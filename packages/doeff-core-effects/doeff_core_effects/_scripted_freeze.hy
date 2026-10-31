@@ -1,4 +1,4 @@
-;;; heap の凍結の fake の答え手 scripted-freeze-handler(agora-redesign #1440・ADR-DOE-CORE-EFFECTS-004)— CollectAndFreeze に、GC に触れず
+;;; heap の凍結の fake の答え手 scripted-freeze-handler(ADR-DOE-CORE-EFFECTS-004)— CollectAndFreeze に、GC に触れず
 ;;; 決めた数で答える。模擬と検で、凍結を求める境目だけを確かめ、process の GC の状態を変えないため。
 (require doeff-hy.macros [defhandler val])
 (val MODULE-TAGS {:context "freeze" :role "foundation"})

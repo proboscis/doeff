@@ -1,5 +1,5 @@
 """展開(compile)の間に実行の始まった Python の code object を拾う — macro の記録の digest が、閉包の関数のうち、その module の
-展開で実行された関数の code の中身だけを覆うため(:mod:`doeff_hy_bytecode_guard._macro_use`・agora-redesign #3769 の子 —
+展開で実行された関数の code の中身だけを覆うため(:mod:`doeff_hy_bytecode_guard._macro_use` —
 defk の展開で呼ばれない binding_forms._Walker._assign の変更で、defk の使い手が全部冷えた)。
 
 拾い方: sys.monitoring(Python 3.12 から)の PY_START(関数の実行の始まり)と PY_RESUME(generator の再開 — 拾いを開く前に

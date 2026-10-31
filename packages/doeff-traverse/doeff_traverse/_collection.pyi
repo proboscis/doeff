@@ -1,4 +1,4 @@
-"""collection.py の公開面の型(型検査のための宣言・agora-redesign #2321)。
+"""collection.py の公開面の型(型検査のための宣言)。
 
 Collection は件ごとの結果の列で、有効な件の値の型 `_V` を運ぶ。Traverse の handler は f の答え(`Program[_V, …]` の
 `_V`)だけを有効な件の値に置くので、`valid_values` は `list[_V]`。失敗した件の value は例外か(When で落ちた件は)

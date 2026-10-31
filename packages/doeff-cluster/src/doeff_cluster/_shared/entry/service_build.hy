@@ -32,7 +32,7 @@
    :environ の既定の値で読んだ形を検める(job の readiness は名のまま持ち、system-declaration が上書きを重ねた値で読み直す)。
    peak-mib・settle-mib = 起動の memory の山と落ち着いた値(MiB — 必ず渡す・既定の値は無い)・single-host = 1 台に縛ってよい訳(無ければ
    None)。規則は coordinator の宣言の読みと同じ job_rules.memory-refusal・single-host-refusal。
-   filled = :environ の名のうち宣言の時に埋める名(defsystem の印 (filled) — 既定の値は空の文字列で渡る。card ki-02e836a9c628)。"
+   filled = :environ の名のうち宣言の時に埋める名(defsystem の印 (filled) — 既定の値は空の文字列で渡る)。"
   (when (not (isinstance program DoExpr))
     (raise (TypeError (.format "job {}: Program の値(defk の関数を呼んだ結果)を渡す: {!r}" name program))))
   (when (not-in replicas REPLICAS-VALUES)
@@ -102,7 +102,7 @@
    environ = job ごとの environ の上書き(配る先ごとの値 — 口の URL・下限の刻など。宣言の :environ に重ね、規則は environ-overlay-refusal。
    spec-hash に入るので、上書きを変えると入れ替わる)。行の readiness は、:environ の名で書いた欄を上書きを重ねた後の値の数に置き換えた形
    (readiness_model の註 — coordinator が受ける readiness はいつも数。読めない値・形の破れは job を名指して断る)。
-   contents = job ごとの中身の鍵(job の名 → 鍵の文字列 — card ki-81bf84ac6590)。送り手が「その job の process が読む code の全部(実行環境の
+   contents = job ごとの中身の鍵(job の名 → 鍵の文字列)。送り手が「その job の process が読む code の全部(実行環境の
    どの repo の、どの file の中身か)」から計った鍵で、在る job の指紋は版と repo の commit の代わりに鍵を読む — 読む code の変わらない版で
    宣言し直しても、worker は process を起こし直さず root も用意しない。鍵が読む code を覆わないと、変わった code が黙って当たらない
    (覆う範囲は送り手の約束)。None・載らない job = 今どおり版と commit で判じる。系に無い job の名と綴りの誤り(content-refusal)は断る。"

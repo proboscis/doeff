@@ -10,7 +10,7 @@
 
 ;; 終わった process の state(どれも、もう走らない — 終わりを待つ相手でも signal を送る相手でもない): Z = 終わって親の回収を待つ・
 ;; X = 親が回収している最中(Linux の EXIT_DEAD — 回収が済んで /proc/<pid> が消える手前の短い間だけ見える。Z だけを見ると、この間の
-;; 読みが「走っている」になる・card ki-6dde100393cd)。macOS の status は Z までしか写さない(darwin_proc.hy)。
+;; 読みが「走っている」になる)。macOS の status は Z までしか写さない(darwin_proc.hy)。
 (val ENDED-STATES (frozenset ["Z" "X"]))
 
 

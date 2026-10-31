@@ -119,7 +119,7 @@ def state(initial: Mapping[Any, Any] | None = None) -> ProgramHandler:
     _refuse_program("state", initial, "the initial state")
     store = dict(initial) if initial else {}
     # The VM answers Get / Put from the store itself, without a Python generator per
-    # effect (card ki-83236a21466e); the store stays this dict.
+    # effect; the store stays this dict.
     return _rust_handler_installer(native.StateHandler(store, Get, Put))
 
 
@@ -558,7 +558,7 @@ def _bridged_error(error: BaseException) -> BaseException:
     row kept its own handle alive and was never swept: every failed Await kept
     its row, error, traceback, frames and the awaited coroutine's locals — an
     httpx client's failed requests kept their httpcore connection each
-    (agora card ki-84b4a6fb6503 — ~0.8 a second in a messaging process). The
+    (~0.8 a second in a messaging process). The
     rest of the traceback (the awaited coroutine's frames) is kept.
     """
     tb = error.__traceback__

@@ -1,6 +1,6 @@
 //! 層の設定の型 — `[tool.doeff-linter.layers]` と `roles` の節の読んだ形と、層の番号・置き場・タグの読み方の検めた形。
 //! 設定の節を組む `settings`・宣言を読む `architecture`・Jev の問い `semantic`・事実の読み `facts` が下から読む型で、
-//! この file は project の他の module を読まない(agora-redesign #2123 で settings.rs から分けた)。
+//! この file は project の他の module を読まない(settings.rs から分けた)。
 
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet};
@@ -29,7 +29,7 @@ pub struct LayersSection {
     /// 型だけを置く層(関数と handler を定めない)。
     #[serde(default)]
     pub types_only: Vec<String>,
-    /// 値を型だけで渡す層(defwire と写像・型の無い組を置かない — DOEFF170・171・agora-redesign #2143)。
+    /// 値を型だけで渡す層(defwire と写像・型の無い組を置かない — DOEFF170・171)。
     #[serde(default)]
     pub wire_free: Vec<String>,
     /// 型だけの層で数える関数の定義の形(Hy の頭の綴り。既定 defk・deff・defp・defpp・defhandler・defn)。
@@ -236,8 +236,8 @@ pub struct TagsSection {
     pub plain_definers: Option<Vec<String>>,
     /// `(名 "doc"? {… :tags {…}})` の形の effect の型の定義の形(既定 defeffect)。
     pub effect_definers: Option<Vec<String>>,
-    /// `(名 "doc"? {:tags {…} :check […]}? 欄 …)` の形の record の型の定義の形(既定 defrecord — doeff-hy の頭の辞書・
-    /// agora-redesign #798)。頭の辞書が在ればその :tags を読み、無ければタグを書いていない定義。
+    /// `(名 "doc"? {:tags {…} :check […]}? 欄 …)` の形の record の型の定義の形(既定 defrecord — doeff-hy の頭の辞書)。
+    /// 頭の辞書が在ればその :tags を読み、無ければタグを書いていない定義。
     pub record_definers: Option<Vec<String>>,
     /// DOEFF112: 定義の :tags に必須の鍵(既定 context・role)。
     pub required: Option<Vec<String>>,

@@ -1,4 +1,4 @@
-;;; 1 台の worker が止まっても常駐の job が残りの worker の memory に入るか(N+1)の純粋な判断(card ki-4689c7008147)。I/O はしない。
+;;; 1 台の worker が止まっても常駐の job が残りの worker の memory に入るか(N+1)の純粋な判断。I/O はしない。
 ;;;
 ;;; coordinator は、他に置ける worker が在る job を、担い手が移し替えの期限を過ぎて黙ったら外して他へ移す(cluster_policy の #2804 の註)。
 ;;; 移る先が在るか・移った後に起動の山まで memory に入るかは置く時に照らさない(置く時は落ち着いた値の和だけを見る —
@@ -6,7 +6,7 @@
 ;;;   1. 置き先: 機体ごとの job(per-machine? — needs が雛形の能力だけか、それに機体の印 host-<機体> を 1 つ足して機体ごとに広げた
 ;;;      物 — 置ける worker のそれぞれに 1 つずつ動く)と、1 台に縛る訳を宣言した job(job の :single-host — ResidentJob.single-host)を
 ;;;      除き、どの常駐の job も置ける worker が 2 台以上ある。言い換えると、どの 1 台を止めても、その機体にしか置けない job が 0。
-;;;   2. (消した — card ki-2acb63aec0fd)数の枠: 手書きの capacity から job の数を引いた空きで照らしていた。coordinator は job を数でなく
+;;;   2. (消した)数の枠: 手書きの capacity から job の数を引いた空きで照らしていた。coordinator は job を数でなく
 ;;;      memory で縛る(cluster_policy.memory-misfit)ので、memory の規則 3 だけが照らす。規則の番号は他の文書が引くので詰めない。
 ;;;   3. memory: 各 worker w で、置ける job の落ち着いた値の和 + max(止まる機体 m について、w と m の両方に置けて m から移りうる job の
 ;;;      (山 − 落ち着いた値)の和)≤ w の memory の予算。予算の無い worker に置ける job が在れば赤。機体ごとの job は移らないので山の

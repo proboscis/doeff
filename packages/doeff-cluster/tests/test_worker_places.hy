@@ -1,4 +1,4 @@
-;; 同じ機体に同じ名の worker の 2 つの世代が並ぶ時(Deployment の RollingUpdate — AL-D2c・card ki-457bdbcc0236)、2 つの worker は同じ /work を
+;; 同じ機体に同じ名の worker の 2 つの世代が並ぶ時(Deployment の RollingUpdate — AL-D2c)、2 つの worker は同じ /work を
 ;; 使う。boot.sh は世代ごとの状態の dir($WORK_DIR/gen/<Pod の uid>/state)を --state-dir に、分け合う dir($WORK_DIR/state)を --shared-dir に
 ;; 渡す。ここでは、その 2 つの dir から worker が作る置き場が衝突しない事を縛る:
 ;;   * 版の木・job の cwd・Program・task の結果・温める子・入口の検め・拍の状態は、世代ごとに別の場所で、それぞれ自分の状態の dir の下。

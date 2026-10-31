@@ -1,4 +1,4 @@
-"""Hy の module の隣の型の宣言(.pyi)と実装の食い違いの失敗ケース(agora-redesign #2320 で sql_effects.pyi・sqlite_sql.pyi に作り、
+"""Hy の module の隣の型の宣言(.pyi)と実装の食い違いの失敗ケース(sql_effects.pyi・sqlite_sql.pyi に作り、
 #2323 で http_server_effects・file_effects・memory_file・random_effects・seeded_random へ広げた)。
 
 型の宣言は手書きなので、.hy の側で欄を足す・消す・並べ替える・関数の引数を変えると、宣言だけが古いまま黙って残る。
@@ -288,7 +288,7 @@ def test_a_dropped_effect_field_is_found() -> None:
 
 
 def test_a_dropped_arrival_remote_is_found() -> None:
-    # 台本が運ぶ出来事 HttpRequestArrived の宣言から送り元の欄 remote を消すと、欄の食い違いとして見つかる(agora-redesign #2233)。
+    # 台本が運ぶ出来事 HttpRequestArrived の宣言から送り元の欄 remote を消すと、欄の食い違いとして見つかる。
     broken = _without_field(_stub_tree("http_server_effects"), "HttpRequestArrived", "remote")
     assert [
         m
@@ -298,7 +298,7 @@ def test_a_dropped_arrival_remote_is_found() -> None:
 
 
 def test_a_dropped_handler_parameter_is_found() -> None:
-    # 宣言の scripted_http_server から引数 script を消すと、引数の食い違いとして見つかる(agora-redesign #2233)。
+    # 宣言の scripted_http_server から引数 script を消すと、引数の食い違いとして見つかる。
     broken = copy.deepcopy(_stub_tree("scripted_http_server"))
     for node in broken.body:
         match node:

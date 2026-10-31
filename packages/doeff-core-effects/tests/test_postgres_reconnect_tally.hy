@@ -1,4 +1,4 @@
-;;; 記録の service の切片の行(1 行 約 262,260 bytes)を読み書きする要求の列が、接続を開き直さない(card ki-004d4af4d6d3)。
+;;; 記録の service の切片の行(1 行 約 262,260 bytes)を読み書きする要求の列が、接続を開き直さない。
 ;;;   - 出自: agora-records-twin は 30 秒に 242 本の接続を開き直していた。本文を 256 KiB の切片に割った行(turn-memory-part・worktree-diff)は
 ;;;     欄の名を足すと 256 KiB をわずかに越え、前の目安(LARGE-CARRY-BYTES = 256 KiB)ではその行を通した接続を返す時に毎回閉じていた。
 ;;;   - 使い捨ての PostgreSQL(postgres_support/disposable_postgres.py)へ繋ぎ、貸し出しの数え(PostgresConnections.tallies)で開いた接続と

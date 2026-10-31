@@ -1,4 +1,4 @@
-;;; 機体の process の表の効果 — 走っている process の親子と memory を 1 度に読み、1 つの process へ signal を送る(card ki-7b934e2538f9)。
+;;; 機体の process の表の効果 — 走っている process の親子と memory を 1 度に読み、1 つの process へ signal を送る。
 ;;; 業務の語を持たない土台の語彙。
 ;;;
 ;;;   ReadProcTable  機体の process の表を 1 度読む。答え = ProcRow の列(pid の昇順)。読む間に終わった process は列に入れない。

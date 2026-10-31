@@ -1,4 +1,4 @@
-;;; 計器の本物の答え手 process-meter-handler(agora-redesign #1440・ADR-DOE-CORE-EFFECTS-004)— CountMetric・ObserveSeconds・
+;;; 計器の本物の答え手 process-meter-handler(ADR-DOE-CORE-EFFECTS-004)— CountMetric・ObserveSeconds・
 ;;; ObserveSecondsBatch・SetGauge・ReadMeter に、process に 1 つの置き場で答える。
 ;;;
 ;;; 何のためか: 動き続ける process では、処理ループの run が計器へ積み、別の run(probe の HTTP — 処理ループが計算している間も答える)が

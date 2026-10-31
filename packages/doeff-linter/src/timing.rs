@@ -1,6 +1,6 @@
 //! 処理ステージごとの時間を stderr へ出す計器(環境変数 `DOEFF_LINTER_TIMING` が在る時だけ)。
 //!
-//! 書き込み直後の hook の 1 回が CPU 3 秒かかっていた(agora-redesign #1022)— どの処理ステージが重いかを、
+//! 書き込み直後の hook の 1 回が CPU 3 秒かかっていた— どの処理ステージが重いかを、
 //! 答え(stdout の JSON)を変えずに測るため。並列の処理は壁時計だと重さが隠れるので、process の CPU 秒
 //! (`/proc/self/stat` の utime + stime)の差も出す。読めない機体では CPU 秒の欄を `?` にする。
 

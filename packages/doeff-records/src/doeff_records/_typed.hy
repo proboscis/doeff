@@ -40,7 +40,7 @@
       (raise (TypeError (.format "RowType.model は行の型(素の defrecord): {!r}" self.model)))))
   (defn [functools.cached-property] #^ (get Codec M) codec [self]
     ;; 作る時に組まない: 行の型は使い手の module の読み込みの時に作られ、写さない表の分まで読み込みの固定費に載る
-    ;; (使い手の画面の検で 29 表・ki-dd5358f7eb46)。
+    ;; (使い手の画面の検で 29 表)。
     (row-codec-of self.model)))
 
 

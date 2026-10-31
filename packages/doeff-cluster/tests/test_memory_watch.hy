@@ -1,4 +1,4 @@
-;; 機体の memory の見張り(card ki-7b934e2538f9)— 模擬の検。
+;; 機体の memory の見張り— 模擬の検。
 ;;
 ;; 実例: atlas(10-16 07:25 UTC・10-11 23:48・10-12 17:22)と zeus(10-11 12:12〜12:52 UTC)で、1 つの job が memory を食うと機体の全体が
 ;; reclaim の thrash で止まり、worker も coordinator も応えなかった(OOM kill は起きない)。誰が食ったかは 10 分ごとの測りの間に落ちて
@@ -11,15 +11,15 @@
 ;;     process は表から消え、他は残る。
 ;;   - guard を切った見張りは様子の行だけで、何も止めない。
 ;;   - /proc/meminfo が読めない機体では訳を 1 度だけ言い、数えない・止めない。
-;;   - 平常の大きさ(card ki-649b1b2f5838 — 10-24 atlas で、機体の空きを worker の外の Pod が食った 2 時間に、平常の約 950 MiB で動く
+;;   - 平常の大きさ(10-24 atlas で、機体の空きを worker の外の Pod が食った 2 時間に、平常の約 950 MiB で動く
 ;;     常駐の job が 11 回止められ、起こし直されては同じ大きさに戻った): 平常の大きさで動く常駐の job は尽きかけの機体でも止めず、
 ;;     止めなかった job と worker の外の使用量を 1 行で言う。平常の 2 倍の常駐の job と大きい task は止める。止めた job の間の最大は
 ;;     平常の大きさに残さない。
-;;   - 群れの止め(card ki-d9953fe1d739 — 10-23 20:36〜20:46 UTC の zeus で、CLI を多数並べる常駐の job の木が約 64 GB に太ったのに、単位は
+;;   - 群れの止め(10-23 20:36〜20:46 UTC の zeus で、CLI を多数並べる常駐の job の木が約 64 GB に太ったのに、単位は
 ;;     どれも 512 MiB 未満で見張りは何も止めず、機体ごと約 3 分止まった): 常駐の job が 300 MiB の CLI の木 40 本と、shim に引き取られた
 ;;     200 MiB の孤児 40 本を持つ尽きかけの機体では、job の本体を残して、大きい単位から DANGER の線を戻す量まで まとめて止める。worker の
 ;;     外の使用量がその job より大きい時は止めずに 1 度だけ言う。
-;;   - 孤児の溢れ(card ki-72f309f23e0f — 10-30 の zeus で、shim の直下に孤児が約 8.2 万本溜まり、木をたどる手間が process の数の 2 乗の
+;;   - 孤児の溢れ(10-30 の zeus で、shim の直下に孤児が約 8.2 万本溜まり、木をたどる手間が process の数の 2 乗の
 ;;     見張りの 1 回が main の scheduler を何十分も塞いだ): 10 万本の孤児の表を尽きかけの機体で 1 回読み、止めるまでを CPU 1 秒未満で終える。
 (require doeff-hy.macros [deftest defk defhandler defeffect <- val var])
 (require doeff-hy.record [defrecord])
@@ -408,7 +408,7 @@
 
 
 (deftest test-many-small-units-of-one-large-resident-job-are-killed-together-until-the-danger-line-returns
-  ;; 失敗ケース(card ki-d9953fe1d739): 空き 2.0 GiB / 32 GiB = 6%(DANGER)・container 28 GiB(worker の外 2 GiB)。単位はどれも 512 MiB
+  ;; 失敗ケース: 空き 2.0 GiB / 32 GiB = 6%(DANGER)・container 28 GiB(worker の外 2 GiB)。単位はどれも 512 MiB
   ;; 未満(CLI の木 300 MiB・孤児 200 MiB)で、直す前の見張りは「止める単位が無い」と言うだけで何も止めない。直した見張りは svc の本体を
   ;; 残して、大きい単位(CLI の木)から、空きを DANGER の線(3.2 GiB)の上へ 512 MiB 戻す量(約 1741 MiB)まで 6 本を まとめて止める。
   ;; 5 秒の読みは止めの間隔(10 秒)の中なので止めない(見張りは 5 秒の読みの後に止める)。
@@ -449,7 +449,7 @@
 
 
 (deftest test-one-reading-of-a-hundred-thousand-orphans-holds-the-scheduler-under-a-second [#^ float deadline-scale-factor]
-  ;; 失敗ケース(card ki-72f309f23e0f): 2026-10-30 の zeus で、job の shim の直下に孤児が約 8.2 万本溜まり、木をたどる手間が process の数の
+  ;; 失敗ケース: 2026-10-30 の zeus で、job の shim の直下に孤児が約 8.2 万本溜まり、木をたどる手間が process の数の
   ;; 2 乗だった見張りの 1 回が main の scheduler を何十分も塞いだ(生存の合図が止まり Pod が NotReady)。直す前の手順は 1 万本で約 3 秒・
   ;; 2 万本で約 19 秒。直した見張りは、10 万本の孤児の表で尽きかけの機体を 1 回読み(job の memory・止める単位 10 万余り・止める単位の
   ;; 選び)、uv の木(3205 MiB)を止めるまでを CPU 1 秒未満で終える。

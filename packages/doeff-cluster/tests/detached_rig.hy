@@ -146,7 +146,7 @@
     (setv #(state status reply) (responded self.state (run (http-request request.method split.path (dict (parse-qsl split.query)) body
                                                              :actor (.get request.headers "x-actor")))
                                          now self.timing))
-    ;; 本物の調停ループの 1 歩と同じく、保存の前に終わりの出口へ積む(program.coordinator-step — card ki-e7945a2b2d00)。
+    ;; 本物の調停ループの 1 歩と同じく、保存の前に終わりの出口へ積む(program.coordinator-step)。
     (setv self.state (outbox-noted before state now))
     (httpx.Response status :json reply)))
 

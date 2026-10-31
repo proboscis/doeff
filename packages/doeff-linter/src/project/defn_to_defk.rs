@@ -1,6 +1,6 @@
-//! `doeff-linter fix defn-to-defk` — Hy の defn を defk に直し、repo の中の呼び手を `<-` / `!` へ書き換える変換(agora-redesign #828)。
+//! `doeff-linter fix defn-to-defk` — Hy の defn を defk に直し、repo の中の呼び手を `<-` / `!` へ書き換える変換。
 //!
-//! 出自: operator の指摘 2026-09-28 — linter の直しは単純なはずなのに時間がかかりすぎていた。
+//! 出自: linter の直しは単純なはずなのに時間がかかりすぎていた。
 //! LLM の係が file ごとに呼び手の書き換えまで手でしていたので、機械的な書き換えをこの変換へ移し、係は変換が直せなかった
 //! 「判断の要る物」だけを直す(coordinator の戻せる決定)。
 //!

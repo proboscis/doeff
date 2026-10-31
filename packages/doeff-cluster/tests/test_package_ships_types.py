@@ -2,7 +2,7 @@
 
 使い手の repo の pyright strict は、型を持つ印の無い Python の module(型を書いた .py — worker/entry/line_stamp.py)を import すると
 「型の写しの無い module」(reportMissingTypeStubs)として赤にする。使い手の repo の検が job の log の
-送り手の部品(SHIP-LIMITS・JobLogShipper ほか)を読み、日次の型の測りが赤にした(card ki-ae11a2a52ea0・親 ki-deb1a202954b)。.py の型を
+送り手の部品(SHIP-LIMITS・JobLogShipper ほか)を読み、日次の型の測りが赤にした。.py の型を
 そのまま渡すのが根(doeff-hy-pytest の b2be79bbb と同じ考え)。
 置き場: doeff_cluster は __init__.py の無い名前空間 package で、pyright は名前空間 package の最上位の py.typed では印と読まず、module の在る
 sub-package の dir の py.typed を読む(実測 2026-10-12: 最上位に置いた時は赤が残り、worker/entry に置くと消えた — PEP 561 の名前空間

@@ -164,7 +164,7 @@ def test_check_writes_the_expression_from_the_predicate_and_the_arguments() -> N
 
 
 def test_the_types_are_the_only_way_to_write_a_check() -> None:
-    # 利用者の答え lt-MHFWEYBQYCC2PQYR84VKXBAET8: 型 Check と Perform を直に書き、関数 check と perform は見せない。
+    # 決め: 型 Check と Perform を直に書き、関数 check と perform は見せない。
     public = {name for name in dir(doeff_validation) if not name.startswith("_")}
     assert {"Check", "Perform"} <= public
     assert public.isdisjoint({"check", "perform", "CheckSpec", "Performed"})

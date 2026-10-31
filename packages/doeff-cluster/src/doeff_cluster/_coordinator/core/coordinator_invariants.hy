@@ -40,12 +40,12 @@
 ;;; と答え、置き先にも選ぶ — 本番 2026-09-25 の欠陥・L643)。判断は記録(生存の読みと、その worker が届かなくなった時刻)を受けて、届かなく
 ;;; なってから lease-ms + 余裕を過ぎて alive と答えた読みの列を返す純関数 1 つ。記録を集めるのは検(tests/test_local.hy の止まりの検)。
 ;;;
-;;; 条 C6 running-within-capacity(card ki-2acb63aec0fd で memory の版へ): どの瞬間も、worker の上で動いている job の process の落ち着いた
+;;; 条 C6 running-within-capacity(memory の版へ): どの瞬間も、worker の上で動いている job の process の落ち着いた
 ;;; memory(宣言の settle-mib)の和は、その worker の本当の memory の予算を越えない。判断は記録(job の process ごとの生きていた区間と
 ;;; その job の settle、worker ごとの本当の memory の予算)を受けて、越えた瞬間の列を返す純関数 1 つ。記録を集めるのは検(tests/test_local.hy
 ;;; の memory の検)。
 ;;;
-;;; 条 C17 jobs-stay-out-of-the-task-reserve(#3489・card ki-2acb63aec0fd で task の側の版へ): どの瞬間も、worker の上で動いている task の
+;;; 条 C17 jobs-stay-out-of-the-task-reserve(#3489・task の側の版へ): どの瞬間も、worker の上で動いている task の
 ;;; 数は、本当の予約(task-reserve)と背景の枠(background-room)の和を越えない — task の置き場は常駐の job の数に依らず、名乗りの外へ
 ;;; 置かれない。判断は記録(task ごとの動いていた区間と、worker ごとの本当の task-reserve と background-room)を受けて、越えた瞬間の列を
 ;;; 返す純関数 1 つ。記録を集めるのは検(tests/test_local.hy の予約の検)。

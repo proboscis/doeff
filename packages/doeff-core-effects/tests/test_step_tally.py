@@ -1,4 +1,4 @@
-"""The step tally (agora-redesign #3855): OpenStepTally / CloseStepTally answered by step-tally-handler.
+"""The step tally: OpenStepTally / CloseStepTally answered by step-tally-handler.
 
 - While a window is open, a task that computes raises the window's CPU sum.
 - Two overlapping windows both count the steps inside both; a step that began before a window

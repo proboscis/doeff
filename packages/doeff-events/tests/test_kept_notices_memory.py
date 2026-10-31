@@ -1,4 +1,4 @@
-"""Kept channels on the in-memory broker (agora card ki-86d11cadf3be): a notice of a kept channel is handed out
+"""Kept channels on the in-memory broker: a notice of a kept channel is handed out
 again until its reader acknowledges it, a reader goes on from where it was after a lost connection, and a notice
 lost between the broker and the bus still reaches the program.
 

@@ -5,7 +5,7 @@
 ;;;   WC1(古い root から分かれない)= task の分かれ元のキーを決めるのは warm-key-of の 1 か所(task 自身の env のキー)。
 ;;;   WC3(分かれる前に VM を起こさない)= 準備済みに数える印の形を判じるのは warm-mark-clean? の 1 か所。
 ;;;
-;;; 常駐の job(service — card ki-de44efdb9aa4): WorkerPolicy.warm-services が真の時、実行環境の service も待ちの子から分けて起こし、
+;;; 常駐の job(service): WorkerPolicy.warm-services が真の時、実行環境の service も待ちの子から分けて起こし、
 ;;; 待ちの子が読み込んだ module の頁を共有する。分けるのは service-warm-keys の root(service が warm-services-min 本以上か、分かれる task も
 ;;; 在る root — 待ちの子そのものの頁が service の得より大きい root に待ちの子を起こさない)の service だけ。道は warm-start の 1 か所で決める:
 ;;; 待ちの子の準備を待つ(WAIT)・分ける(FORK)・入れ物 shim(SHIM — 印で service を受けると名乗らない古い版の待ちの子と、断りの上限に
@@ -100,7 +100,7 @@
 
 (defn #^ bool ended-refusing [#^ WarmChildView view]  ; defk にできない: 純粋な判断の refusals-after・warm-child-refused(Program の外の関数)が呼ぶ
   "待ちの子が断って終わったか(断りの数えの 1 か所): 起動を断った(ended-before-ready)か、task を分けるのを断ったので worker が止め、
-   終わりを観測した(fork-refused — card ki-e1612a12d0c3)。"
+   終わりを観測した(fork-refused)。"
   (or (ended-before-ready view) (and (is-not view.exit-code None) view.fork-refused)))
 
 
@@ -138,7 +138,7 @@
    同じ root の宣言は project が同じなので最初の宣言を読む)、起動で読み込む module の名は、その root の task の宣言と温める表の行の bytecodeEntries を
    合わせた物(名の順・重なりは 1 つ — 宣言の読みは定義点 runtime-env-of-json)。名は root のキーに入らないので、同じ root の宣言どうしで
    違えば合わせた物を読む(読まなかった module は分かれた task が自分で読む — 遅くなるだけで落ちない)。services = service を分ける root の
-   キー(service-warm-keys — 在れば、その root の service の宣言の bytecodeEntries も合わせる・card ki-de44efdb9aa4)。"
+   キー(service-warm-keys — 在れば、その root の service の宣言の bytecodeEntries も合わせる)。"
   (val texts (+ (tuple (gfor spec specs :if (and (= (warm-key-of spec) key)
                                                   (or (forks-from-warm-child spec)
                                                       (and (in key services) (is-not spec.runtime-env None) (not spec.once))))
@@ -197,7 +197,7 @@
   {:pre [(: uv str) (: launch WarmLaunch) (: place WarmPlace)] :post [(: % (get tuple #(str ...)))] :tags {:context "worker" :role "judgment"}}
   "待ちの子を root の venv で起こす命令を、task の子と同じ uv run の形(--no-sync --frozen --project)で組むため(入口 =
    worker/entry/warm_child — 起動で読む module は --preload を名の順に並べる)。入口の名は区画を _worker へ隠す前の path のまま
-   (card ki-3ff93cd3499e — 待ちの子は root の版の doeff で起き、_worker の無い古い版の root でも解ける名が要る。新しい版の root では
+   (待ちの子は root の版の doeff で起き、_worker の無い古い版の root でも解ける名が要る。新しい版の root では
    移し替えの module worker.py が _worker の module を返す。段 3 で移し替えの module を消す前に root の版の下限と合わせて替える)。"
   (+ #(uv "run" "--no-sync" "--frozen" "--project" launch.project "python" "-m" "doeff_cluster.worker.entry.warm_child"
        "--root" launch.root "--socket" place.socket "--ready" place.ready)

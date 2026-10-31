@@ -21,7 +21,7 @@ classifiers = [
 ]
 
 dependencies = [
-    # extra hy — state が Hy で書いた process の effect(doeff_core_effects._os_process)を読む(card ki-006338b48f4b)。
+    # extra hy — state が Hy で書いた process の effect(doeff_core_effects._os_process)を読む。
     "doeff[hy]>=0.1.9",
     "doeff-flow>=0.1.0",
     "doeff-time",
@@ -44,7 +44,7 @@ dev = [
 [project.scripts]
 # doeff-agentic answers ps・show・watch・attach・send・stop with the arguments and the JSON the IDE
 # plugins use. It is the only provider of the doeff-agentic executable: the Rust CLI that used to
-# provide it was removed (card ki-626bf91b0560・ki-7b2e293a2db7).
+# provide it was removed.
 doeff-agentic = "doeff_agentic._cli:main"
 doeff-agentic-tui = "doeff_agentic._tui:main"
 

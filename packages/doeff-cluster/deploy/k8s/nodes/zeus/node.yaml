@@ -5,7 +5,7 @@ metadata:
   name: doeff-worker
   namespace: agent-worker
 spec:
-  # 入れ替えは新しい Pod を先に起こし、Ready になってから旧い Pod を止める(AL-D2・card ki-2f5186034976 — Recreate では旧い Pod が止まる
+  # 入れ替えは新しい Pod を先に起こし、Ready になってから旧い Pod を止める(AL-D2 — Recreate では旧い Pod が止まる
   # 間に新しい Pod が無く、引き継ぐ job の process が入れ替えのたびに止まった)。同じ名の worker の 2 つの世代が同じ機体に並ぶので、
   # 状態は世代ごとの dir に置く(WORKER_GENERATION_DIRS・POD_UID — boot.sh)。coordinator は世代で 2 つを見分け、新しい世代が引き継ぐ
   # job を ready で走らせた後に、旧い世代の process へ退くよう告げる。旧い Pod の preStop の drain は、旧い世代の process が退き終わる
@@ -23,16 +23,16 @@ spec:
         - name: worker
           # CPU の requests = 重み(cgroup の cpu.weight)。4 コアで重み 157 にし、同じ機体の他の Pod より先に CPU を受ける。
           # memory の requests(取り分)8Gi は、落ち着いた時の使用量と起動の山の実測(2026-10-05)から。
-          # 2026-10-09: memory の上限を 100Gi・CPU の上限を 16 へ(利用者の決定 2026-10-09 — zeus の doeff worker に約 100GB を使わせ、
+          # 2026-10-09: memory の上限を 100Gi・CPU の上限を 16 へ(zeus の doeff worker に約 100GB を使わせ、
           # Pod の 20Gi の上限を直ちに外す)。
           # 同時に受ける処理の数は機体の memory の余白で決まるので、20Gi では同時に走る数が 5 本前後に留まった(15:5x の本番: 使用 18.4GiB /
           # 20GiB・CLI 15 本)。Node の allocatable は 118Gi。requests は変えない。
-          # 2026-10-11: CPU の上限を外す(調整役 cisco-c8 01:19 の頼み lt-38MAG13SB4J8KV7TZDPX2KCP0D — この Pod が cpu.max 16 CPU に周期の
-          # 43% で当たり、画面の job の最初の下書きの落ち 2.3% → 20.5% と 送り→最初の字 +3 秒の根の見立て・証拠 lt-TJC2AQWJXZMGCYX6K7MM3DKVNQ)。
+          # 2026-10-11: CPU の上限を外す(この Pod が cpu.max 16 CPU に周期の
+          # 43% で当たり、画面の job の最初の下書きの落ち 2.3% → 20.5% と 送り→最初の字 +3 秒の根の見立て)。
           # CPU の取り分(重み)は requests の 4 のまま。memory の上限 100Gi は変えない。戻す時は limits に cpu: "16" を足す。
           resources: { requests: { cpu: "4", memory: 8Gi }, limits: { memory: 100Gi } }
-          # USB の SSD の上の、作業の root の外の dir 2 つ(claude-projects・service-workers)を、作業の root の下の host-usb/ に置く(card
-          # ki-f79f4b324835・利用者 2026-10-12 15:51 の答え — 上に載る系の job が USB の SSD の 3 つの置き場〔作業の root・この 2 つ〕を日次に刈る。
+          # USB の SSD の上の、作業の root の外の dir 2 つ(claude-projects・service-workers)を、作業の root の下の host-usb/ に置く(
+          # 上に載る系の job が USB の SSD の 3 つの置き場〔作業の root・この 2 つ〕を日次に刈る。
           # 機体の利用者の home の下は置かない)。作業の root の下に置くので、上に載る系の刈りの決まりは作業の root からの名のまま書け、root の外を
           # 指さない。type は Directory: dir が無ければ黙って作らず、新しい Pod が起動で止まる(RollingUpdate なので旧い Pod は動いたまま)。
           volumeMounts:
@@ -40,7 +40,7 @@ spec:
             - { name: usb-service-workers, mountPath: /work/host-usb/service-workers }
             # NAS の控え用 dir(moneta の毎日の控え — moneta-backup-pvc.yaml)。job の子は /mnt/moneta-backup へ書く。
             - { name: moneta-backup, mountPath: /mnt/moneta-backup }
-      # 作業の root(volume work — WORK_DIR=/work)は USB の SSD の下(2026-10-10 の利用者の決定 — zeus の容量を食う置き場を USB の
+      # 作業の root(volume work — WORK_DIR=/work)は USB の SSD の下(zeus の容量を食う置き場を USB の
       # SSD へ移す。同じ日の 13:39 JST に root の disk の空きが準備の最低 25 GiB を切り、新しい版の準備が全部
       # 止まった)。type は Directory: SSD が外れて mount の点が無ければ、root の disk へ黙って dir を作らず起動で止まる。中身は切り替えの前に
       # 機体の上で /var/lib/agent-worker から写す(この行が当たると Pod が作り直される)。戻す時は path を /var/lib/agent-worker・type を

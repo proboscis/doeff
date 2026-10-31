@@ -565,7 +565,7 @@
                                     :if (is-not found None)
                                     (.group found 1))))
   (assert (in "doeff_hy_bytecode_guard" pth-imports) pth-imports)
-  ;; JOB-ENTRY は区画を _worker へ隠す前の送る名(古い版の root でも解ける — card ki-3ff93cd3499e)。この root の venv が走らせて焼く
+  ;; JOB-ENTRY は区画を _worker へ隠す前の送る名(古い版の root でも解ける)。この root の venv が走らせて焼く
   ;; のは、移し替えの module がその名に返す _worker の module。
   (val job-module (. (importlib.import-module JOB-ENTRY) __name__))
   (assert (!= job-module JOB-ENTRY) #("送る名が移し替えの module を通らない" JOB-ENTRY))

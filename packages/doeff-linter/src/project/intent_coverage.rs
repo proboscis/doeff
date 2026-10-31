@@ -1,4 +1,4 @@
-//! DOEFF165: intent の効果の網羅の表(agora-redesign #1561 K3 — 親 #1155「業務ロジックを『テストした』の定義」)。
+//! DOEFF165: intent の効果の網羅の表(親 #1155「業務ロジックを『テストした』の定義」)。
 //!
 //! 各 service の intent の層(`:assembly-shape :intent-layer`)に宣言した効果(defeffect)ごとに 3 つの列を読む:
 //!   * 手元の検から出すか — 検の file の定義から届く定義(効果の節 = 答え手を除く)が、その効果を名指す(作る)。

@@ -4,7 +4,7 @@
 ;; 守る事: 状態の DB は使い捨ての資格の家の外(元の CODEX_HOME)に 1 つ在り、起動は会話の記録(sessions)の全部の大きさに比例する
 ;; 読み(backfill)を DB が無い時の 1 度しかしない。家を消した後も、別の家から同じ thread を thread/resume で続けられる。DB が無い時に
 ;; 同時に起こしても、DB が壊れず、どれも起動する。これが崩れると、記録が育つほど全部の Codex の起動が遅くなり、起動の待ちの上限を
-;; 越えて会話の turn が起動できなくなる(card ki-f316f508a6a5 — 10-19 に 5.0 GB を起動のたびに読み直した)。
+;; 越えて会話の turn が起動できなくなる(10-19 に 5.0 GB を起動のたびに読み直した)。
 (require doeff-hy.macros [deftest defk <- val])
 (val MODULE-TAGS {:context "codex-test" :role "program"})
 (import dataclasses [replace])

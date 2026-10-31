@@ -55,10 +55,10 @@
   "worker へ渡す job の宣言 → heartbeat の返事の jobs の 1 つの JSON の形(Program・環境変数・置き場・実行環境・入れ替えの欄は在る時だけ)。"
   (| {"name" spec.name "entry" spec.entry "args" (list spec.args) "revision" spec.revision "once" spec.once}
      ;; Program の job だけ(改訂 1 の F・G): 詰めた Program の置き場のキー(worker が /programs/<sha> から取る)・宣言の版(子の入口が
-     ;; 比べる送り手の版 — worker は Program の cache の file をこの版ごとに分ける・card ki-172e63fed4c7)と子の環境変数。
+     ;; 比べる送り手の版 — worker は Program の cache の file をこの版ごとに分ける)と子の環境変数。
      (if spec.program {"program" spec.program "versions" (dict spec.versions)} {})
      (if spec.environ {"environ" (dict spec.environ)} {})
-     ;; 中身の鍵の在る job だけ(card ki-81bf84ac6590): worker は版と commit の代わりにこの鍵で宣言の変わりを判じる。欄を読まない古い worker は
+     ;; 中身の鍵の在る job だけ: worker は版と commit の代わりにこの鍵で宣言の変わりを判じる。欄を読まない古い worker は
      ;; 今どおり版で判じる(coordinator は版の指紋の報告も受ける — job_rules.spec-hash-matches)。
      (if (is spec.content None) {} {"content" spec.content})
      (if (is spec.placement None) {} {"placement" spec.placement})
@@ -80,7 +80,7 @@
      ;; 退いた process を同時に残す数の上限 R を宣言した handoff の job だけ(#4072 の D-3 の改め): worker は退いた process が R に達して
      ;; いる間、今の process を退かせずに待つ。欄を読まない古い worker は既定の WorkerPolicy.retired-limit を使う。
      (if (and spec.handoff (is-not spec.retired-limit None)) {"retiredLimit" spec.retired-limit} {})
-     ;; 退きの保ちを持つ退いた process が在る handoff の job だけ(card ki-e3531030eb37): worker は列の世代の退いた process を寿命の上限で
+     ;; 退きの保ちを持つ退いた process が在る handoff の job だけ: worker は列の世代の退いた process を寿命の上限で
      ;; 止めない。欄を読まない古い worker は今どおり上限で止める。
      (if (and spec.handoff spec.retired-held) {"retiredHeld" (list spec.retired-held)} {})
      ;; 途絶しても動かし続けてよい印の在る job だけ(#2804 — cluster_policy.keep-marked): worker は coordinator に届かない間もこの job を
@@ -123,7 +123,7 @@
   "状態の画面の、版の欄を除く本体 → JSON の形(state-view-json が版の欄を足す)。"
   {"now" view.now
    "jobs" (lfor s view.services (| (job-to-json s.job) {"resourceVersion" s.resource-version}))
-   ;; memoryMiB = 枠の file の行の常駐の job の memory の予算(card ki-ced3c45980a5 — 名乗った worker だけに載せる)。
+   ;; memoryMiB = 枠の file の行の常駐の job の memory の予算(名乗った worker だけに載せる)。
    "workers" (dfor w view.workers
                    w.info.name (| {"provides" (list w.info.provides) "exclusive" (list w.info.exclusive) "derived" (list w.info.derived)
                                    "node" w.info.node "taskReserve" w.info.task-reserve "backgroundRoom" w.info.background-room "taskRoom" w.task-room
@@ -144,7 +144,7 @@
    ;; 渡してある。約束の在る job は、担い手が印を手放すか、Worker が消されるか、担い手の沈黙が約束の期限(kept-reassign-after-ms)を
    ;; 越えるまで他へ移らない。GET で返すだけ(約束を書き換える要求は無い)。
    "keepMarks" (lfor m view.keep-marks {"job" m.job "worker" m.worker "boot" m.boot "sinceMs" m.since-ms})
-   ;; 組の同時数の上限(2026-10-12・card ki-b0e8028c8c8d): 組の名の順の列 [{group scope limit perPart resourceVersion held queued}] —
+   ;; 組の同時数の上限(2026-10-12): 組の名の順の列 [{group scope limit perPart resourceVersion held queued}] —
    ;; 系が宣言した値と、置いている数の升 held([{worker? part? count}] — 範囲 worker の組だけ worker・区分ごとの組だけ part)と、
    ;; その組を名乗って待っている task の数。運用者が値の割れや詰まりを 1 か所で読むため。
    "groupLimits" (lfor g view.group-limits
@@ -153,10 +153,10 @@
                                                      (if (is h.worker None) {} {"worker" h.worker})
                                                      (if h.part {"part" h.part} {})))}
                           (group-limit-spec g.limit)))
-   ;; 置き先の一時の上書き(2026-10-27・card ki-1523bc0aba4f): Service の名の順の列 [{service needs reason expiresAtMs writer sinceMs}] —
+   ;; 置き先の一時の上書き(2026-10-27): Service の名の順の列 [{service needs reason expiresAtMs writer sinceMs}] —
    ;; 宣言の needs の代わりに今効いている needs と、その訳・期限・書き手。宣言の spec は書き換えないので、ここで読む。
    "needsOverrides" (lfor o view.needs-overrides (| {"service" o.service} (needs-override-spec o)))
-   ;; 置き先の無い Service の読み(2026-10-27・card ki-53b8677f1374): Service の名 → {kind needs missing pin sinceMs}(unplaced と同じ鍵)—
+   ;; 置き先の無い Service の読み(2026-10-27): Service の名 → {kind needs missing pin sinceMs}(unplaced と同じ鍵)—
    ;; 種類(no-eligible-worker など)・効く needs・足りない能力(生きていて drain 中でない worker のどれも名乗らない能力)・固定・置き先が
    ;; 無いと最初に見た刻。外の見張りが理由の文を読み解かずに、どの Service がいつから何の能力が足りずに置けないかを読むため。
    "unplacedDetail" (dict (zip (gfor u view.unplaced-detail u.service) (! (spelled-each unplaced-view-json view.unplaced-detail))))})
@@ -165,8 +165,8 @@
 (defk unplaced-view-json [#^ UnplacedView view]
   {:pre [(: view UnplacedView)] :post [(: % dict)] :tags {:context "coordinator" :role "protocol" :spells "json"}}
   "置き先の無い Service 1 つの読み → JSON の形 {kind needs missing pin sinceMs memory}(GET /state の unplacedDetail の値と、Service の資源の
-   status.unplaced が同じ形を読むため — card ki-53b8677f1374)。kind = UnplacedKind の値(no-eligible-worker・no-room・waiting-previous-holder)・
-   memory = worker ごとの memory で置けない訳の文の列(no-room の時 — card ki-2acb63aec0fd)。"
+   status.unplaced が同じ形を読むため)。kind = UnplacedKind の値(no-eligible-worker・no-room・waiting-previous-holder)・
+   memory = worker ごとの memory で置けない訳の文の列(no-room の時)。"
   {"kind" view.kind.value "needs" (list view.needs) "missing" (list view.missing) "pin" view.pin "sinceMs" view.since-ms
    "memory" (list view.memory)})
 
@@ -187,7 +187,7 @@
 (defk worker-drain-view-json [#^ WorkerDrainView view]
   {:pre [(: view WorkerDrainView)] :post [(: % dict)] :tags {:context "coordinator" :role "protocol" :spells "json"}}
   "worker 1 つの画面 → JSON の形(#2595 の前に drain_policy.worker-view・superseded-worker-view が組んでいた形と同じ)。今の世代の doeff の
-   版 doeffCommit と起動の刻 bootAt は、名乗った worker だけに載せる(card ki-6e83e03d146d — 同じ Pod の中の版の入れ替えを読む)。"
+   版 doeffCommit と起動の刻 bootAt は、名乗った worker だけに載せる(同じ Pod の中の版の入れ替えを読む)。"
   (val w view.info)
   (| {"name" w.name "alive" view.alive "silentMs" view.silent-ms "boot" w.boot "provides" (list w.provides) "exclusive" (list w.exclusive)
       "derived" (list w.derived) "node" w.node "draining" (is-not view.drain None)}
@@ -243,7 +243,7 @@
        "lastReadiness" (! (readiness-report-json observed.last-readiness))
        "process" (if (is observed.process None) None (status-row-to-json observed.process))
        "version" (! (version-json observed.version observed.running))
-       ;; 置き先が無ければ {kind needs missing pin sinceMs}・置かれていれば null(card ki-53b8677f1374)。
+       ;; 置き先が無ければ {kind needs missing pin sinceMs}・置かれていれば null。
        "unplaced" (if (is observed.unplaced None) None (! (unplaced-view-json observed.unplaced)))}
     (isinstance observed WorkerObserved) {"silentMs" observed.silent-ms "alive" observed.alive}
     (isinstance observed TaskObserved) (! (task-summary observed.task))
@@ -359,7 +359,7 @@
     (isinstance body ProgramRow) {"blob" body.blob "versions" body.versions}
     (isinstance body #(TaskAccepted TaskProgress TaskMissing TaskResultTaken TaskDropped)) (! (task-answer-json body))
     (isinstance body #(DetachedSubmitted DetachedProgress DetachedUnknown DetachedWarming DetachedCancelled DetachedReleased)) (! (detached-answer-json body))
-    ;; 切り離した task の終わりの出口(card ki-e7945a2b2d00 — 読み手の DetachedOutboxWire と同じ形)。
+    ;; 切り離した task の終わりの出口(読み手の DetachedOutboxWire と同じ形)。
     (isinstance body DetachedOutbox) {"entries" (lfor e body.entries (ended-to-json e))}
     (isinstance body DetachedOutboxAcked) {"id" body.id "acked" body.acked}
     (isinstance body ResourceView) (! (resource-view-json body))

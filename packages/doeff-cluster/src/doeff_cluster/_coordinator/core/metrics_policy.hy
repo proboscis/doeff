@@ -15,7 +15,7 @@
 ;;;   doeff_worker_service_ready_replicas{service}(仕事をしている Ready だけ)・doeff_worker_service_standby{service}(lease を待つ待機の Ready)・
 ;;;   doeff_worker_service_unplaced{service}・doeff_worker_service_last_metrics_age_seconds{service}(どの process の物でも最新の計器の報告の古さ)・
 ;;;   doeff_worker_worker_heartbeat_age_seconds{worker}(worker ごとの最後の heartbeat の古さ — coordinator 自身の alert の材料)。
-;;;   2026-10-22 に足した(card ki-d8e594fe934d): doeff_worker_handover_pending_seconds{worker}・doeff_worker_handover_stalled{worker}
+;;;   2026-10-22 に足した: doeff_worker_handover_pending_seconds{worker}・doeff_worker_handover_stalled{worker}
 ;;;   (世代をまたぐ受け渡しの待ちの長さと、上限 cluster_policy.HANDOVER-STALL-MS を越えたか)。
 (require doeff-hy.macros [defk val <-])
 (val MODULE-TAGS {:context "coordinator" :role "judgment"})
@@ -197,7 +197,7 @@
     (add-sample families "doeff_worker_worker_heartbeat_age_seconds" "gauge" "doeff_worker_worker_heartbeat_age_seconds"
                 {"worker" w.name}
                 (/ (max 0 (- now w.last-seen-ms)) 1000.0)))
-  ;; 世代をまたぐ受け渡しの止まり(card ki-d8e594fe934d): 今の世代がまだ受け取れない job が在る(heartbeat の返事の handoverPending と
+  ;; 世代をまたぐ受け渡しの止まり: 今の世代がまだ受け取れない job が在る(heartbeat の返事の handoverPending と
   ;; 同じ判断)worker ごとの、待ちの長さ(秒)と、上限 HANDOVER-STALL-MS を越えたか(1 = 人が見る — Worker の status.handover.stalled と
   ;; 同じ値。止めている job の名と結末は status.handover.blocking)。止めている job が無い worker は出さない。
   (for [w (sorted (.rows state.workers) :key (fn [w] w.name))]

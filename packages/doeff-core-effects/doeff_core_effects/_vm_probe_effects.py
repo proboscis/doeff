@@ -2,7 +2,7 @@
 
 The counts and switches belong to the VM of the whole process; they were functions of
 ``doeff_vm`` (``vm_live_counts``, ``vm_work_counts``, ...) and are effects now, so a user
-sees doeff's effects only (agora card ki-27e8ea225b62). ``vm_probe_handler``
+sees doeff's effects only. ``vm_probe_handler``
 (``doeff_core_effects._handlers``) answers every one of them by asking the VM:
 
     from doeff import ReadVmWorkCounts, run

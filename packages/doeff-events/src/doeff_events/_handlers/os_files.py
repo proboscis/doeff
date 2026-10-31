@@ -11,7 +11,7 @@ it; the library is imported when a watch is started.
   it) and holds no scheduler task busy. It does not run in the event loop's default executor (``asyncio.to_thread``):
   a wait holds its thread for as long as the files stay quiet, and that executor is shared with the loop's name
   lookups (``loop.getaddrinfo`` — an HTTP client's new connection); a turn-host with more turns than its 32 threads
-  queued every new connection behind the waits until it timed out (agora-redesign card ki-fe848da94d24, 2026-10-12).
+  queued every new connection behind the waits until it timed out (2026-10-12).
   When the awaiting task is cancelled, the thread stops after the notifier's current wait. The wait ends when the
   operating system reports a change in the directory; a quiet stretch of the notifier's own time limit only waits
   again (the program is never woken to look). Changes reported together within ``DEBOUNCE_MS`` come as one answer,
@@ -20,7 +20,7 @@ it; the library is imported when a watch is started.
   inside the notifier, otherwise when the last wait leaves it. The library's notifier must never be closed while a
   wait is inside it: its close takes the notifier mutably and its wait borrows it between steps, and on a Python
   without the GIL (3.14t — the library declares ``gil_used = false``) the two meet and its Rust code panics with
-  ``PyBorrowError``, which ended a whole process (agora-redesign card ki-715d1af556eb, 2026-10-10 13:08Z).
+  ``PyBorrowError``, which ended a whole process (2026-10-10 13:08Z).
 """
 
 import asyncio

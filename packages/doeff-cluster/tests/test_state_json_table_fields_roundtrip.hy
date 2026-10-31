@@ -1,4 +1,4 @@
-;;; ClusterState の Table の欄が、保存の形(state-to-json → state-from-json)で往復することの検(ki-aa9ec1f5e1d8 — #2708 の G)。
+;;; ClusterState の Table の欄が、保存の形(state-to-json → state-from-json)で往復することの検(#2708 の G)。
 ;;;
 ;;; state-to-json は test だけが呼ぶ。state-from-json は置き場(durable の KV)が無い時の旧い file の移しが呼ぶ。
 ;;; 欄ごとの往復は T の検(placements・drains・rollouts・programs ほか)が見ている。ここは workers・tasks・meta と、

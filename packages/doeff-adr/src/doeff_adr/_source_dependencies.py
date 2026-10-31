@@ -9,7 +9,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 # 時刻の粒度の上限(ns)— file の最後の変更(mtime・ctime)が、記録を取った時刻からこの幅の内なら、同じ時刻の区切りの中で
-# 書き換えられても stat が変わらない(git の racy-git と同じ形・card ki-5b70c4b62814)。粗い kernel の ctime の区切りは jiffy
+# 書き換えられても stat が変わらない(git の racy-git と同じ形)。粗い kernel の ctime の区切りは jiffy
 # (atlas の 6.8 で 4 ms)、粗い file system は 1〜2 秒(ext3・HFS+ は 1 秒・FAT は 2 秒)なので 2 秒にする。
 RACY_WINDOW_NS: int = 2_000_000_000
 
@@ -102,11 +102,11 @@ class DependencyChecks:
     """収集1回の観測。重複した依存fileはstatとhashの結果を共有する。
 
     macro の提供元も同じく、module 名ごとに 1 度だけ調べる — 記録の file の多く(agora では 420 file)が同じ 9 個ほどの
-    提供元を指し、file ごとに調べ直すと 3,700 回の stat と path の生成になっていた(agora-redesign #1551)。
+    提供元を指し、file ごとに調べ直すと 3,700 回の stat と path の生成になっていた。
 
     実値の記録に残す読込済みの local source も、module の file ごとに 1 度だけ解いて読み hash を取る(``sources_of``)— 実値の
     file ごとに全部を読み直すと、読み込んだ module の数(session が進むほど増える)に比例した費用が import の区間に乗り、
-    doeff-hy-pytest の読み込みの上限を session の後ろの file だけが越えた(card ki-b2383fcc8b25)。root は収集 1 回で 1 つ。
+    doeff-hy-pytest の読み込みの上限を session の後ろの file だけが越えた。root は収集 1 回で 1 つ。
     """
 
     _mut_files: dict[str, SourceDependency | None] = field(default_factory=dict)
@@ -164,7 +164,7 @@ class DependencyChecks:
         root_text: str = str(root)
         for dependency in saved:
             # 鍵は文字列で作る — 記録の path は rootdir からの正規の posix の相対 path なので ``str(root / path)`` と
-            # 同じ文字列になる。Path を作って文字列へ戻すのを照合ごとにしない(420 file で 1 万回近い — agora-redesign #1551)。
+            # 同じ文字列になる。Path を作って文字列へ戻すのを照合ごとにしない(420 file で 1 万回近い)。
             key: str = os.path.join(root_text, dependency.path)
             self._mut_checks += 1
             if key not in self._mut_files:

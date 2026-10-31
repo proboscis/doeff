@@ -27,7 +27,7 @@
 
 (defk zeus-like [room reserve]
   {:pre [(: room int) (: reserve int)] :post [(: % WorkerInfo)] :tags {:context "doeff-cluster-test" :role "judgment"}}
-  "task の空き room のうち reserve を task のために空けておく(背景の枠 = room − reserve — card ki-2acb63aec0fd で task の空きは常駐の job に
+  "task の空き room のうち reserve を task のために空けておく(背景の枠 = room − reserve — task の空きは常駐の job に
    依らない。下の検の数は直す前の capacity − 常駐の job の空きを同じ空きとして写した物)、能力 host-zeus の worker(最後の連絡 0・task と
    同じ版 python 3)を作るため。"
   (WorkerInfo "zeus" #("host-zeus") 0 :task-reserve reserve :versions PY3 :background-room (- room reserve)))
@@ -98,7 +98,7 @@
   (assert (= (. (.row more "t13") detail) (! (task-unplaced-text TaskUnplacedKind.TASK-NO-ROOM))) (.row more "t13")))
 
 (deftest test-background-tasks-run-while-resident-jobs-fill-the-job-side
-  ;; 失敗ケース(card ki-f6d3da302cf0・本番 2026-10-14 17:05〜): zeus の形(capacity 33・task-reserve 6)で常駐の job が 27(= capacity −
+  ;; 失敗ケース(本番 2026-10-14 17:05〜): zeus の形(capacity 33・task-reserve 6)で常駐の job が 27(= capacity −
   ;; task-reserve・job の側の空き 0)になると、残る空きは予約の 6 だけになり、予約を使わない背景の仕事は 1 本も置かれなかった(会話の
   ;; long-command 8 本が 76〜230 分 queued)。背景の仕事は予約の半分(切り捨て — 6 なら 3)までは使い、残りの半分(切り上げ)を優先 0 以上の
   ;; task に残す: 背景の仕事 10 本(呼び手はみな別)のうち 3 本が 1 拍で置かれ、残りは予約の文で待つ。後から積んだ組み立ての task 3 本は、
@@ -121,7 +121,7 @@
   (assert (= (! (phases later builds)) ["assigned" "assigned" "assigned"]) later))
 
 (deftest test-background-tasks-keep-their-half-of-the-reserve-while-foreground-groups-run
-  ;; 失敗ケース(card ki-66ebb596d7d6・本番 2026-10-29 17:09〜21:11 JST): zeus の形(capacity 40・task-reserve 6・常駐の job 33 → task の
+  ;; 失敗ケース(本番 2026-10-29 17:09〜21:11 JST): zeus の形(capacity 40・task-reserve 6・常駐の job 33 → task の
   ;; 空き 7)で優先 0 の task 4 本(日次の検・着地の後の検 2 組・着地の宣言し直し)が走ると、残る空き 3 は予約の半分 3 を越えず、背景の仕事は
   ;; 1 本も置かれなかった(long-command 最大 27 本が 3〜4 時間 queued)。背景の仕事は予約の残りの半分(切り捨て — 6 なら 3)を自分の分として
   ;; 持つ: 優先 0 の 4 本と背景の仕事 10 本(呼び手はみな別)を積むと、1 拍で優先 0 の 4 本と背景の仕事 3 本が置かれる。同じ拍に積んだ

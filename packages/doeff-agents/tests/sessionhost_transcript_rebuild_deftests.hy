@@ -1,7 +1,6 @@
-;;; 会話の記録から Claude Code の transcript を組み直して `--resume` で続ける腕の焦点の検
-;;; (card acp:kanban-issue:ki-c3aace97d825)。
+;;; 会話の記録から Claude Code の transcript を組み直して `--resume` で続ける腕の焦点の検。
 ;;;
-;;; agora-redesign #668(削除 5-1): transcript の組み立てと腕の選び(acp/judgment.hy)は agentd と一緒に退いた。
+;;; 削除 5-1: transcript の組み立てと腕の選び(acp/judgment.hy)は agentd と一緒に退いた。
 ;;; ここに残るのは、組み直した transcript を起こす側の起こし方(policy.launch-conversation-plan-of)の検だけ。
 ;;; HTTP も subprocess も無い(純関数だけ)。
 
@@ -12,7 +11,7 @@
 
 
 (deftest test-an-adopted-transcript-is-resumed-so-the-cold-compaction-runs-first
-  ;; operator 決定 2026-09-23: account / profile / model / 機体 の変更が避けられない手番では、最初の model の
+  ;; account / profile / model / 機体 の変更が避けられない手番では、最初の model の
   ;; 呼び出しの**前に**必ず圧縮を走らせる(cache はどのみち書き直されるので、そこで文脈を小さくするのが最も安い)。
   ;; 組み直しの腕はまさにその手番なので、起こし方が "resume" でなければならない —— headless.hy はこの値ちょうどを
   ;; 見て起動前の `/compact fast-jev-if-cold` を撃つ(headless-cold-compaction-run の門)。

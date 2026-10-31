@@ -16,13 +16,13 @@
 ;;;   文字列の鍵の dict で、値は 2 つの型のどちらか — 既定の値(空でない文字列の literal か、空を「無し」と読む名の印 `(empty)`)か、
 ;;;   宣言の時に埋める名の印 `(filled)`(既定を持たず、宣言する者が上書きで値を渡す — 静的な記述の job の "filled" と Job の filled に載る)。
 ;;;   空を「無し」と読む名は静的な記述の job の "empty" に載る。印の無い空の文字列の literal "" (空白だけの文字列も)は型を決めていない
-;;;   既定なので断る(「既定を空にした」事実と「宣言の時に埋める」印を別の所で持つと、印の書き漏れが宣言する者の確かめの穴になる・
-;;;   card ki-02e836a9c628・ki-27e468fa49e9)。:update は "recreate" か "handoff"。外れれば展開の時の SyntaxError。
+;;;   既定なので断る(「既定を空にした」事実と「宣言の時に埋める」印を別の所で持つと、印の書き漏れが宣言する者の確かめの穴になる)。
+;;;   :update は "recreate" か "handoff"。外れれば展開の時の SyntaxError。
 ;;;   :replicas は job の望む台数(0 = 取り下げ・1 = 動かす)の整数の literal で、**必ず書く** — coordinator の Service は job 1 つに 1 つで、
 ;;;   台数は job の性質。宣言し直しはこの値を書く(宣言の道具の引数で台数を持たない — 持つと、取り下げてあった Service へ台数を書かずに
 ;;;   宣言し直した時に job が起きない取り違えが起きる)。
 ;;;   :peak-mib / :settle-mib は job の起動の memory の山と落ち着いた値(MiB)の 0 以上の整数の literal で、**必ず書く**(落ち着きは山以下・
-;;;   既定の値で埋めない — card ki-2acb63aec0fd)。値の持ち主は job の宣言 1 つで、静的な記述と宣言の行に peakMiB・settleMiB で載る
+;;;   既定の値で埋めない)。値の持ち主は job の宣言 1 つで、静的な記述と宣言の行に peakMiB・settleMiB で載る
 ;;;   (置き方の照らしの材料 — process の形ではないので、数を直しても job は入れ替わらない)。
 ;;;   :single-host は job を 1 台の worker に縛ってよい訳の空でない文字列の literal で、任意の欄 — 書いた job は置ける worker が 2 台以上を
 ;;;   求める照らし(failover_policy の規則 1)の外になる。静的な記述と宣言の行に singleHost で載る(書かない job には鍵が無い)。
@@ -33,8 +33,8 @@
 ;;;   :serves は job が開いて待ち受ける外の入口(HTTP の口など)の集合で、任意の欄 — 形と綴り(<置き場>:<入口>)と載る所は :reads / :writes と
 ;;;   同じ(静的な記述の job の dict にだけ載り、書かない job の dict には鍵が無い)。入口を開かない job は書かない。使い手が同じ入口を
 ;;;   開く job の組(同じ口で受ける組)を、job の形から推し量らずに記述から引くため。
-;;;   系の頭(説明の文の後・job の行の前)に `:task-limits {"<組>" {"scope" "worker" "limit" 6} …}` を置ける(2026-10-12・card
-;;;   ki-b0e8028c8c8d)— 系が宣言する組の同時数の上限(doeff-cluster の GroupLimit)。組の名は「/」を含まない文字列の literal、scope は
+;;;   系の頭(説明の文の後・job の行の前)に `:task-limits {"<組>" {"scope" "worker" "limit" 6} …}` を置ける(2026-10-12)
+;;;   — 系が宣言する組の同時数の上限(doeff-cluster の GroupLimit)。組の名は「/」を含まない文字列の literal、scope は
 ;;;   "worker" か "cluster"、limit は 1 以上の整数の literal、"perPart" True は組を名乗る task が区分(part)ごとに数える組。task は組の名
 ;;;   だけを名乗り、値はここが持つ。静的な記述の task_limits に載る。
 ;;; 値の意味(readiness の窓の形・environ の名の衝突など)は doeff-cluster の service_build.system-of が呼ばれた時に検める。
@@ -58,7 +58,7 @@
 (setv DEFSYSTEM-BUILD #("doeff_cluster._shared.entry.service_build" "_doeff_cluster_service_build"))
 (setv DEFSYSTEM-IMPORTS #(DEFSYSTEM-MODEL DEFSYSTEM-BUILD))
 
-(setv JOB-KEYS #(":needs" ":replicas" ":readiness" ":update" ":environ" ":reads" ":writes" ":serves" ":peak-mib" ":settle-mib" ":single-host"));; 系の頭(説明の文の後・job の行の前)に置ける鍵。:task-limits = 系が宣言する組の同時数の上限(2026-10-12・card ki-b0e8028c8c8d)。
+(setv JOB-KEYS #(":needs" ":replicas" ":readiness" ":update" ":environ" ":reads" ":writes" ":serves" ":peak-mib" ":settle-mib" ":single-host"));; 系の頭(説明の文の後・job の行の前)に置ける鍵。:task-limits = 系が宣言する組の同時数の上限(2026-10-12)。
 (setv SYSTEM-KEYS #(":task-limits"))
 ;; 組の上限 1 つの欄(doeff-cluster の資源 GroupLimit の spec と同じ綴り)と、範囲の名(doeff-cluster の TASK-LIMIT-SCOPES と同じ —
 ;; 誤りの文に並べる順を持つので写しを持ち、規則との一致は tests/test_group_limits_owner.hy が検める)。

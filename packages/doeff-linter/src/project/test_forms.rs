@@ -1,10 +1,10 @@
-//! DOEFF135: テストは deftest だけ(agora-redesign #1106 の R6・#1144 — operator の決定 2026-09-27・#1104 の決定)。
+//! DOEFF135: テストは deftest だけ(#1144・#1104 の決定)。
 //!
 //! architecture.hy の `:test-forms {:tests [..] :check-scripts [..] :runners [..]}` の綴りの型で file を選び、deftest 以外のテストの形を
 //! file ごとに 1 件出す(critical):
 //!   * `python-test`  — :tests の Python の file の `def test_*`(pytest の形)。件数を message に書く。
 //!   * `module-skip`  — :tests の file が module ごと skip する(`pytest.skip(…, allow_module_level=True)`・`pytestmark` の `mark.skip` — 束ねの名と
-//!     印が別の行に在る複数行の束ねも括弧が閉じるまで読む・agora-redesign #1426)。
+//!     印が別の行に在る複数行の束ねも括弧が閉じるまで読む)。
 //!   * `check-script` — :check-scripts の file(pytest の外で走る検査)。
 //!   * `runner`       — :runners の file(deftest を自分で回す runner)。
 //! 判定は字面の行で読む(Python の AST は使わない — 形は file の頭と行の頭で決まる)。Hy の `defn test-…` は DOEFF118 が持つ。
@@ -96,7 +96,7 @@ fn balanced_form(lines: &[&str], start: usize) -> String {
 }
 
 /// module ごとの skip の位置(0 始まりの行)。1 行の形(module_skip_line)に加え、束ねの名と印が別の行に在る複数行の `pytestmark` の
-/// 束ねも拾う(agora-redesign #1426 — `(val pytestmark` の次の行に `(pytest.mark.skip …` を置く形)。複数行の形は束ねの名の行を指す。
+/// 束ねも拾う(`(val pytestmark` の次の行に `(pytest.mark.skip …` を置く形)。複数行の形は束ねの名の行を指す。
 fn module_skip_position(lines: &[&str]) -> Option<usize> {
     lines
         .iter()

@@ -47,8 +47,7 @@
   (ClaudeSessionSpec :home (ClaudeHome (str (/ tmp-path "home")) (child-env ""))
                      :cwd (str work) :settings {"disableAllHooks" True} :cold-resume-prompt cold))
 
-;; 替え玉の CLI の手番 1 回の model ごとの増分(替え玉の charged — 道具なしの手番は本体の model だけ・額は手番の額 0.25 ちょうど —
-;; card ki-1d986d4f0007)。
+;; 替え玉の CLI の手番 1 回の model ごとの増分(替え玉の charged — 道具なしの手番は本体の model だけ・額は手番の額 0.25 ちょうど)。
 (val STUB-TURN-USAGE #((ModelUsage "claude-stub" :input-tokens 7 :output-tokens 6 :cache-read-input-tokens 1010
                                    :cache-creation-input-tokens 20 :web-search-requests 0 :cost-usd 0.25)))
 
@@ -118,8 +117,7 @@
 (deftest test-the-session-keeps-a-few-recent-turns-and-none-once-closed [tmp-path]
   ;; 手番の記録(stdout の行の全部)は、読み手が今の手番と続きの手番しか読まないので、最近の KEPT-TURNS 本だけ持つ。最後の手番の
   ;; 終わりを読み手が読んだ後に閉じた会話は、手番の記録ごと生きた状態をホストから外す(読み手は終わりを読んだ手番を読み直さない —
-  ;; 読み直すと知らない手番)— 会話の数と手番の数だけ ホストの process の memory が伸び続けない(zeus の turn-host の本体・
-  ;; lt-KATGT933TATG1ESPPSW9QGFM7K・lt-5611P8B4MJS6CZQZ1809H94JPQ)。
+  ;; 読み直すと知らない手番)— 会話の数と手番の数だけ ホストの process の memory が伸び続けない(zeus の turn-host の本体)。
   ;; 生きた会話ごとに持つ本数は数本(16 本では、生きた会話の数 × 16 手番分の行をホストが持った)。
   (assert (<= KEPT-TURNS 4) KEPT-TURNS)
   (setv host (host-of #(sys.executable "-m" "hy" STUB-PATH)))
@@ -172,8 +170,8 @@
 
 (deftest test-closed-sessions-leave-no-runtime-and-resume-where-they-stopped [tmp-path]
   ;; 閉じた会話の生きた状態(手番の記録 — stdout の行の全部)をホストが持ち続けると、閉じた会話の数だけ turn-host の memory が伸び、
-  ;; CLI の数が減っても memory が減らない(10-19 の本番 pid 1518593: CLI 96→57 本で ClaudeStreamLine +49,501 個・RssAnon +55 MB —
-  ;; lt-5611P8B4MJS6CZQZ1809H94JPQ)。最後の手番の終わりを読んだ会話は、閉じたらホストから外す。外しても閉じた様子と process の
+  ;; CLI の数が減っても memory が減らない(10-19 の本番 pid 1518593: CLI 96→57 本で ClaudeStreamLine +49,501 個・RssAnon +55 MB)。
+  ;; 最後の手番の終わりを読んだ会話は、閉じたらホストから外す。外しても閉じた様子と process の
   ;; 見え方(起こした数・降ろした訳)は同じに答え、続きは手番の番号・行の seq・起こした数を続ける。
   (setv host (host-of #(sys.executable "-m" "hy" STUB-PATH)))
   (val sids (lfor _ (range 3) (str (uuid.uuid4))))
@@ -212,7 +210,7 @@
 (deftest test-a-live-session-drops-the-lines-of-turns-whose-end-was-read [tmp-path]
   ;; 閉じていない会話も、読み手が終わりまで読んだ turn の行(stdout の行の全部)を持ち続けない — 読み手は終わりを読んだ turn を読み直さない。
   ;; 生きた会話ごとに最近の KEPT-TURNS 本の行を持つと、CLI が減っても running の turn が減っても、本番の turn-host の ClaudeStreamLine が
-  ;; 増え続けた(10-19 の pid 1135549: running の turn 88→72 の区間で +39,677 個 — card ki-ff61c7e52cb9)。読み直しには行の無い頁と終わりを答える
+  ;; 増え続けた(10-19 の pid 1135549: running の turn 88→72 の区間で +39,677 個)。読み直しには行の無い頁と終わりを答える
   ;; (知らない turn にはしない)。
   (setv host (host-of #(sys.executable "-m" "hy" STUB-PATH)))
   (<- seen (with-real-handler host (read-turns-on-a-live-session host (spec-in tmp-path) (str (uuid.uuid4)))))
@@ -309,7 +307,7 @@
   (assert (= (lfor end ends end.usage) [(Usage :input-tokens 1 :output-tokens 1) (Usage :input-tokens 1 :output-tokens 1)])
           (repr ends))
   ;; 同じ process の 2 手番目の modelUsage は 1 手番目との和(実物と同じ累積)。手番の model ごとの使用量は額と同じ起点の差で 1 手番分、
-  ;; 和は手番の額と合う(card ki-1d986d4f0007)。
+  ;; 和は手番の額と合う。
   (assert (all (gfor end ends (priced-like-one-stub-turn end))) (repr ends)))
 
 
@@ -336,7 +334,7 @@
   (<- ends (with-real-handler (host-of #(sys.executable "-m" "hy" STUB-PATH)) (killed-then-two-turns (spec-in tmp-path) sid)))
   (assert (isinstance (get ends 0) BackendLost) (repr ends))
   (assert (= (lfor end (cut ends 1 None) end.cost-usd) [0.25 0.25]) (repr ends))
-  ;; model ごとの起点も額と同じく消えた process の始まりへ戻る(card ki-1d986d4f0007)。
+  ;; model ごとの起点も額と同じく消えた process の始まりへ戻る。
   (assert (all (gfor end (cut ends 1 None) (priced-like-one-stub-turn end))) (repr ends)))
 
 
@@ -403,12 +401,12 @@
   (<- three (with-real-handler third-host (turn-until-down third-host (ResumeSession sid) spec "THREE")))
   (assert (= three.cost-usd 0.25) (repr three))
   ;; --resume の process の modelUsage も前の process が記した累積から数え続ける。起点は cost-state の行の額と modelUsage の組で、
-  ;; どの手番の model ごとの使用量も 1 手番分(card ki-1d986d4f0007)。
+  ;; どの手番の model ごとの使用量も 1 手番分。
   (assert (all (gfor end [one two three] (priced-like-one-stub-turn end))) (repr [one two three])))
 
 
 (deftest test-a-new-host-resuming-a-transcript-without-a-cost-line-counts-from-zero [tmp-path]
-  ;; card ki-4b9be8d95d9f: 額の行が 1 つも無い transcript(額を記す前に消えた process の会話 — host の起き直しで切れた
+  ;; 額の行が 1 つも無い transcript(額を記す前に消えた process の会話 — host の起き直しで切れた
   ;; aj-667MHNMS57VHYM4NXBEPBWKHBD)の、この host の知らない続き。CLI は 0 から数える(実測 2.1.292: 偽の Messages API で、行を全部
   ;; 消した transcript の続きの total_cost_usd はその呼びの分だけ。替え玉も同じ)ので、起点は 0 で手番の額はその手番の分。
   ;; 失敗ケース = 行が無い時に起点を None にする形では、額も model ごとの使用量も出ない(UNKNOWN-MARK)。
@@ -468,7 +466,7 @@
 
 
 (deftest test-a-stopped-turn-is-left-out-of-the-next-turns-model-usage [tmp-path]
-  ;; card ki-1d986d4f0007: 止めた手番(SIGINT の形)の額と model ごとの使用量は数えずに捨て、次の手番の起点へ動かす。続きの手番の
+  ;; 止めた手番(SIGINT の形)の額と model ごとの使用量は数えずに捨て、次の手番の起点へ動かす。続きの手番の
   ;; model ごとの使用量はその手番の分だけ(止めた手番の分 — 替え玉では 1 手番分の累積 — を混ぜない)で、和は手番の額と合う。
   (val host (host-of STUB-COMMAND))
   (<- ends (with-real-handler host (signalled-then-resumed host (spec-in tmp-path) (str (uuid.uuid4)))))
@@ -477,7 +475,7 @@
 
 
 (deftest test-a-cost-state-without-model-usage-gives-the-cost-but-says-the-model-mark-is-unknown [tmp-path]
-  ;; card ki-1d986d4f0007: modelUsage を記さない cost-state の行(古い CLI の形)から続けた手番は、額は前と同じく数えるが、model ごとの
+  ;; modelUsage を記さない cost-state の行(古い CLI の形)から続けた手番は、額は前と同じく数えるが、model ごとの
   ;; 起点が分からないので増分を推測で作らず訳 UNKNOWN-MARK を記す。同じ process の次の手番は result の行の累積を起点に数え直す。
   (val spec (spec-with-stub-model-usage tmp-path "bare-cost-state"))
   (val sid (str (uuid.uuid4)))
@@ -493,7 +491,7 @@
 
 
 (deftest test-model-costs-that-drift-from-the-turn-cost-are-recorded-as-a-gap [tmp-path]
-  ;; card ki-1d986d4f0007: model ごとの額の和(替え玉の drift = 半分の 0.125)が手番の額 0.25 と 0.01 USD を越えて違う手番は、増分を
+  ;; model ごとの額の和(替え玉の drift = 半分の 0.125)が手番の額 0.25 と 0.01 USD を越えて違う手番は、増分を
   ;; そのまま運び、訳 SUM-MISMATCH を記す(合わせるために額を書き換えない)。
   (val host (host-of STUB-COMMAND))
   (<- one (with-real-handler host (turn-until-down host (FreshSession (str (uuid.uuid4))) (spec-with-stub-model-usage tmp-path "drift")
@@ -520,7 +518,7 @@
   (assert (is (.runtime host sid) None)))
 
 
-;; 読み手の thread の死(card ki-bd3aa18e3e71): on-line が例外を投げた process は降ろされ、持ち主は期限を待たずに訳つきの失敗を受ける。
+;; 読み手の thread の死: on-line が例外を投げた process は降ろされ、持ち主は期限を待たずに訳つきの失敗を受ける。
 ;; 失敗ケース = 読み手が try / finally だけで生きた CLI を待つ形では、init の前は launch-timeout の「no init line」、使い回しの process
 ;; の手番は終わりの行が来ないまま読みの期限まで返らない(10-18 の scheduled() の RuntimeError の形)。どちらの CLI も、読み手が死んだ
 ;; 行の後は stdout へ書かずに stdin を待って生きる(本物の CLI と同じ — 書けば broken pipe で自分から降り、期限の待ちを写せない)。
@@ -625,7 +623,7 @@
 
 
 (deftest test-another-task-runs-while-the-transcript-is-read-for-export [tmp-path monkeypatch]
-  ;; transcript(数十 MB の jsonl)の読みは scheduler の thread の外で待つ(card ki-24ee30105583 — turn-host の手番の終わりの書き出しが、
+  ;; transcript(数十 MB の jsonl)の読みは scheduler の thread の外で待つ(turn-host の手番の終わりの書き出しが、
   ;; 詰まった disk の上で同じ process の全部の手番を止めた)。読みは合図まで Path.read_text の頭で止まり、合図を出すのは同じ scheduler の
   ;; 別の task。失敗ケース = handler の節が scheduler の thread で読む形では、合図は読みの上限の 10 秒の後にしか出ない。
   (val spec (spec-in tmp-path))
@@ -655,7 +653,7 @@
 
 
 (deftest test-export-with-tail-bytes-reads-only-the-whole-last-lines [tmp-path]
-  ;; 末尾だけの取り出し(card ki-a264a73efcce): 末尾の tail-bytes byte に丸ごと収まる行だけを、行の頭から返す。切り口がちょうど行の頭なら
+  ;; 末尾だけの取り出し: 末尾の tail-bytes byte に丸ごと収まる行だけを、行の頭から返す。切り口がちょうど行の頭なら
   ;; その行も残す。file より広い幅は全部。
   (val spec (spec-in tmp-path))
   (val sid (str (uuid.uuid4)))
@@ -672,7 +670,7 @@
 
 
 (deftest test-export-from-byte-reads-only-what-follows-it [tmp-path]
-  ;; 伸びた分だけの取り出し(card ki-3b521394a063): from-byte byte 目から末尾までを返す(行の途中からでも字の頭なら読める)。file より
+  ;; 伸びた分だけの取り出し: from-byte byte 目から末尾までを返す(行の途中からでも字の頭なら読める)。file より
   ;; 長い from-byte・字の途中の from-byte は SessionNotFound。tail-bytes と一緒には名指せない。
   (val spec (spec-in tmp-path))
   (val sid (str (uuid.uuid4)))
@@ -695,9 +693,9 @@
 
 
 (deftest test-the-recorded-cost-is-read-from-the-tail-and-widens-until-found [tmp-path]
-  ;; 費用の起点は transcript の末尾から読む(card ki-a264a73efcce)。最後の cost-state が最初の幅(64 KiB)に在ればそれ。末尾の 64 KiB に
-  ;; 無ければ幅を広げて探す(前の cost-state を見落とさない)。頭から全部読んでも行が無ければ 0(CLI が 0 から数える — card
-  ;; ki-4b9be8d95d9f)。file が無ければ None。
+  ;; 費用の起点は transcript の末尾から読む。最後の cost-state が最初の幅(64 KiB)に在ればそれ。末尾の 64 KiB に
+  ;; 無ければ幅を広げて探す(前の cost-state を見落とさない)。頭から全部読んでも行が無ければ 0(CLI が 0 から数える)。
+  ;; file が無ければ None。
   (val spec (spec-in tmp-path))
   (val canonical (os.path.realpath spec.cwd))
   (val filler (* "{\"type\":\"assistant\",\"text\":\"xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx\"}\n" 2000))
@@ -719,7 +717,7 @@
 
 
 (deftest test-the-recorded-cost-beyond-the-widest-tail-is-read-from-the-whole-file [tmp-path]
-  ;; card ki-4b9be8d95d9f: 16 MiB の末尾に cost-state の行が無い transcript は、頭から全部を読んで「もっと前に在る」と「1 つも無い」を
+  ;; 16 MiB の末尾に cost-state の行が無い transcript は、頭から全部を読んで「もっと前に在る」と「1 つも無い」を
   ;; 分ける。失敗ケース = 末尾の幅だけで止める形では、どちらも None(続きの手番の額が出ない)。
   (val spec (spec-in tmp-path))
   (val canonical (os.path.realpath spec.cwd))
@@ -751,7 +749,7 @@
 
 
 (deftest test-another-task-runs-while-the-recorded-cost-is-read [tmp-path monkeypatch]
-  ;; 起こす前の費用の起点の読み(recorded-cost-mark)も scheduler の thread の外で待つ(card ki-14b918a38cd5 — 206 MB の transcript の会話を
+  ;; 起こす前の費用の起点の読み(recorded-cost-mark)も scheduler の thread の外で待つ(206 MB の transcript の会話を
   ;; 起こす準備の間、turn-host の log が 81〜130 秒 1 行も出なかった)。読みは合図まで read-transcript-bytes の頭で止まり、合図を出すのは
   ;; 同じ scheduler の別の task。失敗ケース = 起点を scheduler の thread で読む形では、合図は読みの上限の 10 秒の後にしか出ない。
   (val spec (spec-in tmp-path))
@@ -889,7 +887,7 @@
   (DeltasReadMidTurn :delivered head.lines :held held :rest rest))
 
 (deftest test-a-running-turn-drops-the-delta-lines-it-has-handed-to-the-reader [tmp-path]
-  ;; 走っている手番も、読み手に渡した差分の行(PartialMessage — stream_event)を終わりまで持たない(card ki-27d4694258b0)。差分は答えの
+  ;; 走っている手番も、読み手に渡した差分の行(PartialMessage — stream_event)を終わりまで持たない。差分は答えの
   ;; 途中の写しで、同じ中身は後の assistant の行が運び、読み手は渡された所より後しか読まない。本番の turn-host は running の手番 1 本
   ;; あたり約 900 行を持ち、その 8 割 余りが差分の行だった(10-20 の pid 3619915 の heap-census: ClaudeStreamLine 14,721・PartialMessage
   ;; 12,399・running 16)。答えを組み立てる行(init・道具の呼びの assistant の行)は残し、まだ渡していない行も残す。手番の終わりの計時の行の
@@ -1139,7 +1137,7 @@
   (#^ dict line))
 
 ;; 最初の入力の前に出たら停止する行: assistant の行(ターンの外で model が応答した形)と、model の手番の中で走る hook の行
-;; (UserPromptSubmit ほか — Notification・SessionEnd の hook の行はターンの外でも止めない・ki-d8b473480303)。
+;; (UserPromptSubmit ほか — Notification・SessionEnd の hook の行はターンの外でも止めない)。
 (val FORBIDDEN-BEFORE-INPUT
   [(ForbiddenLine :name "assistant"
                   :line {"type" "assistant" "parent_tool_use_id" None
@@ -1429,7 +1427,7 @@
   (assert (= (len (get heard 1)) 0) (.format "待ちの間に handler が Delay を {} 回撃った" (len (get heard 1)))))
 
 
-;; --- 借りた資格の家(card ki-4ffdafa021e5)--------------------------------------------------------------
+;; --- 借りた資格の家--------------------------------------------------------------
 ;; 借りた資格は子の env に置かず、その process だけの設定 dir(資格の家)の .credentials.json で渡す。走っている process の資格は
 ;; ClaudeReplaceSessionCredential で替わり、資格だけが替わった次の手番は process を使い回してその手番の資格を家の file に書く。
 ;; process が降りたら家は消える。token はどれも偽の文字列。
@@ -1529,7 +1527,7 @@
 
 
 (deftest test-a-lent-credential-rides-on-a-per-process-config-dir-and-is-replaced-in-place [tmp-path]
-  ;; card ki-4ffdafa021e5: 起こした CLI の env に token は無く、process だけの設定 dir の .credentials.json(0600)が
+  ;; 起こした CLI の env に token は無く、process だけの設定 dir の .credentials.json(0600)が
   ;; 期待どおりの中身を持つ。差し替えの effect の後と、資格だけが替わった次の手番の後に、同じ file が新しい token になる(process は
   ;; 起こし直さない)。process が降りたら dir は消え、共有の設定 dir の .credential-homes は空に戻る。
   (val host (host-of STUB-COMMAND))

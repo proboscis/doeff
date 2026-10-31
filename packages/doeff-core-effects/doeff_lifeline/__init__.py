@@ -1,6 +1,6 @@
-"""起こした process が終わったら、その子も終わる — StartProcess の約束の本体の置き場(agora-redesign #3866)。標準ライブラリだけで書く。
+"""起こした process が終わったら、その子も終わる — StartProcess の約束の本体の置き場。標準ライブラリだけで書く。
 
-この package は公開の名を持たない(ADR-DOE-API-001 R1・R5 — 名は effect でも handler でもないので内側に置く・card ki-cb19bdeec5b9)。
+この package は公開の名を持たない(ADR-DOE-API-001 R1・R5 — 名は effect でも handler でもないので内側に置く)。
 本体は内側の module _watch に在り、読むのは doeff の中の 2 つだけ: StartProcess の答え手(doeff_core_effects の os_process.hy — Lifeline)と
 doeff-cluster の worker の shim(watched_until_eof と止める相手の型)。
 

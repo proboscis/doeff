@@ -152,7 +152,7 @@
   (assert (= (replace stopped.end :usage None :cost-usd None :model-usage None :model-usage-gap ModelUsageGap.NOT-NAMED)
              (Interrupted :process-kept False :dropped-refs #("inj-dropped")))
           (repr stopped.end))
-  ;; result の行で閉じた止めは、止めるまでの消費を運ぶ(本物の状態機械と同じ — card ki-47e64b7b642f)。
+  ;; result の行で閉じた止めは、止めるまでの消費を運ぶ(本物の状態機械と同じ)。
   (assert (= #(stopped.end.usage stopped.end.cost-usd) #(USAGE COST)) (repr stopped.end))
   (assert (= (lfor kind (kinds-of stopped.lines Init) kind.capabilities) [#("msg_lifecycle_v1")]) stopped.lines)
   (assert (not-in (InputFate "inj-dropped" "started") (kinds-of stopped.lines InputFate)) stopped.lines)
@@ -502,7 +502,7 @@
     (assert refused)))
 
 
-;; --- 同じ道具を続けて呼ぶ手番(tool-repeats)— card ki-85761baedba4 ------------------------------------------------
+;; --- 同じ道具を続けて呼ぶ手番(tool-repeats) ------------------------------------------------
 
 (val REPEATED-SECONDS 110.0)
 (val REPEATS 3)
@@ -529,7 +529,7 @@
   ;; tool-repeats の返事: 同じ道具(同じ名と命令)の呼びと結果の対を tool-repeats 組、呼び 1 つごとに tool-seconds 秒ずつ出す — 呼びは
   ;; 仮想の 0・110・220 秒、結果は 110・220・330 秒。呼びの id はどれも違い(1 番目は今までと同じ fake-tool)、結果は同じ順に同じ id を
   ;; 名指す。道具の task も呼びごとに別の id で始まって終わる。最後の結果の後に返事の本文で Completed(上の層が「sleep 110 を何度も
-  ;; 走らせる手番」を数える材料 — card ki-85761baedba4)。
+  ;; 走らせる手番」を数える材料)。
   (<- record TurnRecord (on-fake (FakeClaudeWorld :respond repeated-reply) (run-repeated "repeated")))
   (assert (isinstance record.end Completed) (repr record.end))
   (assert (= record.end.result-text "repeated") (repr record.end))
@@ -583,7 +583,7 @@
   (assert (= (. (FakeReply "x" :tool-seconds 1.0 :tool-repeats 2) tool-repeats) 2)))
 
 
-;; --- subagent の中の道具の答えと、道具の境界で読む注入 — card ki-b25d579bf48b ------------------------------------------
+;; --- subagent の中の道具の答えと、道具の境界で読む注入 ------------------------------------------
 
 (val INNER-OUTPUT "ticket x20261024000000-0a1b2c3d — 命令は 60 秒を越えて実行中")
 

@@ -149,7 +149,7 @@
 
 
 (deftest test-any-actor-deletes-a-declaration-and-a-finished-rollout-without-force
-  ;; 所有者と送り手の照合は外した(頼んでいない security の仕掛けは外す — 利用者の決定 2026-10-05・#2986 の一覧の行 5)。
+  ;; 所有者と送り手の照合は外した(頼んでいない security の仕掛けは外す・#2986 の一覧の行 5)。
   ;; X-Actor の名乗りは確かめないので、所有者でない名乗りを 403 で断っても守りにならない。所有者の欄は誰が宣言したかの記録として残る。
   ;; 失敗ケース: delete-resource に所有者と送り手を比べて断る分岐を戻すと、所有者でない名乗りの 2 つの delete が 403 になり赤。
   (<- reply-12 (call (ClusterState) "POST" "/resources/Service" {"name" "shadow" "spec" SPEC} :actor "c-shadow-owner"))
@@ -429,7 +429,7 @@
   (assert (= (! (ready-of s (+ back-at 4000))) "Ready")))
 
 
-;; --- 置き先でない世代の報告(AL-D2o・ki-02ca1a2bfc6c)----------------------------------------------------------------------
+;; --- 置き先でない世代の報告(AL-D2o)----------------------------------------------------------------------
 ;; 10-11 12:14〜12:50 UTC の本番: 退いた世代の worker が同じ名の画面の process を、前の process を止めずに起こし直し続けた。退いた
 ;; process は置き先の process と同じ worker の名・同じ宣言の指紋・同じ割り当ての世代を名乗り、並んで約 10 秒ごとに準備の報告を送った。
 

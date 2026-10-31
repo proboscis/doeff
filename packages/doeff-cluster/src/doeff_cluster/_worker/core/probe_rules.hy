@@ -137,7 +137,7 @@
          (: allowed-env dict) (: probe-dir str)]
    :post [(: % JobLaunch)] :tags {:context "worker" :role "judgment"}}
   "検めの子(shim の下で起こす本体)の起こし方を、渡された値だけから決めるため。実行環境の job は子と同じ root の venv の
-   hy を uv run を挟まずに直に起こす `<root の project>/.venv/bin/hy -c …`(子と同じ字面 — launch.project-hy・card ki-869cdf21ec85)・
+   hy を uv run を挟まずに直に起こす `<root の project>/.venv/bin/hy -c …`(子と同じ字面 — launch.project-hy)・
    環境変数は子と同じ許可表(allowed-env = worker の環境のうち許可表の名と LC_* の分)と宣言の env-vars に root の venv の 2 つ
    (launch.uv-run-environ)を足した物・PYTHONPATH を置かない・cwd = probe-dir(REPLACE)。それ以外は worker の hy と木の PYTHONPATH を
    worker の環境の上に足す(EXTEND)・cwd = 木。shim の命令の並びは呼び手が前に足す。"

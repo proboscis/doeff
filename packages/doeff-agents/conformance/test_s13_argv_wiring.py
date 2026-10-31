@@ -76,7 +76,7 @@ def test_s13_claude_argv_wiring_and_m1_golden_path(tmp_path) -> None:
         server = mcp_config["mcpServers"]["doeff_result"]
         assert server["type"] == "stdio", server
         # The daemon wires the result MCP server's entry module on its own
-        # interpreter (card ki-bb337cfd0336 — no subcommand of the host);
+        # interpreter (no subcommand of the host);
         # the default daemon under test runs on this interpreter.
         assert server["command"] == sys.executable, server
         assert server["args"] == [

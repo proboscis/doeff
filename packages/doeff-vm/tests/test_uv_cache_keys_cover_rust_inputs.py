@@ -3,7 +3,7 @@
 uv は packages/doeff-vm/pyproject.toml の [tool.uv] cache-keys に載った file だけを見て
 「作り直すか」を決める。Rust の source が鍵から漏れると、その file だけが変わった更新の後の
 `uv sync` / `uv run` は古い doeff_vm/*.so を使い続ける(2026-09-23 22:42〜23:17 に pod の
-controller が古い .so で 35 分落ちた — card acp:kanban-issue:ki-3965aa5188ae)。
+controller が古い .so で 35 分落ちた)。
 
 入力の母集団は crate 名を書かずに導く: packages/doeff-vm/Cargo.toml の依存表の path = を
 推移的にたどった crate の集合について、disk の上の Cargo.toml / Cargo.lock / build.rs /

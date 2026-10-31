@@ -1,5 +1,5 @@
 {
- "_about": "doeff の実 I/O の handler の目録(agora-redesign #1209)— 被せると外の世界(HTTP・file・子 process・実時計・socket・DB・環境変数・thread・cluster の coordinator)に触れる handler と組み立て。linter の DOEFF131・DOEFF133 の相手で、:world-handlers の :wraps はここに在る物だけ。載せない物: 値から答えるだけ(memory・fake・sim・再生)・effect を出し直すだけの翻訳・例外の型。",
+ "_about": "doeff の実 I/O の handler の目録— 被せると外の世界(HTTP・file・子 process・実時計・socket・DB・環境変数・thread・cluster の coordinator)に触れる handler と組み立て。linter の DOEFF131・DOEFF133 の相手で、:world-handlers の :wraps はここに在る物だけ。載せない物: 値から答えるだけ(memory・fake・sim・再生)・effect を出し直すだけの翻訳・例外の型。",
  "_not_listed": {
   "doeff_core_effects._handlers:slog_handler": "stderr へ print するだけ(触れる先の語に stdout・stderr が無い)",
   "doeff_cluster._worker.protocol.status_file:status-file": "file system の effect(MakeDirectory・WriteText)を出し直すだけ — 実 I/O は外側の os-file-handler(#2466)",
@@ -88,14 +88,14 @@
    "touches": [
     "file"
    ],
-   "why": "os_file_handler の入口の綴り(ADR-DOE-API-001 R5 — 使い手は入口から読む・card ki-375e0a35b7a0)"
+   "why": "os_file_handler の入口の綴り(ADR-DOE-API-001 R5 — 使い手は入口から読む)"
   },
   {
    "handler": "doeff_core_effects.os_file:os-file-handler",
    "touches": [
     "file"
    ],
-   "why": "os_file_handler の古い綴り — 移し替えの module が残る間、外の repo の :wraps と import が書く(card ki-375e0a35b7a0 の stage 3 の card ki-127f9cd053e0 が消す)"
+   "why": "os_file_handler の古い綴り — 移し替えの module が残る間、外の repo の :wraps と import が書く"
   },
   {
    "handler": "doeff_core_effects._os_process:subprocess-handler",
@@ -133,7 +133,7 @@
    "touches": [
     "network"
    ],
-   "why": "aiohttp_http_server の入口の綴り(ADR-DOE-API-001 R5 — 使い手は入口から読む・card ki-cd6a513ae4b5)"
+   "why": "aiohttp_http_server の入口の綴り(ADR-DOE-API-001 R5 — 使い手は入口から読む)"
   },
   {
    "handler": "doeff_core_effects._aiohttp_ws_client:aiohttp-ws-client",
@@ -277,7 +277,7 @@
     "thread",
     "clock"
    ],
-   "why": "thread_pool_compute_handler の入口の綴り(ADR-DOE-API-001 R5 — 使い手は入口から読む・card ki-32623e1651c6)"
+   "why": "thread_pool_compute_handler の入口の綴り(ADR-DOE-API-001 R5 — 使い手は入口から読む)"
   },
   {
    "handler": "doeff_core_effects.thread_pool_compute:thread-pool-compute-handler",
@@ -285,7 +285,7 @@
     "thread",
     "clock"
    ],
-   "why": "thread_pool_compute_handler の古い綴り — 移し替えの module が残る間、外の repo の :wraps と import が書く(card ki-32623e1651c6 の stage 3 の card ki-127f9cd053e0 が消す)"
+   "why": "thread_pool_compute_handler の古い綴り — 移し替えの module が残る間、外の repo の :wraps と import が書く"
   },
   {
    "handler": "doeff_core_effects._process_meter:process-meter-handler",
@@ -344,14 +344,14 @@
    "touches": [
     "process"
    ],
-   "why": "gc_freeze_handler の入口の綴り(ADR-DOE-API-001 R5 — 使い手は入口から読む・card ki-32623e1651c6)"
+   "why": "gc_freeze_handler の入口の綴り(ADR-DOE-API-001 R5 — 使い手は入口から読む)"
   },
   {
    "handler": "doeff_core_effects.gc_freeze:gc-freeze-handler",
    "touches": [
     "process"
    ],
-   "why": "gc_freeze_handler の古い綴り — 移し替えの module が残る間、外の repo の :wraps と import が書く(card ki-32623e1651c6 の stage 3 の card ki-127f9cd053e0 が消す)"
+   "why": "gc_freeze_handler の古い綴り — 移し替えの module が残る間、外の repo の :wraps と import が書く"
   },
   {
    "handler": "doeff_core_effects._faulthandler_stack_dump:faulthandler-stack-dump-handler",
@@ -367,7 +367,7 @@
     "thread",
     "file"
    ],
-   "why": "faulthandler_stack_dump_handler の入口の綴り(ADR-DOE-API-001 R5 — 使い手は入口から読む・card ki-32623e1651c6)"
+   "why": "faulthandler_stack_dump_handler の入口の綴り(ADR-DOE-API-001 R5 — 使い手は入口から読む)"
   },
   {
    "handler": "doeff_core_effects.faulthandler_stack_dump:faulthandler-stack-dump-handler",
@@ -375,7 +375,7 @@
     "thread",
     "file"
    ],
-   "why": "faulthandler_stack_dump_handler の古い綴り — 移し替えの module が残る間、外の repo の :wraps と import が書く(card ki-32623e1651c6 の stage 3 の card ki-127f9cd053e0 が消す)"
+   "why": "faulthandler_stack_dump_handler の古い綴り — 移し替えの module が残る間、外の repo の :wraps と import が書く"
   },
   {
    "handler": "doeff_core_effects._handlers:await_handler",
@@ -389,14 +389,14 @@
    "touches": [
     "thread"
    ],
-   "why": "await_handler の入口の綴り(ADR-DOE-API-001 R5 — 使い手は入口から読む・card ki-c09b3b527fad)"
+   "why": "await_handler の入口の綴り(ADR-DOE-API-001 R5 — 使い手は入口から読む)"
   },
   {
    "handler": "doeff_core_effects.handlers:await_handler",
    "touches": [
     "thread"
    ],
-   "why": "await_handler の古い綴り — 移し替えの module が残る間、外の repo の :wraps と import が書く(card ki-c09b3b527fad の stage 3 の card ki-127f9cd053e0 が消す)"
+   "why": "await_handler の古い綴り — 移し替えの module が残る間、外の repo の :wraps と import が書く"
   },
   {
    "handler": "doeff_core_effects._handlers:env_var_ask",
@@ -410,14 +410,14 @@
    "touches": [
     "env"
    ],
-   "why": "env_var_ask の入口の綴り(ADR-DOE-API-001 R5 — 使い手は入口から読む・card ki-c09b3b527fad)"
+   "why": "env_var_ask の入口の綴り(ADR-DOE-API-001 R5 — 使い手は入口から読む)"
   },
   {
    "handler": "doeff_core_effects.handlers:env_var_ask",
    "touches": [
     "env"
    ],
-   "why": "env_var_ask の古い綴り — 移し替えの module が残る間、外の repo の :wraps と import が書く(card ki-c09b3b527fad の stage 3 の card ki-127f9cd053e0 が消す)"
+   "why": "env_var_ask の古い綴り — 移し替えの module が残る間、外の repo の :wraps と import が書く"
   },
   {
    "handler": "doeff_core_effects._cache_handlers:sqlite_cache_handler",
@@ -433,7 +433,7 @@
     "db",
     "file"
    ],
-   "why": "sqlite_cache_handler の入口の綴り(ADR-DOE-API-001 R5 — 使い手は入口から読む・card ki-375e0a35b7a0)"
+   "why": "sqlite_cache_handler の入口の綴り(ADR-DOE-API-001 R5 — 使い手は入口から読む)"
   },
   {
    "handler": "doeff_core_effects.cache_handlers:sqlite_cache_handler",
@@ -441,7 +441,7 @@
     "db",
     "file"
    ],
-   "why": "sqlite_cache_handler の古い綴り — 移し替えの module が残る間、外の repo の :wraps と import が書く(card ki-375e0a35b7a0 の stage 3 の card ki-127f9cd053e0 が消す)"
+   "why": "sqlite_cache_handler の古い綴り — 移し替えの module が残る間、外の repo の :wraps と import が書く"
   },
   {
    "handler": "doeff_core_effects._memo_handlers:sqlite_memo_handler",
@@ -457,7 +457,7 @@
     "db",
     "file"
    ],
-   "why": "sqlite_memo_handler の入口の綴り(ADR-DOE-API-001 R5 — 使い手は入口から読む・card ki-375e0a35b7a0)"
+   "why": "sqlite_memo_handler の入口の綴り(ADR-DOE-API-001 R5 — 使い手は入口から読む)"
   },
   {
    "handler": "doeff_core_effects.memo_handlers:sqlite_memo_handler",
@@ -465,7 +465,7 @@
     "db",
     "file"
    ],
-   "why": "sqlite_memo_handler の古い綴り — 移し替えの module が残る間、外の repo の :wraps と import が書く(card ki-375e0a35b7a0 の stage 3 の card ki-127f9cd053e0 が消す)"
+   "why": "sqlite_memo_handler の古い綴り — 移し替えの module が残る間、外の repo の :wraps と import が書く"
   },
   {
    "handler": "doeff_time._handlers.async_time:async_time_handler",
@@ -882,7 +882,7 @@
     "file",
     "thread"
    ],
-   "why": "層 2 だけ — doeff_claude_code の claude-code-handler(子 process の claude)を作る(agora-redesign #3507)"
+   "why": "層 2 だけ — doeff_claude_code の claude-code-handler(子 process の claude)を作る"
   },
   {
    "handler": "doeff_agents:claude-process-layer-handler",

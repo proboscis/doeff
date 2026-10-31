@@ -1,4 +1,4 @@
-;;; 最新の値の契約テストの解釈器(composition root)— 同じ契約の Program を、最新の値の答え手だけ替えて走らせる(agora-redesign #1440・
+;;; 最新の値の契約テストの解釈器(composition root)— 同じ契約の Program を、最新の値の答え手だけ替えて走らせる(
 ;;; #1107 の決め)。
 ;;;
 ;;;   process-latest  本物: process-latest-handler(process に 1 つの置き場 — 別の run・別の thread と同じ名前で共有する)

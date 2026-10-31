@@ -1,4 +1,4 @@
-;; 列の待ち WatchEvents の答えの分け方(ADR-DOE-CORE-EFFECTS-003 R5・R17 の追補 — card ki-d038e0cacae5):
+;; 列の待ち WatchEvents の答えの分け方(ADR-DOE-CORE-EFFECTS-003 R5・R17 の追補):
 ;; defeffect が EventsMoved = 成功 / EventsQuiet = 値 / Unreachable = 失敗(不在は無し)と宣言し、呼び手の <- は
 ;;   - EventsMoved を中身のまま束ねる
 ;;   - EventsQuiet を値のまま束ねる(Raise にも Absent にもしない — 待つ呼び手が毎回 EventsMoved と分けて扱う)

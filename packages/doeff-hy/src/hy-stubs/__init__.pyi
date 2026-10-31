@@ -1,4 +1,4 @@
-"""hy の公開面の型(型検査のための宣言 — 実行時は hy を読む・doeff-hy が配る部分の stub・agora-redesign #2313)。
+"""hy の公開面の型(型検査のための宣言 — 実行時は hy を読む・doeff-hy が配る部分の stub)。
 
 hy は型の宣言(py.typed・stub)を持たないので、pyright strict は Hy の展開が必ず出す `import hy`・`import hy.models` に
 「Stub file not found」(reportMissingTypeStubs)を出していた — 書き手に直せない赤が .hy の file ごとに 1〜2 件。

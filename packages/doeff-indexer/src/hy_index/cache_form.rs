@@ -1,4 +1,4 @@
-//! 索引の file 1 つを disk の cache に置く形(agora-redesign #1364)。
+//! 索引の file 1 つを disk の cache に置く形。
 //!
 //! doeff-linter は 1 file の実行でも repo 全体の Hy の索引を組む。その大半は file ごとの読みと名前の解決(`index_file` —
 //! file の中身と path だけで決まる)なので、linter は file ごとにこの形で cache し、変わった file だけ読み直す。

@@ -1,4 +1,4 @@
-//! 小さい file を大量に読む所の待ちを重ねる(card ki-58bfad2c13a1 の残り — 冷えた作業木の最初の 1 回)。
+//! 小さい file を大量に読む所の待ちを重ねる(冷えた作業木の最初の 1 回)。
 //!
 //! 1 file の実行は、登録簿の dir(1 鍵 1 file — agora-controllers で 447 file)と、書いた file が名指す module の源(数十〜数百 file)を読む。
 //! 作業木ごとに別の inode なので、冷えた作業木では 1 file ごとに disk を 1 回待つ。順に読むと待ちが足し算になり、混んだ Pod(load 70〜100・
@@ -33,13 +33,13 @@ const SERIAL_BELOW: usize = 4;
 
 /// 待ちを重ねる thread は、**待ちが disk の待ちだと見えた時だけ**増やす。page cache から読めている間(1 件が数十マイクロ秒)は、thread を 128 本起こしても
 /// 仕事は速くならず、起動と待ち合わせの CPU だけが増える(混んだ機体〔load 80〕で repo の Hy 4,144 file を page cache から読むのに、128 本で CPU 7〜14 秒・
-/// 1 本で 0.4〜0.8 秒 — agora-redesign #1022)。そこで `WARM_READERS` 本で始め、disk を読んだ仕事が `SLOW_IN_ROW` 件になったら、呼び手が決めた本数まで
+/// 1 本で 0.4〜0.8 秒)。そこで `WARM_READERS` 本で始め、disk を読んだ仕事が `SLOW_IN_ROW` 件になったら、呼び手が決めた本数まで
 /// 1 度だけ増やす。冷えた作業木では最初の数件で増えるので、重なる待ちの数は変わらない。
 ///
 /// disk を読んだかは、その thread が頼んだ block の読みの数(`getrusage` の RUSAGE_THREAD・ru_inblock — `thread_reads`)で見る: page cache から読めた仕事は
 /// 0 のまま、冷えた dir・inode・中身の読みは増える(2026-10-23 の実測: 冷えた dir の読み 1 回で 8〜544・inode の先読みが効いた後の stat は 0)。前は 1 件の時間
 /// (`SLOW_ITEM` 以上が `SLOW_IN_ROW` 件続く)で見ていたが、負荷 100 を越える Pod では CPU の順番待ちだけで 1 件が 500 マイクロ秒を越え、温まった作業木でも
-/// 128 本へ増えて、repo の Hy を集める段が sys の CPU を 0.6〜4.9 秒使っていた(card ki-40c8ca380713)。数を読めない機体だけ時間で見る。
+/// 128 本へ増えて、repo の Hy を集める段が sys の CPU を 0.6〜4.9 秒使っていた。数を読めない機体だけ時間で見る。
 const WARM_READERS: usize = 4;
 const SLOW_ITEM: Duration = Duration::from_micros(500);
 const SLOW_IN_ROW: usize = 3;
@@ -312,7 +312,7 @@ impl<'a, T: Send, R: Send> Crew<'a, T, R> {
     ///
     /// 続きの仕事は手元(`mine`)に積んで自分で済ませ、共有の列の lock は手元が空になった時と、待っている thread へ仕事を渡す時だけ取る。仕事 1 つごとに
     /// 共有の列を通すと、page cache から読める間の小さな仕事(stat 1 回)で 128 本の thread が 1 つの lock を取り合い、新しい作業木の最初の 1 回の CPU が
-    /// sys だけで 10〜34 秒になった(card ki-40c8ca380713)。遅い仕事(disk の待ち)の後に待っている thread が在れば手元の半分を共有の列へ渡すので、
+    /// sys だけで 10〜34 秒になった。遅い仕事(disk の待ち)の後に待っている thread が在れば手元の半分を共有の列へ渡すので、
     /// 冷えた作業木の待ちは今までどおり重なる。
     fn work<'scope, 'env>(&'env self, scope: &'scope Scope<'scope, 'env>) {
         let mut results = Vec::new();
@@ -507,7 +507,7 @@ mod tests {
     }
 
     /// 速い仕事の木(1111 件)は、共有の列の lock を仕事の数より大きく少ない回数で済ませる。仕事ごとに lock を取り合う形は、新しい作業木の最初の 1 回で
-    /// 128 本の thread が stat 1 回ほどの仕事を回し、sys の CPU を 10〜34 秒使った(card ki-40c8ca380713)。遅い待ちで thread が増えた時も同じ。
+    /// 128 本の thread が stat 1 回ほどの仕事を回し、sys の CPU を 10〜34 秒使った。遅い待ちで thread が増えた時も同じ。
     #[test]
     fn a_pipeline_takes_the_shared_queue_lock_far_fewer_times_than_there_are_tasks() {
         let tree = |widen: Widen, hold: Duration| {
@@ -543,7 +543,7 @@ mod tests {
         seen.into_inner().unwrap().len()
     }
 
-    /// page cache から読めている間(1 件が速い)は thread を増やさない: 128 本で読むと CPU だけが増える(agora-redesign #1022)。
+    /// page cache から読めている間(1 件が速い)は thread を増やさない: 128 本で読むと CPU だけが増える。
     #[test]
     fn quick_items_stay_within_the_warm_readers() {
         let items: Vec<usize> = (0..2000).collect();
@@ -575,7 +575,7 @@ mod tests {
     }
 
     /// 決まりの見分け方では、disk を読まない仕事は 1 件が遅くても(CPU の順番待ち・lock の待ち)増やさない — 負荷 100 を越える Pod で、温まった作業木の
-    /// repo の Hy の読みが 128 本へ増えて sys の CPU を 0.6〜4.9 秒使っていた(card ki-40c8ca380713)。thread の読みの数を読めない機体では確かめない。
+    /// repo の Hy の読みが 128 本へ増えて sys の CPU を 0.6〜4.9 秒使っていた。thread の読みの数を読めない機体では確かめない。
     #[test]
     fn slow_items_that_read_nothing_from_disk_stay_within_the_warm_readers() {
         if thread_reads().is_none() {

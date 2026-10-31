@@ -10,7 +10,7 @@
 ;;; C4 は C4b(止め切りの後、job の子孫は 1 つも生きていない — worker の条 stopped-job-leaves-no-descendant・#2940 の 2 段目)が成り立つ
 ;;; 前提の上で意味を持つ。
 ;;; もう 1 つの前提: fence を数える worker の沈黙(最後に届いた返事からの長さ)が、coordinator が自分の時計で数える沈黙を下回らない事。
-;;; worker は沈黙を壁の時計の差と単調な時計の差の長い方で計る(worker/core/heartbeat_rules の silent-ms — card ki-069f4a5c07f7)。壁の
+;;; worker は沈黙を壁の時計の差と単調な時計の差の長い方で計る(worker/core/heartbeat_rules の silent-ms)。壁の
 ;;; 時計の差だけで計ると、途絶の最中に機体の壁の時計が戻った分だけ fence が遅れ、戻りが余白を越えるとこの不等式が崩れる。
 ;;; 同じ判断を、途絶しても動かし続けてよい印の約束の在る job にも当てる: 移し替え = 約束を外す期限(ClusterTiming.kept-reassign-after-ms)・
 ;;; fence = 長い方の柵(keep-fence-ms)。
@@ -64,7 +64,7 @@
 (defk scaled-timing [ratio]
   {:pre [(: ratio int)] :post [(: % ClusterTiming)] :tags {:context "doeff-cluster" :role "judgment"}}
   "本番の既定の時間の窓を全部、同じ比 ratio で延ばした設定を作るため — 長い仮想の時間を回す模擬の筋書きが、heartbeat と待ちの送り直しの
-   間隔を延ばす唯一の入口(窓をばらばらに渡さない・Mac の調整役の決定 2026-10-07 04:4x の条件 (b)・#3865)。順の検めは
+   間隔を延ばす唯一の入口(窓をばらばらに渡さない・#3865)。順の検めは
    ClusterTiming が作る時に当てる。"
   (val base (ClusterTiming))
   (ClusterTiming :lease-ms (* ratio base.lease-ms) :fence-ms (* ratio base.fence-ms) :reassign-after-ms (* ratio base.reassign-after-ms)

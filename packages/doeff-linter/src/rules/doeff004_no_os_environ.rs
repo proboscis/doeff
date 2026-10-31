@@ -4,13 +4,12 @@
 //!
 //! os を指す名・os.environ を指す名・os.getenv を指す名は、file の import 文から作る表(utils の OsEnvNames)で解く —
 //! `import os as x` の `x.environ` / `x.getenv`、`from os import environ [as e]` の `environ` / `e`、
-//! `from os import getenv [as g]` の `getenv` / `g` も、素の `os.environ` / `os.getenv` と同じに当たる(agora-redesign #3012)。
+//! `from os import getenv [as g]` の `getenv` / `g` も、素の `os.environ` / `os.getenv` と同じに当たる。
 //! 表は file に 1 度だけ作るので、この規則は module 全体を見る(RuleReach::Module — 本体は file に 1 度だけ当てる)。
 //! 文は utils の each_statement で全部を 1 度ずつ辿り(入れ子の本体の一覧は本体の再帰と同じ 1 か所)、文ごとに自分の式だけを見る。
-//! 式・pattern は種類を全部辿る(網羅の match)。手で並べた種類の外を黙って飛ばすと、`or` の中ほかを見落とす
-//! (agora-redesign #2832)。
+//! 式・pattern は種類を全部辿る(網羅の match)。手で並べた種類の外を黙って飛ばすと、`or` の中ほかを見落とす。
 //!
-//! 当てるのは os.environ・os.getenv への参照そのもの(利用者の決定 2026-10-02 — foundation の handler の外の
+//! 当てるのは os.environ・os.getenv への参照そのもの(foundation の handler の外の
 //! 環境変数の読みは linter が見つける違反。環境変数の読みは foundation の handler の中だけ。そこは層の宣言の `:exempt` が外す)。
 //! 参照の 1 つは 1 件 — その形で文を分ける:
 //!   * 添字 `os.environ[...]`(読み・書き・del)と method の呼び出し `os.environ.<method>(...)`・`os.getenv(...)` — 前からの文のまま。
@@ -576,7 +575,7 @@ class Settings:
         assert_eq!(check_code(code).len(), 2);
     }
 
-    // 別名の読み(agora-redesign #3012)— 直す前は名が文字どおり `os` の時だけ見ていて、どれも 0 件だった。
+    // 別名の読み— 直す前は名が文字どおり `os` の時だけ見ていて、どれも 0 件だった。
     // 別名でも当たりの文は素の os.environ / os.getenv の時と同じ。
 
     /// `import os as x` の 3 形(x.environ.get()・x.environ[...]・x.getenv())。
@@ -672,8 +671,8 @@ del os.environ["B"]
         assert_eq!(check_code(code).len(), 2);
     }
 
-    // os.environ・os.getenv への参照そのもの(foundation の handler の外の環境変数の読みは違反 —
-    // 利用者の決定 2026-10-02)— 直す前は添字・呼び出しの形だけを見ていて、下の新しい形はどれも 0 件だった。
+    // os.environ・os.getenv への参照そのもの(foundation の handler の外の環境変数の読みは違反)
+    // — 直す前は添字・呼び出しの形だけを見ていて、下の新しい形はどれも 0 件だった。
 
     const ENVIRON_VALUE: &str = "Using os.environ as a value is forbidden. \
          Read environment variables only in a foundation handler; \

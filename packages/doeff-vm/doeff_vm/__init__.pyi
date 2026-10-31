@@ -175,7 +175,7 @@ class Expand(Program[_T_co, _E_co]):
     1.1.414 measured) caches a failed protocol match of ``Expand`` against ``Program`` per class,
     and a later ``Callable[..., Program]`` check in the same process then rejects every ``@do``
     function — which files fail depended on the order pyright checked them
-    (tests/test_expand_program_static_types.py, agora-redesign #4346). With the base, pyright
+    (tests/test_expand_program_static_types.py). With the base, pyright
     accepts ``Expand`` through the class hierarchy and never consults that cache.
     """
 

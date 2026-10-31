@@ -158,7 +158,7 @@
   (val argv (list plan.argv))
   (val cwd plan.cwd)
   (val environment (dfor e plan.env e.name e.value))
-  ;; root の venv の hy を uv run を挟まずに直に起こし、uv run が足していた venv の 2 つを環境に置く(card ki-869cdf21ec85)。
+  ;; root の venv の hy を uv run を挟まずに直に起こし、uv run が足していた venv の 2 つを環境に置く。
   (assert (= (cut argv 0 2) ["/state/roots/env-k/app/.venv/bin/hy" "-c"]) argv)
   (assert (= #((get environment "VIRTUAL_ENV") (.startswith (get environment "PATH") "/state/roots/env-k/app/.venv/bin"))
              #("/state/roots/env-k/app/.venv" True)) environment)
@@ -218,7 +218,7 @@
   (val declared (job "reporter" (report-service (str out))
                      :call (CallShape :function report-service :args [(str out)] :kwargs {}) :replicas 1 :peak-mib 200 :settle-mib 100
                      :needs #{"net"}))
-  ;; 送り手は env の root の外として名乗る(空の environ — 外側の env のキーを宣言に載せない・card ki-6dde100393cd)。
+  ;; 送り手は env の root の外として名乗る(空の environ — 外側の env のキーを宣言に載せない)。
   (val declaration (system-declaration (system-of "lab" #(declared)) "rev" :versions (! (process-versions {})) :runtime-env env))
   (val row (get declaration.rows 0))
   (<- spec (declared-job-spec (! (spec-json (. (job-from-json row) spec))) False))
@@ -243,7 +243,7 @@
 
 
 (deftest test-careful-a-service-runs-in-the-env-root-and-follows-a-new-commit [tmp-path subprocess-bytecode job-child-code-store monkeypatch]
-  ;; 失敗ケース(card ki-6dde100393cd): 検を回す process が外側の env の中で動く時(日次の検証の worker・会話の Pod)は、環境変数に外側の env の
+  ;; 失敗ケース: 検を回す process が外側の env の中で動く時(日次の検証の worker・会話の Pod)は、環境変数に外側の env の
   ;; キーが在る。その時も送り手は env の root の外として名乗り、台の準備した env の鍵と食い違わない事を確かめる。
   (.setenv monkeypatch "DOEFF_RUNTIME_ENV_KEY" "outer-env-of-the-test-process")
   (<- rig Rig (make-rig tmp-path))

@@ -1,9 +1,9 @@
-"""defwire の自前の解き手(wire_codec.py)を pydantic の解き手と照らす道具 — test の中だけで読む(card ki-b7701d5fc0dd)。
+"""defwire の自前の解き手(wire_codec.py)を pydantic の解き手と照らす道具 — test の中だけで読む。
 
-利用者の決定 2026-10-27(依頼書 lt-SJK77NQZ8NSESDVVZ0P41407XQ の問い decoder の答え): defwire の解き手は doeff の中に自前で持ち、pydantic は
+決め: defwire の解き手は doeff の中に自前で持ち、pydantic は
 test で照らす相手としてだけ残す。この module はその「照らす相手」の唯一の置き場で、pydantic を読む。job の道(入口・foundation・本体)は
 この module を import しない(doeff_hy._wire・wire_codec は読まない — import の閉包の test が確かめる)。pydantic は doeff-hy の本体の
-依存に無く、照らしの test を持つ project が test の依存の群に置く extra doeff-hy[parity] から入る(card ki-5ddadb736f62)。job の道の
+依存に無く、照らしの test を持つ project が test の依存の群に置く extra doeff-hy[parity] から入る。job の道の
 module が pydantic を import したら .semgrep.yaml の doeff-job-path-imports-no-pydantic が断り、この module はその範囲の外に置く。
 
 契約は設計の記録 ``docs/design/defwire-decoder/design.md`` の節 7「照らしの test が比べる物」:
@@ -318,7 +318,7 @@ def mixed_catch_all_unions(node: _Node) -> int:
 
 #: 子を持たない判じ手の見本(判じ手の型 → 受ける JSON の値の候補 — 先の物ほど使う)。
 _LEAF_SAMPLES: Final[dict[type, list[object]]] = {
-    _Str: ["s", "ki-000000000001", "a"],
+    _Str: ["s", "id-000000000001", "a"],
     _Float: [1.5, 2],
     _Int: [1, 0, 2],
     _Bool: [True, False],

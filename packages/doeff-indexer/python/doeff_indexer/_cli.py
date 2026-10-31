@@ -25,7 +25,7 @@ def _get_binary_path() -> Path | None:
         Path to the binary if found, None otherwise.
     """
     # 探し先は package の __path__ の順(editable の入れでは venv の組み立ての成果物の dir → 作業木の dir — doeff の build の口の
-    # editable の finder・agora-redesign #3860。普通の入れでは package の dir 1 つ)。
+    # editable の finder。普通の入れでは package の dir 1 つ)。
     package = sys.modules[__package__ or "doeff_indexer"]
     found = (Path(place) / "bin" / _get_binary_name() for place in package.__path__)
     return next(

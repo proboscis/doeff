@@ -44,7 +44,7 @@
 ;;;   写さない)。失敗ケースは同じ file の、定数を 1 つずつ動かすと破りを名指す検(移し替えを 45 秒に戻す・返事の上限を延ばす・停止の猶予を
 ;;;   延ばす)。worker の入口(worker/entry/main.hy の timing-checked)は同じ判断で、破る起動を job を走らせる前に名指しで断る。
 ;;;   この比べは、coordinator が自分の時計で数える沈黙と、worker が自分で数える沈黙(最後に届いた返事からの長さ)が同じ長さである事を
-;;;   前提にする。worker の沈黙は壁の時計の差と単調な時計の差の長い方(worker/core/heartbeat_rules の silent-ms — card ki-069f4a5c07f7):
+;;;   前提にする。worker の沈黙は壁の時計の差と単調な時計の差の長い方(worker/core/heartbeat_rules の silent-ms):
 ;;;   壁の時計が戻っても(壁の差が縮む)・機体が suspend しても(単調な時計が止まる)、worker の数える沈黙は実際に過ぎた時間を下回らない。
 ;;;   確かめるのは tests/test_silence_wall_clock_step.hy(本番の口 — 途絶の最中に壁の時計が余白の 8 秒を越えて戻っても、自己停止を
 ;;;   決める刻は変わらない)と tests/test_wall_clock_step_keeps_one_place.hy(模擬の世界 — 45 秒戻っても process が重ならない)。
@@ -83,14 +83,14 @@
 ;;;   test-the-recreated-coordinator-places-no-new-job-on-a-dead-worker(作り直しの後に宣言し直して足した job の置き先と、死なせた worker の
 ;;;   届かなくなった時刻を判断に渡す)。失敗ケースは同じ file の test-a-counterexample-store-without-last-seen-breaks-l1(DropsLastSeen を差すと、
 ;;;   作り直した coordinator が足した job を死んだ worker へ置き、L1 が名指す)。
-;;;   C6 running-within-capacity(doeff_cluster._coordinator.core.coordinator_invariants:running-within-capacity — #1976 の #32・card ki-2acb63aec0fd
+;;;   C6 running-within-capacity(doeff_cluster._coordinator.core.coordinator_invariants:running-within-capacity — #1976 の #32
 ;;;   で memory の版へ)— どの瞬間も、worker の上で動く job の process の落ち着いた memory(宣言の settle-mib)の和は、その worker の本当の
 ;;;   memory の予算を越えない。確かめるのは tests/test_local.hy の test-a-worker-runs-no-more-jobs-than-its-memory(予算 150 MiB の worker に
 ;;;   settle 100 の service 2 つの系を置き、process の区間を判断に渡す)。失敗ケースは同じ file の
 ;;;   test-a-counterexample-worker-that-overstates-its-memory-breaks-c6(heartbeat で memory の予算を多く名乗る壊れた worker — SimWorker の
 ;;;   overstates-memory — で 2 つ置かれて C6 が名指す)。
 ;;;   C17 jobs-stay-out-of-the-task-reserve(doeff_cluster._coordinator.core.coordinator_invariants:jobs-stay-out-of-the-task-reserve — #3489・
-;;;   card ki-2acb63aec0fd で task の側の版へ)— どの瞬間も、worker の上で動く task の数は、本当の予約(task-reserve)と背景の枠
+;;;   task の側の版へ)— どの瞬間も、worker の上で動く task の数は、本当の予約(task-reserve)と背景の枠
 ;;;   (background-room)の和を越えない(task の置き場は常駐の job の数に依らない)。確かめるのは tests/test_local.hy の
 ;;;   test-tasks-run-in-the-reserve-beside-every-resident-job(予約 1・背景の枠 0 の worker に常駐の service 3 つと task を出す service の系を
 ;;;   置き、3 つとも置かれて task が予約で走る — task の区間を判断に渡す)。失敗ケースは同じ file の
@@ -189,7 +189,7 @@
              :roles [protocol]
              :imports [protocol intent core])
            ;; 層の名 = root の下の dir の名(linter は :foundation の層を <root>/<層の名> に置く)。区画を _foundation へ隠した
-           ;; (ADR-DOE-API-001 R15・card ki-56d2dcf86f01)ので層の名も _foundation。module の :role は foundation のまま。
+           ;; (ADR-DOE-API-001 R15)ので層の名も _foundation。module の :role は foundation のまま。
            (layer _foundation
              :summary "汎用の I/O(環境で差し替えるのはここだけ)— まだ src/doeff_cluster/ に平たく在る coordinator・worker・土台の handler は移しの子で分ける"
              :roles [foundation]
@@ -204,7 +204,7 @@
              :roles [system process main]
              :imports [core intent protocol _foundation entry])]
   ;; 共有の置き場 = root の下の dir(linter は :shared の dir をどの service からも読める置き場と読む)。区画を _shared へ隠した
-  ;; (ADR-DOE-API-001 R15・card ki-6f70e9c957c0)ので dir も _shared。
+  ;; (ADR-DOE-API-001 R15)ので dir も _shared。
   :shared "_shared"
   :foundation _foundation
   ;; 本物の coordinator と worker を 1 process・仮想の時計で走らせる模擬の環境(sim-cluster の local・環境の世界 env_world・git の台本
@@ -215,9 +215,9 @@
   :verification-environment "_sim")
 
 (defservice coordinator "worker へ job を割り当てる coordinator(資源と盤の置き場・調停のループ)"
-  {:system {:exempt "cluster そのものの process — cluster に置く job ではなく、自分の image の k8s Deployment として動く(doeff-cluster の coordinator と worker は自分の image を持ち続ける — operator の補足 2026-10-01)。defsystem にすると cluster が自分を job として置く循環になる"}
+  {:system {:exempt "cluster そのものの process — cluster に置く job ではなく、自分の image の k8s Deployment として動く(doeff-cluster の coordinator と worker は自分の image を持ち続ける)。defsystem にすると cluster が自分を job として置く循環になる"}
    ;; 置き場 = root の下の dir(linter は :dir が無いと service の名の dir に層を置く)。区画を _coordinator へ隠した
-   ;; (ADR-DOE-API-001 R15・card ki-65a5889e595b)ので dir も _coordinator。service の名は coordinator のまま。
+   ;; (ADR-DOE-API-001 R15)ので dir も _coordinator。service の名は coordinator のまま。
    :dir "_coordinator"
    :layers [core intent protocol entry]
    :entry-modules ["doeff_cluster._coordinator.entry.main"]
@@ -249,8 +249,8 @@
 ;; worker/entry(#2027)。worker が送る名は旧い path の入口のまま — 切り替えは #2112・旧い入口を消すのは #2113)。
 ;; #2025・#2026。
 (defservice worker "coordinator から job と task を受けて子 process として走らせる worker"
-  {:system {:exempt "cluster そのものの process — cluster に置く job ではなく、自分の image の k8s Deployment として動く(doeff-cluster の coordinator と worker は自分の image を持ち続ける — operator の補足 2026-10-01)。defsystem にすると cluster が自分を job として置く循環になる"}
-   ;; 区画を _worker へ隠した(ADR-DOE-API-001 R15・card ki-3ff93cd3499e)ので dir も _worker(coordinator と同じ)。service の名は
+  {:system {:exempt "cluster そのものの process — cluster に置く job ではなく、自分の image の k8s Deployment として動く(doeff-cluster の coordinator と worker は自分の image を持ち続ける)。defsystem にすると cluster が自分を job として置く循環になる"}
+   ;; 区画を _worker へ隠した(ADR-DOE-API-001 R15)ので dir も _worker(coordinator と同じ)。service の名は
    ;; worker のまま。
    :dir "_worker"
    :layers [core intent protocol entry]
@@ -266,8 +266,8 @@
 ;; ので条にしていない。層の dir(#2030): intent = effect の型・core = 置き場の Program と条・protocol = file の I/O の
 ;; 言い換え(record-files)・entry = 入口。HTTP の受付(RecordInbox)は汎用の I/O なので foundation/record_inbox。
 (defservice record-store "effect の記録の置き場(run ごと・区切りごとの file に追記し、読み・一覧・圧縮・保持を答える)"
-  {:system {:exempt "cluster そのものの process — cluster に置く job ではなく、自分の image の k8s Deployment として動く(doeff-cluster の coordinator と worker は自分の image を持ち続ける — operator の補足 2026-10-01)。defsystem にすると cluster が自分を job として置く循環になる"}
-   ;; 区画を _record_store へ隠した(ADR-DOE-API-001 R15・card ki-ff69baa69a6b)ので dir も _record_store(coordinator と同じ — 書くまでは
+  {:system {:exempt "cluster そのものの process — cluster に置く job ではなく、自分の image の k8s Deployment として動く(doeff-cluster の coordinator と worker は自分の image を持ち続ける)。defsystem にすると cluster が自分を job として置く循環になる"}
+   ;; 区画を _record_store へ隠した(ADR-DOE-API-001 R15)ので dir も _record_store(coordinator と同じ — 書くまでは
    ;; 区画の 6 module が DOEFF114・115 の置き場の外だった)。
    :dir "_record_store"
    :layers [core intent protocol entry]

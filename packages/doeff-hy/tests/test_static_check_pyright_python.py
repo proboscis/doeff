@@ -1,4 +1,4 @@
-"""doeff-hy-check(doeff_hy._static_check の run_pyright)が pyright に渡す python の失敗ケース(日次 2026-10-11 16:00 の doeff・card ki-04d762c59dac)。
+"""doeff-hy-check(doeff_hy._static_check の run_pyright)が pyright に渡す python の失敗ケース(日次 2026-10-11 16:00 の doeff)。
 
 pyright は --pythonpath の python を検索 path を問うために `-I`(= -E — PYTHON* の環境変数を読まない)で起こすので、呼び手の
 PYTHONDONTWRITEBYTECODE=1 が効かず、site の起動で .pth が読む module の .pyc 6 個(.venv の _virtualenv・__editable___doeff_vm_finder と

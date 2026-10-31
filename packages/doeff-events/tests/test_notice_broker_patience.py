@@ -1,5 +1,5 @@
 """How long a notice source waits for an unreachable broker is the composition's answer, not an argument of the
-wrapper (agora card ki-6b3c298bfee1 — the composition answers it from the same value as its other stores' patience,
+wrapper (the composition answers it from the same value as its other stores' patience,
 so the seconds are declared in one place).
 
 - The source of a wrapper that reads channels asks ``ReadBrokerPatience`` once when an outage begins (like

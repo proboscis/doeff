@@ -1,4 +1,4 @@
-"""宣言を持つ effect の `<-` の束ねた名の型と、宣言を開かない中継 `Perform` の型(card ki-6c774adfb8c7)。
+"""宣言を持つ effect の `<-` の束ねた名の型と、宣言を開かない中継 `Perform` の型。
 
 ADR-DOE-CORE-EFFECTS-003: 実行時の `<-` は :absent の答えを Absent に・:failure の答えを Raise に変えて呼び手のスコープで出すので、
 束ねた名には成功と :value の答えだけが来る。型検査の展開(`_doeff_perform`)も同じ型を返す:

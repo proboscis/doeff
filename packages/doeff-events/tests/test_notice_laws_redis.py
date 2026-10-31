@@ -1,4 +1,4 @@
-"""The delivery laws of the notice broker on a real Redis server (agora-redesign #3850) — the same law programs
+"""The delivery laws of the notice broker on a real Redis server — the same law programs
 the in-memory broker passes in ``test_notice_laws_memory.py`` — and what a real server does to a subscriber that
 does not read.
 
@@ -7,7 +7,7 @@ The server: the fixture asks the root conftest for ``redis-server`` (``machine_t
 at the end of the module. Without one every test here is skipped as an unmet machine premise and named
 ``tool-absent`` (not executed) with the PATH that was searched, so the daily run does not read the skip as
 measured; the in-memory tests run regardless. The daily run's ``packages`` stage puts the declared redis-server
-on ``PATH`` first (``scripts/gate_tools.sh`` — agora-redesign #3870).
+on ``PATH`` first (``scripts/gate_tools.sh``).
 
 The kept channels' tests at the end keep the promises of ``test_kept_notices_memory.py`` on the real server.
 
@@ -252,7 +252,7 @@ def test_cancel_ends_the_blocked_wait_on_redis(redis_url: str) -> None:
     assert _run_on_wall_clock(cancels()) == "cancelled"
 
 
-# --- the subscriptions of one process that re-makes its readers (card ki-aa9497a3a412) -----------------------------
+# --- the subscriptions of one process that re-makes its readers -----------------------------
 # The screen server is one process (one redis_notice_handler) that cancels the reader of the followed turn and makes
 # a new one each time the turn changes. Each reader's subscription holds one connection of the client's pool.
 
@@ -464,7 +464,7 @@ def test_subscriber_that_does_not_read_is_disconnected_on_redis(redis_url: str) 
     assert read < receivers.count(1), (read, receivers.count(1))
 
 
-# --- a sender the broker could not take a notice from, on a real server (agora-redesign #3864) ---------------------
+# --- a sender the broker could not take a notice from, on a real server ---------------------
 # The production path of a missed notice: the gap mark, broker_back_by_retry trying a connection (PING) at its
 # interval only while a gap is held, the gap notice once the server answers again, and the trying stopping after.
 
@@ -757,7 +757,7 @@ def test_a_server_that_stops_answering_cannot_hold_a_publish_past_the_timeout_on
     assert seconds < 2 * TIMEOUT_SECONDS + 1.0, f"the Publish was held {seconds:.2f} s"
 
 
-# --- a subscription's connection that went half-open (card ki-227ad148680d) -----------------------------------------
+# --- a subscription's connection that went half-open -----------------------------------------
 # A subscriber hears nothing from a silent server, so a connection whose peer stopped answering (the network cut, the
 # host gone, the process stopped) looked alive until TCP keep-alive's OS defaults gave up (Linux: about 2 h 11 min).
 # The subscriptions' connection now asks PING while it is quiet; no answer within the silence makes it lost.
@@ -850,7 +850,7 @@ def test_the_silence_must_be_a_positive_number(silence: object) -> None:
         redis_notice_handler("redis://127.0.0.1:9/0", TIMEOUT_SECONDS, silence)  # type: ignore[arg-type]
 
 
-# --- kept channels (agora card ki-86d11cadf3be — the same promises as test_kept_notices_memory.py) ------------------
+# --- kept channels (the same promises as test_kept_notices_memory.py) ------------------
 # Short, so the tests wait little on the wall clock.
 REDELIVER_SECONDS = 0.5
 
@@ -971,7 +971,7 @@ def test_a_kept_notice_lost_on_the_way_to_the_bus_is_received_on_redis(redis_url
     assert (first, second) == (LawNote("lost"), LawNote("next")), (first, second)
 
 
-# --- one read takes what has already come (agora card ki-a83c715eab23) -----------------------------------------------
+# --- one read takes what has already come -----------------------------------------------
 # A source publishes each notice's event on its bus; when every NextAnnouncement is one Await, the source's task parks
 # per notice, and a subscriber whose reaction is long takes one event per reaction. One read must take the crowd.
 

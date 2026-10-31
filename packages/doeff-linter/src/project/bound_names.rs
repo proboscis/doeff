@@ -3,7 +3,7 @@
 //! `(val 名 値)`・`(setv 名 値)` の名(と Python へ mangle した名)。足した名に当たる値に結んだ名も、増えなくなるまで足す(宣言の参照の名
 //! → それを持つ定数の名 → その定数を並べた列)。
 //! 秘密の置き場を指す参照の名を群が正規表現の写しで持つと、新しい参照の名(キーの入れ替えの旧いキーの参照など)を宣言に足しても群が
-//! 守らず、他の file で読んでも赤にならない(agora-controllers の群 web-push-private-key・設計検証 lt-T1R7826ZQ8C78H02ZGKEASNRF0 の盲検 A)。
+//! 守らず、他の file で読んでも赤にならない(agora-controllers の群 web-push-private-key)。
 //! 導くのは architecture.hy を読む時(architecture.rs の names_bound_in)で、この file は結びの読みと導きの純な部品だけを持つ
 //! (architecture に頼らない — DOEFF148 の判じ confined_spellings.rs は architecture の群を読むので、ここに置くと依存が輪になる)。
 

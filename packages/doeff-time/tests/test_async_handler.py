@@ -21,10 +21,10 @@ def _wait_until_program(target: datetime):
 
 # Delay / WaitUntil against the wall clock and the pass-through of non-time
 # effects are the shared contract of every clock handler:
-# test_time_contract.hy (agora-redesign #1159). This file keeps what only the
+# test_time_contract.hy. This file keeps what only the
 # async handler has — its clock waits as seen by the scheduler's stall report.
 
-# agora-redesign #765: a Delay is a clock wait whose wake time is known, so
+# a Delay is a clock wait whose wake time is known, so
 # the scheduler must not report it as stalled; only a clock wait that does not
 # wake by its deadline (plus one stall interval) is a stall. The stall
 # interval is shrunk so the 300 s wait of the report becomes 10 intervals.

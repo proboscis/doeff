@@ -1,16 +1,16 @@
-"""macro が変わった Hy の module の古い bytecode を使わない包み(doeff_hy_bytecode_guard・agora-redesign #1292)の反例。
+"""macro が変わった Hy の module の古い bytecode を使わない包み(doeff_hy_bytecode_guard)の反例。
 
 #1003 の形: macro の提供元を変えても、使う側の module の .pyc は source の更新時刻と大きさしか見ない Python の判定で
 有効とされ、古い展開のまま動く。包みがあれば、使う側は新しい展開で動く。
 
-Hy は **PyPI の版**(fork ではない — Hy は改めない。利用者の決定 2026-09-29)を、この venv と切り離した
+Hy は **PyPI の版**(fork ではない — Hy は改めない)を、この venv と切り離した
 使い捨ての環境(``uv run --no-project --isolated --with hy==<uv.lock の版>``)で使う。この venv は起動の時に .pth から
 包みを入れる(test_the_venv_installs_the_guard_at_startup_before_hy)ので、ここでは包みの無い形と分けて測れない。
-版は repo の根の uv.lock の hy の行から、doeff で uv.lock の版を読む 1 か所(scripts/semgrep_locked.py の locked_version)で読む
-(card ki-df4cc0b38cda・ki-33d2441b7e28)。写しの定数だと、uv.lock の Hy を上げてもこの検は古い版のまま測る。uv.lock の変更では
+版は repo の根の uv.lock の hy の行から、doeff で uv.lock の版を読む 1 か所(scripts/semgrep_locked.py の locked_version)で読む。
+写しの定数だと、uv.lock の Hy を上げてもこの検は古い版のまま測る。uv.lock の変更では
 `make test-changed` がこの file を選ぶ(root の pyproject.toml の [[tool.doeff.contract-tests]])。
 
-包みは import でない形でも Hy の内部に依り、この file がその版の Hy で包みを動かして測る(card ki-eafa369600cd — ADR-DOE-HY-008 の
+包みは import でない形でも Hy の内部に依り、この file がその版の Hy で包みを動かして測る(ADR-DOE-HY-008 の
 R7 の母集団の外): module の macro の表の名(``records.MACRO_TABLE``)と Hy の展開がその表を ``名 in 表`` と ``表[名]`` で引く事
 (引いた名と表に無かった名を覚える表が拾う — macro の変更の検・使う側の呼ぶ名の macro が足された時の検)・reader macro の表の名
 (``records.READER_TABLE`` — reader macro の変更の検)・Hy の export が書く公開の macro の名の表(全部の require の判定が読む)・
@@ -19,14 +19,14 @@ gensym と let が改めた束縛の名の形(compile の口の正準化が読�
 
 Hy の内部の名の定義元は ``records`` の 1 か所(``MACRO_TABLE``・``READER_TABLE``・``EXPORT_NAMES``・``GENERATED_NAME_PREFIX``・
 ``ANON_VAR_NAME``)で、包みの外の使い手(doeff_effect_analyzer._result_cache の解析の鍵・doeff_hy._static_baseline の基点の鍵・
-macro_use の全部の require の判定 — card ki-ffe72a1fb7d7)もそこから引く。この file の末尾の 2 本が、records の読みを実物の Hy の
+macro_use の全部の require の判定)もそこから引く。この file の末尾の 2 本が、records の読みを実物の Hy の
 module に当てる: 表と export の名の読みは Hy 自身の ``(require 提供元 *)`` の振る舞いと一致し、Hy が一時の名に振る形は
 ``fold_anon_var_numbers`` が畳める形のまま。Hy が名を替えるとここが赤になる。字が records の外へ写される事は
 test_hy_internal_names_have_one_home.py の走査が赤にする。
 
 同じ process で包みを動かす検(置き場・口の包み・型検査の展開)は venv の Hy を測る。venv の Hy が uv.lock の版でない作業木(Hy を
 上げて sync していない)では、どの検も uv.lock の版を測らずに緑になりうるので、file の全部の検が先に版の一致を確かめる
-(:func:`_venv_hy_is_the_locked_version` — 設計検証 lt-JYZ9N64ZE70GCBXPP33QDG3WF7 の盲検 A・B)。PyPI の版の中身は版ごとに変わらない
+(:func:`_venv_hy_is_the_locked_version`・B)。PyPI の版の中身は版ごとに変わらない
 ので、版が同じなら同じ Hy を測る。Hy の内部への依りを包みに足す便は、その振る舞いの検をこの file に置く。
 """
 
@@ -281,7 +281,7 @@ def test_a_change_of_the_helper_a_macro_calls_recompiles_the_user(tmp_path: Path
 def test_a_change_of_the_helper_a_macro_imports_inside_its_body_recompiles_the_user(
     tmp_path: Path,
 ) -> None:
-    """macro が展開の時に関数の中で import する同じ package の補助を変えても、使う側は作り直される(agora-redesign #2373 —
+    """macro が展開の時に関数の中で import する同じ package の補助を変えても、使う側は作り直される(
     doeff-hy の defsystem は展開の中で ``doeff-hy.system-form`` を import する。その補助だけが変わった pin の後、提供元の
     名前空間に補助が無いので記録から漏れ、古い置き場を import する展開が .pyc に残った)。"""
     package = tmp_path / "pkg"
@@ -303,7 +303,7 @@ def test_a_reader_macro_change_recompiles_the_user_on_pypi_hy(
 ) -> None:
     """reader macro を変えた後、使う側は新しい展開で動く(包みが無いと古い展開のまま — この検が包みを測る事の確かめ)。包みは
     使う側の module の reader macro の表(``records.READER_TABLE``)に在る他の module の reader macro を記録に入れるので、Hy が表の
-    名を替えると記録から漏れ、古い展開を黙って使う(card ki-eafa369600cd)。"""
+    名を替えると記録から漏れ、古い展開を黙って使う。"""
     package = tmp_path / "pkg"
     package.mkdir()
     (package / "__init__.py").write_text("")
@@ -323,8 +323,8 @@ def test_a_macro_required_inside_a_function_recompiles_the_user_on_pypi_hy(
 ) -> None:
     """関数の中の require で入れた macro を変えた後も、使う側は新しい展開で動く(包みが無いと古い展開のまま — この検が包みを
     測る事の確かめ)。Hy の展開は関数の中の局所の macro の表(compiler の局所の状態)を module の表より先に引くので、module の表を
-    替えるだけの包みは局所の macro を記録から漏らし、macro を変えても古い展開を黙って使った(設計検証
-    lt-JYZ9N64ZE70GCBXPP33QDG3WF7 の範囲の外の所見 1)。包みは compiler が局所の状態を開く口を読むので、Hy がその口を替えると
+    替えるだけの包みは局所の macro を記録から漏らし、macro を変えても古い展開を黙って使った。
+    包みは compiler が局所の状態を開く口を読むので、Hy がその口を替えると
     この検が赤になる。"""
     package = tmp_path / "pkg"
     package.mkdir()
@@ -346,8 +346,8 @@ def test_a_new_macro_named_like_a_function_the_user_calls_recompiles_the_user_on
     """全部を require する使う側が呼ぶ関数と同じ名の macro が提供元に足されると、使う側は作り直され、呼び出しが macro の展開に
     変わる。包みは展開が表に引いて無かった名(``名 in 表`` が偽)を覚え、提供元に足されたら古いと判じるので、Hy が表を ``in`` で
     確かめなくなると覚え損ねる。提供元が Hy の export で公開の macro を絞る形(exported)では、全部の require の判定が Hy の公開の
-    名の表を読むので、Hy がその名を替えると全部の require と数えず、足された macro を見逃す(card ki-eafa369600cd・設計検証
-    lt-JYZ9N64ZE70GCBXPP33QDG3WF7 の盲検 A・B)。"""
+    名の表を読むので、Hy がその名を替えると全部の require と数えず、足された macro を見逃す(
+    B)。"""
     package = tmp_path / "pkg"
     package.mkdir()
     (package / "__init__.py").write_text("")
@@ -368,8 +368,8 @@ def test_the_code_does_not_depend_on_how_many_gensyms_the_process_made_on_pypi_h
     tmp_path: Path,
 ) -> None:
     """同じ source の code は、process が先に何度 gensym を呼んだかに依らない — compile の口が gensym の名(let が改めた束縛の名に
-    埋まった物も)を module の中の順へ振り直す(agora-redesign #3667)。振り直しは Hy の gensym と let の名の形を読むので、Hy が
-    形を替えると黙って振り直さず、.pyc・共有の置き場・詰めた Program の指紋が compile の順で揺れる(card ki-eafa369600cd)。"""
+    埋まった物も)を module の中の順へ振り直す。振り直しは Hy の gensym と let の名の形を読むので、Hy が
+    形を替えると黙って振り直さず、.pyc・共有の置き場・詰めた Program の指紋が compile の順で揺れる。"""
     package = tmp_path / "pkg"
     package.mkdir()
     (package / "__init__.py").write_text("")
@@ -461,8 +461,8 @@ def _expansions(root: Path) -> int:
 
 
 def test_a_new_tree_with_the_same_sources_reuses_the_code_without_expanding(tmp_path: Path) -> None:
-    """新しい作業木(同じ中身・別の絶対 path・.pyc なし)は、共有の置き場の code を使い、macro を展開し直さない
-    (agora-redesign #1753)。記録は file の path を持たないので、2 つの木の .pyc の記録は同じ。木の .pyc も書かれる。"""
+    """新しい作業木(同じ中身・別の絶対 path・.pyc なし)は、共有の置き場の code を使い、macro を展開し直さない。
+   記録は file の path を持たないので、2 つの木の .pyc の記録は同じ。木の .pyc も書かれる。"""
     store = tmp_path / "store"
     first, second = tmp_path / "first", tmp_path / "second"
     for root in (first, second):
@@ -500,7 +500,7 @@ def test_a_new_tree_with_a_different_macro_does_not_reuse_the_other_trees_expans
 def test_two_macro_versions_taking_turns_on_one_store_stop_expanding_from_the_second_round(tmp_path: Path) -> None:
     """macro の中身の違う 2 つの書き手(doeff の版の違う会話の作業木と実行環境の準備の代役 — 使い手の source は同じ)が、同じ置き場で
     新しい木を交互に読む。鍵 1 つに entry 1 つの並びでは、互いの entry を古いと見て展開し直し、同じ鍵を上書きし合った(2026-10-12
-    zeus — 準備 1 回に 100〜600 本の焼き直し・card ki-6828e9af04b4)。鍵 1 つに macro の環境ごとの entry を持つ並びでは、2 巡目から
+    zeus — 準備 1 回に 100〜600 本の焼き直し)。鍵 1 つに macro の環境ごとの entry を持つ並びでは、2 巡目から
     どちらも展開し直さない。"""
     store = tmp_path / "store"
     for turn in (1, 2, 3):
@@ -533,7 +533,7 @@ def _guard_of_the_next_record_generation(tmp_path: Path) -> Path:
 def test_two_record_generations_taking_turns_on_one_store_keep_each_others_entries(tmp_path: Path) -> None:
     """記録の印(RECORD_TAG)の違う 2 つの書き手(doeff-hy の版の違う作業木と実行環境の準備の代役 — 互いの entry の記録を読めない)が、
     同じ置き場で新しい木を交互に読む。読めない世代の entry を読み手が「古い」として除くと、互いの entry を消し合って毎回展開し直す
-    (設計検証 lt-Y2ZEDKRFVZR3S6T34PNQZ28Z97 の盲検 B — 2 つの書き手の doeff-hy が同じ検では見分けられない)。鍵 1 つに環境ごとの entry を
+    (2 つの書き手の doeff-hy が同じ検では見分けられない)。鍵 1 つに環境ごとの entry を
     持つ並びでは、どちらも 2 巡目から展開し直さない。"""
     store = tmp_path / "store"
     writers = (("this", GUARD_ROOT), ("next", _guard_of_the_next_record_generation(tmp_path)))
@@ -555,8 +555,7 @@ def _user_entries(store: Path, root: Path) -> tuple[str, ...]:
 def test_a_stale_pyc_in_a_reused_tree_takes_the_stores_matching_entry_without_compiling(tmp_path: Path) -> None:
     """使い回す作業木の .pyc は、頭(時刻と大きさ)が source に合い、記録だけが今の環境の macro に合わない(兄弟の doeff を替えた木 — 配備の
     宣言の木が宣言ごとに doeff を替える)。置き場に今の環境で合う entry が在るなら、compile(= 展開)し直さずそれを使い、.pyc も書き直す。
-    引かないと最初の import が木の Hy の module を全部 compile し直す(2026-10-12 — 検 1 本の収集で約 880 本・CPU 約 670 秒・card
-    ki-11a90ffff495)。"""
+    引かないと最初の import が木の Hy の module を全部 compile し直す(2026-10-12 — 検 1 本の収集で約 880 本・CPU 約 670 秒)。"""
     store = tmp_path / "store"
     reused, other = tmp_path / "reused", tmp_path / "other"
     for root, add in ((reused, 1), (other, 5)):
@@ -617,8 +616,8 @@ def test_a_pyc_carried_from_another_tree_is_checked_against_the_current_trees_ma
     tmp_path: Path,
 ) -> None:
     """実行環境の準備は、前の root の .pyc を source の hash が同じ file について hardlink で引き継ぐ。引き継いだ .pyc の記録は
-    前の root の macro の file を名指すので、前の root の macro が変わらず残っていても、今の木の macro が違えば作り直す
-    (agora-redesign #2598)。記録の path のまま照らすと、前の root の展開(11)を使い続ける。"""
+    前の root の macro の file を名指すので、前の root の macro が変わらず残っていても、今の木の macro が違えば作り直す。
+   記録の path のまま照らすと、前の root の展開(11)を使い続ける。"""
     first, second = tmp_path / "first", tmp_path / "second"
     first.mkdir()
     second.mkdir()
@@ -637,7 +636,7 @@ def test_a_pyc_carried_from_another_tree_is_checked_against_the_current_trees_ma
 def test_a_file_changed_between_compile_and_the_store_write_does_not_file_old_code_under_the_new_key(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """共有の置き場の鍵は、compile した bytes そのものから作る(agora-redesign #2799)。以前は compile の後に file を読み直して
+    """共有の置き場の鍵は、compile した bytes そのものから作る。以前は compile の後に file を読み直して
     鍵を作ったので、その間に file が書き換わると(着地の git の更新・編集の最中の import)、古い中身から作った code が新しい
     中身の鍵の下に入り、同じ中身の file を読む全部の作業木が古い振る舞いで動いた(実例 2026-10-02 13:57 — doeff-cluster の
     sim/local.hy の検が毎回赤)。"""
@@ -701,7 +700,7 @@ def _compile_in_fresh_package(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, p
 
 
 def test_a_named_store_is_filled_even_when_bytecode_is_not_written(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    """置き場の dir を DOEFF_HY_CODE_STORE で名指した時は、木へ .pyc を書かない設定でも置き場へは足す(agora-redesign #3737)。
+    """置き場の dir を DOEFF_HY_CODE_STORE で名指した時は、木へ .pyc を書かない設定でも置き場へは足す。
     worker の bytecode を焼く道具は PYTHONDONTWRITEBYTECODE=1 で起きるので、足さないと自分の依存の Hy を起動のたびに source から
     変換し直した(空の置き場で 2 回起こして 2 回とも CPU 約 14〜17 秒・置き場の file 0 — 2026-10-08)。"""
     import hy  # noqa: F401 — Hy の source を compile する口を載せる
@@ -811,7 +810,7 @@ def test_a_file_loaded_again_by_path_under_another_name_records_the_macros_its_e
     package の名の module の表で走る。記録を別の名の module の表から作ると、表は一度も引かれず、使った macro の無い空の記録が
     共有の置き場に入り、macro が変わった後も照らしが素通りで古い展開が使われた(2026-10-11 atlas — doeff の取り込みの検証の
     pytest が書いた bake_plan.hy の entry を patrol の準備が引き、ec08cd77d より前の defrecord の展開で
-    ``seal_record() missing ... calls_post_init`` — card ki-9180656459ac)。記録は展開が実際に引いた表から作る。"""
+    ``seal_record() missing ... calls_post_init``)。記録は展開が実際に引いた表から作る。"""
     import hy  # noqa: F401 — Hy の source を compile する口を載せる
     from doeff_hy_bytecode_guard import _code_store as code_store
 
@@ -852,7 +851,7 @@ def test_a_hy_module_read_from_a_current_pyc_does_not_look_up_the_expansion_modu
     """作業木の .pyc が source に合う Hy の module の読み込みは compile しないので、展開の走る module(Hy の compile の口と同じく
     ``inspect.getmodule`` で file の名から引く)を引かない。引き方は読み込み済みの module 全部を歩くので、Hy の module 1 つごとに
     引くと、検の読み込み(約 800 の Hy の module・約 1500 の module)で CPU 約 0.6 秒の固定費になった(2026-10-11 の測り —
-    test_emulated_screen.hy の固定費 3.5 → 4.1 秒・card ki-e77d44aa61e5)。"""
+    test_emulated_screen.hy の固定費 3.5 → 4.1 秒)。"""
     import inspect
 
     import hy  # noqa: F401 — Hy の source を compile する口を載せる
@@ -920,7 +919,7 @@ def _script_pyc(root: Path, by: str) -> Path:
 def test_a_script_run_by_the_hy_command_is_not_expanded_again_by_the_next_run(tmp_path: Path, by: str) -> None:
     """``hy <script>`` と ``hy -m`` は import を通らず、runpy が読みの口の get_code を module を ``sys.modules`` に置く前に呼ぶ。
     Hy は仮の module で compile して直後に消すので、記録が付かず、その .pyc は次の読みで必ず古い物として compile し直され、
-    保存先にも入らなかった(gate の script で 2 度目以降も CPU 約 13 秒・``hy <script>`` も ``hy -m`` も同じ — card ki-b519bddda25b)。
+    保存先にも入らなかった(gate の script で 2 度目以降も CPU 約 13 秒・``hy <script>`` も ``hy -m`` も同じ)。
     module を置いた中で compile すれば、script も import した module と同じく記録つきの .pyc になり、2 度目は展開しない。
     macro が変わった時は今までどおり展開し直す(記録の照らしが効く)。"""
     script = _write_scripts(tmp_path)
@@ -1039,7 +1038,7 @@ def test_records_reads_the_macro_tables_and_the_exported_names_the_way_hy_does(
     """Hy が module に置く macro の表(普通の macro・reader macro)と、``(require 提供元 *)`` が入れる名の読みは、定義元
     (``records.macro_tables``・``records.exported_macro_names``)が実物の Hy の module で Hy 自身の振る舞いと一致する —
     表の名(``MACRO_TABLE``・``READER_TABLE``)と export の名の表(``EXPORT_NAMES``)の字は records の 1 か所なので、Hy が名を
-    替えるとここが赤になる(card ki-ffe72a1fb7d7 — result_cache・macro_use・包みの検が読む名の定義元)。入る名の側は表の名を
+    替えるとここが赤になる(result_cache・macro_use・包みの検が読む名の定義元)。入る名の側は表の名を
     読まず、使い手が同じ名の関数を持つ形(macro が先に引かれる)で測る。"""
     import hy  # noqa: F401 — Hy の source を compile する口を載せる
     from doeff_hy_bytecode_guard import _code_store as code_store
@@ -1114,7 +1113,7 @@ def test_the_temporaries_hy_names_have_the_shape_records_folds() -> None:
     """Hy が一時の名(match を値に使った ``_hy_anon_<数え>``・let の ``_hy_let_<元の名>_<数え>``・except の
     ``_hy_exc_<元の名>_<数え>``)に振る形は、定義元 ``records.ANON_VAR_NAME`` が読む形のまま — 数えを畳んだ名は、定義を足して番号が
     ずれても同じ(doeff-hy-check の基点が、同じ赤を番号の違いで新しい赤と数えない)。Hy が名の形を替えると、畳めない名が出て
-    ここが赤になる(card ki-ffe72a1fb7d7 — 形は records の 1 か所。doeff_hy._static_baseline・static_stub は字を持たない)。"""
+    ここが赤になる(形は records の 1 か所。doeff_hy._static_baseline・static_stub は字を持たない)。"""
     from doeff_hy._static_baseline import comparable_message
     from doeff_hy._static_stub import hidden_name
 

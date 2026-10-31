@@ -1,4 +1,4 @@
-"""The task tally (agora-redesign #4188 — U6 of #3855): OpenTaskTally / ReadTaskTally / CloseTaskTally answered by
+"""The task tally (U6 of #3855): OpenTaskTally / ReadTaskTally / CloseTaskTally answered by
 step-tally-handler.
 
 - The table has one row per task that took a step while the window was open, keyed by (run, tid), with the

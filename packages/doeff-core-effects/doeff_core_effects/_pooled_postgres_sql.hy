@@ -1,5 +1,5 @@
 ;;; 汎用の SQL の effect(sql_effects.hy)の本物の PostgreSQL の答え手のうち、scheduler を塞がない版 pooled-postgres-sql-handler
-;;; (agora-redesign #880 U2・G2)。postgres-sql-handler(postgres_sql.hy)も #1215 から scheduler を塞がない(呼び 1 つに thread 1 本・許可は
+;;; (G2)。postgres-sql-handler(postgres_sql.hy)も #1215 から scheduler を塞がない(呼び 1 つに thread 1 本・許可は
 ;;; thread の間の錠)。この版は同じ文・同じ値の写し・同じ transaction の手順(run-in-transaction)を使い、thread の数を呼び手の pool で
 ;;; 抑えるために、待ち方を次のように変える:
 ;;;   - 接続の許可の待ち = scheduler の CreateSemaphore / AcquireSemaphore(database ごとに PostgresConnections の size 個)。許可を待つ task の
@@ -13,7 +13,7 @@
 ;;;     最初の文と同じ往復・commit の束は COMMIT と同じ往復 — 往復 1 回 = pipeline 1 つ・#3605)で、借りる・全部の往復と間の program・返すを
 ;;;     pool の仕事 1 つで回す(往復の間に scheduler へ戻らない — postgres_sql.hy の offloaded-batched-transaction)。transaction の外の SqlBatch は名指して断る
 ;;;     (stray-batch)。
-;;;   - 通知(SqlNotify・SqlHangNotice・SqlDropNotice — agora-redesign #3073・名で絞る形は #3688)は postgres-sql-handler と同じ手順
+;;;   - 通知(SqlNotify・SqlHangNotice・SqlDropNotice・名で絞る形は #3688)は postgres-sql-handler と同じ手順
 ;;;     (postgres_sql.hy の notified・hung-notice — 名の重なる呼び鈴だけを、接続を返した後に鳴らす)。transaction の外の SqlNotify は接続の
 ;;;     許可を取ってから流す。呼び鈴を掛けるのは待ち受けの接続で、許可を使わない。
 ;;;   - 取り消し: 待っている task が Cancel されたら、run-in-transaction が ROLLBACK を流し、接続を返し(返す時にも transaction の途中なら
@@ -70,7 +70,7 @@
   (session var transaction-permits {})
   (SqlQuery [database statement params binary] :when (in database (.names connections))
     (<- created (permit-for permits database connections.size))
-    ;; 許可は初めての拍に 1 度だけ置く(在れば session の値を書き直さない — 文ごとの Put を土台まで往復させない・agora card ki-1841b724d061)。
+    ;; 許可は初めての拍に 1 度だけ置く(在れば session の値を書き直さない — 文ごとの Put を土台まで往復させない)。
     ;; 下の節も同じ。
     (when (not-in database permits)
       (:= permits (| permits {database created})))

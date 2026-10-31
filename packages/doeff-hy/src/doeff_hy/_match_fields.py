@@ -3,11 +3,11 @@
 Hy 1.3.1 の ``match`` は class pattern の keyword の欄の名を mangle せずに Python の ``case`` へ出す
 (hy/core/result_macros.py の ``compile_pattern`` — ``kwd_attrs=[kwd.name for kwd in keywords]``)。
 ``(match r (Rec :ended-reason None) …)`` は ``case Rec(ended-reason=None):`` になり、属性 ``ended-reason`` は
-どの値にも無いので、その節は値が何でも当たらず、黙って次の節へ倒れる(agora-redesign #2036)。Hy の欄の名
+どの値にも無いので、その節は値が何でも当たらず、黙って次の節へ倒れる。Hy の欄の名
 ``ended-reason`` は defclass / defrecord では属性 ``ended_reason`` になるので、pattern の側も同じ ``hy.mangle`` で
 揃えれば、利用者は Hy の自然な綴り ``(Rec :ended-reason None)`` のまま書ける。
 
-Hy の本体は直さない(フォーク・monkeypatch・hy の版の指定の変更はしない — ADR-DOE-HY-008・operator 2026-10-01
+Hy の本体は直さない(フォーク・monkeypatch・hy の版の指定の変更はしない — ADR-DOE-HY-008
 "i said no. i asked you to make workaround and report me")。直すのは defk の本体(引数・契約を含む)だけで、
 defk の外の ``match`` は doeff-linter の DOEFF169 が止める(規則は defk の form の中を当てない)。
 

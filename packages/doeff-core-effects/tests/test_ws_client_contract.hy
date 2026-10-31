@@ -1,5 +1,5 @@
 ;;; WebSocket の client の契約テスト — 同じ効果(WsConnect・WsReceive・WsSend・WsDisconnect・WsDisconnectAll)に答える本物(aiohttp-ws-client)と
-;;; fake(scripted-ws-client)が、同じ deftest を通る(agora-redesign #4007 U0)。解釈器の組み立てと契約の世界は ws_client_contract_handlers.hy。
+;;; fake(scripted-ws-client)が、同じ deftest を通る。解釈器の組み立てと契約の世界は ws_client_contract_handlers.hy。
 ;;;
 ;;;   * WsConnect は繋がれば WsLink(id は繋ぎを始めた順に ws-1・ws-2 … — 断られた繋ぎの番号も戻さない)、届かなければ WsConnectFailed
 ;;;   * 同じ handler の下で 2 つの繋ぎが同時に進んでも id は重ならず、両方の接続が別々に使える

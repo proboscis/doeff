@@ -2,7 +2,7 @@
 
 本家の Hy 1.3.1 は `hy.compiler` と `hy.macros` の中で `inspect.stack()[n][0]`(呼び出し元の frame)だけを
 使うが、`inspect.stack` は全 frame のファイル名・行・ソース文脈を読むので、bytecode からの読み込みでも
-require 系の呼び出しごとに遅い(agora-controllers の模擬のテスト 1 file の import で 5.4 秒・agora-redesign #1293)。
+require 系の呼び出しごとに遅い(agora-controllers の模擬のテスト 1 file の import で 5.4 秒)。
 Hy からの呼び出しの時だけ、frame を 1 要素目に持つ tuple の列を返す軽い版へ渡す。Hy 以外からの呼び出しは
 元の関数へそのまま渡す。
 

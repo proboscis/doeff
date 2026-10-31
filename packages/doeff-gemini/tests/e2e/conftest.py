@@ -1,6 +1,6 @@
 """本物の Gemini API を呼ぶ live の検(印 ``real_gemini``)は、印を名指して選んだ時(``pytest -m real_gemini``)だけ走る。
 
-以前は環境変数 DOEFF_GEMINI_RUN_E2E で切り替えていた(検の module が環境変数を直に読む — DOEFF004・agora-redesign #3012)。
+以前は環境変数 DOEFF_GEMINI_RUN_E2E で切り替えていた(検の module が環境変数を直に読む — DOEFF004)。
 費用の掛かる呼びを誤って撃たないため、選ばなければ skip する(ADC の資格が無い時の skip は検の中のまま)。
 """
 

@@ -20,7 +20,7 @@ import hy.importer
 from doeff_hy._ast_unparse import install as _install_ast_unparse
 from doeff_hy._light_stack import install as _install_light_stack
 
-# macro が変わった Hy の module の古い bytecode を使わない(agora-redesign #1292)。本来の入れ所は venv の起動時の
+# macro が変わった Hy の module の古い bytecode を使わない。本来の入れ所は venv の起動時の
 # doeff_hy_bytecode_guard.pth で、ここは .pth が読まれない起動(python -S 等)のための 2 つ目(2 度目は何もしない)。
 doeff_hy_bytecode_guard.install()
 
@@ -52,7 +52,7 @@ _install_light_stack()
 # them while it loads. `X as X` shows each name to type checkers. A root that already has `__all__`
 # lists the names there too; the tool does not add `__all__` to a root without one (DOEFF021).
 # defrecord の展開が呼ぶ doeff_hy._record_runtime の部品(RECORD_DOC・record_repr ほか)は入口から出さない — 展開は `_` の
-# path を読む(card ki-797d1e7b122b)。doeff_hy._ast_unparse の install は doeff-hy-pytest の plugin が `_` の path から読む。
+# path を読む。doeff_hy._ast_unparse の install は doeff-hy-pytest の plugin が `_` の path から読む。
 if TYPE_CHECKING:
     from doeff_hy._http import http_get as http_get
     from doeff_hy._json_lines import jsonl_lines as jsonl_lines

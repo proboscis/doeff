@@ -59,7 +59,7 @@ def _joined_history(history_a: list, history_b: list) -> list:
     A Traverse over a collection carries each item's history entries forward as the same
     objects, so when b was built from a (ex07's Zip(signals, prices)) or both from one
     collection, b repeats steps a holds. An entry is one step that ran once, so a shared
-    entry is kept once (card ki-7be8e95f45eb). Entries are compared by identity, not
+    entry is kept once. Entries are compared by identity, not
     equality: two independent Traverses with one label give equal entries for two steps.
     """
     held = {id(entry) for entry in history_a}
@@ -226,7 +226,7 @@ def _sequential_handler(effect: CollectionEffect, k):  # noqa: PLR0911, PLR0912,
     An item's failure is caught by this handler's own ``try`` around the item program,
     not by a ``Try`` effect per item: the ``Try`` round (two try_handler installs, a
     GetHandlers, two ``@do`` functions and a Transfer per item) was ~29 µs of the ~46 µs
-    an item cost (agora-redesign #2871). try_handler stays installed around each item,
+    an item cost. try_handler stays installed around each item,
     so a ``Try`` the item performs is still answered without an outer try_handler.
 
     Each item's outcome is reported with ItemOutcome when a handler between the Traverse
@@ -257,7 +257,7 @@ def _sequential_handler(effect: CollectionEffect, k):  # noqa: PLR0911, PLR0912,
         # One installer per inner handler for the whole Traverse, not one per item —
         # read when the first item runs (a Traverse with no item to run reads none),
         # from GetHandlers itself rather than through get_inner_handlers' @do call
-        # (agora-redesign #2958). The same read decides whether outcomes are reported,
+        #. The same read decides whether outcomes are reported,
         # so a Traverse with no item to run reports none either.
         inner_installs = None
         # Set only when outcomes are reported (a Traverse nobody counts computes none).

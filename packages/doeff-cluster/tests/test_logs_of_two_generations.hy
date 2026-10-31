@@ -1,4 +1,4 @@
-;; 同じ機体に同じ名の worker の 2 つの世代が並ぶ時(Deployment の RollingUpdate — AL-D2j・card ki-2f5186034976)、2 つの worker は job の log の
+;; 同じ機体に同じ名の worker の 2 つの世代が並ぶ時(Deployment の RollingUpdate — AL-D2j)、2 つの worker は job の log の
 ;; dir($WORK_DIR/state/logs — worker/core/places の logs)を分け合う。試みの番号は worker の process の記憶(JobRecord)で数えるので、新しい
 ;; 世代は 1 から数え直す — 名が job の名と試みの番号だけだと、2 つの世代が同じ file に書き足す(2026-10-11 の入れ替えで、新しい世代が前の
 ;; 世代の process と同じ <job の名>.1.log に書き足し、2 つの世代の行が 1 つの file に混ざった)。ここでは、2 つの世代(別の boot・同じ分け合う

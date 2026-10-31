@@ -1,5 +1,5 @@
 ;; 口座の利用枠切れの事実(UsageLimitHit)の検 — 層 2 が、ターンの中で届いた枠の知らせ(RateLimits)と失敗の終わり(誤りの種類
-;; usageLimitExceeded)から、口座が待つ窓の長さ・戻りの刻・codex の文を作る(card ki-a59d80e0afa9)。
+;; usageLimitExceeded)から、口座が待つ窓の長さ・戻りの刻・codex の文を作る。
 ;;
 ;; 守る事: 上の層は利用枠切れを UsageLimitHit だけで読み、codex の誤りの種類の綴り・使った割合の閾値・枠の知らせの重ね方を知らない
 ;; (層 2 の替え玉 fake も同じ事実で利用枠切れのターンを出せる)。刻は codex が名乗った尽きた窓の戻りの刻だけで、名乗られなければ
@@ -83,7 +83,7 @@
 
 
 (deftest test-a-rate-limit-update-read-right-after-the-turn-start-answer-joins-that-turn
-  ;; 失敗ケース(設計検証 lt-4FZFGSA5AJ7DGD7BZ4656WY6HS の再現): 読みの thread は turn/start の答えの直後の行を、答えを待つ側が
+  ;; 失敗ケース: 読みの thread は turn/start の答えの直後の行を、答えを待つ側が
   ;; 走っているターンを立てる前に読み得る。ターンを名乗らない枠の知らせがその隙に届いても、答えが名乗ったターンに積まれ、
   ;; そのターンの失敗の終わりが利用枠切れの事実を運ぶ(読みの thread と同じ順で absorb を呼ぶ — 答えを待つ側は何もしない)。
   (val runtime (SessionRuntime (Continuation (CodexSessionSpec :home (CodexHome :env {}) :cwd "/tmp" :approval-policy ApprovalPolicy.NEVER
@@ -103,7 +103,7 @@
 
 
 (deftest test-a-rate-limit-update-read-right-after-turn-started-joins-that-turn
-  ;; 失敗ケース(依頼 lt-0BC9J56TE8QA3VH1FZNJD3F4FS・設計検証 lt-H32P81572MAR6ANS1EAQJRXAAQ の盲検 B): 続きの会話で、前のターン u0 が
+  ;; 失敗ケース: 続きの会話で、前のターン u0 が
   ;; 終わって走っているターンの印がまだ u0 を指す間に、読みの thread が turn/started(u1)を読み、続けて枠の知らせを読む(turn/start の
   ;; 答えはまだ読んでいない)。枠の知らせは u1 に積まれ(終わった u0 にも outside にも落ちない)、u1 の失敗の終わりが利用枠切れの事実を
   ;; 運ぶ(読みの thread と同じ順で absorb を呼ぶ — 答えを待つ側は何もしない)。
@@ -143,7 +143,7 @@
 
 
 (deftest test-a-usage-limit-turn-reads-only-the-notices-of-its-own-turn
-  ;; 失敗ケース(依頼 lt-0BC9J56TE8QA3VH1FZNJD3F4FS の設計検証・盲検 B): 口座の枠の知らせはターンの記録ごとに重ね、ターンをまたいで
+  ;; 失敗ケース(盲検 B): 口座の枠の知らせはターンの記録ごとに重ね、ターンをまたいで
   ;; 持ち越さない。前のターン u0 が尽きた窓(5 時間・戻り FIVE-HOURS-AT)を名乗って利用枠切れで終わった後、続きのターン u1 も利用枠切れで
   ;; 終わる。u1 の中で窓を名乗る知らせが無い(知らせが来ない・来ても窓を名乗らない)なら、u1 の事実は窓も刻も None — u0 の古い刻を
   ;; u1 の事実として運ばない(会話の一生で枠を重ねて終わりの事実を作る実装は、ほかの検を全部通したままこれを破った)。
@@ -169,7 +169,7 @@
 
 
 (deftest test-every-record-that-carries-limit-windows-is-a-limit-record
-  ;; 失敗ケース(依頼 lt-0BC9J56TE8QA3VH1FZNJD3F4FS の設計検証・盲検 A): どの記録が利用枠切れの事実の材料(口座の枠の窓)を運ぶかは、
+  ;; 失敗ケース(盲検 A): どの記録が利用枠切れの事実の材料(口座の枠の窓)を運ぶかは、
   ;; 記録の型を持つ lines が 1 か所(LimitRecord)で名乗り、handler はその集まりでターンの枠へ重ねる(handler は記録の class を列挙しない
   ;; — TurnRecord と同じ形)。codex の版上げで窓を運ぶ記録(例: 枠の断面をまとめた通知)を足して LimitRecord に入れ忘れると、handler は
   ;; その記録をただの出来事として積み、ターンの枠に重ねない — 利用枠切れの戻りの刻が黙って None になる。この検が赤にする。

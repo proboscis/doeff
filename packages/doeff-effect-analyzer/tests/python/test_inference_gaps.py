@@ -1,4 +1,4 @@
-"""The five inference gaps of agora-redesign #837, each with a counter-example.
+"""Five inference gaps of the effect analysis, each with a counter-example.
 
 Found while writing doeff-cluster's "is the job closed under the production
 foundation" check (#833, foundation_check.hy), whose fixture had to fall back to
@@ -785,7 +785,7 @@ def test_a_lone_resume_handler_closes_the_foundation(pkg: str) -> None:
 
 
 # --------------------------------------------------------------------------- left after the five
-# Found after the five were closed (agora-redesign #837, 2026-09-28): a reading that
+# Found after the five were closed (2026-09-28): a reading that
 # drops what it cannot follow answers "closed" for a Program that is not.
 
 

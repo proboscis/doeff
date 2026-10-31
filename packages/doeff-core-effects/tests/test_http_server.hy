@@ -8,7 +8,7 @@
 ;;;     結んだ port・出来事の received-at・本体の流れ(共有の event loop か scheduler)を塞いでも probe の口が答える(#2776)・
 ;;;     答え(HttpRespond)・宣言の小さい本文の読み(HttpReadBody)・列に既に在る到着(HttpNextRequest)が共有の event loop へ入らない
 ;;;     (#3688 の子 (3) の 3b・3c と案 1)・ws の文字の 1 通の送り(WsSendText)も共有の event loop へ入らず、撃った順に届く
-;;;     (card ki-bbf782b2ab4b)・ws の中継が中継先へ繋ぐ時の 2 つの上限(繋ぐまで・handshake の答え)
+;;;    ・ws の中継が中継先へ繋ぐ時の 2 つの上限(繋ぐまで・handshake の答え)
 ;;;     (aiohttp の無い venv では skip)。
 (require doeff-hy.macros [deftest defk deff defhandler <- val var with-handler])
 (require doeff-hy.record [defrecord])
@@ -149,7 +149,7 @@
 
 
 (deftest test-the-scripted-server-closes-open-sockets-with-the-code-the-shutdown-names
-  ;; 失敗ケース(入れ替えで退く側の閉じ — agora-redesign #4317): HttpShutdown が名指した状態符(1001 going away)で開いた札を閉じる。直す前は
+  ;; 失敗ケース(入れ替えで退く側の閉じ): HttpShutdown が名指した状態符(1001 going away)で開いた札を閉じる。直す前は
   ;; 状態符の欄が無く 1000 で閉じる(赤)。
   (val script (HttpScript :arrivals #((arrival 1 "/" :upgrade True) (WsTextArrived :ticket "1" :text "go-away"))))
   (<- answer tuple (with-handler [(state) (scripted-http-server script)] (echo-served "A")))
@@ -158,7 +158,7 @@
 
 
 (deftest test-the-scripted-server-hands-no-new-request-after-it-stops-listening
-  ;; 失敗ケース(待ち受けだけの閉じ — agora-redesign #4317): 待ち受けだけを閉じた後に届く新しい要求は本体へ渡らず、開いた接続の 1 通は渡る。
+  ;; 失敗ケース(待ち受けだけの閉じ): 待ち受けだけを閉じた後に届く新しい要求は本体へ渡らず、開いた接続の 1 通は渡る。
   (val script (HttpScript :arrivals #((arrival 1 "/" :upgrade True) (WsTextArrived :ticket "1" :text "leave")
                                       (arrival 2 "/" :upgrade True) (WsTextArrived :ticket "1" :text "still"))))
   (<- answer tuple (with-handler [(state) (scripted-http-server script)] (echo-served "A")))
@@ -254,7 +254,7 @@
 
 (deftest test-the-scripted-server-hands-every-queued-arrival-at-once
   ;; HttpTakeQueued は台本の列に今ある出来事を受けた順に全部渡し、渡した物は HttpNextRequest でもう渡らない。列が空なら空の tuple(閉じを
-  ;; 名乗らない)・後から足した出来事も取れる・閉じた後は閉じの理由 1 つ(card ki-472623c28ba0)。
+  ;; 名乗らない)・後から足した出来事も取れる・閉じた後は閉じの理由 1 つ。
   (val script (HttpScript :arrivals #((arrival 1 "/a") (arrival 2 "/b") (arrival 3 "/c"))))
   (<- got tuple (with-handler [(state) (scripted-http-server script)] (take-queued-then-next)))
   (assert (= got #("1" #("2" "3") #() #("z") "HttpServerClosed" #(#("HttpServerClosed" "検が閉じた")))) got))
@@ -371,7 +371,7 @@
 
 
 (defn #^ None test-a-shared-port-hands-new-connections-to-the-listener-that-stays []
-  ;; 失敗ケース(入れ替えで新旧の待ち受けを重ねる — agora-redesign #4317): 待ち受け A に繋いだ後、同じ port を共有して待ち受け B を開き、
+  ;; 失敗ケース(入れ替えで新旧の待ち受けを重ねる): 待ち受け A に繋いだ後、同じ port を共有して待ち受け B を開き、
   ;; A が待ち受けだけを閉じる。A に開いた接続は往復を続け、新しい接続は全部 B に当たる(A が待ち受けを閉じる前は kernel が振り分ける)。
   ;; 直す前は HttpListen に port の共有の欄が無く、A が開けない(赤)。
   (setv aiohttp (pytest.importorskip "aiohttp" :reason "aiohttp は extra http-server の依存"))
@@ -416,7 +416,7 @@
 
 
 (defn #^ None test-a-shutdown-stops-listening-before-it-closes-with-the-code-it-names []
-  ;; 失敗ケース(入れ替えで退く側の閉じ — agora-redesign #4317): 待ち受け A と B が port を共有する時、A が閉じの状態符 1001(going away)を
+  ;; 失敗ケース(入れ替えで退く側の閉じ): 待ち受け A と B が port を共有する時、A が閉じの状態符 1001(going away)を
   ;; 名指して閉じる。A の客は 1001 を受け、受けた直後に張り直した新しい接続は全部 B に当たる(A は客を閉じる前に待ち受けを閉じる)。
   ;; 直す前は HttpShutdown に状態符の欄が無く(客は 1000 を受ける)、待ち受けを閉じるのは送りの箱を流し切った後なので、直後の張り直しが
   ;; A に当たりうる(赤)。
@@ -461,7 +461,7 @@
 
 (defn #^ None test-the-aiohttp-server-names-an-answer-the-peer-left-in-one-line-and-counts-it [#^ (get pytest.CaptureFixture str) capfd
                                                                                                #^ pytest.LogCaptureFixture caplog]
-  ;; 相手が先に切った要求への答え(agora-redesign #2757): aiohttp の traceback(Error handling request)を出さず、1 行の名乗りと
+  ;; 相手が先に切った要求への答え: aiohttp の traceback(Error handling request)を出さず、1 行の名乗りと
   ;; 待ち受けの数え(閉じる時の合計)を残す。次の要求には今までどおり答える。
   (pytest.importorskip "aiohttp" :reason "aiohttp は extra http-server の依存")
   (import queue)
@@ -513,7 +513,7 @@
   (assert (in "届かなかった答えは合わせて 1 件" err) err))
 
 
-;; --- probe の口は本体の流れの止まりに巻き込まれない(agora-redesign #2776)-------------------------------------------------------------
+;; --- probe の口は本体の流れの止まりに巻き込まれない-------------------------------------------------------------
 ;; 2026-10-02 の record の job: 待ち受け・timer・Await の全部が process に 1 つの共有の event loop に乗り、loop が 30 秒止まった間 /healthz も
 ;; 答えなかった(#2734)。probe の口は待ち受けの loop の上で、answer を別の thread の自分の run で答えるので、本体の流れ(共有の loop か
 ;; scheduler)を塞いでも /healthz は答え、/readyz は answer の判じ(拍の古さ)に従う。本体へ届く要求は塞がれている間は答えない(対照)。
@@ -664,7 +664,7 @@
   (assert (is got.work.status None) got))
 
 
-;; --- 答えは待ち受けの loop へ積むだけ(agora-redesign #3688 の子 (3) の 3b)-----------------------------------------------------
+;; --- 答えは待ち受けの loop へ積むだけ-----------------------------------------------------
 
 (defclass [(dataclass :frozen True)] ReadAwaits [EffectBase]
   "awaits-counted が数えた、答え手の節が共有の event loop へ入った回数を読む(答え = int)。")
@@ -753,7 +753,7 @@
   (assert (not-in "Traceback" err) err))
 
 
-;; --- ws の送りは待ち受けの loop へ積むだけ(card ki-bbf782b2ab4b)------------------------------------------------------------------
+;; --- ws の送りは待ち受けの loop へ積むだけ------------------------------------------------------------------
 ;; 直す前は WsSendText 1 回ごとに Await 1 回(共有の loop → 待ち受けの loop → 戻りの往復)を待ち、同じ通を接続の数だけ送る呼び手の
 ;; 1 周期が送りの数に比例して伸びた(画面の job・本番と同じ組で送り 1 回 1.32 ms → 0.45 ms)。
 
@@ -821,7 +821,7 @@
   (assert (= got #(0 (tuple (gfor index (range SENT-TEXTS) (+ "t-" (str index)))) SENT-CLOSE-CODE)) got))
 
 
-;; --- 宣言の小さい本文は待ち受けの loop が先に読む(agora-redesign #3688 の子 (3) の 3c)-----------------------------------------
+;; --- 宣言の小さい本文は待ち受けの loop が先に読む-----------------------------------------
 
 ;; 相手が送る本文(宣言の長さつき)と、読みの上限。
 (val SMALL-BODY b"small body")
@@ -895,7 +895,7 @@
   (assert (= got #(0 (HttpBodyRead :data SMALL-BODY) (Fetched :status 200 :body "small body"))) got))
 
 
-;; --- 列に既に在る到着は往復せずに取る(agora-redesign #3688 の案 1)----------------------------------------------------------------
+;; --- 列に既に在る到着は往復せずに取る----------------------------------------------------------------
 ;; 書き 1 回で保留の待ちが一斉に起きると、続く要求が待ち受けの列に溜まる。受けの loop が 1 つ取るたびに共有の loop → 待ち受けの loop →
 ;; 戻りの往復をしていたので、波が 1 本ずつに並んだ(手元の測り: 待ち 20 本で読みの queue 68.5 ms)。
 
@@ -944,7 +944,7 @@
 
 (defk take-a-wave-at-once [box sent]
   {:pre [(: box queue.Queue) (: sent queue.Queue)] :post [(: % tuple)] :tags {:context "http-server-test" :role "program"}}
-  "take-a-wave と同じ波で、1 つ目の到着の後の残りを HttpTakeQueued 1 回でまとめて取り、全部に答えるため(card ki-472623c28ba0)。
+  "take-a-wave と同じ波で、1 つ目の到着の後の残りを HttpTakeQueued 1 回でまとめて取り、全部に答えるため。
    答え = #(残りを取る間に共有の event loop へ入った回数 取った順の到着)。閉じた後の HttpTakeQueued が閉じの理由を名乗る事も見る。"
   (<- bound HttpAddress (HttpListen :address (HttpAddress :host "127.0.0.1" :port 0)))
   (.put box bound)
@@ -1007,7 +1007,7 @@
 
 
 (deftest test-the-aiohttp-server-hands-every-queued-arrival-at-once
-  ;; HttpTakeQueued は列に既に在る到着を、共有の event loop へ入らずに 1 回で全部取る(card ki-472623c28ba0)。取りこぼしも順の入れ替わりも
+  ;; HttpTakeQueued は列に既に在る到着を、共有の event loop へ入らずに 1 回で全部取る。取りこぼしも順の入れ替わりも
   ;; 無い: 1 つ目の後の残り WAVE-SIZE - 1 個を札の順に取り、相手は全員が自分の path の答えを受ける。閉じた後は閉じの理由。
   (<- got tuple (wave-awaits take-a-wave-at-once))
   (val entered (get got 0))

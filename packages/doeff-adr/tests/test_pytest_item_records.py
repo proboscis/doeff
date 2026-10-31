@@ -1,5 +1,5 @@
 """defadr・defsemgrep と defadr の :enforcement の中の deftest / defsemgrep が、展開の式で pytest の item の記録を module に積む
-(記録の形の定義元 = doeff_hy/_pytest_items.py・agora-redesign #1291)。記録は module を import すれば読める。
+(記録の形の定義元 = doeff_hy/_pytest_items.py)。記録は module を import すれば読める。
 """
 
 import importlib

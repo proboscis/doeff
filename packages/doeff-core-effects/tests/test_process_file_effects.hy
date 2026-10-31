@@ -1,4 +1,4 @@
-;;; 汎用の子 process と file system の effect(process_effects.hy・file_effects.hy — agora-redesign #802 便 1)の検。
+;;; 汎用の子 process と file system の effect(process_effects.hy・file_effects.hy)の検。
 ;;;   - 子 process の本物(subprocess-handler)と I/O なし(scripted-process-handler)が同じ答えになる性質(returncode・出力・時間切れ・起こせない形・
 ;;;     環境・cwd・stdin・出力の追記)は契約テスト test_process_contract.hy。ここは片方だけの性質(本物の WorkingDirectory と ReadMachineName・
 ;;;     答え手の無い ReadMachineName が落ちる形・台本の機体の名・台本が env None を
@@ -7,7 +7,7 @@
 ;;;   - 同じ筋書きの Program を本物(一時 dir)と I/O なし(memory-file-handler)の両方で走らせ、答えが同じになることを確かめる(同じ所で断る)。
 ;;;   doeff-agents の io_effects が同じ型を re-export する(定義は 1 つ)ことの検は、doeff-agents の側
 ;;;   (packages/doeff-agents/tests/test_io_effects_reexports.hy)に置く — 確かめるのは doeff-agents の性質で、この package の検が上の
-;;;   package を import すると層の向きが逆になる(agora-redesign #2837)。
+;;;   package を import すると層の向きが逆になる。
 (require doeff-hy.macros [defk deftest <- val])
 (require doeff-hy.record [defrecord])
 (import os)
@@ -49,7 +49,7 @@
 
 
 (deftest test-subprocess-answers-the-machine-name-from-the-os
-  ;; 本物の ReadMachineName は socket.gethostname と同じ値(agora-redesign #3050)。
+  ;; 本物の ReadMachineName は socket.gethostname と同じ値。
   (<- name str (with_handlers [subprocess-handler] (ReadMachineName)))
   (assert (= name (socket.gethostname)) name))
 
@@ -221,7 +221,7 @@
 
 (defk appended-reads [root]
   {:pre [(: root str)] :post [(: % Journey)]}
-  "追記される file を、前に読んだ所から先だけ読む筋書き(ReadBytes の offset — 追記を待って末尾を写す読み手のため・agora-redesign #3977)。"
+  "追記される file を、前に読んだ所から先だけ読む筋書き(ReadBytes の offset — 追記を待って末尾を写す読み手のため)。"
   (val log (+ root "/s/out.log"))
   (<- made (MakeDirectory (+ root "/s")))
   (<- written (WriteBytes log b"abcdef"))
@@ -374,7 +374,7 @@
 (defk stat-tree-journey [root]
   {:pre [(: root str)] :post [(: % tuple)] :tags {:context "file-system" :role "program"}}
   "木(file 2 つ・下の dir・file を指す symlink)を作って様子つきで歩き(StatTree)、WalkTree と同じ名を並べたかと、名・種類・大きさ(dir の
-   大きさは本物の file system ごとに違うので None)と、断りの 2 つ(file を歩く・無い path を歩く)を返す筋(card ki-0da6a0186492)。"
+   大きさは本物の file system ごとに違うので None)と、断りの 2 つ(file を歩く・無い path を歩く)を返す筋。"
   (<- (MakeDirectory (+ root "/t/sub")))
   (<- (WriteText (+ root "/t/a") "あい"))
   (<- (WriteText (+ root "/t/sub/b") "xyz"))
@@ -393,7 +393,7 @@
 
 
 (deftest test-stat-tree-answers-the-same-on-the-real-and-memory-file-systems [tmp-path]
-  ;; card ki-0da6a0186492: StatTree は WalkTree と同じ名を同じ順に並べ、種類と大きさ(link は辿らずリンク自身)と断りは本物と memory で同じ。
+  ;; StatTree は WalkTree と同じ名を同じ順に並べ、種類と大きさ(link は辿らずリンク自身)と断りは本物と memory で同じ。
   ;; 本物の mtime は os.lstat と同じ(memory は時刻を持たないので 0)。
   (val root (os.path.realpath tmp-path))
   (<- real tuple (with_handlers [os-file-handler] (stat-tree-journey root)))
@@ -424,7 +424,7 @@
 
 
 (deftest test-list-directory-skips-a-name-gone-before-its-kind-is-read [tmp-path monkeypatch]
-  ;; 並べた後で種類を読む前に消えた名は飛ばし、残りを名の順に返す(並べた時点で在った名の写し・card ki-a6a20f777219)。消えた所は
+  ;; 並べた後で種類を読む前に消えた名は飛ばし、残りを名の順に返す(並べた時点で在った名の写し)。消えた所は
   ;; os.lstat の差し替え。失敗ケース(前の形): /proc を並べる間にプロセスが 1 つ終わると、並べ全体が FileFailed になった。
   (.mkdir (/ tmp-path "t"))
   (.write-bytes (/ tmp-path "t" "kept") b"abc")
@@ -478,7 +478,7 @@
 
 (defk symlink-journey [root]
   {:pre [(: root str)] :post [(: % tuple)] :tags {:context "file-system" :role "program"}}
-  "dir を指す symlink を作って辿り、別の木を指す symlink を rename の 1 手で付け替え(agora-redesign #4036 — 設定 dir の entry の付け替え)、
+  "dir を指す symlink を作って辿り、別の木を指す symlink を rename の 1 手で付け替え(設定 dir の entry の付け替え)、
    辿らない様子・一覧・木の走査・断りの 3 つ(在る名・無い親・先の無い link の読み)と、link だけを消す形を返す筋。"
   (<- (MakeDirectory (+ root "/t/a")))
   (<- (WriteText (+ root "/t/a/x") "A"))
@@ -511,7 +511,7 @@
 
 
 (defn #^ None test-symlinks-answer-the-same-on-the-real-and-memory-file-systems []
-  ;; agora-redesign #4036: 設定 dir の entry を木への symlink にし、別名の symlink を rename の 1 手で付け替える形の土台。本物と memory が
+  ;; 設定 dir の entry を木への symlink にし、別名の symlink を rename の 1 手で付け替える形の土台。本物と memory が
   ;; 同じ答えを返す — memory も link を持ち、読み・様子・一覧・走査が辿り、rename が link を替え、RemoveTree は link だけを消す。
   (with [tmp (tempfile.TemporaryDirectory)]
     (setv root (os.path.realpath tmp))

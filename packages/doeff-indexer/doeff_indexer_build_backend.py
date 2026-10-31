@@ -2,9 +2,9 @@
 
 This wraps maturin's backend to ensure the Rust CLI binary is built and bundled into the wheel
 and editable installs. The wheel and the editable install both come from the keyed wheel store of
-doeff_cargo_backend (the one entry for Rust builds — ADR-DOE-BUILD-001・agora-redesign #3860): this module only
+doeff_cargo_backend (the one entry for Rust builds — ADR-DOE-BUILD-001): this module only
 supplies how to build on a miss (the CLI binary, then maturin), in the cargo target the store gives
-(outside the package dir — agora-redesign #1493).
+(outside the package dir).
 """
 
 import os

@@ -1,5 +1,5 @@
 """doeff-hy-check(doeff_hy/_static_check.py)が、1 file だけを検める時も、import する file の dir の隣の .hy を展開して
-pyright に解かせること(agora-redesign #2898)。
+pyright に解かせること。
 
 script を `hy scripts/x.hy` で撃つと scripts/ が探し道の先頭に入るので、script は隣の module を top-level の名で読む
 (`(import e2e_wire [...])`)。pyright もこの形を「import する file の dir から根へ向けて親の dir を探す」で解く。前の依存の

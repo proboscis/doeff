@@ -397,7 +397,7 @@ def test_the_warm_child_reads_the_process_through_the_machine_readers() -> None:
     assert "proc_stat_of" in source and "own_thread_count" in source
 
 
-# --- service の頼み(card ki-de44efdb9aa4)— 入力の pipe・cgroup・退きの知らせの中継 -------------------------------------------------
+# --- service の頼み— 入力の pipe・cgroup・退きの知らせの中継 -------------------------------------------------
 
 NOTICE_ENV = "DOEFF_WORKER_NOTICE_FD"
 

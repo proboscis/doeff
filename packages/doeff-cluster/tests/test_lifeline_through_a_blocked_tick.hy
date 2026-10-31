@@ -1,7 +1,7 @@
-;; 拍が scheduler を同期で塞いでも、生存の合図の thread が heartbeat を送り続ける(card ki-9b58446e2ad6)— 失敗ケース。
+;; 拍が scheduler を同期で塞いでも、生存の合図の thread が heartbeat を送り続ける— 失敗ケース。
 ;;
 ;; 実例(本番 zeus 2026-10-24 05:42〜05:46 JST): 機体の memory が詰まった間、拍の 1 つが 252 秒かかり(区間 ActionsToPublishStatus
-;; 250 秒)、heartbeat の間は 197 秒になった。拍の外の背景の task(card ki-e38dbfca7671)も scheduler の上の task なので、拍が scheduler を
+;; 250 秒)、heartbeat の間は 197 秒になった。拍の外の背景の task も scheduler の上の task なので、拍が scheduler を
 ;; 塞ぐ間や外の完了が返らない間は送れない。coordinator は切り離した task の lease(60 秒)の切れで worker の死と判じ、機体の task を
 ;; 全部 lost にした(日次の検証の 04:00 の回を含む)。
 ;;   - 本物の調整ループ(run-worker)・本物の coordinator-link(GET /watch を使う形 — 本番の入口と同じ)・本番の tick 間の待ち・本番の

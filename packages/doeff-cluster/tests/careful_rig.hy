@@ -257,7 +257,7 @@
   (val blob (encode-program (report)))
   (val sha (program-sha blob))
   ;; 送り手は env の root の外として名乗る(空の environ — process-versions の註)。検を回す process が外側の env の中で動くと
-  ;; os.environ に外側の env のキーが在り、台の env のキーと食い違って断られる(card ki-6dde100393cd)。
+  ;; os.environ に外側の env のキーが在り、台の env のキーと食い違って断られる。
   (val sent (or versions (! (process-versions {}))))
   (<- spec (task-spec {"id" task-id "revision" "" "versions" sent "program" sha
                         "runtimeEnv" declared}

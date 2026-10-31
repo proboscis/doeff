@@ -1,11 +1,11 @@
 ;;; 契約 schema 検証 = JSON Schema(確立した外部意味論の輸入)。
 ;;;
-;;; 歴史(doeff#482 / ACP plan U1 裁定 2026-07-06): 初代 Rust agentd は
+;;; 歴史(doeff#482): 初代 Rust agentd は
 ;;; 検証器を JSON Schema の無裁可 subset(oneOf/const/type/minLength/
 ;;; pattern/required/properties のみ、他キーワードは黙殺 = fail-open)で
 ;;; 実装し、C3 の旧実装 parity 移植がその省略をそのまま「契約」に昇格
 ;;; させた。ACP steward の実障害(items 違反 payload が InvocationSucceeded)
-;;; で露呈。ユーザー裁定: 「JSON Schema で契約を書く」と決めた時点で意味論は
+;;; で露呈。決まり: JSON Schema で契約を書くと決めた時点で意味論は
 ;;; 仕様のそれが唯一の正 — subset は逸脱であって代替仕様ではない。
 ;;;
 ;;; 本モジュールは jsonschema(参照実装、$schema 尊重・既定 draft 2020-12)

@@ -1,4 +1,4 @@
-"""doeff_hy._frozen の型(frozen.pyi)の検(agora-redesign #2311・#2245)。
+"""doeff_hy._frozen の型(frozen.pyi)の検(#2245)。
 
 frozen.hy は Hy の module で、型の宣言(frozen.pyi)が無いと pyright は `FrozenMap` と凍らせる関数を Unknown として読み、
 FrozenMap を返す定義の答え・FrozenMap の値の読みに、書き手に直せない reportUnknown* が連なる(agora の基点に同じ種類が
@@ -8,7 +8,7 @@ FrozenMap を返す定義の答え・FrozenMap の値の読みに、書き手に
   かける(写しは別の名の package — doeff_hy の名のままだと、pyright は写しに無い frozen.pyi を入れた doeff_hy から読む)。外すと FrozenMap と答えが Unknown の赤になり、置くと消える。置いた側では値の型の取り違え(int の値に文字列を
   足す)が赤になる(FrozenMap が値の型を運んでいる)。型引数を書かない `FrozenMap` は FrozenMap[object] で、型引数の
   書き忘れの赤にならない。
-- freeze-json-text(JSON の文字列 → FrozenJson)の答えは FrozenMap に絞れ、絞った値の中身は JSON の値として渡せる(agora-redesign #2628 —
+- freeze-json-text(JSON の文字列 → FrozenJson)の答えは FrozenMap に絞れ、絞った値の中身は JSON の値として渡せる(
   json.loads の Any を読む所で型に決める口。stub から外すと検体のその行が赤)。
 - 一致: stub が宣言する名は実行時の module に在り、関数の引数の名は実装と同じ。FrozenMap は実装と同じく
   `Mapping[str, V]`(型引数は値の型 1 つ)。

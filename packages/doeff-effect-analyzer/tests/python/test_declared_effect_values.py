@@ -1,4 +1,4 @@
-"""A value the contract types as an effect, performed as it is (card ki-827dc43fa730).
+"""A value the contract types as an effect, performed as it is.
 
 A Program that performs effects it was handed — ``(for [answer answers] (<- answer))`` with
 ``:pre [(: answers (get tuple #(HttpRespond ...)))]``, or ``(<- read ask)`` with ``:pre [(: ask

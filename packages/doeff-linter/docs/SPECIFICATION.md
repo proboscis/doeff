@@ -17,7 +17,7 @@
 | `doeff-linter --commit-hook --report-out <file>` | commit の hook(3 節「commit の hook が当てる範囲」)を走らせ、HEAD の版と stage した path の 2 つの測り(測った path の列・editor-json の違反・判じた規則)を 1 つの JSON で `<file>` に書く(3 節「commit の hook の報告」)。止める判定・終了コード・stderr の文は引数の無い時と同じ |
 
 - 設定を探す順: `--config` があればそれ。無ければ今の dir から上へ、`[tool.doeff-linter]` を持つ pyproject.toml を探す。
-- repo の根: `--root` があればそれ。無ければ設定の `root = "<設定 file の dir からの相対の path>"`(agora-redesign #1977 — monorepo の
+- repo の根: `--root` があればそれ。無ければ設定の `root = "<設定 file の dir からの相対の path>"`(monorepo の
   package の `src/` を根にして module の名を import の名に揃える)。それも無ければ見つけた pyproject.toml の dir。`--config` を渡した時は
   今の dir(設定の `root` は `--config` の file の dir から)。
 - `--stdin` と `--path` は editor-json の時だけ使える。`--stdin` に `--path` が無ければ終了コード 2。
@@ -29,10 +29,10 @@
 | 0 | error の違反が無い(warning と info はあってもよい) |
 | 1 | error の違反がある(登録簿に無い新しい破れ) |
 | 2 | 引数の誤り・設定が読めない・設定の名前の食い違い・型の違う値(理由は stderr) |
-| 3 | error の違反は無いが、測れなかった物がある(緑ではない): 意味の規則で問うはずだった定義に答えを得られなかった(Jev に届かない・鍵が無い・較正が撃てない — agora-redesign #1160)か、名指した Hy の file が linter の歩く範囲の外(下の「名指しの範囲の外」・#2821) |
+| 3 | error の違反は無いが、測れなかった物がある(緑ではない): 意味の規則で問うはずだった定義に答えを得られなかった(Jev に届かない・鍵が無い・較正が撃てない)か、名指した Hy の file が linter の歩く範囲の外(下の「名指しの範囲の外」・#2821) |
 | 4 | `--baseline-report` の時だけ: 基点に無い critical がある(新しい critical)。1・3 より先に判じる(2 は常に最優先) |
 
-### 名指しの範囲の外(agora-redesign #2821)
+### 名指しの範囲の外
 
 層の規則は、repo の根(`root`)の下を歩いた Hy の file だけを判じる。根の外の Hy の file(例: 根を `src` にした package の `tests/`)を
 名指しても何も判じられず、以前は終了コード 0 で黙った — 「測って通った」と読める。今は、名指した path(file か dir — dir はその下の
@@ -50,7 +50,7 @@ Hy の file に開く)のうち歩く範囲の外の Hy の file を名指し、
   広げるのは今は入れない(#2821 の決め 2 — 根の下の判じられない file を触る commit が止まるため。数は案 A-2 の表に)。
 - 戻し方: この欄・`project::hy_files::outside_walk` と 3 つの呼び手(通常の入口・editor-json・commit の hook)を消す。
 
-### 歩く範囲に足す dir(設定の `include`・agora-redesign #2821 の案 A-1)
+### 歩く範囲に足す dir(設定の `include`)
 
 `[tool.doeff-linter] include = ["tests"]`(設定 file の dir からの相対)— 根の外の dir を歩く範囲に足す。歩く範囲 = 根の下 + `include` の
 dir の下(1 か所の定義 = `project::hy_files::walked`)。
@@ -63,7 +63,7 @@ dir の下(1 か所の定義 = `project::hy_files::walked`)。
 - **無い dir** は設定の誤り(黙って何も歩かない形にしない)。
 - 戻し方: 設定の行を消す(package の設定)。機能ごと戻すなら `include`・`walked`・`walked_rel` と呼び手を消す。
 
-### 基点との比べ(`--baseline-report`・agora-redesign #1803)
+### 基点との比べ(`--baseline-report`)
 
 マージ前の検査と commit の hook は、保存した既知の一覧を持たず、基点と commit の両方で linter を走らせ、commit の critical の識別子の集合が
 基点の集合に含まれていれば通す(#1762 の決定 A)。基点の側を走らせるのは呼び手の役で、linter は基点の出力 file を読んで比べるだけ
@@ -78,20 +78,20 @@ dir の下(1 か所の定義 = `project::hy_files::walked`)。
 - **範囲**: path を名指した実行では、名指しの下の違反だけを比べる。基点の出力も同じ path の名指しで作る(呼び手の役)。
 - **既知の一覧を持たない規則**(登録簿で下げない規則 — DOEFF206〜209・211): path を名指した実行(commit の hook の stage した file・登録の前の
   変えた所の検査)では、名指しの下のその規則の critical を、基点に同じ識別子が在っても全部 `new_critical` に入れる — 変えた file に
-  当たりが在れば止める(細かさは file 単位)。名指しの無い実行は基点の差だけ(全体の数は日次で出す)(agora-redesign #3834)。
-  repo 全体が要ると名乗る規則(DOEFF206・207・209)は commit の hook では当てず、repo 全体の検証が見る(card ki-7da14032cf9c — 下の
+  当たりが在れば止める(細かさは file 単位)。名指しの無い実行は基点の差だけ(全体の数は日次で出す)。
+  repo 全体が要ると名乗る規則(DOEFF206・207・209)は commit の hook では当てず、repo 全体の検証が見る(下の
   「commit の hook が当てる範囲」)。
   commit の hook は止める当たりを HEAD の版に同じ識別子が在るかで分けて書く(`commit_hook::split_by_head` — 止める判断は変えない):
   無い物は「HEAD に無い critical: <識別子>」、在る物は
   「変えた file の既存の当たり(main にも在る・この規則は既知の一覧で下げない): <識別子>」と書き、後者が在れば
   「この file を変えるなら、その当たりも同じ変更で直す(hook を飛ばさない)」を 1 行足す(既存の当たりにも「HEAD に無い」と書いていて、
-  hook の不具合と読まれた・agora-redesign #3834)。
+  hook の不具合と読まれた)。
 - **誤り**: 基点の file が読めない・JSON でない・`violations` の列が無い・text / json の出力で使った時は終了コード 2。
 - 戻し方: この欄・引数・`src/baseline.rs` を消す(呼び手が使う前なら影響なし)。
 
 設定(pyproject の `[tool.doeff-linter]` のどの段でも・architecture.hy)に**この binary の知らない鍵**か、この binary に無い形の正しい
 規則の ID(`DOEFF` と 3 桁)がある時は、終了コード 2 で止めない。その鍵(参照)だけを読まずに残りの規則を走らせ、設定の file のその行に
-warning の違反 **DOEFF100**(設定の知らない鍵)を出す(agora-redesign #848)。設定は binary より先に進むことがあり(新しい鍵を書いた後、
+warning の違反 **DOEFF100**(設定の知らない鍵)を出す。設定は binary より先に進むことがあり(新しい鍵を書いた後、
 置き場の binary が本線から組み直されるまでの間)、そこで全体を止めるとエディタの違反の欄が空になり hook も黙るため。書き違いも同じ形で
 見える。DOEFF100 は `enable` の一覧に無くても出し、`disable` に名指した時だけ止まる。知っている鍵の正本は設定の struct の定義
 (`serde_ignored` が定義に無い鍵を path つきで集める — 鍵の表を手で持たない)。
@@ -169,7 +169,7 @@ warning の違反 **DOEFF100**(設定の知らない鍵)を出す(agora-redesign
   載った warning は info、照合中の規則は info に下がる。エディタはこの 2 つと `standing` で「重い規則の破れが新しい分・既知の分で何件残るか」
   を数える(下げた理由の判定は linter が持つ)。Python の文ごとの規則は下げないので 2 つは同じで `standing` は `new`。
 
-- `judged_rules`(契約の更新 8・agora-redesign #2163): この実行で判じた規則の ID(辞書順・重ねない)。判じた = その規則の当たりを
+- `judged_rules`(契約の更新 8): この実行で判じた規則の ID(辞書順・重ねない)。判じた = その規則の当たりを
   出し切った(0 件の規則も載る)。`violations` の規則はどれもこの列に入る。
   - 全体の実行: 有効な規則の全部。path を名指した全体の実行は DOEFF166(登録簿の当たらない行)だけを除く(当たる所見が名指しの外に在りうる)。
   - 1 file の実行(`--stdin --path`): Python の文ごとの規則の全部と、層の規則のうち 1 file で判じると規則が名乗る物
@@ -217,7 +217,7 @@ warning の違反 **DOEFF100**(設定の知らない鍵)を出す(agora-redesign
 | `test_sleep` | `parts`・`names`・`exclude`(DOEFF211 の母集団 = Hy の検の置き場。節が無ければ DOEFF211 は判じない) | — |
 | `laws`(配列) | `name`・`adr`・`statement`・`rules`・`layers` | layers が空なら全部の層 |
 | `translation_effects` | `handler_layers`・`intent_layers`・`max_depth`(DOEFF130 — 21 節。DOEFF174 の到達も同じ `max_depth`)・`domain_layers`(DOEFF174 の業務の層 — 書いたなら名の誤りは設定の誤り) | protocol・intent・8・domain_layers は core・intent のうち宣言に在る層 |
-| `commit_hook` | `whole_repo_rules`(退役した鍵 — 読まずに 1 行で名乗る。repo 全体が要るかは規則が名乗り、hook はその規則を当てない・agora-redesign #2090・card ki-7da14032cf9c)・`timeout_s`(子の linter 1 回ごとの上限の秒・0 は上限なし・越えたら測れなかったとして commit を止める — 下の「commit の hook の上限」・agora-redesign #1989・#3834) | なし・20 |
+| `commit_hook` | `whole_repo_rules`(退役した鍵 — 読まずに 1 行で名乗る。repo 全体が要るかは規則が名乗り、hook はその規則を当てない)・`timeout_s`(子の linter 1 回ごとの上限の秒・0 は上限なし・越えたら測れなかったとして commit を止める — 下の「commit の hook の上限」) | なし・20 |
 | `registry` | `dirs`(1 鍵 1 file の dir)・`files`(1 行 1 鍵)・`config_files`(1 行 1 鍵・設定 file の dir からの相対)・`reconciling` | dirs と files は repo の根から |
 | `rules.<ID>` | `registered_severity`(登録簿に載った破れの重さ: error・warning・info) | warning |
 | `rules.<ID>` | `level`(規則の重大さ: critical・major・minor・info。どの規則でも書ける。登録簿で下げない — エディタが「手つかずの critical」を数える軸) | 下の「既定の重大さ」の表、表に無い規則は規則そのものの重さから(error = major・warning = minor・info = info) |
@@ -226,9 +226,9 @@ warning の違反 **DOEFF100**(設定の知らない鍵)を出す(agora-redesign
 
 `--commit-hook` を撃つ linter は、各 repo が pin した doeff の commit の断面から機体で 1 度だけ組んだ物を使う — 組み立ての入口は
 `packages/doeff-linter/scripts/linter_snapshot.py`(`uv run --script <path> <doeff の checkout> <commit>` が置き場の binary の path を
-印字する・組めなければ 1 で終わり、呼び手は自分の環境の linter へ戻る・agora-redesign #1582・#2001)。repo は組み立てを写して持たない。
+印字する・組めなければ 1 で終わり、呼び手は自分の環境の linter へ戻る)。repo は組み立てを写して持たない。
 
-### commit の hook が当てる範囲(card ki-7da14032cf9c・cisco-c8 の決め 2026-10-11)
+### commit の hook が当てる範囲(cisco-c8 の決め 2026-10-11)
 
 `--commit-hook` は、有効な規則のうち file 1 つの中身と設定だけで決まる規則(`--split-rules` の `quick` — 宣言の file を変えたかを問わない)
 だけを、stage した path と、その HEAD の版(stage で消した file の HEAD の版を含む)に当てる。repo 全体(path `.`)は測らない。
@@ -241,12 +241,12 @@ warning の違反 **DOEFF100**(設定の知らない鍵)を出す(agora-redesign
   当てても repo 全体の推論の世界を組む(DOEFF132 は 1 file で 28 秒・42 規則の合計で約 20 秒)ので、stage した path に当てる形でも軽くならない。
 - 門の口 `--split-rules` の分け(宣言の file を変えた変更は全部の規則を `whole` へ)は変えない — 呼び手が repo 全体の比べに使う。
 
-### commit の hook の上限(agora-redesign #3834・元の issue #2723)
+### commit の hook の上限(元の issue #2723)
 
 `--commit-hook` は子の linter を 1 回ごとに上限の秒(`--commit-hook-timeout-s` が設定の `commit_hook.timeout_s` より勝つ・既定 20)で
 打ち切る。0 は上限なし(打ち切らずに終わりまで測る)。
 
-- 上限は子の CPU 秒で測る(`/proc/<pid>/stat` の utime・stime と待ち終えた子孫の cutime・cstime — card ki-79532edd43dd)。混んだ機体では
+- 上限は子の CPU 秒で測る(`/proc/<pid>/stat` の utime・stime と待ち終えた子孫の cutime・cstime)。混んだ機体では
   wall の秒だけが伸び、wall で測っていた時は、上限なしなら 0 件の commit が毎回切れて止まった(zeus の load 42〜73)。CPU を使わずに
   終わらない子は、wall の予備の上限(上限 × 4)で切る。子の CPU 秒を読めない機体(/proc の無い Mac)は今までどおり wall の秒で測る。
   判断は `cut_measure` の 1 か所で、止める行は物差しを名乗る(`CPU 秒の上限 N 秒で打ち切った`・`wall の上限 N 秒で打ち切った(この機体では
@@ -264,7 +264,7 @@ warning の違反 **DOEFF100**(設定の知らない鍵)を出す(agora-redesign
 - 打ち切られなかった時の判じは変わらない。
 - HEAD の版を測る木は cache の根に repo ごとに 1 つ置いて差分で進めるので(#3858)、2 回目からは変わった file だけを書き換える。
 
-### commit の hook の報告(`--report-out`・card ki-b9eeeea338b6)
+### commit の hook の報告(`--report-out`)
 
 `--commit-hook --report-out <file>` は、hook の 2 回の測り(HEAD の版・stage した path)を 1 つの JSON で `<file>` に書く(相対の path は
 今の dir から)。会話の commit の hook がこの報告を会話 id つきで記録へ送り、会話が増やした・減らした違反を commit ごとに読む材料にする
@@ -295,9 +295,9 @@ warning の違反 **DOEFF100**(設定の知らない鍵)を出す(agora-redesign
   上限」)には足さない。
 - 戻し方: 引数 `--report-out`・`commit_hook::Measurement`・`report_of` と `commit_hook::run` の書き出しを消す(送る hook が使う前なら影響なし)。
 
-### 既定の重大さ(agora-redesign #1041)
+### 既定の重大さ
 
-責務の境界の違反は、どの repo でも critical(operator の決定 2026-09-29 — 責務の境界を守る事が doeff の code を検で確かめられる形に保つ前提だから)。repo ごとに写すと片方が黙って古くなるので、既定の表は doeff-linter の 1 か所(`ProjectRule::default_level` —
+責務の境界の違反は、どの repo でも critical(責務の境界を守る事が doeff の code を検で確かめられる形に保つ前提だから)。repo ごとに写すと片方が黙って古くなるので、既定の表は doeff-linter の 1 か所(`ProjectRule::default_level` —
 網羅の match で、新しい規則は決めずに足せない)に置き、repo の設定の `rules.<ID>.level` は既定と違う所だけを書く(書けば repo の宣言が勝つ)。
 
 | 既定 | 規則 |
@@ -307,7 +307,7 @@ warning の違反 **DOEFF100**(設定の知らない鍵)を出す(agora-redesign
 | major — Jev の判定(較正が済むまで) | DOEFF201(翻訳の層の業務の判断)・202(判断の層の通信の手段)・205(形の検めと判断の混ざり) |
 | 規則そのものの重さから | 上に無い規則の全部(Python の文ごとの規則 DOEFF001〜031 も) |
 
-Jev の規則(201・202・205)は、較正が済んで信頼できるまで critical にしない(operator の決定 B・2026-09-30 — agora-redesign #1762 / #1801。#942 で
+Jev の規則(201・202・205)は、較正が済んで信頼できるまで critical にしない(#942 で
 critical にしたのを戻した)。確率で info にも出るが、level は規則の軸なので info の当たりも major に数える(外れは誤判定の一覧へ — 10 節)。
 
 ## 4. 母集団
@@ -340,44 +340,44 @@ critical にしたのを戻した)。確率で info にも出るが、level は�
 | DOEFF103 | `types_only` の層の module に関数の定義(Hy は `function_definers` の頭の最上位の式、Python は最上位の def)があれば 1 件 | `definitions` | 最初の関数の名 |
 | DOEFF104 | タグの無い定義があって module の頭のタグも無い、または定義が 1 つも無く頭のタグも無い | なし | 最初のタグの無い定義の名 / 1 行目 |
 | DOEFF105 | 実効のタグごとに、role か context が無いか空、または role が `roles.by_layer` の外なら破れ(1 module に同じ鍵が何度も出ることがある) | role(無ければ `None`) | タグの辞書 |
-| DOEFF106 | hy-index 版 3 の定義ごとの直接の証拠(raw.direct)が、`allowed_layers` の外の層の Hy の定義に在れば破れ。architecture.hy に `:world-handlers` を書いた repo では層で許さず、名簿の定義の module の file だけに許す(`allowed_layers` は書けない・raw_side_effects の節が無くても当たる — agora-redesign #1140)。強い証拠は error、弱い証拠は warning。入れ子で重なる証拠は内側の定義に 1 度 | `<定義>::<証拠の名>` | 証拠の記号 |
-| DOEFF107 | 経由の証拠(raw.via — 全体の実行だけ)を info で出す。経路つき。1 定義で経路と証拠の名が同じ物は 1 件。architecture.hy の `:world-handlers` に宣言した定義には入らない(その先の生の副作用はその定義の責務 — agora-redesign #1902)。宣言した定義を通らない別の経路で届けば当たる | `<定義>::via::<経路>::<証拠の名>` | 定義の名 |
-| DOEFF131 | `:world-handlers` の `:wraps` に挙げた doeff の実 I/O の handler を、名簿の定義(とその中の入れ子の定義)の外で名指す。値として渡す参照(`with-handlers` の列)も呼び出しも数え、import の行は数えない。名指しの先は索引の参照の `target`(呼び出しと同じ名前の解決)。同じ定義の同じ handler は 1 件。既定の重大さ critical(agora-redesign #1106 の R1・#1140) | `<定義>::world::<module:名>` | 名指した記号 |
-| DOEFF106・131(層の外) | `:world-handlers` を書いた repo では、層の置き場の外の Hy の file(層の外の dir・`:root` の外で `:raw-io-roots` に挙げた dir — 書かなければ `:root` だけ)にも DOEFF106・131 を当てる。検の file(path の段の :exclude・名が test_ / conftest)・defadr を持つ file・deftest の中の当たりは外す(縁のテストは DOEFF133)。message に「層の置き場の外」(agora-redesign #1147) | DOEFF106・131 と同じ | 同じ |
-| DOEFF132 | `:world-handlers` の定義 1 本ずつ — module が層の置き場に無い(無い module か層の外)・foundation の外の層に在る・Hy の module に定義が無い。全体の実行だけ。既定の重大さ critical(agora-redesign #1106 の R2・#1141) | `<module:名>` | architecture.hy の名簿の要素 |
-| DOEFF133 | テストの種類(手元 / 縁)を届く先から導く — 全体の索引で定義の間の辺(呼び出し・参照・入れ子)を組み、名簿の定義・`:wraps` の handler を名指す定義・強い生の I/O の証拠を持つ定義から逆向きに辿る。届く deftest は縁で `:edge-mark` の印(deftest の `:marks` か module の `pytestmark`)が要り、届かない deftest は印を持たない。食い違いを critical で出し、縁の message に届く道を書く。Python の検は数えない(R6)。Hy の定義が名指す repo の中の Python の関数(repo の根からの `a/b.py` か `a/b/__init__.py`)は、その中の強い生の I/O の証拠(import を通した目録の名・呼び出しの頭の組み込み — 型の注記と except の型は数えない)と、名前で決まる呼び先(同じ module の関数・import した関数・class の構築と `self.m` / `cls.m`・Hy の定義へ戻る呼び)まで深さの上限なしに辿る。値の上の属性の呼びと実行時の import は辿らない(Hy の図と同じ範囲)。構文の壊れた・読めない module は報告の errors に名乗る(agora-redesign #1798)。`:edge-mark` を書いた時だけ当たる(agora-redesign #1106 の R3・#1142) | `<定義>::edge` / `<定義>::local` | deftest の名 |
-| DOEFF137 | 縁の検の無い許可名簿の handler — `:world-handlers` の handler ごとに、空でない `:interpreters` を持つ deftest(`:interpreters` の要素は file の外の定数の記号なので読み解かず、空でない列かだけを見る — deftest の設定の dict の読みは DOEFF133 の `:marks` と同じ)のうち、DOEFF133 と同じ定義の辺の図(呼び出し・参照・入れ子)を辿ってその handler の定義に届く物が 1 本も無ければ 1 件。`:interpreters` を持たない deftest が届くだけでは数えない。理由つきの `:contract-test (none …)` の handler は判じない・理由の無い `:contract-test none` は縁の検が在っても 1 件(#1796)。相手役の名簿 `:stand-ins` の組(相手役・本物)ごとにも、空でない `:interpreters` を持ち、同じ図で相手役の定義と本物の定義の両方に届く deftest(契約の検)が 1 本も無ければ 1 件(本物が索引の外の package に在る時は、本物を直に名指す定義から辿る。解釈器の名の文字列 `"module:名"` / `"module:名@<変種>"` を持つ定義もその handler を名指す定義に数える・`:contract-test` は `:world-handlers` と同じ)。全体の実行だけ・有効にする条件は DOEFF133 と同じ(`:world-handlers` と `:edge-mark`)。既定の重大さ critical(agora-redesign #1363・相手役の組は card ki-04978f19b04d) | `<module:名>`・相手役の組は `<相手役 module:名>-><本物 module:名>` | architecture.hy の名簿の要素 |
-| DOEFF135 | テストは deftest だけ — `:test-forms {:tests [..] :check-scripts [..] :runners [..]}` の綴りの型で file を選び、:tests の Python の file の `def test_*`(python-test・件数を message に)、:tests の file の module ごとの skip(字下げの無い段の `pytest.skip`・`allow_module_level`・`pytestmark` の `mark.skip` — 束ねの名と印が別の行に在る複数行の束ねも括弧が閉じるまで読み、束ねの名の行を指す・#1426)、:check-scripts の file(check-script)、:runners の file(runner)を file ごとに 1 件。全体の実行だけ。既定の重大さ critical(agora-redesign #1106 の R6・#1144) | `python-test` / `module-skip` / `check-script` / `runner` | file の頭か最初の当たりの行 |
-| DOEFF136 | 模擬の環境で回していない service — `:verification-environment` を書いた repo で、entry の層を持つ service ごとに、その service の entry の層の dir(`<root>/<service の dir>/entry`)の定義から呼び手(呼び出し・参照・入れ子 — DOEFF133 と同じ図)を逆向きに辿り、模擬の環境の dir の下の deftest に 1 本も届かなければ defservice の位置で critical(鍵 = service の名)。entry の層を宣言しても定義が 0 本の service は数えない(回す組み立てが無い)。service の中の tests は模擬の環境の外なので数えない。索引は `defsystem`(doeff-cluster の系の宣言)も定義として読むので、deftest → defsystem → entry の経路も届く(agora-redesign #1143・R5・#1111)。 |
-| DOEFF163 | 不変条件を宣言していない service — code を持つ service(DOEFF136 と同じ母集団: :layers に entry があり、`<root>/<service の dir>/entry` の下に Hy の定義が 1 本以上。ただし defservice に `:entry-modules` を書いた service は宣言で母集団に入り、その module の Hy の file が無ければ 1 件 — agora-redesign #1978)ごとに、defservice の `:invariants`(業務の不変条件の関数 `"module.path:関数"` の列)が無いか空なら 1 件、名指した関数の定義が repo の Hy の索引に無ければ 1 件、定義の `:tags` の `:role` が `judgment` でなければ 1 件(置き場は問わない — 模擬の環境の `*_invariants.hy` でよい)。位置は defservice の名。既定 critical、登録簿に載った欠けは warning。全体の実行だけ(agora-redesign #1559・#1155 の定義 1 の条 (b)) | `<service>` / `<service>::<module:関数>` / `<service>::entry::<module>` | defservice の名 |
-| DOEFF173 | 系を宣言していない service — architecture.hy の全 defservice ごとに(entry の層を持たない service も数える・agora-redesign #2221)、defservice の `:system`(cluster に置く系 `"module.path:defsystem の名"`・系が複数なら列)が無いか空なら 1 件、`:system {:exempt "理由"}` の理由が空なら 1 件(exempt を書いてよいのは、旧い経路に残す service か、process を持たない部品の service — main も deploy も無く、他の service が読むだけで使う。linter は理由の中身までは判じない)、名指した名ごとに(`:system {:part-of "module.path:defsystem の名"}` = その service の code が別の service の系の中で走る、の時は指した系 1 つに当て、置き場は「どこかの service の entry の層」に緩める — part-of でない宣言が他の service の系を指すのは赤): 定義が無い・defsystem でない(静的な記述 `__doeff_system__` を付けるのは defsystem だけ — 索引の種類で判じる)なら 1 件、module がその service の entry の層の外(`:entry-modules` の service はその module の外)なら 1 件、引数が 1 つでないなら 1 件、土台の引数に型の注記(`[#^ T foundation]`・doeff L983)が在ればその型の頭が素の `Callable`・写像・中身の型の無い組なら 1 件(注記は名として数え、job の関数の型は見ない)、注記が無ければ引数 1 つ(土台)を位置の引数で受ける job の関数ごとに、その引数の型(`:pre` の `(: 引数 型)`)が無いか、頭が素の `Callable`・写像・中身の型の無い組(`dict`・`Mapping`・`FrozenMap`・`tuple`・`list`・`Any`・`JsonBody` など)なら 1 件、土台を受ける job が 1 つも無ければ 1 件。defsystem が在れば汎用の模擬 cluster のテストに自動で載るので、系ごとのテストは求めない(DOEFF136 と対・operator 2026-10-01)。位置は defservice の名。既定 critical。全体の実行だけ(agora-redesign #2187) | `<service>` / `<service>::exempt` / `<service>::<module:名>` / `<service>::<module:名>::params` / `<service>::<module:名>::unused` / `<service>::<module:名>::<job の関数>` | defservice の名 |
-| DOEFF142 | handler の引数に client・可変の店 — `:handler-arguments {:files [..] :exclude [..] :store-names [..] :store-suffixes [..] :keep-mark "…" :value-types [..]}` の :files に当たる Hy の file の `defhandler`(入れ子も)の引数 1 つずつを分ける: `client`(型の名の末尾が Client / Connection / Pool / Engine・名が client / conn / connection / …-client / …-conn)・`container`(dict / list / set / bytearray / MutableMapping … — `(get dict …)` を含む)・`object`(repo の Hy と Python の class の索引で frozen でない class と、索引に無い型 — frozen の dataclass・frozen の設定・Enum・NamedTuple・defrecord と :value-types は値)・`named`(型の注記が無く名が :store-names / :store-suffixes)。本文(次の最上位の form まで)に :keep-mark の註が在る handler は数えない。判定は渡した file だけで決まり、class の索引は file ごとのキャッシュで引く(1 file の実行でも repo を読み直さない)。既定の重大さ critical(agora-redesign #1189 / #1366) | `<handler>::<引数>` | 引数の位置 |
-| DOEFF143 | 業務の効果に答える偽の handler — `:business-fakes {:simulation [..] :assembly [..] :tests [..] :skip [..] :production [..] :sets [..] :simulation-prefix "…" :production-prefix "…" :entry-string-modules [..] :entry-string-files [..] :business-modules [..] :lower-layer-modules [..] :external-effects "dir" :counterexamples "dir" :unserved "dir"}`。定義の辺の図(DOEFF133 と同じ・系の値の中の辺も本番で回る辺として数える)を、模擬の根(:simulation と :assembly の定義・:sets の file の :simulation-prefix の定義)と本番の入口(:production の file のうち :sets の :production-prefix の定義・defsystem・`(when (= __name__ "__main__") …)` の中の名・`"<module>:<名>"` の入口の文字列 — :entry-string-files の本文も読む)から前向きに辿る。模擬の根からだけ届く defhandler の節が、:business-modules の効果に tap でなく(下の節の形で、受けた効果をそのまま渡す終わりを 1 つも持たずに)答え、外の世界の表にも反例の表にも無ければ critical(鍵 = `<handler>::<効果>`)。模擬の根からだけ届く節が :lower-layer-modules の効果に tap でなく答えるのも critical(下の層の偽物は下の層の正典 1 つだけ・鍵 = `lower:<handler>::<効果>`)。表の腐りも出す: 反例の表の行が当たらない(DOEFF157 の検だけから届く節も照らす — 業務の効果か :lower-layer-modules の効果に答える節。表の当たりに数えるのは自前の値を返す終わりを持つ節で、片方の枝でだけ出し直す節も数える)・外の世界の表の行にどの偽物も答えない・本番の答え手が無い(本番の code の Python の `isinstance(effect, X)` も答え手に数える・:unserved に載せた物を除く)。節の形(DOEFF143・155・156・157・158・164・167・206 が共に使う 1 つの判じ — agora-redesign #3834): 節の終わりごとに、受けた効果をそのまま外へ渡す(出し直し — `(<- 名 [型] effect)`・受けた引数をそのまま並べた `(<- 名 (頭 …))`・`(setv 名 (yield effect))`・`(with_handlers [...] 出し直し)` — で束ねた名か、それを `(:= 名 束ねた名)` などで入れ直した名の `resume` / `transfer`・同じ効果を出し直した節の `(resume None)`・`(reperform effect)`・`(pass)`・`:when` の節)か、自前の値(それ以外の値の `resume` / `transfer`・`finish`・別の値の `reperform`・`with_handlers` の下の出し直しの答え)かに分け、`(resume (if 条件 A B))` は枝ごとに分ける。渡す終わりを持つ節が tap(偽物の判じ DOEFF143・155・156・157・158 から外す — 片方の枝でだけ出し直す障害の注入も)、自前の値の終わりを持つ節が表の行を要する節(反例の表の当たり・DOEFF164・167・206)。両方を持つ節も在る。`raise` は終わりに数えない。節の欄に `effect` の名が在れば、その名は受けた効果ではない。同じ handler の同じ頭の節は欄ごとに OR で合わせる。節の終わりを作る操作(ここに挙げた `resume` ほか)の名・終わり方・引数の数は、この規則の source に書かず、doeff-hy の節の操作の表 `CLAUSE-OPS`(`packages/doeff-hy/src/doeff_hy/_clause_ops.hy`)から書き出した生成物 `data/clause_ops.json` を読む(`src/project/clause_ops.rs`)— 終わり方が再開する操作は値で・渡す操作は引数の有無と出し直しの式で・終える操作は自前の値で判じ、例外で抜ける操作は終わりに数えない。表に行を足したら `uv run python scripts/export_clause_ops.py --write` で書き直せば判じが追従する(書き直し忘れ・file への直書きは `tests/test_linter_clause_ops.py` が、source への名の直書きは business_fakes.rs の検が赤にする — card ki-d3ef2a50cc04)。表は 1 鍵 1 file の dir(1 行目が鍵・2 行目から理由)。無い dir は、:unserved(違反を固定する縮める向きの表)なら空の表として読み(知らせ 1 行)、外の世界の表と反例の表(宣言)なら読めない(errors — agora-redesign #1918)。全体の実行だけ。既定の重大さ critical(agora-redesign #1375 / #1189) | `<handler>::<効果>` / `lower:<handler>::<効果>` / `counterexample-unused::…` / `external-unused::…` / `external-unserved::…` | 節の位置・表の dir |
-| DOEFF155 | 組み立ての形の破れ — `:assembly-shape {:translation-point "with-*-translation" :retired-function "…" :translations "…" :translation-layer "…" :intent-layer "…"}`(組み立ての層・組の file・業務の module・外の世界の表は `:business-fakes` から読む — 両方を書いた時だけ)。出す物: :sets の本番の file が残る・組み立ての層に :retired-function の定義が残る・組み立ての層の翻訳の列の 1 点(名が :translation-point の型の defk)の `(with-handlers [#* 列 …] 本体)` が翻訳の列でない import した名を並べる(翻訳の列 = :translation-layer の置き場の :translations の定数か、置き場の外の service の旧い module の列で要素が全部置き場の外の業務の答え手の物・同じ module の val の列は中へ開く)・列の並び(列が出し直す別の service の :intent-layer の効果に答える列が、それより前に無い)・:translations の定数が別の service の :translation-layer の定義を並べる・翻訳の列の 1 点が `#*` で自分の引数を並べる(列を呼び手から受けない)・`:verification-environment` の dir と :tests の file が、翻訳の列(1 点が並べてよい列と、組み立ての層が :translation-layer の handler か翻訳の列を束ねた列)を `#*` で開いて並べる(模擬と検は本番と同じ 1 点を呼ぶ — agora-redesign #3408)。全体の実行だけ。既定の重大さ critical(agora-redesign #1376 / #1189) | `set-file` / `retired` / `stray:<名>` / `parameter:<引数>` / `loose:<列>` / `order:<列>:<効果>` / `own:<定義>` | 定義の位置・組の file・開いた所の定義 |
-| DOEFF156 | 翻訳の先か土台の答えが業務の効果 — 宣言は DOEFF155 と同じ。:translations の定数から届く翻訳の handler が、自分の答えない業務の効果を名指す(:intent-layer の効果は常に・それ以外は同じ列の handler が答えない物)・出し直した効果に答える同じ列の handler がどれも列の後ろに在る(定数が literal の列の時だけ)・:sets の file の組の関数(:simulation-prefix / :production-prefix)が届く handler のうち同じ module の :translations の外の物が業務の効果に tap でなく答える。業務の効果 = :business-modules の効果のうち外の世界の表に無い物。全体の実行だけ。既定の重大さ critical(agora-redesign #1376) | `target:<handler>:<効果>` / `inner:<handler>:<効果>` / `foundation:<組の関数>:<handler>:<効果>` | handler か組の関数の位置 |
-| DOEFF157 | 検だけの偽物 — 宣言は DOEFF143 と同じ `:business-fakes`。検の根(:tests の file の定義の全部)から届き、本番の入口からも模擬の根からも届かない定義の節が、:business-modules か :lower-layer-modules の効果に tap でなく答え、外の世界の表にも反例の表にも無ければ critical(検だけが使う本番の code の置き場の業務の写しも数える)。わざと壊した反例の handler は反例の表に理由つきで載せる。全体の実行だけ。既定の重大さ critical(agora-redesign #1377 / #1189) | `<handler>::<効果>` | 節の位置 |
-| DOEFF158 | intent の効果の答え手が翻訳の 1 つでない — 宣言は DOEFF155 と同じ(`:business-fakes` と `:assembly-shape` の両方)。本番の入口から届く節のうち、効果の定義元の module の置き場が :intent-layer の層で、tap でなく答える物を数える。節の file が :translation-layer の層の外なら critical、同じ効果に答える :translation-layer の handler が 2 つ以上ならその全部を出す(ADR R9 — 本番と模擬で同じ翻訳 1 つ)。全体の実行だけ。既定の重大さ critical(agora-redesign #1377) | `outside:<handler>::<効果>` / `shared:<handler>::<効果>` | 節の位置 |
-| DOEFF164 | 壊した handler の反例が無い service — 宣言は DOEFF143 と同じ `:business-fakes` の `:counterexamples` と `:verification-environment`。反例の節 = 反例の表の鍵に当たり本番の入口から届かず、自前の値を返す終わりを持つ節(DOEFF143 の節の形)。節の効果の定義元の file を含む service の dir が持ち主(どの service の下にも無ければ土台の効果)。entry の層に定義を持つ service ごとに、持ち主がその service か土台の反例の節に(DOEFF136 と同じ図を逆向きに)届く deftest の 1 本でもその service の entry の層の定義に届けば有り、1 本も無ければ defservice の位置で critical(登録簿に載せれば registered_severity で下げる)。あわせて DOEFF143・157 の表の照らしは、本番から届かず自前の値を返す終わりを持つ節の鍵が表に在ればどの効果に答える節でも当たりに数える(土台の効果に答える壊した handler も表に載せられる)。全体の実行だけ。既定の重大さ critical(agora-redesign #1560 / #1155) | service の名 | defservice の位置 |
-| DOEFF165 | intent の効果の網羅の欠け — 宣言は DOEFF158 と同じ(`:business-fakes` と `:assembly-shape` の両方)。宣言の file の置き場が :intent-layer の層の defeffect ごとに、DOEFF143 と同じ到達の図から 3 列を読む: 手元の検から出すか(検の file の定義から届く定義のうち、答え手〔効果の節・defhandler〕と宣言を除いてその効果を名指す物)・模擬の答え手(模擬の根から届く効果の節の handler)・本番の答え手(本番の入口から届く効果の節の handler)。どれかが空の効果を 1 件にし、本文と `--explain` に 3 列を出す。持ち主の service は宣言の file の置き場を dir に持つ defservice(最も長い前方一致)。Python の class で宣言した効果は数えない(索引の図の外)。全体の実行だけ。既定の重大さ critical(agora-redesign #1562 K4 — #1561 K3 の報告だけの表を失敗に。repo の登録簿に載った既知の欠けは warning) | `<service>::<効果>`(service の無い効果は `-::<効果>`) | 効果の宣言の位置 |
-| DOEFF206 | 検証環境が intent の効果に自前で答える — 宣言は `:business-fakes`・`:verification-environment`・`:assembly-shape`(:intent-layer)の 3 つ(有効にする条件は `:business-fakes` と `:verification-environment`。:intent-layer が無ければ当たりは 0)。当たりは 2 種類: (a) 違反を通す表 — `:external-effects`(鍵 = 効果の完全名)・`:lower-layer-passages`・`:test-only-fakes`(鍵 = `<path>::<handler>::<効果>`・最後の `::` の後が効果)— の行が、定義元の module の層が :intent-layer の効果を通す。行の file に出す。無い `:lower-layer-passages`・`:test-only-fakes` の dir は空と読む(知らせ 1 行)。(b) 検証環境の dir(`<root>/<:verification-environment>/` の下 — 置き場の免除 DOEFF114・115 と同じ読み・`Architecture::verification_environment_dir`)の handler の節が intent の層の効果に答える。外すのは、自前の値を返す終わりを 1 つも持たない節(DOEFF143 の節の形 — どの終わりも受けた効果をそのまま渡す)と、反例の表に鍵 `<path>::<handler>::<効果>` の在る節だけ。出し直した答えを変える・別の値を組む・枝の 1 つでだけ自前の値を渡す節は表の行が要る(DOEFF143・164・167 と同じ判じ)。intent の層の判じは DOEFF158・165 と同じ(効果の定義元の module の file の層)— doeff の package の効果は当たらない。全体の実行だけ。既定の重大さ critical。**登録簿で下げない**(載せても error・registered でない — agora-redesign #3405・#3407・#3406) | (a) `pass:<表の鍵>`・(b) `verification:<handler>::<効果>` | (a) 表の行の file・(b) 効果の節 |
-| DOEFF207 | 本番の系の job が読む外の置き場の組に書き手が無い — 宣言は architecture.hy の `:outside-writers {"<置き場>:<名>" "書き手" …}`(本番の系の job でない書き手 — 外の repo の道具・人の操作・job でない task — が書く組と、書き手の名の表)。書いた repo にだけ当たる。母集団は DOEFF173 と同じ本番の系(defservice の `:system` の名指しと `{:part-of …}` の指す系・同じ系は 1 度)— 本番の系でない模擬・検の defsystem の job は、読みも書き手も数えない。当たりは 2 種類: (a) 本番の系の job の行に `:reads` か `:writes` が無い(doeff の defsystem では任意の欄・使わなければ `#{}`)。(b) job の `:reads` の組が、どの本番の job の `:writes` にも、本番の入口から届く defk・deff の契約の `:writes` にも、`:outside-writers` の表にも無い(本番に書き手の無い記録を読み、手元の模擬では代役がその分を作って緑になる形)。job でない書き手(系の job から土台の値で渡る task の Program など)は、定義の契約の辞書に `:writes #{…}`(doeff-hy の FUNCTION-CONTRACT-KEYS・展開の時に形だけ検める)で名乗る。本番の入口は DOEFF143 と同じ(`:business-fakes` の本番の code の defsystem・本番の組の関数・`__main__` の節が名指す定義・入口の文字列)で、そこから前向きに届く定義の名乗りだけを数える — 模擬だけの定義・使われていない定義の名乗りは数えない。`:business-fakes` を書かない repo では job の `:writes` だけ(agora-redesign #3501)。欄の値の形(文字列の集合・綴り `<置き場>:<名>`)は doeff-hy の defsystem の展開が検める — ここは綴りを集めて照らすだけ。名指した系が無い・defsystem でない時は DOEFF173 が出す。全体の実行だけ。既定の重大さ critical。**登録簿で下げない**(この種の違反は doeff-linter が見つける — 利用者の決定 2026-10-04・agora-redesign #3493・#3496) | `<系>::<job>::reads`・`<系>::<job>::writes`(欄の欠け)・`<系>::<job>::<組>`(書き手の無い読み) | job の行 |
-| DOEFF208 | 本番の code が記録の変更の待ちで job を起こす — 宣言は `:business-fakes`(書いた repo にだけ当たる)。母集団は本番の code の Hy の file(`:production` に当たり、`:tests`・`:simulation`・`:skip` に当たらない file — DOEFF143 の本番の入口・DOEFF207 の job でない書き手と同じ範囲の宣言)から、doeff-records の package(path の段 `doeff_records`)の中を除いた物 — この規則は使い手を見る(効果と源の持ち主は、出来事の基盤へ替える時に源そのものを消す)。当たりは 2 種類: (a) 記録の変更を出来事の源にする — doeff-records の合図の源の工場 `read-signal-handler`・`records-signal-handler` の呼び(頭の綴りの最後の段で照らす — `event-source.read-signal-handler` も当たる)。(b) 記録の変更を待つ — `WatchChanges`・`WatchEvents` を、秒(`:timeout` か位置の引数の 3 つ目)が literal の 0(`0`・`0.0`)でない値で出す。変数・式・展開(`#*`・`#**`)は 0 と言えないので当たる。秒を書かない形は既定の 0(待たずに 1 回読む)で当たらない。当たらない物: 秒 0 の読み(受け手が起動や繋ぎ直しの時に記録を読んで追いつく形)・記録への書き・記録の効果に答える defhandler(直下の節の頭が `WatchChanges` / `WatchEvents`)の中の出し直し・`match` の pattern の綴り・註・`#_` で読み捨てた form。Python の file は見ない。全体の実行だけ。既定の重大さ critical。**登録簿で下げない**(今在る当たりを表に載せて通す形にしない — 記録を書いて記録を待つ設計を linter で見つけて禁じ、記録と起動を分ける・利用者の決定 2026-10-06・agora-redesign #3834) | `<囲む top level の定義の名>::<頭の綴り>`(例 `with-turn-events::read-signal-handler`・`waited-signal::WatchChanges`) | 呼びの頭の記号 |
-| DOEFF209 | 本番の code の Program が、同じ物を時間の待ちを挟んで繰り返し取りに行く — 宣言は `:business-fakes`(書いた repo にだけ当たる)。母集団は DOEFF208 と同じ本番の code の Hy の file(`:production` に当たり、`:tests`・`:simulation`・`:skip` に当たらない file)で、DOEFF208 と違い doeff-records の package の中も外さない(この規則は待ちの書き手そのものを見る)。見る物は起きる刻の出所: (1) 待ちの綴り — `(Delay 秒)`・`(WaitTicks _ 秒 …)`・module の名つきの `sleep`(`time.sleep` など)(秒が literal の 0 の譲りと、`(- 期限 今)` を含む期限の待ちは外す)・`ArmTimer` / `ArmedTimer` の刻(位置の 2 つ目か `:at`)が `(+ 今 …)` を含むか、`(+ 今 …)` から結んだ名を含む物。今 = 同じ定義の中で `GetTime`・`now-ms`・`clock-ms` と、引数の無い定義で本文がそれらを呼ぶ物から結んだ名と、その名を 1 つだけ受ける変換の呼びで結んだ名。繰り返しの中の待ちには、繰り返しの中で結んだ今だけを数える(繰り返しの前に 1 度読んだ今から求めた刻は毎回同じ刻)。(2) 補助 — repo を変わりが無くなるまで読み直して集める(名簿で持たない): 刻を渡す補助(引数が結び直しを辿って刻の位置へ流れる)・今を受ける補助(刻が `(+ 引数 …)` か、それから結んだ名を含む)・待ちを返す補助(繰り返しの外に待ちの綴りを持つ定義)・待ちで答える効果(`defhandler` の節が分岐を通らずに必ず待つ効果 — WatchChanges・WatchEvents の節は除く)。呼びの頭は同じ file の定義か `(import module [名])` で引き、引けない `a.b` は名の一致が 1 つだけの時に引く。(3) 繰り返し — `while`・`loop` の本体・`event-loop` の節の中か、自分を呼ぶ定義(`for` は有限の集まりを回す形なので数えない)。1 度だけ掛けて抜ける物は当てず、その定義を呼ぶ繰り返しの中の呼びが当たる。別の task を立てる呼び(`Spawn`・名に spawn を持つ包み)の中は見ない(渡した Program の 1 度の待ち)。(4) ライブラリへ問い直しの間隔を渡す鍵の引数 `:poll-seconds`(literal の 0 でない値)は繰り返しを問わず当たる。当たらない物: 行や予定から導いた期限・変わりを待つ時の上限の秒(DOEFF208 の側)・要求の timeout・`match` の pattern・handler の節の頭(`(Delay [秒] …)`)・quote と `#_` の中・doeff の scheduler の外の完了の拾い方(Python — 規則の外・agora-redesign #3861)・時間切れの期限(`ArmTimer` / `ArmedTimer` の tag が top level の `val` / `setv` の名で、その tag と比べる分岐 `(cond (= tag 名) 本体 …)` / `(if (= tag 名) 本体 …)` が母集団に 1 つ以上在り、本体が全部 繰り返しを抜ける `(stop …)` の物 — 止めの合図を待つ上限の秒。来た後に同じ読みを繰り返す本体が 1 つでも在る tag は外さない・cisco-c8 の決定 2026-10-07)。区分は鍵の細目の最後の段: `periodic`(純粋に時間で取り直す)・`retry`(届かない後の取り直し — 待ちの綴り・掛ける期限の tag・刻を結んだ式・囲む match の節の型・補助の名に retry / unreachable / unavailable が在るか、補助の中の待ちが全部 retry)。同じ定義の同じ頭・同じ区分の当たりは最初の場所の 1 件にまとめ、本文に残りの行を出す。場所に書いて通す理由: 当たりの行か、その直前に続く註だけの行に `; 時間で取り直す理由: <語>`(DOEFF111 の `; defk にできない: <理由>` と同じ置き方)。語は閉じた集合 — `相手に変更の知らせが無い: <相手> — <何で確かめたか>`(相手の名と確かめの根拠〔相手の API の文書の節・相手の code の行・試した命令と結果〕のどちらも空でない。変更の知らせを持つと分かっている相手〔Kubernetes・coordinator の GET /watch・doeff-events の基盤・記録の service の変更の合図 — 照らし方は相手の名を小文字にし空白を除き `_` を `-` に揃えた綴りが、別名〔kubernetes・k8s・kube-apiserver / coordinator・/watch / doeff-events / 記録のservice・記録の変更の合図・agora-record・doeff-records〕のどれかを含むか〕は通さず、本文に「この相手は変更の知らせを持つ」と出す)・`書くだけ: 生存の印` / `書くだけ: 報告` / `書くだけ: 期限の延長`・`届かない間だけの繋ぎ直し`(区分 retry の当たりだけ — 届かない印か失敗の答えが在る間だけ間を置いて繋がるかを試し、data を取りに行かず、戻ったら印を消す形)。語の外・区分の合わない語は通さず、本文に訳を足す。全体の実行だけ。既定の重大さ critical。**登録簿で下げない**(取りに行く繰り返しは全部直す対象で、最後の手段に限る — 利用者の決定 2026-10-06・agora-redesign #3834) | `<囲む top level の定義の名>::<頭の綴り>::<区分>`(例 `watch-custody::wait-own-deadline::periodic`・`making-loop::ticked::retry`) | 呼びの頭の記号 |
-| DOEFF210 | Hy の program が壁の時計で眠る — 母集団は設定の `program_sleep`(program の置き場 — 書いた repo にだけ当たる・4 節)。defk・defp の本体の中(字面で内側に在る fn・defn・deff の中も)の、頭が `time.sleep` / `asyncio.sleep` の呼びが破れ。頭は file の中の import(関数の中の物も)から解く: `(import time :as t)` の `t.sleep`・`(import asyncio [sleep])` と `(import time [sleep :as nap])` で束ねた名・`(import time *)` の `sleep`。`(Await (asyncio.sleep 秒))` は中の呼びが当たる。当てない物: 秒が literal の 0 の呼び(1 度譲るだけ)・handler の実装(defhandler の本体・引数の並びが `[effect k]` の defk / deff / defn / fn・契約の辞書の `:tags` の `:role` が `foundation` の defk / defp — 定義が自分の辞書に書いた時だけで、module の頭のタグでは外さない)・program でない定義(最上位の deff・defn・defclass の method)・註・`#_`・quote した form。眠りの module でない物の `sleep`(自前の関数・他の library)は数えない。file 1 つで決まる(1 file の実行も判じる)。既定 critical(doeff の ADR-DOE-TIME-001 R1・R2・card ki-3c3d85253c2c — Python の同じ決まりは semgrep の doeff-no-sleep-in-programs) | `<program の名>::<time.sleep か asyncio.sleep>` | 眠りの呼びの form |
+| DOEFF106 | hy-index 版 3 の定義ごとの直接の証拠(raw.direct)が、`allowed_layers` の外の層の Hy の定義に在れば破れ。architecture.hy に `:world-handlers` を書いた repo では層で許さず、名簿の定義の module の file だけに許す(`allowed_layers` は書けない・raw_side_effects の節が無くても当たる)。強い証拠は error、弱い証拠は warning。入れ子で重なる証拠は内側の定義に 1 度 | `<定義>::<証拠の名>` | 証拠の記号 |
+| DOEFF107 | 経由の証拠(raw.via — 全体の実行だけ)を info で出す。経路つき。1 定義で経路と証拠の名が同じ物は 1 件。architecture.hy の `:world-handlers` に宣言した定義には入らない(その先の生の副作用はその定義の責務)。宣言した定義を通らない別の経路で届けば当たる | `<定義>::via::<経路>::<証拠の名>` | 定義の名 |
+| DOEFF131 | `:world-handlers` の `:wraps` に挙げた doeff の実 I/O の handler を、名簿の定義(とその中の入れ子の定義)の外で名指す。値として渡す参照(`with-handlers` の列)も呼び出しも数え、import の行は数えない。名指しの先は索引の参照の `target`(呼び出しと同じ名前の解決)。同じ定義の同じ handler は 1 件。既定の重大さ critical(#1140) | `<定義>::world::<module:名>` | 名指した記号 |
+| DOEFF106・131(層の外) | `:world-handlers` を書いた repo では、層の置き場の外の Hy の file(層の外の dir・`:root` の外で `:raw-io-roots` に挙げた dir — 書かなければ `:root` だけ)にも DOEFF106・131 を当てる。検の file(path の段の :exclude・名が test_ / conftest)・defadr を持つ file・deftest の中の当たりは外す(縁のテストは DOEFF133)。message に「層の置き場の外」 | DOEFF106・131 と同じ | 同じ |
+| DOEFF132 | `:world-handlers` の定義 1 本ずつ — module が層の置き場に無い(無い module か層の外)・foundation の外の層に在る・Hy の module に定義が無い。全体の実行だけ。既定の重大さ critical(#1141) | `<module:名>` | architecture.hy の名簿の要素 |
+| DOEFF133 | テストの種類(手元 / 縁)を届く先から導く — 全体の索引で定義の間の辺(呼び出し・参照・入れ子)を組み、名簿の定義・`:wraps` の handler を名指す定義・強い生の I/O の証拠を持つ定義から逆向きに辿る。届く deftest は縁で `:edge-mark` の印(deftest の `:marks` か module の `pytestmark`)が要り、届かない deftest は印を持たない。食い違いを critical で出し、縁の message に届く道を書く。Python の検は数えない(R6)。Hy の定義が名指す repo の中の Python の関数(repo の根からの `a/b.py` か `a/b/__init__.py`)は、その中の強い生の I/O の証拠(import を通した目録の名・呼び出しの頭の組み込み — 型の注記と except の型は数えない)と、名前で決まる呼び先(同じ module の関数・import した関数・class の構築と `self.m` / `cls.m`・Hy の定義へ戻る呼び)まで深さの上限なしに辿る。値の上の属性の呼びと実行時の import は辿らない(Hy の図と同じ範囲)。構文の壊れた・読めない module は報告の errors に名乗る。`:edge-mark` を書いた時だけ当たる(#1142) | `<定義>::edge` / `<定義>::local` | deftest の名 |
+| DOEFF137 | 縁の検の無い許可名簿の handler — `:world-handlers` の handler ごとに、空でない `:interpreters` を持つ deftest(`:interpreters` の要素は file の外の定数の記号なので読み解かず、空でない列かだけを見る — deftest の設定の dict の読みは DOEFF133 の `:marks` と同じ)のうち、DOEFF133 と同じ定義の辺の図(呼び出し・参照・入れ子)を辿ってその handler の定義に届く物が 1 本も無ければ 1 件。`:interpreters` を持たない deftest が届くだけでは数えない。理由つきの `:contract-test (none …)` の handler は判じない・理由の無い `:contract-test none` は縁の検が在っても 1 件(#1796)。相手役の名簿 `:stand-ins` の組(相手役・本物)ごとにも、空でない `:interpreters` を持ち、同じ図で相手役の定義と本物の定義の両方に届く deftest(契約の検)が 1 本も無ければ 1 件(本物が索引の外の package に在る時は、本物を直に名指す定義から辿る。解釈器の名の文字列 `"module:名"` / `"module:名@<変種>"` を持つ定義もその handler を名指す定義に数える・`:contract-test` は `:world-handlers` と同じ)。全体の実行だけ・有効にする条件は DOEFF133 と同じ(`:world-handlers` と `:edge-mark`)。既定の重大さ critical | `<module:名>`・相手役の組は `<相手役 module:名>-><本物 module:名>` | architecture.hy の名簿の要素 |
+| DOEFF135 | テストは deftest だけ — `:test-forms {:tests [..] :check-scripts [..] :runners [..]}` の綴りの型で file を選び、:tests の Python の file の `def test_*`(python-test・件数を message に)、:tests の file の module ごとの skip(字下げの無い段の `pytest.skip`・`allow_module_level`・`pytestmark` の `mark.skip` — 束ねの名と印が別の行に在る複数行の束ねも括弧が閉じるまで読み、束ねの名の行を指す・#1426)、:check-scripts の file(check-script)、:runners の file(runner)を file ごとに 1 件。全体の実行だけ。既定の重大さ critical(#1144) | `python-test` / `module-skip` / `check-script` / `runner` | file の頭か最初の当たりの行 |
+| DOEFF136 | 模擬の環境で回していない service — `:verification-environment` を書いた repo で、entry の層を持つ service ごとに、その service の entry の層の dir(`<root>/<service の dir>/entry`)の定義から呼び手(呼び出し・参照・入れ子 — DOEFF133 と同じ図)を逆向きに辿り、模擬の環境の dir の下の deftest に 1 本も届かなければ defservice の位置で critical(鍵 = service の名)。entry の層を宣言しても定義が 0 本の service は数えない(回す組み立てが無い)。service の中の tests は模擬の環境の外なので数えない。索引は `defsystem`(doeff-cluster の系の宣言)も定義として読むので、deftest → defsystem → entry の経路も届く(R5・#1111)。 |
+| DOEFF163 | 不変条件を宣言していない service — code を持つ service(DOEFF136 と同じ母集団: :layers に entry があり、`<root>/<service の dir>/entry` の下に Hy の定義が 1 本以上。ただし defservice に `:entry-modules` を書いた service は宣言で母集団に入り、その module の Hy の file が無ければ 1 件)ごとに、defservice の `:invariants`(業務の不変条件の関数 `"module.path:関数"` の列)が無いか空なら 1 件、名指した関数の定義が repo の Hy の索引に無ければ 1 件、定義の `:tags` の `:role` が `judgment` でなければ 1 件(置き場は問わない — 模擬の環境の `*_invariants.hy` でよい)。位置は defservice の名。既定 critical、登録簿に載った欠けは warning。全体の実行だけ | `<service>` / `<service>::<module:関数>` / `<service>::entry::<module>` | defservice の名 |
+| DOEFF173 | 系を宣言していない service — architecture.hy の全 defservice ごとに(entry の層を持たない service も数える)、defservice の `:system`(cluster に置く系 `"module.path:defsystem の名"`・系が複数なら列)が無いか空なら 1 件、`:system {:exempt "理由"}` の理由が空なら 1 件(exempt を書いてよいのは、旧い経路に残す service か、process を持たない部品の service — main も deploy も無く、他の service が読むだけで使う。linter は理由の中身までは判じない)、名指した名ごとに(`:system {:part-of "module.path:defsystem の名"}` = その service の code が別の service の系の中で走る、の時は指した系 1 つに当て、置き場は「どこかの service の entry の層」に緩める — part-of でない宣言が他の service の系を指すのは赤): 定義が無い・defsystem でない(静的な記述 `__doeff_system__` を付けるのは defsystem だけ — 索引の種類で判じる)なら 1 件、module がその service の entry の層の外(`:entry-modules` の service はその module の外)なら 1 件、引数が 1 つでないなら 1 件、土台の引数に型の注記(`[#^ T foundation]`・doeff L983)が在ればその型の頭が素の `Callable`・写像・中身の型の無い組なら 1 件(注記は名として数え、job の関数の型は見ない)、注記が無ければ引数 1 つ(土台)を位置の引数で受ける job の関数ごとに、その引数の型(`:pre` の `(: 引数 型)`)が無いか、頭が素の `Callable`・写像・中身の型の無い組(`dict`・`Mapping`・`FrozenMap`・`tuple`・`list`・`Any`・`JsonBody` など)なら 1 件、土台を受ける job が 1 つも無ければ 1 件。defsystem が在れば汎用の模擬 cluster のテストに自動で載るので、系ごとのテストは求めない(DOEFF136 と対)。位置は defservice の名。既定 critical。全体の実行だけ | `<service>` / `<service>::exempt` / `<service>::<module:名>` / `<service>::<module:名>::params` / `<service>::<module:名>::unused` / `<service>::<module:名>::<job の関数>` | defservice の名 |
+| DOEFF142 | handler の引数に client・可変の店 — `:handler-arguments {:files [..] :exclude [..] :store-names [..] :store-suffixes [..] :keep-mark "…" :value-types [..]}` の :files に当たる Hy の file の `defhandler`(入れ子も)の引数 1 つずつを分ける: `client`(型の名の末尾が Client / Connection / Pool / Engine・名が client / conn / connection / …-client / …-conn)・`container`(dict / list / set / bytearray / MutableMapping … — `(get dict …)` を含む)・`object`(repo の Hy と Python の class の索引で frozen でない class と、索引に無い型 — frozen の dataclass・frozen の設定・Enum・NamedTuple・defrecord と :value-types は値)・`named`(型の注記が無く名が :store-names / :store-suffixes)。本文(次の最上位の form まで)に :keep-mark の註が在る handler は数えない。判定は渡した file だけで決まり、class の索引は file ごとのキャッシュで引く(1 file の実行でも repo を読み直さない)。既定の重大さ critical(#1366) | `<handler>::<引数>` | 引数の位置 |
+| DOEFF143 | 業務の効果に答える偽の handler — `:business-fakes {:simulation [..] :assembly [..] :tests [..] :skip [..] :production [..] :sets [..] :simulation-prefix "…" :production-prefix "…" :entry-string-modules [..] :entry-string-files [..] :business-modules [..] :lower-layer-modules [..] :external-effects "dir" :counterexamples "dir" :unserved "dir"}`。定義の辺の図(DOEFF133 と同じ・系の値の中の辺も本番で回る辺として数える)を、模擬の根(:simulation と :assembly の定義・:sets の file の :simulation-prefix の定義)と本番の入口(:production の file のうち :sets の :production-prefix の定義・defsystem・`(when (= __name__ "__main__") …)` の中の名・`"<module>:<名>"` の入口の文字列 — :entry-string-files の本文も読む)から前向きに辿る。模擬の根からだけ届く defhandler の節が、:business-modules の効果に tap でなく(下の節の形で、受けた効果をそのまま渡す終わりを 1 つも持たずに)答え、外の世界の表にも反例の表にも無ければ critical(鍵 = `<handler>::<効果>`)。模擬の根からだけ届く節が :lower-layer-modules の効果に tap でなく答えるのも critical(下の層の偽物は下の層の正典 1 つだけ・鍵 = `lower:<handler>::<効果>`)。表の腐りも出す: 反例の表の行が当たらない(DOEFF157 の検だけから届く節も照らす — 業務の効果か :lower-layer-modules の効果に答える節。表の当たりに数えるのは自前の値を返す終わりを持つ節で、片方の枝でだけ出し直す節も数える)・外の世界の表の行にどの偽物も答えない・本番の答え手が無い(本番の code の Python の `isinstance(effect, X)` も答え手に数える・:unserved に載せた物を除く)。節の形(DOEFF143・155・156・157・158・164・167・206 が共に使う 1 つの判じ): 節の終わりごとに、受けた効果をそのまま外へ渡す(出し直し — `(<- 名 [型] effect)`・受けた引数をそのまま並べた `(<- 名 (頭 …))`・`(setv 名 (yield effect))`・`(with_handlers [...] 出し直し)` — で束ねた名か、それを `(:= 名 束ねた名)` などで入れ直した名の `resume` / `transfer`・同じ効果を出し直した節の `(resume None)`・`(reperform effect)`・`(pass)`・`:when` の節)か、自前の値(それ以外の値の `resume` / `transfer`・`finish`・別の値の `reperform`・`with_handlers` の下の出し直しの答え)かに分け、`(resume (if 条件 A B))` は枝ごとに分ける。渡す終わりを持つ節が tap(偽物の判じ DOEFF143・155・156・157・158 から外す — 片方の枝でだけ出し直す障害の注入も)、自前の値の終わりを持つ節が表の行を要する節(反例の表の当たり・DOEFF164・167・206)。両方を持つ節も在る。`raise` は終わりに数えない。節の欄に `effect` の名が在れば、その名は受けた効果ではない。同じ handler の同じ頭の節は欄ごとに OR で合わせる。節の終わりを作る操作(ここに挙げた `resume` ほか)の名・終わり方・引数の数は、この規則の source に書かず、doeff-hy の節の操作の表 `CLAUSE-OPS`(`packages/doeff-hy/src/doeff_hy/_clause_ops.hy`)から書き出した生成物 `data/clause_ops.json` を読む(`src/project/clause_ops.rs`)— 終わり方が再開する操作は値で・渡す操作は引数の有無と出し直しの式で・終える操作は自前の値で判じ、例外で抜ける操作は終わりに数えない。表に行を足したら `uv run python scripts/export_clause_ops.py --write` で書き直せば判じが追従する(書き直し忘れ・file への直書きは `tests/test_linter_clause_ops.py` が、source への名の直書きは business_fakes.rs の検が赤にする)。表は 1 鍵 1 file の dir(1 行目が鍵・2 行目から理由)。無い dir は、:unserved(違反を固定する縮める向きの表)なら空の表として読み(知らせ 1 行)、外の世界の表と反例の表(宣言)なら読めない(errors)。全体の実行だけ。既定の重大さ critical(#1189) | `<handler>::<効果>` / `lower:<handler>::<効果>` / `counterexample-unused::…` / `external-unused::…` / `external-unserved::…` | 節の位置・表の dir |
+| DOEFF155 | 組み立ての形の破れ — `:assembly-shape {:translation-point "with-*-translation" :retired-function "…" :translations "…" :translation-layer "…" :intent-layer "…"}`(組み立ての層・組の file・業務の module・外の世界の表は `:business-fakes` から読む — 両方を書いた時だけ)。出す物: :sets の本番の file が残る・組み立ての層に :retired-function の定義が残る・組み立ての層の翻訳の列の 1 点(名が :translation-point の型の defk)の `(with-handlers [#* 列 …] 本体)` が翻訳の列でない import した名を並べる(翻訳の列 = :translation-layer の置き場の :translations の定数か、置き場の外の service の旧い module の列で要素が全部置き場の外の業務の答え手の物・同じ module の val の列は中へ開く)・列の並び(列が出し直す別の service の :intent-layer の効果に答える列が、それより前に無い)・:translations の定数が別の service の :translation-layer の定義を並べる・翻訳の列の 1 点が `#*` で自分の引数を並べる(列を呼び手から受けない)・`:verification-environment` の dir と :tests の file が、翻訳の列(1 点が並べてよい列と、組み立ての層が :translation-layer の handler か翻訳の列を束ねた列)を `#*` で開いて並べる(模擬と検は本番と同じ 1 点を呼ぶ)。全体の実行だけ。既定の重大さ critical(#1189) | `set-file` / `retired` / `stray:<名>` / `parameter:<引数>` / `loose:<列>` / `order:<列>:<効果>` / `own:<定義>` | 定義の位置・組の file・開いた所の定義 |
+| DOEFF156 | 翻訳の先か土台の答えが業務の効果 — 宣言は DOEFF155 と同じ。:translations の定数から届く翻訳の handler が、自分の答えない業務の効果を名指す(:intent-layer の効果は常に・それ以外は同じ列の handler が答えない物)・出し直した効果に答える同じ列の handler がどれも列の後ろに在る(定数が literal の列の時だけ)・:sets の file の組の関数(:simulation-prefix / :production-prefix)が届く handler のうち同じ module の :translations の外の物が業務の効果に tap でなく答える。業務の効果 = :business-modules の効果のうち外の世界の表に無い物。全体の実行だけ。既定の重大さ critical | `target:<handler>:<効果>` / `inner:<handler>:<効果>` / `foundation:<組の関数>:<handler>:<効果>` | handler か組の関数の位置 |
+| DOEFF157 | 検だけの偽物 — 宣言は DOEFF143 と同じ `:business-fakes`。検の根(:tests の file の定義の全部)から届き、本番の入口からも模擬の根からも届かない定義の節が、:business-modules か :lower-layer-modules の効果に tap でなく答え、外の世界の表にも反例の表にも無ければ critical(検だけが使う本番の code の置き場の業務の写しも数える)。わざと壊した反例の handler は反例の表に理由つきで載せる。全体の実行だけ。既定の重大さ critical(#1189) | `<handler>::<効果>` | 節の位置 |
+| DOEFF158 | intent の効果の答え手が翻訳の 1 つでない — 宣言は DOEFF155 と同じ(`:business-fakes` と `:assembly-shape` の両方)。本番の入口から届く節のうち、効果の定義元の module の置き場が :intent-layer の層で、tap でなく答える物を数える。節の file が :translation-layer の層の外なら critical、同じ効果に答える :translation-layer の handler が 2 つ以上ならその全部を出す(ADR R9 — 本番と模擬で同じ翻訳 1 つ)。全体の実行だけ。既定の重大さ critical | `outside:<handler>::<効果>` / `shared:<handler>::<効果>` | 節の位置 |
+| DOEFF164 | 壊した handler の反例が無い service — 宣言は DOEFF143 と同じ `:business-fakes` の `:counterexamples` と `:verification-environment`。反例の節 = 反例の表の鍵に当たり本番の入口から届かず、自前の値を返す終わりを持つ節(DOEFF143 の節の形)。節の効果の定義元の file を含む service の dir が持ち主(どの service の下にも無ければ土台の効果)。entry の層に定義を持つ service ごとに、持ち主がその service か土台の反例の節に(DOEFF136 と同じ図を逆向きに)届く deftest の 1 本でもその service の entry の層の定義に届けば有り、1 本も無ければ defservice の位置で critical(登録簿に載せれば registered_severity で下げる)。あわせて DOEFF143・157 の表の照らしは、本番から届かず自前の値を返す終わりを持つ節の鍵が表に在ればどの効果に答える節でも当たりに数える(土台の効果に答える壊した handler も表に載せられる)。全体の実行だけ。既定の重大さ critical(#1155) | service の名 | defservice の位置 |
+| DOEFF165 | intent の効果の網羅の欠け — 宣言は DOEFF158 と同じ(`:business-fakes` と `:assembly-shape` の両方)。宣言の file の置き場が :intent-layer の層の defeffect ごとに、DOEFF143 と同じ到達の図から 3 列を読む: 手元の検から出すか(検の file の定義から届く定義のうち、答え手〔効果の節・defhandler〕と宣言を除いてその効果を名指す物)・模擬の答え手(模擬の根から届く効果の節の handler)・本番の答え手(本番の入口から届く効果の節の handler)。どれかが空の効果を 1 件にし、本文と `--explain` に 3 列を出す。持ち主の service は宣言の file の置き場を dir に持つ defservice(最も長い前方一致)。Python の class で宣言した効果は数えない(索引の図の外)。全体の実行だけ。既定の重大さ critical(#1561 K3 の報告だけの表を失敗に。repo の登録簿に載った既知の欠けは warning) | `<service>::<効果>`(service の無い効果は `-::<効果>`) | 効果の宣言の位置 |
+| DOEFF206 | 検証環境が intent の効果に自前で答える — 宣言は `:business-fakes`・`:verification-environment`・`:assembly-shape`(:intent-layer)の 3 つ(有効にする条件は `:business-fakes` と `:verification-environment`。:intent-layer が無ければ当たりは 0)。当たりは 2 種類: (a) 違反を通す表 — `:external-effects`(鍵 = 効果の完全名)・`:lower-layer-passages`・`:test-only-fakes`(鍵 = `<path>::<handler>::<効果>`・最後の `::` の後が効果)— の行が、定義元の module の層が :intent-layer の効果を通す。行の file に出す。無い `:lower-layer-passages`・`:test-only-fakes` の dir は空と読む(知らせ 1 行)。(b) 検証環境の dir(`<root>/<:verification-environment>/` の下 — 置き場の免除 DOEFF114・115 と同じ読み・`Architecture::verification_environment_dir`)の handler の節が intent の層の効果に答える。外すのは、自前の値を返す終わりを 1 つも持たない節(DOEFF143 の節の形 — どの終わりも受けた効果をそのまま渡す)と、反例の表に鍵 `<path>::<handler>::<効果>` の在る節だけ。出し直した答えを変える・別の値を組む・枝の 1 つでだけ自前の値を渡す節は表の行が要る(DOEFF143・164・167 と同じ判じ)。intent の層の判じは DOEFF158・165 と同じ(効果の定義元の module の file の層)— doeff の package の効果は当たらない。全体の実行だけ。既定の重大さ critical。**登録簿で下げない**(載せても error・registered でない) | (a) `pass:<表の鍵>`・(b) `verification:<handler>::<効果>` | (a) 表の行の file・(b) 効果の節 |
+| DOEFF207 | 本番の系の job が読む外の置き場の組に書き手が無い — 宣言は architecture.hy の `:outside-writers {"<置き場>:<名>" "書き手" …}`(本番の系の job でない書き手 — 外の repo の道具・人の操作・job でない task — が書く組と、書き手の名の表)。書いた repo にだけ当たる。母集団は DOEFF173 と同じ本番の系(defservice の `:system` の名指しと `{:part-of …}` の指す系・同じ系は 1 度)— 本番の系でない模擬・検の defsystem の job は、読みも書き手も数えない。当たりは 2 種類: (a) 本番の系の job の行に `:reads` か `:writes` が無い(doeff の defsystem では任意の欄・使わなければ `#{}`)。(b) job の `:reads` の組が、どの本番の job の `:writes` にも、本番の入口から届く defk・deff の契約の `:writes` にも、`:outside-writers` の表にも無い(本番に書き手の無い記録を読み、手元の模擬では代役がその分を作って緑になる形)。job でない書き手(系の job から土台の値で渡る task の Program など)は、定義の契約の辞書に `:writes #{…}`(doeff-hy の FUNCTION-CONTRACT-KEYS・展開の時に形だけ検める)で名乗る。本番の入口は DOEFF143 と同じ(`:business-fakes` の本番の code の defsystem・本番の組の関数・`__main__` の節が名指す定義・入口の文字列)で、そこから前向きに届く定義の名乗りだけを数える — 模擬だけの定義・使われていない定義の名乗りは数えない。`:business-fakes` を書かない repo では job の `:writes` だけ。欄の値の形(文字列の集合・綴り `<置き場>:<名>`)は doeff-hy の defsystem の展開が検める — ここは綴りを集めて照らすだけ。名指した系が無い・defsystem でない時は DOEFF173 が出す。全体の実行だけ。既定の重大さ critical。**登録簿で下げない**(この種の違反は doeff-linter が見つける) | `<系>::<job>::reads`・`<系>::<job>::writes`(欄の欠け)・`<系>::<job>::<組>`(書き手の無い読み) | job の行 |
+| DOEFF208 | 本番の code が記録の変更の待ちで job を起こす — 宣言は `:business-fakes`(書いた repo にだけ当たる)。母集団は本番の code の Hy の file(`:production` に当たり、`:tests`・`:simulation`・`:skip` に当たらない file — DOEFF143 の本番の入口・DOEFF207 の job でない書き手と同じ範囲の宣言)から、doeff-records の package(path の段 `doeff_records`)の中を除いた物 — この規則は使い手を見る(効果と源の持ち主は、出来事の基盤へ替える時に源そのものを消す)。当たりは 2 種類: (a) 記録の変更を出来事の源にする — doeff-records の合図の源の工場 `read-signal-handler`・`records-signal-handler` の呼び(頭の綴りの最後の段で照らす — `event-source.read-signal-handler` も当たる)。(b) 記録の変更を待つ — `WatchChanges`・`WatchEvents` を、秒(`:timeout` か位置の引数の 3 つ目)が literal の 0(`0`・`0.0`)でない値で出す。変数・式・展開(`#*`・`#**`)は 0 と言えないので当たる。秒を書かない形は既定の 0(待たずに 1 回読む)で当たらない。当たらない物: 秒 0 の読み(受け手が起動や繋ぎ直しの時に記録を読んで追いつく形)・記録への書き・記録の効果に答える defhandler(直下の節の頭が `WatchChanges` / `WatchEvents`)の中の出し直し・`match` の pattern の綴り・註・`#_` で読み捨てた form。Python の file は見ない。全体の実行だけ。既定の重大さ critical。**登録簿で下げない**(今在る当たりを表に載せて通す形にしない — 記録を書いて記録を待つ設計を linter で見つけて禁じ、記録と起動を分ける) | `<囲む top level の定義の名>::<頭の綴り>`(例 `with-turn-events::read-signal-handler`・`waited-signal::WatchChanges`) | 呼びの頭の記号 |
+| DOEFF209 | 本番の code の Program が、同じ物を時間の待ちを挟んで繰り返し取りに行く — 宣言は `:business-fakes`(書いた repo にだけ当たる)。母集団は DOEFF208 と同じ本番の code の Hy の file(`:production` に当たり、`:tests`・`:simulation`・`:skip` に当たらない file)で、DOEFF208 と違い doeff-records の package の中も外さない(この規則は待ちの書き手そのものを見る)。見る物は起きる刻の出所: (1) 待ちの綴り — `(Delay 秒)`・`(WaitTicks _ 秒 …)`・module の名つきの `sleep`(`time.sleep` など)(秒が literal の 0 の譲りと、`(- 期限 今)` を含む期限の待ちは外す)・`ArmTimer` / `ArmedTimer` の刻(位置の 2 つ目か `:at`)が `(+ 今 …)` を含むか、`(+ 今 …)` から結んだ名を含む物。今 = 同じ定義の中で `GetTime`・`now-ms`・`clock-ms` と、引数の無い定義で本文がそれらを呼ぶ物から結んだ名と、その名を 1 つだけ受ける変換の呼びで結んだ名。繰り返しの中の待ちには、繰り返しの中で結んだ今だけを数える(繰り返しの前に 1 度読んだ今から求めた刻は毎回同じ刻)。(2) 補助 — repo を変わりが無くなるまで読み直して集める(名簿で持たない): 刻を渡す補助(引数が結び直しを辿って刻の位置へ流れる)・今を受ける補助(刻が `(+ 引数 …)` か、それから結んだ名を含む)・待ちを返す補助(繰り返しの外に待ちの綴りを持つ定義)・待ちで答える効果(`defhandler` の節が分岐を通らずに必ず待つ効果 — WatchChanges・WatchEvents の節は除く)。呼びの頭は同じ file の定義か `(import module [名])` で引き、引けない `a.b` は名の一致が 1 つだけの時に引く。(3) 繰り返し — `while`・`loop` の本体・`event-loop` の節の中か、自分を呼ぶ定義(`for` は有限の集まりを回す形なので数えない)。1 度だけ掛けて抜ける物は当てず、その定義を呼ぶ繰り返しの中の呼びが当たる。別の task を立てる呼び(`Spawn`・名に spawn を持つ包み)の中は見ない(渡した Program の 1 度の待ち)。(4) ライブラリへ問い直しの間隔を渡す鍵の引数 `:poll-seconds`(literal の 0 でない値)は繰り返しを問わず当たる。当たらない物: 行や予定から導いた期限・変わりを待つ時の上限の秒(DOEFF208 の側)・要求の timeout・`match` の pattern・handler の節の頭(`(Delay [秒] …)`)・quote と `#_` の中・doeff の scheduler の外の完了の拾い方(Python — 規則の外)・時間切れの期限(`ArmTimer` / `ArmedTimer` の tag が top level の `val` / `setv` の名で、その tag と比べる分岐 `(cond (= tag 名) 本体 …)` / `(if (= tag 名) 本体 …)` が母集団に 1 つ以上在り、本体が全部 繰り返しを抜ける `(stop …)` の物 — 止めの合図を待つ上限の秒。来た後に同じ読みを繰り返す本体が 1 つでも在る tag は外さない)。区分は鍵の細目の最後の段: `periodic`(純粋に時間で取り直す)・`retry`(届かない後の取り直し — 待ちの綴り・掛ける期限の tag・刻を結んだ式・囲む match の節の型・補助の名に retry / unreachable / unavailable が在るか、補助の中の待ちが全部 retry)。同じ定義の同じ頭・同じ区分の当たりは最初の場所の 1 件にまとめ、本文に残りの行を出す。場所に書いて通す理由: 当たりの行か、その直前に続く註だけの行に `; 時間で取り直す理由: <語>`(DOEFF111 の `; defk にできない: <理由>` と同じ置き方)。語は閉じた集合 — `相手に変更の知らせが無い: <相手> — <何で確かめたか>`(相手の名と確かめの根拠〔相手の API の文書の節・相手の code の行・試した命令と結果〕のどちらも空でない。変更の知らせを持つと分かっている相手〔Kubernetes・coordinator の GET /watch・doeff-events の基盤・記録の service の変更の合図 — 照らし方は相手の名を小文字にし空白を除き `_` を `-` に揃えた綴りが、別名〔kubernetes・k8s・kube-apiserver / coordinator・/watch / doeff-events / 記録のservice・記録の変更の合図・agora-record・doeff-records〕のどれかを含むか〕は通さず、本文に「この相手は変更の知らせを持つ」と出す)・`書くだけ: 生存の印` / `書くだけ: 報告` / `書くだけ: 期限の延長`・`届かない間だけの繋ぎ直し`(区分 retry の当たりだけ — 届かない印か失敗の答えが在る間だけ間を置いて繋がるかを試し、data を取りに行かず、戻ったら印を消す形)。語の外・区分の合わない語は通さず、本文に訳を足す。全体の実行だけ。既定の重大さ critical。**登録簿で下げない**(取りに行く繰り返しは全部直す対象で、最後の手段に限る) | `<囲む top level の定義の名>::<頭の綴り>::<区分>`(例 `watch-custody::wait-own-deadline::periodic`・`making-loop::ticked::retry`) | 呼びの頭の記号 |
+| DOEFF210 | Hy の program が壁の時計で眠る — 母集団は設定の `program_sleep`(program の置き場 — 書いた repo にだけ当たる・4 節)。defk・defp の本体の中(字面で内側に在る fn・defn・deff の中も)の、頭が `time.sleep` / `asyncio.sleep` の呼びが破れ。頭は file の中の import(関数の中の物も)から解く: `(import time :as t)` の `t.sleep`・`(import asyncio [sleep])` と `(import time [sleep :as nap])` で束ねた名・`(import time *)` の `sleep`。`(Await (asyncio.sleep 秒))` は中の呼びが当たる。当てない物: 秒が literal の 0 の呼び(1 度譲るだけ)・handler の実装(defhandler の本体・引数の並びが `[effect k]` の defk / deff / defn / fn・契約の辞書の `:tags` の `:role` が `foundation` の defk / defp — 定義が自分の辞書に書いた時だけで、module の頭のタグでは外さない)・program でない定義(最上位の deff・defn・defclass の method)・註・`#_`・quote した form。眠りの module でない物の `sleep`(自前の関数・他の library)は数えない。file 1 つで決まる(1 file の実行も判じる)。既定 critical(doeff の ADR-DOE-TIME-001 R1・R2 — Python の同じ決まりは semgrep の doeff-no-sleep-in-programs) | `<program の名>::<time.sleep か asyncio.sleep>` | 眠りの呼びの form |
 | DOEFF211 | Hy の検が、実時間が対象だと名乗らずに壁の時計で眠る — 母集団は設定の `test_sleep`(検の置き場 — 書いた repo にだけ当たる・4 節)。頭が `time.sleep` / `asyncio.sleep` の呼び(import の別名・束ねた名は DOEFF210 と同じ読み・method の綴り `(.sleep time 秒)` も)と、眠りの言い換え `(.wait (threading.Event) 秒)`(その場で作った Event を秒つきで待つ)が破れ。定義の種類は問わない(deftest・defn・defk・deff・class の method・最上位の式)。当てない物: 秒が literal の 0 の眠り・註・`#_`・quote・文字列の中・realtime を名乗った所 — module の最上位の `(val pytestmark pytest.mark.realtime)`(`var` も・値は印 1 つか印の list・tuple)を持つ file の全部、meta の map(引数の並びと先頭の文字列の後の最初の要素)の `:marks` に `"realtime"` を持つ deftest の中、decorator の並び(頭のすぐ後の `[…]`)に `pytest.mark.realtime` を持つ `defn` の中。`setv` の束ね・最上位でない束ね・deftest でない定義の map は名乗りではない(doeff-hy が pytest の印として記録する形だけを読む)。鍵の細目は `<包む最上位の定義の名>::<眠りの関数>`(定義の外は `<module>`)。登録簿では下げない。名乗った検を理由と一緒に載せる名簿との突き合わせは repo の側の検が持つ(doeff は tests/semgrep/test_realtime_tests_registry.py)。定義 = `src/project/test_sleep.rs`・検 = `tests/test_sleep.rs`(doeff の ADR-DOE-TIME-001 R8) |
-| DOEFF174 | 業務の層が下の層の効果か handler を直に使う — 宣言は architecture.hy の `:business-fakes` の `:lower-layer-modules`(書いた repo にだけ当たる・書かなければ規則の一覧で wired 偽)。母集団は業務の層(設定 `translation_effects.domain_layers`・書かなければ既定の名 core・intent のうち宣言に在る層)の Hy の file の最上位の定義(`defk`・`deff`・`defn`・`defp`・`defhandler`)。当たる物: (a) 本文で実行する呼び(`(<- …)`・`(! …)`)の頭が `:lower-layer-modules` の module の物(例 `doeff_records._effects` の `ReadRow`)— 頭が repo の defk なら DOEFF130 と同じ到達で `max_depth` の深さまで辿る(shared の defk を経て届く形も)。同じ package(`:lower-layer-modules` の綴りの最後の区切りを外した module — `doeff_records._effects` なら `doeff_records`)の別の module の、repo の外の定義(`doeff_records._typed` の `read-typed` など効果を包む defk)を実行する所も当てる — repo の外の定義は推論の表に無く、その先まで辿れないので、実行した時点で生の操作とみなす。(b) `with_handlers` の列の要素と `with_handler` / `WithHandler` の 1 つ目に置いた handler の名(要素が呼びなら頭、記号ならその記号、`#*` の展開なら中の記号)が同じ package の物(例 `doeff_records._event_source` の `read-signal-handler`・`doeff_records._http_client` の `http-records-handler`)。当たらない物: 値の型の import と使用(`Row`・`KeepFor`・`RowType`・`typed-row`・`ChangedRow`・`SignalTables` — 実行する呼びの頭にも被せる handler の列にも出ない物。module 単位では import を禁じない — `event_source` は型と handler を同じ module に置くため)・ドメインの効果(層 intent の型)・翻訳の層と土台の層と組み立ての層の定義・quote の中。**拾えない形**: 答えや引数で受けた handler を値のまま被せる所(`(with_handlers (list opened.handlers) …)` — 欄の読み・引数・式の handler は名が静的に決まらないので数えない。被せる値を作る側の翻訳の handler が、業務の層へ生の handler を渡さない形で直す)。定義ごと・名ごとに本文の順で最初の 1 か所。1 file の実行(エディタ)でも判じる。既定の重大さ critical・**既知の一覧(registry)で下げない**(利用者の決定 2026-10-07 — 記録の生の読み書きは handler の仕事で job の仕事ではない。業務の効果を handler が記録の効果へ翻訳し、job が記録の効果を生で出す形は linter で禁じる。範囲: cluster の中で記録の service の生の操作を使うのは handler〔protocol・foundation の層〕だけ・外にはドメインの API だけ・agora-redesign #3885) | `<定義の名(mangle)>::<効果か handler の module まで含めた名(mangle)>`(例 `tail_reading::doeff_records._event_source.read_signal_handler`) | 実行する呼びの頭・被せる handler の記号 |
-| DOEFF167 | 反例も外した理由も無い不変条件の条 — DOEFF164(service に反例が 1 本あれば緑)を条ごとに細かくした物。条の名は `:invariants` の関数が返す値で静的に読めないので、defservice の `:clauses ["条" …]` に宣言し、反例を持たない条は `:clause-exemptions {"条" "理由" …}` に理由を書く(`:clauses` の内・理由は空でない)。反例の節がどの条を破るかは、反例の表(`:counterexamples` の 1 鍵 1 file)の 2 行目から後の `breaks: <service>::<条> …` の行で名乗る。母集団と効く反例の節は DOEFF164 と同じ(entry の層に定義を持つ service・表の鍵に当たり本番の入口から届かない節)。条ごとに、名乗る節に届く deftest の 1 本でもその service の entry の層の定義に届けば有り、理由つきで外した条は数えず、どちらも無ければ defservice の位置で critical(鍵の細目 `<service>::<条>`)。`:clauses` を書かない code を持つ service は service の名で 1 つ。宣言に無い service か条を名乗る `breaks:`・綴りの誤りは設定の誤り(errors)。全体の実行だけ。既定の重大さ critical(agora-redesign #1713) | `<service>::<条>`(宣言の欠けは service の名) | defservice の位置 |
-| DOEFF168 | 業務の層が環境の名の値や dry-run の印で分岐する — `:environment-branches` の `:layers` の層の Hy の file で、比べる form(`=`・`!=`・`is`・`is-not`・`in`・`not-in`)の引数(集まりの literal の要素も)と `match` の節の型に在る、`:values` の文字列の literal と、分岐の form(`if`・`when`・`unless` の条件・`cond` の各条件・`match` の主語)の中の `:flags` の名の記号(点で区切った最後の段を mangle して比べる)を数える。註・`#_` で読み捨てた form・quote した form・分岐の条件の外は数えない。層の分からない置き場は層の規則の外なので数えない。綴りと層は repo の宣言にだけ在る。既定の重大さ critical(agora-redesign #1906) | `value:<綴り>` か `flag:<綴り>` | 当たった literal か記号 |
-| DOEFF169 | match の class pattern の keyword の欄の名に `-` が在る — 層の置き場の Hy の file の全部(設定は要らない)で、`match` の節の型(`:if` の守りは型に数えない)の中の class pattern(頭が `|` でない記号の丸括弧の form — 型の中の入れ子と class pattern の引数も辿る)の keyword の引数のうち、名に `-` を含む物を当てる。Hy 1.3.1 の `match` は class pattern の keyword を属性名へ mangle しないまま `case Class(a-b=…)` に出すので、その節はどの値にも当たらず、黙って次の節(多くは既定の `_`)に倒れる。`_` で書いた欄(`:a_b`)・位置引数の pattern・節の本体と守りの keyword・match の外・註・quote・`#_` は当てない。`(defk …)` の form の中(引数・契約・本体)も当てない — defk は展開の時に中の match の class pattern の欄の名を `hy.mangle` で属性名へ直す(doeff-hy の `doeff_hy/_match_fields.py`)ので、そこでは `:a-b` が当たる。鍵の細目は `<class>:<欄の名>`。既定の重大さ critical(agora-redesign #2036) | `<class>:<欄の名>` | keyword の位置 |
-| DOEFF170 | 値を型だけで渡す層に defwire が在る — architecture.hy の層の `:wire-free True`(TOML の設定は `layers.wire_free`)を宣言した層の Hy の file の、最上位の `defwire` の宣言を当てる。wire の型(欄名の対応 `:names` を持つ宣言)と parse / dump は翻訳の層に置き、この層は欄名を持たない型だけを持つ(operator 2026-10-01 の決め)。宣言した層が無い repo では判定が繋がらない。既定の重大さ critical(agora-redesign #2143) | `wire:<名>` | defwire の名 |
-| DOEFF171 | 値を型だけで渡す層の契約と欄に写像・型の無い組 — `:wire-free True` の層の Hy の file の、defk・deff・defn の `:pre [(: 引数 T)]` と `:post [(: % T)]`、defclass・defrecord・defwire の欄の型(`(#^ T 名)`)と、同じ層の Python の file の class の欄の注記(dataclass・TypedDict・class の `名: T` — agora-redesign #2203 で足した。以前は Hy の file だけを数え、core の .py の `Mapping[` の欄を黙って見逃していた)のうち、写像(dict・Dict・Mapping・MutableMapping・JsonValue・JsonObject・JsonBody・OpaqueJson・FrozenMap — 中身の型の在る `(of dict K V)` も)・中身の型の無い組と列(tuple・list)・長さの決まった組・要素の型が開いた組を当てる(union の枝と入れ物の中身も見る — DOEFF144 の型の読みを使う)。同じ型の列(`(of tuple X ...)`・`(of list X)`)と型つきの record は当てない。並べ替えのキーの関数(名が `…key-of`・`sort-key`)の `:post` の組は外す。データを引く写像はキー → 値の関数か効果にし、写像を組む綴りは翻訳の層の 1 点に置く。既定の重大さ critical(agora-redesign #2143) | `pre:<定義>:<引数>`・`post:<定義>`・`field:<Class>.<欄>` | 型の注記 |
-| DOEFF172 | 写像の置き場(臭い・数えるだけ)— 層の置き場の Hy の file の、最上位の defk・deff・defn の本体(先頭の docstring と契約の辞書を除く — 順を問わない・#2265。match の型の位置の `{…}` は値を組まないので数えない・#2310)で写像を組む所(`{…}`・`(dfor …)`・`(dict …)` — `#{…}` の集合は数えない)を定義ごとに数えて 1 件、値を型だけで渡す層(`:wire-free True`)の外の defclass・defrecord・defwire の欄と Python の file の class の欄の注記(#2203)の型が写像(DOEFF171 と同じ写像の語彙)なら欄ごとに 1 件。外の形を綴る・読むのが目的の 1 点は契約の `:tags` に `:spells` / `:reads` を外の形の名(`"json"`・`"http"`・`"env"`・`"schema"`・`"records"`(doeff-records の API の形)の閉じた一覧 — doeff-hy の SPELLS と同じ。一覧の外の値は名乗りと見なさない)で名乗れば数えない(値を型だけで渡す層では名乗っても数える・agora-redesign #2265・#2515)。中を読まない中継の型 `OpaqueJson` の欄(None との和を含む)は写像と数えない(他の写像との和は数える・#2515)。要素の型が `OpaqueJson` の tuple / list の欄(`(get tuple #(OpaqueJson ...))`・`(of tuple OpaqueJson ...)`・`tuple[OpaqueJson, ...]`・`list[OpaqueJson]` — None との和を含む)も中継を 0 個以上運ぶだけなので数えない(要素の型が OpaqueJson と他の写像の和なら数える・#2586)。`OpaqueJson` と写像でない型(record など)の和の欄(`(| OpaqueJson Record)`・`OpaqueJson | Record | None`)も中継と数えない(写像の枝を含む和は数える・#2629)。契約どおりの外の形の写像の欄を持つ defwire は、頭の辞書の `:tags` に `:spells` / `:reads` を形の名で名乗れば欄を数えない(defrecord は値の型なので名乗りを効かせない・#2515)。defhandler の中(cache は効果の層が持つ)と、`:post` が写像の定義(写像を組むのが目的の綴りの 1 点)は数えない。値を型だけで渡す層の欄は DOEFF171 が見る。当たりの重さは warning・既定の重大さ major(agora-redesign #2143 — operator の決定 2026-10-01 の原則: agora の data は DB に在り効果で読み、memory の写像は cache のためだけで handler が持つ) | `built:<定義>`・`field:<Class>.<欄>` | 定義の名か欄の型の注記 |
+| DOEFF174 | 業務の層が下の層の効果か handler を直に使う — 宣言は architecture.hy の `:business-fakes` の `:lower-layer-modules`(書いた repo にだけ当たる・書かなければ規則の一覧で wired 偽)。母集団は業務の層(設定 `translation_effects.domain_layers`・書かなければ既定の名 core・intent のうち宣言に在る層)の Hy の file の最上位の定義(`defk`・`deff`・`defn`・`defp`・`defhandler`)。当たる物: (a) 本文で実行する呼び(`(<- …)`・`(! …)`)の頭が `:lower-layer-modules` の module の物(例 `doeff_records._effects` の `ReadRow`)— 頭が repo の defk なら DOEFF130 と同じ到達で `max_depth` の深さまで辿る(shared の defk を経て届く形も)。同じ package(`:lower-layer-modules` の綴りの最後の区切りを外した module — `doeff_records._effects` なら `doeff_records`)の別の module の、repo の外の定義(`doeff_records._typed` の `read-typed` など効果を包む defk)を実行する所も当てる — repo の外の定義は推論の表に無く、その先まで辿れないので、実行した時点で生の操作とみなす。(b) `with_handlers` の列の要素と `with_handler` / `WithHandler` の 1 つ目に置いた handler の名(要素が呼びなら頭、記号ならその記号、`#*` の展開なら中の記号)が同じ package の物(例 `doeff_records._event_source` の `read-signal-handler`・`doeff_records._http_client` の `http-records-handler`)。当たらない物: 値の型の import と使用(`Row`・`KeepFor`・`RowType`・`typed-row`・`ChangedRow`・`SignalTables` — 実行する呼びの頭にも被せる handler の列にも出ない物。module 単位では import を禁じない — `event_source` は型と handler を同じ module に置くため)・ドメインの効果(層 intent の型)・翻訳の層と土台の層と組み立ての層の定義・quote の中。**拾えない形**: 答えや引数で受けた handler を値のまま被せる所(`(with_handlers (list opened.handlers) …)` — 欄の読み・引数・式の handler は名が静的に決まらないので数えない。被せる値を作る側の翻訳の handler が、業務の層へ生の handler を渡さない形で直す)。定義ごと・名ごとに本文の順で最初の 1 か所。1 file の実行(エディタ)でも判じる。既定の重大さ critical・**既知の一覧(registry)で下げない**(記録の生の読み書きは handler の仕事で job の仕事ではない。業務の効果を handler が記録の効果へ翻訳し、job が記録の効果を生で出す形は linter で禁じる。範囲: cluster の中で記録の service の生の操作を使うのは handler〔protocol・foundation の層〕だけ・外にはドメインの API だけ) | `<定義の名(mangle)>::<効果か handler の module まで含めた名(mangle)>`(例 `tail_reading::doeff_records._event_source.read_signal_handler`) | 実行する呼びの頭・被せる handler の記号 |
+| DOEFF167 | 反例も外した理由も無い不変条件の条 — DOEFF164(service に反例が 1 本あれば緑)を条ごとに細かくした物。条の名は `:invariants` の関数が返す値で静的に読めないので、defservice の `:clauses ["条" …]` に宣言し、反例を持たない条は `:clause-exemptions {"条" "理由" …}` に理由を書く(`:clauses` の内・理由は空でない)。反例の節がどの条を破るかは、反例の表(`:counterexamples` の 1 鍵 1 file)の 2 行目から後の `breaks: <service>::<条> …` の行で名乗る。母集団と効く反例の節は DOEFF164 と同じ(entry の層に定義を持つ service・表の鍵に当たり本番の入口から届かない節)。条ごとに、名乗る節に届く deftest の 1 本でもその service の entry の層の定義に届けば有り、理由つきで外した条は数えず、どちらも無ければ defservice の位置で critical(鍵の細目 `<service>::<条>`)。`:clauses` を書かない code を持つ service は service の名で 1 つ。宣言に無い service か条を名乗る `breaks:`・綴りの誤りは設定の誤り(errors)。全体の実行だけ。既定の重大さ critical | `<service>::<条>`(宣言の欠けは service の名) | defservice の位置 |
+| DOEFF168 | 業務の層が環境の名の値や dry-run の印で分岐する — `:environment-branches` の `:layers` の層の Hy の file で、比べる form(`=`・`!=`・`is`・`is-not`・`in`・`not-in`)の引数(集まりの literal の要素も)と `match` の節の型に在る、`:values` の文字列の literal と、分岐の form(`if`・`when`・`unless` の条件・`cond` の各条件・`match` の主語)の中の `:flags` の名の記号(点で区切った最後の段を mangle して比べる)を数える。註・`#_` で読み捨てた form・quote した form・分岐の条件の外は数えない。層の分からない置き場は層の規則の外なので数えない。綴りと層は repo の宣言にだけ在る。既定の重大さ critical | `value:<綴り>` か `flag:<綴り>` | 当たった literal か記号 |
+| DOEFF169 | match の class pattern の keyword の欄の名に `-` が在る — 層の置き場の Hy の file の全部(設定は要らない)で、`match` の節の型(`:if` の守りは型に数えない)の中の class pattern(頭が `|` でない記号の丸括弧の form — 型の中の入れ子と class pattern の引数も辿る)の keyword の引数のうち、名に `-` を含む物を当てる。Hy 1.3.1 の `match` は class pattern の keyword を属性名へ mangle しないまま `case Class(a-b=…)` に出すので、その節はどの値にも当たらず、黙って次の節(多くは既定の `_`)に倒れる。`_` で書いた欄(`:a_b`)・位置引数の pattern・節の本体と守りの keyword・match の外・註・quote・`#_` は当てない。`(defk …)` の form の中(引数・契約・本体)も当てない — defk は展開の時に中の match の class pattern の欄の名を `hy.mangle` で属性名へ直す(doeff-hy の `doeff_hy/_match_fields.py`)ので、そこでは `:a-b` が当たる。鍵の細目は `<class>:<欄の名>`。既定の重大さ critical | `<class>:<欄の名>` | keyword の位置 |
+| DOEFF170 | 値を型だけで渡す層に defwire が在る — architecture.hy の層の `:wire-free True`(TOML の設定は `layers.wire_free`)を宣言した層の Hy の file の、最上位の `defwire` の宣言を当てる。wire の型(欄名の対応 `:names` を持つ宣言)と parse / dump は翻訳の層に置き、この層は欄名を持たない型だけを持つ。宣言した層が無い repo では判定が繋がらない。既定の重大さ critical | `wire:<名>` | defwire の名 |
+| DOEFF171 | 値を型だけで渡す層の契約と欄に写像・型の無い組 — `:wire-free True` の層の Hy の file の、defk・deff・defn の `:pre [(: 引数 T)]` と `:post [(: % T)]`、defclass・defrecord・defwire の欄の型(`(#^ T 名)`)と、同じ層の Python の file の class の欄の注記(dataclass・TypedDict・class の `名: T` — 足した。以前は Hy の file だけを数え、core の .py の `Mapping[` の欄を黙って見逃していた)のうち、写像(dict・Dict・Mapping・MutableMapping・JsonValue・JsonObject・JsonBody・OpaqueJson・FrozenMap — 中身の型の在る `(of dict K V)` も)・中身の型の無い組と列(tuple・list)・長さの決まった組・要素の型が開いた組を当てる(union の枝と入れ物の中身も見る — DOEFF144 の型の読みを使う)。同じ型の列(`(of tuple X ...)`・`(of list X)`)と型つきの record は当てない。並べ替えのキーの関数(名が `…key-of`・`sort-key`)の `:post` の組は外す。データを引く写像はキー → 値の関数か効果にし、写像を組む綴りは翻訳の層の 1 点に置く。既定の重大さ critical | `pre:<定義>:<引数>`・`post:<定義>`・`field:<Class>.<欄>` | 型の注記 |
+| DOEFF172 | 写像の置き場(臭い・数えるだけ)— 層の置き場の Hy の file の、最上位の defk・deff・defn の本体(先頭の docstring と契約の辞書を除く — 順を問わない・#2265。match の型の位置の `{…}` は値を組まないので数えない・#2310)で写像を組む所(`{…}`・`(dfor …)`・`(dict …)` — `#{…}` の集合は数えない)を定義ごとに数えて 1 件、値を型だけで渡す層(`:wire-free True`)の外の defclass・defrecord・defwire の欄と Python の file の class の欄の注記(#2203)の型が写像(DOEFF171 と同じ写像の語彙)なら欄ごとに 1 件。外の形を綴る・読むのが目的の 1 点は契約の `:tags` に `:spells` / `:reads` を外の形の名(`"json"`・`"http"`・`"env"`・`"schema"`・`"records"`(doeff-records の API の形)の閉じた一覧 — doeff-hy の SPELLS と同じ。一覧の外の値は名乗りと見なさない)で名乗れば数えない(値を型だけで渡す層では名乗っても数える)。中を読まない中継の型 `OpaqueJson` の欄(None との和を含む)は写像と数えない(他の写像との和は数える・#2515)。要素の型が `OpaqueJson` の tuple / list の欄(`(get tuple #(OpaqueJson ...))`・`(of tuple OpaqueJson ...)`・`tuple[OpaqueJson, ...]`・`list[OpaqueJson]` — None との和を含む)も中継を 0 個以上運ぶだけなので数えない(要素の型が OpaqueJson と他の写像の和なら数える・#2586)。`OpaqueJson` と写像でない型(record など)の和の欄(`(| OpaqueJson Record)`・`OpaqueJson | Record | None`)も中継と数えない(写像の枝を含む和は数える・#2629)。契約どおりの外の形の写像の欄を持つ defwire は、頭の辞書の `:tags` に `:spells` / `:reads` を形の名で名乗れば欄を数えない(defrecord は値の型なので名乗りを効かせない・#2515)。defhandler の中(cache は効果の層が持つ)と、`:post` が写像の定義(写像を組むのが目的の綴りの 1 点)は数えない。値を型だけで渡す層の欄は DOEFF171 が見る。当たりの重さは warning・既定の重大さ major(agora の data は DB に在り効果で読み、memory の写像は cache のためだけで handler が持つ) | `built:<定義>`・`field:<Class>.<欄>` | 定義の名か欄の型の注記 |
 | DOEFF175 | 宣言を切り替えた effect の古い分岐 — 定義の規則の母集団(`definitions` の `paths` と `test_paths` の Hy の file)の最上位の定義(`defk`・`deff`・`defn`・`defn/a`・`defp`・`defpp`・`deftest`)で、effect `E` の答えを束ねた名 x — `(<- x (E …))`・`(<- x T (E …))`・`(<- x (E …) :absent F)`・`(val|var|setv|setx|:= x (! (E …)))` — か、束ねずに直に書いた `(! (E …))` に対して、`E` が defeffect の `:absent` / `:failure` で宣言した型を値として分ける枝を当てる: `(match x (T …) …)` の腕(`(| (A) (B))` の選択肢も 1 つずつ)と `(isinstance x T)`(型の列 `#(A B)`・`[A B]`・`(| A B)`・`(tuple [A B])` も 1 つずつ・cond / if / when / and / not の中も)。`<-` と `!` は宣言した不在・失敗の型を束ねず Absent / Raise として呼び手のスコープへ逃がす(ADR-DOE-CORE-EFFECTS-003 R5)ので、その枝は決して通らない。型は import と module で module まで解いて比べる(DOEFF122 と同じ — 同じ名の型が別の module にあっても、宣言した方だけ)。当てない物: `:value` と宣言した型の枝・成功の型の枝・宣言の無い effect の枝・defhandler(節は effect を受ける側で、答えを束ねる側ではない — 定義ごと読まない)・別の effect が宣言した型・pattern の欄の中の型・束ね直した名と、引数・`for`・`with`・`let`・`except`・comprehension・match の pattern で隠れた名・`maybe` / `result` / `on-raise` / `absent-as` で包んだ答え(頭が effect でない)・defk を経由した答え・quote・註と `#_`。詳しくは 22 節。全体の実行と 1 file の実行(エディタ)の両方で判じる。既定の重大さ critical・**既知の一覧(registry)で下げない**(切り替えの門 — 当たりが 0 になるまでその版を着地させない・law declarations-switch-one-effect-at-a-time) | `<定義の名(mangle)>::<束ねた名>::<型の綴り>`(束ねずに `!` で直に分ける形は束ねた名の代わりに effect の綴り。例 `revise_input::body::Missing`) | match の腕の pattern・isinstance の型の記号 |
-| DOEFF166 | 登録簿の当たらない古い行 — `[tool.doeff-linter.registry]` の `dirs`・`files`・`config_files` の鍵のうち、鍵の区切り(`<path>::<law の名か規則の ID>[::<細目>]` の 2 つ目)が指す規則を**この実行で判じた**(判定が繋がっている・意味の規則でない・`reconciling` でない)のに、どの所見の鍵にも当たらない物。DOEFF166 が有効な全体の実行では、鍵が名指す規則を `enable` に無くても同じ実行で当てる — その当たりは 166 の判じにだけ使い、所見としては報告しない(`--enable DOEFF166` だけの実行でも当たらない行を見逃さない・agora-redesign #1999)。区切りから規則を引けない鍵(登録簿の dir を共用する他の検の鍵)と、意味の規則・`reconciling` の規則を名指す鍵は判じない。path を名指さない全体の実行だけ(名指しの file・保存前の 1 file では、当たる所見が範囲の外に在りうる)。登録簿を設定した repo でだけ繋がる。既定の重大さ critical(agora-redesign #1724・#1706 — 縮める向きの登録簿を消し忘れで緩めない) | 登録簿の鍵 | 載った登録簿の file(dir なら鍵の `*.txt`)の先頭 |
-| DOEFF144 | 公開面の型が素の写像・素の組 — `:typed-values {:files [..] :except [..]}`(glob は DOEFF150 と同じく根に錨を下ろす)に当たる Hy と Python の file の公開面(名が `_` で始まらない物 — `Class.欄` は最後の段で見る)の型の注記を読む: class の欄(Hy の defclass・defrecord・defwire の直下の `(#^ T 名)`・`#^ T 名`・`(setv #^ T 名 …)`/Python の class の直下の `名: T`)・関数と method の戻り値(`(defn #^ T 名 …)`・defk / deff の `:post [(: % T)]`/`-> T`。入れ子の関数は数えない)。赤 = 素の写像(dict・Dict・Mapping・MutableMapping・typing / collections.abc の同名・JsonValue・JSONValue・JsonObject・JSONObject)・素の組(tuple・Tuple)・値が object / Any の写像・長さの決まった組 `tuple[A, B]`・それらを中身に持つ入れ物と union の枝・文字列の型 `"A \| B"` の枝。赤でない = `dict[str, Row]`・`tuple[X, ...]`・FrozenMap。名に型の注記の在る defk / deff の `:post` は写像だけを赤にし、注記の無い `:post` は素の組も赤にする。Hy の defn / defk / deff が長さ 2 以上の組の literal `#(a b)` を答えにする形(最後の式か `(return #(a b))`)も赤。file 1 つで判じ、名指しの path の扱いは DOEFF150 と同じ。既定の重大さ critical(agora-redesign #1191) | `field:<Class.欄>` / `return:<名か Class.method>` / `post:<名>` / `pair:<名>` | 型の注記(答えの組は組の literal) |
+| DOEFF166 | 登録簿の当たらない古い行 — `[tool.doeff-linter.registry]` の `dirs`・`files`・`config_files` の鍵のうち、鍵の区切り(`<path>::<law の名か規則の ID>[::<細目>]` の 2 つ目)が指す規則を**この実行で判じた**(判定が繋がっている・意味の規則でない・`reconciling` でない)のに、どの所見の鍵にも当たらない物。DOEFF166 が有効な全体の実行では、鍵が名指す規則を `enable` に無くても同じ実行で当てる — その当たりは 166 の判じにだけ使い、所見としては報告しない(`--enable DOEFF166` だけの実行でも当たらない行を見逃さない)。区切りから規則を引けない鍵(登録簿の dir を共用する他の検の鍵)と、意味の規則・`reconciling` の規則を名指す鍵は判じない。path を名指さない全体の実行だけ(名指しの file・保存前の 1 file では、当たる所見が範囲の外に在りうる)。登録簿を設定した repo でだけ繋がる。既定の重大さ critical(#1706 — 縮める向きの登録簿を消し忘れで緩めない) | 登録簿の鍵 | 載った登録簿の file(dir なら鍵の `*.txt`)の先頭 |
+| DOEFF144 | 公開面の型が素の写像・素の組 — `:typed-values {:files [..] :except [..]}`(glob は DOEFF150 と同じく根に錨を下ろす)に当たる Hy と Python の file の公開面(名が `_` で始まらない物 — `Class.欄` は最後の段で見る)の型の注記を読む: class の欄(Hy の defclass・defrecord・defwire の直下の `(#^ T 名)`・`#^ T 名`・`(setv #^ T 名 …)`/Python の class の直下の `名: T`)・関数と method の戻り値(`(defn #^ T 名 …)`・defk / deff の `:post [(: % T)]`/`-> T`。入れ子の関数は数えない)。赤 = 素の写像(dict・Dict・Mapping・MutableMapping・typing / collections.abc の同名・JsonValue・JSONValue・JsonObject・JSONObject)・素の組(tuple・Tuple)・値が object / Any の写像・長さの決まった組 `tuple[A, B]`・それらを中身に持つ入れ物と union の枝・文字列の型 `"A \| B"` の枝。赤でない = `dict[str, Row]`・`tuple[X, ...]`・FrozenMap。名に型の注記の在る defk / deff の `:post` は写像だけを赤にし、注記の無い `:post` は素の組も赤にする。Hy の defn / defk / deff が長さ 2 以上の組の literal `#(a b)` を答えにする形(最後の式か `(return #(a b))`)も赤。file 1 つで判じ、名指しの path の扱いは DOEFF150 と同じ。既定の重大さ critical | `field:<Class.欄>` / `return:<名か Class.method>` / `post:<名>` / `pair:<名>` | 型の注記(答えの組は組の literal) |
 | DOEFF145 | 型の宣言の `@dataclass` に kw_only=True が無い — `:record-stubs {:files [..] :except [..]}` に当たる .pyi のうち同じ dir に同じ名の .hy が在る物で、.hy の最上位の `(defrecord 名 …)` か飾りに `(dataclass … :kw-only True …)` を持つ `(defclass [飾り …] 名 …)`(名は Python の名へ mangle)を、.pyi の最上位の class が `@dataclass` / `@dataclasses.dataclass`(呼びの形も)で `kw_only=True` の literal 無しに宣言する。file 1 つで判じる。既定の重大さ critical(#1191) | class の名 | `@dataclass` の飾り |
-| DOEFF146 | 判定を1か所に閉じ込めた語彙 — `:single-point-vocabulary` の群ごとに、`:files`(repo の根に錨を下ろした glob)に当たり `:except`(判定の1点)に当たらない file を読み、`:patterns`(正規表現 `r"…"`・行に1件)のどれかが当たる行が1行でもあれば file ごとに1件出す(当たった行の数を message に書く)。既定の重大さ critical(agora-redesign #1192・#1371 — 元は agora-controllers の一時の検 check_screen_slice_single_point.hy) | 群の名 | file の最初に当たった行 |
-| DOEFF150 | 使わないと決めた綴り — `:retired-words` の群ごとに、`:files`(repo の根に錨を下ろした glob — `/` の無い型は根の直下の file だけ)に当たり `:except` に当たらない file を読む。`:in lines`(既定)は行ごとに、語として単独で在る `:words`(前後が英字・`_`・`-` でない所)と `:patterns`(正規表現 `r"…"`・行に 1 件)を数え、`:rule-lines` の綴りを含む行は数えない。数えるのは実際に使う code の中の綴りだけで、註・docstring・文書の中の綴りは数えない(agora-redesign #1794・#1762 の決定 Q2-3): `.md` の file は数えない(file ごと)・Hy は `;` の註(文字列の外の `;` から行末)と `def…` の形(defk・defn・deff・defclass・defhandler・deftest・defadr …)の docstring(名と引数の列・任意の `{…}` の meta の後の最初の文字列で、後にまだ form が在る物)を数えない・Python は `#` の註(文字列の外)と docstring(行の最初の非空白から始まる三重引用符の文字列)を数えない・shell・toml・ほかの file は引用符の外の `#` の註(行頭か空白の後の `#` から行末 — `$#`・`${#…}` は註でない)を数えない。どの種類でも 1 行目の shebang(`#!`)の行は数える。記号・欄名と docstring でない文字列は数える — command の文字列(`"cd x && PYTHONPATH=. hy"`)は実行される綴りなので数える。`:in names` は定義の名(Hy の `def…` の形と `setv`・`val`・`var` の左辺・Python の def と class の名)だけを見る。`:in paths` は file の名(最後の `.` より前 — dir の名と中身は見ない)だけを見て、退役した名の file を置き直さない(agora-redesign #1369)。`:rule-lines` は `:in lines` の時だけ書ける。`:contract-files [<repo の根からの path> …]`(`:in lines` の時だけ書ける・agora-redesign #1893)は契約の JSON の file の列で、architecture.hy を読む時にどの深さのオブジェクトのキーの名と、キー `enum` の配列の文字列の要素・キー `const` の文字列の値(契約の綴り)を集める(註・例の値・ほかの配列の中身は集めない)。`:words` の語が契約の綴りに在れば、その語は次の 3 か所でだけ数えない — 文字列で中身がその語ちょうどの物(Hy の普通の文字列 `"mail"`・Python の `.py` / `.pyi` の接頭辞の無い 1 行の文字列 `"mail"`・`'mail'`)と、Hy の defwire の本体の欄の定義の名(`(#^ str mail)`・`(setv #^ T mail v)`)と、Hy の defsystem の job の行の `:reads` / `:writes` の集合の文字列(綴り `<置き場>:<名>`)の最初の `:` の後の名の部分がその語ちょうどの物(`#{"record:mail"}` の mail・agora-redesign #3506)。変数・引数・defrecord / defclass の欄・loop の変数・属性の読み(`x.mail`)・語を含む長い文字列と、契約に無い語は今どおり数え、`:patterns` には効かない。file が無い・JSON でない・契約の綴りが 1 つも無い・空の列・根の外の path は宣言の誤り(終了コード 2)。書かない群は今までどおり。file 1 つで判じるので、名指しの path が在ればその下の file だけを読む(repo 全体を読まない)。既定の重大さ critical(agora-redesign #1193) | `:words` の当たりは語・`:patterns` の当たりは群の名 | 当たった綴り |
+| DOEFF146 | 判定を1か所に閉じ込めた語彙 — `:single-point-vocabulary` の群ごとに、`:files`(repo の根に錨を下ろした glob)に当たり `:except`(判定の1点)に当たらない file を読み、`:patterns`(正規表現 `r"…"`・行に1件)のどれかが当たる行が1行でもあれば file ごとに1件出す(当たった行の数を message に書く)。既定の重大さ critical(#1371 — 元は agora-controllers の一時の検 check_screen_slice_single_point.hy) | 群の名 | file の最初に当たった行 |
+| DOEFF150 | 使わないと決めた綴り — `:retired-words` の群ごとに、`:files`(repo の根に錨を下ろした glob — `/` の無い型は根の直下の file だけ)に当たり `:except` に当たらない file を読む。`:in lines`(既定)は行ごとに、語として単独で在る `:words`(前後が英字・`_`・`-` でない所)と `:patterns`(正規表現 `r"…"`・行に 1 件)を数え、`:rule-lines` の綴りを含む行は数えない。数えるのは実際に使う code の中の綴りだけで、註・docstring・文書の中の綴りは数えない(#1762 の決定 Q2-3): `.md` の file は数えない(file ごと)・Hy は `;` の註(文字列の外の `;` から行末)と `def…` の形(defk・defn・deff・defclass・defhandler・deftest・defadr …)の docstring(名と引数の列・任意の `{…}` の meta の後の最初の文字列で、後にまだ form が在る物)を数えない・Python は `#` の註(文字列の外)と docstring(行の最初の非空白から始まる三重引用符の文字列)を数えない・shell・toml・ほかの file は引用符の外の `#` の註(行頭か空白の後の `#` から行末 — `$#`・`${#…}` は註でない)を数えない。どの種類でも 1 行目の shebang(`#!`)の行は数える。記号・欄名と docstring でない文字列は数える — command の文字列(`"cd x && PYTHONPATH=. hy"`)は実行される綴りなので数える。`:in names` は定義の名(Hy の `def…` の形と `setv`・`val`・`var` の左辺・Python の def と class の名)だけを見る。`:in paths` は file の名(最後の `.` より前 — dir の名と中身は見ない)だけを見て、退役した名の file を置き直さない。`:rule-lines` は `:in lines` の時だけ書ける。`:contract-files [<repo の根からの path> …]`(`:in lines` の時だけ書ける)は契約の JSON の file の列で、architecture.hy を読む時にどの深さのオブジェクトのキーの名と、キー `enum` の配列の文字列の要素・キー `const` の文字列の値(契約の綴り)を集める(註・例の値・ほかの配列の中身は集めない)。`:words` の語が契約の綴りに在れば、その語は次の 3 か所でだけ数えない — 文字列で中身がその語ちょうどの物(Hy の普通の文字列 `"mail"`・Python の `.py` / `.pyi` の接頭辞の無い 1 行の文字列 `"mail"`・`'mail'`)と、Hy の defwire の本体の欄の定義の名(`(#^ str mail)`・`(setv #^ T mail v)`)と、Hy の defsystem の job の行の `:reads` / `:writes` の集合の文字列(綴り `<置き場>:<名>`)の最初の `:` の後の名の部分がその語ちょうどの物(`#{"record:mail"}` の mail)。変数・引数・defrecord / defclass の欄・loop の変数・属性の読み(`x.mail`)・語を含む長い文字列と、契約に無い語は今どおり数え、`:patterns` には効かない。file が無い・JSON でない・契約の綴りが 1 つも無い・空の列・根の外の path は宣言の誤り(終了コード 2)。書かない群は今までどおり。file 1 つで判じるので、名指しの path が在ればその下の file だけを読む(repo 全体を読まない)。既定の重大さ critical | `:words` の当たりは語・`:patterns` の当たりは群の名 | 当たった綴り |
 | DOEFF151 | 使わないと決めた呼び — `:retired-calls` の群ごとに、`:files` に当たる Hy の file の `(呼び …)` の形(頭の記号が `:calls` の綴り)を数える。註・文字列・`#_` で読み捨てた form・値として名指すだけの所は数えない。Python の file は数えない。境目の部品(`:boundary-parts`)の module の中では、呼びの綴りが生の副作用の目録で分類でき、その触れる先(DOEFF106 と同じ写し方 — `time.time` は clock)を部品が `:touches` に宣言している呼びだけを数えない(#1894)。名指しの path の扱いと重大さは DOEFF150 と同じ(#1193) | 呼びの綴り | 呼びの頭の記号 |
 | DOEFF109 | service を持つ file(置き場の `*` に当たった物)の層が `services.guarded_layers` に在り、import の先が別の service の守る層の module なら破れ。先が共有の置き場・`open_layers` の層・例外の組なら許す | import の先の綴り | 最初の import の記号 |
 | DOEFF110 | Hy の `defn` / `defn/a` の定義(decorator つきも)。`do` の中も最上位として見る。`eval-and-compile` / `eval-when-compile` の中は外 | 定義の名 | 定義の名 |
@@ -410,7 +410,7 @@ if・try などの中も数え、`from m import a` は `m.a`、`import a.b` は 
 - 全体の実行は、DOEFF107 が有効なら repo の根の Hy の全部を hy-index で索引する(経由の証拠が file をまたぐため)。
   無効なら判じる file だけを索引する。
 - `--stdin` の 1 file の実行は、層の dir の file の一覧(読まない)と、その 1 file の解析だけで判じる。経由の証拠は出さない。
-- `--stdin` の 1 file の実行が読む repo の範囲は、**書いた file が名指す module の file だけ**(card ki-a9959efd9cf6 の残り — 混んだ Pod で repo の
+- `--stdin` の 1 file の実行が読む repo の範囲は、**書いた file が名指す module の file だけ**(混んだ Pod で repo の
   Hy の file を全部読むと 2〜7 秒かかり、書いた後の助言の hook の期限 4 秒で切れた)。表は module まで含めた名で引かれ、引く名は書いた file の記号を
   import の束縛と module で解いた名(`smells::Scope::qualify`)か、届いた file の事実が持つ名なので、書いた file が名指す module から始めて閉じるまで読めば、
   repo 全体を読んだ時と答えが同じ。
@@ -483,7 +483,7 @@ if・try などの中も数え、`from m import a` は `m.a`、`import a.b` は 
   - 冷えた作業木(mincore で確かめた・旧新で別の作業木・共有 cache): 失敗の型を引く file の最初の 1 回 実時間 中央値 4.9 → 3.0 秒・CPU 15 → 1.1 秒。引数に渡された Program を引く file は 3.06 → 3.05 秒・CPU 2.6 → 2.8 秒(変わらない)。
   - 答え: 150 走行の出力は linter の版の欄を除いて 1 byte も違わない。破れを足した断片(平の defn・os.environ・素の sleep・タグの無い record・失敗の型の match・括弧の閉じない所)を 40 file × 7 の 280 走行に足した出力と、
     失敗の型を別の file から引く DOEFF122 の 13 走行も同じ。hook が返す助言の文は、実際の 139 走行で同じ(確かめ方の行の binary の path を除く)。
-- 変わっていない file の中身を読まない(card ki-40c8ca380713): repo の file の全部を見る 3 つの所(引数に渡された Program の呼び手の綴り・失敗の型の宣言の綴り・class の frozen)と
+- 変わっていない file の中身を読まない: repo の file の全部を見る 3 つの所(引数に渡された Program の呼び手の綴り・失敗の型の宣言の綴り・class の frozen)と
   登録簿は、git の index の行と作業木の stat(大きさ・更新時刻の ns・inode)が合う file の事実を、index の blob の id で引いて中身を読まない(`git_index.rs` — index の版 2・3 の
   stage 0 の行。index の更新時刻と同じか後の行〔racy〕・index に無い file・stat の合わない file は中身を読む)。事実は blob の中身だけで決まるので、どの作業木の答えも中身を読んだ時と同じ。
   - 事実は、index の並びを path の hash で区切った塊(約 64 行・上限 256 行)ごとに 1 つの表として置く(`blob_chunks.rs` — 置き場の名は塊の頭の path)。冷えた作業木でも置き場の
@@ -498,7 +498,7 @@ if・try などの中も数え、`from m import a` は `m.a`、`import a.b` は 
   - 事実の置き場を数える上限の片づけ(1 時間に 1 度・zeus で約 40 万の事実・3〜19 秒 — その番を引いた hook が期限で打ち切られた)は、最中の印を持ったまま linter 自身の
     `sweep-facts-cache` の口へ渡して待たない(新しい session・標準の入出力なし・nice 10。渡せなければその実行で片づける)。根の dir だけを数える片づけと、根が消えた dir の片づけは
     軽いのでその実行の中のまま。検は `DOEFF_LINTER_SWEEP_INLINE` で実行の中で片づけて結果を見る。
-- 実測(card ki-40c8ca380713・2026-10-23・agora-controllers の本線 Hy 4,620 file・LTO なしの release・事実の置き場は機体の共有の物):
+- 実測(2026-10-23・agora-controllers の本線 Hy 4,620 file・LTO なしの release・事実の置き場は機体の共有の物):
   - 答え: 旧(branch の基点 a16b2b97f)と新の editor-json は、実 repo の file × 書き換え 5 通り(そのまま・束縛を素の代入に・`:effects` を消す・撃たない effect を足す・
     handler の引数に class の型を足す)の 1,240 走行(綴りの覚えを直した版)と、別の選び方の 1,195 走行(歩きを直した版)で、linter の版の欄を除いて 1 byte も違わない
     (DOEFF122 の当たり 20・DOEFF126 77・DOEFF142 3 を含む)。
@@ -534,15 +534,15 @@ agora-controllers の `scripts/module_tags.hy` の `breaches-of` と、DOEFF101�
 
 repo の一番上の `architecture.hy`(または設定の `architecture = "<設定 file からの相対の path>"`)が、service と層を宣言する唯一の場所。
 宣言の file が根の外(設定の `root` で `src/` を根にした package の根の architecture.hy など)なら、鍵の path は `..` を含む根からの相対
-(`../architecture.hy::DOEFF163::…` — 機体ごとの絶対 path を鍵に入れない・agora-redesign #1977)。
+(`../architecture.hy::DOEFF163::…` — 機体ごとの絶対 path を鍵に入れない)。
 doeff-linter はこれを **実行せずに** doeff-indexer の Hy の読み取り器で読む。在れば層・role は ここから写し、TOML の
 `[tool.doeff-linter.layers]`・`roles`・`services` は置けない(二重の宣言は設定の誤り)。TOML には規則の入り切り・重さ・登録簿の置き場所・
 law の対応だけを残す。無ければ TOML の設定で今どおり動く。doeff-hy の実行時の macro(defarchitecture・defservice・layer)は未実装。
 
-**規則の母集団から外す層(agora-redesign #2811)。**層は `:modules [module の名 …]`(点で区切った module の名 — その下の module も入る)で
+**規則の母集団から外す層。**層は `:modules [module の名 …]`(点で区切った module の名 — その下の module も入る)で
 module を名指し、`:exempt [(rule 規則 ID "理由") …]` で、名指しの module に限って Python の文ごとの規則(DOEFF001〜032)の母集団から外せる
 (例: Python の起動の時点で `.pth` から入る見張りは、Program の外で設定を Ask で受ける入口が無いので DOEFF004 を外す)。定義の書き方の
-規則のうち定義の file ごとに判じる DOEFF110・111・112・118・119 も同じ形で外せる(agora-redesign #2913 — 例: macro の展開の時点に
+規則のうち定義の file ごとに判じる DOEFF110・111・112・118・119 も同じ形で外せる(例: macro の展開の時点に
 Python の関数として呼ばれる module の defn は Program を返せないので DOEFF110 を外す)。DOEFF110 を外した module でも、package
 (宣言の file の dir — 検の dir を除く)のどの defmacro の form からも、最上位の関数の本体を辿って届かない defn は外さずに鳴らす
 (実行の時点の定義の見張り・#2913 の 2 便目 — 名は綴りだけで照らし、quasiquote の中の名 = 展開した code が呼ぶ部品も届いたと数える)。
@@ -632,45 +632,45 @@ module が、その層の `:forbid-modules` の module を import すると DOEF
 - 宣言の外でも、root の下の段に層の名がある dir(層が先の dir — `controllers/core/…`)の module は、:role のタグから層を推して層の規則をかける
   (role を許す層が 1 つならその層・2 つ以上なら path の段の層・推せなければ path の段の層に置いてタグの規則 DOEFF104・105 が理由を出す)。
   module の `layer_reason` は「タグで決めた — …」。旧い機能の dir(層の名の段が無い)は層の規則の母集団に入らない。
-- `:legacy` は廃止(operator の決定 2026-09-27 — 旧い物の逃げ道を置かず、当たりは全部出す)。
+- `:legacy` は廃止(旧い物の逃げ道を置かず、当たりは全部出す)。
 - service の dir は名の `-` を `_` にした物(`land-notice` → `controllers/land_notice/`)。`{:dir "…"}` で変えられる。
 - `{:public-contract http}` の service は、公開の契約が HTTP の口だけ。他の service の `:depends-on` に載せると設定の誤り
-  (in-process で読む近道を止める — 置き場の状態を持つ service が 2 つ目の持ち主を作らせないため・agora-redesign #978)。書かない = in-process。
+  (in-process で読む近道を止める — 置き場の状態を持つ service が 2 つ目の持ち主を作らせないため)。書かない = in-process。
   値は `http` だけ(他は設定の誤り)。載せられないので、その service の module を import すると DOEFF116 が当たる。
-- `{:invariants ["module.path:関数" …]}` は、その service の業務の不変条件の関数(記録を受けて破りの列を返す純粋な判断・`:role "judgment"`)の列
-  (agora-redesign #1559)。書かない = None。綴りが `module:名` でない・同じ名指しの 2 度書き・列でない値は設定の誤り。宣言の欠けと名指しの外れは DOEFF163。
-- `{:entry-modules ["pkg.module" …]}` は、その service の code の入口の module の列(agora-redesign #1978)。層の dir(`<root>/<dir>/entry/`)を
+- `{:invariants ["module.path:関数" …]}` は、その service の業務の不変条件の関数(記録を受けて破りの列を返す純粋な判断・`:role "judgment"`)の列。
+ 書かない = None。綴りが `module:名` でない・同じ名指しの 2 度書き・列でない値は設定の誤り。宣言の欠けと名指しの外れは DOEFF163。
+- `{:entry-modules ["pkg.module" …]}` は、その service の code の入口の module の列。層の dir(`<root>/<dir>/entry/`)を
   持たない repo(merge-queue のように機能の dir で分けた repo)が、DOEFF163 の「code を持つ service」をこの宣言で判じさせる — 書いた service は
   母集団に入り、module の Hy の file(`pkg/module.hy`)が repo に無ければ DOEFF163 の欠け(`entry::<module>`)。書かない = None(entry の層の dir で
-  今までどおり判じる)。DOEFF136・164・167 も同じ宣言で母集団と入口を決める(agora-redesign #1987 — 書いた service は、その module の file の
+  今までどおり判じる)。DOEFF136・164・167 も同じ宣言で母集団と入口を決める(書いた service は、その module の file の
   定義を entry の層の定義の代わりにし、模擬の環境の deftest・反例の節に届く deftest がそこへ届くかを見る)。空の列・`.` で区切った module の名でない
   綴り・同じ module の 2 度書き・列でない値は設定の誤り。
-- `:world-handlers` は、外の世界に触れてよい定義の許可名簿(agora-redesign #1106 — operator の決定 2026-09-29: 外の世界に触れてよいのは少数の handler だけ)。
+- `:world-handlers` は、外の世界に触れてよい定義の許可名簿(外の世界に触れてよいのは少数の handler だけ)。
   要素 `(world-handler "module.path:名" :touches [..] :answers [..]? :wraps [..]? :contract-test (none …)?)` の欄は、`:touches` = 触れる先(必須・閉じた語
   http・db・file・process・clock・env・cluster・network・thread)・`:answers` = 答える effect の名・`:wraps` = 中で動かす doeff の実 I/O の handler
   (`"module:名"`・名簿の定義は書けない)・`:contract-test` = 縁の検を求めない handler の印(書き方の定義元は DOEFF137 の直し方の文 — 値は理由のテストの名つきの
   `(none :doeff-test "file::名")` / `(none :repo-test "file::名")` で、型 `ContractTest::Waived(ContractTestWaiver::{DoeffContractTest, CoveredByRepoTest}(TestNodeId))`
-  に読む。理由の無い記号 `none` は読めるが DOEFF137 が鳴る。ほかの値・空や形違いのテストの名は設定の誤り・書かなければ DOEFF137 が縁の検を求める・agora-redesign #1796)。名簿を書くには `:foundation` が要る。名簿を書いた repo では `[tool.doeff-linter.raw_side_effects]
-  allowed_layers` は二重の宣言(設定の誤り)— 生の I/O を許す所は名簿だけで決める(規則は agora-redesign #1134 の子で足す)。
+  に読む。理由の無い記号 `none` は読めるが DOEFF137 が鳴る。ほかの値・空や形違いのテストの名は設定の誤り・書かなければ DOEFF137 が縁の検を求める)。名簿を書くには `:foundation` が要る。名簿を書いた repo では `[tool.doeff-linter.raw_side_effects]
+  allowed_layers` は二重の宣言(設定の誤り)— 生の I/O を許す所は名簿だけで決める(規則は足す)。
   読み違い(綴りが `module:名` でない・語の外・同じ定義や語の 2 度書き・`:touches` の無い要素)は設定の誤り。
 - `:stand-ins` は、模擬の中で本物の代わりに答える相手役の handler と、それが代わる本物の handler の組の名簿(DOEFF137 の拡張 — 手本は
   verified fake と Pact: 相手役ごとに契約の検を持ち、同じ検を本物にも流す)。要素 `(stand-in "module.path:名" :real "module.path:名" :contract-test (none …)?)`
   の欄は、頭 = 相手役の定義・`:real` = 本物の handler(必須・索引の外の package の定義でもよい)・`:contract-test` = `:world-handlers` と同じ書き方と読み方
   (理由つきの none の組は判じない・理由の無い none は鳴る)。名簿を書くには `:edge-mark` が要る(DOEFF137 の有効にする条件と同じ)。読み違い
   (綴りが `module:名` でない・`:real` の無い要素・`:real` が相手役そのもの・同じ組の 2 度書き・知らない鍵)は設定の誤り。
-- `:boundary-parts` は、模擬の環境から本物の外の世界へ届く境目の部品(agora-redesign #1797)— 人が回す入口や縁の台のように、実 I/O
+- `:boundary-parts` は、模擬の環境から本物の外の世界へ届く境目の部品— 人が回す入口や縁の台のように、実 I/O
   そのものが役目で effect に答える handler ではない module を名指す。要素 `(boundary-part "module.path" :touches [..] :reason "…")` の欄は、
   `:touches` = 許す生の副作用の種類(必須・`:world-handlers` と同じ閉じた語)・`:reason` = なぜ実 I/O そのものが役目か(必須)。宣言した
   module の中では、触れる先(生の I/O の分類を上と同じく写した物)が `:touches` に入る証拠を DOEFF106 で当てない(層の中の file と層の置き場の
   外の file の両方)。種類の外の証拠と宣言の無い module は今どおり当たる。証拠は索引に残るので、部品に届く deftest は DOEFF133 が縁と数え
   `:edge-mark` の印を求める。効くのは `:world-handlers` を書いた repo(許す所を名簿で決める repo)だけ。読み違い(綴りが module の dotted で
   ない・語の外・同じ module や語の 2 度書き・`:touches` か `:reason` の無い要素)は設定の誤り。
-- 実 I/O の handler は doeff の目録 `data/world_handlers.json`(doeff-linter に同梱・agora-redesign #1209)から知る。目録の要素 = `{"handler": "module:名", "touches": [..], "why": "…"}`。`:wraps` は目録に在る物だけ(外は設定の誤り)。DOEFF131 は目録の handler のどれもを相手にし、DOEFF133 は目録の handler・名簿の定義・生の I/O の証拠のうち触れる先が `:edge-touches` に当たる物だけを縁に数える(生の I/O の分類は async・thread → thread、time・random → clock と写す。種つきの `random.Random` は生の I/O の証拠から外す — 後述「種つきの疑似乱数と外部 I/O」)。
-- `:semantic-lines` は、Jev に問う規則(DOEFF201・202・205)のどこからが違反かの線引き(agora-redesign #1909)。要素
+- 実 I/O の handler は doeff の目録 `data/world_handlers.json`(doeff-linter に同梱)から知る。目録の要素 = `{"handler": "module:名", "touches": [..], "why": "…"}`。`:wraps` は目録に在る物だけ(外は設定の誤り)。DOEFF131 は目録の handler のどれもを相手にし、DOEFF133 は目録の handler・名簿の定義・生の I/O の証拠のうち触れる先が `:edge-touches` に当たる物だけを縁に数える(生の I/O の分類は async・thread → thread、time・random → clock と写す。種つきの `random.Random` は生の I/O の証拠から外す — 後述「種つきの疑似乱数と外部 I/O」)。
+- `:semantic-lines` は、Jev に問う規則(DOEFF201・202・205)のどこからが違反かの線引き。要素
   `(line "名" :rules [DOEFF201 …] :text "…" :fires [例 …]? :silent [例 …]?)` の欄は、`:rules` = 線引きを入れる問いの規則
   (DOEFF201・202・205 のどれか・1 つ以上)・`:text` = 線引きの文(空にしない)・`:fires` = この線引きで違反になる例・`:silent` = 違反に
   ならない例(どちらも省いてよい)。例 = code の文字列 `"<code>"` か、code となぜ鳴る / 鳴らないかの 1 文の組 `{:code "<code>" :why "…"}`
-  (agora-redesign #1995 — `:why` は省いてよい。code は bracket の文字列 `#[code[…]code]` で書くと引用符を escape しなくてよい)。文と例は repo の宣言に
+  (`:why` は省いてよい。code は bracket の文字列 `#[code[…]code]` で書くと引用符を escape しなくてよい)。文と例は repo の宣言に
   だけ在り、linter は持たない(定義元は architecture.hy の 1 か所)。問いへの入れ方は 10 節。知らない規則・Jev の問いでない規則・線引きを入れない
   Jev の問い(DOEFF203・204)・空の文・`:rules` か `:text` の欠け・同じ名や同じ規則の 2 度書き・空の code・`:code` の無い組・空の `:why` の例は
   設定の誤り。editor-json の
@@ -684,17 +684,17 @@ module が、その層の `:forbid-modules` の module を import すると DOEF
 |---|---|---|---|
 | DOEFF114 | root の下の module が、宣言した service の宣言した層・shared の層・foundation のどれにも入らない(root の直下・service の dir の直下・宣言に無い dir の中 — 層が先の dir も旧い機能の dir も例外なし)。file ごとに 1 件。hint に移し先の案(`<root>/<:context のタグ>/<path の段の層か :role のタグの層>/<名>`)。`__init__` は外 | なし | file の頭 |
 | DOEFF115 | root の直下の dir が宣言した service・shared・foundation でない / service の中の dir が宣言した層でない。dir ごとに 1 件(鍵の path は dir) | なし | dir の最初の file の頭 |
-| DOEFF116 | service A の module が service B の module を import した時、B が A の :depends-on に無い、または読む先が、A の module の層が依存先で読んでよい層(その層の `:dependency-layers`、無ければ `:open-layers`)でない。組み立ての層(agora は entry)だけ `:dependency-layers [intent protocol]` で依存先の翻訳の handler も読める(operator の決定 2026-09-28 の案 A)。shared と foundation は service ではないので見ない。宣言の DOEFF109 はこれに置き換わる(architecture.hy の在る repo では DOEFF109 の設定を置けない) | import の先 | import の記号 |
+| DOEFF116 | service A の module が service B の module を import した時、B が A の :depends-on に無い、または読む先が、A の module の層が依存先で読んでよい層(その層の `:dependency-layers`、無ければ `:open-layers`)でない。組み立ての層(agora は entry)だけ `:dependency-layers [intent protocol]` で依存先の翻訳の handler も読める。shared と foundation は service ではないので見ない。宣言の DOEFF109 はこれに置き換わる(architecture.hy の在る repo では DOEFF109 の設定を置けない) | import の先 | import の記号 |
 | DOEFF117 | 宣言した依存(A の :depends-on の B)を、A のどの module も読んでいない。info。全体の実行だけ | `A>B` | architecture.hy の defservice の名 |
-| DOEFF140 | `:placed-dependencies` の層の module(service と shared の置き場 — 層が先の旧い dir と foundation は外)が、root の下の層の置き場の外の module(service の dir の直下・宣言に無い dir の中)を import する。読む先は import の綴りの file(無ければ親の module の file)で決め、層の索引に在る物・package の印(`__init__`)・root の外は数えない。渡された file の import と置き場だけで判じる(repo 全体の索引は読まない)。同じ module は 1 件。既定 critical(agora-redesign #1188) | 読む先の module | 最初の import |
-| DOEFF141 | 決めた材料だけで判じる定義 — `:blind-definitions` の定義ごとに、定義から呼び出しと名指し(値として渡す所)で推移的に届く repo の Hy の定義(入れ子を含む・索引が名前を解いた先で、repo に Hy の file が在る module だけ)の本体に、`:forbid-words` の綴りが部分一致で在る(註は除く)と、届いた定義と語ごとに 1 件。`:no-imports True` なら定義の module の import と require(`:allow-requires` の module の require は macro の読み込みなので除く)を module ごとに 1 件。宣言した定義が無ければ architecture.hy の位置で 1 件(母集団 0 を緑にしない)。読むのは宣言の module と届いた先の module の file だけ(repo 全体の索引は組まない)。全体の実行だけ。既定 critical(agora-redesign #1368) | `<届いた定義>:<語>` / `import:<module>` / `missing` | 語の最初の出現・import・architecture.hy の宣言 |
-| DOEFF147 | 呼んでよい頭を決めた定義 — `:allowed-heads` の定義ごとに、定義の form(入れ子を含む)の `( … )` の頭の綴り(記号と keyword — 特殊形式と macro も含む)が `:heads` に無ければ、頭ごとに 1 件。文字列・註・`#_` で読み捨てた form・tuple と `[ … ]`・`{ … }` の要素は頭に数えない。宣言した定義(file の top level の、頭が `def` で始まる form)が無ければ architecture.hy の位置で 1 件(母集団 0 を緑にしない)。読むのは宣言の module の file だけ(索引も組まない)。全体の実行だけ。既定 critical(agora-redesign #1372・#1413) | `<頭>` / `missing` | 頭の最初の出現・architecture.hy の宣言 |
-| DOEFF148 | 書いてよい file を決めた綴り — `:confined-spellings` の群ごとに、`:files`(repo の根に錨を下ろした glob)に当たる Hy・Python(`.hy`・`.py`・`.pyi`)の file のうち `:except` に当たらない物を読み、註を落とした本文(文字列の中は数える — DOEFF146 と違う)に `:patterns` のどれかが当たれば file ごとに 1 件(当たりの数を message に書く)。`:except` が空なら `:files` のどこにも書かない綴り。`:files` に当たる file が無い群は architecture.hy の位置で 1 件(母集団 0 を緑にしない)。`:names-bound-in [<repo の根からの Hy の file> …]` を書いた群は、その file の中で群の綴りに当たる値に結んだ名も群の綴りにする — doeff-cluster の job の宣言の `:environ {"名" "値" …}` の組の名(どの深さでも・値は文字列)と、最上位の `(val 名 値)`・`(setv 名 値)` の名(Python へ mangle した名も・値は form の註を落とした綴りで当てる — 参照の名を並べた列や組み立てた名も)。関数の中の束縛は読まない。足した名に当たる値に結んだ名も増えなくなるまで足す。名の綴りは端が語の字なら `\b` を付けて当てる(`KEY_REF` は `KEY_REFS` に当たらない。Hy の `-` は語の字でないので `KEY-REF-ENV` は `MY-KEY-REF-ENV` にも当たる — 手で書いた写しと同じ広さ)。秘密の置き場の参照の名のように宣言に足していく名を、正規表現の写しで持たずに定義元から導く(写しだと新しい名を他の file で読んでも赤にならない — agora-controllers の群 web-push-private-key・設計検証 lt-T1R7826ZQ8C78H02ZGKEASNRF0 の盲検 A)。名を結ぶ file は `:except` に当たる Hy の file でなければならず(外の file の結びはそれ自身が当たり)、空の列・根の外・`:except` の外・読めない・括弧の閉じない file と、名を 1 つも導けない file は architecture.hy を読む時の宣言の誤り(`:contract-files` の file ごとの検めと同じ — 定数を関数の中へ移した file の名が黙って群から落ちない)。当たりの message は最初の当たりの綴りを、説明は導いた名を書く。歩くのは glob の頭の `*` を含まない dir だけ。全体の実行だけ。既定 critical(agora-redesign #1373・#1436 — 元は agora-controllers の一時の判定 intake_only_rules.hy) | `<群>` / `<群>:missing` | file の最初の当たり・architecture.hy の宣言 |
-| DOEFF161 | 数を決めた綴り — `:counted-spellings` の宣言ごとに、`:files` に当たる file(拡張子を問わない — Hy と Python は註を落とし文字列は数える・ほかはそのまま読む)で `:pattern` の当たりを数え、`:count N`(ちょうど)か `:at-least N`(以上)に合わなければ 1 件。`:within [..]` があれば、Hy の file の top level の定義(頭が `def` で始まる form)のうち名指した物ごとに、その form の中で数える。数える file や定義が無ければ architecture.hy の位置で 1 件(母集団 0 を緑にしない)。全体の実行だけ。既定 critical(agora-redesign #1373・#1437 — 元は agora-controllers の一時の判定 intake_only_rules.hy) | `<名>` / `<名>:<定義>` / `<名>:missing` / `<名>:<定義>:missing` | 最初の当たりか定義の頭・architecture.hy の宣言 |
-| DOEFF162 | effect の宣言の全体 — `:effect-census` の宣言ごとに、`:files` の Hy・Python の file(註を除く)で `:base`(既定 `EffectBase`)を継ぐ class の宣言(Python の `class X(… base …):`・Hy の `(defclass [飾り] X [… base …])`。`:base` が `EffectBase` なら Hy の `(defeffect X …)` も — defeffect は常に EffectBase を継ぐ・#1464)を集め、`:effects` の一覧と比べる。一覧に無い宣言・同じ名の 2 つ目の宣言は宣言の位置で、宣言の無い一覧の effect と `:files` に当たる file の無い宣言は architecture.hy の位置で 1 件ずつ。全体の実行だけ。既定 critical(agora-redesign #1373・#1438 — 元は agora-controllers の一時の判定 intake_only_rules.hy の 2) | `<名>:<effect>` / `<名>:<effect>:twice` / `<名>:<effect>:missing` / `<名>:missing` | 宣言の位置・architecture.hy の宣言 |
-| DOEFF149 | 型の欄を持つ class の顔ぶれ — `:field-holders` の宣言ごとに、`:files` に当たる Python の file(`.py`・`.pyi`)の module の直下の class のうち、本体の直下の欄(注記つきの代入 `名: 注記`)の注記に `:type` の綴りが語として在る class を持ち手と数え、`:holders` の一覧(空でよい = どの class も持たない)と比べる。一覧に無い持ち手は class の位置で、その欄を持たない(か無い)一覧の class は architecture.hy の位置で 1 件ずつ。`:classes` を書けば名指した class だけを数え、無い class も 1 件。`:files` に当たる Python の file が無い宣言も 1 件(母集団 0 を緑にしない)。構文木にならない file は読めない物として出す。全体の実行だけ。既定 critical(agora-redesign #1374 — 元は agora-controllers の一時の判定 record_body_rules.hy の ③) | `<名>:<class>` / `<名>:<class>:absent` / `<名>:<class>:missing` / `<名>:missing` | class の位置・architecture.hy の宣言 |
-| DOEFF159 | 頭を呼んでよい場所と回数 — `:call-sites` の宣言ごとに、`:files` の glob に当たる Hy の file(`:except` を除く)の `(頭 …)` の呼び(文字列・註・`#_` の中は除く)を集め、どの `:sites` の定義の中にも無い呼びは file ごとに 1 件。場所ごとに、`:count` を書けば呼びの数の食い違い、`:parent` を書けば直ぐ外の form の頭の食い違い、`:branch` を書けば条件の form にその記号が在る cond・when・if・unless の枝の外の呼びを 1 件。場所の定義が無い・`:files` に当たる file が 0 なら architecture.hy の位置で 1 件(母集団 0 を緑にしない)。歩くのは glob の字義どおりの頭の dir だけ。全体の実行だけ。既定 critical(agora-redesign #1372・#1414) | `<頭>:outside` / `<頭>:count:<名>` / `<頭>:parent:<名>` / `<頭>:branch:<名>` / `<頭>:missing:<名>` / `<頭>:empty` | 最初の呼び・場所の定義の名・architecture.hy の宣言 |
-| DOEFF160 | 広い例外の捕捉は運搬の境界だけ — `:broad-catches` の群ごとに、`:files` の glob に当たる Hy・Python の file(`:except` を除く)の広い捕捉を集める。広い捕捉 = Hy の `(except [] …)` と、捕まえる型の form に `Exception`・`BaseException`・`AssertionError`(`.` で区切った最後の段)が在る `(except [型] …)`・`(except [名 型] …)`(文字列・註・`#_` の中は除く)、Python の型の無い `except:` と、型がそれらの名・属性・その組の `except …:`。許すのは `:carriers` の定義(Hy の file の top level の form)の中で、捕捉が例外を名で束縛し、その捕捉の中の `(:event の出来事 …)` の呼びがその名を引数に直に渡す物だけ。境界の外の捕捉は file ごとに 1 件、名を束縛しない・出来事へ渡さない境界の中の捕捉は境界ごとに 1 件。境界の定義が無い・`:files` に当たる file が 0 なら architecture.hy の位置で 1 件(母集団 0 を緑にしない)。Python の file が構文として読めなければ実行の誤り。全体の実行だけ。既定 critical(agora-redesign #1372・#1415 — 元は agora-controllers の一時の判定 fault_boundary_rules.hy の (d)) | `<名>:outside` / `<名>:unbound:<定義の名>` / `<名>:missing:<定義の名>` / `<名>:empty` | 最初の捕捉・architecture.hy の宣言 |
+| DOEFF140 | `:placed-dependencies` の層の module(service と shared の置き場 — 層が先の旧い dir と foundation は外)が、root の下の層の置き場の外の module(service の dir の直下・宣言に無い dir の中)を import する。読む先は import の綴りの file(無ければ親の module の file)で決め、層の索引に在る物・package の印(`__init__`)・root の外は数えない。渡された file の import と置き場だけで判じる(repo 全体の索引は読まない)。同じ module は 1 件。既定 critical | 読む先の module | 最初の import |
+| DOEFF141 | 決めた材料だけで判じる定義 — `:blind-definitions` の定義ごとに、定義から呼び出しと名指し(値として渡す所)で推移的に届く repo の Hy の定義(入れ子を含む・索引が名前を解いた先で、repo に Hy の file が在る module だけ)の本体に、`:forbid-words` の綴りが部分一致で在る(註は除く)と、届いた定義と語ごとに 1 件。`:no-imports True` なら定義の module の import と require(`:allow-requires` の module の require は macro の読み込みなので除く)を module ごとに 1 件。宣言した定義が無ければ architecture.hy の位置で 1 件(母集団 0 を緑にしない)。読むのは宣言の module と届いた先の module の file だけ(repo 全体の索引は組まない)。全体の実行だけ。既定 critical | `<届いた定義>:<語>` / `import:<module>` / `missing` | 語の最初の出現・import・architecture.hy の宣言 |
+| DOEFF147 | 呼んでよい頭を決めた定義 — `:allowed-heads` の定義ごとに、定義の form(入れ子を含む)の `( … )` の頭の綴り(記号と keyword — 特殊形式と macro も含む)が `:heads` に無ければ、頭ごとに 1 件。文字列・註・`#_` で読み捨てた form・tuple と `[ … ]`・`{ … }` の要素は頭に数えない。宣言した定義(file の top level の、頭が `def` で始まる form)が無ければ architecture.hy の位置で 1 件(母集団 0 を緑にしない)。読むのは宣言の module の file だけ(索引も組まない)。全体の実行だけ。既定 critical(#1413) | `<頭>` / `missing` | 頭の最初の出現・architecture.hy の宣言 |
+| DOEFF148 | 書いてよい file を決めた綴り — `:confined-spellings` の群ごとに、`:files`(repo の根に錨を下ろした glob)に当たる Hy・Python(`.hy`・`.py`・`.pyi`)の file のうち `:except` に当たらない物を読み、註を落とした本文(文字列の中は数える — DOEFF146 と違う)に `:patterns` のどれかが当たれば file ごとに 1 件(当たりの数を message に書く)。`:except` が空なら `:files` のどこにも書かない綴り。`:files` に当たる file が無い群は architecture.hy の位置で 1 件(母集団 0 を緑にしない)。`:names-bound-in [<repo の根からの Hy の file> …]` を書いた群は、その file の中で群の綴りに当たる値に結んだ名も群の綴りにする — doeff-cluster の job の宣言の `:environ {"名" "値" …}` の組の名(どの深さでも・値は文字列)と、最上位の `(val 名 値)`・`(setv 名 値)` の名(Python へ mangle した名も・値は form の註を落とした綴りで当てる — 参照の名を並べた列や組み立てた名も)。関数の中の束縛は読まない。足した名に当たる値に結んだ名も増えなくなるまで足す。名の綴りは端が語の字なら `\b` を付けて当てる(`KEY_REF` は `KEY_REFS` に当たらない。Hy の `-` は語の字でないので `KEY-REF-ENV` は `MY-KEY-REF-ENV` にも当たる — 手で書いた写しと同じ広さ)。秘密の置き場の参照の名のように宣言に足していく名を、正規表現の写しで持たずに定義元から導く(写しだと新しい名を他の file で読んでも赤にならない — agora-controllers の群 web-push-private-key)。名を結ぶ file は `:except` に当たる Hy の file でなければならず(外の file の結びはそれ自身が当たり)、空の列・根の外・`:except` の外・読めない・括弧の閉じない file と、名を 1 つも導けない file は architecture.hy を読む時の宣言の誤り(`:contract-files` の file ごとの検めと同じ — 定数を関数の中へ移した file の名が黙って群から落ちない)。当たりの message は最初の当たりの綴りを、説明は導いた名を書く。歩くのは glob の頭の `*` を含まない dir だけ。全体の実行だけ。既定 critical(#1436 — 元は agora-controllers の一時の判定 intake_only_rules.hy) | `<群>` / `<群>:missing` | file の最初の当たり・architecture.hy の宣言 |
+| DOEFF161 | 数を決めた綴り — `:counted-spellings` の宣言ごとに、`:files` に当たる file(拡張子を問わない — Hy と Python は註を落とし文字列は数える・ほかはそのまま読む)で `:pattern` の当たりを数え、`:count N`(ちょうど)か `:at-least N`(以上)に合わなければ 1 件。`:within [..]` があれば、Hy の file の top level の定義(頭が `def` で始まる form)のうち名指した物ごとに、その form の中で数える。数える file や定義が無ければ architecture.hy の位置で 1 件(母集団 0 を緑にしない)。全体の実行だけ。既定 critical(#1437 — 元は agora-controllers の一時の判定 intake_only_rules.hy) | `<名>` / `<名>:<定義>` / `<名>:missing` / `<名>:<定義>:missing` | 最初の当たりか定義の頭・architecture.hy の宣言 |
+| DOEFF162 | effect の宣言の全体 — `:effect-census` の宣言ごとに、`:files` の Hy・Python の file(註を除く)で `:base`(既定 `EffectBase`)を継ぐ class の宣言(Python の `class X(… base …):`・Hy の `(defclass [飾り] X [… base …])`。`:base` が `EffectBase` なら Hy の `(defeffect X …)` も — defeffect は常に EffectBase を継ぐ・#1464)を集め、`:effects` の一覧と比べる。一覧に無い宣言・同じ名の 2 つ目の宣言は宣言の位置で、宣言の無い一覧の effect と `:files` に当たる file の無い宣言は architecture.hy の位置で 1 件ずつ。全体の実行だけ。既定 critical(#1438 — 元は agora-controllers の一時の判定 intake_only_rules.hy の 2) | `<名>:<effect>` / `<名>:<effect>:twice` / `<名>:<effect>:missing` / `<名>:missing` | 宣言の位置・architecture.hy の宣言 |
+| DOEFF149 | 型の欄を持つ class の顔ぶれ — `:field-holders` の宣言ごとに、`:files` に当たる Python の file(`.py`・`.pyi`)の module の直下の class のうち、本体の直下の欄(注記つきの代入 `名: 注記`)の注記に `:type` の綴りが語として在る class を持ち手と数え、`:holders` の一覧(空でよい = どの class も持たない)と比べる。一覧に無い持ち手は class の位置で、その欄を持たない(か無い)一覧の class は architecture.hy の位置で 1 件ずつ。`:classes` を書けば名指した class だけを数え、無い class も 1 件。`:files` に当たる Python の file が無い宣言も 1 件(母集団 0 を緑にしない)。構文木にならない file は読めない物として出す。全体の実行だけ。既定 critical(元は agora-controllers の一時の判定 record_body_rules.hy の ③) | `<名>:<class>` / `<名>:<class>:absent` / `<名>:<class>:missing` / `<名>:missing` | class の位置・architecture.hy の宣言 |
+| DOEFF159 | 頭を呼んでよい場所と回数 — `:call-sites` の宣言ごとに、`:files` の glob に当たる Hy の file(`:except` を除く)の `(頭 …)` の呼び(文字列・註・`#_` の中は除く)を集め、どの `:sites` の定義の中にも無い呼びは file ごとに 1 件。場所ごとに、`:count` を書けば呼びの数の食い違い、`:parent` を書けば直ぐ外の form の頭の食い違い、`:branch` を書けば条件の form にその記号が在る cond・when・if・unless の枝の外の呼びを 1 件。場所の定義が無い・`:files` に当たる file が 0 なら architecture.hy の位置で 1 件(母集団 0 を緑にしない)。歩くのは glob の字義どおりの頭の dir だけ。全体の実行だけ。既定 critical(#1414) | `<頭>:outside` / `<頭>:count:<名>` / `<頭>:parent:<名>` / `<頭>:branch:<名>` / `<頭>:missing:<名>` / `<頭>:empty` | 最初の呼び・場所の定義の名・architecture.hy の宣言 |
+| DOEFF160 | 広い例外の捕捉は運搬の境界だけ — `:broad-catches` の群ごとに、`:files` の glob に当たる Hy・Python の file(`:except` を除く)の広い捕捉を集める。広い捕捉 = Hy の `(except [] …)` と、捕まえる型の form に `Exception`・`BaseException`・`AssertionError`(`.` で区切った最後の段)が在る `(except [型] …)`・`(except [名 型] …)`(文字列・註・`#_` の中は除く)、Python の型の無い `except:` と、型がそれらの名・属性・その組の `except …:`。許すのは `:carriers` の定義(Hy の file の top level の form)の中で、捕捉が例外を名で束縛し、その捕捉の中の `(:event の出来事 …)` の呼びがその名を引数に直に渡す物だけ。境界の外の捕捉は file ごとに 1 件、名を束縛しない・出来事へ渡さない境界の中の捕捉は境界ごとに 1 件。境界の定義が無い・`:files` に当たる file が 0 なら architecture.hy の位置で 1 件(母集団 0 を緑にしない)。Python の file が構文として読めなければ実行の誤り。全体の実行だけ。既定 critical(元は agora-controllers の一時の判定 fault_boundary_rules.hy の (d)) | `<名>:outside` / `<名>:unbound:<定義の名>` / `<名>:missing:<定義の名>` / `<名>:empty` | 最初の捕捉・architecture.hy の宣言 |
 | DOEFF113 | 宣言した service の中の :context の食い違いは warning に上がる | | |
 
 ### 既存の道具との対応
@@ -718,12 +718,12 @@ intent の層は Tach の interfaces に当たる — 別の service が読ん�
 | 規則 | 問い(英語のまま・`src/project/semantic.rs` の 1 か所) | 当てる層(設定) | 既定の閾値 | 既定の重大さ(3 節) |
 |---|---|---|---|---|
 | DOEFF201 | 要求を相手の話し方へ言い換えるのを越えて、業務の判断(誰に許すか・業務の決まり・宛先・業務の結果)をしているか(jev-lint の J2) | `semantic.business_decision.layers` | warning p ≥ 0.8・info p ≥ 0.6 | critical |
-| DOEFF202 | 通信の手段(URL や query・HTTP の method や status・JSON の wire・SQL・宛先の address)か、外の data の型の無い形(dict・JSON の値を欄名で読む・組む — json.loads の有無に関わらず)を知っているか(jev-lint の J3・2 つを同じ重さで問う — agora-redesign #2059) | `semantic.transport_knowledge.layers` | warning p ≥ 0.6・info p ≥ 0.4 | critical |
+| DOEFF202 | 通信の手段(URL や query・HTTP の method や status・JSON の wire・SQL・宛先の address)か、外の data の型の無い形(dict・JSON の値を欄名で読む・組む — json.loads の有無に関わらず)を知っているか(jev-lint の J3・2 つを同じ重さで問う) | `semantic.transport_knowledge.layers` | warning p ≥ 0.6・info p ≥ 0.4 | critical |
 | DOEFF203 | deff の理由の註が受け入れる理由に当たるか(11 節) | `semantic.plain_callable` | warning_min 0.4・info_min 0.4 | 重さから |
 | DOEFF204 | 処理を持つ method のある class が value / external-world / stateful / other のどれか(12 節) | `semantic.class_role` | warning_min 0.7・info_min 0.5 | 重さから |
 | DOEFF205 | judgment / program の定義が形の検めと判断を混ぜているか(14 節) | `semantic.mixed_concerns` | warning_min 0.7・info_min 0.5 | critical |
 
-- **全体の実行(text / json / editor-json の repo 全体)の既定は、cache を使い変わった定義だけを撃つ**(operator の決定 2026-09-29 — Jev を使う規則も毎回どこでも走らせ、既定で cache を使う・agora-redesign #1160): 対象 = path の引数の file、無ければ git で変わった file。そのうち手元の
+- **全体の実行(text / json / editor-json の repo 全体)の既定は、cache を使い変わった定義だけを撃つ**(Jev を使う規則も毎回どこでも走らせ、既定で cache を使う): 対象 = path の引数の file、無ければ git で変わった file。そのうち手元の
   cache に答えの無い定義だけを撃ち、残りの答えの無い定義は代理が設定されていれば代理に「覚えている時だけ」問う(下の「Jev の呼び出しを覚える代理」)。
   問うはずだった定義に答えを得られなければ `semantic.unmeasured`(測れなかった)に数え、error の違反が無くても終了コード 3。
 - **1 file の `--stdin`(書いた直後の hook・エディタ)の既定は cache を読むだけ**(hook の全体 3 秒の上限の中で層の規則の知らせを失わないため・#1190 の
@@ -731,14 +731,14 @@ intent の層は Tach の interfaces に当たる — 別の service が読ん�
 - `--semantic` = 対象の定義を cache に答えが在っても撃ち直す・`--semantic-all` = 設定した層の全定義を撃つ・`--semantic-cache-only` = 撃たない(cache を読むだけ・
   測れなかったに数えない — 網の無い所の実行)。
 - **`--semantic` / `--semantic-changed` で名指した path が disk に無ければ、問わずに終了コード 2**(理由の 1 行に無い path を引用符つきで並べる —
-  agora-redesign #2075: zsh が引用符の無い `$FILES` を語に分けず、全部の path が空白で繋がった 1 つの無い path として届き、以前は問う数 0・較正 not-run・
+  zsh が引用符の無い `$FILES` を語に分けず、全部の path が空白で繋がった 1 つの無い path として届き、以前は問う数 0・較正 not-run・
   終了コード 0 で黙って終わっていた)。名指しの Hy の file に問いになる定義が 1 つも無い(問いの層の外・最上位の定義なし・書きかけ)時は、その file を
   `errors` の 1 行に名乗る(終了コードは変えない — 問う物が無いのは誤りではないが、なぜ 0 かを黙らない)。
 - **書きかけで読めない定義(閉じない括弧・対応しない閉じ括弧・閉じない文字列)は、どの実行でも問わない**(未判定に数える)。
 - 問う定義 = 設定した層の Hy の最上位の defn・defk・deff・defp・defpp・defhandler・defeffect・defclass・defrecord・defenum。
 - state = 定義の名・kind・file・申告の `:tags` を消した source(`semantic.source_limit` 字 = 既定 1,800 で切る)・置かれた層の説明(architecture.hy の layer の説明か、
   `layers.describe`)。
-- **線引き**(agora-redesign #1909): architecture.hy の `:semantic-lines`(9 節)を書いた repo では、DOEFF201・202・205 の問いの `instructions` に、
+- **線引き**: architecture.hy の `:semantic-lines`(9 節)を書いた repo では、DOEFF201・202・205 の問いの `instructions` に、
   その規則を `:rules` に持つ線引きを宣言の順に入れる — `"lines": [{"name", "text", "violating_examples": [例 …], "complying_examples": [例 …]} …]`
   (例 = `{"code": …, "why": …}`・`:why` を書かない例は `{"code": …}` — #1995)と、線引きの読み方と答えの向き `"lines_note"`(英語・
   `src/project/semantic.rs` の 1 か所 — 線引きが一般の説明と違えば線引きに従う・鳴る例に似た code は違反の側 = DOEFF201・202 は true・DOEFF205 は
@@ -756,7 +756,7 @@ intent の層は Tach の interfaces に当たる — 別の service が読ん�
   タグを消した source)。申告の役は鍵に入れず、判定の後にコードで比べる。cache の答えが無い定義は違反にせず、最上位の `semantic.unjudged` に数える(合格に倒さない)。
   cache の答えは確率と choice のほかに、答えに載った費用 `reported_cost_usd`(上流が載せた時だけ・載せない答えは null で 0 と区別する)と
   `input_tokens`・`output_tokens`(usage に在る時だけ)を持つ。以前の欄 `cost_usd`(載らない時も 0 と書いていた)は読まない — 前の答えの費用は不明と
-  して読む(agora-redesign #1892)。
+  して読む。
 - 重さは warning か info だけ(当たり外れを測り終えるまで error にしない — 設定にも error の欄は無い)。外れは誤判定の一覧に載せる(下の「誤判定の一覧と正例の一覧」)。
 - 宛先・model・キーは doeff の `packages/doeff-jev/src/doeff_jev/_target.py` と同じ決め方(Rust に写した — 決め方は 1 つ):
   環境変数 `JEV_BASE_URL` / `JEV_MODEL` / `JEV_WIRE` / `JEV_API_KEY` / `JEV_API_KEY_FILE` → 設定 file `~/.config/jev/client.json` → 既定 = TypeSafe 直
@@ -781,11 +781,11 @@ proxy_peek_timeout_ms = 5000                     # 既定(覚えている時だ�
 ```
 
 **Jev の呼び出しを覚える代理**: 本文(state・問い・model)を正規化した sha256 で答えを覚え、初めての鍵だけを本物の Jev に渡す server
-(repo `proboscis/jev-proxy` — 2026-10-01 に doeff の `packages/doeff-jev-proxy` から移した(agora-redesign #1919)・口は TypeSafe の
+(repo `proboscis/jev-proxy` — 2026-10-01 に doeff の `packages/doeff-jev-proxy` から移した・口は TypeSafe の
 `/v1/systemone` と同じ)。
 
 - 宛先は repo ごとの設定 `proxy_url` で向ける(機体全体の環境変数にはしない — 向けない repo は今までどおり)。環境変数 `JEV_BASE_URL` が在ればそちらが勝つ。
-- proxy へは見出し Authorization を送らない(TypeSafe のキーも送らない — proxy は呼び手の身元を問わない・2026-10-02 に proxy の token を外した・agora-redesign #3002)。
+- proxy へは見出し Authorization を送らない(TypeSafe のキーも送らない — proxy は呼び手の身元を問わない・2026-10-02 に proxy の token を外した)。
 - 全体の実行・hook は、手元の cache に無い読める定義を、代理の鍵の束で「覚えている時だけ」問う(`POST <proxy_url>/peek`・本文
   `{"keys": [鍵 …]}`・1,000 個ずつの束を並べて撃つ — 定義 1 つずつ撃たず、本文も送らない。代理は覚えている答えだけを
   `{"answers": {鍵: 答え}}` で返し、本物の Jev を呼ばない)。返った答えを手元の cache に書く。代理に届かない・時間切れの時は、残りの束を撃たず
@@ -794,18 +794,18 @@ proxy_peek_timeout_ms = 5000                     # 既定(覚えている時だ�
   代理(`key.hy` の `normalize-request`)と linter(`semantic.rs` の `proxy_key`)が同じ鍵を作ることは、代理の見本を両方の repo の検が
   読んで確かめる(小数は綴りが言語で違うので見本に入れない — linter の本文は小数を持たない)。見本の正本は proxy の repo の
   `tests/key_contract.json`(server が鍵を決め、呼び手が合わせる)で、linter の `tests/proxy_key_contract.json` は移した時(2026-10-01)に
-  1 byte も違わない写し。鍵の決まりを変える時は、2 つの repo の見本と実装を同じ組の変更で直す(agora-redesign #1923)。
+  1 byte も違わない写し。鍵の決まりを変える時は、2 つの repo の見本と実装を同じ組の変更で直す。
 - 較正の見張りの問いは `Cache-Control: no-cache`(覚えを使わない — model の中身が変わったことを代理の覚えが隠さないため)。
 
 editor-json: violation の `source`(`linter` = 決定的な規則・`jev` = 意味の判定)と `probability`(Jev の違反だけ)、最上位の `semantic`
 (`model`・`wire`・`judged`・`unjudged`・`unmeasured`(測れなかった数 — Jev に問えなかった定義と、proxy の覚えを読む束が待ち
-`proxy_peek_timeout_ms` の内に返らなかった定義。後者は `unjudged` に入れない・agora-redesign #1885)・`asked`・`peeked`(proxy が覚えていた答えを受け取った数)・`cost_usd`(上流が答えに費用を載せた回の和 —
+`proxy_peek_timeout_ms` の内に返らなかった定義。後者は `unjudged` に入れない)・`asked`・`peeked`(proxy が覚えていた答えを受け取った数)・`cost_usd`(上流が答えに費用を載せた回の和 —
 載せるのは Vercel の AI Gateway だけで、TypeSafe 直は載せない)・`cost_unreported`(上流を呼んだのに費用が載っていなかった回の数 — 0 でなければ
 `cost_usd` は下限)・`remembered`(proxy の覚え・相乗りで答えた回の数 — 見出し `x-jev-proxy` が `hit` / `coalesced`。上流を呼んでいないので
 費用と token を数えない)・`input_tokens`・`output_tokens`(上流を呼んだ回の usage の和)・
 `served_model`・`calibration` = not-run / ok / drifted / failed・`false_positives`・`labeled` — 下の節)。`wire` は宛先の形と決め方(例 `direct(default)`・`direct(env)`・`direct(repo)` = repo の代理)。
 
-### 誤判定の一覧と正例の一覧(agora-redesign #1039)
+### 誤判定の一覧と正例の一覧
 
 Jev の判定は確率で、高い確率の外れと低い確率の当たりが混ざる。外れを登録簿に載せると「既知の破れ」として重大さ(level)が残り続けるので、
 人が外れと判定した当たりは登録簿とは別の置き場に置き、**違反として出さず、件数にも入れない**。
@@ -829,7 +829,7 @@ true_positives = ["scripts/doeff_lint/JEV-TRUE-POSITIVES"]     # 人が本当の
   (閾値を決め直す材料)。答えの無い判定(未判定の定義・もう無い定義)は `listed` にだけ数える。
   `probability` は閾値と比べる確率で、較正の見張りと同じ読み方: yes / no の問いは答えの確率、選ぶ形の問いは**的の語の確率**
   (DOEFF204 = `external-world`・DOEFF205 = `mixed`)。選んだ語の確率ではない — `judgment-only` 0.97・`mixed` 0.02 の答えは 0.02
-  (agora-redesign #1994。前は選んだ語の確率を載せていて、205 の閾値の表が読み違いの上で作られた — #1944)。
+  (前は選んだ語の確率を載せていて、205 の閾値の表が読み違いの上で作られた — #1944)。
 - 較正の手順: 判定を付けた file を `--semantic <file>…`(か `--semantic-all`)で問い、`semantic.labeled` の正例の `flagged / judged`
   (当たりを拾えた割合)と反例の `flagged / judged`(外れを出す割合)を読む。同梱の較正の見張り(model の中身が変わったかの検め)とは別の物で、
   見張りの幅には入れない(人の判定は閾値の際の物が多く、幅から外れても model の変化とは限らないため)。
@@ -838,7 +838,7 @@ true_positives = ["scripts/doeff_lint/JEV-TRUE-POSITIVES"]     # 人が本当の
 
 ## 11. 素の関数(deff)の理由と検の書き方 — DOEFF110・111・118・203
 
-operator の決定 2026-09-27(設定を読むのは Ask などの effect の仕事で例外にしない・deftest でない検は禁じる・理由の文の可否は Jev が判じる): 理由の種類の札は書かせない。受け入れるかは Jev が理由の文と source を見て決める。
+設定を読むのは Ask などの effect の仕事で例外にしない — deftest でない検は禁じる — 理由の文の可否は Jev が判じる: 理由の種類の札は書かせない。受け入れるかは Jev が理由の文と source を見て決める。
 
 architecture.hy の `defarchitecture` に、受け入れる理由と受け入れない理由の型を宣言する(名・説明・直し方は Rust に書かない):
 
@@ -865,7 +865,7 @@ architecture.hy の `defarchitecture` に、受け入れる理由と受け入れ
 
 ## 12. class の中身 — DOEFF119・DOEFF204
 
-operator の決定 2026-09-27(Point2D のような値は class でよいが、client や store は handler と effect にする。その区別は Jev に判じさせてよい)。名前では判じず、中身の証拠で分ける。母集団は `definitions` の業務の Hy の file。
+決まり(Point2D のような値は class でよいが、client や store は handler と effect にする。その区別は Jev に判じさせてよい)。名前では判じず、中身の証拠で分ける。母集団は `definitions` の業務の Hy の file。
 
 - **許す(出さない)**: 基底に例外・Enum・Protocol(名の終わりが Error・Exception・Warning・Enum・Flag・Protocol・NamedTuple・TypedDict)か、
   repo の外の module の class(import の束縛の module の先頭の段が repo の根に無い・束縛の無い裸の名は組み込み)を持つ class。
@@ -885,7 +885,7 @@ operator の決定 2026-09-27(Point2D のような値は class でよいが、cl
 
 ## 13. JsonValue の使い場所 — DOEFF120
 
-agora-redesign #840・operator の決定 2026-09-28(JsonValue を直に使わせず、pydantic のように解いて検めた型のある値を使う)。JsonValue(素の `dict | list | str | int | float | bool | None` を名で包んだだけの型)に触ってよいのは、
+決まり: JsonValue を直に使わせず、pydantic のように解いて検めた型のある値を使う。JsonValue(素の `dict | list | str | int | float | bool | None` を名で包んだだけの型)に触ってよいのは、
 汎用の解き手と、送受信そのものを行う foundation の module だけ。ほかの module は型のある値だけを見る。例と設定は [rules/DOEFF120.md](rules/DOEFF120.md)。
 
 - **有効になる条件**: architecture.hy が在る(`project_wired` は architecture の有無)。
@@ -905,7 +905,7 @@ agora-redesign #840・operator の決定 2026-09-28(JsonValue を直に使わせ
 
 ## 14. 臭いの規則 — DOEFF121〜125・DOEFF205
 
-operator の決定 2026-09-28(臭いの規則を足す)。題材は agora-controllers の controllers/kanban/core/tag_judgment.hy の decide-tag
+臭いの規則を足す。題材は agora-controllers の controllers/kanban/core/tag_judgment.hy の decide-tag
 (決定の時点の linter はこの file に何も出していなかった)。記録は doeff の ADR-DOE-HY-007 R9〜R11。
 
 設定:
@@ -938,14 +938,14 @@ mixed_concerns = { layer = "core", roles = ["judgment", "program"], warning_min 
   `layer` の層の説明(summary・knows・does_not_know)。mixed を `warning_min` 以上で warning、`info_min` 以上で info。較正の見張りは
   decide-tag(正例)と card-tags-of(反例)の mixed の確率を比べる。問いの文は `src/project/semantic.rs` の `MixedConcerns` の 1 か所。
   問いの一般の注(note)は、形の確認を「外から来た型の無い入力の確かめ」と言い、型の union の枝分け・外から来ていない型の無い dict(code の定数・
-  自分の集計の控え)・形の確認を任せた 1 つの関数の答え(問題の文)で断りの値を返すだけの枝を形の確認に数えない(agora-redesign #1995 — 前の注は
+  自分の集計の控え)・形の確認を任せた 1 つの関数の答え(問題の文)で断りの値を返すだけの枝を形の確認に数えない(前の注は
   isinstance と dict の読みを例外なしに形の確認と言い、agora-controllers の線引き 4 と食い違った)。
   architecture.hy の `:semantic-lines` に `:rules [DOEFF205]` の線引きがあれば、問いの `instructions` に線引きの文と鳴る例・鳴らない例を入れる
   (10 節の「線引き」— 何を形の確認に数え、何を判断に数えるかは repo の宣言が決める)。
 
 ## 15. defk の素の呼び — DOEFF126
 
-coordinator の決定 2026-09-28(戻せる・agora-redesign #798 に記録)。事実: #798 の直しの便で `latest-by-ref` を defk に改めたのに、
+決まり(戻せる)。事実: #798 の直しの便で `latest-by-ref` を defk に改めたのに、
 それを呼ぶ deff(`text-at`・`expected-inputs`)と検 4 file が素のまま呼んでいた — defk を素で呼ぶと答えではなく Program が返り、型の
 誤りで落ちずに静かに間違った値として流れる(検で見つかった)。記録は doeff の ADR-DOE-HY-007 R13。
 
@@ -957,7 +957,7 @@ coordinator の決定 2026-09-28(戻せる・agora-redesign #798 に記録)。�
   `unless`・`while` の頭・`cond` の条件)、繰り返しの元(`for` の束ねの元・内包表記の元)、record の欄(頭が大文字の型を作る呼びの引数 —
   doeff の package の型と、effect として出す位置 `(<- (T …))`・`(! (T …))` の型は除く)。その位置の中の `if`・`when`・`cond`・`do`・`let`
   の枝も同じ。
-- **Program を運ぶ欄は拾わない**(agora-redesign #2877): repo の Hy の `defrecord` の欄で、宣言の型の註が `Program` か `EffectBase` を
+- **Program を運ぶ欄は拾わない**: repo の Hy の `defrecord` の欄で、宣言の型の註が `Program` か `EffectBase` を
   名指す欄(`(#^ (| Program EffectBase) prepare)`・`#^ Program later`・`doeff.Program` — 註の語の最後の段で比べる)は Program を運ぶ宣言
   なので、型を作る呼びの `:欄 値` の値は答えとして使う所ではない。拾うまま: 型の註の無い欄・`object` / `Any` の欄・別名で隠れた欄
   (別名は Program と綴られない)・位置で渡した値・repo の外(Python の dataclass など)で定義した型。事実: doeff-records の
@@ -966,10 +966,10 @@ coordinator の決定 2026-09-28(戻せる・agora-redesign #798 に記録)。�
   関数かもしれず追えない)、名への束ね、関数の答えとして返す形。初版は「Program として渡す所の外は全部」だったが、agora の本線で 239 件
   (Program を受けて走らせる run-on・in-record・run-wired などへ渡す形が大半)になり、error の重さでは外れが重いので、答えとして使う所に
   絞った(本線 1 件)。
-- **`defsystem` は定義**(doeff-hy・agora-redesign #833 — 関数に展開され、job の行 `(名 (job の関数 foundation …) :needs … :environ …)` の
+- **`defsystem` は定義**(doeff-hy — 関数に展開され、job の行 `(名 (job の関数 foundation …) :needs … :environ …)` の
   式は「名 → Program」の Program の値そのもので、実行しない)。定義の中と同じ判定で下るので、job の行の式は拾わず、その中で答えとして
   使う所(`:environ {"X" (str (f …))}` など)だけを拾う。鍵の `<定義>` は系の名。事実: agora の本線で module の最上位の defsystem の
-  job の行が 43 件 `<module>` として当たっていた(agora-redesign #913)。
+  job の行が 43 件 `<module>` として当たっていた。
 - **重さ**: error(静かな誤りなので)。登録簿に載れば `registered_severity`(既定 warning)。母集団は `definitions` の業務の file と検の置き場。
 - **鍵**: `<path>::DOEFF126::<定義>::<呼んだ defk>`(定義の外は `<module>`)。位置は呼びの式。
 - **引数で受けた関数の素の呼び**(2 つ目の形): repo の全部の呼び `(g … 引数 …)` のうち、引数が repo の defk の名か `(fnk …)` の物を
@@ -980,10 +980,10 @@ coordinator の決定 2026-09-28(戻せる・agora-redesign #798 に記録)。�
 - **拾えない範囲**(ADR-DOE-HY-007 R14): 呼び手が defk を変数や欄に入れてから渡す形・partial などで包んで渡す形、呼び先がその引数を
   さらに別の関数へ渡してそこで素で呼ぶ形(1 段だけ追う)、呼び先が method・入れ子の関数・名で引けない物、repo の外の呼び手。
 
-## 16. defk の見出しと束縛の型 — editor-json 版 2(agora-redesign #849)
+## 16. defk の見出しと束縛の型 — editor-json 版 2
 
 エディタ(doeff-runner)が defk の型・effect・tags を読むだけの表示で描くための材料。型の読み方はこの linter の
-`src/project/signatures.rs` の 1 か所に置き、エディタは写しを持たない(operator の決定 2026-09-28 — source は人が手で書き換えないので、
+`src/project/signatures.rs` の 1 か所に置き、エディタは写しを持たない(source は人が手で書き換えないので、
 書く向きの変換は持たない)。`--stdin --path <file>` の時だけ、その file の分を出す(全体の実行では空)。
 
 ```jsonc
@@ -1042,9 +1042,9 @@ coordinator の決定 2026-09-28(戻せる・agora-redesign #798 に記録)。�
   Program として渡す・返す形は拾わない。同じ名を `(<- 名 …)` でも束ねる定義はその名を追わない。束ねた名を別の定義へ渡す形・
   入れ物に入れて取り出す形は拾えない(ADR-DOE-HY-007 R14)。
 
-## 17. 呼びを `f(a, b)` の形で見せる表示の置き換え — editor-json の `rewrites`(agora-redesign #849)
+## 17. 呼びを `f(a, b)` の形で見せる表示の置き換え — editor-json の `rewrites`
 
-エディタが defk / deff の本体の呼びを Python に近い形で**見せるだけ**の材料(operator の決定 2026-09-28 — 呼びを `(f a b)` でなく `f(a,b)` の形で見せる・式の途中の effect は `!` の印を残す案 A)。source の Hy は変えない。式の形を
+エディタが defk / deff の本体の呼びを Python に近い形で**見せるだけ**の材料(呼びを `(f a b)` でなく `f(a,b)` の形で見せる・式の途中の effect は `!` の印を残す案 A)。source の Hy は変えない。式の形を
 読むのは `src/project/call_view.rs` の 1 か所で、エディタは Hy を読み直さずに描く。版 2 への欄の追加(古いエディタは読み飛ばす)。
 `--stdin --path <file>` の時だけその file の分を出す(全体の実行では空)。
 
@@ -1079,7 +1079,7 @@ coordinator の決定 2026-09-28(戻せる・agora-redesign #798 に記録)。�
 
 ## 18. `:effects` の宣言と推論の食い違い — DOEFF127
 
-operator の訂正 2026-09-28(agora-redesign #849 に記録): linter の知らせは違反している所に、何に違反しているかを添えて出す。前は拡張(doeff-runner)が defk の見出しの中で宣言と推論を比べ、「宣言なし」「違反 2」の札にまとめて出していた。
+決まり: linter の知らせは違反している所に、何に違反しているかを添えて出す。前は拡張(doeff-runner)が defk の見出しの中で宣言と推論を比べ、「宣言なし」「違反 2」の札にまとめて出していた。
 判じる所を linter に移し、違反している所に規則の違反として出す(拡張は描くだけ)。
 
 - **対象**: `:effects` を書いた defk だけ。`:effects` は任意(#800)なので、書いていない defk は対象外(「宣言なし」は違反にしない)。
@@ -1101,12 +1101,12 @@ operator の訂正 2026-09-28(agora-redesign #849 に記録): linter の知ら�
 
 ## 19. (退役)DOEFF129
 
-agora-redesign #955 で消した(#942 の決定 1 — judgment / program を effect の有無で分ける軸は責務の境界ではない)。番号は他の規則に使い回さない。
+消した(judgment / program を effect の有無で分ける軸は責務の境界ではない)。番号は他の規則に使い回さない。
 
 
 ## 21. 翻訳の handler が業務の intent を出す — DOEFF130
 
-agora-redesign #956(#942 の決定 2 — 責務の境界の規則)。翻訳の層(protocol)の handler は、受けた intent を doeff の汎用の effect
+責務の境界の規則。翻訳の層(protocol)の handler は、受けた intent を doeff の汎用の effect
 (HttpRequest・doeff-records の読み書き・時計・file・process・Ask …)へ出し直すだけで、業務の intent(層 intent の型)を出さない。
 業務の intent を出すと、翻訳の handler が業務の判断と流れを抱え込む。
 
@@ -1116,7 +1116,7 @@ agora-redesign #956(#942 の決定 2 — 責務の境界の規則)。翻訳の�
 - **業務の intent**: 実行する呼びの頭を module まで解いた名が、`translation_effects.intent_layers` の層(既定 intent)の module の、
   頭が大文字の名(型)であること。`defeffect` でも `defclass` でもよい(層 intent は型だけを置く — 型を実行すれば intent を出している)。
   module は層の母集団の索引で解く(package の `__init__` も)。数えるのは handler と**同じ service** の intent だけ — 他の service の intent
-  (公開の契約)を出すのは翻訳の仕事として許す(DOEFF156 の「他の service の公開の効果」と同じ読み・agora-redesign #1134 の決め)。
+  (公開の契約)を出すのは翻訳の仕事として許す(DOEFF156 の「他の service の公開の効果」と同じ読み)。
   handler か intent のどちらかの service が決まらない(層が先の置き場)時は、今までどおり数える。
 - **推論**: handler の本体で実行する呼び(`(<- …)`・`(! …)` — 18 節と同じ `signatures::World` の読み)を順に見て、頭が業務の intent なら
   当たり、頭が repo の defk ならその defk の実行する呼びへ進む(import した defk の先も)。進む defk の数の上限は
@@ -1144,7 +1144,7 @@ agora-redesign #956(#942 の決定 2 — 責務の境界の規則)。翻訳の�
 - 読み取り器は f 文字列の置き換えの欄 `{…}` の中を Hy の式として飛ばす(欄の中の文字列・入れ子の f 文字列・括弧で文字列を閉じない
   — Hy の `hy.read_many` と同じ)。`{{` は字面の `{`。
 
-## 20. 定義の本体の文字 — editor-json の `bodies`(agora-redesign #910)
+## 20. 定義の本体の文字 — editor-json の `bodies`
 
 doeff-runner の読む面(webview)は定義などの実体を HTML のカードで見せ、**文字で出すのは本体だけ**。その本体の行の材料。本体の文字の
 形は operator が承認済みで、表の正本は `docs/design/hy-reading-plane/artifacts/v2/design.md`
@@ -1234,7 +1234,7 @@ file の defk / deff の分を出す(全体の実行では空)。
   の 2 つ組を撃つ値に畳み、`(lazy val x e)`・`(session var x e)` を束縛として読んで `bindings` の欄 `modifier`(`lazy` | `session` | null)
   に前の語を載せる(版 2 への欄の追加)。
 
-### 種つきの疑似乱数と外部 I/O（DOEFF133・agora-redesign #1564）
+### 種つきの疑似乱数と外部 I/O（DOEFF133）
 
 生の I/O の索引は、種を明示した `random.Random(seed)`（Hy の `(random.Random seed)`・`:x seed`）を外部 I/O に数えない。数値定数だけでなく、変数の種も明示された引数として扱う。生成した instance の method、instance を別名へ代入してからの method、`random.Random` の型注釈、関数内の import も、それだけでは外部 I/O ではない。module の import と同じ綴りの method（`(.random rng)`・`(. rng (random))`）は module 自体の参照と区別する。
 

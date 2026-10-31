@@ -1,8 +1,8 @@
-"""JSON の値の型の唯一の定義(agora-redesign #840)。
+"""JSON の値の型の唯一の定義。
 
 ``JsonValue`` は JSON を解いたままの値(``dict`` / ``list`` / 文字列 / 数 / 真偽 / ``None``)の型で、名前を変えた素の
 dict にすぎない。構造を持つ値は、型を宣言した値(doeff-hy の ``defwire`` / ``defrecord``)へ解いて確かめてから運ぶ
-(素の dict を直に使わせず、pydantic のように解いて確かめる — operator の決定 2026-09-28)。この型に触ってよいのは、汎用の解き手(``doeff_hy._wire`` の parse / dump)と、送受信
+(素の dict を直に使わせず、pydantic のように解いて確かめる)。この型に触ってよいのは、汎用の解き手(``doeff_hy._wire`` の parse / dump)と、送受信
 そのものを行う foundation の module だけ — それ以外で使うと doeff-linter の DOEFF120 が誤りにする。
 
 置き場: doeff-hy(解き手の置き場)の Python の module。doeff-hy は doeff-records を import できない(依存の向きが逆)
@@ -37,7 +37,7 @@ else:
 @final
 @dataclass(frozen=True)
 class OpaqueJson:
-    """形を呼び手が決める任意の JSON の値を、中を読まずに運ぶための名のある型(agora-redesign #840)。
+    """形を呼び手が決める任意の JSON の値を、中を読まずに運ぶための名のある型。
 
     使う所: 運ぶ側が形を知らず、知ってはいけない値 — tool の呼び出しの引数と結果・耐久の走行の memo の値や spec のように、
     書き手ごとに形が違う JSON。形の決まった値は ``defwire`` の型にする(この型へ逃がさない)。
@@ -53,7 +53,7 @@ class OpaqueJson:
     JSON の値として。``dump-json`` は持っている文字列を解き直さずそのまま出力へ埋める — ``doeff_hy._wire_codec`` の書き手)。
 
     ``__get_pydantic_core_schema__`` は pydantic がこの型を解く・書く時の口で、pydantic を読むのは pydantic が呼んだ時だけ(この module は
-    import しない)。使い手は照らしの道具 ``doeff_hy._wire_parity`` と、pydantic で直に解く読み手(card ki-7c4609cd96c9 で wire の API へ移す)。
+    import しない)。使い手は照らしの道具 ``doeff_hy._wire_parity`` と、pydantic で直に解く読み手(wire の API へ移す)。
     """
 
     text: str
@@ -67,7 +67,7 @@ class OpaqueJson:
 
         文字列は ``json.dumps`` が今書いた物なので ``json.loads`` で必ず読める(書けない値は ``json.dumps`` が
         TypeError / ValueError で断る — 受ける値・断る値・綴りは ``cls(text)`` を通した時と同じ)。その文字列を
-        ``__post_init__`` でもう一度解くのは同じ答えを 2 度出すだけなので、ここでは解かずに包む(agora-redesign #2449 —
+        ``__post_init__`` でもう一度解くのは同じ答えを 2 度出すだけなので、ここでは解かずに包む(
         預かり所の契約の例 124 で 4.2k 回・``of`` の費用の 4 割が、書いた直後の文字列を解き直す ``json.loads`` だった)。
         外から渡る文字列(``cls(text)`` を直に呼ぶ所)は今までどおり ``__post_init__`` が解いて確かめる。
         """

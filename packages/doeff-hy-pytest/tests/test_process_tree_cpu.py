@@ -1,5 +1,4 @@
-"""印の秒の上限を process の木の CPU 秒で判じる宣言(declare_process_tree_cpu・doeff_hy_pytest._tree_cpu)の検
-(agora-redesign card ki-ef6d57782313)。
+"""印の秒の上限を process の木の CPU 秒で判じる宣言(declare_process_tree_cpu・doeff_hy_pytest._tree_cpu)の検。
 
 確かめる事: 宣言した検は、壁の時計が上限を越えても木の CPU 秒が内なら緑(機体の混みで赤にならない)・子孫が CPU を使って上限を
 越えれば赤(子の CPU も数える)・CPU を使わずに安全弁の壁の時計を越えれば赤・宣言しない検は今までどおり壁の時計。読みは刈り取って

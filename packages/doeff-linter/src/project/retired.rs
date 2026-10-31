@@ -1,12 +1,12 @@
-//! DOEFF150・151: 使わないと決めた綴りと呼び(agora-redesign #1193 — agora-controllers の check_vocabulary・check_controller_clock の
+//! DOEFF150・151: 使わないと決めた綴りと呼び(agora-controllers の check_vocabulary・check_controller_clock の
 //! 移し先)。
 //!
 //! 語と呼びの表は repo の architecture.hy の `:retired-words`・`:retired-calls` にだけ在り、ここには書かない。判定は file 1 つを
 //! 読めば決まるので repo 全体の索引を組まない — 名指しの path(`focus`)が在ればその下の file だけを読み、無ければ宣言の glob の
 //! 頭の dir だけを歩く。
 //!   * DOEFF150 `:in lines` — 行ごとに、語として単独で在る :words(前後が英字・`_`・`-` でない所)と :patterns の正規表現。
-//!     :rule-lines の綴りを含む行(規則そのものを述べる行)は数えない。数えるのは実際に使う code の中の綴りだけ(agora-redesign
-//!     #1794・#1762 の決定 Q2-3 — 註・docstring・文書の中の綴りは使っているわけではない):
+//!     :rule-lines の綴りを含む行(規則そのものを述べる行)は数えない。数えるのは実際に使う code の中の綴りだけ(
+//!     #1762 の決定 Q2-3 — 註・docstring・文書の中の綴りは使っているわけではない):
 //!       - `.md` の file は数えない(file ごと)。
 //!       - Hy は `;` の註(文字列の外の `;` から行末)と、`def…` の形の docstring(名と引数の列・任意の {…} の meta の後の最初の
 //!         文字列で、後にまだ form が在る物)を数えない。
@@ -15,18 +15,18 @@
 //!       - どの種類でも、1 行目の shebang(`#!`)の行は数える(退役語 direct-shebang の対象)。
 //!     記号・欄名と、docstring でない文字列は数える — command の文字列(`"cd x && PYTHONPATH=. hy"`)や env の key は実行される綴りなので。
 //!     群に :contract-files が在れば、契約の綴り(契約の file のキーの名と enum / const の値)に在る :words の語は、次の 3 か所でだけ
-//!     数えない(agora-redesign #1893 — 契約と wire の欄名は契約の綴りのまま書く):
+//!     数えない(契約と wire の欄名は契約の綴りのまま書く):
 //!       - 文字列で中身がその語ちょうどの物 — Hy の普通の文字列(`"mail"`)と、Python(`.py`・`.pyi`)の接頭辞の無い 1 行の文字列
 //!         (`"mail"`・`'mail'`)。
 //!       - Hy の defwire の本体の欄の定義の名(`(#^ str mail)`・`(setv #^ T mail v)` — 欄の読み方は doeff-indexer の hy_index::fields)。
 //!       - Hy の defsystem の job の行の `:reads` / `:writes` の集合の文字列(`#{"record:mail"}` — 綴りは `<置き場>:<名>`)の、最初の
-//!         `:` の後の名の部分がその語ちょうどの物(agora-redesign #3506 — 名は記録の種類や表の名で、契約の綴りのまま書く)。
+//!         `:` の後の名の部分がその語ちょうどの物(名は記録の種類や表の名で、契約の綴りのまま書く)。
 //!     変数・引数・defrecord / defclass の欄・loop の変数・属性の読み(`x.mail`)は今どおり数え、:patterns は塗らない中身に当てる。
 //!   * DOEFF150 `:in names` — 定義の名だけ(Hy は `def…` の形と `setv`・`val`・`var` の左辺・Python は def と class の名)。
 //!   * DOEFF150 `:in paths` — file の名だけ(最後の `.` より前・dir の名と中身は見ない)。退役した名の file を置き直さない(#1369)。
 //!   * DOEFF151 — Hy の file の `(呼び …)` の形の呼び(頭の記号が :calls のどれか)。註・文字列・`#_` で読み捨てた form は数えない。
 //!     境目の部品(architecture.hy の `:boundary-parts`)の module の中では、呼びの綴りが生の副作用の目録で分類でき、その分類の
-//!     触れる先を部品が `:touches` に宣言している呼びだけを当てない(agora-redesign #1894 — 生の時計の呼びを通す所は部品の宣言
+//!     触れる先を部品が `:touches` に宣言している呼びだけを当てない(生の時計の呼びを通す所は部品の宣言
 //!     1 か所で決まり、DOEFF106 と同じ写し方なので 2 つの規則が食い違わない)。
 
 use std::collections::{BTreeMap, BTreeSet};
@@ -86,7 +86,7 @@ pub struct FileHits {
     pub calls: Vec<CallHit>,
 }
 
-/// 境目の部品の中で当てない呼び(DOEFF151・agora-redesign #1894)— 部品の module(mangle した dotted の綴り)→ その中で当てない
+/// 境目の部品の中で当てない呼び(DOEFF151)— 部品の module(mangle した dotted の綴り)→ その中で当てない
 /// 呼びの綴り。呼びの綴りが生の副作用の目録で分類でき、その分類の触れる先(DOEFF106 の boundary_allows と同じ `touch_of_raw`)を
 /// 部品が `:touches` に宣言している時だけ当てない。目録で分類できない呼び(効果の Now など)は、どの部品の中でも当てる。
 #[derive(Debug, Default)]
@@ -428,7 +428,7 @@ fn hash_uncounted(rel: &str, source: &str) -> Vec<(usize, usize)> {
     out
 }
 
-/// Python の source として読む file か — `.py` と型の宣言の `.pyi`(agora-redesign #1905: 註と docstring の塗り・契約の文字列・定義の名の
+/// Python の source として読む file か — `.py` と型の宣言の `.pyi`(註と docstring の塗り・契約の文字列・定義の名の
 /// 3 か所が別々に拡張子を見ていて、`.pyi` を Python として扱う所と扱わない所が食い違った。判定はこの 1 か所)。
 fn is_python(rel: &str) -> bool {
     rel.ends_with(".py") || rel.ends_with(".pyi")
@@ -493,8 +493,8 @@ fn defwire_fields<'f>(source: &str, items: &'f [Form]) -> Option<Vec<&'f Form>> 
     Some(rest.to_vec())
 }
 
-/// `(defsystem 名 [引数] "doc"? (job …) …)` の job の行の `:reads` / `:writes` の集合(`#{"<置き場>:<名>" …}` — doeff の欄
-/// agora-redesign #3495)の各文字列の、最初の `:` の後の名の範囲(defsystem でなければ何も足さない)。置き場の綴り(records・record・
+/// `(defsystem 名 [引数] "doc"? (job …) …)` の job の行の `:reads` / `:writes` の集合(`#{"<置き場>:<名>" …}` — doeff の欄)
+/// の各文字列の、最初の `:` の後の名の範囲(defsystem でなければ何も足さない)。置き場の綴り(records・record・
 /// ledger)は契約の語ではないので、名の部分だけを契約の綴りの候補にする(#3506 — `"record:mail"` の名 mail は記録の種類の契約の綴り)。
 fn system_io_name_sites(source: &str, items: &[Form], out: &mut Vec<(usize, usize)>) {
     let Some(head) = items.first() else { return };
@@ -849,7 +849,7 @@ mod tests {
         group
     }
 
-    /// agora-redesign #1893: 契約の綴りに在る語は、Hy の文字列で中身がその語ちょうどの物と defwire の本体の欄の定義の名だけを数えない。
+    /// 契約の綴りに在る語は、Hy の文字列で中身がその語ちょうどの物と defwire の本体の欄の定義の名だけを数えない。
     /// 変数・引数・defrecord の欄・loop の変数・属性の読み・語を含む長い文字列は数える。契約に無い語は今どおり数える。
     #[test]
     fn contract_spellings_skip_exact_strings_and_defwire_fields_only() {
@@ -870,7 +870,7 @@ mod tests {
         assert_eq!(spelled("a.hy", "(defwire C (#^ str mail))\n(f \"mail\")\n", &plain), vec!["mail", "mail"]);
     }
 
-    /// agora-redesign #3506: defsystem の job の行の `:reads` / `:writes` の文字列(`<置き場>:<名>`)は、名の部分が契約の綴りの語
+    /// defsystem の job の行の `:reads` / `:writes` の文字列(`<置き場>:<名>`)は、名の部分が契約の綴りの語
     /// ちょうどなら数えない。契約に無い語の名・欄の外の同じ文字列・defsystem でない form の同じ欄は今どおり数える。
     #[test]
     fn contract_spellings_skip_the_name_part_of_system_io_spellings_only() {
@@ -882,7 +882,7 @@ mod tests {
         assert_eq!(spelled("a.hy", loud, &group), vec!["letter", "mail", "mail", "mail"]);
     }
 
-    /// agora-redesign #1893: Python(.py・.pyi)の接頭辞の無い 1 行の文字列で中身が契約の綴りの語ちょうどの物は数えない。名・属性・欄・
+    /// Python(.py・.pyi)の接頭辞の無い 1 行の文字列で中身が契約の綴りの語ちょうどの物は数えない。名・属性・欄・
     /// 接頭辞つきの文字列・語を含む長い文字列は数える。md・json などほかの file は塗らない。
     #[test]
     fn contract_spellings_skip_exact_python_strings_only() {
@@ -957,7 +957,7 @@ mod tests {
         judge(rel, source, &[group.clone()], &[], &PartCalls::default()).0.iter().map(|h| source[h.start..h.end].to_string()).collect()
     }
 
-    /// agora-redesign #1794: 実際に使う code の中の綴り — Hy の記号・欄名・command の文字列・ほかの文字列 — は数える。
+    /// 実際に使う code の中の綴り — Hy の記号・欄名・command の文字列・ほかの文字列 — は数える。
     #[test]
     fn hy_symbols_fields_and_command_strings_are_counted() {
         let group = words(&["ACP_CHECKOUT", "mail"], &[r"\bPYTHONPATH=", r#""PYTHONPATH""#], WordPlace::Lines, &[]);
@@ -970,7 +970,7 @@ mod tests {
         assert_eq!(spelled("a.hy", "(print \"mail\" 1)\n(defadr x :title \"mail の宛先\" :body 1)\n", &group), vec!["mail", "mail"]);
     }
 
-    /// agora-redesign #1794: 1 行目の shebang は、どの種類の file でも数える(退役語 direct-shebang の対象)。
+    /// 1 行目の shebang は、どの種類の file でも数える(退役語 direct-shebang の対象)。
     #[test]
     fn shebang_lines_are_counted_in_every_kind_of_file() {
         let group = words(&[], &[r"^#!\s*/usr/bin/env\s+(hy|python[0-9.]*)\b"], WordPlace::Lines, &[]);
@@ -980,7 +980,7 @@ mod tests {
         assert!(spelled("scripts/run.sh", "echo 1\n#!/usr/bin/env hy\n", &group).is_empty(), "2 行目の #! は shell の註");
     }
 
-    /// agora-redesign #1794: Hy の `;` の註と定義の docstring は数えない(文字列の中の `;` は註でない)。
+    /// Hy の `;` の註と定義の docstring は数えない(文字列の中の `;` は註でない)。
     #[test]
     fn hy_comments_and_docstrings_are_not_counted() {
         let group = words(&["mail"], &[], WordPlace::Lines, &[]);
@@ -992,7 +992,7 @@ mod tests {
         assert_eq!(spelled("a.hy", "(setv s \"a ; mail\")\n", &group), vec!["mail"]);
     }
 
-    /// agora-redesign #1794: `.md` の file は :in lines で数えない(file ごと)。
+    /// `.md` の file は :in lines で数えない(file ごと)。
     #[test]
     fn markdown_files_are_not_counted() {
         let group = words(&["mail", "ACP_CHECKOUT"], &[], WordPlace::Lines, &[]);
@@ -1002,7 +1002,7 @@ mod tests {
         assert_eq!(judge("docs/mail.md", "", &[paths], &[], &PartCalls::default()).0.len(), 1);
     }
 
-    /// agora-redesign #1794: Python の `#` の註と docstring(行頭の三重引用符の文字列)は数えない。ほかの文字列と名は数える。
+    /// Python の `#` の註と docstring(行頭の三重引用符の文字列)は数えない。ほかの文字列と名は数える。
     #[test]
     fn python_comments_and_docstrings_are_not_counted() {
         let group = words(&["mail"], &[], WordPlace::Lines, &[]);
@@ -1012,7 +1012,7 @@ mod tests {
         assert_eq!(spelled("a.py", "x = f(\"\"\"mail\"\"\")\n", &group), vec!["mail"], "行の途中の三重引用符は docstring でない");
     }
 
-    /// agora-redesign #1905: 型の宣言の `.pyi` も Python として読む — docstring と `#` の註の中の語は数えず、欄・変数・定義の名は数える。
+    /// 型の宣言の `.pyi` も Python として読む — docstring と `#` の註の中の語は数えず、欄・変数・定義の名は数える。
     #[test]
     fn python_stub_files_are_read_as_python() {
         let group = words(&["mail"], &[], WordPlace::Lines, &[]);
@@ -1024,7 +1024,7 @@ mod tests {
         assert_eq!(stub.iter().map(|h| h.name.as_deref().unwrap_or("")).collect::<Vec<_>>(), vec!["read_conversation"], ".pyi の定義の名も読む");
     }
 
-    /// agora-redesign #1794: shell・toml・ほかの file の `#` の註(引用符の外)は数えない。`$#`・`${#…}` と引用符の中の `#` は註でない。
+    /// shell・toml・ほかの file の `#` の註(引用符の外)は数えない。`$#`・`${#…}` と引用符の中の `#` は註でない。
     #[test]
     fn hash_comments_are_not_counted_in_shell_and_other_files() {
         let group = words(&["ACP_CHECKOUT"], &[r"\bPYTHONPATH="], WordPlace::Lines, &[]);

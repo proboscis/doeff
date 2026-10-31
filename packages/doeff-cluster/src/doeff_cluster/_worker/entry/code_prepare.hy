@@ -24,9 +24,9 @@
 ;;;               import の名は構文の読み(Hy の read-many・Python の ast.parse — 閉包の秒の大半)で求め、保存先に source の中身の鍵で
 ;;;               置く(種類 .imports — 形は bake_plan)。次の準備は中身の同じ source の entry を使い、中身の変わった file だけを読む。
 ;;;               一回り(closure-step の答え)の source と entry は、それぞれまとめて thread の pool で並べて読む(効果 ReadSources・
-;;;               ReadStoreEntries — disk の 1 回の読みの待ちを積もらせない・card ki-d3e585481618)。
+;;;               ReadStoreEntries — disk の 1 回の読みの待ちを積もらせない)。
 ;;;   進みの印  --progress の file の時刻を、走査の後・閉包の一回りごと・焼きの前と後に進め(効果 MarkProgress)、焼きの道具にも渡して
-;;;             1 つ用意し終えるたびに進めさせる(card ki-6401ff10af71)。呼び手の準備は印の
+;;;             1 つ用意し終えるたびに進めさせる。呼び手の準備は印の
 ;;;             時刻で停滞を見分けるので、disk が遅いだけの歩みを止まりと読ませない。
 ;;;   3 用意      用意する物を全部の木から集め、source の大きい順に 1 つの process の pool へ 1 つずつ渡す(BakeSources — 答え手は焼きの
 ;;;               道具 _foundation/bytecode_pool.hy を子 process で起こす)— 1 file の秒の偏りが大きい(大半は Hy の macro の展開)ので、
@@ -162,7 +162,7 @@
   (#^ str problem))
 
 
-;; --- 閉包の歩みの読みと進みの印の効果(card ki-d3e585481618)--------------------------------------------
+;; --- 閉包の歩みの読みと進みの印の効果--------------------------------------------
 ;; 閉包の歩みは一回り(closure-step の答え)ごとに、訪ねる source と保存先の entry を全部まとめて読む。1 つずつ順に読むと、disk の 1 回の
 ;; 読みの待ちがそのまま積もる — 2026-10-26 に機体の USB の SSD の trim が読みを 1 回 50〜290 ms にした間、1 つずつ読む歩みは 202 秒・
 ;; 600 秒超(準備が止まりと判じられた)、並べて読む焼きは 3 秒だった。答え手(closure-reads)が並べて読む。
@@ -359,7 +359,7 @@
   ;; 焼きの効果を、焼きの道具の子 process(この process と同じ interpreter)に訳す(main が被せる・子 process の効果は外側の
   ;; subprocess-handler が答える)。道具が 0 でない終わりで止まれば、焼きの失敗でなく道具の失敗として落ちる。
   ;; 引数に残す理由: 印の file の path は起動ごとの値(--progress・None = 印の無い起動)。焼きの道具は 1 つ用意するたびに印を進める —
-  ;; 焼きの前後だけの印では、進んでいる焼き直しの全体が停滞の閾を越えて止められる(card ki-6401ff10af71)。
+  ;; 焼きの前後だけの印では、進んでいる焼き直しの全体が停滞の閾を越えて止められる。
   (BakeSources [items jobs paths code-store]
     ;; interpreter は venv の prefix から求める(hy の起動は sys.executable を hy の入口に差し替えるので、sys.executable では起こせない)。
     (<- facts InterpreterFacts (ReadInterpreter))
@@ -388,7 +388,7 @@
     (resume (store.discard-entry path problem))))
 
 
-;; --- 閉包の歩みの読みと進みの印の効果の訳し(card ki-d3e585481618)--------------------------------------------
+;; --- 閉包の歩みの読みと進みの印の効果の訳し--------------------------------------------
 ;; 一回りの読みを thread の pool で並べる。数は disk の待ちを重ねられる数で、CPU の数に依らない(読みは CPU を使わない)。2026-10-26 の
 ;; 本番の機体の保存先で、page cache に無い entry 400 本の読みは 1 つずつ 2.52 秒・32 本並べて 0.22 秒だった。
 

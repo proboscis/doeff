@@ -9,7 +9,7 @@
 ;;   4 git archive の引数の長さの内に収めるため、path を数百ずつ渡す(PATHS-PER-COMMAND を越える数の差も正しい木になる)
 ;;   5 写せない時(写し元の commit が mirror に無い・写し元の file が欠けて hardlink を作れない)は、途中まで写した木を空にして全部を展開に
 ;;     戻し、理由を答えに載せる
-;;   6 写しは外の cp を起こさない — PATH の cp が GNU の書き方を断る機体(macOS の BSD の cp)でも写す(card ki-d51b7baa38bc)
+;;   6 写しは外の cp を起こさない — PATH の cp が GNU の書き方を断る機体(macOS の BSD の cp)でも写す
 (require doeff-hy.macros [deftest defk <- val var])
 (val MODULE-TAGS {:context "doeff-cluster-test" :role "test"})
 (import os)
@@ -196,7 +196,7 @@
 
 (deftest test-a-tree-is-copied-where-cp-refuses-gnu-options [tmp-path monkeypatch]
   ;; macOS の worker の PATH の cp は BSD の cp で、GNU の書き方(cp -al --parents -t)を使い方の誤り(64)で断る — 10-17 19:53 JST の Mac の
-  ;; root は 2 つの repo の木とも展開に戻った(card ki-d51b7baa38bc)。同じ断り方の cp を PATH の頭に置いても、写しは写しのまま。
+  ;; root は 2 つの repo の木とも展開に戻った。同じ断り方の cp を PATH の頭に置いても、写しは写しのまま。
   (val bin (/ tmp-path "bsd-bin"))
   (.mkdir bin)
   (val fake (/ bin "cp"))

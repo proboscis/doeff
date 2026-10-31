@@ -49,11 +49,11 @@
 ;; 綴りは変えずに足した(#3750 — 鍵 1 つの問いのために列を頭から読み切らないため)。
 (val OP-READ-EVENT-BY-KEY "read-event-by-key")
 ;; 追記の束を 1 往復で積む操作(本文 = {appends: [{stream idempotencyKey body} …]} — 答え = appendedEvents{items: 追記ごとの appended |
-;; refused})。前の 10 個の綴りは変えずに足した(card ki-48c34994ed15 — 1 つの要求で原因と本体の 2 つの出来事を積む書き手が、書きの錠と
+;; refused})。前の 10 個の綴りは変えずに足した(1 つの要求で原因と本体の 2 つの出来事を積む書き手が、書きの錠と
 ;; 往復を 2 回順に待たないため。使う client より先に service を新しい版で起こす — 古い service は知らない操作を 404 で断る)。
 (val OP-APPEND-EVENTS "append-events")
 ;; 行の読みの束を 1 往復で読む操作(本文 = {reads: [{operation: read-row | list-rows, body: その操作の本文} …]} — 答え = batchRead{items:
-;; 読みごとの row | missing | page | reset | notIndexed})。前の 11 個の綴りは変えずに足した(card ki-177a4f287c42 — 複数の表から行を読む
+;; 読みごとの row | missing | page | reset | notIndexed})。前の 11 個の綴りは変えずに足した(複数の表から行を読む
 ;; 読み手が、読みの数だけ往復を待たないため。使う client より先に service を新しい版で起こす — 古い service は知らない操作を 404 で断る)。
 (val OP-READ-BATCH "read-batch")
 ;; 行の件数を数える操作(本文 = {table, where?, whereAny?, atLeast?: [欄の名, 下限の整数]} — 答え = count{count} | notIndexed)。前の 12 個の
@@ -61,7 +61,7 @@
 (val OP-COUNT-ROWS "count-rows")
 ;; 行の書きの束と追記の束を 1 つの書きで全部か 0 で積む操作(本文 = {writes: [put-rows と同じ綴り …], appends: [append-events と同じ綴り …]}
 ;; — 答え = writtenAndAppended{rows: writtenRows の object, appends: appended の列} | rowsConflict | rowsRefused | appendRefused)。冪等キーは
-;; put-rows と同じく見出し IDEMPOTENCY-HEADER。前の 13 個の綴りは変えずに足した(card ki-e17ba3b32dea — 使う client より先に service を新しい
+;; put-rows と同じく見出し IDEMPOTENCY-HEADER。前の 13 個の綴りは変えずに足した(使う client より先に service を新しい
 ;; 版で起こす — 古い service は知らない操作を 404 で断る)。
 (val OP-PUT-ROWS-APPEND-EVENTS "put-rows-append-events")
 (setv OPERATIONS #(OP-READ-ROW OP-LIST-ROWS OP-PUT-ROW OP-WATCH-CHANGES OP-APPEND-EVENT OP-READ-EVENTS OP-PUT-ROWS OP-READ-STREAM-END
@@ -127,13 +127,13 @@
 
 ;; 呼び手が名乗る job の名の見出し(一覧の読みを呼び手ごとに数えるため — 書き手の名 X-Records-Writer とは別の名乗りで、許可には使わない)。
 (val CALLER-HEADER "X-Records-Caller")
-;; 行の書き(put-row・put-rows・put-rows-append-events)の冪等キーの見出し(card ki-78c6d663491f): client は書きの要求ごとに鍵を 1 つ載せ、届かない書きの撃ち直しに
+;; 行の書き(put-row・put-rows・put-rows-append-events)の冪等キーの見出し: client は書きの要求ごとに鍵を 1 つ載せ、届かない書きの撃ち直しに
 ;; 同じ鍵を載せる。service は見出しの鍵を撃つ PutRow・PutRows の idempotency-key にする(keyed-request)。本文の鍵にしない訳: 要求の本文の
 ;; 知らない鍵は古い service が 400 で断る(頭の註)ので、鍵を本文に足すと service を先に新しい版で起こす順を求める — 見出しは古い service が
 ;; 読み捨てるので、client と service をどの順で入れ替えても書きは通る(古い service の間は今までどおり鍵の無い書き)。他の操作の見出しは読まない。
 (val IDEMPOTENCY-HEADER "X-Records-Idempotency-Key")
 
-;; 答えの区間の秒の見出し(ki-ca4b41612e2e): service は記録の操作の答えに、答えが決まった所までの区間の秒を W3C の Server-Timing の形
+;; 答えの区間の秒の見出し: service は記録の操作の答えに、答えが決まった所までの区間の秒を W3C の Server-Timing の形
 ;; (<区間>;dur=<ミリ秒>, …)で載せ(_request_timing.hy の server-timing-of)、client は往復 1 本のうち service の受けの列(queue)と service の
 ;; 中(残りの区間)の秒を要求ごとに名指す(_http_client.hy の往復の計時の行)。区間の名の並びは _request_timing.hy の区間の並びと同じで、
 ;; 答えを送った後に決まる区間(send・total・woke)は載せない。
@@ -256,7 +256,7 @@
 (defk operation-kind [operation]
   {:pre [(: operation (| str None))] :post [(: % RequestKind)]}
   "記録の操作の名 operation(operation-of の答え — 記録の操作の route でなければ None)を要求の種にする(計器が書きと読みを分けて数える
-   ため)。他の defk を呼ばない(答えを送る要求の task が要求ごとに Program を回さない — card ki-5c3e73834e73)。"
+   ため)。他の defk を呼ばない(答えを送る要求の task が要求ごとに Program を回さない)。"
   (match operation
     None RequestKind.OTHER
     name :if (in name WRITE-OPERATIONS) RequestKind.WRITE
@@ -893,7 +893,7 @@
 
 (defk event-json [event]
   {:pre [(: event Event)] :post [(: % dict)]}
-  "追記の列の出来事 1 つを wire の object にする。鍵 position は行と一緒に積んだ出来事(Event.position が在る — card ki-e17ba3b32dea)の時だけ
+  "追記の列の出来事 1 つを wire の object にする。鍵 position は行と一緒に積んだ出来事(Event.position が在る)の時だけ
    出す(省ける鍵 — 1 版前の読み手は知らない鍵を読み捨てる・test_wire_versions)。"
   (| {"stream" event.stream "sequence" event.sequence "idempotencyKey" event.idempotency-key "body" (thaw-json event.body)
       "writer" event.writer "at" event.at}
@@ -934,7 +934,7 @@
           (for [row rows] (.append encoded (! (row-json row value-of))))
           {"kind" "page" "rows" encoded "nextCursor" (! (list-cursor-json next-cursor)) "epoch" epoch "sequence" sequence})
     ;; 鍵 position は書きの変更の位置を持つ答えの時だけ出す(省ける鍵 — 1 版前の読み手は知らない鍵を読み捨てる・test_wire_versions)。
-    ;; 鍵 replayed は冪等キーの送り直しの答えの時だけ出す(省ける鍵 — 真の時だけ・card ki-78c6d663491f。1 版前の読み手は読み捨てる)。
+    ;; 鍵 replayed は冪等キーの送り直しの答えの時だけ出す(省ける鍵 — 真の時だけ。1 版前の読み手は読み捨てる)。
     (Written :version version :value value :position position :replayed replayed)
       (| {"kind" "written" "version" version "value" (thaw-json value)}
          (if (is position None) {} {"position" (! (watch-cursor-json position))})
@@ -980,7 +980,7 @@
       {"kind" "rowsConflict" "index" index "table" table "key" (list key) "current" (! (answer-object current value-of))}
     (RowsRefused :index index :table table :key key :reason reason)
       {"kind" "rowsRefused" "index" index "table" table "key" (list key) "reason" reason}
-    ;; PutRowsAppendEvents の答え(card ki-e17ba3b32dea): 行の束は writtenRows と同じ object を欄 rows に・追記は appended の列を欄 appends に
+    ;; PutRowsAppendEvents の答え: 行の束は writtenRows と同じ object を欄 rows に・追記は appended の列を欄 appends に
     ;; 入れ子で運ぶ(読みは同じ written-rows-from と answer-from)。鍵 replayed は送り直しの時だけ出す(writtenRows と同じ)。
     (WrittenAndAppended :rows rows :appends appends :replayed replayed)
       (do (<- rows-object dict (answer-object rows value-of))
@@ -1118,7 +1118,7 @@
 
 (defk written-and-appended-from [value]
   {:pre [(: value JsonValue)] :post [(: % WrittenAndAppended)]}
-  "wire の object から PutRowsAppendEvents の確定(行の束の writtenRows と束の順の appended の列)を読むため(card ki-e17ba3b32dea)。"
+  "wire の object から PutRowsAppendEvents の確定(行の束の writtenRows と束の順の appended の列)を読むため。"
   (<- (answer-object-of value "writtenAndAppended" #("kind" "rows" "appends") #("replayed")))
   (<- rows WireAnswer (answer-from (get value "rows")))
   (when (not (isinstance rows WrittenRows))
@@ -1239,7 +1239,7 @@
   "client が受けて読んだ答え answer が、撃った要求 ask に合うかを照らすため(#3718): WatchChanges の答えの tails は、名指した列 streams と
    同じ数・同じ順の列の末尾。名指したのに鍵 tails が無い・数や列が違う・名指さないのに在る答えは、黙って空や既定へ倒さず WireMalformed で
    名指して上げる(service の綴りの誤り)。ReadBatch の答え BatchRead は、束の読みと同じ数で、i 番目が i 番目の読みの答えの型(ReadRow =
-   row | missing・ListRows = page | reset | notIndexed — card ki-177a4f287c42)。他の答えはそのまま返す。"
+   row | missing・ListRows = page | reset | notIndexed)。他の答えはそのまま返す。"
   (match #(ask answer)
     #((WatchChanges :streams streams) (Changes :tails tails))
       (do (val named (tuple (gfor tail tails tail.stream)))

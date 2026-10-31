@@ -316,7 +316,7 @@ impl doeff_vm_core::value::Callable for CallThunk {
 /// The error calling a yielding definition raised when its `Call` was read
 /// (`classify_python_object`): `Apply` raises it where the `CallThunk` would have
 /// raised it, so the caller catches it at its yield as before — without calling
-/// the function a second time (agora-redesign #2801).
+/// the function a second time.
 #[derive(Debug)]
 struct CallRaised {
     exception: Value,
@@ -340,7 +340,7 @@ impl doeff_vm_core::value::Callable for CallRaised {
 
 /// What the VM captures when it installs a handler (WithHandler): the answer of the
 /// single Python-side rule `doeff_vm._effect_types.handler_spec`, in the VM's own form
-/// so an install takes it without reading fields one by one (agora-redesign #2927).
+/// so an install takes it without reading fields one by one.
 ///
 /// `effect_types`: the runtime filter (`handler_effect_types`; `None` = every effect).
 /// `generator_function` / `tail_resume_lines`: for a `@do` handler, the undecorated
@@ -353,7 +353,7 @@ impl doeff_vm_core::value::Callable for CallRaised {
 ///
 /// `verdicts`: whether the handler takes an effect, kept per effect type, so the VM
 /// passes over a typed handler without calling isinstance for every effect
-/// (card ki-65239b222437). Kept only when the answer depends on the effect's type
+///. Kept only when the answer depends on the effect's type
 /// alone (`by_type_only`, `answer_depends_on_type_only`), and read only while the
 /// type is unchanged since (its version tag).
 #[pyclass(frozen, name = "HandlerSpec", module = "doeff_vm.doeff_vm")]
@@ -839,7 +839,7 @@ enum Sent<'py> {
 
 /// Send `value` into `generator` with the C API `PyIter_Send`. A return comes back as
 /// `PYGEN_RETURN` with the value: no `send` method lookup, no argument tuple, and no
-/// StopIteration exception built and read back (agora-redesign #2801).
+/// StopIteration exception built and read back.
 fn send_into<'py>(
     py: Python<'py>,
     generator: &Bound<'py, PyAny>,
@@ -985,7 +985,7 @@ enum InPlace<'py> {
     HandedOver(DoCtrl),
 }
 
-/// Run a yielded `Call` of a yielding definition in place (agora-redesign #2816):
+/// Run a yielded `Call` of a yielding definition in place:
 /// start its generator and send into it with `PyIter_Send`. A `Call` it yields is
 /// started on top of it, and a value one returns is sent into the generator below.
 /// When the first call returns, its value is the answer — the VM took no step for
@@ -1157,7 +1157,7 @@ impl PythonGeneratorStream {
     /// Carry on after the generator answered `sent`: a return ends the stream and a
     /// raise fails it. A yielded `Call` of a yielding definition runs in place
     /// (`run_calls_in_place`): when it returns, its value goes straight back into this
-    /// generator and the VM takes no step for the call (agora-redesign #2816). Anything
+    /// generator and the VM takes no step for the call. Anything
     /// else is classified as the stream's next instruction.
     fn carry_on<'py>(&mut self, py: Python<'py>, mut sent: Sent<'py>) -> StreamStep {
         loop {
@@ -1192,7 +1192,7 @@ impl PythonGeneratorStream {
     /// at the yield.
     fn classify_yielded(&self, py: Python<'_>, obj: &Bound<'_, PyAny>) -> StreamStep {
         // A generator with no tail-resume line cannot be at one: skip reading its line
-        // (the frame object and the line table — agora-redesign #2985).
+        // (the frame object and the line table).
         if !self.tail_resume_lines.is_empty() && is_tail_resume_candidate(obj) {
             if let Some(line) = generator_current_line(py, &self.generator) {
                 if self.tail_resume_lines.contains(&line) {
@@ -1328,7 +1328,7 @@ fn is_tail_resume_candidate(obj: &Bound<'_, PyAny>) -> bool {
 }
 
 /// The line the generator is suspended at. The attribute names are interned once
-/// (`getattr(&str)` built and hashed a new str on every read — agora-redesign #2985).
+/// (`getattr(&str)` built and hashed a new str on every read).
 fn generator_current_line(py: Python<'_>, generator: &PyShared) -> Option<u32> {
     let gen = generator.bind(py);
     let frame = gen.getattr(pyo3::intern!(py, "gi_frame")).ok()?;
@@ -1577,7 +1577,7 @@ fn classify_doexpr(py: Python<'_>, obj: &Bound<'_, PyAny>) -> Result<DoCtrl, Unc
             // generator as the program's stream — `Expand(Pure(stream))`, the shape a
             // `@do` handler's call takes (`call_generator_function`). The VM reaches the
             // same Program frame in one step instead of the three of
-            // `Expand(Apply(Pure(thunk)))` (agora-redesign #2801).
+            // `Expand(Apply(Pure(thunk)))`.
             let kwargs = c.kwargs.bind(py);
             let kwargs = if kwargs.is_empty() {
                 None

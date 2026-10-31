@@ -261,7 +261,7 @@
   (assert (= #((get row "phase") (get row "failureKind") (get row "retryable")) #("env-failed" "env-incompatible" False)) row))
 
 
-;; --- task を分けるのを断った待ちの子(card ki-e1612a12d0c3)-----------------------------------------------------------
+;; --- task を分けるのを断った待ちの子-----------------------------------------------------------
 ;; 待ちの子が task を分けるのを断った(混んだ機体で期限の内に答えない — 10-24 02:42 JST の本番)事は、StartJob の答え JobNotStarted で
 ;; 届き、記憶の not-started に残る。判断は task だけを落ちた時と同じ failures と backoff に数え、その待ちの子を止めて断りに数える
 ;; (起こし直しと上限で task を env-failed で終える道は、起動の断りと同じ)。前は宿が OSError に変え、worker の process ごと落ちた。
@@ -337,7 +337,7 @@
           report))
 
 
-;; --- 判断の表 2b: service を待ちの子から分ける道(card ki-de44efdb9aa4 — warm_rules の warm-start)------------------------------
+;; --- 判断の表 2b: service を待ちの子から分ける道(warm_rules の warm-start)------------------------------
 
 (deftest test-a-service-forks-only-from-a-warm-child-that-names-service-forks
   ;; service を分ける方策(warm-services・下限 2 本)。分けるのは service が 2 本以上か分かれる task も在る root の service だけ。待ちの子の
@@ -380,7 +380,7 @@
 
 
 (deftest test-a-service-outliving-the-worker-forks-only-from-a-warm-child-that-names-orphan-forks
-  ;; worker より長く生きる service(退きの寿命を宣言した handoff — launch の outlives-worker・card ki-f69f2a6869aa)は、頼みの
+  ;; worker より長く生きる service(退きの寿命を宣言した handoff — launch の outlives-worker)は、頼みの
   ;; orphan-seconds を受けると印 orphanForks で名乗る待ちの子にだけ分ける。名乗らない版の待ちの子は頼みの知らない欄を断るので、入れ物 shim
   ;; (--orphan-seconds)で起こす。寿命を宣言しない service は今まで通り分ける。
   (val on (replace POLICY :warm-services True :warm-services-min 2))
@@ -401,7 +401,7 @@
     (assert (= got expected) (.format "{}: {}" label got))))
 
 
-;; --- 判断の表 2c: 分ける root の recreate の service の入れ替え(card ki-d8cc8191472e)------------------------------------------
+;; --- 判断の表 2c: 分ける root の recreate の service の入れ替え------------------------------------------
 ;; 失敗ケース: 新しい版の木が揃い入口の検めも通った所で旧を止めると、止め終えた後の新は新しい root の待ちの子の準備(本番 zeus の 10-28〜29 の
 ;; 30 回のうち 23 回・回収から起動まで 5.8〜23.3 秒)を待ち、その間 job の仕事が止まった。待ちの子が準備済みになるまで旧を動かしたままにし、
 ;; 準備済みになった周期に旧を止め、止め終えた次の周期に待ちの子から分けて起こす。直す前は検めの後すぐ旧を止めていた。

@@ -14,24 +14,24 @@
   (呼んだ結果が core の `Expand[T, E]` = 答えの型 T を持つ Program になる)
 - defhandler の `resume` / `transfer`: core の `typed_resume` / `typed_transfer`
   (答えの値を effect の `EffectBase[T]` の T と突き合わせる)
-- defhandler / handle の関数(agora-redesign #2279 — handle.hy): 節を回す関数の引数 `effect: object`
+- defhandler / handle の関数(handle.hy): 節を回す関数の引数 `effect: object`
   (節の `isinstance` が型を絞る)・`k: Continuation`・答え `ClauseRun`、handler を被せる関数の
   本文 `HandlerBody[HandledAnswer]` → `HandledScope[HandledAnswer]`、節の終わり方の検めは型付きの
   static_types の名(HANDLER_STATIC_NAMES)から引く。doeff の node は節の操作の表(clause_ops.hy)の static-nodes と
   handler 自身の Pass だけを import する(Resume / Transfer は typed_resume / typed_transfer が代わるので使わない)
-- defhandler / handle の節の effect(card ki-fede97890f70 — handle.hy の `_effect-form-binding`): 節が欄を束ねるか typed_resume /
+- defhandler / handle の節の effect(handle.hy の `_effect-form-binding`): 節が欄を束ねるか typed_resume /
   typed_transfer で effect を読む時、`isinstance` で絞った後の `_doeff_effect` を `any_specialized(EffectType, *any_args,
   **any_kwargs)` に束ね直す。pyright は総称 class の絞りの型引数を Unknown にする(`Race[Unknown]`)が、構成子の呼びは型引数を
   すべて Any で解く(`Race[Any]`)ので、欄の型は effect の定義の型(`tuple[Task[Any] | Future[Any], ...]`)になり、Unknown の赤が出ない
 - deftest の関数: 引数に fixture の型の注記(DEFTEST_FIXTURE_TYPES)・返り値 None・decorator の pytest は
-  `_doeff_pytest`(agora-redesign #2214 — 実行時の展開は注記なしで interpreter の答えを返す)
-- defk の返り値: `:post` の `(: % T)` の T を注記する(agora-redesign #2308 — この展開の defk は yield の無い
+  `_doeff_pytest`(実行時の展開は注記なしで interpreter の答えを返す)
+- defk の返り値: `:post` の `(: % T)` の T を注記する(この展開の defk は yield の無い
   普通の関数なので、自分を呼び直す defk でも答えの型を推論に頼らず読める。実行時の defk は生成器なので付けない・
   macros.hy の `_annotates-return?`)
-- defhandler の session val / session var(agora-redesign #2293 — handle.hy の `_build-lazy-init-forms`): 名は初期化の値に
+- defhandler の session val / session var(handle.hy の `_build-lazy-init-forms`): 名は初期化の値に
   束ねる(Get を使わない)。session var の書き換え(`:=`・旧い `set!`)の Put / Some と初期化のキーの session_key は
   `_doeff_<名>` で引き、module の頭の補助の import(SESSION_STATIC_IMPORTS)から取る
-- defmcp-tool(card ki-4848d81e0bc5): import を 1 つも出さない。handler の decorator は module の頭の `_doeff_do`、
+- defmcp-tool: import を 1 つも出さない。handler の decorator は module の頭の `_doeff_do`、
   tool の値の McpToolDef / McpParamSchema は `_doeff_<名>` で引き、module の頭の補助の import(MCP_STATIC_IMPORTS)から取る
 
 所見の受け渡し(ADR-DOE-HY-006): val / var の検査のうち展開を止めない物(setv の使用・同じ名前の
@@ -64,7 +64,7 @@ class FixtureType:
     type_name: str
 
 
-#: deftest が作る検の関数の引数の型(agora-redesign #2214)— fixture の名と static_types.pyi の型の名の組の唯一の定義元。
+#: deftest が作る検の関数の引数の型— fixture の名と static_types.pyi の型の名の組の唯一の定義元。
 #: 型検査のための展開では、deftest(macros.hy)が `deftest_fixture_annotation` で引数に注記 `_doeff_<型の名>` を付け、
 #: doeff-hy-check がその名を module の頭で static_types から import する(STATIC_HELPER_IMPORTS)。ここに無い名
 #: (利用者が conftest で定義した fixture・:params の引数)は、書き手の `#^ T 名` の注記をそのまま、無ければ `object` を付ける。
@@ -104,14 +104,14 @@ def deftest_fixture_annotation(fixture: str) -> str:
     return deftest_annotation_name(found[0]) if found else "object"
 
 
-#: defhandler / handle の型検査のための展開が参照する static_types の名(agora-redesign #2279)— 展開の中では
+#: defhandler / handle の型検査のための展開が参照する static_types の名— 展開の中では
 #: `_doeff_<名>` で引き、doeff-hy-check が module の頭で 1 度だけ import する(STATIC_HELPER_IMPORTS)。
 #: - 型: 節を回す関数の答え `ClauseRun`・続き `Continuation`・handler を被せる本文 `HandlerBody[HandledAnswer]` と
 #:   被せた結果 `HandledScope[HandledAnswer]`(本文の答えの型をそのまま運ぶ型変数)。
 #: - 関数: 節の終わり方の検め(clause_endings.hy の check-clause-endings・check-clause-endings-once・fell-through)。
 #:   実体は .hy なので pyright から型が見えない — 実行時の展開は今までどおり clause_endings から import する。
 #: - 総称の effect の節: 構成子の呼びで型引数をすべて Any に解く `any_specialized` と、その呼びの引数 `any_args`・`any_kwargs`
-#:   (card ki-fede97890f70 — 節の `isinstance` の絞りは総称 class の型引数を Unknown にし、欄の読みと typed_resume の引数が
+#:   (節の `isinstance` の絞りは総称 class の型引数を Unknown にし、欄の読みと typed_resume の引数が
 #:   一部 Unknown の赤になる。handle.hy の `_effect-form-binding`)。
 HANDLER_STATIC_NAMES: tuple[str, ...] = (
     "ClauseRun",
@@ -130,7 +130,7 @@ HANDLER_STATIC_NAMES: tuple[str, ...] = (
 #: defeffect の型検査のための展開が参照する static_types の名(答えの分けを宣言した effect の `__iter__` の返り値 — declarations.hy)。
 DEFEFFECT_STATIC_NAMES: tuple[str, ...] = ("BoundRun",)
 
-#: for/do・traverse の型検査のための展開が参照する static_types の名(agora-redesign #2321)— 件の引数を items の要素の
+#: for/do・traverse の型検査のための展開が参照する static_types の名— 件の引数を items の要素の
 #: 型へ読み直す `traverse_item`(macros.hy の _traverse-form)。展開の中では `_doeff_<名>` で引く。
 TRAVERSE_STATIC_NAMES: tuple[str, ...] = ("traverse_item",)
 
@@ -148,7 +148,7 @@ SESSION_STATIC_IMPORTS: str = (
 #: defmcp-tool の型検査のための展開が参照する名 — 展開の中では `_doeff_<名>` で引く(macros.hy の defmcp-tool)。
 #: tool ごとに `from doeff.mcp import McpToolDef, McpParamSchema` を出していた頃は、doeff の module なので重ねの畳み
 #: (static_check.without_bookkeeping)にも掛からず、tool を 65 個持つ module か class で McpToolDef の宣言が 64 を超え、
-#: pyright が tool の値を Unknown にして、tool を使う側の型の誤りを黙って通していた(card ki-4848d81e0bc5 の設計検証の盲検 A)。
+#: pyright が tool の値を Unknown にして、tool を使う側の型の誤りを黙って通していた。
 #: 名に `_doeff_` を付けるのは、書き手の書いた McpToolDef の import と 1 つの名を分け合わないため。
 MCP_STATIC_IMPORTS: str = "from doeff.mcp import McpToolDef as _doeff_McpToolDef, McpParamSchema as _doeff_McpParamSchema\n"
 
@@ -157,7 +157,7 @@ MCP_STATIC_IMPORTS: str = "from doeff.mcp import McpToolDef as _doeff_McpToolDef
 #: 実行時の展開は defk / defhandler / `<-` ごとに同じ import を出すが、静的な展開で同じことをすると、1 つの名に
 #: 宣言が積み上がる。pyright は 1 つの名の宣言が 64 を超えると型の推論をやめて Unknown にするので、defk を 65 個
 #: 持つ module では `_doeff_do` が Unknown になり、defk の呼びが Program ではなく :post の型に見えていた
-#: (doeff-cluster の local.hy の `(Spawn (defk の呼び))` 4 か所 — agora-redesign #1686)。静的な展開の macro は
+#: (doeff-cluster の local.hy の `(Spawn (defk の呼び))` 4 か所)。静的な展開の macro は
 #: この import を出さない(macros.hy の `_helper-imports`・`_bind-yield`・defmcp-tool、handle.hy の `_do-import`)。
 STATIC_HELPER_IMPORTS: str = (
     "from doeff_hy._static_types import do as _doeff_do, _doeff_perform"

@@ -338,7 +338,7 @@ def test_a_function_named_like_an_unrequired_macro_keeps_the_record_current(tree
     assert tree.is_current(record), "選んで require していない macro と同じ名の関数の呼び出しで古いと判じた"
 
 
-# ---- 辿れない値を file の全体でなく狭く覆う(agora-redesign #3938)-------------------------------------------------------
+# ---- 辿れない値を file の全体でなく狭く覆う-------------------------------------------------------
 # 冷えるべき時(直す前から緑でよい — 直した後も緑であることが要)。
 
 
@@ -486,7 +486,7 @@ def test_a_changed_unused_macro_beside_a_context_variable_keeps_the_record_curre
     assert tree.is_current(record), "ContextVar を読む macro の module の別の行を替えただけで古いと判じた"
 
 
-# ---- module の説明の文(card ki-70d92767a917 の子)----------------------------------------------------------------------
+# ---- module の説明の文----------------------------------------------------------------------
 
 
 def test_a_changed_docstring_of_a_module_the_macro_reads_keeps_the_record_current(tree: Tree) -> None:
@@ -504,7 +504,7 @@ def test_a_changed_constant_of_a_module_the_documenting_macro_reads_is_stale(tre
     assert not tree.is_current(record), "macro が読む module の定数を替えたのに古いと判じない"
 
 
-# ---- module の置き場を値として読む code(設計検証 lt-TBEF3PAMAVQ8B3Z07MDSCA994C の盲検 B・card ki-1475765a3f18)-----------------
+# ---- module の置き場を値として読む code-----------------
 
 
 def test_a_changed_file_a_macro_reads_beside_its_module_is_stale(tree: Tree) -> None:
@@ -735,7 +735,7 @@ DOCUMENTED_MODULES = {
 
 
 def test_changed_module_docstrings_keep_a_defhandler_user_current(real_tree: RealTree) -> None:
-    # 直す前は赤(card ki-70d92767a917 の子・doeff b44c49c → 0f2fa6f で defhandler の使い手 540 file が Hy の展開の置き場で
+    # 直す前は赤(doeff b44c49c → 0f2fa6f で defhandler の使い手 540 file が Hy の展開の置き場で
     # 外れた): defhandler の展開の code の文字列の定数 "__doc__" を名の候補として、閉包で辿った module の __doc__ を digest に
     # 入れていた。digest の材料の違いは record_runtime の docstring の 1 行だけだった。
     (real_tree.root / "macro_use_probe" / "user.hy").write_text(REAL_HANDLER_USER, encoding="utf-8")
@@ -850,7 +850,7 @@ def test_a_changed_method_only_the_assigning_expansion_calls_makes_only_its_reco
 # record.hy は deff を使う。.pyc から record を読む process では、record.hy の記録の照らしが record の本体の実行の前に走るので、
 # outcome_forms を import できない(record の macro の表がまだ空)。直す前は、その時の digest(名だけ)が process の覚えに残り、
 # その process の deff の使い手の照らしと記録が全部その値になって、import の順の違う process と置き場の entry を書き直し合った
-# (agora-redesign card ki-464fa307a62b・日次 10-11 16:03 の回)。
+# (日次 10-11 16:03 の回)。
 
 #: deff だけを使う module。
 REAL_DEFF_USER = """\
@@ -1022,7 +1022,7 @@ def test_processes_importing_in_different_orders_share_the_store_without_recompi
     assert not again, f"2 巡目からも Hy の module を作り直した: {again}(全部の回: {rounds})"
 
 
-# ---- process をまたぐ覚え(agora-redesign card ki-38508e6e56fd)----------------------------------------------------------
+# ---- process をまたぐ覚え----------------------------------------------------------
 #
 # 新しい process の照らしの費用の大半は、閉包の歩みが辿れない大域を覆う source の文の読み(bound_source.binding_of — source を
 # 解いて構文木を歩く)だった。中身と名で決まる純な読みは置き場(DOEFF_HY_CODE_STORE)に覚え、次の process は解き直さない。
@@ -1183,7 +1183,7 @@ def test_a_macro_changed_in_another_tree_is_stale_in_a_second_process(cross_tree
 
 
 def test_a_macro_naming_the_place_of_its_module_is_current_in_another_tree(cross_tree: CrossTree) -> None:
-    # 直す前は赤(agora-redesign card ki-1475765a3f18): macro が呼ぶ補助の code の名の表に __file__ が出ると(作った module に
+    # 直す前は赤: macro が呼ぶ補助の code の名の表に __file__ が出ると(作った module に
     # __file__ を書く)、digest にその module の置き場の path が入り、同じ中身を別の作業木に置いただけで古いと判じた(日次の
     # 全体検証は回ごとに別の dir に doeff を置き、型検査の展開の保存が毎回全部外れた)。
     cross_tree.run("record", "placed")
@@ -1225,7 +1225,7 @@ def test_a_changed_environment_value_is_stale_in_a_second_process(
 def test_a_changed_value_from_another_top_package_is_stale_after_an_unchanged_check(
     cross_tree: CrossTree,
 ) -> None:
-    # 条 2 の別の形(card ki-38508e6e56fd の設計検証の盲検 B): LIMIT は macro と別の top の package の file で決まり、記録が名指す
+    # 条 2 の別の形: LIMIT は macro と別の top の package の file で決まり、記録が名指す
     # module はどれもその package に無い。照らしの答え(合う / 古い)を、記録が名指す package の file と環境を鍵に置き場へ覚えて
     # 次の process が信じる形は、変えない照らしの答え(合う)を覚え、LIMIT を替えた後も今に合うと判じて古い展開を使った。
     cross_tree.run("record")
@@ -1236,7 +1236,7 @@ def test_a_changed_value_from_another_top_package_is_stale_after_an_unchanged_ch
     )
 
 
-# ---- source の拡張子(card ki-38508e6e56fd の設計検証の盲検 A)----------------------------------------------------------
+# ---- source の拡張子----------------------------------------------------------
 #
 # 「source の無い module の class は公開の形だけで覆う」(#3938)の判じが、Hy の source の拡張子を自前の写しで持っていた。Hy の
 # 拡張子を定義点(code_store.HY_SOURCE_SUFFIXES)に足しても写しが古いまま残ると、その拡張子の module の class は拡張の module の
@@ -1270,7 +1270,7 @@ def test_a_class_in_a_source_with_an_unlisted_extension_is_covered_by_its_body(
     assert digest(3) != digest(30), "拡張子 .hym の module の class の method の本体を替えても digest が変わらない"
 
 
-# ---- 照らしの固定費(agora-redesign card ki-be596ac8276f)------------------------------------------------------------------
+# ---- 照らしの固定費------------------------------------------------------------------
 #
 # 照らしを常に「今に合う」とした process と比べた差(test_emulated_screen.hy の読み込みで 0.385 秒)の内訳: 照らしの中だけで
 # hy.core.hy_repr を読む(置き場の鍵を作るために hy.repr を引く — Hy が遅れて import する)・code の読み(_code_facts — 命令を
@@ -1433,7 +1433,7 @@ def test_a_file_changed_between_two_imports_is_noticed_by_the_second(scope_tree:
 def test_the_digest_is_the_sha256_of_the_length_prefixed_parts() -> None:
     # 緑のまま守る: 記録の digest の綴り(歩みが入れた文字列ごとに、UTF-8(surrogatepass)の bytes の長さを 8 byte の little endian で
     # 前に置いた並びの sha256)。綴りが変わると、全部の .pyc と置き場の code の記録が古いと判じられ、全部の Hy の module が compile
-    # し直される(歩みの文字列の入れ方を速くした card ki-be596ac8276f の便が、綴りを変えていない証拠)。
+    # し直される(歩みの文字列の入れ方を速くした変更が、綴りを変えていない証拠)。
     import hashlib
 
     from doeff_hy_bytecode_guard import _loader_hooks as loader_hooks, _macro_use as macro_use
@@ -1454,7 +1454,7 @@ def test_the_digest_is_the_sha256_of_the_length_prefixed_parts() -> None:
     )
 
 
-# ---- 設計検証 lt-9TQ4W7B2R3TJ8W808QFDDZ83VP の盲検 A・B(card ki-be596ac8276f)----------------------------------------------
+# ---- 設計検証の失敗例 A・B----------------------------------------------
 
 #: 盲検 A の package — macro rows が、読み込み済みの値の module tables.py の表の行 "b" を返す(歩みは表を tables.py の文で覆う)。
 LIVE_FILES = {
@@ -1548,7 +1548,7 @@ SERVED_FILES = {
 def test_an_import_after_the_outer_import_ended_does_not_use_its_snapshot(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, reader: str
 ) -> None:
-    # 直す前は赤(盲検 A の付録 — card ki-be596ac8276f の読み込みの覚えが入れた・基準版 cf7ea9cc0 は緑): 一番外の読み込みの中で
+    # 直す前は赤(盲検 A の付録・基準版 cf7ea9cc0 は緑): 一番外の読み込みの中で
     # 起きた thread と写した context は、読み込みが終わった後も覚え(file の状態の写しと確かめた digest)を持ち続けた。tables.py を
     # 書き換えて reload した後(表は 100)に user_1 を読むと、古い写しで覚えを確かめて今に合うと判じた(値 1 のまま・compile しない)。
     tree = _scope_tree(tmp_path, monkeypatch, "macro_use_served", SERVED_FILES)
@@ -1670,7 +1670,7 @@ def test_every_function_the_code_reading_calls_is_in_the_module_its_key_covers()
     assert {"_code_facts", "_constant_text", "_called_modules", "_reference_module", "_mangle"} <= seen, seen
 
 
-# ---- 環境変数で決まる値を読む macro(設計検証 lt-9TQ4W7B2R3TJ8W808QFDDZ83VP の盲検 A の付録 3・依頼 lt-D9C8NM324RSPKZZVKC9MHA9464)---
+# ---- 環境変数で決まる値を読む macro---
 #
 # 歩みは標準 library を名だけ入れる(Python の版で覆う)が、os.environ は process の状態で、版も file も覆わない。環境変数から組んだ
 # 素の値の大域(条 3 の MODE)は値で入るので古いと判じるが、環境変数から組んだ表は名を束縛する source の文で覆われ、文は環境変数の
@@ -1683,7 +1683,7 @@ ENV_MODE = "MACRO_USE_ENV_MODE"
 #: aliased = os から別名で import した environ で組む dict・got = os から import した getenv で組む dict・built = 読み込みの時に
 #: 補助の関数が組む dict・py-table = Python の module の文が組む dict・direct = 展開の時に macro が直に読む・helper = 展開の時に
 #: 補助の関数が読む・local = 関数の中の import で読む(module の大域に os が無い)。body と plain は環境変数を読まない macro と、
-#: 環境変数から組んだ素の値を返す macro(条 3 — 値で入る)。設計検証 lt-D9C8NM324RSPKZZVKC9MHA9464 の盲検 A の形: hy-import = Hy の
+#: 環境変数から組んだ素の値を返す macro(条 3 — 値で入る)。失敗例の形: hy-import = Hy の
 #: import で別の module の表を名で束縛して読む・default = 環境変数から組んだ表を補助の関数の既定値に持つ・cell = 読み込みの時に
 #: 組んだ表を閉包の cell に持つ(どちらも大域の名で引けない値)。
 ENV_FORMS = (
@@ -1764,7 +1764,7 @@ def test_macros_that_do_not_read_the_environment_stay_checkable_beside_ones_that
 ) -> None:
     # 緑のまま守る: 環境変数の読みは、それに当たった macro の照らしだけを変える。同じ module の環境変数を読まない macro(body)と、
     # 環境変数から組んだ素の値を値で入れる macro(plain — 条 3)と、Hy の import の同じ form で環境変数から組んだ表と並べて
-    # import した表を読む macro(fixed — import の form の兄弟の名を辿らない・設計検証 lt-D9C8NM324RSPKZZVKC9MHA9464)は、同じ
+    # import した表を読む macro(fixed — import の form の兄弟の名を辿らない)は、同じ
     # 環境の次の process で compile せず、環境変数を替えた時は plain だけを展開し直す。
     monkeypatch.delenv(ENV_MODE, raising=False)
     tree = _scope_tree(tmp_path, monkeypatch, "macro_use_env", ENV_FILES)
@@ -1796,7 +1796,7 @@ def test_a_row_of_an_environment_read_is_stale_even_when_the_walk_now_compares_f
 def test_an_environment_reading_user_is_compiled_again_after_its_macro_changed_in_another_tree(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    # 緑のまま守る(設計検証 lt-D9C8NM324RSPKZZVKC9MHA9464 の盲検 B): 環境変数を読む macro の使い手の記録は、環境変数が同じ process
+    # 緑のまま守る: 環境変数を読む macro の使い手の記録は、環境変数が同じ process
     # でも照らせない — 共有の置き場から引く路でも。印の行を記録から除いて照らし、環境変数の指紋を鍵に置き場の entry を使い回す
     # 読み込みの口は、別の作業木で macro の本体を替えた後も、環境変数が同じだけで前の展開("plain")を今に合うと判じた。
     import shutil
@@ -1837,7 +1837,7 @@ def test_the_environment_mark_is_read_only_by_the_walk_and_the_check() -> None:
     assert not uses, f"records.py・macro_use.py の外で印 ENVIRONMENT_READ を読む — 印の判断は照らし(macro_use)が持つ: {uses}"
 
 
-# ---- 関数の中の require の局所の表は、展開している module の記録にだけ入る(設計検証 lt-07HRM3MVKZXK2MYM4DEQ872YC1 の盲検 B) ----
+# ---- 関数の中の require の局所の表は、展開している module の記録にだけ入る ----
 
 
 def _expand_on_its_own(name: str, source: str, filename: str, entered, before) -> records.MacroRecord:

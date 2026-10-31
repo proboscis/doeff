@@ -10,7 +10,7 @@
 
 
 (defrecord HttpPhases
-  "The phases of one exchange, timed when the request set trace-phases (agora card ki-ca4b41612e2e) — where the seconds of a
+  "The phases of one exchange, timed when the request set trace-phases — where the seconds of a
    request went on the caller's side. new-connection = a connection was made for this request (False = a kept connection was
    reused) · connect-seconds = making it (name lookup and TCP — 0 when reused) · acquire-seconds = from handing the request to
    the client to the first byte written, without connect-seconds (waiting for the pool and the client's own steps) ·
@@ -65,11 +65,11 @@
           self.body-snippet body-snippet)))
 
 
-;; Why no response ever arrived, as a closed set (agora-redesign #850). The HTTP handler maps the transport error's class — never
+;; Why no response ever arrived, as a closed set. The HTTP handler maps the transport error's class — never
 ;; its name or text — to one of these: TIMED-OUT = a time limit ran out after the connection was made, or while waiting for a
 ;; pooled connection (reading, writing — the request may have reached the server) · CONNECT-FAILED = no connection was made
 ;; (refused, DNS, TLS handshake, or the connect time limit ran out — the request never reached the server, so a caller may resend
-;; it elsewhere; agora-redesign #2337) · OTHER = the rest (the connection dropped
+;; it elsewhere) · OTHER = the rest (the connection dropped
 ;; mid-exchange, a protocol error …).
 (defenum HttpFailureKind TIMED-OUT CONNECT-FAILED OTHER)
 (setv HttpFailureKind.__doc__ "Why an HTTP request got no response (HttpFailed.kind): TIMED-OUT = a time limit ran out after
@@ -97,7 +97,6 @@
 
    log-each-request = True asks the handler to slog one \"http_request\" line per attempt (method, url, status, elapsed).
    Off by default: a caller that polls (a node agent that PATCHes every minute) should not add a log line per request.
-   Added for agora-redesign #823 (item 2).
 
    connect-timeout-seconds = a shorter limit for making the connection only (None = timeout-seconds covers every phase). A caller that
    can send the request elsewhere when no connection was made (CONNECT-FAILED) sets it short, so an address that drops the handshake
@@ -105,13 +104,12 @@
 
    trace-phases = True asks the handler to time the exchange's phases (HttpPhases on the response's phases — whether a new
    connection was made, and the seconds to connect, send, wait for the answer's head and read its body). Off by default: a
-   caller that does not read them pays nothing (agora card ki-ca4b41612e2e).
+   caller that does not read them pays nothing.
 
    params and body are handed to the outside HTTP as they are (a query mapping; bytes / str sent as they are; a mapping sent as JSON),
    so their values are any value the outside accepts: the boundary type is `Mapping[str, object]` — covariant in the value, so
    a caller's `dict[str, str]` or `dict[str, Any]` is accepted (`dict[str, object]` is invariant and was not; `Any` is a type escape).
-   A mapping that is not a dict is kept as a dict (the handlers and the fixture key read a dict; a dict is kept as it is) —
-   agora-redesign #2939."
+   A mapping that is not a dict is kept as a dict (the handlers and the fixture key read a dict; a dict is kept as it is)."
 
   (defn #^ None __init__ [self #^ str method #^ str url *
                           #^ (| (get dict #(str str)) None) [headers None]

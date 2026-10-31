@@ -329,7 +329,7 @@
 
 
 (deftest test-a-generation-that-cannot-take-the-elder-jobs-yet-keeps-the-pod-not-ready [#^ Path tmp-path monkeypatch]
-  ;; 失敗ケース(AL-D2k・card ki-c66651db99d6 — 2026-10-11 18:44 JST の zeus): 同じ名の前の世代がまだ動かしている job を、この世代が
+  ;; 失敗ケース(AL-D2k — 2026-10-11 18:44 JST の zeus): 同じ名の前の世代がまだ動かしている job を、この世代が
   ;; まだ受け取れない間(返事の handoverPending)は、worker は readiness の file に ready を書かず、Pod の readinessProbe は NotReady と
   ;; 答える(Deployment は前の世代の Pod の削除を始めず、Service の振り先は前の世代の Pod のまま)。直す前: 最初の返事で ready を書き、
   ;; 前の世代の Pod が振り先から外れた後、その Pod で動く job へ 2〜7 分 届かなかった。

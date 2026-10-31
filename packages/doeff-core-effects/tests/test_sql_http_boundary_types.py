@@ -1,4 +1,4 @@
-"""sql_effects・http_effects の型の境目の失敗ケース(agora-redesign #2939 — 手の .pyi を道具の出力に置き換えた時に決めた境目)。
+"""sql_effects・http_effects の型の境目の失敗ケース(手の .pyi を道具の出力に置き換えた時に決めた境目)。
 
 - SqlTransaction は defeffect の型の引数 :tp [T] で総称になり、program の答え T が使い手の `<-` の答えに通る(型の宣言 .pyi も
   `class SqlTransaction[T](EffectBase[T | SqlFailed | SqlUnreachable])`)。通らなければ、取り違えた答えの型が赤にならない。

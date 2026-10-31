@@ -1,6 +1,6 @@
 """A Program argument handed on through a long chain of wrappers, and one handed back to the same function.
 
-Regression target (card ki-36f06eb1c65a): agora-controllers' production job foundation hands the job's
+Regression target: agora-controllers' production job foundation hands the job's
 body through the host, its inside, the pool split (which receives the cluster handlers as a function
 value) and doeff-cluster's ``with-cluster-handlers``, each wrapping it once more. The reader stopped
 binding Program arguments at a fixed depth of 4, so at the fifth wrapper the body was unbound and every

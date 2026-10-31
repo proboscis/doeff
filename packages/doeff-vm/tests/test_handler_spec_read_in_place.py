@@ -1,4 +1,4 @@
-"""据えた事のある素の関数の handler を、VM が Python を呼ばずに据える事の検(agora-redesign #2927)。
+"""据えた事のある素の関数の handler を、VM が Python を呼ばずに据える事の検。
 
 VM は handler を据える度に、その handler の据えの形(HandlerSpec — 受ける effect の型・@do の生成器の関数・末尾の
 Resume の行・素通しの effect)を doeff_vm._effect_types.handler_spec から受け取る。素の関数なら答えは関数の __dict__ に

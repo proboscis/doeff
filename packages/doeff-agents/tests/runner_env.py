@@ -5,7 +5,7 @@ pytest runs outside any doeff Program, and the e2e suites let the runner choose 
 module only reads them: each function returns the raw value of one variable, or None when unset.
 Which value wins and what the default is stays with the callers (sessionhost_bin,
 agentd_real_agent_result_retry_e2e_support). The read goes through the ReadEnvironment effect and its
-real handler (subprocess_handler) — not os.environ directly (DOEFF004 — agora-redesign #3012; this
+real handler (subprocess_handler) — not os.environ directly (DOEFF004; this
 module was exempted from the rule before, #2861).
 """
 

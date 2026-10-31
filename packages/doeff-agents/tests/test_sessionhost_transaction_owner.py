@@ -5,7 +5,7 @@ RELEASE の SQL、connection の commit / rollback、暗黙に COMMIT する exe
 見つけたら赤にする。R15 の振る舞いの検は「開く側」を lease の 3 関数で確かめるだけで、「閉じる側」を
 誰が持つかは見ていなかった。
 
-出自: 依頼 lt-A5KGD83R9HQJ2K172V61A6VMG9 の盲検 A — cache_receipt_put の ``conn.commit()`` は、
+出自: cache_receipt_put の ``conn.commit()`` は、
 transaction の本体の中で呼ばれると本体の途中で transaction を終わらせ、それまでの書き込みを確定させた
 (本番の actor の connection は autocommit なので、transaction の外では何もしない 1 行だった)。
 """

@@ -1,8 +1,7 @@
 (require doeff-hy.macros [defk defhandler deftest <-])
 
 ;;; 止めの合図の handler の本物(os-signal-stop-handler)だけの性質。本物と fake(scripted-stop-handler)が同じ答えを返すべき性質
-;;; (合図の前は None・合図の後は理由・最初の理由を保つ・外側に state の handler が要る)は契約テスト test_stop_signal_contract.hy
-;;; (agora-redesign #1159)。
+;;; (合図の前は None・合図の後は理由・最初の理由を保つ・外側に state の handler が要る)は契約テスト test_stop_signal_contract.hy。
 
 (import pytest)
 (import doeff [run with_handlers])
@@ -26,7 +25,7 @@
     (run (with_handlers [(state) os-signal-stop-handler] (raise-under-os)))))
 
 
-;; --- AwaitStop の反例(agora-redesign #2205)-----------------------------------------------------------------------------
+;; --- AwaitStop の反例-----------------------------------------------------------------------------
 ;; 止めの合図で寝ている待ちを起こさない handler(RaiseStop で理由を覚えるだけ)だと、AwaitStop で寝た task は止めの後も起きず、
 ;; scheduler は待ちの行き詰まりで止まる。scripted-stop-handler が RaiseStop で promise を完了するのは、この形を作らないため。
 

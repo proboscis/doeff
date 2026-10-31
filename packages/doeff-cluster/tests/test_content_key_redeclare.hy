@@ -1,4 +1,4 @@
-;; 中身の鍵(宣言の行の content — card ki-81bf84ac6590): 送り手が「その job の process が読む code の全部」から計った鍵を宣言に載せると、
+;; 中身の鍵(宣言の行の content): 送り手が「その job の process が読む code の全部」から計った鍵を宣言に載せると、
 ;; 指紋 spec-hash と worker の比べは版(revision)と実行環境の repo の commit の代わりに鍵を読む。読む code の変わらない版で宣言し直されても、
 ;; worker は process を起こし直さず、その版の木・root も用意しない。
 ;;

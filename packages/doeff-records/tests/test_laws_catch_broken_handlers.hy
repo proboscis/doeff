@@ -202,7 +202,7 @@
 
 (defk appended-until-refused [appends]
   {:pre [(: appends tuple)] :post [(: % AppendedEvents)]}
-  "束を追記 1 つずつ撃ち、最初の断りから後を積まずに断る — 断りで束を止める handler の顔の答え(card ki-48c34994ed15)。handler の節で走らせる
+  "束を追記 1 つずつ撃ち、最初の断りから後を積まずに断る — 断りで束を止める handler の顔の答え。handler の節で走らせる
    Program なので、失敗と宣言した Refused・Unreachable(<- は Raise にする)は宣言を開かずに(Perform)値のまま受ける(節から Raise を出さない — R4・R9)。"
   (var items #())
   (var stopped False)
@@ -239,7 +239,7 @@
 (defk rows-then-appends [writes appends idempotency-key]
   {:pre [(: writes tuple) (: appends tuple) (: idempotency-key (| str None))]
    :post [(: % (| WrittenAndAppended RowsConflict RowsRefused AppendRefused Unreachable))]}
-  "行の束を PutRows で書いてから追記の束を AppendEvents で積む — 1 つの書きでない handler の顔の答え(card ki-e17ba3b32dea): 追記が断られても
+  "行の束を PutRows で書いてから追記の束を AppendEvents で積む — 1 つの書きでない handler の顔の答え: 追記が断られても
    行は書いたまま残り、今積んだ出来事は行の位置を持たない。"
   (<- rows (Perform (PutRows writes :idempotency-key idempotency-key)))
   (when (not (isinstance rows WrittenRows))
@@ -334,7 +334,7 @@
   (BatchRead items))
 
 (defhandler batch-drops-where-any []
-  ;; 束の道だけ値の組の絞りを落とす handler の顔(card ki-177a4f287c42): 1 つずつの読みは正しく、束の一覧だけが表の全部を返す。
+  ;; 束の道だけ値の組の絞りを落とす handler の顔: 1 つずつの読みは正しく、束の一覧だけが表の全部を返す。
   (ReadBatch [reads]
     (<- answer (batch-read-without-where-any reads))
     (resume answer)))
@@ -349,7 +349,7 @@
   (BatchRead items))
 
 (defhandler batch-answers-in-reverse []
-  ;; 束の答えの順を読みの順に揃えない handler の顔(card ki-177a4f287c42)。
+  ;; 束の答えの順を読みの順に揃えない handler の顔。
   (ReadBatch [reads]
     (<- answer (batch-read-in-reverse reads))
     (resume answer)))
@@ -480,7 +480,7 @@
 
 
 (defhandler retire-every-expired-event []
-  ;; 送り先に在ると確かめた番号を見ない外しの顔(card ki-707aad0f88e8 の前の回収の形): 列の期限を過ぎた出来事を全部外す。
+  ;; 送り先に在ると確かめた番号を見ない外しの顔: 列の期限を過ぎた出来事を全部外す。
   (RetireArchivedEvents [stream at sequences]
     (<- page (ReadExpiredEvents at :after (ExpiredCursor stream) :limit 1000))
     (<- answer (RetireArchivedEvents stream at (tuple (gfor event page.items event.sequence))))
@@ -488,7 +488,7 @@
 
 
 (defhandler retire-at-the-latest-boundary []
-  ;; 読みの境 T を見ない外しの顔(card ki-707aad0f88e8): 外す時の今の刻の境で外す — 送りの読みの後に期限を過ぎた出来事も外れる。
+  ;; 読みの境 T を見ない外しの顔: 外す時の今の刻の境で外す — 送りの読みの後に期限を過ぎた出来事も外れる。
   (RetireArchivedEvents [stream at sequences]
     (<- now (GetTime))
     (<- answer (RetireArchivedEvents stream now sequences))
@@ -496,7 +496,7 @@
 
 
 (defn test-the-archive-laws-turn-red-when-unsent-events-are-retired [monkeypatch]  ; defk にできない: pytest の fixture を受ける検
-  ;; card ki-707aad0f88e8: 送ってから外す列の関門を破る置き場で法 19〜21 が赤になる — 確かめた番号を見ずに外す・読みの境 T を見ずに外す・
+  ;; 送ってから外す列の関門を破る置き場で法 19〜21 が赤になる — 確かめた番号を見ずに外す・読みの境 T を見ずに外す・
   ;; 書きが触った期限を過ぎた出来事を送らずに外す(retire-touched-events に印の無い宣言を渡し、覚えるだけの片付けを捨てる片付けにする)・
   ;; 印の無い列(前からの形 — 回収が送らずに外す)。壊していない置き場では緑(比べの基準)。
   (for [law [law-only-confirmed-events-are-retired law-retirement-keeps-the-read-boundary law-a-write-keeps-the-unarchived-event-it-touches]]
@@ -520,7 +520,7 @@
 
 
 (defn forget-every-due-key [store now-ms]  ; defk にできない: memory.forget-keys-locked の差し替え(錠の内で同期に呼ばれる置き場の書き)
-  ;; 出来事が置き場に残るかを見ない覚えの外しの顔(card ki-4ebaefac6668): 覚えた刻から列の長さを過ぎた覚えを全部外す — 送ってから外す列で
+  ;; 出来事が置き場に残るかを見ない覚えの外しの顔: 覚えた刻から列の長さを過ぎた覚えを全部外す — 送ってから外す列で
   ;; 送り先に届かない間の覚えも外れる。
   (setv forgotten 0)
   (for [slot (list store.remembered-at)]
@@ -533,7 +533,7 @@
 
 
 (defn test-the-key-memory-laws-turn-red-when-keys-are-forgotten-wrongly [monkeypatch]  ; defk にできない: pytest の fixture を受ける検
-  ;; card ki-4ebaefac6668: 鍵の覚え方の関門を破る置き場で法 22・23 が赤になる — 覚えを外さない置き場(前の形)・覚え方を読まずに全部の列で
+  ;; 鍵の覚え方の関門を破る置き場で法 22・23 が赤になる — 覚えを外さない置き場(前の形)・覚え方を読まずに全部の列で
   ;; 覚え続ける置き場・送り先に届かない間の覚えも外す置き場。壊していない置き場では緑(比べの基準)。
   (for [law [law-keys-are-forgotten-after-their-memory law-unarchived-keys-are-kept-until-retired]]
     (assert (not (breaks? law (broken-harness (MemoryStore LAW-SCHEMA) None))) law.__name__))

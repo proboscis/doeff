@@ -62,7 +62,7 @@
 (val FAKE-TOOL-USE-ID "fake-tool")
 (val FAKE-TOOL-NAME "Bash")
 ;; 偽の手番の本体の呼びの行が名乗る request_id の頭(本番の CLI の stream-json の assistant の行の request_id と同じ役 — 呼びの id の前に
-;; 付ける・card ki-b99ace070bf0)。
+;; 付ける)。
 (val FAKE-REQUEST-PREFIX "req_")
 ;; CLI が model の答えの代わりに自分で作って出す assistant の行(API の誤りの答え — 口座の側の断りの行など)が名乗る model の名(本番
 ;; 2026-10-08 22:32 の口座 cryptic-2 の断りの行)と、その行の usage(2026-10-07 の限度の答えの行が名乗った 0 — model を呼んでいない。
@@ -100,7 +100,7 @@
    呼び、呼びと結果の対を tool-repeats 組出す — どの呼びも tool-seconds 秒走る(道具の秒の和は tool-repeats × tool-seconds)。呼びの id は
    1 番目が FAKE-TOOL-USE-ID、2 番目からは FAKE-TOOL-USE-ID-<n>(n = 2, 3, …)で、結果の行は同じ id を名指す(道具の task の id も同じ
    付け方)。最後の結果の後は 1 回の手番と同じく本文か筋書きの終わりへ進む。上の層が模擬で、同じ命令を何度も走らせる長い手番(sleep 110 を
-   10 回 — card ki-85761baedba4)を数える事を確かめるため。2 以上は道具を走らせる手番(tool-seconds が正)だけで、許可の問い
+   10 回)を数える事を確かめるため。2 以上は道具を走らせる手番(tool-seconds が正)だけで、許可の問い
    (needs-permission)と subagent(subagent-transcript)とは組まない(どちらも最初の呼びだけの筋書き)・
    needs-permission = 道具の前に許可の問いを出す・fail = 期限で Failed(detail = この文)で終わる・fail-api-status = fail の手番を
    API の誤りの答えの形で終える HTTP status(本物の CLI と同じ誤りの行と api_error_status つきの result の行を出し、Failed の
@@ -148,27 +148,27 @@
    compactions = CLI が会話を自動で圧縮する筋書き(CompactBoundary か CompactEnded の列 — 圧縮 1 回に 1 つ・#4189)。偽の CLI は本物と
    同じく、要求の前(init の後・考えている間の差分の前)に圧縮の始まりの行(CompactStarted)と終わりの行を 1 組ずつ出し、手番はそのまま続く。
    CompactBoundary = 成功した圧縮(終わりの status null の行 CompactEnded SUCCEEDED と境目の行の 2 行)・CompactEnded = その終わり方で
-   終わった圧縮(失敗・中断・圧縮しなかった — 境目の行は出ない・card ki-8239be27d5f6)。上の層が無人のターンの圧縮を
+   終わった圧縮(失敗・中断・圧縮しなかった — 境目の行は出ない)。上の層が無人のターンの圧縮を
    記録する事を模擬で確かめるため・
    subagent-transcript = 道具が subagent を走らせる筋書き(SubagentTranscript — 本番の handler が subagent の task の報せで transcript
    から読む物そのもの・親の道具の呼びの id は FAKE-TOOL-USE-ID・道具を走らせる手番だけ)。偽の CLI は本番の CLI(背景の task を止めた
    2.1.292)と同じく subagent の呼びの行を出さず、道具の始まりに subagent の task の始まり(TaskEvent・SUBAGENT-TASK-TYPE)を、道具の終わりに
    その報せを出し、報せの直後に本番の handler と同じくこの行を出す(道具の途中で止めた手番は出さない)。上の層が subagent の呼びの使用量を
-   記録する事を模擬で確かめるため(card ki-8239be27d5f6・ki-e798888dce4e)・
-   hooks = 要求の前に CLI が回す hook の行の筋書き(HookNotice の列 — 条件つきルールの助言を返す UserPromptSubmit の hook の応答ほか・
-   ki-d8b473480303)。偽の CLI は本物(--include-hook-events)と同じく init の後に 1 つずつ出し、手番はそのまま
+   記録する事を模擬で確かめるため・
+   hooks = 要求の前に CLI が回す hook の行の筋書き(HookNotice の列 — 条件つきルールの助言を返す UserPromptSubmit の hook の応答ほか)。
+   偽の CLI は本物(--include-hook-events)と同じく init の後に 1 つずつ出し、手番はそのまま
    続く。Stop hook の差し戻し(stop-hook-rejections)の Stop の hook の応答の行は、差し戻しの筋書きが出す(stop-hook-notice-of)。上の層が
    hook の結果を記録して画面に出す事を模擬で確かめるため・
    lose-exit-code・lose-stderr = lose の手番で消える process の終了 code と stderr(#4207)。BackendLost の欄 exit-code・stderr-tail に
    載せる — stderr は本物の状態機械と同じ上限で切る(lines.hy の stderr-tail-within)。上の層が模擬で「CLI がなぜ降りたか」を受け取る
    ため。None = 名乗らない(欄も None — 今の形)。lose の無い手番は断る・
-   subagent-tool-output = 道具(本体の会話の呼び)が subagent を走らせ、その subagent の中の道具が答えた出力(card
-   ki-b25d579bf48b)。偽の CLI は本体の呼びごとに、その結果の行の直前に subagent の中の道具の答えの行(ToolResult — 親 = その本体の
+   subagent-tool-output = 道具(本体の会話の呼び)が subagent を走らせ、その subagent の中の道具が答えた出力。
+   偽の CLI は本体の呼びごとに、その結果の行の直前に subagent の中の道具の答えの行(ToolResult — 親 = その本体の
    呼びの id・答えた呼びの id = <本体の呼びの id>-sub)を出す — 本物の CLI の stream-json が subagent の user の行を
    parent_tool_use_id つきで出すのと同じ。上の層が subagent の中の道具の答えを本体の会話の答えと見分ける事を確かめるため。道具を
    走らせる手番(tool-seconds が正)だけ。None = 出さない・
    boundary-injections = 道具の結果の後、続けて呼ぶ次の道具の呼び(tool-repeats)の前に、読まれていない注入を読む(注入の started の
-   行を出す — 本物の CLI が道具の境界で足された入力を読み、同じ手番のまま続けるのと同じ。card ki-b25d579bf48b)。読んだ注入の
+   行を出す — 本物の CLI が道具の境界で足された入力を読み、同じ手番のまま続けるのと同じ)。読んだ注入の
    返事の本文は最後の本文に続ける。偽 = 今の形(本文を書き始める時と手番の終わりにだけ読む)。"
   (#^ str text)
   (setv #^ float tool-seconds 0.0)
@@ -185,7 +185,7 @@
   (setv #^ Usage usage (field :default-factory Usage))
   (setv #^ (| float None) cost-usd None)
   ;; Completed / Failed に載せる手番の model ごとの使用量(本番の handler が modelUsage の累積の差から数える増分の代わり — None = 名乗らない)。
-  ;; 照合の訳は本番と同じ規則(model-cost-gap)で cost-usd と比べて決める(card ki-1d986d4f0007)。
+  ;; 照合の訳は本番と同じ規則(model-cost-gap)で cost-usd と比べて決める。
   (setv #^ (| (get tuple #(ModelUsage ...)) None) model-usage None)
   (setv #^ int lines 0)
   ;; 道具なしで考える秒(0 = 既定の短い手番)。本文の行だけで、道具の行を出さずにこの秒まで走る。
@@ -314,10 +314,10 @@
     (setv #^ (get tuple #(str ...)) self.boundary-extra #())
     ;; fake の手番の本体の API の呼び(返事 1 つ = 呼び 1 つ): call-id = 本体の assistant の行が名乗る呼びの id / call-usage = その呼びの
     ;; 行が名乗った usage で、まだ閉じていない物(閉じた・名乗っていなければ None)— 本番の handler と同じく、呼びの最終の usage
-    ;; (CallClosed)を手番の終わりの行の前に出すため(card ki-290ec664737d)。
+    ;; (CallClosed)を手番の終わりの行の前に出すため。
     (setv #^ str self.call-id (.format "msg_fake_{}" seq))
     (setv #^ (| Usage None) self.call-usage None)
-    ;; 手番の行の写し手(ClaudeStartTurn.tap — 本番の handler の読み手の thread と同じく、行を出した所で呼ぶ・card ki-31b41eac5071)。
+    ;; 手番の行の写し手(ClaudeStartTurn.tap — 本番の handler の読み手の thread と同じく、行を出した所で呼ぶ)。
     (setv #^ (| (get Callable #([ClaudeStreamLine] None)) None) self.tap None)))
 
 
@@ -407,8 +407,7 @@
   "fake の CLI がこの手番の行で名乗る呼びの値を行に載せるため(本物の CLI が全部の assistant の行で usage と model を、result の行で
    modelUsage を名乗るのと同じ — #3744): assistant の行には返事の last-call-usage と last-call-model、result の行には返事の
    model-windows。CLI が答えの代わりに自分で作る assistant の行(model を自分で名乗る行 — 口座の断りの行の SYNTHETIC-MODEL)と
-   ほかの行はそのまま。usage を名乗る本体の会話の assistant の行には手番の呼びの id(call-id — 本番の CLI の message.id と同じ役)も載せる(card
-   ki-290ec664737d)。"
+   ほかの行はそのまま。usage を名乗る本体の会話の assistant の行には手番の呼びの id(call-id — 本番の CLI の message.id と同じ役)も載せる。"
   (cond
     (and (isinstance kind AssistantMessage) (is kind.model None))
       (do
@@ -429,7 +428,7 @@
     (setv turn.subagent-due None)
     (<- (emit session turn due)))
   ;; 本体の呼びの最終の usage は、本番の CLI の message_delta と同じく手番の終わりの行より前に出す。止めた手番の終わり(terminal-reason
-  ;; aborted_*)は、本番の CLI が終わりを受けずに止めるので出さない(card ki-290ec664737d)。
+  ;; aborted_*)は、本番の CLI が終わりを受けずに止めるので出さない。
   (when (and (isinstance kind TurnResult) (is-not turn.call-usage None) (not (.startswith kind.terminal-reason "aborted")))
     (val closed (CallClosed :message-id turn.call-id :model turn.last-call-model :parent-tool-use-id None :usage turn.call-usage
                             :stopped True))
@@ -495,7 +494,7 @@
 (defk stop-hook-notice-of [rejection]
   {:pre [(: rejection StopHookRejection)] :post [(: % HookNotice)] :tags {:context "claude-code" :role "foundation"}}
   "Stop hook が答えを差し戻した時に、本物の CLI(--include-hook-events)が差し戻しの行の前に出す Stop の hook の応答の行を、偽の CLI でも
-   出すため(ki-d8b473480303)。形は exit code 2 で差し戻す hook の応答 — 理由は stderr・終わり方 error(本物の
+   出すため。形は exit code 2 で差し戻す hook の応答 — 理由は stderr・終わり方 error(本物の
    差し戻しは同じ時に system/notification の stop-hook-error「Stop hook error occurred」を出す — 替え玉の CLI と同じ。応答の行そのものは
    計っていない — 欄は CLI の書き手 hook_response の形)。"
   (HookNotice :event "Stop" :phase HookPhase.RESPONSE :name "Stop" :hook-id (.format "fake-stop-hook-{}" rejection.answer)
@@ -772,10 +771,10 @@
   (<- (emit session turn (Init :session-id session.session-id
                                :capabilities (if reply.interrupt-receipt FAKE-CAPABILITIES NO-RECEIPT-CAPABILITIES)
                                :model "fake")))
-  ;; 要求の前に CLI が回す hook の行(本物の CLI の --include-hook-events の system/hook_response ほか・ki-d8b473480303)。
+  ;; 要求の前に CLI が回す hook の行(本物の CLI の --include-hook-events の system/hook_response ほか)。
   (<- (emit-all session turn (list reply.hooks)))
-  ;; 要求の前の会話の自動の圧縮(本物の CLI 2.1.292 の行 — 始まりの system/status compacting(card ki-aeae6f9e643d)→ 終わりの
-  ;; system/status null(compact_result — card ki-8239be27d5f6)→ 成功なら system/compact_boundary(#4189)— 圧縮 1 回に 1 組)。
+  ;; 要求の前の会話の自動の圧縮(本物の CLI 2.1.292 の行 — 始まりの system/status compacting→ 終わりの
+  ;; system/status null(compact_result)→ 成功なら system/compact_boundary(#4189)— 圧縮 1 回に 1 組)。
   ;; 筋書きの CompactBoundary は成功した圧縮、CompactEnded はその終わり方で終わった圧縮(境目の行は出ない)。
   (<- (emit-all session turn (lfor compaction reply.compactions
                                    line (if (isinstance compaction CompactBoundary)
@@ -966,8 +965,7 @@
                                               :continued-by (ClaudeTurn session.session-id next-turn.seq)))))
       (do
         (<- (emit session turn (TurnResult "error_during_execution" True :terminal-reason "aborted_streaming")))
-        ;; result の行で閉じた止めは、止めるまでの消費を運ぶ(本物の interrupted-by-result と同じ — 偽は筋書きの額を名乗る・card
-        ;; ki-47e64b7b642f)。
+        ;; result の行で閉じた止めは、止めるまでの消費を運ぶ(本物の interrupted-by-result と同じ — 偽は筋書きの額を名乗る)。
         (<- (finish session turn (Interrupted :process-kept False :dropped-refs (tuple (lfor injection queued injection.ref))
                                               :usage turn.reply.usage :cost-usd turn.reply.cost-usd
                                               :model-usage turn.reply.model-usage

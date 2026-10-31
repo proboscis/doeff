@@ -195,7 +195,7 @@ def test_os_watch_sees_only_the_directorys_own_entries(tmp_path: Path) -> None:
 class _OverlapNotifier:
     """A stand-in for the library's notifier (``watchfiles._rust_notify.RustNotify``) that records whether each close
     came while a wait was inside it — the meeting that made the library's Rust code panic with ``PyBorrowError`` on a
-    Python without the GIL (agora-redesign card ki-715d1af556eb). Its wait ends only after the stop flag, and then
+    Python without the GIL. Its wait ends only after the stop flag, and then
     lingers the way the library does until its next step, so a close made right after the flag is caught inside."""
 
     instances: "tuple[_OverlapNotifier, ...]" = ()
@@ -319,7 +319,7 @@ def test_os_watch_waits_leave_the_default_executor_free(
     """Waits on more watches than the event loop's default executor has threads all enter their notifiers, and a job
     sent to that executor still runs at once. An HTTP client's new connection resolves its name there
     (``loop.getaddrinfo``); when every wait held one of its threads, a turn-host with more turns than the 32 threads
-    timed out its connections to the custody service and the screen's drafts (agora-redesign card ki-fe848da94d24)."""
+    timed out its connections to the custody service and the screen's drafts."""
     import asyncio
     from concurrent.futures import ThreadPoolExecutor
 

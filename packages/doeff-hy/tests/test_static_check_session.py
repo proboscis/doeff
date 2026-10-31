@@ -1,4 +1,4 @@
-"""defhandler の session val / session var の型検査のための展開(agora-redesign #2293・#2214 / #2279 と同じ種類)の失敗ケース。
+"""defhandler の session val / session var の型検査のための展開(#2214 / #2279 と同じ種類)の失敗ケース。
 
 実行時の展開は名を `(yield (Get key))` の答え(Some の中身)か初期化の値に束ねる。型検査のための展開がこれをそのまま写すと、
 Get の答えに型が無いので名とそれを使う式が全部 Unknown になり、strict で書き手に直せない赤が 1 handler に十数件出た

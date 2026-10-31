@@ -1,10 +1,10 @@
 """Hy の検の時間の上限(検 1 本の実行・検の file 1 本の収集)。
 
-模擬の handler で回す検は速いことが前提なので、遅くなった検に気づかせる(proboscis/agora-redesign#907)。
+模擬の handler で回す検は速いことが前提なので、遅くなった検に気づかせる。
 利用側の pyproject の ``[tool.pytest.ini_options]`` に置く設定:
 
 - ``doeff_test_call_budget_steps`` — Hy の検の file から集めた検 1 本の実行(pytest の call の段階)の上限の doeff-vm の歩数
-  (正の整数 — 機体の負荷で揺れない決まった数・agora-redesign #2670)。実行の判定の本体で、歩数で判じ、CPU 秒は測って報告に出すだけ。
+  (正の整数 — 機体の負荷で揺れない決まった数)。実行の判定の本体で、歩数で判じ、CPU 秒は測って報告に出すだけ。
   doeff-vm に数の口が無い build で在れば、秒へ倒さず ``pytest.UsageError`` で止める。
 - ``doeff_test_call_budget_by_marker`` — 印ごとの実行の上限の壁の時計の秒(1 行 = ``印=秒``・例 ``real_world=10``)。検が持つ印
   (``item.iter_markers()`` — module の頭の ``pytestmark`` を含む)に当たる行があればその秒、複数当たれば最も長い秒で判じる
@@ -23,10 +23,10 @@
   task を起こそうとした時に scheduler が ``StepBudgetExceeded`` を上げ、その検はその場で赤になる。設定が無い repo・
   scheduler に口の無い版では入れない(今までどおり)。
 - 検ごとの宣言 ``declare_step_budget(検, 歩数, 理由)`` — 既定の上限は変えず、筋書きの規模に断言が依って縮められない検だけが
-  検の定義の隣で要る歩数と理由 1 行を宣言する(Mac の調整役の決め 2026-10-03 21:5x・agora-redesign #2670 の 3 — 別の file の
+  検の定義の隣で要る歩数と理由 1 行を宣言する(Mac の調整役の決め 2026-10-03 21:5x — 別の file の
   登録簿の代わり)。歩数で判じる時、宣言のある検は宣言の値で判じる: 超えれば赤・宣言の ``STALE_RATIO``(半分)以下で
   終われば古い宣言として赤。宣言の無い検は今までどおり既定の上限(と登録簿)で判じる。
-- 模擬の世界の走りの歩数だけで判じる(調整役 cisco-c8 の決め 2026-10-12 15:47 JST・card ki-a27b195a3f92 — #2670 の数え方を改めた):
+- 模擬の世界の走りの歩数だけで判じる(調整役 cisco-c8 の決め 2026-10-12 15:47 JST — #2670 の数え方を改めた):
   doeff-cluster の ``sim-main`` は、始まり・立ち上がり(宣言の job が全部 起きた後、世界が初めて静まった時)・止め始め・終わりの
   印を ``doeff_core_effects._world_phases`` に残す。``doeff_test_call_steps_counted = "world-running"`` の repo では(既定 ``call`` は
   今までどおり call の全部)、歩数で判じる検の call の間はその記録を開き、世界を回した検は、立ち上がりから
@@ -36,7 +36,7 @@
   切り替えと宣言の測り直しを 1 つの変更で行えるように(doeff が先に入っても利用側の判定が変わらない)と、戻し方を設定 1 行に
   するため(戻し方 = 設定を ``call`` に戻し、宣言を測り直す)。
 
-- Python の呼び出しの数(``doeff_hy_pytest._python_calls`` — agora-redesign #2854): 命令行の印 ``--doeff-python-calls`` を付けた走りだけ、
+- Python の呼び出しの数(``doeff_hy_pytest._python_calls``): 命令行の印 ``--doeff-python-calls`` を付けた走りだけ、
   歩数を宣言した検の call の間に ``sys.monitoring`` の CALL 事象を数え、終わりに 1 行出す(判定はしない)。印の無い走りは枠を取らない。
 
 上限の 3 つ(歩数・印ごとの実行の秒・収集の秒)がどれも無ければ何もしない。設計の決め:
@@ -44,12 +44,12 @@
 - 対象は ``.hy`` の検の file(deftest と、同じ file の素の検)だけ。Python の検は模擬の handler の検とは限らないので外す。
 - 印の上限に当たる実行の判定は壁の時計の秒(``time.perf_counter`` — call の段階の区間)で行い、報告には CPU 秒も並べる。印の付いた検
   (real_world など)は本物の子 process・socket・待ち受けを相手にするので、重さは子 process と待ちに在り、process の CPU 秒
-  (``time.process_time`` — 自分の process の全 thread だけ)には出ない(card ki-f35bb95eddda・agora-redesign #3858 — 上限
+  (``time.process_time`` — 自分の process の全 thread だけ)には出ない(上限
   60 秒の頃に 105 秒かかった印 real_world の検が CPU 秒では赤にならなかった)。壁の時計は機体の負荷(並べて走る他の検・席)で
   伸びるので、日次の Pod の秒は手元より大きく出る。
 - 検ごとの宣言 ``declare_process_tree_cpu(検, 理由)`` — 印の上限に当たる検のうち、重さが子 process(と自分の thread)の CPU に在り
   外を待たない検(型検査の道具を子で撃つ検など)だけが、壁の時計の代わりに process の木の CPU 秒(自分と子孫の user+sys —
-  ``doeff_hy_pytest._tree_cpu``)を同じ秒の上限で判じると宣言する(agora-redesign card ki-ef6d57782313)。壁の時計は機体の混み
+  ``doeff_hy_pytest._tree_cpu``)を同じ秒の上限で判じると宣言する。壁の時計は機体の混み
   (CPU の待ちと disk の待ち)で伸び、同じ検が混んだ回だけ赤になる — 日次 2026-10-22 04:00 JST の回で、子で型検査を撃つ検が
   壁の時計 33 秒・自分の CPU 0.96 秒で上限 30 秒を越え、上限を外すと緑だった。木の CPU 秒は検がした仕事の量で、混みでは
   ほとんど変わらない。壁の時計は CPU を使わずに止まった検を切る安全弁(上限 × ``TREE_CPU_WALL_BACKSTOP_FACTOR``)に退く
@@ -62,11 +62,11 @@
   その範囲で最初に走った検 1 本に丸ごと乗るので、含めると検の選び方と並び順で同じ検の合否が変わる。deftest の本体
   (模擬の handler で Program を回す所)は call の段階にある。
 - file の上限は module の import を測り、別の module の初回の import(共有の依存の一度きりの重さ)は変換と同じく引く
-  (2026-09-30・agora-redesign #1752 で改めた — 以前は依存の import を含めて測り、その重さがその process で最初に import した
+  (2026-09-30・改めた — 以前は依存の import を含めて測り、その重さがその process で最初に import した
   file に乗るので、同じ file の合否が並び順・1 file だけの実行か・テストの索引が冷えているかで変わった。戻し方 =
   ``CompileCounter.install`` の ``_find_and_load`` の差し替えを外す)。測る所は doeff-adr の hook
   ``pytest_doeff_import_hy_module`` の前後 — doeff-adr は記録で説明できる file を import せずに収集し、module の import を
-  item の setup まで待つので(agora-redesign #1211 / #1225)、import は収集の中か setup の中のどちらかで 1 度起きる。
+  item の setup まで待つので(#1225)、import は収集の中か setup の中のどちらかで 1 度起きる。
   どちらで起きても同じ hook を通るので、同じ鍵(file の path)で測る。超えて赤にする時は、その場で落とす(収集なら
   収集の誤り、setup ならその item の setup の誤り)。
 - キャッシュ無しを赤にしない: 測った区間から、source から code への変換(``SourceFileLoader.source_to_code`` —
@@ -77,16 +77,16 @@
   実行も引かれる)なので、下限で超えた物は本当に超えている。
 - GC(ごみ集め)も引く: 測った区間の中で起きた GC の時間(``gc.callbacks`` — 判じる単位と同じ時計の CPU 秒か壁の時計の秒)は、その検の重さではなく process に生きている
   object の数の費用で、いつ起きるかは割り当ての数の巡りで決まる(free-threaded の Python の GC は世代を分けず 1 回ごとに heap の
-  全体を回る)。引かないと、長い session の中で GC に当たった検だけが赤になり、落ちる検が回ごとに入れ替わる(card ki-b2383fcc8b25)。
+  全体を回る)。引かないと、長い session の中で GC に当たった検だけが赤になり、落ちる検が回ごとに入れ替わる。
 - 登録簿は 1 鍵 1 file(``<鍵の sha256 の先頭 12 字>.txt``・1 行目が鍵・2 行目からが理由で空は不可)。鍵は、実行なら
   pytest の nodeid、収集なら rootdir からの file の path。載った鍵は上限を超えても赤にしない。上限の内に戻った鍵は
   終わりの要約に「消せる」と出す(登録簿は縮める向きだけ — 増えたことを赤にするのは利用側の repo の git の検)。
   ``fail`` の形では、載った鍵が上限の ``STALE_RATIO``(半分)以下で終わった時、その検を古い登録として赤にする
-  (消し忘れた行は、同じ検が遅く戻っても黙って通す — agora-redesign #1726・#1706。doeff-linter の DOEFF166 と同じ向き)。
+  (消し忘れた行は、同じ検が遅く戻っても黙って通す。doeff-linter の DOEFF166 と同じ向き)。
   上限の半分から上限までの間は報告だけ(秒の揺れで同じ検の合否が走りごとに変わらないように)。
   測った検だけを判じる(走らなかった検・別の検査の鍵が同じ dir に在っても判じない)。
 - 上限は doeff-vm の不変条件の検査が無効な走行を基準にする。検査が有効な走行(doeff 自身の pytest — root の
-  conftest.py が有効にする・agora-redesign #980 からはどの build も検査を持ち実行時に切り替える)は VM の
+  conftest.py が有効にする・今はどの build も検査を持ち実行時に切り替える)は VM の
   1 歩ごとに不変条件を検査し、同じ検が十数倍遅い。session の始めに doeff の effect ``ReadInvariantChecks`` を 1 回読み、
   検査つきなら ``fail`` でも赤にせず報告に留める(基準の違う build で誤った赤を出さない)。終わりの要約の見出しに
   build の種類を 1 行出す。読めない(import できない・古い VM で答えられない)時は「不明」と出し、判定は今のまま。
@@ -129,11 +129,11 @@ MODE_INI = "doeff_test_budget_mode"
 REGISTRY_INI = "doeff_test_budget_registry"
 CALL_STEPS_INI = "doeff_test_call_budget_steps"
 RUNAWAY_MULTIPLIER_INI = "step_budget_multiplier"
-# 歩数で判じる時に数える区間(card ki-a27b195a3f92): call = call の全部(既定)・world-running = 模擬の世界を回した検は世界の走りの
+# 歩数で判じる時に数える区間: call = call の全部(既定)・world-running = 模擬の世界を回した検は世界の走りの
 # 歩数だけ。repo が設定で選ぶ — 切り替えはその repo の宣言の測り直しと同じ変更で行い、戻す時もこの 1 行を戻す。
 STEPS_COUNTED_INI = "doeff_test_call_steps_counted"
 StepsCounted = Literal["call", "world-running"]
-# 歩数の既定の上限(設定に `default` と書いた時)— 前の CPU 1.0 秒の上限に当たる数(agora-redesign #2670 の 2)。
+# 歩数の既定の上限(設定に `default` と書いた時)— 前の CPU 1.0 秒の上限に当たる数。
 # 根 = vg-w43 の 65 本の測り(#2853 issuecomment-5952699812)の歩数 ÷ CPU 秒の中央値 95,574 歩/秒 × 1.0 秒を丸めた値。
 # 上限は上げない決め(#2670 issuecomment-5963008183)なので、静かな機体の比(より大きい)ではなく、この比を採る。
 DEFAULT_CALL_BUDGET_STEPS = 100_000
@@ -157,9 +157,9 @@ Mode = Literal["report", "fail"]
 # 登録簿に載った検を古い登録として赤にする秒の割合(上限 × この値以下で終わった時だけ — 上限の近くの揺れで赤と緑を行き来しない)。
 # 検の宣言(StepDeclaration)の古さも同じ割合で判じる。
 STALE_RATIO = 0.5
-# 検の関数に付ける「要る歩数」の宣言の属性 — declare_step_budget が付け、実行の判定が読む(agora-redesign #2670 の 3)。
+# 検の関数に付ける「要る歩数」の宣言の属性 — declare_step_budget が付け、実行の判定が読む。
 DECLARED_STEPS_ATTRIBUTE = "__doeff_step_budget__"
-# 検の関数に付ける「process の木の CPU 秒で判じる」宣言の属性 — declare_process_tree_cpu が付け、実行の判定が読む(card ki-ef6d57782313)。
+# 検の関数に付ける「process の木の CPU 秒で判じる」宣言の属性 — declare_process_tree_cpu が付け、実行の判定が読む。
 DECLARED_TREE_CPU_ATTRIBUTE = "__doeff_process_tree_cpu__"
 # 木の CPU 秒で判じる検の壁の時計の安全弁の倍率 — 印の秒 × この値を壁の時計で越えた検は、CPU 秒が上限の内でも赤(CPU を使わずに
 # 止まった・待った検を通さない)。2 = agora-controllers の全体 linter の安全弁と同じ値(9c1a6659f7 の WALL-BACKSTOP-FACTOR)。
@@ -215,7 +215,7 @@ class VmWork:
 
 @dataclass(frozen=True)
 class WorkReader:
-    """doeff-vm の積み上げの数を読む口(doeff の effect ``ReadVmWorkCounts`` を 1 回走らせて読む — agora-redesign #2851)。
+    """doeff-vm の積み上げの数を読む口(doeff の effect ``ReadVmWorkCounts`` を 1 回走らせて読む)。
     読みも run なので、区間の前後の 2 つの読みの差には、読む run の歩(と handler の 1 回)が決まった数だけ入る。"""
 
     read: Callable[[], tuple[int, int]]
@@ -302,8 +302,8 @@ class PhaseMarkRead(Protocol):
 
 @dataclass(frozen=True)
 class WorldPhaseLog:
-    """模擬の世界の区切りの印の口(``doeff_core_effects._world_phases`` の ``open_phase_log`` / ``close_phase_log`` — card
-    ki-a27b195a3f92)。開いている間、doeff-cluster の ``sim-main`` が始まり・立ち上がり・止め始め・終わりの印を、その時の歩数と残す。"""
+    """模擬の世界の区切りの印の口(``doeff_core_effects._world_phases`` の ``open_phase_log`` / ``close_phase_log``)。
+    開いている間、doeff-cluster の ``sim-main`` が始まり・立ち上がり・止め始め・終わりの印を、その時の歩数と残す。"""
 
     open: Callable[[], None]
     close: Callable[[], tuple[PhaseMarkRead, ...]]
@@ -330,7 +330,7 @@ def read_phase_log() -> PhaseLogSource:
 
 @dataclass(frozen=True)
 class WorldSteps:
-    """call の歩数を模擬の世界の出来事で分けた値(card ki-a27b195a3f92)。running = 立ち上がってから止め始めるまで(判じる値)・
+    """call の歩数を模擬の世界の出来事で分けた値。running = 立ち上がってから止め始めるまで(判じる値)・
     starting = 始まってから立ち上がるまで(立ち上がらなかった世界は止め始めまで)・stopping = 止め始めてから終わるまで・outside =
     世界の外(筋書きの支度・答えの判定)。worlds = 始まった世界の数・up = 立ち上がった世界の数。"""
 
@@ -524,7 +524,7 @@ class Measurement:
 
     @property
     def judged_steps(self) -> int:
-        """歩数で判じる時の値 = 模擬の世界を回した検は世界の走りの歩数(起動と止めは数えない — card ki-a27b195a3f92)、それ以外は
+        """歩数で判じる時の値 = 模擬の世界を回した検は世界の走りの歩数(起動と止めは数えない)、それ以外は
         区間の歩数。"""
         if self.work is None:
             raise AssertionError(f"歩数の無い測りを歩数で判じた: {self.key}")
@@ -603,7 +603,7 @@ class RegisteredWithinBudget:
 
 @dataclass(frozen=True)
 class StepDeclaration:
-    """検 1 本に宣言した要る歩数と理由(1 行)— 既定の上限の外に残る検だけが、検の定義の隣に置く(agora-redesign #2670 の 3)。"""
+    """検 1 本に宣言した要る歩数と理由(1 行)— 既定の上限の外に残る検だけが、検の定義の隣に置く。"""
 
     steps: int
     reason: str
@@ -613,7 +613,7 @@ def declare_step_budget(test: Callable[..., object], steps: int, reason: str) ->
     """検 1 本に要る歩数を宣言する — 予算の plugin はその検だけ、既定の上限の代わりに宣言の値で判じる。
 
     既定の上限は変えず、筋書きの規模に断言が依って縮められない検だけに置く(Mac の調整役の決め 2026-10-03 21:5x・
-    agora-redesign #2670 issuecomment-5969293209 — 別の file の登録簿の代わり)。宣言の値を超えれば赤、宣言の値の
+    別の file の登録簿の代わり)。宣言の値を超えれば赤、宣言の値の
     STALE_RATIO(半分)以下で終われば古い宣言として赤(登録簿の古い行と同じ規則)。Hy の検では deftest の直後に
     ``(declare-step-budget test-名 歩数 "理由")`` と書く。読めない値は import の時に止める。"""
     if isinstance(steps, bool) or not isinstance(steps, int) or steps <= 0:
@@ -638,7 +638,7 @@ class TreeCpuDeclaration:
 
 def declare_process_tree_cpu(test: Callable[..., object], reason: str) -> None:
     """印の秒の上限に当たる検 1 本を、壁の時計でなく process の木の CPU 秒(自分と子孫の user+sys)で判じると宣言する
-    (card ki-ef6d57782313 — 頭の註の「検ごとの宣言 declare_process_tree_cpu」)。上限の値は印の秒のまま変えない。
+    (頭の註の「検ごとの宣言 declare_process_tree_cpu」)。上限の値は印の秒のまま変えない。
 
     重さが子 process(と自分の thread)の CPU に在り、外(socket・HTTP・待ち受け)を待たない検だけに置く — 待ちは CPU 秒に出ない。
     壁の時計は安全弁として残る(印の秒 × TREE_CPU_WALL_BACKSTOP_FACTOR)。印の上限に当たらない検に置いても判定は変わらない。
@@ -798,10 +798,10 @@ def judge_call(
     tree_cpu: TreeCpuDeclaration | None = None,
 ) -> Verdict | None:
     """通った検 1 本の実行(call)を判じる(None = 測らない)。印ごとの秒の上限に当たる検(本物の I/O を持つ検 — real_world など)は、
-    歩数に重さが出ないので壁の時計の秒で判じる(重さは子 process と待ちに在り、process の CPU 秒には出ない — card
-    ki-f35bb95eddda・agora-redesign #3858)。それ以外は歩数の上限で判じる(宣言のある検は宣言の値)。歩数の上限も印の上限も
+    歩数に重さが出ないので壁の時計の秒で判じる(重さは子 process と待ちに在り、process の CPU 秒には出ない)。
+    それ以外は歩数の上限で判じる(宣言のある検は宣言の値)。歩数の上限も印の上限も
     当たらない検は判じない。印の上限に当たり木の CPU 秒を宣言した検(tree_cpu)は、木を測れた時だけ同じ秒を木の CPU 秒で判じ、
-    壁の時計が安全弁(秒 × TREE_CPU_WALL_BACKSTOP_FACTOR)を越えれば CPU 秒に依らず赤(card ki-ef6d57782313)。"""
+    壁の時計が安全弁(秒 × TREE_CPU_WALL_BACKSTOP_FACTOR)を越えれば CPU 秒に依らず赤。"""
     marker_seconds = call_budget_for(markers, budgets.call_seconds_by_marker)
     if marker_seconds is not None:
         if tree_cpu is not None and isinstance(measurement.tree, TreeCpu):
@@ -929,7 +929,7 @@ def stale_registration_message(verdict: RegisteredWithinBudget, registry_dirs: S
     return (
         f"{m.key} は登録簿に載っているが、{m.phase} が上限 {_limit_text(verdict.budget, verdict.unit)} の"
         f"{STALE_RATIO:g} 倍以下({_seconds_text(m)})— 古い登録なので登録簿の file "
-        f"{registry_file_name(m.key)} を消す(登録簿は縮める向きだけ・agora-redesign #1726)"
+        f"{registry_file_name(m.key)} を消す(登録簿は縮める向きだけ)"
     )
 
 
@@ -945,16 +945,16 @@ class CompileCounter:
     別の module の初回の import は ``importlib._bootstrap._find_and_load`` の区間(import 文も ``importlib.import_module`` も、
     sys.modules に無い名の時にここを通る)。共有の依存の一度きりの重さは、その process で最初に import した検の file に
     乗るので、引かないと同じ file の合否が並び順・1 file だけの実行か・テストの索引が冷えているかで変わる
-    (agora-redesign #1752 — 索引が冷えた初回の収集だけ赤になっていた)。検の file 自身は doeff-adr が
+    (索引が冷えた初回の収集だけ赤になっていた)。検の file 自身は doeff-adr が
     ``module_from_spec`` と ``exec_module`` で読むのでこの区間に入らず、file 自身の本体の重さは測りに残る。
 
     doeff-effect-analyzer が入っていれば、その Hy の展開(展開した構文木の cache に当たらない時だけ走る — 同じく
-    キャッシュ無しの重さ)も変換の数えに足す(``observe_expansions`` の口 — 解析器は誰が数えるかを知らない・agora-redesign #1534)。
+    キャッシュ無しの重さ)も変換の数えに足す(``observe_expansions`` の口 — 解析器は誰が数えるかを知らない)。
 
     GC(``gc.callbacks`` の start から stop まで)も引く区間として数える。GC の費用は process に生きている object の数で決まり
     (free-threaded の Python の GC は世代を分けず、1 回ごとに heap の全体を回る — 300 万 object で 1 回 約 0.2 秒)、いつ起きるかは
     割り当ての数の巡りで決まるので、測りに入れると session の中のどの検に当たるかで合否が入れ替わる(agora-controllers の日次で、
-    file 1 本だけなら 0.03 秒の file が 1.0〜1.4 秒になり、落ちる file が回ごとに変わった — card ki-b2383fcc8b25)。変換・依存の初回の
+    file 1 本だけなら 0.03 秒の file が 1.0〜1.4 秒になり、落ちる file が回ごとに変わった)。変換・依存の初回の
     import の区間の中で起きた GC はその区間の秒に入っているので、GC の欄には数えない(二重に引かない)。
     """
 
@@ -1516,10 +1516,10 @@ def pytest_runtest_makereport(
     return report
 
 
-# ── 検ごとの CPU 秒 ÷ 歩数(µs/歩)の比(agora-redesign #2854・card ki-a4042e38352a・設計 #2670 の §2)─────────────
+# ── 検ごとの CPU 秒 ÷ 歩数(µs/歩)の比(設計 #2670 の §2)─────────────
 # 報告だけ(判定・終わりの code・BudgetWarning に入れない)。混んだ日は全部の検が同じ向きに揺れるので、絶対の値でなく、同じ
-# session の検どうしの比(session の中央値に対する倍率)で外れを見る。値の根(zeus 2026-10-12 の実測 — doeff の branch
-# wt/2854-cpu-per-step の docs/design-check/ki-a4042e38352a/): 歩数 10,000 以上の検は 9.7〜19.7 µs/歩に収まり、同じ走りの中の
+# session の検どうしの比(session の中央値に対する倍率)で外れを見る。値の根(zeus 2026-10-12 の実測 — doeff の branch):
+# 歩数 10,000 以上の検は 9.7〜19.7 µs/歩に収まり、同じ走りの中の
 # 比は 5〜95 番目の百分位で 0.85〜1.14。歩数 100 未満の検は固定の費用だけの数(中央値 167・最大 23 万 µs/歩)なので比に入れない。
 # 倍率・床・最低本数は最初の 5 回の日次の行を読んで見直す(値を変えるのはこの 4 行)。
 # 比に入れる歩数の床(未満の検は数だけ出す)。

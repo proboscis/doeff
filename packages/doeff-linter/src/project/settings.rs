@@ -318,7 +318,7 @@ pub struct ProjectSettings {
     pub translation: Option<TranslationSettings>,
     /// 設定を読んだ file の dir(registry.config_files の基準)。
     pub config_dir: Option<std::path::PathBuf>,
-    /// 根の外で歩く dir(設定の `include` を設定 file の dir から解いた絶対 path・agora-redesign #2821)。歩く範囲 = 根 + これ
+    /// 根の外で歩く dir(設定の `include` を設定 file の dir から解いた絶対 path)。歩く範囲 = 根 + これ
     /// (`hy_files::walked`)。
     pub include: Vec<std::path::PathBuf>,
     /// repo の一番上の architecture.hy(service と層の唯一の宣言)。在れば層・role は ここから写す。

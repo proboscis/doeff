@@ -66,7 +66,7 @@ def get_default_state_dir() -> Path:
     XDG_STATE_HOME is asked through doeff's foundation handler (subprocess_handler
     answers ReadEnvironment from the process environment) instead of read from the
     process environment directly; an empty value counts as unset, as the XDG spec
-    says (agora-redesign #3012).
+    says.
 
     Returns:
         Path to ~/.local/state/doeff-agentic/

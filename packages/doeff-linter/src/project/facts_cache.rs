@@ -1,18 +1,18 @@
-//! file ごとの事実の cache(agora-redesign #1025)。
+//! file ごとの事実の cache。
 //!
 //! 1 file の実行(書き込み直後の hook の `--stdin --path`)でも、repo 全体の事実が要る規則(DOEFF126 の defk の名・
 //! DOEFF127 / 129 / 130 の effect の推論の世界)は、repo の Hy の file を全部読んで解析し直していた — 1 回の CPU の
 //! 大半(#1022 の計器の実測)。file ごとの事実がその file の中身だけで決まる物について、事実を disk に置き、
 //! 変わった file だけ解析し直す。答えは変えない(同じ file の中身からは同じ事実)。
 //!
-//! 置き場は 2 つ(作業木ごとに全部を作り直して 1 時間に約 3.4GB を zeus の USB の SSD へ書いていた — card ki-9743c30d49bc):
+//! 置き場は 2 つ(作業木ごとに全部を作り直して 1 時間に約 3.4GB を zeus の USB の SSD へ書いていた):
 //! - 事実そのもの(`objects/<種類>.<形>/<hash の頭 2 字>/<残り>`): 1 file の事実を 1 つずつ、中身から決まる鍵で置く。鍵は
 //!   linter の印・file の根からの path(`rel`)・中身の SHA-256 の hash。同じ中身の file は、作業木が違っても同じ事実を読む
 //!   (checkout で更新時刻が新しくなっても作り直さない)。置いたら書き換えない(一時 file から rename)。
 //! - 根ごとの表(`<根の dir>/<種類>.<形>.d/<塊>`): file の path → 大きさ・更新時刻と、その時の事実の鍵。大きさと更新時刻が前と
 //!   同じなら中身を読まずに前の鍵で事実を引く(早い判じ)。違えば中身の hash から鍵を作り直し、置き場に在ればそれを読む。
 //!
-//! file の分け方(責務ごと — 設計検証 lt-3TF90EJ6BTXWY5VWVS7GRE1CGW): この file = 公開の入口・file 1 つを引く手順・根ごとの表 /
+//! file の分け方(責務ごと): この file = 公開の入口・file 1 つを引く手順・根ごとの表 /
 //! `store.rs` = 事実の置き場(配置・鍵・符号化・更新時刻・事実の path を作れるのはここだけ)/ `sweep.rs` = 置き場の寿命(上限・古い順・消えた根)。
 //! 事実を消せるのは `sweep.rs` だけ(引く手順は消さない — 事実は根をまたいで分け合うので、1 つの根の表からは「要らない」と決められない)。
 //!
@@ -28,16 +28,16 @@
 //! 置き場の根は `$DOEFF_LINTER_CACHE_DIR`・無ければ `$XDG_CACHE_HOME/doeff-linter`・無ければ `~/.cache/doeff-linter`。根の下の
 //! 根の path の hash の dir に表を、file の path で決まる SHARDS 個の塊(`00`〜)に分けて置く。
 //! 根の dir には根の絶対 path(`root.path`)を記録し、1 時間ごとに置き場を走査して、記録した根が無くなった dir を消す
-//! (`tend_roots` — agora-redesign #1903。記録の無い dir は消さない)。
+//! (`tend_roots`。記録の無い dir は消さない)。
 //! 表を書くのは変わった塊だけ(行が変わった塊か、消えた file を含む塊)— 1 file を変えた直後の実行が、repo 全体の事実を
-//! 丸ごと書き直していた(zeus で約 0.35 秒・agora-redesign #1523)。読むのは全部の塊を並べて読む。前の形(事実を塊に入れた形・
+//! 丸ごと書き直していた(zeus で約 0.35 秒)。読むのは全部の塊を並べて読む。前の形(事実を塊に入れた形・
 //! 1 file の形)は読まない — 読めない塊は無い物として扱い、作り直すだけで答えは変わらない。
 //! 書くのは一時 file から rename する(並走する hook どうしで壊さない — 後に書いた方が勝つだけで、どちらも正しい事実)。
 //! `DOEFF_LINTER_NO_CACHE` が在れば読みも書きもしない。読めない・壊れた塊や事実は無い物として扱う(その file の事実を解析し直す —
 //! 答えは変わらない)。
 //!
 //! 事実の形は 2 つ: 既定は JSON(`<種類>.json`)。repo 全体の Hy の索引のように大きい種類は、欄の名前を持たない binary(bincode・
-//! `<種類>.bin`)で置く(`per_file_compact` — JSON では agora の本線で 147MB・読みに 1.2 秒かかった・agora-redesign #1364)。
+//! `<種類>.bin`)で置く(`per_file_compact` — JSON では agora の本線で 147MB・読みに 1.2 秒かかった)。
 //! binary の形は値の欄の並びがそのまま綴りなので、値の型の serde の形が値によって欄を出したり出さなかったりすること
 //! (`skip_serializing_if` を持つこと)が無いよう呼び手が保つ。表は形によらず binary。
 
@@ -131,7 +131,7 @@ struct Place {
 
 /// 置き場の根(頭の註 — `$DOEFF_LINTER_CACHE_DIR`・`$XDG_CACHE_HOME/doeff-linter`・`~/.cache/doeff-linter` の順)。
 /// `DOEFF_LINTER_NO_CACHE` が在れば None。根の直下の dir は全部、上限の片づけ(sweep_over_cap)の対象 — 根の dir の外の置き場
-/// (commit の hook の HEAD の木の結果・agora-redesign #2723)も、根の直下に dir を置いて印 `used`(mark_used)を付ければ同じ上限に入る。
+/// (commit の hook の HEAD の木の結果)も、根の直下に dir を置いて印 `used`(mark_used)を付ければ同じ上限に入る。
 /// 事実の置き場 `objects` は dir ごとには消されず、事実 1 つずつ、最後に使われた時刻の古い順に消される。
 pub fn cache_base() -> Option<PathBuf> {
     if std::env::var_os(NO_CACHE_ENV).is_some() {
@@ -345,7 +345,7 @@ where
     resolved.into_iter().map(|(value, _)| value).collect()
 }
 
-/// 中身が git の blob の id で決まる事実の置き場(card ki-d56ba76422ba・ki-40c8ca380713)— 中身を読まずに、別の作業木が置いた事実を引く。
+/// 中身が git の blob の id で決まる事実の置き場— 中身を読まずに、別の作業木が置いた事実を引く。
 /// 事実は塊ごとの(blob の id・事実)の表で置く(`blob_chunks`)。鍵は linter の印・種類・塊の名。事実は blob の中身だけで決まること(`rel` も根も
 /// 読まない)を呼び手が保つ。置き場と上限の片づけは他の事実と同じ。
 pub struct BlobFacts {
@@ -365,7 +365,7 @@ impl BlobFacts {
     }
 
     /// 塊の置き場の(blob の id・事実)の表を読む(無い・壊れた物は None)。1 file の事実を 1 つずつ置くと、冷えた新しい作業木で repo の Hy の数だけ
-    /// (約 4600)置き場の file を開いて disk を待つので、index の並びの塊ごとに 1 file にまとめて引く(card ki-40c8ca380713 — `blob_chunks`)。
+    /// (約 4600)置き場の file を開いて disk を待つので、index の並びの塊ごとに 1 file にまとめて引く(`blob_chunks`)。
     pub fn get_slot<T: DeserializeOwned>(&self, slot: &str) -> Option<Vec<([u8; 20], T)>> {
         read_object::<Vec<([u8; 20], T)>>(&self.place.objects, &self.slot_key(slot), Format::Compact)
     }
@@ -614,7 +614,7 @@ mod tests {
         }
     }
 
-    /// agora-redesign #1523: 1 file を変えた時に書き直す表はその file の塊だけ — 他の塊の file は書かない(更新時刻が変わらない)。
+    /// 1 file を変えた時に書き直す表はその file の塊だけ — 他の塊の file は書かない(更新時刻が変わらない)。
     /// 消えた file の塊も書き直し、前の形の 1 file は消す。
     #[test]
     fn only_the_shard_of_a_changed_file_is_written_again() {
@@ -653,7 +653,7 @@ mod tests {
         }
     }
 
-    /// card ki-9743c30d49bc: 同じ中身・同じ `rel` の file は、別の根(更新時刻が新しい別の作業木)でも事実を作り直さず、新しく書くのは
+    /// 同じ中身・同じ `rel` の file は、別の根(更新時刻が新しい別の作業木)でも事実を作り直さず、新しく書くのは
     /// 根ごとの表だけ(事実は 1 つも書かない)。
     #[test]
     fn a_second_root_with_the_same_contents_reads_the_facts_the_first_wrote() {
@@ -850,7 +850,7 @@ mod tests {
         names
     }
 
-    /// 知識の持ち主を名の走査で守る(設計検証 lt-3TF90EJ6BTXWY5VWVS7GRE1CGW の盲検 B — 引く手順が共有の事実を消す差分は、提示された検が全部通った)。
+    /// 知識の持ち主を名の走査で守る(引く手順が共有の事実を消す差分は、提示された検が全部通った)。
     /// rustc は兄弟の module どうしの見え方を限れない(`pub(super)` は親にも兄弟にも見える)ので、持ち主でない file が使わない名を、ここで確かめる。
     /// - 引く手順(このfile)が store から使うのは、事実を鍵で置く・読む口だけ。事実を並べて消す口(`list`・`remove`)を持てば、寿命の判断が 2 か所になる。
     /// - 片づけ(sweep)が store から使うのは、事実を並べて消す口と置き場の名だけ。事実を置く・読む・鍵を作る口を持てば、事実の中身の知識が漏れる。

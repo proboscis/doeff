@@ -1,4 +1,4 @@
-"""defhandler の展開の型(agora-redesign #2279)の失敗ケース。
+"""defhandler の展開の型の失敗ケース。
 
 前は defhandler の展開が作る関数に型が無く、strict の doeff-hy-check で handler 1 本につき書き手に直せない赤が
 約 20 件出た: 節を回す関数の引数 k と答え(Generator[Transfer, Unknown, Unknown])・本文を受ける関数の引数
@@ -69,7 +69,7 @@ PROBE = """\
     (reperform effect)))
 
 (defhandler left-only
-  "Pair の right を本体で使わない — 欄の名で束ねるので書き手は名を変えられない(agora-redesign #2514)。"
+  "Pair の right を本体で使わない — 欄の名で束ねるので書き手は名を変えられない。"
   (Pair [{PAIR_FIELDS}]
     (resume left)))
 
@@ -139,7 +139,7 @@ def test_handled_program_keeps_the_body_answer_type(tmp_path: Path) -> None:
 @needs_pyright
 def test_field_the_body_does_not_use_is_not_an_unused_variable(tmp_path: Path) -> None:
     # 節の欄 [left right] の right を本体が使わない。前は型検査のための展開が right = effect.right を束ねるだけで、
-    # strict で reportUnusedVariable の赤になっていた(agora-redesign #2514 — 名は欄の名なので書き手に直せない)。
+    # strict で reportUnusedVariable の赤になっていた(名は欄の名なので書き手に直せない)。
     text = _render({})
     errors = _check(tmp_path, text)
     assert [d for d in errors if d["rule"] == "reportUnusedVariable"] == [], errors
@@ -191,7 +191,7 @@ def test_static_view_annotates_only_the_static_expansion() -> None:
     assert "from doeff_hy._clause_endings import fell_through" in runtime
     for name in ("_doeff_Continuation", "_doeff_ClauseRun", "_doeff_HandlerBody", "_doeff_perform"):
         assert name not in runtime
-    # 欄の束ねの「読んだ」印(_ = 欄)は型検査のための展開だけ(agora-redesign #2514)
+    # 欄の束ねの「読んだ」印(_ = 欄)は型検査のための展開だけ
     assert "right = _doeff_effect.right\n" in static, static
     assert "_ = right\n" in static, static
     assert "right = _doeff_effect.right\n" in runtime, runtime
@@ -222,7 +222,7 @@ def test_every_handler_name_is_declared_in_the_stub() -> None:
     assert [name for name in static_view.HANDLER_STATIC_NAMES if name not in declared] == []
 
 
-# 書き手が、展開の読む名(Transfer・Pass・Put)を自分の effect の名にした module(card ki-16180480129e)。前は型検査のための展開が
+# 書き手が、展開の読む名(Transfer・Pass・Put)を自分の effect の名にした module。前は型検査のための展開が
 # `Pass` を素の名で import し、書き手の `Pass` の effect と 1 つの名を分け合っていた。展開は `_doeff_` の頭の別名だけを読む。
 NAMED_EFFECTS = """\
 (import dataclasses [dataclass])
@@ -296,7 +296,7 @@ def test_static_expansion_reads_only_aliases_of_the_expansion_names() -> None:
     assert "from doeff import Pass as _doeff_Pass" in static, static
 
 
-# 書き手が、節の欄を展開の局所名と同じ `k`・`effect` にした module(card ki-6af9862aed32)。前は節を回す関数の引数 `effect`・`k` を
+# 書き手が、節の欄を展開の局所名と同じ `k`・`effect` にした module。前は節を回す関数の引数 `effect`・`k` を
 # 欄の束ねが上書きし、続きの型 `Continuation` の `k` に `int` を代入する赤が出た。展開の局所名は `_doeff_effect`・`_doeff_k` で、
 # 書き手が `effect`・`k` と書いた節だけが、同じ名を節の effect・続きとして読める。
 FIELD_NAMED_EFFECTS = """\
@@ -431,7 +431,7 @@ def _isinstance_subjects(test: ast.expr) -> list[str]:
     ]
 
 
-# 節の判定が同じ値を 2 度絞らない事(card ki-a06b0fbce50d)。前は `effect` を書いた節の判定が
+# 節の判定が同じ値を 2 度絞らない事。前は `effect` を書いた節の判定が
 # `isinstance((effect := _doeff_effect), T) and isinstance(_doeff_effect, T)` で、walrus の右辺も絞る pyright(1.1.414。1.1.411 は
 # 左辺だけを絞る)では 2 つ目が「いつも真」(reportUnnecessaryIsInstance)になった — `effect` を読む節ごとに 1 件・書き手は直せない
 # (agora-controllers の cli_host の検 3 file で 25 件)。walrus の絞りは pyright の版で変わるので、判定は walrus を使わず、
@@ -491,7 +491,7 @@ def test_writers_effect_keeps_the_clause_effect_type(tmp_path: Path) -> None:
     ], errors
 
 
-# 総称の effect(Spawn[_T, _E]・Race[_T]・Wait[_T])を head にした節(card ki-fede97890f70)。pyright は節の `isinstance` が
+# 総称の effect(Spawn[_T, _E]・Race[_T]・Wait[_T])を head にした節。pyright は節の `isinstance` が
 # `object` の effect を絞る型の型引数を Unknown にする(`Race[Unknown]`・`Spawn[Unknown, Unknown]`)ので、前は欄の束ね
 # (`tasks = _doeff_effect.tasks`)と typed_resume / typed_transfer の effect の引数が一部 Unknown の赤になり、書き手は直せなかった
 # (agora-controllers の agora_sim の検 2 file・9 件 — 欄の名は effect の定義で決まる)。展開は節の effect を構成子の呼びで束ね直し、

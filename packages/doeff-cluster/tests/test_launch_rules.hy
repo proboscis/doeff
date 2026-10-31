@@ -28,7 +28,7 @@
   (assert (= plain #(#("WORKER_DOEFF_COMMIT" SHA) #("WORKER_NAME" "w2") #("WORKER_PROVIDES" "agent,host-w2,boundary-personal")
                      #("WORKER_TASK_RESERVE" "3") #("WORKER_BACKGROUND_ROOM" "19")))
           plain)
-  ;; memory の予算は名乗る時だけ行を持つ(card ki-2acb63aec0fd — 0 も名乗る値)。
+  ;; memory の予算は名乗る時だけ行を持つ(0 も名乗る値)。
   (<- sized tuple (pairs-of (WorkerLaunch :name "w2" :provides #("agent") :exclusive #() :background-room 0 :task-reserve 3
                                           :doeff-commit SHA :memory-mib 0)))
   (assert (= (cut sized -2 None) #(#("WORKER_BACKGROUND_ROOM" "0") #("WORKER_MEMORY_MIB" "0"))) sized)

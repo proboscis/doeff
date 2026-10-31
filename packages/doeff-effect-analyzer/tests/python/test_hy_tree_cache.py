@@ -5,7 +5,7 @@ Hy module it read. The tree is kept under the source's content (never its path),
 module name, every macro the expansion used, the Hy / Python versions and the code of
 the expansion (``hy_expansion``); what the reader derives from it is kept apart under
 the same key and the reader's own source — so a changed source, macro or expansion is
-expanded again, a changed reader only builds what it derives again (ki-81f1c868203f),
+expanded again, a changed reader only builds what it derives again,
 the same source in another checkout is not expanded again, and an unreadable cache
 file only costs one expansion.
 """
@@ -67,7 +67,7 @@ def real_import_trees() -> None:
 @pytest.fixture
 def import_trees_on(real_import_trees: None, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     """``real_import_trees`` with a bytecode store named, as the shared one of a worker's jobs is. The trees lie in
-    the store the compiling process names (``DOEFF_HY_CODE_STORE`` — ki-5c1fc605c17d), so this names one and returns
+    the store the compiling process names (``DOEFF_HY_CODE_STORE``), so this names one and returns
     it; the analyzer's own variable is not what decides where an import leaves a tree."""
     store = tmp_path / "code-store"
     monkeypatch.setenv("DOEFF_HY_CODE_STORE", str(store))
@@ -147,7 +147,7 @@ def compile_file(path: Path) -> "pe._WholeTree | pe._ChunkedTree":
 def test_the_same_source_in_another_directory_is_read_from_the_cache(
     cache_dir: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """agora-redesign #3598: the key named the file's absolute path, so every new worktree expanded
+    """The key named the file's absolute path, so every new worktree expanded
     every Hy module again although its source was the same (a closure test of the screen job: 120.7 s
     cold, 5.9 s warm, 71 % of the cold samples in ``_expand_hy``). The tree depends on the source,
     not on where it lies: the same source in another directory is read from the cache."""
@@ -260,7 +260,7 @@ def expanded_value(root: Path, package: str, monkeypatch: pytest.MonkeyPatch) ->
 def test_a_changed_macro_module_that_a_required_macro_module_requires_is_expanded_again(
     cache_dir: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """agora-redesign #3598: without the path in the key, checkouts of different doeff versions share
+    """Without the path in the key, checkouts of different doeff versions share
     entries, so the key must name every macro file the expansion used — not only the modules the
     source requires itself. ``m`` requires ``a``; ``a``'s macro is written with ``b``'s; the two
     checkouts differ only in one character of ``b``, and ``m`` is expanded again with it."""
@@ -431,7 +431,7 @@ def functions_named(tree: ast.Module) -> list[tuple[str, ast.AST]]:
 
 def nested_in(qualnames: Iterable[str], outer: str, inner: str) -> str:
     """The qualname of the def ``inner`` written in the body of ``outer``. doeff-hy writes a
-    definition in a function body inside a function it calls at once (card ki-964823cd7feb),
+    definition in a function body inside a function it calls at once,
     so the qualname has that function's name between the two."""
     [qualname] = [q for q in qualnames if q.startswith(f"{outer}.") and q.endswith(f".{inner}")]
     return qualname
@@ -451,7 +451,7 @@ def a_new_process() -> None:
 def test_a_cached_tree_finds_the_same_def_with_its_body_facts_without_walking(
     cache_dir: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """agora-redesign #1586 / #1590 / #1591: the definition index and the body nodes and facts
+    """The definition index and the body nodes and facts
     of every def are stored with the tree, so a process that reads the cached tree does not
     walk the module and every def again — and chooses the same def, with the same facts, as
     ``_find_function`` does on the whole tree (nested defs included; the line and the
@@ -494,7 +494,7 @@ TWO = """
 
 
 def test_a_cached_tree_builds_only_the_definition_it_is_asked_for(cache_dir: Path) -> None:
-    """agora-redesign #1591: building the whole cached tree was most of what was left of an
+    """Building the whole cached tree was most of what was left of an
     analysis (0.41–0.45 s of 1.17 s for one closure test), although the reader follows a few
     defs of each module. Finding a def builds only its top-level definition (a nested def
     comes with it, as the same nodes); the whole tree is built only when asked for."""
@@ -524,7 +524,7 @@ DISPATCHER = """
 def test_a_cached_tree_brings_what_the_handler_reader_finds_in_a_def(
     cache_dir: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """ki-24a14c43f26b: reading a handler's dispatchers and branches walked its body in every process,
+    """Reading a handler's dispatchers and branches walked its body in every process,
     although they are a function of its nodes. They are stored with the chunk, and a process that reads
     the chunk finds them where the handler reader looks — the same dispatchers and branches it would
     find by walking, without walking."""
@@ -559,7 +559,7 @@ def test_a_cached_tree_brings_what_the_handler_reader_finds_in_a_def(
 def test_the_whole_tree_of_a_cached_entry_comes_from_the_expansions_store(
     cache_dir: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """ki-24a14c43f26b: the entry kept the whole tree beside the chunks, so reading an entry read it twice
+    """The entry kept the whole tree beside the chunks, so reading an entry read it twice
     over; ``module_ast`` is the only one who asks for it, and the expansion's store holds it. The entry
     holds no tree, and asking for it reads the store (not expanding again)."""
     seen = expansions(monkeypatch)
@@ -591,7 +591,7 @@ def test_an_entry_cut_short_is_not_read(cache_dir: Path, monkeypatch: pytest.Mon
 
 def test_the_entry_written_last_is_tried_first(tmp_path: Path) -> None:
     """The other entries of a place are of macros that changed since; reading one only to find that costs
-    a file read (ki-24a14c43f26b)."""
+    a file read."""
     import os
 
     place = tmp_path / "place"
@@ -660,13 +660,13 @@ def write_entry(path: Path, entry: StoredEntry) -> None:
 
 
 def test_an_entry_written_by_another_reader_is_not_read(cache_dir: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    """agora-redesign #2973: the body facts stored with a tree are built by the reader's code.
+    """The body facts stored with a tree are built by the reader's code.
     #2973 changed ``_BodyFacts.rewraps`` from one first value per local to a tuple of them and
     kept the key, so the newer reader read the older reader's entries and raised
     ``TypeError: 'Attribute' object is not iterable`` on ``prog = effect.program`` … ``prog =
     wrap(prog)``. The key of what the reader derives names the reader's source, so an entry the
     older reader wrote (the older shape, stored under its own digest) is not read: the tree is read
-    from the expansion's store (not expanded again — ki-81f1c868203f) and its facts are this
+    from the expansion's store (not expanded again) and its facts are this
     reader's."""
     seen = expansions(monkeypatch)
     reader = pe._reader_digest
@@ -691,7 +691,7 @@ def test_an_entry_written_by_another_reader_is_not_read(cache_dir: Path, monkeyp
 
 
 def test_writing_the_cache_entry_is_inside_the_observed_miss(cache_dir: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    """agora-redesign #1590: building and writing what is cached with the tree (the derived values)
+    """Building and writing what is cached with the tree (the derived values)
     is part of the miss the budget subtracts — outside it, a cold cache would count against the test."""
     import contextlib
 
@@ -757,7 +757,7 @@ def the_answer(report: pe.ProgramEffects) -> str:
 def test_a_changed_reader_expands_nothing_again_and_answers_the_same(
     cache_dir: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, changed_file: ChangeFile
 ) -> None:
-    """ki-81f1c868203f: the tree was kept only with what the reader derives from it, under a key
+    """The tree was kept only with what the reader derives from it, under a key
     naming the reader's source, so any change of program_effects.py expanded every Hy module again —
     the screen job's closure test took 257.3 s in the daily run after one (212 s of 244 s expansion
     when measured by hand). The tree does not depend on the reader: after a change of
@@ -812,7 +812,7 @@ def test_a_changed_expansion_is_expanded_again(
 def test_a_changed_module_of_the_reader_builds_what_is_derived_again(
     cache_dir: Path, monkeypatch: pytest.MonkeyPatch, changed_file: ChangeFile
 ) -> None:
-    """Design check lt-DMXJNAWWMCFNV7F1QX3GJZ574H, blind A: the reader's digest named
+    """The reader's digest named
     program_effects.py alone, so a helper of the body facts split into a module of its own and
     changed there read the facts the older rule had built (``rewraps`` empty where the new rule finds
     ``prog``). Every file of the package is the reader: a change of another one builds what is
@@ -964,7 +964,7 @@ def analyzer_sources() -> dict[str, str]:
 
 
 def test_only_the_expansion_module_reads_or_writes_its_store() -> None:
-    """Design check lt-DMXJNAWWMCFNV7F1QX3GJZ574H, blind B: the reader called the store's writer, so a
+    """The reader called the store's writer, so a
     reader that reshaped a tree (renumbered its gensyms) could store it under a key without the
     reader, and every later reader — a reverted one too — read that shape. A caller asks for a tree
     (``_expansion``); no module but ``hy_expansion`` names the store."""
@@ -1040,7 +1040,7 @@ def import_compiling(root: Path, package: str, files: dict[str, str], monkeypatc
 def test_a_module_the_import_compiled_is_not_expanded_again(
     import_trees_on: Path, cache_dir: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """ki-e053a847c515: a changed module was expanded by the session's import and again by the analysis
+    """A changed module was expanded by the session's import and again by the analysis
     (58 % of the closure tests' seconds in the daily run). The import's compile leaves its tree and the macros
     it used; the analysis reads that tree instead of expanding the same source again."""
     seen = expansions(monkeypatch)
@@ -1072,7 +1072,7 @@ def test_a_changed_macro_after_the_import_expands_the_module_again(
 def test_a_module_compiled_by_a_process_without_the_analyzers_variable_is_not_expanded_again(
     import_trees_on: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """ki-5c1fc605c17d: a job that shares the bytecode store compiles a changed module without
+    """A job that shares the bytecode store compiles a changed module without
     ``DOEFF_EFFECT_ANALYZER_CACHE`` (the worker does not pass it on), and the daily run then hits that bytecode,
     compiles nothing, and its analysis expanded the same source again. The tree lies in the bytecode store the
     compiling process names, whatever the analyzer's variable was there, and the analysis — with a place of its
@@ -1121,7 +1121,7 @@ def test_an_import_leaves_no_tree_when_no_bytecode_store_is_named(
 
 
 def test_a_patch_version_update_keeps_the_place_of_the_trees(monkeypatch: pytest.MonkeyPatch) -> None:
-    """The place is keyed by Python's minor version, not the patch (card ki-968309595391): 3.14.3 -> 3.14.7 reads the same trees,
+    """The place is keyed by Python's minor version, not the patch: 3.14.3 -> 3.14.7 reads the same trees,
     3.14 -> 3.15 and a free-threaded build do not."""
 
     def place(version: tuple[int, int, int], flags: str) -> Path:

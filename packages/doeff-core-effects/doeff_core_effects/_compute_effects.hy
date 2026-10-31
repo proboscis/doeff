@@ -1,4 +1,4 @@
-;;; 汎用の「純粋な計算を回して答えを値で受ける」effect(agora-redesign #802 便 4・最初の消費者 = agora の画面の処理ループの外の畳みと
+;;; 汎用の「純粋な計算を回して答えを値で受ける」effect(最初の消費者 = agora の画面の処理ループの外の畳みと
 ;;; 問いの答え — 旧 FoldLater・AnswerLater)。業務の語を持たない土台の語彙で、process_effects.hy と同じ段。答え手は仕組みごとに差し替える:
 ;;;   thread-pool-compute-handler   呼び手が渡す thread の pool で回す(thread_pool_compute.hy)。待つのは撃った task だけで、scheduler の
 ;;;                                 他の task は回り続ける(scheduled の下で使う — 外から完了させる promise で待つ)

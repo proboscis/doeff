@@ -1,4 +1,4 @@
-//! DOEFF211(Hy の検は realtime を名乗らない限り壁の時計で眠らない — doeff の ADR-DOE-TIME-001 R3・card ki-bb3ee40d0af2)の検。
+//! DOEFF211(Hy の検は realtime を名乗らない限り壁の時計で眠らない — doeff の ADR-DOE-TIME-001 R3)の検。
 //! binary を走らせ、`--output-format editor-json` の出力を見る。
 //!
 //!   * 検体 tests/fixtures/test_sleep/sleeps.hy の「; 鳴る」の行の集合と、当たりの行の集合が同じ(極性 — 規則を外す・名乗りの読みを

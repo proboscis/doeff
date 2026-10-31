@@ -156,7 +156,7 @@
 ;; この run の 1 つの dir(PYTHONPYCACHEPREFIX)に書いて読み、Hy の code を既定の置き場に足す — 最初の検の子が compile した物を、後の検の
 ;; 子が使う。取らないと子は根の conftest の固定(PYTHONDONTWRITEBYTECODE=1)を継いで何も残さず、.pyc の無い checkout(実行ごとに新しい
 ;; .venv)では、検ごとに coordinator・worker・job の子が Hy を source から compile し直す — 日次の全体検証を atlas の Pod で走らせた初回
-;; (2026-10-10 20:05)に、job を落とす検が compile だけで pytest の打ち切り(60 秒)を越えた(card ki-9338eec1d15e)。
+;; (2026-10-10 20:05)に、job を落とす検が compile だけで pytest の打ち切り(60 秒)を越えた。
 
 
 (deftest test-a-local-machine-starts-a-coordinator-and-a-worker-and-stops-both-at-the-end [tmp-path subprocess-bytecode]
@@ -481,7 +481,7 @@
 
 
 (deftest test-a-key-table-line-added-after-the-worker-started-is-read-by-the-next-prepare [tmp-path monkeypatch subprocess-bytecode]
-  ;; 失敗ケース(card ki-2de748a0eac5): worker は鍵の表を起動の時にしか組まず、表に行を足しても worker を作り直すまで効かなかった。
+  ;; 失敗ケース: worker は鍵の表を起動の時にしか組まず、表に行を足しても worker を作り直すまで効かなかった。
   ;; 起動の時は空の表で起こし、起きた後に表の file へ実行環境の repo の行を書く — 次の準備の鍵の表の JSON にその url が在る。
   (<- repo AppRepo (app-repo tmp-path))
   (<- machine LocalMachine (runtime-machine-of tmp-path repo))

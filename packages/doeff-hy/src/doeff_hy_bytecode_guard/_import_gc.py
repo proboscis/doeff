@@ -1,4 +1,4 @@
-"""一番外の読み込み(module の本体の実行 — 中の import を含む)の間だけ、GC の閾値を上げる持ち主(agora-redesign card ki-de9d3593bbde)。
+"""一番外の読み込み(module の本体の実行 — 中の import を含む)の間だけ、GC の閾値を上げる持ち主。
 
 CPython 3.14 free-threaded の GC は、前の GC から正味の object が閾値(既定 2000)を越えて増え、生き残りの 1/4 以上で、RSS が
 10% 超増えると heap 全体を掃く。読み込みは長く生きる object(module・関数・型)で heap を育てるので、ごみが 1% 前後でも RSS が
@@ -21,8 +21,7 @@ import os
 from _thread import allocate_lock, get_ident
 
 #: 一番外の読み込みの間の閾値(前の GC から正味で増えてよい object の数)。test_emulated_screen.hy の読み込みで 150,000 / 200,000 /
-#: 250,000 / 400,000 を比べ、読み込みの中の GC が 7 回 → 2 回になり、テスト本体の中へ GC を移さず、最大 RSS が揺れの中だった値
-#: (card ki-de9d3593bbde)。
+#: 250,000 / 400,000 を比べ、読み込みの中の GC が 7 回 → 2 回になり、テスト本体の中へ GC を移さず、最大 RSS が揺れの中だった値。
 IMPORT_GC_THRESHOLD = 250_000
 
 

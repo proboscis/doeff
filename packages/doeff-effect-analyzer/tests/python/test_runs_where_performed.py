@@ -1,4 +1,4 @@
-"""Which carriers run the Program they carry where they were performed (agora-redesign #1456).
+"""Which carriers run the Program they carry where they were performed.
 
 A closure check folds a carried Program in when its carrier declares
 ``__doeff_runs_carried__``: before, only carriers named ``Spawn`` were folded, so the

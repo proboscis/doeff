@@ -38,7 +38,7 @@
   ;; (WorkerPolicy.retired-limit)。R に達している間の宣言し直しは、退いた process を止めず今の process も退かせずに待つ
   ;; (worker_policy.handoff-actions・#4072 の D-3 の改め)。比べない欄(値が変わっても process を起こし直さない)。
   (setv #^ (| int None) retired-limit (field :default None :compare False))
-  ;; 退きの保ちを持つ退いた process の世代の名(handoff の job だけ・card ki-e3531030eb37 — readiness_model の RETIREMENT-HOLD)。coordinator が
+  ;; 退きの保ちを持つ退いた process の世代の名(handoff の job だけ — readiness_model の RETIREMENT-HOLD)。coordinator が
   ;; 今の世代の worker への返事に、期限の内の保ちの持ち手を名の順で載せる。worker は列に在る退いた process を寿命の上限 retired-ms で
   ;; 止めない(worker_policy.retired-actions — 保ちが無くなった拍から今どおり)。空 = 誰も持たない。比べない欄。
   (setv #^ (get tuple #(str ...)) retired-held (field :default #() :compare False))
@@ -84,11 +84,11 @@
   ;; 子の入口が比べる送り手の版(名の順の #(名 版) の tuple — #3762)。Program の job は必ず持つ: service = Service の宣言の行の
   ;; run.versions(coordinator が spec-of-declaration で読み、heartbeat の返事の job の行に載せる)・task = task の行の versions(task を
   ;; 作った時の送り手の版)。coordinator の Program の行の版は、同じ sha の Program を後から別の版の送り手が置くと上書きされるので使わない
-  ;; (2026-10-06 の t661・2026-10-10 の zeus の merge-queue — card ki-172e63fed4c7)。worker は Program の cache の file を版ごとに分けて
+  ;; (2026-10-06 の t661・2026-10-10 の zeus の merge-queue)。worker は Program の cache の file を版ごとに分けて
   ;; 置く(worker/core/launch.spec-program-file)— 版が替われば別の file なので取り直す。None = Program を持たない job。
   ;; 比べない欄(service の版の替わりは identity の指紋で args に載る・指紋 spec-hash に入らない)。位置の引数で作る呼び手を崩さないよう最後に置く。
   (setv #^ (| (get tuple #((get tuple #(str str)) ...)) None) versions (field :default None :compare False))
-  ;; 中身の鍵(card ki-81bf84ac6590)。宣言の行の content — 送り手が「この job の process が読む code の全部(どの repo の木の、どの file の
+  ;; 中身の鍵。宣言の行の content — 送り手が「この job の process が読む code の全部(どの repo の木の、どの file の
   ;; 中身か・依存の lock)」から計った鍵。在れば指紋 spec-hash と比べ(==)は版(revision)と実行環境の repo の commit を材料に入れず、
   ;; この鍵で置き換える — 読む code の変わらない commit で宣言し直されても、process を起こし直さず root も用意しない(2026-10-27 01:16〜01:50
   ;; JST に 5 commit で全部の service が 10 回作り直された)。None = 今どおり版と commit で比べる(鍵を渡さない送り手・古い送り手)。
@@ -107,7 +107,7 @@
      計り、その値の中に覚える(覚えの寿命 = この値。module の大域には持たない)。dataclasses.replace で作り直した値は別の object なので
      計り直す — 欄が変われば指紋も変わる。材料の欄(name・entry・args・revision・once・runtime-env・environ・content)は str・bool と str の
      tuple・str の組の tuple だけで、値を作った後に中身が書き換わらないので、覚えた指紋は古くならない。
-     中身の鍵 content が在れば、版 revision と実行環境の repo の commit を材料から外し、鍵を入れる(card ki-81bf84ac6590 — 実行環境の
+     中身の鍵 content が在れば、版 revision と実行環境の repo の commit を材料から外し、鍵を入れる(実行環境の
      ほかの欄〔lock の sha256・Python・import の根・native の wheel〕はそのまま材料)。"
     (setv materials
       (if (is self.content None)
@@ -120,7 +120,7 @@
                                               "utf-8")))
          0 16))
 
-  ;; 比べは指紋 1 つ(card ki-81bf84ac6590)。前は dataclass の作る比べ(比べる欄 = 指紋の材料の欄)で、指紋と同じ意味だった。中身の鍵の
+  ;; 比べは指紋 1 つ。前は dataclass の作る比べ(比べる欄 = 指紋の材料の欄)で、指紋と同じ意味だった。中身の鍵の
   ;; 在る値は版が違っても同じ process の形なので、欄ごとの比べでは表せない — worker の「宣言が変わったか」(plan-job の (= want process.spec))と
   ;; 指紋を 1 つの定義にする。
   (defn #^ bool __eq__ [self #^ object other]  ; defk にできない: 値の比べの口
@@ -132,7 +132,7 @@
 
 (defn #^ str env-without-commits [#^ str runtime-env]
   "実行環境の宣言の JSON(正規化した文字列)から repo の commit を外した正規の文字列 — 中身の鍵の在る job の指紋の材料(commit の違いは
-   鍵が運ぶ・card ki-81bf84ac6590)。"
+   鍵が運ぶ)。"
   (setv declared (json.loads runtime-env))
   (json.dumps (| declared {"repos" (lfor r (.get declared "repos" []) (dfor #(k v) (.items r) :if (!= k "commit") k v))})
               :sort-keys True :ensure-ascii False :separators #("," ":")))

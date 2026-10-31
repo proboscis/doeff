@@ -54,13 +54,13 @@
   (assert (not (& (set env) #{"SECRET_TOKEN" "PYTHONPATH"})) env)
   (assert (= plan.env-mode EnvMode.REPLACE) plan.env-mode)
   (assert (= (cut plan.argv 5 9) #("--stamp-lines" "--notice-env" "DOEFF_NOTICE_FD" "--")) plan.argv)
-  ;; 本体は uv run を挟まずに root の venv の hy を直に起こす(card ki-869cdf21ec85)。
+  ;; 本体は uv run を挟まずに root の venv の hy を直に起こす。
   (assert (= (cut plan.argv 9 None) #("/roots/env-k1/app/.venv/bin/hy" "-m" "doeff_cluster._worker.entry.job_entry"
                                       "task" "--program" "/state/programs/s.json")) plan.argv)
   (assert (= #(plan.cwd plan.work-dir plan.last-used) #("/jobs/task_t1" "/jobs/task_t1" "/roots/env-k1/.last-used")) plan)
   ;; 環境変数は名の順(StartProcess の env にそのまま渡せる形)。
   (assert (= (lfor e plan.env e.name) (sorted env)) plan.env)
-  ;; 待ちの子から分ける道の環境(entry-env)は shim の下の道の env と同じ値(card ki-b884608b96e4・ki-869cdf21ec85)— 2 つの道が
+  ;; 待ちの子から分ける道の環境(entry-env)は shim の下の道の env と同じ値— 2 つの道が
   ;; 同じ root の venv を名で引く。
   (assert (= plan.entry-env plan.env) plan.entry-env))
 
@@ -95,7 +95,7 @@
 
 
 (deftest test-only-a-handoff-service-with-a-retired-lifetime-outlives-the-worker
-  ;; worker の消失を退きとして寿命の上限まで待つ旗 --orphan-seconds(card ki-f69f2a6869aa)は、退きの寿命 retired-ms を宣言した handoff の
+  ;; worker の消失を退きとして寿命の上限まで待つ旗 --orphan-seconds は、退きの寿命 retired-ms を宣言した handoff の
   ;; service だけに付く(値は寿命の秒)。寿命を宣言しない handoff・recreate の service・task は付かない(消失ですぐ止める)。
   (<- shim ShimSpans (shim-spans (WorkerPolicy)))
   (val service (JobSpec "svc" "app.main" #("service") "rev1"))

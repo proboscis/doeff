@@ -3,7 +3,7 @@
 ;;
 ;; 守る事: 答えの文字の途中(TextDelta)がターンの出来事の頁に順に載り、ターンの終わりはちょうど 1 つ届く。止めたターンは INTERRUPTED で
 ;; 終わり、同じ process が次のターンを受ける。これが崩れると、上の層(doeff-agents の adapter)は答えの途中を画面へ流せない
-;; (決まりの元 = 答えは文字が届くごとに画面へ流す — 利用者の指摘 2026-09-10・2026-10-10 の答え A)。
+;; (決まりの元 = 答えは文字が届くごとに画面へ流す・2026-10-10 の答え A)。
 (require doeff-hy.macros [deftest defk <- val])
 (val MODULE-TAGS {:context "codex-test" :role "program"})
 (import pathlib [Path])
@@ -40,7 +40,7 @@
 (deftest test-a-usage-limited-turn-ends-failed-with-the-usage-limit-fact
   ;; 口座の利用枠切れで断られたターンは、誤りの種類 usageLimitExceeded の失敗で終わり、その終わりが利用枠切れの事実(口座が待つ窓の
   ;; 長さ・戻りの刻・codex の文)を運ぶ — 本番の handler は録った枠の知らせから作り、fake は筋書きの事実をそのまま出す
-  ;; (上の層は同じ終わりを読む・card ki-a59d80e0afa9)。
+  ;; (上の層は同じ終わりを読む)。
   {:interpreters ["fake" "stub"]}
   (<- s (settings))
   (<- started (CodexStartTurn (FreshThread) s.spec (CodexInput :text "USAGE-LIMIT please")))
@@ -54,8 +54,8 @@
 
 (deftest test-a-turn-refused-by-provider-capacity-ends-failed-with-the-fact-and-the-same-process-takes-the-next-turn
   ;; 提供側の混雑(codex の「Selected model is at capacity」)で断られたターンは、誤りの種類 serverOverloaded の失敗で終わり、その終わりが
-  ;; 混雑の事実(codex の文)を運ぶ — 上の層が「少し後に同じ thread で試し直せる」と知る材料(card ki-843475dd8f8b・本番 2026-10-22 21:59 JST
-  ;; の会話 c-QM2DD91FG7T13716VSC9C6GKV2)。process は降ろさず、同じ thread の次のターン(試し直し)は同じ process が受けて終わりまで走る。
+  ;; 混雑の事実(codex の文)を運ぶ — 上の層が「少し後に同じ thread で試し直せる」と知る材料(本番 2026-10-22 21:59 JST)。
+  ;; process は降ろさず、同じ thread の次のターン(試し直し)は同じ process が受けて終わりまで走る。
   ;; stub は録った codex 0.162.1 の混雑のターン(上流の 503・server_is_overloaded)を流す。
   {:interpreters ["fake" "stub"]}
   (<- s (settings))
@@ -77,8 +77,8 @@
 
 (deftest test-a-turn-whose-process-cannot-call-tools-ends-tools-unavailable-and-the-next-turn-gets-a-new-process
   ;; code mode が使えず道具の呼びを閉じたと codex が名乗った process のターンは、model が道具を呼べないまま文だけを返して completed に
-  ;; なる前に、codex の警告の文を運ぶ ToolsUnavailable で終わる — 道具を使えなかったターンを成功と見せない(card ki-86b1443b22b6・
-  ;; 本番の実例 = 10-15 の会話 c-HFAMV0E6RHQJ773QTWP1HJ58T2)。stub は録った codex 0.162.1 の行を流す: 警告は turn/start の答えより
+  ;; なる前に、codex の警告の文を運ぶ ToolsUnavailable で終わる — 道具を使えなかったターンを成功と見せない(
+  ;; 本番の実例 = 10-15 の会話)。stub は録った codex 0.162.1 の行を流す: 警告は turn/start の答えより
   ;; 前に 1 度だけ届き、その後に文だけの答えと completed の終わりが続く。
   {:interpreters ["fake" "stub"]}
   (<- s (settings))
@@ -191,7 +191,7 @@
 
 (deftest test-a-steer-refused-after-the-end-notice-is-no-turn-in-flight
   ;; ターンの終わりの通知(turn/completed)が断りより先に届く順 — 層 2 は終わりを読んでから断りを読むので、走っているターンが無い。
-  ;; 断られたのは「走っているターンが無い」からで、入力が悪いのではない(card ki-5ce2c2216149 の原因 2 — 10-18 の本番の実例)。
+  ;; 断られたのは「走っているターンが無い」からで、入力が悪いのではない(10-18 の本番の実例)。
   {:interpreters ["stub"]}
   (<- seen (steer-a-turn-codex-refuses STEER-ENDED-FIRST))
   (val turn (get seen 0))

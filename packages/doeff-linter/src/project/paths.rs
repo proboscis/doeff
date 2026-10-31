@@ -1,5 +1,5 @@
 //! repo の中の path の道具(根からの相対の綴り・宣言の file の鍵・glob の照合)。規則の module はここを直に読む — 組み立ての
-//! project/mod.rs を読み戻すと、mod.rs が宣言する子の module と依存の輪になる(agora-redesign #2119)。
+//! project/mod.rs を読み戻すと、mod.rs が宣言する子の module と依存の輪になる。
 
 use std::path::Path;
 
@@ -19,7 +19,7 @@ pub fn relative_path(root: &Path, path: &Path) -> Option<String> {
 
 /// 宣言の file(architecture.hy)の鍵の綴り — 根の下なら根からの相対、根の外なら `..` を含む根からの相対(区切り `/`)。
 /// 設定の root で package の `src/` を根にすると、package の根の architecture.hy は根の外になる。機体ごとに変わる絶対 path や
-/// 置き場を失った file 名だけを鍵に入れず、どの機体でも同じ鍵にするため(agora-redesign #1977)。
+/// 置き場を失った file 名だけを鍵に入れず、どの機体でも同じ鍵にするため。
 pub fn declared_rel(root: &Path, path: &Path) -> String {
     if let Some(rel) = relative_path(root, path) {
         return rel;

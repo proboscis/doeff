@@ -1,4 +1,4 @@
-"""起こした process が終わったら、その子も終わる — StartProcess の約束の本体(agora-redesign #3866)。標準ライブラリだけで書く。
+"""起こした process が終わったら、その子も終わる — StartProcess の約束の本体。標準ライブラリだけで書く。
 
 本体は 1 つ: 起こした側だけが書き口を持つ pipe を行ごとに読み、EOF(起こした側の終わり — SIGKILL を含む)で、持っている相手へ TERM を
 送る(watched_until_eof)。置き方は 2 つで、どちらもこの本体を呼ぶ。
@@ -13,7 +13,7 @@
 (閉じ方は #3866 の記録 — 今回は閉じない)。
 
 置き場は doeff-core-effects の配布の中の、doeff_core_effects と別の top-level の package doeff_lifeline の内側(package の頭の註)。
-名は effect でも handler でもないので公開しない(ADR-DOE-API-001 R1・R5 — card ki-cb19bdeec5b9)。見張りは `python -I -S -B <この file>` で
+名は effect でも handler でもないので公開しない(ADR-DOE-API-001 R1・R5)。見張りは `python -I -S -B <この file>` で
 起こす(標準ライブラリだけ — 起動は最小の python と同じ)。
 """
 

@@ -1,4 +1,4 @@
-;;; session の行の保存の法(agora-redesign #608)— handler に依らない検の本体。
+;;; session の行の保存の法— handler に依らない検の本体。
 ;;;
 ;;; 各法は `PutAgentSession` / `GetAgentSession` / `ListAgentSessions` だけを出す
 ;;; Program で、どの repository の handler の下でも同じ答えになることを確かめる。

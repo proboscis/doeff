@@ -51,7 +51,7 @@
 (deftest test-the-pidfd-opener-does-not-load-libc-per-call [monkeypatch]
   ;; 失敗ケース: pidfd-of は呼ぶたびに ctypes.CDLL を作らない。CDLL は作るたびに関数の型(_FuncPtr の class)を 1 つ作り、free-threading の
   ;; CPython 3.14 では、主 thread の VM が走る間に await の bridge の thread で作り続けると、放した後も memory が戻らない。worker の周の間の
-  ;; 待ちは拍ごと・子ごとに pidfd-of を呼ぶので、子 1 つの worker の process が 1 日に 0.5 GB を越えて増えた(依頼 lt-KAYKH21D2WYWBEG2EH8AJSB19N)。
+  ;; 待ちは拍ごと・子ごとに pidfd-of を呼ぶので、子 1 つの worker の process が 1 日に 0.5 GB を越えて増えた。
   (when (not (and (= sys.platform "linux") (in (platform.machine) #("x86_64" "aarch64"))))
     (pytest.skip "pidfd_open は Linux の x86_64 と aarch64 だけ"))
   (val loads (Mock :wraps ctypes.CDLL))
@@ -71,7 +71,7 @@
 (deftest test-a-process-being-reaped-is-not-running [tmp-path monkeypatch]
   ;; 失敗ケース: 親が回収している最中の process(/proc の state X — Linux の EXIT_DEAD。回収が済んで /proc/<pid> が消える手前の短い間だけ
   ;; 見える)は、zombie(Z)と同じく走っていない。前は Z だけを終わりと読み、待ちの子から分かれた子の終わりを待った直後の PollWarmChild が、
-  ;; 待ちの子の回収と重なった時に WarmRunning と答えた(日次の packages の段の test_task_venv_on_both_paths・card ki-6dde100393cd)。
+  ;; 待ちの子の回収と重なった時に WarmRunning と答えた(日次の packages の段の test_task_venv_on_both_paths)。
   ;; /proc の根を検の置き場に差し替え、Linux の読みで測る。
   (when (!= (platform.system) "Linux")
     (pytest.skip "/proc の state を読むのは Linux の読み"))

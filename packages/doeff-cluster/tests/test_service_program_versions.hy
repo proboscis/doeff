@@ -1,4 +1,4 @@
-;;; service の Program の cache は (Program のキー・宣言の版) ごと(card ki-172e63fed4c7 — task の #3762 と同じ規則)。
+;;; service の Program の cache は (Program のキー・宣言の版) ごと(task の #3762 と同じ規則)。
 ;;;
 ;;; 置き場のキーは詰めた Program の sha256 なので、同じ Program を python の版の違う送り手が宣言し直すと、sha は同じで版だけが替わる
 ;;; (2026-10-10 13:58 — merge-queue の系 3 つを 3.14.7 の宣言の道具で詰めた後に 3.14.3t で宣言し直した)。worker の cache の file が

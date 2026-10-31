@@ -1,4 +1,4 @@
-;;; 前もって読み込みを済ませて待っている子(待ちの子)に仕事を頼み、その終わりを読む効果(agora-redesign #3646 の A3)。
+;;; 前もって読み込みを済ませて待っている子(待ちの子)に仕事を頼み、その終わりを読む効果。
 ;;; 業務の語を持たない土台の語彙で、子 process の効果(process_effects.hy)の隣。答え手は仕組みごとに差し替える:
 ;;;   os-warm-process-handler        本物 — 待ちの子の unix socket に JSON 1 行を送り、/proc と exit の file で終わりを読む(os_warm_process.hy)
 ;;;   scripted-warm-process-handler  I/O なし — socket の在否と、仕事ごとの台本で答える(scripted_warm_process.hy)
@@ -11,7 +11,7 @@
 ;;;   ForkFromWarm     待ちの子に 1 つ仕事を頼む。答え = WarmForked(A の pid と start-ticks)か WarmRefused(socket が無い・接続を断られた・
 ;;;                    待ちの子が断りを答えた・答えの期限 WARM-ANSWER-SECONDS が切れた・答えが読めない — 理由の文は下の関数で 1 度だけ作る)。
 ;;;                    env は子の環境変数の全部(置き換え)。値はどの答え・断りの文・log にも出さない。
-;;;                    常駐の子の 3 つの欄(card ki-de44efdb9aa4 — どれも既定なら頼みの形は今までと同じ):
+;;;                    常駐の子の 3 つの欄(どれも既定なら頼みの形は今までと同じ):
 ;;;                      hold-input   = 頼み手が子 A だけの入力の pipe を作り、読み口を頼みに添えて(unix socket の fd の受け渡し)A の標準入力に
 ;;;                                     させ、書き口を握る。頼み手が消えると A は EOF を読む(入れ物 shim の hold-stdin と同じ働き)・
 ;;;                                     頼み手は WriteWarmChildInput で A へ行を書く。

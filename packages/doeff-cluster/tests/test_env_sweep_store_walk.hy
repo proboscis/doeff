@@ -1,5 +1,5 @@
 ;; 実行環境の掃除の消しの task(env_store の removing-leftovers → sweep-leftovers → unused-store-entries)が bytecode の保存先を歩く間も、
-;; 同じ scheduler の別の task(調整ループの拍と背景の heartbeat の代役)が回る形の検(card ki-0da6a0186492)。
+;; 同じ scheduler の別の task(調整ループの拍と背景の heartbeat の代役)が回る形の検。
 ;;
 ;; 実例(2026-10-11・zeus の worker): 保存先の file 104,735 個を、同期の WalkTree と file ごとの StatPath で歩いた掃除が scheduler の
 ;; thread を占め(掃除の長さの中央 13.1 秒)、tick も背景の heartbeat も止まった — heartbeat の間の遅れの行 45 行・lease(10 秒)越え 11 行・

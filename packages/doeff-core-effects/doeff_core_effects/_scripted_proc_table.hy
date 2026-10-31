@@ -1,4 +1,4 @@
-;;; 機体の process の表の効果(proc_table_effects.hy)の I/O なしの答え手 scripted-proc-table-handler(card ki-7b934e2538f9)。
+;;; 機体の process の表の効果(proc_table_effects.hy)の I/O なしの答え手 scripted-proc-table-handler。
 ;;; 本物の /proc と signal を使わず、台本の表で答える。業務を知らない: 表の中身は呼び手(検・模擬)が渡す。
 ;;;
 ;;;   ReadProcTable  今の表(pid の昇順)を答える。

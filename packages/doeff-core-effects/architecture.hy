@@ -1,10 +1,10 @@
-;;; doeff-core-effects の層の宣言(agora-redesign #3012)。
+;;; doeff-core-effects の層の宣言。
 ;;;
 ;;; doeff-linter は Python の文ごとの規則の母集団を、file から上へ最も近い architecture.hy(この file)から決める(#2811)。
 ;;; 層は foundation の 1 つだけを置き、名指すのは scheduler の handler を選ぶ入口と、Ask に環境変数から答える handler の
 ;;; 2 module に限る。この package のほかの file の母集団は変わらない(今までどおり DOEFF004 が当たる)。
 ;;;
-;;; foundation = 環境変数の読みが許される foundation の handler の層(利用者の決定 2026-10-02 — 環境変数の読みは
+;;; foundation = 環境変数の読みが許される foundation の handler の層(環境変数の読みは
 ;;;   foundation の handler の中だけで、外での読みは違反)。
 ;;;   - doeff_core_effects._scheduler: handler の組の前に scheduler の handler(python / rust)を選ぶ入口で、DOEFF_SCHEDULER を読む。
 ;;;     handler の組がまだ無い所で選ぶので、ReadEnvironment で問うと doeff の全部の run に約 4 割の固定費が足される
@@ -21,7 +21,7 @@
 ;;;     本番 30 秒)何も届かない時、それを止まりと数えて警告を書く(#495b の見張り)のは、次のどちらかの時だけ:
 ;;;       - 起こしの約束の登録された待ちが 1 つも無い。約束の登録された待ち = 期限の分かる時計の待ち(CreateExternalPromise の
 ;;;         deadline — Delay・WaitUntil など・#765)と、終わりの知らせの出どころを見張る待ち(source_alive — 子の process の終わりの
-;;;         fd など・card ki-6222e22d4179)。
+;;;         fd など)。
 ;;;       - 約束を破った待ちが在る(失われた起こし)。時計の待ちは期限から、見張りの待ちは出どころが終わったと初めて見た時から、
 ;;;         1 周期を過ぎても届かない。
 ;;;     期限も出どころも持たない外部の待ちだけで塞がっている間は、今どおり周期ごとに警告する。
@@ -38,4 +38,4 @@
              :knows "環境変数の名・scheduler の実装の名・Ask の鍵から環境変数の名への写し"
              :does-not-know "業務の Program・どの業務がどの設定を使うか"
              :modules [doeff_core_effects._scheduler doeff_core_effects._handlers]
-             :exempt [(rule DOEFF004 "foundation の層 — handler の組の前に scheduler の handler を選ぶ入口と、Ask に環境変数から答える handler。環境変数の読みは foundation の handler の中だけ可(利用者 2026-10-02)")])])
+             :exempt [(rule DOEFF004 "foundation の層 — handler の組の前に scheduler の handler を選ぶ入口と、Ask に環境変数から答える handler。環境変数の読みは foundation の handler の中だけ可")])])

@@ -368,7 +368,7 @@ def test_hy_file_under_a_workspace_package_dir_imports_from_its_package_base(
     an in-process run shares this process's ``sys.modules``, and a ``tests`` package
     imported earlier by another test (the root ``tests/`` does
     ``from tests._run_helpers import …``) hid ``tests.helper`` from the inner run
-    (the daily of 2026-09-26, agora-redesign#639).  A stand-in ``tests`` is put into this
+    (the daily of 2026-09-26).  A stand-in ``tests`` is put into this
     process first so the independence is proven on every run, not only in some orders."""
     monkeypatch.setitem(sys.modules, "tests", types.ModuleType("tests"))
     pytester.makepyprojecttoml(
@@ -404,7 +404,7 @@ def test_a_collected_module_is_importable_by_dotted_name_from_a_later_test(
     """dir ごとの glob(``app/proto/*.hy``)で集めた module を、後で集める test が dotted name で
     ``(import app.proto.policy :as policy)`` と読んでも落ちない。集める時に module を ``sys.modules`` へ置くだけで、
     親の package(``app.proto``)を import せず親の属性にも結ばないと、``import a.b.c :as x`` は親の属性を引いて
-    ImportError になる(agora-redesign #1212 — agora-controllers の classifier の protocol の glob で出た)。
+    ImportError になる(agora-controllers の classifier の protocol の glob で出た)。
     親を持つ dir と、``__init__`` の無い namespace の dir の両方で確かめる。"""
     pytester.makepyprojecttoml(
         """\

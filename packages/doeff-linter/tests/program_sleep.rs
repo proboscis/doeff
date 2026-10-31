@@ -1,4 +1,4 @@
-//! DOEFF210(Hy の program は壁の時計で眠らない — doeff の ADR-DOE-TIME-001 R1・R2・card ki-3c3d85253c2c)の検。
+//! DOEFF210(Hy の program は壁の時計で眠らない — doeff の ADR-DOE-TIME-001 R1・R2)の検。
 //! binary を走らせ、`--output-format editor-json` の出力を見る。
 //!
 //!   * 検体 tests/fixtures/program_sleep/waits.hy の「; 鳴る」の行の集合と、当たりの行の集合が同じ(極性 — 規則を外す・handler の

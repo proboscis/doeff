@@ -150,7 +150,7 @@
 
 
 (deftest test-rows-and-events-are-faulted-as-one-write
-  ;; card ki-e17ba3b32dea: PutRowsAppendEvents は書き全体(束の表 — PutRows と同じ)と追記ごと(同じ追記の AppendEvent — AppendEvents と同じ)
+  ;; PutRowsAppendEvents は書き全体(束の表 — PutRows と同じ)と追記ごと(同じ追記の AppendEvent — AppendEvents と同じ)
   ;; に当たり、全部か 0 なので着けない故障は何も書かない。追記に当たった Refused はその追記の AppendRefused。
   (val store (MemoryStore LAW-SCHEMA))
   (val both (PutRowsAppendEvents #((RowWrite "parts" #("p1") (part "p1") (ExpectAbsent)))

@@ -1,4 +1,4 @@
-"""検の session が自分で立てる使い捨ての PostgreSQL(agora-redesign #2830)。
+"""検の session が自分で立てる使い捨ての PostgreSQL。
 
 doeff の実 PostgreSQL の検(doeff-core-effects の test_sql_effects.hy と doeff-records の test_pg_*.hy ほか)は DSN を env
 (``DOEFF_SQL_TEST_POSTGRES_DSN``・``DOEFF_RECORDS_TEST_PG_DSN``)から module の読み込みの時に読む。日次の機体にも手元にも外の

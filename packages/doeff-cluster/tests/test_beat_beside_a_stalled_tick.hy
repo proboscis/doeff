@@ -1,4 +1,4 @@
-;; heartbeat の送りの間は tick の長さに依らない(card ki-e38dbfca7671)— 失敗ケース。
+;; heartbeat の送りの間は tick の長さに依らない— 失敗ケース。
 ;;
 ;; 実例(本番 2026-10-09 の agent-worker-2): worker は heartbeat を tick の中(ReadDesired)でだけ送るので、送りの間 ≒ tick の長さに
 ;; なる(今日の最長 7.3 秒)。lease は 10 秒で、13:15:04 に間 10041 ms で coordinator の名簿が gone と判じた。#4332 の直し(418d4eab6)は

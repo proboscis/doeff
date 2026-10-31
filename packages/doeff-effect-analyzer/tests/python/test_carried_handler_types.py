@@ -1,6 +1,6 @@
 """Handlers carried as a value, read through the type of the place they come from (doeff's ``BuiltBy``).
 
-Regression target (card ki-e912b1821351): agora-controllers' screen job places the notice receivers it
+Regression target: agora-controllers' screen job places the notice receivers it
 gets in the answer of an effect (``(with-handlers [#* receivers] …)``) and its CLI host places the
 records clients a setting answers (``(with-handlers (list lane.handlers) …)``). The reader could not
 know the values and showed ``receivers`` / ``list(lane.handlers)`` as unread handlers, so the closure

@@ -108,7 +108,7 @@
 (defk live-instances [row now-ms job]
   {:pre [(: row (| (get Mapping #(str object)) None)) (: now-ms int) (: job str)] :post [(: % (get tuple #(str ...)))] :tags {:context "doeff-cluster" :role "judgment"}}
   "行の期限が now より後の担い手のうち、job の process(担い手 = lease-holder job <世代の名>・token = <担い手>/<番号>)の世代の名を、
-   重ねず名の順に並べた列を知るため(退きの保ちの持ち手を coordinator が worker への返事に載せる — card ki-e3531030eb37)。"
+   重ねず名の順に並べた列を知るため(退きの保ちの持ち手を coordinator が worker への返事に載せる)。"
   (val head (lease-holder job ""))
   (tuple (sorted (sfor token (live-holders row now-ms) :if (.startswith token head)
                        (get (.rsplit (cut token (len head) None) "/" 1) 0)))))
@@ -161,7 +161,7 @@
    延ばせなかっただけなので、止まる前に残っていた時間を起き直した刻から持つ: 生きていれば延ばしが通り、本当に居なければその時間の後に
    切れる(遅れは止まっていた長さ・切れない lease を作らない)。止まる前に既に切れていた担い手は、ずらしても切れたまま。
    形の読めない値・担い手の無い行は触らない(None)。出自 = 2026-10-11 00:25:51 UTC の coordinator の作り直しで、盤が戻った時の時計で
-   持ち主の lease を切り、待っていた別の process に渡した(同じ会話のターンが 2 本並んだ — ki-3b7498747e4c)。"
+   持ち主の lease を切り、待っていた別の process に渡した(同じ会話のターンが 2 本並んだ)。"
   (when (or (not (isinstance row dict)) (not (isinstance (.get row "holders") dict)) (not (get row "holders"))) (return None))
   (| row {"holders" (dfor #(t e) (.items (get row "holders")) t (+ e gap-ms))}))
 

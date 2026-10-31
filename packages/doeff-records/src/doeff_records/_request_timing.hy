@@ -104,7 +104,7 @@
     (StageMeaning :stage RequestStage.TOTAL :meaning "受けた → 送った")
     (StageMeaning :stage RequestStage.WOKE :meaning "最後に起きた → 送った — 待った要求だけ")))
 
-;; 操作 → 区間 → 計器の名(STAGE-METRIC の綴り — 要求ごとに綴らずに引く・card ki-1841b724d061)。
+;; 操作 → 区間 → 計器の名(STAGE-METRIC の綴り — 要求ごとに綴らずに引く)。
 (val STAGE-METRIC-NAMES
   (FrozenMap (gfor operation OPERATIONS
                    #(operation (FrozenMap (gfor described STAGE-MEANINGS
@@ -141,7 +141,7 @@
   (if (or (is since None) (is until None)) None (- until since)))
 
 
-;; --- 答えに載せる区間の秒(ki-ca4b41612e2e)------------------------------------------------------------------------------------------
+;; --- 答えに載せる区間の秒------------------------------------------------------------------------------------------
 ;; 記録の操作の答えは、答えが決まった所までの区間の秒を見出し Server-Timing に載せる(綴りと読みは _wire.hy の SERVER-TIMING-HEADER の註 —
 ;; client と同じ 1 か所)。計器の和と数(GET /metrics)は平均しか言えず、p95 の要求の内訳を言えないので、呼び手が要求ごとに名指せるように
 ;; する。載せる区間の名の並びは wire の SERVER-TIMING-NAMES(区間の名と同じ綴り)。
@@ -168,7 +168,7 @@
   "要求 1 つの受けた刻と、答えが決まるまでの刻の列 marks(と、その待ちの読み wait — waited)を、答えを送る前に決まる区間(queue・body・
    decode・handler・wait・encode — 頭の註の区間)の秒の列にするため(両端の刻が欠けた区間は入れない)。送り終わりの刻で決まる区間は
    sent-stages。刻は名ごとの最初の刻を 1 度の走りで引く(first-at と between の意味のまま、要求ごとに刻の数だけ Program を撃たない —
-   card ki-1841b724d061。他の defk を呼ばないので、この関数も Program にならない — card ki-5c3e73834e73)。"
+   他の defk を呼ばないので、この関数も Program にならない)。"
   (val firsts {})
   (for [stamped marks]
     (.setdefault firsts stamped.mark stamped.at))
@@ -193,8 +193,7 @@
   {:pre [(: received-at (| float None)) (: marks (get tuple #(MarkAt ...))) (: wait WaitSum) (: sent-at float)]
    :post [(: % (get tuple #(StageSeconds ...)))] :tags {:context "records" :role "judgment"}}
   "送り終えた刻 sent-at で決まる区間(send・total・woke — 頭の註の区間)の秒の列にするため。答えが決まるまでの刻の列 marks を
-   request-stages で 1 度割って答えの見出しに載せた要求の task が、送った後にこの区間だけを足して計器に積む(刻の列を送った後に割り直さない
-   — card ki-5c3e73834e73)。"
+   request-stages で 1 度割って答えの見出しに載せた要求の task が、送った後にこの区間だけを足して計器に積む(刻の列を送った後に割り直さない)。"
   (val firsts {})
   (for [stamped marks]
     (.setdefault firsts stamped.mark stamped.at))
@@ -208,7 +207,7 @@
   (tuple (gfor #(stage seconds) spans :if (is-not seconds None) (StageSeconds :stage stage :seconds seconds))))
 
 
-;; --- 書きの錠の秒(card ki-0306f5a614b4)-------------------------------------------------------------------------------------------
+;; --- 書きの錠の秒-------------------------------------------------------------------------------------------
 ;; 記録の service の書き 1 回が、錠の単位(_pg_sql.hy の頭の註の「書きの錠」— 表の単位 table:<表>・番号の単位 rows・列の単位 stream:<列>)ごとの同じ process の
 ;; 並びを待った秒(wait)と、並びを通ってから transaction の答えまで錠を持った秒(hold — 接続の許可の待ち・DB の錠の待ち・文の往復・COMMIT)。
 ;; 積むのは _pg.hy の locked-transaction(本番の組み立てだけ)。計器の名: records_lock_<操作>_<単位>_<相>(名の - と : は _)。どの書きが錠を

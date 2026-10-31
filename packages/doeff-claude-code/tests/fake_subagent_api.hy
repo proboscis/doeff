@@ -1,5 +1,5 @@
 ;;; 偽の Anthropic の Messages API(127.0.0.1 の小さな HTTP server)— 本物の claude CLI に subagent を 1 つ走らせ、subagent の API の
-;;; 呼びに何を答えたかを記す検の相手(card ki-e798888dce4e)。本物の API にも本物の資格にも触らない。
+;;; 呼びに何を答えたかを記す検の相手。本物の API にも本物の資格にも触らない。
 ;;;
 ;;; 振る舞い(要求の中身で決める):
 ;;;   - 最後の user の message が道具の結果を持つ呼び(本体が subagent の答えを受けた後)= 本文 "done"。
@@ -22,7 +22,7 @@
   "偽の API が答えた /v1/messages の呼び 1 つ: role = main-tool(本体の Agent の呼び)・main-final(本体の最後の答え)・subagent /
    message-id = 答えた message の id / model = 要求の model / input・cache-write・cache-read・output = 答えで名乗った 4 種の token /
    request-id = 答えの頭 request-id に置いた要求の id(本物の API と同じ頭 — CLI はこの値を stream-json の行の request_id と transcript の
-   requestId に書く・card ki-b99ace070bf0)。"
+   requestId に書く)。"
   (#^ str role)
   (#^ str message-id)
   (#^ str model)

@@ -1,9 +1,9 @@
-"""doeff-conductor が環境変数から読む値(agora-redesign #2894)。
+"""doeff-conductor が環境変数から読む値。
 
 conductor の CLI と状態の記録は、どの Program・handler よりも前に、状態の置き場の dir と
 profile の設定を決める。この module は変数の素の値を返すだけで、既定の値・読み方・どれを使うかの
 判断は呼び手(journal・workflow_effect_journal・environment)に残す。読みは os.environ を直に読まず、
-ReadEnvironment の効果を本物の答え手 subprocess_handler の下で問う(agora-redesign #3012 — 環境変数の
+ReadEnvironment の効果を本物の答え手 subprocess_handler の下で問う(環境変数の
 読みは foundation の handler の中だけ)。
 """
 

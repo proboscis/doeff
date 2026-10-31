@@ -86,7 +86,7 @@
 
 
 ;; --- 退く知らせを待たない handoff の service(退いた process の寿命の上限を宣言しない): 止められるまで動き続ける。起きた刻を盤に書く。 ----
-;; 本番の待ち受けの service の形(待ち受けを開いて動き続け、AwaitRetirement を待たない・宣言の readiness に retiredSeconds が無い — card ki-7c11722e3621)。
+;; 本番の待ち受けの service の形(待ち受けを開いて動き続け、AwaitRetirement を待たない・宣言の readiness に retiredSeconds が無い)。
 (val SERVE-PREFIX "serve")
 
 
@@ -96,7 +96,7 @@
           :readiness {"windowSeconds" 5}))
 
 
-;; --- 退きの保ちを持つ handoff の service(card ki-e3531030eb37): 仕事を走らせたまま退く知らせを待ち、受けたら退きの保ち(名前付きの lease
+;; --- 退きの保ちを持つ handoff の service: 仕事を走らせたまま退く知らせを待ち、受けたら退きの保ち(名前付きの lease
 ;; RETIREMENT-HOLD)を取り、仕事の終わりを待って保ちを返し、退いた刻を書いて自分で終わる(上に載る系が、受付を渡した後に走っている仕事を
 ;; 終わりまで回す形)。保ちを取らない版(hold = 偽)は、寿命の上限で止められる対照。土台は名前付きの lease の担い手を並べた物
 ;; (tests/fixtures/lease_programs.hy の lease-sim-foundation)。

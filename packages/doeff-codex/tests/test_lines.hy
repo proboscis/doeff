@@ -3,7 +3,7 @@
 ;;
 ;; 守る事: 答えの文字の途中(item/agentMessage/delta)が型つきの記録 TextDelta になり、ターンごとに連ねると答えの全文
 ;; (item/completed の agentMessage)と同じ文字になる。これが崩れると、上の層は答えの途中を画面へ流せない(決まりの元 =
-;; 答えは文字が届くごとに画面へ流す — 利用者の指摘 2026-09-10・2026-10-10 の答え A)。
+;; 答えは文字が届くごとに画面へ流す・2026-10-10 の答え A)。
 (require doeff-hy.macros [val])
 (val MODULE-TAGS {:context "codex-test" :role "foundation"})
 (require doeff-hy.macros [deftest defk <- var])
@@ -113,8 +113,8 @@
 
 (deftest test-a-provider-capacity-refusal-ends-the-turn-with-the-overloaded-fact
   ;; 提供側の混雑(上流の 503 と error.code server_is_overloaded)のターン: codex は繰り返さない誤りの通知(willRetry 偽)と失敗の終わりで
-  ;; 種類 serverOverloaded と自分の文「Selected model is at capacity. …」を名乗り、行の分類はその終わりに混雑の事実を載せる(本番
-  ;; 2026-10-22 21:59 JST の会話 c-QM2DD91FG7T13716VSC9C6GKV2 の turn と同じ文・card ki-843475dd8f8b)。同じ thread の次のターンは答える
+  ;; 種類 serverOverloaded と自分の文「Selected model is at capacity. …」を名乗り、行の分類はその終わりに混雑の事実を載せる(本番)。
+  ;; 同じ thread の次のターンは答える
   ;; (試し直しは同じ thread で通る)。ほかの失敗の終わり(429・利用枠切れ)は混雑の事実を持たない。
   (<- records (recorded-records "server-overloaded"))
   (val errors (tuple (gfor record records :if (isinstance record TurnError) record)))
@@ -138,7 +138,7 @@
 (deftest test-a-usage-limit-names-its-windows-and-its-kind
   ;; 口座の利用枠切れ(上流の 429 の usage_limit_reached と枠の header)のターン: codex は枠の知らせ(account/rateLimits/updated)で窓
   ;; ごとの使った割合・長さ・戻りの刻を名乗り、その後の誤りの通知と失敗の終わりで種類 usageLimitExceeded を名乗る — 上の層が口座の
-  ;; 替えと待ちを claude と同じ道で決める材料(card ki-a59d80e0afa9)。
+  ;; 替えと待ちを claude と同じ道で決める材料。
   (<- records (recorded-records "usage-limit"))
   (val limits (tuple (gfor record records :if (isinstance record RateLimits) record)))
   (assert (= limits #((RateLimits :limit-id "codex"

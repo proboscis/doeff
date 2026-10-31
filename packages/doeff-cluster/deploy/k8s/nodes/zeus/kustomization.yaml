@@ -16,6 +16,6 @@ patches:
   # drain の上限(JSON patch — 雛形の env の決まった場所を確かめて改める)。
   - path: generation.yaml
     target: { group: apps, version: v1, kind: Deployment, name: doeff-worker }
-  # cgroup の memory の層と、その委ねる係・host の cgroupfs の mount(JSON patch — 足す物は全部末尾へ・card ki-cd8cb84fdcd2)。
+  # cgroup の memory の層と、その委ねる係・host の cgroupfs の mount(JSON patch — 足す物は全部末尾へ)。
   - path: cgroup.yaml
     target: { group: apps, version: v1, kind: Deployment, name: doeff-worker }

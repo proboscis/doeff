@@ -1,4 +1,4 @@
-;;; 歩の積算の答え手 step-tally-handler(agora-redesign #3855)— OpenStepTally・CloseStepTally に、scheduler の測りの口
+;;; 歩の積算の答え手 step-tally-handler— OpenStepTally・CloseStepTally に、scheduler の測りの口
 ;;; (set_scheduler_trace — Python の版も Rust の版も同じ出来事を出す)が出す task-leave の出来事で答える。
 ;;;
 ;;; 何のためか: 呼び手(agora の CLI ホストなど)が、ある区間(1 つのターンを運ぶ間)に scheduler が走らせた歩の数・壁と CPU の時間と
@@ -14,7 +14,7 @@
 ;;; 窓を閉じずに run が終わると、その窓と sink は process に残る(次に同じ key を開けると断る)。scheduler はどちらの版でもよい
 ;;; (既定の Rust の版も同じ出来事を出す — docs/25-rust-scheduler.md の「測りの口」)。
 ;;;
-;;; task の積算の窓(OpenTaskTally・ReadTaskTally・CloseTaskTally — agora-redesign #4188): 同じ sink が spawned と task-leave の出来事で、
+;;; task の積算の窓(OpenTaskTally・ReadTaskTally・CloseTaskTally): 同じ sink が spawned と task-leave の出来事で、
 ;;; 窓ごとの (run, tid) → 行(TaskTally)の表を進める。歩の窓と task の窓は sink を分け合い、どちらかの窓が 1 つでも開いている間は
 ;;; sink を据えたまま(据える・外すの判じは sink-claimed・sink-released の 1 か所)。
 (require doeff-hy.macros [defhandler defk deff <- val])

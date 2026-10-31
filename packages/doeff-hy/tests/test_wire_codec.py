@@ -1,4 +1,4 @@
-"""自前の解き手(doeff_hy/_wire_codec.py — 読む側)の検(card ki-923c16d33551)。
+"""自前の解き手(doeff_hy/_wire_codec.py — 読む側)の検。
 
 契約は設計の記録 docs/design/defwire-decoder/design.md(節 2 の型ごとの判じ方・節 3 の共通の規則・付録 B の腕の名)。確かめること:
 

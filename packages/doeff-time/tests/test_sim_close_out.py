@@ -39,7 +39,7 @@ def test_a_positive_delay_below_one_tick_still_moves_the_clock() -> None:
     """A positive sub-microsecond Delay advances the virtual clock by one tick (not zero).
 
     Before the fix ``timedelta(seconds=7.2e-08)`` rounded to zero, so a loop sleeping
-    "the rest of its timeout" never advanced virtual time (agora-redesign #675).
+    "the rest of its timeout" never advanced virtual time.
     """
 
     @do

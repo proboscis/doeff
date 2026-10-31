@@ -203,8 +203,8 @@
 
 
 (deftest test-the-boundaries-are-handlers
-  ;; 設定の無い maybe・result は handler の値で program に当て(ADR-DOE-API-002 R1・2026-10-29 の答え — agora card
-  ;; ki-2d05bfc6ec94)、設定を受ける on_raise・absent_as は中核の state() と同じく呼ぶと handler を返す工場(ADR-DOE-API-001 R6)。
+  ;; 設定の無い maybe・result は handler の値で program に当て(ADR-DOE-API-002 R1・2026-10-29 の答え)、
+  ;; 設定を受ける on_raise・absent_as は中核の state() と同じく呼ぶと handler を返す工場(ADR-DOE-API-001 R6)。
   ;; どれも印 _doeff_is_handler_fn を持つ。
   (val conflict-case (RaiseCase #(Conflict) (fn [r] (Some (+ "conflict: " r.detail)))))
   (val handlers {"maybe" maybe
@@ -245,7 +245,7 @@
 
 
 (deftest test-the-old-forms-are-refused
-  ;; program を工場に渡す旧い形は、呼んだ所で TypeError で断る — 移し替えの層は agora card ki-53be25c354e4 で消した。
+  ;; program を工場に渡す旧い形は、呼んだ所で TypeError で断る — 移し替えの層は消した。
   ;; absent_as は前の macro の展開の形(印を 3 つ目に置く)も断る。
   (val conflict-case (RaiseCase #(Conflict) (fn [r] (Some (+ "conflict: " r.detail)))))
   (with [(pytest.raises TypeError :match "handler を返す工場")]

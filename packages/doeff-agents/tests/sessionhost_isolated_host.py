@@ -152,7 +152,7 @@ def isolated_host(root: Path, *, base_env: Mapping[str, str] | None = None) -> I
     """`root` の下に隔離した宿を作る。daemon とその tmux server・pane・判定の子はこの env を継ぐ。
 
     base_env を渡さない時の元 = この process の環境(os.environ を直に読まず、foundation の handler の
-    subprocess_handler が答える ReadEnvironment の写像 — agora-redesign #3012)。"""
+    subprocess_handler が答える ReadEnvironment の写像)。"""
     process_env: Mapping[str, str] = (
         run(with_handlers([subprocess_handler], environment_mapping())) if base_env is None else base_env
     )

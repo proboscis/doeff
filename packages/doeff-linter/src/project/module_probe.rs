@@ -1,4 +1,4 @@
-//! module の綴りから file を、tree を歩かずに探る(1 file の実行 — card ki-a9959efd9cf6 の残り)。
+//! module の綴りから file を、tree を歩かずに探る(1 file の実行)。
 //!
 //! 1 file の実行が引く module は、書いた file が名指す数十個だけ。その file を探すのに repo の tree を全部歩くと(agora-controllers で約 1200 の dir)、
 //! 冷えた作業木では dir ごとに 1 回ずつ disk を読む(混んだ Pod で `iowait` が 12〜25% の時、1 回の歩きで 5〜11 秒かかった)。module の綴り `a.b.c` は

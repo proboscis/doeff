@@ -17,7 +17,7 @@
 (defrecord KnownRoot
   "worker が既に完成させた root(木を写す元の候補)。platform = 完成マーカーに書いた、その root の platform(欄の無い印の root は
    None = 分からない・写し元にしない)・made-ms = 完成マーカーを置いた時刻(epoch ミリ秒 — 同じ repo を持つ root のうち最も新しく完成した物を写し元に選ぶため・
-   #3677・card ki-61eb8170b3b9)・hy-version = 完成マーカーに書いた、その root の venv の Hy の compiler の版(欄の無い前の印の root と、venv に Hy の無い root は
+   #3677)・hy-version = 完成マーカーに書いた、その root の venv の Hy の compiler の版(欄の無い前の印の root と、venv に Hy の無い root は
    None = 分からない — #3706)。"
   (#^ RuntimeEnv env)
   (#^ str root)

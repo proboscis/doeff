@@ -10,8 +10,7 @@ that answers them by reading the sources (nothing is run)::
 
     run(effect_analysis()(program))
 
-Decided by the answer lt-646XDCG0CJXMX7JP6558JD426W (question analyzer of lt-4GATVKA4BMSJMJSRPZ1HFX42J9 —
-make them effects, show the answer types — card ki-593f9f44c501).  The functions that answer them
+Decided: make them effects, and show the answer types.  The functions that answer them
 (``_program_effects.analyze_program``, ``_handler_effects.check_coverage`` …) are inside the package.
 """
 

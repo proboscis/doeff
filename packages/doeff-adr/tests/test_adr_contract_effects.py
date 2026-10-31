@@ -1,8 +1,7 @@
 """ADR の形を確かめる操作は effect AssertAdrContract・AssertAllAdrContracts、deftest の検を表に載せる操作は effect RegisterDeftest
-で、GetAdr と同じ handler の工場 adr_registry が答える(card ki-54e559d3c0e7・ADR-DOE-API-001 R30)。
+で、GetAdr と同じ handler の工場 adr_registry が答える(ADR-DOE-API-001 R30)。
 
-決め: 依頼書 lt-6SE07X4256P323ZGZVNSEF9M95 の問い adr-scope の答え lt-RA4FZ731JNZQ6JEGVAYD35XCAZ(doeff-adr の残りの名を同じ向きで
-直す)。前の関数 assert_adr_contract・assert_all_adr_contracts・register_deftest_enforcement は外の repo に呼び手が無いので、移し替えの
+決め: doeff-adr の残りの名を同じ向きで直す。前の関数 assert_adr_contract・assert_all_adr_contracts・register_deftest_enforcement は外の repo に呼び手が無いので、移し替えの
 層を残さずに消した。
 
 adr_registry() は process の登録簿から答え、adr_registry(specs=[…], enforcements={…}) は渡した列と辞書だけから答える(渡さない方は

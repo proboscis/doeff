@@ -1,12 +1,12 @@
 ;; headless の codex の adapter(handlers/headless_codex.hy)の検 — doeff-agents の公開 effect だけを撃つ Program を、層 2(doeff-codex)の
-;; handler の組だけ替えて走らせる(card acp:kanban-issue:ki-534a081e32eb)。
+;; handler の組だけ替えて走らせる。
 ;;
 ;;   fake  doeff-codex の fake の handler + 仮想の時計。process も API も使わない。
 ;;   stub  doeff-codex の本番の handler + 替え玉の app-server(packages/doeff-codex/tests/stub_cli/codex_app_server.py — 録った codex
 ;;         0.162.1 の行を、id を差し替えて返す)+ 壁の時計。
 ;;
 ;; 守る事: codex のターンの答えの文字の途中が AgentTextDeltaEvent として順に届く(崩れると agora の画面は codex の答えを途中から流せない —
-;; 答えは文字が届くごとに画面へ流す — 利用者の指摘 2026-09-10・2026-10-10 の答え A)。出来事の種類と欄は claude の
+;; 答えは文字が届くごとに画面へ流す・2026-10-10 の答え A)。出来事の種類と欄は claude の
 ;; adapter と同じ形(agora の absorb-event を変えずに受けられる)。入力が読まれた事は AgentInputFateEvent(started)と完了の input_refs で
 ;; 届く(agora は入力の勘定をこの 2 つで数える)。
 ;; 筋書きの Program は doeff_codex を import しない(公開 effect と、組み立ての部品 headless_compose だけ)。
@@ -34,7 +34,7 @@
 (val STUB "stub")
 ;; 同じ層 2 と adapter を、doeff_agents の公開の口(codex_process_layer_handler・fake_codex_process_layer_handler・codex_agent_adapter_handler)
 ;; で組む backend。agora は module の名に下の層の語が出る組み立ての部品を import できない(agora-controllers の境界の検 — 名の語の禁止)ので、
-;; claude と同じく公開の口から組む(card acp:kanban-issue:ki-f63f65c153b0)。
+;; claude と同じく公開の口から組む。
 (val PUBLIC-FAKE "public-fake")
 (val PUBLIC-STUB "public-stub")
 (val REPO-PACKAGES (. (Path __file__) (resolve) parent parent parent))
@@ -251,7 +251,7 @@
   None)
 
 (deftest test-the-public-codex-handlers-carry-the-text-deltas-fake [tmp-path]
-  ;; 失敗ケース(card acp:kanban-issue:ki-f63f65c153b0): doeff_agents の公開の口だけで組んだ層 2 と adapter でも、答えの文字の途中が届く。
+  ;; 失敗ケース: doeff_agents の公開の口だけで組んだ層 2 と adapter でも、答えの文字の途中が届く。
   (<- seen (run-on PUBLIC-FAKE tmp-path one-turn))
   (<- (check-one-turn seen))
   None)
@@ -375,7 +375,7 @@
   {:pre [(: s Setting)] :post [(: % dict)] :tags {:context "headless-codex-adapter-test" :role "program"}}
   "走っているターンに入力を足した直後に、その入力を名指して止めるため(agora の割り込み送信の形 — InterruptEffect の for_input)。codex の
    層 2 は入力を読んだかを名乗らないので、名指しても名指さない止めと同じに止まる(I3 — adapter が steer で合成した行方を「読んだ」と読み
-   替えて止めを省くと、ターンが終わらない・設計検証 lt-2F61HHZ2YZKD0HY0GV1YG0ZDN0 の盲検 B)。"
+   替えて止めを省くと、ターンが終わらない)。"
   (<- handle (launch s "codex-named-stop" SLOW-PROMPT {}))
   (<- before (read-until handle first-delta s.timeout -1))
   (<- (FollowUp handle "more" :input-ref "ref-more" :mode TurnInputMode.INJECT))
@@ -662,19 +662,19 @@
   None)
 
 (deftest test-headless-codex-usage-limit-carries-the-account-limit-stub [tmp-path]
-  ;; 失敗ケース(card acp:kanban-issue:ki-a59d80e0afa9): 録った codex 0.162.1 の利用枠切れのターン(枠の知らせ・誤り usageLimitExceeded・
+  ;; 失敗ケース: 録った codex 0.162.1 の利用枠切れのターン(枠の知らせ・誤り usageLimitExceeded・
   ;; 失敗の終わり)が、AgentTurnFailed.account_limit に届く。
   (<- done (run-on STUB tmp-path usage-limited-turn))
   (<- (check-usage-limit done)))
 
 (deftest test-the-public-codex-handlers-carry-the-account-limit-stub [tmp-path]
-  ;; agora が組む公開の口でも同じ(card acp:kanban-issue:ki-a59d80e0afa9)。
+  ;; agora が組む公開の口でも同じ。
   (<- done (run-on PUBLIC-STUB tmp-path usage-limited-turn))
   (<- (check-usage-limit done)))
 
 (deftest test-headless-codex-usage-limit-carries-the-account-limit-fake [tmp-path]
   ;; 層 2 の fake が筋書きの利用枠切れの事実で失敗のターンを出せば、adapter は本番と同じ AgentAccountLimit を出す(fake は adapter の
-  ;; 窓の名の表を知らない — 長さで受ける・設計検証 lt-4FZFGSA5AJ7DGD7BZ4656WY6HS の盲検 A・B)。
+  ;; 窓の名の表を知らない — 長さで受ける・B)。
   (<- done (run-on FAKE tmp-path usage-limited-turn))
   (<- (check-usage-limit done)))
 
@@ -711,8 +711,7 @@
 (defk check-overloaded-turn [#^ dict seen]
   {:pre [(: seen dict)] :post [(: % None)] :tags {:context "headless-codex-adapter-test" :role "program"}}
   "提供側の混雑で断られたターンの終わりが、会話の宣言の model と codex の文を AgentProviderCapacity で運び(口座の利用枠切れでない)、
-   同じ session の次の入力のターンが完了する事を確かめるため — agora は混雑の事実の在る失敗を、少し後に同じ session で試し直す
-   (card ki-843475dd8f8b・本番 2026-10-22 21:59 JST の会話 c-QM2DD91FG7T13716VSC9C6GKV2)。"
+   同じ session の次の入力のターンが完了する事を確かめるため — agora は混雑の事実の在る失敗を、少し後に同じ session で試し直す。"
   (val end (. (get seen "failed") end))
   (assert (isinstance end AgentTurnFailed) end)
   (assert (= end.provider-capacity (AgentProviderCapacity :model OVERLOADED-MODEL :text OVERLOADED-TEXT)) end)
@@ -725,7 +724,7 @@
   None)
 
 (deftest test-headless-codex-provider-capacity-is-carried-and-the-session-retries-stub [tmp-path]
-  ;; 失敗ケース(card ki-843475dd8f8b): 録った codex 0.162.1 の混雑のターン(誤り serverOverloaded・失敗の終わり)が
+  ;; 失敗ケース: 録った codex 0.162.1 の混雑のターン(誤り serverOverloaded・失敗の終わり)が
   ;; AgentTurnFailed.provider_capacity に届き、同じ session の試し直しが完了する。
   (<- seen (run-on STUB tmp-path overloaded-turn-then-retry))
   (<- (check-overloaded-turn seen)))
@@ -762,7 +761,7 @@
   {:pre [(: seen dict)] :post [(: % None)] :tags {:context "headless-codex-adapter-test" :role "program"}}
   "道具を呼べない process のターンが、completed でなく codex の警告の文を detail に持つ AgentTurnFailed(口座の利用枠切れでない)で
    終わり、道具を呼べなかった model の文だけの答えを届けない事と、同じ session の次の入力のターンが同じ thread の続きとして完了する
-   事を確かめるため — agora は失敗のターン(cli-failed)として記録し、責任 turns-keep-succeeding が数える(card ki-86b1443b22b6)。"
+   事を確かめるため — agora は失敗のターン(cli-failed)として記録し、責任 turns-keep-succeeding が数える。"
   (val failed (get seen "failed"))
   (val end failed.end)
   (assert (isinstance end AgentTurnFailed) end)
@@ -780,7 +779,7 @@
   None)
 
 (deftest test-headless-codex-a-turn-without-tools-ends-failed-stub [tmp-path]
-  ;; 失敗ケース(card ki-86b1443b22b6・本番の実例 = 10-15 の会話 c-HFAMV0E6RHQJ773QTWP1HJ58T2): 録った codex 0.162.1 の、code mode の
+  ;; 失敗ケース(本番の実例): 録った codex 0.162.1 の、code mode の
   ;; host を使えない process のターン(ターンの前の警告の後に、文だけの答えと completed の終わり)が、completed でなく失敗で届く。
   (<- seen (run-on STUB tmp-path toolless-turn-then-next))
   (<- (check-toolless-turn seen)))
@@ -804,7 +803,7 @@
   done)
 
 (deftest test-headless-codex-tool-items-reach-tool-use-and-tool-result-events-stub [tmp-path]
-  ;; 失敗ケース(card acp:kanban-issue:ki-77e76c7c07ce): 録った codex 0.162.1 の道具の item(命令の成功・失敗・apply_patch・web 検索)が、
+  ;; 失敗ケース: 録った codex 0.162.1 の道具の item(命令の成功・失敗・apply_patch・web 検索)が、
   ;; claude の adapter と同じ出来事(AgentToolUseEvent の ToolCall・AgentToolResultEvent の ToolAnswer)で届く — agora は absorb-event を
   ;; 変えずに画面の道具カードへ出す。道具の名は codex の item の種類の名、命令は画面の shell の card が読む command の欄。
   (<- done (run-on STUB tmp-path tool-turn))
@@ -865,7 +864,7 @@
   {"first" first "second" second})
 
 (deftest test-headless-codex-background-command-result-reaches-a-tool-result-event-stub [tmp-path]
-  ;; 失敗ケース(card acp:kanban-issue:ki-77e76c7c07ce の設計検証・盲検 A): 前のターンで始めて後ろで走った命令の終わりは、前のターンを
+  ;; 失敗ケース(盲検 A): 前のターンで始めて後ろで走った命令の終わりは、前のターンを
   ;; 名乗って次のターンの間に届く。その結果も AgentToolResultEvent で届く(届かないと画面の道具カードは結果の無いまま残る)。
   (<- read (run-on STUB tmp-path background-turns))
   (assert (isinstance read dict) read)
@@ -897,7 +896,7 @@
   done)
 
 (deftest test-headless-codex-other-tool-items-reach-tool-use-and-tool-result-events-stub [tmp-path]
-  ;; 失敗ケース(card ki-c09b93b72bff): 録った codex 0.162.1 の mcpToolCall・dynamicToolCall・imageView・collabAgentToolCall の item も、
+  ;; 失敗ケース: 録った codex 0.162.1 の mcpToolCall・dynamicToolCall・imageView・collabAgentToolCall の item も、
   ;; commandExecution ほかと同じ出来事(AgentToolUseEvent の ToolCall・AgentToolResultEvent の ToolAnswer)で届く — 道具の名は codex の
   ;; item の種類の名、命令は item の中身の欄(MCP と動的な道具の引数は道具が決めた形のまま)。子の agent の thread の答えは親の答えに
   ;; 混ざらない。

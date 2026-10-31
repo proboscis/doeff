@@ -1,4 +1,4 @@
-//! DOEFF133 の届く先を、Hy の定義が名指す repo の中の Python の関数(`.py`)の中まで辿る(agora-redesign #1798)。
+//! DOEFF133 の届く先を、Hy の定義が名指す repo の中の Python の関数(`.py`)の中まで辿る。
 //!
 //! Hy の索引は Hy の file だけを読むので、deftest → Hy の定義 → import した Python の関数 → `subprocess.run` の形の到達は、
 //! 図の上で Python の関数の所で途切れ、テストは「手元」と判じられていた。ここは Python の関数 1 つずつの事実(生の副作用の

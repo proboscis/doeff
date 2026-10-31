@@ -2,7 +2,7 @@
 
 The scheduler drops the answer of a ``Spawn`` (the task's handle) when the spawner is cancelled before it resumes, so
 the spawner can neither learn nor stop the task it just made (the first such window was the source task of
-``_run``, card ki-f01c529b539a). The wrapper has three more tasks that wait for the broker's return — the watcher of
+``_run``). The wrapper has three more tasks that wait for the broker's return — the watcher of
 ``_came_back_within``, and the gap waiter that ``_marked`` and ``_started_gaps_told`` make — and a task parked in
 ``AwaitBrokerBack`` cannot be woken by anything but its cancel. So each of them must not begin to wait before its
 spawner holds its handle.

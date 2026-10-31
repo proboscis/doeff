@@ -1,4 +1,4 @@
-;;; 汎用の SQL の effect(sql_effects.hy)の本物の ClickHouse の答え手 clickhouse-http-sql-handler(agora-redesign #802 便 3)。client の library を
+;;; 汎用の SQL の effect(sql_effects.hy)の本物の ClickHouse の答え手 clickhouse-http-sql-handler。client の library を
 ;;; 使わず、stdlib の http.client の HTTP POST 1 本 = 問い合わせ 1 つ。値の詰め替えだけで判断を持たない。要求の組み立てと答えの写しは純関数に
 ;;; 切ってある(clickhouse-query-request・clickhouse-insert-request・clickhouse-kill-request・clickhouse-rows・clickhouse-failure — 実 DB なしで
 ;;; 検を撃てる)。
@@ -10,7 +10,7 @@
 ;;;   - SqlTransaction は SqlFailed(0A000)で断る(transaction の無い置き場 — program を走らせない)。
 ;;;   - 失敗: X-ClickHouse-Exception-Code の在る答えは SqlFailed(sqlstate = None — ClickHouse は SQLSTATE を持たない・reason に code と文)。
 ;;;     HTTP が届かない・code の無い 5xx(前段の proxy)は SqlUnreachable。
-;;;   - client は server が答えるまで接続を離れない(card ki-42d653b1470f・proboscis-ema ISSUE-TRD-199): ClickHouse 24.11 は、client が離れた
+;;;   - client は server が答えるまで接続を離れない(proboscis-ema ISSUE-TRD-199): ClickHouse 24.11 は、client が離れた
 ;;;     接続へ結果か例外を書く所(HTTPHandler::trySendExceptionToClient)で落ちる。そこで要求ごとに server 側の期限(max_execution_time = 宣言の
 ;;;     deadline・timeout_overflow_mode = throw)と query_id を送り、答えの始まりを「期限 + 余白(WAIT-MARGIN-SECONDS)」の秒だけ待つ —
 ;;;     遅い問い合わせは server が期限で断り(TIMEOUT_EXCEEDED)、その答えを client がまだ待っている間に SqlFailed として受ける。待ちは宣言に
@@ -23,7 +23,7 @@
 ;;;     同じ作法)。遅い問い合わせの間も、同じ run の他の task(別の置き場への文・待ち受けの /healthz・時計の刻み)は回る。外側に scheduled が
 ;;;     要る。接続も貸し出しも持たないので、取り消された待ちに届かなかった答えの後始末は要らない(keep-nothing)。待ち手が取り消されても
 ;;;     走っている往復は止めない(止めると server の問い合わせを置いて離れる)— 往復は上の待ちの約束の秒の内に終わる。
-;;;   - process の終わりも往復を置いて離れない(card ki-41b402ad072d): 往復の thread は daemon なので、process が終わると往復の途中で
+;;;   - process の終わりも往復を置いて離れない: 往復の thread は daemon なので、process が終わると往復の途中で
 ;;;     消え、OS が socket を閉じた接続へ server が答えを書いて落ちた(10-24 08:23 JST — worker の Pod の入れ替えで終わった record の
 ;;;     service の SELECT)。走っている往復は台帳(ROUND-TRIPS)に載せ、process の終わり(Python の終わりの atexit・既定のままの
 ;;;     SIGTERM)に読み終える(settle-round-trips): EXIT-SETTLE-SECONDS の間 往復が自ら終わるのを待ち、残った往復へ KILL QUERY を撃ち、

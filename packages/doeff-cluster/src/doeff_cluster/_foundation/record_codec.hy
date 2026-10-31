@@ -158,21 +158,21 @@
       "doeff_cluster.env_upkeep" "doeff_cluster._worker.core.env_upkeep"
       ;; 実行環境の root の準備の型(#2025 の 3 本目)— FileSha256 だけは共有の置き場(MOVED-TYPES)。
       "doeff_cluster.env_prepare" "doeff_cluster._worker.intent.env_prepare_model"
-      ;; record-store の effect の区画を _ へ隠した(ADR-DOE-API-001 R15・card ki-ff69baa69a6b)— 移し替えの module を消した後も引く。
+      ;; record-store の effect の区画を _ へ隠した(ADR-DOE-API-001 R15)— 移し替えの module を消した後も引く。
       "doeff_cluster.record_store.intent.record_store_model" "doeff_cluster._record_store.intent.record_store_model"}
-     ;; 土台の区画を _ へ隠した(ADR-DOE-API-001 R15・card ki-56d2dcf86f01)— 型の名は class を定義する module の名を書くので、class を
+     ;; 土台の区画を _ へ隠した(ADR-DOE-API-001 R15)— 型の名は class を定義する module の名を書くので、class を
      ;; 定義する module(記録の例外 RecordedError・ClusterCaMissing、記録の形 Entry ほか)だけを並べる。移し替えの module を消した後も引く。
      (dfor name #("coordinator_inbox" "in_cluster_api" "notice_pipe" "otlp_post" "process_environ" "process_versions" "record_codec"
                   "record_handlers" "record_inbox" "record_log" "wal_store")
            (+ "doeff_cluster.foundation." name) (+ "doeff_cluster._foundation." name))
-     ;; coordinator の区画を _ へ隠した(ADR-DOE-API-001 R15・card ki-65a5889e595b)— 同じく class を定義する module(観測の型
+     ;; coordinator の区画を _ へ隠した(ADR-DOE-API-001 R15)— 同じく class を定義する module(観測の型
      ;; cluster_model・置き場の型 wal_format・store ほか)だけを並べる。移し替えの module を消した後も引く。
      (dfor name #("core.coordinator_invariants" "core.detached_policy" "core.program" "core.resource_policy" "entry.handler_sets"
                   "intent.cluster_model" "intent.due_model" "intent.failover_model" "intent.kube_model" "intent.request_bodies"
                   "intent.worker_notices" "protocol.durable_kv" "protocol.kube" "protocol.request_queue" "protocol.store"
                   "protocol.wal_format" "protocol.worker_notices")
            (+ "doeff_cluster.coordinator." name) (+ "doeff_cluster._coordinator." name))
-     ;; worker の区画を _ へ隠した(ADR-DOE-API-001 R15・card ki-3ff93cd3499e)— 同じく class を定義する module(worker の effect と観測の型
+     ;; worker の区画を _ へ隠した(ADR-DOE-API-001 R15)— 同じく class を定義する module(worker の effect と観測の型
      ;; worker_model・準備の型 env_prepare_model・宿の handler ほか)だけを並べる。移し替えの module を消した後も引く。
      (dfor name #("core.account_token" "core.bake_plan" "core.beat_policy" "core.boot_timing" "core.env_prepare" "core.env_rules"
                   "core.env_upkeep" "core.invariants" "core.launch" "core.memory_rules" "core.places" "core.pod_label_rules" "core.policy"
@@ -183,7 +183,7 @@
                   "protocol.observations" "protocol.pod_labels" "protocol.probes" "protocol.process_host" "protocol.supplied_hold"
                   "protocol.tick_pauses" "protocol.warm_host")
            (+ "doeff_cluster.worker." name) (+ "doeff_cluster._worker." name))
-     ;; 共有の区画を _ へ隠した(ADR-DOE-API-001 R15・card ki-6f70e9c957c0)— 同じく class を定義する module(共有の effect の型
+     ;; 共有の区画を _ へ隠した(ADR-DOE-API-001 R15)— 同じく class を定義する module(共有の effect の型
      ;; detached_model・cluster_control・盤と lease の型 shared_model・semaphore_model ほか)だけを並べる。移し替えの module を消した後も引く。
      (dfor name #("core.image_rules" "core.launch_rules" "core.native_wheel" "core.semaphore_handlers" "core.timing_rules"
                   "entry.deployed_cluster" "intent.checkout_model" "intent.cluster_control" "intent.detached_model" "intent.due_model"

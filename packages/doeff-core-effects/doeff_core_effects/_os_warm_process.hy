@@ -1,4 +1,4 @@
-;;; 待ちの子の効果(warm_effects.hy)の本物の答え手 os-warm-process-handler(agora-redesign #3646 の A3)。
+;;; 待ちの子の効果(warm_effects.hy)の本物の答え手 os-warm-process-handler。
 ;;;
 ;;;   ForkFromWarm     待ちの子の unix socket(AF_UNIX・SOCK_STREAM)に頼みの JSON 1 行を送り、答えの JSON 1 行を受ける。接続・送り・受けの
 ;;;                    全部で WARM-ANSWER-SECONDS の期限。socket の在否と mode は確かめない(作る側 = 待ちの子が mode で絞る — 相手の身元を
@@ -8,7 +8,7 @@
 ;;;                    いない(zombie でも回収の最中でもない — process_stat.hy の ENDED-STATES の外)process が居れば WarmRunning、
 ;;;                    そうでなければ exit の file を読む(在れば WarmExited・無ければ WarmLost)。
 ;;;   SignalWarmChild  同じ start-ticks で終わっていない process が居る時だけ、その group(子 A は setsid した group の先頭)へ os.killpg で送る。
-;;;   hold-input の頼み(card ki-de44efdb9aa4)は、pipe を作って読み口を頼みの 1 行の頭の 1 byte に添えて送り(SCM_RIGHTS)、受けた子の書き口を
+;;;   hold-input の頼みは、pipe を作って読み口を頼みの 1 行の頭の 1 byte に添えて送り(SCM_RIGHTS)、受けた子の書き口を
 ;;;   表に握る。WriteWarmChildInput は同じ start-ticks で走っている子の書き口へだけ書き、PollWarmChild が子の終わりを答えた時に閉じる。
 ;;;   頼み手(worker)が消えると書き口が閉じ、子 A は入力の EOF を読む。
 ;;;   読みを知らない機体(Linux と macOS の外)・/proc の無い Linux では WarmProcUnavailable を上げる — 黙って Lost / Gone にしない。
@@ -66,7 +66,7 @@
   (#^ str log-path)
   (#^ str exit-path)
   (#^ float grace-seconds)
-  ;; 常駐の子の 3 つの欄(warm_effects.hy の頭の註 — card ki-de44efdb9aa4)。既定の値は書かない(dump が省く)ので、task の頼みの形は
+  ;; 常駐の子の 3 つの欄(warm_effects.hy の頭の註)。既定の値は書かない(dump が省く)ので、task の頼みの形は
   ;; 今までと同じ(この欄を知らない版の待ちの子も task を受ける)。hold-input の頼みは入力の pipe の読み口を fd の受け渡しで添える。
   (setv #^ bool hold-input False)
   (setv #^ (| str None) cgroup-procs None)

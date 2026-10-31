@@ -1,4 +1,4 @@
-"""worker の消失を退きとして扱う入れ物 shim(worker/entry/shim の --orphan-seconds・card ki-f69f2a6869aa)を本物の process で確かめる。
+"""worker の消失を退きとして扱う入れ物 shim(worker/entry/shim の --orphan-seconds)を本物の process で確かめる。
 
 退きの寿命 retired-ms を宣言した handoff の service は、worker の世代の入れ替えでは退いて寿命の上限まで回る。worker が落ちた時(shim の
 標準入力の EOF)も同じ寿命で回すため、shim は止めの合図を送らず、job へ退く知らせの行を中継し、job が自分で終わるのを待つ。

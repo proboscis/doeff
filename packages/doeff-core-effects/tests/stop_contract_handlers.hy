@@ -1,5 +1,4 @@
-;;; 止めの合図の契約テストの解釈器(composition root)— 同じ契約の Program を、止めの合図の handler だけ替えて走らせる
-;;; (agora-redesign #1159)。
+;;; 止めの合図の契約テストの解釈器(composition root)— 同じ契約の Program を、止めの合図の handler だけ替えて走らせる。
 ;;;
 ;;;   os-signal  本物: os-signal-stop-handler(process に届く本当の SIGINT / SIGTERM)
 ;;;   scripted   fake: scripted-stop-handler(I/O なし — RaiseStop で合図を起こす)

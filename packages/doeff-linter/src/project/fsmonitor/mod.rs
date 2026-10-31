@@ -1,4 +1,4 @@
-//! 作業木の「git の index と同じでない file」と repo の歩きの一覧を、常駐の process が inotify で覚えて答える(git の fsmonitor の形・card ki-9e7e85407b71)。
+//! 作業木の「git の index と同じでない file」と repo の歩きの一覧を、常駐の process が inotify で覚えて答える(git の fsmonitor の形)。
 //!
 //! 1 file の実行(hook・エディタの `--stdin`)は、1 回ごとに別の process なので、温まっても repo の Hy の全部(約 4600)の stat と約 2000 の dir の
 //! 読みを毎回やり直していた(`GitIndex::blob_of` で file が index と同じかを確かめる所・`hy_files` の歩き)。機体ごとに 1 つの常駐の process
@@ -15,7 +15,7 @@
 //! 使う側は `session(root)` で一覧を受け、`Session::clean_oid` で file の blob の id を(stat せずに)引き、`Session::listing` で歩きの結果を引く。
 //! 有効にするのは `enable()` を呼んだ実行だけ(`--stdin` の 1 file の実行)。`DOEFF_LINTER_NO_FSMONITOR` が在れば使わない。
 //! 常駐の process は inotify(Linux だけの口)で作業木を見張るので、Linux の外(macOS の機体)では組まず、`enable()` も効かない —
-//! 1 file の実行は常駐の process が居ない時と同じく自分で stat して歩く(答えは同じ・card ki-1bcd5b34cbb3)。
+//! 1 file の実行は常駐の process が居ない時と同じく自分で stat して歩く(答えは同じ)。
 
 #[cfg(target_os = "linux")]
 pub mod daemon;

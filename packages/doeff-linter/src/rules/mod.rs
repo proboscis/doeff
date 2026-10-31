@@ -80,7 +80,7 @@ pub fn get_rules_by_id() -> HashMap<String, Box<dyn LintRule>> {
 }
 
 // 規則の ID の全部(この Python の規則と層の規則)・repo 全体が要るかの名乗り・`--list-rules` は config.rs(層の規則 project::rule を読む
-// 側)に在る — ここが project を読むと、project/settings.rs がここの get_all_rules を読むので依存の輪になる(agora-redesign #2122)。
+// 側)に在る — ここが project を読むと、project/settings.rs がここの get_all_rules を読むので依存の輪になる。
 
 /// Get rules filtered by enabled IDs
 pub fn get_enabled_rules(enabled_ids: Option<&[String]>) -> Vec<Box<dyn LintRule>> {

@@ -1,4 +1,4 @@
-;; worker の枠(task-reserve・background-room・memory の予算 — card ki-2acb63aec0fd)を枠の file から読み直す(card ki-6828eda880ce)。
+;; worker の枠(task-reserve・background-room・memory の予算)を枠の file から読み直す。
 ;; 枠を起動の引数だけで受けると、値を変えるたびに worker の Pod の template が変わって作り直され、走っている job と task が切れた(常駐の job を
 ;; 1 つ足すたびに枠を変える — 2026-10-25 の差し戻し「枠の変更に再起動を要する設計を治す。p0」)。
 ;;   (1) 枠の file の自分の行を読み、JSON でない・行が無い・taskReserve・backgroundRoom・memoryMiB のどれかが無いか 0 以上の整数でない
@@ -47,7 +47,7 @@
   (val broken [["{" "JSON でない"]
                ["[1]" "JSON の object でない"]
                [(json.dumps ROOMS) "worker eos の行が無い"]
-               ;; 失敗ケース(card ki-2acb63aec0fd): backgroundRoom の無い行(capacity だけの旧い形)は malformed。
+               ;; 失敗ケース: backgroundRoom の無い行(capacity だけの旧い形)は malformed。
                [(json.dumps {"eos" {"capacity" 3 "taskReserve" 0 "memoryMiB" 3840}}) "worker eos の行の backgroundRoom が 0 以上の整数でない: None"]
                [(json.dumps {"eos" {"capacity" 3}}) "worker eos の行の taskReserve が 0 以上の整数でない: None"]
                [(json.dumps {"eos" {"taskReserve" True "backgroundRoom" 0 "memoryMiB" 1}}) "worker eos の行の taskReserve が 0 以上の整数でない: True"]
@@ -61,7 +61,7 @@
 
 
 (deftest test-the-room-file-row-with-capacity-is-read-without-it
-  ;; card ki-2acb63aec0fd: 行に capacity(消した欄)が在っても読み、値は名乗らない(上に載る系の pin がまだ file の capacity を読むので、
+  ;; 行に capacity(消した欄)が在っても読み、値は名乗らない(上に載る系の pin がまだ file の capacity を読むので、
   ;; step 4 まで file に残す)。capacity の値が何でも同じ枠を読む。
   (<- with-capacity RoomReading (room-of-text (json.dumps {"eos" {"capacity" 7 "taskReserve" 0 "backgroundRoom" 0 "memoryMiB" 3840}}) "eos"))
   (<- odd-capacity RoomReading (room-of-text (json.dumps {"eos" {"capacity" "x" "taskReserve" 0 "backgroundRoom" 0 "memoryMiB" 3840}}) "eos"))
@@ -72,7 +72,7 @@
 
 
 (deftest test-the-room-file-row-names-pools-and-memory-mib
-  ;; card ki-ced3c45980a5: 行の省ける欄 pools(置ける組の印 pool-…)と memoryMiB(常駐の job の memory の予算)。
+  ;; 行の省ける欄 pools(置ける組の印 pool-…)と memoryMiB(常駐の job の memory の予算)。
   ;; 失敗ケース = 機体の印 host- や導く能力の名を組の印として名乗る・崩れた欄を黙って外して残りを名乗る・memoryMiB の真偽や負の数を受ける。
   (<- atlas RoomReading (room-of-text (json.dumps {"atlas" {"capacity" 13 "taskReserve" 3 "backgroundRoom" 0 "pools" ["pool-b" "pool-a" "pool-b"]
                                                             "memoryMiB" 16384}})
@@ -102,7 +102,7 @@
 
 
 (deftest test-the-heartbeat-adds-the-pools-to-provides-and-keeps-them-when-the-file-breaks [tmp-path]
-  ;; card ki-ced3c45980a5: 組の印は起動の引数の能力との和で heartbeat の provides に載り、memoryMiB は欄で載る。外すと次の読み直しの後の
+  ;; 組の印は起動の引数の能力との和で heartbeat の provides に載り、memoryMiB は欄で載る。外すと次の読み直しの後の
   ;; heartbeat から消え、崩れた file の間は前に名乗った組の印のまま。
   ;; 失敗ケース = 組の印を起動の時にしか読まない(Pod を作り直さないと効かない)・崩れた file で組の印を落とす・起動の引数の能力を捨てる。
   (setv sent #())
@@ -134,7 +134,7 @@
 
 
 (deftest test-the-coordinator-shows-memory-mib-and-takes-the-pools-as-provides
-  ;; card ki-ced3c45980a5: coordinator は heartbeat の memoryMiB を Worker の行と Worker の spec に写し(job の側の枠 — card ki-2acb63aec0fd)、組の印は
+  ;; coordinator は heartbeat の memoryMiB を Worker の行と Worker の spec に写し(job の側の枠)、組の印は
   ;; provides として受ける。名乗らない worker の行は予算を持たず、spec の形も前のまま。
   (val heard (! (register-heartbeat (ClusterState) (! (heartbeat-of {"name" "eos" "provides" ["host-eos" "pool-a"] "backgroundRoom" 3
                                                                      "taskReserve" 0 "memoryMiB" 3072})) 10)))
@@ -143,7 +143,7 @@
   (val silent (.row both.workers "w2"))
   (assert (= #(eos.provides eos.memory-mib silent.memory-mib) #(#("host-eos" "pool-a") 3072 None)) #(eos silent))
   (assert (= (get (worker-row both eos 10 T) "spec" "memoryMiB") 3072))
-  ;; spec は capacity を持たず、backgroundRoom を持つ(card ki-2acb63aec0fd)。
+  ;; spec は capacity を持たず、backgroundRoom を持つ。
   (assert (= #((get (worker-row both eos 10 T) "spec" "backgroundRoom") (in "capacity" (get (worker-row both eos 10 T) "spec"))) #(3 False)))
   (assert (not-in "memoryMiB" (get (worker-row both silent 10 T) "spec")))
   ;; 負の予算は本文の形の誤り(400)。
@@ -152,7 +152,7 @@
 
 
 (deftest test-the-naming-refuses-a-derived-capability-in-the-pool-names
-  ;; card ki-ced3c45980a5: pool- は枠の file の組の印に取ってある。node の label から導く能力に pool- の名を置く naming は起動で断る
+  ;; pool- は枠の file の組の印に取ってある。node の label から導く能力に pool- の名を置く naming は起動で断る
   ;; (導く能力と組の印が重なると、枠の file が node の label の境界を名乗れる)。
   (with [e (pytest.raises ValueError)]
     (naming-from-json (json.dumps {"nodeCapabilities" [{"label" "doeff.dev/pool" "value" "a" "capability" "pool-a"}]})))
@@ -240,7 +240,7 @@
 
 
 (deftest test-the-boot-reads-warm-services-from-the-env-then-the-room-file [tmp-path]
-  ;; card ki-67abc0cf71e9: service を待ちの子から分ける旗を、Pod の template を変えずに機体ごとに入れる(枠の file の行の warmServices)。
+  ;; service を待ちの子から分ける旗を、Pod の template を変えずに機体ごとに入れる(枠の file の行の warmServices)。
   ;; 失敗ケース = 枠の file の真を読まない・環境変数の off が file の真に負ける・真偽でない綴りで黙って偽に倒れる・枠だけの行で断る。
   (val room (/ tmp-path "room.json"))
   (.write-text room (json.dumps {"zeus" {"capacity" 39 "taskReserve" 6 "backgroundRoom" 4 "memoryMiB" 63488 "warmServices" True}

@@ -42,7 +42,7 @@ discarded):
 Reference implementation to port (a real production run, 5 parallel
 implementers → compile-reconcile → 2 test writers → gate loop → 4 adversarial
 reviewers):
-`/Users/s22625/.claude/projects/-Users-s22625-repos-agent-control-plane/3911089d-cc6c-484c-ab7c-4f9a71de723d/workflows/scripts/k2-k3-merge-failure-routing-wf_158874ac-ae0.js`
+`/path/to/workflows/scripts/k2-k3-merge-failure-routing-wf.js`
 Use it as the pilot port and the acceptance benchmark for the DSL's
 expressiveness.
 

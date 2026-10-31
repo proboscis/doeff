@@ -330,7 +330,7 @@
   (val fence-due fence-answer.at)
   (assert (and (alive (- fence-due 1) worker timing.keep-fence-ms) (not (alive fence-due worker timing.keep-fence-ms))))
   ;; kept-reassign-after-ms — sweep-keep-marks が担い手の沈黙を比べ、途絶しても動かし続けてよい印の約束を外す刻(要求の無い間も
-  ;; coordinator がこの刻に起きて約束を外す — 担い手の名が替わる切り替えで旧い名の worker が二度と知らせて来ない時・card ki-9bccbbe738a7)。
+  ;; coordinator がこの刻に起きて約束を外す — 担い手の名が替わる切り替えで旧い名の worker が二度と知らせて来ない時)。
   (<- kept-reassign-answer (| DueAt DueNow DueNever) (liveness-due silent fence-due timing))
   (assert (= kept-reassign-answer (DueAt :at (+ seen timing.kept-reassign-after-ms 1))) kept-reassign-answer)
   (val kept-reassign-due kept-reassign-answer.at)

@@ -214,7 +214,7 @@ def test_a_cli_that_ends_without_an_answer_or_runs_past_the_wait_is_a_transport_
 
 
 def test_an_exhausted_usage_limit_is_its_own_refusal_with_the_reset() -> None:
-    # 口座の利用枠が尽きた print は、届かない・壊れた答えの誤りと分けた JudgeUsageLimited(枠の種類と戻る刻 — card ki-eb4f8e1db64d)。
+    # 口座の利用枠が尽きた print は、届かない・壊れた答えの誤りと分けた JudgeUsageLimited(枠の種類と戻る刻)。
     # 失敗ケース(前の形): PrintLimited が無く 429 の http の誤りになり、呼び手は戻る刻を知れない。
     limit = AccountLimitHit(window="five_hour", resets_at=1791342000, text="You've hit your session limit · resets 12pm")
     error = _refusal(JUDGE, printer=_printer(PrintLimited(limit=limit, exit_code=1, stderr_tail=""), {}), lender=_lender(LENT))

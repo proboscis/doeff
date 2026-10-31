@@ -1,4 +1,4 @@
-;;; program を撃った task の scheduler の thread の外で回す仕組み run-apart(card ki-3b942d3af8da)— program の計算(VM の歩と、program の
+;;; program を撃った task の scheduler の thread の外で回す仕組み run-apart— program の計算(VM の歩と、program の
 ;;; 中の素の関数)は別の thread の新しい VM で回し、program が出す effect は撃った task へ送り返して、撃った所の handler で答える。
 ;;;
 ;;; 何のためか: scheduler は 1 本の thread で全部の task を回し、task を替えるのは scheduler の effect(待ち・立て・合図)の所だけ。effect を

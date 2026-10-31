@@ -1,4 +1,4 @@
-//! 節の操作の表(`data/clause_ops.json` — card ki-d3ef2a50cc04)。
+//! 節の操作の表(`data/clause_ops.json`)。
 //!
 //! defhandler の節の中で書く操作(続きを再開する・値で終える・外へ渡す・例外で抜ける)の名と終わり方の定義元は、doeff-hy の表
 //! `CLAUSE-OPS`(`packages/doeff-hy/src/doeff_hy/clause_ops.hy`)の 1 か所。Rust は Hy を評価できないので、linter は表から名・終わり方・

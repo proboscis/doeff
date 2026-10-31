@@ -1,5 +1,5 @@
-;; coordinator が process の中で止まった時の判断の失敗ケース(card ki-d033e5f969cf — 2026-10-13 02:22〜02:24 JST に atlas が 3 分止まり、
-;; 起きた coordinator が最初の歩で全 worker を lease 切れに数え、配る担当へ消えと戻りが 33 回届いた・親 card ki-b4d94c618094)。
+;; coordinator が process の中で止まった時の判断の失敗ケース(2026-10-13 02:22〜02:24 JST に atlas が 3 分止まり、
+;; 起きた coordinator が最初の歩で全 worker を lease 切れに数え、配る担当へ消えと戻りが 33 回届いた)。
 ;;   1 予定の外の長さ(前の歩の長さ + 予定の起きる刻からの寝過ごし)が lease-ms を越えた時だけ止まりと数え、前の歩の判断の刻から今まで
 ;;     を止まりとする(寝過ごし・保存の詰まりのどちらでも)。
 ;;   2 予定どおりの眠り(worker の期限の刻に起きる)は止まりに数えない — 前の歩から lease を越えて起きても、期限ちょうどに起きた歩は 0
@@ -7,7 +7,7 @@
 ;;   3 起動の最初の歩(刻み無し)と、期限なしの待ちの長い眠りは止まりでない。
 ;;   4 止まりの長さだけ時計をずらすと、止まる前に生きていた worker は止まりの直後の歩で沈黙にならず(WorkerGone 無し)、その後
 ;;     heartbeat が無ければ、止まる前の沈黙の残りの後に従来どおり WorkerGone になる。
-;;   5 起き直し(card ki-439a73dc075c — rev 47 2026-10-17 15:25 の配備で全 worker が WorkerGone になり、Service に載った後に WorkerBack
+;;   5 起き直し(rev 47 2026-10-17 15:25 の配備で全 worker が WorkerGone になり、Service に載った後に WorkerBack
 ;;     で戻った): 読み直しから Pod が Service に載るまで(readinessProbe の周期 — lease と同じ 10 秒)worker の heartbeat は届かない。その
 ;;     間も経過に数えず、Service に載った後の歩で WorkerGone を出さない。heartbeat が待ちの上限(REACH-WAIT-MS)まで 1 つも来なければ、
 ;;     その後は従来どおり数える。
@@ -95,7 +95,7 @@
           "猶予が明けたら WorkerGone を 1 つ"))
 
 
-;; --- 起き直しの後、Service に載るまで(card ki-439a73dc075c)---------------------------------------------------------------
+;; --- 起き直しの後、Service に載るまで---------------------------------------------------------------
 ;; 刻 JUDGED の印の後に coordinator が止まり、刻 BOOT に読み直した。受付は BOOT に始まるが、Pod が Service に載る刻 READY まで worker の
 ;; heartbeat は届かない(rev 47 の実測: 受付の 15:25:04 から Service の 15:25:12 まで 8 秒・戻した最後の連絡は 15:25:00〜02)。
 (val BOOT (+ JUDGED 60000))
@@ -140,7 +140,7 @@
           "上限の後は従来どおり WorkerGone を 1 つ"))
 
 
-;; 盲検 A(card ki-d033e5f969cf の設計検証): 止まりの間にずらす欄の一覧が api_policy.clocks-shifted に在るので、期限を持つ欄を足す人が
+;; 盲検 A: 止まりの間にずらす欄の一覧が api_policy.clocks-shifted に在るので、期限を持つ欄を足す人が
 ;; 一覧を忘れると、止まりの直後にその期限だけが切れる(drain・盤の TTL の行で実測した)。欄ごとに必ず分けさせ、分けた通りにずらす。
 
 (deftest test-every-state-field-is-classified-for-the-stall

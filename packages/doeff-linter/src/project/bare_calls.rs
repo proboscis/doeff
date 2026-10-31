@@ -1,8 +1,8 @@
 //! DOEFF126: defk の定義を素で呼んでいる所を拾う。
 //!
-//! defk を素で呼ぶと、答えではなく Program が返る。型の誤りで落ちずに、静かに間違った値として流れる(agora-redesign #798 の直しの便で、
+//! defk を素で呼ぶと、答えではなく Program が返る。型の誤りで落ちずに、静かに間違った値として流れる(
 //! defk に改めた `latest-by-ref` を deff と検 4 file が素のまま呼んでいた — 検で見つかった)。defn / deff を defk に改める便が何百と
-//! 続くので、呼び手の取り残しを見張る。coordinator の決定 2026-09-28(戻せる・#798 に記録)。
+//! 続くので、呼び手の取り残しを見張る。決まり(戻せる)。
 //!
 //! defk と分かる定義 = repo の Hy の file の最上位の `(defk 名 …)`(`do` と `eval-and-compile` の中も)。呼びの頭の綴りは file の import と
 //! 定義の場所で module まで解き(`smells::Scope`)、defk の集合と比べる。追えない呼び(引数で受けた関数・method)は拾わない。
@@ -11,7 +11,7 @@
 //! (`=`・`+`・`in`・`not`・`and` …)、答えを読む組み込みの関数(`len`・`str`・`get`・`sorted`・`isinstance` …)、method の的と引数
 //! (`(.get (f …) "欄")`・`(.append out (f …))`)と属性(`(. (f …) 欄)`)、条件(`if`・`when`・`while` の頭・`cond` の条件)、繰り返しの元(`for` の束ねと
 //! 内包表記の元)、record の欄(頭が大文字の型を作る呼び — doeff の package の effect は除く・repo の `defrecord` で宣言の型が Program か
-//! EffectBase を名指す欄も除く — `ProgramFields`・agora-redesign #2877)。その位置の中の `if`・`when`・`cond`・`do`・`let` の枝も
+//! EffectBase を名指す欄も除く — `ProgramFields`)。その位置の中の `if`・`when`・`cond`・`do`・`let` の枝も
 //! 答えとして使う所のまま。
 //! 拾わない: `(<- …)` の右辺・`(! …)`・`(return …)`、Program を受ける呼びの引数(repo の関数に渡す形も — Program を受けて走らせる
 //! 関数(run-on など)かもしれず、追えない)、名への束ね(後で Program として渡すかもしれない)。
@@ -20,7 +20,7 @@
 //! 定義の外には Program を走らせる所が無く、表の行や名に束ねた Program は値の代わりに流れる(実弾 = agora-controllers c6271008a が
 //! scripts/land_focus_gate.hy の最上位の表に defk の tests-of を run 無しで足し、`--all` が起動で落ちた)。ただし `run`・`<-`・`!`・
 //! doeff の package の呼びの中、defk の呼びの引数、関数の本体(`fn`・`fnk`・`defmacro`・`defclass` …)、quote / quasiquote の中は定義の中と同じ判定で下る。
-//! `defsystem` は定義(関数に展開される)で、job の行の Program の式は答えとして使う所ではない(agora-redesign #913)。
+//! `defsystem` は定義(関数に展開される)で、job の行の Program の式は答えとして使う所ではない。
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
@@ -128,7 +128,7 @@ pub fn defk_names_over(root: &Path, enabled: &BTreeSet<ProjectRule>, reach: fact
 }
 
 /// record の型の欄のうち、宣言の型が Program か EffectBase を名指す欄(module まで含めた型の名 → 欄の名・どちらも mangle 済み)。
-/// その欄は Program を運ぶ宣言なので、型を作る呼びのその欄に置いた素の defk 呼びは答えとして使う所ではない(agora-redesign #2877 —
+/// その欄は Program を運ぶ宣言なので、型を作る呼びのその欄に置いた素の defk 呼びは答えとして使う所ではない(
 /// doeff-records の RecordsServing の :prepare は (| Program EffectBase) で、serve-records が用意の task として走らせる)。
 /// 入れないのは、型の註の無い欄・object / Any の欄・別名で隠れた欄(別名の名は Program と綴られない)— どれも今までどおり答えとして数える。
 #[derive(Debug, Clone, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
@@ -235,7 +235,7 @@ const BRANCHING_FORMS: &[&str] = &["if", "when", "unless", "cond", "do", "let"];
 /// 内包表記(元は items[2])。
 const COMPREHENSIONS: &[&str] = &["lfor", "sfor", "gfor", "dfor"];
 
-/// 定義の頭(呼びを含む定義の名を取るため)。defsystem(doeff-hy・agora-redesign #833)は関数に展開され、job の行の式は「名 → Program」の
+/// 定義の頭(呼びを含む定義の名を取るため)。defsystem(doeff-hy)は関数に展開され、job の行の式は「名 → Program」の
 /// Program の値そのもの(実行しない — 宣言の道具と sim-cluster が読む)なので、定義の中と同じ判定で下る(job の式は答えとして使う所ではない・#913)。
 const DEFINITION_HEADS: &[&str] = &["defk", "deff", "defn", "defn/a", "defp", "defpp", "defhandler", "deftest", "defeffect", "defsystem"];
 
@@ -254,7 +254,7 @@ pub fn bare_calls_in(source: &str, scope: Scope<'_>, defks: &DefkNames) -> Vec<B
 }
 
 /// `bare_calls_in` と同じ — ただし型を作る呼びの `:欄 値` で、その欄の宣言の型が Program か EffectBase を名指すなら(`fields`)、値を
-/// 答えとして数えない(欄が Program を運ぶ宣言・agora-redesign #2877)。
+/// 答えとして数えない(欄が Program を運ぶ宣言)。
 pub fn bare_calls_with(source: &str, scope: Scope<'_>, defks: &DefkNames, fields: &ProgramFields) -> Vec<BareCall> {
     let mut reader = Reader::new(source, 0, source.len());
     let forms = reader.read_all();
@@ -505,7 +505,7 @@ mod tests {
         assert_eq!(names.len(), 3);
     }
 
-    /// agora-redesign #2877: record の欄の宣言の型が Program か EffectBase を名指す時だけ、型を作る呼びのその欄の素の呼びを数えない。
+    /// record の欄の宣言の型が Program か EffectBase を名指す時だけ、型を作る呼びのその欄の素の呼びを数えない。
     /// 型の註の無い欄・object / Any の欄・別名で隠れた欄・位置で渡した値は今までどおり数える。
     #[test]
     fn record_fields_declared_as_programs_carry_bare_calls_and_others_do_not() {
@@ -633,8 +633,8 @@ mod tests {
 
     #[test]
     fn defsystem_job_programs_are_declared_not_bare() {
-        // doeff-hy の defsystem(agora-redesign #833)は関数に展開され、job の行の式は「名 → Program」の Program の値そのもの(実行しない)。
-        // job の名が defk の名と同じ形(controllers/kanban/entry/writes_service.hy の (fetch (fetch foundation)))も呼びではない(agora-redesign #913)。
+        // doeff-hy の defsystem は関数に展開され、job の行の式は「名 → Program」の Program の値そのもの(実行しない)。
+        // job の名が defk の名と同じ形(controllers/kanban/entry/writes_service.hy の (fetch (fetch foundation)))も呼びではない。
         let source = r#"(defsystem sample-system [foundation]
   "見本の系"
   (fetch (fetch foundation 3 1.0) :needs #{"sim"})

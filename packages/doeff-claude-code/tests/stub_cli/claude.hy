@@ -18,14 +18,14 @@
 ;;; - テスト用の env STUB_CLI_AT_START が在れば、起動の直後(入力の前)にその行を出す(main のコメント)。
 ;;; - テスト用の env STUB_CLI_READ_SECONDS_PER_MIB(秒の数)が在れば、--resume の process は transcript の大きさ(MiB)× その秒だけ、
 ;;;   入力を読む前に待つ — 実物の CLI が init の前に transcript を頭から全部読む秒を模す(実測 2026-10-18: 割れた 216 MB の file を
-;;;   混んだ USB の disk から約 127 秒・card ki-d96c2ca8a5a1)。
+;;;   混んだ USB の disk から約 127 秒)。
 ;;; - --input-format の無い -p <prompt>(冷えた続きの前の 1 回きりの命令)は transcript に印を 1 行足して rc 0。
 ;;; - 額(実測 2.1.283・#883): result の行の total_cost_usd は会話の累積(CLI の手番 1 回 = TURN-COST)で、usage は
 ;;;   その手番の分だけ。stdin の EOF・SIGINT で降りる時に累積の額を transcript に実物と同じ形の 1 行で記し
 ;;;   ({"type":"cost-state","sessionId":…,"totalCostUSD":…,"modelUsage":{…}} — handler が続きの起点として読む)、--resume の process と
 ;;;   --fork-session の枝は最後に記した額から数え続ける。SIGKILL で消えた process は額を記さない(実物と同じ — 次の process は
 ;;;   前に記した額から数える)。modelUsage も実物 2.1.292 と同じく会話の累積で、model ごとの costUSD の和は total_cost_usd と同じ
-;;;   (card ki-1d986d4f0007 — charged)。
+;;;   (charged)。
 (import datetime [datetime timezone])
 (import json)
 (import os)
@@ -48,18 +48,18 @@
 ;; CLI — write-subagent-transcript)。道具の手番は、道具の呼びの行と最後の本文の行で別の呼びの usage を名乗る(最後の呼びは最後の本文の行)。
 (setv MODEL "claude-stub" SUBAGENT-MODEL "claude-stub-sub")
 (setv TOOL-CALL-USAGE {"input_tokens" 3 "cache_creation_input_tokens" 0 "cache_read_input_tokens" 1000 "output_tokens" 5})
-;; 最後の呼びは cache の書きの寿命の内訳(5 分・1 時間 — 実物 2.1.292 の usage.cache_creation)も名乗る(card ki-75d813bebc27)。
+;; 最後の呼びは cache の書きの寿命の内訳(5 分・1 時間 — 実物 2.1.292 の usage.cache_creation)も名乗る。
 (setv FINAL-CALL-USAGE {"input_tokens" 4 "cache_creation_input_tokens" 20 "cache_read_input_tokens" 1010 "output_tokens" 1
                         "cache_creation" {"ephemeral_5m_input_tokens" 5 "ephemeral_1h_input_tokens" 15}})
 (setv SUBAGENT-USAGE {"input_tokens" 1 "cache_creation_input_tokens" 0 "cache_read_input_tokens" 50000 "output_tokens" 900})
 ;; subagent の task の報せの total_tokens が、transcript の最後の呼びの 4 種 token の和より多い分(本番の実測の形 — 2026-10-22 の
-;; session e088fc87… で、書き切った transcript の和より報せが +251〜+1,801 多い subagent が 13 件中 10 件在った・card ki-3d45f5857239)。
+;; session e088fc87… で、書き切った transcript の和より報せが +251〜+1,801 多い subagent が 13 件中 10 件在った)。
 (setv NOTICE-EXCESS-TOKENS 1801)
-;; subagent の答えの本文(JSON の文字列の中に生の U+2028 を含む — web の本文を写した実物の transcript と同じ・card ki-3d45f5857239)。
+;; subagent の答えの本文(JSON の文字列の中に生の U+2028 を含む — web の本文を写した実物の transcript と同じ)。
 (setv SUBAGENT-ANSWER "subagent\u2028done")
 (setv MAIN-WINDOW {"inputTokens" 7 "outputTokens" 6 "contextWindow" 200000 "maxOutputTokens" 32000})
 (setv SUBAGENT-WINDOW {"inputTokens" 1 "contextWindow" 100000})
-;; 呼びを 3 段で流す手番(scenario_rules の STREAMED-CALLS-PHRASE — card ki-290ec664737d)の usage: 始まりと assistant の行の出力は
+;; 呼びを 3 段で流す手番(scenario_rules の STREAMED-CALLS-PHRASE)の usage: 始まりと assistant の行の出力は
 ;; STREAMED-PARTIAL-OUTPUT(本物の CLI 2.1.292 の stdout と同じく途中の値)、message_delta の最終の出力は呼びの usage の出力に
 ;; STREAMED-EXTRA-OUTPUT を足した値。cache の書きは全部 1 時間の寿命(本体の会話の書きの実測)。result の行の usage は本体の呼びの
 ;; 最終の usage の和(本物と同じく subagent の分を入れない — 実測 2.1.292)。
@@ -134,10 +134,10 @@
   (.format "{}/projects/{}/{}.jsonl" config mangled session-id))
 
 (defn write-subagent-transcript [#^ str path #^ str session-id #^ str agent-id]
-  "道具の途中に走らせた subagent の transcript を、実物(CLI 2.1.292)と同じ置き場と形で書く(card ki-e798888dce4e): 会話の transcript の
+  "道具の途中に走らせた subagent の transcript を、実物(CLI 2.1.292)と同じ置き場と形で書く: 会話の transcript の
    隣の <会話の id>/subagents/agent-<id>.jsonl に、subagent への頼みの user の行と、API の呼び 1 回分の assistant の行 2 本(実物と同じく
    content の block ごとに 1 行・同じ message の id。本番の CLI 2.1.292 の最後の答えの呼びと同じく、2 本とも stop_reason は null・出力の
-   token は呼びの途中の値(3)で、最終の usage は道具の結果の行の tool_use_result にだけ出す — 本番 10-23 の 5 件・card ki-3d45f5857239)。
+   token は呼びの途中の値(3)で、最終の usage は道具の結果の行の tool_use_result にだけ出す — 本番 10-23 の 5 件)。
    本文は JSON の文字列の中に生の U+2028 を含む)。"
   (setv folder (os.path.join (cut path 0 (- (len path) (len ".jsonl"))) "subagents"))
   (os.makedirs folder :exist-ok True)
@@ -181,7 +181,7 @@
 
 (defn user-text [#^ dict record]
   (setv content (.get (.get record "message" {}) "content"))
-  ;; image の block は 1 つにつき印 IMAGE-MARK を 1 つ本文へ写す(添付の画像が CLI の入力に入ったかを規則が数える — ki-0faa366b76c0)。
+  ;; image の block は 1 つにつき印 IMAGE-MARK を 1 つ本文へ写す(添付の画像が CLI の入力に入ったかを規則が数える)。
   (if (isinstance content list)
       (.join "" (gfor part content :if (isinstance part dict)
                       (if (= (.get part "type") "image") IMAGE-MARK (.get part "text" ""))))
@@ -212,7 +212,7 @@
 
   (defn call [self #^ list content #^ dict usage]
     "本体の会話の API の呼び 1 回の行を出す。3 段で流す手番(self.streamed)は message_start → 途中の値の assistant の行 → message_delta
-     (最終の usage)、ほかの手番は usage を名乗る assistant の行 1 本(card ki-290ec664737d)。"
+     (最終の usage)、ほかの手番は usage を名乗る assistant の行 1 本。"
     (if (not self.streamed)
         (emit (assistant-line self.session-id content usage))
         (do
@@ -332,7 +332,7 @@
            {})))
 
   (defn hook-lines [self #^ str event #^ str name #^ str stdout #^ str stderr #^ int exit-code #^ str outcome]
-    "hook 1 回の開始と応答の 2 行を、実物(CLI 2.1.292 の --include-hook-events)と同じ形で出す(ki-d8b473480303)。"
+    "hook 1 回の開始と応答の 2 行を、実物(CLI 2.1.292 の --include-hook-events)と同じ形で出す。"
     (setv hook-id (str (uuid.uuid4)))
     (emit {"type" "system" "subtype" "hook_started" "hook_id" hook-id "hook_name" name "hook_event" event
            "uuid" (str (uuid.uuid4)) "session_id" self.session-id})
@@ -359,14 +359,14 @@
       (time.sleep (get rule "hook_seconds")))
     (when (get rule "advice")
       ;; 条件つきルールの助言を返す UserPromptSubmit の hook(--include-hook-events の CLI の開始と応答の 2 行 — stdout は hook の書いた
-      ;; JSON の文字列・ki-d8b473480303)。
+      ;; JSON の文字列)。
       (.hook-lines self "UserPromptSubmit" "UserPromptSubmit" (advice-stdout (get rule "advice")) "" 0 "success"))
     (when (get rule "compact")
       ;; 要求の前に会話を自動で圧縮する(#4189)— 実物(CLI 2.1.294 の stream-json の書き手)と同じ形の 2 行: 圧縮中の
       ;; status の行 → system/compact_boundary(compact_metadata は会話の記録の compactMetadata を snake の名へ写した物・
       ;; preserved_segment は残した区間の uuid の組)。
       (emit {"type" "system" "subtype" "status" "status" "compacting" "session_id" self.session-id})
-      ;; 圧縮の関数の終わりの status null の行(compact_result — CLI 2.1.292 は境目の行の前に出す・card ki-8239be27d5f6)。
+      ;; 圧縮の関数の終わりの status null の行(compact_result — CLI 2.1.292 は境目の行の前に出す)。
       (emit {"type" "system" "subtype" "status" "status" None "compact_result" "success" "session_id" self.session-id})
       (emit {"type" "system" "subtype" "compact_boundary" "session_id" self.session-id "uuid" (str (uuid.uuid4))
              "compact_metadata" (| COMPACT-METADATA {"preserved_segment" {"head_uuid" (str (uuid.uuid4)) "anchor_uuid" (str (uuid.uuid4))
@@ -403,7 +403,7 @@
                     "input" (if (get rule "tool_command") {"command" (get rule "tool_command")} {})}]
              TOOL-CALL-USAGE)
       ;; 道具の途中に subagent を 1 つ走らせる(親 = 道具の呼び・別の model と usage)。実物(背景の task を止めた CLI 2.1.292 — 本番の
-      ;; 起こし方・card ki-e798888dce4e)と同じく subagent の呼びの行は stdout に出さず、subagent の task の始まりと報せの行だけを出し、
+      ;; 起こし方)と同じく subagent の呼びの行は stdout に出さず、subagent の task の始まりと報せの行だけを出し、
       ;; 呼びは subagent の transcript に書く。
       (setv agent-id (+ "a" (cut (. (uuid.uuid4) hex) 0 16)))
       (emit {"type" "system" "subtype" "task_started" "task_id" agent-id "tool_use_id" "toolu_stub" "description" "stub subagent"
@@ -442,8 +442,7 @@
       ;; Stop hook が最初の答えを差し戻す(#4020)— 実物(CLI 2.1.292・旗なし)と同じ 3 行: 差し戻される答えの assistant の行 →
       ;; isSynthetic の user の行(本文「Stop hook feedback:\n<理由>」)→ system/notification(key stop-hook-error)。その後に答え直す。
       (.call self [{"type" "text" "text" REJECTED-ANSWER}] FINAL-CALL-USAGE)
-      ;; --include-hook-events の CLI は差し戻しの前に Stop の hook の開始と応答の行を出す(exit code 2 で差し戻す hook — 理由は stderr・
-      ;; ki-d8b473480303)。
+      ;; --include-hook-events の CLI は差し戻しの前に Stop の hook の開始と応答の行を出す(exit code 2 で差し戻す hook — 理由は stderr)。
       (.hook-lines self "Stop" "Stop" "" (get rule "hook_feedback") 2 "error")
       (emit {"type" "user" "session_id" self.session-id "parent_tool_use_id" None "isSynthetic" True "uuid" (str (uuid.uuid4))
              "message" {"role" "user" "content" [{"type" "text" "text" (+ "Stop hook feedback:\n" (get rule "hook_feedback"))}]}})

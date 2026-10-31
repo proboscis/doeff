@@ -291,7 +291,7 @@
 
 
 (deftest test-the-declaration-row-carries-the-memory-and-the-single-host-reason
-  ;; job の memory と 1 台に縛る訳(card ki-2acb63aec0fd)は宣言の行に peakMiB・settleMiB(いつも)・singleHost(書いた時だけ)で載り、
+  ;; job の memory と 1 台に縛る訳は宣言の行に peakMiB・settleMiB(いつも)・singleHost(書いた時だけ)で載り、
   ;; coordinator の読みが ClusterJob の欄に写す。訳の無い job の行には singleHost の鍵が無い。
   (val bound (job "tally" (tally-program plain-foundation 2) :call TALLY-CALL :replicas 1 :peak-mib 900 :settle-mib 400
                   :single-host "機体の disk の data を持つ" :needs #{"cluster-net"}))

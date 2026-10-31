@@ -96,7 +96,7 @@
    手元の checkout から読ませる組(GitSource の列 — 空 = 宣言の url をそのまま読む): 宣言は配備と同じ remote の綴りのまま置き(送り手の
    宣言の組み立てを手元用に分けない)、この機体の worker の git にだけ url.<path>.insteadOf を環境変数で渡す — 手元の 1 台の worker は
    配備の鍵を持たないので、remote へは取りに行かない。worker-env = どの worker の boot.sh にも足す環境変数(EnvEntry の列 — 空 = 足さない):
-   配備の機体の dir が足す値(版の file と keeper — WORKER_VERSION_FILE・WORKER_DOEFF_COMMIT ほか・card ki-6e83e03d146d)を、同じ名で
+   配備の機体の dir が足す値(版の file と keeper — WORKER_VERSION_FILE・WORKER_DOEFF_COMMIT ほか)を、同じ名で
    渡す。"
   (#^ str work-dir)
   (#^ int port)
@@ -181,7 +181,7 @@
    /tmp の file は同じ機体の worker どうしで重なる)。鍵の表と git の設定の置き場 WORKER_ACCESS_DIR も worker ごとの dir に置く — 既定の
    $HOME/.doeff-worker-repos は、同じ機体で同じ HOME の本物の worker の鍵の表と重なり、上書きする(#3042)。鍵の表は配備と同じく
    file(WORKER_REPOS_FILE — 配備では ConfigMap worker-env の dir の mount)でも渡す — 起動の後に書き換えた表を worker が次の準備で
-   読み直す道を、配備と同じ形で通すため(card ki-2de748a0eac5)。"
+   読み直す道を、配備と同じ形で通すため。"
   (val home (/ (Path machine.work-dir) "workers" worker.name))
   (<- repos str (repo-key-table machine))
   (<- sources (get tuple #(EnvEntry ...)) (git-source-env machine.git-sources))

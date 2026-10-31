@@ -1,4 +1,4 @@
-"""契約の型を `(of base arg …)` で書いた引数の、型検査のための注記(agora-redesign #2535)の失敗ケース。
+"""契約の型を `(of base arg …)` で書いた引数の、型検査のための注記の失敗ケース。
 
 `of` は macro で、契約の型を注記の文字列へ写す `_type-source` は macro を持たない hy-compile に式を渡していた。そのため
 `(: rows (of tuple Row ...))` は呼び出し `of(tuple, Row, ...)` に compile され、注記にならず捨てられていた(引数は注記なし =

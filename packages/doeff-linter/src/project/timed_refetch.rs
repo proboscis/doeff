@@ -1,5 +1,5 @@
-//! DOEFF209 — 本番の code の Program が、同じ物を時間の待ちを挟んで繰り返し取りに行く所(利用者の決定 2026-10-06 — 取りに行く
-//! 繰り返しは全部直す対象で最後の手段に限り、この方針を doeff-linter と defjevrule で強制する・agora-redesign #3834)。
+//! DOEFF209 — 本番の code の Program が、同じ物を時間の待ちを挟んで繰り返し取りに行く所(取りに行く
+//! 繰り返しは全部直す対象で最後の手段に限り、この方針を doeff-linter と defjevrule で強制する)。
 //!
 //! 母集団は DOEFF208 と同じ宣言(architecture.hy の `:business-fakes` の本番の code の Hy の file — `business_fakes::production_code`)。
 //! DOEFF208 と違い doeff-records の package の中も外さない(この規則は待ちの書き手そのものを見る — 効果と源の持ち主も時間で取り直す loop を
@@ -28,7 +28,7 @@
 //! 当たらない物: 起きる刻が行や予定から導かれる期限の待ち(刻に `(+ 今 …)` を含まない)・変わりを待つ時の上限の秒(WatchChanges /
 //! WatchEvents の秒 — DOEFF208 の側)・要求の timeout・`match` の pattern・handler の節の頭(`(Delay [秒] …)`)・quote と `#_` の中・
 //! 時間切れの期限(tag が top level の名で、その tag と比べる分岐の本体が全部 繰り返しを抜ける `(stop …)` の物 — 止めの合図を待つ上限の
-//! 秒・cisco-c8 の決定 2026-10-07。来た後に同じ読みを繰り返す本体が在る tag は外さない — stopping_tags)。
+//! 秒。来た後に同じ読みを繰り返す本体が在る tag は外さない — stopping_tags)。
 //!
 //! 区分(当たりの鍵の細目の最後の段と本文): `periodic`(純粋に時間で取り直す)と `retry`(届かない後の取り直し — 待ちの綴り・掛ける期限の
 //! tag・囲む match の節の型の綴りに retry / unreachable / unavailable が在る。補助の呼びは補助の中の待ちが全部 retry の時)。
@@ -130,7 +130,7 @@ pub const NO_CHANGE_NOTICE: &str = "相手に変更の知らせが無い:";
 pub const EVIDENCE_SEPARATOR: char = '—';
 
 /// 変更の知らせを持つと分かっている相手(閉じた一覧 — 表に出す名, 照らす綴り)。照らし方: 書いた相手の名を小文字にし、空白を除き、`_` を
-/// `-` に揃えた綴りが、照らす綴りのどれかを含めば当てる(Mac の調整役の条件 2026-10-07・agora-redesign #3834)。
+/// `-` に揃えた綴りが、照らす綴りのどれかを含めば当てる(Mac の調整役の条件 2026-10-07)。
 pub const PARTIES_WITH_CHANGE_NOTICE: &[(&str, &[&str])] = &[
     ("Kubernetes", &["kubernetes", "k8s", "kube-apiserver"]),
     ("coordinator の GET /watch", &["coordinator", "/watch"]),
@@ -571,7 +571,7 @@ impl Index {
 
 /// 時間切れの期限の tag — top level で結んだ名(`(val STOP-WAIT-TAG "…")`)のうち、その tag と比べる分岐(`(cond (= tag 名) 本体 …)`・
 /// `(if (= tag 名) 本体 …)`)が母集団に 1 つ以上在り、その本体が全部 繰り返しを抜ける `(stop …)` の物。止めの合図を待つ上限の秒の期限は、
-/// 来たら待ちを打ち切って抜けるだけで、同じ物を取りに行く繰り返しではない(cisco-c8 の決定 2026-10-07・agora-redesign #3834)。来た後に
+/// 来たら待ちを打ち切って抜けるだけで、同じ物を取りに行く繰り返しではない。来た後に
 /// 同じ読みを繰り返す本体が 1 つでも在る tag は外さない。
 fn stopping_tags(units: &[Unit]) -> BTreeSet<String> {
     let mut seen: HashMap<String, bool> = HashMap::new();
@@ -1225,7 +1225,7 @@ mod tests {
         assert_eq!(details(&[("h.hy", handler), ("u.hy", user)]), vec!["run::AwaitNextTick::periodic", "os::sleep::periodic"]);
     }
 
-    /// cisco-c8 の決定 2026-10-07(agora-redesign #3834): 止めの合図を待つ上限の期限(来たら繰り返しを抜けるだけ — agora-controllers の
+    /// 決まり: 止めの合図を待つ上限の期限(来たら繰り返しを抜けるだけ — agora-controllers の
     /// task_attempt.hy の pumping-loop の deadline-passed の形)は当てない。同じ形でも、期限が来た後に同じ読みを繰り返す本体なら当たる。
     #[test]
     fn a_deadline_that_only_ends_the_wait_is_not_hit_but_one_that_reads_again_is() {

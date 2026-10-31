@@ -1,5 +1,5 @@
-;;; 汎用の file system の effect(file_effects.hy)を、外側の置き場の 1 つの dir(root)の下へ移して撃ち直す答え手 rooted-file-handler
-;;; (agora-redesign #823 項目 1)。container の volume の mount と同じ: 内側から見た / は外側の root。置き場は持たない — 答えるのは外側の
+;;; 汎用の file system の effect(file_effects.hy)を、外側の置き場の 1 つの dir(root)の下へ移して撃ち直す答え手 rooted-file-handler。
+;;;container の volume の mount と同じ: 内側から見た / は外側の root。置き場は持たない — 答えるのは外側の
 ;;; 答え手(memory-file-handler か os-file-handler)で、この handler は path の付け替えだけをする(業務を知らない)。
 ;;;
 ;;; 使い道: 1 つの memory の置き場を、node ごと・pod ごとの file system に分けて見せる(模擬の世界で、管理者の手と pod の読みが同じ置き場に
@@ -99,7 +99,7 @@
     (<- answer (moved root effect))
     (resume answer))
   (MakeSymlink [path target]
-    ;; link の先が絶対 path なら内側の / から読む先なので外側へ移す(相対の先は link の在る dir から読むので、そのまま — agora-redesign #4036)。
+    ;; link の先が絶対 path なら内側の / から読む先なので外側へ移す(相対の先は link の在る dir から読むので、そのまま)。
     (<- outer str (outer-path root path))
     (<- pointed str (if (.startswith target "/") (outer-path root target) (unchanged target)))
     (<- answer (MakeSymlink outer pointed))

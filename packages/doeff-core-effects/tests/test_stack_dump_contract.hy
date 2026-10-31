@@ -1,5 +1,5 @@
 ;;; 全 thread の stack を書く見張りの契約テスト — 同じ effect(ArmStackDump・DisarmStackDump・ReadStackDumps)に答える本物
-;;; (faulthandler-stack-dump-handler)と fake(memory-stack-dump-handler)が、同じ deftest を通る(agora-redesign #2748)。解釈器の組み立ては
+;;; (faulthandler-stack-dump-handler)と fake(memory-stack-dump-handler)が、同じ deftest を通る。解釈器の組み立ては
 ;;; stack_dump_contract_handlers.hy。
 ;;;
 ;;; 見る性質:

@@ -1,4 +1,4 @@
-//! DOEFF141: 決めた材料だけで判じる定義(agora-redesign #1368 — agora-controllers の入口の保証の判定
+//! DOEFF141: 決めた材料だけで判じる定義(agora-controllers の入口の保証の判定
 //! controllers/screen/tests/entrance_guarantee_rules.hy の 9 点のうち、一般の形で持てる 2 点の移し先)。
 //!
 //! architecture.hy の `:blind-definitions [(blind "module:名" :forbid-words [..] :no-imports True :allow-requires [..] :why "…")]` の

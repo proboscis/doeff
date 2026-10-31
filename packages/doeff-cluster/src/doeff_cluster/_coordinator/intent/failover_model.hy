@@ -1,4 +1,4 @@
-;;; 1 台の worker が止まっても常駐の job が残りの worker に入るか(N+1)の判断の型(card ki-4689c7008147)。判断は
+;;; 1 台の worker が止まっても常駐の job が残りの worker に入るか(N+1)の判断の型。判断は
 ;;; coordinator/core/failover_policy.failover-refusals。宣言の側(上に載る系の検・宣言の前の照らし)が値を集めて渡す — coordinator の
 ;;; 状態は読まない(置き方の判断 placeable・job-room-of と同じ層の、値を受ける純粋な判断)。
 (require doeff-hy.macros [val])

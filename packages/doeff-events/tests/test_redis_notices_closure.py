@@ -5,7 +5,7 @@ A job writes each factory as a call in its ``with_handlers`` list. The analyzer 
 handler is made inside the function), so each factory declares what it answers and what it performs while answering
 (``__doeff_handles__`` and ``__doeff_effects__``). Without the declaration a closure check of the job reports an
 unreadable handler, and a user had to copy the answered effects by hand — a copy that did not follow when the Redis
-handler began to answer ``AckAnnouncement`` (card ki-c3b888f955e2).
+handler began to answer ``AckAnnouncement``.
 
 - The analyzer reads each declaration.
 - The declared answers are what the real handler answers: the clauses the analyzer reads and the annotation the VM

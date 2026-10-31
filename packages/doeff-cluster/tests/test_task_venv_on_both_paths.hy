@@ -1,10 +1,10 @@
 ;; 実行環境の task の入口が、待ちの子から分かれる道と冷えた道(shim の下で root の venv の hy を直に起こす道)で、同じ root の venv を名で
-;; 引くこと(card ki-b884608b96e4・ki-869cdf21ec85)。
+;; 引くこと。
 ;;
 ;; 前は、冷えた道では uv run が root の venv を PATH の頭と VIRTUAL_ENV に足し、待ちの子から分かれる道では分かれた子 A が頼みの env(許可表の
 ;; worker の PATH のまま・VIRTUAL_ENV 無し)で置き換えたので、名で hy・python を起こす task が道によって違う venv(worker の boot の venv)を
 ;; 引いた。今は job-launch が uv run の足していた 2 つを足した環境を作り、冷えた道の env と分かれる道の頼み(entry-env)の両方に置く。
-;; 冷えた道は uv run を挟まない(card ki-869cdf21ec85)ので、uv が選ぶ venv との突き合わせは、本物の uv run の下に起きる待ちの子の
+;; 冷えた道は uv run を挟まないので、uv が選ぶ venv との突き合わせは、本物の uv run の下に起きる待ちの子の
 ;; interpreter の venv で行う。
 ;;
 ;; 1 つの宣言(実行環境の task — root の project は symlink でこの checkout を指す・入口 = tests/fixtures/warm_job の inspect)から、本物の
@@ -15,7 +15,7 @@
 ;;                  process_host と同じ欄(entry-args・cwd・entry-env)で頼む。
 ;;   前の形       … 同じ待ちの子へ、root の venv の 2 つを外した env で頼む — PATH の頭が worker の venv・VIRTUAL_ENV 無しで冷えた道と
 ;;                  食い違う(失敗ケース — この検が食い違いを測れている事を示す)。
-;; 突き合わせる事(設計検証 lt-MEB74WM4BV22PDN26YAA1JVJMK — docs/design-checks の下):
+;; 突き合わせる事(docs/design-checks の下):
 ;;   - 入口が見る PATH(全部)と VIRTUAL_ENV が 2 つの道で同じで、uv が選ぶ project の venv を名指す。
 ;;   - 入口を走らせる interpreter の venv(sys.prefix の実 path)が 2 つの道で同じで、VIRTUAL_ENV の実 path と同じ — 待ちの子を起こす venv
 ;;     (warm-launch)と entry-env と冷えた道の root の venv の hy が 1 つ(盲検 A — 3 つは別々に uv の既定に頼る)。実 path で比べるのは、冷えた道の

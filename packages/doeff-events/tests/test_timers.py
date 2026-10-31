@@ -1,4 +1,4 @@
-"""ArmTimer / DisarmTimer / TimerFired — a deadline is an event the program waits for (agora-redesign #3076).
+"""ArmTimer / DisarmTimer / TimerFired — a deadline is an event the program waits for.
 
 - An armed timer publishes ``TimerFired(tag)`` at its deadline; the program receives it with ``WaitForEvent``.
 - A disarmed timer never fires, and re-arming a tag moves its deadline (one fire per arming).
@@ -8,7 +8,7 @@
   moves to the next deadline in one step while every task waits.
 - The same timer handler runs on the wall clocks (async and sync).
 - Re-arming a tag with the deadline it already has keeps its waiting task — a worker that re-arms its deadlines
-  after every pass pays no new task for the ones that did not move (agora-redesign #3054 C).
+  after every pass pays no new task for the ones that did not move.
 - One task works every deadline of the handler (cisco-c8 2026-10-03 15:1x): arming many deadlines spawns one
   task; deadlines of the same instant fire in arming order; an earlier deadline armed after a later one fires at
   its own instant (the task waits again when the earliest deadline changes), and disarming the earliest wakes

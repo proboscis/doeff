@@ -81,7 +81,7 @@ struct BoundImport {
 /// 名前の解決の場 — 1 つの file の module・定義・import(他の file は見ない)を、引きやすい表にして持つ。
 ///
 /// 呼び出しと参照は 1 つの file に数万在り(10,000 行の file で 3 万以上)、1 つごとに定義と import の全部を回して mangle の String を確保していると、
-/// 「呼びの数 × (定義 + import の数)」になる(10,000 行で `index_source` が 4.3 秒 — card ki-58bfad2c13a1 の残り)。表は 1 回だけ作り、解決は引くだけにする。
+/// 「呼びの数 × (定義 + import の数)」になる(10,000 行で `index_source` が 4.3 秒)。表は 1 回だけ作り、解決は引くだけにする。
 struct Scope<'a> {
     /// この file の module(mangle した dotted)。
     own_module: String,

@@ -119,14 +119,14 @@ type SiteIndex<'a> = ModuleIndex<'a, ModuleSite>;
 /// 何を判じるか — repo 全体か、保存前の内容の 1 file。
 pub enum Target<'a> {
     /// repo 全体。focus は命令の行で名指した path(None = 全部)— file 1 つで判じられる規則(DOEFF150・151)は、名指しが在れば
-    /// その下の file だけを読み、repo 全体を読まない(agora-redesign #1193 — 全体を読む規則が commit を止めた DOEFF133 の再発を防ぐ)。
+    /// その下の file だけを読み、repo 全体を読まない(全体を読む規則が commit を止めた DOEFF133 の再発を防ぐ)。
     /// ほかの規則は今までどおり全体を読み、出力を名指しの path で絞る。
     Whole { focus: Option<&'a [PathBuf]> },
     Single { path: PathBuf, source: &'a str },
 }
 
 impl Target<'_> {
-    /// この実行が規則を判じるか(agora-redesign #2163)— 全体の実行は有効な規則の全部(名指しの path が在る時は DOEFF166 を除く —
+    /// この実行が規則を判じるか— 全体の実行は有効な規則の全部(名指しの path が在る時は DOEFF166 を除く —
     /// 当たる所見が名指しの外に在りうる)、1 file の実行は 1 file で判じると規則が名乗る物(`ProjectRule::judged_on_one_file`)だけ。
     /// 判じない規則は有効でも走らせず、報告の `judged` に載せない(エディタがその規則の違反を全体の実行の結果のまま残す)。
     pub fn judges(&self, rule: ProjectRule) -> bool {
@@ -214,11 +214,11 @@ pub fn run_with(root: &Path, settings: &ProjectSettings, enabled: &BTreeSet<Proj
     report.notes.extend(registry.notes.iter().cloned());
     // この実行が判じる規則(`Target::judges`)。判じない規則は有効でも走らせない — 登録簿の当たらない行(DOEFF166)は repo 全体を当てた
     // 時だけ判じ(名指しの file だけ・1 file の実行では、当たる所見が範囲の外に在りうる)、1 file の実行は 1 file で判じると名乗る規則
-    // だけを走らせる(agora-redesign #2163)。
+    // だけを走らせる。
     let judged_rules: BTreeSet<ProjectRule> = enabled.iter().copied().filter(|rule| target.judges(*rule)).collect();
     // DOEFF166 を判じる全体の実行では、登録簿の鍵が名指す規則を enable に無くても同じ実行で当てる(lent)— 当たりは 166 の判じにだけ
     // 使い、報告の前に外す。enable に 166 を含む一部の列だけを渡すと名指された規則が走らず、166 が黙って 0 件になっていた
-    // (agora-redesign #1999・#1992 の見逃し)。
+    // (#1992 の見逃し)。
     let lent: BTreeSet<ProjectRule> = if judged_rules.contains(&ProjectRule::RegistryEntryStale) {
         rules_named_by_registry(&registry, settings).difference(&judged_rules).copied().collect()
     } else {
@@ -666,7 +666,7 @@ pub fn run_with(root: &Path, settings: &ProjectSettings, enabled: &BTreeSet<Proj
                     let defks = crate::timing::timed("defk-names", || defk_names_for(root, enabled));
                     let program_params = crate::timing::timed("program-params", || program_params_for(root, enabled, &defks));
                     let program_fields = crate::timing::timed("program-fields", || program_fields_for(root, enabled));
-                    // 歩く範囲(根の下と設定の include — 根の外の検の dir も・agora-redesign #2821)。
+                    // 歩く範囲(根の下と設定の include — 根の外の検の dir も)。
                     let files: Vec<SourceFile> = hy_files::walked(root, &settings.include)
                         .into_iter()
                         .filter_map(|(rel, path)| {
@@ -674,8 +674,7 @@ pub fn run_with(root: &Path, settings: &ProjectSettings, enabled: &BTreeSet<Proj
                                 .then_some(SourceFile { rel, path, language: Language::Hy })
                         })
                         // 名指しが在れば、その下の file だけを判じる — 判定は file 1 つ(と全体の表)で決まり、出力は名指しの path で絞られる
-                        // (main の project_results と同じ述語)。全部を判じると、1 file の commit の hook で CPU 2.4 秒を使っていた
-                        // (agora-redesign #1418)。
+                        // (main の project_results と同じ述語)。全部を判じると、1 file の commit の hook で CPU 2.4 秒を使っていた。
                         .filter(|file| focus.is_none_or(|only| only.iter().any(|p| file.path.starts_with(p))))
                         .collect();
                     let judged: Vec<Result<Vec<Draft>, String>> = crate::timing::timed("definitions-judge", || files
@@ -823,7 +822,7 @@ pub fn run_with(root: &Path, settings: &ProjectSettings, enabled: &BTreeSet<Proj
                 }
             }
             // 層の置き場の外の Hy の file にも許可名簿の規則(DOEFF106・131)を当てる — 全体の実行の judge_unplaced_world と同じ判定を
-            // この file 1 つに(1 file の実行がこの 2 つを判じると名乗るため・agora-redesign #2163)。索引は上で組んだこの file の物だけ。
+            // この file 1 つに(1 file の実行がこの 2 つを判じると名乗るため)。索引は上で組んだこの file の物だけ。
             if let (Some(architecture), Some(layers), Some(raw_spec), Some(rel)) =
                 (&settings.architecture, &settings.layers, settings.raw.as_ref().filter(|r| r.world_modules.is_some()), &rel)
             {
@@ -838,7 +837,7 @@ pub fn run_with(root: &Path, settings: &ProjectSettings, enabled: &BTreeSet<Proj
                 }
             }
             // 定義の書き方の規則の名乗りは歩く範囲で引く — 根の外でも設定の include の dir の下なら `..` を含む相対(全体の実行の
-            // hy_files::walked と同じ名乗り・agora-redesign #2821)。
+            // hy_files::walked と同じ名乗り)。
             let definition_rel = rel.clone().or_else(|| hy_files::walked_rel(root, &settings.include, &path));
             if let (Some(definitions), Some(rel)) = (&settings.definitions, &definition_rel) {
                 if wants_definitions(enabled)
@@ -931,7 +930,7 @@ pub fn run_with(root: &Path, settings: &ProjectSettings, enabled: &BTreeSet<Proj
                 if enabled.contains(&ProjectRule::HandlerArgumentHoldsState) && handler_arguments::in_population(rel, decl) {
                     // class の frozen は名で引かれ、同じ名が frozen でない class が repo のどこかに在れば frozen でない(名指さない file の宣言が答えを変える)ので、
                     // 型で判じる引数が在って引かれた時だけ repo 全体から作る(索引は Hy と Python の全 file — 3000 の事実)。変わっていない file の class は git の
-                    // blob の id で引き、中身を読まない(`class_index_by_blobs` — card ki-40c8ca380713)。
+                    // blob の id で引き、中身を読まない(`class_index_by_blobs`)。
                     let classes = deferred::Deferred::new(|| crate::timing::timed("handler-argument-classes", || handler_arguments::class_index_by_blobs(root, Some((rel.as_str(), source)))));
                     drafts.extend(crate::timing::timed("single.handler-arguments", || judge_handler_arguments(root, rel, source, decl, &classes)));
                 }
@@ -967,8 +966,8 @@ pub fn run_with(root: &Path, settings: &ProjectSettings, enabled: &BTreeSet<Proj
             semantic_probes = probes;
         }
     }
-    // 索引(repo 全体の Hy・数百 MB)の後片づけは別の thread で — 実行の終わりを待たせない(1 file の commit の hook で 0.07 秒・
-    // agora-redesign #1418)。process が先に終われば片づけは OS が持つ。
+    // 索引(repo 全体の Hy・数百 MB)の後片づけは別の thread で — 実行の終わりを待たせない(1 file の commit の hook で 0.07 秒)。
+    // process が先に終われば片づけは OS が持つ。
     crate::timing::timed("drop-index", || {
         std::thread::spawn(move || drop(indexes));
     });
@@ -1000,7 +999,7 @@ fn retired_groups<'a>(architecture: &'a architecture::Architecture, enabled: &BT
 }
 
 /// DOEFF150・151 を全体の実行で判じる(focus が在ればその下の file だけを読む)。境目の部品の中の呼びは catalog(DOEFF106 と同じ
-/// 生の副作用の目録)で分類して部品の :touches と照らす(agora-redesign #1894)。
+/// 生の副作用の目録)で分類して部品の :touches と照らす。
 fn judge_retired_files(
     root: &Path,
     architecture: &architecture::Architecture,
@@ -1129,7 +1128,7 @@ fn raw_settings(root: &Path, settings: &ProjectSettings, errors: &mut Vec<String
 }
 
 /// 名指しの実行(focus)で、有効な規則がどれも file 1 つの中身と設定だけで決まると名乗る(`ProjectRule::needs_whole_repo` が偽・Jev に
-/// 問う規則でない)時の、読む範囲(名指しの path)— commit の hook の形(card ki-4c87df448c5f)。当たりは名指しの file の中身だけで
+/// 問う規則でない)時の、読む範囲(名指しの path)— commit の hook の形。当たりは名指しの file の中身だけで
 /// 決まり、出力も名指しの path で絞るので、名指しの外を読まなくても答えは同じ。repo 全体が要る規則が 1 つでも在れば None(全体を読む)。
 /// 以前は DOEFF106・131・108 が名指しの実行でも repo 全体の Hy の索引を組み、agora-controllers の 1 file で CPU 20〜60 秒・0.8〜1 GB を使った。
 fn file_local_scope<'a>(focus: Option<&'a [PathBuf]>, enabled: &BTreeSet<ProjectRule>) -> Option<&'a [PathBuf]> {
@@ -1204,7 +1203,7 @@ fn whole_hy_index(
         None => crate::timing::timed("hy-index.read", || cached_hy_files(root, &paths)),
     };
     // 経由の辿りは、実 I/O を担うと宣言した定義(:world-handlers)に入らない — その先の生の副作用はその定義の責務で、
-    // 呼び手が届くと数える意味が無い(agora-redesign #1902 — DOEFF107 の 39 件がすべてこの形だった)。
+    // 呼び手が届くと数える意味が無い(DOEFF107 の 39 件がすべてこの形だった)。
     let stops: BTreeSet<String> = settings.architecture.as_ref().map(|a| a.world_definition_targets().into_keys().collect()).unwrap_or_default();
     let trace = if via && scope.is_none() { hy_index::ViaTrace::Through { stops: &stops } } else { hy_index::ViaTrace::Skip };
     crate::timing::timed("hy-index.annotate", || hy_index::annotate_raw(&mut files, &raw.catalog, trace));
@@ -1212,11 +1211,11 @@ fn whole_hy_index(
 }
 
 /// Hy の file の索引(生の副作用の注記の前)を、file ごとの cache(facts_cache の種類 "hy-index"・binary の形)を通して読むため
-/// (agora-redesign #1364 — 1 file の実行でも repo 全体の索引を組むので、変わった file だけ読み直す)。答えは cache の無い
+/// (1 file の実行でも repo 全体の索引を組むので、変わった file だけ読み直す)。答えは cache の無い
 /// hy_index::index_file と同じ — cache の形が契約の JSON の形では運べない欄も持つ(hy_index::CachedHyFile)。欄の数が合わない
 /// 壊れた cache はその file を読み直す。鍵は facts_cache と同じ(file の大きさと更新時刻・中身の hash・linter の binary の印と版)で、
 /// file の根からの path を鍵の名にする(根の下に無い file は絶対 path)。索引は file の絶対 path を持つので、置く値は path を空にし、
-/// 読んだ後で今の根の file の path を付ける — 作業木をまたいで同じ中身の file の索引を分け合うため(card ki-9743c30d49bc)。
+/// 読んだ後で今の根の file の path を付ける — 作業木をまたいで同じ中身の file の索引を分け合うため。
 fn cached_hy_files(root: &Path, paths: &[PathBuf]) -> Vec<HyFileIndex> {
     let keyed: Vec<(String, PathBuf)> =
         paths.iter().map(|path| (relative_path(root, path).unwrap_or_else(|| path.to_string_lossy().into_owned()), path.clone())).collect();
@@ -1422,12 +1421,12 @@ fn judge_layer_file(
     if enabled.contains(&ProjectRule::LayerImportDirection) {
         drafts.extend(judge.import_direction(&facts, index));
     }
-    // DOEFF169: 層の置き場の Hy の file の全部(設定は要らない — 決して当たらない match の節・agora-redesign #2036)。
+    // DOEFF169: 層の置き場の Hy の file の全部(設定は要らない — 決して当たらない match の節)。
     if enabled.contains(&ProjectRule::MatchFieldHyphen) && file.file.language == Language::Hy {
         drafts.extend(judge.match_field_hyphens());
     }
-    // DOEFF170・171: 値を型だけで渡す層(architecture.hy の層の :wire-free True — agora の core)の Hy と Python の file(agora-redesign
-    // #2143・Python の欄は #2203 — .py の dataclass の欄の写像を黙って見逃していた)。
+    // DOEFF170・171: 値を型だけで渡す層(architecture.hy の層の :wire-free True — agora の core)の Hy と Python の file(
+    // Python の欄は #2203 — .py の dataclass の欄の写像を黙って見逃していた)。
     let wire_free_rules = [ProjectRule::WireInWireFreeLayer, ProjectRule::BareMapInWireFreeLayer];
     if spec.wire_free && wire_free_rules.iter().any(|r| enabled.contains(r)) {
         drafts.extend(judge.wire_free(enabled));
@@ -1436,7 +1435,7 @@ fn judge_layer_file(
     if enabled.contains(&ProjectRule::DictOutsideItsPlace) {
         drafts.extend(judge.dict_smells(!spec.wire_free));
     }
-    // DOEFF168: 宣言の :layers の層の Hy の file だけ(業務の層 — 層の分からない置き場は層の規則の外・agora-redesign #1906)。
+    // DOEFF168: 宣言の :layers の層の Hy の file だけ(業務の層 — 層の分からない置き場は層の規則の外)。
     if let Some(decl) = settings.architecture.as_ref().and_then(|a| a.environment_branches.as_ref()) {
         if enabled.contains(&ProjectRule::EnvironmentBranch) && file.file.language == Language::Hy && decl.layers.contains(&spec.name) {
             drafts.extend(judge.environment_branches(decl));
@@ -1484,7 +1483,7 @@ fn judge_layer_file(
         }
     }
     if let (Some(raw), Some(hy_file)) = (&settings.raw, hy_file) {
-        // 許可名簿を書いた repo では名簿の定義の module だけに許す(層では許さない — agora-redesign #1140)。
+        // 許可名簿を書いた repo では名簿の定義の module だけに許す(層では許さない)。
         let allowed_here = match &raw.world_modules {
             Some(modules) => modules.contains(&architecture::mangle_dotted(&file.module)),
             None => raw.allowed.contains(&file.site.layer),
@@ -1498,7 +1497,7 @@ fn judge_layer_file(
             }
         }
     }
-    // Python の file の環境変数の読み(agora-redesign #1907)— Hy の索引の外の `.py` にも、許しの判定は Hy の枝と同じ 1 つを使う。
+    // Python の file の環境変数の読み— Hy の索引の外の `.py` にも、許しの判定は Hy の枝と同じ 1 つを使う。
     if let (Some(raw), Language::Python, true) = (&settings.raw, file.file.language, enabled.contains(&ProjectRule::RawSideEffectDirect)) {
         let allowed_here = match &raw.world_modules {
             Some(modules) => modules.contains(&architecture::mangle_dotted(&file.module)),
@@ -2548,10 +2547,10 @@ fn range_inside(inner: &Range, outer: &Range) -> bool {
 }
 
 
-/// 1 つの test file の印の読み(file ごとに Hy の reader で 1 度だけ読む — deftest ごとに読み直さない・agora-redesign #1352)。
+/// 1 つの test file の印の読み(file ごとに Hy の reader で 1 度だけ読む — deftest ごとに読み直さない)。
 /// module の印 = 最上位の `(val pytestmark 値)` / `(setv pytestmark 値)` の値の綴り。deftest の印 = deftest の始まりの行 → :marks の並びの
 /// 綴り(doeff-hy の deftest と同じ読み方 — 名の後の fixture の並び `[..]` を 1 つ外し、先頭の文字列を飛ばした最初の dict の :marks)。
-/// 註・検の本体の文字列の中の綴りは印ではない(agora-redesign #1279)。defadr などの中に入れ子の deftest も読む。
+/// 註・検の本体の文字列の中の綴りは印ではない。defadr などの中に入れ子の deftest も読む。
 struct FileMarks {
     module: Vec<String>,
     deftests: HashMap<usize, String>,
@@ -2633,14 +2632,14 @@ struct DefinitionGraph<'h> {
     world: Vec<Option<String>>,
     /// callers[n] = n に届く定義(辺の逆向き)。
     callers: Vec<Vec<usize>>,
-    /// world_carried[n] = 系の値の中(defsystem の本体・:systems の :carriers の引数)で外の世界に触れる理由(agora-redesign #1390)。
+    /// world_carried[n] = 系の値の中(defsystem の本体・:systems の :carriers の引数)で外の世界に触れる理由。
     world_carried: Vec<Option<String>>,
     /// carried[n] = 系の値の中の辺で n に届く定義(系の値として運ぶだけで、この場では回らない辺)。
     carried: Vec<Vec<usize>>,
     /// runs[n] = その定義が系を回す入口(:systems の :runners)を名指す。
     runs: Vec<bool>,
     /// 索引の外の名指し(節・名指した完全修飾名・系の値の中か)— 組む時に渡した `foreign` が認めた名だけ(DOEFF133 の
-    /// Python の関数 — agora-redesign #1798)。
+    /// Python の関数)。
     foreign: Vec<(usize, String, bool)>,
 }
 
@@ -2733,7 +2732,7 @@ fn definition_graph_with<'h>(
         let known = |t: &str| by_name.contains_key(t) || wrapped.contains_key(t) || runners.contains(t);
         let interesting = |t: &str| known(t) || foreign(t);
         // 値を検めるだけの名指し(比べの form と assert の被演算子 — 索引の `Reference::inspected`)は、名指した値を呼ばず・被せず・渡さないので
-        // 辺にしない(agora-redesign #1581)。呼ぶ・with-handlers の列に置く・他の定義の引数に渡す・比べの外で属性を読む名指しは今までどおり辺。
+        // 辺にしない。呼ぶ・with-handlers の列に置く・他の定義の引数に渡す・比べの外で属性を読む名指しは今までどおり辺。
         let spots = file
             .references
             .iter()
@@ -2756,7 +2755,7 @@ fn definition_graph_with<'h>(
                 continue;
             }
             if let Some((spelling, _, touches)) = wrapped.get(target) {
-                // 目録の数えない行(:wraps に書けるだけの移行の間の行 — agora-redesign #1318)は外の世界に触れない。
+                // 目録の数えない行(:wraps に書けるだけの移行の間の行)は外の世界に触れない。
                 let counted = catalog.handlers.get(target).is_some_and(|h| h.counts());
                 if counted && architecture.counts_as_edge(touches) {
                     let slot = if is_carried { &mut world_carried[owner] } else { &mut world[owner] };
@@ -2845,7 +2844,7 @@ fn reach_seeds(graph: &DefinitionGraph, seeds: &[bool], carried_seeds: &[bool], 
 /// (名簿の定義・:wraps の handler を名指す定義・強い生の I/O の証拠を持つ定義)から逆向きに辿って「外の世界に届く定義」の集合を
 /// 求める。deftest がその集合に在れば縁(:edge-mark の印が要る)、無ければ手元(印を持たない)。Python の検は数えない(R6 で deftest へ)。
 /// Hy の定義が名指す repo の中の Python の関数は、その中の生の I/O の強い証拠と、名前で決まる呼び先(Python の関数・Hy の定義)まで
-/// 辿る(python_reach — agora-redesign #1798)。読めない Python の module は 2 つ目の答え(報告の誤り)に名乗る。
+/// 辿る(python_reach)。読めない Python の module は 2 つ目の答え(報告の誤り)に名乗る。
 fn judge_test_kinds(
     root: &Path,
     architecture: &architecture::Architecture,
@@ -2939,7 +2938,7 @@ fn judge_test_kinds(
 /// DOEFF137: 許可名簿の handler ごとに縁の検が在るかを判じる。縁の検 = 空でない `:interpreters` を持つ deftest のうち、DOEFF133 と
 /// 同じ定義の辺の図を辿ってその handler の定義に届く物(`:interpreters` の要素は file の外の定数の記号なので読み解かない)。
 /// 理由つきの `:contract-test (none …)` の handler は判じない・理由の無い `none` は縁の検が在っても鳴る。当たりの位置は architecture.hy の
-/// 名簿の要素・細目は名簿の綴り(agora-redesign #1363・#1796)。
+/// 名簿の要素・細目は名簿の綴り(#1796)。
 /// 相手役の名簿(:stand-ins)の組ごとにも、相手役と本物の両方に届く縁の検を数える(verified fake・Pact の形 — 同じ検を両方に流して
 /// 答えを照らす)。本物は索引の外(doeff などの package)に在ってよく、その時は本物を直に名指す定義から辿る。細目は「相手役->本物」。
 fn judge_contract_tests(root: &Path, architecture: &architecture::Architecture, hy: &HashMap<String, HyFileIndex>) -> Vec<Draft> {
@@ -3107,7 +3106,7 @@ fn spelled_handlers(root: &Path, graph: &DefinitionGraph, hy: &HashMap<String, H
     out
 }
 
-/// handler 1 つの縁の検の宣言と、縁の検が届くか(求める時だけ問う)から、DOEFF137 の当たりを決める(agora-redesign #1796)。
+/// handler 1 つの縁の検の宣言と、縁の検が届くか(求める時だけ問う)から、DOEFF137 の当たりを決める。
 fn contract_test_breach(declared: &architecture::ContractTest, covered: impl FnOnce() -> bool) -> Option<ContractTestBreach> {
     match declared {
         architecture::ContractTest::Waived(_) => None,
@@ -3129,7 +3128,7 @@ fn forward_edges(graph: &DefinitionGraph) -> Vec<Vec<usize>> {
 }
 
 /// 図の中の effect の節の全部と、その形(読まない file の節は数えない)。節の形はここで 1 度だけ求め、DOEFF143・155・156・157・158・164・
-/// 167・206 が同じ物を読む(agora-redesign #3834)。
+/// 167・206 が同じ物を読む。
 fn effect_clauses(root: &Path, graph: &DefinitionGraph, hy: &HashMap<String, HyFileIndex>, decl: &architecture::BusinessFakes) -> Vec<business_fakes::Clause> {
     use business_fakes::FileRole;
     let mut clauses: Vec<business_fakes::Clause> = Vec::new();
@@ -3151,7 +3150,7 @@ fn effect_clauses(root: &Path, graph: &DefinitionGraph, hy: &HashMap<String, HyF
     clauses
 }
 
-/// DOEFF155・156: 組み立ての形の破れを知らせにする(判定は assembly_shape — agora-redesign #1376)。全体の索引が要る(全体の実行だけ)。
+/// DOEFF155・156: 組み立ての形の破れを知らせにする(判定は assembly_shape)。全体の索引が要る(全体の実行だけ)。
 fn judge_assembly_shape(
     root: &Path,
     architecture: &architecture::Architecture,
@@ -3208,7 +3207,7 @@ fn judge_assembly_shape(
 }
 
 /// DOEFF143: 模擬の根と本番の入口から定義の辺の図を前向きに辿り、模擬の根からだけ届く effect の節(偽物)が業務の効果に tap でなく
-/// 答える所と、外の世界の表・反例の表の腐りを出す(agora-redesign #1375)。全体の索引が要る(全体の実行だけ)。
+/// 答える所と、外の世界の表・反例の表の腐りを出す。全体の索引が要る(全体の実行だけ)。
 /// 判定と、読めない表の理由(errors へ)と、空と読んだ無い表の知らせ(notes へ)。
 struct FakesJudgement {
     drafts: Vec<Draft>,
@@ -3217,7 +3216,7 @@ struct FakesJudgement {
 }
 
 /// 本番の入口(DOEFF143・164・165 と DOEFF207 が読む 1 か所): 本番の code の組の file の本番の組の関数・defsystem・__main__ の節が
-/// 名指す定義・入口の文字列が指す定義(agora-redesign #1375・#3496)。図の節の添字で返す(同じ節が 2 度入ることがある)。
+/// 名指す定義・入口の文字列が指す定義(#3496)。図の節の添字で返す(同じ節が 2 度入ることがある)。
 fn production_entry_roots(
     root: &Path,
     decl: &architecture::BusinessFakes,
@@ -3488,7 +3487,7 @@ fn judge_business_fakes(
                 .collect()
         }
     };
-    // DOEFF206(agora-redesign #3405・#3407): 違反を通す表の行(1 鍵 1 file — 行の file に当てる)と、検証環境の dir の中の節。
+    // DOEFF206(#3407): 違反を通す表の行(1 鍵 1 file — 行の file に当てる)と、検証環境の dir の中の節。
     let pass_rows: Vec<business_fakes::PassRow> = if enabled.contains(&ProjectRule::IntentFakedInVerification) {
         let mut rows = Vec::new();
         // 外の世界の表の読みの誤りは上の table が出す。下の層を通す表と検だけの偽物の表は無い dir を空と読む(Registry の読み)。
@@ -3640,7 +3639,7 @@ fn judge_business_fakes(
 }
 
 /// DOEFF136: service ごとに、entry の層の定義から呼び手を逆向きに辿り、模擬の環境(:verification-environment)の下の deftest に
-/// 1 本も届かなければ、その defservice を出す(agora-redesign #1106 の R5)。entry の層を持たない service は数えない。
+/// 1 本も届かなければ、その defservice を出す。entry の層を持たない service は数えない。
 fn judge_untested_services(architecture: &architecture::Architecture, hy: &HashMap<String, HyFileIndex>) -> Vec<Draft> {
     let Some(place) = architecture.verification_environment.as_deref() else { return Vec::new() };
     let root = layers::normalize_dir(&architecture.root);
@@ -3743,7 +3742,7 @@ fn judge_service_systems(root: &Path, architecture: &architecture::Architecture,
 }
 
 /// DOEFF207 の job でない書き手: 本番の入口(DOEFF143 と同じ `production_entry_roots`)から前向きに届く defk・deff が、契約の `:writes`
-/// で名乗った組(agora-redesign #3501 — 系の job から土台の値で渡る task の Program)。本番の入口は `:business-fakes` の宣言で決まるので、
+/// で名乗った組(系の job から土台の値で渡る task の Program)。本番の入口は `:business-fakes` の宣言で決まるので、
 /// 宣言の無い repo・`:outside-writers` を書いていない repo では空(job の :writes だけを数える)。模擬だけの定義は届かないので数えない。
 fn reachable_function_writers(root: &Path, architecture: &architecture::Architecture, hy: &HashMap<String, HyFileIndex>) -> BTreeSet<String> {
     let (Some(_), Some(decl)) = (architecture.outside_writers.as_ref(), architecture.business_fakes.as_ref()) else {
@@ -3806,7 +3805,7 @@ fn judge_record_waits(root: &Path, decl: &architecture::BusinessFakes) -> (Vec<D
                 base: Severity::Error,
                 explain: Explain::RecordChangeWakesJob {
                     subject: found.subject(),
-                    reason: "記録は記録、起動は起動(利用者 2026-10-06)。記録の変更を待って job を起こすと、記録の置き場が出来事の運び手を兼ね、待ちの秒と読み直しの分だけ反応が遅れ、置き場の負荷が待ち手の数に比例して増える。起こす知らせは出来事の基盤から受け、記録は書くだけにする — 起動や繋ぎ直しの時に追いつく読みは待たない 1 回の読み(秒 0)で足りる(agora-redesign #3834)。".to_string(),
+                    reason: "記録は記録、起動は起動。記録の変更を待って job を起こすと、記録の置き場が出来事の運び手を兼ね、待ちの秒と読み直しの分だけ反応が遅れ、置き場の負荷が待ち手の数に比例して増える。起こす知らせは出来事の基盤から受け、記録は書くだけにする — 起動や繋ぎ直しの時に追いつく読みは待たない 1 回の読み(秒 0)で足りる。".to_string(),
                 },
                 rel: found.rel,
                 message,
@@ -3833,7 +3832,7 @@ fn judge_timed_refetch(root: &Path, decl: &architecture::BusinessFakes) -> (Vec<
                 base: Severity::Error,
                 explain: Explain::PollingOnTimer {
                     subject: format!("{}(区分 {})", found.subject(), found.refetch.label()),
-                    reason: "時間で取りに行くのは最後の手段(利用者の決定 2026-10-06 — 取りに行く繰り返しは全部直す対象)。間隔を置いて同じ物を取りに行くと、変わりへの反応が間隔の分だけ遅れ、変わらない間も相手を読み続け、負荷が取りに行く手の数に比例して増える。起こすのは相手の変わりの知らせ(出来事)にし、起きる刻が行や予定から決まる期限はその刻を掛ける(agora-redesign #3834)。".to_string(),
+                    reason: "時間で取りに行くのは最後の手段(取りに行く繰り返しは全部直す対象)。間隔を置いて同じ物を取りに行くと、変わりへの反応が間隔の分だけ遅れ、変わらない間も相手を読み続け、負荷が取りに行く手の数に比例して増える。起こすのは相手の変わりの知らせ(出来事)にし、起きる刻が行や予定から決まる期限はその刻を掛ける。".to_string(),
                 },
                 rel: found.rel,
                 message,
@@ -3865,7 +3864,7 @@ fn deftests_reaching(graph: &DefinitionGraph, hy: &HashMap<String, HyFileIndex>,
 }
 
 /// service の入口の定義(図の節)と、知らせに書く入口の綴り — DOEFF136・164・167 の母集団と、届くかを辿る種。`:entry-modules` を書いた
-/// service はその module の file の定義(層の dir を持たない repo — DOEFF163 の「code を持つ service」と同じ決め・agora-redesign #1987)、
+/// service はその module の file の定義(層の dir を持たない repo — DOEFF163 の「code を持つ service」と同じ決め)、
 /// 書かない service は entry の層の dir(`<root>/<dir>/entry`)の下の定義。どちらも無い service は None(数えない)。
 fn entry_seeds(root: &str, service: &architecture::ArchService, graph: &DefinitionGraph) -> Option<(Vec<usize>, String)> {
     match &service.entry_modules {
@@ -3882,7 +3881,7 @@ fn entry_seeds(root: &str, service: &architecture::ArchService, graph: &Definiti
     }
 }
 
-/// DOEFF164: service ごとの壊した handler の反例の有無(agora-redesign #1560)。反例の節 = 反例の表の鍵に当たり本番の入口から届かない節。
+/// DOEFF164: service ごとの壊した handler の反例の有無。反例の節 = 反例の表の鍵に当たり本番の入口から届かない節。
 /// 節の効果の定義元の file を含む service の dir が持ち主(どの service の下にも無ければ土台の効果)。反例の節に届く deftest の 1 本でも
 /// その service の entry の層の定義に(DOEFF136 と同じ図を逆向きに)届けば有り。母集団は DOEFF136 と同じ(entry の層に定義を持つ service)。
 fn judge_counterexample_coverage(
@@ -3945,7 +3944,7 @@ fn judge_counterexample_coverage(
         .collect()
 }
 
-/// DOEFF167: service ごと・条ごとの反例の網羅(agora-redesign #1713)。効く反例の節と母集団は DOEFF164 と同じ(反例の表に在り本番の入口から
+/// DOEFF167: service ごと・条ごとの反例の網羅。効く反例の節と母集団は DOEFF164 と同じ(反例の表に在り本番の入口から
 /// 届かない節・entry の層に定義を持つ service)。節が名乗る条は反例の表の行の `breaks:`(claims)から読み、節に届く deftest の 1 本でも
 /// service の entry の層に届けば、その条は有り。返りの 2 つ目 = 宣言に無い service か条を名乗る `breaks:` の理由(表の読めない行)。
 fn judge_clause_coverage(
@@ -4019,7 +4018,7 @@ fn judge_clause_coverage(
 }
 
 /// 生の副作用の直接の証拠のうち、入れ子で重なる物はいちばん内側の定義に 1 度だけ(DOEFF106 の母集団)。
-/// agora-redesign #1797: 境目の部品(architecture.hy の :boundary-parts)の module の中で、触れる先が宣言に入る生の副作用の証拠か
+/// 境目の部品(architecture.hy の :boundary-parts)の module の中で、触れる先が宣言に入る生の副作用の証拠か
 /// (DOEFF106 が当たりにしない)。種類の外の証拠と、宣言の無い module の証拠は今どおり当たる。
 fn boundary_allows(raw: &raw_settings::RawSettingsSpec, module: &str, category: hy_index::RawCategory) -> bool {
     raw.boundary
@@ -4066,7 +4065,7 @@ fn world_handler_spots(hy_file: &HyFileIndex, architecture: &architecture::Archi
     let catalog = world_catalog::WorldCatalog::bundled();
     let mut chosen: BTreeMap<(Option<usize>, String), Range> = BTreeMap::new();
     for (target, range) in spots {
-        // 目録の数えない行(:wraps に書けるだけの移行の間の行 — agora-redesign #1318)は数えない。
+        // 目録の数えない行(:wraps に書けるだけの移行の間の行)は数えない。
         if !wrapped.contains_key(target) || !catalog.handlers.get(target).is_some_and(|h| h.counts()) {
             continue;
         }
@@ -4087,7 +4086,7 @@ fn world_handler_spots(hy_file: &HyFileIndex, architecture: &architecture::Archi
         .collect()
 }
 
-/// agora-redesign #1147: 層の置き場の外の Hy の file(層の外の dir・architecture の :root の外の :raw-io-roots)にも、許可名簿の規則
+/// 層の置き場の外の Hy の file(層の外の dir・architecture の :root の外の :raw-io-roots)にも、許可名簿の規則
 /// DOEFF106・131 を当てる — 外の世界に触れてよいのは名簿の定義だけで、置き場の破れ(DOEFF114)の file も例外ではない。検の file
 /// (path の段に tests・名が test_ か conftest)と :exclude の段は外す(縁のテストは DOEFF133 が持つ)。
 fn judge_unplaced_world(
@@ -4269,7 +4268,7 @@ fn judge_semantic(
     };
     let mut items = Vec::new();
     // file ごとの Hy の索引は、下の問いの節(層の問い・DOEFF203・DOEFF205)で共有する — 同じ file を節ごとに索引し直すと、1 file の実行で
-    // 34KB の file に約 0.02 秒ずつ 3 回かかっていた(agora-redesign #1632)。どの節も同じ file を同じ中身で読む(1 file の実行は stdin の
+    // 34KB の file に約 0.02 秒ずつ 3 回かかっていた。どの節も同じ file を同じ中身で読む(1 file の実行は stdin の
     // 中身・全体の実行は disk)ので、答えは変わらない。
     let mut indexed: HashMap<String, HyFileIndex> = HashMap::new();
     let mut roles_of: HashMap<String, Vec<String>> = HashMap::new();
@@ -4412,7 +4411,7 @@ fn judge_semantic(
     }
     // DOEFF205: 役が judgment / program の定義(定義の :tags か module の頭のタグ)に、形の検めと判断が混ざっているかを問う。
     // 母集団は definitions の file から、層の宣言の exclude(`tests`・`conftest.py` など)に当たる path を除いた物 — DOEFF201・202(層の
-    // file から集める)と同じ外し方にする。除かないと検の置き場の定義まで Jev に問い、業務の判断の当たりに混ざる(agora-redesign #1952)。
+    // file から集める)と同じ外し方にする。除かないと検の置き場の定義まで Jev に問い、業務の判断の当たりに混ざる。
     if let (Some(mixed), Some(reading)) = (&settings.mixed_concerns, &plain.tags) {
         if enabled.contains(&ProjectRule::SemanticMixedConcerns) {
             let spec = &layers.layers[mixed.layer.0];
@@ -4621,7 +4620,7 @@ fn judge_semantic(
             layer: layered.then_some(item.layer),
             rel: item.rel.clone(),
             detail: hy_mangle(&item.name),
-            // 選ぶ形の問いは的の語の確率(較正の見張りと同じ読み方 — 選んだ語の確率ではない・agora-redesign #1994)
+            // 選ぶ形の問いは的の語の確率(較正の見張りと同じ読み方 — 選んだ語の確率ではない)
             probability: semantic::target_probability(item.question, answer),
             flagged: draft.is_some(),
         });
@@ -4660,7 +4659,7 @@ fn is_definition_file(rel: &str, definitions: &settings::DefinitionSettings) -> 
 }
 
 /// 層の宣言(file から上へ最も近い architecture.hy)の `:exempt` が、この file の module を名指しで外した定義の書き方の規則
-/// (ProjectRule::exemptible_by_layer の物だけ・agora-redesign #2913)と、DOEFF110 を外す時に限って要る「package のどれかの
+/// (ProjectRule::exemptible_by_layer の物だけ)と、DOEFF110 を外す時に限って要る「package のどれかの
 /// defmacro から届く名」(macro_reach)。Python の文ごとの規則と同じ 1 点(crate::population)で決める。宣言を読めない時は何も
 /// 外さない — 黙って緑にしない(読めない宣言は同じ package の Python の file の DOEFF032 が名指す)。
 struct LayerExemption {
@@ -4884,7 +4883,7 @@ fn unreadable_findings(root: &Path, settings: &ProjectSettings, single: &Option<
                 Vec::new()
             }
         }
-        // 歩く範囲(根の下と設定の include)の file — 定義の規則の母集団と同じ一覧(agora-redesign #2821)。
+        // 歩く範囲(根の下と設定の include)の file — 定義の規則の母集団と同じ一覧。
         None => hy_files::walked(root, &settings.include)
             .par_iter()
             .filter_map(|(rel, path)| {
@@ -4918,8 +4917,7 @@ fn hy_rel_files(root: &Path) -> Vec<(String, PathBuf)> {
 }
 
 /// DOEFF126 が答えとして数えない record の欄(宣言の型が Program か EffectBase を名指す欄)を repo の Hy の file から集める(規則が
-/// 有効な時だけ — 無ければ空)。`(defrecord` の綴りを含む file だけを読む。defk の名と同じく file ごとに覚え、変わった file だけ読み直す
-/// (agora-redesign #2877)。
+/// 有効な時だけ — 無ければ空)。`(defrecord` の綴りを含む file だけを読む。defk の名と同じく file ごとに覚え、変わった file だけ読み直す。
 fn program_fields_for(root: &Path, enabled: &BTreeSet<ProjectRule>) -> bare_calls::ProgramFields {
     program_fields_over(root, enabled, facts_cache::Reach::Whole, &hy_rel_files(root))
 }
@@ -4982,7 +4980,7 @@ fn is_translation_file(file: &LayerFile, translation: &settings::TranslationSett
 
 /// DOEFF130: 翻訳の層の handler が業務の intent を出す所を判じる(error — 責務の境界の違反)。業務の intent = 撃った呼びの頭が、
 /// 設定の intent_layers の module の大文字の名(型)で、handler と同じ service の物(他の service の公開の intent は数えない)。撃った呼びの頭が repo の defk なら、その先を max_depth 段まで辿る —
-/// 定義の本文の名だけでは、import した関数を経由した intent がすり抜ける(agora-redesign #956・#942 の独立レビュー)。
+/// 定義の本文の名だけでは、import した関数を経由した intent がすり抜ける(#942 の独立レビュー)。
 fn judge_translation_intents(
     file: &LayerFile,
     source: &str,
@@ -4998,7 +4996,7 @@ fn judge_translation_intents(
             return None;
         }
         let site = index.get(module).or_else(|| index.get(&format!("{}.__init__", module)))?;
-        // 他の service の公開の intent を出すのは翻訳の仕事(DOEFF156 の「他の service の公開の効果」と同じ読み — agora-redesign #1134 の決め)。
+        // 他の service の公開の intent を出すのは翻訳の仕事(DOEFF156 の「他の service の公開の効果」と同じ読み)。
         // 止めるのは handler と同じ service の intent だけ。どちらかの service が決まらない(層が先の置き場)時は、今までどおり数える。
         let other_service = matches!((&site.service, &file.site.service), (Some(intent), Some(handler)) if intent != handler);
         (translation.intent_layers.contains(&site.layer) && !other_service).then_some(site.layer)
@@ -5053,7 +5051,7 @@ fn lower_layer_package(pattern: &str) -> &str {
 }
 
 /// DOEFF174: 業務の層の定義が、下の層の効果を出す所(defk を辿って届く形も)と、下の層の package の handler を被せる所を判じる
-/// (error — 責務の境界の違反・agora-redesign #3885)。
+/// (error — 責務の境界の違反)。
 fn judge_lower_layer_uses(
     file: &LayerFile,
     source: &str,
@@ -5177,7 +5175,7 @@ fn judge_bare_calls(
     let module = module_of(&file.rel);
     let facts = read_facts(Language::Hy, source, &module, &definitions.tags);
     let scope = smells::Scope { module: &module, bindings: &facts.bindings };
-    // 宣言の型が Program か EffectBase を名指す record の欄に置いた素の呼びは数えない(agora-redesign #2877)。
+    // 宣言の型が Program か EffectBase を名指す record の欄に置いた素の呼びは数えない。
     let mut drafts: Vec<Draft> = bare_calls::bare_calls_with(source, scope, defks, program_fields)
         .into_iter()
         .map(|call| Draft {
@@ -5508,7 +5506,7 @@ enum JsonValueAllowance {
 /// 方針は差し替えられる形にしてある: 許す場所の決め方を変える時(例: defwire の macro が生む解き手の中だけを許す形へ移る時)は、
 /// この関数の中身だけを替える。呼び手(母集団・名の数え方・鍵・説明の形)は変わらない。
 ///
-/// 今の方針(agora-redesign #840・operator の決定 2026-09-28 — JsonValue に触ってよいのは、汎用の解き手と、送受信そのものを行う foundation だけ):
+/// 今の方針(JsonValue に触ってよいのは、汎用の解き手と、送受信そのものを行う foundation だけ):
 /// 1. 組み込みの汎用の解き手(`BUILTIN_WIRE_MODULES`)は許す。
 /// 2. architecture.hy の `:wire-modules` の pattern に当たり、かつ foundation の層(`:foundation` の層の置き場)に在る module は許す。
 /// 3. `:wire-modules` に当たっても foundation の外なら許さない(訳を説明に出す)。当たらなければ許さない。
@@ -5937,7 +5935,7 @@ fn finish(drafts: Vec<Draft>, settings: &ProjectSettings, registry: &Registry, f
                 dropped += 1;
                 return None;
             }
-            // DOEFF206 は登録簿で下げない(載っても手つかずの当たりのまま — agora-redesign #3405)。
+            // DOEFF206 は登録簿で下げない(載っても手つかずの当たりのまま)。
             let registered = registry.keys.contains(&key) && draft.rule.lowered_by_registry();
             let base = settings.severity.get(&draft.rule).copied().unwrap_or(draft.base);
             let reconciling = settings.registry.reconciling.contains(&draft.rule);
@@ -6001,7 +5999,7 @@ mod contract_test_breach_tests {
 
     #[test]
     fn waived_none_with_doeff_contract_test_passes_without_an_edge_test() {
-        // DOEFF137(agora-redesign #1796): 理由(doeff 側の契約テストの名)つきの none は、縁の検が無くても鳴らない。
+        // DOEFF137: 理由(doeff 側の契約テストの名)つきの none は、縁の検が無くても鳴らない。
         let waived = ContractTest::Waived(ContractTestWaiver::DoeffContractTest(node("packages/doeff-core-effects/tests/test_http.hy::test-contract")));
         assert_eq!(contract_test_breach(&waived, || false), None);
         let covered_here = ContractTest::Waived(ContractTestWaiver::CoveredByRepoTest(node("tests/test_main.hy::test-main")));
@@ -6048,7 +6046,7 @@ mod judged_rules_tests {
 
     #[test]
     fn a_single_file_run_does_not_judge_rules_judged_only_on_the_whole_repo() {
-        // agora-redesign #2163: 1 file の実行は DOEFF166(登録簿の当たらない行)などの repo 全体でだけ判じる規則を判じない。全体の実行は
+        // 1 file の実行は DOEFF166(登録簿の当たらない行)などの repo 全体でだけ判じる規則を判じない。全体の実行は
         // 判じ、名指しの path の全体の実行は 166 だけを判じない(当たる所見が名指しの外に在りうる)。
         let single = Target::Single { path: PathBuf::from("/repo/app/core/x.hy"), source: "" };
         let whole = Target::Whole { focus: None };

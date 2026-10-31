@@ -34,7 +34,7 @@
 (import doeff [DoExpr EffectBase])
 (import doeff.mcp [mcp-param-annotation mcp-json-type-names])
 ;; 展開の部品は `_` の名で束ねる — この module は Hy の require が path で読む macro の境界で、見せる名は macro だけ
-;; (ADR-DOE-API-001 R14・card ki-a28c20b93638)。素の名で束ねると、目録が doeff_hy.macros の公開の名と数える。
+;; (ADR-DOE-API-001 R14)。素の名で束ねると、目録が doeff_hy.macros の公開の名と数える。
 (import doeff-hy._declarations [CONTRACT-KEYS :as _CONTRACT-KEYS
                                FUNCTION-CONTRACT-KEYS :as _FUNCTION-CONTRACT-KEYS
                                refuse-unknown-keys :as _refuse-unknown-keys
@@ -63,7 +63,7 @@
   "Return the file extension (.hyk / .hyp, else \"\") of the file the macro is being expanded in.
    Reads the Hy compiler's filename (the macro's _hy-compiler argument) — the old form walked
    inspect.stack() on every defk/deff/defp expansion, which reads the source of every frame on
-   the stack and made compiling a large .hy file take minutes (agora-redesign #786)."
+   the stack and made compiling a large .hy file take minutes."
   (setv filename compiler.filename)
   (setv ext (if (isinstance filename str) (get (os.path.splitext filename) 1) ""))
   (if (in ext [".hyk" ".hyp"]) ext ""))
@@ -114,7 +114,7 @@
    Skips leading docstring if present.
    Returns #(pre-checks post-checks real-body).
    pre-checks/post-checks are None if not specified, [] if specified but empty.
-   Keys outside `allowed` are refused (SyntaxError) instead of silently dropped (agora-redesign #800) —
+   Keys outside `allowed` are refused (SyntaxError) instead of silently dropped —
    definitions accept :effects / :tags as well (doeff_hy._declarations)."
   (setv pre-checks None
         post-checks None)
@@ -306,7 +306,7 @@ defk {name}: :post must include a return type check (: % Type).
 (import doeff-hy._type-forms [runtime-type-form :as _runtime-type-form])
 
 (defn _runtime-type-check [target rt message]
-  "契約の `(: x T)` と束縛 `(<- x T e)` が実行時に型を確かめる form の 1 点(card ki-8673c7bb5b0c)。rt = runtime-type-form で写した型の式。
+  "契約の `(: x T)` と束縛 `(<- x T e)` が実行時に型を確かめる form の 1 点。rt = runtime-type-form で写した型の式。
    正しい型の時の通り道は素の isinstance のまま(try の入りは Python 3.11 から費用が無い)。isinstance が TypeError を上げた時 —
    型の式が名(型の別名)で、その値が型引数つきの総称型かそれを含む和の時(展開の時には名の値が分からない)— だけ、
    doeff_hy._type_forms.runtime-class で値を外側の型へ写して確かめ直す(実行時は外側の型だけ — #1790 の決め)。型でない値の名は
@@ -363,7 +363,7 @@ defk {name}: :post must include a return type check (: % Type).
 (defn _of-as-get [tp]
   "型の式の中の `(of base arg …)` を、同じ意味の `(get base arg)` / `(get base #(arg …))` へ写す(入れ子と `|` の中も)。
    `of` は macro なので、macro を持たない hy-compile に直に渡すと呼び出し `of(tuple, X, ...)` になり、`(of tuple X ...)` と
-   書いた契約の引数が注記を失っていた(`|` の中では `of(...) | None` という嘘の注記になっていた — agora-redesign #2535)。"
+   書いた契約の引数が注記を失っていた(`|` の中では `of(...) | None` という嘘の注記になっていた)。"
   (cond
     (not (isinstance tp hy.models.Expression)) tp
     (and (> (len tp) 1) (isinstance (get tp 0) hy.models.Symbol) (= (str (get tp 0)) "of"))
@@ -386,7 +386,7 @@ defk {name}: :post must include a return type check (: % Type).
 
 (defn _type-params [body where]
   "契約の辞書の `:tp [T …]` を記号の list で返す(無ければ空)。答えが引数の型で決まる関数(本体の答えをそのまま返す包みなど)の型を、
-   実行時に確かめられない総称のまま型検査と .pyi へ渡すため(agora-redesign #2893)。名の並びでない値・重なる名は SyntaxError。"
+   実行時に確かめられない総称のまま型検査と .pyi へ渡すため。名の並びでない値・重なる名は SyntaxError。"
   (setv contract (get (_find-contract body) 0))
   ;; 形の検めは defeffect の :tp と分け合う(declarations.hy の type-param-symbols)。
   (_type-param-symbols (when (is-not contract None) (_declared-value contract ":tp")) where))
@@ -412,7 +412,7 @@ defk {name}: :post must include a return type check (: % Type).
         True p))))
 
 (defn _static-pre-type-check? [target phase]
-  "型検査のための展開(`_static-view?`)で、引数の型の契約 `(: x T)`(:pre の x が名)の isinstance を出さない所か(agora-redesign #2512)。
+  "型検査のための展開(`_static-view?`)で、引数の型の契約 `(: x T)`(:pre の x が名)の isinstance を出さない所か。
    引数の型は契約から書く注記(_annotate-params・defeffect の欄の注記)が運ぶので、型検査には isinstance が要らない。出すと、要素の型
    つきの総称型を含む型の別名(例 `JsonBody = Mapping[str, JsonBody] | tuple[JsonBody, ...] | …` を型検査の時だけ書く形 —
    doeff_hy/_json_value.py と同じ)が『isinstance の第 2 引数は型でない』の赤になり、別名に要素の型を書けなかった。実行の時の展開は
@@ -429,7 +429,7 @@ defk {name}: :post must include a return type check (: % Type).
    Other  → generic condition assert.
    type-params(契約の :tp)は isinstance に渡す型の中だけ object に消す — `(of Program T)` は今までどおり外側の型 Program へ
    (runtime-type-form)・素の `(: % T)` は常に真。実行時は外側の型だけを確かめる今までの決め(#1790)と同じ向きで、失敗の文と注記
-   (_contract-types)は書いた型のまま(agora-redesign #2893)。"
+   (_contract-types)は書いた型のまま。"
   (if (_is-type-check check)
       (let [target (get check 1)
             tp (get check 2)]
@@ -555,10 +555,10 @@ defk {name}: :post type annotation cannot be an empty string.
   False)
 
 ;; defk の本体の束ね(<- と !)が open_bind と Pure を引く、module の globals の名 — `__import__` を束ねごとに撃たないため
-;; (1 回 約 0.2µs・agora-redesign #844 の案 a)。値は _install-guard-globals が defk の module の globals に置く。
+;; (1 回 約 0.2µs)。値は _install-guard-globals が defk の module の globals に置く。
 ;; model ではなく名の文字列で持つ — Symbol は open-form が差し込むたびに作る。1 つの Symbol を展開のあいだで
 ;; 使い回すと、locate-synthesized が最初の展開でそれに付けた位置が残り、後のすべての束ねの式の行がその行へ
-;; ずれる(agora-redesign #1004)。
+;; ずれる。
 (setv _HELPERS-NAME "_doeff_outcomes")
 
 (defn _install-guard-globals [wrapped [runtime-globals None]]
@@ -624,7 +624,7 @@ defk {name}: :post type annotation cannot be an empty string.
    `do` を引く展開は、どれもここから綴りを作る: 補助の表の `_doeff_do`(defk・defp・deftest・defmcp-tool)・handle.hy の
    defhandler と handle の `_doeff_do`(`_do-import`)・fnk の名を束ねない引き(`_do-reference`)・validate と契約の check の
    `_doeff_validation_do`(`_validation-imports`)。別名と引き方は書いた場所の scope の都合で違うが、置き場は 1 つ —
-   置き場を macro ごとに綴っていた頃は、表を替えても写しを持つ macro だけが古い `do` で包み続けた(card ki-973b4e44d7bc・
+   置き場を macro ごとに綴っていた頃は、表を替えても写しを持つ macro だけが古い `do` で包み続けた(
    tests/test_helper_imports_table.py)。型検査のための展開の `do` は static_view.py の STATIC_HELPER_IMPORTS が持つ。"
   (_RuntimeDo "doeff.do" "do"))
 
@@ -642,7 +642,7 @@ defk {name}: :post type annotation cannot be an empty string.
    (型は macros.pyi)。
    型検査のための展開(`_static-view?`)では何も出さない — 型付きの `do`・`_doeff_perform` と補助は、doeff-hy-check が
    module の頭に 1 度だけ import する(doeff_hy/_static_view.py の STATIC_HELPER_IMPORTS)。defk ごとに出すと 1 つの名に
-   宣言が積み上がり、64 を超えた module で pyright が `_doeff_do` を Unknown にする(agora-redesign #1686)。"
+   宣言が積み上がり、64 を超えた module で pyright が `_doeff_do` を Unknown にする。"
   (if (_static-view?)
       '(do)
       `(do
@@ -657,7 +657,7 @@ defk {name}: :post type annotation cannot be an empty string.
    実行時の展開は、補助の import と `form` を、すぐ呼ぶ引数なしの関数の中に入れる。関数の中で import した名は
    関数全体の局所の名になるので、defk の本体でそのまま import すると、同じ本体で先に読む traverse / for/do の
    `_doeff_do`・文の guard の `_guard_statement_value`・最後の値の guard の `_doeff_effect_base` が
-   UnboundLocalError で落ちた(card ki-c67428538aec・tests/test_fnk_do_bang_scope.py)。すぐ呼ぶ関数の中なら名はその
+   UnboundLocalError で落ちた(tests/test_fnk_do_bang_scope.py)。すぐ呼ぶ関数の中なら名はその
    関数に留まり、外は module の段の名を読み続ける。型検査のための展開は import を出さないので包まない。
 
    前提: `form` のうち評価の時にすぐ走る部分に、利用者の式を置かない(利用者の式は `form` の中の関数の本体にだけ置く)。
@@ -685,14 +685,14 @@ defk {name}: :post type annotation cannot be an empty string.
   "名 `name` を定義する macro(defk・deff・defp・deftest・defeffect・defmcp-tool・handle.hy の defhandler・record.hy の defrecord と defwire・持ち主の package の定義の macro — doeff-conductor の defworkflow(doeff_conductor/macros.hy)と doeff-cluster の defsystem(doeff_cluster/_shared/entry/macros.hy))の展開の文の並び `forms`(補助の import を含む)を、書かれた所に合わせて組む。
    `module-forms` は module の読み込みで 1 度だけ走る前提の、定義を module に知らせる文(deftest の pytest の item の記録)。
    module と class の本体では `forms` の後に置き、関数の本体の中では実行時の展開でも型検査のための展開でも出さない —
-   関数の中の定義は module の段の定義ではなく、外の関数を呼ぶたびに積み増す(card ki-93395c51de1e・設計検証
-   lt-0YB1XJPKH406GNDWRZ4KND2Q9N の盲検 A)。どこで 1 度だけ走るかの判断はここだけが持ち、呼び手は文を渡すだけにする。
+   関数の中の定義は module の段の定義ではなく、外の関数を呼ぶたびに積み増す。
+   どこで 1 度だけ走るかの判断はここだけが持ち、呼び手は文を渡すだけにする。
 
    module と class の本体では今までどおり文を並べる — import した名は module の globals か class の属性になり、先の
    読みを壊さない。関数の本体の中(入れ子の定義)では、文の並びをすぐ呼ぶ引数なしの関数に入れ、定義した値だけを
    `name` に束ねる。関数の中で import した名は関数全体の局所の名になるので、並べたままだと外の関数で先に読む
    traverse / for/do の `_doeff_do`・文の guard の `_guard_statement_value`・最後の値の guard の `_doeff_effect_base` が
-   UnboundLocalError で落ちた(card ki-964823cd7feb・tests/test_nested_definition_scope.py)。module と class の本体を
+   UnboundLocalError で落ちた(tests/test_nested_definition_scope.py)。module と class の本体を
    包まないのは、包むと定義の `__qualname__` が変わり(pickle が名で引けない)、class の本体の method の引数なしの
    `super()` が `__class__` を失うから。型検査のための展開は補助を import しないので包まない。
 
@@ -782,7 +782,7 @@ defk {name}: :post type annotation cannot be an empty string.
 
    展開の時の Hy の compiler の scope のうち、let と内包を飛ばした最も近い Python の scope が class(defclass が作る、
    関数でない ScopeFn)なら真。型検査のための展開は偽(展開を変えない — `_in-function-body?` と同じ)。読み手は handle.hy
-   の handle と defhandler(card ki-edab7c8fbb55)。"
+   の handle と defhandler。"
   (setv scope (nearest-python-scope (. compiler scope)))
   (and (not (_static-view?))
        (isinstance scope ScopeFn)
@@ -813,7 +813,7 @@ defk {name}: :post type annotation cannot be an empty string.
    置き、途中の出口(`_route-returns`)と最後の式の代入は注記なしにする(`_exit-binding`)— どの出口の値も宣言の T と突き合わされ、
    型の穴を持つ値(`tuple[Unknown, ...]` など)を代入しても、穴の赤は代入の 1 つ(書き手の return の行)だけで、以後の guard・`%`・
    return へ伝わらない。注記を最後の式の代入にだけ付けると、本体の最後が `while True` の形では注記が到達しない所に置かれ、途中の
-   出口の値の型の穴が guard の引数・`_hy_let_%`・return へのコピーへ伝わって return ごとに赤が 3 つ増えた(agora-redesign #4254・
+   出口の値の型の穴が guard の引数・`_hy_let_%`・return へのコピーへ伝わって return ごとに赤が 3 つ増えた(
    親 #3167)。値の型がまるごと Unknown の時は、pyright が宣言の在る変数をその Unknown に絞るので伝わる(最後の式の出口と同じ)。
    位置は最後の式から取る(T の誤りの赤は前と同じ行を指す)。局所変数の注記は実行時に評価されない。"
   (if (is return-source None)
@@ -824,7 +824,7 @@ defk {name}: :post type annotation cannot be an empty string.
   "出口(途中の `(return x)` と最後の式)の値を `_contract_result` に入れる文 `(setv #(_contract_result) #(値))`。注記は付けない
    (型は関数の頭の宣言 `_result-declaration`)。要素 1 つのタプルの代入で書くのは、Hy の `(setv 名 値)` が値の一時の名(match・if・
    cond を値に使った時の `_hy_anon_N`)を代入先の名へ移し替えるため — match は case の前に `一時の名 = None` を置くので、移し替えると
-   `_contract_result = None` が宣言の T と突き合わされ、網羅した match でも書き手に直せない赤になる(agora-redesign #4254 の使い手の
+   `_contract_result = None` が宣言の T と突き合わされ、網羅した match でも書き手に直せない赤になる(
    測定)。タプルの代入先には移し替えが起きず、一時の名は match の網羅で絞られた型のまま入る。CPython は要素 1 つのタプルを作って
    すぐ展開する代入を素の代入と同じ bytecode にするので、実行時の手間は増えない。位置は origin から取る。"
   `(setv #(~(_result-symbol origin)) #(~value)))
@@ -847,7 +847,7 @@ defk {name}: :post type annotation cannot be an empty string.
    - defk: 型検査のための展開(`_static-view?`)の時だけ書く。その展開では `<-` と `(! …)` が `_doeff_perform` に
      なり本体に yield が無いので、関数は答え T を返す普通の関数で、`do` の型(static_types.pyi)が
      `Expand[T, Never]` にする。注記が無いと、自分を呼び直す defk では pyright が答えの型を推せず(推論の途中の
-     自分の呼びは Unknown)、呼び直しの答えを束ねた名と返り値が Unknown の strict の赤になった(agora-redesign #2308)。
+     自分の呼びは Unknown)、呼び直しの答えを束ねた名と返り値が Unknown の strict の赤になった。
      書き手が本体に yield を直に書いた defk は生成器なので書かない(T は生成器の返り値の注記にならない)。
      実行時の展開は今までどおり書かない — 実行時の defk は生成器で、T の注記は食い違う。"
   (cond
@@ -862,7 +862,7 @@ defk {name}: :post type annotation cannot be an empty string.
 
 (defn _route-returns [form exit-forms]
   "本体の form の中の `(return x)` を、最後の式と同じ出口 — `_contract_result` に入れ、guard と :post の確かめを通してから
-   返す — に書き換える(agora-redesign #1823: 途中の return は確かめの前に関数を抜けていた)。`exit-forms` は結果を
+   返す — に書き換える(途中の return は確かめの前に関数を抜けていた)。`exit-forms` は結果を
    `_contract_result` に入れた後に置く文の列。別の関数・class の定義と quote の中は書き換えない(その return は外側の出口ではない)。"
   (cond
     (and (isinstance form hy.models.Expression) (> (len form) 0)
@@ -903,7 +903,7 @@ defk {name}: :post type annotation cannot be an empty string.
   ;; 注記せず、結果を入れる局所変数 `_contract_result` を関数の頭で T と宣言する(`_result-declaration`)
   ;; — 生成器かどうか(本体に yield が在るか)を macro が判定せずに、途中の出口と最後の式の型を T と
   ;; 突き合わせられる。局所変数の注記は実行時に評価されない。
-  ;; 型検査のための展開の defk は生成器でないので、戻り値にも T を注記する(`_annotates-return?` — agora-redesign #2308)。
+  ;; 型検査のための展開の defk は生成器でないので、戻り値にも T を注記する(`_annotates-return?`)。
   (setv params (_annotate-params params (_contract-types pre-checks))
         return-source (.get (_contract-types post-checks) "%"))
   (setv head (if (_annotates-return? kleisli? return-source real-body)
@@ -915,7 +915,7 @@ defk {name}: :post type annotation cannot be an empty string.
         `(do)))
   (if post-checks
       (let [post-asserts (_contract-code post-checks name "post-condition" kleisli? type-params)
-            ;; 途中の return も最後の式と同じ出口(guard → :post の確かめ)を通す(agora-redesign #1823)。
+            ;; 途中の return も最後の式と同じ出口(guard → :post の確かめ)を通す。
             exit-forms [guard-stmt `(let [% _contract_result] ~@post-asserts)]
             routed (lfor f real-body (_route-returns f exit-forms))
             ;; ADR-DOE-HY-001: kleisli 本体の statement 位置を guard(最終式=返り値は対象外)
@@ -952,10 +952,10 @@ defk {name}: :post type annotation cannot be an empty string.
                                 ModuleBindings :as _ModuleBindings
                                 ModuleNames :as _ModuleNames
                                 module-declaration :as _module-declaration])
-;; match の class pattern の欄の名を Python の属性の名へ直す(Hy 1.3.1 の欠陥の回避・defk が使う — agora-redesign #2036)
+;; match の class pattern の欄の名を Python の属性の名へ直す(Hy 1.3.1 の欠陥の回避・defk が使う)
 (import doeff-hy._match-fields [mangle-match-fields :as _mangle-match-fields])
 (import doeff-hy._static-view [report-findings :as _report-findings])
-;; pytest の item の記録の口(agora-redesign #1211 — 記録の形の定義元は pytest_items.py)
+;; pytest の item の記録の口(記録の形の定義元は pytest_items.py)
 (import doeff-hy._pytest-items [record-function :as _record-test-function
                                record-module-binding :as _record-module-binding])
 (import hy.scoping [ScopeGlobal])
@@ -1003,7 +1003,7 @@ defk {name}: :post type annotation cannot be an empty string.
                            "(defn・fn・class・let の中には書けません — 関数は defk で書きます)。"
                            " [ADR-DOE-HY-006]\n"))))
   (setv declaration (_module-declaration (_module-bindings compiler) form (_static-view?)))
-  ;; module の直下の pytestmark を pytest の item の記録に載せる(agora-redesign #1211 / #1291 — 記録の式を展開に足す)
+  ;; module の直下の pytestmark を pytest の item の記録に載せる(#1291 — 記録の式を展開に足す)
   (setv item-record (when (is-not compiler None) (_record-module-binding head args)))
   (if (is item-record None)
       declaration
@@ -1031,8 +1031,7 @@ defk {name}: :post type annotation cannot be an empty string.
 ;; ---------------------------------------------------------------------------
 
 (defmacro defeffect [#^ HyASTCompiler _hy-compiler #^ Object name #^ Object #* rest]
-  "Define an effect type: a frozen dataclass inheriting EffectBase (agora-redesign #800 —
-   operator decision 2026-09-27).
+  "Define an effect type: a frozen dataclass inheriting EffectBase.
 
    (defeffect BorrowToken
      \"Borrow an access token from the custody service.\"
@@ -1059,15 +1058,15 @@ defk {name}: :post type annotation cannot be an empty string.
    :runs-carried [program] names the fields holding a Program the handler runs where the
    effect was performed (under the handlers there — SqlTransaction's program). It sets
    __doeff_runs_carried__ (read by doeff_core_effects._effects.runs_carried_of; a closure
-   check reads those Programs as run at the performing site — agora-redesign #1456).
+   check reads those Programs as run at the performing site).
 
    :tp [T] names the type parameters the answer and the fields read (the same form as defk / deff's :tp). The type-check
    expansion writes `class SqlTransaction[T](…)` (PEP 695), so a field `(: program (of Program T object))` and
    :answer (| T SqlFailed SqlUnreachable) are generic in T; the runtime expansion writes no type parameter and reads T from
-   the module (`(val T (TypeVar \"T\"))`) — agora-redesign #2939.
+   the module (`(val T (TypeVar \"T\"))`).
 
    関数の本体の中に書くと、補助の import(_doeff-dataclass・_doeff-effect-base など)と class をすぐ呼ぶ関数に入れて
-   <name> だけを束ねる(_scoped-definition — card ki-93395c51de1e)。"
+   <name> だけを束ねる(_scoped-definition)。"
   (setv docstring None contract None forms (list rest))
   (when (and forms (isinstance (get forms 0) hy.models.String))
     (setv docstring (get forms 0) forms (cut forms 1 None)))
@@ -1108,7 +1107,7 @@ defk {name}: :post type annotation cannot be an empty string.
    Arbitrary validation expressions are also allowed in the same list.
 
    関数の本体の中に書くと、宣言の import(doeff_hy)と定義をすぐ呼ぶ関数に入れて name だけを束ねる
-   (_scoped-definition — card ki-93395c51de1e)。"
+   (_scoped-definition)。"
   (_warn-defk-in-hyp _hy-compiler "deff" name)
   (setv #(pre-checks post-checks real-body) (_extract-contracts body _FUNCTION-CONTRACT-KEYS (+ "deff " (str name))))
   (when (is pre-checks None)
@@ -1182,7 +1181,7 @@ deff {name}: {{:post [...]}} is required.
   (_reject-handler-signature name params)
   ;; 本体・契約・引数の match の class pattern の keyword の欄の名を hy.mangle で属性の名へ直す — Hy 1.3.1 の match は
   ;; 欄の名を mangle せずに case へ出すので、(Rec :ended-reason None) の節は決して当たらず黙って次の節へ倒れる
-  ;; (agora-redesign #2036・Hy は直さない = ADR-DOE-HY-008)。defk の外の match は doeff-linter の DOEFF169 が止める
+  ;; (Hy は直さない = ADR-DOE-HY-008)。defk の外の match は doeff-linter の DOEFF169 が止める
   ;; (規則は defk の form の中を当てない)。__doeff_body__ には書いたままの本体を残す(written-forms)。
   (setv written-forms body
         body (lfor form body (_mangle-match-fields form))
@@ -1437,7 +1436,7 @@ defk {name}: {{:post [...]}} is required.
    (ADR-DOE-CORE-EFFECTS-003 R5・R6)。
    束ねた後は b を del する(`(del b)` を setv の次に置く・名の無い (<- expr) は答えを一時の名 a で受けて a も外す):
    b は yield した Program(Call — 関数と引数)を持つので、残すと同じ行が次に走るまで引数を生かす(長い loop の
-   generator で前の周の表を持ち続けた — agora card ki-d5fb19be03db)。del は文なので、式の中の `!` はこの外。"
+   generator で前の周の表を持ち続けた)。del は文なので、式の中の `!` はこの外。"
   (import doeff-hy._outcome-forms [open-form])
   (setv bound (hy.gensym "bound"))
   (setv performed (open-form expr absent helpers bound))
@@ -1452,7 +1451,7 @@ defk {name}: {{:post [...]}} is required.
     (_static-view?)
       ;; `_doeff_perform` は doeff-hy-check が module の頭に 1 度だけ import する(STATIC_HELPER_IMPORTS)ので、
       ;; defhandler の節・利用者の defn など `_helper-imports` を出さない所の `<-` でも名前が解ける。形の中に import を
-      ;; 持つと、`<-` を 65 個持つ関数で pyright が `_doeff_perform` を Unknown にする(agora-redesign #1686)。
+      ;; 持つと、`<-` を 65 個持つ関数で pyright が `_doeff_perform` を Unknown にする。
       (let [bound `(_doeff-perform ~expr)
             source (when (is-not tp None) (_type-source tp))]
         (cond
@@ -1568,7 +1567,7 @@ defk {name}: {{:post [...]}} is required.
              (and (_is-bind bind) (_is-iterate (get (_bind-parts bind) 2))))))
 
 (defn _place-traverse [traverse inner-from? in-step]
-  "From 1 つの Traverse を、置かれた所に合わせた形にする(card ki-7e6a11f56bd5)。
+  "From 1 つの Traverse を、置かれた所に合わせた形にする。
 
    重ねた From は内包(list の <-・SQL の CROSS JOIN)と同じく、組ごとの本体の値を 1 件として平らに並べる。そのため:
    - 外の From の件の関数の中(in-step)の From は、その関数の中で Traverse を実行し、答えの Collection を件の値にする。
@@ -1593,8 +1592,7 @@ defk {name}: {{:post [...]}} is required.
 (defn _skip-form []
   "When が偽の件を落とす Skip を出すため。実行時は `(yield (_doeff_traverse_Skip))`。型検査のための展開では `<-` と同じく
    yield を出さず `_doeff_perform` で包む — yield を残すと件ごとの関数が生成器になり、送り返しの型が分からない
-   `Generator[Skip, Unknown, T]` の答えが strict の赤になる(Skip の答えは Never なので、続く文は偽の枝では届かない・
-   agora-redesign #2321)。"
+   `Generator[Skip, Unknown, T]` の答えが strict の赤になる(Skip の答えは Never なので、続く文は偽の枝では届かない)。"
   (if (_static-view?)
       '(_doeff_perform (_doeff_traverse_Skip))
       '(yield (_doeff_traverse_Skip))))
@@ -1604,12 +1602,12 @@ defk {name}: {{:post [...]}} is required.
 
    実行時の展開: `(_doeff_traverse_Traverse (_doeff_do (fn [param] (do 本体))) items)`。件ごとの関数は Traverse 1 つに 1 度だけ
    `@do` で包む — 件ごとに `(fn [param] ((_doeff_do (fn [] …))))` で包み直すと、件 1 つあたり約 7 µs の `@do` の組み立て
-   (DoFunction・functools.wraps)がかかっていた(agora-redesign #2871)。件の Program は同じ(件を引数に受ける 1 つの呼び)。
+   (DoFunction・functools.wraps)がかかっていた。件の Program は同じ(件を引数に受ける 1 つの呼び)。
    型検査のための展開(`_static-view?`)では、件の引数を `#^ object` の別名で受け、本体の前で
    `(setv param (_doeff_traverse_item items の写し 件))` と件の型へ読み直す — Hy の fn は本体が文を持つと def になり、
    引数に注記が無いと pyright strict が「引数の型が分からない」と赤にする(書き手は件の型を書く口を持たない)。
-   static_types.pyi の traverse_item は items の要素の型を答えるので、件の引数は items の要素の型に読める
-   (agora-redesign #2321)。items は 1 度だけ名へ置き、関数の中からはその名を引く(展開の写しは走らない)。"
+   static_types.pyi の traverse_item は items の要素の型を答えるので、件の引数は items の要素の型に読める。
+  items は 1 度だけ名へ置き、関数の中からはその名を引く(展開の写しは走らない)。"
   (if (_static-view?)
       (let [item (hy.gensym "item")
             items-ref (hy.gensym "items")
@@ -1666,7 +1664,7 @@ defk {name}: {{:post [...]}} is required.
      (<- result (process item sub))
      result)
    The answer has one item per (item, sub) combination, like a list comprehension — not one
-   item per outer item (card ki-7e6a11f56bd5).
+   item per outer item.
 
    Requires:
      (import doeff [do :as _doeff-do])
@@ -1675,7 +1673,7 @@ defk {name}: {{:post [...]}} is required.
 
    The `_doeff-do` import has the same type as the `do` doeff-hy-check places for defk
    (doeff_hy/_static_types.pyi re-exports doeff.do.do), so it does not change how the type checker
-   reads the module's defk (agora-redesign #2321). Without a When guard the expansion never names
+   reads the module's defk. Without a When guard the expansion never names
    Skip, and pyright strict reports its import as unused — leave it out then."
   (setv #(bindings body-expr) (_parse-do-body forms "for/do"))
   (_locate-synthesized (_gen-traverse-body bindings body-expr)))
@@ -1795,7 +1793,7 @@ the effect in the enclosing do-context.
    helpers = the module-global name of doeff_core_effects._outcomes (defk passes _HELPERS-NAME,
    which it installs in its module's globals): the binds of this body — every (! e) and every
    (<- …) outside a nested function — reach open_bind by that name instead of `__import__`
-   (agora-redesign #844 — about 0.2µs a bind). Other callers pass None and keep their (<- …)
+   (about 0.2µs a bind). Other callers pass None and keep their (<- …)
    forms for their own expansion."
   (defn #^ Object walk [#^ Object node #^ (| (get tuple #(str str)) None) ctx]
     (cond
@@ -1812,7 +1810,7 @@ the effect in the enclosing do-context.
           ;; 実行時は <- と同じ open-bind を通す(宣言を持つ effect の不在・失敗を Absent / Raise に変え、
           ;; Result / Maybe の値を開く — ADR-DOE-CORE-EFFECTS-003 R6)。型検査のための展開は `<-` と同じ
           ;; `_doeff_perform`(式の答えの型 — _bind-yield の静的な枝)。前は `(yield e)` で、注記の無い generator の
-          ;; yield の値は Unknown なので、(! …) を使う所ごとに書き手に直せない Unknown の赤が出ていた(agora-redesign #2279)。
+          ;; yield の値は Unknown なので、(! …) を使う所ごとに書き手に直せない Unknown の赤が出ていた。
           (if (_static-view?)
               `(_doeff-perform ~(walk (get node 1) ctx))
               (do (import doeff-hy._outcome-forms [open-form])
@@ -2033,7 +2031,7 @@ the effect in the enclosing do-context.
 ;; ---------------------------------------------------------------------------
 
 (defn _test-scans [value]
-  "deftest の :scans の値(そのテストが走査して読む dir か glob — agora-redesign #3874)を検めて glob の list にする。
+  "deftest の :scans の値(そのテストが走査して読む dir か glob)を検めて glob の list にする。
    文字列の tuple(空でない・空の文字列を含まない)以外は断る — 黙って捨てると、宣言したつもりのテストが選びの道具に選ばれない。
    展開の時に呼ぶ helper なので defn(defk にできない)。"
   (when (or (not (isinstance value hy.models.Tuple)) (= (len value) 0)
@@ -2045,7 +2043,7 @@ the effect in the enclosing do-context.
 (defn _extract-test-meta [body]
   "Parse optional test metadata dict from front of body.
    Supported keys: :interpreters, :params, :env, :marks, :skip-if, :skip-reason, :scans.
-   :scans = the dirs or globs the test walks and reads (a tuple of strings — agora-redesign #3874).
+   :scans = the dirs or globs the test walks and reads (a tuple of strings).
    Returns #(interpreters params-dict env-dict marks skip-if skip-reason scans real-body).
    Skips leading docstring if present."
   (setv interpreters None
@@ -2064,7 +2062,7 @@ the effect in the enclosing do-context.
     ;; Skip string literals (docstrings) at the start
     (when (not (isinstance form hy.models.String))
       (break)))
-  ;; meta の map のすぐ後にもう 1 つ map が並ぶ形は断る(agora-redesign #2726): 以前は 2 つ目を黙って本文の式にし、その鍵
+  ;; meta の map のすぐ後にもう 1 つ map が並ぶ形は断る: 以前は 2 つ目を黙って本文の式にし、その鍵
   ;; (例 :skip-if)が捨てられた — agora の検で印の map を既存の meta の前に足し、skip が消えて日次で KeyError になった(#2704)。
   ;; 本文の先頭に map の式を置く意味は無いので、meta は 1 つの map にまとめる。
   (when (and (is-not meta-idx None) (< (+ meta-idx 1) (len body)) (isinstance (get body (+ meta-idx 1)) hy.models.Dict))
@@ -2101,7 +2099,7 @@ the effect in the enclosing do-context.
     _ #(param None)))
 
 (defn _deftest-annotation [param-name written]
-  "型検査のための展開で deftest の引数に付ける注記(agora-redesign #2214)。書き手の `#^ T 名` があればそれを、
+  "型検査のための展開で deftest の引数に付ける注記。書き手の `#^ T 名` があればそれを、
    無ければ fixture の名の表(doeff_hy/_static_view.py の DEFTEST_FIXTURE_TYPES)の型を、表に無い名(利用者の
    fixture・:params の引数)は `object` を付ける — Unknown のまま strict の赤にせず、型も逃がさない。"
   (if (is-not written None)
@@ -2150,7 +2148,7 @@ the effect in the enclosing do-context.
      (assert result))
 
    A test that walks a dir or glob instead of importing what it reads declares it, so a changed-file selector
-   (agora-controllers' land_focus_gate) picks the test when a scanned file changes (agora-redesign #3874):
+   (agora-controllers' land_focus_gate) picks the test when a scanned file changes:
 
    (deftest test-every-table-row-loads
      {:scans #(\"scripts/business_fakes/*/*.txt\")}
@@ -2158,7 +2156,7 @@ the effect in the enclosing do-context.
 
    A fixture may carry its type for the static check — `(deftest test-x [#^ str label] …)`;
    pytest's built-in fixtures (tmp_path, monkeypatch, capsys, …) and doeff_interpreter are typed
-   by doeff-hy-check without it, any other unannotated fixture is `object` (agora-redesign #2214).
+   by doeff-hy-check without it, any other unannotated fixture is `object`.
 
    Expansion: generates def test_*(doeff_interpreter, ...fixtures...)
    that creates a DoExpr program and passes it to the interpreter."
@@ -2210,7 +2208,7 @@ the effect in the enclosing do-context.
       `(doeff_interpreter
          ((_doeff_do (fn [] ~@gen-body))))))
 
-  ;; 型検査のための展開(agora-redesign #2214): 引数に fixture の型の注記を付け、返り値は None(検の関数は値を
+  ;; 型検査のための展開: 引数に fixture の型の注記を付け、返り値は None(検の関数は値を
   ;; 返さない — interpreter の答えは文として捨てる)。実行時の展開は今までどおり注記なしで答えを返す
   ;; (Python 3.13 以前は注記を定義の時に評価するので、型検査だけの名を実行時に置かない)。
   (setv #(fn-name fn-signature fn-body)
@@ -2223,7 +2221,7 @@ the effect in the enclosing do-context.
       #(name fn-params run-form)))
 
   ;; The pytest decorators, in source order, as #(kind first second) — the one list that both the
-  ;; decorator forms below and the item record (doeff-hy._pytest-items, agora-redesign #1211) are made from.
+  ;; decorator forms below and the item record (doeff-hy._pytest-items) are made from.
   (setv item-decorators [])
 
   ;; :interpreters → @pytest.mark.parametrize("doeff_interpreter_name", [...])
@@ -2250,7 +2248,7 @@ the effect in the enclosing do-context.
 
   ;; 型検査のための展開では、decorator の pytest を doeff-hy-check が module の頭に 1 度だけ置く別名
   ;; `_doeff_pytest`(doeff_hy/_static_view.py の STATIC_HELPER_IMPORTS)で引く — deftest ごとの `import pytest` が
-  ;; 書き手の import と重なって strict の reportDuplicateImport になっていた(agora-redesign #2214)。
+  ;; 書き手の import と重なって strict の reportDuplicateImport になっていた。
   (setv #(pytest-name pytest-import)
     (if (_static-view?) #('_doeff_pytest '(do)) #('pytest '(import pytest))))
   (setv decorators
@@ -2263,9 +2261,9 @@ the effect in the enclosing do-context.
                     :reason ~(if (is-not skip-reason None) skip-reason
                                  (hy.models.String "skip condition met"))))))
 
-  ;; pytest の item の記録 — 収集が test module を import せずに読む(agora-redesign #1211 / #1291 — 記録の式を展開に足す)。
+  ;; pytest の item の記録 — 収集が test module を import せずに読む(#1291 — 記録の式を展開に足す)。
   ;; module の段で 1 度だけ走る文なので _scoped-definition の module-forms に渡す(関数の本体の中の deftest は記録しない —
-  ;; pytest が集めるのは module の段の関数だけ・card ki-93395c51de1e)。
+  ;; pytest が集めるのは module の段の関数だけ)。
   (setv item-record (_record-test-function name fn-params item-decorators))
 
   ;; Assemble the function definition with decorators
@@ -2439,7 +2437,7 @@ defpipeline {pipeline}: no stages defined.
 (defn _mcp-param-schema [schema p]
   "MCP の引数 1 つ(schema の Hy の dict `p`)の McpParamSchema の組み立ての式 — 書かれた欄だけを keyword で 1 度渡す
    (:enum は tuple にする)。欄ごとに式を組み直していた頃は、:default を :required か :enum と一緒に書くと keyword が
-   崩れて定義の時に落ちた(設計検証 lt-K8KC9HXRJBQ4C47YNMNTVKTT4Y の盲検 B)。schema = 展開が McpParamSchema を引く名。"
+   崩れて定義の時に落ちた。schema = 展開が McpParamSchema を引く名。"
   (setv enum (_mcp-param-field p ":enum")
         required (_mcp-param-field p ":required")
         default (_mcp-param-field p ":default"))
@@ -2457,11 +2455,11 @@ defpipeline {pipeline}: no stages defined.
 
    注記は doeff.mcp の表 MCP_JSON_TYPES の行から引く(`mcp-param-annotation`)。server(doeff_agents の mcp_server_loop)は
    同じ表で受けた値を検め、合わない値・省いた必須の引数を handler を呼ぶ前に断るので、注記は実行の時にも真になる
-   (設計検証 lt-K8KC9HXRJBQ4C47YNMNTVKTT4Y の盲検 A・B — 検めずに渡していた頃は `int` の引数に `\"100\"` が届いた)。
+   (検めずに渡していた頃は `int` の引数に `\"100\"` が届いた)。
    必須でない引数は `| None`(送られず既定値も無い引数に server が None を渡す)。:required を書かない引数は必須
    (McpParamSchema の既定)で、True の字面でない :required と、既定値が `None` の引数は必須と決めない。
    注記が無かった頃は、strict の型検査で引数 1 つにつき書き手の直せない赤が 2 件(注記が無い・型が Unknown)と、
-   本体でその引数を渡す所ごとに 1 件出た(card ki-973b4e44d7bc)。知らない :type は展開の時に誤りにする。"
+   本体でその引数を渡す所ごとに 1 件出た。知らない :type は展開の時に誤りにする。"
   (setv pname (str (_mcp-param-field p ":name"))
         ptype (_mcp-param-field p ":type")
         required (_mcp-param-field p ":required")
@@ -2494,7 +2492,7 @@ defpipeline {pipeline}: no stages defined.
   "defmcp-tool の本体 `body`(form の列)のうち、tool 自身の名 `name` を頭に置く呼びの式の列(書かれた順)。
 
    展開は `name` を McpToolDef に束ねるので、本体の `(name …)` は同じ名の defk が先に在っても tool を指し、run の時に
-   TypeError: 'McpToolDef' object is not callable で落ちる(docs 12 章 MCP の道具の例・card ki-896fc4bca8cb)。名は
+   TypeError: 'McpToolDef' object is not callable で落ちる(docs 12 章 MCP の道具の例)。名は
    mangle して比べる(`submit-order` と `submit_order` は同じ名)。引用(quote・quasiquote)の中は data なので見ない。
    tool の値を読むだけの参照(`(. name 欄)`・引数に渡す `name`)は呼びでないので数えない。綴りだけを見るので、本体の
    中で同じ名を束ね直して呼ぶ形も断る — tool の名を変えれば済む。"
@@ -2537,7 +2535,7 @@ defpipeline {pipeline}: no stages defined.
 
    <name> は McpToolDef に束ねるので、tool には本体が呼ぶ defk と別の名を付ける。本体が <name> を呼ぶ形は展開の時に
    断る(`_mcp-self-calls`)— 断らなかった頃は、同じ名の defk が先に在っても本体の呼びが tool を指し、run の時に
-   TypeError: 'McpToolDef' object is not callable で落ちた(docs 12 章 MCP の道具の例・card ki-896fc4bca8cb)。
+   TypeError: 'McpToolDef' object is not callable で落ちた(docs 12 章 MCP の道具の例)。
 
    関数の本体の中に書くと、import と handler をすぐ呼ぶ関数に入れて <name> だけを束ねる(_scoped-definition —
    外の関数で先に読む for/do・traverse の `_doeff_do` を未束縛にしない。handler は <name> の :handler で引く)。
@@ -2545,12 +2543,12 @@ defpipeline {pipeline}: no stages defined.
    handler の decorator の `_doeff_do` は、defk と同じく `_helper-imports` から取る。型検査のための展開では import を出さず、
    doeff-hy-check が module の頭に置く `_doeff_do` を読む — tool ごとに `doeff.do` を import していた頃は、tool を 65 個持つ
    module で `_doeff_do` の宣言が 64 を超え、pyright が Unknown にして、同じ module の defk の呼びを Program ではなく
-   :post の型に見ていた(agora-redesign #1686 と同じ訳)。
+   :post の型に見ていた。
 
    型検査のための展開は import を 1 つも出さない。tool の値の McpToolDef / McpParamSchema も、doeff-hy-check が module の
    頭に 1 度だけ置く `_doeff_McpToolDef` / `_doeff_McpParamSchema`(doeff_hy/_static_view.py の MCP_STATIC_IMPORTS)で引く —
    tool ごとに `doeff.mcp` を import すると、tool を 65 個持つ module か class で McpToolDef の宣言が 64 を超え、tool の値が
-   Unknown になった(card ki-4848d81e0bc5 の設計検証の盲検 A)。実行時の展開は今までどおり tool ごとに doeff.mcp を import する。"
+   Unknown になった。実行時の展開は今までどおり tool ごとに doeff.mcp を import する。"
   (when (not (isinstance description hy.models.String))
     (raise (SyntaxError (.format "
 defmcp-tool {name}: second argument must be a description string.

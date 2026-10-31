@@ -1,4 +1,4 @@
-"""defeffect の :answer の型が型検査の展開に残ることの失敗ケース(agora-redesign #2322)。
+"""defeffect の :answer の型が型検査の展開に残ることの失敗ケース。
 
 defeffect は答えの型を `__doeff_answer__` に置く。型検査の展開(doeff-hy-check)は記帳の setattr(`__doeff_…__`)を外すので、
 答えの型を setattr で置くと :answer の式が型検査から消え、答えの型のためだけに import した名が reportUnusedImport の赤になっていた

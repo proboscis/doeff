@@ -4,8 +4,8 @@
 ;;   (1) env-capacity は下限 + NEAR-MARGIN-BYTES(20 GB)を切った空きに near を名乗る(下限を切れば今までどおり exhausted・下限 0 は ok)
 ;;   (2) coordinator の Worker の資源の status は envCapacity が ok でない間だけ載せる(読み手が GET /resources/Worker で読む —
 ;;       ok の worker の status の形と版は以前と同じ)
-;;   (3) ok でない語を名乗った後は、空きがその線の上 NEAR-RETURN-BYTES(2 GB)を越えるまで near のまま名乗る(依頼
-;;       lt-JJVZWCWHC91PJ5MF15W3YDKSQC)。2026-10-17 の mac-native は APFS の local snapshot の切れと版の env の組みで空きが線の上下 1 GB を
+;;   (3) ok でない語を名乗った後は、空きがその線の上 NEAR-RETURN-BYTES(2 GB)を越えるまで near のまま名乗る。
+;;       2026-10-17 の mac-native は APFS の local snapshot の切れと版の env の組みで空きが線の上下 1 GB を
 ;;       行き来し、名乗りが near と ok を往復するたびに、見回りの責任 workers-stay-live が同じ訳の failing を新しい 1 続きとして作り直した。
 ;;       env-host は最後に名乗った語を拍を跨いで持ち、次の名乗りに渡す。
 ;; 失敗ケース = near を名乗らない(下限を切るまで ok)・status に載せない(読み手が予告を読めない)・戻りの幅を持たない(線の上 0.76 GB で ok に

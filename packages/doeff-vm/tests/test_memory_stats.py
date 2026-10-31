@@ -116,7 +116,7 @@ def test_arena_slots_reclaimed_when_handler_abandons_continuation() -> None:
     )
 
 
-# ── 積み上げの仕事の量(agora-redesign #2851・#2670)────────────────────────────────
+# ── 積み上げの仕事の量(#2670)────────────────────────────────
 # 検の時間の予算を、機体の負荷で揺れない数で判じるための数。effect ReadVmWorkCounts で読む(拡張の関数は公開の名に無い)。
 
 

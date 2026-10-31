@@ -1,4 +1,4 @@
-;;; 乱数の検(agora-redesign #1544)。契約(本物 os-random-handler と fake seeded-random-handler が同じ deftest を通る)と、fake だけの性質。
+;;; 乱数の検。契約(本物 os-random-handler と fake seeded-random-handler が同じ deftest を通る)と、fake だけの性質。
 ;;; 解釈器の組み立ては random_contract_handlers.hy。
 ;;;
 ;;;   契約  RandomBytes の答えは長さ count の bytes で、続けた 2 回の呼びは違う値(本物は確率 2^-128 で一致しうるが無視できる)

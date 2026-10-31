@@ -160,7 +160,7 @@
                 #())))
 
   (RunProcess [argv stdin timeout cwd env env-mode output-path env-drop process-group stop-grace stream-output]
-    ;; 実装は汎用の subprocess-handler と同じ 1 つ(doeff_core_effects._os_process の run-subprocess — agora-redesign #802 便 1・#2184)。
+    ;; 実装は汎用の subprocess-handler と同じ 1 つ(doeff_core_effects._os_process の run-subprocess・#2184)。
     (<- outcome (run-subprocess argv stdin timeout cwd env env-mode output-path env-drop process-group stop-grace stream-output))
     (resume outcome))
 
@@ -190,5 +190,5 @@
 (defn #^ object run-driver-io [#^ Program program]
   "composition root: driver 層の program を本番の I/O で回す(答えは program の答え — 型は渡す program ごとに違う)。
    program の待ち(doeff-time の Delay)には、外側の sync-time-handler が壁の時計で答える — driver-io-handler は待ちに
-   答えない(card ki-3c3d85253c2c・ADR-DOE-TIME-001 R2)。"
+   答えない(ADR-DOE-TIME-001 R2)。"
   (run ((sync-time-handler) (driver-io-handler program))))

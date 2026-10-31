@@ -1,6 +1,6 @@
 """k8s の宣言(deploy/k8s)は、機体ごとに静的な worker 1 つと coordinator 1 つを持ち、上に載る系の値を名の固定した ConfigMap で受ける。
 
-利用者の決定(2026-10-09 — doeff worker は頻繁に作り直さず、静的に保つ): worker の Pod の
+決まり: doeff worker は頻繁に作り直さず、静的に保つ。worker の Pod の
 宣言はこの package が持ち、上に載る系の repo は job と DB の宣言だけを持つ。だから宣言はこの dir に在り、機体ごとの差(置く Node・資源の
 上限)だけを機体の dir が足す。上に載る系の値(env・準備の script・Bash の包み)は名の固定した ConfigMap を名で参照するだけで、宣言の文字に
 上に載る系の語を書かない(規則 doeff-packages-have-no-application-vocabulary — 語の一覧は .semgrep.yaml の規則 1 つから読み、ここに写さない)。
@@ -158,13 +158,13 @@ HOST_ONLY_RESOURCES = {
 }
 
 
-# zeus でない機体の受ける数の内訳(N+1 — card ki-17043e66bd83・2026-10-27。ここが式の定義点 — 枠の file の値はこの和と同じでなければ赤):
+# zeus でない機体の受ける数の内訳(N+1・2026-10-27。ここが式の定義点 — 枠の file の値はこの和と同じでなければ赤):
 # 機体の仕事 1 + 置ける組の印(枠の file の欄 pools)で、その worker に置ける上に載る系の常駐の job の数 + task に空けておく数。
 # 置ける job は「今どこに在るか」でなく「置けるか」で数える — 移った job は元の機体が戻っても戻らないので、この数え方なら、どの置き方の後の
 # どの 1 台の停止でも、移る job が移る先の枠に入る(doeff-cluster の N+1 の判断 failover-refusals の規則 2)。組ごとの job の数は card の
 # 組の表から数えた: pool-atlas-eos 6・pool-atlas-k3s-0 2・pool-atlas-k3s-2 1・pool-atlas-k3s-3 4・pool-k3s-1-k3s-2 1。
 # atlas の task に空けておく 3 は上に載る系の日次の全体検証の task(:needs host-atlas — 同時に 3 本まで)の分。ほかの機体に task は来ない。
-# (前の版の予備の枠 — card ki-384c80df957f の atlas 1・k3s-0 1・k3s-2 1・k3s-3 1 — は、この数えの中に入る。)
+# (前の版の予備の枠・k3s-0 1・k3s-2 1・k3s-3 1 — は、この数えの中に入る。)
 POOL_JOBS = {
     "pool-atlas-eos": 6,
     "pool-atlas-k3s-0": 2,
@@ -187,14 +187,14 @@ HOST_ONLY_ROOM = {
     node: (MACHINE_JOBS + sum(POOL_JOBS[pool] for pool in pools) + reserve, reserve)
     for node, (reserve, pools) in HOST_ONLY_POOLS.items()
 }
-# 常駐の job の memory の予算(枠の file の欄 memoryMiB — card ki-17043e66bd83 の定義点)= worker の container の memory の上限 − worker 自身の分
+# 常駐の job の memory の予算(枠の file の欄 memoryMiB)= worker の container の memory の上限 − worker 自身の分
 # − task の分。zeus でない機体: worker 自身 256 MiB(worker の process の RSS 126〜132 MiB・2026-10-27 の 4 機体の実測に余裕を足す)・task の分
 # = task に空けておく数 × 3072 MiB(atlas の task の 1 本の山は 8 時間で 1.1〜4.0 GiB・3 本の同時は group の上限で 3 本まで)。
 # zeus: container の上限 − cgroup の層の worker の memory.min − task の層(jobs)の memory.max(命令の層は常駐の job の子の分なので引かない)。
 # 予算は N+1 の判断の規則 3(置ける job の落ち着いた値の和 + 最悪の 1 台の停止で移る job の起動の山の上乗せ ≤ 予算)が読む。
 HOST_ONLY_WORKER_SELF_MIB = 256
 TASK_SHARE_MIB = 3072
-# 枠の定義元(card ki-6828eda880ce): 機体の名 → taskReserve・backgroundRoom・memoryMiB の JSON 1 つ。名の固定した ConfigMap worker-room にして worker の Pod に
+# 枠の定義元: 機体の名 → taskReserve・backgroundRoom・memoryMiB の JSON 1 つ。名の固定した ConfigMap worker-room にして worker の Pod に
 # file で置き、worker は heartbeat の前に読み直す(枠の変更で Pod を作り直さない)。env の WORKER_TASK_RESERVE・WORKER_BACKGROUND_ROOM・
 # WORKER_MEMORY_MIB は書かない。
 ROOM_FILE = K8S / "workers" / "worker-room.json"
@@ -250,7 +250,7 @@ def test_zeus_worker_is_one_deployment_with_100gi_memory_limit(zeus_worker: Mani
     assert resources["requests"] == {"cpu": "4", "memory": "8Gi"}
 
 
-# 入れ替えで同じ機体に同じ名の worker の 2 つの世代を並べる機体(AL-D2・card ki-2f5186034976): 新しい Pod を先に起こし、Ready になって
+# 入れ替えで同じ機体に同じ名の worker の 2 つの世代を並べる機体(AL-D2): 新しい Pod を先に起こし、Ready になって
 # から旧い Pod を止める。2 つの世代は状態を世代ごとの dir に置き(WORKER_GENERATION_DIRS・POD_UID — boot.sh)、旧い Pod の drain は
 # 退いた process が走り切るまで待つ。世代の dir を知らない版の boot.sh は WORKER_DIR_LOCK の錠で旧い Pod の終わりを待ち続け、入れ替えが
 # 進まない — だから世代の dir を置く worker の版は GENERATION_DIRS_SINCE かその子孫。
@@ -294,7 +294,7 @@ def test_generation_dirs_on_a_version_without_them_is_refused() -> None:
     assert not _same_or_ancestor(GENERATION_DIRS_SINCE, "44778ca69e9d101f757721c4b5d283c57f856d80")
 
 
-# cgroup の memory の層(card ki-cd8cb84fdcd2 — nodes/zeus/cgroup.yaml・boot.sh の「cgroup の層」): zeus の worker の container の cgroup の
+# cgroup の memory の層(nodes/zeus/cgroup.yaml・boot.sh の「cgroup の層」): zeus の worker の container の cgroup の
 # 中に、守る層(memory.min — worker の本体と常駐の job)と限る層(memory.max — task と、job の子が置く命令)を作る。1 本の task や命令が
 # 際限なく memory を増やしても、kernel は限る層の中だけで回収して止め、守る層は回収されない(10-24 06:03 JST は 1 つの cgroup で
 # 16.7 分止まった)。層を知らない版の boot.sh と worker は宣言を読まず、名(DOEFF_WORKER_JOB_CGROUP)だけを読んで、根に居る worker の
@@ -304,7 +304,7 @@ CGROUP_LAYOUT_SINCE = "2c1ac027a212bc59ceb304683130e7b69becbf0b"
 CGROUP_FIRST_LAYER = "worker"
 CGROUP_CHILD_LAYER = "commands"
 CGROUP_CLI_LAYER = "clis"
-# cgroup の層の CPU の重み(card ki-b40c5c399455 — boot.sh の「cgroup の層」の CPU の重み): 層に cpu.weight・cpu.idle を書ける boot.sh
+# cgroup の層の CPU の重み(boot.sh の「cgroup の層」の CPU の重み): 層に cpu.weight・cpu.idle を書ける boot.sh
 # の最初の版。知らない版の boot.sh は cpu の file を宣言の誤りとして断り、worker が起動で止まる — だから cpu を書く層を宣言する worker の
 # 版は CGROUP_CPU_SINCE かその子孫。
 CGROUP_CPU_SINCE = "d5673eb9875c1c8535ebf11c80881016e839ad05"
@@ -348,7 +348,7 @@ def test_zeus_worker_guards_its_resident_jobs_and_caps_its_tasks_and_commands(ze
 
 
 def test_zeus_worker_puts_its_resident_layers_before_the_bulk_layers_on_the_cpu(zeus_worker: Manifest) -> None:
-    """worker の本体と常駐の job の層の cpu.weight は、task・CLI・命令の層の cpu.weight より高い(card ki-b40c5c399455)。失敗ケース:
+    """worker の本体と常駐の job の層の cpu.weight は、task・CLI・命令の層の cpu.weight より高い。失敗ケース:
     子に cpu を掛けない(重みの無い)層では、CPU が埋まった時に起きた画面の thread が CLI と task の thread と同じ重みで実行待ちに並び、
     ws の ping の往復が 50〜140 ms に跳ねた。cpu.idle は掛けない(命令の層が CPU の埋まった間ずっと止まる)。"""
     settings = dict(_layout(zeus_worker))
@@ -418,7 +418,7 @@ def test_cgroup_layout_on_a_version_without_it_is_refused() -> None:
     assert not _same_or_ancestor(CGROUP_LAYOUT_SINCE, "0e6081c18c0d58f665246c296944d8939d0a2dcd")
 
 
-# worker の doeff の版の定義元は workers/worker-version.env 1 つ(1 行 1 worker「<名>=<commit>」— card ki-6e83e03d146d)。名の固定した
+# worker の doeff の版の定義元は workers/worker-version.env 1 つ(1 行 1 worker「<名>=<commit>」)。名の固定した
 # ConfigMap worker-version になり、雛形が /etc/worker-version に volume で置く(subPath でない)。版を Pod の template に持たないので、版を
 # 替えても Pod は作り直されず、keeper(deploy/boot.sh の頭の註の「版の file と keeper」)が同じ container の中で worker の process を
 # 入れ替える。反例: 版を env(以前の機体の dir の version.yaml の JSON patch)に置くと、版を上げるたびに Pod の型が替わって Pod が作り直され、
@@ -650,8 +650,7 @@ def _room_rows() -> dict[str, object]:
 def test_every_worker_reads_its_room_from_the_fixed_named_configmap_file(rendered: list[Manifest], worker: Manifest) -> None:
     """worker の枠は、名の固定した ConfigMap worker-room を volume で置いた file(subPath でない)から読む — 中身を変えても Pod の template は
     変わらず、kubelet が file を入れ替え、worker が heartbeat の前に読み直す。env で枠を決めない(env の値を変えると Pod が作り直される)。
-    反例: env の WORKER_CAPACITY で枠を決めると、常駐の job を 1 つ足すたびに worker の Pod が作り直され、走っているターンが切れる
-    (2026-10-25 の差し戻し lt-HZM4SN5788SY6NB6AQAXWXM7AC)。"""
+    反例: env の WORKER_CAPACITY で枠を決めると、常駐の job を 1 つ足すたびに worker の Pod が作り直され、走っているターンが切れる。"""
     names = [entry["name"] for entry in _env(worker)]
     assert "WORKER_CAPACITY" not in names
     assert "WORKER_TASK_RESERVE" not in names
@@ -670,10 +669,10 @@ def test_every_worker_reads_its_room_from_the_fixed_named_configmap_file(rendere
 
 def test_the_room_file_has_one_valid_row_per_node() -> None:
     """枠の file は機体ごとに 1 行を持ち、どの行も taskReserve・backgroundRoom・memoryMiB が 0 以上の整数(worker が名乗れる値 — 外れた行は
-    worker が読まず、前の値のまま名乗り続ける・card ki-2acb63aec0fd)。背景の仕事を同時に置ける数 backgroundRoom は zeus が 4(背景の仕事に
+    worker が読まず、前の値のまま名乗り続ける)。背景の仕事を同時に置ける数 backgroundRoom は zeus が 4(背景の仕事に
     残す枠 3 + 入れ替えの並べた置き先 1 — 手書きの capacity が持っていた分)、他の機体は 0。capacity は worker が読まないが、上に載る系の
     pin がまだ読むので残す(step 4 で消す)。省ける欄 warmServices は真偽だけ(service を待ちの子から分ける旗 — 真偽でない綴りは worker の
-    起動を断る・card ki-67abc0cf71e9)。"""
+    起動を断る)。"""
     rows = _room_rows()
     assert sorted(rows) == sorted(NODES)
     for node, row in rows.items():
@@ -686,8 +685,8 @@ def test_the_room_file_has_one_valid_row_per_node() -> None:
 
 
 def test_every_pool_in_the_room_file_is_named_by_two_or_more_machines() -> None:
-    """枠の file の置ける組の印(欄 pools)は、どれも 2 台以上の機体の行が名乗る。名は pool- で始まり、機体の行は同じ印を 2 度書かない
-    (card ki-17043e66bd83)。zeus の行は組を名乗らない(zeus の常駐の job は移さない)。
+    """枠の file の置ける組の印(欄 pools)は、どれも 2 台以上の機体の行が名乗る。名は pool- で始まり、機体の行は同じ印を 2 度書かない。
+   zeus の行は組を名乗らない(zeus の常駐の job は移さない)。
     反例: 1 台だけが名乗る組は、組の印で宣言した job を 1 台に縛る — その 1 台が止まると job は置き先を失う(2026-10-27 10:38 JST に
     1 台にしか置けない job が約 16 分止まった)。"""
     rows = {node: _mapping(row, node) for node, row in _room_rows().items()}
@@ -744,8 +743,8 @@ def test_coordinator_is_one_deployment_on_atlas(rendered: list[Manifest]) -> Non
 
 
 def test_coordinator_pod_is_guaranteed(rendered: list[Manifest]) -> None:
-    """coordinator の Pod は Guaranteed(oom_score_adj -997)— atlas の memory が尽きた時に、kernel が worker の job と並べて殺さない
-    (card ki-7b934e2538f9・ki-b3c8a5cc7b9a)。Guaranteed は全部の container(init を含む)で cpu と memory の requests = limits が要る —
+    """coordinator の Pod は Guaranteed(oom_score_adj -997)— atlas の memory が尽きた時に、kernel が worker の job と並べて殺さない。
+   Guaranteed は全部の container(init を含む)で cpu と memory の requests = limits が要る —
     1 つでも欠けると Pod 全体が Burstable に落ちる。"""
     (coordinator,) = _deployments(rendered, "coordinator")
     pod = _pod_spec(coordinator)
@@ -830,7 +829,7 @@ def test_prepare_job_follows_a_bump_of_the_coordinator_line_alone(tmp_path: Path
     assert _mapping(job["metadata"], "metadata")["name"] == f"coordinator-prepare-{BUMPED_COMMIT}"
 
 
-# 版の向き(card ki-76a269c31615): どの機体の worker の版も、coordinator の版と同じか、その祖先(古い版)でなければならない。
+# 版の向き: どの機体の worker の版も、coordinator の版と同じか、その祖先(古い版)でなければならない。
 # coordinator は古い worker を受けられるが、古い coordinator は新しい worker を受けられるとは限らない — 10-11 02:21〜02:37 に zeus の
 # worker を 44778ca69 へ上げた宣言(ad90f71c5)が coordinator の e247ea66d より先に main へ入り、新しい worker が登録できずに zeus が
 # 約 16 分止まった。worker を先に要る変更でも、coordinator の版を先に(同じ版か、より新しい版へ)上げてから worker を上げる。
@@ -885,11 +884,11 @@ def test_the_worker_first_declaration_of_10_11_is_refused() -> None:
     assert _workers_newer_than(COORDINATOR_OF_10_11, WORKER_FIRST_OF_10_11) == WORKER_FIRST_OF_10_11
 
 
-# Program の cache の名の版(card ki-172e63fed4c7・ki-bc7697da6cf0): どの機体の worker の版も、service の Program の cache を
+# Program の cache の名の版: どの機体の worker の版も、service の Program の cache を
 # (宣言の版・sha) で名づける版(PROGRAM_CACHE_BY_VERSION_SINCE)かその子孫でなければならない。それより前の worker は cache を <sha>.json と
 # sha だけで名づけ、doeff の pin を上げても Program の sha が変わらない宣言し直しで前の版の file を子へ渡し、子が「版が違うので Program を
-# 解かない」で落ち続ける — 10-16・10-17・10-18 の 3 回(card ki-d132c14e6f13・ki-fbefb0cf6abd・ki-bc7697da6cf0)eos(901c200c8)の
-# patrol-watch が落ち続け、k3s-0(同じ版)の ideas も 0.7.0 で落ちた(ki-3c1998e1e787)。直しの版の後に機体の worker を古い版のまま残すと
+# 解かない」で落ち続ける — 10-16・10-17・10-18 の 3 回 eos(901c200c8)の
+# patrol-watch が落ち続け、k3s-0(同じ版)の ideas も 0.7.0 で落ちた。直しの版の後に機体の worker を古い版のまま残すと
 # 穴が残るので、宣言の側で断る。
 PROGRAM_CACHE_BY_VERSION_SINCE = "7decfe5f7d23c813504e3260a59da0f7be89e7f1"
 WORKER_OF_10_18 = "901c200c8ff693e58c49284395a980532bae760f"
@@ -1019,8 +1018,8 @@ def test_declarations_name_no_upper_system(rendered: list[Manifest]) -> None:
     assert {where: words for where, words in hits.items() if words} == {}
 
 
-# zeus の worker の作業の root(volume work — WORK_DIR=/work)は、機体の root の disk でなく USB の SSD の下に置く(2026-10-10 の利用者の
-# 決定 — zeus の容量を食う置き場を USB の SSD へ移す。同じ日の 13:39 JST に root の disk の空きが準備の最低
+# zeus の worker の作業の root(volume work — WORK_DIR=/work)は、機体の root の disk でなく USB の SSD の下に置く(
+# zeus の容量を食う置き場を USB の SSD へ移す。同じ日の 13:39 JST に root の disk の空きが準備の最低
 # 25 GiB を切り、zeus へ置く job の新しい版の準備が全部止まった)。hostPath の type は Directory: SSD が外れて mount の点が無い時に、root の
 # disk へ黙って dir を作らず Pod の起動で止まる。他の機体の worker は今の /var/lib/agent-worker のまま。
 ZEUS_WORK_ROOT = "/mnt/fast_ssd_usb/agent-worker"
@@ -1041,7 +1040,7 @@ def test_zeus_worker_work_root_is_on_the_usb_ssd(zeus_worker: Manifest) -> None:
     assert work == {"path": ZEUS_WORK_ROOT, "type": "Directory"}
 
 
-# zeus の worker は、USB の SSD の上で作業の root の外に在る dir 2 つを、作業の root の下の host-usb/ に置く(利用者 2026-10-12 15:51 の答え —
+# zeus の worker は、USB の SSD の上で作業の root の外に在る dir 2 つを、作業の root の下の host-usb/ に置く(
 # 上に載る系の job が USB の SSD の 3 つの置き場を日次に刈る。機体の利用者の home の下は置かない)。type は Directory(dir が無ければ新しい Pod が
 # 起動で止まり、黙って空の dir を作らない)。
 ZEUS_USB_MOUNTS = {

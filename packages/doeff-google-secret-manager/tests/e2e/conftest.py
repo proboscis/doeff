@@ -1,7 +1,7 @@
 """本物の Secret Manager を読む e2e の検(印 ``real_secret_manager``)は、印を名指して選んだ時(``pytest -m real_secret_manager``)
 だけ走る。
 
-以前は環境変数 SECRET_MANAGER_RUN_E2E で切り替えていた(検の module が環境変数を直に読む — DOEFF004・agora-redesign #3012)。
+以前は環境変数 SECRET_MANAGER_RUN_E2E で切り替えていた(検の module が環境変数を直に読む — DOEFF004)。
 本物の Google Cloud に触るので、選ばなければ skip する。宛先(project・secret id・version)の環境変数は検が ReadEnvironment で読む。
 """
 

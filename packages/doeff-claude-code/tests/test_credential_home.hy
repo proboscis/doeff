@@ -1,4 +1,4 @@
-;; 資格の家(credential_home.hy)の形の検 — card ki-4ffdafa021e5。共有の設定 dir の直下の名へ symlink を張った process
+;; 資格の家(credential_home.hy)の形の検。共有の設定 dir の直下の名へ symlink を張った process
 ;; だけの設定 dir に、借りた資格を .credentials.json(0600)で置き、替える時は rename で一息に替え、消すのは冪等。token は偽の文字列。
 (require doeff-hy.macros [deftest defk <- val])
 (import json)

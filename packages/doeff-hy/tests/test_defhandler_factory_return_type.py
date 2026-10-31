@@ -1,4 +1,4 @@
-"""引数の在る defhandler(handler の工場)の戻りの型の検(card ki-01270742001e)。
+"""引数の在る defhandler(handler の工場)の戻りの型の検。
 
 引数の在る defhandler は呼ぶと handler を返す関数を作る。前は工場に戻りの型が無く、公開 API の目録
 (tools/public_api_inventory.py)と inspect.signature が工場を「戻りの型が無い関数」と読み、handler を返す名 53 個が未分類になった。

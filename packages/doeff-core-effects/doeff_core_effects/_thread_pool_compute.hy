@@ -1,4 +1,4 @@
-;;; 汎用の計算の effect(compute_effects.hy)の本物の答え手 thread-pool-compute-handler(agora-redesign #802 便 4)。program を呼び手が渡す
+;;; 汎用の計算の effect(compute_effects.hy)の本物の答え手 thread-pool-compute-handler。program を呼び手が渡す
 ;;; thread の pool で回し、外から完了させる promise(scheduler の CreateExternalPromise)で待つ。待つのは撃った task だけで、scheduler の他の
 ;;; task はその間も回る — scheduled の下で使う(doeff-time の sync-time-handler の ScheduleAt と同じ形)。
 ;;;

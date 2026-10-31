@@ -1,9 +1,9 @@
 ;;; defk の本体の match で、class pattern の keyword の欄の名を `-` で書いても当たる回避(doeff_hy/_match_fields.py)の検。
 ;;;
 ;;; Hy 1.3.1 の match は class pattern の keyword の欄の名を mangle せずに Python の case へ出すので、
-;;; (RecordWrite :ended-reason None) の節は値が何でも当たらず、黙って次の節へ倒れる(agora-redesign #2036)。defk は本体の
+;;; (RecordWrite :ended-reason None) の節は値が何でも当たらず、黙って次の節へ倒れる。defk は本体の
 ;;; match の class pattern の欄の名を hy.mangle で属性の名へ直す(Hy の本体は直さない — ADR-DOE-HY-008)。
-;;; 確かめること: defk の中で `-` の綴りが当たる(agora-controllers #1962 の形)・入れ子の class pattern・| の中・:if の守りつき・
+;;; 確かめること: defk の中で `-` の綴りが当たる・入れ子の class pattern・| の中・:if の守りつき・
 ;;; `_` の綴りは変わらない・本体と守りの keyword は変わらない・defk の外の Hy の match は今も当たらない(Hy が直ったらこの検が
 ;;; 赤になる — 回避と doeff-linter の DOEFF169 を外す合図)。
 ;;; 公開は test_match_field_names.py(包み直さずそのまま公開する — ADR-DOE-HY-002)。
@@ -15,7 +15,7 @@
 (import doeff_hy._match_fields [mangle-match-fields])
 
 (defrecord RecordWrite
-  "記録の書き込み 1 件(agora-controllers #1962 の形)"
+  "記録の書き込み 1 件"
   (#^ (| str None) ended-reason)
   (#^ (| int None) usage))
 
@@ -122,4 +122,4 @@
                      :module (hy.I.types.ModuleType "probe")))
   (assert (= got "fell")
           (+ "Hy の match が class pattern の欄の名を mangle するようになった — defk の回避(doeff_hy/_match_fields.py)と"
-             " doeff-linter の DOEFF169 を外せるかを確かめる時(agora-redesign #2036)")))
+             " doeff-linter の DOEFF169 を外せるかを確かめる時")))

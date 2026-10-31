@@ -14,7 +14,7 @@
 ;;; stdout の 1 行には上限(line-cap — 初めは LINE-CAP-BYTES)を置く: stdout は bytes で読み、1 行を溜める前に大きさを数える。上限を
 ;;; 超えた行は頭(CUT-HEAD-BYTES)だけを残して残りを読み捨て、頭と行の大きさ(CutLine)を上の層へ渡し、捨てた事を log に残す。
 ;;; codex の thread/resume の答えは session の履歴全体を 1 行で運び(数百 MB になる)、上の層が使うのは頭に在る id と thread の id
-;;; だけなので、本体の確保は行の大きさでなく上限で決まる(card ki-83f24000d86c — 1 行で turn-host の本体が 27 GB に膨らんだ)。
+;;; だけなので、本体の確保は行の大きさでなく上限で決まる(1 行で turn-host の本体が 27 GB に膨らんだ)。
 (require doeff-hy.macros [val])
 (require doeff-hy.record [defrecord])
 (val MODULE-TAGS {:context "codex" :role "process"})

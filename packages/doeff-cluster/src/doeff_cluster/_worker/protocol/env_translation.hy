@@ -28,7 +28,7 @@
 ;;; 物だけを LinkFile(os.link — hardlink)で写し、変わった path と symlink の新しい中身を git archive と tar で置く — .venv・__pycache__・
 ;;; 完成マーカーなど追跡しない物は写さず、変わる path の旧い file は写さないので、写し元の file をその場で書き換えない(#3677)。写しは
 ;;; 外の cp を起こさない(GNU の書き方 cp -al --parents -t は macOS の BSD の cp が断り、Mac の worker は毎回全部を展開して、消した root の
-;;; 中身を APFS の local snapshot が 24 時間持った — card ki-d51b7baa38bc)。写し元が無い・写せない時は git archive と tar で全部を展開する。
+;;; 中身を APFS の local snapshot が 24 時間持った)。写し元が無い・写せない時は git archive と tar で全部を展開する。
 ;;; git archive と tar は StartProcess/PollProcess で起こし、待つ間 WATCH-SECONDS ごとに子の書いた量(archive の大きさ・tar -v の一覧の大きさ)を読んで、
 ;;; 増えた時だけ進みの印(runtime-env.progress)を触る。量が増えない子は印を触らず、worker が停滞の窓で止める(時間だけで触る heartbeat は入れない)。
 ;;; 子の間の区切りでも触る: git archive の後・tar の展開の前、写しの link-unchanged の後・place-paths の前(stage-trees は repo ごとにも触る)。
@@ -97,7 +97,7 @@
 ;; 子の入口の約束の版は root の新旧の両方の置き場から読む — 新しい置き場(shared/intent・c56fa8634 から)を先に、無ければ旧い置き場
 ;; (それより前の doeff で宣言した root)。片方だけを読むと、worker の版と root の版の組によって約束の版を 0 と読み、起こせる root を
 ;; env-failed にする(issue #2413 — 2026-10-01 22:20 に service の宣言 1 つが env-failed)。旧い doeff の root が無くなったら旧い置き場を外す。
-;; 新しい置き場は共有の区画を _ へ隠す前の名のまま(ADR-DOE-API-001 R15・card ki-6f70e9c957c0): root は job が宣言した版の doeff で、
+;; 新しい置き場は共有の区画を _ へ隠す前の名のまま(ADR-DOE-API-001 R15): root は job が宣言した版の doeff で、
 ;; _shared の無い版の root でも解ける名が要る(_shared の在る版の root では移し替えの module shared.py が _shared の module を返す —
 ;; worker の JOB-ENTRY と同じ順)。段 3 で移し替えの module を消す前に、root の版の下限と合わせて _shared の名へ替える。
 (val CHILD-PROTOCOL-PLACES #("doeff_cluster.shared.intent.runtime_env_model" "doeff_cluster.runtime_env_model"))
@@ -434,7 +434,7 @@
 (defk link-unchanged [source dest paths]
   {:pre [(: source str) (: dest str) (: paths tuple)] :post [(: % (| None CopyRefused))]}
   "写し元の木 source の path(追跡する普通の file で、新しい commit まで変わらない物)を、dest の同じ相対 path に hardlink で置くため
-   (LinkFile — os.link。dir は先に作る)。外の cp を起こさないので、GNU の cp の無い機体(macOS)でも同じに写す(card ki-d51b7baa38bc)。
+   (LinkFile — os.link。dir は先に作る)。外の cp を起こさないので、GNU の cp の無い機体(macOS)でも同じに写す。
    追跡しない物(.venv・__pycache__・完成マーカー・焼いた印)は path に無いので写さない。変わる path は渡されないので、dest にはその hardlink が
    無く、あとで新しい中身を書いても写し元の file には届かない。写せない file が 1 つでも在れば、写せない理由を答える。"
   (for [directory (sorted (frozenset (gfor p paths :setv d (posixpath.dirname p) :if d d)))]
@@ -745,7 +745,7 @@
    並べる(道具の揃え方)。entries は全部の木に共通。保存先の dir は道具が環境変数 DOEFF_HY_CODE_STORE から読む(worker の起動の script が
    置き、子へ継がれる)。jobs = 並べる数(在る時だけ --jobs N — recreate の job の旧い process が動いている間の準備・None = 道具の既定 =
    cgroup の CPU の上限・天井 BAKE-JOBS-CEILING・2026-10-08)。progress = 進みの印の file(在る時だけ --progress — 道具が閉包の一回りと
-   焼きの前後に印の時刻を進めるので、disk が遅いだけの bytecode の処理ステージを停滞と読まない・空 = 印を書かない設定・card ki-d3e585481618)。"
+   焼きの前後に印の時刻を進めるので、disk が遅いだけの bytecode の処理ステージを停滞と読まない・空 = 印を書かない設定)。"
   (+ #(uv "run" "--no-sync" "--frozen" "--project" project-dir "hy" code-prepare "--revision" "env")
      (if (is jobs None) #() #("--jobs" (str jobs)))
      (if entries #("--entries" (.join "," entries)) #())

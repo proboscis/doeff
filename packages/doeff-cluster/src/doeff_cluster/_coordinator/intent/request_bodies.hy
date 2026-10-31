@@ -188,19 +188,19 @@
   "POST /heartbeat の本文(worker/protocol/heartbeat の heartbeat-body と env-heartbeat-part と同じ形): name = worker の名(空でない)・
    provides / exclusive = 能力の名の列(labels = 旧い形の名乗り — 判断が断る)・node・task-reserve = task のために空けておく数
    (必ず書く欄・0 以上 — 欄の無い本文は形の誤りで断る)・background-room = 背景の仕事を同時に置ける数(0 以上 — task の空きは予約 + この数 −
-   置いた task・card ki-2acb63aec0fd)・versions / tools = 名 → 版・platform・
+   置いた task)・versions / tools = 名 → 版・platform・
    envs = root の名乗り・env-capacity = disk の条件・statuses = 状態の報告の行の列(StatusRow)・
    endpoint・boot = process の世代・boot-at = 起動時刻(epoch ms)・format = 本文の形の版・kept-when-cut-off = 途絶しても動かし続けてよい印を
    今持っている job の名の列(#2804 — None = 欄の無い古い worker = 印を知らない)・stopping = この世代が止まり始めた
    (drain の頼みを通らない止めの名乗り — 判断はこの世代を drain に載せる・#2819。名乗らない旧い worker は偽)・overlaps-elder = この
    世代は同じ名の前の世代がまだ走っている間に起きた(起動の script が前の世代の dir の錠を持たれていると見た — RollingUpdate・AL-D2e)。
    判断は新しい世代の名乗りで前の世代の process の lease を外さない(#3770 は前の世代が終わった時だけ)。名乗らない旧い worker は偽。
-   account-token = worker の ServiceAccount の token の状態(ok・stale = 置き直しが遅れた・expired・unreadable — card ki-d31166f84ad0。
+   account-token = worker の ServiceAccount の token の状態(ok・stale = 置き直しが遅れた・expired・unreadable。
    名乗らない worker(Pod の外・旧い worker)は ok)・room-file = 枠の file の状態(ok・unreadable・malformed — ok でない間 worker は
-   前に名乗った枠のまま・card ki-6828eda880ce。file を読まない worker・旧い worker は ok)・doeff-commit = その process の doeff の版
-   (起動の script の WORKER_DOEFF_COMMIT — card ki-6e83e03d146d。版を持たない worker・旧い worker は空)・memory-MiB = 枠の file の行の
-   常駐の job の memory の予算(欄 memoryMiB・0 以上の MiB — card ki-ced3c45980a5。job の側の枠 — 置いた job の settle の和 + 新しい job の
-   settle がこの値以下の時だけ置く・card ki-2acb63aec0fd。名乗らない worker(枠の file の外の機体)は None で、memory で縛らない)。"
+   前に名乗った枠のまま。file を読まない worker・旧い worker は ok)・doeff-commit = その process の doeff の版
+   (起動の script の WORKER_DOEFF_COMMIT。版を持たない worker・旧い worker は空)・memory-MiB = 枠の file の行の
+   常駐の job の memory の予算(欄 memoryMiB・0 以上の MiB。job の側の枠 — 置いた job の settle の和 + 新しい job の
+   settle がこの値以下の時だけ置く。名乗らない worker(枠の file の外の機体)は None で、memory で縛らない)。"
   {:tags {:context "coordinator" :role "type" :reads "json"} :names :camel :unknown :ignore
    :check [(> (len name) 0) (>= task-reserve 0) (>= background-room 0) (or (is memory-MiB None) (>= memory-MiB 0))]}
   (#^ str name)
@@ -209,7 +209,7 @@
   (setv #^ (| (get tuple #(str ...)) None) exclusive None)
   (setv #^ object labels None)
   (setv #^ str node "")
-  ;; 配備の間だけの許し(card ki-2acb63aec0fd — coordinator を先・worker を後に入れ替える間): 旧い worker は capacity を送り backgroundRoom を
+  ;; 配備の間だけの許し(coordinator を先・worker を後に入れ替える間): 旧い worker は capacity を送り backgroundRoom を
   ;; 送らない。capacity は欄に持たずに捨て(:unknown :ignore)、backgroundRoom の無い本文は 0 で受ける。worker を入れ替え終えたら既定の値を外す。
   (setv #^ int background-room 0)
   (setv #^ (| (get dict #(str str)) None) versions None)
@@ -263,7 +263,7 @@
   ;; 置き方の名乗り(2026-10-11): priority = 置く順の優先(整数・None = 0)・limits = 同時数の上限の列(None = 無し)。形は判断が読む。
   (setv #^ object priority None)
   (setv #^ object limits None)
-  ;; 終わりの知らせ先(2026-10-21・card ki-e7945a2b2d00 — 切り離した task だけが読む。None = 知らせない)。形は判断が読む。
+  ;; 終わりの知らせ先(2026-10-21 — 切り離した task だけが読む。None = 知らせない)。形は判断が読む。
   (setv #^ object notify None)
   (setv #^ object format 1))
 

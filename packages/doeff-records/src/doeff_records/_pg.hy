@@ -1,7 +1,7 @@
 ;;; PostgreSQL の handler — 公開 effect(_effects.hy の頭の註)に PostgreSQL の表で答える(本番の置き場)。
 ;;; PutRows は PutRow と同じ置き場の錠と transaction 1 つの中で、全部の行を検めてから書く(途中の失敗は transaction ごと戻る)。
 ;;; PutRowsAppendEvents は行の束と追記の束を、触る表と列の全部の書きの錠の transaction 1 つ・2 往復で全部か 0 で積み、今積む出来事の payload の
-;;; 鍵 position に同じ書きの行の最後の変更の位置を置く(put-rows-append-events-locked — card ki-e17ba3b32dea)。
+;;; 鍵 position に同じ書きの行の最後の変更の位置を置く(put-rows-append-events-locked)。
 ;;;
 ;;; 判断(期待・書きの許可・保持・索引・頁)は _admission.hy の純関数ちょうど 1 つ(memory の handler と同じ関数)。
 ;;; 文は _pg_sql.hy(純粋・中立の記法)で、この file はそれを doeff の汎用の SQL の effect(SqlQuery・SqlTransaction)に載せる
@@ -20,7 +20,7 @@
 ;;; transaction の中では SqlQuery / SqlBatch と純粋な計算だけを出す(時刻は前に読んで渡す)。版の繰り上げ・回収・刈り取りの transaction は既定の形(文 1 つずつ — writing)のまま。
 ;;; 書きの往復(#3605 — 記録の service と DB が別の機体に在ると、DB への往復 1 回が書き 1 回の待ちに乗る): PutRow・PutRows・AppendEvent・
 ;;; AppendEvents だけが往復をまとめる transaction(SqlTransaction の batched — batched-writing)を選び、DB へ 2 往復で書く(AppendEvents は束の
-;;; 追記の数に依らず 2 往復 — 追記ごとの読みと書きを同じ往復に並べる・card ki-48c34994ed15)。1 往復目 = 判じるための読みの束
+;;; 追記の数に依らず 2 往復 — 追記ごとの読みと書きを同じ往復に並べる)。1 往復目 = 判じるための読みの束
 ;;; (置き場の頭・錠つきの行 | 冪等キーの引き・鍵の覚え・組の期限を過ぎた出来事 —
 ;;; BEGIN と書きの錠は答え手が同じ往復の先頭に流す)、2 往復目 = 書きの束(片付け・行の書きと変更の列 | 出来事の書き — 合図と COMMIT も同じ
 ;;; 往復)。判じる事(Conflict・ExpectAbsent・断り・期限を過ぎた物の片付け)は 1 往復目の答えで決め、片付けの文は 2 往復目の先頭に入れる
@@ -60,22 +60,22 @@
 ;;; 「消えた」を積む文を 2 往復目に入れ、無い行として判じる(locked-row)。追記は冪等キーの単位(出来事ごとに数える列は鍵の出来事・組で
 ;;; 数える列は鍵の組)の期限を過ぎた出来事を 1 往復目に読み、それを捨てて鍵の覚えへ移した後の断面で前の使いを判じ、捨てる文と覚えの文を
 ;;; 2 往復目に入れる(earlier-use)。触らない行と出来事は SweepExpired まで置き場に残り(読みには出ない)、その行の「消えた」も SweepExpired が積む。
-;;; 出来事を送ってから外す(card ki-707aad0f88e8 — _maintenance.hy の頭の註): 宣言 StreamDecl.archive-before-retire の列は、回収
+;;; 出来事を送ってから外す(_maintenance.hy の頭の註): 宣言 StreamDecl.archive-before-retire の列は、回収
 ;;; (purge-expired)が飛ばし、追記の片付けは捨てずに鍵を覚えるだけ(retired-events-statements)。外すのは ReadExpiredEvents で読んで
 ;;; 送り先に在ると確かめた番号の RetireArchivedEvents だけ(回収と同じ文 — retire-expired-events)。組で数える列は、鍵を覚えただけの
 ;;; 出来事を読みの条件が期限を過ぎた物に数える(event-expiry の remembered — 組に新しい鍵が積まれて組の最後の刻が動いても、覚えた
 ;;; 出来事は読みに戻らない)。鍵の引きは覚えを先に見る(earlier-use・pg-read-event-by-key — 覚えた鍵の出来事がまだ置き場に在る)。
-;;; 鍵の覚えの外し(card ki-4ebaefac6668 — _maintenance.hy の頭の註の「鍵の覚えを外す」): 出来事を捨てる transaction は、列の覚え方
+;;; 鍵の覚えの外し(_maintenance.hy の頭の註の「鍵の覚えを外す」): 出来事を捨てる transaction は、列の覚え方
 ;;; (StreamDecl.key-memory)に従って覚えを刻つきで入れるか(departed-keys-statements)、覚えを残さない列は入れずに外す。回収
 ;;; (SweepExpired)は長さを限った列ごとに、覚えた刻から長さを過ぎた覚えを錠の単位の transaction を分けて外す(forget-expired-keys)。
-;;; 行の書きの冪等キー(card ki-78c6d663491f — memory の置き場と同じ形): 鍵つきの PutRow・PutRows は、1 往復目の読みの束の後ろに同じ鍵の覚えの
+;;; 行の書きの冪等キー(memory の置き場と同じ形): 鍵つきの PutRow・PutRows は、1 往復目の読みの束の後ろに同じ鍵の覚えの
 ;;; 引き(pg_sql.find-write-key-statement — 表 write_keys)を足し、期待と書きの判定の前に admission.judge-write-replay で判じる。同じ鍵・同じ
 ;;; 本文の送り直しは、片付けも行の書きも流さずに COMMIT だけを流して覚えた答えを送り直しと名乗って返す(表の単位と冪等キーの錠の中なので、
 ;;; 送り直しの判じと元の書きの確定は重ならない)。覚えが無ければ今までどおり判じ、確定する時だけ 2 往復目の行の書きと変更の文の後ろに答えの覚えを入れる
 ;;; 文を足す(remember-statements — 往復を増やさない。答えの変更の番号は同じ往復の変更の文が採るので、覚えの行は書きの最後の変更の番号を
 ;;; 変更の列の最大の番号として同じ文で読む)。回収(SweepExpired)が覚えた刻から values.WRITE-KEY-MEMORY-SECONDS を過ぎた覚えを外す
 ;;; (forget-write-keys)。
-;;; 索引の用意(card ki-954c58540d0f — 2026-10-18 13:18〜14:26 JST に、索引を 1 つ宣言した配備で起動が落ち続けた): 表の用意
+;;; 索引の用意(2026-10-18 13:18〜14:26 JST に、索引を 1 つ宣言した配備で起動が落ち続けた): 表の用意
 ;;; (prepare-records-store)は宣言と置き場の差を観測して埋める形で、置き場の大きさに比例する仕事を起動の道に置かない。
 ;;;   - 移行の transaction は、表と行の文(CREATE TABLE IF NOT EXISTS・store_epoch の行)を流し、その transaction で生まれた表の索引だけを
 ;;;     作る(空の表 — 一瞬)。既に在る表の索引の文は流さない(在る表への CREATE INDEX は表に ShareLock を取り、その表の書きを止め、表の
@@ -91,7 +91,7 @@
 ;;;     消してから作る。落ちた回は名乗って INDEX-RETRY-SECONDS 秒の後に観測し直す(service を終えない)。
 ;;;   - 答えは用意の終わりを待たない: ListRows が名指す宣言した索引の欄に、使える索引がまだ無ければ NotIndexed で断る(使い手は
 ;;;     Unavailable として撃ち直す — 宣言の注記の形)。他の読みと書きは答える(索引は読みの速さで、答えの値を変えない)。
-;;;   - 宣言した索引の欄の索引は表の欄の式の索引(pg_sql の頭の註 — card ki-2176012d1804)。旧い形の索引か前の部分索引(aliases)が在る欄は、
+;;;   - 宣言した索引の欄の索引は表の欄の式の索引(pg_sql の頭の註)。旧い形の索引か前の部分索引(aliases)が在る欄は、
 ;;;     表の欄の式の索引を作り終えるまで前の文の形で照らして答え(NotIndexed にしない)、作り終えて表の標本を取り直した欄から表の欄の式で
 ;;;     照らす(IndexBook の scoped — ListRows と回収の終端の行の読みが文の形を決める)。索引の用意は aliases が在っても表の欄の式の索引を
 ;;;     作り、作り終えた回の終わりに表の標本を取り直して観測し直す。標本を取り直す前の表の欄の式の索引は、索引の式の統計が無く値の組の
@@ -500,7 +500,7 @@
   answer)
 
 
-;; --- 同じ process の書きの並び(card ki-0306f5a614b4)-----------------------------------------------------------------------------
+;; --- 同じ process の書きの並び-----------------------------------------------------------------------------
 
 (defeffect AdmitWriters
   "錠の単位 units(名の順)の書きを、同じ process の同じ単位の書きと 1 本ずつに並べるため、単位ごとの並びを名の順に通る(writer-gates が
@@ -530,7 +530,7 @@
   (AdmitWriters [units]
     ;; 無い単位の並びを、どの並びも待つ前に全部作って 1 度に置く。session の値は節の入口で読んだ物で、並びを待つ間(AcquireSemaphore で
     ;; 他の task に譲る間)に他の書きが置いた単位を知らない — 待った後に置き直すと、その単位を消して返す時の KeyError にし、同じ単位に
-    ;; 2 つ目の並びを作って 1 本ずつの約束を破る(card ki-2b1142ac9146)。並びを作る CreateSemaphore は譲らずに答える。
+    ;; 2 つ目の並びを作って 1 本ずつの約束を破る。並びを作る CreateSemaphore は譲らずに答える。
     (for [unit units]
       (when (not-in unit gates)
         (<- created (CreateSemaphore 1))
@@ -1021,7 +1021,7 @@
    :tags {:context "records" :role "foundation"}}
   "append_rows の行(seq at payload)の列を、列 stream の番号の順の出来事(Event)の tuple にするため(出来事を出す読みの全部が通る 1 点 —
    1 行の event-of もここを通る。内包表記で 1 度に組む・純粋 — 束の読みでは decoded-batch が scheduler の thread の外で回す)。payload の鍵
-   position(行と一緒に積んだ出来事だけが持つ — card ki-e17ba3b32dea)は Event.position に読む(鍵が無ければ None)。"
+   position(行と一緒に積んだ出来事だけが持つ)は Event.position に読む(鍵が無ければ None)。"
   (tuple (gfor #(record decoded) (gfor record records #(record (json.loads (get record 2))))
                (Event stream (int (get record 0)) (get decoded "idempotencyKey") (get decoded "body") (get decoded "writer")
                       (int (get record 1)) (event-position (.get decoded "position"))))))
@@ -1392,7 +1392,7 @@
 (defk pg-read-batch [store ask now-ms]
   {:pre [(: store PreparedStore) (: ask ReadBatch) (: now-ms int)] :post [(: % BatchRead)]
    :tags {:context "records" :role "foundation"}}
-  "ReadBatch の束に答えるため(card ki-177a4f287c42): 置き場の頭の文と、束の読みごとに同じ読みを 1 つ撃った時と
+  "ReadBatch の束に答えるため: 置き場の頭の文と、束の読みごとに同じ読みを 1 つ撃った時と
    同じ文(read-row-plan・list-rows-plan)を、往復をまとめる読みだけの transaction の SqlBatch 1 本で DB への 1 往復に流し、答えの行から読みごとの
    答えを組む(row-of・list-rows-page — 1 つの読みと同じ組み方)。文 1 つずつの往復の和(本番で読み 11 本・service の中で中央 36 ms)を
    1 往復にするため。索引の無い欄の読み(NotIndexed)は文を流さない。束の文は 1 つの transaction の中で流れる。"
@@ -1532,7 +1532,7 @@
          (: appended tuple) (: now-ms int)]
    :post [(: % (get tuple #(Statement ...)))]
    :tags {:context "records" :role "foundation"}}
-  "確定する鍵つきの PutRowsAppendEvents の答えを覚える文(2 往復目の追記の文の後ろ — 鍵の無い書きは 0 文)を作るため(card ki-e17ba3b32dea):
+  "確定する鍵つきの PutRowsAppendEvents の答えを覚える文(2 往復目の追記の文の後ろ — 鍵の無い書きは 0 文)を作るため:
    答えの綴りは remembered-answer-json の綴りの頭に鍵 appends(束の順の追記の番号)を足した物。appended = 束の順の、送り直しの追記の前の番号
    (int)か今積む追記の印(InsertAt — 番号は同じ往復の追記の文が採るので、覚えの文が同じ文の中で (列, 冪等キー) で引く)。"
   (when (is ask.idempotency-key None)
@@ -1658,7 +1658,7 @@
   {:pre [(: store PreparedStore) (: origin-host str) (: writer str) (: ask PutRowsAppendEvents) (: now-ms int)]
    :post [(: % (| WrittenAndAppended RowsConflict RowsRefused AppendRefused))]
    :tags {:context "records" :role "foundation"}}
-  "PutRowsAppendEvents を全部か 0 で、行と追記の数に依らず 2 往復で積むため(頭の註の「書きの往復」・card ki-e17ba3b32dea): 1 往復目に置き場の
+  "PutRowsAppendEvents を全部か 0 で、行と追記の数に依らず 2 往復で積むため(頭の註の「書きの往復」): 1 往復目に置き場の
    頭・全部の行の錠つきの読み(put-rows-locked と同じ)・追記ごとの冪等キーの引き・鍵の覚え・組の期限を過ぎた出来事(append-events-locked と
    同じ)・(鍵つきなら)同じ鍵の錠と覚えを読む。覚えで先に判じ(送り直しは何も流さずに COMMIT)、行の束を判じ(通らなければ片付けと COMMIT
    だけでその答え)、追記を束の順に判じる(断りがあれば束の順で最初の AppendRefused — 片付けと COMMIT だけ)。全部通れば 2 往復目に追記の
@@ -1792,8 +1792,7 @@
    前でも出さない(文の条件・頭の註)。頼んだ表が空なら文を流さない(`IN ()` は文にできない — WatchChanges は空の組を作る時に断るので、
    今は起きない)。名指した列(ask.streams)の末尾は、置き場の頭と同じ 1 文(watch-head-statement — 同じ断面)で読み、変更の列は頭の番号
    までを読む(変更と末尾が同じ断面の物になる・往復は増えない — #3718)。位置が頭そのもの(cursor.sequence = head)なら、読む変更の範囲
-   (位置, 頭] は空なので変更の列の文を流さない(答えは同じ空の変更 — 追いついた読み手の待たない読みは、頭の 1 文だけで答える・
-   ki-ca4b41612e2e)。"
+   (位置, 頭] は空なので変更の列の文を流さない(答えは同じ空の変更 — 追いついた読み手の待たない読みは、頭の 1 文だけで答える)。"
   (for [name ask.tables] (store.schema.table name))
   (<- reads tuple (tail-reads store ask.streams now-ms))
   (<- head-statement Statement (watch-head-statement store.prefix reads))
@@ -1956,7 +1955,7 @@
   {:pre [(: store PreparedStore) (: origin-host str) (: writer str) (: ask AppendEvents) (: now-ms int)]
    :post [(: % AppendedEvents)]
    :tags {:context "records" :role "foundation"}}
-  "AppendEvents の束を、追記の数に依らず 2 往復で積むため(頭の註の「書きの往復」・card ki-48c34994ed15): 1 往復目に置き場の頭と、追記ごとの
+  "AppendEvents の束を、追記の数に依らず 2 往復で積むため(頭の註の「書きの往復」): 1 往復目に置き場の頭と、追記ごとの
    冪等キーの引き・鍵の覚え・(組で数える列は)組の期限を過ぎた出来事を読み、追記ごとに前の使いを判じ(earlier-use — 束の前の追記が片付ける
    出来事は重ねて片付けない)、2 往復目に片付けと今積む追記の書きを束の順に COMMIT と同じ往復で流す(書きの錠の中なので番号は束の順に増え、
    間に他の書きは入らない)。束の冪等キーは互いに違う(AppendEvents が作る時に断る)ので、追記ごとの判断は束の前の断面で決まり、束の順に

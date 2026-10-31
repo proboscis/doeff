@@ -1,4 +1,4 @@
-"""defeffect の型の振る舞いの deftest を公開する(card ki-e77d44aa61e5)。
+"""defeffect の型の振る舞いの deftest を公開する。
 
 ``defeffect_shape_deftests.hy`` の deftest を包み直さずそのまま公開する(ADR-DOE-HY-002 —
 包むと pytestmark が落ちる)。実行時の ``doeff_interpreter`` はこの module の fixture が供給する。

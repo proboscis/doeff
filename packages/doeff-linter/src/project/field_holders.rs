@@ -1,4 +1,4 @@
-//! DOEFF149: 型の欄を持つ class の顔ぶれ(agora-redesign #1374・親 #1192 — 元は agora-controllers の一時の判定
+//! DOEFF149: 型の欄を持つ class の顔ぶれ(親 #1192 — 元は agora-controllers の一時の判定
 //! controllers/screen/tests/record_body_rules.hy の ③)。
 //!
 //! architecture.hy の `:field-holders [(field-holders "名" :type "T" :files [..] :classes [..] :holders [..] :why "…") …]` の宣言ごとに、

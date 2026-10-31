@@ -28,7 +28,7 @@
    takes = 取り手が取った回数(coordinator の歩の数 — 検が読む)。crash-waiting = 落ちの注入(次の Persist で落とす — local.hy の
    CrashCoordinator)が待っているか(世界が立て、落ちで下ろす)。模擬の coordinator の書きの見張り(local.hy の observe-requests)は、
    これが偽の書きでは落ちの判断を世界へ問わない(#3132)。arrivals = 積んだ要求の id → 積んだ刻(同じ刻の要求を送り手の名の順に取る)。
-   stalled-until = coordinator の機体ごとの止まり(local.hy の StallCoordinator — card ki-d033e5f969cf)が明ける刻(epoch ms・0 = 止まって
+   stalled-until = coordinator の機体ごとの止まり(local.hy の StallCoordinator)が明ける刻(epoch ms・0 = 止まって
    いない)。世界が立て、模擬の coordinator の取りの見張り(local.hy の observe-requests)が、取りの後にこの刻まで調停ループを止めてから下ろす。"
   (defn #^ None __init__ [self]
     (setv self.pending [] self.up False self.bells {} self.takers [] self.faults [] self.takes 0 self.crash-waiting False

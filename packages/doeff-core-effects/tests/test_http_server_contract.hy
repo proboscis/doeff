@@ -366,7 +366,7 @@
   (assert (= (. (get served.answers 0) status) 204) served.answers))
 
 
-;; --- 答え手が自分で答える probe の口(agora-redesign #2776)-----------------------------------------------------------------------
+;; --- 答え手が自分で答える probe の口-----------------------------------------------------------------------
 
 (val PROBE-FAILED "/peek の probe は答えを出せなかった")
 
@@ -434,7 +434,7 @@
   (assert (= (lfor a (cut served.answers 4 None) #(a.status a.body)) [#(200 b"program") #(200 b"program")]) served.answers))
 
 
-;; --- 答え手がその場で答える ws の 1 通の口(agora card ki-f4cd863959c8)-------------------------------------------------------
+;; --- 答え手がその場で答える ws の 1 通の口-------------------------------------------------------
 
 (defk early-texts [ticket text]
   {:pre [(: ticket str) (: text str)] :post [(: % (get tuple #(str ...)))] :tags {:context "http-server-test" :role "program"}}
@@ -516,7 +516,7 @@
 
 (defk staged-texts [ticket text]
   {:pre [(: ticket str) (: text str)] :post [(: % WsShortcutAhead)] :tags {:context "http-server-test" :role "program"}}
-  "2 段の ws の口の answer(agora card ki-d5887d5edbd5): 先に \"first:\" の 1 通を積み、続きの段 staged-rest を走らせる。"
+  "2 段の ws の口の answer: 先に \"first:\" の 1 通を積み、続きの段 staged-rest を走らせる。"
   (WsShortcutAhead :texts #((+ "first:" text)) :rest (staged-rest text)))
 
 
@@ -535,7 +535,7 @@
 
 (deftest test-a-staged-ws-shortcut-sends-each-stage-before-the-next-and-carries-a-value-to-the-program
   {:interpreters ["aiohttp-http-server" "scripted-http-server"]}
-  ;; 2 段の答え(agora card ki-d5887d5edbd5): 1 段目の文を積んでから続きの段を走らせ、続きの段の文も積んでから、全部の段の文と終わりの段が
+  ;; 2 段の答え: 1 段目の文を積んでから続きの段を走らせ、続きの段の文も積んでから、全部の段の文と終わりの段が
   ;; 運ぶ値 carried を載せた 1 通が本体へ届く。続きの段が落ちた 1 通は、1 段目に積んだ文を載せ、値は運ばずに届く。同じ接続の 1 通の順は変わらない。
   (val shortcuts #((WsShortcut :marker "stage" :answer staged-texts) (WsShortcut :marker "split" :answer staged-broken)))
   (<- served Served (serve-shortcut #((PeerRequest :method "GET" :target "/ws" :ws True :sends #("stage1" "hi" "split1" "bye")))

@@ -198,7 +198,7 @@ def _analyze_handler(obj: Any, label: str, *, depth: int) -> HandlerEffects:
 
 def _installed_again(label: str, done: HandlerEffects | None, why: Unresolved) -> HandlerEffects:
     """A handler a clause of its own installs again (doeff-traverse's ``sequential`` reports each
-    item's outcome under itself — agora card ki-70117167ebf3): the same handler, as its read
+    item's outcome under itself): the same handler, as its read
     answered it.  An effect that reaches it there is answered by the same clauses; what leaves a
     clause reached again inside what it performs is worked out in ``pass_through``.  A clause's
     body is read after its handler's read is done (``_emits_read_later``), so ``done`` is there;
@@ -438,7 +438,7 @@ def _clause_functions(
     """``root`` and the functions nested in it that dispatch on a parameter.
 
     Found once per def node (as ``_body_nodes`` lists a body once): a handler is read again
-    for every Program that installs it, and the tree never changes (agora-redesign #1586)."""
+    for every Program that installs it, and the tree never changes."""
     cached = _CLAUSE_FUNCTIONS.get(id(root))
     if cached is not None and cached[0] is root:
         return cached[1]
@@ -503,13 +503,13 @@ def _nested_functions(parent: FunctionNode) -> Iterator[FunctionNode]:
 
     Breadth-first from the body like ``ast.walk``, but stopping at every def / class / lambda,
     so each level reads its own body only — walking the whole subtree at every level read a
-    node once per function enclosing it (agora-redesign #1586). Leaving out the other fields
+    node once per function enclosing it. Leaving out the other fields
     (arguments, decorators) and the subtrees below does not reorder the nodes kept.
 
     The defs and lambdas are the ones the body's node list holds (``_body_nodes`` — listed for the facts anyway, and
     stopping at the same scopes), in that list's depth-first order. That is the breadth-first order when there is
     at most one, or when each is a statement of the body itself; any other layout is walked breadth-first as above
-    (ki-56e063c79150: building what a changed module's entry holds, this walk was the largest part of the dispatch
+    (building what a changed module's entry holds, this walk was the largest part of the dispatch
     reading)."""
     listed = [node for node in _body_nodes(parent) if isinstance(node, FunctionNode)]
     statements = () if isinstance(parent, ast.Lambda) else {id(statement) for statement in parent.body}
@@ -532,7 +532,7 @@ def _effect_param(node: FunctionNode) -> str | None:
         return None
     # The tests of the body's ifs and the subjects of its matches are listed once and asked of each parameter in
     # turn: a def takes many parameters and has a long body, and asking the body for each of them was most of the
-    # dispatch reading of a changed module (ki-56e063c79150).
+    # dispatch reading of a changed module.
     tests: list[ast.expr] = []
     subjects: list[ast.expr] = []
     for child in _body_nodes(node):
@@ -655,7 +655,7 @@ _DISPATCHES: dict[int, tuple[FunctionNode, _Dispatch]] = {}
 def _dispatch_of(node: FunctionNode) -> _Dispatch:
     """The effect parameter and the branches of ``node``, found once per def node: a handler is
     read again wherever it is installed, and the tree never changes — finding them at every read
-    ran ``_branches`` 544,643 times for 924 reads in five closure checks (ki-5a5f6bd26d5e)."""
+    ran ``_branches`` 544,643 times for 924 reads in five closure checks."""
     cached = _DISPATCHES.get(id(node))
     if cached is not None and cached[0] is node:
         return cached[1]
@@ -1047,7 +1047,7 @@ def _element_handler(element: ast.expr, value: Any, scope: _Scope, text: str) ->
 # these hops can come back to where they started (``x = [*x]``, a builder calling itself);
 # the literal, ``+``, bind and spread around them are finite in the tree and not counted —
 # counting them stopped a ``(<- launch (managed-launch [] adapter))`` inside a builder
-# before its plain list was reached (agora-redesign #2674).
+# before its plain list was reached.
 _MAX_LIST_HOPS = 12
 
 
@@ -1176,7 +1176,7 @@ def _placed_element(
     unpacked from a list (``(setv [lower adapter] (runtime-handlers))``), or a constant index
     into one (``(get runtime 0)``).  A place inside a list that could not be read whole is
     that list's unread entry under the same name — the name an unreadable parent was
-    reported by passes to its parts (agora-redesign #2674).  A name bound once to an element
+    reported by passes to its parts.  A name bound once to an element
     (``h = (reader {...})`` … ``[h]``) is read as that element."""
     hop = depth + 1
     value = scope.resolve(element)

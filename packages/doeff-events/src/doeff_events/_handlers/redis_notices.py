@@ -1,5 +1,5 @@
 """The notice broker on Redis: the lower layer of ``doeff_events._effects.notices`` answered by a Redis server's
-Pub/Sub (agora-redesign #3850).
+Pub/Sub.
 
 ``redis_notice_handler(url, timeout_seconds, silence_seconds)`` needs the optional dependency ``doeff-events[redis]``
 (redis-py's asyncio client). The module itself imports without it; the client library is imported when the wrapped
@@ -12,7 +12,7 @@ How it talks to Redis:
   (inside ``scheduled``). The wait for the next notice holds no scheduler task busy and has no time limit of its own while
   the connection lives: cancelling the waiting task cancels the coroutine (``await_handler`` forwards the cancel),
   which is how a source stops.
-- A subscription's connection that went half-open is lost after ``silence_seconds`` (card ki-227ad148680d). A
+- A subscription's connection that went half-open is lost after ``silence_seconds``. A
   subscribed server sends nothing while nobody announces, so a quiet connection and one whose peer stopped
   answering (the network cut, the host gone, the process stopped) look the same to a reader; TCP keep-alive's OS
   defaults told the second after about 2 h 11 min (Linux), and not at all for a stopped process whose kernel still
@@ -32,7 +32,7 @@ How it talks to Redis:
   connection; when that connection is lost the subscription is dead (``NextAnnouncement`` answers
   ``BrokerUnreachable``) and the caller makes a new one — this handler never re-subscribes behind the caller's
   back, because a notice announced between the loss and the new subscription is gone and the caller must know.
-- One read takes everything that has already come, up to ``_READ_BATCH`` (agora card ki-a83c715eab23): the read
+- One read takes everything that has already come, up to ``_READ_BATCH``: the read
   that answers a ``NextAnnouncement`` waits for the first notice, then takes the Pub/Sub notices already received
   on the connection without waiting, and ``XREAD`` takes up to ``_READ_BATCH`` entries per kept stream. The notices
   after the first stay with the subscription, in order, and the next ``NextAnnouncement``s are answered from them
@@ -55,7 +55,7 @@ How it talks to Redis:
   within it, and a send (``Announce``, ``ProbeBroker``) must be answered within it, so a server that keeps the
   connection but stops answering never holds a sender. The subscriptions' wait for the next notice is held by
   ``silence_seconds`` instead (above); TCP keep-alive stays on with the OS's intervals.
-- Kept channels (agora card ki-86d11cadf3be) are Redis Streams under the key ``doeff-events:kept:<channel>``:
+- Kept channels are Redis Streams under the key ``doeff-events:kept:<channel>``:
   ``Announce(kept=True)`` is ``XADD`` with an approximate length bound (``KEPT_LOG_LENGTH``), and a subscription's
   kept channels are read with ``XREAD BLOCK`` from the positions this handler keeps for the subscription's reader
   (one process — no consumer group on the server, so a standby process does not take notices from the active one,
@@ -110,11 +110,11 @@ _T = TypeVar("_T")
 _NAME: Final = "name"
 _BODY: Final = "body"
 
-# The longest a subscription's connection may answer nothing before it counts as lost (card ki-227ad148680d): the
+# The longest a subscription's connection may answer nothing before it counts as lost: the
 # read replica's keeper in agora must learn of a dead subscription within 7 s (its ADR R10).
 SUBSCRIPTION_SILENCE_SECONDS: Final = 7.0
 
-# The most notices one read of a subscription takes from what has already come (agora card ki-a83c715eab23): the
+# The most notices one read of a subscription takes from what has already come: the
 # Pub/Sub notices already received on the connection, and the entries ``XREAD … COUNT`` answers per kept stream.
 _READ_BATCH: Final = 1000
 
@@ -146,8 +146,8 @@ class BrokerAnswerMalformed(TypeError):
 class BrokerConnectionsExhausted(RuntimeError):
     """The client's pool of connections to the server is full (redis-py's ``MaxConnectionsError``): this process
     holds every connection the pool allows. It is not an outage — the server answers, and waiting gives no
-    connection back — so it is raised by name at once instead of answered as ``BrokerUnreachable`` (card
-    ki-aa9497a3a412: subscriptions left open filled the pool, and the source waited out its whole patience for a
+    connection back — so it is raised by name at once instead of answered as ``BrokerUnreachable`` (
+    subscriptions left open filled the pool, and the source waited out its whole patience for a
     broker that was never away)."""
 
 
@@ -517,7 +517,7 @@ async def _or_failed(call: "Awaitable[_T]") -> "_T | _Failed":
 class _OnAwait(Generic[_T]):
     """What the handler hands ``Await``: an awaitable that makes its call's coroutine only when it is awaited.
     When the task performing the ``Await`` is stopped before the answerer took it, the effect is dropped with
-    nothing made — no coroutine is left unawaited (agora-redesign #3864: "coroutine '_or_failed' was never
+    nothing made — no coroutine is left unawaited ("coroutine '_or_failed' was never
     awaited" when a stopped task's last call was dropped)."""
 
     __slots__ = ("_call",)
@@ -713,10 +713,10 @@ def redis_notice_handler(
     """Build the handler that answers the lower-layer notice effects from the Redis server at ``url``
     (for example ``redis://agora-events:6379/0``). ``timeout_seconds`` = how long a connection may take to be made
     and a send (``Announce``, ``ProbeBroker``) may take to be answered before it counts as unreachable — so a
-    server that stops answering, or a network that goes silent, never holds a sender (agora-redesign #3864). No
+    server that stops answering, or a network that goes silent, never holds a sender. No
     default: the composition names it. ``silence_seconds`` = how long a subscription's connection may answer
     nothing (no notice, no answer to ``PING``) before it counts as lost — so a half-open connection is told as
-    ``BrokerUnreachable`` within it (card ki-227ad148680d). The default ``SUBSCRIPTION_SILENCE_SECONDS`` (7 s) is
+    ``BrokerUnreachable`` within it. The default ``SUBSCRIPTION_SILENCE_SECONDS`` (7 s) is
     the target of agora's read replica keeper. ``redeliver_seconds`` = how long a kept channel's notice handed to
     its reader waits for the acknowledgement before it is handed out again (default ``KEPT_REDELIVERY_SECONDS``)."""
     if not isinstance(url, str) or not url:
@@ -741,7 +741,7 @@ redis_notice_handler.__doeff_effects__ = REDIS_NOTICE_EFFECTS
 def broker_back_by_retry(retry_seconds: float) -> "ProgramHandler":
     """Build the handler that answers ``AwaitBrokerBack`` for a broker that cannot tell its own return (Redis):
     try ``ProbeBroker`` (a connection only, no data), and while it fails, wait ``retry_seconds`` and try again
-    (agora-redesign #3864 — the decision of 2026-10-07, ADR-DOE-EVENTS-002 R6). Answers once a try succeeds.
+    (the decision of 2026-10-07, ADR-DOE-EVENTS-002 R6). Answers once a try succeeds.
 
     Placed between ``redis_notice_handler`` (outside — it answers ``ProbeBroker``) and ``notice_events_handler``
     (inside — it asks ``AwaitBrokerBack`` only while a channel holds a gap or a subscription lost its broker), so

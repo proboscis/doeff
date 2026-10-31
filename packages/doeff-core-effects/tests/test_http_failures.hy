@@ -1,10 +1,10 @@
 (require doeff-hy.macros [deftest defk <- with-handler])
 
-;;; HttpRequest の failures-as-values(agora-redesign #805 の構成レビュー 2-1 — 呼び手が transport の library の例外の型を知らずに届かない失敗を読むため):
+;;; HttpRequest の failures-as-values(呼び手が transport の library の例外の型を知らずに届かない失敗を読むため):
 ;;;   * 立てれば、応答が 1 度も来なかった失敗は HttpFailed(url・detail = 例外の class と文・kind = 失敗の類)で答える
 ;;;   * 立てなければ今までどおり transport の例外が上がる(今の使い手は変わらない)
-;;;   この 2 つは本物と fake(fixture の replay)の共通の契約として test_http_request_contract.hy が見る(agora-redesign #1159)。
-;;; 失敗の類 kind(agora-redesign #850 — 消費者が detail の型名の文字列で期限切れを判じないため):
+;;;   この 2 つは本物と fake(fixture の replay)の共通の契約として test_http_request_contract.hy が見る。
+;;; 失敗の類 kind(消費者が detail の型名の文字列で期限切れを判じないため):
 ;;;   * 答え手が transport の例外の class の階層から写す: 期限切れ 4 種 = TIMED-OUT・接続できない = CONNECT-FAILED・残り = OTHER
 ;;;   * 反例: 名が Timeout で終わるだけの例外や、文に timed out を含む失敗は期限切れと読めない
 ;;;   * kind は既定値を持たない(作り手が書き忘れたら作る時に落ちる — 黙って「期限切れでない」にならない)
@@ -154,7 +154,7 @@
 
 
 (deftest test-one-handler-value-installed-around-two-scopes-answers-both
-  ;; 失敗ケース(agora-redesign #3415): 1 つの答え手の値を作って、別々の 2 つの範囲に被せる(値を持って要求ごとに被せる使い手の形)。
+  ;; 失敗ケース: 1 つの答え手の値を作って、別々の 2 つの範囲に被せる(値を持って要求ごとに被せる使い手の形)。
   ;; 直す前は値を作った時の client 1 つを 2 つの範囲が使い、1 つ目の範囲の終わりで閉じたので、2 つ目の要求が「client が閉じた」で落ちた。
   ;; 直した後は範囲ごとに client を作って閉じる: 2 つとも答え、作った数 = 閉じた数 = 2。
   (val made (Made))

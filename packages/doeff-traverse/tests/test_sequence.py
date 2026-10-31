@@ -1,4 +1,4 @@
-"""sequence() の契約の検(agora-redesign #2812)。
+"""sequence() の契約の検。
 
 sequence は Program の列を渡された順に 1 つずつ走らせ、答えを tuple で返す。handler は要らず、方針は「順・最初の失敗で止まる」に
 固定する(Traverse の handler が決める並び・失敗の扱いとは別の、名前のある道具)。確かめる事は 3 つ。

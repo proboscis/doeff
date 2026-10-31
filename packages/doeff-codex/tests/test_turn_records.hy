@@ -1,4 +1,4 @@
-;; ターンを名乗る記録の集まり(lines.TurnRecord)の検(ki-77e76c7c07ce の設計検証・盲検 A)。
+;; ターンを名乗る記録の集まり(lines.TurnRecord)の検(盲検 A)。
 ;;
 ;; 守る事: 「どの記録がターンを名乗るか」は記録の型を持つ lines が 1 か所(TurnRecord)で名乗り、handler はそれで記録をターンの列へ
 ;; 振り分ける(handler は記録の class を列挙しない)。ターンの id(turn-id)を必ず持つ記録を足して TurnRecord に入れ忘れると、handler は

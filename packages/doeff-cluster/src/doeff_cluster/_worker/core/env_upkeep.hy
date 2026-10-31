@@ -38,7 +38,7 @@
 (val SWEEP-EVERY-MS 30000)              ; roots の合計が上限を越えている間の掃除の間隔(前の掃除の終わりから — 固定の集合が変わった時はすぐ)
 ;; project ごとに消さない root の数(最後に使った時刻の新しい順): 今の版と 1 つ前に動いていた版(戻し先 — #3732)。
 (val KEEP-PER-PROJECT 2)
-;; roots の合計が上限を越えた時に、消して下げる先(上限に掛ける割合 — card ki-a619d34de8c9)。上限ちょうどまでしか消さないと、次に完成した
+;; roots の合計が上限を越えた時に、消して下げる先(上限に掛ける割合)。上限ちょうどまでしか消さないと、次に完成した
 ;; root 1 つですぐ越え、「1 つ消す → 越える」の往復のたびに数えと消しが node の共有の disk を取り合った(zeus 2026-10-16 — 24 時間の約 36% が
 ;; 掃除中・20〜60 秒おきに全 root を数え直した)。95% まで下げて、次に越えるまで root 数個分(上限 20 GiB で約 1 GiB)の余白を置く。
 (val SWEEP-TARGET-RATIO 0.95)
@@ -102,7 +102,7 @@
   {:pre [(: known tuple) (: key str) (: made-ms int) (: used-ms int)] :post [(: % (| int None))]
    :tags {:context "worker" :role "judgment"}}
   "前の数え(known — 最後の掃除の数えの RootInfo の列)の root の大きさを使い回せるかを判じ、使えればその byte を、数え直す時は None を
-   返すため(card ki-a619d34de8c9 — 掃除のたびに全 root の木を lstat で歩き、node の共有の disk の浅い枠を取り合った)。使い回すのは、worker
+   返すため(掃除のたびに全 root の木を lstat で歩き、node の共有の disk の浅い枠を取り合った)。使い回すのは、worker
    が作った同じキーの root で、完成マーカーの時刻(made-ms — 準備し直した root は時刻が変わる)と最後に使った時刻(used-ms)が前の数えと
    同じ物だけ。完成の後に root が大きくなるのは、job が import した時に書く .pyc だけで(zeus 2026-10-16 の実測 — 完成マーカーより新しい
    file は __pycache__ の .pyc と .last-used だけ・足された量は root の 0.03〜2.5%・中身の書き換えは無い)、job は起こす前に .last-used を
@@ -136,7 +136,7 @@
    返すため。root の dir の合計を上限の内に、共有の disk の空きを最低の上に保つ(#4051)。
    消さない物: 固定(pinned — 走っている job・宣言の job・準備中・温める表)・project ごとの新しい 2 つ・worker が作っていない dir。
    残りを最後に使った時刻の古い順に、合計が上限の SWEEP-TARGET-RATIO(sweep-target)まで下がり、かつ空きが最低へ戻るまで選ぶ(上限を
-   越えた時に上限ちょうどまでしか消さないと、次に完成した root 1 つですぐ越えて掃除が往復した — card ki-a619d34de8c9。合計が上限の内
+   越えた時に上限ちょうどまでしか消さないと、次に完成した root 1 つですぐ越えて掃除が往復した。合計が上限の内
    なら下げ先の上でも選ばない)。空きの見積もりは消す root の数えた大きさを足す — hardlink を重ねて数えるので実際に空く量より大きく、
    足りなければ消した後の数え直しで残りを選ぶ。戻れなくても選べる物は全部選ぶ(候補を全部消しても空きが戻らない時は、準備が
    disk-full で断る — env_prepare の stage-disk・env-capacity)。"
@@ -202,7 +202,7 @@
 ;; near へ入る所と exhausted の出入りは今のまま(予告を遅らせない・exhausted は準備の process の disk-full と同じ線)。2026-10-17 の mac-native
 ;; は APFS の local snapshot の切れ(1 時間ごとに空きが 0.5〜1 GB 戻る)と版の env の組み(1 本で約 0.43 GB 減る)で、空きが near の線の上下
 ;; 1 GB を行き来した。名乗りが near と ok を往復するたびに、読み手(見回りの責任 workers-stay-live)が同じ訳の failing を新しい 1 続きとして
-;; 作り直した(1 日に 3 続き — 依頼 lt-JJVZWCWHC91PJ5MF15W3YDKSQC)。2 GB は版の env 4〜5 本分。
+;; 作り直した(1 日に 3 続き)。2 GB は版の env 4〜5 本分。
 (val NEAR-RETURN-BYTES (* 2 (** 10 9)))
 
 

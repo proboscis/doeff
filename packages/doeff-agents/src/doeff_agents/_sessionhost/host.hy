@@ -348,7 +348,7 @@
      (+ "Set to the pid of the spawning process to make the host exit "
         "when its parent is no longer that process (opt-in lifetime boundary)."))])
 
-;; `--help` / `-h` の usage(agora-redesign #668: 旧い入口の usage.py が agentd の join / 弁の説明と
+;; `--help` / `-h` の usage(旧い入口の usage.py が agentd の join / 弁の説明と
 ;; 一緒に持っていた serve の部分を、表の持ち主のここへ移した)。flag の一覧は上の 2 つの表から導く —
 ;; 手で写した一覧を作らない。折り返しは語の境界だけ(command 名や path をハイフンで割らない)。
 (setv HELP-FLAGS #("--help" "-h"))
@@ -448,7 +448,7 @@
   ;; out-of-band 寿命境界(opt-in、env-only — CLI 語彙は oracle parse_args の
   ;; 凍結物理なので足さない。backend knob と同じ搬送経路)。値は spawn 元の pid:
   ;; 起動の途中(serve の前)に spawn 元が死んでも、付け替え先(pid 1 とは限らない —
-  ;; user の systemd など)を spawn 元と取り違えない(agora-redesign #3026)。
+  ;; user の systemd など)を spawn 元と取り違えない。
   (setv orphan-knob (.get os.environ ENV-EXIT-WHEN-ORPHANED ""))
   (setv orphan-supervisor
         (cond
@@ -478,7 +478,7 @@
       (= arg FLAG-MAX-RUNNING)
       (do (+= index 1)
           (setv raw (required-arg args index FLAG-MAX-RUNNING))
-          ;; 「上限なし」を言う口(2026-08-19 operator 裁定: 上限は ACP の
+          ;; 「上限なし」を言う口(上限は ACP の
           ;; 都合であって sessionhost の性質ではない)。運用側は plist の
           ;; 1 語で無制限を選べる必要があり、旗の省略に無制限を割り当てると
           ;; 省略している既存の呼び手(適合 harness 等)の挙動まで変わる —
@@ -592,7 +592,7 @@
    Env)は素通しで real-substrate に残る(mux 差し替えの blast radius を
    多重化 effect 6 個に限定する)。
    program の待ち(doeff-time の Delay — launch の ready gate の poll と再描画待ち)
-   には、最も外側の sync-time-handler が壁の時計で答える(card ki-3c3d85253c2c・
+   には、最も外側の sync-time-handler が壁の時計で答える(
    ADR-DOE-TIME-001 R2)。
    agent が起こす結果の MCP server は、host を走らせている python で入口の module を起こす
    (WireResultChannel の handler が `python -m doeff_agents._sessionhost.result_mcp` の argv を書く)。"
@@ -733,7 +733,7 @@
              f"invalid params for session.list: `{key}` must be an integer >= {minimum}")))
   value)
 
-;; 段 10 lane 10o(agora-redesign #96): 添付の段を持たない器(tui = tmux / herdr の pane)の断りの理由。
+;; 段 10 lane 10o: 添付の段を持たない器(tui = tmux / herdr の pane)の断りの理由。
 ;; 呼び手(agentd)はこれを条件 AttachmentIgnored の reason に写す(黙って落とさない)。
 (setv ATTACHMENTS-UNSUPPORTED-REASON
       "the session substrate delivers keystrokes to a pane and cannot carry attachments")
@@ -928,7 +928,7 @@
    "expected_result" (.get params "expected_result")
    ;; ⚠ 自動記憶の置き場(memory_dir)と手番の頭に置き場へ書き出す冊(memory_files)は
    ;; **ここに書かない** — policy.TURN-CARRIED-KEYS の 1 点から carry-charter-fields が写す
-   ;; (card ki-a40292ed30d9: 置き場だけをこの座へ手で足した便の次に、同じ座で本文が落ちた)。
+   ;; (置き場だけをこの座へ手で足した便の次に、同じ座で本文が落ちた)。
    ;; law context-file-rides-the-wire(上の admit-context-file 参照): 実体化は
    ;; launch program(spawn 前・work_dir 検査後)が fs-write-text-atomic で行う
    "context_file" (.get params "context_file")
@@ -960,7 +960,7 @@
    charter → resume params(judgment.resume-params-of)→ ここ → 蘇生の名簿
    (launch.resume-session)と続く 4 枚のうちの 3 枚目。席へ運ぶ欄は数え直さず
    policy.CHARTER-CARRIED-KEYS を carry-charter-fields で写す
-   (card acp:kanban-issue:ki-a40292ed30d9 — 置き場だけを 4 枚に手で足した便の次に、
+   (置き場だけを 4 枚に手で足した便の次に、
     同じ 4 枚で本文が落ちた)。"
   (carry-charter-fields
     p
@@ -1020,7 +1020,7 @@
 (defk backend-alive-program [session-name pane-id]
   {:pre [(: session-name str) (: pane-id str)]
    :post [(: % bool)]}
-  "wire の backend_alive(段 10 lane 10h・agora-redesign #84): 行の backend が今この host で生きて
+  "wire の backend_alive(段 10 lane 10h): 行の backend が今この host で生きて
    いるかの観測 — tmux / herdr = 行の pane が session の pane の集合に在る
    (TmuxSessionPaneIds — monitor の帰属検証と同じ観測)。status の語からは導かない(推測しない)。"
   (<- pane-ids (tmux-session-pane-ids session-name))
@@ -1284,7 +1284,7 @@
   (when (= method "session.launch")
     (setv wire-params (params-object params "session.launch"))
     (setv program-params (build-launch-program-params wire-params config))
-    ;; 段 10 lane 10o(agora-redesign #96): 起こす腕は郵便を 1 手番目に畳むので、その郵便の添付も
+    ;; 段 10 lane 10o: 起こす腕は郵便を 1 手番目に畳むので、その郵便の添付も
     ;; この launch に載る。添付の段を持たない器(tui)には渡さず、断りを答えに名乗る。
     (setv launch-attachments (run (turn-attachments-of wire-params "session.launch")))
     (setv launch-ignored (if launch-attachments
@@ -1331,7 +1331,7 @@
       ;; 通せば新しい会話に親の記憶が黙って付く — 直している誤帰属そのもの。黙殺せず断る。
       ;; memory_files(置き場へ書き出す冊そのもの)も同じ理由で resume 専用 — 親の記憶を
       ;; 新しい会話の置き場へ書き出したら、誤帰属は置き場の名ではなく**中身**で起きる。
-      ;; ⚠ 記憶の族は**名簿から**採る(policy.TURN-CARRIED-KEYS の 1 点・card ki-6b5c4b270ca0):
+      ;; ⚠ 記憶の族は**名簿から**採る(policy.TURN-CARRIED-KEYS の 1 点):
       ;; 手で並べると、族に欄を足した便がこの断りを落とし、fork が親の値をそのまま持って行く
       ;; (memory_retired_files ならば、親の退役した名で**新しい会話の置き場の file を消す**)。
       (for [banned (+ #("binding" "new_session_id" "expected_result"
@@ -1529,7 +1529,7 @@
       (raise (RuntimeError
                (+ "session.send: session_env is not carried "
                   f"(backend: {config.backend}). The tmux container has no per-turn env."))))
-    ;; 段 10 lane 10o(agora-redesign #96): 添付の段を持たない器(tui = tmux / herdr)は断りを名乗る —
+    ;; 段 10 lane 10o: 添付の段を持たない器(tui = tmux / herdr)は断りを名乗る —
     ;; 本文は届く・添付だけ落ちる。
     (setv attachments (run (turn-attachments-of p "session.send")))
     (setv ignored (if attachments
@@ -1715,7 +1715,7 @@
    supervisor の死を「親が supervisor の pid でなくなった」で検出し(orphan は
    init/launchd か子の付け替え先 — user の systemd など — へ reparent される。
    比べる pid は knob が運ぶので、serve の前に spawn 元が死んでも付け替え先を
-   spawn 元と取り違えない・agora-redesign #3026)、(1) launch 済み active session を reap(上)、
+   spawn 元と取り違えない)、(1) launch 済み active session を reap(上)、
    (2) SIGTERM を自送 — main の SIGTERM handler が SystemExit(0) に変換し、
    finally の lease 釈放を通る(issue #565 の graceful 経路と同一)。SIGTERM
    経路が万一 wedge しても backstop の os._exit(1) で有界に退場する(lease は

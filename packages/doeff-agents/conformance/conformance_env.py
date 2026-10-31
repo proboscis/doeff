@@ -6,7 +6,7 @@ agentd-compatible executable, the session-host backend, the herdr socket) throug
 variables. This module only reads them: each function returns the raw value of one variable, or
 None when unset. Which value wins and what the default is stays with the callers (harness, and the
 HY_GATE of test_s8 / test_s14 / test_s20). The read goes through the ReadEnvironment effect and its
-real handler (subprocess_handler) — not os.environ directly (DOEFF004 — agora-redesign #3012; this
+real handler (subprocess_handler) — not os.environ directly (DOEFF004; this
 module was exempted from the rule before, #2954).
 """
 

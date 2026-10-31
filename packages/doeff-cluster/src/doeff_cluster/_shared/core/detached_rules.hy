@@ -1,6 +1,6 @@
 ;;; 切り離した task(SubmitDetached)の純粋な判断: 送る effect を作る前の needs の検めと、置き方の名乗り(優先・同時数の上限の組)の
 ;;; 形の検めと本文の綴り(送り手と coordinator の受け口が同じ規則を読む — 2026-10-11)。系が宣言する組の上限(GroupLimit)の形の検めと
-;;; 綴りも同じ所に置く(系の構成子・coordinator の資源の口・保存の読み直しが同じ規則を読む — 2026-10-12・card ki-b0e8028c8c8d)。
+;;; 綴りも同じ所に置く(系の構成子・coordinator の資源の口・保存の読み直しが同じ規則を読む — 2026-10-12)。
 ;;; 型は doeff_cluster._shared.intent.detached_model、coordinator への口(送る・待つ)は doeff_cluster._shared.protocol.detached。
 (require doeff-hy.macros [defk deff <- val])
 (val MODULE-TAGS {:context "doeff-cluster" :role "judgment"})
@@ -25,7 +25,7 @@
 
 (deff task-notify-refusal [#^ (| dict list tuple str int float bool None) value]  ; defk にできない: coordinator の本文の読み(Program の外)と構築関数が呼ぶ純粋な判断
   {:pre [(: value (| dict list tuple str int float bool None))] :post [(: % (| str None))] :tags {:context "doeff-cluster" :role "judgment"}}
-  "task の本文の欄 notify(終わりの知らせ先 — card ki-e7945a2b2d00)が受けられない理由(None = 欄が無いか、空白を持たない
+  "task の本文の欄 notify(終わりの知らせ先)が受けられない理由(None = 欄が無いか、空白を持たない
    TASK-NOTIFY-MAX-LENGTH 字までの文字列)。読み手は語の頭で自分の行を選ぶので、空白で語を割らせない。"
   (if (or (is value None)
           (and (isinstance value str) (<= (len value) TASK-NOTIFY-MAX-LENGTH) (not (any (gfor c value (.isspace c))))))
@@ -45,7 +45,7 @@
 (deff task-limit-refusal [#^ (| dict list tuple str int float bool None) value]  ; defk にできない: coordinator の本文の読みと構築関数が呼ぶ純粋な判断
   {:pre [(: value (| dict list tuple str int float bool None))] :post [(: % (| str None))] :tags {:context "doeff-cluster" :role "judgment"}}
   "同時数の上限の組の名乗り 1 つ(本文の JSON の object {group part?})が受けられない理由(受けられれば None)。上限の値と範囲の欄
-   (limit・scope — 2026-10-12 より前の送り手の形)は受けない — 値と範囲は系の宣言の GroupLimit が持つ(card ki-b0e8028c8c8d)。"
+   (limit・scope — 2026-10-12 より前の送り手の形)は受けない — 値と範囲は系の宣言の GroupLimit が持つ。"
   (cond
     (not (isinstance value dict)) (.format "limits の 1 つは {{group part?}} の object: {!r}" value)
     (- (set value) TASK-LIMIT-KEYS)
@@ -151,7 +151,7 @@
                    (if (all (gfor l limits (isinstance l TaskLimit)))
                        (task-limits-refusal (task-limits-json limits))
                        (.format "limits は TaskLimit の tuple: {!r}" limits))
-                   ;; 知らせ先(card ki-e7945a2b2d00)も受け口と同じ規則で、送る前に断る。
+                   ;; 知らせ先も受け口と同じ規則で、送る前に断る。
                    (task-notify-refusal notify)))
   (when placing (raise (TypeError (+ "SubmitDetached: " placing))))
   (<- answer DetachedSubmitAnswer

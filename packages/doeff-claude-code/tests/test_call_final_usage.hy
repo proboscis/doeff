@@ -1,4 +1,4 @@
-;;; 呼びの最終の usage(card ki-290ec664737d)の検: CLI の stdout の assistant の行の usage は呼びの途中の値(出力 16 など)なので、
+;;; 呼びの最終の usage の検: CLI の stdout の assistant の行の usage は呼びの途中の値(出力 16 など)なので、
 ;;; 同じ親の message_start と message_delta の対を 1 つの閉じた呼び(CallClosed)へ組み、上の層が呼びごとの使用量を最終の値で記録できる
 ;;; ようにする。重ね方(closed-usage)は CLI 2.1.292 が自分の記録に使う規則と同じ。
 ;;;
@@ -75,7 +75,7 @@
 
 
 ;; 実測の行(2026-10-24・本物の CLI 2.1.292 を偽の Messages API へ向け、本体の呼びが thinking を流している間に利用者の入力を足して
-;; control_request interrupt で止めた計測 — card ki-7498a039250d)。CLI は「[Request interrupted by user]」の後に、止めた呼びの
+;; control_request interrupt で止めた計測)。CLI は「[Request interrupted by user]」の後に、止めた呼びの
 ;; 終わりの行を自分で作る: message_delta は止まった訳を名乗らず(stop_reason null)、usage は始まりの値のまま(出力 1)。その手番の
 ;; result の total_cost_usd はこの呼びを数えない(前の呼びの額だけ)。
 (val INTERRUPTED-START
@@ -100,7 +100,7 @@
 
 
 (deftest test-a-call-the-cli-stopped-closes-as-stopped-not-as-a-final-call
-  ;; card ki-7498a039250d: 止めた呼びの CLI が作った終わり(止まった訳を名乗らない message_delta)は、呼びを止めた呼び(stopped
+  ;; 止めた呼びの CLI が作った終わり(止まった訳を名乗らない message_delta)は、呼びを止めた呼び(stopped
   ;; 偽・usage は始まりの値)として閉じ、API の終わり(止まった訳を名乗る)は最終の呼び(stopped 真)として閉じる。失敗ケース = 止まった
   ;; 訳を読まずに閉じる読み(本番 aj-P8G6EKP31ZKWS761MSKBCXK5PD — 止めた呼びが最終の値として記録され、CLI の額に無い呼びが 1 本増えた)。
   (<- closed (steps-over [INTERRUPTED-START INTERRUPTED-THINKING INTERRUPTED-NOTE INTERRUPTED-DELTA
@@ -174,7 +174,7 @@
   record)
 
 (deftest test-the-handler-adds-each-main-call-final-usage-and-their-outputs-sum-to-the-cli-turn-output [tmp-path]
-  ;; 受入(card ki-290ec664737d の条 c1154d7c3 の doeff の側): 道具の手番で、閉じた呼びは本体の呼びごとに 1 つ・呼びの id は
+  ;; 受入: 道具の手番で、閉じた呼びは本体の呼びごとに 1 つ・呼びの id は
   ;; assistant の行と同じ・出力は最終の値で、その和が CLI の result の出力と一致する。assistant の行の出力は途中の値のまま。失敗
   ;; ケース = assistant の行の usage を呼びの値にする記録(和が 2 で result の 802 と合わない)。
   (val host (host-of))

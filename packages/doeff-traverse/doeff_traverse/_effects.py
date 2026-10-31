@@ -19,7 +19,7 @@ ItemOutcome: the Traverse handler's report that one item got its outcome
 Answer types: each effect declares what its handler answers with (EffectBase[T]),
 so ``coll = yield from Traverse(f, items)`` is typed and a Hy ``(<- coll (for/do ...))``
 reads ``coll.failed_items`` / ``coll.valid_values`` under the type checker
-(agora-redesign #2047). The handlers in handlers.py resume with exactly these values.
+. The handlers in handlers.py resume with exactly these values.
 The constructors are annotated too, so pyright does not infer each call from its arguments
 (measured: with doeff's pyrightconfig, doeff-hy's static expansion of a for/do,
 ``_doeff_perform(Traverse(step, items, label="n"))`` with a nested ``step``, answered Any
@@ -76,8 +76,7 @@ class Traverse(EffectBase[Collection]):
 
     The handlers run each Program ``f`` builds where the Traverse was performed (they put
     the inner handlers and themselves back around it), so ``f`` is declared in
-    ``__doeff_runs_carried__``: a closure check reads ``f``'s body at the performing site
-    (agora-redesign #2973).
+    ``__doeff_runs_carried__``: a closure check reads ``f``'s body at the performing site.
 
     Nesting: the Program ``f`` builds may itself perform Traverse to the same handler — a
     for/do with several From binds does this for every outer item, as does a for/do bound
@@ -87,8 +86,7 @@ class Traverse(EffectBase[Collection]):
     for its inner items and the scheduler deadlocks. A bound on a leaf resource (an API
     call) belongs to the handler of that leaf effect. Splicing the inner answers is not
     the handler's job either: the for/do expansion applies Collection.flatten, so a
-    handler answers every Traverse alike and does not infer whether it is an inner From
-    (design check lt-BD5XYC8Z64P5YMHZDEAPKXQXK5).
+    handler answers every Traverse alike and does not infer whether it is an inner From.
     """
 
     __doeff_runs_carried__: ClassVar[frozenset[str]] = frozenset({"f"})
@@ -117,7 +115,7 @@ class Reduce(EffectBase[_Acc], Generic[_Acc]):
         collection: a Collection (from Traverse) or plain iterable
 
     Like Traverse, the handlers run each Program ``f`` builds where the Reduce was
-    performed, so ``f`` is declared in ``__doeff_runs_carried__`` (agora-redesign #2973).
+    performed, so ``f`` is declared in ``__doeff_runs_carried__``.
     """
 
     __doeff_runs_carried__: ClassVar[frozenset[str]] = frozenset({"f"})
@@ -203,7 +201,7 @@ class ItemOutcome(EffectBase[None]):
     progress handler counts every item — failed, skipped and carried ones too — without
     knowing how the handler runs items, and reaches ``total``. A Traverse with no item to run
     (no items, or only carried ones) reports nothing: sequential reads no inner handlers for
-    it (agora-redesign #2958).
+    it.
 
     However a Traverse that runs an item ends, it reports exactly ``total`` outcomes: when it
     finishes, when parallel_fail_fast stops at a failure (the failed item is reported
@@ -226,7 +224,7 @@ class ItemOutcome(EffectBase[None]):
     the Traverse runs is the Traverse handler's decision — parallel_fail_fast is the one
     that stops at a failure): the Traverse handler raises ItemOutcomeNotPassedError when the
     report comes back answered by someone else or thrown into (design check
-    lt-H07C2RG4T2BM59EENGQWQHSJKH, blind A and B).
+    blind A and B).
 
     When it is performed: only
     when one of those handlers names ItemOutcome (or a subclass) in the annotation of its

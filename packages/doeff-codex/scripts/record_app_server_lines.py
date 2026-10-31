@@ -22,7 +22,7 @@ binary が出した物。録る筋書きと比べ:
   終わり・答え)も同じ stdout に混ざる。
 - code-mode-unavailable: code mode の host(codex-code-mode-host)の無い dir に置いた codex を、code mode だけで道具を呼ぶ設定
   (features.code_mode_only)で起こし、1 つの process でターンを 2 回走らせる(上流はどちらのターンも code mode の道具 exec を 1 回
-  呼ぶ)— code mode が使えない警告(warning の通知)がどこに・何回出るかと、道具の呼びが何を返すかの形(card ki-86b1443b22b6)。
+  呼ぶ)— code mode が使えない警告(warning の通知)がどこに・何回出るかと、道具の呼びが何を返すかの形。
 - code-mode-host-broken: 比べ — 起動できない host(在るが、起こすとすぐ code 1 で終わる)を隣に置いた codex で同じ 2 ターン(codex
   0.162.1 は host の file が在るかだけを見て警告を出すので、この形では警告が出ない事の実測)。
 - exec-json: 比べ — 同じ答えを `codex exec --json` で走らせた行(文字の途中を出さない事の実測)。

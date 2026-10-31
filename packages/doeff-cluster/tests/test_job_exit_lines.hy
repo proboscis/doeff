@@ -1,4 +1,4 @@
-;; 止めを求めていない job の終わりを回収した拍の 1 行の検(card ki-cb9f34c49f83)。以前は止めた終わりの計時の行(process_host の
+;; 止めを求めていない job の終わりを回収した拍の 1 行の検。以前は止めた終わりの計時の行(process_host の
 ;; STOP-TIMING-LOG)しか無く、job が SIGSEGV で落ちても worker の log に落ち方が 1 行も残らなかった(終了 code 139 は状態の file の
 ;; lastExitCode を読むまで分からない)。
 ;;   前半: 終了 code から signal の名を読む表(exit-signal)と、回収の action から行の欄を作る判断(exit-notes)— 純粋な関数。

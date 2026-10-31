@@ -1,6 +1,6 @@
 """A handler value whose raw ``(effect, k)`` dispatches by its effect parameter's annotation alone.
 
-Regression target (card ki-36f06eb1c65a): doeff-events' ``broker_patience_handler`` builds
+Regression target: doeff-events' ``broker_patience_handler`` builds
 ``handler(effect: ReadBrokerPatience, k)`` and installs it with ``doeff.handler``; agora-controllers
 keeps the value (``(val broker-stall-patience (broker-patience-handler …))``) and places it by name in
 its foundation. The VM gives the raw handler only the effects of the annotated class (as if it began

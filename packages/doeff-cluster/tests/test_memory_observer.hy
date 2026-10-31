@@ -1,4 +1,4 @@
-;; 機体の memory の逼迫の観測(card ki-7b934e2538f9): worker の観測のまとめ(本番と同じ local-host)が、機体の memory の見張りの入れ物
+;; 機体の memory の逼迫の観測: worker の観測のまとめ(本番と同じ local-host)が、機体の memory の見張りの入れ物
 ;; (MemoryCell.level)の様子を WorldView.memory-tight として読む(答え手 = worker/protocol/memory_observer)。CALM は偽・TIGHT と DANGER は真。
 ;; 判断の側の検(task を見送る)は test_policy.hy の末尾の節。
 (require doeff-hy.macros [defhandler deftest <- val])

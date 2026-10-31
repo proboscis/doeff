@@ -21,7 +21,7 @@ shim(worker/entry/shim の --stamp-lines)と、待ちの子から分かれた子
 残る穴: shim 自身が KILL で止まった時(引き取りを使えない時の期限切れの group への KILL・worker の停止の猶予の後の KILL)は、その瞬間に
 pipe と file の書きの溜めに残っていた分と末尾の改行は残らない(shim の残る穴と同じ所)。
 
-file の書き(card ki-2742a2af90b6 — 機体の log の置き場の disk が詰まると、log の file への write が 1〜16 秒返らない事が、1 つの常駐の
+file の書き(機体の log の置き場の disk が詰まると、log の file への write が 1〜16 秒返らない事が、1 つの常駐の
 job の 8 日分の log で 1 秒越え 1126 回在った。前の形は読みの thread が file へ書き終えるまで pipe を読まなかったので、詰まりが続くと
 pipe(64 KiB)が満ち、job の stdout・stderr への write が止まり、job の main thread と event loop が止まる): 読みの thread は pipe を読んで
 刻を差し込むだけにし、file への write は別の thread(FileFeed)が溜めから受けた順に書く。溜めは上限つき(FeedLimits.queue_bytes)で、
@@ -29,7 +29,7 @@ pipe(64 KiB)が満ち、job の stdout・stderr への write が止まり、job 
 (送りの溜めと同じ考え方)。終わり(end)は、読みの thread が pipe を読み切った後に、溜めに在る分を file へ書き終えるまで待つ(前の形と
 同じく file を欠かない)。
 
-送り(card ki-ae919abe5b26 — 取り決め job-log/1): 子の環境に送り先の基の URL(DOEFF_JOB_LOG_OTLP)が在る時だけ、file へ書く行を
+送り(取り決め job-log/1): 子の環境に送り先の基の URL(DOEFF_JOB_LOG_OTLP)が在る時だけ、file へ書く行を
 OTLP/HTTP の logs(JSON・送り先 = 基の URL + /v1/logs)としても送る(無ければ今と同じ — 送り手を作らない)。機体の外から job の log を
 読むため。
 - 1 行 = log の record 1 つ: timeUnixNano = その行の最初の byte を読んだ壁の時計(file の行の頭の刻と同じ読み)・body = 刻の頭と改行を
@@ -44,21 +44,21 @@ OTLP/HTTP の logs(JSON・送り先 = 基の URL + /v1/logs)としても送る(�
   後なので、送りが遅れて shim が KILL に先を越されても file は欠けない。上限の後に残った行は捨てて数える。
 - 送り先の値が使えない(URL の形・属性の並べ方・job の文脈の欠け)時は送らず、理由を 1 行 log に書く(job はそのまま走る)。
 
-worker の process 自身の行(card ki-35923a5895b2 — 機体の上で直に動く worker(zeus-native・mac-native)の log は systemd・launchd の
+worker の process 自身の行(機体の上で直に動く worker(zeus-native・mac-native)の log は systemd・launchd の
 出力先の file にしか無く、会話から読めなかった): worker の入口(worker/entry/main)も同じ刻の付け方と送り手で、自分の Python の
 出力(sys.stdout と sys.stderr)を刻つきの書き手へ差し替えて送る(process_lines・stamped_streams)。job の文脈は worker が自分で
 置く(worker_log_plan — job の名 worker/<worker の名>・試み 0・世代 = worker の boot)。差し替えるのは送り先が使えて、stdout と
 stderr が同じ file を指す時だけ(機体の形 — 送り先の無い Pod の worker は今のまま)。
 - fd 1・2 は替えない(job の shim と違う所): worker の子孫(lifeline の見張りのように worker より長く生きる子)は fd 2 を継ぐので、
-  fd を pipe にすると、worker が終わった後の子孫の書きは読み手の居ない pipe へ行き、行が消えて子孫が止まる(設計検証
-  lt-8PQM3S5DDHCSJ92Q7X259K9HAW の盲検 A)。替えるのは Python の流れの物だけで、子孫と、fd へ直に書く物(Rust の panic など)は
+  fd を pipe にすると、worker が終わった後の子孫の書きは読み手の居ない pipe へ行き、行が消えて子孫が止まる。
+  替えるのは Python の流れの物だけで、子孫と、fd へ直に書く物(Rust の panic など)は
   元の file へ刻なしで書く(送らない)。
 - 書き手は送りに待たされない(job と同じ — 溢れは捨てて数える)。worker の道で溜めが満ちても worker の write が止まらない事は
   tests/test_job_log_ship.py の検が見張る(盲検 B)。
 - 書き手の終わりは process の終わり(atexit)で、捕まえない例外の traceback(excepthook が atexit より前に sys.stderr へ書く)も
   file へ書いて送ってから止める。
 
-coordinator の process 自身の行(card ki-0b0ab40048b9 — coordinator の Pod の log は版上げの Pod の入れ替えで消え、全部の worker が
+coordinator の process 自身の行(coordinator の Pod の log は版上げの Pod の入れ替えで消え、全部の worker が
 coordinator に届かなかった窓の coordinator の側を後から読めなかった): coordinator の入口(coordinator/entry/main)も worker と同じ
 process_lines で、自分の Python の出力を送る。job の文脈は coordinator が置く(coordinator_log_plan — job の名 coordinator/<Pod の
 namespace>(Pod が入れ替わっても同じ名で読む)・worker の名の欄 = Pod の名・試み 0・世代 = process の起動の刻)。Pod の名と

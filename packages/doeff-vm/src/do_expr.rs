@@ -263,7 +263,7 @@ impl PyExpand {
 /// body yields (a generator function). Built once per definition
 /// (`doeff.do.program_factory`) and shared by every `Call` of it. A call to a
 /// definition that does not yield performs nothing, so a bind may call it in place
-/// (`doeff_core_effects.outcomes.open_bind` — agora-redesign #844).
+/// (`doeff_core_effects.outcomes.open_bind`).
 #[pyclass(name = "DoFunction", frozen, module = "doeff_vm.doeff_vm")]
 pub struct PyDoFunction {
     #[pyo3(get)]
@@ -292,8 +292,7 @@ impl PyDoFunction {
     /// The `Call` of this definition with `args` and `kwargs` — what calling the `@do`
     /// wrapper builds (`doeff.do.program_factory`). A method, called with vectorcall,
     /// rather than the `Call(...)` constructor: no argument tuple for the constructor,
-    /// no `tp_new` dispatch and no constructor argument parsing per call
-    /// (agora-redesign #2817).
+    /// no `tp_new` dispatch and no constructor argument parsing per call.
     fn make_call(
         slf: &Bound<'_, Self>,
         args: Py<pyo3::types::PyTuple>,
@@ -331,7 +330,7 @@ impl PyDoFunction {
 ///
 /// One node per call, where the wrapper used to build
 /// `Expand(Apply(Pure(Callable(thunk)), []))` — five objects and a Python
-/// closure (agora-redesign #844). It is an `Expand` (the static type of a `@do`
+/// closure. It is an `Expand` (the static type of a `@do`
 /// call stays `Expand[T, E]`), and the VM reads it as exactly that DoCtrl shape
 /// (`classify_python_object`), so every evaluation path — handler dispatch
 /// included — is unchanged. Its `expr` is not a program node: read
@@ -410,21 +409,21 @@ impl PyCall {
 /// The hot path runs here without entering Python: with no `absent` and an operand that
 /// is a `Call` of a definition whose body does not yield (a defk judgment), call the
 /// function in place and return `Pure(answer)` — the bind then takes `.value` without a
-/// VM round trip. This is the same answer `outcomes._settled` gives (agora-redesign
-/// #844 — a screen row binds such judgments 10–16 times, and the Python dispatch
+/// VM round trip. This is the same answer `outcomes._settled` gives (
+/// a screen row binds such judgments 10–16 times, and the Python dispatch
 /// `open_bind` → `_opened` → `_settled` was the largest cost left per bind). An answer
 /// that is itself a generator runs as a program, as the VM would run it:
 /// `generator_program(gen)`. A `Call` of a definition whose body yields, with no
 /// `absent`, is answered here too: the operand itself, the same object
 /// `outcomes._open_bind` returns for it (`_settled` hands such a call back unchanged and
-/// no `absent` wraps it) — the VM runs it when the bind yields it (agora-redesign #2449:
+/// no `absent` wraps it) — the VM runs it when the bind yields it (
 /// such calls were 13.8k of the 16.3k binds of the custody contract examples that
 /// reached the Python dispatch, each paying `_open_bind` → `_opened` → `_settled` for an
 /// answer that is the operand). With no `absent`, an operand of a type for which
 /// `passes_through(type)` answered True — the Python dispatch hands such an operand back
 /// unchanged (an effect without a converting outcome declaration) — is answered here too:
 /// the operand itself. The answer is kept per type while the type is unchanged since
-/// (its version tag), and only when it depends on the type alone (card ki-5c3e73834e73 —
+/// (its version tag), and only when it depends on the type alone (
 /// every bind of an effect went through `_open_bind` → `_opened` in Python, about 3% of a
 /// records request's scheduler-thread CPU). Everything else (an `absent`, any other
 /// operand) goes to `fallback(expr[, absent])`, the Python dispatch, unchanged.
@@ -778,8 +777,8 @@ impl PyWithObserve {
 
 /// WithBoundaries(boundaries, body) — install a captured boundary stack around
 /// body in one VM step, so a scheduler re-entering the handlers and observers
-/// captured at a spawn site does not pay a step per layer (agora-redesign
-/// #3149). `boundaries` is innermost first, each entry a `(kind, callable)`
+/// captured at a spawn site does not pay a step per layer
+/// . `boundaries` is innermost first, each entry a `(kind, callable)`
 /// pair with kind `"handler"` or `"observer"` — the shape `GetBoundaries`
 /// returns. Each entry means the same as `WithHandler(callable, ...)` /
 /// `WithObserve(callable, ...)` nested in that order.

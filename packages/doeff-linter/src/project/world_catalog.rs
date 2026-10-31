@@ -1,4 +1,4 @@
-//! doeff の実 I/O の handler の目録(`data/world_handlers.json` — agora-redesign #1209)。
+//! doeff の実 I/O の handler の目録(`data/world_handlers.json`)。
 //!
 //! 何が外の世界に触れる handler かは doeff の事実なので、利用者の repo の architecture.hy ごとに書かせず、doeff の側に 1 つ置く
 //! (生の I/O の目録 doeff-indexer `data/raw_side_effects.json` と同じ考え)。linter は:
@@ -38,7 +38,7 @@ struct CatalogEntry {
 pub struct CatalogHandler {
     pub definition: DefinitionRef,
     pub touches: Vec<WorldTouch>,
-    /// false = :wraps に書けるが数えない(移行の間の行 — agora-redesign #1318)。
+    /// false = :wraps に書けるが数えない(移行の間の行)。
     pub counted: bool,
 }
 
@@ -61,7 +61,7 @@ pub struct WorldCatalog {
 
 impl WorldCatalog {
     /// 目録の doeff の実 I/O の handler の完全修飾名 → (綴り, それを宣言の :wraps に挙げた名簿の定義の綴りの列, 触れる先)。
-    /// 宣言(architecture)と目録を突き合わせるのは目録の側 — 宣言は目録を読まない(agora-redesign #2124)。
+    /// 宣言(architecture)と目録を突き合わせるのは目録の側 — 宣言は目録を読まない。
     pub fn world_targets(&self, architecture: &Architecture) -> BTreeMap<String, (String, Vec<String>, Vec<WorldTouch>)> {
         let wrapped = architecture.wrapped_targets();
         self.handlers
@@ -137,11 +137,11 @@ mod tests {
         let parsed = WorldCatalog::parse(include_str!("../../data/world_handlers.json"));
         let catalog = parsed.unwrap_or_else(|problems| panic!("同梱の目録が読めない:\n{}", problems.join("\n")));
         assert!(catalog.handlers.contains_key("doeff_core_effects.os_file.os_file_handler"), "os-file-handler が目録に無い");
-        // 層 2 だけの入口(子 process の claude を起こす — agora-redesign #3507)も実 I/O の handler として目録に在る(綴りは 2 つ)。
+        // 層 2 だけの入口(子 process の claude を起こす)も実 I/O の handler として目録に在る(綴りは 2 つ)。
         for name in ["doeff_agents._handlers.claude_process_layer_handler", "doeff_agents.claude_process_layer_handler"] {
             assert!(catalog.handlers.contains_key(name), "{} が目録に無い", name);
         }
-        // doeff_core_effects の子を _ へ移した後も、移し替えの module が残る間は古い綴りで :wraps に書ける(card ki-c09b3b527fad)。
+        // doeff_core_effects の子を _ へ移した後も、移し替えの module が残る間は古い綴りで :wraps に書ける。
         for name in [
             "doeff_core_effects._handlers.await_handler",
             "doeff_core_effects.await_handler",
@@ -150,25 +150,25 @@ mod tests {
         ] {
             assert!(catalog.handlers.contains_key(name), "{} が目録に無い", name);
         }
-        // 計算・VM・測りの子も同じく、_ の綴り・入口の綴り・古い綴りの 3 つで在る(card ki-32623e1651c6)。
+        // 計算・VM・測りの子も同じく、_ の綴り・入口の綴り・古い綴りの 3 つで在る。
         for (child, handler) in [
             ("thread_pool_compute", "thread_pool_compute_handler"),
             ("gc_freeze", "gc_freeze_handler"),
             ("faulthandler_stack_dump", "faulthandler_stack_dump_handler"),
-            // file・memo・cache の子も同じ(card ki-375e0a35b7a0)。
+            // file・memo・cache の子も同じ。
             ("os_file", "os_file_handler"),
             ("cache_handlers", "sqlite_cache_handler"),
             ("memo_handlers", "sqlite_memo_handler"),
-            // process の子も同じ(card ki-8d33df2c82df)。
+            // process の子も同じ。
             ("os_process", "subprocess_handler"),
             ("stop_signal_handlers", "os_signal_stop_handler"),
             ("process_meter", "process_meter_handler"),
             ("process_latest", "process_latest_handler"),
-            // http・ws の子も同じ(card ki-d4ba562a1367)。
+            // http・ws の子も同じ。
             ("http_handlers", "http_production_handler"),
             ("http_handlers", "http_fixture_handler"),
             ("aiohttp_ws_client", "aiohttp_ws_link_handler"),
-            // sql の子も同じ(card ki-4e56dc4a0ecd)。
+            // sql の子も同じ。
             ("postgres_sql", "postgres_sql_handler"),
             ("pooled_postgres_sql", "pooled_postgres_sql_handler"),
             ("clickhouse_http_sql", "clickhouse_http_sql_handler"),
@@ -185,7 +185,7 @@ mod tests {
 
     /// 子を _ へ移した handler の行は、移し替えの module(1 行目 `# moved-submodule-shim: <古い path> -> <新しい path>`)が残る間、
     /// 古い綴りの行も目録に持つ。外の repo の :wraps は古い綴りのまま書いてあり、目録から消すと設定の誤りで全部の commit が止まる
-    /// (42f897000 が aiohttp-http-server の古い綴りを _ の綴りへ置き換え、agora-controllers の commit-msg の hook を止めた・card ki-cd6a513ae4b5)。
+    /// (42f897000 が aiohttp-http-server の古い綴りを _ の綴りへ置き換え、agora-controllers の commit-msg の hook を止めた)。
     #[test]
     fn catalog_keeps_the_old_spelling_of_every_moved_handler() {
         let packages = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("..");
@@ -202,7 +202,7 @@ mod tests {
                 moved_from.insert(new.trim().to_string(), old.trim().to_string());
             }
         }
-        // aiohttp_http_server の殻は入口の名と同じ名なので消した(ADR-DOE-API-001 R34・card ki-db44e4d3efe4)— 残る殻で探しを確かめる。
+        // aiohttp_http_server の殻は入口の名と同じ名なので消した(ADR-DOE-API-001 R34)— 残る殻で探しを確かめる。
         assert!(moved_from.contains_key("doeff_core_effects._thread_pool_compute"), "移し替えの module を見つけられない(探す根 {})", packages.display());
         let catalog = WorldCatalog::bundled();
         let missing: Vec<String> = catalog

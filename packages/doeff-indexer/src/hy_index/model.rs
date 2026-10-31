@@ -229,7 +229,7 @@ pub enum DefinitionKind {
     Defsemgrep,
     #[serde(rename = "law")]
     Law,
-    /// doeff-cluster の系の宣言(`(defsystem 名 [引数] 本体)` — 中の呼び出しの持ち主。agora-redesign #1143)。
+    /// doeff-cluster の系の宣言(`(defsystem 名 [引数] 本体)` — 中の呼び出しの持ち主)。
     #[serde(rename = "defsystem")]
     Defsystem,
     #[serde(rename = "defpipeline")]
@@ -304,11 +304,11 @@ pub struct Reference {
     pub range: Range,
     /// 値の上の属性・method の名前として書かれた(`(.m x)` の `m`・`x.m` の `m`・`(. obj m)` / `(. obj (m …))` の `m`)。
     /// false は名前の引き(局所の束縛・定義・import・組み込み)。生の副作用の method の証拠はこの区切りだけから取る —
-    /// 局所の束縛の名 `stat` を `.stat` と読まないため(agora-redesign #798)。索引の JSON の契約(版 1)には出さない。
+    /// 局所の束縛の名 `stat` を `.stat` と読まないため。索引の JSON の契約(版 1)には出さない。
     #[serde(skip)]
     pub member: bool,
     /// 名指した先の完全修飾名 — 呼び出しの `target` と同じ名前の解決(`qualify.rs`)。handler を値として渡す所
-    /// (`(with-handlers [os-file-handler] …)`)は呼び出しにならないので、名指しの先はここで引く(agora-redesign #1140)。
+    /// (`(with-handlers [os-file-handler] …)`)は呼び出しにならないので、名指しの先はここで引く。
     /// 解決できなければ None。索引の JSON の契約(版 1)には出さない。
     #[serde(skip)]
     pub target: Option<String>,
@@ -317,12 +317,12 @@ pub struct Reference {
     pub type_only: bool,
     /// 値を検めるだけの名指し — 比べの form(`is`・`is-not`・`=`・`!=`・`in`・`not-in`)と `assert` の直接の被演算子(literal の
     /// 列・辞書・組・集合の中と、被演算子の dotted の属性の読み `(= f.__doeff_needs__ …)` を含む)。名指した値を呼ばず・被せず・
-    /// 他の定義へ渡さないので、届く辺(doeff-linter の定義の図)にしない(agora-redesign #1581)。索引の JSON の契約(版 1)には出さない。
+    /// 他の定義へ渡さないので、届く辺(doeff-linter の定義の図)にしない。索引の JSON の契約(版 1)には出さない。
     #[serde(skip)]
     pub inspected: bool,
     /// method として呼ばれた時(`(.m 受け手 …)` の頭の `m`・`(x.m …)` の頭の `m`)の、受け手を除く引数の数(keyword と値の組は 1 つ)。
     /// 呼びの頭でなければ None。生の副作用の method の証拠を、目録の引数の上限で同じ名の別の型の method と見分けるため
-    /// (文字列の `(.replace s "/" "_")` と `Path.replace(target)` — agora-redesign #3014)。索引の JSON の契約(版 1)には出さない。
+    /// (文字列の `(.replace s "/" "_")` と `Path.replace(target)`)。索引の JSON の契約(版 1)には出さない。
     #[serde(skip)]
     pub call_arity: Option<usize>,
 }
@@ -351,7 +351,7 @@ pub struct Call {
     pub qualifier: Option<String>,
     /// 頭の記号の最後の区切りの位置。
     pub range: Range,
-    /// 呼び出しの頭から最後の引数の終わりまで(引数の中の参照を引くため — agora-redesign #1279)。索引の JSON の契約には出さない。
+    /// 呼び出しの頭から最後の引数の終わりまで(引数の中の参照を引くため)。索引の JSON の契約には出さない。
     #[serde(skip)]
     pub form_range: Range,
     /// 直接の引数として渡した keyword の綴り(`(f a :k v)` の `:k`)。索引の JSON の契約には出さない。

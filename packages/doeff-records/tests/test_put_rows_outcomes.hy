@@ -1,4 +1,4 @@
-;; 行の束の書き PutRows の答えの分け方(ADR-DOE-CORE-EFFECTS-003 R5・R17 の追補 — card ki-7bbf8e3e40e8):
+;; 行の束の書き PutRows の答えの分け方(ADR-DOE-CORE-EFFECTS-003 R5・R17 の追補):
 ;; defeffect が WrittenRows = 成功 / RowsConflict = 値 / RowsRefused = 失敗 / Unreachable = 失敗(不在は無し)と宣言し、呼び手の <- は
 ;;   - WrittenRows を中身のまま束ねる
 ;;   - RowsConflict を値のまま束ねる(Raise にも Absent にもしない — 呼び手が読み直して撃ち直す版の負け)

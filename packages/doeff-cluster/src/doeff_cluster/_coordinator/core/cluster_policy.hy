@@ -40,7 +40,7 @@
 (import doeff_cluster._shared.core.readiness_rules [readiness-refusal retired-lifetime-ms retired-limit-of])
 (import doeff_cluster._coordinator.core.program_policy [PROGRAM-GRACE-MS program-refs])
 
-;; 送る名は区画を _worker へ隠す前の path のまま(card ki-3ff93cd3499e): 子は job の root の版の doeff で `hy -m <名>` として起き、
+;; 送る名は区画を _worker へ隠す前の path のまま: 子は job の root の版の doeff で `hy -m <名>` として起き、
 ;; _worker の無い古い版の root でも解ける名が要る(新しい版の root では移し替えの module worker.py が _worker の module を返す)。
 ;; 移し替えの module を消す段 3 の前に、root の版の下限と合わせて替える(#2112 と同じ順)。
 (setv JOB-ENTRY "doeff_cluster.worker.entry.job_entry")
@@ -107,10 +107,10 @@
                    :retired-limit (if handoff (retired-limit-of held) None)
                    :program (if (isinstance program str) program None)
                    ;; 子の入口が比べる送り手の版 = 宣言の行の run.versions(宣言の道具が Program と一緒に置いた版)。worker は Program の
-                   ;; cache の file をこの版ごとに分けるので、同じ sha の Program を別の版で宣言し直すと取り直す(card ki-172e63fed4c7)。
+                   ;; cache の file をこの版ごとに分けるので、同じ sha の Program を別の版で宣言し直すと取り直す。
                    :versions (if (json-object? versions) (environ-pairs versions) #())
                    :environ (if (json-object? environ) (environ-pairs environ) #())
-                   ;; 中身の鍵(card ki-81bf84ac6590 — 在れば指紋と比べが版と commit の代わりにこれを読む・program-row-refusal が形を確かめた)。
+                   ;; 中身の鍵(在れば指紋と比べが版と commit の代わりにこれを読む・program-row-refusal が形を確かめた)。
                    :content (.get item "content")))
     True (raise (BodyInvalid (+ "知らない run.kind: " (repr (.get run "kind")))))))
 
@@ -209,7 +209,7 @@
 
 (defn #^ ClusterJob declared-job-from-json [#^ (get Mapping #(str object)) item]
   "送り手が書く宣言の行(Service の資源の POST・PUT と旧い PUT /jobs)を、memory の欄 peakMiB・settleMiB を必ず求めて読むため
-   (card ki-2acb63aec0fd — 欄の無い宣言は断り、既定の値で埋めない)。保存の読み直しは job-from-json を直に呼び、欄の無い行も受ける。"
+   (欄の無い宣言は断り、既定の値で埋めない)。保存の読み直しは job-from-json を直に呼び、欄の無い行も受ける。"
   ;; 行の形の誤り(旧い宣言の形など)は先に job-from-json が今までどおりの理由で断る。欄の無さはその後に言う。
   (setv job (job-from-json item) problem (memory-refusal (.get item "peakMiB") (.get item "settleMiB")))
   (when (is-not problem None)
@@ -263,7 +263,7 @@
   (setv extra (| (if (= job.update "recreate") {} {"update" job.update})
                  (if (is job.spec.runtime-env None) {} {"runtimeEnv" (json.loads job.spec.runtime-env)})
                  (if job.spec.environ {"environ" (dict job.spec.environ)} {})
-                 ;; 中身の鍵は送られた宣言にだけ書く(鍵の無い宣言の spec の形は以前と同じ — card ki-81bf84ac6590)。
+                 ;; 中身の鍵は送られた宣言にだけ書く(鍵の無い宣言の spec の形は以前と同じ)。
                  (if (is job.spec.content None) {} {"content" job.spec.content})
                  ;; memory は知っている時だけ書く(旧い coordinator の保存から読んだ job は次の宣言し直しまで知らない)・訳は在る時だけ。
                  (if (is job.peak-mib None) {} {"peakMiB" job.peak-mib "settleMiB" job.settle-mib})
@@ -386,7 +386,7 @@
 (deff request-needs [#^ (get Mapping #(str object)) body #^ str what]  ; defk にできない: HTTP の本文・宣言の JSON を読む境界(Program の外)が呼ぶ
   {:pre [(: body Mapping) (: what str)] :post [(: % tuple)] :tags {:context "coordinator" :role "judgment"}}
   "送られた宣言・task・温める頼みの本文の needs → 名の順の tuple。旧い形の requires を持つ本文・空の needs は BodyInvalid(理由つき・ValueError の子)—
-   旧い宣言は受け付けない(operator 2026-09-27)・要る能力は必ず書く(改訂 1 の I)。"
+   旧い宣言は受け付けない・要る能力は必ず書く(改訂 1 の I)。"
   (needs-named (.get body "needs") (.get body "requires") what))
 
 
@@ -451,7 +451,7 @@
 
 (deff effective-needs [#^ ClusterState state #^ ClusterJob job]  ; defk にできない: 置き先の判断(eligible)と表示の綴り(unplaced-text の呼び手 — Program の外の純粋な判断)が呼ぶ
   {:pre [(: state ClusterState) (: job ClusterJob)] :post [(: % tuple)] :tags {:context "coordinator" :role "judgment"}}
-  "Service に効く needs を、置き先の判断の 1 か所で決めるため(card ki-1523bc0aba4f): needs の一時の上書き(資源 NeedsOverride)が在れば
+  "Service に効く needs を、置き先の判断の 1 か所で決めるため: needs の一時の上書き(資源 NeedsOverride)が在れば
    上書きの needs、無ければ宣言の needs(ClusterJob.needs — 上書きは宣言を書き換えない)。上書きの行は、期限の来た拍と上書きの needs を
    満たす生きた worker が 0 になった拍に、置き方の前に外れる(resource_policy.lift-needs-overrides)ので、置き方の拍に残る行は満たせる行。
    置き先の判断(eligible — 置く・続ける・drain の移し先・置けない訳)と模擬が同じこの関数を読む。"
@@ -502,7 +502,7 @@
 (defn #^ bool can-take [#^ int now #^ ClusterState state #^ ClusterJob job #^ WorkerInfo w #^ dict load #^ ClusterTiming timing
                         #^ (| frozenset None) [draining None]]
   "job(と並べた置き先 surge)を新しく置ける worker か(生きている・条件を満たす・drain 中でない・memory の残りに job の settle が入る —
-   memory-misfit が None)。job は task の空き(task-room-of)を使わない(card ki-2acb63aec0fd)。load = load-of の答え(worker の名 → WorkerLoad)。"
+   memory-misfit が None)。job は task の空き(task-room-of)を使わない。load = load-of の答え(worker の名 → WorkerLoad)。"
   (and (alive now w timing.lease-ms) (eligible state job w)
        (not-in w.name (if (is draining None) (draining-workers state now) draining))
        (is (run (memory-misfit w load job)) None)))
@@ -645,8 +645,8 @@
 
 (defk memory-room-of [worker load]
   {:pre [(: worker WorkerInfo) (: load (get dict #(str WorkerLoad)))] :post [(: % (| int None))] :tags {:context "coordinator" :role "judgment"}}
-  "worker の常駐の job の memory の残り(MiB)を知るため: memory の予算(memory-mib)− 置いた job と surge の settle の和(card
-   ki-2acb63aec0fd)。memory を名乗らない worker(memory-mib None — 枠の file の外の機体の worker。Mac・zeus-native の worker は file を
+  "worker の常駐の job の memory の残り(MiB)を知るため: memory の予算(memory-mib)− 置いた job と surge の settle の和。
+   memory を名乗らない worker(memory-mib None — 枠の file の外の機体の worker。Mac・zeus-native の worker は file を
    読まない)は memory で縛らない(None)。load = load-of の答え(worker の名 → WorkerLoad)。"
   (val used (get load worker.name))
   (if (is worker.memory-mib None) None (- worker.memory-mib used.settle-mib)))
@@ -655,7 +655,7 @@
 (defk memory-misfit [worker load job]
   {:pre [(: worker WorkerInfo) (: load (get dict #(str WorkerLoad))) (: job ClusterJob)] :post [(: % (| str None))]
    :tags {:context "coordinator" :role "judgment"}}
-  "job(と並べた置き先 surge)を worker に新しく置けない memory の訳を、job を名指す文にするため(置けるなら None — card ki-2acb63aec0fd)。
+  "job(と並べた置き先 surge)を worker に新しく置けない memory の訳を、job を名指す文にするため(置けるなら None)。
    job の側の枠は「置いた job の settle の和 + 新しい job の settle ≤ memory の予算」だけで、数では縛らない。山(peak-mib)は使わない — 山は
    宣言の側の N+1 の照らし(failover_policy の規則 3)が見る。置く時に新しい job の山で照らすと、最後に置く大きい job が落ち着いた値の
    和では入るのに断られる(本番の zeus では和が 67150 MiB になり、予算 63488 MiB を越えた)。memory を知らない job(settle-mib None — 欄の無い旧い保存の行)は新しく置かず、宣言し直しを待つ。
@@ -676,7 +676,7 @@
 (defk task-room-of [worker load]
   {:pre [(: worker WorkerInfo) (: load dict)] :post [(: % int)] :tags {:context "coordinator" :role "judgment"}}
   "worker に task をあと幾つ置けるかを知るため: 予約(task-reserve)+ 背景の枠(background-room)− 置かれた task の数。常駐の job の数に
-   依らない — job は memory で数え、task の空きを使わない(card ki-2acb63aec0fd — 以前は手書きの capacity から job も引き、job を足すと
+   依らない — job は memory で数え、task の空きを使わない(以前は手書きの capacity から job も引き、job を足すと
    背景の仕事の置き場が減った)。load = load-of の答え(worker の名 → WorkerLoad)。task の置き先(place-tasks)と GET /state の taskRoom は
    この値を読む。"
   (val used (get load worker.name))
@@ -984,7 +984,7 @@
   {:pre [(: now int) (: state ClusterState) (: job ClusterJob) (: timing ClusterTiming)] :post [(: % (get tuple #(str ...)))]
    :tags {:context "coordinator" :role "judgment"}}
   "担い手の無い job を、生きていて条件を満たし drain 中でない worker のそれぞれに memory で置けない訳(memory-misfit の文 — worker の名の
-   順)— 置けない訳(unplaced-text の NO-ROOM・UnplacedView.memory)が、どの worker の予算をどれだけ越えるかを名指すため(card ki-2acb63aec0fd)。"
+   順)— 置けない訳(unplaced-text の NO-ROOM・UnplacedView.memory)が、どの worker の予算をどれだけ越えるかを名指すため。"
   (val draining (draining-workers state now))
   (val load (load-of state state.placements))
   (var texts #())
@@ -1028,7 +1028,7 @@
 
 (defk note-unplaced [state now]
   {:pre [(: state ClusterState) (: now int)] :post [(: % ClusterState)] :tags {:context "coordinator" :role "judgment"}}
-  "置き先が無いと最初に見た拍の刻(ClusterState.unplaced-since)を、この拍の置き先で求め直すため(card ki-53b8677f1374)。置き先の無い
+  "置き先が無いと最初に見た拍の刻(ClusterState.unplaced-since)を、この拍の置き先で求め直すため。置き先の無い
    Service(unplaced-jobs と同じ母集団)は前の刻を保ち、初めて見た Service には now を置く。置かれた・宣言から消えた Service の行は外す。
    変わらなければ同じ値を返す。"
   (val names (sorted (gfor job (active-jobs state) :if (is (.row state.placements job.spec.name) None) job.spec.name)))
@@ -1047,8 +1047,8 @@
 
 
 (defn #^ UnplacedView unplaced-view [#^ int now #^ ClusterState state #^ ClusterJob job #^ ClusterTiming timing]
-  "置き先の無い Service 1 つの読み(UnplacedView)— 外の見張りが理由の文を読み解かずに、種類・足りない能力・いつからを読むため
-   (card ki-53b8677f1374)。GET /state の unplacedDetail(unplaced-views)と Service の資源の status.unplaced(resource_policy.observed-of)が
+  "置き先の無い Service 1 つの読み(UnplacedView)— 外の見張りが理由の文を読み解かずに、種類・足りない能力・いつからを読むため。
+  GET /state の unplacedDetail(unplaced-views)と Service の資源の status.unplaced(resource_policy.observed-of)が
    同じこの関数を読む。刻は ClusterState.unplaced-since(まだ調停の拍が見ていなければ now)。"
   (setv needs (tuple (effective-needs state job))
         since (.row state.unplaced-since job.spec.name)
@@ -1087,7 +1087,7 @@
   {:pre [(: limit TaskLimit) (: declared GroupLimit) (: worker (| str None))] :post [(: % tuple)] :tags {:context "coordinator" :role "judgment"}}
   "task の名乗った組 1 つを数える升の鍵を知るため(置いている数を升ごとに数え、置く前に比べる): #(組 区分 worker)。区分は宣言が区分ごとに
    数える組(per-part)の時だけ task の part・worker は宣言の範囲が worker の時だけ置いた worker(cluster の範囲は None)。範囲と区分の
-   読みは task の名乗りでなく宣言 declared が決める(card ki-b0e8028c8c8d — 以前は task の名乗った範囲で数えた)。"
+   読みは task の名乗りでなく宣言 declared が決める(以前は task の名乗った範囲で数えた)。"
   #(limit.group (if declared.per-part limit.part "") (if (= declared.scope "worker") worker None)))
 
 
@@ -1116,7 +1116,7 @@
    :tags {:context "coordinator" :role "judgment"}}
   "task 1 本(名乗った組 limits — TaskLimit の tuple)を worker に置いた後の組の升ごとの数を知るため(held を変えずに新しい dict を返す —
    宣言に無い組の名乗りは数えない)。1 本は升ごとに 1 と数える。task の行を受けないのは、送り手の名乗る他の欄(重さなど)を数えに入れさせない
-   ため(値の持ち主は系の宣言だけ — 設計検証 lt-9E0W15ZW21H6R3SA26CNW1T4FP の盲検 B。引数は test_group_limits_owner が固定する)。"
+   ため(値の持ち主は系の宣言だけ。引数は test_group_limits_owner が固定する)。"
   (var after (dict held))
   (for [l limits :setv declared (.row groups l.group) :if (is-not declared None)]
     (<- slot tuple (limit-slot l declared worker))
@@ -1127,7 +1127,7 @@
 (defk foreground-reserve-of [worker]
   {:pre [(: worker WorkerInfo)] :post [(: % int)] :tags {:context "coordinator" :role "judgment"}}
   "worker の task-reserve のうち、負の優先の task(背景の仕事)に使わせず優先 0 以上の task に残す数を知るため: 予約の半分(切り上げ)。
-   背景の仕事は残りの半分(切り捨て)までは予約を使える(card ki-f6d3da302cf0・2026-10-14)。以前は予約を 1 つも使わせず、背景の仕事の
+   背景の仕事は残りの半分(切り捨て)までは予約を使える(2026-10-14)。以前は予約を 1 つも使わせず、背景の仕事の
    置き場は job の側の残り(capacity − task-reserve − 常駐の job)だけだった — 常駐の job は capacity − task-reserve まで置ける(C17)ので、
    job が増えて job の側を埋めると背景の仕事は 1 本も置かれず、本番の zeus(capacity 33・task-reserve 6・常駐の job 27)で会話の
    long-command 8 本が 76〜230 分 queued のまま待った。予約の中に背景の仕事の分を持てば、job の数によらず背景の仕事が走り、
@@ -1141,7 +1141,7 @@
    予約の残りの半分(切り捨て — foreground-reserve-of と足して予約の全部)。以前は優先 0 以上の側の半分だけを守り、背景の仕事の側の半分は
    守らなかった — 本番の zeus(capacity 40・task-reserve 6・常駐の job 33 → task の空き 7)で優先 0 の組 4 つ(日次の検・着地の後の検 2 組・
    着地の宣言し直し)が 4 本を持つと、残る空き 3 は予約の半分 3 を越えず、会話の long-command は 1 本も置かれなかった(2026-10-29 17:09〜
-   21:11 JST に最大 27 本・3〜4 時間 queued — card ki-66ebb596d7d6・調べ ki-c0d591a62dc4)。背景の仕事は置いている数がこの数に満たない間は
+   21:11 JST に最大 27 本・3〜4 時間 queued)。背景の仕事は置いている数がこの数に満たない間は
    予約の残りを使ってよく、優先 0 以上の task は、その worker に置けうる待っている背景の仕事が在る間は、この数に満たない分を残す。"
   (// worker.task-reserve 2))
 
@@ -1159,7 +1159,7 @@
    負の優先の task で、空きが予約のうち優先 0 以上の task に残す数(foreground-reserve-of)以下で、置いている背景の仕事が背景の仕事に残す数
    (background-reserve-of)に達している → TASK-RESERVED(2026-10-11・残す数は 2026-10-14 に予約の全部から半分へ・背景の仕事の側の半分は
    2026-10-29)・優先 0 以上の task で、空きが背景の仕事に残す数のうち置いている数に満たない分(待っている背景の仕事の数まで)以下 →
-   TASK-BACKGROUND-RESERVED。比べる値は宣言の値で、task の名乗りに値は無い(card ki-b0e8028c8c8d)。"
+   TASK-BACKGROUND-RESERVED。比べる値は宣言の値で、task の名乗りに値は無い。"
   (<- by-limits (| TaskUnplacedKind None) (limits-misfit limits worker.name held groups))
   (<- kept int (foreground-reserve-of worker))
   (<- bg-floor int (background-reserve-of worker))
@@ -1209,7 +1209,7 @@
   {:pre [(: groups Table) (: value (| list None))] :post [(: % (| str None))] :tags {:context "coordinator" :role "judgment"}}
   "受け口が、task の本文の欄 limits(形を task-limits-refusal で検めた値)を系の宣言と照らして断る理由を知るため(None = 受ける):
    宣言に無い組・区分ごとに数える組(per-part)で区分を名乗らない・区分ごとに数えない組で区分を名乗る。groups = 系が宣言した
-   GroupLimit の表(card ki-b0e8028c8c8d — 送り手は値を送らず、coordinator は宣言の値で数える)。"
+   GroupLimit の表(送り手は値を送らず、coordinator は宣言の値で数える)。"
   (next (gfor l (task-limits-of value)
               :setv declared (.row groups l.group)
               :setv problem (cond
@@ -1229,7 +1229,7 @@
 (defk group-limit-views [state]
   {:pre [(: state ClusterState)] :post [(: % tuple)] :tags {:context "coordinator" :role "judgment"}}
   "GET /state の組の画面の列(組の名の順 — GroupLimitView)を作るため: 系が宣言した値と、置いている数の升(置き方 place-tasks と同じ数え
-   limit-holdings)と、その組を名乗って待っている task の数。運用者が、値が宣言のとおりに効いているかを 1 か所で読む(card ki-b0e8028c8c8d)。"
+   limit-holdings)と、その組を名乗って待っている task の数。運用者が、値が宣言のとおりに効いているかを 1 か所で読む。"
   (<- claims tuple (placed-claims state.tasks))
   (<- held dict (limit-holdings claims state.group-limits))
   (val queued (lfor t (scan-rows state.tasks) :if (= t.phase "queued") t))
@@ -2071,7 +2071,7 @@
         overlap (if (is overlapped None) (and (is-not prior None) prior.overlapped) overlapped)
         ;; 止まりの始まりの印(AL-D2k)は前の組から引き継ぐ(drain_policy.request-drain が付ける)。
         leaving (and (is-not prior None) prior.leaving)
-        ;; 組を初めて書いた刻(受け渡しの待ちの始まり — card ki-d8e594fe934d)も引き継ぐ。欄の前に保存した組は、次の報告の刻から数える。
+        ;; 組を初めて書いた刻(受け渡しの待ちの始まり)も引き継ぐ。欄の前に保存した組は、次の報告の刻から数える。
         since (if (and (is-not prior None) (is-not prior.since-ms None)) prior.since-ms now)
         counted (frozenset (gfor j state.jobs :if (if overlap (not j.spec.once) j.spec.handoff) j.spec.name))
         jobs (tuple (sorted (& (running-names statuses) counted)))
@@ -2221,7 +2221,7 @@
   (val elder (if (and (is-not boot None) (> now 0)) (elder-held state name boot now timing.lease-ms) (frozenset)))
   ;; 前の世代の job をまだ受け取れない間は、worker が Pod の ready の file を書かない(AL-D2k — handover-pending)。
   (val pending (and (is-not boot None) (> now 0) (handover-pending state name boot now timing ready-instances)))
-  ;; 退きの保ち(card ki-e3531030eb37 — readiness_model の RETIREMENT-HOLD): 入れ替えの job ごとに、期限の内の保ちの持ち手の世代の名を
+  ;; 退きの保ち(readiness_model の RETIREMENT-HOLD): 入れ替えの job ごとに、期限の内の保ちの持ち手の世代の名を
   ;; 載せる(worker は列に在る退いた process を寿命の上限で止めない)。退いた世代への返事(superseded-reply)には載せない — その世代の
   ;; 退いた process は Pod の止まりの drain の上限(寿命の上限 + 5 分)の内で終わる。
   (val hold-row (.row state.board (semaphore-key RETIREMENT-HOLD)))
@@ -2256,7 +2256,7 @@
   (bool (handover-blockers state name boot now timing ready-instances)))
 
 
-;; 受け渡しの止まりの知らせの上限(card ki-d8e594fe934d): 待ちの始まり(SupersededRun.since-ms)からこの長さを越えても止めている
+;; 受け渡しの止まりの知らせの上限: 待ちの始まり(SupersededRun.since-ms)からこの長さを越えても止めている
 ;; job(handover-blockers)が残れば、Worker の status.handover の stalled と GET /metrics の doeff_worker_handover_stalled{worker} を
 ;; 1 にする。根拠: 今の世代が job を受け取れるまでに要るのは、Pod の起動と最初の heartbeat・job ごとの実行環境の準備(世代をまたいで
 ;; 同じ node の root を共有するので、ふつうは準備済み — 進まない準備は 600 秒で止めてやり直す・worker の PrepareLimits.stall-seconds)・
@@ -2271,7 +2271,7 @@
 (defn #^ tuple handover-blockers [#^ ClusterState state #^ str name #^ str boot #^ int now #^ ClusterTiming timing
                                   #^ (| dict None) ready-instances]
   ;; defk にできない: coordinator の純粋な判断(handover-pending・資源の行 resource_policy.handover-of — defn)が呼ぶ
-  "純粋: 名 name の今の世代 boot の受け渡しを止めている job(HandoverBlocker の列・job の名の順 — card ki-d8e594fe934d)。handover-pending
+  "純粋: 名 name の今の世代 boot の受け渡しを止めている job(HandoverBlocker の列・job の名の順)。handover-pending
    は空でない時に真 — 止める判断の定義点はここ 1 つ。数えるのは、重なりを名乗った前の世代(overlapped)のうち、止まりがまだ始まって
    いない(leaving でない)・最後の報告が lease の内の組の job だけ。recreate の job = 今の世代の状態の行が HANDOVER-SETTLED-PHASES に
    無い。handoff の job = Ready と数えている process(ready-instance)が今の世代の報告の行に無い(入れ替えを諦めた handoff-abandoned は
@@ -2314,7 +2314,7 @@
 
 
 (defn #^ (| int None) handover-since [#^ ClusterState state #^ str name #^ str boot #^ int now #^ ClusterTiming timing]
-  "純粋: 名 name の今の世代 boot の受け渡しの待ちの始まりの刻(待っている組の since-ms の最小 — card ki-d8e594fe934d)。待っている組が
+  "純粋: 名 name の今の世代 boot の受け渡しの待ちの始まりの刻(待っている組の since-ms の最小)。待っている組が
    無いか、始まりを持たない(欄の前に保存した)組だけなら None。"
   (min (gfor r (handover-runs state name boot now timing) :if (is-not r.since-ms None) r.since-ms) :default None))
 
@@ -2412,11 +2412,11 @@
              :keep-marks state.keep-marks
              ;; この coordinator の process が走っている doeff の版(#3772 — 読めなければ None)。
              :coordinator-commit state.running-commit
-             ;; 組ごとの宣言の値と置いている数(card ki-b0e8028c8c8d)。
+             ;; 組ごとの宣言の値と置いている数。
              :group-limits (! (group-limit-views state))
-             ;; 置き先の一時の上書き(card ki-1523bc0aba4f — Service の名の順)。
+             ;; 置き先の一時の上書き(Service の名の順)。
              :needs-overrides (tuple (sorted (.rows state.needs-overrides) :key (fn [o] o.service)))
-             ;; 置き先の無い Service の種類・足りない能力・いつから(card ki-53b8677f1374 — unplaced と同じ Service)。
+             ;; 置き先の無い Service の種類・足りない能力・いつから(unplaced と同じ Service)。
              :unplaced-detail (unplaced-views now state timing)))
 
 

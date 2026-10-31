@@ -3,7 +3,7 @@
 Hy の `(defmacro 名 …)` は `hy.macros.macro('名')(_hy_anon_N)` に展開される。hy.macros は型の宣言を持たないので、pyright strict は
 その 1 文に「macro の型が分からない」(reportUnknownMemberType)と「hy の属性に無い」(reportAttributeAccessIssue)を出していた —
 defmacro を書いた .hy の file ごとに macro 1 つにつき 2 件、書き手に直せない赤(agora-controllers の controllers/shared/intent/patrols.hy の
-6 件・card acp:kanban-issue:ki-5ecd80461f13)。ここは Hy の展開が出す名(macro・require)だけを宣言する — doeff と agora-controllers の
+6 件)。ここは Hy の展開が出す名(macro・require)だけを宣言する — doeff と agora-controllers の
 code が hy.macros から読む名はこの 2 つだけ(2026-10-10 の git grep)。ほかの名を読む code を足す時は、ここに宣言を足す。
 """
 

@@ -14,13 +14,12 @@ import の途中の module か import できない module に当たった時は 
 digest で比べず、閉包が依った module の file で比べる。閉包の歩みが環境変数の読みに当たった時は印 :data:`ENVIRONMENT_READ`
 (照らせない — 照らしはいつも古いと判じる)。file の path は持たない — 照らす時に module 名から今の環境で引き直す。
 使った macro の digest は、閉包の関数のうち中身(code)を覆った関数を、覆った code の印(閉包の歩みが関数に出会った順の番号の
-bit の 16 進 — その module の展開で実行された関数と、絞らない関数)で名指す。照らしは同じ印で今の閉包の digest を作り直して比べる
-(agora-redesign #3769 の子)。
+bit の 16 進 — その module の展開で実行された関数と、絞らない関数)で名指す。照らしは同じ印で今の閉包の digest を作り直して比べる。
 
 code object の定数なので marshal でそのまま .pyc に入り、.pyc は標準の形のまま(PEP 552 の頭 + marshal の body)。
 image の組み立ての bytecode の道具(agora-controllers の deploy/bytecode.py)が body を綴り直しても値は変わらない。
 
-compile した code の Hy の gensym の名は :func:`canonical_gensyms` で module の中の順の通し番号へ振り直す(agora-redesign #3667)。
+compile した code の Hy の gensym の名は :func:`canonical_gensyms` で module の中の順の通し番号へ振り直す。
 """
 
 import hashlib
@@ -33,28 +32,28 @@ from types import CodeType
 from typing import TypeVar
 
 #: 記録の印(形を変えたら末尾の番号を上げる — 古い形の記録は「記録なし」と同じに扱われ、compile し直される)。
-#: 2 = gensym の名を正準化した code の記録(agora-redesign #3667)。1 の記録の code は gensym の番号が compile の順で決まって
+#: 2 = gensym の名を正準化した code の記録。1 の記録の code は gensym の番号が compile の順で決まって
 #: いるので、1 度 compile し直させる。保存先の code の鍵の印(code_store.CODE_TAG)は上げない: 1 の記録の entry は引いた時に記録なしと
 #: 判じられて使われず(loader_hooks._from_shared_store)、compile し直した code が同じ鍵の entry を上書きするので、古い世代の
 #: file が保存先に残らない(鍵の印を上げると、古い世代の file は誰にも上書きされずに残る)。引いて捨てる手間は module 1 つに 1 回。
 #: 3 = 展開が依った file 単位から、展開で実際に使った macro 単位の記録へ(macro の関数の code の閉包の digest)。2 の記録は
 #: 形が違うので記録なしと同じに扱われ、1 度 compile し直される(鍵の印を上げない理由は 2 と同じ)。
 #: 4 = 閉包の中の辿れない値を file の全体でなく狭く覆う digest(大域の表は名を束縛し書き換える source の文・拡張の class は名と
-#: 公開の形・ContextVar は名と既定値 — agora-redesign #3938)。3 の記録の digest は今の作り方で引き直すと必ず合わないので、上げなくても
+#: 公開の形・ContextVar は名と既定値)。3 の記録の digest は今の作り方で引き直すと必ず合わないので、上げなくても
 #: 1 度は古いと判じられるが、形の世代を記録の印で分ける(鍵の印を上げない理由は 2 と同じ)。
 #: 5 = import の途中の状態で作った digest を記録に入れない(None)・file の行を、import できなかった module から閉包が依った
-#: module の全部へ広げ、digest で比べられない行がある時だけ比べる(agora-redesign card ki-464fa307a62b — 循環する import の途中の
+#: module の全部へ広げ、digest で比べられない行がある時だけ比べる(循環する import の途中の
 #: digest が process の import の順で変わり、順の違う process が置き場の entry を互いに書き直した)。4 の記録の file の行は
 #: 意味が違うので、記録なしと同じに扱う(鍵の印を上げない理由は 2 と同じ)。
 #: 6 = 使った macro の行に、digest が中身(code)を覆った閉包の関数の印を足し、digest が覆う関数の code を、その module の展開で
-#: 実行された関数と絞らない関数(束縛の文の先・関数の中身を値として読む code の閉包)に絞った形(agora-redesign #3769 の子 —
+#: 実行された関数と絞らない関数(束縛の文の先・関数の中身を値として読む code の閉包)に絞った形(
 #: defk の展開で呼ばれない binding_forms._Walker._assign の変更で、defk の使い手 1,197 本が作り直された)。5 の記録は行の形が
 #: 違うので、記録なしと同じに扱う(鍵の印を上げない理由は 2 と同じ)。
-#: 7 = 関数の中の require で入れた macro(compiler の局所の表から引かれた macro)も使った macro に入れる記録(依頼
-#: lt-07HRM3MVKZXK2MYM4DEQ872YC1)。行の形は 6 と同じだが、6 の記録は局所の macro を覆わない — 照らしは記録に在る行しか照らさない
+#: 7 = 関数の中の require で入れた macro(compiler の局所の表から引かれた macro)も使った macro に入れる記録。
+#: 行の形は 6 と同じだが、6 の記録は局所の macro を覆わない — 照らしは記録に在る行しか照らさない
 #: ので、6 の記録の .pyc と置き場の entry は、局所の macro を変えても今に合うと判じられ続けた(設計検証の盲検 A)。覆う範囲の違う
 #: 世代を記録の印で分け、6 の記録は記録なしと同じに扱う(鍵の印を上げない理由は 2 と同じ)。
-#: 保存先の鍵の印 3(card ki-6828e9af04b4)からは、記録の違う code は同じ鍵の dir に別の entry として並ぶ(上書きしない — 記録の指紋が
+#: 保存先の鍵の印 3 からは、記録の違う code は同じ鍵の dir に別の entry として並ぶ(上書きしない — 記録の指紋が
 #: entry の名)。だから記録の印を上げた後の古い世代の entry は上書きされずに残り、使われなければ鍵の entry の数の上限か掃除の 7 日で消える
 #: (鍵の印を上げない理由は、鍵の印を上げると記録に依らない entry まで全部当たらなくなる事に変わる)。
 RECORD_TAG = "doeff-hy/macro-dependencies/7"
@@ -62,12 +61,12 @@ RECORD_TAG = "doeff-hy/macro-dependencies/7"
 #: Hy が module の名前空間に置く辞書の名(普通の macro の表・reader macro の表・Hy の export が書く公開の macro の名の表)と、
 #: Hy が振る名の先頭。Hy の内部の名の定義元はこの module の 1 か所で、使い手(macro_use・doeff_effect_analyzer._result_cache・
 #: doeff_hy._static_baseline・doeff_hy._static_stub)は名の字を持たず、この下の定数と関数(:func:`macro_tables`・
-#: :func:`exported_macro_names`・:func:`fold_anon_var_numbers`)で引く(card ki-ffe72a1fb7d7)— Hy が名を替えた時に直す所を 1 つにし、
+#: :func:`exported_macro_names`・:func:`fold_anon_var_numbers`)で引く— Hy が名を替えた時に直す所を 1 つにし、
 #: 名の字を他の file へ写す変更は packages/doeff-hy/tests/test_hy_internal_names_have_one_home.py の走査が赤にする。
 #: 名と、Hy の展開が表を ``名 in 表`` と ``表[名]`` で引く事(macro_use.RecordingTable が引いた名と表に無かった名を覚える前提)は
 #: Hy の内部の形で、uv.lock の版の Hy で測る検が測る — 包みを動かす検(packages/doeff-hy/tests/test_bytecode_guard.py の macro・
 #: reader macro の変更の検と、使う側の呼ぶ名の macro が足された時の検)と、この下の関数を実物の Hy の module に当てる検
-#: (同じ file の test_records_reads_…・test_the_temporaries_hy_names_…)で、どちらも uv.lock の変更で選ばれる(card ki-eafa369600cd)。
+#: (同じ file の test_records_reads_…・test_the_temporaries_hy_names_…)で、どちらも uv.lock の変更で選ばれる。
 #: 名が替わるか表を ``.get`` で引くと、包みは使った macro を記録し損ねて古い展開を黙って使う。
 MACRO_TABLE = "_hy_macros"
 READER_TABLE = "_hy_reader_macros"
@@ -88,9 +87,9 @@ FLAG_HASH_BASED = 0b01
 FLAG_CHECK_SOURCE = 0b10
 
 #: digest の代わり(閉包の歩みが環境変数の読みか、module の置き場を値として読む code に当たった — digest は環境変数の値も、
-#: 置き場から辿る file の中身も写さないので照らせない・置き場の読みは設計検証 lt-TBEF3PAMAVQ8B3Z07MDSCA994C の盲検 B)。16 進の sha256 とも
-#: None(import の途中)とも違う印で、照らしはこの行をいつも古いと判じる(使い手は process ごとに展開し直す — 設計検証
-#: lt-9TQ4W7B2R3TJ8W808QFDDZ83VP の盲検 A の付録 3)。記録の印(RECORD_TAG)は上げない: 前の版の照らしはこの印を今の digest と
+#: 置き場から辿る file の中身も写さないので照らせない)。16 進の sha256 とも
+#: None(import の途中)とも違う印で、照らしはこの行をいつも古いと判じる(使い手は process ごとに展開し直す)。
+#: 記録の印(RECORD_TAG)は上げない: 前の版の照らしはこの印を今の digest と
 #: 比べて古いと判じ、前の版の記録は今の歩みが印になるので古いと判じる(どちらも展開し直すだけ — 上げると全部の Hy の module が
 #: 1 度 compile し直される)。
 ENVIRONMENT_READ = "environment-read"
@@ -363,7 +362,7 @@ GENSYM_NAME = re.compile(r"(_hy_gensym_.*_)([0-9]+)")
 #: 名なら、その数えが名の中に埋まる(absent-as の let = ``_hy_let__hy_gensym_absent_token_<数え>_<数>``)。最後の <数> は compile
 #: 1 回ごとの数え(module の中で決まる)なので替えない。
 #: 2 つの形は Hy の内部の形で、uv.lock の版の PyPI の Hy で compile の口を動かす検(packages/doeff-hy/tests/test_bytecode_guard.py の
-#: gensym の数えの検 — uv.lock の変更で選ばれる)が測る(card ki-eafa369600cd)。
+#: gensym の数えの検 — uv.lock の変更で選ばれる)が測る。
 RENAMED_BINDING = re.compile(r"(_hy_[a-z]+_)(_hy_.*)(_[0-9]+)")
 
 #: Hy が一時の名と let・except の束縛の名に振る形(``HyASTCompiler.get_anon_var`` = ``_hy_<種>[_<元の名>]_<数え>`` — match や if を値に
@@ -371,13 +370,13 @@ RENAMED_BINDING = re.compile(r"(_hy_[a-z]+_)(_hy_.*)(_[0-9]+)")
 #: 足すだけで後ろの名の番号がずれる。第 1 の組が番号を除いた名(元の名が ``x1``・``x_1`` のように数字で終わる名も、最後の
 #: ``_<数え>`` だけを番号とする — 非貪欲な先頭と末尾の ``\b``)。元の名に gensym の名が入った束縛(:data:`RENAMED_BINDING`)は
 #: 末尾の数えだけを畳み、埋まった gensym の数えは gensym の名の振り直し(:func:`renamed`)の持ち場。形は uv.lock の版の Hy の module を
-#: compile して名を集める検(test_bytecode_guard.py の test_the_temporaries_hy_names_…)が測る(card ki-ffe72a1fb7d7)。
+#: compile して名を集める検(test_bytecode_guard.py の test_the_temporaries_hy_names_…)が測る。
 ANON_VAR_NAME = re.compile(r"\b(" + re.escape(GENERATED_NAME_PREFIX) + r"[A-Za-z0-9_]*?)_[0-9]+\b")
 
 
 def canonical_gensyms(code: CodeType) -> CodeType:
     """Hy の module の code の木の gensym の名を、module の中の数えの順に 1 から振り直した名へ替えた code を返す — 同じ source の
-    code を、compile の順・process・thread に依らず同じにするため(agora-redesign #3667: 詰めた Program の指紋・.pyc・共有の
+    code を、compile の順・process・thread に依らず同じにするため(詰めた Program の指紋・.pyc・共有の
     保存先の中身が、どの process が先に何を compile したかで変わっていた)。
 
     名の表(局所・cell・free・大域と属性の名・関数の名と qualname)と文字列の定数(呼び出しの keyword の名・注記の鍵)に現れる
@@ -392,7 +391,7 @@ def canonical_gensyms(code: CodeType) -> CodeType:
 
 def gensym_renames(texts: Iterable[str]) -> dict[str, str]:
     """名と文字列の並びに現れる gensym の名から、数えの小さい順に ``_hy_gensym_<base>_1`` から振り直した名への対応を作る —
-    code の木(:func:`canonical_gensyms`)と、型検査の展開の木(doeff_hy._static_check — agora-redesign #3869)が同じ 1 つの
+    code の木(:func:`canonical_gensyms`)と、型検査の展開の木(doeff_hy._static_check)が同じ 1 つの
     振り直しを使うため。対応は gensym の名そのもの(Hy が改めた束縛の名に埋まった物も含む)を鍵にし、替えるのは
     :func:`renamed` が行う。"""
     found: dict[str, re.Match[str]] = {}

@@ -1,6 +1,6 @@
 """sequential is a handler value, not a factory called with no arguments (ADR-DOE-API-002).
 
-The owner's decision of 2026-10-29 (agora card ki-b10e81c19717): a handler without settings is not a
+The owner's decision of 2026-10-29: a handler without settings is not a
 factory. ``sequential`` is applied to the program itself and put in a stack as it is; the former
 call ``sequential()`` answers the same handler with a DeprecationWarning for one release.
 

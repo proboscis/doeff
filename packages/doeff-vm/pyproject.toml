@@ -1,7 +1,7 @@
 [build-system]
 # license の SPDX の式と license-files(PEP 639)を License-Expression で書き、sdist にも license-files を入れるのは maturin 1.9.3 から。
 requires = ["maturin>=1.9.3,<2"]
-# maturin を包み、cargo の target を作業木の外の一時の dir に置く(tools/doeff_cargo_backend.py・agora-redesign #1493)
+# maturin を包み、cargo の target を作業木の外の一時の dir に置く(tools/doeff_cargo_backend.py)
 build-backend = "doeff_cargo_backend"
 backend-path = ["."]
 
@@ -41,15 +41,15 @@ features = ["pyo3/extension-module"]
 module-name = "doeff_vm.doeff_vm"
 python-source = "."
 # sdist は path 依存の crate を持つので crate を doeff-vm/ の下へ移す。build の口は pyproject と同じ根に要る
-# (backend-path = ["."])ので、根に写す — 無いと sdist から組めない(agora-redesign #1493)。
+# (backend-path = ["."])ので、根に写す — 無いと sdist から組めない。
 include = [{ path = "doeff_cargo_backend.py", format = "sdist" }]
 
 # uv が「この package を作り直すか」を決める鍵。uv の既定の鍵は pyproject.toml / setup.py /
 # setup.cfg だけで Rust の source を見ないため、Rust だけが変わった更新の後の `uv sync` /
 # `uv run` は古い doeff_vm/*.so をそのまま使い続ける(2026-09-23 22:42〜23:17 に pod の
-# controller が古い .so で 35 分落ちた — card acp:kanban-issue:ki-3965aa5188ae)。
+# controller が古い .so で 35 分落ちた)。
 # ここに列挙すると既定の鍵は置き換わるので pyproject.toml も自分で並べる。
-# この集合は build の口(tools/doeff_cargo_backend.py)の wheel の保存先の鍵でもある(agora-redesign #3860)。python-source
+# この集合は build の口(tools/doeff_cargo_backend.py)の wheel の保存先の鍵でもある。python-source
 # (この dir の doeff_vm/)の .py・.pyi・py.typed も並べる — 口はどちらの hook でも Python を保存先の wheel から取らず作業木から
 # 入れる(ADR-DOE-BUILD-001 R2b)が、uv はここに並べた file の変化でだけ非 editable の path の入れを作り直す。wheel の
 # dist-info に入る license-files(LICENSE)は保存先の wheel から渡るので並べる。

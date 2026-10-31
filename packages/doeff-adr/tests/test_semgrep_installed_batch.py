@@ -1,4 +1,4 @@
-"""installed の defsemgrep を、同じ設定の組ごとに 1 回の semgrep でまとめて確かめる(agora-redesign #2976 I-3)。
+"""installed の defsemgrep を、同じ設定の組ごとに 1 回の semgrep でまとめて確かめる。
 
 規則の検 1 本ごとに semgrep を 2 回(当たる例・当たらない例)起こすと、1 回の起動の費用(約 2.3 秒)が「規則の数 × 2」だけ
 重なる。agora-controllers の defadr_turn_boundary では 7 規則で 14 回・約 33 秒になり、日次の 1 file の上限(60 秒)を越えた。
@@ -26,12 +26,12 @@ WORDS = ("eval", "exec", "compile")
 
 
 def _register(effect: RegisterSemgrep) -> None:
-    """Semgrep の検を process の登録簿に載せる(effect RegisterSemgrep — card ki-2a549274055c)。"""
+    """Semgrep の検を process の登録簿に載せる(effect RegisterSemgrep)。"""
     run(semgrep_enforcements()(effect))
 
 
 def _check(enforcement_id: str) -> None:
-    """登録簿の Semgrep の検を確かめる(effect AssertSemgrep — card ki-2a549274055c)。"""
+    """登録簿の Semgrep の検を確かめる(effect AssertSemgrep)。"""
     run(semgrep_enforcements()(AssertSemgrep(enforcement_id)))
 
 

@@ -320,7 +320,7 @@ def test_project_defined_effects_are_found_in_a_python_program(pkg: str) -> None
 
 
 def test_a_local_rebound_to_a_call_of_itself_is_not_followed_through_itself(pkg: str) -> None:
-    # Regression (agora-redesign #811 3c): `state = replace_state(state, awaiting=...)`
+    # Regression: `state = replace_state(state, awaiting=...)`
     # put `state` in the bound-once table as that call, so the argument `state` of the
     # call was read as the same call again — the reader recursed until RecursionError.
     report = analyze_program(f"{pkg}.programs:on_cache")
@@ -336,7 +336,7 @@ def test_a_local_bound_to_a_call_that_does_not_read_itself_is_still_followed(pkg
 
 
 def test_a_carried_program_chosen_by_a_conditional_carries_both_branches(pkg: str) -> None:
-    # Regression (agora-redesign #811 3c): Spawn(a() if c else b()) carried nothing, so
+    # Regression: Spawn(a() if c else b()) carried nothing, so
     # the closure check did not see what the spawned task performs.
     report = analyze_program(f"{pkg}.programs:spawn_either")
 
@@ -376,7 +376,7 @@ def test_handler_clauses_and_what_they_perform(pkg: str) -> None:
 
 
 def test_a_clause_that_performs_the_effect_it_received_emits_that_effect(pkg: str) -> None:
-    # Regression (agora-redesign #811 3c): `(<- answer effect)` in a clause was "a value
+    # Regression: `(<- answer effect)` in a clause was "a value
     # that is not a call"; the clause's effect parameter holds an effect of the class the
     # clause handles, so performing it emits that class (answered further out).
     watch = analyze_handler(f"{pkg}.handlers:nap_watch")
@@ -390,7 +390,7 @@ def test_a_clause_that_performs_the_effect_it_received_emits_that_effect(pkg: st
 def test_a_clause_that_hands_its_alias_of_the_received_effect_to_a_function_emits_it(
     pkg: str,
 ) -> None:
-    # Regression (card ki-fbf5f1db72a7): doeff-hy binds the effect a clause received as
+    # Regression: doeff-hy binds the effect a clause received as
     # `_doeff_effect` and gives the writer's name `effect` as a local alias of it (doeff
     # 4f284efa9).  The alias handed to a Program function that performs it was "a value that
     # is not a call", so every closure check through doeff-cluster's in-cluster-api-routed
@@ -427,7 +427,7 @@ def test_a_local_rebound_after_the_alias_is_not_the_received_effect(pkg: str) ->
 def test_a_parent_class_clause_passes_on_the_effect_it_received_as_its_own_class(
     pkg: str,
 ) -> None:
-    # Regression (agora-redesign #1163): a clause keyed on EffectBase narrowed by :when
+    # Regression: a clause keyed on EffectBase narrowed by :when
     # (leases-fence) that performs the effect it received was read as emitting an
     # EffectBase, a gap no handler answers.  What leaves is the effect that arrived.
     program = analyze_program(f"{pkg}.programs:helper")

@@ -1,4 +1,4 @@
-;;; worker の枠(task-reserve・background-room・memory の予算)を枠の file から読む判断(card ki-6828eda880ce)— I/O は呼び手
+;;; worker の枠(task-reserve・background-room・memory の予算)を枠の file から読む判断— I/O は呼び手
 ;;; (worker/protocol/coordinator_link と入口 worker/entry/main)が行う。
 ;;;
 ;;; 枠を起動の引数だけで受けると、値を変えるたびに worker の Pod の template が変わって作り直され、走っている job と task が切れる。
@@ -6,17 +6,17 @@
 ;;; worker は heartbeat の前に読み直して名乗る。coordinator は heartbeat ごとに Worker の行の taskReserve・backgroundRoom・memoryMiB を書き直す。
 ;;;
 ;;; file の形(JSON): worker の名 → {"taskReserve": 整数, "backgroundRoom": 整数, "memoryMiB": 整数}。名の無い行は読まない(他の worker の
-;;; 行を置いてよい)。3 つの欄はどれも必須の 0 以上の整数(card ki-2acb63aec0fd):
+;;; 行を置いてよい)。3 つの欄はどれも必須の 0 以上の整数:
 ;;;   taskReserve     task のために空けておく数
 ;;;   backgroundRoom  背景の仕事を同時に置ける数(task の空き = taskReserve + backgroundRoom − 置いた task — 常駐の job の数に依らない)
 ;;;   memoryMiB       その worker で常駐の job に使ってよい memory の予算(MiB)。coordinator は置いた job の settle の和 + 新しい job の settle が
 ;;;                   この値以下の時だけ job を置く(job は数でなく memory で縛る)
 ;;;   {"zeus": {"taskReserve": 6, "backgroundRoom": 4, "memoryMiB": 63488}, "atlas": {"taskReserve": 3, "backgroundRoom": 0, "memoryMiB": 16384}}
 ;;; 行に capacity(手書きの job と task の上限 — 消した欄)が在っても読まずに通す。上に載る系の pin がまだ capacity を読むので、file から
-;;; capacity を消すのは使い手を入れ替えた後(card ki-2acb63aec0fd の step 4)。
-;;; 行は省ける欄 warmServices(真偽 — card ki-67abc0cf71e9)も持てる: 実行環境の service も待ちの子から分けて起こすか(WorkerPolicy.warm-services)。
+;;; capacity を消すのは使い手を入れ替えた後。
+;;; 行は省ける欄 warmServices(真偽)も持てる: 実行環境の service も待ちの子から分けて起こすか(WorkerPolicy.warm-services)。
 ;;; 起動の時に 1 度だけ読む(枠と違って読み直さない)— 版の file の入れ替えで新しい世代が起きた時に効き、Pod の template を変えずに機体ごとに入れる。
-;;; 行は省ける欄 pools(card ki-ced3c45980a5 — 枠と同じく heartbeat の前に読み直す)も持てる: 置ける組の印の列(pool-… —
+;;; 行は省ける欄 pools(枠と同じく heartbeat の前に読み直す)も持てる: 置ける組の印の列(pool-… —
 ;;; shared/core/capabilities の pool-refusal)。worker は起動の引数の能力(--provides)との和を heartbeat の provides で名乗る — 常駐の job を
 ;;; 2 台以上の機体の組の印で宣言でき、組を替えるのに Pod を作り直さない。
 ;;;   {"atlas": {"taskReserve": 3, "backgroundRoom": 0, "memoryMiB": 16384, "pools": ["pool-a", "pool-b"]}}
@@ -41,7 +41,7 @@
 (defenum RoomState OK UNREADABLE MALFORMED)
 
 ;; 雛形の能力: worker の雛形(deploy/k8s/worker/worker.yaml の WORKER_PROVIDES — host-only の差も同じ)が、機体の印 host-<機体> の後ろに
-;; どの機体の worker にも渡す能力。上に載る系の照らし(常駐の job が枠に入るか)は写さずにここから読む(card ki-5996b0cce581)。
+;; どの機体の worker にも渡す能力。上に載る系の照らし(常駐の job が枠に入るか)は写さずにここから読む。
 (val TEMPLATE-PROVIDES #("host-systemd-readable"))
 
 
@@ -50,10 +50,9 @@
 
 
 (defrecord WorkerRoom
-  "worker の枠(card ki-2acb63aec0fd): task-reserve = task のために空けておく数・background-room = 背景の仕事を同時に置ける数・memory-mib =
+  "worker の枠: task-reserve = task のために空けておく数・background-room = 背景の仕事を同時に置ける数・memory-mib =
    常駐の job に使ってよい memory の予算(MiB — None = 名乗らない。枠の file を読まない機体の worker(Mac・zeus-native)が --memory-mib を
-   渡さない時だけ。coordinator はその worker を memory で縛らない)・pools = 置ける組の印(名の順 — heartbeat の provides に足す・
-   card ki-ced3c45980a5)。"
+   渡さない時だけ。coordinator はその worker を memory で縛らない)・pools = 置ける組の印(名の順 — heartbeat の provides に足す)。"
   {:check [(>= task-reserve 0) (>= background-room 0) (or (is memory-mib None) (>= memory-mib 0))]}
   (#^ int task-reserve)
   (#^ int background-room)
@@ -95,7 +94,7 @@
 
 (defk row-pools [row name]
   {:pre [(: row dict) (: name str)] :post [(: % (| (get tuple #(str ...)) str))] :tags {:context "worker" :role "judgment" :reads "json"}}
-  "枠の file の worker name の行から置ける組の印 pools を読むため(card ki-ced3c45980a5)。欄が無ければ空・在れば名の順の重なりの無い
+  "枠の file の worker name の行から置ける組の印 pools を読むため。欄が無ければ空・在れば名の順の重なりの無い
    tuple。列でない値・文字列でない名・組の印として受けられない名(機体の印 host-・pool- で始まらない名 — 導く能力の名もここで落ちる)は
    malformed の訳の文(黙って外して残りを名乗らない — 1 台の縛りを枠の file から入れない)。"
   (val value (.get row "pools" []))
@@ -126,13 +125,13 @@
   {:pre [(: provides (get tuple #(str ...))) (: pools (get tuple #(str ...)))] :post [(: % (get tuple #(str ...)))]
    :tags {:context "worker" :role "judgment"}}
   "worker が heartbeat の provides で名乗る能力 = 起動の引数の能力 provides の後ろに、枠の file の行の組の印 pools のうちまだ無い物を
-   足した列(card ki-ced3c45980a5)を知るため — heartbeat の本文と上に載る系の照らしが同じ和を使う(card ki-5996b0cce581)。"
+   足した列を知るため — heartbeat の本文と上に載る系の照らしが同じ和を使う。"
   (+ provides (tuple (gfor p pools :if (not-in p provides) p))))
 
 
 (defk room-warm-services-of [text name]
   {:pre [(: text str) (: name str)] :post [(: % (| bool None str))] :tags {:context "worker" :role "judgment" :reads "json"}}
-  "枠の file の中身から worker name の行の warmServices を読むため(card ki-67abc0cf71e9)。真偽ならその値・JSON でない・行が無い・欄が
+  "枠の file の中身から worker name の行の warmServices を読むため。真偽ならその値・JSON でない・行が無い・欄が
    無いなら None(機体の配備が入れていない)・真偽でない値は起動を断る訳の文(黙って偽に倒れない)。"
   (val decoded (try #((json.loads text)) (except [json.JSONDecodeError] #())))
   (val parsed (if decoded (get decoded 0) None))

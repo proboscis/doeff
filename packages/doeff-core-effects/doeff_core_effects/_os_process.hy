@@ -1,15 +1,14 @@
-;;; 汎用の子 process の effect(process_effects.hy)の本物の答え手 subprocess-handler(agora-redesign #802 便 1)。subprocess と os.environ を
+;;; 汎用の子 process の effect(process_effects.hy)の本物の答え手 subprocess-handler。subprocess と os.environ を
 ;;; 呼んで値を詰め替えるだけで、判断を持たない。doeff-agents の driver-io-handler も RunProcess に同じ run-subprocess で答える(実装は 1 つ)。
-;;; ReadMachineName は socket.gethostname をそのまま答える(agora-redesign #3050)。
-;;; 子の標準入力・標準出力・標準エラーと output-path は utf-8 と surrogateescape で読み書きする(可逆 — process_effects.hy の頭の註・
-;;; agora-redesign #2160)。
+;;; ReadMachineName は socket.gethostname をそのまま答える。
+;;; 子の標準入力・標準出力・標準エラーと output-path は utf-8 と surrogateescape で読み書きする(可逆 — process_effects.hy の頭の註)。
 ;;;
-;;; process-group・stream-output(agora-redesign #2184)を使う呼びだけ、子を Popen で起こし、標準出力と標準エラーを thread 2 本で行ごとに
+;;; process-group・stream-output を使う呼びだけ、子を Popen で起こし、標準出力と標準エラーを thread 2 本で行ごとに
 ;;; 読みながら待つ(run-watched)。使わない呼びは subprocess.run と同じ待ち方(Popen の communicate — run-communicated)の道を通る。
 ;;; offloaded-subprocess-handler は同じ実装を、呼び 1 つに thread 1 本(offloaded_call.hy の ThreadPerCall)で回す — 子を待つ間も
 ;;; scheduler の他の task が回る。外側に scheduled が要る。
 ;;;
-;;; 待っている task が取り消された時(agora-redesign #2847): 答えは捨て(keep-nothing)、走っている子は止める。止めるのは offloaded の
+;;; 待っている task が取り消された時: 答えは捨て(keep-nothing)、走っている子は止める。止めるのは offloaded の
 ;;; 止め方(interrupt)で、別の thread の新しい VM で回す(scheduler の thread を猶予の間塞がない)。process-group なら group へ、そうでなければ
 ;;; 子へ SIGTERM → RunProcess の stop-grace 秒の内に(group なら孫も)居なくなるのを待つ → 残れば SIGKILL を送って回収する。子と取り消しの
 ;;; 待ち合わせは ChildWatch(仕事の thread が起こした子を置き、取り消しが取り出す — 子を置く前の取り消しは、置いた仕事の thread が止める)。
@@ -20,7 +19,7 @@
 ;;; (process-meter-handler)で、1 つの run の中の答え手(memory-meter-handler)を渡しても要求の run の断面には出ない。
 ;;; offloaded-subprocess-handler は計器の無い形(数えず、log にだけ出す — 計器の答え手の無い使い手が「答え手が無い」で落ちない)。
 ;;; 取り消しの前に子が終わっていれば何も送らず数えない。subprocess-handler(thread で回さない)の待ちは取り消しで抜けない(子を待ち切る)。
-;;; StartProcess・PollProcess・StopProcess(agora-redesign #2223)・SignalProcess(#2461)・WriteProcessInput(#3672)は、立てた子を process に 1 つの表
+;;; StartProcess・PollProcess・StopProcess ・SignalProcess(#2461)・WriteProcessInput(#3672)は、立てた子を process に 1 つの表
 ;;; STARTED-CHILDREN で持つ。立てる・問う・signal を送る・握った標準入力へ短い行を書くは待たないので、どちらの答え手もその場で答える。止めるは猶予の間だけ待つので、offloaded-subprocess-handler
 ;;; では thread で回す。
 (require doeff-hy.macros [defhandler defk deff <- val var])
@@ -126,7 +125,7 @@
 
 
 (defclass StartedChildren []
-  "StartProcess で立てた子の表(pid → #(Popen process-group reap-group))を process に 1 つ持つため(agora-redesign #2223 — 子は OS の process ごとの資源で、
+  "StartProcess で立てた子の表(pid → #(Popen process-group reap-group))を process に 1 つ持つため(子は OS の process ごとの資源で、
    答え手を積み直しても同じ子を問える)。Popen を捨てると subprocess の後始末が子を回収して終了 code を奪うので、終わりを答えるまで表で持つ。
    表の読み書きは 1 つの錠の下(offloaded の thread と本体が並んで触る)。"
   (defn __init__ [self]
@@ -176,7 +175,7 @@
 
 (defk os-process-alive [pid]
   {:pre [(: pid int)] :post [(: % bool)] :tags {:context "process" :role "foundation"}}
-  "pid の process が生きているかを signal 0 で確かめるため(着地の列の窓が、死んだ走者の行を見分ける — agora-redesign #2184)。送る権限が
+  "pid の process が生きているかを signal 0 で確かめるため(着地の列の窓が、死んだ走者の行を見分ける)。送る権限が
    無いだけの process は生きている。0 以下の pid は group への signal になるので送らずに生きていないと答える。"
   (if (<= pid 0)
       False
@@ -189,14 +188,14 @@
 (defk os-interpreter-facts []
   {:pre [] :post [(: % InterpreterFacts)] :tags {:context "process" :role "foundation"}}
   "自分の process の Python の interpreter の事実(sys.prefix を symlink まで解いた絶対 path・pid)を読むため — venv の上の root を辿る
-   入口の検め(doeff-cluster)が、interpreter の置き場を直に読まずに効果で問う(agora-redesign #2347)。"
+   入口の検め(doeff-cluster)が、interpreter の置き場を直に読まずに効果で問う。"
   (InterpreterFacts :prefix (os.path.realpath sys.prefix) :pid (os.getpid)))
 
 
 (defk os-module-location [name]
   {:pre [(: name str)] :post [(: % (| ModuleFound ModuleNotFound))] :tags {:context "process" :role "foundation"}}
   "module の名を、この process の import が解く置き場(file・submodule を探す dir — symlink まで解いた絶対 path)にするため — どの木の
-   code を動かしているかを確かめる入口の検め(doeff-cluster)が、import の仕組みを直に読まずに効果で問う(agora-redesign #2347)。
+   code を動かしているかを確かめる入口の検め(doeff-cluster)が、import の仕組みを直に読まずに効果で問う。
    import はしない(点の付いた名は親の package を import する — importlib.util.find_spec と同じ)。解けない・名が壊れている・親を読めない
    = ModuleNotFound。file を持たない module(__init__ の無い package・built-in・frozen)の origin は None。"
   (val spec (try (importlib.util.find-spec name)
@@ -262,7 +261,7 @@
    group に残った process(背景の孫)が居なくなるのを GROUP-POLL 秒ごとに期限まで問う。
    問う間の待ちは time.sleep のまま(doeff-time の Delay にしない): ここは答え手(subprocess-handler・offloaded の取り消しの手当て)の
    実装で、取り消しの手当ては要求の答え手の積みが届かない新しい VM で回る(頭の註)ので Delay に答える物が居ない。待つ相手は本物の
-   process の終わりで、doeff-core-effects は doeff-time に依存しない(ADR-DOE-TIME-001 R2・card ki-3c3d85253c2c — :role foundation が
+   process の終わりで、doeff-core-effects は doeff-time に依存しない(ADR-DOE-TIME-001 R2 — :role foundation が
    その名乗り)。"
   (val leader-gone (try
                      (do (.wait child :timeout (max 0.0 (- deadline (time.monotonic)))) True)
@@ -491,7 +490,7 @@
    :post [(: % ProcessOutcome)] :tags {:context "process" :role "foundation"}}
   "子を subprocess.run と同じ待ち方(Popen の communicate — 時間切れは子だけを kill して回収し、それまでの出力を持つ時間切れの答えに
    する)で 1 回走らせるため(process-group も stream-output も使わない呼び — 頭の註)。subprocess.run を呼ばずに Popen を開くのは、起こした
-   子を終わりを見届けるまで watch に置き、要求の取り消しの手当てが走っている子を止められるようにするため(agora-redesign #2847)。"
+   子を終わりを見届けるまで watch に置き、要求の取り消しの手当てが走っている子を止められるようにするため。"
   (var outcome None)
   (try
     (with [child (subprocess.Popen (list argv)

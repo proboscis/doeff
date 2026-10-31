@@ -1,5 +1,5 @@
 ;;; 偽の Anthropic の Messages API(127.0.0.1 の小さな HTTP server)— 本物の claude CLI を ANTHROPIC_BASE_URL で向け、CLI がどの
-;;; access token で呼んだかを記す検の相手(card ki-4ffdafa021e5)。本物の API にも本物の資格にも触らない。
+;;; access token で呼んだかを記す検の相手。本物の API にも本物の資格にも触らない。
 ;;;
 ;;; 振る舞い:
 ;;;   - POST /v1/messages の Authorization: Bearer <token> を呼びの順に記す(MessagesCall)。取り消した token(revoke)には 401 と

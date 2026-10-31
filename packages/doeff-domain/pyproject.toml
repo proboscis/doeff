@@ -11,7 +11,7 @@ requires-python = ">=3.10"
 dependencies = [
     "doeff-vm>=0.2.0",
     # doeff-hy を引かない(ADR-DOE-DOMAIN-001 R1)ので、Hy の版の指定は doeff-hy の Hy の宣言と同じにする — doeff-domain だけを
-    # 引く環境にも doeff-hy の上限を効かせる。違えば ADR-DOE-HY-008 R6 の検が赤(card ki-96ca6c49fffd)。
+    # 引く環境にも doeff-hy の上限を効かせる。違えば ADR-DOE-HY-008 R6 の検が赤。
     "hy>=1.3.0,<=1.3.1",
 ]
 

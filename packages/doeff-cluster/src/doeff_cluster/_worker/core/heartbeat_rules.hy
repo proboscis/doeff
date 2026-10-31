@@ -37,7 +37,7 @@
   {:pre [(: now-ms int) (: now-mono-ms int) (: since-ms int) (: since-mono-ms int)] :post [(: % int)]
    :tags {:context "worker" :role "judgment"}}
   "沈黙の長さ(起点 — 最後に届いた返事・前の送りの始め — から今までの ms)を、機体の壁の時計が動いても実際に過ぎた時間を下回らない
-   ように計るため(card ki-069f4a5c07f7)。起点と今を壁の時計(epoch ms)と単調な時計(ms)の両方で読み、2 つの差の長い方を採る —
+   ように計るため。起点と今を壁の時計(epoch ms)と単調な時計(ms)の両方で読み、2 つの差の長い方を採る —
    途絶の柵(desired-after-silence・desired-when-unreachable)・heartbeat を送る間隔(beat_policy.heartbeat-due)・拍の外の送りの間隔が
    使う沈黙は、どれもここで作る(壁の差だけ・単調な差だけを判断に渡さない)。周の間の待ち(worker/protocol/tick_pauses)も、周の頭の
    刻からの経過をここで数えて待ちの長さにする(期限 − 今の壁の時計 で待たない)。

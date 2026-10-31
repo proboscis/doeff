@@ -1,4 +1,4 @@
-"""The per-subscriber bus hands an event over as the in-memory notice broker does (agora card ki-a83c715eab23):
+"""The per-subscriber bus hands an event over as the in-memory notice broker does:
 ``Publish`` returns to the publisher at once, and the subscriber it woke runs when the publisher next waits.
 
 Before, ``Publish`` woke a waiting subscriber with ``CompletePromise``'s default, and the scheduler runs every task a

@@ -1,6 +1,6 @@
-"""Traverse の handler が止まる時に自分の始めた件を止め、止めた件を cancelled と知らせる契約の検(card ki-e0fd319d5b75)。
+"""Traverse の handler が止まる時に自分の始めた件を止め、止めた件を cancelled と知らせる契約の検。
 
-出自は調査 ki-0d7fee62cd59(依頼 lt-JH5Z0X456AED038XTNFWBDH316)。origin/main da660e83e では、parallel_fail_fast は件の
+出自: origin/main da660e83e では、parallel_fail_fast は件の
 失敗で抜けた後も残りの件を走らせ続け(失敗の後に走り始める件もあった)、Traverse を走らせる task を外から Cancel すると
 sequential は取り消しを 1 件の失敗として飲み込んで残りの件を走らせ、parallel 系は持ち主だけが抜けて件の task は走り切った。
 止めた件は知らされず、progress_bars の bar は n < total で開いたまま残った。
@@ -372,7 +372,7 @@ def test_cancelling_a_traverse_stops_and_reports_the_traverses_inside_its_items(
     内の件も止まり(後で門を開けても走り終わらない)、外の Traverse も内の Traverse も 1 回ごとに total ちょうど知らせる。
 
     門は待ち手が起きた後に開ける: 取り消しは 1 段ずつ届くので、取り消しの直後に開けると、内の Traverse に届く前に起こされて
-    待ち行列に在った内の件は走り終わる(持ち主が起きる前に待ち行列に在った件 — card ki-e0fd319d5b75 が許した形)。"""
+    待ち行列に在った内の件は走り終わる(持ち主が起きる前に待ち行列に在った件)。"""
     items = _Items()
     reports = _Reports()
 

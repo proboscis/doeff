@@ -1,8 +1,8 @@
-;; Pod の止まりの印(AL-D2p — card ki-bfa05ac34c77): worker の Pod の preStop(drain の入口 drain_main の drain)が止まりの始まりを Pod の
+;; Pod の止まりの印(AL-D2p): worker の Pod の preStop(drain の入口 drain_main の drain)が止まりの始まりを Pod の
 ;; 中の file(世代の file の隣)に書き(書き手と印の形 = worker/protocol/leaving_mark)、worker の観測のまとめ(local-host)が拍ごとに
 ;; WorldView.leaving として読む(worker の入口が並べる答え手 = worker/protocol/leaving_observer — 書き手と形を import しない)。worker の判断
 ;; (worker/core/policy の start-step)はこの観測で、止まる Pod の handoff の job の新しい試行を起こさない — coordinator の返事の印
-;; supersededBy が欠けても(10-11 の zeus の画面の process の群 — card ki-3a57786eba88)。判断の側の検は test_policy.hy の AL-D2p の節。
+;; supersededBy が欠けても(10-11 の zeus の画面の process の群)。判断の側の検は test_policy.hy の AL-D2p の節。
 (require doeff-hy.macros [defhandler deftest <- val])
 (val MODULE-TAGS {:context "doeff-cluster-test" :role "test"})
 (import sys)

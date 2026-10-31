@@ -1,4 +1,4 @@
-;;; heap の凍結の契約テストの解釈器(composition root)— 同じ契約の Program を、凍結の答え手だけ替えて走らせる(agora-redesign #1440・
+;;; heap の凍結の契約テストの解釈器(composition root)— 同じ契約の Program を、凍結の答え手だけ替えて走らせる(
 ;;; #1107 の決め)。
 ;;;
 ;;;   gc-freeze        本物: gc-freeze-handler(回収してから凍らせる — process の GC の状態を変える。走った後に解いて戻す)

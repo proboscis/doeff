@@ -1,4 +1,4 @@
-//! 1 file の実行(`--stdin --path` — 書き込み直後の hook とエディタ)が読む repo の範囲: 書いた file が名指す module(card ki-a9959efd9cf6 の残り)。
+//! 1 file の実行(`--stdin --path` — 書き込み直後の hook とエディタ)が読む repo の範囲: 書いた file が名指す module。
 //!
 //! 1 file の検査は、書いた file の中の名(呼び・型・定義)を import の束縛と module で `module.名` に解いて、repo の表(defk の名・record の欄・effect と型の
 //! 世界)を引く。引く名は書いた file の中の記号を `smells::Scope::qualify` で解いた物だけなので、その module の file だけを読めば、repo の全部の file を

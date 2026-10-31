@@ -5,7 +5,7 @@
 ;;; 表の形(列の名と型)は別の置き場(状態の行の表 state_rows・追記の表 append_rows)と同じ形:
 ;;;   state_rows   PK = (ledger, key)・payload = 値の JSON の綴り・version は書くたびに 1 増える・epoch = 書いた時の置き場の版
 ;;;   append_rows  seq = bigserial・ledger = 追記の列の名・payload = {"idempotencyKey" "writer" "body"} の JSON の綴り(行と一緒に積んだ出来事
-;;;                — PutRowsAppendEvents・card ki-e17ba3b32dea — は鍵 "position" {"epoch" "sequence"} も持つ。表の形は変えない)
+;;;                — PutRowsAppendEvents — は鍵 "position" {"epoch" "sequence"} も持つ。表の形は変えない)
 ;;; 足した物(この package の意味に要る物だけ):
 ;;;   row_changes  変更の列(WatchChanges が読む)— seq = bigserial・payload NULL = 行が消えた
 ;;;   store_epoch  置き場の版と、変更の列を忘れた位置(floor)の 1 行。版の初めの値は行を作った時の server の時計の ms
@@ -14,12 +14,12 @@
 ;;;   冪等キーの一意の索引(append_rows の ledger × payload の idempotencyKey)と、宣言した索引の欄の式の索引
 ;;;   retired_keys 保持の期限で出来事を消した冪等キーの覚え — PK = (ledger, idempotency_key)・seq = 消した出来事の番号・
 ;;;                body_digest = 本文の指紋(admission.body-digest)。出来事を消す transaction が同じ transaction で入れる(#3022)。
-;;;                旧い版の文の後ろに足した表(旧い版は読まない・IF NOT EXISTS)。remembered_at = 覚えた刻(epoch ミリ秒 — card ki-4ebaefac6668・
+;;;                旧い版の文の後ろに足した表(旧い版は読まない・IF NOT EXISTS)。remembered_at = 覚えた刻(epoch ミリ秒・
 ;;;                表の後に足した列で、列の無い表にだけ足す — SchemaStep の column。既定 = 足す文を流した刻・旧い版の書きの覚えも既定で刻を持つ)。
 ;;;                覚え方(StreamDecl.key-memory)の長さを限った列の覚えは、回収(SweepExpired)が覚えた刻の境までを limit 個ずつ外す
 ;;;                (forget-keys-statement — 索引 (ledger, remembered_at))。覚えを残さない列は出来事を消す transaction で入れない・外す
 ;;;                (drop-keys-statement)。送ってから外す列の覚えは、鍵の出来事が置き場に在る間は外さない。
-;;   write_keys   行の書き(PutRow・PutRows)の冪等キーの覚え(card ki-78c6d663491f)— PK = idempotency_key・body_digest = 書きの本文の指紋
+;;   write_keys   行の書き(PutRow・PutRows)の冪等キーの覚え— PK = idempotency_key・body_digest = 書きの本文の指紋
 ;;                (admission.write-digest)・answer = 確定した答えの綴り(版・値・置き場の版 — _pg.hy の remembered-answer-json)・last_seq =
 ;;                書きの最後の変更の番号(束の項の番号はそこから束の順に遡る — 同じ往復の変更の文が採る番号を、行の単位の錠の中の変更の列の
 ;;                最大の番号として同じ文で読む)・remembered_at = 覚えた刻(epoch ミリ秒)。行の書きの transaction(行の単位の錠の中)が 1 往復目に鍵を引き(find-write-key-statement)、
@@ -44,7 +44,7 @@
 ;;;                                  辿る(下の註)
 ;;;   state_rows (ledger, key COLLATE "C")  鍵の綴りの順の頁読み(list-rows-statement の ledger = :ledger と key COLLATE "C" > :after・
 ;;;                                  ORDER BY key COLLATE "C")が索引の範囲を 1 頁 + 1 行だけ辿る(下の註)
-;;; 欄の式の索引は表の欄の式の索引(card ki-2176012d1804): 宣言した表 1 つ × 欄 1 つに、表の欄の式
+;;; 欄の式の索引は表の欄の式の索引: 宣言した表 1 つ × 欄 1 つに、表の欄の式
 ;;; `(CASE WHEN ledger = '<表>' THEN ((payload::jsonb) -> '<欄>') END)`(table-field-expression — その表の行の欄の値・他の表の行は NULL)の
 ;;; 索引 1 つ(名 = table-field-index-name)を張る。state_rows は全部の表の行を持つ 1 つの表なので、全部の行の payload を読み直す索引
 ;;; (旧い形 — 名 = index-name)を足す費用は置き場の全体の大きさに比例した(2026-10-18 に 444,566 行・6.3 GB の置き場で 1 本 3 分 23 秒)。
@@ -53,7 +53,7 @@
 ;;; 表の欄の式にする訳(2026-10-18 に本番の 44,296 行の表 message で計画を読んだ): 等号 2 つ(宛先と kind)の 1 頁は、宛先の索引で宛先の
 ;;; 行 5,283 行を引き、1 行ずつ payload を jsonb に読み直して kind で 5,249 行を捨てた(0.43〜9 秒)。2 つの欄の索引を組んで(BitmapAnd)
 ;;; 当たる 34 行だけを読む計画を、planner は選べなかった: 2 つの索引が同じ条件 ledger = '<表>' を使う(旧い形は列 ledger の条件・
-;;; 前の部分索引 `… WHERE ledger = '<表>'`〔card ki-954c58540d0f〕は述語)と、planner は後の索引を前の索引と重なる物として組まない
+;;; 前の部分索引 `… WHERE ledger = '<表>'` は述語)と、planner は後の索引を前の索引と重なる物として組まない
 ;;; (PostgreSQL の choose_bitmap_and の重なりの判じ)。表の欄の式の索引は、条件が欄ごとに別の式なので組め、当たる行の数で決まる読みに
 ;;; なる(本番の分布の 46.8 万行の置き場で 280 ms → 6 ms)。読みの文は、絞りの欄が全部表の欄の式で照らせる時、条件 ledger = :ledger を
 ;;; 置かない(表の欄の式の条件がその表の行だけに合う — 置くと planner は ledger の選択度を式の選択度に重ねて掛け、ledger だけの索引を
@@ -121,7 +121,7 @@
 ;;; どれも IF NOT EXISTS / ON CONFLICT DO NOTHING なので、字面が変わっても旧い版へ戻せ(表の形は変わらない)、既に在る置き場の
 ;;; store_epoch の行(旧い版が作った epoch 1 を含む)には触らない。
 ;;;
-;;; 書きの錠(card ki-0306f5a614b4 — 前は置き場の書き全部を advisory lock 1 つで直列にし、受付の列の追記が他の表の書きと手入れの後ろで
+;;; 書きの錠(前は置き場の書き全部を advisory lock 1 つで直列にし、受付の列の追記が他の表の書きと手入れの後ろで
 ;;; 待った): bigserial の番号は commit の順と揃わない(番号 5 を取った書きより先に番号 6 の書きが commit すると、6 まで読んだ読み手は 5 を
 ;;; 永久に取りこぼす)。番号の読みの約束 = 「読み手が見た最大の番号より小さい番号は、読み手が読む範囲で全部 commit 済み」(WatchChanges の
 ;;; 「ちょうど 1 回」と ReadEvents の位置の読みの土台)。約束が要るのは、同じ読みが 1 つの位置で読む範囲の中だけ:
@@ -134,7 +134,7 @@
 ;;; (writer-lock-key)を共有で持つ(SqlTransaction の locks — 共有どうしは並んで持てる)。置き場全体を変える書き(版の繰り上げ)と表の用意は
 ;;; 置き場全体の錠を排他で持ち、全部の部分の書きと互いを待つ。錠の順は置き場全体(共有か排他)→ transaction の初めに取る部分の錠(単位の
 ;;; 名の順)→ 冪等キーの錠 → 番号の錠の 1 つで、束の追記(AppendEvents)が列を 2 つ以上触る時も名の順に取る(逆の順の取り合いを作らない)。
-;;; 行の書きの錠を表と番号に分ける(card ki-f2888153ff62 — 前は行の書き全部が行の単位 1 つを transaction の初めから持ち、1 つの表への束の
+;;; 行の書きの錠を表と番号に分ける(前は行の書き全部が行の単位 1 つを transaction の初めから持ち、1 つの表への束の
 ;;; 書き〔派生の表の作り直し〕が索引の更新の IO 待ちで錠を 39 秒持つ間、関わりの無い表の 1 行の書きが全部その後ろで待った): 行の書きは
 ;;; 触る表の単位(table-unit)を transaction の初めに取り、行の表の文(錠つきの読み・消す・書く — 索引の更新で IO を待つ文)を流してから、
 ;;; 2 往復目の中で番号の錠(numbering-lock-statement)を取り、変更の列に積む文と冪等キーの覚え(変更の列の最大の番号を読む)を流して
@@ -174,7 +174,7 @@
 ;;; `max(seq) WHERE at <= 境` を消す文の中に持ち、planner は主鍵を新しい方から辿って境より古い変更に当たるまで保持の窓の変更を全部読んだ
 ;;; (本番 約 150 万行・heap 973 MB)。DB が起き直した直後の冷えた cache でこの 1 文が文の上限 60 秒を越え、その間 番号の錠を待つ書きが
 ;;; 同じ上限で切られた。
-;;; 送ってから外す列(card ki-707aad0f88e8 — _maintenance.hy の頭の註): 送りの頁の読み(expired-page-statement)は期限の条件を
+;;; 送ってから外す列(_maintenance.hy の頭の註): 送りの頁の読み(expired-page-statement)は期限の条件を
 ;;; expiring-where で書き、(ledger, at) の索引を位置から境まで辿る(積んだ刻と番号の順)。外しは回収と同じ expire-chosen-events-statement。
 ;;; 組で数える列は、冪等キーを覚えた出来事(retired_keys に鍵の在る出来事)も期限を過ぎた物に数える(EventExpiry の remembered)。
 (require doeff-hy.macros [defk <- val var])
@@ -419,7 +419,7 @@
 (defk table-index-name [prefix table field-name]
   {:pre [(: prefix str) (: table str) (: field-name str)] :post [(: % str)]
    :tags {:context "records" :role "foundation"}}
-  "前の部分索引(表 table の欄 field-name の (欄の式) WHERE ledger = '<表>' — card ki-954c58540d0f)の名を作るため。表の欄の式の索引の
+  "前の部分索引(表 table の欄 field-name の (欄の式) WHERE ledger = '<表>')の名を作るため。表の欄の式の索引の
    aliases(頭の註)。"
   (<- field-digest (digest-of field-name))
   (<- table-digest (digest-of table))
@@ -665,8 +665,8 @@
   (for [index added]
     (<- added-made (index-steps index))
     (:= added-steps (+ added-steps added-made)))
-  ;; 覚えた刻の列(card ki-4ebaefac6668 — 頭の註の retired_keys)は表の後ろ・索引の前(覚えの外しの索引がこの列を引く)。
-  ;; 行の書きの冪等キーの覚えの表(card ki-78c6d663491f — 頭の註の write_keys)は覚えた刻の列の後ろ・索引の前(覚えの外しの索引がこの表を引く)。
+  ;; 覚えた刻の列(頭の註の retired_keys)は表の後ろ・索引の前(覚えの外しの索引がこの列を引く)。
+  ;; 行の書きの冪等キーの覚えの表(頭の註の write_keys)は覚えた刻の列の後ろ・索引の前(覚えの外しの索引がこの表を引く)。
   (+ tables
      indexes
      #((! (table-step (.format "CREATE TABLE IF NOT EXISTS {p}retired_keys (
@@ -1365,7 +1365,7 @@
 (defk insert-positioned-event-statement [prefix stream at head tail origin-host epoch]
   {:pre [(: prefix str) (: stream str) (: at int) (: head str) (: tail str) (: origin-host str) (: epoch int)] :post [(: % Statement)]
    :tags {:context "records" :role "foundation"}}
-  "行と一緒に積む出来事を 1 つ積んで番号を返す文を作るため(PutRowsAppendEvents — _pg.hy の put-rows-append-events-locked・card ki-e17ba3b32dea)。
+  "行と一緒に積む出来事を 1 つ積んで番号を返す文を作るため(PutRowsAppendEvents — _pg.hy の put-rows-append-events-locked)。
    payload = head と tail の間に変更の列の最大の番号(この書きの行の最後の変更 — 番号の錠の中で、変更の文の後に流す。remember-write-statement
    と同じ読み)を挟んだ綴り(head と tail は呼び手が出来事の位置の鍵 position.sequence の前と後ろを正規の綴りで作る)。"
   (Statement :text (.format "INSERT INTO {p}append_rows (ledger, at, payload, origin_host, epoch)
@@ -1608,7 +1608,7 @@
          (= (len parts) (+ (len lookups) 1)) (: remembered-at int)]
    :post [(: % Statement)]
    :tags {:context "records" :role "foundation"}}
-  "確定した PutRowsAppendEvents の冪等キーの覚えを入れる文を作るため(remember-write-statement と同じ表・同じ位置 — card ki-e17ba3b32dea)。
+  "確定した PutRowsAppendEvents の冪等キーの覚えを入れる文を作るため(remember-write-statement と同じ表・同じ位置)。
    答えの綴り = parts と lookups を交互につないだ物: lookups の各項 #(列 冪等キー) は同じ transaction で今積んだ出来事の番号を、(列, 冪等キー)
    の引き(find-event-statement と同じ式)で同じ文の中で読む(番号は同じ往復の追記の文が採るので、綴りの組み立ての時には知らない)。"
   (var pieces #())

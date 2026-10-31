@@ -24,9 +24,9 @@ dependencies = [
     "doeff>=0.1.0",
     "doeff-time",
     "doeff-hy",
-    # the headless handler is an adapter onto doeff-claude-code's effects (agora-redesign #604)
+    # the headless handler is an adapter onto doeff-claude-code's effects
     "doeff-claude-code",
-    # the headless codex handler is an adapter onto doeff-codex's effects (card ki-534a081e32eb)
+    # the headless codex handler is an adapter onto doeff-codex's effects
     "doeff-codex",
     "click>=8.0.0",
     "rich>=13.0.0",
@@ -37,7 +37,7 @@ dependencies = [
     "jsonschema>=4.21",
     # the api-limit marker reads its reset instant in the IANA zone the refusal
     # names (ZoneInfo); zoneinfo falls back to this package when the machine has
-    # no /usr/share/zoneinfo (the daily-verify Pod, card ki-db3650ee22fb).
+    # no /usr/share/zoneinfo (the daily-verify Pod).
     "tzdata>=2024.1",
 ]
 

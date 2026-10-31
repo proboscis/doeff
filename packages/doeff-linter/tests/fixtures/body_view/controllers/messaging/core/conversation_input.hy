@@ -1,4 +1,4 @@
-;;; 会話の入力の処理ステージの手順(agora-redesign #808 入力の便 — 5 層の core・旧 controllers/conversation/input_stage.hy と
+;;; 会話の入力の処理ステージの手順(5 層の core・旧 controllers/conversation/input_stage.hy と
 ;;; handlers_input.hy の係の 1 周と常駐)。判断は conversation_input_judgment.hy の judge、外へ求める事は intent の effect
 ;;; (列 intake = ReadIntake・SettleIntake — controllers/messaging/intent/intake.hy・入力の行 = ReadInput・WriteInput —
 ;;; controllers/messaging/intent/conversation_input.hy)と時計(doeff-time の GetTime と共有の換算 epoch-seconds-of-time・doeff-time の Delay)。
@@ -21,11 +21,11 @@
 ;;; identity-not-delegated と担い手の名 agora-conversation は列 intake の語彙(controllers/messaging/intent/intake_types.hy — 同じ日に
 ;;; 振り分けの表の旧い置き場 intake_model.hy・intake_routes.hy から移した)から読む。
 ;;;
-;;; 置き場の移り: 2026-09-28 に controllers/core/conversation_input.hy から移した(agora-redesign #797)。旧い module は同じ名で出す。
+;;; 置き場の移り: 2026-09-28 に controllers/core/conversation_input.hy から移した。旧い module は同じ名で出す。
 (require doeff-hy.macros [defk <- val var])
 (import doeff_time [GetTime Delay])
 (import datetime [datetime])
-;; いまの時刻は doeff-time の GetTime で読み、契約の物差しへの換算は共有の置き場の式で読む(agora-redesign #797)。
+;; いまの時刻は doeff-time の GetTime で読み、契約の物差しへの換算は共有の置き場の式で読む。
 (import controllers.shared.core.time_values [epoch-seconds-of-time])
 (import controllers.shared.core.intake_rules [identity-problem])
 (import controllers.messaging.intent.intake_types [REASON-IDENTITY ROUTE-INPUT])

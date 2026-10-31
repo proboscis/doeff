@@ -84,14 +84,14 @@ class WaitWithinEffect(EffectBase, Generic[_T]):
     "spawn a sleeping timer task, Race it, cancel it" pattern: the clock handler
     owns the deadline (``sim_time_handler`` puts it on its virtual time queue and
     drops it when the future wins — no task is spawned), which keeps a timed wait
-    as cheap as a Delay (agora-redesign #2618).
+    as cheap as a Delay.
 
     ``park`` is for an *external* promise that in-run code completes (doeff-records'
     memory-store bell, rung by a synchronous write): the race against the deadline
     parks like ``Wait(future, priority=TaskPriority.IDLE)`` instead of shielding the sim
     clock, so virtual time can reach the deadline while the promise is pending. With
     the default (``False``) a pending external promise holds the clock, and the
-    deadline cannot pass before it completes (agora-redesign #3054).
+    deadline cannot pass before it completes.
     """
 
     future: "Future[_T]"
@@ -165,7 +165,7 @@ class WaitTicksEffect(EffectBase[TicksOutcome[_T]], Generic[_T]):
     that passed before it), or ``TicksOutcome(None, count)`` when the last tick passes first.
 
     The order at a tick instant is that of a waiter that re-registers ``WaitWithin(future, every)`` at
-    each tick (agora-redesign #3066): tick k counts as passed before any other timer due at the same
+    each tick: tick k counts as passed before any other timer due at the same
     instant that was registered after tick k-1 passed, and after one registered before it.
     ``sim_time_handler`` keeps that order by re-queueing tick k+1 on its virtual time queue the moment
     tick k is taken off it — the waiting task is not woken at the ticks. ``park`` is WaitWithin's.

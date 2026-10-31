@@ -14,7 +14,7 @@
 //!   :open-layers [intent]            ; 別の service から読んでよい層(Tach の interfaces に当たる)
 //!   :roles {:judgment "業務の判断をする純粋な関数" …}
 //!   :wire-modules ["controllers.foundation.record_client"]  ; JSON の送受信そのものを行う foundation の module(DOEFF120 が JsonValue を許す)
-//!   :world-handlers [(world-handler "controllers.foundation.host:with-agora-process"  ; 外の世界に触れてよい定義の許可名簿(agora-redesign #1106)
+//!   :world-handlers [(world-handler "controllers.foundation.host:with-agora-process"  ; 外の世界に触れてよい定義の許可名簿
 //!                       :touches [http file clock env]           ; 触れる先(閉じた語 — WorldTouch)
 //!                       :answers [HttpRequest ReadText]          ; 答える effect(省略可)
 //!                       :wraps ["doeff_core_effects.os_file:os-file-handler"])]  ; 中で動かす doeff の実 I/O の handler(省略可)
@@ -26,7 +26,7 @@
 //! ```
 //! 読めない形(重複した service・存在しない層の名・廃止した鍵)は、file の中の位置つきの理由の列で返す(設定の誤り)。
 //! この binary の知らない鍵は誤りにせず、その鍵だけを読まずに知らせ(`Architecture::notices` → DOEFF100)として残す
-//! (宣言は binary より先に進むことがある — agora-redesign #848)。
+//! (宣言は binary より先に進むことがある)。
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
@@ -56,20 +56,20 @@ pub struct ArchLayer {
     pub forbid_modules: Vec<String>,
     #[serde(skip)]
     pub types_only: bool,
-    /// 値を型だけで渡す層(`:wire-free True` — defwire と写像・型の無い組を置かない・DOEFF170・171・agora-redesign #2143)。
+    /// 値を型だけで渡す層(`:wire-free True` — defwire と写像・型の無い組を置かない・DOEFF170・171)。
     #[serde(skip)]
     pub wire_free: bool,
     /// この層の module が、:depends-on に宣言した依存先の service のどの層を読んでよいか(None = :open-layers)。
-    /// 例: 組み立ての層 entry は依存先の intent と protocol(翻訳の handler)を読んで全体を組む(operator の決定 2026-09-28 の案 A)。
+    /// 例: 組み立ての層 entry は依存先の intent と protocol(翻訳の handler)を読んで全体を組む。
     #[serde(skip)]
     pub dependency_layers: Option<Vec<String>>,
     /// この層に入る module を綴りで名指す(`:modules [名 …]` — 点で区切った module の名・その下の module も入る)。置き場の dir で層が
-    /// 決まらない package(起動の時点で入る module ほか)が、層の宣言から規則の母集団を決めるため(agora-redesign #2811)。
+    /// 決まらない package(起動の時点で入る module ほか)が、層の宣言から規則の母集団を決めるため。
     #[serde(skip)]
     pub modules: Vec<String>,
     /// この層に入る file を、宣言の在る dir からの相対 path で 1 つずつ名指す(`:files ["相対 path" …]`)。module の名を持たない
     /// file(package の外の、hash で封をした設計の記録ほか)は :modules では名指せない — 名が素の stem になり、上の dir の宣言で書くと
-    /// その下の同じ名の file が全部入る(agora-redesign #2934)。名指した file が無い・`..`・dir は読みの誤り。
+    /// その下の同じ名の file が全部入る。名指した file が無い・`..`・dir は読みの誤り。
     #[serde(skip)]
     pub files: Vec<String>,
     /// 名指しの module・file に限って、その規則の母集団から外す(`:exempt [(rule 規則 ID "理由") …]`)。理由が要り、:modules も :files も
@@ -78,7 +78,7 @@ pub struct ArchLayer {
     pub exempt: Vec<RuleExemption>,
 }
 
-/// 層が名指しの module を規則の母集団から外す宣言 1 つ(`(rule 規則 ID "理由")`・agora-redesign #2811)。
+/// 層が名指しの module を規則の母集団から外す宣言 1 つ(`(rule 規則 ID "理由")`)。
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RuleExemption {
     pub rule: String,
@@ -97,19 +97,19 @@ pub struct ArchService {
     /// 公開の契約の形(`:public-contract`)。書かない = in-process(他の service が `:depends-on` に載せて読める)。
     pub public_contract: PublicContract,
     /// 業務の不変条件の関数(`:invariants` — `module:関数` の列・書かない = None)。DOEFF163 が、code を持つ service に宣言・実在・
-    /// :role judgment を求める(agora-redesign #1559・#1155 の定義 1)。
+    /// :role judgment を求める(#1155 の定義 1)。
     pub invariants: Option<Vec<DefinitionRef>>,
     /// 不変条件の条の名(`:clauses` — :invariants の関数が返す破りの条の名の列・書かない = None)。DOEFF167 が条ごとに、その条を名乗る
-    /// 壊した handler の反例か外した理由を求める(agora-redesign #1713)。条の名は関数の返す値で静的に読めないので、ここに宣言する。
+    /// 壊した handler の反例か外した理由を求める。条の名は関数の返す値で静的に読めないので、ここに宣言する。
     pub clauses: Option<Vec<String>>,
     /// 反例を持たない条と理由(`:clause-exemptions {"条" "理由" …}` — 壊した handler では破れない構造の保証など)。条は :clauses の内。
     pub clause_exemptions: Vec<ClauseExemption>,
     /// service の code の入口の module(`:entry-modules ["pkg.module" …]` — 書かない = None)。層の dir(`<root>/<dir>/entry/`)を持たない
-    /// repo(merge-queue のように機能の dir で分けた repo)が、DOEFF163 の「code を持つ service」をこの module の在りかで判じさせる
-    /// (agora-redesign #1978)。書かない service は今までどおり entry の層の dir で判じる。
+    /// repo(merge-queue のように機能の dir で分けた repo)が、DOEFF163 の「code を持つ service」をこの module の在りかで判じさせる。
+    ///書かない service は今までどおり entry の層の dir で判じる。
     pub entry_modules: Option<Vec<String>>,
     /// cluster に置く系の宣言(`:system "module:defsystem の名"`・系が複数なら列・置かない理由は `{:exempt "理由"}` — 書かない = None)。
-    /// DOEFF173 が、code を持つ service に宣言・entry の層の defsystem の実在・引数が型つきの土台 1 つを求める(agora-redesign #2187)。
+    /// DOEFF173 が、code を持つ service に宣言・entry の層の defsystem の実在・引数が型つきの土台 1 つを求める。
     pub system: Option<SystemDecl>,
     /// architecture.hy の中の defservice の位置(DOEFF117 の知らせの位置)。
     #[serde(skip)]
@@ -137,7 +137,7 @@ pub struct ClauseExemption {
 
 /// service の公開の契約の形(`defservice` の `:public-contract`)。
 /// `Http` の service は、公開の契約が HTTP の口だけで、他の service は `:depends-on` に載せて in-process で読まない
-/// (置き場の状態を持つ service の近道を止める — agora-redesign #978 の設計 artifact-store v10)。
+/// (置き場の状態を持つ service の近道を止める)。
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "kebab-case")]
 pub enum PublicContract {
@@ -269,7 +269,7 @@ impl TestNodeId {
     }
 }
 
-/// 縁の検を求めない理由(`:contract-test (none :<理由の鍵> "file::名")` — DOEFF137・agora-redesign #1796)。
+/// 縁の検を求めない理由(`:contract-test (none :<理由の鍵> "file::名")` — DOEFF137)。
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub enum ContractTestWaiver {
     /// handler は doeff の handler を包むだけで、契約テストは doeff の側に在る(`:doeff-test` — doeff の repo の中の node id)。
@@ -295,7 +295,7 @@ pub enum ContractTest {
 }
 
 /// 外の世界に触れてよい定義 1 つ(`:world-handlers` の `(world-handler "module:名" :touches [..] :answers [..] :wraps [..])`)。
-/// 名簿の定義の下でだけ実 I/O の答え手(Python の生の I/O と、:wraps に挙げた doeff の実 I/O の handler)が動く(agora-redesign #1106)。
+/// 名簿の定義の下でだけ実 I/O の答え手(Python の生の I/O と、:wraps に挙げた doeff の実 I/O の handler)が動く。
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct WorldHandler {
     pub definition: DefinitionRef,
@@ -304,7 +304,7 @@ pub struct WorldHandler {
     pub answers: Vec<String>,
     /// 中で動かす doeff の実 I/O の handler(書かなくてよい)。
     pub wraps: Vec<DefinitionRef>,
-    /// 縁の検(`:interpreters` を持つ deftest)の宣言(`:contract-test` — 書かなければ求める・DOEFF137・agora-redesign #1363・#1796)。
+    /// 縁の検(`:interpreters` を持つ deftest)の宣言(`:contract-test` — 書かなければ求める・DOEFF137)。
     pub contract_test: ContractTest,
     /// architecture.hy の中の位置。
     #[serde(skip)]
@@ -329,7 +329,7 @@ pub struct StandIn {
 }
 
 /// 模擬の環境から本物の外の世界へ届く境目の部品 1 つ(`:boundary-parts` の `(boundary-part "module" :touches [..] :reason "…")`
-/// — DOEFF106・agora-redesign #1797)。宣言した module の中では、:touches に入る種類の生の副作用(実 socket の客・実時計・thread など)を
+/// — DOEFF106)。宣言した module の中では、:touches に入る種類の生の副作用(実 socket の客・実時計・thread など)を
 /// DOEFF106 で当たりにしない。種類の外の生の副作用は今どおり当たる。生の副作用の証拠は索引に残るので、この部品に届くテストは
 /// DOEFF133 が縁(:edge-mark の印が要る)と数える。名簿(:world-handlers)と違い、effect に答える handler ではなく、人が回す入口や
 /// 縁の台のように実 I/O そのものが役目の部品を名指す。
@@ -345,7 +345,7 @@ pub struct BoundaryPart {
 }
 
 /// 決めた材料だけで判じる定義 1 つ(`:blind-definitions` の `(blind "module:名" :forbid-words [..] :no-imports True :allow-requires [..]
-/// :why "…")` — DOEFF141・agora-redesign #1368)。定義から呼び出しと名指しで推移的に届く repo の Hy の定義(入れ子を含む)の本体に
+/// :why "…")` — DOEFF141)。定義から呼び出しと名指しで推移的に届く repo の Hy の定義(入れ子を含む)の本体に
 /// :forbid-words の綴りが現れない(註は除く・部分一致)こと、:no-imports なら定義の module が import と require を持たない
 /// (:allow-requires に挙げた module の require だけは macro の読み込みなので許す)ことを求める。
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
@@ -362,7 +362,7 @@ pub struct BlindDefinition {
 }
 
 /// 呼んでよい頭を決めた定義 1 つ(`:allowed-heads` の `(allowed-heads "module:名" :heads [..] :why "…")` — DOEFF147・
-/// agora-redesign #1372・#1413)。定義の form の中(入れ子を含む・文字列と註を除く)の `( … )` の頭の綴りが :heads に在ることを求める。
+/// #1413)。定義の form の中(入れ子を含む・文字列と註を除く)の `( … )` の頭の綴りが :heads に在ることを求める。
 /// 例外を受け止める境界の外で動く定義(境界そのもの・断りを組む 1 点)に、例外を上げうる呼びを入れないための宣言。
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct AllowedHeads {
@@ -392,7 +392,7 @@ pub struct CallSiteSite {
 }
 
 /// 頭を呼んでよい場所と回数を決めた綴り 1 つ(`:call-sites` の `(call-site "頭" :files [..] :except [..] :sites [(site …) …] :why "…")` —
-/// DOEFF159・agora-redesign #1372・#1414)。:files の Hy の file(:except を除く)の中の `(頭 …)` の呼びは、どれも :sites の定義の中に在る。
+/// DOEFF159)。:files の Hy の file(:except を除く)の中の `(頭 …)` の呼びは、どれも :sites の定義の中に在る。
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct CallSite {
     pub head: String,
@@ -420,7 +420,7 @@ pub struct BroadCatchCarrier {
 }
 
 /// 広い例外の捕捉を置かない file の群 1 つ(`:broad-catches` の `(broad-catch "名" :files [..] :except [..] :carriers [(carrier …) …]
-/// :why "…")` — DOEFF160・agora-redesign #1372・#1415)。:files の Hy・Python の file(:except を除く)の広い捕捉は、どれも :carriers の中に在る。
+/// :why "…")` — DOEFF160)。:files の Hy・Python の file(:except を除く)の広い捕捉は、どれも :carriers の中に在る。
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct BroadCatch {
     /// 群の名(登録簿の鍵の細目)。
@@ -463,7 +463,7 @@ pub enum WordPlace {
     Lines,
     /// 定義の名だけ(Hy の `def…` の形と `setv`・`val`・`var` の左辺・Python の def と class の名)。
     Names,
-    /// file の名だけ(最後の `.` より前 — dir の名と中身は見ない)。退役した名の file を置き直さないため(agora-redesign #1369)。
+    /// file の名だけ(最後の `.` より前 — dir の名と中身は見ない)。退役した名の file を置き直さないため。
     Paths,
 }
 
@@ -482,14 +482,14 @@ pub struct RetiredWords {
     pub except: Vec<String>,
     /// この綴りを含む行は数えない(規則そのものを述べる行 — :in lines の時だけ効く)。
     pub rule_lines: Vec<String>,
-    /// 契約の file から読んだ綴り(`:contract-files` — :in lines の時だけ効く・agora-redesign #1893)。書かなければ空で、今までどおり数える。
+    /// 契約の file から読んだ綴り(`:contract-files` — :in lines の時だけ効く)。書かなければ空で、今までどおり数える。
     pub contracts: ContractSpellings,
     pub place: WordPlace,
     /// 代わりに使う語・直し方(知らせの文に入れる)。
     pub instead: String,
 }
 
-/// retired-words の群の `:contract-files`(repo の根からの path の JSON)と、そこから集めた契約の綴り(agora-redesign #1893)。
+/// retired-words の群の `:contract-files`(repo の根からの path の JSON)と、そこから集めた契約の綴り。
 /// 集める物 = どの深さのオブジェクトのキーの名(wire の欄名)と、キー `enum` の配列の文字列の要素・キー `const` の文字列の値(契約の値)。
 /// :words の語がこの綴りに在れば、その語は Hy・Python の文字列で中身がその語ちょうどの物と defwire の本体の欄の定義の名では数えない。
 /// 読むのは architecture.hy を読む時(`Architecture::load`)で、読めない・JSON でない・綴りが 1 つも無い file は宣言の誤りにする。
@@ -531,7 +531,7 @@ pub fn collect_contract_spellings(value: &serde_json::Value, out: &mut BTreeSet<
 }
 
 /// 宣言の正規表現(`:patterns`・`:pattern`)が読めるか。**構文だけ**を確かめる: 宣言を読むたび(1 回の実行で 195 個)`Regex::new` で NFA まで組むと 50〜130 ミリ秒
-/// かかり、書いた file 1 つの hook の CPU の半分近くになっていた(agora-redesign #1022)。宣言が持つのは綴りで、使う時に規則が組み直すので、ここで組んだ物は捨てていた。
+/// かかり、書いた file 1 つの hook の CPU の半分近くになっていた。宣言が持つのは綴りで、使う時に規則が組み直すので、ここで組んだ物は捨てていた。
 /// 読めない時だけ `Regex::new` に聞き直し、知らせの文は今までと同じ綴りにする。
 fn check_regex(pattern: &str) -> Result<(), regex::Error> {
     match regex_syntax::Parser::new().parse(pattern) {
@@ -552,8 +552,8 @@ pub struct RetiredCalls {
     pub instead: String,
 }
 
-/// 業務の層が分岐してはならない環境の名の値と dry-run の印(`:environment-branches {:values [..] :flags [..] :layers [..]}` — DOEFF168・
-/// agora-redesign #1906)。綴りと当てる層は repo の宣言にだけ在り、linter は持たない。
+/// 業務の層が分岐してはならない環境の名の値と dry-run の印(`:environment-branches {:values [..] :flags [..] :layers [..]}` — DOEFF168)。
+/// 綴りと当てる層は repo の宣言にだけ在り、linter は持たない。
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize)]
 pub struct EnvironmentBranches {
     /// 環境の名の値(比べる form の引数の文字列の literal と、match の節の型として当てる — 例 production・emulated)。
@@ -609,7 +609,7 @@ pub struct VocabularyScope {
 }
 
 /// 書いてよい file を決めた綴りの群 1 つ(`:confined-spellings` の
-/// `(confined-spelling "名" :patterns [r"…"] :files [..] :except [..] :why "…")` — DOEFF148・agora-redesign #1373・#1436)。
+/// `(confined-spelling "名" :patterns [r"…"] :files [..] :except [..] :why "…")` — DOEFF148)。
 /// :files と :except は repo の根からの path の glob。:except の file だけがこの綴りを書ける(空なら :files のどこにも書かない)。
 /// 註を落とした本文を読み、文字列の中は数える(DOEFF146 は文字列を数えない — 外の口の動詞や route の綴りは文字列に在る)。
 /// `:names-bound-in [<repo の根からの path> …]` を書けば、その Hy の file で群の綴りに当たる値に結んだ名(宣言の `:environ` の組の名・
@@ -635,7 +635,7 @@ pub struct ConfinedSpelling {
 }
 
 /// effect の宣言の全体 1 つ(`:effect-census` の `(effect-census "名" :files [..] :effects [..] :base "EffectBase" :why "…")` —
-/// DOEFF162・agora-redesign #1373・#1438)。:files の Hy・Python の file で :base を継ぐ class の宣言を集め、:effects の一覧と比べる。
+/// DOEFF162)。:files の Hy・Python の file で :base を継ぐ class の宣言を集め、:effects の一覧と比べる。
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct EffectCensus {
     /// 宣言の名(登録簿の鍵の細目)。
@@ -653,7 +653,7 @@ pub struct EffectCensus {
 }
 
 /// 型の欄を持つ class の顔ぶれ 1 つ(`:field-holders` の
-/// `(field-holders "名" :type "T" :files [..] :classes [..] :holders [..] :why "…")` — DOEFF149・agora-redesign #1374)。
+/// `(field-holders "名" :type "T" :files [..] :classes [..] :holders [..] :why "…")` — DOEFF149)。
 /// :files の Python の file の module の直下の class のうち、欄の注記に :type の綴りが語として在る class を :holders と比べる。
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct FieldHolders {
@@ -699,7 +699,7 @@ impl WantedCount {
 }
 
 /// 数を決めた綴り 1 つ(`:counted-spellings` の
-/// `(counted-spelling "名" :pattern r"…" :files [..] :within [..] :count N :why "…")` — DOEFF161・agora-redesign #1373・#1437)。
+/// `(counted-spelling "名" :pattern r"…" :files [..] :within [..] :count N :why "…")` — DOEFF161)。
 /// :files に当たる file の本文(Hy と Python は註を落とす・文字列は数える)で :pattern の当たりを数える。:within があれば名指した定義ごとに数える。
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct CountedSpelling {
@@ -788,24 +788,24 @@ pub struct Architecture {
     pub verification_environment: Option<String>,
     /// 本番の系の job でない書き手が書く外の置き場の組の表(`:outside-writers {"<置き場>:<名>" "書き手" …}` — 外の repo の道具・
     /// 人の操作・job でない task)。書けば DOEFF207 が、本番の系(defservice の `:system`)の job に `:reads` / `:writes` を求め、
-    /// job が読む組に、本番の job の `:writes` かこの表の行が在るかを見る(agora-redesign #3493・#3496)。書かなければ当てない。
+    /// job が読む組に、本番の job の `:writes` かこの表の行が在るかを見る(#3496)。書かなければ当てない。
     pub outside_writers: Option<Vec<OutsideWriter>>,
     pub open_layers: Vec<String>,
     /// 置き場の決まった module にだけ依存してよい層(`:placed-dependencies [core intent protocol]` — 空 = 宣言していない)。
     /// 書けば DOEFF140 が、service と shared のこの層の module が root の下の層の置き場の外の module を import するのを出す
-    /// (agora-redesign #1188 — 移す前の置き場への依存を移す変更で消し、新しく足さない)。
+    /// (移す前の置き場への依存を移す変更で消し、新しく足さない)。
     pub placed_dependencies: Vec<String>,
     /// 決めた材料だけで判じる定義(`:blind-definitions [(blind "module:名" :forbid-words [..] :no-imports True …) …]` — 空 = 宣言していない)。
-    /// 書けば DOEFF141 が、その定義から呼び出しと名指しで届く定義の本体の使わない語と、定義の module の import を出す(agora-redesign #1368)。
+    /// 書けば DOEFF141 が、その定義から呼び出しと名指しで届く定義の本体の使わない語と、定義の module の import を出す。
     pub blind_definitions: Vec<BlindDefinition>,
     /// 呼んでよい頭を決めた定義(`:allowed-heads [(allowed-heads "module:名" :heads [..] :why "…") …]` — 空 = 宣言していない)。
-    /// 書けば DOEFF147 が、その定義の中の一覧の外の頭を出す(agora-redesign #1413)。
+    /// 書けば DOEFF147 が、その定義の中の一覧の外の頭を出す。
     pub allowed_heads: Vec<AllowedHeads>,
     /// 頭を呼んでよい場所と回数(`:call-sites [(call-site "頭" :files [..] :sites [(site "module:名" :count 1) …] :why "…") …]` — 空 = 宣言
-    /// していない)。書けば DOEFF159 が、場所の外の呼び・回数の食い違い・外の form と分岐の食い違いを出す(agora-redesign #1414)。
+    /// していない)。書けば DOEFF159 が、場所の外の呼び・回数の食い違い・外の form と分岐の食い違いを出す。
     pub call_sites: Vec<CallSite>,
     /// 広い例外の捕捉を置かない file の群(`:broad-catches [(broad-catch "名" :files [..] :carriers [(carrier "module:名" :event "出来事") …]
-    /// :why "…") …]` — 空 = 宣言していない)。書けば DOEFF160 が、運搬の境界の外の広い捕捉を出す(agora-redesign #1415)。
+    /// :why "…") …]` — 空 = 宣言していない)。書けば DOEFF160 が、運搬の境界の外の広い捕捉を出す。
     pub broad_catches: Vec<BroadCatch>,
     pub services: Vec<ArchService>,
     /// 素の関数を許す理由の種類の閉じた一覧(DOEFF203 の受け入れる答え)。
@@ -819,63 +819,63 @@ pub struct Architecture {
     pub world_handlers: Vec<WorldHandler>,
     /// 相手役の名簿(`:stand-ins` — 空 = 宣言していない・DOEFF137)。
     pub stand_ins: Vec<StandIn>,
-    /// 模擬の環境から本物の外の世界へ届く境目の部品(`:boundary-parts` — 空 = 宣言していない・DOEFF106・agora-redesign #1797)。
+    /// 模擬の環境から本物の外の世界へ届く境目の部品(`:boundary-parts` — 空 = 宣言していない・DOEFF106)。
     pub boundary_parts: Vec<BoundaryPart>,
     /// 許可名簿の規則(DOEFF106・131)を層の置き場の外の file にも当てる dir(repo の根からの綴りの列・`:raw-io-roots ["controllers" "services"]`)。
-    /// 書かなければ `:root` だけ(agora-redesign #1147 — :root の外の services/ も名簿で縛る)。
+    /// 書かなければ `:root` だけ(:root の外の services/ も名簿で縛る)。
     pub raw_io_roots: Option<Vec<String>>,
     /// 「縁」のテスト(外の世界に触れる handler に届くテスト)が持つ pytest の印の名(`:edge-mark "real_world"`)。
-    /// 書けば DOEFF133 が、テストの届く先から導いた種類と印の有無の食い違いを出す(agora-redesign #1106 の R3)。
+    /// 書けば DOEFF133 が、テストの届く先から導いた種類と印の有無の食い違いを出す。
     pub edge_mark: Option<String>,
     /// 渡された値を実行せずに読むだけの定義(`:static-readers ["module:名" …]` — 例: 土台の閉じを解析器で読む ClosureCase・open-foundations)。
-    /// この呼び出しの引数の中の参照は、DOEFF133・136 の「届く」の辺にしない(値として読むだけで、実行しない — agora-redesign #1279)。
+    /// この呼び出しの引数の中の参照は、DOEFF133・136 の「届く」の辺にしない(値として読むだけで、実行しない)。
     pub static_readers: Vec<DefinitionRef>,
-    /// 系の値と系を回す入口(`:systems {:carriers [..] :runners [..]}` — agora-redesign #1390)。系の値(defsystem の定義と :carriers の
+    /// 系の値と系を回す入口(`:systems {:carriers [..] :runners [..]}`)。系の値(defsystem の定義と :carriers の
     /// 呼び出しの引数)の中から外の世界に届く検は、:runners のどれかにも届く時だけ縁(系の値を読むだけの検は手元)。
     pub systems: Option<Systems>,
     /// 縁と数える触れる先(`:edge-touches [http db …]` — 書かなければ全部)。agora は file・env を入れない
-    /// (一時 dir の file は手元 — agora-redesign #1142 の決定 B)。仕組みは linter・値は repo の宣言。
+    /// (一時 dir の file は手元)。仕組みは linter・値は repo の宣言。
     pub edge_touches: Option<Vec<WorldTouch>>,
     /// テストの形の決まり(`:test-forms {:tests [..] :check-scripts [..] :runners [..]}` — どれも file の綴りの型の列)。
-    /// 書けば DOEFF135 が deftest 以外のテストの形を出す(agora-redesign #1106 の R6・#1144)。
+    /// 書けば DOEFF135 が deftest 以外のテストの形を出す(#1144)。
     pub test_forms: Option<TestForms>,
-    /// 使わないと決めた綴り(`:retired-words [(retired-words …) …]` — 空 = 宣言していない)。書けば DOEFF150 が当たりを出す
-    /// (agora-redesign #1193)。語の表は repo の宣言にだけ在り、linter は持たない。
+    /// 使わないと決めた綴り(`:retired-words [(retired-words …) …]` — 空 = 宣言していない)。書けば DOEFF150 が当たりを出す。
+    ///語の表は repo の宣言にだけ在り、linter は持たない。
     pub retired_words: Vec<RetiredWords>,
     /// 使わないと決めた呼び(`:retired-calls [(retired-calls …) …]` — 空 = 宣言していない)。書けば DOEFF151 が当たりを出す(#1193)。
     pub retired_calls: Vec<RetiredCalls>,
     /// 業務の層が分岐してはならない環境の名の値と dry-run の印(`:environment-branches {…}` — 書かなければ DOEFF168 は当たらない)。
     pub environment_branches: Option<EnvironmentBranches>,
     /// Jev に問う規則(DOEFF201・202・205)の線引き(`:semantic-lines [(line …) …]` — 空 = 宣言していない・問いは今のまま)。書けば、その規則の
-    /// 問いの instructions に線引きの文と例が入る(agora-redesign #1909)。問いの材料で editor は読まないので editor-json には載せない。
+    /// 問いの instructions に線引きの文と例が入る。問いの材料で editor は読まないので editor-json には載せない。
     #[serde(skip)]
     pub semantic_lines: Vec<SemanticLine>,
     /// 判定を 1 か所に閉じ込めた語彙(`:single-point-vocabulary [(vocabulary-scope …) …]` — 空 = 宣言していない)。書けば
-    /// DOEFF146 が :except の外でこの語彙を読む file を出す(agora-redesign #1192・#1371)。
+    /// DOEFF146 が :except の外でこの語彙を読む file を出す(#1371)。
     pub single_point_vocabulary: Vec<VocabularyScope>,
     /// 書いてよい file を決めた綴り(`:confined-spellings [(confined-spelling …) …]` — 空 = 宣言していない)。書けば DOEFF148 が
-    /// :except の外でこの綴りを書く file を出す(agora-redesign #1373・#1436)。
+    /// :except の外でこの綴りを書く file を出す(#1436)。
     pub confined_spellings: Vec<ConfinedSpelling>,
     /// 数を決めた綴り(`:counted-spellings [(counted-spelling …) …]` — 空 = 宣言していない)。書けば DOEFF161 が、:files(か :within の
-    /// 定義)の中の当たりの数が決めた数でない所を出す(agora-redesign #1373・#1437)。
+    /// 定義)の中の当たりの数が決めた数でない所を出す(#1437)。
     pub counted_spellings: Vec<CountedSpelling>,
     /// effect の宣言の全体(`:effect-census [(effect-census …) …]` — 空 = 宣言していない)。書けば DOEFF162 が、一覧に無い effect の
-    /// 宣言・2 度の宣言・宣言の無い一覧の effect を出す(agora-redesign #1373・#1438)。
+    /// 宣言・2 度の宣言・宣言の無い一覧の effect を出す(#1438)。
     pub effect_census: Vec<EffectCensus>,
     /// 型の欄を持つ class の顔ぶれ(`:field-holders [(field-holders …) …]` — 空 = 宣言していない)。書けば DOEFF149 が、一覧に無い
-    /// 持ち手と、欄を持たない一覧の class を出す(agora-redesign #1374)。
+    /// 持ち手と、欄を持たない一覧の class を出す。
     pub field_holders: Vec<FieldHolders>,
-    /// handler の引数の決まり(書けば DOEFF142 が defhandler の引数の client・可変の店を出す — agora-redesign #1189 / #1366)。
+    /// handler の引数の決まり(書けば DOEFF142 が defhandler の引数の client・可変の店を出す)。
     pub handler_arguments: Option<HandlerArguments>,
     /// 公開面の型の注記を読む file(`:typed-values {:files [..] :except [..]}`)。書けば DOEFF144 が、欄・戻り値・:post の型の素の写像・
-    /// 素の組と、組の literal の答えを出す(agora-redesign #1191)。
+    /// 素の組と、組の literal の答えを出す。
     pub typed_values: Option<FileSelection>,
     /// 型の宣言(.pyi)を読む file(`:record-stubs {:files [..] :except [..]}`)。書けば DOEFF145 が、同じ dir の同じ名の .hy の kw-only の
     /// record を kw_only=True 無しの @dataclass で宣言する .pyi を出す(#1191)。
     pub record_stubs: Option<FileSelection>,
-    /// 偽の handler の決まり(書けば DOEFF143 が業務の効果に答える偽の handler を出す — agora-redesign #1375)。
+    /// 偽の handler の決まり(書けば DOEFF143 が業務の効果に答える偽の handler を出す)。
     pub business_fakes: Option<BusinessFakes>,
-    /// 組み立ての形の決まり(書けば DOEFF155・156 が組み立ての形の破れを出す — agora-redesign #1376)。
+    /// 組み立ての形の決まり(書けば DOEFF155・156 が組み立ての形の破れを出す)。
     pub assembly_shape: Option<AssemblyShape>,
     #[serde(skip)]
     pub role_descriptions: BTreeMap<String, String>,
@@ -902,7 +902,7 @@ impl Architecture {
     }
 
     /// module(点で区切った綴り)が入る層のうち、規則の除外を持つ層(:modules の名と同じか、その下の module)。Python の規則の母集団を
-    /// file ごとに決める 1 点(crate::population)が読む(agora-redesign #2811)。
+    /// file ごとに決める 1 点(crate::population)が読む。
     pub fn exempt_layer_of(&self, module: &str) -> Option<&ArchLayer> {
         self.layers.iter().find(|layer| {
             !layer.exempt.is_empty()
@@ -913,7 +913,7 @@ impl Architecture {
     }
 
     /// file(宣言の在る dir からの相対 path・`/` 区切り)を :files で名指す層のうち、規則の除外を持つ層。名指しと 1 字違わず同じ
-    /// path だけが入る(agora-redesign #2934)。
+    /// path だけが入る。
     pub fn exempt_layer_of_file(&self, relative: &str) -> Option<&ArchLayer> {
         self.layers
             .iter()
@@ -1375,7 +1375,7 @@ impl<'a> Parser<'a> {
                     }
                     None => self.problem(value, ":roles は {:role \"説明\" …} の辞書"),
                 },
-                // :legacy は廃止(operator の決定 2026-09-27 — 旧い物の逃げ道を置かない)— 宣言の外の module は
+                // :legacy は廃止(旧い物の逃げ道を置かない)— 宣言の外の module は
                 // 全部 DOEFF114・115 で出し、既存の分は登録簿で受ける。
                 ":legacy" => self.problem(
                     key,
@@ -1716,7 +1716,7 @@ impl<'a> Parser<'a> {
 
     /// retired-words の群 group の `:contract-files [<repo の根からの path> …]` を読み、契約の file の JSON から綴りを集める
     /// (collect_contract_spellings)。空の列・根の外の path・読めない file・JSON でない file・綴りが 1 つも無い file は、黙って空にせず
-    /// 位置つきの宣言の誤りにする(agora-redesign #1893)。
+    /// 位置つきの宣言の誤りにする。
     fn contract_files(&mut self, value: &Form, group: &str) -> ContractSpellings {
         let mut contracts = ContractSpellings::default();
         let Some(items) = self.bracket(value) else {
@@ -2232,7 +2232,7 @@ impl<'a> Parser<'a> {
         Some(decl)
     }
 
-    /// `:semantic-lines [(line "名" :rules [DOEFF201 …] :text "…" :fires [例 …]? :silent [例 …]?) …]` を読む(agora-redesign #1909)。
+    /// `:semantic-lines [(line "名" :rules [DOEFF201 …] :text "…" :fires [例 …]? :silent [例 …]?) …]` を読む。
     /// 例 = `"<code>"` か `{:code "<code>" :why "…"}`(#1995)。
     /// 名・:rules・空でない :text は要る。:rules に書けるのは線引きを入れる Jev の問い(SemanticQuestion::LINED)の規則だけで、知らない規則・
     /// Jev の問いでない規則・線引きを入れない Jev の問いの規則は設定の誤り。同じ名・同じ規則の 2 度書きと空の code・空の why の例も誤り。
@@ -2850,7 +2850,7 @@ impl<'a> Parser<'a> {
     }
 
     /// `:contract-test` の値を読む — 記号 none は理由なし、`(none :doeff-test "file::名")` / `(none :repo-test "file::名")` は理由つき。
-    /// ほかの形・鍵の数の違い・node id の形の違いは理由を積んで None(DOEFF137・agora-redesign #1796)。subject = 名簿の要素の綴り
+    /// ほかの形・鍵の数の違い・node id の形の違いは理由を積んで None(DOEFF137)。subject = 名簿の要素の綴り
     /// (`world-handler 名` / `stand-in 名`)。
     fn contract_test(&mut self, field: &Form, subject: &str) -> Option<ContractTest> {
         let shape = format!(
@@ -2885,7 +2885,7 @@ impl<'a> Parser<'a> {
         }
     }
 
-    /// 境目の部品の列 `[(boundary-part "module" :touches [..] :reason "…") …]` を読む(agora-redesign #1797)。
+    /// 境目の部品の列 `[(boundary-part "module" :touches [..] :reason "…") …]` を読む。
     fn boundary_parts(&mut self, value: &Form) -> Vec<BoundaryPart> {
         let entries = self.bracket(value).unwrap_or_else(|| {
             self.problem(value, ":boundary-parts は (boundary-part \"module\" :touches [..] :reason \"…\") の列");
@@ -3073,7 +3073,7 @@ impl<'a> Parser<'a> {
         Some(layer)
     }
 
-    /// `:files ["相対 path" …]` を読む(agora-redesign #2934)— 宣言の在る dir からの相対 path(`/` 区切り)で file を 1 つずつ
+    /// `:files ["相対 path" …]` を読む— 宣言の在る dir からの相対 path(`/` 区切り)で file を 1 つずつ
     /// 名指す。絶対 path・`..`・`.` の段・`.py` でない path・名指した file が無い・同じ path の 2 度は読みの誤り(消した・動かした
     /// file の名指しが残らない)。dir は名指せない(dir に足した file が黙って層に入らない)。
     fn layer_files(&mut self, value: &Form, layer: &str) -> Vec<String> {
@@ -3106,7 +3106,7 @@ impl<'a> Parser<'a> {
         out
     }
 
-    /// `:exempt [(rule 規則 ID "理由") …]` を読む(agora-redesign #2811)。理由の無い除外・知らない規則 ID・同じ規則の 2 度の宣言は
+    /// `:exempt [(rule 規則 ID "理由") …]` を読む。理由の無い除外・知らない規則 ID・同じ規則の 2 度の宣言は
     /// 読みの誤り(位置つきの理由を積む)。外せるのは Python の文ごとの規則(crate::rules::get_all_rules — 母集団を外す 1 点
     /// crate::population が file ごとの Python の規則の当たりに効く)と、定義の file ごとに判じる定義の書き方の規則
     /// (ProjectRule::exemptible_by_layer — 定義の判定の直後に同じ 1 点で外す・#2913)だけ。それ以外の ID を書くと黙って効かない形に
@@ -3381,7 +3381,7 @@ mod tests {
 
     #[test]
     fn unknown_keys_are_notices_and_the_rest_is_read() {
-        // この binary より新しい宣言(知らない鍵)は誤りにせず、その鍵だけを読まずに知らせる(agora-redesign #848)。
+        // この binary より新しい宣言(知らない鍵)は誤りにせず、その鍵だけを読まずに知らせる。
         let newer = GOOD
             .replace("(layer foundation)]", "(layer foundation :future-knob [x])]")
             .replace(":foundation foundation", ":foundation foundation\n  :brand-new-key 1")
@@ -3398,7 +3398,7 @@ mod tests {
 
     #[test]
     fn public_contract_http_is_read_and_cannot_be_depended_on() {
-        // agora-redesign #978: 公開の契約が HTTP だけの service(:public-contract http)は、他の service の :depends-on に載せられない。
+        // 公開の契約が HTTP だけの service(:public-contract http)は、他の service の :depends-on に載せられない。
         let declared = GOOD.replace("{:depends-on [custody] :layers [core intent]}", "{:layers [core intent]}");
         let with_http = declared.replace("(defservice custody", "(defservice custody {:public-contract http})\n(defservice custody-old");
         let arch = Architecture::parse(&with_http, Path::new("architecture.hy")).unwrap();
@@ -3418,7 +3418,7 @@ mod tests {
 
     #[test]
     fn clauses_and_their_exemptions_are_read() {
-        // agora-redesign #1713: :clauses は条の名の列・:clause-exemptions は {"条" "理由"} の辞書で、外す条は :clauses の内。
+        // :clauses は条の名の列・:clause-exemptions は {"条" "理由"} の辞書で、外す条は :clauses の内。
         let declared = GOOD.replace(
             "{:depends-on [custody] :layers [core intent]}",
             "{:depends-on [custody] :layers [core intent] :clauses [\"C1\" C2] :clause-exemptions {\"C2\" \"構造の保証\"}}",
@@ -3443,7 +3443,7 @@ mod tests {
 
     #[test]
     fn layer_rule_exemptions_name_their_modules_and_reasons() {
-        // agora-redesign #2811: 層は :modules で module を名指し、:exempt [(rule 規則 ID "理由")] で名指しの module に限って Python の
+        // 層は :modules で module を名指し、:exempt [(rule 規則 ID "理由")] で名指しの module に限って Python の
         // 規則の母集団から外す。理由の空・層の規則の ID・知らない ID・:modules の無い除外・同じ規則の 2 度は読みの誤り。
         let declared = GOOD.replace(
             "(layer foundation)",
@@ -3491,7 +3491,7 @@ mod tests {
 
     #[test]
     fn layer_files_name_existing_files_by_relative_path() {
-        // agora-redesign #2934: :files は宣言の在る dir からの相対 path で file を 1 つずつ名指す(module の名を持たない file のため)。
+        // :files は宣言の在る dir からの相対 path で file を 1 つずつ名指す(module の名を持たない file のため)。
         // 名指しと 1 字違わず同じ path だけが入る。無い file・`..`・絶対 path・dir(.py でない)・2 度は読みの誤り。
         let dir = tempfile::tempdir().unwrap();
         std::fs::create_dir_all(dir.path().join("sealed")).unwrap();
@@ -3526,7 +3526,7 @@ mod tests {
 
     #[test]
     fn invariants_are_module_colon_function_strings() {
-        // agora-redesign #1559: :invariants は "module:関数" の文字列の列。書かない service は None(宣言の欠けは DOEFF163 が判じる)。
+        // :invariants は "module:関数" の文字列の列。書かない service は None(宣言の欠けは DOEFF163 が判じる)。
         let declared = GOOD.replace(
             "{:depends-on [custody] :layers [core intent]}",
             "{:depends-on [custody] :layers [core intent] :invariants [\"app.sim.billing_invariants:charges-hold\"]}",
@@ -3549,7 +3549,7 @@ mod tests {
 
     #[test]
     fn entry_modules_are_dotted_module_strings() {
-        // agora-redesign #1978: :entry-modules は "pkg.module" の文字列の空でない列。書かない service は None(entry の層の dir で判じる)。
+        // :entry-modules は "pkg.module" の文字列の空でない列。書かない service は None(entry の層の dir で判じる)。
         let declared = GOOD.replace(
             "{:depends-on [custody] :layers [core intent]}",
             "{:depends-on [custody] :layers [core intent] :entry-modules [\"merge_queue.controller.main\"]}",
@@ -3609,7 +3609,7 @@ mod tests {
 
     #[test]
     fn world_handler_contract_test_reads_reasoned_and_bare_none() {
-        // DOEFF137(agora-redesign #1363・#1796): 理由つきの none は縁の検を求めない。理由の無い記号 none は読めるが判じる時に鳴る。
+        // DOEFF137(#1796): 理由つきの none は縁の検を求めない。理由の無い記号 none は読めるが判じる時に鳴る。
         let good = GOOD.replace(
             ":foundation foundation",
             r#":foundation foundation
@@ -3717,7 +3717,7 @@ mod tests {
         assert!(problems.contains(":world-handlers を書くには :foundation が要る"), "{}", problems);
     }
 
-    /// agora-redesign #1909: `:semantic-lines` は線引きの名・入れる問い(DOEFF201・202・205)・文・鳴る例・鳴らない例(省いてよい)を読む。
+    /// `:semantic-lines` は線引きの名・入れる問い(DOEFF201・202・205)・文・鳴る例・鳴らない例(省いてよい)を読む。
     /// 例は bracket の文字列(`#[code[…]code]`)でも書け、`{:code "<code>" :why "…"}` の組ならなぜ鳴る / 鳴らないかの 1 文も読む(#1995)。
     /// 書かない宣言は空(問いは今のまま)。
     #[test]
@@ -3783,7 +3783,7 @@ mod tests {
         }
     }
 
-    /// agora-redesign #1893: 契約の綴りは、どの深さのオブジェクトのキーの名と、`enum` の文字列の要素・`const` の文字列の値だけ —
+    /// 契約の綴りは、どの深さのオブジェクトのキーの名と、`enum` の文字列の要素・`const` の文字列の値だけ —
     /// 註・例の値・ほかの配列の文字列(required・deprecated の path)の中身は集めない。
     #[test]
     fn contract_spellings_are_keys_and_enum_const_values() {
@@ -3801,7 +3801,7 @@ mod tests {
         assert!(!spellings.contains("letter"), "enum / const でない文字列の値は集めない");
     }
 
-    /// agora-redesign #1022: 宣言の正規表現が読めるかは構文だけで決める(`Regex::new` で NFA まで組まない)。読める綴りは今までと同じに通し、
+    /// 宣言の正規表現が読めるかは構文だけで決める(`Regex::new` で NFA まで組まない)。読める綴りは今までと同じに通し、
     /// 読めない綴りは `Regex::new` と同じ知らせの文で断る。
     #[test]
     fn a_declared_pattern_is_checked_by_syntax_and_refused_with_the_compilers_words() {

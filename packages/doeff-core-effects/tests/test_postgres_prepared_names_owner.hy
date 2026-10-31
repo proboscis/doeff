@@ -1,4 +1,4 @@
-;;; 接続の上の prepared statement の名の持ち主は doeff 1 つ(agora card ki-2c5646a8a2c1・調べは ki-746fc833ea6a): 束ねた transaction の
+;;; 接続の上の prepared statement の名の持ち主は doeff 1 つ: 束ねた transaction の
 ;;; 文は postgres-flush が doeff_pq_N の名で用意して接続ごとの PreparedBook に覚え、psycopg の自動の prepare は止めてある。psycopg に名を
 ;;; 持たせると、cursor の道で同じ文を 6 回目から _pg3_N として用意し、その後の ROLLBACK で自分の覚えを捨てて DEALLOCATE ALL を送り、
 ;;; doeff_pq_N も消す — PreparedBook は知らないので、その接続の次の束ねた往復は 26000 で落ち続けた(merge-queue-ledger の put-row の 500)。

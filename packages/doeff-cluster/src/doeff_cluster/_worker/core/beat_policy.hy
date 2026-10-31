@@ -22,7 +22,7 @@
 (val DEFAULT-LEASE-MS (. (ClusterTiming) lease-ms))  ; 返事に timing の無い旧い coordinator の生存の窓
 (val WATCH-RETRY-SECONDS 1.0)       ; 届かない・断られた待ちを送り直すまでの間
 (val WAKE-HOLD-SECONDS 5.0)         ; 待ちが「変わった」と答えた後、heartbeat が版を進めるのを待つ上限(同じ版で待ち直して空回りしない)
-;; 生存の合図の thread(card ki-9b58446e2ad6 — scheduler の外の OS の thread)が送るまでの、前の送り(どの口でも)の始めからの長さ =
+;; 生存の合図の thread(scheduler の外の OS の thread)が送るまでの、前の送り(どの口でも)の始めからの長さ =
 ;; 送信間隔 × この比。拍と拍の外の背景の task が送れている間は、それらが先に送る(thread は送らない)。送れない間の送りの間は
 ;; 送信間隔 × 1.5 + thread の 1 周(LIFELINE-PERIOD-SECONDS)— 生存の窓 10 秒なら 3.75 + 0.25 = 4 秒で、窓の半分(5 秒)の内。
 (val LIFELINE-SLACK-RATIO 1.5)
@@ -65,7 +65,7 @@
 (deff lifeline-due [#^ bool ready #^ int since-sent-ms #^ int interval-ms #^ int since-progress-ms]  ; defk にできない: 生存の合図の thread の 1 周(worker/protocol/coordinator_link の lifeline-turn — scheduler の外の thread の VM)が判じる純粋な判断
   {:pre [(: ready bool) (: since-sent-ms int) (: interval-ms int) (: since-progress-ms int)] :post [(: % bool)]
    :tags {:context "worker" :role "judgment"}}
-  "生存の合図の thread がこの周に heartbeat を送るかを決めるため(card ki-9b58446e2ad6)。ready = 送る本文が在り(拍が 1 度送った)、
+  "生存の合図の thread がこの周に heartbeat を送るかを決めるため。ready = 送る本文が在り(拍が 1 度送った)、
    thread が今 送っていない・止めの合図が無い・since-sent-ms = 前の送り(拍・拍の外の背景の task・thread のどれか)の始めからの長さ・
    interval-ms = 送信間隔・since-progress-ms = 拍の進みが最後に見えてからの長さ。拍の側が送れている間は送らず(送信間隔 ×
    LIFELINE-SLACK-RATIO まで待つ)、拍の進みが LIFELINE-STALL-LIMIT-MS を越えて止まったら送らない(固まった worker の lease を延ばし

@@ -1,4 +1,4 @@
-;;; HTTP の client が使われない接続を持つ秒と、相手の server が閉じる秒の組(agora-redesign #3688 の子 — 記録の service への書きが前の
+;;; HTTP の client が使われない接続を持つ秒と、相手の server が閉じる秒の組(記録の service への書きが前の
 ;;; 書きから 5 秒を越えて空くと、書きのたびに TCP を張り直して名前を引き直していた)。本物の socket で、検の中の最小の待ち受け(標準の
 ;;; http.server — 受けた接続の数と要求の本文を数える)へ当てる。
 ;;;   (1) 既定の client は、旧い既定(httpx の keepalive_expiry 5 秒)を越える実時間の間(6 秒)を空けても張り直さない。本番の書きの間
@@ -271,7 +271,7 @@
 
 
 (deftest test-a-traced-request-names-whether-it-made-a-connection-and-where-its-seconds-went
-  ;; 区間の割り(agora card ki-ca4b41612e2e — 記録の service への変更の読み 1 本の往復のどこで時間が過ぎるかを、呼び手の側で名指す):
+  ;; 区間の割り(記録の service への変更の読み 1 本の往復のどこで時間が過ぎるかを、呼び手の側で名指す):
   ;; trace-phases の要求の答えは区間 HttpPhases を持つ。1 本目は接続を張り(new-connection・connect-seconds > 0)、間を空けない 2 本目は
   ;; 同じ接続を使い回す(connect-seconds 0)。区間の和は答え手の測る elapsed を越えない(同じ要求の中の区間)。旗の無い要求は区間を
   ;; 持たない(既定の呼び手は trace の費用を払わない)。直す前の答えは欄 phases を持たない。

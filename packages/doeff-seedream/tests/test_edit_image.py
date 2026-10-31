@@ -194,7 +194,7 @@ def test_edit_image_seedream4_surfaces_api_error_with_handler():
 
 def test_edit_image_seedream4_retry_waits_on_the_time_handler_clock():
     """The wait between retries is doeff-time's Delay: three failed attempts wait 1 s twice on
-    the virtual clock, and the test never sleeps (card ki-94380dba532f)."""
+    the virtual clock, and the test never sleeps."""
     client = FailingSeedreamClient(RuntimeError("seedream api failure"))
     clock = SimClock()
     started = clock.current_time

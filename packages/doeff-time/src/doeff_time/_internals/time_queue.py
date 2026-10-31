@@ -25,8 +25,8 @@ class TimeQueue:
     def __init__(self) -> None:
         self._mut_sequence = 0
         self._mut_items: "list[tuple[datetime, int, Promise[Any], Any]]" = []  # noqa: UP037
-        # Sequences of entries withdrawn before their time (a timed wait whose future won —
-        # agora-redesign #2618). Dropped lazily when they reach the head, so withdrawing is O(1)
+        # Sequences of entries withdrawn before their time (a timed wait whose future won).
+        # Dropped lazily when they reach the head, so withdrawing is O(1)
         # and the clock never advances to a deadline nobody waits for.
         self._mut_withdrawn: set[int] = set()
         # Sequences still in the heap and not withdrawn — answers "is it still queued?" in O(1).

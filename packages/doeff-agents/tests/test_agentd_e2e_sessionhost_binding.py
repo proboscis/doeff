@@ -1,4 +1,4 @@
-"""agentd e2e 群の sessionhost 束縛(issue #575 M2・card ki-bb337cfd0336)。
+"""agentd e2e 群の sessionhost 束縛(issue #575 M2)。
 
 daemon under test は host の入口の module(`python -m doeff_agents._sessionhost.host`)であり、
 退役 Rust crate(rollback tag agentd-rust-final に保存)のビルド(cargo)・path 算出にも、
@@ -35,7 +35,7 @@ def test_default_is_the_entry_module_on_the_running_interpreter(monkeypatch, tmp
 
 
 def test_the_package_declares_no_sessionhost_console_script():
-    # card ki-bb337cfd0336: code starts the host through the StartSessionHost effect and the
+    # code starts the host through the StartSessionHost effect and the
     # entry module — a console script would be a second, PATH-resolved way to start it.
     import tomllib
 

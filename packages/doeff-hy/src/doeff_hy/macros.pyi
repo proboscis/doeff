@@ -4,8 +4,8 @@ macro(defmacro)そのものはここに載せない — Hy の compile の時に
 `_guard_statement_value`: 文の位置に置いた式(ADR-DOE-HY-001)。値が Program か effect なら
 「作ったが走らない」ので deprecated の overload に当たり、doeff-hy-check が赤にする。
 Program の node の和(doeff の `DoExpr` と同じ並び)は型引数を付けて書く — `DoExpr` は型引数の無い総称の和で
-pyright の strict が partially unknown とし、文を持つ module ごとに書き手に直せない赤 1 件を出していた
-(agora-redesign #2214)。答えの型で共変な node は `object`、不変な `Perform`・`EffectBase` は型変数で受ける。
+pyright の strict が partially unknown とし、文を持つ module ごとに書き手に直せない赤 1 件を出していた。
+答えの型で共変な node は `object`、不変な `Perform`・`EffectBase` は型変数で受ける。
 """
 
 from typing import TypeAlias, TypeVar, overload

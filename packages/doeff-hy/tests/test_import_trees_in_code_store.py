@@ -1,4 +1,4 @@
-"""import の compile が展開した木は、bytecode の置き場(code_store — 環境変数 DOEFF_HY_CODE_STORE)の下に残る(card ki-5c1fc605c17d)の検。
+"""import の compile が展開した木は、bytecode の置き場(code_store — 環境変数 DOEFF_HY_CODE_STORE)の下に残るの検。
 
 実例(2026-10-19・日次): 木は DOEFF_EFFECT_ANALYZER_CACHE が dir を指す process の compile だけが置いていた。bytecode の置き場は worker の
 上の job が全部 DOEFF_HY_CODE_STORE で共有するのに、analyzer の置き場の変数は worker が job の子へ渡す許可表に無い。変わった module を

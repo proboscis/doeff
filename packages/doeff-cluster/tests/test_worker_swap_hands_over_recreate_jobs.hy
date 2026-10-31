@@ -1,5 +1,5 @@
-;; 同じ名の worker の新しい世代を先に起こす入れ替え(本番の Deployment の RollingUpdate — AL-D2f・card ki-76506cc96202 / AL-D2k・
-;; card ki-c66651db99d6)で、他の worker へ移せない recreate の job を、新しい世代が起こせるまで、かつ前の世代の Pod の止まりが始まるまで
+;; 同じ名の worker の新しい世代を先に起こす入れ替え(本番の Deployment の RollingUpdate — AL-D2f / AL-D2k)
+;; で、他の worker へ移せない recreate の job を、新しい世代が起こせるまで、かつ前の世代の Pod の止まりが始まるまで
 ;; 前の世代に残す。本番の Service は worker の Pod を振り先にし、Terminating の Pod を振り先から外すので、job が動く Pod と振り先の Pod が
 ;; 食い違う間は、その job へ届かない。
 ;;

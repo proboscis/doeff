@@ -3,7 +3,7 @@
 A job writes the factory as a call in its ``with_handlers`` list. The analyzer cannot read inside the factory, so
 the factory declares what it closes and what it performs (``__doeff_handles__ = ()`` and
 ``__doeff_effects__ = NOTICE_EVENTS_EFFECTS``). Without the declaration a closure check of the job reports an
-unreadable handler (agora-redesign #3850 — agora-controllers listed it as known-unreadable until this landed).
+unreadable handler (agora-controllers listed it as known-unreadable until this landed).
 
 - The analyzer reads the declaration: the wrapper closes nothing and performs ``NOTICE_EVENTS_EFFECTS``.
 - The declared effects are what the wrapper performs around a body (changing either side fails).

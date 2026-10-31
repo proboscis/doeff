@@ -1,4 +1,4 @@
-"""defrecord と defeffect の実行の展開が読み込みの時に読む部品(card acp:kanban-issue:ki-a0cca3bdb9a0・defeffect は ki-e77d44aa61e5)。
+"""defrecord と defeffect の実行の展開が読み込みの時に読む部品。
 
 defrecord は関数(__init__・__repr__・__eq__・__hash__・凍結の __setattr__ / __delattr__)を展開の時に書き、dataclass には欄の表だけを
 作らせる(doeff_hy/record.hy の頭注)。展開が書いた class の本体と、class を作った直後の文がここを読む。
@@ -37,7 +37,7 @@ RECORD_PARAMS: object = getattr(_ReferenceRecord, "__dataclass_params__")
 
 @dataclasses.dataclass(frozen=True)
 class _ReferenceEffect:
-    """defeffect の今までの展開(dataclass frozen・位置の引数)と同じ __dataclass_params__ を持つ見本(card ki-e77d44aa61e5)。"""
+    """defeffect の今までの展開(dataclass frozen・位置の引数)と同じ __dataclass_params__ を持つ見本。"""
 
 
 #: 展開が関数を書いた effect 型の __dataclass_params__ — 今までの展開(frozen・eq・init・repr が真・kw_only が偽)と同じ値に戻す。
@@ -47,11 +47,11 @@ EFFECT_PARAMS: object = getattr(_ReferenceEffect, "__dataclass_params__")
 recursive_repr = reprlib.recursive_repr
 
 
-# --- 型どうしで共有する method(card ki-ff2c33449b3f)----------------------------------------------------------------------
+# --- 型どうしで共有する method----------------------------------------------------------------------
 # __repr__ と凍結の __setattr__ / __delattr__ は、型ごとに関数を書かず、ここの 1 組を defrecord の全部の型が class の本体で指す。
 # 型ごとに違うのは欄の名の並びだけで、展開が class の本体に字面の tuple で置く: __doeff_fields__(全部の欄 — 凍結の守り)・
-# __doeff_repr_fields__。型ごとに関数(code の object・注記の __annotate__ ほか)を持つと、型 約 1,760 の job で 10 MB を越えた
-# (card ki-22e230f0f396 の測り)。__eq__ と __hash__ は辞書の鍵や集合に入れるたびに呼ばれるので型ごとのまま(record.hy の注)。
+# __doeff_repr_fields__。型ごとに関数(code の object・注記の __annotate__ ほか)を持つと、型 約 1,760 の job で 10 MB を越えた。
+#__eq__ と __hash__ は辞書の鍵や集合に入れるたびに呼ばれるので型ごとのまま(record.hy の注)。
 # 振る舞いは標準の dataclass(frozen・kw_only)と同じ。型の名は名でなく self の型から読む(class の本体に書いた型も同じに動く)。
 
 
@@ -126,8 +126,8 @@ def seal_record(cls: type, plain: tuple[str, ...], calls_post_init: bool) -> Non
 
 def seal_effect(cls: type, names: tuple[str, ...], calls_post_init: bool) -> None:
     """展開が関数を書いた defeffect の effect 型を仕上げるため: __dataclass_params__ を今までの展開(frozen の dataclass・位置の
-    引数)と同じ値に戻す(card ki-e77d44aa61e5)。展開は欄の型と既定値を字面で読むので、dataclass の欄の表が展開の読んだ形と
-    違う時は読み込みで断る(424a87f58 の後退と同じ穴 — 展開の関数が黙って違う値を置かない・card ki-c22d8fd6237d):
+    引数)と同じ値に戻す。展開は欄の型と既定値を字面で読むので、dataclass の欄の表が展開の読んだ形と
+    違う時は読み込みで断る(424a87f58 の後退と同じ穴 — 展開の関数が黙って違う値を置かない):
     型が __post_init__ を持つのに展開の __init__ が呼ばない・欄の名の並び names が違う(ClassVar・InitVar・KW_ONLY の型)・
     既定値が名を介した field の印(工場・init・repr・compare・hash を持つか、展開の __init__ の既定値が欄の既定値と違う)。"""
     if "__post_init__" in vars(cls) and not calls_post_init:

@@ -916,7 +916,7 @@ impl VM {
 
     /// Install a whole boundary stack around `body` in one step, so a task
     /// re-entering the handlers captured at its spawn site does not pay one
-    /// step and one empty body fiber per layer (agora-redesign #3149).
+    /// step and one empty body fiber per layer.
     ///
     /// `boundaries` is innermost first. The boundary fibers are created
     /// outermost first, each one the parent of the next (`match_with` parents

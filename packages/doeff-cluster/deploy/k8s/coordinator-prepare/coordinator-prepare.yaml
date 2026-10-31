@@ -1,5 +1,5 @@
 # coordinator の上げ先の版(doeff の commit)の自己起動の root を、coordinator の Pod の外で、同じ node(atlas)の同じ dir に先に組む Job
-# (ADR-DOE-CLUSTER-003・card ki-5808173477cf)。
+# (ADR-DOE-CLUSTER-003)。
 #
 # なぜ: coordinator の Deployment は Recreate(状態の file を 2 つが同時に書かない)なので、版上げは古い Pod を止めてから新しい Pod が
 #   root を組む。組む間(bytecode の焼きが大半)は全部の worker が coordinator に届かない — 10-12 12:39 JST は 141.1 秒(うち bytecode 111 秒)、

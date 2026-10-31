@@ -1,5 +1,5 @@
 """持ち主の package の定義の macro が `_doeff_` の別名で出す import を、型検査のための展開が「展開の合成した import」と読む事の検
-(card ki-f2107259b141 — defsystem を doeff-cluster へ移した時、doeff-hy から doeff-cluster の module の綴りの表を無くした)。
+(defsystem を doeff-cluster へ移した時、doeff-hy から doeff-cluster の module の綴りの表を無くした)。
 
 doeff-hy の外の定義の macro(doeff-cluster の defsystem など)は、展開の import を `import <module> as _doeff_<名>` の形で置く。
 doeff-hy-check はその綴りの表を持たず、束ねる名の頭 `_doeff_`(expansion_names.PREFIX)だけで読む:

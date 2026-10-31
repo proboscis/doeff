@@ -1,4 +1,4 @@
-//! DOEFF169: `match` の class pattern の keyword の欄の名に `-` が在る(決して当たらない pattern — agora-redesign #2036)。
+//! DOEFF169: `match` の class pattern の keyword の欄の名に `-` が在る(決して当たらない pattern)。
 //!
 //! Hy 1.3.1 の `match` は class pattern の keyword を属性名へ mangle しないまま Python の `case` に出す:
 //! `(match r (Rec :ended-reason None) …)` は `case Rec(ended-reason=None):` になり、属性 `ended-reason` はどの値にも無いので、

@@ -13,7 +13,7 @@ socket を開いて準備完了の印を書き、頼みを待つ。頼み 1 つ 
   待ちの子は、その知らせを受けてから A の pid と起動の刻(機体ごとの読み proc-stat-of の start-ticks — pid の使い回しを見分ける)を
   答える(答えの直後の
   合図が、まだ group の先頭でない A に届いて ESRCH にならないように)。
-常駐の job(service — card ki-de44efdb9aa4)の頼みは 3 つの欄を足す(どれも省ける — task の頼みは今までの形):
+常駐の job(service)の頼みは 3 つの欄を足す(どれも省ける — task の頼みは今までの形):
   holdInput   = 頼みの 1 行の頭の byte に、worker が握る入力の pipe の読み口が添えて届く(unix socket の fd の受け渡し)。A はそれを自分の
                 標準入力にする — worker が消えると A は EOF を読む(入れ物 shim の標準入力と同じ)・worker が書いた退きの知らせの行を読む。
                 添えた fd の無い holdInput の頼み・holdInput でない頼みに添えた fd は断る。
@@ -21,7 +21,7 @@ socket を開いて準備完了の印を書き、頼みを待つ。頼み 1 つ 
                 worker/core/job_cgroup の service の類)。書けなければ A は入口を起こさずに終わり、待ちの子は断りを答える。
   noticeEnv   = A が入力の行を中継する知らせの pipe の読み口の fd の番号を、入口へ渡す環境変数の名(入れ物 shim の --notice-env と同じ)。
   orphanSeconds = A が入力の EOF(worker の消失)を退きとして扱い、入口が自分で終わるのを待つ秒(入れ物 shim の --orphan-seconds と
-                同じ — card ki-f69f2a6869aa)。
+                同じ)。
 待ちの子は service の頼みを受けられる事を準備完了の印の serviceForks で名乗る(worker はこの印の無い版の待ちの子へ service を頼まない)。
 orphanSeconds を受けられる事は印の orphanForks で名乗る(worker はこの印の無い版の待ちの子へ worker より長く生きる service を頼まない)。
 頼みと答えの 1 行は doeff_core_effects._os_warm_process の約束(WarmRequestWire・WarmForkedWire・WarmRefusedWire)で、読み書きは

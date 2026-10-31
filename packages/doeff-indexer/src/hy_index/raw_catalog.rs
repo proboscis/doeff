@@ -67,7 +67,7 @@ pub struct RawMethod {
     /// この module が file の import か定義の中の参照に見える時だけ数える。空なら常に数える。
     pub context: Vec<String>,
     /// 呼びの受け手を除く引数がこの数より多い呼びは数えない(書かなければ上限なし)。同じ名の別の型の method と見分けるため —
-    /// `Path.replace(target)` は 1 つ・文字列の `(.replace s "/" "_")` は 2 つ(agora-redesign #3014)。呼びの頭でない参照
+    /// `Path.replace(target)` は 1 つ・文字列の `(.replace s "/" "_")` は 2 つ。呼びの頭でない参照
     /// (`(. p replace)` を値として渡す等)は引数が分からないので、今までどおり数える。
     #[serde(default)]
     pub max_args: Option<usize>,

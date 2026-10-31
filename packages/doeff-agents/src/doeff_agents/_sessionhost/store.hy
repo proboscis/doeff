@@ -176,7 +176,7 @@ CREATE INDEX IF NOT EXISTS idx_agent_session_commands_requested
        ;; R10): monitor が手番の終わりを最初に観測した時刻。level-triggered(次の手番
        ;; で NULL)・単一 writer = monitor・素の last-write-wins。
        #("agent_sessions" "turn_ended_at" "TEXT")
-       ;; 依頼 lt-R79KYTYMJH4ZT9X4KHWKCD23KB(D2): 温かい session の手番が**失敗で**終わった時に走行器が
+       ;; D2: 温かい session の手番が**失敗で**終わった時に走行器が
        ;; 名乗った文(headless の turn_verdict の detail)。turn_ended_at と対の level-triggered の欄
        ;; (成功の終わり・次の手番の送りで NULL)・単一 writer = monitor・素の last-write-wins。
        #("agent_sessions" "turn_error" "TEXT")])
@@ -278,7 +278,7 @@ CREATE INDEX IF NOT EXISTS idx_agent_session_commands_requested
   (setv conn (sqlite3.connect db-path :check-same-thread False
                               :isolation-level None))
   (.execute conn f"PRAGMA busy_timeout = {SQLITE-BUSY-TIMEOUT-MS}")
-  ;; card acp:kanban-issue:ki-e786e72e2ae7: WAL + synchronous NORMAL — commit で fsync を撃たない(checkpoint の時だけ)。
+  ;; WAL + synchronous NORMAL — commit で fsync を撃たない(checkpoint の時だけ)。
   ;; 既定の rollback journal は autocommit の 1 文ごとに fsync を 3 度前後撃つ。pool の pod の store は network の block
   ;; volume(longhorn)で fsync 1 回 p50 96 ms・書き 1 文 p50 215 ms(実測 2026-09-24)。actor は 1 本の thread で読みも
   ;; 書きも順に通すので、書きが積もると session.get / session.list が 5〜12 秒待ち、agentd の読みの期限 10 秒を越えて
@@ -331,7 +331,7 @@ CREATE INDEX IF NOT EXISTS idx_agent_session_commands_requested
     (setv (get payload "reason") cause.reason))
   (setv (get payload "retryable") cause.retryable)
   (setv (get payload "observed_at") cause.observed-at)
-  ;; 限度の断りの範囲と戻りの時刻(2026-09-23)・理由(2026-09-24 card acp:kanban-issue:ki-5d4849d22a4e)
+  ;; 限度の断りの範囲と戻りの時刻(2026-09-23)・理由(2026-09-24)
   ;; — 在る時だけ・凍結表の外の情報の欄。
   (when (is-not cause.limit-scope None)
     (setv (get payload "limit_scope") cause.limit-scope))
@@ -348,7 +348,7 @@ CREATE INDEX IF NOT EXISTS idx_agent_session_commands_requested
    retry_after_seconds / backend_error_code / exit_code / signal — は
    policy 契約外なので落とす。行の JSON はそのまま保たれる)。
    契約の必須欄(category / observed_at が str)を持たない payload は None —
-   行の typed な眺めでは『cause なし』(段 10 lane 10h・agora-redesign #84: 手で書かれた
+   行の typed な眺めでは『cause なし』(段 10 lane 10h・手で書かれた
    {\"cause\": …} の行を session.get / session.resume が KeyError 'category' で読めず、
    会話の --resume が断られていた)。wire(snapshot-to-wire-dict)は raw の JSON を
    そのまま運び、DB の COALESCE(first-write-wins)が raw を消さないので、None は
@@ -498,7 +498,7 @@ CREATE INDEX IF NOT EXISTS idx_agent_session_commands_requested
   ;; (run_to_completion / interactive では常に不在 — 未観測を null と区別しない)。
   (when (is-not (.get snap "turn_ended_at") None)
     (setv (get wire "turn_ended_at") (get snap "turn_ended_at")))
-  ;; 依頼 lt-R79KYTYMJH4ZT9X4KHWKCD23KB(D2): 手番の失敗の文も None のとき欄ごと省略(成功の終わりと区別しない null を書かない)。
+  ;; D2: 手番の失敗の文も None のとき欄ごと省略(成功の終わりと区別しない null を書かない)。
   (when (is-not (.get snap "turn_error") None)
     (setv (get wire "turn_error") (get snap "turn_error")))
   wire)
@@ -796,7 +796,7 @@ CREATE INDEX IF NOT EXISTS idx_agent_session_commands_requested
    唯一の意図的破棄。latch の意味は死んだ process の再促に束縛されている)。
    期限の基点 awaiting_response_since も同時に消す(issue #568 /
    ADR-DOE-AGENTS-010 R3 — 基点も同じく死んだ process の配送に束縛されている)。
-   headless の行は対象外(段 10 lane 10h・agora-redesign #84): headless の latch は
+   headless の行は対象外(段 10 lane 10h): headless の latch は
    『手番の途中』の事実そのもので、消すと再起動後の復帰(headless.hy
    recover-headless-rows — backend の生死を観測して手番の途中の行を終端に倒す)が
    判断できず、死んだ手番が running のまま永久に残る(実弾 2026-09-14 14:35)。"
@@ -989,7 +989,7 @@ CREATE INDEX IF NOT EXISTS idx_agent_session_commands_requested
    transaction を閉じるのもここだけ。本体(の中の helper)が commit / rollback / executescript で閉じると、
    そこまでの書き込みは確定して原子性が無い — 成功の路は閉じた本体を名指して落とし(COMMIT の失敗に化けさせない)、
    失敗の路は元の例外に note を添える。SQLite が自分で巻き戻すのは SQLite の失敗の時だけなので、それ以外の
-   失敗で transaction が無いのは本体が閉じたから(依頼 lt-A5KGD83R9HQJ2K172V61A6VMG9 の盲検 A の反例)。"
+   失敗で transaction が無いのは本体が閉じたから。"
   (.execute conn "BEGIN IMMEDIATE")
   (var closed-by-body False)
   (try
@@ -1113,7 +1113,7 @@ CREATE INDEX IF NOT EXISTS idx_agent_session_commands_requested
   {:pre [(: conn sqlite3.Connection)]
    :post [(: % int)]}
   "出来事の journal(agent_session_events)の先端 = 最大の id(空なら 0)。session.wait_events の
-   答えと待ちの座はこの値(段 12 lane 12b・agora-redesign #207 根 1)。"
+   答えと待ちの座はこの値(段 12 lane 12b)。"
   (setv row (.fetchone (.execute conn "SELECT COALESCE(MAX(id), 0) FROM agent_session_events")))
   (int (get row 0)))
 
@@ -1124,7 +1124,7 @@ CREATE INDEX IF NOT EXISTS idx_agent_session_commands_requested
    actor thread に一本化される — 読みも書きも queue を通るので、すべての op
    (read-modify-write 含む)が原子的に直列化される。
 
-   出来事の journal の合図(段 12 lane 12b・agora-redesign #207 根 1): op が store を変えた
+   出来事の journal の合図(段 12 lane 12b): op が store を変えた
    (conn.total_changes が進んだ)拍に journal の先端(db-journal-seq)を読み直し、進んでいれば
    journal-seq に写して待ち手(wait-journal = RPC session.wait_events の long-poll)を起こす。
    出来事の insert がどの路(SessionStoreRecordEvent・host の結果の受理の直の db-record-event)を
@@ -1154,8 +1154,8 @@ CREATE INDEX IF NOT EXISTS idx_agent_session_commands_requested
       (try
         (setv value (op self.conn))
         ;; op の戻りは値。Program / effect のまま返すと、それは actor の thread の外で actor の connection を
-        ;; 使って走り、この actor の直列化・書き込みの健康の数え・journal の合図を素通りする(依頼
-        ;; lt-A5KGD83R9HQJ2K172V61A6VMG9 の盲検 B の反例)。op の中で run して値にするよう断る。
+        ;; 使って走り、この actor の直列化・書き込みの健康の数え・journal の合図を素通りする。
+        ;; op の中で run して値にするよう断る。
         (when (isinstance value #(Program EffectBase))
           (raise (TypeError (+ "StoreActor op returned an unexecuted doeff "
                                (. (type value) __name__)
@@ -1321,7 +1321,7 @@ CREATE INDEX IF NOT EXISTS idx_agent_session_commands_requested
    ;; 温かい session(multi_turn — ADR-DOE-AGENTS-012 R10): 手番の終わりの刻印も
    ;; policy(monitor)が唯一の writer(level-triggered・素の last-write-wins)。
    "turn_ended_at" row.turn-ended-at
-   ;; 依頼 lt-R79KYTYMJH4ZT9X4KHWKCD23KB(D2): 手番の失敗の文も monitor が唯一の writer(turn_ended_at と対)。
+   ;; D2: 手番の失敗の文も monitor が唯一の writer(turn_ended_at と対)。
    "turn_error" row.turn-error})
 
 (defk changed-policy-patch [row]

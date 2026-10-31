@@ -14,7 +14,6 @@ worker は job の子の stdout・stderr を同じ log の file へ書き取る(
 - 旗の無い shim(入口の検めの形)は、子の出力をそのまま運ぶ
 - log の file への write が止まっても(disk の詰まり — 検は読まない pipe を file の代わりに渡す)、job の write は止まらず、job の
   event loop の拍は止まらず、job が答える HTTP の要求は timeout しない。止まりが解けた後、行は全部・書いた順のまま・刻つきで file に在る
-  (card ki-2742a2af90b6)
 - file の書きの溜めが上限を越えたら、塊を捨てて、その位置に捨てた byte の数を 1 行で書く(読みの thread は待たない)
 """
 

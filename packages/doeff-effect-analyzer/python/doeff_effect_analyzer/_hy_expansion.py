@@ -10,12 +10,11 @@ tree (the definition index, the body nodes and facts) in entries of its own, key
 well (``program_effects._TreeKey``); when its source changes, it reads the tree from here and
 rebuilds only what it derives. Before, the tree was kept only with the derived values under the
 reader's key, so every change of program_effects.py (9 changes in 10-01..10-11) expanded every
-module again — the screen job's closure test took 257.3 s in the daily run after such a change
-(ki-81f1c868203f).
+module again — the screen job's closure test took 257.3 s in the daily run after such a change.
 
 Only the expansion and the store of its trees are here: the digest of this file is in the key
 (``_expander_digest``), so a tree another version of the expansion made is never read. Hence what
-lies in the store is decided here alone (design check lt-DMXJNAWWMCFNV7F1QX3GJZ574H, blind B): a
+lies in the store is decided here alone (blind B): a
 caller asks for a tree (``_expansion``) and never writes one, so a tree a reader reshaped cannot lie
 under a key without the reader; and this module imports no other module of the analyzer, so no code
 outside this file decides a tree. Both are kept by ``tests/python/test_hy_tree_cache.py``.
@@ -86,9 +85,9 @@ class _ExpansionKey:
     is refused or ``defk`` warned about, never the tree), nothing derived from the tree holds it,
     and the reader takes the path it reports from the module it reads
     (``_ModuleSource.filename``) — so a worktree whose file has the same content reads the entry
-    another worktree wrote (agora-redesign #3598: a closure test of the screen job took 120.7 s
+    another worktree wrote (a closure test of the screen job took 120.7 s
     in a new worktree and 5.9 s after). The reader's source is not one either
-    (ki-81f1c868203f). The macros used name the entry within the place (``_entry_name``)."""
+   . The macros used name the entry within the place (``_entry_name``)."""
 
     python: str
     hy: str
@@ -129,7 +128,7 @@ def _python_series() -> str:
     take part) and pickles by node class and field. The node classes and their fields change only between minor versions (the
     ``ast`` grammar is fixed within one), so a patch update (3.14.3 -> 3.14.7) reads the same trees. Unlike the analyzer's result
     cache (``result_cache._place``, which keeps ``sys.version`` because its answers read bytecode), nothing here depends on the
-    interpreter's code generation (card ki-968309595391)."""
+    interpreter's code generation."""
     return f"{sys.implementation.name}-{sys.version_info.major}.{sys.version_info.minor}{getattr(sys, 'abiflags', '')}"
 
 
@@ -168,11 +167,11 @@ def _expansion(source: str, filename: str, module_name: str, directory: Path | N
 def _imported_expansion(source: str, module_name: str) -> _Expanded | None:
     """The tree the import side already expanded for this source (``doeff_hy_bytecode_guard._expansion_trees`` —
     a changed module is compiled by a process that imports it before it is analyzed, and both expand the same source
-    with the same compiler: ki-e053a847c515), with the record of the macros it used; None when no import left one
+    with the same compiler), with the record of the macros it used; None when no import left one
     (the store of the bytecode, which holds the trees, is not named here, or the module was compiled before trees were
     kept) or those macros are not this environment's. The trees lie in the bytecode store that the compiling process
     names — ``DOEFF_HY_CODE_STORE``, shared by a worker's jobs — and not under this analyzer's own directory, whose
-    variable the compiling job may not have had (ki-5c1fc605c17d). Read only — the import side is the one that writes
+    variable the compiling job may not have had. Read only — the import side is the one that writes
     these trees, so this module's key (``_ExpansionKey``) stays what it decides."""
     from doeff_hy_bytecode_guard._expansion_trees import read_import_tree
 

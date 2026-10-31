@@ -1,4 +1,4 @@
-"""What the reader derives from a changed module is built by walks that take the shortest way (ki-56e063c79150).
+"""What the reader derives from a changed module is built by walks that take the shortest way.
 
 A closure test of the screen job spent 23.5 of 48.1 s on building the derived values (the definition index, the
 body nodes, the body facts and the dispatch reading) of the five modules a day's commits had changed, and most of

@@ -1,7 +1,7 @@
-;;; 汎用の子 process の effect(agora-redesign #802 便 1・消費者 = #796 日次の全体検証・#795 webapp の組み立て・doeff-agents の driver 層)。
+;;; 汎用の子 process の effect(消費者 = #796 日次の全体検証・#795 webapp の組み立て・doeff-agents の driver 層)。
 ;;; 業務の語を持たない土台の語彙で、HttpRequest(http_effects.hy)と同じ段。答え手は仕組みごとに差し替える:
 ;;;   subprocess-handler            本物の子 process と os.environ(os_process.hy)。doeff-agents の driver-io-handler も同じ実装を呼ぶ
-;;;   offloaded-subprocess-handler  本物と同じ実装を、呼び 1 つに thread 1 本で回す(os_process.hy・agora-redesign #2184)— 子を待つ間も
+;;;   offloaded-subprocess-handler  本物と同じ実装を、呼び 1 つに thread 1 本で回す(os_process.hy)— 子を待つ間も
 ;;;                                 scheduler の他の task が回る(並べた RunProcess を Spawn / Gather で同時に走らせる・子の間も拍を回す)。
 ;;;                                 外側に scheduled が要る。待っている task が取り消されたら走っている子を止める(#2847 — 下の stop-grace)。
 ;;;                                 止めた子を計器で数える形が metered-offloaded-subprocess-handler(計器の答え手を渡す)
@@ -11,15 +11,15 @@
 ;;; 足した欄は全部既定値つきで、今の使い手の振る舞いは変わらない:
 ;;;   RunProcess の env(None = 呼び手の環境を継ぐ・EnvEntry の tuple = env-mode の通り)・output-path(None = 追記しない・path = 子の出力を
 ;;;   その file の末尾へ足す — 答えの stdout / stderr も持つ)。
-;;;   RunProcess の env-mode(agora-redesign #822)= env の tuple の扱いの閉じた型 EnvMode:
+;;;   RunProcess の env-mode= env の tuple の扱いの閉じた型 EnvMode:
 ;;;     REPLACE(既定)  tuple が子の環境変数の全部(前からの振る舞い)
 ;;;     EXTEND         呼び手の環境を継いだ上で tuple を足す(同じ名は tuple が勝つ)
 ;;;   env が None の時は env-mode を読まない(呼び手の環境を全部継ぐ)。
-;;;   RunProcess の env-drop(agora-redesign #831)= EXTEND で継ぐ呼び手の環境から外す名の型(fnmatch — `UV_*` のように)の tuple。既定 #()
+;;;   RunProcess の env-drop= EXTEND で継ぐ呼び手の環境から外す名の型(fnmatch — `UV_*` のように)の tuple。既定 #()
 ;;;   = 外さない。REPLACE と env None の時は読まない(REPLACE は継がないので外す物が無い)。子に呼び手の venv や道具の設定を持ち込ませない時に使う。
 ;;;   ProcessOutcome の started(False = 起こせなかった — OSError を値で)・start-error(その理由)。exit-code は子の returncode を丸めずに
 ;;;   持つ(負の値 = signal・137 など)。時間切れは timed-out True(exit-code 124)、起こせない時は exit-code 127。
-;;;   RunProcess の process-group・stop-grace・stream-output(agora-redesign #2184 — 着地の列の窓の門の命令の走らせ方):
+;;;   RunProcess の process-group・stop-grace・stream-output(着地の列の窓の門の命令の走らせ方):
 ;;;     process-group  True = 子を新しい session(自分の process group)で走らせる。時間切れでは group へ SIGTERM → stop-grace 秒待つ →
 ;;;                    SIGKILL(子が起こした孫も止まる)。時間内に終わった後も、group に残った子(背景に回った孫)へ SIGTERM を送る。
 ;;;                    既定 False = 前からの振る舞い(時間切れで子だけを止める)
@@ -28,9 +28,9 @@
 ;;;     stream-output  True = 子の出力を、届いた順に output-path へ書きながら走らせる(時間切れで止めた子の出力も file に残る — 走者の log が
 ;;;                    指す赤の証拠)。既定 False = 子が終わってから stdout・stderr の順に足す(前からの振る舞い)。output-path が None なら読まない
 ;;;   待ち方はどれも subprocess の communicate と同じ = 子の終了に加えて出力の EOF(背景の孫が出力を抱えたままなら期限まで待つ)。
-;;;   ProcessAlive(agora-redesign #2184)= pid の process が生きているか。0 以下の pid は生きていない(group への signal にしない)。
+;;;   ProcessAlive= pid の process が生きているか。0 以下の pid は生きていない(group への signal にしない)。
 ;;;
-;;; 文字列と bytes の約束(agora-redesign #2160): RunProcess の stdin と ProcessOutcome の stdout / stderr は、子の bytes を utf-8 と
+;;; 文字列と bytes の約束: RunProcess の stdin と ProcessOutcome の stdout / stderr は、子の bytes を utf-8 と
 ;;; surrogateescape で読み書きした文字列(可逆 — Python の os.fsdecode と同じ作法)。有効な utf-8 はふつうの文字列のまま、壊れた bytes は
 ;;; surrogate の文字(U+DC80〜U+DCFF)で表す。bytes が要る使い手(git の diff を patch-id へ渡す等)は `.encode "utf-8" "surrogateescape"`
 ;;; で元の bytes に戻し、bytes を渡す時は同じ作法で文字列にして stdin に置く。表に出す時(JSON・log)は呼び手が置き換えて読む。
@@ -44,16 +44,16 @@
 ;;;   WorkingDirectory  自分の process の作業 dir(絶対 path)。
 ;;;   ProcessAlive      pid の process が生きているか。答え = bool(本物 = signal 0 を送れるか・送る権限が無いだけの process は生きている)。
 ;;;   ReadInterpreter   自分の process の Python の interpreter の事実。答え = InterpreterFacts(prefix = sys.prefix を symlink まで解いた絶対
-;;;                     path・pid)(agora-redesign #2347 — 消費者 = doeff-cluster の入口の検め。venv の上の root と、報告に載せる pid を読む)。
+;;;                     path・pid)(消費者 = doeff-cluster の入口の検め。venv の上の root と、報告に載せる pid を読む)。
 ;;;   ReadMachineName   自分の process が走る機体の名。答え = 名(str — 本物 = socket.gethostname をそのまま・台本 = ProcessScript の
-;;;                     machine-name)(agora-redesign #3050 — 消費者 = merge-queue の controller の leader の名乗り
+;;;                     machine-name)(消費者 = merge-queue の controller の leader の名乗り
 ;;;                     <機体の名>/<pid>/<乱数>。pid は ReadInterpreter から読む)。
 ;;;   ResolveModule     module の名を、自分の process の import が解く置き場へ(import はしない — 点の付いた名は親の package を import する
 ;;;                     のは importlib.util.find_spec と同じ)。答え = ModuleFound(origin = file の絶対 path・file を持たない module〔__init__ の
 ;;;                     無い package・built-in・frozen〕は None / search-locations = submodule を探す dir の絶対 path の tuple)か
 ;;;                     ModuleNotFound(解けない・名が壊れている)。path は symlink まで解く(#2347 — どの木の code を動かしているかを確かめる)。
 ;;;
-;;; 立てたらすぐ返す子(agora-redesign #2223 — 消費者 = merge-queue の controller の配りの腕。拍は子を待たない):
+;;; 立てたらすぐ返す子(消費者 = merge-queue の controller の配りの腕。拍は子を待たない):
 ;;;   StartProcess      子を立てて、終わりを待たずに返す。答え = ProcessStarted(pid)か ProcessNotStarted(理由の文 — 出力の file が開けない・
 ;;;                     cwd が無い・命令が無い。RunProcess の起こせない形と同じ文で、出力の file を先に確かめる)。子の標準入力は無し、標準出力と
 ;;;                     標準エラーは stdout-path・stderr-path の file の末尾へ(None = 捨てる)。pipe にしない — 読まずにおくと約 64 KB で子が
@@ -106,7 +106,7 @@
 (setv EnvMode.__doc__ "RunProcess の env の扱い: REPLACE = 子の環境変数の全部・EXTEND = 呼び手の環境を継いで足す。")
 
 
-;; StartProcess で立てた子が、起こした process の終わりの後にどうなるか(頭の註・agora-redesign #3866): WITH-STARTER(既定)= 起こした
+;; StartProcess で立てた子が、起こした process の終わりの後にどうなるか(頭の註): WITH-STARTER(既定)= 起こした
 ;; process が終わると(SIGKILL を含む)子も終わる・OUTLIVES-STARTER = 起こした process が終わっても子は走り続ける(書くのは理由を持つ
 ;; 使い手の 1 か所だけ — merge-queue の着地の窓)。
 (defenum ChildLifetime WITH-STARTER OUTLIVES-STARTER)
@@ -185,8 +185,8 @@
 
 (defk environment-mapping []
   {:pre [] :post [(: % (get dict #(str str)))] :tags {:context "process" :role "program"}}
-  "この process の環境変数の全部を 名 → 値 の写像で受けるため(子 process の env の元・設定の解決に環境を丸ごと渡す呼び手 —
-   agora-redesign #3012)。os.environ を直に読まず ReadEnvironment の接頭辞 \"\"(全部の名に当たる)で問う — 答えるのは外側の
+  "この process の環境変数の全部を 名 → 値 の写像で受けるため(子 process の env の元・設定の解決に環境を丸ごと渡す呼び手)。
+   os.environ を直に読まず ReadEnvironment の接頭辞 \"\"(全部の名に当たる)で問う — 答えるのは外側の
    foundation の handler(本物 = os_process の subprocess-handler・台本 = scripted_process の scripted-process-handler)。"
   (<- entries (get tuple #(EnvEntry ...)) (ReadEnvironment #() #("")))
   (dfor entry entries entry.name entry.value))

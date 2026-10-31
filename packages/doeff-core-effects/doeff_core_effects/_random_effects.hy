@@ -1,4 +1,4 @@
-;;; 乱数の effect — 決まった長さの乱数の byte を求める(agora-redesign #1544)。業務の語を持たない土台の語彙。
+;;; 乱数の effect — 決まった長さの乱数の byte を求める。業務の語を持たない土台の語彙。
 ;;;
 ;;;   RandomBytes  count 個の乱数の byte を求める。答え = 長さ count の bytes。
 ;;;

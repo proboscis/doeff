@@ -1,4 +1,4 @@
-"""handle・defhandler の展開が読む doeff の名の綴りの唯一の定義元(card ki-16180480129e)。
+"""handle・defhandler の展開が読む doeff の名の綴りの唯一の定義元。
 
 展開は、書き手の module・class・関数の中に import と名の読みを置く。節の操作と handler のために読む `Resume`・`Transfer`・
 `Pass`・`WithHandlerType`(session があれば `Get`・`Put`・`Some`)を素の名で置くと、書き手が自分の effect を同じ名にした時
@@ -56,7 +56,7 @@ def alias(name: str) -> str:
 
 def alias_symbol(name: str) -> Symbol:
     """展開が name を読む Symbol。呼ぶたびに新しい Symbol を作る — 展開のあいだで 1 つの Symbol を使い回すと、位置を付ける
-    macro(`locate-synthesized`)が最初の展開で付けた位置が残り、後の式の行がその行へずれる(agora-redesign #1004)。"""
+    macro(`locate-synthesized`)が最初の展開で付けた位置が残り、後の式の行がその行へずれる。"""
     return Symbol(alias(name))
 
 
@@ -65,7 +65,7 @@ def effect_symbol() -> Symbol:
 
     doeff の名でなく展開の局所名だが、書き手の節の欄・session の名と分け合わないよう、同じ `_doeff_` の別名の決めで綴る。素の `effect` で
     束ねると、欄を `effect` にした節(`(Note [effect extra] …)`)の欄の束ね `(setv effect (. effect effect))` が受けた effect を上書きし、
-    続く欄の読みと外へ渡す effect が欄の値になった(card ki-6af9862aed32)。書き手が本体に `effect` と書いた時に読める名は、別に
+    続く欄の読みと外へ渡す effect が欄の値になった。書き手が本体に `effect` と書いた時に読める名は、別に
     `WRITER_VISIBLE` が決める(handle.hy の `_clause-aliases`)。"""
     return alias_symbol("effect")
 
@@ -73,13 +73,13 @@ def effect_symbol() -> Symbol:
 def continuation_symbol() -> Symbol:
     """節を回す関数が受けた続きを束ねる局所名(引数)と、展開がそれを読む Symbol。`effect_symbol` と同じ決め — 素の `k` で束ねると、
     欄を `k` にした節(KV の `(Kv [k v] …)`)の欄の束ね `(setv k (. effect k))` が続きを上書きし、`(resume …)` が
-    `TypeError: argument 'k': 'int' object is not an instance of 'K'` で落ちた(card ki-6af9862aed32)。"""
+    `TypeError: argument 'k': 'int' object is not an instance of 'K'` で落ちた。"""
     return alias_symbol("k")
 
 
 @dataclass(frozen=True)
 class WriterName:
-    """書き手が節の本体・`:when` の番に書いた時、節の effect・続きとして読める名 1 つ(card ki-6af9862aed32)。
+    """書き手が節の本体・`:when` の番に書いた時、節の effect・続きとして読める名 1 つ。
 
     - `written`: 書き手が書く名(`effect`・`k`)。
     - `internal`: それを束ねる展開の局所名(`_doeff_` の別名 — 節を回す関数の引数)。
@@ -122,7 +122,7 @@ def _module_model(module: str) -> Object:
     """module の名の model。点を含む名は、Hy が読む式の形(`(. a b)`)で組む — 文字 1 つの Symbol にすると名が崩れる。
     reader(`hy.read`)を通さない: reader が作る model は 1 行目 1 列目の位置を持ち、位置を付ける macro(`locate-synthesized`)が
     利用者の式の位置と取り違えて、囲む式の範囲を 1 行目へ引く。型検査の診断(未使用の import・未定義の名)の行が、handler の行でなく
-    1:1 になった(設計検証 lt-2SJXY98Q643WGJK2ASWJ3N8PWH の盲検 A の実測)。ここが作る model は位置を持たない。"""
+    1:1 になった。ここが作る model は位置を持たない。"""
     parts = module.split(".")
     if len(parts) == 1:
         return Symbol(module)

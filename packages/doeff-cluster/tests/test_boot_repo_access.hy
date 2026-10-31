@@ -83,7 +83,7 @@
 
 
 (deftest test-a-refused-rebuild-keeps-the-previous-table [tmp-path]
-  ;; worker は準備の前ごとに ROLE=access で表を組み直す(card ki-2de748a0eac5)。組み直しが断られても(鍵の file が無い)、置き場の
+  ;; worker は準備の前ごとに ROLE=access で表を組み直す。組み直しが断られても(鍵の file が無い)、置き場の
   ;; 3 つの file は前の値のまま残り、書きかけの別名の file も残らない — 走っている worker の git・ssh・準備の process は前の表で読める。
   (val home (/ tmp-path "home"))
   (val keys (/ tmp-path "keys"))

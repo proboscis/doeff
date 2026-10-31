@@ -17,7 +17,7 @@
 
 ;; --include-hook-events = 全 hook の開始と応答の行(system/hook_started・hook_response — 応答は出力・exit code・終わり方つき)を出させる。
 ;; CLI 2.1.292 は旗が無いと SessionStart・Setup の hook の行だけを出す(CLI の中の判定の実測)。上の層が会話の画面に hook の結果
-;; (条件つきルールの助言・Stop の差し戻しほか)を出すため(ki-d8b473480303)。
+;; (条件つきルールの助言・Stop の差し戻しほか)を出すため。
 (setv STREAM-FLAGS ["-p" "--input-format" "stream-json" "--output-format" "stream-json" "--verbose"
                     "--include-partial-messages" "--include-hook-events"])
 
@@ -45,7 +45,7 @@
 (defk subagent-transcript-path [#^ str config-dir #^ str canonical-cwd #^ str session-id #^ str agent-id]
   {:pre [(: config-dir str) (: canonical-cwd str) (: session-id str) (: agent-id str)] :post [(: % str)]
    :tags {:context "claude-code" :role "foundation"}}
-  "subagent の呼びごとの消費を読む file を名指すため(CLI の規則 — 実測 2.1.292・card ki-e798888dce4e): 会話の transcript と同じ dir の
+  "subagent の呼びごとの消費を読む file を名指すため(CLI の規則 — 実測 2.1.292): 会話の transcript と同じ dir の
    <会話の id>/subagents/agent-<subagent の task の id>.jsonl。"
   (.format "{}/{}/subagents/agent-{}.jsonl" (transcript-dir config-dir canonical-cwd) session-id agent-id))
 
@@ -64,7 +64,7 @@
   {:pre [(: credential (| LentCredential None))] :post [(: % (| dict None))] :tags {:context "claude-code" :role "judgment"}}
   "起動条件のキーの材料のうち資格の分(JSON の境界 — sha256 へ渡す綴り): 家の資格で起こすなら None、借りた資格で起こすなら契約の種類と
    階級だけ。token と期限は入れない — 走っている process の資格の家の file を替えれば同じ process が新しい token を使うので、資格だけが
-   替わった手番は process を使い回す(card ki-4ffdafa021e5)。借りたか家のかは入れる(設定 dir が違う)。契約の種類と
+   替わった手番は process を使い回す。借りたか家のかは入れる(設定 dir が違う)。契約の種類と
    階級は入れる(CLI が起動の時に読む口座の事実 — 違う口座の事実の手番は起こし直す。秘密ではない)。"
   (if (is credential None)
       None
@@ -163,8 +163,8 @@
 ;; 設定の源なし(--setting-sources "" — 家の settings・hook・CLAUDE.md を読まない)・家の MCP と connector を継がない・記録を残さない。
 ;; 素の CLI の測り(2026-10-18・CLI 2.1.292)と同じ組。--bare は OAuth を読まない(借りた資格で走らない)ので使わない。
 ;; 出力は stream-json(print mode では --verbose が要る): 口座の利用枠が尽きた事を名乗る行(拒まれた rate_limit_event・error rate_limit の
-;; 答えの行)は result の行の前に出て、`--output-format json` の 1 行の result には戻る刻が載らない(CLI 2.1.292 の測り 2026-10-19・
-;; card ki-eb4f8e1db64d)。答えは今までどおり最後の result の行。
+;; 答えの行)は result の行の前に出て、`--output-format json` の 1 行の result には戻る刻が載らない(CLI 2.1.292 の測り 2026-10-19)。
+;; 答えは今までどおり最後の result の行。
 (setv PRINT-ONCE-FLAGS ["-p" "--output-format" "stream-json" "--verbose"])
 (setv PRINT-ONCE-ISOLATION-FLAGS ["--tools" "" "--setting-sources" "" "--strict-mcp-config" "--no-session-persistence"])
 ;; 本文が PrintContent(画像を含む本文)の時だけ付ける旗: 標準入力は stream-json の user の 1 行(dialogue.hy の print-once-stdin)。

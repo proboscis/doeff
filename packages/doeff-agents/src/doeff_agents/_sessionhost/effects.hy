@@ -35,11 +35,11 @@
   #^ (| str None) reason
   #^ bool retryable
   #^ str observed-at
-  ;; 2026-09-23(operator の規則 2026-09-17 — profile が費用の上限で止まれば、上限の種類に依らず口座が枯れたと読む):
+  ;; 2026-09-23(profile が費用の上限で止まれば、上限の種類に依らず口座が枯れたと読む):
   ;; 限度の断り(category rate_limited)が枯らした範囲と、文が名乗った戻りの時刻。当てるのは器の側の 1 点
   ;; (headless.headless-turn-limit-cause — 表は impls/markers.hy)で、制御面はこの欄を読む(ADR-DOE-AGENTS-012 R33)。
   ;; limit-scope = "account"(口座全体)| "model"(文が model の族を名乗る)| "unknown"(文が範囲を名乗らない —
-  ;; group の上限 $0 の族・card acp:kanban-issue:ki-5d4849d22a4e)・None = 限度の断りではない。
+  ;; group の上限 $0 の族)・None = 限度の断りではない。
   ;; limit-reason = 文が名乗る理由(範囲とは別の軸・今日は "rate-limited" の 1 語 — 語彙は impls/markers.hy の
   ;; API-LIMIT-REASON-*)・None = 限度の断りではない / 旧い器(制御面は rate-limited と読む)。
   ;; 凍結表(category / retryable)の外の情報の欄 — 永続の JSON では limit_scope / limit_reason / limit_resets_at_ms。
@@ -137,7 +137,7 @@
   ;; wire には None のとき欄ごと省略。run_to_completion / interactive では常に None。
   #^ (| str None) turn-ended-at
   (setv turn-ended-at None)
-  ;; 依頼 lt-R79KYTYMJH4ZT9X4KHWKCD23KB(D2): 温かい session の手番が**失敗で**終わった時に走行器が名乗った文
+  ;; D2: 温かい session の手番が**失敗で**終わった時に走行器が名乗った文
   ;; (headless の turn_verdict の detail — ok = False の時だけ)。turn-ended-at と対の level-triggered の欄:
   ;; 成功の終わりと次の手番の送りで None。旧形は multi_turn の手番の失敗の旗を provider の限度以外すべて捨て、
   ;; 走行器が「失敗した」と言っても行に 1 bit も残らなかった。wire には None のとき欄ごと省略。
@@ -445,7 +445,7 @@
   #^ dict params)
 
 (defclass [(dataclass :frozen True :kw-only True)] HydrateMemoryHome [EffectBase]
-  "会話の自動記憶の置き場を**起こす前に**実体化する(card acp:kanban-issue:ki-9fc7d4bca4dc・
+  "会話の自動記憶の置き場を**起こす前に**実体化する(
    法 ACP 575b1e): 置き場の dir を在らせ、charter が運んできた冊と索引を file に落とし、
    器が**書いた数**を 1 行で名乗る。claude の実体は impls/claude_code.hy・codex は対象外
    (auto-memory の置き場を持たない = 何もしない)。戻り値: None。
@@ -706,7 +706,7 @@
   #^ str path)
 
 (defclass [(dataclass :frozen True :kw-only True)] FsRemoveFile [EffectBase]
-  "1 file の取り除き(card acp:kanban-issue:ki-6b5c4b270ca0 — 自動記憶の置き場から、退役した行と
+  "1 file の取り除き(自動記憶の置き場から、退役した行と
    同じ名前の file を落とす)。**dir は触らない**(再帰も glob も無い — 消せるのは呼び手が名指した
    1 つの path ちょうど)。不在は成功(端の状態を観測する形 — 既に無いのは望みの状態)。
    raise しない: 置き場の掃除は席を起こすための前置きで、そこで落ちると記憶を使う会話だけが
@@ -833,7 +833,7 @@
   #^ str target-path)
 
 (defclass [(dataclass :frozen True :kw-only True)] FsEnsureSymlink [(get EffectBase FsSymlinkOutcome)]
-  "symlink を**正しい先へ据える**(card acp:kanban-issue:ki-62aa1f4e9c9c 決定 D8・盲検 A の反例)。
+  "symlink を**正しい先へ据える**(盲検 A の反例)。
    物理(4 値・冪等・level-triggered):
      既に同じ先を指す symlink  = 触らない \"unchanged\"(走っている席の見張りを起こさない)
      別の先を指す symlink      = **張り替える** → \"linked\"
@@ -890,7 +890,7 @@
 
 (defclass [(dataclass :frozen True :kw-only True)] LogLine [EffectBase]
   "運用 log の 1 行(stderr)。席の起動が**黙って落とした前提**を名乗るための口
-   (card acp:kanban-issue:ki-7b52bb76aa6e・ADR-DOE-AGENTS-004 R13): 参加の宣言が名指した
+   (ADR-DOE-AGENTS-004 R13): 参加の宣言が名指した
    席の settings file が起動の拍に無い時、hook 無しで起こしたことを起動ごとに 1 行で名乗る。
    program は substrate-clean(生 IO 禁止)なので print ではなくこの effect を通す。
    綴りの家は agentd の同名の effect(acp/effects.py LogLine)と同じ形 — 2 つの層が
@@ -898,7 +898,7 @@
   #^ str text)
 
 ;; 待ちの effect はこの語彙に無い — program は doeff-time の Delay を yield し、handler の積みの時間の handler が
-;; 答える(card ki-3c3d85253c2c・ADR-DOE-TIME-001 R1。それまでの自前の ClockSleep は退役)。
+;; 答える(ADR-DOE-TIME-001 R1。それまでの自前の ClockSleep は退役)。
 
 
 ;; ===========================================================================

@@ -1,4 +1,4 @@
-;;; coordinator の調停ループが落ち着かない時の失敗(#3865)と、前の歩の刻み(止まりの検出の材料 — card ki-d033e5f969cf)。期限の答えの型
+;;; coordinator の調停ループが落ち着かない時の失敗(#3865)と、前の歩の刻み(止まりの検出の材料)。期限の答えの型
 ;;; (DueAt・DueNow・DueNever)は worker と共用なので shared/intent/due_model へ移した(#3871)— ここには coordinator だけの物が残る。
 (require doeff-hy.macros [val])
 (require doeff-hy.record [defrecord])

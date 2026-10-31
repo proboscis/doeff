@@ -1,4 +1,4 @@
-"""defk の本体の match の class pattern の欄の名の回避の deftest を公開する(agora-redesign #2036)。
+"""defk の本体の match の class pattern の欄の名の回避の deftest を公開する。
 
 ``match_field_names_deftests.hy`` の deftest を包み直さずそのまま公開する(ADR-DOE-HY-002 —
 包むと pytestmark が落ちる)。実行時の ``doeff_interpreter`` はこの module の fixture が供給する。

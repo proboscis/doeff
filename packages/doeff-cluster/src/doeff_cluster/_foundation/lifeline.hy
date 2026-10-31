@@ -1,4 +1,4 @@
-;;; 生存の合図の thread(card ki-9b58446e2ad6)— scheduler の外の OS の thread で、使い手の渡す 1 周の判断(turn — 送るなら
+;;; 生存の合図の thread— scheduler の外の OS の thread で、使い手の渡す 1 周の判断(turn — 送るなら
 ;;; #(URL 本文の bytes) を返す Program)を間を置いて回し、送る周は自分の接続の pool で POST して、答えを使い手の書き(settle — status と
 ;;; 理由を受ける Program)へ渡す汎用の I/O。何を・いつ送るかは使い手(worker/protocol/coordinator_link の lifeline-turn・lifeline-settled)が
 ;;; 決め、この module は送るだけ。

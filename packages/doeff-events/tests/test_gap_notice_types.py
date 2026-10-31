@@ -1,5 +1,5 @@
-"""The gap notice is made and told apart through the types, not through its wire name (ADR-DOE-API-001 R1·R2 —
-agora card ki-a2ac882abeb7): ``Announce.gap(channel, source)`` sends it, and ``Announce.is_gap`` (for a fake broker
+"""The gap notice is made and told apart through the types, not through its wire name (ADR-DOE-API-001 R1·R2):
+``Announce.gap(channel, source)`` sends it, and ``Announce.is_gap`` (for a fake broker
 that sees the effect) and ``Announcement.is_gap`` (for a reader of raw notices) tell it apart from a routed notice."""
 
 from typing import TYPE_CHECKING

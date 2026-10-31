@@ -1,4 +1,4 @@
-//! Jev の規則(DOEFF201・202・205)の問いに入れる線引き(architecture.hy の :semantic-lines — agora-redesign #1909)のテスト。
+//! Jev の規則(DOEFF201・202・205)の問いに入れる線引き(architecture.hy の :semantic-lines)のテスト。
 //! 宣言は tests/fixtures/semantic_lines/architecture.hy(線引き 5 つと、線引きごとの鳴る例・鳴らない例 1 つずつ = 計 10)。
 //! 自動のテストは Jev の宛先を手元の偽の HTTP(127.0.0.1)にし、問いに線引きの文と例が入る事と、問いを組んで答えを受けるまでを確かめる。
 //! 本物の Jev に 10 例を 1 回だけ問うテストは #[ignore](手で走らせる — 下の ask_jev_the_line_examples_once)。
@@ -30,7 +30,7 @@ struct FakeJev {
     bodies: Arc<Mutex<Vec<Value>>>,
 }
 
-/// 問いの instructions の部品(1 つの鍵の object の列 — agora-redesign #1995)から、鍵 key の中身を引く。
+/// 問いの instructions の部品(1 つの鍵の object の列)から、鍵 key の中身を引く。
 fn part<'a>(question: &'a Value, key: &str) -> &'a Value {
     question["instructions"].as_array().and_then(|parts| parts.iter().find_map(|p| p.get(key))).unwrap_or(&Value::Null)
 }
@@ -199,7 +199,7 @@ fn finding<'a>(report: &'a Value, rule: &str, mangled: &str) -> Option<&'a Value
     report["violations"].as_array().unwrap().iter().find(|v| v["rule"] == rule && v["key"].as_str().unwrap().ends_with(mangled))
 }
 
-/// 線引きごとの鳴る例・鳴らない例(計 10)を問いの JSON に入れ、偽の Jev の答えを受けて違反にする(agora-redesign #1909)。
+/// 線引きごとの鳴る例・鳴らない例(計 10)を問いの JSON に入れ、偽の Jev の答えを受けて違反にする。
 /// 問いには、その規則の線引きの名・文(architecture.hy の :text のまま)・鳴る例・鳴らない例(:fires・:silent の code と why)が入る —
 /// 線引き 1 と 5 は DOEFF201、2 と 3 は DOEFF202、4 と 5 は DOEFF205。偽の Jev は問いの例に照らして答えるので、線引きの文か例を問いから
 /// 外すと鳴る例の違反が消えてこのテストが落ちる。
@@ -273,7 +273,7 @@ fn line_examples_reach_the_questions_and_the_answers_come_back() {
     assert_eq!(jev_findings, 5, "鳴るのは鳴る例 5 つだけ: {}", report["violations"]);
 }
 
-/// 本物の Jev に 10 例を 1 回だけ問い、例ごとの確率と token 数を 1 行 1 例の JSON で出す(agora-redesign #1909 — 手で走らせる:
+/// 本物の Jev に 10 例を 1 回だけ問い、例ごとの確率と token 数を 1 行 1 例の JSON で出す(手で走らせる:
 /// `SEMANTIC_LINES_DEFINITIONS=<json> SEMANTIC_LINES_PROXY_URL=<url> cargo test --test semantic_lines -- --ignored --nocapture`)。
 /// 問う定義 = env SEMANTIC_LINES_DEFINITIONS の JSON(`[{"name", "rule", "path", "expect", "source"} …]` — 本物の定義の source。linter と同じく
 /// :tags を消して `source_limit` 字で切る)。線引きと層の説明はこのテストの architecture.hy の物。宛先 = Jev の呼び出しを覚える proxy

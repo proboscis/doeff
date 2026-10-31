@@ -1,4 +1,4 @@
-"""The conductor CLI commands are programs of conductor effects (card ki-1ef3718c89b3).
+"""The conductor CLI commands are programs of conductor effects.
 
 The subpackage shows its users effects and handlers only, so every ``conductor``
 subcommand yields run effects (``doeff_conductor._effects.runs``) and issue effects that

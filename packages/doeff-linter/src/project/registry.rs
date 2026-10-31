@@ -1,6 +1,6 @@
 //! 既知の破れの登録簿を読む — 1 鍵 1 file の dir(中の `*.txt` の 1 行目が鍵)と、1 行 1 鍵の file。
 //! 読めない dir・file は止めずに理由を返す(登録簿が読めないことを緑にしないため、呼び手は errors に出す)。無い dir は空の登録簿
-//! (知らせ notes — 最後の行を消すと git が dir ごと消すため・agora-redesign #1732)。
+//! (知らせ notes — 最後の行を消すと git が dir ごと消すため)。
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
@@ -35,7 +35,7 @@ impl Registry {
 
     /// 1 鍵 1 file の dir を読む(`*.txt` の 1 行目が鍵)。
     ///
-    /// 無い dir は空の登録簿として読む(知らせを 1 行 — agora-redesign #1732)。登録簿は縮める向きの表で、最後の 1 行を消すと git は
+    /// 無い dir は空の登録簿として読む(知らせを 1 行)。登録簿は縮める向きの表で、最後の 1 行を消すと git は
     /// 空の dir を持たないので dir ごと消える — それは正しい操作なので読めないとしない。登録簿は既知の当たりを緩めるだけの表なので、
     /// 無い(綴りの誤りを含む)dir を空と読んでも判定は厳しい側にしか倒れない(載っていたはずの当たりは新しい当たりとして出る)。
     fn read_dir(&mut self, root: &Path, path: &Path, shown: &str) {
@@ -93,7 +93,7 @@ pub enum Absent {
     /// 黙って消える。
     Unreadable,
     /// 空の一覧(notes に 1 行)— 違反を固定する縮める向きの表(`:unserved`)。最後の行を消すと git は空の dir を持たないので dir ごと
-    /// 消える — それは正しい操作(登録簿の Registry::read_dir と同じ・agora-redesign #1732・#1918)。空と読んでも判定は厳しい側にしか
+    /// 消える — それは正しい操作(登録簿の Registry::read_dir と同じ)。空と読んでも判定は厳しい側にしか
     /// 倒れない(載っていたはずの不足は当たりとして出る)。
     Empty,
 }
@@ -211,7 +211,7 @@ mod tests {
         assert!(registry.keys.contains("a.hy::rule::x"));
         assert!(registry.keys.contains("b.hy::rule"));
         assert_eq!(registry.keys.len(), 2);
-        // 最後の行を消して git が dir ごと消した登録簿は、読めないではなく空(知らせ 1 行 — agora-redesign #1732)。
+        // 最後の行を消して git が dir ごと消した登録簿は、読めないではなく空(知らせ 1 行)。
         assert!(registry.problems.is_empty(), "{:?}", registry.problems);
         assert_eq!(registry.notes.len(), 1);
         assert!(registry.notes[0].contains("MISSING"));
@@ -244,7 +244,7 @@ mod tests {
         assert!(judged.notes.is_empty());
     }
 
-    /// 1 鍵 1 file の dir は、冷えた作業木で 1 file ごとに disk を待つので、読みの待ちを重ねる(card ki-58bfad2c13a1 の残り — 447 file の登録簿を
+    /// 1 鍵 1 file の dir は、冷えた作業木で 1 file ごとに disk を待つので、読みの待ちを重ねる(447 file の登録簿を
     /// 順に読むと、混んだ Pod の冷えた作業木で中央値 2.4 秒かかった)。答えは順に読んだ時と同じで、読めない file の知らせは file の順。
     #[test]
     fn a_dir_of_one_key_files_is_read_with_overlapping_waits_and_answers_in_file_order() {
@@ -285,7 +285,7 @@ mod tests {
         assert!(judged.problems.is_empty(), "{:?}", judged.problems);
     }
 
-    /// agora-redesign #1918: 縮める向きの表(Absent::Empty)の無い dir は空の一覧(知らせ 1 行・読みの誤りにしない)。鍵を 1 つ足せば
+    /// 縮める向きの表(Absent::Empty)の無い dir は空の一覧(知らせ 1 行・読みの誤りにしない)。鍵を 1 つ足せば
     /// 今までどおり効く。
     #[test]
     fn an_absent_shrinking_list_reads_as_empty_and_one_added_key_counts() {

@@ -159,7 +159,7 @@ class AwaitOutcome:
 
 # =============================================================================
 # Turn events — backend-neutral events of an agent runtime's turns
-# (agora-redesign #604).  Handlers translate their CLI's own lines into these;
+#.  Handlers translate their CLI's own lines into these;
 # callers never see stream-json lines, JSON-RPC messages, pids or argv.
 # =============================================================================
 
@@ -216,7 +216,7 @@ class AgentTurnUsage:
 
 
 # Every turn end also carries what the conversation's current context size is read from
-# (agora-redesign #3744): ``last_call_usage`` = the usage of the turn's last API call in the main
+#: ``last_call_usage`` = the usage of the turn's last API call in the main
 # conversation (subagent calls excluded; ``cost_usd`` is None — the runtime prices whole turns, not
 # calls; the context size is its input side: input + cache_read + cache_write), ``last_call_model`` =
 # that call's model, ``model_windows`` = each model's context window and output limit as the runtime
@@ -224,7 +224,7 @@ class AgentTurnUsage:
 # when nothing was — never an invented 0).
 #
 # A turn the runtime finished (``AgentTurnCompleted`` / ``AgentTurnFailed``) also carries what each model used
-# in it (card ki-1d986d4f0007): ``model_usage`` = the turn's share of each model's tokens, web searches and
+# in it: ``model_usage`` = the turn's share of each model's tokens, web searches and
 # cost (``ModelUsage`` — the runtime reports running totals for the whole conversation; the runtime's layer
 # turns them into the turn's share from the same starting point as ``usage.cost_usd``; only the models the turn
 # used; ``None`` when it cannot be worked out), ``model_usage_gap`` = why the models' costs could not be
@@ -235,7 +235,7 @@ class AgentTurnUsage:
 
 @dataclass(frozen=True, kw_only=True)
 class AgentAccountLimit:
-    """The turn ran into the account's usage limit (agora-redesign #3983): the runtime refused the request and
+    """The turn ran into the account's usage limit: the runtime refused the request and
     answered with its limit message instead of the model.  ``window`` = which limit ran out (e.g. ``five_hour``;
     ``None`` when not stated), ``resets_at`` = when it comes back (epoch seconds; ``None`` when not stated),
     ``text`` = the runtime's limit message.  Which account it was is not in the runtime's lines — the layer that
@@ -293,7 +293,7 @@ class AgentTurnCompleted:
 
     ``usage`` = the tokens the turn used and what it cost (``None`` when the
     runtime reports none of them).  ``account_limit`` = the turn ran into the
-    account's usage limit (``None`` when it did not — agora-redesign #3983).
+    account's usage limit (``None`` when it did not).
     ``account_refusal`` = the account refused the turn's request (``None`` when
     it did not).  ``model_refusal`` = the model's safeguards refused the turn's
     request (``None`` when they did not).
@@ -328,7 +328,7 @@ class AgentTurnFailed:
 
     ``exit_code`` / ``stderr_tail`` = 手番の終わりの前に agent の CLI の process が降りた時(手番を起こす前に降りて手番を
     始められなかった時も)の、process の終了 code と stderr の末尾(runtime の上限の字数まで — 越えた分は頭を捨てる)。
-    process が降りずに終わった手番は None(agora-redesign #4207)。``detail`` の文にも今までどおり含まれる。
+    process が降りずに終わった手番は None。``detail`` の文にも今までどおり含まれる。
     """
 
     detail: str
@@ -388,7 +388,7 @@ class AgentTurnLost:
 
     ``exit_code`` / ``stderr_tail`` = 降りた agent の CLI の process の終了 code(信号で降りたなら負の数)と stderr の末尾
     (runtime の上限の字数まで — 越えた分は頭を捨てる。stderr が空なら空の文字列)。runtime が process の降り方を知らない
-    終わりは None(agora-redesign #4207)。``detail`` の文にも今までどおり含まれる。
+    終わりは None。``detail`` の文にも今までどおり含まれる。
     """
 
     detail: str
@@ -425,7 +425,7 @@ class AgentTextDeltaEvent:
 class AgentThinkingStartedEvent:
     """The agent began thinking (the runtime opened a thinking block, before any piece of it). It arrives ahead of
     the first AgentThinkingDeltaEvent, so an upper layer can show that the agent is thinking as soon as the
-    model starts answering (agora-redesign #4186)."""
+    model starts answering."""
 
     seq: int
     at: datetime
@@ -435,7 +435,7 @@ class AgentThinkingStartedEvent:
 class AgentThinkingDeltaEvent:
     """A partial piece of the agent's thinking before it writes its text (``text`` may be empty when the
     runtime streams the thinking without its words). An upper layer shows that the agent is thinking
-    before the first text arrives (agora-redesign #3789)."""
+    before the first text arrives."""
 
     seq: int
     at: datetime
@@ -446,7 +446,7 @@ class AgentThinkingDeltaEvent:
 class AgentToolCallStartedEvent:
     """The agent began writing a tool call (before its command is complete): ``id`` (the tool_use block id — the
     same id the later AgentToolUseEvent's ToolCall names) and ``name`` (the tool). An upper layer shows that the
-    agent is calling that tool while the command is still being written (agora-redesign #3974)."""
+    agent is calling that tool while the command is still being written."""
 
     seq: int
     at: datetime
@@ -457,7 +457,7 @@ class AgentToolCallStartedEvent:
 @dataclass(frozen=True, kw_only=True)
 class AgentToolInputDeltaEvent:
     """A partial piece of the command of the tool call being written (``text`` is a fragment of JSON that cannot be
-    read on its own; it may be empty). It belongs to the latest AgentToolCallStartedEvent (agora-redesign #3974)."""
+    read on its own; it may be empty). It belongs to the latest AgentToolCallStartedEvent."""
 
     seq: int
     at: datetime
@@ -467,7 +467,7 @@ class AgentToolInputDeltaEvent:
 @dataclass(frozen=True, kw_only=True)
 class AgentStopHookFeedbackEvent:
     """A Stop hook sent the turn's answer back: the CLI fed ``reason`` into the turn and the agent answers again
-    (agora-redesign #4020). The text events after the turn's last tool result and before this event belong to the
+   . The text events after the turn's last tool result and before this event belong to the
     answer that was sent back (a Stop hook runs only after a response that called no tool)."""
 
     seq: int
@@ -476,7 +476,7 @@ class AgentStopHookFeedbackEvent:
 
 
 class CompactionTrigger(Enum):
-    """How the runtime came to compact the conversation's context (agora-redesign #4189).
+    """How the runtime came to compact the conversation's context.
 
     ``AUTO``: the runtime compacted on its own when the context passed its threshold.
     ``MANUAL``: a ``/compact`` command compacted it.
@@ -489,7 +489,7 @@ class CompactionTrigger(Enum):
 @dataclass(frozen=True, kw_only=True)
 class AgentCompactionEvent:
     """The runtime compacted the conversation's context in the middle of the turn; the turn goes on
-    (agora-redesign #4189 — an upper layer records it as an event of the turn).  The fields are the runtime's
+    (an upper layer records it as an event of the turn).  The fields are the runtime's
     compact boundary as stated: ``trigger`` (how it started), ``pre_tokens`` (the context size before),
     ``post_tokens`` (the size after), ``cumulative_dropped_tokens`` (the tokens compaction dropped in this
     conversation so far) and ``duration_ms`` (how long it took) — the last three are ``None`` when the runtime
@@ -506,8 +506,8 @@ class AgentCompactionEvent:
 
 @dataclass(frozen=True, kw_only=True)
 class AgentCompactionStartedEvent:
-    """The runtime started compacting the conversation's context in the middle of the turn (agora card
-    ki-aeae6f9e643d — an upper layer shows "compacting" on the conversation screen while the summary is made,
+    """The runtime started compacting the conversation's context in the middle of the turn (
+    an upper layer shows "compacting" on the conversation screen while the summary is made,
     which takes tens of seconds to minutes and otherwise looks like a stalled turn).  It carries only when it
     started; how it started and the token counts come with the ``AgentCompactionEvent`` that ends it."""
 
@@ -516,7 +516,7 @@ class AgentCompactionStartedEvent:
 
 
 class CompactionOutcome(Enum):
-    """How a compaction the runtime started ended (agora card ki-8239be27d5f6).
+    """How a compaction the runtime started ended.
 
     ``SUCCEEDED``: the context was compacted (an ``AgentCompactionEvent`` carries the token counts).
     ``FAILED``: the compaction failed (``error`` names why, as the runtime stated it).
@@ -532,8 +532,8 @@ class CompactionOutcome(Enum):
 
 @dataclass(frozen=True, kw_only=True)
 class AgentCompactionEndedEvent:
-    """The runtime ended a compaction it started in the middle of the turn; the turn goes on (agora card
-    ki-8239be27d5f6 — an upper layer records failed and interrupted compactions too, not only the successful
+    """The runtime ended a compaction it started in the middle of the turn; the turn goes on (
+    an upper layer records failed and interrupted compactions too, not only the successful
     ones an ``AgentCompactionEvent`` carries).  ``outcome`` = how it ended, ``error`` = the runtime's error text
     for a failed or interrupted compaction (``None`` when not stated).  The runtime does not state the token usage
     of the compaction's own API request on any line, so no event carries it.  A turn that ends between an
@@ -548,7 +548,7 @@ class AgentCompactionEndedEvent:
 
 @dataclass(frozen=True, kw_only=True)
 class AgentHookEvent:
-    """A hook the runtime ran in the turn answered (card acp:kanban-issue:ki-d8b473480303 — an upper layer shows the
+    """A hook the runtime ran in the turn answered (an upper layer shows the
     hook's result, e.g. advice a conditional rule added or a Stop hook sending the answer back, in the conversation).
     The fields are the runtime's hook response as stated: ``hook_event`` (the hook's event, e.g. ``PreToolUse``),
     ``name`` (the hook's name, ``<event>:<matcher>``), ``hook_id`` (the id of this run of the hook), ``stdout`` and
@@ -583,7 +583,7 @@ class AgentCallUsageEvent:
     states windows only at the turn's end (``model_windows``).
 
     ``call_id`` = the API call's id (the message id) when the runtime states it, so an upper layer folds the events of
-    one call into one response by id rather than by equal values (agora card ki-290ec664737d).  ``final`` tells which
+    one call into one response by id rather than by equal values.  ``final`` tells which
     value the event carries: ``False`` = a value the runtime stated while the call was still streaming (Claude Code
     2.1.292 states the call's ``message_start`` usage on every assistant line of the call — its output is a mid-call
     value such as 16); ``True`` = the call's final usage (Claude Code: ``message_start`` overlaid with the call's
@@ -594,7 +594,7 @@ class AgentCallUsageEvent:
     ``request_id`` = the API request's id when the runtime states it (Claude Code 2.1.292 puts it on each assistant line
     of the call; the final event of a call does not carry it — ``None``).  It is the id the runtime's own telemetry
     names the same call by, so an upper layer that adds calls seen only in that telemetry (calls a tool or the
-    conversation's compaction makes inside the runtime) counts a call once (agora card ki-b99ace070bf0)."""
+    conversation's compaction makes inside the runtime) counts a call once."""
 
     seq: int
     at: datetime
@@ -608,7 +608,7 @@ class AgentCallUsageEvent:
 @dataclass(frozen=True, kw_only=True)
 class AgentSubagentCallUsageEvent:
     """An API call of a subagent (an agent a tool call of the main conversation started) stated its usage while
-    the turn is running (agora card ki-8239be27d5f6 — an upper layer records what subagents consumed next to the
+    the turn is running (an upper layer records what subagents consumed next to the
     main conversation's calls, apart from them: a subagent's call is not the conversation's context).
     ``parent_tool_use_id`` = the main conversation's tool call that runs the subagent, ``call_id`` = the API
     call's id (``None`` when not stated), ``usage`` = that call's usage as the runtime stated it (``cost_usd`` is
@@ -618,8 +618,8 @@ class AgentSubagentCallUsageEvent:
     that states no usage carries no event (never an invented 0).  ``request_id`` = the API request's id when the
     runtime states it (``AgentCallUsageEvent.request_id``).
 
-    ``output_partial`` = the output tokens in ``usage`` are a mid-call value, not the call's final output (agora card
-    ki-edb2b5947d6a).  Claude Code 2.1.306 writes a subagent's call to its transcript one line per content block and
+    ``output_partial`` = the output tokens in ``usage`` are a mid-call value, not the call's final output
+    .  Claude Code 2.1.306 writes a subagent's call to its transcript one line per content block and
     puts the call's end (``message_delta`` — the stop reason and the final output tokens) on the last line; when the
     last block's line is written before the ``message_delta`` arrives (side-by-side tool calls in one call, for
     instance), no line of the call is closed: every line states no stop reason and a mid-call output such as 6.  The
@@ -641,11 +641,11 @@ class AgentSubagentCallUsageEvent:
 class AgentToolUseEvent:
     """The agent called tools: one ToolCall per call, in block order — ``id`` (the tool_use block id),
     ``name`` (the tool) and ``input`` (the call's command: the block's input JSON object, deep-frozen).
-    Each id is the one a later AgentToolResultEvent's answer names (agora-redesign #3744).
+    Each id is the one a later AgentToolResultEvent's answer names.
 
     ``parent_tool_use_id`` = the main conversation's tool call that runs the subagent when the calls are a
     subagent's (the line's top-level ``parent_tool_use_id``), ``None`` for the main conversation's own calls — so
-    an upper layer tells a subagent's work from the main turn's (agora card ki-b25d579bf48b)."""
+    an upper layer tells a subagent's work from the main turn's."""
 
     seq: int
     at: datetime
@@ -657,12 +657,11 @@ class AgentToolUseEvent:
 class AgentToolResultEvent:
     """Tool results went back to the agent: one ToolAnswer per result, in block order — ``id`` (the
     call it answers), ``text`` (the result's text), ``is_error`` and ``non_text_kinds`` (kinds of the
-    result's non-text blocks, e.g. images, that ``text`` leaves out) (agora-redesign #3744).
+    result's non-text blocks, e.g. images, that ``text`` leaves out).
 
     ``parent_tool_use_id`` = the main conversation's tool call that runs the subagent when the results went back to
     a subagent (the line's top-level ``parent_tool_use_id``), ``None`` when they went back to the main conversation
-    — an upper layer that ends the main turn on a tool's answer must not end it on a subagent's tool answer (agora
-    card ki-b25d579bf48b)."""
+    — an upper layer that ends the main turn on a tool's answer must not end it on a subagent's tool answer."""
 
     seq: int
     at: datetime
@@ -800,7 +799,7 @@ class TurnRef:
     """The caller's reference to the last turn run on a session.
 
     Opaque to the library: ``turn_id`` is the caller's turn identifier and
-    ``attempt`` its attempt number (agora-redesign #608).
+    ``attempt`` its attempt number.
     """
 
     turn_id: str
@@ -1033,8 +1032,8 @@ class TurnCredential:
     agent process's own (``CLAUDE_CONFIG_DIR`` — doeff-claude-code's
     credential home), never in the process env and never through
     ``session_env`` (which stays a non-auth overlay), so a refreshed token can
-    replace it while the process runs (``ReplaceSessionCredentialEffect`` —
-    card acp:kanban-issue:ki-4ffdafa021e5). Only the access token travels — a
+    replace it while the process runs (``ReplaceSessionCredentialEffect``).
+    Only the access token travels — a
     refresh token is never carried. The token is kept out of ``repr`` so
     effects, answers and errors never print it.
 
@@ -1042,19 +1041,19 @@ class TurnCredential:
     seconds; generic — the answer does not say who lent it), or ``None`` when
     the redeemer does not know. The launch handler copies it to the session
     declaration so the process layer can stop a live process before it (the
-    credential floor — agora-redesign #3672 D2); the lender is told through
+    credential floor); the lender is told through
     the process layer's stop reason, never by this value.
 
     ``github_token`` is a GitHub token lent for the same turns, or ``None``
-    when none is lent (agora-redesign #3753). A handler that can place it puts
+    when none is lent. A handler that can place it puts
     it into the agent process's ``GH_TOKEN`` env (the name lives in
     ``doeff_agents._agent_env``) so the agent's ``gh`` / ``git`` can write to
     GitHub; it is checked like ``oauth_token`` and kept out of ``repr`` too.
 
     ``subscription_type`` and ``rate_limit_tier`` are the plan kind (``pro``,
     ``max`` ...) and the rate limit tier the lender read from the stored
-    credential, or ``None`` when the lender has not observed them (card
-    acp:kanban-issue:ki-d81bb8c7eaaa). Without a plan kind a Claude CLI
+    credential, or ``None`` when the lender has not observed them
+    . Without a plan kind a Claude CLI
     treats the account as possibly team / enterprise and checks the
     organization policy on every start. The headless Claude handler writes
     them next to the token in the ``.credentials.json`` it places
@@ -1094,7 +1093,7 @@ class TurnCredential:
 
 @dataclass(frozen=True)
 class CodexTurnCredential:
-    """A Codex account lent for this session's turns (card ki-0b244c011ca3): the
+    """A Codex account lent for this session's turns: the
     ``auth.json`` document the lender sealed for the borrower, as JSON text.
 
     Like ``TurnCredential`` it is one answer of ``RedeemTurnCredentialEffect``
@@ -1334,8 +1333,8 @@ class LaunchEffect(AgentEffectBase, EffectBase[SessionHandle]):
     # A file the handler keeps current with the events of the turns this
     # launch starts, as the runtime reads them (None = no record) — see
     # ``EventRecord``. A caller keeps its own record of the turn current even
-    # when its page reads (``EventsEffect``) lag behind the runtime (agora card
-    # ki-31b41eac5071). Handlers that do not read the runtime's output as it
+    # when its page reads (``EventsEffect``) lag behind the runtime
+    # . Handlers that do not read the runtime's output as it
     # comes refuse it with ``AgentCapabilityUnsupportedError``.
     event_record: "EventRecord | None" = None
 
@@ -1622,8 +1621,7 @@ ReplaceSessionCredentialOutcome = (
 
 @dataclass(frozen=True, kw_only=True)
 class ReplaceSessionCredentialEffect(AgentEffectBase, EffectBase[ReplaceSessionCredentialOutcome]):
-    """Replace the turn credential of a session's live agent process (card
-    acp:kanban-issue:ki-4ffdafa021e5).
+    """Replace the turn credential of a session's live agent process.
 
     A lender that refreshes an account kills the previous access token
     upstream; this hands the refreshed token to the agent process that is
@@ -1662,13 +1660,13 @@ class ExportContextEffect(AgentEffectBase, EffectBase[str | None]):
     ``tail_bytes`` asks for only the last lines of the copy that fit in that
     many bytes (starting at a line start).  Such a copy cannot be brought back
     with ``resume_snapshot``; it is for callers that read only recent lines,
-    so a 100 MB context is not read whole on every turn (card ki-a264a73efcce).
+    so a 100 MB context is not read whole on every turn.
 
     ``from_byte`` asks for only the part of the copy after that many bytes
     (``from_byte`` is a character start within a copy taken before).  Such a
     copy cannot be brought back with ``resume_snapshot``; it is for callers
-    that hold an earlier copy and read only what was appended since (card
-    ki-3b521394a063).  The answer is None when the copy is shorter than
+    that hold an earlier copy and read only what was appended since
+    .  The answer is None when the copy is shorter than
     ``from_byte`` or ``from_byte`` falls inside a character.  ``tail_bytes``
     and ``from_byte`` are not given together.
 
@@ -1724,7 +1722,7 @@ class ListAgentSessionsEffect(AgentEffectBase, EffectBase[tuple[AgentSessionSnap
 class PutAgentSessionEffect(AgentEffectBase, EffectBase[AgentSessionSnapshot]):
     """Persist a session snapshot, replacing the row with the same session id.
 
-    The write half of the session store (agora-redesign #608). The handler is
+    The write half of the session store. The handler is
     chosen by the deployment: memory for tests, a SQL table (PostgreSQL in the
     cluster, SQLite locally) for real runs.
 
@@ -1969,8 +1967,8 @@ class AgentLaunchError(AgentError):
     """Error during agent launch.
 
     ``exit_code`` / ``stderr_tail`` = 手番を始める前に agent の CLI の process が降りた時の、process の終了 code と
-    stderr の末尾(runtime の上限の字数まで — 越えた分は頭を捨てる)。そうした process の無い起動の失敗は None
-    (agora-redesign #4207)。この例外を失敗の終わり(``AgentTurnFailed``)へ写す呼び手は、2 つの欄をそのまま運ぶ。
+    stderr の末尾(runtime の上限の字数まで — 越えた分は頭を捨てる)。そうした process の無い起動の失敗は None。
+   この例外を失敗の終わり(``AgentTurnFailed``)へ写す呼び手は、2 つの欄をそのまま運ぶ。
     """
 
     exit_code: int | None = None

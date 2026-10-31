@@ -62,7 +62,7 @@ SOURCE = """\
   {:pre [(: n int)] :post [(: % (of dict str int))]}
   (tuple (range n)))
 
-;; 途中の return も :post と guard を通る(agora-redesign #1823)。繰り返しの中・分岐の中の return と、入れ子の関数の return(外側の
+;; 途中の return も :post と guard を通る。繰り返しの中・分岐の中の return と、入れ子の関数の return(外側の
 ;; 出口ではない — 書き換えない)。
 (defk early-names [n]
   {:pre [(: n int)] :post [(: % (get tuple #(str ...)))]}
@@ -147,7 +147,7 @@ def test_generic_contract_rejects_the_wrong_outer_type(mod: ModuleType) -> None:
 
 
 def test_an_early_return_passes_the_post_condition(mod: ModuleType) -> None:
-    # 途中の return の値も :post に合えば通り、入れ子の関数の return は外側の出口ではない(agora-redesign #1823)。
+    # 途中の return の値も :post に合えば通り、入れ子の関数の return は外側の出口ではない。
     assert _run(mod.early_names(3)) == ("early",)
     assert _run(mod.early_names(1)) == ("0",)
     assert mod.nested_return_is_not_an_exit(1) == "8"

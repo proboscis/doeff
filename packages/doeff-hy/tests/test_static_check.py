@@ -183,7 +183,7 @@ def test_static_view_does_not_leak_into_the_runtime_expansion() -> None:
     # 静的な展開は補助の import を出さない — doeff-hy-check が module の頭に 1 度だけ置く(#1686)
     assert "static_types" not in static
     # 実行時にも型の注記は付く(文字列 = 定義の時に評価しない)。結果の変数は関数の頭で値なしで宣言し、出口の代入は注記なしの
-    # 要素 1 つのタプルの代入(途中の return の出口も同じ宣言で型を読む — agora-redesign #4254・macros.hy の _exit-binding)。
+    # 要素 1 つのタプルの代入(途中の return の出口も同じ宣言で型を読む・macros.hy の _exit-binding)。
     assert "def f(x: 'int')" in runtime
     assert re.search(r"^\s*_contract_result: 'int'$", runtime, re.MULTILINE), runtime
     assert "_contract_result, = (y,)" in runtime
@@ -216,7 +216,7 @@ def _many_definitions(count: int, mistake: bool) -> str:
 @needs_pyright
 @pytest.mark.parametrize("mistake", [False, True])
 def test_defk_calls_stay_programs_past_sixty_four_definitions(tmp_path: Path, mistake: bool) -> None:
-    """反例(agora-redesign #1686): 静的な展開が defk / `<-` ごとに補助の import を出していた頃は、1 つの名(`_doeff_do`・
+    """反例: 静的な展開が defk / `<-` ごとに補助の import を出していた頃は、1 つの名(`_doeff_do`・
     `_doeff_perform`)の宣言が 64 を超えた module / 関数で pyright が型の推論をやめて Unknown にし、defk の呼びが Program では
     なく :post の型に見えた — `(Spawn (defk の呼び))` が reportArgumentType、束ねの型の食い違いは黙って通った。補助の import は
     module の頭に 1 度だけ(static_check.with_static_helpers)。"""
@@ -318,7 +318,7 @@ def test_defk_calls_stay_programs_past_sixty_four_mcp_tools(tmp_path: Path, mist
     65 個持つ module で `_doeff_do` の宣言が 64 を超え、pyright が Unknown にして、後ろの defk の呼びが Program ではなく :post の
     型に見えた — `(Spawn (defk の呼び))` が reportArgumentType(#1686 の defk の反例と同じ訳)。tool ごとに doeff.mcp の
     McpToolDef を import していた頃は、同じ訳で tool の値が Unknown になり、tool の name の型の食い違い(reportReturnType)を
-    黙って通した(設計検証 lt-N19BACF5SXDRMKQ7EZD3AZA8FC の盲検 A)。"""
+    黙って通した。"""
     import contextlib
     import io
 
@@ -370,7 +370,7 @@ def test_defmcp_tool_handler_params_carry_the_schema_types(tmp_path: Path, mista
     """型検査のための展開の defmcp-tool は、handler の引数に schema の :type を写した型を注記する(必須でない引数は
     `| None` — server は送られなかった引数に None を渡す)。注記が無かった頃は、strict で引数 1 つにつき書き手の直せない赤が
     2 件(reportMissingParameterType・reportUnknownParameterType)と、本体で引数を渡す所ごとに reportUnknownArgumentType が
-    出て、引数の型の食い違いは黙って通った(card ki-973b4e44d7bc)。"""
+    出て、引数の型の食い違いは黙って通った。"""
     import contextlib
     import io
 
@@ -406,7 +406,7 @@ def _union_bind_first(mistake: bool) -> str:
 @needs_pyright
 @pytest.mark.parametrize("mistake", [False, True])
 def test_a_bind_after_a_union_bind_keeps_its_answer_type(tmp_path: Path, mistake: bool) -> None:
-    """反例(agora-redesign #3116): `_doeff_perform` が `object -> Any` の受け皿の overload を持っていた頃、module の中で最初の
+    """反例: `_doeff_perform` が `object -> Any` の受け皿の overload を持っていた頃、module の中で最初の
     評価が union の期待型の下(`(<- m (| int None) …)`)だと、pyright が以後の `_doeff_perform` を全部受け皿へ落とし、答えが
     Any になった — 後ろの束ねの型の食い違い(int を str と書く)が黙って通り、event-loop の節の値が Unknown になった。"""
     import contextlib
@@ -468,7 +468,7 @@ READ_ONCE_MODULE = """\
 
 
 def test_one_source_is_read_by_the_hy_reader_once(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    # 失敗ケース(agora-redesign #3869 の (c)): project は source を Hy の reader で 2 度読んでいた(compile と、一番外の setv の
+    # 失敗ケース: project は source を Hy の reader で 2 度読んでいた(compile と、一番外の setv の
     # 所見)。2 度目の読みが展開の約 2 割(依存 76 file で 2.6 秒)。1 度だけ読み、compile が読んだ form を所見にも使う。
     # file の中で定義した reader macro(#twice)は compile が前の form を処理してから次を読む作りで効くので、それも崩さない。
     from doeff_hy._static_check import Projection, project
@@ -500,7 +500,7 @@ GENSYM_MODULE = """\
 
 
 def test_the_expansion_text_does_not_depend_on_what_was_expanded_before(tmp_path: Path) -> None:
-    # 失敗ケース(agora-redesign #3869 の (b) の前提): Hy の gensym の番号は process に 1 つの数えなので、同じ source でも、同じ
+    # 失敗ケースの前提: Hy の gensym の番号は process に 1 つの数えなので、同じ source でも、同じ
     # process で先に別の file を展開したかで展開の文が変わっていた。保存の中身が実行の順(と、並べた時の process の割り振り)で
     # 変わらないよう、展開の文の gensym の名は file の中で出てくる順に振り直す。
     from doeff_hy._static_check import Projection, project

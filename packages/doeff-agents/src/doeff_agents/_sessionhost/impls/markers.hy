@@ -50,7 +50,7 @@
        "(?: [a-z0-9][a-z0-9+&-]*(?:\\.[a-z0-9]+)*){0,4} limit\\b")))
 
 
-;; 組織の側の上限の族(agora-redesign #513・実弾 2026-09-17): 「Your group's usage limit is
+;; 組織の側の上限の族(実弾 2026-09-17): 「Your group's usage limit is
 ;; set to $0 · ask your admin for a higher limit」。所有格族(you've hit/reached your …
 ;; limit)の外の実物文言で、会社の口座 p10174 の 18 手番が普通の終わりとして流れた(族の表が
 ;; 破れた 4 度目)。可変なのは主語(group / organization / team …)と金額なので、固定するのは
@@ -58,7 +58,7 @@
 (setv API-LIMIT-ORG-CAP-FAMILY-RE
   (re.compile "\\busage limit is set to \\$[0-9]"))
 
-;; CLI が**構造で**名乗る限度の断り(agora-redesign #513): claude の stream-json の result は、
+;; CLI が**構造で**名乗る限度の断り: claude の stream-json の result は、
 ;; API の誤りで終わった手番に api_error_status(HTTP の status)を載せる。429 = provider が
 ;; 利用の上限で断った、の CLI 自身の分類で、文の言い回しに依らない。実測 2026-09-17(会社 Mac の
 ;; agentd の headless-events 900 本): 限度の断り 39 本(group の上限 $0 ×18・Fable の週 ×13・
@@ -139,14 +139,14 @@
             ;; credits 枯渇(2026-07-26 実 incident)は所有格族の外の実物
             ;; 文言 — exhausted 側 = blocked_api が正。
             (in "out of usage credits" text)
-            ;; 組織の側の上限(agora-redesign #513・2026-09-17 実 incident)—
+            ;; 組織の側の上限(2026-09-17 実 incident)—
             ;; 所有格族の外の述部の族。
             (is-not (.search API-LIMIT-ORG-CAP-FAMILY-RE text) None))))
 
 
 (deff is-api-limit-refusal [detail api-error-status]
   {:pre [(: detail str) (: api-error-status (| int None))] :post [(: % bool)]}
-  "手番を終わらせた断りは provider の限度か(agora-redesign #513)—— 構造が先・文が後。
+  "手番を終わらせた断りは provider の限度か—— 構造が先・文が後。
    CLI が status を名乗っていれば 429 ちょうどが限度(文は読まない: 429 でない status を
    名乗る断り〔401 / 403 / 404〕は、文に limit の語が在っても限度ではない)。名乗らない面
    (pane の画面・旧い CLI・codex)は文の族の表 has-api-limit-marker に落ちる。"
@@ -158,8 +158,8 @@
 ;; ---------------------------------------------------------------------------
 ;; 限度の断りが「どの範囲」を枯らしたか・「いつ戻る」と言ったか(2026-09-23)
 ;; ---------------------------------------------------------------------------
-;; operator の規則(2026-09-17 — 費用の上限で止まった profile は、上限の種類に依らず別の profile へ
-;; 切り替える): 5 時間 / 週 / spend limit / group の上限 / credit 切れのどれも
+;; 決まり: 費用の上限で止まった profile は、上限の種類に依らず別の profile へ切り替える。
+;; 5 時間 / 週 / spend limit / group の上限 / credit 切れのどれも
 ;; 「その口座が枯れた」の 1 事実。文が model を名乗る断り(「You've reached your Fable 5 limit」
 ;; 「You've reached your Opus 4.5 weekly limit」)だけが、その model だけの枯れ(同じ口座で別の model は
 ;; 走れる)。実測 2026-09-23 08:00〜15:00 JST: agent-job の ProviderLimit の文は 8 件とも口座全体
@@ -167,9 +167,9 @@
 ;; model 別の枯れと書いて、配置が「Opus 5.5 だけ使えない・Fable は使える」と誤読した。
 ;; 分類は文の物理なのでここ(ADR-DOE-AGENTS-008 R1)に置き、判断の側(acp/judgment.hy)は答えを使うだけ。
 ;;
-;; card acp:kanban-issue:ki-5d4849d22a4e(2026-09-24): 組織の側の上限の族「Your group's usage limit is set to
+;; 2026-09-24: 組織の側の上限の族「Your group's usage limit is set to
 ;; $0」は**どの窓が枯れたかも model も名乗らない** —— 口座全体と読むと、Fable の週の窓だけが枯れた拍に同じ
-;; profile の Opus まで最長 5 時間止まる(設計の記録 ACP docs/design-checks/ki-5d4849d22a4e/design.md §0-2)。
+;; profile の Opus まで最長 5 時間止まる。
 ;; 文だけでは決まらないので、器は範囲 unknown を名乗って**決めない**(範囲と理由の推定は窓の写しを持つ
 ;; 予算の係の 1 点 — 契約 ACP scheduling.json providerRefusal.unknownScope)。記録は範囲(scope)と
 ;; 理由(reason)の 2 軸で、表の 1 行はその対を返す(api-limit-reading-of)。

@@ -1,5 +1,5 @@
 ;;; 同じ版の Service を重ねて起こし直す RestartService の判断(declaration_requests.restart-read)と、その書きを受けた coordinator と worker の
-;;; 本物の判断の筋書き(card ki-0019be4b9939 — 手で replicas 1→0→1 にする「止めてから起こす」は、旧が止まってから新が起きるまで受ける相手の
+;;; 本物の判断の筋書き(手で replicas 1→0→1 にする「止めてから起こす」は、旧が止まってから新が起きるまで受ける相手の
 ;;; 居ない間を作った・2026-10-12 05:18 UTC の常駐の job で 12.6 秒)。
 ;;;   (a) 判断: handoff で動いている Service には、spec の環境変数 RESTART_MARK を 1 つ進めた書きを、それ以外の spec を読んだままで読んだ版つきに決める。
 ;;;       Service が無い・台数 0 の取り下げ・入れ替えの形が recreate の時は書かない(理由つきの RestartRefused)。409 の後の読み直しは宣言の書きと同じ。

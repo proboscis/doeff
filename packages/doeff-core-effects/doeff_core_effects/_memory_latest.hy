@@ -1,4 +1,4 @@
-;;; 最新の値の memory の答え手 memory-latest-handler(agora-redesign #1440・ADR-DOE-CORE-EFFECTS-004)— PublishLatest・ReadLatest・AwaitLatest に、
+;;; 最新の値の memory の答え手 memory-latest-handler(ADR-DOE-CORE-EFFECTS-004)— PublishLatest・ReadLatest・AwaitLatest に、
 ;;; 1 つの run の中の状態(session の値)で答える。
 ;;;
 ;;; 何のためか: 模擬と検では、本物(process_latest.hy)と同じ契約で最新の値の受け渡しを確かめたいが、process に 1 つの置き場や thread に
@@ -9,7 +9,7 @@
 ;;; だから置く・読む 1 回ごとの session の出し入れは 1 回(置く回数の多い使い手の検の歩数に乗る — 呼び鈴の組を 2 つ目の session の値に
 ;;; 持っていた形では置くたびに 3 回だった・test_memory_latest.hy)。
 ;;;
-;;; 変わるまでの待ち(AwaitLatest — agora-redesign #4296)は本物と同じ形: 待つ側は呼び鈴(CreateExternalPromise の約束 — 同じ run の task が
+;;; 変わるまでの待ち(AwaitLatest)は本物と同じ形: 待つ側は呼び鈴(CreateExternalPromise の約束 — 同じ run の task が
 ;;; 完了してもよい)を呼び鈴の組に掛け、park の形(Wait の TaskPriority.IDLE — 約束が開いている間も仮想の時計が進む)で待つ。PublishLatest が値を
 ;;; 差し替えた後に、その型の呼び鈴を全部外して鳴らす。呼び手が待ちの task を Cancel した時は、約束の取り消しの callback(effect を出せない)が
 ;;; 呼び鈴の組から外す。鳴らす側は置いた値で呼び鈴を完了し、待つ側はその値を答える(同じ object が置き直された時は seen のままなので、

@@ -35,9 +35,9 @@
 (import doeff_cluster._foundation.coordinator_inbox [RequestInbox StopState stop-on-signals])
 (import doeff_cluster._coordinator.entry.handler_sets [memory-notices production-handlers redis-notices])
 (import doeff_events [MemoryBroker])
-;; 自分の行の送り(card ki-0b0ab40048b9 — worker の process 自身の行と同じ部品)。
+;; 自分の行の送り(worker の process 自身の行と同じ部品)。
 (import doeff_cluster._worker.entry.line_stamp [COORDINATOR-LOG-ENV-NAMES SHIP-LIMITS coordinator-log-plan process-lines])
-;; 止まる時に残りの行を送る上限(秒 — 盲検 A・card ki-0b0ab40048b9): 止まる直前の行が Pod の入れ替えの後に一番要る。既定(shim の 0.5 秒)
+;; 止まる時に残りの行を送る上限(秒 — 盲検 A): 止まる直前の行が Pod の入れ替えの後に一番要る。既定(shim の 0.5 秒)
 ;; では、POST の答えを待つ間に止まると後ろの行が消えた。1 回の POST の待ちの上限(ShipLimits.post_seconds 5 秒)2 回分 = 飛んでいる
 ;; POST と残りの POST。Pod の止めの猶予(宣言に書かない既定 30 秒)の内に収まり、送り先が答えない時だけ入れ替えの止まりを最大この秒延ばす。
 (val LOG-END-SECONDS 10.0)
@@ -163,7 +163,7 @@
 (deff main []  ; defk にできない: console script の main(`hy -m doeff_cluster._coordinator.entry.main` の __main__ と boot.sh が素の関数として呼ぶ)
   {:pre [] :post [(: % None)] :tags {:context "coordinator" :role "main"}}
   "coordinator の process の入口: 起動の引数から置き場と受け口を組み立て、置き場から状態を読み直して、本番の handler の組の上で調停ループを回すため。"
-  ;; この process の Python の出力(sys.stdout・sys.stderr)の行を、job の log と同じ送り先へも送る(card ki-0b0ab40048b9 — Pod の log は
+  ;; この process の Python の出力(sys.stdout・sys.stderr)の行を、job の log と同じ送り先へも送る(Pod の log は
   ;; 版上げの Pod の入れ替えで消え、worker が届かなかった窓の coordinator の行を後から読めなかった)。job の名 coordinator/<Pod の
   ;; namespace>・名乗り Pod の名・世代 = 起動の刻。送り先が無ければ今のまま。Pod の stdout と stderr は 2 本の pipe なので 1 本に
   ;; まとめて(merged)以後の行を stdout へ刻つきで書く。引数の断りと捕まえない例外の traceback も送る(終わりは process の終わり)。

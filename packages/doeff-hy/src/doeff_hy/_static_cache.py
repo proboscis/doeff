@@ -1,10 +1,10 @@
-"""doeff-hy-check の展開の cache(agora-redesign #2153)。
+"""doeff-hy-check の展開の cache。
 
 変えた file 3 つを検めるだけでも、それが import する根の下の .hy(agora の画面の core で 105 個)を全部展開するので
 36 秒かかった。依存の展開は、展開が依った物が変わらなければ同じ結果になるので、展開した Python・位置の対応表・所見を
 保存し、次の実行は変わった物だけを展開する。
 
-展開が依った物(agora-redesign #3862 — テストの実行の側の bytecode の記録と同じ 1 つの作り方):
+展開が依った物(テストの実行の側の bytecode の記録と同じ 1 つの作り方):
 - 展開する source の中身・その module 名・根からの相対 path(診断の path と import の解決に効く)。
 - 展開が使った macro の記録(``doeff_hy_bytecode_guard._loader_hooks.macro_recording``)— Hy の版、展開が実際に使った macro(提供元の
   module 名・macro 名・macro の関数の code の閉包の digest — macro が呼ぶ補助・読む定数・本体の中の import を含む)、表を
@@ -46,7 +46,7 @@ if TYPE_CHECKING:
     from doeff_hy_bytecode_guard import MacroRecord
 
 # 保存の形の版(形を変えたら上げる — 場所の名に入るので、古い版の entry は読まれない)。
-# 2 = 展開が通った file の記録で照らす形(agora-redesign #3862)。
+# 2 = 展開が通った file の記録で照らす形。
 # 3 = 展開が使った macro 単位の記録で照らす形(記録の行 = 表の名・提供元の module 名・macro 名・digest)。
 CACHE_VERSION = 3
 
@@ -183,7 +183,7 @@ def _mtime_ns(entry: os.DirEntry[str]) -> int:
 
 def _read_entry(path: Path) -> CachedProjection | CacheMiss:
     """entry 1 つを読む(読めない・形が違う時は CacheMiss)。保存の形の版は CACHE_VERSION と照らす(literal の版で照らすと、
-    CACHE_VERSION を上げた版は自分の書いた entry を読めない — 設計検証 lt-TBEF3PAMAVQ8B3Z07MDSCA994C の盲検 A)。"""
+    CACHE_VERSION を上げた版は自分の書いた entry を読めない)。"""
     try:
         loaded: object = json.loads(path.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError) as error:
@@ -245,7 +245,7 @@ def store(cache_dir: Path, name: str, projection: CachedProjection) -> None:
     path = _place_dir(cache_dir, name) / f"{record_fingerprint(projection.used)}.json"
     payload = _entry_payload(projection)
     # 一時の file は書き手ごとの名(pid と時刻)— 保存先を共有する 2 台の worker が同じ entry を同時に書いても、互いの一時の file へ
-    # 書き込まずに済み、どちらかの中身がそのまま rename される(agora-redesign #3863 の (b))。書けなければ一時の file を残さない。
+    # 書き込まずに済み、どちらかの中身がそのまま rename される。書けなければ一時の file を残さない。
     _write_atomically(path, payload)
 
 
@@ -259,7 +259,7 @@ def _write_atomically(path: Path, payload: object) -> None:
         temporary.unlink(missing_ok=True)
 
 
-# --- closure 単位の束(card ki-2829daea29fa) -------------------------------------------------------------------------
+# --- closure 単位の束 -------------------------------------------------------------------------
 #
 # 1 .hy ごとの entry は、引くたびに source の読みと entry の読みの 2 回 open する(367 file の closure で 700 回超)。束は、
 # 検める file の組ごとに closure 全体の行(場所の名・展開・展開が使った macro の記録)を 1 file にして、温まった実行の open を

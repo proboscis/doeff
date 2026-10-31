@@ -1,13 +1,13 @@
 ;;; 子 process の契約テストの解釈器(composition root)— 同じ契約の Program を、子 process の handler だけ替えて走らせる。
 ;;;
 ;;;   subprocess             本物: subprocess-handler(本当の子 process と os.environ)+ os-file-handler(一時 dir)
-;;;   offloaded-subprocess   本物を thread で回す: offloaded-subprocess-handler(agora-redesign #2184)+ os-file-handler(一時 dir)
+;;;   offloaded-subprocess   本物を thread で回す: offloaded-subprocess-handler+ os-file-handler(一時 dir)
 ;;;   scripted-process       fake: scripted-process-handler(I/O なし — 台本)+ memory-file-handler + state
 ;;;
 ;;; 契約の世界は解釈器ごとに同じ形で用意する:
 ;;;   * 置き場の根(ContractRoot の答え): 本物 = 走るたびに新しい一時 dir(実の path)・fake = memory の置き場の MEMORY-ROOT
 ;;;   * 呼び手の環境(INHERITED): 本物 = 走る間だけ os.environ に置き、走った後に前の値へ戻す・fake = ProcessScript の env
-;;;   * import が解く module(ResolveModule — agora-redesign #2347): 本物 = 走る間だけ根に file の module(PROBE-MODULE.py)と __init__ の無い
+;;;   * import が解く module(ResolveModule): 本物 = 走る間だけ根に file の module(PROBE-MODULE.py)と __init__ の無い
 ;;;     package の dir(NAMESPACE-MODULE)を置いて sys.path の頭に根を足し、走った後に外す・fake = ProcessScript の modules に同じ置き場を書く
 ;;;   * interpreter(ReadInterpreter): 本物 = この検の process・fake = ProcessScript の interpreter(prefix = 根・pid 1 = 生きている pid)
 ;;;   * 命令: 本物 = /bin/sh と sleep。fake = 台本の sh と sleep で、契約が使う `sh -c <文>` の文ごとに「本物の sh ならこう答える」を
@@ -48,11 +48,11 @@
 (val CAT "cat")
 (val PWD "pwd")
 (val ENV-PROBE "printf '%s|%s|%s' \"$DOEFF_INHERITED\" \"$DOEFF_SHADOWED\" \"$DOEFF_ADDED\"")
-;; utf-8 でない bytes(0xff)を挟んだ出力 — 子の bytes が可逆の文字列で返る契約を見る(agora-redesign #2160)。
+;; utf-8 でない bytes(0xff)を挟んだ出力 — 子の bytes が可逆の文字列で返る契約を見る。
 (val NOT-UTF-8 "printf 'ok\\377\\n'")
 (val NOT-UTF-8-BYTES b"ok\xff\n")
 (val PROBED-NAMES #("DOEFF_INHERITED" "DOEFF_SHADOWED" "DOEFF_ADDED"))
-;; process group と流しの出力と pid の生死の文(agora-redesign #2184)。背景の孫は出力を /dev/null へ向ける(出力を抱えた孫は EOF を
+;; process group と流しの出力と pid の生死の文。背景の孫は出力を /dev/null へ向ける(出力を抱えた孫は EOF を
 ;; 遅らせ、子の終わりを期限まで待たせる — 待ち方の契約は communicate と同じ)。
 (val OWN-PID "echo $$")
 (val LEFT-BEHIND "sleep 30 >/dev/null 2>&1 & echo $!")
@@ -60,7 +60,7 @@
 (val TWO-LINES "echo one; echo two")
 (val FIRST-THEN-WAIT "echo first; sleep 30")
 ;; pipe の容量(約 64 KB)を大きく超える出力(2,000,000 byte = "a\n" の 100 万回)— 立てたらすぐ返す子の出力が file へ流れ、子が止まらない
-;; ことを見る(agora-redesign #2223)。
+;; ことを見る。
 (val BIG-OUTPUT "yes a | head -c 2000000")
 (val BIG-OUTPUT-TEXT (* "a\n" 1000000))
 ;; 台本の世界の pid(台本の sh が答える — 生きている表 ALIVE に無いので死んでいる)と、生きている pid の表(1 = init — 本物でも生きている)。

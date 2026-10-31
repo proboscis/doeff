@@ -1,5 +1,5 @@
-"""一番外の読み込み(module の本体の実行 — 中の import を含む)の間だけ GC の閾値を上げ、終わったら戻す(agora-redesign card
-ki-de9d3593bbde・親 ki-e77d44aa61e5)の検。
+"""一番外の読み込み(module の本体の実行 — 中の import を含む)の間だけ GC の閾値を上げ、終わったら戻す(agora-redesign)
+の検。
 
 測り(2026-10-12・agora-controllers の test_emulated_screen.hy・CPython 3.14.3 free-threaded): file 全体の秒の中の GC は 7 回・
 0.28〜0.38 秒で、全部 test module の読み込み 1 つの中だった。free-threaded の GC は前の GC から RSS が 10% 超増えると heap 全体を

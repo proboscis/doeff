@@ -1,4 +1,4 @@
-;;; 汎用の HTTP の待ち受けの effect(http_server_effects.hy)の I/O なしの答え手 scripted-http-server(agora-redesign #802 便 2・ws の終端は
+;;; 汎用の HTTP の待ち受けの effect(http_server_effects.hy)の I/O なしの答え手 scripted-http-server(ws の終端は
 ;;; #811 変更 3a)。本物の socket を開かず、台本(HttpScript — 届く出来事の列と中継先ごとの答えと読まない相手の札)で答える。業務を知らない:
 ;;; 台本の中身は呼び手が渡す。
 ;;;

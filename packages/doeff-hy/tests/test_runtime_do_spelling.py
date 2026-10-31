@@ -1,5 +1,5 @@
 """doeff-hy の macro の source(`.hy` の form)の中で、実行時の `do` の置き場 `doeff.do` を綴る所が、補助の表の `do` の行
-(macros.hy の `_runtime-do`)の 1 か所だけである事の検(設計検証 lt-K8KC9HXRJBQ4C47YNMNTVKTT4Y の S4・card ki-973b4e44d7bc)。
+(macros.hy の `_runtime-do`)の 1 か所だけである事の検。
 
 表の検(test_helper_imports_table.py)は一覧 `_DEFINITIONS` に載せた macro の展開だけを見るので、新しい macro が `doeff.do` を
 自分で綴ると、一覧に足すまで見えない。ここは `.hy` の form を読み、文字 `"doeff.do"` と `doeff.do` を import する form を、

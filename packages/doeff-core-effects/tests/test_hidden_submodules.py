@@ -1,6 +1,6 @@
 """doeff_core_effects の子を `_<名>` へ移した後も、どちらの package を先に import しても読み込みの順が保たれる事の検。
 
-決まり: ADR-DOE-API-001 の R5 — 名は入口(`__init__`)から出し、子は名に `_` を付けて隠す(card ki-c09b3b527fad)。
+決まり: ADR-DOE-API-001 の R5 — 名は入口(`__init__`)から出し、子は名に `_` を付けて隠す。
 doeff は読み込みの時にこの package の `_effects` と `_scheduler` を読み、この package の入口は先に doeff を読む。入口が
 遅延で出す名(`__getattr__` の `_LAZY_EXPORTS`)の module は、`import doeff` で読まない(起動を重くしない)。元の名の所の
 移し替えの module(1 行目に `# moved-submodule-shim:`)は、`_<名>` の module そのものを返す。
@@ -14,10 +14,9 @@ import sys
 
 import pytest
 
-#: 子の古い path と新しい path(card ki-c09b3b527fad で移した中核の 10 個 — storage は下の module も・card ki-32623e1651c6 で
-#: 移した計算・VM・乱数・測りの 23 個・card ki-375e0a35b7a0 で移した file・memo・cache の 11 個・card ki-8d33df2c82df で移した
-#: process の 19 個・card ki-4fbed45b5863 と ki-d4ba562a1367 で移した http・ws の 6 個・card ki-4e56dc4a0ecd で移した sql の
-#: 7 個)。
+#: 子の古い path と新しい path(移した中核の 10 個 — storage は下の module も
+#: 移した計算・VM・乱数・測りの 23 個・次に移した file・memo・cache の 11 個・process の 19 個・
+#: http・ws の 6 個・sql の 7 個)。
 MOVED = {
     "doeff_core_effects.effects": "doeff_core_effects._effects",
     "doeff_core_effects.handlers": "doeff_core_effects._handlers",

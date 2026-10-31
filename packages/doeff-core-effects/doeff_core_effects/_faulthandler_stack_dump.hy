@@ -1,4 +1,4 @@
-;;; 全 thread の stack を書く見張りの本物の答え手 faulthandler-stack-dump-handler(agora-redesign #2748)— ArmStackDump・DisarmStackDump・
+;;; 全 thread の stack を書く見張りの本物の答え手 faulthandler-stack-dump-handler— ArmStackDump・DisarmStackDump・
 ;;; ReadStackDumps に、CPython の faulthandler の見張りと 1 つの run の中の台帳で答える。
 ;;;
 ;;; 何のためか: 共有の実行の流れが止まると、止めた呼び出しは止まりが明けた後には stack に残らない。止まりの最中に全 thread の stack を

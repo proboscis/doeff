@@ -1,5 +1,5 @@
 """根の disk を worker と Longhorn が分け合う機体の分け前(deploy/k8s/disk-share/shares.yaml)が disk に収まり、Flux が当てる worker の env と
-Longhorn の disk の予約がその宣言から導かれている事の検(card ki-3dfe8e9d820a)。
+Longhorn の disk の予約がその宣言から導かれている事の検。
 
 2026-10-21 02:30 JST に k3s-1 の worker が near を名乗った。worker は roots を 20 GiB まで、Longhorn は写しを名目の合計 (disk - 既定の予約 30%)
 × 200% まで受ける作りで、2 つが disk を独り占めする前提の上限を別々に持ち、どちらも自分の上限の内のまま near の線を割った。分け前の宣言は
@@ -12,11 +12,11 @@ Longhorn の disk の予約がその宣言から導かれている事の検(card
       Longhorn が分を越えて受けるので赤。
   (4) worker の分の空き(最低 + near の幅 + 戻りの幅)は、worker が near から ok へ戻る線と同じ — 幅は worker の code から読む。
   (5) Flux が当てる Longhorn の Node は置き方の欄(Node と disk の allowScheduling・evictionRequested・tags)を全部書き、値は宣言の通り
-      (card ki-c37ae82751bf — 予約の欄だけを書いた Node から、Flux が手で入れた allowScheduling と札 warm を引き取って消した)。
+      (予約の欄だけを書いた Node から、Flux が手で入れた allowScheduling と札 warm を引き取って消した)。
   (6) 書いてある kubelet の image GC の drop-in の線で、kubelet は worker が near を名乗る前に消し始め、worker が ok へ戻る線の上まで
-      消す(card ki-57ff91db1411 — atlas の手で置いた high 85・low 80 は worker の near の帯の中で止まり、near が続いた)。
+      消す(atlas の手で置いた high 85・low 80 は worker の near の帯の中で止まり、near が続いた)。
   (7) 同じ根の disk の機体直の worker(atlas-native)の env file は、Pod の worker と同じ空きの最低と宣言の roots の上限で、その roots と
-      state は worker の分に数える(card ki-705b0ad4893e — 宣言の外の 25 GiB では near の線が image GC の始まりより上に在った)。
+      state は worker の分に数える(宣言の外の 25 GiB では near の線が image GC の始まりより上に在った)。
 失敗ケース(赤になる事の検): 分け前の合計が disk を越える宣言・Longhorn の既定の予約(30%)のままの Node・綴りの誤った鍵・予約の欄だけを
 書く Node・文字で書いた longhornScheduling・Longhorn の欄の欠けた機体・atlas の手で置いた image GC の線・boot.sh の既定の roots の
 機体直の worker・自分の空きの最低を書いた機体直の worker。
@@ -358,7 +358,7 @@ def test_a_misspelled_key_is_refused() -> None:
 
 
 def test_a_node_that_writes_only_the_reserve_is_red() -> None:
-    """予約の欄だけを書く Longhorn の Node(card ki-3dfe8e9d820a の宣言の形)は、置き方の欄を欠くので赤 — Flux はその欄を引き取って消す。"""
+    """予約の欄だけを書く Longhorn の Node は、置き方の欄を欠くので赤 — Flux はその欄を引き取って消す。"""
     spec = {"disks": {"default-disk-e4ac800743aec705": {"storageReserved": 88_171_963_136}}}
     assert _unwritten(spec) == (
         "spec.allowScheduling",
@@ -412,7 +412,7 @@ def test_a_node_without_longhorn_over_its_disk_is_refused(
     assert found[0].startswith("atlas: 分け前の合計が disk を越える"), found
 
 
-# --- 機体直の worker(card ki-705b0ad4893e)----------------------------------------------------------------------------------------------
+# --- 機体直の worker----------------------------------------------------------------------------------------------
 
 
 def _native_shares(declaration: object) -> tuple[object, ...]:

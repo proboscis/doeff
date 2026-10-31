@@ -1,9 +1,9 @@
 """A ``defk`` / ``defhandler`` / ``handle`` written in a function body is read where it is used.
 
 doeff-hy writes a definition in a function body inside a function it calls at once
-(``nested = _hy_anon_9()`` — card ki-964823cd7feb), so the helpers its expansion imports do
+(``nested = _hy_anon_9()``), so the helpers its expansion imports do
 not become locals of the outer function; a ``handle`` in a function body binds its installer
-the same way (card ki-907f779b3290). The reader followed only a def written directly in
+the same way. The reader followed only a def written directly in
 the body: after that change a ``defk`` calling a ``defk`` of its own body was left unresolved
 and its effects were lost (``outer`` below read no ``Tick``). The function a def's qualname
 names is the same in the tree the reader indexes and in the running process.
@@ -13,7 +13,7 @@ in a body sees the bindings of that call (``run_nested`` read with two different
 not those of whichever call was read first. A ``defhandler`` in a body is wrapped twice (its
 own builder inside the definition's wrapper), and a fence-shaped ``handle`` writes its
 dispatcher inside ``declare_passes``; both are read by their clauses, as at the module level
-(design check lt-WWJ71GHT99N2H1PST9W7TVGD9D, blind A and B).
+(blind A and B).
 """
 
 import importlib

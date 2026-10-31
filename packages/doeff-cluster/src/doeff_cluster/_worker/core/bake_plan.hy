@@ -64,7 +64,7 @@
   "焼きの道具の答え: failed = 焼けなかった物の #(木の path 相対 path 理由) の列・stored = 保存先の code から .pyc を書いた物の
    #(木の path 相対 path) の列・reused = 在った .pyc が今の source と今の環境の macro に合うので pool へ送らなかった物の
    #(木の path 相対 path) の列(#3675)・unstored = 焼いた code を保存先へ書けなかった理由と、保存先の .pyc を木へ hardlink で置けなかった
-   理由(その .pyc は書いた — card ki-d51b7baa38bc)の列(重ねない)。"
+   理由(その .pyc は書いた)の列(重ねない)。"
   (#^ tuple failed)
   (#^ tuple stored)
   (#^ tuple reused)
@@ -84,7 +84,7 @@
 
 ;; 焼きの並列数の既定の天井。cpu.max の無い pod(zeus の worker — node の 36 CPU が使える)では、使える CPU の数で焼くと 36 本並べ、
 ;; 準備 1 回で 14 core(nice 10)を使って node の load 1 分を 170 まで上げ、同じ node の nice 0 の service が CPU を 34〜89% 待った
-;; (2026-10-12 06:50 JST の測り・card ki-4c2f5878e524)。上限の在る pod の worker(atlas 8・ほかは 2〜3)は今の並列数のまま。
+;; (2026-10-12 06:50 JST の測り)。上限の在る pod の worker(atlas 8・ほかは 2〜3)は今の並列数のまま。
 (val BAKE-JOBS-CEILING 8)
 
 (defk cpu-limit-of [cpu-max available]
@@ -262,7 +262,7 @@
   "焼きの道具(tool = worker 自身のコードの _foundation/bytecode_pool.hy)を起こす命令を組むため(python = 入口と同じ venv の interpreter —
    準備する root の venv・jobs = 並列数・paths = 焼く process の import の路の先頭に足す dir・store-module = worker の版の doeff-hy の
    code_store.py・store = 保存先の dir — None は保存先を使わない・progress = 進みの印の file — 道具が 1 つ用意するたびに時刻を進める・
-   None は印を触らない・card ki-6401ff10af71)。"
+   None は印を触らない)。"
   (+ #(python "-m" "hy" tool "--jobs" (str jobs) "--store-module" store-module)
      (if (is store None) #() #("--store" store))
      (if (is progress None) #() #("--progress" progress))

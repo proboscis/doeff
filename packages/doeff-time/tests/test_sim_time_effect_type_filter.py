@@ -1,4 +1,4 @@
-"""模擬の時計の handler の effect の引数の型の註の検(agora-redesign #2008)。
+"""模擬の時計の handler の effect の引数の型の註の検。
 
 VM は handler の effect の引数の型の註を install の時に読み(doeff_vm._effect_types・SPEC-WITHHANDLER-TYPE-FILTER)、型の外の effect では
 その handler を Python に入らずに外へ渡す。模擬の時計の `handle` は、扱う型の外の effect を最後の `Pass` で外へ渡すだけなので、註を足しても

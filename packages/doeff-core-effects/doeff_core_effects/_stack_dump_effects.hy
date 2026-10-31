@@ -1,5 +1,5 @@
 ;;; 全 thread の stack を log に書く見張りの effect — 共有の実行の流れ(scheduler・Await の橋の event loop)が止まった時に、止めた呼び出しを
-;;; 名指す証拠を止まりの最中に残すため(agora-redesign #2748・#2734)。業務の語を持たない土台の語彙。
+;;; 名指す証拠を止まりの最中に残すため(#2734)。業務の語を持たない土台の語彙。
 ;;;
 ;;;   ArmStackDump     at + seconds までに張り直されなければ、process の全 thread の stack を 1 度だけ書く見張りを張る。張り直すと前の見張りは
 ;;;                    消える(process に見張りは 1 つ)。at = 張った刻(単調時計の秒 — time.monotonic と同じ物差し)。答え = None。

@@ -1,5 +1,4 @@
-"""defeffect の :pre と defwire / defrecord の :check が、型検査の展開で書き手の直せない赤を出さないことの失敗ケース
-(agora-redesign #4196)。
+"""defeffect の :pre と defwire / defrecord の :check が、型検査の展開で書き手の直せない赤を出さないことの失敗ケース。
 
 - defeffect: `__post_init__` が :pre の検めのために全部の欄を `<欄> = self.<欄>` で束縛していたので、:pre が使わない欄が
   reportUnusedVariable の赤になっていた。:pre が参照する欄だけを束縛する(defrecord の :check と同じ形)。

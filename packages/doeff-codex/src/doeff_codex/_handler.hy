@@ -269,7 +269,7 @@
    どの記録が運ぶかは lines が決める・ターンを名乗らない)は走っているターンの枠に重ねて積む(ターンをまたいで持ち越さない)・ほかは
    走っているターンへ(無ければ outside)。turn/start の答え(ターンの id を名乗る)と
    turn/started は、読んだ時点で走っているターンを立てる(mark-running)— 答えを待つ側が起きる前に読んだ、ターンを名乗らない行も
-   そのターンへ積むため(設計検証 lt-4FZFGSA5AJ7DGD7BZ4656WY6HS で再現した競合)。終わったターンを名乗る遅れた記録(後ろで走った命令の
+   そのターンへ積むため(再現した競合)。終わったターンを名乗る遅れた記録(後ろで走った命令の
    終わり — 前のターンの終わりの後に、次のターンの間かターンの無い間に届く)は、上の層が終わったターンをもう読まないので、走っている
    ターンへ積み、無ければ late に取っておく(次のターンを立てた時にその頭に積む)。会話の thread でない thread を名乗る記録(子の
    agent — collabAgentToolCall の spawnAgent が同じ process の別の thread で走らせる。録った行 other-tools)は会話のターンに積まず
@@ -334,7 +334,7 @@
 (deff on-line [#^ SessionRuntime runtime #^ int generation raw]  ; defk にできない: CodexProcess の読み手の thread が呼ぶ callback
   {:pre [(: runtime SessionRuntime) (: generation int) (: raw (| str CutLine))] :post [(: % None)]}
   "stdout の 1 行を分けて会話の状態へ積み、呼び鈴を鳴らすため(今の process の行だけ — 降ろし中の古い process の行は捨てる)。読む上限を
-   超えた行(CutLine)は頭だけを分ける(thread/resume の答えの履歴を本体に載せない — card ki-83f24000d86c)。"
+   超えた行(CutLine)は頭だけを分ける(thread/resume の答えの履歴を本体に載せない)。"
   (setv record (run (match raw
                       (CutLine) (lines.classify-cut-line raw.head raw.size)
                       _ (lines.classify-line raw))))

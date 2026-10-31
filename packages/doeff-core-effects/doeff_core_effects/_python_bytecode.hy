@@ -41,7 +41,7 @@
   "source の中身 1 つを、import が検める方式(PEP 552 の checked hash)の .pyc の中身にするため。焼けない時は SourceNotCompiled
    (import の時に同じ誤りが出るので、ここでは記録だけ)。rel = 木の中の相対 path・name = module 名・path = source の在処(Hy の source かの
    見分けと、誤りの文に出る名)。Hy の source は import と同じく module を置いた中で compile し、展開が依った macro の記録を付ける —
-   記録の無い .pyc は import の時に doeff-hy の古さの検めが compile し直すので、焼いた分が無駄になる(agora-redesign #2598)。"
+   記録の無い .pyc は import の時に doeff-hy の古さの検めが compile し直すので、焼いた分が無駄になる。"
   (try
     (val loader (importlib.machinery.SourceFileLoader name path))
     (val code (source-to-code-as-import loader data path))
@@ -54,7 +54,7 @@
 (defk kept-pyc [path data existing]
   {:pre [(: path str) (: data bytes) (: existing bytes)] :post [(: % bool)]}
   "木に既に在る .pyc の中身 existing(前の木から引き継いだ物)を焼き直さずに残すか — 今の source data と今の環境の macro にそのまま
-   使える時だけ残すため(doeff-hy の古さの検めと同じ照らし方・agora-redesign #2598)。path = source の在処(Hy の source かの見分け)。"
+   使える時だけ残すため(doeff-hy の古さの検めと同じ照らし方)。path = source の在処(Hy の source かの見分け)。"
   (bytecode-is-current path existing data))
 
 
@@ -72,7 +72,7 @@
     (except [error OSError]
       (return (SourceNotCompiled :path rel :reason (str error)))))   ; 読めない source の文は file の効果の断りと同じ形(OSError の文)
   (setv cache (pyc-path source))
-  ;; 前の木から引き継いだ .pyc が今の source と今の環境の macro に合えば焼き直さない(agora-redesign #2598 — 合わない物はここで焼き直す。
+  ;; 前の木から引き継いだ .pyc が今の source と今の環境の macro に合えば焼き直さない(合わない物はここで焼き直す。
   ;; 焼き直しは別の file へ書いて置き換えるので、hardlink の先の前の木の .pyc は変わらない)。
   (when (os.path.isfile cache)
     (with [f (open cache "rb")] (setv existing (.read f)))

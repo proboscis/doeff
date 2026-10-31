@@ -1,4 +1,4 @@
-;;; 汎用の列の effect(channel_effects.hy)の答え手 scheduler-channel-handler(agora-redesign #802 便 4 の相乗り)。I/O を持たず、同じ run の
+;;; 汎用の列の effect(channel_effects.hy)の答え手 scheduler-channel-handler。I/O を持たず、同じ run の
 ;;; scheduler の promise(CreatePromise / CompletePromise / Wait)で待つ — 本番と模擬で同じ答え手。
 ;;;
 ;;; 積んだ時は待ち手を全部起こし、起きた待ち手は列を見直す(空なら待ち直す)。1 人だけに値を渡す形にしないのは、待ち手の task が Cancel

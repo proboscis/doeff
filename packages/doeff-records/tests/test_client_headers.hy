@@ -23,7 +23,7 @@
 
 
 (deftest test-a-write-key-is-sent-in-its-own-header
-  ;; 行の書きの冪等キーは X-Records-Idempotency-Key で送る(card ki-78c6d663491f — 本文の鍵にしないので、古い service は読み捨てる)。
+  ;; 行の書きの冪等キーは X-Records-Idempotency-Key で送る(本文の鍵にしないので、古い service は読み捨てる)。
   ;; 鍵の無い要求は見出しを付けない。
   (val keyed (! (request-headers (RecordsEndpoint "http://records.test" :writer "agent-writer") "k-1")))
   (assert (= (get keyed IDEMPOTENCY-HEADER) "k-1") keyed)

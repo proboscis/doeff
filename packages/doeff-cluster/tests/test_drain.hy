@@ -165,7 +165,7 @@
 
 
 (deftest test-a-surge-target-keeps-its-report-while-other-generations-report
-  ;; AL-D2o(ki-02ca1a2bfc6c): 並べた置き先(surge)の process の報告も置き先の報告として残す。退いた世代の process 5 つ(並べた先と同じ
+  ;; AL-D2o: 並べた置き先(surge)の process の報告も置き先の報告として残す。退いた世代の process 5 つ(並べた先と同じ
   ;; worker の名・指紋・割り当ての世代を名乗る)が報告しても、drain の画面は並べた先がまだ Ready でない理由に並べた先の報告を出し続け、
   ;; 並べた先が Ready を報告すれば付け替える。
   ;; 失敗ケース: 報告の表が送り手を問わず直近 4 世代しか残さないか、必ず残す報告をいまの置き先(placements)の process だけに絞ると、
@@ -514,7 +514,7 @@
 
 
 (deftest test-the-old-generation-keeps-a-recreate-job-until-the-new-generation-can-start-it-and-the-old-pod-stops
-  ;; 失敗ケース(AL-D2f・card ki-76506cc96202 — 10-11 17:36 JST の zeus の RollingUpdate / AL-D2k・card ki-c66651db99d6 — 18:44 JST):
+  ;; 失敗ケース(AL-D2f — 10-11 17:36 JST の zeus の RollingUpdate / AL-D2k — 18:44 JST):
   ;; 同じ名 atlas の新しい世代が、前の世代がまだ走っている間に名乗る(overlapsElder)。前の世代の動かしている recreate の job r は、
   ;; 新しい世代が r を起こせる(準備と入口の検めが揃った — 状態の行の phase が elder-runs)と報告し、かつ前の世代の Pod の止まりが
   ;; 始まる(preStop の drain)まで前の世代に残す。新しい世代には印 elderRuns を付けて渡し(準備と検めだけをして起こさない)、揃うまでは

@@ -8,7 +8,7 @@
 - 購読の型の外を待つと ``ValueError``(``WaitForEvent`` と同じ文)。
 - 列を持たない ``event_handler`` は、届いた 1 つを 1 つの組で答える。
 - ``notice_events_handler`` の包みの中: 自分の源の ``SourceFailed`` で例外になり、別の源の ``SourceFailed`` は組から除く。待ちに源の失敗を
-  足すのは channel を読む(源の task を持つ)包みだけで、送るだけの包みは待ちを受けない(作業ボードの card ki-3724ab2e9a0f)。
+  足すのは channel を読む(源の task を持つ)包みだけで、送るだけの包みは待ちを受けない。
 """
 
 from dataclasses import dataclass

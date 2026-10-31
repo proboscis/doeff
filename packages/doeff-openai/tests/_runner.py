@@ -124,7 +124,7 @@ def openai_api_key_from_env_handler(effect, k):
     touches environment variables directly; this handler asks for the
     variable with the ``ReadEnvironment`` effect, which the caller's real
     handler (``subprocess_handler`` outside this one) answers — no direct
-    ``os.environ`` read (DOEFF004 — agora-redesign #3012). Any other
+    ``os.environ`` read (DOEFF004). Any other
     effect — or an ``Ask`` for a different key — is passed through so an
     outer handler (e.g. a ``lazy_ask`` with an env dict) can resolve it.
 

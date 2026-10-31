@@ -1,5 +1,5 @@
 ;;; 歩の積算の効果 — 名前つきの窓を開けている間に、scheduler(Python の版も Rust の版も)が task を走らせた歩(task へ入ってから scheduler の効果で
-;;; 戻るまで)の数・壁の ns・CPU の ns と最長の歩 1 つを数える(agora-redesign #3855)。業務の語を持たない土台の語彙。
+;;; 戻るまで)の数・壁の ns・CPU の ns と最長の歩 1 つを数える。業務の語を持たない土台の語彙。
 ;;;
 ;;;   OpenStepTally   窓 key を開く。開いている key をもう 1 度開くと ValueError。答え = None。
 ;;;   CloseStepTally  窓 key を閉じ、開けていた間の積算(StepTally)を答える。開いていない key なら None。
@@ -7,7 +7,7 @@
 ;;; 数えるのは、窓を開けた scheduler の thread の歩のうち、始まりも終わりも窓を開けていた間にある物(開けた歩・閉じた歩の途中は
 ;;; 数えない)。窓が重なれば、同じ歩をどの窓にも足す。
 ;;;
-;;; task ごとの積算(agora-redesign #4188 — #3855 の U6): 呼び手が区間の担当の task の分だけを数えられるように、窓の間に歩を進めた
+;;; task ごとの積算(#3855 の U6): 呼び手が区間の担当の task の分だけを数えられるように、窓の間に歩を進めた
 ;;; task ごとの行(TaskTally)を答える。行は (run, tid) で 1 つ(run = scheduler の run の番号 — tid は run ごとの番号なので組で持つ)。
 ;;; 親(parent)は窓の間に見た Spawn の出来事から引く — 窓を開ける前に生まれた task の親は None。子孫の和は呼び手が親の結びで足す。
 ;;; 窓の間に始まった歩だけを数えるのは歩の積算と同じ。thread では絞らない(run の番号が process で一意なので、別の thread の run も

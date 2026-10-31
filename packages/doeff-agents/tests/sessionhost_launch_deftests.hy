@@ -266,7 +266,7 @@
   (ClockNow []
     (resume world.now))
   (DelayEffect [seconds]
-    ;; launch の待ちは doeff-time の Delay(card ki-3c3d85253c2c)— 台本の世界は自分の時計を待った秒だけ進め、
+    ;; launch の待ちは doeff-time の Delay— 台本の世界は自分の時計を待った秒だけ進め、
     ;; 待った秒を痕跡に残す(ClockNow と同じ world.now)。
     (.append world.trace #("delay" seconds))
     (setv world.now (+ world.now (timedelta :seconds seconds)))
@@ -285,14 +285,14 @@
     (setv (get world.fs path) text)
     (resume None))
   (FsRemoveFile [path]
-    ;; card acp:kanban-issue:ki-6b5c4b270ca0: 名指した 1 file を落とす(不在は成功)。
+    ;; 名指した 1 file を落とす(不在は成功)。
     ;; 痕跡に残すのは「宣言外の path を触らない」を**消し**でも撃てるようにするため。
     (.append world.trace #("fs-remove" path))
     (resume (is-not (.pop world.fs path None) None)))
   (FsMakeDirs [path]
     (resume None))
   (FsEnsureSymlink [link target]
-    ;; 実 substrate の 4 値(card ki-62aa1f4e9c9c D8)の台本版: symlink は張り替える・
+    ;; 実 substrate の 4 値の台本版: symlink は張り替える・
     ;; 実体(fs / listings に居る物)は触らない・同じ先なら何もしない。
     ;; ⚠ 台本の世界では器は断らないので refused-by-container は出ない(errno / detail も
     ;; None)。**型は実物と同じ** FsSymlinkOutcome — 同じ effect 契約の fake であって、
@@ -871,13 +871,13 @@
 
 
 (deftest test-launch-claude-carries-the-declared-seat-settings-file
-  ;; card acp:kanban-issue:ki-7b52bb76aa6e(ADR-DOE-AGENTS-004 R13): 機体の参加の宣言が名指した席の settings file
+  ;; ADR-DOE-AGENTS-004 R13: 機体の参加の宣言が名指した席の settings file
   ;; (join が門を通して据えた env DOEFF_AGENTD_CLAUDE_SETTINGS_FILE)を起動の拍ごとに読み、claude の
   ;; --settings に合流する(inherit の委ね先 = config-dir の持ち主 = doeff 自身なので、doeff が運ぶ)。
   (setv world (LaunchWorld))
   (setv (get world.env "DOEFF_AGENTD_SESSION_HOOKS") "inherit")
-  (setv (get world.env "DOEFF_AGENTD_CLAUDE_SETTINGS_FILE") "/home/agentd/dotfiles/claude-hooks/seat-settings.json")
-  (setv (get world.fs "/home/agentd/dotfiles/claude-hooks/seat-settings.json")
+  (setv (get world.env "DOEFF_AGENTD_CLAUDE_SETTINGS_FILE") "/home/user/dotfiles/claude-hooks/seat-settings.json")
+  (setv (get world.fs "/home/user/dotfiles/claude-hooks/seat-settings.json")
         (json.dumps {"hooks" {"PreToolUse" [{"matcher" "*"
                                             "hooks" [{"type" "command"
                                                       "command" "python3 ~/dotfiles/claude-hooks/hook-proxy.py PreToolUse"
@@ -895,7 +895,7 @@
   ;; 同じ env でも codex の起動は file を読まない(file の名は claude の settings)— fs に無くても起きる。
   (setv world2 (LaunchWorld))
   (setv (get world2.env "DOEFF_AGENTD_SESSION_HOOKS") "inherit")
-  (setv (get world2.env "DOEFF_AGENTD_CLAUDE_SETTINGS_FILE") "/home/agentd/dotfiles/claude-hooks/seat-settings.json")
+  (setv (get world2.env "DOEFF_AGENTD_CLAUDE_SETTINGS_FILE") "/home/user/dotfiles/claude-hooks/seat-settings.json")
   (setv world2.capture-script ["codex booting banner" "› {composer}"])
   (<- _ (run-launch world2 (launch-params)))
   (setv [pane2 cmd2 literal2 submit2] (get world2.sent-keys 0))
@@ -910,8 +910,8 @@
   (for [[label text] [["not-json" "{not json"] ["not-an-object" "[]"]]]
     (setv world (LaunchWorld))
     (setv (get world.env "DOEFF_AGENTD_SESSION_HOOKS") "inherit")
-    (setv (get world.env "DOEFF_AGENTD_CLAUDE_SETTINGS_FILE") "/home/agentd/seat-settings.json")
-    (setv (get world.fs "/home/agentd/seat-settings.json") text)
+    (setv (get world.env "DOEFF_AGENTD_CLAUDE_SETTINGS_FILE") "/home/user/seat-settings.json")
+    (setv (get world.fs "/home/user/seat-settings.json") text)
     (setv world.capture-script ["❯ {composer}"])
     (setv raised None)
     (try
@@ -925,13 +925,13 @@
 
 
 (deftest test-launch-claude-names-an-absent-seat-settings-file-and-still-opens-the-seat
-  ;; ⚑ 受入 8(card acp:kanban-issue:ki-7b52bb76aa6e・依頼書 §10-2 の訂正): 名指した file が起動の拍に**無い**のは
+  ;; ⚑ 受入 8(依頼書 §10-2 の訂正): 名指した file が起動の拍に**無い**のは
   ;; 非致命 — 宿の入口は「先端で揃えられない日は image の下限へ戻して立つ」正規の degrade を持ち、その日の
   ;; checkout に file は無い。そこで起こさないと degrade がその機体の全席の停止に化ける。だから席は起こす:
   ;; argv は名指しの無い日と byte 同一(--settings を出さない)で、代わりに**起動ごとに名前つきの 1 行**を log へ。
   (setv world (LaunchWorld))
   (setv (get world.env "DOEFF_AGENTD_SESSION_HOOKS") "inherit")
-  (setv (get world.env "DOEFF_AGENTD_CLAUDE_SETTINGS_FILE") "/home/agentd/dotfiles/claude-hooks/seat-settings.json")
+  (setv (get world.env "DOEFF_AGENTD_CLAUDE_SETTINGS_FILE") "/home/user/dotfiles/claude-hooks/seat-settings.json")
   (setv world.capture-script ["❯ {composer}"])
   (<- row (run-launch world (launch-params
                               :agent_type "claude"
@@ -944,7 +944,7 @@
   ;; 名乗り: 起動の 1 行(名前つき)に file の path が入る
   (setv named (lfor line world.log-lines :if (in "seat-settings-file-absent" line) line))
   (assert (= (len named) 1) world.log-lines)
-  (assert (in "/home/agentd/dotfiles/claude-hooks/seat-settings.json" (get named 0)) (get named 0))
+  (assert (in "/home/user/dotfiles/claude-hooks/seat-settings.json" (get named 0)) (get named 0))
   ;; 黙って落としていない = 席は起きている(tmux の効果が在る)
   (assert (in "new-session" (lfor t world.trace (get t 0)))))
 
@@ -1077,9 +1077,9 @@
 
 
 (deftest test-launch-capacity-unlimited-when-max-running-absent
-  ;; 上限なし(max_running None)= admission の check ごと飛ぶ。2026-08-19 の
+  ;; 上限なし(max_running None)= admission の check ごと飛ぶ。
   ;; 同時走行の上限は ACP の都合であって sessionhost の性質ではない、という
-  ;; operator 裁定の受け口で、直接束縛(config を持たない使い方 = params に key が
+  ;; 決まりの受け口で、直接束縛(config を持たない使い方 = params に key が
   ;; 載らない)と同じ形。key 自体が無い場合と、key が None で載る場合(host が
   ;; 上限なしで起動した時の注入形)の両方で通ること。
   (for [params [(launch-params) (launch-params :max_running None)]]
@@ -1160,7 +1160,7 @@
 
 
 (deftest test-launch-rejects-metered-credential-in-overlay
-  ;; operator 裁定 2026-08-26: 従量課金 credential(API キー)はどの経路でも
+  ;; 従量課金 credential(API キー)はどの経路でも
   ;; 受けない — 席の認証は定額 profile(typed binding)のみ。判定は形
   ;; (`*_API_KEY`)なので既知 provider(ANTHROPIC_API_KEY)も未知 provider
   ;; (SOMETHING_API_KEY)も語彙改訂なしで弾く。副作用ゼロ(行も tmux も
@@ -1181,7 +1181,7 @@
 
 
 (deftest test-launch-rejects-personal-api-key-alias-in-overlay
-  ;; 反例(card acp:kanban-issue:ki-2a061da56ca9): 個人鍵の別名 3 綴りは形
+  ;; 反例: 個人鍵の別名 3 綴りは形
   ;; (`*_API_KEY`)に当たらないので従量課金の節を素通りし、受理の層では
   ;; 通っていた(spawn の砦だけが拾う = 呼び手へ返る断りが遅い)。語彙を
   ;; 語彙の 1 点(PROVIDER-AUTH-ENV-KEYS・#708 から doeff_agents/_agent_env.hy)へ寄せた後は**受理で**落ちる。
@@ -1364,8 +1364,8 @@
 
 (deftest test-launch-still-rejects-metered-credential-in-overlay-with-allow-flag
   ;; 旗は「binding の kind で宣言された従量課金の家を受ける」ことだけを許す。
-  ;; env に credential を積む経路は **旗があっても不変で拒否**(operator 裁定
-  ;; 2026-08-26 の env の締め出しは旗の有無に依らない — 鍵の値は host を通らない)。
+  ;; env に credential を積む経路は **旗があっても不変で拒否**(env の締め出しは
+  ;; 旗の有無に依らない — 鍵の値は host を通らない)。
   ;; 定額の kind でも従量課金の kind でも同じ。
   (for [[world params]
         [#((metered-claude-world) (metered-claude-params :allow_metered_billing True))
@@ -1639,7 +1639,7 @@
 
 
 (deftest test-launch-ready-gate-polls-by-the-time-effect
-  ;; ready gate の poll の待ちは doeff-time の Delay で、自前の待ちの効果ではない(card ki-3c3d85253c2c・
+  ;; ready gate の poll の待ちは doeff-time の Delay で、自前の待ちの効果ではない(
   ;; ADR-DOE-TIME-001 R1)。何も ready にならない画面・予算 5s → 待ちは全部 poll の間隔の Delay で、足すと予算に届く。
   (setv world (LaunchWorld))
   (setv world.capture-script ["nothing ready here"])

@@ -1,15 +1,15 @@
-//! DOEFF146: 判定を 1 か所に閉じ込めた語彙(agora-redesign #1106・#1192・#1371 — 元は agora-controllers の一時の検
+//! DOEFF146: 判定を 1 か所に閉じ込めた語彙(#1192・#1371 — 元は agora-controllers の一時の検
 //! check_screen_slice_single_point.hy)。
 //!
 //! architecture.hy の `:single-point-vocabulary [(vocabulary-scope "名" :patterns [r"…"] :files [..] :except [..] :instead "…") …]`
 //! で群を宣言する。群ごとに `:files` の glob に当たった Hy の file(`:except` に挙げた file を除く)を読み、註(`;` から行末・
 //! 文字列の外)を落とした本文に `:patterns` のどれかが当たる行が 1 行でもあれば file ごとに 1 件出す(critical)。判定は `:except`
 //! の file(通常は 1 つ = 判定の 1 点)だけが持ってよく、他の file がこの語彙を読むと「第 2 の判定」が生えたことになる。
-//! 註を落とすのは DOEFF150(:retired-words の :in lines — 註・docstring を数えない・agora-redesign #1794)と同じ向きの判断 —
+//! 註を落とすのは DOEFF150(:retired-words の :in lines — 註・docstring を数えない)と同じ向きの判断 —
 //! この規則は「判定の二重化」を見るので、判定でないことを述べる註(例: 「routedTo はここで読まない」)まで赤にしない。
 //! 判定は字面の行で読む(この語彙を使わずに済む形かは linter には分からない — repo の宣言が「これは判定の語彙だ」と決める)。
 //! ただし欄を 1 対 1 で写すだけの行(`:routed-to d.routed-to`・`"routedTo" request.routed-to` — 判断も分岐も無い)は数えない
-//! (agora-redesign #1800・#1762 の決定 Q2)。値をそのまま運ぶ行は判定を持たず、それを数えると判定の 1 点の外で欄を渡すだけの
+//! (#1762 の決定 Q2)。値をそのまま運ぶ行は判定を持たず、それを数えると判定の 1 点の外で欄を渡すだけの
 //! 行まで「第 2 の判定」になる。
 
 use std::path::{Path, PathBuf};
@@ -137,7 +137,7 @@ fn walked_hy_files(root: &Path, focus: Option<&[PathBuf]>) -> Vec<String> {
 
 /// `:single-point-vocabulary` の群ごとに `:except` の外の当たりを探す(群の宣言の順・path の順)。repo は 1 度だけ歩き(群ごとに
 /// 歩き直さない)、focus が在ればその下の file だけを読む — 当たりは file ごとにその file に付くので、答えは全体を読んで名指しで
-/// 絞った時と同じ(1 file の commit の hook で repo の全部の Hy を読んでいた・agora-redesign #1418)。
+/// 絞った時と同じ(1 file の commit の hook で repo の全部の Hy を読んでいた)。
 pub fn find(root: &Path, scopes: &[VocabularyScope], focus: Option<&[PathBuf]>) -> Vec<VocabularyHit> {
     let mut out = Vec::new();
     let walked = walked_hy_files(root, focus);
@@ -232,7 +232,7 @@ mod tests {
 
     #[test]
     fn a_line_that_only_copies_the_field_is_not_counted() {
-        // agora-redesign #1800: 欄を 1 対 1 で写すだけの行(keyword の鍵・文字列の鍵・日本語の註が前に在る行)は数えない。
+        // 欄を 1 対 1 で写すだけの行(keyword の鍵・文字列の鍵・日本語の註が前に在る行)は数えない。
         let dir = tempfile::tempdir().unwrap();
         std::fs::create_dir_all(dir.path().join("glue")).unwrap();
         std::fs::write(
@@ -301,7 +301,7 @@ mod tests {
 
     #[test]
     fn named_paths_read_only_the_named_files_with_the_same_answer() {
-        // agora-redesign #1418: 名指しの実行の当たりは、全体の実行の当たりを名指しで絞った物と同じ(名指しの外の b.hy は出ない)。
+        // 名指しの実行の当たりは、全体の実行の当たりを名指しで絞った物と同じ(名指しの外の b.hy は出ない)。
         // 隠し dir の下の file は名指しても数えない(全体の実行と同じ)。読めない file は全体でも黙って飛ばす(今までどおり)。
         let dir = tempfile::tempdir().unwrap();
         std::fs::create_dir_all(dir.path().join("glue")).unwrap();

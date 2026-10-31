@@ -1,4 +1,4 @@
-# 添付の画像の実 CLI 物理(段 10 lane 10o・agora-redesign #96 の便 1)
+# 添付の画像の実 CLI 物理(段 10 lane 10o)
 
 会話の画面から送る画像(郵便の添付)を、headless の claude と codex の app-server が**手番の入力としてどう受けるか**を
 実物の CLI で測った記録。interrupt-physics.md / resume-physics.md と同じ役割 — 偽 CLI(tests/headless_stubs)と
@@ -51,7 +51,7 @@ effort low / medium・sandbox read-only・approvalPolicy never)。
 - codex: 添付は turn/start の input に `{"type":"image","url":"data:<mime>;base64,<data>"}` の項として積む(localImage と
   API への入力は同じなので、agentd は一時 file を作らない)。割り込みの継ぎ足し(`pending_injection`)も項の列で持つ必要が
   ある(今日は文字列の連結)。
-- 両 CLI とも受けない mime を断らないので、受ける mime の判断は agentd の手前に 1 点置く(置き場は agora-redesign #96 の問い)。
+- 両 CLI とも受けない mime を断らないので、受ける mime の判断は agentd の手前に 1 点置く。
 - 再開: claude の `--resume` と codex の `thread/resume` は、CLI の履歴に画像の手番を残す。履歴からの再開(記録の service からの
   要約 — 9f-4 / 9o-3)の 1 項に画像をどう載せるかは、この測定の外。
 

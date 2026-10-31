@@ -59,7 +59,7 @@ class WatchFiles(EffectBase["FileWatch | WatchRefused"]):
     The watch is not recursive so that starting it costs the same for any number of entries: a recursive start walks
     the whole tree first, and the operating-system answerer starts on the caller's scheduler thread — on zeus a
     tool-stream directory of 4,217 entries took 39 s to start and one of 95,900 had not started after 260 s, with
-    every task of the turn-host waiting behind it (agora-redesign card ki-b82163261cc0, 2026-10-17)."""
+    every task of the turn-host waiting behind it (2026-10-17)."""
 
     directory: str
 

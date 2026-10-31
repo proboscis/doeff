@@ -1,4 +1,4 @@
-"""The analysis as effects (ADR-DOE-API-001 R24・card ki-593f9f44c501): a Program asks with ``AnalyzeProgram`` /
+"""The analysis as effects (ADR-DOE-API-001 R24): a Program asks with ``AnalyzeProgram`` /
 ``AnalyzeHandler`` / ``AnalyzeEnv`` / ``CheckCoverage`` and the handler ``effect_analysis()`` answers with what the
 functions inside the package read; the root shows the effects, the factory and the answer types only.
 

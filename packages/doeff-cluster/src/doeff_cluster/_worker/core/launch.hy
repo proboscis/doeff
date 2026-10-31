@@ -23,7 +23,7 @@
 ;; (#3972 — 継がなかった時、job の子の uv sync が 5 分半)。DOEFF_ の名は宣言の env-vars に書けない(予約の接頭辞)ので worker が継ぐ。宣言の env-vars と worker が組む DOEFF_WORKER_*・DOEFF_RUNTIME_ENV* を足す。LC_* は名を前もって知らない
 ;; 一族なので頭で拾う(CHILD-ENV-PREFIXES — ReadEnvironment の prefixes に渡せる形)。
 ;; job の log の送り先(DOEFF_JOB_LOG_OTLP)と配備が足す属性(DOEFF_JOB_LOG_ATTRIBUTES)も継ぐ: 子の shim と待ちの子から分かれた子 A の
-;; 刻つきの書き手が、worker の環境に在る時だけ job の log の行を OTLP でも送る(card ki-ae919abe5b26 — 名の読み手は
+;; 刻つきの書き手が、worker の環境に在る時だけ job の log の行を OTLP でも送る(名の読み手は
 ;; worker/entry/line_stamp の JOB_LOG_ENV_NAMES。木の job は worker の環境を EXTEND で継ぐので、この表は実行環境の job と待ちの子の分)。
 (setv CHILD-ENV-ALLOWED (frozenset #("PATH" "HOME" "USER" "LOGNAME" "SHELL" "LANG" "LANGUAGE" "TZ" "TMPDIR" "TERM"
                                      "SSL_CERT_FILE" "SSL_CERT_DIR" "UV_CACHE_DIR" "UV_PYTHON_INSTALL_DIR"
@@ -62,16 +62,16 @@
 (defk project-hy [project-dir]
   {:pre [(: project-dir str)] :post [(: % str)] :tags {:context "worker" :role "judgment"}}
   "実行環境の job と入口の検めの本体を起こす hy(root の venv の bin/hy — uv sync が置く入口の script)を決めるため。uv run を挟まずに
-   この path を直に起こす(card ki-869cdf21ec85 — uv run は子を spawn して待つだけで 1 本 6 MB を持っていた)。"
+   この path を直に起こす(uv run は子を spawn して待つだけで 1 本 6 MB を持っていた)。"
   (<- venv str (project-venv project-dir))
   (posixpath.join venv "bin" "hy"))
 
 
 (defk uv-run-environ [project-dir env]
   {:pre [(: project-dir str) (: env (get dict #(str str)))] :post [(: % (get dict #(str str)))] :tags {:context "worker" :role "judgment"}}
-  "`uv run --project <project-dir>` が子へ渡していた環境を、渡した env から導くため(card ki-b884608b96e4): project の venv
+  "`uv run --project <project-dir>` が子へ渡していた環境を、渡した env から導くため: project の venv
    (project-venv)の bin を PATH の頭に足し(PATH が無ければ bin だけ)、VIRTUAL_ENV にその venv を置く。実行環境の job は shim の下の
-   道も待ちの子から分ける道も uv を通らない(card ki-869cdf21ec85 — shim の下は root の venv の hy を直に起こす)ので、job-launch と
+   道も待ちの子から分ける道も uv を通らない(shim の下は root の venv の hy を直に起こす)ので、job-launch と
    probe-command がこの関数で 2 つを足した環境を子に置く — 名で hy・python を起こす task が、どの道でも同じ root の venv を引く。
    uv の足し方と字面が合う事は tests/test_task_venv_on_both_paths.hy が本物の uv で確かめる。"
   (<- venv str (project-venv project-dir))
@@ -97,7 +97,7 @@
    取って書き、task の印 <id>.program に残して掃除に使い、子 process の言い換えが spec-program-file で --program に渡す)。
    service も task も <版の指紋>/<sha>.json — 版は service が宣言の行の版・task が task の行の版(spec.versions)。同じ sha の Program を
    版の違う 2 本の task が使っても file が上書きし合わず(#3762)、同じ sha の Program を別の版で宣言し直した service は別の file を
-   取り直す(card ki-172e63fed4c7 — sha だけのキーでは前の版の file を持ち続け、子の入口が版の違いで断り続けた)。file の名は <sha>.json
+   取り直す(sha だけのキーでは前の版の file を持ち続け、子の入口が版の違いで断り続けた)。file の名は <sha>.json
    のまま(記録係の header が file の名から Program のキーを読む — shared/entry/boundary_recorder)。
    版の指紋 = 名の順の #(名 版) の組の正規 JSON の sha256 の頭 16 桁。"
   (val canonical (json.dumps (lfor #(k v) spec.versions [k v]) :ensure-ascii False :separators #("," ":")))
@@ -113,7 +113,7 @@
 
 
 (defn #^ bool outlives-worker [#^ JobSpec spec]  ; defk にできない: 純粋な判断の warm-start(Program の外の関数)が呼ぶ
-  "worker が消えても job を止めず、退いた process と同じに寿命の上限まで回すかを、宣言から決めるため(card ki-f69f2a6869aa — 定義点は
+  "worker が消えても job を止めず、退いた process と同じに寿命の上限まで回すかを、宣言から決めるため(定義点は
    ここ 1 つ)。退きの寿命の上限 retired-ms を持つ handoff の service だけが真: worker の世代の入れ替えでは、その job の旧い process は
    退いて寿命の上限まで回る(policy の retired-actions)ので、worker が落ちた時も同じ寿命で回す。他の job(task・recreate・寿命を宣言しない
    handoff)は偽(消失ですぐ止める — 今まで通り)。"
@@ -163,7 +163,7 @@
   (setv #^ tuple entry-args #())
   ;; 入口が走る環境(実行環境の job だけ — 名の順): 許可表で組んだ環境に root の venv の 2 つ(PATH の頭・VIRTUAL_ENV —
   ;; uv-run-environ)を足した物で、shim の下の道の env と同じ値。待ちの子から分ける task はこの環境を ForkFromWarm の env に載せ、2 つの道の
-  ;; 入口が同じ venv を名で引く(card ki-b884608b96e4)。分ける service も同じ値を使う(card ki-de44efdb9aa4)。木の job と入口の検めは
+  ;; 入口が同じ venv を名で引く。分ける service も同じ値を使う。木の job と入口の検めは
   ;; 待ちの子から分けないので空。
   (setv #^ (get tuple #(EnvEntry ...)) entry-env #()))
 
@@ -179,7 +179,7 @@
    DOEFF_RUNTIME_ENV_KEY を受ける)。Program の job(改訂 1 の F・H)は詰めた Program の file(program-path)を引数と環境変数(宿の契約
    HOST-CONTRACT の program-env — 呼び手が名を渡す。core は foundation の宿の契約を読まない)で渡す。実行環境の job は root の venv の hy を
    uv run を挟まずに直に起こす(PYTHONPATH を置かない・子の環境変数は許可表で組み、root の venv の 2 つ(uv-run-environ)を足す・
-   cwd = work-dir・待ちの子から分ける道の環境も同じ entry-env — card ki-869cdf21ec85)、
+   cwd = work-dir・待ちの子から分ける道の環境も同じ entry-env)、
    それ以外は木の PYTHONPATH(layout)を足して worker の環境を継ぐ(EXTEND)。allowed-env = worker の環境のうち許可表の名と LC_* の分
    (実行環境の job だけが読む — 読むのは呼び手: ReadEnvironment の names = CHILD-ENV-ALLOWED・prefixes = CHILD-ENV-PREFIXES)。
    shim-grace-ms = shim の猶予(worker の方針から shim_timing.shim-spans が導いた値 — 呼び手が渡す)。notice-env = 退きの知らせの pipe の

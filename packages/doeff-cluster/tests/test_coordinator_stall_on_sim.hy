@@ -1,5 +1,5 @@
 ;; coordinator の機体ごとの止まりを、模擬の世界(sim-cluster — 本物の coordinator と本物の worker を仮想の時計で回す)で受ける側から
-;; 確かめる失敗ケース(card ki-d033e5f969cf・親 card ki-b4d94c618094)。2026-10-13 02:22〜02:24 JST に atlas が 3 分止まり(containerd と
+;; 確かめる失敗ケース。2026-10-13 02:22〜02:24 JST に atlas が 3 分止まり(containerd と
 ;; kubelet が答えず、host の記録にも空白)、起きた coordinator が最初の歩で全 worker を lease 切れに数え、配る担当へ消えと戻りが 33 回
 ;; 届いた。筋書きの Program が coordinator と同じ知らせの broker を読む受け手になり、coordinator を StallCoordinator で 3 分止める。
 ;;   1 誰も死なない止まり: 止まりの間と明けた後に WorkerGone が 0 回(終わりの印として、明けた後に w1 の処理を止めた時の WorkerGone・
@@ -147,7 +147,7 @@
   (assert (is w1-live True) "生きている w1 は生きたまま"))
 
 
-;; --- 起き直しの後、Service に載るまで(card ki-439a73dc075c)---------------------------------------------------------------
+;; --- 起き直しの後、Service に載るまで---------------------------------------------------------------
 ;; 配備で coordinator の Pod が作り直されると、読み直して受付を始めてから Pod が Ready になり Service に載るまで(readinessProbe の周期 —
 ;; 最大 10 秒)worker の heartbeat は届かない(rev 47 2026-10-17 15:25 の実測: 全 worker が WorkerGone になり、Service に載った直後に
 ;; WorkerBack で戻った)。筋書きは両 worker の網を、止めてから作り直した coordinator の Service に載るまでの長さだけ切って、その形を作る。

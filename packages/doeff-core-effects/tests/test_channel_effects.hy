@@ -1,4 +1,4 @@
-;;; 汎用の列の effect(channel_effects.hy — agora-redesign #802 便 4 の相乗り)の検。
+;;; 汎用の列の effect(channel_effects.hy)の検。
 ;;;   - 届いた順に取れる・空の列を取る task は、別の task が積むまで待つ(他の task は回る)。
 ;;;   - 待ち手が Cancel されても、積んだ値は消えずに次の待ち手が取る。
 ;;;   - 消費者の形: Spawn した計算(Compute)の答えを、処理ループが 1 本の列で届いた順に読む。

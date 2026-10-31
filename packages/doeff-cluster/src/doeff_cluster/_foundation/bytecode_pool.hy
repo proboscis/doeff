@@ -10,7 +10,7 @@
 ;;; 環境ごとの code のうち今の source と今の環境の macro に合う物が在れば(doeff-hy の bytecode-is-current — Hy の source は記録の macro の
 ;;; 提供元を今の import の路で引き直して照らす)その code から .pyc を置く(stored)。無い・合わない物は焼いて .pyc を置き、今の環境の code を
 ;;; 鍵に足す(rebuilt — 他の環境の code は上書きしない)。.pyc は、保存先に置いた中身の同じ file への hardlink で置く(code_store の link-pyc —
-;;; root ごとに同じ中身を新しく書かない・card ki-d51b7baa38bc。置けなければ今どおり書く)。
+;;; root ごとに同じ中身を新しく書かない。置けなければ今どおり書く)。
 ;;; 木に既に在る .pyc(同じ commit の木を hardlink で写した root)が今の source と macro に合う物は、pool へ渡さずに残す(reused)。
 ;;; 標準出力 = 1 つ 1 行で、焼けなかった物は `failed\t<木の path>\t<相対 path>\t<理由>`(理由の tab と改行は空白)、保存先の code から書いた
 ;;; 物は `stored\t<木の path>\t<相対 path>`、焼かずに残した物は `reused\t<木の path>\t<相対 path>`、保存先へ書けなかった理由と、保存先の
@@ -22,8 +22,7 @@
 ;;; 提供元をこの路で引き直す)。.pyc は source の隣の __pycache__ に置く(python_bytecode の pyc-path)。
 ;;; --progress = 進みの印の file(呼び手の準備が停滞を見分ける印 — 1 つ用意し終えるたびに時刻を今にする・中身は変えない・無ければ触らない)。
 ;;; 印を焼きの前と後にしか進めないと、保存先に合う code の無い焼き直し(macro を変えた版の後の初めての準備 — 2026-10-27 の zeus-native で
-;;; 2,400 本・並べる数 2)が 1 file ずつ進んでいても、焼きの全体が停滞の閾(600 秒)を越えて止められ、作り直しも同じ所で止められた
-;;; (card ki-6401ff10af71)。
+;;; 2,400 本・並べる数 2)が 1 file ずつ進んでいても、焼きの全体が停滞の閾(600 秒)を越えて止められ、作り直しも同じ所で止められた。
 ;;;
 ;;; 版に依らず効く形: root の側から import するのは python_bytecode の compiled-pyc・checked-hash-pyc・pyc-path と doeff-hy の
 ;;; bytecode-is-current だけ(cluster で動く job の doeff の版から変わっていない名前と引数の形 — どれも 2026-10-02 の #2463・#2598 から在る)。
@@ -123,8 +122,8 @@
    組む(頭の後ろに entry の中身をそのまま — 同じ entry から置く .pyc が root をまたいで同じ bytes になり、保存先の 1 つの file を分け合う。
    組み方は code_store だけが知る)。
    保存先の鍵には macro の環境ごとの entry が並ぶ(doeff の版の違う書き手の物も — code_store の current-code)。今の source の hash と
-   今の環境の macro に合う entry だけを使い、無ければ焼き直して今の環境の entry を鍵に足す(他の環境の entry は上書きしない — card
-   ki-6828e9af04b4: 鍵 1 つに entry 1 つの形では、版の違う書き手と同じ鍵を交互に上書きし、同じ版の準備でも 1 回に 100〜600 本を
+   今の環境の macro に合う entry だけを使い、無ければ焼き直して今の環境の entry を鍵に足す(他の環境の entry は上書きしない —
+   鍵 1 つに entry 1 つの形では、版の違う書き手と同じ鍵を交互に上書きし、同じ版の準備でも 1 回に 100〜600 本を
    焼き直した)。"
   (setv source (posixpath.join tree rel))
   (try

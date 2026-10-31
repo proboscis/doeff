@@ -26,7 +26,7 @@ USED = (
          "PG-STORE"),
     ),
     UsedModule("_admission", ("key-text", "row-matches?", "retention-group-of", "key-from-text")),
-    # PostgreSQL の表の用意の検が import する名(使い手の repo の表の用意の検・card ki-a87c5f8a3b11)。
+    # PostgreSQL の表の用意の検が import する名(使い手の repo の表の用意の検)。
     UsedModule("_pg_sql", ("schema-statements", "writer-lock-key", "migrate-lock-key")),
     # 手入れの回収を effect で出す使い手(使い手の repo の写しの検 — 期限の後に SweepExpired を名で出す・2026-10-05)。
     UsedModule("_maintenance", ("SweepExpired", "Swept", "PruneChanges", "Pruned", "ReadChangeLog", "ChangeLog")),
@@ -149,7 +149,7 @@ def test_a_key_of_another_element_type_is_red_at_key_text(tmp_path: Path) -> Non
 
 
 # 表の用意の文の列(schema-statements)を使い手の形で受ける: 答えは Statement の tuple。素の tuple では .pyi が tuple[Unknown, ...] になり、
-# 使い手の strict の門に「型の一部が分からない」の赤(partially unknown)が出た(card ki-a87c5f8a3b11)。BOUND = 受ける型。
+# 使い手の strict の門に「型の一部が分からない」の赤(partially unknown)が出た。BOUND = 受ける型。
 PREPARED = """\
 (require doeff-hy.macros [defk <-])
 (import doeff_records._pg_sql [Statement schema-statements])

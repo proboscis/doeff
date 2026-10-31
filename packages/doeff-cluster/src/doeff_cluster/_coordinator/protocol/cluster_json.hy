@@ -42,7 +42,7 @@
                     (tuple (gfor row (get data "nodeCapabilities")
                                  #((get row "label") (get row "value") (get row "capability"))))
                     base.node-capabilities))
-  ;; pool- で始まる名は worker が枠の file で名乗る置ける組の印(card ki-ced3c45980a5)。導く能力と名が重なると、枠の file の印が
+  ;; pool- で始まる名は worker が枠の file で名乗る置ける組の印。導く能力と名が重なると、枠の file の印が
   ;; node の label の境界を名乗れてしまう(coordinator は導く能力の名を worker の名乗りから外す)ので、起動で断る。
   (setv pooled (sorted (gfor row derived :if (.startswith (get row 2) POOL-PREFIX) (get row 2))))
   (when pooled
@@ -56,11 +56,11 @@
 (deff task-record-to-json [#^ TaskRecord task]  ; defk にできない: 保存の綴り(state_json・durable_kv — Program の外)が呼ぶ純粋な綴り
   {:pre [(: task TaskRecord)] :post [(: % dict)] :tags {:context "coordinator" :role "protocol" :spells "json"}}
   "TaskRecord → 保存の JSON の形(版は名 → 値の object・needs は名の list)。保存の 2 つの形(state file と durable の KV)はここだけを使う。
-   知らせ先の無い行は欄 notify を置かない(card ki-e7945a2b2d00 — 欄を知らない前の版の coordinator へ戻しても、知らせ先の無い開いた行を
+   知らせ先の無い行は欄 notify を置かない(欄を知らない前の版の coordinator へ戻しても、知らせ先の無い開いた行を
    旧い形と読んで failed にしない)。"
   (setv row (| (asdict task) {"versions" (dict task.versions) "needs" (list task.needs) "environ" (dict task.environ)
                               "limits" (task-limits-json task.limits)}))
-  ;; 待ちの知らせの印(card ki-4b6613f39c80)も、積んでいない行は欄を置かない(欄を知らない前の版へ戻しても、待っている行を旧い形と
+  ;; 待ちの知らせの印も、積んでいない行は欄を置かない(欄を知らない前の版へ戻しても、待っている行を旧い形と
   ;; 読んで failed にしない — 印を積んだ行だけが戻した版で failed になる)。
   (setv unset (| (if task.notify #{} #{"notify"}) (if (is task.queued-noticed-ms None) #{"queued_noticed_ms"} #{})))
   (dfor #(k v) (.items row) :if (not-in k unset) k v))
@@ -69,15 +69,15 @@
 (defk task-record-from-json [data]
   {:pre [(: data (get dict #(str object)))] :post [(: % TaskRecord)] :tags {:context "coordinator" :role "protocol" :reads "json"}}
   "保存の JSON の形 → TaskRecord(task-record-to-json の逆)。
-   旧い形の行は読み直しで coordinator を落とさず、まだ終わっていない行を failed(理由つき)にする — 旧い形は受け付けない
-   (operator 2026-09-27)。旧い形 = TaskRecord に無い欄を持つ行(今の TaskRecord の欄の集合 1 つで判じる — 消した欄を 1 つずつ数えると、
+   旧い形の行は読み直しで coordinator を落とさず、まだ終わっていない行を failed(理由つき)にする — 旧い形は受け付けない。
+  旧い形 = TaskRecord に無い欄を持つ行(今の TaskRecord の欄の集合 1 つで判じる — 消した欄を 1 つずつ数えると、
    数え漏れた欄 1 つで読み直しが TypeError になり coordinator が起きない。実弾 2026-09-28 の予行: 3880944e の行の env)。
    無い欄は捨てて読む(終わった行は Program 無し = program None で読む)。空の requires は needs 無しと同じ。"
   (val known (sfor f (fields TaskRecord) f.name))
   (val extra (sorted (gfor k data :if (not-in k known) k)))
   (val phase (stored-str data "phase" "queued"))
   (val unended (not-in phase ENDED-PHASES))
-  ;; 上限の値と範囲を名乗る limits(2026-10-12 より前の形)も旧い形(読み分けて値を捨てて数えない — card ki-b0e8028c8c8d)。
+  ;; 上限の値と範囲を名乗る limits(2026-10-12 より前の形)も旧い形(読み分けて値を捨てて数えない)。
   (val old-limits (old-limits-reason (list (stored-items data "limits"))))
   (val reason (or (old-task-row-reason (.get data "requires") extra) old-limits))
   ;; failure = まだ終わっていない旧い形の行を failed にする理由(None = そのまま読む)
@@ -114,9 +114,9 @@
               ;; (まだ終わっていなければ上の failure で failed — 置かない行は数えない)。
               :priority (stored-int data "priority" 0)
               :limits (if old-limits #() (stored-limits data))
-              ;; 終わりの知らせ先(card ki-e7945a2b2d00)の欄の無い行は知らせない(足した欄)。
+              ;; 終わりの知らせ先の欄の無い行は知らせない(足した欄)。
               :notify (stored-str data "notify" "")
-              ;; 待ちの知らせの印(card ki-4b6613f39c80)の欄の無い行は、まだ積んでいない(足した欄)。
+              ;; 待ちの知らせの印の欄の無い行は、まだ積んでいない(足した欄)。
               :queued-noticed-ms (stored-optional-int data "queued_noticed_ms")))
 
 
@@ -219,7 +219,7 @@
 (deff old-limits-reason [#^ list limits]  ; defk にできない: 保存の読み直し(Program の外)が呼ぶ純粋な判断
   {:pre [(: limits list)] :post [(: % (| str None))] :tags {:context "coordinator" :role "protocol"}}
   "保存の task の行の limits が旧い形(上限の値 limit と範囲 scope を task が名乗る — 2026-10-12 より前)なら、まだ終わっていない行を
-   failed にする理由の文(新しい形なら None)。値の持ち主は系の宣言 1 つになった(card ki-b0e8028c8c8d)ので、旧い行の値を読んで数えない。"
+   failed にする理由の文(新しい形なら None)。値の持ち主は系の宣言 1 つになったので、旧い行の値を読んで数えない。"
   (if (any (gfor item limits (and (isinstance item dict) (or (in "limit" item) (in "scope" item)))))
       "旧い形の task(上限の値と範囲を名乗る limits)は受け付けない — 上限の値と範囲は系の宣言(:task-limits)が持つ。組の名だけで送り直す"
       None))

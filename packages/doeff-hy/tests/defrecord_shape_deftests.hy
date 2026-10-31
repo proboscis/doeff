@@ -1,5 +1,5 @@
 ;;; defrecord の型の振る舞い(frozen・等価・hash・repr・既定値・kw-only・欄の表)が、同じ欄の標準の dataclass と同じ事の検
-;;; (card acp:kanban-issue:ki-a0cca3bdb9a0 — 展開の時に関数を書き、読み込みの時に dataclass に関数の source を compile させない)。
+;;; (展開の時に関数を書き、読み込みの時に dataclass に関数の source を compile させない)。
 ;;;
 ;;; 確かめること: 欄の形を全部持つ record(既定値なし・字面の既定値・default-factory・repr を切る・比べを切る・init を切る・:check)と、
 ;;; 同じ欄を手で書いた標準の dataclass を、作る・比べる・hash・repr・凍結・kw-only・fields・replace・asdict・__match_args__・
@@ -130,7 +130,7 @@
   (<- _ (Pure None))
   ;; __repr__ は再帰の守り(reprlib.recursive_repr)に包まれる — 包まれた関数の code を見る。包みが __wrapped__ を持つのは Python 3.13
   ;; からで、それより前は包みの code(reprlib.py)しか見えないので、3.12 までは __repr__ を数えない。
-  ;; __init__・__eq__・__hash__ は型ごとの関数で、__repr__ と凍結の 2 つは record_runtime の共有の 1 組(card ki-ff2c33449b3f)。
+  ;; __init__・__eq__・__hash__ は型ごとの関数で、__repr__ と凍結の 2 つは record_runtime の共有の 1 組。
   (val own (lfor n #("__init__" "__eq__" "__hash__") #(n (. (getattr Shape n) __code__ co-filename))))
   (val shared (lfor n (+ #("__setattr__" "__delattr__") (if (>= sys.version-info #(3 13)) #("__repr__") #()))
                     #(n (. (getattr (getattr Shape n) "__wrapped__" (getattr Shape n)) __code__ co-filename))))
@@ -140,7 +140,7 @@
 
 (deftest test-records-share-one-set-of-methods-and-keep-no-runtime-text
   ;; 失敗ケース(直す前は赤): 型ごとに __repr__・__setattr__・__delattr__ の関数を書き、__init__ の引数に注記を書き、
-  ;; docstring を型に持たせた — 型 約 1,760 の job で関数と注記と文が 10 MB を越えた(card ki-ff2c33449b3f)。
+  ;; docstring を型に持たせた — 型 約 1,760 の job で関数と注記と文が 10 MB を越えた。
   (<- _ (Pure None))
   (val shared #("__repr__" "__setattr__" "__delattr__"))
   (assert (all (gfor n shared (is (getattr Shape n) (getattr Bare n) (getattr Empty n)))))
@@ -204,7 +204,7 @@
 
 
 (deftest test-the-seal-refuses-a-post-init-the-written-init-does-not-call
-  ;; 失敗ケース(card ki-a49427e82a0b — 守りの 2 段目・直す前は赤): 展開が本体の自前の __post_init__ を見落として __init__ を書くと、
+  ;; 失敗ケース(守りの 2 段目・直す前は赤): 展開が本体の自前の __post_init__ を見落として __init__ を書くと、
   ;; 入力の検査は黙って効かなくなる(424a87f58 の後退は日次の検 8 本の赤で見つかるまで本番の coordinator に載った)。展開が書いた
   ;; record を仕上げる seal_record は、型が __post_init__ を持つのに展開の __init__ が呼ばない時に読み込みで断る。
   (<- _ (Pure None))

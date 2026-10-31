@@ -5,7 +5,7 @@ use std::collections::BTreeSet;
 
 /// 文の入れ子の本体(規則に 1 つずつ渡す文の列)。文の種類を網羅する(`_ =>` を使わない)— 降りない本体が在ると、
 /// そこの code にはどの規則も当たらない(for / while の else・async for・async with・match の case・try* を
-/// 落としていた — agora-redesign #2834)。linter 本体の文ごとの再帰と、module 全体を自分で辿る規則が読む 1 か所。
+/// 落としていた)。linter 本体の文ごとの再帰と、module 全体を自分で辿る規則が読む 1 か所。
 pub fn nested_bodies(stmt: &Stmt) -> Vec<&[Stmt]> {
     match stmt {
         Stmt::FunctionDef(func) => vec![func.body.as_slice()],
@@ -67,7 +67,7 @@ pub fn each_statement<'a>(body: &'a [Stmt], visit: &mut impl FnMut(&'a Stmt)) {
     }
 }
 
-/// file の中で環境変数の読みを指す名の表(DOEFF004 と DOEFF106 の環境変数の種類が読む 1 か所 — agora-redesign #3012)。
+/// file の中で環境変数の読みを指す名の表(DOEFF004 と DOEFF106 の環境変数の種類が読む 1 か所)。
 /// file の import 文(module の直下と、関数・class・if ほかの入れ子の中の import 文の全部)から 1 度だけ作る。
 /// 名の束ね先は file 全体で 1 つ(Python の名の有効範囲は見ない — 関数の中の `import os as x` の `x` も file の全体で os を指すと見る)。
 /// `importlib.import_module("os")`・`__import__("os")`・`from os import *` は見ない(範囲の外)。

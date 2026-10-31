@@ -11,7 +11,7 @@ def _agent_env() -> ModuleType:
 
     Not ``sessionhost/policy.hy``: that module drags the session host's effect
     vocabulary (tmux / fs / store) into every importer, and the headless turn
-    route reaches this file (agora-redesign #708).
+    route reaches this file.
 
     Imported lazily inside the functions that need it, never at module import:
     the Hy module costs ~0.3s to compile and ``doeff_agents._shell`` is on the
@@ -36,7 +36,7 @@ def _forbidden_agent_env_keys() -> frozenset[str]:
 
     Do NOT flatten the three sets into one list here: admission and spawn
     deliberately carry TURN_AUTH (ADR-DOE-AGENTS-012 R5/R30), so the union
-    belongs to this layer only (card acp:kanban-issue:ki-2a061da56ca9).
+    belongs to this layer only.
     """
     vocabulary = _agent_env()
     return frozenset(

@@ -279,8 +279,7 @@ def _texts(code: CodeType) -> Iterator[str]:
 
 def _gensym_names(code: CodeType) -> list[str]:
     """code の木の gensym の名(Hy が改めた束縛の名に埋まった物は、埋まった gensym の名)を並べる — 名の形は正準化の持ち物
-    (records の GENSYM_NAME・RENAMED_BINDING)で読み、この file に写さない(Hy が形を替えた便が直すのは records だけ — 設計検証
-    lt-JYZ9N64ZE70GCBXPP33QDG3WF7)。"""
+    (records の GENSYM_NAME・RENAMED_BINDING)で読み、この file に写さない(Hy が形を替えた便が直すのは records だけ)。"""
     return sorted(records.gensym_renames(_texts(code)))
 
 

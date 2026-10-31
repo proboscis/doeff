@@ -1,4 +1,4 @@
-//! 定義の本体の文字 — editor-json の `bodies`(読む面の本体の行・agora-redesign #910 U2)。
+//! 定義の本体の文字 — editor-json の `bodies`(読む面の本体の行)。
 //!
 //! doeff-runner の読む面(webview)は定義などの実体を HTML のカードで見せ、**文字で出すのは本体だけ**。本体の文字の形は operator が
 //! 承認済み("yeah val var when match is perfect.")で、表の正本は `docs/design/hy-reading-plane/artifacts/v2/design.md` 2.2 節と

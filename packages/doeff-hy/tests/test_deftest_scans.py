@@ -1,4 +1,4 @@
-"""deftest の meta の ``:scans`` — そのテストが走査して読む dir か glob の宣言(agora-redesign #3874・親 #3873)。
+"""deftest の meta の ``:scans`` — そのテストが走査して読む dir か glob の宣言(親 #3873)。
 
 選びの道具(agora-controllers の land_focus_gate)は file を Hy の reader で読んで ``:scans`` を引き、変えた path が glob に
 当たればそのテストを選ぶ。展開は宣言を pytest の印 ``scans`` として関数に付け、item の記録(#1211)にも印の名を残す。
