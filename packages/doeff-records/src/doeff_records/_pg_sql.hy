@@ -58,10 +58,8 @@
 ;;; なる(本番の分布の 46.8 万行の置き場で 280 ms → 6 ms)。読みの文は、絞りの欄が全部表の欄の式で照らせる時、条件 ledger = :ledger を
 ;;; 置かない(表の欄の式の条件がその表の行だけに合う — 置くと planner は ledger の選択度を式の選択度に重ねて掛け、ledger だけの索引を
 ;;; 組みに足す)。
-;;; 部分索引にしない訳: 述語 ledger = '<表>' は上の重なりで組めず、述語 `<式> IS NOT NULL` は planner が部分索引の式の統計を読まないので
-;;; 式の統計(CREATE STATISTICS)が要り、その統計は値の組の値 1 つずつの見積もりで読み直されて、値 995 個の組の計画に 55〜65 ms かかった
-;;; (全部の行の索引の式の統計なら 3.5 ms)。全部の行の索引の他の表の行の項は NULL の 1 項(payload を開かない)で、本番の 44 万行で
-;;; 1 本 約 10 MB(旧い形 1 本 約 56 MB)。式の統計は表の標本(ANALYZE)が索引の式から取る(sampled — 作った後に標本を取り直す)。
+;;; 述語 ledger = '<表>' の部分索引にしない訳: 上の重なりで組めない。表の欄の式の索引は述語 `<式> IS NOT NULL` の部分索引(下の註の
+;;; 「表の欄の式の索引を部分索引にする」— 欄ごとに式が違うので組める)。
 ;;; 旧い形の索引と前の部分索引(名 = table-index-name)は aliases: 在る欄は、表の欄の式の索引を作り終えるまで、その欄を前の文の形
 ;;; (ledger = :ledger と欄の式 — field-expression)で照らす読みに答える(索引の用意は aliases が在っても表の欄の式の索引を作る)。
 ;;; 旧い形の索引を外す(2026-10-19): 宣言の索引が全部そろい(差が無い)、表の欄の式の索引の欄が全部表の欄の式で照らせる(見積もれる)
@@ -106,6 +104,19 @@
 ;;; disk 読みを 0.5 回にし、索引の項も他の表の行の分だけ減らすが、前者は式の統計の訳(上の註)で、後者は置き場の表の作り直し
 ;;; (150 万行の移し替えと、旧い版が CONCURRENTLY で索引を作れない形)で選ばない。終端の行の読み(terminal-rows-statement の
 ;;; 状態の欄の IN と updated_at <= 境)は後ろの列の範囲で引ける。
+;;; 表の欄の式の索引を部分索引にする(2026-10-31): 表の欄の式の索引は述語 `<表の欄の式> IS NOT NULL` の部分索引(名 = fp_ — 列は前の形
+;;; ft_ と同じ (表の欄の式, updated_at))と、索引と同じ名の式の統計(CREATE STATISTICS — 名は索引と別の catalog に在る)の組。前の形 ft_ は
+;;; 全部の行の索引で、他の表の行の項 (NULL, 書いた刻) は後ろの列が行ごとに違うので B-tree の重複のまとめが効かず、HOT にならない書きの
+;;; たびに全部の索引の右の端へ積まれ、vacuum が消した項の空きは中ほどの葉に散らばって使い直されない(本番の 272 万行の置き場で 63 本・
+;;; 15 GB、7 日で 3 倍 — 置き場の volume の伸びの 6 割)。部分索引はその表の行の項だけを持ち、他の表の行の書きは述語の CASE が NULL を
+;;; 返すだけで索引に触らない。読みの文の条件 `<式> = :w` と `<式> IN (…)` は strict な比べなので、文を変えずに planner が述語を証明して
+;;; 選ぶ。planner は部分索引の式の統計を読まない(selfuncs の examine_variable — 述語の在る索引の統計は表の全部の行を映さない)ので、
+;;; 見積もりは式の統計が持つ(他の表の行を NULL と数える — 全部の行の索引の式の統計と同じ値)。観測は、式の統計の在る索引を、その統計に
+;;; 標本が入った時だけ見積もれると数える(indexes-statement)。式の統計は値の組の値 1 つずつの見積もりで読み直されるので、値の組の計画は
+;;; 全部の行の索引より重い(本番に近い統計〔1 本 7 KB〕の手元の 100 万行で、値 995 個の組と値 5 個の組の 1 頁の計画は 17〜30 ms →
+;;; 73〜160 ms、値 100 個は 2〜4 → 6〜14 ms、値 10 個までは 1 ms 未満)が、見積もりが表の行の数でなくその表の行の数に依るので、当たる行の
+;;; 少ない欄の索引だけを引く計画を選び、同じ 1 頁の実行は 80〜125 ms → 25〜36 ms(計は同じほど)。前の形 ft_ は peers(作り終えて式の
+;;; 統計に標本が入るまで同じ読みに答え、その後に今の宣言に無い表ごとの索引として外す)。
 ;;; 鍵の綴りの順の索引: 列 key と主キー (ledger, key) の索引は database の既定の照合順(本番は en_US.utf8)で並び、頁読みの順
 ;;; key COLLATE "C"(memory の置き場と同じ符号点の順)では主キーを辿れない。索引の無い置き場の 1 頁は、表の全部の行を読んで並べ替えて
 ;;; 上から limit + 1 行を取る(2026-10-19 の本番 — 1.88 万行の表で 1 頁ごとに 1.88 万行・全頁の読みは行の数の 2 乗)。照合順 "C" の
@@ -191,11 +202,12 @@
 (val PREFIX-PATTERN (re.compile "^[a-z_][a-z0-9_]{0,30}$"))
 ;; 旧い形の索引の名の接頭辞の後ろ(index-name の ix_<欄の指紋> と table-index-name の ix_<欄の指紋>_<表の指紋> — retired-index?)。
 (val RETIRED-INDEX-PATTERN (re.compile "ix_[0-9a-f]{12}(_[0-9a-f]{12})?"))
-;; 宣言が作る表ごとの索引の名の接頭辞の後ろ(table-field-index-name の ft_・ordered-index-name の op_・ordered-within-index-name の wp_ —
+;; 宣言が作る表ごとの索引の名の接頭辞の後ろ(table-field-index-name の fp_・ordered-index-name の op_・ordered-within-index-name の wp_ —
 ;; どれも <形>_<欄か欄の組の指紋>_<表の指紋> — table-shaped-index?)。ox_・ow_ は上から読む索引の前の形(全部の行の索引 — 頭の註の
-;; 「上から読む索引を部分索引にする」)の名、fx_ は表の欄の式の索引の前の形(式 1 つの索引 — 頭の註の「表の欄の式の索引の項を書きの刻の順に
-;; 並べる」)の名で、今の宣言は作らないので、索引の用意が今の宣言に無い物として外す。
-(val TABLE-SHAPED-INDEX-PATTERN (re.compile "(ft|fx|ox|ow|op|wp)_[0-9a-f]{12}_[0-9a-f]{12}"))
+;; 「上から読む索引を部分索引にする」)の名、fx_・ft_ は表の欄の式の索引の前の形(式 1 つの索引と全部の行の 2 列の索引 — 頭の註の
+;; 「表の欄の式の索引の項を書きの刻の順に並べる」「表の欄の式の索引を部分索引にする」)の名で、今の宣言は作らないので、索引の用意が今の
+;; 宣言に無い物として外す。
+(val TABLE-SHAPED-INDEX-PATTERN (re.compile "(fp|ft|fx|ox|ow|op|wp)_[0-9a-f]{12}_[0-9a-f]{12}"))
 (val DEFAULT-PREFIX "records_")
 ;; 錠の鍵の接尾(接頭辞の後ろに区切りなしで続ける — 旧い版の錠の文の引数と同じ字面)。
 (val WRITER-LOCK-SUFFIX "records-writer")
@@ -270,7 +282,9 @@
    (table-field-expression)で照らす (表, 欄) の組の並び(表の欄の式の索引だけ)/ aliases = この索引を作り終えるまで serves の読みに答える
    旧い形の索引の名(頭の註 — 在っても作る)/ sampled = 見積もりが索引の式の統計(表の標本 — ANALYZE が取る)に依る索引か(作った後に
    表の標本を取り直す — 作ったばかりの索引の式の統計は空)/ peers = この索引を作り終えるまで、scoped の読み(表の欄の式の条件)にも
-   答える前の形の索引の名(先頭の式がこの索引と同じ — 頭の註の「表の欄の式の索引の項を書きの刻の順に並べる」。aliases にも入れる)。"
+   答える前の形の索引の名(先頭の式がこの索引と同じ — 頭の註の「表の欄の式の索引の項を書きの刻の順に並べる」。aliases にも入れる)/
+   statistics = 索引の前に作る、索引と同じ名の式の統計の文(CREATE STATISTICS IF NOT EXISTS … — catalog だけの一瞬の文。None = 要らない —
+   planner は部分索引の式の統計を読まないので、見積もりに式の統計の要る部分索引だけが持つ・頭の註の「表の欄の式の索引を部分索引にする」)。"
   (#^ str name)
   (#^ str relation)
   (#^ str text)
@@ -278,7 +292,8 @@
   (#^ (get tuple #(IndexedField ...)) scoped)
   (#^ (get tuple #(str ...)) aliases)
   (#^ bool sampled)
-  (setv #^ (get tuple #(str ...)) peers #()))
+  (setv #^ (get tuple #(str ...)) peers #())
+  (setv #^ (| str None) statistics None))
 
 
 (defrecord AddedColumn
@@ -449,8 +464,18 @@
 (defk table-field-index-name [prefix table field-name]
   {:pre [(: prefix str) (: table str) (: field-name str)] :post [(: % str)]
    :tags {:context "records" :role "foundation"}}
-  "表 table の欄 field-name の表の欄の式の索引(頭の註 — 項を書きの刻の順に並べる形)の名を作るため(接頭辞 31 字 + 30 字 —
-   PostgreSQL の名の上限 63 字の内)。"
+  "表 table の欄 field-name の表の欄の式の索引(頭の註 — 述語 `<式> IS NOT NULL` の部分索引)と、その式の統計の名を作るため(接頭辞
+   31 字 + 30 字 — PostgreSQL の名の上限 63 字の内)。"
+  (<- field-digest (digest-of field-name))
+  (<- table-digest (digest-of table))
+  (.format "{}fp_{}_{}" prefix field-digest table-digest))
+
+
+(defk whole-field-index-name [prefix table field-name]
+  {:pre [(: prefix str) (: table str) (: field-name str)] :post [(: % str)]
+   :tags {:context "records" :role "foundation"}}
+  "表 table の欄 field-name の表の欄の式の索引の前の形(全部の行の (表の欄の式, updated_at) の索引 — 頭の註の「表の欄の式の索引を
+   部分索引にする」)の名を作るため。表の欄の式の索引の aliases と peers(作り終えるまで同じ読みに答える)。"
   (<- field-digest (digest-of field-name))
   (<- table-digest (digest-of table))
   (.format "{}ft_{}_{}" prefix field-digest table-digest))
@@ -459,8 +484,8 @@
 (defk former-field-index-name [prefix table field-name]
   {:pre [(: prefix str) (: table str) (: field-name str)] :post [(: % str)]
    :tags {:context "records" :role "foundation"}}
-  "表 table の欄 field-name の表の欄の式の索引の前の形(式 1 つの索引 — 頭の註の「表の欄の式の索引の項を書きの刻の順に並べる」)の名を
-   作るため。表の欄の式の索引の aliases と peers(作り終えるまで同じ読みに答える)。"
+  "表 table の欄 field-name の表の欄の式の索引の前の前の形(式 1 つの索引 — 頭の註の「表の欄の式の索引の項を書きの刻の順に並べる」)の
+   名を作るため。表の欄の式の索引の aliases と peers(作り終えるまで同じ読みに答える)。"
   (<- field-digest (digest-of field-name))
   (<- table-digest (digest-of table))
   (.format "{}fx_{}_{}" prefix field-digest table-digest))
@@ -555,25 +580,29 @@
 (defk field-index [prefix table field-name serves]
   {:pre [(: prefix str) (: table str) (.match TABLE-NAME-PATTERN table) (: field-name str) (: serves bool)] :post [(: % DeclaredIndex)]
    :tags {:context "records" :role "foundation"}}
-  "表 table の欄 field-name の表の欄の式の索引 state_rows (表の欄の式, updated_at) を作るため(頭の註 — 宣言した索引の欄と、その表の
-   索引の欄に無い保持の期限の在る表の状態の欄)。部分索引にしない(頭の註 — 述語 ledger = '<表>' は同じ表の欄の索引どうしを planner が
-   組まず、述語 `<式> IS NOT NULL` は式の統計の読み直しで値の組の計画が重い)。後ろの列 updated_at は、他の表の行の項 (NULL, 書いた刻) を
-   索引の右の端に並べる(頭の註の「表の欄の式の索引の項を書きの刻の順に並べる」)。見積もりは索引の式の統計(sampled — 表の標本が取る)。
+  "表 table の欄 field-name の表の欄の式の索引 state_rows (表の欄の式, updated_at) WHERE <表の欄の式> IS NOT NULL を作るため(頭の註 —
+   宣言した索引の欄と、その表の索引の欄に無い保持の期限の在る表の状態の欄)。述語は表の欄の式(頭の註の「表の欄の式の索引を部分索引に
+   する」— 他の表の行の書きは索引に触らない。述語 ledger = '<表>' は同じ表の欄の索引どうしを planner が組まない)。後ろの列 updated_at
+   は、終端の行の読みが範囲で引く(頭の註)。見積もりは索引と同じ名の式の統計(statistics — 表の標本が取る・sampled)。
    serves = 宣言した索引の欄か(ListRows がこの索引を待つ — NotIndexed の判断)。aliases = 旧い形の索引と前の部分索引と前の形の索引
-   (作り終えるまで前の文の形の読みに答える)。peers = 前の形の索引(先頭の式が同じ — 作り終えるまで表の欄の式の条件の読みに答える)。"
+   (作り終えるまで前の文の形の読みに答える)。peers = 前の形の索引(先頭の式が同じ全部の行の索引 — 作り終えるまで表の欄の式の条件の
+   読みに答える)。"
   (<- name (table-field-index-name prefix table field-name))
   (<- partial (table-index-name prefix table field-name))
   (<- legacy (index-name prefix field-name))
   (<- former (former-field-index-name prefix table field-name))
+  (<- whole (whole-field-index-name prefix table field-name))
   (<- expression (table-field-expression "" table field-name))
   (val indexed (IndexedField :table table :field field-name))
   (DeclaredIndex :name name :relation "state_rows"
-                 :text (.format "CREATE INDEX IF NOT EXISTS {i} ON {p}state_rows ({e}, updated_at)" :i name :p prefix :e expression)
+                 :text (.format "CREATE INDEX IF NOT EXISTS {i} ON {p}state_rows ({e}, updated_at) WHERE {e} IS NOT NULL"
+                                :i name :p prefix :e expression)
                  :serves (if serves #(indexed) #())
                  :scoped #(indexed)
-                 :aliases #(legacy partial former)
+                 :aliases #(legacy partial former whole)
                  :sampled True
-                 :peers #(former)))
+                 :peers #(former whole)
+                 :statistics (.format "CREATE STATISTICS IF NOT EXISTS {i} ON {e} FROM {p}state_rows" :i name :p prefix :e expression)))
 
 
 (defk fixed-index [name relation text]
@@ -618,8 +647,12 @@
 (defk index-steps [index]
   {:pre [(: index DeclaredIndex)] :post [(: % (get tuple #(SchemaStep ...)))]
    :tags {:context "records" :role "foundation"}}
-  "索引 1 つを表の用意の文にするため(移行の transaction は、索引の表がその transaction で生まれた時だけ流す)。"
-  #((SchemaStep :statement (Statement :text index.text :params #()) :index index)))
+  "索引 1 つを表の用意の文にするため(移行の transaction は、索引の表がその transaction で生まれた時だけ流す)。式の統計の要る索引は、
+   統計の文を索引の文の前に置く(DeclaredIndex の statistics)。"
+  (val made #((SchemaStep :statement (Statement :text index.text :params #()) :index index)))
+  (if (is index.statistics None)
+      made
+      (+ #((SchemaStep :statement (Statement :text index.statistics :params #()) :index index)) made)))
 
 
 (defk schema-steps [prefix schema]
@@ -801,14 +834,23 @@
    :tags {:context "records" :role "foundation"}}
   "置き場の表の索引の名と、使える形か(indisvalid — CONCURRENTLY の作りかけは False で残る)と、見積もれるか(索引の式の統計が在るか、
    表に統計がまだ 1 つも無いか — 既に統計の在る表に足して標本を取り直す前の式の索引は、値の組の見積もりが既定の選択度の積み上げになり、
-   表の行を頭から読む計画が選ばれる・DeclaredIndex の sampled)を読む文を作るため(索引の観測)。統計は持ち主の役が読める pg_stats から
-   読む(索引の式の統計の行の tablename は索引の名)。"
+   表の行を頭から読む計画が選ばれる・DeclaredIndex の sampled)と、索引と同じ名の式の統計が在るか(DeclaredIndex の statistics)を読む文を
+   作るため(索引の観測)。統計は持ち主の役が読める pg_stats と pg_stats_ext_exprs から読む(索引の式の統計の行の tablename は索引の名)。
+   索引と同じ名の式の統計の在る索引(部分索引 — planner はその索引の式の統計を読まない・頭の註の「表の欄の式の索引を部分索引にする」)
+   は、その式の統計に標本が入った時だけ見積もれる(標本の前の行は null_frac が NULL)。"
   (<- relations (relation-names prefix INDEXED-RELATIONS))
   (Statement :text (.format "SELECT c.relname, i.indisvalid,
-                              EXISTS (SELECT 1 FROM pg_stats AS s WHERE s.schemaname = n.nspname AND s.tablename = c.relname)
-                              OR NOT EXISTS (SELECT 1 FROM pg_stats AS t WHERE t.schemaname = n.nspname AND t.tablename = r.relname)
+                              CASE WHEN x.oid IS NULL
+                                   THEN EXISTS (SELECT 1 FROM pg_stats AS s WHERE s.schemaname = n.nspname AND s.tablename = c.relname)
+                                   ELSE EXISTS (SELECT 1 FROM pg_stats_ext_exprs AS e
+                                                 WHERE e.statistics_schemaname = n.nspname AND e.statistics_name = c.relname
+                                                   AND e.null_frac IS NOT NULL) END
+                              OR NOT EXISTS (SELECT 1 FROM pg_stats AS t WHERE t.schemaname = n.nspname AND t.tablename = r.relname),
+                              x.oid IS NOT NULL
                          FROM pg_index AS i JOIN pg_class AS c ON c.oid = i.indexrelid JOIN pg_class AS r ON r.oid = i.indrelid
                               JOIN pg_namespace AS n ON n.oid = c.relnamespace
+                              LEFT JOIN pg_statistic_ext AS x ON x.stxrelid = i.indrelid AND x.stxname = c.relname
+                                                             AND x.stxnamespace = c.relnamespace
                        WHERE i.indrelid IN ({r})" :r relations.text)
              :params relations.params))
 
@@ -836,6 +878,22 @@
    table-shaped-index?)を、表の読み書きを止めずに消す文を作るため(名は宣言から作った名か、旧い形か表ごとの名の形を通った観測の名 —
    英小文字・数字・_ だけなので文に直に置ける)。"
   (Statement :text (.format "DROP INDEX CONCURRENTLY IF EXISTS {}" name) :params #()))
+
+
+(defk statistics-statement [index]
+  {:pre [(: index DeclaredIndex) (is-not index.statistics None)] :post [(: % Statement)]
+   :tags {:context "records" :role "foundation"}}
+  "索引 index の見積もりに要る、索引と同じ名の式の統計を作る文を作るため(索引の用意が索引の前に流す — catalog だけの一瞬の文。
+   作ったばかりの統計は空で、表の標本を取り直すまで見積もりに効かない — DeclaredIndex の sampled)。"
+  (Statement :text index.statistics :params #()))
+
+
+(defk drop-statistics-statement [name]
+  {:pre [(: name str)] :post [(: % Statement)]
+   :tags {:context "records" :role "foundation"}}
+  "外した索引 name と同じ名の式の統計(在れば — 宣言から外した表の欄の式の索引の統計)を消す文を作るため(外した索引の欄の統計を
+   表の標本のたびに取り続けない。名は drop-index-statement と同じ観測の名)。"
+  (Statement :text (.format "DROP STATISTICS IF EXISTS {}" name) :params #()))
 
 
 (defk index-lock-key [prefix]

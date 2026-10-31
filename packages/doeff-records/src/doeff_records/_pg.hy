@@ -101,9 +101,12 @@
 ;;;     欄が全部表の欄の式で照らせる(retirement-ready?)ようになった回に、索引の用意が錠の中で 1 本ずつ DROP INDEX CONCURRENTLY で外す
 ;;;     (pg_sql の頭の註の「旧い形の索引を外す」)。その前は前の文の形の読みが引くので外さず、INDEX-RETRY-SECONDS 秒の後に観測し直す。
 ;;;     宣言の索引が全部在る置き場でも、旧い形の索引が在れば記録の service は索引の用意の task を立てる(IndexBook の retired)。
-;;;   - 宣言から外した表ごとの索引(pg_sql.table-shaped-index? の名の形 — 宣言が作る ft_・op_・wp_ と前の形の fx_・ox_・ow_ で今の宣言に無い物)も、旧い形の索引と
+;;;   - 宣言から外した表ごとの索引(pg_sql.table-shaped-index? の名の形 — 宣言が作る fp_・op_・wp_ と前の形の fx_・ft_・ox_・ow_ で今の宣言に無い物)も、旧い形の索引と
 ;;;     同じ覚え(retired)に数え、同じ回に同じ道で外す(pg_sql の頭の註の「宣言から外した表ごとの索引を外す」— 2026-10-23 に本番の置き場の
-;;;     使われない表ごとの索引 11 本・874 MB が書きのたびに更新されていた)。
+;;;     使われない表ごとの索引 11 本・874 MB が書きのたびに更新されていた)。外す索引と同じ名の式の統計(在れば)も同じ回に消す。
+;;;   - 表の欄の式の索引(部分索引 — pg_sql の頭の註の「表の欄の式の索引を部分索引にする」)は、索引と同じ名の式の統計
+;;;     (DeclaredIndex の statistics)と組で作る。索引の用意は統計を索引の前に作り(統計だけが無い索引も差に数える — index-gaps)、
+;;;     観測はその統計に標本が入った索引だけを見積もれると数える(pg_sql.indexes-statement)。
 ;;;     名の形が旧い形でも宣言の作る形でもない宣言に無い索引(手で足した物)は外さない。
 (require doeff-hy.macros [defeffect defhandler defk <- val var])
 (require doeff-hy.record [defrecord])
@@ -138,7 +141,8 @@
 (import doeff_records._pg_sql [Statement RowExpiry EventExpiry TailRead DEFAULT-PREFIX checked-prefix writer-lock-key migrate-lock-key
                               unit-lock-key stream-unit table-unit ROWS-UNIT writer-lock-statement numbering-lock-statement write-key-lock-statement schema-steps drop-statements
                               IndexedField DeclaredIndex declared-indexes relations-statement indexes-statement
-                              concurrent-index-statement drop-index-statement analyze-statement retired-index? table-shaped-index?
+                              concurrent-index-statement drop-index-statement statistics-statement drop-statistics-statement
+                              analyze-statement retired-index? table-shaped-index?
                               index-lock-statement index-unlock-statement
                               store-head-statement watch-head-statement read-row-statement lock-row-statement list-rows-statement top-rows-statement
                               ordered-rows-statement count-rows-statement
@@ -255,14 +259,17 @@
 
 (defrecord ObservedIndex
   "置き場の表に在る索引 1 つの観測(pg_index): name = 索引の名 / valid = 使える形か(CONCURRENTLY の作りかけは False で残る)/
-   estimable = 見積もれるか(索引の式の統計が在るか、表に統計がまだ無い — pg_sql.indexes-statement)。"
+   estimable = 見積もれるか(索引の式の統計が在るか、表に統計がまだ無い — 索引と同じ名の式の統計の在る索引は、その統計に標本が入ったか・
+   pg_sql.indexes-statement)/ counted = 索引と同じ名の式の統計が在るか(DeclaredIndex の statistics)。"
   (#^ str name)
   (#^ bool valid)
-  (#^ bool estimable))
+  (#^ bool estimable)
+  (#^ bool counted))
 
 
 (defrecord IndexGap
-  "宣言の索引と置き場の差 1 つ(索引の用意が埋める): index = 作る索引 / invalid = 同じ名の索引が使えない形で残っている(消してから作る)。"
+  "宣言の索引と置き場の差 1 つ(索引の用意が埋める): index = 作る索引(式の統計の要る索引は、索引が在っても統計が無ければ差 — 統計を
+   作り、在る索引は作り直さない)/ invalid = 同じ名の索引が使えない形で残っている(消してから作る)。"
   (#^ DeclaredIndex index)
   (#^ bool invalid))
 
@@ -668,8 +675,10 @@
 (defk observed-indexes [found]
   {:pre [(: found tuple)] :post [(: % (get tuple #(ObservedIndex ...)))]
    :tags {:context "records" :role "foundation"}}
-  "索引の観測の行(名・使える形か・見積もれるか — pg_sql.indexes-statement の答え)を ObservedIndex の並びにするため。"
-  (tuple (gfor #(name valid estimable) found (ObservedIndex :name name :valid (bool valid) :estimable (bool estimable)))))
+  "索引の観測の行(名・使える形か・見積もれるか・同じ名の式の統計が在るか — pg_sql.indexes-statement の答え)を ObservedIndex の並びに
+   するため。"
+  (tuple (gfor #(name valid estimable counted) found
+               (ObservedIndex :name name :valid (bool valid) :estimable (bool estimable) :counted (bool counted)))))
 
 
 (defk usable-index? [index usable]
@@ -685,11 +694,14 @@
    :tags {:context "records" :role "foundation"}}
   "宣言の索引 declared のうち、置き場の観測 observed に同じ名の使える索引の無い物を差の並びにするため(宣言の順 — 同じ名の使えない
    索引が残っていれば invalid)。aliases の旧い形の索引が在っても差に数える(表の欄の式の索引でなければ等号 2 つの読みが索引を組めない —
-   pg_sql の頭の註。旧い形の索引は作り終えるまでの読みに答える — usable-index?)。"
+   pg_sql の頭の註。旧い形の索引は作り終えるまでの読みに答える — usable-index?)。式の統計の要る索引(DeclaredIndex の statistics)は、
+   同じ名の式の統計が無ければ索引が在っても差に数える(統計が無ければ見積もれず、前の形の索引を外せない)。"
   (val usable (frozenset (gfor seen observed :if seen.valid seen.name)))
   (val unusable (frozenset (gfor seen observed :if (not seen.valid) seen.name)))
+  (val counted (frozenset (gfor seen observed :if seen.counted seen.name)))
   (tuple (gfor index declared
-               :if (not-in index.name usable)
+               :if (or (not-in index.name usable)
+                       (and (is-not index.statistics None) (not-in index.name counted)))
                (IndexGap :index index :invalid (in index.name unusable)))))
 
 
@@ -713,15 +725,18 @@
       (:= retired (+ retired #(seen.name)))))
   (val usable (frozenset (gfor seen observed :if seen.valid seen.name)))
   (val estimable (frozenset (gfor seen observed :if (and seen.valid seen.estimable) seen.name)))
+  (val counted (frozenset (gfor seen observed :if seen.counted seen.name)))
   (var served #())
   (for [index declared]
     (<- answers (usable-index? index usable))
     (when answers
       (:= served (+ served index.serves))))
-  ;; 宣言の名の索引そのもので見積もれる欄(settled — 前の形を外してよいかの判断)と、作り終えるまで前の形の索引(peers — 先頭の式が
-  ;; 同じ・前の形も見積もりは索引の式の統計)でも見積もれる欄(scoped — 読みの文の形)。
+  ;; 宣言の名の索引そのもので見積もれる欄(settled — 前の形を外してよいかの判断。式の統計の要る索引は、その統計が在る時だけ — 無ければ
+  ;; 観測の見積もれるは planner の読まない部分索引の統計を見ている)と、作り終えるまで前の形の索引(peers — 先頭の式が同じ・前の形も
+  ;; 見積もりは索引の式の統計)でも見積もれる欄(scoped — 読みの文の形)。
   (val settled (frozenset (gfor index declared
-                                :if (in index.name (if index.sampled estimable usable))
+                                :if (and (in index.name (if index.sampled estimable usable))
+                                         (or (is index.statistics None) (in index.name counted)))
                                 indexed index.scoped
                                 indexed)))
   (val peered (frozenset (gfor index declared
@@ -840,6 +855,9 @@
   (for [name store.indexes.retired]
     (<- started float (GetMonotonic))
     (try
+      ;; 同じ名の式の統計(宣言から外した表の欄の式の索引の統計 — 在れば)を先に消す(索引を外し損ねた回も、次の回が統計から消し直す)。
+      (<- uncounting (drop-statistics-statement name))
+      (<- (query-rows store.ddl-database uncounting))
       (<- dropping (drop-index-statement name))
       (<- (query-rows store.ddl-database dropping))
       (except [TaskCancelledError]
@@ -928,12 +946,16 @@
 (defk built-gaps [store gaps]
   {:pre [(: store PreparedStore) (: gaps tuple)] :post [(: % bool)]
    :tags {:context "records" :role "foundation"}}
-  "差の索引を宣言の順に 1 つずつ CONCURRENTLY で作り(使えない形で残った同じ名の索引は先に消す)、作れた索引の答える欄を覚えに足す
-   ため(表の欄の式で照らす欄は、表の標本を取り直した後の観測が足す — locked-round)。
+  "差の索引を宣言の順に 1 つずつ CONCURRENTLY で作り(式の統計の要る索引は統計を先に作る・使えない形で残った同じ名の索引は先に
+   消す・在る索引は IF NOT EXISTS で作り直さない)、作れた索引の答える欄を覚えに足すため(表の欄の式で照らす欄は、表の標本を取り直した
+   後の観測が足す — locked-round)。
    答え = 全部を作れたか(作れなかった索引は名乗り、残りは次の回へ — 錠を外す道を例外で飛ばさないよう、取り消しの外の例外を上げない)。"
   (for [gap gaps]
     (<- started float (GetMonotonic))
     (try
+      (when (is-not gap.index.statistics None)
+        (<- counting (statistics-statement gap.index))
+        (<- (query-rows store.ddl-database counting)))
       (when gap.invalid
         (<- dropping (drop-index-statement gap.index.name))
         (<- (query-rows store.ddl-database dropping)))

@@ -71,6 +71,7 @@ class DeclaredIndex:
     aliases: tuple[str, ...]
     sampled: bool
     peers: tuple[str, ...] = ...
+    statistics: str | None = None
 
 @dataclass(frozen=True, kw_only=True)
 class AddedColumn:
@@ -136,6 +137,9 @@ def hyx_table_shaped_indexXquestion_markX(prefix: str, name: str) -> _Program[bo
     ...
 
 def table_field_index_name(prefix: str, table: str, field_name: str) -> _Program[str, object]:
+    ...
+
+def whole_field_index_name(prefix: str, table: str, field_name: str) -> _Program[str, object]:
     ...
 
 def former_field_index_name(prefix: str, table: str, field_name: str) -> _Program[str, object]:
@@ -214,6 +218,12 @@ def analyze_statement(prefix: str, relation: str) -> _Program[Statement, object]
     ...
 
 def drop_index_statement(name: str) -> _Program[Statement, object]:
+    ...
+
+def statistics_statement(index: DeclaredIndex) -> _Program[Statement, object]:
+    ...
+
+def drop_statistics_statement(name: str) -> _Program[Statement, object]:
     ...
 
 def index_lock_key(prefix: str) -> _Program[str, object]:

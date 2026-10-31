@@ -37,7 +37,8 @@
 (import doeff_records [pg-records-handler]
         doeff_records._pg [drop-records-tables])
 (import doeff_records [schema-statements writer-lock-key migrate-lock-key]
-        doeff_records._pg_sql [in-list changes-statement terminal-rows-statement RowExpiry declared-indexes index-name table-index-name retired-index? table-shaped-index? table-field-index-name ordered-index-name ordered-within-index-name former-field-index-name])
+        doeff_records._pg_sql [in-list changes-statement terminal-rows-statement RowExpiry declared-indexes index-name table-index-name retired-index? table-shaped-index? table-field-index-name ordered-index-name ordered-within-index-name former-field-index-name
+                              whole-field-index-name])
 (import tests.interpreters [session-dsn PG-DSN-VARIABLE pg-skip-reason DATABASE ORIGIN-HOST open-postgres postgres-connections fresh-prefix run-sql prepared-store])
 (import doeff_records._main [store-pressure-pg])
 (import doeff_records._store_choice [StorePressure])
@@ -55,9 +56,12 @@
 ;; 旧い版の宣言した索引の欄の索引(全部の行に張る — "records_ix_" で始まる 3 文)は、表の欄の式の索引に替えた(頭の註)。
 (val BEFORE-880-FIELD-INDEXES (lfor text BEFORE-880-DDL :if (.startswith text "CREATE INDEX IF NOT EXISTS records_ix_") text))
 (val TABLE-INDEXES
-  ["CREATE INDEX IF NOT EXISTS records_ft_6dd0fe800114_909e6bf0ca53 ON records_state_rows ((CASE WHEN ledger = 'parts' THEN ((payload::jsonb) -> 'color') END), updated_at)"
-   "CREATE INDEX IF NOT EXISTS records_ft_64c65374dbab_909e6bf0ca53 ON records_state_rows ((CASE WHEN ledger = 'parts' THEN ((payload::jsonb) -> 'label') END), updated_at)"
-   "CREATE INDEX IF NOT EXISTS records_ft_579233b2c479_d370d9cd5625 ON records_state_rows ((CASE WHEN ledger = 'tickets' THEN ((payload::jsonb) -> 'owner') END), updated_at)"])
+  ["CREATE STATISTICS IF NOT EXISTS records_fp_6dd0fe800114_909e6bf0ca53 ON (CASE WHEN ledger = 'parts' THEN ((payload::jsonb) -> 'color') END) FROM records_state_rows"
+   "CREATE INDEX IF NOT EXISTS records_fp_6dd0fe800114_909e6bf0ca53 ON records_state_rows ((CASE WHEN ledger = 'parts' THEN ((payload::jsonb) -> 'color') END), updated_at) WHERE (CASE WHEN ledger = 'parts' THEN ((payload::jsonb) -> 'color') END) IS NOT NULL"
+   "CREATE STATISTICS IF NOT EXISTS records_fp_64c65374dbab_909e6bf0ca53 ON (CASE WHEN ledger = 'parts' THEN ((payload::jsonb) -> 'label') END) FROM records_state_rows"
+   "CREATE INDEX IF NOT EXISTS records_fp_64c65374dbab_909e6bf0ca53 ON records_state_rows ((CASE WHEN ledger = 'parts' THEN ((payload::jsonb) -> 'label') END), updated_at) WHERE (CASE WHEN ledger = 'parts' THEN ((payload::jsonb) -> 'label') END) IS NOT NULL"
+   "CREATE STATISTICS IF NOT EXISTS records_fp_579233b2c479_d370d9cd5625 ON (CASE WHEN ledger = 'tickets' THEN ((payload::jsonb) -> 'owner') END) FROM records_state_rows"
+   "CREATE INDEX IF NOT EXISTS records_fp_579233b2c479_d370d9cd5625 ON records_state_rows ((CASE WHEN ledger = 'tickets' THEN ((payload::jsonb) -> 'owner') END), updated_at) WHERE (CASE WHEN ledger = 'tickets' THEN ((payload::jsonb) -> 'owner') END) IS NOT NULL"])
 (val EXPECTED-DDL (+ (lfor text (cut BEFORE-880-DDL EPOCH-ROW-AT) :if (not-in text BEFORE-880-FIELD-INDEXES) text)
                      [UNIQUE-EPOCH-ROW]
                      (lfor text (cut BEFORE-880-DDL (+ EPOCH-ROW-AT 1) None) :if (not-in text BEFORE-880-FIELD-INDEXES) text)
@@ -82,7 +86,8 @@
                  ELSE ((payload::jsonb) ->> 'idempotencyKey') END))"
    "CREATE INDEX IF NOT EXISTS records_append_rows_head_d08f88df745f ON records_append_rows (ledger, split_part(((payload::jsonb) ->> 'idempotencyKey'), '#', 1), seq)"
    "CREATE INDEX IF NOT EXISTS records_row_changes_at ON records_row_changes (at)"
-   "CREATE INDEX IF NOT EXISTS records_ft_aa4a5f8125f2_d370d9cd5625 ON records_state_rows ((CASE WHEN ledger = 'tickets' THEN ((payload::jsonb) -> 'state') END), updated_at)"
+   "CREATE STATISTICS IF NOT EXISTS records_fp_aa4a5f8125f2_d370d9cd5625 ON (CASE WHEN ledger = 'tickets' THEN ((payload::jsonb) -> 'state') END) FROM records_state_rows"
+   "CREATE INDEX IF NOT EXISTS records_fp_aa4a5f8125f2_d370d9cd5625 ON records_state_rows ((CASE WHEN ledger = 'tickets' THEN ((payload::jsonb) -> 'state') END), updated_at) WHERE (CASE WHEN ledger = 'tickets' THEN ((payload::jsonb) -> 'state') END) IS NOT NULL"
    "CREATE INDEX IF NOT EXISTS records_op_c51048b7325d_909e6bf0ca53 ON records_state_rows ((CASE WHEN ledger = 'parts' THEN (CASE WHEN jsonb_typeof(((payload::jsonb) -> 'note')) = 'number' AND (((payload::jsonb) -> 'note'))::text ~ '^-?[0-9]+$' THEN (((payload::jsonb) -> 'note'))::text::numeric END) END) DESC NULLS LAST, key COLLATE \"C\" DESC) WHERE (CASE WHEN ledger = 'parts' THEN (CASE WHEN jsonb_typeof(((payload::jsonb) -> 'note')) = 'number' AND (((payload::jsonb) -> 'note'))::text ~ '^-?[0-9]+$' THEN (((payload::jsonb) -> 'note'))::text::numeric END) END) IS NOT NULL"
    "CREATE INDEX IF NOT EXISTS records_wp_0b920c6b8d1d_909e6bf0ca53 ON records_state_rows ((CASE WHEN ledger = 'parts' THEN ((payload::jsonb) -> 'color') END), (CASE WHEN ledger = 'parts' THEN (CASE WHEN jsonb_typeof(((payload::jsonb) -> 'note')) = 'number' AND (((payload::jsonb) -> 'note'))::text ~ '^-?[0-9]+$' THEN (((payload::jsonb) -> 'note'))::text::numeric END) END) DESC NULLS LAST, key COLLATE \"C\" DESC) WHERE (CASE WHEN ledger = 'parts' THEN (CASE WHEN jsonb_typeof(((payload::jsonb) -> 'note')) = 'number' AND (((payload::jsonb) -> 'note'))::text ~ '^-?[0-9]+$' THEN (((payload::jsonb) -> 'note'))::text::numeric END) END) IS NOT NULL"
    "CREATE INDEX IF NOT EXISTS records_state_rows_key_c ON records_state_rows (ledger, key COLLATE \"C\")"
@@ -129,19 +134,21 @@
 
 
 (deftest test-the-table-shaped-index-names-are-the-three-forms-the-declaration-makes
-  ;; 宣言から外した表ごとの索引を外す(_pg_sql.hy の頭の註): 当たる名は宣言が作る 3 つの形(表の欄の式 ft_・上から読む欄 op_・等号の欄 ×
-  ;; 上から読む欄の組 wp_)と、表の欄の式の索引の前の形(fx_)と上から読む索引の前の形(ox_・ow_)だけ。索引の用意はこの形で今の宣言に無い物を外すので、宣言の置き場の形の索引(append_rows_・row_changes_・
+  ;; 宣言から外した表ごとの索引を外す(_pg_sql.hy の頭の註): 当たる名は宣言が作る 3 つの形(表の欄の式 fp_・上から読む欄 op_・等号の欄 ×
+  ;; 上から読む欄の組 wp_)と、表の欄の式の索引の前の形(fx_・ft_)と上から読む索引の前の形(ox_・ow_)だけ。索引の用意はこの形で今の宣言に無い物を外すので、宣言の置き場の形の索引(append_rows_・row_changes_・
   ;; state_rows_key_c など)と手の索引と旧い形の名に当たると、宣言の外の索引を外してしまう。
   (<- field (table-field-index-name "records_" "parts" "role"))
   (<- former (former-field-index-name "records_" "parts" "role"))
+  (<- whole (whole-field-index-name "records_" "parts" "role"))
   (<- ordered (ordered-index-name "records_" "parts" "role"))
   (<- within (ordered-within-index-name "records_" "parts" "color" "role"))
-  ;; 2026-10-23 の本番の置き場の使われない表ごとの索引の名の写しと、表の欄の式の索引の前の形(式 1 つの索引 fx_)・上から読む索引の
-  ;; 前の形(全部の行の索引 ox_・ow_)の名の写しも当たる(今の宣言は作らないので、索引の用意が外す)。
-  (assert (.startswith field "records_ft_") field)
+  ;; 2026-10-23 と 2026-10-31 の本番の置き場の表ごとの索引の名の写しと、表の欄の式の索引の前の形(式 1 つの索引 fx_・全部の行の 2 列の
+  ;; 索引 ft_)・上から読む索引の前の形(全部の行の索引 ox_・ow_)の名の写しも当たる(今の宣言は作らないので、索引の用意が外す)。
+  (assert (.startswith field "records_fp_") field)
   (assert (.startswith former "records_fx_") former)
-  (for [name [field former ordered within "records_fx_3150ecd5e029_8a35885a0e07" "records_fx_8dca46428d00_2c17ecd3ddd1"
-              "records_ox_27e90dfa57c3_6f9b9af3cd6e" "records_ow_bd51f9a00add_6f9b9af3cd6e"]]
+  (assert (.startswith whole "records_ft_") whole)
+  (for [name [field former whole ordered within "records_fx_3150ecd5e029_8a35885a0e07" "records_fx_8dca46428d00_2c17ecd3ddd1"
+              "records_ft_e382b1ded37d_8a35885a0e07" "records_ox_27e90dfa57c3_6f9b9af3cd6e" "records_ow_bd51f9a00add_6f9b9af3cd6e"]]
     (<- hit (table-shaped-index? "records_" name))
     (assert hit name))
   (<- legacy (index-name "records_" "role"))
