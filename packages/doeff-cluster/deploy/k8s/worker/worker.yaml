@@ -30,6 +30,8 @@
 #                             止める(deploy/boot.sh の頭の註の「版の file と keeper」)。ConfigMap が無ければ Pod は起きない。
 #   Secret worker-repos      WORKER_REPOS の deploy key と known_hosts(boot.sh が /etc/worker-repos から読む)。無くても起動する
 #                             (WORKER_REPOS が要る key を欠けば boot.sh が理由を出して止まる)。
+#   Secret worker-machine-ssh 機体へ ssh で入る key・known_hosts・ssh の設定(/etc/worker-machine-ssh に置く — 読むのは起動の前の
+#                             準備の script で、worker は読まない)。無くても起動する(subPath でない — 中身の差し替えに Pod を作り直さない)。
 #   Namespace agent-worker    ここでは宣言しない(この宣言から外れた時に prune が Namespace ごと Secret を消すため)。
 #
 # 機体の事実: worker の名と NODE_NAME は Node の名(fieldRef spec.nodeName)。機体の /etc/systemd/system を読み取り専用で
@@ -142,6 +144,7 @@ spec:
             - { mountPath: /host/etc/systemd/system, name: host-systemd, readOnly: true }
             - { mountPath: /var/run/secrets/kubernetes.io/serviceaccount, name: account-token, readOnly: true }
             - { mountPath: /etc/worker-repos, name: repos, readOnly: true }
+            - { mountPath: /etc/worker-machine-ssh, name: machine-ssh, readOnly: true }
             - { mountPath: /opt/worker-prepare, name: prepare, readOnly: true }
             - { mountPath: /opt/worker-shell, name: shell, readOnly: true }
             - { mountPath: /etc/worker-room, name: room, readOnly: true }
@@ -165,6 +168,7 @@ spec:
               - configMap: { name: kube-root-ca.crt, items: [{ key: ca.crt, path: ca.crt }] }
               - downwardAPI: { items: [{ path: namespace, fieldRef: { fieldPath: metadata.namespace } }] }
         - { name: repos, secret: { secretName: worker-repos, defaultMode: 0400, optional: true } }
+        - { name: machine-ssh, secret: { secretName: worker-machine-ssh, defaultMode: 0400, optional: true } }
         - { name: prepare, configMap: { name: worker-prepare, defaultMode: 0555, optional: true } }
         - { name: shell, configMap: { name: worker-shell, defaultMode: 0555, optional: true } }
         - { name: room, configMap: { name: worker-room, defaultMode: 0444 } }
