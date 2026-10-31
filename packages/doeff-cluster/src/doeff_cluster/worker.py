@@ -412,9 +412,14 @@ class _MovedSubmodules(importlib.abc.MetaPathFinder, importlib.abc.Loader):
     def find_spec(
         self, fullname: str, path: Sequence[str] | None = None, target: ModuleType | None = None
     ) -> ModuleSpec | None:
-        if not fullname.startswith(_OLD + ".") or importlib.util.find_spec(self._target(fullname)) is None:
+        if not fullname.startswith(_OLD + "."):
             return None
-        return importlib.util.spec_from_loader(fullname, self)
+        moved = importlib.util.find_spec(self._target(fullname))
+        if moved is None:
+            return None
+        # The origin is the moved file: python -m <old>.<sub> runs with __file__ and sys.argv[0] naming it (a __main__
+        # without a file breaks inspect.getmodule, which Hy's compile and doeff-hy's bytecode guard call).
+        return importlib.util.spec_from_loader(fullname, self, origin=moved.origin)
 
     def create_module(self, spec: ModuleSpec) -> None:
         return None
@@ -422,11 +427,17 @@ class _MovedSubmodules(importlib.abc.MetaPathFinder, importlib.abc.Loader):
     def exec_module(self, module: ModuleType) -> None:
         sys.modules[module.__name__] = import_module(self._target(module.__name__))
 
-    def get_code(self, fullname: str) -> CodeType:
-        # python -m <old>.<sub>: run the moved module as __main__.
+    def get_code(self, fullname: str) -> CodeType | None:
+        # python -m <old>.<sub>: run the moved module's own code as __main__ (a package's __main__, as runpy does). Not a
+        # nested runpy.run_module: its outer run leaves a __main__ without a file in sys.modules while the moved Hy module
+        # compiles, and inspect.getmodule raises TypeError on it.
         target = self._target(fullname)
-        source = f"import runpy\nrunpy.run_module({target!r}, run_name='__main__', alter_sys=True)\n"
-        return compile(source, f"<moved {fullname}>", "exec")
+        moved = importlib.util.find_spec(target)
+        if moved is not None and moved.submodule_search_locations is not None:
+            moved = importlib.util.find_spec(target + ".__main__")
+        if moved is None or not isinstance(moved.loader, importlib.abc.InspectLoader):
+            raise ImportError(f"no code to run for the moved module {target}", name=fullname)
+        return moved.loader.get_code(moved.name)
 
     @staticmethod
     def _target(fullname: str) -> str:

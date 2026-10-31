@@ -1135,3 +1135,78 @@ def test_pin_writes_the_names_into_the_shim_of_a_namespace_dir(tmp_path: Path) -
         "列に書いた名": [f"{child.old}.sub.PingEffect"],
         "列から外した名": [f"{child.old}.sub.helper"],
     }
+
+
+@pytest.mark.timeout(300)
+def test_hy_m_on_an_old_path_runs_the_moved_hy_module_while_the_bytecode_guard_compiles(tmp_path: Path) -> None:
+    """古い path の ``hy -m <old>.<sub>`` が、移した Hy の module を __main__ として走らせる — .pyc も保存先の code も無く、
+    bytecode guard が移した module とそれが読む Hy の module を compile する時にも。
+
+    殻の -m の道が runpy.run_module を入れ子に呼んでいた時、外の run が file の無い __main__ を sys.modules に置いたまま中の
+    run が移した Hy の module を compile し、inspect.getmodule が TypeError を出した(本番の moneta-ledger と moneta-view が、
+    古い worker の送る子の入口 ``hy -m doeff_cluster.worker.entry.job_entry`` で起動のたびに落ちた — 2026-10-31・agora card
+    ki-eb15f6bdadfa)。__main__ が走る間に compile する late は、__main__ の __file__ が None の時に同じ形で落ちる。
+    """
+    src = tmp_path / "src" / "fixmoved"
+    _write_repo(
+        tmp_path / "src",
+        {
+            "fixmoved/__init__.py": "",
+            # The package compiles a Hy module before __main__ is swapped, so inspect.getmodule has read the first __main__.
+            "fixmoved/_jobs/__init__.py": """
+                import hy  # noqa: F401 - lets the Hy modules below be imported
+
+                from fixmoved._jobs.helper import greet as greet
+            """,
+            "fixmoved/_jobs/helper.hy": '(defn greet [] "hello")\n',
+            "fixmoved/_jobs/late.hy": '(defn later [] "from the moved module")\n',
+            "fixmoved/_jobs/entry.hy": """
+                (import sys)
+                (import fixmoved._jobs [greet])
+                (import fixmoved._jobs.late [later])
+
+                (when (= __name__ "__main__")
+                  (print (greet) (later))
+                  (print __file__)
+                  (print (get sys.argv 0)))
+            """,
+        },
+    )
+    child = tool.Child("fixmoved", "jobs", src)
+    child.shim.write_text(tool.shim_text(child, False, {}), encoding="utf-8")
+    environment = {
+        **os.environ,
+        "PYTHONPATH": str(tmp_path / "src"),
+        "DOEFF_HY_CODE_STORE": str(tmp_path / "store"),
+        "PYTHONPYCACHEPREFIX": str(tmp_path / "pycache"),
+    }
+
+    finished = subprocess.run(
+        [sys.executable, "-m", "hy", "-m", "fixmoved.jobs.entry"],
+        cwd=tmp_path,
+        env=environment,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+    assert finished.returncode == 0, finished.stderr
+    moved = str(src / "_jobs" / "entry.hy")
+    assert finished.stdout.splitlines() == ["hello from the moved module", moved, moved]
+
+
+@pytest.mark.parametrize(
+    ("shim", "old"),
+    [
+        ("packages/doeff-cluster/src/doeff_cluster/worker.py", "doeff_cluster.worker"),
+        ("packages/doeff-cluster/src/doeff_cluster/shared.py", "doeff_cluster.shared"),
+        ("packages/doeff-core-effects/doeff_core_effects/storage.py", "doeff_core_effects.storage"),
+    ],
+)
+def test_a_committed_package_shim_carries_the_finder_the_tool_writes(shim: str, old: str) -> None:
+    """木に在る package の殻の finder は、道具の書く finder と同じ字面 — 道具の finder を直した時に、置いた殻も直っている事
+    (上の test は道具の書く殻で -m の道を確かめる)。"""
+    root, name = old.rsplit(".", 1)
+    finder = tool._SHIM_FINDER.format(old=old, new=f"{root}._{name}")
+
+    assert finder in (ROOT / shim).read_text(encoding="utf-8")
