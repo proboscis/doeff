@@ -91,7 +91,7 @@ EXTERNAL_STALL_LOG_INTERVAL_SECONDS = 30.0
 # How many parked waiters the stall diagnostic names one by one; the rest are
 # only counted (by waiter type). A long-running service can hold tens of
 # thousands of parked waiters: naming every one made each stall line ~2.7 MB,
-# written twice per interval (agora card ki-1706e931a46c — 57,003 waiters).
+# written twice per interval (57,003 waiters).
 STALL_LOG_WAITERS_SHOWN = 20
 
 # How many fresh_id allocations pass between two sweeps of terminal,
@@ -106,7 +106,7 @@ HANDLE_SWEEP_INTERVAL = 1024
 # with no work allocates a few ids per clock tick, so the interval above took
 # hours to arrive and the terminal rows of every tick — awaited-value boxes,
 # clock wakes, cancelled timers, failed tasks' tracebacks — piled up until
-# then (agora card ki-f9aa5fce26e3). The ratio keeps the idle sweep's walk at
+# then. The ratio keeps the idle sweep's walk at
 # most this many rows per allocated id, so a busy run with many parked rows
 # does not walk them all at every block.
 IDLE_SWEEP_ROWS_PER_ID = 64
@@ -117,13 +117,13 @@ IDLE_SWEEP_ROWS_PER_ID = 64
 HANDLE_REFS_PRUNE_MIN = 8
 
 # How many never-retrieved task exceptions the run-end warning names; the rest
-# are counted (card ki-84667a89b47a). A run keeps no more descriptions than this
+# are counted. A run keeps no more descriptions than this
 # for the tasks the #502 sweep deletes, so a long run of fire-and-forget
 # failures does not grow memory.
 UNRETRIEVED_EXCEPTIONS_NAMED = 10
 
-# The kinds of ready-heap entry, declared in one place (design check of card
-# ki-1294af4fa525): ready_push refuses any other kind, so a new kind is declared
+# The kinds of ready-heap entry, declared in one place (design check of):
+# ready_push refuses any other kind, so a new kind is declared
 # here — not taught to Cancel or to the counts one by one.
 # - holding a started task's continuation (a K) at [2], shaped (kind, owner_tid,
 #   k, ...): Cancel/Discard take the continuation out of the heap
@@ -185,7 +185,7 @@ class _ClaimMark:
         self.mut_in_ready = in_ready
 
 
-# 測りの口(agora-redesign #3861・#3855)。sink を据えると、scheduler(Python の版も Rust の版も)が出来事ごとに dict を
+# 測りの口(#3855)。sink を据えると、scheduler(Python の版も Rust の版も)が出来事ごとに dict を
 # 1 つ渡す。sink が None の間は、呼び所の頭で 1 度だけ見て抜ける — 出来事の dict も時計の読みも作らない(Rust の版は
 # doeff_vm の旗を 1 度読む)。
 TraceSink = Callable[[dict[str, object]], None]
@@ -323,7 +323,7 @@ def _reinstall_boundaries(
     """Re-wrap prog with the boundary stack captured at the spawn site (innermost first) in one VM step.
 
     The same scope as one WithHandler / WithObserve per boundary, nested in that
-    order, without a VM step and an empty body fiber per layer (agora-redesign #3149).
+    order, without a VM step and an empty body fiber per layer.
     """
     return _WithBoundariesRaw(
         [(kind, _boundary_callable(kind, boundary_callable)) for kind, boundary_callable in boundaries],
@@ -374,8 +374,7 @@ def _drop_waiter_frames(error, kept_from) -> bool:
     hold the waiter's Wait/Try effects and the Task handle they name — in their
     locals and in the closures of their functions — so the row kept its own
     handle alive and the #502 sweep never deleted it: a job that waited on many
-    failing tasks kept every row, error, traceback and frame (agora card
-    ki-6ebcb9c44749).
+    failing tasks kept every row, error, traceback and frame.
 
     Walks the traceback from its head to ``kept_from`` (the traceback the error
     had when it failed) and clears each waiter frame. When every one was
@@ -616,7 +615,7 @@ class SchedulerIndexDriftError(AssertionError):
     Raised only while ``_INDEX_SELF_CHECK`` is on (the scheduler tests): the
     waiters index, the ready counts and the claimed-placeholder count are kept
     by the entry functions alone, and a change that moves ``waiters`` or
-    ``ready`` some other way breaks them silently (card ki-1294af4fa525).
+    ``ready`` some other way breaks them silently.
     """
 
 
@@ -798,7 +797,7 @@ class Race(EffectBase[_T], Generic[_T]):
     placeholder, so the sim clock may advance while it waits — a timed wait
     (doeff-time's WaitWithin) on a promise that in-run code completes, such as
     doeff-records' memory-store bell, needs the clock to reach its deadline
-    (agora-redesign #3054). The owner still wakes at its own task priority.
+   . The owner still wakes at its own task priority.
     Internal waitables park the same way under either value.
 
     ``Race(Task[int], Task[str])`` answers ``int | str`` (the overloads below;
@@ -874,7 +873,7 @@ class CompletePromise(EffectBase[None], Generic[_T]):
       completer next waits (asyncio's ``Future.set_result``, a Redis
       ``PUBLISH``). Only for a completer whose waiters cannot miss what it does
       next — the in-memory notice broker keeps a notice for a subscriber not
-      waiting in that subscriber's queue (agora-redesign #4013). The woken
+      waiting in that subscriber's queue. The woken
       tasks are queued exactly as with ``True``, so a run whose tasks all wait
       on promises nobody completes is still a deadlock the scheduler names.
     """
@@ -928,11 +927,11 @@ class CreateExternalPromise(EffectBase["ExternalPromise[_T]"], Generic[_T]):
 
     - ``deadline`` marks a clock wait: the ``time.monotonic()`` instant by
       which the producer is known to complete it (a timer /
-      ``asyncio.sleep``, agora-redesign #765).
+      ``asyncio.sleep``).
     - ``source_alive`` marks a watched wait: the source that completes it is
       registered (a watched child's exit descriptor) and this callable says,
       on the scheduler's thread, whether that source is still live — True
-      while the child runs (agora-redesign card ki-6222e22d4179). It must
+      while the child runs. It must
       answer at once without blocking.
 
     Neither = an open-ended external wait; a wait is never both.
@@ -1025,8 +1024,7 @@ def _stall_waiters_digest(parked: list[str]) -> str:
     ``STALL_LOG_WAITERS_SHOWN`` of them (``parked`` is in the scheduler's
     waiter order, so the root's waits come first) — "none" when nothing is
     parked. Both scheduler implementations call this one function, so the
-    line stays a few hundred bytes however many waiters are parked (agora
-    card ki-1706e931a46c).
+    line stays a few hundred bytes however many waiters are parked.
     """
     if not parked:
         return "none"
@@ -1157,7 +1155,7 @@ class ExternalPromise(Generic[_T]):
     promise state are scheduler-thread-confined.
 
     ``complete``/``fail`` は scheduler の thread に割り込む signal の受け手からも呼んでよい
-    (python の実装の外からの完了の列は put が reentrant な ``queue.SimpleQueue`` — agora-redesign #3584)。
+    (python の実装の外からの完了の列は put が reentrant な ``queue.SimpleQueue``)。
     """
     def __init__(
         self,
@@ -1446,7 +1444,7 @@ def _scheduled_rust(body_program: "Program[_T, Any]") -> "Program[_T, Any]":
     def root_close_out(prog):
         """Unwind, then report, work the run abandons when the root body returns.
 
-        Same meaning as the Python scheduler (agora-redesign #2684 / #2690):
+        Same meaning as the Python scheduler (#2690):
         live non-daemon tasks are cancelled and their unwinding (finally
         blocks) is awaited up to ROOT_CLOSE_OUT_GRACE_SECONDS — on the error
         path too — and whatever is still live afterwards is dropped, but
@@ -1478,7 +1476,7 @@ def _scheduled_rust(body_program: "Program[_T, Any]") -> "Program[_T, Any]":
 
 
 #: Wall-clock bound on unwinding abandoned work at root return
-#: (agora-redesign #2684). A task whose cleanup does not finish by then is
+#:. A task whose cleanup does not finish by then is
 #: abandoned as before (#501) and still named by the warning — the run's
 #: answer is never held hostage by a cleanup that does not end.
 ROOT_CLOSE_OUT_GRACE_SECONDS = 5.0
@@ -1599,7 +1597,7 @@ def _program_definition(program: object) -> object:
 def _describe_unretrieved_exception(
     task_id: int, definition: object, spawn_site: str | None, error: BaseException
 ) -> str:
-    """One task's entry in the never-retrieved warning (card ki-84667a89b47a).
+    """One task's entry in the never-retrieved warning.
 
     Shared by both implementations; called when a task fails while nothing has
     claimed its outcome yet, so the entry outlives the task's row.
@@ -1624,7 +1622,7 @@ def _describe_unretrieved_exception(
 
 def _warn_unretrieved_exceptions(named: list[str], total: int) -> None:
     """The run-end warning for task exceptions nothing retrieved, shared by both
-    implementations (card ki-84667a89b47a).
+    implementations.
 
     asyncio warns "Task exception was never retrieved" for a failed task
     dropped unread. A spawned task's outcome is claimed once a Wait, Gather or
@@ -1669,7 +1667,7 @@ def _scheduled_python(body_program: "Program[_T, Any]") -> "Program[_T, Any]":  
     semaphores = {}      # sid → {permits, max_permits, waiters: deque of (owner_tid, k)}
     waiters = {}         # waitable_key → [(type, owner_tid, k/state, ...)]
     ready = []           # heapq of _ReadyItem: (-priority, seq, entry)
-    # 待ち手の表と走れる列の索引(card ki-1294af4fa525)。走っている手番ごとに待つ task が居るので、Cancel が待ち手の表を、
+    # 待ち手の表と走れる列の索引。走っている手番ごとに待つ task が居るので、Cancel が待ち手の表を、
     # 外の待ちの印が走れる列を毎回なめると、1 回の WaitWithin の仕事が待つ task の数で増えた。索引は waiters・ready を
     # 書き換える入口(park_waiter・unpark_*・keep_waiters・ready_push・ready_pop・ready_remove_at・drop_claimed_marks)だけが保つ。
     parked_keys_of = {}  # owner_tid → {waitable_key: その task の entry の数}(waiters の逆の索引)
@@ -1693,8 +1691,7 @@ def _scheduled_python(body_program: "Program[_T, Any]") -> "Program[_T, Any]":  
     # 外からの完了の列。SimpleQueue の put は reentrant(Python の文書 — signal の受け手・__del__ から呼んでよい)。
     # 止めの合図の受け手(stop_signal_handlers の StopBox.receive)は主 thread の上で bytecode の区切りに割り込み、
     # ExternalPromise.complete からこの列へ put する。主 thread がこの列の empty / get の中に居ても put は止まらない
-    # (queue.Queue は入れ子で取れない lock を持ち、その lock の中に合図が当たると put が同じ thread を待って止まった —
-    # agora-redesign #3584)。
+    # (queue.Queue は入れ子で取れない lock を持ち、その lock の中に合図が当たると put が同じ thread を待って止まった)。
     external_queue = queue_mod.SimpleQueue()  # thread-safe, blocking get()
     # 測りの口(#3861): この run の番号と、ready の entry の通し番号ごとの起こされ方
     # (external の時は起こした外の約束の id)。sink が無い時は何も積まない。
@@ -1708,8 +1705,8 @@ def _scheduled_python(body_program: "Program[_T, Any]") -> "Program[_T, Any]":  
         _trace("start", run_id, gil=sys._is_gil_enabled() if sys.version_info >= (3, 13) else True)
     handle_refs = {}     # waitable_key → [weakref.ref(Task/Promise/Future/…)]
     handle_prune_at = {}  # waitable_key → refs length that triggers a dead-ref prune
-    # Never-retrieved task exceptions of rows the #502 sweep deleted (card
-    # ki-84667a89b47a): a tuple of at most UNRETRIEVED_EXCEPTIONS_NAMED
+    # Never-retrieved task exceptions of rows the #502 sweep deleted
+    # : a tuple of at most UNRETRIEVED_EXCEPTIONS_NAMED
     # descriptions, and how many there were.
     unretrieved_swept = [()]
     unretrieved_swept_count = [0]
@@ -1750,7 +1747,7 @@ def _scheduled_python(body_program: "Program[_T, Any]") -> "Program[_T, Any]":  
         re-reads tasks[tid]; ``cancelling`` tasks are live. Without the
         settled sweep every Cancel of a started task left its row and its
         TaskCancelledError (whose traceback pins the task's frames) for the
-        life of the run (agora-redesign #3504 — a records service's
+        life of the run (a records service's
         long-poll waits grew ~15 MB a minute). Semaphores are never swept:
         "no permits outstanding" is not trackable from handle liveness.
         """
@@ -1814,8 +1811,7 @@ def _scheduled_python(body_program: "Program[_T, Any]") -> "Program[_T, Any]":  
         Called when nothing is runnable and the scheduler is about to wait
         for an external completion. It sweeps once the ids allocated since the last
         sweep, times the ratio, cover the rows a sweep walks — in a job with no
-        work that is every tick, so a tick's terminal rows do not outlive it
-        (agora card ki-f9aa5fce26e3).
+        work that is every tick, so a tick's terminal rows do not outlive it.
         """
         allocated = next_id[0] - swept_at_id[0]
         if allocated and len(tasks) + len(promises) + len(waiters) <= allocated * IDLE_SWEEP_ROWS_PER_ID:
@@ -1834,7 +1830,7 @@ def _scheduled_python(body_program: "Program[_T, Any]") -> "Program[_T, Any]":  
     def mark_retrieved(key: tuple[str, int]) -> None:
         """A Wait, Gather, Race, Cancel or Discard was given the task: its
         outcome is claimed, so its exception is not reported as never
-        retrieved (card ki-84667a89b47a)."""
+        retrieved."""
         kind, wid = key
         row = tasks.get(wid) if kind == "task" else None
         if row is not None:
@@ -1906,7 +1902,7 @@ def _scheduled_python(body_program: "Program[_T, Any]") -> "Program[_T, Any]":  
     def trace_enqueued(entry: tuple[object, ...], priority: int, seq: int) -> None:
         """測りの口(#3861): 並べた entry の起こされ方を出す。前に並ぶ entry の数と起こされ方は、
         外から起きた entry の時だけ数える。前に並ぶ = 優先度が同じか高い entry(同じ優先度では今 並べた物が一番後ろ)で、
-        ready をなめずに (-priority, 起こされ方) ごとの数から足す(card ki-1294af4fa525 — なめは ready の長さで増えた)。"""
+        ready をなめずに (-priority, 起こされ方) ごとの数から足す(なめは ready の長さで増えた)。"""
         kind, pid = wake_of_seq[seq]
         if kind != "external":
             _trace("enqueued", run_id, tid=entry[1], wake=kind, pid=pid, priority=priority)
@@ -1930,7 +1926,7 @@ def _scheduled_python(body_program: "Program[_T, Any]") -> "Program[_T, Any]":  
         )
 
     def ready_push(heap_item: _ReadyItem) -> None:
-        """Push onto the ready heap — the one way in, so the counts stay in step (card ki-1294af4fa525)."""
+        """Push onto the ready heap — the one way in, so the counts stay in step."""
         entry = heap_item[2]
         if entry[0] in _CONTINUATION_ENTRY_KINDS:
             if not isinstance(entry[2], K):
@@ -2015,7 +2011,7 @@ def _scheduled_python(body_program: "Program[_T, Any]") -> "Program[_T, Any]":  
         A claimed placeholder still in the heap is dead, and it is popped only
         when no NORMAL work is queued — in a busy run every timed wait whose
         future won left one there, holding the deadline timer's continuation
-        (card ki-1294af4fa525). Once there are many and they are most of the
+       . Once there are many and they are most of the
         heap, they are taken out together.
         """
         if mark.mut_claimed:
@@ -2040,7 +2036,7 @@ def _scheduled_python(body_program: "Program[_T, Any]") -> "Program[_T, Any]":  
     def check_indexes() -> None:
         """Recompute the index and counts from ``waiters`` and ``ready`` and fail on a difference (only while
         ``_INDEX_SELF_CHECK`` is on — the scheduler tests), so a change that moves them outside the entry functions
-        is caught by the first test that runs it, not by a later stall (card ki-1294af4fa525)."""
+        is caught by the first test that runs it, not by a later stall."""
         held_parked = Counter({
             (owner, key): count for owner, owned in parked_keys_of.items() for key, count in owned.items()
         })
@@ -2088,7 +2084,7 @@ def _scheduled_python(body_program: "Program[_T, Any]") -> "Program[_T, Any]":  
         external-wait placeholder (PRIORITY_EXTERNAL_WAIT), when every entry
         still in the heap is at or below it — so it is answered from the
         live counts ready_push keeps for those entries, not by walking the
-        heap (card ki-1294af4fa525).
+        heap.
         """
         return live_ready_count[0 if include_daemons else 1] > 0
 
@@ -2203,7 +2199,7 @@ def _scheduled_python(body_program: "Program[_T, Any]") -> "Program[_T, Any]":  
         the parked-waiter summary is logged, then blocking continues —
         semantics are unchanged. A block is a stall only as invariant S1
         says (``_external_wait_is_stall``): a pending clock wait not overdue
-        (#765) or a watched wait whose source is live (card ki-6222e22d4179)
+        (#765) or a watched wait whose source is live
         keeps the warning silent. Nothing is runnable here, so the
         terminal-entry sweep may run first (``sweep_when_idle``).
         """
@@ -2347,7 +2343,7 @@ def _scheduled_python(body_program: "Program[_T, Any]") -> "Program[_T, Any]":  
         """Waitable keys that hold a Wait/Gather/Race entry owned by ``tid``, in ``waiters``' order.
 
         Read from the reverse index, so a Cancel does not walk every parked
-        waiter (card ki-1294af4fa525).
+        waiter.
         """
         return sorted(parked_keys_of.get(tid, ()), key=waiter_key_stamp.__getitem__)
 
@@ -2419,7 +2415,7 @@ def _scheduled_python(body_program: "Program[_T, Any]") -> "Program[_T, Any]":  
         multi-key registration (Gather/Race — its state holds ``resolved`` and
         ``waiter_k``) is resolved and withdrawn from every key by the function
         its kind declared in withdraw_group_of. Only the keys ``tid`` is parked
-        on are read (card ki-1294af4fa525).
+        on are read.
         """
         for key in keys_parked_by(tid):
             for index, entry in enumerate(waiters[key]):
@@ -2874,7 +2870,7 @@ def _scheduled_python(body_program: "Program[_T, Any]") -> "Program[_T, Any]":  
         ``priority=TaskPriority.IDLE``) registers without the placeholder, like
         Wait's IDLE park: the waiter still counts for the blocking drain
         (has_pending_external_waiters reads ``waiters``), but the sim clock
-        may run (agora-redesign #3054).
+        may run.
         """
         claimed = None
         kind, wid = wk
@@ -2957,7 +2953,7 @@ def _scheduled_python(body_program: "Program[_T, Any]") -> "Program[_T, Any]":  
             )
 
     # 複数の鍵にまたがる待ち手の登録の種類 → その登録を全部の鍵から外す関数(Cancel・Discard が呼ぶ)。登録の種類を足す effect
-    # はここに 1 行足す — park_waiter が宣言の無い種類を断り、detach_from_waiters は種類の名を持たない(card ki-1294af4fa525 の
+    # はここに 1 行足す — park_waiter が宣言の無い種類を断り、detach_from_waiters は種類の名を持たない(
     # 設計検証・盲検 A: cancel が "gather"・"race" の名を持ち、新しい種類の Cancel が state の dict を継続として投げ込んだ)。
     withdraw_group_of = {"gather": remove_gather_waiters, "race": remove_race_waiters}
 
@@ -3168,7 +3164,7 @@ def _scheduled_python(body_program: "Program[_T, Any]") -> "Program[_T, Any]":  
                     if not tasks[tid]["retrieved"] and not isinstance(error, TaskCancelledError):
                         # Nothing has claimed the outcome yet: describe the
                         # exception now, while the program and spawn site are
-                        # still held (card ki-84667a89b47a).
+                        # still held.
                         tasks[tid]["unretrieved"] = _describe_unretrieved_exception(
                             tid, tasks[tid]["definition"], tasks[tid].get("spawn_site"), error
                         )
@@ -3438,7 +3434,7 @@ def _scheduled_python(body_program: "Program[_T, Any]") -> "Program[_T, Any]":  
             promise["result"] = effect.value
             woken_min = wake_waiters(("promise", pid))
             if not effect.yield_to_woken:
-                # The completer keeps its turn (agora-redesign #4013): the woken
+                # The completer keeps its turn: the woken
                 # tasks are already queued and run when it next waits. Deadlock
                 # detection is unchanged — it reads the ready heap and the
                 # parked waiters, not who is running.

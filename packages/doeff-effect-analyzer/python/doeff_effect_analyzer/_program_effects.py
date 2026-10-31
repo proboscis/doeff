@@ -159,7 +159,7 @@ class _ClauseEmits:
 
     A handler is read wherever it is installed, but ``pass_through`` asks only the clauses an
     effect reaches what they emit: reading every clause's body when the handler was read built
-    the emits of 452 clauses for the 118 the delivery job's closure asked for (ki-5a5f6bd26d5e).
+    the emits of 452 clauses for the 118 the delivery job's closure asked for.
     A clause read later counts the sources it reads in the ``reading_sources`` around the place
     that asks — an analysis that keeps an answer asks for what the answer needs inside it. Two
     threads asking at once may both call the function: it answers the same value to both (the
@@ -585,7 +585,7 @@ def _left_from(performed: "ProgramEffects", include: Callable[[Any], bool]) -> R
     clause is worked out again with that until nothing more leaves: the least answer that holds
     at every turn of the recursion.  Taking the inner turn to leave nothing, without working it
     out again, would lose what a handler between the inner turn and the clause makes of what the
-    turn performs (agora card ki-70117167ebf3).  Each turn leaves at least what the one before
+    turn performs.  Each turn leaves at least what the one before
     did, out of a finite set of effects, handler names and places, so the turns end.
     """
     leaving = _LEAVING.get()
@@ -774,14 +774,14 @@ def _module_source(module: types.ModuleType) -> _ModuleSource:
 def _compile_hy(source: str, filename: str, module_name: str) -> "_WholeTree | _ChunkedTree":
     """The macro-expanded tree of a Hy module: from this reader's entry when it read the same inputs
     before; else the tree another reader's expansion stored, with only what this reader derives
-    built again (ki-81f1c868203f); else expanded here."""
+    built again; else expanded here."""
     place = _hy_cache_place(source, module_name)
     if place is not None:
         cached = _find_cached_tree(place, lambda: _expansion(source, filename, module_name, _hy_cache_dir()).tree)
         if cached is not None:
             return cached
     # The whole miss is observed: the expansion (or reading the tree it stored), and building and
-    # writing what is cached with it (the derived values of _CachedTree — agora-redesign #1590).
+    # writing what is cached with it (the derived values of _CachedTree).
     # All of it is paid once per changed source or reader, so none of it is a test's weight.
     with contextlib.ExitStack() as observed:
         for observer in tuple(_EXPANSION_OBSERVERS):
@@ -813,7 +813,7 @@ def observe_expansions(observer: ExpansionObserver) -> Callable[[], None]:
 
 # What the reader derives from an expanded tree (the definition index, the body nodes and the
 # body facts — _CachedTree) was most of what was left of an analysis once the tree was read
-# (agora-redesign #1586 / #1590), so it is kept on disk with the tree in this reader's entries:
+# (#1590), so it is kept on disk with the tree in this reader's entries:
 # their key is what the tree is a function of (hy_expansion._ExpansionKey) and the reader's
 # source (_reader_digest). The tree is kept apart as well, under a key without the reader
 # (hy_expansion — only that module writes it), so a changed reader builds only what it derives
@@ -822,7 +822,7 @@ def observe_expansions(observer: ExpansionObserver) -> Callable[[], None]:
 
 # The shape of the key; a new shape names other entries, and the old ones are never read.
 # v2: the tree is stored with what is derived from it alone. v3: cut into top-level
-# definitions that are built only when followed (_CachedTree — agora-redesign #1591).
+# definitions that are built only when followed (_CachedTree).
 # v4: the body facts keep the names a destructuring binds (_Unpacked — #2674).
 # v5: the key names the reader's source (_reader_digest), so a change of what is
 # derived no longer waits for this tag to be bumped by hand (#2973 changed the shape
@@ -833,10 +833,10 @@ def observe_expansions(observer: ExpansionObserver) -> Callable[[], None]:
 # v8: the record names the macros the expansion used, each with the digest of its code's
 # closure, not the files they lie in — a change of an unused macro of a file keeps the entry
 # (_entry_name is the record's fingerprint).
-# v9: the tree is also kept on its own under a key without the reader (hy_expansion —
-# ki-81f1c868203f), and this key names the expansion's code as well (_ExpansionKey.expander).
+# v9: the tree is also kept on its own under a key without the reader (hy_expansion),
+# and this key names the expansion's code as well (_ExpansionKey.expander).
 # v10: the reader's source is every Python file of this package, not this file alone (design
-# check lt-DMXJNAWWMCFNV7F1QX3GJZ574H, blind A).
+# blind A).
 _TREE_KEY_FORMAT = "v10"
 
 
@@ -889,8 +889,8 @@ def _reader_digest() -> str:
     ``_derived``) is built by the reader's code, so an entry written by another version of it —
     another shape of a fact — is never read by this one; the tree itself is read again from the
     expansion's store (``hy_expansion``), which does not name it. The whole package and not this
-    file alone, so that code ``_derived`` follows may move to another of its modules (design check
-    lt-DMXJNAWWMCFNV7F1QX3GJZ574H, blind A: a helper split into a module of its own and changed
+    file alone, so that code ``_derived`` follows may move to another of its modules (a
+    helper split into a module of its own and changed
     there read the older facts); that it stays in this package is kept by a test."""
     files = sorted(Path(__file__).parent.glob("*.py"))
     text = "\n".join(f"{file.name}={hashlib.sha256(file.read_bytes()).hexdigest()}" for file in files)
@@ -929,13 +929,13 @@ class _CachedTree:
     """An expanded tree as it is kept on disk: the definition index, and how long the pickle of each
     top-level definition's chunk is (the chunks follow it in the entry, back to back).
 
-    agora-redesign #1586 / #1590 stored the derived values (definition index, body nodes and
+    An earlier change stored the derived values (definition index, body nodes and
     facts) with the tree, since rebuilding them in every process was most of an analysis.
     What stayed was building the whole tree from the pickle — 0.41–0.45 s of 1.17 s for one
     closure test — although the reader follows a few definitions of each module (#1591).
     The chunks are read as bytes and only the ones asked for are built. The whole tree is not kept
     here at all — the expansion's store (``hy_expansion``) holds it, and only ``module_ast`` asks
-    for it (ki-24a14c43f26b: reading the entries was half of what an analysis that missed paid)."""
+    for it (reading the entries was half of what an analysis that missed paid)."""
 
     index: dict[tuple[str, ...], tuple[_Definition, ...]]
     spans: tuple[int, ...]
@@ -1094,7 +1094,7 @@ def _derived(tree: ast.Module) -> _Derived:
 
     The definitions of a chunk are found through the body nodes of its defs — the lists
     that are kept for the chunk anyway — and not by walking the chunk again for them, and once more
-    for its defs (ki-56e063c79150: the changed modules of the screen job's closure took 17-19 s of 32 s
+    for its defs (the changed modules of the screen job's closure took 17-19 s of 32 s
     to build, and the walks were most of what was not the facts themselves). A lambda written in the
     decorators or the defaults of a def is not one of the chunk's defs, and is read when followed,
     as any def the reader finds elsewhere is."""
@@ -1219,7 +1219,7 @@ def _function_of(obj: Any) -> types.FunctionType | None:
         obj = obj.__func__
     if isinstance(obj, _bind_opener_class()):
         # ``outcomes.open_bind`` is doeff-vm's BindOpener: its in-place path gives the answer
-        # its Python path gives, so read the Python path (agora-redesign #844).
+        # its Python path gives, so read the Python path.
         obj = obj.fallback
     if not callable(obj) or isinstance(obj, type):
         return None
@@ -1325,7 +1325,7 @@ class ReceivedField:
     the effect that arrived.  Performing it runs a Program the effect carried
     (``Try(program)`` → ``yield effect.program``); that Program was read where the
     effect was performed — carried with the effect class as carrier — so performing it
-    here adds nothing (agora-redesign #1432)."""
+    here adds nothing."""
 
     cls: type
     attr: str
@@ -1398,7 +1398,7 @@ class _Bound:
 
         Built once per ``_Bound`` (the bindings are frozen, and a written value's identity
         names its scope's key — so rebuilding it walked every enclosing scope again on each
-        read; agora-redesign #1592)."""
+        read)."""
         return _BindingsKey(frozenset(_KeyEntry(b.name, _identity(b.value)) for b in self.bindings))
 
     @functools.cached_property
@@ -1447,7 +1447,7 @@ class _ProgramSeq:
     (``(sequence (gfor row rows (carrier-of row)))`` — doeff-traverse's ``sequence``).
     It is not a Program itself: what the callee takes out of it (``for p in ps`` /
     ``ps[i]``) is one of the elements, read where the caller wrote it (agora-redesign
-    #1265; a comprehension — request lt-QX2FM3MDS8EX0Q308A3NCQQYGJ)."""
+    #1265; a comprehension)."""
 
     expr: ast.Tuple | ast.List | Comprehension
     scope: "_Scope"
@@ -1491,8 +1491,7 @@ class _ProgramAnyOf:
 class _LocalFunction:
     """A lambda or a def nested in a body (``(fn [] (begin-query c))`` passed to a
     callee, ``attempt`` defined in a handler clause): calling it runs its body, read
-    where it was written (``scope``) with its parameters bound to the call's arguments
-    (agora-redesign #1432)."""
+    where it was written (``scope``) with its parameters bound to the call's arguments."""
 
     node: FunctionNode
     scope: "_Scope"
@@ -1519,7 +1518,7 @@ class _WrittenArgument:
     when the reader cannot bind it to an object (``(managed-launch [] adapter)`` — a list
     literal, a name the caller unpacked).  Where the builder places the parameter in its list
     (``[mark #* around adapter]``), the expression is read as a handler (list) in the
-    caller's ``scope`` (agora-redesign #2674)."""
+    caller's ``scope``."""
 
     expr: ast.expr
     scope: "_Scope"
@@ -1819,7 +1818,7 @@ class _Scope:
         child: the answer depends on this scope's bindings and is not kept beyond it.
         doeff-hy writes a definition (``defk`` / ``deftest`` / ``defhandler``) and a
         ``handle`` in a function body this way, so the helpers its expansion imports stay
-        local to the wrapper (card ki-964823cd7feb・ki-907f779b3290); any other shape (a
+        local to the wrapper; any other shape (a
         wrapper taking arguments, several returns, a name bound twice) is left unresolved."""
         match self.local_values.get(name):
             case ast.Call(func=ast.Name(id=callee), args=[], keywords=[]) if callee != name:
@@ -1932,7 +1931,7 @@ class _Scope:
         handlers (``prog = effect.program`` … ``prog = h(prog)`` — ``try_handler``
         puts the inner handlers back around the Program it received).  A first value may
         also be the Program a declared function field builds (``prog = effect.f(item)`` —
-        doeff-traverse's ``sequential``, agora-redesign #2973), and a local first bound on
+        doeff-traverse's ``sequential``), and a local first bound on
         several paths holds a field only when every first value does."""
         if name in self.local_values:
             seeds: tuple[ast.expr, ...] = (self.local_values[name],)
@@ -2195,7 +2194,7 @@ _NODE_FIELDS: dict[type, tuple[str, ...]] = {}
 def _children_of(node: ast.AST) -> list[ast.AST]:
     """The child nodes of ``node``, the ones ``ast.iter_child_nodes`` yields and in its order, read from the
     fields of the node's class directly: the reader walks the nodes of every def of every module whose derived
-    values are built (ki-56e063c79150), and asking a generator for each node costs more than reading its fields."""
+    values are built, and asking a generator for each node costs more than reading its fields."""
     kind = type(node)
     fields = _NODE_FIELDS.get(kind)
     if fields is None:
@@ -2325,7 +2324,7 @@ def _body_facts(function: FunctionNode) -> _BodyFacts:
 # and ``_unpacked_places`` find, and the loops and defs ``_read_body_facts`` takes by their class, are in nodes of
 # these classes and no others — and of a name, only one that is stored. Most nodes of a body (calls, attributes,
 # constants, names that are read) are none of them and are not asked at all — asking each one five questions was
-# two thirds of building the facts of a changed module (ki-56e063c79150). A test asks the helpers of the nodes of every
+# two thirds of building the facts of a changed module. A test asks the helpers of the nodes of every
 # other class in real sources, so a rule added for another class cannot slip by.
 _BINDING_NODES = frozenset(
     {
@@ -2501,7 +2500,7 @@ def declared_builders(expr: ast.expr, scope: "_Scope") -> tuple[Any, ...]:
     sequence of it): a parameter's annotation (``(: receivers (get tuple #(NoticeReceiver ...)))``), a
     field of a clause's received effect (``effect.handlers``), or a field of a record held by such a
     parameter (``lane.handlers`` with ``lane: TurnRecordsLane``); ``list(x)`` / ``tuple(x)`` are read
-    as ``x``.  () when the place has no such type — the value stays unread (card ki-e912b1821351)."""
+    as ``x``.  () when the place has no such type — the value stays unread."""
     match expr:
         case ast.Call(func=func, args=[inner], keywords=[]) if scope.resolve(func) in (list, tuple):
             return declared_builders(inner, scope)
@@ -2609,7 +2608,7 @@ def _builds_carried(value: Imported) -> bool:
     Program it runs where the effect was performed — declared in ``__doeff_runs_carried__``
     (doeff-traverse's ``Traverse.f``).  The Program a call of it builds is read at the
     performing site (``_Reader._carried_builder``), so performing it in the handler adds
-    nothing (agora-redesign #2973)."""
+    nothing."""
     if not isinstance(value, ReceivedField):
         return False
     effects = importlib.import_module("doeff_core_effects._effects")
@@ -2747,8 +2746,7 @@ def _defaulted(
     call on the parameter does: ``None`` (calling it performs nothing — ``(read-intake fold)``
     leaves ``kept`` None, and the body calls ``(kept entry)`` only when it is not) or a function /
     effect class (the call runs it).  Other defaults (data) stay unbound, as before.  A call that
-    spreads ``*args`` / ``**kwargs`` may pass any parameter: nothing is taken as left out
-    (card ki-e912b1821351)."""
+    spreads ``*args`` / ``**kwargs`` may pass any parameter: nothing is taken as left out."""
     spreads = any(isinstance(a, ast.Starred) for a in call.args) or any(
         k.arg is None for k in call.keywords
     )
@@ -2808,7 +2806,7 @@ def _argument_value(argument: ast.expr, scope: _Scope) -> Imported:
     if isinstance(argument, ast.Constant) and argument.value is None:
         # A written None is what a parameter left at its default None is bound to (``_defaulted``):
         # the callee calls it only on a path where it is set (``(sieved-mirror-of table None
-        # fields)`` — agora card ki-8694f6cc9b39).
+        # fields)``).
         return None
     value = scope.resolve(argument)
     if isinstance(value, _LocalFunction) or isinstance(argument, ast.Lambda):
@@ -2833,7 +2831,7 @@ def _recurs(value: "_ProgramArg | _ProgramSeq | _LocalFunction") -> bool:
     would never end. A chain of callers through distinct places is followed to its end however long
     it is: the number of places is finite. (Before, a fixed depth of 4 stopped it, and the production
     job foundation's chain of wrappers — foundation, host, its inside, the pool split, the cluster
-    handlers — lost its body at the fifth: card ki-36f06eb1c65a.)"""
+    handlers)"""
     return id(value.place) in value.scope.bound.written
 
 
@@ -2986,7 +2984,7 @@ def _opening(expr: ast.expr, scope: _Scope) -> _Opening | None:
 def _bind_expression(expr: ast.expr, scope: _Scope) -> ast.Call | None:
     """The bind wrapper call ``W`` when ``expr`` is doeff-hy's bind expression
     ``b.value if (b := W).__class__ is <Pure> else (yield b)`` (``W`` = ``open_bind(e[, absent])``),
-    else None. The expression yields ``W`` unless ``W`` already answered (agora-redesign #844)."""
+    else None. The expression yields ``W`` unless ``W`` already answered."""
     match expr:
         case ast.IfExp(
             test=ast.Compare(
@@ -3118,7 +3116,7 @@ def _read_install(form: _InstallForm, scope: _Scope, filename: str) -> list[Hand
 def _bound_handler(handler: ast.expr, scope: _Scope) -> ast.expr:
     """``WithHandler(h, body)``'s ``h`` as written: a local the reader cannot resolve, bound
     once (``__doeff_handler_data__ = _doeff_do(_hy_anon_17)`` — a ``handle`` in a function body
-    binds its dispatcher in the function it calls at once, card ki-907f779b3290), is read
+    binds its dispatcher in the function it calls at once), is read
     through the expression it was bound to."""
     if not isinstance(handler, ast.Name) or scope.resolve(handler) is not UNBOUND:
         return handler
@@ -3149,7 +3147,7 @@ class _Reader:
         self._reports: dict[int, list[_KeptReport]] = {}
         # Held while a clause made with this reader is read (``handler_effects._emits_read_later``):
         # a handler's clauses share the reader, and a thread asking for one clause walked the empty
-        # facts another thread had placed but not yet read (blind A of ki-5a5f6bd26d5e).
+        # facts another thread had placed but not yet read.
         self.lock = threading.RLock()
         self._mut_absent: HandlerEffects | None = None
 
@@ -3157,7 +3155,7 @@ class _Reader:
         """The ``:absent`` receiver this reader's binds are read under, read once per reader.
         Kept for the process, its clauses — read when an effect reaches them, with the reader they
         were made with — were shared by every analysis, and counted their sources only in the one
-        that read them first (blind A of ki-5a5f6bd26d5e)."""
+        that read them first."""
         if self._mut_absent is None:
             self._mut_absent = _absent_receiver()
         return self._mut_absent
@@ -3251,7 +3249,7 @@ class _Reader:
             opened = scope.local_values.get(expr.id)
             if opened is not None and _opening(opened, scope) is not None:
                 # doeff-hy's bind: ``b.value if (b := open_bind(e)).__class__ is Pure else (yield b)``
-                # — what is yielded is the bind it named (agora-redesign #844).
+                # — what is yielded is the bind it named.
                 self._performed(opened, scope, filename, facts)
                 return
             choices = scope.local_choices.get(expr.id)
@@ -3523,7 +3521,7 @@ class _Reader:
         (``Traverse``'s ``f``): its body is that Program, read where the function was
         written with its parameters unbound — a ``do``-wrapped local def or lambda (what
         ``for/do`` expands to), a local def or lambda, or a Program function.  A value the
-        reader cannot read as a function is not carried, as before (agora-redesign #2973)."""
+        reader cannot read as a function is not carried, as before."""
         location = Location(filename, getattr(argument, "lineno", 0))
         function = _do_wrapped(argument, scope) or argument
         value = _argument_value(function, scope)
@@ -3834,7 +3832,7 @@ class _KeptReport:
     label whose ``active`` holds the same of those keys (``active_checked``) takes the same bodies
     in the same order, so it builds this report — and reads nothing this one did not.  Before, every
     walk that reached a body reported the handled scopes and carried Programs in it again: 7,000 -
-    17,500 reports from 800 - 1,900 bodies in one closure check (ki-5a5f6bd26d5e)."""
+    17,500 reports from 800 - 1,900 bodies in one closure check."""
 
     start: _Facts
     label: str
