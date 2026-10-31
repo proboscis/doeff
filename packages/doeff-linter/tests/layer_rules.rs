@@ -972,6 +972,20 @@ fn architecture_repo(files: &[(&str, String)], toml_extra: &str) -> tempfile::Te
     dir
 }
 
+/// `:root-modules` に名を宣言した root 直下の module は DOEFF114 にならず、宣言を外すと(か別の名の file は)DOEFF114 が出る。
+#[test]
+fn root_modules_declared_pass_and_undeclared_fail_doeff114() {
+    let files = [("app/macros.hy", "(defn m [] 1)\n".to_string()), ("app/other.hy", "(defn o [] 1)\n".to_string())];
+    let with_declaration = architecture_repo(&files, "");
+    let source = std::fs::read_to_string(with_declaration.path().join("architecture.hy")).unwrap();
+    std::fs::write(with_declaration.path().join("architecture.hy"), source.replace("  :foundation foundation)", "  :foundation foundation\n  :root-modules [\"macros\"])")).unwrap();
+    let (_, report) = editor(with_declaration.path());
+    assert_eq!(keys(&report, "DOEFF114"), vec!["app/other.hy::DOEFF114"], "{}", report);
+    let without = architecture_repo(&files, "");
+    let (_, report) = editor(without.path());
+    assert_eq!(keys(&report, "DOEFF114"), vec!["app/macros.hy::DOEFF114", "app/other.hy::DOEFF114"], "{}", report);
+}
+
 #[test]
 fn architecture_declares_services_layers_and_dependencies() {
     let files = [

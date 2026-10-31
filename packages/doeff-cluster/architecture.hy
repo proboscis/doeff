@@ -212,7 +212,10 @@
   ;; 本番の code はこの dir を import しない。
   ;; JSON の値を手で綴ってよい foundation の module — 盤の送受信と、effect の記録の綴り(record_codec)と記録の形(record_log)(#2580)。
   :wire-modules ["doeff_cluster._shared.protocol.board_requests" "doeff_cluster._foundation.record_codec" "doeff_cluster._foundation.record_log"]
-  :verification-environment "_sim")
+  :verification-environment "_sim"
+  ;; root の直下の公開の module(ADR-DOE-API-001 R15 — macro defsystem は Hy の require が module の path で読むので、根の入口の遅延の名にできず
+  ;; doeff_cluster.macros から見せる)。ここに無い root 直下の file は DOEFF114。
+  :root-modules ["macros"])
 
 (defservice coordinator "worker へ job を割り当てる coordinator(資源と盤の置き場・調停のループ)"
   [removed]
