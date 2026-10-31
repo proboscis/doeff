@@ -44,6 +44,45 @@ class RunRefused:
 RunStartOutcome: TypeAlias = RunAccepted | RunNameInUse | RunRefused
 
 @dataclass(frozen=True, kw_only=True)
+class VolumeCreated:
+    name: str
+
+    def __post_init__(self) -> None:
+        ...
+
+@dataclass(frozen=True, kw_only=True)
+class VolumeExisted:
+    name: str
+
+    def __post_init__(self) -> None:
+        ...
+
+@dataclass(frozen=True, kw_only=True)
+class VolumePresent:
+    name: str
+
+    def __post_init__(self) -> None:
+        ...
+
+@dataclass(frozen=True, kw_only=True)
+class VolumeAbsent:
+    name: str
+
+    def __post_init__(self) -> None:
+        ...
+
+@dataclass(frozen=True, kw_only=True)
+class VolumeRefused:
+    name: str
+    why: RefusalWhy
+    detail: str = ''
+
+    def __post_init__(self) -> None:
+        ...
+VolumeEnsureOutcome: TypeAlias = VolumeCreated | VolumeExisted | VolumeRefused
+VolumeStatusOutcome: TypeAlias = VolumePresent | VolumeAbsent | VolumeRefused
+
+@dataclass(frozen=True, kw_only=True)
 class StopFailed:
     handle: RunHandle
     detail: str = ''
@@ -113,6 +152,20 @@ class RunReadEvents(_doeff_effect_base[RunEventPage]):
     handle: RunHandle
     after_seq: int
     wait_up_to: float
+
+    def __post_init__(self) -> None:
+        ...
+
+@_doeff_dataclass(frozen=True)
+class VolumeEnsure(_doeff_effect_base[VolumeEnsureOutcome]):
+    name: str
+
+    def __post_init__(self) -> None:
+        ...
+
+@_doeff_dataclass(frozen=True)
+class VolumeStatus(_doeff_effect_base[VolumeStatusOutcome]):
+    name: str
 
     def __post_init__(self) -> None:
         ...
