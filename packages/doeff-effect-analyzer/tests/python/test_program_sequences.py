@@ -1,6 +1,6 @@
 """Programs handed over in a tuple / list and taken out of it inside the callee.
 
-Regression target ([issue], from #1178): a foundation of the shape
+Regression target (from #1178): a foundation of the shape
 ``(defk listeners [parts ports] …)`` receives one body per port as a tuple and runs
 each under its own listener — ``(for [port ports] …)`` or ``(get ports 0)``.  The
 reader followed a Program bound to a parameter by name, but not an element taken

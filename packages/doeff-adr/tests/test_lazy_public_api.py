@@ -1,4 +1,4 @@
-"""``doeff_adr`` の公開 API は最初の利用時に registry から読む([issue])— 名・型・値・import の失敗は
+"""``doeff_adr`` の公開 API は最初の利用時に registry から読む— 名・型・値・import の失敗は
 今までと同じで、pytest の plugin を読むだけでは registry と YAML を読まないことを確かめる。"""
 
 import ast
@@ -14,8 +14,8 @@ import doeff_adr._semgrep_effects
 import doeff_adr._semgrep_hy
 
 INIT = Path(doeff_adr.__file__)
-#: 公開の名を定義する module(registry と、effect と handler の内側の module — card [id]・[id]。
-#: 型・例外と pytest の plugin の名を出す _registry・_semgrep_hy・_pytest_plugin — card [id])。
+#: 公開の名を定義する module(registry と、effect と handler の内側の module。
+#: 型・例外と pytest の plugin の名を出す _registry・_semgrep_hy・_pytest_plugin)。
 DEFINING_MODULES = {
     "doeff_adr._registry": doeff_adr._registry,
     "doeff_adr._effects": doeff_adr._effects,

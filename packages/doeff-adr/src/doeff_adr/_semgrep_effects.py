@@ -1,11 +1,10 @@
 """Semgrep の検を表に載せる effect RegisterSemgrep と、semgrep を走らせて見本の当たり外れを確かめる effect AssertSemgrep と、
 2 つに答える handler を返す工場 semgrep_enforcements。
 
-決め: 依頼書 [id] の問い register-semgrep の答え [id] と、依頼書
-[id] の問い assert-semgrep の答え [id](どちらも effect にする・card
-[id]・ADR-DOE-API-001 R22)。本体は内側の registry._register_semgrep_enforcement・registry._assert_semgrep_enforcement に
+決め: RegisterSemgrep と AssertSemgrep はどちらも effect にする
+(ADR-DOE-API-001 R22)。本体は内側の registry._register_semgrep_enforcement・registry._assert_semgrep_enforcement に
 移した。前の関数 register_semgrep_enforcement と assert_semgrep_enforcement は、外の repo の呼び手を effect へ書き換えた後に
-(card [id]・agora-controllers cef8e6e88a)消した(card [id])。
+(agora-controllers cef8e6e88a)消した。
 
 handler は GetAdr の adr_registry と分ける: AssertSemgrep は外の process(semgrep)を起こすので、ADR を読むだけの program の
 handler の組に semgrep の実行を混ぜない。macro defsemgrep の展開は、自分の載せと検をこの handler の下で走らせる(project の

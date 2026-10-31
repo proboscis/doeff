@@ -1,4 +1,4 @@
-"""``Annotated`` contract types run as the type they annotate (card [id]).
+"""``Annotated`` contract types run as the type they annotate.
 
 A contract may name a type that carries a mark for the static reader (doeff's ``BuiltBy`` —
 ``Annotated[Callable[..., object], BuiltBy(f)]``). At run time the check is the annotated type's.

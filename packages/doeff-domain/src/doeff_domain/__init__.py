@@ -1,6 +1,6 @@
 """doeff-domain — vocabulary cohesion domains for doeff (ADR-DOE-DOMAIN-001 E1).
 
-Public surface (ADR-DOE-API-001 R29 — card [id]):
+Public surface (ADR-DOE-API-001 R29):
 
 - ``Domain`` / ``DomainTerm`` / ``DomainLaw`` / ``Handles`` — the cohesion unit
   and its handler declarations as pure data.

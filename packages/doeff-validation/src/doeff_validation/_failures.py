@@ -153,7 +153,7 @@ class CheckError:
         )
 
 
-[removed]
+class ValidationException(Exception):  # noqa: N818 - operator が名指した名前
     """``validate`` の項目のどれかが落ちた。落ちた項目の失敗を項目の順に全部持つ。
 
     ``failures`` の要素は ``CheckFailure``(判定が偽)・``CheckError``(評価が例外)・入れ子の

@@ -1,4 +1,4 @@
-"""The Redis handler's calls are made only when they are awaited ([issue] — the warning
+"""The Redis handler's calls are made only when they are awaited (the warning
 "coroutine '_or_failed' was never awaited" seen on the real server).
 
 Every operation of ``redis_notice_handler`` is one ``Await``. When the task that performs it is stopped after the

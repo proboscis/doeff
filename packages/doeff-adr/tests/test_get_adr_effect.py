@@ -1,7 +1,7 @@
-"""設計の記録(ADR)を id で引く操作は effect GetAdr で、handler を返す工場 adr_registry が答える(card [id])。
+"""設計の記録(ADR)を id で引く操作は effect GetAdr で、handler を返す工場 adr_registry が答える。
 
-決め: 依頼書 [id] の問い get-adr の答え [id](effect にする)。
-移し替えの層だった関数 get_adr は、外の repo の呼び手を書き換えた後(card [id])に消した(card [id])。
+決め: effect にする。
+移し替えの層だった関数 get_adr は、外の repo の呼び手を書き換えた後に消した。
 
 adr_registry() は process の登録簿から、adr_registry(specs=[spec, …]) はその列だけから答える(列に無い id は登録簿へ
 落ちずに KeyError)。

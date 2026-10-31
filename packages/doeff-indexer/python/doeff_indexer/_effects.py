@@ -1,11 +1,11 @@
 """索引を引く effect FindSymbols と、その答えの 1 行の型 SymbolInfo(Rust の拡張を読まない — 答える handler は _handlers)。
 
-決め: 依頼書 [id] の問い indexer の答え [id](effect にする・card
-[id]・ADR-DOE-API-001)。前の口の class Indexer(Indexer.for_module(m).find_symbols(…))は内側の拡張
+決め: effect にする(
+ADR-DOE-API-001)。前の口の class Indexer(Indexer.for_module(m).find_symbols(…))は内側の拡張
 doeff_indexer._native に置き、入口から出さない。答えの 1 行の型 SymbolInfo は R2 の effect の結果の型として入口から見せる。
 
 この module は Python だけで、拡張の .so を読まない: test は FindSymbols に自分の handler で答えれば、Rust の索引器も拡張も
-file も無しに同じ program を走らせられる(構成のレビュー [id] の所見 A)。
+file も無しに同じ program を走らせられる。
 """
 
 from dataclasses import dataclass

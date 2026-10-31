@@ -10,8 +10,7 @@ that answers them by reading the sources (nothing is run)::
 
     run(effect_analysis()(program))
 
-Decided by the answer [id] (question analyzer of [id] —
-make them effects, show the answer types — card [id]).  The functions that answer them
+Decided: make them effects, and show the answer types.  The functions that answer them
 (``_program_effects.analyze_program``, ``_handler_effects.check_coverage`` …) are inside the package.
 """
 

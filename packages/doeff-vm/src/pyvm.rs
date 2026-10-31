@@ -54,7 +54,7 @@ impl PyVM {
         )
     }
 
-    /// Steps this VM has taken since it was built (diagnostic — [issue]).
+    /// Steps this VM has taken since it was built (diagnostic).
     fn step_count(&self) -> u64 {
         self.vm.steps
     }

@@ -2,7 +2,7 @@
 
 ADR-DOE-API-001 R1: the import root shows effects, handlers and their types only. The client class
 is built inside the handlers from Reader keys, so a caller never constructs ``OpenAIClient`` to set
-the timeout or the retries (agora card [id]).
+the timeout or the retries.
 """
 
 import doeff_openai

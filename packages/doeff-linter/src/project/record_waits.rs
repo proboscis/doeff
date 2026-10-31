@@ -1,6 +1,5 @@
-//! [removed]
-//! 待つ設計を linter で見つけて禁じる。記録と起動を分け、起動は Redis や RabbitMQ などの出来事の基盤から受けて即座に応じる・
-//! [issue])。
+//! DOEFF208 — 本番の code が、記録の変更の待ちを job を起こす手段にする所(記録を書いて記録を
+//! 待つ設計を linter で見つけて禁じる。記録と起動を分け、起動は Redis や RabbitMQ などの出来事の基盤から受けて即座に応じる)。
 //!
 //! 当たるのは、architecture.hy に `:business-fakes` を書いた repo の本番の code の Hy の file(`business_fakes::production_code` — DOEFF143 の
 //! 本番の入口・DOEFF207 の job でない書き手と同じ範囲の宣言。検・模擬の環境・読まない file は外れる)。次の 2 つを当たりにする:
