@@ -14,6 +14,7 @@ from doeff_cluster._shared.intent.runtime_env_model import EnvFailure as EnvFail
 from doeff_cluster._shared.intent.runtime_env_model import EnvFailureKind as EnvFailureKind
 from doeff_cluster._shared.intent.runtime_env_model import CHILD_PROTOCOL as CHILD_PROTOCOL
 from doeff_cluster._shared.intent.runtime_env_model import SUPPORTED_CHILD_PROTOCOLS as SUPPORTED_CHILD_PROTOCOLS
+from doeff_cluster._shared.intent.job_model import CHILD_ENTRY_PLACES as CHILD_ENTRY_PLACES
 from doeff_cluster._shared.core.runtime_env_rules import env_failure as env_failure
 from doeff_cluster._shared.core.runtime_env_rules import root_split as root_split
 from doeff_cluster._shared.core.runtime_env_rules import hyx_runtime_env_XgreaterHthan_signXjson as hyx_runtime_env_XgreaterHthan_signXjson

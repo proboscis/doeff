@@ -85,6 +85,7 @@ from doeff_core_effects import WarmExited as WarmExited
 from doeff_core_effects import WarmLost as WarmLost
 from doeff_cluster._worker.core.warm_rules import WarmPlace as WarmPlace
 from doeff_cluster._worker.core.warm_rules import warm_place as warm_place
+from doeff_cluster._worker.protocol.env_store import root_entry_place as root_entry_place
 
 @dataclass(frozen=True, kw_only=True)
 class HostSettings:

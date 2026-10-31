@@ -93,6 +93,7 @@ class EnvMarker:
     startup_seconds: float | None = None
     hy_version: str | None = None
     build_memory_bytes: int | None = None
+    entry_place: str | None = None
 
 class WheelOrigin(StrEnum):
     BUILT = 'built'
@@ -129,6 +130,7 @@ class BytecodeReport:
 class ProbeReport:
     child_protocol: int
     misplaced: tuple
+    entry_place: str | None
 
 @dataclass(frozen=True, kw_only=True)
 class EnvReady:
@@ -153,6 +155,7 @@ class PrepareState:
     parts: tuple = ...
     volume: VolumeKind | None = None
     hy_version: str | None = None
+    entry_place: str | None = None
 
 @dataclass(frozen=True)
 class StageStarted(EffectBase):

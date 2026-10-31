@@ -4,6 +4,8 @@ from dataclasses import dataclass as dataclass
 from dataclasses import field as field
 from enum import Enum as Enum
 from functools import cached_property as cached_property
+CHILD_ENTRY_PLACES: tuple[str, ...]
+LEGACY_ENTRY_PLACE: str
 
 @dataclass(frozen=True)
 class JobSpec:
@@ -41,6 +43,9 @@ class JobSpec:
         ...
 
     def __hash__(self) -> int:
+        ...
+
+    def entry_at(self, place: str | None) -> str:
         ...
 
 def env_without_commits(runtime_env: str) -> str:

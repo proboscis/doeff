@@ -8,8 +8,12 @@ from doeff_core_effects import EnvEntry as EnvEntry
 from doeff_core_effects import EnvMode as EnvMode
 from doeff_cluster._shared.core.run_context_rules import process_context_environ as process_context_environ
 from doeff_cluster._shared.intent.job_model import JobSpec as JobSpec
+from doeff_cluster._shared.intent.job_model import LEGACY_ENTRY_PLACE as LEGACY_ENTRY_PLACE
 from doeff_cluster._shared.intent.runtime_env_model import WITHHELD_ENV_NAMES as WITHHELD_ENV_NAMES
 from doeff_cluster._worker.intent.worker_model import CodeLayout as CodeLayout
+
+def entry_place_of_marker(text: str | None) -> _Program[str | None, object]:
+    ...
 CHILD_ENV_ALLOWED: frozenset[str]
 CHILD_ENV_PREFIXES: tuple[str, ...]
 
@@ -60,5 +64,5 @@ class JobLaunch:
     entry_args: tuple = ...
     entry_env: tuple[EnvEntry, ...] = ...
 
-def job_launch(spec: JobSpec, code_path: str, instance: str, attempt: int, *, python: str, hy_command: str, extra_env: dict, layout: CodeLayout, allowed_env: dict, worker_pid: int, program_path: str | None, program_env: str, work_dir: str, shim_grace_ms: int, notice_env: str) -> _Program[JobLaunch, object]:
+def job_launch(spec: JobSpec, code_path: str, instance: str, attempt: int, *, entry: str, python: str, hy_command: str, extra_env: dict, layout: CodeLayout, allowed_env: dict, worker_pid: int, program_path: str | None, program_env: str, work_dir: str, shim_grace_ms: int, notice_env: str) -> _Program[JobLaunch, object]:
     ...
