@@ -1,6 +1,6 @@
 """MemoDeleteEffect handling: delete-then-get must recompute.
 
-[removed]
+Issue doeff-core-effects-delete-effects-drift:
 MemoDeleteEffect は語彙として定義済みだが handler が処理していなかった。
 この invariant probe 群は、Put(k) → Delete(k) → Get(k) がいかなる handler
 スタック構成でも stale 値を返さないことを固定する。

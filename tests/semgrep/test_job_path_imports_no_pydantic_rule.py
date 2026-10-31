@@ -1,7 +1,7 @@
-"""job の道の module が pydantic を import しない事の規則の検(card [id]・親 card [id])。
+"""job の道の module が pydantic を import しない事の規則の検。
 
 規則 doeff-job-path-imports-no-pydantic(Python)と doeff-job-path-imports-no-pydantic-hy(Hy)は、doeff の根と packages/ の module が
-[removed]
+pydantic と pydantic_core を import したら断る。範囲の外は
 LLM の出力を受ける doeff-openai・doeff-gemini・doeff-openrouter と、照らしの道具 doeff_hy/_wire_parity.py と tests。
 
 - 1 本目: 検体(tests/semgrep/fixtures/python/packages/doeff-job-path-pydantic-sample/)で `fires` を付けた行だけが鳴る(型検査の時だけの

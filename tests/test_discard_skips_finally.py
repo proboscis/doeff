@@ -1,4 +1,4 @@
-"""Discard drops a task without unwinding it, like SIGKILL ([issue]).
+"""Discard drops a task without unwinding it, like SIGKILL.
 
 ``Cancel(task)`` throws ``TaskCancelledError`` into the task so its
 ``except`` / ``finally`` run (tests/test_cancel_runs_finally.py). ``Discard``

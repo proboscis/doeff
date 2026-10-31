@@ -1,6 +1,6 @@
-"""doeff-vm-imported-only-by-doeff の検(agora-redesign [id])。
+"""doeff-vm-imported-only-by-doeff の検。
 
-[removed]
+doeff だけが doeff_vm を import する。packages/ の subpackage・examples・
 docs/adr の Hy は VM の型を doeff の根から、VM の内側の物を doeff._vm から読む。検体
 (tests/semgrep/fixtures/python/packages/doeff-vm-boundary-sample/)で `fires` を付けた行だけが当たることを、規則の当たりの行で
 突き合わせる。

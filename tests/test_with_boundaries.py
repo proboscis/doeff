@@ -1,4 +1,4 @@
-"""WithBoundaries installs a captured boundary stack in one VM step ([issue]).
+"""WithBoundaries installs a captured boundary stack in one VM step.
 
 A scheduler starting a task re-enters the handlers and observers captured at
 the spawn site (get_inner_boundaries, innermost first). Until #3149 it did so

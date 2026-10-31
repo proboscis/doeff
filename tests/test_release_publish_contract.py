@@ -30,7 +30,7 @@ POST_PUBLISH_SECTION = "## 出した後の確かめ"
 # What the root tag publishes: the packages released under one version — `pip install doeff`
 # installs doeff, doeff-vm and doeff-core-effects, and the `hy` extra adds doeff-hy and
 # doeff-hy-pytest (tests/test_core_install_extras.py). The owner chose this range, the current
-# names and Python 3.11-3.14 (request [id], 2026-10-16; 3.15 added 2026-10-26); doeff-agents,
+# names and Python 3.11-3.14 (2026-10-16; 3.15 added 2026-10-26); doeff-agents,
 # doeff-time and doeff-indexer left the root release then.
 CORE_RELEASE_PACKAGES = frozenset(
     {"doeff", "doeff-vm", "doeff-core-effects", "doeff-hy", "doeff-hy-pytest"}
