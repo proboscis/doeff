@@ -41,7 +41,6 @@ from doeff_records._effects import WatchEvents as WatchEvents
 from doeff_records._values import Changes as Changes
 from doeff_records._values import EventsMoved as EventsMoved
 from doeff_records._values import EventsQuiet as EventsQuiet
-from doeff_records._values import NotIndexed as NotIndexed
 from doeff_records._values import Page as Page
 from doeff_records._values import Reset as Reset
 from doeff_records._values import StreamEmpty as StreamEmpty
@@ -87,10 +86,10 @@ def back_announced(names: tuple[str, ...], promise: Promise) -> _Program[None, o
 def came_back_within(names: tuple[str, ...], seconds: int | float) -> _Program[bool, object]:
     ...
 
-def ride_out_stall(subscriber: str, names: tuple[str, ...], first: Unreachable, again: EffectBase | Program) -> _Program[Page | NotIndexed | Changes | Reset | EventsMoved | EventsQuiet | StreamEnd | StreamEmpty | bool, object]:
+def ride_out_stall(subscriber: str, names: tuple[str, ...], first: Unreachable, again: EffectBase | Program) -> _Program[Page | Changes | Reset | EventsMoved | EventsQuiet | StreamEnd | StreamEmpty | bool, object]:
     ...
 
-def reachable(ask: ListRows | WatchChanges | WatchEvents | ReadStreamEnd, subscriber: str, names: tuple[str, ...]) -> _Program[Page | NotIndexed | Changes | Reset | EventsMoved | EventsQuiet | StreamEnd | StreamEmpty, object]:
+def reachable(ask: ListRows | WatchChanges | WatchEvents | ReadStreamEnd, subscriber: str, names: tuple[str, ...]) -> _Program[Page | Changes | Reset | EventsMoved | EventsQuiet | StreamEnd | StreamEmpty, object]:
     ...
 
 def start_cursor(subscriber: str, tables: tuple[str, ...]) -> _Program[WatchCursor | None, object]:

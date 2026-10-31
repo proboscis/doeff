@@ -49,7 +49,7 @@
 (import doeff_time [GetTimeEffect WaitWithinEffect])
 (import doeff_records._admission [key-text])
 (import doeff_records._effects [AwaitRecordsBack ListRows ReadSignalSource ReadSourcePatience ReadStreamEnd WatchChanges WatchEvents])
-(import doeff_records._values [Changes EventsMoved EventsQuiet NotIndexed Page Reset StreamEmpty StreamEnd Unreachable WatchCursor
+(import doeff_records._values [Changes EventsMoved EventsQuiet Page Reset StreamEmpty StreamEnd Unreachable WatchCursor
                               checked-table-name ChangedRow SignalTables SignalSourceFactory SignalSourcePatience])
 
 ;; 記録の変化の待ちの上限(秒)— 変化が無ければこの秒で静かな答えが返り、同じ位置から待ち直す(long-poll の 1 回の長さ)。
@@ -146,7 +146,7 @@
 
 (defk ride-out-stall [subscriber names first again]
   {:pre [(: subscriber str) (: names (get tuple #(str ...))) (: first Unreachable) (: again (| EffectBase Program))]
-   :post [(: % (| Page NotIndexed Changes Reset EventsMoved EventsQuiet StreamEnd StreamEmpty bool))]}
+   :post [(: % (| Page Changes Reset EventsMoved EventsQuiet StreamEnd StreamEmpty bool))]}
   "置き場の止まりを、落ちずに越えるため(#3469 — 記録の service の短い停止を越える・記録の置き場の源と memory の置き場の源が同じ 1 つを使う)。
    first = 止まりを見た最初の答え / again = 置き場に届くかを読み直す effect か Program(答え = Unreachable か、届いた答え — 戻りの知らせの
    後にすぐ答える形で渡す。変化の待ちは同じ位置の timeout 0 の読み・reachable の註)。止まりの最初の拍に
@@ -163,7 +163,7 @@
     (when (not back)
       (raise (SignalSourceUnreachable (.format "購読者 {!r} の合図の源(記録の {})が {} 秒 待っても届かない: {}"
                                                subscriber (.join ", " names) patience.seconds answer.detail))))
-    ;; again が失敗と宣言した Unreachable(ReadStreamEnd・WatchEvents・WatchChanges — <- は Raise にする)でも、この待ち直しは Unreachable を値で受けて待つ。
+    ;; again が失敗と宣言した Unreachable(ListRows・ReadStreamEnd・WatchEvents・WatchChanges — <- は Raise にする)でも、この待ち直しは Unreachable を値で受けて待つ。
     (<- reread (on-raise again (Unreachable detail) (Unreachable detail)))
     (:= answer reread))
   (<- (Publish (SourceResumed :source subscriber)))
@@ -172,7 +172,7 @@
 
 (defk reachable [ask subscriber names]
   {:pre [(: ask (| ListRows WatchChanges WatchEvents ReadStreamEnd)) (: subscriber str) (: names (get tuple #(str ...)))]
-   :post [(: % (| Page NotIndexed Changes Reset EventsMoved EventsQuiet StreamEnd StreamEmpty))]}
+   :post [(: % (| Page Changes Reset EventsMoved EventsQuiet StreamEnd StreamEmpty))]}
   "記録の置き場への読み ask を撃ち、答えが Unreachable なら落ちずに置き場の戻りを待って撃ち直すため(止まりの越え方は ride-out-stall の 1 つ)。
    読みは組み立ての置き場の答え手(HTTP の client・memory の置き場)へそのまま撃つ。HTTP の client の要求と答えの読み(始まりの ListRows・
    ReadStreamEnd)は、client の要求を待つ時間(ReadRequestPatience の答え — 組み立てが client の外側で選ぶ)だけ client の中で待ってから
@@ -183,8 +183,8 @@
    ままだと、戻った後に書きが無い間はその秒(WATCH-SECONDS)を待ち切ってから SourceResumed が出た(受信停止の戻りの遅れ・W の条件 5)。
    待たない読みの答え(変化が在れば Changes・EventsMoved、無ければ空の Changes・EventsQuiet、Reset)は long-poll の答えと同じ型なので、
    呼び手は今までどおり答えの位置から long-poll に戻る。他の読み(ListRows・ReadStreamEnd)は待たないので、そのまま撃ち直す。"
-  ;; ask が失敗と宣言した Unreachable(ReadStreamEnd・WatchEvents・WatchChanges — <- は Raise にする)でも、この越え方は Unreachable を値で受けて待つ(on-raise で戻す)。
-  ;; 宣言の無い読み(ListRows)は Unreachable が元から値で、そのまま通る。
+  ;; ask が失敗と宣言した Unreachable(ListRows・ReadStreamEnd・WatchEvents・WatchChanges — <- は Raise にする)でも、この越え方は Unreachable を値で受けて待つ(on-raise で戻す)。
+  ;; ListRows の NotIndexed(失敗)は Unreachable に合わないので外へ渡る — 始まりの位置の読みは where を持たないので起きない。
   (<- answered (on-raise ask (Unreachable detail) (Unreachable detail)))
   (when (not (isinstance answered Unreachable))
     (return answered))
@@ -208,7 +208,7 @@
   (<- page (reachable (ListRows (get tables 0) :limit 1) subscriber tables))
   (match page
     (Page :epoch epoch :sequence sequence) (WatchCursor epoch sequence)
-    _ (raise (TypeError (.format "購読者 {!r} の始まりの ListRows の答えは Page | Unreachable: {!r}" subscriber page)))))
+    _ (raise (TypeError (.format "購読者 {!r} の始まりの ListRows の答えは Page: {!r}" subscriber page)))))
 
 
 (defk stream-starts [bindings subscriber]

@@ -73,13 +73,14 @@
 
 (defhandler ignore-where []
   (ListRows [table where fields cursor limit]
-    (<- answer (ListRows table :fields fields :cursor cursor :limit limit))
+    ;; ListRows の中継 7 つは宣言を開かずに(Perform)値のまま受ける: <- だと Unreachable・NotIndexed が Raise になり、この節から出てしまう(R4)。
+    (<- answer (Perform (ListRows table :fields fields :cursor cursor :limit limit)))
     (resume answer)))
 
 (defhandler ignore-descending []
   ;; 上から読む読みを知らない handler の顔: descending-by を捨てて鍵の順の頁を返す。
   (ListRows [table where fields cursor limit descending-by]
-    (<- answer (ListRows table :where where :fields fields :cursor cursor :limit limit))
+    (<- answer (Perform (ListRows table :where where :fields fields :cursor cursor :limit limit)))
     (resume answer)))
 
 (defhandler drop-write-positions
@@ -106,35 +107,35 @@
 (defhandler hide-descending-cursor
   ;; 上から読む読みの続きを返さない handler の顔(続きの位置を足す前の 1 頁だけの形): 上から読む頁の next-cursor を捨てる。
   (ListRows [table where fields cursor limit descending-by where-any]
-    (<- answer (ListRows table :where where :fields fields :cursor cursor :limit limit :descending-by descending-by :where-any where-any))
+    (<- answer (Perform (ListRows table :where where :fields fields :cursor cursor :limit limit :descending-by descending-by :where-any where-any)))
     (resume (if (and (is-not descending-by None) (isinstance answer Page)) (Page answer.rows None answer.epoch answer.sequence) answer))))
 
 (defhandler descending-cursor-from-the-top
   ;; 上から読む読みの位置を読み捨てる handler の顔: 位置を渡された読みも上から読み直す(頁が重なる)。
   (ListRows [table where fields cursor limit descending-by where-any]
-    (<- answer (ListRows table :where where :fields fields :cursor (if (is descending-by None) cursor None) :limit limit
-                         :descending-by descending-by :where-any where-any))
+    (<- answer (Perform (ListRows table :where where :fields fields :cursor (if (is descending-by None) cursor None) :limit limit
+                                  :descending-by descending-by :where-any where-any)))
     (resume answer)))
 
 (defhandler descending-cursor-by-value-only
   ;; 位置を並べる欄の値だけで比べる handler の顔: 位置の値より小さい値の行から読む(同じ値で鍵の小さい行を落とす — 欠け)。
   (ListRows [table where fields cursor limit descending-by where-any]
-    (<- answer (ListRows table :where where :fields fields
-                         :cursor (if (or (is descending-by None) (is cursor None)) cursor (ListCursor cursor.epoch "" cursor.after-value))
-                         :limit limit :descending-by descending-by :where-any where-any))
+    (<- answer (Perform (ListRows table :where where :fields fields
+                                  :cursor (if (or (is descending-by None) (is cursor None)) cursor (ListCursor cursor.epoch "" cursor.after-value))
+                                  :limit limit :descending-by descending-by :where-any where-any)))
     (resume answer)))
 
 (defhandler ignore-where-any
   ;; 値の組の絞りを知らない handler の顔: where-any を捨てて、where の等号だけで絞った頁を返す。
   (ListRows [table where fields cursor limit descending-by]
-    (<- answer (ListRows table :where where :fields fields :cursor cursor :limit limit :descending-by descending-by))
+    (<- answer (Perform (ListRows table :where where :fields fields :cursor cursor :limit limit :descending-by descending-by)))
     (resume answer)))
 
 (defhandler first-of-any
   ;; 組の値の最初の 1 つだけを等号で読む handler の顔(組を等号の 1 往復に倒す — 値ごとの和にならない)。
   (ListRows [table where fields cursor limit descending-by where-any]
-    (<- answer (ListRows table :where (FrozenMap (| (dict where) (dfor #(name members) (.items where-any) name (get members 0))))
-                         :fields fields :cursor cursor :limit limit :descending-by descending-by))
+    (<- answer (Perform (ListRows table :where (FrozenMap (| (dict where) (dfor #(name members) (.items where-any) name (get members 0))))
+                                  :fields fields :cursor cursor :limit limit :descending-by descending-by)))
     (resume answer)))
 
 (defhandler ignore-key-head []
