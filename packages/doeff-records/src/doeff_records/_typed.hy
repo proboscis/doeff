@@ -151,10 +151,12 @@
 (defk list-typed [#^ RowType row-type * [where None] [cursor None] [limit DEFAULT-LIST-LIMIT] [where-any None]]
   {:pre [(: row-type RowType) (: where (| FrozenMap NoneType)) (: cursor (| ListCursor NoneType)) (: limit int)
          (: where-any (| FrozenMap NoneType))]
-   :post [(: % "TypedPage | Reset | Unreachable | NotIndexed")]}
+   :post [(: % "TypedPage | Reset")]}
   "表の行を 1 頁読み、行の型で返す。where = 欄 → 値(索引の欄の等号の AND・None = 絞らない)/ where-any = 欄 → 値の組(行の欄の値が組の
    どれかに等しい行 — ListRows.where-any と同じ・None = 絞らない)/ cursor・limit は ListRows と同じ。
-   行の型は欄を全部読むので、返す欄の絞り(ListRows.fields)は使わない。答え = TypedPage | Reset | Unreachable | NotIndexed。"
+   行の型は欄を全部読むので、返す欄の絞り(ListRows.fields)は使わない。答え = TypedPage | Reset(cursor の位置の世代が置き場の版と違う —
+   ListRows の値の答えをそのまま返す。呼び手が一覧の頭から読み直す)。ListRows が失敗と宣言した Unreachable・NotIndexed は <- が
+   Raise にして呼び手へ逃がす(値で受けたい呼び手は on-raise か result で包む)。"
   (<- answer (ListRows row-type.table :where (if (is where None) (FrozenMap) where) :cursor cursor :limit limit
                        :where-any (if (is where-any None) (FrozenMap) where-any)))
   (if (isinstance answer Page)

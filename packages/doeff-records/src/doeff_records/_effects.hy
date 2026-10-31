@@ -23,11 +23,11 @@
 (import dataclasses [dataclass field])
 (import doeff [EffectBase])
 (import doeff_hy._frozen [FrozenMap freeze-json])
-(import doeff_records._values [ExpectAbsent ExpectVersion ExpectAny Expectation WatchCursor ListCursor checked-table-name
+(import doeff_records._values [ExpectAbsent ExpectVersion ExpectAny Expectation WatchCursor ListCursor Page checked-table-name
                               checked-field-name freeze-field StreamEnd StreamEmpty Unreachable checked-write-key EventsMoved EventsQuiet
                               Event EventAbsent EventRetired Changes Reset
                               Appended Refused Events NotIndexed WrittenRows RowsConflict RowsRefused
-                              WrittenAndAppended AppendRefused ReadRowAnswer ListRowsAnswer CountRowsAnswer
+                              WrittenAndAppended AppendRefused ReadRowAnswer CountRowsAnswer
                               ReadBatchAnswer PutRowAnswer AppendEventsAnswer
                               SignalSourceFactory SignalSourcePatience RequestPatience])
 
@@ -99,7 +99,47 @@
     (checked-key self.key "ReadRow.key")))
 
 
-(defclass [(dataclass :frozen True)] ListRows [(get EffectBase ListRowsAnswer)]
+(defn #^ bool checked-list-rows [#^ object ask]  ; defk にできない: defeffect の :pre が作る時に同期に呼ぶ検め(:pre は真偽を assert するので、断りは TypeError / ValueError で上げ、通れば True を返す)
+  "ListRows の欄(table・where・where-any・fields・cursor・limit・descending-by・ascending-by)を作る時に検め、where と where-any を深く凍らせる。
+   断りの型と文言は defclass の時から変えない。写像の凍らせは欄を置き換えるので、:pre には欄の値でなく effect 自身(ask)を渡す。"
+  (checked-table-name ask.table "ListRows.table")
+  (freeze-field ask "where" "ListRows.where")
+  (for [name ask.where] (checked-field-name name "ListRows.where の欄"))
+  (freeze-field ask "where_any" "ListRows.where_any")
+  (for [#(name members) (.items ask.where-any)]
+    (checked-field-name name "ListRows.where_any の欄")
+    (when (not (isinstance members tuple))
+      (raise (TypeError (.format "ListRows.where_any の欄 {} の組は JSON の値の配列: {!r}" name members))))
+    (when (not members)
+      (raise (ValueError (.format "ListRows.where_any の欄 {} の組が空(絞らない欄は写像に置かない)" name))))
+    (when (in name ask.where)
+      (raise (ValueError (.format "ListRows の欄 {} が where と where_any の両方に在る(等号と組を同じ欄に重ねない)" name)))))
+  (setv counted (sum (gfor members (.values ask.where-any) (len members))))
+  (when (> counted WHERE-ANY-LIMIT)
+    (raise (ValueError (.format "ListRows.where_any の値の数 {} が上限 {} を越える(組を割って読む)" counted WHERE-ANY-LIMIT))))
+  (when (is-not ask.fields None)
+    (for [name ask.fields] (checked-field-name name "ListRows.fields の欄")))
+  (when (not (or (is ask.cursor None) (isinstance ask.cursor ListCursor)))
+    (raise (TypeError "ListRows.cursor は ListCursor か None")))
+  (checked-limit ask.limit "ListRows.limit")
+  (when (> ask.limit LIST-LIMIT-MAX)
+    (raise (ValueError (.format "ListRows.limit {} が上限 {} を越える(一覧は続きの位置 next_cursor で {} 行までの頁に割って読む)"
+                                ask.limit LIST-LIMIT-MAX LIST-LIMIT-MAX))))
+  (when (is-not ask.descending-by None)
+    (checked-field-name ask.descending-by "ListRows.descending_by"))
+  (when (is-not ask.ascending-by None)
+    (checked-field-name ask.ascending-by "ListRows.ascending_by")
+    (when (is-not ask.descending-by None)
+      (raise (ValueError "ListRows の ascending_by と descending_by は組みで使えない(向きは 1 つ)"))))
+  (setv ordered (or (is-not ask.descending-by None) (is-not ask.ascending-by None)))
+  (when (and (is-not ask.cursor None) (!= ordered (is-not ask.cursor.after-value None)))
+    (raise (ValueError (if ordered
+                           "ListRows.descending_by / ascending_by の読みの cursor は after_value を持つ位置(並べて読む読みが返した next_cursor)"
+                           "ListRows の鍵の順の読みの cursor は after_value の無い位置(並べて読む読みの位置を渡さない)"))))
+  True)
+
+
+(defeffect ListRows
   "表の行を鍵の綴りの順に 1 頁読む。where = 欄 → 値の凍らせた写像(索引の欄の等号の AND)/ fields = 返す欄(None = 全部。鍵の欄は常に返す)/
    cursor = 前の頁の next-cursor(None = 最初から)/ limit = 頁の行数の上限(1 以上 LIST-LIMIT-MAX 以下 — 外は作る時に ValueError)。
    答え = Page | Reset | Unreachable | NotIndexed。
@@ -117,50 +157,20 @@
    (descending-by と同じ ListCursor の after-value と after-key — keyset)で、それを cursor に渡した読みは (値, 鍵の綴り) がその組より
    大きい行から次の頁を読む。descending-by とは組みで使えない(作る時に ValueError)。値の正負を入れ替えて向きを変える手は使わない —
    昇順の読みは欄の値をそのまま並べる。PostgreSQL の置き場は、欄が表の descending / descending-within に在れば、その並べる式の索引を
-   逆向きに辿る(昇順のための索引の宣言は要らない)。"
-  (#^ str table)
-  (setv #^ FrozenMap where (field :default-factory FrozenMap))
-  (setv #^ (| tuple None) fields None)
-  (setv #^ (| ListCursor None) cursor None)
-  (setv #^ int limit DEFAULT-LIST-LIMIT)
-  (setv #^ (| str None) descending-by None)
-  (setv #^ FrozenMap where-any (field :default-factory FrozenMap))
-  (setv #^ (| str None) ascending-by None)
-  (defn #^ None __post_init__ [self]
-    (checked-table-name self.table "ListRows.table")
-    (freeze-field self "where" "ListRows.where")
-    (for [name self.where] (checked-field-name name "ListRows.where の欄"))
-    (freeze-field self "where_any" "ListRows.where_any")
-    (for [#(name members) (.items self.where-any)]
-      (checked-field-name name "ListRows.where_any の欄")
-      (when (not (isinstance members tuple))
-        (raise (TypeError (.format "ListRows.where_any の欄 {} の組は JSON の値の配列: {!r}" name members))))
-      (when (not members)
-        (raise (ValueError (.format "ListRows.where_any の欄 {} の組が空(絞らない欄は写像に置かない)" name))))
-      (when (in name self.where)
-        (raise (ValueError (.format "ListRows の欄 {} が where と where_any の両方に在る(等号と組を同じ欄に重ねない)" name)))))
-    (setv counted (sum (gfor members (.values self.where-any) (len members))))
-    (when (> counted WHERE-ANY-LIMIT)
-      (raise (ValueError (.format "ListRows.where_any の値の数 {} が上限 {} を越える(組を割って読む)" counted WHERE-ANY-LIMIT))))
-    (when (is-not self.fields None)
-      (for [name self.fields] (checked-field-name name "ListRows.fields の欄")))
-    (when (not (or (is self.cursor None) (isinstance self.cursor ListCursor)))
-      (raise (TypeError "ListRows.cursor は ListCursor か None")))
-    (checked-limit self.limit "ListRows.limit")
-    (when (> self.limit LIST-LIMIT-MAX)
-      (raise (ValueError (.format "ListRows.limit {} が上限 {} を越える(一覧は続きの位置 next_cursor で {} 行までの頁に割って読む)"
-                                  self.limit LIST-LIMIT-MAX LIST-LIMIT-MAX))))
-    (when (is-not self.descending-by None)
-      (checked-field-name self.descending-by "ListRows.descending_by"))
-    (when (is-not self.ascending-by None)
-      (checked-field-name self.ascending-by "ListRows.ascending_by")
-      (when (is-not self.descending-by None)
-        (raise (ValueError "ListRows の ascending_by と descending_by は組みで使えない(向きは 1 つ)"))))
-    (setv ordered (or (is-not self.descending-by None) (is-not self.ascending-by None)))
-    (when (and (is-not self.cursor None) (!= ordered (is-not self.cursor.after-value None)))
-      (raise (ValueError (if ordered
-                             "ListRows.descending_by / ascending_by の読みの cursor は after_value を持つ位置(並べて読む読みが返した next_cursor)"
-                             "ListRows の鍵の順の読みの cursor は after_value の無い位置(並べて読む読みの位置を渡さない)"))))))
+   逆向きに辿る(昇順のための索引の宣言は要らない)。
+   答えの分け方(ADR-DOE-CORE-EFFECTS-003 R5・R17 の追補): Page = 成功 / Reset = 値(位置の世代が置き場の版と違うという普通の答えで、
+   呼び手が一覧の頭から読み直して続ける — 失敗にして Raise で飛ばさず、不在にして Absent で飛ばさない)/ Unreachable = 失敗(<- は
+   Raise(Unreachable) を出す)/ NotIndexed = 失敗(<- は Raise(NotIndexed) を出す — 索引の無い欄で絞った誤りで、読み直しても同じ答えに
+   なり続きが無い。索引の用意が終わるまでの断りも失敗で、撃ち直す呼び手は on-raise で受ける)。不在は無い。答える handler は今までどおり
+   4 つとも値で答える(R4)。"
+  {:fields [(: table str) (: where FrozenMap (FrozenMap)) (: fields (| tuple None) None) (: cursor (| ListCursor None) None)
+            (: limit int DEFAULT-LIST-LIMIT) (: descending-by (| str None) None) (: where-any FrozenMap (FrozenMap))
+            (: ascending-by (| str None) None)]
+   :pre [(checked-list-rows self)]
+   :answer (| Page Reset Unreachable NotIndexed)
+   :failure [Unreachable NotIndexed]
+   :value [Reset]
+   :tags {:context "records" :role "foundation"}})
 
 
 (defn #^ bool checked-at-least [#^ object at-least]  ; defk にできない: frozen dataclass の __post_init__ が作る時に同期に呼ぶ検め

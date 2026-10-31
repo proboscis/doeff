@@ -25,7 +25,6 @@ from doeff_records._values import (
     Expectation,
     ListCursor,
     Missing,
-    NotIndexed,
     Refused,
     Reset,
     Row,
@@ -101,7 +100,7 @@ def list_typed(
     cursor: ListCursor | None = None,
     limit: int = ...,
     where_any: FrozenMap | None = None,
-) -> Program[TypedPage[M] | Reset | Unreachable | NotIndexed, object]: ...
+) -> Program[TypedPage[M] | Reset, object]: ...
 def put_typed(
     row_type: RowType[M], key: tuple[str, ...], value: M, expect: Expectation
 ) -> Program[TypedWritten[M] | TypedConflict[M] | Refused | Unreachable, object]: ...
