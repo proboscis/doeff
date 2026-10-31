@@ -4,6 +4,11 @@
 
 ### Added
 
+- **doeff-run:** a new package for running an image with a given command, environment variables, volumes and resource
+  limits. Five effects (`RunStart`, `RunStop`, `RunRemove`, `RunStatus`, `RunReadEvents`) answer with values, not
+  exceptions: a handle, a state (`RunPending`, `RunLive`, `RunStopped`, `RunGone`) and a numbered list of state events.
+  The package has the value types (they refuse a malformed setting when built), a fake handler that answers in memory
+  on the virtual clock, and a contract test every handler must pass.
 - doeff-vm builds musllinux wheels (x86_64 and aarch64, CPython 3.11–3.15 and 3.14t/3.15t), so the next release
   installs on Alpine Linux without a Rust toolchain. A daily workflow builds the musllinux and the manylinux aarch64
   wheels and runs `python -m doeff demo` from each in a fresh venv of an Alpine or arm64 container.

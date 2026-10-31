@@ -13428,6 +13428,167 @@
    "決め": "lt-7EK027YNFXTP27QE60J7Q686CZ"
   },
   {
+   "package": "doeff-run",
+   "module": "doeff_run",
+   "name": "FakeBehavior",
+   "組": "許した物 — handler の設定の型",
+   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
+  },
+  {
+   "package": "doeff-run",
+   "module": "doeff_run",
+   "name": "FakeRunWorld",
+   "組": "許した物 — handler の設定の型",
+   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
+  },
+  {
+   "package": "doeff-run",
+   "module": "doeff_run",
+   "name": "RefusalWhy",
+   "組": "許した物 — effect の答えの型",
+   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
+  },
+  {
+   "package": "doeff-run",
+   "module": "doeff_run",
+   "name": "ResourceLimits",
+   "組": "許した物 — effect の値の型",
+   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
+  },
+  {
+   "package": "doeff-run",
+   "module": "doeff_run",
+   "name": "RunAccepted",
+   "組": "許した物 — effect の答えの型",
+   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
+  },
+  {
+   "package": "doeff-run",
+   "module": "doeff_run",
+   "name": "RunEvent",
+   "組": "許した物 — effect の答えの型",
+   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
+  },
+  {
+   "package": "doeff-run",
+   "module": "doeff_run",
+   "name": "RunEventPage",
+   "組": "許した物 — effect の答えの型",
+   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
+  },
+  {
+   "package": "doeff-run",
+   "module": "doeff_run",
+   "name": "RunGone",
+   "組": "許した物 — effect の答えの型",
+   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
+  },
+  {
+   "package": "doeff-run",
+   "module": "doeff_run",
+   "name": "RunHandle",
+   "組": "許した物 — effect の値の型",
+   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
+  },
+  {
+   "package": "doeff-run",
+   "module": "doeff_run",
+   "name": "RunLive",
+   "組": "許した物 — effect の答えの型",
+   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
+  },
+  {
+   "package": "doeff-run",
+   "module": "doeff_run",
+   "name": "RunNameInUse",
+   "組": "許した物 — effect の答えの型",
+   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
+  },
+  {
+   "package": "doeff-run",
+   "module": "doeff_run",
+   "name": "RunPending",
+   "組": "許した物 — effect の答えの型",
+   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
+  },
+  {
+   "package": "doeff-run",
+   "module": "doeff_run",
+   "name": "RunRefused",
+   "組": "許した物 — effect の答えの型",
+   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
+  },
+  {
+   "package": "doeff-run",
+   "module": "doeff_run",
+   "name": "RunRemoveOutcome",
+   "組": "許した物 — effect の答えの型",
+   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
+  },
+  {
+   "package": "doeff-run",
+   "module": "doeff_run",
+   "name": "RunSpec",
+   "組": "許した物 — effect の値の型",
+   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
+  },
+  {
+   "package": "doeff-run",
+   "module": "doeff_run",
+   "name": "RunStartOutcome",
+   "組": "許した物 — effect の答えの型",
+   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
+  },
+  {
+   "package": "doeff-run",
+   "module": "doeff_run",
+   "name": "RunState",
+   "組": "許した物 — effect の答えの型",
+   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
+  },
+  {
+   "package": "doeff-run",
+   "module": "doeff_run",
+   "name": "RunStillAlive",
+   "組": "許した物 — effect の答えの型",
+   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
+  },
+  {
+   "package": "doeff-run",
+   "module": "doeff_run",
+   "name": "RunStopOutcome",
+   "組": "許した物 — effect の答えの型",
+   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
+  },
+  {
+   "package": "doeff-run",
+   "module": "doeff_run",
+   "name": "RunStopped",
+   "組": "許した物 — effect の答えの型",
+   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
+  },
+  {
+   "package": "doeff-run",
+   "module": "doeff_run",
+   "name": "StopCause",
+   "組": "許した物 — effect の答えの型",
+   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
+  },
+  {
+   "package": "doeff-run",
+   "module": "doeff_run",
+   "name": "StopFailed",
+   "組": "許した物 — effect の答えの型",
+   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
+  },
+  {
+   "package": "doeff-run",
+   "module": "doeff_run",
+   "name": "VolumeMount",
+   "組": "許した物 — effect の値の型",
+   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
+  },
+  {
    "package": "doeff-secret",
    "module": "doeff_secret",
    "name": "InMemorySecretStore",
