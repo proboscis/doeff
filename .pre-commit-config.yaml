@@ -99,7 +99,7 @@ repos:
         pass_filenames: true
 
       # 公開の repo に、持ち主の chat の言葉を日付つきで写した引用を入れない。決定と理由は記録の
-      # 言葉で書き、言われた言葉は写さない。CI(.github/workflows/no-chat-quotes.yml)は
+      # 言葉で書き、出自は日付つきの短い決定の印か内部の tracker への参照にする。CI(.github/workflows/no-chat-quotes.yml)は
       # 木の全体と push した commit の文を同じ script で見る。
       - id: no-chat-quotes
         name: 持ち主の chat の言葉の日付つきの引用が無いか
