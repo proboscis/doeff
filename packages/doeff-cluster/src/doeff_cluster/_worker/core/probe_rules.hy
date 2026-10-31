@@ -68,9 +68,10 @@
   "  (.flush sys.stdout))"]))
 
 
-(defn #^ list probe-targets [#^ JobSpec spec]
-  "検める import path の列: 入口の module(spec.entry)だけ(Program の job は関数の参照を持たない — 版と復元は起こした子が検める)。"
-  [spec.entry])
+(defn #^ list probe-targets [#^ JobSpec spec #^ (| str None) place]
+  "検める import path の列: 入口の module だけ(Program の job は関数の参照を持たない — 版と復元は起こした子が検める)。名は子と同じ
+   置き場 place の名(spec.entry-at — 実行環境の job は root の完成の印の置き場・None = spec.entry のまま・card ki-7a7a1dcb1933)。"
+  [(.entry-at spec place)])
 
 
 (defk probe-launches [waiting busy]

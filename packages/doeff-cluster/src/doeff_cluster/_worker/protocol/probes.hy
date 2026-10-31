@@ -33,6 +33,7 @@
 (import doeff_cluster._worker.protocol.observations [ObserveProbes])
 (import doeff_cluster._worker.core.worker_rules [probe-refusal])
 (import doeff_cluster._worker.core.launch [JobLaunch CHILD-ENV-ALLOWED CHILD-ENV-PREFIXES shim-argv])
+(import doeff_cluster._worker.protocol.env_store [root-entry-place])
 (import doeff_cluster._worker.core.shim_timing [ShimSpans shim-deadline-ms])
 (import doeff_cluster._worker.core.probe_rules [PROBE-SECONDS probe-targets probe-launches probe-reason probe-results
                                                probe-settle probe-command probe-step ProbeSettle ProbeStep])
@@ -54,11 +55,13 @@
 (defrecord ProbeRun
   "走っている検めの束 1 本(木ごとに 1 本): pid = shim の process(group の先頭)・specs = 束の spec・targets = 束の対象(検める順)・
    runtime-env = 実行環境の宣言・started-ms = 起こした時刻(epoch ms)・out / err = 標準出力と標準エラーを受ける file・
-   stopping-ms = 時間切れで止めの合図を送った時刻(epoch ms・送っていなければ None — #2940)。"
+   stopping-ms = 時間切れで止めの合図を送った時刻(epoch ms・送っていなければ None — #2940)・entry-place = 対象の入口の名の置き場
+   (実行環境の束は root の完成の印の置き場・木の束は None — 起こす時と片づける時が同じ対象の名を読む・card ki-7a7a1dcb1933)。"
   (#^ int pid)
   (#^ tuple specs)
   (#^ tuple targets)
   (#^ (| str None) runtime-env)
+  (#^ (| str None) entry-place)
   (#^ int started-ms)
   (#^ str out)
   (#^ str err)
@@ -81,11 +84,15 @@
   "束 1 本を起こすため: 束の spec の対象を重ねずに並べ、shim を group の先頭にして 1 つの process で検める。n = 出力の file の名の番号。"
   (val code-path (get batch 0))
   (val runtime-env (get batch 1))
-  (val targets (tuple (dict.fromkeys (gfor spec specs target (probe-targets spec) target))))
+  ;; 実行環境の束は、子と同じく root の完成の印の置き場の名を検める(card ki-7a7a1dcb1933 — 子は root の版の doeff で起きる)。
   (var allowed #())
+  (var place None)
   (when runtime-env
     (<- read tuple (ReadEnvironment (tuple (sorted CHILD-ENV-ALLOWED)) :prefixes CHILD-ENV-PREFIXES))
-    (:= allowed read))
+    (:= allowed read)
+    (<- found (| str None) (root-entry-place code-path))
+    (:= place found))
+  (val targets (tuple (dict.fromkeys (gfor spec specs target (probe-targets spec place) target))))
   (<- plan JobLaunch (probe-command code-path runtime-env targets :hy-command settings.hy-command :layout settings.layout
                                     :allowed-env (dfor e allowed e.name e.value) :probe-dir settings.probe-dir))
   (val runs-dir (+ settings.probe-dir "/runs"))
@@ -101,7 +108,8 @@
                            :process-group True :hold-stdin True :reap-group True))
   (when (isinstance answer ProcessNotStarted)
     (raise (OSError answer.detail)))
-  (ProbeRun :pid answer.pid :specs specs :targets targets :runtime-env runtime-env :started-ms started-ms :out out :err err))
+  (ProbeRun :pid answer.pid :specs specs :targets targets :runtime-env runtime-env :entry-place place :started-ms started-ms
+            :out out :err err))
 
 
 (defk finish-probe [settings run code]
@@ -120,7 +128,7 @@
   (<- now-ms int (now-epoch-ms))
   (val detail (.format "入口の検めが {} 秒で終わらない(process group ごと止めた): {} の読み込みの途中" settings.timeout-seconds stuck))
   (tuple (gfor spec run.specs
-               :setv settled (probe-settle (probe-targets spec) results (is code None) stuck crash)
+               :setv settled (probe-settle (probe-targets spec run.entry-place) results (is code None) stuck crash)
                (ProbeOutcome :spec spec :kind settled.kind :reason settled.reason :timed-out-detail detail :ended-ms now-ms))))
 
 

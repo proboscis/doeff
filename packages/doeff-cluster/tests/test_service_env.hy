@@ -153,7 +153,7 @@
   (val spec (JobSpec "quiet" "doeff_cluster._worker.entry.job_entry" #("service" "--identity" "0123456789abcdef")
                      "env-k" :runtime-env (json.dumps env-json :sort-keys True) :program (* "a" 64) :versions #()))
   ;; 検めの子の起こし方の判断(probe-command — #2465)を、子を起こさずに見る。
-  (<- plan JobLaunch (probe-command "/state/roots/env-k" spec.runtime-env (tuple (probe-targets spec)) :hy-command "/worker/bin/hy"
+  (<- plan JobLaunch (probe-command "/state/roots/env-k" spec.runtime-env (tuple (probe-targets spec None)) :hy-command "/worker/bin/hy"
                                     :layout (CodeLayout) :allowed-env {} :probe-dir (str tmp-path)))
   (val argv (list plan.argv))
   (val cwd plan.cwd)
@@ -163,7 +163,7 @@
   (assert (= #((get environment "VIRTUAL_ENV") (.startswith (get environment "PATH") "/state/roots/env-k/app/.venv/bin"))
              #("/state/roots/env-k/app/.venv" True)) environment)
   ;; Program の job の検めは入口の module の import だけ(詰めた Program の版と復元は起こした子が検める)。
-  (assert (= (probe-targets spec) ["doeff_cluster._worker.entry.job_entry"]))
+  (assert (= (probe-targets spec None) ["doeff_cluster._worker.entry.job_entry"]))
   (assert (in "doeff_cluster._worker.entry.job_entry" argv) argv)
   (assert (not-in "/worker/bin/hy" argv) "worker の hy では検めない")
   (assert (not-in "PYTHONPATH" environment) "PYTHONPATH を置かない")

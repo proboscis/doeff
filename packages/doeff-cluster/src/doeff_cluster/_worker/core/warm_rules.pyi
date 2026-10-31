@@ -5,6 +5,7 @@ from collections import Counter as Counter
 from dataclasses import dataclass as dataclass
 from enum import StrEnum as StrEnum
 from doeff_cluster._shared.intent.job_model import JobSpec as JobSpec
+from doeff_cluster._shared.intent.job_model import CHILD_ENTRY_PLACES as CHILD_ENTRY_PLACES
 from doeff_cluster._shared.intent.runtime_env_model import RuntimeEnv as RuntimeEnv
 from doeff_cluster._shared.intent.runtime_env_model import EnvFailure as EnvFailure
 from doeff_cluster._shared.intent.runtime_env_model import EnvFailureKind as EnvFailureKind
@@ -88,5 +89,5 @@ def warm_dir_of(state: str) -> _Program[str, object]:
 def warm_place(warm_dir: str, key: str) -> _Program[WarmPlace, object]:
     ...
 
-def warm_child_argv(uv: str, launch: WarmLaunch, place: WarmPlace) -> _Program[tuple[str, ...], object]:
+def warm_child_argv(uv: str, launch: WarmLaunch, place: WarmPlace, entry_place: str | None) -> _Program[tuple[str, ...], object]:
     ...

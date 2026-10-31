@@ -93,3 +93,23 @@
   (assert (not-in "fingerprint" (vars two)))
   (assert (= one two))
   (assert (= (spec-hash two) h)))
+
+
+(deftest test-moving-the-entry-to-the-hidden-place-keeps-the-spec-hash
+  ;; card ki-7a7a1dcb1933: 送る名を区画を隠す前の置き場から _worker の置き場へ替えても、process の形は同じなので指紋は変わらない(変われば
+  ;; coordinator の版上げで全部の service を作り直す)。指紋は前の綴りで計った値(固定の文字列)と一致する。
+  (val legacy (JobSpec "svc" "doeff_cluster.worker.entry.job_entry" #("service" "--identity" "abc") "rev1"))
+  (val moved (replace legacy :entry "doeff_cluster._worker.entry.job_entry"))
+  (assert (= (spec-hash moved) (spec-hash legacy) (! (fresh-hash legacy))))
+  (assert (= moved legacy))
+  ;; 反例: 置き場の列の外の名は綴りのまま材料に入る(別の入口は別の指紋)。
+  (assert (!= (spec-hash (replace legacy :entry "doeff_cluster.other.job_entry")) (spec-hash legacy))))
+
+
+(deftest test-the-entry-at-a-place-keeps-the-module-under-the-place
+  ;; worker が root の完成の印の置き場から送る名を作る読み(None = 印の読めない root — 名を替えない)。
+  (val spec (JobSpec "svc" "doeff_cluster._worker.entry.job_entry" #("service") "rev1"))
+  (assert (= (.entry-at spec "doeff_cluster.worker.entry") "doeff_cluster.worker.entry.job_entry"))
+  (assert (= (.entry-at spec "doeff_cluster._worker.entry") "doeff_cluster._worker.entry.job_entry"))
+  (assert (= (.entry-at spec None) "doeff_cluster._worker.entry.job_entry"))
+  (assert (= (.entry-at (replace spec :entry "pkg.entry") "doeff_cluster.worker.entry") "pkg.entry")))

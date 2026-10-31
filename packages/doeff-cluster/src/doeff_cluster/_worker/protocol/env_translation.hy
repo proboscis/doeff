@@ -52,6 +52,7 @@
 ;; 共有する定義点 native_wheel の物。
 (import doeff_cluster._shared.core.native_wheel [UV-DROP WHEEL-REPORT-ENV NotReported reported-built uv-environment :as uv-variables wheel-lock])
 (import doeff_cluster._shared.intent.runtime_env_model [EnvFailure EnvFailureKind RepoLocation RuntimeEnv])
+(import doeff_cluster._shared.intent.job_model [CHILD-ENTRY-PLACES])
 (import doeff_cluster._shared.core.runtime_env_rules [runtime-env-of-json url-location])
 (import doeff_cluster._worker.core.env_prepare [
                      
@@ -93,20 +94,27 @@
 (val FILE-ANSWER (| FileFailed PathStat LockHeld str bytes tuple int None))
 
 ;; 準備の確かめ(処理ステージ 10)の本体。root の venv の hy で、cwd = 空の作業 dir から起こす(子と同じ起こし方)。
-;; 出力 = JSON 1 行 {"childProtocol" 版 "misplaced" [根の外に解けた最上位の名]}。
-;; 子の入口の約束の版は root の新旧の両方の置き場から読む — 新しい置き場(shared/intent・c56fa8634 から)を先に、無ければ旧い置き場
-;; (それより前の doeff で宣言した root)。片方だけを読むと、worker の版と root の版の組によって約束の版を 0 と読み、起こせる root を
-;; env-failed にする(issue #2413 — 2026-10-01 22:20 に service の宣言 1 つが env-failed)。旧い doeff の root が無くなったら旧い置き場を外す。
-;; 新しい置き場は共有の区画を _ へ隠す前の名のまま(ADR-DOE-API-001 R15・card ki-6f70e9c957c0): root は job が宣言した版の doeff で、
-;; _shared の無い版の root でも解ける名が要る(_shared の在る版の root では移し替えの module shared.py が _shared の module を返す —
-;; worker の JOB-ENTRY と同じ順)。段 3 で移し替えの module を消す前に、root の版の下限と合わせて _shared の名へ替える。
-(val CHILD-PROTOCOL-PLACES #("doeff_cluster.shared.intent.runtime_env_model" "doeff_cluster.runtime_env_model"))
+;; 出力 = JSON 1 行 {"childProtocol" 版 "misplaced" [根の外に解けた最上位の名] "entryPlace" 子の入口の置き場か null}。
+;; 子の入口の約束の版は root の版ごとの置き場から読む — 新しい置き場を先に、無ければ前の置き場(それより前の doeff で宣言した root)。
+;; 片方だけを読むと、worker の版と root の版の組によって約束の版を 0 と読み、起こせる root を env-failed にする(issue #2413 —
+;; 2026-10-01 22:20 に service の宣言 1 つが env-failed)。置き場は 3 つ: 共有の区画を _shared へ隠した後(ce175be53 から — card
+;; ki-7a7a1dcb1933)・隠す前の shared/intent(c56fa8634 から)・それより前。古い doeff の root が無くなったら後ろの置き場を外す。
+(val CHILD-PROTOCOL-PLACES #("doeff_cluster._shared.intent.runtime_env_model" "doeff_cluster.shared.intent.runtime_env_model"
+                             "doeff_cluster.runtime_env_model"))
+;; 子の入口の置き場(job_model の CHILD-ENTRY-PLACES の順)のうち、root で job_entry の解ける最初の物を entryPlace に答える(card
+;; ki-7a7a1dcb1933 — worker は完成の印のこの欄から、root へ送る子の入口と待ちの子の名を選ぶ)。find_spec は親の package を読み込むので、
+;; 置き場の無い root では例外になる — 次の置き場へ進む。
 (val PROBE-PROGRAM (.join "\n" [
   "(import importlib importlib.util json os sys)"
   "(setv protocol 0)"
   (.format "(for [place [{}]]" (.join " " (gfor p CHILD-PROTOCOL-PLACES (.format "\"{}\"" p))))
   "  (when (= protocol 0)"
   "    (try (setv protocol (getattr (importlib.import-module place) \"CHILD_PROTOCOL\")) (except [Exception] None))))"
+  "(setv entry-place None)"
+  (.format "(for [place [{}]]" (.join " " (gfor p CHILD-ENTRY-PLACES (.format "\"{}\"" p))))
+  "  (when (is entry-place None)"
+  "    (try (when (is-not (importlib.util.find-spec (+ place \".job_entry\")) None) (setv entry-place place))"
+  "         (except [Exception] None))))"
   "(defn has-source [d] (any (gfor #(p ds fs) (os.walk d) f fs (.endswith f #(\".py\" \".hy\")))))"
   "(setv misplaced [])"
   "(for [root (cut sys.argv 1 None)]"
@@ -123,7 +131,7 @@
   "      (when (not (any (gfor p places :setv rp (os.path.realpath p)"
   "                              (and (.startswith rp (+ real os.sep)) (not-in (+ os.sep \".venv\" os.sep) (cut rp (len real) None))))))"
   "        (.append misplaced name)))))"
-  "(print (json.dumps {\"childProtocol\" protocol \"misplaced\" misplaced}))"]))
+  "(print (json.dumps {\"childProtocol\" protocol \"misplaced\" misplaced \"entryPlace\" entry-place}))"]))
 
 
 (defrecord CommandResult
@@ -976,7 +984,8 @@
     (val lines (lfor line (.splitlines result.stdout) :if (.startswith (.strip line) "{") line))
     (if (and (= result.code 0) lines)
         (do (val seen (json.loads (get lines -1)))
-            (resume (ProbeReport :child-protocol (int (get seen "childProtocol")) :misplaced (tuple (get seen "misplaced")))))
+            (resume (ProbeReport :child-protocol (int (get seen "childProtocol")) :misplaced (tuple (get seen "misplaced"))
+                                 :entry-place (get seen "entryPlace"))))
         (do (<- detail str (tail-of result))
             (resume (EnvFailure :kind EnvFailureKind.ENV-INCOMPATIBLE :retryable False
                                 :detail (.format "root で子と同じ起こし方ができない: {}" detail))))))

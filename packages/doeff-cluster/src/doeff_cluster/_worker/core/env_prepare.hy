@@ -40,6 +40,7 @@
 (import doeff_time [GetMonotonic GetTime])
 (import doeff_cluster._shared.intent.runtime_env_model [RuntimeEnv RepoCheckout EnvFailure EnvFailureKind CHILD-PROTOCOL
                                                        SUPPORTED-CHILD-PROTOCOLS])
+(import doeff_cluster._shared.intent.job_model [CHILD-ENTRY-PLACES])
 (import doeff_cluster._shared.core.runtime_env_rules [env-failure root-split runtime-env->json repo-source-material])
 (import doeff_cluster._shared.core.runtime_env [project-dir])
 (import doeff_cluster._shared.core.native_wheel [wheel-out-dir])
@@ -150,7 +151,10 @@
    ;; 同一性)は読まない。
    "hyVersion" marker.hy-version
    ;; buildMemoryBytes(組みの山の memory — 先の組みを始める前の memory の見積もりに worker の掃除の数えが読む・#3748)。null = 測れなかった。
-   "buildMemoryBytes" marker.build-memory-bytes})
+   "buildMemoryBytes" marker.build-memory-bytes
+   ;; entryPlace(root の中で子の入口の解ける置き場 — worker が root へ送る子の入口と待ちの子の名を選ぶ・card ki-7a7a1dcb1933)。欄の
+   ;; 無い印(足す前の worker の印)は job_model の LEGACY-ENTRY-PLACE と読む(worker/protocol/env_store の root-entry-place)。
+   "entryPlace" marker.entry-place})
 
 
 ;; /proc/self/mountinfo の 1 行: `<id> <親> <major:minor> <根> <mount の点> <選択> [<任意の欄>…] - <fs の型> <mount の元> <super の選択>`。
@@ -441,7 +445,14 @@
               (env-failure EnvFailureKind.ENV-INCOMPATIBLE
                            (.format "import の根の名が根の外に解ける(名前の影): {}" (.join " " report.misplaced))))
           failure)
-      True state)))
+      ;; 子の入口の置き場は完成の印に書き、worker が root へ送る名をそこから選ぶ(card ki-7a7a1dcb1933)— どの置き場にも入口の無い
+      ;; root は、子を起こせない root として断る。
+      (is report.entry-place None)
+      (do (<- failure EnvFailure
+              (env-failure EnvFailureKind.ENV-INCOMPATIBLE
+                           (.format "root に子の入口 job_entry が無い(置き場 = {})" (.join " " CHILD-ENTRY-PLACES))))
+          failure)
+      True (replace state :entry-place report.entry-place))))
 
 
 (defrecord Stage
@@ -498,6 +509,7 @@
                                          :stages outcome.stages :downloaded outcome.downloaded :built outcome.built
                                          :interpreter outcome.interpreter :child-protocol CHILD-PROTOCOL
                                          :bytecode outcome.bytecode :volume outcome.volume :startup-seconds startup
-                                         :hy-version outcome.hy-version :build-memory-bytes build-memory)))
+                                         :hy-version outcome.hy-version :build-memory-bytes build-memory
+                                         :entry-place outcome.entry-place)))
           (EnvReady :env request.env :key request.key :root request.root :stages outcome.stages
                     :downloaded outcome.downloaded :built outcome.built :interpreter outcome.interpreter))))

@@ -117,7 +117,9 @@
    (起こした刻を読めなければ None — #3676)・hy-version = root の venv の Hy の compiler の版(venv に Hy が無ければ None — 次の準備が
    bytecode の引き継ぎ元を選ぶ時に比べる・#3706)・build-memory-bytes = 組みの山の memory(byte — 準備の後の cgroup の memory.peak − 準備の前の
    memory.current。準備の間に container の memory.peak が上がらなかった・読めなかった組みは None — worker が先の組みを始める前の memory の
-   見積もりに読む・#3748)・built = 組んだ native の wheel の数(build の口の報告の無い wheel が在れば None = 数えられない・#3860)。"
+   見積もりに読む・#3748)・built = 組んだ native の wheel の数(build の口の報告の無い wheel が在れば None = 数えられない・#3860)・
+   entry-place = root の中で子の入口の解ける置き場(job_model の CHILD-ENTRY-PLACES の 1 つ — 準備の確かめが読む。worker が子へ送る名を
+   選ぶ時に印から読む・card ki-7a7a1dcb1933)。"
   (#^ RuntimeEnv env)
   (#^ str key)
   (#^ str platform)
@@ -130,7 +132,8 @@
   (setv #^ (| VolumeKind None) volume None)
   (setv #^ (| float None) startup-seconds None)
   (setv #^ (| str None) hy-version None)
-  (setv #^ (| int None) build-memory-bytes None))
+  (setv #^ (| int None) build-memory-bytes None)
+  (setv #^ (| str None) entry-place None))
 
 
 ;; native の wheel をどう用意したか(build の口の報告の観測 — #3860): BUILT = 口が組んだ・STORED = 口が保存先から引いた・
@@ -174,9 +177,11 @@
 
 (defrecord ProbeReport
   "子と同じ起こし方で読んだ root の姿。child-protocol = root の中の子の入口の約束の版・
-   misplaced = 根の最上位の名のうち、根の外(第三者の package 等)に解けた物。"
+   misplaced = 根の最上位の名のうち、根の外(第三者の package 等)に解けた物・entry-place = 子の入口 job_entry の解ける最初の置き場
+   (job_model の CHILD-ENTRY-PLACES の順 — どれにも解けなければ None)。"
   (#^ int child-protocol)
-  (#^ tuple misplaced))
+  (#^ tuple misplaced)
+  (#^ (| str None) entry-place))
 
 
 (defrecord EnvReady
@@ -205,7 +210,9 @@
   (setv #^ tuple parts #())
   (setv #^ (| VolumeKind None) volume None)
   ;; root の venv の Hy の compiler の版(bytecode の処理ステージが読み、引き継ぎ元の選びと完成マーカーへ渡す — #3706)。
-  (setv #^ (| str None) hy-version None))
+  (setv #^ (| str None) hy-version None)
+  ;; root の中で子の入口の解ける置き場(準備の確かめが読み、完成マーカーへ渡す — card ki-7a7a1dcb1933)。
+  (setv #^ (| str None) entry-place None))
 
 
 ;; --- effect ------------------------------------------------------------------------------

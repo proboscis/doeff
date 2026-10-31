@@ -565,10 +565,10 @@
                                     :if (is-not found None)
                                     (.group found 1))))
   (assert (in "doeff_hy_bytecode_guard" pth-imports) pth-imports)
-  ;; JOB-ENTRY は区画を _worker へ隠す前の送る名(古い版の root でも解ける — card ki-3ff93cd3499e)。この root の venv が走らせて焼く
-  ;; のは、移し替えの module がその名に返す _worker の module。
+  ;; JOB-ENTRY は _worker の名(card ki-7a7a1dcb1933 — 古い版の root へは worker が root の完成の印の置き場の名へ替えて送る)。この
+  ;; root の venv が走らせて焼くのは、その名の module そのもの(移し替えの module を通らない)。
   (val job-module (. (importlib.import-module JOB-ENTRY) __name__))
-  (assert (!= job-module JOB-ENTRY) #("送る名が移し替えの module を通らない" JOB-ENTRY))
+  (assert (= job-module JOB-ENTRY "doeff_cluster._worker.entry.job_entry") #("送る名が _worker の module でない" job-module JOB-ENTRY))
   (val wanted (| started pth-imports (frozenset #(ENV-TOOL job-module (get shim 3)))))
   (assert (<= wanted entries) #("BOOT_ENTRIES に無い入口" (sorted (- wanted entries))))
   (val marker (re.search r"(?m)^CODE_MARKER=(\S+)$" text))

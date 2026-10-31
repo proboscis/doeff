@@ -40,10 +40,10 @@
 (import doeff_cluster._shared.core.readiness_rules [readiness-refusal retired-lifetime-ms retired-limit-of])
 (import doeff_cluster._coordinator.core.program_policy [PROGRAM-GRACE-MS program-refs])
 
-;; 送る名は区画を _worker へ隠す前の path のまま(card ki-3ff93cd3499e): 子は job の root の版の doeff で `hy -m <名>` として起き、
-;; _worker の無い古い版の root でも解ける名が要る(新しい版の root では移し替えの module worker.py が _worker の module を返す)。
-;; 移し替えの module を消す段 3 の前に、root の版の下限と合わせて替える(#2112 と同じ順)。
-(setv JOB-ENTRY "doeff_cluster.worker.entry.job_entry")
+;; 子の入口の名(card ki-7a7a1dcb1933)。子は job の root の版の doeff で `hy -m <名>` として起きるので、worker が root ごとに、その
+;; root で解ける置き場の名へ替えて起こす(JobSpec.entry-at — _worker の無い古い版の root では区画を隠す前の名)。指紋の材料は置き場を
+;; 替えた綴りなので、この名を替えても宣言の指紋は変わらない。
+(setv JOB-ENTRY "doeff_cluster._worker.entry.job_entry")
 (setv MAX-EVENTS 200)
 
 ;; --- 盤と task の容量(2026-09-25) ---

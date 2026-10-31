@@ -21,6 +21,7 @@
 (import tempfile)
 (import pathlib [Path])
 (import doeff_cluster._worker.protocol.env_translation [PROBE-PROGRAM CHILD-PROTOCOL-PLACES])
+(import doeff_cluster._shared.intent.job_model [CHILD-ENTRY-PLACES])
 
 (setv HY (str (/ (. (Path sys.executable) parent) "hy"))
       ;; 置き場ごとの版の値(本物の CHILD-PROTOCOL の 1 と重ならない値)。
@@ -55,16 +56,63 @@
       (shutil.rmtree work :ignore-errors True))))
 
 
-(deftest test-the-probe-reads-the-new-place
-  ;; c56fa8634 以降の doeff の root(約束の版は shared/intent の runtime_env_model)。
-  (assert (= (get CHILD-PROTOCOL-PLACES 0) "doeff_cluster.shared.intent.runtime_env_model") CHILD-PROTOCOL-PLACES)
+(deftest test-the-probe-reads-the-hidden-place
+  ;; ce175be53 以降の doeff の root(約束の版は _shared/intent の runtime_env_model — card ki-7a7a1dcb1933)。移し替えの module shared.py を
+  ;; 消した版の root では、ここしか読めない。
+  (assert (= (get CHILD-PROTOCOL-PLACES 0) "doeff_cluster._shared.intent.runtime_env_model") CHILD-PROTOCOL-PLACES)
   (assert (= (! (probed-protocol (get CHILD-PROTOCOL-PLACES 0) NEW-PLACE-PROTOCOL)) NEW-PLACE-PROTOCOL)))
 
 
+(deftest test-the-probe-reads-the-new-place
+  ;; c56fa8634 から ce175be53 より前の doeff の root(約束の版は shared/intent の runtime_env_model)— 今動いている service の多くの root。
+  (assert (= (get CHILD-PROTOCOL-PLACES 1) "doeff_cluster.shared.intent.runtime_env_model") CHILD-PROTOCOL-PLACES)
+  (assert (= (! (probed-protocol (get CHILD-PROTOCOL-PLACES 1) NEW-PLACE-PROTOCOL)) NEW-PLACE-PROTOCOL)))
+
+
 (deftest test-the-probe-reads-the-old-place
-  ;; c56fa8634 より前の doeff で宣言した root(約束の版は doeff_cluster.runtime_env_model)— 今動いている service の root。
-  (assert (= (get CHILD-PROTOCOL-PLACES 1) "doeff_cluster.runtime_env_model") CHILD-PROTOCOL-PLACES)
-  (assert (= (! (probed-protocol (get CHILD-PROTOCOL-PLACES 1) OLD-PLACE-PROTOCOL)) OLD-PLACE-PROTOCOL)))
+  ;; c56fa8634 より前の doeff で宣言した root(約束の版は doeff_cluster.runtime_env_model)。
+  (assert (= (get CHILD-PROTOCOL-PLACES 2) "doeff_cluster.runtime_env_model") CHILD-PROTOCOL-PLACES)
+  (assert (= (! (probed-protocol (get CHILD-PROTOCOL-PLACES 2) OLD-PLACE-PROTOCOL)) OLD-PLACE-PROTOCOL)))
+
+
+;; --- 子の入口の置き場(entryPlace — card ki-7a7a1dcb1933)-------------------------------------------------------------
+;; worker は完成の印のこの欄から root へ送る子の入口の名を選ぶ。区画 worker を _worker へ隠す前の doeff の root(2026-10-31 の本番の 64 本の
+;; うち 61 本)は区画を隠す前の置き場だけを持ち、移し替えの module worker.py を消した版の root は _worker だけを持つ。
+
+(defk probed-entry-place [places]
+  {:pre [(: places tuple)] :post [(: % (| str None))] :tags {:context "doeff-cluster-test" :role "entry"}}
+  "子の入口の置き場の列 places の下に job_entry を置いた doeff_cluster の最小の root を作り、本物の hy で PROBE-PROGRAM を撃って、probe が
+   答えた子の入口の置き場(entryPlace)を返すため(一時の dir は終わりに消す)。"
+  (val root (Path (tempfile.mkdtemp :prefix "probe-root-")))
+  (val work (Path (tempfile.mkdtemp :prefix "probe-cwd-")))
+  (try
+    (val package (/ root "doeff_cluster"))
+    (.mkdir package)
+    (.write-text (/ package "__init__.py") "")
+    (for [place places]
+      (var directory package)
+      (for [part (cut (.split place ".") 1 None)]
+        (:= directory (/ directory part))
+        (.mkdir directory :exist-ok True)
+        (.write-text (/ directory "__init__.py") ""))
+      (.write-text (/ directory "job_entry.py") "V = 1\n"))
+    (val done (subprocess.run [HY "-c" PROBE-PROGRAM (str root)] :cwd (str work) :capture-output True :text True :timeout 120
+                               :env (| (dict os.environ) {"PYTHONPATH" (str root)})))
+    (assert (= done.returncode 0) done.stderr)
+    (get (json.loads (get (.splitlines (.strip done.stdout)) -1)) "entryPlace")
+    (finally
+      (shutil.rmtree root :ignore-errors True)
+      (shutil.rmtree work :ignore-errors True))))
+
+
+(deftest test-the-probe-answers-the-entry-place-the-root-has
+  (assert (= CHILD-ENTRY-PLACES #("doeff_cluster._worker.entry" "doeff_cluster.worker.entry")) CHILD-ENTRY-PLACES)
+  ;; 区画を隠す前の doeff の root — 区画を隠す前の置き場(_worker の名を送ると子が起きない)。
+  (assert (= (! (probed-entry-place #("doeff_cluster.worker.entry"))) "doeff_cluster.worker.entry"))
+  ;; 両方を解く root(_worker と移し替えの module の在る版)— 新しい置き場を先に。
+  (assert (= (! (probed-entry-place CHILD-ENTRY-PLACES)) "doeff_cluster._worker.entry"))
+  ;; 失敗ケース: どの置き場にも入口の無い root は null(準備が env-failed にする — env_prepare の stage-probe)。
+  (assert (is (! (probed-entry-place #())) None)))
 
 
 (deftest test-a-root-without-the-protocol-reads-zero

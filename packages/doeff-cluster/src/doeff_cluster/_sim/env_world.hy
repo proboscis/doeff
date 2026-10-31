@@ -48,6 +48,7 @@
 (import doeff_core_effects [ScriptedCommand ProcessScript scripted-process-handler])
 (import doeff_time [Delay])
 (import doeff_cluster._shared.intent.runtime_env_model [CHILD-PROTOCOL])
+(import doeff_cluster._shared.intent.job_model [CHILD-ENTRY-PLACES])
 (import doeff_cluster._worker.protocol.env_translation [env-translation])
 
 (val SOURCE-SUFFIXES #(".py" ".hy"))
@@ -130,6 +131,8 @@
   (setv #^ (| UvFailure None) uv-failure None)
   (setv #^ int disk-free (** 2 40))
   (setv #^ int child-protocol CHILD-PROTOCOL)
+  ;; root の中で子の入口の解ける置き場(準備の確かめの答え entryPlace — None = どの置き場にも入口の無い root・card ki-7a7a1dcb1933)。
+  (setv #^ (| str None) entry-place (get CHILD-ENTRY-PLACES 0))
   (setv #^ str mounts SIM-MOUNTS)
   (setv #^ float cold-seconds 60.0)
   (setv #^ float warm-seconds 5.0)
@@ -723,7 +726,8 @@
   (for [root roots]
     (<- names frozenset (top-names root))
     (.extend misplaced (sorted (& names third))))
-  (ProcessOutcome :stdout (+ (json.dumps {"childProtocol" world.child-protocol "misplaced" misplaced}) "\n") :stderr "" :exit-code 0))
+  (ProcessOutcome :stdout (+ (json.dumps {"childProtocol" world.child-protocol "misplaced" misplaced "entryPlace" world.entry-place}) "\n")
+                  :stderr "" :exit-code 0))
 
 
 (defk uv-script [world commands request]

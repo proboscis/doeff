@@ -9,7 +9,7 @@
 (import doeff [run with-handlers])
 (import doeff_core_effects [state slog-handler])
 (import doeff_core_effects [memory-file-handler])
-(import doeff_core_effects [MemoryFiles WriteText ReadText StatPath PathKind])
+(import doeff_core_effects [MemoryFiles MemoryFile WriteText ReadText StatPath PathKind])
 (import doeff_core_effects [EnvEntry ProcessOutcome RunProcess timed-out-outcome])
 (import doeff_core_effects [ScriptedCommand ProcessScript scripted-process-handler])
 (import doeff_core_effects [WarmScript WarmSocket WarmSocketAnswer WarmRun scripted-warm-process-handler])
@@ -25,6 +25,7 @@
         doeff_cluster._worker.protocol.warm_host [WarmSettings])
 (import doeff_cluster [process-host])
 (import doeff_cluster._worker.core.warm_rules [WarmPlace warm-place])
+(import doeff_cluster._shared.intent.env_marker_model [ENV-MARKER])
 (import tests.env_fixtures [LOCK env-of])
 (import tests.host_rig [host-settings])
 
@@ -79,7 +80,7 @@
   ;; 起こし方: root の venv の uv run・待ちの子の入口・置き場は root の外の <warm-dir>/<キー>・読む module を名の順に。env は許可表の名だけ
   ;; (値の在る資格の名 SECRET_TOKEN は渡さない)。
   (assert (= (get record "argv")
-             ["uv" "run" "--no-sync" "--frozen" "--project" "/roots/env-a/app" "python" "-m" "doeff_cluster.worker.entry.warm_child"
+             ["uv" "run" "--no-sync" "--frozen" "--project" "/roots/env-a/app" "python" "-m" "doeff_cluster._worker.entry.warm_child"
               "--root" "/roots/env-a" "--socket" "/state/warm/env-a/sock" "--ready" "/state/warm/env-a/ready.json"
               "--preload" "app.jobs" "--preload" "app.models"])
           record)
@@ -91,6 +92,36 @@
   ;; 忘れた待ちの子は観測から消え、置き場も消える。
   (assert (= forgotten #()) forgotten)
   (assert (= gone.kind PathKind.MISSING) gone))
+
+
+;; --- root へ送る名は root の完成の印の置き場(card ki-7a7a1dcb1933)--------------------------------------------
+;; 待ちの子と task の子は root の版の doeff で起きる。区画 worker を _worker へ隠す前の doeff の root(本番の 64 本のうち 61 本・2026-10-31)
+;; には _worker の名が無いので、worker は準備の確かめが印に書いた置き場の名を送る。反例: 置き場を読まずに _worker の名を送ると、
+;; 古い root の待ちの子は起きず、task は台本の待ちの子に名の合う仕事が無くて落ちる。
+
+(defk roots-with-marker [marker]
+  {:pre [(: marker (| dict None))] :post [(: % MemoryFiles)] :tags {:context "doeff-cluster-test" :role "entry"}}
+  "root の dir と、その完成の印(marker = 印の JSON の値・None = 印の無い root)を持つ memory の世界を作るため。"
+  (MemoryFiles :dirs #("/roots/env-a" "/record")
+               :files (if (is marker None)
+                          #()
+                          #((MemoryFile :path (+ "/roots/env-a/" ENV-MARKER) :content (.encode (json.dumps marker) "utf-8"))))))
+
+
+(deftest test-the-warm-child-entry-is-the-place-the-roots-marker-names
+  (val script (ProcessScript :commands #((ScriptedCommand :name "uv" :run warm-child-starts)) :env SCRIPT-ENV))
+  (for [#(marker wanted) #(#({"entryPlace" "doeff_cluster.worker.entry"} "doeff_cluster.worker.entry.warm_child")
+                           #({"entryPlace" "doeff_cluster._worker.entry"} "doeff_cluster._worker.entry.warm_child")
+                           ;; 欄を足す前の worker が書いた印 — その頃の root はどれも区画を隠す前の名を解く。
+                           #({"interpreter" "/roots/env-a/app/.venv/bin/python"} "doeff_cluster.worker.entry.warm_child")
+                           ;; 印の無い root(準備の済んでいない root)— この版の置き場。
+                           #(None "doeff_cluster._worker.entry.warm_child"))]
+    (<- roots MemoryFiles (roots-with-marker marker))
+    (val record (run (with-handlers [(state) (sync-time-handler) slog-handler (memory-file-handler roots) (scripted-process-handler script)
+                                     (warm-host SETTINGS)]
+                       (warm-lifecycle))))
+    (val argv (get (get record 4) "argv"))
+    (assert (= (get argv (+ (.index argv "-m") 1)) wanted) #(marker argv))))
 
 
 (defk bad-mark [commands request]
@@ -153,6 +184,23 @@
   (val second (get seen 1))
   (assert (= (tuple (gfor v first #(v.name v.exit-code))) #(#("task/t1" None))) first)
   (assert (= (tuple (gfor v second #(v.name v.exit-code))) #(#("task/t1" 0))) second))
+
+
+(deftest test-a-warm-key-task-on-an-old-root-forks-the-entry-name-the-old-root-has [tmp-path]
+  ;; 宣言の入口は _worker の名(coordinator と worker の JOB-ENTRY)でも、印が区画を隠す前の置き場を名指す root の待ちの子へは、その
+  ;; root が解く名を頼む(台本の待ちの子は名の合う仕事しか持たない — _worker の名を送れば「WarmRun が無い」で落ちる)。
+  (<- spec JobSpec (task-spec-on "env-a"))
+  (assert (= spec.entry "doeff_cluster._worker.entry.job_entry") spec.entry)
+  (<- settings (host-settings tmp-path))
+  (<- place WarmPlace (warm-place settings.warm-dir "env-a"))
+  (<- roots MemoryFiles (roots-with-marker {"entryPlace" "doeff_cluster.worker.entry"}))
+  (val warm (WarmScript :sockets #((WarmSocket :path place.socket))
+                        :runs #((WarmRun :entry "doeff_cluster.worker.entry.job_entry" :polls 1 :exit-code 0))))
+  (val script (ProcessScript :commands #() :env SCRIPT-ENV))
+  (val seen (run (with-handlers [(state) (sync-time-handler) slog-handler (memory-file-handler roots) (scripted-process-handler script)
+                                 (scripted-warm-process-handler warm) (process-host settings)]
+                   (fork-then-observe spec))))
+  (assert (= (tuple (gfor v (get seen 1) #(v.name v.exit-code))) #(#("task/t1" 0))) seen))
 
 
 (defhandler fork-recorded

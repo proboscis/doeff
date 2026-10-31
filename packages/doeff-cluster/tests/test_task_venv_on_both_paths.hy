@@ -98,7 +98,7 @@
    worker-path-led-by が boot の venv にする)。"
   (<- allowed tuple (ReadEnvironment (tuple (sorted CHILD-ENV-ALLOWED)) :prefixes CHILD-ENV-PREFIXES))
   (<- shim ShimSpans (shim-spans (WorkerPolicy)))
-  (<- plan JobLaunch (job-launch spec root "1-venv" 1 :python sys.executable :hy-command "hy" :extra-env {}
+  (<- plan JobLaunch (job-launch spec root "1-venv" 1 :entry spec.entry :python sys.executable :hy-command "hy" :extra-env {}
                                  :layout (CodeLayout) :allowed-env (dfor e allowed e.name e.value) :worker-pid (os.getpid) :program-path None
                                  :program-env HOST-CONTRACT.program-env :work-dir (str PACKAGE) :shim-grace-ms shim.shim-grace-ms
                                  :notice-env HOST-CONTRACT.notice-env))

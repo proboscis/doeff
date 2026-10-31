@@ -10,6 +10,16 @@
 (import json)
 
 
+;; 子の入口(job_entry・warm_child)の在る package の置き場の列(新しい置き場を先に — card ki-7a7a1dcb1933)。子は job の root の版の
+;; doeff で起きるので、root へ送る名は root ごとに、その root の中で解ける置き場から選ぶ(worker の準備の確かめが root の答えを完成の印の
+;; entryPlace へ書く — worker/core/env_prepare の stage-probe)。区画 worker を _worker へ隠す前(c04f425ed より前)の doeff の root は
+;; 2 つ目の置き場だけを持つ。
+(val CHILD-ENTRY-PLACES #("doeff_cluster._worker.entry" "doeff_cluster.worker.entry"))
+;; 完成の印に置き場の欄の無い root の置き場: 欄を足す前の worker が準備した root で、その頃の doeff はどれも 2 つ目の置き場の名を解く
+;; (_worker の在る版も、移し替えの module worker.py が 2 つ目の名を _worker の module に解く)。
+(val LEGACY-ENTRY-PLACE "doeff_cluster.worker.entry")
+
+
 (defclass [(dataclass :frozen True)] JobSpec []
   "job 1 本の宣言。entry は `hy -m` へ渡す module 名、revision は git の commit。once = 1 度だけ走らせる(task)。"
   (#^ str name)
@@ -108,12 +118,15 @@
      計り直す — 欄が変われば指紋も変わる。材料の欄(name・entry・args・revision・once・runtime-env・environ・content)は str・bool と str の
      tuple・str の組の tuple だけで、値を作った後に中身が書き換わらないので、覚えた指紋は古くならない。
      中身の鍵 content が在れば、版 revision と実行環境の repo の commit を材料から外し、鍵を入れる(card ki-81bf84ac6590 — 実行環境の
-     ほかの欄〔lock の sha256・Python・import の根・native の wheel〕はそのまま材料)。"
+     ほかの欄〔lock の sha256・Python・import の根・native の wheel〕はそのまま材料)。
+     入口の名は置き場を LEGACY-ENTRY-PLACE に替えた綴りで材料に入れる(card ki-7a7a1dcb1933 — 送る名を _worker の置き場へ替えても
+     process の形は変わらないので、置き場の改名で全部の service を作り直さない。前の綴りの指紋とも同じ値になる)。"
+    (setv entry (.entry-at self LEGACY-ENTRY-PLACE))
     (setv materials
       (if (is self.content None)
-          (+ [self.name self.entry (list self.args) self.revision self.once]
+          (+ [self.name entry (list self.args) self.revision self.once]
              (if self.runtime-env [self.runtime-env] []))
-          (+ ["content" self.name self.entry (list self.args) self.once self.content]
+          (+ ["content" self.name entry (list self.args) self.once self.content]
              (if self.runtime-env [(env-without-commits self.runtime-env)] []))))
     (cut (.hexdigest (hashlib.sha256 (.encode (json.dumps (+ materials (if self.environ [(lfor #(k v) self.environ [k v])] []))
                                                           :ensure-ascii False :separators #("," ":"))
@@ -127,7 +140,16 @@
     (and (isinstance other JobSpec) (= self.fingerprint other.fingerprint)))
 
   (defn #^ int __hash__ [self]  ; defk にできない: 値の hash の口(比べと揃える)
-    (hash self.fingerprint)))
+    (hash self.fingerprint))
+
+  (defn #^ str entry-at [self #^ (| str None) place]  ; defk にできない: 値の読み口(指紋 fingerprint と worker の起こし方が読む)
+    "入口の名 entry(置き場の列 CHILD-ENTRY-PLACES のどれかの下の module)を、置き場 place の下の同じ module の名で返す(place = None・
+     列の外の名は entry のまま)。worker が root へ送る名(子の起動・待ちの子から分ける task・入口の確かめ)と指紋の材料が、同じ読みで
+     置き場を替える。"
+    (for [known CHILD-ENTRY-PLACES]
+      (when (and (is-not place None) (.startswith self.entry (+ known ".")))
+        (return (+ place (cut self.entry (len known) None)))))
+    self.entry))
 
 
 (defn #^ str env-without-commits [#^ str runtime-env]

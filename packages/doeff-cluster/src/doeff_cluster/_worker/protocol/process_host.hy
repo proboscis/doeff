@@ -47,6 +47,7 @@
 (import doeff_cluster._worker.core.shim_timing [ShimSpans shim-deadline-ms])
 (import doeff_core_effects [ForkFromWarm PollWarmChild SignalWarmChild WriteWarmChildInput WarmRefused WarmRunning WarmExited WarmLost])
 (import doeff_cluster._worker.core.warm_rules [WarmPlace warm-place])
+(import doeff_cluster._worker.protocol.env_store [root-entry-place])
 
 
 (defrecord HostSettings
@@ -347,7 +348,13 @@
   (when spec.program
     (<- cached Path (spec-program-file (Path settings.program-dir) spec))
     (:= program-path (str cached)))
-  (<- plan JobLaunch (job-launch spec action.code-path instance action.attempt :python settings.python :hy-command settings.hy-command
+  ;; root へ送る子の入口の名(card ki-7a7a1dcb1933): 子は root の版の doeff で起きるので、実行環境の job は root の完成の印の置き場の名。
+  ;; 木の job は宣言の名のまま。shim の下の道と待ちの子から分ける道が同じ名を使う。
+  (var entry spec.entry)
+  (when spec.runtime-env
+    (<- place (| str None) (root-entry-place action.code-path))
+    (:= entry (.entry-at spec place)))
+  (<- plan JobLaunch (job-launch spec action.code-path instance action.attempt :entry entry :python settings.python :hy-command settings.hy-command
                                  :extra-env (dfor e settings.extra-env e.name e.value) :layout settings.layout
                                  :allowed-env (dfor e allowed e.name e.value) :worker-pid facts.pid
                                  :program-path program-path
@@ -372,7 +379,7 @@
           ;; worker より長く生きる service(launch の outlives-worker — card ki-f69f2a6869aa)は、A に入力の EOF を退きとして待たせる
           ;; (入れ物 shim の --orphan-seconds と同じ値。印 orphanForks の無い版の待ちの子へは頼まない — warm_rules の warm-start)。
           (<- orphan (| float None) (orphan-seconds-of spec))
-          (<- forked (ForkFromWarm :socket-path place.socket :entry spec.entry :args plan.entry-args :cwd plan.cwd :env plan.entry-env
+          (<- forked (ForkFromWarm :socket-path place.socket :entry entry :args plan.entry-args :cwd plan.cwd :env plan.entry-env
                                    :log-path log :exit-path exit-path :grace-seconds (/ settings.shim.shim-grace-ms 1000)
                                    :hold-input service :notice-env (if service settings.notice-env None) :orphan-seconds orphan
                                    :cgroup-procs (if service settings.service-procs None)))

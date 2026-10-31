@@ -12,9 +12,22 @@
 (import pathlib [Path])
 (import doeff_core_effects [EnvEntry EnvMode])
 (import doeff_cluster._shared.core.run_context_rules [process-context-environ])
-(import doeff_cluster._shared.intent.job_model [JobSpec])
+(import doeff_cluster._shared.intent.job_model [JobSpec LEGACY-ENTRY-PLACE])
 (import doeff_cluster._shared.intent.runtime_env_model [WITHHELD-ENV-NAMES])
 (import doeff_cluster._worker.intent.worker_model [CodeLayout])
+
+
+(defk entry-place-of-marker [text]
+  {:pre [(: text (| str None))] :post [(: % (| str None))] :tags {:context "worker" :role "judgment"}}
+  "root の完成の印の中身 text(None = 印が無い・読めない)から、root へ送る子の入口の置き場を読むため(card ki-7a7a1dcb1933 — 準備の
+   確かめが欄 entryPlace へ書いた、root の中で job_entry の解ける置き場)。欄の無い印は、欄を足す前の worker が準備した root なので
+   LEGACY-ENTRY-PLACE(その頃の doeff はどれもその置き場の名を解く)。印の読めない root は None(送る名を替えない — 準備の済んで
+   いない root で、子はどの名でも root の venv を見つけられずに落ちる)。"
+  (val marker (if (is text None) None (try (json.loads text) (except [ValueError] None))))
+  (cond
+    (not (isinstance marker dict)) None
+    (isinstance (.get marker "entryPlace") str) (get marker "entryPlace")
+    True LEGACY-ENTRY-PLACE))
 
 
 ;; 子 process へ継ぐ worker の環境変数の許可表(実行環境の job — 2026-09-26)。これ以外(PYTHON*・HY_*・UV_* の他・LD_*・VIRTUAL_ENV・
@@ -168,9 +181,9 @@
   (setv #^ (get tuple #(EnvEntry ...)) entry-env #()))
 
 
-(defk job-launch [spec code-path instance attempt * python hy-command extra-env layout allowed-env worker-pid program-path program-env work-dir
+(defk job-launch [spec code-path instance attempt * entry python hy-command extra-env layout allowed-env worker-pid program-path program-env work-dir
                   shim-grace-ms notice-env]
-  {:pre [(: spec JobSpec) (: code-path str) (: instance str) (: attempt int) (: python str) (: hy-command str)
+  {:pre [(: spec JobSpec) (: code-path str) (: instance str) (: attempt int) (: entry str) (: python str) (: hy-command str)
          (: extra-env dict) (: layout CodeLayout) (: allowed-env dict) (: worker-pid int) (: program-path (| str None)) (: program-env str) (: work-dir str)
          (: shim-grace-ms int) (: notice-env str)]
    :post [(: % JobLaunch)] :tags {:context "worker" :role "judgment"}}
@@ -183,7 +196,9 @@
    それ以外は木の PYTHONPATH(layout)を足して worker の環境を継ぐ(EXTEND)。allowed-env = worker の環境のうち許可表の名と LC_* の分
    (実行環境の job だけが読む — 読むのは呼び手: ReadEnvironment の names = CHILD-ENV-ALLOWED・prefixes = CHILD-ENV-PREFIXES)。
    shim-grace-ms = shim の猶予(worker の方針から shim_timing.shim-spans が導いた値 — 呼び手が渡す)。notice-env = 退きの知らせの pipe の
-   fd の番号を子へ渡す環境変数の名(宿の契約 HOST-CONTRACT の notice-env — 呼び手が名を渡す・shim の旗 --notice-env・#3672)。"
+   fd の番号を子へ渡す環境変数の名(宿の契約 HOST-CONTRACT の notice-env — 呼び手が名を渡す・shim の旗 --notice-env・#3672)。
+   entry = `-m` へ渡す子の入口の名(実行環境の job は root の完成の印の置き場の名 spec.entry-at — 呼び手が印を読む・card ki-7a7a1dcb1933。
+   木の job は spec.entry)。"
   (<- context dict (process-context-environ spec instance attempt))
   (val worker-env (| context {"DOEFF_WORKER_PID" (str worker-pid)}
                      (if program-path {program-env program-path} {})))
@@ -202,7 +217,7 @@
           (<- entry-env dict (uv-run-environ project-dir child-env))
           (<- root-hy str (project-hy project-dir))
           (val entry-entries (tuple (gfor k (sorted entry-env) (EnvEntry :name k :value (get entry-env k)))))
-          (JobLaunch :argv (+ shim #(root-hy "-m" spec.entry) spec.args program-args)
+          (JobLaunch :argv (+ shim #(root-hy "-m" entry) spec.args program-args)
                      :cwd work-dir
                      :env entry-entries
                      :env-mode EnvMode.REPLACE
@@ -214,7 +229,7 @@
       ;; 落とす口が無い)— worker の環境に置かない事は雛形(deploy/)の側が守る。
       (do (val tree-env (dfor #(k v) (.items (| extra-env environ {"PYTHONPATH" (.pythonpath layout code-path)} worker-env))
                               :if (not-in k WITHHELD-ENV-NAMES) k v))
-          (JobLaunch :argv (+ shim #(hy-command "-m" spec.entry) spec.args program-args)
+          (JobLaunch :argv (+ shim #(hy-command "-m" entry) spec.args program-args)
                      :cwd code-path
                      :env (tuple (gfor k (sorted tree-env) (EnvEntry :name k :value (get tree-env k))))
                      :env-mode EnvMode.EXTEND

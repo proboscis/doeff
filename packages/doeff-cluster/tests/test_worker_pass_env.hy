@@ -69,7 +69,7 @@
   (val runtime (json.dumps {"project" {"repo" "app" "path" "."} "envVars" [{"name" MARKER "value" "/work"}]}))
   (for [spec [(JobSpec "task/t1" "app.main" #("task") "rev1" :runtime-env runtime :env-key "k1" :environ #(#(MARKER "/work")))
               (JobSpec "svc" "app.main" #("service") "rev1" :environ #(#(MARKER "/work")))]]
-    (<- plan JobLaunch (job-launch spec "/roots/env-k1" "1-abc" 1 :python "/py" :hy-command "/bin/hy" :extra-env with-marker
+    (<- plan JobLaunch (job-launch spec "/roots/env-k1" "1-abc" 1 :entry spec.entry :python "/py" :hy-command "/bin/hy" :extra-env with-marker
                                    :layout (CodeLayout) :allowed-env with-marker :worker-pid 42 :program-path None
                                    :program-env "DOEFF_PROGRAM_FILE" :work-dir "/jobs/t1" :shim-grace-ms shim.shim-grace-ms
                                    :notice-env "DOEFF_NOTICE_FD"))

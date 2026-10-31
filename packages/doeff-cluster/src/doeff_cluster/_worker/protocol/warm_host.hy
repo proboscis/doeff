@@ -26,6 +26,7 @@
 (import doeff_cluster._worker.protocol.observations [ObserveWarmChildren])
 (import doeff_cluster._worker.core.launch [CHILD-ENV-ALLOWED CHILD-ENV-PREFIXES])
 (import doeff_cluster._worker.core.warm_rules [WarmPlace WARM-CHILD-FLAGS warm-place warm-child-argv])
+(import doeff_cluster._worker.protocol.env_store [root-entry-place])
 
 
 (defrecord WarmSettings
@@ -91,7 +92,9 @@
   (<- (file-done (MakeDirectory place.dir :mode 0o700)))
   (<- (file-done (MakeDirectory settings.log-dir)))
   (<- allowed tuple (ReadEnvironment (tuple (sorted CHILD-ENV-ALLOWED)) :prefixes CHILD-ENV-PREFIXES))
-  (<- argv tuple (warm-child-argv settings.uv launch place))
+  ;; 待ちの子の入口の名は root の完成の印の置き場から選ぶ(card ki-7a7a1dcb1933 — 待ちの子は root の版の doeff で起きる)。
+  (<- entry-place (| str None) (root-entry-place launch.root))
+  (<- argv tuple (warm-child-argv settings.uv launch place entry-place))
   (<- log str (warm-log-path settings key))
   (<- now int (now-epoch-ms))
   (<- answer (| ProcessStarted ProcessNotStarted)

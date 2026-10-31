@@ -20,7 +20,7 @@
   (val spec (JobSpec "svc" "app.main" #("service") "rev1" :environ #(#("MODE" "fast"))))
   ;; shim の猶予は本番の方針から導いた値(数を検に写さない — #2940)。
   (<- shim ShimSpans (shim-spans (WorkerPolicy)))
-  (<- plan JobLaunch (job-launch spec "/cache/rev1" "1-abc" 1 :python "/py" :hy-command "/bin/hy" :extra-env {"DOEFF_WORKER_NAME" "w1"}
+  (<- plan JobLaunch (job-launch spec "/cache/rev1" "1-abc" 1 :entry spec.entry :python "/py" :hy-command "/bin/hy" :extra-env {"DOEFF_WORKER_NAME" "w1"}
                                  :layout (CodeLayout) :allowed-env {} :worker-pid 42 :program-path None :program-env "DOEFF_PROGRAM_FILE"
                                  :work-dir "/jobs/svc" :shim-grace-ms shim.shim-grace-ms :notice-env "DOEFF_NOTICE_FD"))
   (val env (dfor e plan.env e.name e.value))
@@ -42,7 +42,7 @@
 (deftest test-a-runtime-env-job-inherits-only-the-allowed-worker-environment
   (val spec (JobSpec "task/t1" "doeff_cluster._worker.entry.job_entry" #("task") "rev1" :runtime-env RUNTIME :env-key "k1"))
   (<- shim ShimSpans (shim-spans (WorkerPolicy)))
-  (<- plan JobLaunch (job-launch spec "/roots/env-k1" "1-abc" 1 :python "/py" :hy-command "/bin/hy" :extra-env {}
+  (<- plan JobLaunch (job-launch spec "/roots/env-k1" "1-abc" 1 :entry spec.entry :python "/py" :hy-command "/bin/hy" :extra-env {}
                                  :layout (CodeLayout) :allowed-env BASE :worker-pid 42 :program-path "/state/programs/s.json"
                                  :program-env "DOEFF_PROGRAM_FILE" :work-dir "/jobs/task_t1" :shim-grace-ms shim.shim-grace-ms
                                  :notice-env "DOEFF_NOTICE_FD"))
@@ -69,7 +69,7 @@
   ;; 木の job は待ちの子から分けない(warm_rules.forks-from-warm-child)ので、分ける道の環境を持たない。
   (val spec (JobSpec "task/t2" "app.main" #("task") "rev1" :once True))
   (<- shim ShimSpans (shim-spans (WorkerPolicy)))
-  (<- plan JobLaunch (job-launch spec "/cache/rev1" "1-abc" 1 :python "/py" :hy-command "/bin/hy" :extra-env {}
+  (<- plan JobLaunch (job-launch spec "/cache/rev1" "1-abc" 1 :entry spec.entry :python "/py" :hy-command "/bin/hy" :extra-env {}
                                  :layout (CodeLayout) :allowed-env BASE :worker-pid 42 :program-path None :program-env "DOEFF_PROGRAM_FILE"
                                  :work-dir "/jobs/task_t2" :shim-grace-ms shim.shim-grace-ms :notice-env "DOEFF_NOTICE_FD"))
   (assert (= plan.entry-env #()) plan.entry-env))
@@ -105,7 +105,7 @@
       #("recreate の service" service #())
       #("寿命つきの handoff の task" (replace service :handoff True :retired-ms 18000000 :once True) #())))
   (for [#(label spec expected) rows]
-    (<- plan JobLaunch (job-launch spec "/cache/rev1" "1-abc" 1 :python "/py" :hy-command "/bin/hy" :extra-env {}
+    (<- plan JobLaunch (job-launch spec "/cache/rev1" "1-abc" 1 :entry spec.entry :python "/py" :hy-command "/bin/hy" :extra-env {}
                                    :layout (CodeLayout) :allowed-env {} :worker-pid 42 :program-path None
                                    :program-env "DOEFF_PROGRAM_FILE" :work-dir "/jobs/svc" :shim-grace-ms shim.shim-grace-ms
                                    :notice-env "DOEFF_NOTICE_FD"))

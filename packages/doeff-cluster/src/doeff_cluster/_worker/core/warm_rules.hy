@@ -17,7 +17,7 @@
 (import json)
 (import dataclasses [dataclass])  ; defrecord の展開が名指す
 (import enum [StrEnum])  ; defenum の展開が名指す
-(import doeff_cluster._shared.intent.job_model [JobSpec])
+(import doeff_cluster._shared.intent.job_model [JobSpec CHILD-ENTRY-PLACES])
 (import doeff_cluster._shared.intent.runtime_env_model [RuntimeEnv EnvFailure EnvFailureKind])
 (import doeff_cluster._shared.core.runtime_env_rules [runtime-env-of-json])
 (import doeff_cluster._worker.intent.worker_model [WorldView WarmChildMark WarmMarkUnreadable WarmChildView WarmLaunch WorkerPolicy])
@@ -193,12 +193,14 @@
   (WarmPlace :dir dir :socket (+ dir "/sock") :ready (+ dir "/ready.json")))
 
 
-(defk warm-child-argv [uv launch place]
-  {:pre [(: uv str) (: launch WarmLaunch) (: place WarmPlace)] :post [(: % (get tuple #(str ...)))] :tags {:context "worker" :role "judgment"}}
+(defk warm-child-argv [uv launch place entry-place]
+  {:pre [(: uv str) (: launch WarmLaunch) (: place WarmPlace) (: entry-place (| str None))] :post [(: % (get tuple #(str ...)))]
+   :tags {:context "worker" :role "judgment"}}
   "待ちの子を root の venv で起こす命令を、task の子と同じ uv run の形(--no-sync --frozen --project)で組むため(入口 =
-   worker/entry/warm_child — 起動で読む module は --preload を名の順に並べる)。入口の名は区画を _worker へ隠す前の path のまま
-   (card ki-3ff93cd3499e — 待ちの子は root の版の doeff で起き、_worker の無い古い版の root でも解ける名が要る。新しい版の root では
-   移し替えの module worker.py が _worker の module を返す。段 3 で移し替えの module を消す前に root の版の下限と合わせて替える)。"
-  (+ #(uv "run" "--no-sync" "--frozen" "--project" launch.project "python" "-m" "doeff_cluster.worker.entry.warm_child"
+   _worker/entry/warm_child — 起動で読む module は --preload を名の順に並べる)。待ちの子は root の版の doeff で起きるので、入口の名は
+   root の完成の印の置き場 entry-place の下の warm_child(card ki-7a7a1dcb1933 — _worker の無い古い版の root では区画を隠す前の置き場。
+   None = 印の読めない root で、job_model の CHILD-ENTRY-PLACES の先頭の置き場)。"
+  (+ #(uv "run" "--no-sync" "--frozen" "--project" launch.project "python" "-m"
+       (+ (if (is entry-place None) (get CHILD-ENTRY-PLACES 0) entry-place) ".warm_child")
        "--root" launch.root "--socket" place.socket "--ready" place.ready)
      (tuple (gfor name launch.preload part #("--preload" name) part))))

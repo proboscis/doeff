@@ -50,6 +50,7 @@
 (import doeff_cluster._shared.intent.due_model [DueAt DueNow DueNever])
 (import doeff_cluster._worker.protocol.observations [ObserveEnvs ObserveEnvDisk])
 (import doeff_cluster._worker.core.worker_rules [ENV-KEY-PREFIX])
+(import doeff_cluster._worker.core.launch [entry-place-of-marker])
 (import doeff_cluster._worker.core.env_upkeep [RootInfo RootsTally PrepareLimits sweep-candidates sweep-choice sweep-wanted sweep-due roots-bytes kept-bytes
                                               prepare-overdue env-capacity WHEEL-UNUSED-SECONDS CODE-STORE-UNUSED-SECONDS MemoryUse MemoryUnread WarmRoom
                                               memory-use-of root-estimate build-memory-estimate reclaimable-bytes warm-refusal])
@@ -157,6 +158,15 @@
   (if (isinstance text str)
       (try (json.loads text) (except [ValueError] None))
       None))
+
+
+(defk root-entry-place [root]
+  {:pre [(: root str)] :post [(: % (| str None))]}
+  "root へ送る子の入口と待ちの子の名を選ぶため、root の完成の印から子の入口の置き場を読む(card ki-7a7a1dcb1933 — 起こす宿・入口の
+   確かめ・待ちの子の宿が読む。印の中身の読みは launch の entry-place-of-marker)。"
+  (<- text (ReadText (+ root "/" ENV-MARKER)))
+  (<- place (| str None) (entry-place-of-marker (if (isinstance text str) text None)))
+  place)
 
 
 (defk read-answer [path]
