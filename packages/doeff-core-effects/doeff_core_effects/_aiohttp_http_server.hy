@@ -80,7 +80,7 @@
                                                 WS-CLOSE-ABNORMAL HttpReadBody HttpBodyRead HttpBodyTooLarge HttpBodyFailed HttpBodyOutcome
                                                 WS-REFUSAL-TEXT WS-CUT-REASON WsCloseFrame carries-content ws-refusal-status
                                                 send-overflows closing-of HttpProbe probe-for probe-answer
-                                                WsShortcutAnswered WsShortcutFailed ws-shortcut-for ws-shortcut-outcome ws-shortcut-stage])
+                                                WsShortcut WsShortcutAnswered WsShortcutFailed ws-shortcut-for ws-shortcut-outcome ws-shortcut-stage])
 (import aiohttp.web_protocol [PayloadAccessError])
 (import doeff [run])
 
@@ -345,8 +345,9 @@
      loop の task も取り消す。"
     (await (asyncio.wrap-future (asyncio.run-coroutine-threadsafe coroutine (self.edge-loop)))))
 
-  (defn :async #^ HttpAddress start [self #^ HttpAddress address #^ int ws-max-bytes #^ int ws-send-max-bytes #^ tuple probes
-                                     #^ bool share-port #^ tuple ws-shortcuts]
+  (defn :async #^ HttpAddress start [self #^ HttpAddress address #^ int ws-max-bytes #^ int ws-send-max-bytes
+                                     #^ (get tuple #(HttpProbe ...)) probes
+                                     #^ bool share-port #^ (get tuple #(WsShortcut ...)) ws-shortcuts]
     "待ち受けを開き、結んだ宛先を答えるため(開いた後に届いた要求は、probe の口に当たる物を除いてすべて列へ並ぶ)。share-port = 同じ port を
      別の待ち受けと共有して開く(SO_REUSEPORT)。ws-shortcuts = ws の 1 通にその場で答える口(頭の註)。"
     (setv self.address address
@@ -735,7 +736,7 @@
         (return (HttpBodyFailed :reason (.format "札 {} の要求の本文を読めなかった: {!r}" ticket error)))))
     (HttpBodyRead :data (.join b"" chunks)))
 
-  (defn :async #^ web.StreamResponse respond [self #^ web.Request request #^ int status #^ tuple headers
+  (defn :async #^ web.StreamResponse respond [self #^ web.Request request #^ int status #^ (get tuple #(HttpHeader ...)) headers
                                               #^ (| HttpBodyBytes HttpBodyFileRange HttpNoBody) body #^ bool cut-off]
     "翻訳の handler が決めた答えをそのまま送るため(file の範囲は塊で読んで書く)。cut-off = 本文を上限で断った札 — 送った後に接続を閉じる
      (残りの本文を読み捨てない)。"

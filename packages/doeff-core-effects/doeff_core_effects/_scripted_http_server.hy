@@ -154,15 +154,16 @@
 (defrecord ScriptSend
   "台本の札 1 つへ文字の 1 通を送った後の session の値: 記録・開いた札・箱の溜まり・送りの勘定・まだ届けていない出来事の列。"
   (#^ (get tuple #(object ...)) served)
-  (#^ frozenset opened)
-  (#^ dict backlog)
+  (#^ (get frozenset str) opened)
+  (#^ (get dict #(str int)) backlog)
   (#^ WsSendReport tally)
   (#^ (get tuple #(object ...)) pending))
 
 
 (defk script-sent [ticket text limit stalled served opened backlog tally pending]
-  {:pre [(: ticket str) (: text str) (: limit int) (: stalled frozenset) (: served tuple) (: opened frozenset) (: backlog dict)
-         (: tally WsSendReport) (: pending tuple)]
+  {:pre [(: ticket str) (: text str) (: limit int) (: stalled (of frozenset str)) (: served (of tuple object ...))
+         (: opened (of frozenset str)) (: backlog (of dict str int))
+         (: tally WsSendReport) (: pending (of tuple object ...))]
    :post [(: % ScriptSend)] :tags {:context "http-server" :role "foundation"}}
   "台本の札へ文字の 1 通を送った扱いにするため(WsSendText・WsSendTextEach の札ごとと、ws の口の答えの 1 通の同じ決め — 頭の註の WsSendText):
    閉じた・知らない札は捨てる・上限を超える 1 通は積まずに切る(箱の溜まりを捨て、WsClosed を列の頭へ差す)・読まない相手は箱に溜める・

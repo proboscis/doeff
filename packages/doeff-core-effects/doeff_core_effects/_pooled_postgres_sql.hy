@@ -58,7 +58,7 @@
     (finally (<- (ReleaseSemaphore permit)))))
 
 
-(defhandler pooled-postgres-sql-handler [#^ PostgresConnections connections #^ Executor pool #^ tuple [serialized-lock-keys #()]]
+(defhandler pooled-postgres-sql-handler [#^ PostgresConnections connections #^ Executor pool #^ (get tuple #(str ...)) [serialized-lock-keys #()]]
   ;; 引数に残す理由: 接続の貸し出しは組み立ての側が作って閉じる資源で(DSN と資格を持つ)、答える database の名で ClickHouse の答え手と
   ;; 同じ組に並べ分ける。pool も組み立ての側が作って閉じる資源(worker の数の契約は頭の註)。
   ;; permits = database の名 → 接続の許可(scheduler の semaphore — 初めて使う拍に作る)(session の値)。

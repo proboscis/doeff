@@ -50,7 +50,8 @@
 (import dataclasses [dataclass field])
 (import doeff [Program])
 (import doeff_core_effects._sql_effects [SqlQuery SqlInsertRows SqlTransaction SqlEnsureTables SqlRows SqlFailed SqlUnreachable
-                                        SqlSchemaApplied SqlColumnType SqlText SqlPlaceholder split-statement checked-params param-value
+                                        SqlSchemaApplied SqlColumnType SqlParam SqlTable SqlText SqlPlaceholder split-statement checked-params
+                                        param-value
                                         checked-identifier checked-identifiers checked-rows normalized-rows])
 (import doeff_core_effects._offloaded_call [ThreadPerCall offloaded run-detached keep-nothing])
 
@@ -286,7 +287,7 @@
 
 
 (defk clickhouse-query-request [database statement params]
-  {:pre [(: database ClickHouseDatabase) (: statement str) (: params tuple)] :post [(: % ClickHouseRequest)]
+  {:pre [(: database ClickHouseDatabase) (: statement str) (: params (get tuple #(SqlParam ...)))] :post [(: % ClickHouseRequest)]
    :tags {:context "sql" :role "foundation"}}
   "SqlQuery 1 つを HTTP POST 1 本にするため(文は本文・設定と引数は URL — 期限と query_id は要求ごと)。"
   (<- bound (clickhouse-statement statement params))
@@ -358,7 +359,7 @@
 
 
 (defk clickhouse-schema-statements [tables]
-  {:pre [(: tables tuple)] :post [(: % (| tuple SqlFailed))]
+  {:pre [(: tables (get tuple #(SqlTable ...)))] :post [(: % (| (get tuple #(str ...)) SqlFailed))]
    :tags {:context "sql" :role "foundation"}}
   "表の宣言を ClickHouse の DDL(MergeTree・ORDER BY = 主鍵・索引は minmax の data skipping)に描くため。一意の索引は持てないので
    SqlFailed(0A000)。"
@@ -634,7 +635,7 @@
   answer)
 
 
-(defhandler clickhouse-http-sql-handler [#^ tuple databases]
+(defhandler clickhouse-http-sql-handler [#^ (get tuple #(ClickHouseDatabase ...)) databases]
   ;; 引数に残す理由: database の宣言(URL と資格)は組み立ての側が渡す値で、答える database の名で PostgreSQL の答え手と同じ組に並べ分ける。
   "本物の ClickHouse の答え手(頭の註)。databases = ClickHouseDatabase の tuple(宣言した名にだけ答え、他の名は外側へ回す)。"
   {:tags {:context "sql" :role "foundation"}}

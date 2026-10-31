@@ -35,14 +35,14 @@ def child_unreaped(pid: int) -> _Program[bool, object]:
 def child_running(pid: int) -> _Program[bool, object]:
     ...
 
-def ended(pid: int, still_ours: Callable) -> None:
+def ended(pid: int, still_ours: Callable[[], bool]) -> None:
     ...
 
 class ExitEnd:
     pid: int
-    still_ours: Callable
+    still_ours: Callable[[], bool]
 
-    def __init__(self, pid: int, still_ours: Callable) -> None:
+    def __init__(self, pid: int, still_ours: Callable[[], bool]) -> None:
         ...
 
     def __await__(self) -> Generator[object, None, None]:

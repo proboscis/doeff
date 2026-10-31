@@ -83,7 +83,7 @@
       False))
 
 
-(defn :async #^ None ended [#^ int pid #^ Callable still-ours]
+(defn :async #^ None ended [#^ int pid #^ (get Callable #([] bool)) still-ours]
   "pid の process が終わるまで待つ coroutine(loop の thread で走る)。終わると読める fd を開き、still-ours(開いた後に、まだ待つ相手の
    process か)が偽ならその場で、真なら fd が読めるまで待って返る。どの終わり方(取り消しを含む)でも読み待ちを外して fd を閉じる。"
   (setv fd (run (exit-fd-of pid)))
@@ -102,7 +102,7 @@
 (defclass ExitEnd []
   "pid の process の終わりを待つ awaitable(Await に渡す)。coroutine は await された時に初めて作る — Await が答え手に届く前に捨てられても、
    開いた fd も待たれない coroutine も残さない(頭の註)。"
-  (defn #^ None __init__ [self #^ int pid #^ Callable still-ours]
+  (defn #^ None __init__ [self #^ int pid #^ (get Callable #([] bool)) still-ours]
     (setv self.pid pid self.still-ours still-ours))
 
   (defn #^ (get Generator #(object None None)) __await__ [self]

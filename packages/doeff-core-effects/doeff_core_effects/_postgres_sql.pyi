@@ -89,7 +89,7 @@ class PostgresStatement:
 
 @dataclass(kw_only=True)
 class RaisedNotices:
-    topics: dict = ...
+    topics: dict[str, frozenset[str] | None] = ...
     sent: bool = False
 
 @dataclass(frozen=True, kw_only=True)
@@ -112,7 +112,7 @@ class PostgresConnections:
     counts: Incomplete
     counts_lock: Incomplete
 
-    def __init__(self, databases: tuple, *, size: Incomplete=..., timeouts: Incomplete=...) -> None:
+    def __init__(self, databases: tuple[PostgresDatabase, ...], *, size: Incomplete=..., timeouts: Incomplete=...) -> None:
         ...
 
     def counted(self, tally: str) -> None:
@@ -156,13 +156,13 @@ class PostgresListener:
     def __init__(self, connections: PostgresConnections, name: str, channel: str) -> None:
         ...
 
-    def ring(self, topics: frozenset | None) -> None:
+    def ring(self, topics: frozenset[str] | None) -> None:
         ...
 
-    def hang(self, bell: ExternalPromise, topics: frozenset | None) -> str | None:
+    def hang(self, bell: ExternalPromise[bool | None], topics: frozenset[str] | None) -> str | None:
         ...
 
-    def drop(self, bell: ExternalPromise) -> None:
+    def drop(self, bell: ExternalPromise[bool | None]) -> None:
         ...
 
     def listen(self) -> None:

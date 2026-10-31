@@ -45,13 +45,22 @@ _DOEFF_GAPS: dict[str, str] = {
     "doeff.cli.demo.live_world": _DEMO_PRINTS_THE_README_EXAMPLE,
 }
 
-#: doeff_core_effects の頭の名のうち、型が分からないままの物と訳(今は無い — 足す時は訳と一緒に書く)。
-_CORE_HEAD_GAPS: dict[str, str] = {}
+#: aiohttp の型そのものが verifytypes に「一部分からない」(``ClientSession`` の引数の yarl の ``URL``・``BasicAuth``、
+#: ``web.Request``・``web.StreamResponse`` の欄)。名の注記は全部書いてあり(外の package の型の報告を外す
+#: ``--ignoreexternal`` では型が分かる)、doeff の側では直せない。strict の型の check は外の class の欄を数えないので、
+#: 使う人に Unknown の error は出ない。
+_AIOHTTP_TYPES_ARE_PARTIALLY_UNKNOWN = "aiohttp の型が verifytypes に一部分からない(注記は全部ある・外の package)"
+
+#: doeff_core_effects の頭の名のうち、型が分からないままの物と訳(足す時は訳と一緒に書く)。
+_CORE_HEAD_GAPS: dict[str, str] = {
+    "doeff_core_effects.WebEdge": _AIOHTTP_TYPES_ARE_PARTIALLY_UNKNOWN,
+    "doeff_core_effects.aiohttp_ws_link_handler": _AIOHTTP_TYPES_ARE_PARTIALLY_UNKNOWN,
+}
 #: doeff_core_effects の module のうち、公開の名の全部に型が分かる物(この検が守る範囲)。今は全部を下の隠した module で数える。
 _CORE_TYPED_MODULES: tuple[str, ...] = ()
 #: 守る範囲のうち、名に _ を付けて隠した module(ADR-DOE-API-001 R5)。
-#: verifytypes は _ の module の名を数えないので、入口がこれらの module から出す名
-#: (``doeff_core_effects.Task`` とその欄)で数える。
+#: verifytypes は _ の module の名を数えないので、入口がこれらの module から出す名(``doeff_core_effects.Task`` など)で
+#: 数える。入口の class の欄は別の行に出ず、class の行の型の分かり(isTypeKnown)に畳まれる。
 _CORE_TYPED_HIDDEN_MODULES = (
     "doeff_core_effects._effects",
     "doeff_core_effects._scheduler",
@@ -138,28 +147,39 @@ def _in_module(name: str, modules: tuple[str, ...]) -> bool:
     return any(name == module or name.startswith(f"{module}.") for module in modules)
 
 
-def _entry_names_from_hidden_modules() -> set[str]:
-    """入口が ``from <隠した module> import X as X`` で出す名。
+def _entry_names_by_hidden_module() -> dict[str, set[str]]:
+    """隠した module ごとに、入口が ``from <その module> import X as X`` で出す名。
 
     即座に結ぶ名と ``if TYPE_CHECKING:`` の名の両方。
     """
     tree = ast.parse(_CORE_ENTRY.read_text(encoding="utf-8"))
+    imports = [node for node in ast.walk(tree) if isinstance(node, ast.ImportFrom)]
     return {
-        alias.asname or alias.name
-        for node in ast.walk(tree)
-        if isinstance(node, ast.ImportFrom)
-        and _in_module(node.module or "", _CORE_TYPED_HIDDEN_MODULES)
-        for alias in node.names
+        module: {
+            alias.asname or alias.name
+            for node in imports
+            if _in_module(node.module or "", (module,))
+            for alias in node.names
+        }
+        for module in _CORE_TYPED_HIDDEN_MODULES
     }
 
 
 def test_every_public_name_of_the_typed_core_modules_has_a_known_type(core_symbols: list[dict]) -> None:
-    entry_names = tuple(f"doeff_core_effects.{name}" for name in _entry_names_from_hidden_modules())
+    """守る範囲は数の下限でなく、名の組で確かめる。前の下限(100 より多い)は、公開の module の class の欄が 1 行ずつ
+    数えられた頃の物だった。module を _ で隠した後は入口の名だけが行になり(欄は class の行に畳まれる)、名を内側へ
+    移すたびに減った(96 → 91: TraceSink・VmWork・Resumption・PRIORITY_* を入口から外した)。だから、表の module の
+    どれもが入口に名を出し、入口の名の全部を verifytypes が報告し、その全部に型が分かる事を確かめる。"""
+    by_module = _entry_names_by_hidden_module()
+    silent = sorted(module for module, names in by_module.items() if not names)
+    assert silent == [], f"入口が名を出していない隠した module — 表と入口を見直す: {silent}"
+    entry_names = {f"doeff_core_effects.{name}" for names in by_module.values() for name in names}
+    reported = {symbol["name"] for symbol in core_symbols}
+    assert sorted(entry_names - reported) == [], "verifytypes が報告しない入口の名 — 守る範囲から漏れている"
     covered = [
         symbol for symbol in core_symbols
         if _in_module(symbol["name"], (*_CORE_TYPED_MODULES, *entry_names))
     ]
-    assert len(covered) > 100, len(covered)
     assert sorted(_unknown(covered)) == []
 
 
