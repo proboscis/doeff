@@ -11,6 +11,7 @@
 //!   :shared "shared"                 ; どの service からも読める置き場(root/shared/<層>/)
 //!   :foundation "foundation"         ; service の外の層(root/foundation/)— :layers に同じ名の layer が要る
 //!   :verification-environment "agora_sim"  ; 模擬の環境の置き場(root/<dir>/ 1 つ)— service ではない置き場で DOEFF114・115 にしない。他の規則は当たる
+//!   :root-modules ["macros"]         ; root の直下に置いてよい公開の module の名(file の stem)— DOEFF114 にしない。名の無い file は今までどおり DOEFF114
 //!   :open-layers [intent]            ; 別の service から読んでよい層(Tach の interfaces に当たる)
 //!   :roles {:judgment "業務の判断をする純粋な関数" …}
 //!   :wire-modules ["controllers.foundation.record_client"]  ; JSON の送受信そのものを行う foundation の module(DOEFF120 が JsonValue を許す)
@@ -786,6 +787,9 @@ pub struct Architecture {
     /// 同じ理屈)。この dir の下の module は DOEFF114・115 で置き場所の違反にしない。ほかの規則は今までどおり当たる。
     /// 1 つだけ受ける(列は受けない — 何でも逃がせる欄にしない。:legacy を廃した理由と同じ)。
     pub verification_environment: Option<String>,
+    /// root のすぐ下に置いてよい公開の module の名(`:root-modules ["macros"]` — file の stem)。Hy の require は module の path で macro を
+    /// 読むので、根の入口の遅延の名にできない公開の境界(ADR-DOE-API-001 R15)を宣言で受ける。名の無い root 直下の file は DOEFF114。
+    pub root_modules: Vec<String>,
     /// 本番の系の job でない書き手が書く外の置き場の組の表(`:outside-writers {"<置き場>:<名>" "書き手" …}` — 外の repo の道具・
     /// 人の操作・job でない task)。書けば DOEFF207 が、本番の系(defservice の `:system`)の job に `:reads` / `:writes` を求め、
     /// job が読む組に、本番の job の `:writes` かこの表の行が在るかを見る(agora-redesign #3493・#3496)。書かなければ当てない。
@@ -1220,6 +1224,7 @@ impl<'a> Parser<'a> {
             shared: None,
             foundation: None,
             verification_environment: None,
+            root_modules: Vec::new(),
             outside_writers: None,
             open_layers: Vec::new(),
             placed_dependencies: Vec::new(),
@@ -1282,6 +1287,7 @@ impl<'a> Parser<'a> {
                 ":shared" => arch.shared = self.required_string(value, ":shared"),
                 ":foundation" => arch.foundation = self.name(value),
                 ":verification-environment" => arch.verification_environment = self.required_string(value, ":verification-environment"),
+                ":root-modules" => arch.root_modules = self.names(value, ":root-modules"),
                 ":outside-writers" => arch.outside_writers = Some(self.outside_writers(value)),
                 ":open-layers" => {
                     arch.open_layers = self.names(value, ":open-layers");
@@ -3266,6 +3272,11 @@ impl<'a> Parser<'a> {
             }
             if arch.services.iter().any(|s| s.dir == *place) {
                 push(&mut self.problems, format!(":verification-environment {} は宣言した service の dir と同じ名にできない", place));
+            }
+        }
+        for module in &arch.root_modules {
+            if module.is_empty() || module.contains('/') || module.contains('.') {
+                push(&mut self.problems, format!(":root-modules {:?} は root の直下の module の名 1 つ(file の stem — `/`・`.` を含まない)", module));
             }
         }
         for open in &arch.open_layers {
