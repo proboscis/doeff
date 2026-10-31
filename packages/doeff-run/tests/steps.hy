@@ -22,6 +22,10 @@
   "この検だけの run の名(名は小文字・数字・- の 1〜63 字)。"
   (+ "contract-" (cut (. (uuid.uuid4) hex) 0 12)))
 
+(defn #^ str new-volume-name []
+  "この検だけの volume の名(docker の named volume の名の形)。"
+  (+ "contract-vol-" (cut (. (uuid.uuid4) hex) 0 12)))
+
 (defn #^ bool terminal? [state]
   (isinstance state #(RunStopped RunGone)))
 

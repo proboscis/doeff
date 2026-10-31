@@ -5,6 +5,7 @@ from doeff import Program as _Program
 from doeff_hy._static_types import Handler as _Handler
 from collections.abc import Callable as Callable
 from dataclasses import dataclass as dataclass
+from dataclasses import replace as replace
 from datetime import datetime as datetime
 from datetime import timedelta as timedelta
 from doeff_time import GetMonotonic as GetMonotonic
@@ -19,6 +20,7 @@ from doeff_run._values import RunStopped as RunStopped
 from doeff_run._values import RunGone as RunGone
 from doeff_run._values import RunState as RunState
 from doeff_run._values import StopCause as StopCause
+from doeff_run._values import volume_name_refusal as volume_name_refusal
 from doeff_run._effects import RunStart as RunStart
 from doeff_run._effects import RunStop as RunStop
 from doeff_run._effects import RunRemove as RunRemove
@@ -32,6 +34,13 @@ from doeff_run._effects import StopFailed as StopFailed
 from doeff_run._effects import RunStillAlive as RunStillAlive
 from doeff_run._effects import RunEvent as RunEvent
 from doeff_run._effects import RunEventPage as RunEventPage
+from doeff_run._effects import VolumeEnsure as VolumeEnsure
+from doeff_run._effects import VolumeStatus as VolumeStatus
+from doeff_run._effects import VolumeCreated as VolumeCreated
+from doeff_run._effects import VolumeExisted as VolumeExisted
+from doeff_run._effects import VolumePresent as VolumePresent
+from doeff_run._effects import VolumeAbsent as VolumeAbsent
+from doeff_run._effects import VolumeRefused as VolumeRefused
 from doeff_run._faults import RunVanish as RunVanish
 CLOCK_TICK: float
 MIN_SLEEP: float
@@ -72,6 +81,7 @@ class FakeRunWorld:
     unsupported: Callable[[RunSpec], str | None] | None
     counter: int
     runs: dict[str, FakeRun]
+    volumes: set[str]
 
     def __init__(self, *, behavior_of: Callable[[RunSpec], FakeBehavior], capacity: int | None=None, unsupported: Callable[[RunSpec], str | None] | None=None) -> None:
         ...
@@ -109,6 +119,9 @@ def await_end(run: FakeRun) -> _Program[None, object]:
 def lookup(world: FakeRunWorld, handle: RunHandle) -> FakeRun | None:
     ...
 
+def absent_volume_of(world: FakeRunWorld, spec: RunSpec) -> str | None:
+    ...
+
 def fake_start(world: FakeRunWorld, request: RunStart) -> _Program[RunAccepted | RunNameInUse | RunRefused, object]:
     ...
 
@@ -122,6 +135,12 @@ def fake_status(world: FakeRunWorld, request: RunStatus) -> _Program[RunPending 
     ...
 
 def fake_read_events(world: FakeRunWorld, request: RunReadEvents) -> _Program[RunEventPage, object]:
+    ...
+
+def fake_volume_ensure(world: FakeRunWorld, request: VolumeEnsure) -> _Program[VolumeCreated | VolumeExisted | VolumeRefused, object]:
+    ...
+
+def fake_volume_status(world: FakeRunWorld, request: VolumeStatus) -> _Program[VolumePresent | VolumeAbsent | VolumeRefused, object]:
     ...
 
 def fake_vanish(world: FakeRunWorld, request: RunVanish) -> _Program[bool, object]:

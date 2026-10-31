@@ -40,6 +40,9 @@ from doeff_run._effects import StopFailed as StopFailed
 from doeff_run._effects import RunStillAlive as RunStillAlive
 from doeff_run._effects import RunEvent as RunEvent
 from doeff_run._effects import RunEventPage as RunEventPage
+from doeff_run._effects import VolumeEnsure as VolumeEnsure
+from doeff_run._effects import VolumeStatus as VolumeStatus
+from doeff_run._effects import VolumeRefused as VolumeRefused
 from doeff_run._faults import RunVanish as RunVanish
 MIN_SLEEP: float
 DEADLINE_SLACK: float
@@ -118,6 +121,9 @@ def mark_unmade(host: ProcessRunHost, handle: RunHandle, detail: str) -> _Progra
     ...
 
 def process_start(host: ProcessRunHost, request: RunStart) -> _Program[RunAccepted | RunNameInUse | RunRefused, object]:
+    ...
+
+def process_volume_refusal(name: str) -> _Program[VolumeRefused, object]:
     ...
 
 def process_stop(host: ProcessRunHost, request: RunStop) -> _Program[RunStopped | RunGone | StopFailed, object]:

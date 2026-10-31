@@ -19,6 +19,8 @@ from doeff_run._values import RunStopped as RunStopped
 from doeff_run._values import RunGone as RunGone
 from doeff_run._values import RunState as RunState
 from doeff_run._values import StopCause as StopCause
+from doeff_run._values import VOLUME_NAME as VOLUME_NAME
+from doeff_run._values import volume_name_refusal as volume_name_refusal
 from doeff_run._effects import RunStart as RunStart
 from doeff_run._effects import RunStop as RunStop
 from doeff_run._effects import RunRemove as RunRemove
@@ -32,10 +34,17 @@ from doeff_run._effects import StopFailed as StopFailed
 from doeff_run._effects import RunStillAlive as RunStillAlive
 from doeff_run._effects import RunEvent as RunEvent
 from doeff_run._effects import RunEventPage as RunEventPage
+from doeff_run._effects import VolumeEnsure as VolumeEnsure
+from doeff_run._effects import VolumeStatus as VolumeStatus
+from doeff_run._effects import VolumeCreated as VolumeCreated
+from doeff_run._effects import VolumeExisted as VolumeExisted
+from doeff_run._effects import VolumePresent as VolumePresent
+from doeff_run._effects import VolumeAbsent as VolumeAbsent
+from doeff_run._effects import VolumeRefused as VolumeRefused
 from doeff_run._faults import RunVanish as RunVanish
 RUN_ID_LABEL: str
 HOST_LABEL: str
-VOLUME_NAME: Incomplete
+VOLUME_TOKEN_LABEL: str
 MIN_MEMORY_BYTES: int
 CALL_TIMEOUT: float
 STOP_MARGIN: float
@@ -77,6 +86,12 @@ def last_line(text: str) -> str:
 def hyx_no_suchXquestion_markX(stderr: str) -> bool:
     ...
 
+def volume_info_of(name: str, outcome: ProcessOutcome) -> dict | None:
+    ...
+
+def volume_create_args(host: DockerRunHost, name: str, token: str) -> tuple:
+    ...
+
 def read_container(host: DockerRunHost, handle: RunHandle, info: dict) -> tuple:
     ...
 
@@ -101,7 +116,16 @@ def mark_unmade(host: DockerRunHost, handle: RunHandle, detail: str) -> _Program
 def holder_of(host: DockerRunHost, name: str) -> _Program[RunHandle | str | None, object]:
     ...
 
+def inspect_volume(host: DockerRunHost, name: str) -> _Program[dict | None, object]:
+    ...
+
 def missing_volume(host: DockerRunHost, spec: RunSpec) -> _Program[str | None, object]:
+    ...
+
+def docker_volume_ensure(host: DockerRunHost, request: VolumeEnsure) -> _Program[VolumeCreated | VolumeExisted | VolumeRefused, object]:
+    ...
+
+def docker_volume_status(host: DockerRunHost, request: VolumeStatus) -> _Program[VolumePresent | VolumeAbsent | VolumeRefused, object]:
     ...
 
 def docker_start(host: DockerRunHost, request: RunStart) -> _Program[RunAccepted | RunNameInUse | RunRefused, object]:

@@ -12,6 +12,11 @@
 ;;; 何度引いても同じ番号になる。読みの待ちは docker events(その container の start・die・destroy)の最初の 1 行で起き、時間で見に行かない。
 ;;; 読みの途中で container が消えたら、その読みは RunGone を最後の出来事として返す(消えた後の読みは、知らない取っ手として空の頁と RunGone)。
 ;;;
+;;; volume は docker の named volume。VolumeEnsure は docker volume inspect で在るかを見て、無ければ label(host の印と、この作成だけの
+;;; token)つきで docker volume create し、問い直して token が自分の物なら「作った」・他の作り手の物なら「在った」・見えなければ
+;;; 「作れなかった」と答える。VolumeStatus は問うだけで作らない。docker は無い named volume を黙って作るので、RunStart は volume が無ければ
+;;; container を作らず NEVER-BEGAN にする。volume を消す手は持たない。
+;;;
 ;;; 受け付け(RunStart)は container を作って起こしてから答える — image が手元に無い時は docker create が取り寄せを待つ(取り寄せの間は名を
 ;;; docker が持たないため)。起こせなかった container(命令が無い など)は docker が State.Error に残し、NEVER-BEGAN として読む。
 ;;;
@@ -26,16 +31,18 @@
 (import datetime [datetime timedelta])
 (import doeff_time [GetMonotonic GetTime])
 (import doeff_core_effects [RunProcess ProcessOutcome EnvEntry EnvMode])
-(import doeff_run._values [RunSpec RunHandle RunPending RunLive RunStopped RunGone RunState StopCause])
+(import doeff_run._values [RunSpec RunHandle RunPending RunLive RunStopped RunGone RunState StopCause VOLUME-NAME volume-name-refusal])
 (import doeff_run._effects [RunStart RunStop RunRemove RunStatus RunReadEvents RunAccepted RunNameInUse RunRefused RefusalWhy
-                            StopFailed RunStillAlive RunEvent RunEventPage])
+                            StopFailed RunStillAlive RunEvent RunEventPage VolumeEnsure VolumeStatus
+                            VolumeCreated VolumeExisted VolumePresent VolumeAbsent VolumeRefused])
 (import doeff_run._faults [RunVanish])
 
-;; container に置く label: run-id = 取っ手の run-id・host = 作った DockerRunHost の印(片付けの的)。
+;; container と volume に置く label: run-id = 取っ手の run-id・host = 作った DockerRunHost の印(片付けの的)・
+;; volume-token = volume を作る 1 回ごとの印(docker は在る名への create を黙って受けるので、volume に残った印が自分の物かで「作った」と
+;; 「在った」を見分ける — 作成が重なっても作ったと答えるのは 1 つだけ)。
 (val RUN-ID-LABEL "doeff-run.run-id")
 (val HOST-LABEL "doeff-run.host")
-;; docker の named volume の名。合わない source は docker が bind mount の path に読むので断る。
-(val VOLUME-NAME (re.compile r"[A-Za-z0-9][A-Za-z0-9_.-]+"))
+(val VOLUME-TOKEN-LABEL "doeff-run.volume-token")
 ;; docker が受けるメモリの上限の下限(6 MiB)。
 (val MIN-MEMORY-BYTES (* 6 1024 1024))
 ;; inspect・create・rm など待たない呼びの上限の秒(docker の daemon が答えない時に読みを止めない)。create は image の取り寄せを待つので外す。
@@ -122,6 +129,19 @@
 (defn #^ bool no-such? [#^ str stderr]
   "docker の CLI の誤りが「その container が無い」か(daemon が答えない など、他の誤りと見分ける)。"
   (bool (re.search r"(?i)no such (container|object)" stderr)))
+
+(defn #^ (| dict None) volume-info-of [#^ str name #^ ProcessOutcome outcome]
+  "docker volume inspect の答えから volume の記録(無ければ None)を読むため。daemon が答えない など「無い」でない誤りは例外で上げる
+   (無いと読み違えて、在る volume を作り直さない・消えたと言わない)。"
+  (when (= outcome.exit-code 0)
+    (return (get (json.loads outcome.stdout) 0)))
+  (when (re.search r"(?i)no such volume" outcome.stderr)
+    (return None))
+  (raise (RuntimeError (.format "docker volume inspect {} が失敗した(code {}): {}" name outcome.exit-code (last-line outcome.stderr)))))
+
+(defn #^ tuple volume-create-args [#^ DockerRunHost host #^ str name #^ str token]
+  "docker volume create の引数(docker の後ろ): host の印と、この作成だけの token を label に置く。"
+  #("volume" "create" "--label" (+ HOST-LABEL "=" host.host-id) "--label" (+ VOLUME-TOKEN-LABEL "=" token) "--" name))
 
 (defn #^ tuple read-container [#^ DockerRunHost host #^ RunHandle handle #^ dict info]
   "inspect の答えから、run の今の状態と出来事の列(#(状態 出来事の tuple))を引く(頭の註)。"
@@ -224,17 +244,61 @@
   (val unmade (.get host.unmade name))
   (if (is unmade None) None unmade.handle))
 
+(defk inspect-volume [#^ DockerRunHost host #^ str name]
+  {:pre [(: host DockerRunHost) (: name str)] :post [(: % (| dict None))]}
+  "名の volume の inspect の答え(無ければ None)。docker が答えない誤りは例外で上げる(無いと読み違えない)。"
+  (<- outcome (docker-call host #("volume" "inspect" "--" name)))
+  (volume-info-of name outcome))
+
 (defk missing-volume [#^ DockerRunHost host #^ RunSpec spec]
   {:pre [(: host DockerRunHost) (: spec RunSpec)] :post [(: % (| str None))]}
   "spec の volume のうち docker に無い物の訳の文(全部在れば None)。docker は無い named volume を黙って作るので、作る前に確かめる。"
   (for [volume spec.volumes]
-    (<- outcome (docker-call host #("volume" "inspect" "--" volume.source)))
-    (when (!= outcome.exit-code 0)
-      (return (.format "volume {!r} が無い: {}" volume.source (last-line outcome.stderr)))))
+    (<- found (inspect-volume host volume.source))
+    (when (is found None)
+      (return (.format "volume {!r} が無い(VolumeEnsure で先に作る)" volume.source))))
   None)
 
 
 ;; --- effect の答え -------------------------------------------------------------------------------------------
+
+(defk docker-volume-ensure [#^ DockerRunHost host #^ VolumeEnsure request]
+  {:pre [(: host DockerRunHost) (: request VolumeEnsure)] :post [(: % (| VolumeCreated VolumeExisted VolumeRefused))]}
+  "volume を無ければ作るため: 名が規則に合わなければ docker を呼ぶ前に断り・在れば在るまま(create を撃たない)・無ければ印(token)つきで作って
+   問い直す。問い直して見えなければ「作った」と答えない(作れなかった)・印が自分の物なら作った・他の作り手の物なら在った(作成が重なっても
+   作ったと答えるのは 1 つだけ)。create が誤りでも問い直して在れば在った(重なった作成を docker が断る版)。"
+  (val name request.name)
+  (val refusal (volume-name-refusal name))
+  (when (is-not refusal None)
+    (return (VolumeRefused :name name :why RefusalWhy.UNSUPPORTED :detail refusal)))
+  (<- present (inspect-volume host name))
+  (when (is-not present None)
+    (return (VolumeExisted :name name)))
+  (val token (. (uuid.uuid4) hex))
+  (<- created (docker-call host (volume-create-args host name token)))
+  (<- found (inspect-volume host name))
+  (cond
+    (is found None)
+      (VolumeRefused :name name :why RefusalWhy.NO-CAPACITY
+                     :detail (if (= created.exit-code 0)
+                                 "docker volume create は成功と答えたが、作ったはずの volume が見えない"
+                                 (or (last-line created.stderr) (.format "docker volume create が失敗した(code {})" created.exit-code))))
+    (= (.get (or (.get found "Labels") {}) VOLUME-TOKEN-LABEL) token)
+      (VolumeCreated :name name)
+    True
+      (VolumeExisted :name name)))
+
+(defk docker-volume-status [#^ DockerRunHost host #^ VolumeStatus request]
+  {:pre [(: host DockerRunHost) (: request VolumeStatus)] :post [(: % (| VolumePresent VolumeAbsent VolumeRefused))]}
+  "volume が在るかを docker に問うため(作らない): 名が規則に合わなければ docker を呼ぶ前に断る。"
+  (val name request.name)
+  (val refusal (volume-name-refusal name))
+  (when (is-not refusal None)
+    (return (VolumeRefused :name name :why RefusalWhy.UNSUPPORTED :detail refusal)))
+  (<- found (inspect-volume host name))
+  (if (is found None)
+      (VolumeAbsent :name name)
+      (VolumePresent :name name)))
 
 (defk docker-start [#^ DockerRunHost host #^ RunStart request]
   {:pre [(: host DockerRunHost) (: request RunStart)] :post [(: % (| RunAccepted RunNameInUse RunRefused))]}
@@ -368,7 +432,7 @@
 ;; 引数に残す理由: host は handler の覚え(止めを頼んだ刻・起きなかった run)を持つ資源で、検が同じ host を片付けの的に読む
 ;; (fake-run-handler の world と同じ形)。
 (defhandler docker-run-handler [#^ DockerRunHost host]
-  "DoeffRun の docker の handler: 公開 effect 5 つと故障の注入 RunVanish に、host の docker の CLI で答える。外側に RunProcess の答え手
+  "DoeffRun の docker の handler: 公開 effect 7 つと故障の注入 RunVanish に、host の docker の CLI で答える。外側に RunProcess の答え手
    (offloaded-subprocess-handler)と時計(GetTime・GetMonotonic)と scheduled が要る。"
   (RunStart [name spec]
     (<- outcome (docker-start host effect))
@@ -385,6 +449,12 @@
   (RunReadEvents [handle after-seq wait-up-to]
     (<- page (docker-read-events host effect))
     (resume page))
+  (VolumeEnsure [name]
+    (<- outcome (docker-volume-ensure host effect))
+    (resume outcome))
+  (VolumeStatus [name]
+    (<- outcome (docker-volume-status host effect))
+    (resume outcome))
   (RunVanish [handle]
     (<- vanished (docker-vanish host effect))
     (resume vanished)))

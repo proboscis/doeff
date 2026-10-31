@@ -1,7 +1,9 @@
-;;; doeff-run の公開 effect 5 つと、その答えの型。
+;;; doeff-run の公開 effect 7 つと、その答えの型。
 ;;;
 ;;; RunStart(走らせ始める)・RunStop(止める)・RunRemove(止まった run の跡を片付ける)・RunStatus(今の状態を読む)・
 ;;; RunReadEvents(状態の出来事を読む)。単位は「image を走らせた run 1 つ」で、上の層が持つのは取っ手(RunHandle)だけ。
+;;; VolumeEnsure(volume を無ければ作る)・VolumeStatus(volume が在るかを問う)。volume は run の寿命より長く、run を止めても片付けても
+;;; 残る。volume を消す effect は無い(消すのはマージを知る側が別に決める)。
 ;;;
 ;;; 失敗は例外ではなく答えの型で返す(handler の実装の誤り — backend の予期しない例外 — だけが例外として上がる)。
 ;;; 取っ手の run を handler が知らない時(名にも取っ手にも覚えが無い・片付けた・消えた)は、どの effect も「消えた」として答える
@@ -46,6 +48,45 @@
   (setv #^ str detail ""))
 
 (val RunStartOutcome (| RunAccepted RunNameInUse RunRefused))
+
+
+;; --- volume ---------------------------------------------------------------------------------------------
+
+(defrecord VolumeCreated
+  "作った: 無かった volume を、この頼みで作った(中身は空)。同じ名の作成が重なった時、作ったと答えるのは作った 1 つだけ。"
+  {:tags {:context "run" :role "type"}
+   :check [(and (isinstance name str) (bool name))]}
+  (#^ str name))
+
+(defrecord VolumeExisted
+  "在った: volume は頼まれる前から在った(作っていない・中身はそのまま)。同じ名の作成が重なって他の頼みが先に作った時も、在った。"
+  {:tags {:context "run" :role "type"}
+   :check [(and (isinstance name str) (bool name))]}
+  (#^ str name))
+
+(defrecord VolumePresent
+  "在る(問いの答え): volume が今ある。"
+  {:tags {:context "run" :role "type"}
+   :check [(and (isinstance name str) (bool name))]}
+  (#^ str name))
+
+(defrecord VolumeAbsent
+  "無い(問いの答え): volume が今ない(作っていない・消えた)。問いは作らない。"
+  {:tags {:context "run" :role "type"}
+   :check [(and (isinstance name str) (bool name))]}
+  (#^ str name))
+
+(defrecord VolumeRefused
+  "作れなかった・問えなかった(volume は作っていない)。why = 訳(RefusalWhy: UNSUPPORTED = 名が backend の規則に合わない・この handler は
+   volume を持たない / NO-CAPACITY = backend が作らなかった・作ったと言うが見えない)・detail = 何が守れないかの 1 行。"
+  {:tags {:context "run" :role "type"}
+   :check [(and (isinstance name str) (bool name)) (isinstance why RefusalWhy) (isinstance detail str)]}
+  (#^ str name)
+  (#^ RefusalWhy why)
+  (setv #^ str detail ""))
+
+(val VolumeEnsureOutcome (| VolumeCreated VolumeExisted VolumeRefused))
+(val VolumeStatusOutcome (| VolumePresent VolumeAbsent VolumeRefused))
 
 
 ;; --- 止める・片付ける -------------------------------------------------------------------------------------
@@ -139,4 +180,24 @@
   {:fields [(: handle RunHandle) (: after-seq int) (: wait-up-to float)]
    :pre [(: handle RunHandle) (: after-seq int) (>= after-seq 0) (: wait-up-to float) (>= wait-up-to 0.0)]
    :answer RunEventPage
+   :tags {:context "run" :role "intent"}})
+
+(defeffect VolumeEnsure
+  "volume を無ければ作る(在れば在るまま — 中身を作り直さない)。name = RunSpec.volumes の VolumeMount.source に書く名。
+   答え = VolumeCreated(この頼みで作った)| VolumeExisted(頼まれる前から在った)| VolumeRefused(作れなかった・訳つき)。
+   名が backend の規則に合わない時は、作る前に UNSUPPORTED で断る。volume を持たない handler も UNSUPPORTED で断る(黙って成功にしない)。
+   使い分け: 会話の最初の「開く」だけがこの効果を撃つ。開き直しは VolumeStatus で先に確かめ、無ければ作らずに断る — 消えた volume へ
+   黙って「戻って」空になる事故を、呼び手が見分けるため(消えた volume にこの効果を撃つと、空の volume が作られて VolumeCreated と答える)。"
+  {:fields [(: name str)]
+   :pre [(: name str) (bool name)]
+   :answer VolumeEnsureOutcome
+   :tags {:context "run" :role "intent"}})
+
+(defeffect VolumeStatus
+  "volume が在るかを問う(待たない・作らない)。答え = VolumePresent | VolumeAbsent | VolumeRefused(名が backend の規則に合わない・
+   この handler は volume を持たない — どちらも UNSUPPORTED。volume を持たない handler に「無い」と答えさせると、置き場が消えた事と
+   見分けがつかない)。"
+  {:fields [(: name str)]
+   :pre [(: name str) (bool name)]
+   :answer VolumeStatusOutcome
    :tags {:context "run" :role "intent"}})

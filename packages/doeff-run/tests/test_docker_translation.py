@@ -23,7 +23,16 @@ from doeff_run import (
     StopCause,
     VolumeMount,
 )
-from doeff_run._docker import create_argv, docker_time, read_container, unsupported_of, watch_script
+from doeff_core_effects import ProcessOutcome
+from doeff_run._docker import (
+    create_argv,
+    docker_time,
+    read_container,
+    unsupported_of,
+    volume_create_args,
+    volume_info_of,
+    watch_script,
+)
 
 IMAGE = "registry.invalid/app@sha256:" + "a" * 64
 HANDLE = RunHandle(name="contract-run", run_id="docker-1")
@@ -162,6 +171,44 @@ def test_a_created_container_is_pending_until_a_stop_is_requested() -> None:
 def test_a_running_container_is_live_since_it_started() -> None:
     state, events = read_container(DockerRunHost(), HANDLE, inspect("running", started=STARTED))
     assert state == RunLive() and [event.seq for event in events] == [1]
+
+
+# --- volume の問いと作成の命令 --------------------------------------------------------------------------------
+
+
+def volume_outcome(exit_code: int, *, stdout: str = "", stderr: str = "") -> ProcessOutcome:
+    return ProcessOutcome(exit_code=exit_code, stdout=stdout, stderr=stderr)
+
+
+def test_a_volume_docker_does_not_know_is_none() -> None:
+    outcome = volume_outcome(1, stdout="[]", stderr="Error response from daemon: get vol-a: no such volume")
+    assert volume_info_of("vol-a", outcome) is None
+
+
+def test_an_answer_that_is_not_no_such_volume_is_an_error_not_absence() -> None:
+    # daemon が答えない誤りを「volume が無い」と読むと、在る volume を作り直し、消えたと言い張る — 例外で上げる。
+    outcome = volume_outcome(1, stderr="Cannot connect to the Docker daemon at unix:///var/run/docker.sock")
+    with pytest.raises(RuntimeError, match="Cannot connect"):
+        volume_info_of("vol-a", outcome)
+
+
+def test_a_volume_docker_knows_is_its_record() -> None:
+    outcome = volume_outcome(0, stdout='[{"Name": "vol-a", "Labels": {"k": "v"}}]')
+    assert volume_info_of("vol-a", outcome) == {"Name": "vol-a", "Labels": {"k": "v"}}
+
+
+def test_create_marks_the_volume_with_the_host_and_this_creation_and_ends_the_options_before_the_name() -> None:
+    args = volume_create_args(DockerRunHost(host_id="h1"), "-odd", "tok")
+    assert args == (
+        "volume",
+        "create",
+        "--label",
+        "doeff-run.host=h1",
+        "--label",
+        "doeff-run.volume-token=tok",
+        "--",
+        "-odd",
+    )
 
 
 # --- 時刻と読みの待ち -----------------------------------------------------------------------------------------

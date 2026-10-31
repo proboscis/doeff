@@ -12,7 +12,7 @@
 ;;; 筋書きを通す。fake の解釈器は、命令を読んで FakeBehavior を決める(fake-behavior-of)。image の名で「起動できない image」を
 ;;; 表す(Settings.missing-image)— 本物の解釈器は、存在しない image の名をここに置く。
 (require doeff-hy.macros [defk <- val])
-(import doeff_run [RunSpec ResourceLimits FakeBehavior])
+(import doeff_run [RunSpec ResourceLimits VolumeMount FakeBehavior])
 
 (setv WORKLOAD "contract-workload")
 ;; 1 GiB 未満の上限で hog が OOM になる(本物の解釈器は上限を守る handler の下でだけ hog を走らせる)。
@@ -31,6 +31,10 @@
 (defn #^ RunSpec hog-spec [#^ str image]
   (RunSpec :image image :command #(WORKLOAD "hog") :limits (ResourceLimits :memory-bytes HOG-MEMORY-BYTES)))
 
+
+(defn #^ RunSpec volume-spec [#^ str image #^ str volume]
+  "volume を /data に置いて走り続ける run(volume の効果の筋書きが、volume を指す run を撃つ時の設定)。"
+  (RunSpec :image image :command #(WORKLOAD "live") :volumes #((VolumeMount :source volume :target "/data"))))
 
 (defn #^ FakeBehavior fake-behavior-of [#^ RunSpec spec #^ str missing-image]
   "fake の世界が、RunSpec(命令の約束)から負荷の振る舞いを決める関数の本体。image が missing-image なら起動できない。"

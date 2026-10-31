@@ -8,7 +8,8 @@
 ;;; 受け付けた後に起きなかった止まり(NEVER-BEGAN)で届く。
 ;;;
 ;;; process には run の中の file system も、子へ課す資源の上限も無い。volume と資源の上限は守れない設定として RunRefused(UNSUPPORTED)で
-;;; 断る(黙って無視しない — 上限を無視した run は機体を食い尽くす)。止まった訳は EXITED と REQUESTED の 2 つで、OUT-OF-MEMORY は無い。
+;;; 断る(黙って無視しない — 上限を無視した run は機体を食い尽くす)。volume の効果(VolumeEnsure・VolumeStatus)も同じ訳で VolumeRefused
+;;; (UNSUPPORTED)と答える。止まった訳は EXITED と REQUESTED の 2 つで、OUT-OF-MEMORY は無い。
 ;;; 終了 code は docker・shell と同じ数にする: signal で死んだ子(戻り値が負)は 128 + signal の番号。
 ;;;
 ;;; 状態と出来事は host が覚える(OS は子の終わりの刻を残さない)。子は立てた時にもう走っているので、受け付けは RunLive まで進む
@@ -32,7 +33,7 @@
                             ReadEnvironment Spawn StartProcess StopProcess])
 (import doeff_run._values [IMAGE-NAME RunSpec RunHandle RunLive RunStopped RunGone RunState StopCause])
 (import doeff_run._effects [RunStart RunStop RunRemove RunStatus RunReadEvents RunAccepted RunNameInUse RunRefused RefusalWhy
-                            StopFailed RunStillAlive RunEvent RunEventPage])
+                            StopFailed RunStillAlive RunEvent RunEventPage VolumeEnsure VolumeStatus VolumeRefused])
 (import doeff_run._faults [RunVanish])
 
 ;; 眠りの下限と期限の比べの余裕(秒)— 期限の直前で待ちを繰り返さない。
@@ -231,6 +232,13 @@
   (setv (get host.runs name) (ProcessRun handle started.pid (RunLive) #((RunEvent :seq 1 :at live-at :state (RunLive)))))
   (RunAccepted :handle handle))
 
+(defk process-volume-refusal [#^ str name]
+  {:pre [(: name str)] :post [(: % VolumeRefused)]}
+  "volume の効果(作る・問う)を断るため: process の子は host の file system をそのまま見るので、volume を持たない。名の形によらず UNSUPPORTED
+   (「無い」と答えると、置き場が消えた事と見分けがつかない・作ったことにもしない)。"
+  (VolumeRefused :name name :why RefusalWhy.UNSUPPORTED
+                 :detail (.format "volume {!r} を作れず問えない(process の子は host の file system をそのまま見る)" name)))
+
 (defk process-stop [#^ ProcessRunHost host #^ RunStop request]
   {:pre [(: host ProcessRunHost) (: request RunStop)] :post [(: % (| RunStopped RunGone StopFailed))]}
   "run を止めるため: 止まった run にはその状態・走っている run には止めを頼んだ刻を覚えてから StopProcess(SIGTERM → 猶予 → SIGKILL)で止めて
@@ -324,7 +332,7 @@
 ;; 引数に残す理由: host は handler の覚え(名ごとの run・止めを頼んだ刻)を持つ資源で、検が同じ host の走っている子を後始末に読む
 ;; (fake-run-handler の world・docker-run-handler の host と同じ形)。
 (defhandler process-run-handler [#^ ProcessRunHost host]
-  "DoeffRun の process の handler: 公開 effect 5 つと故障の注入 RunVanish に、host の子 process で答える。外側に子の答え手
+  "DoeffRun の process の handler: 公開 effect 7 つ(volume の 2 つは UNSUPPORTED で断る)と故障の注入 RunVanish に、host の子 process で答える。外側に子の答え手
    (offloaded-subprocess-handler)と終わりの待ち(process-exit-handler・await-handler)と時計と scheduled が要る。"
   (RunStart [name spec]
     (<- outcome (process-start host effect))
@@ -341,6 +349,12 @@
   (RunReadEvents [handle after-seq wait-up-to]
     (<- page (process-read-events host effect))
     (resume page))
+  (VolumeEnsure [name]
+    (<- refused (process-volume-refusal effect.name))
+    (resume refused))
+  (VolumeStatus [name]
+    (<- refused (process-volume-refusal effect.name))
+    (resume refused))
   (RunVanish [handle]
     (<- vanished (process-vanish host effect))
     (resume vanished)))

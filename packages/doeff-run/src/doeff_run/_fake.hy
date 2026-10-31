@@ -7,19 +7,23 @@
 ;;; 状態は effect を受けた時と読みの待ちが起きた時に、今の仮想の刻まで進める(時間で見に行かない)。読みの待ちは、次の変わり目の刻か
 ;;; 期限まで眠り、待ちの外から状態が変わった時(止める・消える・片付ける)は呼び鈴で起きる — 読み手は次の変わり目の刻まで眠り続けない。
 ;;;
+;;; volume は世界が名の集まりで持つ(FakeRunWorld.volumes)。VolumeEnsure が足し、消す効果は無いので RunStop・RunRemove の後も残る。
+;;; docker と同じく、世界に無い volume を指す RunStart は volume を黙って作らず、受け付けた直後に NEVER-BEGAN で止まる。
+;;;
 ;;; 本番と共通の不変条件(名の重なりは持ち主の取っ手で断る・受け付けは起きるを待たない・出来事は 1 から欠けずに増える・止めは冪等・
-;;; 止めの答えが返る時は run がもう走っていない・消えた run は RunGone・片付けは止まった run だけ)は、契約の検(tests/test_contract.hy)が
-;;; 同じ筋書きで確かめる。
+;;; 止めの答えが返る時は run がもう走っていない・消えた run は RunGone・片付けは止まった run だけ・volume は run より長く残る)は、
+;;; 契約の検(tests/test_contract.hy・tests/test_volume_contract.hy)が同じ筋書きで確かめる。
 (require doeff-hy.macros [defhandler defk <- val var])
 (require doeff-hy.record [defrecord])
 (import collections.abc [Callable])
-(import dataclasses [dataclass])
+(import dataclasses [dataclass replace])
 (import datetime [datetime timedelta])
 (import doeff_time [GetMonotonic GetTime WaitWithin])
 (import doeff_core_effects [CreateExternalPromise])
-(import doeff_run._values [RunSpec RunHandle RunPending RunLive RunStopped RunGone RunState StopCause])
+(import doeff_run._values [RunSpec RunHandle RunPending RunLive RunStopped RunGone RunState StopCause volume-name-refusal])
 (import doeff_run._effects [RunStart RunStop RunRemove RunStatus RunReadEvents RunAccepted RunNameInUse RunRefused RefusalWhy
-                            StopFailed RunStillAlive RunEvent RunEventPage])
+                            StopFailed RunStillAlive RunEvent RunEventPage VolumeEnsure VolumeStatus
+                            VolumeCreated VolumeExisted VolumePresent VolumeAbsent VolumeRefused])
 (import doeff_run._faults [RunVanish])
 
 ;; 仮想の時計は datetime(マイクロ秒の刻み)なので、秒の小数の足し算の端数で「期限の直前」に留まらないように、期限の比べに刻み 1 つ分の
@@ -72,7 +76,8 @@
 (defclass FakeRunWorld []
   "fake の世界。behavior-of = RunSpec → FakeBehavior の同期の関数(走らせ始める時に 1 度引く)・capacity = 同時に受け付けて止まっていない
    (起きていない・走っている)run の数の上限(None = 上限なし — 越える頼みは RunRefused(NO-CAPACITY))・unsupported = RunSpec → この
-   世界が守れない訳の文か None の関数(None = 全部守れる — 文を返すと RunRefused(UNSUPPORTED))。"
+   世界が守れない訳の文か None の関数(None = 全部守れる — 文を返すと RunRefused(UNSUPPORTED))。volumes = 世界にある volume の名の集まり
+   (VolumeEnsure が足し、消す効果は無い — RunStop・RunRemove の後も残る。検が世界の外の力で消す口として直に読み書きしてよい)。"
   (defn __init__ [self * #^ (get Callable #([RunSpec] FakeBehavior)) behavior-of #^ (| int None) [capacity None] #^ (| (get Callable #([RunSpec] (| str None))) None) [unsupported None]]
     (when (not (callable behavior-of))
       (raise (ValueError (.format "FakeRunWorld.behavior_of は RunSpec → FakeBehavior の関数: {!r}" behavior-of))))
@@ -84,7 +89,8 @@
     (setv self.behavior-of behavior-of self.capacity capacity self.unsupported unsupported)
     (setv #^ int self.counter 0)
     ;; 片付けるか消えるまで名を持つ run だけを覚える(消えた run は世界に跡を残さない)。
-    (setv #^ (get dict #(str FakeRun)) self.runs {})))
+    (setv #^ (get dict #(str FakeRun)) self.runs {})
+    (setv #^ (get set str) self.volumes (set))))
 
 
 ;; --- 状態の変わり目 -----------------------------------------------------------------------------------------
@@ -192,6 +198,13 @@
   (setv run (.get world.runs handle.name))
   (if (and (is-not run None) (= run.handle.run-id handle.run-id)) run None))
 
+(defn #^ (| str None) absent-volume-of [#^ FakeRunWorld world #^ RunSpec spec]
+  "spec の volume のうち世界に無い物の訳の文(全部在れば None) — 無い volume を指す run を起きずに止めるため。"
+  (for [volume spec.volumes]
+    (when (not-in volume.source world.volumes)
+      (return (.format "volume {!r} が無い(VolumeEnsure で先に作る)" volume.source))))
+  None)
+
 (defk fake-start [#^ FakeRunWorld world #^ RunStart request]
   {:pre [(: world FakeRunWorld) (: request RunStart)] :post [(: % (| RunAccepted RunNameInUse RunRefused))]}
   "走らせ始めを受け付けるため。名の持ち主が在れば取っ手を答え・守れない設定か空きが無ければ断り・それ以外は取っ手を決めて、起きる刻を
@@ -211,10 +224,13 @@
   (val behavior (world.behavior-of request.spec))
   (when (not (isinstance behavior FakeBehavior))
     (raise (TypeError (.format "FakeRunWorld.behavior_of の答えは FakeBehavior: {!r}" behavior))))
+  ;; docker と同じく、世界に無い volume を指す run は黙って volume を作らず、受け付けた直後に起きずに止まる(image の取り寄せより先に分かる)。
+  (val absent (absent-volume-of world request.spec))
+  (val begins (if (is absent None) behavior (replace behavior :begin-after 0.0 :refuses-to-begin absent)))
   (+= world.counter 1)
   (val handle (RunHandle :name request.name :run-id (+ "fake-" (str world.counter))))
   (<- now (GetMonotonic))
-  (setv (get world.runs request.name) (FakeRun handle request.spec behavior (+ now behavior.begin-after)))
+  (setv (get world.runs request.name) (FakeRun handle request.spec begins (+ now begins.begin-after)))
   (RunAccepted :handle handle))
 
 (defk fake-stop [#^ FakeRunWorld world #^ RunStop request]
@@ -280,6 +296,28 @@
       (return (RunEventPage :events fresh :next-seq (if fresh (. (get fresh -1) seq) request.after-seq) :state run.state)))
     (<- (wait-for-change run deadline))))
 
+(defk fake-volume-ensure [#^ FakeRunWorld world #^ VolumeEnsure request]
+  {:pre [(: world FakeRunWorld) (: request VolumeEnsure)] :post [(: % (| VolumeCreated VolumeExisted VolumeRefused))]}
+  "volume を無ければ作るため: 名が規則に合わなければ作る前に断り・在れば在るまま・無ければ世界に足す。途中で他の task に譲らないので、
+   同じ名の作成が重なっても作ったと答えるのは 1 つだけ。"
+  (val refusal (volume-name-refusal request.name))
+  (when (is-not refusal None)
+    (return (VolumeRefused :name request.name :why RefusalWhy.UNSUPPORTED :detail refusal)))
+  (when (in request.name world.volumes)
+    (return (VolumeExisted :name request.name)))
+  (.add world.volumes request.name)
+  (VolumeCreated :name request.name))
+
+(defk fake-volume-status [#^ FakeRunWorld world #^ VolumeStatus request]
+  {:pre [(: world FakeRunWorld) (: request VolumeStatus)] :post [(: % (| VolumePresent VolumeAbsent VolumeRefused))]}
+  "volume が在るかを世界から答えるため(作らない): 名が規則に合わなければ断り・在れば在る・無ければ無い。"
+  (val refusal (volume-name-refusal request.name))
+  (when (is-not refusal None)
+    (return (VolumeRefused :name request.name :why RefusalWhy.UNSUPPORTED :detail refusal)))
+  (if (in request.name world.volumes)
+      (VolumePresent :name request.name)
+      (VolumeAbsent :name request.name)))
+
 (defk fake-vanish [#^ FakeRunWorld world #^ RunVanish request]
   {:pre [(: world FakeRunWorld) (: request RunVanish)] :post [(: % bool)]}
   "run を世界の外の力で消すため(検の口): 最後の出来事 RunGone を足して世界から外す。止まった跡も消える。答え = 消す run が在ったか。"
@@ -297,7 +335,7 @@
 ;; --- handler -------------------------------------------------------------------------------------------------
 
 (defhandler fake-run-handler [#^ FakeRunWorld world]
-  "DoeffRun の fake の handler: 公開 effect 5 つと故障の注入 RunVanish に、世界 world の上で仮想の時計に沿って答える。"
+  "DoeffRun の fake の handler: 公開 effect 7 つと故障の注入 RunVanish に、世界 world の上で仮想の時計に沿って答える。"
   (RunStart [name spec]
     (<- outcome (fake-start world effect))
     (resume outcome))
@@ -313,6 +351,12 @@
   (RunReadEvents [handle after-seq wait-up-to]
     (<- page (fake-read-events world effect))
     (resume page))
+  (VolumeEnsure [name]
+    (<- outcome (fake-volume-ensure world effect))
+    (resume outcome))
+  (VolumeStatus [name]
+    (<- outcome (fake-volume-status world effect))
+    (resume outcome))
   (RunVanish [handle]
     (<- vanished (fake-vanish world effect))
     (resume vanished)))
