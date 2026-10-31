@@ -49,7 +49,8 @@
 (import doeff_records [pg-records-handler]
         doeff_records._pg [prepare-records-store reconcile-indexes index-round drop-records-tables notice-channel INDEX-TOPIC])
 (import doeff_records [migrate-lock-key schema-statements]
-        doeff_records._pg_sql [IndexedField table-index-name table-field-index-name former-field-index-name ordered-index-name ordered-within-index-name index-name index-lock-key])
+        doeff_records._pg_sql [IndexedField table-index-name table-field-index-name former-field-index-name whole-field-index-name field-index
+                               ordered-index-name ordered-within-index-name index-name index-lock-key])
 (import doeff_records._main [RecordsSettings DDL-DATABASE DDL-TIMEOUTS PG-STORE records-serving records-connected records-process])
 (import doeff_records [RecordsListening]
         doeff_records._http_server [MaintenancePlan])
@@ -106,6 +107,21 @@
   (setv found (.fetchone (.execute watcher "SELECT i.indisvalid FROM pg_index AS i JOIN pg_class AS c ON c.oid = i.indexrelid
                                             WHERE c.relname = %s" #(name))))
   (if (is found None) None (get found 0)))
+
+
+(defn statistics-present? [watcher #^ str name]  ; defk にできない: 検の素の接続で読む
+  "名 name の式の統計(表の欄の式の索引と同じ名 — DeclaredIndex の statistics)が在るか。"
+  (is-not (.fetchone (.execute watcher "SELECT 1 FROM pg_statistic_ext WHERE stxname = %s" #(name))) None))
+
+
+(defn create-declared-note-index [watcher #^ str prefix [counted True]]  ; defk にできない: 検の素の接続で宣言の索引を作る
+  "宣言 NOTE-SCHEMA の表 parts の欄 note の表の欄の式の索引を、宣言の文の字面のまま作る(counted = 索引と同じ名の式の統計も先に
+   作るか)。答え = 索引の名。"
+  (setv declared (run (field-index prefix "parts" "note" True)))
+  (when counted
+    (.execute watcher declared.statistics))
+  (.execute watcher declared.text)
+  declared.name)
 
 
 (defn hold-writer [writer #^ str prefix]  ; defk にできない: 検の素の接続で書きの代役を始める
@@ -284,12 +300,10 @@
   ;; 表の標本が取れた後の回が外す。
   (with-seeded-store
     (fn [prefix quick ddl]
-      (setv note-index (run (table-field-index-name prefix "parts" "note"))
-            watcher (open-postgres))
+      (setv watcher (open-postgres))
       (try
         (.execute watcher (.format "ANALYZE {}state_rows" prefix))
-        (.execute watcher (.format "CREATE INDEX {i} ON {p}state_rows ((CASE WHEN ledger = 'parts' THEN ((payload::jsonb) -> 'note') END), updated_at)"
-                                   :i note-index :p prefix))
+        (create-declared-note-index watcher prefix)
         (setv #(legacy partial _hand) (create-former-indexes watcher prefix))
         (setv store (run-on quick ddl (prepare-records-store DATABASE DDL-DATABASE NOTE-SCHEMA prefix)))
         (assert (= store.indexes.missing #()) (repr store.indexes.missing))
@@ -329,9 +343,8 @@
         (assert (in "note" (.scoped-fields store.indexes "parts")) (repr store.indexes.scoped))
         (setv #(_row _color by-note) (reads-of quick ddl store))
         (assert (= (listed-keys by-note) #(#("p1"))) (repr by-note))
-        ;; 新しい形が在っても標本の前(見積もれない)は前の形を外さない。
-        (.execute watcher (.format "CREATE INDEX {i} ON {p}state_rows ((CASE WHEN ledger = 'parts' THEN ((payload::jsonb) -> 'note') END), updated_at)"
-                                   :i note-index :p prefix))
+        ;; 新しい形が在っても標本の前(見積もれない — 式の統計が空)は前の形を外さない。
+        (create-declared-note-index watcher prefix)
         (assert (is (run-on quick ddl (index-round store)) False) "新しい形が見積もれない間の回が埋めたと答えた")
         (assert (is (index-validity watcher former) True) "新しい形が見積もれない間に前の形を外した")
         (assert (in "note" (.scoped-fields store.indexes "parts")) (repr store.indexes.scoped))
@@ -341,6 +354,45 @@
         (assert (is (index-validity watcher former) None) "標本の後に前の形を外さなかった")
         (assert (in "note" (.scoped-fields store.indexes "parts")) (repr store.indexes.scoped))
         (setv #(_row _color note-after) (reads-of quick ddl store))
+        (assert (= (listed-keys note-after) #(#("p1"))) (repr note-after))
+        (finally
+          (.close watcher))))))
+
+
+(deftest test-the-whole-row-table-field-index-answers-until-the-partial-index-and-its-statistics-are-sampled
+  {:skip-if (not PG-DSN) :skip-reason PG-SKIP-REASON}
+  ;; 表の欄の式の索引を部分索引にする(_pg_sql.hy の頭の註 — 2026-10-31 に本番の置き場の全部の行の ft_ 63 本が 15 GB): 前の形の索引
+  ;; (全部の行の (表の欄の式, updated_at) — ft_)は、部分索引 fp_ と同じ名の式の統計に標本が入るまで表の欄の式の条件の読みに答える。
+  ;; 部分索引だけが在って式の統計が無い置き場(planner は部分索引の式の統計を読まないので見積もれない)は、索引が在っても差に数え、
+  ;; 索引の用意が統計を作り(在る索引は作り直さない)、表の標本を取り直して前の形を外す。
+  (with-seeded-store
+    (fn [prefix quick ddl]
+      (setv note-index (run (table-field-index-name prefix "parts" "note"))
+            whole (run (whole-field-index-name prefix "parts" "note"))
+            watcher (open-postgres))
+      (try
+        (.execute watcher (.format "CREATE INDEX {i} ON {p}state_rows ((CASE WHEN ledger = 'parts' THEN ((payload::jsonb) -> 'note') END), updated_at)"
+                                   :i whole :p prefix))
+        (.execute watcher (.format "ANALYZE {}state_rows" prefix))
+        (setv store (run-on quick ddl (prepare-records-store DATABASE DDL-DATABASE NOTE-SCHEMA prefix)))
+        (assert (= store.indexes.missing #(note-index)) (repr store.indexes.missing))
+        (assert (= store.indexes.retired #(whole)) (repr store.indexes.retired))
+        (assert (in "note" (.scoped-fields store.indexes "parts")) (repr store.indexes.scoped))
+        (setv #(_row _color by-note) (reads-of quick ddl store))
+        (assert (= (listed-keys by-note) #(#("p1"))) (repr by-note))
+        ;; 部分索引だけを作り、式の統計を作らない(観測は差に数える — 見積もれないまま前の形を外さない)。
+        (create-declared-note-index watcher prefix :counted False)
+        (.execute watcher (.format "ANALYZE {}state_rows" prefix))
+        (setv observed (run-on quick ddl (prepare-records-store DATABASE DDL-DATABASE NOTE-SCHEMA prefix)))
+        (assert (= observed.indexes.missing #(note-index)) (repr observed.indexes.missing))
+        (assert (not-in (IndexedField :table "parts" :field "note") observed.indexes.settled) (repr observed.indexes.settled))
+        (assert (is (run-on quick ddl (index-round observed)) True) "統計の無い部分索引の回が埋めなかった")
+        (assert (statistics-present? watcher note-index) "索引の用意が式の統計を作らなかった")
+        (assert (is (index-validity watcher note-index) True) note-index)
+        (assert (is (index-validity watcher whole) None) "標本の後に全部の行の前の形を外さなかった")
+        (assert (= observed.indexes.missing #()) (repr observed.indexes.missing))
+        (assert (in (IndexedField :table "parts" :field "note") observed.indexes.settled) (repr observed.indexes.settled))
+        (setv #(_row _color note-after) (reads-of quick ddl observed))
         (assert (= (listed-keys note-after) #(#("p1"))) (repr note-after))
         (finally
           (.close watcher))))))
@@ -395,12 +447,10 @@
   ;; 後に数える。
   (with-seeded-store
     (fn [prefix quick ddl]
-      (setv note-index (run (table-field-index-name prefix "parts" "note"))
-            watcher (open-postgres))
+      (setv watcher (open-postgres))
       (try
         (.execute watcher (.format "ANALYZE {}state_rows" prefix))
-        (.execute watcher (.format "CREATE INDEX {i} ON {p}state_rows ((CASE WHEN ledger = 'parts' THEN ((payload::jsonb) -> 'note') END), updated_at)"
-                                   :i note-index :p prefix))
+        (create-declared-note-index watcher prefix)
         (setv store (run-on quick ddl (prepare-records-store DATABASE DDL-DATABASE NOTE-SCHEMA prefix)))
         (assert (= store.indexes.missing #()) (repr store.indexes.missing))
         (assert (.covers store.indexes "parts" "note") (repr store.indexes.fields))
@@ -429,8 +479,7 @@
         (hold-writer writer prefix)
         (.execute builder "SET statement_timeout = 300")
         (try
-          (.execute builder (.format "CREATE INDEX CONCURRENTLY {i} ON {p}state_rows ((CASE WHEN ledger = 'parts' THEN ((payload::jsonb) -> 'note') END), updated_at)"
-                                     :i note-index :p prefix))
+          (.execute builder (.replace (. (run (field-index prefix "parts" "note" True)) text) "INDEX IF NOT EXISTS" "INDEX CONCURRENTLY" 1))
           (except [error Exception]
             (assert (= (getattr error "sqlstate" None) "57014") (repr error))))
         (.execute writer "COMMIT")
@@ -650,14 +699,12 @@
   ;; 立て(差が無くても)、起動の道の外で外す。外す間も外した後も記録の操作に答え、service は落ちない。
   (with-seeded-store
     (fn [prefix quick ddl]
-      (setv note-index (run (table-field-index-name prefix "parts" "note"))
-            watcher (open-postgres)
+      (setv watcher (open-postgres)
             opened (queue.Queue)
             ended (queue.Queue)
             stopping (threading.Event))
       (try
-        (.execute watcher (.format "CREATE INDEX {i} ON {p}state_rows ((CASE WHEN ledger = 'parts' THEN ((payload::jsonb) -> 'note') END), updated_at)"
-                                   :i note-index :p prefix))
+        (create-declared-note-index watcher prefix)
         (.execute watcher (.format "ANALYZE {}state_rows" prefix))
         (setv #(legacy partial hand) (create-former-indexes watcher prefix))
         (setv thread (serve-in-thread prefix opened stopping ended))
