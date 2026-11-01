@@ -13,6 +13,7 @@
 ;;     その後は従来どおり数える。
 (require doeff-hy.macros [defk deftest <- val])
 (import doeff_hy._table [TableWrite table-of])
+(import tests.room_rows [ROOM-JSONS])
 (import doeff [run])
 (import dataclasses [fields replace])
 (import doeff_cluster [ClusterTiming])
@@ -38,7 +39,7 @@
 (defk named []
   {:pre [] :post [(: % ClusterState)] :tags {:context "doeff-cluster-test" :role "entry"}}
   "worker w(起動の印 b1)が刻 SEEN に名乗っただけの状態(置き先も task も無い)を、検の出発点として組むため。"
-  (val body {"name" "w" "boot" "b1" "provides" ["net"] "backgroundRoom" 10 "taskReserve" 0 "versions" V "statuses" []})
+  (val body {"name" "w" "boot" "b1" "provides" ["net"] "measured" (get ROOM-JSONS 10) "versions" V "statuses" []})
   (get (responded (ClusterState) (! (http-request "POST" "/heartbeat" {} body)) SEEN T) 0))
 
 

@@ -2,6 +2,7 @@
 ;; 変わる行が有る時は変わった行だけ新しい object にする(他の行は元の object — durable-delta の tasks の組を飛ばすため・Q3)。
 (require doeff-hy.macros [deftest defk val])
 (val MODULE-TAGS {:context "doeff-cluster-test" :role "test"})
+(import tests.room_rows [ROOM-LOADS ROOM-JSONS])
 
 (import dataclasses [replace])
 (import doeff_hy._table [Table table-of])
@@ -48,7 +49,7 @@
 (deftest test-promote-prepared-returns-the-same-dict-when-no-row-is-ready
   (val tasks (! (table-from-rows {"p" (! (task "p" "preparing" "w" False None)) "q" (! (task "q" "queued" None False None))})))
   ;; env-ready-on は runtime-env の無い task を準備済みとしない
-  (val info (WorkerInfo "w" #() 0 :task-reserve 0 :background-room 10))
+  (val info (WorkerInfo "w" #() 0 :measured (get ROOM-LOADS 10)))
   (assert (is (promote-prepared tasks info) tasks)))
 
 (deftest test-absorb-task-reports-returns-the-same-dict-when-nothing-is-reported
@@ -75,7 +76,7 @@
 (defk beat [state name now]
   {:pre [(: state ClusterState) (: name str) (: now int)] :post [(: % ClusterState)] :tags {:context "doeff-cluster-test" :role "judgment"}}
   "task を担わない worker name の heartbeat(statuses 無し)を 1 つ受けた後の状態。"
-  (! (register-heartbeat state (! (heartbeat-of {"name" name "provides" ["net"] "backgroundRoom" 2 "taskReserve" 0 "statuses" []})) now)))
+  (! (register-heartbeat state (! (heartbeat-of {"name" name "provides" ["net"] "measured" (get ROOM-JSONS 2) "statuses" []})) now)))
 
 (deftest test-a-heartbeat-of-a-worker-holding-no-task-keeps-the-tasks-dict
   ;; 受入: 切り離した task を担わない worker の heartbeat の後、tasks は前の歩と同じ object(2 度目の heartbeat で名乗りの変化も無い)。

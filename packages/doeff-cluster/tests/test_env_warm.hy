@@ -13,6 +13,7 @@
 ;; bytecode: 焼きの並列数は cgroup の CPU の上限(天井 BAKE-JOBS-CEILING)・焼く範囲は入口の module の import の閉包。
 (require doeff-hy.macros [deftest defk deff do! <- val var])
 (val MODULE-TAGS {:context "doeff-cluster-test" :role "test"})
+(import tests.room_rows [ROOM-LOADS ROOM-JSONS])
 (require doeff-hy.record [defrecord])
 (import doeff_events [MemoryBroker])
 (import dataclasses [dataclass replace])
@@ -65,7 +66,7 @@
 ;; runtime-env — 本番の DetachedSender の runtime-env)が運ぶ。
 
 (val PREPARE-SECONDS 5.0)
-(val WARM-WORKERS #((SimWorker :name "w1" :provides (frozenset ["local"]) :prepare-seconds PREPARE-SECONDS :task-reserve 0)))
+(val WARM-WORKERS #((SimWorker :name "w1" :provides (frozenset ["local"]) :prepare-seconds PREPARE-SECONDS)))
 (val NO-JOBS (system-of "warm-scenarios" #()))
 (val COLD-STARTS-METRIC "doeff_worker_env_cold_start_total")
 
@@ -158,7 +159,7 @@
 
 (val SPLIT-ENV-SECONDS 30.0)
 (val SPLIT-WORKERS #((SimWorker :name "w1" :provides (frozenset ["local"]) :prepare-seconds 0.0
-                                :env-prepare-seconds SPLIT-ENV-SECONDS :task-reserve 0)))
+                                :env-prepare-seconds SPLIT-ENV-SECONDS)))
 
 
 (defrecord SplitMeasured
@@ -294,7 +295,7 @@
    :tags {:context "doeff-cluster-test" :role "entry"}}
   "名乗った worker の事実(準備済みの root の鍵 ready・root の置き場の余地 capacity)を、盤の状態に置く形で組むため。"
   (WorkerInfo name provides seen #() None #() :platform "linux-x86_64" :env-ready (frozenset ready)
-              :env-capacity capacity :task-reserve 0 :background-room load-capacity))
+              :env-capacity capacity :measured (get ROOM-LOADS load-capacity)))
 
 
 (defk env-task [id declared [needs #("net")]]
@@ -314,7 +315,7 @@
   (assert (= warmed.until-ms 601000) warmed)
   (assert (= #(warmed.ready warmed.preparing) #(#() #())) warmed)
   ;; 能力の合う worker の heartbeat の返事にだけ載る(能力の足りない worker・専用の能力を持つ worker には載らない)
-  (val hb {"name" "w1" "provides" ["agent-cli"] "backgroundRoom" 2 "taskReserve" 0 "versions" {} "boot" "b1" "platform" "linux-x86_64"
+  (val hb {"name" "w1" "provides" ["agent-cli"] "measured" (get ROOM-JSONS 2) "versions" {} "boot" "b1" "platform" "linux-x86_64"
            "envs" {"ready" [] "preparing" [key-linux] "failed" []} "envCapacity" "ok"})
   (val s1 (! (register-heartbeat after (! (heartbeat-of hb)) 2000)))
   (val reply-1 (! (heartbeat-reply s1 "w1" TIMING :now 2000)))
@@ -344,7 +345,7 @@
   (val body {"runtimeEnv" declared "needs" ["agent-cli"] "ttlSeconds" 600 "holder" "svc-a"})
   (val written (responded (ClusterState) (! (http-request "POST" "/warm" {} body :actor "svc-a")) 1000 TIMING))
   (val warmed (warm-state-of-json (get written 2)))
-  (val hb {"name" "w1" "provides" ["agent-cli"] "backgroundRoom" 2 "taskReserve" 0 "versions" {} "boot" "b1" "platform" "linux-x86_64"
+  (val hb {"name" "w1" "provides" ["agent-cli"] "measured" (get ROOM-JSONS 2) "versions" {} "boot" "b1" "platform" "linux-x86_64"
            "envs" {"ready" [] "preparing" [key-linux] "failed" [] "memoryUnmeasured" []} "envCapacity" "ok"})
   (val measured (! (register-heartbeat (get written 0) (! (heartbeat-of hb)) 2000)))
   (val read-1 (warm-state-of-json (get (responded measured (! (http-request "GET" (+ "/warm/" warmed.key) {} None)) 2000 TIMING) 2)))
@@ -440,7 +441,7 @@
   (assert (= (. (get (load-of after (table-of #())) "w1") tasks) 1) "preparing の task も担い手の数に入る")
   (assert (= (lfor t (tasks-for after "w1") t.id) ["t1"]) "preparing の task も worker へ送る")
   ;; worker が準備済みを名乗った拍に assigned へ進む
-  (val hb {"name" "w1" "provides" ["net"] "backgroundRoom" 2 "taskReserve" 0 "versions" {} "boot" None "platform" "linux-x86_64"
+  (val hb {"name" "w1" "provides" ["net"] "measured" (get ROOM-JSONS 2) "versions" {} "boot" None "platform" "linux-x86_64"
            "envs" {"ready" [key] "preparing" [] "failed" []} "envCapacity" "ok"})
   (val promoted (! (register-heartbeat after (! (heartbeat-of hb)) 20)))
   (assert (= (. (.row promoted.tasks "t1") phase) "assigned") (.row promoted.tasks "t1")))

@@ -9,6 +9,7 @@
 ;; - 期限の関数(liveness-due・sweep-due・task-due)は、判断が比べに使う期限の値と同じ刻を返す。
 (require doeff-hy.macros [deftest defk <- val var])
 (require doeff-hy.record [defrecord])
+(import tests.room_rows [ROOM-LOADS])
 (import doeff_hy._table [Table TableWrite table-of])
 (import doeff_events [MemoryBroker])
 (import dataclasses [dataclass replace])
@@ -43,8 +44,8 @@
 
 ;; --- 同値: 期限だけで起きる走りと、余計に起こす走りで、判断の刻が同じ ------------------------------------------------
 
-(val TWO-WORKERS #((SimWorker :name "w1" :provides (frozenset ["cluster-net"]) :task-reserve 0)
-                   (SimWorker :name "w2" :provides (frozenset ["cluster-net"]) :task-reserve 0)))
+(val TWO-WORKERS #((SimWorker :name "w1" :provides (frozenset ["cluster-net"]))
+                   (SimWorker :name "w2" :provides (frozenset ["cluster-net"]))))
 
 ;; 仮想の長い時間を回す使い手の検と同じ worker の設定(起こし直しは待たせる)— 要求の無い時間が長い。
 (val QUIET-POLICY (WorkerPolicy :restart-backoff-ms 1000000000 :restart-backoff-max-ms 1000000000))
@@ -311,7 +312,7 @@
 (deftest test-liveness-due-is-the-deadline-the-judgments-compare
   (val timing (ClusterTiming))
   (val seen 1000000)
-  (val worker (WorkerInfo :name "w" :provides #("cpu") :background-room 1 :last-seen-ms seen :task-reserve 0))
+  (val worker (WorkerInfo :name "w" :provides #("cpu") :measured (get ROOM-LOADS 1) :last-seen-ms seen))
   (val start (ClusterState :workers (! (table-from-rows {"w" worker}))))
   ;; lease-ms — note-liveness が生きていないと数え始める刻。
   (<- lease-answer (| DueAt DueNow DueNever) (liveness-due start seen timing))
@@ -415,7 +416,7 @@
   (<- lost TaskRecord (task-row "lost" "assigned" 20000 :detached True :worker "w1"))
   (<- dropped TaskRecord (task-row "call" "finished" 12000 :worker "w1" :finished 3000))
   (<- waiting TaskRecord (task-row "wait" "queued" 20000 :detached True :needs #("verify")))
-  (val verify (replace (WorkerInfo "verify-1" #("verify") 0 :task-reserve 0 :background-room 1) :versions #((ComponentVersion "python" "3")) :exclusive #("verify")))
+  (val verify (replace (WorkerInfo "verify-1" #("verify") 0 :measured (get ROOM-LOADS 1)) :versions #((ComponentVersion "python" "3")) :exclusive #("verify")))
   #(#("lease の内に終わった task の保持" (ClusterState :tasks (! (table-from-rows {"done" retained}))) 5000 10001)
     #("lease の切れる置いた task" (ClusterState :tasks (! (table-from-rows {"lost" lost}))) 5000 20001)
     #("呼び手が問い合わせを止めた task" (ClusterState :tasks (! (table-from-rows {"call" dropped}))) 5000 12001)

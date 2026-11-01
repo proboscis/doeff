@@ -56,8 +56,8 @@
 (defk handoff-workers [prepare-seconds]
   {:pre [(: prepare-seconds float)] :post [(: % tuple)] :tags {:context "doeff-cluster-test" :role "entry"}}
   "能力 cluster-net を持つ worker 2 台(どちらもコードの木の準備に prepare 秒かかる — drain 中の worker が新しい版を起こす窓を広げる)。"
-  #((SimWorker :name "w1" :provides (frozenset ["cluster-net"]) :task-reserve 0 :prepare-seconds prepare-seconds)
-    (SimWorker :name "w2" :provides (frozenset ["cluster-net"]) :task-reserve 0 :prepare-seconds prepare-seconds)))
+  #((SimWorker :name "w1" :provides (frozenset ["cluster-net"]) :prepare-seconds prepare-seconds)
+    (SimWorker :name "w2" :provides (frozenset ["cluster-net"]) :prepare-seconds prepare-seconds)))
 
 
 (defk assert-the-drained-worker-kept-the-old-version [seen]
@@ -113,7 +113,7 @@
   ;; 宣言し直す。直す前は drain 中の worker が版 1 を止めて版 2 を起こし直した(10 秒後の読みで版 1 は終わり版 2 が動いていた)。
   ;; 直した後は期限まで版 1 が動き続け、期限が過ぎて返事の draining が偽に戻った後の周期で、普通の入れ替え(版 1 を動かしたまま版 2 を
   ;; 準備し入口を検めてから版 1 を止め、止め終えてから版 2 を起動する)で版 2 へ移る。
-  (val workers #((SimWorker :name "w1" :provides (frozenset ["cluster-net"]) :task-reserve 0)))
+  (val workers #((SimWorker :name "w1" :provides (frozenset ["cluster-net"]))))
   (<- seen HeldDrain (sim-cluster :notice-broker (MemoryBroker) (beacons sim-foundation)
                                   (drain-then-redeclare 10.0 20.0 (beacons-v2 sim-foundation) 10.0 30.0)
                                   :workers workers))
@@ -165,7 +165,7 @@
   ;; 「drain 中でない」と読み、返事の job をそのまま宣言にした。
   (val handle (fn #^ httpx.Response [#^ httpx.Request request]
                 (httpx.Response 200 :json {"jobs" [JOB-ROW] "tasks" [] "warm" []})))
-  (val link (LinkRig "http://coord" "w" #() 1 0 20000 :task-dir (str (/ tmp-path "tasks")) :transport (httpx.MockTransport handle)))
+  (val link (LinkRig "http://coord" "w" #() 20000 :task-dir (str (/ tmp-path "tasks")) :transport (httpx.MockTransport handle)))
   (val seen (.poll link))
   (assert (isinstance seen DesiredUnreadable) seen)
   (assert (in "DeclaredReplyMalformed" seen.reason) seen.reason)

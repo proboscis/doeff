@@ -31,8 +31,6 @@
     (LaunchField :env-name "WORKER_NAME" :field "name" :kind LaunchFieldKind.TEXT :optional False)
     (LaunchField :env-name "WORKER_PROVIDES" :field "provides" :kind LaunchFieldKind.NAMES :optional False)
     (LaunchField :env-name "WORKER_EXCLUSIVE" :field "exclusive" :kind LaunchFieldKind.NAMES :optional True)
-    (LaunchField :env-name "WORKER_TASK_RESERVE" :field "task_reserve" :kind LaunchFieldKind.COUNT :optional False)
-    (LaunchField :env-name "WORKER_BACKGROUND_ROOM" :field "background_room" :kind LaunchFieldKind.COUNT :optional False)
     (LaunchField :env-name "WORKER_MEMORY_MIB" :field "memory_mib" :kind LaunchFieldKind.COUNT :optional True)))
 
 (val COORDINATOR-LAUNCH-FIELDS

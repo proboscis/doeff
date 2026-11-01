@@ -7,6 +7,7 @@
 ;;   起き直し(D): 今の状態は、沈黙の worker の WorkerGone と生きている worker の WorkerBack。
 (require doeff-hy.macros [defk deftest <- val])
 (import doeff [run])
+(import tests.room_rows [ROOM-JSONS])
 (import doeff_cluster [ClusterTiming])
 (import doeff_cluster [http-request])
 (import doeff_cluster [ClusterState])
@@ -26,7 +27,7 @@
 (defk beat-body [boot]
   {:pre [(: boot str)] :post [(: % dict)] :tags {:context "doeff-cluster-test" :role "entry"}}
   "process の起動の印 boot を名乗る worker w の heartbeat の本文を組むため。"
-  {"name" "w" "boot" boot "provides" ["net"] "backgroundRoom" 10 "taskReserve" 0 "versions" V "statuses" []})
+  {"name" "w" "boot" boot "provides" ["net"] "measured" (get ROOM-JSONS 10) "versions" V "statuses" []})
 
 
 (defk named []

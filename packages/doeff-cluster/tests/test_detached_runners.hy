@@ -37,7 +37,7 @@
 
 (val RUNNERS #((RunnerFact :name "a" :provides #("x-tool") :exclusive #() :live True :draining False :task-room 1)
                 (RunnerFact :name "b" :provides #("y-tool") :exclusive #() :live True :draining False :task-room 1)))
-(val SIM-RUNNERS (tuple (gfor f RUNNERS (SimWorker :name f.name :provides (frozenset f.provides) :exclusive (frozenset f.exclusive) :task-reserve 0))))
+(val SIM-RUNNERS (tuple (gfor f RUNNERS (SimWorker :name f.name :provides (frozenset f.provides) :exclusive (frozenset f.exclusive)))))
 (val NO-JOBS (system-of "runner-scenarios" #()))
 (val ON-X (frozenset ["x-tool"]))
 (val ON-Y (frozenset ["y-tool"]))
@@ -191,11 +191,12 @@
   (<- (Delay (* SLOW 0.3)))
   (<- early (AwaitDetached "k-on-y" :timeout-seconds 0.0))
   (assert (and (isinstance early DetachedPending) (= early.phase "assigned") (= early.runner "b")) early)
-  ;; 名簿の task-room は coordinator が task を置くのと同じ数え(#3489・#3488): b に置いた task の分だけ b の空きが減り、a は変わらない。
+  ;; 名簿の task-room は coordinator が task を置くのと同じ数え(#3489・#3488 — 機体の測った空き): b に置いた task で b の空きが減り、
+  ;; a は変わらない。走り出したばかりの task は測りに出た使いと、まだ出きっていない見込みの両方で引くので、減りは 1 本以上。
   (<- placed-roster tuple (ReadRunners))
   (val placed (! (by-name placed-roster)))
-  (assert (= #((. (get placed "a") task-room) (. (get placed "b") task-room))
-             #((. (get facts "a") task-room) (- (. (get facts "b") task-room) 1)))
+  (assert (and (= (. (get placed "a") task-room) (. (get facts "a") task-room))
+               (< (. (get placed "b") task-room) (. (get facts "b") task-room)))
           #(roster placed-roster))
   (<- done (AwaitDetached "k-on-y"))
   (assert (= done (DetachedSucceeded 101)) done)

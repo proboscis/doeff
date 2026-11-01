@@ -1,8 +1,8 @@
 ;;; 手元の runner sim-cluster — 系(defsystem の関数を sim の土台で呼んだ System の値)を、本物の coordinator と本物の worker の上で、
 ;;; 1 process・仮想の時計で走らせる(ADR-DOE-CLUSTER-001・計画 2.6・10.2・段 5・5b)。同じ物を壁の時計で走らせる入口が wall-sim-cluster。
 ;;;
-;;;   (<- answer (sim-cluster (lab sim-foundation) (scenario) :workers #((SimWorker :name "w1" :provides #{"net"} :task-reserve 0)) :environ {"tally" {"STEP" "3"}}))
-;;;   (<- answer (wall-sim-cluster (lab sim-foundation) (scenario) :workers #((SimWorker :name "w1" :provides #{"net"} :task-reserve 0))))
+;;;   (<- answer (sim-cluster (lab sim-foundation) (scenario) :workers #((SimWorker :name "w1" :provides #{"net"})) :environ {"tally" {"STEP" "3"}}))
+;;;   (<- answer (wall-sim-cluster (lab sim-foundation) (scenario) :workers #((SimWorker :name "w1" :provides #{"net"}))))
 ;;;
 ;;; 時計(入口が選ぶ — 内側の仕組みは同じ):
 ;;;   sim-cluster       仮想の時計(doeff-time の sim-time-handler・起点 start-ms)。時計は scheduler の中の task が全部止まった時だけ進む
@@ -242,6 +242,7 @@
 (import doeff_cluster._shared.core.warm_rules [warm-state-of-json warm-wait-answer])
 (import doeff_cluster._worker.core.warm_rules [refusals-after])
 (import doeff_cluster._worker.core.room_rules [RoomReading RoomState WorkerRoom room-of-text room-read-due])
+(import doeff_cluster._worker.core.load_rules [MachineLoad])
 ;; worker の世代は入口の組み立て(doeff_cluster._worker.entry.main の worker-on)を偽の宿の組の上で回す(本番の main と同じ口)。
 (import doeff_cluster._worker.entry.main [worker-on])
 (import doeff_cluster._worker.intent.worker_model [WorkerPolicy WorkerState WorldView CodeView CodeState ProcessView ProbeView ProbeState
@@ -286,12 +287,48 @@
 
 ;; --- 公開の値 --------------------------------------------------------------------------------------------
 
+(defrecord SimMachine
+  "sim の worker が載る機体(本番の worker が /proc から測って heartbeat の measured で名乗る機体の空きの代役)。cpus = CPU の数・
+   memory-mib = memory の全体(MiB)・base-cores = task の外(常駐の job・他の Pod)が使う CPU・base-mib = task の外が使う memory(MiB)・
+   task-cores / task-mib = 走っている task 1 本が使う CPU と memory。worker は heartbeat を送る刻に、走っている task の数から
+   machine-load-of で今の空きを数えて名乗る(機体の真実 — 名乗りを偽る壊れた worker は SimWorker の claims-cpus)。"
+  {:check [(> cpus 0) (>= memory-mib base-mib 0) (>= base-cores 0) (> task-cores 0) (>= task-mib 0)]}
+  (#^ int cpus)
+  (#^ int memory-mib)
+  (setv #^ float base-cores 0.0)
+  (setv #^ int base-mib 0)
+  (setv #^ float task-cores 1.0)
+  (setv #^ int task-mib 1024))
+
+
+;; SimWorker の既定の機体: 模擬の筋書きが task の空きを気にせず走るための広い機体(task の空きの数え — coordinator/core/measured_room —
+;; で 60 本前後が並べて置ける)。空きの数えを確かめる筋書きは小さい機体を名指す。
+(val ROOMY-MACHINE (SimMachine :cpus 64 :memory-mib 262144))
+
+
+(defk machine-load-of [machine running at-ms [claims-cpus None]]
+  {:pre [(: machine SimMachine) (: running int) (: at-ms int) (: claims-cpus (| int None))] :post [(: % MachineLoad)]
+   :tags {:context "doeff-cluster" :role "judgment"}}
+  "sim の worker が刻 at-ms に heartbeat の measured で名乗る機体の空き(本番の worker/core/load_rules の MachineLoad と同じ形)を、機体
+   machine と走っている task の数 running から作るため。需要 = base-cores + running × task-cores・CPU の使い = min(1, 需要 / cpus)・
+   CPU の PSI の some avg10 = 需要のうち CPU に載れない割合(%)・memory の空き = memory-mib − base-mib − running × task-mib(0 まで)・
+   memory の PSI の some avg10 = 空きが全体の 5% を切ると 20(他は 0)。claims-cpus = 反例の世界だけの壊れた worker が名乗る CPU の数
+   (None = 機体の真実 — 名乗った数で CPU の使いを割り、機体を大きく見せる)。"
+  (val cpus (if (is claims-cpus None) machine.cpus claims-cpus))
+  (val demand (+ machine.base-cores (* running machine.task-cores)))
+  (val available (max 0 (- machine.memory-mib machine.base-mib (* running machine.task-mib))))
+  (MachineLoad :at-ms at-ms :cpus cpus :cpu-busy (min 1.0 (/ demand cpus)) :memory-total-mib machine.memory-mib
+               :memory-available-mib available
+               :cpu-some-avg10 (if (> demand cpus) (* 100.0 (/ (- demand cpus) demand)) 0.0) :cpu-full-avg10 0.0
+               :memory-some-avg10 (if (< (* available 20) machine.memory-mib) 20.0 0.0) :memory-full-avg10 0.0))
+
+
 (defrecord SimWorker
-  "sim の worker 1 台(本番の worker の --provides・--exclusive・--task-reserve・--background-room・--memory-mib・node に当たる)。provides =
-   提供する能力の名・exclusive = 専用の能力(この能力を needs に持つ job だけを受ける)・task-reserve = task のために空けておく数(必ず渡す —
-   本番の worker の --task-reserve と同じく既定の値は無い)・background-room = 背景の仕事を同時に置ける数(既定 10 — 模擬の筋書きが task の
-   空きを気にせず走るため。本番の既定は 0)・memory-mib = 常駐の job の memory の予算(MiB — None = 名乗らず、memory で縛られない)
-   ・node = 置かれた k8s の node の名(空 = k8s の外)・
+  "sim の worker 1 台(本番の worker の --provides・--exclusive・--memory-mib・node と、載る機体に当たる)。provides =
+   提供する能力の名・exclusive = 専用の能力(この能力を needs に持つ job だけを受ける)・machine = 載る機体(SimMachine — heartbeat の
+   measured で機体の今の空きを名乗る。既定は広い機体 ROOMY-MACHINE — 模擬の筋書きが task の空きを気にせず走るため。None = 測った空きを
+   名乗らない worker〔/proc の無い機体の代役 — coordinator は task を置かない〕)・memory-mib = 常駐の job の memory の予算(MiB — None =
+   名乗らず、memory で縛られない)・node = 置かれた k8s の node の名(空 = k8s の外)・
    versions = 名乗る版(None = 送り手と同じ筋の versions — 違えば版の合わない task は置かれない)・prepare-seconds = コードの木と
    実行環境の root(env-prepare-seconds が None の時)の準備にかかる仮想の秒・env-prepare-seconds = 実行環境の root の準備(PrepareEnv)に
    かかる仮想の秒(None = prepare-seconds と同じ — 本番の code-host と env-host のように 2 つの準備は別の操作で、別の時間がかかる。
@@ -310,23 +347,22 @@
    専用の能力は exclusive のまま — 条 C10 の反例・#1976)・fresh-boot-every-beat = 反例の世界だけの壊れた worker(heartbeat ごとに新しい
    世代を名乗る — 本当の process の世代は変わらない。coordinator は別の世代の heartbeat で drain を解くので、drain が効かない — 条 C11 の
    反例・#1976)・hides-retired = 反例の世界だけの壊れた worker(観測の handler が入れ替えで名から外した旧の process を載せない —
-   worker が旧を止める前に次の新を並べ、並ぶ数が増える — 条 C14 の反例・#1976)・claims-task-reserve = 反例の世界だけの壊れた worker
-   (heartbeat で task-reserve の代わりにこの数を名乗る — None = task-reserve。本当に task のために空けておく数は task-reserve のまま —
-   条 C17 の反例・#3489)・silent-notices = 反例の世界だけの壊れた worker(入れ替えで旧を名から外す RetireJob と取り消しの NoticeJob が、
+   worker が旧を止める前に次の新を並べ、並ぶ数が増える — 条 C14 の反例・#1976)・claims-cpus = 反例の世界だけの壊れた worker
+   (heartbeat の measured で機体の CPU の数の代わりにこの数を名乗る — None = 機体の真実。本当の CPU の数は machine のまま —
+   条 C17 の反例)・silent-notices = 反例の世界だけの壊れた worker(入れ替えで旧を名から外す RetireJob と取り消しの NoticeJob が、
    観測の notice を書くだけで process へ退きの知らせを送らない — 条 W2 の反例・#3672)・doeff-commit = この値で起きた worker が動いている doeff の版(本番の WORKER_DOEFF_COMMIT に当たる名札 —
    置き先の判断と版の突き合わせ versions には使わない。空 = 版を名乗らない筋書き・#3366)・steps-wall = 機体の壁の時計を筋書きが動かす
    worker(StepWorkerWall の相手 — 宿の外側に機体の壁の時計の代役 worker-wall を並べ、その worker の調整ループ・宿・子 process の
    GetTime を世界の時計から動かした分だけずらす。偽 = 世界の時計をそのまま読む。この worker が起こした process の記録 SimProcess の
    刻は世界の時計のまま。処理の止まり StallWorker の明けの刻は世界の時計なので、壁を動かした worker と併せて使わない)・
    reads-room = 枠の file を読む worker(本番の --room-file を渡した worker — 世界の枠の file を WriteRoomFile が書き換え、worker は本番の
-   room-noted と同じ間 room-read-due で読み直して、file の行の task-reserve・background-room・memory の予算・置ける組の印 pools を名乗る。組の
-   印は provides に足す。file を読めない・崩れた間は前に名乗った値(初めは SimWorker の task-reserve・background-room・memory-mib・組の印は無し)のまま)。"
+   room-noted と同じ間 room-read-due で読み直して、file の行の memory の予算・置ける組の印 pools を名乗る。組の
+   印は provides に足す。file を読めない・崩れた間は前に名乗った値(初めは SimWorker の memory-mib・組の印は無し)のまま)。"
   (#^ str name)
   (#^ (get frozenset str) provides)
-  (#^ int task-reserve)
   (setv #^ str doeff-commit "")
   (setv #^ (get frozenset str) exclusive (frozenset))
-  (setv #^ int background-room 10)
+  (setv #^ (| SimMachine None) machine ROOMY-MACHINE)
   (setv #^ (| int None) memory-mib None)
   (setv #^ str node "")
   (setv #^ (| dict None) versions None)
@@ -344,7 +380,7 @@
   (setv #^ (| (get frozenset str) None) claims-exclusive None)
   (setv #^ bool fresh-boot-every-beat False)
   (setv #^ bool hides-retired False)
-  (setv #^ (| int None) claims-task-reserve None)
+  (setv #^ (| int None) claims-cpus None)
   (setv #^ bool silent-notices False)
   (setv #^ bool steps-wall False)
   (setv #^ bool reads-room False))
@@ -808,7 +844,7 @@
   ;; 前の世代がまだ走っている間に起きた世代(RollWorker の新しい世代 — 本番の起動の script が前の世代の dir の錠を見て渡す
   ;; --overlaps-elder と同じ・AL-D2e)。heartbeat に overlapsElder を載せる。
   (setv #^ bool overlaps-elder False)
-  ;; 枠の file を読む worker(SimWorker の reads-room)が最後に名乗った枠(本番の LinkState の task-reserve・background-room・memory-mib・pools —
+  ;; 枠の file を読む worker(SimWorker の reads-room)が最後に名乗った枠(本番の LinkState の memory-mib・pools —
   ;; None = まだ読めていない = SimWorker の値を名乗る)・最後に読んだ状態(None = まだ読んでいない・読まない worker — heartbeat の
   ;; roomFile に載せない)・最後に読んだ刻。世代ごと(新しい世代は読み直す — 本番の起動の boot-room と同じく
   ;; 最初の heartbeat の前に読む)。
@@ -1115,9 +1151,9 @@
 
 (defk default-workers [system]
   {:pre [(: system System)] :post [(: % tuple)] :tags {:context "doeff-cluster" :role "judgment"}}
-  "worker を名指さない時の既定 = 系の全 job の needs の和を提供する 1 台(どの job も置ける・task のために空けておく分は無い)。"
+  "worker を名指さない時の既定 = 系の全 job の needs の和を提供する 1 台(どの job も置ける・既定の広い機体)。"
   (val needs (frozenset (gfor j system.jobs n j.needs n)))
-  #((SimWorker :name "sim-worker" :provides needs :task-reserve 0)))
+  #((SimWorker :name "sim-worker" :provides needs)))
 
 
 (defk declaration-of [system revision environ runtime-env versions]
@@ -2035,19 +2071,23 @@
   (val named (if (is worker.claims-provides None) worker.provides worker.claims-provides))
   (val named-exclusive (if (is worker.claims-exclusive None) worker.exclusive worker.claims-exclusive))
   ;; 枠の file から名乗る枠(読めていない worker は SimWorker の値・組の印は無し)。
-  (val room (if (is truth.room None)
-                (WorkerRoom :task-reserve worker.task-reserve :background-room worker.background-room :memory-mib worker.memory-mib)
-                truth.room))
+  (val room (if (is truth.room None) (WorkerRoom :memory-mib worker.memory-mib) truth.room))
+  ;; 機体の測った空き(本番の load-noted の代役 — 送る刻に走っている task の数から数える。機体の無い worker は名乗らない)。
+  (var measured None)
+  (val machine worker.machine)
+  (when (is-not machine None)
+    (<- load MachineLoad (machine-load-of machine (len (lfor p truth.processes :if (.startswith p.name "task/") p)) sent-at
+                                          :claims-cpus worker.claims-cpus))
+    (:= measured load))
   (<- base dict (heartbeat-body :name worker.name :provides (tuple (sorted named)) :exclusive (tuple (sorted named-exclusive))
                                 :node worker.node
-                                :task-reserve (if (is worker.claims-task-reserve None) room.task-reserve worker.claims-task-reserve)
-                                :background-room room.background-room
                                 :versions (or worker.versions plan.versions)
                                 :statuses truth.statuses :endpoint (+ "sim://" worker.name)
                                 :boot (if worker.fresh-boot-every-beat (+ truth.boot "-" (str sent-at)) truth.boot)
                                 :boot-at truth.boot-at :tools {} :kept kept :stopping stopping :overlaps-elder truth.overlaps-elder
                                 :pools room.pools
-                                :memory-mib (if (is worker.overstates-memory None) room.memory-mib worker.overstates-memory)))
+                                :memory-mib (if (is worker.overstates-memory None) room.memory-mib worker.overstates-memory)
+                                :measured measured))
   (val full (| base
                (env-heartbeat-part (env-report views "ok" (frozenset)) (current-platform))
                ;; 枠の file の状態は file を読む worker だけが名乗る(本番の coordinator への口の beat と同じ)。
@@ -2059,7 +2099,7 @@
   {:pre [(: worker SimWorker) (: boot str) (: truth HostTruth) (: now-ms int)] :post [(: % HostTruth)]
    :tags {:context "doeff-cluster" :role "protocol"}}
   "本番の coordinator への口の room-noted の代役: 枠の file を読む worker が、読み直しの番(room-read-due)に世界の
-   枠の file を読み、名乗る枠(task-reserve・background-room・memory の予算・置ける組の印)と読めた状態を宿の真実へ書いて、その真実を返すため。
+   枠の file を読み、名乗る枠(memory の予算・置ける組の印)と読めた状態を宿の真実へ書いて、その真実を返すため。
    読めない・崩れた file は前に名乗った値のまま(状態だけを替える — 本番と同じ room-of-text の判断)。読まない worker と番でない拍は
    truth のまま返す(世界へ問わない)。"
   (<- due bool (room-read-due truth.room-read-ms now-ms))

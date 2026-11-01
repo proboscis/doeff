@@ -17,7 +17,8 @@
 ;;;   board/<盤のキー> = {"value" … "resourceVersion" …}
 ;;; worker/<名> は最後の連絡の時刻 lastSeenMs を持つ(2026-09-25 — heartbeat ごとではなく api_policy.mark-alive の拍ごとの写し)。
 ;;; 世代の順 boot・retired と今の世代の起動時刻 bootAt(2026-09-27 — cluster_policy.generation-order)も持つ(無い鍵は世代・起動時刻を知らない)。
-;;; task のために空けておく数 taskReserve も必ず持つ(#3489 — この欄の無い行は読まず、次の heartbeat で作り直す)。
+;;; 手書きの task の枠(taskReserve・backgroundRoom — 消した欄)は書かず、在る旧い行も欄を読まずに通す(task の置き先は heartbeat の
+;;; 測った空きから数え、保存しない)。
 ;;; 最後に終わったと知れた刻と今の世代で process を持つ job の列 knownExits も持つ(#3672 — state_json.worker-generations-json。
 ;;; 中身が替わるのは process の起き・終わり・世代の入れ替わりの時だけで、heartbeat ごとには書かない。無い行は空の列として読む)。
 ;;; 保存しない物(状態の報告・readiness・k8s の観測)は入れない。
@@ -73,14 +74,11 @@
      (if (= state.task-prefix "t") {} {"taskPrefix" state.task-prefix})))
 
 
-;; 保存の行は capacity を書かず backgroundRoom を書く。capacity の在る旧い行は capacity を読まずに通し、backgroundRoom の無い行は
-;; 0 で読む — 配備の間だけの許し(旧い coordinator の保存から読み直す間)。
 (deff worker-json [#^ WorkerInfo w]  ; defk にできない: SaveState の答え手 durable-states と起動の読み直し(Program の外)が呼ぶ純粋な綴り
   {:pre [(: w WorkerInfo)] :post [(: % dict)] :tags {:context "coordinator" :role "protocol" :spells "json"}}
   "鍵 worker/<名> の値。lastSeenMs は生存の印の拍で写した w.seen-mark(heartbeat ごとに進む last-seen-ms は書かない — 書きは
    印の拍ごと・#2903 の前は ClusterState.seen-marks から引いた)。"
   (| {"name" w.name "provides" (list w.provides) "exclusive" (list w.exclusive) "node" w.node
-      "taskReserve" w.task-reserve "backgroundRoom" w.background-room
       "versions" (dict w.versions)}
      (worker-generations-json w)
      (if (is w.seen-mark None) {} {"lastSeenMs" w.seen-mark})))
@@ -250,9 +248,9 @@
                                                                                        :expires-ms (.get v "expiresMs") :size (value-size (get v "value"))))))))
   ;; 読めない Service の行(旧い宣言の形)は落とさず RefusedJob にする(改訂 1 の C)。
   (val service-rows (read-service-rows (lfor #(_ v) (part "service/") v)))
-  ;; 旧い形(labels だけ・task のために空けておく数 taskReserve の無い行)の worker の行は読まない(state_json.state-from-json と同じ —
-  ;; 次の heartbeat で作り直す。taskReserve を既定の値で埋めない)。
-  (val stored-workers (tuple (gfor #(k w) (part "worker/") :if (and (in "provides" w) (in "taskReserve" w)) #(k w))))
+  ;; 旧い形(labels だけ)の worker の行は読まない(state_json.state-from-json と同じ — 次の heartbeat で作り直す)。手書きの task の枠の
+  ;; 欄(taskReserve・backgroundRoom・capacity)の在る行は欄を読まずに通す。
+  (val stored-workers (tuple (gfor #(k w) (part "worker/") :if (in "provides" w) #(k w))))
   (<- generations tuple (read-each worker-generations-from-json stored-workers))
   (<- tasks tuple (read-each task-record-from-json (tuple (part "task/"))))
   (<- warms tuple (read-each warm-entry-from-json (tuple (part WARM))))
@@ -269,9 +267,6 @@
                                  (.get w "lastSeenMs" unknown-seen)
                                  (component-versions-of (.get w "versions" {}))
                                  :exclusive (get caps 1) :node (.get w "node" "")
-                                 :task-reserve (get w "taskReserve")
-                                 ;; backgroundRoom の無い旧い行は 0 で読む(配備の間だけの許し — worker-json の註)。
-                                 :background-room (.get w "backgroundRoom" 0)
                                  :seen-mark (.get w "lastSeenMs")
                                  #** generation)))))
     :tasks (table-of (tuple (gfor #(k t) tasks (TableWrite k t))))

@@ -6,6 +6,7 @@
 ;; job の落ちの行だけ)。
 (require doeff-hy.macros [deftest defk val var <-])
 (val MODULE-TAGS {:context "doeff-cluster-test" :role "test"})
+(import tests.room_rows [ROOM-JSONS])
 (import doeff [run])
 (import doeff_cluster._coordinator.core.cluster_policy [HANDOVER-STALL-MS])
 (import doeff_cluster._coordinator.protocol.durable_kv [full-kv state-from-kv])
@@ -15,7 +16,7 @@
 
 (defn #^ dict new-beat [#^ Coord c #^ str worker #^ list statuses]  ; defk にできない: 模擬の世界の method を呼ぶ(状態を進める)
   "今の世代(boot new)の heartbeat(前の世代がまだ走っている間に起きたと名乗る)。"
-  (c.call "POST" "/heartbeat" {"name" worker "provides" K3S "backgroundRoom" 10 "taskReserve" 0 "versions" {} "boot" "new"
+  (c.call "POST" "/heartbeat" {"name" worker "provides" K3S "measured" (get ROOM-JSONS 10) "versions" {} "boot" "new"
                                "statuses" statuses "overlapsElder" True "stopping" False}
           :actor None))
 

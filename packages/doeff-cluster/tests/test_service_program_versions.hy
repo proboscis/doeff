@@ -7,6 +7,7 @@
 ;;; 同じく版ごとの file に取る — 版が替われば別の file なので、取り直しの if を足さずに新しい版の Program を取る。
 (require doeff-hy.macros [deftest defk deff <- val])
 (import json)
+(import tests.room_rows [ROOM-JSONS])
 (import os)
 (import httpx)
 (import doeff [run])
@@ -75,7 +76,7 @@
   {:pre [(: state ClusterState) (: mine dict)] :post [(: % tuple)] :tags {:context "doeff-cluster-test" :role "entry"}}
   "worker w(版 mine)の heartbeat 1 回 → #(次の状態 worker が読んだ job の列)(本番の worker の拍と同じ読み — declared-job-specs)。"
   (<- answer tuple (call state "POST" "/heartbeat"
-                         {"name" "w" "provides" ["net"] "backgroundRoom" 10 "taskReserve" 0 "versions" mine "boot" "b1" "statuses" []} 5))
+                         {"name" "w" "provides" ["net"] "measured" (get ROOM-JSONS 10) "versions" mine "boot" "b1" "statuses" []} 5))
   (assert (= (get answer 1) 200) answer)
   (<- specs tuple (declared-job-specs (! (declared-reply-of-json (get answer 2)))))
   #((get answer 0) specs))
@@ -88,7 +89,7 @@
   (val sha (program-sha (encode-program (based-add 3))))
   (val worker (! (beat-specs (ClusterState) mine)))
   (val cell [(! (declared (get worker 0) sha OLD 1))])
-  (val link (LinkRig "http://coord" "w" #("net") 10 0 60000 :task-dir (str (/ tmp-path "state" "tasks"))
+  (val link (LinkRig "http://coord" "w" #("net") 60000 :task-dir (str (/ tmp-path "state" "tasks"))
                      :transport (! (coordinator-programs cell))))
   (val first (! (beat-specs (get cell 0) mine)))
   (.accept-programs link (get first 1))

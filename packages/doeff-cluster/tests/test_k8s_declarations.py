@@ -212,6 +212,8 @@ HOST_ONLY_ROOM = {
 WORKER_SELF_MIB = 256
 PREPARE_SHARE_MIB = 1536
 TASK_SHARE_MIB = 3072
+# 枠の行の task の数の欄(capacity・taskReserve・backgroundRoom)は、配備してある版の worker が必ず読むので残す。この版の worker と
+# coordinator は読まない(task の置き先は heartbeat の測った空きから数える)— worker と coordinator をこの版以後へ上げる変更で欄を消す。
 # 枠の定義元: 機体の名 → taskReserve・backgroundRoom・memoryMiB の JSON 1 つ。名の固定した ConfigMap worker-room にして worker の Pod に
 # file で置き、worker は heartbeat の前に読み直す(枠の変更で Pod を作り直さない)。env の WORKER_TASK_RESERVE・WORKER_BACKGROUND_ROOM・
 # WORKER_MEMORY_MIB は書かない。

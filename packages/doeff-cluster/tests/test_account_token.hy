@@ -7,6 +7,7 @@
 ;; 失敗ケース = 古さを読まない(exp まで ok)・heartbeat に載せない・status に載せない(見回りが知らせにできない)。
 (require doeff-hy.macros [deff defk deftest <- val])
 (val MODULE-TAGS {:context "doeff-cluster-test" :role "test"})
+(import tests.room_rows [ROOM-JSONS])
 (import base64)
 (import json)
 (import time)
@@ -91,14 +92,14 @@
   (val now (int (time.time)))
   (<- text str (jwt-of {"iat" (- now 3600) "exp" (+ now 3600)}))
   (.write-text token text)
-  (val link (LinkRig "http://coord" "w" #() 1 0 60000 :task-dir (str (/ tmp-path "tasks")) :transport (httpx.MockTransport handle)))
+  (val link (LinkRig "http://coord" "w" #() 60000 :task-dir (str (/ tmp-path "tasks")) :transport (httpx.MockTransport handle)))
   (setv link.state.token-file (str token))
   (.poll link)
   (assert (= (.get (get sent 0) "accountToken") "stale") sent)
   ;; 読まない設定(Pod の外の worker の検の口)と、file の無い worker は名乗らない。
-  (val plain (LinkRig "http://coord" "w" #() 1 0 60000 :task-dir (str (/ tmp-path "plain")) :transport (httpx.MockTransport handle)))
+  (val plain (LinkRig "http://coord" "w" #() 60000 :task-dir (str (/ tmp-path "plain")) :transport (httpx.MockTransport handle)))
   (.poll plain)
-  (val missing (LinkRig "http://coord" "w" #() 1 0 60000 :task-dir (str (/ tmp-path "missing")) :transport (httpx.MockTransport handle)))
+  (val missing (LinkRig "http://coord" "w" #() 60000 :task-dir (str (/ tmp-path "missing")) :transport (httpx.MockTransport handle)))
   (setv missing.state.token-file (str (/ tmp-path "no-such-token")))
   (.poll missing)
   (assert (= (lfor body (cut sent 1 None) (in "accountToken" body)) [False False]) sent))
@@ -106,9 +107,9 @@
 
 (deftest test-the-worker-status-carries-the-token-state-only-when-not-ok
   ;; coordinator は heartbeat の accountToken を worker の行に写し、Worker の資源の status に ok でない間だけ載せる。名乗らない worker は ok。
-  (<- named (http-request "POST" "/heartbeat" {} {"name" "w1" "provides" ["net"] "backgroundRoom" 2 "taskReserve" 0 "statuses" []
+  (<- named (http-request "POST" "/heartbeat" {} {"name" "w1" "provides" ["net"] "measured" (get ROOM-JSONS 2) "statuses" []
                                                   "accountToken" "stale"} :actor "c-test"))
-  (<- unnamed (http-request "POST" "/heartbeat" {} {"name" "w2" "provides" ["net"] "backgroundRoom" 2 "taskReserve" 0 "statuses" []}
+  (<- unnamed (http-request "POST" "/heartbeat" {} {"name" "w2" "provides" ["net"] "measured" (get ROOM-JSONS 2) "statuses" []}
                             :actor "c-test"))
   (val after-stale (get (responded (ClusterState) named 1000 T) 0))
   (val after-both (get (responded after-stale unnamed 1000 T) 0))

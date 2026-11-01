@@ -3,6 +3,7 @@
 ;;; 時間では測らない。見る物は 3 つ: 残る行(鍵)、書きの無い拍で表・状態が元と同じ物(is)であること、保存の鍵と値。
 (require doeff-hy.macros [deftest val <- defk])
 (val MODULE-TAGS {:context "doeff-cluster-test" :role "test"})
+(import tests.room_rows [ROOM-LOADS])
 
 (import dataclasses [replace])
 (import doeff_cluster [ClusterTiming])
@@ -61,7 +62,7 @@
 
 
 (deftest test-delete-resource-drops-the-row-of-each-table-and-keeps-the-others
-  (val worker (WorkerInfo "w1" #("net") 0 :task-reserve 0 :background-room 10))
+  (val worker (WorkerInfo "w1" #("net") 0 :measured (get ROOM-LOADS 10)))
   (val task (TaskRecord "t1" "n" "b" "r" #() #() 15000 16000 1000))
   (<- rollouts Table (table-from-rows {"done" DONE "keep" DONE}))
   (<- refused Table (table-from-rows {"old" (RefusedJob :name "old" :row OLD-ROW :reason "旧い形の行")}))

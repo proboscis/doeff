@@ -5,6 +5,7 @@
 ;; - 壁の時計の模擬でも、要求の来ない間は受け口から取らない。
 (require doeff-hy.macros [deftest defk defhandler <- val var])
 (val MODULE-TAGS {:context "doeff-cluster-test" :role "test"})
+(import tests.room_rows [ROOM-JSONS])
 (import datetime [timedelta])
 (import doeff [run with-handlers])
 (import doeff_core_effects [state])
@@ -39,7 +40,7 @@
 (defk heartbeat-of [name]
   {:pre [(: name str)] :post [(: % Request)] :tags {:context "doeff-cluster-test" :role "judgment"}}
   "worker name の POST /heartbeat の要求を作るため(返事の札は無し)。"
-  (! (http-request "POST" "/heartbeat" {} {"name" name "provides" ["net"] "backgroundRoom" 10 "taskReserve" 0 "versions" VERSIONS}
+  (! (http-request "POST" "/heartbeat" {} {"name" name "provides" ["net"] "measured" (get ROOM-JSONS 10) "versions" VERSIONS}
                    :actor name :peer name)))
 
 
@@ -116,7 +117,7 @@
 ;; 起動の流れ(宣言・最初の heartbeat・quitter が盤へ書いて 3 拍で抜ける・その刈り取り)が済むまでの秒。worker は周期で起きないので、
 ;; 起動の流れは worker の刻みに引き延ばされず、約 4 秒で済む。
 (val SETTLE-SECONDS 5.0)
-(val RESTING-WORKERS #((SimWorker :name "w1" :provides (frozenset ["cluster-net"]) :task-reserve 0)))
+(val RESTING-WORKERS #((SimWorker :name "w1" :provides (frozenset ["cluster-net"]))))
 (val RESTING-POLICY (WorkerPolicy :restart-backoff-ms 1000000000 :restart-backoff-max-ms 1000000000))
 
 

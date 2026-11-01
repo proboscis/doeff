@@ -23,8 +23,8 @@
 (import tests.fixtures.sim_programs [pulses])
 
 (val T (ClusterTiming))
-(val WORKERS #((SimWorker :name "w1" :provides (frozenset ["cluster-net"]) :task-reserve 0)
-               (SimWorker :name "w2" :provides (frozenset ["cluster-net"]) :task-reserve 0)))
+(val WORKERS #((SimWorker :name "w1" :provides (frozenset ["cluster-net"]))
+               (SimWorker :name "w2" :provides (frozenset ["cluster-net"]))))
 ;; coordinator を止める長さ(2026-10-13 の atlas と同じ 3 分 — 移し替えの期限 reassign-after-ms の 60 秒も越える)。
 (val STALL-SECONDS 180.0)
 ;; 明けた後に見る長さ: 移し替えの期限を越える(誤って沈黙と数えていれば job が移る)。

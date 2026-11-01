@@ -27,7 +27,7 @@
 
 (val T (ClusterTiming))
 (val WORKER "w1")
-(val WORKERS #((SimWorker :name WORKER :provides #{"net"} :task-reserve 0)))
+(val WORKERS #((SimWorker :name WORKER :provides #{"net"})))
 ;; 処理を止める長さ: 生死の期限(lease-ms)を十分に越える。
 (val STALL-SECONDS (+ (/ T.lease-ms 1000) 20.0))
 (val READER "liveness-reader")

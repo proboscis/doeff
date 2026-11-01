@@ -8,8 +8,8 @@
 # 中身を変えても Pod は作り直されず、次の起動で効く。
 #
 # 上に載る系の repo が用意する物(名は固定 — この宣言は名で参照するだけで、上に載る系の名と値は書かない):
-#   ConfigMap worker-env      envFrom で受ける env。WORKER_REPOS・CODE_REPO_URL など boot.sh と job の子が読む値。枠(WORKER_CAPACITY・
-#                             WORKER_TASK_RESERVE)は置かない — 枠は下の worker-room。加えて次の 2 つを必ず置く(空の値でよい):
+#   ConfigMap worker-env      envFrom で受ける env。WORKER_REPOS・CODE_REPO_URL など boot.sh と job の子が読む値。枠(memory の予算・
+#                             組の印)は置かない — 枠は下の worker-room(task の数は書かない — 測った空きで置く)。加えて次の 2 つを必ず置く(空の値でよい):
 #                               WORKER_PROVIDES_EXTRA  能力の残り(`,` で並べる)— 下の WORKER_PROVIDES の後ろに付く
 #                               WORKER_PASS_ENV_EXTRA  job の子へ渡す残りの env の名(`,` で並べる)— 下の WORKER_PASS_ENV の後ろに付く
 #                             無いと $(名) が展開されずに残り、worker は能力の名か env の名の誤りを stderr に出して起動しない。
@@ -18,7 +18,7 @@
 #   ConfigMap worker-shell    job の子が使う shell の script(/opt/worker-shell に置く)。無くても起動する。
 #
 # この dir の組(../workers)が用意する物:
-#   ConfigMap worker-room     機体ごとの枠(../workers/worker-room.json — 名 → capacity・taskReserve)。/etc/worker-room に
+#   ConfigMap worker-room     機体ごとの枠(../workers/worker-room.json — 名 → memoryMiB・pools)。/etc/worker-room に
 #                             置き(subPath でない — 中身を変えると kubelet が Pod を作り直さずに file を入れ替える)、WORKER_ROOM_FILE で
 #                             渡す。worker は heartbeat の前に読み直して名乗るので、枠の変更で Pod を作り直さない。ConfigMap が無ければ
 #                             Pod は起きない(optional でない — 既定の枠で起きない)。

@@ -30,7 +30,7 @@
   {:pre [(: text str) (: extras (get tuple #(ExtraProvides ...))) (all (gfor e extras (isinstance e ExtraProvides)))
          (= (len (set (gfor e extras e.name))) (len extras))]
    :post [(: % (get tuple #(FailoverWorker ...)))] :tags {:context "coordinator" :role "judgment"}}
-  "枠の file の中身 text の行の全部を、N+1 の判断が受ける worker(名の順)にするため。枠・予約・組の印・memory の予算 = room-of-text で
+  "枠の file の中身 text の行の全部を、N+1 の判断が受ける worker(名の順)にするため。組の印・memory の予算 = room-of-text で
    読んだ行の値、能力 = 雛形が起動の引数で渡す能力(launch-provides — extras の同じ名の行の能力を足す)に行の組の印を足した名乗り
    (announced-provides)。worker が名乗らない行(room-of-text の malformed)と、行の無い worker の extras は ValueError で名指す(前の値も
    既定の値も無いので、照らせない物を通さない)。"
@@ -46,8 +46,6 @@
     (<- launched (get tuple #(str ...)) (launch-provides name (sum (gfor e extras :if (= e.name name) e.provides) #())))
     (<- provides (get tuple #(str ...)) (announced-provides launched reading.room.pools))
     (:= workers (+ workers #((FailoverWorker :info (WorkerInfo :name name :provides provides :last-seen-ms 0
-                                                              :exclusive #() :task-reserve reading.room.task-reserve
-                                                              :background-room reading.room.background-room
-                                                              :memory-mib reading.room.memory-mib)
+                                                              :exclusive #() :memory-mib reading.room.memory-mib)
                                              :memory-mib reading.room.memory-mib)))))
   workers)

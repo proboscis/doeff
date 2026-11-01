@@ -185,7 +185,7 @@
   ;; 60 秒後に起きる worker の上の job の起き上がりを待つ: 起きるのは process を記録した刻ちょうどで、待つ相手の判断は定数回。
   (<- judged list (count-calls monkeypatch "first_process"))
   (<- seen StartWait (sim-cluster :notice-broker (MemoryBroker) (long-quitters sim-foundation) (wait-for-late-start)
-                                  :workers #((SimWorker :name "late" :provides NET :starts-down True :task-reserve 0))))
+                                  :workers #((SimWorker :name "late" :provides NET :starts-down True))))
   (assert (= seen.woke-ms seen.process.started-ms) seen)
   (assert (>= (- seen.woke-ms seen.started-ms) 60000) seen)
   (assert (<= 1 (len judged) READS-BOUND) (len judged)))

@@ -45,7 +45,6 @@
    "placements" (dfor #(k v) (.items state.placements) k (asdict v))
    "workers" (lfor w (.rows state.workers)
                    (| {"name" w.name "provides" (list w.provides) "exclusive" (list w.exclusive) "node" w.node
-                       "taskReserve" w.task-reserve "backgroundRoom" w.background-room
                        "versions" (dict w.versions)}
                       (worker-generations-json w)))
    "tasks" (lfor t (.rows state.tasks) (task-record-to-json t))
@@ -225,9 +224,9 @@
    読んだ後の最初の書きで resource_policy.stamp が版を振る(送り手 = 移し替え)。"
   (val service-rows (read-service-rows (list (get data "jobs"))))
   ;; 旧い形(labels だけ — 2026-09-27 より前)の worker の行は読まない。能力を知らない worker に置かないため(次の heartbeat で
-  ;; 新しい形の名乗りから作り直す)。task のために空けておく数 taskReserve の無い行(この欄より前の版が書いた行)も同じく読まない —
-  ;; 予約を知らない worker に置かないため・既定の値で埋めない(次の heartbeat の必ずの欄から作り直す)。
-  (val stored-workers (tuple (gfor w (.get data "workers" []) :if (and (in "provides" w) (in "taskReserve" w)) #((get w "name") w))))
+  ;; 新しい形の名乗りから作り直す)。手書きの task の枠(taskReserve・backgroundRoom・capacity — 消した欄)の在る行は欄を読まずに通す
+  ;; (task の置き先は heartbeat の測った空きから数え、保存しない)。
+  (val stored-workers (tuple (gfor w (.get data "workers" []) :if (in "provides" w) #((get w "name") w))))
   (<- generations tuple (read-each worker-generations-from-json stored-workers))
   (<- programs tuple (read-each program-row-from-json (tuple (.items (.get data "programs" {})))))
   (<- tasks tuple (read-each task-record-from-json (tuple (gfor t (.get data "tasks" []) #((get t "id") t)))))
@@ -245,9 +244,6 @@
                    (WorkerInfo name (get caps 0) now
                                (component-versions-of (.get w "versions" {}))
                                :exclusive (get caps 1) :node (.get w "node" "")
-                               :task-reserve (get w "taskReserve")
-                               ;; capacity の在る旧い行は capacity を読まず、backgroundRoom の無い行は 0 で読む(配備の間だけの許し)。
-                               :background-room (.get w "backgroundRoom" 0)
                                #** generation)))))
     ;; 改名の前の file は置き先を旧い名の欄に持つ(durable_kv.LEGACY-PLACEMENT と同じ改名)。両方を読み、新しい欄が勝つ。
     :placements (table-of (tuple (gfor #(k v) (.items (| (.get data "assignments" {}) (.get data "placements" {}))) (TableWrite k (Placement #** v)))))

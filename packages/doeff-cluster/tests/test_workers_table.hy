@@ -3,6 +3,7 @@
 ;;; 時間では測らない。見る物は 2 つ: 表の同一性(is)と、変わった行の鍵(changed-keys)。
 (require doeff-hy.macros [deftest val <- defk])
 (val MODULE-TAGS {:context "doeff-cluster-test" :role "test"})
+(import tests.room_rows [ROOM-LOADS])
 
 (import dataclasses [replace])
 (import doeff_cluster [ClusterTiming])
@@ -17,7 +18,7 @@
 
 (defn #^ WorkerInfo worker [#^ str name #^ int seen [seen-mark None] [node ""]]
   "最後の連絡が seen・印が seen-mark の worker 1 台。"
-  (WorkerInfo name #() seen :task-reserve 0 :seen-mark seen-mark :node node :background-room 10))
+  (WorkerInfo name #() seen :measured (get ROOM-LOADS 10) :seen-mark seen-mark :node node))
 
 (defn table-of-workers [#* workers]
   (table-of (tuple (gfor w workers (TableWrite w.name w)))))

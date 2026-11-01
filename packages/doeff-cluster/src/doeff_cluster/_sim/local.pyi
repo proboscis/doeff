@@ -288,6 +288,7 @@ from doeff_cluster._worker.core.room_rules import RoomState as RoomState
 from doeff_cluster._worker.core.room_rules import WorkerRoom as WorkerRoom
 from doeff_cluster._worker.core.room_rules import room_of_text as room_of_text
 from doeff_cluster._worker.core.room_rules import room_read_due as room_read_due
+from doeff_cluster._worker.core.load_rules import MachineLoad as MachineLoad
 from doeff_cluster._worker.entry.main import worker_on as worker_on
 from doeff_cluster._worker.intent.worker_model import WorkerPolicy as WorkerPolicy
 from doeff_cluster._worker.intent.worker_model import WorkerState as WorkerState
@@ -353,13 +354,28 @@ STALL_REASON: str
 SIM_TIMING_RATIO: int
 
 @dataclass(frozen=True, kw_only=True)
+class SimMachine:
+    cpus: int
+    memory_mib: int
+    base_cores: float = 0.0
+    base_mib: int = 0
+    task_cores: float = 1.0
+    task_mib: int = 1024
+
+    def __post_init__(self) -> None:
+        ...
+ROOMY_MACHINE: SimMachine
+
+def machine_load_of(machine: SimMachine, running: int, at_ms: int, claims_cpus: int | None=None) -> _Program[MachineLoad, object]:
+    ...
+
+@dataclass(frozen=True, kw_only=True)
 class SimWorker:
     name: str
     provides: frozenset[str]
-    task_reserve: int
     doeff_commit: str = ''
     exclusive: frozenset[str] = ...
-    background_room: int = 10
+    machine: SimMachine | None = ...
     memory_mib: int | None = None
     node: str = ''
     versions: dict | None = None
@@ -377,7 +393,7 @@ class SimWorker:
     claims_exclusive: frozenset[str] | None = None
     fresh_boot_every_beat: bool = False
     hides_retired: bool = False
-    claims_task_reserve: int | None = None
+    claims_cpus: int | None = None
     silent_notices: bool = False
     steps_wall: bool = False
     reads_room: bool = False

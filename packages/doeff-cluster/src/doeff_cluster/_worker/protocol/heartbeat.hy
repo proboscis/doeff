@@ -35,10 +35,9 @@
    "envCapacity" (get report "capacity")})
 
 
-(defk heartbeat-body [* name provides exclusive node task-reserve background-room versions statuses endpoint boot boot-at tools kept [stopping False]
+(defk heartbeat-body [* name provides exclusive node versions statuses endpoint boot boot-at tools kept [stopping False]
                       [overlaps-elder False] [doeff-commit ""] [pools #()] [memory-mib None] [measured None]]
   {:pre [(: name str) (: provides (get tuple #(str ...))) (: exclusive (get tuple #(str ...))) (: node str)
-         (: task-reserve int) (: background-room int)
          (: versions (get dict #(str str))) (: statuses (get list (get dict #(str object)))) (: endpoint str) (: boot str) (: boot-at int)
          (: tools (get dict #(str object))) (: kept (get tuple #(str ...))) (: stopping bool)
          (: overlaps-elder bool) (: doeff-commit str) (: pools (get tuple #(str ...))) (: memory-mib (| int None))
@@ -46,8 +45,7 @@
    :post [(: % (get dict #(str object)))]
    :tags {:context "worker" :role "protocol"}}
   "POST /heartbeat の本文(生存・能力・版・状態の報告・世代・持っている印・止まり始め)を作るため。実行環境の root の名乗り(env-body)は
-   本番の worker だけが足す。task-reserve = task のために空けておく数・background-room = 背景の仕事を同時に置ける数(どちらも必ず書く — coordinator の task の
-   空きは予約 + 背景の枠 − 置いた task。capacity は送らない)。
+   本番の worker だけが足す。手書きの task の枠(taskReserve・backgroundRoom・capacity)は送らない — coordinator は task の置き先を measured から数える。
    kept = 途絶しても動かし続けてよい印を今持っている job の名(worker_policy.keep-marks-held — #2804)。欄を毎回
    書く(空でも)— coordinator は欄の在る worker だけを「印を知る worker」と数え、欄の無い本文(古い worker)には印の約束を持たない。
    stopping = この世代が止まり始めた(coordinator はこの世代へ新しく置かない — drain の頼みを通らない止めの名乗り・#2819)。
@@ -58,15 +56,14 @@
    provides の後ろに足して名乗る。起動の引数の能力との和で、coordinator は heartbeat ごとに Worker の行の provides を書き直すので、次の
    heartbeat から置き方に効く)。memory-mib = 常駐の job の memory の予算(MiB — 名乗る時だけ欄 memoryMiB を書く。coordinator は置いた job の
    settle の和 + 新しい job の settle がこの値以下の時だけ置き、名乗らない worker は memory で縛らない)。measured = 機体の測った空き
-   (worker/core/load_rules の MachineLoad — 測れた時だけ欄 measured を書く。coordinator は保存せずに GET /state の worker の行に出し、
-   置き方の判断には使わない)。"
+   (worker/core/load_rules の MachineLoad — 測れた時だけ欄 measured を書く。coordinator は保存せず、task の置き先をこの値から数え、
+   GET /state の worker の行に出す。名乗らない worker には task を置かない)。"
   (<- named (get tuple #(str ...)) (announced-provides provides pools))
   (var measured-part {})
   (when (is-not measured None)
     (<- row (get dict #(str object)) (measured-json measured))
     (:= measured-part {"measured" row}))
   {"name" name "provides" (list named) "exclusive" (list exclusive) "node" node
-   "taskReserve" task-reserve "backgroundRoom" background-room
    "versions" versions
    "statuses" statuses "endpoint" endpoint "boot" boot "bootAt" boot-at
    "format" PROTOCOL-FORMAT

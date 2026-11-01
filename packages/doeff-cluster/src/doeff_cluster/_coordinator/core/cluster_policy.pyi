@@ -106,6 +106,9 @@ from doeff_cluster._shared.core.readiness_rules import retired_lifetime_ms as re
 from doeff_cluster._shared.core.readiness_rules import retired_limit_of as retired_limit_of
 from doeff_cluster._coordinator.core.program_policy import PROGRAM_GRACE_MS as PROGRAM_GRACE_MS
 from doeff_cluster._coordinator.core.program_policy import program_refs as program_refs
+from doeff_cluster._coordinator.core.measured_room import measured_room as measured_room
+from doeff_cluster._coordinator.core.measured_room import reserve_of as reserve_of
+from doeff_cluster._coordinator.core.measured_room import unseen_since as unseen_since
 JOB_ENTRY: str
 MAX_EVENTS: int
 BOARD_MAX_VALUE_BYTES: int

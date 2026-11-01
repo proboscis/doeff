@@ -21,7 +21,7 @@
 (import tests.fixtures.envs [sim-foundation])
 (import tests.fixtures.sim_programs [beacons NET])
 
-(val WORKERS #((SimWorker :name "w1" :provides NET :task-reserve 0) (SimWorker :name "w2" :provides NET :task-reserve 0)))
+(val WORKERS #((SimWorker :name "w1" :provides NET) (SimWorker :name "w2" :provides NET)))
 
 
 (defk ready-word [name]
