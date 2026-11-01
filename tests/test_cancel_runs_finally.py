@@ -58,7 +58,8 @@ from doeff_core_effects import (
 )
 
 import tests.cancel_runs_finally_cases as hy_cases
-from doeff import Err, do
+from doeff import EffectBase, Err, Pass, UnhandledEffect, do
+from doeff import handler as _program_handler
 from doeff import run as doeff_run
 from doeff.program import Pure
 
@@ -526,6 +527,32 @@ def test_try_wait_of_another_cancelled_task_answers_err_and_keeps_working() -> N
     assert isinstance(seen, Err)
     assert isinstance(seen.error, TaskCancelledError)
     assert after == "still waiting"
+
+
+def test_shielded_with_no_scheduler_in_scope_just_runs_the_program() -> None:
+    """Nothing can cancel a program no scheduler runs, so ``shielded`` runs it,
+    under other handlers or under none. A handler the program itself misses
+    is still reported."""
+
+    class Unanswered(EffectBase):
+        """An effect no handler of the test answers."""
+
+    @do
+    def work():
+        return (yield Pure("ran"))
+
+    @do
+    def asks():
+        return (yield Unanswered())
+
+    @do
+    def other(effect: Any, k: Any):
+        return (yield Pass(effect, k))
+
+    assert doeff_run(shielded(work())) == "ran"
+    assert doeff_run(_program_handler(other)(shielded(work()))) == "ran"
+    with pytest.raises(UnhandledEffect, match="Unanswered"):
+        doeff_run(shielded(asks()))
 
 
 def test_a_cancel_inside_shielded_lands_at_the_first_wait_after_it() -> None:

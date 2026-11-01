@@ -50,7 +50,7 @@ from typing import (
     overload,
 )
 
-from doeff import Call, EffectBase, Err, K, Ok, TailEval
+from doeff import Call, EffectBase, Err, K, Ok, TailEval, UnhandledEffect
 from doeff import Callable as _VmCallable
 from doeff import WithBoundaries as _WithBoundariesRaw
 from doeff import WithHandlerType as _WithHandlerRaw
@@ -623,6 +623,10 @@ def shielded(program: "Program[_T]") -> Generator[Any, Any, _T]:
     the region. Keep the region bounded: a shielded wait that never ends
     keeps the cancelled task alive.
 
+    With no scheduler in scope nothing can cancel the program, so it just
+    runs: the library cleanup that uses ``shielded`` also runs under handlers
+    that answer its effects in place, without a scheduler.
+
     Usage::
 
         try:
@@ -630,7 +634,10 @@ def shielded(program: "Program[_T]") -> Generator[Any, Any, _T]:
         finally:
             yield shielded(give_back(lease))
     """
-    yield _ShieldEnter()
+    try:
+        yield _ShieldEnter()
+    except UnhandledEffect:
+        return (yield program)
     try:
         return (yield program)
     finally:
