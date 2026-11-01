@@ -1,0 +1,951 @@
+"""uv の cache を node ごとに用意し(seed)、古い項目と使われない venv を消す(gc)道具 — worker の起動の準備(deploy/boot.sh)が呼ぶ。
+
+訳: worker の uv の cache(DOEFF_UV_CACHE_DIR・既定 $WORK_DIR/state/uv-cache)は node の disk に在り、新しい node では空から始まる。空の
+cache で依存を取り込むと、wheel の無い package(free-threaded の 3.14t の grpcio など)を source から組み、doeff の workspace の全部で
+611 秒かかった(2026-11-01 の zeus の測り — 依存を取り込み済みの cache なら秒)。また cache は誰も消さず、zeus で展開済みの wheel の項目が
+169,393 個に溜まった。`uv cache prune` は走っている uv の process が 1 つでも在ると錠を待ち続けて終わらない(常駐の job の `uv run` は
+生きている間ずっと錠を持つ)ので、uv の外で消す。
+
+動詞(答えはどれも標準出力の JSON 1 行・訳は標準エラーの 1 行):
+  upkeep   worker の起動の準備(deploy/boot.sh の doeff_uv_cache_upkeep)が背後で 1 度起こす: 環境変数 DOEFF_UV_CACHE_SEED_URL が在れば
+           seed(DOEFF_UV_CACHE_SEED_SECRET = --secret・空きが DOEFF_UV_CACHE_SEED_MIN_FREE_GIB(既定 50)を下回れば入れない)、
+           続けて DOEFF_UV_CACHE_GC_DAYS が在れば gc(--idle-days = その値・--venvs = DOEFF_UV_CACHE_GC_VENVS を `:` で分けた dir・
+           --every-seconds = DOEFF_UV_CACHE_GC_EVERY_SECONDS(既定 72000))。どちらが落ちても訳を 1 行出して続け、0 で終わる。
+  pack    cache を tar.zst 1 file にする。入れない物: 錠(.lock)・作りかけ(.tmp*)・組みの一時の環境(builds-v*)・`uv run --with` の
+           環境(environments-v*)・interpreter の問い合わせの控え(interpreter-v*)。
+  publish  pack した file を S3 互換の object storage の URL(path の形 http(s)://<host>/<bucket>/<key>)へ PUT する。
+  seed     cache に印(.doeff-uv-seed.json)が無ければ、URL(S3 の path の形か file の path)の tar.zst を取り寄せ、cache の中の一時の dir に
+           展開してから、cache に無い物だけを rename で入れる(在る物は替えない — 走っている uv の索引と展開済みの項目を壊さない)。
+           展開済みの wheel の項目(archive-v*)を先に入れ、索引(wheels-v*・sdists-v* など)を後に入れる。入れ終えたら印を書く。印が在れば
+           何もしない(--force で入れ直す)。
+  count    gc と同じ数えだけをする(何も消さない)。
+  gc       数えてから消す。消す物:
+             venv        --venvs の dir の下(深さ --depth まで)の .venv のうち、最後に使った刻(dir・pyvenv.cfg・bin・site-packages の
+                         最後の変更と pyvenv.cfg の最後の読み)が --idle-days 日より前で、どの process も使っていない物(作業 dir が
+                         venv を持つ dir の下・命令の path か読み込んだ file が venv の下)。
+             環境        cache の environments-v* の項目(`uv run --with` の環境 — 中身は venv)を venv と同じ決まりで。
+             一時の物    cache の直下の .tmp* と builds-v* の項目のうち、最後の変更が --idle-days 日より前の物。
+             展開済みの wheel  archive-v* の項目のうち、中の file が全部 hardlink の数 1(どの venv も同じ中身を指していない)で、項目の
+                         最後の変更が --idle-days 日より前の物。venv と環境を消した後に数え直して判じる。索引が指す項目を消しても、uv は
+                         取り寄せ直すだけで壊れない(2026-11-01 に uv 0.12.19 で確かめた — 索引の指す項目を消した後の install は
+                         「uncached distribution」として取り寄せ直した)。
+           消す物は先に同じ dir の中の別の名へ rename し(uv からは即座に見えなくなる)、その後で中身を消す。前と後の数(項目の数・file の
+           数・disk の byte・file system の空き)を答えに載せる。--every-seconds を渡すと、前の gc の印(.doeff-uv-gc.json)がその秒より
+           新しい時は何もしない。同じ cache の gc と seed は錠(.doeff-uv-gc.lock・.doeff-uv-seed.lock)で 1 つに限る。
+
+資格(publish と、http(s) の seed): --secret <namespace>/<name> を渡すと、その k8s の Secret の鍵 access-key-id・secret-access-key を
+Pod の ServiceAccount の token(標準の path)で API server から読む。渡さなければ環境変数 AWS_ACCESS_KEY_ID・AWS_SECRET_ACCESS_KEY を
+使い、どちらも無ければ署名しない。署名は SigV4(--region・既定 us-east-1・payload は UNSIGNED-PAYLOAD)。
+
+標準の library だけを使う(依存を取り込む前の cache に入れる道具なので、取り込みに頼らない)。Python 3.14 以上(zstd は 3.14 の
+compression.zstd・型の註の前方の参照は 3.14 の遅れて読む註で解く)。
+"""
+
+import argparse
+import base64
+import bisect
+import contextlib
+import datetime
+import fcntl
+import hashlib
+import hmac
+import http.client
+import json
+import os
+import shutil
+import ssl
+import stat
+import sys
+import tarfile
+import tempfile
+import time
+import urllib.parse
+from collections.abc import Iterable, Iterator
+from concurrent.futures import ThreadPoolExecutor
+from dataclasses import dataclass, field
+from pathlib import Path
+from typing import BinaryIO, Self
+
+SEED_MARK = ".doeff-uv-seed.json"
+GC_MARK = ".doeff-uv-gc.json"
+SEED_LOCK = ".doeff-uv-seed.lock"
+GC_LOCK = ".doeff-uv-gc.lock"
+# seed の展開の一時の dir と gc の消しの一時の名の頭(cache の直下 — 同じ file system の rename で入れ・退ける)。
+SEED_STAGE = ".doeff-uv-seed-"
+GC_TRASH = ".doeff-uv-gc-"
+# pack が入れない cache の直下の名(頭の一致)。uv の bucket の版の番号は uv の版で変わるので、頭の名で引く。
+# この道具の印・錠・一時の名・log(.doeff-uv-*)も入れない。
+PACK_SKIP_PREFIXES = (".lock", ".tmp", "builds-v", "environments-v", "interpreter-v", ".doeff-uv-")
+ARCHIVE_PREFIX = "archive-v"
+ENVIRONMENTS_PREFIX = "environments-v"
+BUILDS_PREFIX = "builds-v"
+TMP_PREFIX = ".tmp"
+SA_DIR = Path("/var/run/secrets/kubernetes.io/serviceaccount")
+EMPTY_SHA256 = hashlib.sha256(b"").hexdigest()
+CHUNK = 1 << 20
+# 並べた Range の GET の 1 片の byte。
+PART = 64 << 20
+
+
+def say(line: str) -> None:
+    """訳の 1 行を標準エラーへ出す(boot.sh の log に載る)。"""
+    print(f"uv-cache: {line}", file=sys.stderr, flush=True)
+
+
+def answer(value: dict[str, object]) -> None:
+    print(json.dumps(value, ensure_ascii=False, sort_keys=True), flush=True)
+
+
+# ── S3 の SigV4 ────────────────────────────────────────────────────────────
+
+
+@dataclass(frozen=True)
+class Credentials:
+    access_key: str
+    secret_key: str
+
+
+def _uri_encode(text: str, *, keep_slash: bool) -> str:
+    return urllib.parse.quote(text, safe="/-_.~" if keep_slash else "-_.~")
+
+
+def sigv4_headers(
+    method: str,
+    url: str,
+    region: str,
+    credentials: Credentials,
+    now: datetime.datetime,
+    payload_hash: str = "UNSIGNED-PAYLOAD",
+    headers: dict[str, str] | None = None,
+) -> dict[str, str]:
+    """S3 の要求に付ける header(host・x-amz-date・x-amz-content-sha256・Authorization と、渡した header)を返す。
+
+    url の path は decode した形で受け、segment ごとに 1 度だけ encode する(S3 は 2 度 encode しない)。渡した header も署名に入れる。
+    """
+    parts = urllib.parse.urlsplit(url)
+    stamp = now.astimezone(datetime.UTC).strftime("%Y%m%dT%H%M%SZ")
+    day = stamp[:8]
+    signed = {k.lower(): " ".join(v.strip().split()) for k, v in (headers or {}).items()}
+    signed["host"] = parts.netloc
+    signed["x-amz-date"] = stamp
+    signed["x-amz-content-sha256"] = payload_hash
+    names = sorted(signed)
+    query = "&".join(
+        f"{_uri_encode(k, keep_slash=False)}={_uri_encode(v, keep_slash=False)}"
+        for k, v in sorted(urllib.parse.parse_qsl(parts.query, keep_blank_values=True))
+    )
+    canonical = "\n".join(
+        [
+            method,
+            _uri_encode(urllib.parse.unquote(parts.path) or "/", keep_slash=True),
+            query,
+            "".join(f"{name}:{signed[name]}\n" for name in names),
+            ";".join(names),
+            payload_hash,
+        ]
+    )
+    scope = f"{day}/{region}/s3/aws4_request"
+    to_sign = "\n".join(
+        ["AWS4-HMAC-SHA256", stamp, scope, hashlib.sha256(canonical.encode()).hexdigest()]
+    )
+    key = f"AWS4{credentials.secret_key}".encode()
+    for piece in (day, region, "s3", "aws4_request"):
+        key = hmac.new(key, piece.encode(), hashlib.sha256).digest()
+    signature = hmac.new(key, to_sign.encode(), hashlib.sha256).hexdigest()
+    out = dict(headers or {})
+    out["x-amz-date"] = stamp
+    out["x-amz-content-sha256"] = payload_hash
+    out["Authorization"] = (
+        f"AWS4-HMAC-SHA256 Credential={credentials.access_key}/{scope}, "
+        f"SignedHeaders={';'.join(names)}, Signature={signature}"
+    )
+    return out
+
+
+def secret_credentials(ref: str, sa_dir: Path = SA_DIR) -> Credentials:
+    """k8s の Secret <namespace>/<name> の access-key-id・secret-access-key を ServiceAccount の token で読む。"""
+    namespace, _, name = ref.partition("/")
+    if not namespace or not name:
+        raise SystemExit(f"uv-cache: --secret は <namespace>/<name>: {ref!r}")
+    host = os.environ.get("KUBERNETES_SERVICE_HOST")
+    port = os.environ.get("KUBERNETES_SERVICE_PORT", "443")
+    if not host:
+        raise SystemExit("uv-cache: KUBERNETES_SERVICE_HOST が無い — Secret を読めない")
+    token = (sa_dir / "token").read_text().strip()
+    context = ssl.create_default_context(cafile=str(sa_dir / "ca.crt"))
+    conn = http.client.HTTPSConnection(host, int(port), context=context, timeout=30)
+    try:
+        conn.request(
+            "GET",
+            f"/api/v1/namespaces/{namespace}/secrets/{name}",
+            headers={"Authorization": f"Bearer {token}", "Accept": "application/json"},
+        )
+        response = conn.getresponse()
+        body = response.read()
+    finally:
+        conn.close()
+    if response.status != 200:
+        raise SystemExit(f"uv-cache: Secret {ref} を読めない(HTTP {response.status})")
+    data = json.loads(body).get("data") or {}
+    try:
+        return Credentials(
+            base64.b64decode(data["access-key-id"]).decode(),
+            base64.b64decode(data["secret-access-key"]).decode(),
+        )
+    except KeyError as missing:
+        raise SystemExit(f"uv-cache: Secret {ref} に鍵 {missing} が無い") from None
+
+
+def resolve_credentials(secret: str | None) -> Credentials | None:
+    if secret:
+        return secret_credentials(secret)
+    key, value = os.environ.get("AWS_ACCESS_KEY_ID"), os.environ.get("AWS_SECRET_ACCESS_KEY")
+    return Credentials(key, value) if key and value else None
+
+
+def _connection(url: str, timeout: float) -> tuple[http.client.HTTPConnection, str]:
+    parts = urllib.parse.urlsplit(url)
+    if parts.scheme not in ("http", "https"):
+        raise SystemExit(f"uv-cache: URL は http か https: {url!r}")
+    cls = http.client.HTTPSConnection if parts.scheme == "https" else http.client.HTTPConnection
+    target = parts.path + (f"?{parts.query}" if parts.query else "")
+    return cls(parts.netloc, timeout=timeout), target
+
+
+def http_put_file(
+    url: str, path: Path, credentials: Credentials | None, region: str, timeout: float
+) -> dict[str, str]:
+    size = path.stat().st_size
+    headers = {"Content-Length": str(size), "Content-Type": "application/zstd"}
+    if credentials:
+        headers = sigv4_headers(
+            "PUT", url, region, credentials, datetime.datetime.now(datetime.UTC), headers=headers
+        )
+    conn, target = _connection(url, timeout)
+    try:
+        with path.open("rb") as body:
+            conn.request("PUT", target, body=body, headers=headers)
+            response = conn.getresponse()
+            text = response.read()
+    finally:
+        conn.close()
+    if response.status not in (200, 201):
+        raise SystemExit(f"uv-cache: PUT {url} が HTTP {response.status}: {text[:300]!r}")
+    return {"etag": response.getheader("ETag", "").strip('"')}
+
+
+def _signed(
+    method: str, url: str, credentials: Credentials | None, region: str, headers: dict[str, str]
+) -> dict[str, str]:
+    if credentials is None:
+        return headers
+    return sigv4_headers(
+        method,
+        url,
+        region,
+        credentials,
+        datetime.datetime.now(datetime.UTC),
+        payload_hash=EMPTY_SHA256,
+        headers=headers,
+    )
+
+
+def _request(
+    method: str,
+    url: str,
+    credentials: Credentials | None,
+    region: str,
+    timeout: float,
+    headers: dict[str, str],
+    sink: BinaryIO | None = None,
+) -> tuple[http.client.HTTPResponse, int]:
+    """要求を 1 つ送り、答えと本体の byte の数を返す(sink が在れば本体を書き、無ければ読み捨てる)。"""
+    conn, target = _connection(url, timeout)
+    try:
+        conn.request(method, target, headers=_signed(method, url, credentials, region, headers))
+        response = conn.getresponse()
+        count = 0
+        while chunk := response.read(CHUNK):
+            count += len(chunk)
+            if sink is not None:
+                sink.write(chunk)
+        return response, count
+    finally:
+        conn.close()
+
+
+def http_download(
+    url: str,
+    credentials: Credentials | None,
+    region: str,
+    timeout: float,
+    dest: Path,
+    workers: int,
+    part: int = PART,
+) -> dict[str, str]:
+    """url の object を dest へ、part byte ごとの Range の GET を workers 本並べて取り寄せる(object の置き場は 1 本の GET では
+    disk 1 本の読みの速さしか出ない — 2026-11-01 の測りで 1 本 11.6 MB/s・8 本 39.3 MB/s)。片ごとに ETag が HEAD と同じかを確かめる
+    (取り寄せの間に置き直された object を混ぜない)。"""
+    head, _ = _request("HEAD", url, credentials, region, timeout, {})
+    if head.status != 200:
+        raise SystemExit(f"uv-cache: HEAD {url} が HTTP {head.status}")
+    size = int(head.getheader("Content-Length", "0"))
+    etag = head.getheader("ETag", "")
+    with dest.open("wb") as out:
+        out.truncate(size)
+
+    def fetch(start: int) -> int:
+        end = min(start + part, size) - 1
+        with dest.open("r+b") as out:
+            out.seek(start)
+            response, count = _request(
+                "GET",
+                url,
+                credentials,
+                region,
+                timeout,
+                {"Range": f"bytes={start}-{end}"},
+                sink=out,
+            )
+        if (
+            response.status != 206
+            or response.getheader("ETag", "") != etag
+            or count != end - start + 1
+        ):
+            raise SystemExit(
+                f"uv-cache: GET {url} の bytes={start}-{end} が HTTP {response.status}・{count} byte・ETag "
+                f"{response.getheader('ETag', '')!r}(HEAD は {etag!r})"
+            )
+        return count
+
+    with ThreadPoolExecutor(max_workers=max(1, workers)) as pool:
+        fetched = sum(pool.map(fetch, range(0, size, part)))
+    if fetched != size:
+        raise SystemExit(f"uv-cache: {url} の {size} byte のうち {fetched} byte しか届かない")
+    return {"etag": etag.strip('"'), "last-modified": head.getheader("Last-Modified", "")}
+
+
+# ── pack と seed ────────────────────────────────────────────────────────────
+
+
+def _tar_mode(name: str, write: bool) -> str:
+    kind = "w" if write else "r"
+    if name.endswith(".tar.zst"):
+        return f"{kind}|zst"
+    if name.endswith(".tar.gz"):
+        return f"{kind}|gz"
+    raise SystemExit(f"uv-cache: 名は .tar.zst か .tar.gz で終わる: {name!r}")
+
+
+def pack_members(cache: Path) -> list[str]:
+    """pack が入れる cache の直下の名(並びは名の順 — 入れる時と同じ archive-v* が先)。"""
+    names = sorted(p.name for p in cache.iterdir() if not p.name.startswith(PACK_SKIP_PREFIXES))
+    return sorted(names, key=lambda n: (not n.startswith(ARCHIVE_PREFIX), n))
+
+
+def pack(cache: Path, out: Path) -> dict[str, object]:
+    started = time.monotonic()
+    members = pack_members(cache)
+    partial = out.with_name(out.name + ".partial")
+    with (
+        partial.open("wb") as raw,
+        tarfile.open(fileobj=raw, mode=_tar_mode(out.name, write=True)) as tar,
+    ):
+        for name in members:
+            tar.add(cache / name, arcname=name)
+    partial.replace(out)
+    return {
+        "verb": "pack",
+        "out": str(out),
+        "members": members,
+        "bytes": out.stat().st_size,
+        "seconds": round(time.monotonic() - started, 1),
+    }
+
+
+@contextlib.contextmanager
+def held(lock: Path, *, wait: bool) -> Iterator[bool]:
+    """lock の file の排他の錠を持つ間 True を渡す(wait=False で取れなければ False)。"""
+    lock.parent.mkdir(parents=True, exist_ok=True)
+    with lock.open("a") as handle:
+        try:
+            fcntl.flock(handle, fcntl.LOCK_EX | (0 if wait else fcntl.LOCK_NB))
+        except BlockingIOError:
+            yield False
+            return
+        try:
+            yield True
+        finally:
+            fcntl.flock(handle, fcntl.LOCK_UN)
+
+
+@dataclass(frozen=True)
+class Merged:
+    """入れた数(rename した file か dir の木)と、同じ名が在って替えなかった数。"""
+
+    moved: int = 0
+    skipped: int = 0
+
+    def __add__(self, other: Self) -> Self:
+        return type(self)(self.moved + other.moved, self.skipped + other.skipped)
+
+
+def _is_real_dir(path: Path) -> bool:
+    return path.is_dir() and not path.is_symlink()
+
+
+def merge_one(child: Path, dest: Path) -> Merged:
+    """child を dest に同じ名が無ければ rename で入れる。在れば、両方が dir なら中へ降り、file と link は替えない。"""
+    if not os.path.lexists(dest):
+        child.rename(dest)
+        return Merged(moved=1)
+    if _is_real_dir(child) and _is_real_dir(dest):
+        return merge_tree(child, dest)
+    return Merged(skipped=1)
+
+
+def merge_tree(source: Path, target: Path, order=lambda p: p.name) -> Merged:
+    """source の中の物を order の順に target へ入れる(merge_one)。"""
+    return sum(
+        (merge_one(child, target / child.name) for child in sorted(source.iterdir(), key=order)),
+        Merged(),
+    )
+
+
+def seed(
+    cache: Path,
+    source: str,
+    credentials: Credentials | None,
+    region: str,
+    timeout: float,
+    force: bool,
+    workers: int = 8,
+    part: int = PART,
+) -> dict[str, object]:
+    """新しい node の空の cache に、置いた cache の写しを入れるため(頭の註の seed)。"""
+    mark = cache / SEED_MARK
+    if mark.exists() and not force:
+        say(f"seed: 印 {mark} が在る — 入れない")
+        return {"verb": "seed", "seeded": False, "reason": "marked"}
+    cache.mkdir(parents=True, exist_ok=True)
+    started = time.monotonic()
+    with held(cache / SEED_LOCK, wait=True):
+        if mark.exists() and not force:
+            return {"verb": "seed", "seeded": False, "reason": "marked"}
+        for stale in cache.glob(SEED_STAGE + "*"):
+            shutil.rmtree(stale, ignore_errors=True)
+        stage = Path(tempfile.mkdtemp(prefix=SEED_STAGE, dir=cache))
+        try:
+            remote = "://" in source
+            name = urllib.parse.urlsplit(source).path if remote else source
+            packed = stage / Path(name).name if remote else Path(source)
+            meta = (
+                http_download(source, credentials, region, timeout, packed, workers, part)
+                if remote
+                else {}
+            )
+            fetched = time.monotonic()
+            tree = stage / "tree"
+            with (
+                packed.open("rb") as raw,
+                tarfile.open(fileobj=raw, mode=_tar_mode(name, write=False)) as tar,
+            ):
+                tar.extractall(tree, filter="data")
+            extracted = time.monotonic()
+            # 展開済みの wheel(archive-v*)を先に入れ、それを指す索引を後に入れる(索引が無い項目を指す間を作らない)。
+            merged = merge_tree(
+                tree, cache, order=lambda p: (not p.name.startswith(ARCHIVE_PREFIX), p.name)
+            )
+            size = packed.stat().st_size
+        finally:
+            shutil.rmtree(stage, ignore_errors=True)
+        result: dict[str, object] = {
+            "verb": "seed",
+            "seeded": True,
+            "source": source,
+            "bytes": size,
+            "moved": merged.moved,
+            "skipped": merged.skipped,
+            "fetch-seconds": round(fetched - started, 1),
+            "extract-seconds": round(extracted - fetched, 1),
+            "seconds": round(time.monotonic() - started, 1),
+            "at": datetime.datetime.now(datetime.UTC).isoformat(timespec="seconds"),
+            **meta,
+        }
+        partial = mark.with_name(mark.name + ".partial")
+        partial.write_text(json.dumps(result, ensure_ascii=False, sort_keys=True) + "\n")
+        partial.replace(mark)
+    say(
+        f"seed: {source} の {size} byte を入れた({result['seconds']} 秒 — 取り寄せ {result['fetch-seconds']} 秒・展開 "
+        f"{result['extract-seconds']} 秒・入れた {merged.moved}・在った {merged.skipped})"
+    )
+    return result
+
+
+# ── count と gc ────────────────────────────────────────────────────────────
+
+
+@dataclass
+class Tally:
+    """数え 1 つ: items = 項目の数・files = file の数・bytes = disk の byte(st_blocks)・freeable = hardlink の数 1 の file の byte。"""
+
+    items: int = 0
+    files: int = 0
+    bytes: int = 0
+    freeable: int = 0
+
+    @classmethod
+    def total(cls, tallies: Iterable[Self]) -> Self:
+        """数えの和(種類ごとの全部と消す物の数えを、答えの 1 欄にまとめるため)。"""
+        parts = list(tallies)
+        return cls(
+            sum(t.items for t in parts),
+            sum(t.files for t in parts),
+            sum(t.bytes for t in parts),
+            sum(t.freeable for t in parts),
+        )
+
+    def as_dict(self) -> dict[str, int]:
+        return {
+            "items": self.items,
+            "files": self.files,
+            "bytes": self.bytes,
+            "freeable": self.freeable,
+        }
+
+
+@dataclass
+class Unit:
+    """消すかを判じる単位 1 つ(展開済みの wheel・環境・一時の物・venv)。"""
+
+    path: Path
+    kind: str
+    tally: Tally
+    shared: bool  # 中の file のどれかが hardlink の数 2 以上
+    last_used: float
+
+
+def measure(path: Path) -> tuple[Tally, bool, float]:
+    """path の下の file を数え、hardlink を持つ file が在るかと、最後の変更の刻を返す(link は辿らない)。"""
+    walked = list(os.walk(path))
+    dirs = list(_lstats([path, *(Path(top, name) for top, names, _ in walked for name in names)]))
+    files = list(_lstats(Path(top, name) for top, _, names in walked for name in names))
+    linked = [st for st in files if st.st_nlink > 1 and not stat.S_ISLNK(st.st_mode)]
+    tally = Tally(
+        items=1,
+        files=len(files),
+        bytes=sum(st.st_blocks * 512 for st in [*dirs, *files]),
+        freeable=sum(st.st_blocks * 512 for st in files) - sum(st.st_blocks * 512 for st in linked),
+    )
+    return tally, bool(linked), (dirs[0].st_mtime if dirs else 0.0)
+
+
+def _lstats(paths: Iterable[Path]) -> Iterator[os.stat_result]:
+    """paths の lstat(消えた物は飛ばす — 走っている uv と並ぶ)。"""
+    for path in paths:
+        with contextlib.suppress(FileNotFoundError):
+            yield path.lstat()
+
+
+def venv_last_used(venv: Path) -> float:
+    """venv を最後に使った刻: dir・pyvenv.cfg・bin・site-packages の最後の変更と、pyvenv.cfg の最後の読み(Python は起動ごとに読む —
+    atime を書かない file system では変更の刻と同じ)の遅い方。"""
+    probes = [venv, venv / "bin", *venv.glob("lib/python*/site-packages")]
+    stamps = [st.st_mtime for st in _lstats(probes)] + [
+        t for st in _lstats([venv / "pyvenv.cfg"]) for t in (st.st_mtime, st.st_atime)
+    ]
+    return max(stamps, default=0.0)
+
+
+def process_paths(proc: Path = Path("/proc")) -> list[str] | None:
+    """走っている process の作業 dir・実行 file・引数の絶対 path・読み込んだ file の path を、並べた list で返す(proc が読めなければ None)。"""
+    try:
+        pids = [p for p in proc.iterdir() if p.name.isdigit()]
+    except OSError:
+        return None
+    return sorted({path for pid in pids for path in _process_paths_of(pid)})
+
+
+def _process_paths_of(pid: Path) -> Iterator[str]:
+    """process 1 つの作業 dir・実行 file・引数の絶対 path・読み込んだ file の path(読めない物は飛ばす — 終わった・別の uid)。"""
+    for link in ("cwd", "exe"):
+        with contextlib.suppress(OSError):
+            yield os.readlink(pid / link)
+    with contextlib.suppress(OSError):
+        yield from (
+            arg.decode(errors="replace")
+            for arg in (pid / "cmdline").read_bytes().split(b"\0")
+            if arg.startswith(b"/")
+        )
+    with contextlib.suppress(OSError):
+        lines = (pid / "maps").read_text(errors="replace").splitlines()
+        yield from (
+            line[line.find(" /") + 1 :].removesuffix(" (deleted)") for line in lines if " /" in line
+        )
+
+
+def used_under(paths: list[str], root: Path) -> bool:
+    """並べた path のどれかが root か root の下か。"""
+    prefix = str(root)
+    at = bisect.bisect_left(paths, prefix)
+    while at < len(paths) and paths[at].startswith(prefix):
+        rest = paths[at][len(prefix) :]
+        if rest == "" or rest.startswith("/"):
+            return True
+        at += 1
+    return False
+
+
+def find_venvs(root: Path, depth: int) -> Iterator[Path]:
+    """root の下の深さ depth までの .venv(pyvenv.cfg を持つ dir)。.venv の中と link の先へは降りない。"""
+    if depth <= 0:
+        return
+    try:
+        entries = sorted(os.scandir(root), key=lambda e: e.name)
+    except (FileNotFoundError, NotADirectoryError, PermissionError):
+        return
+    for entry in entries:
+        if not entry.is_dir(follow_symlinks=False) or entry.name.startswith(GC_TRASH):
+            continue
+        path = Path(entry.path)
+        if entry.name == ".venv":
+            if (path / "pyvenv.cfg").exists():
+                yield path
+        else:
+            yield from find_venvs(path, depth - 1)
+
+
+def children(cache: Path, prefix: str) -> Iterable[Path]:
+    for bucket in sorted(cache.glob(prefix + "*")):
+        if bucket.is_dir() and not bucket.is_symlink():
+            yield from sorted(bucket.iterdir())
+
+
+@dataclass
+class Survey:
+    archives: list[Unit] = field(default_factory=list)
+    environments: list[Unit] = field(default_factory=list)
+    temporaries: list[Unit] = field(default_factory=list)
+    venvs: list[Unit] = field(default_factory=list)
+
+    def groups(self) -> tuple[tuple[str, list[Unit]], ...]:
+        return (
+            ("archives", self.archives),
+            ("environments", self.environments),
+            ("temporaries", self.temporaries),
+            ("venvs", self.venvs),
+        )
+
+    def tallies(self, cutoff: float, used: list[str] | None) -> dict[str, object]:
+        return {
+            kind: {
+                "all": Tally.total(u.tally for u in units).as_dict(),
+                "doomed": Tally.total(
+                    u.tally for u in units if is_doomed(u, cutoff, used)
+                ).as_dict(),
+            }
+            for kind, units in self.groups()
+        }
+
+
+def _unit(path: Path, kind: str, last_used: float | None = None) -> Unit:
+    tally, shared, newest = measure(path)
+    return Unit(path, kind, tally, shared, newest if last_used is None else last_used)
+
+
+def survey(cache: Path, venv_roots: list[Path], depth: int) -> Survey:
+    temporaries = [*sorted(cache.glob(TMP_PREFIX + "*")), *children(cache, BUILDS_PREFIX)]
+    return Survey(
+        archives=[_unit(entry, "archive") for entry in children(cache, ARCHIVE_PREFIX)],
+        environments=[
+            _unit(entry, "environment", venv_last_used(entry))
+            for entry in children(cache, ENVIRONMENTS_PREFIX)
+        ],
+        temporaries=[_unit(entry, "temporary") for entry in temporaries],
+        venvs=[
+            _unit(venv, "venv", venv_last_used(venv))
+            for root in venv_roots
+            for venv in find_venvs(root, depth)
+        ],
+    )
+
+
+def is_doomed(unit: Unit, cutoff: float, used: list[str] | None) -> bool:
+    """unit を消すか: 最後に使った刻が cutoff より前で、種類ごとの決まりに合う物。"""
+    if unit.last_used >= cutoff:
+        return False
+    # venv と環境は使っている process が無い事を確かめる(proc が読めなければ消さない)。venv は venv を持つ dir(作業木)を作業 dir に
+    # する process も使っていると見る。
+    match unit.kind:
+        case "archive":
+            return not unit.shared
+        case "temporary":
+            return True
+        case "venv":
+            return used is not None and not used_under(used, unit.path.parent)
+        case "environment":
+            return used is not None and not used_under(used, unit.path)
+        case other:
+            raise ValueError(f"知らない単位の種類 {other!r}")
+
+
+def remove(unit: Unit) -> bool:
+    """unit を同じ dir の中の別の名へ rename してから消す(rename できなければ消さない)。"""
+    trash = unit.path.with_name(f"{GC_TRASH}{os.getpid()}-{unit.path.name}")
+    try:
+        unit.path.rename(trash)
+    except OSError as error:
+        say(f"gc: {unit.path} を退けられない({error})— 残す")
+        return False
+    shutil.rmtree(trash, ignore_errors=True)
+    return True
+
+
+def disk_free(path: Path) -> int:
+    st = os.statvfs(path)
+    return st.f_bavail * st.f_frsize
+
+
+def gc(
+    cache: Path,
+    venv_roots: list[Path],
+    idle_days: float,
+    depth: int,
+    dry_run: bool,
+    every_seconds: float | None,
+    proc: Path = Path("/proc"),
+) -> dict[str, object]:
+    verb = "count" if dry_run else "gc"
+    mark = cache / GC_MARK
+    if (
+        not dry_run
+        and every_seconds is not None
+        and mark.exists()
+        and time.time() - mark.stat().st_mtime < every_seconds
+    ):
+        say(f"gc: 前の gc から {every_seconds:.0f} 秒が経っていない — 消さない")
+        return {"verb": verb, "ran": False, "reason": "recent"}
+    started = time.monotonic()
+    with held(cache / GC_LOCK, wait=False) as got:
+        if not got:
+            say("gc: 同じ cache の別の gc が走っている — 消さない")
+            return {"verb": verb, "ran": False, "reason": "locked"}
+        for leftover in [
+            *cache.glob(GC_TRASH + "*"),
+            *(p for root in venv_roots for p in root.glob(f"*/{GC_TRASH}*")),
+        ]:
+            shutil.rmtree(leftover, ignore_errors=True)
+        cutoff = time.time() - idle_days * 86400
+        free_before = disk_free(cache)
+        used = process_paths(proc)
+        before = survey(cache, venv_roots, depth)
+        counted = before.tallies(cutoff, used)
+        result: dict[str, object] = {
+            "verb": verb,
+            "ran": True,
+            "cache": str(cache),
+            "idle-days": idle_days,
+            "venv-roots": [str(r) for r in venv_roots],
+            "proc-readable": used is not None,
+            "before": counted,
+            "free-before": free_before,
+        }
+        say(f"gc: 数えた — {json.dumps(counted, ensure_ascii=False, sort_keys=True)}")
+        if dry_run:
+            result["seconds"] = round(time.monotonic() - started, 1)
+            return result
+        first = {
+            kind: sum(1 for unit in units if is_doomed(unit, cutoff, used) and remove(unit))
+            for kind, units in before.groups()
+            if kind != "archives"
+        }
+        # venv と環境を消すと、同じ中身を指していた展開済みの wheel の hardlink の数が減る — 数え直してから判じる。
+        archives = [_unit(entry, "archive") for entry in children(cache, ARCHIVE_PREFIX)]
+        removed = {
+            **first,
+            "archives": sum(
+                1 for unit in archives if is_doomed(unit, cutoff, used) and remove(unit)
+            ),
+        }
+        after = survey(cache, venv_roots, depth)
+        result.update(
+            {
+                "removed": removed,
+                "after": after.tallies(cutoff, used),
+                "free-after": disk_free(cache),
+                "seconds": round(time.monotonic() - started, 1),
+            }
+        )
+        partial = mark.with_name(mark.name + ".partial")
+        partial.write_text(json.dumps(result, ensure_ascii=False, sort_keys=True) + "\n")
+        partial.replace(mark)
+    say(
+        f"gc: 消した {removed}・空き {free_before} → {result['free-after']} byte({result['seconds']} 秒)"
+    )
+    return result
+
+
+# ── upkeep(起動の準備が背後で 1 度起こす)──────────────────────────────────
+
+
+@dataclass(frozen=True)
+class UpkeepSettings:
+    """起動の準備の環境変数から読む値(頭の註の upkeep)。seed_url が空なら seed しない・gc_days が None なら gc しない。"""
+
+    seed_url: str = ""
+    seed_secret: str = ""
+    seed_min_free: int = 50 << 30
+    gc_days: float | None = None
+    gc_venvs: tuple[Path, ...] = ()
+    gc_every_seconds: float = 72000.0
+
+    @classmethod
+    def from_env(cls, env: dict[str, str]) -> Self:
+        days = env.get("DOEFF_UV_CACHE_GC_DAYS", "").strip()
+        venvs = tuple(Path(p) for p in env.get("DOEFF_UV_CACHE_GC_VENVS", "").split(":") if p)
+        return cls(
+            seed_url=env.get("DOEFF_UV_CACHE_SEED_URL", "").strip(),
+            seed_secret=env.get("DOEFF_UV_CACHE_SEED_SECRET", "").strip(),
+            seed_min_free=int(float(env.get("DOEFF_UV_CACHE_SEED_MIN_FREE_GIB", "50")) * (1 << 30)),
+            gc_days=float(days) if days else None,
+            gc_venvs=venvs,
+            gc_every_seconds=float(env.get("DOEFF_UV_CACHE_GC_EVERY_SECONDS", "72000")),
+        )
+
+
+def upkeep(cache: Path, settings: UpkeepSettings, part: int = PART) -> dict[str, object]:
+    """worker の起動ごとに、新しい node の cache を置き場の写しで用意し(印が無く、空きが seed_min_free 以上の時だけ)、続けて古い物を
+    片付ける(前の gc から gc_every_seconds が経った時だけ)ため。どちらが落ちても他方と起動を止めない — 落ちた訳を 1 行出して続ける。"""
+    cache.mkdir(parents=True, exist_ok=True)
+    seeded: dict[str, object] = {"seeded": False, "reason": "unset"}
+    if settings.seed_url and (cache / SEED_MARK).exists():
+        seeded = {"seeded": False, "reason": "marked"}
+    elif settings.seed_url and disk_free(cache) < settings.seed_min_free:
+        say(
+            f"seed: 空き {disk_free(cache)} byte が下限 {settings.seed_min_free} byte を下回る — 入れない"
+        )
+        seeded = {"seeded": False, "reason": "low-free"}
+    elif settings.seed_url:
+        try:
+            remote = "://" in settings.seed_url
+            credentials = resolve_credentials(settings.seed_secret or None) if remote else None
+            seeded = seed(
+                cache, settings.seed_url, credentials, "us-east-1", 300.0, force=False, part=part
+            )
+        except (SystemExit, OSError, tarfile.TarError, http.client.HTTPException) as error:
+            say(f"seed: 入れられない — {error}(片付けと起動は続ける)")
+            seeded = {"seeded": False, "reason": "failed", "error": str(error)}
+    collected: dict[str, object] = {"ran": False, "reason": "unset"}
+    if settings.gc_days is not None:
+        roots = [r.resolve() for r in settings.gc_venvs if r.is_dir()]
+        try:
+            collected = gc(
+                cache,
+                roots,
+                settings.gc_days,
+                3,
+                dry_run=False,
+                every_seconds=settings.gc_every_seconds,
+            )
+        except OSError as error:
+            say(f"gc: 片付けられない — {error}")
+            collected = {"ran": False, "reason": "failed", "error": str(error)}
+    return {"verb": "upkeep", "seed": seeded, "gc": collected}
+
+
+# ── 入口 ────────────────────────────────────────────────────────────────────
+
+
+def main(argv: list[str] | None = None) -> int:
+    """命令の口(動詞と旗は頭の註)。答えの JSON を標準出力へ 1 行出すため。"""
+    parser = argparse.ArgumentParser(prog="uv_cache.py", description=__doc__.splitlines()[0])
+    sub = parser.add_subparsers(dest="verb", required=True)
+    sub.add_parser("upkeep").add_argument(
+        "--cache", required=True, type=Path, help="uv の cache の dir(UV_CACHE_DIR)"
+    )
+    for name in ("pack", "publish", "seed", "count", "gc"):
+        p = sub.add_parser(name)
+        p.add_argument("--cache", required=True, type=Path, help="uv の cache の dir(UV_CACHE_DIR)")
+        if name in ("pack", "publish"):
+            p.add_argument(
+                "--out", required=True, type=Path, help="pack の file(.tar.zst か .tar.gz)"
+            )
+        if name in ("publish", "seed"):
+            p.add_argument(
+                "--url", required=True, help="S3 の path の形の URL(seed は file の path も)"
+            )
+            p.add_argument("--secret", help="資格の k8s の Secret <namespace>/<name>")
+            p.add_argument("--region", default="us-east-1")
+            p.add_argument(
+                "--timeout", type=float, default=300.0, help="HTTP の 1 回の読み書きの上限の秒"
+            )
+        if name == "seed":
+            p.add_argument("--force", action="store_true", help="印が在っても入れ直す")
+            p.add_argument("--workers", type=int, default=8, help="並べる Range の GET の数")
+        if name in ("count", "gc"):
+            p.add_argument(
+                "--venvs",
+                action="append",
+                default=[],
+                type=Path,
+                help="下の .venv を消す候補にする dir(繰り返せる)",
+            )
+            p.add_argument(
+                "--depth", type=int, default=3, help="--venvs の dir から .venv を探す深さ"
+            )
+            p.add_argument(
+                "--idle-days",
+                type=float,
+                default=7.0,
+                help="最後に使ってからこの日数を過ぎた物だけを消す",
+            )
+        if name == "gc":
+            p.add_argument(
+                "--every-seconds", type=float, help="前の gc からこの秒が経っていなければ何もしない"
+            )
+    args = parser.parse_args(argv)
+    cache: Path = args.cache.resolve()
+    match args.verb:
+        case "pack":
+            answer(pack(cache, args.out))
+        case "publish":
+            packed = pack(cache, args.out)
+            put = http_put_file(
+                args.url, args.out, resolve_credentials(args.secret), args.region, args.timeout
+            )
+            say(
+                f"publish: {args.url} へ {packed['bytes']} byte を置いた(pack {packed['seconds']} 秒)"
+            )
+            answer({**packed, "verb": "publish", "url": args.url, **put})
+        case "seed":
+            credentials = resolve_credentials(args.secret) if "://" in args.url else None
+            answer(
+                seed(
+                    cache,
+                    args.url,
+                    credentials,
+                    args.region,
+                    args.timeout,
+                    args.force,
+                    args.workers,
+                )
+            )
+        case "upkeep":
+            answer(upkeep(cache, UpkeepSettings.from_env(dict(os.environ))))
+        case "count" | "gc":
+            roots = [r.resolve() for r in args.venvs if r.is_dir()]
+            answer(
+                gc(
+                    cache,
+                    roots,
+                    args.idle_days,
+                    args.depth,
+                    dry_run=args.verb == "count",
+                    every_seconds=getattr(args, "every_seconds", None),
+                )
+            )
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())
