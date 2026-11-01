@@ -6202,6 +6202,12 @@
    "module": "(submodule)",
    "name": "doeff_cluster.worker.entry.warm_watch",
    "訳": "R15 の段 1 で区画 worker を _worker へ隠した後に普通の開発が足した module(doeff main 2768aff6c — 待ちの子から分かれた子の見張り)。移し替えの module worker.py が _worker の下の module を古い path でも見せるので目録に数えられる。worker.py は、job の root が古い送る名 doeff_cluster.worker.entry.job_entry で起きる間は消せず、送る名を _worker へ替えて coordinator と worker を配備し直した後に消すと目録から消える"
+  },
+  {
+   "package": "doeff-cluster",
+   "module": "(submodule)",
+   "name": "doeff_cluster.worker.core.load_rules",
+   "訳": "R15 の段 1 で区画 worker を _worker へ隠した後に普通の開発が足した module(doeff main 6806cc360 — heartbeat で名乗る機体の測った空きの判断)。warm_watch と同じく、移し替えの module worker.py が _worker の下の module を古い path でも見せるので目録に数えられる(名の固定の列は空 — 古い path からは名を出さない)。worker.py を消すと目録から消える"
   }
  ]
 }
