@@ -5,10 +5,16 @@
 # (fork した子の共有の頁を重ねて数えた 1 窓を除く — その窓の container は 6531 MiB)・container の memory.peak は 13438 MiB。
 # 値:
 # - services の memory.min 7G(7168M): 予算 7424 − 256。1 台の停止で移る常駐の job の値を含めて N+1 の判断が予算に求める 6571 MiB 以上。
-# - jobs の memory.max 10752M: 準備の分 1536M + task の予約 3 × 3G。task の和の最大 9345 MiB を通す。
-# - container の上限は 18Gi のまま(上げない): 機体の memory が足りずに kubelet がこの Pod を追い出している(10-30〜11-01 に 5 回 — 機体の空き
-#   1536Mi の線を割った時の container は 11.1〜12.0 GiB)。上限を上げると追い出しの手前の使いを増やすので、予算の側を 8960 → 7424 に下げた。
-#   層は container の中の分け方を決めるだけで、機体の memory の不足による追い出しは止めない。
+# - jobs の memory.max 10752M: 準備の分 1536M + task の予約 3 × 3G。task の和の最大 9345 MiB を通す。これは静的な上限で、worker は見張りの
+#   回(5 秒)ごとに jobs の層の memory.max を「jobs の今の使い + kubelet の追い出しまでの空き − 余裕 1 GiB」に掛け直す(この値が上限 —
+#   worker/core/eviction_rules・worker/protocol/eviction_line)。追い出しまでの空き = allocatable 19.79 GiB − Pod の全部の working set
+#   (と機体の線の近い方)。allocatable と E(evictionHard)は worker が Node の status と kubepods の memory.max から読む — ここには書かない。
+#   ほかの Pod の和(7 日で 7.0〜12.7 GiB)が伸びると jobs の層が先に縮み、task の跳ねは kernel が jobs の層の中で止める(task 1 本の
+#   OOM kill — Pod と常駐の job は残る)。
+# - container の上限は 18Gi のまま(上げない): kubelet がこの Pod を追い出したのは allocatable の線(Pod の全部の working set の和が
+#   allocatable 19.79 GiB を越えた — 10-30〜11-01 に 5 回・その時の container は 11.1〜12.0 GiB・機体の MemAvailable は 8〜11 GiB 残っていた)。
+#   上限を上げると追い出しの手前の使いを増やすので、予算の側を 8960 → 7424 に下げた。追い出しを止めるのは上限や層の静的な値でなく、
+#   追い出しまでの空きから掛け直す jobs の層の上限。
 - op: add
   path: /spec/template/spec/containers/0/env/-
   value: { name: WORKER_CGROUP_LAYOUT, value: "worker:memory.min=256M,cpu.weight=1000 services:memory.min=7168M,cpu.weight=1000 jobs:memory.max=10752M,cpu.weight=100" }

@@ -7,7 +7,9 @@
 ;;; 読む file(どれも機体の全体の値 — container の中でも cgroup に縛られない):
 ;;;   /proc/stat             頭の行 cpu の刻みの和(user nice system idle iowait irq softirq steal)と、行 cpuN の数(CPU の数)。
 ;;;                          使い = 前の読みからの (和 − idle − iowait) の増え / 和の増え。guest と guest_nice は user と nice に含まれるので足さない。
-;;;   /proc/meminfo          MemTotal と MemAvailable(memory の見張りと同じ読み — worker/core/memory_rules の node-memory-of)。
+;;;   /proc/meminfo          MemTotal と MemAvailable(memory の見張りと同じ読み — worker/core/memory_rules の node-memory-of)。kubelet の下の
+;;;                          worker は、見張りが最後に数えた追い出しの線の大きさと追い出しまでの空き(worker/core/eviction_rules の
+;;;                          line-memory — 見張りの DANGER と同じ量)を memory の総量と空きとして名乗る。
 ;;;   /proc/pressure/cpu     PSI の some と full の avg10(%)。full の行の無い古い kernel は full を None。
 ;;;   /proc/pressure/memory  PSI の some と full の avg10(%)。
 ;;; PSI の file の無い機体(PSI を切った kernel)は PSI の欄を None にし、/proc/stat か /proc/meminfo の読めない機体(Mac)は測りを名乗らない。
@@ -16,10 +18,14 @@
 (val MODULE-TAGS {:context "worker" :role "judgment"})
 (import dataclasses [dataclass])  ; defrecord の展開が名指す
 (import doeff_cluster._worker.core.memory_rules [MIB NodeMemory node-memory-of])
+(import doeff_cluster._worker.core.eviction_rules [EvictionLine line-memory])
 
 ;; 測りを読み直す間。PSI の avg10 が 10 秒の平均なので、その半分の間で読めば名乗る値の遅れは avg10 の窓の内に収まる。CPU の使いは
 ;; この間の平均になる。
 (val LOAD-READ-EVERY-MS (* 5 1000))
+;; 見張りが数えた追い出しの線を名乗りに使う古さの上限(見張りの回の 5 秒の 3 回分 — 見張りが止まった・遅れた worker は古い空きを
+;; 名乗らず、MemAvailable に戻る)。
+(val LINE-FRESH-MS (* 15 1000))
 ;; /proc/stat の頭の行 cpu の欄のうち、使いに数えない刻み(欄の位置 — 0 = user)。3 = idle・4 = iowait。
 (val IDLE-FIELDS #(3 4))
 ;; 頭の行 cpu の欄のうち、和に数える数(user nice system idle iowait irq softirq steal — 後ろの guest と guest_nice は user と nice に含まれる)。
@@ -79,6 +85,14 @@
   (or (is read-ms None) (< now-ms read-ms) (>= (- now-ms read-ms) LOAD-READ-EVERY-MS)))
 
 
+(defk fresh-line [line line-at-ms now-ms]
+  {:pre [(: line (| EvictionLine None)) (: line-at-ms (| int None)) (: now-ms int)] :post [(: % (| EvictionLine None))]
+   :tags {:context "worker" :role "judgment"}}
+  "見張りが最後に数えた追い出しの線 line(line-at-ms = 数えた刻)を、名乗りに使える新しさの時だけ返すため(LINE-FRESH-MS の内 —
+   古い・刻の無い・壁の時計が戻った読みは None で、名乗りは MemAvailable に戻る)。"
+  (if (and (is-not line None) (is-not line-at-ms None) (<= 0 (- now-ms line-at-ms) LINE-FRESH-MS)) line None))
+
+
 (defk cpu-ticks-of [text]
   {:pre [(: text str)] :post [(: % CpuTicks)] :tags {:context "worker" :role "judgment"}}
   "/proc/stat の中身を CPU の刻みの読みにするため。頭の行 cpu が無い・欄が TICK-FIELDS 個に満たない・数でない・行 cpuN が無いなら
@@ -120,14 +134,18 @@
       (min 1.0 (/ (- after.busy before.busy) (- after.total before.total)))))
 
 
-(defk machine-load-of [stat meminfo cpu-pressure memory-pressure before at-ms]
-  {:pre [(: stat str) (: meminfo str) (: cpu-pressure (| str None)) (: memory-pressure (| str None)) (: before (| CpuTicks None)) (: at-ms int)]
+(defk machine-load-of [stat meminfo cpu-pressure memory-pressure before at-ms [line None]]
+  {:pre [(: stat str) (: meminfo str) (: cpu-pressure (| str None)) (: memory-pressure (| str None)) (: before (| CpuTicks None)) (: at-ms int)
+         (: line (| EvictionLine None))]
    :post [(: % LoadReading)] :tags {:context "worker" :role "judgment"}}
   "/proc/stat・/proc/meminfo・PSI の 2 つの file の中身(読めない PSI の file は None)と前の /proc/stat の読み before を、機体の測った
-   空きにするため。形の違う中身は ValueError(読みの訳 — 呼び手が名乗りを外す)。"
+   空きにするため。line = 機体の memory の見張りが最後に数えた追い出しの線(worker/core/eviction_rules — None = 線が無いか古い)。
+   線が在れば memory の総量と空きは線の大きさと追い出しまでの空き(見張りの DANGER と同じ量 — coordinator はこの空きで task を置く)、
+   無ければ MemTotal と MemAvailable。形の違う中身は ValueError(読みの訳 — 呼び手が名乗りを外す)。"
   (<- ticks CpuTicks (cpu-ticks-of stat))
   (<- busy (| float None) (cpu-busy-between before ticks))
-  (<- memory NodeMemory (node-memory-of meminfo memory-pressure))
+  (<- machine NodeMemory (node-memory-of meminfo memory-pressure))
+  (<- memory NodeMemory (line-memory machine line))
   (var cpu None)
   (when (is-not cpu-pressure None)
     (<- read Pressure (pressure-of cpu-pressure "/proc/pressure/cpu"))

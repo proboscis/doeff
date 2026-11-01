@@ -5,7 +5,10 @@ from dataclasses import dataclass as dataclass
 from doeff_cluster._worker.core.memory_rules import MIB as MIB
 from doeff_cluster._worker.core.memory_rules import NodeMemory as NodeMemory
 from doeff_cluster._worker.core.memory_rules import node_memory_of as node_memory_of
+from doeff_cluster._worker.core.eviction_rules import EvictionLine as EvictionLine
+from doeff_cluster._worker.core.eviction_rules import line_memory as line_memory
 LOAD_READ_EVERY_MS: int
+LINE_FRESH_MS: int
 IDLE_FIELDS: tuple[int, ...]
 TICK_FIELDS: int
 
@@ -56,6 +59,9 @@ class LoadReading:
 def load_read_due(read_ms: int | None, now_ms: int) -> _Program[bool, object]:
     ...
 
+def fresh_line(line: EvictionLine | None, line_at_ms: int | None, now_ms: int) -> _Program[EvictionLine | None, object]:
+    ...
+
 def cpu_ticks_of(text: str) -> _Program[CpuTicks, object]:
     ...
 
@@ -65,5 +71,5 @@ def pressure_of(text: str, source: str) -> _Program[Pressure, object]:
 def cpu_busy_between(before: CpuTicks | None, after: CpuTicks) -> _Program[float | None, object]:
     ...
 
-def machine_load_of(stat: str, meminfo: str, cpu_pressure: str | None, memory_pressure: str | None, before: CpuTicks | None, at_ms: int) -> _Program[LoadReading, object]:
+def machine_load_of(stat: str, meminfo: str, cpu_pressure: str | None, memory_pressure: str | None, before: CpuTicks | None, at_ms: int, line: EvictionLine | None=None) -> _Program[LoadReading, object]:
     ...

@@ -187,7 +187,8 @@
 (defwire MeasuredLoad
   "heartbeat の機体の測った空き(欄 measured — worker/protocol/heartbeat の measured-json と同じ形・worker/core/load_rules の
    MachineLoad): at-ms = 読んだ刻(worker の壁の時計の epoch ms)・cpus = CPU の数・cpu-busy = 前の読みからの CPU の使いの割合(0〜1 —
-   None = まだ数えられない)・memory-total-MiB / memory-available-MiB = MemTotal / MemAvailable(MiB)・cpu-some-avg10 / cpu-full-avg10 /
+   None = まだ数えられない)・memory-total-MiB / memory-available-MiB = kubelet の下の worker は追い出しの線の大きさと追い出しまでの
+   空き、それ以外は MemTotal / MemAvailable(MiB — worker/core/eviction_rules の line-memory)・cpu-some-avg10 / cpu-full-avg10 /
    memory-some-avg10 / memory-full-avg10 = PSI の avg10(%— None = PSI の無い機体・full の行の無い kernel の cpu)。coordinator は
    保存せず、task の置き先をこの値から数え(core/measured_room)、GET /state の worker の行に写す。"
   {:tags {:context "coordinator" :role "type" :reads "json"} :names :camel :unknown :ignore

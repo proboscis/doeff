@@ -57,6 +57,8 @@
 (import doeff_cluster._worker.core.shim_timing [ShimSpans ShimOutlastsTheKill shim-spans shim-ends-before-the-kill])
 (import doeff_cluster._worker.protocol.process_host [HostSettings process-host])
 (import doeff_cluster._worker.protocol.memory_watch [MemoryWatchSettings MemoryCell memory-watch-loop])
+(import doeff_cluster._worker.protocol.eviction_line [EvictionSettings])
+(import doeff_cluster._worker.core.eviction_rules [layer-memory-max pods-dir-of])
 (import doeff_cluster._worker.protocol.supplied_hold [SuppliedHoldSettings SuppliedHoldCell supplied-hold-loop])
 (import doeff_cluster._worker.protocol.warm_host [WarmSettings warm-host])
 (import doeff_cluster._worker.core.places [worker-places])
@@ -86,6 +88,12 @@
 ;; 兄弟の cgroup.procs を書く cgroup v2 の見えの根(起動の script の層 — deploy/boot.sh の WORKER_CGROUP_LAYOUT が書ける見えを置く。無ければ
 ;; /sys/fs/cgroup)。在れば job の子へも渡す(子が自分の子を、機体の配備が宣言した層へ置けるように)。
 (val CGROUP-DIR-VAR "DOEFF_WORKER_CGROUP_DIR")
+;; host の cgroupfs を書ける形で置いた場所(機体の配備の cgroup の層の部品 deploy/k8s/cgroup-layers が置く)と、cgroup の層の宣言
+;; (deploy/boot.sh の「cgroup の層」)。両方と CGROUP-DIR-VAR が在り、worker の container が kubelet の kubepods の下に居る Pod の worker は、
+;; 見張りの回ごとに kubelet の追い出しの線までの空きを数え、jobs の層(JOB-CGROUP-VAR)の memory.max をその空きから掛け直す
+;; (worker/protocol/eviction_line — 宣言の jobs の memory.max はその上限)。
+(val CGROUP-HOST-VAR "WORKER_CGROUP_HOST")
+(val CGROUP-LAYOUT-VAR "WORKER_CGROUP_LAYOUT")
 ;; 実行環境の service も、その root の待ちの子から分けて起こすか(WorkerPolicy.warm-services)。値は on か off
 ;; (無ければ枠の file の自分の行の warmServices・それも無ければ off)。それ以外の綴りは起動を断る(黙って off に倒れない)。
 (val WARM-SERVICES-VAR "DOEFF_WORKER_WARM_SERVICES")
@@ -104,6 +112,25 @@
                           :namespace-file (+ SERVICE-ACCOUNT-DIR "/namespace") :node node :pod-uid pod-uid)
         (PodLabelCell))
       None))
+
+
+(defk eviction-settings-of [machine-env node in-pod]
+  {:pre [(: machine-env dict) (: node str) (: in-pod bool)] :post [(: % (| EvictionSettings None))] :tags {:context "worker" :role "main"}}
+  "機体の memory の見張りが追い出しの線を数え、jobs の層の上限を掛け直すための設定を、起動の時に 1 度だけ作るため(CGROUP-HOST-VAR の
+   註)。in-pod = API server を区画の CA で検める口を組む Pod の worker か(Node の宣言をその口で読む)。Pod の外・node の名が無い・
+   host の cgroupfs か cgroup の層が無い・kubelet の kubepods の下に居ない worker は None(線を数えず、機体の MemAvailable で見張る)。
+   jobs の層の宣言の値を読めない起動は断る(ValueError — 上限の無いまま掛け直さない)。"
+  (val host-root (.get machine-env CGROUP-HOST-VAR))
+  (val cgroup-dir (.get machine-env CGROUP-DIR-VAR))
+  (when (or (not in-pod) (not node) (not host-root) (not cgroup-dir))
+    (return None))
+  (<- pods-dir (| str None) (pods-dir-of cgroup-dir host-root))
+  (when (is pods-dir None)
+    (return None))
+  (val jobs (.get machine-env JOB-CGROUP-VAR))
+  (<- cap (| int None) (layer-memory-max (.get machine-env CGROUP-LAYOUT-VAR "") (or jobs "")))
+  (EvictionSettings :api KUBE-API :token-file SERVICE-ACCOUNT-TOKEN-FILE :node node :pods-dir pods-dir :host-root host-root
+                    :jobs-dir (if jobs (+ cgroup-dir "/" jobs) None) :jobs-cap-bytes cap))
 
 
 (defk boot-file-written [path boot]
@@ -416,7 +443,7 @@
         machine-env (run (with-handlers [subprocess-handler]
                            (machine-environment (+ (run (pass-env-names args.pass-env))
                                                    #(BOOT-FILE-VAR BOOT-STARTED-VAR BOOT-EXEC-VAR JOB-CGROUP-VAR SERVICE-CGROUP-VAR CGROUP-DIR-VAR
-                                                     WARM-SERVICES-VAR POD-UID-VAR commit-var)
+                                                     CGROUP-HOST-VAR CGROUP-LAYOUT-VAR WARM-SERVICES-VAR POD-UID-VAR commit-var)
                                                    WORKER-LOG-ENV-NAMES))))
         ;; service も待ちの子から分けるか(機体の配備が WARM-SERVICES-VAR か枠の file の自分の行の warmServices で
         ;; 入れる・無ければ今までどおり)。
@@ -471,6 +498,10 @@
   ;; 名指しの待ちと lease の返しで別の入れ物に置く(同じ並び)。送り方は一巡し直さない(前の httpx の client を持つ口と同じ —
   ;; 届かない拍は次の拍で送り直す)。世代(boot — 上で決めた値)は Pod の中の file にも書く(readinessProbe が比べる)。
   ;; 起動の刻は壁の時計と単調な時計の両方で読む(最後の連絡とみなす初めの刻 — 沈黙は 2 つの時計の長い方で計る)。
+  ;; 機体の memory の見張り(5 秒ごとに job ごとの memory を数え、尽きかけたら大きい単位を止める)の入れ物は、
+  ;; 見張りの背景の task と、逼迫の観測の答え手 memory-observer(本番の組)と、heartbeat の測り(追い出しの線)が分けるので、組と link より
+  ;; 先に作る。
+  (setv memory-cell (MemoryCell))
   (setv started-ms (run (with-handlers [(sync-time-handler)] (now-epoch-ms)))
         started-mono-ms (monotonic-ms-of (run (with-handlers [(sync-time-handler)] (GetMonotonic))))
         link (LinkState args.name provides (int (* args.fence 1000)) places.tasks boot
@@ -487,6 +518,8 @@
                         :doeff-commit (.get machine-env commit-var "")
                         ;; 機体の空き(/proc の CPU の使い・memory の空き・PSI)を測って heartbeat で名乗る(/proc の無い機体は名乗らない)。
                         :load-paths (LoadPaths)
+                        ;; kubelet の下の worker は、見張りの数えた追い出しまでの空きを memory の空きとして名乗る。
+                        :eviction memory-cell.eviction
                         ;; heartbeat を拍から切り離し、desired の変化は名指しの待ちで受ける(#1933 — 待つ口の無い coordinator
                         ;; には拍ごとに送る)。
                         :watch True)
@@ -497,18 +530,18 @@
         watch-cell (RouteCell (run (route-of args.coordinator started-ms)))
         lease-cell (RouteCell (run (route-of args.coordinator started-ms))))
   (run (with-handlers [os-file-handler] (boot-file-written (.get machine-env BOOT-FILE-VAR) boot)))
-  ;; 機体の memory の見張り(5 秒ごとに job ごとの memory を数え、尽きかけたら大きい単位を止める)の入れ物は、
-  ;; 見張りの背景の task と、逼迫の観測の答え手 memory-observer(本番の組)が分けるので、組より先に作る。
-  (setv watch (MemoryWatchSettings :guard (= args.memory-guard "on"))
-        memory-cell (MemoryCell)
-        ;; 子の job を置く兄弟の cgroup(機体の配備が名を渡した時だけ)。
+  (setv ;; 子の job を置く兄弟の cgroup(機体の配備が名を渡した時だけ)。
         job-procs (run (with-handlers [os-file-handler] (job-cgroup-placed (.get machine-env JOB-CGROUP-VAR) cgroup-root)))
         ;; 置かれた常駐の job を自分の Pod の label に写す(Pod の uid と node の名が在る worker だけ)。
         pod-labels (run (pod-label-parts (.get machine-env POD-UID-VAR) args.node))
         ;; 値の写しの係(ADR-DOE-CLUSTER-004 — 区画の CA で API server を検める口 in-cluster-api-routed を組む Pod の worker だけ。Pod の外の
         ;; worker は ServiceAccount を持たず、API server から値を読まない)。
         hold (if (is pod-labels None) None (SuppliedHoldSettings :worker args.name))
-        hold-cell (SuppliedHoldCell))
+        hold-cell (SuppliedHoldCell)
+        ;; 機体の memory の見張りの設定。追い出しの線(CGROUP-HOST-VAR の註)は、Node の宣言を読む口 in-cluster-api-routed を組む Pod の
+        ;; worker(pod-labels が在る)だけが数える。
+        watch (MemoryWatchSettings :guard (= args.memory-guard "on")
+                                   :eviction (run (eviction-settings-of machine-env args.node (is-not pod-labels None)))))
   ;; handler の組を選び(本番の組)、その組の上で worker の Program を回す。
   (setv handlers (run (production-handlers host probes link link-cell link-options watch-cell lease-cell
                                            places.status codes envs warm (.get machine-env BOOT-FILE-VAR) memory-cell

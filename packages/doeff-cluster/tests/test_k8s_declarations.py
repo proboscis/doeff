@@ -386,6 +386,25 @@ def test_worker_layers_leave_room_for_the_worker_its_preparation_and_its_tasks(r
 
 
 @pytest.mark.parametrize("node", sorted(CGROUP_LAYERS))
+def test_worker_is_given_what_it_needs_to_hold_its_jobs_layer_under_the_eviction_line(rendered: list[Manifest], node: str) -> None:
+    """worker が kubelet の追い出しの線までの空きを数え、jobs の層の memory.max をその空きから掛け直すのに要る物
+    (worker/protocol/eviction_line・worker/entry/main の eviction-settings-of)を、層を宣言する全部の機体の worker が受ける: host の
+    cgroupfs の mount(WORKER_CGROUP_HOST と同じ path — kubepods と root の cgroup を読む)・jobs の層の名と層の宣言(静的な上限)・
+    Node の名(Node の宣言の capacity と allocatable を読む)・Pod の uid(API server を区画の CA で検める口を組む印)。失敗ケース: どれかが
+    無い機体の worker は線を数えず、jobs の層は宣言の静的な上限のまま — task の跳ねが kubelet の allocatable の線に先に当たり、worker の
+    Pod ごと(常駐の job ごと)追い出される(atlas の 10-30〜11-01 の 5 回)。"""
+    worker = _worker_on(rendered, node)
+    host = _env_value(worker, "WORKER_CGROUP_HOST")["value"]
+    mounts = [_mapping(m, "volumeMount")["mountPath"] for m in _sequence(_container(worker).get("volumeMounts", []), "volumeMounts")]
+    assert host in mounts, mounts
+    assert _env_value(worker, "DOEFF_WORKER_JOB_CGROUP")["value"], worker
+    assert "memory.max=" in str(_env_value(worker, "WORKER_CGROUP_LAYOUT")["value"]), worker
+    for name, path in (("NODE_NAME", "spec.nodeName"), ("POD_UID", "metadata.uid")):
+        source = _mapping(_mapping(_env_value(worker, name)["valueFrom"], name)["fieldRef"], name)
+        assert source["fieldPath"] == path, source
+
+
+@pytest.mark.parametrize("node", sorted(CGROUP_LAYERS))
 def test_worker_guards_its_resident_jobs_and_caps_its_tasks_and_commands(rendered: list[Manifest], node: str) -> None:
     """守る層は worker の本体と常駐の job(と zeus の CLI)の層(memory.min)、限る層は task(と zeus の命令)の層(memory.max・memory.high は
     掛けない)。守る層の min の和と限る層の max の和は container の memory の上限の内。失敗ケース: 限る層の max の和が上限を越えると、限る層が

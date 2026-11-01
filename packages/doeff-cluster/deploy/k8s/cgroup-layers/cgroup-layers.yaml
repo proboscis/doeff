@@ -12,6 +12,8 @@
 #   自身の分と同じ値。
 # - jobs の memory.max = 準備の分 1536M + task の予約 × 3G。準備の分は、container の上限 2Gi の機体(k3s-0〜2)で準備が通っていた余地
 #   (2Gi − worker の本体と常駐の job の約 0.4 GiB。oom_kill は 11-01 までの 5 日で 0)。task の 1 本の分は枠の file の task の分と同じ 3G。
+#   この値は静的な上限: worker は見張りの回ごとに jobs の層の memory.max を、kubelet が Pod を追い出す線までの空き(Node の allocatable −
+#   Pod の全部の working set — 下の host の cgroupfs の mount と Node の status から読む)から掛け直す(worker/protocol/eviction_line)。
 # - 枠の file の memoryMiB(常駐の job の memory の予算)= container の上限 − worker の memory.min − jobs の memory.max(zeus と同じ式)。
 # - services の memory.min = その予算から 256M を引いた値(守る層と限る層の和を container の上限の内に残す余り)。どの機体でも、1 台の
 #   worker の停止で移る常駐の job の落ち着いた値と起動の山(N+1 の判断 failover-refusals が予算に求める値)以上。

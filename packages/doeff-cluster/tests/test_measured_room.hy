@@ -68,9 +68,9 @@
 
 
 (deftest test-the-room-is-the-smallest-of-the-measured-cpu-memory-and-cap
-  ;; CPU 16 個・使い 0.25 → 空いた CPU 12 − 残す 1 = 11・memory の空き 6 GiB → (6144 − 512) / 1024 = 5・上限 16 − 置いた 3 = 13。
+  ;; CPU 16 個・使い 0.25 → 空いた CPU 12 − 残す 1 = 11・memory の空き 7 GiB → (7168 − 1536) / 1024 = 5・上限 16 − 置いた 3 = 13。
   ;; 測りにまだ出ていない 1 本を CPU と memory の空きから引く → 4(memory が決める)。
-  (<- by-memory int (measured-room (! (load 16 0.25 6144)) 3 1))
+  (<- by-memory int (measured-room (! (load 16 0.25 7168)) 3 1))
   (assert (= by-memory 4))
   ;; memory が広ければ CPU が決める: 11 − 1 = 10。
   (<- by-cpu int (measured-room (! (load 16 0.25 60000)) 3 1))
@@ -125,10 +125,10 @@
 
 
 (deftest test-one-tick-places-no-more-than-the-measured-room
-  ;; CPU 4 個・使い 0 → CPU の空き 3・memory の空き 2600 MiB → 2。待っている 5 本のうち 1 拍で置くのは 2 本(置くたびに測りにまだ
+  ;; CPU 4 個・使い 0 → CPU の空き 3・memory の空き 3600 MiB → (3600 − 1536) / 1024 = 2。待っている 5 本のうち 1 拍で置くのは 2 本(置くたびに測りにまだ
   ;; 出ていない task として空きから引く)。残る 3 本は空きの無い固定の文で待つ。失敗ケース: 置いたばかりの task を数えなければ、
   ;; 測りが変わらない同じ拍で 5 本とも置く。
-  (<- small WorkerInfo (worker "small" (! (load 4 0.0 2600 :at-ms 1000))))
+  (<- small WorkerInfo (worker "small" (! (load 4 0.0 3600 :at-ms 1000))))
   (val ids ["t1" "t2" "t3" "t4" "t5"])
   (<- state ClusterState (state-of #(small) (! (queued-all ids))))
   (val placed (! (tasks-placed 1000 state state.placements T)))
@@ -137,7 +137,7 @@
   (<- no-room str (task-unplaced-text TaskUnplacedKind.TASK-NO-ROOM))
   (assert (all (gfor id ids :setv row (.row placed id) :if (= row.phase "queued") (= row.detail no-room))) placed)
   ;; 次の測りで機体が空いて見えても、置いた 2 本はまだ動いていると報告されていない(測りに出ていない)ので空きから引く。
-  (<- later WorkerInfo (worker "small" (! (load 4 0.0 2600 :at-ms 9000))))
+  (<- later WorkerInfo (worker "small" (! (load 4 0.0 3600 :at-ms 9000))))
   (<- again ClusterState (state-of #(later) (dfor id ids id (.row placed id))))
   (val replaced (! (tasks-placed 9000 again again.placements T)))
   (assert (= (.count (lfor id ids (. (.row replaced id) phase)) "assigned") 2) replaced))

@@ -14,9 +14,15 @@
 ;;; もう出ている機体へ足さない)。測った空きを名乗らない worker(/proc の無い機体・測りの前の版の worker)と、CPU の使いをまだ数えられない
 ;;; 読み(cpu-busy None — 初めの読み)は 0。
 ;;;
-;;; 常駐の job の分: 測った CPU の使いと MemAvailable には、常駐の job が今使っている CPU と memory が入っている。空きはその残りから数えるので、
+;;; memory の空き(memory-available): worker が名乗る値。kubelet の下の worker は、kubelet が Pod を追い出す線までの空き(Pod の全部の
+;;; working set と allocatable の差・機体の線の近い方 — worker/core/eviction_rules)を名乗り、それ以外の worker は MemAvailable を名乗る。
+;;; 機体の MemAvailable が残っていても、allocatable の線を越えれば kubelet は worker の Pod を丸ごと追い出す(atlas の 10-30〜11-01 の
+;;; 5 回)ので、置き先は追い出しまでの空きで数える。
+;;;
+;;; 常駐の job の分: 測った CPU の使いと memory の空きには、常駐の job が今使っている CPU と memory が入っている。空きはその残りから数えるので、
 ;;; 常駐の job の測った使用量の分を残して task を置く(手書きの割合や数で残さない)。置いた後に task が膨らむ分は、機体の中の cgroup の層
-;;; (常駐の job の memory.min と CPU の重み)が kernel で守る。数の値は機体ごとに書かず、どの機体にも同じ値を使う。
+;;; (常駐の job の memory.min と CPU の重み・追い出しまでの空きから worker が掛け直す jobs の層の memory.max)が kernel で守る。数の値は
+;;; 機体ごとに書かず、どの機体にも同じ値を使う。
 ;;;
 ;;; 優先 0 以上の task と背景の仕事(負の優先の task)の取り分の守り(cluster_policy.task-misfit)は、予約(reserve-of = 上限 /
 ;;; RESERVE-SHARE)を半分ずつに分けて読む。RESERVE-SHARE は、36 core の機体の予約が手で書いていた 6(半分ずつ 3)と同じになる値。
@@ -28,9 +34,11 @@
 ;; task 1 本に見込む CPU の数と memory(MiB)。会話の test や build の 1 本は、混んでいない機体で CPU 1 つ・memory 1 GiB 前後を使う。
 (val TASK-CORES 1)
 (val TASK-MEMORY-MIB 1024)
-;; 機体に残す空いた CPU と memory(常駐の job の揺れと、測りの間の増えの分)。
+;; 機体に残す空いた CPU と memory。CPU は常駐の job の揺れと、測りの間の増えの分。memory はその 512 MiB に、worker が jobs の層の上限で
+;; 追い出しの線の手前に残す余裕 1024 MiB(worker/core/eviction_rules の EVICTION-MARGIN-BYTES — task は追い出しまでの空きからこの余裕を
+;; 引いた分までしか使えない)を足した値。
 (val CPU-FLOOR-CORES 1)
-(val MEMORY-FLOOR-MIB 512)
+(val MEMORY-FLOOR-MIB 1536)
 ;; PSI の some avg10(%)がこの値以上の機体には置かない。CPU は実行を待つ process が出ている時間の割合、memory は回収で止まった時間の割合。
 (val CPU-PRESSURE-STOP 40.0)
 (val MEMORY-PRESSURE-STOP 10.0)
