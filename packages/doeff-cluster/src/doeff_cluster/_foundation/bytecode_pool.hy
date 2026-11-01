@@ -24,12 +24,17 @@
 ;;; 印を焼きの前と後にしか進めないと、保存先に合う code の無い焼き直し(macro を変えた版の後の初めての準備 — 2026-10-27 の zeus-native で
 ;;; 2,400 本・並べる数 2)が 1 file ずつ進んでいても、焼きの全体が停滞の閾(600 秒)を越えて止められ、作り直しも同じ所で止められた。
 ;;;
-;;; 版に依らず効く形: root の側から import するのは python_bytecode の compiled-pyc・checked-hash-pyc・pyc-path と doeff-hy の
-;;; bytecode-is-current だけ(cluster で動く job の doeff の版から変わっていない名前と引数の形 — どれも 2026-10-02 の #2463・#2598 から在る)。
-;;; 読む module の path は内側の doeff_core_effects._python_bytecode と doeff_hy_bytecode_guard._loader_hooks(どちらも 2026-10-29 の
-;;; 段 1 の hide から在る — doeff_hy_bytecode_guard の入口は bytecode-is-current を出さない・ADR-DOE-API-001 R14)。
-(require doeff-hy.macros [defk val])
-(val MODULE-TAGS {:context "doeff-cluster" :role "foundation"})
+;;; 版に依らず効く形: この道具は root の venv の python で走るが、root の版の doeff の package から名を import しない(doeff・
+;;; doeff_core_effects・doeff-hy の macro も — 標準 library と hy だけ。defk・val を使わないのも、macro が root の版の doeff-hy の物になるため)。
+;;; .pyc の path と PEP 552 の頭はここで組む。Hy の source の compile(展開が依った macro の記録を付ける)と、在る .pyc・保存先の code が
+;;; 今の環境の macro に合うかの照らしだけは root の版の doeff-hy の古さの検め(guard)の物を使う(記録の形と照らし方は root の版の物 —
+;;; import の時に照らすのも root の guard)。guard は module の名で引かず、root の guard が起動時(.pth)に SourceFileLoader に被せた口の
+;;; 持ち主の module を sys.modules から引き、その bytecode_is_current と source_to_code_as_import を呼ぶ(guard-module)。口の持ち主の
+;;; [removed]
+;;; #2463・#2598 から変わらず、doeff-hy の tests/test_guard_hook_owner_contract.py が守る。
+;;; 前は guard と python_bytecode を module の名で import したので、worker の版と root の版の doeff が組になり、名の置き場を内側へ移した
+;;; doeff(2026-10-29)の root で、それより古い worker の準備が import の誤りで必ず落ちた(2026-11-01・ADR-DOE-BUILD-002 R7)。
+(setv MODULE-TAGS {:context "doeff-cluster" :role "foundation"})
 (import argparse)
 (import importlib.machinery)
 (import importlib.util)
@@ -41,17 +46,55 @@
 (import concurrent.futures [ProcessPoolExecutor as-completed])
 (import functools [partial])
 (import pathlib [Path])
-(import types [ModuleType])
+(import types [CodeType ModuleType])
 (import hy)
-(import doeff [run])
-(import doeff_hy_bytecode_guard._loader_hooks [bytecode-is-current])
-(import doeff_core_effects [SourceNotCompiled])
-(import doeff_core_effects._python_bytecode [compiled-pyc checked-hash-pyc pyc-path])
 
 ;; PEP 552 の .pyc の頭の長さ(magic・flags・source の hash)— 頭の後ろが marshal した code(保存先の code の entry の中身)。
-(val PYC-HEAD-BYTES 16)
+(setv PYC-HEAD-BYTES 16)
+;; PEP 552 の hash 方式の .pyc の頭の flags: bit 0 = hash 方式・bit 1 = import の時に source の hash を検める(checked)。
+(setv CHECKED-HASH-FLAGS 0b11)
 ;; worker の版の code_store を sys.modules に置く名(root の版の doeff_hy_bytecode_guard._code_store と重ならない名)。
-(val STORE-MODULE-NAME "doeff_cluster_worker_code_store")
+(setv STORE-MODULE-NAME "doeff_cluster_worker_code_store")
+;; root の guard が包む SourceFileLoader の口(持ち主の module を引く手がかり — 前が先)と、持ち主の module から呼ぶ名(頭の註)。
+(setv GUARD-HOOKS #("get_code" "source_to_code"))
+(setv GUARD-NAMES #("bytecode_is_current" "source_to_code_as_import"))
+
+
+(defn #^ ModuleType guard-module []  ; defk にできない: root の版の doeff の macro を使わない道具の素の関数(頭の註)
+  "root の guard の module — root の guard が起動時に SourceFileLoader に被せた口の持ち主を、module の名で import せずに引くため(頭の註)。
+   口が包まれていない・持ち主が 2 つの名を出さない root は、焼いた .pyc に記録を付けられない(import が全部を compile し直す)ので落とす。"
+  (for [hook GUARD-HOOKS]
+    (setv owner (.get sys.modules (getattr (getattr importlib.machinery.SourceFileLoader hook) "__module__" None)))
+    (when (and (is-not owner None) (all (gfor name GUARD-NAMES (callable (getattr owner name None)))))
+      (return owner)))
+  (raise (RuntimeError (.format "SourceFileLoader の口を包んだ guard の module が {} を出さない(doeff-hy の .pth が効いていない root)"
+                                (.join "・" GUARD-NAMES)))))
+
+
+(defn #^ str pyc-path [#^ str source]  ; defk にできない: 内包表記と process の pool の中で呼ぶ path の計算
+  "source の path → 同じ dir の __pycache__ の .pyc の path(import が探す名 — <名>.<cache の印>.pyc)。"
+  (setv #(head tail) (posixpath.split source))
+  (posixpath.join head "__pycache__" (+ (get (posixpath.splitext tail) 0) "." sys.implementation.cache-tag ".pyc")))
+
+
+(defn #^ bytes checked-hash-pyc [#^ CodeType code #^ bytes data]  ; defk にできない: process の pool の子が呼ぶ素の組み立て
+  "焼いた code を、import が source の hash で検める .pyc の中身にするため(PEP 552 — 頭 = magic・flags・source の hash 8 byte、
+   続けて marshal した code)。"
+  (+ importlib.util.MAGIC-NUMBER
+     (.to-bytes CHECKED-HASH-FLAGS 4 "little")
+     (importlib.util.source-hash data)
+     (marshal.dumps code)))
+
+
+(defn #^ tuple compiled-pyc [#^ str name #^ str path #^ bytes data]  ; defk にできない: process の pool の子が呼ぶ焼き
+  "source の中身 1 つを、import が検める方式の .pyc の中身にするため — #(.pyc の中身 None)、焼けない時は #(None 理由)(import の時に同じ
+   誤りが出るので、ここでは記録だけ)。Hy の source は root の guard の source_to_code_as_import で、import と同じく module を置いた中で
+   compile し、展開が依った macro の記録を付ける(記録の無い .pyc は import の時に guard が compile し直す)。"
+  (try
+    (setv code (.source-to-code-as-import (guard-module) (importlib.machinery.SourceFileLoader name path) data path))
+    #((checked-hash-pyc code data) None)
+    (except [error Exception]
+      #(None (.format "{}: {}" (. (type error) __name__) (cut (str error) 0 200))))))
 
 
 (defn #^ None prepare-path [#^ tuple paths]  ; defk にできない: process の pool の initializer(素の関数として呼ばれる)
@@ -72,16 +115,15 @@
   module)
 
 
-(defk current-pyc [tree rel]
-  {:pre [(: tree str) (: rel str)] :post [(: % bool)] :tags {:context "doeff-cluster" :role "foundation"}}
+(defn #^ bool current-pyc [#^ str tree #^ str rel]  ; defk にできない: root の版の doeff の macro を使わない道具の素の関数(頭の註)
   "木に既に在る source 1 つの .pyc が、今の source の hash と今の環境の macro の記録に合うか — 合えば焼き直さずに残すため(.pyc か source を
-   読めない時は偽 = 用意する)。照らし方は import の読みの口と同じ doeff-hy の bytecode-is-current(記録の macro の提供元は module 名から
+   読めない時は偽 = 用意する)。照らし方は import の読みの口と同じ root の guard の bytecode_is_current(記録の macro の提供元は module 名から
    今の import の路で引き直す — prepare-path の後に呼ぶ)。"
-  (val source (posixpath.join tree rel))
+  (setv source (posixpath.join tree rel))
   (try
-    (val existing (.read-bytes (Path (pyc-path source))))
-    (val data (.read-bytes (Path source)))
-    (bytecode-is-current source existing data)
+    (setv existing (.read-bytes (Path (pyc-path source)))
+          data (.read-bytes (Path source)))
+    (.bytecode-is-current (guard-module) source existing data)
     (except [OSError] False)))
 
 
@@ -135,13 +177,14 @@
                 None
                 (.code-key code-store source data name hy.__version__ (or sys.implementation.cache-tag "") sys.flags.optimize)))
   (when (is-not key None)
-    (setv found (.current-entry code-store store key (fn [c] (bytecode-is-current source (run (checked-hash-pyc c data)) data))))
+    (setv guard (guard-module)
+          found (.current-entry code-store store key (fn [c] (.bytecode-is-current guard source (checked-hash-pyc c data) data))))
     (when (is-not found None)
-      (setv head (cut (run (checked-hash-pyc found.code data)) 0 PYC-HEAD-BYTES))
+      (setv head (cut (checked-hash-pyc found.code data) 0 PYC-HEAD-BYTES))
       (return #("stored" (place-pyc store source (.entry-pyc code-store head found))))))
-  (setv compiled (run (compiled-pyc rel name source data)))
-  (when (isinstance compiled SourceNotCompiled)
-    (return #("failed" compiled.reason)))
+  (setv #(compiled reason) (compiled-pyc name source data))
+  (when (is compiled None)
+    (return #("failed" reason)))
   (setv placed (place-pyc store source compiled))
   ;; entry の中身は焼いた .pyc の頭の後ろの bytes そのもの — 次の root が entry から置く .pyc が今置いた .pyc と同じ bytes になり、保存先の
   ;; 1 つの file を分け合う(marshal し直すと bytes が変わり得る)。
@@ -157,7 +200,7 @@
    import し直す前に関数を解けない・worker の版の code_store も fork で子へ引き継ぐ)。1 つ用意し終えるたびに(終わった順に)進みの印
    progress を進める(頭の註 --progress — 渡す順の先の遅い 1 file を待つ間も、ほかの process の終わりで印が進む)。"
   (prepare-path paths)
-  (setv kept (tuple (gfor i items (run (current-pyc (get i 0) (get i 1)))))
+  (setv kept (tuple (gfor i items (current-pyc (get i 0) (get i 1))))
         work (tuple (gfor #(i k) (zip items kept) :if (not k) i))
         one (partial bake-one store))
   (mark-progress progress)
@@ -195,6 +238,7 @@
   (setv here (. (.resolve (Path __file__)) parent))
   (setv (cut sys.path) (lfor p sys.path :if (not (and p (= (.resolve (Path p)) here))) p))
   (store-module-at args.store-module)
+  (guard-module)  ; guard の口の無い root は焼く前に落とす(焼いても記録を付けられない)
   (setv items (tuple (gfor line (.splitlines (.read sys.stdin)) :setv parts (.split line "\t" 2) :if (= (len parts) 3) (tuple parts))))
   (setv #(failed stored reused unstored) (bake items args.jobs (tuple (or args.path [])) args.store args.progress))
   (for [#(tree rel reason) failed]

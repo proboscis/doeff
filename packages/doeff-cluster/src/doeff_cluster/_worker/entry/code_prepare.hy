@@ -351,8 +351,9 @@
 
 
 ;; --- 焼きの効果の訳し --------------------------------------------------------------------
-;; 焼きの道具 _foundation/bytecode_pool.hy はこの file と同じく準備する root の venv の python で起こす(root の側から import するのは
-;; python_bytecode と doeff-hy の bytecode-is-current だけ・保存先の入口は worker の版の code_store)。用意する物を標準入力で渡し、
+;; 焼きの道具 _foundation/bytecode_pool.hy はこの file と同じく準備する root の venv の python で起こす(root の doeff の package からは
+;; 名を import せず、root の guard は SourceFileLoader の口の持ち主として引く・保存先の入口は worker の版の code_store —
+;; ADR-DOE-BUILD-002 R7)。用意する物を標準入力で渡し、
 ;; 結果の行を標準出力から読む。
 
 (defhandler pool-tool-baker [progress]
