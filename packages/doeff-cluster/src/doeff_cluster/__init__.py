@@ -86,6 +86,7 @@ if TYPE_CHECKING:
     from doeff_cluster._sim.local import SharedRows as SharedRows
     from doeff_cluster._sim.local import SimDeadlockError as SimDeadlockError
     from doeff_cluster._sim.local import SimLivenessError as SimLivenessError
+    from doeff_cluster._sim.local import SimMachine as SimMachine
     from doeff_cluster._sim.local import SimOutside as SimOutside
     from doeff_cluster._sim.local import SimPreparation as SimPreparation
     from doeff_cluster._sim.local import SimProcess as SimProcess
@@ -875,6 +876,7 @@ _LAZY_EXPORTS: dict[str, str] = {
     "SignalJob": "doeff_cluster._worker.intent.worker_model",
     "SimDeadlockError": "doeff_cluster._sim.local",
     "SimLivenessError": "doeff_cluster._sim.local",
+    "SimMachine": "doeff_cluster._sim.local",
     "SimOutside": "doeff_cluster._sim.local",
     "SimPreparation": "doeff_cluster._sim.local",
     "SimProcess": "doeff_cluster._sim.local",

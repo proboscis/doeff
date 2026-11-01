@@ -104,7 +104,7 @@
                                    #^ frozenset draining #^ dict load]
   "入れ替えの job を source から並べて置く先の worker の名(担っている数の少ない順・同点は名前順)。無ければ None。並べた置き先(surge)は
    job の側で数える(can-take — job の側の空き job-room-of と全体の空き task-room-of の両方が要る)ので、job の側に空きが無ければ並べず、
-   入れ替えは空くまで待つ(task のために空けておく分 task-reserve を食わない)。load = cluster_policy.load-of の答え。"
+   入れ替えは空くまで待つ。load = cluster_policy.load-of の答え。"
   (setv candidates (sorted (lfor w (.rows state.workers)
                                  :if (and (!= w.name source) (can-take now state job w load timing draining))
                                  w)

@@ -14,6 +14,7 @@
 ;;   (d) 鍵の欄を読まない古い worker(版の指紋を報告する)でも、coordinator は今の宣言の process と数えて Ready にする。
 (require doeff-hy.macros [deftest defk <- val var])
 (val MODULE-TAGS {:context "doeff-cluster-test" :role "test"})
+(import tests.room_rows [ROOM-JSONS])
 (import json)
 (import os)
 (import dataclasses [replace])
@@ -188,7 +189,7 @@
   (for [a actions] (sim.apply a))
   (setv sim.records (! (records-after sim.now sim.records actions sim.policy)))
   (<- rows tuple (status-rows-json (tuple (! (statuses sim.now sim.desired (sim.world) sim.records sim.policy)))))
-  (val reply (sim.call "POST" "/heartbeat" {"name" "zeus" "provides" ["net"] "backgroundRoom" 10 "taskReserve" 0 "versions" V "statuses" (list rows)}
+  (val reply (sim.call "POST" "/heartbeat" {"name" "zeus" "provides" ["net"] "measured" (get ROOM-JSONS 10) "versions" V "statuses" (list rows)}
                        :actor None))
   (val stripped (| reply {"jobs" (lfor j (get reply "jobs") (dfor #(k v) (.items j) :if (!= k "content") k v))}))
   (<- declared DeclaredReply (declared-reply-of-json stripped))

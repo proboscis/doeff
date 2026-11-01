@@ -26,7 +26,7 @@
 (import tests.fixtures.envs [sim-foundation])
 (import tests.fixtures.working_programs [serving-hosts])
 
-(val W1 (SimWorker :name "w1" :provides (frozenset ["cluster-net"]) :task-reserve 0))
+(val W1 (SimWorker :name "w1" :provides (frozenset ["cluster-net"])))
 ;; 新しい Pod が Ready になってから旧い Pod の preStop が drained を受けるまでの上限: 前の世代の worker が印(supersededBy)を次の heartbeat の
 ;; 返事で受けて退かせ、止め(TERM — 止めの猶予 stop-grace 10 秒の後は KILL)で終わり、その終わりを次の heartbeat で coordinator が読むまで。
 (val RETIRE-BOUND-MS 30000)

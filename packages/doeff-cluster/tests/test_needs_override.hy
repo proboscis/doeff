@@ -6,6 +6,8 @@
 ;; 効く needs をその記録から決める。期限の拍か、上書きの needs を満たす生きた worker が 0 になった拍に、coordinator が記録を外して同じ拍で
 ;; 宣言の needs で置き直す。版(revision)を変えずに置き先(needs・pin)を書き換える PUT は 409 で断る。
 (require doeff-hy.macros [deftest defk <- val var])
+(import doeff_cluster [SimMachine])
+(import tests.room_rows [ROOM-JSONS])
 (import doeff_events [MemoryBroker])
 (import doeff_time [Delay])
 (import doeff_cluster [ClusterTiming Request])
@@ -52,7 +54,7 @@
    :tags {:context "doeff-cluster-test" :role "judgment"}}
   "worker name(世代 boot)が能力 provides(専用の能力 exclusive)を名乗る heartbeat を 1 つ受けた後の状態を返すため。"
   (<- answer tuple (call state "POST" "/heartbeat"
-                         {"name" name "provides" provides "exclusive" (or exclusive []) "backgroundRoom" 10 "taskReserve" 0 "versions" V
+                         {"name" name "provides" provides "exclusive" (or exclusive []) "measured" (get ROOM-JSONS 10) "versions" V
                           "boot" boot "bootAt" (if (= boot "b1") 1 now) "statuses" []}
                          :actor None :now now))
   (assert (= (get answer 1) 200) answer)
@@ -290,9 +292,9 @@
   ;; 受入の条 1(模擬): 上書きで rescue の機体へ向けた beacon が、rescue の死の後に上書きを失い(宣言の needs は cluster-net のまま)、
   ;; 宣言の候補の zeus に置かれる。worker の死を試す筋書きなので本番の timing を明示して渡す。
   (<- seen dict (sim-cluster :notice-broker (MemoryBroker) :timing (ClusterTiming) (beacons sim-foundation) (rescue-scenario)
-                             :workers #((SimWorker :name "zeus" :provides (frozenset ["cluster-net"]) :task-reserve 0)
+                             :workers #((SimWorker :name "zeus" :provides (frozenset ["cluster-net"]))
                                         (SimWorker :name "rescue" :provides (frozenset ["cluster-net" "rescue"])
-                                                   :exclusive (frozenset ["rescue"]) :task-reserve 0))))
+                                                   :exclusive (frozenset ["rescue"])))))
   (assert (= seen {"written" 201 "before" "zeus" "bound" "rescue" "after" "zeus" "needs" ["cluster-net"] "overrides" 0}) seen))
 
 
@@ -320,7 +322,7 @@
   (<- (Delay 10.0))
   (<- bound dict (ReadCoordinator "/state"))
   (<- (StopWorker "zeus"))
-  (<- replaced bool (ReplaceWorker "zeus" (SimWorker :name "zeus" :provides (frozenset ["cluster-net"]) :task-reserve 0)))
+  (<- replaced bool (ReplaceWorker "zeus" (SimWorker :name "zeus" :provides (frozenset ["cluster-net"]))))
   (<- started bool (StartWorker "zeus"))
   (var gaps 0)
   (for [_ (range 30)]
@@ -344,5 +346,5 @@
   ;; 直す前の形(上書きを外さない)では、起き直した後の全部の拍で 13 本が置き先を持たない。worker の作り直しを試すので本番の timing を渡す。
   (<- seen dict (sim-cluster :notice-broker (MemoryBroker) :timing (ClusterTiming) (thirteen-beacons sim-foundation) (zeus-rebuilt-scenario)
                              :workers #((SimWorker :name "zeus" :provides (frozenset ["cluster-net" "rescue"])
-                                                   :exclusive (frozenset ["rescue"]) :task-reserve 0 :background-room 20))))
+                                                   :exclusive (frozenset ["rescue"]) :machine (SimMachine :cpus 21 :memory-mib 262144)))))
   (assert (= seen {"written" [201] "bound" ["zeus"] "replaced" #(True True) "gaps" 0 "after" ["zeus"] "overrides" 0}) seen))

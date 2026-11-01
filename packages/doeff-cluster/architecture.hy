@@ -89,13 +89,13 @@
 ;;;   settle 100 の service 2 つの系を置き、process の区間を判断に渡す)。失敗ケースは同じ file の
 ;;;   test-a-counterexample-worker-that-overstates-its-memory-breaks-c6(heartbeat で memory の予算を多く名乗る壊れた worker — SimWorker の
 ;;;   overstates-memory — で 2 つ置かれて C6 が名指す)。
-;;;   C17 jobs-stay-out-of-the-task-reserve(doeff_cluster._coordinator.core.coordinator_invariants:jobs-stay-out-of-the-task-reserve — #3489・
-;;;   task の側の版へ)— どの瞬間も、worker の上で動く task の数は、本当の予約(task-reserve)と背景の枠
-;;;   (background-room)の和を越えない(task の置き場は常駐の job の数に依らない)。確かめるのは tests/test_local.hy の
-;;;   test-tasks-run-in-the-reserve-beside-every-resident-job(予約 1・背景の枠 0 の worker に常駐の service 3 つと task を出す service の系を
-;;;   置き、3 つとも置かれて task が予約で走る — task の区間を判断に渡す)。失敗ケースは同じ file の
-;;;   test-a-counterexample-worker-that-overclaims-its-task-reserve-breaks-c17(本当は枠 0 の worker が heartbeat で予約を 1 と名乗る — SimWorker の
-;;;   claims-task-reserve — で task が置かれて C17 が名指す)。
+;;;   C17 tasks-stay-within-the-machine(doeff_cluster._coordinator.core.coordinator_invariants:tasks-stay-within-the-machine — #3489 の
+;;;   予約の条を測った空きの置き方へ)— どの瞬間も、worker の上で動く task の数は、その機体が本当の測った空き(measured_room.measured-room)
+;;;   で受ける数を越えない(task は heartbeat の測った空きから数えて置き、常駐の job の数に依らない)。確かめるのは
+;;;   tests/test_local.hy の test-tasks-run-in-the-measured-room-beside-every-resident-job(CPU 2 つの機体の worker に常駐の service 3 つと
+;;;   task を出す service の系を置き、3 つとも置かれて task が測った空きで走る — task の区間を判断に渡す)。失敗ケースは同じ file の
+;;;   test-a-counterexample-worker-that-overclaims-its-cpus-breaks-c17(本当は CPU 1 つ — 空きの無い機体の worker が heartbeat の measured で
+;;;   CPU を 4 つと名乗る — SimWorker の claims-cpus — で task が置かれ C17 が名指す)。
 ;;;   C7 placed-only-where-eligible(doeff_cluster._coordinator.core.coordinator_invariants:placed-only-where-eligible — #1976 の #32)— 置き先の
 ;;;   worker は job の needs を本当に提供する。確かめるのは tests/test_local.hy の test-a-job-is-not-placed-on-a-worker-without-its-needs
 ;;;   (needs を提供しない worker だけの世界の置き先を判断に渡す)。失敗ケースは同じ file の
@@ -233,7 +233,7 @@
                 "doeff_cluster._coordinator.core.coordinator_invariants:alive-only-while-reachable"
                 "doeff_cluster._coordinator.core.coordinator_invariants:places-only-on-reachable"
                 "doeff_cluster._coordinator.core.coordinator_invariants:running-within-capacity"
-                "doeff_cluster._coordinator.core.coordinator_invariants:jobs-stay-out-of-the-task-reserve"
+                "doeff_cluster._coordinator.core.coordinator_invariants:tasks-stay-within-the-machine"
                 "doeff_cluster._coordinator.core.coordinator_invariants:placed-only-where-eligible"
                 "doeff_cluster._coordinator.core.coordinator_invariants:moves-to-a-live-worker"
                 "doeff_cluster._coordinator.core.coordinator_invariants:tasks-answered-in-time"

@@ -6214,6 +6214,12 @@
    "module": "doeff_cluster",
    "name": "task_room_of",
    "訳": "区画 coordinator の移し替えの module を消した後に、packages/doeff-cluster/tests/test_cluster_policy.hy が読むために根から出した program の helper(doeff main 32694cf7a — worker の task の空きを数える判断)。外の使い手は無く、test が隠した module から読む形に替えると根から消せる"
+  },
+  {
+   "package": "doeff-cluster",
+   "module": "doeff_cluster",
+   "name": "SimMachine",
+   "訳": "模擬の worker(根の SimWorker)の欄 machine の型(card [id] — coordinator が task を測った空きで置くので、模擬の worker は載る機体の CPU と memory から測った空きを名乗る)。SimWorker を作る使い手が機体の大きさを名指すために根から出す。SimWorker と同じ組へ移る時に一緒に動く"
   }
  ]
 }

@@ -4,6 +4,7 @@
 ;;; 回らない版で同じになるので、答えの比べでは「走査に戻った」退行を捕まえられない — 判断が走った行を見る。
 (require doeff-hy.macros [deftest val <- defk])
 (val MODULE-TAGS {:context "doeff-cluster-test" :role "test"})
+(import tests.room_rows [ROOM-LOADS])
 
 (import hy)
 (import pytest)
@@ -51,7 +52,7 @@
 (defk state-of [tasks]
   {:pre [(: tasks dict)] :post [(: % ClusterState)] :tags {:context "doeff-cluster-test" :role "judgment"}}
   "tasks と worker w だけを持つ状態を作るため。"
-  (ClusterState :workers (! (table-from-rows {"w" (WorkerInfo "w" #() 0 :task-reserve 0 :background-room 1)}))
+  (ClusterState :workers (! (table-from-rows {"w" (WorkerInfo "w" #() 0 :measured (get ROOM-LOADS 1))}))
                 :tasks (! (table-from-rows tasks))))
 
 (defk watch-lapse-decisions [monkeypatch]

@@ -9,6 +9,7 @@
 ;; readiness-due は「答えを変え得る刻の下限」を返す(早めに試すのは安全)。D で答えが変わらない枝は、その事と判定が実際に変わる刻を
 ;; そのテストの註に書く(D − 1 で変わらない事だけを縛る)。
 (require doeff-hy.macros [deftest defk <- val])
+(import tests.room_rows [ROOM-LOADS])
 (import tests.state_rows [table-from-rows])
 (import dataclasses [replace])
 (import doeff_hy._table [TableWrite table-of])
@@ -202,7 +203,7 @@
   ;; 約束の期限(ClusterTiming.kept-reassign-after-ms): 印の約束の担い手 w1 が長い方の柵を越えて黙っている(ほかの期限は過ぎている)。
   ;; liveness-due が返す刻 D は w1 の最後の連絡 + kept-reassign-after-ms + 1。調停(reconcile)は D − 1 では約束を保ち、D で外す —
   ;; 要求の無い間も、coordinator は D に起きて約束を外す。
-  (val holder (WorkerInfo :name "w1" :provides #("net") :background-room 10 :last-seen-ms 0 :task-reserve 0))
+  (val holder (WorkerInfo :name "w1" :provides #("net") :measured (get ROOM-LOADS 10) :last-seen-ms 0))
   (val mark (KeepMark :job "a" :worker "w1" :boot None :since-ms 0))
   (val now (+ T.keep-fence-ms 1000))
   (val state (note-liveness (ClusterState :workers (! (table-from-rows {"w1" holder})) :keep-marks #(mark)) now T))
@@ -258,9 +259,9 @@
 (deftest test-nodes-to-follow-reads-no-time
   ;; node n1・n2 の上の worker と、node を申告しない worker。見張るのは n1 と n2 で、観測の在る無しと観測の時刻に依らない(時刻を
   ;; 読まない — label の変化は見張りが受付の箱を起こして伝える)。
-  (val workers (! (table-from-rows {"w1" (WorkerInfo :name "w1" :provides #("cpu") :background-room 1 :last-seen-ms 1000000 :task-reserve 0 :node "n2")
-                "w2" (WorkerInfo :name "w2" :provides #("cpu") :background-room 1 :last-seen-ms 1000000 :task-reserve 0 :node "n1")
-                "w3" (WorkerInfo :name "w3" :provides #("cpu") :background-room 1 :last-seen-ms 1000000 :task-reserve 0 :node "")})))
+  (val workers (! (table-from-rows {"w1" (WorkerInfo :name "w1" :provides #("cpu") :measured (get ROOM-LOADS 1) :last-seen-ms 1000000 :node "n2")
+                "w2" (WorkerInfo :name "w2" :provides #("cpu") :measured (get ROOM-LOADS 1) :last-seen-ms 1000000 :node "n1")
+                "w3" (WorkerInfo :name "w3" :provides #("cpu") :measured (get ROOM-LOADS 1) :last-seen-ms 1000000 :node "")})))
   (val observations (ClusterObservations
                       :nodes (table-of #((TableWrite "n1" (NodeLabelsSeen :labels (table-of #()) :at 1000000))))))
   (<- followed tuple (nodes-to-follow (ClusterState :workers workers :observations observations)))

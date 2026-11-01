@@ -8,6 +8,7 @@
 ;; - Rollout の進行中に Kubernetes を読む: 名のある読みの周期の後の刻。
 ;; どれも、返す刻の 1 ms 前では判断が状態を変えず、その刻で変える。
 (require doeff-hy.macros [deftest defk <- val])
+(import tests.room_rows [ROOM-LOADS])
 (import doeff_hy._table [Table TableWrite table-of])
 (import dataclasses [replace])
 (import doeff_cluster [ClusterTiming])
@@ -27,7 +28,7 @@
 (defk worker-at [name last-seen capacity]
   {:pre [(: name str) (: last-seen int) (: capacity int)] :post [(: % WorkerInfo)] :tags {:context "doeff-cluster-test" :role "judgment"}}
   "筋書きの worker(能力 cpu・python 3・最後の連絡 last-seen)を作るため。"
-  (replace (WorkerInfo name #("cpu") last-seen :task-reserve 0 :background-room capacity) :versions PYTHON))
+  (replace (WorkerInfo name #("cpu") last-seen :measured (get ROOM-LOADS capacity)) :versions PYTHON))
 
 
 (defk task-on [id phase worker]

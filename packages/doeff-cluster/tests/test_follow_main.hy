@@ -13,6 +13,7 @@
 ;; 係は 2026-09-28 に消した(Program の job は宣言した commit でだけ解く — ADR-DOE-CLUSTER-001・計画 2.2 の E)ので、版を変えるのは
 ;; 宣言し直しだけ。image の版を追う欄(baseFrom・base・overlay)を持つ宣言を断る検は test_old_declarations.hy。
 (require doeff-hy.macros [deftest defk <- val])
+(import tests.room_rows [ROOM-LOADS ROOM-JSONS])
 (import tests.state_rows [table-from-rows])
 (import doeff [run])
 (import dataclasses [replace])
@@ -114,7 +115,7 @@
   (for [a actions] (sim.apply a))
   (setv sim.records (! (records-after sim.now sim.records actions sim.policy)))
   (<- rows tuple (status-rows-json (tuple (! (statuses sim.now sim.desired (sim.world) sim.records sim.policy)))))
-  (val reply (sim.call "POST" "/heartbeat" {"name" "zeus" "provides" ["net"] "backgroundRoom" 10 "taskReserve" 0 "versions" V "statuses" (list rows)}
+  (val reply (sim.call "POST" "/heartbeat" {"name" "zeus" "provides" ["net"] "measured" (get ROOM-JSONS 10) "versions" V "statuses" (list rows)}
                        :actor None))
   (setv sim.desired (tuple (gfor j (get reply "jobs")
                                  (JobSpec (get j "name") (get j "entry") (tuple (get j "args")) (get j "revision")
@@ -205,7 +206,7 @@
   (import doeff_cluster [WorkerInfo]
           doeff_cluster._coordinator.intent.cluster_model [WorkerReport])
   (import doeff_cluster._coordinator.intent.request_bodies [StatusRow])
-  (val state (replace empty :workers (! (table-from-rows {"zeus" (WorkerInfo "zeus" #("net") 1000 :task-reserve 0 :background-room 10)}))
+  (val state (replace empty :workers (! (table-from-rows {"zeus" (WorkerInfo "zeus" #("net") 1000 :measured (get ROOM-LOADS 10))}))
                             :observations (! (reports-observed {"zeus" (WorkerReport :at 1000 :endpoint None
                                                                                      :jobs #((StatusRow :name "a#retired-1-x" :phase "running"
                                                                                                         :retired-from "a")))}))))
@@ -218,8 +219,8 @@
   ;; 能力の名乗りは計器の label に写さない)。忘れた worker は出ない。
   (import doeff_cluster [WorkerInfo])
   (val state (replace (ClusterState)
-                      :workers (! (table-from-rows {"zeus" (WorkerInfo "zeus" #("cluster-net" "net") 1000 :task-reserve 0 :background-room 10)
-                                "proboscis-mbp" (WorkerInfo "proboscis-mbp" #("agent-cli") 61000 :exclusive #("agent-cli") :task-reserve 0 :background-room 10)}))))
+                      :workers (! (table-from-rows {"zeus" (WorkerInfo "zeus" #("cluster-net" "net") 1000 :measured (get ROOM-LOADS 10))
+                                "proboscis-mbp" (WorkerInfo "proboscis-mbp" #("agent-cli") 61000 :exclusive #("agent-cli") :measured (get ROOM-LOADS 10))}))))
   (val text (metrics-text state 91000 T))
   (assert (in "doeff_worker_worker_heartbeat_age_seconds{worker=\"zeus\"} 90.0" text) text)
   (assert (in "doeff_worker_worker_heartbeat_age_seconds{worker=\"proboscis-mbp\"} 30.0" text) text)

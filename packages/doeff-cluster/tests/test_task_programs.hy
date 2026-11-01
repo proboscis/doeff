@@ -10,6 +10,7 @@
 ;;;             返事から外れた task の Program の cache は消す(service の job の Program は消さない)。
 (require doeff-hy.macros [deftest defk deff <- val var])
 (import json)
+(import tests.room_rows [ROOM-JSONS])
 (import os)
 (import subprocess)
 (import sys)
@@ -75,7 +76,7 @@
   {:pre [(: state ClusterState) (: now int) (: statuses list)] :post [(: % tuple)] :tags {:context "doeff-cluster-test" :role "entry"}}
   "worker w(能力 net・版 V・世代 b1)の heartbeat 1 回 → #(次の状態 status 返事)。"
   (<- answer tuple (call state "POST" "/heartbeat"
-                         {"name" "w" "provides" ["net"] "backgroundRoom" 10 "taskReserve" 0 "versions" V "boot" "b1" "statuses" statuses} now))
+                         {"name" "w" "provides" ["net"] "measured" (get ROOM-JSONS 10) "versions" V "boot" "b1" "statuses" statuses} now))
   answer)
 
 
@@ -177,7 +178,7 @@
   (<- put tuple (call (get placed 0) "PUT" "/detached/job-c" {"program" (get placed 1) "revision" "r" "needs" ["net"]} 10))
   (val id (get put 2 "task"))
   (<- reply tuple (beat (get put 0) 20 []))
-  (val link (LinkRig "http://127.0.0.1:9" "w" #() 10 0 60000 :task-dir (str (/ tmp-path "tasks"))))
+  (val link (LinkRig "http://127.0.0.1:9" "w" #() 60000 :task-dir (str (/ tmp-path "tasks"))))
   (.accept-tasks link (get reply 2 "tasks"))
   (val row (get (.report link #((JobStatus (+ "task/" id) JobPhase.RUNNING "r" "r" 42 1))) 0))
   (assert (= (get row "task" "program") (get placed 1)) row)
@@ -241,7 +242,7 @@
   (val seen [])
   (<- transport httpx.MockTransport (served-programs seen))
   (val state-dir (/ tmp-path "state"))
-  (val link (LinkRig "http://coord" "w" #("net") 10 0 60000 :task-dir (str (/ state-dir "tasks")) :transport transport))
+  (val link (LinkRig "http://coord" "w" #("net") 60000 :task-dir (str (/ state-dir "tasks")) :transport transport))
   (<- host (host-settings state-dir))
   (val service (JobSpec "svc" JOB-ENTRY #("service" "--identity" (* "0" 16)) "rev1" :program SERVICE-SHA :versions (environ-pairs V)))
   (val tasks (.accept-tasks link [{"id" "t1" "name" "n" "revision" "r" "versions" V "program" TASK-SHA}]))
@@ -292,7 +293,7 @@
    :tags {:context "doeff-cluster-test" :role "entry"}}
   "能力 net・版 versions の worker name の heartbeat 1 回 → #(次の状態 status 返事)。"
   (<- answer tuple (call state "POST" "/heartbeat"
-                         {"name" name "provides" ["net"] "backgroundRoom" 10 "taskReserve" 0 "versions" versions "boot" "b1" "statuses" []}
+                         {"name" name "provides" ["net"] "measured" (get ROOM-JSONS 10) "versions" versions "boot" "b1" "statuses" []}
                          now))
   answer)
 
@@ -324,7 +325,7 @@
   (assert (= (get stored 2 "versions") OTHER) stored)
   ;; 1 つの worker の口が 2 本の task(同じ sha・違う版)を受け、coordinator から Program を取る。
   (<- transport httpx.MockTransport (coordinator-programs [(get reply-b 0)] 6))
-  (val link (LinkRig "http://coord" "w" #("net") 10 0 60000 :task-dir (str (/ tmp-path "state" "tasks")) :transport transport))
+  (val link (LinkRig "http://coord" "w" #("net") 60000 :task-dir (str (/ tmp-path "state" "tasks")) :transport transport))
   ;; 同じ Program を指す service の job も並べる — service は宣言の行の版(DECLARED)で比べ、coordinator の Program の行の版(B)は
   ;; 使わない。
   (val service (JobSpec "svc" JOB-ENTRY #("service" "--identity" (* "0" 16)) "rev1" :program sha :versions (environ-pairs DECLARED)))
@@ -401,7 +402,7 @@
   ;; cache へ取り、job_entry の task 入口の子 process が走らせて結果の file を書き、終わりの報告で呼び手に結果が届く。
   ;; fixture の値は検査器から型が見えない(repo の fixture は object)— conftest の served_coordinator の答え(str)をここで確かめる(test_served_program.hy と同じ)。
   (assert (isinstance served-coordinator str) served-coordinator)
-  (val link (LinkRig served-coordinator WORKER #(NEED) 10 0 60000
+  (val link (LinkRig served-coordinator WORKER #(NEED) 60000
                              :task-dir (str (/ tmp-path "state" "tasks")) :versions (! (process-versions os.environ))))
   (val sender (TaskSender :revision "r-served" :versions (! (process-versions os.environ)) :runtime-env None))
   (<- route CoordinatorRoute (route-of served-coordinator (int (* (time.time) 1000))))

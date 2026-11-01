@@ -110,7 +110,7 @@
   (.write-text (/ root "pressure" "memory") MEMORY-PSI)
   (val paths (LoadPaths :stat (str (/ root "stat")) :meminfo (str (/ root "meminfo"))
                         :cpu-pressure (str (/ root "pressure" "cpu")) :memory-pressure (str (/ root "pressure" "memory"))))
-  (val link (LinkRig "http://coord" "atlas" #() 0 0 60000 :task-dir (str (/ tmp-path "tasks")) :transport (httpx.MockTransport handle)))
+  (val link (LinkRig "http://coord" "atlas" #() 60000 :task-dir (str (/ tmp-path "tasks")) :transport (httpx.MockTransport handle)))
   (setv link.state.load-paths paths)
   (val measured (fn [] (.get (get sent -1) "measured")))
   ;; 初めての拍: 使いは数えられず null・残りは読んだ値。読んだ刻は worker の壁の時計。
@@ -137,8 +137,9 @@
   (setv link.state.load-read-ms None)
   (.poll link)
   (assert (= #((get (measured) "cpuBusy") (get (measured) "cpus") link.state.load-reason) #(None 2 "")) (measured))
-  ;; 測らない worker(load-paths を渡さない — sim の宿・検の口の既定)は measured を名乗らない。
-  (val plain (LinkRig "http://coord" "zeus" #() 0 0 60000 :task-dir (str (/ tmp-path "plain")) :transport (httpx.MockTransport handle)))
+  ;; 測らない worker(load-paths を渡さず、名乗る値も置かない口)は measured を名乗らない。
+  (val plain (LinkRig "http://coord" "zeus" #() 60000 :task-dir (str (/ tmp-path "plain")) :transport (httpx.MockTransport handle)
+                     :measured None))
   (.poll plain)
   (assert (not-in "measured" (get sent -1)) (get sent -1)))
 
@@ -146,9 +147,9 @@
 (deftest test-the-coordinator-shows-the-measured-load-in-state-but-not-in-the-worker-resource
   (<- load LoadReading (machine-load-of STAT-B MEMINFO CPU-PSI MEMORY-PSI (CpuTicks :busy 150 :total 1000 :cpus 2) 1700000000000))
   (<- spelled dict (measured-json load.load))
-  (val body {"name" "helios" "provides" ["host-helios"] "backgroundRoom" 2 "taskReserve" 0})
+  (val body {"name" "helios" "provides" ["host-helios"]})
   (val heard (! (register-heartbeat (ClusterState) (! (heartbeat-of (| body {"measured" spelled}))) 10)))
-  (val both (! (register-heartbeat heard (! (heartbeat-of {"name" "eos" "provides" [] "backgroundRoom" 0 "taskReserve" 0})) 10)))
+  (val both (! (register-heartbeat heard (! (heartbeat-of {"name" "eos" "provides" []})) 10)))
   (val helios (.row both.workers "helios"))
   (assert (= #(helios.measured.cpus helios.measured.cpu-busy helios.measured.memory-available-MiB) #(2 0.4 2048)) helios.measured)
   (assert (is (. (.row both.workers "eos") measured) None))

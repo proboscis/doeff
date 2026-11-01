@@ -28,11 +28,11 @@
 (import doeff_cluster [RuntimeEnv])
 (import doeff_cluster [runtime-env->json])
 
-(val TWO-WORKERS #((SimWorker :name "w1" :provides (frozenset ["cluster-net"]) :task-reserve 0)
-                   (SimWorker :name "w2" :provides (frozenset ["cluster-net"]) :task-reserve 0)))
+(val TWO-WORKERS #((SimWorker :name "w1" :provides (frozenset ["cluster-net"]))
+                   (SimWorker :name "w2" :provides (frozenset ["cluster-net"]))))
 ;; 名指しの待ちが他の worker の drain で起きない事を見る筋書きの worker 3 台 — 2 台だと、もう 1 台を drain すると名指した worker の job が
 ;; 他へ移せなくなり、返事に「途絶しても動かし続けてよい」印(keep-when-cut-off)が立つ(名指した worker の本物の変化 — 起きるのが正しい)。
-(val THREE-WORKERS (+ TWO-WORKERS #((SimWorker :name "w3" :provides (frozenset ["cluster-net"]) :task-reserve 0))))
+(val THREE-WORKERS (+ TWO-WORKERS #((SimWorker :name "w3" :provides (frozenset ["cluster-net"])))))
 ;; 系が落ち着くまで(beacon が置かれ、readiness の window 5 秒が埋まる)待つ秒。
 (val SETTLE-SECONDS 12.0)
 ;; 起こし直しを待たせる worker の設定(終わった process を起こし直す要求で coordinator を起こさない)。
@@ -161,8 +161,8 @@
 
 (val WARM-NEED "warm-only")
 ;; w1 だけが温める行の needs(WARM-NEED)を提供する — w2 には当たらない。
-(val WARM-WORKERS #((SimWorker :name "w1" :provides (frozenset ["cluster-net" WARM-NEED]) :task-reserve 0)
-                    (SimWorker :name "w2" :provides (frozenset ["cluster-net"]) :task-reserve 0)))
+(val WARM-WORKERS #((SimWorker :name "w1" :provides (frozenset ["cluster-net" WARM-NEED]))
+                    (SimWorker :name "w2" :provides (frozenset ["cluster-net"]))))
 
 
 (defk warm-request [ttl]

@@ -4,6 +4,7 @@
 ;;; 宣言に無い組を名乗る task を受け口で断る。/state の groupLimits に組ごとの宣言の値と置いている数が出る。
 (require doeff-hy.macros [deftest defk <- val var])
 (val MODULE-TAGS {:context "doeff-cluster-test" :role "test"})
+(import tests.room_rows [ROOM-LOADS])
 
 (import dataclasses [replace])
 (import doeff_hy._table [Table table-of])
@@ -46,7 +47,7 @@
                         (create-resource declared "GroupLimit" (ResourceBody :name l.group :spec {"scope" l.scope "limit" l.limit "perPart" l.per-part "system" "probe"})
                                          "declare" 0)
                         "declare" 0 T)))
-  #((replace declared :workers (! (table-from-rows {"zeus" (WorkerInfo "zeus" #("host-zeus") 0 :task-reserve 0 :versions PY3 :background-room 30)}))) sha))
+  #((replace declared :workers (! (table-from-rows {"zeus" (WorkerInfo "zeus" #("host-zeus") 0 :measured (get ROOM-LOADS 30) :versions PY3)}))) sha))
 
 
 (defk detached-reply [state sha key limits]
@@ -194,7 +195,7 @@
   ;; sim の宣言(系の :task-limits → 資源 GroupLimit)で組 probe を宣言し、同じ組を名乗る 2 本を出す: 宣言の値 1 で 1 本だけ置かれ、
   ;; /state の groupLimits に {group probe・scope worker・limit 1・held [{worker w1 count 1}]・queued 1} が出る。宣言に無い組は断られる。
   (<- state dict (sim-cluster :notice-broker (MemoryBroker) :timing (ClusterTiming) SYSTEM (group-limit-scenario)
-                              :workers #((SimWorker :name "w1" :provides LOCAL :task-reserve 0))))
+                              :workers #((SimWorker :name "w1" :provides LOCAL))))
   (val groups (get state "groupLimits"))
   (assert (= groups [{"group" "probe" "scope" "worker" "limit" 1 "system" "group-limit-scenarios" "resourceVersion" (get (get groups 0) "resourceVersion")
                       "held" [{"worker" "w1" "count" 1}] "queued" 1}])
@@ -237,7 +238,7 @@
   ;; 失敗ケース: 組 probe(機体ごとに 1 本)が埋まって queued の task を、「置き先が無い」と区別できない — 待たせている組の名・範囲・今の数・
   ;; 上限の値・待ち数が答えに出る事で、「列に並んでいる」と読める。置かれた task も同じ組の読みを持つ。
   (<- state dict (sim-cluster :notice-broker (MemoryBroker) :timing (ClusterTiming) SYSTEM (queue-reason-scenario)
-                              :workers #((SimWorker :name "w1" :provides LOCAL :task-reserve 0))))
+                              :workers #((SimWorker :name "w1" :provides LOCAL))))
   (val waiting (get state "waiting"))
   (assert (isinstance waiting DetachedQueueReason) waiting)
   (assert (= waiting.phase "queued") waiting)

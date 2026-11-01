@@ -16,7 +16,7 @@ def env_report(views: tuple[CodeView, ...], capacity: str, unmeasured: frozenset
 def env_heartbeat_part(report: dict[str, object], platform: str) -> dict[str, object]:
     ...
 
-def heartbeat_body(*, name: str, provides: tuple[str, ...], exclusive: tuple[str, ...], node: str, task_reserve: int, background_room: int, versions: dict[str, str], statuses: list[dict[str, object]], endpoint: str, boot: str, boot_at: int, tools: dict[str, object], kept: tuple[str, ...], stopping: bool=False, overlaps_elder: bool=False, doeff_commit: str='', pools: tuple[str, ...]=..., memory_mib: int | None=None, measured: MachineLoad | None=None) -> _Program[dict[str, object], object]:
+def heartbeat_body(*, name: str, provides: tuple[str, ...], exclusive: tuple[str, ...], node: str, versions: dict[str, str], statuses: list[dict[str, object]], endpoint: str, boot: str, boot_at: int, tools: dict[str, object], kept: tuple[str, ...], stopping: bool=False, overlaps_elder: bool=False, doeff_commit: str='', pools: tuple[str, ...]=..., memory_mib: int | None=None, measured: MachineLoad | None=None) -> _Program[dict[str, object], object]:
     ...
 
 def measured_json(load: MachineLoad) -> _Program[dict[str, object], object]:

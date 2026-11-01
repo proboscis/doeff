@@ -3,6 +3,7 @@
 ;;; 時間では測らない。数える物は 3 つ: TaskRecord の replace の呼び数・書きの列の長さ(変わった行の数)・行の同一性(is)。
 (require doeff-hy.macros [deftest val <- defk])
 (val MODULE-TAGS {:context "doeff-cluster-test" :role "test"})
+(import tests.room_rows [ROOM-LOADS])
 
 (import hy)
 (import pathlib [Path])
@@ -29,7 +30,7 @@
               :phase phase :worker worker :detached detached :priority priority))
 
 (defn #^ WorkerInfo live-worker [#^ str name [capacity 10]]
-  (WorkerInfo name #() NOW :task-reserve 0 :background-room capacity))
+  (WorkerInfo name #() NOW :measured (get ROOM-LOADS capacity)))
 
 (defk state-of [rows workers]
   {:pre [(: rows dict) (: workers dict)] :post [(: % ClusterState)] :tags {:context "doeff-cluster-test" :role "judgment"}}

@@ -48,7 +48,7 @@
 (deftest test-a-service-whose-env-cannot-be-prepared-answers-failed-before-the-deadline
   (<- env RuntimeEnv (env-of "app-1" "lib-1" LOCK))
   (<- seen Waited (sim-cluster :notice-broker (MemoryBroker) (beacons sim-foundation) (wait-ready "beacon" PATIENCE) :runtime-env env
-                               :workers #((SimWorker :name "w1" :provides NEEDS :env-failure MISSING :task-reserve 0))))
+                               :workers #((SimWorker :name "w1" :provides NEEDS :env-failure MISSING))))
   ;; 直す前は ReadinessWaitExpired(waited 600 秒)— 落ちた事が答えに無く、回は段の上限まで止まる。
   (assert (isinstance seen.answer ServiceFailed) seen.answer)
   (assert (= seen.answer.phase JobPhase.ENV-FAILED) seen.answer)

@@ -610,11 +610,9 @@
    (timing の lease で前の世代の沈黙を数える — handover-of)。"
   ;; spec.doeffCommit = 今の世代の process の doeff の版(名乗る worker だけ。名乗らない worker の spec の形・版は
   ;; 以前と同じ)。版が替わった拍に版と出来事が進み、版の読み手が GET /watch で起きる。spec.memoryMiB = 枠の file の行の常駐の job の
-  ;; memory の予算(名乗る worker だけ。名乗らない worker の spec の形・版は以前と同じ)。spec.backgroundRoom = 背景の
-  ;; 仕事を同時に置ける数(手書きの capacity の代わり)。いまの task の空き(taskRoom)は task を置くたびに変わる観測
-  ;; なので spec に入れない(版が拍ごとに進む)— GET /state の workers の taskRoom で読む。
-  {"spec" (| {"provides" (list w.provides) "exclusive" (list w.exclusive) "node" w.node "taskReserve" w.task-reserve
-              "backgroundRoom" w.background-room
+  ;; memory の予算(名乗る worker だけ。名乗らない worker の spec の形・版は以前と同じ)。いまの task の空き(taskRoom — 機体の
+  ;; 測った空きから数える)は heartbeat ごとに変わる観測なので spec に入れない(版が拍ごとに進む)— GET /state の workers の taskRoom で読む。
+  {"spec" (| {"provides" (list w.provides) "exclusive" (list w.exclusive) "node" w.node
               "versions" (dict w.versions)}
              (if w.doeff-commit {"doeffCommit" w.doeff-commit} {})
              (if (is w.memory-mib None) {} {"memoryMiB" w.memory-mib}))

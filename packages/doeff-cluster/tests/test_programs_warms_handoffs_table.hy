@@ -3,6 +3,7 @@
 ;;; 時間では測らない。見る物は 3 つ: 残る行(鍵)、書きの無い拍で状態が元と同じ物(is)であること、保存の鍵と値。
 (require doeff-hy.macros [deftest val <- defk])
 (val MODULE-TAGS {:context "doeff-cluster-test" :role "test"})
+(import tests.room_rows [ROOM-LOADS])
 
 (import doeff_cluster [ClusterTiming])
 (import doeff_cluster [ClusterState WorkerInfo]
@@ -52,7 +53,7 @@
 
 
 (deftest test-warms-for-does-not-offer-rows-to-a-draining-worker
-  (val worker (WorkerInfo "w1" #("net") 0 :task-reserve 0 :background-room 10))
+  (val worker (WorkerInfo "w1" #("net") 0 :measured (get ROOM-LOADS 10)))
   (val warms (table-of #((TableWrite "live" LIVE-WARM) (TableWrite "old" OLD-WARM))))
   (val plain (ClusterState :workers (table-of #((TableWrite "w1" worker))) :warms warms))
   (assert (= (tuple (gfor o (warms-for plain "w1" 1000) o.key)) #("live")) "期限の内の行だけを配る")

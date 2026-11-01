@@ -6,9 +6,10 @@
 ;;       test-a-queued-task-waits-past-its-lease-while-the-only-runner-is-replaced が既に測る(待つ・2026-10-02 の直しの後)。
 ;;   (b) 唯一の合う worker の入れ替えの間の assigned(走り中の切り離した task)。
 ;;   (c) coordinator の作り直しの直後の queued — 作り直した coordinator が worker の行を読めない(2026-10-05 の版上げの形: 古い
-;;       coordinator が書いた行に taskReserve が無く、新しい coordinator が読まない)時と、読める時。
+;;       coordinator が書いた行に新しい coordinator が必ず読む欄が無く、行を読まない)時と、読める時。
 (require doeff-hy.macros [deftest defk <- val])
 (val MODULE-TAGS {:context "doeff-cluster-test" :role "test"})
+(import doeff_cluster [SimMachine])
 (import doeff_events [MemoryBroker])
 (import dataclasses [replace])
 (import doeff_time [Delay])
@@ -25,7 +26,7 @@
 (val NEW "90fd9a81d97ddf1cf5ae13a4036fa615108abbe7")
 (val NO-JOBS (system-of "upgrade-swaps" #()))
 (val ON-X (frozenset ["x-tool"]))
-(val A (SimWorker :name "a" :provides (frozenset ["x-tool" "host-a"]) :task-reserve 0 :background-room 1 :doeff-commit OLD))
+(val A (SimWorker :name "a" :provides (frozenset ["x-tool" "host-a"]) :machine (SimMachine :cpus 2 :memory-mib 262144) :doeff-commit OLD))
 (val POLL 0.5)
 (val LEASE 60.0)
 ;; 待ちの期限を短く(本番の既定は 5 時間 — 期限の内か外かを短い仮想の時間で測るため)。
@@ -34,7 +35,7 @@
 
 (defk worker-view [name]
   {:pre [(: name str)] :post [(: % dict)] :tags {:context "doeff-cluster-test" :role "program"}}
-  "coordinator の状態の画面の worker 1 台(backgroundRoom・taskReserve・live を読むため)。"
+  "coordinator の状態の画面の worker 1 台(taskRoom・live を読むため)。"
   (<- state dict (ReadCoordinator "/state"))
   (get (get state "workers") name))
 
@@ -51,20 +52,24 @@
   (and replaced started))
 
 
-(defk replace-a-with-a-larger-background-room []
+(val LARGER (SimMachine :cpus 3 :memory-mib 262144))
+
+
+(defk replace-a-on-a-larger-machine []
   {:pre [] :post [(: % tuple)] :tags {:context "doeff-cluster-test" :role "program"}}
-  "筋書き: 動いている a には差し替えを断られる → 作り直しで背景の枠 1 → 2・版 OLD → NEW にする → coordinator が新しい背景の枠を読む。"
-  (<- refused bool (ReplaceWorker "a" (replace A :background-room 2)))
+  "筋書き: 動いている a には差し替えを断られる → 作り直しで機体の CPU 2 → 3・版 OLD → NEW にする → coordinator が新しい世代の測った空き
+   から task の空き 1 → 2 を数える。"
+  (<- refused bool (ReplaceWorker "a" (replace A :machine LARGER)))
   (<- before dict (worker-view "a"))
-  (<- swapped bool (swap-a (replace A :background-room 2 :doeff-commit NEW)))
+  (<- swapped bool (swap-a (replace A :machine LARGER :doeff-commit NEW)))
   (<- (Delay 5.0))
   (<- after dict (worker-view "a"))
   (<- now SimWorker (WorkerOf "a"))
-  #(refused swapped (get before "backgroundRoom") (get after "backgroundRoom") (get after "live") now.doeff-commit))
+  #(refused swapped (get before "taskRoom") (get after "taskRoom") (get after "live") now.doeff-commit))
 
 
 (deftest test-a-replaced-worker-comes-back-with-the-new-values
-  (<- seen tuple (sim-cluster :notice-broker (MemoryBroker) NO-JOBS (replace-a-with-a-larger-background-room) :workers #(A) :timing TIMING))
+  (<- seen tuple (sim-cluster :notice-broker (MemoryBroker) NO-JOBS (replace-a-on-a-larger-machine) :workers #(A) :timing TIMING))
   (assert (= seen #(False True 1 2 True NEW)) seen))
 
 
@@ -86,17 +91,17 @@
   (assert (in "lease が切れた" outcome.reason) outcome.reason))
 
 
-(defclass DropsTaskReserve [MemoryWalStore]
-  "2026-10-05 の版上げの形の置き場: worker の行に taskReserve を書かない(古い coordinator が書いた行の形)— 作り直した coordinator は
-   taskReserve の無い worker の行を読まず、次の heartbeat まで名簿に worker が居ない。"
+(defclass DropsProvides [MemoryWalStore]
+  "2026-10-05 の版上げの形の置き場: worker の行に、作り直した coordinator が必ず読む欄(provides)を書かない(古い coordinator が書いた
+   行の形 — 10-05 は taskReserve だった)— 作り直した coordinator はその worker の行を読まず、次の heartbeat まで名簿に worker が居ない。"
   (defn #^ None persist [self #^ (get dict #(str object)) delta]
-    (setv drop (fn [v] (if (isinstance v dict) (dfor #(a b) (.items v) :if (!= a "taskReserve") a b) v)))
+    (setv drop (fn [v] (if (isinstance v dict) (dfor #(a b) (.items v) :if (!= a "provides") a b) v)))
     (.persist (super) (dfor #(k v) (.items delta) k (if (.startswith k "worker/") (drop v) v)))))
 
 
 (defk queued-task-across-a-coordinator-restart []
   {:pre [] :post [(: % tuple)] :tags {:context "doeff-cluster-test" :role "program"}}
-  "場面 (c): a(背景の枠 1)を 30 秒の task で埋め、次の task を queued にしてから coordinator を 10 秒止める。答え = 2 つの task の結末。"
+  "場面 (c): a(測った空きで task 1 本)を 30 秒の task で埋め、次の task を queued にしてから coordinator を 10 秒止める。答え = 2 つの task の結末。"
   (<- (Delay 3.0))
   (<- (submit-detached-task (slow-add 30.0 1) :key "k-busy" :needs ON-X :lease-seconds LEASE))
   (<- (Delay 3.0))
@@ -112,7 +117,7 @@
 (deftest test-a-queued-task-is-dropped-when-the-restarted-coordinator-cannot-read-the-worker-rows
   (<- readable tuple (sim-cluster :notice-broker (MemoryBroker) NO-JOBS (queued-task-across-a-coordinator-restart) :workers #(A) :timing TIMING))
   (<- unreadable tuple (sim-cluster :notice-broker (MemoryBroker) NO-JOBS (queued-task-across-a-coordinator-restart) :workers #(A) :timing TIMING
-                                    :store DropsTaskReserve))
+                                    :store DropsProvides))
   ;; 測り (c): 行が読めれば queued は作り直しを越えて走る。読めない(2026-10-05 の形)と queued は「合う worker が無い」で即 落ち、
   ;; 走り中の task は残る — 条 V4 の根拠(#2440)。
   (assert (= readable #((DetachedSucceeded 102) (DetachedSucceeded 101))) readable)

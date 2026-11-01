@@ -39,6 +39,7 @@
 (import doeff_cluster._shared.core.runtime_env_rules [runtime-env-of-json env-key child-environ-refusal])
 (import doeff_cluster._shared.core.readiness_rules [readiness-refusal retired-lifetime-ms retired-limit-of])
 (import doeff_cluster._coordinator.core.program_policy [PROGRAM-GRACE-MS program-refs])
+(import doeff_cluster._coordinator.core.measured_room [measured-room reserve-of unseen-since])
 
 ;; 子の入口の名。子は job の root の版の doeff で `hy -m <名>` として起きるので、worker が root ごとに、その
 ;; root で解ける置き場の名へ替えて起こす(JobSpec.entry-at — _worker の無い古い版の root では区画を隠す前の名)。指紋の材料は置き場を
@@ -629,18 +630,36 @@
 
 (defn #^ dict load-of [#^ ClusterState state #^ (get Table Placement) placements]
   "worker ごとの担っている数(worker の名 → WorkerLoad): jobs = 常駐の job の置き先(placements)と並べた置き先(surge)・tasks = 置かれた
-   task(PLACED-PHASES)・settle-mib = 置き先と surge の job の settle の和(memory を知らない旧い保存の行の job は 0 — 宣言し直しで知る)。
+   task(PLACED-PHASES)・settle-mib = 置き先と surge の job の settle の和(memory を知らない旧い保存の行の job は 0 — 宣言し直しで知る)・
+   unseen = 置かれた task のうち、worker の測った空きにまだ出ていない物(measured を載せた同じ heartbeat の状態の報告に、動いている行
+   task/<id> が無いか、置いた刻 started-ms が measured_room.unseen-since の刻より後 — 走り出したばかりの task の使いは測りに出きって
+   いない)。
    置ける空きは memory-room-of・memory-misfit・task-room-of がこの値から求める(数え方を 1 か所にする)。"
   (setv jobs (dfor name (.keys state.workers) name 0) tasks (dfor name (.keys state.workers) name 0)
+        unseen (dfor name (.keys state.workers) name 0)
         settles (dfor name (.keys state.workers) name 0)
-        settle-of (dfor job state.jobs job.spec.name (or job.settle-mib 0)))
+        settle-of (dfor job state.jobs job.spec.name (or job.settle-mib 0))
+        since (dfor #(name w) (.items state.workers) name (run (unseen-since w.measured)))
+        ;; measured と同じ heartbeat の状態の報告で動いていた task の id(worker ごと)。
+        live (dfor name (.keys state.workers)
+                   :setv report (.row state.observations.statuses name)
+                   name (if (is report None)
+                            (frozenset)
+                            (frozenset (gfor row report.jobs :if (and (.startswith row.name "task/") (in row.phase LIVE-PHASES))
+                                             (cut row.name 5 None))))))
   (for [a (+ (list (.rows placements)) (list (.rows state.surges)))]
     (when (in a.worker jobs)
       (+= (get jobs a.worker) 1)
       (+= (get settles a.worker) (.get settle-of a.job 0))))
   (for [t (scan-rows state.tasks)]
-    (when (and (in t.phase PLACED-PHASES) (in t.worker tasks)) (+= (get tasks t.worker) 1)))
-  (dfor name (.keys state.workers) name (WorkerLoad :jobs (get jobs name) :tasks (get tasks name) :settle-mib (get settles name))))
+    (when (and (in t.phase PLACED-PHASES) (in t.worker tasks))
+      (+= (get tasks t.worker) 1)
+      (setv cut-off (get since t.worker))
+      (when (and (is-not cut-off None)
+                 (not (and (in t.id (get live t.worker)) (is-not t.started-ms None) (<= t.started-ms cut-off))))
+        (+= (get unseen t.worker) 1))))
+  (dfor name (.keys state.workers) name (WorkerLoad :jobs (get jobs name) :tasks (get tasks name) :settle-mib (get settles name)
+                                                    :unseen (get unseen name))))
 
 
 (defk memory-room-of [worker load]
@@ -675,12 +694,12 @@
 
 (defk task-room-of [worker load]
   {:pre [(: worker WorkerInfo) (: load dict)] :post [(: % int)] :tags {:context "coordinator" :role "judgment"}}
-  "worker に task をあと幾つ置けるかを知るため: 予約(task-reserve)+ 背景の枠(background-room)− 置かれた task の数。常駐の job の数に
-   依らない — job は memory で数え、task の空きを使わない(以前は手書きの capacity から job も引き、job を足すと
-   背景の仕事の置き場が減った)。load = load-of の答え(worker の名 → WorkerLoad)。task の置き先(place-tasks)と GET /state の taskRoom は
-   この値を読む。"
+  "worker に task をあと幾つ置けるかを知るため: 機体の測った空き(worker.measured)から数えた数(measured_room.measured-room — 置いた
+   task と、そのうち測りにまだ出ていない task を引く)。常駐の job の今の使いは測った値に入っているので、その分を残して数える。
+   以前は手書きの予約と背景の枠(枠の file の taskReserve・backgroundRoom)から置いた task を引いた。load = load-of の答え(worker の名 →
+   WorkerLoad)。task の置き先(place-tasks)と GET /state の taskRoom はこの値を読む。"
   (val used (get load worker.name))
-  (- (+ worker.task-reserve worker.background-room) used.tasks))
+  (! (measured-room worker.measured used.tasks used.unseen)))
 
 
 (defn #^ tuple active-jobs [#^ ClusterState state]
@@ -1072,15 +1091,17 @@
    文は種類ごとに固定 — 待つ間に調停が拍ごとに書き換えて保存の版を進めない。"
   (match kind
     TaskUnplacedKind.TASK-NO-ROOM
-      "能力と版の合う worker は在るが、どれも task を置ける空きが無い(置かれた task で予約と背景の枠が埋まっている)— 空くまで待つ"
+      "能力と版の合う worker は在るが、どの機体の測った空き(CPU・memory・PSI)にも task を置く余りが無い — 空くまで待つ"
     TaskUnplacedKind.TASK-LIMITED
       "task の名乗った組(limits)の同時数が系の宣言の上限に達している — 同じ組の task が終わるまで待つ"
     TaskUnplacedKind.TASK-RESERVED
-      "負の優先の task(背景の仕事)は worker の task-reserve のうち優先 0 以上の task に残す半分を使わない — 予約を越える空きができるまで待つ"
+      "負の優先の task(背景の仕事)は worker の予約のうち優先 0 以上の task に残す半分を使わない — 予約を越える空きができるまで待つ"
     TaskUnplacedKind.TASK-BACKGROUND-RESERVED
-      "優先 0 以上の task は、背景の仕事が待っている間は worker の task-reserve のうち背景の仕事に残す半分を使わない — 空きができるまで待つ"
+      "優先 0 以上の task は、背景の仕事が待っている間は worker の予約のうち背景の仕事に残す半分を使わない — 空きができるまで待つ"
     TaskUnplacedKind.TASK-UNDECLARED
-      "task の名乗った組(limits)が系の宣言(資源 GroupLimit)に無い — 組の上限が宣言されるまで待つ"))
+      "task の名乗った組(limits)が系の宣言(資源 GroupLimit)に無い — 組の上限が宣言されるまで待つ"
+    TaskUnplacedKind.TASK-UNMEASURED
+      "能力と版の合う worker は在るが、どれも機体の測った空き(heartbeat の measured)を名乗っていない — 測った空きを名乗るまで待つ"))
 
 
 (defk limit-slot [limit declared worker]
@@ -1126,24 +1147,28 @@
 
 (defk foreground-reserve-of [worker]
   {:pre [(: worker WorkerInfo)] :post [(: % int)] :tags {:context "coordinator" :role "judgment"}}
-  "worker の task-reserve のうち、負の優先の task(背景の仕事)に使わせず優先 0 以上の task に残す数を知るため: 予約の半分(切り上げ)。
+  "worker の予約(measured_room.reserve-of — 機体の CPU の数から導く。以前は手書きの task-reserve)のうち、負の優先の task(背景の仕事)に
+   使わせず優先 0 以上の task に残す数を知るため: 予約の半分(切り上げ)。
    背景の仕事は残りの半分(切り捨て)までは予約を使える(2026-10-14)。以前は予約を 1 つも使わせず、背景の仕事の
    置き場は job の側の残り(capacity − task-reserve − 常駐の job)だけだった — 常駐の job は capacity − task-reserve まで置ける(C17)ので、
    job が増えて job の側を埋めると背景の仕事は 1 本も置かれず、本番の zeus(capacity 33・task-reserve 6・常駐の job 27)で会話の
    long-command 8 本が 76〜230 分 queued のまま待った。予約の中に背景の仕事の分を持てば、job の数によらず背景の仕事が走り、
    優先 0 以上の task(配備の組み立て・日次の検)には予約の半分が必ず残る(10-11 の、背景の仕事が枠を埋めて組み立てが待った件の守り)。"
-  (- worker.task-reserve (// worker.task-reserve 2)))
+  (<- reserve int (reserve-of worker.measured))
+  (- reserve (// reserve 2)))
 
 
 (defk background-reserve-of [worker]
   {:pre [(: worker WorkerInfo)] :post [(: % int)] :tags {:context "coordinator" :role "judgment"}}
-  "worker の task-reserve のうち、待っている負の優先の task(背景の仕事)が在る間は優先 0 以上の task に使わせず背景の仕事に残す数を知るため:
+  "worker の予約(measured_room.reserve-of)のうち、待っている負の優先の task(背景の仕事)が在る間は優先 0 以上の task に使わせず背景の
+   仕事に残す数を知るため:
    予約の残りの半分(切り捨て — foreground-reserve-of と足して予約の全部)。以前は優先 0 以上の側の半分だけを守り、背景の仕事の側の半分は
    守らなかった — 本番の zeus(capacity 40・task-reserve 6・常駐の job 33 → task の空き 7)で優先 0 の組 4 つ(日次の検・着地の後の検 2 組・
    着地の宣言し直し)が 4 本を持つと、残る空き 3 は予約の半分 3 を越えず、会話の long-command は 1 本も置かれなかった(2026-10-29 17:09〜
    21:11 JST に最大 27 本・3〜4 時間 queued)。背景の仕事は置いている数がこの数に満たない間は
    予約の残りを使ってよく、優先 0 以上の task は、その worker に置けうる待っている背景の仕事が在る間は、この数に満たない分を残す。"
-  (// worker.task-reserve 2))
+  (<- reserve int (reserve-of worker.measured))
+  (// reserve 2))
 
 
 (defk task-misfit [limits priority worker room held groups bg-held bg-wanted]
@@ -1152,10 +1177,11 @@
    :post [(: % (| TaskUnplacedKind None))]
    :tags {:context "coordinator" :role "judgment"}}
   "能力と版の合う worker 1 台に、待っている task(名乗った組 limits・優先 priority — task の行は受けない)を今置けない理由を知るため
-   (None = 置ける)。room = その worker の task の空き(task-room-of)・held = 置いている task の組の升ごとの数(limit-holdings)・
+   (None = 置ける)。room = その worker の測った空き(task-room-of)・held = 置いている task の組の升ごとの数(limit-holdings)・
    groups = 系が宣言した GroupLimit の表・bg-held = その worker に置いている負の優先の task の数・bg-wanted = その worker に今置けうる
    待っている負の優先の task の数。名乗った組の
-   どれかが宣言に無い → TASK-UNDECLARED・空きが無い → TASK-NO-ROOM・名乗った組のどれかの升が宣言の値に達している → TASK-LIMITED・
+   どれかが宣言に無い → TASK-UNDECLARED・worker が測った空きを名乗らない(measured が無いか CPU の使いをまだ数えられない)→
+   TASK-UNMEASURED・空きが無い → TASK-NO-ROOM・名乗った組のどれかの升が宣言の値に達している → TASK-LIMITED・
    負の優先の task で、空きが予約のうち優先 0 以上の task に残す数(foreground-reserve-of)以下で、置いている背景の仕事が背景の仕事に残す数
    (background-reserve-of)に達している → TASK-RESERVED(2026-10-11・残す数は 2026-10-14 に予約の全部から半分へ・背景の仕事の側の半分は
    2026-10-29)・優先 0 以上の task で、空きが背景の仕事に残す数のうち置いている数に満たない分(待っている背景の仕事の数まで)以下 →
@@ -1166,6 +1192,7 @@
   (val bg-kept (max 0 (min (- bg-floor bg-held) bg-wanted)))
   (cond
     (= by-limits TaskUnplacedKind.TASK-UNDECLARED) by-limits
+    (or (is worker.measured None) (is worker.measured.cpu-busy None)) TaskUnplacedKind.TASK-UNMEASURED
     (<= room 0) TaskUnplacedKind.TASK-NO-ROOM
     by-limits by-limits
     (and (< priority 0) (<= room kept) (>= bg-held bg-floor)) TaskUnplacedKind.TASK-RESERVED
@@ -1196,12 +1223,15 @@
 (defk misfit-reason [kinds]
   {:pre [(: kinds list)] :post [(: % TaskUnplacedKind)] :tags {:context "coordinator" :role "judgment"}}
   "置ける worker のどれにも置けない task の待ちの理由を 1 つに決めるため(kinds = worker ごとの task-misfit の答え・空でない)。
-   宣言に無い組 → 上限 → 予約 → 空きの順に、待てば晴れる理由の具体な物を名乗る。"
+   宣言に無い組 → 上限 → 予約 → 空き → 測りの無さの順に、待てば晴れる理由の具体な物を名乗る(測った空きの無い worker と測りを名乗らない
+   worker が並ぶ時は空きの無さを名乗る — 測りを名乗る worker が在る)。"
   (cond
     (in TaskUnplacedKind.TASK-UNDECLARED kinds) TaskUnplacedKind.TASK-UNDECLARED
     (in TaskUnplacedKind.TASK-LIMITED kinds) TaskUnplacedKind.TASK-LIMITED
     (in TaskUnplacedKind.TASK-RESERVED kinds) TaskUnplacedKind.TASK-RESERVED
     (in TaskUnplacedKind.TASK-BACKGROUND-RESERVED kinds) TaskUnplacedKind.TASK-BACKGROUND-RESERVED
+    (in TaskUnplacedKind.TASK-NO-ROOM kinds) TaskUnplacedKind.TASK-NO-ROOM
+    (in TaskUnplacedKind.TASK-UNMEASURED kinds) TaskUnplacedKind.TASK-UNMEASURED
     True TaskUnplacedKind.TASK-NO-ROOM))
 
 
@@ -1408,8 +1438,9 @@
       (setv able (lfor w (.rows state.workers) :if (and (alive now w timing.lease-ms) (can-run-task task w)) w)
             ;; drain 中と、disk の尽きた worker(準備済みでない env の task)は避ける — 置ける先が他に無ければ待つ。
             able-now (lfor w able :if (and (not-in w.name draining) (env-room-on task w)) w))
-      ;; task を置けるのは task の空き(task-room-of — 予約と背景の枠から置かれた task を引いた数)が在り、名乗った上限に
-      ;; 達しておらず、負の優先なら予約を越える空きの在る worker だけ(task-misfit)。置けない worker の理由は待ちの文に使う。
+      ;; task を置けるのは測った空き(task-room-of — 機体の CPU・memory・PSI から数え、置いた task と測りにまだ出ていない task を
+      ;; 引いた数)が在り、名乗った上限に達しておらず、負の優先なら予約を越える空きの在る worker だけ(task-misfit)。置けない worker の
+      ;; 理由は待ちの文に使う。roomy = 置ける worker と測った空きの組。
       (var roomy #())
       (var misfits [])
       (for [w able-now]
@@ -1417,19 +1448,21 @@
         (<- misfit (| TaskUnplacedKind None) (task-misfit task.limits task.priority w room held state.group-limits
                                                           (get bg-held w.name) (get bg-wanted w.name)))
         (if (is misfit None)
-            (:= roomy #(#* roomy w))
+            (:= roomy #(#* roomy #(w room)))
             (:= misfits [#* misfits misfit])))
       ;; 実行環境の task は、その env を準備済みの worker を優先する(空きの多さより先 — 準備を task の待ちに入れない・2026-09-26)。
-      ;; 次は担っている数(job と task の和)の少ない順。
-      (setv free (sorted roomy :key (fn [w] #((not (env-ready-on task.runtime-env w))
-                                              (+ (. (get load w.name) jobs) (. (get load w.name) tasks)) w.name))))
+      ;; 次は測った空きの多い順(以前は担っている数の少ない順 — 空いた機体があるのに混んだ機体へ置いた)、同じ空きは名の順。
+      (setv free (lfor #(w _) (sorted roomy :key (fn [pair] #((not (env-ready-on task.runtime-env (get pair 0)))
+                                                              (- (get pair 1)) (. (get pair 0) name))))
+                       w))
       (cond
         free (do (setv chosen (get free 0)
                        ;; 準備済みの worker が無い置き先 = 冷たい起動(worker が準備してから走る)。phase を preparing にして assigned と分ける。
                        phase (if (and (is-not task.runtime-env None) (not (env-ready-on task.runtime-env chosen)))
                                  "preparing" "assigned")
                        used (get load chosen.name)
-                       (get load chosen.name) (replace used :tasks (+ used.tasks 1)))
+                       ;; 置いた task は今の刻 now に置かれ、測った刻より後なので測りにまだ出ていない(load-of の unseen と同じ数え)。
+                       (get load chosen.name) (replace used :tasks (+ used.tasks 1) :unseen (+ used.unseen 1)))
                  (when (< task.priority 0)
                    (+= (get bg-held chosen.name) 1))
                  (<- after-hold dict (hold-limits held task.limits chosen.name state.group-limits))
@@ -1439,7 +1472,7 @@
                                           (replace task :phase phase :worker chosen.name :started-ms now
                                                    :boot chosen.boot :lease-until-ms (+ now task.lease-ms))
                                           (replace task :phase phase :worker chosen.name :started-ms now))))
-        ;; 置ける worker(drain 中でも disk 尽きでもない)は在るが、どれにも今置けない(空きが 0・上限・予約): 失敗にせず待つ。
+        ;; 置ける worker(drain 中でも disk 尽きでもない)は在るが、どれにも今置けない(測った空きが 0・測りが無い・上限・予約): 失敗にせず待つ。
         ;; 理由は閉じた語(misfit-reason)の固定の文(task-unplaced-text)。既に同じ文なら書き換えない(調停が拍ごとに保存して版を進めない)。
         ;; drain 中・disk 尽きで置ける先が 1 つも無い(able-now が空)時は、今までどおり理由を書かずに待つ(空きの話ではない)。
         able-now
@@ -1858,10 +1891,8 @@
       (!= (set (.keys before.workers)) (set (.keys after.workers)))
       (any (gfor #(n w) (.items after.workers)
                  :setv b (.row before.workers n)
-                 (or (is b None) (!= #(b.provides b.exclusive b.derived b.node b.task-reserve b.background-room b.versions b.boot b.retired b.boot-at
-                                       b.known-exits)
-                                     #(w.provides w.exclusive w.derived w.node w.task-reserve w.background-room w.versions w.boot w.retired w.boot-at
-                                       w.known-exits)))))))
+                 (or (is b None) (!= #(b.provides b.exclusive b.derived b.node b.versions b.boot b.retired b.boot-at b.known-exits)
+                                     #(w.provides w.exclusive w.derived w.node w.versions w.boot w.retired w.boot-at w.known-exits)))))))
 
 
 (defn #^ list board-changes [#^ ClusterState before #^ ClusterState after]
@@ -1990,9 +2021,6 @@
                          (component-versions-of (or body.versions {}))
                          boot
                          (component-versions-of (or body.tools {}))
-                         ;; task のために空けておく数(本文の必ずの欄)と背景の仕事を同時に置ける数(0 以上は本文の型が検める)。
-                         :task-reserve body.task-reserve
-                         :background-room body.background-room
                          :platform body.platform
                          :env-ready (frozenset envs.ready)
                          :env-preparing (frozenset envs.preparing)
@@ -2390,7 +2418,7 @@
 (defk state-view [state now timing]
   {:pre [(: state ClusterState) (: now int) (: timing ClusterTiming)] :post [(: % StateView)] :tags {:context "coordinator" :role "judgment"}}
   "GET /state の状態の画面(JSON は coordinator/protocol/replies が綴る — #2595)。worker ごとの taskRoom は置き先の判断と同じ数え
-   (load-of と task-room-of)から読む。"
+   (load-of と task-room-of — 機体の測った空き)から読む。"
   (setv draining (draining-workers state now)
         load (load-of state state.placements))
   (var workers #())

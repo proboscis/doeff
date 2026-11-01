@@ -21,7 +21,7 @@
 
 (val NODE "n1")
 (val COMPANY-LABELS {"doeff.dev/company-machine" "true" "kubernetes.io/hostname" NODE})
-(val WORKERS #((SimWorker :name "w1" :provides (frozenset #{"cluster-net"}) :task-reserve 0 :node NODE)))
+(val WORKERS #((SimWorker :name "w1" :provides (frozenset #{"cluster-net"}) :node NODE)))
 ;; worker が heartbeat で node を申告し coordinator が最初の観測を持つまでの秒・label が変わらない静かな区間の秒(直す前の読み直しの間隔 60 秒の 2 倍より長い)・
 ;; label を替える刻を 1 秒の格子から外す端数・替えた後に能力を読むまでの秒。
 (val SETTLE-SECONDS 10.0)

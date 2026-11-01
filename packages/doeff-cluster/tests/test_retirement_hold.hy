@@ -18,7 +18,7 @@
 (import tests.fixtures.lease_programs [lease-sim-foundation])
 (import tests.fixtures.working_programs [HOLD-PREFIX holding-hosts holding-hosts-v2 unheld-hosts unheld-hosts-v2])
 
-(val W1 (SimWorker :name "w1" :provides (frozenset ["cluster-net"]) :task-reserve 0))
+(val W1 (SimWorker :name "w1" :provides (frozenset ["cluster-net"])))
 
 
 (defrecord HoldSeen

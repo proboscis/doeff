@@ -19,7 +19,7 @@
   {:pre [(: name str) (: pools tuple) (: memory (| int None))] :post [(: % FailoverWorker)]
    :tags {:context "doeff-cluster-test" :role "judgment"}}
   "機体の名の能力 host-<名> と雛形の能力と組の印 pools を名乗る、memory の予算 memory の worker を作るため(task の枠は判断が読まない)。"
-  (FailoverWorker :info (WorkerInfo name (tuple (sorted #(f"host-{name}" #* TEMPLATE #* pools))) 0 :task-reserve 0 :background-room 0
+  (FailoverWorker :info (WorkerInfo name (tuple (sorted #(f"host-{name}" #* TEMPLATE #* pools))) 0
                                     :memory-mib memory)
                   :memory-mib memory))
 

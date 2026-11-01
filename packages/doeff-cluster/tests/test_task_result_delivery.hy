@@ -7,6 +7,7 @@
 ;; 窓そのもの(exit 0 の直後の worker の死)は sim-cluster の反例 test_task_result_window.hy が通す。
 (require doeff-hy.macros [deftest defk deff <- val])
 (import httpx)
+(import tests.room_rows [ROOM-JSONS])
 (import doeff_cluster [ClusterTiming Request])
 (import doeff_cluster [ClusterState])
 (import doeff_cluster [http-request])
@@ -35,7 +36,7 @@
 (defk beat-body [worker statuses]
   {:pre [(: worker str) (: statuses list)] :post [(: % dict)] :tags {:context "doeff-cluster-test" :role "judgment"}}
   "worker の heartbeat の本文(能力 net・版 V・状態の報告 statuses)を作るため。"
-  {"name" worker "provides" ["net"] "backgroundRoom" 10 "taskReserve" 0 "versions" V "statuses" statuses})
+  {"name" worker "provides" ["net"] "measured" (get ROOM-JSONS 10) "versions" V "statuses" statuses})
 
 
 (defk placed-task [worker]

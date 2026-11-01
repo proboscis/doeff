@@ -25,8 +25,8 @@
 ;; 本番と同じ時間の設定(fence 20 秒・移し替え 60 秒)。
 (val T (ClusterTiming))
 ;; 能力 cluster-net を持つ worker 2 台 — pulse は移せる先の在る job になり、印が付かない。どちらも機体の壁の時計を動かせる。
-(val TWO-CAPABLE #((SimWorker :name "w1" :provides (frozenset ["cluster-net"]) :task-reserve 0 :steps-wall True)
-                   (SimWorker :name "w2" :provides (frozenset ["cluster-net"]) :task-reserve 0 :steps-wall True)))
+(val TWO-CAPABLE #((SimWorker :name "w1" :provides (frozenset ["cluster-net"]) :steps-wall True)
+                   (SimWorker :name "w2" :provides (frozenset ["cluster-net"]) :steps-wall True)))
 ;; 途絶を始めてから壁の時計を動かすまでの秒(途絶の最中 — fence の 20 秒より前)。
 (val STEP-AFTER-SECONDS 5.0)
 ;; 壁の時計を動かしてから process の列を読むまでの秒(移し替えの 60 秒と、戻った分だけ遅れた自己停止の後まで)。
@@ -144,5 +144,5 @@
   ;; 守り: steps-wall でない worker の壁の時計は動かせない — 黙って何も起きない筋書きにしない。
   (with [raised (pytest.raises ValueError)]
     (<- (sim-cluster :notice-broker (MemoryBroker) :timing T (pulses sim-foundation) (step-a-plain-worker)
-                     :workers #((SimWorker :name "w1" :provides (frozenset ["cluster-net"]) :task-reserve 0)))))
+                     :workers #((SimWorker :name "w1" :provides (frozenset ["cluster-net"]))))))
   (assert (in "steps-wall" (str raised.value)) raised.value))

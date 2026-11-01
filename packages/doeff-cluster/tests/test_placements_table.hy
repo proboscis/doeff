@@ -3,6 +3,7 @@
 ;;; 時間では測らない。見る物は 2 つ: 書きの列(place-jobs の答え)に載る job の鍵と、表の同一性(is)。
 (require doeff-hy.macros [deftest val <- defk])
 (val MODULE-TAGS {:context "doeff-cluster-test" :role "test"})
+(import tests.room_rows [ROOM-LOADS])
 
 (import dataclasses [replace])
 (import doeff_cluster [JobSpec])
@@ -23,7 +24,7 @@
   (ClusterJob (JobSpec name "m" #() "rev" :handoff handoff) :needs needs :peak-mib 200 :settle-mib 100))
 
 (defn #^ WorkerInfo worker-of [#^ str name #^ int seen [provides #()]]
-  (WorkerInfo name provides seen :task-reserve 0 :background-room 10))
+  (WorkerInfo name provides seen :measured (get ROOM-LOADS 10)))
 
 (defn rows-table [#^ dict rows]
   (table-of (tuple (gfor #(key row) (.items rows) (TableWrite key row)))))

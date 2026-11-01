@@ -10,6 +10,7 @@
 ;; 新しい spec の入れ替えが始まる・(d) recreate の Service は今と同じ。
 (require doeff-hy.macros [deftest defk <- val var])
 (import doeff [run])
+(import tests.room_rows [ROOM-JSONS])
 (import dataclasses [replace])
 (import pytest)
 (import doeff_cluster [ClusterTiming])
@@ -137,7 +138,7 @@
   (for [a actions] (sim.apply a))
   (setv sim.records (! (records-after sim.now sim.records actions sim.policy)))
   (<- rows tuple (status-rows-json (tuple (! (statuses sim.now sim.desired (sim.world) sim.records sim.policy)))))
-  (val reply (sim.call "POST" "/heartbeat" {"name" "zeus" "provides" ["net"] "backgroundRoom" 10 "taskReserve" 0 "versions" V "statuses" (list rows)}
+  (val reply (sim.call "POST" "/heartbeat" {"name" "zeus" "provides" ["net"] "measured" (get ROOM-JSONS 10) "versions" V "statuses" (list rows)}
                        :actor None))
   (.append sim.replies (next (gfor j (get reply "jobs") :if (= (get j "name") "writer-a") j) None))
   (<- declared DeclaredReply (declared-reply-of-json reply))

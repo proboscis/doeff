@@ -150,7 +150,7 @@
   ;; 盲検 A の再現の形(sim — 本物の coordinator): alpha の後に beta が同じ組を宣言すると、beta の宣言は断られ(黙って書き直さない)、組 llm は
   ;; alpha の値 1 で数えられる。
   (<- observed dict (sim-cluster :notice-broker (MemoryBroker) :timing (ClusterTiming) ALPHA (second-system-scenario BETA)
-                                 :workers #((SimWorker :name "w1" :provides LOCAL :task-reserve 0))))
+                                 :workers #((SimWorker :name "w1" :provides LOCAL))))
   (assert (and (get observed "refused") (in "alpha" (get observed "refused"))) (get observed "refused"))
   (<- summary dict (llm-summary observed))
   (assert (= summary {"limit" 1 "system" "alpha" "held" 1 "phases" ["assigned" "queued" "queued"]}) summary))

@@ -2,7 +2,6 @@
 
 from dataclasses import dataclass as dataclass
 from dataclasses import field as field
-from dataclasses import KW_ONLY as KW_ONLY
 from enum import StrEnum as StrEnum
 from functools import partial as partial
 from typing import NamedTuple as NamedTuple
@@ -76,9 +75,6 @@ class WorkerInfo:
     node: str = ''
     derived: tuple[str, ...] = ...
     seen_mark: int | None = None
-    _: KW_ONLY
-    task_reserve: int
-    background_room: int
     known_exits: tuple[KnownExit, ...] = ...
 
 @dataclass(frozen=True, kw_only=True)
@@ -86,6 +82,7 @@ class WorkerLoad:
     jobs: int
     tasks: int
     settle_mib: int
+    unseen: int = 0
 
 @dataclass(frozen=True)
 class EnvFailed:
@@ -421,6 +418,7 @@ class TaskUnplacedKind(StrEnum):
     TASK_RESERVED = 'task-reserved'
     TASK_BACKGROUND_RESERVED = 'task-background-reserved'
     TASK_UNDECLARED = 'task-undeclared'
+    TASK_UNMEASURED = 'task-unmeasured'
 
 class NotReadyKind(StrEnum):
     NO_DECLARATION = 'no-declaration'

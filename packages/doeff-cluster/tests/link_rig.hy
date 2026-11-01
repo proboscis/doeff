@@ -25,6 +25,13 @@
 (import doeff_cluster [program-file program-file-text])
 (import tests.transport_http [transport-http])
 (import doeff_cluster._foundation.coordinator_http [RESEND-PAUSE-SECONDS])
+(import doeff_cluster._worker.core.load_rules [MachineLoad])
+
+
+;; LinkRig が既定で名乗る機体の測った空き: CPU 64 個・memory 256 GiB の空いた機体(検の筋書きが task の空きを気にせず走るため。刻 0 の
+;; 読みなので、置いた task はどれも測りにまだ出ていないと数えられる — それでも 60 本前後が置ける)。
+(setv ROOMY-LOAD (MachineLoad :at-ms 0 :cpus 64 :cpu-busy 0.0 :memory-total-mib 262144 :memory-available-mib 262144
+                              :cpu-some-avg10 0.0 :cpu-full-avg10 0.0 :memory-some-avg10 0.0 :memory-full-avg10 0.0))
 (import doeff_cluster._shared.core.resend [IDEMPOTENT-DEADLINE-SECONDS])
 
 ;; 口の送り方(本番の組み立てと同じく一巡し直さない — 届かない拍は次の拍で送り直す)。
@@ -40,19 +47,21 @@
 
 (defclass LinkRig []
   "検の coordinator への口: state = 本番と同じ入れ物・cell / watch-cell = heartbeat と待ちの宛先・transport = 送り先(None = 本物の網)。
-   background-room・task-reserve = heartbeat で名乗る背景の枠と task のために空けておく数(本番の --background-room・--task-reserve)。"
-  (defn #^ None __init__ [self #^ str url #^ str name #^ tuple provides #^ int background-room #^ int task-reserve #^ int fence-ms
+   measured = heartbeat で名乗る機体の測った空き(既定 ROOMY-LOAD — 検の筋書きが task の空きを気にせず走るため。None = 名乗らない)。"
+  (defn #^ None __init__ [self #^ str url #^ str name #^ tuple provides #^ int fence-ms
                           #^ (| str None) [task-dir None] #^ (| dict None) [versions None] #^ (| httpx.BaseTransport None) [transport None]
                           #^ (| dict None) [tools None] #^ bool [handles-envs False] #^ tuple [exclusive #()] #^ str [node ""]
-                          #^ bool [watch False]]
+                          #^ bool [watch False] #^ (| MachineLoad None) [measured ROOMY-LOAD]]
     ;; 最後の連絡とみなす初めの刻は、本番の入口と同じく壁の時計と単調な時計の両方で読む(時計は実時間)。
     (setv now-ms (int (* 1000 (time.time))))
-    (setv self.state (LinkState name provides task-reserve background-room fence-ms (or task-dir "tasks") (. (uuid.uuid4) hex) now-ms now-ms
+    (setv self.state (LinkState name provides fence-ms (or task-dir "tasks") (. (uuid.uuid4) hex) now-ms now-ms
                                 (round (* 1000 (time.monotonic)))
                                 :versions versions :tools tools :handles-envs handles-envs :exclusive exclusive :node node :watch watch
                                 :beat-beside False)
           self.cell (run (cell-of url)) self.watch-cell (run (cell-of url))
-          self.transport (or transport (httpx.HTTPTransport))))
+          self.transport (or transport (httpx.HTTPTransport)))
+    ;; 測らない口(load-paths None)は state.measured を書き換えないので、名乗る値をここで置く。
+    (setv self.state.measured measured))
 
   (defn #^ object on-link [self #^ object program]
     "program を口の handler と検の答え手の下で 1 回走らせる(本体は run-on-link)。"

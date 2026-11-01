@@ -219,7 +219,7 @@
 
 
 (deftest test-the-first-heartbeat-answer-logs-the-boot-breakdown-once-in-order [tmp-path capsys]
-  (val link (LinkRig "http://coord" "w" #() 1 0 20000 :task-dir (str (/ tmp-path "tasks"))
+  (val link (LinkRig "http://coord" "w" #() 20000 :task-dir (str (/ tmp-path "tasks"))
                         :transport (httpx.MockTransport quiet-coordinator)))
   (val now (int (* 1000 (time.time))))
   (setv link.state.boot-marks (BootMarks :pod-ms (- now 9000) :script-ms (- now 8000) :exec-ms (- now 3000)
@@ -249,7 +249,7 @@
   (.write-text (/ bin "hy") FAKE-HY)
   (os.chmod (/ bin "hy") 0o755)
   (val base {"PATH" (+ (str bin) ":/usr/bin:/bin") "HOME" (str tmp-path) "ROLE" "worker" "WORK_DIR" (str (/ tmp-path "work"))
-             "COORDINATOR_URL" "http://coord" "WORKER_NAME" "w" "WORKER_TASK_RESERVE" "0"})
+             "COORDINATOR_URL" "http://coord" "WORKER_NAME" "w"})
   (.mkdir (/ tmp-path "work"))
   (val done (subprocess.run ["sh" BOOT-SH] :env base :capture-output True :text True :timeout 60))
   (assert (= done.returncode 0) done.stderr)

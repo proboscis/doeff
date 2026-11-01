@@ -189,7 +189,7 @@
    MachineLoad): at-ms = 読んだ刻(worker の壁の時計の epoch ms)・cpus = CPU の数・cpu-busy = 前の読みからの CPU の使いの割合(0〜1 —
    None = まだ数えられない)・memory-total-MiB / memory-available-MiB = MemTotal / MemAvailable(MiB)・cpu-some-avg10 / cpu-full-avg10 /
    memory-some-avg10 / memory-full-avg10 = PSI の avg10(%— None = PSI の無い機体・full の行の無い kernel の cpu)。coordinator は
-   保存せずに GET /state の worker の行に写すだけで、置き方の判断には使わない。"
+   保存せず、task の置き先をこの値から数え(core/measured_room)、GET /state の worker の行に写す。"
   {:tags {:context "coordinator" :role "type" :reads "json"} :names :camel :unknown :ignore
    :check [(> cpus 0) (or (is cpu-busy None) (<= 0 cpu-busy 1)) (>= memory-total-MiB memory-available-MiB 0)
            (all (gfor v #(cpu-some-avg10 cpu-full-avg10 memory-some-avg10 memory-full-avg10) (or (is v None) (>= v 0))))]}
@@ -206,9 +206,7 @@
 
 (defwire HeartbeatBody
   "POST /heartbeat の本文(worker/protocol/heartbeat の heartbeat-body と env-heartbeat-part と同じ形): name = worker の名(空でない)・
-   provides / exclusive = 能力の名の列(labels = 旧い形の名乗り — 判断が断る)・node・task-reserve = task のために空けておく数
-   (必ず書く欄・0 以上 — 欄の無い本文は形の誤りで断る)・background-room = 背景の仕事を同時に置ける数(0 以上 — task の空きは予約 + この数 −
-   置いた task)・versions / tools = 名 → 版・platform・
+   provides / exclusive = 能力の名の列(labels = 旧い形の名乗り — 判断が断る)・node・versions / tools = 名 → 版・platform・
    envs = root の名乗り・env-capacity = disk の条件・statuses = 状態の報告の行の列(StatusRow)・
    endpoint・boot = process の世代・boot-at = 起動時刻(epoch ms)・format = 本文の形の版・kept-when-cut-off = 途絶しても動かし続けてよい印を
    今持っている job の名の列(#2804 — None = 欄の無い古い worker = 印を知らない)・stopping = この世代が止まり始めた
@@ -221,18 +219,15 @@
    (起動の script の WORKER_DOEFF_COMMIT。版を持たない worker・旧い worker は空)・memory-MiB = 枠の file の行の
    常駐の job の memory の予算(欄 memoryMiB・0 以上の MiB。job の側の枠 — 置いた job の settle の和 + 新しい job の
    settle がこの値以下の時だけ置く。名乗らない worker(枠の file の外の機体)は None で、memory で縛らない)・measured = 機体の
-   測った空き(MeasuredLoad — 測れない worker・旧い worker は None)。"
+   測った空き(MeasuredLoad — 測れない worker・旧い worker は None。task の置き先はこの値から数え、None の worker には task を置かない)。
+   旧い worker が送る taskReserve・backgroundRoom・capacity(手書きの task の枠 — 消した欄)は欄に持たずに捨てる(:unknown :ignore)。"
   {:tags {:context "coordinator" :role "type" :reads "json"} :names :camel :unknown :ignore
-   :check [(> (len name) 0) (>= task-reserve 0) (>= background-room 0) (or (is memory-MiB None) (>= memory-MiB 0))]}
+   :check [(> (len name) 0) (or (is memory-MiB None) (>= memory-MiB 0))]}
   (#^ str name)
-  (#^ int task-reserve)
   (setv #^ (| (get tuple #(str ...)) None) provides None)
   (setv #^ (| (get tuple #(str ...)) None) exclusive None)
   (setv #^ object labels None)
   (setv #^ str node "")
-  ;; 配備の間だけの許し(coordinator を先・worker を後に入れ替える間): 旧い worker は capacity を送り backgroundRoom を
-  ;; 送らない。capacity は欄に持たずに捨て(:unknown :ignore)、backgroundRoom の無い本文は 0 で受ける。worker を入れ替え終えたら既定の値を外す。
-  (setv #^ int background-room 0)
   (setv #^ (| (get dict #(str str)) None) versions None)
   (setv #^ (| (get dict #(str str)) None) tools None)
   (setv #^ str platform "")

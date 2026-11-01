@@ -26,7 +26,7 @@
 (import tests.fixtures.working_programs [keeping-hosts])
 
 (val PREPARE-SECONDS 8.0)
-(val W1 (SimWorker :name "w1" :provides (frozenset ["cluster-net"]) :task-reserve 0 :prepare-seconds PREPARE-SECONDS))
+(val W1 (SimWorker :name "w1" :provides (frozenset ["cluster-net"]) :prepare-seconds PREPARE-SECONDS))
 ;; 受け渡しの間の上限: 振り先が移って(前の世代の preStop の drain)から、前の世代の止め(stop-grace の内で終わる)と、新しい世代が印の
 ;; 外れを次の heartbeat の返事で受けて起こすまで。準備の秒(8 秒)より短い — 直す前の形(準備の秒だけ空く)を赤にする。
 (val MAX-GAP-MS 5000)

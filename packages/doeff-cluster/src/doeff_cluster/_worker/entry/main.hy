@@ -1,7 +1,7 @@
 ;;; doeff worker の composition root。coordinator から job と task を受け、子 process として管理する。
 ;;;
 ;;;   hy -m doeff_cluster._worker.entry.main --coordinator URL --name NAME [--provides a,b] [--exclusive a] --repo REPO --state-dir DIR
-;;;     (--room-file FILE | --task-reserve N) --env-roots-cap BYTES --env-min-free BYTES --code-store DIR --uv-cache DIR
+;;;     [--room-file FILE] [--memory-mib N] --env-roots-cap BYTES --env-min-free BYTES --code-store DIR --uv-cache DIR
 ;;;
 ;;; --provides = この worker が提供する能力の名(`,` で並べる)・--exclusive = 専用の能力(provides の一部 — このどれかを要る job / task
 ;;; だけを受ける)。置き場所の名ではなく能力を名乗る(ADR-DOE-CLUSTER-001 R4b)。旧い --labels は受け付けない。
@@ -143,15 +143,15 @@
     True found))
 
 
-(defk boot-room [room-file name task-reserve background-room memory-mib]
-  {:pre [(: room-file str) (: name str) (: task-reserve (| int None)) (: background-room int) (: memory-mib (| int None))]
+(defk boot-room [room-file name memory-mib]
+  {:pre [(: room-file str) (: name str) (: memory-mib (| int None))]
    :post [(: % (| WorkerRoom str))]
    :tags {:context "worker" :role "main"}}
   "起動の時に名乗る枠を決めるため: 枠の file(room-file — 空 = 読まない)の自分の行が読めればその値、読めなければ
-   引数の値(--background-room は既定 0・--memory-mib は省けば名乗らない)。引数の --task-reserve も無ければ起動を
-   断る訳の文を返す — 既定の値で埋めない。0 未満の引数も断る訳の文(coordinator の heartbeat の本文の型と同じ範囲 — 外れた値で名乗り
-   続けて断られない)。file を読めない事は最初の heartbeat の前の読み直し(coordinator_link.room-noted)が log に出し、heartbeat の
-   roomFile で名乗る。"
+   引数の値(--memory-mib — 省けば名乗らず、組の印は無し)。0 未満の --memory-mib は起動を断る訳の文(coordinator の heartbeat の本文の
+   型と同じ範囲 — 外れた値で名乗り続けて断られない)。file を読めない事は最初の heartbeat の前の読み直し(coordinator_link.room-noted)が
+   log に出し、heartbeat の roomFile で名乗る。task の置き先は手書きの数でなく機体の測った空きから coordinator が数えるので、枠に task の
+   数は無い。"
   (var reading None)
   (when room-file
     (<- text (ReadText room-file))
@@ -161,12 +161,8 @@
       (:= reading read)))
   (cond
     (and (is-not reading None) (is-not reading.room None)) reading.room
-    (and (is-not task-reserve None) (or (< task-reserve 0) (< background-room 0) (and (is-not memory-mib None) (< memory-mib 0))))
-      (.format "--task-reserve {}・--background-room {}・--memory-mib {} は 0 以上で名乗る" task-reserve background-room memory-mib)
-    (is-not task-reserve None) (WorkerRoom :task-reserve task-reserve :background-room background-room :memory-mib memory-mib)
-    (is reading None) "--task-reserve を渡す(--room-file を渡さない時は必ず要る)"
-    True (.format "枠の file {} を読めない({}: {})— 読めるようにするか、--task-reserve(と --background-room・--memory-mib)を渡す"
-                  room-file reading.state.value reading.reason)))
+    (and (is-not memory-mib None) (< memory-mib 0)) (.format "--memory-mib {} は 0 以上で名乗る" memory-mib)
+    True (WorkerRoom :memory-mib memory-mib)))
 
 
 (defk job-cgroup-placed [sibling [root CGROUP-ROOT] [var JOB-CGROUP-VAR]]
@@ -340,16 +336,11 @@
   (.add-argument parser "--exclusive" :default "" :help "専用の能力(provides の一部・a,b)— このどれかを要る仕事だけを受ける")
   (.add-argument parser "--node" :default "" :help "この worker の置かれた k8s の node の名(coordinator が node の label から能力を導く)")
   (.add-argument parser "--labels" :default None :help "受け付けない(旧い形 — --provides / --exclusive で能力を名乗る)")
-  (.add-argument parser "--task-reserve" :type int :default None
-                 :help "task のために空けておく数(0 以上)。--room-file が無ければ必ず渡す(在れば file の値が勝ち、file を読めない起動の時だけ使う)")
-  (.add-argument parser "--background-room" :type int :default 0
-                 :help "背景の仕事を同時に置ける数(0 以上 — task の空きは task-reserve + この数 − 置いた task)。
-                        --room-file が在れば file の値が勝つ")
   (.add-argument parser "--memory-mib" :type int :default None
                  :help "常駐の job に使ってよい memory の予算(MiB・0 以上)。coordinator は置いた job の settle の和 + 新しい job の settle が
                         この値以下の時だけ置く。省けば名乗らず、memory で縛られない(枠の file の外の機体の worker)。--room-file が在れば file の値が勝つ")
   (.add-argument parser "--room-file" :default ""
-                 :help "枠の file(JSON — worker の名 → taskReserve・backgroundRoom・memoryMiB)。渡すと起動の時と heartbeat の前に読み直し、自分の名の行の
+                 :help "枠の file(JSON — worker の名 → memoryMiB・pools)。渡すと起動の時と heartbeat の前に読み直し、自分の名の行の
                         値を名乗る — 枠の変更で worker を起こし直さない。空 = 読まない")
   (.add-argument parser "--fence" :type float :default (/ (. (ClusterTiming) fence-ms) 1000)
                  :help "連絡が途絶えて自分の job を止めるまでの秒(最初に coordinator へ届くまで。以後は coordinator の値)")
@@ -397,9 +388,9 @@
       (.error parser (str error))))
   (when (not (<= (set exclusive) (set provides)))
     (.error parser (.format "--exclusive {} は --provides {} の一部で名乗る" (list exclusive) (list provides))))
-  ;; 起動の時に名乗る枠: 枠の file が在れば file の自分の行(読めなければ引数 — 両方無ければ起動しない)、
-  ;; 無ければ引数。以後の読み直しは coordinator への口(room-noted)。
-  (setv room (run (with-handlers [os-file-handler] (boot-room args.room-file args.name args.task-reserve args.background-room args.memory-mib))))
+  ;; 起動の時に名乗る枠: 枠の file が在れば file の自分の行(読めなければ引数)、無ければ引数。以後の読み直しは
+  ;; coordinator への口(room-noted)。
+  (setv room (run (with-handlers [os-file-handler] (boot-room args.room-file args.name args.memory-mib))))
   (when (isinstance room str)
     (.error parser room))
   (setv layout (CodeLayout :import-roots (tuple (gfor r (.split args.import-roots ",") :if r r))
@@ -482,7 +473,7 @@
   ;; 起動の刻は壁の時計と単調な時計の両方で読む(最後の連絡とみなす初めの刻 — 沈黙は 2 つの時計の長い方で計る)。
   (setv started-ms (run (with-handlers [(sync-time-handler)] (now-epoch-ms)))
         started-mono-ms (monotonic-ms-of (run (with-handlers [(sync-time-handler)] (GetMonotonic))))
-        link (LinkState args.name provides room.task-reserve room.background-room (int (* args.fence 1000)) places.tasks boot
+        link (LinkState args.name provides (int (* args.fence 1000)) places.tasks boot
                         started-ms started-ms started-mono-ms
                         :versions (run (this-process-versions)) :tools (run (parse-labels args.tools)) :handles-envs True :exclusive exclusive
                         :node args.node :boot-marks boot-marks :overlaps-elder args.overlaps-elder

@@ -3,6 +3,8 @@
 ;;; 待った(置く順が id の順だけ — 先に積んだ背景の仕事が空いた枠を先に取った)。
 (require doeff-hy.macros [deftest val <- defk])
 (val MODULE-TAGS {:context "doeff-cluster-test" :role "test"})
+(import doeff_cluster._coordinator.intent.request_bodies [MeasuredLoad])
+(import doeff_cluster._coordinator.core.measured_room [CPU-FLOOR-CORES MEMORY-FLOOR-MIB RESERVE-SHARE TASK-CORES TASK-MEMORY-MIB])
 
 (import dataclasses [replace])
 (import doeff_hy._table [Table])
@@ -26,11 +28,17 @@
                          (TableWrite "bg-caller" (GroupLimit :group "bg-caller" :scope "cluster" :limit 2 :per-part True)))))
 
 (defk zeus-like [room reserve]
-  {:pre [(: room int) (: reserve int)] :post [(: % WorkerInfo)] :tags {:context "doeff-cluster-test" :role "judgment"}}
-  "task の空き room のうち reserve を task のために空けておく(背景の枠 = room − reserve — task の空きは常駐の job に
-   依らない。下の検の数は直す前の capacity − 常駐の job の空きを同じ空きとして写した物)、能力 host-zeus の worker(最後の連絡 0・task と
-   同じ版 python 3)を作るため。"
-  (WorkerInfo "zeus" #("host-zeus") 0 :task-reserve reserve :versions PY3 :background-room (- room reserve)))
+  {:pre [(: room int) (: reserve int) (>= reserve 1) (<= room (- (* RESERVE-SHARE TASK-CORES reserve) CPU-FLOOR-CORES))]
+   :post [(: % WorkerInfo)] :tags {:context "doeff-cluster-test" :role "judgment"}}
+  "測った空きで task を room 本置け、予約(measured_room.reserve-of — 上限の 1/RESERVE-SHARE)が reserve の、能力 host-zeus の worker
+   (最後の連絡 0・task と同じ版 python 3)を作るため: CPU は予約が reserve になる数(使い 0 — CPU では room より多く置ける)、memory の
+   空きは床 + room 本分(空きを memory で room 本に絞る)。task の空きは常駐の job に依らない(常駐の job の使いは測った値に入っている)。
+   下の検の数は、以前の手書きの枠(capacity − 常駐の job・task-reserve)の空きと予約を、同じ空きと予約として写した物。"
+  (WorkerInfo "zeus" #("host-zeus") 0
+              :measured (MeasuredLoad :at-ms 0 :cpus (* RESERVE-SHARE TASK-CORES reserve) :cpu-busy 0.0 :memory-total-MiB 262144
+                                      :memory-available-MiB (+ MEMORY-FLOOR-MIB (* room TASK-MEMORY-MIB))
+                                      :cpu-some-avg10 0.0 :cpu-full-avg10 0.0 :memory-some-avg10 0.0 :memory-full-avg10 0.0)
+              :versions PY3))
 
 (defk resident [names]
   {:pre [(: names tuple)] :post [(: % tuple)] :tags {:context "doeff-cluster-test" :role "judgment"}}
@@ -74,8 +82,8 @@
   (<- limited str (task-unplaced-text TaskUnplacedKind.TASK-LIMITED))
   (assert (all (gfor id LONG-IDS :if (= (. (.row placed id) phase) "queued") (= (. (.row placed id) detail) limited))) placed))
 
-(deftest test-background-tasks-leave-half-the-task-reserve-for-the-build-that-comes-later
-  ;; 背景の仕事(優先 < 0)は task-reserve の半分(切り上げ)を優先 0 以上の task に残す(2026-10-14 — 以前は予約を全部残した):
+(deftest test-background-tasks-leave-half-the-reserve-for-the-build-that-comes-later
+  ;; 背景の仕事(優先 < 0)は予約の半分(切り上げ)を優先 0 以上の task に残す(2026-10-14 — 以前は予約を全部残した):
   ;; worker ごとの上限が無くても、背景の仕事 10 本は空き 10 のうち予約 3 の 2 を残した 8 本までしか置かれない。後の拍で積んだ組み立ての
   ;; task は、背景の仕事が走っている間でも残した予約へ置かれる。
   (setv #(jobs placements) (! (resident #("a" "b"))))
@@ -173,7 +181,7 @@
   ;; 1 本が終われば 3 本目が置かれる。
   (val tasks {"t1" (! (background "t1" "c-a")) "t2" (! (background "t2" "c-a")) "t3" (! (background "t3" "c-a"))
               "t4" (! (background "t4" "c-b"))})
-  (val state (ClusterState #() (! (table-from-rows {"zeus" (! (zeus-like 30 3))})) (table-of #()) (! (table-from-rows tasks)) :group-limits GROUPS))
+  (val state (ClusterState #() (! (table-from-rows {"zeus" (! (zeus-like 17 3))})) (table-of #()) (! (table-from-rows tasks)) :group-limits GROUPS))
   (val placed (! (tasks-placed 1000 state (table-of #()) T)))
   (assert (= (! (phases placed ["t1" "t2" "t3" "t4"])) ["assigned" "assigned" "queued" "assigned"]) placed)
   (assert (= (. (.row placed "t3") detail) (! (task-unplaced-text TaskUnplacedKind.TASK-LIMITED))) (.row placed "t3"))

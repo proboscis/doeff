@@ -10,6 +10,7 @@
 ;;   4. 停止の述語は 1 つ: target-view と version-state が同じ関数(service-stopped)を呼ぶ(止まっている・止めている途中)。
 (require doeff-hy.macros [deftest defk val <-])
 (import doeff_hy._table [TableWrite table-of])
+(import tests.room_rows [ROOM-JSONS])
 (import doeff_cluster [ClusterTiming])
 (import doeff_cluster [ClusterState UnplacedKind]
         doeff_cluster._coordinator.intent.cluster_model [RefusedJob RolloutTarget VersionState NotReadyKind])
@@ -85,7 +86,7 @@
    None は名乗らない)。"
   (val generation (| (if (is boot None) {} {"boot" boot}) (if (is boot-at None) {} {"bootAt" boot-at})
                      (if (is memory None) {} {"memoryMiB" memory})))
-  (! (call state "POST" "/heartbeat" (| {"name" worker "provides" ["net"] "backgroundRoom" 10 "taskReserve" 0 "versions" {} "statuses" (or rows [])}
+  (! (call state "POST" "/heartbeat" (| {"name" worker "provides" ["net"] "measured" (get ROOM-JSONS 10) "versions" {} "statuses" (or rows [])}
                                         generation)
            :now now :actor None)))
 

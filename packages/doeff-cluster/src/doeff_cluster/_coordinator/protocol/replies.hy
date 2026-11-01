@@ -131,10 +131,11 @@
    "jobs" (lfor s view.services (| (job-to-json s.job) {"resourceVersion" s.resource-version}))
    ;; memoryMiB = 枠の file の行の常駐の job の memory の予算(名乗った worker だけに載せる)。measured = 機体の測った空き
    ;; (heartbeat の measured の写し {atMs cpus cpuBusy memoryTotalMiB memoryAvailableMiB cpuSomeAvg10 cpuFullAvg10 memorySomeAvg10
-   ;; memoryFullAvg10} — 測れた worker だけに載せる)。
+   ;; memoryFullAvg10} — 測れた worker だけに載せる)。taskRoom = 置き先の判断と同じ数えで、いま task を置ける数(測った空きから —
+   ;; 測りの無い worker は 0)。
    "workers" (dfor w view.workers
                    w.info.name (| {"provides" (list w.info.provides) "exclusive" (list w.info.exclusive) "derived" (list w.info.derived)
-                                   "node" w.info.node "taskReserve" w.info.task-reserve "backgroundRoom" w.info.background-room "taskRoom" w.task-room
+                                   "node" w.info.node "taskRoom" w.task-room
                                    "silentMs" w.silent-ms
                                    "versions" (dict w.info.versions) "live" w.live "draining" w.draining}
                                   (if (is w.info.memory-mib None) {} {"memoryMiB" w.info.memory-mib})
