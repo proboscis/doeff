@@ -1412,6 +1412,8 @@ def _rust_spec() -> dict[str, object]:
         "Race": Race,
         "Cancel": Cancel,
         "Discard": Discard,
+        "_ShieldEnter": _ShieldEnter,
+        "_ShieldExit": _ShieldExit,
         "CreatePromise": CreatePromise,
         "CompletePromise": CompletePromise,
         "FailPromise": FailPromise,
