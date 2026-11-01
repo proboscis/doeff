@@ -308,7 +308,13 @@ def store(cache_dir: Path, name: str, projection: CachedProjection) -> None:
 
 
 def _write_atomically(path: Path, payload: object) -> None:
-    _write_chunks_atomically(path, (json.dumps(payload, ensure_ascii=False),))
+    temporary = path.with_name(f"{path.name}.{os.getpid()}.{time.monotonic_ns()}.tmp")
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        temporary.write_text(json.dumps(payload, ensure_ascii=False), encoding="utf-8")
+        temporary.replace(path)
+    except OSError:
+        temporary.unlink(missing_ok=True)
 
 
 def _write_chunks_atomically(path: Path, chunks: Iterable[str]) -> None:
