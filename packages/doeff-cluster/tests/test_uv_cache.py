@@ -307,6 +307,61 @@ def test_gc_waits_out_the_interval(tmp_path: Path, busy: Path) -> None:
     }
 
 
+def _symlinked_venv(venv: Path, entry: Path, *, relative: bool = False) -> Path:
+    """UV_LINK_MODE=symlink の形の venv: site-packages の file が、展開済みの wheel の項目の中の file への symlink。"""
+    _venv(venv)
+    link = venv / "lib" / "python3.14" / "site-packages" / "m.py"
+    target = entry / "m.py"
+    link.symlink_to(os.path.relpath(target, link.parent) if relative else target)
+    return venv
+
+
+def test_gc_keeps_entries_that_kept_symlink_venvs_point_at(tmp_path: Path) -> None:
+    """symlink の venv は項目の hardlink の数を増やさない。残る venv(新しい・--links の置き場の物)と残る環境が symlink で指す項目は
+    [removed]
+    UV_LINK_MODE=symlink)。"""
+    cache = tmp_path / "cache"
+    entries = {
+        name: _write(cache / "archive-v0" / name / "m.py", f"{name}\n").parent
+        for name in ("YOUNGV", "HELD", "ENV", "IDLEV")
+    }
+    worktrees, held = tmp_path / "worktrees", tmp_path / "volumes"
+    _symlinked_venv(worktrees / "wt-young" / ".venv", entries["YOUNGV"])
+    idle = _symlinked_venv(worktrees / "wt-idle" / ".venv", entries["IDLEV"])
+    holder = _symlinked_venv(held / "c-1" / ".venv", entries["HELD"], relative=True)
+    environment = _symlinked_venv(cache / "environments-v2" / "young-env", entries["ENV"])
+    for path in [*entries.values(), idle, holder]:
+        _age(path)
+    os.utime(environment, None)
+
+    result = uv_cache.gc(
+        cache, [worktrees], 7.0, 3, dry_run=False, every_seconds=None, link_roots=[held]
+    )
+
+    assert sorted(p.name for p in (cache / "archive-v0").iterdir()) == ["ENV", "HELD", "YOUNGV"]
+    assert not idle.exists()
+    assert holder.is_dir()
+    assert result["removed"] == {"venvs": 1, "environments": 0, "temporaries": 0, "archives": 1}
+    assert (
+        worktrees / "wt-young" / ".venv" / "lib" / "python3.14" / "site-packages" / "m.py"
+    ).read_text() == "YOUNGV\n"
+
+
+def test_gc_keeps_entries_a_running_process_has_loaded(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """symlink の venv の拡張 module は、読み込んだ process の maps に項目の中の path で出る — その項目は消さない。"""
+    cache = tmp_path / "cache"
+    loaded = _write(cache / "archive-v0" / "LOADED" / "ext.so", "elf\n")
+    _write(cache / "archive-v0" / "OLD" / "m.py", "old\n")
+    _age(cache / "archive-v0")
+    monkeypatch.setattr(uv_cache, "process_paths", lambda _proc=None: [str(loaded)])
+
+    uv_cache.gc(cache, [], 7.0, 3, dry_run=False, every_seconds=None)
+
+    assert sorted(p.name for p in (cache / "archive-v0").iterdir()) == ["LOADED"]
+
+
 def test_gc_keeps_venvs_when_processes_are_unreadable(tmp_path: Path, busy: Path) -> None:
     cache, worktrees = _cache_for_gc(tmp_path, busy)
     uv_cache.gc(
@@ -328,10 +383,17 @@ def test_upkeep_reads_the_environment() -> None:
             "DOEFF_UV_CACHE_GC_DAYS": "3",
             "DOEFF_UV_CACHE_GC_VENVS": "/a:/b",
             "DOEFF_UV_CACHE_GC_EVERY_SECONDS": "60",
+            "DOEFF_UV_CACHE_GC_LINK_ROOTS": "/c",
         }
     )
     assert settings == uv_cache.UpkeepSettings(
-        "http://store/b/seed.tar.zst", "ns/name", 2 << 30, 3.0, (Path("/a"), Path("/b")), 60.0
+        "http://store/b/seed.tar.zst",
+        "ns/name",
+        2 << 30,
+        3.0,
+        (Path("/a"), Path("/b")),
+        60.0,
+        (Path("/c"),),
     )
     assert uv_cache.UpkeepSettings.from_env({}) == uv_cache.UpkeepSettings()
 
