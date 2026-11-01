@@ -92,7 +92,7 @@
   (val home (/ tmp-path "workers" WORKER))
   (val version-file (/ home "version"))
   (.write-text version-file versions.old :encoding "utf-8")
-  (LocalMachine :work-dir (str tmp-path) :port port :workers #((SimWorker :name WORKER :provides (frozenset ["local"]) :task-reserve 0))
+  (LocalMachine :work-dir (str tmp-path) :port port :workers #((SimWorker :name WORKER :provides (frozenset ["local"])))
                 :boot-seconds 120.0 :stop-grace 15.0 :code-repo repo.url :revision repo.sha
                 :worker-env #((EnvEntry :name "PATH" :value IMAGE-PATH)
                               (EnvEntry :name "WORKER_DOEFF_COMMIT" :value versions.old)

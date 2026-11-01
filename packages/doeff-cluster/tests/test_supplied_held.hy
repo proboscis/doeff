@@ -37,6 +37,7 @@
 (import tests.state_rows [table-from-rows])
 
 (val MODULE-TAGS {:context "doeff-cluster-test" :role "test"})
+(import tests.room_rows [ROOM-LOADS])
 
 (val TOKEN "worker-identity-token")
 (val PG-URL "postgresql://ledger@pg.apps.svc:5432/ledger\n")
@@ -247,9 +248,9 @@
                                                          #("PLAIN" "https://example.invalid/x")))
                      :needs #("pool-a") :peak-mib 200 :settle-mib 100))
   (val z (ClusterJob (JobSpec "z" "m" #() "rev" :environ #(#("Z_REF" "secret:apps/z-only/key"))) :needs #("pool-z") :peak-mib 200 :settle-mib 100))
-  (val state (ClusterState #(a z) (! (table-from-rows {"atlas" (WorkerInfo "atlas" #("pool-a") 0 :task-reserve 0 :background-room 10)
-                                                       "eos" (WorkerInfo "eos" #("pool-a") 0 :task-reserve 0 :background-room 10)
-                                                       "zeus" (WorkerInfo "zeus" #("pool-z") 0 :task-reserve 0 :background-room 10)}))))
+  (val state (ClusterState #(a z) (! (table-from-rows {"atlas" (WorkerInfo "atlas" #("pool-a") 0 :measured (get ROOM-LOADS 10))
+                                                       "eos" (WorkerInfo "eos" #("pool-a") 0 :measured (get ROOM-LOADS 10))
+                                                       "zeus" (WorkerInfo "zeus" #("pool-z") 0 :measured (get ROOM-LOADS 10))}))))
   (<- atlas (| tuple None) (supplied-for state "atlas"))
   (<- eos (| tuple None) (supplied-for state "eos"))
   (<- zeus (| tuple None) (supplied-for state "zeus"))

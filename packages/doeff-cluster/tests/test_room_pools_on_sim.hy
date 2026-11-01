@@ -11,6 +11,7 @@
 (require doeff-cluster.macros [defsystem])
 (require doeff-hy.record [defrecord])
 (val MODULE-TAGS {:context "doeff-cluster-test" :role "test"})
+(import doeff_cluster [SimMachine])
 (import collections.abc [Callable])
 (import dataclasses [dataclass])  ; defrecord の展開が名指す
 (import json)
@@ -21,7 +22,7 @@
 (import tests.fixtures.envs [sim-foundation])
 (import tests.fixtures.sim_programs [pulse-program])
 
-(val WORKERS #((SimWorker :name "w1" :provides (frozenset #{"cluster-net"}) :task-reserve 0 :background-room 3 :reads-room True)))
+(val WORKERS #((SimWorker :name "w1" :provides (frozenset #{"cluster-net"}) :machine (SimMachine :cpus 4 :memory-mib 262144) :reads-room True)))
 ;; 本番の時間の設定を明示して渡す: 枠の file の値は heartbeat で名乗るので、heartbeat の間(本番は生存の窓 10 秒の 4 分の 1)がこの筋書きの
 ;; 物差し。比で延ばした既定の世界(SIM-TIMING-RATIO)では heartbeat が 875 秒に 1 度になり、読み直しの間 10 秒と比べられない。
 (val TIMING (ClusterTiming))

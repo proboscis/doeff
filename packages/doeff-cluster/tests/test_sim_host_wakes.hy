@@ -42,7 +42,7 @@
 
 (deftest test-quiet-minutes-step-only-for-the-heartbeats
   (<- truth HostTruth (sim-cluster :notice-broker (MemoryBroker) :timing TIMING (beacons sim-foundation) (quiet-minutes)
-                                   :workers #((SimWorker :name "w1" :provides NET :task-reserve 0))))
+                                   :workers #((SimWorker :name "w1" :provides NET))))
   ;; heartbeat は間隔(生存の窓の 1/4 = 2.5 秒)ごとに届く — 10 分で 200 を越える。周はその数と起動の分だけ。
   (assert (> truth.beats 200) #(truth.ticks truth.beats))
   (assert (<= truth.beats truth.ticks (+ truth.beats STARTUP-TICKS)) #(truth.ticks truth.beats)))
@@ -63,7 +63,7 @@
 
 (deftest test-a-job-starts-at-the-instant-its-code-is-ready
   (<- seen tuple (sim-cluster :notice-broker (MemoryBroker) :timing TIMING (beacons sim-foundation) (ready-then-started)
-                              :workers #((SimWorker :name "w1" :provides NET :task-reserve 0 :prepare-seconds PREPARE-SECONDS))))
+                              :workers #((SimWorker :name "w1" :provides NET :prepare-seconds PREPARE-SECONDS))))
   (assert (= (get seen 0) (get seen 1)) seen)
   ;; 状態を変える周が続いて落ちた(WorkerUnsettled)なら、世代が替わっている。
   (assert (= (get seen 2) "w1-boot1") seen))
@@ -71,7 +71,7 @@
 
 ;; --- 3: 代役の組の期限と呼び鈴 ---------------------------------------------------------------------------------
 
-(val WORKER (SimWorker :name "w1" :provides NET :task-reserve 0))
+(val WORKER (SimWorker :name "w1" :provides NET))
 (val BEAT-MS 2500)
 
 

@@ -12,6 +12,7 @@
 ;; 戻る)・env-host が前の名乗りを持たない(ok へ戻った後の線の上の揺れで near に戻る)。
 (require doeff-hy.macros [deftest defk defhandler defeffect <- val var])
 (val MODULE-TAGS {:context "doeff-cluster-test" :role "test"})
+(import tests.room_rows [ROOM-LOADS])
 (import dataclasses [dataclass])  ; defeffect の展開が名指す
 (import pathlib [Path])
 (import doeff [Program with-handlers])
@@ -122,8 +123,8 @@
 
 
 (deftest test-the-worker-status-carries-env-capacity-only-when-not-ok
-  (val near (WorkerInfo "w1" #("net") 0 #() None #() :platform "linux-x86_64" :env-capacity "near" :task-reserve 0 :background-room 2))
-  (val ok (WorkerInfo "w2" #("net") 0 #() None #() :platform "linux-x86_64" :env-capacity "ok" :task-reserve 0 :background-room 2))
+  (val near (WorkerInfo "w1" #("net") 0 #() None #() :platform "linux-x86_64" :env-capacity "near" :measured (get ROOM-LOADS 2)))
+  (val ok (WorkerInfo "w2" #("net") 0 #() None #() :platform "linux-x86_64" :env-capacity "ok" :measured (get ROOM-LOADS 2)))
   (val state (ClusterState :workers (! (table-from-rows {"w1" near "w2" ok}))))
   (assert (= (.get (get (worker-row state near 0 (ClusterTiming)) "status") "envCapacity") "near"))
   (assert (not-in "envCapacity" (get (worker-row state ok 0 (ClusterTiming)) "status"))))

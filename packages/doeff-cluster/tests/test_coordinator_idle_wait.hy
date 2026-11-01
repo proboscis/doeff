@@ -116,7 +116,7 @@
 ;; 起動の流れ(宣言・最初の heartbeat・quitter が盤へ書いて 3 拍で抜ける・その刈り取り)が済むまでの秒。worker は周期で起きないので、
 ;; 起動の流れは worker の刻みに引き延ばされず、約 4 秒で済む。
 (val SETTLE-SECONDS 5.0)
-(val RESTING-WORKERS #((SimWorker :name "w1" :provides (frozenset ["cluster-net"]) :task-reserve 0)))
+(val RESTING-WORKERS #((SimWorker :name "w1" :provides (frozenset ["cluster-net"]))))
 (val RESTING-POLICY (WorkerPolicy :restart-backoff-ms 1000000000 :restart-backoff-max-ms 1000000000))
 
 

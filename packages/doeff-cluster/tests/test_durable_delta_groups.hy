@@ -35,7 +35,7 @@
                                                        :actor "c-test")) 1000 T) 0))
   (val served (get (responded s (! (http-request "POST" "/resources/Service" {} {"name" "a" "spec" {"revision" "r" "needs" ["net"] "run" SAMPLE-RUN "peakMiB" 200 "settleMiB" 100}}
                                               :actor "c-test")) 1500 T) 0))
-  (val changed (replace served :workers (! (table-from-rows (dfor #(k w) (.items served.workers) k (replace w :background-room (+ w.background-room 1)))))))
+  (val changed (replace served :workers (! (table-from-rows (dfor #(k w) (.items served.workers) k (replace w :node (+ w.node "-moved")))))))
   (val spies (tuple (gfor g dk.SOURCE-GROUPS #(g.fields (Mock :wraps g.build)))))
   (.setattr monkeypatch dk "SOURCE_GROUPS" (tuple (gfor #(fields spy) spies (dk.SourceGroup :fields fields :build spy))))
   (val got (! (dk.durable-delta served changed)))
@@ -60,7 +60,7 @@
   ;; 判定が中身の変化を見逃さない。別の object で中身が同じ(作り直しただけ)なら差分に入らない。
   (val s (get (responded (ClusterState) (! (http-request "POST" "/heartbeat" {} {"name" "atlas" "provides" ["net"] "backgroundRoom" 2 "taskReserve" 0 "statuses" []}
                                                        :actor "c-test")) 1000 T) 0))
-  (val changed (replace s :workers (! (table-from-rows (dfor #(k w) (.items s.workers) k (replace w :background-room (+ w.background-room 1)))))))
+  (val changed (replace s :workers (! (table-from-rows (dfor #(k w) (.items s.workers) k (replace w :node (+ w.node "-moved")))))))
   (val old (! (dk.durable-kv s)))
   (val new (! (dk.durable-kv changed)))
   (val by-full (| (dfor #(k v) (.items new) :if (!= (.get old k) v) k v) (dfor k old :if (not-in k new) k None)))
@@ -80,7 +80,7 @@
   (val read-as-delta (fn [delta] (dict (.items delta))))
   (val s (get (responded (ClusterState) (! (http-request "POST" "/heartbeat" {} {"name" "atlas" "provides" ["net"] "backgroundRoom" 2 "taskReserve" 0 "statuses" []}
                                                        :actor "c-test")) 1000 T) 0))
-  (val changed (replace s :workers (! (table-from-rows (dfor #(k w) (.items s.workers) k (replace w :background-room (+ w.background-room 1)))))))
+  (val changed (replace s :workers (! (table-from-rows (dfor #(k w) (.items s.workers) k (replace w :node (+ w.node "-moved")))))))
   (with [(pytest.raises AttributeError :match "items")]
     (read-as-delta (dk.durable-delta s changed))))
 

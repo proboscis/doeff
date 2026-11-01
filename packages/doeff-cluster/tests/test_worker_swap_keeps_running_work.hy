@@ -20,7 +20,7 @@
 (import tests.fixtures.envs [sim-foundation])
 (import tests.fixtures.working_programs [WORK-PREFIX working-hosts])
 
-(val W1 (SimWorker :name "w1" :provides (frozenset ["cluster-net"]) :task-reserve 0))
+(val W1 (SimWorker :name "w1" :provides (frozenset ["cluster-net"])))
 
 
 (defrecord RollSeen

@@ -135,7 +135,7 @@
   ;; sim の宿は本番の土台の os-environ-reader と同じ答え方の environ-table-reader を子の spec.environ の上に並べるので、os-environ-reader で読む Program は本番の子と
   ;; 同じ字面を返す。反例の見本(env_var_ask)も sim では字面どおり返る — 環境に無い名を外へ通し sim の宿が答えるため。本番の子でだけ
   ;; 落ちる食い違いは sim の検では見えない(だから本番の土台は env_var_ask ではなく os-environ-reader を並べる)。
-  (<- answer tuple (sim-cluster :notice-broker (MemoryBroker) NO-JOBS (sim-reads) :workers #((SimWorker :name "w1" :provides LOCAL :task-reserve 0))))
+  (<- answer tuple (sim-cluster :notice-broker (MemoryBroker) NO-JOBS (sim-reads) :workers #((SimWorker :name "w1" :provides LOCAL))))
   (assert (= answer #(POLICY POLICY)) answer))
 
 

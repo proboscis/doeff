@@ -46,7 +46,7 @@
   {:pre [(: env-prepare-seconds float) (: env-failure (| EnvFailure None))] :post [(: % tuple)]
    :tags {:context "doeff-cluster-test" :role "program"}}
   "筋書きの担い手(gpu を専用の能力に持つ 1 台)を、組みの秒と失敗で作るため。"
-  #((SimWorker :name "gpu-1" :provides (frozenset ["gpu" "net"]) :exclusive (frozenset ["gpu"]) :task-reserve 0
+  #((SimWorker :name "gpu-1" :provides (frozenset ["gpu" "net"]) :exclusive (frozenset ["gpu"])
                :env-prepare-seconds env-prepare-seconds :env-failure env-failure)))
 
 

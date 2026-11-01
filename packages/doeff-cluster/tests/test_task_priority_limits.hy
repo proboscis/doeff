@@ -3,6 +3,7 @@
 ;;; 待った(置く順が id の順だけ — 先に積んだ背景の仕事が空いた枠を先に取った)。
 (require doeff-hy.macros [deftest val <- defk])
 (val MODULE-TAGS {:context "doeff-cluster-test" :role "test"})
+(import tests.room_rows [ROOM-LOADS])
 
 (import dataclasses [replace])
 (import doeff_hy._table [Table])
@@ -30,7 +31,7 @@
   "task の空き room のうち reserve を task のために空けておく(背景の枠 = room − reserve — task の空きは常駐の job に
    依らない。下の検の数は直す前の capacity − 常駐の job の空きを同じ空きとして写した物)、能力 host-zeus の worker(最後の連絡 0・task と
    同じ版 python 3)を作るため。"
-  (WorkerInfo "zeus" #("host-zeus") 0 :task-reserve reserve :versions PY3 :background-room (- room reserve)))
+  (WorkerInfo "zeus" #("host-zeus") 0 :measured (get ROOM-LOADS (+ reserve (- room reserve))) :versions PY3))
 
 (defk resident [names]
   {:pre [(: names tuple)] :post [(: % tuple)] :tags {:context "doeff-cluster-test" :role "judgment"}}

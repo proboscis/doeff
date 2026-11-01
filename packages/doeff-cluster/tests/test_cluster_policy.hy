@@ -1,5 +1,6 @@
 (require doeff-hy.macros [deftest val <- defk])
 (val MODULE-TAGS {:context "doeff-cluster-test" :role "test"})
+(import tests.room_rows [ROOM-LOADS])
 
 (import dataclasses [replace])
 (import doeff_cluster [JobSpec])
@@ -19,8 +20,8 @@
   (ClusterJob (JobSpec name "m" #() "rev") :needs needs :pin pin :peak-mib (if (is settle None) None (* 2 settle)) :settle-mib settle))
 (defk worker [name seen [room 10] #* provides]
   {:pre [(: name str) (: seen int) (: room int) (: provides tuple)] :post [(: % WorkerInfo)] :tags {:context "doeff-cluster-test" :role "judgment"}}
-  "最後の連絡が seen で能力 provides と背景の枠 room を持つ worker の記録(memory は名乗らない)を作るため。"
-  (WorkerInfo name (tuple (sorted provides)) seen :task-reserve 0 :background-room room))
+  "最後の連絡が seen で能力 provides と測った空き room(tests/room_rows の ROOM-LOADS)を持つ worker の記録(memory は名乗らない)を作るため。"
+  (WorkerInfo name (tuple (sorted provides)) seen :measured (get ROOM-LOADS room)))
 
 (deftest test-spreads-and-respects-capabilities-and-pins
   (setv state (ClusterState
@@ -537,7 +538,7 @@
   (<- observed-delta dict (durable-delta settled stamped))
   (assert (= observed-delta {}) observed-delta)
   ;; 反例の対照: 保存する欄(worker の記録)を書けば、同じ比べが版と差分を出す(比べが何も見ていないのではない)。
-  (val moved (replace observed :workers (! (rows-merged observed.workers {"at-home" (replace (.row observed.workers "at-home") :background-room 3)}))))
+  (val moved (replace observed :workers (! (rows-merged observed.workers {"at-home" (replace (.row observed.workers "at-home") :node "moved")}))))
   (assert (> (. (stamp settled moved "c-test" later T) revision) settled.revision))
   (<- moved-delta dict (durable-delta settled moved))
   (assert (in "worker/at-home" moved-delta) moved-delta))
@@ -559,7 +560,7 @@
   (assert (is noop.meta created.meta))
   (assert (is noop.audit created.audit))
   ;; 変われば update の出来事が連番で足り、消えれば delete が記録される
-  (val updated (stamp created (replace created :workers (! (rows-merged created.workers {"at-home" (replace (.row created.workers "at-home") :background-room 3)}))) "c-test" later T))
+  (val updated (stamp created (replace created :workers (! (rows-merged created.workers {"at-home" (replace (.row created.workers "at-home") :node "moved")}))) "c-test" later T))
   (val deleted (stamp updated (replace updated :workers (! (table-from-rows {}))) "c-test" later T))
   (assert (= (lfor e deleted.audit e.verb) ["create" "update" "delete"]) deleted.audit)
   (assert (= (lfor e deleted.audit e.seq) [1 2 3]))
@@ -621,9 +622,9 @@
 (defk reserved [name seen room reserve [memory None]]
   {:pre [(: name str) (: seen int) (: room int) (: reserve int) (: memory (| int None))] :post [(: % WorkerInfo)]
    :tags {:context "doeff-cluster-test" :role "judgment"}}
-  "背景の枠 room・task のために空けておく数 reserve・memory の予算 memory(None = 名乗らない)の worker の記録(最後の連絡 seen・能力なし・
-   task と同じ版 python 3)を作るため。"
-  (replace (! (worker name seen room)) :task-reserve reserve :memory-mib memory :versions #((ComponentVersion "python" "3"))))
+  "測った空き room + reserve(以前の背景の枠と task のために空けておく数の和 — 測った空きで同じ数の task が置ける)・memory の予算
+   memory(None = 名乗らない)の worker の記録(最後の連絡 seen・能力なし・task と同じ版 python 3)を作るため。"
+  (replace (! (worker name seen (+ room reserve))) :memory-mib memory :versions #((ComponentVersion "python" "3"))))
 
 (deftest test-a-job-over-the-memory-allowance-is-refused-by-name
   ;; 失敗ケース: memory の予算 250 MiB の worker に settle 100 の job を 3 本。2 本(名の順に a・b)を
@@ -1284,15 +1285,15 @@
 (deftest test-forgetting-a-worker-counts-an-undetached-finished-row-busy_not-a-held-one
   ;; F4: 切り離していない終わった行の worker は忙しい(lease が切れるまで)。保持側(切り離した終わり)の worker は数えない。
   (val timing (ClusterTiming :worker-forget-ms (* 2 3600 1000)))
-  (val workers (! (table-from-rows {"keep" (WorkerInfo :name "keep" :provides #("cpu") :background-room 1 :last-seen-ms 0 :task-reserve 0)
-                "free" (WorkerInfo :name "free" :provides #("cpu") :background-room 1 :last-seen-ms 0 :task-reserve 0)})))
+  (val workers (! (table-from-rows {"keep" (WorkerInfo :name "keep" :provides #("cpu") :measured (get ROOM-LOADS 1) :last-seen-ms 0)
+                "free" (WorkerInfo :name "free" :provides #("cpu") :measured (get ROOM-LOADS 1) :last-seen-ms 0)})))
   (val tasks {"u" (replace (! (split-task "u" "finished" :detached False :finished 100)) :worker "keep")
               "h" (replace (! (split-task "h" "finished" :finished 100)) :worker "free")})
   (<- after ClusterState (forget-silent-workers (ClusterState :workers workers :tasks (! (table-from-rows tasks))) (* 3 3600 1000) timing))
   (assert (= (list (.keys after.workers)) ["keep"])))
 
 (deftest test-the-count-reads-skip-the-held-rows
-  (val workers (! (table-from-rows {"w" (WorkerInfo :name "w" :provides #("cpu") :background-room 4 :last-seen-ms 0 :task-reserve 0)})))
+  (val workers (! (table-from-rows {"w" (WorkerInfo :name "w" :provides #("cpu") :measured (get ROOM-LOADS 4) :last-seen-ms 0)})))
   (val tasks {"p" (replace (! (split-task "p" "assigned" :detached False)) :worker "w")
               "h" (replace (! (split-task "h" "finished" :finished 100)) :worker "w")})
   (val state (ClusterState :workers workers :tasks (! (table-from-rows tasks))))

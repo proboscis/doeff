@@ -1,5 +1,6 @@
 ;;; 盤の掃除と容量(2026-09-25): 期限つきの行(ttlSeconds)・上限を越える書きの断り・task の上限・沈黙した worker を忘れる。
 (require doeff-hy.macros [defk deftest <- val var])
+(import tests.room_rows [ROOM-LOADS])
 (import doeff_hy._table [Table TableWrite table-of])
 (import doeff_cluster [semaphore-key])
 (import dataclasses [replace])
@@ -127,7 +128,7 @@
   (val queued (dfor i (range TASK-MAX-OPEN) (.format "t{}" i)
                     (TaskRecord (.format "t{}" i) "n" SAMPLE-TASK-PROGRAM "r" #() #() 60000 999999999 0)))
   (<- full tuple (program-placed (ClusterState :tasks (! (table-from-rows queued)) :next-task (+ TASK-MAX-OPEN 1)
-                                               :workers (! (table-from-rows {"a" (WorkerInfo "a" #("net") 1000 :task-reserve 0 :background-room 0)})))
+                                               :workers (! (table-from-rows {"a" (WorkerInfo "a" #("net") 1000)})))
                                  {} :now 1000))
   (<- over (call (get full 0) "POST" "/tasks" (| body {"leaseSeconds" 60})))
   (assert (= (get over 1) 429) over)
@@ -138,7 +139,7 @@
 
 
 (deftest test-a-worker-silent-for-a-week-without-work-is-forgotten
-  (setv old (WorkerInfo "newmac" #("net") 0 :task-reserve 0 :background-room 10) busy (WorkerInfo "atlas" #("net") 0 :task-reserve 0 :background-room 10))
+  (setv old (WorkerInfo "newmac" #("net") 0 :measured (get ROOM-LOADS 10)) busy (WorkerInfo "atlas" #("net") 0 :measured (get ROOM-LOADS 10)))
   (var s (ClusterState :workers (! (table-from-rows {"newmac" old "atlas" busy}))))
   (<- reply-11 (call s "PUT" "/jobs" {"jobs" [{"name" "j" "run" SAMPLE-RUN "peakMiB" 200 "settleMiB" 100 "revision" "r" "needs" ["net"] "pin" "atlas"}]} 1000))
   (:= s (get reply-11 0))

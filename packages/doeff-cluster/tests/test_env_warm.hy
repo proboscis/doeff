@@ -13,6 +13,7 @@
 ;; bytecode: 焼きの並列数は cgroup の CPU の上限(天井 BAKE-JOBS-CEILING)・焼く範囲は入口の module の import の閉包。
 (require doeff-hy.macros [deftest defk deff do! <- val var])
 (val MODULE-TAGS {:context "doeff-cluster-test" :role "test"})
+(import tests.room_rows [ROOM-LOADS])
 (require doeff-hy.record [defrecord])
 (import doeff_events [MemoryBroker])
 (import dataclasses [dataclass replace])
@@ -65,7 +66,7 @@
 ;; runtime-env — 本番の DetachedSender の runtime-env)が運ぶ。
 
 (val PREPARE-SECONDS 5.0)
-(val WARM-WORKERS #((SimWorker :name "w1" :provides (frozenset ["local"]) :prepare-seconds PREPARE-SECONDS :task-reserve 0)))
+(val WARM-WORKERS #((SimWorker :name "w1" :provides (frozenset ["local"]) :prepare-seconds PREPARE-SECONDS)))
 (val NO-JOBS (system-of "warm-scenarios" #()))
 (val COLD-STARTS-METRIC "doeff_worker_env_cold_start_total")
 
@@ -158,7 +159,7 @@
 
 (val SPLIT-ENV-SECONDS 30.0)
 (val SPLIT-WORKERS #((SimWorker :name "w1" :provides (frozenset ["local"]) :prepare-seconds 0.0
-                                :env-prepare-seconds SPLIT-ENV-SECONDS :task-reserve 0)))
+                                :env-prepare-seconds SPLIT-ENV-SECONDS)))
 
 
 (defrecord SplitMeasured
@@ -294,7 +295,7 @@
    :tags {:context "doeff-cluster-test" :role "entry"}}
   "名乗った worker の事実(準備済みの root の鍵 ready・root の置き場の余地 capacity)を、盤の状態に置く形で組むため。"
   (WorkerInfo name provides seen #() None #() :platform "linux-x86_64" :env-ready (frozenset ready)
-              :env-capacity capacity :task-reserve 0 :background-room load-capacity))
+              :env-capacity capacity :measured (get ROOM-LOADS load-capacity)))
 
 
 (defk env-task [id declared [needs #("net")]]

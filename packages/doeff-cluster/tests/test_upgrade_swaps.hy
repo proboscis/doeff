@@ -9,6 +9,7 @@
 ;;       coordinator が書いた行に taskReserve が無く、新しい coordinator が読まない)時と、読める時。
 (require doeff-hy.macros [deftest defk <- val])
 (val MODULE-TAGS {:context "doeff-cluster-test" :role "test"})
+(import doeff_cluster [SimMachine])
 (import doeff_events [MemoryBroker])
 (import dataclasses [replace])
 (import doeff_time [Delay])
@@ -25,7 +26,7 @@
 (val NEW "90fd9a81d97ddf1cf5ae13a4036fa615108abbe7")
 (val NO-JOBS (system-of "upgrade-swaps" #()))
 (val ON-X (frozenset ["x-tool"]))
-(val A (SimWorker :name "a" :provides (frozenset ["x-tool" "host-a"]) :task-reserve 0 :background-room 1 :doeff-commit OLD))
+(val A (SimWorker :name "a" :provides (frozenset ["x-tool" "host-a"]) :machine (SimMachine :cpus 2 :memory-mib 262144) :doeff-commit OLD))
 (val POLL 0.5)
 (val LEASE 60.0)
 ;; 待ちの期限を短く(本番の既定は 5 時間 — 期限の内か外かを短い仮想の時間で測るため)。

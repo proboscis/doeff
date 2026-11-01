@@ -90,12 +90,12 @@
 ;;;   test-a-counterexample-worker-that-overstates-its-memory-breaks-c6(heartbeat で memory の予算を多く名乗る壊れた worker — SimWorker の
 ;;;   overstates-memory — で 2 つ置かれて C6 が名指す)。
 ;;;   C17 tasks-stay-within-the-machine(doeff_cluster._coordinator.core.coordinator_invariants:tasks-stay-within-the-machine — #3489 の
-;;;   予約の条を測った空きの置き方へ)— どの瞬間も、worker の上で動く task の数は、その機体の本当の CPU の数から導く上限
-;;;   (measured_room.task-cap-of)を越えない(task は heartbeat の測った空きから数えて置き、常駐の job の数に依らない)。確かめるのは
+;;;   予約の条を測った空きの置き方へ)— どの瞬間も、worker の上で動く task の数は、その機体が本当の測った空き(measured_room.measured-room)
+;;;   で受ける数を越えない(task は heartbeat の測った空きから数えて置き、常駐の job の数に依らない)。確かめるのは
 ;;;   tests/test_local.hy の test-tasks-run-in-the-measured-room-beside-every-resident-job(CPU 2 つの機体の worker に常駐の service 3 つと
 ;;;   task を出す service の系を置き、3 つとも置かれて task が測った空きで走る — task の区間を判断に渡す)。失敗ケースは同じ file の
-;;;   test-a-counterexample-worker-that-overclaims-its-cpus-breaks-c17(本当は CPU 1 つの機体の worker が heartbeat の measured で CPU を 4 つと
-;;;   名乗る — SimWorker の claims-cpus — で task が上限を越えて置かれ C17 が名指す)。
+;;;   test-a-counterexample-worker-that-overclaims-its-cpus-breaks-c17(本当は CPU 1 つ — 空きの無い機体の worker が heartbeat の measured で
+;;;   CPU を 4 つと名乗る — SimWorker の claims-cpus — で task が置かれ C17 が名指す)。
 ;;;   C7 placed-only-where-eligible(doeff_cluster._coordinator.core.coordinator_invariants:placed-only-where-eligible — #1976 の #32)— 置き先の
 ;;;   worker は job の needs を本当に提供する。確かめるのは tests/test_local.hy の test-a-job-is-not-placed-on-a-worker-without-its-needs
 ;;;   (needs を提供しない worker だけの世界の置き先を判断に渡す)。失敗ケースは同じ file の

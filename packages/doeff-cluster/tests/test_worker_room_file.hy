@@ -11,6 +11,7 @@
 ;; 失敗ケース = 起動の時の値を名乗り続ける(file の変更が効かない)・崩れた file で既定の値や 0 を名乗る・下げた枠で走っている job を外す。
 (require doeff-hy.macros [deff defk deftest <- val])
 (val MODULE-TAGS {:context "doeff-cluster-test" :role "test"})
+(import tests.room_rows [ROOM-LOADS])
 (import json)
 (import dataclasses [replace])
 (import httpx)
@@ -42,7 +43,7 @@
 
 (deftest test-the-room-file-names-the-row-of-the-worker
   (<- zeus RoomReading (room-of-text (json.dumps ROOMS) "zeus"))
-  (assert (= zeus (RoomReading :state RoomState.OK :room (WorkerRoom :background-room 4 :task-reserve 6 :memory-mib 63488) :reason "")) zeus)
+  (assert (= zeus (RoomReading :state RoomState.OK :room (WorkerRoom :memory-mib 63488) :reason "")) zeus)
   ;; 崩れた形はどれも malformed で枠を持たない(既定の値や 0 で埋めない)。
   (val broken [["{" "JSON でない"]
                ["[1]" "JSON の object でない"]
@@ -66,7 +67,7 @@
   (<- with-capacity RoomReading (room-of-text (json.dumps {"eos" {"capacity" 7 "taskReserve" 0 "backgroundRoom" 0 "memoryMiB" 3840}}) "eos"))
   (<- odd-capacity RoomReading (room-of-text (json.dumps {"eos" {"capacity" "x" "taskReserve" 0 "backgroundRoom" 0 "memoryMiB" 3840}}) "eos"))
   (<- without RoomReading (room-of-text (json.dumps {"eos" {"taskReserve" 0 "backgroundRoom" 0 "memoryMiB" 3840}}) "eos"))
-  (val room (WorkerRoom :task-reserve 0 :background-room 0 :memory-mib 3840))
+  (val room (WorkerRoom :memory-mib 3840))
   (assert (= #(with-capacity.room odd-capacity.room without.room) #(room room room)) #(with-capacity odd-capacity without))
   (assert (= with-capacity.state RoomState.OK) with-capacity))
 
@@ -78,11 +79,11 @@
                                                             "memoryMiB" 16384}})
                                       "atlas"))
   (assert (= atlas (RoomReading :state RoomState.OK :reason ""
-                                :room (WorkerRoom :background-room 0 :task-reserve 3 :pools #("pool-a" "pool-b") :memory-mib 16384)))
+                                :room (WorkerRoom :pools #("pool-a" "pool-b") :memory-mib 16384)))
           atlas)
   ;; pools の無い行は組の印を持たない。
   (<- plain RoomReading (room-of-text (json.dumps ROOMS) "zeus"))
-  (assert (= plain.room (WorkerRoom :background-room 4 :task-reserve 6 :pools #() :memory-mib 63488)) plain)
+  (assert (= plain.room (WorkerRoom :pools #() :memory-mib 63488)) plain)
   (val row (fn [extra] (json.dumps {"eos" (| {"capacity" 3 "taskReserve" 0 "backgroundRoom" 0 "memoryMiB" 3840} extra)})))
   (val broken [[{"pools" "pool-a"} "worker eos の行の pools が列でない: 'pool-a'"]
                [{"pools" {"pool-a" True}} "worker eos の行の pools が列でない: {'pool-a': True}"]
@@ -170,8 +171,8 @@
 
 
 (deftest test-the-log-line-names-the-move-and-the-kept-value
-  (val before (WorkerRoom :background-room 4 :task-reserve 6 :memory-mib None))
-  (val after (WorkerRoom :background-room 5 :task-reserve 6 :memory-mib 63488))
+  (val before (WorkerRoom :memory-mib None))
+  (val after (WorkerRoom :memory-mib 63488))
   (<- moved str (room-line before after (RoomReading :state RoomState.OK :room after :reason "")))
   (<- kept str (room-line before before (RoomReading :state RoomState.MALFORMED :room None :reason "JSON でない")))
   (assert (= moved "worker: 枠の file から task-reserve 6・background-room 4 → task-reserve 6・background-room 5・memory 63488 MiB を名乗る") moved)
@@ -225,16 +226,16 @@
   (.write-text room (json.dumps ROOMS))
   (val booted (fn [path reserve [room 0] [memory None]]
                  (run (with-handlers [os-file-handler] (boot-room path "zeus" reserve room memory)))))
-  (assert (= (booted (str room) None) (WorkerRoom :background-room 4 :task-reserve 6 :memory-mib 63488)))
-  (assert (= (booted (str room) 1 2 100) (WorkerRoom :background-room 4 :task-reserve 6 :memory-mib 63488)))
+  (assert (= (booted (str room) None) (WorkerRoom :memory-mib 63488)))
+  (assert (= (booted (str room) 1 2 100) (WorkerRoom :memory-mib 63488)))
   ;; 読めない file は引数へ戻る(--background-room は既定 0・--memory-mib は省けば名乗らない)。引数も無ければ断りの文。
   (val missing (str (/ tmp-path "no-such.json")))
-  (assert (= (booted missing 1 2 4096) (WorkerRoom :background-room 2 :task-reserve 1 :memory-mib 4096)))
-  (assert (= (booted missing 1) (WorkerRoom :background-room 0 :task-reserve 1 :memory-mib None)))
+  (assert (= (booted missing 1 2 4096) (WorkerRoom :memory-mib 4096)))
+  (assert (= (booted missing 1) (WorkerRoom :memory-mib None)))
   (val refused (booted missing None))
   (assert (and (isinstance refused str) (.startswith refused (+ "枠の file " missing " を読めない(unreadable"))) refused)
   ;; file を渡さない起動は今までどおり --task-reserve が要る。負の数は断る。
-  (assert (= (booted "" 0) (WorkerRoom :background-room 0 :task-reserve 0 :memory-mib None)))
+  (assert (= (booted "" 0) (WorkerRoom :memory-mib None)))
   (assert (= (booted "" None 4) "--task-reserve を渡す(--room-file を渡さない時は必ず要る)"))
   (assert (= (booted "" 0 -1) "--task-reserve 0・--background-room -1・--memory-mib None は 0 以上で名乗る")))
 
@@ -257,14 +258,14 @@
   (assert (is (run (with-handlers [os-file-handler] (boot-warm-services (str (/ tmp-path "no-such.json")) "zeus" None))) False))
   (assert (is (run (with-handlers [os-file-handler] (boot-warm-services "" "zeus" None))) False))
   (<- zeus RoomReading (room-of-text (.read-text room) "zeus"))
-  (assert (= zeus.room (WorkerRoom :background-room 4 :task-reserve 6 :memory-mib 63488)) zeus))
+  (assert (= zeus.room (WorkerRoom :memory-mib 63488)) zeus))
 
 
 (defk sized [name room reserve memory]
   {:pre [(: name str) (: room int) (: reserve int) (: memory int)] :post [(: % WorkerInfo)] :tags {:context "doeff-cluster-test" :role "judgment"}}
   "背景の枠 room・task のために空けておく数 reserve・memory の予算 memory の、最後の連絡が 0 で task と同じ版 python 3 の worker の記録を
    作るため。"
-  (WorkerInfo name #() 0 :task-reserve reserve :versions #((ComponentVersion "python" "3")) :background-room room :memory-mib memory))
+  (WorkerInfo name #() 0 :measured (get ROOM-LOADS (+ reserve room)) :versions #((ComponentVersion "python" "3")) :memory-mib memory))
 
 
 (defk task [id]

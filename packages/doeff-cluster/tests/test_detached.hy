@@ -115,7 +115,7 @@
    送る Program が自分の handler を並べる(sim の宿は柵の中で走らせ、足りない handler を補わない)。task の始まりは worker の拍(0.5 秒)と
    コードの準備の拍を挟むので、slow は他の組より長く取る(仮想の時計なので走る時間は増えない)。"
   (Rig :kind "sim" :handlers [] :worker None :slow 6.0 :lease 5.0 :poll 1.0
-       :sim-workers #((SimWorker :name RUNNER :provides LOCAL :versions runner-versions :task-reserve 0))))
+       :sim-workers #((SimWorker :name RUNNER :provides LOCAL :versions runner-versions))))
 
 
 (defk coordinator-rig [tmp-path runner-versions]

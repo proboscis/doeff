@@ -278,7 +278,7 @@
 
 (deftest test-a-sim-task-child-answers-the-environ-name-from-the-host
   ;; sim の子では os-environ-reader が環境に無い名を外へ通し、sim の宿が同じ読みの定義で spec.environ から答える(本番と同じ Program・同じ :environ)。
-  (<- answer tuple (sim-cluster :notice-broker (MemoryBroker) NO-JOBS (sim-environ-scenario) :workers #((SimWorker :name "w1" :provides LOCAL :task-reserve 0))))
+  (<- answer tuple (sim-cluster :notice-broker (MemoryBroker) NO-JOBS (sim-environ-scenario) :workers #((SimWorker :name "w1" :provides LOCAL))))
   (assert (= (get answer 0) URL) answer)
   (assert (= (get answer 1) (DetachedSubmitted "sim-env" True)) answer)
   (assert (= (get answer 2) (DetachedSucceeded "http://detached.invalid")) answer))

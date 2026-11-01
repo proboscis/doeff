@@ -4,6 +4,7 @@
 ;; 黙って捨てる・heartbeat の名乗りと違う能力を作る。
 (require doeff-hy.macros [deftest <- val])
 (val MODULE-TAGS {:context "doeff-cluster-test" :role "test"})
+(import tests.room_rows [ROOM-LOADS])
 (import json)
 (import pytest)
 (import doeff_cluster [WorkerInfo])
@@ -20,14 +21,14 @@
 (deftest test-every-row-becomes-a-worker-with-the-provides-it-announces
   (<- workers (get tuple #(FailoverWorker ...)) (room-file-workers (json.dumps ROOMS) #((ExtraProvides :name "zeus" :provides #("agent" "boundary-x")))))
   (assert (= workers
-             #((FailoverWorker :info (WorkerInfo :name "atlas" :provides #("host-atlas" "host-systemd-readable" "pool-a" "pool-b") :background-room 0
-                                                 :last-seen-ms 0 :exclusive #() :task-reserve 3 :memory-mib 8960)
+             #((FailoverWorker :info (WorkerInfo :name "atlas" :provides #("host-atlas" "host-systemd-readable" "pool-a" "pool-b") :measured (get ROOM-LOADS 3)
+                                                 :last-seen-ms 0 :exclusive #() :memory-mib 8960)
                                :memory-mib 8960)
-               (FailoverWorker :info (WorkerInfo :name "k3s-1" :provides #("host-k3s-1" "host-systemd-readable" "pool-k3s-1-k3s-2") :background-room 0
-                                                 :last-seen-ms 0 :exclusive #() :task-reserve 0 :memory-mib 1792)
+               (FailoverWorker :info (WorkerInfo :name "k3s-1" :provides #("host-k3s-1" "host-systemd-readable" "pool-k3s-1-k3s-2")
+                                                 :last-seen-ms 0 :exclusive #() :memory-mib 1792)
                                :memory-mib 1792)
-               (FailoverWorker :info (WorkerInfo :name "zeus" :provides #("agent" "boundary-x" "host-systemd-readable" "host-zeus") :background-room 4
-                                                 :last-seen-ms 0 :exclusive #() :task-reserve 6 :memory-mib 60000)
+               (FailoverWorker :info (WorkerInfo :name "zeus" :provides #("agent" "boundary-x" "host-systemd-readable" "host-zeus") :measured (get ROOM-LOADS 10)
+                                                 :last-seen-ms 0 :exclusive #() :memory-mib 60000)
                                :memory-mib 60000)))
          workers))
 
@@ -37,7 +38,7 @@
   (<- workers (get tuple #(FailoverWorker ...)) (room-file-workers (json.dumps ROOMS) #()))
   (val atlas (get workers 0))
   (<- body dict (heartbeat-body :name "atlas" :provides (tuple (sorted #("host-atlas" #* TEMPLATE-PROVIDES))) :exclusive #() :node "atlas"
-                                :background-room 0 :task-reserve 3 :versions {} :statuses [] :endpoint "" :boot "b" :boot-at 0 :tools {} :kept #()
+                                :versions {} :statuses [] :endpoint "" :boot "b" :boot-at 0 :tools {} :kept #()
                                 :pools #("pool-a" "pool-b")))
   (assert (= (get body "provides") (list atlas.info.provides)) #(body atlas)))
 

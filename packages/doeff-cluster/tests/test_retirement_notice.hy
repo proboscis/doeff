@@ -114,7 +114,7 @@
 (deftest test-a-counterexample-worker-that-does-not-tell-the-retiring-process-breaks-w2
   ;; 反例(条 W2): 入れ替えで旧を名から外す RetireJob が観測だけ書いて process へ知らせない壊れた worker(silent-notices)では、旧は
   ;; 何も受けないまま新が Ready になり止められ、W2 の判断がその世代を名指す — 本物の宿が名から外す時に知らせていることの裏返し。
-  (val workers #((SimWorker :name "w1" :provides (frozenset ["cluster-net"]) :silent-notices True :task-reserve 0)))
+  (val workers #((SimWorker :name "w1" :provides (frozenset ["cluster-net"]) :silent-notices True)))
   (<- seen RetireSeen (sim-cluster :notice-broker (MemoryBroker) (retiring-beacons sim-foundation) (redeclared (retiring-beacons-v2 sim-foundation) 15.0)
                                    :workers workers))
   (val old (get seen.processes 0))
