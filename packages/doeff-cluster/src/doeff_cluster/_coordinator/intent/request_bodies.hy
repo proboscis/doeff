@@ -220,7 +220,9 @@
    (起動の script の WORKER_DOEFF_COMMIT。版を持たない worker・旧い worker は空)・memory-MiB = 枠の file の行の
    常駐の job の memory の予算(欄 memoryMiB・0 以上の MiB。job の側の枠 — 置いた job の settle の和 + 新しい job の
    settle がこの値以下の時だけ置く。名乗らない worker(枠の file の外の機体)は None で、memory で縛らない)・measured = 機体の
-   測った空き(MeasuredLoad — 測れない worker・旧い worker は None。task の置き先はこの値から数え、None の worker には task を置かない)。
+   測った空き(MeasuredLoad — 測れない worker・旧い worker は None。task の置き先はこの値から数え、None の worker には task を置かない)・
+   child-environ = worker が job の子へ渡す環境変数の名の列(名乗らない旧い worker は None — GET /state の worker の行に写すだけで、
+   置き方の判断には使わない)。
    旧い worker が送る taskReserve・backgroundRoom・capacity(手書きの task の枠 — 消した欄)は欄に持たずに捨てる(:unknown :ignore)。"
   {:tags {:context "coordinator" :role "type" :reads "json"} :names :camel :unknown :ignore
    :check [(> (len name) 0) (or (is memory-MiB None) (>= memory-MiB 0))]}
@@ -247,7 +249,8 @@
   (setv #^ str doeff-commit "")
   ;; wire の名を memoryMiB にするため、欄の名は単位の綴りのまま(:camel の写しが memory-MiB → memoryMiB)。
   (setv #^ (| int None) memory-MiB None)
-  (setv #^ (| MeasuredLoad None) measured None))
+  (setv #^ (| MeasuredLoad None) measured None)
+  (setv #^ (| (get tuple #(str ...)) None) child-environ None))
 
 
 (defwire ResourceBody

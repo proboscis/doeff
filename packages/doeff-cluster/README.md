@@ -575,6 +575,10 @@ coordinator は古い版のまま動き続けます。
   `provides` の組の印をそのまま能力として受けますが、`memoryMiB` の欄は読み捨てます(Worker の spec と GET /state に出ない)。
   coordinator を先に上げ、新しい版が Ready になってから worker を上げ、その後に枠の file へ値を入れます。旧い版の worker は 2 つの欄を
   読まないので、値を先に入れても何も変わりません。
+- 子の環境の名 `childEnviron` の名乗り(どちらが先でもよい): worker は job の子へ渡す環境変数の名(worker の環境のうち許可表の名と
+  `LC_*` + `--pass-env` の名と worker の文脈の名・名の順)を heartbeat の欄 `childEnviron` で名乗り、coordinator は GET /state の
+  workers の値に `childEnviron` で出します。旧い版の coordinator は欄を読み捨て、旧い版の worker の行には欄が出ません(空の列は出さない)。
+  欄の在る worker だけが、宣言し直す前の照らし(job が worker の環境から読む名がその worker の子に届くか)に入ります。
 
 ## テスト
 

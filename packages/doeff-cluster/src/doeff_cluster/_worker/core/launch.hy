@@ -56,6 +56,17 @@
   (dfor #(k v) (.items merged) :if (not-in k WITHHELD-ENV-NAMES) k v))
 
 
+(defk child-environ-names [base extra]
+  {:pre [(: base (get dict #(str str))) (: extra (get dict #(str str)))] :post [(: % (get tuple #(str ...)))]
+   :tags {:context "worker" :role "judgment"}}
+  "worker が job の子へ渡す環境変数の名を、heartbeat の childEnviron で名乗る形(名の順)にするため: base(worker の環境)のうち許可表の
+   物と LC_* と、worker が全部の子へ足す名 extra(--pass-env・worker の文脈)を、child-environment と同じ規則で重ねる(WITHHELD-ENV-NAMES は
+   名乗らない)。job ごとの名(宣言の env-vars・DOEFF_WORKER_JOB などの文脈)は入れない — 上に載る系は、job が worker の環境から読む名が
+   ここに在るかを、宣言し直す前に照らす。木の job は worker の環境を EXTEND で全部継ぐが、名乗るのは実行環境の job の子に届く名だけ。"
+  (<- merged dict (child-environment base extra {} {}))
+  (tuple (sorted merged)))
+
+
 (defk env-project-dir [root declared]
   {:pre [(: root str) (: declared dict)] :post [(: % str)] :tags {:context "worker" :role "judgment"}}
   "root と宣言の JSON から、uv の --project に渡す project の dir を決めるため(env_prepare.project-dir と同じ規則)。"

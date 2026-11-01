@@ -69,6 +69,7 @@ class WorkerInfo:
     doeff_commit: str = ''
     memory_mib: int | None = None
     measured: MeasuredLoad | None = None
+    child_environ: tuple[str, ...] | None = None
     retired: tuple[str, ...] = ...
     boot_at: int | None = None
     exclusive: tuple[str, ...] = ...

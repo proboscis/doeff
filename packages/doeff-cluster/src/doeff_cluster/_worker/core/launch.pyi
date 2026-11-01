@@ -20,6 +20,9 @@ CHILD_ENV_PREFIXES: tuple[str, ...]
 def child_environment(base: dict[str, str], extra: dict[str, str], declared: dict[str, str], worker: dict[str, str]) -> _Program[dict[str, str], object]:
     ...
 
+def child_environ_names(base: dict[str, str], extra: dict[str, str]) -> _Program[tuple[str, ...], object]:
+    ...
+
 def env_project_dir(root: str, declared: dict) -> _Program[str, object]:
     ...
 

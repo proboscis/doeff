@@ -47,6 +47,7 @@
 (import doeff_cluster._shared.core.launch_rules [worker-commit-env-name])
 (import doeff_cluster._worker.core.room_rules [RoomReading RoomState WorkerRoom room-of-text room-warm-services-of])
 (import doeff_cluster._worker.core.load_rules [LoadPaths])
+(import doeff_cluster._worker.core.launch [CHILD-ENV-ALLOWED CHILD-ENV-PREFIXES child-environ-names])
 (import doeff_cluster._worker.protocol.lease_release [lease-release])
 (import doeff_cluster._foundation.process_versions [this-process-versions clock-ticks])
 (import doeff_cluster._shared.intent.protocol [ClusterTiming])
@@ -228,6 +229,14 @@
   "起動の時に要る機体の環境変数(子へ渡す名・版の識別の env のキー・世代の file の名)を、在る分だけ名 → 値で読むため。読みは
    ReadEnvironment の effect で、答え手は入口が並べる subprocess-handler(本物 = os.environ)— 入口の層で os.environ を直に読まない(DOEFF106)。"
   (<- found (ReadEnvironment :names names))
+  (dfor entry found entry.name entry.value))
+
+
+(defk allowed-environment []
+  {:pre [] :post [(: % dict)] :tags {:context "worker" :role "main"}}
+  "worker の環境のうち、実行環境の job の子へ継ぐ許可表の名(CHILD-ENV-ALLOWED と LC_*)を在る分だけ名 → 値で読むため(heartbeat で
+   子の環境の名を名乗る材料 — 子を起こす宿 process_host と同じ読み)。答え手は入口が並べる subprocess-handler(本物 = os.environ)。"
+  (<- found (ReadEnvironment (tuple (sorted CHILD-ENV-ALLOWED)) :prefixes CHILD-ENV-PREFIXES))
   (dfor entry found entry.name entry.value))
 
 
@@ -461,6 +470,8 @@
         host-env (| (run (passed-environment args.pass-env machine-env))
                     (run (worker-context-environ args.coordinator args.name))
                     (run (cgroup-dir-environ (.get machine-env CGROUP-DIR-VAR))))
+        ;; job の子へ渡す環境変数の名(許可表の名のうち worker の環境に在る物 + 上の host-env の名 — heartbeat の childEnviron で名乗る)。
+        child-environ (run (child-environ-names (run (with-handlers [subprocess-handler] (allowed-environment))) host-env))
         ;; 兄弟の cgroup.procs を書く cgroup v2 の見えの根(起動の script の層が置く・無ければ /sys/fs/cgroup)。
         cgroup-root (.get machine-env CGROUP-DIR-VAR CGROUP-ROOT)
         ;; 常駐の job の shim を置く兄弟の cgroup(機体の配備が名を渡した時だけ)。
@@ -520,6 +531,8 @@
                         :load-paths (LoadPaths)
                         ;; kubelet の下の worker は、見張りの数えた追い出しまでの空きを memory の空きとして名乗る。
                         :eviction memory-cell.eviction
+                        ;; job の子へ渡す環境変数の名を heartbeat で名乗る(上に載る系が宣言し直す前に job の読む名と照らす)。
+                        :child-environ child-environ
                         ;; heartbeat を拍から切り離し、desired の変化は名指しの待ちで受ける(#1933 — 待つ口の無い coordinator
                         ;; には拍ごとに送る)。
                         :watch True)

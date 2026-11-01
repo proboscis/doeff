@@ -146,7 +146,8 @@
    読み直して heartbeat の measured で名乗る)。eviction = 機体の memory の見張りの追い出しの線の入れ物(worker/protocol/eviction_line の
    EvictionCell — 在れば、見張りが最後に数えた新しい線の大きさと追い出しまでの空きを measured の memory の総量と空きとして名乗る)。
    supplied =最後に届いた返事の、この worker に置かれうる job の参照の綴り(None = まだ渡されていない — 値の写しの係 supplied_hold が
-   読む・ADR-DOE-CLUSTER-004)。"
+   読む・ADR-DOE-CLUSTER-004)。child-environ = job の子へ渡す環境変数の名(名の順 — worker/core/launch の child-environ-names。
+   None = 名乗らない。本番の入口が起動の時に 1 度決めて渡し、heartbeat の childEnviron で名乗る)。"
   (defn #^ None __init__ [self #^ str name #^ tuple provides #^ int fence-ms #^ str task-dir #^ str boot
                           #^ int boot-at #^ int started-ms #^ int started-mono-ms * #^ (| dict None) [versions None]
                           #^ (| dict None) [tools None]
@@ -154,7 +155,7 @@
                           #^ bool [beat-beside True] #^ (| BootMarks None) [boot-marks None] #^ bool [overlaps-elder False]
                           #^ (| str None) [token-file None] #^ (| str None) [room-file None] #^ str [doeff-commit ""]
                           #^ (| int None) [memory-mib None] #^ (| LoadPaths None) [load-paths None]
-                          #^ (| EvictionCell None) [eviction None]]
+                          #^ (| EvictionCell None) [eviction None] #^ (| tuple None) [child-environ None]]
     (setv self.name name self.provides provides self.exclusive exclusive self.node node
           self.tools (or tools {})
           self.handles-envs handles-envs self.env-report None
@@ -210,7 +211,9 @@
           ;; load-reason = 前の読めない訳("" = 読めた — 同じ訳の 2 度目は log に出さない)。eviction = 機体の memory の見張りの追い出しの
           ;; 線の入れ物(None = 見張らない worker — memory の空きは MemAvailable で名乗る)。
           self.load-paths load-paths self.measured None self.load-ticks None self.load-read-ms None self.load-reason ""
-          self.eviction eviction)))
+          self.eviction eviction
+          ;; job の子へ渡す環境変数の名(None = 名乗らない — 起動の時に決まり、process の間は変わらない)。
+          self.child-environ child-environ)))
 
 
 
@@ -531,7 +534,8 @@
                                 :versions state.versions :statuses sending
                                 :endpoint endpoint :boot state.boot :boot-at state.boot-at :tools state.tools :kept kept
                                 :stopping stopping :overlaps-elder state.overlaps-elder :doeff-commit state.doeff-commit
-                                :pools state.pools :memory-mib state.memory-mib :measured state.measured))
+                                :pools state.pools :memory-mib state.memory-mib :measured state.measured
+                                :child-environ state.child-environ))
   (val body (| base
                (if (or (not state.handles-envs) (is state.env-report None))
                    {}

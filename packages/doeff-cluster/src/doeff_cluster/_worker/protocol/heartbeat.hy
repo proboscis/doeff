@@ -36,12 +36,12 @@
 
 
 (defk heartbeat-body [* name provides exclusive node versions statuses endpoint boot boot-at tools kept [stopping False]
-                      [overlaps-elder False] [doeff-commit ""] [pools #()] [memory-mib None] [measured None]]
+                      [overlaps-elder False] [doeff-commit ""] [pools #()] [memory-mib None] [measured None] [child-environ None]]
   {:pre [(: name str) (: provides (get tuple #(str ...))) (: exclusive (get tuple #(str ...))) (: node str)
          (: versions (get dict #(str str))) (: statuses (get list (get dict #(str object)))) (: endpoint str) (: boot str) (: boot-at int)
          (: tools (get dict #(str object))) (: kept (get tuple #(str ...))) (: stopping bool)
          (: overlaps-elder bool) (: doeff-commit str) (: pools (get tuple #(str ...))) (: memory-mib (| int None))
-         (: measured (| MachineLoad None))]
+         (: measured (| MachineLoad None)) (: child-environ (| (get tuple #(str ...)) None))]
    :post [(: % (get dict #(str object)))]
    :tags {:context "worker" :role "protocol"}}
   "POST /heartbeat の本文(生存・能力・版・状態の報告・世代・持っている印・止まり始め)を作るため。実行環境の root の名乗り(env-body)は
@@ -57,7 +57,8 @@
    heartbeat から置き方に効く)。memory-mib = 常駐の job の memory の予算(MiB — 名乗る時だけ欄 memoryMiB を書く。coordinator は置いた job の
    settle の和 + 新しい job の settle がこの値以下の時だけ置き、名乗らない worker は memory で縛らない)。measured = 機体の測った空き
    (worker/core/load_rules の MachineLoad — 測れた時だけ欄 measured を書く。coordinator は保存せず、task の置き先をこの値から数え、
-   GET /state の worker の行に出す。名乗らない worker には task を置かない)。"
+   GET /state の worker の行に出す。名乗らない worker には task を置かない)。child-environ = job の子へ渡す環境変数の名(名の順 —
+   worker/core/launch の child-environ-names。名乗る時だけ欄 childEnviron を書く。coordinator は GET /state の worker の行に出す)。"
   (<- named (get tuple #(str ...)) (announced-provides provides pools))
   (var measured-part {})
   (when (is-not measured None)
@@ -73,6 +74,7 @@
    #** (if overlaps-elder {"overlapsElder" True} {})
    #** (if doeff-commit {"doeffCommit" doeff-commit} {})
    #** (if (is memory-mib None) {} {"memoryMiB" memory-mib})
+   #** (if (is child-environ None) {} {"childEnviron" (list child-environ)})
    #** measured-part})
 
 
