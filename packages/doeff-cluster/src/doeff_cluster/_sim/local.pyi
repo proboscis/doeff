@@ -36,6 +36,7 @@ from doeff_core_effects import Task as Task
 from doeff_core_effects import Future as Future
 from doeff_core_effects import TaskCancelledError as TaskCancelledError
 from doeff_core_effects import Race as Race
+from doeff_core_effects import shielded as shielded
 from doeff_core_effects import AwaitStop as AwaitStop
 from doeff_core_effects import StopBell as StopBell
 from doeff_core_effects import StopRequested as StopRequested

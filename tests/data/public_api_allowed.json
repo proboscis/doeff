@@ -6555,6 +6555,13 @@
   },
   {
    "package": "doeff-core-effects",
+   "module": "doeff_core_effects",
+   "name": "shielded",
+   "組": "許した物 — program の helper",
+   "決め": "ADR-DOE-API-001 R18"
+  },
+  {
+   "package": "doeff-core-effects",
    "module": "doeff_core_effects.aiohttp_http_server",
    "name": "HttpAddress",
    "組": "許した物 — effect の値の型",

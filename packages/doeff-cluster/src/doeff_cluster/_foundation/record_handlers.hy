@@ -33,7 +33,7 @@
 (import typing [Protocol TypeVar])
 (import doeff [Program])
 (import doeff [GetBoundaries K WithObserveRaw Callable :as VmCallable])
-(import doeff_core_effects [Spawn Wait CreatePromise CompletePromise Promise TaskPriority])
+(import doeff_core_effects [Spawn Wait CreatePromise CompletePromise Promise TaskPriority shielded])
 (import doeff_cluster._foundation.record_codec [READ LIVE DECISION OUTPUT LOOSE DIVERGE INTERN-MIN-CHARS BLOB-MEMORY-MAX FORMAT-VERSION BlobMemory
                                          EffectCodec HandleTable UnencodableValue UnrecordableEffect
                                          encode-value encode-error decode-value decode-error canonical intern-json
@@ -583,7 +583,8 @@
     (<- answer (with-handlers [(effect-recorder log)] body))
     answer
     (finally
-      (<- (close-log log)))))
+      ;; shielded: 取り消された task の待ちはまた取り消されるので、残りの行の送りは囲んで待ち切る
+      (<- (shielded (close-log log))))))
 
 
 (defclass RecordingInstaller []

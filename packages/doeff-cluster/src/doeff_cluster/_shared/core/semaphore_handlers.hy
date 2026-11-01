@@ -18,7 +18,7 @@
 (val MODULE-TAGS {:context "doeff-cluster" :role "program"})
 (import collections.abc [Callable])
 (import doeff [EffectBase])
-(import doeff_core_effects [CreateSemaphore AcquireSemaphore ReleaseSemaphore Spawn Cancel TaskCancelledError])
+(import doeff_core_effects [CreateSemaphore AcquireSemaphore ReleaseSemaphore Spawn Cancel TaskCancelledError shielded])
 (import doeff_time [Delay])
 (import doeff_cluster._shared.core.clock [now-epoch-ms])
 (import doeff_cluster._shared.intent.semaphore_model [CreateNamedSemaphore ClusterSemaphore LeaseLost HeldLease WriteFenced
@@ -126,7 +126,8 @@
                    (except [e Exception] (<- (Delay session.retry-seconds)))))))
     (except [cancelled TaskCancelledError]
       (when unsure
-        (<- (claim-withdrawn semaphore token)))
+        ;; shielded: 取り消された task の待ちはまた取り消されるので、返しの送りは囲んで待ち切る
+        (<- (shielded (claim-withdrawn semaphore token))))
       (raise cancelled))))
 
 

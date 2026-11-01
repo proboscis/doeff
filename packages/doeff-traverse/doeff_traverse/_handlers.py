@@ -188,13 +188,14 @@ def _stop_items(
     ``boundaries`` None reports nothing (no consumer, or one broke the ItemOutcome contract)."""
     from doeff_core_effects import Try
     from doeff_core_effects import try_handler
-    from doeff_core_effects import Cancel, Wait
+    from doeff_core_effects import Cancel, Wait, shielded
 
     stopped = tasks.take_the_rest()
     for task in tasks.tasks:
         yield Cancel(task)
     for task in tasks.tasks:
-        yield try_handler(Try(Wait(task)))
+        # Shielded: the Traverse's own task may be the cancelled one, whose waits raise again.
+        yield try_handler(Try(shielded(Wait(task))))
     if boundaries is not None:
         yield _report_cancelled(handler, boundaries, traverse, label, total, stopped)
 

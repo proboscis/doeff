@@ -32,6 +32,7 @@
 (import dataclasses [dataclass])  ; defrecord の展開が使う
 (import doeff [EffectBase Program])
 (import doeff_core_effects._http_server_effects [HttpHeader])
+(import doeff_core_effects._scheduler [shielded])
 
 ;; ws の閉じの状態符(RFC 6455 7.4.1)— 答え手が決める値。
 (val WS-LINK-CLOSE-NORMAL 1000)
@@ -162,7 +163,8 @@
     (<- answer program)
     answer
     (finally
-      (<- (WsDisconnectAll)))))
+      ;; shielded: 取り消された task の待ちはまた取り消されるので、閉じは囲んで待ち切る
+      (<- (shielded (WsDisconnectAll))))))
 
 
 ;; --- 台本の語彙(scripted-ws-client) ----------------------------------------------------------------------------------------------
