@@ -324,6 +324,7 @@ if TYPE_CHECKING:
     )
     from doeff_cluster._coordinator.core.cluster_policy import sweep_due as sweep_due
     from doeff_cluster._coordinator.core.cluster_policy import task_due as task_due
+    from doeff_cluster._coordinator.core.cluster_policy import task_room_of as task_room_of
     from doeff_cluster._coordinator.core.api_policy import tick as tick
     from doeff_cluster._coordinator.core.api_policy import tick_due as tick_due
     from doeff_cluster._coordinator.core.cluster_policy import unplaced_kind as unplaced_kind
@@ -1046,6 +1047,7 @@ _LAZY_EXPORTS: dict[str, str] = {
     "spec_of_declaration": "doeff_cluster._coordinator.core.cluster_policy",
     "sweep_due": "doeff_cluster._coordinator.core.cluster_policy",
     "task_due": "doeff_cluster._coordinator.core.cluster_policy",
+    "task_room_of": "doeff_cluster._coordinator.core.cluster_policy",
     "tick": "doeff_cluster._coordinator.core.api_policy",
     "tick_due": "doeff_cluster._coordinator.core.api_policy",
     "unplaced_kind": "doeff_cluster._coordinator.core.cluster_policy",

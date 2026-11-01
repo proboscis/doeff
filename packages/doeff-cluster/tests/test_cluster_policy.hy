@@ -613,8 +613,8 @@
 (import doeff_cluster [JobSpec])
 (import doeff_cluster [UnplacedKind]
         doeff_cluster._coordinator.intent.cluster_model [Drain DrainPhase TaskUnplacedKind])
-(import doeff_cluster [memory-room-of memory-misfit]
-        doeff_cluster._coordinator.core.cluster_policy [load-of task-room-of task-unplaced-text durable-changed unplaced-views])
+(import doeff_cluster [memory-room-of memory-misfit task-room-of]
+        doeff_cluster._coordinator.core.cluster_policy [load-of task-unplaced-text durable-changed unplaced-views])
 (import doeff_cluster._coordinator.core.drain_policy [advance-drains drain-view])
 (import doeff_cluster [tick])
 
