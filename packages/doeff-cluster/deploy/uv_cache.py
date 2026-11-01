@@ -10,7 +10,7 @@ cache で依存を取り込むと、wheel の無い package(free-threaded の 3.
   upkeep   worker の起動の準備(deploy/boot.sh の doeff_uv_cache_upkeep)が背後で 1 度起こす: 環境変数 DOEFF_UV_CACHE_SEED_URL が在れば
            seed(DOEFF_UV_CACHE_SEED_SECRET = --secret・空きが DOEFF_UV_CACHE_SEED_MIN_FREE_GIB(既定 50)を下回れば入れない)、
            続けて DOEFF_UV_CACHE_GC_DAYS が在れば gc(--idle-days = その値・--venvs = DOEFF_UV_CACHE_GC_VENVS を `:` で分けた dir・
-           --every-seconds = DOEFF_UV_CACHE_GC_EVERY_SECONDS(既定 72000))。どちらが落ちても訳を 1 行出して続け、0 で終わる。
+           --links = DOEFF_UV_CACHE_GC_LINK_ROOTS を `:` で分けた dir・--every-seconds = DOEFF_UV_CACHE_GC_EVERY_SECONDS(既定 72000))。どちらが落ちても訳を 1 行出して続け、0 で終わる。
   pack    cache を tar.zst 1 file にする。入れない物: 錠(.lock)・作りかけ(.tmp*)・組みの一時の環境(builds-v*)・`uv run --with` の
            環境(environments-v*)・interpreter の問い合わせの控え(interpreter-v*)。
   publish  pack した file を S3 互換の object storage の URL(path の形 http(s)://<host>/<bucket>/<key>)へ PUT する。
@@ -26,7 +26,10 @@ cache で依存を取り込むと、wheel の無い package(free-threaded の 3.
              環境        cache の environments-v* の項目(`uv run --with` の環境 — 中身は venv)を venv と同じ決まりで。
              一時の物    cache の直下の .tmp* と builds-v* の項目のうち、最後の変更が --idle-days 日より前の物。
              展開済みの wheel  archive-v* の項目のうち、中の file が全部 hardlink の数 1(どの venv も同じ中身を指していない)で、項目の
-                         最後の変更が --idle-days 日より前の物。venv と環境を消した後に数え直して判じる。索引が指す項目を消しても、uv は
+                         最後の変更が --idle-days 日より前で、残る venv と環境と --links の dir の下の venv のどれも中の symlink で指さず
+                         (UV_LINK_MODE=symlink の venv は中身を項目への symlink で持ち、hardlink の数を増やさない — 項目を消すと壊れる)、
+                         走っている process が読み込んでいない物。venv と環境を消した後に数え直して判じる。symlink の venv の置き場が
+                         --venvs と --links の外に在ると守れないので、置き場を必ずどちらかに渡す。索引が指す項目を消しても、uv は
                          取り寄せ直すだけで壊れない(2026-11-01 に uv 0.12.19 で確かめた — 索引の指す項目を消した後の install は
                          「uncached distribution」として取り寄せ直した)。
            消す物は先に同じ dir の中の別の名へ rename し(uv からは即座に見えなくなる)、その後で中身を消す。前と後の数(項目の数・file の
@@ -523,10 +526,16 @@ class Unit:
     tally: Tally
     shared: bool  # 中の file のどれかが hardlink の数 2 以上
     last_used: float
+    # 中の symlink が指す展開済みの wheel の項目(cache の archive-v*/<id> の path)。UV_LINK_MODE=symlink の venv は中身を cache の項目への
+    # symlink で持ち、項目の hardlink の数を増やさない — 項目を消すと venv が壊れるので、残す venv の指す項目は消さない。
+    links: frozenset[str] = frozenset()
 
 
-def measure(path: Path) -> tuple[Tally, bool, float]:
-    """path の下の file を数え、hardlink を持つ file が在るかと、最後の変更の刻を返す(link は辿らない)。"""
+def measure(
+    path: Path, archive_roots: tuple[str, ...] = ()
+) -> tuple[Tally, bool, float, frozenset[str]]:
+    """path の下の file を数え、hardlink を持つ file が在るか・最後の変更の刻・中の symlink が指す展開済みの wheel の項目を返す
+    (link は辿らない)。archive_roots = cache の archive-v* の dir の path(末尾の / つき)。"""
     walked = list(os.walk(path))
     dirs = list(_lstats([path, *(Path(top, name) for top, names, _ in walked for name in names)]))
     files = list(_lstats(Path(top, name) for top, _, names in walked for name in names))
@@ -537,7 +546,28 @@ def measure(path: Path) -> tuple[Tally, bool, float]:
         bytes=sum(st.st_blocks * 512 for st in [*dirs, *files]),
         freeable=sum(st.st_blocks * 512 for st in files) - sum(st.st_blocks * 512 for st in linked),
     )
-    return tally, bool(linked), (dirs[0].st_mtime if dirs else 0.0)
+    entries = [Path(top, name) for top, names, others in walked for name in [*names, *others]]
+    links = frozenset(
+        entry
+        for link in entries
+        if archive_roots
+        for entry in [_archive_entry(link, archive_roots)]
+        if entry
+    )
+    return tally, bool(linked), (dirs[0].st_mtime if dirs else 0.0), links
+
+
+def _archive_entry(link: Path, archive_roots: tuple[str, ...]) -> str | None:
+    """link が symlink で、指す先が展開済みの wheel の項目の中なら、その項目の path(archive-v*/<id>)。"""
+    try:
+        target = os.readlink(link)
+    except OSError:  # symlink でない・消えた
+        return None
+    resolved = os.path.normpath(os.path.join(link.parent, target))
+    for root in archive_roots:
+        if resolved.startswith(root):
+            return root + resolved[len(root) :].split("/", 1)[0]
+    return None
 
 
 def _lstats(paths: Iterable[Path]) -> Iterator[os.stat_result]:
@@ -623,10 +653,13 @@ def children(cache: Path, prefix: str) -> Iterable[Path]:
 
 @dataclass
 class Survey:
+    """cache と venv の置き場を 1 度読んだ物(消す候補の種類ごとの単位と、消さずに symlink だけを読む置き場の venv)。"""
+
     archives: list[Unit] = field(default_factory=list)
     environments: list[Unit] = field(default_factory=list)
     temporaries: list[Unit] = field(default_factory=list)
     venvs: list[Unit] = field(default_factory=list)
+    holders: list[Unit] = field(default_factory=list)
 
     def groups(self) -> tuple[tuple[str, list[Unit]], ...]:
         return (
@@ -637,48 +670,81 @@ class Survey:
         )
 
     def tallies(self, cutoff: float, used: list[str] | None) -> dict[str, object]:
+        kept = self.kept_links(cutoff, used)
         return {
             kind: {
                 "all": Tally.total(u.tally for u in units).as_dict(),
                 "doomed": Tally.total(
-                    u.tally for u in units if is_doomed(u, cutoff, used)
+                    u.tally for u in units if is_doomed(u, cutoff, used, kept)
                 ).as_dict(),
             }
             for kind, units in self.groups()
         }
 
+    def kept_links(self, cutoff: float, used: list[str] | None) -> frozenset[str]:
+        """残る venv・環境と、symlink だけを読む置き場の venv が指す展開済みの wheel の項目(消さない)。"""
+        survivors = [u for u in [*self.venvs, *self.environments] if not is_doomed(u, cutoff, used)]
+        return frozenset(entry for unit in [*survivors, *self.holders] for entry in unit.links)
 
-def _unit(path: Path, kind: str, last_used: float | None = None) -> Unit:
-    tally, shared, newest = measure(path)
-    return Unit(path, kind, tally, shared, newest if last_used is None else last_used)
+
+def _unit(
+    path: Path, kind: str, last_used: float | None = None, archive_roots: tuple[str, ...] = ()
+) -> Unit:
+    tally, shared, newest, links = measure(path, archive_roots)
+    return Unit(path, kind, tally, shared, newest if last_used is None else last_used, links)
 
 
-def survey(cache: Path, venv_roots: list[Path], depth: int) -> Survey:
+def archive_roots_of(cache: Path) -> tuple[str, ...]:
+    """cache の archive-v* の dir の path(末尾の / つき — symlink の指す先と頭で比べる)。"""
+    return tuple(
+        f"{bucket}/" for bucket in sorted(cache.glob(ARCHIVE_PREFIX + "*")) if bucket.is_dir()
+    )
+
+
+def survey(
+    cache: Path, venv_roots: list[Path], depth: int, link_roots: list[Path] | None = None
+) -> Survey:
     temporaries = [*sorted(cache.glob(TMP_PREFIX + "*")), *children(cache, BUILDS_PREFIX)]
+    archive_roots = archive_roots_of(cache)
     return Survey(
         archives=[_unit(entry, "archive") for entry in children(cache, ARCHIVE_PREFIX)],
         environments=[
-            _unit(entry, "environment", venv_last_used(entry))
+            _unit(entry, "environment", venv_last_used(entry), archive_roots)
             for entry in children(cache, ENVIRONMENTS_PREFIX)
         ],
         temporaries=[_unit(entry, "temporary") for entry in temporaries],
         venvs=[
-            _unit(venv, "venv", venv_last_used(venv))
+            _unit(venv, "venv", venv_last_used(venv), archive_roots)
             for root in venv_roots
+            for venv in find_venvs(root, depth)
+        ],
+        holders=[
+            _unit(venv, "holder", venv_last_used(venv), archive_roots)
+            for root in link_roots or []
             for venv in find_venvs(root, depth)
         ],
     )
 
 
-def is_doomed(unit: Unit, cutoff: float, used: list[str] | None) -> bool:
-    """unit を消すか: 最後に使った刻が cutoff より前で、種類ごとの決まりに合う物。"""
+def is_doomed(
+    unit: Unit, cutoff: float, used: list[str] | None, kept: frozenset[str] = frozenset()
+) -> bool:
+    """unit を消すか: 最後に使った刻が cutoff より前で、種類ごとの決まりに合う物。kept = 残る venv が symlink で指す展開済みの wheel の
+    項目(展開済みの wheel だけが読む)。"""
     if unit.last_used >= cutoff:
         return False
     # venv と環境は使っている process が無い事を確かめる(proc が読めなければ消さない)。venv は venv を持つ dir(作業木)を作業 dir に
-    # する process も使っていると見る。
+    # する process も使っていると見る。展開済みの wheel は、どの venv も hardlink で指さず、残る venv が symlink で指さず、走っている
+    # process が読み込んでいない物(symlink の venv の拡張 module は、読み込んだ process の maps に項目の中の path で出る)。
     match unit.kind:
         case "archive":
-            return not unit.shared
+            return (
+                not unit.shared
+                and str(unit.path) not in kept
+                and not (used is not None and used_under(used, unit.path))
+            )
+        case "holder":
+            return False
         case "temporary":
             return True
         case "venv":
@@ -714,7 +780,10 @@ def gc(
     dry_run: bool,
     every_seconds: float | None,
     proc: Path = Path("/proc"),
+    link_roots: list[Path] | None = None,
 ) -> dict[str, object]:
+    """古い cache の項目と使われない venv を、数えてから消すため(頭の註の gc)。link_roots = 消さずに、中の venv の symlink が指す
+    展開済みの wheel の項目だけを守る置き場(UV_LINK_MODE=symlink の venv を持つ dir — --venvs の外の置き場)。"""
     verb = "count" if dry_run else "gc"
     mark = cache / GC_MARK
     if (
@@ -738,7 +807,7 @@ def gc(
         cutoff = time.time() - idle_days * 86400
         free_before = disk_free(cache)
         used = process_paths(proc)
-        before = survey(cache, venv_roots, depth)
+        before = survey(cache, venv_roots, depth, link_roots)
         counted = before.tallies(cutoff, used)
         result: dict[str, object] = {
             "verb": verb,
@@ -746,6 +815,7 @@ def gc(
             "cache": str(cache),
             "idle-days": idle_days,
             "venv-roots": [str(r) for r in venv_roots],
+            "link-roots": [str(r) for r in link_roots or []],
             "proc-readable": used is not None,
             "before": counted,
             "free-before": free_before,
@@ -754,20 +824,28 @@ def gc(
         if dry_run:
             result["seconds"] = round(time.monotonic() - started, 1)
             return result
-        first = {
-            kind: sum(1 for unit in units if is_doomed(unit, cutoff, used) and remove(unit))
+        gone = {
+            kind: [unit for unit in units if is_doomed(unit, cutoff, used) and remove(unit)]
             for kind, units in before.groups()
             if kind != "archives"
         }
-        # venv と環境を消すと、同じ中身を指していた展開済みの wheel の hardlink の数が減る — 数え直してから判じる。
+        # venv と環境を消すと、同じ中身を指していた展開済みの wheel の hardlink の数が減る — 数え直してから判じる。残る(消さなかった・
+        # 消せなかった)venv と環境と、symlink だけを読む置き場の venv が symlink で指す項目は消さない。
+        removed_paths = {unit.path for units in gone.values() for unit in units}
+        kept = frozenset(
+            entry
+            for unit in [*before.venvs, *before.environments, *before.holders]
+            if unit.path not in removed_paths
+            for entry in unit.links
+        )
         archives = [_unit(entry, "archive") for entry in children(cache, ARCHIVE_PREFIX)]
         removed = {
-            **first,
+            **{kind: len(units) for kind, units in gone.items()},
             "archives": sum(
-                1 for unit in archives if is_doomed(unit, cutoff, used) and remove(unit)
+                1 for unit in archives if is_doomed(unit, cutoff, used, kept) and remove(unit)
             ),
         }
-        after = survey(cache, venv_roots, depth)
+        after = survey(cache, venv_roots, depth, link_roots)
         result.update(
             {
                 "removed": removed,
@@ -798,11 +876,13 @@ class UpkeepSettings:
     gc_days: float | None = None
     gc_venvs: tuple[Path, ...] = ()
     gc_every_seconds: float = 72000.0
+    gc_link_roots: tuple[Path, ...] = ()
 
     @classmethod
     def from_env(cls, env: dict[str, str]) -> Self:
         days = env.get("DOEFF_UV_CACHE_GC_DAYS", "").strip()
         venvs = tuple(Path(p) for p in env.get("DOEFF_UV_CACHE_GC_VENVS", "").split(":") if p)
+        links = tuple(Path(p) for p in env.get("DOEFF_UV_CACHE_GC_LINK_ROOTS", "").split(":") if p)
         return cls(
             seed_url=env.get("DOEFF_UV_CACHE_SEED_URL", "").strip(),
             seed_secret=env.get("DOEFF_UV_CACHE_SEED_SECRET", "").strip(),
@@ -810,6 +890,7 @@ class UpkeepSettings:
             gc_days=float(days) if days else None,
             gc_venvs=venvs,
             gc_every_seconds=float(env.get("DOEFF_UV_CACHE_GC_EVERY_SECONDS", "72000")),
+            gc_link_roots=links,
         )
 
 
@@ -846,6 +927,7 @@ def upkeep(cache: Path, settings: UpkeepSettings, part: int = PART) -> dict[str,
                 3,
                 dry_run=False,
                 every_seconds=settings.gc_every_seconds,
+                link_roots=[r.resolve() for r in settings.gc_link_roots if r.is_dir()],
             )
         except OSError as error:
             say(f"gc: 片付けられない — {error}")
@@ -891,7 +973,17 @@ def main(argv: list[str] | None = None) -> int:
                 help="下の .venv を消す候補にする dir(繰り返せる)",
             )
             p.add_argument(
-                "--depth", type=int, default=3, help="--venvs の dir から .venv を探す深さ"
+                "--links",
+                action="append",
+                default=[],
+                type=Path,
+                help="消さずに、下の .venv の symlink が指す展開済みの wheel の項目だけを守る dir(繰り返せる)",
+            )
+            p.add_argument(
+                "--depth",
+                type=int,
+                default=3,
+                help="--venvs と --links の dir から .venv を探す深さ",
             )
             p.add_argument(
                 "--idle-days",
@@ -942,6 +1034,7 @@ def main(argv: list[str] | None = None) -> int:
                     args.depth,
                     dry_run=args.verb == "count",
                     every_seconds=getattr(args, "every_seconds", None),
+                    link_roots=[r.resolve() for r in args.links if r.is_dir()],
                 )
             )
     return 0
