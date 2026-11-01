@@ -4,10 +4,14 @@
 ;;;                      URL を持つ環境変数の名)で、要求を <URL><target> へ HTTP の要求 1 本で出す(待ちは patience 秒・繋ぐまでは connect-patience
 ;;;                      秒・やり直しなし・redirect は要求の follow-redirects の時だけ辿る・届かない時は値で受ける)。答えは HttpResponse → JobReached・
 ;;;                      HttpFailed → JobNotReached(HttpFailureKind を届かない種類へ写す — 訳の字では分けない)。道の環境変数の名か値が空なら
-;;;                      出さずに JobNoWay。表に無い API の ReachJob は外側へ回す
+;;;                      出さずに JobNoWay。表に無い API の ReachJob は外側へ回す。
+;;;                      ResolveJob: 名で引く道の宛先の URL の host を名前引きの effect ResolveHost(doeff-core-effects — 待ちは patience 秒)で
+;;;                      引くだけで繋がない。HostResolved → JobResolved・HostNotResolved → JobNotResolved(ResolveFailureKind を引けない種類へ
+;;;                      写す)。名で引く道の環境変数の値が空か host を持たなければ引かずに JobNoWay。表に無い API の ResolveJob は外側へ回す
 ;;;   job-reach-handover 模擬の handler: 相手の表(CallJob と同じ Counterpart — API の名と、要求 1 つへの相手の job の答えの 1 点)で、要求を
 ;;;                      相手へ直に渡す(HTTP も宛先も道も通らない — 道を問わず同じ相手)。JobAnswer → JobReached・JobUnreachable → JobNotReached
-;;;                      (繋がらなかった)。表に無い API の ReachJob は外側へ回す
+;;;                      (繋がらなかった)。ResolveJob は表に在る API なら JobResolved(名を持たない — 名前引きは無い)。表に無い API の
+;;;                      ReachJob と ResolveJob は外側へ回す
 ;;;
 ;;; 要求の行の target の綴りは CallJob の送る側と同じ 1 点 job-target。2 つが同じ要求に同じ答えを返す事は契約の検
 ;;; tests/test_job_reach_contract.hy が見る。宛先の環境変数の名・相手の答えの 1 点は使い手の組み立てが決めて渡す(この module は API の名を
@@ -18,8 +22,11 @@
 (import dataclasses [dataclass])  ; defrecord の展開が使う
 (import doeff_core_effects [Ask])
 (import doeff_core_effects [HttpFailed HttpFailureKind HttpRequest HttpResponse])
+(import doeff_core_effects [HostNotResolved HostResolved ResolveFailureKind ResolveHost])
+(import urllib.parse [urlsplit])
 (import doeff_cluster._shared.intent.job_call_model [JobAnswer JobRequest JobUnreachable])
-(import doeff_cluster._shared.intent.job_reach_model [JobNoWay JobNotReached JobReached JobWay ReachFailure ReachJob])
+(import doeff_cluster._shared.intent.job_reach_model [JobNoWay JobNotReached JobNotResolved JobReached JobResolved JobWay ReachFailure ReachJob
+                                                     ResolveFailure ResolveJob])
 (import doeff_cluster._shared.protocol.job_call_handlers [Counterpart job-target])
 
 
@@ -81,6 +88,31 @@
   answer)
 
 
+(defk resolve-failure-of [kind]
+  {:pre [(: kind ResolveFailureKind)] :post [(: % ResolveFailure)] :tags {:context "doeff-cluster" :role "protocol"}}
+  "名前引きの引けない種類を、引けない種類の閉じた語へ写すため(頭の註 — 写すだけで判じない。知らない種類は当てはまる枝が無く :post で落ちる)。"
+  (match kind
+    ResolveFailureKind.NOT-RESOLVED ResolveFailure.NOT-RESOLVED
+    ResolveFailureKind.TIMED-OUT ResolveFailure.TIMED-OUT))
+
+
+(defk resolved-name [destination patience]
+  {:pre [(: destination ReachDestination) (: patience float)] :post [(: % (| JobResolved JobNotResolved JobNoWay))]
+   :tags {:context "doeff-cluster" :role "protocol" :spells "http"}}
+  "宛先 destination の名で引く道の URL の host を、繋がずに引いた事実にするため(頭の註 — 道の値が空か host を持たなければ引かない)。"
+  (<- base str (Ask destination.environ))
+  (when (not (.strip base))
+    (return (JobNoWay :reason (.format "API {} の道 by-name の宛先の環境変数 {} が空" destination.api destination.environ))))
+  (val host (. (urlsplit (.strip base)) hostname))
+  (when (not host)
+    (return (JobNoWay :reason (.format "API {} の道 by-name の宛先の URL に host が無い" destination.api))))
+  (<- answer (| HostResolved HostNotResolved) (ResolveHost :host host :timeout-seconds patience))
+  (match answer
+    (HostNotResolved :kind kind :detail detail) (do (<- failure ResolveFailure (resolve-failure-of kind))
+                                                    (JobNotResolved :failure failure :reason detail))
+    (HostResolved) (JobResolved)))
+
+
 (defk handed-reach [counterpart request]
   {:pre [(: counterpart Counterpart) (: request JobRequest)] :post [(: % (| JobReached JobNotReached))] :tags {:context "doeff-cluster" :role "protocol"}}
   "要求 request を相手の job の答えの 1 点へ直に渡し、届いた事実にするため(頭の註 — 答えなかった相手は繋がらなかったと読む)。"
@@ -98,6 +130,12 @@
     (if (is found None)
         (reperform effect)
         (do (<- answer (| JobReached JobNotReached JobNoWay) (sent-reach found request way connect-patience))
+            (resume answer))))
+  (ResolveJob [api patience]
+    (val found (next (gfor destination destinations :if (= destination.api api) destination) None))
+    (if (is found None)
+        (reperform effect)
+        (do (<- answer (| JobResolved JobNotResolved JobNoWay) (resolved-name found patience))
             (resume answer)))))
 
 
@@ -109,4 +147,8 @@
     (if (is found None)
         (reperform effect)
         (do (<- answer (| JobReached JobNotReached) (handed-reach found request))
-            (resume answer)))))
+            (resume answer))))
+  (ResolveJob [api]
+    (if (any (gfor counterpart counterparts (= counterpart.api api)))
+        (resume (JobResolved))
+        (reperform effect))))

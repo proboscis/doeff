@@ -7,6 +7,8 @@ import httpx
 
 FixtureMode = Literal["record", "replay"]
 SleepFn = Callable[[float], Awaitable[None]]
+# host -> the awaitable of getaddrinfo's rows (family, type, proto, canonname, sockaddr) — ResolveHost's lookup.
+ResolverFn = Callable[[str], Awaitable[list[tuple[Any, ...]]]]
 
 CLIENT_KEEPALIVE_SECONDS: float
 CLIENT_MAX_CONNECTIONS: int
@@ -45,6 +47,7 @@ def http_production_handler(
     *,
     client_factory: AsyncClientFactory = ...,
     sleep: SleepFn = ...,
+    resolver: ResolverFn = ...,
 ) -> Any: ...
 
 
@@ -57,7 +60,7 @@ def http_fixture_handler(
 ) -> Any: ...
 
 
-def _http_production_handler(client: Any, sleep: Any) -> Any: ...
+def _http_production_handler(client: Any, gate: Any, sleep: Any, resolver: Any) -> Any: ...
 
 
 def _http_fixture_record_handler(

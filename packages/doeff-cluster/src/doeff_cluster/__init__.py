@@ -512,12 +512,14 @@ if TYPE_CHECKING:
     from doeff_cluster._shared.intent.job_call_model import JobField as JobField
     from doeff_cluster._shared.intent.job_reach_model import JobNoWay as JobNoWay
     from doeff_cluster._shared.intent.job_reach_model import JobNotReached as JobNotReached
+    from doeff_cluster._shared.intent.job_reach_model import JobNotResolved as JobNotResolved
     from doeff_cluster._shared.intent.job_model import JobPhase as JobPhase
     from doeff_cluster._shared.intent.cluster_control import JobProcessSeen as JobProcessSeen
     from doeff_cluster._shared.intent.cluster_control import (
         JobProcessWaitExpired as JobProcessWaitExpired,
     )
     from doeff_cluster._shared.intent.job_reach_model import JobReached as JobReached
+    from doeff_cluster._shared.intent.job_reach_model import JobResolved as JobResolved
     from doeff_cluster._shared.intent.job_call_model import JobRequest as JobRequest
     from doeff_cluster._shared.intent.job_model import JobSpec as JobSpec
     from doeff_cluster._shared.intent.job_call_model import JobUnreachable as JobUnreachable
@@ -557,6 +559,8 @@ if TYPE_CHECKING:
     )
     from doeff_cluster._shared.intent.job_reach_model import ReachFailure as ReachFailure
     from doeff_cluster._shared.intent.job_reach_model import ReachJob as ReachJob
+    from doeff_cluster._shared.intent.job_reach_model import ResolveFailure as ResolveFailure
+    from doeff_cluster._shared.intent.job_reach_model import ResolveJob as ResolveJob
     from doeff_cluster._shared.intent.checkout_model import ReadCheckout as ReadCheckout
     from doeff_cluster._shared.intent.metrics_model import ReadProcessGauges as ReadProcessGauges
     from doeff_cluster._shared.intent.runtime_identity_model import (
@@ -1233,10 +1237,12 @@ _LAZY_EXPORTS: dict[str, str] = {
     "JobField": "doeff_cluster._shared.intent.job_call_model",
     "JobNoWay": "doeff_cluster._shared.intent.job_reach_model",
     "JobNotReached": "doeff_cluster._shared.intent.job_reach_model",
+    "JobNotResolved": "doeff_cluster._shared.intent.job_reach_model",
     "JobPhase": "doeff_cluster._shared.intent.job_model",
     "JobProcessSeen": "doeff_cluster._shared.intent.cluster_control",
     "JobProcessWaitExpired": "doeff_cluster._shared.intent.cluster_control",
     "JobReached": "doeff_cluster._shared.intent.job_reach_model",
+    "JobResolved": "doeff_cluster._shared.intent.job_reach_model",
     "JobRequest": "doeff_cluster._shared.intent.job_call_model",
     "JobSpec": "doeff_cluster._shared.intent.job_model",
     "JobUnreachable": "doeff_cluster._shared.intent.job_call_model",
@@ -1271,6 +1277,8 @@ _LAZY_EXPORTS: dict[str, str] = {
     "ReachDestination": "doeff_cluster._shared.protocol.job_reach_handlers",
     "ReachFailure": "doeff_cluster._shared.intent.job_reach_model",
     "ReachJob": "doeff_cluster._shared.intent.job_reach_model",
+    "ResolveFailure": "doeff_cluster._shared.intent.job_reach_model",
+    "ResolveJob": "doeff_cluster._shared.intent.job_reach_model",
     "ReadCheckout": "doeff_cluster._shared.intent.checkout_model",
     "ReadProcessGauges": "doeff_cluster._shared.intent.metrics_model",
     "ReadRuntimeFacts": "doeff_cluster._shared.intent.runtime_identity_model",

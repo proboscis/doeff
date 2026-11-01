@@ -35,7 +35,7 @@
 (import doeff [EffectBase Program])
 (import doeff.program [ProgramHandler])
 (import doeff_core_effects._effects [Await HttpRequest HttpResponse SlogEffect slog])
-(import doeff_core_effects._http_effects [HttpFailed HttpFailureKind HttpPhases])
+(import doeff_core_effects._http_effects [HostNotResolved HostResolved HttpFailed HttpFailureKind HttpPhases ResolveFailureKind ResolveHost])
 (import doeff_core_effects._scheduler [AcquireSemaphore CreateSemaphore ReleaseSemaphore Semaphore shielded])
 
 
@@ -158,20 +158,47 @@
   (asyncio.sleep delay))
 
 
-;; http-production-handler が答える効果と、節が出す効果(下の宣言の 1 か所の値)。
-(val HTTP-PRODUCTION-HANDLES #(HttpRequest))
+(defn _loop-getaddrinfo [host]
+  "Look host up with the running loop's resolver — the same getaddrinfo an HTTP client's new connection makes — without
+   connecting (the resolver of http-production-handler's ResolveHost unless a caller hands another)."
+  (import asyncio)
+  (import socket)
+  (.getaddrinfo (asyncio.get-running-loop) host None :type socket.SOCK-STREAM))
+
+
+(defn :async _resolved-or-not [resolver host timeout-seconds]
+  "Await resolver's lookup of host within timeout-seconds and answer what came, as a value (ResolveHost — never raises for a
+   lookup that gave no address). The kind comes from the error's class: the resolver's own error (socket.gaierror) is NOT-RESOLVED,
+   the time limit running out is TIMED-OUT."
+  (import asyncio)
+  (import socket)
+  (try
+    (setv infos (await (asyncio.wait-for (resolver host) timeout-seconds)))
+    (HostResolved :addresses (tuple (.fromkeys dict (gfor info infos (str (get (get info 4) 0))))))
+    (except [error socket.gaierror]
+      (HostNotResolved :kind ResolveFailureKind.NOT-RESOLVED :detail (_failure-detail error)))
+    (except [TimeoutError]
+      (HostNotResolved :kind ResolveFailureKind.TIMED-OUT
+                       :detail (.format "TimeoutError: no address for {} within {} s" host timeout-seconds)))))
+
+
+;; http-production-handler が答える効果と、節が出す効果(下の宣言の 1 か所の値)。ResolveHost は HTTP の接続が中で行う名前引きを単独で
+;; 行う効果で、接続と同じ resolver を使うので同じ答え手が答える。
+(val HTTP-PRODUCTION-HANDLES #(HttpRequest ResolveHost))
 (val HTTP-PRODUCTION-EFFECTS #(Await SlogEffect CreateSemaphore AcquireSemaphore ReleaseSemaphore))
 
 
 (defn #^ ProgramHandler http-production-handler
-  [* #^ (get Callable #([] object)) [client-factory http-client-factory] #^ (get Callable #([float] object)) [sleep _asyncio-sleep]]
+  [* #^ (get Callable #([] object)) [client-factory http-client-factory] #^ (get Callable #([float] object)) [sleep _asyncio-sleep]
+   #^ (get Callable #([str] object)) [resolver _loop-getaddrinfo]]
   "Handle HttpRequest with retry/backoff through one async HTTP client per covered scope: each time the handler value is
    installed around a program, a new client is made when that program starts and closed when it ends — the same value can
    be installed around many scopes (a value made once and installed per request used to reuse the
-   client the first scope had already closed)."
+   client the first scope had already closed). Also handle ResolveHost — the name lookup alone, with resolver (host -> the
+   awaitable of getaddrinfo's rows; the default is the running loop's getaddrinfo, the one the client's connections use)."
   (defn #^ Program scoped-handler [#^ (| Program EffectBase) program]
-    (_run-with-scoped-client client-factory sleep program))
-  (_copy-handler-metadata scoped-handler (_http-production-handler None None sleep))
+    (_run-with-scoped-client client-factory sleep resolver program))
+  (_copy-handler-metadata scoped-handler (_http-production-handler None None sleep resolver))
   ;; 呼ぶたびに作る installer にも同じ宣言を置く — stacked_handlers の束が中の handler の宣言の和を作れるように(#3724 の読み)。
   (setv scoped-handler.__doeff_handles__ HTTP-PRODUCTION-HANDLES
         scoped-handler.__doeff_effects__ HTTP-PRODUCTION-EFFECTS)
@@ -201,14 +228,15 @@
       (_http-fixture-replay-handler fixtures)))
 
 
-(defn #^ Program _run-with-scoped-client [#^ (get Callable #([] object)) client-factory #^ (get Callable #([float] object)) sleep #^ (| Program EffectBase) program]
+(defn #^ Program _run-with-scoped-client [#^ (get Callable #([] object)) client-factory #^ (get Callable #([float] object)) sleep
+                                          #^ (get Callable #([str] object)) resolver #^ (| Program EffectBase) program]
   "Run program under a client made for this scope only (with this scope's permits — the head comment's contract), and close that
    client when the scope ends."
   (do!
     (setv client (client-factory))
     (try
       (<- total (CreateSemaphore CLIENT-MAX-CONNECTIONS))
-      (<- result ((_http-production-handler client (ClientGate total) sleep) program))
+      (<- result ((_http-production-handler client (ClientGate total) sleep resolver) program))
       result
       (finally
         ;; Shielded: a cancelled task's waits raise again, and the client must still close.
@@ -514,11 +542,15 @@
                 :elapsed-seconds (get record "elapsed_seconds")))
 
 
-(defhandler _http-production-handler [client gate sleep]
-  "Handle HttpRequest through the async transport helper."
+(defhandler _http-production-handler [client gate sleep resolver]
+  "Handle HttpRequest through the async transport helper, and ResolveHost through resolver (no client, no permit — it makes
+   no connection)."
   (HttpRequest []
     (<- response (_perform-request-with-retries client gate effect sleep))
-    (resume response)))
+    (resume response))
+  (ResolveHost [host timeout-seconds]
+    (<- answer (Await (_resolved-or-not resolver host timeout-seconds)))
+    (resume answer)))
 
 
 (defhandler _http-fixture-record-handler [path fixtures]

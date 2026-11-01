@@ -43,3 +43,25 @@ class ReachJob(EffectBase[JobReached | JobNotReached | JobNoWay]):
     request: JobRequest
     way: JobWay
     connect_patience: float | None
+
+class ResolveFailure(StrEnum):
+    NOT_RESOLVED = 'not-resolved'
+    TIMED_OUT = 'timed-out'
+
+@dataclass(frozen=True, kw_only=True)
+class JobResolved:
+    ...
+
+@dataclass(frozen=True, kw_only=True)
+class JobNotResolved:
+    failure: ResolveFailure
+    reason: str
+
+    def __post_init__(self) -> None:
+        ...
+
+@dataclass(frozen=True)
+class ResolveJob(EffectBase[JobResolved | JobNotResolved | JobNoWay]):
+    __record_spec__: ClassVar[RecordSpec]
+    api: str
+    patience: float

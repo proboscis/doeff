@@ -142,3 +142,45 @@
 
   (defn #^ str __repr__ [self]
     (+ "HttpRequest(" self.method " " (repr self.url) ")")))
+
+
+;; Why a name lookup gave no address, as a closed set. The handler maps the lookup error's class — never its name or text — to
+;; one of these: NOT-RESOLVED = the resolver answered that it could not resolve the name (no such name, or a failure it reported)
+;; · TIMED-OUT = no answer came within the lookup's time limit.
+(defenum ResolveFailureKind NOT-RESOLVED TIMED-OUT)
+(setv ResolveFailureKind.__doc__ "Why a name lookup gave no address (HostNotResolved.kind): NOT-RESOLVED = the resolver answered
+   that it could not resolve the name · TIMED-OUT = no answer within the time limit.")
+
+
+(defrecord HostResolved
+  "The addresses a name lookup answered (ResolveHost), in the resolver's order without repeats. Plain data -- not an effect."
+  {:check [addresses]}
+  (#^ (get tuple #(str ...)) addresses))
+
+
+(defrecord HostNotResolved
+  "No address came for a name lookup (ResolveHost). Plain data -- not an effect. kind = why, as ResolveFailureKind (branch on
+   this); detail = the lookup error's class and text, for people and logs (do not branch on it)."
+  (#^ ResolveFailureKind kind)
+  (#^ str detail))
+
+
+;; 答えの型(ADR-DOE-API-001 R2)は和 HostResolved | HostNotResolved — 引けなかった事は例外にせず値で答える。
+(defclass [(dataclass :frozen True)] ResolveHost [(get EffectBase (| HostResolved HostNotResolved))]
+  "Name lookup effect: resolve host to its addresses without making a connection.
+
+   yield ResolveHost(host=\"service.example\", timeout_seconds=5.0) -> HostResolved | HostNotResolved
+
+   An HTTP request looks its host up inside making its connection, so a failed request cannot tell a failed lookup from a
+   failed connection (both are CONNECT-FAILED). A caller that must tell them apart — a watcher that judges whether its own
+   name lookups work — asks for the lookup alone. timeout-seconds = the limit for the whole lookup (> 0); past it the answer is
+   TIMED-OUT. Answered by http-production-handler, with the same resolver the HTTP client's connections use."
+  (#^ str host)
+  (#^ float timeout-seconds)
+
+  (defn #^ None __post-init__ [self]
+    "Refuse a lookup with no host or no time limit when it is made, not when the handler runs it."
+    (when (not (.strip self.host))
+      (raise (ValueError "ResolveHost needs a host")))
+    (when (<= self.timeout-seconds 0.0)
+      (raise (ValueError (+ "timeout_seconds must be positive: " (repr self.timeout-seconds)))))))

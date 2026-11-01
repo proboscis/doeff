@@ -3,15 +3,19 @@
 ;;;
 ;;;   * 相手が答えた要求は、status だけを相手の決めたまま答える(404 も届いた事にする)— 名の道も番地の道も
 ;;;   * 表に無い API の ReachJob は外側へ回す
+;;;   * 表に在る API の ResolveJob(名前引きだけ)は引けたと答え、表に無い API の ResolveJob は外側へ回す
 ;;; 届かない種類の写し・繋ぐまでの上限の渡し・道が選ぶ環境変数・道の無い宛先(JobNoWay)は本物だけの性質なので契約の外(この file の後ろの節 —
-;;; 素の deftest)。模擬が答えない相手を繋がらなかったと読む事も模擬だけの性質。
+;;; 素の deftest)。名前引きの host と待ちの上限の渡し・引けない種類の写し・名の道の無い宛先も本物だけの性質。模擬が答えない相手を繋がらなかったと
+;;; 読む事も模擬だけの性質。
 (require doeff-hy.macros [deftest defhandler defk <- val])
 (val MODULE-TAGS {:context "doeff-cluster-test" :role "test"})
 (import doeff [run with_handlers])
 (import doeff_core_effects [Ask])
 (import doeff_core_effects [HttpFailed HttpFailureKind HttpRequest HttpResponse])
+(import doeff_core_effects [HostNotResolved ResolveFailureKind ResolveHost])
 (import doeff_cluster [JobRequest JobUnreachable])
 (import doeff_cluster [JobNoWay JobNotReached JobReached JobWay ReachFailure ReachJob])
+(import doeff_cluster [JobNotResolved JobResolved ResolveFailure ResolveJob])
 (import doeff_cluster [Counterpart])
 (import doeff_cluster [ReachDestination job-reach-handover job-reach-sender])
 (import tests.job_call_contract_handlers [NOTES-API NOTES-ENVIRON NOTES-ROOT])
@@ -31,6 +35,14 @@
   {:interpreters ["job-reach-sender" "job-reach-handover"]}
   (<- answer (ReachJob "another" (JobRequest :method "GET" :path "/items/k") JobWay.BY-NAME None))
   (assert (= answer ELSEWHERE-REACH) answer))
+
+
+(deftest test-a-resolve-of-a-listed-api-is-resolved-and-another-is-passed-outward
+  {:interpreters ["job-reach-sender" "job-reach-handover"]}
+  (<- found (ResolveJob NOTES-API 5.0))
+  (assert (= found (JobResolved)) found)
+  (<- other (ResolveJob "another" 5.0))
+  (assert (= other ELSEWHERE-REACH) other))
 
 
 ;; --- 本物だけの性質(契約の外) ---------------------------------------------------------------------------------------------------
@@ -130,3 +142,52 @@
   (val answer (run (with_handlers [(job-reach-handover #(down))]
                      (ReachJob NOTES-API (JobRequest :method "GET" :path "/items/k") JobWay.BY-NAME None))))
   (assert (= answer (JobNotReached :failure ReachFailure.NOT-CONNECTED :reason "相手が居ない")) answer))
+
+
+;; --- 名前引きだけの読み(ResolveJob)の本物だけの性質 ---------------------------------------------------------------------------------
+
+(defhandler spelled-lookup
+  ;; 送る側が ResolveHost に渡した host と待ちの上限を、引けない答えの訳に写して返すため。
+  (ResolveHost [host timeout-seconds]
+    (resume (HostNotResolved :kind ResolveFailureKind.NOT-RESOLVED :detail (.format "{} timeout={}" host timeout-seconds)))))
+
+
+(defhandler lookup-failing-with [kind]
+  ;; 送る側の ResolveHost に、種類 kind の引けない答えを返すため。
+  ;; 引数に残す理由: 引けない種類は検ごとの値。
+  (ResolveHost [host]
+    (resume (HostNotResolved :kind kind :detail (.format "failed: {}" kind.value)))))
+
+
+(defhandler no-lookup
+  ;; 送る側が ResolveHost を出したら検を落とすため(名の道の宛先が無い時は引かないはず)。
+  (ResolveHost [host]
+    (raise (AssertionError (.format "名の道が無いのに名を引いた: {}" host)))))
+
+
+(defhandler hostless-environ
+  ;; 名の道の環境変数に、host を持たない値で答えるため(送る側は名を引かずに道が無いと答えるはず)。
+  (Ask [key]
+    (resume "file:///run/notes.sock")))
+
+
+(deftest test-a-resolve-looks-up-the-host-of-the-name-way-only
+  ;; 本物だけの性質: 名前引きは名の道の環境変数の URL の host だけを引き(番地の道の URL・port・path は引かない)、待ちの上限は ResolveHost へ
+  ;; そのまま渡す。繋がない(HttpRequest を出さない)。
+  (val answer (run (with_handlers [no-request spelled-lookup two-ways-environ (job-reach-sender DESTINATIONS)]
+                     (ResolveJob NOTES-API 6.0))))
+  (assert (= answer (JobNotResolved :failure ResolveFailure.NOT-RESOLVED :reason "notes.test timeout=6.0")) answer))
+
+
+(deftest test-lookup-failure-kinds-are-copied-not-read-from-the-reason
+  (for [#(kind failure) [#(ResolveFailureKind.NOT-RESOLVED ResolveFailure.NOT-RESOLVED) #(ResolveFailureKind.TIMED-OUT ResolveFailure.TIMED-OUT)]]
+    (val answer (run (with_handlers [(lookup-failing-with kind) two-ways-environ (job-reach-sender DESTINATIONS)]
+                       (ResolveJob NOTES-API 6.0))))
+    (assert (= answer (JobNotResolved :failure failure :reason (.format "failed: {}" kind.value))) answer)))
+
+
+(deftest test-a-resolve-without-a-name-host-is-no-way-without-a-lookup
+  ;; 本物だけの性質: 名の道の環境変数の値が空か、値の URL が host を持たなければ、ResolveHost を出さずに JobNoWay。
+  (for [environ [blank-environ hostless-environ]]
+    (val answer (run (with_handlers [no-lookup environ (job-reach-sender DESTINATIONS)] (ResolveJob NOTES-API 6.0))))
+    (assert (isinstance answer JobNoWay) #(environ answer))))

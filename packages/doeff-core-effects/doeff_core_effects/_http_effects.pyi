@@ -71,3 +71,27 @@ class HttpRequest(EffectBase[HttpResponse | HttpFailed]):
 
     def __repr__(self) -> str:
         ...
+
+class ResolveFailureKind(StrEnum):
+    NOT_RESOLVED = 'not-resolved'
+    TIMED_OUT = 'timed-out'
+
+@dataclass(frozen=True, kw_only=True)
+class HostResolved:
+    addresses: tuple[str, ...]
+
+    def __post_init__(self) -> None:
+        ...
+
+@dataclass(frozen=True, kw_only=True)
+class HostNotResolved:
+    kind: ResolveFailureKind
+    detail: str
+
+@dataclass(frozen=True)
+class ResolveHost(EffectBase[HostResolved | HostNotResolved]):
+    host: str
+    timeout_seconds: float
+
+    def __post_init__(self) -> None:
+        ...
