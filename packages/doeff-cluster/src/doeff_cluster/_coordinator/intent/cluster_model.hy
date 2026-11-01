@@ -15,7 +15,7 @@
 (require doeff-hy.macros [val])
 (require doeff-hy.record [defenum defrecord defwire])
 (val MODULE-TAGS {:context "coordinator" :role "intent"})
-(import dataclasses [dataclass field KW_ONLY])
+(import dataclasses [dataclass field])
 (import enum [StrEnum])
 (import functools [partial])
 (import typing [NamedTuple])
@@ -117,9 +117,9 @@
   ;; None の worker(枠の file の外の機体 — Mac・zeus-native)は memory で縛らない。保存しない(次の heartbeat で埋まる)。
   ;; 位置で渡す欄の後ろに置かない(retired と boot-at の前)。
   (setv #^ (| int None) memory-mib None)
-  ;; 機体の測った空き(heartbeat の measured — CPU の使い・memory の空き・PSI。測れない worker は None)。GET /state の worker の行に写すだけで、
-  ;; 置き方の判断は読まない。heartbeat ごとに変わる観測なので保存せず、Worker の資源の行にも入れない(入れると版が拍ごとに進む)。
-  ;; 位置で渡す欄の後ろに置かない(retired と boot-at の前)。
+  ;; 機体の測った空き(heartbeat の measured — CPU の使い・memory の空き・PSI。測れない worker は None)。task の置き先はこの値から数える
+  ;; (measured_room.measured-room — None の worker には task を置かない)。GET /state の worker の行にも写す。heartbeat ごとに変わる観測なので
+  ;; 保存せず、Worker の資源の行にも入れない(入れると版が拍ごとに進む)。位置で渡す欄の後ろに置かない(retired と boot-at の前)。
   (setv #^ (| MeasuredLoad None) measured None)
   ;; 退いた世代(boot の欄の説明 — 位置で渡す欄の後ろに置く)。
   (setv #^ (get tuple #(str ...)) retired #())
@@ -139,13 +139,6 @@
   ;; まだ印の拍を通っていない worker は None(lastSeenMs を書かない)。以前は ClusterState の写像 seen-marks(worker 名 → 時刻)に
   ;; 持っていた — worker の保存の行の材料をこの記録 1 つに寄せた(#2903)。
   (setv #^ (| int None) seen-mark None)
-  ;; task の側の枠: task-reserve = task のために空けておく数(heartbeat の taskReserve — 0 以上・必ず名乗る)・
-  ;; background-room = 背景の仕事を同時に置ける数(heartbeat の backgroundRoom — 0 以上)。task の空きは 予約 + 背景の枠 − 置いた task
-  ;; (cluster_policy.task-room-of)で、常駐の job の数に依らない(job は memory で数える — memory-mib)。どちらも保存する。位置で渡す欄の
-  ;; 後ろに置くので、KW_ONLY の印の後の名で渡す必ずの欄(既定の値なし — 型の宣言 .pyi でも必ずの欄として読まれる)。
-  (#^ KW_ONLY _)
-  (#^ int task-reserve)
-  (#^ int background-room)
   ;; 宣言の在る job ごとの、最後に終わったと知れた刻と今の世代の報告で process を持つか(KnownExit の列・job の名の順 — #3672)。
   ;; heartbeat ごとに cluster_policy.known-exits-after が作り直す。保存する(worker/<名> の knownExits — 状態の報告 statuses は保存しないので、
   ;; coordinator を作り直した後に最初に来る新しい世代の heartbeat も、前の世代で process を持っていた job をこの列から数える)。
@@ -157,12 +150,14 @@
 (defrecord WorkerLoad
   "worker 1 台の担っている数(cluster_policy.load-of の値): jobs = 常駐の job の置き先と並べた置き先(surge)の数・tasks = 置かれた task
    (PLACED-PHASES)の数・settle-mib = 置いた job と surge の落ち着いた memory(ClusterJob.settle-mib)の和(MiB — memory を知らない旧い
-   保存の行の job は 0 と数える)。job の側の空き(memory-room-of・memory-misfit)は settle-mib と worker の memory-mib から、task の空き
-   (task-room-of)は tasks と worker の task-reserve・background-room から求める。jobs は置く順(担う数の少ない順)にだけ使う。"
+   保存の行の job は 0 と数える)・unseen = 置いた task のうち、worker の測った空き(measured)にまだ出ていない数(測った刻 −
+   measured_room.TASK-RAMP-MS より後に置いた task — 測りの無い worker は 0)。job の側の空き(memory-room-of・memory-misfit)は settle-mib と
+   worker の memory-mib から、task の空き(task-room-of)は worker の measured と tasks・unseen から求める。jobs は置く順にだけ使う。"
   {:tags {:context "coordinator" :role "type"}}
   (#^ int jobs)
   (#^ int tasks)
-  (#^ int settle-mib))
+  (#^ int settle-mib)
+  (setv #^ int unseen 0))
 
 
 (defclass [(dataclass :frozen True)] EnvFailed []
@@ -662,20 +657,18 @@
 ;; 材料の判定(running-process・入れ替えの見張り・停止の述語)の答えは、理由の文ではなく下の閉じた型で運ぶ — version-state は種類を
 ;; 網羅の match で状態へ写し、文を読んで分けない。
 
-(defenum TaskUnplacedKind TASK-NO-ROOM TASK-LIMITED TASK-RESERVED TASK-BACKGROUND-RESERVED TASK-UNDECLARED)
-
-
-;; 待っている task を置けない理由(cluster_policy.task-unplaced-text)。TASK-NO-ROOM = 置ける worker のどれにも task の空きが無い・
-;; TASK-LIMITED = 空きは在るが、task の名乗った組の同時数の上限(系の宣言の GroupLimit の値)に達している・TASK-RESERVED = 空きは在るが、
-;; 残りが worker の task-reserve のうち優先 0 以上の task に残す半分(切り上げ)だけで、負の優先の task(背景の仕事)はそこを使わない(2026-10-11・半分は 2026-10-14)・TASK-BACKGROUND-RESERVED = 空きは在るが、
-;; 残りが task-reserve のうち背景の仕事に残す半分(切り捨て)だけで、背景の仕事が待っている間は優先 0 以上の task はそこを使わない(2026-10-29)・TASK-UNDECLARED = task の名乗った
-;; 組が系の宣言に無い(受けた後に資源 GroupLimit が消された・宣言の前の保存から読み直した — 宣言されるまで待つ・2026-10-12)。
-
+(defenum TaskUnplacedKind TASK-NO-ROOM TASK-LIMITED TASK-RESERVED TASK-BACKGROUND-RESERVED TASK-UNDECLARED TASK-UNMEASURED)
 
 
 ;; 待っている task を置けない理由(cluster_policy.place-tasks が detail に書く文の種類 — cluster_policy.task-unplaced-text)。
-;; TASK-NO-ROOM = 能力と版の合う生きた worker が在り、drain 中でも disk 尽きでもない worker も在るが、どれも task を置ける空き
-;; (task-room-of)が 0(置かれた task で予約と背景の枠が埋まっている — 常駐の job は task の空きを使わない)。
+;; TASK-NO-ROOM = 能力と版の合う生きた worker が在り、drain 中でも disk 尽きでもない worker も在るが、どれも測った空き(task-room-of —
+;; CPU・memory・PSI から数えた数)が 0・TASK-LIMITED = 空きは在るが、task の名乗った組の同時数の上限(系の宣言の GroupLimit の値)に
+;; 達している・TASK-RESERVED = 空きは在るが、残りが worker の予約(measured_room.reserve-of)のうち優先 0 以上の task に残す半分
+;; (切り上げ)だけで、負の優先の task(背景の仕事)はそこを使わない(2026-10-11・半分は 2026-10-14)・TASK-BACKGROUND-RESERVED = 空きは
+;; 在るが、残りが予約のうち背景の仕事に残す半分(切り捨て)だけで、背景の仕事が待っている間は優先 0 以上の task はそこを使わない
+;; (2026-10-29)・TASK-UNDECLARED = task の名乗った組が系の宣言に無い(受けた後に資源 GroupLimit が消された・宣言の前の保存から
+;; 読み直した — 宣言されるまで待つ・2026-10-12)・TASK-UNMEASURED = 置ける worker のどれも機体の測った空き(heartbeat の measured)を
+;; 名乗らない(/proc の無い機体・測りの前の版の worker・CPU の使いをまだ数えられない初めの読み — 名乗るまで待つ)。
 
 
 (defenum NotReadyKind
@@ -1103,7 +1096,7 @@
   (setv #^ (get tuple #((get tuple #(str str)) ...)) environ #())
   ;; --- 置く順と同時数(2026-10-11)---
   ;; priority = 置く順の優先(大きいほど先・既定 0)。待っている task は (優先の大きい順, id) で置く。負の優先の task(背景の仕事)は
-  ;; worker の task-reserve の半分(切り上げ)を使わない(置いた後にもその数の空きが残る worker にだけ置く・2026-10-14 に予約の全部から半分へ)— 背景の仕事が何本積まれても、予約の半分は
+  ;; worker の予約(measured_room.reserve-of)の半分(切り上げ)を使わない(置いた後にもその数の空きが残る worker にだけ置く・2026-10-14 に予約の全部から半分へ)— 背景の仕事が何本積まれても、予約の半分は
   ;; 優先 0 以上の task(配備の組み立てなど)に残る。limits = 名乗った同時数の上限の組(TaskLimit の tuple — 値と範囲は系の宣言の
   ;; GroupLimit・2026-10-12)。どちらも欄の無い旧い行は既定で読む。
   (setv #^ int priority 0)

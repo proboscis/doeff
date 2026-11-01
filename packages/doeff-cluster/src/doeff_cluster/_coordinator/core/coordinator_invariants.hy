@@ -45,10 +45,10 @@
 ;;; その job の settle、worker ごとの本当の memory の予算)を受けて、越えた瞬間の列を返す純関数 1 つ。記録を集めるのは検(tests/test_local.hy
 ;;; の memory の検)。
 ;;;
-;;; 条 C17 jobs-stay-out-of-the-task-reserve(#3489・task の側の版へ): どの瞬間も、worker の上で動いている task の
-;;; 数は、本当の予約(task-reserve)と背景の枠(background-room)の和を越えない — task の置き場は常駐の job の数に依らず、名乗りの外へ
-;;; 置かれない。判断は記録(task ごとの動いていた区間と、worker ごとの本当の task-reserve と background-room)を受けて、越えた瞬間の列を
-;;; 返す純関数 1 つ。記録を集めるのは検(tests/test_local.hy の予約の検)。
+;;; 条 C17 tasks-stay-within-the-machine(#3489 の予約の条を、測った空きの置き方へ): どの瞬間も、worker の上で動いている task の数は、
+;;; その機体の本当の CPU の数から導く上限(measured_room.task-cap-of)を越えない — task は測った空きから数えて置き、測りが遅れても名乗りが
+;;; 偽っても、機体の大きさの外へ置かれない。判断は記録(task ごとの動いていた区間と、worker ごとの本当の上限)を受けて、越えた瞬間の列を
+;;; 返す純関数 1 つ。記録を集めるのは検(tests/test_local.hy の測った空きの検)。
 ;;;
 ;;; 条 C7 placed-only-where-eligible: 置き先の worker は、job の needs を本当に提供する。判断は記録(読めた置き先・job ごとの needs・worker
 ;;; ごとの本当の能力)を受けて、needs を提供しない worker への置き先の列を返す純関数 1 つ。専用の能力の決まりは条 C10、drain の期限の
@@ -287,17 +287,17 @@
                (OverCapacity :worker c.worker :at-ms at :settle-mib used :memory-mib c.memory-mib))))
 
 
-(defrecord WorkerReserve
-  "条 C17 の記録 1 つ = worker 1 台の本当の task の枠: task-reserve = task のために空けておく数・background-room = 背景の仕事を同時に置ける数。"
+(defrecord MachineTaskCap
+  "条 C17 の記録 1 つ = worker 1 台の本当の task の上限: task-cap = 機体の本当の CPU の数から導いた、同時に動かしてよい task の数
+   (measured_room.task-cap-of の答え — 名乗りでなく機体の真実から)。"
   {:tags {:context "coordinator" :role "type"}}
   (#^ str worker)
-  (#^ int task-reserve)
-  (#^ int background-room))
+  (#^ int task-cap))
 
 
-(defrecord ReserveTaken
-  "条 C17 の破り 1 つ = worker の上で本当の task の枠を越えて task が動いていた瞬間(at-ms = 越えた task の動き始めた時刻・running = その時に
-   動いていた task の数・limit = task-reserve + background-room)。"
+(defrecord TaskCapTaken
+  "条 C17 の破り 1 つ = worker の上で本当の task の上限を越えて task が動いていた瞬間(at-ms = 越えた task の動き始めた時刻・running = その時に
+   動いていた task の数・limit = 本当の上限)。"
   {:tags {:context "coordinator" :role "type"}}
   (#^ str worker)
   (#^ int at-ms)
@@ -305,20 +305,19 @@
   (#^ int limit))
 
 
-(defk jobs-stay-out-of-the-task-reserve [spans reserves]
-  {:pre [(: spans (get tuple #(ProcessSpan ...))) (: reserves (get tuple #(WorkerReserve ...)))] :post [(: % tuple)]
+(defk tasks-stay-within-the-machine [spans caps]
+  {:pre [(: spans (get tuple #(ProcessSpan ...))) (: caps (get tuple #(MachineTaskCap ...)))] :post [(: % tuple)]
    :tags {:context "coordinator" :role "judgment"}}
-  "条 C17: task の動いていた区間の列(ProcessSpan — worker・動き始め・終わり)と worker ごとの本当の task-reserve と background-room から、
-   task が動き始めた瞬間にその worker で動いていた task の数が task-reserve + background-room を越えた所(ReserveTaken)を返す(空なら緑)。
-   task の置き場が常駐の job の数に依らず、名乗った枠の外へ置かれないこと(cluster_policy.task-room-of)を、筋書きの記録から判じるため。
-   本当の値の記録が無い worker は判じない。区間は [動き始め, 終わり)。"
+  "条 C17: task の動いていた区間の列(ProcessSpan — worker・動き始め・終わり)と worker ごとの本当の上限から、task が動き始めた瞬間に
+   その worker で動いていた task の数が上限を越えた所(TaskCapTaken)を返す(空なら緑)。task が測った空きから数えて置かれ、機体の大きさの
+   外へ置かれないこと(cluster_policy.task-room-of)を、筋書きの記録から判じるため。本当の値の記録が無い worker は判じない。
+   区間は [動き始め, 終わり)。"
   (val ending (fn [s] (if (is s.ended-ms None) (float "inf") s.ended-ms)))
-  (tuple (gfor r reserves
-               at (sorted (set (gfor s spans :if (= s.worker r.worker) s.started-ms)))
-               :setv running (len (lfor o spans :if (and (= o.worker r.worker) (<= o.started-ms at) (< at (ending o))) o))
-               :setv limit (+ r.task-reserve r.background-room)
-               :if (> running limit)
-               (ReserveTaken :worker r.worker :at-ms at :running running :limit limit))))
+  (tuple (gfor c caps
+               at (sorted (set (gfor s spans :if (= s.worker c.worker) s.started-ms)))
+               :setv running (len (lfor o spans :if (and (= o.worker c.worker) (<= o.started-ms at) (< at (ending o))) o))
+               :if (> running c.task-cap)
+               (TaskCapTaken :worker c.worker :at-ms at :running running :limit c.task-cap))))
 
 
 (defrecord PlacementSeen
