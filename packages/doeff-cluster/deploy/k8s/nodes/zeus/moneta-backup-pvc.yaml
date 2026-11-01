@@ -1,6 +1,19 @@
-# NAS の控え用 dir。家計の記録 moneta の毎日の控え(restic の repository)を置く。前例は別 namespace の PostgreSQL の
-# 控えの PVC(canonical-backup-nfs)。PVC は namespace を越えて使えないので、同じ StorageClass nfs-oborodukiyo(NAS の
-# /volume1/k3s-storage の下に subdir を切る・reclaimPolicy Retain)で agent-worker に別に切る。名は kustomize の nameSuffix で -zeus が付く。
+# 家計の記録 moneta の毎日の控え(restic の repository・数 MB・30 日分)の置き場。元の data(proboscis-ema の ClickHouse)は atlas に
+# 在るので、控えは zeus の Longhorn に置いて機体を分ける(card ki-c539f56a93df — Garage も atlas なので選ばない)。StorageClass は
+# 同じ namespace の jev-proxy-answers と同じ longhorn-hot(hot の disk に replica 2・Retain)。名は kustomize の nameSuffix で -zeus が付く。
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: moneta-backup
+  namespace: agent-worker
+spec:
+  accessModes: [ReadWriteOnce]
+  storageClassName: longhorn-hot
+  resources: { requests: { storage: 1Gi } }
+---
+# 前の置き場(NAS の dir — 10-30 に足した・card ki-4aa4389b88bb)。StorageClass nfs-oborodukiyo(NAS の /volume1/k3s-storage の
+# 下に subdir を切る・reclaimPolicy Retain)。上の Longhorn の PVC へ restic copy で移した(card ki-c539f56a93df)。Flux の prune が
+# PVC を消さないよう宣言は残す。消すかは利用者に依頼書で問う。
 apiVersion: v1
 kind: PersistentVolumeClaim
 metadata:
