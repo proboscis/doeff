@@ -132,13 +132,15 @@
    ;; memoryMiB = 枠の file の行の常駐の job の memory の予算(名乗った worker だけに載せる)。measured = 機体の測った空き
    ;; (heartbeat の measured の写し {atMs cpus cpuBusy memoryTotalMiB memoryAvailableMiB cpuSomeAvg10 cpuFullAvg10 memorySomeAvg10
    ;; memoryFullAvg10} — 測れた worker だけに載せる)。taskRoom = 置き先の判断と同じ数えで、いま task を置ける数(測った空きから —
-   ;; 測りの無い worker は 0)。
+   ;; 測りの無い worker は 0)。childEnviron = worker が job の子へ渡す環境変数の名(名の順 — 名乗った worker だけに載せる。名乗らない旧い
+   ;; worker に空の列を出さない: 空の列は「子へ何も渡さない」と読まれる)。
    "workers" (dfor w view.workers
                    w.info.name (| {"provides" (list w.info.provides) "exclusive" (list w.info.exclusive) "derived" (list w.info.derived)
                                    "node" w.info.node "taskRoom" w.task-room
                                    "silentMs" w.silent-ms
                                    "versions" (dict w.info.versions) "live" w.live "draining" w.draining}
                                   (if (is w.info.memory-mib None) {} {"memoryMiB" w.info.memory-mib})
+                                  (if (is w.info.child-environ None) {} {"childEnviron" (list w.info.child-environ)})
                                   (if (in w.info.name measured) {"measured" (get measured w.info.name)} {})))
    "placements" (dfor #(k v) (.items view.placements) k (asdict v))
    "unplaced" view.unplaced
