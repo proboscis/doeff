@@ -22,6 +22,9 @@ def git_output(path: str, args: tuple) -> _Program[str, object]:
 def checkout_state_at(path: str, remote: str) -> _Program[CheckoutState, object]:
     ...
 
+def on_remote_at(path: str, remote: str, head: str) -> _Program[bool, object]:
+    ...
+
 def checkout_root(path: str) -> _Program[str | None, object]:
     ...
 

@@ -28,6 +28,7 @@
 ;;;
 ;;; 訳し方(git は `git -C <path> …` の 1 回ずつ・0 でない終わりは読めない checkout として RuntimeError — 前の本物の check=True と同じ):
 ;;;   ReadCheckout      rev-parse HEAD → config --get remote.<remote>.url(insteadOf で書き換える前の URL)→ status --porcelain --untracked-files=no(空でなければ dirty)→
+;;;                     merge-base --is-ancestor <head> <remote>/HEAD(exit 0 なら on-remote — remote の既定の branch に在る)→ 0 でなければ
 ;;;                     branch -r --contains <head> --list <remote>/*(空でなければ on-remote — 知識は手元の追跡の ref・最後の fetch による)
 ;;;   CheckoutRoot      <path> で rev-parse --show-toplevel。0 でなければ None(checkout の外)
 ;;;   SenderSourceRoot  CheckoutRoot と同じ問いを SENDER-SOURCE-DIR(この module の dir)で
