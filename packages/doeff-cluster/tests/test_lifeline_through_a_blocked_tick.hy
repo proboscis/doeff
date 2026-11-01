@@ -15,12 +15,22 @@
 ;;     遅れの行が出ない・thread の送りを拍の log に 1 行出す。
 ;; 直す前の赤: thread が無く、塞いだ 300 秒の間は誰も送らない — 間は約 300 秒、task は lease の切れで lost、塞ぎが明けた最初の周期で
 ;; 途絶の柵(20 秒)を越えた worker が自分の job を止める判断を出す。
+;;
+;; ready の file(Pod の readinessProbe が読む — 読み手の deploy/boot.sh の ROLE=ready は READY_MAX_AGE 秒・既定 30 より古い file を
+;; NotReady と読む)も同じ組みで見る。実例(本番 zeus 2026-10-26 02:59 JST): 拍が IO で 30〜62 秒止まった間、thread の heartbeat で
+;; coordinator には生きて見えたのに、ready の file は拍が返事を解いた時だけ書かれたので古び、Pod が Ready を失い、Pod に載る job の
+;; Service の振り先が 0 になった(job は答え続けていた)。
+;;   - 期待: 拍の塞ぎ(300 秒 — 本番の 62 秒より長い)の間も、thread の送りに ready を許す返事が届くたびに送りの後の書きの thread が
+;;     ready の file を書き、書きの間はどれも READY_MAX_AGE の内。thread の送りの返事が handoverPending(AL-D2k — 前の世代の job を
+;;     まだ受け取れない)なら、拍の許しが残っていても塞ぎの間は書かない(今まで通り Ready を失う)。
+;;   - 直す前の赤: 塞ぎの間に ready の file を書く者が無く、書きの間は約 300 秒。
 (require doeff-hy.macros [deftest defk defhandler defeffect <- val var])
 (require doeff-hy.record [defrecord])
 (val MODULE-TAGS {:context "doeff-cluster-test" :role "test"})
 (import dataclasses [dataclass replace])  ; defrecord の展開が名指す
 (import datetime [datetime timedelta])
 (import json)
+(import pathlib [Path])
 (import threading)
 (import httpx)
 (import doeff [with-handlers])
@@ -28,7 +38,7 @@
 (import doeff_core_effects [SlogEffect])
 (import doeff_core_effects [slog-handler state])
 (import doeff_core_effects [os-file-handler])
-(import doeff_core_effects [ReadEnvironment])
+(import doeff_core_effects [EnvEntry ReadEnvironment WriteText])
 (import doeff_core_effects [HttpRequest HttpResponse])
 (import doeff_time [Delay SimClock sim-time-handler])
 (import doeff_cluster [now-epoch-ms])
@@ -44,7 +54,7 @@
 (import doeff_cluster [tick-pauses])
 (import doeff_cluster [no-wakes])
 (import doeff_cluster [coordinator-link]
-        doeff_cluster._worker.protocol.coordinator_link [LinkState lifeline-turn lifeline-settled])
+        doeff_cluster._worker.protocol.coordinator_link [LinkState lifeline-turn lifeline-settled lifeline-ready-written])
 (import doeff_core_effects [StopRequested])
 (import tests.link_rig [LINK-ROUTE])
 (import tests.program_rows [heartbeat-of])
@@ -74,6 +84,8 @@
 (val LIFELINE-LOG "worker: 生存の合図の thread が拍の代わりに heartbeat を送りました")
 ;; 塞ぎの間に、生存の合図の thread の 1 周の後の待ちを待つ実時間の上限(秒 — 越えたら検を赤で止める。眠りではない)。
 (val TURN-LIMIT-SECONDS 30)
+;; readinessProbe が ready の file を Ready と読む古さの上限(ms — deploy/boot.sh の READY_MAX_AGE の既定 30 秒)。
+(val READY-MAX-AGE-MS 30000)
 
 
 (defclass SteppedClock [SimClock]
@@ -124,9 +136,26 @@
 
 
 (defclass ThreadHeard []
-  "偽の coordinator が生存の合図の thread から受けた heartbeat の #(刻 本文) の列(書くのは thread だけ — 検だけの資源)。"
+  "偽の coordinator が生存の合図の thread から受けた heartbeat の #(刻 本文) の列(書くのは thread だけ — 検だけの資源)と、thread への
+   返事に handoverPending を載せるか(pending — 検が作る時に決める)。"
+  (defn #^ None __init__ [self #^ bool [pending False]]
+    (setv self.beats #() self.pending pending)))
+
+
+(defclass ReadyWrites []
+  "ready の file への書きの仮想の刻(ms)の列。拍(scheduler の thread)と送りの後の書きの thread の両方が書くので錠で守る(検だけの
+   資源)。"
   (defn #^ None __init__ [self]
-    (setv self.beats #())))
+    (setv self.times #() self.lock (threading.Lock)))
+
+  (defn #^ None note [self #^ int at]
+    (with [_ self.lock]
+      (setv self.times (+ self.times #(at)))))
+
+  (defn #^ tuple seen [self]
+    (with [_ self.lock]
+      (setv times self.times))
+    times))
 
 
 (defk stepped-pause [clock seconds stopped]
@@ -146,11 +175,22 @@
 (defk thread-coordinator [clock heard]
   {:pre [(: clock SteppedClock) (: heard ThreadHeard)] :post [(: % httpx.MockTransport)] :tags {:context "doeff-cluster-test" :role "foundation"}}
   "生存の合図の thread の送りを受ける偽の coordinator(httpx の偽の相手 — thread の中から呼ばれる): 受けた仮想の刻と本文を記録し、
-   拍の側と同じ返事を返す。"
+   拍の側と同じ返事を返す(heard.pending なら handoverPending を載せる)。"
   (defn answer [request]  ; httpx の偽の相手が thread の中から呼ぶ callback
     (setv heard.beats (+ heard.beats #(#((run-clock-ms clock) (json.loads request.content)))))
-    (httpx.Response 200 :json (run-reply-body)))
+    (httpx.Response 200 :json (| (run-reply-body) (if heard.pending {"handoverPending" True} {}))))
   (httpx.MockTransport answer))
+
+
+(defhandler ready-writes-noted [clock ready-path writes]
+  "ready の file(ready-path)への書きの仮想の刻を writes に記し、書きは外側の file の答え手へ渡す(拍と送りの後の書きの thread の
+   両方に置く)。ほかの file の書きは素通し。"
+  {:tags {:context "doeff-cluster-test" :role "foundation"}}
+  ;; 引数に残す理由: 時計と記しの入れ物は、拍と送りの後の書きの thread が分ける資源(検が作って両方に渡す)。
+  (WriteText [path]
+    (when (= path ready-path)
+      (.note writes (run-clock-ms clock)))
+    (reperform effect)))
 
 
 (defn run-clock-ms [clock]  ; httpx の偽の相手の callback の中から読む(VM の外)
@@ -184,14 +224,16 @@
   (HttpResponse 200 {} (.encode text "utf-8") text url 0.0))
 
 
-(defhandler blocking-coordinator [clock]
+(defhandler blocking-coordinator [clock ready-path]
   "偽の coordinator(拍の側)と、worker の外側の偽の応答: heartbeat は受けた時刻と本文を記録し、REPLY-SECONDS 待って返事を返す。
-   GET /watch は問われた秒数だけ仮想時計で待って「変わっていない」と答える。ObserveWorld は空の観測。PublishStatus は、
+   GET /watch は問われた秒数だけ仮想時計で待って「変わっていない」と答える。環境変数の読みは ready の file の名だけを答える
+   (ready-path が None なら何も答えない — ready の file を持たない worker)。ObserveWorld は空の観測。PublishStatus は、
    STALL-AFTER-BEATS 回の heartbeat の後の最初の 1 回だけ、scheduler の thread を STALL-SECONDS 同期で塞ぐ(譲らずに時計を
    LIFELINE-PERIOD-SECONDS ずつ進め、生存の合図の thread の 1 周を待つ)。StopRequested は RUN-UNTIL-MS 以後に止めの理由を答える。
    heartbeat の間の遅れ・途絶の自己停止・thread の送りの行を数えて log へ流す。"
   {:tags {:context "doeff-cluster-test" :role "foundation"}}
-  ;; 引数に残す理由: 塞ぎの間に進める時計は、生存の合図の thread と分ける 1 つの資源(検が作って両方に渡す)。
+  ;; 引数に残す理由: 塞ぎの間に進める時計は、生存の合図の thread と分ける 1 つの資源(検が作って両方に渡す)。ready の file の名は
+  ;; 検ごとに違う tmp の path で、記しの答え手(ready-writes-noted)と同じ値を検が渡す。
   (session var beats #())
   (session var stalled-at None)
   (session var gap-lines 0)
@@ -212,7 +254,9 @@
             (<- reply HttpResponse (answered url {"revision" REVISION "changed" False}))
             (resume reply))))
   (ReadEnvironment [names]
-    (resume #()))
+    (resume (if (and (is-not ready-path None) (in "DOEFF_WORKER_READY_FILE" names))
+                #((EnvEntry :name "DOEFF_WORKER_READY_FILE" :value ready-path))
+                #())))
   (EnvReport []
     (resume None))
   (ObserveWorld []
@@ -249,22 +293,27 @@
   heard)
 
 
-(defk beats-through-a-blocked-tick [task-dir clock heard-by-thread]
-  {:pre [(: task-dir str) (: clock SteppedClock) (: heard-by-thread ThreadHeard)] :post [(: % HeardBeats)]
+(defk beats-through-a-blocked-tick [task-dir clock heard-by-thread ready-path writes]
+  {:pre [(: task-dir str) (: clock SteppedClock) (: heard-by-thread ThreadHeard) (: ready-path (| str None)) (: writes ReadyWrites)]
+   :post [(: % HeardBeats)]
    :tags {:context "doeff-cluster-test" :role "program"}}
   "本物の coordinator-link(GET /watch を使う・最後の連絡の時刻 0)と本番の tick 間の待ちと本番の生存の合図の thread を、偽の coordinator と
-   1 つの仮想の時計の下に並べて動かすため。thread は入口と同じ組み(lifeline-turn・lifeline-settled)で起こし、ループの後に止める。"
+   1 つの仮想の時計の下に並べて動かすため。thread は入口と同じ組み(lifeline-turn・lifeline-settled・送りの後の書き
+   lifeline-ready-written)で起こし、ループの後に止める。ready の file(ready-path — None なら持たない)への書きの刻を writes に記す。"
   (val link (LinkState WORKER #("cpu") FENCE-MS task-dir BOOT 0 0 0 :watch True))
   (<- transport httpx.MockTransport (thread-coordinator clock heard-by-thread))
   (<- stop (start-lifeline (LifelineSettings :turn (fn [] (lifeline-turn link))
-                                             :settle (fn [status detail] (lifeline-settled link status detail))
-                                             :handlers [(sim-time-handler :clock clock)] :period-seconds LIFELINE-PERIOD-SECONDS
+                                             :settle (fn [status detail text] (lifeline-settled link status detail text))
+                                             :aside (fn [] (lifeline-ready-written link))
+                                             :handlers [(sim-time-handler :clock clock) os-file-handler (ready-writes-noted clock ready-path writes)]
+                                             :period-seconds LIFELINE-PERIOD-SECONDS
                                              :reply-seconds 5.0 :connect-seconds 1.0 :headers {"X-Actor" WORKER}
                                              :pause (fn [seconds stopped] (stepped-pause clock seconds stopped))
                                              :transport transport)))
   (try
-    (<- heard HeardBeats (with-handlers [(state) (sim-time-handler :clock clock) os-file-handler slog-handler no-wakes stop-signal-never-comes
-                                         (blocking-coordinator clock) tick-pauses
+    (<- heard HeardBeats (with-handlers [(state) (sim-time-handler :clock clock) os-file-handler (ready-writes-noted clock ready-path writes)
+                                         slog-handler no-wakes stop-signal-never-comes
+                                         (blocking-coordinator clock ready-path) tick-pauses
                                          (coordinator-link link (route-cell "http://coord") LINK-ROUTE (route-cell "http://coord"))]
                            (worker-then-heard)))
     (finally
@@ -302,7 +351,7 @@
 (deftest test-a-tick-that-blocks-the-scheduler-for-300-seconds-keeps-every-heartbeat-gap-within-half-the-lease [tmp-path]
   (val clock (SteppedClock))
   (val by-thread (ThreadHeard))
-  (<- heard HeardBeats (beats-through-a-blocked-tick (str (/ tmp-path "tasks")) clock by-thread))
+  (<- heard HeardBeats (beats-through-a-blocked-tick (str (/ tmp-path "tasks")) clock by-thread None (ReadyWrites)))
   (assert (is-not heard.stalled-at None) heard)
   (val beats (tuple (sorted (+ heard.beats by-thread.beats) :key (fn [beat] (get beat 0)))))
   (val times (tuple (gfor beat beats (get beat 0))))
@@ -324,3 +373,75 @@
   ;; thread の送りも heartbeat の間の計り(#3850)に数える: 遅れの行は 0。thread の送りは拍の log に出る。
   (assert (= heard.gap-lines 0) heard)
   (assert (>= heard.lifeline-lines 1) heard))
+
+
+(defrecord ReadySeen
+  "拍を塞いだ間の ready の file への書き: stalled-at = 塞ぎの始め・stall-ends = 塞ぎの終わり・times = 書きの仮想の刻(順に並べた物)。"
+  {:tags {:context "doeff-cluster-test" :role "type"}}
+  (#^ int stalled-at)
+  (#^ int stall-ends)
+  (#^ tuple times))
+
+
+(defk ready-through-a-blocked-tick [tmp-path by-thread]
+  {:pre [(: tmp-path Path) (: by-thread ThreadHeard)] :post [(: % ReadySeen)] :tags {:context "doeff-cluster-test" :role "program"}}
+  "ready の file を持つ worker で拍を塞ぎ、塞いだ間と ready の file への書きの刻を返すため。"
+  (val clock (SteppedClock))
+  (val writes (ReadyWrites))
+  (<- heard HeardBeats (beats-through-a-blocked-tick (str (/ tmp-path "tasks")) clock by-thread (str (/ tmp-path "doeff-worker-ready"))
+                                                     writes))
+  (assert (is-not heard.stalled-at None) heard)
+  (ReadySeen :stalled-at heard.stalled-at :stall-ends (+ heard.stalled-at (int (* STALL-SECONDS 1000)))
+             :times (tuple (sorted (.seen writes)))))
+
+
+(deftest test-a-tick-that-blocks-the-scheduler-for-300-seconds-keeps-the-ready-file-within-the-probe-age [#^ Path tmp-path]
+  (<- seen ReadySeen (ready-through-a-blocked-tick tmp-path (ThreadHeard)))
+  (val times seen.times)
+  ;; 拍が塞ぎの前に書き、塞ぎが明けた後にも書く(書きの列が塞ぎを覆う)。
+  (assert (and times (< (get times 0) seen.stalled-at) (> (get times -1) seen.stall-ends)) seen)
+  ;; 塞ぎの間も書く(thread の送りに ready を許す返事が届くたびに、送りの後の書きの thread が)。
+  (assert (any (gfor at times (< seen.stalled-at at seen.stall-ends))) seen)
+  ;; 書きの間はどれも readinessProbe の古さの上限の内 — Pod は Ready を失わず、Pod に載る job の Service の振り先は 0 にならない。
+  (val gaps (tuple (gfor #(earlier later) (zip times (cut times 1 None)) (- later earlier))))
+  (assert (<= (max gaps) READY-MAX-AGE-MS) #((max gaps) seen)))
+
+
+(deftest test-a-blocked-tick-lets-the-pod-lose-ready-while-the-lifeline-reply-says-handover-pending [#^ Path tmp-path]
+  ;; AL-D2k: 同じ名の前の世代の job をまだ受け取れない間(thread の送りの返事の handoverPending)は、拍が塞ぎの前に ready を許して
+  ;; いても、thread の送りの後に ready の file を書かない(今まで通り、古びた file で Pod が Ready を失う)。
+  (val by-thread (ThreadHeard :pending True))
+  (<- seen ReadySeen (ready-through-a-blocked-tick tmp-path by-thread))
+  ;; thread は塞ぎの間も送る(coordinator は生きていると見る)。
+  (assert (any (gfor beat by-thread.beats (< seen.stalled-at (get beat 0) seen.stall-ends))) by-thread.beats)
+  (assert (and seen.times (< (get seen.times 0) seen.stalled-at)) seen)
+  (assert (not (any (gfor at seen.times (< seen.stalled-at at seen.stall-ends)))) seen))
+
+
+(defk settled-on-a-clock [link status text]
+  {:pre [(: link LinkState) (: status (| int None)) (: text str)] :post [(: % bool)] :tags {:context "doeff-cluster-test" :role "program"}}
+  "生存の合図の thread の送り 1 本の答えを、thread と同じく時計の答え手だけの下で書かせ、送りの後の書きを求めたかを返すため。"
+  (<- wanted bool (with-handlers [(sim-time-handler :clock (SimClock))] (lifeline-settled link status "" text)))
+  wanted)
+
+
+(deftest test-the-lifeline-asks-to-renew-the-ready-file-only-while-the-tick-and-its-own-reply-permit-it [#^ Path tmp-path]
+  (val link (LinkState WORKER #("cpu") FENCE-MS (str (/ tmp-path "tasks")) BOOT 0 0 0))
+  (val plain (json.dumps (run-reply-body)))
+  ;; 拍がまだ ready を許していない(返事を解いていない・解いた返事が handoverPending だった)間は、thread の返事が許しても求めない。
+  (<- before bool (settled-on-a-clock link 200 plain))
+  (assert (not before))
+  (setv link.life.ready-file (str (/ tmp-path "doeff-worker-ready")))
+  (<- permitted bool (settled-on-a-clock link 200 plain))
+  (assert permitted)
+  (assert (= link.life.ready-refusal "") link.life.ready-refusal)
+  ;; thread の返事が handoverPending・形が違う(draining が無い)・JSON でない → 求めず、訳を残す(拍の口が log に出す)。
+  (for [text [(json.dumps (| (run-reply-body) {"handoverPending" True})) (json.dumps {"jobs" []}) "<html>"]]
+    (<- refused bool (settled-on-a-clock link 200 text))
+    (assert (not refused) text)
+    (assert link.life.ready-refusal text))
+  ;; 届かない・断られた送りは求めない。
+  (<- unreachable bool (settled-on-a-clock link None plain))
+  (assert (not unreachable))
+  (<- refused bool (settled-on-a-clock link 503 plain))
+  (assert (not refused)))
