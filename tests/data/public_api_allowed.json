@@ -3405,6 +3405,27 @@
   },
   {
    "package": "doeff-cluster",
+   "module": "doeff_cluster",
+   "name": "JobNotResolved",
+   "組": "許した物 — effect の答えの型",
+   "決め": "ADR-DOE-API-001 R2"
+  },
+  {
+   "package": "doeff-cluster",
+   "module": "doeff_cluster",
+   "name": "JobResolved",
+   "組": "許した物 — effect の答えの型",
+   "決め": "ADR-DOE-API-001 R2"
+  },
+  {
+   "package": "doeff-cluster",
+   "module": "doeff_cluster",
+   "name": "ResolveFailure",
+   "組": "許した物 — effect の答えの型",
+   "決め": "ADR-DOE-API-001 R2"
+  },
+  {
+   "package": "doeff-cluster",
    "module": "doeff_cluster.coordinator.core.api_policy",
    "name": "BodyInvalid",
    "組": "許した物 — 例外の型",
@@ -6500,6 +6521,20 @@
   {
    "package": "doeff-core-effects",
    "module": "doeff_core_effects",
+   "name": "HostNotResolved",
+   "組": "許した物 — effect の答えの型",
+   "決め": "ADR-DOE-API-001 R2"
+  },
+  {
+   "package": "doeff-core-effects",
+   "module": "doeff_core_effects",
+   "name": "HostResolved",
+   "組": "許した物 — effect の答えの型",
+   "決め": "ADR-DOE-API-001 R2"
+  },
+  {
+   "package": "doeff-core-effects",
+   "module": "doeff_core_effects",
    "name": "MissingEnvKeyError",
    "組": "許した物 — 例外の型",
    "決め": "ADR-DOE-API-001 R2"
@@ -6516,6 +6551,13 @@
    "module": "doeff_core_effects",
    "name": "RaiseCase",
    "組": "許した物 — handler の設定の型",
+   "決め": "ADR-DOE-API-001 R2"
+  },
+  {
+   "package": "doeff-core-effects",
+   "module": "doeff_core_effects",
+   "name": "ResolveFailureKind",
+   "組": "許した物 — effect の答えの型",
    "決め": "ADR-DOE-API-001 R2"
   },
   {

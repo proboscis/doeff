@@ -6,16 +6,21 @@ __doeff_handles__ / __doeff_effects__ で宣言しているが、宣言は関数
 """
 
 from doeff import stacked_handlers
-from doeff_core_effects import HttpRequest
+from doeff_core_effects import HttpRequest, ResolveHost
 from doeff_core_effects import http_production_handler
 
 
 def test_the_installer_declares_what_the_function_declares() -> None:
     installer = http_production_handler()
-    assert installer.__doeff_handles__ == http_production_handler.__doeff_handles__ == (HttpRequest,)
+    assert installer.__doeff_handles__ == http_production_handler.__doeff_handles__ == (HttpRequest, ResolveHost)
     assert installer.__doeff_effects__ == http_production_handler.__doeff_effects__
 
 
 def test_a_bundle_with_the_installer_declares_the_request_effect() -> None:
     bundle = stacked_handlers(http_production_handler())
     assert HttpRequest in bundle.__doeff_handles__
+
+
+def test_a_bundle_with_the_installer_declares_the_lookup_effect() -> None:
+    bundle = stacked_handlers(http_production_handler())
+    assert ResolveHost in bundle.__doeff_handles__

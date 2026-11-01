@@ -13,8 +13,20 @@
 ;;;   ReachJob       API api(使い手の repo が名付けた名)の口へ、道 way で要求 request を 1 つ出し、届いたかを答える。connect-patience = 繋ぐまでの
 ;;;                  上限の秒(None = 要求の patience のまま — 番地の道のように、繋ぐのが短い道は短くする)。やり直さない
 ;;;
+;;; 名前引きだけの読み(届くかの検査の兄弟): 名で引く道の要求は名前引きを繋ぐ処理の中で行うので、届かない種類 NOT-CONNECTED は名前引きの失敗と
+;;; 繋ぎの失敗を分けない。相手の Pod の止まりで繋がらない時と、見る側の名前引きが壊れた時を分けたい使い手は、名で引く道の宛先の名を、繋がずに
+;;; 引くだけの読みを別に出す(名を答えるのは cluster の名の server で相手でないので、相手の止まりはこの読みに出ない):
+;;;   ResolveFailure 引けない種類の閉じた語: NOT-RESOLVED = 名の server が引けないと答えた(名が無い・server の失敗)・TIMED-OUT = 上限の秒の内に
+;;;                  答えが無い
+;;;   JobResolved    名が引けた(番地は使い手の判じに要らないので運ばない)
+;;;   JobNotResolved 名が引けなかった — failure = 引けない種類・reason = 人と log が読む理由の 1 句(判じに使わない)
+;;;   ResolveJob     API api の名で引く道の宛先の名(URL の host)を引くだけで、繋がずに答える。patience = 引きの待ちの上限の秒。答えの JobNoWay =
+;;;                  名で引く道の宛先が無い(引いていない)。やり直さない
+;;;
 ;;; handler は 2 つ(doeff_cluster._shared.protocol.job_reach_handlers): job-reach-sender = 道ごとの宛先(URL を持つ環境変数)の口へ HTTP の要求
 ;;; 1 本で出す(本番)・job-reach-handover = 相手の job の答えの 1 点(CallJob の相手 Counterpart と同じ)へ直に渡す(模擬 — 道を問わない)。
+;;; ResolveJob も同じ 2 つが答える: job-reach-sender = 名で引く道の宛先の URL の host を名前引きの effect ResolveHost(doeff-core-effects)で
+;;; 引く(本番)・job-reach-handover = 引けたと答える(模擬 — 相手へ直に渡すので名を持たない)。
 ;;; 2 つが同じ要求に同じ答えを返す事は契約の検 tests/test_job_reach_contract.hy が見る。記録では答えを記録の値で返す(read)。
 (require doeff-hy.macros [val])
 (require doeff-hy.record [defenum defrecord])
@@ -59,3 +71,25 @@
   (#^ JobRequest request)
   (#^ JobWay way)
   (#^ (| float None) connect-patience))
+
+
+(defenum ResolveFailure NOT-RESOLVED TIMED-OUT)
+
+
+(defrecord JobResolved
+  "名が引けた(頭の註 — 番地は運ばない)。"
+  {:tags {:context "doeff-cluster" :role "intent"}})
+
+
+(defrecord JobNotResolved
+  "名が引けなかった(頭の註): failure = 引けない種類・reason = 理由の 1 句。"
+  {:tags {:context "doeff-cluster" :role "intent"} :check [(.strip reason)]}
+  (#^ ResolveFailure failure)
+  (#^ str reason))
+
+
+(defclass [(dataclass :frozen True)] ResolveJob [(get EffectBase (| JobResolved JobNotResolved JobNoWay))]
+  "API api の名で引く道の宛先の名を引くだけで、繋がずに答える(頭の註)。patience = 引きの待ちの上限の秒。"
+  (setv #^ (get ClassVar RecordSpec) __record-spec__ (RecordSpec :mode RecordMode.READ))
+  (#^ str api)
+  (#^ float patience))

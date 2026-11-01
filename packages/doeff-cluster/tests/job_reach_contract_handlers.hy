@@ -5,13 +5,16 @@
 ;;;                       どちらも同じ口の URL)へ HttpRequest を 1 本出し、その HttpRequest には CallJob の契約と同じ served-notes が HTTP の
 ;;;                       待ち受けと同じく要求の行を読み直して同じ答えの 1 点へ渡して答える(道が選ぶ環境変数は本物だけの性質 — 契約の外)
 ;;;
-;;; 両方とも、表に無い API の ReachJob は外側の答え手 elsewhere-reach が答える(外側へ回す性質を同じ Program で見る)。
+;;; ResolveJob(名前引きだけ)は、本物の側では job-reach-sender が出す名前引きの effect ResolveHost に resolved-names が引けたと答え、模擬の
+;;; 側では job-reach-handover が直に引けたと答える。
+;;; 両方とも、表に無い API の ReachJob と ResolveJob は外側の答え手 elsewhere-reach が答える(外側へ回す性質を同じ Program で見る)。
 ;;; 使い手は conftest.py の doeff_interpreter(deftest の :interpreters の名 → INTERPRETERS)。
 (require doeff-hy.macros [defk defhandler <- val])
 (val MODULE-TAGS {:context "doeff-cluster-test" :role "test"})
 (import doeff [Program with_handlers])
 (import doeff_core_effects [Ask])
-(import doeff_cluster [JobNoWay ReachJob])
+(import doeff_core_effects [HostResolved ResolveHost])
+(import doeff_cluster [JobNoWay ReachJob ResolveJob])
 (import doeff_cluster [Counterpart])
 (import doeff_cluster [ReachDestination job-reach-handover job-reach-sender])
 (import tests.job_call_contract_handlers [NOTES-API NOTES-ENVIRON NOTES-ROOT NOTES-URL notes-answer served-notes])
@@ -31,9 +34,17 @@
 
 
 (defhandler elsewhere-reach
-  ;; 表に無い API の ReachJob に、両方の解釈器で同じ印の答えを返すため(頭の註)。
+  ;; 表に無い API の ReachJob と ResolveJob に、両方の解釈器で同じ印の答えを返すため(頭の註)。
   (ReachJob [api]
+    (resume ELSEWHERE-REACH))
+  (ResolveJob [api]
     (resume ELSEWHERE-REACH)))
+
+
+(defhandler resolved-names
+  ;; 本物の側の名前引き ResolveHost に、どの host も引けたと答えるため(cluster の名の server の代わり — 番地は文書用の番地)。
+  (ResolveHost [host]
+    (resume (HostResolved :addresses #("192.0.2.7")))))
 
 
 (defk under-reach-handover [program]
@@ -47,7 +58,7 @@
   {:pre [(: program Program)] :post [(: % "契約の Program の答え")] :tags {:context "doeff-cluster-test" :role "foundation"}}
   "本物の組: 道ごとの宛先の表に notes を置いた job-reach-sender の下で program を走らせるため(HttpRequest と宛先の読みは served-notes・
    reach-environ)。"
-  (<- answer (with_handlers [elsewhere-reach served-notes reach-environ
+  (<- answer (with_handlers [elsewhere-reach served-notes resolved-names reach-environ
                              (job-reach-sender #((ReachDestination :api NOTES-API :root NOTES-ROOT :environ NOTES-ENVIRON
                                                                    :address-environ NOTES-ADDRESS-ENVIRON)))]
                program))

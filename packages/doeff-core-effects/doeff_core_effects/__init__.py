@@ -194,6 +194,10 @@ if TYPE_CHECKING:
     from doeff_core_effects._http_effects import HttpFailed as HttpFailed
     from doeff_core_effects._http_effects import HttpFailureKind as HttpFailureKind
     from doeff_core_effects._http_effects import HttpPhases as HttpPhases
+    from doeff_core_effects._http_effects import HostNotResolved as HostNotResolved
+    from doeff_core_effects._http_effects import HostResolved as HostResolved
+    from doeff_core_effects._http_effects import ResolveFailureKind as ResolveFailureKind
+    from doeff_core_effects._http_effects import ResolveHost as ResolveHost
     from doeff_core_effects._http_host_gate import HostNotAllowed as HostNotAllowed
     from doeff_core_effects._http_host_gate import http_host_gate as http_host_gate
     from doeff_core_effects._http_server_effects import AppendHttpScript as AppendHttpScript
@@ -828,6 +832,10 @@ _LAZY_EXPORTS = {
     "HttpFailed": "doeff_core_effects._http_effects",
     "HttpFailureKind": "doeff_core_effects._http_effects",
     "HttpPhases": "doeff_core_effects._http_effects",
+    "HostNotResolved": "doeff_core_effects._http_effects",
+    "HostResolved": "doeff_core_effects._http_effects",
+    "ResolveFailureKind": "doeff_core_effects._http_effects",
+    "ResolveHost": "doeff_core_effects._http_effects",
     "ReadWsSent": "doeff_core_effects._ws_client_effects",
     "ScriptedWsBinary": "doeff_core_effects._ws_client_effects",
     "ScriptedWsClosed": "doeff_core_effects._ws_client_effects",
