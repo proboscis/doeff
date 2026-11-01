@@ -5,8 +5,8 @@
 ### Added
 
 - **doeff-core-effects:** `shielded(program)` runs `program` without being cancelled — the cleanup of a cancelled
-  task that has to wait (see the cancellation entry under Changed). It is a program helper exported from the import
-  root (ADR-DOE-API-001 R18).
+  task that has to wait (see the cancellation entry under Changed). With no scheduler in scope nothing can cancel the
+  program, so it just runs. It is a program helper exported from the import root (ADR-DOE-API-001 R18).
 - **doeff-run:** a new package for running an image with a given command, environment variables, volumes and resource
   limits. Five effects (`RunStart`, `RunStop`, `RunRemove`, `RunStatus`, `RunReadEvents`) answer with values, not
   exceptions: a handle, a state (`RunPending`, `RunLive`, `RunStopped`, `RunGone`) and a numbered list of state events.
