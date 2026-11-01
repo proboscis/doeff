@@ -408,6 +408,24 @@
     (assert (= polled (ProcessRunning :pid started.pid)) #(group polled))
     (<- (StopProcess :pid started.pid :stop-grace 2.0))))
 
+(deftest test-a-stop-whose-kill-the-os-refuses-answers-refused-without-waiting-and-keeps-the-child
+  ;; OS が送りを断る機体(上の検と同じ)で StopProcess: SIGTERM も SIGKILL も届かない。断られた SIGKILL の後に子の終わりを待たず
+  ;; (待てば止めの呼びが返らない)、答えは ProcessSignalRefused — 子は走ったまま表に残り、PollProcess が ProcessRunning と答える。
+  ;; 反例 = 断られた SIGKILL の後に子を待つ形(直す前)は返らず赤・group でない子へ Popen の terminate で送る形は PermissionError で赤。
+  {:interpreters ["subprocess" "offloaded-subprocess"]}
+  (for [group [True False]]
+    (<- started (StartProcess :argv #("sleep" "30") :process-group group))
+    (assert (isinstance started ProcessStarted) started)
+    (with [_ (mock.patch.object os "killpg" :side-effect (PermissionError 1 "Operation not permitted"))
+           _ (mock.patch.object os "kill" :side-effect (PermissionError 1 "Operation not permitted"))]
+      (<- answer (StopProcess :pid started.pid :stop-grace 0.2)))
+    (assert (= answer (ProcessSignalRefused :pid started.pid)) #(group answer))
+    (<- polled (PollProcess started.pid))
+    (assert (= polled (ProcessRunning :pid started.pid)) #(group polled))
+    (<- stopped (StopProcess :pid started.pid :stop-grace 2.0))
+    (assert (isinstance stopped ProcessExited) #(group stopped))))
+
+
 
 (deftest test-an-ended-child-is-not-signalled-and-its-end-is-kept-for-poll
   {:interpreters ["subprocess" "offloaded-subprocess" "scripted-process"]}

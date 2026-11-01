@@ -8,6 +8,7 @@
 ;;;                    いない(zombie でも回収の最中でもない — process_stat.hy の ENDED-STATES の外)process が居れば WarmRunning、
 ;;;                    そうでなければ exit の file を読む(在れば WarmExited・無ければ WarmLost)。
 ;;;   SignalWarmChild  同じ start-ticks で終わっていない process が居る時だけ、その group(子 A は setsid した group の先頭)へ os.killpg で送る。
+;;;                    OS が送りを断れば(EPERM)ProcessSignalRefused — 黙って WarmSignaled にしない。
 ;;;   hold-input の頼みは、pipe を作って読み口を頼みの 1 行の頭の 1 byte に添えて送り(SCM_RIGHTS)、受けた子の書き口を
 ;;;   表に握る。WriteWarmChildInput は同じ start-ticks で走っている子の書き口へだけ書き、PollWarmChild が子の終わりを答えた時に閉じる。
 ;;;   頼み手(worker)が消えると書き口が閉じ、子 A は入力の EOF を読む。
@@ -31,7 +32,7 @@
 (import socket)
 (import dataclasses [dataclass])
 (import doeff_hy._wire [Malformed dump parse-json])
-(import doeff_core_effects._process_effects [ProcessSignal])
+(import doeff_core_effects._process_effects [ProcessSignal ProcessSignalRefused])
 (import doeff_core_effects._process_stat [ProcStat ENDED-STATES])
 (import doeff_core_effects._darwin_proc [darwin-proc-stat darwin-thread-count])
 (import doeff_core_effects._warm_effects [ForkFromWarm PollWarmChild SignalWarmChild WriteWarmChildInput WarmInputWritten WarmForked WarmRefused WarmRunning WarmExited
@@ -248,9 +249,10 @@
 
 
 (defk os-signal-warm-child [pid start-ticks sent]
-  {:pre [(: pid int) (: start-ticks int) (: sent ProcessSignal)] :post [(: % (| WarmSignaled WarmGone))]
+  {:pre [(: pid int) (: start-ticks int) (: sent ProcessSignal)] :post [(: % (| WarmSignaled ProcessSignalRefused WarmGone))]
    :tags {:context "process" :role "foundation"}}
-  "頼んだ子の group へ signal を送るため(頭の註)。同じ start-ticks で走っている時だけ送り、他人の process には送らない。"
+  "頼んだ子の group へ signal を送るため(頭の註)。同じ start-ticks で走っている時だけ送り、他人の process には送らない。OS が送りを
+   断れば(EPERM)ProcessSignalRefused — 子は走ったまま。"
   (<- running bool (same-child-running pid start-ticks))
   (<- gone WarmGone (warm-gone pid))
   (<- number int (signal-number-of sent))
@@ -258,7 +260,8 @@
       gone
       (try
         (do (os.killpg pid number) (WarmSignaled :pid pid))
-        (except [ProcessLookupError] gone))))
+        (except [ProcessLookupError] gone)
+        (except [PermissionError] (ProcessSignalRefused :pid pid)))))
 
 
 (defk input-written [fd text]
