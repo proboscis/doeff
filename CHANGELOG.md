@@ -4,6 +4,9 @@
 
 ### Added
 
+- **doeff-core-effects:** `shielded(program)` runs `program` without being cancelled — the cleanup of a cancelled
+  task that has to wait (see the cancellation entry under Changed). It is a program helper exported from the import
+  root (ADR-DOE-API-001 R18).
 - **doeff-run:** a new package for running an image with a given command, environment variables, volumes and resource
   limits. Five effects (`RunStart`, `RunStop`, `RunRemove`, `RunStatus`, `RunReadEvents`) answer with values, not
   exceptions: a handle, a state (`RunPending`, `RunLive`, `RunStopped`, `RunGone`) and a numbered list of state events.
@@ -62,6 +65,23 @@
 
 ### Changed
 
+- **Breaking (doeff-core-effects, behaviour change):** a cancelled task stays cancelled. Before, one `Cancel` threw
+  `TaskCancelledError` into the task once; a task that caught it (an `except`, or a `Try` that turned it into `Err`)
+  went on running — borrowing credentials, calling services — while its waiters were already told it was cancelled
+  and its result was thrown away. Now every `Wait`, `Gather`, `Race` and `AcquireSemaphore` the task reaches after
+  the cancellation raises `TaskCancelledError` again, also when performed by a handler answering another effect in
+  the task (an `Await`, an HTTP or SQL call, a `Delay`), and the external promise it was about to wait on is stopped
+  (its `on_cancel` callbacks run). Code before the next wait still runs; non-waiting effects (`Spawn`, `Cancel`,
+  `ReleaseSemaphore`, `CompletePromise`, state, logging) still work. `Try` is unchanged: it turns every exception of
+  its program into a `Result`, the cancellation included, and a `Try(Wait(t))` of a cancelled task `t` in a task
+  that is not itself cancelled answers `Err(TaskCancelledError)` and keeps working. Both scheduler implementations
+  behave the same. What callers do: cleanup that has to wait — giving a lease or connection back, closing a client,
+  waiting for a stopped child to unwind — goes inside the new `shielded(program)`; cleanup outside it stops at its
+  first wait. A `Cancel` that arrives inside `shielded` lands at the first wait after the region. Keep shielded
+  regions bounded: a shielded wait that never ends keeps the cancelled task alive. The packages' own cleanup is
+  shielded: the Postgres transaction's lease return and `ROLLBACK`, the scoped HTTP client close, the websocket
+  close-all, doeff-cluster's lease-claim withdrawal, remote task `DELETE` and last record send, and the stop-and-wait
+  helpers of doeff-records, doeff-events, doeff-cluster and doeff-traverse.
 - **Breaking:** the task priorities are the `IntEnum` `TaskPriority` (`IDLE` = 0, `NORMAL` = 10, `HIGH` = 20),
   exported from `doeff` and `doeff_core_effects`; the constants `PRIORITY_IDLE`, `PRIORITY_NORMAL` and
   `PRIORITY_HIGH` are gone. Write `Spawn(p, priority=TaskPriority.HIGH)` and `Wait(t, priority=TaskPriority.IDLE)`

@@ -597,7 +597,7 @@ class Discard(EffectBase[None], Generic[_T]):
 
 
 class TaskCancelledError(Exception):
-    """Thrown into a cancelled task, and raised to whoever waits on it."""
+    """Thrown into a cancelled task, again at each of its waits outside ``shielded``, and raised to whoever waits on it."""
 
 
 class _ShieldEnter(EffectBase[None]):
