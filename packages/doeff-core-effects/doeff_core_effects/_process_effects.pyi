@@ -156,7 +156,11 @@ class ProcessSignalled:
     delivered: bool
 
 @dataclass(frozen=True, kw_only=True)
-class SignalProcess(EffectBase[ProcessSignalled | ProcessNotChild]):
+class ProcessSignalRefused:
+    pid: int
+
+@dataclass(frozen=True, kw_only=True)
+class SignalProcess(EffectBase[ProcessSignalled | ProcessSignalRefused | ProcessNotChild]):
     pid: int
     signal: ProcessSignal
 

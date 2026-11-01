@@ -29,7 +29,7 @@
         doeff_core_effects._file_effects [file-done])
 (import doeff_core_effects [Spawn CreatePromise CompletePromise FailPromise Promise])
 (import doeff_time [WaitWithin])
-(import doeff_core_effects [EnvEntry ReadEnvironment ReadInterpreter StartProcess PollProcess StopProcess SignalProcess ProcessSignal ProcessStarted ProcessNotStarted ProcessRunning ProcessExited ProcessNotChild WriteProcessInput ProcessInputWritten])
+(import doeff_core_effects [EnvEntry ReadEnvironment ReadInterpreter StartProcess PollProcess StopProcess SignalProcess ProcessSignal ProcessStarted ProcessNotStarted ProcessRunning ProcessExited ProcessNotChild ProcessSignalRefused WriteProcessInput ProcessInputWritten])
 (import doeff_cluster._worker.intent.worker_model [NoticeJob])
 (import doeff_cluster._shared.core.clock [now-epoch-ms])
 (import doeff_cluster._worker.intent.worker_model [CodeLayout ProcessView StartJob JobStarted JobNotStarted SignalJob ReapJob RetireJob StopStage
@@ -109,6 +109,9 @@
 (defenum StopMoment TERM KILL REAPED)
 ;; 止めの計時の行の名(他の計時の行と同じく、名 + 欄の形 — 本文は持たない)。
 (val STOP-TIMING-LOG "worker: job の止めの計時")
+;; 止めの合図を OS が断った行(EPERM — 例: AppArmor が container の中の process どうしの signal を拒む機体)。子は走ったままで、
+;; 止めの計時の行の killed は KILL を「送れた」時だけ真にする(断られた KILL を送った事にしない)。
+(val STOP-REFUSED-LOG "worker: job の止めの合図を OS が断った")
 ;; 起こせなかった job の行の名(名 + 欄 job・via(shim か warm:<root のキー>)・detail の形)。
 (val JOB-NOT-STARTED-LOG "worker: job を起こせなかった")
 ;; 退けた作業 dir の置き場の名(jobs-dir の下 — 名の付け替えが同じ file system の中の 1 手で済む。job の作業 dir の名は job-work-dir が
@@ -428,20 +431,27 @@
     ;; 分けた子は、分けた子 A(group の先頭)へ起動の刻を照らしてから送る(使い回された pid へ送らない)。
     (val started (.get table name))
     (val signal (if (= stage StopStage.TERM) ProcessSignal.TERM ProcessSignal.KILL))
-    (if (and started (is-not started.fork None) (= started.view.pid pid))
-        (<- (SignalWarmChild :pid pid :start-ticks started.fork.start-ticks :signal signal))
-        (<- (SignalProcess :pid pid :signal signal)))
+    (<- answer
+      (if (and started (is-not started.fork None) (= started.view.pid pid))
+          (SignalWarmChild :pid pid :start-ticks started.fork.start-ticks :signal signal)
+          (SignalProcess :pid pid :signal signal)))
+    ;; OS が送りを断った合図は warning の行に出し、KILL を送った事に数えない(子は走ったまま — 2026-11-01 に helios で、断られた KILL が
+    ;; killed=True と書かれ、退いた job が 27 分 生き残った)。
+    (val refused (isinstance answer ProcessSignalRefused))
+    (when refused
+      (<- (slog STOP-REFUSED-LOG :level "warning" :job name :pid pid :stage stage.value)))
     ;; 止めの計時(#3713): 最初の合図の刻・KILL を送ったか・止めた訳を子の表に残し、合図ごとに 1 行。表に無い子(別の世代の pid)は
     ;; この合図の刻と訳から数える。
     (<- now int (now-epoch-ms))
     (val ours (and started (= started.view.pid pid)))
-    (val killed (= stage StopStage.KILL))
+    (val killed (and (= stage StopStage.KILL) (not refused)))
     (val asked (if (and ours (is-not started.stop None))
                    (replace started.stop :killed (or started.stop.killed killed))
                    (StopAsked :requested-ms now :killed killed :reason reason)))
     (when ours
       (:= table (| table {name (replace started :stop asked)})))
-    (<- (noted-stop (if killed StopMoment.KILL StopMoment.TERM) name pid asked now))
+    ;; 行の段は送った合図の段(断られた KILL も段は kill — killed の欄が送れたかを名乗る)。
+    (<- (noted-stop (if (= stage StopStage.KILL) StopMoment.KILL StopMoment.TERM) name pid asked now))
     (resume None))
   (ReapJob [name pid outcome exit-code]
     (val started (.get table name))

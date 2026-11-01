@@ -21,6 +21,7 @@
 (import doeff_core_effects [MemoryFiles])
 (import doeff_core_effects [ProcessOutcome RunProcess timed-out-outcome])
 (import doeff_core_effects [ScriptedCommand ProcessScript scripted-process-handler])
+(import doeff_core_effects [SignalProcess ProcessSignalRefused])
 (import doeff_time [Delay SimClock sim-time-handler])
 (import doeff_cluster [now-epoch-ms])
 (import doeff_cluster [JobSpec])
@@ -28,7 +29,7 @@
         doeff_cluster._worker.intent.worker_model [Outcome Undeclared WorkerState DesiredJobs])
 (import doeff_cluster [ObserveProcesses])
 (import doeff_cluster [process-host]
-        doeff_cluster._worker.protocol.process_host [HostSettings STOP-TIMING-LOG])
+        doeff_cluster._worker.protocol.process_host [HostSettings STOP-TIMING-LOG STOP-REFUSED-LOG])
 (import doeff_cluster [tick-pauses])
 (import tests.wake_fixtures [wakes-every])
 (import doeff_cluster._worker.core.heartbeat_rules [desired-when-unreachable])
@@ -67,15 +68,17 @@
 
 
 (defrecord NotedLines
-  "筋書きの間に出た行(出た順): stops = 止めの計時の行・holds = 起こしの見送りの行。"
+  "筋書きの間に出た行(出た順): stops = 止めの計時の行・holds = 起こしの見送りの行・refused = OS が断った止めの合図の行の #(job 段)。"
   (#^ (get tuple #(StopLine ...)) stops)
-  (#^ (get tuple #(HoldLine ...)) holds))
+  (#^ (get tuple #(HoldLine ...)) holds)
+  (#^ (get tuple #(tuple ...)) refused))
 
 
 (defrecord StopScene
-  "止めの筋書き 1 回の見え方: pid = 起こした子の pid・lines = 止めの計時の行(出た順)。"
+  "止めの筋書き 1 回の見え方: pid = 起こした子の pid・lines = 止めの計時の行(出た順)・refused = OS が断った止めの合図の行の #(job 段)。"
   (#^ int pid)
-  (#^ (get tuple #(StopLine ...)) lines))
+  (#^ (get tuple #(StopLine ...)) lines)
+  (#^ (get tuple #(tuple ...)) refused))
 
 
 (defrecord Reply
@@ -103,6 +106,7 @@
   {:tags {:context "doeff-cluster-test" :role "foundation"}}
   (session var stops #())
   (session var holds #())
+  (session var refused #())
   (SlogEffect []
     (val fields effect.kwargs)
     (cond
@@ -112,10 +116,20 @@
                                        :reason (get fields "reason") :silent-ms (get fields "silent_ms")))))
       (= effect.msg START-HOLD-LOG)
         (:= holds (+ holds #((HoldLine :job (get fields "job") :reason (get fields "reason")))))
+      (= effect.msg STOP-REFUSED-LOG)
+        (:= refused (+ refused #(#((get fields "job") (get fields "stage")))))
       True None)
     (resume None))
   (NotedStopLines []
-    (resume (NotedLines :stops stops :holds holds))))
+    (resume (NotedLines :stops stops :holds holds :refused refused))))
+
+
+(defhandler signals-refused
+  "OS が signal の送りを全部断る機体の代役(2026-11-01 の helios — AppArmor が container の中の process どうしの signal を拒んだ):
+   SignalProcess に ProcessSignalRefused で答え、子は走ったまま(台本の子 process の答え手へ渡さない)。"
+  {:tags {:context "doeff-cluster-test" :role "foundation"}}
+  (SignalProcess [pid signal]
+    (resume (ProcessSignalRefused :pid pid))))
 
 
 (defk code-view [revision script now]
@@ -188,7 +202,7 @@
   (<- (Delay REAP-SECONDS))
   (<- (ReapJob SPEC.name pid Outcome.STOPPED (. (get ended 0) exit-code)))
   (<- noted NotedLines (NotedStopLines))
-  (StopScene :pid pid :lines noted.stops))
+  (StopScene :pid pid :lines noted.stops :refused noted.refused))
 
 
 (defk ended-by-itself []
@@ -209,14 +223,15 @@
   noted)
 
 
-(defk on-scripted-host [program [inner []]]
-  {:pre [(: program Program) (: inner list)] :post [(: % "program の答え")] :tags {:context "doeff-cluster-test" :role "entry"}}
+(defk on-scripted-host [program [inner []] [outer []]]
+  {:pre [(: program Program) (: inner list) (: outer list)] :post [(: % "program の答え")] :tags {:context "doeff-cluster-test" :role "entry"}}
   "program を process-host と台本の子 process・memory の file system・仮想の時計の下で回すため(止めの計時の行は process-host の外側の
-   lines-noted が受ける)。inner = process-host の内側に置く handler(調整ループを回す筋書きは宿の代役 worker-world と拍の間の眠り)。"
+   lines-noted が受ける)。inner = process-host の内側に置く handler(調整ループを回す筋書きは宿の代役 worker-world と拍の間の眠り)・
+   outer = process-host と台本の子 process の間に置く handler(process-host が出す子 process の effect を先に受ける)。"
   (<- settings HostSettings (host-settings (Path STATE) :policy POLICY))
   (val script (ProcessScript :commands #((ScriptedCommand :name (. (Path settings.python) name) :run runs-until-stopped))))
   (run (scheduled (with-handlers [(state) (sim-time-handler :clock (SimClock)) lines-noted (memory-file-handler (MemoryFiles :dirs #(STATE)))
-                                  (scripted-process-handler script) (process-host settings) #* inner]
+                                  (scripted-process-handler script) #* outer (process-host settings) #* inner]
                                  program))))
 
 
@@ -244,6 +259,14 @@
              #(#("term" 0 False "undeclared") #("kill" grace-ms True "undeclared")
                #("reaped" (+ grace-ms (int (* 1000 REAP-SECONDS))) True "undeclared")))
           scene.lines))
+
+
+(deftest test-a-refused-kill-is-not-counted-as-killed-and-is-noted-as-a-warning
+  ;; OS が止めの合図を断る機体: TERM も KILL も届かない。KILL の行と回収の行は killed False(断られた KILL を送った事にしない)で、
+  ;; 合図ごとに断られた行が出る。反例 = 答えを見ずに killed True と書く形(直す前)は、下の列の断言が赤。
+  (<- scene StopScene (on-scripted-host (stopped-scene #(StopStage.TERM StopStage.KILL)) [] [signals-refused]))
+  (assert (= (tuple (gfor line scene.lines #(line.stage line.killed))) #(#("term" False) #("kill" False) #("reaped" False))) scene.lines)
+  (assert (= scene.refused #(#("svc" "term") #("svc" "kill"))) scene.refused))
 
 
 (deftest test-a-job-that-ended-by-itself-has-no-stop-line
