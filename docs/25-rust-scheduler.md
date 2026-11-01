@@ -157,7 +157,7 @@ Cancel in particular maps line by line to the Python implementation (`on_cancel`
 - A cancelled task stays cancelled: every Wait, Gather, Race and AcquireSemaphore it reaches after
   swallowing the exception raises it again and stops the external promise it was about to wait on
   (`recancel_at_wait` in `scheduler.rs`, `cancel_pending` in the Python implementation).
-- Inside `shielded` (the effects `_ShieldEnter` and `_ShieldExit`, a count per task) nothing is thrown;
+- Inside `shielded` (the effects `ShieldEnter` and `ShieldExit`, a count per task) nothing is thrown;
   a Cancel that arrives there only marks the task, and the exception lands at the first wait after the region.
 - If cleanup raises a different exception, it is reported as `failed`, not hidden.
 - A task that has not started yet is cancelled without running its body.

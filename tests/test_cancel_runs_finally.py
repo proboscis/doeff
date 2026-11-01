@@ -46,6 +46,8 @@ from doeff_core_effects import (
     Race,
     ReleaseSemaphore,
     SchedulerImplementation,
+    ShieldEnter,
+    ShieldExit,
     Spawn,
     TaskCancelledError,
     TaskPriority,
@@ -553,6 +555,43 @@ def test_shielded_with_no_scheduler_in_scope_just_runs_the_program() -> None:
     assert doeff_run(_program_handler(other)(shielded(work()))) == "ran"
     with pytest.raises(UnhandledEffect, match="Unanswered"):
         doeff_run(shielded(asks()))
+
+
+def test_a_fence_admits_shielded_by_the_public_names_of_its_effects() -> None:
+    """``shielded`` performs ``ShieldEnter`` and ``ShieldExit``, public names of
+    ``doeff_core_effects``: a handler that admits only the effects it names can
+    name them (the packages' cleanup performs them without the program writing
+    them), and the region still holds the cancellation off (card [id])."""
+    admitted = (ShieldEnter, ShieldExit, Spawn, Wait, Cancel, CreatePromise, CompletePromise)
+    performed: set[type] = set()
+
+    @do
+    def fence(effect: Any, k: Any):
+        if not isinstance(effect, admitted):
+            raise PermissionError(f"outside the fence: {type(effect).__name__}")
+        performed.add(type(effect))
+        return (yield Pass(effect, k))
+
+    @do
+    def worker(inside: Any, release: Any):
+        try:
+            yield CompletePromise(inside, None)
+            yield Wait(release.future)
+        finally:
+            yield shielded(Wait(release.future))
+
+    @do
+    def body():
+        inside = yield CreatePromise()
+        release = yield CreatePromise()
+        task = yield Spawn(worker(inside, release))
+        yield Wait(inside.future)
+        yield Cancel(task)
+        yield CompletePromise(release, "released")
+        return (yield _outcome(task))
+
+    assert _run(_program_handler(fence)(body())) == "cancelled"
+    assert {ShieldEnter, ShieldExit} <= performed
 
 
 def test_a_cancel_inside_shielded_lands_at_the_first_wait_after_it() -> None:

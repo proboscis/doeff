@@ -600,16 +600,24 @@ class TaskCancelledError(Exception):
     """Thrown into a cancelled task, again at each of its waits outside ``shielded``, and raised to whoever waits on it."""
 
 
-class _ShieldEnter(EffectBase[None]):
+class ShieldEnter(EffectBase[None]):
     """Enter a shielded region of the performing task (``shielded``): no cancellation is raised in it.
 
-    The class keeps its underscore name: only ``shielded`` performs it, and the
-    Rust scheduler reads it from the scheduler's spec by that key.
+    Only ``shielded`` performs it. The type is public so that a handler that
+    admits a fixed set of effects can name it: ``shielded`` runs inside the
+    packages' own handlers (HTTP, SQL, records), so a program performs it
+    without writing it. The Rust scheduler reads it from the scheduler's spec
+    by the key ``_ShieldEnter``.
     """
 
 
-class _ShieldExit(EffectBase[None]):
-    """Leave the shielded region ``_ShieldEnter`` entered (``shielded``)."""
+class ShieldExit(EffectBase[None]):
+    """Leave the shielded region ``ShieldEnter`` entered (``shielded``)."""
+
+
+# The old private names, kept until agora-controllers reads the public ones (card [id]).
+_ShieldEnter = ShieldEnter
+_ShieldExit = ShieldExit
 
 
 @do
@@ -635,13 +643,13 @@ def shielded(program: "Program[_T]") -> Generator[Any, Any, _T]:
             yield shielded(give_back(lease))
     """
     try:
-        yield _ShieldEnter()
+        yield ShieldEnter()
     except UnhandledEffect:
         return (yield program)
     try:
         return (yield program)
     finally:
-        yield _ShieldExit()
+        yield ShieldExit()
 
 
 class ExternalPromiseCancelCallbackError(RuntimeError):
@@ -1419,8 +1427,8 @@ def _rust_spec() -> dict[str, object]:
         "Race": Race,
         "Cancel": Cancel,
         "Discard": Discard,
-        "_ShieldEnter": _ShieldEnter,
-        "_ShieldExit": _ShieldExit,
+        "_ShieldEnter": ShieldEnter,
+        "_ShieldExit": ShieldExit,
         "CreatePromise": CreatePromise,
         "CompletePromise": CompletePromise,
         "FailPromise": FailPromise,
@@ -3169,11 +3177,11 @@ def _scheduled_python(body_program: "Program[_T, Any]") -> "Program[_T, Any]":  
                     "to wait on failed: %r", current_tid, error,
                 )
             return (yield ResumeThrow(k, TaskCancelledError()))
-        if isinstance(effect, _ShieldEnter):
+        if isinstance(effect, ShieldEnter):
             if current_tid is not None:
                 tasks[current_tid]["shield"] = tasks[current_tid].get("shield", 0) + 1
             return (yield Resume(k, None))
-        if isinstance(effect, _ShieldExit):
+        if isinstance(effect, ShieldExit):
             if current_tid is not None:
                 tasks[current_tid]["shield"] -= 1
             return (yield Resume(k, None))
