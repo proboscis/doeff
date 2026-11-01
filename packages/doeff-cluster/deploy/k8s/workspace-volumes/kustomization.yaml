@@ -1,0 +1,16 @@
+# 作業場所の volume の宣言 — 級(storageclass.yaml)・backup の先と 1 時間ごとの backup(backup.yaml)・worker が読む名と寿命の値
+# (workspace-volume.json → ConfigMap workspace-volume)。決まりは README.md。worker の組(../workers)が resources に並べ、Flux は
+# worker と同じ Kustomization で当てる — 値を読む worker と同じ main の版で替わる。
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources:
+  - storageclass.yaml
+  - backup.yaml
+# 名の固定した ConfigMap workspace-volume(中身の hash を名に付けない)— worker は名指しで読む。値の訳は README.md の節「名」「寿命」。
+configMapGenerator:
+  - name: workspace-volume
+    namespace: agent-worker
+    files:
+      - workspace-volume.json
+    options:
+      disableNameSuffixHash: true

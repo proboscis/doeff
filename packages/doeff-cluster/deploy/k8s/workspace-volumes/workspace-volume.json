@@ -1,0 +1,9 @@
+{
+  "storageClass": "longhorn-workspace",
+  "namePrefix": "ws-",
+  "nameMaxLength": 40,
+  "sizeBytes": 10737418240,
+  "warmHours": 2,
+  "spareVolumes": 8,
+  "keepDays": 7
+}

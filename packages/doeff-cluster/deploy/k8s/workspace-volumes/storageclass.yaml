@@ -1,0 +1,38 @@
+# 作業場所の volume の級 — 持ち主(上に載る系が渡す id 1 つ)ごとに 1 つの Longhorn の RWO volume。worker は Pod を作らずに、この
+# 級の値で Longhorn の volume を名指しで作り、手番の機体の node に attach して作業場所の path に mount する(名・寿命・backup・置く
+# disk の決まりと値の訳は README.md)。worker は CSI を通らないので、この級は値の定義元: worker は parameters を Longhorn の volume の
+# 欄へ写す(写し方は README.md の表)。PVC からこの級を使っても同じ値の volume になる。
+# prune: disabled — この file を外しても Flux は級を消さない(級を名指す worker が作れなくなる)。parameters は作った後に替えられない
+# (k8s が断る)— 替える時は別の名の級を足し、worker の名指し(workspace-volume.json の storageClass)を移す。
+apiVersion: storage.k8s.io/v1
+kind: StorageClass
+metadata:
+  name: longhorn-workspace
+  annotations:
+    kustomize.toolkit.fluxcd.io/prune: disabled
+    storageclass.kubernetes.io/is-default-class: "false"
+provisioner: driver.longhorn.io
+# 消すのは寿命の決まり(README.md)の「冷やす」だけ — backup の完了を確かめた後に worker が volume を名指しで消す。PVC を消しただけで
+# 中身が消える形にしない。
+reclaimPolicy: Retain
+# Pod が無いので、使い手の Pod を待つ WaitForFirstConsumer では PVC が結ばれない。
+volumeBindingMode: Immediate
+allowVolumeExpansion: true
+parameters:
+  # 測り(card ki-00f2d6af6581・2026-11-01・zeus)で replica 1 は hostPath に対して pytest 1.06 倍・git clone 1.18 倍・1 file ごとに
+  # fsync する小さい file 300 個 0.79 倍。replica 2 は書くたびに別の機体への網を往復し、fsync つきで 3.07 倍。1 本の守りは garage への
+  # backup(backup.yaml)が持つ。
+  numberOfReplicas: "1"
+  # 札 workspace の disk だけに置く(付けた disk は README.md の節「置く disk」)。札 hot を名指さない — hot の disk は名簿の volume
+  # だけの物。
+  diskSelector: "workspace"
+  # attach した node に replica を寄せる。replica 1 では、別の node に付けると Longhorn がその node に写しを作ってから元を消す — 持ち主を
+  # 別の機体へ移すと volume もついて来る(strict-local は replica の在る node にしか付かない)。
+  dataLocality: "best-effort"
+  fsType: "ext4"
+  staleReplicaTimeout: "2880"
+  # backup の先(backup.yaml の BackupTarget)。Longhorn は無い BackupTarget を名指す volume の作成を断る。
+  backupTargetName: "garage-workspace"
+  # 1 時間ごとの backup(backup.yaml の RecurringJob)と、ほかの volume と同じ snapshot の片付けと trim(群 default)。
+  # 群を名指すと既定の群 default に自動で入らなくなるので、default も書く。
+  recurringJobSelector: '[{"name":"workspace-backup","isGroup":true},{"name":"default","isGroup":true}]'

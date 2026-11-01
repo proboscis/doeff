@@ -17,6 +17,8 @@ resources:
   - ../nodes/zeus
   # 根の disk を worker と Longhorn が分け合う機体の Longhorn の disk の予約(worker の env と同じ宣言 ../disk-share/shares.yaml から導く)。
   - ../disk-share
+  # 作業場所の volume の級・backup・名と寿命の値(worker が読む — ../workspace-volumes/README.md)。
+  - ../workspace-volumes
 # 機体ごとの worker の枠: 同時の job と task の上限 capacity と、そのうち task のために空けておく数 taskReserve を、
 # 機体の名(= worker の名)ごとに worker-room.json に置く — 枠の定義元はこの 1 file。名の固定した ConfigMap worker-room にし(中身の hash を
 # 名に付けない)、worker は volume で置いた file(subPath でない)を heartbeat の前に読み直して名乗る。中身を変えても Pod は作り直されず、

@@ -1,0 +1,36 @@
+# 作業場所の volume の backup — replica 1 の volume の守り(間隔・何を残すか・別の node へ戻す手順は README.md の節「backup」)。
+#
+# BackupTarget garage-workspace: cluster の中の S3(garage — 入口 http://garage.garage.svc.cluster.local:3900・region us-east-1・path の形)の
+#   bucket longhorn-workspace。資格の Secret longhorn-backup-garage(namespace longhorn-system・鍵 AWS_ACCESS_KEY_ID・
+#   AWS_SECRET_ACCESS_KEY・AWS_ENDPOINTS)と bucket と key は、garage を持つ側が作る(中身はここに書かない)。Secret と bucket が揃う
+#   までは BackupTarget が available false のまま、backup は失敗として残る(volume の作成は断られない — 断られるのは BackupTarget が無い時)。
+#   prune: disabled — この file を外しても Flux は消さない(名指す volume の作成と backup が止まる)。
+# RecurringJob workspace-backup: 1 時間ごと(毎時 17 分 — ほかの Longhorn の job の 0・10・18・20・40 分を避ける)に、群 workspace-backup の
+#   attach している volume を backup し、この job の作った backup を volume ごとに新しい 6 つ残す。外れている volume は飛ばす
+#   (Longhorn の設定 allow-recurring-job-while-volume-detached が false — 外れている間は中身が変わらない)。worker が「冷やす」時に
+#   作る backup はこの job の物でないので、6 つの数えに入らず、寿命の「消す」まで残る。
+---
+apiVersion: longhorn.io/v1beta2
+kind: BackupTarget
+metadata:
+  name: garage-workspace
+  namespace: longhorn-system
+  annotations: { kustomize.toolkit.fluxcd.io/prune: disabled }
+spec:
+  backupTargetURL: s3://longhorn-workspace@us-east-1/
+  credentialSecret: longhorn-backup-garage
+  pollInterval: 5m0s
+---
+apiVersion: longhorn.io/v1beta2
+kind: RecurringJob
+metadata:
+  name: workspace-backup
+  namespace: longhorn-system
+spec:
+  name: workspace-backup
+  task: backup
+  cron: "17 * * * *"
+  retain: 6
+  concurrency: 4
+  groups: [workspace-backup]
+  labels: {}
