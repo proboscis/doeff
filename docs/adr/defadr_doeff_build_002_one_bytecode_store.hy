@@ -90,15 +90,29 @@
   (lfor rel (sorted found) :if (not-in rel BYTECODE-TOOL-FILES)
         f"{rel}: .pyc の置き場(__pycache__・.pyc・pyc-path)を綴る — .pyc を root に置くのは焼く道具だけ(code_store の link-pyc 経由)。前の root から .pyc を持ち越す 2 本目の道になる"))
 
+(defk module-name-of [part]
+  {:pre [(: part hy.models.Object)] :post [(: % (| str None))] :tags {:context "doeff-build-adr" :role "judgment"}}
+  "import・require の form の部品 1 つが module の名なら、その綴り(a.b.c)を返すため — Hy は点の付いた名 a.b を (. a b) の form に読む
+   ので、Symbol だけを見ると点の付いた名を見落とす。名でない部品(引く名の並び [x y] など)は None。"
+  (cond (isinstance part hy.models.Symbol) (str part)
+        (and (isinstance part hy.models.Expression) (> (len part) 1) (= (str (get part 0)) ".")
+             (all (gfor p (cut part 1 None) (isinstance p hy.models.Symbol))))
+        (.join "." (gfor p (cut part 1 None) (str p)))
+        True None))
+
+
 (defk root-doeff-names [text]
   {:pre [(: text str)] :post [(: % list)] :tags {:context "doeff-build-adr" :role "judgment"}}
   "Hy の source の最上位の import・require の form が引く module の名のうち、doeff で始まる物を挙げる — R7 の判断(焼く道具は root の
    venv の python で走るので、doeff の名を引くとそれは root の版の doeff の物になる)。"
-  (lfor form (hy.read-many text)
+  (var names [])
+  (for [form (hy.read-many text)
         :if (and (isinstance form hy.models.Expression) form (in (str (get form 0)) #("import" "require")))
-        part (cut form 1 None)
-        :if (and (isinstance part hy.models.Symbol) (.startswith (hy.mangle (str part)) "doeff"))
-        (str part)))
+        part (cut form 1 None)]
+    (<- name (module-name-of part))
+    (when (and (is-not name None) (.startswith (hy.mangle name) "doeff"))
+      (:= names (+ names [name]))))
+  names)
 
 ;; ---------------------------------------------------------------------------
 ;; 土台(file を読む)
@@ -234,8 +248,9 @@
        (<- names list (root-doeff-names (.read-text (/ repo-root POOL-TOOL) :encoding "utf-8")))
        (assert (= names []) (+ POOL-TOOL ": root の版の doeff の名を import する(ADR-DOE-BUILD-002 R7): " (str names)))
        ;; 反例: 2026-11-01 の形(guard を module の名で引く)と doeff-hy の macro の require は赤。註の中の名は数えない。
-       (<- old list (root-doeff-names "(require doeff-hy.macros [defk val])\n(import os)\n(import doeff_hy_bytecode_guard [bytecode-is-current])\n"))
-       (assert (= old ["doeff-hy.macros" "doeff_hy_bytecode_guard"]) (str old))
+       (<- old list (root-doeff-names (+ "(require doeff-hy.macros [defk val])\n(import os)\n(import doeff_hy_bytecode_guard [bytecode-is-current])\n"
+                                         "(import doeff_core_effects._python_bytecode [pyc-path])\n")))
+       (assert (= old ["doeff-hy.macros" "doeff_hy_bytecode_guard" "doeff_core_effects._python_bytecode"]) (str old))
        (<- clean list (root-doeff-names ";; (import doeff [run])\n(import importlib.machinery)\n(import hy)\n"))
        (assert (= clean []) (str clean)))
      (deftest test-adr-doe-build-002-judgments-reject-the-counterexamples
