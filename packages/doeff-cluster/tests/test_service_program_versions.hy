@@ -88,7 +88,7 @@
   (val sha (program-sha (encode-program (based-add 3))))
   (val worker (! (beat-specs (ClusterState) mine)))
   (val cell [(! (declared (get worker 0) sha OLD 1))])
-  (val link (LinkRig "http://coord" "w" #("net") 10 0 60000 :task-dir (str (/ tmp-path "state" "tasks"))
+  (val link (LinkRig "http://coord" "w" #("net") 60000 :task-dir (str (/ tmp-path "state" "tasks"))
                      :transport (! (coordinator-programs cell))))
   (val first (! (beat-specs (get cell 0) mine)))
   (.accept-programs link (get first 1))

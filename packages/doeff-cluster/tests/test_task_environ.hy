@@ -239,7 +239,7 @@
   ;; Program の名の Ask に os-environ-reader(本番の土台の読み)が environ の値で答える。
   (val coordinator (MemoryCoordinator (SimClock)))
   (val transport (httpx.MockTransport coordinator.handle))
-  (val link (LinkRig "http://coordinator" "w1" RIG-PROVIDES 10 0 60000 :task-dir (str (/ tmp-path "state" "tasks"))
+  (val link (LinkRig "http://coordinator" "w1" RIG-PROVIDES 60000 :task-dir (str (/ tmp-path "state" "tasks"))
                              :versions (! (process-versions os.environ)) :transport transport))
   (.poll link)
   (<- submitted (with-handlers [(sim-time-handler :clock (SimClock)) (transport-http transport)]

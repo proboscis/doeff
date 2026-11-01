@@ -219,7 +219,7 @@
 
 
 (deftest test-the-first-heartbeat-answer-logs-the-boot-breakdown-once-in-order [tmp-path capsys]
-  (val link (LinkRig "http://coord" "w" #() 1 0 20000 :task-dir (str (/ tmp-path "tasks"))
+  (val link (LinkRig "http://coord" "w" #() 20000 :task-dir (str (/ tmp-path "tasks"))
                         :transport (httpx.MockTransport quiet-coordinator)))
   (val now (int (* 1000 (time.time))))
   (setv link.state.boot-marks (BootMarks :pod-ms (- now 9000) :script-ms (- now 8000) :exec-ms (- now 3000)

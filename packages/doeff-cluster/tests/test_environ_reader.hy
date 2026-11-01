@@ -86,7 +86,7 @@
   (val base (/ tmp-path key))
   (val coordinator (MemoryCoordinator (SimClock)))
   (val transport (httpx.MockTransport coordinator.handle))
-  (val link (LinkRig "http://coordinator" "w1" RIG-PROVIDES 10 0 60000 :task-dir (str (/ base "state" "tasks"))
+  (val link (LinkRig "http://coordinator" "w1" RIG-PROVIDES 60000 :task-dir (str (/ base "state" "tasks"))
                              :versions (! (process-versions os.environ)) :transport transport))
   (.poll link)
   (<- submitted (with-handlers [(sim-time-handler :clock (SimClock)) (transport-http transport)]

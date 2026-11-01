@@ -115,7 +115,7 @@
   (val room (/ tmp-path "room.json"))
   (val pooled {"eos" {"capacity" 3 "taskReserve" 0 "backgroundRoom" 0 "pools" ["pool-a"] "memoryMiB" 3072}})
   (.write-text room (json.dumps pooled))
-  (val link (LinkRig "http://coord" "eos" #("host-eos" "host-systemd-readable") 3 0 60000 :task-dir (str (/ tmp-path "tasks"))
+  (val link (LinkRig "http://coord" "eos" #("host-eos" "host-systemd-readable") 60000 :task-dir (str (/ tmp-path "tasks"))
                      :transport (httpx.MockTransport handle)))
   (setv link.state.room-file (str room))
   (val named (fn [body] #((get body "provides") (.get body "memoryMiB") (.get body "roomFile"))))
@@ -189,7 +189,7 @@
   (val room (/ tmp-path "room.json"))
   (.write-text room (json.dumps ROOMS))
   ;; 起動の引数は background-room 1・task-reserve 0。file を渡した worker は最初の heartbeat から file の値を名乗る。capacity は送らない。
-  (val link (LinkRig "http://coord" "zeus" #() 1 0 60000 :task-dir (str (/ tmp-path "tasks")) :transport (httpx.MockTransport handle)))
+  (val link (LinkRig "http://coord" "zeus" #() 60000 :task-dir (str (/ tmp-path "tasks")) :transport (httpx.MockTransport handle)))
   (setv link.state.room-file (str room))
   (val named (fn [body] #((get body "backgroundRoom") (get body "taskReserve") (.get body "roomFile"))))
   (.poll link)
@@ -215,7 +215,7 @@
   (.poll link)
   (assert (= (named (get sent -1)) #(3 5 "ok")) sent)
   ;; file を読まない worker は起動の引数を名乗り、roomFile を名乗らない。
-  (val plain (LinkRig "http://coord" "zeus" #() 3 1 60000 :task-dir (str (/ tmp-path "plain")) :transport (httpx.MockTransport handle)))
+  (val plain (LinkRig "http://coord" "zeus" #() 60000 :task-dir (str (/ tmp-path "plain")) :transport (httpx.MockTransport handle)))
   (.poll plain)
   (assert (= (named (get sent -1)) #(3 1 None)) sent))
 

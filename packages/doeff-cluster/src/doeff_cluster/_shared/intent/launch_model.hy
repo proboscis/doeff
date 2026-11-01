@@ -2,7 +2,7 @@
 ;;; (WORKER_DOEFF_COMMIT)を型にした物と、配備する側の repo がその望む状態を言う effect(#3366 の単位 1)。
 ;;;
 ;;;   (<- changes (DesireWorker (WorkerLaunch :name "w1" :provides #("verify" "host-w1") :exclusive #()
-;;;                                           :task-reserve 0 :background-room 0 :doeff-commit <40 字の sha>)))
+;;;                                           :doeff-commit <40 字の sha>)))
 ;;;   (<- changes (DesireCoordinator (CoordinatorLaunch :doeff-commit <40 字の sha>)))
 ;;;
 ;;; 答え = 変えた行(LaunchLineChange)の tuple — 空なら宣言は既に望む状態。manifest(Deployment の YAML)そのものは配備する側の
@@ -18,15 +18,13 @@
 
 (defclass [(dataclass :frozen True)] WorkerLaunch []
   "worker 1 台の名乗りと自己起動の版。name = WORKER_NAME・provides = WORKER_PROVIDES(書いた順のまま — 宣言の行は順を保つ)・
-   exclusive = WORKER_EXCLUSIVE(空なら行を持たない)・task-reserve = WORKER_TASK_RESERVE・background-room = WORKER_BACKGROUND_ROOM
-   (背景の仕事を同時に置ける数)・memory-mib = WORKER_MEMORY_MIB(常駐の job の memory の予算 MiB — None なら行を持たず、worker は
-   memory を名乗らない)。数はどれも 0 以上(worker の入口 main.hy が起動の時に断るのと同じ範囲)・
-   doeff-commit = WORKER_DOEFF_COMMIT(40 字の sha)。"
+   exclusive = WORKER_EXCLUSIVE(空なら行を持たない)・memory-mib = WORKER_MEMORY_MIB(常駐の job の memory の予算 MiB — None なら行を
+   持たず、worker は memory を名乗らない。0 以上 — worker の入口 main.hy が起動の時に断るのと同じ範囲)・
+   doeff-commit = WORKER_DOEFF_COMMIT(40 字の sha)。task の置き先は worker が測って名乗る機体の空きから coordinator が数えるので、
+   手書きの task の枠(WORKER_TASK_RESERVE・WORKER_BACKGROUND_ROOM)は持たない。"
   (#^ str name)
   (#^ (get tuple #(str ...)) provides)
   (#^ (get tuple #(str ...)) exclusive)
-  (#^ int task-reserve)
-  (#^ int background-room)
   (#^ str doeff-commit)
   (setv #^ (| int None) memory-mib None)
   (defn #^ None __post_init__ [self]  ; defk にできない: dataclass の __post_init__ — 起動の時に断られる値を宣言の時に断る
@@ -34,9 +32,8 @@
       (raise (ValueError "WorkerLaunch.name は空でない worker の名")))
     (when (not self.provides)
       (raise (ValueError (.format "WorkerLaunch {} の provides が空" self.name))))
-    (when (or (< self.task-reserve 0) (< self.background-room 0) (and (is-not self.memory-mib None) (< self.memory-mib 0)))
-      (raise (ValueError (.format "WorkerLaunch {} の task-reserve {}・background-room {}・memory-mib {} は 0 以上" self.name
-                                  self.task-reserve self.background-room self.memory-mib))))
+    (when (and (is-not self.memory-mib None) (< self.memory-mib 0))
+      (raise (ValueError (.format "WorkerLaunch {} の memory-mib {} は 0 以上" self.name self.memory-mib))))
     (when (not (and (= (len self.doeff-commit) 40) (all (gfor ch self.doeff-commit (in ch "0123456789abcdef")))))
       (raise (ValueError (.format "WorkerLaunch {} の doeff-commit は 40 字の sha: {!r}" self.name self.doeff-commit))))))
 

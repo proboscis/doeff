@@ -202,7 +202,7 @@
 
 (deftest test-the-coordinator-link-tells-the-heartbeat-it-sent [tmp-path]
   ;; 本物の coordinator への口: 送った読みに送りの事実を載せる。最初の送りは返事の前なので既定の窓、次の送りは返事の timing の窓。
-  (val link (LinkRig "http://coord" "w-gap" #() 1 0 20000 :task-dir (str (/ tmp-path "tasks"))
+  (val link (LinkRig "http://coord" "w-gap" #() 20000 :task-dir (str (/ tmp-path "tasks"))
                      :transport (httpx.MockTransport lease-reply)))
   (val earlier (.poll link))
   (val later (.poll link))

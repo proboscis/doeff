@@ -1,6 +1,6 @@
 # 機体の仕事だけを受ける worker の差(能力の置き換えは kustomization.yaml の JSON patch):
-# - 受ける数は env で決めない — 機体ごとの枠は ../workers/worker-room.json(ConfigMap worker-room)。機体の仕事は
-#   機体ごとに数本なので多くは 2。task に空けておく数は 0(task は機体の能力を要らず、ここへは来ない)。
+# - 受ける数は env で決めない — 機体ごとの枠(memory の予算)は ../workers/worker-room.json(ConfigMap worker-room)。task は
+#   needs の合う物だけが、機体の測った空きの分だけ置かれる(task の数は書かない)。
 # - 上に載る系の準備の script(ConfigMap worker-prepare)は置かない — 上に載る系の仕事を受ける worker の道具の準備で、機体の仕事には
 #   要らず、clone の無い空の機体では通らずに起動を止める。雛形の起動の args は script が無ければ飛ばす。
 # worker-env(読み取りの鍵の表など)と worker-shell・Secret worker-repos は雛形のまま受ける。

@@ -17,8 +17,6 @@ ROOM_FIELDS: tuple[str, ...]
 
 @dataclass(frozen=True, kw_only=True)
 class WorkerRoom:
-    task_reserve: int
-    background_room: int
     memory_mib: int | None
     pools: tuple[str, ...] = ...
 

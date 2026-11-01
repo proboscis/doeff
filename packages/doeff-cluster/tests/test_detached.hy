@@ -1084,7 +1084,7 @@
   (val reply-43 (! (beat s "w" 100 :boot-at 1000)))
   (:= s (get reply-43 0))
   (var body (get reply-43 2))
-  (setv link (LinkRig "http://127.0.0.1:9" "w" #() 10 0 60000 :task-dir (str (/ tmp-path "tasks"))))
+  (setv link (LinkRig "http://127.0.0.1:9" "w" #() 60000 :task-dir (str (/ tmp-path "tasks"))))
   (setv #(before) (.accept-tasks link (get body "tasks")))
   (setv rows (.report link #((JobStatus (+ "task/" id) JobPhase.RUNNING "r" "r" 42 1))))
   ;; 置き場を失った coordinator が起きる: 走っている task を同じ行で引き取り、同じ heartbeat の返事に載せる。
@@ -1135,7 +1135,7 @@
   (val id (get (get put 2) "task"))
   (assert (isinstance id str) put)
   (<- seen (get tuple #(ClusterState int (get dict #(str object)))) (beat (get put 0) "w" 100 :boot-at 1000 :provides caps))
-  (val link (LinkRig "http://127.0.0.1:9" "w" #() 10 0 60000 :task-dir (str (/ tmp-path "tasks"))))
+  (val link (LinkRig "http://127.0.0.1:9" "w" #() 60000 :task-dir (str (/ tmp-path "tasks"))))
   (val specs (.accept-tasks link (get (get seen 2) "tasks")))
   (assert (= (len specs) 1) specs)
   #((get seen 0) id link (get specs 0)))
@@ -1347,7 +1347,7 @@
         plain (JobSpec "plain" "doeff_cluster._worker.entry.job_entry" #() "r"))
   (assert (= (kept-when-cut-off #(detached remote writer plain) 60000 240000) #(detached writer)))
   ;; coordinator への口: 途絶が fence を越えたら、最後に受け取った宣言のうち切り離した task を動かし続ける
-  (setv link (LinkRig "http://127.0.0.1:9" "w" #() 1 0 60000))
+  (setv link (LinkRig "http://127.0.0.1:9" "w" #() 60000))
   (setv link.state.last-tasks #(detached remote) link.state.fence-ms 0 link.state.last-ok-ms (- (int (* 1000 (time.time))) (int (* 1000 1))))
   (val cut (.poll link))
   ;; 途絶で絞った宣言は、止めの訳 CutOff を運ぶ(#3713 — worker が止めた job の行に cut-off と黙った秒を出す)

@@ -165,7 +165,7 @@
   ;; 「drain 中でない」と読み、返事の job をそのまま宣言にした。
   (val handle (fn #^ httpx.Response [#^ httpx.Request request]
                 (httpx.Response 200 :json {"jobs" [JOB-ROW] "tasks" [] "warm" []})))
-  (val link (LinkRig "http://coord" "w" #() 1 0 20000 :task-dir (str (/ tmp-path "tasks")) :transport (httpx.MockTransport handle)))
+  (val link (LinkRig "http://coord" "w" #() 20000 :task-dir (str (/ tmp-path "tasks")) :transport (httpx.MockTransport handle)))
   (val seen (.poll link))
   (assert (isinstance seen DesiredUnreadable) seen)
   (assert (in "DeclaredReplyMalformed" seen.reason) seen.reason)

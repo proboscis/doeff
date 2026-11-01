@@ -25,7 +25,7 @@
                 (if (= request.url.path "/heartbeat")
                     (httpx.Response 200 :json {"jobs" [row] "draining" False "tasks" [] "warm" []})
                     (httpx.Response 404 :json {"error" "no such program"}))))
-  (LinkRig "http://coord" "w" #() 1 0 20000 :task-dir (str (/ tmp-path "tasks")) :transport (httpx.MockTransport handle)))
+  (LinkRig "http://coord" "w" #() 20000 :task-dir (str (/ tmp-path "tasks")) :transport (httpx.MockTransport handle)))
 
 
 (deftest test-a-program-job-row-without-versions-is-refused-by-name-and-leaves-the-worker-not-ready [tmp-path monkeypatch]
