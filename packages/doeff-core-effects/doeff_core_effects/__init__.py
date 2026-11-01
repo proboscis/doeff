@@ -72,6 +72,8 @@ from doeff_core_effects._scheduler import Race as Race
 from doeff_core_effects._scheduler import ReleaseSemaphore as ReleaseSemaphore
 from doeff_core_effects._scheduler import SchedulerDeadlockError as SchedulerDeadlockError
 from doeff_core_effects._scheduler import Semaphore as Semaphore
+from doeff_core_effects._scheduler import ShieldEnter as ShieldEnter
+from doeff_core_effects._scheduler import ShieldExit as ShieldExit
 from doeff_core_effects._scheduler import Spawn as Spawn
 from doeff_core_effects._scheduler import Task as Task
 from doeff_core_effects._scheduler import TaskCancelledError as TaskCancelledError
