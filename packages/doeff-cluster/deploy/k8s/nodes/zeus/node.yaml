@@ -38,9 +38,8 @@ spec:
           volumeMounts:
             - { name: usb-claude-projects, mountPath: /work/host-usb/claude-projects }
             - { name: usb-service-workers, mountPath: /work/host-usb/service-workers }
-            # moneta の毎日の控えの置き場(Longhorn の PVC — moneta-backup-pvc.yaml)。job の子は /mnt/moneta-backup-longhorn へ書く。
-            - { name: moneta-backup-longhorn, mountPath: /mnt/moneta-backup-longhorn }
-            # 前の置き場(NAS の dir)。新しい置き場へ restic copy で写す間だけ並べて付ける(card ki-c539f56a93df)。
+            # moneta の毎日の控えの置き場(Longhorn の PVC — moneta-backup-pvc.yaml)。job の子は /mnt/moneta-backup へ書く。path は NAS の
+            # PVC の時と同じにし、Pod の入れ替えの瞬間に置き場が替わるようにする(job の側の path を替える間の食い違いを作らない)。
             - { name: moneta-backup, mountPath: /mnt/moneta-backup }
       # 作業の root(volume work — WORK_DIR=/work)は USB の SSD の下(zeus の容量を食う置き場を USB の
       # SSD へ移す。同じ日の 13:39 JST に root の disk の空きが準備の最低 25 GiB を切り、新しい版の準備が全部
@@ -61,7 +60,5 @@ spec:
           hostPath: { path: /mnt/fast_ssd_usb/claude-projects, type: Directory }
         - name: usb-service-workers
           hostPath: { path: /mnt/fast_ssd_usb/service-workers, type: Directory }
-        - name: moneta-backup-longhorn
-          persistentVolumeClaim: { claimName: moneta-backup }
         - name: moneta-backup
-          persistentVolumeClaim: { claimName: moneta-backup-nfs }
+          persistentVolumeClaim: { claimName: moneta-backup }
