@@ -23,6 +23,14 @@
 ;;;     そのまま送り直す。返事は読まない(宣言の読みは拍の送りだけ — coordinator は同じ本文の送り直しで lease と生存だけを延ばし、
 ;;;     置いた task を次の返事でも送る)。thread の送りに届いた返事の刻は沈黙の計りに入る(拍が戻った最初の周期で、coordinator が
 ;;;     生きていると見ていた間を途絶と数えて自分の job を止めない)。分ける値は入れ物 LifeCell。
+;;;   * ready の file(Pod の readinessProbe が読む — ready-file-written)は、coordinator が生きていると見る heartbeat と同じ送りで新しくする:
+;;;     拍が解いた返事ごとに拍が書き、拍の止まる間は thread の送りに 2xx が届くたびに送りの後の書きの thread が書く
+;;;     (lifeline-settled・lifeline-ready-written)。thread の書きは 2 つが揃う時だけ — 拍が最後に読んだ返事が ready を許した(解けて
+;;;     handoverPending でない — 許しは LifeCell.ready-file。拍が読んだ返事ごとに下ろし、解けた返事だけが戻す)と、thread の送りの返事も
+;;;     解けて handoverPending でない。拍の止まりの間も job の業務の口(Service の振り先)を網から外さないため(zeus 2026-10-26 02:59 JST —
+;;;     拍が IO で 30〜62 秒止まった間、thread の heartbeat で coordinator には生きて見えたのに、ready の file が古びて Pod が Ready を失い、
+;;;     Pod に載る job の Service の振り先が 0 になった)。thread の送りが止まれば(process 全体の止まり・拍の進みが止まりの上限を越えた)
+;;;     ready の file も古び、Pod は今まで通り Ready を失う。
 (require doeff-hy.macros [defhandler defk deff <- val var])
 (val MODULE-TAGS {:context "worker" :role "protocol"})
 (import json)
@@ -53,7 +61,7 @@
 (import doeff_cluster._shared.core.due_policy [earliest-due])
 (import doeff_cluster._worker.core.worker_due [beat-due fence-due wakes-with])
 (import doeff_cluster._worker.core.boot_timing [boot-line])
-(import doeff_cluster._worker.protocol.declared [DeclaredReply declared-reply-of-json declared-job-specs task-specs])
+(import doeff_cluster._worker.protocol.declared [DeclaredReply DeclaredReplyMalformed declared-reply-of-json declared-job-specs task-specs])
 (import doeff_cluster._worker.protocol.heartbeat [env-heartbeat-part heartbeat-body status-report])
 (import doeff_cluster._worker.core.account_token [TokenClaims TokenState token-claims token-state token-read-due])
 (import doeff_cluster._worker.core.room_rules [RoomReading RoomState WorkerRoom room-of-text room-read-due room-line])
@@ -100,6 +108,11 @@
    送りの #(通しの本数 直近の送りの事実の列)(HeartbeatSent — 直近 LIFELINE-SENT-KEPT 本。書くのは thread だけ)・read-total = 拍の
    宣言の読みが受け取り済みの通しの本数(書くのは拍だけ)。欄ごとに書き手が 1 つなので錠を持たない・
    failure = thread の最後の送りの失敗の理由(\"\" = 届いた)・told = 拍の口が最後に log に出した失敗の理由。
+   ready-file = 拍が最後に読んだ返事が ready を許した時の ready の file の path(None = 許していない・まだ読んでいない・file を
+   持たない worker — 書くのは拍だけ。送りの後の書きの thread はこの path にだけ書く)・ready-refusal = 拍の許しが在る間に thread の
+   送りに届いた最後の返事が ready を許さなかった訳(\"\" = 許した — reply-ready-refusal・書くのは thread だけ)・ready-failure =
+   送りの後の書きの最後の失敗の理由(\"\" = 書けた・書いていない — 書くのはその thread だけ)・ready-told = 拍の口が最後に log に
+   出した #(許さない訳 書けない理由)。
    刻の対は書き手が 1 つの setv で書き、読み手は錠を取らずに読む: 別の thread の書きの間に読むと、前後 2 回の送りの刻が混ざった対に
    なりうるが、沈黙の計り(heartbeat_rules.silent-ms — 2 つの差の長い方)は古い方の刻で計るので、沈黙を長く見る側(早く送る・早く
    止める側)にしか外れない。"
@@ -107,7 +120,8 @@
     (setv self.post None self.started-at None self.started-mono-ms None
           self.last-ok-ms 0 self.last-ok-mono-ms 0 self.progress-at None self.progress-mono-ms None self.sent #(0 #()) self.read-total 0
           self.failure ""
-          self.told "")))
+          self.told ""
+          self.ready-file None self.ready-refusal "" self.ready-failure "" self.ready-told #("" ""))))
 
 
 (defclass LinkState []
@@ -352,17 +366,43 @@
           (tuple out))))
 
 
-(defk ready-file-written []
-  {:pre [] :post [(: % None)]}
-  "readinessProbe が sh で読む file(DOEFF_WORKER_READY_FILE — 無ければ書かない)へ、heartbeat の返事が届いた拍ごとに「ready」を書くため
-   (mtime = 最後に届いた時刻 — probe は中身が ready で新しい時だけ Ready)。drain 中の返事でも ready を書く: drain は coordinator の配りの状態で
+(defk ready-file-written [life]
+  {:pre [(: life LifeCell)] :post [(: % None)]}
+  "readinessProbe が sh で読む file(DOEFF_WORKER_READY_FILE — 無ければ書かない)へ、heartbeat の返事が届いた拍ごとに「ready」を書き、
+   拍の止まる間に生存の合図の thread の送りの後の書きが同じ file を新しくしてよいと許すため(path を life.ready-file に置く — 頭の註)。
+   mtime = 最後に届いた時刻 — probe は中身が ready で新しい時だけ Ready。drain 中の返事でも ready を書く: drain は coordinator の配りの状態で
    Pod の健康ではなく、drain は Pod の作り直しをまたいで残るので(#4177)、Ready に混ぜると「Ready を待つ」手順が drain の間ずっと待ち合う。
    環境変数は ReadEnvironment で読む(在る名の分だけ答えが返る — 本物 = 入口の subprocess-handler が os.environ から・sim = 台本の process の
    handler。protocol の層は os.environ に触らない・#3014)。"
   (<- found (get tuple #(EnvEntry ...)) (ReadEnvironment #("DOEFF_WORKER_READY_FILE")))
   (when found
-    (<- (file-done (WriteText (. (get found 0) value) "ready\n" :replace True))))
+    (val path (. (get found 0) value))
+    (setv life.ready-file path)
+    (<- (file-done (WriteText path "ready\n" :replace True))))
   None)
+
+
+(defk reply-ready-refusal [text]
+  {:pre [(: text str)] :post [(: % str)] :tags {:context "worker" :role "protocol" :reads "json"}}
+  "生存の合図の thread の送りに届いた返事の本文が、ready の file を新しくしてよいと言っているかを読むため(\"\" = 許す・それ以外 =
+   許さない訳)。許すのは、宣言の部分が解けて(declared-reply-of-json — 拍と同じ読み)handoverPending でない返事だけ(AL-D2k — 同じ名の
+   前の世代の job をまだ受け取れない間は、拍の許しが残っていても Ready を延ばさない)。JSON でない・object でない・形の違う返事は
+   訳つきで許さない(読めない返事で Ready を延ばさない — 拍の口が訳を log に出す)。drain は見ない(#4177)。"
+  (var body None)
+  (try
+    (:= body (json.loads text))
+    (except [error ValueError]
+      (return (+ "返事が JSON でない: " (str error)))))
+  (when (not (isinstance body dict))
+    (return (+ "返事が JSON の object でない: " (. (type body) __name__))))
+  (var refusal "")
+  (try
+    (<- declared DeclaredReply (declared-reply-of-json body))
+    (when declared.handover-pending
+      (:= refusal "handoverPending(前の世代の job をまだ受け取れない)"))
+    (except [error DeclaredReplyMalformed]
+      (:= refusal (str error))))
+  refusal)
 
 
 (defk watching? [state]
@@ -505,6 +545,10 @@
   (try
     (<- answered (answer-json reply.answer))
     (setv state.last-ok-ms now-ms state.last-ok-mono-ms (monotonic-ms-of now-mono))
+    ;; 読めた返事ごとに、生存の合図の thread への ready の許しを下ろす(下で解けて handoverPending でない返事だけが戻す — 頭の註)。
+    ;; 届かない・断られた送り(answer-json が投げる)は許しを変えない: 返事を読んでいないので判じが無く、thread の送りが届く間は
+    ;; coordinator が生きていると見ている。
+    (setv state.life.ready-file None)
     ;; 返事の宣言の部分(job の行と draining)を JSON の境界で 1 度だけ解く(#3684)— 返事の job の版を据え置く印(declared-job-specs)が
     ;; draining を読む。ready の file は解けた返事ごとに ready を書く(drain を見ない・#4177)。形の違う返事(draining の無い返事など)は
     ;; DeclaredReplyMalformed で落ち、下の except が「名乗れない」の 1 行にして「読めない」を返す(拍は前の宣言のまま動かし、ready の file は
@@ -516,7 +560,7 @@
     ;; 同じ名の前の世代がまだ動かしている job を、この世代がまだ受け取れない間(handoverPending — AL-D2k)は ready を書かない:
     ;; Pod が Ready になると Deployment が前の世代の Pod の削除を始め、Service がその Pod を振り先から外す。
     (when (not declared.handover-pending)
-      (<- (ready-file-written)))
+      (<- (ready-file-written state.life)))
     ;; 自己停止の時間は coordinator の ClusterTiming が持つ(移し替えの時間と組で決まる)。受け取った値に合わせる。
     (val timing (.get answered "timing"))
     (when (and timing (in "fence_ms" timing))
@@ -664,19 +708,40 @@
             None))))
 
 
-(defk lifeline-settled [state status detail]
-  {:pre [(: state LinkState) (: status (| int None)) (: detail str)] :post [(: % None)]}
-  "生存の合図の thread の送り 1 本の答えを、拍の側が読む値に書くため(thread の VM で走る)。status = 返事の
-   HTTP の status(None = 届かなかった)・detail = 届かない・断られた理由。2xx なら返事の刻の対を書き(沈黙の計りに入る —
-   heard-silence)、失敗の理由を空にする。それ以外は理由を書く(拍の口が変わり目を 1 行で出す — lifeline-told)。返事の本文は読まない
-   (宣言の読みは拍の送りだけ — 頭の註)。"
+(defk lifeline-settled [state status detail text]
+  {:pre [(: state LinkState) (: status (| int None)) (: detail str) (: text str)] :post [(: % bool)]}
+  "生存の合図の thread の送り 1 本の答えを、拍の側が読む値に書き、送りの後の書き(ready の file — lifeline-ready-written)を求めるかを
+   答えるため(thread の VM で走る)。status = 返事の HTTP の status(None = 届かなかった)・detail = 届かない・断られた理由・text = 返事の
+   本文。2xx なら返事の刻の対を書き(沈黙の計りに入る — heard-silence)、失敗の理由を空にし、拍の ready の許しが在る間は返事の本文の
+   ready の許し(reply-ready-refusal)を読んで、許せば真を答える。それ以外は理由を書いて偽を答える(拍の口が変わり目を 1 行で出す —
+   lifeline-told)。返事の job の宣言は読まない(宣言の読みは拍の送りだけ — 頭の註)。"
   (val life state.life)
+  (var wanted False)
   (if (and (is-not status None) (<= 200 status 299))
       (do (<- now-ms int (now-epoch-ms))
           (<- mono float (GetMonotonic))
           (setv life.last-ok-ms now-ms life.last-ok-mono-ms (monotonic-ms-of mono))
-          (setv life.failure ""))
+          (setv life.failure "")
+          ;; 拍の許しの無い間は返事を読まない(許しは拍が解いた返事だけが戻す — thread の返事では戻さない)。
+          (when (is-not life.ready-file None)
+            (<- refusal str (reply-ready-refusal text))
+            (setv life.ready-refusal refusal)
+            (:= wanted (= refusal ""))))
       (setv life.failure (if (is status None) detail (.format "{}: {}" status detail))))
+  wanted)
+
+
+(defk lifeline-ready-written [state]
+  {:pre [(: state LinkState)] :post [(: % None)]}
+  "生存の合図の thread の送りに、ready を許す返事が届いた後に(lifeline-settled が真)、拍の止まる間も ready の file を新しくするため
+   (送りの後の書きの thread の VM で走る — 送りの thread を disk の待ちで塞がない・foundation/lifeline の頭の註)。書く直前に拍の
+   許しを読み直し、その間に拍が許しを下ろしていれば書かない。書けない理由は life.ready-failure に置く(拍の口が変わり目を
+   1 行で出す — lifeline-told)。"
+  (val life state.life)
+  (val path life.ready-file)
+  (when (is-not path None)
+    (<- written (| FileFailed None) (WriteText path "ready\n" :replace True))
+    (setv life.ready-failure (if (isinstance written FileFailed) (.format "{}: {}" written.path written.detail) "")))
   None)
 
 
@@ -809,6 +874,15 @@
     (<- (slog (if failure
                   (+ "worker: 生存の合図の thread が heartbeat を届けられない: " failure)
                   "worker: 生存の合図の thread の heartbeat が届くようになりました"))))
+  ;; thread の送りの後に ready の file を新しくしない訳(返事が許さない・書けない)の変わり目も 1 行。
+  (val ready #(life.ready-refusal life.ready-failure))
+  (when (!= ready life.ready-told)
+    (setv life.ready-told ready)
+    (<- (slog (if (= ready #("" ""))
+                  "worker: 生存の合図の thread の送りの後に ready の file を新しくできるようになりました"
+                  "worker: 生存の合図の thread の送りの後に ready の file を新しくしない")
+              :level (if (= ready #("" "")) "info" "warning")
+              :refusal (get ready 0) :failure (get ready 1))))
   None)
 
 
