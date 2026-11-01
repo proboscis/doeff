@@ -57,6 +57,7 @@
 (require doeff-hy.record [defrecord])
 (import bisect)
 (import heapq)
+(import itertools [islice])
 (import threading)
 (import collections.abc [Callable])
 (import contextlib [AbstractContextManager])
@@ -195,18 +196,22 @@
           ;; 書きの控え(頭の註の「書きの控え」): 変更の番号 → 行の書きの変更の WriteNote と、出来事の番号 → 積んだ時の
           ;; 変更の番号の頭。
           self.written-by {}
-          self.appended-at-head {}))
+          self.appended-at-head {}
+          ;; 表の名 → 鍵の綴りを並べた list の覚え(鍵の順の頁 memory-key-page-texts が頁ごとに表の全部の鍵を並べ直さないため)。
+          ;; 置き場の中身から導ける物なので、錠と同じく pickle と copy は運ばず、戻した側は空から作る。
+          self.sorted-texts {}))
   ;; 錠と呼び鈴は置き場の中身ではなく、この process の thread と実行の間の取り決め — pickle と copy は錠と呼び鈴を除いた中身だけを運び、
   ;; 戻した側で新しい錠と空の呼び鈴を作る(置き場を含む値を pickle する使い手 — worker の結果の file・coordinator の状態 — を壊さないため。
   ;; 呼び鈴は掛けた実行の中でしか意味を持たない)。
   (defn #^ dict __getstate__ [self]
     "pickle / copy が運ぶ中身を返すため(錠と呼び鈴を除く)。"
-    (dfor [name value] (.items self.__dict__) :if (not-in name #("lock" "bells")) name value))
+    (dfor [name value] (.items self.__dict__) :if (not-in name #("lock" "bells" "sorted_texts")) name value))
   (defn #^ None __setstate__ [self #^ dict state]
-    "pickle / copy から戻す時に中身を入れ、運んだ make-lock で新しい錠を作るため。"
+    "pickle / copy から戻す時に中身を入れ、運んだ make-lock で新しい錠を作るため(並べた鍵の覚えは空から作る)。"
     (.update self.__dict__ state)
     (setv self.lock (self.make-lock)
-          self.bells {}))
+          self.bells {}
+          self.sorted-texts {}))
   (deff __deepcopy__ [self memo]  ; defk にできない: copy.deepcopy が呼ぶ class の口(同期の呼び — Program を実行しない)
     {:pre [(: self MemoryStore) (: memo dict)] :post [(: % MemoryStore)] :tags {:context "records" :role "foundation"}}
     "置き場の写しを作るため(使い手の模擬の検が、種を置いた置き場を検ごとに写す — 写しへの書きは元の置き場に届かない)。書き換える
@@ -438,6 +443,7 @@
   "保持の期限を過ぎた行 1 つ(表 table の鍵の文字列 text)を置き場から消し、変更の列に RowRemoved を積む — 回収(purge-expired-scan)と、
    期限を過ぎた行へ書く書きの片付け(writable-row)が同じ 1 つを使う。呼び鈴は鳴らさない(呼び手が鳴らす — 回収は消した表をまとめて 1 回)。"
   (setv stored (.pop (get store.rows table) text))
+  (note-text-removed store table text)
   (+= store.head 1)
   (setv (get store.changed-at store.head) now-ms)
   ;; 保持の刈りの変更は書き手を持たないので、書きの控えを置かない(頭の註の「書きの控え」)。
@@ -524,10 +530,57 @@
    (ListRows と CountRows が同じ行を数える 1 点)。"
   (setv table (get store.rows table-name))
   (lfor text (sorted table)
-        :if (and (row-matches? where (. (get table text) row value))
-                 (row-matches-any? where-any (. (get table text) row value))
-                 (not (stored-row-expired? decl (get table text) now-ms)))
+        :if (memory-row-visible? decl (get table text) where where-any now-ms)
         text))
+
+
+(defn #^ bool memory-row-visible? [#^ TableDecl decl #^ StoredRow stored #^ FrozenMap where #^ FrozenMap where-any #^ int now-ms]  ; defk にできない: 錠の内で同期に呼ぶ置き場の読みの判定(読みの関数が内包表記の中で行ごとに呼ぶ)
+  "置き場の行 stored が絞り(where・where-any)に合い、刻 now-ms で保持の期限を過ぎていないか — 一覧と数え(memory-matching-texts)と
+   鍵の順の頁(memory-key-page-texts)が同じ行を見るための 1 つの判じ。"
+  (and (row-matches? where stored.row.value)
+       (row-matches-any? where-any stored.row.value)
+       (not (stored-row-expired? decl stored now-ms))))
+
+
+(defn #^ list memory-sorted-texts [#^ MemoryStore store #^ str table-name]  ; defk にできない: 錠の内(read-at-now の operation)で同期に呼ぶ置き場の読み
+  "表 table-name の鍵の綴りを綴りの順に並べた list を返すため(覚えが無ければ並べて覚える)。覚えは行の鍵が増える・消える書き
+   (memory-store-row・remove-stored-row)が並びを保ったまま直すので、頁ごとに並べ直さない。返した list は呼び手が変えない。"
+  (setv texts (.get store.sorted-texts table-name))
+  (when (is texts None)
+    (setv texts (sorted (get store.rows table-name))
+          (get store.sorted-texts table-name) texts))
+  texts)
+
+
+(defn #^ None note-text-added [#^ MemoryStore store #^ str table-name #^ str text]  ; defk にできない: 錠の内で同期に呼ぶ置き場の書き(memory-store-row が新しい鍵を置いた時)
+  "表 table-name に新しく置いた鍵の綴り text を、並べた鍵の覚え(在れば)の並びの位置へ入れるため。"
+  (setv texts (.get store.sorted-texts table-name))
+  (when (is-not texts None)
+    (bisect.insort texts text))
+  None)
+
+
+(defn #^ None note-text-removed [#^ MemoryStore store #^ str table-name #^ str text]  ; defk にできない: 錠の内で同期に呼ぶ置き場の書き(remove-stored-row が鍵を消した時)
+  "表 table-name から消した鍵の綴り text を、並べた鍵の覚え(在れば)から外すため。"
+  (setv texts (.get store.sorted-texts table-name))
+  (when (is-not texts None)
+    (del (get texts (bisect.bisect-left texts text))))
+  None)
+
+
+(defn #^ list memory-key-page-texts [#^ MemoryStore store #^ TableDecl decl #^ ListRows ask #^ int now-ms]  ; defk にできない: 錠の内(read-at-now の operation)で同期に呼ぶ置き場の読み
+  "鍵の順の頁(ListRows の並べる欄の無い読み)に出す行の鍵の綴りを、cursor の位置の後から綴りの順に最大 limit + 1 件返すため(limit 件を
+   越える 1 件は続きの有無の判じだけに使う)。cursor の位置は並べた鍵の上を二分探しで探し、絞りは位置の後から綴りの順に当てて limit + 1 件
+   見つけた所で止める — 頁ごとに表の全行を並べて絞りを当てると、頭からの頁送りの全読みが表の行の数の 2 乗になる(2026-10-31 の実測:
+   約 2.8 万行の表の読み込みで頁 1 枚 0.26 秒)。並べた鍵は置き場の覚え(memory-sorted-texts)を使う。"
+  (setv table (get store.rows ask.table)
+        texts (memory-sorted-texts store ask.table)
+        start (if (is ask.cursor None) 0 (bisect.bisect-right texts ask.cursor.after-key)))
+  (list (islice (gfor at (range start (len texts))
+                      :setv text (get texts at)
+                      :if (memory-row-visible? decl (get table text) ask.where ask.where-any now-ms)
+                      text)
+                (+ ask.limit 1))))
 
 
 (defn #^ object memory-list-rows [#^ MemoryStore store #^ ListRows ask #^ int now-ms]  ; defk にできない: 錠の内(read-at-now の operation)で同期に呼ぶ置き場の読み
@@ -538,14 +591,13 @@
   (setv refusal (where-refusal decl ask.where ask.where-any))
   (when refusal (return refusal))
   (setv table (get store.rows ask.table)
-        matching (memory-matching-texts store decl ask.table ask.where ask.where-any now-ms)
         ordered-by (if (is-not ask.descending-by None) ask.descending-by ask.ascending-by))
   (when (is-not ordered-by None)
     ;; 並べて読む読み(ListRows の註): 値が整数の行だけを (値, 鍵の綴り) の順に、cursor の位置の組を越えた行から limit 件。descending-by は
     ;; 大きい順で位置より小さい行から・ascending-by は小さい順で位置より大きい行から。
     (setv descending (is-not ask.descending-by None)
           past (if (is ask.cursor None) None #(ask.cursor.after-value ask.cursor.after-key))
-          ordered (sorted (gfor text matching
+          ordered (sorted (gfor text (memory-matching-texts store decl ask.table ask.where ask.where-any now-ms)
                                 :setv value (.get (. (get table text) row value) ordered-by)
                                 :if (and (descending-value? value)
                                          (or (is past None) (if descending (< #(value text) past) (> #(value text) past))))
@@ -556,8 +608,7 @@
                   (if (> (len ordered) ask.limit) (ListCursor store.epoch (get top -1 1) (get top -1 0)) None)
                   store.epoch
                   store.head)))
-  (setv after (if (is ask.cursor None) None ask.cursor.after-key)
-        matching (lfor text matching :if (or (is after None) (> text after)) text))
+  (setv matching (memory-key-page-texts store decl ask now-ms))
   (setv taken (cut matching ask.limit)
         rows (tuple (gfor text taken (listed-row decl ask.fields (. (get table text) row)))))
   (Page rows
@@ -606,6 +657,8 @@
   (setv spelled (canonical-json value)
         text (key-text key)
         stored (StoredRow (spelled-row key value spelled version) now-ms))
+  (when (not-in text (get store.rows table))
+    (note-text-added store table text))
   (setv (get (get store.rows table) text) stored)
   (+= store.head 1)
   (setv (get store.changed-at store.head) now-ms
