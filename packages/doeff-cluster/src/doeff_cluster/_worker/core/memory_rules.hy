@@ -57,7 +57,8 @@
 
 
 (defrecord MemoryLimits
-  "見張りの閾: danger-available = 空き(MemAvailable)/ 総量 がこれ未満なら DANGER・danger-pressured-available と danger-full-avg10 =
+  "見張りの閾(空き / 総量 — kubelet の下の機体は追い出しまでの空き / 線の大きさ・それ以外は MemAvailable / MemTotal。見張りが
+   worker/core/eviction_rules の line-memory で NodeMemory にして渡す): danger-available = 空き / 総量 がこれ未満なら DANGER・danger-pressured-available と danger-full-avg10 =
    空き / 総量 がこれ未満で、memory の PSI の full avg10(%)がこれ以上でも DANGER(reclaim で全 process が止まり始めた)・
    tight-available と tight-full-avg10 = どちらかを越えたら TIGHT・min-victim-bytes = これより小さい単位は止めない(食った物が job の外の
    時に、小さい job を次々に止めない)・steady-ratio = 常駐の job の今の memory が平常の大きさのこの倍以上の時だけ、その job の単位を

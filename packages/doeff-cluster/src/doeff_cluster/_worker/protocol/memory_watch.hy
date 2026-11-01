@@ -2,6 +2,11 @@
 ;;; memory(/proc/meminfo・/proc/pressure/memory)・worker の container の memory(cgroup v2)・job ごとの memory(process の表を job の根の
 ;;; 木で数える)を読み、worker の log に残す。機体の memory が尽きかけたら(worker/core/memory_rules の DANGER)、job の木の中のいちばん
 ;;; 大きい単位を SIGKILL で止める — kernel の OOM に至らない reclaim の thrash で機体の全体が止まる前に。
+;;; 追い出しの線: kubelet の下の worker(設定 eviction が在る — 入口が host の cgroupfs と Node の名から作る)は、回の頭で kubelet が Pod を
+;;; 追い出す線までの空きを数え、jobs の層の memory.max をその空きから掛け直す(worker/protocol/eviction_line)。その回の様子(CALM・TIGHT・
+;;; DANGER)・群れの止めの量・log の機体の空きと総量は、機体の MemAvailable と MemTotal でなく、追い出しまでの空きと線の大きさで判じる
+;;; (worker/core/eviction_rules の line-memory — kubelet は機体の MemAvailable でなく線で Pod を追い出す)。線の無い機体と読めない回は
+;;; 機体の MemAvailable と MemTotal で判じる。
 ;;;
 ;;; log の行(名 + 欄の形):
 ;;;   MEMORY-WINDOW-LOG  window-seconds ごとに 1 行: その間の job ごとの memory の最大(report-floor-bytes 以上・大きい順に report-jobs 個)・
@@ -28,7 +33,7 @@
 (require doeff-hy.macros [defk <- val var])
 (require doeff-hy.record [defrecord])
 (val MODULE-TAGS {:context "worker" :role "protocol"})
-(import dataclasses [dataclass])  ; defrecord の展開が名指す
+(import dataclasses [dataclass replace])  ; dataclass = defrecord の展開が名指す
 (import doeff_core_effects [slog])
 (import doeff_core_effects [ReadText FileFailed])
 (import doeff_core_effects [ProcessSignal])
@@ -38,6 +43,8 @@
 (import doeff_cluster._worker.protocol.observations [ObserveJobRoots])
 (import doeff_cluster._worker.core.memory_rules [MemoryLevel MemoryLimits NodeMemory ContainerMemory KillUnit JobUse JobSteady node-memory-of
                                                 cgroup-bytes-of memory-level _job-walks _uses-of _units-of steady-sizes spared-steady victim-of swarm-of])
+(import doeff_cluster._worker.core.eviction_rules [EvictionLine line-memory line-name])
+(import doeff_cluster._worker.protocol.eviction_line [EvictionSettings EvictionCell eviction-noted])
 
 (val MEMORY-WINDOW-LOG "worker: job ごとの memory")
 (val JOB-PEAK-LOG "worker: job の memory の最大")
@@ -54,7 +61,8 @@
   "見張りの設定(頭の註): meminfo-path・pressure-path・cgroup-dir = 読む file の置き場・sample-seconds = 読みの間隔・window-seconds = job ごとの
    最大の行の間隔・kill-cooldown-seconds = 止めた後に次を止めない秒・guard = 止めるか(偽は log だけ)・limits = 様子の閾・report-floor-bytes =
    最大の行に載せる job の最低・report-jobs = 最大の行に載せる job の数の上限・kill-mark-seconds = 止めた印を残す秒(調整ループが止めた
-   process の終わりを回収するまでの間を十分に覆う)・steady-windows = 平常の大きさに数える最大の行の間の数(頭の註 — 既定 12 は 1 時間)。"
+   process の終わりを回収するまでの間を十分に覆う)・steady-windows = 平常の大きさに数える最大の行の間の数(頭の註 — 既定 12 は 1 時間)・
+   eviction = 追い出しの線の読みの設定(頭の註 — None = kubelet の下に居ない worker・線を数えない)。"
   {:check [(> sample-seconds 0) (>= window-seconds sample-seconds) (>= kill-cooldown-seconds 0) (>= report-floor-bytes 0) (> report-jobs 0)
            (> kill-mark-seconds 0) (> steady-windows 0)]}
   (setv #^ str meminfo-path "/proc/meminfo")
@@ -68,7 +76,8 @@
   (setv #^ int report-floor-bytes (* 64 1024 1024))
   (setv #^ int report-jobs 12)
   (setv #^ float kill-mark-seconds 600.0)
-  (setv #^ int steady-windows 12))
+  (setv #^ int steady-windows 12)
+  (setv #^ (| EvictionSettings None) eviction None))
 
 
 (defrecord MemoryKill
@@ -107,11 +116,13 @@
    last-kill-ms = 最後に止めた刻・told-no-victim = 今の DANGER で止める単位が無いと言った・unread = 前の読めない訳("" = 読めた)・
    failure = 前の読みで起きた思わぬ例外の repr(同じ例外は 2 度言わない)・kills = 止めた印(MemoryKill の列 — kill-mark-seconds を
    過ぎた物は読みごとに除く・調整ループが memory_observer で読む)・steady = 閉じた最大の行の間ごとの job の最大(JobSteady の列の列 —
-   新しい間が後・steady-windows 個まで)・window-killed = 今の最大の行の間に見張りが止めた job の名(その間の最大を steady に残さない)。
+   新しい間が後・steady-windows 個まで)・window-killed = 今の最大の行の間に見張りが止めた job の名(その間の最大を steady に残さない)・
+   eviction = 追い出しの線の読みの入れ物(worker/protocol/eviction_line の EvictionCell — heartbeat の測りも最後の線を読む)。
    scheduler の task は 1 つの thread で交互に走るので錠は要らない。"
   (defn #^ None __init__ [self]
     (setv self.closing False self.level MemoryLevel.CALM self.peaks #() self.window None self.last-kill-ms None
-          self.told-no-victim False self.unread "" self.failure "" self.kills #() self.steady #() self.window-killed (frozenset))))
+          self.told-no-victim False self.unread "" self.failure "" self.kills #() self.steady #() self.window-killed (frozenset)
+          self.eviction (EvictionCell))))
 
 
 (defrecord MemoryReading
@@ -218,6 +229,7 @@
                     :jobs (.join " " (gfor m listed (.format "{}={}" m.job (// m.bytes (* 1024 1024)))))
                     :jobs-not-listed (- (len jobs) (len listed))
                     :node-min-available-mib (// merged.min-available (* 1024 1024)) :node-total-mib (// node.total-bytes (* 1024 1024))
+                    :line (! (line-name cell.eviction.line)) :jobs-limit-mib (! (mib-or-none cell.eviction.jobs-limit))
                     :max-full-avg10 merged.max-full
                     :container-current-mib (if (is reading.container.current-bytes None) None (// reading.container.current-bytes (* 1024 1024)))
                     :container-peak-mib (if (is reading.container.peak-bytes None) None (// reading.container.peak-bytes (* 1024 1024)))))
@@ -336,13 +348,18 @@
   (<- now-ms int (now-epoch-ms))
   ;; kill-mark-seconds を過ぎた止めた印を除く(調整ループは止めた process の終わりを秒の桁で回収するので、残す間はそれを十分に覆う)。
   (setv cell.kills (tuple (gfor k cell.kills :if (< (- now-ms k.at-ms) (* settings.kill-mark-seconds 1000)) k)))
-  (<- reading (| MemoryReading MemoryUnreadable) (memory-reading settings))
-  (when (isinstance reading MemoryUnreadable)
-    (when (!= reading.reason cell.unread)
-      (<- (slog MEMORY-UNREAD-LOG :level "warning" :reason reading.reason))
-      (setv cell.unread reading.reason))
+  ;; 追い出しの線を数え、jobs の層の上限を掛け直す(process の表の読みより先 — 表が大きい回も掛け直しを遅らせない)。
+  (<- line (| EvictionLine None) (eviction-noted settings.eviction cell.eviction settings.guard now-ms))
+  (<- read (| MemoryReading MemoryUnreadable) (memory-reading settings))
+  (when (isinstance read MemoryUnreadable)
+    (when (!= read.reason cell.unread)
+      (<- (slog MEMORY-UNREAD-LOG :level "warning" :reason read.reason))
+      (setv cell.unread read.reason))
     (return None))
   (setv cell.unread "")
+  ;; 様子・止め・log の機体の空きと総量は、線が在れば追い出しまでの空きと線の大きさ(頭の註)。
+  (<- line-node NodeMemory (line-memory read.node line))
+  (val reading (replace read :node line-node))
   ;; 表を並べ直して木をたどるのは 1 回の読みに 1 度(job ごとの memory と止める単位で分けて使う)。
   (<- walks tuple (_job-walks reading.rows reading.roots))
   (<- uses tuple (_uses-of walks))
@@ -354,7 +371,7 @@
     (<- listed str (units-text units LEVEL-UNITS))
     (<- (slog MEMORY-LEVEL-LOG :level (if (= level MemoryLevel.CALM) "info" "warning") :from cell.level.value :to level.value
               :node-available-mib (// node.available-bytes (* 1024 1024)) :node-total-mib (// node.total-bytes (* 1024 1024))
-              :some-avg10 node.some-avg10 :full-avg10 node.full-avg10
+              :some-avg10 node.some-avg10 :full-avg10 node.full-avg10 :line (! (line-name line))
               :container-current-mib (if (is reading.container.current-bytes None) None (// reading.container.current-bytes (* 1024 1024)))
               :units listed))
     (setv cell.level level))
