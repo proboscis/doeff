@@ -592,6 +592,24 @@ class TaskCancelledError(Exception):
     """Thrown into a cancelled task, and raised to whoever waits on it."""
 
 
+class _ShieldEnter(EffectBase[None]):
+    """PROTOTYPE (level): stop re-delivering the cancellation in this task."""
+
+
+class _ShieldExit(EffectBase[None]):
+    """PROTOTYPE (level): resume re-delivering the cancellation in this task."""
+
+
+@do
+def shielded(program):
+    """PROTOTYPE (level): run ``program`` without being cancelled again (cleanup)."""
+    yield _ShieldEnter()
+    try:
+        return (yield program)
+    finally:
+        yield _ShieldExit()
+
+
 class ExternalPromiseCancelCallbackError(RuntimeError):
     """Raised to the ``Cancel`` caller when an ``on_cancel`` callback failed.
 
@@ -3084,6 +3102,25 @@ def _scheduled_python(body_program: "Program[_T, Any]") -> "Program[_T, Any]":  
         if self_check:
             check_indexes()
         drain()
+        if (
+            isinstance(effect, (Wait, Gather, Race, AcquireSemaphore))
+            and os.environ.get("DOEFF_CANCEL_PROTO") == "level"
+            and current_tid is not None
+            and tasks.get(current_tid, {}).get("status") == "cancelling"
+            and not tasks[current_tid].get("shield", 0)
+        ):
+            # PROTOTYPE (level): a cancelled task is cancelled again at every
+            # suspension point until it ends, unless shielded.
+            from doeff.program import ResumeThrow
+            return (yield ResumeThrow(k, TaskCancelledError()))
+        if isinstance(effect, _ShieldEnter):
+            if current_tid is not None:
+                tasks[current_tid]["shield"] = tasks[current_tid].get("shield", 0) + 1
+            return (yield Resume(k, None))
+        if isinstance(effect, _ShieldExit):
+            if current_tid is not None:
+                tasks[current_tid]["shield"] = tasks[current_tid].get("shield", 1) - 1
+            return (yield Resume(k, None))
         if isinstance(effect, Spawn):
             # Capture the boundary stack (handlers AND WithObserve observers)
             # from the continuation (between yield site and scheduler) so the
@@ -3127,7 +3164,8 @@ def _scheduled_python(body_program: "Program[_T, Any]") -> "Program[_T, Any]":  
                 _release_task_refs(tid)
                 tasks[tid]["settled"] = True
             elif status == "cancelling" and (
-                error is None or isinstance(error, TaskCancelledError)
+                (error is None and os.environ.get("DOEFF_CANCEL_PROTO") != "request")
+                or isinstance(error, TaskCancelledError)
             ):
                 # The task finished unwinding a Cancel: by propagating the
                 # TaskCancelledError, or by swallowing it and returning — the
