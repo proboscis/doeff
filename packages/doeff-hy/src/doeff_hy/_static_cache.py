@@ -37,7 +37,7 @@ from array import array
 from collections.abc import Iterable, Iterator, Sequence
 from dataclasses import dataclass
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, overload
 
 from doeff_hy_bytecode_guard._loader_hooks import (
     record_fingerprint,
@@ -133,7 +133,14 @@ class PackedSpans(Sequence[Span]):
     def __len__(self) -> int:
         return len(self._cells) // _SPAN_CELLS
 
-    def __getitem__(self, index: int | slice) -> "Span | tuple[Span, ...]":  # type: ignore[override]
+    @overload
+    def __getitem__(self, index: int) -> Span: ...
+
+    @overload
+    def __getitem__(self, index: slice) -> tuple[Span, ...]: ...
+
+    def __getitem__(self, index: int | slice) -> Span | tuple[Span, ...]:
+        """number 番目の対応(切り出しは tuple)を読むため — tuple と同じ読み方。"""
         if isinstance(index, slice):
             return tuple(self._span(number) for number in range(*index.indices(len(self))))
         size = len(self)
