@@ -31,11 +31,13 @@
   (val store (WalStore (str (/ tmp-path "wal"))))
   ;; load-state は Program(1 行の報告は slog・以前の形の file の読みは file system の effect — 入口と同じ答え手を並べる)。
   (<- state ClusterState (with-handlers [slog-handler os-file-handler] (load-state (str (/ tmp-path "state.json")) store NOW)))
-  ;; 宣言した Service・終えて保持中の切り離した task・盤の行が、旧い版の置き場から読める。名乗った worker の行は、task のために空けて
-  ;; おく数 taskReserve(#3489 で足した必ずの欄)を持たないので読まない — 既定の値で埋めず、次の heartbeat の名乗りから作り直す
-  ;; (labels だけの旧い形の行と同じ扱い — state_json.state-from-json・durable_kv.state-from-kv)。
+  ;; 宣言した Service・終えて保持中の切り離した task・盤の行・名乗った worker の行が、旧い版の置き場から読める。worker の行は能力
+  ;; (provides)を持つので読む — 手書きの task の枠の欄は読まない(この版の task の置き先は測った空きから数える)。測った空きは保存
+  ;; しないので、読み直した worker は次の heartbeat まで task を受けない(labels だけの旧い形の行は今までどおり読まない —
+  ;; state_json.state-from-json・durable_kv.state-from-kv)。
   (assert (= (lfor job state.jobs job.spec.name) ["beacon"]) (lfor job state.jobs job.spec.name))
-  (assert (not-in "sim-worker" (.keys state.workers)) (sorted (.keys state.workers)))
+  (assert (in "sim-worker" (.keys state.workers)) (sorted (.keys state.workers)))
+  (assert (is (. (.row state.workers "sim-worker") measured) None) (.row state.workers "sim-worker"))
   (val kept (lfor task (.rows state.tasks) :if (= task.key "k-done") task))
   (assert (= (lfor task kept #(task.phase task.detached (is-not task.result None))) [#("finished" True True)]) kept)
   (assert (is-not (.row state.board "note/a") None) (sorted (.keys state.board)))

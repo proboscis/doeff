@@ -1147,7 +1147,8 @@
 (deftest test-tasks-run-in-the-measured-room-beside-every-resident-job
   ;; 条 C17(architecture.hy の :invariants・測った空きの置き方へ): CPU 2 つの空いた機体の worker 1 台に常駐の service を 3 つ宣言すると、
   ;; coordinator は 3 つとも置き(job は task の空きを使わない)、delegator が出す手番の task は測った空きの分で走って答える(add-task の
-  ;; 答え 103 が盤に載る)。どの瞬間も動く task は機体が本当に受ける数(1)を越えない。worker の行に手書きの枠の欄は無い。
+  ;; 答え 103 が盤に載る)。どの瞬間も動く task は機体が本当に受ける数(1)を越えない。worker の行に手書きの枠は無い(capacity は出さず、
+  ;; 旧い読み手の許しの欄 taskReserve・backgroundRoom は 0)。
   (<- admits int (machine-admits MEASURED-ONE-MACHINE))
   (assert (= admits 1))
   (<- scene ReserveScene (sim-cluster :notice-broker (MemoryBroker) (reserved-trio sim-foundation) (reserve-scene) :workers #(MEASURED-ONE)))
@@ -1156,7 +1157,8 @@
   (assert scene.tasks scene)
   (assert (= scene.unplaced {}) scene.unplaced)
   (assert (in "measured" (get scene.workers "w1")) scene.workers)
-  (assert (not (& #{"taskReserve" "backgroundRoom" "capacity"} (set (get scene.workers "w1")))) scene.workers)
+  (assert (not-in "capacity" (get scene.workers "w1")) scene.workers)
+  (assert (= #((get scene.workers "w1" "taskReserve") (get scene.workers "w1" "backgroundRoom")) #(0 0)) scene.workers)
   (assert (= (get scene.rows "trio/result" "sum") 103) scene.rows))
 
 

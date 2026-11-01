@@ -69,7 +69,9 @@
   (<- data dict (state-to-json state))
   (<- from-file ClusterState (state-from-json data 777))
   (val got (.row from-file.workers "w1"))
-  (assert (= #(got.name got.provides got.background-room got.task-reserve got.node) #("w1" #("net") 10 2 "n1")) got)
+  (assert (= #(got.name got.provides got.node) #("w1" #("net") "n1")) got)
+  ;; 測った空き(measured)は heartbeat ごとの観測なので保存しない — 読み直した worker は次の heartbeat まで task を受けない。
+  (assert (is got.measured None) got)
   ;; 知っていた worker は「いま生きていた」とみなす(読み直した時刻が最後の連絡)。
   (assert (= got.last-seen-ms 777) got))
 

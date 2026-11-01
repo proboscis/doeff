@@ -183,31 +183,27 @@ SINGLE_MACHINE_POOLS = {
     # 決まり: 上に載る系のコアの job は helios の worker で動かす。2 台目を名乗らせる時はここから消す。
     "pool-helios": "上に載る系のコアの job を helios の 1 台で動かす",
 }
-MACHINE_JOBS = 1
-ATLAS_TASK_RESERVE = 3
-HELIOS_TASK_RESERVE = 1
-# 機体の仕事だけを受ける機体の枠 — 機体の名 → (task に空けておく数, 置ける組の印)。受ける数は上の式から導く。
+ATLAS_TASK_SHARES = 3
+HELIOS_TASK_SHARES = 1
+# 機体の仕事だけを受ける機体の枠 — 機体の名 → (memory の予算から task に残す本数, 置ける組の印)。task を置く数は枠の file に書かず、
+# coordinator が heartbeat の測った空きから数える。
 HOST_ONLY_POOLS = {
-    "atlas": (ATLAS_TASK_RESERVE, ("pool-atlas-eos", "pool-atlas-k3s-0", "pool-atlas-k3s-2", "pool-atlas-k3s-3")),
+    "atlas": (ATLAS_TASK_SHARES, ("pool-atlas-eos", "pool-atlas-k3s-0", "pool-atlas-k3s-2", "pool-atlas-k3s-3")),
     "eos": (0, ("pool-atlas-eos",)),
-    "helios": (HELIOS_TASK_RESERVE, ("pool-helios",)),
+    "helios": (HELIOS_TASK_SHARES, ("pool-helios",)),
     "k3s-0": (0, ("pool-atlas-k3s-0",)),
     "k3s-1": (0, ("pool-k3s-1-k3s-2",)),
     "k3s-2": (0, ("pool-atlas-k3s-2", "pool-k3s-1-k3s-2")),
     "k3s-3": (0, ("pool-atlas-k3s-3",)),
 }
-HOST_ONLY_ROOM = {
-    node: (MACHINE_JOBS + sum(POOL_JOBS[pool] for pool in pools) + reserve, reserve)
-    for node, (reserve, pools) in HOST_ONLY_POOLS.items()
-}
 # 常駐の job の memory の予算(枠の file の欄 memoryMiB)= worker の container の memory の上限 − worker 自身の分
 # − task の分。zeus でない機体: worker 自身 256 MiB(worker の process の RSS 126〜132 MiB・2026-10-27 の 4 機体の実測に余裕を足す)・task の分
-# = task に空けておく数 × 3072 MiB(atlas の task の 1 本の山は 8 時間で 1.1〜4.0 GiB・3 本の同時は group の上限で 3 本まで)。
+# = task に残す本数 × 3072 MiB(atlas の task の 1 本の山は 8 時間で 1.1〜4.0 GiB・3 本の同時は group の上限で 3 本まで)。
 # zeus: container の上限 − cgroup の層の worker の memory.min − task の層(jobs)の memory.max(命令の層は常駐の job の子の分なので引かない)。
 # 予算は N+1 の判断の規則 3(置ける job の落ち着いた値の和 + 最悪の 1 台の停止で移る job の起動の山の上乗せ ≤ 予算)が読む。
 HOST_ONLY_WORKER_SELF_MIB = 256
 TASK_SHARE_MIB = 3072
-# 枠の定義元: 機体の名 → taskReserve・backgroundRoom・memoryMiB の JSON 1 つ。名の固定した ConfigMap worker-room にして worker の Pod に
+# 枠の定義元: 機体の名 → memoryMiB・pools・warmServices の JSON 1 つ(task を置く数の欄 taskReserve・backgroundRoom・capacity は持たない)。名の固定した ConfigMap worker-room にして worker の Pod に
 # file で置き、worker は heartbeat の前に読み直す(枠の変更で Pod を作り直さない)。env の WORKER_TASK_RESERVE・WORKER_BACKGROUND_ROOM・
 # WORKER_MEMORY_MIB は書かない。
 ROOM_FILE = K8S / "workers" / "worker-room.json"
@@ -645,13 +641,13 @@ def test_upper_system_values_come_from_fixed_named_configmaps(
 @pytest.mark.parametrize("node", HOST_ONLY_NODES)
 def test_host_only_worker_offers_only_machine_capabilities(rendered: list[Manifest], node: str) -> None:
     """zeus でない機体の worker は、機体の能力 2 つだけを名乗り(上に載る系の能力の残り WORKER_PROVIDES_EXTRA を足さない)、枠は枠の file
-    の機体の行(HOST_ONLY_ROOM の式 — 機体の仕事 1 + 置ける組の job + task の予約)と、置ける組の印(HOST_ONLY_POOLS)。上に載る系の
+    の機体の行の置ける組の印(HOST_ONLY_POOLS)。task を置く数の欄は行に無い(coordinator が測った空きから数える)。上に載る系の
     準備の script(worker-prepare)は置かない — それは上に載る系の仕事を受ける worker の準備で、空の機体では通らない。
     反例: worker-env の能力の残りを名乗ると、その能力だけを要る上に載る系の job が memory 4GiB の機体へ置かれ得る。"""
     host_only = _worker_on(rendered, node)
     assert _env_value(host_only, "WORKER_PROVIDES")["value"] == HOST_ONLY_PROVIDES
     row = _mapping(_room_rows()[node], node)
-    assert (row["capacity"], row["taskReserve"]) == HOST_ONLY_ROOM[node]
+    assert not {"capacity", "taskReserve", "backgroundRoom"} & set(row), row
     assert tuple(row["pools"]) == HOST_ONLY_POOLS[node][1]
     mounts = [
         _mapping(mount, "volumeMount")["mountPath"]
@@ -715,20 +711,17 @@ def test_every_worker_reads_its_room_from_the_fixed_named_configmap_file(rendere
 
 
 def test_the_room_file_has_one_valid_row_per_node() -> None:
-    """枠の file は機体ごとに 1 行を持ち、どの行も taskReserve・backgroundRoom・memoryMiB が 0 以上の整数(worker が名乗れる値 — 外れた行は
-    worker が読まず、前の値のまま名乗り続ける)。背景の仕事を同時に置ける数 backgroundRoom は zeus が 4(背景の仕事に
-    残す枠 3 + 入れ替えの並べた置き先 1 — 手書きの capacity が持っていた分)、他の機体は 0。capacity は worker が読まないが、上に載る系の
-    pin がまだ読むので残す(step 4 で消す)。省ける欄 warmServices は真偽だけ(service を待ちの子から分ける旗 — 真偽でない綴りは worker の
-    起動を断る)。"""
+    """枠の file は機体ごとに 1 行を持ち、どの行も memoryMiB が 0 以上の整数(worker が名乗れる値 — 外れた行は worker が読まず、前の値の
+    まま名乗り続ける)。task を置く数の欄(taskReserve・backgroundRoom・capacity)は持たない — task の置き先は coordinator が heartbeat の
+    測った空きから数える。省ける欄 warmServices は真偽だけ(service を待ちの子から分ける旗 — 真偽でない綴りは worker の起動を断る)。
+    反例: 手で書いた枠の数を残すと、空いた機体があっても書いた数で task が待たされる。"""
     rows = _room_rows()
     assert sorted(rows) == sorted(NODES)
     for node, row in rows.items():
         room = _mapping(row, node)
-        assert sorted(set(room) - {"warmServices", "pools", "capacity"}) == ["backgroundRoom", "memoryMiB", "taskReserve"], node
+        assert sorted(set(room) - {"warmServices", "pools"}) == ["memoryMiB"], node
         assert type(room.get("warmServices", False)) is bool, node
-        for field in ("taskReserve", "backgroundRoom", "memoryMiB"):
-            assert type(room[field]) is int and int(room[field]) >= 0, (node, field)
-        assert room["backgroundRoom"] == (4 if node == "zeus" else 0), node
+        assert type(room["memoryMiB"]) is int and int(room["memoryMiB"]) >= 0, node
 
 
 def test_every_pool_in_the_room_file_is_named_by_two_or_more_machines() -> None:
@@ -768,7 +761,7 @@ def test_the_memory_allowance_is_the_worker_limit_less_the_worker_and_its_tasks(
             jobs = str(_env_value(worker, "DOEFF_WORKER_JOB_CGROUP")["value"])
             allowance = (limit - _bytes(settings[CGROUP_FIRST_LAYER]["memory.min"]) - _bytes(settings[jobs]["memory.max"])) // 2**20
         else:
-            allowance = limit // 2**20 - HOST_ONLY_WORKER_SELF_MIB - HOST_ONLY_ROOM[node][1] * TASK_SHARE_MIB
+            allowance = limit // 2**20 - HOST_ONLY_WORKER_SELF_MIB - HOST_ONLY_POOLS[node][0] * TASK_SHARE_MIB
         assert _mapping(rows[node], node)["memoryMiB"] == allowance, node
 
 

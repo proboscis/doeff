@@ -249,7 +249,7 @@
   (.write-text (/ bin "hy") FAKE-HY)
   (os.chmod (/ bin "hy") 0o755)
   (val base {"PATH" (+ (str bin) ":/usr/bin:/bin") "HOME" (str tmp-path) "ROLE" "worker" "WORK_DIR" (str (/ tmp-path "work"))
-             "COORDINATOR_URL" "http://coord" "WORKER_NAME" "w" "WORKER_TASK_RESERVE" "0"})
+             "COORDINATOR_URL" "http://coord" "WORKER_NAME" "w"})
   (.mkdir (/ tmp-path "work"))
   (val done (subprocess.run ["sh" BOOT-SH] :env base :capture-output True :text True :timeout 60))
   (assert (= done.returncode 0) done.stderr)

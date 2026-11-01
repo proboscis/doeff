@@ -277,7 +277,7 @@
 (defk named [name node]
   {:pre [(: name str) (: node str)] :post [(: % dict)]}
   "company-machine を自分で名乗る worker の heartbeat の本文(node = 置かれた k8s の node)。"
-  {"name" name "provides" ["net" COMPANY] "backgroundRoom" 10 "taskReserve" 0 "versions" {} "boot" "b1" "node" node "statuses" []})
+  {"name" name "provides" ["net" COMPANY] "versions" {} "boot" "b1" "node" node "statuses" []})
 
 (defk beat-as [state name node now]
   {:pre [(: state ClusterState) (: name str) (: node str) (: now int)] :post [(: % ClusterState)]}
@@ -606,10 +606,10 @@
   (assert (= #(quiet.revision quiet.audit-seq) #(first.revision first.audit-seq))))
 
 
-;; --- worker の枠(#3489 の task-reserve を引き継ぐ)----------------------------------------------------
+;; --- worker の枠 ----------------------------------------------------------------------------------------
 ;; job の側は memory で数える: 置いた job と surge の settle の和 + 新しい job の settle ≤ memory-mib の時だけ置く(memory-misfit)。task の側は
-;; 予約(task-reserve)+ 背景の枠(background-room)− 置いた task(task-room-of)で、常駐の job の数に依らない。置けない job は memory の訳を、
-;; 置けない task は理由の閉じた語 TASK-NO-ROOM の固定の文を持って待つ。
+;; 機体の測った空き(heartbeat の measured — task-room-of)で、常駐の job の数に依らない(常駐の job の使いは測った値に入っている)。置けない
+;; job は memory の訳を、置けない task は理由の閉じた語 TASK-NO-ROOM の固定の文を持って待つ。
 
 (import doeff_cluster [JobSpec])
 (import doeff_cluster [UnplacedKind]
@@ -664,7 +664,7 @@
 
 (defk room-beside-jobs [count]
   {:pre [(: count int)] :post [(: % tuple)] :tags {:context "doeff-cluster-test" :role "judgment"}}
-  "予約 1・背景の枠 2 の worker に常駐の job を count 本置き、task を 4 本積んだ世界の読みを知るため: #(置けた job の数 task の空き
+  "測った空き 3 本の worker に常駐の job を count 本置き、task を 4 本積んだ世界の読みを知るため: #(置けた job の数 task の空き
    task の phase の並び 待つ task の detail)。"
   ;; (! …) は内包の中に置けない(内包は別の scope で yield できない)ので、for で 1 本ずつ作る。
   (var rows {})
@@ -683,9 +683,9 @@
     (next (gfor id ["t0" "t1" "t2" "t3"] :if (= (. (.row put id) phase) "queued") (. (.row put id) detail)) None)))
 
 (deftest test-resident-jobs-do-not-shrink-the-task-room
-  ;; 受入 ca5ce3521: 背景の仕事を同時に置ける数は常駐の job を足しても減らない。予約 1・背景の枠 2 の worker の task の空きは、常駐の job が
-  ;; 0 本でも 6 本でも 3 で、task を 4 本積むと 3 本置き 1 本は TASK-NO-ROOM で待つ(以前の形 — 手書きの capacity から job も引く — では
-  ;; 6 本の時に task の空きが減った)。
+  ;; 受入 ca5ce3521: 背景の仕事を同時に置ける数は常駐の job を置いても減らない(常駐の job の使いは測った空きにもう入っている — 置いた
+  ;; 数で二重に引かない)。測った空き 3 本の worker の task の空きは、常駐の job が 0 本でも 6 本でも 3 で、task を 4 本積むと 3 本置き 1 本は
+  ;; TASK-NO-ROOM で待つ(以前の形 — 手書きの capacity から job も引く — では 6 本の時に task の空きが減った)。
   (val waits (! (task-unplaced-text TaskUnplacedKind.TASK-NO-ROOM)))
   (val none (! (room-beside-jobs 0)))
   (val six (! (room-beside-jobs 6)))
@@ -693,7 +693,7 @@
   (assert (= six #(6 3 ["assigned" "assigned" "assigned" "queued"] waits)) six))
 
 (deftest test-a-task-without-room-waits-with-the-same-reason-on-every-reconcile
-  ;; 失敗ケース(直す前の形では理由が空のまま待つ): 能力と版の合う生きた worker は在るが、予約も背景の枠も 0 で task の空きが 0(常駐の
+  ;; 失敗ケース(直す前の形では理由が空のまま待つ): 能力と版の合う生きた worker は在るが、測った空きが 0 で task の空きが 0(常駐の
   ;; job は空きを使わない)。task は queued のまま、detail に TASK-NO-ROOM の固定の文。次の調停でも同じ文で、状態も版も進めない(拍ごとに
   ;; 保存しない)。
   (val full (ClusterState #((! (job "a")) (! (job "b"))) (! (table-from-rows {"mac" (! (reserved "mac" 0 0 0))}))
@@ -717,7 +717,7 @@
 
 (deftest test-a-surge-waits-while-the-memory-is-full-and-leaves-the-task-room-open
   ;; drain 中の atlas の上の入れ替えの job w を並べたいが、移せる先 zeus は memory が満杯(予算 150 MiB・常駐 x の settle 100)。surge も
-  ;; memory で数えるので置かれず(入れ替えは空くまで待つ)、zeus の task の空き(予約 1)は空いたまま。予算が 200 なら同じ状態で zeus へ
+  ;; memory で数えるので置かれず(入れ替えは空くまで待つ)、zeus の task の空き(測った空き 1 本)は空いたまま。予算が 200 なら同じ状態で zeus へ
   ;; 並べる(memory が理由で待つことの対照)。
   (val handoff-job (ClusterJob (JobSpec "w" "m" #() "rev" :handoff True) :peak-mib 200 :settle-mib 100))
   (val state (ClusterState #(handoff-job (! (job "x")))
@@ -736,22 +736,21 @@
   (val open (replace state :workers (! (rows-merged state.workers {"zeus" (replace (.row state.workers "zeus") :memory-mib 200)}))))
   (assert (= (. (.row (. (advance-drains 1000 open T) surges) "w") worker) "zeus")))
 
-(deftest test-a-heartbeat-names-the-task-reserve-and-the-saved-rows-keep-it
-  ;; heartbeat の taskReserve は worker の記録へ写り、保存の行(state file と durable の KV)も同じ値を持って読み直せる。この欄の無い保存の
-  ;; 行(欄より前の版が書いた行)は読まない — 既定の値で埋めず、次の heartbeat の名乗りから作り直す(labels だけの旧い形の行と同じ)。
-  (val heard (! (register-heartbeat (ClusterState) (! (heartbeat-of {"name" "kept" "provides" ["net"] "backgroundRoom" 4 "taskReserve" 2})) 10)))
-  (assert (= (. (.row heard.workers "kept") task-reserve) 2) (.row heard.workers "kept"))
+(deftest test-the-saved-worker-rows-carry-no-task-fields-and-rows-with-them-are-read
+  ;; 保存の行(state file と durable の KV)は手書きの task の枠(taskReserve・backgroundRoom — 消した欄)を書かない。前の版が書いた、
+  ;; その欄を持つ行は欄を読まずに通して読む(版上げで worker が名簿から消えない)。provides の無い行(labels だけの旧い形)は今までどおり
+  ;; 読まない。失敗ケース = 消した欄を必ずの欄として読み、前の版の行を全部捨てる。
+  (val heard (! (register-heartbeat (ClusterState) (! (heartbeat-of {"name" "kept" "provides" ["net"]})) 10)))
   (val state (replace heard :workers (! (rows-merged heard.workers {"old" (! (reserved "old" 0 4 1))}))))
   (val data (! (state-to-json state)))
-  (val stripped (lfor w (get data "workers")
-                      (if (= (get w "name") "old") (dfor #(k v) (.items w) :if (!= k "taskReserve") k v) w)))
-  (val from-file (! (state-from-json (| data {"workers" stripped}) 5000)))
-  (assert (= (sorted (.keys from-file.workers)) ["kept"]) from-file.workers)
-  (assert (= (. (.row from-file.workers "kept") task-reserve) 2) (.row from-file.workers "kept"))
+  (assert (not (& #{"taskReserve" "backgroundRoom"} (set (gfor w (get data "workers") k w k)))) data)
+  (val dated (lfor w (get data "workers") (if (= (get w "name") "old") (| w {"taskReserve" 1 "backgroundRoom" 4}) w)))
+  (val from-file (! (state-from-json (| data {"workers" dated}) 5000)))
+  (assert (= (sorted (.keys from-file.workers)) ["kept" "old"]) from-file.workers)
   (val kv (! (full-kv state)))
-  (val from-kv (! (state-from-kv (| kv {"worker/old" (dfor #(k v) (.items (get kv "worker/old")) :if (!= k "taskReserve") k v)}) 5000)))
-  (assert (= (sorted (.keys from-kv.workers)) ["kept"]) from-kv.workers)
-  (assert (= (. (.row from-kv.workers "kept") task-reserve) 2) (.row from-kv.workers "kept")))
+  (assert (not (& #{"taskReserve" "backgroundRoom"} (set (get kv "worker/old")))) (get kv "worker/old"))
+  (val from-kv (! (state-from-kv (| kv {"worker/old" (| (get kv "worker/old") {"taskReserve" 1 "backgroundRoom" 4})}) 5000)))
+  (assert (= (sorted (.keys from-kv.workers)) ["kept" "old"]) from-kv.workers))
 
 
 ;; --- 最後に終わったと知れた刻(lastExitAtMs)と worker の世代(#3672) ----------------------------------------
@@ -770,7 +769,7 @@
   {:pre [(: state ClusterState) (: boot str) (: boot-at (| int None)) (: rows list) (: now int)] :post [(: % ClusterState)]
    :tags {:context "doeff-cluster-test" :role "entry"}}
   "worker atlas の世代 boot(起動の刻 boot-at — None は名乗らない)が job の行 rows を報告した heartbeat を 1 つ受けた後の状態を求めるため。"
-  (val body (| {"name" "atlas" "provides" ["net"] "backgroundRoom" 10 "taskReserve" 0 "versions" {} "boot" boot "statuses" rows}
+  (val body (| {"name" "atlas" "provides" ["net"] "versions" {} "boot" boot "statuses" rows}
                (if (is boot-at None) {} {"bootAt" boot-at})))
   (! (register-heartbeat state (! (heartbeat-of body)) now)))
 
@@ -1058,7 +1057,7 @@
   ;; 外さず、その process の延長も通す(直す前は #3770 が外し、recreate の job の process が返しで LeaseLost で落ち、退き中の handoff の
   ;; process の lease の延長が断られて走っていた仕事が切れた)。新しい世代の process は、前の担い手が返すか期限が来るまで取れない。
   (val held (! (old-generation-holding)))
-  (val body {"name" "atlas" "provides" ["net"] "backgroundRoom" 10 "taskReserve" 0 "versions" {} "boot" "b2" "bootAt" (+ BOOT-1 3000)
+  (val body {"name" "atlas" "provides" ["net"] "versions" {} "boot" "b2" "bootAt" (+ BOOT-1 3000)
              "statuses" [] "overlapsElder" True})
   (val overlapping (! (register-heartbeat held (! (heartbeat-of body)) (+ BOOT-1 4000))))
   (assert (= (. (.row overlapping.workers "atlas") boot) "b2"))

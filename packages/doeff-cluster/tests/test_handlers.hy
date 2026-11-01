@@ -95,7 +95,7 @@
   (setv server (ThreadingHTTPServer #("127.0.0.1" 0) Reply))
   (.start (threading.Thread :target server.serve-forever :daemon True))
   (try
-    (setv link (LinkRig f"http://127.0.0.1:{(get server.server-address 1)}" "w" #() 1 0 10000))
+    (setv link (LinkRig f"http://127.0.0.1:{(get server.server-address 1)}" "w" #() 10000))
     (assert (= (.poll link) (DesiredJobs #())))
     (assert (= link.state.fence-ms 20000))
     (finally (.shutdown server))))

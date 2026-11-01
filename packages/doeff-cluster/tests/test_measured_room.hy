@@ -193,10 +193,11 @@
 
 (deftest test-the-state-shows-the-placement-room-and-no-task-slots
   ;; GET /state の worker の taskRoom は置き方と同じ数え(CPU 16 個・使い 0.25・memory 広い → 11)で、測りの無い worker は 0。
-  ;; 手書きの task の枠の欄(taskReserve・backgroundRoom)は worker の行に無い。
+  ;; 手書きの task の枠は worker の行に無い: capacity は出さず、旧い読み手の許しの欄 taskReserve・backgroundRoom は測った空きに依らず 0。
   (<- roomy WorkerInfo (worker "roomy" (! (load 16 0.25 60000))))
   (<- blind WorkerInfo (worker "blind" None))
   (<- state ClusterState (state-of #(roomy blind) {}))
   (val workers (get (! (state-view-json (! (state-view state 20 T)))) "workers"))
   (assert (= #((get workers "roomy" "taskRoom") (get workers "blind" "taskRoom")) #(11 0)) workers)
-  (assert (not (& #{"taskReserve" "backgroundRoom" "capacity"} (set (get workers "roomy")))) (get workers "roomy")))
+  (assert (not-in "capacity" (get workers "roomy")) (get workers "roomy"))
+  (assert (= #((get workers "roomy" "taskReserve") (get workers "roomy" "backgroundRoom")) #(0 0)) (get workers "roomy")))

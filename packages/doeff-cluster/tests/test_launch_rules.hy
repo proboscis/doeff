@@ -1,5 +1,5 @@
 ;; worker と coordinator の起動の値(shared/intent/launch_model.hy)と、boot.sh が読む環境変数の行への写し(shared/core/launch_rules.hy)の検
-;; (#3366 の単位 1)。起動の時に worker の入口が断る値(task-reserve が範囲の外・版が sha でない)を、宣言の時に断る事と、行の名と値の
+;; (#3366 の単位 1)。起動の時に worker の入口が断る値(memory の予算が範囲の外・版が sha でない)を、宣言の時に断る事と、行の名と値の
 ;; 綴りが boot.sh の名と同じ事を確かめる。
 (require doeff-hy.macros [deftest defk <- val])
 (val MODULE-TAGS {:context "doeff-cluster-test" :role "test"})
@@ -25,13 +25,13 @@
   (<- plain tuple (pairs-of (WorkerLaunch :name "w2" :provides #("agent" "host-w2" "boundary-personal") :exclusive #()
                                           :doeff-commit SHA)))
   ;; provides は書いた順のまま(名の順に並べ替えない — 宣言の行が順を持つ)・exclusive が空なら行を持たない。
-  (assert (= plain #(#("WORKER_DOEFF_COMMIT" SHA) #("WORKER_NAME" "w2") #("WORKER_PROVIDES" "agent,host-w2,boundary-personal")
-                     #("WORKER_TASK_RESERVE" "3") #("WORKER_BACKGROUND_ROOM" "19")))
+  ;; task を置く数の行(WORKER_TASK_RESERVE・WORKER_BACKGROUND_ROOM — 消した欄)は持たない。
+  (assert (= plain #(#("WORKER_DOEFF_COMMIT" SHA) #("WORKER_NAME" "w2") #("WORKER_PROVIDES" "agent,host-w2,boundary-personal")))
           plain)
   ;; memory の予算は名乗る時だけ行を持つ(0 も名乗る値)。
   (<- sized tuple (pairs-of (WorkerLaunch :name "w2" :provides #("agent") :exclusive #()
                                           :doeff-commit SHA :memory-mib 0)))
-  (assert (= (cut sized -2 None) #(#("WORKER_BACKGROUND_ROOM" "0") #("WORKER_MEMORY_MIB" "0"))) sized)
+  (assert (= (cut sized -2 None) #(#("WORKER_PROVIDES" "agent") #("WORKER_MEMORY_MIB" "0"))) sized)
   (<- dedicated tuple (pairs-of (WorkerLaunch :name "web" :provides #("webapp" "host-web") :exclusive #("webapp")
                                               :doeff-commit SHA)))
   (assert (in #("WORKER_EXCLUSIVE" "webapp") dedicated) dedicated)
@@ -42,10 +42,8 @@
 (deftest test-values-the-worker-refuses-at-boot-are-refused-at-declaration
   ;; 失敗ケース: worker の入口(main.hy)が起動の時に exit 2 で断る値を、宣言の値の時に断る — 断らないと、宣言が main に入り
   ;; Pod が作り直された後で初めて止まる。
-  (val base {"name" "w" "provides" #("verify") "exclusive" #() "background_room" 1 "task_reserve" 0 "doeff_commit" SHA})
-  (for [#(what change) #(#("reserve が負" {"task_reserve" -1})
-                         #("背景の枠が負" {"background_room" -1})
-                         #("memory の予算が負" {"memory_mib" -1})
+  (val base {"name" "w" "provides" #("verify") "exclusive" #() "doeff_commit" SHA})
+  (for [#(what change) #(#("memory の予算が負" {"memory_mib" -1})
                          #("版が短い sha" {"doeff_commit" "90fd9a81"})
                          #("provides が空" {"provides" #()})
                          #("名が空" {"name" ""}))]
@@ -53,8 +51,8 @@
       (WorkerLaunch #** (| base change))))
   (with [(pytest.raises ValueError)]
     (CoordinatorLaunch :doeff-commit "main"))
-  ;; 境界の値は通る(どれも 0・予約は背景の枠より大きくてよい)。
-  (assert (= (. (WorkerLaunch #** (| base {"background_room" 0 "task_reserve" 3 "memory_mib" 0})) task-reserve) 3)))
+  ;; 境界の値は通る(memory の予算 0)。
+  (assert (= (. (WorkerLaunch #** (| base {"memory_mib" 0})) memory-mib) 0)))
 
 
 (deftest test-the-desire-effects-carry-the-launch
@@ -78,10 +76,10 @@
 
 
 (deftest test-a-missing-line-is-refused-not-defaulted
-  ;; 失敗ケース: 省けない行(取っておく数)が無い env を、既定の値で埋めて読まない。
+  ;; 失敗ケース: 省けない行(名乗る能力)が無い env を、既定の値で埋めて読まない。
   (<- env tuple (worker-launch-env (WorkerLaunch :name "w" :provides #("verify") :exclusive #()
                                                  :doeff-commit SHA)))
-  (val without (tuple (gfor e env :if (!= e.name "WORKER_TASK_RESERVE") e)))
+  (val without (tuple (gfor e env :if (!= e.name "WORKER_PROVIDES") e)))
   (with [(pytest.raises LaunchEnvMissing)]
     (<- _ (worker-launch-of-env without))))
 
@@ -92,5 +90,4 @@
   (assert (= (frozenset (gfor f COORDINATOR-LAUNCH-FIELDS f.field))
              (frozenset (gfor f (dataclasses.fields CoordinatorLaunch) f.name))))
   (<- names (get frozenset str) (worker-launch-names))
-  (assert (= names (frozenset #("WORKER_DOEFF_COMMIT" "WORKER_NAME" "WORKER_PROVIDES" "WORKER_EXCLUSIVE" "WORKER_TASK_RESERVE"
-                                "WORKER_BACKGROUND_ROOM" "WORKER_MEMORY_MIB")))))
+  (assert (= names (frozenset #("WORKER_DOEFF_COMMIT" "WORKER_NAME" "WORKER_PROVIDES" "WORKER_EXCLUSIVE" "WORKER_MEMORY_MIB")))))
