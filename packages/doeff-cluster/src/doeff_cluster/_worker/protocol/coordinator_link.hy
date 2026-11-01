@@ -57,6 +57,7 @@
 (import doeff_cluster._worker.protocol.heartbeat [env-heartbeat-part heartbeat-body status-report])
 (import doeff_cluster._worker.core.account_token [TokenClaims TokenState token-claims token-state token-read-due])
 (import doeff_cluster._worker.core.room_rules [RoomReading RoomState WorkerRoom room-of-text room-read-due room-line])
+(import doeff_cluster._worker.core.load_rules [LoadPaths LoadReading load-read-due machine-load-of])
 
 ;; 前の heartbeat が届いていない時に、送り直しの周を起こすまでの ms(届かない coordinator の戻りを知る試し — 前の周期 0.5 秒と同じ速さ・
 ;; #3871 の単位 4)。
@@ -125,7 +126,9 @@
    token-file = ServiceAccount の token の file(None = 読まない — 本番の入口が標準の path を渡す。読んだ状態を heartbeat の
    accountToken で名乗る)・room-file = 枠の file(None = 読まない — 起動の引数の task-reserve・background-room・memory-mib を
    名乗り続ける。渡すと heartbeat の前に読み直し、自分の名の行の値を名乗る)・doeff-commit = この process の doeff の
-   版(起動の script の WORKER_DOEFF_COMMIT — 空 = 名乗らない。heartbeat の doeffCommit)。
+   版(起動の script の WORKER_DOEFF_COMMIT — 空 = 名乗らない。heartbeat の doeffCommit)。load-paths = 機体の測った空きを読む
+   file の置き場(worker/core/load_rules の LoadPaths — None = 測らない。本番の入口が機体の /proc を渡し、LOAD-READ-EVERY-MS ごとに
+   読み直して heartbeat の measured で名乗る)。
    supplied = 最後に届いた返事の、この worker に置かれうる job の参照の綴り(None = まだ渡されていない — 値の写しの係 supplied_hold が
    読む・ADR-DOE-CLUSTER-004)。"
   (defn #^ None __init__ [self #^ str name #^ tuple provides #^ int task-reserve #^ int background-room #^ int fence-ms #^ str task-dir #^ str boot
@@ -134,7 +137,7 @@
                           #^ bool [handles-envs False] #^ tuple [exclusive #()] #^ str [node ""] #^ bool [watch False]
                           #^ bool [beat-beside True] #^ (| BootMarks None) [boot-marks None] #^ bool [overlaps-elder False]
                           #^ (| str None) [token-file None] #^ (| str None) [room-file None] #^ str [doeff-commit ""]
-                          #^ (| int None) [memory-mib None]]
+                          #^ (| int None) [memory-mib None] #^ (| LoadPaths None) [load-paths None]]
     (setv self.name name self.provides provides self.exclusive exclusive self.node node
           self.task-reserve task-reserve self.background-room background-room self.tools (or tools {})
           self.handles-envs handles-envs self.env-report None
@@ -184,7 +187,11 @@
           ;; room-read-ms = 最後に読んだ刻。pools = 枠の file から名乗る置ける組の印(heartbeat の provides に足す)・memory-mib = 名乗る
           ;; 常駐の job の memory の予算(None = 名乗らない)。どちらも file を読めない間は前の値のまま。
           self.room-file room-file self.room-state None self.room-reason "" self.room-read-ms None
-          self.pools #() self.memory-mib memory-mib)))
+          self.pools #() self.memory-mib memory-mib
+          ;; 機体の測った空き: load-paths = 読む file(None = 測らない)・measured = 最後に測れた値(None = まだ測れていない・最後の読みが
+          ;; 読めなかった — heartbeat に載せない)・load-ticks = 前に読めた /proc/stat(CPU の使いの起点)・load-read-ms = 最後に読んだ刻・
+          ;; load-reason = 前の読めない訳("" = 読めた — 同じ訳の 2 度目は log に出さない)。
+          self.load-paths load-paths self.measured None self.load-ticks None self.load-read-ms None self.load-reason "")))
 
 
 
@@ -479,7 +486,7 @@
                                 :task-reserve state.task-reserve :background-room state.background-room :versions state.versions :statuses sending
                                 :endpoint endpoint :boot state.boot :boot-at state.boot-at :tools state.tools :kept kept
                                 :stopping stopping :overlaps-elder state.overlaps-elder :doeff-commit state.doeff-commit
-                                :pools state.pools :memory-mib state.memory-mib))
+                                :pools state.pools :memory-mib state.memory-mib :measured state.measured))
   (val body (| base
                (if (or (not state.handles-envs) (is state.env-report None))
                    {}
@@ -736,6 +743,43 @@
   None)
 
 
+(defk load-noted [state]
+  {:pre [(: state LinkState)] :post [(: % None)]}
+  "機体の測った空き(CPU の使い・memory の空き・PSI — worker/core/load_rules)を LOAD-READ-EVERY-MS ごとに読み直し、次の heartbeat で
+   名乗る値(state.measured)にするため。/proc/stat か /proc/meminfo を読めない・形の違う読みは名乗りを外し(古い値を今の値として
+   名乗らない — CPU の使いの起点も捨て、戻った最初の読みは使いを None で名乗る)、訳が変わった時に log へ 1 行出す。PSI の file を
+   読めない機体は PSI の欄を None で名乗る。測らない worker(load-paths が None)は何もしない。"
+  (val paths state.load-paths)
+  (when (is-not paths None)
+    (<- now-ms int (now-epoch-ms))
+    (<- due bool (load-read-due state.load-read-ms now-ms))
+    (when due
+      (setv state.load-read-ms now-ms)
+      (<- stat (| str FileFailed) (ReadText paths.stat))
+      (<- meminfo (| str FileFailed) (ReadText paths.meminfo))
+      (<- cpu-pressure (| str FileFailed) (ReadText paths.cpu-pressure))
+      (<- memory-pressure (| str FileFailed) (ReadText paths.memory-pressure))
+      (var reading None)
+      (var reason "")
+      (cond
+        (not (isinstance stat str)) (:= reason (.format "{} を読めない: {}" paths.stat stat.detail))
+        (not (isinstance meminfo str)) (:= reason (.format "{} を読めない: {}" paths.meminfo meminfo.detail))
+        True (try
+               (<- read LoadReading (machine-load-of stat meminfo (if (isinstance cpu-pressure str) cpu-pressure None)
+                                                     (if (isinstance memory-pressure str) memory-pressure None)
+                                                     state.load-ticks now-ms))
+               (:= reading read)
+               (except [error ValueError]
+                 (:= reason (str error)))))
+      (when (!= reason state.load-reason)
+        (<- (slog (if reason (+ "worker: 機体の空きを測れない — heartbeat に載せない: " reason) "worker: 機体の空きを測れた — heartbeat に載せる")
+                  :level (if reason "warning" "info"))))
+      (setv state.load-reason reason
+            state.measured (if (is reading None) None reading.load)
+            state.load-ticks (if (is reading None) None reading.ticks))))
+  None)
+
+
 (defk token-line [before after claims now-ms failure]
   {:pre [(: before (| TokenState None)) (: after (| TokenState None)) (: claims (| TokenClaims None)) (: now-ms int) (: failure str)]
    :post [(: % str)]}
@@ -841,6 +885,8 @@
     (<- (token-noted state))
     ;; 枠の file を読み直す(READ-EVERY-MS ごと — 次の heartbeat が名乗る)。
     (<- (room-noted state))
+    ;; 機体の空きを測り直す(LOAD-READ-EVERY-MS ごと — 次の heartbeat が名乗る)。
+    (<- (load-noted state))
     ;; 拍の間の眠りを起こす呼び鈴は heartbeat の前に掛ける(送っている間に来た変化も鳴らす — #2692)。
     (<- bell (| Promise None) (armed-bell state))
     (<- desired (polled state cell options watch-cell))

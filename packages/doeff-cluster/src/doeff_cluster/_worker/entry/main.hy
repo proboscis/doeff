@@ -46,6 +46,7 @@
 (import doeff_cluster._worker.protocol.pod_labels [PodLabelCell PodLabelSettings pod-job-labels])
 (import doeff_cluster._shared.core.launch_rules [worker-commit-env-name])
 (import doeff_cluster._worker.core.room_rules [RoomReading RoomState WorkerRoom room-of-text room-warm-services-of])
+(import doeff_cluster._worker.core.load_rules [LoadPaths])
 (import doeff_cluster._worker.protocol.lease_release [lease-release])
 (import doeff_cluster._foundation.process_versions [this-process-versions clock-ticks])
 (import doeff_cluster._shared.intent.protocol [ClusterTiming])
@@ -493,6 +494,8 @@
                         :memory-mib room.memory-mib
                         ;; 自分の doeff の版を heartbeat で名乗る(無ければ名乗らない)。
                         :doeff-commit (.get machine-env commit-var "")
+                        ;; 機体の空き(/proc の CPU の使い・memory の空き・PSI)を測って heartbeat で名乗る(/proc の無い機体は名乗らない)。
+                        :load-paths (LoadPaths)
                         ;; heartbeat を拍から切り離し、desired の変化は名指しの待ちで受ける(#1933 — 待つ口の無い coordinator
                         ;; には拍ごとに送る)。
                         :watch True)

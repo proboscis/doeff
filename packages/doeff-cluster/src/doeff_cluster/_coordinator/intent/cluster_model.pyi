@@ -15,6 +15,7 @@ from doeff_cluster._shared.intent.protocol import ClusterTiming as ClusterTiming
 from doeff_cluster._shared.intent.protocol import Request as Request
 from doeff_cluster._coordinator.intent.request_bodies import StatusRow as StatusRow
 from doeff_cluster._coordinator.intent.request_bodies import DurationRow as DurationRow
+from doeff_cluster._coordinator.intent.request_bodies import MeasuredLoad as MeasuredLoad
 from doeff_cluster._shared.intent.detached_model import TaskLimit as TaskLimit
 from doeff_cluster._shared.intent.detached_model import GroupLimit as GroupLimit
 from doeff_cluster._shared.intent.detached_model import DetachedEnded as DetachedEnded
@@ -68,6 +69,7 @@ class WorkerInfo:
     room_file: str = 'ok'
     doeff_commit: str = ''
     memory_mib: int | None = None
+    measured: MeasuredLoad | None = None
     retired: tuple[str, ...] = ...
     boot_at: int | None = None
     exclusive: tuple[str, ...] = ...
