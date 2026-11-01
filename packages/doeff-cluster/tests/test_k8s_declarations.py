@@ -304,8 +304,8 @@ def test_generation_dirs_on_a_version_without_them_is_refused() -> None:
     assert not _same_or_ancestor(GENERATION_DIRS_SINCE, "44778ca69e9d101f757721c4b5d283c57f856d80")
 
 
-# cgroup の memory の層(nodes/zeus/cgroup.yaml・boot.sh の「cgroup の層」): zeus の worker の container の cgroup の
-# 中に、守る層(memory.min — worker の本体と常駐の job)と限る層(memory.max — task と、job の子が置く命令)を作る。1 本の task や命令が
+# cgroup の memory の層(nodes/<Node の名>/cgroup.yaml・boot.sh の「cgroup の層」): 層を宣言する機体(CGROUP_LAYERS)の worker の
+# container の cgroup の中に、守る層(memory.min — worker の本体と常駐の job)と限る層(memory.max — task と、job の子が置く命令)を作る。1 本の task や命令が
 # 際限なく memory を増やしても、kernel は限る層の中だけで回収して止め、守る層は回収されない(10-24 06:03 JST は 1 つの cgroup で
 # 16.7 分止まった)。層を知らない版の boot.sh と worker は宣言を読まず、名(DOEFF_WORKER_JOB_CGROUP)だけを読んで、根に居る worker の
 # 兄弟を置けずに起動で止まる — だから層を宣言する worker の版は CGROUP_LAYOUT_SINCE かその子孫。
@@ -314,6 +314,15 @@ CGROUP_LAYOUT_SINCE = "2c1ac027a212bc59ceb304683130e7b69becbf0b"
 CGROUP_FIRST_LAYER = "worker"
 CGROUP_CHILD_LAYER = "commands"
 CGROUP_CLI_LAYER = "clis"
+# 層を宣言する機体 → 最初の層と常駐の job の層(DOEFF_WORKER_SERVICE_CGROUP)のほかに守る層・task の層(DOEFF_WORKER_JOB_CGROUP)のほかに
+# 限る層。ほかの機体は層を宣言しない。helios は CLI も命令の層も使わない(CLI と命令を起こす上に載る系の常駐の job は zeus に残る)。
+CGROUP_LAYERS = {
+    "zeus": ({CGROUP_CLI_LAYER}, {CGROUP_CHILD_LAYER}),
+    "helios": (set(), set()),
+}
+# helios の常駐の job の層の memory.min の下限: helios へ移す常駐の job 29 本の memory の峰の見積もり 約 28 GiB(2026-11-01 の上に載る系の
+# 調べ — zeus の services の層の 54.6 時間の峰 35.3 GiB × 移す物の割合 79%)。
+HELIOS_SERVICE_PEAK = "28G"
 # cgroup の層の CPU の重み(boot.sh の「cgroup の層」の CPU の重み): 層に cpu.weight・cpu.idle を書ける boot.sh
 # の最初の版。知らない版の boot.sh は cpu の file を宣言の誤りとして断り、worker が起動で止まる — だから cpu を書く層を宣言する worker の
 # 版は CGROUP_CPU_SINCE かその子孫。
@@ -337,38 +346,56 @@ def _layout(deployment: Manifest) -> list[tuple[str, dict[str, str]]]:
     ]
 
 
-def test_zeus_worker_guards_its_resident_jobs_and_caps_its_tasks_and_commands(zeus_worker: Manifest) -> None:
-    """守る層は worker の本体と常駐の job の 2 つ(memory.min)、限る層は task と命令の 2 つ(memory.max・memory.high は掛けない)。
-    守る層の min の和と限る層の max の和は container の memory の上限の内。失敗ケース: 限る層の max の和が上限を越えると、限る層が
+def test_only_the_listed_nodes_declare_cgroup_layers(rendered: list[Manifest]) -> None:
+    """cgroup の層を宣言する機体は CGROUP_LAYERS の機体だけ(層の約束を確かめる test が、層を持つ機体を漏らさず読む)。"""
+    declared = {node for node in NODES if any(entry["name"] == "WORKER_CGROUP_LAYOUT" for entry in _env(_worker_on(rendered, node)))}
+    assert declared == set(CGROUP_LAYERS)
+
+
+@pytest.mark.parametrize("node", sorted(CGROUP_LAYERS))
+def test_worker_guards_its_resident_jobs_and_caps_its_tasks_and_commands(rendered: list[Manifest], node: str) -> None:
+    """守る層は worker の本体と常駐の job(と zeus の CLI)の層(memory.min)、限る層は task(と zeus の命令)の層(memory.max・memory.high は
+    掛けない)。守る層の min の和と限る層の max の和は container の memory の上限の内。失敗ケース: 限る層の max の和が上限を越えると、限る層が
     上限まで使った時に container の上限の回収が起き、守る層の min を越えた分と kernel の回収の待ちが守る層にも掛かる。"""
-    layout = _layout(zeus_worker)
+    worker = _worker_on(rendered, node)
+    layout = _layout(worker)
     settings = dict(layout)
-    service = str(_env_value(zeus_worker, "DOEFF_WORKER_SERVICE_CGROUP")["value"])
-    jobs = str(_env_value(zeus_worker, "DOEFF_WORKER_JOB_CGROUP")["value"])
+    service = str(_env_value(worker, "DOEFF_WORKER_SERVICE_CGROUP")["value"])
+    jobs = str(_env_value(worker, "DOEFF_WORKER_JOB_CGROUP")["value"])
+    more_guarded, more_limited = CGROUP_LAYERS[node]
     assert layout[0][0] == CGROUP_FIRST_LAYER, layout
     guarded = {name for name, values in layout if "memory.min" in values}
     limited = {name for name, values in layout if "memory.max" in values}
-    assert guarded == {CGROUP_FIRST_LAYER, service, CGROUP_CLI_LAYER}, layout
-    assert limited == {jobs, CGROUP_CHILD_LAYER}, layout
+    assert guarded == {CGROUP_FIRST_LAYER, service, *more_guarded}, layout
+    assert limited == {jobs, *more_limited}, layout
     assert all("memory.high" not in values for _, values in layout), layout
-    limits = _mapping(_mapping(_container(zeus_worker)["resources"], "resources")["limits"], "limits")
+    limits = _mapping(_mapping(_container(worker)["resources"], "resources")["limits"], "limits")
     limit = _bytes(str(limits["memory"]))
     total = sum(_bytes(settings[name]["memory.min"]) for name in guarded) + sum(_bytes(settings[name]["memory.max"]) for name in limited)
     assert total <= limit, f"守る層の min と限る層の max の和 {total} が container の上限 {limit} を越える"
 
 
-def test_zeus_worker_puts_its_resident_layers_before_the_bulk_layers_on_the_cpu(zeus_worker: Manifest) -> None:
-    """worker の本体と常駐の job の層の cpu.weight は、task・CLI・命令の層の cpu.weight より高い。失敗ケース:
+def test_helios_worker_guards_its_resident_jobs_above_their_estimated_peak(rendered: list[Manifest]) -> None:
+    """helios の常駐の job の層の memory.min は、helios へ移す常駐の job の memory の峰の見積もり(HELIOS_SERVICE_PEAK)以上。失敗ケース:
+    守る値が峰を下回ると、準備の層が上限まで使った時の container の上限の回収が、峰の常駐の job の memory にも掛かる。"""
+    helios = _worker_on(rendered, "helios")
+    service = str(_env_value(helios, "DOEFF_WORKER_SERVICE_CGROUP")["value"])
+    assert _bytes(dict(_layout(helios))[service]["memory.min"]) >= _bytes(HELIOS_SERVICE_PEAK)
+
+
+@pytest.mark.parametrize("node", sorted(CGROUP_LAYERS))
+def test_worker_puts_its_resident_layers_before_the_bulk_layers_on_the_cpu(rendered: list[Manifest], node: str) -> None:
+    """worker の本体と常駐の job の層の cpu.weight は、ほかの層(task・CLI・命令)の cpu.weight より高い。失敗ケース:
     子に cpu を掛けない(重みの無い)層では、CPU が埋まった時に起きた画面の thread が CLI と task の thread と同じ重みで実行待ちに並び、
     ws の ping の往復が 50〜140 ms に跳ねた。cpu.idle は掛けない(命令の層が CPU の埋まった間ずっと止まる)。"""
-    settings = dict(_layout(zeus_worker))
-    service = str(_env_value(zeus_worker, "DOEFF_WORKER_SERVICE_CGROUP")["value"])
-    jobs = str(_env_value(zeus_worker, "DOEFF_WORKER_JOB_CGROUP")["value"])
+    worker = _worker_on(rendered, node)
+    settings = dict(_layout(worker))
+    service = str(_env_value(worker, "DOEFF_WORKER_SERVICE_CGROUP")["value"])
     weights = {name: int(values["cpu.weight"]) for name, values in settings.items() if "cpu.weight" in values}
     assert set(weights) == set(settings), settings
-    for resident in (CGROUP_FIRST_LAYER, service):
-        for bulk in (jobs, CGROUP_CHILD_LAYER, CGROUP_CLI_LAYER):
-            assert weights[resident] > weights[bulk], weights
+    resident = {CGROUP_FIRST_LAYER, service}
+    for bulk in set(settings) - resident:
+        assert all(weights[name] > weights[bulk] for name in resident), weights
     assert all("cpu.idle" not in values for values in settings.values()), settings
 
 
@@ -391,24 +418,31 @@ def test_cgroup_cpu_layout_on_a_version_without_it_is_refused() -> None:
     assert not _same_or_ancestor(CGROUP_CPU_SINCE, "036ea2cb175a3eb4b20cf25eb61bdd85a740d000")
 
 
-def test_zeus_worker_cgroup_is_delegated_by_a_root_sidecar_while_the_worker_stays_unprivileged(zeus_worker: Manifest) -> None:
-    """委ねる係は root・privileged の native sidecar(restartPolicy Always — worker の container が起こし直されても渡し直す)で、image は
-    worker と同じ。worker の container は特権を持たず(privileged は host の cgroup の名前空間で起き、/sys/fs/cgroup の見えが変わる)、
-    host の cgroupfs を WORKER_CGROUP_HOST に置く。"""
+def _cgroup_delegate(deployment: Manifest) -> Manifest:
     sidecars = [
         _mapping(c, "initContainer")
-        for c in _sequence(_pod_spec(zeus_worker)["initContainers"], "initContainers")
+        for c in _sequence(_pod_spec(deployment)["initContainers"], "initContainers")
         if _mapping(c, "initContainer")["name"] == "cgroup-delegate"
     ]
     assert len(sidecars) == 1, sidecars
-    sidecar = sidecars[0]
+    return sidecars[0]
+
+
+@pytest.mark.parametrize("node", sorted(CGROUP_LAYERS))
+def test_worker_cgroup_is_delegated_by_a_root_sidecar_while_the_worker_stays_unprivileged(rendered: list[Manifest], node: str) -> None:
+    """委ねる係は root・privileged の native sidecar(restartPolicy Always — worker の container が起こし直されても渡し直す)で、image は
+    worker と同じ。worker の container は特権を持たず(privileged は host の cgroup の名前空間で起き、/sys/fs/cgroup の見えが変わる)、
+    host の cgroupfs を WORKER_CGROUP_HOST に置く。委ねる係の宣言は層を持つ全部の機体で同じ(機体の dir の写しが離れない)。"""
+    worker = _worker_on(rendered, node)
+    sidecar = _cgroup_delegate(worker)
     assert sidecar["restartPolicy"] == "Always"
     assert sidecar["securityContext"] == {"privileged": True, "runAsUser": 0, "runAsNonRoot": False}
-    assert sidecar["image"] == _container(zeus_worker)["image"]
-    assert "privileged" not in _mapping(_container(zeus_worker).get("securityContext") or {}, "securityContext")
-    host = str(_env_value(zeus_worker, "WORKER_CGROUP_HOST")["value"])
-    assert _mount_at(zeus_worker, host)["name"] == "host-cgroup"
-    assert _volume(zeus_worker, "host-cgroup")["hostPath"] == {"path": "/sys/fs/cgroup", "type": "Directory"}
+    assert sidecar["image"] == _container(worker)["image"]
+    assert sidecar == _cgroup_delegate(_worker_on(rendered, "zeus"))
+    assert "privileged" not in _mapping(_container(worker).get("securityContext") or {}, "securityContext")
+    host = str(_env_value(worker, "WORKER_CGROUP_HOST")["value"])
+    assert _mount_at(worker, host)["name"] == "host-cgroup"
+    assert _volume(worker, "host-cgroup")["hostPath"] == {"path": "/sys/fs/cgroup", "type": "Directory"}
 
 
 @pytest.mark.parametrize("node", NODES)
@@ -718,20 +752,21 @@ def test_every_pool_in_the_room_file_is_named_by_two_or_more_machines() -> None:
 
 def test_the_memory_allowance_is_the_worker_limit_less_the_worker_and_its_tasks(rendered: list[Manifest]) -> None:
     """枠の file の memoryMiB(常駐の job の memory の予算)は、機体の worker の container の memory の上限から worker 自身の分と task の分を
-    引いた値(定義点は HOST_ONLY_WORKER_SELF_MIB・TASK_SHARE_MIB と zeus の cgroup の層)。
+    引いた値(定義点は、cgroup の層を宣言する機体では層 — worker の memory.min と task の層の memory.max、ほかの機体では
+    HOST_ONLY_WORKER_SELF_MIB・TASK_SHARE_MIB)。
     反例: 上限を越える予算は、N+1 の判断の規則 3 を通しても、移った job の起動の山で worker の container の上限に当たり、worker の memory の
     守りが job の起動を止め続ける(k3s-1 の例 — 上に載る系の宣言の註)。"""
     rows = _room_rows()
-    for node in HOST_ONLY_NODES:
-        limit = _bytes(str(_mapping(_container(_worker_on(rendered, node))["resources"], "resources")["limits"]["memory"])) // 2**20
-        reserve = HOST_ONLY_ROOM[node][1]
-        assert _mapping(rows[node], node)["memoryMiB"] == limit - HOST_ONLY_WORKER_SELF_MIB - reserve * TASK_SHARE_MIB, node
-    zeus = _worker_on(rendered, "zeus")
-    settings = dict(_layout(zeus))
-    jobs = str(_env_value(zeus, "DOEFF_WORKER_JOB_CGROUP")["value"])
-    limit = _bytes(str(_mapping(_mapping(_container(zeus)["resources"], "resources")["limits"], "limits")["memory"]))
-    allowance = (limit - _bytes(settings[CGROUP_FIRST_LAYER]["memory.min"]) - _bytes(settings[jobs]["memory.max"])) // 2**20
-    assert _mapping(rows["zeus"], "zeus")["memoryMiB"] == allowance
+    for node in NODES:
+        worker = _worker_on(rendered, node)
+        limit = _bytes(str(_mapping(_mapping(_container(worker)["resources"], "resources")["limits"], "limits")["memory"]))
+        if node in CGROUP_LAYERS:
+            settings = dict(_layout(worker))
+            jobs = str(_env_value(worker, "DOEFF_WORKER_JOB_CGROUP")["value"])
+            allowance = (limit - _bytes(settings[CGROUP_FIRST_LAYER]["memory.min"]) - _bytes(settings[jobs]["memory.max"])) // 2**20
+        else:
+            allowance = limit // 2**20 - HOST_ONLY_WORKER_SELF_MIB - HOST_ONLY_ROOM[node][1] * TASK_SHARE_MIB
+        assert _mapping(rows[node], node)["memoryMiB"] == allowance, node
 
 
 def test_zeus_worker_keeps_upper_system_capabilities(zeus_worker: Manifest) -> None:

@@ -1,4 +1,5 @@
-# helios の worker(doeff-worker-helios)= worker の雛形 + 機体の仕事だけを受ける差(../../host-only)+ helios の差(置く Node・資源の上限)。
+# helios の worker(doeff-worker-helios)= worker の雛形 + 機体の仕事だけを受ける差(../../host-only)+ helios の差(置く Node・資源の上限・
+# cgroup の層)。
 apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
 resources:
@@ -12,3 +13,6 @@ labels:
     includeSelectors: true
 patches:
   - path: node.yaml
+  # cgroup の memory と CPU の層と、その委ねる係・host の cgroupfs の mount(JSON patch — 足す物は全部末尾へ)。
+  - path: cgroup.yaml
+    target: { group: apps, version: v1, kind: Deployment, name: doeff-worker }
