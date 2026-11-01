@@ -23,6 +23,8 @@ from doeff_codex._lines import UsageLimitHit as UsageLimitHit
 from doeff_codex._lines import USAGE_LIMIT_KIND as USAGE_LIMIT_KIND
 from doeff_codex._lines import ServerOverloadedHit as ServerOverloadedHit
 from doeff_codex._lines import SERVER_OVERLOADED_KIND as SERVER_OVERLOADED_KIND
+from doeff_codex._lines import UnauthorizedHit as UnauthorizedHit
+from doeff_codex._lines import UNAUTHORIZED_KIND as UNAUTHORIZED_KIND
 from doeff_codex._effects import CodexStartTurn as CodexStartTurn
 from doeff_codex._effects import CodexSteerTurn as CodexSteerTurn
 from doeff_codex._effects import CodexInterruptTurn as CodexInterruptTurn
@@ -50,6 +52,7 @@ class FakeReply:
     hold: bool = False
     usage_limit: UsageLimitHit | None = None
     server_overloaded: ServerOverloadedHit | None = None
+    unauthorized: UnauthorizedHit | None = None
     tools_lost: str | None = None
 
 class FakeTurn:

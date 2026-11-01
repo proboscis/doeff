@@ -20,6 +20,9 @@ class TurnStatus(StrEnum):
     IN_PROGRESS = 'inProgress'
 USAGE_LIMIT_KIND: str
 SERVER_OVERLOADED_KIND: str
+UNAUTHORIZED_KIND: str
+UNAUTHORIZED_STATUS: int
+UNAUTHORIZED_TAIL: str
 CODE_MODE_UNAVAILABLE_HEAD: str
 CODE_MODE_FAIL_CLOSED: str
 
@@ -421,6 +424,10 @@ class ServerOverloadedHit:
     text: str
 
 @dataclass(frozen=True, kw_only=True)
+class UnauthorizedHit:
+    text: str
+
+@dataclass(frozen=True, kw_only=True)
 class TurnEnded:
     thread_id: str
     turn_id: str
@@ -430,6 +437,7 @@ class TurnEnded:
     http_status: int | None = None
     usage_limit: UsageLimitHit | None = None
     server_overloaded: ServerOverloadedHit | None = None
+    unauthorized: UnauthorizedHit | None = None
 
 @dataclass(frozen=True, kw_only=True)
 class RateLimitWindow:
@@ -486,6 +494,9 @@ def turn_status_of(spelled: str) -> _Program[TurnStatus | UnknownValue, object]:
     ...
 
 def turn_ended_of(params: TurnParamsWire) -> _Program[TurnEnded, object]:
+    ...
+
+def unauthorized_of(message: str | None, facts: ErrorFacts) -> _Program[UnauthorizedHit | None, object]:
     ...
 
 def turn_error_of(params: ErrorParamsWire) -> _Program[TurnError, object]:

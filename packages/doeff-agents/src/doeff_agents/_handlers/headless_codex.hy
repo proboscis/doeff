@@ -49,6 +49,11 @@
 ;;;     capacity」)→ AgentTurnFailed.provider_capacity(AgentProviderCapacity — model = 会話の宣言の model・text = codex の文)。agora は
 ;;;     少し後に同じ thread で試し直す。判定(誤りの種類の綴り)は層 2(doeff-codex の lines.hy)が
 ;;;     持ち、ここは運ぶだけ(provider-capacity-of)。
+;;;   口座の資格の断り: 失敗の終わりの資格の断りの事実(TurnEnded.unauthorized = UnauthorizedHit — 上流の 401。codex は誤りの種類
+;;;     unauthorized・HTTP の status 401 か、種類 other の文「workspace routing discovery unauthorized (401)」で名乗る)→
+;;;     AgentTurnFailed.account_refusal(AgentAccountRefusal — error = UNAUTHORIZED-WORD・text = codex の文。claude の adapter の
+;;;     authentication_failed と同じ欄 — agora は同じ道で口座を外し、ターンを別の口座へ結び直す・card ki-148d925696be)。判定(種類・
+;;;     status・文の照らし)は層 2(doeff-codex の lines.hy の unauthorized-of)が持ち、ここは運ぶだけ(account-refusal-of)。
 ;;;   道具を呼べない process: 層 2 の終わり ToolsUnavailable(codex が code mode を使えず道具の呼びを閉じたと名乗った process のターンを、
 ;;;     層 2 が model の文だけの答えの前に終えた物)→ AgentTurnFailed(detail = codex の警告の文・account_limit なし)。agora は失敗の
 ;;;     ターン(cli-failed)と読み、completed と見せない。警告の判定と process の降ろしは層 2。
@@ -85,7 +90,7 @@
   AgentEventPage AgentTextEvent AgentTextDeltaEvent AgentThinkingStartedEvent AgentThinkingDeltaEvent AgentCallUsageEvent
   AgentToolCallStartedEvent AgentToolUseEvent AgentToolResultEvent ToolCall ToolAnswer
   AgentInputFateEvent AgentTurnEndEvent AgentTurnCompleted AgentTurnFailed AgentTurnInterrupted AgentTurnLost AgentTurnUsage
-  AgentAccountLimit AgentProviderCapacity AgentError AgentLaunchError AgentCapabilityUnsupportedError NoTurnInFlightError ResumeTargetNotFoundError
+  AgentAccountLimit AgentAccountRefusal AgentProviderCapacity AgentError AgentLaunchError AgentCapabilityUnsupportedError NoTurnInFlightError ResumeTargetNotFoundError
   SessionAlreadyExistsError SessionNotFoundError TurnInFlightError])
 ;; 手番の終わり → AwaitOutcome の写し(L2 の見え方)は claude の adapter と同じ 1 つの関数を使う。
 (import doeff_agents._handlers.headless [outcome-of])
@@ -93,7 +98,7 @@
 (import doeff_codex [CodexHome CodexSessionSpec CodexTurn CodexInput CodexImage FreshThread ResumeThread
                      ApprovalPolicy SandboxMode
                      CodexLine TextDelta AgentMessageDone ReasoningDelta ItemStarted ItemDone TokenUsage TokenCount TurnEnded
-                     TurnStatus UsageLimitHit ServerOverloadedHit ToolStatus ToolItem CommandRun FilePatch WebSearch McpCall
+                     TurnStatus UsageLimitHit ServerOverloadedHit UnauthorizedHit ToolStatus ToolItem CommandRun FilePatch WebSearch McpCall
                      DynamicCall AgentCall ImageView
                      CodexStartTurn CodexSteerTurn CodexInterruptTurn CodexReadTurnEvents CodexCloseSession
                      BackendLost ToolsUnavailable TurnStarted Steered InterruptRequested TurnEventPage
@@ -102,6 +107,9 @@
 (val HANDLER-NAME "headless-codex-handler")
 ;; 枠の窓の長さ(分)→ 窓の名(claude の CLI の rateLimitType と同じ綴り — 上の層が claude と同じ語で読む)。表に無い長さは名乗らない。
 (val WINDOW-NAMES {300 "five_hour" 10080 "seven_day"})
+;; 口座の資格の断りの語(AgentAccountRefusal.error — codex の誤りの種類 CodexErrorInfo::Unauthorized の綴り。codex が種類 other の文で
+;; 名乗る 401 も同じ語で運ぶ — 上の層は CLI の語を 1 つの表で口座の断りの訳へ写す)。
+(val UNAUTHORIZED-WORD "unauthorized")
 
 
 ;; --- 設定と状態 ---------------------------------------------------------------------------------
@@ -362,6 +370,15 @@
       None
       (AgentAccountLimit :window (.get WINDOW-NAMES hit.minutes) :resets-at hit.resets-at :text hit.text)))
 
+(defk account-refusal-of [hit]
+  {:pre [(: hit (| UnauthorizedHit None))] :post [(: % (| AgentAccountRefusal None))]
+   :tags {:context "headless-adapter" :role "judgment"}}
+  "上の層(agora)が資格の通らない口座を外し、ターンを別の口座へ結び直せるように、層 2 が名乗った資格の断りの事実(UnauthorizedHit か
+   None)を公開型 AgentAccountRefusal にするため(語は UNAUTHORIZED-WORD・文はそのまま運ぶ)。"
+  (if (is hit None)
+      None
+      (AgentAccountRefusal :error UNAUTHORIZED-WORD :text hit.text)))
+
 (defk provider-capacity-of [hit model]
   {:pre [(: hit (| ServerOverloadedHit None)) (: model (| str None))] :post [(: % (| AgentProviderCapacity None))]
    :tags {:context "headless-adapter" :role "judgment"}}
@@ -376,7 +393,7 @@
    :post [(: % (| AgentTurnCompleted AgentTurnFailed AgentTurnInterrupted AgentTurnLost))]
    :tags {:context "headless-adapter" :role "judgment"}}
   "層 2 のターンの終わりを層 3 のターンの終わりへ写すため(続きの身元 resume-from = thread の id・どの終わりも最後の呼びの usage と
-   model と窓を運ぶ・失敗の終わりは口座の利用枠切れの事実と提供側の混雑の事実も運ぶ・道具を呼べない process の終わりは codex の警告の
+   model と窓を運ぶ・失敗の終わりは口座の利用枠切れの事実と資格の断りの事実と提供側の混雑の事実も運ぶ・道具を呼べない process の終わりは codex の警告の
    文の失敗)。止めた
    session(stopped)の終わりは、閉じた process の終わりでも割り込みの終わり(cli_kept 偽)にする。"
   (val model session.spec.model)
@@ -395,13 +412,15 @@
                      :resume-from thread-id :usage session.turn-usage
                      :last-call-usage session.last-call :last-call-model last-model :model-windows windows
                      :account-limit (! (account-limit-of end.usage-limit))
+                     :account-refusal (! (account-refusal-of end.unauthorized))
                      :provider-capacity (! (provider-capacity-of end.server-overloaded model)))
     ;; 終わりの行の状態が語彙の外(版で増えた綴り)か inProgress — 終わりは届いたので失敗の終わりとして名乗る(待ち続けない)。
     (TurnEnded)
     (AgentTurnFailed :detail (.format "codex のターンの終わりの状態が語彙の外: {!r}" end.status) :input-refs session.turn-refs
                      :resume-from thread-id :usage session.turn-usage
                      :last-call-usage session.last-call :last-call-model last-model :model-windows windows
-                     :account-limit (! (account-limit-of end.usage-limit)))
+                     :account-limit (! (account-limit-of end.usage-limit))
+                     :account-refusal (! (account-refusal-of end.unauthorized)))
     (ToolsUnavailable)
     (AgentTurnFailed :detail end.detail :input-refs session.turn-refs :resume-from thread-id :usage session.turn-usage
                      :last-call-usage session.last-call :last-call-model last-model :model-windows windows)

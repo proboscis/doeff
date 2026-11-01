@@ -43,6 +43,8 @@
 (import doeff_codex [UsageLimitHit :as CodexUsageLimitHit])
 ;; 提供側の混雑の事実(fake の筋書きの FakeCodexReply.server-overloaded に渡す・層 2 の終わりが運ぶ)。
 (import doeff_codex [ServerOverloadedHit :as CodexServerOverloadedHit])
+;; 口座の資格の断りの事実(fake の筋書きの FakeCodexReply.unauthorized に渡す・層 2 の終わりが運ぶ)。
+(import doeff_codex [UnauthorizedHit :as CodexUnauthorizedHit])
 (import doeff_agents._handlers.headless_codex [HeadlessCodexConfig HeadlessCodexState headless-codex-handler])
 
 

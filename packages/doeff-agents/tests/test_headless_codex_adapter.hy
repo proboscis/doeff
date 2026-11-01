@@ -21,13 +21,13 @@
 (import doeff_core_effects [scheduled])
 (import doeff_time [GetMonotonic SimClock sim-time-handler sync-time-handler])
 (import doeff_agents [AgentType AgentSessionLifecycle])
-(import doeff_agents [LaunchEffect FollowUp Interrupt Events Monitor Stop ExportContextEffect WarmSession SessionHandle AgentEventPage TurnInputMode InputFateState InputImage NamedContextId ModelWindow AgentTextEvent AgentTextDeltaEvent AgentInputFateEvent AgentTurnEndEvent AgentCallUsageEvent AgentToolCallStartedEvent AgentToolUseEvent AgentToolResultEvent AgentTurnCompleted AgentTurnFailed AgentTurnInterrupted AgentTurnLost AgentTurnUsage AgentAccountLimit AgentProviderCapacity AgentCapabilityUnsupportedError NoTurnInFlightError RedeemTurnCredentialEffect TurnCredential CodexTurnCredential TurnCredentialUnavailable TurnCredentialUnavailableError])
+(import doeff_agents [LaunchEffect FollowUp Interrupt Events Monitor Stop ExportContextEffect WarmSession SessionHandle AgentEventPage TurnInputMode InputFateState InputImage NamedContextId ModelWindow AgentTextEvent AgentTextDeltaEvent AgentInputFateEvent AgentTurnEndEvent AgentCallUsageEvent AgentToolCallStartedEvent AgentToolUseEvent AgentToolResultEvent AgentTurnCompleted AgentTurnFailed AgentTurnInterrupted AgentTurnLost AgentTurnUsage AgentAccountLimit AgentAccountRefusal AgentProviderCapacity AgentCapabilityUnsupportedError NoTurnInFlightError RedeemTurnCredentialEffect TurnCredential CodexTurnCredential TurnCredentialUnavailable TurnCredentialUnavailableError])
 (import doeff_agents._effects.agent [AutocompactTokens])
 (import doeff_hy._frozen [freeze-json])
 (import doeff_agents [SessionStatus])
 ;; 層 2 との組は doeff-agents の組み立ての部品で作る(この検も doeff_codex を import しない)。
 (import doeff_agents._handlers.headless_compose [FakeCodexWorld FakeCodexReply CodexTurnInput CodexApprovalPolicy CodexSandboxMode
-                                                CodexUsageLimitHit CodexServerOverloadedHit codex-process-layer fake-codex-process-layer
+                                                CodexUsageLimitHit CodexServerOverloadedHit CodexUnauthorizedHit codex-process-layer fake-codex-process-layer
                                                 codex-adapter])
 
 (val FAKE "fake")
@@ -61,6 +61,10 @@
 (val OVERLOADED-PROMPT "SERVER-OVERLOADED please")
 (val OVERLOADED-TEXT "Selected model is at capacity. Please try a different model.")
 (val OVERLOADED-MODEL "gpt-6-astra")
+;; 口座の資格の切れたターンを流させる言い方(替え玉の規則 — 録った codex 0.162.1 の unauthorized のターンを流す)と、codex が名乗る文
+;; (誤りの種類 other・HTTP の status 無し — 本番 2026-11-01 の口座の資格切れと同じ文)。
+(val UNAUTHORIZED-PROMPT "UNAUTHORIZED please")
+(val UNAUTHORIZED-TEXT "workspace routing discovery unauthorized (401)")
 ;; 道具を呼ぶターンの言い方(替え玉の規則 — 録った codex 0.162.1 の道具の呼びのターン tool-calls を流す)。
 (val TOOLS-PROMPT "TOOL-CALLS please")
 ;; code mode の host を使えない codex のターンを流させる言い方(替え玉の規則 — 録った codex 0.162.1 の code-mode-unavailable の、ターンの
@@ -108,6 +112,8 @@
                                                                                         :text USAGE-LIMIT-TEXT))
     ;; 提供側の混雑: 層 2 の事実(codex の文)を筋書きで渡す — 替え玉は録った行から本番の行の分類が同じ事実を作る。
     (in OVERLOADED-PROMPT input.text) (FakeCodexReply :pieces #() :server-overloaded (CodexServerOverloadedHit :text OVERLOADED-TEXT))
+    ;; 口座の資格の断り: 層 2 の事実(codex の文)を筋書きで渡す — 替え玉は録った行から本番の行の分類が同じ事実を作る。
+    (in UNAUTHORIZED-PROMPT input.text) (FakeCodexReply :pieces #() :unauthorized (CodexUnauthorizedHit :text UNAUTHORIZED-TEXT))
     ;; 道具を呼べない process: 層 2 の終わり(codex の警告の文)を筋書きで渡す — 替え玉は録った警告から本番の handler が同じ終わりを作る。
     (in CODE-MODE-PROMPT input.text) (FakeCodexReply :pieces #() :tools-lost CODE-MODE-WARNING)
     True (FakeCodexReply :pieces ANSWER-PIECES)))
@@ -690,6 +696,37 @@
   (assert (isinstance end AgentTurnFailed) end)
   (assert (is end.account-limit None) end)
   (assert (in "429" end.detail) end))
+
+
+(defk unauthorized-turn [#^ Setting s]
+  {:pre [(: s Setting)] :post [(: % Read)] :tags {:context "headless-codex-adapter-test" :role "program"}}
+  "口座の資格の切れたターンを最後まで読むため。"
+  (<- handle (launch s "codex-unauthorized" UNAUTHORIZED-PROMPT {}))
+  (<- done (read-until handle ended s.timeout -1))
+  (<- (Stop handle))
+  done)
+
+(defk check-unauthorized-turn [#^ Read done]
+  {:pre [(: done Read)] :post [(: % None)] :tags {:context "headless-codex-adapter-test" :role "program"}}
+  "口座の資格の切れたターンの終わりが、codex の文を AgentAccountRefusal(語 unauthorized)で運ぶ事を確かめるため — agora は口座の断りの
+   在る失敗を claude の authentication_failed と同じ道で読み、その口座を外してターンを別の口座へ結び直す(card ki-148d925696be — 前は
+   ただの失敗で、配る担当が 401 の口座へ配り続けた)。利用枠切れ・混雑とは読まない。"
+  (val end done.end)
+  (assert (isinstance end AgentTurnFailed) end)
+  (assert (= end.account-refusal (AgentAccountRefusal :error "unauthorized" :text UNAUTHORIZED-TEXT)) end)
+  (assert (and (is end.account-limit None) (is end.provider-capacity None)) end)
+  (assert (= end.detail UNAUTHORIZED-TEXT) end)
+  None)
+
+(deftest test-headless-codex-unauthorized-is-an-account-refusal-stub [tmp-path]
+  ;; 失敗ケース: 録った codex 0.162.1 の資格の切れたターン(種類 other・status 無しの 401 の文)が AgentTurnFailed.account_refusal に届く。
+  (<- done (run-on STUB tmp-path unauthorized-turn))
+  (<- (check-unauthorized-turn done)))
+
+(deftest test-headless-codex-unauthorized-is-an-account-refusal-fake [tmp-path]
+  ;; fake の層 2 でも同じ(agora の模擬は fake で組む)。
+  (<- done (run-on FAKE tmp-path unauthorized-turn))
+  (<- (check-unauthorized-turn done)))
 
 
 (defk completed-end [events end]

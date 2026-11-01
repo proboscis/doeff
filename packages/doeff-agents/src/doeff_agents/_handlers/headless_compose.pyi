@@ -44,6 +44,7 @@ from doeff_codex import FakeReply as FakeCodexReply
 from doeff_codex import fake_codex_handler as fake_codex_handler
 from doeff_codex import UsageLimitHit as CodexUsageLimitHit
 from doeff_codex import ServerOverloadedHit as CodexServerOverloadedHit
+from doeff_codex import UnauthorizedHit as CodexUnauthorizedHit
 from doeff_agents._handlers.headless_codex import HeadlessCodexConfig as HeadlessCodexConfig
 from doeff_agents._handlers.headless_codex import HeadlessCodexState as HeadlessCodexState
 from doeff_agents._handlers.headless_codex import headless_codex_handler as headless_codex_handler

@@ -10,7 +10,7 @@
 (import json)
 (import pathlib [Path])
 (import doeff_hy._json_value [OpaqueJson])
-(import doeff_codex [TextDelta AgentMessageDone ReasoningDelta TurnEnded TurnStatus TokenUsage ServerRequest ItemStarted ItemDone ServerOverloadedHit]
+(import doeff_codex [TextDelta AgentMessageDone ReasoningDelta TurnEnded TurnStatus TokenUsage ServerRequest ItemStarted ItemDone ServerOverloadedHit UnauthorizedHit]
         doeff_codex._lines [classify-line TurnStarted TurnError ThreadStarted Response ErrorResponse Other Unparsed UnknownValue RateLimits RateLimitWindow])
 
 (val RECORDED (/ (. (Path __file__) parent) "recorded" "codex-0.162.1"))
@@ -133,6 +133,38 @@
     (<- others (recorded-records name))
     (val failed (tuple (gfor record others :if (isinstance record TurnEnded) record)))
     (assert (and failed (all (gfor end failed (is end.server-overloaded None)))) #(name failed))))
+
+
+(deftest test-an-unauthorized-account-ends-the-turn-with-the-unauthorized-fact
+  ;; 資格の切れた口座(ChatGPT の口が全部 401)のターン: codex は繋ぎ直しの誤りの通知(willRetry 真)を重ねた後に、種類 other・HTTP の
+  ;; status 無しの文「workspace routing discovery unauthorized (401)」で失敗の終わりにする(本番 2026-11-01 の口座の資格切れと同じ文)。
+  ;; 種類も status も 401 を運ばないが、行の分類はその終わりに資格の断りの事実を載せる — 載せないと上の層はただの失敗と読み、同じ口座へ
+  ;; 配り続ける(card ki-148d925696be)。ほかの失敗の終わり(429・利用枠切れ・混雑)は資格の断りの事実を持たない。
+  (<- records (recorded-records "unauthorized"))
+  (val ends (tuple (gfor record records :if (isinstance record TurnEnded) record)))
+  (assert (= (tuple (gfor end ends end.status)) #(TurnStatus.FAILED)) ends)
+  (val refused (get ends 0))
+  (assert (= #(refused.error-message refused.error-kind refused.http-status)
+             #("workspace routing discovery unauthorized (401)" "other" None))
+          refused)
+  (assert (= refused.unauthorized (UnauthorizedHit :text refused.error-message)) refused)
+  (assert (and (is refused.usage-limit None) (is refused.server-overloaded None)) refused)
+  (val retried (tuple (gfor record records :if (and (isinstance record TurnError) record.will-retry) record)))
+  (assert retried records)
+  (for [name #("rate-limit" "usage-limit" "server-overloaded")]
+    (<- others (recorded-records name))
+    (val failed (tuple (gfor record others :if (isinstance record TurnEnded) record)))
+    (assert (and failed (all (gfor end failed (is end.unauthorized None)))) #(name failed)))
+  ;; 種類で名乗る形(CodexErrorInfo::Unauthorized)と status で名乗る形も、同じ事実になる。元は録った終わりの行。
+  (<- ended-line (recorded-line "unauthorized" "turn/completed"))
+  (val turn (get ended-line "params" "turn"))
+  (for [#(info message) #(#("unauthorized" "refresh token was rejected")
+                          #({"responseStreamConnectionFailed" {"httpStatusCode" 401}} "unexpected status 401"))]
+    (val drifted {#** ended-line
+                  "params" {#** (get ended-line "params")
+                            "turn" {#** turn "error" {#** (get turn "error") "message" message "codexErrorInfo" info}}}})
+    (<- named (classify-line (json.dumps drifted)))
+    (assert (= named.unauthorized (UnauthorizedHit :text message)) named)))
 
 
 (deftest test-a-usage-limit-names-its-windows-and-its-kind

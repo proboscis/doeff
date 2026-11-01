@@ -34,6 +34,7 @@ binary が出した物。録る筋書きと比べ:
 作業の dir は /tmp の外に置く(codex は /tmp の下の CODEX_HOME に助けの binary を作らず、警告の行を stderr に出す)。
 """
 
+import base64
 import http.server
 import json
 import os
@@ -107,6 +108,9 @@ BROKEN_HOST = "#!/bin/sh\nexit 1\n"
 # codex-api/src/api_bridge.rs が CodexErr::ServerOverloaded に読む形)と、断りの body の文(codex は自分の文で名乗るので、中身は偽物)。
 OVERLOADED_MARK = "SERVER-OVERLOADED"
 OVERLOADED_BODY = {"error": {"code": "server_is_overloaded", "message": "The server is overloaded."}}
+# 資格の切れた口座の筋書き(unauthorized): 偽の ChatGPT の資格(署名の無い JWT — 中身の値は偽物)と、全部の要求への 401 の断りの本文。
+UNAUTHORIZED_BODY = b'{"error": {"message": "Your authentication token has expired.", "code": "token_expired"}}'
+CHATGPT_ACCOUNT_ID = "recorder-account"
 
 
 def sse_event(stream: IO[bytes], event: JsonObject) -> None:
@@ -350,6 +354,32 @@ class Upstream(http.server.BaseHTTPRequestHandler):
         self.wfile.write(refusal)
 
 
+class RefusingUpstream(http.server.BaseHTTPRequestHandler):
+    """資格の断りの偽の上流: ChatGPT の口(backend-api)と更新の口(oauth/token)の全部の要求に 401 で答える(資格の切れた口座 —
+    本番 2026-11-01 の codex-personal の「workspace routing discovery unauthorized (401)」)。"""
+
+    protocol_version = "HTTP/1.1"
+    request_log: IO[str]
+
+    def log_message(self, format: str, *args: object) -> None:  # noqa: A002 - BaseHTTPRequestHandler の引数の名のまま
+        """要求ごとの既定の log の行を stderr に出さないため(要求は request_log に JSON で残す)。"""
+        return
+
+    def refuse(self) -> None:
+        """要求の中身を読み捨て、401 の断りで答えるため。"""
+        self.rfile.read(int(self.headers.get("content-length", "0")))
+        self.request_log.write(json.dumps({"method": self.command, "path": self.path, "status": 401}) + "\n")
+        self.request_log.flush()
+        self.send_response(401)
+        self.send_header("content-type", "application/json")
+        self.send_header("content-length", str(len(UNAUTHORIZED_BODY)))
+        self.end_headers()
+        self.wfile.write(UNAUTHORIZED_BODY)
+
+    do_GET = refuse
+    do_POST = refuse
+
+
 class ThreadingServer(socketserver.ThreadingMixIn, http.server.HTTPServer):
     """偽の上流を、codex の同時の呼び(止めの後の次の呼びなど)でも塞がずに答えさせるため。"""
 
@@ -370,6 +400,30 @@ def codex_home(work: Path, port: int, mcp_server: bool = False, code_mode_only: 
         'model = "gpt-mock"\nmodel_provider = "mock"\n' + features + '[model_providers.mock]\nname = "mock"\n'
         f'base_url = "http://127.0.0.1:{port}/v1"\nwire_api = "responses"\nrequires_openai_auth = false\n'
         "request_max_retries = 0\nstream_max_retries = 0\n" + declared,
+        encoding="utf-8",
+    )
+    return home
+
+
+def chatgpt_home(work: Path, port: int) -> Path:
+    """資格の切れた口座の筋書きの CODEX_HOME を作るため: 偽の ChatGPT の資格(auth.json — 署名の無い JWT と偽の更新鍵)と、ChatGPT の
+    口・Responses の口を偽の上流(RefusingUpstream)へ向ける config.toml。codex の更新の口は env CODEX_REFRESH_TOKEN_URL_OVERRIDE で
+    偽の上流へ向ける(main)。"""
+    home = work / "codex-home-chatgpt"
+    home.mkdir(parents=True, exist_ok=True)
+
+    def segment(value: JsonObject) -> str:
+        return base64.urlsafe_b64encode(json.dumps(value).encode()).rstrip(b"=").decode()
+
+    claims = {"email": "recorder@example.com", "exp": USAGE_RESETS_AT,
+              "https://api.openai.com/auth": {"chatgpt_plan_type": "pro", "chatgpt_account_id": CHATGPT_ACCOUNT_ID}}
+    token = f"{segment({'alg': 'none', 'typ': 'JWT'})}.{segment(claims)}.unsigned"
+    (home / "auth.json").write_text(json.dumps({"OPENAI_API_KEY": None, "last_refresh": "2026-11-01T00:00:00Z", "tokens": {
+        "id_token": token, "access_token": token, "refresh_token": "recorder-refresh", "account_id": CHATGPT_ACCOUNT_ID}}),
+        encoding="utf-8")
+    (home / "config.toml").write_text(
+        f'model = "gpt-mock"\nchatgpt_base_url = "http://127.0.0.1:{port}/backend-api/"\n'
+        f'openai_base_url = "http://127.0.0.1:{port}/backend-api/codex"\n',
         encoding="utf-8",
     )
     return home
@@ -533,6 +587,13 @@ def server_overloaded(send: Send, wait: Wait, cwd: Path) -> None:
     wait(turn_ended(start_turn(send, wait, 4, thread_id, "hello again")), WAIT_SECONDS)
 
 
+def unauthorized(send: Send, wait: Wait, cwd: Path) -> None:
+    """資格の切れた口座(ChatGPT の口が全部 401)のターンの誤りと終わりの形を録るため(codex は繰り返しの後に誤りの種類 other・
+    HTTP の status 無しで「workspace routing discovery unauthorized (401)」の失敗の終わりにする — 本番 2026-11-01 と同じ文)。"""
+    thread_id = start_thread(send, wait, cwd)
+    wait(turn_ended(start_turn(send, wait, 3, thread_id, "hello")), WAIT_SECONDS * 2)
+
+
 def tool_calls(send: Send, wait: Wait, cwd: Path) -> None:
     """道具を呼ぶターン(命令の成功・失敗・apply_patch・web 検索の後に答え)の道具の item の形を録るため。命令が本当に走り、ファイルを
     書けるように、sandbox は会話の担当の既定と同じ danger-full-access(機体の sandbox の有無で行が変わらない)。"""
@@ -591,13 +652,15 @@ def code_mode_turns(send: Send, wait: Wait, cwd: Path) -> None:
 @dataclass(frozen=True)
 class Scenario:
     """録る筋書き 1 つ: name = 録った file の名の頭 / script = 要求を書いて行を待つ手順 / mcp_server = CODEX_HOME に録りの MCP の
-    server を宣言するか / code_mode_only = 道具を code mode だけで呼ぶ設定にするか / host = code mode の host の置き方(placed_codex)。"""
+    server を宣言するか / code_mode_only = 道具を code mode だけで呼ぶ設定にするか / host = code mode の host の置き方(placed_codex)/
+    refused = 偽の ChatGPT の資格の家(chatgpt_home)で、全部の要求に 401 で答える偽の上流(RefusingUpstream)につなぐか。"""
 
     name: str
     script: Callable[[Send, Wait, Path], None]
     mcp_server: bool = False
     code_mode_only: bool = False
     host: str = "given"
+    refused: bool = False
 
 
 SCENARIOS: tuple[Scenario, ...] = (
@@ -606,7 +669,8 @@ SCENARIOS: tuple[Scenario, ...] = (
     Scenario("background-command", background_command),
     Scenario("other-tools", other_tools, mcp_server=True),
     Scenario("code-mode-unavailable", code_mode_turns, code_mode_only=True, host="absent"),
-    Scenario("code-mode-host-broken", code_mode_turns, code_mode_only=True, host="broken"))
+    Scenario("code-mode-host-broken", code_mode_turns, code_mode_only=True, host="broken"),
+    Scenario("unauthorized", unauthorized, refused=True))
 
 
 def main(codex: str, out: Path, work: Path, chosen: tuple[str, ...]) -> None:
@@ -618,19 +682,28 @@ def main(codex: str, out: Path, work: Path, chosen: tuple[str, ...]) -> None:
     # 筋書きを選んで録る時は、前に録った要求の記録を消さずに後ろへ足す。
     with (out / "upstream-requests.jsonl").open("a" if chosen else "w", encoding="utf-8") as request_log:
         Upstream.request_log = request_log
+        RefusingUpstream.request_log = request_log
         server = ThreadingServer(("127.0.0.1", 0), Upstream)
+        refusing = ThreadingServer(("127.0.0.1", 0), RefusingUpstream)
         threading.Thread(target=server.serve_forever, daemon=True).start()
+        threading.Thread(target=refusing.serve_forever, daemon=True).start()
         try:
             port = server.server_address[1]
+            refusing_port = refusing.server_address[1]
             env = {"PATH": "/usr/bin:/bin", "HOME": str(work), "CODEX_HOME": str(codex_home(work, port))}
+            # 資格の切れた口座の筋書きは、更新の口を偽の上流へ向け、手元の外への要求を届かない proxy へ送る(偽の資格を外へ出さない)。
+            refused_env = {**env, "CODEX_REFRESH_TOKEN_URL_OVERRIDE": f"http://127.0.0.1:{refusing_port}/oauth/token",
+                           "HTTPS_PROXY": "http://127.0.0.1:9", "HTTP_PROXY": "http://127.0.0.1:9", "NO_PROXY": "127.0.0.1"}
             cwd = work / "cwd"
             cwd.mkdir(parents=True, exist_ok=True)
             Upstream.image_path = str(cwd / IMAGE_NAME)
             for scenario in SCENARIOS:
                 if not chosen or scenario.name in chosen:
-                    home = codex_home(work, port, scenario.mcp_server, scenario.code_mode_only)
+                    home = (chatgpt_home(work, refusing_port) if scenario.refused
+                            else codex_home(work, port, scenario.mcp_server, scenario.code_mode_only))
                     binary = placed_codex(codex, work, scenario.host)
-                    record_app_server(binary, out, {**env, "CODEX_HOME": str(home)}, cwd, scenario.name, scenario.script)
+                    record_app_server(binary, out, {**(refused_env if scenario.refused else env), "CODEX_HOME": str(home)}, cwd,
+                                      scenario.name, scenario.script)
             if chosen:
                 return
             compared = subprocess.run([codex, "exec", "--json", "--skip-git-repo-check", "say hello"], capture_output=True,
@@ -639,6 +712,7 @@ def main(codex: str, out: Path, work: Path, chosen: tuple[str, ...]) -> None:
             print("exec-json exit", compared.returncode)
         finally:
             server.shutdown()
+            refusing.shutdown()
 
 
 if __name__ == "__main__":

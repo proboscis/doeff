@@ -11,7 +11,8 @@
 (import doeff_time [Delay])
 (import doeff_codex._values [CodexSessionSpec CodexTurn CodexEvent CodexInput FreshThread ResumeThread])
 (import doeff_codex._lines [TurnStarted :as TurnStartedLine TextDelta AgentMessageDone ItemStarted TurnError TurnEnded TurnStatus
-                           UsageLimitHit USAGE-LIMIT-KIND ServerOverloadedHit SERVER-OVERLOADED-KIND])
+                           UsageLimitHit USAGE-LIMIT-KIND ServerOverloadedHit SERVER-OVERLOADED-KIND UnauthorizedHit
+                           UNAUTHORIZED-KIND])
 (import doeff_codex._effects [CodexStartTurn CodexSteerTurn CodexInterruptTurn CodexReadTurnEvents CodexAnswerRequest
                              CodexCloseSession CodexLaunchCount BackendLost ToolsUnavailable TurnStarted Steered InterruptRequested
                              TurnEventPage SessionClosed ThreadUnknown TurnInFlight NoTurnInFlight UnknownTurn NoSuchRequest])
@@ -27,6 +28,8 @@
    出さず、誤りの種類 USAGE-LIMIT-KIND の誤りと失敗の終わりで終える — 終わりは本番の handler が枠の知らせから作るのと同じ事実を運ぶ)/
    server-overloaded = 提供側の混雑の事実(在れば、欠片の後に答えの全文を出さず、誤りの種類 SERVER-OVERLOADED-KIND の誤りと失敗の
    終わりで終える — 終わりは本番の行の分類が作るのと同じ事実を運ぶ。process は降ろさない — 次のターンは同じ process で続く)/
+   unauthorized = 口座の資格の断りの事実(在れば、欠片の後に答えの全文を出さず、誤りの種類 UNAUTHORIZED-KIND の誤りと失敗の終わりで
+   終える — 終わりは本番の行の分類が作るのと同じ事実を運ぶ)/
    tools-lost = 道具を呼べない process の筋書き(在れば codex の警告の文 — 始まりの後に、欠片を出さずその文の ToolsUnavailable で終え、
    process を降ろした数えにする。本番の handler が code mode の使えない警告で終えるのと同じ終わり)。"
   {:tags {:context "codex" :role "type"}}
@@ -34,6 +37,7 @@
   (setv #^ bool hold False)
   (setv #^ (| UsageLimitHit None) usage-limit None)
   (setv #^ (| ServerOverloadedHit None) server-overloaded None)
+  (setv #^ (| UnauthorizedHit None) unauthorized None)
   (setv #^ (| str None) tools-lost None))
 
 
@@ -131,6 +135,12 @@
                                      :http-status None :will-retry False))
         (.add thread turn (TurnEnded :thread-id thread-id :turn-id turn-id :status TurnStatus.FAILED :error-message busy.text
                                      :error-kind SERVER-OVERLOADED-KIND :server-overloaded busy)))
+    (is-not reply.unauthorized None)
+    (do (val refused reply.unauthorized)
+        (.add thread turn (TurnError :thread-id thread-id :turn-id turn-id :message refused.text :error-kind UNAUTHORIZED-KIND
+                                     :http-status None :will-retry False))
+        (.add thread turn (TurnEnded :thread-id thread-id :turn-id turn-id :status TurnStatus.FAILED :error-message refused.text
+                                     :error-kind UNAUTHORIZED-KIND :unauthorized refused)))
     True
     (do (.add thread turn (AgentMessageDone :thread-id thread-id :turn-id turn-id :item-id item-id :text (.join "" reply.pieces)))
         (.add thread turn (TurnEnded :thread-id thread-id :turn-id turn-id :status TurnStatus.COMPLETED))))
