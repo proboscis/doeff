@@ -36,6 +36,7 @@ from doeff_core_effects import (
     Tell,
     Wait,
     scheduled,
+    shielded,
     state,
     writer,
 )
@@ -104,6 +105,13 @@ def _outcome(task: Task[object]):
 
 
 @do
+def _finally_effect():
+    """The finally's work that waits: a cancelled task runs it inside ``shielded``."""
+    yield Wait((yield Spawn(_noop())))
+    yield Tell("finally effect done")
+
+
+@do
 def _guarded_worker(gate: Promise[None]):
     """Park on ``gate``; its finally records and performs an effect."""
     try:
@@ -112,8 +120,7 @@ def _guarded_worker(gate: Promise[None]):
         yield Tell("resumed")
     finally:
         yield Tell("finally")
-        yield Wait((yield Spawn(_noop())))
-        yield Tell("finally effect done")
+        yield shielded(_finally_effect())
 
 
 @pytest.mark.parametrize("implementation", IMPLEMENTATIONS)
