@@ -14,7 +14,7 @@
 (import hashlib)
 (import pytest)
 (import doeff [with_handlers])
-(import doeff_core_effects [state])
+(import doeff_core_effects [state Get Put])
 (import doeff_core_effects [MemoryFile MemoryFiles ReadBytes])
 (import doeff_core_effects [memory-file-handler])
 (import doeff_core_effects [ProcessScript scripted-process-handler])
@@ -183,6 +183,59 @@
   (assert (= (.strip on-main.stdout) "origin/main"))
   (<- nowhere ProcessOutcome (git-says world #("git" "-C" "/src/hud" "branch" "-r" "--contains" side "--list" "origin/*")))
   (assert (= nowhere.stdout "")))
+
+
+;; --- remote に在るかの問いの数(2026-11-02) ------------------------------------------
+;;
+;; branch -r --contains は remote の branch の数に比例する(remote の branch が 2 万本を越える repo で、load 100 の worker の 1.3 秒)。既定の branch
+;; (<remote>/HEAD)に在る checkout は merge-base --is-ancestor の 1 問で済ませ、全部を歩くのは既定の branch に無い時だけ。
+
+(val ASKED-KEY "asked-git")
+
+
+(defhandler record-git
+  ;; checkout の読みが git へ出した問い(-C <path> の後の argv)を外側の状態(ASKED-KEY の tuple)へ足し、そのまま台本の git へ渡す。
+  (RunProcess [argv]
+    (<- asked tuple (Get ASKED-KEY))
+    (<- (Put ASKED-KEY (+ asked #((tuple (cut argv 3 None))))))
+    (reperform effect)))
+
+
+(defk read-asking [checkout]
+  {:pre [(: checkout GitCheckout)] :post [(: % tuple)]}
+  "checkout 1 つを翻訳を通して読み、読みと git へ出した問いの動詞(argv の頭 2 語)を返すため。"
+  (<- seen tuple ((state {ASKED-KEY #()})
+                  (with_handlers [(scripted-process-handler (ProcessScript :commands #((git-command #(checkout))))) record-git checkout-reads]
+                                 (read-and-ask checkout.path))))
+  seen)
+
+
+(defk read-and-ask [path]
+  {:pre [(: path str)] :post [(: % tuple)]}
+  "ReadCheckout を 1 度出し、その間に記録した問いと並べて返すため。"
+  (<- checkout-state CheckoutState (ReadCheckout path "origin"))
+  (<- asked tuple (Get ASKED-KEY))
+  #(checkout-state.on-remote (tuple (gfor argv asked (tuple (cut argv 0 2))))))
+
+
+(deftest test-a-checkout-on-the-default-branch-is-read-without-walking-every-remote-branch []
+  (val head (* "c" 40))
+  (<- on-default tuple (read-asking (GitCheckout :path "/src/app" :head head :remotes #((GitRemote :name "origin" :url APP-URL))
+                                                 :pushed #("origin/main") :remote-head "origin/main")))
+  (assert (= on-default #(True #(#("rev-parse" "HEAD") #("config" "--get") #("status" "--porcelain")
+                                 #("merge-base" "--is-ancestor"))))
+          on-default)
+  ;; 既定の branch に無く別の remote の branch だけに在る commit は、全部の branch を歩いて on-remote と読む。
+  (<- on-side tuple (read-asking (GitCheckout :path "/src/app" :head head :remotes #((GitRemote :name "origin" :url APP-URL))
+                                              :pushed #("origin/wt/feature") :remote-head "origin/main")))
+  (assert (= on-side #(True #(#("rev-parse" "HEAD") #("config" "--get") #("status" "--porcelain")
+                              #("merge-base" "--is-ancestor") #("branch" "-r"))))
+          on-side)
+  ;; <remote>/HEAD の無い clone(exit 128)も全部を歩いて読み、どの branch にも無ければ on-remote でない。
+  (<- headless tuple (read-asking (GitCheckout :path "/src/app" :head head :remotes #((GitRemote :name "origin" :url APP-URL)))))
+  (assert (= headless #(False #(#("rev-parse" "HEAD") #("config" "--get") #("status" "--porcelain")
+                                #("merge-base" "--is-ancestor") #("branch" "-r"))))
+          headless))
 
 
 ;; --- 系の宣言の前の検め(declare — 2026-09-28・計画 2.2 の E) ------------------------------------------
