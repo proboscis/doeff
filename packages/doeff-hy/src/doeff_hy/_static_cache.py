@@ -26,11 +26,15 @@ doeff の版が違う作業木どうしは、互いの entry を上書きせず�
 温まった実行の open を減らすため、検める file の組ごとに closure 全体を 1 file に束ねた写し(束 — 下の節)も持つ。束は写しで、正本は entry。
 """
 
+import base64
 import hashlib
 import json
 import os
+import sys
 import time
-from collections.abc import Iterator, Sequence
+import zlib
+from array import array
+from collections.abc import Iterable, Iterator, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING
@@ -48,7 +52,8 @@ if TYPE_CHECKING:
 # 保存の形の版(形を変えたら上げる — 場所の名に入るので、古い版の entry は読まれない)。
 # 2 = 展開が通った file の記録で照らす形。
 # 3 = 展開が使った macro 単位の記録で照らす形(記録の行 = 表の名・提供元の module 名・macro 名・digest)。
-CACHE_VERSION = 3
+# 4 = 位置の対応を、整数の list の list でなく、詰めた配列を縮めた文字列 1 つで持つ形(PackedSpans)。
+CACHE_VERSION = 4
 
 
 @dataclass(frozen=True)
@@ -65,41 +70,94 @@ class Span:
 CachedSpan = Span
 
 
-class LazySpans(Sequence[Span]):
-    """entry から読んだ位置の対応を、使われる時まで Span にしない列(1 file で千個を超え、使うのは検める file だけ — 引く側が
-    依存の数百 file の分を作らずに済む)。tuple と同じ中身・同じ repr・同じ等しさで読める。"""
+#: 位置の対応 1 つが持つ整数の数(始まりの行・列・終わりの行・列・Hy の行・列)。
+_SPAN_CELLS = 6
 
-    __slots__ = ("_mut_items", "_raw")
 
-    def __init__(self, raw: list[object]) -> None:
-        self._raw = raw
-        self._mut_items: tuple[Span, ...] | None = None
+class PackedSpans(Sequence[Span]):
+    """位置の対応の列を、1 file につき整数の配列 1 つで持つため。展開の親は検める全部の file(日次で 5,500 本・874 万個)の対応を
+    pyright の間も抱える。1 個を list や Span の object にすると 1 個あたり 200〜400 byte になり、free-threaded の CPython は捨てた
+    細かな object の memory を OS へ返さないので、一度作った山が pyright の間の RSS として残った(2026-11-01 — 親が 10GB)。
+    配列なら 1 個 24 byte で、Span は読む時に 1 つずつ作って捨てる(覚えない)。保存の形は配列の byte を zlib で縮めて base64 に
+    した文字列 1 つ(JSON の list の list にすると、読むだけで 1 個ごとの list ができる)。tuple と同じ中身・同じ repr・同じ等しさで読める
+    (repr は運びの digest — static_carry.own_digest — に入る)。"""
 
-    def _items(self) -> tuple[Span, ...]:
-        if self._mut_items is None:
-            self._mut_items = tuple(
-                Span((s[0], s[1]), (s[2], s[3]), s[4], s[5])  # type: ignore[index]
-                for s in self._raw
-            )
-        return self._mut_items
+    __slots__ = ("_cells", "_mut_text")
+
+    def __init__(self, cells: array, text: str | None = None) -> None:
+        self._cells = cells
+        self._mut_text = text
+
+    @classmethod
+    def of(cls, spans: Iterable[Span]) -> "PackedSpans":
+        """Span の列を詰めるため(展開した直後の子の process で — 親へ送る pickle も配列 1 つになる)。"""
+        if isinstance(spans, PackedSpans):
+            return spans
+        cells = array("i")
+        for span in spans:
+            cells.extend((*span.start, *span.end, span.hy_line, span.hy_column))
+        return cls(cells)
+
+    @classmethod
+    def from_text(cls, text: str) -> "PackedSpans":
+        """保存の形(payload)から戻すため。読めない文字列は ValueError(呼び手が読めない entry として飛ばす — 使う時まで遅らせると、
+        壊れた entry が pyright の後で検査全体を落とす)。読んだ文字列は書き直しに使い回す(束は毎回書き直す)。"""
+        try:
+            raw = zlib.decompress(base64.b64decode(text, validate=True))
+        except zlib.error as error:
+            raise ValueError(f"位置の対応を解けない: {error}") from error
+        cells = array("i")
+        if len(raw) % (cells.itemsize * _SPAN_CELLS):
+            raise ValueError(f"位置の対応の byte の数 {len(raw)} が対応 1 つの大きさの倍数でない")
+        cells.frombytes(raw)
+        if sys.byteorder != "little":
+            cells.byteswap()
+        return cls(cells, text)
+
+    def payload(self) -> str:
+        """保存の形にするため(縮めた byte の base64・little endian の 4 byte の整数)。"""
+        if self._mut_text is None:
+            cells = self._cells
+            if sys.byteorder != "little":
+                cells = array("i", cells)
+                cells.byteswap()
+            self._mut_text = base64.b64encode(zlib.compress(cells.tobytes(), 1)).decode("ascii")
+        return self._mut_text
+
+    def _span(self, number: int) -> Span:
+        """number 番目の対応を、読む時だけの Span にするため(覚えない — 覚えると配列で持つ意味が無くなる)。"""
+        c = self._cells
+        at = number * _SPAN_CELLS
+        return Span((c[at], c[at + 1]), (c[at + 2], c[at + 3]), c[at + 4], c[at + 5])
 
     def __len__(self) -> int:
-        return len(self._raw)
+        return len(self._cells) // _SPAN_CELLS
 
     def __getitem__(self, index: int | slice) -> "Span | tuple[Span, ...]":  # type: ignore[override]
-        return self._items()[index]
+        if isinstance(index, slice):
+            return tuple(self._span(number) for number in range(*index.indices(len(self))))
+        size = len(self)
+        number = index + size if index < 0 else index
+        if not 0 <= number < size:
+            raise IndexError("位置の対応の番号が範囲の外")
+        return self._span(number)
 
     def __iter__(self) -> Iterator[Span]:
-        return iter(self._items())
+        return (self._span(number) for number in range(len(self)))
 
     def __eq__(self, other: object) -> bool:
-        return self._items() == (other._items() if isinstance(other, LazySpans) else other)
+        if isinstance(other, PackedSpans):
+            return self._cells == other._cells
+        return isinstance(other, tuple) and tuple(self) == other
 
     def __hash__(self) -> int:
-        return hash(self._items())
+        return hash(tuple(self))
 
     def __repr__(self) -> str:
-        return repr(self._items())
+        return repr(tuple(self))
+
+    def __reduce__(self) -> tuple[object, ...]:
+        return (PackedSpans, (self._cells, None))
 
 
 @dataclass(frozen=True)
@@ -198,7 +256,7 @@ def _entry_from_json(loaded: object) -> CachedProjection | CacheMiss:
             "version": int(version),
             "used": used,
             "text": str(text),
-            "spans": list(spans),
+            "spans": str(spans),
             "findings": list(findings),
         } if version == CACHE_VERSION:
             record = record_from_json(used)
@@ -207,12 +265,12 @@ def _entry_from_json(loaded: object) -> CachedProjection | CacheMiss:
             try:
                 return CachedProjection(
                     text,
-                    LazySpans(spans),
+                    PackedSpans.from_text(spans),
                     tuple(CachedFinding(**f) for f in findings),
                     record,
                     _imports_of(loaded),
                 )
-            except (TypeError, IndexError) as error:
+            except (TypeError, IndexError, ValueError) as error:
                 return CacheMiss(f"欄の形が違う: {error}")
         case _:
             return CacheMiss("版か形が違う")
@@ -232,7 +290,7 @@ def _entry_payload(projection: CachedProjection) -> dict[str, object]:
         "version": CACHE_VERSION,
         "used": record_to_json(projection.used),
         "text": projection.text,
-        "spans": [[*s.start, *s.end, s.hy_line, s.hy_column] for s in projection.spans],
+        "spans": PackedSpans.of(projection.spans).payload(),
         "findings": [vars(f) for f in projection.findings],
     }
     if projection.imports is not None:
@@ -250,10 +308,18 @@ def store(cache_dir: Path, name: str, projection: CachedProjection) -> None:
 
 
 def _write_atomically(path: Path, payload: object) -> None:
+    _write_chunks_atomically(path, (json.dumps(payload, ensure_ascii=False),))
+
+
+def _write_chunks_atomically(path: Path, chunks: Iterable[str]) -> None:
+    """JSON の文字列を断片ごとに一時の file へ書いて rename するため(束は全部の行を 1 つの payload にすると、書くだけで closure 全体の
+    細かな object を一度に作る — 行ごとに作って書けば、捨てた行の memory を次の行が使い回す)。"""
     temporary = path.with_name(f"{path.name}.{os.getpid()}.{time.monotonic_ns()}.tmp")
     try:
         path.parent.mkdir(parents=True, exist_ok=True)
-        temporary.write_text(json.dumps(payload, ensure_ascii=False), encoding="utf-8")
+        with temporary.open("w", encoding="utf-8") as stream:
+            for chunk in chunks:
+                stream.write(chunk)
         temporary.replace(path)
     except OSError:
         temporary.unlink(missing_ok=True)
@@ -272,7 +338,8 @@ def _write_atomically(path: Path, payload: object) -> None:
 #   大きさと更新時刻が同じまま中身が変わる書き換えを信じて逃さないため、束を書いた時に更新時刻が RACY_NS 以内に新しい file は
 #   stat を持たない行にして、毎回中身で照らす(git の index の racy 判定と同じ)。
 # - macro: 行ごとに ``record_is_current_here(used)`` で今の環境と照らす(entry と同じ)。
-BUNDLE_VERSION = 1
+# 版 2 = JSON Lines(頭の行 = 版・続く 1 行 = 1 file — 1 行ずつ読み書きする)。
+BUNDLE_VERSION = 2
 #: 束を書く時刻からこの幅以内に更新された file は、更新時刻と大きさで信じない(粗い時計の同じ刻みの中の書き換え)。
 RACY_NS = 2_000_000_000
 
@@ -305,33 +372,52 @@ def bundle_key(root: Path, targets: Sequence[str]) -> str:
 
 
 def _bundle_path(cache_dir: Path, key: str) -> Path:
-    return cache_dir / "bundles" / f"{key}.json"
+    return cache_dir / "bundles" / f"{key}.jsonl"
 
 
 def load_bundle(cache_dir: Path, key: str) -> dict[str, BundleRow]:
-    """束を読む(無い・読めない・形が違う時は空 — 呼び手は今までの引き方で引く。壊れた行だけ飛ばす)。"""
-    try:
-        loaded: object = json.loads(_bundle_path(cache_dir, key).read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError):
-        return {}
-    match loaded:
-        case {"version": int(version), "rows": dict(rows)} if version == BUNDLE_VERSION:
-            pass
-        case _:
-            return {}
+    """束を読む(無い・読めない・形が違う時は空 — 呼び手は今までの引き方で引く。壊れた行だけ飛ばす)。1 行ずつ読んで行にする
+    (全体を 1 度に JSON として読むと、closure 全体の細かな object を一度に作り、その山が pyright の間の RSS に残った)。"""
     found: dict[str, BundleRow] = {}
-    for relative, row in rows.items():
-        match row:
-            case {"module": str(module), "place": str(place), "stat": stat, "entry": entry}:
-                cached = _entry_from_json(entry)
-                if isinstance(cached, CacheMiss):
+    try:
+        with _bundle_path(cache_dir, key).open(encoding="utf-8") as stream:
+            try:
+                header: object = json.loads(stream.readline())
+            except json.JSONDecodeError:
+                return {}
+            match header:
+                case {"version": int(version)} if version == BUNDLE_VERSION:
+                    pass
+                case _:
+                    return {}
+            for line in stream:
+                try:
+                    row: object = json.loads(line)
+                except json.JSONDecodeError:
                     continue
-                match stat:
-                    case [int(size), int(mtime)]:
-                        found[relative] = BundleRow(module, place, FileStat(size, mtime), cached)
-                    case None:
-                        found[relative] = BundleRow(module, place, None, cached)
+                if (kept := _bundle_row(row)) is not None:
+                    found[kept[0]] = kept[1]
+    except OSError:
+        return {}
     return found
+
+
+def _bundle_row(row: object) -> tuple[str, BundleRow] | None:
+    """束の 1 行を (相対 path, 行) にするため(形が違う・entry が読めない行は None — 飛ばす)。"""
+    match row:
+        case {"relative": str(relative), "module": str(module), "place": str(place), "stat": stat, "entry": entry}:
+            cached = _entry_from_json(entry)
+            if isinstance(cached, CacheMiss):
+                return None
+            match stat:
+                case [int(size), int(mtime)]:
+                    return relative, BundleRow(module, place, FileStat(size, mtime), cached)
+                case None:
+                    return relative, BundleRow(module, place, None, cached)
+                case _:
+                    return None
+        case _:
+            return None
 
 
 def bundle_signature(rows: dict[str, BundleRow]) -> dict[str, tuple[str, str, str, FileStat | None]]:
@@ -352,19 +438,22 @@ def bundle_signature(rows: dict[str, BundleRow]) -> dict[str, tuple[str, str, st
 def store_bundle(cache_dir: Path, key: str, rows: dict[str, BundleRow]) -> None:
     """束を書く(書けなくても検めは続ける)。"""
     signature = bundle_signature(rows)
-    payload = {
-        "version": BUNDLE_VERSION,
-        "rows": {
-            relative: {
+
+    def chunks() -> Iterator[str]:
+        """束の JSON Lines(頭の行 = 版・続く 1 行 = 1 file)を行ごとに作るため。"""
+        yield json.dumps({"version": BUNDLE_VERSION}) + "\n"
+        for relative, row in rows.items():
+            stat = signature[relative][3]
+            line = {
+                "relative": relative,
                 "module": signature[relative][0],
                 "place": signature[relative][1],
-                "stat": [stat.size, stat.mtime_ns] if (stat := signature[relative][3]) is not None else None,
+                "stat": [stat.size, stat.mtime_ns] if stat is not None else None,
                 "entry": _entry_payload(row.cached),
             }
-            for relative, row in rows.items()
-        },
-    }
-    _write_atomically(_bundle_path(cache_dir, key), payload)
+            yield json.dumps(line, ensure_ascii=False) + "\n"
+
+    _write_chunks_atomically(_bundle_path(cache_dir, key), chunks())
 
 
 def stat_of(path: Path) -> FileStat | None:

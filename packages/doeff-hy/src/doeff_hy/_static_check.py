@@ -93,6 +93,7 @@ from doeff_hy._static_cache import (
     CachedSpan,
     CacheMiss,
     FileStat,
+    PackedSpans,
     bundle_key,
     bundle_signature,
     default_cache_dir,
@@ -746,14 +747,15 @@ def project(root: Path, roots: list[Path], source: Path) -> Projection | Compile
                 relative, at.line, at.column, "error", "hy-expansion", f"展開した Python が文法に合わない: {error.msg}"
             ),
         )
-    spans = [span for pair in _child_pairs(reparsed, tree) if (span := _span(*pair)) is not None]
+    # 位置の対応は詰めた配列で持つ(展開の子から親へ送る pickle も、親が pyright の間に抱えるのも配列 1 つ — PackedSpans)。
+    spans = PackedSpans.of(span for pair in _child_pairs(reparsed, tree) if (span := _span(*pair)) is not None)
     # module の直下の setv は macro の外なので、source の一番外の並びを別に見る(ADR-DOE-HY-006)— compile と並んで見た所見。
     top_level = scope.findings
     return Projection(
         source,
         name,
         rendered,
-        tuple(spans),
+        spans,
         tuple(_finding_diagnostic(relative, f) for f in (*found, *top_level)),
         used=recording.record(
             text, also=(value_reference(_POST_PROCESSING_MODULE, "POST_PROCESSING"),)

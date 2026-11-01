@@ -141,9 +141,10 @@ def test_an_entry_of_the_current_store_version_is_read_back(
 #: CACHE_VERSION を上げ、この表に新しい行を足す(版は行ごとに違う — 同じ版のまま hash だけを足すと下の検が断る)。
 #: 版 3 の行の hash は、gensym_renaming の中の import を _records へ移した source の物(規則は同じなので版は
 #: 上げず、前の hash 5b4612a4… を置き換えた)。その後に docstring だけを書き換えた(移した module の名・tracker の id を
-#: 外した)ので、規則は同じまま hash 75e5ff36… を置き換えた。
+#: 外した)ので、規則は同じまま hash 75e5ff36… を置き換えた。版 4 は位置の対応の保存の形を替えた版で、規則は版 3 と同じなので
+#: 同じ hash の行の版を 4 にした(表は今の規則の行の版を CACHE_VERSION と照らす)。
 GENSYM_RULE_VERSIONS = {
-    "7981e4ad3c2b2d0f589750610b29f6d53a2dcbac75e1180c84876ed63736f0b5": 3,
+    "7981e4ad3c2b2d0f589750610b29f6d53a2dcbac75e1180c84876ed63736f0b5": 4,
 }
 
 
@@ -566,7 +567,7 @@ def test_two_writers_of_one_entry_do_not_mix(tmp_path: Path) -> None:
     text = json.loads(entries[0].read_text(encoding="utf-8"))["text"]
     assert text in {"x" * 400_000, "y" * 400_000}, "2 つの書き手の中身が混ざった"
     assert not [p for p in cache.rglob("*") if p.is_file() and p.suffix != ".json"], "一時の file が残った"
-    assert static_cache.CACHE_VERSION == 3
+    assert static_cache.CACHE_VERSION == 4
 
 
 def test_each_writer_uses_its_own_temporary_file(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -702,8 +703,9 @@ def test_a_warm_closure_opens_one_bundle_not_every_entry(
     opened = _opened_during(tree, monkeypatch)
     sources = [p for p in opened if p.endswith(".hy")]
     entries = [p for p in opened if p.endswith(".json")]
+    bundles = [p for p in opened if p.endswith(".jsonl")]
     assert sources == [], f"温まった closure が source を読み直した: {sources}"
-    assert len(entries) == 1, f"温まった closure が束 1 つでなく entry を読んだ: {entries}"
+    assert (entries, len(bundles)) == ([], 1), f"温まった closure が束 1 つでなく entry を読んだ: {opened}"
     assert {p: q.text for p, q in second.projections.items()} == {p: q.text for p, q in first.projections.items()}
 
 
@@ -779,4 +781,5 @@ def test_a_bundle_follows_a_changed_macro_to_the_next_run(tree: Tree, monkeypatc
     _closure(tree)  # 展開し直して束を書き直す
     opened = _opened_during(tree, monkeypatch)
     assert [p for p in opened if p.endswith(".hy")] == []
-    assert len([p for p in opened if p.endswith(".json")]) == 1, opened
+    assert [p for p in opened if p.endswith(".json")] == [], opened
+    assert len([p for p in opened if p.endswith(".jsonl")]) == 1, opened
