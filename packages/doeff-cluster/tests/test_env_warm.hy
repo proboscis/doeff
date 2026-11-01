@@ -13,7 +13,7 @@
 ;; bytecode: 焼きの並列数は cgroup の CPU の上限(天井 BAKE-JOBS-CEILING)・焼く範囲は入口の module の import の閉包。
 (require doeff-hy.macros [deftest defk deff do! <- val var])
 (val MODULE-TAGS {:context "doeff-cluster-test" :role "test"})
-(import tests.room_rows [ROOM-LOADS])
+(import tests.room_rows [ROOM-LOADS ROOM-JSONS])
 (require doeff-hy.record [defrecord])
 (import doeff_events [MemoryBroker])
 (import dataclasses [dataclass replace])
@@ -315,7 +315,7 @@
   (assert (= warmed.until-ms 601000) warmed)
   (assert (= #(warmed.ready warmed.preparing) #(#() #())) warmed)
   ;; 能力の合う worker の heartbeat の返事にだけ載る(能力の足りない worker・専用の能力を持つ worker には載らない)
-  (val hb {"name" "w1" "provides" ["agent-cli"] "backgroundRoom" 2 "taskReserve" 0 "versions" {} "boot" "b1" "platform" "linux-x86_64"
+  (val hb {"name" "w1" "provides" ["agent-cli"] "measured" (get ROOM-JSONS 2) "versions" {} "boot" "b1" "platform" "linux-x86_64"
            "envs" {"ready" [] "preparing" [key-linux] "failed" []} "envCapacity" "ok"})
   (val s1 (! (register-heartbeat after (! (heartbeat-of hb)) 2000)))
   (val reply-1 (! (heartbeat-reply s1 "w1" TIMING :now 2000)))
@@ -345,7 +345,7 @@
   (val body {"runtimeEnv" declared "needs" ["agent-cli"] "ttlSeconds" 600 "holder" "svc-a"})
   (val written (responded (ClusterState) (! (http-request "POST" "/warm" {} body :actor "svc-a")) 1000 TIMING))
   (val warmed (warm-state-of-json (get written 2)))
-  (val hb {"name" "w1" "provides" ["agent-cli"] "backgroundRoom" 2 "taskReserve" 0 "versions" {} "boot" "b1" "platform" "linux-x86_64"
+  (val hb {"name" "w1" "provides" ["agent-cli"] "measured" (get ROOM-JSONS 2) "versions" {} "boot" "b1" "platform" "linux-x86_64"
            "envs" {"ready" [] "preparing" [key-linux] "failed" [] "memoryUnmeasured" []} "envCapacity" "ok"})
   (val measured (! (register-heartbeat (get written 0) (! (heartbeat-of hb)) 2000)))
   (val read-1 (warm-state-of-json (get (responded measured (! (http-request "GET" (+ "/warm/" warmed.key) {} None)) 2000 TIMING) 2)))
@@ -441,7 +441,7 @@
   (assert (= (. (get (load-of after (table-of #())) "w1") tasks) 1) "preparing の task も担い手の数に入る")
   (assert (= (lfor t (tasks-for after "w1") t.id) ["t1"]) "preparing の task も worker へ送る")
   ;; worker が準備済みを名乗った拍に assigned へ進む
-  (val hb {"name" "w1" "provides" ["net"] "backgroundRoom" 2 "taskReserve" 0 "versions" {} "boot" None "platform" "linux-x86_64"
+  (val hb {"name" "w1" "provides" ["net"] "measured" (get ROOM-JSONS 2) "versions" {} "boot" None "platform" "linux-x86_64"
            "envs" {"ready" [key] "preparing" [] "failed" []} "envCapacity" "ok"})
   (val promoted (! (register-heartbeat after (! (heartbeat-of hb)) 20)))
   (assert (= (. (.row promoted.tasks "t1") phase) "assigned") (.row promoted.tasks "t1")))

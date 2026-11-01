@@ -3,6 +3,7 @@
 ;; 回した答えと同じで、変化のある heartbeat(報告の行が変わる・沈黙から戻る)は早道に入らない。
 (require doeff-hy.macros [defk deftest <- val])
 (import doeff [run])
+(import tests.room_rows [ROOM-JSONS])
 (import doeff_cluster [ClusterTiming])
 (import doeff_cluster [http-request])
 (import doeff_cluster [ClusterState])
@@ -20,7 +21,7 @@
 (defk beat-body [name statuses]
   {:pre [(: name str) (: statuses list)] :post [(: % dict)] :tags {:context "doeff-cluster-test" :role "entry"}}
   "worker name の heartbeat の本文(報告の行 statuses)を組むため。"
-  {"name" name "provides" ["net"] "backgroundRoom" 10 "taskReserve" 0 "versions" V "statuses" statuses})
+  {"name" name "provides" ["net"] "measured" (get ROOM-JSONS 10) "versions" V "statuses" statuses})
 
 
 (defk answered [state body now settled]

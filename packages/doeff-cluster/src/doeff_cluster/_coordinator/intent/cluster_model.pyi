@@ -76,6 +76,8 @@ class WorkerInfo:
     derived: tuple[str, ...] = ...
     seen_mark: int | None = None
     known_exits: tuple[KnownExit, ...] = ...
+    task_reserve: int = 0
+    background_room: int = 0
 
 @dataclass(frozen=True, kw_only=True)
 class WorkerLoad:

@@ -136,6 +136,8 @@
    "workers" (dfor w view.workers
                    w.info.name (| {"provides" (list w.info.provides) "exclusive" (list w.info.exclusive) "derived" (list w.info.derived)
                                    "node" w.info.node "taskRoom" w.task-room
+                                   ;; 旧い読み手が必ずの欄として読む手書きの task の枠の許し(WorkerInfo の註 — 置き方は読まない)。
+                                   "taskReserve" w.info.task-reserve "backgroundRoom" w.info.background-room
                                    "silentMs" w.silent-ms
                                    "versions" (dict w.info.versions) "live" w.live "draining" w.draining}
                                   (if (is w.info.memory-mib None) {} {"memoryMiB" w.info.memory-mib})

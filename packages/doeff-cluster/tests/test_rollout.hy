@@ -8,6 +8,7 @@
 ;; 配備の流れが Deployment の台数を戻したら Rollout の状態に出る・dry-run は k8s に保存しない。
 (require doeff-hy.macros [deftest defk <- val])
 (import doeff [run with_handlers])
+(import tests.room_rows [ROOM-JSONS])
 (import doeff_core_effects [scheduled])
 (import doeff_cluster [ClusterTiming])
 (import doeff_cluster [ClusterNaming ClusterState])
@@ -97,7 +98,7 @@
                              "specHash" (spec-hash spec) "placement" spec.placement}])
                        []))
     (setv #(state _ reply) (responded self.state (run (http-request "POST" "/heartbeat" {}
-                                                        {"name" "atlas" "provides" ["net"] "backgroundRoom" 10 "taskReserve" 0 "versions" V
+                                                        {"name" "atlas" "provides" ["net"] "measured" (get ROOM-JSONS 10) "versions" V
                                                          "statuses" statuses})) self.now T))
     (setv self.state state)
     (setv want (next (gfor j (get reply "jobs") :if (= (get j "name") "writer-a")

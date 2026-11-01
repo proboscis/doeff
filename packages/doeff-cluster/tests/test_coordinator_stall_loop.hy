@@ -11,6 +11,7 @@
 (require doeff-hy.macros [deftest defk defhandler <- val var])
 (require doeff-hy.record [defrecord])
 (val MODULE-TAGS {:context "doeff-cluster-test" :role "test"})
+(import tests.room_rows [ROOM-JSONS])
 (import dataclasses [dataclass])  ; defrecord の展開が名指す
 (import datetime [datetime timezone])
 (import doeff [run with-handlers])
@@ -81,7 +82,7 @@
 (defk stalls-of [oversleep slow-save]
   {:pre [(: oversleep float) (: slow-save float)] :post [(: % list)] :tags {:context "doeff-cluster-test" :role "entry"}}
   "新しい状態の調停ループを、寝過ごし oversleep 秒・最初の保存 slow-save 秒の台本の上で止めの合図まで回し、出た止まりの行を返すため。"
-  (val request (! (http-request "POST" "/heartbeat" {} {"name" "w1" "provides" ["net"] "backgroundRoom" 10 "taskReserve" 0 "versions" VERSIONS}
+  (val request (! (http-request "POST" "/heartbeat" {} {"name" "w1" "provides" ["net"] "measured" (get ROOM-JSONS 10) "versions" VERSIONS}
                                 :actor "w1" :peer "w1" :queued-ms 0)))
   (val script (Script request oversleep slow-save))
   (run (scheduled ((sim-time-handler :clock (SimClock :current-time START))

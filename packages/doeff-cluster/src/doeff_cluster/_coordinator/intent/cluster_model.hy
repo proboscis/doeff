@@ -144,7 +144,12 @@
   ;; coordinator を作り直した後に最初に来る新しい世代の heartbeat も、前の世代で process を持っていた job をこの列から数える)。
   ;; 中身が替わるのは process の起き・終わり・世代の入れ替わりの時だけ(同じ世代の heartbeat をくり返しても保存の行は変わらない)。
   ;; 欄の無い保存の行は空の列として読む。
-  (setv #^ (get tuple #(KnownExit ...)) known-exits #()))
+  (setv #^ (get tuple #(KnownExit ...)) known-exits #())
+  ;; 手書きの task の枠(消した欄 — task の置き先は measured から数える)。上に載る系の呼び手が名で渡す間だけ受けて捨てる許し:
+  ;; 置き方・保存・Worker の資源の行は読まず、GET /state の worker の行の taskReserve・backgroundRoom(旧い読み手が必ずの欄として
+  ;; 読む)に写すだけ。heartbeat の名乗りから作る記録は 0。呼び手が渡すのを止めたら欄ごと消す。
+  (setv #^ int task-reserve 0)
+  (setv #^ int background-room 0))
 
 
 (defrecord WorkerLoad

@@ -11,6 +11,7 @@
 (require doeff-cluster.macros [defsystem])
 (require doeff-hy.record [defrecord])
 (val MODULE-TAGS {:context "doeff-cluster-test" :role "test"})
+(import tests.room_rows [ROOM-JSONS])
 (import doeff_cluster [SimMachine])
 (import collections.abc [Callable])
 (import dataclasses [dataclass])  ; defrecord の展開が名指す
@@ -28,7 +29,7 @@
 (val TIMING (ClusterTiming))
 ;; 枠の file の読み直しの間(10 秒)と heartbeat の間(2.5 秒)を越えて、置き方が落ち着くまでの秒。
 (val SETTLE-SECONDS 20.0)
-(val ROOM {"capacity" 3 "taskReserve" 0 "backgroundRoom" 3 "memoryMiB" 2048})
+(val ROOM {"capacity" 3 "measured" (get ROOM-JSONS 3) "memoryMiB" 2048})
 
 
 (defsystem pooled-system [#^ Callable foundation]

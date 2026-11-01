@@ -6,6 +6,7 @@
 ;; 能力・置き先が無いと最初に見た刻(sinceMs — 後の拍でも最初の刻を保つ)が出て、置かれた拍に消える。
 (require doeff-hy.macros [deftest defk <- val])
 (import doeff_cluster [ClusterTiming Request])
+(import tests.room_rows [ROOM-JSONS])
 (import doeff_cluster [ClusterState])
 (import doeff_cluster [http-request])
 (import doeff_cluster [responded])
@@ -36,7 +37,7 @@
    :tags {:context "doeff-cluster-test" :role "judgment"}}
   "worker name が能力 provides を名乗る heartbeat を 1 つ受けた後の状態を返すため。"
   (<- answer tuple (call state "POST" "/heartbeat"
-                         {"name" name "provides" provides "exclusive" [] "backgroundRoom" 10 "taskReserve" 0 "versions" V
+                         {"name" name "provides" provides "exclusive" [] "measured" (get ROOM-JSONS 10) "versions" V
                           "boot" "b1" "bootAt" 1 "statuses" []}
                          :actor None :now now))
   (assert (= (get answer 1) 200) answer)

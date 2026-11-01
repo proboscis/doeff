@@ -9,7 +9,7 @@
 ;; (入れ替えを宣言しない job は同時に 2 つの worker の上で走らない — architecture.hy)を筋書きの process の記録で判じる検。
 (require doeff-hy.macros [deftest defk <- val var])
 (require doeff-hy.record [defrecord])
-(import tests.room_rows [ROOM-LOADS])
+(import tests.room_rows [ROOM-LOADS ROOM-JSONS])
 (import tests.state_rows [table-from-rows])
 (import doeff_hy._table [table-of])
 (import doeff_events [MemoryBroker])
@@ -175,7 +175,7 @@
 (defk beat-body [name statuses kept]
   {:pre [(: name str) (: statuses list) (: kept (| list None))] :post [(: % dict)] :tags {:context "doeff-cluster-test" :role "program"}}
   "heartbeat の本文 1 つ(kept = 今持っている印の名の列 — None なら欄を書かない古い worker)を組むため。"
-  (| {"name" name "provides" ["net"] "backgroundRoom" 10 "taskReserve" 0 "versions" {"python" "3.14.0"} "statuses" statuses}
+  (| {"name" name "provides" ["net"] "measured" (get ROOM-JSONS 10) "versions" {"python" "3.14.0"} "statuses" statuses}
      (if (is kept None) {} {"keptWhenCutOff" kept})))
 
 

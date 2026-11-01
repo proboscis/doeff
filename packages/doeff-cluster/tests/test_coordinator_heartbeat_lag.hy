@@ -12,6 +12,7 @@
 (require doeff-hy.macros [deftest defk defhandler <- val var])
 (require doeff-hy.record [defrecord])
 (val MODULE-TAGS {:context "doeff-cluster-test" :role "test"})
+(import tests.room_rows [ROOM-JSONS])
 (import dataclasses [dataclass])  ; defrecord の展開が名指す
 (import doeff [run with-handlers])
 (import doeff_core_effects [state])
@@ -81,7 +82,7 @@
 (defk heartbeat-of [name queued-ms]
   {:pre [(: name str) (: queued-ms int)] :post [(: % Request)] :tags {:context "doeff-cluster-test" :role "judgment"}}
   "worker name の POST /heartbeat の要求を作るため(受付の箱に queued-ms 並んでいた事にする)。"
-  (! (http-request "POST" "/heartbeat" {} {"name" name "provides" ["net"] "backgroundRoom" 10 "taskReserve" 0 "versions" VERSIONS}
+  (! (http-request "POST" "/heartbeat" {} {"name" name "provides" ["net"] "measured" (get ROOM-JSONS 10) "versions" VERSIONS}
                    :actor name :peer name :queued-ms queued-ms)))
 
 

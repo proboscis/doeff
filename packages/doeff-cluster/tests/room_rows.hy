@@ -10,3 +10,8 @@
 (val ROOM-LOADS (tuple (gfor n (range 0 65)
                              (MeasuredLoad :at-ms 0 :cpus (+ n 1) :cpu-busy 0.0 :memory-total-MiB 262144 :memory-available-MiB 262144
                                            :cpu-some-avg10 0.0 :cpu-full-avg10 0.0 :memory-some-avg10 0.0 :memory-full-avg10 0.0))))
+
+;; ROOM-LOADS と同じ読みを heartbeat の本文の欄 measured の JSON の形で(本文を dict で組む検のため)。
+(val ROOM-JSONS (tuple (gfor n (range 0 65)
+                             {"atMs" 0 "cpus" (+ n 1) "cpuBusy" 0.0 "memoryTotalMiB" 262144 "memoryAvailableMiB" 262144
+                              "cpuSomeAvg10" 0.0 "cpuFullAvg10" 0.0 "memorySomeAvg10" 0.0 "memoryFullAvg10" 0.0})))

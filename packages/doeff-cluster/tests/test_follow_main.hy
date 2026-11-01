@@ -13,7 +13,7 @@
 ;; 係は 2026-09-28 に消した(Program の job は宣言した commit でだけ解く — ADR-DOE-CLUSTER-001・計画 2.2 の E)ので、版を変えるのは
 ;; 宣言し直しだけ。image の版を追う欄(baseFrom・base・overlay)を持つ宣言を断る検は test_old_declarations.hy。
 (require doeff-hy.macros [deftest defk <- val])
-(import tests.room_rows [ROOM-LOADS])
+(import tests.room_rows [ROOM-LOADS ROOM-JSONS])
 (import tests.state_rows [table-from-rows])
 (import doeff [run])
 (import dataclasses [replace])
@@ -115,7 +115,7 @@
   (for [a actions] (sim.apply a))
   (setv sim.records (! (records-after sim.now sim.records actions sim.policy)))
   (<- rows tuple (status-rows-json (tuple (! (statuses sim.now sim.desired (sim.world) sim.records sim.policy)))))
-  (val reply (sim.call "POST" "/heartbeat" {"name" "zeus" "provides" ["net"] "backgroundRoom" 10 "taskReserve" 0 "versions" V "statuses" (list rows)}
+  (val reply (sim.call "POST" "/heartbeat" {"name" "zeus" "provides" ["net"] "measured" (get ROOM-JSONS 10) "versions" V "statuses" (list rows)}
                        :actor None))
   (setv sim.desired (tuple (gfor j (get reply "jobs")
                                  (JobSpec (get j "name") (get j "entry") (tuple (get j "args")) (get j "revision")

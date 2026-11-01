@@ -369,6 +369,9 @@ ROOMY_MACHINE: SimMachine
 def machine_load_of(machine: SimMachine, running: int, at_ms: int, claims_cpus: int | None=None) -> _Program[MachineLoad, object]:
     ...
 
+def sim_machine_of(worker: SimWorker) -> _Program[SimMachine | None, object]:
+    ...
+
 @dataclass(frozen=True, kw_only=True)
 class SimWorker:
     name: str
@@ -376,6 +379,8 @@ class SimWorker:
     doeff_commit: str = ''
     exclusive: frozenset[str] = ...
     machine: SimMachine | None = ...
+    task_reserve: int | None = None
+    background_room: int | None = None
     memory_mib: int | None = None
     node: str = ''
     versions: dict | None = None

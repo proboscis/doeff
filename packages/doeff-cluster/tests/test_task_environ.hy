@@ -11,6 +11,7 @@
 ;;               (本番の土台の os-environ-reader が外へ通した Ask)。値の字面どおりの読みの契約は test_environ_reader.hy。
 (require doeff-hy.macros [deftest defk <- val var])
 (import doeff_events [MemoryBroker])
+(import tests.room_rows [ROOM-JSONS])
 (import json)
 (import os)
 (import sys)
@@ -72,7 +73,7 @@
   {:pre [(: state ClusterState) (: now int)] :post [(: % tuple)] :tags {:context "doeff-cluster-test" :role "entry"}}
   "worker w(能力 net・版 V・世代 b1)の heartbeat 1 回 → #(次の状態 status 返事)。"
   (<- answer tuple (call state "POST" "/heartbeat"
-                         {"name" "w" "provides" ["net"] "backgroundRoom" 10 "taskReserve" 0 "versions" V "boot" "b1" "statuses" []} now))
+                         {"name" "w" "provides" ["net"] "measured" (get ROOM-JSONS 10) "versions" V "boot" "b1" "statuses" []} now))
   answer)
 
 

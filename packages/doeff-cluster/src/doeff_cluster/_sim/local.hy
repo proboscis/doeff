@@ -323,6 +323,15 @@
                :memory-some-avg10 (if (< (* available 20) machine.memory-mib) 20.0 0.0) :memory-full-avg10 0.0))
 
 
+(defk sim-machine-of [worker]
+  {:pre [(: worker SimWorker)] :post [(: % (| SimMachine None))] :tags {:context "doeff-cluster" :role "judgment"}}
+  "worker が載る機体を知るため: 名指した machine。手書きの task の枠(task-reserve・background-room — 上に載る系の筋書きの許し)を渡し
+   machine を既定のままにした worker は、以前の枠と同じ数の task が置かれる機体(空いた CPU = 枠 + 1・memory 256 GiB)。"
+  (if (and (is-not worker.task-reserve None) (is worker.machine ROOMY-MACHINE))
+      (SimMachine :cpus (+ worker.task-reserve (if (is worker.background-room None) 10 worker.background-room) 1) :memory-mib 262144)
+      worker.machine))
+
+
 (defrecord SimWorker
   "sim の worker 1 台(本番の worker の --provides・--exclusive・--memory-mib・node と、載る機体に当たる)。provides =
    提供する能力の名・exclusive = 専用の能力(この能力を needs に持つ job だけを受ける)・machine = 載る機体(SimMachine — heartbeat の
@@ -363,6 +372,10 @@
   (setv #^ str doeff-commit "")
   (setv #^ (get frozenset str) exclusive (frozenset))
   (setv #^ (| SimMachine None) machine ROOMY-MACHINE)
+  ;; 手書きの task の枠(消した欄)を名で渡す上に載る系の筋書きの許し: task-reserve を渡し machine を名指さない worker は、空き
+  ;; task-reserve + background-room(既定 10 — 以前の既定)の機体(CPU = その和 + 1 — sim-machine-of)に載る。渡すのを止めたら消す。
+  (setv #^ (| int None) task-reserve None)
+  (setv #^ (| int None) background-room None)
   (setv #^ (| int None) memory-mib None)
   (setv #^ str node "")
   (setv #^ (| dict None) versions None)
@@ -2074,8 +2087,9 @@
   (val room (if (is truth.room None) (WorkerRoom :memory-mib worker.memory-mib) truth.room))
   ;; 機体の測った空き(本番の load-noted の代役 — 送る刻に走っている task の数から数える。機体の無い worker は名乗らない)。
   (var measured None)
-  (when (is-not worker.machine None)
-    (<- load MachineLoad (machine-load-of worker.machine (len (lfor p truth.processes :if (.startswith p.name "task/") p)) sent-at
+  (<- machine (| SimMachine None) (sim-machine-of worker))
+  (when (is-not machine None)
+    (<- load MachineLoad (machine-load-of machine (len (lfor p truth.processes :if (.startswith p.name "task/") p)) sent-at
                                           :claims-cpus worker.claims-cpus))
     (:= measured load))
   (<- base dict (heartbeat-body :name worker.name :provides (tuple (sorted named)) :exclusive (tuple (sorted named-exclusive))

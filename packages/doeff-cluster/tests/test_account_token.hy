@@ -7,6 +7,7 @@
 ;; 失敗ケース = 古さを読まない(exp まで ok)・heartbeat に載せない・status に載せない(見回りが知らせにできない)。
 (require doeff-hy.macros [deff defk deftest <- val])
 (val MODULE-TAGS {:context "doeff-cluster-test" :role "test"})
+(import tests.room_rows [ROOM-JSONS])
 (import base64)
 (import json)
 (import time)
@@ -106,9 +107,9 @@
 
 (deftest test-the-worker-status-carries-the-token-state-only-when-not-ok
   ;; coordinator は heartbeat の accountToken を worker の行に写し、Worker の資源の status に ok でない間だけ載せる。名乗らない worker は ok。
-  (<- named (http-request "POST" "/heartbeat" {} {"name" "w1" "provides" ["net"] "backgroundRoom" 2 "taskReserve" 0 "statuses" []
+  (<- named (http-request "POST" "/heartbeat" {} {"name" "w1" "provides" ["net"] "measured" (get ROOM-JSONS 2) "statuses" []
                                                   "accountToken" "stale"} :actor "c-test"))
-  (<- unnamed (http-request "POST" "/heartbeat" {} {"name" "w2" "provides" ["net"] "backgroundRoom" 2 "taskReserve" 0 "statuses" []}
+  (<- unnamed (http-request "POST" "/heartbeat" {} {"name" "w2" "provides" ["net"] "measured" (get ROOM-JSONS 2) "statuses" []}
                             :actor "c-test"))
   (val after-stale (get (responded (ClusterState) named 1000 T) 0))
   (val after-both (get (responded after-stale unnamed 1000 T) 0))

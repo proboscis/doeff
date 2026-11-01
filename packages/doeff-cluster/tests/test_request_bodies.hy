@@ -84,17 +84,17 @@
 
 
 (deftest test-a-heartbeat-body-is-read-into-its-type-and-refused-before-the-decision
-  ;; heartbeat の本文の形の検め(前は判断の中の手書きの検め)は解く所で: 空の名・欠けた失敗の行の kind・文字列の容量は 400。旧い labels は判断が断る。
-  (<- beat (body-of (! (http-request "POST" "/heartbeat" {} {"name" "w" "provides" ["net"] "taskReserve" 2 "envs" {"ready" ["k1"]}
+  ;; heartbeat の本文の形の検め(前は判断の中の手書きの検め)は解く所で: 空の名・欠けた失敗の行の kind・形の違う測った空きは 400。旧い labels は判断が断る。
+  (<- beat (body-of (! (http-request "POST" "/heartbeat" {} {"name" "w" "provides" ["net"] "envs" {"ready" ["k1"]}
                                                              "statuses" [{"name" "a"}]}))))
-  (assert (= #(beat.name beat.provides beat.envs.ready beat.background-room beat.task-reserve (len beat.statuses)) #("w" #("net") #("k1") 0 2 1)) beat)
-  (<- nameless (body-of (! (http-request "POST" "/heartbeat" {} {"name" "" "provides" ["net"] "taskReserve" 0}))))
+  (assert (= #(beat.name beat.provides beat.envs.ready beat.measured (len beat.statuses)) #("w" #("net") #("k1") None 1)) beat)
+  (<- nameless (body-of (! (http-request "POST" "/heartbeat" {} {"name" "" "provides" ["net"]}))))
   (assert (isinstance nameless BodyMalformed) nameless)
-  (<- kindless (body-of (! (http-request "POST" "/heartbeat" {} {"name" "w" "taskReserve" 0 "envs" {"failed" [{"key" "k"}]}}))))
+  (<- kindless (body-of (! (http-request "POST" "/heartbeat" {} {"name" "w" "envs" {"failed" [{"key" "k"}]}}))))
   (assert (in "kind" kindless.reason) kindless)
-  (<- wordy (body-of (! (http-request "POST" "/heartbeat" {} {"name" "w" "backgroundRoom" "10" "taskReserve" 0}))))
-  (assert (in "backgroundRoom" wordy.reason) wordy)
-  (val old (responded (ClusterState) (! (http-request "POST" "/heartbeat" {} {"name" "w" "taskReserve" 0 "labels" {"kind" "mac"}})) 1000 T))
+  (<- wordy (body-of (! (http-request "POST" "/heartbeat" {} {"name" "w" "measured" {"atMs" 0 "cpus" "4" "memoryTotalMiB" 1 "memoryAvailableMiB" 1}}))))
+  (assert (in "cpus" wordy.reason) wordy)
+  (val old (responded (ClusterState) (! (http-request "POST" "/heartbeat" {} {"name" "w" "labels" {"kind" "mac"}})) 1000 T))
   (assert (= (get old 1) 400) old)
   (assert (in "labels" (get old 2 "error")) old))
 
@@ -102,51 +102,31 @@
 (deftest test-a-worker-overlapping-a-running-elder-says-so-and-the-coordinator-reads-it
   ;; 前の世代がまだ走っている間に起きた worker(起動の script の --overlaps-elder — AL-D2e)の heartbeat の本文は overlapsElder を載せ、
   ;; coordinator の本文の型はそれを真と読む。印の無い worker の本文は前と同じ形(欄を書かない)で、偽と読む。
-  (<- overlapping (heartbeat-body :name "w" :provides #("net") :exclusive #() :node "n" :background-room 3 :task-reserve 0 :versions {}
+  (<- overlapping (heartbeat-body :name "w" :provides #("net") :exclusive #() :node "n" :versions {}
                                   :statuses [] :endpoint "http://c" :boot "b2" :boot-at 2 :tools {} :kept #() :overlaps-elder True))
   (assert (= (get overlapping "overlapsElder") True) overlapping)
   (<- read (body-of (! (http-request "POST" "/heartbeat" {} overlapping))))
   (assert (= read.overlaps-elder True) read)
-  (<- plain (heartbeat-body :name "w" :provides #("net") :exclusive #() :node "n" :background-room 3 :task-reserve 0 :versions {}
+  (<- plain (heartbeat-body :name "w" :provides #("net") :exclusive #() :node "n" :versions {}
                             :statuses [] :endpoint "http://c" :boot "b2" :boot-at 2 :tools {} :kept #()))
   (assert (not-in "overlapsElder" plain) plain)
   (<- plain-read (body-of (! (http-request "POST" "/heartbeat" {} plain))))
   (assert (= plain-read.overlaps-elder False) plain-read))
 
 
-(deftest test-a-heartbeat-without-its-task-reserve-or-outside-its-range-is-refused-before-the-decision
-  ;; task のために空けておく数 taskReserve は heartbeat の必ずの欄(既定の値は無い)。欄の無い本文・負の数・数でない値は解く所で 400(判断に
-  ;; 入らず、状態を変えない)— 欄を知らない worker を黙って予約 0 と読まない。backgroundRoom の負の数も 400。
-  (<- missing (body-of (! (http-request "POST" "/heartbeat" {} {"name" "w" "provides" ["net"] "backgroundRoom" 3}))))
-  (assert (isinstance missing BodyMalformed) missing)
-  (assert (in "taskReserve" missing.reason) missing)
-  (<- negative (body-of (! (http-request "POST" "/heartbeat" {} {"name" "w" "provides" ["net"] "backgroundRoom" 3 "taskReserve" -1}))))
-  (assert (isinstance negative BodyMalformed) negative)
-  (<- below (body-of (! (http-request "POST" "/heartbeat" {} {"name" "w" "provides" ["net"] "backgroundRoom" -1 "taskReserve" 0}))))
-  (assert (isinstance below BodyMalformed) below)
-  (<- worded (body-of (! (http-request "POST" "/heartbeat" {} {"name" "w" "provides" ["net"] "backgroundRoom" 3 "taskReserve" "1"}))))
-  (assert (in "taskReserve" worded.reason) worded)
-  ;; 予約は背景の枠より大きくてよい(手書きの capacity は消した — 上限は無い)。
-  (<- whole (body-of (! (http-request "POST" "/heartbeat" {} {"name" "w" "provides" ["net"] "backgroundRoom" 3 "taskReserve" 4}))))
-  (assert (= #(whole.task-reserve whole.background-room) #(4 3)) whole)
-  (val state (ClusterState))
-  (val answer (responded state (! (http-request "POST" "/heartbeat" {} {"name" "w" "provides" ["net"] "backgroundRoom" 3})) 1000 T))
-  (assert (is (get answer 0) state) answer)
-  (assert (= (get answer 1) 400) answer)
-  (assert (in "taskReserve" (get answer 2 "error")) answer))
-
-
-(deftest test-an-old-worker-heartbeat-with-capacity-is-read-with-no-background-room
-  ;; 配備の間だけの許し(coordinator を先・worker を後に入れ替える): 旧い worker の本文は capacity を送り
-  ;; backgroundRoom を送らない。capacity は読み捨て(数でも数でない値でも本文を断らない)、背景の枠は 0 と読む。新しい worker の本文は
-  ;; capacity を送らない。
-  (<- old (body-of (! (http-request "POST" "/heartbeat" {} {"name" "w" "provides" ["net"] "capacity" 41 "taskReserve" 6}))))
-  (assert (= #(old.task-reserve old.background-room (hasattr old "capacity")) #(6 0 False)) old)
-  (<- odd (body-of (! (http-request "POST" "/heartbeat" {} {"name" "w" "provides" ["net"] "capacity" "x" "taskReserve" 6}))))
-  (assert (= odd.background-room 0) odd)
-  (<- sent (heartbeat-body :name "w" :provides #("net") :exclusive #() :node "n" :background-room 4 :task-reserve 6 :versions {}
+(deftest test-an-old-worker-heartbeat-with-task-slots-is-read-without-them
+  ;; 配備の間(coordinator を先・worker を後に入れ替える): 旧い worker の本文は手書きの task の枠(taskReserve・backgroundRoom・
+  ;; capacity)を送る。どれも読み捨てる(数でも数でない値・負の数でも本文を断らない — 置き先は measured から数える)。新しい worker の
+  ;; 本文はどれも送らない。失敗ケース: 欄を必ずの欄のまま残すと、新しい worker の本文が 400 で断られる。
+  (<- old (body-of (! (http-request "POST" "/heartbeat" {} {"name" "w" "provides" ["net"] "capacity" 41 "taskReserve" 6 "backgroundRoom" 4}))))
+  (assert (= #(old.name (hasattr old "task_reserve") (hasattr old "background_room") (hasattr old "capacity")) #("w" False False False)) old)
+  (<- odd (body-of (! (http-request "POST" "/heartbeat" {} {"name" "w" "provides" ["net"] "capacity" "x" "taskReserve" -1 "backgroundRoom" "10"}))))
+  (assert (not (isinstance odd BodyMalformed)) odd)
+  (<- sent (heartbeat-body :name "w" :provides #("net") :exclusive #() :node "n" :versions {}
                            :statuses [] :endpoint "http://c" :boot "b2" :boot-at 2 :tools {} :kept #()))
-  (assert (= #((get sent "backgroundRoom") (in "capacity" sent)) #(4 False)) sent))
+  (assert (not (& #{"capacity" "taskReserve" "backgroundRoom"} (set sent))) sent)
+  (<- read (body-of (! (http-request "POST" "/heartbeat" {} sent))))
+  (assert (not (isinstance read BodyMalformed)) read))
 
 
 (deftest test-a-resource-declaration-envelope-is-read-into-its-type

@@ -7,6 +7,7 @@
 ;; 宣言の needs で置き直す。版(revision)を変えずに置き先(needs・pin)を書き換える PUT は 409 で断る。
 (require doeff-hy.macros [deftest defk <- val var])
 (import doeff_cluster [SimMachine])
+(import tests.room_rows [ROOM-JSONS])
 (import doeff_events [MemoryBroker])
 (import doeff_time [Delay])
 (import doeff_cluster [ClusterTiming Request])
@@ -53,7 +54,7 @@
    :tags {:context "doeff-cluster-test" :role "judgment"}}
   "worker name(世代 boot)が能力 provides(専用の能力 exclusive)を名乗る heartbeat を 1 つ受けた後の状態を返すため。"
   (<- answer tuple (call state "POST" "/heartbeat"
-                         {"name" name "provides" provides "exclusive" (or exclusive []) "backgroundRoom" 10 "taskReserve" 0 "versions" V
+                         {"name" name "provides" provides "exclusive" (or exclusive []) "measured" (get ROOM-JSONS 10) "versions" V
                           "boot" boot "bootAt" (if (= boot "b1") 1 now) "statuses" []}
                          :actor None :now now))
   (assert (= (get answer 1) 200) answer)
