@@ -9,7 +9,7 @@
   program, so it just runs. It is a program helper exported from the import root (ADR-DOE-API-001 R18).
 - **doeff-core-effects:** the two effects `shielded` performs are public as `ShieldEnter` and `ShieldExit` (they were
   `_ShieldEnter` and `_ShieldExit`). The packages' own cleanup performs them without the program writing them, so a
-  handler that admits only the effects it names can now name them. The old private names stay as aliases for now.
+  handler that admits only the effects it names can now name them. The old private names are gone.
 - **doeff-run:** a new package for running an image with a given command, environment variables, volumes and resource
   limits. Five effects (`RunStart`, `RunStop`, `RunRemove`, `RunStatus`, `RunReadEvents`) answer with values, not
   exceptions: a handle, a state (`RunPending`, `RunLive`, `RunStopped`, `RunGone`) and a numbered list of state events.

@@ -615,11 +615,6 @@ class ShieldExit(EffectBase[None]):
     """Leave the shielded region ``ShieldEnter`` entered (``shielded``)."""
 
 
-# The old private names, kept until agora-controllers reads the public ones (card [id]).
-_ShieldEnter = ShieldEnter
-_ShieldExit = ShieldExit
-
-
 @do
 def shielded(program: "Program[_T]") -> Generator[Any, Any, _T]:
     """Run ``program`` without being cancelled: the cleanup of a cancelled task that has to wait.
