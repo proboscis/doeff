@@ -3,6 +3,7 @@
 ;;; I/O を持たない(sha256 は計算だけ)。訳し方・本物と模擬の組は doeff_cluster._shared.core.runtime_env の頭の註。
 ;;; 訳し方(git は `git -C <path> …` の 1 回ずつ・0 でない終わりは読めない checkout として RuntimeError — 前の本物の check=True と同じ):
 ;;;   ReadCheckout      rev-parse HEAD → config --get remote.<remote>.url(insteadOf で書き換える前の URL)→ status --porcelain --untracked-files=no(空でなければ dirty)→
+;;;                     merge-base --is-ancestor <head> <remote>/HEAD(exit 0 なら on-remote — remote の既定の branch に在る)→ 0 でなければ
 ;;;                     branch -r --contains <head> --list <remote>/*(空でなければ on-remote — 知識は手元の追跡の ref・最後の fetch による)
 ;;;   CheckoutRoot      <path> で rev-parse --show-toplevel。0 でなければ None(checkout の外)
 ;;;   SenderSourceRoot  CheckoutRoot と同じ問いを SENDER-SOURCE-DIR(この module の dir)で
@@ -35,14 +36,27 @@
 
 (defk checkout-state-at [path remote]
   {:pre [(: path str) (: remote str)] :post [(: % CheckoutState)]}
-  "checkout 1 つの読み(HEAD・remote の URL・汚れ・remote の branch に在るか)を git の 4 問から作るため(頭の註の訳し方)。"
+  "checkout 1 つの読み(HEAD・remote の URL・汚れ・remote の branch に在るか)を git の 4 問(既定の branch に無ければ 5 問)から作るため(頭の註の訳し方)。"
   (<- head str (git-output path #("rev-parse" "HEAD")))
   ;; URL は remote get-url でなく設定の値で読む: get-url は送り手の機体の url.<base>.insteadOf で書き換えた値を答え、機体だけの ssh の
   ;; 別名が宣言に載ると別の機体の worker が clone できない。
   (<- url str (git-output path #("config" "--get" (.format "remote.{}.url" remote))))
   (<- status str (git-output path #("status" "--porcelain" "--untracked-files=no")))
+  (<- on-remote bool (on-remote-at path remote head))
+  (CheckoutState :head head :url url :dirty (bool status) :on-remote on-remote))
+
+
+(defk on-remote-at [path remote head]
+  {:pre [(: path str) (: remote str) (: head str)] :post [(: % bool)]}
+  "head が remote の branch のどれかに在るかを読むため。先に remote の既定の branch(<remote>/HEAD)の祖先かを 1 問で聞き、そうでない時
+   (別の branch だけに在る・<remote>/HEAD が無い clone)だけ remote の branch を全部歩く。branch -r --contains は remote の branch の
+   数に比例し(remote の branch が 2 万本を越える repo で、load 100 の worker の 1.3 秒)、宣言する checkout は大抵既定の branch に在る。"
+  (<- ancestor ProcessOutcome
+      (RunProcess :argv #("git" "-C" path "merge-base" "--is-ancestor" head (.format "{}/HEAD" remote))))
+  (when (= ancestor.exit-code 0)
+    (return True))
   (<- containing str (git-output path #("branch" "-r" "--contains" head "--list" (.format "{}/*" remote))))
-  (CheckoutState :head head :url url :dirty (bool status) :on-remote (bool containing)))
+  (bool containing))
 
 
 (defk checkout-root [path]

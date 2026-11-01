@@ -12,6 +12,8 @@
 ;;;   git -C <path> status --porcelain --untracked-files=no          dirty なら変更の行 1 つ・でなければ空
 ;;;   git -C <path> branch -r --contains <sha> --list <型>            sha が head なら pushed・revs の sha ならその rev の pushed のうち、
 ;;;                                                                  型(fnmatch)に合う branch の行
+;;;   git -C <path> merge-base --is-ancestor <sha> <ref>             ref(<remote>/HEAD は remote-head の branch へ解く)が sha を含めば
+;;;                                                                  exit 0・含まなければ 1・解けない ref は 128(本物の git と同じ)
 ;;; checkout でない path は exit 128(fatal: not a git repository — 本物の git と同じ)。
 ;;;
 ;;;   (scripted-process-handler (ProcessScript :commands #((git-command #((GitCheckout :path "/src/app" :head sha …))))))
@@ -59,7 +61,8 @@
   "台本の git が知る checkout 1 つ。path = 根・head = HEAD の sha・remotes = remote の列・dirty = commit していない変更がある・
    pushed = head を含む remote の branch(`origin/main` の形)・members = 根の外に書くがこの checkout に属する dir(送り手の source の dir
    SENDER-SOURCE-DIR のように、模擬の checkout の path と本物の置き場が違う dir)・revs = 名指しの rev(GitRev の列)・rewrites = 機体の git の
-   URL の書き換え(GitUrlRewrite の列 — remote get-url だけが当てる)。"
+   URL の書き換え(GitUrlRewrite の列 — remote get-url だけが当てる)・remote-head = <remote>/HEAD が指す branch(`origin/main` の形・
+   空なら <remote>/HEAD の無い clone)。"
   (#^ str path)
   (#^ str head)
   (setv #^ (get tuple #(GitRemote ...)) remotes #())
@@ -67,7 +70,8 @@
   (setv #^ (get tuple #(str ...)) pushed #())
   (setv #^ (get tuple #(str ...)) members #())
   (setv #^ (get tuple #(GitRev ...)) revs #())
-  (setv #^ (get tuple #(GitUrlRewrite ...)) rewrites #()))
+  (setv #^ (get tuple #(GitUrlRewrite ...)) rewrites #())
+  (setv #^ str remote-head ""))
 
 
 (defk answered [stdout]
@@ -134,6 +138,19 @@
   lines)
 
 
+(defk ancestry [checkout sha ref]
+  {:pre [(: checkout GitCheckout) (: sha str) (: ref str)] :post [(: % ProcessOutcome)]}
+  "merge-base --is-ancestor <sha> <ref> に答えるため(<remote>/HEAD は remote-head へ解き、その branch が sha を含めば exit 0・含まなければ
+   1・解けない ref は 128)。"
+  (val branch (if (.endswith ref "/HEAD") checkout.remote-head ref))
+  (<- pushed tuple (pushed-of checkout sha))
+  (cond
+    (not branch) (do (<- unknown ProcessOutcome (refused NOT-A-REPOSITORY (.format "fatal: Not a valid object name {}" ref)))
+                     unknown)
+    (in branch pushed) (do (<- contained ProcessOutcome (answered "")) contained)
+    True (ProcessOutcome :exit-code 1 :stdout "" :stderr "")))
+
+
 (defk remote-url-key [key]
   {:pre [(: key str)] :post [(: % (| str None))]}
   "config --get の鍵 remote.<名>.url から remote の名を取り出すため(他の鍵は None — 台本が答える config の鍵はこの形だけ)。"
@@ -186,7 +203,8 @@
         #("status" "--porcelain" "--untracked-files=no") (answered (if found.dirty " M changed" ""))
         #("branch" "-r" "--contains" sha "--list" pattern)
         (containing found sha pattern)
-        _ (refused BAD-USAGE (.format "usage: 台本の git が知らない問い: {}" (.join " " argv)))))
+        #("merge-base" "--is-ancestor" sha ref) (ancestry found sha ref)
+        _(refused BAD-USAGE (.format "usage: 台本の git が知らない問い: {}" (.join " " argv)))))
   answer)
 
 
