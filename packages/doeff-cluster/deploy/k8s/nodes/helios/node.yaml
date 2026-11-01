@@ -8,6 +8,14 @@ spec:
   template:
     spec:
       nodeSelector: { kubernetes.io/hostname: helios }
+      # helios(Ubuntu 26.04・kernel 7.0)では、既定の AppArmor の profile の container の label が
+      # `cri-containerd.apparmor.d//&unconfined`(重ねた形)になり、container の中の process どうしの signal が全部拒まれる
+      # (自分が立てた子への SIGTERM・SIGKILL も EPERM — signal 0 だけ通る)。worker が job を止められず、入れ替えで退いた古い job が
+      # 生き残って新しい job と同じ port を分け合った(2026-11-01 23:08 JST)。同じ image を RuntimeDefault と Unconfined で helios に
+      # 置いて比べ、Unconfined だけ自分の子へ TERM が届くことを確かめた。zeus(Ubuntu 24.04)の label は重ならず、既定のままで届く。
+      # uid 1000・capability 無しは雛形のまま。
+      securityContext:
+        appArmorProfile: { type: Unconfined }
       containers:
         - name: worker
           # helios は CPU 15・memory 58Gi(Node の allocatable・2026-10-31 の実測)。組の印 pool-helios の常駐の job を受ける機体。
