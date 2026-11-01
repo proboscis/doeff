@@ -6,6 +6,7 @@ from doeff import EffectBase as EffectBase
 from doeff_core_effects._process_effects import EnvEntry as EnvEntry
 from doeff_core_effects._process_effects import ProcessEnded as ProcessEnded
 from doeff_core_effects._process_effects import ProcessSignal as ProcessSignal
+from doeff_core_effects._process_effects import ProcessSignalRefused as ProcessSignalRefused
 WARM_ANSWER_SECONDS: float
 EXIT_CODE_PATTERN: str
 
@@ -79,7 +80,7 @@ class AwaitWarmChildExit(EffectBase[ProcessEnded]):
     start_ticks: int
 
 @dataclass(frozen=True, kw_only=True)
-class SignalWarmChild(EffectBase[WarmSignaled | WarmGone]):
+class SignalWarmChild(EffectBase[WarmSignaled | ProcessSignalRefused | WarmGone]):
     pid: int
     start_ticks: int
     signal: ProcessSignal

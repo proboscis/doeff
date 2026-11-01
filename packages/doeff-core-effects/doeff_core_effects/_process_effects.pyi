@@ -134,7 +134,11 @@ class PollProcess(EffectBase[ProcessRunning | ProcessExited | ProcessNotChild]):
     pid: int
 
 @dataclass(frozen=True, kw_only=True)
-class StopProcess(EffectBase[ProcessExited | ProcessNotChild]):
+class ProcessSignalRefused:
+    pid: int
+
+@dataclass(frozen=True, kw_only=True)
+class StopProcess(EffectBase[ProcessExited | ProcessSignalRefused | ProcessNotChild]):
     pid: int
     stop_grace: float = 10.0
 
@@ -154,10 +158,6 @@ class ProcessSignal(StrEnum):
 class ProcessSignalled:
     pid: int
     delivered: bool
-
-@dataclass(frozen=True, kw_only=True)
-class ProcessSignalRefused:
-    pid: int
 
 @dataclass(frozen=True, kw_only=True)
 class SignalProcess(EffectBase[ProcessSignalled | ProcessSignalRefused | ProcessNotChild]):

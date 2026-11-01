@@ -18,7 +18,8 @@
 ;;; 積みは届かない)。止める VM は新しいので計器の外側に state を置く — run をまたいで数えが残るのは process に 1 つの置き場の答え手
 ;;; (process-meter-handler)で、1 つの run の中の答え手(memory-meter-handler)を渡しても要求の run の断面には出ない。
 ;;; offloaded-subprocess-handler は計器の無い形(数えず、log にだけ出す — 計器の答え手の無い使い手が「答え手が無い」で落ちない)。
-;;; 取り消しの前に子が終わっていれば何も送らず数えない。subprocess-handler(thread で回さない)の待ちは取り消しで抜けない(子を待ち切る)。
+;;; 取り消しの前に子が終わっていれば何も送らず数えない。OS が SIGKILL の送りを断った子(EPERM — 例 = AppArmor が container の中の
+;;; signal を拒む機体)は終わりを待たず、止めたと数えずに warning の 1 行で名指す(子は走ったまま)。subprocess-handler(thread で回さない)の待ちは取り消しで抜けない(子を待ち切る)。
 ;;; StartProcess・PollProcess・StopProcess ・SignalProcess(#2461)・WriteProcessInput(#3672)は、立てた子を process に 1 つの表
 ;;; STARTED-CHILDREN で持つ。立てる・問う・signal を送る・握った標準入力へ短い行を書くは待たないので、どちらの答え手もその場で答える。止めるは猶予の間だけ待つので、offloaded-subprocess-handler
 ;;; では thread で回す。
@@ -66,8 +67,8 @@
 
 
 ;; 取り消しで子を止めた結末(頭の註): NOT-RUNNING = 止める前に終わっていた(何も送らない)・TERMINATED = SIGTERM で猶予の内に止まった・
-;; KILLED = 猶予の後も残り SIGKILL で止めた。
-(defenum CancelStop NOT-RUNNING TERMINATED KILLED)
+;; KILLED = 猶予の後も残り SIGKILL で止めた・REFUSED = OS が SIGKILL の送りを断った(EPERM — 子は走ったまま。止めたと数えない)。
+(defenum CancelStop NOT-RUNNING TERMINATED KILLED REFUSED)
 
 
 ;; process group へ signal を送った結末(signal-group の答え): SENT = 送った・GONE = group が既に無い・REFUSED = OS が送りを断った
@@ -289,7 +290,8 @@
    :tags {:context "process" :role "foundation"}}
   "要求が取り消された子を止めるため(頭の註): process-group なら group へ、そうでなければ子へ SIGTERM を送り、stop-grace 秒の内に(group
    なら孫も)居なくなれば TERMINATED、残れば SIGKILL を送って回収し KILLED。止める前に終わっていた子(group なら残りも無い)には何も
-   送らず NOT-RUNNING。子だけの SIGTERM・SIGKILL は Popen の口で送る(回収済みの子の pid へは送らない)。"
+   送らず NOT-RUNNING。子だけの SIGTERM・SIGKILL は Popen の口で送る(回収済みの子の pid へは送らない)。OS が SIGKILL の送りを断れば
+   (EPERM)終わりを待たずに REFUSED — 子は走ったまま(断られた SIGTERM は猶予の後の SIGKILL へ進む)。"
   (val deadline (+ (time.monotonic) stop-grace))
   (val leader-done (is-not (.poll child) None))
   (if process-group
@@ -303,19 +305,21 @@
               (if gone
                   CancelStop.TERMINATED
                   (do
-                    (<- (signal-group child.pid signal.SIGKILL))
-                    (.wait child)
-                    CancelStop.KILLED)))))
+                    (<- killed GroupSignal (signal-group child.pid signal.SIGKILL))
+                    (if (= killed GroupSignal.REFUSED)
+                        CancelStop.REFUSED
+                        (do (.wait child) CancelStop.KILLED)))))))
       (if leader-done
           CancelStop.NOT-RUNNING
           (do
-            (.terminate child)
+            (<- (send-child-signal child signal.SIGTERM))
             (try
               (do (.wait child :timeout stop-grace) CancelStop.TERMINATED)
               (except [subprocess.TimeoutExpired]
-                (.kill child)
-                (.wait child)
-                CancelStop.KILLED))))))
+                (<- killed GroupSignal (send-child-signal child signal.SIGKILL))
+                (if (= killed GroupSignal.REFUSED)
+                    CancelStop.REFUSED
+                    (do (.wait child) CancelStop.KILLED))))))))
 
 
 (defk reported-stop [child how metric meter]
@@ -338,6 +342,9 @@
     CancelStop.TERMINATED (<- (reported-stop child "SIGTERM で止まった" CANCEL-TERMINATED-METRIC watch.meter))
     CancelStop.KILLED (<- (reported-stop child (.format "猶予 {} 秒の後も残り SIGKILL で止めた" watch.stop-grace) CANCEL-KILLED-METRIC
                                          watch.meter))
+    CancelStop.REFUSED (.warning (logging.getLogger __name__)
+                                 "要求が取り消された子 process を止められなかった(OS が SIGKILL の送りを断った — 子は走ったまま): argv の頭 %r・pid %d"
+                                 (get child.args 0) child.pid)
     CancelStop.NOT-RUNNING None)
   None)
 
@@ -598,28 +605,42 @@
 
 
 (defk stop-child-process [pid stop-grace]
-  {:pre [(: pid int) (: stop-grace float)] :post [(: % (| ProcessExited ProcessNotChild))] :tags {:context "process" :role "foundation"}}
+  {:pre [(: pid int) (: stop-grace float)] :post [(: % (| ProcessExited ProcessSignalRefused ProcessNotChild))]
+   :tags {:context "process" :role "foundation"}}
   "StopProcess に本物の子で答えるため: 表に無い pid は ProcessNotChild(他人の process に signal を送らない)。走っていれば、process-group
-   なら group へ・そうでなければ子へ SIGTERM → stop-grace 秒待つ → SIGKILL で止め、回収して表から外す。終わっていた子はそのまま回収する。"
+   なら group へ・そうでなければ子へ SIGTERM → stop-grace 秒待つ → SIGKILL で止め、回収して表から外す。終わっていた子はそのまま回収する。
+   OS が SIGKILL の送りを断れば(EPERM)終わりを待たずに ProcessSignalRefused — 子は走ったままなので表に残す(断られた SIGTERM は
+   猶予の後の SIGKILL へ進む)。"
   (val found (.find STARTED-CHILDREN pid))
   (if (is found None)
       (ProcessNotChild :pid pid)
       (do
         (val child (get found 0))
         (val process-group (get found 1))
+        (var killed GroupSignal.GONE)
         (when (is (.poll child) None)
-          (if process-group
-              (<- (signal-group child.pid signal.SIGTERM))
-              (with [(contextlib.suppress ProcessLookupError)] (.terminate child)))
+          (<- (child-signal child process-group signal.SIGTERM))
           (try
             (.wait child :timeout stop-grace)
             (except [subprocess.TimeoutExpired]
-              (if process-group
-                  (<- (signal-group child.pid signal.SIGKILL))
-                  (with [(contextlib.suppress ProcessLookupError)] (.kill child)))
-              (.wait child))))
-        (.forget STARTED-CHILDREN pid)
-        (ProcessExited :pid pid :exit-code child.returncode))))
+              (<- sent GroupSignal (child-signal child process-group signal.SIGKILL))
+              (:= killed sent)
+              (when (!= killed GroupSignal.REFUSED)
+                (.wait child)))))
+        (if (= killed GroupSignal.REFUSED)
+            (ProcessSignalRefused :pid pid)
+            (do (.forget STARTED-CHILDREN pid)
+                (ProcessExited :pid pid :exit-code child.returncode))))))
+
+
+(defk child-signal [child process-group number]
+  {:pre [(: child subprocess.Popen) (: process-group bool) (: number int)] :post [(: % GroupSignal)]
+   :tags {:context "process" :role "foundation"}}
+  "立てた子へ signal を 1 回送るため: process-group で立てた子は group へ(signal-group)・そうでなければ子へ(send-child-signal)。"
+  (<- sent GroupSignal (if process-group
+                           (signal-group child.pid number)
+                           (send-child-signal child number)))
+  sent)
 
 
 (defk signal-child-process [pid sent]
@@ -635,10 +656,7 @@
         (val number (match sent ProcessSignal.TERM signal.SIGTERM ProcessSignal.KILL signal.SIGKILL))
         (if (is-not (.poll child) None)
             (ProcessSignalled :pid pid :delivered False)
-            (do (<- outcome GroupSignal
-                      (if (get found 1)
-                          (signal-group child.pid number)
-                          (send-child-signal child number)))
+            (do (<- outcome GroupSignal (child-signal child (get found 1) number))
                 (match outcome
                   GroupSignal.REFUSED (ProcessSignalRefused :pid pid)
                   _ (ProcessSignalled :pid pid :delivered True)))))))

@@ -10,7 +10,9 @@
 ;;;   * 待ちの子との約束の 1 行は、頼みも答えも往復する(形の違う 1 行は読めない断り)
 (require doeff-hy.macros [defk deftest <- val var])
 (import doeff_hy._wire [Malformed])
-(import doeff_core_effects [EnvEntry ProcessSignal RunProcess])
+(import os)
+(import unittest [mock])
+(import doeff_core_effects [EnvEntry ProcessSignal ProcessSignalRefused RunProcess])
 (import doeff_core_effects [ForkFromWarm PollWarmChild SignalWarmChild WarmForked WarmRefused WarmRunning WarmExited WarmLost WarmSignaled WarmGone]
         doeff_core_effects._warm_effects [warm-socket-missing warm-answer-late warm-answer-unreadable warm-lost warm-gone])
 (import doeff_core_effects [warm-request-of warm-answer-line]
@@ -77,6 +79,24 @@
   (<- again (SignalWarmChild :pid forked.pid :start-ticks forked.start-ticks :signal ProcessSignal.KILL))
   (<- gone WarmGone (warm-gone forked.pid))
   (assert (= again gone) again))
+
+(deftest test-a-signal-the-os-refuses-is-answered-as-refused-and-the-child-keeps-running
+  ;; OS が送りを断る機体(EPERM — 2026-11-01 の helios では AppArmor が container の中の process どうしの signal を拒んだ)。断られた
+  ;; 合図を WarmSignaled と答えない — 答えは ProcessSignalRefused で、子は走ったまま。反例 = PermissionError が上がるか、送った形で
+  ;; 答える形(直す前)は赤。台本の答え手は OS の断りを持たないので本物だけ。
+  {:interpreters ["os-warm"]}
+  (<- paths WarmPaths (WarmWorldPaths))
+  (<- forked (forked-at paths paths.accepting SLEEPER "refused"))
+  (assert (isinstance forked WarmForked) forked)
+  (<- exit-path str (exit-path-of paths "refused"))
+  (with [_ (mock.patch.object os "killpg" :side-effect (PermissionError 1 "Operation not permitted"))]
+    (<- sent (SignalWarmChild :pid forked.pid :start-ticks forked.start-ticks :signal ProcessSignal.KILL)))
+  (assert (= sent (ProcessSignalRefused :pid forked.pid)) sent)
+  (<- running (PollWarmChild :pid forked.pid :start-ticks forked.start-ticks :exit-path exit-path))
+  (assert (= running (WarmRunning :pid forked.pid)) running)
+  (<- killed (SignalWarmChild :pid forked.pid :start-ticks forked.start-ticks :signal ProcessSignal.KILL))
+  (assert (= killed (WarmSignaled :pid forked.pid)) killed))
+
 
 
 (deftest test-a-reused-pid-is-lost-and-is-not-signalled

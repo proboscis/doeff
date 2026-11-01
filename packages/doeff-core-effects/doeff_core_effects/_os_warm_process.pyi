@@ -8,6 +8,7 @@ from doeff_hy._wire import Malformed as Malformed
 from doeff_hy._wire import dump as dump
 from doeff_hy._wire import parse_json as parse_json
 from doeff_core_effects._process_effects import ProcessSignal as ProcessSignal
+from doeff_core_effects._process_effects import ProcessSignalRefused as ProcessSignalRefused
 from doeff_core_effects._process_stat import ProcStat as ProcStat
 from doeff_core_effects._process_stat import ENDED_STATES as ENDED_STATES
 from doeff_core_effects._darwin_proc import darwin_proc_stat as darwin_proc_stat
@@ -108,7 +109,7 @@ def same_child_running(pid: int, start_ticks: int) -> _Program[bool, object]:
 def os_poll_warm_child(pid: int, start_ticks: int, exit_path: str) -> _Program[WarmRunning | WarmExited | WarmLost, object]:
     ...
 
-def os_signal_warm_child(pid: int, start_ticks: int, sent: ProcessSignal) -> _Program[WarmSignaled | WarmGone, object]:
+def os_signal_warm_child(pid: int, start_ticks: int, sent: ProcessSignal) -> _Program[WarmSignaled | ProcessSignalRefused | WarmGone, object]:
     ...
 
 def input_written(fd: int, text: str) -> _Program[bool, object]:

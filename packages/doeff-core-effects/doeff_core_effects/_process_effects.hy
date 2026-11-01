@@ -71,6 +71,8 @@
 ;;;                     ProcessNotChild(この答え手が立てた子でない pid)。
 ;;;   StopProcess       立てた子を止めて回収する: process-group なら group へ、そうでなければ子へ SIGTERM → stop-grace 秒待つ → SIGKILL。
 ;;;                     答え = ProcessExited か ProcessNotChild(他人の process には signal を送らない)。終わっていた子はそのまま回収する。
+;;;                     OS が SIGKILL の送りを断れば(EPERM)終わりを待たずに ProcessSignalRefused — 子は走ったまま表に残す(断られた KILL の
+;;;                     後に終わりを待つと、止めの呼びが返らない)。
 ;;;   SignalProcess     立てた子へ signal(ProcessSignal の TERM か KILL)を 1 度だけ送り、待たずに返す(#2461 — 消費者 = doeff-cluster の
 ;;;                     worker の子の止め方: 拍ごとに TERM を送り、止まらなければ次の段で KILL を送り、終わりは PollProcess で確かめる)。
 ;;;                     process-group で立てた子は group へ、そうでなければ子へ送る(StopProcess と同じ)。答え = ProcessSignalled(delivered =
@@ -290,8 +292,14 @@
   (#^ int pid))
 
 
-(defclass [(dataclass :frozen True :kw-only True)] StopProcess [(get EffectBase (| ProcessExited ProcessNotChild))]
-  "StartProcess で立てた子を止めて回収する(頭の註)。答え = ProcessExited か ProcessNotChild。"
+(defrecord ProcessSignalRefused
+  "SignalProcess・StopProcess・SignalWarmChild の答え: 走っている子へ送ろうとしたが、OS が送りを断った(EPERM — 権限の照合か LSM の
+   拒否)。子は走ったままなので、呼び手は「送った」「止めた」と数えない。"
+  (#^ int pid))
+
+
+(defclass [(dataclass :frozen True :kw-only True)] StopProcess [(get EffectBase (| ProcessExited ProcessSignalRefused ProcessNotChild))]
+  "StartProcess で立てた子を止めて回収する(頭の註)。答え = ProcessExited か ProcessSignalRefused か ProcessNotChild。"
   #^ int pid
   #^ float stop-grace
   (setv stop-grace 10.0))
@@ -317,12 +325,6 @@
    答えて回収する)。送った後に子が終わったかは PollProcess で問う。"
   (#^ int pid)
   (#^ bool delivered))
-
-
-(defrecord ProcessSignalRefused
-  "SignalProcess の答え: 走っている子へ送ろうとしたが、OS が送りを断った(EPERM — 権限の照合か LSM の拒否)。子は走ったままなので、
-   呼び手は「送った」と数えない。"
-  (#^ int pid))
 
 
 (defclass [(dataclass :frozen True :kw-only True)] SignalProcess [(get EffectBase (| ProcessSignalled ProcessSignalRefused ProcessNotChild))]
