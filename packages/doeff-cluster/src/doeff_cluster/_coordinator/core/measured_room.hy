@@ -7,8 +7,9 @@
 ;;;   CPU の空き     = ⌊(cpus × (1 − cpu-busy) − CPU-FLOOR-CORES) / TASK-CORES⌋
 ;;;   memory の空き  = ⌊(memory-available − MEMORY-FLOOR-MIB) / TASK-MEMORY-MIB⌋
 ;;;   上限           = ⌊cpus / TASK-CORES⌋(task-cap-of — 測りが遅れても CPU の数より多くは置かない)
-;;;   まだ測りに出ていない task = 測った刻 − TASK-RAMP-MS より後に置いた task(置いた直後の task は CPU と memory をまだ使っていない —
-;;;                               呼び手 cluster_policy.load-of が WorkerLoad.unseen に数える)
+;;;   まだ測りに出ていない task = 置いた task のうち、測った空きを載せた同じ heartbeat の状態の報告で動いていない物と、測った刻 −
+;;;                               TASK-RAMP-MS より後に置いた物(置いた直後・走り出した直後の task は CPU と memory をまだ使いきって
+;;;                               いない — 呼び手 cluster_policy.load-of が WorkerLoad.unseen に数える)
 ;;; CPU の PSI の some avg10 が CPU-PRESSURE-STOP 以上か、memory の some avg10 が MEMORY-PRESSURE-STOP 以上の間は 0(実行を待つ process が
 ;;; もう出ている機体へ足さない)。測った空きを名乗らない worker(/proc の無い機体・測りの前の版の worker)と、CPU の使いをまだ数えられない
 ;;; 読み(cpu-busy None — 初めの読み)は 0。
@@ -33,8 +34,8 @@
 ;; PSI の some avg10(%)がこの値以上の機体には置かない。CPU は実行を待つ process が出ている時間の割合、memory は回収で止まった時間の割合。
 (val CPU-PRESSURE-STOP 40.0)
 (val MEMORY-PRESSURE-STOP 10.0)
-;; 置いた task が CPU と memory を使い始めて測りに出るまでの見込みの長さ(worker の測りの間 5 秒・heartbeat の間・子の起動を足した値)。
-(val TASK-RAMP-MS 30000)
+;; 走り出した task の使いが測りに出きるまでの見込みの長さ(worker の測りの間 5 秒の 2 回分 — CPU の使いは前の読みとの間の増えで数える)。
+(val TASK-RAMP-MS 10000)
 ;; 予約 = 上限のこの分の 1。
 (val RESERVE-SHARE 6)
 
@@ -48,7 +49,8 @@
 
 (defk unseen-since [measured]
   {:pre [(: measured (| MeasuredLoad None))] :post [(: % (| int None))] :tags {:context "coordinator" :role "judgment"}}
-  "置いた task が worker の測りにまだ出ていないと数える刻の起点を知るため(この刻より後に置いた task — 刻は task の started-ms と比べる):
+  "置いた task が worker の測りにまだ出ていないと数える刻の起点を知るため(この刻より後に置いた task は、動いていると報告されていても
+   数える — 刻は task の started-ms と比べる):
    測った刻 − TASK-RAMP-MS。測りの無い worker は None(数えない — 空きは 0)。"
   (if (is measured None) None (- measured.at-ms TASK-RAMP-MS)))
 

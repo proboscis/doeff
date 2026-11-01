@@ -631,13 +631,22 @@
 (defn #^ dict load-of [#^ ClusterState state #^ (get Table Placement) placements]
   "worker ごとの担っている数(worker の名 → WorkerLoad): jobs = 常駐の job の置き先(placements)と並べた置き先(surge)・tasks = 置かれた
    task(PLACED-PHASES)・settle-mib = 置き先と surge の job の settle の和(memory を知らない旧い保存の行の job は 0 — 宣言し直しで知る)・
-   unseen = 置かれた task のうち、worker の測った空きにまだ出ていない物(置いた刻 started-ms が measured_room.unseen-since の刻より後)。
+   unseen = 置かれた task のうち、worker の測った空きにまだ出ていない物(measured を載せた同じ heartbeat の状態の報告に、動いている行
+   task/<id> が無いか、置いた刻 started-ms が measured_room.unseen-since の刻より後 — 走り出したばかりの task の使いは測りに出きって
+   いない)。
    置ける空きは memory-room-of・memory-misfit・task-room-of がこの値から求める(数え方を 1 か所にする)。"
   (setv jobs (dfor name (.keys state.workers) name 0) tasks (dfor name (.keys state.workers) name 0)
         unseen (dfor name (.keys state.workers) name 0)
         settles (dfor name (.keys state.workers) name 0)
         settle-of (dfor job state.jobs job.spec.name (or job.settle-mib 0))
-        since (dfor #(name w) (.items state.workers) name (run (unseen-since w.measured))))
+        since (dfor #(name w) (.items state.workers) name (run (unseen-since w.measured)))
+        ;; measured と同じ heartbeat の状態の報告で動いていた task の id(worker ごと)。
+        live (dfor name (.keys state.workers)
+                   :setv report (.row state.observations.statuses name)
+                   name (if (is report None)
+                            (frozenset)
+                            (frozenset (gfor row report.jobs :if (and (.startswith row.name "task/") (in row.phase LIVE-PHASES))
+                                             (cut row.name 5 None))))))
   (for [a (+ (list (.rows placements)) (list (.rows state.surges)))]
     (when (in a.worker jobs)
       (+= (get jobs a.worker) 1)
@@ -645,7 +654,9 @@
   (for [t (scan-rows state.tasks)]
     (when (and (in t.phase PLACED-PHASES) (in t.worker tasks))
       (+= (get tasks t.worker) 1)
-      (when (and (is-not (get since t.worker) None) (is-not t.started-ms None) (> t.started-ms (get since t.worker)))
+      (setv cut-off (get since t.worker))
+      (when (and (is-not cut-off None)
+                 (not (and (in t.id (get live t.worker)) (is-not t.started-ms None) (<= t.started-ms cut-off))))
         (+= (get unseen t.worker) 1))))
   (dfor name (.keys state.workers) name (WorkerLoad :jobs (get jobs name) :tasks (get tasks name) :settle-mib (get settles name)
                                                     :unseen (get unseen name))))
