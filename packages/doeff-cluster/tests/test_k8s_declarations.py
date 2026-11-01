@@ -166,7 +166,9 @@ HOST_ONLY_RESOURCES = {
 # どの 1 台の停止でも、移る job が移る先の枠に入る(doeff-cluster の N+1 の判断 failover-refusals の規則 2)。組ごとの job の数は card の
 # 組の表から数えた: pool-atlas-eos 6・pool-atlas-k3s-0 2・pool-atlas-k3s-2 1・pool-atlas-k3s-3 4・pool-k3s-1-k3s-2 1。
 # pool-helios 24 は helios へ移す予定の上に載る系のコアの job の数(移す前から置ける数で数える)。
-# atlas の task に空けておく 3 は上に載る系の日次の全体検証の task(:needs host-atlas — 同時に 3 本まで)の分。ほかの機体に task は来ない。
+# atlas の task に空けておく 3 は上に載る系の日次の全体検証の task(:needs host-atlas — 同時に 3 本まで)の分。helios の 1 は上に載る系の
+# 画面(webapp)の配りの組む係の 1 回きりの task(webapp の job と同じ :needs pool-helios — 同じ worker の作業の根で束を組む)の分。
+# ほかの機体に task は来ない。
 # (前の版の予備の枠・k3s-0 1・k3s-2 1・k3s-3 1 — は、この数えの中に入る。)
 POOL_JOBS = {
     "pool-atlas-eos": 6,
@@ -183,11 +185,12 @@ SINGLE_MACHINE_POOLS = {
 }
 MACHINE_JOBS = 1
 ATLAS_TASK_RESERVE = 3
+HELIOS_TASK_RESERVE = 1
 # 機体の仕事だけを受ける機体の枠 — 機体の名 → (task に空けておく数, 置ける組の印)。受ける数は上の式から導く。
 HOST_ONLY_POOLS = {
     "atlas": (ATLAS_TASK_RESERVE, ("pool-atlas-eos", "pool-atlas-k3s-0", "pool-atlas-k3s-2", "pool-atlas-k3s-3")),
     "eos": (0, ("pool-atlas-eos",)),
-    "helios": (0, ("pool-helios",)),
+    "helios": (HELIOS_TASK_RESERVE, ("pool-helios",)),
     "k3s-0": (0, ("pool-atlas-k3s-0",)),
     "k3s-1": (0, ("pool-k3s-1-k3s-2",)),
     "k3s-2": (0, ("pool-atlas-k3s-2", "pool-k3s-1-k3s-2")),

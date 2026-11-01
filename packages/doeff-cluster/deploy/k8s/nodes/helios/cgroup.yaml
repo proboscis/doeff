@@ -6,8 +6,8 @@
 # 1 本が上限の手前で回収を詰まらせると常駐の job も止まる(zeus の 10-24 06:03 JST の 16.7 分の止まりと同じ形)。準備が CPU の上限を埋めた
 # 時も、常駐の job の thread が準備の thread と同じ重みで実行待ちに並ぶ。
 #
-# 層: worker = tini・起動の script・worker の本体・services = 常駐の job の shim と子・jobs = 実行環境と木の準備・入口の検め(helios は task を
-# 受けない — 枠の file の taskReserve 0)。zeus の clis・commands は置かない: helios の常駐の job は CLI も命令の層も使わない(CLI と命令を
+# 層: worker = tini・起動の script・worker の本体・services = 常駐の job の shim と子・jobs = 実行環境と木の準備・入口の検め・task(helios の task は
+# 上に載る系の画面の配りの組む係の 1 本だけ — 枠の file の taskReserve 1)。zeus の clis・commands は置かない: helios の常駐の job は CLI も命令の層も使わない(CLI と命令を
 # 起こす上に載る系の常駐の job は zeus に残る)。上に載る系の子は層が無ければ今の cgroup のまま走る — 置けばその子は services に居続ける。
 # 値の出どころ:
 # - services の memory.min 30G: helios へ移す常駐の job 29 本の memory の峰の見積もり 約 28 GiB(23〜32 — 2026-11-01 の上に載る系の調べ。
