@@ -543,14 +543,22 @@ class Cancel(EffectBase[None]):
     - A started task receives ``TaskCancelledError`` at the point where it
       is suspended (Wait / Gather / Race / AcquireSemaphore / a queued
       resume; a self-cancel at its own Cancel). Its ``except``/``finally``
-      blocks run and may perform effects; the task stays live
-      (``cancelling``) until it finishes unwinding.
+      blocks run; the task stays live (``cancelling``) until it finishes
+      unwinding.
+    - The cancellation is a state of the task, not a single throw: until
+      the task ends, every Wait / Gather / Race / AcquireSemaphore it
+      performs raises ``TaskCancelledError`` again, and the external
+      promises it was about to wait on are stopped. A task whose ``Try``
+      turned the cancellation into ``Err`` (or whose ``except`` swallowed
+      it) therefore cannot finish any more waiting work.
+    - Cleanup that has to wait (give a lease back, release a remote
+      resource) runs inside ``shielded(program)``: no cancellation is
+      raised in it, and a Cancel that arrives meanwhile lands at the first
+      wait after it.
     - Waiters are woken when the task has finished unwinding. They observe
       ``TaskCancelledError`` if it ended by propagating it or by swallowing
       it and returning (the late value is discarded), or the other
       exception its cleanup raised.
-    - Each Cancel delivers the exception once; a task that swallows it
-      keeps running until it ends or is cancelled again.
     - Cancelling a terminal task is a no-op.
     """
     def __init__(self, task: "Task[Any]") -> None:
@@ -593,16 +601,35 @@ class TaskCancelledError(Exception):
 
 
 class _ShieldEnter(EffectBase[None]):
-    """PROTOTYPE (level): stop re-delivering the cancellation in this task."""
+    """Enter a shielded region of the performing task (``shielded``): no cancellation is raised in it.
+
+    The class keeps its underscore name: only ``shielded`` performs it, and the
+    Rust scheduler reads it from the scheduler's spec by that key.
+    """
 
 
 class _ShieldExit(EffectBase[None]):
-    """PROTOTYPE (level): resume re-delivering the cancellation in this task."""
+    """Leave the shielded region ``_ShieldEnter`` entered (``shielded``)."""
 
 
 @do
-def shielded(program):
-    """PROTOTYPE (level): run ``program`` without being cancelled again (cleanup)."""
+def shielded(program: "Program[_T]") -> Generator[Any, Any, _T]:
+    """Run ``program`` without being cancelled: the cleanup of a cancelled task that has to wait.
+
+    A cancelled task is cancelled again at every wait (see ``Cancel``), so a
+    ``finally`` that waits — to give a lease back, to release a remote
+    resource — would be cut short. Inside ``shielded`` no cancellation is
+    raised; a Cancel that arrives meanwhile lands at the first wait after
+    the region. Keep the region bounded: a shielded wait that never ends
+    keeps the cancelled task alive.
+
+    Usage::
+
+        try:
+            yield work()
+        finally:
+            yield shielded(give_back(lease))
+    """
     yield _ShieldEnter()
     try:
         return (yield program)
@@ -2123,6 +2150,23 @@ def _scheduled_python(body_program: "Program[_T, Any]") -> "Program[_T, Any]":  
             and tasks.get(owner_tid, {}).get("status") == "cancelled"
         )
 
+    def cancel_pending(tid: int | None) -> bool:
+        """``tid`` is cancelled and outside ``shielded``: its next wait raises (Cancel's docstring)."""
+        task = tasks.get(tid) if tid is not None else None
+        return task is not None and task["status"] == "cancelling" and not task.get("shield", 0)
+
+    def waited_keys(effect: EffectBase) -> list[tuple[str, int]]:
+        """The waitables a Wait / Gather / Race names (none for a misused one — its branch throws)."""
+        if isinstance(effect, Wait):
+            items: tuple[object, ...] = (effect.task,)
+        elif isinstance(effect, (Gather, Race)):
+            items = tuple(effect.tasks)
+        else:
+            return []
+        if _misused_waitable(effect, items) is not None:
+            return []
+        return [waitable_key(effect, item) for item in items]
+
     def is_daemon(owner_tid):
         """True when the owner was spawned with daemon=True (root is not)."""
         return (
@@ -3102,16 +3146,19 @@ def _scheduled_python(body_program: "Program[_T, Any]") -> "Program[_T, Any]":  
         if self_check:
             check_indexes()
         drain()
-        if (
-            isinstance(effect, (Wait, Gather, Race, AcquireSemaphore))
-            and os.environ.get("DOEFF_CANCEL_PROTO") == "level"
-            and current_tid is not None
-            and tasks.get(current_tid, {}).get("status") == "cancelling"
-            and not tasks[current_tid].get("shield", 0)
-        ):
-            # PROTOTYPE (level): a cancelled task is cancelled again at every
-            # suspension point until it ends, unless shielded.
+        if isinstance(effect, (Wait, Gather, Race, AcquireSemaphore)) and cancel_pending(current_tid):
+            # A cancelled task is cancelled again at every wait until it ends
+            # (Cancel's docstring): a Try that turned the cancellation into Err
+            # does not let the task finish more waiting work. The external work
+            # it was about to wait on is stopped, as Cancel stops the work a
+            # parked task waits on (#498).
             from doeff.program import ResumeThrow
+            errors = cancel_abandoned_external_promises(waited_keys(effect))
+            for error in errors:
+                _logger.warning(
+                    "task %s: an on_cancel callback of an external promise it was about "
+                    "to wait on failed: %r", current_tid, error,
+                )
             return (yield ResumeThrow(k, TaskCancelledError()))
         if isinstance(effect, _ShieldEnter):
             if current_tid is not None:
@@ -3119,7 +3166,7 @@ def _scheduled_python(body_program: "Program[_T, Any]") -> "Program[_T, Any]":  
             return (yield Resume(k, None))
         if isinstance(effect, _ShieldExit):
             if current_tid is not None:
-                tasks[current_tid]["shield"] = tasks[current_tid].get("shield", 1) - 1
+                tasks[current_tid]["shield"] -= 1
             return (yield Resume(k, None))
         if isinstance(effect, Spawn):
             # Capture the boundary stack (handlers AND WithObserve observers)
@@ -3164,8 +3211,7 @@ def _scheduled_python(body_program: "Program[_T, Any]") -> "Program[_T, Any]":  
                 _release_task_refs(tid)
                 tasks[tid]["settled"] = True
             elif status == "cancelling" and (
-                (error is None and os.environ.get("DOEFF_CANCEL_PROTO") != "request")
-                or isinstance(error, TaskCancelledError)
+                error is None or isinstance(error, TaskCancelledError)
             ):
                 # The task finished unwinding a Cancel: by propagating the
                 # TaskCancelledError, or by swallowing it and returning — the
@@ -3372,6 +3418,10 @@ def _scheduled_python(body_program: "Program[_T, Any]") -> "Program[_T, Any]":  
             if task is not None and task["status"] == "pending":
                 # Never started: no body ran, so there is nothing to unwind.
                 finish_cancelled(tid, TaskCancelledError())
+            elif task is not None and task["status"] in ("running", "cancelling") and task.get("shield", 0):
+                # Inside shielded(): nothing is thrown into the region; the
+                # cancellation lands at the first wait after it (cancel_pending).
+                task["status"] = "cancelling"
             elif task is not None and task["status"] in ("running", "cancelling"):
                 task["status"] = "cancelling"
                 if tid == current_tid:
