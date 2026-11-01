@@ -56,6 +56,7 @@ if TYPE_CHECKING:
     from doeff_codex._lines import ToolStatus as ToolStatus
     from doeff_codex._lines import TurnEnded as TurnEnded
     from doeff_codex._lines import TurnStatus as TurnStatus
+    from doeff_codex._lines import UnauthorizedHit as UnauthorizedHit
     from doeff_codex._lines import UsageLimitHit as UsageLimitHit
     from doeff_codex._lines import WebSearch as WebSearch
     from doeff_codex._rpc import ApprovalPolicy as ApprovalPolicy
@@ -122,6 +123,7 @@ _LAZY_EXPORTS: dict[str, str] = {
     "ToolStatus": "doeff_codex._lines",
     "TurnEnded": "doeff_codex._lines",
     "TurnStatus": "doeff_codex._lines",
+    "UnauthorizedHit": "doeff_codex._lines",
     "UsageLimitHit": "doeff_codex._lines",
     "WebSearch": "doeff_codex._lines",
     "ApprovalPolicy": "doeff_codex._rpc",

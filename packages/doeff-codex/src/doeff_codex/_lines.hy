@@ -28,6 +28,13 @@
 ;; server_is_overloaded で断った時に、codex は文「Selected model is at capacity. Please try a different model.」で名乗る — 録り
 ;; tests/recorded/codex-0.162.1/server-overloaded)。綴りの定義はここ 1 か所(turn-ended-of の判定と fake の終わりが読む)。
 (val SERVER-OVERLOADED-KIND "serverOverloaded")
+;; 口座の資格の断り(上流の 401)の印。codex は 2 つの形で名乗る: 誤りの種類 UNAUTHORIZED-KIND(codex 0.162.1 の
+;; CodexErrorInfo::Unauthorized — 更新鍵が通らない時)か HTTP の status 401 と、ChatGPT の口の 401 を誤りの種類 other・status 無しの文
+;; 「workspace routing discovery unauthorized (401)」で名乗る形(録り tests/recorded/codex-0.162.1/unauthorized — 本番 2026-11-01 の
+;; 口座の資格切れと同じ文)。後の形は種類も status も 401 を運ばないので、文の終わり UNAUTHORIZED-TAIL を照らす(unauthorized-of)。
+(val UNAUTHORIZED-KIND "unauthorized")
+(val UNAUTHORIZED-STATUS 401)
+(val UNAUTHORIZED-TAIL "unauthorized (401)")
 ;; code mode が使えない警告の文の頭と、道具の呼びを閉じた(fail closed)と名乗る句(codex 0.162.1 の codex-rs/core の
 ;; CodeModeService.take_unavailable_warning — 「Code Mode is unavailable because <訳>. <振る舞い>; enable …」)。振る舞いは道具の出し方で
 ;; 2 つ: code mode だけで道具を呼ぶ形(gpt-6-astra)は「Code mode will fail closed」で道具を 1 つも呼べず、code mode と直の道具の両方を
@@ -545,11 +552,19 @@
   {:tags {:context "codex" :role "type"}}
   (#^ str text))
 
+(defrecord UnauthorizedHit
+  "ターンが口座の資格の断り(上流の 401)で失敗した事実(unauthorized-of — 誤りの種類 UNAUTHORIZED-KIND・HTTP の status 401・文の終わり
+   UNAUTHORIZED-TAIL のどれか): text = codex の誤りの文(例 workspace routing discovery unauthorized (401))。口座の資格が上流で通らない
+   — 同じ口座で試し直しても同じ断りで落ちる(録り unauthorized: codex は自分で 10 回繋ぎ直した後に終える)。資格の値は運ばない。"
+  {:tags {:context "codex" :role "type"}}
+  (#^ str text))
+
 (defrecord TurnEnded
   "ターンの終わり(turn/completed — ターンごとにちょうど 1 つ): status = 終わりの状態(この版に無い綴りは UnknownValue — 知らない状態でも
    終わりは届く)/ error-message・error-kind・http-status = 失敗の終わりの誤り(turn.error — 無ければ None・種類は TurnError と同じ)/
    usage-limit = 口座の利用枠切れの事実(行の分類では None。handler がそのターンの枠の知らせから埋める・fake は筋書きから)/
    server-overloaded = 提供側の混雑の事実(誤りの種類が SERVER-OVERLOADED-KIND の終わりに、行の分類が誤りの文から埋める・fake は
+   筋書きから。ほかの終わりは None)/ unauthorized = 口座の資格の断りの事実(行の分類が unauthorized-of で誤りから埋める・fake は
    筋書きから。ほかの終わりは None)。"
   {:tags {:context "codex" :role "type"}}
   (#^ str thread-id)
@@ -559,7 +574,8 @@
   (setv #^ (| str UnknownValue None) error-kind None)
   (setv #^ (| int None) http-status None)
   (setv #^ (| UsageLimitHit None) usage-limit None)
-  (setv #^ (| ServerOverloadedHit None) server-overloaded None))
+  (setv #^ (| ServerOverloadedHit None) server-overloaded None)
+  (setv #^ (| UnauthorizedHit None) unauthorized None))
 
 (defrecord RateLimitWindow
   "口座の利用枠の窓 1 つ: used-percent = 使った割合(百分率 — 100 以上で尽きた)/ minutes = 窓の長さ(分)/ resets-at = 窓が戻る刻
@@ -693,9 +709,21 @@
   (<- facts (error-facts-of (if (is failure None) None failure.codex-error-info)))
   (<- status (turn-status-of params.turn.status))
   (val overloaded (if (and (is-not failure None) (= facts.kind SERVER-OVERLOADED-KIND)) (ServerOverloadedHit :text failure.message) None))
+  (<- refused (unauthorized-of (if (is failure None) None failure.message) facts))
   (TurnEnded :thread-id params.thread-id :turn-id params.turn.id :status status
              :error-message (if (is failure None) None failure.message) :error-kind facts.kind :http-status facts.http-status
-             :server-overloaded overloaded))
+             :server-overloaded overloaded :unauthorized refused))
+
+
+(defk unauthorized-of [message #^ ErrorFacts facts]
+  {:pre [(: message (| str None)) (: facts ErrorFacts)] :post [(: % (| UnauthorizedHit None))] :tags {:context "codex" :role "foundation"}}
+  "上の層が口座を外せるように、ターンの誤り(文と、codexErrorInfo から読んだ種類と HTTP の status — 誤りの無い終わりは文が None)が
+   口座の資格の断りかを決め、断りならその文の事実にするため(頭の UNAUTHORIZED-KIND の註): 種類が UNAUTHORIZED-KIND・status が 401・
+   文が UNAUTHORIZED-TAIL で終わる、のどれか。誤りが無い・どれでもなければ None。"
+  (if (and (is-not message None)
+           (or (= facts.kind UNAUTHORIZED-KIND) (= facts.http-status UNAUTHORIZED-STATUS) (.endswith message UNAUTHORIZED-TAIL)))
+      (UnauthorizedHit :text message)
+      None))
 
 
 (defk turn-error-of [#^ ErrorParamsWire params]
