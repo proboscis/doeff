@@ -18,9 +18,9 @@ How it talks to Redis:
   defaults told the second after about 2 h 11 min (Linux), and not at all for a stopped process whose kernel still
   holds the connection. So the wait asks ``PING`` on the subscription's connection after half the silence without
   a message, and a connection that answers nothing — no notice, no answer to the ``PING`` — for the other half is
-  lost: ``NextAnnouncement`` answers ``BrokerUnreachable`` and the source tells ``SourceStalled``. The confirmation
-  of ``SubscribeChannels`` is held to the same silence. This is the second timed check of ADR-DOE-EVENTS-002 (R8):
-  it reads no data, and it runs only while a ``NextAnnouncement`` waits.
+  lost: ``NextAnnouncement`` answers ``BrokerUnreachable`` and the source tells ``SourceStalled``. This is the
+  second timed check of ADR-DOE-EVENTS-002 (R8): it reads no data, and it runs only while a ``NextAnnouncement``
+  waits.
 - When the server cannot be reached (connection refused, connection lost, a socket error) the answer is
   ``BrokerUnreachable`` with the library's words. The library's timed retries are not used, so the answer comes
   at once; waiting for the server's return is left to ``AwaitBrokerBack`` — which this handler does not answer:
@@ -53,8 +53,13 @@ How it talks to Redis:
   once, on a fresh connection (a pooled connection that died while idle is not an outage). The connection
   settings are the URL and ``timeout_seconds`` (named by the composition — no default): a connection must be made
   within it, and a send (``Announce``, ``ProbeBroker``) must be answered within it, so a server that keeps the
-  connection but stops answering never holds a sender. The subscriptions' wait for the next notice is held by
-  ``silence_seconds`` instead (above); TCP keep-alive stays on with the OS's intervals.
+  connection but stops answering never holds a sender. Making a subscription is held to ``timeout_seconds`` as a
+  whole too — the connection's handshake (redis-py's ``on_connect`` reads its answers with the client's call limit,
+  which the subscriptions' client does not set), the kept streams' ends, ``SUBSCRIBE`` and the server's
+  confirmation of every channel — and so is the close of a subscription: a server that takes the connection and
+  answers nothing never holds the subscriber's task (card [id] — durable attempts stuck before their
+  wait in agora, 2026-11-01). Only the subscriptions' wait for the next notice is held by ``silence_seconds``
+  instead (above); TCP keep-alive stays on with the OS's intervals.
 - Kept channels are Redis Streams under the key ``doeff-events:kept:<channel>``:
   ``Announce(kept=True)`` is ``XADD`` with an approximate length bound (``KEPT_LOG_LENGTH``), and a subscription's
   kept channels are read with ``XREAD BLOCK`` from the positions this handler keeps for the subscription's reader
@@ -286,24 +291,49 @@ def _silent(silence_seconds: float, waited_for: str) -> Exception:
     )
 
 
-async def _subscribe(client: "Redis", subscription: ChannelSubscription, silence_seconds: float) -> "PubSub":
+def _unanswered(timeout_seconds: float, waited_for: str) -> Exception:
+    """The failure of a call of the subscriptions' client that did not end within ``timeout_seconds`` — redis-py's
+    ``TimeoutError``, so that it is answered ``BrokerUnreachable`` like any lost connection."""
+    from redis.exceptions import TimeoutError as RedisTimeoutError
+
+    return RedisTimeoutError(
+        f"the notice broker did not end {waited_for} within {timeout_seconds} s: it is counted unreachable"
+    )
+
+
+async def _within(timeout_seconds: float, waited_for: str, call: "Awaitable[_T]") -> "_T":
+    """Await ``call``, which must end within ``timeout_seconds``: the calls of the subscriptions' client that are not
+    the wait for a notice (making and closing a subscription — the module's notes on the two clients)."""
+    try:
+        async with asyncio.timeout(timeout_seconds):
+            return await call
+    except TimeoutError:
+        raise _unanswered(timeout_seconds, waited_for) from None
+
+
+async def _subscribe(client: "Redis", subscription: ChannelSubscription, timeout_seconds: float) -> "PubSub":
     """``SUBSCRIBE`` and wait for the server's confirmation of every channel, so that a notice announced after
-    the answer is received. A confirmation that does not come within ``silence_seconds`` fails like a lost
-    connection. A connection that cannot be made is closed again before the failure is passed on."""
+    the answer is received. The whole — the connection's handshake, the command and every confirmation — must end
+    within ``timeout_seconds``, or it fails like a lost connection. A subscription that cannot be made is closed
+    again (within the same limit) before the failure is passed on."""
     pubsub = client.pubsub()
     try:
-        await pubsub.subscribe(*subscription.channels)
-        confirmed = 0
-        while confirmed < len(subscription.channels):
-            message: object = await pubsub.get_message(ignore_subscribe_messages=False, timeout=silence_seconds)
-            if message is None:
-                raise _silent(silence_seconds, "the confirmation of SUBSCRIBE")
-            if isinstance(message, dict) and message.get("type") == "subscribe":
-                confirmed += 1
+        await _within(timeout_seconds, "the handshake, SUBSCRIBE and its confirmation", _confirmed(pubsub, subscription))
     except BaseException:
-        await _or_failed(pubsub.aclose())
+        await _or_failed(_within(timeout_seconds, "the close of a subscription it could not make", pubsub.aclose()))
         raise
     return pubsub
+
+
+async def _confirmed(pubsub: "PubSub", subscription: ChannelSubscription) -> None:
+    """``SUBSCRIBE`` every channel (redis-py makes the connection first) and read until the server confirmed each —
+    the caller holds the whole to its limit."""
+    await pubsub.subscribe(*subscription.channels)
+    confirmed = 0
+    while confirmed < len(subscription.channels):
+        message: object = await pubsub.get_message(ignore_subscribe_messages=False, timeout=None)
+        if isinstance(message, dict) and message.get("type") == "subscribe":
+            confirmed += 1
 
 
 async def _next_message(pubsub: "PubSub", silence_seconds: float) -> object:
@@ -563,7 +593,7 @@ def _client(url: str, repeats: int, timeout_seconds: float, *, calls_end: bool) 
 
 @do
 def _subscribed(
-    receiving: "Redis", effect: SubscribeChannels, readers: KeptReaders[_KeptReader], silence_seconds: float
+    receiving: "Redis", effect: SubscribeChannels, readers: KeptReaders[_KeptReader], timeout_seconds: float
 ) -> "EffectGenerator[_Listening | _Failed]":
     """Make one subscription: ``SUBSCRIBE`` its Pub/Sub channels (when it has any), and for its kept channels take
     a reader state (``KeptReaders.attach`` — a closed subscription's of the same name, or a fresh one) and set its
@@ -571,7 +601,7 @@ def _subscribed(
     subscription = ChannelSubscription(effect.channels, effect.kept, effect.reader)
     name = effect.reader
     reader = readers.attach(name) if name is not None else None
-    made = yield _reading(receiving, effect, subscription, reader, silence_seconds)
+    made = yield _reading(receiving, effect, subscription, reader, timeout_seconds)
     if isinstance(made, _Failed):
         if name is not None and reader is not None:
             readers.returned(name, reader)
@@ -587,31 +617,35 @@ def _reading(
     effect: SubscribeChannels,
     subscription: ChannelSubscription,
     reader: _KeptReader | None,
-    silence_seconds: float,
+    timeout_seconds: float,
 ) -> "EffectGenerator[_Listening | _Failed]":
     """The server's part of a subscription: the kept streams' ends for a reader that has no position yet, then
     ``SUBSCRIBE`` of every channel — the kept ones too, so a notice a sender that has not switched to the kept
-    channel yet announces with ``PUBLISH`` still reaches the reader (without a receipt)."""
+    channel yet announces with ``PUBLISH`` still reaches the reader (without a receipt). Each call must end within
+    ``timeout_seconds``."""
     if reader is not None:
         fresh = tuple(channel for channel in effect.kept if channel not in reader.positions)
         if fresh:
-            ends = yield Await(_attempt(partial(_kept_positions, receiving, fresh)))
+            ends = yield Await(
+                _attempt(lambda: _within(timeout_seconds, "XREVRANGE", _kept_positions(receiving, fresh)))
+            )
             if isinstance(ends, _Failed):
                 return ends
             reader.positions = {**ends, **reader.positions}
-    pubsub = yield Await(_attempt(partial(_subscribe, receiving, ChannelSubscription(effect.channels), silence_seconds)))
+    pubsub = yield Await(_attempt(partial(_subscribe, receiving, ChannelSubscription(effect.channels), timeout_seconds)))
     if isinstance(pubsub, _Failed):
         return pubsub
     return _Listening(subscription, pubsub, reader)
 
 
 def _broker_handler(
-    sending: "Redis", receiving: "Redis", silence_seconds: float, redeliver_seconds: float
+    sending: "Redis", receiving: "Redis", timeout_seconds: float, silence_seconds: float, redeliver_seconds: float
 ) -> "ProgramHandler":
     """The handler that answers the lower-layer effects: ``Announce`` from ``sending``, subscriptions from
-    ``receiving`` whose connections count as lost after ``silence_seconds`` without an answer (see the module's
-    notes on the two clients and on a half-open connection), and kept channels' notices handed out again after
-    ``redeliver_seconds`` without an acknowledgement."""
+    ``receiving`` made and closed within ``timeout_seconds`` and whose connections count as lost after
+    ``silence_seconds`` without an answer (see the module's notes on the two clients and on a half-open
+    connection), and kept channels' notices handed out again after ``redeliver_seconds`` without an
+    acknowledgement."""
     listening: tuple[_Listening, ...] = ()
     readers: KeptReaders[_KeptReader] = KeptReaders(_KeptReader)
 
@@ -628,7 +662,7 @@ def _broker_handler(
             case ProbeBroker():
                 answer = yield Await(_attempt(partial(_reached, sending)))
             case SubscribeChannels():
-                made = yield _subscribed(receiving, effect, readers, silence_seconds)
+                made = yield _subscribed(receiving, effect, readers, timeout_seconds)
                 if isinstance(made, _Failed):
                     answer = made
                 else:
@@ -662,7 +696,10 @@ def _broker_handler(
                 for entry in closed:
                     entry.stop_reads()
                     if entry.pubsub is not None:
-                        yield Await(_attempt(entry.pubsub.aclose))
+                        closing_pubsub = entry.pubsub
+                        yield Await(
+                            _attempt(lambda: _within(timeout_seconds, "the close of a subscription", closing_pubsub.aclose()))
+                        )
             case _:
                 yield Pass(effect, k)
                 return None
@@ -689,7 +726,7 @@ def _run(
     # The close runs on an exception and on the normal end, not in ``finally``: yielding inside the GeneratorExit
     # of a discarded process is an error (the same reason as doeff-records' sources).
     try:
-        answer = yield _broker_handler(sending, receiving, silence_seconds, redeliver_seconds)(body)
+        answer = yield _broker_handler(sending, receiving, timeout_seconds, silence_seconds, redeliver_seconds)(body)
     except Exception:
         yield Await(_OnAwait(partial(_close, sending, receiving)))
         raise
@@ -711,9 +748,10 @@ def redis_notice_handler(
     redeliver_seconds: float = KEPT_REDELIVERY_SECONDS,
 ) -> "ProgramHandler":
     """Build the handler that answers the lower-layer notice effects from the Redis server at ``url``
-    (for example ``redis://agora-events:6379/0``). ``timeout_seconds`` = how long a connection may take to be made
-    and a send (``Announce``, ``ProbeBroker``) may take to be answered before it counts as unreachable — so a
-    server that stops answering, or a network that goes silent, never holds a sender. No
+    (for example ``redis://agora-events:6379/0``). ``timeout_seconds`` = how long a connection may take to be made,
+    a send (``Announce``, ``ProbeBroker``) may take to be answered, and a subscription may take to be made (the
+    handshake, ``SUBSCRIBE`` and its confirmation) or closed before it counts as unreachable — so a server that
+    stops answering, or a network that goes silent, never holds a sender or a subscriber. No
     default: the composition names it. ``silence_seconds`` = how long a subscription's connection may answer
     nothing (no notice, no answer to ``PING``) before it counts as lost — so a half-open connection is told as
     ``BrokerUnreachable`` within it. The default ``SUBSCRIPTION_SILENCE_SECONDS`` (7 s) is
