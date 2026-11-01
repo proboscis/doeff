@@ -61,6 +61,7 @@ class CancelStop(StrEnum):
     NOT_RUNNING = 'not-running'
     TERMINATED = 'terminated'
     KILLED = 'killed'
+    REFUSED = 'refused'
 
 class GroupSignal(StrEnum):
     SENT = 'sent'
@@ -198,7 +199,10 @@ def start_child_process(argv: tuple, cwd: str | None, env: tuple | None, env_mod
 def poll_child_process(pid: int) -> _Program[ProcessRunning | ProcessExited | ProcessNotChild, object]:
     ...
 
-def stop_child_process(pid: int, stop_grace: float) -> _Program[ProcessExited | ProcessNotChild, object]:
+def stop_child_process(pid: int, stop_grace: float) -> _Program[ProcessExited | ProcessSignalRefused | ProcessNotChild, object]:
+    ...
+
+def child_signal(child: subprocess.Popen, process_group: bool, number: int) -> _Program[GroupSignal, object]:
     ...
 
 def signal_child_process(pid: int, sent: ProcessSignal) -> _Program[ProcessSignalled | ProcessSignalRefused | ProcessNotChild, object]:

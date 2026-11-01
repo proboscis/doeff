@@ -24,7 +24,8 @@
 ;;;   PollWarmChild    頼んだ子の様子を 1 度だけ問う。答え = WarmRunning(同じ start-ticks の process が居て、終わっていない)・
 ;;;                    WarmExited(exit の file の終了 code)・WarmLost(居ないか使い回されたのに exit の file が無い)。
 ;;;   SignalWarmChild  頼んだ子の group へ signal を 1 度だけ送る。答え = WarmSignaled か WarmGone(居ない・終わっている・使い回された —
-;;;                    他人の process には送らない)。終わりは PollWarmChild で読む: TERM は子 A が受けずに入口の終わり(-15)を exit の
+;;;                    他人の process には送らない)か ProcessSignalRefused(process_effects.hy — OS が送りを断った・EPERM。子は走ったまま。
+;;;                    例 = AppArmor が container の中の process どうしの signal を拒む機体)。終わりは PollWarmChild で読む: TERM は子 A が受けずに入口の終わり(-15)を exit の
 ;;;                    file に書く・KILL は A も道連れにするので exit の file は無く WarmLost。
 ;;;   AwaitWarmChildExit 頼んだ子が終わるまで待つ(#3871 — 消費者 = doeff-cluster の worker の周の間の待ち)。答え = ProcessEnded
 ;;;                    (process_effects.hy — 終わった・使い回された・居ない。終了 code は後の PollWarmChild が読む)。pid と start-ticks の組で
@@ -37,7 +38,7 @@
 (import re)
 (import dataclasses [dataclass])
 (import doeff [EffectBase])
-(import doeff_core_effects._process_effects [EnvEntry ProcessEnded ProcessSignal])
+(import doeff_core_effects._process_effects [EnvEntry ProcessEnded ProcessSignal ProcessSignalRefused])
 
 ;; 待ちの子が答えるまでの期限の秒(接続・送り・答えの 1 行の受けの全部)。
 (val WARM-ANSWER-SECONDS 5.0)
@@ -133,8 +134,8 @@
   #^ int start-ticks)
 
 
-(defclass [(dataclass :frozen True :kw-only True)] SignalWarmChild [(get EffectBase (| WarmSignaled WarmGone))]
-  "頼んだ子の group へ signal を 1 度だけ送り、待たずに返す(頭の註)。答え = WarmSignaled か WarmGone。"
+(defclass [(dataclass :frozen True :kw-only True)] SignalWarmChild [(get EffectBase (| WarmSignaled ProcessSignalRefused WarmGone))]
+  "頼んだ子の group へ signal を 1 度だけ送り、待たずに返す(頭の註)。答え = WarmSignaled か ProcessSignalRefused か WarmGone。"
   #^ int pid
   #^ int start-ticks
   #^ ProcessSignal signal)

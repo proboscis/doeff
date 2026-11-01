@@ -27,6 +27,8 @@
 (import dataclasses [dataclass])
 (import os)
 (import signal)
+(import subprocess)
+(import unittest [mock])
 (import threading)
 (import time)
 (import collections.abc [Callable])
@@ -368,3 +370,48 @@
   (assert (= seen.killed 1.0) (.format "SIGKILL まで要った数が {}(1 のはず)" seen.killed))
   (val lines (lfor record caplog.records :if (= record.name process-module.__name__) (.getMessage record)))
   (assert (and (= (len lines) 2) (all (gfor line lines (in "'/bin/sh'" line)))) lines))
+
+
+;; (f) OS が signal の送りを断る機体(EPERM — 2026-11-01 の helios では AppArmor が container の中の process どうしの signal を拒んだ):
+;; 取り消しで止める子へ SIGTERM も SIGKILL も届かない。止めの手当ては断られた SIGKILL の後に子の終わりを待たずに返り(待てば止めの
+;; thread が子の終わりまで返らない)、止めたと数えず、止められなかった事を warning の 1 行で名指す。子は走ったまま。
+;; 反例 = 断られた SIGKILL の後に子を待つ形(直す前)は SCENARIO-LIMIT で赤・group でない子へ Popen の terminate で送る形は
+;; PermissionError で赤。
+
+(defrecord RefusedStop
+  "(f) の筋書きで見た事: alive = 止めの手当ての後も子が走っていたか・terminated・killed = 計器の counter(取り消しで止めた数)。"
+  (#^ bool alive)
+  (#^ float terminated)
+  (#^ float killed))
+
+
+(defk refused-cancel-stop [grouped place]
+  {:pre [(: grouped bool) (: place str)] :post [(: % RefusedStop)]
+   :tags {:context "process-test" :role "program"}}
+  "(f) の筋書き: 走っている子を、signal の送りを全部断る機体の代役(os.killpg・os.kill を EPERM にする)の下で取り消しの手当てに止めさせ、
+   子の生死と計器 place の counter を読む。子は最後に本物の SIGKILL で片づける。"
+  (val child (subprocess.Popen ["sleep" "30"] :start-new-session grouped))
+  (try
+    (val watch (process-module.ChildWatch CANCEL-GRACE (process-meter-handler place (MeterSettings))))
+    (with [_ (mock.patch.object os "killpg" :side-effect (PermissionError 1 "Operation not permitted"))
+           _ (mock.patch.object os "kill" :side-effect (PermissionError 1 "Operation not permitted"))]
+      (<- (process-module.stop-cancelled-child child grouped watch)))
+    (val alive (is (.poll child) None))
+    (<- snapshot MeterSnapshot (with_handlers [(state) (process-meter-handler place (MeterSettings))] (ReadMeter)))
+    (RefusedStop :alive alive
+                 :terminated (.get snapshot.counters CANCEL-TERMINATED-METRIC 0.0)
+                 :killed (.get snapshot.counters CANCEL-KILLED-METRIC 0.0))
+    (finally
+      (.kill child)
+      (.wait child))))
+
+
+(deftest test-a-cancelled-child-whose-kill-the-os-refuses-is-not-waited-for-nor-counted [#^ bool grouped tmp-path caplog]
+  {:params {"grouped" [False True]}}
+  ;; (f)(上の註)。
+  (val place (.format "test-offloaded-process-cancel-refused:{}" tmp-path))
+  (<- seen RefusedStop (settled-within (refused-cancel-stop grouped place) "signal を断る機体の取り消しの止め"))
+  (assert seen.alive seen)
+  (assert (= #(seen.terminated seen.killed) #(0.0 0.0)) seen)
+  (val lines (lfor record caplog.records :if (= record.name process-module.__name__) (.getMessage record)))
+  (assert (and (= (len lines) 1) (in "止められなかった" (get lines 0)) (in "'sleep'" (get lines 0))) lines))

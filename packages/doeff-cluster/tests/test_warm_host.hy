@@ -1,19 +1,19 @@
 ;;; 待ちの子の宿(#3646 の A4b)— worker/protocol/warm_host の言い換えと、worker/protocol/process_host が warm-key の在る task を待ちの子から
 ;;; 分ける道を、I/O なしの台本の答え手(子 process・待ちの子・file を memory で)の上で確かめる。本物の待ちの子の入口と効果の答え手は
 ;;; A2・A3 の検(tests/test_warm_child.py・doeff-core-effects の test_warm_process_contract)が持つ。
-(require doeff-hy.macros [deftest defk defhandler val var <-])
+(require doeff-hy.macros [deftest defk defhandler defeffect val var <-])
 (val MODULE-TAGS {:context "doeff-cluster-test" :role "test"})
 (import json)
 (import pathlib [Path])
 (import dataclasses [replace])
 (import doeff [run with-handlers])
-(import doeff_core_effects [state slog-handler])
+(import doeff_core_effects [state slog-handler SlogEffect])
 (import doeff_core_effects [memory-file-handler])
 (import doeff_core_effects [MemoryFiles MemoryFile WriteText ReadText StatPath PathKind])
 (import doeff_core_effects [EnvEntry ProcessOutcome RunProcess timed-out-outcome])
 (import doeff_core_effects [ScriptedCommand ProcessScript scripted-process-handler])
 (import doeff_core_effects [WarmScript WarmSocket WarmSocketAnswer WarmRun scripted-warm-process-handler])
-(import doeff_core_effects [ForkFromWarm])
+(import doeff_core_effects [ForkFromWarm SignalWarmChild ProcessSignalRefused])
 (import doeff_time [sync-time-handler])
 (import doeff_cluster [JobSpec])
 (import doeff_cluster [RuntimeEnv])
@@ -23,7 +23,9 @@
 (import doeff_cluster [ObserveWarmChildren ObserveProcesses])
 (import doeff_cluster [warm-host]
         doeff_cluster._worker.protocol.warm_host [WarmSettings])
-(import doeff_cluster [process-host])
+(import doeff_cluster [process-host]
+        doeff_cluster._worker.protocol.process_host [STOP-TIMING-LOG STOP-REFUSED-LOG])
+(import doeff_cluster._worker.intent.worker_model [Undeclared])
 (import doeff_cluster._worker.core.warm_rules [WarmPlace warm-place])
 (import doeff_cluster._shared.intent.env_marker_model [ENV-MARKER])
 (import tests.env_fixtures [LOCK env-of])
@@ -306,3 +308,66 @@
   (assert (= #(answer.name answer.warm-key) #("svc" None)) answer)
   (assert (.startswith answer.detail "子を起こせない: ") answer.detail)
   (assert (= (get got 1) #()) got))
+
+
+;; --- 待ちの子から分けた task への止めの合図を OS が断る ------------------------------------------------------
+;; 2026-11-01 の helios(AppArmor が container の中の process どうしの signal を拒んだ)と同じ機体で、待ちの子から分けた task を止める。
+;; 反例 = SignalWarmChild が断りを WarmSignaled と答え、worker が KILL を送った事に数える形は、下の行の断言が赤。
+
+(defhandler warm-signals-refused
+  "OS が待ちの子の group への signal を全部断る機体の代役: SignalWarmChild に ProcessSignalRefused で答え、子は走ったまま(台本の待ちの子の
+   答え手へ渡さない)。"
+  {:tags {:context "doeff-cluster-test" :role "foundation"}}
+  (SignalWarmChild [pid start-ticks signal]
+    (resume (ProcessSignalRefused :pid pid))))
+
+
+(defeffect KeptStopLines
+  "ここまでに出た止めの行(計時の行と断られた合図の行)を読む — 検だけの問い(stop-lines-kept が答える)。"
+  {:fields [] :answer tuple :tags {:context "doeff-cluster-test" :role "intent"}})
+
+
+(defhandler stop-lines-kept
+  "外の世界の log の代役: 止めの計時の行と断られた合図の行を #(行の名 段 killed) で出た順に覚え、他の行は受け流す。覚えた列は
+   KeptStopLines で読む。"
+  {:tags {:context "doeff-cluster-test" :role "foundation"}}
+  (session var lines #())
+  (SlogEffect []
+    (val fields effect.kwargs)
+    (when (in effect.msg #(STOP-TIMING-LOG STOP-REFUSED-LOG))
+      (:= lines (+ lines #(#(effect.msg (get fields "stage") (.get fields "killed"))))))
+    (resume None))
+  (KeptStopLines []
+    (resume lines)))
+
+
+(defk refused-warm-stop [spec]
+  {:pre [(: spec JobSpec)] :post [(: % tuple)] :tags {:context "doeff-cluster-test" :role "program"}}
+  "待ちの子から分けた task を起こし、TERM と KILL の止めの合図を送った後の観測と止めの行を返すため。"
+  (<- (StartJob spec 1 "/roots/env-a" :warm-key "env-a"))
+  (<- first tuple (ObserveProcesses))
+  (val pid (. (get first 0) pid))
+  (<- (SignalJob spec.name pid StopStage.TERM (Undeclared)))
+  (<- (SignalJob spec.name pid StopStage.KILL (Undeclared)))
+  (<- after tuple (ObserveProcesses))
+  (<- lines tuple (KeptStopLines))
+  #(after lines))
+
+
+(deftest test-a-refused-kill-of-a-warm-forked-task-is-not-counted-as-killed [tmp-path]
+  (<- spec JobSpec (task-spec-on "env-a"))
+  (<- settings (host-settings tmp-path))
+  (<- place WarmPlace (warm-place settings.warm-dir "env-a"))
+  (val warm (WarmScript :sockets #((WarmSocket :path place.socket)) :runs #((WarmRun :entry spec.entry :polls 10 :exit-code 0))))
+  (val script (ProcessScript :commands #() :env SCRIPT-ENV))
+  (val seen (run (with-handlers [(state) (sync-time-handler) stop-lines-kept (memory-file-handler ROOTS) (scripted-process-handler script)
+                                 (scripted-warm-process-handler warm) warm-signals-refused (process-host settings)]
+                   (refused-warm-stop spec))))
+  (val after (get seen 0))
+  (val lines (get seen 1))
+  ;; 子は走ったまま(断られた合図は子を止めない)。
+  (assert (= (tuple (gfor v after #(v.name v.exit-code))) #(#("task/t1" None))) after)
+  ;; 合図ごとに断られた行が出て、KILL の計時の行は killed False(断られた KILL を送った事にしない)。
+  (assert (= lines #(#(STOP-REFUSED-LOG "term" None) #(STOP-TIMING-LOG "term" False)
+                     #(STOP-REFUSED-LOG "kill" None) #(STOP-TIMING-LOG "kill" False)))
+          lines))
