@@ -11,6 +11,7 @@ from doeff_core_effects import ReleaseSemaphore as ReleaseSemaphore
 from doeff_core_effects import Spawn as Spawn
 from doeff_core_effects import Cancel as Cancel
 from doeff_core_effects import TaskCancelledError as TaskCancelledError
+from doeff_core_effects import shielded as shielded
 from doeff_time import Delay as Delay
 from doeff_cluster._shared.core.clock import now_epoch_ms as now_epoch_ms
 from doeff_cluster._shared.intent.semaphore_model import CreateNamedSemaphore as CreateNamedSemaphore

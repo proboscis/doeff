@@ -14,6 +14,7 @@
 (import doeff_cluster._shared.protocol.coordinator_route [RouteCell RouteOptions RoutedReply routed-request resent-request answer-json])
 (import doeff_time [Delay])
 (import doeff [run])
+(import doeff_core_effects [shielded])
 (import doeff_cluster._shared.intent.protocol [PROTOCOL-FORMAT])
 (import doeff_cluster._shared.intent.runtime_env_model [RuntimeEnv])
 (import doeff_cluster._shared.core.runtime_env_rules [runtime-env->json])
@@ -140,7 +141,8 @@
       (val outcome (outcome-of view task sender.revision))
       (when (is-not outcome None) (return outcome)))
     (finally
-      (<- (task-dropped cell options task)))))
+      ;; shielded: 呼び手の Cancel の後の待ちはまた取り消されるので、落とす送りは囲んで待ち切る
+      (<- (shielded (task-dropped cell options task))))))
 
 
 ;; 本物の RemoteJob: coordinator の /programs と /tasks へ、汎用の HttpRequest で話す(#2337 の 4b — httpx を直に持っていた TaskClient を

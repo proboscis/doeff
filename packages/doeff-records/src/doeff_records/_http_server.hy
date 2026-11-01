@@ -91,7 +91,7 @@
 (import doeff_core_effects [thread-pool-compute-handler])
 (import doeff_core_effects [ComputeLoad ReadComputeLoad])
 (import doeff_core_effects [run-apart])
-(import doeff_core_effects [Cancel CompletePromise CreatePromise Gather TaskPriority Promise Race Spawn Task TaskCancelledError Wait scheduled])
+(import doeff_core_effects [Cancel CompletePromise CreatePromise Gather TaskPriority Promise Race Spawn Task TaskCancelledError Wait scheduled shielded])
 (import doeff_core_effects [StopRequested])
 (import doeff_core_effects [aiohttp-http-server])
 (import doeff_core_effects [HttpAddress HttpBodyBytes HttpBodyFailed HttpBodyRead HttpBodyTooLarge HttpEvent HttpHeader HttpListen HttpNextRequest HttpReadBody HttpRequestArrived HttpRespond HttpServerClosed HttpShutdown])
@@ -514,7 +514,8 @@
   "Race で答えの決まった問いの task を取り消し、解け終わるまで待つため(終わっていた task の取り消しは何もしない — 答えは捨てる)。"
   (<- (Cancel task))
   (try
-    (<- _ended (Wait task))
+    ;; shielded: 要求の task が取り消されていても、問いの task が解け終わるまで待ち切る(取り消された task の待ちはまた取り消される)
+    (<- _ended (shielded (Wait task)))
     (except [TaskCancelledError] None))
   None)
 

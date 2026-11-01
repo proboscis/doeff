@@ -36,7 +36,7 @@
 (import doeff.program [ProgramHandler])
 (import doeff_core_effects._effects [Await HttpRequest HttpResponse SlogEffect slog])
 (import doeff_core_effects._http_effects [HttpFailed HttpFailureKind HttpPhases])
-(import doeff_core_effects._scheduler [AcquireSemaphore CreateSemaphore ReleaseSemaphore Semaphore])
+(import doeff_core_effects._scheduler [AcquireSemaphore CreateSemaphore ReleaseSemaphore Semaphore shielded])
 
 
 (defn _failure-detail [error]
@@ -211,7 +211,8 @@
       (<- result ((_http-production-handler client (ClientGate total) sleep) program))
       result
       (finally
-        (<- (Await (.aclose client)))))))
+        ;; Shielded: a cancelled task's waits raise again, and the client must still close.
+        (<- (shielded (Await (.aclose client))))))))
 
 
 (defn _compose-recording-handler [record-handler production-handler]

@@ -43,7 +43,7 @@
 (import functools [partial])
 (import doeff [EffectBase Program with-handlers])
 (import datetime [datetime])
-(import doeff_core_effects [Cancel CompletePromise CreateExternalPromise CreatePromise Promise Spawn Task TaskCancelledError Wait])
+(import doeff_core_effects [Cancel CompletePromise CreateExternalPromise CreatePromise Promise Spawn Task TaskCancelledError Wait shielded])
 (import doeff_events [Publish PublishEffect SourceFailed SourceResumed SourceStalled WaitForEventEffect WaitForEventsEffect])
 (import doeff_time [GetTime WaitWithin])
 (import doeff_time [GetTimeEffect WaitWithinEffect])
@@ -311,10 +311,11 @@
 
 (defk stop-source [task]
   {:pre [(: task Task)] :post [(: % None)]}
-  "源の task 1 つを止め、解け終わるまで待つため(源は Cancel でしか終わらないので、待ちの答えは TaskCancelledError)。"
+  "源の task 1 つを止め、解け終わるまで待つため(源は Cancel でしか終わらないので、待ちの答えは TaskCancelledError)。止める側が取り消された
+   task でも待ち切るよう、待ちは shielded で囲む(取り消された task の待ちはまた取り消される)。"
   (<- (Cancel task))
   (try
-    (<- (Wait task))
+    (<- (shielded (Wait task)))
     (except [TaskCancelledError]
       None))
   None)

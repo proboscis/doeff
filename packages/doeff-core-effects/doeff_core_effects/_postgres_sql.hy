@@ -71,7 +71,7 @@
 (import doeff [Program])
 (import doeff_hy._wire [Malformed dump-json parse-json])
 (import doeff_core_effects._offloaded_call [ReusedThreads :as _ReusedThreads offloaded run-detached keep-nothing])
-(import doeff_core_effects._scheduler [CreateExternalPromise ExternalPromise TaskCancelledError])
+(import doeff_core_effects._scheduler [CreateExternalPromise ExternalPromise TaskCancelledError shielded])
 (import doeff_core_effects._sql_effects [SqlQuery SqlInsertRows SqlBatch SqlTransaction SqlEnsureTables SqlNotify SqlHangNotice SqlDropNotice
                                         SqlRows SqlFailed SqlUnreachable SqlLock
                                         SqlSchemaApplied SqlParam SqlColumnType SqlText SqlPlaceholder split-statement checked-params
@@ -1151,7 +1151,8 @@
     (finally
       (try
         (when (not driver.lease.returned)
-          (<- (offloaded pool (fn [] (abandon-lease driver)) keep-nothing)))
+          ;; shielded: 取り消された task の待ちはまた取り消されるので、接続の返しは囲んで待ち切る
+          (<- (shielded (offloaded pool (fn [] (abandon-lease driver)) keep-nothing))))
         (finally
           (.ring-local connections database raised))))))
 
@@ -1190,7 +1191,8 @@
     (finally
       (try
         (when (and driver.lease.submitted (not driver.lease.returned))
-          (<- (offloaded pool (fn [] (abandon-lease driver)) keep-nothing)))
+          ;; shielded: 取り消された task の待ちはまた取り消されるので、接続の返しは囲んで待ち切る
+          (<- (shielded (offloaded pool (fn [] (abandon-lease driver)) keep-nothing))))
         (finally
           (.ring-local connections database raised))))))
 

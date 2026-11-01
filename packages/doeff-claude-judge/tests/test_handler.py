@@ -29,7 +29,7 @@ from doeff_claude_judge import (
     scripted_printer,
 )
 from doeff_claude_judge._wire import NOUL_HEAD, prepare
-from doeff_core_effects import scheduled
+from doeff_core_effects import Cancel, CompletePromise, CreatePromise, Promise, Spawn, Wait, scheduled
 from doeff_hy._frozen import freeze_json
 from doeff_system_one import Image, Judge, JudgeError, JudgeUsageLimited, Question
 
@@ -299,3 +299,54 @@ def test_the_verdict_input_tokens_count_only_what_the_cli_named() -> None:
     # CLI が model を名乗らなければ宣言の model。
     assert verdict.model == "claude-test"
     assert math.isclose(verdict.answer("plain_where").confidence, 0.625)
+
+
+@pytest.mark.parametrize("implementation", ["python", "rust"])
+def test_a_cancelled_judging_loop_does_not_reach_the_cli_again(implementation: str) -> None:
+    # 期限で取り消した判定の task(agora の判じる読み手の形 — 断りを Try で値にして次の判定へ進む)は、取り消しの後の判定で資格を借りる
+    # 待ちがまた取り消され、no_credentials で終わる: CLI の print に着かず、借りた資格も増えない。task を待つ側は取り消しを受ける。
+    events: list[str] = []
+    gates: dict[str, Promise[object]] = {}
+
+    @do
+    def noop():
+        return None
+
+    @do
+    def lend(effect, k):
+        if not isinstance(effect, BorrowJudgeCredential):
+            return (yield Pass(effect, k))
+        yield Wait((yield Spawn(noop())))  # 本番の貸し手は資格を網で借りる(待つ)
+        events.append("lent")
+        return (yield Resume(k, LENT))
+
+    @do
+    def respond(request: ClaudePrintOnce):
+        events.append("print started")
+        if events.count("print started") == 1:
+            yield CompletePromise(gates["printing"], None)
+        answer = yield Wait(gates["answer"].future)
+        events.append("print answered")
+        return answer
+
+    @do
+    def judging():
+        for _ in range(3):
+            outcome = yield Try(JUDGE)
+            events.append(outcome.error.kind if isinstance(outcome, Err) else "verdict")
+
+    @do
+    def body():
+        gates["printing"] = yield CreatePromise()
+        gates["answer"] = yield CreatePromise()
+        task = yield Spawn(judging())
+        yield Wait(gates["printing"].future)
+        yield Cancel(task)
+        yield CompletePromise(gates["answer"], _answered(ANSWER))
+        seen = yield Try(Wait(task))
+        return type(seen.error).__name__ if isinstance(seen, Err) else seen
+
+    layers = claude_judge_stack(TARGET, printer=fake_claude_print_handler(respond), lender=_program_handler(lend))
+    ended = run(scheduled(with_handlers(layers, body()), implementation=implementation))
+    assert ended == "TaskCancelledError"
+    assert events == ["lent", "print started", "transport", "no_credentials", "no_credentials"]
