@@ -71,6 +71,7 @@
 #   child_environment env_project_dir job_launch process_context_environ program_file
 #   program_file_text project_hy project_venv shim_argv spec_program_file spec_program_name
 #   uv_run_environ
+# moved-submodule-shim-names doeff_cluster.worker.core.load_rules:
 # moved-submodule-shim-names doeff_cluster.worker.core.memory_rules:
 #   ContainerMemory DOMINANT_SHARE Gathering JobRoot JobSteady JobUse KillUnit MIB MODULE_TAGS
 #   MemoryLevel MemoryLimits NodeMemory ProcTree TASK_PREFIX UnitKind cgroup_bytes_of gathering_of
