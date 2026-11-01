@@ -1,0 +1,10 @@
+# eos の worker の cgroup の層の値(JSON patch)。委ねる係・host の cgroupfs の mount・層の名と、値の決め方は ../../cgroup-layers。
+#
+# 訳: eos は機体の仕事 1 本を走らせ、atlas が止まると組の印 pool-atlas-eos の常駐の job 6 本を受ける。
+# 値:
+# - services の memory.min 3584M: 予算 3840 − 256。1 台の停止で移る常駐の job の値を含めて N+1 の判断が予算に求める 3510 MiB 以上。
+# - jobs の memory.max 1536M: 準備の分(task は来ない — 枠の file の taskReserve 0)。
+# - container の上限 4Gi → 5632Mi: 予算 3840 を前の値のまま残し、準備の分を足した。
+- op: add
+  path: /spec/template/spec/containers/0/env/-
+  value: { name: WORKER_CGROUP_LAYOUT, value: "worker:memory.min=256M,cpu.weight=1000 services:memory.min=3584M,cpu.weight=1000 jobs:memory.max=1536M,cpu.weight=100" }

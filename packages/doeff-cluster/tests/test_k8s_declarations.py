@@ -145,18 +145,20 @@ class Resources:
     limits: dict[str, str]
 
 
-# 機体の仕事だけを受ける worker の資源。取り分は小さく(機体が他の Pod で埋まっていても置ける)、上限は機体の memory の半分ほど
-# (最初の起動の Rust の組み立ての山を通す — 越えたら kubelet が取り分を最も越えたこの Pod を先に追い出す)。
+# 機体の仕事だけを受ける worker の資源。取り分は小さく(機体が他の Pod で埋まっていても置ける)、memory の上限は cgroup の層の和
+# (worker の min + 常駐の job の予算 + task と準備の層の max — 越えたら kubelet が取り分を最も越えたこの Pod を先に追い出す)。task を
+# 受けない機体の上限は、前の上限(機体の memory の半分ほど)に準備の層の分 1536Mi を足した値(予算を前の値のまま残す)。
 HOST_ONLY_RESOURCES = {
     # atlas は上に載る系の日次の全体検証の task も受ける(1 本の上限は旧い専用の worker と同じ 16Gi 前後 — 2026-10-10 調整役 cisco-c8 の値)。
+    # 機体の memory が足りずに kubelet がこの Pod を追い出しているので、層を置いても上限は上げない(予算の側を下げる)。
     "atlas": Resources(requests={"cpu": "500m", "memory": "1Gi"}, limits={"cpu": "8", "memory": "18Gi"}),
-    "eos": Resources(requests={"cpu": "250m", "memory": "512Mi"}, limits={"cpu": "2", "memory": "4Gi"}),
+    "eos": Resources(requests={"cpu": "250m", "memory": "512Mi"}, limits={"cpu": "2", "memory": "5632Mi"}),
     # helios は組の印 pool-helios の常駐の job 24 本(起動の山の和 約 31GiB・落ち着いた値の和 約 16.5GiB)を受ける。
     "helios": Resources(requests={"cpu": "2", "memory": "4Gi"}, limits={"cpu": "12", "memory": "40Gi"}),
-    "k3s-0": Resources(requests={"cpu": "100m", "memory": "256Mi"}, limits={"cpu": "2", "memory": "2Gi"}),
-    "k3s-1": Resources(requests={"cpu": "100m", "memory": "256Mi"}, limits={"cpu": "2", "memory": "2Gi"}),
-    "k3s-2": Resources(requests={"cpu": "100m", "memory": "256Mi"}, limits={"cpu": "2", "memory": "2Gi"}),
-    "k3s-3": Resources(requests={"cpu": "250m", "memory": "512Mi"}, limits={"cpu": "3", "memory": "4Gi"}),
+    "k3s-0": Resources(requests={"cpu": "100m", "memory": "256Mi"}, limits={"cpu": "2", "memory": "3584Mi"}),
+    "k3s-1": Resources(requests={"cpu": "100m", "memory": "256Mi"}, limits={"cpu": "2", "memory": "3584Mi"}),
+    "k3s-2": Resources(requests={"cpu": "100m", "memory": "256Mi"}, limits={"cpu": "2", "memory": "3584Mi"}),
+    "k3s-3": Resources(requests={"cpu": "250m", "memory": "512Mi"}, limits={"cpu": "3", "memory": "5632Mi"}),
 }
 
 
@@ -200,12 +202,15 @@ HOST_ONLY_ROOM = {
     node: (MACHINE_JOBS + sum(POOL_JOBS[pool] for pool in pools) + reserve, reserve)
     for node, (reserve, pools) in HOST_ONLY_POOLS.items()
 }
-# 常駐の job の memory の予算(枠の file の欄 memoryMiB)= worker の container の memory の上限 − worker 自身の分
-# − task の分。zeus でない機体: worker 自身 256 MiB(worker の process の RSS 126〜132 MiB・2026-10-27 の 4 機体の実測に余裕を足す)・task の分
-# = task に空けておく数 × 3072 MiB(atlas の task の 1 本の山は 8 時間で 1.1〜4.0 GiB・3 本の同時は group の上限で 3 本まで)。
-# zeus: container の上限 − cgroup の層の worker の memory.min − task の層(jobs)の memory.max(命令の層は常駐の job の子の分なので引かない)。
+# 常駐の job の memory の予算(枠の file の欄 memoryMiB)= worker の container の memory の上限 − cgroup の層の worker の memory.min − task と
+# 準備の層(jobs)の memory.max(全部の機体 — zeus の命令の層は常駐の job の子の分なので引かない)。
 # 予算は N+1 の判断の規則 3(置ける job の落ち着いた値の和 + 最悪の 1 台の停止で移る job の起動の山の上乗せ ≤ 予算)が読む。
-HOST_ONLY_WORKER_SELF_MIB = 256
+# 層の値の下限(nodes/<Node の名>/cgroup.yaml の値の決め方は ../deploy/k8s/cgroup-layers): worker の memory.min ≥ worker 自身の分 256 MiB
+# (worker の process の RSS 126〜132 MiB・2026-10-27 の 4 機体の実測に余裕を足す)。jobs の memory.max ≥ 準備の分 1536 MiB + task に空けて
+# おく数 × task の分 3072 MiB(atlas の task の 1 本の山は 8 時間で 1.1〜4.0 GiB・3 本の同時は group の上限で 3 本まで)。準備の分は、
+# container の上限 2Gi の機体(k3s-0〜2)で実行環境と木の準備が通っていた余地(2Gi − worker の本体と常駐の job の約 0.4 GiB)。
+WORKER_SELF_MIB = 256
+PREPARE_SHARE_MIB = 1536
 TASK_SHARE_MIB = 3072
 # 枠の定義元: 機体の名 → taskReserve・backgroundRoom・memoryMiB の JSON 1 つ。名の固定した ConfigMap worker-room にして worker の Pod に
 # file で置き、worker は heartbeat の前に読み直す(枠の変更で Pod を作り直さない)。env の WORKER_TASK_RESERVE・WORKER_BACKGROUND_ROOM・
@@ -317,11 +322,18 @@ CGROUP_LAYOUT_SINCE = "2c1ac027a212bc59ceb304683130e7b69becbf0b"
 CGROUP_FIRST_LAYER = "worker"
 CGROUP_CHILD_LAYER = "commands"
 CGROUP_CLI_LAYER = "clis"
-# 層を宣言する機体 → 最初の層と常駐の job の層(DOEFF_WORKER_SERVICE_CGROUP)のほかに守る層・task の層(DOEFF_WORKER_JOB_CGROUP)のほかに
-# 限る層。ほかの機体は層を宣言しない。helios は CLI も命令の層も使わない(CLI と命令を起こす上に載る系の常駐の job は zeus に残る)。
+# 層を宣言する機体(全部の機体)→ 最初の層と常駐の job の層(DOEFF_WORKER_SERVICE_CGROUP)のほかに守る層・task の層
+# (DOEFF_WORKER_JOB_CGROUP)のほかに限る層。zeus でない機体は CLI も命令の層も使わない(CLI と命令を起こす上に載る系の常駐の job は
+# zeus に残る)。zeus でない機体の委ねる係と層の名は部品 ../deploy/k8s/cgroup-layers 1 つ。
 CGROUP_LAYERS = {
     "zeus": ({CGROUP_CLI_LAYER}, {CGROUP_CHILD_LAYER}),
+    "atlas": (set(), set()),
+    "eos": (set(), set()),
     "helios": (set(), set()),
+    "k3s-0": (set(), set()),
+    "k3s-1": (set(), set()),
+    "k3s-2": (set(), set()),
+    "k3s-3": (set(), set()),
 }
 # helios の常駐の job の層の memory.min の下限: helios へ移す常駐の job 29 本の memory の峰の見積もり 約 28 GiB(2026-11-01 の上に載る系の
 # 調べ — zeus の services の層の 54.6 時間の峰 35.3 GiB × 移す物の割合 79%)。
@@ -349,10 +361,26 @@ def _layout(deployment: Manifest) -> list[tuple[str, dict[str, str]]]:
     ]
 
 
-def test_only_the_listed_nodes_declare_cgroup_layers(rendered: list[Manifest]) -> None:
-    """cgroup の層を宣言する機体は CGROUP_LAYERS の機体だけ(層の約束を確かめる test が、層を持つ機体を漏らさず読む)。"""
+def test_every_node_declares_cgroup_layers(rendered: list[Manifest]) -> None:
+    """全部の機体の worker が cgroup の層を宣言し、層の約束を確かめる test(CGROUP_LAYERS)が全部の機体を読む。失敗ケース: 層の無い機体では
+    task・実行環境の準備・入口の検めが常駐の job と container の cgroup 1 つを分け合い、1 本が上限の手前で回収を詰まらせると常駐の job も
+    止まる。"""
     declared = {node for node in NODES if any(entry["name"] == "WORKER_CGROUP_LAYOUT" for entry in _env(_worker_on(rendered, node)))}
-    assert declared == set(CGROUP_LAYERS)
+    assert declared == set(CGROUP_LAYERS) == set(NODES)
+
+
+@pytest.mark.parametrize("node", sorted(CGROUP_LAYERS))
+def test_worker_layers_leave_room_for_the_worker_its_preparation_and_its_tasks(rendered: list[Manifest], node: str) -> None:
+    """worker の層の memory.min は worker 自身の分(WORKER_SELF_MIB)以上、task と準備の層の memory.max は準備の分と、task に空けておく数
+    × task の分の和(PREPARE_SHARE_MIB + taskReserve × TASK_SHARE_MIB)以上。失敗ケース: 限る層の max がこの和を下回ると、実行環境の準備
+    (uv・Rust の wheel・焼き)や枠どおりに置いた task が層の上限で殺され、常駐の job の版を上げられず、task が失敗する。"""
+    worker = _worker_on(rendered, node)
+    settings = dict(_layout(worker))
+    jobs = str(_env_value(worker, "DOEFF_WORKER_JOB_CGROUP")["value"])
+    reserve = _mapping(_room_rows()[node], node)["taskReserve"]
+    assert isinstance(reserve, int)
+    assert _bytes(settings[CGROUP_FIRST_LAYER]["memory.min"]) >= WORKER_SELF_MIB * 2**20, settings
+    assert _bytes(settings[jobs]["memory.max"]) >= (PREPARE_SHARE_MIB + reserve * TASK_SHARE_MIB) * 2**20, settings
 
 
 @pytest.mark.parametrize("node", sorted(CGROUP_LAYERS))
@@ -435,7 +463,7 @@ def _cgroup_delegate(deployment: Manifest) -> Manifest:
 def test_worker_cgroup_is_delegated_by_a_root_sidecar_while_the_worker_stays_unprivileged(rendered: list[Manifest], node: str) -> None:
     """委ねる係は root・privileged の native sidecar(restartPolicy Always — worker の container が起こし直されても渡し直す)で、image は
     worker と同じ。worker の container は特権を持たず(privileged は host の cgroup の名前空間で起き、/sys/fs/cgroup の見えが変わる)、
-    host の cgroupfs を WORKER_CGROUP_HOST に置く。委ねる係の宣言は層を持つ全部の機体で同じ(機体の dir の写しが離れない)。"""
+    host の cgroupfs を WORKER_CGROUP_HOST に置く。委ねる係の宣言は層を持つ全部の機体で同じ(zeus の dir の宣言と、ほかの機体の部品 cgroup-layers の宣言が離れない)。"""
     worker = _worker_on(rendered, node)
     sidecar = _cgroup_delegate(worker)
     assert sidecar["restartPolicy"] == "Always"
@@ -754,21 +782,17 @@ def test_every_pool_in_the_room_file_is_named_by_two_or_more_machines() -> None:
 
 
 def test_the_memory_allowance_is_the_worker_limit_less_the_worker_and_its_tasks(rendered: list[Manifest]) -> None:
-    """枠の file の memoryMiB(常駐の job の memory の予算)は、機体の worker の container の memory の上限から worker 自身の分と task の分を
-    引いた値(定義点は、cgroup の層を宣言する機体では層 — worker の memory.min と task の層の memory.max、ほかの機体では
-    HOST_ONLY_WORKER_SELF_MIB・TASK_SHARE_MIB)。
+    """枠の file の memoryMiB(常駐の job の memory の予算)は、機体の worker の container の memory の上限から worker 自身の分と task と準備の
+    分を引いた値(定義点は cgroup の層 — worker の memory.min と task と準備の層の memory.max)。
     反例: 上限を越える予算は、N+1 の判断の規則 3 を通しても、移った job の起動の山で worker の container の上限に当たり、worker の memory の
     守りが job の起動を止め続ける(k3s-1 の例 — 上に載る系の宣言の註)。"""
     rows = _room_rows()
     for node in NODES:
         worker = _worker_on(rendered, node)
         limit = _bytes(str(_mapping(_mapping(_container(worker)["resources"], "resources")["limits"], "limits")["memory"]))
-        if node in CGROUP_LAYERS:
-            settings = dict(_layout(worker))
-            jobs = str(_env_value(worker, "DOEFF_WORKER_JOB_CGROUP")["value"])
-            allowance = (limit - _bytes(settings[CGROUP_FIRST_LAYER]["memory.min"]) - _bytes(settings[jobs]["memory.max"])) // 2**20
-        else:
-            allowance = limit // 2**20 - HOST_ONLY_WORKER_SELF_MIB - HOST_ONLY_ROOM[node][1] * TASK_SHARE_MIB
+        settings = dict(_layout(worker))
+        jobs = str(_env_value(worker, "DOEFF_WORKER_JOB_CGROUP")["value"])
+        allowance = (limit - _bytes(settings[CGROUP_FIRST_LAYER]["memory.min"]) - _bytes(settings[jobs]["memory.max"])) // 2**20
         assert _mapping(rows[node], node)["memoryMiB"] == allowance, node
 
 

@@ -1,0 +1,11 @@
+# k3s-2 の worker の cgroup の層の値(JSON patch)。委ねる係・host の cgroupfs の mount・層の名と、値の決め方は ../../cgroup-layers。
+#
+# 訳: k3s-2 は機体の仕事 1 本と組の印 pool-k3s-1-k3s-2 の常駐の job 1 本を走らせ、atlas が止まると組の印 pool-atlas-k3s-2 の常駐の job
+# 1 本を受ける。
+# 値:
+# - services の memory.min 1536M: 予算 1792 − 256。1 台の停止で移る常駐の job の値を含めて N+1 の判断が予算に求める 1428 MiB 以上。
+# - jobs の memory.max 1536M: 準備の分(task は来ない — 枠の file の taskReserve 0)。
+# - container の上限 2Gi → 3584Mi: 予算 1792 を前の値のまま残し、準備の分を足した。
+- op: add
+  path: /spec/template/spec/containers/0/env/-
+  value: { name: WORKER_CGROUP_LAYOUT, value: "worker:memory.min=256M,cpu.weight=1000 services:memory.min=1536M,cpu.weight=1000 jobs:memory.max=1536M,cpu.weight=100" }

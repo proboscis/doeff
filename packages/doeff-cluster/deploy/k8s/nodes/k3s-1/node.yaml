@@ -11,5 +11,6 @@ spec:
       containers:
         - name: worker
           # k3s-1 は CPU 4・memory 3.8Gi(allocatable)。越えたら kubelet が取り分を最も越えたこの Pod を先に追い出す。
-          # 取り分は小さく(機体が他の Pod で埋まっていても置ける)、上限は最初の起動で doeff-vm の wheel を組む山を通す大きさ。
-          resources: { requests: { cpu: "100m", memory: 256Mi }, limits: { cpu: "2", memory: 2Gi } }
+          # 取り分は小さく(機体が他の Pod で埋まっていても置ける)、上限は cgroup の層の和(worker の min + 常駐の job の予算 + 準備の max
+          # — cgroup.yaml)が入る大きさ。準備の層の max が準備を抑えるので、ふだんの使いは前の上限 2Gi の頃と変わらない。
+          resources: { requests: { cpu: "100m", memory: 256Mi }, limits: { cpu: "2", memory: 3584Mi } }

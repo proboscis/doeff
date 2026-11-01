@@ -1,0 +1,56 @@
+# 機体の仕事だけを受ける worker の cgroup の層の共通の部分(JSON patch)。形は zeus と同じ(../nodes/zeus/cgroup.yaml の頭の註)。
+#
+# 訳: 層が無いと、常駐の job と、task・実行環境と木の準備・入口の検め・待ちの子が container の cgroup 1 つ(memory.max と cpu.max だけ)を
+# 分け合い、1 本が上限の手前で回収を詰まらせると常駐の job も止まる(zeus の 10-24 06:03 JST の 16.7 分の止まりと同じ形)。CPU が埋まった
+# 時も、常駐の job の thread が一括の仕事の thread と同じ重みで実行待ちに並ぶ。
+#
+# 層の名: worker = tini・起動の script・worker の本体(と kubectl exec・readinessProbe)・services = 常駐の job の shim と子・jobs = task・
+# 待ちの子・実行環境と木の準備・入口の検め・keeper の版の準備。値は機体の dir の cgroup.yaml の WORKER_CGROUP_LAYOUT。
+#
+# 値の決め方(helios の外 — helios の値の訳は ../nodes/helios/cgroup.yaml):
+# - worker の memory.min 256M: worker の本体の RSS 126〜132 MiB(10-27 の 4 機体・11-01 の atlas 132 MiB)に余裕を足した、枠の file の worker
+#   自身の分と同じ値。
+# - jobs の memory.max = 準備の分 1536M + task の予約 × 3G。準備の分は、container の上限 2Gi の機体(k3s-0〜2)で準備が通っていた余地
+#   (2Gi − worker の本体と常駐の job の約 0.4 GiB。oom_kill は 11-01 までの 5 日で 0)。task の 1 本の分は枠の file の task の分と同じ 3G。
+# - 枠の file の memoryMiB(常駐の job の memory の予算)= container の上限 − worker の memory.min − jobs の memory.max(zeus と同じ式)。
+# - services の memory.min = その予算から 256M を引いた値(守る層と限る層の和を container の上限の内に残す余り)。どの機体でも、1 台の
+#   worker の停止で移る常駐の job の落ち着いた値と起動の山(N+1 の判断 failover-refusals が予算に求める値)以上。
+# - container の上限 = 層の和が入る大きさ。task を受けない機体は、予算を前の値のまま残すよう、前の上限に準備の分を足した(前の予算は
+#   準備の memory を数えていなかった)。層が準備を jobs の max で抑えるので、ふだんの使いは上限を上げても増えない — 増えうるのは 1 台の停止で
+#   常駐の job が移った時の services だけで、それは前の予算が既に約束していた分。
+#
+# 雛形の env の並び(WORK_DIR が 1 番・WORKER_PROVIDES が 5 番 — ../host-only の操作が読む)を動かさないよう、足す物は全部末尾へ足す。
+- op: add
+  path: /spec/template/spec/initContainers/-
+  value:
+    name: cgroup-delegate
+    image: zeus:5000/agent-worker-exp:in-c17f84e4dcaa
+    restartPolicy: Always
+    securityContext: { privileged: true, runAsUser: 0, runAsNonRoot: false }
+    resources: { requests: { cpu: 10m, memory: 16Mi }, limits: { cpu: 100m, memory: 64Mi } }
+    command: ["/bin/sh", "-c"]
+    args:
+      - |
+        own=$(sed -n 's/^0:://p' /proc/self/cgroup)
+        case "$own" in
+          /kubepods*/*.scope) ;;
+          *) echo "cgroup-delegate: 自分の cgroup '$own' が Pod の slice の下の container の cgroup でない(host の cgroup の名前空間で起きていない)" >&2
+             exit 1 ;;
+        esac
+        slice=/sys/fs/cgroup${own%/*}
+        echo "cgroup-delegate: $slice の container の cgroup を uid 1000 へ委ねる" >&2
+        while :; do
+          for d in "$slice"/*.scope; do
+            [ -d "$d" ] && [ "$d" != "/sys/fs/cgroup$own" ] || continue
+            [ "$(cat "$d/memory.max" 2>/dev/null)" != max ] || continue
+            [ "$(stat -c %u "$d")" != 1000 ] || continue
+            chown 1000:1000 "$d" "$d/cgroup.procs" "$d/cgroup.subtree_control" "$d/cgroup.threads" &&
+              echo "cgroup-delegate: $d を uid 1000 へ委ねた" >&2
+          done
+          sleep 2
+        done
+- { op: add, path: /spec/template/spec/volumes/-, value: { name: host-cgroup, hostPath: { path: /sys/fs/cgroup, type: Directory } } }
+- { op: add, path: /spec/template/spec/containers/0/volumeMounts/-, value: { name: host-cgroup, mountPath: /host/cgroup } }
+- { op: add, path: /spec/template/spec/containers/0/env/-, value: { name: WORKER_CGROUP_HOST, value: /host/cgroup } }
+- { op: add, path: /spec/template/spec/containers/0/env/-, value: { name: DOEFF_WORKER_SERVICE_CGROUP, value: services } }
+- { op: add, path: /spec/template/spec/containers/0/env/-, value: { name: DOEFF_WORKER_JOB_CGROUP, value: jobs } }

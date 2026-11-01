@@ -1,0 +1,14 @@
+# atlas の worker の cgroup の層の値(JSON patch)。委ねる係・host の cgroupfs の mount・層の名と、値の決め方は ../../cgroup-layers。
+#
+# 訳: atlas は組の印 pool-atlas-* の常駐の job 13 本と機体の仕事 1 本と、上に載る系の日次の全体検証の task(task の予約 3)を同じ container
+# で走らせる。11-01 の 5 時間の窓(job ごとの 5 分の記録)で、常駐の job の memory の和は最大 5100 MiB(中央 4406)・task の和は最大 9345 MiB
+# (fork した子の共有の頁を重ねて数えた 1 窓を除く — その窓の container は 6531 MiB)・container の memory.peak は 13438 MiB。
+# 値:
+# - services の memory.min 7G(7168M): 予算 7424 − 256。1 台の停止で移る常駐の job の値を含めて N+1 の判断が予算に求める 6571 MiB 以上。
+# - jobs の memory.max 10752M: 準備の分 1536M + task の予約 3 × 3G。task の和の最大 9345 MiB を通す。
+# - container の上限は 18Gi のまま(上げない): 機体の memory が足りずに kubelet がこの Pod を追い出している(10-30〜11-01 に 5 回 — 機体の空き
+#   1536Mi の線を割った時の container は 11.1〜12.0 GiB)。上限を上げると追い出しの手前の使いを増やすので、予算の側を 8960 → 7424 に下げた。
+#   層は container の中の分け方を決めるだけで、機体の memory の不足による追い出しは止めない。
+- op: add
+  path: /spec/template/spec/containers/0/env/-
+  value: { name: WORKER_CGROUP_LAYOUT, value: "worker:memory.min=256M,cpu.weight=1000 services:memory.min=7168M,cpu.weight=1000 jobs:memory.max=10752M,cpu.weight=100" }

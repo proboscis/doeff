@@ -1,10 +1,12 @@
-# atlas の worker(doeff-worker-atlas)= worker の雛形 + 機体の仕事だけを受ける差(../../host-only)+ atlas の差(置く Node・資源の上限)。
+# atlas の worker(doeff-worker-atlas)= worker の雛形 + 機体の仕事だけを受ける差(../../host-only)+ cgroup の層の共通の部分
+# (../../cgroup-layers)+ atlas の差(置く Node・資源の上限・cgroup の層の値)。
 apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
 resources:
   - ../../worker
 components:
   - ../../host-only
+  - ../../cgroup-layers
 nameSuffix: -atlas
 # 機体ごとの Deployment が互いの Pod を選ばないよう、selector と Pod の label に Node の名を足す。
 labels:
@@ -14,3 +16,6 @@ patches:
   - path: node.yaml
   # disk の分け前から導いた worker の env(空きの最低・roots の上限 — ../../disk-share/derive.py が書く)。
   - path: disk-share.yaml
+  # cgroup の memory と CPU の層の値(JSON patch — 足す物は全部末尾へ)。
+  - path: cgroup.yaml
+    target: { group: apps, version: v1, kind: Deployment, name: doeff-worker }
