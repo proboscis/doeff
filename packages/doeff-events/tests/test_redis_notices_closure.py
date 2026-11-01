@@ -145,7 +145,7 @@ def _real_broker_handler() -> object:
     """The handler ``_run`` installs around the body, on clients that connect to nothing until a call is made."""
     sending = _client("redis://broker:6379/0", 1, 1.0, calls_end=True)
     receiving = _client("redis://broker:6379/0", 0, 1.0, calls_end=False)
-    return _broker_handler(sending, receiving, 7.0, 30.0)
+    return _broker_handler(sending, receiving, 1.0, 7.0, 30.0)
 
 
 def _emitted(handler: object) -> frozenset[type]:
