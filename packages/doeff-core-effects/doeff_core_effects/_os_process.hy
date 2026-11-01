@@ -49,7 +49,7 @@
 (import doeff_lifeline._watch [Lifeline])
 (import doeff_core_effects._process_effects [ChildLifetime EnvEntry EnvMode ProcessOutcome RunProcess ExecutableAt ReadEnvironment WorkingDirectory
                                             ProcessAlive StartProcess PollProcess StopProcess ProcessStarted ProcessNotStarted
-                                            ProcessRunning ProcessExited ProcessNotChild SignalProcess ProcessSignal ProcessSignalled
+                                            ProcessRunning ProcessExited ProcessNotChild SignalProcess ProcessSignal ProcessSignalled ProcessSignalRefused
                                             WriteProcessInput ProcessInputWritten
                                             ReadInterpreter ReadMachineName ResolveModule InterpreterFacts ModuleFound ModuleNotFound
                                             timed-out-outcome not-started-outcome executable-file-answer environment-answer])
@@ -68,6 +68,11 @@
 ;; 取り消しで子を止めた結末(頭の註): NOT-RUNNING = 止める前に終わっていた(何も送らない)・TERMINATED = SIGTERM で猶予の内に止まった・
 ;; KILLED = 猶予の後も残り SIGKILL で止めた。
 (defenum CancelStop NOT-RUNNING TERMINATED KILLED)
+
+
+;; process group へ signal を送った結末(signal-group の答え): SENT = 送った・GONE = group が既に無い・REFUSED = OS が送りを断った
+;; (EPERM — 権限の照合か LSM。例 = AppArmor が container の中の process どうしの signal を拒む機体)。
+(defenum GroupSignal SENT GONE REFUSED)
 
 
 (defrecord WatchedChild
@@ -238,11 +243,13 @@
 
 
 (defk signal-group [pgid sig]
-  {:pre [(: pgid int) (: sig int)] :post [(: % None)] :tags {:context "process" :role "foundation"}}
-  "子の process group へ signal を 1 回送るため — 消えた group と、送る権限の無い group は触らない。"
-  (with [(contextlib.suppress ProcessLookupError PermissionError)]
-    (os.killpg pgid sig))
-  None)
+  {:pre [(: pgid int) (: sig int)] :post [(: % GroupSignal)] :tags {:context "process" :role "foundation"}}
+  "子の process group へ signal を 1 回送るため。答え = SENT・GONE(group が既に無い)・REFUSED(OS が送りを断った — EPERM。group は
+   走ったまま)。止めの経路は REFUSED を「送った」と数えない(SignalProcess の答えの ProcessSignalRefused)。"
+  (try
+    (do (os.killpg pgid sig) GroupSignal.SENT)
+    (except [ProcessLookupError] GroupSignal.GONE)
+    (except [PermissionError] GroupSignal.REFUSED)))
 
 
 (defk group-alive [pgid]
@@ -616,10 +623,10 @@
 
 
 (defk signal-child-process [pid sent]
-  {:pre [(: pid int) (: sent ProcessSignal)] :post [(: % (| ProcessSignalled ProcessNotChild))] :tags {:context "process" :role "foundation"}}
+  {:pre [(: pid int) (: sent ProcessSignal)] :post [(: % (| ProcessSignalled ProcessSignalRefused ProcessNotChild))] :tags {:context "process" :role "foundation"}}
   "SignalProcess に本物の子で答えるため: 表に無い pid は ProcessNotChild(他人の process に signal を送らない)。既に終わっていた子には
    送らず delivered False(表に残し、終わりは PollProcess が答えて回収する)。走っていれば、process-group で立てた子は group へ・そうでなければ
-   子へ signal を 1 度だけ送り、待たずに delivered True。"
+   子へ signal を 1 度だけ送り、待たずに delivered True。OS が送りを断れば(EPERM)ProcessSignalRefused — 子は走ったまま。"
   (val found (.find STARTED-CHILDREN pid))
   (if (is found None)
       (ProcessNotChild :pid pid)
@@ -628,10 +635,22 @@
         (val number (match sent ProcessSignal.TERM signal.SIGTERM ProcessSignal.KILL signal.SIGKILL))
         (if (is-not (.poll child) None)
             (ProcessSignalled :pid pid :delivered False)
-            (do (if (get found 1)
-                    (<- (signal-group child.pid number))
-                    (with [(contextlib.suppress ProcessLookupError)] (.send-signal child number)))
-                (ProcessSignalled :pid pid :delivered True))))))
+            (do (<- outcome GroupSignal
+                      (if (get found 1)
+                          (signal-group child.pid number)
+                          (send-child-signal child number)))
+                (match outcome
+                  GroupSignal.REFUSED (ProcessSignalRefused :pid pid)
+                  _ (ProcessSignalled :pid pid :delivered True)))))))
+
+
+(defk send-child-signal [child number]
+  {:pre [(: child subprocess.Popen) (: number int)] :post [(: % GroupSignal)] :tags {:context "process" :role "foundation"}}
+  "group で立てていない子 1 つへ signal を送るため(Popen の口 — 回収済みの子の pid へは送らない)。答えの形は signal-group と同じ。"
+  (try
+    (do (.send-signal child number) GroupSignal.SENT)
+    (except [ProcessLookupError] GroupSignal.GONE)
+    (except [PermissionError] GroupSignal.REFUSED)))
 
 
 (defk write-child-input [pid text]

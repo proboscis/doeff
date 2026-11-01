@@ -39,6 +39,7 @@ from doeff_core_effects._process_effects import ProcessNotChild as ProcessNotChi
 from doeff_core_effects._process_effects import SignalProcess as SignalProcess
 from doeff_core_effects._process_effects import ProcessSignal as ProcessSignal
 from doeff_core_effects._process_effects import ProcessSignalled as ProcessSignalled
+from doeff_core_effects._process_effects import ProcessSignalRefused as ProcessSignalRefused
 from doeff_core_effects._process_effects import WriteProcessInput as WriteProcessInput
 from doeff_core_effects._process_effects import ProcessInputWritten as ProcessInputWritten
 from doeff_core_effects._process_effects import ReadInterpreter as ReadInterpreter
@@ -60,6 +61,11 @@ class CancelStop(StrEnum):
     NOT_RUNNING = 'not-running'
     TERMINATED = 'terminated'
     KILLED = 'killed'
+
+class GroupSignal(StrEnum):
+    SENT = 'sent'
+    GONE = 'gone'
+    REFUSED = 'refused'
 
 @dataclass(frozen=True, kw_only=True)
 class WatchedChild:
@@ -124,7 +130,7 @@ def append_output(output_path: str | None, stdout: str, stderr: str) -> _Program
 def child_environment(env: tuple | None, env_mode: EnvMode, env_drop: tuple) -> _Program[dict | None, object]:
     ...
 
-def signal_group(pgid: int, sig: int) -> _Program[None, object]:
+def signal_group(pgid: int, sig: int) -> _Program[GroupSignal, object]:
     ...
 
 def group_alive(pgid: int) -> _Program[bool, object]:
@@ -195,7 +201,10 @@ def poll_child_process(pid: int) -> _Program[ProcessRunning | ProcessExited | Pr
 def stop_child_process(pid: int, stop_grace: float) -> _Program[ProcessExited | ProcessNotChild, object]:
     ...
 
-def signal_child_process(pid: int, sent: ProcessSignal) -> _Program[ProcessSignalled | ProcessNotChild, object]:
+def signal_child_process(pid: int, sent: ProcessSignal) -> _Program[ProcessSignalled | ProcessSignalRefused | ProcessNotChild, object]:
+    ...
+
+def send_child_signal(child: subprocess.Popen, number: int) -> _Program[GroupSignal, object]:
     ...
 
 def write_child_input(pid: int, text: str) -> _Program[ProcessInputWritten | ProcessNotChild, object]:

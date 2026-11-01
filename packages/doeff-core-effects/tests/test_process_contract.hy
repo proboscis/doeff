@@ -24,11 +24,12 @@
 ;;; 台本が env None を None で受ける)は test_process_file_effects.hy。
 (require doeff-hy.macros [defk deftest <- val var])
 (import contextlib)
+(import unittest [mock])
 (import os)
 (import signal)
 (import sys)
 (import doeff_core_effects [MakeDirectory PathKind PathStat ReadText StatPath WriteText])
-(import doeff_core_effects [EnvEntry EnvMode ExecutableAt ProcessAlive ProcessOutcome ReadEnvironment RunProcess WorkingDirectory StartProcess PollProcess StopProcess ProcessStarted ProcessNotStarted ProcessRunning ProcessExited ProcessNotChild SignalProcess ProcessSignal ProcessSignalled WriteProcessInput ProcessInputWritten ReadInterpreter ReadMachineName ResolveModule InterpreterFacts ModuleFound ModuleNotFound environment-mapping])
+(import doeff_core_effects [EnvEntry EnvMode ExecutableAt ProcessAlive ProcessOutcome ReadEnvironment RunProcess WorkingDirectory StartProcess PollProcess StopProcess ProcessStarted ProcessNotStarted ProcessRunning ProcessExited ProcessNotChild SignalProcess ProcessSignal ProcessSignalled ProcessSignalRefused WriteProcessInput ProcessInputWritten ReadInterpreter ReadMachineName ResolveModule InterpreterFacts ModuleFound ModuleNotFound environment-mapping])
 (import process_contract_handlers [BIG-OUTPUT BIG-OUTPUT-TEXT CAT ContractRoot ENV-PROBE FIRST-THEN-WAIT KILLED LEFT-BEHIND LEFT-BEHIND-THEN-WAIT NOT-UTF-8
                                    NOT-UTF-8-BYTES OUT-ERR OUT-ERR-EXIT OWN-PID PWD TWO-LINES
                                    PROBE-MODULE NAMESPACE-MODULE MISSING-MODULE])
@@ -389,6 +390,23 @@
     (assert (= exited (ProcessExited :pid started.pid :exit-code code)) #(sent exited))
     (<- again (SignalProcess :pid started.pid :signal sent))
     (assert (= again (ProcessNotChild :pid started.pid)) again)))
+
+
+(deftest test-a-signal-the-os-refuses-is-answered-as-refused-and-the-child-keeps-running
+  ;; OS が送りを断る機体(EPERM — 2026-11-01 の helios では AppArmor が container の中の process どうしの signal を拒んだ)。断られた
+  ;; 合図を「送った」と答えない — 答えは ProcessSignalRefused で、子は走ったまま。反例 = PermissionError を握りつぶして delivered True と
+  ;; 答える形(直す前)は、下の断言が赤。group で立てた子(os.killpg)と group でない子(Popen の口 → os.kill)の両方。
+  {:interpreters ["subprocess" "offloaded-subprocess"]}
+  (for [group [True False]]
+    (<- started (StartProcess :argv #("sleep" "30") :process-group group))
+    (assert (isinstance started ProcessStarted) started)
+    (with [_ (mock.patch.object os "killpg" :side-effect (PermissionError 1 "Operation not permitted"))
+           _ (mock.patch.object os "kill" :side-effect (PermissionError 1 "Operation not permitted"))]
+      (<- answer (SignalProcess :pid started.pid :signal ProcessSignal.KILL)))
+    (assert (= answer (ProcessSignalRefused :pid started.pid)) #(group answer))
+    (<- polled (PollProcess started.pid))
+    (assert (= polled (ProcessRunning :pid started.pid)) #(group polled))
+    (<- (StopProcess :pid started.pid :stop-grace 2.0))))
 
 
 (deftest test-an-ended-child-is-not-signalled-and-its-end-is-kept-for-poll

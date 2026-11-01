@@ -74,7 +74,8 @@
 ;;;   SignalProcess     立てた子へ signal(ProcessSignal の TERM か KILL)を 1 度だけ送り、待たずに返す(#2461 — 消費者 = doeff-cluster の
 ;;;                     worker の子の止め方: 拍ごとに TERM を送り、止まらなければ次の段で KILL を送り、終わりは PollProcess で確かめる)。
 ;;;                     process-group で立てた子は group へ、そうでなければ子へ送る(StopProcess と同じ)。答え = ProcessSignalled(delivered =
-;;;                     送ったか — 既に終わっていた子には送らず、回収は PollProcess)か ProcessNotChild(他人の process には送らない)。
+;;;                     送ったか — 既に終わっていた子には送らず、回収は PollProcess)か ProcessSignalRefused(OS が送りを断った — EPERM。子は
+;;;                     走ったまま。例 = AppArmor が container の中の signal を拒む機体)か ProcessNotChild(他人の process には送らない)。
 ;;;   WriteProcessInput hold-stdin で立てた子の標準入力の pipe へ text を書き、待たずに返す(#3672 — 消費者 = doeff-cluster の worker が shim へ
 ;;;                     job の退きの知らせの行を送る)。答え = ProcessInputWritten(delivered = 書いたか — 終わっていた子・pipe を握っていない子
 ;;;                     〔hold-stdin でない〕・読み手の居ない pipe には書かない)か ProcessNotChild(立てていない pid)。書くのは短い行に限る
@@ -318,8 +319,14 @@
   (#^ bool delivered))
 
 
-(defclass [(dataclass :frozen True :kw-only True)] SignalProcess [(get EffectBase (| ProcessSignalled ProcessNotChild))]
-  "StartProcess で立てた子へ signal を 1 度だけ送り、待たずに返す(頭の註)。答え = ProcessSignalled か ProcessNotChild。"
+(defrecord ProcessSignalRefused
+  "SignalProcess の答え: 走っている子へ送ろうとしたが、OS が送りを断った(EPERM — 権限の照合か LSM の拒否)。子は走ったままなので、
+   呼び手は「送った」と数えない。"
+  (#^ int pid))
+
+
+(defclass [(dataclass :frozen True :kw-only True)] SignalProcess [(get EffectBase (| ProcessSignalled ProcessSignalRefused ProcessNotChild))]
+  "StartProcess で立てた子へ signal を 1 度だけ送り、待たずに返す(頭の註)。答え = ProcessSignalled か ProcessSignalRefused か ProcessNotChild。"
   #^ int pid
   #^ ProcessSignal signal)
 

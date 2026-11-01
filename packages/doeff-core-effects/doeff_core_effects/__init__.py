@@ -344,6 +344,7 @@ if TYPE_CHECKING:
     from doeff_core_effects._process_effects import ProcessOutcome as ProcessOutcome
     from doeff_core_effects._process_effects import ProcessRunning as ProcessRunning
     from doeff_core_effects._process_effects import ProcessSignal as ProcessSignal
+    from doeff_core_effects._process_effects import ProcessSignalRefused as ProcessSignalRefused
     from doeff_core_effects._process_effects import ProcessSignalled as ProcessSignalled
     from doeff_core_effects._process_effects import ProcessStarted as ProcessStarted
     from doeff_core_effects._process_effects import ReadEnvironment as ReadEnvironment
@@ -752,6 +753,7 @@ _LAZY_EXPORTS = {
     "ProcessOutcome": "doeff_core_effects._process_effects",
     "ProcessRunning": "doeff_core_effects._process_effects",
     "ProcessSignal": "doeff_core_effects._process_effects",
+    "ProcessSignalRefused": "doeff_core_effects._process_effects",
     "ProcessSignalled": "doeff_core_effects._process_effects",
     "ProcessStarted": "doeff_core_effects._process_effects",
     "ReadEnvironment": "doeff_core_effects._process_effects",

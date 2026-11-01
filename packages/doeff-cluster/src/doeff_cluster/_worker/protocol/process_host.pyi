@@ -36,6 +36,7 @@ from doeff_core_effects import ProcessNotStarted as ProcessNotStarted
 from doeff_core_effects import ProcessRunning as ProcessRunning
 from doeff_core_effects import ProcessExited as ProcessExited
 from doeff_core_effects import ProcessNotChild as ProcessNotChild
+from doeff_core_effects import ProcessSignalRefused as ProcessSignalRefused
 from doeff_core_effects import WriteProcessInput as WriteProcessInput
 from doeff_core_effects import ProcessInputWritten as ProcessInputWritten
 from doeff_cluster._worker.intent.worker_model import NoticeJob as NoticeJob
@@ -126,6 +127,7 @@ class StopMoment(StrEnum):
     KILL = 'kill'
     REAPED = 'reaped'
 STOP_TIMING_LOG: str
+STOP_REFUSED_LOG: str
 JOB_NOT_STARTED_LOG: str
 SET_ASIDE_DIR: str
 SET_ASIDE_CLEARED_LOG: str
