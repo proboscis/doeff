@@ -184,6 +184,26 @@
   (setv #^ (get tuple #(str ...)) memory-unmeasured #()))
 
 
+(defwire MeasuredLoad
+  "heartbeat の機体の測った空き(欄 measured — worker/protocol/heartbeat の measured-json と同じ形・worker/core/load_rules の
+   MachineLoad): at-ms = 読んだ刻(worker の壁の時計の epoch ms)・cpus = CPU の数・cpu-busy = 前の読みからの CPU の使いの割合(0〜1 —
+   None = まだ数えられない)・memory-total-MiB / memory-available-MiB = MemTotal / MemAvailable(MiB)・cpu-some-avg10 / cpu-full-avg10 /
+   memory-some-avg10 / memory-full-avg10 = PSI の avg10(%— None = PSI の無い機体・full の行の無い kernel の cpu)。coordinator は
+   保存せずに GET /state の worker の行に写すだけで、置き方の判断には使わない。"
+  {:tags {:context "coordinator" :role "type" :reads "json"} :names :camel :unknown :ignore
+   :check [(> cpus 0) (or (is cpu-busy None) (<= 0 cpu-busy 1)) (>= memory-total-MiB memory-available-MiB 0)
+           (all (gfor v #(cpu-some-avg10 cpu-full-avg10 memory-some-avg10 memory-full-avg10) (or (is v None) (>= v 0))))]}
+  (#^ int at-ms)
+  (#^ int cpus)
+  (#^ int memory-total-MiB)
+  (#^ int memory-available-MiB)
+  (setv #^ (| float None) cpu-busy None)
+  (setv #^ (| float None) cpu-some-avg10 None)
+  (setv #^ (| float None) cpu-full-avg10 None)
+  (setv #^ (| float None) memory-some-avg10 None)
+  (setv #^ (| float None) memory-full-avg10 None))
+
+
 (defwire HeartbeatBody
   "POST /heartbeat の本文(worker/protocol/heartbeat の heartbeat-body と env-heartbeat-part と同じ形): name = worker の名(空でない)・
    provides / exclusive = 能力の名の列(labels = 旧い形の名乗り — 判断が断る)・node・task-reserve = task のために空けておく数
@@ -200,7 +220,8 @@
    前に名乗った枠のまま。file を読まない worker・旧い worker は ok)・doeff-commit = その process の doeff の版
    (起動の script の WORKER_DOEFF_COMMIT。版を持たない worker・旧い worker は空)・memory-MiB = 枠の file の行の
    常駐の job の memory の予算(欄 memoryMiB・0 以上の MiB。job の側の枠 — 置いた job の settle の和 + 新しい job の
-   settle がこの値以下の時だけ置く。名乗らない worker(枠の file の外の機体)は None で、memory で縛らない)。"
+   settle がこの値以下の時だけ置く。名乗らない worker(枠の file の外の機体)は None で、memory で縛らない)・measured = 機体の
+   測った空き(MeasuredLoad — 測れない worker・旧い worker は None)。"
   {:tags {:context "coordinator" :role "type" :reads "json"} :names :camel :unknown :ignore
    :check [(> (len name) 0) (>= task-reserve 0) (>= background-room 0) (or (is memory-MiB None) (>= memory-MiB 0))]}
   (#^ str name)
@@ -229,7 +250,8 @@
   (setv #^ str room-file "ok")
   (setv #^ str doeff-commit "")
   ;; wire の名を memoryMiB にするため、欄の名は単位の綴りのまま(:camel の写しが memory-MiB → memoryMiB)。
-  (setv #^ (| int None) memory-MiB None))
+  (setv #^ (| int None) memory-MiB None)
+  (setv #^ (| MeasuredLoad None) measured None))
 
 
 (defwire ResourceBody

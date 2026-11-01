@@ -7,6 +7,7 @@
 (import doeff_cluster._worker.core.worker_rules [ENV-KEY-PREFIX])
 (import doeff_cluster._worker.core.heartbeat_rules [finished-task-id])
 (import doeff_cluster._worker.core.room_rules [announced-provides])
+(import doeff_cluster._worker.core.load_rules [MachineLoad])
 
 
 (deff env-report [#^ (get tuple #(CodeView ...)) views #^ str capacity #^ (get frozenset str) unmeasured]  ; defk にできない: worker の root の言い換え(env-host)と sim の宿が同じ形を作る純粋な判断
@@ -35,12 +36,13 @@
 
 
 (defk heartbeat-body [* name provides exclusive node task-reserve background-room versions statuses endpoint boot boot-at tools kept [stopping False]
-                      [overlaps-elder False] [doeff-commit ""] [pools #()] [memory-mib None]]
+                      [overlaps-elder False] [doeff-commit ""] [pools #()] [memory-mib None] [measured None]]
   {:pre [(: name str) (: provides (get tuple #(str ...))) (: exclusive (get tuple #(str ...))) (: node str)
          (: task-reserve int) (: background-room int)
          (: versions (get dict #(str str))) (: statuses (get list (get dict #(str object)))) (: endpoint str) (: boot str) (: boot-at int)
          (: tools (get dict #(str object))) (: kept (get tuple #(str ...))) (: stopping bool)
-         (: overlaps-elder bool) (: doeff-commit str) (: pools (get tuple #(str ...))) (: memory-mib (| int None))]
+         (: overlaps-elder bool) (: doeff-commit str) (: pools (get tuple #(str ...))) (: memory-mib (| int None))
+         (: measured (| MachineLoad None))]
    :post [(: % (get dict #(str object)))]
    :tags {:context "worker" :role "protocol"}}
   "POST /heartbeat の本文(生存・能力・版・状態の報告・世代・持っている印・止まり始め)を作るため。実行環境の root の名乗り(env-body)は
@@ -55,8 +57,14 @@
    出す)。空でない時だけ欄を書く(版を持たない worker の本文は前と同じ形)。pools = 枠の file の行の置ける組の印(
    provides の後ろに足して名乗る。起動の引数の能力との和で、coordinator は heartbeat ごとに Worker の行の provides を書き直すので、次の
    heartbeat から置き方に効く)。memory-mib = 常駐の job の memory の予算(MiB — 名乗る時だけ欄 memoryMiB を書く。coordinator は置いた job の
-   settle の和 + 新しい job の settle がこの値以下の時だけ置き、名乗らない worker は memory で縛らない)。"
+   settle の和 + 新しい job の settle がこの値以下の時だけ置き、名乗らない worker は memory で縛らない)。measured = 機体の測った空き
+   (worker/core/load_rules の MachineLoad — 測れた時だけ欄 measured を書く。coordinator は保存せずに GET /state の worker の行に出し、
+   置き方の判断には使わない)。"
   (<- named (get tuple #(str ...)) (announced-provides provides pools))
+  (var measured-part {})
+  (when (is-not measured None)
+    (<- row (get dict #(str object)) (measured-json measured))
+    (:= measured-part {"measured" row}))
   {"name" name "provides" (list named) "exclusive" (list exclusive) "node" node
    "taskReserve" task-reserve "backgroundRoom" background-room
    "versions" versions
@@ -67,7 +75,18 @@
    "stopping" stopping
    #** (if overlaps-elder {"overlapsElder" True} {})
    #** (if doeff-commit {"doeffCommit" doeff-commit} {})
-   #** (if (is memory-mib None) {} {"memoryMiB" memory-mib})})
+   #** (if (is memory-mib None) {} {"memoryMiB" memory-mib})
+   #** measured-part})
+
+
+(defk measured-json [load]
+  {:pre [(: load MachineLoad)] :post [(: % (get dict #(str object)))] :tags {:context "worker" :role "protocol" :spells "json"}}
+  "機体の測った空きを heartbeat の欄 measured の JSON の形にするため(coordinator/intent/request_bodies の MeasuredLoad と同じ形 — 測れない
+   欄は null)。"
+  {"atMs" load.at-ms "cpus" load.cpus "cpuBusy" load.cpu-busy
+   "memoryTotalMiB" load.memory-total-mib "memoryAvailableMiB" load.memory-available-mib
+   "cpuSomeAvg10" load.cpu-some-avg10 "cpuFullAvg10" load.cpu-full-avg10
+   "memorySomeAvg10" load.memory-some-avg10 "memoryFullAvg10" load.memory-full-avg10})
 
 
 (defk status-report [statuses task-echo results]

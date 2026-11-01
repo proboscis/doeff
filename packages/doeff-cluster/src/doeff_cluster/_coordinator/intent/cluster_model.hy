@@ -24,7 +24,7 @@
 (import doeff_hy._table [Table table-of])
 (import doeff_cluster._shared.intent.job_model [JobSpec])
 (import doeff_cluster._shared.intent.protocol [ClusterTiming Request])
-(import doeff_cluster._coordinator.intent.request_bodies [StatusRow DurationRow])
+(import doeff_cluster._coordinator.intent.request_bodies [StatusRow DurationRow MeasuredLoad])
 (import doeff_cluster._shared.intent.detached_model [TaskLimit GroupLimit DetachedEnded DetachedOutbox DetachedOutboxAcked])
 
 
@@ -117,6 +117,10 @@
   ;; None の worker(枠の file の外の機体 — Mac・zeus-native)は memory で縛らない。保存しない(次の heartbeat で埋まる)。
   ;; 位置で渡す欄の後ろに置かない(retired と boot-at の前)。
   (setv #^ (| int None) memory-mib None)
+  ;; 機体の測った空き(heartbeat の measured — CPU の使い・memory の空き・PSI。測れない worker は None)。GET /state の worker の行に写すだけで、
+  ;; 置き方の判断は読まない。heartbeat ごとに変わる観測なので保存せず、Worker の資源の行にも入れない(入れると版が拍ごとに進む)。
+  ;; 位置で渡す欄の後ろに置かない(retired と boot-at の前)。
+  (setv #^ (| MeasuredLoad None) measured None)
   ;; 退いた世代(boot の欄の説明 — 位置で渡す欄の後ろに置く)。
   (setv #^ (get tuple #(str ...)) retired #())
   ;; 今の世代の process の起動時刻(epoch ms・heartbeat の bootAt — 2026-09-27)。今の世代と来た世代の両方の起動時刻を知る時は、
