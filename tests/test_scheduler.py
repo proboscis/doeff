@@ -23,6 +23,7 @@ from doeff_core_effects import (
     TaskPriority,
     Wait,
     scheduled,
+    shielded,
 )
 
 from doeff import EffectBase, Pass, Resume, do
@@ -2148,7 +2149,7 @@ class TestRootCloseOut:
                 return (yield Wait(ep.future))
             finally:
                 entered["finally"] = True
-                _ = yield Wait(never.future)  # cleanup that never ends
+                _ = yield shielded(Wait(never.future))  # cleanup that never ends
 
         @do
         def body():

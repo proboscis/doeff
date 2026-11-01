@@ -11,6 +11,7 @@ from doeff_core_effects import Spawn as Spawn
 from doeff_core_effects import Task as Task
 from doeff_core_effects import TaskCancelledError as TaskCancelledError
 from doeff_core_effects import Wait as Wait
+from doeff_core_effects import shielded as shielded
 from doeff_cluster._shared.core.promise_wait import promise_or_timeout as promise_or_timeout
 from doeff_cluster._shared.intent.detached_model import AwaitRunnersChange as AwaitRunnersChange
 from doeff_cluster._shared.intent.detached_model import AwaitServiceReady as AwaitServiceReady

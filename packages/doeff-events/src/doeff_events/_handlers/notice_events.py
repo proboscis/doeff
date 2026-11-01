@@ -97,6 +97,7 @@ from doeff_core_effects import (
     Task,
     TaskCancelledError,
     Wait,
+    shielded,
 )
 from doeff_time import GetTime, GetTimeEffect, WaitWithin, WaitWithinEffect
 
@@ -353,7 +354,8 @@ def _stop_task(task: Task[object]) -> "EffectGenerator[Exception | None]":
     one that ended by this cancel or by itself) — the caller decides whether to raise it."""
     yield Cancel(task)
     try:
-        yield Wait(task)
+        # Shielded: the stopping task may be cancelled itself, and its waits raise again.
+        yield shielded(Wait(task))
     except TaskCancelledError:
         return None
     except Exception as error:
@@ -509,7 +511,8 @@ def _subscription_closed(reading: _Reading) -> "EffectGenerator[None]":
     reading._mut_ended = True
     held, reading._mut_held = reading._mut_held, None
     if held is not None:
-        yield CloseSubscription(held)
+        # Shielded: it runs on a cancelled wrapper's way out too, where waits raise again.
+        yield shielded(CloseSubscription(held))
 
 
 @do

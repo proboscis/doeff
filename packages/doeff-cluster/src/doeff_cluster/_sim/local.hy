@@ -154,7 +154,7 @@
 (import doeff [with-handlers EffectBase UnhandledEffect DoExpr Program])
 (import doeff_core_effects [Ask])
 (import doeff_core_effects [state :as session-store await-handler slog-handler slog-discard-handler])
-(import doeff_core_effects [scheduled CreatePromise CompletePromise Wait Spawn Gather Cancel Discard Promise Task Future TaskCancelledError Race])
+(import doeff_core_effects [scheduled CreatePromise CompletePromise Wait Spawn Gather Cancel Discard Promise Task Future TaskCancelledError Race shielded])
 (import doeff_core_effects [AwaitStop StopBell StopRequested])
 (import doeff_core_effects._world_phases [mark-world-phase])
 (import doeff_events [ArmedTimer ArmedTimers ArmedTimersEffect WaitForEventEffect WaitForEventsEffect])
@@ -1378,7 +1378,8 @@
       (when (= (get polled 0) 200)
         (:= outcome (outcome-of (get polled 1) id link.revision))))
     (finally
-      (<- (send-request link "DELETE" (+ "/tasks/" id) {} None))))
+      ;; shielded: 本番の wait-outcome と同じく、呼び手の Cancel の後でも落とす送りの答えを待ち切る
+      (<- (shielded (send-request link "DELETE" (+ "/tasks/" id) {} None)))))
   outcome)
 
 

@@ -36,6 +36,7 @@
 (import collections.abc [Callable Generator])
 (import dataclasses [dataclass])
 (import doeff [do :as program-handler Resume Program EffectBase K WithHandlerType])
+(import doeff_core_effects._scheduler [shielded])
 (import doeff_core_effects._sql_effects [SqlQuery SqlInsertRows SqlBatch SqlNotify SqlRows SqlFailed SqlUnreachable SqlTransactionMisuse T])
 
 
@@ -95,7 +96,8 @@
   (try
     (<- value (WithHandlerType (transaction-scope database execute-query execute-insert execute-notify) program))
     (except [Exception]
-      (<- (rollback))
+      ;; shielded: 取り消しで来た時も ROLLBACK を待ち切る(取り消された task の待ちはまた取り消される)
+      (<- (shielded (rollback)))
       (raise)))
   (match value
     (TransactionAborted :failure failure)

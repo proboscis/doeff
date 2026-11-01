@@ -3,7 +3,7 @@
 
 (require doeff-hy.macros [defk <-])
 
-(import doeff_core_effects [Cancel CompletePromise CreatePromise Promise Spawn Task TaskCancelledError Wait])
+(import doeff_core_effects [Cancel CompletePromise CreatePromise Promise Spawn Task TaskCancelledError Wait shielded])
 
 
 (defk noop []
@@ -50,16 +50,22 @@
   "released")
 
 
+(defk effectful-cleanup [done events]
+  {:pre [(: done Promise) (: events list)] :post [(: % "None")]}
+  (.append events "cleanup start")
+  (<- lease-task (Spawn (release-lease)))
+  (<- released (Wait lease-task))
+  (<- (CompletePromise done released))
+  (.append events "cleanup end"))
+
+
 (defk worker-with-effectful-cleanup [gate done events]
   {:pre [(: gate Promise) (: done Promise) (: events list)] :post [(: % "None")]}
+  ;; 取り消された task の待ちはまた取り消されるので、待つ片付けは shielded で囲む。
   (try
     (<- (Wait gate.future))
     (finally
-      (.append events "cleanup start")
-      (<- lease-task (Spawn (release-lease)))
-      (<- released (Wait lease-task))
-      (<- (CompletePromise done released))
-      (.append events "cleanup end"))))
+      (<- (shielded (effectful-cleanup done events))))))
 
 
 (defk cancel-worker-with-effectful-cleanup [events]

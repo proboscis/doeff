@@ -13,7 +13,7 @@
 ;;; 状態の答え手(doeff_core_effects._handlers の state)・AwaitRunnersChange と AwaitServiceReady の答え手(本番の detached-cluster・sim の宿)。
 (require doeff-hy.macros [defk <- val var])
 (import doeff_core_effects [Get Put])
-(import doeff_core_effects [Cancel CompletePromise CreatePromise Promise Spawn Task TaskCancelledError Wait])
+(import doeff_core_effects [Cancel CompletePromise CreatePromise Promise Spawn Task TaskCancelledError Wait shielded])
 (import doeff_cluster._shared.core.promise_wait [promise-or-timeout])
 (import doeff_cluster._shared.intent.detached_model [AwaitRunnersChange AwaitServiceReady RunnersChange RunnersUnreachable RunnersWatchMissing
                                                    ServiceReady])
@@ -60,7 +60,8 @@
    その例外は Wait が上げる — 待つ口の無い coordinator を黙らせない)。"
   (<- (Cancel task))
   (try
-    (<- (Wait task))
+    ;; shielded: 止める側が取り消された task でも、見張りが解け終わるまで待ち切る
+    (<- (shielded (Wait task)))
     (except [TaskCancelledError]
       None))
   None)

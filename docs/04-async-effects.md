@@ -298,23 +298,32 @@ Cancellation is explicit and delivered into the task:
 - a started task receives `TaskCancelledError` at the point where it is suspended (`Wait`,
   `Gather`, `Race`, `AcquireSemaphore`, `Await`, or a queued resume), so its `except` and
   `finally` blocks run; a task that cancels itself receives it at its own `Cancel`
-- cleanup may perform effects (scheduler effects, `Await` I/O, user effects); the task stays
-  live until it has finished unwinding
+- a cancelled task stays cancelled: every `Wait`, `Gather`, `Race` and `AcquireSemaphore` it
+  reaches afterwards raises `TaskCancelledError` again — also one a handler performs for another
+  effect of the task (`Await`, an HTTP or SQL call, `Delay`) — and the external promise it was
+  about to wait on is stopped. So a task that catches `TaskCancelledError` (an `except`, or a
+  `Try` that turns it into `Err`) and carries on runs only up to its next wait. Its waiters
+  observe `TaskCancelledError` when it ends, and its return value is discarded.
+  `TaskCancelledError` is an `Exception` subclass, so a broad `except Exception` also catches it
+- cleanup that has to wait (give a lease back, close a client, wait for a stopped child) goes
+  inside `shielded(program)`: no cancellation is raised in it, and a `Cancel` that arrives
+  meanwhile lands at the first wait after it. Cleanup outside `shielded` stops at its first
+  wait. Non-waiting effects (`Spawn`, `Cancel`, `ReleaseSemaphore`, `CompletePromise`, state,
+  logging) work anywhere. Keep a shielded region bounded: a shielded wait that never ends keeps
+  the cancelled task alive
 - waiters (`Wait`, `Gather`, `Race`) are woken only after the task has finished unwinding, and
   observe it as `TaskCancelledError`; to be sure the cleanup ran, `Wait` on the task after
   `Cancel` (work still unwinding when the root body returns is abandoned, with the #501 warning)
+- a task that is not itself cancelled and waits on a cancelled task under `Try` gets
+  `Err(TaskCancelledError)` and goes on as usual — only the cancelled task is cancelled again
 - if the cleanup raises a different exception, waiters observe that exception instead
-- a task that catches `TaskCancelledError` and carries on keeps running (one `Cancel` delivers
-  the exception once); waiters still observe `TaskCancelledError` when it ends, and its return
-  value is discarded. Another `Cancel` delivers the exception again at its next suspension point.
-  `TaskCancelledError` is an `Exception` subclass, so a broad `except Exception` also catches it
 - cancelling `Completed`/`Failed`/`Cancelled` tasks is a no-op
 
 ```python
 from doeff import Cancel, CreatePromise, Ok, Err, Try, Spawn, Wait, do, run
 from doeff_core_effects import slog
 from doeff_core_effects import slog_handler, try_handler
-from doeff_core_effects import scheduled
+from doeff_core_effects import scheduled, shielded
 
 @do
 def acquire_lease():
@@ -335,7 +344,7 @@ def work():
     try:
         return (yield run_remote(lease))
     finally:
-        yield release_lease(lease)  # runs on Cancel, may perform effects
+        yield shielded(release_lease(lease))  # runs on Cancel; shielded, so it may also wait
 
 @do
 def cancel_child():

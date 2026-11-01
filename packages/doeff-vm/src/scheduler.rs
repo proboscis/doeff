@@ -162,9 +162,11 @@ enum Kind {
     CreateSemaphore,
     AcquireSemaphore,
     ReleaseSemaphore,
+    ShieldEnter,
+    ShieldExit,
 }
 
-const KINDS: [(Kind, &str); 15] = [
+const KINDS: [(Kind, &str); 17] = [
     (Kind::Spawn, "Spawn"),
     (Kind::TaskCompleted, "TaskCompleted"),
     (Kind::Wait, "Wait"),
@@ -180,6 +182,8 @@ const KINDS: [(Kind, &str); 15] = [
     (Kind::CreateSemaphore, "CreateSemaphore"),
     (Kind::AcquireSemaphore, "AcquireSemaphore"),
     (Kind::ReleaseSemaphore, "ReleaseSemaphore"),
+    (Kind::ShieldEnter, "_ShieldEnter"),
+    (Kind::ShieldExit, "_ShieldExit"),
 ];
 
 // ---------------------------------------------------------------------------
@@ -391,6 +395,10 @@ struct TaskEntry {
     /// `frames_kept_from`): the frames before it in the error's traceback are
     /// the waiters' (`queue_waiter_frames`).
     frames_kept_from: Option<Py<PyAny>>,
+    /// How many `shielded` regions the task is inside (the Python version's
+    /// `shield`): a Cancel throws nothing into it and its waits do not raise
+    /// the cancellation while this is above 0.
+    shield: u32,
 }
 
 struct PromiseEntry {
@@ -1008,6 +1016,15 @@ enum Outcome {
         k: KRef,
         callbacks: Vec<Py<PyAny>>,
     },
+    /// A cancelled task reached a wait (`recancel_at_wait`): the `on_cancel`
+    /// callbacks of the external promises it was about to wait on run
+    /// (outside the scheduler lock), then `error` is thrown at its yield.
+    RecancelCallbacks {
+        k: KRef,
+        callbacks: Vec<Py<PyAny>>,
+        tid: Owner,
+        error: Py<PyAny>,
+    },
 }
 
 struct Locked<'a> {
@@ -1201,6 +1218,20 @@ impl Core {
                     let resumed = Ok(finish_cancel(py, &self.spec, k, callbacks));
                     return self.deliver_trace_interrupt(resumed, interrupt);
                 }
+                Ok(Outcome::RecancelCallbacks {
+                    k,
+                    callbacks,
+                    tid,
+                    error,
+                }) => {
+                    let k = locked.take_k(k);
+                    let interrupt = locked.trace_interrupt.take();
+                    let graveyard = locked.take_graveyard();
+                    drop(locked);
+                    drop(graveyard);
+                    let thrown = Ok(finish_recancel(py, &self.spec, k, callbacks, tid, error));
+                    return self.deliver_trace_interrupt(thrown, interrupt);
+                }
                 Err(err) => {
                     let exception = exception_value(py, err);
                     match locked.take_k(kref) {
@@ -1306,6 +1337,40 @@ fn finish_cancel(
         k,
         exception: Value::Opaque(PyShared::new(exception)),
     }
+}
+
+/// The end of a `RecancelCallbacks`: the callbacks run, one that fails is
+/// logged (the cancellation, not its error, is what the task gets), then the
+/// cancellation is thrown at the task's yield.
+fn finish_recancel(
+    py: Python<'_>,
+    spec: &Spec,
+    k: Option<Continuation>,
+    callbacks: Vec<Py<PyAny>>,
+    tid: Owner,
+    error: Py<PyAny>,
+) -> DoCtrl {
+    for callback in callbacks {
+        if let Err(err) = callback.bind(py).call0() {
+            if !err.is_instance_of::<PyException>(py) {
+                // A BaseException escapes the Python version's `except Exception`.
+                return throw_or_empty(k, raised_object(py, &err));
+            }
+            let logged = spec.logger.bind(py).call_method1(
+                "warning",
+                (
+                    "task %s: an on_cancel callback of an external promise it was about \
+                     to wait on failed: %r",
+                    tid,
+                    raised_object(py, &err),
+                ),
+            );
+            if let Err(err) = logged {
+                return throw_or_empty(k, raised_object(py, &err));
+            }
+        }
+    }
+    throw_or_empty(k, error)
 }
 
 fn throw_or_empty(k: Option<Continuation>, exception: Py<PyAny>) -> DoCtrl {
@@ -3150,7 +3215,24 @@ impl Locked<'_> {
             self.check_indexes(py)?;
         }
         self.drain(py)?;
+        if matches!(kind, Kind::Wait | Kind::Gather | Kind::Race | Kind::AcquireSemaphore)
+            && self.cancel_pending(current)
+        {
+            return self.recancel_at_wait(py, current, kind, effect, k);
+        }
         match kind {
+            Kind::ShieldEnter => {
+                if let Some(task) = current.and_then(|tid| self.tasks.get_mut(&tid)) {
+                    task.shield += 1;
+                }
+                self.resume_now(py, k, py.None())
+            }
+            Kind::ShieldExit => {
+                if let Some(task) = current.and_then(|tid| self.tasks.get_mut(&tid)) {
+                    task.shield = task.shield.saturating_sub(1);
+                }
+                self.resume_now(py, k, py.None())
+            }
             Kind::Spawn => self.on_spawn(py, current, effect, k),
             Kind::TaskCompleted => self.on_task_completed(py, effect, k),
             Kind::Wait => self.on_wait(py, current, effect, k),
@@ -3339,6 +3421,7 @@ impl Locked<'_> {
                 retrieved: false,
                 unretrieved: None,
                 frames_kept_from: None,
+                shield: 0,
             },
         );
         if traced() {
@@ -3493,6 +3576,54 @@ impl Locked<'_> {
         // The completing task's continuation is never resumed.
         self.discard_k(k);
         Ok(Outcome::Ctrl(next))
+    }
+
+    /// `current` is cancelled and outside `shielded`: its next wait raises
+    /// (the Python version's `cancel_pending`, Cancel's docstring).
+    fn cancel_pending(&self, current: Owner) -> bool {
+        current
+            .and_then(|tid| self.tasks.get(&tid))
+            .is_some_and(|task| task.status == Status::Cancelling && task.shield == 0)
+    }
+
+    /// A cancelled task is cancelled again at every wait until it ends: a Try
+    /// that turned the cancellation into Err does not let the task finish more
+    /// waiting work. The external work it was about to wait on is stopped, as
+    /// Cancel stops the work a parked task waits on (#498).
+    fn recancel_at_wait(&mut self, py: Python<'_>, current: Owner, kind: Kind, effect: &Bound<'_, PyAny>, k: KRef) -> PyResult<Outcome> {
+        let error = self.spec().cancelled_error(py)?;
+        let keys = self.waited_keys(py, kind, effect)?;
+        let callbacks = self.cancel_abandoned_external_promises(py, &keys)?;
+        if callbacks.is_empty() {
+            return Ok(self.throw_now(k, error));
+        }
+        Ok(Outcome::RecancelCallbacks {
+            k,
+            callbacks,
+            tid: current,
+            error,
+        })
+    }
+
+    /// The waitables a Wait / Gather / Race names (none for an AcquireSemaphore or a misused
+    /// Wait / Gather / Race — its branch throws), the Python version's `waited_keys`.
+    fn waited_keys(&self, py: Python<'_>, kind: Kind, effect: &Bound<'_, PyAny>) -> PyResult<Vec<WKey>> {
+        let items: Vec<Bound<'_, PyAny>> = match kind {
+            Kind::Wait => vec![effect.getattr(pyo3::intern!(py, "task"))?],
+            Kind::Gather | Kind::Race => effect
+                .getattr(pyo3::intern!(py, "tasks"))?
+                .try_iter()?
+                .collect::<PyResult<_>>()?,
+            _ => return Ok(Vec::new()),
+        };
+        let mut keys = Vec::with_capacity(items.len());
+        for item in &items {
+            match self.waitable_key(py, effect, item) {
+                Ok(key) => keys.push(key),
+                Err(_) => return Ok(Vec::new()),
+            }
+        }
+        Ok(keys)
     }
 
     fn on_wait(&mut self, py: Python<'_>, current: Owner, effect: &Bound<'_, PyAny>, k: KRef) -> PyResult<Outcome> {
@@ -3684,6 +3815,13 @@ impl Locked<'_> {
             Some(Status::Pending) => {
                 let error = self.spec().cancelled_error(py)?;
                 self.finish_cancelled(py, tid, error)?;
+            }
+            Some(Status::Running) | Some(Status::Cancelling)
+                if self.tasks.get(&tid).is_some_and(|t| t.shield > 0) =>
+            {
+                // Inside shielded(): nothing is thrown into the region; the
+                // cancellation lands at the first wait after it (cancel_pending).
+                self.tasks.get_mut(&tid).expect("present").status = Status::Cancelling;
             }
             Some(Status::Running) | Some(Status::Cancelling) => {
                 self.tasks.get_mut(&tid).expect("present").status = Status::Cancelling;

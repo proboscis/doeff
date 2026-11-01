@@ -19,6 +19,7 @@ from doeff_core_effects import Spawn as Spawn
 from doeff_core_effects import Task as Task
 from doeff_core_effects import TaskCancelledError as TaskCancelledError
 from doeff_core_effects import Wait as Wait
+from doeff_core_effects import shielded as shielded
 from doeff_events import Publish as Publish
 from doeff_events import PublishEffect as PublishEffect
 from doeff_events import SourceFailed as SourceFailed

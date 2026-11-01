@@ -7,16 +7,23 @@ worker lease stayed held until it expired). The contract fixed here:
 - A task that already started receives ``TaskCancelledError`` at the point
   where it is suspended (Wait / Gather / Race / AcquireSemaphore / a queued
   resume / an Await), and its ``except`` and ``finally`` blocks run.
-- Cleanup may perform effects (scheduler effects, Await I/O, user effects).
-- ``Cancel`` only requests: the caller resumes immediately. Waiters of the
-  task wake only after the task has finished unwinding.
+- Cleanup that waits (Wait / Gather / Race / AcquireSemaphore, an Await)
+  runs inside ``shielded``; outside it, the cleanup stops at its first wait.
+- ``Cancel`` does not wait for the task: the caller resumes immediately.
+  Waiters of the task wake only after the task has finished unwinding.
 - Outcome seen by waiters: ``TaskCancelledError`` when the task ended by
   propagating it OR by swallowing it and returning (the late value is
   discarded); a different exception raised during cleanup is reported
   instead (failed).
-- Cancellation is delivered once per ``Cancel``: a task that swallows it
-  keeps running; another ``Cancel`` delivers it again at the next point.
+- A cancelled task stays cancelled: a task that swallows the cancellation
+  (an ``except``, a ``Try``) gets it again at its next wait, outside
+  ``shielded``. A Cancel that arrives inside ``shielded`` lands at the first
+  wait after the region.
+- A ``Try(Wait(other))`` of a task that is not itself cancelled answers
+  ``Err(TaskCancelledError)`` for a cancelled ``other`` and keeps working.
 - A task that never started is cancelled without running any of its body.
+
+Every test runs on both scheduler implementations (python and rust).
 """
 
 from __future__ import annotations
@@ -26,40 +33,56 @@ import threading
 from typing import Any
 
 import doeff_hy  # noqa: F401  # registers the Hy import hook for the defk module
+import pytest
 from doeff_core_effects import (
     AcquireSemaphore,
     Await,
     Cancel,
     CompletePromise,
+    CreateExternalPromise,
     CreatePromise,
     CreateSemaphore,
     Gather,
     Race,
     ReleaseSemaphore,
+    SchedulerImplementation,
     Spawn,
     TaskCancelledError,
     TaskPriority,
+    Try,
     Wait,
     await_handler,
     scheduled,
+    shielded,
+    try_handler,
 )
 
 import tests.cancel_runs_finally_cases as hy_cases
-from doeff import do
+from doeff import Err, do
 from doeff import run as doeff_run
 from doeff.program import Pure
 
 RUN_TIMEOUT_SECONDS = 5.0
 
 
+@pytest.fixture(autouse=True, params=["python", "rust"])
+def implementation(
+    request: pytest.FixtureRequest, monkeypatch: pytest.MonkeyPatch
+) -> SchedulerImplementation:
+    """Every test of this module runs on both scheduler implementations."""
+    chosen: SchedulerImplementation = request.param
+    monkeypatch.setenv("DOEFF_SCHEDULER", chosen)  # read by scheduled() at every call
+    return chosen
+
+
 def _run(program: Any, *, with_await: bool = False) -> Any:
-    """Run ``program`` under the scheduler on a thread, failing on a hang."""
+    """Run ``program`` under the scheduler (with ``Try`` answered) on a thread, failing on a hang."""
     result: dict[str, Any] = {}
 
     def _worker() -> None:
         try:
             body = await_handler(program) if with_await else program
-            result["value"] = doeff_run(scheduled(body))
+            result["value"] = doeff_run(scheduled(try_handler(body)))
         except BaseException as exc:  # re-raised below on the test thread
             result["error"] = exc
 
@@ -303,9 +326,9 @@ def test_finally_runs_for_task_parked_on_await() -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_finally_may_perform_effects_and_waiters_see_the_end() -> None:
-    """Cleanup I/O (Await, Spawn/Wait, CompletePromise) runs to completion
-    before anyone waiting on the task is woken."""
+def test_shielded_cleanup_runs_to_the_end_and_waiters_see_the_end() -> None:
+    """Cleanup that waits (Await, Spawn/Wait, CompletePromise) in ``shielded``
+    runs to completion before anyone waiting on the task is woken."""
     events: list[str] = []
 
     @do
@@ -315,15 +338,19 @@ def test_finally_may_perform_effects_and_waiters_see_the_end() -> None:
         return "released"
 
     @do
+    def cleanup(done: Any):
+        events.append("cleanup start")
+        yield Await(asyncio.sleep(0))
+        released = yield Wait((yield Spawn(release_lease())))
+        yield CompletePromise(done, released)
+        events.append("cleanup end")
+
+    @do
     def worker(gate: Any, done: Any):
         try:
             yield Wait(gate.future)
         finally:
-            events.append("cleanup start")
-            yield Await(asyncio.sleep(0))
-            released = yield Wait((yield Spawn(release_lease())))
-            yield CompletePromise(done, released)
-            events.append("cleanup end")
+            yield shielded(cleanup(done))
 
     @do
     def body():
@@ -338,6 +365,33 @@ def test_finally_may_perform_effects_and_waiters_see_the_end() -> None:
 
     assert _run(body(), with_await=True) == ("cancelled", "released")
     assert events == ["cleanup start", "lease released", "cleanup end", "waiter woke"]
+
+
+def test_unshielded_cleanup_stops_at_its_first_wait() -> None:
+    """Outside ``shielded``, a cancelled task's cleanup runs up to its first
+    wait, which raises the cancellation again (the cost of the level form)."""
+    events: list[str] = []
+
+    @do
+    def worker(gate: Any, second: Any):
+        try:
+            yield Wait(gate.future)
+        finally:
+            events.append("cleanup start")
+            yield Wait(second.future)
+            events.append("cleanup end")
+
+    @do
+    def body():
+        gate = yield CreatePromise()
+        second = yield CreatePromise()
+        task = yield Spawn(worker(gate, second))
+        _ = yield Wait((yield Spawn(_noop())))
+        yield Cancel(task)
+        return (yield _outcome(task))
+
+    assert _run(body()) == "cancelled"
+    assert events == ["cleanup start"]
 
 
 def test_error_raised_during_cleanup_is_reported_to_waiters() -> None:
@@ -368,7 +422,9 @@ def test_error_raised_during_cleanup_is_reported_to_waiters() -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_swallowed_cancel_keeps_running_and_waiters_still_see_cancelled() -> None:
+def test_a_swallowed_cancel_is_raised_again_at_the_next_wait() -> None:
+    """One Cancel: the task swallows it, and its next wait raises it again —
+    the work after the swallow that waits does not run."""
     events: list[str] = []
 
     @do
@@ -377,6 +433,7 @@ def test_swallowed_cancel_keeps_running_and_waiters_still_see_cancelled() -> Non
             yield Wait(gate.future)
         except TaskCancelledError:
             events.append("swallowed")
+        events.append("ran up to the next wait")
         value = yield Wait(second.future)
         events.append(f"continued with {value}")
         return "late value"
@@ -393,36 +450,145 @@ def test_swallowed_cancel_keeps_running_and_waiters_still_see_cancelled() -> Non
         return (yield _outcome(task))
 
     assert _run(body()) == "cancelled"
-    assert events == ["swallowed", "continued with second"]
+    assert events == ["swallowed", "ran up to the next wait"]
 
 
-def test_second_cancel_is_delivered_again() -> None:
+def test_a_cancel_turned_into_err_by_try_is_raised_again_at_the_next_wait() -> None:
+    """The judge flow of the card: ``Try`` turns the cancellation into Err (it
+    turns every exception of its program into a Result), and the loop that
+    reads the Err goes on — its next judgment's wait is cancelled again, at
+    every kind of wait."""
     events: list[str] = []
 
     @do
-    def stubborn(gate: Any, second: Any):
-        try:
-            yield Wait(gate.future)
-        except TaskCancelledError:
-            events.append("swallowed first")
-        try:
-            yield Wait(second.future)
-        finally:
-            events.append("second finally")
+    def judge(n: int, gate: Any):
+        events.append(f"judge {n}")
+        yield Wait(gate.future)
+        events.append(f"judge {n} answered")
+        return n
+
+    @do
+    def flow(gate: Any, sem: Any):
+        for n in range(1, 4):
+            _ = yield Try(judge(n, gate))
+        for kind, program in (
+            ("gather", Gather((yield Spawn(_noop())))),
+            ("race", Race((yield Spawn(_noop())))),
+            ("acquire", AcquireSemaphore(sem)),
+        ):
+            outcome = yield Try(program)
+            events.append(f"{kind}: {type(outcome.error).__name__}")
 
     @do
     def body():
         gate = yield CreatePromise()
-        second = yield CreatePromise()
-        task = yield Spawn(stubborn(gate, second))
-        _ = yield Wait((yield Spawn(_noop())))
-        yield Cancel(task)
+        sem = yield CreateSemaphore(1)
+        task = yield Spawn(flow(gate, sem))
         _ = yield Wait((yield Spawn(_noop())))
         yield Cancel(task)
         return (yield _outcome(task))
 
     assert _run(body()) == "cancelled"
-    assert events == ["swallowed first", "second finally"]
+    assert events == [
+        "judge 1",
+        "judge 2",
+        "judge 3",
+        "gather: TaskCancelledError",
+        "race: TaskCancelledError",
+        "acquire: TaskCancelledError",
+    ]
+
+
+def test_try_wait_of_another_cancelled_task_answers_err_and_keeps_working() -> None:
+    """Only the cancelled task is cancelled again: a task that waits on a
+    cancelled task under ``Try`` gets ``Err(TaskCancelledError)`` and its next
+    waits run as usual."""
+
+    @do
+    def parked(gate: Any):
+        return (yield Wait(gate.future))
+
+    @do
+    def answer():
+        return (yield Pure("still waiting"))
+
+    @do
+    def body():
+        gate = yield CreatePromise()
+        other = yield Spawn(parked(gate))
+        _ = yield Wait((yield Spawn(_noop())))
+        yield Cancel(other)
+        seen = yield Try(Wait(other))
+        after = yield Wait((yield Spawn(answer())))
+        return seen, after
+
+    seen, after = _run(body())
+    assert isinstance(seen, Err)
+    assert isinstance(seen.error, TaskCancelledError)
+    assert after == "still waiting"
+
+
+def test_a_cancel_inside_shielded_lands_at_the_first_wait_after_it() -> None:
+    """Nothing is thrown into a shielded region: its waits run, and the
+    Cancel that arrived meanwhile is raised at the first wait after it."""
+    events: list[str] = []
+
+    @do
+    def region(inside: Any, release: Any):
+        yield CompletePromise(inside, None)
+        value = yield Wait(release.future)
+        events.append(f"region got {value}")
+        return value
+
+    @do
+    def worker(inside: Any, release: Any, after: Any):
+        yield shielded(region(inside, release))
+        events.append("after the region")
+        yield Wait(after.future)
+        events.append("waited after the region")
+
+    @do
+    def body():
+        inside = yield CreatePromise()
+        release = yield CreatePromise()
+        after = yield CreatePromise()
+        task = yield Spawn(worker(inside, release, after))
+        yield Wait(inside.future)
+        yield Cancel(task)
+        yield CompletePromise(release, "released")
+        yield CompletePromise(after, None)
+        return (yield _outcome(task))
+
+    assert _run(body()) == "cancelled"
+    assert events == ["region got released", "after the region"]
+
+
+def test_the_wait_a_cancelled_task_reaches_stops_its_external_work() -> None:
+    """The external work a cancelled task was about to wait on is stopped, as
+    Cancel stops the work a parked task waits on — so a judgment begun after
+    the cancellation does not keep its I/O running."""
+    stopped: list[str] = []
+
+    @do
+    def stubborn(gate: Any):
+        try:
+            yield Wait(gate.future)
+        except TaskCancelledError:
+            pass
+        promise = yield CreateExternalPromise()
+        promise.on_cancel(lambda: stopped.append("on_cancel"))
+        yield Wait(promise.future)
+
+    @do
+    def body():
+        gate = yield CreatePromise()
+        task = yield Spawn(stubborn(gate))
+        _ = yield Wait((yield Spawn(_noop())))
+        yield Cancel(task)
+        return (yield _outcome(task))
+
+    assert _run(body()) == "cancelled"
+    assert stopped == ["on_cancel"]
 
 
 def test_unstarted_task_is_cancelled_without_running() -> None:

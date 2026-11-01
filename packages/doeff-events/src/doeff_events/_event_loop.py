@@ -24,7 +24,7 @@ from typing import Any, Generic, TypeVar
 
 import hy  # noqa: F401 — stop_signal_effects below is a Hy module
 from doeff_core_effects import slog
-from doeff_core_effects import Cancel, Spawn, Task, TaskCancelledError, Wait
+from doeff_core_effects import Cancel, Spawn, Task, TaskCancelledError, Wait, shielded
 from doeff_core_effects import AwaitStop, StopRequested
 
 from doeff import do
@@ -90,7 +90,8 @@ def _withdrawn(task: Task[Any]) -> Generator[Any, Any, None]:
     try:
         yield Wait(cleaning)
     except TaskCancelledError:
-        yield Wait(cleaning)
+        # Shielded: a cancelled task's waits raise again, and this one is the unwinding we promise.
+        yield shielded(Wait(cleaning))
         raise
     return None
 

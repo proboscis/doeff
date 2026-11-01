@@ -78,6 +78,7 @@ from doeff_core_effects._scheduler import TaskCancelledError as TaskCancelledErr
 from doeff_core_effects._scheduler import TaskPriority as TaskPriority
 from doeff_core_effects._scheduler import Wait as Wait
 from doeff_core_effects._scheduler import scheduled as scheduled
+from doeff_core_effects._scheduler import shielded as shielded
 
 # the doeff-vm's counts and switches, answered by vm_probe_handler
 from doeff_core_effects._vm_probe_effects import ReadInvariantChecks as ReadInvariantChecks

@@ -863,13 +863,18 @@ yield Cancel(task)
 
 `Cancel` is an effect that must be yielded. There is no `task.cancel()` method.
 
+A cancelled task stays cancelled: after it catches `TaskCancelledError`, every later `Wait`,
+`Gather`, `Race` or `AcquireSemaphore` in it raises the exception again. Cleanup that has to wait
+goes inside `shielded(program)` from `doeff_core_effects`.
+
 **See:** [Async Effects](04-async-effects.md#cancel-and-taskcancellederror)
 
 ---
 
 ### TaskCancelledError
 
-Raised by `Wait`, `Gather`, or `Race` when a waited task was cancelled.
+Raised in a cancelled task at its waits (outside `shielded`), and by `Wait`, `Gather`, or `Race`
+when a waited task was cancelled.
 
 ```python excerpt
 joined = yield Try(Wait(task))
