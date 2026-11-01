@@ -783,3 +783,35 @@ def test_a_bundle_follows_a_changed_macro_to_the_next_run(tree: Tree, monkeypatc
     assert [p for p in opened if p.endswith(".hy")] == []
     assert [p for p in opened if p.endswith(".json")] == [], opened
     assert len([p for p in opened if p.endswith(".jsonl")]) == 1, opened
+
+
+# ---- 位置の対応を詰めて持つ(親が pyright の間に抱える memory)--------------------------------------------
+
+
+def test_packed_spans_read_like_the_tuple_they_pack() -> None:
+    # 位置の対応は 1 file につき整数の配列 1 つで持つ(1 個ずつ list や Span にすると、日次の 874 万個で親の RSS が 10GB に残った)。
+    # 読みは tuple と同じ — repr は運びの digest に入るので、詰める前と同じ綴りでなければ運んだ診断が全部当て直しになる。
+    import pickle
+
+    from doeff_hy._static_cache import PackedSpans, Span
+
+    spans = (Span((0, 0), (0, 5), 1, 1), Span((2, 4), (70000, 3), 90000, 12), Span((3, 0), (3, 1), 4, 2))
+    packed = PackedSpans.of(spans)
+    assert (len(packed), tuple(packed), repr(packed)) == (3, spans, repr(spans))
+    assert (packed == spans, packed[1], packed[-1], packed[0:2]) == (True, spans[1], spans[2], spans[0:2])
+    stored = PackedSpans.from_text(packed.payload())
+    assert stored == packed and tuple(stored) == spans
+    assert pickle.loads(pickle.dumps(packed)) == packed
+    assert PackedSpans.of(()) == () and repr(PackedSpans.from_text(PackedSpans.of(()).payload())) == "()"
+
+
+def test_an_entry_with_unreadable_spans_is_a_miss(tmp_path: Path) -> None:
+    # 壊れた位置の対応は読む時に読めない entry として飛ばす(使う時まで遅らせると、pyright の後で検査全体が落ちる)。
+    from doeff_hy._static_cache import CacheMiss, _entry_from_json
+    from doeff_hy_bytecode_guard._loader_hooks import record_to_json
+    from doeff_hy_bytecode_guard._records import MacroRecord
+    from doeff_hy import _static_cache as static_cache
+
+    used = record_to_json(MacroRecord("probe", (), (), (), (), ()))
+    entry = {"version": static_cache.CACHE_VERSION, "used": used, "text": "t", "spans": "not base64!", "findings": []}
+    assert isinstance(_entry_from_json(entry), CacheMiss)
