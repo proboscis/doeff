@@ -339,6 +339,8 @@
   (val link (! (watching-link coordinator tmp-path :watch False)))
   (<- (on-link link (polls 1)))
   (assert (not (.exists path)) "受け取れない間は ready を書かない")
+  ;; 拍の止まる間に生存の合図の thread の送りの後の書きが ready の file を新しくする許しも置かない(coordinator_link の頭の註)。
+  (assert (is link.state.life.ready-file None) link.state.life.ready-file)
   (val boot-sh (str (/ (. (Path __file__) parent parent) "deploy" "boot.sh")))
   (val probe (subprocess.run ["sh" boot-sh] :env {"PATH" (os.environ.get "PATH" "") "ROLE" "ready" "DOEFF_WORKER_READY_FILE" (str path)}
                              :capture-output True))
@@ -346,4 +348,9 @@
   ;; 受け取れる姿になった(handoverPending の無い返事)→ ready を書く。
   (setv coordinator.handover-pending False)
   (<- (on-link link (polls 1)))
-  (assert (= (.read-text path :encoding "utf-8") "ready\n") (.read-text path :encoding "utf-8")))
+  (assert (= (.read-text path :encoding "utf-8") "ready\n") (.read-text path :encoding "utf-8"))
+  (assert (= link.state.life.ready-file (str path)) link.state.life.ready-file)
+  ;; また受け取れなくなった返事は、許しを下ろす(thread の送りの後の書きが、拍の古い許しで Ready を延ばさない)。
+  (setv coordinator.handover-pending True)
+  (<- (on-link link (polls 1)))
+  (assert (is link.state.life.ready-file None) link.state.life.ready-file))

@@ -34,7 +34,7 @@
 (import doeff_cluster._shared.core.clock [now-epoch-ms monotonic-ms-of])
 (import doeff_cluster._worker.protocol.tick_pauses [tick-pauses])
 (import doeff_cluster._worker.protocol.worker_wakes [no-wakes])
-(import doeff_cluster._worker.protocol.coordinator_link [LinkState coordinator-link lifeline-turn lifeline-settled])
+(import doeff_cluster._worker.protocol.coordinator_link [LinkState coordinator-link lifeline-turn lifeline-settled lifeline-ready-written])
 (import doeff_cluster._worker.core.beat_policy [LIFELINE-PERIOD-SECONDS])
 (import doeff_cluster._foundation.lifeline [LifelineSettings start-lifeline event-pause])
 (import doeff_core_effects [http-production-handler])
@@ -515,10 +515,14 @@
                                            :job-procs job-procs :pod-labels pod-labels)))
   ;; 生存の合図の thread(scheduler の外の OS の thread)。拍の側の送りが送信間隔 × 1.5 を過ぎても来ない時に、
   ;; 拍が最後に送った本文を送り直す(判断は coordinator への口の lifeline-turn)。返事の上限は生存の窓の半分(遅い返事を待つ間に次の
-  ;; 送りを始められなくならない)。時計の読みは引数なしの sync-time-handler(拍と同じ機体の時計)。
+  ;; 送りを始められなくならない)。時計の読みは引数なしの sync-time-handler(拍と同じ機体の時計)。ready を許す返事が届いた送りの後は、
+  ;; 送りの後の書きの thread が ready の file を新しくする(lifeline-ready-written — 拍の止まる間も Pod の Ready を heartbeat に揃える。
+  ;; 書きは os-file-handler でその thread の上で待つ — 送りの thread を disk の待ちで塞がない)。
   (setv stop-lifeline (run (start-lifeline (LifelineSettings :turn (fn [] (lifeline-turn link))
-                                                             :settle (fn [status detail] (lifeline-settled link status detail))
-                                                             :handlers [(sync-time-handler)] :period-seconds LIFELINE-PERIOD-SECONDS
+                                                             :settle (fn [status detail text] (lifeline-settled link status detail text))
+                                                             :aside (fn [] (lifeline-ready-written link))
+                                                             :handlers [(sync-time-handler) os-file-handler]
+                                                             :period-seconds LIFELINE-PERIOD-SECONDS
                                                              :reply-seconds (/ (. (ClusterTiming) lease-ms) 2000.0)
                                                              :connect-seconds CONNECT-SECONDS :headers {"X-Actor" args.name}
                                                              :pause event-pause :transport None))))
