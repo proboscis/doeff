@@ -1134,3 +1134,27 @@ def test_the_temporaries_hy_names_have_the_shape_records_folds() -> None:
         comparable_message(f"x is {name}") for name in shifted
     } == {f"x is {each}" for each in set(folded.values())}, "基点の鍵が、一時の名の番号に依っている"
     assert all(hidden_name(name) for name in plain | shifted), "型の面が、Hy の振った一時の名を隠さない"
+
+
+def test_the_reading_hook_builds_the_record_of_one_code_once(monkeypatch: pytest.MonkeyPatch) -> None:
+    """読みの口は同じ code の記録を照らしと覚えで続けて読む — 記録の組み立て(欄の形を全部確かめる)は code 1 つに 1 度で、別の
+    code に替われば組み直す(宣言の道具の import の 2,500 module で 2 度ずつ組んでいた)。"""
+    from doeff_hy_bytecode_guard import _loader_hooks as loader_hooks
+
+    record = records.MacroRecord(_locked_hy_version(), (), (), (), (), ())
+    first = records.with_record(compile("value = 1\n", "first.hy", "exec"), record)
+    second = records.with_record(compile("value = 2\n", "second.hy", "exec"), record)
+    built: list[types.CodeType] = []
+    record_of = records.record_of
+
+    def counting(code: types.CodeType) -> records.MacroRecord | None:
+        built.append(code)
+        return record_of(code)
+
+    monkeypatch.setattr(records, "record_of", counting)
+    monkeypatch.setattr(loader_hooks, "_last_record", {})
+    assert loader_hooks._record_of(first) == record
+    assert loader_hooks._remember_record("first.hy", first) == record
+    assert built == [first]
+    assert loader_hooks._record_of(second) == record
+    assert built == [first, second]

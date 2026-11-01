@@ -69,6 +69,9 @@ _executed: dict[str, tuple[int, int]] = {}
 #: 読み直さずに引くため(:func:`loaded_record`)。
 _loaded_records: dict[str, "MacroRecord"] = {}
 
+#: 最後に記録を読んだ code とその記録(鍵 "entry" → (code, 記録 か None))— :func:`_record_of` が同じ code の記録を組み直さないため。
+_last_record: dict[str, "tuple[CodeType, MacroRecord | None]"] = {}
+
 
 def installed() -> bool:
     """この process の ``SourceFileLoader`` が包まれているか(起動時の .pth が効いたかを検査が確かめるため)。"""
@@ -439,13 +442,14 @@ def _checking_get_code(previous: GetCode):
             return None
         from doeff_hy_bytecode_guard import _records as records  # Hy の source に当たった時だけ読む
 
-        if _record_is_current_here(code):
-            return code
         if header is not None and not records.python_checks_source(
             header, _check_hash_based_pycs()
         ):
             # Python が source と突き合わせない .pyc(PEP 552 の unchecked-hash — image の組み立てが焼く形)は、
             # Python が source の変更を信じないのと同じく、macro の変更も信じない(組み立ての中で焼き直す前提)。
+            # 記録を照らしても結末を使わないので、照らす前に返す。
+            return code
+        if _record_is_current_here(code):
             return code
         return _replacing_stale_pyc(self, fullname, path, header)
 
@@ -469,9 +473,7 @@ def _replacing_stale_pyc(
 def _remember_record(path: str, code: CodeType | None) -> "MacroRecord | None":
     """読みの口が返した code に載った記録を覚える(:func:`loaded_record`)— 記録の無い code(module の外の compile・型検査の展開)
     なら前の覚えを消す(別の code の記録を残さない)。覚えた記録(無ければ None)を返す。"""
-    from doeff_hy_bytecode_guard import _records as records  # Hy の source に当たった時だけ読む
-
-    record = None if code is None else records.record_of(code)
+    record = None if code is None else _record_of(code)
     if record is None:
         _loaded_records.pop(path, None)
     else:
@@ -482,10 +484,22 @@ def _remember_record(path: str, code: CodeType | None) -> "MacroRecord | None":
 def _record_is_current_here(code: CodeType) -> bool:
     """code に載った記録が、今の Hy の版と今の環境の macro の file に合うか(記録が無ければ偽・照らし方は
     record_is_current_here)。"""
+    record = _record_of(code)
+    return record is not None and record_is_current_here(record)
+
+
+def _record_of(code: CodeType) -> "MacroRecord | None":
+    """code に載った記録 — 読みの口は同じ code の記録を照らし(:func:`_record_is_current_here`)と覚え(:func:`_remember_record`)で
+    続けて読むので、最後に読んだ code 1 つの記録を使い回す(記録の組み立ては欄の形を全部確かめる — 宣言の道具の import の
+    2,500 module で 2 度ずつ組んでいた)。覚えは (code, 記録) の 1 つの tuple で置き換え、thread をまたいで別の code の記録を返さない。"""
     from doeff_hy_bytecode_guard import _records as records  # Hy の source に当たった時だけ読む
 
+    last = _last_record.get("entry")
+    if last is not None and last[0] is code:
+        return last[1]
     record = records.record_of(code)
-    return record is not None and record_is_current_here(record)
+    _last_record["entry"] = (code, record)
+    return record
 
 
 def bytecode_is_current(path: str, pyc: bytes, source: bytes) -> bool:
