@@ -56,6 +56,8 @@
 #       持たない古い版の root と、焼く根の無い venv は、何度組み直しても焼く物が無い。
 #     - drain は組まない: 印が無くても venv の hy が在れば(焼きの失敗のまま起動した worker の preStop)それを使い、無ければ断る。
 #   uv の cache は DOEFF_UV_CACHE_DIR(既定 $WORK_DIR/state/uv-cache — 実行環境の root と同じ dir)、Python は $WORK_DIR/state/python。crate の取得先は $WORK_DIR/state/cargo。
+#   uv の cache の用意(置き場の写しを空の cache へ — DOEFF_UV_CACHE_SEED_URL)と片付け(DOEFF_UV_CACHE_GC_DAYS)は、準備の終わりに背後で
+#   起こす(doeff_uv_cache_upkeep・deploy/uv_cache.py)。
 #   2026-10-06 より前の image の script は準備まで自分でしてから引き継ぐ — 引き継いだ先は完成の印を見て準備済みとして続ける。
 #   worker の code を変える時は WORKER_DOEFF_COMMIT を変えて Pod を入れ替える(image は作り直さない)。無ければ今までどおり PATH の hy。
 #   版の file(WORKER_VERSION_FILE)を渡す worker は Pod を入れ替えず、下の keeper が同じ container の中で worker の process を入れ替える。
@@ -253,7 +255,27 @@ doeff_prepare() {
     esac
   fi
   exec 8>&-
+  doeff_uv_cache_upkeep
   export PATH="$root/.venv/bin:$PATH"
+}
+
+# uv の cache の用意(seed — 新しい node の空の cache に、置き場の写しを入れる)と片付け(gc — 古い項目と使われない venv を消す)を、
+# 起動の待ちの外で 1 度起こす(役 worker と prepare — 起動と版の入れ替えのたび。動詞と値の意味は deploy/uv_cache.py の頭の註の upkeep)。
+# 置き場の URL(DOEFF_UV_CACHE_SEED_URL)か片付けの日数(DOEFF_UV_CACHE_GC_DAYS)が環境に在る時だけ。boot.lock を離した後に呼ぶ
+# (背後の子が錠の fd を継がない)。子の出力は cache の dir の .doeff-uv-upkeep.log へ足す — 役 prepare の標準出力(root の path の 1 行)に
+# 混ぜない。子が落ちても起動は止めない。
+doeff_uv_cache_upkeep() {
+  case "$role" in worker|prepare) ;; *) return 0 ;; esac
+  [ -n "${DOEFF_UV_CACHE_SEED_URL:-}${DOEFF_UV_CACHE_GC_DAYS:-}" ] || return 0
+  upkeep_tool=$root/packages/doeff-cluster/deploy/uv_cache.py
+  if [ ! -f "$upkeep_tool" ] || [ ! -x "$root/.venv/bin/python" ]; then
+    return 0
+  fi
+  mkdir -p "$DOEFF_UV_CACHE_DIR"
+  # uv の cache の錠を持たない(--no-cache)— 片付けの間、ほかの uv の cache の操作を待たせない。道具は標準の library だけを使う。
+  nice -n 19 uv run -q --no-cache --no-project --python "$root/.venv/bin/python" python -I "$upkeep_tool" upkeep \
+    --cache "$DOEFF_UV_CACHE_DIR" </dev/null >>"$DOEFF_UV_CACHE_DIR/.doeff-uv-upkeep.log" 2>&1 &
+  echo "boot: uv の cache の用意と片付けを背後で起こした(log $DOEFF_UV_CACHE_DIR/.doeff-uv-upkeep.log)" >&2
 }
 
 # 準備する root の中の source(venv の .pth が書く root の中の dir — editable で入る package)の bytecode を用意する(doeff_prepare が
