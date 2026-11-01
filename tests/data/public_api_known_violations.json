@@ -6208,6 +6208,12 @@
    "module": "(submodule)",
    "name": "doeff_cluster.worker.core.load_rules",
    "訳": "R15 の段 1 で区画 worker を _worker へ隠した後に普通の開発が足した module(doeff main 6806cc360 — heartbeat で名乗る機体の測った空きの判断)。warm_watch と同じく、移し替えの module worker.py が _worker の下の module を古い path でも見せるので目録に数えられる(名の固定の列は空 — 古い path からは名を出さない)。worker.py を消すと目録から消える"
+  },
+  {
+   "package": "doeff-cluster",
+   "module": "doeff_cluster",
+   "name": "task_room_of",
+   "訳": "区画 coordinator の移し替えの module を消した後に、packages/doeff-cluster/tests/test_cluster_policy.hy が読むために根から出した program の helper(doeff main 32694cf7a — worker の task の空きを数える判断)。外の使い手は無く、test が隠した module から読む形に替えると根から消せる"
   }
  ]
 }
