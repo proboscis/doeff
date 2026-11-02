@@ -13738,13 +13738,6 @@
   {
    "package": "doeff-stream",
    "module": "doeff_stream",
-   "name": "replay",
-   "組": "許した物 — 換算の関数",
-   "決め": "ADR-DOE-API-001 R35"
-  },
-  {
-   "package": "doeff-stream",
-   "module": "doeff_stream",
    "name": "subscribe",
    "組": "許した物 — program の形を組む作り手と型",
    "決め": "ADR-DOE-API-001 R37"

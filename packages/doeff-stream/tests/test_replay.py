@@ -1,6 +1,7 @@
 """The test harness: a list of inputs in, the states and effects out — and the same refusals as the runtime.
 
-``replay`` refuses what the runtime would refuse (a step answer that is not a valid ``Next``) and what the runtime
+``replay`` refuses what the runtime would refuse (a step answer that is not a valid ``Next``, a ``Run`` of a value that is
+not a program, two ``Finish``) and what the runtime
 never delivers (the end of a run that is not running, an input after ``Finish``), so a test cannot assert a trace the
 fold could not produce.
 """
@@ -117,6 +118,15 @@ def test_the_end_of_a_run_that_is_not_running_is_refused() -> None:
         )
 
 
+def test_finish_anywhere_in_an_answer_is_carried_out_last() -> None:
+    # The effects of several reducers joined in any order: the Finish of one does not cut off the others.
+    trace = replay(
+        lambda s, _: Next(s, (Finish("end"), CancelRun("a"), CancelRun("b"))), 0, ["once"]
+    )
+    assert trace.effects == (CancelRun("a"), CancelRun("b"), Finish("end"))
+    assert trace.finished == Finish("end")
+
+
 def test_an_input_after_finish_is_refused() -> None:
     def finishes(state: int, event: object) -> Next[int]:
         return Next(state, (Finish(state),))
@@ -153,9 +163,10 @@ def test_a_cancel_of_a_key_that_is_not_running_is_no_error() -> None:
     [
         ((0, ()), TypeError),
         (Next(0, ("not an effect",)), TypeError),  # type: ignore[arg-type]  # the check under test: a wrong effect
-        (Next(0, (Finish(0), CancelRun("k"))), ValueError),
+        (Next(0, (Finish(0), CancelRun("k"), Finish(1))), ValueError),
+        (Next(0, (Run("k", 7),)), TypeError),  # type: ignore[arg-type]  # the check under test: not a program
     ],
-    ids=["not-next", "not-an-effect", "finish-not-last"],
+    ids=["not-next", "not-an-effect", "two-finishes", "run-of-a-value"],
 )
 def test_a_wrong_answer_is_refused(answer: object, error: type[Exception]) -> None:
     with pytest.raises(error):

@@ -10,7 +10,7 @@ from collections.abc import Hashable
 from dataclasses import dataclass
 from typing import Generic, TypeVar
 
-from doeff import Program
+from doeff import DoExpr, EffectBase, Program
 
 S = TypeVar("S")
 
@@ -18,6 +18,10 @@ S = TypeVar("S")
 @dataclass(frozen=True)
 class Run:
     """Run ``program`` (a Program or an effect) in a task of its own.
+
+    The program must not wait for the fold's inputs (``WaitForEvent`` / ``WaitForEvents``): it runs under the fold's
+    bus handler, so its wait would take an input from the fold's queue. It must also end once cancelled — the runtime
+    has no clock, so a run that waits on the outside world bounds its own wait (``WaitWithin``).
 
     Its end comes back to the step as one input with ``key``. A key names one run while it is running: a ``Run``
     of a key whose end has not come back yet is refused. Once the end came back, the key may be used again.
@@ -38,9 +42,10 @@ class CancelRun:
 
 @dataclass(frozen=True)
 class Finish:
-    """End the fold with ``value``: the effect after which the step is not called again (it comes last).
+    """End the fold with ``value``: the effect after which the step is not called again.
 
-    The runtime cancels the runs that are still running and waits until each has ended before the fold answers
+    An answer has at most one. It may stand anywhere among the effects — the runtime carries it out after the others
+    (so the effects of several reducers can be joined in any order). The runtime cancels the runs that are still running and waits until each has ended before the fold answers
     ``value``; their ends are not given to a step any more.
     """
 
@@ -90,27 +95,35 @@ def checked_next(answer: "Next[S]", running: frozenset[Hashable]) -> "Next[S]":
     """``answer`` as the ``Next`` it must be, or the error naming what is wrong with it.
 
     ``running`` = the keys whose runs have not come back yet. Refused: an answer that is not a ``Next``, an effect
-    that is not a ``StepEffect``, a ``Run`` of a running key (or of a key two ``Run``s of the answer share), a
-    ``Finish`` that is not the last effect.
+    that is not a ``StepEffect``, a ``Run`` whose program is neither a Program nor an effect, a ``Run`` of a running
+    key (or of a key two ``Run``s of the answer share), two ``Finish``. The answer comes back with its ``Finish`` moved
+    after the other effects — the order the runtime carries them out in.
     """
     # A step written in Hy or untyped Python is not held to its annotation: the answer is checked here.
     if not isinstance(answer, Next):
         raise TypeError(f"a step answers Next(state, effects), got {type(answer).__name__}")
     effects: tuple[object, ...] = answer.effects
     started = set(running)
-    for index, effect in enumerate(effects):
+    for effect in effects:
         match effect:
-            case Run(key=key):
+            case Run(key=key, program=program):
+                # Caught here, not in the run: a non-program would come back as a run's Raised, a step's mistake
+                # read as the run's failure.
+                if not isinstance(program, (DoExpr, EffectBase)):
+                    raise TypeError(
+                        f"Run of the key {key!r} takes a Program or an effect, got {type(program).__name__}"
+                    )
                 if key in started:
                     raise ValueError(f"Run of the key {key!r}, whose run has not come back yet")
                 started.add(key)
-            case CancelRun():
+            case CancelRun() | Finish():
                 pass
-            case Finish():
-                if index != len(effects) - 1:
-                    raise ValueError("Finish is not the last effect of the step's answer")
             case _:
                 raise TypeError(
                     f"a step's effects are Run, CancelRun or Finish, got {type(effect).__name__}"
                 )
-    return answer
+    finishes = tuple(effect for effect in answer.effects if isinstance(effect, Finish))
+    if len(finishes) > 1:
+        raise ValueError(f"an answer has at most one Finish, got {len(finishes)}")
+    others = tuple(effect for effect in answer.effects if not isinstance(effect, Finish))
+    return Next(answer.state, (*others, *finishes))
