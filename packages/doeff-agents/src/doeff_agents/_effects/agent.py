@@ -1693,6 +1693,57 @@ class ExportContextEffect(AgentEffectBase, EffectBase[str | None]):
             raise ValueError("ExportContextEffect takes tail_bytes or from_byte, not both")
 
 
+@dataclass(frozen=True)
+class SideContextFile:
+    """One file of the side records an agent runtime keeps next to a context.
+
+    ``path`` is relative to the context's side directory (``/`` separated);
+    ``size`` is the byte length of ``data``; ``modified_ms`` is when the file
+    was last changed (epoch milliseconds).  ``data`` is bytes because side
+    records include binary tool outputs (images, pdf).
+    """
+
+    path: str
+    size: int
+    modified_ms: int
+    data: bytes
+
+    def __post_init__(self) -> None:
+        if self.size != len(self.data):
+            raise ValueError("SideContextFile.size must be the byte length of data")
+
+
+@dataclass(frozen=True, kw_only=True)
+class ExportSideContextEffect(AgentEffectBase, EffectBase[tuple[SideContextFile, ...] | None]):
+    """Take a copy of the side records of an agent runtime context.
+
+    ``ExportContextEffect`` copies the context itself; a runtime may also keep
+    side records next to it (Claude Code keeps subagent transcripts and stored
+    tool outputs under ``<context id>/``) that are the only copy of that data.
+    The answer holds the side files changed after ``since_ms`` (epoch
+    milliseconds; a file changed exactly at ``since_ms`` is not included;
+    None = all files), ordered by path, so a caller that keeps the copies
+    outside a disposable home reads only what changed since its last copy.
+    Handlers whose runtime keeps no side records refuse it with
+    ``AgentCapabilityUnsupportedError``.
+
+    Yields: tuple[SideContextFile, ...] | None (None = this runtime has no such
+    context; an empty tuple = no side file changed)
+    """
+
+    agent_type: AgentType
+    # A plain path value, like ``LaunchEffect.work_dir``.
+    work_dir: str | PurePath
+    context_id: str
+    since_ms: int | None = None
+
+    def __post_init__(self) -> None:
+        if self.since_ms is not None and (
+            isinstance(self.since_ms, bool) or not isinstance(self.since_ms, int) or self.since_ms < 0
+        ):
+            raise ValueError("ExportSideContextEffect.since_ms must be a non-negative int or None")
+
+
 # =============================================================================
 # Session State Effects
 # =============================================================================

@@ -21,7 +21,7 @@
 (import doeff_core_effects [scheduled])
 (import doeff_time [GetMonotonic SimClock sim-time-handler sync-time-handler])
 (import doeff_agents [AgentType AgentSessionLifecycle])
-(import doeff_agents [LaunchEffect FollowUp Interrupt Events Monitor Stop ExportContextEffect WarmSession SessionHandle AgentEventPage TurnInputMode InputFateState InputImage NamedContextId ModelWindow AgentTextEvent AgentTextDeltaEvent AgentInputFateEvent AgentTurnEndEvent AgentCallUsageEvent AgentToolCallStartedEvent AgentToolUseEvent AgentToolResultEvent AgentTurnCompleted AgentTurnFailed AgentTurnInterrupted AgentTurnLost AgentTurnUsage AgentAccountLimit AgentAccountRefusal AgentProviderCapacity AgentCapabilityUnsupportedError NoTurnInFlightError ResumeTargetNotFoundError RedeemTurnCredentialEffect TurnCredential CodexTurnCredential TurnCredentialUnavailable TurnCredentialUnavailableError])
+(import doeff_agents [LaunchEffect FollowUp Interrupt Events Monitor Stop ExportContextEffect ExportSideContextEffect WarmSession SessionHandle AgentEventPage TurnInputMode InputFateState InputImage NamedContextId ModelWindow AgentTextEvent AgentTextDeltaEvent AgentInputFateEvent AgentTurnEndEvent AgentCallUsageEvent AgentToolCallStartedEvent AgentToolUseEvent AgentToolResultEvent AgentTurnCompleted AgentTurnFailed AgentTurnInterrupted AgentTurnLost AgentTurnUsage AgentAccountLimit AgentAccountRefusal AgentProviderCapacity AgentCapabilityUnsupportedError NoTurnInFlightError ResumeTargetNotFoundError RedeemTurnCredentialEffect TurnCredential CodexTurnCredential TurnCredentialUnavailable TurnCredentialUnavailableError])
 (import doeff_agents._effects.agent [AutocompactTokens])
 (import doeff_hy._frozen [freeze-json])
 (import doeff_agents [SessionStatus])
@@ -622,6 +622,20 @@
 (deftest test-headless-codex-keeps-a-copy-and-carries-it-back-after-the-rollout-is-gone-stub [tmp-path]
   (<- seen (run-on STUB tmp-path kept-and-carried))
   (<- (check-kept-and-carried seen)))
+
+(defk side-records-refused [#^ Setting s]
+  {:pre [(: s Setting)] :post [(: % dict)] :tags {:context "headless-codex-adapter-test" :role "program"}}
+  "側の記録の取り出しを頼み、断った能力の名を返すため(codex は rollout の隣に側の記録を持たない)。"
+  (try
+    (<- (ExportSideContextEffect :agent-type AgentType.CODEX :work-dir s.work-dir :context-id "abc"))
+    (except [error AgentCapabilityUnsupportedError]
+      (return {"refused" error.capability})))
+  {"refused" None})
+
+(deftest test-headless-codex-refuses-the-side-records [tmp-path]
+  ;; codex の adapter は側の記録の取り出しを黙って空で返さず、型で断る。
+  (<- refused (run-on FAKE tmp-path side-records-refused))
+  (assert (= (get refused "refused") "ExportSideContextEffect") refused))
 
 
 (defk credential-turns [#^ Setting s]

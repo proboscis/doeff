@@ -34,7 +34,7 @@
 (import doeff_agents._handlers.headless [HeadlessSession start-waiting])
 (import doeff_time [Delay GetMonotonic SimClock sim-time-handler sync-time-handler])
 (import doeff_agents [AgentType AgentSessionLifecycle])
-(import doeff_agents [Launch FollowUp Interrupt Events AwaitResult Monitor Capture Stop ReleaseSession ExportContextEffect WarmSession SessionHandle AgentEventPage AwaitStatus TurnInputMode InputFateState AgentTextEvent AgentTextDeltaEvent AgentThinkingDeltaEvent AgentToolUseEvent AgentToolResultEvent AgentInputFateEvent AgentTurnEndEvent AgentToolCallStartedEvent AgentToolInputDeltaEvent AgentStopHookFeedbackEvent AgentCompactionEvent CompactionTrigger AgentHookEvent AgentCallUsageEvent AgentTurnCompleted AgentTurnFailed AgentTurnInterrupted AgentTurnLost AgentTurnUsage AgentCapabilityUnsupportedError NoTurnInFlightError ResumeTargetNotFoundError SessionNotFoundError AgentError AgentLaunchError TurnInFlightError LaunchEffect RedeemTurnCredentialEffect EventsEffect NamedContextId HandlerMadeContextId InputImage EventRecord RecordStep FollowUpEffect])
+(import doeff_agents [Launch FollowUp Interrupt Events AwaitResult Monitor Capture Stop ReleaseSession ExportContextEffect ExportSideContextEffect WarmSession SessionHandle AgentEventPage AwaitStatus TurnInputMode InputFateState AgentTextEvent AgentTextDeltaEvent AgentThinkingDeltaEvent AgentToolUseEvent AgentToolResultEvent AgentInputFateEvent AgentTurnEndEvent AgentToolCallStartedEvent AgentToolInputDeltaEvent AgentStopHookFeedbackEvent AgentCompactionEvent CompactionTrigger AgentHookEvent AgentCallUsageEvent AgentTurnCompleted AgentTurnFailed AgentTurnInterrupted AgentTurnLost AgentTurnUsage AgentCapabilityUnsupportedError NoTurnInFlightError ResumeTargetNotFoundError SessionNotFoundError AgentError AgentLaunchError TurnInFlightError LaunchEffect RedeemTurnCredentialEffect EventsEffect NamedContextId HandlerMadeContextId InputImage EventRecord RecordStep FollowUpEffect])
 (import doeff_agents [SessionStatus])
 ;; 層 2 の handler との対は doeff-agents の組み立ての部品で作る(この検も doeff_claude_code を import しない)。
 (import doeff_agents [FakeReply FakeClaudeWorld headless-claude-handlers fake-headless-claude-handlers])
@@ -650,7 +650,88 @@
   (with [info (pytest.raises AgentCapabilityUnsupportedError)]
     (run (scheduled (with_handlers [(codex-handler)]
                                    (ExportContextEffect :agent-type AgentType.CODEX :work-dir tmp-path :context-id "abc")))))
-  (assert (= info.value.capability "ExportContextEffect") info.value.capability))
+  (assert (= info.value.capability "ExportContextEffect") info.value.capability)
+  (with [info (pytest.raises AgentCapabilityUnsupportedError)]
+    (run (scheduled (with_handlers [(codex-handler)]
+                                   (ExportSideContextEffect :agent-type AgentType.CODEX :work-dir tmp-path :context-id "abc")))))
+  (assert (= info.value.capability "ExportSideContextEffect") info.value.capability))
+
+
+;; 側の記録の変えた刻(epoch ミリ秒)と、その間の since-ms。中身の binary(png の頭・NUL・utf-8 でない byte)。
+(val SIDE-OLD-MS 1793600000000)
+(val SIDE-SINCE-MS 1793610000000)
+(val SIDE-NEW-MS 1793620000000)
+(val SIDE-PNG (+ b"\x89PNG\r\n\x1a\n\x00\x00" (bytes (range 256))))
+
+(defk side-copies [#^ Path work #^ str context]
+  {:pre [(: work Path) (: context str)] :post [(: % dict)] :tags {:context "headless-adapter-test" :role "program"}}
+  "文脈 context の側の記録を since-ms で取り出し、手元に無い文脈・綴りの外の id も取り出す。"
+  (<- grown (ExportSideContextEffect :agent-type AgentType.CLAUDE :work-dir work :context-id context :since-ms SIDE-SINCE-MS))
+  (<- whole (ExportSideContextEffect :agent-type AgentType.CLAUDE :work-dir work :context-id context))
+  (<- missing (ExportSideContextEffect :agent-type AgentType.CLAUDE :work-dir work
+                                       :context-id "0b7a3e8e-2d0c-4a55-9d3f-6c1a3b7a0f11"))
+  (<- malformed (ExportSideContextEffect :agent-type AgentType.CLAUDE :work-dir work :context-id "../not-a-uuid"))
+  {"grown" grown "whole" whole "missing" missing "malformed" malformed})
+
+(defn check-side-copies [#^ dict seen]
+  (import doeff_agents [SideContextFile])
+  (assert (= (get seen "grown")
+             #((SideContextFile "subagents/agent-a1.jsonl" 10 SIDE-NEW-MS b"{\"new\":1}\n")
+               (SideContextFile "tool-results/shot.png" (len SIDE-PNG) SIDE-NEW-MS SIDE-PNG)))
+          seen)
+  (assert (= (lfor f (get seen "whole") f.path) ["subagents/agent-a0.jsonl" "subagents/agent-a1.jsonl" "tool-results/shot.png"])
+          seen)
+  (assert (is (get seen "missing") None) seen)
+  (assert (is (get seen "malformed") None) seen))
+
+(deftest test-headless-exports-the-side-records-changed-after-since-real-layer-two [tmp-path]
+  ;; 本番の層 2: 家の <文脈の id>/ の下に置いた subagent の記録と道具の出力のうち、since-ms より後に変わった物だけが同じ bytes で
+  ;; SideContextFile の並びになる。前の物は返らない。手元に無い文脈・綴りの外の id は None。
+  (import doeff_claude_code._argv [transcript-path])
+  (val work (/ tmp-path "work"))
+  (.mkdir work :parents True :exist-ok True)
+  (val home (str (/ tmp-path "home")))
+  (val context "4f1c2a9e-8b7d-4e6f-9a0b-1c2d3e4f5a6b")
+  (val transcript (Path (transcript-path home (os.path.realpath work) context)))
+  (val side (Path (.removesuffix (str transcript) ".jsonl")))
+  (for [#(path data ms) [#(transcript b"{}\n" SIDE-OLD-MS)
+                         #((/ side "subagents" "agent-a1.jsonl") b"{\"new\":1}\n" SIDE-NEW-MS)
+                         #((/ side "subagents" "agent-a0.jsonl") b"{\"old\":1}\n" SIDE-OLD-MS)
+                         #((/ side "tool-results" "shot.png") SIDE-PNG SIDE-NEW-MS)]]
+    (.mkdir path.parent :parents True :exist-ok True)
+    (.write-bytes path data)
+    (os.utime path :ns #((* ms 1000000) (* ms 1000000))))
+  (val handlers (+ [(sync-time-handler) slog-discard-handler]
+                   (headless-claude-handlers home (child-env) :live-limit 8 :credential-floor-seconds 7200.0
+                                             :command #((str (/ tmp-path "no-such-claude"))))))
+  (check-side-copies (run (scheduled (with_handlers handlers (side-copies work context))))))
+
+(defk side-after-a-turn [#^ Path work #^ object world #^ str home]
+  {:pre [(: work Path) (: home str)] :post [(: % dict)] :tags {:context "headless-adapter-test" :role "program"}}
+  "fake の層 2 で手番を 1 つ走らせ、その文脈の側の記録を世界に置いてから取り出す。"
+  (import doeff_claude_code [ClaudeHome])
+  (<- handle (Launch "side-one" :agent-type AgentType.CLAUDE :work-dir work :prompt (reply-prompt "SIDE")
+                     :lifecycle AgentSessionLifecycle.MULTI-TURN))
+  (<- one (read-until handle (fn [events end] (is-not end None)) 60.0 -1))
+  (<- (Stop handle))
+  (val context one.end.resume-from)
+  (for [#(path data ms) [#("subagents/agent-a1.jsonl" b"{\"new\":1}\n" SIDE-NEW-MS)
+                         #("subagents/agent-a0.jsonl" b"{\"old\":1}\n" SIDE-OLD-MS)
+                         #("tool-results/shot.png" SIDE-PNG SIDE-NEW-MS)]]
+    (.put-side-file world (ClaudeHome home) (str work) context path data ms))
+  (<- seen (side-copies work context))
+  seen)
+
+(deftest test-headless-exports-the-side-records-changed-after-since-fake [tmp-path]
+  ;; fake の層 2: 世界に置いた側の file を本番と同じ形で返す。
+  (val work (/ tmp-path "work"))
+  (.mkdir work :parents True :exist-ok True)
+  (val home (str (/ tmp-path "home")))
+  (val world (FakeClaudeWorld fake-responder))
+  (check-side-copies
+    (run (scheduled (with_handlers (+ [(sim-time-handler :clock (SimClock))]
+                                      (fake-headless-claude-handlers None home :world world :env {} :settings {}))
+                                   (side-after-a-turn work world home))))))
 
 (defk reader [#^ SessionHandle handle #^ float timeout]
   {:pre [(: handle SessionHandle) (: timeout float)] :post [(: % Read)]}

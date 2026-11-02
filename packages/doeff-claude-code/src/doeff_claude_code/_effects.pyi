@@ -96,6 +96,20 @@ class SessionExported:
         ...
 
 @dataclass(frozen=True)
+class SideFile:
+    path: str
+    size: int
+    modified_ms: int
+    data: bytes
+
+    def __post_init__(self) -> None:
+        ...
+
+@dataclass(frozen=True)
+class SessionSideExported:
+    files: tuple
+
+@dataclass(frozen=True)
 class SessionNotFound:
     session_id: str
 
@@ -137,6 +151,7 @@ class ProcessStillAlive:
     detail: str
 StartTurnOutcome: TypeAlias = TurnStarted | SessionNotFound | SessionIdInUse | TurnInFlight | CarryRefused | LaunchFailed | AttachmentRefused
 ExportSessionOutcome: TypeAlias = SessionExported | SessionNotFound
+ExportSessionSideOutcome: TypeAlias = SessionSideExported | SessionNotFound
 
 @dataclass(frozen=True)
 class ClaudeStartTurn(EffectBase[StartTurnOutcome]):
@@ -191,6 +206,16 @@ class ClaudeExportSession(EffectBase[ExportSessionOutcome]):
     session_id: str
     tail_bytes: int | None = None
     from_byte: int | None = None
+
+    def __post_init__(self) -> None:
+        ...
+
+@dataclass(frozen=True)
+class ClaudeExportSessionSide(EffectBase[ExportSessionSideOutcome]):
+    home: ClaudeHome
+    cwd: str
+    session_id: str
+    since_ms: int | None = None
 
     def __post_init__(self) -> None:
         ...

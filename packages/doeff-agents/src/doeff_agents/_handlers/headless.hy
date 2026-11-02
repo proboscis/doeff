@@ -29,6 +29,7 @@
 ;;;   FollowUpEffect.record_note      → 入力を層 2 へ渡す前に、session の記録の守り手へ畳ませる(読み手の thread が入力の行方を読むより先に、
 ;;;                                      記録が入力を知る)。記録の無い session への record_note は AgentCapabilityUnsupportedError
 ;;;   ExportContextEffect(CLAUDE)      → ClaudeExportSession(SessionExported → 写しの本文・SessionNotFound → None)
+;;;   ExportSideContextEffect(CLAUDE)  → ClaudeExportSessionSide(SessionSideExported → SideContextFile の並び・SessionNotFound → None)
 ;;;   SendEffect / FollowUpEffect      → 手番が走っていなければ ClaudeStartTurn(ResumeSession)、走っていれば待たせて終わりの後に始める
 ;;;   FollowUpEffect(mode = INJECT)    → ClaudeInjectInput(走っている手番に足す)
 ;;;   InterruptEffect                  → ClaudeInterruptTurn(手番だけを止める。待たせた入力は次の手番で走る。for_input の入力を層 2 がもう読んでいれば止めない)
@@ -106,8 +107,8 @@
 (import doeff_agents._shell [assert-no-forbidden-agent-env assert-session-env-is-non-auth-overlay])
 (import doeff_agents._effects.agent [
   LaunchEffect SendEffect FollowUpEffect InterruptEffect EventsEffect AwaitResultEffect MonitorEffect CaptureEffect
-  StopEffect StopSessionEffect ReleaseSessionEffect AttachAgentSessionEffect ExportContextEffect WarmSessionEffect
-  SessionHandle Observation AwaitOutcome AwaitStatus TurnInputMode InputFateState
+  StopEffect StopSessionEffect ReleaseSessionEffect AttachAgentSessionEffect ExportContextEffect ExportSideContextEffect SideContextFile
+  WarmSessionEffect SessionHandle Observation AwaitOutcome AwaitStatus TurnInputMode InputFateState
   AgentEventPage AgentTextEvent AgentTextDeltaEvent AgentThinkingStartedEvent AgentThinkingDeltaEvent AgentToolCallStartedEvent AgentToolInputDeltaEvent
   AgentToolUseEvent AgentToolResultEvent AgentInputFateEvent AgentStopHookFeedbackEvent AgentCompactionStartedEvent AgentCompactionEvent CompactionTrigger
   AgentCompactionEndedEvent CompactionOutcome AgentHookEvent AgentCallUsageEvent AgentSubagentCallUsageEvent
@@ -123,7 +124,7 @@
         doeff_claude_code._values [checked-session-id])
 (import doeff_claude_code [AssistantMessage PartialMessage ToolResult InputFate DeltaKind StopHookFeedback CompactStarted CompactEnded CompactBoundary HookNotice HookPhase SubagentTranscript SubagentCall CallClosed Completed Failed Interrupted BackendLost Usage AccountRefusalHit ModelRefusalHit]
         doeff_claude_code._lines [stderr-tail-within])
-(import doeff_claude_code [ClaudeStartTurn ClaudeInjectInput ClaudeInterruptTurn ClaudeReadTurnEvents ClaudeCloseSession ClaudeSessionStatus ClaudeExportSession ClaudeWarmSession TurnStarted InterruptRequested InputAlreadyRead TurnEventPage SessionExported SessionWarmed SessionNotFound SessionIdInUse TurnInFlight CarryRefused LaunchFailed AttachmentRefused NoTurnInFlight UnknownTurn ProcessStillAlive TranscriptAbsent ClaudeReplaceSessionCredential CredentialReplaced NoSuchSession SessionProcessDown HomeCredentialSession])
+(import doeff_claude_code [ClaudeStartTurn ClaudeInjectInput ClaudeInterruptTurn ClaudeReadTurnEvents ClaudeCloseSession ClaudeSessionStatus ClaudeExportSession ClaudeExportSessionSide ClaudeWarmSession TurnStarted InterruptRequested InputAlreadyRead TurnEventPage SessionExported SessionSideExported SessionWarmed SessionNotFound SessionIdInUse TurnInFlight CarryRefused LaunchFailed AttachmentRefused NoTurnInFlight UnknownTurn ProcessStillAlive TranscriptAbsent ClaudeReplaceSessionCredential CredentialReplaced NoSuchSession SessionProcessDown HomeCredentialSession])
 
 (setv HANDLER-NAME "headless-claude-handler")
 
@@ -794,6 +795,22 @@
     (isinstance outcome SessionNotFound) None
     True (raise (AgentError (.format "文脈 {} の写し: 層 2 の答えが閉語彙の外: {!r}" request.context-id outcome)))))
 
+(defk export-side-context [#^ HeadlessClaudeConfig config #^ ExportSideContextEffect request]
+  {:pre [(: config HeadlessClaudeConfig) (: request ExportSideContextEffect)] :post [(: % (| tuple None))]
+   :tags {:context "headless-adapter" :role "judgment"}}
+  "文脈の側の記録(subagent の記録・道具の出力)のうち since-ms より後に変わった file を層 2 から取り出すため(cwd は export-context と
+   同じ綴り)。答え = SideContextFile の並びか、この家に文脈が無ければ None(文脈の id の綴りでない値もこの家には無い)。"
+  (try
+    (checked-session-id request.context-id "ExportSideContextEffect.context_id")
+    (except [#(ValueError TypeError)]
+      (return None)))
+  (<- outcome (ClaudeExportSessionSide config.home (str request.work-dir) request.context-id request.since-ms))
+  (cond
+    (isinstance outcome SessionSideExported)
+    (tuple (gfor f outcome.files (SideContextFile f.path f.size f.modified-ms f.data)))
+    (isinstance outcome SessionNotFound) None
+    True (raise (AgentError (.format "文脈 {} の側の記録: 層 2 の答えが閉語彙の外: {!r}" request.context-id outcome)))))
+
 (defk replacement-credential [#^ str ref]
   {:pre [(: ref str)] :post [(: % (| LentCredential ReplacementCredentialUnavailable))]
    :tags {:context "headless-adapter" :role "foundation"}}
@@ -852,6 +869,11 @@
     :when (= agent-type AgentType.CLAUDE)
     (<- copied (export-context config effect))
     (resume copied))
+
+  (ExportSideContextEffect [agent-type]
+    :when (= agent-type AgentType.CLAUDE)
+    (<- side (export-side-context config effect))
+    (resume side))
 
   (SendEffect [handle message enter literal]
     :when (in handle.session-id state.sessions)

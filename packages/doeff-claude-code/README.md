@@ -17,6 +17,7 @@
 | `ClaudeCloseSession(session-id, reason)` | 会話を閉じる(冪等) | `SessionClosed` | `ProcessStillAlive` |
 | `ClaudeSessionStatus(home, cwd, session-id)` | 会話の状態と transcript の在否を読む | `SessionStatus` | — |
 | `ClaudeExportSession(home, cwd, session-id)` | transcript の jsonl の写しを取り出す(`ResumeSession(carry=Rebuilt(写し))` で別の家へ持ち込める) | `SessionExported` | `SessionNotFound` |
+| `ClaudeExportSessionSide(home, cwd, session-id, since-ms=None)` | 会話の側の記録(transcript の隣の `<session-id>/` の下 — `subagents/`・`tool-results/`)のうち since-ms(epoch ミリ秒)より後に変わった file を取り出す(相対の path・大きさ・変えた刻・中身の bytes。symlink は辿らない) | `SessionSideExported`(`SideFile` の並び — path の順) | `SessionNotFound`(本体の transcript が無い) |
 | `ClaudeWarmSession(origin, spec)` | 会話の process を最初の入力の前に起動し、入力を書かずに待たせる(`origin` は `FreshSession` / `ResumeSession`) | `SessionWarmed` | `SessionNotFound` / `SessionIdInUse` / `TurnInFlight` / `CarryRefused` / `LaunchFailed` |
 | `ClaudeReplaceSessionCredential(session-id, credential)` | 会話の生きた process の借りた資格を替える(手番の途中でも次の API の呼びから新しい token を使う) | `CredentialReplaced` | `NoSuchSession` / `SessionProcessDown` / `HomeCredentialSession` |
 
@@ -32,7 +33,9 @@
 fake = `doeff_claude_code.fake-claude-print-handler(respond)`(respond = 宣言 → 答えの Program)。本番の handler は外側に doeff の
 scheduler が要る(時間の handler は要らない)。
 
-`ClaudeExportSession` が写すのは transcript の jsonl 1 つだけ。`<session-id>/` の下の subagent の記録と `memory/` は写さない(残りの設計)。
+`ClaudeExportSession` が写すのは transcript の jsonl 1 つだけ。`<session-id>/` の下の側の記録(subagent の記録・道具の出力)は
+`ClaudeExportSessionSide` で別に取り出す(前に預けた刻を since-ms に渡せば、増えた・伸びた file だけ)。fake は
+`FakeClaudeWorld.put-side-file(home, cwd, session-id, path, data, modified-ms)` で側の file を置く。
 
 `ClaudeWarmSession` は、起動してから入力を受けられるまでの秒を入力の前に済ませるための effect。後に来た同じ会話の `ClaudeStartTurn`
 は、起動条件(argv・cwd・env)が同じならその process に入力を書き、違えば停止して再起動する。新しい会話を事前起動した時は、最初の

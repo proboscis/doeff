@@ -1,7 +1,8 @@
-;;; doeff-claude-code の公開 effect 11 と、その戻り値の型(設計 4.3)。
+;;; doeff-claude-code の公開 effect 12 と、その戻り値の型(設計 4.3)。
 ;;;
 ;;; ClaudeStartTurn / ClaudeInjectInput / ClaudeInterruptTurn / ClaudeReadTurnEvents / ClaudeAnswerPermission /
-;;; ClaudeCloseSession / ClaudeSessionStatus / ClaudeExportSession / ClaudeWarmSession / ClaudeReplaceSessionCredential /
+;;; ClaudeCloseSession / ClaudeSessionStatus / ClaudeExportSession / ClaudeExportSessionSide / ClaudeWarmSession /
+;;; ClaudeReplaceSessionCredential /
 ;;; ClaudePrintOnce。
 ;;;
 ;;; 単位は「claude の会話(session)と、その上の手番」。process の単位の操作(起こす・stdin に書く・信号・降ろす・pid の生存)は
@@ -73,6 +74,21 @@
     (when (not (and (isinstance self.jsonl-text str) self.jsonl-text (not (.isspace self.jsonl-text))))
       (raise (ValueError "SessionExported.jsonl_text は空白だけでない文字列")))))
 
+(defclass [(dataclass :frozen True)] SideFile []
+  "会話の側の記録(<会話の id>/ の下 — subagents/・tool-results/)の file 1 つ。path = <会話の id>/ からの相対の path(区切りは /)・
+   size = 中身の byte 数・modified-ms = 変えた刻(epoch ミリ秒)・data = 中身(pdf・画像も在るので bytes)。"
+  (#^ str path)
+  (#^ int size)
+  (#^ int modified-ms)
+  (#^ bytes data)
+  (defn __post_init__ [self]
+    (when (!= self.size (len self.data))
+      (raise (ValueError (.format "SideFile.size {} が中身の byte 数 {} と違う" self.size (len self.data)))))))
+
+(defclass [(dataclass :frozen True)] SessionSideExported []
+  "側の記録のうち頼んだ刻より後に変わった file の並び(path の順)。空 = 変わった file が無い(側の dir が無い会話も空)。"
+  (#^ tuple files))
+
 
 ;; --- 失敗の戻り値 ---------------------------------------------------------------------------------
 
@@ -115,6 +131,7 @@
 (setv StartTurnOutcome (| TurnStarted SessionNotFound SessionIdInUse TurnInFlight CarryRefused LaunchFailed
                           AttachmentRefused))
 (val ExportSessionOutcome (| SessionExported SessionNotFound))
+(val ExportSessionSideOutcome (| SessionSideExported SessionNotFound))
 
 
 ;; --- effect ----------------------------------------------------------------------------------
@@ -204,6 +221,22 @@
       (raise (ValueError (.format "ClaudeExportSession.from_byte は 0 以上の整数か None: {!r}" self.from-byte))))
     (when (and (is-not self.tail-bytes None) (is-not self.from-byte None))
       (raise (ValueError "ClaudeExportSession の tail_bytes と from_byte は一緒に名指さない")))))
+
+(defclass [(dataclass :frozen True)] ClaudeExportSessionSide [(get EffectBase ExportSessionSideOutcome)]
+  "会話の側の記録(transcript の隣の <会話の id>/ の下の file — subagent の記録・道具の出力)を家から取り出す(ClaudeExportSession
+   が写さない分を、手番の終わりに家の外へ預けるため)。置き場は ClaudeExportSession と同じ(cwd は実体の path へ正規化)。
+   since-ms = この刻(epoch ミリ秒)より後に変わった file だけ(None = 全部)— 前に預けた刻を渡して、増えた・伸びた file だけを読む。
+   ちょうど since-ms に変えた file は返さない。側の dir の中の symlink は辿らない(置き場の外の file を写さない)。
+   答え = SessionSideExported | SessionNotFound(本体の transcript が無い)。"
+  (#^ ClaudeHome home)
+  (#^ str cwd)
+  (#^ str session-id)
+  (setv #^ (| int None) since-ms None)
+  (defn __post_init__ [self]
+    (checked-session-id self.session-id "ClaudeExportSessionSide.session_id")
+    (when (and (is-not self.since-ms None)
+               (or (isinstance self.since-ms bool) (not (isinstance self.since-ms int)) (< self.since-ms 0)))
+      (raise (ValueError (.format "ClaudeExportSessionSide.since_ms は 0 以上の整数か None: {!r}" self.since-ms))))))
 
 
 ;; --- 入力の前に会話の process を事前起動して待たせる ------------------------------------------------------------

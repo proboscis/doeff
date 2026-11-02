@@ -69,6 +69,7 @@ from doeff_agents._effects.agent import CleanupAgentSessionEffect as CleanupAgen
 from doeff_agents._effects.agent import Events as Events
 from doeff_agents._effects.agent import EventsEffect as EventsEffect
 from doeff_agents._effects.agent import ExportContextEffect as ExportContextEffect
+from doeff_agents._effects.agent import ExportSideContextEffect as ExportSideContextEffect
 from doeff_agents._effects.agent import FollowUp as FollowUp
 from doeff_agents._effects.agent import FollowUpEffect as FollowUpEffect
 from doeff_agents._effects.agent import GetAgentSession as GetAgentSession
@@ -105,6 +106,7 @@ from doeff_agents._effects.agent import Send as Send
 from doeff_agents._effects.agent import SendEffect as SendEffect
 from doeff_agents._effects.agent import SessionAlreadyExistsError as SessionAlreadyExistsError
 from doeff_agents._effects.agent import SessionHandle as SessionHandle
+from doeff_agents._effects.agent import SideContextFile as SideContextFile
 from doeff_agents._effects.agent import SessionNotFoundError as SessionNotFoundError
 from doeff_agents._effects.agent import SessionStatus as SessionStatus
 from doeff_agents._effects.agent import Stop as Stop

@@ -52,6 +52,7 @@
 (import operator [attrgetter])
 (import os)
 (import os.path)
+(import stat)
 (import re)
 (import signal)
 (import threading)
@@ -75,7 +76,7 @@
                                    CarryRefused LaunchFailed AttachmentRefused NoTurnInFlight UnknownTurn NoSuchRequest
                                    ProcessStillAlive ClaudeWarmSession SessionWarmed ClaudeLiveLimitExceeded
                                    ClaudeReplaceSessionCredential CredentialReplaced NoSuchSession SessionProcessDown
-                                   HomeCredentialSession])
+                                   HomeCredentialSession ClaudeExportSessionSide SessionSideExported SideFile])
 (import json)
 (import doeff_claude_code._faults [ClaudeDropProcess ClaudeLiveProcess ClaudeEmitOutsideTurn LiveProcess NoLiveProcess StopReason])
 (import doeff_claude_code._dialogue :as dialogue)
@@ -1759,6 +1760,47 @@
   (<- exported (| SessionExported SessionNotFound) (offloaded TRANSCRIPT-THREADS (fn [] (run-detached (read-session-export request))) keep-nothing))
   exported)
 
+(defk read-side-file [#^ str side #^ str path #^ (| int None) since-ms]
+  {:pre [(: side str) (: path str) (: since-ms (| int None))] :post [(: % (| SideFile None))]
+   :tags {:context "claude-code" :role "foundation"}}
+  "側の dir の file 1 つを、since-ms より後に変わった普通の file なら写すため(symlink・消えた file・前の file は None)。変えた刻は
+   読む前に取る — 読んだ後に伸びた file は、次の取り出しで刻が since-ms より後になって写し直される。"
+  (val info (try
+              (os.lstat path)
+              (except [FileNotFoundError] None)))
+  (when (or (is info None) (not (stat.S-ISREG info.st-mode))) (return None))
+  (val modified-ms (// info.st-mtime-ns 1000000))
+  (when (and (is-not since-ms None) (<= modified-ms since-ms)) (return None))
+  (val data (try
+              (with [f (open path "rb")] (.read f))
+              (except [FileNotFoundError] None)))
+  (when (is data None) (return None))
+  (SideFile (.replace (os.path.relpath path side) os.sep "/") (len data) modified-ms data))
+
+(defk read-session-side [#^ ClaudeExportSessionSide request]
+  {:pre [(: request ClaudeExportSessionSide)] :post [(: % (| SessionSideExported SessionNotFound))]
+   :tags {:context "claude-code" :role "foundation"}}
+  "会話の側の記録(transcript の隣の <会話の id>/ の下)のうち since-ms より後に変わった file を path の順に読むため。本体の transcript
+   が無い = SessionNotFound・側の dir が無い = 空の並び。symlink の dir へは降りない(os.walk の followlinks の既定)。"
+  (val path (transcript-path request.home.config-dir (os.path.realpath request.cwd) request.session-id))
+  (when (not (os.path.isfile path)) (return (SessionNotFound request.session-id)))
+  (val side (.removesuffix path ".jsonl"))
+  (when (or (os.path.islink side) (not (os.path.isdir side))) (return (SessionSideExported #())))
+  (val found (lfor #(dir dirs names) (os.walk side)
+                   name names
+                   :setv read (run (read-side-file side (os.path.join dir name) request.since-ms))
+                   :if (is-not read None)
+                   read))
+  (SessionSideExported (tuple (sorted found :key (fn [f] f.path)))))
+
+(defk export-session-side [#^ ClaudeExportSessionSide request]
+  {:pre [(: request ClaudeExportSessionSide)] :post [(: % (| SessionSideExported SessionNotFound))]
+   :tags {:context "claude-code" :role "foundation"}}
+  "側の記録を書き出すため(ClaudeExportSessionSide)。数 GiB に届く dir の読みは transcript と同じく TRANSCRIPT-THREADS の thread で待つ。"
+  (<- exported (| SessionSideExported SessionNotFound)
+      (offloaded TRANSCRIPT-THREADS (fn [] (run-detached (read-session-side request))) keep-nothing))
+  exported)
+
 (defn drop-process [#^ ClaudeCodeHost host #^ str session-id]
   (setv runtime (.runtime host session-id))
   (setv process (if (is runtime None) None runtime.process))
@@ -1848,6 +1890,9 @@
   (ClaudeExportSession [home cwd session-id]
     (<- exported (export-session effect))
     (resume exported))
+  (ClaudeExportSessionSide [home cwd session-id since-ms]
+    (<- side (export-session-side effect))
+    (resume side))
   (ClaudeWarmSession [origin spec]
     (<- warmed (warm-session host effect))
     (resume warmed))

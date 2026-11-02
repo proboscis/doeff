@@ -9,7 +9,8 @@
 (import doeff [Ask])
 (import doeff_agents._effects.agent [
   LaunchEffect MonitorEffect CaptureEffect
-  SendEffect StopEffect SessionHandle Observation ExportContextEffect WarmSessionEffect AgentCapabilityUnsupportedError])
+  SendEffect StopEffect SessionHandle Observation ExportContextEffect ExportSideContextEffect WarmSessionEffect
+  AgentCapabilityUnsupportedError])
 (import doeff_agents._effects._handler-effects [refuse-turn-capabilities])
 (import doeff_agents._adapters.base [AgentType LaunchParams])
 (import doeff_agents._adapters.codex [CodexAdapter])
@@ -83,6 +84,9 @@
   (ExportContextEffect [agent-type]
     :when (= agent-type AgentType.CODEX)
     (raise (AgentCapabilityUnsupportedError :capability "ExportContextEffect" :handler "codex-handler")))
+  (ExportSideContextEffect [agent-type]
+    :when (= agent-type AgentType.CODEX)
+    (raise (AgentCapabilityUnsupportedError :capability "ExportSideContextEffect" :handler "codex-handler")))
 
   ;; 入力の前に runtime を事前起動する WarmSessionEffect は、この handler の会話では LaunchEffect が既に CLI を起動して入力を待たせて
   ;; いる — 黙って何もせずに応答せず、型で拒否する。この handler の知らない会話は外側の handler へ回す。

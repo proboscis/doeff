@@ -5,7 +5,7 @@
 ;;; 許可の問いの要否・終わり方〔完了・失敗・process が消える〕・usage・途中の本文の行の数・最後の本文を分ける差分の片の数)。
 ;;; 行は本番と同じ ClaudeStreamLine / ClaudeLineKind の型で出す(型を 2 つ作らない)。
 ;;;
-;;; 世界 = 家の中身(transcripts・activity — disk の上の物)と process の中の会話(sessions)。restarted は同じ家の上で process だけを
+;;; 世界 = 家の中身(transcripts・activity・side-files — disk の上の物)と process の中の会話(sessions)。restarted は同じ家の上で process だけを
 ;;; 作り直した世界(前の process の会話は前の世界で走り続け、新しい世界からは見えない — 上の層の process の作り直しの模擬)。
 ;;;
 ;;; 本番と共通の不変条件(1 つの会話に走る手番は多くとも 1 つ・StartTurn 1 回に終わりちょうど 1 つ・seq の単調増加・
@@ -37,7 +37,8 @@
                                    SessionNotFound SessionIdInUse TurnInFlight AttachmentRefused NoTurnInFlight
                                    UnknownTurn NoSuchRequest ClaudeWarmSession SessionWarmed ClaudeLiveLimitExceeded
                                    ClaudeReplaceSessionCredential CredentialReplaced NoSuchSession SessionProcessDown
-                                   HomeCredentialSession ClaudePrintOnce PrintAnswered PrintFailed PrintLimited PrintTimedOut])
+                                   HomeCredentialSession ClaudePrintOnce PrintAnswered PrintFailed PrintLimited PrintTimedOut
+                                   ClaudeExportSessionSide SessionSideExported SideFile])
 (import doeff_claude_code._faults [ClaudeDropProcess ClaudeForgetSession ClaudeLiveProcess ClaudeEmitOutsideTurn LiveProcess
                                   NoLiveProcess StopReason])
 (import doeff_claude_code._argv [launch-key])
@@ -363,18 +364,25 @@
     (setv self.responder responder
           self.respond respond
           self.transcripts {}
-          self.activity {})
+          self.activity {}
+          self.side-files {})
     (setv #^ (get dict #(str FakeSession)) self.sessions {}))
 
   (defn #^ "FakeClaudeWorld" restarted [self]
     "同じ家の上で process を作り直した世界: transcript と activity(家の中身)は同じ物を共有し、会話(process の中の状態)は空。
      前の世界の走っている手番は前の世界で走り続ける(子 process は上の層の process の作り直しで止まらない)。"
     (setv world (FakeClaudeWorld self.responder :respond self.respond :live-limit self.live-limit))
-    (setv world.transcripts self.transcripts world.activity self.activity)
+    (setv world.transcripts self.transcripts world.activity self.activity world.side-files self.side-files)
     world)
 
   (defn transcript-key [self home #^ str cwd #^ str session-id]
-    #(home.config-dir cwd session-id)))
+    #(home.config-dir cwd session-id))
+
+  (defn put-side-file [self home #^ str cwd #^ str session-id #^ str path #^ bytes data #^ int modified-ms]
+    "会話の側の記録(<会話の id>/ の下)に file を置く(検の口 — CLI が subagent の記録・道具の出力を書いた形)。path = <会話の id>/
+     からの相対の path(区切りは /)。同じ path は置き直す。"
+    (setv (get (.setdefault self.side-files (.transcript-key self home cwd session-id) {}) path)
+          (SideFile path (len data) modified-ms data))))
 
 
 (defk reply-of [#^ FakeClaudeWorld world #^ str text #^ tuple memory]
@@ -1063,6 +1071,17 @@
   (val text (.join "" kept))
   (if (.strip text) (SessionExported text) (SessionNotFound request.session-id)))
 
+(defk fake-export-side [#^ FakeClaudeWorld world #^ ClaudeExportSessionSide request]
+  {:pre [(: world FakeClaudeWorld) (: request ClaudeExportSessionSide)] :post [(: % (| SessionSideExported SessionNotFound))]
+   :tags {:context "claude-code" :role "foundation"}}
+  "側の記録の写し: 世界に置いた側の file(put-side-file)のうち since-ms より後に変わった物を path の順に(本物と同じ答え)。
+   本体の transcript を世界が持たない会話 = SessionNotFound。"
+  (val key (.transcript-key world request.home request.cwd request.session-id))
+  (when (not-in key world.transcripts) (return (SessionNotFound request.session-id)))
+  (val files (.values (.get world.side-files key {})))
+  (SessionSideExported (tuple (sorted (gfor f files :if (or (is request.since-ms None) (> f.modified-ms request.since-ms)) f)
+                                      :key (fn [f] f.path)))))
+
 (defk fake-drop [#^ FakeClaudeWorld world #^ str session-id]
   {:pre [(: world FakeClaudeWorld) (: session-id str)] :post [(: % bool)]}
   "会話の process を消すため(検の口 — 本番の答え手と同じく、手番を走らせていない生きた process も消す。走っている手番は
@@ -1089,7 +1108,8 @@
   (setv keys (lfor key world.transcripts :if (= (get key 2) session-id) key))
   (for [key keys]
     (del (get world.transcripts key))
-    (.pop world.activity key None))
+    (.pop world.activity key None)
+    (.pop world.side-files key None))
   (bool keys))
 
 (defk fake-live-process [#^ FakeClaudeWorld world #^ str session-id]
@@ -1155,6 +1175,9 @@
   (ClaudeExportSession [home cwd session-id]
     (<- exported (fake-export world effect))
     (resume exported))
+  (ClaudeExportSessionSide [home cwd session-id since-ms]
+    (<- side (fake-export-side world effect))
+    (resume side))
   (ClaudeWarmSession [origin spec]
     (<- warmed (fake-warm-session world effect))
     (resume warmed))

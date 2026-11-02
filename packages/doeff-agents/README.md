@@ -396,9 +396,10 @@ Codex states no per-input fate, so the adapter emits `AgentInputFateEvent`
 (`started`) when layer 2 accepts an input (a turn start or a `turn/steer`), and
 the completed end lists the same refs in `input_refs`. `resume_from`, `model`,
 `effort`, `autocompact` (as `model_auto_compact_token_limit`), image
-attachments and `FollowUp(mode=INJECT)` (as `turn/steer`) are honoured. A named
-`new_context_id` (Codex makes thread ids itself), `resume_snapshot`,
-`ExportContextEffect`, `mcp_tools` and `bare` are refused with
+attachments, `FollowUp(mode=INJECT)` (as `turn/steer`), `ExportContextEffect`
+(the rollout) and `resume_snapshot` are honoured. A named
+`new_context_id` (Codex makes thread ids itself), `ExportSideContextEffect`
+(Codex keeps no side records next to the rollout), `mcp_tools` and `bare` are refused with
 `AgentCapabilityUnsupportedError`; `WarmSession` answers `False` (layer 2
 cannot open a thread before the first input). Tests: `tests/test_headless_codex_adapter.hy` runs the same programs
 over the fake and over the production handler with the stand-in app server

@@ -26,6 +26,7 @@
 ;;;   WarmSessionEffect             → 偽(前もって起こさない — doeff-codex に入力の前に thread を開く口が無い)
 ;;;   ExportContextEffect(CODEX)    → CodexExportThread(家 = 会話の宣言と同じ家・context_id = thread の id・tail_bytes・from_byte)→
 ;;;                                    ThreadExported の記録の本文(rollout の jsonl — 行の終わりまで)・ThreadUnknown → None
+;;;   ExportSideContextEffect(CODEX) → AgentCapabilityUnsupportedError(codex は rollout の隣に側の記録を持たない)
 ;;;   LaunchEffect.resume_snapshot  → その session の最初の CodexStartTurn の ResumeThread の carry(2 ターン目からは無し — 層 2 が家に
 ;;;                                    rollout が無い時だけ元の置き場へ書き戻してから thread/resume する)
 ;;;   行 → 出来事: TextDelta → AgentTextDeltaEvent・AgentMessageDone → AgentTextEvent・item の種類 reasoning の始まり →
@@ -86,7 +87,7 @@
 (import doeff_agents._shell [assert-no-forbidden-agent-env assert-session-env-is-non-auth-overlay])
 (import doeff_agents._effects.agent [
   LaunchEffect SendEffect FollowUpEffect InterruptEffect EventsEffect AwaitResultEffect MonitorEffect CaptureEffect
-  StopEffect StopSessionEffect ReleaseSessionEffect AttachAgentSessionEffect ExportContextEffect WarmSessionEffect
+  StopEffect StopSessionEffect ReleaseSessionEffect AttachAgentSessionEffect ExportContextEffect ExportSideContextEffect WarmSessionEffect
   ReplaceSessionCredentialEffect
   SessionHandle Observation AwaitOutcome AwaitStatus TurnInputMode InputFateState ModelWindow AutocompactAuto AutocompactTokens
   NamedContextId RedeemTurnCredentialEffect TurnCredential CodexTurnCredential HomeTurnCredential TurnCredentialUnavailable
@@ -728,6 +729,11 @@
     :when (= agent-type AgentType.CODEX)
     (<- exported (export-context config effect))
     (resume exported))
+
+  ;; codex は会話の記録(rollout)の隣に側の記録を持たない — 黙って空を返さず断る。
+  (ExportSideContextEffect [agent-type]
+    :when (= agent-type AgentType.CODEX)
+    (raise (AgentCapabilityUnsupportedError :capability "ExportSideContextEffect" :handler HANDLER-NAME)))
 
   (SendEffect [handle message enter literal]
     :when (in handle.session-id state.sessions)
