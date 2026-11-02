@@ -38,6 +38,28 @@ class DelayEffect(EffectBase):
 
 
 @dataclass(frozen=True)
+class SpendCpuEffect(EffectBase):
+    """Hold the CPU for ``seconds`` without yielding: the clock moves on by ``seconds`` while no other
+    task of the scheduler runs.
+
+    The shape of a stretch of computation that never reaches a suspension point (a long decision
+    round in one task while the other tasks of its process wait for their turn). Wall-clock handlers
+    block the thread for the span; ``sim_time_handler`` moves the virtual clock forward by the span
+    without switching tasks (wake-ups that fall due during it run late, after the span). Unlike
+    ``SetTime`` it only moves the clock forward from now, so a program may perform it where the
+    whole system's clock must not be set from inside.
+    """
+
+    seconds: float
+
+    def __post_init__(self) -> None:
+        seconds = _coerce_finite_float(self.seconds, name="seconds")
+        if seconds < 0.0:
+            raise ValueError("seconds must be >= 0.0")
+        object.__setattr__(self, "seconds", seconds)
+
+
+@dataclass(frozen=True)
 class WaitUntilEffect(EffectBase):
     """Wait until a specific timezone-aware datetime."""
 
@@ -249,6 +271,10 @@ def ScheduleAt(time: datetime, program: Any) -> EffectBase:  # noqa: N802
 
 def SetTime(time: datetime) -> EffectBase:  # noqa: N802
     return SetTimeEffect(time=time)
+
+
+def SpendCpu(seconds: float) -> EffectBase:  # noqa: N802
+    return SpendCpuEffect(seconds=seconds)
 
 
 def WaitWithin(future: "Future[_T]", seconds: float, *, park: bool = False) -> EffectBase:  # noqa: N802

@@ -13,6 +13,8 @@ from doeff_time._effects.time import ScheduleAt as ScheduleAt
 from doeff_time._effects.time import ScheduleAtEffect as ScheduleAtEffect
 from doeff_time._effects.time import SetTime as SetTime
 from doeff_time._effects.time import SetTimeEffect as SetTimeEffect
+from doeff_time._effects.time import SpendCpu as SpendCpu
+from doeff_time._effects.time import SpendCpuEffect as SpendCpuEffect
 from doeff_time._effects.time import TicksOutcome as TicksOutcome
 from doeff_time._effects.time import WaitTicks as WaitTicks
 from doeff_time._effects.time import WaitTicksEffect as WaitTicksEffect

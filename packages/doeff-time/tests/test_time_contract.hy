@@ -2,11 +2,12 @@
 ;;; (sim-time-handler)が、同じ deftest を通る。解釈器の組み立ては time_contract_clocks.hy。
 ;;;
 ;;; 時間の幅は時計の性質(ClockTraits)で見る: 仮想の時計はちょうど・本物の時計は早起きを early 秒・遅れを late 秒まで許す。
-;;; SetTime は仮想の時計だけの effect なので契約の外(test_sim_time.py)。本物の時計が壁時計を読むことは test_get_time.py。
+;;; SetTime は仮想の時計だけの effect なので契約の外(test_sim_time.py)。SpendCpu(手番を譲らずに CPU の秒を使う)は 3 つの時計の契約に入る。本物の時計が壁時計を読むことは test_get_time.py。
 (require doeff-hy.macros [defk deftest <- val])
 (import datetime [datetime timedelta])
-(import doeff_core_effects [CompletePromise CreatePromise Promise Spawn Task Wait])
-(import doeff_time [Delay GetMonotonic GetTime RaceOutcome RaceWithin ScheduleAt WaitUntil])
+(import dataclasses [dataclass])
+(import doeff_core_effects [Cancel CompletePromise CreatePromise Promise Spawn Task Wait])
+(import doeff_time [Delay GetMonotonic GetTime RaceOutcome RaceWithin ScheduleAt SpendCpu WaitUntil])
 (import time_contract_clocks [ClockTraits ClockUnderTest OuterProbe])
 
 ;; 仮想の時計の「ちょうど」の許し — GetMonotonic は仮想の時刻の POSIX の秒(float)で、2024 年の秒数の刻みは 1e-6 より細かい。
@@ -183,3 +184,57 @@
   (assert (= outcome (RaceOutcome :value None :timed-out True)) (.format "{}: 期限が先(答え {})" clock.name outcome))
   (<- at-deadline bool (spent-matches clock SHORT (- m1 m0)))
   (assert at-deadline (.format "{}: {} 秒の期限の待ちに {} 秒かかった" clock.name SHORT (- m1 m0))))
+
+
+;; DOEFF119 の対象だが defrecord にしない: 刻む task(ticking)が書き、検が読む可変の入れ物。
+(defclass [(dataclass)] TickCount []
+  "刻む task が回った数。"
+  (setv #^ int ticks 0))
+
+
+(defk ticking [count every]
+  {:pre [(: count TickCount) (: every float)] :post [(: % None)] :tags {:context "doeff-time-test" :role "program"}}
+  "every 秒ごとに count を 1 つ進め続ける Program(同じ scheduler のほかの task が回っているかを見る — 検が Cancel で止める)。"
+  (while True
+    (setv count.ticks (+ count.ticks 1))
+    (<- (Delay every)))
+  None)
+
+
+(val CPU-SPAN 0.15)
+
+
+(deftest test-spend-cpu-advances-by-its-span
+  {:interpreters ["async" "sync" "sim"]}
+  (<- clock (ClockUnderTest))
+  (<- t0 datetime (GetTime))
+  (<- m0 float (GetMonotonic))
+  (<- (SpendCpu CPU-SPAN))
+  (<- t1 datetime (GetTime))
+  (<- m1 float (GetMonotonic))
+  (<- by-monotonic bool (spent-matches clock CPU-SPAN (- m1 m0)))
+  (<- by-time bool (spent-matches clock CPU-SPAN (.total-seconds (- t1 t0))))
+  (assert by-monotonic (.format "{}: SpendCpu {} の後の GetMonotonic の差 {}" clock.name CPU-SPAN (- m1 m0)))
+  (assert by-time (.format "{}: SpendCpu {} の後の GetTime の差 {}" clock.name CPU-SPAN (- t1 t0))))
+
+
+;; sync の時計は外す: Delay も thread を止める眠りなので、どの待ちの間もほかの task は回らない(刻む task が回る場が無い)。
+(deftest test-spend-cpu-runs-no-other-task-while-the-clock-moves
+  {:interpreters ["async" "sim"]}
+  (<- clock (ClockUnderTest))
+  (val count (TickCount))
+  (<- ticker Task (Spawn (ticking count 0.01) :daemon True))
+  (<- (Delay 0.035))
+  (val before count.ticks)
+  (<- m0 float (GetMonotonic))
+  (<- (SpendCpu CPU-SPAN))
+  (<- m1 float (GetMonotonic))
+  (val during (- count.ticks before))
+  (<- (Delay 0.02))
+  (val after (- count.ticks before))
+  (<- (Cancel ticker))
+  (assert (>= before 1) (.format "{}: 刻む task が CPU を使う前に回っていない({} 回)" clock.name before))
+  (assert (= during 0) (.format "{}: CPU を使う {} 秒の間に、同じ scheduler の別の task が {} 回回った" clock.name CPU-SPAN during))
+  (<- spent bool (spent-matches clock CPU-SPAN (- m1 m0)))
+  (assert spent (.format "{}: CPU を使う {} 秒で時計が {} 秒進んだ" clock.name CPU-SPAN (- m1 m0)))
+  (assert (>= after 1) (.format "{}: CPU を使い終えた後も別の task が回らない({} 回)" clock.name after)))

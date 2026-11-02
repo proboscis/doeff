@@ -476,7 +476,7 @@
 
 
 (deftest test-the-fence-drops-a-process-whose-effect-only-the-sim-could-answer
-  ;; 柵: sim の外側が答える物(scheduler の Spawn / Wait・時計の Delay / GetTime・期限つきの待ち RaceWithin / WaitTicks)は通る。sim の世界
+  ;; 柵: sim の外側が答える物(scheduler の Spawn / Wait・時計の Delay / GetTime・期限つきの待ち RaceWithin / WaitTicks・CPU の秒 SpendCpu)は通る。sim の世界
   ;; だけが答える effect(検の ProcessesOf)を出した process は、本番の子と同じ未処理の例外で落ちる(exit 1 — worker が起こし直しても同じく
   ;; 落ちる)。RaceWithin と WaitTicks が表に無かった時は passer が柵で落ちた(失敗ケース)。task を捨てる Discard も同じく通る(表に無かった時は
   ;; passer が柵で落ちた)。
@@ -484,6 +484,11 @@
   (assert (= (get seen.rows "fence/passer" "answer") 42) seen.rows)
   (assert (= #((get seen.rows "fence/passer" "raced") (get seen.rows "fence/passer" "ticked")) #(7 9)) seen.rows)
   (assert (get seen.rows "fence/passer" "discarded") seen.rows)
+  ;; CPU の秒(SpendCpu)も通り、sim の仮想の時計が手番を譲らずに 0.15 秒進む: 同じ process の刻む task は CPU を使う前には回り、その間は回らない
+  ;; (表に無かった時は passer が柵で落ちた)。
+  (assert (= (get seen.rows "fence/passer" "cpuMs") 150) seen.rows)
+  (assert (>= (get seen.rows "fence/passer" "ticksBefore") 1) seen.rows)
+  (assert (= (get seen.rows "fence/passer" "ticksDuringCpu") 0) seen.rows)
   (assert (>= (get seen.rows "fence/passer" "elapsedMs") 500) seen.rows)
   (assert (= seen.passer.state "Ready") seen.passer)
   (assert (>= (len seen.peeker) 2) seen.peeker)

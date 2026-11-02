@@ -19,6 +19,7 @@ from doeff_time._effects import (
     GetTimeEffect,
     RaceWithinEffect,
     ScheduleAtEffect,
+    SpendCpuEffect,
     WaitTicksEffect,
     WaitUntilEffect,
     WaitWithinEffect,
@@ -58,7 +59,8 @@ class SyncTimeRuntime:
         # leaves this frame suspended mid-`yield` forever, pinning the
         # Task handle and defeating the scheduler's terminal-entry sweep
         # (ADR-DOE-CORE-EFFECTS-002).
-        if isinstance(effect, DelayEffect):
+        if isinstance(effect, (DelayEffect, SpendCpuEffect)):
+            # A blocking sleep is already a span the caller holds without yielding (SpendCpu).
             self._sleep(max(0.0, effect.seconds))
             return (yield Transfer(k, None))
         if isinstance(effect, WaitUntilEffect):
