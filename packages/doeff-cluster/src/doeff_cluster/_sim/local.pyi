@@ -186,6 +186,18 @@ from doeff_cluster._shared.intent.detached_model import DetachedAckAnswer as Det
 from doeff_cluster._worker.core.drain_client import DRAIN_DEADLINE_SECONDS as DRAIN_DEADLINE_SECONDS
 from doeff_cluster._worker.core.drain_client import DRAIN_TTL_MARGIN_SECONDS as DRAIN_TTL_MARGIN_SECONDS
 from doeff_cluster._worker.protocol.drain_requests import drain_request as drain_request
+from doeff_cluster._worker.core.memory_rules import JobRoot as JobRoot
+from doeff_cluster._worker.core.memory_rules import MIB as MIB
+from doeff_cluster._worker.protocol.memory_watch import MemoryWatchSettings as MemoryWatchSettings
+from doeff_cluster._worker.protocol.memory_watch import MemoryCell as MemoryCell
+from doeff_cluster._worker.protocol.memory_watch import memory_watch_step as memory_watch_step
+from doeff_cluster._sim.memory_watch_world import SimMemoryWatch as SimMemoryWatch
+from doeff_cluster._sim.memory_watch_world import SimMemoryRead as SimMemoryRead
+from doeff_cluster._sim.memory_watch_world import sim_watch_settings as sim_watch_settings
+from doeff_cluster._sim.memory_watch_world import sim_proc_rows as sim_proc_rows
+from doeff_cluster._sim.memory_watch_world import sim_meminfo_text as sim_meminfo_text
+from doeff_cluster._sim.memory_watch_world import sim_watch_answers as sim_watch_answers
+from doeff_cluster._sim.memory_watch_world import limited_cpu_seconds as limited_cpu_seconds
 from doeff_cluster._worker.protocol.declared import DeclaredReply as DeclaredReply
 from doeff_cluster._worker.protocol.declared import declared_reply_of_json as declared_reply_of_json
 from doeff_cluster._worker.protocol.declared import declared_job_specs as declared_job_specs
@@ -411,6 +423,7 @@ class SimWorker:
     silent_notices: bool = False
     steps_wall: bool = False
     reads_room: bool = False
+    memory_watch: SimMemoryWatch | None = None
 
 @dataclass(frozen=True, kw_only=True)
 class SimProcess:
@@ -629,6 +642,10 @@ class PreparationsOf(_doeff_effect_base[tuple[SimPreparation, ...]]):
 
 @_doeff_dataclass(frozen=True)
 class WatchFailuresOf(_doeff_effect_base[tuple]):
+    name: str
+
+@_doeff_dataclass(frozen=True)
+class MemoryReadsOf(_doeff_effect_base[tuple]):
     name: str
 
 @_doeff_dataclass(frozen=True)
@@ -856,6 +873,10 @@ class NotePreparation(_doeff_effect_base[None]):
 @_doeff_dataclass(frozen=True)
 class NoteWatchFailure(_doeff_effect_base[None]):
     failure: SimWatchFailure
+
+@_doeff_dataclass(frozen=True)
+class NoteMemoryRead(_doeff_effect_base[None]):
+    read: SimMemoryRead
 
 @_doeff_dataclass(frozen=True)
 class WorkersStopping(_doeff_effect_base[bool]):
@@ -1228,6 +1249,9 @@ def watch_desired(worker: SimWorker, boot: str) -> _Program[str, object]:
     ...
 
 def guarded_watch(worker: SimWorker, boot: str) -> _Program[str, object]:
+    ...
+
+def sim_memory_watch(worker: SimWorker, boot: str) -> _Program[str, object]:
     ...
 
 def run_sim_worker(worker: SimWorker, policy: WorkerPolicy, boot: str) -> _Program[str, object]:
