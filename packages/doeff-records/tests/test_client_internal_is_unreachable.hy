@@ -3,12 +3,13 @@
 ;; 確かめること:
 ;;   要求の全部(要求と答えの 12 個と変化の待ち 2 つ)が、500 internal を例外でなく答えの値 Unreachable で返す — 結末の不明な答えの値は
 ;;   Unreachable だけで、どの要求の答えの型にも在る
-;;   行の型の書き put-typed と読み read-typed も、500 internal を答えの型(Unreachable)で返す(呼び手は値で読み分ける)
+;;   行の型の読み read-typed は 500 internal を答えの型(Unreachable)で返し、書き put-typed は PutRow の宣言どおり Raise(Unreachable) で逃がす
+;;   (値で受けたい呼び手は on-raise で包む)
 ;;   待つ時間の在る client は、500 internal を置き場の止まりと同じく戻りを待って撃ち直し、撃ち直しの書きは 1 回目と同じ冪等キーを送る
 ;;   400 malformed(client の実装の誤り)は今までどおり WireError を上げる — 実装の誤りの断りを値に紛れさせない
 ;; 反例 = 前の client(500 を WireError で上げた)は、1 本目と 2 本目の検で WireError を上げて赤になる。
 ;; 記録の service の代役は、client の送る HttpRequest に台本の答えを送られた順に返す(test_client_metrics.hy と同じ形)。
-(require doeff-hy.macros [deftest defhandler defk <- val var])
+(require doeff-hy.macros [deftest defhandler defk <- val var on-raise])
 (import json)
 (import typing [get-args])
 (import dataclasses [dataclass])
@@ -21,7 +22,7 @@
 (import doeff_records [ReadRow ListRows PutRow PutRows RowWrite WatchChanges WatchEvents AppendEvent AppendEvents EventAppend ReadEvents
                        ReadStreamEnd ReadEventByKey ReadBatch CountRows PutRowsAppendEvents AwaitRecordsBack])
 (import doeff_records [RecordsEndpoint RequestPatience WireError http-records-handler request-patience-handler records-unwaited])
-(import doeff_records._typed [RowType read-typed put-typed])
+(import doeff_records._typed [RowType TypedWritten TypedConflict read-typed put-typed])
 (import doeff_records._wire [PublicEffect IDEMPOTENCY-HEADER])
 
 ;; 記録の service が要求の task の落ちで答える本文(_http_server.hy の answer-arrival の 500 internal と同じ綴り)。
@@ -113,10 +114,19 @@
     (assert (in "要求の task が答える前に落ちた" answer.detail) #(ask answer))))
 
 
+(defk typed-write-as-value []
+  {:pre [] :post [(: % (| TypedWritten TypedConflict Unreachable))] :tags {:context "records" :role "program"}}
+  "行の型の書きの失敗(Raise)を on-raise で Unreachable の値へ戻して返すため(値で受けたい呼び手の形)。"
+  (<- written (on-raise (put-typed PARTS #("p1") (Part :id "p1" :label "a") (ExpectAny)) (Unreachable detail) (Unreachable detail)))
+  written)
+
+
 (deftest test-typed-reads-and-writes-answer-an-internal-failure-by-type
-  ;; 行の型の書きと読み(呼び手が答えの型で読み分ける層)も、500 internal を Unreachable の値で返す。
-  (val written (scripted-run #(INTERNAL) (put-typed PARTS #("p1") (Part :id "p1" :label "a") (ExpectAny))))
+  ;; 行の型の読み(呼び手が答えの型で読み分ける層)は 500 internal を Unreachable の値で返す。書きは PutRow が Unreachable を失敗と宣言した
+  ;; ので Raise(Unreachable) で逃がし、on-raise で包んだ呼び手が Unreachable の値で受ける。
+  (val written (scripted-run #(INTERNAL) (typed-write-as-value)))
   (assert (isinstance written Unreachable) written)
+  (assert (in "500 internal" written.detail) written)
   (val read (scripted-run #(INTERNAL) (read-typed PARTS #("p1"))))
   (assert (isinstance read Unreachable) read))
 
