@@ -7,7 +7,7 @@
 (require doeff-cluster.macros [defsystem])
 (import json)
 (import collections.abc [Callable])
-(import doeff [with-handlers EffectBase Program])
+(import doeff [with-handlers EffectBase Perform Program])
 (import doeff_time [Delay])
 (import doeff_core_effects [HttpRequest HttpResponse HttpFailed HttpFailureKind])
 (import doeff_core_effects [MeterSettings])
@@ -41,10 +41,11 @@
 
 (defk writes-then-idle [endpoint writes every]
   {:pre [(: endpoint RecordsEndpoint) (: writes int) (: every float)] :post [(: % int)] :tags {:context "doeff-cluster-test" :role "program"}}
-  "記録の client で書きを every 秒ごとに writes 回撃ち、その後は止められるまで待つため(待つ間も橋が数えを送り続ける)。"
+  "記録の client で書きを every 秒ごとに writes 回撃ち、その後は止められるまで待つため(待つ間も橋が数えを送り続ける)。書きの答えは見ない
+   (届かない窓の間の Unreachable で止まらず撃ち続けるため、宣言を開かずに(Perform)値のまま受ける — <- だと Raise になってこの program が落ちる)。"
   (<- (zero-client-metrics endpoint))
   (for [_ (range writes)]
-    (<- NOTE)
+    (<- (Perform NOTE))
     (<- (Delay every)))
   (while True
     (<- (Delay 60.0)))
