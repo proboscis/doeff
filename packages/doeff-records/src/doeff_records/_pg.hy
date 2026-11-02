@@ -133,7 +133,7 @@
 (import doeff_records._faults [AdvanceStoreEpoch])
 (import doeff_records._event_source [RECORDS-SIGNAL-SOURCE ReadSignalSource])
 (import doeff_records._maintenance [SweepExpired PruneChanges ReadChangeLog ChangeLog Swept Pruned ReadExpiredEvents ExpiredEvents ExpiredCursor
-                                   RetireArchivedEvents RetiredEvents])
+                                   RetireArchivedEvents RetiredEvents MoveBulkFields BulkMoved])
 (import doeff_records._admission [AppendNew AppendReplay judge-expect judge-put judge-put-rows judge-append row-expired? retention-cutoff-ms
                                  where-refusal key-head-refusal listed-row key-text key-from-text canonical-json next-watch-sequence epoch-ms body-digest
                                  judge-write-replay write-digest])
@@ -147,6 +147,7 @@
                               store-head-statement watch-head-statement read-row-statement lock-row-statement list-rows-statement top-rows-statement
                               ordered-rows-statement count-rows-statement
                               terminal-rows-statement upsert-row-statement delete-row-statement append-change-statement
+                              bulk-candidates-statement unmoved-count-statement move-bulk-statement
                               changes-statement change-log-statement advance-epoch-statement forget-changes-statement find-event-statement
                               prune-bound-statement prune-changes-statement statement-limit-statement UNBOUNDED-SEQ
                               insert-event-statement insert-unused-event-statement HeadRead read-events-statement stream-end-statement event-by-key-statement
@@ -299,6 +300,12 @@
    cleanup = 期限を過ぎた行を消して「消えた」を積む文(2 往復目に流す — 片付けが要らなければ両方の組が空)。"
   (#^ (| Row None) current)
   (#^ RowSteps cleanup))
+
+
+(defrecord TableMove
+  "大きい欄の移しの表 1 つの結果(moved-table): moved = この回に分け直した行の数 / unmoved = 分け直した後も payload に大きい欄が残る行の数。"
+  (#^ int moved)
+  (#^ int unmoved))
 
 
 (defrecord StagedRow
@@ -1336,7 +1343,7 @@
   "ListRows の文を作るか、索引の無い欄の断り NotIndexed を返すため(1 つの読みの pg-list-rows-at と束の読みの pg-read-batch が同じ文を流す
    1 点 — 置き場の版の照らし Reset は頭を読んだ後に呼び手がする)。"
   (val decl (store.schema.table ask.table))
-  (val refusal (where-refusal decl ask.where ask.where-any))
+  (val refusal (where-refusal decl ask.where ask.where-any (if (is-not ask.descending-by None) ask.descending-by ask.ascending-by)))
   (when refusal (return refusal))
   (<- unbuilt (unbuilt-fields store decl (+ (tuple ask.where) (tuple ask.where-any))))
   (when unbuilt (return (NotIndexed unbuilt)))
@@ -1400,7 +1407,7 @@
   "CountRows に答えるため: 絞りに合う行の件数を 1 文で数える(刻 now-ms で保持の期限を過ぎた終端の行は回収の前でも数えない — ListRows と
    同じ条件・索引の無い欄の絞りは NotIndexed)。下限 at-least の欄が表の上から読む欄なら、並べる式の索引の範囲で数える。"
   (val decl (store.schema.table ask.table))
-  (val refusal (where-refusal decl ask.where ask.where-any))
+  (val refusal (where-refusal decl ask.where ask.where-any (if (is ask.at-least None) None (get ask.at-least 0))))
   (when refusal (return refusal))
   (<- unbuilt (unbuilt-fields store decl (+ (tuple ask.where) (tuple ask.where-any))))
   (when unbuilt (return (NotIndexed unbuilt)))
@@ -1474,17 +1481,29 @@
   (LockedRow :current row :cleanup NO-STEPS))
 
 
+(defn #^ tuple split-spellings [#^ tuple bulk #^ object value #^ str whole]  ; defk にできない: 書きの行ごとと移しの候補の行ごとに同期に呼ぶ純粋な綴り(移しは内包表記で 1,000 行を組む)
+  "行の値 value(正規の綴り whole)を、列 payload と列 bulk に置く 2 つの綴りにするため(_pg_sql.hy の頭の註の state_rows): 大きい欄の名
+   bulk に当たる欄を bulk の綴りへ、残りを payload の綴りへ(どちらも正規の綴り — canonical-json)。値に大きい欄が無ければ #(whole None)
+   (列 bulk は NULL・綴り直さない)。"
+  (setv moved (dfor #(name field) (.items value) :if (in name bulk) name field))
+  (if (not moved)
+      #(whole None)
+      #((canonical-json (dfor #(name field) (.items value) :if (not-in name bulk) name field))
+        (canonical-json moved))))
+
+
 (defk staged-row [store origin-host writer table text current value now-ms epoch]
   {:pre [(: store PreparedStore) (: origin-host str) (: writer str) (: table str) (: text str) (: current (| Row None))
          (: value FrozenMap) (: now-ms int) (: epoch int)]
    :post [(: % StagedRow)]
    :tags {:context "records" :role "foundation"}}
-  "判定を通った 1 行の書き(行の書きの文と変更の列に 1 つ積む文 — 2 往復目に流す)を作るため(PutRow と PutRows の書きを 1 つにし、
-   版と番号の採り方を揃える)。"
+  "判定を通った 1 行の書き(行の書きの文と変更の列に 1 つ積む文 — 2 往復目に流す)を作るため(PutRow と PutRows と PutRowsAppendEvents の
+   書きを 1 つにし、版と番号の採り方を揃える)。行は表の大きい欄を列 bulk に分けて置き(split-spellings)、変更の列は値の全部を積む。"
   (val version (if (is current None) 1 (+ current.version 1)))
-  (val payload (canonical-json value))
-  (<- upsert (upsert-row-statement store.prefix table text payload version now-ms writer origin-host epoch))
-  (<- change (append-change-statement store.prefix table text version payload now-ms epoch))
+  (val whole (canonical-json value))
+  (val spelled (split-spellings (. (store.schema.table table) bulk) value whole))
+  (<- upsert (upsert-row-statement store.prefix table text (get spelled 0) (get spelled 1) version now-ms writer origin-host epoch))
+  (<- change (append-change-statement store.prefix table text version whole now-ms epoch))
   (StagedRow :upsert upsert :change change :version version :value value))
 
 
@@ -2319,6 +2338,58 @@
   (Swept removed forgotten write-keys))
 
 
+;; --- 大きい欄の移し -----------------------------------------------------------------------------------------
+
+(defk bulk-moves-json [bulk records]
+  {:pre [(: bulk tuple) (: records (| tuple list))] :post [(: % str)]
+   :tags {:context "records" :role "foundation"}}
+  "移しの候補の行(鍵・版・payload — bulk-candidates-statement)を、分け直した綴りの組 {key version payload bulk} の JSON の配列の綴りに
+   するため(move-bulk-statement の引数)。綴りは書き(staged-row)と同じ split-spellings — 値を解いて正規の綴りに戻すので、数と文字列は
+   書いた時の綴りのまま(jsonb で組み直すと鍵の並び・空白・指数の数の綴りが変わる)。"
+  (json.dumps (lfor record records
+                    :setv spelled (split-spellings bulk (json.loads (get record 2)) (get record 2))
+                    {"key" (get record 0) "version" (int (get record 1)) "payload" (get spelled 0) "bulk" (get spelled 1)})
+              :separators #("," ":") :ensure-ascii False))
+
+
+(defk moved-table [store gated table bulk limit]
+  {:pre [(: store PreparedStore) (: gated bool) (: table str) (: bulk tuple) (: limit int)] :post [(: % TableMove)]
+   :tags {:context "records" :role "foundation"}}
+  "表 table の、payload に大きい欄 bulk が残る行を limit 行まで分け直し、分け直した数と残りの数を返すため(MoveBulkFields の表 1 つ —
+   _maintenance.hy の頭の註の「大きい欄を移す」)。候補は錠の外で読み、分け直しは表の書きの錠の中の 1 文(書きと行の錠を取り合わない —
+   束の書きは行を書きの順に錠するので、錠の外の UPDATE とは順が食い違い得る)。文は読んだ時の版の行だけを書き換えるので、候補の読みの
+   後に書かれた行は上書きしない。残りの数は、候補が limit に満たなければ候補のうち書き換えなかった行の数、満てば数え直す(全部を数える
+   文は payload を jsonb に読み直すので、移し終えた後の回では流さない)。値は変わらないので変更の列に積まず、合図も出さない。"
+  (<- candidates (bulk-candidates-statement store.prefix table bulk limit))
+  (<- records (query-rows store.database candidates))
+  (when (not records)
+    (return (TableMove :moved 0 :unmoved 0)))
+  (<- moves (bulk-moves-json bulk records))
+  (<- statement (move-bulk-statement store.prefix table moves))
+  (<- units (table-units #(table)))
+  (<- rows (writing store gated "move-bulk" units #() (query-rows store.database statement)))
+  (val moved (len rows))
+  (when (< (len records) limit)
+    (return (TableMove :moved moved :unmoved (- (len records) moved))))
+  (<- counting (unmoved-count-statement store.prefix table bulk))
+  (<- counted (query-rows store.database counting))
+  (TableMove :moved moved :unmoved (int (get counted 0 0))))
+
+
+(defk pg-move-bulk [store gated ask]
+  {:pre [(: store PreparedStore) (: gated bool) (: ask MoveBulkFields)] :post [(: % BulkMoved)]
+   :tags {:context "records" :role "foundation"}}
+  "MoveBulkFields に答えるため: 大きい欄を宣言した表ごとに(名の順)1 回分を分け直す(moved-table)。"
+  (var moved {})
+  (var unmoved {})
+  (for [#(name decl) (sorted (.items store.schema.tables))]
+    (when decl.bulk
+      (<- done (moved-table store gated name decl.bulk ask.limit))
+      (setv (get moved name) done.moved)
+      (setv (get unmoved name) done.unmoved)))
+  (BulkMoved :moved (FrozenMap moved) :unmoved (FrozenMap unmoved)))
+
+
 ;; --- handler ------------------------------------------------------------------------------------------------
 
 (defhandler pg-records-handler [#^ PreparedStore store #^ str writer #^ str origin-host #^ bool [gated False]]
@@ -2436,6 +2507,10 @@
     (resume answer))
   (ReadChangeLog [after limit]
     (<- answer (reached (change-log store effect)))
+    (resume answer))
+  ;; 大きい欄の移し(候補の読みは錠の外・分け直しは表の書きの錠 — moved-table)。
+  (MoveBulkFields [limit]
+    (<- answer (reached (pg-move-bulk store gated effect)))
     (resume answer))
   ;; 送ってから外す列の送りの読み(錠の外)と、送り先に在ると確かめた出来事の外し(列の書きの錠 — 頭の註の「出来事を送ってから外す」)。
   (ReadExpiredEvents [at after limit]
