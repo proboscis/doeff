@@ -14,7 +14,7 @@
 (import re)
 (import typing [TypeGuard])
 
-(import doeff_cluster._shared.intent.job_model [JobSpec])
+(import doeff_cluster._shared.intent.job_model [JobSpec LEGACY-ENTRY-PLACE])
 (import doeff_cluster._shared.core.job_rules [content-refusal memory-refusal single-host-refusal])
 (import doeff_cluster._shared.intent.protocol [ClusterTiming Request BodyInvalid])
 (import doeff_cluster._shared.core.capabilities [capabilities-of environ-pairs])
@@ -42,9 +42,11 @@
 (import doeff_cluster._coordinator.core.measured_room [measured-room reserve-of unseen-since])
 
 ;; 子の入口の名。子は job の root の版の doeff で `hy -m <名>` として起きるので、worker が root ごとに、その
-;; root で解ける置き場の名へ替えて起こす(JobSpec.entry-at — _worker の無い古い版の root では区画を隠す前の名)。指紋の材料は置き場を
-;; 替えた綴りなので、この名を替えても宣言の指紋は変わらない。
-(setv JOB-ENTRY "doeff_cluster._worker.entry.job_entry")
+;; root で解ける置き場の名へ替えて起こす(JobSpec.entry-at — _worker の無い古い版の root では区画を隠す前の名)。送る綴りは指紋の材料の
+;; 綴り(置き場 LEGACY-ENTRY-PLACE)と同じにする: 置き場を読まない古い worker は返事の名を綴りのまま指紋に入れるので、綴りが違うと
+;; coordinator を先に上げた拍に全部の job を起こし直し、その後も指紋が宣言と合わずに NotReady のまま残る(2026-11-02 の本番 —
+;; tests/test_older_worker_reads_the_wire_entry.hy)。
+(setv #^ str JOB-ENTRY (+ LEGACY-ENTRY-PLACE ".job_entry"))
 (setv MAX-EVENTS 200)
 
 ;; --- 盤と task の容量(2026-09-25) ---

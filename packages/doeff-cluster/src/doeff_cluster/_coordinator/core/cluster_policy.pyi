@@ -9,6 +9,7 @@ from operator import attrgetter as attrgetter
 from math import ceil as ceil
 from typing import TypeGuard as TypeGuard
 from doeff_cluster._shared.intent.job_model import JobSpec as JobSpec
+from doeff_cluster._shared.intent.job_model import LEGACY_ENTRY_PLACE as LEGACY_ENTRY_PLACE
 from doeff_cluster._shared.core.job_rules import content_refusal as content_refusal
 from doeff_cluster._shared.core.job_rules import memory_refusal as memory_refusal
 from doeff_cluster._shared.core.job_rules import single_host_refusal as single_host_refusal
