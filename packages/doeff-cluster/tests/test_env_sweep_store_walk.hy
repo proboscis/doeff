@@ -11,6 +11,13 @@
 ;; 拍の task へ知らせ、拍の task が歩きの間に BEATS 拍進んでから出す合図を待つ。
 ;; 反例 = 直す前の形(保存先を WalkTree と file ごとの StatPath で、scheduler の thread で歩く)は、歩きが合図を待つ間 拍の task が回れず、
 ;; SCENARIO-LIMIT で赤(2026-10-12 に直す前の env_store.hy で確かめた)。
+;;
+;; 歩きの答えから消す物を選ぶ計算(unused-store-names)も同じ(2026-11-02・zeus の worker): 歩きを thread へ出した後も、選びは scheduler の
+;; thread に残り、50 万の entry の選びに数秒かかって、掃除の終わりのたびに拍が止まった(終わりの行の直前に生存の合図の thread が拍の
+;; 代わりに heartbeat を送った)。だから選びは Compute で回し、本番の worker-compute-handler(main.hy の production-handlers)が pool の
+;; thread で待つ。選びを止めておく所は env_store の unused-store-names の差し替え — 入った事を外の promise で知らせ、合図を待つ。
+;; 反例 = 直す前の形(選びを scheduler の thread で回す)は、選びが合図を待つ間 拍の task が回れず SCENARIO-LIMIT で赤(2026-11-02 に
+;; 直す前の env_store.hy で確かめた)。
 (require doeff-hy.macros [defk deftest <- val var])
 (require doeff-hy.record [defrecord])
 (val MODULE-TAGS {:context "doeff-cluster-test" :role "test"})
@@ -24,6 +31,8 @@
 (import doeff_core_effects [os-file-handler offloaded-tree-handler])
 (import doeff_core_effects [scheduled CreatePromise CreateExternalPromise Spawn Wait Task])
 (import doeff_cluster._worker.protocol.code_store [PREPARE-TOOL])
+(import doeff_cluster._foundation.compute_pool [worker-compute-handler])
+(import doeff_cluster._worker.protocol.env_store)
 (import doeff_cluster._worker.protocol.env_store [EnvSettings RemovedRoots removing-leftovers])
 (import doeff_cluster._worker.core.env_upkeep [CODE-STORE-UNUSED-SECONDS])
 
@@ -72,19 +81,29 @@
 
 (defk in-thread [program]
   {:pre [(: program Program)] :post [(: % "program の答え")] :tags {:context "doeff-cluster-test" :role "program"}}
-  "program を scheduled と本番の worker と同じ file の答え手の組(os-file-handler と内側の offloaded-tree-handler)の下で、検の thread とは
-   別の daemon の thread の新しい VM で 1 回回し、SCENARIO-LIMIT 秒まで答えを待つため(過ぎたら scheduler の thread が塞がったと名指して
-   落とす — test_offloaded_tree.hy と同じ作法)。"
+  "program を scheduled と本番の worker と同じ file と計算の答え手の組(os-file-handler と内側の offloaded-tree-handler・
+   worker-compute-handler)の下で、検の thread とは別の daemon の thread の新しい VM で 1 回回し、SCENARIO-LIMIT 秒まで答えを待つため(過ぎたら
+   scheduler の thread が塞がったと名指して落とす — test_offloaded_tree.hy と同じ作法)。"
   (val running (.submit (ThreadPerCall) run-detached
-                        (scheduled (with-handlers [os-file-handler offloaded-tree-handler] program))))
+                        (scheduled (with-handlers [os-file-handler offloaded-tree-handler worker-compute-handler] program))))
   (try
     (.result running :timeout SCENARIO-LIMIT)
     (except [TimeoutError]
-      (raise (AssertionError (.format "{} 秒で答えが無い(保存先の歩きが scheduler の thread を塞いだ)" SCENARIO-LIMIT))))))
+      (raise (AssertionError (.format "{} 秒で答えが無い(保存先の歩きか選びが scheduler の thread を塞いだ)" SCENARIO-LIMIT))))))
 
 
-(deftest test-the-store-walk-of-the-sweep-lets-other-tasks-beat [tmp-path monkeypatch]
-  ;; 保存先に 7 日使われない entry 1 つと使った entry 1 つ。保存先の walk は、拍の task が BEATS 拍進んで合図を出すまで頭で待つ(頭の註)。
+(defrecord StoreFixture
+  "筋書きの保存先: settings = 掃除の設定・store = 保存先・stale = 7 日使われない entry・used = 使った entry・now-s = 今の秒。"
+  (#^ EnvSettings settings)
+  (#^ Path store)
+  (#^ Path stale)
+  (#^ Path used)
+  (#^ float now-s))
+
+
+(defk store-fixture [tmp-path]
+  {:pre [(: tmp-path Path)] :post [(: % StoreFixture)] :tags {:context "doeff-cluster-test" :role "program"}}
+  "保存先に 7 日使われない entry 1 つと使った entry 1 つを置き、筋書きの保存先を返すため。"
   (val store (/ tmp-path "code-store"))
   (.mkdir (/ store "ab") :parents True)
   (val stale (/ store "ab" "old.code"))
@@ -96,6 +115,42 @@
   (os.utime stale #(past past))
   (val settings (EnvSettings :state (str (/ tmp-path "state")) :uv-cache (str (/ tmp-path "uv-cache")) :hy-command "hy" :platform "test"
                              :code-prepare PREPARE-TOOL :roots-cap-bytes 0 :code-store (str store)))
+  (StoreFixture :settings settings :store store :stale stale :used used :now-s now-s))
+
+
+(deftest test-the-store-judgment-of-the-sweep-lets-other-tasks-beat [tmp-path monkeypatch]
+  ;; 保存先の歩きの答えから消す物を選ぶ計算は、拍の task が BEATS 拍進んで合図を出すまで頭で待つ(頭の註)。
+  (<- fixture StoreFixture (store-fixture tmp-path))
+  (val settings fixture.settings)
+  (val stale fixture.stale)
+  (val used fixture.used)
+  (val now-s fixture.now-s)
+  (val walks [])
+  (val gate (threading.Event))
+  (val original doeff_cluster._worker.protocol.env_store.unused-store-names)
+  (defk held-judgment [entries now-ms]
+    {:pre [(: entries tuple) (: now-ms int)] :post [(: % tuple)] :tags {:context "doeff-cluster-test" :role "program"}}
+    "選びの頭で、入った事を拍の task へ知らせ、合図を待ってから本物の選びを回すため。"
+    (.complete (get walks 0) None)
+    (.wait gate (* 2 SCENARIO-LIMIT))
+    (<- names tuple (original entries now-ms))
+    names)
+  (.setattr monkeypatch doeff_cluster._worker.protocol.env_store "unused_store_names" held-judgment)
+  (<- got WalkRun (in-thread (beats-while-walking settings (int (* now-s 1000)) walks gate)))
+  (assert (= got.beats BEATS) got)
+  (assert (in (str stale) got.removed) got)
+  (assert (not (.exists stale)) "7 日使われない entry が残った")
+  (assert (.exists used) "使った entry を消した"))
+
+
+(deftest test-the-store-walk-of-the-sweep-lets-other-tasks-beat [tmp-path monkeypatch]
+  ;; 保存先に 7 日使われない entry 1 つと使った entry 1 つ。保存先の walk は、拍の task が BEATS 拍進んで合図を出すまで頭で待つ(頭の註)。
+  (<- fixture StoreFixture (store-fixture tmp-path))
+  (val settings fixture.settings)
+  (val store fixture.store)
+  (val stale fixture.stale)
+  (val used fixture.used)
+  (val now-s fixture.now-s)
   (val walks [])
   (val gate (threading.Event))
   (val original os.walk)

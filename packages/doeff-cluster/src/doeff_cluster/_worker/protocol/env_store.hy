@@ -36,6 +36,7 @@
 (import re)
 (import doeff_core_effects [slog])
 (import doeff_core_effects [Spawn CreatePromise CompletePromise FailPromise Promise])
+(import doeff_core_effects [Compute Computed ComputeFailed])
 (import doeff_time [WaitWithin])
 (import doeff_core_effects [PathKind FileFailed StatPath ReadText WriteText ListDirectory StatTree RenamePath MakeDirectory RemoveTree ReadDiskUsage MeasureTree]
         doeff_core_effects._file_effects [file-done])
@@ -513,14 +514,19 @@
   "bytecode の保存先(store — None = 使わない設定)のうち、掃除が消す物(unused-store-names)の path の列を求めるため(保存先の dir が
    無ければ空)。保存先は file ごとの時刻まで StatTree の 1 つの呼びで読む — 本番は offloaded-tree-handler が thread で待つので、file が
    10 万を越える保存先を歩く間も調整ループ(tick と heartbeat)は回る(前は WalkTree と file ごとの StatPath を
-   scheduler の thread で歩き、zeus で 10〜19 秒止めた)。"
+   scheduler の thread で歩き、zeus で 10〜19 秒止めた)。歩きの答えからの選び(unused-store-names)も Compute で回す — 本番は
+   thread-pool-compute-handler が thread で待つ(前は scheduler の thread で回し、50 万の entry の選びが数秒かかって、掃除の終わり際に
+   調整ループを止めた — 2026-11-02 の zeus で掃除の終わりのたびに生存の合図の thread が拍の代わりに heartbeat を送った)。選びが落ちたら
+   その例外を上げる(掃除の task の失敗として答えへ渡る)。"
   (if (is store None)
       #()
       (do (<- listed (| tuple FileFailed) (StatTree store))
           (match listed
             (FileFailed) #()
-            entries (do (<- names tuple (unused-store-names entries now-ms))
-                        (tuple (gfor name names (posixpath.join store name))))))))
+            entries (do (<- chosen (| Computed ComputeFailed) (Compute (unused-store-names entries now-ms)))
+                        (when (isinstance chosen ComputeFailed)
+                          (raise chosen.error))
+                        (tuple (gfor name chosen.value (posixpath.join store name))))))))
 
 
 (defk unused-store-names [entries now-ms]
