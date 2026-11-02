@@ -48,5 +48,6 @@
 
 (defk placed-argv [procs argv]
   {:pre [(: procs str) (: argv tuple)] :post [(: % tuple)] :tags {:context "worker" :role "judgment"}}
-  "子の argv を、兄弟の cgroup へ移ってから元の argv を exec する sh で包むため(頭の註)。"
+  "子の argv を、兄弟の cgroup へ移ってから元の argv を exec する sh で包むため(頭の註)。内側の宿が自分の子を別の兄弟へ包んだ argv
+   (常駐の job の services・実行環境の準備の prepare)は、外の答え手の包みで jobs を経て、最後に pid を書く内の包みの兄弟に落ち着く。"
   (+ #("/bin/sh" "-c" PLACE-SCRIPT procs) argv))

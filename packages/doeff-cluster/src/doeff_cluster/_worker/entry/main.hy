@@ -497,6 +497,9 @@
         ;; 常駐の job の shim を置く兄弟の cgroup(機体の配備が名を渡した時だけ)。
         service-procs (run (with-handlers [os-file-handler]
                              (job-cgroup-placed (.get machine-env SERVICE-CGROUP-VAR) cgroup-root SERVICE-CGROUP-VAR)))
+        ;; 実行環境の準備の process を置く兄弟の cgroup(準備の層 — 機体の配備が名を渡した時だけ・EnvSettings の prepare-procs の註)。
+        prepare-procs (run (with-handlers [os-file-handler]
+                             (job-cgroup-placed (.get machine-env PREPARE-CGROUP-VAR) cgroup-root PREPARE-CGROUP-VAR)))
         ;; 待ちの子の置き場の根(#3646 — 起こす宿 warm_host と task を分ける宿 process_host が同じ値を読む)。
         warm-dir places.warm
         ;; job の子 process の置き場と起こし方(worker/protocol/process_host の言い換えが読む — #2464)。
@@ -514,7 +517,8 @@
                           ;; bytecode の保存先の dir(掃除が 7 日使われない entry を消す — `off` は保存先を使わない設定)。
                           :code-store (if (= args.code-store "off") None args.code-store)
                           ;; 世代をまたいで分け合う dir(Python・wheel・mirror と錠 — AL-D2)。
-                          :shared (str shared-dir))
+                          :shared (str shared-dir)
+                          :prepare-procs prepare-procs)
         ;; 入口の検め(service の job の木を worker の実行環境で読み込めるか — 起こす前に試す)。
         probes (ProbeSettings :python interpreter :hy-command hy-command :layout layout
                               :probe-dir places.probe :shim shim))

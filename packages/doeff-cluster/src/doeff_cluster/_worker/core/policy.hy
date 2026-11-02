@@ -951,9 +951,11 @@
       :spec-hash (if (is process None) None (spec-hash process.spec))
       :placement (if (is process None) None process.spec.placement)
       :retired-from (if (is process None) None process.retired-from)
-      ;; 実行環境の root の準備の失敗(動いている process が無い時だけ — 動いていれば準備は済んでいる)。
-      ;; 待ちの子が起動の断りの上限に達した task は、その断りを準備の失敗として運ぶ(coordinator がやり直さずに終える)。
-      :failure (cond (and (is process None) (is-not code None) (= code.state CodeState.FAILED)) code.failure
+      ;; 実行環境の root の準備の失敗(動いている process が無い時と、recreate の job の旧い版を動かしたまま新しい版を準備している時 —
+      ;; 後者は行の phase が running のままなので、欄に載せないと coordinator は版の違いを「入れ替えの途中」と読み、宣言の道具が
+      ;; 段の締め切りまで待った・2026-11-02)。待ちの子が起動の断りの上限に達した task は、その断りを準備の失敗として運ぶ
+      ;; (coordinator がやり直さずに終える)。
+      :failure (cond (and (or (is process None) replacing) (is-not code None) (= code.state CodeState.FAILED)) code.failure
                      (is-not refused None) (warm-refusal-failure refused)
                      True None)
       ;; 宣言の spec の入口の検めの姿(走っている・待っている・失敗した間 — 入れ替えで旧が動いている行も)。

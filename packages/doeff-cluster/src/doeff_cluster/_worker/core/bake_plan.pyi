@@ -54,6 +54,17 @@ BAKE_JOBS_CEILING: int
 
 def cpu_limit_of(cpu_max: str | None, available: int) -> _Program[int, object]:
     ...
+BAKE_CHILD_BYTES: int
+BAKE_FIXED_BYTES: int
+
+def memory_room_of(levels: tuple) -> _Program[int | None, object]:
+    ...
+
+def bake_jobs_of(jobs: int, room: int | None) -> _Program[int, object]:
+    ...
+
+def cgroup_levels_of(own_cgroup: str | None, root: str) -> _Program[tuple, object]:
+    ...
 
 def tree_arguments(trees: tuple, roots: tuple) -> _Program[tuple | str, object]:
     ...

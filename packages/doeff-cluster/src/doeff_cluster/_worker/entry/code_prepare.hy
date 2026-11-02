@@ -30,7 +30,9 @@
 ;;;             時刻で停滞を見分けるので、disk が遅いだけの歩みを止まりと読ませない。
 ;;;   3 用意      用意する物を全部の木から集め、source の大きい順に 1 つの process の pool へ 1 つずつ渡す(BakeSources — 答え手は焼きの
 ;;;               道具 _foundation/bytecode_pool.hy を子 process で起こす)— 1 file の秒の偏りが大きい(大半は Hy の macro の展開)ので、
-;;;               名の順・束で渡すと最後に遅い file を 1 core で待つ。並列数の既定は cgroup の CPU の上限(pod の limits・天井 BAKE-JOBS-CEILING)。道具は 1 つずつ
+;;;               名の順・束で渡すと最後に遅い file を 1 core で待つ。並列数の既定は cgroup の CPU の上限(pod の limits・天井 BAKE-JOBS-CEILING)で、
+;;;               --jobs とともにこの process の居る cgroup の memory の空きで絞る(bake_plan の bake-jobs-of — 焼く子 1 本の山の見積もり
+;;;               BAKE-CHILD-BYTES)。道具は 1 つずつ
 ;;;               保存先の code を引き(stored)、無ければ焼いて足す(rebuilt)。木に既に在る .pyc が今の source と macro に合う物は
 ;;;               焼かずに残す(reused — 同じ commit の木を hardlink で写した root)。
 ;;;   4 検めと印   木ごとに用意した後を走査し直し、用意するべき source ごとに .pyc が在ること(焼けなかった file は理由つきで印に載せる)を
@@ -133,6 +135,22 @@
   (<- cpu-max (ReadText "/sys/fs/cgroup/cpu.max"))
   (<- limit int (plan.cpu-limit-of (if (isinstance cpu-max str) cpu-max None) available))
   limit)
+
+
+(defk usable-memory []
+  {:pre [] :post [(: % (| int None))] :tags {:context "worker" :role "main"}}
+  "この process の木が使える memory の空き(byte — この process の cgroup とその上の層の 上限 − 今の使い の最小・上限の無い層だけなら
+   None)— 焼きの並列数を memory で絞る材料(plan.bake-jobs-of)。/proc/self/cgroup と層ごとの memory.max・memory.current は file の効果で
+   読む(答え手 = 入口の os-file-handler・読めない file の層は数えない)。"
+  (<- own (ReadText "/proc/self/cgroup"))
+  (<- dirs tuple (plan.cgroup-levels-of (if (isinstance own str) own None) "/sys/fs/cgroup"))
+  (var levels #())
+  (for [d dirs]
+    (<- cap (ReadText (posixpath.join d "memory.max")))
+    (<- now (ReadText (posixpath.join d "memory.current")))
+    (:= levels (+ levels #(#((if (isinstance cap str) cap None) (if (isinstance now str) now None))))))
+  (<- room (| int None) (plan.memory-room-of levels))
+  room)
 
 
 ;; --- 焼きの効果 --------------------------------------------------------------------------
@@ -450,7 +468,8 @@
   (setv default-jobs (run (with-handlers [os-file-handler] (usable-cpus))))
   (setv parser (argparse.ArgumentParser))
   (.add-argument parser "--revision" :required True)
-  (.add-argument parser "--jobs" :type int :default default-jobs :help "焼きの並列数(既定 = cgroup の CPU の上限・天井 BAKE-JOBS-CEILING)")
+  (.add-argument parser "--jobs" :type int :default default-jobs
+                 :help "焼きの並列数の上限(既定 = cgroup の CPU の上限・天井 BAKE-JOBS-CEILING — memory の空きが足りなければ減らす)")
   (.add-argument parser "--entries" :default "" :help "焼く範囲の入口の module(`,` で並べる・空 = 全部の木の根の下を全部)")
   (.add-argument parser "--tree" :action "append" :required True :help "焼く木(幾つでも — 木ごとの引数はこの順に並べる)")
   (.add-argument parser "--roots" :action "append" :help "木の中の import の根(`,` で並べる・前が先 — 木ごとに 1 つ)")
@@ -467,6 +486,14 @@
   (setv (cut sys.path) (lfor p sys.path :if (not (and p (= (.resolve (Path p)) here))) p))
   (setv trees (run (with-handlers [os-file-handler] (bake-trees shaped))))
   (setv entries (tuple (gfor e (.split args.entries ",") :if e e)))
+  ;; 焼きの並列数: CPU から決めた数(か --jobs)を上限に、この process の居る cgroup の memory の空きで絞る(焼く子が層の上限で殺され、
+  ;; pool が壊れて準備が落ちた — 2026-11-02 の k3s-0・頭の註の手順 3)。絞った時は 1 行で名乗る(worker の log の準備の行に並ぶ)。
+  (setv room (run (with-handlers [os-file-handler] (usable-memory)))
+        jobs (run (plan.bake-jobs-of (max 1 args.jobs) room)))
+  (when (< jobs args.jobs)
+    (print (.format "焼きの並列数を memory の空きで {} から {} に絞った(空き {} MiB・子 1 本の見積もり {} MiB)" args.jobs jobs
+                    (// room (* 1024 1024)) (// plan.BAKE-CHILD-BYTES (* 1024 1024)))
+           :file sys.stderr :flush True))
   ;; 木の効果は言い換え tree-files(worker/protocol/tree_files)が汎用の file の効果へ出し直し、本物の os-file-handler が答える(#2468)。
   ;; Note の行は slog-handler が stderr へ出す(worker が木ごとの問題と合計を読む)。
   ;; 保存先の dir は環境変数で決まる(code_store の store-dir — import の読みの口と同じ 1 つの解き方)。import の名の entry の鍵は、この root の
@@ -474,7 +501,7 @@
   (setv code-store (store.store-dir))
   (setv outcomes (run (with-handlers [(sync-time-handler) slog-handler os-file-handler subprocess-handler tree-files (pool-tool-baker (or args.progress None))
                                       store-entries closure-reads (progress-marks (or args.progress None))]
-                                     (prepare-trees trees args.revision args.jobs entries code-store hy.__version__))))
+                                     (prepare-trees trees args.revision jobs entries code-store hy.__version__))))
   (setv failed (tuple (gfor t outcomes :if (is-not t.problem None) t)))
   (for [t failed]
     (print (.format "準備に失敗: {}: {}" t.named t.problem) :file sys.stderr :flush True))

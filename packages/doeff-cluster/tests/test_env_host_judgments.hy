@@ -16,7 +16,7 @@
 (require doeff-hy.macros [deftest defk defhandler <- val var])
 (require doeff-hy.record [defrecord])
 (val MODULE-TAGS {:context "doeff-cluster-test" :role "test"})
-(import dataclasses [dataclass])  ; defrecord の展開が使う
+(import dataclasses [dataclass replace])  ; dataclass は defrecord の展開が使う
 (import json)
 (import os)
 (import shutil)
@@ -76,6 +76,8 @@
     (setv #^ (get dict #(int ToolRun)) self.running {})
     (setv #^ bool self.released False)
     (setv #^ (get tuple #(int ...)) self.stopped #())
+    ;; 起こした準備の道具の argv(起こした順 — cgroup の層への包みを確かめる)。
+    (setv #^ (get tuple #(tuple ...)) self.argvs #())
     None))
 
 
@@ -106,6 +108,7 @@
             (val result (get argv (+ (.index argv "--result") 1)))
             (val progress (get argv (+ (.index argv "--progress") 1)))
             (setv runs.launches (+ runs.launches #(request)))
+            (setv runs.argvs (+ runs.argvs #((tuple argv))))
             (setv runs.running (| runs.running {pid (ToolRun :request request :result result :progress progress)}))
             (resume (ProcessStarted :pid pid)))
         (do (<- answer (StartProcess :argv argv :cwd cwd :env env :env-mode env-mode :env-drop env-drop :stdout-path stdout-path
@@ -195,6 +198,29 @@
   (<- (PrepareEnv other-key other-text None))
   (<- views tuple (ObserveEnvs))
   views)
+
+
+(deftest test-the-preparation-runs-in-the-prepare-layer-when-the-machine-names-one [tmp-path]
+  ;; 失敗ケース(2026-11-02 18:56 JST の k3s-0): 準備の process(と、それが起こす焼く道具の子)は jobs の層で動く job と memory を分け合い、
+  ;; 焼く子が層の上限で殺されて準備が落ちた。機体の配備が準備の層を名乗れば、準備の process をその層の cgroup.procs へ移してから
+  ;; exec する sh で包んで起こす(外の job-cgroup-placer の包みの内側 — 最後に pid を書く内の包みの層に落ち着く)。名乗らなければ包まない。
+  (import doeff_cluster._worker.core.job_cgroup [PLACE-SCRIPT])
+  (<- env RuntimeEnv (declared 1))
+  (<- key str (env-key-of env))
+  (<- text str (declared-text env))
+  (val procs "/cg/pod/prepare/cgroup.procs")
+  (for [#(where wrapped) [#("layer" True) #("none" False)]]
+    (val runs (ToolRuns))
+    (<- base EnvSettings (settings-at (/ tmp-path where)))
+    (val settings (if wrapped (replace base :prepare-procs procs) base))
+    (<- (with-handlers [(state) (sync-time-handler) slog-handler os-file-handler subprocess-handler (inline-env-tool runs) (env-host settings)]
+          (twice-then-release runs key text)))
+    (assert (= (len runs.argvs) 1) runs.argvs)
+    (val argv (get runs.argvs 0))
+    (if wrapped
+        (assert (= (cut argv 4) #("/bin/sh" "-c" PLACE-SCRIPT procs)) argv)
+        (assert (!= (get argv 0) "/bin/sh") argv))
+    (assert (in ENV-TOOL argv) argv)))
 
 
 (deftest test-scenario-6-two-requests-of-one-key-launch-one-preparation [tmp-path]

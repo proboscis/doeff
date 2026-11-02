@@ -248,6 +248,22 @@
   (assert (and (get proc "ok") (not-in "kind" proc)) proc))
 
 
+(deftest test-an-old-process-whose-new-version-cannot-be-prepared-is-blocked
+  ;; recreate の job が旧い版を動かしたまま、新しい版の実行環境の準備に再試行しない失敗をした(2026-11-02 — 行の phase は
+  ;; running のまま・worker は行に失敗を載せる): 版の違いを「入れ替えの途中」と読まず Blocked(宣言の道具が段の締め切りまで待たない)。
+  ;; 再試行する失敗と、失敗の無い版の違い・指紋の違いは今までどおり Updating。
+  (val failed {"failureKind" "env-incompatible" "retryable" False})
+  (for [#(extra want) [[(| {"runningRevision" "r0"} failed) #(NotReadyKind.REVISION-MISMATCH VersionState.BLOCKED)]
+                       [(| {"specHash" "0000"} failed) #(NotReadyKind.SPEC-MISMATCH VersionState.BLOCKED)]
+                       [{"runningRevision" "r0" "failureKind" "disk-full" "retryable" True}
+                        #(NotReadyKind.REVISION-MISMATCH VersionState.UPDATING)]
+                       [{"runningRevision" "r0"} #(NotReadyKind.REVISION-MISMATCH VersionState.UPDATING)]]]
+    (assert (= (! (answer (! (reporting extra)))) want) extra))
+  ;; 写しの表: stuck を読むのは版の違いと指紋の違いだけ。
+  (for [kind NotReadyKind :if (not-in kind #{NotReadyKind.REVISION-MISMATCH NotReadyKind.SPEC-MISMATCH NotReadyKind.NOT-RUNNING})]
+    (assert (= (not-ready-version kind None False True) (not-ready-version kind None False)) kind)))
+
+
 
 
 (deftest test-a-worker-phase-the-coordinator-does-not-know-is-unknown

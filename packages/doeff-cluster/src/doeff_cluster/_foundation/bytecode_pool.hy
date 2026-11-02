@@ -44,6 +44,7 @@
 (import posixpath)
 (import sys)
 (import concurrent.futures [ProcessPoolExecutor as-completed])
+(import concurrent.futures.process [BrokenProcessPool])
 (import functools [partial])
 (import pathlib [Path])
 (import types [CodeType ModuleType])
@@ -193,6 +194,36 @@
   #("rebuilt" (or problem placed)))
 
 
+(defn #^ tuple pooled [#^ tuple work #^ int jobs #^ tuple paths one #^ (| str None) progress]  ; defk にできない: process の pool を回す
+  "work(#(木の path 相対 path module 名) の列)を jobs 個の process の pool で用意し、work の順の bake-one の答えの列を返すため。子が
+   途中で殺されて pool が壊れた時(BrokenProcessPool — cgroup の memory の上限の OOM kill・2026-11-02 の k3s-0)は、答えの届いた物は
+   そのまま使い、答えの無い物だけをこの process で 1 つずつ用意し直す(殺された子の memory は返っているので、並べずに焼けば層の上限の
+   内に収まる)。焼き直した数は stderr の 1 行で名乗る(呼び手の入口が報告の行と並べて出す)。"
+  (with [pool (ProcessPoolExecutor :max-workers jobs :mp-context (multiprocessing.get-context "fork")
+                                   :initializer prepare-path :initargs #(paths))]
+    ;; 渡す順は submit の順(pool は受けた順に空いた process へ 1 つずつ渡す — map の chunksize 1 と同じ)。
+    (setv futures (lfor #(tree rel name) work (.submit pool one tree rel name)))
+    (try
+      (for [_ (as-completed futures)]
+        (mark-progress progress))
+      (except [BrokenProcessPool]
+        None)))
+  ;; pool を閉じた後は、どの future も答えか断りを持つ。BrokenProcessPool の断りの物だけを焼き直す(ほかの断りは今どおり .result で上げる)。
+  (setv lost (tuple (gfor f futures (isinstance (.exception f) BrokenProcessPool))))
+  (when (any lost)
+    (print (.format "焼く子が途中で止められ pool が壊れた — 答えの無い {} 本をこの process で 1 つずつ焼き直す" (sum lost))
+           :file sys.stderr :flush True))
+  (tuple (gfor #(f gone #(tree rel name)) (zip futures lost work)
+               (if gone (rebaked one progress tree rel name) (.result f)))))
+
+
+(defn #^ tuple rebaked [one #^ (| str None) progress #^ str tree #^ str rel #^ str name]  ; defk にできない: pool の後の素の焼き直し
+  "pool が壊れて答えの無い物 1 つを、この process で用意し直して進みの印を進めるため(pooled)。答えは bake-one の答え。"
+  (setv result (one tree rel name))
+  (mark-progress progress)
+  result)
+
+
 (defn #^ tuple bake [#^ tuple items #^ int jobs #^ tuple paths #^ (| str None) store #^ (| str None) progress]  ; defk にできない: process の pool を回す
   "items(#(木の path 相対 path module 名) の列)のうち、在る .pyc が今の source と macro に合わない物をこの順に用意し、#(焼けなかった物の
    #(木の path 相対 path 理由) の列 保存先から書いた物の #(木の path 相対 path) の列 焼かずに残した物の #(木の path 相対 path) の列
@@ -210,13 +241,7 @@
                      :setv result (one tree rel name)
                      :do (mark-progress progress)
                      result))
-        (with [pool (ProcessPoolExecutor :max-workers jobs :mp-context (multiprocessing.get-context "fork")
-                                         :initializer prepare-path :initargs #(paths))]
-          ;; 渡す順は submit の順(pool は受けた順に空いた process へ 1 つずつ渡す — map の chunksize 1 と同じ)。
-          (setv futures (lfor #(tree rel name) work (.submit pool one tree rel name)))
-          (for [_ (as-completed futures)]
-            (mark-progress progress))
-          (tuple (gfor f futures (.result f))))))
+        (pooled work jobs paths one progress)))
   #((tuple (gfor #(item result) (zip work results) :if (= (get result 0) "failed") #((get item 0) (get item 1) (get result 1))))
     (tuple (gfor #(item result) (zip work results) :if (= (get result 0) "stored") #((get item 0) (get item 1))))
     (tuple (gfor #(i k) (zip items kept) :if k #((get i 0) (get i 1))))
