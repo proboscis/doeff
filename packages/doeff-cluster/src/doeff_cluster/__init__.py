@@ -16,6 +16,7 @@ if TYPE_CHECKING:
     from doeff_cluster._sim.child_processes import SimChildren as SimChildren
     from doeff_cluster._sim.child_processes import SimDescendant as SimDescendant
     from doeff_cluster._sim.k8s_services import held_kube_services as held_kube_services
+    from doeff_cluster._sim.workspace_volumes import HeldBackup as HeldBackup
     from doeff_cluster._sim.workspace_volumes import HeldVolume as HeldVolume
     from doeff_cluster._sim.workspace_volumes import WorkspaceVolumeWorld as WorkspaceVolumeWorld
     from doeff_cluster._sim.workspace_volumes import held_workspace_volumes as held_workspace_volumes
@@ -199,6 +200,15 @@ if TYPE_CHECKING:
     )
     from doeff_cluster._shared.intent.workspace_volume_model import (
         UmountWorkspaceVolume as UmountWorkspaceVolume,
+    )
+    from doeff_cluster._shared.intent.workspace_volume_model import (
+        CoolIdleWorkspaceVolumes as CoolIdleWorkspaceVolumes,
+    )
+    from doeff_cluster._shared.intent.workspace_volume_model import (
+        CoolWorkspaceVolume as CoolWorkspaceVolume,
+    )
+    from doeff_cluster._shared.intent.workspace_volume_model import (
+        PurgeWorkspaceVolume as PurgeWorkspaceVolume,
     )
     from doeff_cluster._shared.intent.metrics_model import ReportMetrics as ReportMetrics
     from doeff_cluster._shared.intent.process_model import AwaitProcessEnded as AwaitProcessEnded
@@ -558,6 +568,7 @@ if TYPE_CHECKING:
     from doeff_cluster._shared.intent.workspace_volume_model import WorkspaceOutcome as WorkspaceOutcome
     from doeff_cluster._shared.intent.workspace_volume_model import WorkspaceVolumeRefused as WorkspaceVolumeRefused
     from doeff_cluster._shared.intent.workspace_volume_model import WorkspaceVolumeSite as WorkspaceVolumeSite
+    from doeff_cluster._shared.intent.workspace_volume_model import CoolingSweep as CoolingSweep
     from doeff_cluster._shared.intent.semaphore_model import LEASE_MAX_TTL_MS as LEASE_MAX_TTL_MS
     from doeff_cluster._shared.intent.semaphore_model import LOST as LOST
     from doeff_cluster._shared.core.launch_rules import LaunchEnvMissing as LaunchEnvMissing
@@ -827,6 +838,9 @@ _LAZY_EXPORTS: dict[str, str] = {
     "DetachWorkspaceVolume": "doeff_cluster._shared.intent.workspace_volume_model",
     "MountWorkspaceVolume": "doeff_cluster._shared.intent.workspace_volume_model",
     "UmountWorkspaceVolume": "doeff_cluster._shared.intent.workspace_volume_model",
+    "CoolIdleWorkspaceVolumes": "doeff_cluster._shared.intent.workspace_volume_model",
+    "CoolWorkspaceVolume": "doeff_cluster._shared.intent.workspace_volume_model",
+    "PurgeWorkspaceVolume": "doeff_cluster._shared.intent.workspace_volume_model",
     "EnvReport": "doeff_cluster._worker.intent.worker_model",
     "FailRoute": "doeff_cluster._sim.local",
     "ForgetProbes": "doeff_cluster._worker.intent.worker_model",
@@ -970,6 +984,7 @@ _LAZY_EXPORTS: dict[str, str] = {
     "git_command": "doeff_cluster._sim.checkout_git_script",
     "heartbeat": "doeff_cluster._sim.local",
     "held_kube_services": "doeff_cluster._sim.k8s_services",
+    "HeldBackup": "doeff_cluster._sim.workspace_volumes",
     "HeldVolume": "doeff_cluster._sim.workspace_volumes",
     "WorkspaceVolumeWorld": "doeff_cluster._sim.workspace_volumes",
     "held_workspace_volumes": "doeff_cluster._sim.workspace_volumes",
@@ -1302,6 +1317,7 @@ _LAZY_EXPORTS: dict[str, str] = {
     "WorkspaceOutcome": "doeff_cluster._shared.intent.workspace_volume_model",
     "WorkspaceVolumeRefused": "doeff_cluster._shared.intent.workspace_volume_model",
     "WorkspaceVolumeSite": "doeff_cluster._shared.intent.workspace_volume_model",
+    "CoolingSweep": "doeff_cluster._shared.intent.workspace_volume_model",
     "LEASE_MAX_TTL_MS": "doeff_cluster._shared.intent.semaphore_model",
     "LOST": "doeff_cluster._shared.intent.semaphore_model",
     "LaunchEnvMissing": "doeff_cluster._shared.core.launch_rules",

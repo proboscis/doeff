@@ -14,11 +14,30 @@ card 2)・測り ki-00f2d6af6581。
 | `workspace-mount.sh` | mount の係の script(ConfigMap `workspace-mount`・namespace agent-worker)— 節「mount の係」 |
 | `README.md` | この file(決まりと値の訳) |
 
-## handler(作る・attach・mount・umount・detach)
+## handler(作る・attach・mount・umount・detach・冷やす・消す)
 
-持ち主の volume を扱う effect は 5 つで、入口 `doeff_cluster` から出す: `CreateWorkspaceVolume`・`AttachWorkspaceVolume`・
-`MountWorkspaceVolume`・`UmountWorkspaceVolume`・`DetachWorkspaceVolume`(答えは `WorkspaceOutcome` の DONE = 今した・ALREADY = 既に
-そうだった。できなければ `WorkspaceVolumeRefused`)。出所 = card ki-a2d67aa8203d。
+持ち主の volume を扱う effect は 8 つで、入口 `doeff_cluster` から出す: `CreateWorkspaceVolume`・`AttachWorkspaceVolume`・
+`MountWorkspaceVolume`・`UmountWorkspaceVolume`・`DetachWorkspaceVolume`・`CoolWorkspaceVolume`・`PurgeWorkspaceVolume`・
+`CoolIdleWorkspaceVolumes`(答えは `WorkspaceOutcome` の DONE = 今した・ALREADY = 既にそうだった・RESTORED = backup から戻した(作る時
+だけ)、まとめて冷やすは `CoolingSweep`。できなければ `WorkspaceVolumeRefused`)。出所 = card ki-a2d67aa8203d(作る〜detach)・
+ki-c817a191ad4e(戻す・冷やす・消す)。
+
+| effect | 何をするか |
+|---|---|
+| `CreateWorkspaceVolume` | volume が無ければ作る。その名の完了した backup が在れば(冷えている)一番新しい物から戻して RESTORED(戻し終わるまで待つ)、無ければ空で DONE。在れば ALREADY — 戻す途中なら戻し終わりを、消す途中なら消え終わりを待ってから(同じ持ち主の次の頼みは先の戻しに相乗りする)。backup は在るが完了した物が無い名は空で作らずに断る |
+| `AttachWorkspaceVolume` | 前と同じ。ticket を置いた後に Volume へ使った刻の印(annotation `doeff-cluster/used-at` = epoch 秒)を書く |
+| `DetachWorkspaceVolume` | 前と同じ。外した後に使い終わりの刻の印を書く(冷やす順が読む) |
+| `CoolWorkspaceVolume` | 外れている volume を冷やす(節「寿命」の手順)。使っている・戻す途中・ほかの冷やす手順の途中の volume は触らずに断る |
+| `PurgeWorkspaceVolume` | 冷えた名の backup を消す(最後の backup から keepDays を過ぎた物だけ)。Longhorn の volume が在る名・途中の backup の在る名は断る |
+| `CoolIdleWorkspaceVolumes` | 外れている volume を、冷やす順(節「寿命」)に 1 つずつ冷やす。冷やせなかった物は訳を残して次へ進む |
+
+- 使う側が勝つ: 冷やす途中に attach が来たら、冷やす側は volume を消さずに退く(attach は待たされない)。冷やす側は Volume を読み(版 R)、
+  次に VolumeAttachment に使う ticket(冷やす手順の snapshot と backup の ticket の外)が無い事を確かめ、版 R の上でだけ消す(DELETE の
+  preconditions)。attach は ticket を置いてから印を書くので、消せたなら ticket は確かめの後に置かれていて、attach の印の書きが 404 になる —
+  attach は「消された — 作る(戻す)から出し直す」と断る(上に載る系は作るから出し直す)。印が先なら版 R が古いか ticket が見えて消さない。
+- 呼び手(上に載る系)の仕事: 使い始めに 作る → attach → mount、使い終わりに umount → detach。数分ごとに `CoolIdleWorkspaceVolumes` を出す。
+  もう使わない持ち主には、keepDays の後に `PurgeWorkspaceVolume` を出す。handler は「いつ使うか」を知らない — 使った刻の印と Longhorn の
+  様子だけで決める。
 
 | 答え手 | 在りか | 何をするか |
 |---|---|---|
@@ -31,7 +50,7 @@ card 2)・測り ki-00f2d6af6581。
 - 外側に要る答え手: file(os)・環境(os.environ)・時計(doeff-time)・HTTP と、API server 宛ての要求を区画の CA で検める
   `in-cluster-api-routed`(job の本番の土台が並べる)。
 - 検: `tests/test_workspace_volumes_handler.hy`(本番の答え手を偽の Longhorn と偽の係の上で回し、模擬の答え手と同じ筋書きで結末と様子が
-  揃う事・失敗ケース)と `tests/test_workspace_volume_rules.hy`。
+  揃う事・失敗ケース・Spawn で並べた「戻す途中・冷やす途中・消す途中に次の頼みが来る」)と `tests/test_workspace_volume_rules.hy`。
 
 ## 級(StorageClass `longhorn-workspace`)
 
@@ -83,12 +102,18 @@ worker は CSI を通らずに Longhorn の volume を名指しで作るので�
 | 冷えている | garage の backup だけ(Longhorn の volume は無い) | 冷やした時 | 次に使う時は backup から同じ名で戻してから付ける(節「backup」の戻し方) |
 | 消えた | どこにも無い | 消した時 | — |
 
-- 冷やす: 温かい volume のうち、(1) 使い終わってから warmHours(2 時間)を過ぎた物、または (2) 札 workspace の disk が受けられる 10 GiB の
-  volume の残りが spareVolumes(8 本)を割った時に、使い終わりの古い順に。手順は 付ける → fstrim → backup を取る → backup の完了を確かめる
-  → 外す → volume を消す。backup の完了を確かめずに消さない。
+- 冷やす: 温かい volume のうち、(1) 使い終わってから warmHours(2 時間)を過ぎた物は全部、(2) それでも札 workspace の disk が受けられる
+  volume の残り(空き)と冷やす本数の和が spareVolumes(4 本)に届かなければ、届くまで残りを、使い終わりの古い順に(判断 = `cooling-order`・
+  空き = Longhorn の置く線 `free-slots`)。手順(`CoolWorkspaceVolume`)は Snapshot `<名>-cool-<epoch 秒>` を作る → 使えるまで待つ →
+  同じ名の Backup(label backup-volume・backup-target)を作る → Completed まで待つ → 使う ticket が無い事を確かめて読んだ版の上で volume を
+  消す → 消え終わるまで待つ。外れている volume は、Longhorn が snapshot と backup の ticket(frontend を問わない)で自分で付けて取る —
+  worker は付けない・mount しない。backup の完了を確かめずに消さない(backup が Error なら volume を残して断る)。
+- fstrim は冷やす時にしない(付けて mount すると、その間に来た使う頼みの mount と RWO で争う)。消したファイルの block は、使っている間の
+  群 default の trim(毎時)で返る。
 - 消す: 使い終わってから keepDays(7 日)を過ぎ、上に載る系が「この持ち主はもう使わない」と答えた時に、その名の backup の束(BackupVolume)を消す。答えが無い・
   読めない時は消さない(今の作業場所の dir の決まり — 最後の変更から 7 日・持ち主に問う — と同じ日数)。冷やした volume の中身は 7 日の間
-  backup に残るので、「作業場所を消さない・消すなら 1 週間」の決まりは冷やしても守られる。
+  backup に残るので、「作業場所を消さない・消すなら 1 週間」の決まりは冷やしても守られる。handler は最後の backup から keepDays の内の名を
+  消さずに断る(上に載る系の答えの取り違えの守り)。
 
 ### なぜ温かいままにしないか(容量の数)
 
@@ -96,10 +121,13 @@ worker は CSI を通らずに Longhorn の volume を名指しで作るので�
   6 時間 111・12 時間 549・24 時間 891・7 日 7,565・全部で 8,799 個・48 GB)。
 - Longhorn は volume を名目の大きさで数え、disk ごとに (容量 − 予約) × 200%(設定 storage-over-provisioning-percentage)までしか置かない。
   10 GiB の volume を 7 日温かく置くと約 7,500 本・75 TiB で、どの disk にも収まらない。
-- 例: zeus の SATA SSD(503 GB・予約 47 GB・置いた名目 138 GB — 2026-11-01)に置ける 10 GiB の volume は約 72 本。昼の 1 時間に約 70 個の
-  作業場所が動くので、2 時間の窓でも数の上限(2)が先に効く。冷えた持ち主を次に使う時は backup から戻す時間(中身 1〜3 GiB で数十秒の見込み
-  — 測りは handler の card)が掛かる。
-- 冷やす・戻す・消すは handler の仕事(card ki-c817a191ad4e — 節「handler」の 5 つの effect は作る・付ける・外すまで)。この dir は決まりと値だけを持つ。
+- 今の札 workspace の disk(zeus の USB の SSD の上の 100 GiB の image — 2026-11-03 の読み: storageMaximum 105 GB・予約 0)に置ける 10 GiB
+  の volume は名目で 19 本(付いている物と温かい物の和)。昼の 1 時間に約 25 個の作業場所が動くので、2 時間の窓でも数の線(2)が先に効く。
+- spareVolumes = 4 の訳: 19 本のうち 15 本までを付いている・温かい物に使い、4 本を、次のまとめて冷やす回(数分ごと)までに始まる新しい
+  持ち主のために空けておく(昼の頃合いで 5 分に 2 本ほど)。前の 8 本は、disk が 72 本を受ける見込みの頃の値。
+- 冷えた持ち主を次に使う時は、backup から戻す時間が掛かる(2026-11-03 の zeus の測り: 中身 50 MB で戻す 20.8 秒・attach 6.0 秒・mount
+  0.5 秒)。温かい持ち主でも attach と mount で約 6 秒掛かる。
+- 冷やす・戻す・消すは handler の仕事(節「handler」)。この dir は決まりと値だけを持つ。
 
 ## backup
 
@@ -112,7 +140,9 @@ worker は CSI を通らずに Longhorn の volume を名指しで作るので�
 
 ### 別の node へ戻す手順
 
-冷えている volume を次に使う時と、volume の在る node か disk が壊れた時に、同じ手順で戻す。
+冷えている volume を次に使う時と、volume の在る node か disk が壊れた時に、同じ手順で戻す。冷えている volume は `CreateWorkspaceVolume`
+が 1・3 を、`AttachWorkspaceVolume`・`MountWorkspaceVolume` が 4・5 をする。壊れた時は 2(残った volume を消す)を人が決めてから同じ effect を
+出す。
 
 1. 戻す元を選ぶ: `kubectl -n longhorn-system get backups.longhorn.io -l backup-volume=ws-<id>,backup-target=garage-workspace` の
    state Completed のうち、status.backupCreatedAt が一番新しい物(その status.url が戻す元)。

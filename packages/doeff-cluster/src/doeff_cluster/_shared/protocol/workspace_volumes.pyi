@@ -3,6 +3,7 @@
 from doeff import Program as _Program
 from doeff_hy._static_types import Handler as _Handler
 from dataclasses import dataclass as dataclass
+from datetime import datetime as datetime
 from urllib.parse import quote as url_quote
 from doeff_hy._wire import Malformed as Malformed
 from doeff_hy._wire import parse_json as parse_json
@@ -21,10 +22,15 @@ from doeff_core_effects import HttpRequest as HttpRequest
 from doeff_core_effects import HttpResponse as HttpResponse
 from doeff_time import Delay as Delay
 from doeff_time import GetMonotonic as GetMonotonic
+from doeff_time import GetTime as GetTime
 from doeff_cluster._shared.intent.workspace_volume_model import AttachWorkspaceVolume as AttachWorkspaceVolume
+from doeff_cluster._shared.intent.workspace_volume_model import CoolIdleWorkspaceVolumes as CoolIdleWorkspaceVolumes
+from doeff_cluster._shared.intent.workspace_volume_model import CoolingSweep as CoolingSweep
+from doeff_cluster._shared.intent.workspace_volume_model import CoolWorkspaceVolume as CoolWorkspaceVolume
 from doeff_cluster._shared.intent.workspace_volume_model import CreateWorkspaceVolume as CreateWorkspaceVolume
 from doeff_cluster._shared.intent.workspace_volume_model import DetachWorkspaceVolume as DetachWorkspaceVolume
 from doeff_cluster._shared.intent.workspace_volume_model import MountWorkspaceVolume as MountWorkspaceVolume
+from doeff_cluster._shared.intent.workspace_volume_model import PurgeWorkspaceVolume as PurgeWorkspaceVolume
 from doeff_cluster._shared.intent.workspace_volume_model import UmountWorkspaceVolume as UmountWorkspaceVolume
 from doeff_cluster._shared.intent.workspace_volume_model import WorkspaceOutcome as WorkspaceOutcome
 from doeff_cluster._shared.intent.workspace_volume_model import WorkspaceVolumeRefused as WorkspaceVolumeRefused
@@ -32,15 +38,25 @@ from doeff_cluster._shared.intent.workspace_volume_model import WorkspaceVolumeS
 from doeff_cluster._shared.intent.supplied_model import WorkerFactName as WorkerFactName
 from doeff_cluster._shared.core.workspace_volume_rules import AttachStep as AttachStep
 from doeff_cluster._shared.core.workspace_volume_rules import AttachView as AttachView
+from doeff_cluster._shared.core.workspace_volume_rules import BackupView as BackupView
 from doeff_cluster._shared.core.workspace_volume_rules import DetachStep as DetachStep
+from doeff_cluster._shared.core.workspace_volume_rules import DiskRoom as DiskRoom
 from doeff_cluster._shared.core.workspace_volume_rules import MountEntry as MountEntry
+from doeff_cluster._shared.core.workspace_volume_rules import NAME_PREFIX as NAME_PREFIX
+from doeff_cluster._shared.core.workspace_volume_rules import USED_AT_KEY as USED_AT_KEY
+from doeff_cluster._shared.core.workspace_volume_rules import WarmVolume as WarmVolume
 from doeff_cluster._shared.core.workspace_volume_rules import attach_step as attach_step
+from doeff_cluster._shared.core.workspace_volume_rules import cooling_name as cooling_name
+from doeff_cluster._shared.core.workspace_volume_rules import cooling_order as cooling_order
 from doeff_cluster._shared.core.workspace_volume_rules import detach_step as detach_step
+from doeff_cluster._shared.core.workspace_volume_rules import free_slots as free_slots
 from doeff_cluster._shared.core.workspace_volume_rules import mount_entries as mount_entries
 from doeff_cluster._shared.core.workspace_volume_rules import mounted_at as mounted_at
+from doeff_cluster._shared.core.workspace_volume_rules import newest_backup as newest_backup
 from doeff_cluster._shared.core.workspace_volume_rules import owner_refusal as owner_refusal
 from doeff_cluster._shared.core.workspace_volume_rules import ticket_id as ticket_id
 from doeff_cluster._shared.core.workspace_volume_rules import TICKET_TYPE as TICKET_TYPE
+from doeff_cluster._shared.core.workspace_volume_rules import using_tickets as using_tickets
 from doeff_cluster._shared.core.workspace_volume_rules import volume_mount_points as volume_mount_points
 from doeff_cluster._shared.core.workspace_volume_rules import volume_name as volume_name
 from doeff_cluster._shared.core.workspace_volume_rules import volume_of_entry as volume_of_entry
@@ -65,6 +81,9 @@ CLASS_FS_TYPE: str
 class SettingsWire:
     storage_class: str
     size_bytes: int
+    warm_hours: int
+    spare_volumes: int
+    keep_days: int
 
 @dataclass(frozen=True, kw_only=True)
 class ConfigMapWire:
@@ -83,10 +102,106 @@ class RecurringSelectorWire:
 class VolumeStatusWire:
     state: str = ''
     current_node_id: str = ''
+    restore_required: bool = False
+    restore_initiated: bool = False
+
+@dataclass(frozen=True, kw_only=True)
+class VolumeMetaWire:
+    name: str = ''
+    resource_version: str = ''
+    annotations: dict[str, str] | None = None
+    creation_timestamp: str = ''
+    deletion_timestamp: str | None = None
+
+@dataclass(frozen=True, kw_only=True)
+class VolumeSpecWire:
+    from_backup: str = ''
+    backup_target_name: str = ''
 
 @dataclass(frozen=True, kw_only=True)
 class VolumeWire:
+    metadata: VolumeMetaWire | None = None
+    spec: VolumeSpecWire | None = None
     status: VolumeStatusWire | None = None
+
+@dataclass(frozen=True, kw_only=True)
+class VolumeListWire:
+    items: tuple[VolumeWire, ...] | None = None
+
+@dataclass(frozen=True, kw_only=True)
+class NamedMetaWire:
+    name: str = ''
+
+@dataclass(frozen=True, kw_only=True)
+class BackupStatusWire:
+    state: str = ''
+    backup_created_at: str = ''
+    url: str = ''
+    error: str = ''
+
+@dataclass(frozen=True, kw_only=True)
+class BackupWire:
+    metadata: NamedMetaWire | None = None
+    status: BackupStatusWire | None = None
+
+@dataclass(frozen=True, kw_only=True)
+class BackupListWire:
+    items: tuple[BackupWire, ...] | None = None
+
+@dataclass(frozen=True, kw_only=True)
+class NamedWire:
+    metadata: NamedMetaWire | None = None
+
+@dataclass(frozen=True, kw_only=True)
+class NamedListWire:
+    items: tuple[NamedWire, ...] | None = None
+
+@dataclass(frozen=True, kw_only=True)
+class SnapshotStatusWire:
+    ready_to_use: bool = False
+    error: str = ''
+
+@dataclass(frozen=True, kw_only=True)
+class SnapshotWire:
+    status: SnapshotStatusWire | None = None
+
+@dataclass(frozen=True, kw_only=True)
+class DiskSpecWire:
+    tags: tuple[str, ...] | None = None
+    allow_scheduling: bool = False
+    storage_reserved: int = 0
+
+@dataclass(frozen=True, kw_only=True)
+class DiskConditionWire:
+    type: str = ''
+    status: str = ''
+
+@dataclass(frozen=True, kw_only=True)
+class DiskStatusWire:
+    storage_maximum: int = 0
+    storage_scheduled: int = 0
+    conditions: tuple[DiskConditionWire, ...] | None = None
+
+@dataclass(frozen=True, kw_only=True)
+class NodeSpecWire:
+    disks: dict[str, DiskSpecWire] | None = None
+
+@dataclass(frozen=True, kw_only=True)
+class NodeStatusWire:
+    disk_status: dict[str, DiskStatusWire] | None = None
+
+@dataclass(frozen=True, kw_only=True)
+class NodeWire:
+    spec: NodeSpecWire | None = None
+    status: NodeStatusWire | None = None
+
+@dataclass(frozen=True, kw_only=True)
+class NodeListWire:
+    items: tuple[NodeWire, ...] | None = None
+
+@dataclass(frozen=True, kw_only=True)
+class LonghornSettingWire:
+    value: str
 
 @dataclass(frozen=True, kw_only=True)
 class TicketWire:
@@ -130,6 +245,16 @@ class KeeperAnswer:
     code: int
     notes: str
 
+@dataclass(frozen=True, kw_only=True)
+class VolumeRead:
+    name: str
+    version: str
+    state: str
+    restoring: bool
+    deleting: bool
+    used_at: float
+    backup_target: str
+
 def refused(owner: str, doing: str, reason: str) -> _Program[WorkspaceVolumeRefused, object]:
     ...
 
@@ -157,10 +282,43 @@ def workspace_settings(site: WorkspaceVolumeSite, owner: str) -> _Program[Settin
 def class_parameters(owner: str, class_name: str) -> _Program[dict[str, str], object]:
     ...
 
-def volume_create_text(site: WorkspaceVolumeSite, name: str, parameters: dict[str, str], size_bytes: int) -> _Program[str, object]:
+def volume_create_text(site: WorkspaceVolumeSite, name: str, parameters: dict[str, str], size_bytes: int, from_backup: str) -> _Program[str, object]:
+    ...
+
+def longhorn_path(site: WorkspaceVolumeSite, kind: str) -> _Program[str, object]:
+    ...
+
+def epoch_of(text: str) -> _Program[float | None, object]:
+    ...
+
+def volume_read_of(owner: str, doing: str, held: VolumeWire) -> _Program[VolumeRead, object]:
+    ...
+
+def volume_read(site: WorkspaceVolumeSite, owner: str, doing: str, name: str) -> _Program[VolumeRead | None, object]:
+    ...
+
+def waited_gone(site: WorkspaceVolumeSite, owner: str, doing: str, name: str) -> _Program[None, object]:
+    ...
+
+def waited_restored(site: WorkspaceVolumeSite, owner: str, doing: str, name: str) -> _Program[None, object]:
+    ...
+
+def label_query(name: str, target: str) -> _Program[str, object]:
+    ...
+
+def backup_view_of(item: BackupWire) -> _Program[BackupView, object]:
+    ...
+
+def backup_views(site: WorkspaceVolumeSite, owner: str, doing: str, name: str, target: str) -> _Program[tuple[BackupView, ...], object]:
+    ...
+
+def class_backup_target(owner: str, doing: str, parameters: dict[str, str]) -> _Program[str, object]:
     ...
 
 def created_volume(site: WorkspaceVolumeSite, owner: str) -> _Program[WorkspaceOutcome, object]:
+    ...
+
+def marked_volume(site: WorkspaceVolumeSite, owner: str, doing: str, name: str) -> _Program[bool, object]:
     ...
 
 def attach_read(site: WorkspaceVolumeSite, owner: str, doing: str, name: str) -> _Program[AttachRead | None, object]:
@@ -197,6 +355,45 @@ def mounted_volume(site: WorkspaceVolumeSite, owner: str, path: str) -> _Program
     ...
 
 def unmounted_volume(site: WorkspaceVolumeSite, owner: str, path: str) -> _Program[WorkspaceOutcome, object]:
+    ...
+
+def created_object(site: WorkspaceVolumeSite, owner: str, doing: str, kind: str, body: str) -> _Program[None, object]:
+    ...
+
+def snapshot_taken(site: WorkspaceVolumeSite, owner: str, doing: str, name: str) -> _Program[None, object]:
+    ...
+
+def backup_finished(site: WorkspaceVolumeSite, owner: str, doing: str, name: str) -> _Program[None, object]:
+    ...
+
+def deleted_volume(site: WorkspaceVolumeSite, owner: str, doing: str, name: str, version: str) -> _Program[bool, object]:
+    ...
+
+def tickets_of(name: str, view: AttachView) -> _Program[tuple[str, ...], object]:
+    ...
+
+def cooled_volume(site: WorkspaceVolumeSite, owner: str) -> _Program[WorkspaceOutcome, object]:
+    ...
+
+def backup_volume_names(site: WorkspaceVolumeSite, owner: str, doing: str, name: str, target: str) -> _Program[tuple[str, ...], object]:
+    ...
+
+def deleted_object(site: WorkspaceVolumeSite, owner: str, doing: str, kind: str, name: str) -> _Program[None, object]:
+    ...
+
+def purged_volume(site: WorkspaceVolumeSite, owner: str) -> _Program[WorkspaceOutcome, object]:
+    ...
+
+def volume_reads(site: WorkspaceVolumeSite, owner: str, doing: str) -> _Program[tuple[VolumeRead, ...], object]:
+    ...
+
+def disk_rooms(site: WorkspaceVolumeSite, owner: str, doing: str, tags: tuple[str, ...]) -> _Program[tuple[DiskRoom, ...], object]:
+    ...
+
+def over_provisioning(site: WorkspaceVolumeSite, owner: str, doing: str) -> _Program[int, object]:
+    ...
+
+def idle_cooling(site: WorkspaceVolumeSite) -> _Program[CoolingSweep, object]:
     ...
 
 def workspace_volumes_api(site: WorkspaceVolumeSite) -> _Handler:

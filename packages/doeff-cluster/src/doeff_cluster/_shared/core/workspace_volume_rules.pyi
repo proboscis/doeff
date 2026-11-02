@@ -10,6 +10,10 @@ OWNER_SPELLING: Incomplete
 TICKET_TYPE: str
 DEVICE_DIR_NAME: str
 MOUNTINFO_ESCAPE: Incomplete
+USED_AT_KEY: str
+COOLING_TICKET_PREFIXES: tuple[str, ...]
+COOLING_MARK: str
+BACKUP_COMPLETED: str
 
 class AttachStep(StrEnum):
     PUT = 'put'
@@ -39,6 +43,24 @@ class AttachView:
     current_node: str
     other_tickets: tuple[str, ...]
 
+@dataclass(frozen=True, kw_only=True)
+class BackupView:
+    name: str
+    state: str
+    created_at: str
+    url: str
+
+@dataclass(frozen=True, kw_only=True)
+class DiskRoom:
+    maximum: int
+    reserved: int
+    scheduled: int
+
+@dataclass(frozen=True, kw_only=True)
+class WarmVolume:
+    name: str
+    used_at: float
+
 def owner_refusal(owner: str) -> _Program[str | None, object]:
     ...
 
@@ -67,4 +89,19 @@ def attach_step(view: AttachView, node: str) -> _Program[AttachStep, object]:
     ...
 
 def detach_step(view: AttachView, node: str) -> _Program[DetachStep, object]:
+    ...
+
+def using_tickets(ids: tuple[str, ...]) -> _Program[tuple[str, ...], object]:
+    ...
+
+def cooling_name(name: str, stamp: int) -> _Program[str, object]:
+    ...
+
+def newest_backup(backups: tuple[BackupView, ...]) -> _Program[BackupView | None, object]:
+    ...
+
+def free_slots(rooms: tuple[DiskRoom, ...], size_bytes: int, percentage: int) -> _Program[int, object]:
+    ...
+
+def cooling_order(warm: tuple[WarmVolume, ...], now: float, warm_seconds: float, slots: int, spare: int) -> _Program[tuple[str, ...], object]:
     ...

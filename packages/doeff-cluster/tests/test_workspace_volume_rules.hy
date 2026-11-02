@@ -7,10 +7,14 @@
 ;;;   attach の一手     VolumeAttachment がまだ無い → 待つ・ticket が無い → 置く・別の node → 断る(失敗ケース — 別の機体の ticket を
 ;;;                     書き換えない)・満たされて付いた → 付いた
 ;;;   detach の一手     別の node → 断る(失敗ケース)・この node → 外す・外れる途中 → 待つ・ほかの ticket が付けている → この答え手の分は外れた
+;;;   冷やす            使っている印の ticket(冷やす手順の snapshot と backup の ticket を除く)・snapshot と backup の名(63 字まで)・
+;;;                     戻す元(完了した物の一番新しい物 — 途中・失敗・url の無い物は選ばない)・札の disk の空きの本数(Longhorn の置く線・
+;;;                     負は 0)・冷やす順(2 時間を過ぎた物は全部・足りない空きの分を古い順に・空きが足りていれば足さない)
 (require doeff-hy.macros [deftest <- val])
-(import doeff_cluster._shared.core.workspace_volume_rules [AttachStep AttachView DetachStep MountEntry NAME-MAX-LENGTH NAME-PREFIX
-                                                         attach-step detach-step mount-entries mounted-at owner-refusal ticket-id
-                                                         volume-mount-points volume-name volume-of-entry])
+(import doeff_cluster._shared.core.workspace_volume_rules [AttachStep AttachView BackupView DetachStep DiskRoom MountEntry NAME-MAX-LENGTH
+                                                         NAME-PREFIX WarmVolume attach-step cooling-name cooling-order detach-step
+                                                         free-slots mount-entries mounted-at newest-backup owner-refusal ticket-id
+                                                         using-tickets volume-mount-points volume-name volume-of-entry])
 
 (val MODULE-TAGS {:context "doeff-cluster-test" :role "test"})
 
@@ -120,3 +124,62 @@
   (for [#(view wanted) cases]
     (<- step (detach-step view "zeus"))
     (assert (= step wanted) #(view step))))
+
+
+(deftest test-only-tickets-outside-the-cooling-mark-a-volume-in-use
+  (<- users (using-tickets #("snapshot-controller-ws-c-1-cool-5" "csi-abc" "backup-controller-ws-c-1-cool-5" "longhorn-api-ws-c-1")))
+  (assert (= users #("csi-abc" "longhorn-api-ws-c-1")) users)
+  (<- none (using-tickets #("backup-controller-x" "snapshot-controller-y")))
+  (assert (= none #()) none))
+
+
+(deftest test-the-cooling-name-fits-a-kubernetes-name
+  (val longest (+ NAME-PREFIX (* "a" (- NAME-MAX-LENGTH (len NAME-PREFIX)))))
+  (<- name (cooling-name longest 1793643381))
+  (assert (= name (+ longest "-cool-1793643381")) name)
+  (assert (<= (len name) 63) (len name)))
+
+
+(deftest test-the-newest-completed-backup-is-restored-from
+  (val old (BackupView :name "b-old" :state "Completed" :created-at "2026-11-01T10:00:00Z" :url "s3://t/?backup=b-old&volume=v"))
+  (val new (BackupView :name "b-new" :state "Completed" :created-at "2026-11-02T10:00:00Z" :url "s3://t/?backup=b-new&volume=v"))
+  (val going (BackupView :name "b-going" :state "InProgress" :created-at "" :url ""))
+  (val broken (BackupView :name "b-broken" :state "Error" :created-at "2026-11-03T10:00:00Z" :url ""))
+  (<- chosen (newest-backup #(old going new broken)))
+  (assert (= chosen new) chosen)
+  ;; 失敗ケース: 完了した物が無ければ選ばない(呼び手は空で作らずに断る)。
+  (<- nothing (newest-backup #(going broken)))
+  (assert (is nothing None) nothing)
+  (<- empty (newest-backup #()))
+  (assert (is empty None) empty))
+
+
+(deftest test-free-slots-follow-the-longhorn-scheduling-line
+  (val size 10737418240)
+  ;; zeus の USB の SSD の image(2026-11-03 の読み): 105 GB・予約 0・置いた 0 → 200% で 19 本。
+  (<- zeus (free-slots #((DiskRoom :maximum 105089261568 :reserved 0 :scheduled 0)) size 200))
+  (assert (= zeus 19) zeus)
+  ;; 置いた分を引く。2 つの disk は足す。名目で溢れた disk は 0(負にしない)。
+  (<- two (free-slots #((DiskRoom :maximum (* 10 size) :reserved 0 :scheduled (* 3 size))
+                        (DiskRoom :maximum (* 10 size) :reserved (* 5 size) :scheduled (* 20 size)))
+                      size 200))
+  (assert (= two 17) two))
+
+
+(deftest test-the-cooling-order-takes-the-stale-then-the-oldest
+  (val hour 3600.0)
+  (val warm #((WarmVolume :name "ws-d" :used-at (* 9.5 hour)) (WarmVolume :name "ws-a" :used-at 0.0)
+              (WarmVolume :name "ws-c" :used-at (* 9 hour)) (WarmVolume :name "ws-b" :used-at (* 7 hour))))
+  (val now (* 10 hour))
+  ;; 空きが足りていれば、2 時間を過ぎた物だけを古い順に。
+  (<- stale (cooling-order warm now (* 2 hour) 20 8))
+  (assert (= stale #("ws-a" "ws-b")) stale)
+  ;; 空き 5 と冷やす 2 で 7 < 8 → もう 1 本(残りの一番古い ws-c)。
+  (<- short (cooling-order warm now (* 2 hour) 5 8))
+  (assert (= short #("ws-a" "ws-b" "ws-c")) short)
+  ;; 空きが 0 なら、外れた物は全部(足りない数より少ない)。
+  (<- all (cooling-order warm now (* 2 hour) 0 8))
+  (assert (= all #("ws-a" "ws-b" "ws-c" "ws-d")) all)
+  ;; 何も外れていなければ何も冷やさない。
+  (<- none (cooling-order #() now (* 2 hour) 0 8))
+  (assert (= none #()) none))

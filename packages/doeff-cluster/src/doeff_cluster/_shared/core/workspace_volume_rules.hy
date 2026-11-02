@@ -11,6 +11,12 @@
 ;;;   volume-mount-points   mount の行の組と volume の名 → その volume の device が付いている path の組
 ;;;   attach-step           Longhorn の様子 → attach の次の一手(ticket を置く・待つ・付いた・別の node に付いている)
 ;;;   detach-step           Longhorn の様子 → detach の次の一手(ticket を外す・待つ・外れた・別の node に付いている)
+;;;   using-tickets         VolumeAttachment の ticket の id の組 → 冷やす手順の外の ticket(使っている印 — 冷やす側の snapshot と backup の
+;;;                         ticket を除く)
+;;;   cooling-name          volume の名と刻 → 冷やす時の snapshot と backup の名(<名>-cool-<epoch 秒>)
+;;;   newest-backup         backup の組 → 戻す元(完了した物のうち作られたのが一番新しい物 — 無ければ None)
+;;;   free-slots            札の disk の組と volume の大きさと過剰割り当ての % → まだ置ける volume の本数
+;;;   cooling-order         外れている volume の組・今・温かく置く秒・空きの本数・空けておく本数 → 冷やす volume の名(使い終わりの古い順)
 ;;;
 ;;; device の見分け方: mount の係は attach した volume を host の /dev/longhorn/<名> の device で付ける(係の /host/dev/longhorn/<名>)。
 ;;; mountinfo の source はその path なので、dir の名が longhorn で file の名が volume の名の source を、その volume の mount と読む。
@@ -33,6 +39,15 @@
 (val DEVICE-DIR-NAME "longhorn")
 ;; mountinfo の path の 8 進の escape(空白・tab・改行・\)。
 (val MOUNTINFO-ESCAPE (re.compile r"\\([0-7]{3})"))
+;; 使い手が volume に置く刻の印(annotation・epoch 秒の字)。attach は ticket を置いた後に、detach は ticket を外した後に書く。冷やす側は
+;; これを使い終わりの刻と読み、volume を消す時はこの書きの後の版でなければ消さない(冷やす途中の attach に負ける — README の節「寿命」)。
+(val USED-AT-KEY "doeff-cluster/used-at")
+;; 冷やす手順の snapshot と backup のために Longhorn が置く ticket の id の頭(外れている volume を、frontend を問わずに付ける)。
+(val COOLING-TICKET-PREFIXES #("snapshot-controller-" "backup-controller-"))
+;; 冷やす時の snapshot と backup の名の中の印。
+(val COOLING-MARK "-cool-")
+;; backup の様子のうち、戻す元にできる物。
+(val BACKUP-COMPLETED "Completed")
 
 
 (defenum AttachStep PUT WAIT READY ELSEWHERE)
@@ -58,6 +73,29 @@
   (#^ str state)
   (#^ str current-node)
   (#^ (get tuple #(str ...)) other-tickets))
+
+
+(defrecord BackupView
+  "Longhorn の Backup 1 つの読み: name = Backup の名・state = 様子(Completed・InProgress・Error ほか)・created-at = status.backupCreatedAt
+   (ISO 8601 の UTC の字 — 字の順が刻の順。まだ無ければ空)・url = 戻す元の印(Volume の spec.fromBackup に書く字)。"
+  (#^ str name)
+  (#^ str state)
+  (#^ str created-at)
+  (#^ str url))
+
+
+(defrecord DiskRoom
+  "札の disk 1 つの置き場の数(byte): maximum = storageMaximum・reserved = storageReserved・scheduled = storageScheduled(置いた volume の
+   名目の大きさの和)。"
+  (#^ int maximum)
+  (#^ int reserved)
+  (#^ int scheduled))
+
+
+(defrecord WarmVolume
+  "外れている(温かい)volume 1 つ: name = volume の名・used-at = 使い終わりの刻(epoch 秒 — 印 USED-AT-KEY が無ければ作られた刻)。"
+  (#^ str name)
+  (#^ float used-at))
 
 
 (defk owner-refusal [owner]
@@ -157,3 +195,48 @@
     (and (not view.other-tickets) (in view.state #("attaching" "attached" "detaching")) (in view.current-node #(node "")))
     DetachStep.WAIT
     True DetachStep.GONE))
+
+
+(defk using-tickets [ids]
+  {:pre [(: ids (get tuple #(str ...)))] :post [(: % (get tuple #(str ...)))]}
+  "VolumeAttachment の ticket の id の組 ids のうち、冷やす手順の snapshot と backup の ticket でない物(使っている印 — この答え手の
+   ticket・CSI・ほかの持ち主)を、名の順に得るため。"
+  (tuple (sorted (gfor id ids :if (not (any (gfor prefix COOLING-TICKET-PREFIXES (.startswith id prefix)))) id))))
+
+
+(defk cooling-name [name stamp]
+  {:pre [(: name str) (.startswith name NAME-PREFIX) (: stamp int) (>= stamp 0)] :post [(: % str) (<= (len %) 63)]}
+  "volume name を刻 stamp(epoch 秒)に冷やす時の snapshot と backup の名を得るため(<名>-cool-<刻> — 名は 40 字までなので k8s の名の 63 字に
+   収まる)。"
+  (+ name COOLING-MARK (str stamp)))
+
+
+(defk newest-backup [backups]
+  {:pre [(: backups (get tuple #(BackupView ...)))] :post [(: % (| BackupView None))]}
+  "backup の組 backups のうち、戻す元にする物を得るため: 完了した物(BACKUP-COMPLETED・url が在る)のうち created-at が一番新しい物(同じ刻は
+   名の大きい物)。無ければ None。"
+  (val done (lfor backup backups :if (and (= backup.state BACKUP-COMPLETED) backup.url backup.created-at) backup))
+  (if done (max done :key (fn [backup] #(backup.created-at backup.name))) None))
+
+
+(defk free-slots [rooms size-bytes percentage]
+  {:pre [(: rooms (get tuple #(DiskRoom ...))) (: size-bytes int) (> size-bytes 0) (: percentage int) (>= percentage 0)]
+   :post [(: % int) (>= % 0)]}
+  "札の disk の組 rooms に、名目の大きさ size-bytes の volume をあと何本置けるかを得るため(Longhorn の置く線と同じ: disk ごとに
+   (maximum − reserved) × percentage% − scheduled を大きさで割った整数の和。負は 0)。"
+  (sum (gfor room rooms
+             (max 0 (// (- (// (* (- room.maximum room.reserved) percentage) 100) room.scheduled) size-bytes)))))
+
+
+(defk cooling-order [warm now warm-seconds slots spare]
+  {:pre [(: warm (get tuple #(WarmVolume ...))) (: now float) (: warm-seconds float) (>= warm-seconds 0) (: slots int) (: spare int)
+         (>= spare 0)]
+   :post [(: % (get tuple #(str ...)))]}
+  "外れている volume の組 warm から、今 now に冷やす物の名を、使い終わりの古い順に得るため: (1) 使い終わりから warm-seconds を過ぎた物は
+   全部、(2) それでも空き slots と冷やす本数の和が spare に届かなければ、届くまで残りを古い順に足す(冷やした 1 本が 1 本の空きになる)。
+   同じ刻は名の順。"
+  (val ordered (sorted warm :key (fn [volume] #(volume.used-at volume.name))))
+  (val stale (lfor volume ordered :if (>= (- now volume.used-at) warm-seconds) volume.name))
+  (val rest (lfor volume ordered :if (not-in volume.name stale) volume.name))
+  (val short (max 0 (- spare slots (len stale))))
+  (tuple (+ stale (cut rest 0 short))))
