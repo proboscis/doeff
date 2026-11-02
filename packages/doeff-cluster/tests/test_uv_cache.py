@@ -7,6 +7,8 @@
   HEAD と違えば入れない。
 - gc: 消すのは、最後に使った刻が日数より前で — 展開済みの wheel は hardlink の数が 1 の物・venv と環境はどの process も使っていない物・
   一時の物。同じ回に venv を消して hardlink の数が 1 に戻った展開済みの wheel も消す。count は何も消さない。前の gc から間が無ければ消さない。
+  予算を渡すと、cache だけが持つ byte(venv が hardlink で持つ中身を除き、cache の中で共に持つ中身は 1 度)が予算を越える分を、
+  floor を過ぎた古い項目から消し、venv が hardlink か symlink で指す項目・process が読み込んだ項目は消さない。
 - upkeep: 環境変数を読んで seed と gc を順に撃ち、seed が落ちても gc を撃つ。空きが下限を下回れば seed しない。refresh は名指した node でだけ撃つ。
 - refresh: 空の cache に project ごとの取り込みを撃ち(venv は project の外)、組みの一時の環境を除いて pack し、lock の hash を
   metadata に載せて PUT する。置いてある写しの hash が同じか、置いてから間が無ければ組まない。取り込みが落ちれば PUT しない。
@@ -19,6 +21,7 @@ import datetime
 import email.utils
 import http.server
 import importlib.util
+import json
 import os
 import re
 import socket
@@ -367,6 +370,135 @@ def test_gc_keeps_entries_a_running_process_has_loaded(
     assert sorted(p.name for p in (cache / "archive-v0").iterdir()) == ["LOADED"]
 
 
+DAY = 86400
+
+
+def _cache_for_size_budget(tmp_path: Path) -> tuple[Path, Path]:
+    """予算の消しの cache: 期限(7 日)の内で floor(1 日)を過ぎた項目と、守る項目。
+
+    OLDEST(5 日)・OLDER(4 日)・OLD(3 日)は cache だけが持つ展開済みの wheel。ENVLINK(3 日)は環境 env(3 日)と同じ中身を
+    hardlink で持つ(cache の中だけの共有)。PINNED(6 日)は新しい作業木の venv が hardlink で指す 4 MiB。SYMLINKED(6 日)は
+    新しい作業木の venv が symlink で指す。LOADED(6 日)は走っている process が読み込んだ。YOUNG は floor の内。
+    """
+    cache = tmp_path / "cache"
+    worktrees = tmp_path / "worktrees"
+    archive = cache / "archive-v0"
+    for name in ("OLDEST", "OLDER", "OLD", "SYMLINKED", "LOADED", "YOUNG"):
+        _write(archive / name / "m.py", name[0] * 65536)
+    shared = _write(archive / "ENVLINK" / "m.py", "e" * 65536)
+    env = _venv(cache / "environments-v2" / "env")
+    os.link(shared, env / "lib" / "python3.14" / "site-packages" / "m.py")
+    pinned = _write(archive / "PINNED" / "big.bin", "p" * (4 << 20))
+    venv = _venv(worktrees / "wt-young" / ".venv")
+    os.link(pinned, venv / "lib" / "python3.14" / "site-packages" / "big.bin")
+    (venv / "lib" / "python3.14" / "site-packages" / "s.py").symlink_to(
+        archive / "SYMLINKED" / "m.py"
+    )
+    now = time.time()
+    for name, days in [
+        ("OLDEST", 5),
+        ("OLDER", 4),
+        ("OLD", 3),
+        ("ENVLINK", 3),
+        ("PINNED", 6),
+        ("SYMLINKED", 6),
+        ("LOADED", 6),
+    ]:
+        _age(archive / name, now - days * DAY)
+    _age(env, now - 3 * DAY)
+    return cache, worktrees
+
+
+def _size_budget_gc(cache: Path, worktrees: Path, size_budget: int) -> dict:
+    return uv_cache.gc(
+        cache,
+        [worktrees],
+        7.0,
+        3,
+        dry_run=False,
+        every_seconds=None,
+        size_budget=size_budget,
+        floor_days=1.0,
+    )
+
+
+@pytest.fixture
+def loaded(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    ext = tmp_path / "cache" / "archive-v0" / "LOADED" / "m.py"
+    monkeypatch.setattr(uv_cache, "process_paths", lambda _proc=None: [str(ext)])
+
+
+def test_gc_size_budget_counts_only_bytes_the_cache_alone_holds(
+    tmp_path: Path, loaded: None
+) -> None:
+    """venv が hardlink で持つ PINNED の 4 MiB は数えず、展開済みの wheel と環境が共に持つ中身は 1 度だけ数える。予算の内なら消さない。"""
+    cache, worktrees = _cache_for_size_budget(tmp_path)
+
+    result = _size_budget_gc(cache, worktrees, 1 << 40)
+
+    size_budget = result["size-budget"]
+    assert size_budget["usage-before"] < 4 << 20
+    assert 7 * 65536 <= size_budget["usage-before"] < 7 * 65536 + 64 * 4096
+    assert size_budget["removed"] == {"archives": 0, "environments": 0, "temporaries": 0}
+    assert size_budget["freed"] == 0
+    assert size_budget["within"] is True
+    assert size_budget["floor-days"] == 1.0
+    assert len(list((cache / "archive-v0").iterdir())) == 8
+    assert json.loads((cache / uv_cache.GC_MARK).read_text())["size-budget"] == size_budget
+
+
+def test_gc_size_budget_removes_the_oldest_first_until_within(tmp_path: Path, loaded: None) -> None:
+    """和が予算を 1 byte 越えるだけなら、最も古い消せる項目(OLDEST — 消せない PINNED・SYMLINKED・LOADED はより古い)だけを消す。"""
+    cache, worktrees = _cache_for_size_budget(tmp_path)
+    usage = _size_budget_gc(cache, worktrees, 1 << 40)["size-budget"]["usage-before"]
+
+    size_budget = _size_budget_gc(cache, worktrees, usage - 1)["size-budget"]
+
+    assert not (cache / "archive-v0" / "OLDEST").exists()
+    assert sorted(p.name for p in (cache / "archive-v0").iterdir()) == [
+        "ENVLINK",
+        "LOADED",
+        "OLD",
+        "OLDER",
+        "PINNED",
+        "SYMLINKED",
+        "YOUNG",
+    ]
+    assert size_budget["removed"] == {"archives": 1, "environments": 0, "temporaries": 0}
+    assert size_budget["freed"] == usage - size_budget["usage-after"] > 0
+    assert size_budget["within"] is True
+
+
+def test_gc_size_budget_never_removes_held_or_young_units(tmp_path: Path, loaded: None) -> None:
+    """予算 0 でも、venv が hardlink か symlink で指す項目・走っている process が読み込んだ項目・floor の内の項目は消さない。
+    展開済みの wheel と環境が共に持つ中身は、両方を消して戻った byte に数える。"""
+    cache, worktrees = _cache_for_size_budget(tmp_path)
+
+    result = _size_budget_gc(cache, worktrees, 0)
+
+    size_budget = result["size-budget"]
+    assert sorted(p.name for p in (cache / "archive-v0").iterdir()) == [
+        "LOADED",
+        "PINNED",
+        "SYMLINKED",
+        "YOUNG",
+    ]
+    assert not list((cache / "environments-v2").iterdir())
+    assert size_budget["removed"] == {"archives": 4, "environments": 1, "temporaries": 0}
+    assert size_budget["freed"] >= 4 * 65536
+    assert size_budget["within"] is False
+    venv = worktrees / "wt-young" / ".venv" / "lib" / "python3.14" / "site-packages"
+    assert (venv / "s.py").read_text() == "S" * 65536
+    assert (venv / "big.bin").stat().st_size == 4 << 20
+
+
+def test_gc_without_a_size_budget_only_expires(tmp_path: Path, loaded: None) -> None:
+    cache, worktrees = _cache_for_size_budget(tmp_path)
+    result = uv_cache.gc(cache, [worktrees], 7.0, 3, dry_run=False, every_seconds=None)
+    assert "size_budget" not in result
+    assert len(list((cache / "archive-v0").iterdir())) == 8
+
+
 def test_gc_keeps_venvs_when_processes_are_unreadable(tmp_path: Path, busy: Path) -> None:
     cache, worktrees = _cache_for_gc(tmp_path, busy)
     uv_cache.gc(
@@ -401,6 +533,11 @@ def test_upkeep_reads_the_environment() -> None:
         (Path("/c"),),
     )
     assert uv_cache.UpkeepSettings.from_env({}) == uv_cache.UpkeepSettings()
+    capped = uv_cache.UpkeepSettings.from_env(
+        {"DOEFF_UV_CACHE_GC_SIZE_BUDGET_GIB": "100", "DOEFF_UV_CACHE_GC_FLOOR_DAYS": "2"}
+    )
+    assert (capped.gc_size_budget, capped.gc_floor_days) == (100 << 30, 2.0)
+    assert (settings.gc_size_budget, settings.gc_floor_days) == (None, 1.0)
 
 
 def test_upkeep_seeds_then_collects(source_cache: Path, tmp_path: Path) -> None:
