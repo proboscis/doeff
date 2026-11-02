@@ -6,7 +6,7 @@
 (require doeff-hy.record [defrecord])
 (import json)
 (import dataclasses [dataclass])
-(import doeff [EffectBase run with-handlers])
+(import doeff [EffectBase Perform run with-handlers])
 (import doeff_core_effects [state])
 (import doeff_core_effects [scheduled])
 (import doeff_core_effects [HttpRequest HttpResponse HttpFailed HttpFailureKind])
@@ -60,9 +60,10 @@
 
 (defk attempted [ask]
   {:pre [(: ask EffectBase)] :post [(: % str)] :tags {:context "records" :role "foundation"}}
-  "公開 effect を 1 つ撃ち、答えの型の名か、上がった例外の型の名を返すため(client は 502・401 などの断りを一般の失敗 WireError にする)。"
+  "公開 effect を 1 つ撃ち、答えの型の名か、上がった例外の型の名を返すため(client は 502・401 などの断りを一般の失敗 WireError にする)。
+   client が値で答える事(R4)を見る検なので、宣言を開かずに(Perform)値のまま受ける — <- だと PutRow の失敗(Refused・Unreachable)が Raise になる。"
   (try
-    (do (<- answer ask)
+    (do (<- answer (Perform ask))
         (. (type answer) __name__))
     (except [problem WireError]
       (. (type problem) __name__))))
