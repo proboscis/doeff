@@ -38,17 +38,35 @@
 ;;;   ReadExpiredEvents    印の列の、刻 at の境で期限を過ぎた出来事(書きが覚えた鍵の出来事を含む)を、列の名の順・列の中は
 ;;;                        積んだ刻と番号の順に limit 件まで読む(1 頁 = 1 つの列)。after = 前の頁の続きの位置(None = 頭から)
 ;;;   RetireArchivedEvents 列 stream の番号 sequences の出来事のうち、刻 at の境で今も期限を過ぎた物だけを外し、冪等キーを覚える
+;;;
+;;; 大きい欄を移す: 書きは表の大きい欄(TableDecl.bulk)を置き場の別の所(PostgreSQL の state_rows の列 bulk)に分けて置く。前の版の書きが
+;;; 値の全部を payload に置いた行(この版の前に在った行と、入れ替えの途中に前の版の process が書いた行)は、手入れの回ごとに
+;;; MoveBulkFields が表ごとに limit 行まで分け直す(値・版・刻・変更の列は動かさない — 物理の置き方だけの変え)。分け直しは行を書き直して
+;;; 全部の索引を直し、古い本体を死んだ行に残すので、1 回の量を limit に縛り、手入れの拍の間を空けて回す。移す行が無くなっても回り続け、
+;;; 後から前の版が書いた行も拾う。表ごとの移していない行の数は計器の gauge records_bulk_unmoved_<表>・移した行の数は counter
+;;; records_bulk_moved_<表>(大きい欄を宣言した表だけ)。memory の置き場は分けて置かない(答えは移す行 0)。
+;;;
+;;;   MoveBulkFields  大きい欄を宣言した表ごとに、payload に大きい欄が残る行を limit 行まで分け直し、表ごとの移した数と残りの数を答える
 (require doeff-hy.macros [defk <- val var])
 (val MODULE-TAGS {:context "records" :role "program"})
+(import re)
 (import dataclasses [dataclass])
 (import collections.abc [Callable])
 (import doeff [EffectBase])
+(import doeff_core_effects [CountMetric SetGauge])
+(import doeff_hy._frozen [FrozenMap])
 (import doeff_time [Delay GetTime])
 (import doeff_records._values [Event RowChanged RowRemoved Unreachable])
 (import datetime [datetime])
 
 ;; 出来事の送りの 1 頁の出来事の数の上限(送りの関数に渡す 1 回の量 — 外しの書きの錠の中で触る行もこの数で縛る)。
 (val ARCHIVE-PAGE 500)
+;; 大きい欄の移しの 1 回・1 表の行の数の上限(頭の註の「大きい欄を移す」— 1 文の UPDATE が書き直す行の数)。
+(val BULK-MOVE-BATCH 1000)
+;; 大きい欄の移しの計器の名(表の名を計器の 1 語に畳む — wire の表ごとの一覧の系列と同じ畳み方)。
+(val BULK-UNMOVED-METRIC "records_bulk_unmoved_{}")
+(val BULK-MOVED-METRIC "records_bulk_moved_{}")
+(val BULK-METRIC-WORD-UNSAFE (re.compile "[^A-Za-z0-9_]"))
 
 
 ;; 答えの class は答える effect より前に置く(effect が基底 EffectBase[答え] で答えの型を名乗る — ADR-DOE-API-001 R2)。
@@ -172,14 +190,60 @@
   (setv #^ (| Unreachable None) halted None))
 
 
+(defclass [(dataclass :frozen True)] BulkMoved []
+  "MoveBulkFields の答え: moved = 大きい欄を宣言した表の名 → この回に分け直した行の数 / unmoved = 表の名 → 分け直した後も payload に
+   大きい欄が残る行の数(計器 records_bulk_unmoved_<表> の値)。"
+  (#^ FrozenMap moved)
+  (#^ FrozenMap unmoved))
+
+
+(defclass [(dataclass :frozen True)] MoveBulkFields [(get EffectBase (| BulkMoved Unreachable))]
+  "大きい欄を宣言した表ごとに、payload に大きい欄が残る行を limit 行まで分け直す(頭の註の「大きい欄を移す」)。答え = BulkMoved | Unreachable。"
+  (setv #^ int limit BULK-MOVE-BATCH)
+  (defn #^ None __post_init__ [self]
+    (when (or (isinstance self.limit bool) (not (isinstance self.limit int)) (< self.limit 1))
+      (raise (ValueError (.format "MoveBulkFields.limit は 1 以上の数: {!r}" self.limit))))))
+
+
 (defclass [(dataclass :frozen True)] MaintenanceReport []
   "手入れ 1 回の結果(係の記録と計器のため)。置き場に届かなかった手入れは Unreachable(次の回で撃ち直す)。archived = 送りの答え
    (送りを持たない計画は None・送り先に届かなかった回は Unreachable で、その回は刈らない — pruned も同じ Unreachable)。
-   events = 出来事の送りの結果(出来事の送りの関数を持たない計画は None)。"
+   events = 出来事の送りの結果(出来事の送りの関数を持たない計画は None)。bulk = 大きい欄の移しの答え(移さない手入れは None)。"
   (#^ (| Swept Unreachable) swept)
   (#^ (| Pruned Unreachable) pruned)
   (setv #^ (| ArchivedThrough Unreachable None) archived None)
-  (setv #^ (| EventsArchiveReport None) events None))
+  (setv #^ (| EventsArchiveReport None) events None)
+  (setv #^ (| BulkMoved Unreachable None) bulk None))
+
+
+(defk bulk-metric-word [table]
+  {:pre [(: table str)] :post [(: % str)]}
+  "表の名を大きい欄の移しの計器の名の 1 語にするため(Prometheus の名に使えない字を _ にする)。"
+  (.sub BULK-METRIC-WORD-UNSAFE "_" table))
+
+
+(defk bulk-metric-helps [tables]
+  {:pre [(: tables tuple)] :post [(: % FrozenMap)]}
+  "大きい欄を宣言した表 tables の移しの計器の # HELP の説明(名 → 説明)を作り、/metrics の読み手が移しの残りを読めるようにするため。"
+  (var helps {})
+  (for [table (sorted tables)]
+    (<- word (bulk-metric-word table))
+    (setv (get helps (.format BULK-UNMOVED-METRIC word))
+          (.format "表 {} の、大きい欄がまだ列 payload に在る行の数(手入れの移しが回るたびに読む — 0 で移し終えた)" table))
+    (setv (get helps (.format BULK-MOVED-METRIC word))
+          (.format "手入れの移しが表 {} の大きい欄を列 bulk へ分け直した行の数(起動からの累計)" table)))
+  (FrozenMap helps))
+
+
+(defk bulk-measured [answer]
+  {:pre [(: answer (| BulkMoved Unreachable))] :post [(: % None)]}
+  "移しの答えを計器に積むため(表ごとの残りの gauge と移した数の counter — 置き場に届かなかった回は積まず、前の回の値を残す)。"
+  (when (isinstance answer BulkMoved)
+    (for [#(table count) (sorted (.items answer.unmoved))]
+      (<- word (bulk-metric-word table))
+      (<- (SetGauge (.format BULK-UNMOVED-METRIC word) (float count)))
+      (<- (CountMetric (.format BULK-MOVED-METRIC word) (float (.get answer.moved table 0))))))
+  None)
 
 
 (defk prune-after-archive [keep-seconds archive]
@@ -240,8 +304,10 @@
     (:= after page.next)))
 
 
-(defk maintenance-tick [keep-seconds archive [archive-events None]]
-  {:pre [(: keep-seconds (| int float)) (: archive (| Callable None)) (: archive-events (| Callable None))] :post [(: % MaintenanceReport)]}
+(defk maintenance-tick [keep-seconds archive [archive-events None] [move-bulk False]]
+  ;; move-bulk なら最後に大きい欄を 1 回分移し、残りを計器に積む(頭の註の「大きい欄を移す」)。
+  {:pre [(: keep-seconds (| int float)) (: archive (| Callable None)) (: archive-events (| Callable None)) (: move-bulk bool)]
+   :post [(: % MaintenanceReport)]}
   "手入れを 1 回行う: 期限切れを回収し、出来事の送りの関数が在れば印の列の期限を過ぎた出来事を送って確かめた物だけ外してから、古い変更を
    (送りが在れば送って確かめた所まで)刈る(回収が積んだ RowRemoved は新しいので刈られない)。"
   (<- swept (SweepExpired))
@@ -250,12 +316,18 @@
     (<- sent (archive-expired-events archive-events))
     (:= events sent))
   (<- report (prune-after-archive keep-seconds archive))
-  (MaintenanceReport swept report.pruned report.archived events))
+  (var bulk None)
+  (when move-bulk
+    (<- moved (MoveBulkFields))
+    (<- (bulk-measured moved))
+    (:= bulk moved))
+  (MaintenanceReport swept report.pruned report.archived events bulk))
 
 
-(defk maintenance-loop [interval-seconds keep-seconds archive ticks [archive-events None]]
+(defk maintenance-loop [interval-seconds keep-seconds archive ticks [archive-events None] [move-bulk False]]
+  ;; move-bulk = 拍ごとに大きい欄を 1 回分移すか(頭の註の「大きい欄を移す」)。
   {:pre [(: interval-seconds (| int float)) (: keep-seconds (| int float)) (: archive (| Callable None)) (: ticks (| int None))
-         (: archive-events (| Callable None))]
+         (: archive-events (| Callable None)) (: move-bulk bool)]
    :post [(: % list)]}
   "記録の service の手入れの係の本体: interval-seconds ごとに maintenance-tick を撃つ。archive = 送りの関数(keep-seconds → 答えが
    ArchivedThrough | Unreachable の Program・None = 送らない)。ticks = 回数(None = 止めるまで)。archive-events = 出来事の送りの関数
@@ -263,7 +335,7 @@
    None の時は返らない)。"
   (setv reports [] count 0)
   (while (or (is ticks None) (< count ticks))
-    (<- report (maintenance-tick keep-seconds archive archive-events))
+    (<- report (maintenance-tick keep-seconds archive archive-events move-bulk))
     ;; 止めるまで回す係は結果を溜めない(溜めると際限なく伸びる)。
     (when (is-not ticks None) (.append reports report))
     (+= count 1)

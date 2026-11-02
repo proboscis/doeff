@@ -273,13 +273,16 @@
 
 ;; --- 索引と頁 --------------------------------------------------------------------------------------------
 
-(defn #^ (| NotIndexed None) where-refusal [#^ TableDecl decl #^ FrozenMap where #^ FrozenMap where-any]
-  "ListRows の絞り(where の等号と where-any の値の組)が索引の無い欄を名指す時に、その欄を名の順に名指して断るため(memory と PostgreSQL の
-   置き場の 1 点)。大きい欄(TableDecl.bulk)は索引の欄にできないので、その絞りもここで断る — PostgreSQL の置き場が列 bulk に置いた欄を
-   payload の式で照らして答えが memory と食い違う事が無い。"
-  (setv loose (tuple (sorted (gfor name (+ (tuple where) (tuple where-any))
-                                   :if (not (or (in name decl.key-fields) (in name decl.indexes)))
-                                   name))))
+(defn #^ (| NotIndexed None) where-refusal [#^ TableDecl decl #^ FrozenMap where #^ FrozenMap where-any #^ (| str None) [ordered-by None]]
+  "ListRows・CountRows の絞り(where の等号と where-any の値の組)が索引の無い欄を名指す時に、その欄を名の順に名指して断るため(memory と
+   PostgreSQL の置き場の 1 点)。大きい欄(TableDecl.bulk)は索引の欄にできないので、その絞りもここで断る — PostgreSQL の置き場が列 bulk に
+   置いた欄を payload の式で照らして答えが memory と食い違う事が無い。ordered-by = 並べる欄か下限の欄(ListRows の descending-by・
+   ascending-by・CountRows の at-least の欄 — None = 無し): 並べる式も payload から読むので、大きい欄で並べる・数える読みも同じく断る
+   (索引の無い欄で並べる読みは断らない)。"
+  (setv loose (tuple (sorted (set (+ (tuple (gfor name (+ (tuple where) (tuple where-any))
+                                                  :if (not (or (in name decl.key-fields) (in name decl.indexes)))
+                                                  name))
+                                     (if (and (is-not ordered-by None) (in ordered-by decl.bulk)) #(ordered-by) #()))))))
   (if loose (NotIndexed loose) None))
 
 

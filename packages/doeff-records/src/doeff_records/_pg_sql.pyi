@@ -311,7 +311,16 @@ def count_rows_statement(prefix: str, table: str, key_fields: tuple, scoped: fro
 def terminal_rows_statement(prefix: str, table: str, state_field: str, terminal: tuple, scoped: bool, before_at: int) -> _Program[Statement, object]:
     ...
 
-def upsert_row_statement(prefix: str, table: str, key: str, payload: str, version: int, at: int, writer: str, origin_host: str, epoch: int) -> _Program[Statement, object]:
+def upsert_row_statement(prefix: str, table: str, key: str, payload: str, bulk: str | None, version: int, at: int, writer: str, origin_host: str, epoch: int) -> _Program[Statement, object]:
+    ...
+
+def bulk_candidates_statement(prefix: str, table: str, fields: tuple, limit: int) -> _Program[Statement, object]:
+    ...
+
+def unmoved_count_statement(prefix: str, table: str, fields: tuple) -> _Program[Statement, object]:
+    ...
+
+def move_bulk_statement(prefix: str, table: str, moves: str) -> _Program[Statement, object]:
     ...
 
 def delete_row_statement(prefix: str, table: str, key: str, version: int) -> _Program[Statement, object]:

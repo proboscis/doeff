@@ -6,7 +6,7 @@
 ;;     前の行と同じ値になる。保存の綴りは解かずに継ぐので欄の並びは違い得る — 綴りを JSON として読んだ写像が分ける前と同じ。同じ欄が両方に
 ;;     在れば payload の値。
 ;;   - ListRows の fields が大きい欄を 1 つも含まなければ、DB へ流れた文は列 bulk を選ばない(含むか fields が無ければ選ぶ)。
-;; 行を分けるのは今の版の書きでなく検の素の UPDATE(分ける書きは次の版)。
+;; 分けた行と分けない行の比べは、検の素の UPDATE で列を置き直して作る(書きは大きい欄を分けて置く — 版 2 の書きの検は test_bulk_moves.hy)。
 (require doeff-hy.macros [deftest defk <- val var on-raise])
 (import hashlib)
 (import json)
@@ -140,14 +140,14 @@
 
 (defn split-rows [prefix #^ (get dict #(str str)) overrides]
   "置いた行の大きい欄を、検の素の UPDATE で列 bulk に分けるため(大きい欄の無い行は触らない)。overrides = 鍵 → bulk に置く綴り(分けた
-   綴りの代わり — 同じ欄が両方に在る行を作る)。"
+   綴りの代わり — payload に値の全部を置き、同じ欄が両方に在る行を作る)。置いた時の列の分け方に依らず、2 つの列を合わせた値から分け直す。"
   (with [connection (open-postgres)]
     (for [#(name _) (.items VALUES)]
       (setv key (key-text #(name)))
-      (setv payload (get (.fetchone (.execute connection (.format "SELECT payload FROM {}state_rows WHERE ledger = 'notes' AND key = %s" prefix)
-                                             #(key)))
-                        0))
-      (setv value (json.loads payload))
+      (setv #(stored stored-bulk) (.fetchone (.execute connection (.format "SELECT payload, bulk FROM {}state_rows WHERE ledger = 'notes' AND key = %s" prefix)
+                                                       #(key))))
+      (setv value (| (if (is stored-bulk None) {} (json.loads stored-bulk)) (json.loads stored)))
+      (setv payload (canonical-json value))
       (setv bulk (dfor #(field v) (.items value) :if (in field BULK) field v))
       (when (or bulk (in name overrides))
         (setv kept (dfor #(field v) (.items value) :if (not-in field BULK) field v))
@@ -155,6 +155,17 @@
                   #((if (in name overrides) payload (canonical-json kept))
                     (.get overrides name (canonical-json bulk))
                     key))))))
+
+
+(defn join-rows [prefix]
+  "置いた行を、検の素の UPDATE で値の全部を payload に置いた形(列 bulk が NULL — 前の版の書きの形)に戻すため。"
+  (with [connection (open-postgres)]
+    (for [name VALUES]
+      (setv key (key-text #(name)))
+      (setv #(stored stored-bulk) (.fetchone (.execute connection (.format "SELECT payload, bulk FROM {}state_rows WHERE ledger = 'notes' AND key = %s" prefix)
+                                                       #(key))))
+      (.execute connection (.format "UPDATE {}state_rows SET payload = %s, bulk = NULL WHERE ledger = 'notes' AND key = %s" prefix)
+                #((canonical-json (| (if (is stored-bulk None) {} (json.loads stored-bulk)) (json.loads stored))) key)))))
 
 
 (defn stored-columns [prefix #^ str name]
@@ -214,6 +225,8 @@
   (val counts (StatementCounts))
   (try
     (pg-run connections store counts (put-notes))
+    (join-rows store.prefix)
+    (assert (is (get (stored-columns store.prefix "n1") 1) None))
     (val whole (pg-run connections store counts (read-everything)))
     (split-rows store.prefix {})
     ;; 分けた: n1 と n2 の大きい欄は列 bulk に在り、payload に無い。n3 は bulk が NULL。
@@ -265,8 +278,8 @@
 
 
 (deftest test-a-write-over-a-split-row-keeps-its-bulk-fields
-  ;; 書きの土台の読み(行の錠の読み)も payload と bulk を合わせる: 題だけを書く書きの値・行・変更の列は大きい欄を持ち、書いた行は値の全部を
-  ;; payload に置いて列 bulk を NULL にする(今の版の書き)。
+  ;; 書きの土台の読み(行の錠の読み)も payload と bulk を合わせる: 題だけを書く書きの値・行・変更の列は大きい欄を持ち、書いた行は大きい欄を
+  ;; 列 bulk に、残りを payload に置く。
   {:skip-if (not PG-DSN) :skip-reason PG-SKIP-REASON}
   (val connections (postgres-connections))
   (val store (run-sql connections (prepare-records-store DATABASE DATABASE SCHEMA (fresh-prefix))))
@@ -280,8 +293,10 @@
     (val t-payload-bulk (stored-columns store.prefix "n1"))
     (val payload (get t-payload-bulk 0))
     (val bulk (get t-payload-bulk 1))
-    (assert (is bulk None) bulk)
-    (assert (= (frozen-json-object (json.loads payload) "payload") expected) payload)
+    (assert (= bulk (canonical-json (dfor #(field v) (.items (get VALUES "n1")) :if (in field BULK) field v))) bulk)
+    (assert (= payload (canonical-json (dfor #(field v) (.items (| {"id" "n1" "state" "open"} (get VALUES "n1") {"title" "alpha-2"}))
+                                             :if (not-in field BULK) field v)))
+            payload)
     (with [connection (open-postgres)]
       (val change (get (.fetchone (.execute connection (.format "SELECT payload FROM {}row_changes WHERE ledger = 'notes' AND key = %s ORDER BY seq DESC LIMIT 1"
                                                                 store.prefix)

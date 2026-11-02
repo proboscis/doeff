@@ -216,7 +216,7 @@
 (defenum LockPhase WAIT HOLD)
 (val LOCK-METRIC "records_lock_{}_{}_{}")
 ;; 錠の単位ごとの書きの操作の名(_pg.hy の handler と回収が名乗る — 単位の名は pg_sql の table-unit・ROWS-UNIT・stream-unit)。
-(val TABLE-LOCK-OPERATIONS #("put-row" "put-rows" "put-rows-append-events" "sweep-rows"))
+(val TABLE-LOCK-OPERATIONS #("put-row" "put-rows" "put-rows-append-events" "sweep-rows" "move-bulk"))
 (val ROWS-LOCK-OPERATIONS #("prune-changes" "forget-write-keys"))
 (val STREAM-LOCK-OPERATIONS #("append-event" "append-events" "put-rows-append-events" "sweep-stream"))
 

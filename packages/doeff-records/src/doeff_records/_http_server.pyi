@@ -36,6 +36,7 @@ class MaintenancePlan:
     keep_seconds: float
     archive: Callable | None = None
     archive_events: Callable | None = None
+    move_bulk: bool = True
 
 @dataclass(frozen=True, kw_only=True)
 class RepoCommit:
