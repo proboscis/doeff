@@ -8,7 +8,7 @@
 (import doeff [with-handlers DoExpr EffectBase Program])
 (import doeff_core_effects [Ask])
 (import doeff_core_effects [reader])
-(import doeff_core_effects [Spawn Task Wait])
+(import doeff_core_effects [Discard Spawn Task Wait])
 (import doeff_time [Delay RaceOutcome RaceWithin TicksOutcome WaitTicks])
 (import doeff_cluster [now-epoch-ms])
 (import doeff_cluster [ProcessesOf])
@@ -106,7 +106,7 @@
 
 (defk passable-body [key]
   {:pre [(: key str)] :post [(: % int)] :tags {:context "doeff-cluster-test" :role "program"}}
-  "sim の外側が答える物(scheduler の Spawn / Wait・時計の Delay / GetTime と期限つきの待ち RaceWithin / WaitTicks)だけを使う本体: 子の task を
+  "sim の外側が答える物(scheduler の Spawn / Wait / Discard・時計の Delay / GetTime と期限つきの待ち RaceWithin / WaitTicks)だけを使う本体: 子の task を
    起こして待ち、経った時間と期限つきの待ちの答えを盤の key に書いてから、準備できたと報告し続ける。"
   (<- started int (now-epoch-ms))
   (<- child Task (Spawn (do! (<- (Delay 0.5)) 21)))
@@ -116,8 +116,11 @@
   (<- raced RaceOutcome (RaceWithin #(raced-task) 5.0))
   (<- ticked-task Task (Spawn (do! (<- (Delay 0.25)) 9)))
   (<- ticked TicksOutcome (WaitTicks ticked-task 0.1 10))
+  ;; 走り続ける task を巻き戻さずに捨てる(Discard — scheduler の effect)。捨てた後も本体は続く。
+  (<- dropped Task (Spawn (do! (<- (Delay 60.0)) 0)))
+  (<- (Discard dropped))
   (<- (WriteShared key (OpaqueJson.of {"answer" (* 2 half) "elapsedMs" (- ended started)
-                                       "raced" raced.value "ticked" ticked.value})))
+                                       "raced" raced.value "ticked" ticked.value "discarded" True})))
   (while True
     (<- (ReportReady True "通った"))
     (<- (Delay 1.0)))

@@ -11,6 +11,7 @@ from doeff_core_effects import Gather as Gather
 from doeff_core_effects import Wait as Wait
 from doeff_core_effects import Race as Race
 from doeff_core_effects import Cancel as Cancel
+from doeff_core_effects import Discard as Discard
 from doeff_core_effects import CreatePromise as CreatePromise
 from doeff_core_effects import CompletePromise as CompletePromise
 from doeff_core_effects import FailPromise as FailPromise
