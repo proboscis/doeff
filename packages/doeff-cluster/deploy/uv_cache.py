@@ -10,7 +10,8 @@ cache で依存を取り込むと、wheel の無い package(free-threaded の 3.
   upkeep   worker の起動の準備(deploy/boot.sh の doeff_uv_cache_upkeep)が背後で 1 度起こす: 環境変数 DOEFF_UV_CACHE_SEED_URL が在れば
            seed(DOEFF_UV_CACHE_SEED_SECRET = --secret・空きが DOEFF_UV_CACHE_SEED_MIN_FREE_GIB(既定 50)を下回れば入れない)、
            続けて DOEFF_UV_CACHE_GC_DAYS が在れば gc(--idle-days = その値・--venvs = DOEFF_UV_CACHE_GC_VENVS を `:` で分けた dir・
-           --links = DOEFF_UV_CACHE_GC_LINK_ROOTS を `:` で分けた dir・--every-seconds = DOEFF_UV_CACHE_GC_EVERY_SECONDS(既定 72000))、
+           --links = DOEFF_UV_CACHE_GC_LINK_ROOTS を `:` で分けた dir・--every-seconds = DOEFF_UV_CACHE_GC_EVERY_SECONDS(既定 72000)・
+           --size-budget-gib = DOEFF_UV_CACHE_GC_SIZE_BUDGET_GIB(無ければ予算なし)・--floor-days = DOEFF_UV_CACHE_GC_FLOOR_DAYS(既定 1))、
            続けて DOEFF_UV_CACHE_SEED_REFRESH_PROJECTS が在り、環境変数 NODE_NAME が DOEFF_UV_CACHE_SEED_REFRESH_NODE と同じ node でだけ
            refresh(--url = DOEFF_UV_CACHE_SEED_URL・--project = その値を `:` で分けた dir・--every-seconds =
            DOEFF_UV_CACHE_SEED_REFRESH_EVERY_SECONDS(既定 72000)— 置き場の写しを置き直す node を 1 つに限り、同じ時に起きる worker が
@@ -43,6 +44,11 @@ cache で依存を取り込むと、wheel の無い package(free-threaded の 3.
                          --venvs と --links の外に在ると守れないので、置き場を必ずどちらかに渡す。索引が指す項目を消しても、uv は
                          取り寄せ直すだけで壊れない(2026-11-01 に uv 0.12.19 で確かめた — 索引の指す項目を消した後の install は
                          「uncached distribution」として取り寄せ直した)。
+           予算(--size-budget-gib)を渡すと、期限の消しの後に、cache だけが持つ byte(cache の項目 — 展開済みの wheel・環境・一時の物 — の
+           file のうち、hardlink の全部が cache の項目の中に在る物と dir の byte)の和を数え、予算を越えていれば、最後に使った刻の古い
+           順に、--floor-days 日(既定 1)より前で、cache の外の venv が hardlink で指さず(展開済みの wheel)、上の決まり(残る venv の
+           symlink・走っている process)に当たらない項目を、和が予算に収まるまで消す。venv が hardlink で持つ byte は venv の持ち分で、
+           消しても disk が戻らないので数えない。
            消す物は先に同じ dir の中の別の名へ rename し(uv からは即座に見えなくなる)、その後で中身を消す。前と後の数(項目の数・file の
            数・disk の byte・file system の空き)を答えに載せる。--every-seconds を渡すと、前の gc の印(.doeff-uv-gc.json)がその秒より
            新しい時は何もしない。同じ cache の gc と seed は錠(.doeff-uv-gc.lock・.doeff-uv-seed.lock)で 1 つに限る。
@@ -56,9 +62,11 @@ compression.zstd・型の註の前方の参照は 3.14 の遅れて読む註で�
 """
 
 import argparse
+import array
 import base64
 import bisect
 import contextlib
+import dataclasses
 import datetime
 import email.utils
 import fcntl
@@ -726,14 +734,78 @@ class Unit:
     links: frozenset[str] = frozenset()
 
 
+class Ledger:
+    """予算の数え: cache の項目ごとの持ち分を、hardlink の inode で数える物。
+
+    hardlink の数 1 の file と dir の byte はその項目だけの物(own)。数 2 以上の file は inode で数え、見た link の数(seen — cache の
+    項目の中の link)が hardlink の数より少ない inode は cache の外(venv)も指す物(pinned)で、予算に数えない。pinned でない inode は
+    cache の項目の中だけで指される — 指す項目を全部消せば disk が戻るので、1 度だけ数える(展開済みの wheel と環境が同じ中身を指す時)。
+    """
+
+    def __init__(self) -> None:
+        self.own: dict[Path, int] = {}
+        self.inodes: dict[Path, array.array] = {}
+        self.size: dict[int, int] = {}
+        self.nlink: dict[int, int] = {}
+        self.seen: dict[int, int] = {}
+        self.pinned: set[int] = set()
+
+    def add(self, path: Path, dirs: list[os.stat_result], files: list[os.stat_result]) -> None:
+        own = sum(st.st_blocks * 512 for st in dirs)
+        inodes = array.array("q")
+        for st in files:
+            if st.st_nlink <= 1:
+                own += st.st_blocks * 512
+                continue
+            inodes.append(st.st_ino)
+            self.size[st.st_ino] = st.st_blocks * 512
+            self.nlink[st.st_ino] = st.st_nlink
+            self.seen[st.st_ino] = self.seen.get(st.st_ino, 0) + 1
+        self.own[path] = own
+        if inodes:
+            self.inodes[path] = inodes
+
+    def close(self, kept: Iterable[Path]) -> None:
+        """数え終えた後に 1 度: kept(残る項目)の外の持ち分を落とし、cache の外も指す inode を決める。kept の外の項目(期限の消しで
+        消した物)は hardlink の数 1 の file だけを持つので、inode の数えは変わらない。"""
+        keep = set(kept)
+        for path in [p for p in self.own if p not in keep]:
+            self.release(path)
+        self.pinned = {ino for ino, seen in self.seen.items() if self.nlink[ino] > seen}
+        self.nlink.clear()
+
+    def holds_outside(self, path: Path) -> bool:
+        """path の項目の file のどれかを cache の外(venv)も hardlink で指すか。"""
+        return any(ino in self.pinned for ino in self.inodes.get(path, ()))
+
+    def usage(self) -> int:
+        """cache だけが持つ byte の和。"""
+        shared = sum(
+            self.size[ino] for ino, seen in self.seen.items() if seen and ino not in self.pinned
+        )
+        return sum(self.own.values()) + shared
+
+    def release(self, path: Path) -> int:
+        """path の項目を数えから外し、それで戻る byte(own と、cache の中の最後の link だった pinned でない inode)を返す。"""
+        freed = self.own.pop(path, 0)
+        for ino in self.inodes.pop(path, ()):
+            self.seen[ino] -= 1
+            if self.seen[ino] == 0 and ino not in self.pinned:
+                freed += self.size[ino]
+        return freed
+
+
 def measure(
-    path: Path, archive_roots: tuple[str, ...] = ()
+    path: Path, archive_roots: tuple[str, ...] = (), ledger: Ledger | None = None
 ) -> tuple[Tally, bool, float, frozenset[str]]:
     """path の下の file を数え、hardlink を持つ file が在るか・最後の変更の刻・中の symlink が指す展開済みの wheel の項目を返す
-    (link は辿らない)。archive_roots = cache の archive-v* の dir の path(末尾の / つき)。"""
+    (link は辿らない)。archive_roots = cache の archive-v* の dir の path(末尾の / つき)。ledger を渡すと、予算の数えに path の
+    持ち分を載せる。"""
     walked = list(os.walk(path))
     dirs = list(_lstats([path, *(Path(top, name) for top, names, _ in walked for name in names)]))
     files = list(_lstats(Path(top, name) for top, _, names in walked for name in names))
+    if ledger is not None:
+        ledger.add(path, dirs, files)
     linked = [st for st in files if st.st_nlink > 1 and not stat.S_ISLNK(st.st_mode)]
     tally = Tally(
         items=1,
@@ -883,9 +955,13 @@ class Survey:
 
 
 def _unit(
-    path: Path, kind: str, last_used: float | None = None, archive_roots: tuple[str, ...] = ()
+    path: Path,
+    kind: str,
+    last_used: float | None = None,
+    archive_roots: tuple[str, ...] = (),
+    ledger: Ledger | None = None,
 ) -> Unit:
-    tally, shared, newest, links = measure(path, archive_roots)
+    tally, shared, newest, links = measure(path, archive_roots, ledger)
     return Unit(path, kind, tally, shared, newest if last_used is None else last_used, links)
 
 
@@ -962,6 +1038,38 @@ def remove(unit: Unit) -> bool:
     return True
 
 
+def trim(
+    units: list[Unit],
+    ledger: Ledger,
+    size_budget: int,
+    floor_cutoff: float,
+    used: list[str] | None,
+    kept: frozenset[str],
+) -> dict[str, object]:
+    """cache だけが持つ byte の和が size_budget を越えていれば、最後に使った刻の古い項目から、和が size_budget に収まるまで消す(頭の註の予算)。
+    消せる項目は is_doomed の決まりを floor_cutoff で当て、展開済みの wheel は cache の外の venv が hardlink で指さない物に限る
+    (cache の中の環境だけが指す物は消せる — 戻る byte は指す項目を全部消した時に数える)。"""
+    start = ledger.usage()
+    usage = start
+    removed = {"archives": 0, "environments": 0, "temporaries": 0}
+    plural = {"archive": "archives", "environment": "environments", "temporary": "temporaries"}
+    for unit in sorted(units, key=lambda u: u.last_used):
+        if usage <= size_budget:
+            break
+        candidate = dataclasses.replace(unit, shared=ledger.holds_outside(unit.path))
+        if is_doomed(candidate, floor_cutoff, used, kept) and remove(unit):
+            usage -= ledger.release(unit.path)
+            removed[plural[unit.kind]] += 1
+    return {
+        "bytes": size_budget,
+        "usage-before": start,
+        "usage-after": usage,
+        "freed": start - usage,
+        "removed": removed,
+        "within": usage <= size_budget,
+    }
+
+
 def disk_free(path: Path) -> int:
     st = os.statvfs(path)
     return st.f_bavail * st.f_frsize
@@ -976,9 +1084,12 @@ def gc(
     every_seconds: float | None,
     proc: Path = Path("/proc"),
     link_roots: list[Path] | None = None,
+    size_budget: int | None = None,
+    floor_days: float = 1.0,
 ) -> dict[str, object]:
     """古い cache の項目と使われない venv を、数えてから消すため(頭の註の gc)。link_roots = 消さずに、中の venv の symlink が指す
-    展開済みの wheel の項目だけを守る置き場(UV_LINK_MODE=symlink の venv を持つ dir — --venvs の外の置き場)。"""
+    展開済みの wheel の項目だけを守る置き場(UV_LINK_MODE=symlink の venv を持つ dir — --venvs の外の置き場)。size_budget = cache だけが
+    持つ byte の上限(None なら期限だけで消す)・floor_days = 予算で消す項目の、最後に使ってからの最短の日数。"""
     verb = "count" if dry_run else "gc"
     mark = cache / GC_MARK
     if (
@@ -1033,13 +1144,32 @@ def gc(
             if unit.path not in removed_paths
             for entry in unit.links
         )
-        archives = [_unit(entry, "archive") for entry in children(cache, ARCHIVE_PREFIX)]
-        removed = {
-            **{kind: len(units) for kind, units in gone.items()},
-            "archives": sum(
-                1 for unit in archives if is_doomed(unit, cutoff, used, kept) and remove(unit)
-            ),
-        }
+        # 予算を数える時は、venv を消して変わった hardlink の数で、残る cache の項目の持ち分を数え直す。
+        ledger = Ledger() if size_budget is not None else None
+        archives = [
+            _unit(entry, "archive", ledger=ledger) for entry in children(cache, ARCHIVE_PREFIX)
+        ]
+        expired = [
+            unit for unit in archives if is_doomed(unit, cutoff, used, kept) and remove(unit)
+        ]
+        removed = {**{kind: len(units) for kind, units in gone.items()}, "archives": len(expired)}
+        if ledger is not None and size_budget is not None:
+            expired_paths = {unit.path for unit in expired}
+            survivors = [
+                *(unit for unit in archives if unit.path not in expired_paths),
+                *(
+                    _unit(unit.path, unit.kind, unit.last_used, ledger=ledger)
+                    for unit in [*before.environments, *before.temporaries]
+                    if unit.path not in removed_paths
+                ),
+            ]
+            ledger.close(unit.path for unit in survivors)
+            trimmed = trim(
+                survivors, ledger, size_budget, time.time() - floor_days * 86400, used, kept
+            )
+            trimmed["floor-days"] = floor_days
+            result["size-budget"] = trimmed
+            say(f"gc: 予算 — {json.dumps(trimmed, ensure_ascii=False, sort_keys=True)}")
         after = survey(cache, venv_roots, depth, link_roots)
         result.update(
             {
@@ -1079,6 +1209,9 @@ class UpkeepSettings:
     refresh_every_seconds: float = 72000.0
     # refresh が撃つ uv(`uv run` が子に渡す UV — 無ければ PATH の uv)。
     uv: str = "uv"
+    # gc の予算(cache だけが持つ byte の上限 — None なら期限だけ)と、予算で消す項目の最短の日数。
+    gc_size_budget: int | None = None
+    gc_floor_days: float = 1.0
 
     @property
     def refreshes(self) -> bool:
@@ -1092,6 +1225,7 @@ class UpkeepSettings:
         venvs = tuple(Path(p) for p in env.get("DOEFF_UV_CACHE_GC_VENVS", "").split(":") if p)
         links = tuple(Path(p) for p in env.get("DOEFF_UV_CACHE_GC_LINK_ROOTS", "").split(":") if p)
         projects = env.get("DOEFF_UV_CACHE_SEED_REFRESH_PROJECTS", "")
+        size_budget = env.get("DOEFF_UV_CACHE_GC_SIZE_BUDGET_GIB", "").strip()
         return cls(
             node=env.get("NODE_NAME", "").strip(),
             refresh_node=env.get("DOEFF_UV_CACHE_SEED_REFRESH_NODE", "").strip(),
@@ -1107,6 +1241,8 @@ class UpkeepSettings:
             gc_venvs=venvs,
             gc_every_seconds=float(env.get("DOEFF_UV_CACHE_GC_EVERY_SECONDS", "72000")),
             gc_link_roots=links,
+            gc_size_budget=int(float(size_budget) * (1 << 30)) if size_budget else None,
+            gc_floor_days=float(env.get("DOEFF_UV_CACHE_GC_FLOOR_DAYS", "1")),
         )
 
 
@@ -1145,6 +1281,8 @@ def upkeep(cache: Path, settings: UpkeepSettings, part: int = PART) -> dict[str,
                 dry_run=False,
                 every_seconds=settings.gc_every_seconds,
                 link_roots=[r.resolve() for r in settings.gc_link_roots if r.is_dir()],
+                size_budget=settings.gc_size_budget,
+                floor_days=settings.gc_floor_days,
             )
         except OSError as error:
             say(f"gc: 片付けられない — {error}")
@@ -1254,6 +1392,17 @@ def main(argv: list[str] | None = None) -> int:
             p.add_argument(
                 "--every-seconds", type=float, help="前の gc からこの秒が経っていなければ何もしない"
             )
+            p.add_argument(
+                "--size-budget-gib",
+                type=float,
+                help="期限の消しの後、cache だけが持つ byte がこれを越えれば古い順に消す",
+            )
+            p.add_argument(
+                "--floor-days",
+                type=float,
+                default=1.0,
+                help="予算で消す項目の、最後に使ってからの最短の日数",
+            )
     args = parser.parse_args(argv)
     cache: Path = args.cache.resolve()
     match args.verb:
@@ -1309,6 +1458,12 @@ def main(argv: list[str] | None = None) -> int:
                     dry_run=args.verb == "count",
                     every_seconds=getattr(args, "every_seconds", None),
                     link_roots=[r.resolve() for r in args.links if r.is_dir()],
+                    size_budget=(
+                        int(args.size_budget_gib * (1 << 30))
+                        if getattr(args, "size_budget_gib", None) is not None
+                        else None
+                    ),
+                    floor_days=getattr(args, "floor_days", 1.0),
                 )
             )
     return 0
