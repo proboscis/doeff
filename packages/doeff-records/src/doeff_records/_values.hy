@@ -191,7 +191,12 @@
    (DescendingWithin)の tuple(速さだけの宣言 — PostgreSQL の置き場が組ごとに、等号の欄の式を前に置いた並べる式の索引を張り、絞った行の 1 頁だけを辿る。
    等号の欄は indexes に・上から読む欄は descending に在る欄。答えを変えないので repr に出さない — 表の要約を変えない)/
    state-field = 状態の語を持つ欄(states が空なら使わない)/ states・terminal・initial = 状態の語彙・終端の語・生まれる行の語 /
-   operator-paths = operator の宣言の欄(宣言だけ — 置き場の書きの判断は読まない・#2994)/ retention = KeepForever | KeepFor / size-budget = 行の値の JSON の byte の上限(None = 無し)。"
+   operator-paths = operator の宣言の欄(宣言だけ — 置き場の書きの判断は読まない・#2994)/ retention = KeepForever | KeepFor / size-budget = 行の値の JSON の byte の上限(None = 無し)/
+   bulk = 大きい欄の名の tuple(既定 = 空): 置き場が行の値のうちその欄を別の所(PostgreSQL の state_rows の列 bulk)に置いてよい欄で、
+   ListRows の fields が大きい欄を 1 つも含まなければ置き場はその本体を読まない。読みの答え(ReadRow・ReadBatch・fields の無い ListRows・
+   WatchChanges)は分けても同じ値。鍵の欄・索引の欄・上から読む欄・等号の欄(descending-within)・状態の欄(states が在る時の state-field)は
+   大きい欄にできない — どれも置き場が SQL の式で payload から読む欄。大きい欄の where・where-any は索引の欄でないので NotIndexed
+   (admission.where-refusal)。repr は空なら出さない(空の表の要約〔schema_digest〕を変えない — 要約は空でない bulk を足して綴る)。"
   (#^ str name)
   (#^ tuple key-fields)
   (#^ tuple fields)
@@ -205,6 +210,7 @@
   (setv #^ tuple operator-paths #())
   (setv #^ object retention (KeepForever))
   (setv #^ (| int None) size-budget None)
+  (setv #^ tuple bulk (field :default #() :repr False))
   (defn #^ None __post_init__ [self]
     (checked-table-name self.name "TableDecl.name")
     (checked-names self.key-fields "TableDecl.key_fields")
@@ -258,7 +264,17 @@
       (raise (ValueError "KeepFor の表は終端の語(terminal)を持つ")))
     (when (and (is-not self.size-budget None)
                (or (isinstance self.size-budget bool) (not (isinstance self.size-budget int)) (<= self.size-budget 0)))
-      (raise (ValueError (.format "TableDecl.size_budget は正の整数か None: {!r}" self.size-budget)))))
+      (raise (ValueError (.format "TableDecl.size_budget は正の整数か None: {!r}" self.size-budget))))
+    (checked-names self.bulk "TableDecl.bulk")
+    (for [name self.bulk]
+      (when (not (self.declares name)) (raise (ValueError (.format "大きい欄 {!r} が fields に無い(宣言の外の欄)" name))))
+      (when (in name self.key-fields) (raise (ValueError (.format "鍵の欄 {!r} を大きい欄にはできない" name))))
+      (when (in name self.indexes) (raise (ValueError (.format "索引の欄 {!r} を大きい欄にはできない" name))))
+      (when (in name self.descending) (raise (ValueError (.format "上から読む欄 {!r} を大きい欄にはできない" name))))
+      (when (any (gfor pair self.descending-within (= pair.equal name)))
+        (raise (ValueError (.format "等号の欄 {!r} を大きい欄にはできない" name))))
+      (when (and self.states (= name self.state-field))
+        (raise (ValueError (.format "状態の欄 {!r} を大きい欄にはできない" name))))))
 
   (defn #^ tuple field-names [self]
     "宣言した欄の名(宣言の順)。"

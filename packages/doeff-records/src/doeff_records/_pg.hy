@@ -1346,19 +1346,23 @@
   ;; 表の欄の式の索引が在る欄は表の欄の式で照らす(作り終える前の欄は前の文の形 — pg_sql の頭の註)。
   (val scoped (.scoped-fields store.indexes ask.table))
   (val ordered-by (if (is-not ask.descending-by None) ask.descending-by ask.ascending-by))
+  ;; 返す欄 fields が表の大きい欄を 1 つも含まなければ、文は列 bulk を選ばない(大きい欄の本体を読まない — pg_sql の頭の註の state_rows)。
+  ;; fields が無い読みと、大きい欄を含む読みは payload と bulk を合わせて読む。
+  (val with-bulk (or (is ask.fields None) (any (gfor name ask.fields (in name decl.bulk)))))
   (when (is-not ordered-by None)
     ;; 並べて読む読み(ListRows の註): cursor の位置の (値, 鍵の綴り) を越えた行から 1 頁 + 1 行(続きの有無を知るため)。降順は位置より小さい
     ;; 行・昇順は大きい行。表の上から読む欄は並べる式の索引の順に(昇順は逆に)辿る形(pg_sql の頭の註)。
     (<- top-statement Statement (ordered-rows-statement store.prefix ask.table decl.key-fields scoped ordered-by
                                                         (in ordered-by decl.descending) (is-not ask.ascending-by None) ask.cursor
-                                                        where-json where-any-json ask.limit expiry))
+                                                        where-json where-any-json ask.limit expiry with-bulk))
     (return top-statement))
   (<- statement Statement (list-rows-statement store.prefix ask.table decl.key-fields scoped
                                                (if (is ask.cursor None) None ask.cursor.after-key)
                                                where-json
                                                where-any-json
                                                ask.limit
-                                               expiry))
+                                               expiry
+                                               with-bulk))
   statement)
 
 

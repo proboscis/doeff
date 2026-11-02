@@ -131,7 +131,7 @@ effect と型(定義・期待・答え)は入口 `doeff_records` から読む(`f
 
 ## 表の定義
 
-`TableDecl(name, key_fields, fields, indexes, descending, descending_within, state_field, states, terminal, initial, operator_paths, retention, size_budget)`
+`TableDecl(name, key_fields, fields, indexes, descending, descending_within, state_field, states, terminal, initial, operator_paths, retention, size_budget, bulk)`
 
 - `fields`: 欄の定義 `FieldDecl(name, writers)`(欄の名と、その欄を書く書き手の名の tuple)の tuple。定義した欄はこれで全部
   (載っていない欄への書きは断る)。`writers` は宣言だけで、置き場の書きの判断は書き手の名では断らない(#2994)。
@@ -148,6 +148,13 @@ effect と型(定義・期待・答え)は入口 `doeff_records` から読む(`f
 - `retention`: `KeepForever()`(消さない)か `KeepFor(seconds)`(終端になってから秒の後に読みに出なくなり、その後の最初の書きか
   `SweepExpired` の回収が消して変更の列に `RowRemoved` を出す — 上の保持の期限の項)。
 - `size_budget`: 行の値の JSON(正規の綴り・UTF-8)の byte の上限。
+- `bulk`: 大きい欄の名の tuple(既定 = 空)。置き場が行の値のうちその欄を別の所(PostgreSQL の置き場の `state_rows` の列 `bulk`)に
+  置いてよい欄。読みの答え(`ReadRow`・`ReadBatch`・`fields` の無い `ListRows`・`WatchChanges`)は分けても同じ値で、版・刻・変更の列も
+  変わらない。`ListRows` の `fields` が大きい欄を 1 つも含まなければ、PostgreSQL の置き場は文で列 `bulk` を選ばない(大きい欄の本体を
+  読まない)。鍵の欄・`indexes`・`descending`・`descending_within` の等号の欄・`states` の在る表の `state_field` は大きい欄にできない
+  (作る時に `ValueError`)。大きい欄は索引の欄でないので、`where`・`where_any` で絞る読みは `NotIndexed`。repr に出さず、空でない時だけ
+  表の要約(`schema_digests`)に足す — 大きい欄の無い表の要約は変わらない。今の版の書きは値の全部を `payload` に置き(列 `bulk` は
+  NULL にする)、読みが `payload` と `bulk` を合わせる(同じ欄が両方に在れば `payload` の値)。
 
 追記の列は `StreamDecl(name, writers, retention, size_budget)`(`KeepFor` は積んでから秒の後に読みに出なくなり、その後の回収で消す。消した出来事の冪等キーは
 番号と本文の指紋だけを覚える — 消した後の同じキーの再送も、同じ本文なら前の番号・別の本文なら `Refused`。#3022)。

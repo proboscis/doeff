@@ -38,7 +38,8 @@
         doeff_records._pg [drop-records-tables])
 (import doeff_records [schema-statements writer-lock-key migrate-lock-key]
         doeff_records._pg_sql [in-list changes-statement terminal-rows-statement RowExpiry declared-indexes index-name table-index-name retired-index? table-shaped-index? table-field-index-name ordered-index-name ordered-within-index-name former-field-index-name
-                              whole-field-index-name])
+                              whole-field-index-name list-rows-statement top-rows-statement ordered-rows-statement read-row-statement
+                              lock-row-statement upsert-row-statement STORED-PAYLOAD])
 (import tests.interpreters [session-dsn PG-DSN-VARIABLE pg-skip-reason DATABASE ORIGIN-HOST open-postgres postgres-connections fresh-prefix run-sql prepared-store])
 (import doeff_records._main [store-pressure-pg])
 (import doeff_records._store_choice [StorePressure])
@@ -80,6 +81,7 @@
    "CREATE TABLE IF NOT EXISTS records_write_keys (
            idempotency_key text PRIMARY KEY, body_digest text NOT NULL, answer text NOT NULL, last_seq bigint NOT NULL,
            remembered_at bigint NOT NULL)"
+   "ALTER TABLE records_state_rows ADD COLUMN bulk text"
    "CREATE INDEX IF NOT EXISTS records_append_rows_ledger_at ON records_append_rows (ledger, at)"
    "CREATE INDEX IF NOT EXISTS records_append_rows_group_05a79f06cf3f ON records_append_rows (ledger, (CASE WHEN strpos(((payload::jsonb) ->> 'idempotencyKey'), ':') > 0
                  THEN substr(((payload::jsonb) ->> 'idempotencyKey'), strpos(((payload::jsonb) ->> 'idempotencyKey'), ':') + 1)
@@ -171,6 +173,34 @@
   (for [name per-table]
     (<- per-table-hit (table-shaped-index? "records_" name))
     (assert per-table-hit name)))
+
+
+(deftest test-a-list-without-bulk-fields-names-no-bulk-column
+  ;; ListRows の fields の約束(_pg_sql.hy の頭の註の state_rows の bulk): 大きい欄を 1 つも返さない読み(with-bulk 偽)の文は列 bulk を選ばず、
+  ;; 字面は列 bulk を足す前の文と同じ。返す読み(with-bulk 真 — 既定)と ListRows の外の読み(行 1 つの読み・書きの錠の読み・回収の候補の
+  ;; 読み)は、payload と bulk を合わせた綴り STORED-PAYLOAD を payload の位置で選ぶ。
+  (<- narrow (list-rows-statement "records_" "parts" #("id") (frozenset) None {} {} 10 None False))
+  (assert (= narrow.text "SELECT key, payload, version FROM records_state_rows AS r WHERE ledger = :ledger ORDER BY key COLLATE \"C\" LIMIT :limit")
+          narrow.text)
+  (<- wide (list-rows-statement "records_" "parts" #("id") (frozenset) None {} {} 10 None))
+  (assert (= wide.text (+ "SELECT key, " STORED-PAYLOAD " AS payload, version FROM records_state_rows AS r WHERE ledger = :ledger"
+                          " ORDER BY key COLLATE \"C\" LIMIT :limit"))
+          wide.text)
+  (for [ordered [True False]]
+    (<- top-narrow (top-rows-statement "records_" "parts" #("id") (frozenset) "note" ordered None {} {} 10 None False))
+    (assert (and (.startswith top-narrow.text "SELECT key, payload, version FROM") (not-in "bulk" top-narrow.text)) top-narrow.text)
+    (<- top-wide (top-rows-statement "records_" "parts" #("id") (frozenset) "note" ordered None {} {} 10 None))
+    (assert (.startswith top-wide.text (+ "SELECT key, " STORED-PAYLOAD " AS payload, version FROM")) top-wide.text)
+    (<- up-narrow (ordered-rows-statement "records_" "parts" #("id") (frozenset) "note" ordered True None {} {} 10 None False))
+    (assert (not-in "bulk" up-narrow.text) up-narrow.text))
+  (<- one (read-row-statement "records_" "parts" "[\"p1\"]" None))
+  (<- locked (lock-row-statement "records_" "parts" "[\"p1\"]"))
+  (<- terminal (terminal-rows-statement "records_" "parts" "state" #("closed") False 5))
+  (for [statement [one locked terminal]]
+    (assert (.startswith statement.text (+ "SELECT key, " STORED-PAYLOAD " AS payload, version, updated_at FROM")) statement.text))
+  ;; 今の版の書きは値の全部を payload に置き、古い bulk を残さない。
+  (<- upsert (upsert-row-statement "records_" "parts" "[\"p1\"]" "{}" 1 0 "w" "h" 1))
+  (assert (in "DO UPDATE SET payload = EXCLUDED.payload, bulk = NULL," upsert.text) upsert.text))
 
 
 (deftest test-the-lock-keys-have-the-text-of-the-version-before-880
