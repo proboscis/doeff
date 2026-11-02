@@ -10,7 +10,11 @@ cache で依存を取り込むと、wheel の無い package(free-threaded の 3.
   upkeep   worker の起動の準備(deploy/boot.sh の doeff_uv_cache_upkeep)が背後で 1 度起こす: 環境変数 DOEFF_UV_CACHE_SEED_URL が在れば
            seed(DOEFF_UV_CACHE_SEED_SECRET = --secret・空きが DOEFF_UV_CACHE_SEED_MIN_FREE_GIB(既定 50)を下回れば入れない)、
            続けて DOEFF_UV_CACHE_GC_DAYS が在れば gc(--idle-days = その値・--venvs = DOEFF_UV_CACHE_GC_VENVS を `:` で分けた dir・
-           --links = DOEFF_UV_CACHE_GC_LINK_ROOTS を `:` で分けた dir・--every-seconds = DOEFF_UV_CACHE_GC_EVERY_SECONDS(既定 72000))。どちらが落ちても訳を 1 行出して続け、0 で終わる。
+           --links = DOEFF_UV_CACHE_GC_LINK_ROOTS を `:` で分けた dir・--every-seconds = DOEFF_UV_CACHE_GC_EVERY_SECONDS(既定 72000))、
+           続けて DOEFF_UV_CACHE_SEED_REFRESH_PROJECTS が在り、環境変数 NODE_NAME が DOEFF_UV_CACHE_SEED_REFRESH_NODE と同じ node でだけ
+           refresh(--url = DOEFF_UV_CACHE_SEED_URL・--project = その値を `:` で分けた dir・--every-seconds =
+           DOEFF_UV_CACHE_SEED_REFRESH_EVERY_SECONDS(既定 72000)— 置き場の写しを置き直す node を 1 つに限り、同じ時に起きる worker が
+           並べて組まない)。どれが落ちても訳を 1 行出して続け、0 で終わる。
   pack    cache を tar.zst 1 file にする。入れない物: 錠(.lock)・作りかけ(.tmp*)・組みの一時の環境(builds-v*)・`uv run --with` の
            環境(environments-v*)・interpreter の問い合わせの控え(interpreter-v*)。
   publish  pack した file を S3 互換の object storage の URL(path の形 http(s)://<host>/<bucket>/<key>)へ PUT する。
@@ -18,6 +22,12 @@ cache で依存を取り込むと、wheel の無い package(free-threaded の 3.
            展開してから、cache に無い物だけを rename で入れる(在る物は替えない — 走っている uv の索引と展開済みの項目を壊さない)。
            展開済みの wheel の項目(archive-v*)を先に入れ、索引(wheels-v*・sdists-v* など)を後に入れる。入れ終えたら印を書く。印が在れば
            何もしない(--force で入れ直す)。
+  refresh  置き場の写しを、渡した project の lock(--project の dir の uv.lock)に合わせて作り直して置く。cache の中の一時の dir
+           (.doeff-uv-refresh-*)の空の cache に、project ごとに `uv sync --frozen --no-install-workspace --no-install-local --all-groups
+           --all-packages` で第三者の依存だけを取り込み(venv も一時の dir に置く — project の dir に .venv を作らない)、その cache を pack
+           して PUT する。lock の中身の hash(並べた uv.lock の sha256)を object の metadata(x-amz-meta-doeff-uv-locks)に載せ、置いてある
+           写しの hash が同じ時と、置いた刻(Last-Modified)が --every-seconds より新しい時は組まない(--force で組む)。空きが --min-free-gib
+           を下回れば組まない。同じ cache の refresh は錠(.doeff-uv-refresh.lock)で 1 つに限る。
   count    gc と同じ数えだけをする(何も消さない)。
   gc       数えてから消す。消す物:
              venv        --venvs の dir の下(深さ --depth まで)の .venv のうち、最後に使った刻(dir・pyvenv.cfg・bin・site-packages の
@@ -49,6 +59,7 @@ import base64
 import bisect
 import contextlib
 import datetime
+import email.utils
 import fcntl
 import hashlib
 import hmac
@@ -58,6 +69,7 @@ import os
 import shutil
 import ssl
 import stat
+import subprocess
 import sys
 import tarfile
 import tempfile
@@ -76,6 +88,20 @@ GC_LOCK = ".doeff-uv-gc.lock"
 # seed の展開の一時の dir と gc の消しの一時の名の頭(cache の直下 — 同じ file system の rename で入れ・退ける)。
 SEED_STAGE = ".doeff-uv-seed-"
 GC_TRASH = ".doeff-uv-gc-"
+REFRESH_LOCK = ".doeff-uv-refresh.lock"
+REFRESH_BUILD = ".doeff-uv-refresh-"
+# 置いた写しの lock の中身の hash を載せる object の metadata の header(S3 は x-amz-meta-* を HEAD でそのまま返す)。
+LOCKS_META = "x-amz-meta-doeff-uv-locks"
+# refresh が project ごとに撃つ uv の動詞と旗(第三者の依存だけを取り込む — workspace と path の package は組まない)。
+SYNC_ARGS = (
+    "sync",
+    "-q",
+    "--frozen",
+    "--no-install-workspace",
+    "--no-install-local",
+    "--all-groups",
+    "--all-packages",
+)
 # pack が入れない cache の直下の名(頭の一致)。uv の bucket の版の番号は uv の版で変わるので、頭の名で引く。
 # この道具の印・錠・一時の名・log(.doeff-uv-*)も入れない。
 PACK_SKIP_PREFIXES = (".lock", ".tmp", "builds-v", "environments-v", "interpreter-v", ".doeff-uv-")
@@ -216,10 +242,16 @@ def _connection(url: str, timeout: float) -> tuple[http.client.HTTPConnection, s
 
 
 def http_put_file(
-    url: str, path: Path, credentials: Credentials | None, region: str, timeout: float
+    url: str,
+    path: Path,
+    credentials: Credentials | None,
+    region: str,
+    timeout: float,
+    meta: dict[str, str] | None = None,
 ) -> dict[str, str]:
+    """path を url へ PUT する(meta = object に載せる x-amz-meta-* の header — 署名に入れる)。"""
     size = path.stat().st_size
-    headers = {"Content-Length": str(size), "Content-Type": "application/zstd"}
+    headers = {"Content-Length": str(size), "Content-Type": "application/zstd", **(meta or {})}
     if credentials:
         headers = sigv4_headers(
             "PUT", url, region, credentials, datetime.datetime.now(datetime.UTC), headers=headers
@@ -481,6 +513,124 @@ def seed(
     say(
         f"seed: {source} の {size} byte を入れた({result['seconds']} 秒 — 取り寄せ {result['fetch-seconds']} 秒・展開 "
         f"{result['extract-seconds']} 秒・入れた {merged.moved}・在った {merged.skipped})"
+    )
+    return result
+
+
+# ── refresh(置き場の写しを lock に合わせて作り直す)──────────────────────────
+
+
+def locks_digest(projects: Iterable[Path]) -> str:
+    """渡した順の project の uv.lock の中身の sha256(project の dir の名と中身の長さで区切る — 並びと境目の違いも別の hash)。"""
+    digest = hashlib.sha256()
+    for project in projects:
+        body = (project / "uv.lock").read_bytes()
+        digest.update(f"{project.name}\0{len(body)}\0".encode())
+        digest.update(body)
+    return digest.hexdigest()
+
+
+@dataclass(frozen=True)
+class Published:
+    """置き場に在る写しの、載せた lock の hash(無ければ空)と置いた刻(epoch 秒)。"""
+
+    digest: str
+    at: float
+
+
+def published(
+    url: str, credentials: Credentials | None, region: str, timeout: float
+) -> Published | None:
+    """置き場の写しを HEAD で読む(無ければ None)。"""
+    head, _ = _request("HEAD", url, credentials, region, timeout, {})
+    if head.status == 404:
+        return None
+    if head.status != 200:
+        raise SystemExit(f"uv-cache: HEAD {url} が HTTP {head.status}")
+    modified = head.getheader("Last-Modified", "")
+    at = email.utils.parsedate_to_datetime(modified).timestamp() if modified else 0.0
+    return Published(digest=head.getheader(LOCKS_META, "").strip(), at=at)
+
+
+def sync_into(uv: str, project: Path, cache: Path, venv: Path) -> dict[str, object]:
+    """project の第三者の依存を cache へ取り込む(venv は渡した dir — project の dir に .venv を作らない)。落ちれば
+    CalledProcessError。"""
+    began = time.monotonic()
+    env = {
+        **{k: v for k, v in os.environ.items() if k != "VIRTUAL_ENV"},
+        "UV_PROJECT_ENVIRONMENT": str(venv),
+    }
+    subprocess.run(
+        [uv, *SYNC_ARGS, "--project", str(project), "--cache-dir", str(cache)],
+        env=env,
+        stdin=subprocess.DEVNULL,
+        stdout=sys.stderr,
+        check=True,
+    )
+    return {"project": str(project), "seconds": round(time.monotonic() - began, 1)}
+
+
+def refresh(
+    cache: Path,
+    projects: list[Path],
+    url: str,
+    credentials: Credentials | None,
+    region: str,
+    timeout: float,
+    *,
+    every_seconds: float,
+    min_free: int,
+    force: bool,
+    uv: str,
+) -> dict[str, object]:
+    """置き場の写しが lock より古くならないよう、空の cache に project の依存を取り込み直して置くため(頭の註の refresh)。"""
+    cache.mkdir(parents=True, exist_ok=True)
+    with held(cache / REFRESH_LOCK, wait=False) as got:
+        if not got:
+            say("refresh: 同じ cache の別の refresh が走っている — 組まない")
+            return {"verb": "refresh", "refreshed": False, "reason": "locked"}
+        digest = locks_digest(projects)
+        remote = published(url, credentials, region, timeout)
+        if remote is not None and not force:
+            if remote.digest == digest:
+                say(f"refresh: 置いてある写しの lock の hash が今と同じ({digest[:12]})— 組まない")
+                return {"verb": "refresh", "refreshed": False, "reason": "current", "locks": digest}
+            age = time.time() - remote.at
+            if age < every_seconds:
+                say(f"refresh: 置いてから {round(age)} 秒で {round(every_seconds)} 秒が経っていない — 組まない")
+                return {"verb": "refresh", "refreshed": False, "reason": "recent", "locks": digest}
+        if disk_free(cache) < min_free:
+            say(f"refresh: 空き {disk_free(cache)} byte が下限 {min_free} byte を下回る — 組まない")
+            return {"verb": "refresh", "refreshed": False, "reason": "low-free"}
+        for stale in cache.glob(REFRESH_BUILD + "*"):
+            shutil.rmtree(stale, ignore_errors=True)
+        started = time.monotonic()
+        build = Path(tempfile.mkdtemp(prefix=REFRESH_BUILD, dir=cache))
+        try:
+            synced = [
+                sync_into(uv, project, build / "cache", build / f"venv-{index}")
+                for index, project in enumerate(projects)
+            ]
+            packed = pack(build / "cache", build / Path(urllib.parse.urlsplit(url).path).name)
+            put = http_put_file(
+                url, Path(str(packed["out"])), credentials, region, timeout, {LOCKS_META: digest}
+            )
+        finally:
+            shutil.rmtree(build, ignore_errors=True)
+    result: dict[str, object] = {
+        "verb": "refresh",
+        "refreshed": True,
+        "url": url,
+        "locks": digest,
+        "bytes": packed["bytes"],
+        "synced": synced,
+        "pack-seconds": packed["seconds"],
+        "seconds": round(time.monotonic() - started, 1),
+        "at": datetime.datetime.now(datetime.UTC).isoformat(timespec="seconds"),
+        **put,
+    }
+    say(
+        f"refresh: {url} へ {packed['bytes']} byte を置いた({result['seconds']} 秒 — lock の hash {digest[:12]})"
     )
     return result
 
@@ -868,7 +1018,8 @@ def gc(
 
 @dataclass(frozen=True)
 class UpkeepSettings:
-    """起動の準備の環境変数から読む値(頭の註の upkeep)。seed_url が空なら seed しない・gc_days が None なら gc しない。"""
+    """起動の準備の環境変数から読む値(頭の註の upkeep)。seed_url が空なら seed しない・gc_days が None なら gc しない・
+    refresh_projects が空か node が refresh_node でなければ refresh しない。"""
 
     seed_url: str = ""
     seed_secret: str = ""
@@ -877,13 +1028,31 @@ class UpkeepSettings:
     gc_venvs: tuple[Path, ...] = ()
     gc_every_seconds: float = 72000.0
     gc_link_roots: tuple[Path, ...] = ()
+    node: str = ""
+    refresh_node: str = ""
+    refresh_projects: tuple[Path, ...] = ()
+    refresh_every_seconds: float = 72000.0
+    # refresh が撃つ uv(`uv run` が子に渡す UV — 無ければ PATH の uv)。
+    uv: str = "uv"
+
+    @property
+    def refreshes(self) -> bool:
+        return bool(self.seed_url and self.refresh_projects and self.refresh_node == self.node != "")
 
     @classmethod
     def from_env(cls, env: dict[str, str]) -> Self:
         days = env.get("DOEFF_UV_CACHE_GC_DAYS", "").strip()
         venvs = tuple(Path(p) for p in env.get("DOEFF_UV_CACHE_GC_VENVS", "").split(":") if p)
         links = tuple(Path(p) for p in env.get("DOEFF_UV_CACHE_GC_LINK_ROOTS", "").split(":") if p)
+        projects = env.get("DOEFF_UV_CACHE_SEED_REFRESH_PROJECTS", "")
         return cls(
+            node=env.get("NODE_NAME", "").strip(),
+            refresh_node=env.get("DOEFF_UV_CACHE_SEED_REFRESH_NODE", "").strip(),
+            refresh_projects=tuple(Path(p) for p in projects.split(":") if p),
+            refresh_every_seconds=float(
+                env.get("DOEFF_UV_CACHE_SEED_REFRESH_EVERY_SECONDS", "72000")
+            ),
+            uv=env.get("UV", "").strip() or "uv",
             seed_url=env.get("DOEFF_UV_CACHE_SEED_URL", "").strip(),
             seed_secret=env.get("DOEFF_UV_CACHE_SEED_SECRET", "").strip(),
             seed_min_free=int(float(env.get("DOEFF_UV_CACHE_SEED_MIN_FREE_GIB", "50")) * (1 << 30)),
@@ -896,7 +1065,8 @@ class UpkeepSettings:
 
 def upkeep(cache: Path, settings: UpkeepSettings, part: int = PART) -> dict[str, object]:
     """worker の起動ごとに、新しい node の cache を置き場の写しで用意し(印が無く、空きが seed_min_free 以上の時だけ)、続けて古い物を
-    片付ける(前の gc から gc_every_seconds が経った時だけ)ため。どちらが落ちても他方と起動を止めない — 落ちた訳を 1 行出して続ける。"""
+    片付け(前の gc から gc_every_seconds が経った時だけ)、決めた 1 つの node では置き場の写しを lock に合わせて置き直す(refresh)ため。
+    どれが落ちても他と起動を止めない — 落ちた訳を 1 行出して続ける。"""
     cache.mkdir(parents=True, exist_ok=True)
     seeded: dict[str, object] = {"seeded": False, "reason": "unset"}
     if settings.seed_url and (cache / SEED_MARK).exists():
@@ -932,7 +1102,31 @@ def upkeep(cache: Path, settings: UpkeepSettings, part: int = PART) -> dict[str,
         except OSError as error:
             say(f"gc: 片付けられない — {error}")
             collected = {"ran": False, "reason": "failed", "error": str(error)}
-    return {"verb": "upkeep", "seed": seeded, "gc": collected}
+    refreshed: dict[str, object] = {"refreshed": False, "reason": "unset"}
+    if settings.refreshes:
+        try:
+            remote = "://" in settings.seed_url
+            refreshed = refresh(
+                cache,
+                list(settings.refresh_projects),
+                settings.seed_url,
+                resolve_credentials(settings.seed_secret or None) if remote else None,
+                "us-east-1",
+                300.0,
+                every_seconds=settings.refresh_every_seconds,
+                min_free=settings.seed_min_free,
+                force=False,
+                uv=settings.uv,
+            )
+        except (
+            SystemExit,
+            OSError,
+            subprocess.CalledProcessError,
+            http.client.HTTPException,
+        ) as error:
+            say(f"refresh: 置き直せない — {error}")
+            refreshed = {"refreshed": False, "reason": "failed", "error": str(error)}
+    return {"verb": "upkeep", "seed": seeded, "gc": collected, "refresh": refreshed}
 
 
 # ── 入口 ────────────────────────────────────────────────────────────────────
@@ -945,14 +1139,14 @@ def main(argv: list[str] | None = None) -> int:
     sub.add_parser("upkeep").add_argument(
         "--cache", required=True, type=Path, help="uv の cache の dir(UV_CACHE_DIR)"
     )
-    for name in ("pack", "publish", "seed", "count", "gc"):
+    for name in ("pack", "publish", "seed", "refresh", "count", "gc"):
         p = sub.add_parser(name)
         p.add_argument("--cache", required=True, type=Path, help="uv の cache の dir(UV_CACHE_DIR)")
         if name in ("pack", "publish"):
             p.add_argument(
                 "--out", required=True, type=Path, help="pack の file(.tar.zst か .tar.gz)"
             )
-        if name in ("publish", "seed"):
+        if name in ("publish", "seed", "refresh"):
             p.add_argument(
                 "--url", required=True, help="S3 の path の形の URL(seed は file の path も)"
             )
@@ -964,6 +1158,24 @@ def main(argv: list[str] | None = None) -> int:
         if name == "seed":
             p.add_argument("--force", action="store_true", help="印が在っても入れ直す")
             p.add_argument("--workers", type=int, default=8, help="並べる Range の GET の数")
+        if name == "refresh":
+            p.add_argument(
+                "--project",
+                action="append",
+                required=True,
+                type=Path,
+                help="依存を取り込む project の dir(uv.lock が在る — 繰り返せる)",
+            )
+            p.add_argument(
+                "--every-seconds",
+                type=float,
+                default=72000.0,
+                help="置いてからこの秒が経っていなければ組まない",
+            )
+            p.add_argument(
+                "--min-free-gib", type=float, default=50.0, help="空きがこれを下回れば組まない"
+            )
+            p.add_argument("--force", action="store_true", help="hash と刻に関わらず組む")
         if name in ("count", "gc"):
             p.add_argument(
                 "--venvs",
@@ -1020,6 +1232,21 @@ def main(argv: list[str] | None = None) -> int:
                     args.timeout,
                     args.force,
                     args.workers,
+                )
+            )
+        case "refresh":
+            answer(
+                refresh(
+                    cache,
+                    [p.resolve() for p in args.project],
+                    args.url,
+                    resolve_credentials(args.secret) if "://" in args.url else None,
+                    args.region,
+                    args.timeout,
+                    every_seconds=args.every_seconds,
+                    min_free=int(args.min_free_gib * (1 << 30)),
+                    force=args.force,
+                    uv=os.environ.get("UV", "").strip() or "uv",
                 )
             )
         case "upkeep":
