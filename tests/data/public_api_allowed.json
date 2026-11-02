@@ -13708,6 +13708,55 @@
    "決め": "ADR-DOE-API-001 R2"
   },
   {
+   "package": "doeff-stream",
+   "module": "doeff_stream",
+   "name": "Inputs",
+   "組": "許した物 — program の形を組む作り手と型",
+   "決め": "ADR-DOE-API-001 R37"
+  },
+  {
+   "package": "doeff-stream",
+   "module": "doeff_stream",
+   "name": "Source",
+   "組": "許した物 — program の形を組む作り手と型",
+   "決め": "ADR-DOE-API-001 R37"
+  },
+  {
+   "package": "doeff-stream",
+   "module": "doeff_stream",
+   "name": "fold",
+   "組": "許した物 — program の helper",
+   "決め": "ADR-DOE-API-001 R18"
+  },
+  {
+   "package": "doeff-stream",
+   "module": "doeff_stream",
+   "name": "merge",
+   "組": "許した物 — program の形を組む作り手と型",
+   "決め": "ADR-DOE-API-001 R37"
+  },
+  {
+   "package": "doeff-stream",
+   "module": "doeff_stream",
+   "name": "replay",
+   "組": "許した物 — 換算の関数",
+   "決め": "ADR-DOE-API-001 R35"
+  },
+  {
+   "package": "doeff-stream",
+   "module": "doeff_stream",
+   "name": "subscribe",
+   "組": "許した物 — program の形を組む作り手と型",
+   "決め": "ADR-DOE-API-001 R37"
+  },
+  {
+   "package": "doeff-stream",
+   "module": "doeff_stream",
+   "name": "timers",
+   "組": "許した物 — program の形を組む作り手と型",
+   "決め": "ADR-DOE-API-001 R37"
+  },
+  {
    "package": "doeff-system-one",
    "module": "doeff_system_one",
    "name": "Answer",

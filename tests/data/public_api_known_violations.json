@@ -4690,6 +4690,10 @@
    "範囲": "決まりの範囲",
    "名": {}
   },
+  "doeff-stream": {
+   "範囲": "決まりの範囲",
+   "名": {}
+  },
   "doeff-system-one": {
    "範囲": "決まりの範囲",
    "名": {}
@@ -6220,6 +6224,72 @@
    "module": "doeff_cluster",
    "name": "SimMachine",
    "訳": "模擬の worker(根の SimWorker)の欄 machine の型(card [id] — coordinator が task を測った空きで置くので、模擬の worker は載る機体の CPU と memory から測った空きを名乗る)。SimWorker を作る使い手が機体の大きさを名指すために根から出す。SimWorker と同じ組へ移る時に一緒に動く"
+  },
+  {
+   "package": "doeff-stream",
+   "module": "doeff_stream",
+   "name": "Answered",
+   "訳": "fold の step(状態 × 入力 → 次の状態 + effect の列 の純な関数)が読み書きする値。step は effect を yield せず値で返し、runtime が task で実行して終わりを入力に戻すので、effect の class・handler の設定・作り手の返す型のどの組にも当たらない(ADR-DOE-API-001 に純な reducer の約束の値の組が無い)"
+  },
+  {
+   "package": "doeff-stream",
+   "module": "doeff_stream",
+   "name": "CancelRun",
+   "訳": "fold の step(状態 × 入力 → 次の状態 + effect の列 の純な関数)が読み書きする値。step は effect を yield せず値で返し、runtime が task で実行して終わりを入力に戻すので、effect の class・handler の設定・作り手の返す型のどの組にも当たらない(ADR-DOE-API-001 に純な reducer の約束の値の組が無い)"
+  },
+  {
+   "package": "doeff-stream",
+   "module": "doeff_stream",
+   "name": "Cancelled",
+   "訳": "fold の step(状態 × 入力 → 次の状態 + effect の列 の純な関数)が読み書きする値。step は effect を yield せず値で返し、runtime が task で実行して終わりを入力に戻すので、effect の class・handler の設定・作り手の返す型のどの組にも当たらない(ADR-DOE-API-001 に純な reducer の約束の値の組が無い)"
+  },
+  {
+   "package": "doeff-stream",
+   "module": "doeff_stream",
+   "name": "Finish",
+   "訳": "fold の step(状態 × 入力 → 次の状態 + effect の列 の純な関数)が読み書きする値。step は effect を yield せず値で返し、runtime が task で実行して終わりを入力に戻すので、effect の class・handler の設定・作り手の返す型のどの組にも当たらない(ADR-DOE-API-001 に純な reducer の約束の値の組が無い)"
+  },
+  {
+   "package": "doeff-stream",
+   "module": "doeff_stream",
+   "name": "Next",
+   "訳": "fold の step(状態 × 入力 → 次の状態 + effect の列 の純な関数)が読み書きする値。step は effect を yield せず値で返し、runtime が task で実行して終わりを入力に戻すので、effect の class・handler の設定・作り手の返す型のどの組にも当たらない(ADR-DOE-API-001 に純な reducer の約束の値の組が無い)"
+  },
+  {
+   "package": "doeff-stream",
+   "module": "doeff_stream",
+   "name": "Raised",
+   "訳": "fold の step(状態 × 入力 → 次の状態 + effect の列 の純な関数)が読み書きする値。step は effect を yield せず値で返し、runtime が task で実行して終わりを入力に戻すので、effect の class・handler の設定・作り手の返す型のどの組にも当たらない(ADR-DOE-API-001 に純な reducer の約束の値の組が無い)"
+  },
+  {
+   "package": "doeff-stream",
+   "module": "doeff_stream",
+   "name": "Run",
+   "訳": "fold の step(状態 × 入力 → 次の状態 + effect の列 の純な関数)が読み書きする値。step は effect を yield せず値で返し、runtime が task で実行して終わりを入力に戻すので、effect の class・handler の設定・作り手の返す型のどの組にも当たらない(ADR-DOE-API-001 に純な reducer の約束の値の組が無い)"
+  },
+  {
+   "package": "doeff-stream",
+   "module": "doeff_stream",
+   "name": "RunEnd",
+   "訳": "fold の step(状態 × 入力 → 次の状態 + effect の列 の純な関数)が読み書きする値。step は effect を yield せず値で返し、runtime が task で実行して終わりを入力に戻すので、effect の class・handler の設定・作り手の返す型のどの組にも当たらない(ADR-DOE-API-001 に純な reducer の約束の値の組が無い)"
+  },
+  {
+   "package": "doeff-stream",
+   "module": "doeff_stream",
+   "name": "StepEffect",
+   "訳": "fold の step(状態 × 入力 → 次の状態 + effect の列 の純な関数)が読み書きする値。step は effect を yield せず値で返し、runtime が task で実行して終わりを入力に戻すので、effect の class・handler の設定・作り手の返す型のどの組にも当たらない(ADR-DOE-API-001 に純な reducer の約束の値の組が無い)"
+  },
+  {
+   "package": "doeff-stream",
+   "module": "doeff_stream",
+   "name": "Replay",
+   "訳": "test の harness replay が返す跡の値(step の入力・状態・effect の列)。replay は換算の関数の組で、その返す class を置く組が無い"
+  },
+  {
+   "package": "doeff-stream",
+   "module": "doeff_stream",
+   "name": "Stepped",
+   "訳": "test の harness replay が返す跡の値(step の入力・状態・effect の列)。replay は換算の関数の組で、その返す class を置く組が無い"
   }
  ]
 }
