@@ -126,6 +126,7 @@ LIST_ROWS_CALLER_METRIC: str
 LIST_ROWS_MEASURES: tuple[str, ...]
 CALLER_UNNAMED: str
 CALLER_UNDECLARED: str
+CALLER_OP_METRIC: str
 METRIC_WORD_UNSAFE: Incomplete
 ANSWER_KINDS: dict[str, tuple[str, ...]]
 PublicEffect: TypeAlias = ReadRow | ListRows | PutRow | WatchChanges | AppendEvent | ReadEvents | PutRows | ReadStreamEnd | WatchEvents | ReadEventByKey | AppendEvents | ReadBatch | CountRows | PutRowsAppendEvents
@@ -184,6 +185,12 @@ def list_rows_caller(named: str | None, callers: tuple) -> _Program[str, object]
     ...
 
 def list_rows_counts(caller: str, table: str, rows: int) -> _Program[tuple, object]:
+    ...
+
+def caller_op_metric(caller: str, operation: str) -> _Program[str, object]:
+    ...
+
+def caller_op_metrics(callers: tuple) -> _Program[tuple, object]:
     ...
 
 def list_rows_metrics(tables: tuple, callers: tuple) -> _Program[tuple, object]:

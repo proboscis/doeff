@@ -125,7 +125,7 @@
 (val CLIENT-OUTCOMES (+ (tuple (gfor status ANSWER-STATUSES (str status))) #(CLIENT-UNREACHABLE CLIENT-OTHER-STATUS)))
 (val CLIENT-ANSWER-METRICS (tuple (gfor kind CLIENT-KINDS outcome CLIENT-OUTCOMES (.format CLIENT-ANSWER-METRIC kind outcome))))
 
-;; 呼び手が名乗る job の名の見出し(一覧の読みを呼び手ごとに数えるため — 書き手の名 X-Records-Writer とは別の名乗りで、許可には使わない)。
+;; 呼び手が名乗る job の名の見出し(一覧の読みと要求の数を呼び手ごとに数えるため — 書き手の名 X-Records-Writer とは別の名乗りで、許可には使わない)。
 (val CALLER-HEADER "X-Records-Caller")
 ;; 行の書き(put-row・put-rows・put-rows-append-events)の冪等キーの見出し: client は書きの要求ごとに鍵を 1 つ載せ、届かない書きの撃ち直しに
 ;; 同じ鍵を載せる。service は見出しの鍵を撃つ PutRow・PutRows の idempotency-key にする(keyed-request)。本文の鍵にしない訳: 要求の本文の
@@ -183,6 +183,12 @@
 (val LIST-ROWS-MEASURES #("calls" "rows"))
 (val CALLER-UNNAMED "unnamed")
 (val CALLER-UNDECLARED "undeclared")
+;; 呼び手ごとの要求の数の counter の名の綴り(重い呼び手を一覧の読みの外の操作でも数で名指すため): 記録の操作の要求 1 つごとに、呼び手
+;; (list-rows-caller の答え — 宣言の呼び手・unnamed・undeclared)× 操作(OPERATIONS)で 1 つ数える(描く名は末尾に _total)。
+;;   records_requests_caller_<呼び手>_op_<操作>   操作の名は語へ畳む(read-row → read_row)。表は付けない
+;; 系列は (宣言の呼び手 + 2)× 操作の種類で閉じる。起動の時に 0 で置かず、最初の要求で現れる(宣言の呼び手は job の数だけ在り、
+;; 全部を 0 で置くと /metrics の本文と、数えるたびの断面の写しが重くなる — 呼び手の和は records_requests_<種>_<status> で読む)。
+(val CALLER-OP-METRIC "records_requests_caller_{}_op_{}")
 ;; 名を語に畳む時に _ へ替える字(Prometheus の名に使えない字 — ASCII の英数字と _ の外)。
 (val METRIC-WORD-UNSAFE (re.compile "[^A-Za-z0-9_]"))
 
@@ -317,6 +323,30 @@
                pair #(#((.format LIST-ROWS-TABLE-METRIC table-word measure) amount)
                       #((.format LIST-ROWS-CALLER-METRIC caller-word table-word measure) amount))
                pair)))
+
+
+(defk caller-op-metric [caller operation]
+  {:pre [(: caller str) (: operation str)] :post [(: % str)]}
+  "呼び手 caller(list-rows-caller の答え)が送った記録の操作 operation(OPERATIONS の 1 つ)の要求を数える counter の名を作るため
+   (CALLER-OP-METRIC の綴り)。他の defk を呼ばない(答える要求ごとに Program を回さない)。"
+  (.format CALLER-OP-METRIC (.sub METRIC-WORD-UNSAFE "_" caller) (.sub METRIC-WORD-UNSAFE "_" operation)))
+
+
+(defk caller-op-metrics [callers]
+  {:pre [(: callers tuple)] :post [(: % tuple)]}
+  "宣言の呼び手 callers の呼び手ごとの要求の数の系列の閉じた組((宣言の呼び手 + unnamed・undeclared)× OPERATIONS の名)を確かめて返すため。
+   語へ畳んだ名が重なる(別の呼び手が同じ counter に入る)か、宣言の呼び手が unnamed・undeclared を名乗るなら、数えを混ぜずに起動を
+   止める(ValueError)。"
+  (val reserved (tuple (gfor name callers :if (in name #(CALLER-UNNAMED CALLER-UNDECLARED)) name)))
+  (when reserved
+    (raise (ValueError (.format "宣言の呼び手の名に予約の語は使えない: {}" reserved))))
+  (val every (tuple (gfor who (+ callers #(CALLER-UNNAMED CALLER-UNDECLARED)) operation OPERATIONS
+                          (.format CALLER-OP-METRIC (.sub METRIC-WORD-UNSAFE "_" who) (.sub METRIC-WORD-UNSAFE "_" operation)))))
+  (val clashes (sorted (gfor #(name seen) (.items (Counter every)) :if (> seen 1) name)))
+  (when clashes
+    (raise (ValueError (.format "呼び手ごとの要求の数の系列の名が重なる(呼び手の名が同じ語に畳まれる — 呼び手 {}): {}"
+                                callers (cut clashes 0 5)))))
+  every)
 
 
 (defk list-rows-metrics [tables callers]
