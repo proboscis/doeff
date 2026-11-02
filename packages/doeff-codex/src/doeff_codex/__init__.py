@@ -10,6 +10,7 @@ if TYPE_CHECKING:
     from doeff_codex._effects import BackendLost as BackendLost
     from doeff_codex._effects import CodexAnswerRequest as CodexAnswerRequest
     from doeff_codex._effects import CodexCloseSession as CodexCloseSession
+    from doeff_codex._effects import CodexExportThread as CodexExportThread
     from doeff_codex._effects import CodexInterruptTurn as CodexInterruptTurn
     from doeff_codex._effects import CodexLaunchCount as CodexLaunchCount
     from doeff_codex._effects import CodexReadTurnEvents as CodexReadTurnEvents
@@ -25,6 +26,7 @@ if TYPE_CHECKING:
     from doeff_codex._effects import SessionClosed as SessionClosed
     from doeff_codex._effects import StartTurnOutcome as StartTurnOutcome
     from doeff_codex._effects import Steered as Steered
+    from doeff_codex._effects import ThreadExported as ThreadExported
     from doeff_codex._effects import ThreadUnknown as ThreadUnknown
     from doeff_codex._effects import ToolsUnavailable as ToolsUnavailable
     from doeff_codex._effects import TurnEventPage as TurnEventPage
@@ -75,6 +77,7 @@ _LAZY_EXPORTS: dict[str, str] = {
     "BackendLost": "doeff_codex._effects",
     "CodexAnswerRequest": "doeff_codex._effects",
     "CodexCloseSession": "doeff_codex._effects",
+    "CodexExportThread": "doeff_codex._effects",
     "CodexInterruptTurn": "doeff_codex._effects",
     "CodexLaunchCount": "doeff_codex._effects",
     "CodexReadTurnEvents": "doeff_codex._effects",
@@ -90,6 +93,7 @@ _LAZY_EXPORTS: dict[str, str] = {
     "SessionClosed": "doeff_codex._effects",
     "StartTurnOutcome": "doeff_codex._effects",
     "Steered": "doeff_codex._effects",
+    "ThreadExported": "doeff_codex._effects",
     "ThreadUnknown": "doeff_codex._effects",
     "ToolsUnavailable": "doeff_codex._effects",
     "TurnEventPage": "doeff_codex._effects",

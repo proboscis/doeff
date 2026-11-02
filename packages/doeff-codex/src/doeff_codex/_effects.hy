@@ -1,7 +1,7 @@
 ;;; doeff-codex の公開 effect と、その答えの型。
 ;;;
-;;; CodexStartTurn / CodexSteerTurn / CodexInterruptTurn / CodexReadTurnEvents / CodexAnswerRequest / CodexCloseSession と、検の口
-;;; CodexLaunchCount。
+;;; CodexStartTurn / CodexSteerTurn / CodexInterruptTurn / CodexReadTurnEvents / CodexAnswerRequest / CodexCloseSession /
+;;; CodexExportThread と、検の口 CodexLaunchCount。
 ;;; 単位は「codex の会話(thread)と、その上のターン」。process の単位の操作(起こす・stdin に書く・降ろす・pid)は公開しない —
 ;;; handler の内側の語彙。失敗は例外ではなく答えの型で返す(成功の型と失敗の型の判別可能な union)。handler の実装の誤り(I/O の
 ;;; 予期しない例外)だけが例外として上がる。手本 = doeff-claude-code の effects.hy(同じ単位・同じ答えの形)。
@@ -10,7 +10,7 @@
 (require doeff-hy.record [defrecord])
 (import dataclasses [dataclass])
 (import doeff_hy._json_value [OpaqueJson])
-(import doeff_codex._values [CodexSessionSpec CodexTurn CodexEvent CodexInput FreshThread ResumeThread])
+(import doeff_codex._values [CodexHome CodexSessionSpec CodexTurn CodexEvent CodexInput FreshThread ResumeThread])
 (import doeff_codex._lines [TurnEnded])
 
 
@@ -60,6 +60,13 @@
 (defrecord Answered
   "codex からの要求(ServerRequest)に答えた。"
   {:tags {:context "codex" :role "type"}})
+
+(defrecord ThreadExported
+  "会話の記録(rollout の jsonl)を取り出した: jsonl-text = 行の終わりまでの行の列(空白だけでない)。from-byte も tail-bytes も名指さない
+   取り出しの答えは記録の全部で、ResumeThread の carry に渡すと同じ会話を続けられる(rollout.hy の頭の註)。"
+  {:tags {:context "codex" :role "type"}
+   :check [(not (.isspace jsonl-text)) (bool jsonl-text)]}
+  (#^ str jsonl-text))
 
 (defrecord SessionClosed
   "会話を閉じた: was-running = 走っているターンが在ったか(在ればそのターンは BackendLost で終わる)。"
@@ -166,6 +173,20 @@
   {:fields [(: thread-id str) (: reason str)]
    :pre [(: thread-id str) (: reason str)]
    :answer (| SessionClosed ProcessStillAlive)
+   :tags {:context "codex" :role "intent"}})
+
+(defeffect CodexExportThread
+  "会話(thread)の記録(codex の rollout の jsonl)を家の sessions から取り出す(家の外に預けて、記録を外した家・別の家で ResumeThread の
+   carry で持ち込むため)。home = 記録の置き場を決める家(env の CODEX_HOME — 資格の家を作っても記録は元の sessions に在る)/
+   from-byte = 頭から何 byte 目より後ろだけを読むか(前に取り出した写しの長さ — 手番の終わりごとに全部を読み直さない)/ tail-bytes =
+   末尾の何 byte までを読むか(切り口の後の最初の行の頭から — 持ち込みには使えない)。どちらも None なら全部。一緒には名指さない。
+   答えは行の終わりまで(書きかけの最後の行は入れない)。答え = ThreadExported | ThreadUnknown(記録が無い・空・from-byte より短い・
+   from-byte が字の途中・CODEX_HOME が env に無い)。"
+  {:fields [(: home CodexHome) (: thread-id str) (: from-byte (| int None)) (: tail-bytes (| int None))]
+   :pre [(: home CodexHome) (: thread-id str) (: from-byte (| int None)) (: tail-bytes (| int None))
+         (or (is from-byte None) (>= from-byte 0)) (or (is tail-bytes None) (>= tail-bytes 1))
+         (or (is from-byte None) (is tail-bytes None))]
+   :answer (| ThreadExported ThreadUnknown)
    :tags {:context "codex" :role "intent"}})
 
 (defeffect CodexLaunchCount

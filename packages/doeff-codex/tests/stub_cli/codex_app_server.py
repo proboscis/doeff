@@ -100,6 +100,8 @@ STEER_REFUSALS = {
 }
 # DB の行の rollout の path が無い thread の thread/resume を断る誤りの code(本物の codex 0.162.1 の答え — invalid request)。
 NO_ROLLOUT_CODE = -32600
+# thread/start が書く rollout の 1 行目の刻(file の名の刻 2026-10-19T00-00-00 と同じ時 — 本物の codex は UTC の刻で名と dir を決める)。
+ROLLOUT_STARTED_AT = "2026-10-19T00:00:00.000Z"
 # rollout の file の名の頭(rollout-<刻 19 字>-<thread の id>.jsonl)の字数。
 ROLLOUT_HEAD_CHARS = len("rollout-2026-10-19T00-00-00-")
 
@@ -199,7 +201,9 @@ def write_rollout(thread_id: str) -> None:
     """新しい thread の rollout を sessions に書き、DB の行に家を通る path を書くため(本物の codex の形)。"""
     path = codex_home() / "sessions" / "2026" / "10" / "19" / f"rollout-2026-10-19T00-00-00-{thread_id}.jsonl"
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps({"type": "session_meta", "payload": {"id": thread_id}}) + "\n", encoding="utf-8")
+    # 1 行目は本物の codex と同じ session_meta(payload の id と timestamp — 置き場の刻と年月日は timestamp の頭)。
+    meta = {"type": "session_meta", "timestamp": ROLLOUT_STARTED_AT, "payload": {"id": thread_id, "timestamp": ROLLOUT_STARTED_AT}}
+    path.write_text(json.dumps(meta) + "\n", encoding="utf-8")
     with state_connection() as connection:
         connection.execute("INSERT OR REPLACE INTO threads VALUES (?, ?)", (thread_id, str(path)))
 

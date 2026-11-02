@@ -63,9 +63,12 @@
   {:tags {:context "codex" :role "type"}})
 
 (defrecord ResumeThread
-  "前の会話(thread)を続ける。生きた process が在ればそれを使い、無ければ新しい process で thread/resume する。"
+  "前の会話(thread)を続ける。生きた process が在ればそれを使い、無ければ新しい process で thread/resume する。
+   carry = 持ち込む会話の記録(CodexExportThread で取り出した rollout の jsonl の全部・None = 持ち込まない)。新しい process で続ける時、
+   家の sessions にその thread の rollout が無ければ、thread/resume の前に元の置き場(rollout.hy の頭の註)へ書き戻す。在れば上書きしない。"
   {:tags {:context "codex" :role "type"}}
-  (#^ str thread-id))
+  (#^ str thread-id)
+  (setv #^ (| str None) carry (field :default None :repr False)))
 
 (defrecord CodexTurn
   "ターンの参照: thread-id = 会話 / turn-id = codex が turn/start の答えで決めたターンの id。"

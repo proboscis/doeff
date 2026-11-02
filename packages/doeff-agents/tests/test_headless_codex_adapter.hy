@@ -21,7 +21,7 @@
 (import doeff_core_effects [scheduled])
 (import doeff_time [GetMonotonic SimClock sim-time-handler sync-time-handler])
 (import doeff_agents [AgentType AgentSessionLifecycle])
-(import doeff_agents [LaunchEffect FollowUp Interrupt Events Monitor Stop ExportContextEffect WarmSession SessionHandle AgentEventPage TurnInputMode InputFateState InputImage NamedContextId ModelWindow AgentTextEvent AgentTextDeltaEvent AgentInputFateEvent AgentTurnEndEvent AgentCallUsageEvent AgentToolCallStartedEvent AgentToolUseEvent AgentToolResultEvent AgentTurnCompleted AgentTurnFailed AgentTurnInterrupted AgentTurnLost AgentTurnUsage AgentAccountLimit AgentAccountRefusal AgentProviderCapacity AgentCapabilityUnsupportedError NoTurnInFlightError RedeemTurnCredentialEffect TurnCredential CodexTurnCredential TurnCredentialUnavailable TurnCredentialUnavailableError])
+(import doeff_agents [LaunchEffect FollowUp Interrupt Events Monitor Stop ExportContextEffect WarmSession SessionHandle AgentEventPage TurnInputMode InputFateState InputImage NamedContextId ModelWindow AgentTextEvent AgentTextDeltaEvent AgentInputFateEvent AgentTurnEndEvent AgentCallUsageEvent AgentToolCallStartedEvent AgentToolUseEvent AgentToolResultEvent AgentTurnCompleted AgentTurnFailed AgentTurnInterrupted AgentTurnLost AgentTurnUsage AgentAccountLimit AgentAccountRefusal AgentProviderCapacity AgentCapabilityUnsupportedError NoTurnInFlightError ResumeTargetNotFoundError RedeemTurnCredentialEffect TurnCredential CodexTurnCredential TurnCredentialUnavailable TurnCredentialUnavailableError])
 (import doeff_agents._effects.agent [AutocompactTokens])
 (import doeff_hy._frozen [freeze-json])
 (import doeff_agents [SessionStatus])
@@ -557,19 +557,13 @@
 
 (defk refusals [#^ Setting s]
   {:pre [(: s Setting)] :post [(: % dict)] :tags {:context "headless-codex-adapter-test" :role "program"}}
-  "codex の adapter が持たない能力を、黙って捨てずに型で断るのを集めるため(名指しの文脈の id・写しの持ち込みと書き出し)。
-   前もっての起動は持たないので偽を答える。"
+  "codex の adapter が持たない能力を、黙って捨てずに型で断るのを集めるため(名指しの文脈の id)。前もっての起動は持たないので偽を
+   答える。"
   (var refused {})
-  (for [#(name fields) [#("named" {"new_context_id" (NamedContextId "ctx-1")})
-                        #("snapshot" {"resume_from" "thread-1" "resume_snapshot" "{}"})]]
-    (try
-      (<- (launch s (+ "codex-refused-" name) "say hello" fields))
-      (except [error AgentCapabilityUnsupportedError]
-        (:= refused (| refused {name error.capability})))))
   (try
-    (<- (ExportContextEffect :agent-type AgentType.CODEX :work-dir s.work-dir :context-id "thread-1"))
+    (<- (launch s "codex-refused-named" "say hello" {"new_context_id" (NamedContextId "ctx-1")}))
     (except [error AgentCapabilityUnsupportedError]
-      (:= refused (| refused {"export" error.capability}))))
+      (:= refused (| refused {"named" error.capability}))))
   (<- idle (launch s "codex-idle" None {}))
   (<- warmed (WarmSession idle))
   (<- (Stop idle))
@@ -577,11 +571,57 @@
 
 (deftest test-headless-codex-refuses-what-it-cannot-honour-fake [tmp-path]
   (<- seen (run-on FAKE tmp-path refusals))
-  (assert (= (get seen "refused") {"named" "LaunchEffect.new_context_id"
-                                   "snapshot" "LaunchEffect.resume_snapshot"
-                                   "export" "ExportContextEffect(codex)"})
-          seen)
+  (assert (= (get seen "refused") {"named" "LaunchEffect.new_context_id"}) seen)
   (assert (is (get seen "warmed") False) seen))
+
+
+(defk kept-and-carried [#^ Setting s]
+  {:pre [(: s Setting)] :post [(: % dict)] :tags {:context "headless-codex-adapter-test" :role "program"}}
+  "1 ターンの後に会話の記録を書き出して預け、記録を外し(fake は世界の forget-rollout・stub は rollout の file を消す — 機体の掃除の
+   模型)、持ち込みなしと持ち込みあり(resume_snapshot)で続けるため(card ki-06ec6deda2d6 — codex の記録を保管へ写して手元を離す)。"
+  (<- handle (launch s "codex-kept" "say hello" {}))
+  (<- done (read-until handle ended s.timeout -1))
+  (<- (Stop handle))
+  (val thread-id done.end.resume-from)
+  (<- copy (ExportContextEffect :agent-type AgentType.CODEX :work-dir s.work-dir :context-id thread-id))
+  (<- grown (ExportContextEffect :agent-type AgentType.CODEX :work-dir s.work-dir :context-id thread-id
+                                 :from-byte (len (.encode copy "utf-8"))))
+  (if (is s.world None)
+      (for [path (.rglob (/ s.codex-home "sessions") (+ "rollout-*-" thread-id ".jsonl"))]
+        (.unlink path))
+      (.forget-rollout s.world thread-id))
+  (<- gone (ExportContextEffect :agent-type AgentType.CODEX :work-dir s.work-dir :context-id thread-id))
+  (var bare None)
+  (try
+    (<- (launch s "codex-bare" "say hello" {"resume_from" thread-id}))
+    (except [error ResumeTargetNotFoundError]
+      (:= bare error.resume-from)))
+  (<- carried (launch s "codex-carried" "say hello" {"resume_from" thread-id "resume_snapshot" copy}))
+  (<- again (read-until carried ended s.timeout -1))
+  (<- (Stop carried))
+  (<- back (ExportContextEffect :agent-type AgentType.CODEX :work-dir s.work-dir :context-id thread-id))
+  {"thread" thread-id "copy" copy "grown" grown "gone" gone "bare" bare "end" again.end "back" back})
+
+(defk check-kept-and-carried [#^ dict seen]
+  {:pre [(: seen dict)] :post [(: % None)] :tags {:context "headless-codex-adapter-test" :role "program"}}
+  "書き出した記録は session_meta から始まる行の列で、前の写しの長さからは新しい行が無ければ None。外した記録は書き出せず、持ち込みなしの
+   続きは断られ(続きの文脈が無い)、持ち込めば同じ thread で続いて記録が戻る(頭は預けた写しと同じ)、を確かめるため。"
+  (val copy (get seen "copy"))
+  (assert (and (.startswith copy "{") (in "session_meta" (get (.split copy "\n" 1) 0)) (.endswith copy "\n")) seen)
+  (assert (is (get seen "grown") None) seen)
+  (assert (is (get seen "gone") None) seen)
+  (assert (= (get seen "bare") (get seen "thread")) seen)
+  (assert (and (isinstance (get seen "end") AgentTurnCompleted) (= (. (get seen "end") resume-from) (get seen "thread"))) seen)
+  (assert (.startswith (get seen "back") copy) seen)
+  None)
+
+(deftest test-headless-codex-keeps-a-copy-and-carries-it-back-after-the-rollout-is-gone-fake [tmp-path]
+  (<- seen (run-on FAKE tmp-path kept-and-carried))
+  (<- (check-kept-and-carried seen)))
+
+(deftest test-headless-codex-keeps-a-copy-and-carries-it-back-after-the-rollout-is-gone-stub [tmp-path]
+  (<- seen (run-on STUB tmp-path kept-and-carried))
+  (<- (check-kept-and-carried seen)))
 
 
 (defk credential-turns [#^ Setting s]

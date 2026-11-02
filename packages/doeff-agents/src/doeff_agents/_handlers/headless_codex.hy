@@ -24,6 +24,10 @@
 ;;;   StopEffect / StopSessionEffect / ReleaseSessionEffect → CodexCloseSession(走っていたターンは cli_kept 偽の AgentTurnInterrupted で
 ;;;                                    終わり、待たせた入力は discarded の行方で閉じる)
 ;;;   WarmSessionEffect             → 偽(前もって起こさない — doeff-codex に入力の前に thread を開く口が無い)
+;;;   ExportContextEffect(CODEX)    → CodexExportThread(家 = 会話の宣言と同じ家・context_id = thread の id・tail_bytes・from_byte)→
+;;;                                    ThreadExported の記録の本文(rollout の jsonl — 行の終わりまで)・ThreadUnknown → None
+;;;   LaunchEffect.resume_snapshot  → その session の最初の CodexStartTurn の ResumeThread の carry(2 ターン目からは無し — 層 2 が家に
+;;;                                    rollout が無い時だけ元の置き場へ書き戻してから thread/resume する)
 ;;;   行 → 出来事: TextDelta → AgentTextDeltaEvent・AgentMessageDone → AgentTextEvent・item の種類 reasoning の始まり →
 ;;;     AgentThinkingStartedEvent・ReasoningDelta → AgentThinkingDeltaEvent・TokenUsage → AgentCallUsageEvent(この呼びの分)。
 ;;;     道具の item— 道具の名は codex の item の種類の名、ToolCall の id は item の id:
@@ -65,7 +69,7 @@
 ;;;     model(codex の usage の行は model を名乗らない)、窓は codex が名乗った modelContextWindow。
 ;;;
 ;;; 断る物(AgentCapabilityUnsupportedError — 黙って捨てない): new_context_id の名指し(codex 0.162.1 の thread/start に id の欄が無く、
-;;; 呼び手の id で thread を始められない)・resume_snapshot と ExportContextEffect(codex の会話の写しの口が無い)・mcp_tools・bare・
+;;; 呼び手の id で thread を始められない)・mcp_tools・bare・
 ;;; CaptureEffect・AttachAgentSessionEffect(画面が無い)・ReplaceSessionCredentialEffect(走っている codex の process の資格を替える口を
 ;;; まだ持たない — claude の headless の adapter だけが答える)。
 ;;; この handler が起こしていない session の effect と、CODEX 以外の LaunchEffect は外側の handler へ回す。
@@ -100,7 +104,7 @@
                      CodexLine TextDelta AgentMessageDone ReasoningDelta ItemStarted ItemDone TokenUsage TokenCount TurnEnded
                      TurnStatus UsageLimitHit ServerOverloadedHit UnauthorizedHit ToolStatus ToolItem CommandRun FilePatch WebSearch McpCall
                      DynamicCall AgentCall ImageView
-                     CodexStartTurn CodexSteerTurn CodexInterruptTurn CodexReadTurnEvents CodexCloseSession
+                     CodexStartTurn CodexSteerTurn CodexInterruptTurn CodexReadTurnEvents CodexCloseSession CodexExportThread ThreadExported
                      BackendLost ToolsUnavailable TurnStarted Steered InterruptRequested TurnEventPage
                      ThreadUnknown TurnInFlight LaunchFailed RequestRefused NoTurnInFlight UnknownTurn ProcessStillAlive])
 
@@ -137,13 +141,15 @@
    cursor = そのターンの読んだ所 / turn-refs = 走っているターンが受けた入力の参照 / waiting = 走っているターンの後に回す入力
    (WaitingInput の tuple)/ events = 層 3 の出来事(seq → 出来事 — seq は 0 から欠けずに続く。答えの文字の途中が 1 つずつ積もるので、
    頁は読む分の seq だけを引く)/ last-end = 最後のターンの終わり / stopped = 止めた / answer = 走っているターンの最後の答えの全文 /
-   turn-usage = 走っているターンの呼びの分の和 / last-call = 最後の呼びの分 / window = codex が名乗った model の窓の大きさ。"
-  (defn __init__ [self #^ str name #^ CodexSessionSpec spec thread-id lifecycle]
+   turn-usage = 走っているターンの呼びの分の和 / last-call = 最後の呼びの分 / window = codex が名乗った model の窓の大きさ /
+   carry = 最初のターンを始める時に持ち込む記録(LaunchEffect.resume_snapshot — 最初のターンを始めたら None)。"
+  (defn __init__ [self #^ str name #^ CodexSessionSpec spec thread-id lifecycle carry]
     (setv self.name name
           self.spec spec
           self.thread-id thread-id
           self.lifecycle lifecycle
-          self.stopped False)
+          self.stopped False
+          self.carry carry)
     (setv #^ (| CodexTurn None) self.turn None)
     (setv #^ int self.cursor -1)
     (setv #^ tuple self.turn-refs #())
@@ -210,7 +216,6 @@
   (val asked #(#("LaunchEffect.mcp_tools" (bool request.mcp-tools))
                #("LaunchEffect.bare" request.bare)
                #("LaunchEffect.new_context_id" (isinstance request.new-context-id NamedContextId))
-               #("LaunchEffect.resume_snapshot" (is-not request.resume-snapshot None))
                ;; 出来事の記録は claude の adapter だけが持つ。
                #("LaunchEffect.event_record" (is-not request.event-record None))))
   (val refused (next (gfor #(capability present) asked :if present capability) None))
@@ -486,10 +491,10 @@
   {:pre [(: session CodexHeadlessSession)] :post [(: % (| FreshThread ResumeThread))]
    :tags {:context "headless-adapter" :role "judgment"}}
   "session の次のターンの始まり方を 1 か所で決めるため: thread の id がまだ無い(1 度もターンを始めていない新しい会話)なら
-   FreshThread、ほかはその thread の続き。"
+   FreshThread、ほかはその thread の続き(持ち込む記録が残っていれば載せる — 最初のターンだけ)。"
   (if (is session.thread-id None)
       (FreshThread)
-      (ResumeThread :thread-id session.thread-id)))
+      (ResumeThread :thread-id session.thread-id :carry session.carry)))
 
 (defk start-turn [#^ CodexHeadlessSession session #^ str ref #^ CodexInput input]
   {:pre [(: session CodexHeadlessSession) (: ref str) (: input CodexInput)] :post [(: % CodexTurn)]
@@ -502,6 +507,7 @@
     (<- error (start-refusal outcome session))
     (raise error))
   (setv session.thread-id outcome.turn.thread-id
+        session.carry None
         session.turn outcome.turn
         session.cursor -1
         session.turn-refs #())
@@ -627,7 +633,7 @@
   ;; ターンの資格は起こす直前に引き換える(断りの検めを通った起動だけが資格を受ける)。
   (<- auth-json (redeemed-auth-json request))
   (<- spec (spec-of config request auth-json))
-  (val session (CodexHeadlessSession name spec request.resume-from request.lifecycle))
+  (val session (CodexHeadlessSession name spec request.resume-from request.lifecycle request.resume-snapshot))
   (when (is-not request.prompt None)
     (<- images (images-of request.attachments))
     (<- ref (new-ref))
@@ -682,6 +688,16 @@
   (setv session.waiting #() session.turn None)
   None)
 
+(defk export-context [#^ HeadlessCodexConfig config #^ ExportContextEffect request]
+  {:pre [(: config HeadlessCodexConfig) (: request ExportContextEffect)] :post [(: % (| str None))]
+   :tags {:context "headless-adapter" :role "judgment"}}
+  "会話の記録を家の外に預けられるよう、層 2 から取り出すため(context_id = thread の id・家は会話の宣言と同じ — 記録は資格の家でなく
+   元の CODEX_HOME の sessions に在る)。答え = 記録の本文か、無ければ None。"
+  (<- exported (CodexExportThread config.home request.context-id request.from-byte request.tail-bytes))
+  (match exported
+    (ThreadExported :jsonl-text text) text
+    (ThreadUnknown) None))
+
 (defk warm [#^ CodexHeadlessSession session]
   {:pre [(: session CodexHeadlessSession)] :post [(: % bool)] :tags {:context "headless-adapter" :role "judgment"}}
   "前もっての起動の頼みに答えるため: codex の層 2 は入力の前に thread を開く口を持たないので、起こさず偽を答える(止めた session は
@@ -710,7 +726,8 @@
 
   (ExportContextEffect [agent-type]
     :when (= agent-type AgentType.CODEX)
-    (raise (AgentCapabilityUnsupportedError :capability "ExportContextEffect(codex)" :handler HANDLER-NAME)))
+    (<- exported (export-context config effect))
+    (resume exported))
 
   (SendEffect [handle message enter literal]
     :when (in handle.session-id state.sessions)

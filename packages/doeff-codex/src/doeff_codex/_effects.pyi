@@ -5,6 +5,7 @@ from doeff import EffectBase as _doeff_effect_base
 from dataclasses import dataclass as _doeff_dataclass
 from dataclasses import dataclass as dataclass
 from doeff_hy._json_value import OpaqueJson as OpaqueJson
+from doeff_codex._values import CodexHome as CodexHome
 from doeff_codex._values import CodexSessionSpec as CodexSessionSpec
 from doeff_codex._values import CodexTurn as CodexTurn
 from doeff_codex._values import CodexEvent as CodexEvent
@@ -45,6 +46,13 @@ class TurnEventPage:
 @dataclass(frozen=True, kw_only=True)
 class Answered:
     ...
+
+@dataclass(frozen=True, kw_only=True)
+class ThreadExported:
+    jsonl_text: str
+
+    def __post_init__(self) -> None:
+        ...
 
 @dataclass(frozen=True, kw_only=True)
 class SessionClosed:
@@ -134,6 +142,16 @@ class CodexAnswerRequest(_doeff_effect_base[Answered | NoSuchRequest]):
 class CodexCloseSession(_doeff_effect_base[SessionClosed | ProcessStillAlive]):
     thread_id: str
     reason: str
+
+    def __post_init__(self) -> None:
+        ...
+
+@_doeff_dataclass(frozen=True)
+class CodexExportThread(_doeff_effect_base[ThreadExported | ThreadUnknown]):
+    home: CodexHome
+    thread_id: str
+    from_byte: int | None
+    tail_bytes: int | None
 
     def __post_init__(self) -> None:
         ...

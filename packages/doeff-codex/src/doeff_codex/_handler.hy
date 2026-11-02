@@ -43,8 +43,10 @@
 (import doeff_codex._process [CodexProcess CutLine EOF-GRACE-SECONDS TERM-GRACE-SECONDS LINE-CAP-BYTES])
 (import doeff_codex._credential_home [open-credential-home close-credential-home credential-env state-db-claim state-db-release
                                      repoint-state-db])
+(import doeff_codex._rollout [sessions-of read-thread-rollout restore-rollout])
+(import doeff_core_effects._offloaded_call [ThreadPerCall offloaded run-detached keep-nothing])
 (import doeff_codex._effects [CodexStartTurn CodexSteerTurn CodexInterruptTurn CodexReadTurnEvents CodexAnswerRequest
-                             CodexCloseSession CodexLaunchCount BackendLost ToolsUnavailable TurnStarted Steered InterruptRequested
+                             CodexCloseSession CodexExportThread CodexLaunchCount ThreadExported BackendLost ToolsUnavailable TurnStarted Steered InterruptRequested
                              TurnEventPage Answered SessionClosed ThreadUnknown TurnInFlight LaunchFailed RequestRefused NoTurnInFlight
                              UnknownTurn NoSuchRequest ProcessStillAlive])
 
@@ -53,6 +55,9 @@
 ;; 走っているターンだけを名指して読み、次のターンは前のターンの終わりを読んでから始めるので、今のターンと続きの数本があればよい
 ;; (16 本では、道具の出力の全文を含む記録を、開いた会話ごとに 16 ターン分 host の本体が持った)。
 (val KEPT-TURNS 4)
+;; 会話の記録(rollout の jsonl — 数十〜数百 MB)の読みと書き戻しを回す thread。handler の手で読むと、読む間 host の全部の会話の手が止まる
+;; (doeff-claude-code の TRANSCRIPT-THREADS と同じ作法 — 待つのは読みを頼んだ手だけ)。
+(val ROLLOUT-THREADS (ThreadPerCall))
 (val CLIENT-NAME "doeff-codex")
 (val CLIENT-VERSION "0.1.0")
 
@@ -566,6 +571,21 @@
   bell)
 
 
+(defk carried-back [#^ CodexSessionSpec spec #^ ResumeThread origin]
+  {:pre [(: spec CodexSessionSpec) (: origin ResumeThread)] :post [(: % (| str None))] :tags {:context "codex" :role "process"}}
+  "記録を外した家(や別の家)で thread を続けるため、続きの頼み(ResumeThread)が持ち込む記録(carry)を、家の sessions にその thread の
+   rollout が無い時だけ元の置き場へ書き戻す(rollout.hy の頭の註 — 書きは ROLLOUT-THREADS の thread)。答え = None(書き戻した・既に在る・
+   持ち込む物が無い)か書き戻せない訳。"
+  (when (is origin.carry None)
+    (return None))
+  (<- sessions (sessions-of spec.home.env))
+  (when (is sessions None)
+    (return "持ち込む記録を書き戻す CODEX_HOME が宣言の env に無い"))
+  (val carry origin.carry)
+  (<- refused (| str None)
+      (offloaded ROLLOUT-THREADS (fn [] (run-detached (restore-rollout sessions origin.thread-id carry))) keep-nothing))
+  refused)
+
 (defk launch [#^ CodexHost host #^ SessionRuntime runtime #^ CodexSessionSpec spec origin]
   {:pre [(: host CodexHost) (: runtime SessionRuntime) (: spec CodexSessionSpec) (: origin (| FreshThread ResumeThread))]
    :post [(: % (| str ThreadUnknown LaunchFailed RequestRefused))]
@@ -574,7 +594,12 @@
    (失敗した process は降ろす)。宣言の家が借りた資格(auth-json)を持てば、その process だけの資格の家を env の CODEX_HOME の下に作って
    CODEX_HOME をそこへ向け、process が降りたら消す(credential_home.hy)。その process の状態の DB は家の外の元の CODEX_HOME に置き
    (CODEX_SQLITE_HOME)、DB がまだ無い間は、DB を作る起動(initialize の答えまで)を lock で 1 本ずつにする。DB の家を通る rollout の
-   path の書き直しは手の外の thread で走らせ(start-repoint)、続き(thread/resume)の要求の前だけ、上限まで終わりを待つ。"
+   path の書き直しは手の外の thread で走らせ(start-repoint)、続き(thread/resume)の要求の前だけ、上限まで終わりを待つ。
+   続きが記録を持ち込めば(ResumeThread.carry)、process を起こす前に家の sessions へ書き戻す(書き戻せなければ起こさずに ThreadUnknown)。"
+  (when (isinstance origin ResumeThread)
+    (<- refused (| str None) (carried-back spec origin))
+    (when (is-not refused None)
+      (return (ThreadUnknown :thread-id origin.thread-id :detail refused))))
   (val base (.get spec.home.env "CODEX_HOME"))
   (when (and (is-not spec.home.auth-json None) (not base))
     (return (LaunchFailed :detail "借りた資格を置く元の CODEX_HOME が宣言の env に無い")))
@@ -866,6 +891,21 @@
 
 ;; 引数に残す理由: host は会話の process と状態の持ち主で、composition root が 1 つ作って渡す(Ask で読む設定ではなく、生きた資源の束 —
 ;; doeff-claude-code の claude-code-handler と同じ)。
+(defk export-thread [#^ CodexExportThread asked]
+  {:pre [(: asked CodexExportThread)] :post [(: % (| ThreadExported ThreadUnknown))] :tags {:context "codex" :role "process"}}
+  "会話の記録を家の外に預けられるよう、家の sessions から取り出すため(CodexExportThread — 読みは ROLLOUT-THREADS の thread)。"
+  (<- sessions (sessions-of asked.home.env))
+  (when (is sessions None)
+    (return (ThreadUnknown :thread-id asked.thread-id :detail "記録の置き場 CODEX_HOME が宣言の env に無い")))
+  (<- text (| str None)
+      (offloaded ROLLOUT-THREADS
+                 (fn [] (run-detached (read-thread-rollout sessions asked.thread-id asked.from-byte asked.tail-bytes)))
+                 keep-nothing))
+  (if (is text None)
+      (ThreadUnknown :thread-id asked.thread-id :detail "家の sessions にこの thread の記録が無い(空・from-byte より短い・字の途中を含む)")
+      (ThreadExported :jsonl-text text)))
+
+
 (defhandler codex-handler [host]
   (CodexStartTurn [origin spec input]
     (<- outcome (start-turn host effect))
@@ -885,6 +925,9 @@
   (CodexCloseSession [thread-id reason]
     (<- closed (close-session host effect))
     (resume closed))
+  (CodexExportThread [home thread-id from-byte tail-bytes]
+    (<- exported (export-thread effect))
+    (resume exported))
   (CodexLaunchCount [thread-id]
     (<- count (launch-count host thread-id))
     (resume count)))

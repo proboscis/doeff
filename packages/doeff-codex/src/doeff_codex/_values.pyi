@@ -48,6 +48,7 @@ class FreshThread:
 @dataclass(frozen=True, kw_only=True)
 class ResumeThread:
     thread_id: str
+    carry: str | None = ...
 
 @dataclass(frozen=True, kw_only=True)
 class CodexTurn:
