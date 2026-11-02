@@ -676,3 +676,41 @@ def test_chains_siblings_drafts_and_line_breaks_compare_like_their_rows() -> Non
 def test_a_line_keeps_no_more_keys_than_its_table_holds() -> None:
     table = _grown_chain(MIN_DELTA * 2, MIN_DELTA * 10)
     assert table._line.keys <= max(MIN_DELTA, table.size())
+
+
+def test_small_tables_share_the_empty_layers_and_hold_no_line_until_a_child() -> None:
+    # 行ごとの小さな表(画面に 45 万個)は、空の差分・空の消した鍵・系譜を表 1 つごとに持たない(card [id])。
+    first, second = _table(3), _table(4)
+    assert first._delta is second._delta and first._removed is second._removed
+    assert first._line is None and second._line is None
+    child = first.with_writes((TableWrite(key="k0", value=-1),))
+    assert child._delta is first._delta and child._removed is first._removed
+    # 初めての子で親に系譜ができ、子はそれに載る(比べは書いた鍵だけ)。2 人目の子は載らない。
+    assert first._line is not None and child._line is first._line
+    sibling = first.with_writes((TableWrite(key="k1", value=-2),))
+    assert sibling._line is None
+    assert child.changed_keys(sibling) == ("k0", "k1") and (child == sibling) is False
+    assert first.changed_keys(second) == ("k3",) and second.changed_keys(_table(4)) == ()
+    # 差分の層を空にした書き(基の作り直し)の答えも、分け合う空の値を持つ。
+    rebuilt = _grown_chain(MIN_DELTA * 20, MIN_DELTA * 20 // COMPACT_RATIO + 1)
+    assert rebuilt._delta is first._delta and rebuilt._removed is first._removed
+
+
+def test_first_children_made_at_once_from_threads_give_the_parent_one_line() -> None:
+    from concurrent.futures import ThreadPoolExecutor
+    from threading import Barrier
+
+    for _ in range(50):
+        parent = _table(5)
+        barrier = Barrier(8)
+
+        def write(step: int, parent: Table[int] = parent, barrier: Barrier = barrier) -> Table[int]:
+            barrier.wait()
+            return parent.with_writes((TableWrite(key=f"k{step % 5}", value=-step - 1),))
+
+        with ThreadPoolExecutor(8) as pool:
+            children = list(pool.map(write, range(8)))
+        assert sum(child._line is parent._line for child in children) == 1
+        for child in children:
+            for other in children:
+                assert (child == other) is (child is other)

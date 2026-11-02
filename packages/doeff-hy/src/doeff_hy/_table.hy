@@ -22,6 +22,10 @@
 ;;; with-writes(と下書きの freeze)で作った子の表は、親がまだ子を持たなければ親と同じ系譜に載り、系譜の記録へ書いた鍵の列を 1 つ足す。
 ;;; 同じ系譜の 2 つの表は一方が他方の子孫なので、違い得る鍵は 2 つの位置の間に記録した鍵だけ。2 人目の子・記録が子の行の数(と MIN-DELTA の大きい方)を越えた子・
 ;;; table-of と写しで作った表は新しい系譜を始める(比べは前の道 — 基を分け合えば差分、ほかは全部の鍵)。記録は鍵だけを持つ(行を持たない)。
+;;;
+;;; 小さな表の持ち物 — agora の画面は行ごとの小さな表(返事の列・card の関係と tag)を 45 万個持ち、表 1 つごとの空の差分の dict・空の
+;;; frozenset・系譜(dict と Lock を持つ)が約 0.9 GB を占めた(card [id])。空の差分と消した鍵は module に 1 つの空の値
+;;; (_NO-DELTA・_NO-REMOVED)を分け合い、系譜は初めて子を作る時に作る(子を作らない表は系譜を持たない — _line は None)。
 (import dataclasses [dataclass])
 (import collections.abc [Mapping])
 (import threading [Lock])
@@ -36,6 +40,13 @@
 ;; 真偽と長さの読みを断る時の文(Table と TableDraft で同じ文 — 直し方を名指す)。
 (setv TABLE-TRUTH-REFUSAL "Table / TableDraft は真偽で読まない — 空かどうかは (= (.size t) 0) か (> (.size t) 0) で読む")
 (setv TABLE-LEN-REFUSAL "Table / TableDraft は len で数えない — 行の数は (.size t) で読む")
+
+;; 空の差分と空の消した鍵(頭の註「小さな表の持ち物」)— 全部の表が分け合う。差分は書き換えない(書きは写して新しい dict を作る)ので、
+;; 分け合う空の dict にも誰も書かない。
+(setv _NO-DELTA {})
+(setv _NO-REMOVED (frozenset))
+;; 系譜をまだ持たない表に系譜を作る判断を 1 つにする錠(2 つの thread が同じ親から初めての子を作っても、親の系譜は 1 本)。
+(setv _LINE-BIRTH (Lock))
 
 (setv TABLE-MAPPING-EQ-REFUSAL "Table を dict / Mapping と == で比べない — 偽に化ける。比べるなら (dict (zip (.keys t) (.rows t))) などの dict へ直して比べる(card E0)")
 
@@ -66,16 +77,18 @@
   (#^ int _size)
   ;; 全行の写し(基と差分を合わせた dict)— 初めて全行を読む時に 1 度だけ作る(下の _flat-rows)。基だけの表は基そのもの。
   (#^ (| (get dict #(str V)) None) _flat)
-  ;; 系譜と、その記録の中の位置(頭の註)— 作った表は新しい系譜の位置 0。子を親の系譜へ載せるのは _on-line。
-  (#^ _Line _line)
+  ;; 系譜と、その記録の中の位置(頭の註)— 作った表は系譜を持たず(None)位置 0。初めて子を作る時に系譜を作り(位置 0)、
+  ;; 子を親の系譜へ載せるのは _on-line。
+  (#^ (| _Line None) _line)
   (#^ int _at)
 
   (defn #^ None __init__ [self #^ (get dict #(str V)) base #^ (get dict #(str V)) delta #^ (get frozenset str) removed]
     (object.__setattr__ self "_base" base)
-    (object.__setattr__ self "_delta" delta)
-    (object.__setattr__ self "_removed" removed)
+    ;; 空の差分と消した鍵は分け合う空の値へ替える(頭の註「小さな表の持ち物」— 呼び手の空の値を表に持たせない)。
+    (object.__setattr__ self "_delta" (if delta delta _NO-DELTA))
+    (object.__setattr__ self "_removed" (if removed removed _NO-REMOVED))
     (object.__setattr__ self "_flat" None)
-    (object.__setattr__ self "_line" (_Line))
+    (object.__setattr__ self "_line" None)
     (object.__setattr__ self "_at" 0)
     ;; 行の数 = 基の行 − 消した基の行 + 基に無い差分の行。差分と消した鍵の数に比例して数える(基の全鍵を回らない — `&` は小さい方を回る。
     ;; 基の全鍵を回る `(- (.keys delta) (.keys base))` は 1 行の書きの費用の 65〜96% だった・card E0)。
@@ -212,11 +225,11 @@
    base はこの module の中で作った写しだけを受ける(作った後に書き換えない)。"
   (setv table (object.__new__ Table))
   (object.__setattr__ table "_base" base)
-  (object.__setattr__ table "_delta" {})
-  (object.__setattr__ table "_removed" (frozenset))
+  (object.__setattr__ table "_delta" _NO-DELTA)
+  (object.__setattr__ table "_removed" _NO-REMOVED)
   (object.__setattr__ table "_size" (len base))
   (object.__setattr__ table "_flat" None)
-  (object.__setattr__ table "_line" (_Line))
+  (object.__setattr__ table "_line" None)
   (object.__setattr__ table "_at" 0)
   table)
 
@@ -224,8 +237,14 @@
 (defn #^ (get Table V) _on-line [#^ (get Table V) parent #^ (get Table V) child #^ (get tuple #(str ...)) keys]
   "書いて作ったばかりの子の表 child を、親 parent の系譜へ載せるため(頭の註)— 親がまだ子を持たず(親の位置が記録の末尾)、記録が
    子の行の数と MIN-DELTA の大きい方を越えない時だけ(系譜の記録は表 1 つ分を越えて育たない)、書いた鍵 keys を記録へ足して載せる。載せない子は作った時の新しい系譜のまま。
-   child はこの module の中で作ったばかりの表だけを受ける(まだ誰にも渡していない)。答えは child。"
+   child はこの module の中で作ったばかりの表だけを受ける(まだ誰にも渡していない)。答えは child。
+   系譜を持たない親(初めての子)には、ここで系譜を作る(親は位置 0 のまま — 作った時の新しい系譜と同じ)。"
   (setv line parent._line)
+  (when (is line None)
+    (with [_LINE-BIRTH]
+      (when (is parent._line None)
+        (object.__setattr__ parent "_line" (_Line)))
+      (setv line parent._line)))
   (with [line.lock]
     (setv at (len line.log))
     (when (and (= parent._at at)
@@ -239,8 +258,8 @@
 
 (defn #^ (| (get frozenset str) None) _line-span [#^ (get Table V) left #^ (get Table V) right]
   "同じ系譜の 2 つの表の間で書いた鍵の集合(違い得る鍵の全部 — 頭の註)を答えるため。系譜が違えば None(呼び手は前の道で比べる)。
-   記録は足すだけなので、2 つの位置の間の項は 2 つの表を作った時から変わらない。"
-  (when (is-not left._line right._line)
+   記録は足すだけなので、2 つの位置の間の項は 2 つの表を作った時から変わらない。系譜を持たない表(子を作っていない — 系譜の誰の子でもない)も None。"
+  (when (or (is left._line None) (is-not left._line right._line))
     (return None))
   (setv low (min left._at right._at)
         high (max left._at right._at))
@@ -272,14 +291,14 @@
   ;; 子は親の系譜へ載る(基を作り直した子も — 系譜は基を問わず、2 つの表の間の書きの鍵だけを持つ)。
   (_on-line table
             (if (> (+ (len delta) (len removed)) (max MIN-DELTA (// (len table._base) COMPACT-RATIO)))
-                (Table (| (dfor #(key value) (.items table._base) :if (not-in key removed) key value) delta) {} (frozenset))
+                (Table (| (dfor #(key value) (.items table._base) :if (not-in key removed) key value) delta) _NO-DELTA _NO-REMOVED)
                 (Table table._base delta (frozenset removed)))
             (tuple pending)))
 
 
 (defn #^ (get Table V) table-of [#^ (get tuple #((get TableWrite V) ...)) rows]
   "行の列から Table を作る(value = None の行は入れない)。"
-  (Table (dfor write rows :if (is-not write.value None) write.key write.value) {} (frozenset)))
+  (Table (dfor write rows :if (is-not write.value None) write.key write.value) _NO-DELTA _NO-REMOVED))
 
 
 ;;; 下書き(TableDraft)— 1 拍の中で書いた行を同じ拍の中で読み直す書き手のための物。
