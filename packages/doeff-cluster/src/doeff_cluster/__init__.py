@@ -16,6 +16,9 @@ if TYPE_CHECKING:
     from doeff_cluster._sim.child_processes import SimChildren as SimChildren
     from doeff_cluster._sim.child_processes import SimDescendant as SimDescendant
     from doeff_cluster._sim.k8s_services import held_kube_services as held_kube_services
+    from doeff_cluster._sim.workspace_volumes import HeldVolume as HeldVolume
+    from doeff_cluster._sim.workspace_volumes import WorkspaceVolumeWorld as WorkspaceVolumeWorld
+    from doeff_cluster._sim.workspace_volumes import held_workspace_volumes as held_workspace_volumes
     from doeff_cluster._sim.k8s_supplied import OBJECT_PATH as OBJECT_PATH
     from doeff_cluster._sim.k8s_supplied import HeldEntry as HeldEntry
     from doeff_cluster._sim.k8s_supplied import HeldObject as HeldObject
@@ -181,6 +184,21 @@ if TYPE_CHECKING:
     )
     from doeff_cluster._shared.intent.kube_service_model import (
         EnsureKubeService as EnsureKubeService,
+    )
+    from doeff_cluster._shared.intent.workspace_volume_model import (
+        AttachWorkspaceVolume as AttachWorkspaceVolume,
+    )
+    from doeff_cluster._shared.intent.workspace_volume_model import (
+        CreateWorkspaceVolume as CreateWorkspaceVolume,
+    )
+    from doeff_cluster._shared.intent.workspace_volume_model import (
+        DetachWorkspaceVolume as DetachWorkspaceVolume,
+    )
+    from doeff_cluster._shared.intent.workspace_volume_model import (
+        MountWorkspaceVolume as MountWorkspaceVolume,
+    )
+    from doeff_cluster._shared.intent.workspace_volume_model import (
+        UmountWorkspaceVolume as UmountWorkspaceVolume,
     )
     from doeff_cluster._shared.intent.metrics_model import ReportMetrics as ReportMetrics
     from doeff_cluster._shared.intent.process_model import AwaitProcessEnded as AwaitProcessEnded
@@ -537,6 +555,9 @@ if TYPE_CHECKING:
     from doeff_cluster._shared.intent.kube_service_model import KubeService as KubeService
     from doeff_cluster._shared.intent.kube_service_model import KubeServicePort as KubeServicePort
     from doeff_cluster._shared.intent.kube_service_model import KubeServiceType as KubeServiceType
+    from doeff_cluster._shared.intent.workspace_volume_model import WorkspaceOutcome as WorkspaceOutcome
+    from doeff_cluster._shared.intent.workspace_volume_model import WorkspaceVolumeRefused as WorkspaceVolumeRefused
+    from doeff_cluster._shared.intent.workspace_volume_model import WorkspaceVolumeSite as WorkspaceVolumeSite
     from doeff_cluster._shared.intent.semaphore_model import LEASE_MAX_TTL_MS as LEASE_MAX_TTL_MS
     from doeff_cluster._shared.intent.semaphore_model import LOST as LOST
     from doeff_cluster._shared.core.launch_rules import LaunchEnvMissing as LaunchEnvMissing
@@ -694,6 +715,8 @@ if TYPE_CHECKING:
     )
     from doeff_cluster._shared.protocol.job_call_handlers import job_target as job_target
     from doeff_cluster._shared.protocol.kube_services import kube_services_api as kube_services_api
+    from doeff_cluster._shared.protocol.workspace_volumes import WORKSPACE_SITE as WORKSPACE_SITE
+    from doeff_cluster._shared.protocol.workspace_volumes import workspace_volumes_api as workspace_volumes_api
     from doeff_cluster._shared.core.lease_rules import lease_full_until as lease_full_until
     from doeff_cluster._shared.core.lease_rules import lease_holder as lease_holder
     from doeff_cluster._shared.entry.cluster_foundation import lease_holder_of as lease_holder_of
@@ -799,6 +822,11 @@ _LAZY_EXPORTS: dict[str, str] = {
     "EndProcess": "doeff_cluster._sim.local",
     "EnsureKubeIngress": "doeff_cluster._shared.intent.kube_service_model",
     "EnsureKubeService": "doeff_cluster._shared.intent.kube_service_model",
+    "AttachWorkspaceVolume": "doeff_cluster._shared.intent.workspace_volume_model",
+    "CreateWorkspaceVolume": "doeff_cluster._shared.intent.workspace_volume_model",
+    "DetachWorkspaceVolume": "doeff_cluster._shared.intent.workspace_volume_model",
+    "MountWorkspaceVolume": "doeff_cluster._shared.intent.workspace_volume_model",
+    "UmountWorkspaceVolume": "doeff_cluster._shared.intent.workspace_volume_model",
     "EnvReport": "doeff_cluster._worker.intent.worker_model",
     "FailRoute": "doeff_cluster._sim.local",
     "ForgetProbes": "doeff_cluster._worker.intent.worker_model",
@@ -942,6 +970,9 @@ _LAZY_EXPORTS: dict[str, str] = {
     "git_command": "doeff_cluster._sim.checkout_git_script",
     "heartbeat": "doeff_cluster._sim.local",
     "held_kube_services": "doeff_cluster._sim.k8s_services",
+    "HeldVolume": "doeff_cluster._sim.workspace_volumes",
+    "WorkspaceVolumeWorld": "doeff_cluster._sim.workspace_volumes",
+    "held_workspace_volumes": "doeff_cluster._sim.workspace_volumes",
     "held_value_of": "doeff_cluster._sim.k8s_supplied",
     "held_whole_of": "doeff_cluster._sim.k8s_supplied",
     "host_answers": "doeff_cluster._sim.local",
@@ -1268,6 +1299,9 @@ _LAZY_EXPORTS: dict[str, str] = {
     "KubeService": "doeff_cluster._shared.intent.kube_service_model",
     "KubeServicePort": "doeff_cluster._shared.intent.kube_service_model",
     "KubeServiceType": "doeff_cluster._shared.intent.kube_service_model",
+    "WorkspaceOutcome": "doeff_cluster._shared.intent.workspace_volume_model",
+    "WorkspaceVolumeRefused": "doeff_cluster._shared.intent.workspace_volume_model",
+    "WorkspaceVolumeSite": "doeff_cluster._shared.intent.workspace_volume_model",
     "LEASE_MAX_TTL_MS": "doeff_cluster._shared.intent.semaphore_model",
     "LOST": "doeff_cluster._shared.intent.semaphore_model",
     "LaunchEnvMissing": "doeff_cluster._shared.core.launch_rules",
@@ -1378,6 +1412,8 @@ _LAZY_EXPORTS: dict[str, str] = {
     "job_reach_sender": "doeff_cluster._shared.protocol.job_reach_handlers",
     "job_target": "doeff_cluster._shared.protocol.job_call_handlers",
     "kube_services_api": "doeff_cluster._shared.protocol.kube_services",
+    "WORKSPACE_SITE": "doeff_cluster._shared.protocol.workspace_volumes",
+    "workspace_volumes_api": "doeff_cluster._shared.protocol.workspace_volumes",
     "lease_full_until": "doeff_cluster._shared.core.lease_rules",
     "lease_holder": "doeff_cluster._shared.core.lease_rules",
     "lease_holder_of": "doeff_cluster._shared.entry.cluster_foundation",

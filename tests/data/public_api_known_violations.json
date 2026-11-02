@@ -6296,6 +6296,12 @@
    "module": "doeff_stream",
    "name": "replay",
    "訳": "test の harness: VM を使わずに入力の列を step に与え、fold と同じ検め(Run の program が Program か effect か)で答えを確かめて跡を返す。検めが EffectBase を読むので換算の関数の形に当たらず、harness を置く組が無い"
+  },
+  {
+   "package": "doeff-cluster",
+   "module": "doeff_cluster",
+   "name": "WORKSPACE_SITE",
+   "訳": "作業場所の volume の本番の答え手 workspace-volumes-api に渡す本番の場所と待つ秒(Longhorn の namespace・値の ConfigMap・mount の係の頼みの dir — zeus の Pod の宣言と同じ path)。job の子は env WORKER_WORKSPACE_MOUNT_DIR を継がないので、使い手(agora-controllers)が本番の値を入口から受ける。宣言と同じ値である事は tests/test_workspace_mount.py と tests/test_workspace_volumes.py が縛る(card [id])"
   }
  ]
 }

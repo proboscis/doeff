@@ -3406,6 +3406,13 @@
   {
    "package": "doeff-cluster",
    "module": "doeff_cluster",
+   "name": "HeldVolume",
+   "組": "許した物 — handler の設定の型",
+   "決め": "ADR-DOE-API-001 R2"
+  },
+  {
+   "package": "doeff-cluster",
+   "module": "doeff_cluster",
    "name": "JobNotResolved",
    "組": "許した物 — effect の答えの型",
    "決め": "ADR-DOE-API-001 R2"
@@ -3422,6 +3429,34 @@
    "module": "doeff_cluster",
    "name": "ResolveFailure",
    "組": "許した物 — effect の答えの型",
+   "決め": "ADR-DOE-API-001 R2"
+  },
+  {
+   "package": "doeff-cluster",
+   "module": "doeff_cluster",
+   "name": "WorkspaceOutcome",
+   "組": "許した物 — effect の答えの型",
+   "決め": "ADR-DOE-API-001 R2"
+  },
+  {
+   "package": "doeff-cluster",
+   "module": "doeff_cluster",
+   "name": "WorkspaceVolumeRefused",
+   "組": "許した物 — 例外の型",
+   "決め": "ADR-DOE-API-001 R2"
+  },
+  {
+   "package": "doeff-cluster",
+   "module": "doeff_cluster",
+   "name": "WorkspaceVolumeSite",
+   "組": "許した物 — handler の設定の型",
+   "決め": "ADR-DOE-API-001 R2"
+  },
+  {
+   "package": "doeff-cluster",
+   "module": "doeff_cluster",
+   "name": "WorkspaceVolumeWorld",
+   "組": "許した物 — handler の設定の型",
    "決め": "ADR-DOE-API-001 R2"
   },
   {
