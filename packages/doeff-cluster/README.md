@@ -557,7 +557,9 @@ coordinator の版上げの commit は、`deploy/k8s/coordinator/coordinator.yam
 (`coordinator-prepare-<commit>`)は、組み立ての時にその行から写されます。Flux はこの Job が上げ先の版の root を coordinator と同じ node・
 同じ dir に組み終えるのを待ってから(Kustomization の wait と dependsOn)Deployment coordinator を入れ替えるので、新しい Pod は組み済みの
 root で秒で起動します(前は古い Pod を止めてから新しい Pod が組み、全部の worker が 105〜141 秒 coordinator に届かなかった)。Job が組めなければ
-coordinator は古い版のまま動き続けます。
+coordinator は古い版のまま動き続けます。node の memory の空きが足りずに Job が置けない間は、Job は失敗せずに Pending で待ちます(期限は
+Pod の側が持ち、走った時間だけを数える)。Job と coordinator は既定の 0 より高い PriorityClass `doeff-cluster-coordinator` を持ち、空きが
+足りなければ低い Pod を追い出して置かれます(ADR-DOE-CLUSTER-003 R4・R5)。
 
 順が決まっている変更の例:
 
