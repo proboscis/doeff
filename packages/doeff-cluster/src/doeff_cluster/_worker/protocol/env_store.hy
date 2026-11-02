@@ -51,6 +51,7 @@
 (import doeff_cluster._worker.protocol.observations [ObserveEnvs ObserveEnvDisk])
 (import doeff_cluster._worker.core.worker_rules [ENV-KEY-PREFIX])
 (import doeff_cluster._worker.core.launch [entry-place-of-marker])
+(import doeff_cluster._worker.core.job_cgroup [placed-argv])
 (import doeff_cluster._worker.core.env_upkeep [RootInfo RootsTally PrepareLimits sweep-candidates sweep-choice sweep-wanted sweep-due roots-bytes kept-bytes
                                               prepare-overdue env-capacity WHEEL-UNUSED-SECONDS CODE-STORE-UNUSED-SECONDS MemoryUse MemoryUnread WarmRoom
                                               memory-use-of root-estimate build-memory-estimate reclaimable-bytes warm-refusal])
@@ -99,7 +100,10 @@
    設定 — 値は main の --code-store・起動の script が DOEFF_HY_CODE_STORE を渡す・#3858)・shared = 世代をまたいで分け合う dir(root の
    置き場 roots・固定の file・Python の置き場・Rust の wheel の保存先・mirror とその錠・wheel と root の錠 — 値は main の --shared-dir・
    None = state と同じ dir。同じ機体に同じ名の worker の 2 つの世代が並ぶ時、準備の要求は世代ごとの state に置き、root と重い cache を
-   分け合う・AL-D2・AL-D2g)。2 つの量の値は worker の
+   分け合う・AL-D2・AL-D2g)・prepare-procs = 準備の process を置く兄弟の cgroup(準備の層)の cgroup.procs(None = 置き直さない — 外側の
+   job-cgroup-placer が jobs の層へ置く)。準備の層は機体の配備が準備のために取り置く memory の上限で、worker は走っている準備の分を
+   jobs の上限から引く(worker/core/eviction_rules の prepare-reserve)。jobs の層で焼くと、動く job と memory を分け合い、焼く子が層の
+   上限で殺されて準備が落ちた(2026-11-02 の k3s-0 — jobs 896 MiB のうち動く job が約 450 MiB)。2 つの量の値は worker の
    起動の引数(main.hy の --env-roots-cap・--env-min-free — 既定は boot.sh)。"
   (#^ str state)
   (#^ str hy-command)
@@ -116,7 +120,8 @@
   (setv #^ str tool ENV-TOOL)
   (setv #^ str cgroup-dir "/sys/fs/cgroup")
   (setv #^ (| str None) code-store None)
-  (setv #^ (| str None) shared None))
+  (setv #^ (| str None) shared None)
+  (setv #^ (| str None) prepare-procs None))
 
 
 (defrecord PendingEnv
@@ -254,8 +259,13 @@
   (<- argv tuple (prepare-argv settings.hy-command settings.tool request result settings.state (or settings.shared settings.state)
                                settings.uv-cache settings.repo-keys
                                settings.code-prepare settings.uv progress settings.platform))
+  ;; 準備の層が在れば、準備の process(と、それが起こす git・uv・焼く道具の子)をそこへ置く(EnvSettings の prepare-procs の註)。
+  (var placed argv)
+  (when (is-not settings.prepare-procs None)
+    (<- wrapped tuple (placed-argv settings.prepare-procs argv))
+    (:= placed wrapped))
   ;; 子は worker の環境を継ぐ(env = None)。出力は標準出力と標準エラーを同じ log の末尾へ。
-  (<- started (StartProcess :argv argv :stdout-path log :stderr-path log))
+  (<- started (StartProcess :argv placed :stdout-path log :stderr-path log))
   (when (isinstance started ProcessNotStarted)
     (raise (OSError started.detail)))
   (PendingEnv :pid started.pid :started-ms now-ms :result result :progress progress :warm warm))

@@ -561,6 +561,23 @@
   (assert (= failing.detail "旧い版を動かしたまま — 新しい版を準備できない: 準備に失敗") failing)
   (assert (= (! (start-holds 30999 #(R2) failed {} policy)) #((JobHold :name "s" :hold StartHold.PREPARE-FAILED)))))
 
+(import doeff_cluster._shared.intent.runtime_env_model [EnvFailure EnvFailureKind])
+
+(deftest test-a-recreate-job-reports-the-new-versions-prepare-failure-while-the-old-process-runs
+  ;; 失敗ケース(2026-11-02): 旧い版を動かしたまま新しい版の実行環境の準備に失敗した行は phase が running のままなので、
+  ;; 失敗の欄に載せないと coordinator は版の違いを「入れ替えの途中」と読み、宣言の道具は段の締め切りまで待った。行は旧い版で running の
+  ;; まま、準備の失敗(種類と再試行するか)を運ぶ。準備中に戻れば欄は空(撃ち直しの間は失敗と読ませない)。
+  (val failure (EnvFailure :kind EnvFailureKind.ENV-INCOMPATIBLE :detail "焼けない(模擬)" :retryable False))
+  (val failed (! (world (! (running R1)) :codes #(READY1 (CodeView "rev2" CodeState.FAILED :detail "焼けない(模擬)" :failed-ms 1000
+                                                                 :failure failure)))))
+  (val status (get (! (statuses 2000 #(R2) failed {} POLICY)) 0))
+  (assert (= #(status.phase status.running-revision status.failure) #(JobPhase.RUNNING "rev1" failure)) status)
+  (val preparing (! (world (! (running R1)) :codes #(READY1 (CodeView "rev2" CodeState.PREPARING)))))
+  (assert (is (. (get (! (statuses 2000 #(R2) preparing {} POLICY)) 0) failure) None))
+  ;; 宣言の版で動いている job(入れ替えでない)は、走っている process の行に別の版の失敗を載せない。
+  (val steady (! (world (! (running R2)) :codes #(READY2 (CodeView "rev1" CodeState.FAILED :failed-ms 1000 :failure failure)))))
+  (assert (is (. (get (! (statuses 2000 #(R2) steady {} POLICY)) 0) failure) None)))
+
 (deftest test-a-recreate-job-probes-the-new-entry-before-stopping-the-old-process
   ;; 失敗ケース: 新しい版の木が揃っても、入口の検めが通るまでは旧を止めない — 検めの action だけを出し、走っている間は待つ。直す前は
   ;; 旧を止めていた。

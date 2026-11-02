@@ -99,6 +99,47 @@
   (max 1 (min BAKE-JOBS-CEILING usable)))
 
 
+;; 焼きの並列数の memory の見積もり(2026-11-02 の測り — 2 つの木の 2878 本〔2376 本と 502 本〕を保存先なしで並べる数 2 で焼き直した
+;; 木の PSS: 焼く子 1 本の山 198〜316 MiB・入口(この道具の親)の山 191 MiB・焼きの道具の親 31 MiB・木の山 520 MiB)。memory 4 GiB の
+;; node の worker(jobs の層 896 MiB を動く job が約 450 MiB 使う)で CPU の数 2 だけ子を並べ、子が層の上限で殺されて準備が落ちた
+;; (2026-11-02 18:56 JST の k3s-0 — BrokenProcessPool)。
+;; 子 1 本の山(焼く子は fork の後に Hy の macro の module と焼く source を読み、子ごとに持つ)。
+(val BAKE-CHILD-BYTES (* 320 1024 1024))
+;; 子の外に要る分: 入口が読みを始めた後に閉包の歩みで伸びる分(約 100 MiB)と焼きの道具の親(約 31 MiB)に余裕を足した値。
+(val BAKE-FIXED-BYTES (* 160 1024 1024))
+
+
+(defk memory-room-of [levels]
+  {:pre [(: levels tuple)] :post [(: % (| int None))] :tags {:context "worker" :role "judgment"}}
+  "この process が居る cgroup(v2)と、その上の層の memory.max・memory.current の中身の組の列(levels = #(max の中身 current の中身) の列 —
+   読めない file は None)から、この process の木が使える memory の空き(byte — 層ごとの 上限 − 今の使い の最小・負は 0)を求めるため。
+   上限の無い(max)・読めない層は数えない。どの層も上限を持たなければ None(空きで並列数を絞らない)。"
+  (val rooms (tuple (gfor #(cap now) levels
+                          :if (and (isinstance cap str) (isinstance now str) (.isdigit (.strip cap)) (.isdigit (.strip now)))
+                          (max 0 (- (int (.strip cap)) (int (.strip now)))))))
+  (if rooms (min rooms) None))
+
+
+(defk bake-jobs-of [jobs room]
+  {:pre [(: jobs int) (>= jobs 1) (: room (| int None))] :post [(: % int) (>= % 1)] :tags {:context "worker" :role "judgment"}}
+  "焼きの並列数を、CPU から決めた数(か呼び手の --jobs)jobs を上限に、memory の空き room(memory-room-of — None = 上限の無い層)で
+   子が層の上限を越えない数へ絞るため: (空き − BAKE-FIXED-BYTES) ÷ BAKE-CHILD-BYTES の切り捨て。1 本も入らない空きでも 1(並べずに
+   道具の親が 1 つずつ焼く — 子を立てない分だけ軽い)。"
+  (if (is room None)
+      jobs
+      (max 1 (min jobs (// (- room BAKE-FIXED-BYTES) BAKE-CHILD-BYTES)))))
+
+
+(defk cgroup-levels-of [own-cgroup root]
+  {:pre [(: own-cgroup (| str None)) (: root str)] :post [(: % tuple)] :tags {:context "worker" :role "judgment"}}
+  "/proc/self/cgroup の中身(cgroup v2 の行 `0::<path>` — 読めなければ None)から、この process の cgroup とその上の層の dir(root の下 —
+   名前空間の根から見た path・近い順・root 自身を含む)を求めるため。v2 の行が無ければ root だけ(k8s の Pod の container は名前空間の根が
+   自分の cgroup)。"
+  (val lines (if (is own-cgroup None) [] (lfor line (.splitlines own-cgroup) :if (.startswith line "0::") (cut line 3 None))))
+  (val parts (if (= (len lines) 1) (lfor p (.split (get lines 0) "/") :if p p) []))
+  (tuple (gfor n (range (len parts) -1 -1) (posixpath.join root #* (cut parts 0 n)))))
+
+
 (defk tree-arguments [trees roots]
   {:pre [(: trees tuple) (: roots tuple)] :post [(: % (| tuple str))] :tags {:context "worker" :role "judgment"}}
   "木ごとに並べた命令の引数(--tree・--roots の値の列)を木の組(TreeArgs の列)に揃えるため(揃え方は入口の頭の註)。揃わなければ
