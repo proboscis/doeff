@@ -17,7 +17,8 @@ cache で依存を取り込むと、wheel の無い package(free-threaded の 3.
            並べて組まない)。どれが落ちても訳を 1 行出して続け、0 で終わる。
   pack    cache を tar.zst 1 file にする。入れない物: 錠(.lock)・作りかけ(.tmp*)・組みの一時の環境(builds-v*)・`uv run --with` の
            環境(environments-v*)・interpreter の問い合わせの控え(interpreter-v*)。
-  publish  pack した file を S3 互換の object storage の URL(path の形 http(s)://<host>/<bucket>/<key>)へ PUT する。
+  publish  pack した file を S3 互換の object storage の URL(path の形 http(s)://<host>/<bucket>/<key>)へ PUT する。PUT が 5xx・
+           時間切れ・接続の切れで落ちれば、30・60・120・240・480 秒を待って 5 回まで試し直す(refresh の PUT も同じ)。
   seed     cache に印(.doeff-uv-seed.json)が無ければ、URL(S3 の path の形か file の path)の tar.zst を取り寄せ、cache の中の一時の dir に
            展開してから、cache に無い物だけを rename で入れる(在る物は替えない — 走っている uv の索引と展開済みの項目を壊さない)。
            展開済みの wheel の項目(archive-v*)を先に入れ、索引(wheels-v*・sdists-v* など)を後に入れる。入れ終えたら印を書く。印が在れば
@@ -114,6 +115,9 @@ EMPTY_SHA256 = hashlib.sha256(b"").hexdigest()
 CHUNK = 1 << 20
 # 並べた Range の GET の 1 片の byte。
 PART = 64 << 20
+# PUT が落ちた時に試し直すまでの秒(並びの数 = 試し直しの回数)。object の置き場は disk の命令が詰まると数分 503(quorum に届かない)
+# を返し、組みから pack までは約 30 分かかるので、落ちた PUT 1 回で組みを捨てない — 5 回・待ちの計 15.5 分。
+PUT_RETRY_DELAYS = (30.0, 60.0, 120.0, 240.0, 480.0)
 
 
 def say(line: str) -> None:
@@ -241,17 +245,23 @@ def _connection(url: str, timeout: float) -> tuple[http.client.HTTPConnection, s
     return cls(parts.netloc, timeout=timeout), target
 
 
-def http_put_file(
+class PutError(Exception):
+    """PUT の 1 回の失敗(retryable = 試し直せば通りうる — 5xx・時間切れ・接続の切れ)。"""
+
+    def __init__(self, reason: str, *, retryable: bool) -> None:
+        super().__init__(reason)
+        self.retryable = retryable
+
+
+def _put_once(
     url: str,
     path: Path,
     credentials: Credentials | None,
     region: str,
     timeout: float,
-    meta: dict[str, str] | None = None,
+    *,
+    headers: dict[str, str],
 ) -> dict[str, str]:
-    """path を url へ PUT する(meta = object に載せる x-amz-meta-* の header — 署名に入れる)。"""
-    size = path.stat().st_size
-    headers = {"Content-Length": str(size), "Content-Type": "application/zstd", **(meta or {})}
     if credentials:
         headers = sigv4_headers(
             "PUT", url, region, credentials, datetime.datetime.now(datetime.UTC), headers=headers
@@ -262,11 +272,44 @@ def http_put_file(
             conn.request("PUT", target, body=body, headers=headers)
             response = conn.getresponse()
             text = response.read()
+    except (OSError, http.client.HTTPException) as error:
+        raise PutError(f"{type(error).__name__}: {error}", retryable=True) from error
     finally:
         conn.close()
     if response.status not in (200, 201):
-        raise SystemExit(f"uv-cache: PUT {url} が HTTP {response.status}: {text[:300]!r}")
+        raise PutError(f"HTTP {response.status}: {text[:300]!r}", retryable=response.status >= 500)
     return {"etag": response.getheader("ETag", "").strip('"')}
+
+
+def http_put_file(
+    url: str,
+    path: Path,
+    credentials: Credentials | None,
+    region: str,
+    timeout: float,
+    meta: dict[str, str] | None = None,
+) -> dict[str, object]:
+    """path を url へ PUT する(meta = object に載せる x-amz-meta-* の header — 署名に入れる)。5xx・時間切れ・接続の切れ
+    (Broken pipe など)は PUT_RETRY_DELAYS の秒を待って試し直す(署名は試しごとに今の刻で作り直す)。4xx は試し直さない。"""
+    size = path.stat().st_size
+    headers = {"Content-Length": str(size), "Content-Type": "application/zstd", **(meta or {})}
+    delays = PUT_RETRY_DELAYS
+    attempt = 0
+    while True:
+        attempt += 1
+        try:
+            return {
+                **_put_once(url, path, credentials, region, timeout, headers=headers),
+                "attempts": attempt,
+            }
+        except PutError as failed:
+            if not failed.retryable or attempt > len(delays):
+                raise SystemExit(
+                    f"uv-cache: PUT {url} が {failed}({attempt} 回目で止めた)"
+                ) from failed
+            wait = delays[attempt - 1]
+            say(f"PUT {url} が {failed} — {wait:g} 秒の後に試し直す({attempt}/{len(delays)})")
+            time.sleep(wait)
 
 
 def _signed(
@@ -597,7 +640,9 @@ def refresh(
                 return {"verb": "refresh", "refreshed": False, "reason": "current", "locks": digest}
             age = time.time() - remote.at
             if age < every_seconds:
-                say(f"refresh: 置いてから {round(age)} 秒で {round(every_seconds)} 秒が経っていない — 組まない")
+                say(
+                    f"refresh: 置いてから {round(age)} 秒で {round(every_seconds)} 秒が経っていない — 組まない"
+                )
                 return {"verb": "refresh", "refreshed": False, "reason": "recent", "locks": digest}
         if disk_free(cache) < min_free:
             say(f"refresh: 空き {disk_free(cache)} byte が下限 {min_free} byte を下回る — 組まない")
@@ -1037,7 +1082,9 @@ class UpkeepSettings:
 
     @property
     def refreshes(self) -> bool:
-        return bool(self.seed_url and self.refresh_projects and self.refresh_node == self.node != "")
+        return bool(
+            self.seed_url and self.refresh_projects and self.refresh_node == self.node != ""
+        )
 
     @classmethod
     def from_env(cls, env: dict[str, str]) -> Self:

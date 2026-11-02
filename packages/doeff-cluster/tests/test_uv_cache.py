@@ -21,12 +21,14 @@ import http.server
 import importlib.util
 import os
 import re
+import socket
 import subprocess
 import sys
 import threading
 import time
 from collections.abc import Iterator
 from pathlib import Path
+from typing import ClassVar
 
 import pytest
 
@@ -466,6 +468,8 @@ class _StoreHandler(http.server.BaseHTTPRequestHandler):
     meta = ""
     modified = 0.0
     puts = 0
+    # 先頭から順に PUT の答えを替える: HTTP の状態の数か "drop"(本体を読まずに接続を切る)。空になれば 200 で置く。
+    failures: ClassVar[list[int | str]] = []
 
     def do_HEAD(self) -> None:
         if self.body is None:
@@ -481,10 +485,21 @@ class _StoreHandler(http.server.BaseHTTPRequestHandler):
 
     def do_PUT(self) -> None:
         cls = type(self)
+        cls.puts += 1
+        if cls.failures:
+            failure = cls.failures.pop(0)
+            if failure == "drop":
+                self.close_connection = True
+                self.connection.shutdown(socket.SHUT_RDWR)
+                return
+            self.rfile.read(int(self.headers["Content-Length"]))
+            self.send_response(int(failure))
+            self.send_header("Content-Length", "0")
+            self.end_headers()
+            return
         cls.body = self.rfile.read(int(self.headers["Content-Length"]))
         cls.meta = self.headers.get(uv_cache.LOCKS_META, "")
         cls.modified = time.time()
-        cls.puts += 1
         self.send_response(200)
         self.send_header("ETag", '"put"')
         self.send_header("Content-Length", "0")
@@ -502,6 +517,7 @@ def seed_store() -> Iterator[str]:
         0.0,
         0,
     )
+    _StoreHandler.failures = []
     server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), _StoreHandler)
     thread = threading.Thread(target=server.serve_forever, daemon=True)
     thread.start()
@@ -602,6 +618,65 @@ def test_refresh_does_not_put_when_a_sync_fails(seed_store: str, tmp_path: Path)
         _refresh(cache, _projects(tmp_path), seed_store, failing)
     assert _StoreHandler.puts == 0
     assert not list(cache.glob(uv_cache.REFRESH_BUILD + "*"))
+
+
+@pytest.fixture
+def waits(monkeypatch: pytest.MonkeyPatch) -> list[float]:
+    """PUT の試し直しの待ちを眠らずに控える(待ちの並びは PUT_RETRY_DELAYS の頭の 3 つ)。"""
+    slept: list[float] = []
+    monkeypatch.setattr(uv_cache, "PUT_RETRY_DELAYS", (30.0, 60.0, 120.0))
+    monkeypatch.setattr(uv_cache.time, "sleep", slept.append)
+    return slept
+
+
+def test_put_retry_delays_are_five_waits_within_sixteen_minutes() -> None:
+    assert len(uv_cache.PUT_RETRY_DELAYS) == 5
+    assert sum(uv_cache.PUT_RETRY_DELAYS) <= 16 * 60
+
+
+@pytest.mark.parametrize("failures", [[503, 503], [500, "drop"], ["drop"]])
+def test_put_retries_server_errors_and_dropped_connections(
+    seed_store: str, waits: list[float], tmp_path: Path, failures: list[int | str]
+) -> None:
+    _StoreHandler.failures = list(failures)
+    packed = _write(tmp_path / "seed.tar.zst", "packed")
+    put = uv_cache.http_put_file(
+        seed_store, packed, None, "us-east-1", 10.0, {uv_cache.LOCKS_META: "h"}
+    )
+    assert put == {"etag": "put", "attempts": len(failures) + 1}
+    assert waits == [30.0, 60.0][: len(failures)]
+    assert _StoreHandler.body == b"packed"
+    assert _StoreHandler.meta == "h"
+
+
+def test_put_gives_up_after_the_last_wait(
+    seed_store: str, waits: list[float], tmp_path: Path
+) -> None:
+    _StoreHandler.failures = [503] * 4
+    with pytest.raises(SystemExit, match=r"HTTP 503.*4 回目で止めた"):
+        uv_cache.http_put_file(seed_store, _write(tmp_path / "s", "x"), None, "us-east-1", 10.0)
+    assert waits == [30.0, 60.0, 120.0]
+    assert _StoreHandler.body is None
+
+
+def test_put_does_not_retry_a_refusal(seed_store: str, waits: list[float], tmp_path: Path) -> None:
+    _StoreHandler.failures = [403]
+    with pytest.raises(SystemExit, match=r"HTTP 403.*1 回目で止めた"):
+        uv_cache.http_put_file(seed_store, _write(tmp_path / "s", "x"), None, "us-east-1", 10.0)
+    assert waits == []
+    assert _StoreHandler.puts == 1
+
+
+def test_refresh_keeps_the_build_through_a_failed_put(
+    seed_store: str, fake_uv: Path, waits: list[float], tmp_path: Path
+) -> None:
+    _StoreHandler.failures = [503]
+    projects = _projects(tmp_path)
+    result = _refresh(tmp_path / "cache", projects, seed_store, fake_uv)
+    assert result["refreshed"] is True
+    assert result["attempts"] == 2
+    assert _StoreHandler.meta == uv_cache.locks_digest(projects)
+    assert waits == [30.0]
 
 
 # ── boot.sh ───────────────────────────────────────────────────────────────
