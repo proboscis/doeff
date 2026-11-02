@@ -44,8 +44,10 @@
    上書き・手元の 1 台は上書き無し)。台数はこの effect の引数ではなく系の値が言う — 各 job の :replicas(0 = 取り下げ・1 = 動かす)が
    宣言の行に載り、3 つの handler(sim-cluster・手元の 1 台・配備)はそれを coordinator へ書く。取り下げは job の :replicas 0 の系を
    宣言し直す事(#3487 — 引数で台数を持つと、取り下げてあった Service へ台数を書かずに宣言し直した時に job が起きない取り違えが起きた・#3295)。
+   revision = その宣言し直しの版(送り手の commit)。None = handler の既定(sim-cluster は最初の宣言の版)。置き先(needs・pin)を
+   替える宣言し直しは、本番の declare と同じく新しい版で書く(coordinator は版を変えない置き先の書き換えを断る)。
    答え = 宣言した Service の名の tuple。"
-  {:fields [(: system System) (: environ (| (get dict #(str (get dict #(str str)))) None) None)]
+  {:fields [(: system System) (: environ (| (get dict #(str (get dict #(str str)))) None) None) (: revision (| str None) None)]
    :answer (get tuple #(str ...))
    :tags {:context "doeff-cluster" :role "intent"}})
 

@@ -68,6 +68,10 @@
      (if spec.handoff {"handoff" True "readyInstance" spec.ready-instance} {})
      ;; 入れ替えを諦めた job だけ(2026-09-26 — handoff_policy の期限): worker は新を止めて起こし直さず、旧を動かし続ける。
      (if (and spec.handoff spec.handoff-abandoned) {"handoffAbandoned" True} {})
+     ;; 条件を満たさなくなった担い手に残した handoff の job だけ(cluster_policy.relocating — 並べた先が Ready になるまで): worker は
+     ;; 動いている旧い版をそのまま動かし、新しい版を準備も起動もしない。欄を読まない古い worker は今どおり自分の上でも入れ替える
+     ;; (並べた先が Ready になると止められる — 無駄な準備と起動だけで、空白は作らない)。
+     (if (and spec.handoff spec.hold-version) {"holdVersion" True} {})
      ;; 世代をまたぐ入れ替えの印を持つ handoff の job だけ(AL-D2 — 退いた世代への返事): worker は今の process を止めずに退かせ、起こし直さ
      ;; ない。欄を読まない古い worker は今どおり動かし続ける(Pod の停止で止める)。
      (if (and spec.handoff (is-not spec.superseded-by None)) {"supersededBy" spec.superseded-by} {})

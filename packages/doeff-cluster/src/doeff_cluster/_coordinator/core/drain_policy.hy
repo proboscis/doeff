@@ -34,7 +34,7 @@
 (import doeff_cluster._shared.intent.protocol [ClusterTiming])
 (import doeff_cluster._coordinator.intent.cluster_model [ClusterJob ClusterState Drain Placement DrainPhase DrainProgress WorkerDrainView])
 (import doeff_cluster._coordinator.intent.request_bodies [DrainBody])
-(import doeff_cluster._coordinator.core.cluster_policy [alive eligible effective-needs can-take draining-workers load-of other-generation-boot handover-pending
+(import doeff_cluster._coordinator.core.cluster_policy [alive eligible effective-needs can-take draining-workers relocating load-of other-generation-boot handover-pending
                                                        LIVE-PHASES MAX-EVENTS scan-rows])
 (import doeff_cluster._coordinator.core.resource_policy [refuse service-readiness])
 
@@ -112,13 +112,21 @@
   (if candidates (. (get candidates 0) name) None))
 
 
+(defn #^ bool leaving-carrier [#^ int now #^ ClusterState state #^ ClusterJob job #^ Placement placed #^ ClusterTiming timing
+                               #^ frozenset draining]
+  "入れ替えの job の置き先 placed の担い手を空ける途中か: 担い手が drain 中か、宣言し直しで条件を満たさなくなった(relocating)。
+   どちらも同じ形で並べてから付け替える。"
+  (or (in placed.worker draining) (relocating now state job placed timing)))
+
+
 (defn #^ bool surge-holds [#^ int now #^ ClusterState state #^ ClusterJob job #^ Placement surge #^ ClusterTiming timing
                            #^ frozenset draining]
-  "並べた置き先を持ち続けてよいか: 元の置き先が drain 中の worker に在り、並べた先が生きていて条件を満たし、drain 中でない。"
+  "並べた置き先を持ち続けてよいか: 元の置き先が drain 中の worker か条件を満たさなくなった担い手(relocating)に在り、並べた先が
+   生きていて条件を満たし、drain 中でない。"
   (setv placed (.row state.placements job.spec.name)
         w (.row state.workers surge.worker))
   (and (> job.replicas 0) job.spec.handoff
-       (is-not placed None) (in placed.worker draining) (!= placed.worker surge.worker)
+       (is-not placed None) (leaving-carrier now state job placed timing draining) (!= placed.worker surge.worker)
        (is-not w None) (alive now w timing.lease-ms) (eligible state job w) (not-in w.name draining)))
 
 
@@ -127,7 +135,11 @@
    書くのは変わった job の行だけ(with-writes)・変える物が無ければ同じ object。"
   (setv draining (draining-workers state now)
         jobs (dfor j state.jobs j.spec.name j))
-  (when (and (not draining) (= (.size state.surges) 0)) (return state))
+  (when (and (not draining) (= (.size state.surges) 0)
+             (not (any (gfor #(name placed) (.items state.placements)
+                             :setv job (.get jobs name)
+                             (and (is-not job None) (relocating now state job placed timing))))))
+    (return state))
   ;; surge-rows・placement-rows = 当てる書き(job の名 → 次の Placement か、None = 外す)。読み直す行はここを先に引く。
   (setv surge-rows {} placement-rows {} events [])
   ;; 1. 並べた置き先の見直し(drain が解けた・job が消えた・並べた先が死んだ等は外す — 並べた先の worker は次の heartbeat で止める)。
@@ -139,12 +151,12 @@
                        "drain" "並べた置き先を外した"})))
   (setv kept-surges (.with-writes state.surges (tuple (gfor #(n r) (.items surge-rows) (TableWrite n r))))
         stepped (replace state :surges kept-surges))
-  ;; 2. 並べた先の process が Ready なら付け替える。3. drain 中の worker の上の入れ替えの job を並べる(並べた置き先は job の側で数える —
+  ;; 2. 並べた先の process が Ready なら付け替える。3. 空ける途中の担い手(drain 中・条件を満たさなくなった)の上の入れ替えの job を並べる(並べた置き先は job の側で数える —
   ;;    load-of の jobs。並べるたびに同じ数えを進める)。
   (setv load (load-of stepped stepped.placements))
   (for [#(name placed) (sorted (.items state.placements))]
     (setv job (.get jobs name))
-    (when (and (is-not job None) (> job.replicas 0) job.spec.handoff (in placed.worker draining))
+    (when (and (is-not job None) (> job.replicas 0) job.spec.handoff (leaving-carrier now stepped job placed timing draining))
       (setv surge (.row kept-surges name))
       (cond
         (is-not surge None)

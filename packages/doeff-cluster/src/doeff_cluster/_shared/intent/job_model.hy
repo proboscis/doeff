@@ -88,7 +88,8 @@
   ;; 版を据え置く印(#3684)。worker の返事の読み(worker/protocol/declared.declared-job-specs)が、heartbeat の返事の draining(この worker が
   ;; drain 中)を返事の job の全部に写す。worker は印の在る job の spec が変わっても、止めていない process をそのまま動かす(worker_policy.plan-job
   ;; — drain の間に宣言し直された新しい版を、移される worker の上で準備も起動もしない)。宣言から消えた job は今までどおり止め、drain が解けて
-  ;; 印が偽に戻った拍から普通の入れ替えへ進む。coordinator は持たない(返事の JSON にも保存にも載らない — worker の中だけの欄)。比べない欄
+  ;; 印が偽に戻った拍から普通の入れ替えへ進む。job ごとの印もある: coordinator が条件を満たさなくなった担い手に残した handoff の job
+  ;; (cluster_policy.relocating・jobs-for)に付け、返事の job の行の holdVersion で運ぶ(読みは draining との和)。保存には載らない。比べない欄
   ;; (印だけが変わっても process を起こし直さない・指紋 spec-hash に入らない)。位置の引数で作る呼び手を崩さないよう最後に置く。
   (setv #^ bool hold-version (field :default False :compare False))
   ;; 子の入口が比べる送り手の版(名の順の #(名 版) の tuple — #3762)。Program の job は必ず持つ: service = Service の宣言の行の

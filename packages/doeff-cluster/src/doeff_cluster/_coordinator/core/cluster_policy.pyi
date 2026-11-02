@@ -223,6 +223,9 @@ def still_live_somewhere(now: int, state: ClusterState, name: str, timing: Clust
 def draining_workers(state: ClusterState, now: int) -> frozenset:
     ...
 
+def relocating(now: int, state: ClusterState, job: ClusterJob, placed: Placement, timing: ClusterTiming) -> bool:
+    ...
+
 def can_take(now: int, state: ClusterState, job: ClusterJob, w: WorkerInfo, load: dict, timing: ClusterTiming, draining: frozenset | None=None) -> bool:
     ...
 RETIRED_BOOTS_KEPT: int
