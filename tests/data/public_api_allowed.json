@@ -3406,6 +3406,20 @@
   {
    "package": "doeff-cluster",
    "module": "doeff_cluster",
+   "name": "CoolingSweep",
+   "組": "許した物 — effect の答えの型",
+   "決め": "ADR-DOE-API-001 R2"
+  },
+  {
+   "package": "doeff-cluster",
+   "module": "doeff_cluster",
+   "name": "HeldBackup",
+   "組": "許した物 — handler の設定の型",
+   "決め": "ADR-DOE-API-001 R2"
+  },
+  {
+   "package": "doeff-cluster",
+   "module": "doeff_cluster",
    "name": "HeldVolume",
    "組": "許した物 — handler の設定の型",
    "決め": "ADR-DOE-API-001 R2"

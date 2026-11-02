@@ -10,6 +10,7 @@ from doeff_cluster._shared.intent.record_spec import RecordMode as RecordMode
 class WorkspaceOutcome(StrEnum):
     DONE = 'done'
     ALREADY = 'already'
+    RESTORED = 'restored'
 
 @dataclass(frozen=True, kw_only=True)
 class WorkspaceVolumeSite:
@@ -21,6 +22,8 @@ class WorkspaceVolumeSite:
     attach_seconds: float
     detach_seconds: float
     mount_seconds: float
+    backup_seconds: float
+    restore_seconds: float
     poll_seconds: float
 
     def __post_init__(self) -> None:
@@ -28,6 +31,12 @@ class WorkspaceVolumeSite:
 
 class WorkspaceVolumeRefused(RuntimeError):
     ...
+
+@dataclass(frozen=True, kw_only=True)
+class CoolingSweep:
+    slots: int
+    cooled: tuple[str, ...]
+    failed: tuple[str, ...]
 
 @dataclass(frozen=True)
 class CreateWorkspaceVolume(EffectBase[WorkspaceOutcome]):
@@ -55,3 +64,17 @@ class UmountWorkspaceVolume(EffectBase[WorkspaceOutcome]):
 class DetachWorkspaceVolume(EffectBase[WorkspaceOutcome]):
     __record_spec__: ClassVar[RecordSpec]
     owner: str
+
+@dataclass(frozen=True)
+class CoolWorkspaceVolume(EffectBase[WorkspaceOutcome]):
+    __record_spec__: ClassVar[RecordSpec]
+    owner: str
+
+@dataclass(frozen=True)
+class PurgeWorkspaceVolume(EffectBase[WorkspaceOutcome]):
+    __record_spec__: ClassVar[RecordSpec]
+    owner: str
+
+@dataclass(frozen=True)
+class CoolIdleWorkspaceVolumes(EffectBase[CoolingSweep]):
+    __record_spec__: ClassVar[RecordSpec]
