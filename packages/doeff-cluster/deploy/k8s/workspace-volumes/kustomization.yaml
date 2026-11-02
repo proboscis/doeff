@@ -1,5 +1,5 @@
 # 作業場所の volume の宣言 — 級(storageclass.yaml)・backup の先と 1 時間ごとの backup(backup.yaml)・worker が読む名と寿命の値
-# (workspace-volume.json → ConfigMap workspace-volume)。決まりは README.md。worker の組(../workers)が resources に並べ、Flux は
+# (workspace-volume.json → ConfigMap workspace-volume)・mount の係の script(workspace-mount.sh → ConfigMap workspace-mount)。決まりは README.md。worker の組(../workers)が resources に並べ、Flux は
 # worker と同じ Kustomization で当てる — 値を読む worker と同じ main の版で替わる。
 apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
@@ -12,5 +12,14 @@ configMapGenerator:
     namespace: agent-worker
     files:
       - workspace-volume.json
+    options:
+      disableNameSuffixHash: true
+  # 名の固定した ConfigMap workspace-mount — mount の係の script(README.md の節「mount の係」)。zeus の worker の Pod の sidecar
+  # workspace-mount が /etc/workspace-mount に置き(subPath でない)、頼み 1 つごとに読み直す。中身の hash を名に付けないので、script を
+  # 替えても Pod は作り直されない。
+  - name: workspace-mount
+    namespace: agent-worker
+    files:
+      - workspace-mount.sh
     options:
       disableNameSuffixHash: true
