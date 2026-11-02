@@ -18,6 +18,7 @@ cancelled explicitly (docs/04-async-effects.md "Race Semantics").
 from __future__ import annotations
 
 import asyncio
+import inspect
 import threading
 from typing import Any
 
@@ -157,6 +158,51 @@ def test_cancel_right_after_parking_still_reaches_coroutine() -> None:
     assert _run_await(body()) == "requested"
     assert probe.finalized.wait(UNWIND_TIMEOUT_SECONDS)
     assert probe.saw_cancelled.is_set()
+
+
+def test_cancel_before_bridge_starts_closes_awaited_coroutine() -> None:
+    """(a'') Cancel may land while the bridge loop has not yet run the bridge task's
+    first step (the loop is busy). From Python 3.12 on, run_coroutine_threadsafe
+    cancels such a task before that step, so the awaited coroutine is never
+    started; it is closed on the loop instead of being left for the garbage
+    collector, which used to report it as ``coroutine ... was never awaited``
+    (and, when collected inside namedtuple's ``__new__``, as ``KeyError: '__import__'``)."""
+    from doeff_core_effects._handlers import _get_await_bridge_loop
+
+    probe = _Probe()
+    awaited = probe.long_io()
+    loop_busy = threading.Event()
+    release_loop = threading.Event()
+    _get_await_bridge_loop().call_soon_threadsafe(
+        lambda: (loop_busy.set(), release_loop.wait(RUN_TIMEOUT_SECONDS))
+    )
+    assert loop_busy.wait(RUN_TIMEOUT_SECONDS)
+
+    @do
+    def worker(parked):
+        parked.complete(None)
+        return (yield Await(awaited))
+
+    @do
+    def body():
+        parked = yield CreateExternalPromise()
+        task = yield Spawn(worker(parked))
+        yield Wait(parked.future)
+        yield Cancel(task)
+        release_loop.set()
+        yield _unwound(task)
+        return "requested"
+
+    try:
+        assert _run_await(body()) == "requested"
+    finally:
+        release_loop.set()
+    # The cancel was queued on the loop during Cancel; a step queued now runs after it.
+    asyncio.run_coroutine_threadsafe(asyncio.sleep(0), _get_await_bridge_loop()).result(
+        UNWIND_TIMEOUT_SECONDS
+    )
+    assert inspect.getcoroutinestate(awaited) == inspect.CORO_CLOSED
+    assert not probe.started.is_set()
 
 
 def test_late_completion_after_cancel_is_ignored() -> None:
