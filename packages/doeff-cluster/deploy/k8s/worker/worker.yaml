@@ -124,13 +124,15 @@ spec:
           lifecycle:
             # preStop の drain は、keeper が最後に起こした世代の版(keeper の状態の dir の commit — deploy/boot.sh の DOEFF_KEEPER_DIR の
             # 既定 /tmp/doeff-worker-keeper)の script で、生きている全部の世代を drain する。keeper が起きる前なら版の file の版。
+            # lifecycle の exec の命令は kubelet が $(名) を展開しない(container の command・args だけを展開する)ので、`$$(` でなく
+            # `$(` と書く。`$$(` と書くと sh が `$$` を PID と読み、版が「<PID>(cat …)」になって drain が落ちる。
             preStop:
               exec:
                 command:
                   - /bin/sh
                   - -c
                   - >-
-                    WORKER_DOEFF_COMMIT="$$(cat /tmp/doeff-worker-keeper/commit 2>/dev/null || cat "$WORKER_VERSION_FILE")"
+                    WORKER_DOEFF_COMMIT="$(cat /tmp/doeff-worker-keeper/commit 2>/dev/null || cat "$WORKER_VERSION_FILE")"
                     && export WORKER_DOEFF_COMMIT && ROLE=drain exec /opt/worker-boot.sh
           readinessProbe:
             exec: { command: ["/bin/sh", "-c", "ROLE=ready exec /opt/worker-boot.sh"] }

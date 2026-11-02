@@ -534,8 +534,11 @@ VERSION_PATH = VERSION_DIR + "/$(WORKER_NAME)"
 # 版の file を読んで keeper として回る起動の script を持つ最初の版(段 A — L2908)。版の file の版はこれかその子孫(keeper を知らない版で
 # 起きると、版の file を読まずに worker を 1 つ起こすだけで、版を替えても入れ替わらない)。
 KEEPER_SINCE = "07fd279c3f53c66f82178b9e40b9b2c75991f9e2"
-# 起動の args と preStop が版の file を読む綴り(`$$(` は k8s の $(名) の展開を避け、shell に `$(` で届く)。
+# 起動の args が版の file を読む綴り(`$$(` は k8s の $(名) の展開を避け、shell に `$(` で届く)。preStop の命令は kubelet が展開しないので
+# この綴りを使わない(test_pre_stop_reads_the_keeper_commit_in_shell)。
 VERSION_READ = 'WORKER_DOEFF_COMMIT="$$(cat "$WORKER_VERSION_FILE")"'
+KEEPER_COMMIT = "/tmp/doeff-worker-keeper/commit"
+DRAIN = "ROLE=drain exec /opt/worker-boot.sh"
 SHA = re.compile(r"^[0-9a-f]{40}$")
 
 
@@ -597,10 +600,35 @@ def test_every_worker_reads_its_version_from_the_fixed_named_configmap_file(rend
     assert volume.get("optional", False) is False
     container = _container(worker)
     assert VERSION_READ in " ".join(str(arg) for arg in _sequence(container["args"], "args"))
-    pre_stop = _mapping(_mapping(_mapping(container["lifecycle"], "lifecycle")["preStop"], "preStop")["exec"], "exec")
-    assert VERSION_READ.replace('cat "$WORKER_VERSION_FILE"', 'cat /tmp/doeff-worker-keeper/commit 2>/dev/null || cat "$WORKER_VERSION_FILE"') in " ".join(
-        str(word) for word in _sequence(pre_stop["command"], "command")
-    )
+
+
+def _pre_stop_script(worker: Manifest) -> str:
+    """preStop の exec の命令(/bin/sh -c <script>)の script。"""
+    lifecycle = _mapping(_container(worker)["lifecycle"], "lifecycle")
+    command = [str(word) for word in _sequence(_mapping(_mapping(lifecycle["preStop"], "preStop")["exec"], "exec")["command"], "command")]
+    assert command[:2] == ["/bin/sh", "-c"] and len(command) == 3, command
+    return command[2]
+
+
+@pytest.mark.parametrize("name", NODES)
+@pytest.mark.parametrize("keeper_started", [True, False])
+def test_pre_stop_reads_the_keeper_commit_in_shell(rendered: list[Manifest], name: str, keeper_started: bool, tmp_path: Path) -> None:
+    """preStop は keeper の状態の dir の commit(keeper が起きる前なら版の file の版)を WORKER_DOEFF_COMMIT に入れて drain を起こす。
+    kubelet は lifecycle の exec の命令の $(名) を展開しない(container の command・args だけ)ので、宣言の文字をそのまま sh が読む。
+    反例: `$$(` と書くと sh が `$$` を PID と読み、版が「<PID>(cat …)」になって drain が落ち、drain を待たずに SIGTERM が届く。
+    確かめ方: 宣言の script の keeper の file を tmp の file に、drain の起動を版の表示に替えて sh で走らせ、40 桁の commit になるかを見る。"""
+    script = _pre_stop_script(_worker_on(rendered, name))
+    assert script.count(KEEPER_COMMIT) == 1 and script.endswith(DRAIN), script
+    keeper_commit = tmp_path / "keeper-commit"
+    version_file = tmp_path / "version"
+    version_file.write_text("1" * 40, encoding="utf-8")
+    if keeper_started:
+        keeper_commit.write_text("2" * 40, encoding="utf-8")
+    probe = script.replace(KEEPER_COMMIT, str(keeper_commit)).removesuffix(DRAIN) + 'printf %s "$WORKER_DOEFF_COMMIT"'
+    shown = subprocess.run(
+        ["/bin/sh", "-c", probe], env={"PATH": "/usr/bin:/bin", "WORKER_VERSION_FILE": str(version_file)}, capture_output=True, text=True, check=True
+    ).stdout
+    assert shown == ("2" if keeper_started else "1") * 40
 
 
 def test_the_version_file_has_one_row_per_worker_at_a_version_that_knows_the_keeper(rendered: list[Manifest]) -> None:
