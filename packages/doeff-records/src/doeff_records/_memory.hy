@@ -525,12 +525,44 @@
   (if (or (is stored None) (stored-row-expired? decl stored now-ms)) (Missing) stored.row))
 
 
+(defrecord KeyedTexts
+  "鍵で直に引いた候補(memory-keyed-texts の答え): texts = 鍵の欄の値の組の行のうち置き場に在る行の鍵の綴り(綴りの順)/
+   rest = 候補に残りの絞りとして当てる where-any(鍵の欄を除いた物)。"
+  #^ list texts
+  #^ FrozenMap rest)
+
+
+(defn #^ (| KeyedTexts None) memory-keyed-texts [#^ MemoryStore store #^ TableDecl decl #^ FrozenMap where-any]  ; defk にできない: 錠の内(read-at-now の operation)で同期に呼ぶ置き場の読み
+  "鍵の欄が 1 つの表で、値の組の絞り where-any がその鍵の欄を名指す時に、組の値の行を鍵で直に引くため(None = 鍵で引けない絞り — 呼び手は
+   表の全部の行に絞りを当てる)。PostgreSQL の置き場の `key IN (…)` と同じ行を答える: 鍵は文字列の tuple なので、組の文字列でない値
+   (数・真偽・null)は鍵の欄の値と json-equal? で等しくならず、どの行にも合わない。行の値の鍵の欄は鍵と同じ値(書きの判定 judge-put が
+   鍵の欄を鍵の値で書く)なので、鍵の欄の照らしは引いた事で済み、候補に当てる残りの絞りから外す — 1 行ごとに組の値を順に比べると、
+   鍵の組の読み 1 回が表の行の数 × 組の値の数の比べになる(使い手の模擬の 5 万行の表で、1,000 個の組の読みの繰り返しが表の大きさの
+   2 乗で伸びた)。"
+  (when (!= (len decl.key-fields) 1)
+    (return None))
+  (setv field (get decl.key-fields 0)
+        members (.get where-any field))
+  (when (is members None)
+    (return None))
+  (setv table (get store.rows decl.name))
+  (KeyedTexts :texts (sorted (sfor member members
+                                   :if (isinstance member str)
+                                   :setv text (key-text #(member))
+                                   :if (in text table)
+                                   text))
+              :rest (FrozenMap (dfor #(name wanted) (.items where-any) :if (!= name field) name wanted))))
+
+
 (defn #^ list memory-matching-texts [#^ MemoryStore store #^ TableDecl decl #^ str table-name #^ FrozenMap where #^ FrozenMap where-any #^ int now-ms]  ; defk にできない: 錠の内(read-at-now の operation)で同期に呼ぶ置き場の読み
   "表 table-name の行のうち、絞り(where・where-any)に合い、刻 now-ms で保持の期限を過ぎていない行の鍵の綴りを、綴りの順に返すため
-   (ListRows と CountRows が同じ行を数える 1 点)。"
-  (setv table (get store.rows table-name))
-  (lfor text (sorted table)
-        :if (memory-row-visible? decl (get table text) where where-any now-ms)
+   (ListRows と CountRows が同じ行を数える 1 点)。鍵の欄の値の組の絞りは鍵で直に引いた行だけを見る(memory-keyed-texts)。ほかは並べた鍵の
+   覚え(memory-sorted-texts)を辿る — 上から読む頁の送りが頁ごとに表の全部の鍵を並べ直さない。"
+  (setv table (get store.rows table-name)
+        keyed (memory-keyed-texts store decl where-any)
+        #(texts rest) (if (is keyed None) #((memory-sorted-texts store table-name) where-any) #(keyed.texts keyed.rest)))
+  (lfor text texts
+        :if (memory-row-visible? decl (get table text) where rest now-ms)
         text))
 
 
@@ -572,13 +604,15 @@
   "鍵の順の頁(ListRows の並べる欄の無い読み)に出す行の鍵の綴りを、cursor の位置の後から綴りの順に最大 limit + 1 件返すため(limit 件を
    越える 1 件は続きの有無の判じだけに使う)。cursor の位置は並べた鍵の上を二分探しで探し、絞りは位置の後から綴りの順に当てて limit + 1 件
    見つけた所で止める — 頁ごとに表の全行を並べて絞りを当てると、頭からの頁送りの全読みが表の行の数の 2 乗になる(2026-10-31 の実測:
-   約 2.8 万行の表の読み込みで頁 1 枚 0.26 秒)。並べた鍵は置き場の覚え(memory-sorted-texts)を使う。"
+   約 2.8 万行の表の読み込みで頁 1 枚 0.26 秒)。並べた鍵は置き場の覚え(memory-sorted-texts)を使う。鍵の欄の値の組の絞りは、鍵で直に
+   引いた行の並び(memory-keyed-texts)の上で同じく辿る。"
   (setv table (get store.rows ask.table)
-        texts (memory-sorted-texts store ask.table)
+        keyed (memory-keyed-texts store decl ask.where-any)
+        #(texts rest) (if (is keyed None) #((memory-sorted-texts store ask.table) ask.where-any) #(keyed.texts keyed.rest))
         start (if (is ask.cursor None) 0 (bisect.bisect-right texts ask.cursor.after-key)))
   (list (islice (gfor at (range start (len texts))
                       :setv text (get texts at)
-                      :if (memory-row-visible? decl (get table text) ask.where ask.where-any now-ms)
+                      :if (memory-row-visible? decl (get table text) ask.where rest now-ms)
                       text)
                 (+ ask.limit 1))))
 

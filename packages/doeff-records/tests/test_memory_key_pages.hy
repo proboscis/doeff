@@ -5,7 +5,7 @@
 (import copy)
 (import pickle)
 (import doeff_hy._frozen [FrozenMap])
-(import doeff_records [ListCursor ListRows Page])
+(import doeff_records [CountRows ListCursor ListRows Page])
 (import doeff_records._admission [key-text key-from-text row-matches? row-matches-any?])
 (import doeff_records._memory :as memory)
 (import doeff_records [MemoryStore])
@@ -132,3 +132,74 @@
   (memory.memory-list-rows store (ListRows "tickets" :cursor middle :limit 10) 0)
   (assert (= (len calls) 11) (len calls))
   (assert (is-not head.next-cursor None) head))
+
+
+;; 鍵の欄 1 つの表(parts — 鍵 id)の鍵の欄の値の組の絞りは、鍵で直に引いた行だけを見る(memory-keyed-texts)。出自 = 使い手の模擬の 5 万行の
+;; 表で、1,000 個の鍵の組の読みが行ごとに組の値を順に比べ、読みの繰り返しが表の大きさの 2 乗で伸びた。引いた答えは表の全部の行に絞りを
+;; 当てた読み(直す前の読み)と同じ。
+
+(defn put-part [store id color note state]  ; defk にできない: 検の種を置き場へ同期に置く(錠の内の書きと同じ道 memory-store-row)
+  "表 parts に 1 行(番号 id・色 color・整数の欄 note・状態 state)を置くため(鍵で引く読みと全部の行に絞りを当てる読みを比べる種)。"
+  (setv key #(id)
+        value (FrozenMap {"id" id "label" (+ "l-" id) "color" color "note" note "state" state}))
+  (memory.memory-store-row store "parts" key (memory.memory-current-row store "parts" key) value MAKER value 0))
+
+
+(defn seeded-parts [count]  ; defk にできない: 検の種を同期に組む
+  "表 parts に count 行を鍵の順と違う順で置いた置き場を作るため(色は 3 色に配り、note は行ごとに違う整数)。"
+  (setv store (MemoryStore LAW-SCHEMA))
+  (for [i (range count)]
+    (setv n (% (* i 7919) count))
+    (put-part store (.format "p{:04d}" n) (get #("red" "blue" "green") (% n 3)) (* 3 n) "open"))
+  store)
+
+
+(defn scanned-texts [store where where-any]  ; defk にできない: 錠の内の読みと比べる同期の読みの写し
+  "表 parts の全部の行に絞りを当てた鍵の綴り(綴りの順)— 鍵で引く読みと比べる直す前の読み。"
+  (setv table (get store.rows "parts"))
+  (lfor text (sorted table)
+        :setv value (. (get table text) row value)
+        :if (and (row-matches? where value) (row-matches-any? where-any value))
+        text))
+
+
+(defn test-a-key-set-read-answers-the-rows-of-the-full-scan []  ; defk にできない: 錠の内の読みを同期に呼んで比べる検
+  ;; 組 × 残りの絞り × limit: 鍵の頁・上から読む頁・数えが、表の全部の行に絞りを当てた読みと同じ行を答える。組は置き場に無い鍵・文字列で
+  ;; ない値(数・真偽・null)・重なりを含み、鍵の順と違う順に並べる。
+  (setv store (seeded-parts 300)
+        decl (store.schema.table "parts")
+        ids #("p0299" "p0007" "nothing" "p0150" "p0007" "p0003" "p0042" "p0151" "p0152"))
+  (for [#(where any-of) #(#(NO-WHERE (FrozenMap {"id" ids}))
+                          #(NO-WHERE (FrozenMap {"id" (+ ids #(7 True None))}))
+                          #((FrozenMap {"color" "red"}) (FrozenMap {"id" ids}))
+                          #(NO-WHERE (FrozenMap {"id" ids "label" #("l-p0150" "l-p0042" "l-p0299")}))
+                          #(NO-WHERE (FrozenMap {"id" #("nothing" 3)})))]
+    (setv want (scanned-texts store where any-of))
+    (assert (= (memory.memory-matching-texts store decl "parts" where any-of 0) want) #(where any-of))
+    (assert (= (. (memory.memory-count-rows store (CountRows "parts" :where where :where-any any-of) 0) count) (len want)) #(where any-of))
+    (for [limit #(1 2 3 7 20)]
+      (setv cursor None keys [])
+      (while True
+        (setv page (memory.memory-list-rows store (ListRows "parts" :where where :where-any any-of :cursor cursor :limit limit) 0))
+        (.extend keys (gfor row page.rows (key-text row.key)))
+        (setv cursor page.next-cursor)
+        (when (is cursor None) (break)))
+      (assert (= keys want) #(where any-of limit keys want))
+      (setv ordered (memory.memory-list-rows store (ListRows "parts" :where where :where-any any-of :descending-by "note" :limit limit) 0))
+      (assert (= (lfor row ordered.rows (key-text row.key))
+                 (cut (sorted want :key (fn [text] (. (get (get store.rows "parts") text) row value ["note"])) :reverse True) limit))
+              #(where any-of limit ordered)))))
+
+
+(defn test-a-key-set-read-judges-only-the-named-keys [monkeypatch]  ; defk にできない: pytest の fixture を受ける検
+  ;; 3,000 行の表の 1,000 個の鍵の組の読みは、組の鍵の行だけに残りの絞りを当てる(表の全部の行に当てない)。
+  (setv store (seeded-parts 3000) calls [] original memory.memory-row-visible?)
+  (defn counted [#* args]
+    (.append calls 1)
+    (original #* args))
+  (.setattr monkeypatch memory (hy.mangle "memory-row-visible?") counted)
+  (setv ids (tuple (gfor n (range 0 3000 3) (.format "p{:04d}" n)))
+        page (memory.memory-list-rows store (ListRows "parts" :where-any (FrozenMap {"id" ids}) :limit 1000) 0))
+  (assert (= (len page.rows) 1000) (len page.rows))
+  (assert (is page.next-cursor None) page)
+  (assert (= (len calls) 1000) (len calls)))
