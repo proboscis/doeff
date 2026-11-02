@@ -3986,6 +3986,11 @@ fn intent_effect_coverage_gaps_are_red_unless_registered() {
 /// DOEFF206 の宣言(:verification-environment "sim"・:business-fakes の 4 つの表・:assembly-shape の intent の層)を書いた一時の repo。
 /// 請求の service は層 intent を持ち、効果 Charge・Refund・Settle・Ship は層 intent、Now は土台(foundation)の効果。
 fn intent_fake_repo(files: &[(&str, String)], registry: Option<(&str, &str)>) -> tempfile::TempDir {
+    intent_fake_repo_enabling(files, registry, "[\"DOEFF206\"]")
+}
+
+/// `intent_fake_repo` と同じ repo で、当てる規則を `enable` で選ぶ。
+fn intent_fake_repo_enabling(files: &[(&str, String)], registry: Option<(&str, &str)>, enable: &str) -> tempfile::TempDir {
     let intent = |name: &str| format!("(defeffect {} \"{}\" {{:fields [amount] :answer int :tags {{:context \"billing\" :role \"intent\"}}}})\n", name, name);
     let mut all: Vec<(&str, String)> = vec![
         ("app/foundation/host.hy", tags("shared", "foundation") + "(defk with-host [body] body)\n"),
@@ -3993,7 +3998,7 @@ fn intent_fake_repo(files: &[(&str, String)], registry: Option<(&str, &str)>) ->
         ("app/billing/intent/effects.hy", intent("Charge") + &intent("Refund") + &intent("Settle") + &intent("Ship")),
     ];
     all.extend(files.iter().cloned());
-    let dir = world_repo_with(&all, "", "[\"DOEFF206\"]");
+    let dir = world_repo_with(&all, "", enable);
     let arch_path = dir.path().join("architecture.hy");
     let declarations = ":foundation foundation\n  :verification-environment \"sim\"\n  \
                         :business-fakes {:simulation [\"app/sim/**\"] :assembly [\"app/*/entry/**\"] :tests [\"**/tests/**\"] \
@@ -4091,6 +4096,61 @@ fn verification_handlers_answering_intent_effects_are_critical_except_pass_throu
     let found = violation(&report, &key("fake-charge", "Charge"));
     assert_eq!(found["level"], "critical", "{}", found);
     assert!(found["message"].as_str().unwrap().contains("自前で答える"), "{}", found);
+}
+
+/// 失敗ケース(agora card [id]): 効果の import の綴りを、定義元の module から再 export する入口(`app.billing` の根 —
+/// TYPE_CHECKING の `X as X` と `__getattr__` の名 → module の表)へ替えるだけでは、反例の表の行(定義元の綴りの鍵)は当たったままで、
+/// 層の判じ(intent の効果か)も変わらない。綴りを鍵にする実装では、入口の綴りの broken-ship が表に当たらず counterexample-unused と
+/// DOEFF206 の当たりになり、入口の綴りの Charge が intent と読まれず fake-charge の DOEFF206 が消える。
+#[test]
+fn reimporting_an_effect_through_a_reexporting_entry_keeps_table_rows_and_layers() {
+    let entry = "from importlib import import_module\nfrom typing import TYPE_CHECKING\n\nif TYPE_CHECKING:\n    \
+                 from app.billing.intent.effects import Charge as Charge\n\n\
+                 _LAZY_EXPORTS = {\"Charge\": \"app.billing.intent.effects\", \"Ship\": \"app.billing.intent.effects\"}\n\n\n\
+                 def __getattr__(name):\n    return getattr(import_module(_LAZY_EXPORTS[name]), name)\n";
+    for spelled in ["app.billing.intent.effects", "app.billing"] {
+        let files = [
+            ("app/billing/__init__.py", entry.to_string()),
+            (
+                "app/sim/fake_billing.hy",
+                format!(
+                    "(import {} [Charge Ship])\n(defhandler fake-charge (Charge [amount] (resume 0)))\n(defhandler broken-ship (Ship [amount] (resume 0)))\n",
+                    spelled
+                ),
+            ),
+            ("tables/COUNTEREXAMPLES/ship.txt", "app/sim/fake_billing.hy::broken-ship::app.billing.intent.effects.Ship\n出荷を 0 で返す壊した handler\n".to_string()),
+        ];
+        let dir = intent_fake_repo_enabling(&files, None, "[\"DOEFF143\", \"DOEFF206\"]");
+        let (_, report) = editor(dir.path());
+        assert_eq!(report["errors"], serde_json::json!([]), "{}: {}", spelled, report["errors"]);
+        // 知らせの細目は節の書いた綴りのまま。intent と読む事(fake-charge が鳴る)と、表の行に当たる事(broken-ship が鳴らない)は綴りに依らない。
+        assert_eq!(
+            keys(&report, "DOEFF206"),
+            vec![format!("app/sim/fake_billing.hy::DOEFF206::verification:fake-charge::{}.Charge", spelled)],
+            "{}: {}",
+            spelled,
+            report
+        );
+        let fakes = keys(&report, "DOEFF143");
+        assert!(fakes.iter().all(|k| !k.contains("counterexample-unused") && !k.contains("broken-ship")), "{}: {:?}", spelled, fakes);
+    }
+}
+
+/// 解けない効果の名(定義の module の file が無い)は綴りのまま照らし、解けなかった事を errors に出す(黙って綴りに倒さない)。
+#[test]
+fn an_effect_whose_origin_cannot_be_traced_is_reported() {
+    let files = [(
+        "app/sim/fake_billing.hy",
+        "(import app.gone.effects [Charge])\n(defhandler fake-charge (Charge [amount] (resume 0)))\n".to_string(),
+    )];
+    let dir = intent_fake_repo(&files, None);
+    let (_, report) = editor(dir.path());
+    let errors: Vec<&str> = report["errors"].as_array().unwrap().iter().filter_map(Value::as_str).collect();
+    assert!(
+        errors.iter().any(|e| e.contains("app.gone.effects.Charge") && e.contains("定義元を解けない") && e.contains("fake-charge")),
+        "{:?}",
+        errors
+    );
 }
 
 /// DOEFF206: 登録簿(既知の当たりの表)に鍵を載せても DOEFF206 の当たりは下がらない — error・critical・registered でない。

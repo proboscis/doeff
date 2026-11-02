@@ -14,7 +14,8 @@
 //!
 //! 同じ repo の class を探す道(import が指す file): 絶対 import は、読んでいる file の上の dir(`.git` の dir まで)のうち `__init__.py` を持たない
 //! dir(import の起点になる dir — package の dir は起点ではない)と、その `src` から module の path を引く。相対 import は読んでいる file の dir から
-//! 段の数だけ上る。`__init__.py` の再 export(`from .a import B`)は 8 段まで辿る。どれでも見つからない・読めない class は repo の外と同じに読む
+//! 段の数だけ上る。`__init__.py` の再 export(`from .a import B`・`__getattr__` の名 → module の表)は、効果の名の解きと同じ
+//! `crate::origins` の辿りで 8 段まで辿る。どれでも見つからない・読めない class は repo の外と同じに読む
 //! (属性の全部が見えない基底)— 外れる向きは「鳴らさない」だけで、鳴らす向きに外れない。
 
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
@@ -27,14 +28,12 @@ use rustpython_ast::{Constant, Expr, Fold, Mod, Ranged, Stmt, StmtClassDef};
 use rustpython_parser::{parse, Mode};
 use serde::Deserialize;
 
-use crate::utils::{each_statement, nested_bodies};
+use crate::origins::{dotted_parts, import_roots_within, lazy_exports, lookup, python_bindings, reexport_hop, Binding, MAX_REEXPORT_DEPTH, PYTHON_FILES};
+use crate::utils::nested_bodies;
 
 /// 初期化の method — ここで `self` へ書く名は class が置く名で、DOEFF002 は鳴らさない。`__set_name__` は descriptor の初期化
 /// (class が作られる時に 1 度だけ呼ばれる — PEP 487)。
 const INIT_METHODS: [&str; 3] = ["__init__", "__post_init__", "__set_name__"];
-
-/// `__init__.py` の再 export(`from .a import B`)を辿る段の上限。
-const MAX_REEXPORT_DEPTH: usize = 8;
 
 /// `self` への書きが在る method の種類。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -342,73 +341,22 @@ fn collect_classes(body: &[Stmt], module_level: bool, classes: &mut Vec<ClassFac
     }
 }
 
-/// import が束ねた名。
-#[derive(Debug, Clone, PartialEq, Eq)]
-enum Binding {
-    /// module を指す名: `import a.b as m` の m は `a.b`、`import a.b` の a は `a`。
-    Module { dotted: String },
-    /// `from <module> import <name>` の名(level = 相対 import の点の数)。
-    Member { module: String, level: u32, name: String },
-    /// 同じ名を違う物へ束ねた(try の import の逃げ道ほか)— どちらとも決めない。
-    Ambiguous,
-}
-
-fn collect_bindings(body: &[Stmt]) -> HashMap<String, Binding> {
-    let mut bindings = HashMap::new();
-    each_statement(body, &mut |stmt| match stmt {
-        Stmt::Import(import) => {
-            for alias in &import.names {
-                let (bound, dotted) = match &alias.asname {
-                    Some(asname) => (asname.to_string(), alias.name.to_string()),
-                    None => {
-                        let head = alias.name.split('.').next().unwrap_or_default().to_string();
-                        (head.clone(), head)
-                    }
-                };
-                bind(&mut bindings, bound, Binding::Module { dotted });
-            }
-        }
-        Stmt::ImportFrom(from) => {
-            let level = from.level.as_ref().map_or(0, |level| level.to_u32());
-            let module = from.module.as_ref().map(|module| module.to_string()).unwrap_or_default();
-            for alias in &from.names {
-                if alias.name.as_str() == "*" {
-                    continue;
-                }
-                let bound = alias.asname.as_ref().unwrap_or(&alias.name).to_string();
-                bind(&mut bindings, bound, Binding::Member { module: module.clone(), level, name: alias.name.to_string() });
-            }
-        }
-        _ => {}
-    });
-    bindings
-}
-
-fn bind(bindings: &mut HashMap<String, Binding>, name: String, binding: Binding) {
-    match bindings.get(&name) {
-        Some(existing) if *existing != binding => {
-            bindings.insert(name, Binding::Ambiguous);
-        }
-        Some(_) => {}
-        None => {
-            bindings.insert(name, binding);
-        }
-    }
-}
-
 /// module 1 つの事実: class と import の束ね。
 #[derive(Debug)]
 struct ModuleFacts {
     path: PathBuf,
     bindings: HashMap<String, Binding>,
+    /// `__getattr__` で遅れて読む名の表(名 → module)。
+    lazy: HashMap<String, String>,
     classes: Vec<ClassFacts>,
 }
 
 impl ModuleFacts {
     fn of(ast: &Mod, path: PathBuf) -> Self {
-        let mut facts = Self { path, bindings: HashMap::new(), classes: Vec::new() };
+        let mut facts = Self { path, bindings: HashMap::new(), lazy: HashMap::new(), classes: Vec::new() };
         if let Mod::Module(module) = ast {
-            facts.bindings = collect_bindings(&module.body);
+            facts.bindings = python_bindings(&module.body);
+            facts.lazy = lazy_exports(&module.body);
             collect_classes(&module.body, true, &mut facts.classes);
         }
         facts
@@ -481,43 +429,6 @@ fn import_roots(from: &Path) -> Vec<PathBuf> {
     import_roots_within(from, REPO_ROOT.get().map(PathBuf::as_path).filter(|root| from.starts_with(root)))
 }
 
-/// 読んでいる file の上の dir のうち `__init__.py` を持たない dir と、その `src`。`bound`(repo の根)までで、無ければ `.git` を持つ dir まで。
-fn import_roots_within(from: &Path, bound: Option<&Path>) -> Vec<PathBuf> {
-    let mut roots = Vec::new();
-    let mut dir = from.parent();
-    while let Some(current) = dir {
-        if !current.join("__init__.py").is_file() {
-            for root in [current.to_path_buf(), current.join("src")] {
-                if !roots.contains(&root) {
-                    roots.push(root);
-                }
-            }
-        }
-        let at_root = match bound {
-            Some(root) => current == root,
-            None => current.join(".git").exists(),
-        };
-        if at_root {
-            break;
-        }
-        dir = current.parent();
-    }
-    roots
-}
-
-/// 起点の dir から module の path を引く(`a/b.py` か `a/b/__init__.py`。名の無い module は起点の `__init__.py`)。
-fn lookup(root: &Path, parts: &[String]) -> Option<PathBuf> {
-    let base = parts.iter().fold(root.to_path_buf(), |path, part| path.join(part));
-    if !parts.is_empty() {
-        let module = base.with_extension("py");
-        if module.is_file() {
-            return Some(module);
-        }
-    }
-    let package = base.join("__init__.py");
-    package.is_file().then_some(package)
-}
-
 /// import が指す module の file(level = 相対 import の点の数・0 は絶対)。
 fn module_file(from: &Path, level: u32, parts: &[String]) -> Option<PathBuf> {
     let found = if level > 0 {
@@ -525,12 +436,12 @@ fn module_file(from: &Path, level: u32, parts: &[String]) -> Option<PathBuf> {
         for _ in 1..level {
             dir = dir.parent()?.to_path_buf();
         }
-        lookup(&dir, parts)?
+        lookup(&dir, parts, PYTHON_FILES)?
     } else {
         if parts.is_empty() {
             return None;
         }
-        import_roots(from).iter().find_map(|root| lookup(root, parts))?
+        import_roots(from).iter().find_map(|root| lookup(root, parts, PYTHON_FILES))?
     };
     Some(found.canonicalize().unwrap_or(found))
 }
@@ -550,10 +461,6 @@ enum Found {
     NotInRepo,
     /// module は repo の中に在るが、読めないか class が見つからない。
     Unreadable,
-}
-
-fn dotted_parts(dotted: &str) -> impl Iterator<Item = String> + '_ {
-    dotted.split('.').filter(|part| !part.is_empty()).map(str::to_string)
 }
 
 /// module の中で、位置 `before` より前に書いた同じ名の class(同じ file の基底)。module の直下の class を優先し、無ければ
@@ -591,15 +498,11 @@ fn class_in(target: &Arc<ModuleFacts>, name: &str, depth: usize) -> Option<(Arc<
     if depth >= MAX_REEXPORT_DEPTH {
         return None;
     }
-    match target.bindings.get(name)? {
-        Binding::Member { module, level, name: original } => {
-            let parts: Vec<String> = dotted_parts(module).collect();
-            match find_class(&target.path, *level, &parts, original, depth + 1) {
-                Found::Class(module, index) => Some((module, index)),
-                Found::NotInRepo | Found::Unreadable => None,
-            }
-        }
-        Binding::Module { .. } | Binding::Ambiguous => None,
+    let hop = reexport_hop(&target.bindings, &target.lazy, name)?;
+    let parts: Vec<String> = dotted_parts(&hop.module).collect();
+    match find_class(&target.path, hop.level, &parts, &hop.name, depth + 1) {
+        Found::Class(module, index) => Some((module, index)),
+        Found::NotInRepo | Found::Unreadable => None,
     }
 }
 

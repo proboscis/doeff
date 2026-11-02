@@ -3213,9 +3213,78 @@ fn forward_edges(graph: &DefinitionGraph) -> Vec<Vec<usize>> {
     callees
 }
 
+/// 効果の名(完全名)を定義元の正典の名へ解く読み(`crate::origins` の解き手)と、解けなかった綴り。DOEFF143・157・164・167・206 の
+/// 鍵・表の照らし・層の判じは、節の側も表の行の側も、ここで解いた名で読む(import の綴りで照らさない — 同じ効果を再 export する入口から
+/// import し直すだけで鍵が変わり、表の行が当たらなくなった・agora card [id])。
+struct EffectNames<'a> {
+    origins: crate::origins::Origins<'a>,
+    /// 解けなかった綴り → 初めに見た所。
+    unresolved: BTreeMap<String, String>,
+}
+
+impl<'a> EffectNames<'a> {
+    fn new(origins: crate::origins::Origins<'a>) -> Self {
+        Self { origins, unresolved: BTreeMap::new() }
+    }
+
+    /// 綴り `written`(file `from` に書いた名 — 無ければ根の起点だけで引く)の正典の名。解けない時は綴りのまま返し、解けなかった事を
+    /// 覚える(所見に出す — 黙って綴りに倒さない)。
+    fn name(&mut self, written: &str, from: Option<&str>, at: impl FnOnce() -> String) -> String {
+        match self.origins.origin_from(written, from) {
+            Some(origin) => origin,
+            None => {
+                self.unresolved.entry(written.to_string()).or_insert_with(at);
+                written.to_string()
+            }
+        }
+    }
+
+    /// 鍵 `<path>::<handler>::<効果>`(`::` の無い鍵は効果の完全名そのもの)の効果の部分を正典の名へ解いた鍵。
+    fn key(&mut self, key: &str, at: impl FnOnce() -> String) -> String {
+        match key.rsplit_once("::") {
+            Some((place, effect)) => {
+                let file = place.split("::").next();
+                format!("{}::{}", place, self.name(effect, file, at))
+            }
+            None => self.name(key, None, at),
+        }
+    }
+
+    /// 表(鍵 → 理由)の鍵を正典の名へ解いた表と、解いた鍵 → 表に書いた鍵の対応。同じ正典の鍵に 2 行が当たれば知らせる。
+    fn table(&mut self, table: &BTreeMap<String, String>, dir: Option<&str>, problems: &mut Vec<String>) -> (BTreeMap<String, String>, BTreeMap<String, String>) {
+        let mut out = BTreeMap::new();
+        let mut written = BTreeMap::new();
+        let shown = dir.unwrap_or("-");
+        for (key, reason) in table {
+            let canonical = self.key(key, || format!("表 {} の行 {}", shown, key));
+            if let Some(first) = written.insert(canonical.clone(), key.clone()) {
+                problems.push(format!("表 {} の行 {} と {} が、効果の定義元の名で同じ鍵 {} になる — 1 行にまとめる", shown, first, key, canonical));
+            }
+            out.insert(canonical, reason.clone());
+        }
+        (out, written)
+    }
+
+    /// 解けなかった綴りの所見(1 綴り 1 行)。
+    fn problems(&self) -> Vec<String> {
+        self.unresolved
+            .iter()
+            .map(|(written, at)| {
+                format!("効果 {} の定義元を解けない({})— 定義の module の file も、そこへ辿る再 export も見つからない。綴りのまま照らした", written, at)
+            })
+            .collect()
+    }
+}
+
 /// 図の中の effect の節の全部と、その形(読まない file の節は数えない)。節の形はここで 1 度だけ求め、DOEFF143・155・156・157・158・164・
-/// 167・206 が同じ物を読む。
-fn effect_clauses(root: &Path, graph: &DefinitionGraph, hy: &HashMap<String, HyFileIndex>, decl: &architecture::BusinessFakes) -> Vec<business_fakes::Clause> {
+/// 167・206 が同じ物を読む。`names` を渡せば節の効果を定義元の正典の名へ解く(渡さなければ索引の綴りのまま — DOEFF155・156 は参照の綴りと照らす)。
+fn effect_clauses(
+    root: &Path,
+    graph: &DefinitionGraph,
+    hy: &HashMap<String, HyFileIndex>,
+    decl: &architecture::BusinessFakes,
+    mut names: Option<&mut EffectNames>,
+) -> Vec<business_fakes::Clause> {
     use business_fakes::FileRole;
     let mut clauses: Vec<business_fakes::Clause> = Vec::new();
     let mut shapes: HashMap<&str, HashMap<(String, String), business_fakes::ClauseShape>> = HashMap::new();
@@ -3225,13 +3294,17 @@ fn effect_clauses(root: &Path, graph: &DefinitionGraph, hy: &HashMap<String, HyF
         if d.kind != DefinitionKind::EffectClause || role == FileRole::Skipped {
             continue;
         }
-        let Some(effect) = d.handles.as_ref().and_then(|h| h.target.clone()) else { continue };
+        let Some(written) = d.handles.as_ref().and_then(|h| h.target.clone()) else { continue };
         let handler = d.container.clone().unwrap_or_default();
+        let effect = match names.as_deref_mut() {
+            Some(names) => names.name(&written, Some(rel), || format!("{} の {} の節", rel, handler)),
+            None => written.clone(),
+        };
         let file_shapes =
             shapes.entry(rel).or_insert_with(|| std::fs::read_to_string(root.join(rel)).map(|s| business_fakes::clause_shapes_in(&s)).unwrap_or_default());
         let head = d.handles.as_ref().map(|h| h.name.clone()).unwrap_or_default();
         let shape = file_shapes.get(&(handler.clone(), head)).copied().unwrap_or(business_fakes::ClauseShape::ANSWERING);
-        clauses.push(business_fakes::Clause { node, rel: rel.to_string(), handler, effect, shape });
+        clauses.push(business_fakes::Clause { node, rel: rel.to_string(), handler, effect, written, shape });
     }
     clauses
 }
@@ -3250,7 +3323,7 @@ fn judge_assembly_shape(
     let graph = definition_graph(architecture, hy);
     let inputs = assembly_shape::GraphInputs {
         callees: forward_edges(&graph),
-        clauses: effect_clauses(root, &graph, hy, decl),
+        clauses: effect_clauses(root, &graph, hy, decl, None),
         layers: layers
             .map(|l| {
                 graph
@@ -3410,6 +3483,11 @@ fn judge_business_fakes(
     let external = table(&decl.external_effects, registry::Absent::Unreadable);
     let counterexamples = table(&decl.counterexamples, registry::Absent::Unreadable);
     let unserved = table(&decl.unserved, registry::Absent::Empty);
+    // 節の効果と表の行の効果は、どちらも定義元の正典の名で照らす(表の行は書いた綴りのまま — 知らせは書いた鍵で出す)。
+    let mut names = EffectNames::new(crate::origins::Origins::new(root, hy));
+    let (external, external_written) = names.table(&external, decl.external_effects.as_deref(), &mut problems);
+    let (counterexamples, counterexample_written) = names.table(&counterexamples, decl.counterexamples.as_deref(), &mut problems);
+    let (unserved, _) = names.table(&unserved, decl.unserved.as_deref(), &mut problems);
     let graph = definition_graph(architecture, hy);
     let count = graph.nodes.len();
     let callees = forward_edges(&graph);
@@ -3438,7 +3516,7 @@ fn judge_business_fakes(
     // 検の根: 検の file の定義の全部(検だけが使う本番の code の置き場の業務の写しも、ここから届く)。
     let test_roots: Vec<usize> = (0..count).filter(|&n| role(n) == FileRole::Test).collect();
     let tested_nodes = reach(&test_roots);
-    let clauses = effect_clauses(root, &graph, hy, decl);
+    let clauses = effect_clauses(root, &graph, hy, decl, Some(&mut names));
     let simulated: Vec<bool> = clauses.iter().map(|c| simulated_nodes[c.node]).collect();
     let produced: Vec<bool> = clauses.iter().map(|c| produced_nodes[c.node]).collect();
     let tested: Vec<bool> = clauses.iter().map(|c| tested_nodes[c.node]).collect();
@@ -3463,7 +3541,10 @@ fn judge_business_fakes(
         .filter_map(|e| relative_path(root, e.path()).map(|rel| (rel, e.path().to_path_buf())))
         .filter(|(rel, _)| decl.entry_string_modules.iter().any(|m| rel.starts_with(&format!("{}/", m.replace('.', "/")))) && production_code(rel))
         .filter_map(|(rel, path)| std::fs::read_to_string(path).ok().map(|source| (module_of(&rel), source)))
-        .flat_map(|(module, source)| business_fakes::python_isinstance_effects(&source, &module))
+        .flat_map(|(module, source)| business_fakes::python_isinstance_effects(&source, &module).into_iter().map(move |effect| (effect, module.clone())))
+        .collect::<Vec<_>>()
+        .into_iter()
+        .map(|(effect, module)| names.name(&effect, None, || format!("module {} の isinstance", module)))
         .collect();
     let inputs = business_fakes::Inputs {
         clauses: &clauses,
@@ -3494,7 +3575,7 @@ fn judge_business_fakes(
     // 節 1 つの知らせ(鍵の細目 = `[<種類>:]<handler>::<効果>`)。
     let clause_draft = |rule: ProjectRule, i: usize, kind: Option<&str>, what: String, reason: &str| {
         let clause = &clauses[i];
-        let explain = Explain::BusinessEffectFake { subject: format!("handler {} の節 {}", clause.handler, clause.effect), reason: reason.to_string() };
+        let explain = Explain::BusinessEffectFake { subject: format!("handler {} の節 {}", clause.handler, clause.written), reason: reason.to_string() };
         Draft {
             rule,
             layer: None,
@@ -3503,8 +3584,8 @@ fn judge_business_fakes(
             range: definition(clause.node).range,
             message: format!("{} の {} が{}", clause.rel, clause.handler, what),
             detail: Some(match kind {
-                Some(kind) => format!("{}:{}::{}", kind, clause.handler, clause.effect),
-                None => format!("{}::{}", clause.handler, clause.effect),
+                Some(kind) => format!("{}:{}::{}", kind, clause.handler, clause.written),
+                None => format!("{}::{}", clause.handler, clause.written),
             }),
             base: Severity::Error,
             explain,
@@ -3595,7 +3676,14 @@ fn judge_business_fakes(
         Vec::new()
     };
     let intent_fakes: Vec<Verdict> = if enabled.contains(&ProjectRule::IntentFakedInVerification) {
-        let row_intent: Vec<bool> = pass_rows.iter().map(|row| effect_in_intent(row.effect())).collect();
+        // 行の効果も定義元の名で層を判じる(再 export の入口の綴りの行も intent の効果と読む)。
+        let row_intent: Vec<bool> = pass_rows
+            .iter()
+            .map(|row| {
+                let canonical = business_fakes::PassRow { key: names.key(&row.key, || format!("表 {} の行 {}", row.table, row.key)), ..row.clone() };
+                effect_in_intent(canonical.effect())
+            })
+            .collect();
         let in_verification: Vec<bool> = clauses.iter().map(|c| architecture.in_verification_environment(&c.rel)).collect();
         business_fakes::judge_intent_fakes(&business_fakes::IntentFakeInputs {
             clauses: &clauses,
@@ -3616,49 +3704,55 @@ fn judge_business_fakes(
                 ProjectRule::BusinessEffectFake,
                 i,
                 None,
-                format!("業務の効果 {} に答える偽物(模擬の根からだけ届く)", clauses[i].effect),
+                format!("業務の効果 {} に答える偽物(模擬の根からだけ届く)", clauses[i].written),
                 "模擬の根から届き本番の入口から届かない定義が業務の効果に答えを作っている。業務の操作は下の層の効果を出す defk で書き、検査は外の世界の handler だけを差し替える。",
             ),
             Verdict::LowerLayerFake(i) => clause_draft(
                 ProjectRule::BusinessEffectFake,
                 i,
                 Some("lower"),
-                format!("下の層の効果 {} に答える第 2 の偽物(模擬の根からだけ届く)", clauses[i].effect),
+                format!("下の層の効果 {} に答える第 2 の偽物(模擬の根からだけ届く)", clauses[i].written),
                 "下の層の効果に答える偽物は下の層が持つ正典 1 つだけ。模擬は外の世界の handler と正典の偽物で組む。",
             ),
             Verdict::TestOnlyFake(i) => clause_draft(
                 ProjectRule::TestOnlyFake,
                 i,
                 None,
-                format!("{} に答える検だけの偽物(検の定義からだけ届く)", clauses[i].effect),
+                format!("{} に答える検だけの偽物(検の定義からだけ届く)", clauses[i].written),
                 "検だけから届く定義が業務の効果か下の層の効果に答えを作っている。業務の handler は本番の 1 つだけで、検は土台(記録の効果・時計・外の相手)の handler の差し替えで組む。わざと壊した反例なら反例の表に載せる。",
             ),
             Verdict::IntentAnsweredOutside(i) => clause_draft(
                 ProjectRule::IntentAnswererNotTranslation,
                 i,
                 Some("outside"),
-                format!("intent の効果 {} に翻訳の層の外で答える(本番の入口から届く)", clauses[i].effect),
+                format!("intent の効果 {} に翻訳の層の外で答える(本番の入口から届く)", clauses[i].written),
                 "intent の効果に答えるのは翻訳の層の handler 1 つだけ(本番と模擬で同じ)。環境ごとの別の答え手や土台の handler で答えず、模擬は土台を差し替える。",
             ),
             Verdict::IntentAnsweredTwice(i, n) => clause_draft(
                 ProjectRule::IntentAnswererNotTranslation,
                 i,
                 Some("shared"),
-                format!("intent の効果 {} に答える翻訳の handler {} 個の 1 つ", clauses[i].effect, n),
+                format!("intent の効果 {} に答える翻訳の handler {} 個の 1 つ", clauses[i].written, n),
                 "intent の効果 1 つに答える翻訳の handler は 1 つだけ。答えを 1 つの handler にまとめる。",
             ),
-            Verdict::StaleCounterexample(key) => table_draft(
+            Verdict::StaleCounterexample(key) => {
+                let key = counterexample_written.get(&key).cloned().unwrap_or(key);
+                table_draft(
                 &decl.counterexamples,
                 format!("counterexample-unused::{}", key),
                 format!("反例の表の {} はもう当たらない", key),
                 "反例の表の行は、わざと壊した反例の handler が今も在る間だけ置く — 表から外す。",
-            ),
-            Verdict::UnusedExternal(effect) => table_draft(
+            )
+            }
+            Verdict::UnusedExternal(effect) => {
+                let effect = external_written.get(&effect).cloned().unwrap_or(effect);
+                table_draft(
                 &decl.external_effects,
                 format!("external-unused::{}", effect),
                 format!("外の世界の表の {} にどの偽物も答えない", effect),
                 "外の世界の表は偽物が答える外の世界の効果の宣言 — 答える偽物が無い行は表から外す(表を腐らせない)。",
-            ),
+            )
+            }
             Verdict::IntentPassedByTable(r) => {
                 let row = &pass_rows[r];
                 let subject = format!("表 {} の行 {}", row.table, row.key);
@@ -3685,21 +3779,24 @@ fn judge_business_fakes(
                     path: root.join(&clause.rel),
                     rel: clause.rel.clone(),
                     range: definition(clause.node).range,
-                    message: format!("{} の {} が intent の層の効果 {} に自前で答える(検証環境の中)", clause.rel, clause.handler, clause.effect),
-                    detail: Some(format!("verification:{}::{}", clause.handler, clause.effect)),
+                    message: format!("{} の {} が intent の層の効果 {} に自前で答える(検証環境の中)", clause.rel, clause.handler, clause.written),
+                    detail: Some(format!("verification:{}::{}", clause.handler, clause.written)),
                     base: Severity::Error,
                     explain: Explain::IntentFakedInVerification {
-                        subject: format!("検証環境の handler {} の節 {}", clause.handler, clause.effect),
+                        subject: format!("検証環境の handler {} の節 {}", clause.handler, clause.written),
                         reason: "検証環境が intent の効果に答えると、本番の翻訳の handler が手元で 1 度も走らないまま緑になる。答えは本番の翻訳の handler に任せ、その下の土台の handler だけを差し替える。外すのは、どの終わりも受けた効果をそのまま外へ渡す節(出し直しの答えをそのまま resume する・reperform する・:when の節)と、反例の表に載せたわざと壊した節だけ。片方の枝でだけ自前で答える節も、表の行が無ければ当たる。".to_string(),
                     },
                 }
             }
-            Verdict::UnservedExternal(effect) => table_draft(
+            Verdict::UnservedExternal(effect) => {
+                let effect = external_written.get(&effect).cloned().unwrap_or(effect);
+                table_draft(
                 &decl.external_effects,
                 format!("external-unserved::{}", effect),
                 format!("外の世界の表の {} に本番の入口から届く答え手が無い", effect),
                 "外と名乗った効果には本番の答え手が要る(偽物 1 つで通さない)— 本番の handler を書くか、業務の効果なら下の層の効果で書く。今の不足は :unserved の表に理由と担い手つきで載せる。",
-            ),
+            )
+            }
         })
         .filter(|draft| enabled.contains(&draft.rule))
         .chain(coverage)
@@ -3712,15 +3809,21 @@ fn judge_business_fakes(
         );
     }
     if enabled.contains(&ProjectRule::ClauseWithoutCounterexample) {
-        let claims = match decl.counterexamples.as_deref() {
+        let mut claims = match decl.counterexamples.as_deref() {
             Some(dir) => clause_coverage::ClauseClaims::load(root, dir),
             None => clause_coverage::ClauseClaims::default(),
         };
+        // 名乗りの鍵も、節の鍵と同じ定義元の名で照らす。
+        claims.by_key = std::mem::take(&mut claims.by_key)
+            .into_iter()
+            .map(|(key, breaks)| (names.key(&key, || format!("反例の表の行 {}", key)), breaks))
+            .collect();
         let (found, claim_problems) = judge_clause_coverage(architecture, &graph, hy, &clauses, &produced, &counterexamples, &claims);
         drafts.extend(found.into_iter().map(|d| Draft { path: root.join(&d.rel), ..d }));
         problems.extend(claims.problems);
         problems.extend(claim_problems);
     }
+    problems.extend(names.problems());
     FakesJudgement { drafts, problems, notes }
 }
 

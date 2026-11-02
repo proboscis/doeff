@@ -17,6 +17,7 @@ pub mod editor;
 pub mod logging;
 pub mod models;
 pub mod noqa;
+pub mod origins;
 pub mod population;
 pub mod position;
 pub mod project;
