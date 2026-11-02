@@ -256,6 +256,11 @@ class SupersededRun:
     since_ms: int | None = None
 
 @dataclass(frozen=True, kw_only=True)
+class GenerationRow:
+    boot: str | None
+    row: StatusRow
+
+@dataclass(frozen=True, kw_only=True)
 class HandoverBlocker:
     job: str
     update: str
@@ -514,6 +519,7 @@ class ClusterObservations:
     readiness: Table[tuple[ReadinessReport, ...]] = ...
     metrics: Table[tuple[MetricsReport, ...]] = ...
     statuses: Table[WorkerReport] = ...
+    elder_statuses: Table[WorkerReport] = ...
 
 @dataclass(frozen=True, kw_only=True)
 class ObservedDeployment:
@@ -528,6 +534,8 @@ class ServiceObserved:
     version: VersionVerdict
     running: tuple[LiveProcess, ...]
     unplaced: UnplacedView | None = None
+    process_boot: str | None = None
+    process_elder: bool = False
 
 @dataclass(frozen=True, kw_only=True)
 class WorkerObserved:

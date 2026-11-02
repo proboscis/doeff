@@ -31,11 +31,11 @@
 (import doeff_hy._table [Table TableWrite draft-of])
 (import doeff_cluster._shared.intent.protocol [ClusterTiming BodyInvalid])
 (import doeff_cluster._coordinator.intent.cluster_model [ClusterJob ClusterState NeedsOverride ErrorReply RowConflict Placement HandoffPhase UnplacedKind NotReadyKind VersionState VersionVerdict LiveProcess ResourceMeta AuditEvent EventsView ServiceBody ServiceObserved WorkerObserved TaskObserved RolloutObserved ObservedDeployment ResourceView ResourceList LegacyJobRow RolloutRow RolloutStatus RolloutTarget RefusedJob WorkerInfo HandoverBlocker TaskRecord
-                                                       ReportOrigin ReadinessReport MetricsReport WorkerReport])
+                                                       ReportOrigin ReadinessReport MetricsReport WorkerReport GenerationRow])
 (import doeff_cluster._coordinator.core.cluster_rules [int-field])
 (import doeff_cluster._shared.core.job_rules [spec-hash spec-hash-matches] doeff_cluster._shared.intent.job_model [JobPhase])
 (import doeff_cluster._coordinator.core.cluster_policy [job-to-json alive effective-needs placeable liveness-deadline still-live-somewhere service-rows unplaced-kind unplaced-text unplaced-memory unplaced-view active-jobs resource-version-of keep-mark-of warms-for
-                                                       handover-blockers handover-since HANDOVER-STALL-MS])
+                                                       handover-blockers handover-since HANDOVER-STALL-MS elder-rows elder-key])
 (import doeff_cluster._coordinator.core.rollout_policy [validate-rollout-spec rollout-spec-to-json rollout-status-to-json rollout-targets target-key TERMINAL-PHASES])
 (import doeff [run])
 (import doeff_cluster._coordinator.intent.request_bodies [ReadinessBody MetricsBody ResourceBody StatusRow])
@@ -91,6 +91,24 @@
   (for [row st.jobs]
     (when (= row.name name) (return row)))
   None)
+
+
+(defn #^ (| GenerationRow None) carrying-row [#^ ClusterState state #^ str worker #^ str name #^ int now #^ ClusterTiming timing]
+  ;; defk にできない: coordinator の純粋な判断(Program の外 — observed-of)が呼ぶ
+  "Service name を置き先の worker で今動かしている process の行と、それを報告した世代(Service の status.process — 外の測り手は行の
+   pid から process を読む)。今の世代の行が running なら今の世代の行。running でない間(同じ名の新しい世代が名乗り、前の世代が
+   job を動かしている受け渡しの間 — 行の phase は elder-runs ほか)は、前の世代が running と報告した行(cluster_policy.elder-rows —
+   lease の内の組の行・新しい世代から順に見る)。どちらも無ければ今の世代の行(無ければ None)。"
+  (setv info (.row state.workers worker)
+        current (job-status-row state worker name)
+        own (if (is current None) None (GenerationRow :boot (if (is info None) None info.boot) :row current)))
+  (when (and (is-not current None) (= current.phase JobPhase.RUNNING.value))
+    (return own))
+  (setv elder (next (gfor e (reversed (elder-rows now state worker timing))
+                          :if (and (= e.row.name name) (= e.row.phase JobPhase.RUNNING.value))
+                          e)
+                    None))
+  (if (is-not elder None) elder own))
 
 
 ;; process の世代(2026-09-24 の実弾で改めた): readiness と計器の報告は、送った process の世代(worker が起こした時に振った名
@@ -347,13 +365,19 @@
    :tags {:context "coordinator" :role "judgment"}}
   "service-stopped が、状態がこのままで答えを変え得る最初の刻を知るため(Rollout の Service の相手の stopped — wake_policy.rollout-due)。
    宣言が無いか replicas 0 で置き先も無い Service の行を載せた worker が、沈黙で母集団(cluster_policy.service-rows の lease-ms の窓)から
-   外れる刻の最小。それ以外は時刻で変わらない(None)。"
+   外れる刻と、その行を載せた退いた世代の組(SupersededRun)が沈黙で母集団(cluster_policy.elder-rows の lease-ms の窓)から外れる刻の
+   最小。それ以外は時刻で変わらない(None)。"
   (val job (next (gfor j state.jobs :if (= j.spec.name name) j) None))
   (if (and (or (is job None) (= job.replicas 0)) (is (.row state.placements name) None))
-      (min (gfor #(wname st) (.items state.observations.statuses)
-                 :setv w (.row state.workers wname)
-                 :if (and (is-not w None) (any (gfor row st.jobs (or (= row.name name) (= row.retired-from name)))))
-                 :setv due (+ (liveness-deadline w timing.lease-ms) 1)
+      (min (gfor due (+ (tuple (gfor #(wname st) (.items state.observations.statuses)
+                                     :setv w (.row state.workers wname)
+                                     :if (and (is-not w None) (any (gfor row st.jobs (or (= row.name name) (= row.retired-from name)))))
+                                     (+ (liveness-deadline w timing.lease-ms) 1)))
+                        (tuple (gfor r state.superseded-runs
+                                     :setv report (.row state.observations.elder-statuses (elder-key r.worker r.boot))
+                                     :if (and (is-not report None)
+                                              (any (gfor row report.jobs (or (= row.name name) (= row.retired-from name)))))
+                                     (+ r.seen-ms timing.lease-ms))))
                  :if (> due now)
                  due)
            :default None)
@@ -753,10 +777,21 @@
                                  :if (in p.worker workers-moved)
                                  name))
         reported (frozenset (gfor state #(before after) w workers-moved name (status-row-names state w) name))
+        ;; 退いた世代の行(cluster_policy.elder-rows — service-rows の母集団に入る): 行の表か組(数える窓の seen-ms)が変わった世代の行の名。
+        elder-reported (frozenset (gfor state #(before after)
+                                        k (| (moved-names before.observations.elder-statuses after.observations.elder-statuses)
+                                             (frozenset (gfor r (^ (set before.superseded-runs) (set after.superseded-runs))
+                                                              (elder-key r.worker r.boot))))
+                                        :setv report (.row state.observations.elder-statuses k)
+                                        :if (is-not report None)
+                                        row report.jobs
+                                        n #(row.name row.retired-from)
+                                        :if n
+                                        n))
         unplaced (if workers-moved
                      (frozenset (gfor name all-services :if (or (is (.row before.placements name) None) (is (.row after.placements name) None)) name))
                      (frozenset))
-        services (if global-moved all-services (| names-moved carried reported unplaced))
+        services (if global-moved all-services (| names-moved carried reported elder-reported unplaced))
         silent-moved (^ (frozenset before.silent) (frozenset after.silent))
         ;; 世代をまたぐ受け渡し(AL-D2f — worker-row の handover): 退いた世代の組か、今の世代の報告が変わった worker。
         handover-moved (| (frozenset (gfor r (^ (set before.superseded-runs) (set after.superseded-runs)) r.worker))
@@ -868,10 +903,15 @@
   "資源の種類ごとの変わりやすい観測(比べる単位 snapshot に入れない物 — 資源の画面に足す)。"
   (cond
     (= kind "Service")
-      (do (setv a (.row state.placements name) reports (.row state.observations.readiness name))
+      (do (setv a (.row state.placements name) reports (.row state.observations.readiness name)
+                carrying (if a (carrying-row state a.worker name now timing) None))
           (ServiceObserved :ready-reason (get (service-readiness state name now timing) "reason")
                            :last-readiness (if reports (get reports -1) None)
-                           :process (if a (job-status-row state a.worker name) None)
+                           ;; 世代の受け渡しの間は前の世代の行(job を今動かしている process — carrying-row)。
+                           :process (if carrying carrying.row None)
+                           :process-boot (if carrying carrying.boot None)
+                           :process-elder (and (is-not carrying None) (is-not carrying.boot None)
+                                               (!= carrying.boot (getattr (.row state.workers a.worker) "boot" None)))
                            ;; 版の判定(state は snapshot と同じ値)と、その理由・動いている版の列(2026-09-29)。
                            :version (version-state state name now timing)
                            :running (live-processes state name now timing)
