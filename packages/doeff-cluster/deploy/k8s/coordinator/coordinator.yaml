@@ -249,7 +249,7 @@ spec:
             # fffb250ee = keeper の版の準備を準備の層で起こし、追い出しの線までの空きが無い間は待つ worker の版(card ki-16594ef9bba4)。
             # coordinator の process に効く差は無いが、worker の版を coordinator の版より新しくしない約束(版の向き)のため、k3s-0〜2 の
             # worker と同じ commit で上げる。前の版 6e1996649 は fffb250ee の祖先。
-            - { name: WORKER_DOEFF_COMMIT, value: fffb250ee6a7b3e242a8b701349ada31164bd8d8 }
+            - { name: WORKER_DOEFF_COMMIT, value: 9f10594e604245e3571bb16fa92d30aab833da81 }
             # coordinator の process 自身の行の名乗り(coordinator/entry/main の process-lines — job の名 coordinator/<namespace>・worker の
             # 名の欄 = Pod の名)。送り先(ConfigMap coordinator-env の DOEFF_JOB_LOG_OTLP)が無ければ読まない。
             - { name: POD_NAME, valueFrom: { fieldRef: { fieldPath: metadata.name } } }
