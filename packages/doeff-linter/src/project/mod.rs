@@ -571,6 +571,7 @@ pub fn run_with(root: &Path, settings: &ProjectSettings, enabled: &BTreeSet<Proj
                     }
                     let fake_rules = [
                         ProjectRule::BusinessEffectFake,
+                        ProjectRule::StaleCounterexampleRow,
                         ProjectRule::TestOnlyFake,
                         ProjectRule::IntentAnswererNotTranslation,
                         ProjectRule::ServiceWithoutCounterexample,
@@ -1162,6 +1163,7 @@ fn whole_hy_index(
     // 許可名簿を書いた repo は、層の置き場の外の file にも DOEFF106・131 を当てる(#1147)ので、全体の索引を作る。
     // DOEFF136 は模擬の環境の deftest から service の entry の層の定義へ届くかを見る。
     let wants_tests = ((enabled.contains(&ProjectRule::BusinessEffectFake)
+        || enabled.contains(&ProjectRule::StaleCounterexampleRow)
         || enabled.contains(&ProjectRule::TestOnlyFake)
         || enabled.contains(&ProjectRule::IntentAnswererNotTranslation)
         || enabled.contains(&ProjectRule::ServiceWithoutCounterexample)
@@ -3558,10 +3560,11 @@ fn judge_business_fakes(
         unserved: &unserved,
         python_answered: &python_answered,
     };
-    let table_draft = |dir: &Option<String>, detail: String, subject: String, reason: &str| {
+    // 表の腐りの知らせ。反例の表の古い行は DOEFF176、外の世界の表の腐りは DOEFF143(偽物の数と古い行の数を別の番号で数える)。
+    let table_draft = |rule: ProjectRule, dir: &Option<String>, detail: String, subject: String, reason: &str| {
         let rel = dir.clone().unwrap_or_else(|| "architecture.hy".to_string());
         Draft {
-            rule: ProjectRule::BusinessEffectFake,
+            rule,
             layer: None,
             path: root.join(&rel),
             rel,
@@ -3738,6 +3741,7 @@ fn judge_business_fakes(
             Verdict::StaleCounterexample(key) => {
                 let key = counterexample_written.get(&key).cloned().unwrap_or(key);
                 table_draft(
+                ProjectRule::StaleCounterexampleRow,
                 &decl.counterexamples,
                 format!("counterexample-unused::{}", key),
                 format!("反例の表の {} はもう当たらない", key),
@@ -3747,6 +3751,7 @@ fn judge_business_fakes(
             Verdict::UnusedExternal(effect) => {
                 let effect = external_written.get(&effect).cloned().unwrap_or(effect);
                 table_draft(
+                ProjectRule::BusinessEffectFake,
                 &decl.external_effects,
                 format!("external-unused::{}", effect),
                 format!("外の世界の表の {} にどの偽物も答えない", effect),
@@ -3791,6 +3796,7 @@ fn judge_business_fakes(
             Verdict::UnservedExternal(effect) => {
                 let effect = external_written.get(&effect).cloned().unwrap_or(effect);
                 table_draft(
+                ProjectRule::BusinessEffectFake,
                 &decl.external_effects,
                 format!("external-unserved::{}", effect),
                 format!("外の世界の表の {} に本番の入口から届く答え手が無い", effect),

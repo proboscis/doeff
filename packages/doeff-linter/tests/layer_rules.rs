@@ -3703,7 +3703,7 @@ fn services_without_a_counterexample_are_red() {
         ),
         ("tables/COUNTEREXAMPLES/stock.txt", "app/sim/broken_clock.hy::stopped-clock::app.foundation.clock_effects.Now\n止まった時計\n".to_string()),
     ];
-    let dir = world_repo_with(&files, "", "[\"DOEFF143\", \"DOEFF157\", \"DOEFF164\"]");
+    let dir = world_repo_with(&files, "", "[\"DOEFF143\", \"DOEFF157\", \"DOEFF164\", \"DOEFF176\"]");
     let arch_path = dir.path().join("architecture.hy");
     let fakes = ":foundation foundation\n  :verification-environment \"sim\"\n  :business-fakes {:simulation [\"app/sim/**\"] :assembly [\"app/*/entry/**\"] \
                  :tests [\"**/tests/**\"] :production [\"app/**\"] :business-modules [\"app.billing\"] :counterexamples \"tables/COUNTEREXAMPLES\"}";
@@ -3715,8 +3715,8 @@ fn services_without_a_counterexample_are_red() {
     let found = violation(&report, "architecture.hy::DOEFF164::ledger");
     assert!(found["message"].as_str().unwrap().contains("service ledger に壊した handler の反例が無い"), "{}", found["message"]);
     assert_eq!(found["severity"], "error", "{}", found);
-    // 土台の効果に答える壊した handler の行は表の当たり(腐りの赤にしない)。
-    assert!(keys(&report, "DOEFF143").iter().all(|k| !k.contains("counterexample-unused")), "{}", report);
+    // 土台の効果に答える壊した handler の行は表の当たり(古い行 DOEFF176 にしない)。
+    assert!(keys(&report, "DOEFF176").iter().all(|k| !k.contains("stopped-clock")), "{}", report);
 }
 
 /// :business-fakes の :unserved(違反を固定する縮める向きの表)の無い dir は空の表として読む(知らせ 1 行・errors に
@@ -3787,6 +3787,38 @@ fn simulation_fakes_and_test_only_fakes_are_red_but_taps_and_counterexamples_are
     assert_eq!(keys(&report, "DOEFF157"), vec![test_only], "{}", report);
     assert!(violation(&report, test_only)["message"].as_str().unwrap().contains("検だけの偽物"), "{}", violation(&report, test_only));
     assert_eq!(violation(&report, test_only)["severity"], "error");
+}
+
+/// 反例の表の当たらない古い行は DOEFF176 で出し、DOEFF143(偽物の数)には入れない(偽物の数と古い行の数を規則の番号で別に数える)。
+/// 表の 2 行のうち broken-refund は今も在る壊した handler に当たり(鳴らない例)、gone-charge はどの節にも当たらない(鳴る例)。
+/// DOEFF176 を enable しなければ古い行は出ない(DOEFF143 へ戻らない)。
+#[test]
+fn a_stale_counterexample_row_is_doeff176_not_a_doeff143_fake() {
+    let files = [
+        ("app/foundation/host.hy", tags("shared", "foundation") + "(defk with-host [body] body)\n"),
+        ("app/billing/intent/effects.hy", "(import doeff [EffectBase])\n(defclass Charge [EffectBase])\n(defclass Refund [EffectBase])\n".to_string()),
+        ("app/sim/fake_billing.hy", "(import app.billing.intent.effects [Refund])\n(defhandler broken-refund (Refund [] (resume 0)))\n".to_string()),
+        ("tables/COUNTEREXAMPLES/sim_refund.txt", "app/sim/fake_billing.hy::broken-refund::app.billing.intent.effects.Refund\n返金を 0 で返す壊した handler\n".to_string()),
+        ("tables/COUNTEREXAMPLES/gone_charge.txt", "app/sim/fake_billing.hy::gone-charge::app.billing.intent.effects.Charge\n消した壊した handler\n".to_string()),
+    ];
+    let fakes = ":foundation foundation\n  :verification-environment \"sim\"\n  :business-fakes {:simulation [\"app/sim/**\"] :assembly [\"app/*/entry/**\"] \
+                 :tests [\"**/tests/**\"] :production [\"app/**\"] :business-modules [\"app.billing\"] :counterexamples \"tables/COUNTEREXAMPLES\"}";
+    let stale = "tables/COUNTEREXAMPLES::DOEFF176::counterexample-unused::app/sim/fake_billing.hy::gone-charge::app.billing.intent.effects.Charge";
+    for (enable, expected) in [("[\"DOEFF143\", \"DOEFF176\"]", vec![stale]), ("[\"DOEFF143\"]", vec![])] {
+        let dir = world_repo_with(&files, "", enable);
+        let arch_path = dir.path().join("architecture.hy");
+        let text = std::fs::read_to_string(&arch_path).unwrap().replace(":foundation foundation", fakes);
+        std::fs::write(&arch_path, text).unwrap();
+        let (_, report) = editor(dir.path());
+        assert_eq!(report["errors"], serde_json::json!([]), "{}: {}", enable, report["errors"]);
+        assert_eq!(keys(&report, "DOEFF143"), Vec::<String>::new(), "{}: {}", enable, report);
+        assert_eq!(keys(&report, "DOEFF176"), expected, "{}: {}", enable, report);
+        if let Some(key) = expected.first() {
+            let found = violation(&report, key);
+            assert!(found["message"].as_str().unwrap().contains("はもう当たらない"), "{}", found);
+            assert_eq!(found["severity"], "error", "{}", found);
+        }
+    }
 }
 
 /// DOEFF164 は service に反例が 1 本あれば緑。DOEFF167 は defservice の :clauses の条ごとに、反例の表の行の
@@ -4100,7 +4132,7 @@ fn verification_handlers_answering_intent_effects_are_critical_except_pass_throu
 
 /// 失敗ケース(agora card [id]): 効果の import の綴りを、定義元の module から再 export する入口(`app.billing` の根 —
 /// TYPE_CHECKING の `X as X` と `__getattr__` の名 → module の表)へ替えるだけでは、反例の表の行(定義元の綴りの鍵)は当たったままで、
-/// 層の判じ(intent の効果か)も変わらない。綴りを鍵にする実装では、入口の綴りの broken-ship が表に当たらず counterexample-unused と
+/// 層の判じ(intent の効果か)も変わらない。綴りを鍵にする実装では、入口の綴りの broken-ship が表に当たらず古い行(DOEFF176)と
 /// DOEFF206 の当たりになり、入口の綴りの Charge が intent と読まれず fake-charge の DOEFF206 が消える。
 #[test]
 fn reimporting_an_effect_through_a_reexporting_entry_keeps_table_rows_and_layers() {
@@ -4120,7 +4152,7 @@ fn reimporting_an_effect_through_a_reexporting_entry_keeps_table_rows_and_layers
             ),
             ("tables/COUNTEREXAMPLES/ship.txt", "app/sim/fake_billing.hy::broken-ship::app.billing.intent.effects.Ship\n出荷を 0 で返す壊した handler\n".to_string()),
         ];
-        let dir = intent_fake_repo_enabling(&files, None, "[\"DOEFF143\", \"DOEFF206\"]");
+        let dir = intent_fake_repo_enabling(&files, None, "[\"DOEFF143\", \"DOEFF176\", \"DOEFF206\"]");
         let (_, report) = editor(dir.path());
         assert_eq!(report["errors"], serde_json::json!([]), "{}: {}", spelled, report["errors"]);
         // 知らせの細目は節の書いた綴りのまま。intent と読む事(fake-charge が鳴る)と、表の行に当たる事(broken-ship が鳴らない)は綴りに依らない。
@@ -4132,7 +4164,8 @@ fn reimporting_an_effect_through_a_reexporting_entry_keeps_table_rows_and_layers
             report
         );
         let fakes = keys(&report, "DOEFF143");
-        assert!(fakes.iter().all(|k| !k.contains("counterexample-unused") && !k.contains("broken-ship")), "{}: {:?}", spelled, fakes);
+        assert!(fakes.iter().all(|k| !k.contains("broken-ship")), "{}: {:?}", spelled, fakes);
+        assert_eq!(keys(&report, "DOEFF176"), Vec::<String>::new(), "{}: {}", spelled, report);
     }
 }
 
