@@ -183,39 +183,79 @@ fn clause_shape(source: &str, params: &[&str], body: &[Form], head: &str, ops: &
             _ => None,
         }
     }
+    /// 名が指しうる値の (渡すか, 自前で答えるか) — 出し直しの答えは (真, 別の handler の下か)・それ以外の値は (偽, 真)。
+    /// 枝の合流の後は、枝ごとの値の OR。
+    type Held = (bool, bool);
+    const OTHER: Held = (false, true);
     /// 節の終わり 1 つ。
-    enum Ending<'s> {
+    enum Ending {
         /// 受けた効果をそのまま外へ渡す(`(reperform effect)`・`(pass)`)。
         Forward,
         /// 自前の値。
         Own,
-        /// 記号の値の `resume` / `transfer`(出し直しで束ねた名なら渡す・そうでなければ自前 — 束ねの全部を集めた後で決める)。
-        Value(&'s str),
+        /// 記号の値の `resume` / `transfer` — その終わりに届く束ね(同じ枝の中で終わりより前の最も近い束ね)が指す値。
+        Value(Held),
         /// `(resume None)`(同じ効果を出し直した節なら、答えを捨てて None で返す観測 — 渡す終わりに数える)。
         Nothing,
     }
     /// 本体を歩いて集める物。
     #[derive(Default)]
     struct Walked<'s> {
-        /// 出し直しの答えを束ねた名と、別の handler の下の出し直しか。
-        bound: Vec<(&'s str, bool)>,
-        /// 名から名への入れ直し `(:= 名 名)`・`(setv 名 名)`・`(val 名 名)`。
-        assigned: Vec<(&'s str, &'s str)>,
+        /// 歩いている所に届く束ね — 名と、その名が指しうる値。`if`・`when`・`unless`・`cond` の枝ごとに分け、枝の後で合わせる
+        /// (枝をまたいで名を混ぜない — 名の付け方で判じが変わらない)。
+        bound: Vec<(&'s str, Held)>,
         /// 本体のどこかで同じ効果を出し直したか(名に束ねない `(<- 出し直し)` も含む)。
         reissued: bool,
-        endings: Vec<Ending<'s>>,
+        endings: Vec<Ending>,
+    }
+    impl<'s> Walked<'s> {
+        fn held(&self, name: &str) -> Option<Held> {
+            self.bound.iter().find(|(bound, _)| *bound == name).map(|&(_, held)| held)
+        }
+        /// 名を束ね直す(前の束ねを覆う)。
+        fn bind(&mut self, name: &'s str, held: Held) {
+            self.bound.retain(|(bound, _)| *bound != name);
+            self.bound.push((name, held));
+        }
     }
     /// 再開する操作の値の終わり — `(if 条件 A B)` は枝ごとの終わりに分ける。
-    fn value_endings<'s>(source: &'s str, form: &Form, out: &mut Vec<Ending<'s>>) {
+    fn value_endings(source: &str, form: &Form, walked: &mut Walked) {
         match &form.node {
-            Node::Symbol if text(source, form) == "None" => out.push(Ending::Nothing),
-            Node::Symbol => out.push(Ending::Value(text(source, form))),
-            Node::Seq { delim: Delim::Paren, items } if head_symbol(source, items) == Some("if") && items.len() == 4 => {
-                value_endings(source, &items[2], out);
-                value_endings(source, &items[3], out);
+            Node::Symbol if text(source, form) == "None" => walked.endings.push(Ending::Nothing),
+            Node::Symbol => {
+                let held = walked.held(text(source, form)).unwrap_or(OTHER);
+                walked.endings.push(Ending::Value(held));
             }
-            _ => out.push(Ending::Own),
+            Node::Seq { delim: Delim::Paren, items } if head_symbol(source, items) == Some("if") && items.len() == 4 => {
+                value_endings(source, &items[2], walked);
+                value_endings(source, &items[3], walked);
+            }
+            _ => walked.endings.push(Ending::Own),
         }
+    }
+    /// 分かれる式の枝を、枝ごとに前の束ねから歩き、枝の後で束ねを合わせる(同じ名は枝ごとの値の OR)。どの枝も通らない道が在れば
+    /// (`when`・else の無い `if`・`True` で終わらない `cond`)、前の束ねもその道の束ねとして合わせる。
+    fn branches<'s>(
+        source: &'s str,
+        alternatives: &[&[Form]],
+        falls_through: bool,
+        reissue: &dyn Fn(&Form) -> Option<bool>,
+        ops: &ClauseOps,
+        walked: &mut Walked<'s>,
+    ) {
+        let before = walked.bound.clone();
+        let mut joined = if falls_through { before.clone() } else { Vec::new() };
+        for forms in alternatives {
+            walked.bound = before.clone();
+            forms.iter().for_each(|form| walk(source, form, reissue, ops, walked));
+            for (name, (forwards, answers)) in std::mem::take(&mut walked.bound) {
+                match joined.iter_mut().find(|(bound, _)| *bound == name) {
+                    Some((_, held)) => *held = (held.0 || forwards, held.1 || answers),
+                    None => joined.push((name, (forwards, answers))),
+                }
+            }
+        }
+        walked.bound = joined;
     }
     fn walk<'s>(source: &'s str, form: &Form, reissue: &dyn Fn(&Form) -> Option<bool>, ops: &ClauseOps, walked: &mut Walked<'s>) {
         let Node::Seq { delim, items } = &form.node else { return };
@@ -225,33 +265,72 @@ fn clause_shape(source: &str, params: &[&str], body: &[Form], head: &str, ops: &
             let op = word.and_then(|word| ops.named(word));
             match (word, op, items.as_slice()) {
                 // (<- 名 [型] 出し直し)・(<- 出し直し)
+                // 名は値を歩いた後に束ね、出し直しでない値の束ねも前の束ねを覆う。
                 (Some("<-"), _, [_, .., last]) => {
-                    if let Some(chosen) = reissue(last) {
-                        walked.reissued = true;
-                        if items.len() >= 3 && matches!(items[1].node, Node::Symbol) {
-                            walked.bound.push((text(source, &items[1]), chosen));
-                        }
+                    let chosen = reissue(last);
+                    walked.reissued |= chosen.is_some();
+                    items.iter().for_each(|item| walk(source, item, reissue, ops, walked));
+                    if items.len() >= 3 && matches!(items[1].node, Node::Symbol) {
+                        walked.bind(text(source, &items[1]), chosen.map_or(OTHER, |chosen| (true, chosen)));
                     }
+                    return;
                 }
+                // 名から名への入れ直し `(:= 名 名)` は入れた名の値を引き継ぐ(`(:= answer closed)` など)。
                 (Some(":=" | "setv" | "val"), _, [_, name, value]) if matches!(name.node, Node::Symbol) => {
-                    if matches!(value.node, Node::Symbol) {
-                        walked.assigned.push((text(source, name), text(source, value)));
-                    }
-                    // (setv 名 (yield 出し直し))
-                    if let Some(inner) = value.paren_items() {
-                        if head_symbol(source, inner) == Some("yield") {
-                            if let Some(chosen) = reissue(value) {
+                    walk(source, value, reissue, ops, walked);
+                    let held = match value.paren_items() {
+                        _ if matches!(value.node, Node::Symbol) => walked.held(text(source, value)).unwrap_or(OTHER),
+                        // (setv 名 (yield 出し直し))
+                        Some(inner) if head_symbol(source, inner) == Some("yield") => match reissue(value) {
+                            Some(chosen) => {
                                 walked.reissued = true;
-                                walked.bound.push((text(source, name), chosen));
+                                (true, chosen)
                             }
+                            None => OTHER,
+                        },
+                        _ => OTHER,
+                    };
+                    walked.bind(text(source, name), held);
+                    return;
+                }
+                // 分かれる式 — 条件は前の束ねの上で歩き、枝ごとに束ねを分ける。
+                (Some("if"), _, [_, test, then]) => {
+                    walk(source, test, reissue, ops, walked);
+                    branches(source, &[std::slice::from_ref(then)], true, reissue, ops, walked);
+                    return;
+                }
+                (Some("if"), _, [_, test, then, otherwise]) => {
+                    walk(source, test, reissue, ops, walked);
+                    branches(source, &[std::slice::from_ref(then), std::slice::from_ref(otherwise)], false, reissue, ops, walked);
+                    return;
+                }
+                (Some("when" | "unless"), _, [_, test, body @ ..]) => {
+                    walk(source, test, reissue, ops, walked);
+                    branches(source, &[body], true, reissue, ops, walked);
+                    return;
+                }
+                // (cond 条件 枝 …)・古い綴りの (cond [条件 枝 …] …)。最後の条件が `True`・`else`・`:else` なら、どの枝も通らない道は無い。
+                (Some("cond"), _, [_, arms @ ..]) if !arms.is_empty() => {
+                    let bracketed: Option<Vec<&[Form]>> = arms.iter().map(Form::bracket_items).collect();
+                    let (alternatives, last_test): (Vec<&[Form]>, Option<&Form>) = match bracketed {
+                        Some(arms) => {
+                            let last_test = arms.last().and_then(|arm| arm.first());
+                            (arms, last_test)
                         }
-                    }
+                        None => {
+                            arms.iter().step_by(2).for_each(|test| walk(source, test, reissue, ops, walked));
+                            (arms.iter().skip(1).step_by(2).map(std::slice::from_ref).collect(), arms.len().checked_sub(2).map(|i| &arms[i]))
+                        }
+                    };
+                    let falls_through = !last_test.is_some_and(|test| matches!(text(source, test), "True" | "else" | ":else"));
+                    branches(source, &alternatives, falls_through, reissue, ops, walked);
+                    return;
                 }
                 // 節の操作 — 名と終わり方と引数の数は表 `ops` から読み、終わり方ごとに判じる。
                 (_, Some(op), [_, args @ ..]) => match (op.ending, op.arity, args) {
                     // 続きを値で再開する操作は、値 1 つなら値の中身で判じる。
                     (clause_ops::Ending::Resumes, Some(1), [value]) => {
-                        value_endings(source, value, &mut walked.endings);
+                        value_endings(source, value, walked);
                         return;
                     }
                     // 値の形が違う再開と、値で終える操作は自前の値。
@@ -281,23 +360,13 @@ fn clause_shape(source: &str, params: &[&str], body: &[Form], head: &str, ops: &
     let reissue = |form: &Form| reissue(source, form, head, params, &effect_names);
     let mut walked = Walked::default();
     body.iter().for_each(|form| walk(source, form, &reissue, ops, &mut walked));
-    // 束ねた名を入れ直した名も束ねた名に数える(`(:= answer closed)` など)。
-    while let Some(grown) = walked.assigned.iter().find_map(|&(name, value)| {
-        let known = |n: &str| walked.bound.iter().find(|(bound, _)| *bound == n).map(|&(_, chosen)| chosen);
-        known(name).is_none().then(|| known(value).map(|chosen| (name, chosen))).flatten()
-    }) {
-        walked.bound.push(grown);
-    }
-    let Walked { bound, reissued, endings, .. } = walked;
+    let Walked { reissued, endings, .. } = walked;
     // 終わりごとに (渡すか, 自前で答えるか)。別の handler の下の出し直しの答えは、受けた効果を外へ渡しつつ、答えを作る handler を節が選ぶので両方。
     let judged = |ending: &Ending| match ending {
         Ending::Forward => (true, false),
         Ending::Own => (false, true),
         Ending::Nothing => (reissued, !reissued),
-        Ending::Value(name) => match bound.iter().find(|(bound, _)| bound == name) {
-            Some(&(_, chosen)) => (true, chosen),
-            None => (false, true),
-        },
+        &Ending::Value(held) => held,
     };
     // `:when 条件` の節は、条件が偽の時に doeff-hy の handle が自動で reperform する(doeff-hy handle.hy の Clause guards)。
     let guarded = body.first().is_some_and(|form| text(source, form) == ":when");
@@ -838,6 +907,44 @@ mod tests {
         assert_eq!(at("Trimmed"), both); // (resume (if 条件 A B)) の枝の 1 つが自前の値
         assert_eq!(at("Twice"), both); // 同じ頭の 2 つの節は欄ごとに OR
         assert_eq!(at("Own"), answers);
+    }
+
+    /// 失敗ケース(card [id]): 束ねた名は、その終わりに届く束ね(同じ枝の中で終わりより前の最も近い束ね)で引く。
+    /// 同じ名を 2 つの枝で別の出し直し(そのまま渡す出し直しと、引数を書き換えた出し直し)に束ねる節は、名を替えた同じ節と同じ形に
+    /// 判じる — 名を節の全体で 1 つの平らな表に集めると、書き換えの枝の `(resume answer)` が別の枝の束ねに当たり、answers が偽になる。
+    #[test]
+    fn clause_shapes_do_not_depend_on_how_bound_names_are_spelled() {
+        let shape = |body: &str| {
+            let source = format!("(defhandler h (HttpRequest [method url headers body] {}))", body);
+            let shape = clause_shapes_in(&source)[&("h".to_string(), "HttpRequest".to_string())];
+            (shape.forwards, shape.answers)
+        };
+        let branched = |rewritten: &str, passed: &str, form: &str| {
+            let rewrite = format!(
+                "(do (<- {r} (| HttpResponse HttpFailed) (HttpRequest method url :headers headers :body changed)) (resume {r}))",
+                r = rewritten
+            );
+            let pass = format!("(do (<- {p} (| HttpResponse HttpFailed) effect) (resume {p}))", p = passed);
+            match form {
+                "cond" => format!("(<- to str (posted-field body)) (cond (= to D) {} True {})", rewrite, pass),
+                "cond-brackets" => format!("(cond [(= method \"GET\") {}] [True {}])", rewrite, pass),
+                "if" => format!("(if (= method \"GET\") {} {})", rewrite, pass),
+                "when" => format!("(when (= method \"GET\") {}) {}", rewrite, pass),
+                _ => unreachable!(),
+            }
+        };
+        for form in ["cond", "cond-brackets", "if", "when"] {
+            let renamed = shape(&branched("tampered", "answer", form));
+            assert_eq!(renamed, (true, true), "{}: 書き換えの枝は自前で答え、渡す枝は渡す", form);
+            assert_eq!(shape(&branched("answer", "answer", form)), renamed, "{}: 両方の枝で同じ名 answer", form);
+            assert_eq!(shape(&branched("answer", "tampered", form)), renamed, "{}: 名を入れ替えても同じ形", form);
+        }
+        // 終わりより前の最も近い束ねで引く — 後から束ね直した名は前の束ねを覆い、終わりより後の束ねは終わりに届かない。
+        assert_eq!(shape("(<- answer effect) (<- answer (HttpRequest method url :body changed)) (resume answer)"), (false, true));
+        assert_eq!(shape("(<- answer (HttpRequest method url :body changed)) (<- answer effect) (resume answer)"), (true, false));
+        assert_eq!(shape("(<- seen effect) (resume answer) (<- answer effect)"), (false, true));
+        // 枝の後では、枝ごとの束ねを合わせる(どちらの枝の値も届きうる)。
+        assert_eq!(shape("(<- answer effect) (when (= method \"GET\") (<- answer (Other 2))) (resume answer)"), (true, true));
     }
 
     /// 節の判じが読む操作の名は、同梱の表の行から来る: 表の行ごとに、終わり方どおりの節の形になる。表に行を足せば
