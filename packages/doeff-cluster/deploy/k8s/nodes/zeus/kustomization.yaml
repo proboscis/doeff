@@ -19,3 +19,6 @@ patches:
   # cgroup の memory の層と、その委ねる係・host の cgroupfs の mount(JSON patch — 足す物は全部末尾へ)。
   - path: cgroup.yaml
     target: { group: apps, version: v1, kind: Deployment, name: doeff-worker }
+  # mount の係へ頼む dir の env(JSON patch — 末尾へ。係の宣言は node.yaml)。
+  - path: workspace-mount.yaml
+    target: { group: apps, version: v1, kind: Deployment, name: doeff-worker }

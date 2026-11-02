@@ -31,11 +31,17 @@ spec:
           # 43% で当たり、画面の job の最初の下書きの落ち 2.3% → 20.5% と 送り→最初の字 +3 秒の根の見立て)。
           # CPU の取り分(重み)は requests の 4 のまま。memory の上限 100Gi は変えない。戻す時は limits に cpu: "16" を足す。
           resources: { requests: { cpu: "4", memory: 8Gi }, limits: { memory: 100Gi } }
-          # USB の SSD の上の、作業の root の外の dir 2 つ(claude-projects・service-workers)を、作業の root の下の host-usb/ に置く(
-          # 上に載る系の job が USB の SSD の 3 つの置き場〔作業の root・この 2 つ〕を日次に刈る。
-          # 機体の利用者の home の下は置かない)。作業の root の下に置くので、上に載る系の刈りの決まりは作業の root からの名のまま書け、root の外を
-          # 指さない。type は Directory: dir が無ければ黙って作らず、新しい Pod が起動で止まる(RollingUpdate なので旧い Pod は動いたまま)。
+          # mount の係へ頼む dir を渡す env WORKER_WORKSPACE_MOUNT_DIR は workspace-mount.yaml(JSON patch — ここで足すと env の頭に
+          # 入り、generation.yaml が読む env の場所が動く)。
           volumeMounts:
+            # 作業の root は HostToContainer: mount の係(下の initContainers の workspace-mount)が /work の下に付けた作業場所の volume
+            # が、この container の /work の同じ path に見える(host を通って届く)。この container からは外へ広げない(特権が要らない)。
+            - { name: work, mountPath: /work, mountPropagation: HostToContainer }
+            - { name: workspace-mount, mountPath: /run/workspace-mount }
+            # USB の SSD の上の、作業の root の外の dir 2 つ(claude-projects・service-workers)を、作業の root の下の host-usb/ に置く(
+            # 上に載る系の job が USB の SSD の 3 つの置き場〔作業の root・この 2 つ〕を日次に刈る。
+            # 機体の利用者の home の下は置かない)。作業の root の下に置くので、上に載る系の刈りの決まりは作業の root からの名のまま書け、root の外を
+            # 指さない。type は Directory: dir が無ければ黙って作らず、新しい Pod が起動で止まる(RollingUpdate なので旧い Pod は動いたまま)。
             - { name: usb-claude-projects, mountPath: /work/host-usb/claude-projects }
             - { name: usb-service-workers, mountPath: /work/host-usb/service-workers }
             # moneta の毎日の控えの置き場(Longhorn の PVC — moneta-backup-pvc.yaml)。job の子は /mnt/moneta-backup へ書く。path は NAS の
@@ -52,7 +58,65 @@ spec:
       initContainers:
         - name: own-work
           command: ["sh", "-c", "test -f /work/.on-usb-ssd || { echo 'own-work: /work/.on-usb-ssd が無い — USB の SSD が mount されていない' >&2; exit 1; }; chown 1000:1000 /work"]
+        # mount の係(native sidecar — restartPolicy Always): 作業場所の volume(持ち主ごとの Longhorn の RWO volume — 級・名・寿命は
+        # ../../workspace-volumes/README.md)を、作業の root の下の dir に付け外す。worker が Longhorn の API で volume を node に attach
+        # し(device は host の /dev/longhorn/<名>)、頼みの dir に「付けて・外して・fstrim して」を置くと、この係が mkfs・mount・umount・
+        # fstrim をして答えを置く(頼みと答えの形・断る物は README.md の節「mount の係」と script workspace-mount.sh)。
+        # 訳: mount は特権が要るが、worker の container は特権を持たない(privileged の container は host の cgroup の名前空間で起き、
+        # memory の見張りが壊れる — cgroup.yaml の頭の註)。だから同じ Pod の root・privileged の container 1 つに mount だけを任せる。
+        # 見せ方: この係の /work は Bidirectional — ここで付けた mount が host の /mnt/fast_ssd_usb/agent-worker の下へ広がり(host の
+        # /mnt/fast_ssd_usb は shared の mount — 2026-11-02 に host の mountinfo で shared:790 を確かめた)、worker の container の /work
+        # (HostToContainer)の同じ path に見える。mount は host の物なので、Pod の入れ替え(RollingUpdate — 2 つの世代が同じ機体に並ぶ)
+        # でも残り、新しい世代の worker にも係にも見える。係が止まっても付いた mount は外れない(外すのは頼みだけ)。この係の /work の下に
+        # ほかの volume を重ねない(重ねた mount まで host へ広がる)。起きた時に /work が shared でなければ名を挙げて止まる(付けても worker
+        # に見えない — Pod は起動で止まり、RollingUpdate なので旧い Pod は動いたまま)。
+        # 頼みの受け方: 頼みの dir(emptyDir — Pod ごと)を 0.2 秒ごとに見て、`<鍵>.req` があれば ConfigMap workspace-mount の script を
+        # 読み直して走らせ、頼みを消す。0.2 秒ごとに見る訳: 同じ Pod の container の間で file の置きを知らせる道が image に無い(inotify の
+        # 道具が無い)。頼みが無い時は shell の glob だけで、子 process は sleep 1 つ。script は名の固定した ConfigMap に置くので、
+        # 頼みの形や断る物を替えても Pod は作り直されない(この宣言を替えた時だけ作り直す — doeff worker は静的に保つ)。
+        # device は host の /dev を /host/dev に置いて引く(attach のたびに増える device を見るため。container の /dev は起きた時の写しで
+        # 増えない。/dev に重ねないのは、container の /dev の file — termination-log など — を host の /dev に作らないため)。
+        # 上に載る系の決まりとの合い方(通過点 AG — ms-5835ee6ab1f8: 上に載る系が持つ Pod は doeff worker だけ・zeus の doeff worker は
+        # 1 つ・上に載る系の版上げで worker の Pod を作り直さない): 係は doeff worker の Pod の中の container で、Pod・Deployment・
+        # DaemonSet を足さない(zeus の Pod は 1 つのまま)。宣言は doeff の repo のこの dir に在る。作業場所の volume は Pod を作らずに付ける
+        # (attach は Longhorn の ticket・mount はこの係)。script は ConfigMap なので、頼みの形の替えでも Pod は作り直されない。
+        - name: workspace-mount
+          image: zeus:5000/agent-worker-exp:in-c17f84e4dcaa
+          restartPolicy: Always
+          securityContext: { privileged: true, runAsUser: 0, runAsNonRoot: false }
+          # mkfs.ext4 が 10 GiB の volume の journal と表を書く間の page cache を数えても止まらない上限と、待たされない CPU の上限。
+          resources: { requests: { cpu: 10m, memory: 16Mi }, limits: { cpu: "1", memory: 256Mi } }
+          command: ["/bin/sh", "-c"]
+          args:
+            - |
+              propagation=$(findmnt -rn -o PROPAGATION -M /work)
+              case "$propagation" in
+                *shared*) ;;
+                *) echo "workspace-mount: /work の propagation が '$propagation'(shared でない — 付けた mount が worker に見えない)" >&2
+                   exit 1 ;;
+              esac
+              echo "workspace-mount: /run/workspace-mount の頼みを受ける" >&2
+              while :; do
+                for request in /run/workspace-mount/*.req; do
+                  [ -e "$request" ] || continue
+                  sh /etc/workspace-mount/workspace-mount.sh "$request" || echo "workspace-mount: $request が code $? で終わった" >&2
+                  rm -f "$request"
+                done
+                sleep 0.2
+              done
+          volumeMounts:
+            - { name: work, mountPath: /work, mountPropagation: Bidirectional }
+            - { name: host-dev, mountPath: /host/dev }
+            - { name: workspace-mount, mountPath: /run/workspace-mount }
+            - { name: workspace-mount-script, mountPath: /etc/workspace-mount, readOnly: true }
       volumes:
+        # mount の係(上の initContainers の workspace-mount)の 3 つ: worker と分け合う頼みの dir・host の device・係の script。
+        - name: workspace-mount
+          emptyDir: {}
+        - name: host-dev
+          hostPath: { path: /dev, type: Directory }
+        - name: workspace-mount-script
+          configMap: { name: workspace-mount, defaultMode: 0444 }
         - name: work
           hostPath: { path: /mnt/fast_ssd_usb/agent-worker, type: Directory }
         # 作業の root の下の host-usb/ に置く 2 つ(上の volumeMounts の註)。

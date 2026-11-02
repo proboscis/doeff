@@ -11,6 +11,7 @@ card 2)・測り ki-00f2d6af6581。
 | `storageclass.yaml` | 級 `longhorn-workspace`(replica・置く disk・locality・backup の先と群)— 値の定義元 |
 | `backup.yaml` | backup の先 `garage-workspace`(BackupTarget)と 1 時間ごとの backup(RecurringJob `workspace-backup`) |
 | `workspace-volume.json` | worker が読む値(ConfigMap `workspace-volume`・namespace agent-worker): 級の名・名の頭と長さ・大きさ・寿命の時間 |
+| `workspace-mount.sh` | mount の係の script(ConfigMap `workspace-mount`・namespace agent-worker)— 節「mount の係」 |
 | `README.md` | この file(決まりと値の訳) |
 
 ## 級(StorageClass `longhorn-workspace`)
@@ -112,10 +113,35 @@ worker は CSI を通らずに Longhorn の volume を名指しで作るので�
   空きが 290 GB で、Longhorn が置く線(空きが容量の 25% — 設定 storage-minimal-available-percentage)を割っている。どちらに付けるかは
   持ち主の決め(card ki-e2e594d4ecfe の発言に答えを書く)。
 
+## mount の係
+
+worker の container は特権を持たないので、mkfs・mount・umount・fstrim は同じ Pod の sidecar `workspace-mount`(root・privileged の
+native sidecar — 宣言と訳は `../nodes/zeus/node.yaml` の註)がする。今は zeus の worker にだけ在る(card ki-c1a429da5761)。
+
+| 項目 | 決まり |
+|---|---|
+| 見せ方 | 係の `/work` は mountPropagation Bidirectional、worker の container の `/work` は HostToContainer(同じ volume work = host の `/mnt/fast_ssd_usb/agent-worker` — host の `/mnt/fast_ssd_usb` は shared の mount)。係が `/work/<path>` に付けた volume は host を通って worker の `/work/<path>` に見える |
+| 入れ替え | mount は host の物なので、Pod の入れ替え(2 つの世代が同じ機体に並ぶ)でも残り、どちらの世代の worker にも係にも見える。係が止まっても外れない — 外すのは頼みだけ |
+| 頼みの dir | env `WORKER_WORKSPACE_MOUNT_DIR`(= `/run/workspace-mount` — Pod ごとの emptyDir を係と worker が分け合う)。env の無い worker には係が無い |
+| 頼み | `<鍵>.tmp` に 1 行 `<命令> <volume の名> <付ける先>` を書き、`<鍵>.req` へ名を替える(鍵は頼みごとに別。`.` で始めない)。命令は mount・umount・fstrim |
+| 答え | 係は 0.2 秒ごとに `*.req` を見て script を読み直して走らせ、`<鍵>.out`(1 行目 = code 0 か 1・2 行目から訳と命令の出力)を置いて `<鍵>.req` を消す。頼み手は答えを読んだら消す |
+| mount | device は host の `/dev/longhorn/<volume の名>`(Longhorn の ticket で attach した後に在る)。file system が無ければ `mkfs.ext4 -m 0 -E root_owner=1000:1000` を打ってから付ける。同じ volume が既に付いていれば何もしない |
+| umount | 付いている物が名指した volume か照らしてから外す。使用中で外れなければ断る(lazy に外さない)。何も付いていなければ何もしない |
+| fstrim | 付いている物を照らしてから `fstrim -v`(冷やす前 — 節「寿命」) |
+| 断る物 | 3 つの命令の外・volume の名が英小文字・数字・`-` の外・付ける先が `/work` の下の在る dir でない・`.` か `..` か `//` を含む・symlink を通る・attach されていない・付ける先に別の物・volume が別の所に付いている・中身が ext4 でない(作り直さない) |
+| 付ける先の dir | 頼み手(worker の uid)が作り、外した後も残す(係は dir を作らない・消さない) |
+
+- script を替える時: `workspace-mount.sh` を直して main に入れる。ConfigMap の名が固定なので Pod は作り直されず、kubelet が file を入れ替えた後
+  (1 分前後)の頼みから効く。Pod の宣言(係の container・mount propagation・頼みの dir)を替えた時だけ Pod が作り直される。
+- 検: `../../../tests/test_workspace_mount.py`(宣言と、偽の mount の命令で script を回す検)。
+
 ## 当て方と戻し方
 
 - 当て方: main に入ると、Flux が worker の組(Kustomization doeff-cluster-workers — `../workers` がこの dir を resources に並べる)と
   一緒に当てる。
 - 戻し方: `../workers/kustomization.yaml` の `../workspace-volumes` の行を外す。級と BackupTarget は prune: disabled なので Flux は消さない
   — 名指す volume が 0 本になってから手で消す。RecurringJob と ConfigMap は Flux が消す。
+- mount の係の戻し方: 付いている volume を全部頼みで外してから、`../nodes/zeus/node.yaml` の係の宣言(initContainers の `workspace-mount`・
+  volumes の 3 つ・worker の `/work` の mountPropagation と頼みの dir の mount)と `../nodes/zeus/workspace-mount.yaml` を外す(zeus の
+  Pod が 1 度作り直される)。外さずに係を消すと、付いた volume は host に残り、外す者が居なくなる。
 - 級の parameters は作った後に替えられない(k8s が断る)。替える時は別の名の級を足し、`workspace-volume.json` の storageClass を移す。

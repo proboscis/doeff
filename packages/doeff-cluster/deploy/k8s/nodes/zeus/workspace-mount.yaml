@@ -1,0 +1,5 @@
+# zeus の worker の mount の係へ頼む dir を worker に渡す env(JSON patch)。係の宣言(sidecar workspace-mount・頼みの dir の emptyDir・
+# /work の mount propagation)は node.yaml、頼みの形は ../../workspace-volumes/README.md の節「mount の係」。
+# この env が無い worker(zeus 以外の機体)には mount の係が無い — worker はこの env の有る無しで係の有る無しを知る。
+# 雛形の env の並び(WORK_DIR が 1 番・DRAIN_DEADLINE が 9 番)を動かさないよう末尾へ足す(node.yaml の strategic merge で足すと頭に入る)。
+- { op: add, path: /spec/template/spec/containers/0/env/-, value: { name: WORKER_WORKSPACE_MOUNT_DIR, value: /run/workspace-mount } }
