@@ -107,7 +107,7 @@
 (import doeff_records._effects [PutRowsAppendEvents ReadRow ListRows PutRow PutRows WatchChanges WatchEvents AppendEvent AppendEvents ReadEvents ReadStreamEnd
                                ReadEventByKey ReadBatch CountRows])
 (import doeff_records._event_source [BodyWrapper])
-(import doeff_records._maintenance [maintenance-loop])
+(import doeff_records._maintenance [maintenance-loop bulk-metric-helps])
 (import doeff_records._request_timing [RequestMark MarkAt StageSeconds STAGE-METRIC-HELPS STAGE-METRIC-NAMES request-stages sent-stages waited server-timing-spans-of
                                       lock-metric-helps])
 (import doeff_records._service [HttpRequest HttpAnswer RecordsService records-service respond refusal-answer json-answer])
@@ -182,11 +182,13 @@
    古い変更を送る関数(keep-seconds → 答えが ArchivedThrough | Unreachable の Program — 刈りはその番号まで・None = 送らない置き場。
    _maintenance.hy の頭の註の「消す前に送る」)・archive-events = 印(StreamDecl.archive-before-retire)の列の期限を過ぎた出来事を送る
    関数(出来事の頁 → 答えが EventsArchived | Unreachable の Program — 確かめた出来事だけを外す・None = 送らない。印の列を宣言した
-   置き場では要る — unsent-streams。_maintenance.hy の頭の註の「出来事を送ってから外す」)。"
+   置き場では要る — unsent-streams。_maintenance.hy の頭の註の「出来事を送ってから外す」)・move-bulk = 拍ごとに大きい欄
+   (TableDecl.bulk)を列 bulk へ 1 回分移すか(_maintenance.hy の頭の註の「大きい欄を移す」— 既定 = 移す)。"
   (#^ float interval-seconds)
   (#^ float keep-seconds)
   (setv #^ (| Callable None) archive None)
-  (setv #^ (| Callable None) archive-events None))
+  (setv #^ (| Callable None) archive-events None)
+  (setv #^ bool move-bulk True))
 
 
 (defrecord RepoCommit
@@ -586,13 +588,15 @@
   {:pre [(: schema RecordsSchema) (: workers (| int None))] :post [(: % TextAnswer)] :tags {:context "records" :role "entry"}}
   "GET /metrics に答えるため: 計器の断面(ReadMeter)に計算の pool の負荷(ReadComputeLoad と pool の thread の数 workers — with-compute-load)を
    足し、Prometheus の text に描く(身元を問わない — 数だけで、行の中身を載せない)。説明は固定の系列と、宣言の表 schema の一覧の読みの
-   系列と、宣言の表と列の書きの錠の系列の分(request_timing の lock-metric-helps)。"
+   系列と、宣言の表と列の書きの錠の系列の分(request_timing の lock-metric-helps)と、大きい欄を宣言した表の移しの系列の分
+   (maintenance の bulk-metric-helps)。"
   (<- meter MeterSnapshot (ReadMeter))
   (<- load ComputeLoad (ReadComputeLoad))
   (<- snapshot MeterSnapshot (with-compute-load meter load workers))
   (<- list-rows-helps (get FrozenMap str) (list-rows-metric-helps (tuple schema.tables)))
   (<- lock-helps (get FrozenMap str) (lock-metric-helps (tuple schema.tables) (tuple schema.streams)))
-  (<- text str (render-prometheus snapshot (.updated (.updated METRIC-HELPS list-rows-helps) lock-helps)))
+  (<- bulk-helps (get FrozenMap str) (bulk-metric-helps (tuple (gfor #(name decl) (.items schema.tables) :if decl.bulk name))))
+  (<- text str (render-prometheus snapshot (.updated (.updated (.updated METRIC-HELPS list-rows-helps) lock-helps) bulk-helps)))
   (TextAnswer :status 200 :content-type METRICS-CONTENT-TYPE :body text))
 
 
@@ -847,7 +851,7 @@
   {:pre [(: handler-for Callable) (: plan MaintenancePlan)] :post [(: % None)] :tags {:context "records" :role "entry"}}
   "手入れの係: 止めるまで maintenance-loop を手入れの係の書き手の handler の下で回すため(置き場に届かない回は Unreachable の値で次の回へ)。"
   (<- (with-handlers [(handler-for MAINTAINER)] (maintenance-loop plan.interval-seconds plan.keep-seconds plan.archive None
-                                                                  plan.archive-events)))
+                                                                  plan.archive-events plan.move-bulk)))
   None)
 
 

@@ -39,7 +39,8 @@
 (import doeff_records [schema-statements writer-lock-key migrate-lock-key]
         doeff_records._pg_sql [in-list changes-statement terminal-rows-statement RowExpiry declared-indexes index-name table-index-name retired-index? table-shaped-index? table-field-index-name ordered-index-name ordered-within-index-name former-field-index-name
                               whole-field-index-name list-rows-statement top-rows-statement ordered-rows-statement read-row-statement
-                              lock-row-statement upsert-row-statement STORED-PAYLOAD])
+                              lock-row-statement upsert-row-statement STORED-PAYLOAD
+                              bulk-candidates-statement unmoved-count-statement move-bulk-statement])
 (import tests.interpreters [session-dsn PG-DSN-VARIABLE pg-skip-reason DATABASE ORIGIN-HOST open-postgres postgres-connections fresh-prefix run-sql prepared-store])
 (import doeff_records._main [store-pressure-pg])
 (import doeff_records._store_choice [StorePressure])
@@ -198,9 +199,29 @@
   (<- terminal (terminal-rows-statement "records_" "parts" "state" #("closed") False 5))
   (for [statement [one locked terminal]]
     (assert (.startswith statement.text (+ "SELECT key, " STORED-PAYLOAD " AS payload, version, updated_at FROM")) statement.text))
-  ;; 今の版の書きは値の全部を payload に置き、古い bulk を残さない。
-  (<- upsert (upsert-row-statement "records_" "parts" "[\"p1\"]" "{}" 1 0 "w" "h" 1))
-  (assert (in "DO UPDATE SET payload = EXCLUDED.payload, bulk = NULL," upsert.text) upsert.text))
+  ;; 書きは大きい欄を列 bulk に置き(大きい欄の無い値は NULL を渡す)、置き換えでも bulk を書いた値に替える(古い bulk を残さない)。
+  (<- upsert (upsert-row-statement "records_" "parts" "[\"p1\"]" "{}" None 1 0 "w" "h" 1))
+  (assert (in "DO UPDATE SET payload = EXCLUDED.payload, bulk = EXCLUDED.bulk," upsert.text) upsert.text)
+  (assert (in #("bulk" None) (tuple (gfor p upsert.params #(p.name p.value)))) upsert.params))
+
+
+(deftest test-the-bulk-move-statements-read-and-rewrite-only-unsplit-rows
+  ;; 手入れの移し(_pg_sql.hy の頭の註の state_rows): 候補の読みと残りの数えは、bulk が NULL で payload に大きい欄が残る行だけを名指し、
+  ;; 分け直しの文は読んだ時の版の行だけを書き換え、版・刻・書き手・置き場の版の列を書かない。
+  (<- candidates (bulk-candidates-statement "records_" "parts" #("body" "notes") 1000))
+  (<- unmoved (unmoved-count-statement "records_" "parts" #("body" "notes")))
+  (for [statement [candidates unmoved]]
+    (assert (in "WHERE ledger = :ledger AND bulk IS NULL AND (payload::jsonb) ?| ARRAY[:b0, :b1]::text[]" statement.text) statement.text)
+    (assert (= (tuple (gfor p statement.params :if (.startswith p.name "b") #(p.name p.value))) #(#("b0" "body") #("b1" "notes")))
+            statement.params))
+  (assert (.endswith candidates.text "LIMIT :limit") candidates.text)
+  (assert (not-in "ORDER BY" candidates.text) candidates.text)
+  (<- move (move-bulk-statement "records_" "parts" "[]"))
+  (assert (in "SET payload = moved.payload, bulk = moved.bulk" move.text) move.text)
+  (assert (in "r.version = moved.version" move.text) move.text)
+  (for [column ["version =" "updated_at" "updated_by" "origin_host" "epoch"]]
+    (assert (not-in (+ "SET " column) move.text) #(column move.text))
+    (assert (not-in (+ ", " column) move.text) #(column move.text))))
 
 
 (deftest test-the-lock-keys-have-the-text-of-the-version-before-880

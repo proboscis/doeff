@@ -8,7 +8,9 @@
 ;;;                表にだけ足す(bulk-column-step — 既定の値の無い列なので表を書き直さない)。行の値 = payload と bulk の欄を合わせた写像で、
 ;;;                同じ欄が両方に在れば payload の値。ListRows の外の読みは全部、合わせた綴り(stored-payload-expression)を payload の位置で
 ;;;                選ぶ。ListRows は fields が大きい欄を 1 つも含まなければ列 bulk を選ばない(選ばない列の TOAST を PostgreSQL は開かない)。
-;;;                今の書き(upsert-row-statement)は値の全部を payload に置き、bulk を NULL にする。
+;;;                書き(upsert-row-statement)は値のうち大きい欄を bulk に、残りを payload に置く(値に大きい欄の無い行は bulk が NULL)。
+;;;                前の版が値の全部を payload に置いた行は、手入れの移し(MoveBulkFields — bulk-candidates-statement・move-bulk-statement)が
+;;;                版を照らして分け直す(値・版・刻・変更の列は動かさない)。
 ;;;   append_rows  seq = bigserial・ledger = 追記の列の名・payload = {"idempotencyKey" "writer" "body"} の JSON の綴り(行と一緒に積んだ出来事
 ;;;                — PutRowsAppendEvents — は鍵 "position" {"epoch" "sequence"} も持つ。表の形は変えない)
 ;;; 足した物(この package の意味に要る物だけ):
@@ -1311,20 +1313,58 @@
                      :params (+ (! (params-of #(#("ledger" table)))) states.params bound)))))
 
 
-(defk upsert-row-statement [prefix table key payload version at writer origin-host epoch]
-  {:pre [(: prefix str) (: table str) (: key str) (: payload str) (: version int) (: at int) (: writer str) (: origin-host str)
-         (: epoch int)]
+(defk upsert-row-statement [prefix table key payload bulk version at writer origin-host epoch]
+  {:pre [(: prefix str) (: table str) (: key str) (: payload str) (: bulk (| str None)) (: version int) (: at int) (: writer str)
+         (: origin-host str) (: epoch int)]
    :post [(: % Statement)]
    :tags {:context "records" :role "foundation"}}
-  "行 1 つを書く(在れば置き換える)文を作るため。値の全部を payload に置き、列 bulk を NULL にする(前に大きい欄を bulk に分けて置いた行の
-   古い bulk を残さない — 残すと、この書きが外した欄が読みの合わせで戻る)。"
-  (Statement :text (.format "INSERT INTO {p}state_rows (ledger, key, payload, version, updated_at, updated_by, origin_host, epoch)
-                       VALUES (:ledger, :key, :payload, :version, :at, :writer, :origin_host, :epoch)
-                       ON CONFLICT (ledger, key) DO UPDATE SET payload = EXCLUDED.payload, bulk = NULL, version = EXCLUDED.version,
+  "行 1 つを書く(在れば置き換える)文を作るため。payload = 値のうち大きい欄を除いた綴り・bulk = 大きい欄の綴り(None = 値に大きい欄が
+   無い — 列 bulk を NULL にする。前に bulk に置いた古い欄を残すと、この書きが外した欄が読みの合わせで戻る)。"
+  (Statement :text (.format "INSERT INTO {p}state_rows (ledger, key, payload, bulk, version, updated_at, updated_by, origin_host, epoch)
+                       VALUES (:ledger, :key, :payload, :bulk, :version, :at, :writer, :origin_host, :epoch)
+                       ON CONFLICT (ledger, key) DO UPDATE SET payload = EXCLUDED.payload, bulk = EXCLUDED.bulk, version = EXCLUDED.version,
                          updated_at = EXCLUDED.updated_at, updated_by = EXCLUDED.updated_by,
                          origin_host = EXCLUDED.origin_host, epoch = EXCLUDED.epoch" :p prefix)
-             :params (! (params-of #(#("ledger" table) #("key" key) #("payload" payload) #("version" version) #("at" at)
+             :params (! (params-of #(#("ledger" table) #("key" key) #("payload" payload) #("bulk" bulk) #("version" version) #("at" at)
                                      #("writer" writer) #("origin_host" origin-host) #("epoch" epoch))))))
+
+
+(defk bulk-candidates-statement [prefix table fields limit]
+  {:pre [(: prefix str) (: table str) (: fields tuple) (> (len fields) 0) (: limit int) (> limit 0)] :post [(: % Statement)]
+   :tags {:context "records" :role "foundation"}}
+  "表 table の、列 payload に大きい欄 fields のどれかが残る行(前の版の書きが値の全部を payload に置いた行 — 頭の註の state_rows)を
+   limit 行まで読む文を作るため(手入れの移しの候補 — 鍵・版・payload)。分け終えた行は bulk が NULL でないので、payload を jsonb に
+   読み直さずに外れる(大きい欄の無い行だけは bulk が NULL のまま毎回読み直す)。並べない(候補の全部を並べ替えずに頭の limit 行で止まる)。"
+  (<- members (in-list "b" fields))
+  (Statement :text (.format "SELECT key, version, payload FROM {p}state_rows
+                       WHERE ledger = :ledger AND bulk IS NULL AND (payload::jsonb) ?| ARRAY[{m}]::text[] LIMIT :limit"
+                            :p prefix :m members.text)
+             :params (+ (! (params-of #(#("ledger" table) #("limit" limit)))) members.params)))
+
+
+(defk unmoved-count-statement [prefix table fields]
+  {:pre [(: prefix str) (: table str) (: fields tuple) (> (len fields) 0)] :post [(: % Statement)]
+   :tags {:context "records" :role "foundation"}}
+  "表 table の、列 payload に大きい欄が残る行の数を 1 行で返す文を作るため(移しの残りの計器 — 候補の読みと同じ条件)。"
+  (<- members (in-list "b" fields))
+  (Statement :text (.format "SELECT count(*) FROM {p}state_rows
+                       WHERE ledger = :ledger AND bulk IS NULL AND (payload::jsonb) ?| ARRAY[{m}]::text[]"
+                            :p prefix :m members.text)
+             :params (+ (! (params-of #(#("ledger" table)))) members.params)))
+
+
+(defk move-bulk-statement [prefix table moves]
+  {:pre [(: prefix str) (: table str) (: moves str)] :post [(: % Statement)]
+   :tags {:context "records" :role "foundation"}}
+  "表 table の行を、読んだ時の版のまま分け直す文を作るため(手入れの移し — 頭の註の state_rows)。moves = 行ごとの
+   {key version payload bulk} の JSON の配列の綴り(retire-keys-statement と同じく引数 1 つで運び jsonb_to_recordset で展げる)。版が読んだ時と
+   違う行(読みの後に書きが書き直した行)は書き換えない — 書きの値を上書きせず、残れば次の回の候補に出る。版・刻・書き手・置き場の版の
+   列は動かさない。分け直した行の鍵を返す。"
+  (Statement :text (.format "UPDATE {p}state_rows AS r SET payload = moved.payload, bulk = moved.bulk
+                       FROM jsonb_to_recordset(CAST(:moves AS jsonb)) AS moved(key text, version bigint, payload text, bulk text)
+                       WHERE r.ledger = :ledger AND r.key = moved.key AND r.version = moved.version
+                       RETURNING r.key" :p prefix)
+             :params (! (params-of #(#("ledger" table) #("moves" moves))))))
 
 
 (defk delete-row-statement [prefix table key version]

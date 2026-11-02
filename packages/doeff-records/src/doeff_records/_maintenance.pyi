@@ -1,9 +1,13 @@
 # doeff_hy._static_stub が作った型の宣言 — 手で直さない(元 = _maintenance.hy・作り直し = python -m doeff_hy._static_stub --write <この .pyi の隣の .hy>)
 
+from _typeshed import Incomplete
 from doeff import Program as _Program
 from dataclasses import dataclass as dataclass
 from collections.abc import Callable as Callable
 from doeff import EffectBase as EffectBase
+from doeff_core_effects import CountMetric as CountMetric
+from doeff_core_effects import SetGauge as SetGauge
+from doeff_hy._frozen import FrozenMap as FrozenMap
 from doeff_time import Delay as Delay
 from doeff_time import GetTime as GetTime
 from doeff_records._values import Event as Event
@@ -12,6 +16,10 @@ from doeff_records._values import RowRemoved as RowRemoved
 from doeff_records._values import Unreachable as Unreachable
 from datetime import datetime as datetime
 ARCHIVE_PAGE: int
+BULK_MOVE_BATCH: int
+BULK_UNMOVED_METRIC: str
+BULK_MOVED_METRIC: str
+BULK_METRIC_WORD_UNSAFE: Incomplete
 
 @dataclass(frozen=True)
 class Swept:
@@ -102,11 +110,33 @@ class EventsArchiveReport:
     halted: Unreachable | None = None
 
 @dataclass(frozen=True)
+class BulkMoved:
+    moved: FrozenMap
+    unmoved: FrozenMap
+
+@dataclass(frozen=True)
+class MoveBulkFields(EffectBase[BulkMoved | Unreachable]):
+    limit: int = ...
+
+    def __post_init__(self) -> None:
+        ...
+
+@dataclass(frozen=True)
 class MaintenanceReport:
     swept: Swept | Unreachable
     pruned: Pruned | Unreachable
     archived: ArchivedThrough | Unreachable | None = None
     events: EventsArchiveReport | None = None
+    bulk: BulkMoved | Unreachable | None = None
+
+def bulk_metric_word(table: str) -> _Program[str, object]:
+    ...
+
+def bulk_metric_helps(tables: tuple) -> _Program[FrozenMap, object]:
+    ...
+
+def bulk_measured(answer: BulkMoved | Unreachable) -> _Program[None, object]:
+    ...
 
 def prune_after_archive(keep_seconds: int | float, archive: Callable | None) -> _Program[MaintenanceReport, object]:
     ...
@@ -117,8 +147,8 @@ def archived_page(archive_events: Callable, at: datetime, page: ExpiredEvents) -
 def archive_expired_events(archive_events: Callable) -> _Program[EventsArchiveReport, object]:
     ...
 
-def maintenance_tick(keep_seconds: int | float, archive: Callable | None, archive_events: Callable | None=None) -> _Program[MaintenanceReport, object]:
+def maintenance_tick(keep_seconds: int | float, archive: Callable | None, archive_events: Callable | None=None, move_bulk: bool=False) -> _Program[MaintenanceReport, object]:
     ...
 
-def maintenance_loop(interval_seconds: int | float, keep_seconds: int | float, archive: Callable | None, ticks: int | None, archive_events: Callable | None=None) -> _Program[list, object]:
+def maintenance_loop(interval_seconds: int | float, keep_seconds: int | float, archive: Callable | None, ticks: int | None, archive_events: Callable | None=None, move_bulk: bool=False) -> _Program[list, object]:
     ...

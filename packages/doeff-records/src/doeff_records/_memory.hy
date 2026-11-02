@@ -82,7 +82,7 @@
                                PutRowsAppendEvents append-parts])
 (import doeff_records._faults [AdvanceStoreEpoch SetStoreOutage StoreFault StoreOperation AddStoreFault ClearStoreFaults])
 (import doeff_records._maintenance [SweepExpired PruneChanges ReadChangeLog ChangeLog Swept Pruned ReadExpiredEvents ExpiredEvents ExpiredCursor
-                                   RetireArchivedEvents RetiredEvents])
+                                   RetireArchivedEvents RetiredEvents MoveBulkFields BulkMoved])
 (import doeff_records._store_choice [StoreChoice])
 (import functools [partial])
 (import doeff_records._admission [Admitted AppendNew AppendReplay judge-expect judge-put judge-put-rows judge-append judged-diff
@@ -588,7 +588,7 @@
   (setv decl (store.schema.table ask.table))
   (when (and (is-not ask.cursor None) (!= ask.cursor.epoch store.epoch))
     (return (Reset store.epoch store.floor)))
-  (setv refusal (where-refusal decl ask.where ask.where-any))
+  (setv refusal (where-refusal decl ask.where ask.where-any (if (is-not ask.descending-by None) ask.descending-by ask.ascending-by)))
   (when refusal (return refusal))
   (setv table (get store.rows ask.table)
         ordered-by (if (is-not ask.descending-by None) ask.descending-by ask.ascending-by))
@@ -621,7 +621,7 @@
   "CountRows に答えるため: 絞りに合い、刻 now-ms で保持の期限を過ぎていない行のうち、下限 at-least があれば欄の値が整数で下限以上の行を
    数える(索引の無い欄の絞りは NotIndexed)。"
   (setv decl (store.schema.table ask.table))
-  (setv refusal (where-refusal decl ask.where ask.where-any))
+  (setv refusal (where-refusal decl ask.where ask.where-any (if (is ask.at-least None) None (get ask.at-least 0))))
   (when refusal (return refusal))
   (setv table (get store.rows ask.table)
         matching (memory-matching-texts store decl ask.table ask.where ask.where-any now-ms))
@@ -1472,6 +1472,10 @@
   (SweepExpired []
     (<- now (GetTime))
     (resume (memory-sweep store (epoch-ms now))))
+  ;; memory の置き場は大きい欄を分けて置かないので、移す行も残りも無い(大きい欄を宣言した表ごとに 0)。
+  (MoveBulkFields [limit]
+    (val bulk-tables (tuple (gfor #(name decl) (sorted (.items store.schema.tables)) :if decl.bulk name)))
+    (resume (BulkMoved :moved (FrozenMap (dfor name bulk-tables name 0)) :unmoved (FrozenMap (dfor name bulk-tables name 0)))))
   (PruneChanges [keep-seconds upto-seq]
     (<- now (GetTime))
     (<- pruned (memory-prune-changes store effect (epoch-ms now)))
