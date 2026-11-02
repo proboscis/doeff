@@ -244,7 +244,9 @@ spec:
             # 2017ad313 = worker が job の子へ渡す環境変数の名を heartbeat の childEnviron で送り、coordinator が GET /state の workers に
             # 出す版。上に載る系が宣言し直す前に、job が worker の環境から読む名がその worker の子に届くかを照らすため、機体の worker より先に
             # coordinator を上げる。前の版 be893ad9d は 2017ad313 の祖先。
-            - { name: WORKER_DOEFF_COMMIT, value: 2017ad31316d9c6ad7875974295a4285ee054b92 }
+            # 6e1996649 = 置き先の条件が替わる宣言し直しも別の worker へ移せる版(1e50d45f5)に、古い worker が読む job の行の綴りの直し(048fd044b)
+            # を足した版。機体の worker より先に coordinator を上げる。前の版 2017ad313 は 6e1996649 の祖先。
+            - { name: WORKER_DOEFF_COMMIT, value: 6e1996649c5de9f17e2b00c32fc97fec10be77be }
             # coordinator の process 自身の行の名乗り(coordinator/entry/main の process-lines — job の名 coordinator/<namespace>・worker の
             # 名の欄 = Pod の名)。送り先(ConfigMap coordinator-env の DOEFF_JOB_LOG_OTLP)が無ければ読まない。
             - { name: POD_NAME, valueFrom: { fieldRef: { fieldPath: metadata.name } } }
