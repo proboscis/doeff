@@ -2,7 +2,7 @@
 
 worker は、持ち主(上に載る系が渡す id 1 つ)ごとに Longhorn の RWO volume を 1 つ持ち、持ち主が使う間だけ、使う機体の node に
 attach して作業場所の path に mount する。Pod は作らない — attach は Longhorn の VolumeAttachment の ticket(attacherType
-longhorn-api)、mkfs と mount は worker が行う(作業場所の path への見せ方と handler は別の card — ki-c1a429da5761・ki-a2d67aa8203d)。
+longhorn-api)、mkfs と mount は worker が行う(作業場所の path への見せ方は ki-c1a429da5761・handler は節「handler」)。
 この dir は、その volume の級・名・寿命・backup の決まりと、worker が読む値を持つ。出所 = card ki-e2e594d4ecfe(区切り ms-e60af528a048 の
 card 2)・測り ki-00f2d6af6581。
 
@@ -13,6 +13,25 @@ card 2)・測り ki-00f2d6af6581。
 | `workspace-volume.json` | worker が読む値(ConfigMap `workspace-volume`・namespace agent-worker): 級の名・名の頭と長さ・大きさ・寿命の時間 |
 | `workspace-mount.sh` | mount の係の script(ConfigMap `workspace-mount`・namespace agent-worker)— 節「mount の係」 |
 | `README.md` | この file(決まりと値の訳) |
+
+## handler(作る・attach・mount・umount・detach)
+
+持ち主の volume を扱う effect は 5 つで、入口 `doeff_cluster` から出す: `CreateWorkspaceVolume`・`AttachWorkspaceVolume`・
+`MountWorkspaceVolume`・`UmountWorkspaceVolume`・`DetachWorkspaceVolume`(答えは `WorkspaceOutcome` の DONE = 今した・ALREADY = 既に
+そうだった。できなければ `WorkspaceVolumeRefused`)。出所 = card ki-a2d67aa8203d。
+
+| 答え手 | 在りか | 何をするか |
+|---|---|---|
+| 本番 `workspace-volumes-api`(引数 `WORKSPACE-SITE`) | `src/doeff_cluster/_shared/protocol/workspace_volumes.hy` | worker の ServiceAccount で API server の Longhorn の Volume を作り(級の値を写す — 下の写し方の表)、VolumeAttachment に ticket `longhorn-api-<名>`(種類 longhorn-api)を置いて満たされるまで待つ。mount と umount は節「mount の係」の頼み。detach は mount が残っていれば断る |
+| 模擬 `held-workspace-volumes`(引数 `WorkspaceVolumeWorld`) | `src/doeff_cluster/_sim/workspace_volumes.hy` | 同じ契約を memory の世界に当てる(使い手の検のため) |
+| 純粋な判断 | `src/doeff_cluster/_shared/core/workspace_volume_rules.hy` | 名の条件と名・mountinfo の読み・attach と detach の次の一手 |
+
+- 機体の node は機体の事実 NODE_NAME。係の頼みの dir は `WORKSPACE-SITE` の固定の path(job の子は env `WORKER_WORKSPACE_MOUNT_DIR` を
+  継がない — 宣言と同じ path である事は `tests/test_workspace_mount.py` が縛る)。dir の無い worker では mount と umount を頼む前に断る。
+- 外側に要る答え手: file(os)・環境(os.environ)・時計(doeff-time)・HTTP と、API server 宛ての要求を区画の CA で検める
+  `in-cluster-api-routed`(job の本番の土台が並べる)。
+- 検: `tests/test_workspace_volumes_handler.hy`(本番の答え手を偽の Longhorn と偽の係の上で回し、模擬の答え手と同じ筋書きで結末と様子が
+  揃う事・失敗ケース)と `tests/test_workspace_volume_rules.hy`。
 
 ## 級(StorageClass `longhorn-workspace`)
 
@@ -80,7 +99,7 @@ worker は CSI を通らずに Longhorn の volume を名指しで作るので�
 - 例: zeus の SATA SSD(503 GB・予約 47 GB・置いた名目 138 GB — 2026-11-01)に置ける 10 GiB の volume は約 72 本。昼の 1 時間に約 70 個の
   作業場所が動くので、2 時間の窓でも数の上限(2)が先に効く。冷えた持ち主を次に使う時は backup から戻す時間(中身 1〜3 GiB で数十秒の見込み
   — 測りは handler の card)が掛かる。
-- 冷やす・戻す・消すは handler の仕事(card ki-a2d67aa8203d と、その後の card)。この dir は決まりと値だけを持つ。
+- 冷やす・戻す・消すは handler の仕事(card ki-c817a191ad4e — 節「handler」の 5 つの effect は作る・付ける・外すまで)。この dir は決まりと値だけを持つ。
 
 ## backup
 

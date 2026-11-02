@@ -230,6 +230,25 @@ def test_values_reach_the_worker_as_the_fixed_named_configmap(workers: list[Mani
     assert json.loads(found[0]["data"][VALUES_FILE.name]) == json.loads(VALUES_FILE.read_text(encoding="utf-8"))
 
 
+def test_the_volume_handler_reads_the_values_where_they_are_declared(declared: list[Manifest]) -> None:
+    """作業場所の volume の本番の答え手(shared/protocol/workspace_volumes)は、名の頭と長さを API server に問わずに持ち(umount と detach が
+    API server の止まる間も名を決める)、大きさと級は ConfigMap から読む — 持つ値と読む先が宣言と同じ。"""
+    import hy  # noqa: F401  — Hy の module を読む前に要る
+
+    from doeff_cluster._shared.core.workspace_volume_rules import NAME_MAX_LENGTH, NAME_PREFIX
+    from doeff_cluster._shared.protocol.workspace_volumes import CLASS_PARAMETERS, SETTINGS_KEY, WORKSPACE_SITE
+
+    values = json.loads(VALUES_FILE.read_text(encoding="utf-8"))
+    assert (NAME_PREFIX, NAME_MAX_LENGTH) == (values["namePrefix"], values["nameMaxLength"])
+    assert (WORKSPACE_SITE.settings_namespace, WORKSPACE_SITE.settings_name, SETTINGS_KEY) == (
+        NAMESPACE,
+        VALUES_CONFIGMAP,
+        VALUES_FILE.name,
+    )
+    # 級の parameters は全部、答え手が volume の欄へ写せる物(写せない parameter を足すと、答え手は作る時に断る)。
+    assert set(_one_class(declared)["parameters"]) <= CLASS_PARAMETERS
+
+
 def test_workers_apply_the_class_and_its_backup(workers: list[Manifest]) -> None:
     """Flux が当てる worker の組に、級と backup の先と job が在る(この dir を resources から外していない)。"""
     names = {(doc["kind"], doc["metadata"]["name"]) for doc in workers}

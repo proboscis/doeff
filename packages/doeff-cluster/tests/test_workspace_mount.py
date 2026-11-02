@@ -134,6 +134,18 @@ def test_worker_and_sidecar_share_one_request_dir_named_by_the_env(pod: Manifest
     assert f"{path}/*.req" in _sidecar(pod)["args"][0]
 
 
+def test_the_volume_handler_asks_the_request_dir_and_device_dir_the_pod_declares(pod: Manifest) -> None:
+    """job の子は env WORKER_WORKSPACE_MOUNT_DIR を継がないので、作業場所の volume の本番の答え手は頼みの dir を固定の path で持つ —
+    その path が Pod の宣言の頼みの dir と同じで、答え手が mountinfo で volume を見分ける device の dir の名が script の device の dir と同じ。"""
+    import hy  # noqa: F401  — Hy の module を読む前に要る
+
+    from doeff_cluster._shared.core.workspace_volume_rules import DEVICE_DIR_NAME
+    from doeff_cluster._shared.protocol.workspace_volumes import WORKSPACE_SITE
+
+    assert WORKSPACE_SITE.mount_dir == _named(_worker(pod)["env"], REQUEST_ENV, "env")["value"]
+    assert f"${{WORKSPACE_MOUNT_DEVICES:-{HOST_DEV}/{DEVICE_DIR_NAME}}}" in SCRIPT.read_text(encoding="utf-8")
+
+
 def test_sidecar_reads_the_script_from_the_fixed_named_configmap(rendered: list[Manifest], pod: Manifest) -> None:
     sidecar = _sidecar(pod)
     mount = _mount(sidecar, SCRIPT_DIR)
