@@ -324,6 +324,16 @@ CGROUP_LAYOUT_SINCE = "2c1ac027a212bc59ceb304683130e7b69becbf0b"
 CGROUP_FIRST_LAYER = "worker"
 CGROUP_CHILD_LAYER = "commands"
 CGROUP_CLI_LAYER = "clis"
+# keeper の版の準備の層(空きの小さい機体だけ — ../deploy/k8s/cgroup-layers の頭の註)と、それを知る worker と boot.sh の最初の版。
+# 知らない版の keeper は準備を jobs の層で起こし、知らない版の worker は準備の層を数えない — 準備の層を宣言する worker の版はこれかその子孫。
+CGROUP_PREPARE_LAYER = "prepare"
+PREPARE_LAYER_SINCE = "fffb250ee6a7b3e242a8b701349ada31164bd8d8"
+# 準備の山(11-02 に手元で測った — doeff 6e1996649 の root を冷えた bytecode の保存先で準備し、焼きを 2 並列で回した process の木の anon の
+# 最大 453 MiB)。準備の層を宣言する機体の CPU の上限は 2(焼きの並列数)で、層の上限はこれ以上。
+PREPARE_PEAK_MIB = 453
+# 準備の層を宣言する機体の平常の追い出しまでの空き(11-02 の 6 時間の worker の log の 5 分ごとの最小の中央 — k3s-1 は 1,067 MiB・k3s-0 は
+# 1,241 MiB・k3s-2 は 1,728 MiB)のうち小さい方。余裕 + 準備の層の上限がこれ以下なら、keeper は平常の空きで準備を起こす。
+SMALL_NODE_ROOM_MIB = 1024
 # 上に載る系の配備の宣言の CLI を置く層(zeus だけ)。遅れに敏感な 1 本の process なので、CPU の重みは常駐の層と同じまで上げてよい
 # (常駐の層より上には置かない)・ほかの一括の仕事の層より上。
 CGROUP_DEPLOY_LAYER = "deploy"
@@ -335,9 +345,9 @@ CGROUP_LAYERS = {
     "atlas": (set(), set()),
     "eos": (set(), set()),
     "helios": (set(), set()),
-    "k3s-0": (set(), set()),
-    "k3s-1": (set(), set()),
-    "k3s-2": (set(), set()),
+    "k3s-0": (set(), {CGROUP_PREPARE_LAYER}),
+    "k3s-1": (set(), {CGROUP_PREPARE_LAYER}),
+    "k3s-2": (set(), {CGROUP_PREPARE_LAYER}),
     "k3s-3": (set(), set()),
 }
 # helios の常駐の job の層の memory.min の下限: helios へ移す常駐の job 29 本の memory の峰の見積もり 約 28 GiB(2026-11-01 の上に載る系の
@@ -385,7 +395,12 @@ def test_worker_layers_leave_room_for_the_worker_its_preparation_and_its_tasks(r
     reserve = _mapping(_room_rows()[node], node)["taskReserve"]
     assert isinstance(reserve, int)
     assert _bytes(settings[CGROUP_FIRST_LAYER]["memory.min"]) >= WORKER_SELF_MIB * 2**20, settings
-    assert _bytes(settings[jobs]["memory.max"]) >= (PREPARE_SHARE_MIB + reserve * TASK_SHARE_MIB) * 2**20, settings
+    if CGROUP_PREPARE_LAYER not in settings:
+        assert _bytes(settings[jobs]["memory.max"]) >= (PREPARE_SHARE_MIB + reserve * TASK_SHARE_MIB) * 2**20, settings
+        return
+    # 準備の層を宣言する機体: keeper の版の準備は準備の層、実行環境と木の準備(同じ焼きの道具)は jobs の層 — どちらも準備の山以上。
+    assert _bytes(settings[CGROUP_PREPARE_LAYER]["memory.max"]) >= PREPARE_PEAK_MIB * 2**20, settings
+    assert _bytes(settings[jobs]["memory.max"]) >= (PREPARE_PEAK_MIB + reserve * TASK_SHARE_MIB) * 2**20, settings
 
 
 @pytest.mark.parametrize("node", sorted(CGROUP_LAYERS))
@@ -514,6 +529,28 @@ def test_worker_with_a_cgroup_layout_runs_a_boot_script_that_knows_it(rendered: 
     version = _worker_version(rendered, node)
     assert _same_or_ancestor(CGROUP_LAYOUT_SINCE, version), (
         f"{node} の worker の版 {version} は cgroup の層を知らない(CGROUP_LAYOUT_SINCE {CGROUP_LAYOUT_SINCE} の子孫でない)"
+    )
+
+
+@pytest.mark.parametrize("node", NODES)
+def test_a_prepare_layer_is_declared_with_its_name_its_margin_and_a_version_that_knows_it(rendered: list[Manifest], node: str) -> None:
+    """準備の層を宣言する worker は、層の名(DOEFF_WORKER_PREPARE_CGROUP)と機体の余裕(WORKER_EVICTION_MARGIN)を受け、版は準備の層を
+    知る版(PREPARE_LAYER_SINCE)かその子孫。余裕 + 準備の層の上限は、その機体の平常の追い出しまでの空き(SMALL_NODE_ROOM_MIB)以下 —
+    keeper は平常の空きで準備を起こし、空きの縮んだ間だけ待つ。失敗ケース: 版が古いと keeper は準備を jobs の層で起こし、worker が縮めた
+    jobs の上限で OOM になる(11-02 の k3s-1)。余裕 1 GiB を引くと、k3s-1 の平常の空き 約 1 GiB では準備がいつまでも起きない。"""
+    worker = _worker_on(rendered, node)
+    if not any(entry["name"] == "WORKER_CGROUP_LAYOUT" for entry in _env(worker)):
+        return
+    settings = dict(_layout(worker))
+    if CGROUP_PREPARE_LAYER not in settings:
+        assert not any(entry["name"] == "DOEFF_WORKER_PREPARE_CGROUP" for entry in _env(worker)), worker
+        return
+    assert _env_value(worker, "DOEFF_WORKER_PREPARE_CGROUP")["value"] == CGROUP_PREPARE_LAYER
+    margin = _bytes(str(_env_value(worker, "WORKER_EVICTION_MARGIN")["value"]))
+    assert margin + _bytes(settings[CGROUP_PREPARE_LAYER]["memory.max"]) <= SMALL_NODE_ROOM_MIB * 2**20, (margin, settings)
+    version = _worker_version(rendered, node)
+    assert _same_or_ancestor(PREPARE_LAYER_SINCE, version), (
+        f"{node} の worker の版 {version} は準備の層を知らない(PREPARE_LAYER_SINCE {PREPARE_LAYER_SINCE} の子孫でない)"
     )
 
 

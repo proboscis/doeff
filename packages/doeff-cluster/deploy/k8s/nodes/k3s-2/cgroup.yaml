@@ -4,8 +4,14 @@
 # 1 本を受ける。
 # 値:
 # - services の memory.min 1536M: 予算 1792 − 256。1 台の停止で移る常駐の job の値を含めて N+1 の判断が予算に求める 1428 MiB 以上。
-# - jobs の memory.max 1536M: 準備の分(task は来ない — 枠の file の taskReserve 0)。
+# - jobs の memory.max 896M と prepare の memory.max 640M: 前の準備の分 1536M を、keeper の版の準備の層 prepare(準備の山 640M —
+#   ../../cgroup-layers の頭の註)と、jobs の層(実行環境と木の準備 — 同じ焼きの道具の山 640M に余りを足した値・task は来ない —
+#   枠の file の taskReserve 0)に分けた。和は前の 1536M のまま。
 # - container の上限 2Gi → 3584Mi: 予算 1792 を前の値のまま残し、準備の分を足した。
+# - 余裕 WORKER_EVICTION_MARGIN 128M: 11-02 までの 7 日で、worker の外の Pod の working set の和の 30 秒の増えの最大 150 MiB(p999 10 MiB)を
+#   ../../cgroup-layers の頭の註の式で 5 秒の回 2 つ分にした値。
 - op: add
   path: /spec/template/spec/containers/0/env/-
-  value: { name: WORKER_CGROUP_LAYOUT, value: "worker:memory.min=256M,cpu.weight=1000 services:memory.min=1536M,cpu.weight=1000 jobs:memory.max=1536M,cpu.weight=100" }
+  value: { name: WORKER_CGROUP_LAYOUT, value: "worker:memory.min=256M,cpu.weight=1000 services:memory.min=1536M,cpu.weight=1000 jobs:memory.max=896M,cpu.weight=100 prepare:memory.max=640M,cpu.weight=100" }
+- { op: add, path: /spec/template/spec/containers/0/env/-, value: { name: DOEFF_WORKER_PREPARE_CGROUP, value: prepare } }
+- { op: add, path: /spec/template/spec/containers/0/env/-, value: { name: WORKER_EVICTION_MARGIN, value: 128M } }
