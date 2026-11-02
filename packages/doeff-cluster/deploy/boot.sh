@@ -67,7 +67,7 @@
 #     1. worker の世代(process 1 つ)を自分の子から外して起こす(回収は PID 1 の tini)。世代ごとの状態の dir は $WORK_DIR/gen/<世代>
 #        (下の WORKER_GENERATION_DIRS — 世代の名は <POD_UID>.<起こした刻>)・boot と ready と pid の file は $DOEFF_KEEPER_DIR/gens/<世代>/。
 #     2. KEEPER_TICK_SECONDS 秒(既定 2)ごとに版の file を読み、版が替わると、その版の root を役 prepare で背景で準備し(走っている世代は
-#        止めない)、準備できたらその版の世代を同じ container に起こす(前の世代の錠が持たれているので --overlaps-elder — 同じ機体に同じ名の
+#        止めない・cgroup の準備の層で起こし、追い出しの線までの空きが準備の層の上限に足りない間は起こさずに待つ — keeper_swap)、準備できたらその版の世代を同じ container に起こす(前の世代の錠が持たれているので --overlaps-elder — 同じ機体に同じ名の
 #        2 つの世代を並べる RollingUpdate と同じ形・AL-D2)。
 #     3. いちばん新しい世代が coordinator に名乗れて自分の ready の file を書いた後(受け渡しの待ち handover-pending が解けた後)に、前の
 #        世代を世代つきで drain し(旧い Pod の preStop と同じ drain_main・上限 DRAIN_DEADLINE)、drained の後に SIGTERM を送る。前の世代は
@@ -573,9 +573,9 @@ keeper_start() {
     # 起動の内訳の刻(#3676)は世代ごとに数える — keeper の起動の刻を継がない。
     unset DOEFF_BOOT_STARTED_MS DOEFF_BOOT_EXEC_MS
     ROLE=worker WORKER_DOEFF_COMMIT=$1 DOEFF_BOOT_FROM_ROOT=1 WORKER_GENERATION_DIRS=1 DOEFF_WORKER_GENERATION=$k_key
-    DOEFF_WORKER_BOOT_FILE=$k_gen/boot DOEFF_WORKER_READY_FILE=$k_gen/ready
+    DOEFF_WORKER_BOOT_FILE=$k_gen/boot DOEFF_WORKER_READY_FILE=$k_gen/ready DOEFF_WORKER_PREPARE_ROOM_FILE=$keeper_dir/prepare-room
     export ROLE WORKER_DOEFF_COMMIT DOEFF_BOOT_FROM_ROOT WORKER_GENERATION_DIRS DOEFF_WORKER_GENERATION DOEFF_WORKER_BOOT_FILE \
-      DOEFF_WORKER_READY_FILE
+      DOEFF_WORKER_READY_FILE DOEFF_WORKER_PREPARE_ROOM_FILE
     sh "$2/packages/doeff-cluster/deploy/boot.sh" </dev/null &
     echo $! >"$k_gen/pid"
   )
@@ -615,10 +615,37 @@ keeper_retire() {
   ) </dev/null & )
 }
 
+# 準備を置く cgroup の層の名(空 = 層が無い — keeper の層のまま準備する)。準備の層(DOEFF_WORKER_PREPARE_CGROUP)の dir が在ればそれ、
+# 無ければ(準備の層を宣言しない機体)job の層(DOEFF_WORKER_JOB_CGROUP — 前の置き場)。
+keeper_layer() {
+  [ -n "${DOEFF_WORKER_CGROUP_DIR:-}" ] || return 0
+  if [ -n "${DOEFF_WORKER_PREPARE_CGROUP:-}" ] && [ -d "$DOEFF_WORKER_CGROUP_DIR/$DOEFF_WORKER_PREPARE_CGROUP" ]; then
+    printf '%s' "$DOEFF_WORKER_PREPARE_CGROUP"
+  elif [ -n "${DOEFF_WORKER_JOB_CGROUP:-}" ]; then
+    printf '%s' "$DOEFF_WORKER_JOB_CGROUP"
+  fi
+}
+
+# 準備を起こしてよいか: worker が見張りの回ごとに書く $keeper_dir/prepare-room(1 行「<準備に使える空き MiB> <準備の層の上限 MiB>」—
+# worker/protocol/eviction_line の room-file)が KEEPER_ROOM_MAX_AGE 秒(既定 30)以内に書かれていて、空きが上限より小さければ偽(k_room に
+# 読んだ 2 つの数を残す)。file が無い・古い・形が違う(線を読めない worker・準備の層を知らない版の世代)は真 — 前と同じく準備を起こす。
+keeper_room() {
+  k_room=""
+  [ -f "$keeper_dir/prepare-room" ] || return 0
+  k_mtime=$(keeper_mtime "$keeper_dir/prepare-room") || return 0
+  [ $(( $(date +%s) - k_mtime )) -le "${KEEPER_ROOM_MAX_AGE:-30}" ] || return 0
+  k_room=$(sed -n '1{/^-\{0,1\}[0-9]\{1,\} [0-9]\{1,\}$/p;}' "$keeper_dir/prepare-room" 2>/dev/null || true)
+  [ -n "$k_room" ] || return 0
+  [ "${k_room%% *}" -ge "${k_room#* }" ]
+}
+
 # 版 $1 へ替える歩(tick ごとに呼ぶ — 準備は背景で 1 度だけ起こし、済んだ後の tick で世代を起こす)。準備の結末は
 # $keeper_dir/prepare/<版>/ の file(root = 準備した root の path・failed = 失敗の印 — 300 秒で消して撃ち直す・refused = 世代を知らない
 # 版の印・pid = 準備の process)。準備は役 prepare(この script が展開し、その版の script が準備する — 版上げの前の準備と同じ道)で、
-# cgroup の層が在れば job の層(DOEFF_WORKER_JOB_CGROUP — 準備の memory を worker の本体の守りに数えない)へ移してから起こす。
+# cgroup の層が在れば準備の層(下の keeper_layer — 準備の memory を worker の本体の守りに数えない)へ移してから起こす。準備の層
+# (DOEFF_WORKER_PREPARE_CGROUP)は、worker が追い出しの線から掛け直す jobs の層と違い、上限(準備の山)を縮めない。代わりに準備を
+# 起こす前に worker の書く空き(keeper_room)を読み、空きが準備の層の上限に足りない間は準備を起こさずに待つ(log に名指す — OOM で
+# 殺さない・worker/core/eviction_rules の頭の註の「準備の層」)。
 keeper_swap() {
   k_prep=$keeper_dir/prepare/$1
   if [ -f "$k_prep/root" ]; then
@@ -644,13 +671,23 @@ keeper_swap() {
     # 準備中。準備の process が結末を書かずに居なくなっていたら失敗とする。
     keeper_alive "$(cat "$k_prep/pid" 2>/dev/null || true)" || [ -f "$k_prep/root" ] || : >"$k_prep/failed"
   else
+    k_layer=$(keeper_layer)
+    if [ "$k_layer" = "${DOEFF_WORKER_PREPARE_CGROUP:-}" ] && [ -n "$k_layer" ] && ! keeper_room; then
+      # 空きが準備の山に足りない — 準備を起こさず、次の tick で読み直す(同じ訳は 1 度だけ言う)。
+      if [ "$prepare_waiting" != "$1 $k_room" ]; then
+        prepare_waiting="$1 $k_room"
+        keeper_log "doeff $(keeper_short "$1") の root の準備を待つ — 追い出しの線までの空きが無い(空き − 余裕 = ${k_room%% *} MiB < 準備の層 $k_layer の上限 ${k_room#* } MiB・走っている世代はそのまま)"
+      fi
+      return 0
+    fi
+    prepare_waiting=""
     mkdir -p "$k_prep"
     keeper_log "版の file が doeff $(keeper_short "$1") を名指す — その root を準備する(走っている世代は止めない)"
     ( (
-      if [ -n "${DOEFF_WORKER_CGROUP_DIR:-}" ] && [ -n "${DOEFF_WORKER_JOB_CGROUP:-}" ]; then
-        # この subshell の pid(dash の $$ は親の pid)を job の層へ移す — 準備の子はこの層で起きる。
-        sh -c 'echo "$PPID"' >"$DOEFF_WORKER_CGROUP_DIR/$DOEFF_WORKER_JOB_CGROUP/cgroup.procs" 2>/dev/null ||
-          keeper_log "準備を job の層 $DOEFF_WORKER_JOB_CGROUP へ移せない — keeper の層のまま準備する"
+      if [ -n "$k_layer" ]; then
+        # この subshell の pid(dash の $$ は親の pid)を準備の層へ移す — 準備の子はこの層で起きる。
+        sh -c 'echo "$PPID"' >"$DOEFF_WORKER_CGROUP_DIR/$k_layer/cgroup.procs" 2>/dev/null ||
+          keeper_log "準備を層 $k_layer へ移せない — keeper の層のまま準備する"
       fi
       unset DOEFF_BOOT_FROM_ROOT
       ROLE=prepare WORKER_DOEFF_COMMIT=$1
@@ -765,6 +802,7 @@ keeper_run() {
   target_root=$root
   restarts=0
   unreadable=""
+  prepare_waiting=""
   trap keeper_stop TERM INT
   keeper_log "版の file $WORKER_VERSION_FILE を読む keeper として起きた(doeff $(keeper_short "$sha"))"
   keeper_start "$target" "$target_root"

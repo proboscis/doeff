@@ -10,7 +10,7 @@
 ;;;
 ;;; 入口の組み立ては 2 つに分ける: handler の組を選ぶ(production-handlers — 本番の組)と、その組の上で worker の
 ;;; Program を回す(worker-on)。模擬の環境(sim/local.hy の worker の世代)は、同じ worker-on を偽の宿の組(sim-host)の上で回す。
-(require doeff-hy.macros [deff defk <- val])
+(require doeff-hy.macros [deff defk <- val var])
 (val MODULE-TAGS {:context "worker" :role "main"})
 (import argparse)
 (import hy)
@@ -59,7 +59,7 @@
 (import doeff_cluster._worker.protocol.process_host [HostSettings process-host])
 (import doeff_cluster._worker.protocol.memory_watch [MemoryWatchSettings MemoryCell memory-watch-loop])
 (import doeff_cluster._worker.protocol.eviction_line [EvictionSettings])
-(import doeff_cluster._worker.core.eviction_rules [layer-memory-max pods-dir-of])
+(import doeff_cluster._worker.core.eviction_rules [EVICTION-MARGIN-BYTES kernel-bytes-of layer-memory-max pods-dir-of])
 (import doeff_cluster._worker.protocol.supplied_hold [SuppliedHoldSettings SuppliedHoldCell supplied-hold-loop])
 (import doeff_cluster._worker.protocol.warm_host [WarmSettings warm-host])
 (import doeff_cluster._worker.core.places [worker-places])
@@ -95,6 +95,12 @@
 ;; (worker/protocol/eviction_line — 宣言の jobs の memory.max はその上限)。
 (val CGROUP-HOST-VAR "WORKER_CGROUP_HOST")
 (val CGROUP-LAYOUT-VAR "WORKER_CGROUP_LAYOUT")
+;; keeper の版の準備を置く兄弟の cgroup の名(deploy/boot.sh の keeper_swap — 層の宣言に memory.max が在る時だけ使う)と、keeper が世代に
+;; 渡す準備の空きの file(worker/protocol/eviction_line の room-file)と、機体の宣言の余裕(kernel の memory の綴り — 追い出しの線の手前に
+;; 残す余裕の床・無ければ worker/core/eviction_rules の EVICTION-MARGIN-BYTES)。
+(val PREPARE-CGROUP-VAR "DOEFF_WORKER_PREPARE_CGROUP")
+(val PREPARE-ROOM-FILE-VAR "DOEFF_WORKER_PREPARE_ROOM_FILE")
+(val EVICTION-MARGIN-VAR "WORKER_EVICTION_MARGIN")
 ;; 実行環境の service も、その root の待ちの子から分けて起こすか(WorkerPolicy.warm-services)。値は on か off
 ;; (無ければ枠の file の自分の行の warmServices・それも無ければ off)。それ以外の綴りは起動を断る(黙って off に倒れない)。
 (val WARM-SERVICES-VAR "DOEFF_WORKER_WARM_SERVICES")
@@ -120,7 +126,8 @@
   "機体の memory の見張りが追い出しの線を数え、jobs の層の上限を掛け直すための設定を、起動の時に 1 度だけ作るため(CGROUP-HOST-VAR の
    註)。in-pod = API server を区画の CA で検める口を組む Pod の worker か(Node の宣言をその口で読む)。Pod の外・node の名が無い・
    host の cgroupfs か cgroup の層が無い・kubelet の kubepods の下に居ない worker は None(線を数えず、機体の MemAvailable で見張る)。
-   jobs の層の宣言の値を読めない起動は断る(ValueError — 上限の無いまま掛け直さない)。"
+   jobs の層の宣言の値を読めない起動は断る(ValueError — 上限の無いまま掛け直さない)。準備の層(PREPARE-CGROUP-VAR)は層の宣言に
+   memory.max が在る時だけ数え、機体の宣言の余裕(EVICTION-MARGIN-VAR)を読めない起動も断る(ValueError)。"
   (val host-root (.get machine-env CGROUP-HOST-VAR))
   (val cgroup-dir (.get machine-env CGROUP-DIR-VAR))
   (when (or (not in-pod) (not node) (not host-root) (not cgroup-dir))
@@ -128,10 +135,22 @@
   (<- pods-dir (| str None) (pods-dir-of cgroup-dir host-root))
   (when (is pods-dir None)
     (return None))
+  (val layout (.get machine-env CGROUP-LAYOUT-VAR ""))
   (val jobs (.get machine-env JOB-CGROUP-VAR))
-  (<- cap (| int None) (layer-memory-max (.get machine-env CGROUP-LAYOUT-VAR "") (or jobs "")))
+  (<- cap (| int None) (layer-memory-max layout (or jobs "")))
+  (val prepare (.get machine-env PREPARE-CGROUP-VAR))
+  (<- prepare-cap (| int None) (layer-memory-max layout (or prepare "")))
+  (val declared (.get machine-env EVICTION-MARGIN-VAR))
+  (var margin EVICTION-MARGIN-BYTES)
+  (when declared
+    (<- read (| int None) (kernel-bytes-of declared))
+    (when (is read None)
+      (raise (ValueError (.format "{} は byte の数で書く(max は余裕にならない)" EVICTION-MARGIN-VAR))))
+    (:= margin read))
   (EvictionSettings :api KUBE-API :token-file SERVICE-ACCOUNT-TOKEN-FILE :node node :pods-dir pods-dir :host-root host-root
-                    :jobs-dir (if jobs (+ cgroup-dir "/" jobs) None) :jobs-cap-bytes cap))
+                    :jobs-dir (if jobs (+ cgroup-dir "/" jobs) None) :jobs-cap-bytes cap
+                    :prepare-dir (if (is prepare-cap None) None (+ cgroup-dir "/" prepare)) :prepare-cap-bytes prepare-cap
+                    :room-file (if (is prepare-cap None) None (.get machine-env PREPARE-ROOM-FILE-VAR)) :margin-bytes margin))
 
 
 (defk boot-file-written [path boot]
@@ -452,7 +471,8 @@
         machine-env (run (with-handlers [subprocess-handler]
                            (machine-environment (+ (run (pass-env-names args.pass-env))
                                                    #(BOOT-FILE-VAR BOOT-STARTED-VAR BOOT-EXEC-VAR JOB-CGROUP-VAR SERVICE-CGROUP-VAR CGROUP-DIR-VAR
-                                                     CGROUP-HOST-VAR CGROUP-LAYOUT-VAR WARM-SERVICES-VAR POD-UID-VAR commit-var)
+                                                     CGROUP-HOST-VAR CGROUP-LAYOUT-VAR WARM-SERVICES-VAR POD-UID-VAR PREPARE-CGROUP-VAR
+                                                     PREPARE-ROOM-FILE-VAR EVICTION-MARGIN-VAR commit-var)
                                                    WORKER-LOG-ENV-NAMES))))
         ;; service も待ちの子から分けるか(機体の配備が WARM-SERVICES-VAR か枠の file の自分の行の warmServices で
         ;; 入れる・無ければ今までどおり)。
