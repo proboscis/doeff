@@ -64,7 +64,7 @@
   "時間のかかる task を 1 本 SubmitDetached で出し、AwaitDetached で答えを待ち、答えと送った・受けた時刻(系の中の時計の epoch ms)を盤の key に
    書いてから、準備できたと報告し続ける。"
   (<- sent int (now-epoch-ms))
-  (<- submitted DetachedSubmitted (submit-detached-task (slow-task sim-task-foundation seconds n) :key "wall-task" :needs NET :name "slow"))
+  (<- submitted DetachedSubmitted (submit-detached-task (slow-task sim-task-foundation seconds n) :key "wall-task" :needs NET :name "slow" :memory-mib 1024))
   (<- outcome (AwaitDetached submitted.key))
   (<- answered int (now-epoch-ms))
   (<- (WriteShared key (OpaqueJson.of {"created" submitted.created

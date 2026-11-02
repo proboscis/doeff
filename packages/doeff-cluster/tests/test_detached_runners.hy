@@ -187,7 +187,7 @@
   (assert (= (sorted facts) ["a" "b"]) roster)
   (assert (all (gfor f (.values facts) (and f.live (not f.draining)))) roster)
   (assert (= #((. (get facts "a") provides) (. (get facts "a") exclusive)) #(#("x-tool") #())) roster)
-  (<- (submit-detached-task (slow-add SLOW 1) :key "k-on-y" :needs ON-Y :lease-seconds LEASE))
+  (<- (submit-detached-task (slow-add SLOW 1) :key "k-on-y" :needs ON-Y :lease-seconds LEASE :memory-mib 1024))
   (<- (Delay (* SLOW 0.3)))
   (<- early (AwaitDetached "k-on-y" :timeout-seconds 0.0))
   (assert (and (isinstance early DetachedPending) (= early.phase "assigned") (= early.runner "b")) early)
@@ -214,8 +214,8 @@
   {:pre [] :post [(: % bool)]}
   ;; a だけが死ぬ: a の task は消え(走らせ直さない)、b の task は終わる。lease の後の名簿で a は生きていない。
   ;; 死なせる前に 2 秒待つ(sim の worker が task を起こすのはコードの準備の拍の後)。
-  (<- (submit-detached-task (slow-add (* SLOW 4) 2) :key "k-x" :needs ON-X :lease-seconds LEASE))
-  (<- (submit-detached-task (slow-add (* SLOW 2) 3) :key "k-y" :needs ON-Y :lease-seconds LEASE))
+  (<- (submit-detached-task (slow-add (* SLOW 4) 2) :key "k-x" :needs ON-X :lease-seconds LEASE :memory-mib 1024))
+  (<- (submit-detached-task (slow-add (* SLOW 2) 3) :key "k-y" :needs ON-Y :lease-seconds LEASE :memory-mib 1024))
   (<- (Delay 2.0))
   (<- lost int (KillWorker "a"))
   (assert (= lost 1) lost)
@@ -247,7 +247,7 @@
   (<- (Delay POLL))
   (<- roster tuple (ReadRunners))
   (assert (. (get (! (by-name roster)) "a") draining) roster)
-  (<- (submit-detached-task (slow-add SLOW 4) :key "k-drain" :needs ON-X :lease-seconds LEASE))
+  (<- (submit-detached-task (slow-add SLOW 4) :key "k-drain" :needs ON-X :lease-seconds LEASE :memory-mib 1024))
   (<- (Delay (* 4 POLL)))
   (<- waiting (AwaitDetached "k-drain" :timeout-seconds 0.0))
   (assert (and (isinstance waiting DetachedPending) (= waiting.phase "queued")) waiting)
@@ -268,7 +268,7 @@
 
 (defk no-runner-with-the-capability []
   {:pre [] :post [(: % bool)]}
-  (<- (submit-detached-task (slow-add 0.0 5) :key "k-z" :needs ON-Z :lease-seconds LEASE))
+  (<- (submit-detached-task (slow-add 0.0 5) :key "k-z" :needs ON-Z :lease-seconds LEASE :memory-mib 1024))
   (<- outcome (AwaitDetached "k-z"))
   (assert (isinstance outcome DetachedUnrunnable) outcome)
   True)
@@ -293,7 +293,7 @@
   (<- asked dict (DrainWorker "a"))
   (assert (= (get asked "status") 200) asked)
   (<- (Delay POLL))
-  (<- (submit-detached-task (slow-add SLOW 7) :key "k-away" :needs ON-X :lease-seconds QUEUED-LEASE))
+  (<- (submit-detached-task (slow-add SLOW 7) :key "k-away" :needs ON-X :lease-seconds QUEUED-LEASE :memory-mib 1024))
   (<- (StopWorker "a"))
   (<- (Delay AWAY))
   (<- waiting (AwaitDetached "k-away" :timeout-seconds 0.0))
@@ -321,7 +321,7 @@
   (assert (= (get asked "status") 200) asked)
   (<- (Delay POLL))
   (<- (StopWorker "a"))
-  (<- (submit-detached-task (slow-add SLOW 8) :key "k-gone" :needs ON-X :lease-seconds QUEUED-LEASE))
+  (<- (submit-detached-task (slow-add SLOW 8) :key "k-gone" :needs ON-X :lease-seconds QUEUED-LEASE :memory-mib 1024))
   (<- outcome (AwaitDetached "k-gone"))
   (assert (isinstance outcome DetachedUnrunnable) outcome)
   (assert (in (.format "の worker a が {} 秒 live でない(待ちの期限 {} 秒を過ぎた)" (+ WAIT-LIMIT-SECONDS 1) WAIT-LIMIT-SECONDS)
@@ -349,7 +349,7 @@
   "筋書き: a に 20 秒の task を出し、走り出した後で coordinator を 120 秒止める。止まっている間は名簿も終わりも読めず、送りも届かない
    (送り手は本番と同じ期限まで送り直してから「届かない」と答える)。作り直した後に、止まっている間に終わった結果が読める。答え = 結果を
    読んだ後の task の process の列。"
-  (<- (submit-detached-task (slow-add 20.0 6) :key "k-cut" :needs ON-X :lease-seconds LEASE))
+  (<- (submit-detached-task (slow-add 20.0 6) :key "k-cut" :needs ON-X :lease-seconds LEASE :memory-mib 1024))
   (<- (Delay 3.0))
   (<- (StopCoordinator 120.0))
   (<- (Delay 1.5))
@@ -358,7 +358,7 @@
   ;; 途絶の間は終わりを読めない(死んだとみなさない — 期限を決めた待ちは「届かない」)・送りも届かない。
   (<- during (AwaitDetached "k-cut" :timeout-seconds (* SLOW 1.5)))
   (assert (isinstance during DetachedUnreachable) during)
-  (<- refused (submit-detached-task (slow-add 0.0 1) :key "k-during" :needs ON-X :lease-seconds LEASE))
+  (<- refused (submit-detached-task (slow-add 0.0 1) :key "k-during" :needs ON-X :lease-seconds LEASE :memory-mib 1024))
   (assert (isinstance refused DetachedUnreachable) refused)
   (<- after (AwaitDetached "k-cut"))
   (assert (= after (DetachedSucceeded 106)) after)
@@ -423,7 +423,7 @@
    要る task を積み、置かれ方を読む。止まった a は名簿の生存の窓(lease 10 秒)の内に居る。答え = 条 C3 の記録。"
   (<- stopped-boot str (boot-of "a"))
   (<- (StopWorker "a"))
-  (<- (submit-detached-task (slow-add SLOW 10) :key STOPPED-KEY :needs ON-X :lease-seconds QUEUED-LEASE))
+  (<- (submit-detached-task (slow-add SLOW 10) :key STOPPED-KEY :needs ON-X :lease-seconds QUEUED-LEASE :memory-mib 1024))
   (<- (Delay (* 4 POLL)))
   (<- placed tuple (placements-seen STOPPED-KEY))
   (StopRecords :stopped #((StoppedGeneration :worker "a" :boot stopped-boot)) :placed placed))
@@ -469,7 +469,7 @@
    StopWorker = sigterm — 宿が止まりを立て、worker が抜けるまで待つ)。止めの前に a の世代に置かれていたこと(競り合いの形)を確かめてから
    止め、止めた後・戻す前の置き先を読む。答え = 条 C3 の記録。"
   (<- stopped-boot str (boot-of "a"))
-  (<- (submit-detached-task (slow-add SLOW 10) :key RACED-KEY :needs ON-X :lease-seconds QUEUED-LEASE))
+  (<- (submit-detached-task (slow-add SLOW 10) :key RACED-KEY :needs ON-X :lease-seconds QUEUED-LEASE :memory-mib 1024))
   (<- before tuple (placements-seen RACED-KEY))
   (assert (= before #((TaskPlacementSeen :key RACED-KEY :worker "a" :boot stopped-boot))) before)
   (<- (StopWorker "a"))
@@ -509,7 +509,7 @@
   ;; 送り直しの期限(deadline-seconds)を過ぎた通信の失敗は、送りも期限を決めた待ちも DetachedUnreachable(sim の宿の途絶と同じ値)。
   (defk scenario []
     {:pre [] :post [(: % bool)]}
-    (<- sent (submit-detached-task (slow-add 0.0 1) :key "k-cut-real" :needs ON-X))
+    (<- sent (submit-detached-task (slow-add 0.0 1) :key "k-cut-real" :needs ON-X :memory-mib 1024))
     (assert (isinstance sent DetachedUnreachable) sent)
     (<- awaited (AwaitDetached "k-cut-real" :timeout-seconds 1.0))
     (assert (isinstance awaited DetachedUnreachable) awaited)
@@ -666,7 +666,7 @@
   (<- asked dict (DrainWorker "a"))
   (assert (= (get asked "status") 200) asked)
   (<- (Delay POLL))
-  (<- (submit-detached-task (slow-add SLOW 5) :key "k-timed" :needs ON-X :lease-seconds LEASE))
+  (<- (submit-detached-task (slow-add SLOW 5) :key "k-timed" :needs ON-X :lease-seconds LEASE :memory-mib 1024))
   (<- (Delay (* 4 POLL)))
   (<- waiting (ReadDetachedTiming "k-timed"))
   (assert (and (isinstance waiting DetachedTiming) (= waiting.phase "queued") (is waiting.started-ms None) (is waiting.finished-ms None)) waiting)

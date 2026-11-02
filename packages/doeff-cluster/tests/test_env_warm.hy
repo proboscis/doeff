@@ -97,7 +97,7 @@
   (<- link SimLink (ClientLink))
   (<- sent int (now-epoch-ms))
   (<- outcome (with-handlers [(coordinator-answers (replace link :runtime-env env))]
-                (do! (<- (submit-detached-task (slow-add 0.0 n) :needs (frozenset ["local"]) :key key))
+                (do! (<- (submit-detached-task (slow-add 0.0 n) :needs (frozenset ["local"]) :key key :memory-mib 1024))
                      (<- awaited (AwaitDetached key))
                      awaited)))
   (assert (= outcome (DetachedSucceeded (+ 100 n))) outcome)

@@ -303,7 +303,7 @@
 
 (defk submit-and-await [rig]
   {:pre [(: rig Rig)] :post [(: % bool)]}
-  (<- submitted DetachedSubmitted (submit-detached-task (slow-add rig.slow 1) :needs LOCAL :key "k-basic" :lease-seconds rig.lease))
+  (<- submitted DetachedSubmitted (submit-detached-task (slow-add rig.slow 1) :needs LOCAL :key "k-basic" :lease-seconds rig.lease :memory-mib 1024))
   (assert (= submitted (DetachedSubmitted "k-basic" True)))
   (<- outcome (AwaitDetached "k-basic"))
   (assert (= outcome (DetachedSucceeded 101)) outcome)
@@ -319,13 +319,13 @@
 
 (defk resubmit-same-key [rig]
   {:pre [(: rig Rig)] :post [(: % bool)]}
-  (<- first DetachedSubmitted (submit-detached-task (slow-add rig.slow 2) :needs LOCAL :key "k-idem" :lease-seconds rig.lease))
-  (<- second DetachedSubmitted (submit-detached-task (slow-add rig.slow 2) :needs LOCAL :key "k-idem" :lease-seconds rig.lease))
+  (<- first DetachedSubmitted (submit-detached-task (slow-add rig.slow 2) :needs LOCAL :key "k-idem" :lease-seconds rig.lease :memory-mib 1024))
+  (<- second DetachedSubmitted (submit-detached-task (slow-add rig.slow 2) :needs LOCAL :key "k-idem" :lease-seconds rig.lease :memory-mib 1024))
   (assert (= #(first.created second.created) #(True False)))
   (<- outcome (AwaitDetached "k-idem"))
   (assert (= outcome (DetachedSucceeded 102)) outcome)
   ;; 終わった後の送り直しも同じ行(走らせ直さない)。
-  (<- third DetachedSubmitted (submit-detached-task (slow-add rig.slow 2) :needs LOCAL :key "k-idem" :lease-seconds rig.lease))
+  (<- third DetachedSubmitted (submit-detached-task (slow-add rig.slow 2) :needs LOCAL :key "k-idem" :lease-seconds rig.lease :memory-mib 1024))
   (assert (not third.created))
   (<- runs int (runs-of rig "k-idem"))
   (assert (= runs 1) runs)
@@ -341,14 +341,14 @@
 
 (defk submit-then-wait [key seconds lease]
   {:pre [(: key str) (: seconds float) (: lease float)] :post [(: % DetachedSucceeded)]}
-  (<- (submit-detached-task (slow-add seconds 3) :needs LOCAL :key key :lease-seconds lease))
+  (<- (submit-detached-task (slow-add seconds 3) :needs LOCAL :key key :lease-seconds lease :memory-mib 1024))
   (<- outcome DetachedSucceeded (AwaitDetached key))
   outcome)
 
 (defk task-longer-than-the-lease [rig]
   {:pre [(: rig Rig)] :post [(: % bool)]}
   ;; lease は担い手が延ばす: lease の 2 倍かかる task も、担い手が生きている限り消えない(呼び手の問い合わせは無くてよい)。
-  (<- (submit-detached-task (slow-add (* rig.lease 2) 11) :needs LOCAL :key "k-long" :lease-seconds rig.lease))
+  (<- (submit-detached-task (slow-add (* rig.lease 2) 11) :needs LOCAL :key "k-long" :lease-seconds rig.lease :memory-mib 1024))
   (<- outcome (AwaitDetached "k-long"))
   (assert (= outcome (DetachedSucceeded 111)) outcome)
   True)
@@ -423,7 +423,7 @@
 
 (defk result-outlives-the-runner [rig]
   {:pre [(: rig Rig)] :post [(: % bool)]}
-  (<- (submit-detached-task (slow-add 0.0 4) :needs LOCAL :key "k-kept" :lease-seconds rig.lease))
+  (<- (submit-detached-task (slow-add 0.0 4) :needs LOCAL :key "k-kept" :lease-seconds rig.lease :memory-mib 1024))
   (<- outcome (AwaitDetached "k-kept"))
   (assert (= outcome (DetachedSucceeded 104)) outcome)
   ;; 結果の後に担い手が死んでも、結果は保持する(lease が切れる時間を過ぎても)。
@@ -444,7 +444,7 @@
 
 (defk runner-dies-mid-run [rig]
   {:pre [(: rig Rig)] :post [(: % bool)]}
-  (<- (submit-detached-task (slow-add (* rig.slow 10) 5) :needs LOCAL :key "k-lost" :lease-seconds rig.lease))
+  (<- (submit-detached-task (slow-add (* rig.slow 10) 5) :needs LOCAL :key "k-lost" :lease-seconds rig.lease :memory-mib 1024))
   ;; 担い手を殺すのは、担い手が task を起こした後(実時間の長さで代えない — 混んだ機体で起こすのが遅れると lost が 0 で揺れた・#2849)。
   (<- (await-observed rig "k-lost" held-or-none "担い手の task の起こし"))
   (<- lost int (KillWorker RUNNER))
@@ -452,7 +452,7 @@
   (<- outcome (AwaitDetached "k-lost"))
   (assert (isinstance outcome DetachedLost) outcome)
   ;; 走らせ直さない(同じ key の送り直しは消えた行を返すだけ)。
-  (<- again DetachedSubmitted (submit-detached-task (slow-add 0.0 5) :needs LOCAL :key "k-lost" :lease-seconds rig.lease))
+  (<- again DetachedSubmitted (submit-detached-task (slow-add 0.0 5) :needs LOCAL :key "k-lost" :lease-seconds rig.lease :memory-mib 1024))
   (assert (not again.created))
   (<- still (AwaitDetached "k-lost"))
   (assert (isinstance still DetachedLost) still)
@@ -468,7 +468,7 @@
 
 (defk cancel-open-and-finished [rig]
   {:pre [(: rig Rig)] :post [(: % bool)]}
-  (<- (submit-detached-task (slow-add (* rig.slow 10) 6) :needs LOCAL :key "k-cancel" :lease-seconds rig.lease))
+  (<- (submit-detached-task (slow-add (* rig.slow 10) 6) :needs LOCAL :key "k-cancel" :lease-seconds rig.lease :memory-mib 1024))
   (<- (Delay (* rig.slow 0.3)))
   (<- cancelled bool (CancelDetached "k-cancel"))
   (assert cancelled)
@@ -477,7 +477,7 @@
   (<- twice bool (CancelDetached "k-cancel"))
   (assert (not twice))
   ;; 終わった後の取り消しは何もしない(結果は保持)。
-  (<- (submit-detached-task (slow-add 0.0 7) :needs LOCAL :key "k-done" :lease-seconds rig.lease))
+  (<- (submit-detached-task (slow-add 0.0 7) :needs LOCAL :key "k-done" :lease-seconds rig.lease :memory-mib 1024))
   (<- done (AwaitDetached "k-done"))
   (assert (= done (DetachedSucceeded 107)) done)
   (<- late bool (CancelDetached "k-done"))
@@ -498,7 +498,7 @@
 
 (defk program-raises [rig]
   {:pre [(: rig Rig)] :post [(: % bool)]}
-  (<- (submit-detached-task (boom) :needs LOCAL :key "k-boom" :lease-seconds rig.lease))
+  (<- (submit-detached-task (boom) :needs LOCAL :key "k-boom" :lease-seconds rig.lease :memory-mib 1024))
   (<- outcome (AwaitDetached "k-boom"))
   (assert (isinstance outcome DetachedFailed) outcome)
   (assert (= outcome.kind "ValueError"))
@@ -518,7 +518,7 @@
   {:pre [(: rig Rig)] :post [(: % bool)]}
   (<- nothing (AwaitDetached "k-nope"))
   (assert (= nothing (DetachedUnknown "k-nope")))
-  (<- (submit-detached-task (slow-add 0.0 8) :needs LOCAL :key "k-release" :lease-seconds rig.lease))
+  (<- (submit-detached-task (slow-add 0.0 8) :needs LOCAL :key "k-release" :lease-seconds rig.lease :memory-mib 1024))
   (<- done (AwaitDetached "k-release"))
   (assert (= done (DetachedSucceeded 108)))
   (<- released bool (ReleaseDetached "k-release"))
@@ -528,12 +528,12 @@
   (<- again bool (ReleaseDetached "k-release"))
   (assert (not again))
   ;; 解放した key は送り直せる(新しい task)。
-  (<- fresh DetachedSubmitted (submit-detached-task (slow-add 0.0 9) :needs LOCAL :key "k-release" :lease-seconds rig.lease))
+  (<- fresh DetachedSubmitted (submit-detached-task (slow-add 0.0 9) :needs LOCAL :key "k-release" :lease-seconds rig.lease :memory-mib 1024))
   (assert fresh.created)
   (<- rerun (AwaitDetached "k-release"))
   (assert (= rerun (DetachedSucceeded 109)))
   ;; まだ終わっていない task は解放できない(先に取り消す)。
-  (<- (submit-detached-task (slow-add (* rig.slow 10) 1) :needs LOCAL :key "k-open" :lease-seconds rig.lease))
+  (<- (submit-detached-task (slow-add (* rig.slow 10) 1) :needs LOCAL :key "k-open" :lease-seconds rig.lease :memory-mib 1024))
   (var refused None)
   (try
     (<- (ReleaseDetached "k-open"))
@@ -552,7 +552,7 @@
 
 (defk await-times-out [rig]
   {:pre [(: rig Rig)] :post [(: % bool)]}
-  (<- (submit-detached-task (slow-add rig.slow 10) :needs LOCAL :key "k-timeout" :lease-seconds rig.lease))
+  (<- (submit-detached-task (slow-add rig.slow 10) :needs LOCAL :key "k-timeout" :lease-seconds rig.lease :memory-mib 1024))
   (<- pending (AwaitDetached "k-timeout" :timeout-seconds (* rig.slow 0.2)))
   (assert (isinstance pending DetachedPending) pending)
   (<- outcome (AwaitDetached "k-timeout"))
@@ -569,7 +569,7 @@
 
 (defk versions-differ [rig]
   {:pre [(: rig Rig)] :post [(: % bool)]}
-  (<- submitted DetachedSubmitted (submit-detached-task (slow-add 0.0 1) :needs LOCAL :key "k-version" :lease-seconds rig.lease))
+  (<- submitted DetachedSubmitted (submit-detached-task (slow-add 0.0 1) :needs LOCAL :key "k-version" :lease-seconds rig.lease :memory-mib 1024))
   (assert submitted.created)
   (<- outcome (AwaitDetached "k-version"))
   (assert (isinstance outcome DetachedVersionMismatch) outcome)
@@ -600,21 +600,21 @@
 
 (defk outbox-tells-each-end-once [rig]
   {:pre [(: rig Rig)] :post [(: % bool)]}
-  (<- (submit-detached-task (slow-add 0.0 1) :needs LOCAL :key "k-ob-done" :lease-seconds rig.lease :notify "t:c-a"))
+  (<- (submit-detached-task (slow-add 0.0 1) :needs LOCAL :key "k-ob-done" :lease-seconds rig.lease :notify "t:c-a" :memory-mib 1024))
   (<- done (AwaitDetached "k-ob-done"))
   (assert (= done (DetachedSucceeded 101)) done)
-  (<- (submit-detached-task (boom) :needs LOCAL :key "k-ob-boom" :lease-seconds rig.lease :notify "t:c-a"))
+  (<- (submit-detached-task (boom) :needs LOCAL :key "k-ob-boom" :lease-seconds rig.lease :notify "t:c-a" :memory-mib 1024))
   (<- boomed (AwaitDetached "k-ob-boom"))
   (assert (isinstance boomed DetachedFailed) boomed)
-  (<- (submit-detached-task (slow-add (* rig.slow 10) 1) :needs LOCAL :key "k-ob-cancel" :lease-seconds rig.lease :notify "t:c-a"))
+  (<- (submit-detached-task (slow-add (* rig.slow 10) 1) :needs LOCAL :key "k-ob-cancel" :lease-seconds rig.lease :notify "t:c-a" :memory-mib 1024))
   (<- cancelled bool (CancelDetached "k-ob-cancel"))
   (assert cancelled)
   ;; 置き先の無い能力を要る task は走らずに終わる(place-tasks — task の process は 1 度も起きない)。
-  (<- (submit-detached-task (slow-add 0.0 1) :needs (frozenset #{"nobody-provides"}) :key "k-ob-unrun" :lease-seconds rig.lease :notify "t:c-a"))
+  (<- (submit-detached-task (slow-add 0.0 1) :needs (frozenset #{"nobody-provides"}) :key "k-ob-unrun" :lease-seconds rig.lease :notify "t:c-a" :memory-mib 1024))
   (<- unrun (AwaitDetached "k-ob-unrun"))
   (assert (isinstance unrun DetachedUnrunnable) unrun)
-  (<- (submit-detached-task (slow-add 0.0 2) :needs LOCAL :key "k-ob-silent" :lease-seconds rig.lease))
-  (<- (submit-detached-task (slow-add 0.0 3) :needs LOCAL :key "k-ob-other" :lease-seconds rig.lease :notify "u:c-b"))
+  (<- (submit-detached-task (slow-add 0.0 2) :needs LOCAL :key "k-ob-silent" :lease-seconds rig.lease :memory-mib 1024))
+  (<- (submit-detached-task (slow-add 0.0 3) :needs LOCAL :key "k-ob-other" :lease-seconds rig.lease :notify "u:c-b" :memory-mib 1024))
   (<- (AwaitDetached "k-ob-silent"))
   (<- (AwaitDetached "k-ob-other"))
   (<- ends dict (outbox-ends rig "t:"))
@@ -652,7 +652,7 @@
 (defk outbox-tells-a-lost-task [rig]
   {:pre [(: rig Rig)] :post [(: % bool)]}
   ;; 担い手の死(task の process の外で決まる終わり)も出口に積まれる。出口の待ちは、終わりを待たずに掛けても終わった時に起きる。
-  (<- (submit-detached-task (slow-add (* rig.slow 10) 5) :needs LOCAL :key "k-ob-lost" :lease-seconds rig.lease :notify "l:c-a"))
+  (<- (submit-detached-task (slow-add (* rig.slow 10) 5) :needs LOCAL :key "k-ob-lost" :lease-seconds rig.lease :notify "l:c-a" :memory-mib 1024))
   (<- (await-observed rig "k-ob-lost" held-or-none "担い手の task の起こし"))
   (<- empty (AwaitDetachedOutbox "l:" 0.0))
   (assert (= empty (DetachedOutbox :entries #())) empty)
@@ -673,10 +673,10 @@
 
 (defk same-key-other-work [rig]
   {:pre [(: rig Rig)] :post [(: % bool)]}
-  (<- (submit-detached-task (slow-add 0.0 1) :needs LOCAL :key "k-conflict" :name "a" :lease-seconds rig.lease))
+  (<- (submit-detached-task (slow-add 0.0 1) :needs LOCAL :key "k-conflict" :name "a" :lease-seconds rig.lease :memory-mib 1024))
   (var refused None)
   (try
-    (<- (submit-detached-task (slow-add 0.0 1) :needs LOCAL :key "k-conflict" :name "b" :lease-seconds rig.lease))
+    (<- (submit-detached-task (slow-add 0.0 1) :needs LOCAL :key "k-conflict" :name "b" :lease-seconds rig.lease :memory-mib 1024))
     (except [error DetachedRefused] (:= refused error)))
   (assert (and refused (= refused.status 409)) refused)
   (<- outcome (AwaitDetached "k-conflict"))
@@ -694,10 +694,10 @@
 (defk same-key-other-needs [rig]
   {:pre [(: rig Rig)] :post [(: % bool)]}
   ;; 同じ key で要る能力(needs)だけが違う送り直しも別の仕事 — 409。
-  (<- (submit-detached-task (slow-add (* rig.slow 10) 1) :key "k-needs" :needs LOCAL :lease-seconds rig.lease))
+  (<- (submit-detached-task (slow-add (* rig.slow 10) 1) :key "k-needs" :needs LOCAL :lease-seconds rig.lease :memory-mib 1024))
   (var refused None)
   (try
-    (<- (submit-detached-task (slow-add 0.0 1) :key "k-needs" :needs (| LOCAL #{"gpu"}) :lease-seconds rig.lease))
+    (<- (submit-detached-task (slow-add 0.0 1) :key "k-needs" :needs (| LOCAL #{"gpu"}) :lease-seconds rig.lease :memory-mib 1024))
     (except [error DetachedRefused] (:= refused error)))
   (assert (and refused (= refused.status 409)) refused)
   (<- (CancelDetached "k-needs"))
@@ -717,18 +717,18 @@
   ;; (ADR-DOE-CLUSTER-001 R4b)。断るのは構築関数で、型(intent)は core の判断を読まない。handler を並べないので、断らずに出せば
   ;; UnhandledEffect になり pytest.raises の TypeError に当たらない。
   (with [raised (pytest.raises TypeError)]
-    (<- (submit-detached-task (slow-add 0.0 1) "k")))
+    (<- (submit-detached-task (slow-add 0.0 1) "k" :memory-mib 1024)))
   (assert (in "SubmitDetached.needs" (str raised.value)) raised.value)
   (assert (in "空" (str raised.value)) raised.value)
   (with [raised (pytest.raises TypeError)]
-    (<- (submit-detached-task (slow-add 0.0 1) "k" :needs (frozenset))))
+    (<- (submit-detached-task (slow-add 0.0 1) "k" :needs (frozenset) :memory-mib 1024)))
   (assert (in "空" (str raised.value)) raised.value)
   ;; 旧い形: Requirement の (label value) の組の tuple。
   (with [raised (pytest.raises TypeError)]
-    (<- (submit-detached-task (slow-add 0.0 1) "k" :needs #(#("kind" "k3s")))))
+    (<- (submit-detached-task (slow-add 0.0 1) "k" :needs #(#("kind" "k3s")) :memory-mib 1024)))
   (assert (in "frozenset" (str raised.value)) raised.value)
   (with [raised (pytest.raises TypeError)]
-    (<- (submit-detached-task (slow-add 0.0 1) "k" :needs (frozenset ["kind=k3s"]))))
+    (<- (submit-detached-task (slow-add 0.0 1) "k" :needs (frozenset ["kind=k3s"]) :memory-mib 1024)))
   (assert (in "kind=k3s" (str raised.value)) raised.value))
 
 
@@ -769,7 +769,7 @@
   ;; 詰めた Program を置き場に(版 V と一緒に)置いてから、本文は置き場のキーだけを運ぶ(service の宣言と同じ運び方)。
   (<- placed (get tuple #(ClusterState str)) (program-placed state V :now now))
   (<- reply (get tuple #(ClusterState int (get dict #(str object)))) (call (get placed 0) "PUT" (+ "/detached/" key) now {"program" (get placed 1) "revision" "r" "needs" ["net"]
-                                                                        "leaseSeconds" lease "retainSeconds" retain}))
+                                                                        "leaseSeconds" lease "retainSeconds" retain "memoryMiB" 1024}))
   reply)
 
 (defk phase-of [state key]
@@ -1132,7 +1132,7 @@
   (<- named (get tuple #(ClusterState int (get dict #(str object)))) (beat (ClusterState) "w" 0 :boot-at 1000 :provides caps))
   (<- placed (get tuple #(ClusterState str)) (program-placed (get named 0) V))
   (<- put (get tuple #(ClusterState int (get dict #(str object)))) (call (get placed 0) "PUT" "/detached/job-e" 0 {"program" (get placed 1) "revision" "r" "needs" caps
-                                                                "leaseSeconds" 10.0 "retainSeconds" 100.0}))
+                                                                "leaseSeconds" 10.0 "retainSeconds" 100.0 "memoryMiB" 1024}))
   (val id (get (get put 2) "task"))
   (assert (isinstance id str) put)
   (<- seen (get tuple #(ClusterState int (get dict #(str object)))) (beat (get put 0) "w" 100 :boot-at 1000 :provides caps))
@@ -1201,7 +1201,7 @@
   (:= fresh (get reply-57 0))
   (val sha (get reply-57 1))
   (val reply-58 (! (call fresh "PUT" "/detached/job-new" (+ 123500 T.lease-ms)
-                               {"program" sha "revision" "r" "needs" ["net"] "leaseSeconds" 10.0})))
+                               {"program" sha "revision" "r" "needs" ["net"] "leaseSeconds" 10.0 "memoryMiB" 1024})))
   (:= fresh (get reply-58 0))
   (val reply (get reply-58 2))
   (assert (!= (get reply "task") id) #(reply id))
@@ -1224,7 +1224,7 @@
 
 (defk amnesia-scenario [coordinator]
   {:pre [(: coordinator MemoryCoordinator)] :post [(: % bool)]}
-  (<- (submit-detached-task (slow-add 3.0 1) :needs LOCAL :key "k-amnesia" :lease-seconds 5.0))
+  (<- (submit-detached-task (slow-add 3.0 1) :needs LOCAL :key "k-amnesia" :lease-seconds 5.0 :memory-mib 1024))
   (<- (Delay 1.0))
   ;; coordinator が置き場を失って起き直す(task の行も worker の名乗りも無い)。呼び手はすぐ読む — worker の最初の heartbeat より
   ;; 先に届く読みも「知らない」と答えない(送り直させて並走させない)。
@@ -1365,7 +1365,7 @@
   (val reply-80 (run (program-placed s V)))
   (:= s (get reply-80 0))
   (val sha (get reply-80 1))
-  (setv reply (submit-detached s "job-typed" (! (task-body-of {"program" sha "revision" "r" "needs" ["x-tool" "cluster-net" "x-tool"]}))
+  (setv reply (submit-detached s "job-typed" (! (task-body-of {"program" sha "revision" "r" "needs" ["x-tool" "cluster-net" "x-tool"] "memoryMiB" 1024}))
                                100))
   (assert (isinstance reply Reply))
   (assert (= #(reply.status reply.body.created) #(200 True)))
@@ -1390,7 +1390,7 @@
   (assert (= status 400))
   (val reply-84 (! (put-detached s "job-9" 0)))
   (:= s (get reply-84 0))
-  (val reply-85 (! (call s "PUT" "/detached/job-9" 0 {"name" "other" "program" SAMPLE-TASK-PROGRAM "revision" "r" "needs" ["net"]})))
+  (val reply-85 (! (call s "PUT" "/detached/job-9" 0 {"name" "other" "program" SAMPLE-TASK-PROGRAM "revision" "r" "needs" ["net"] "memoryMiB" 1024})))
   (:= status (get reply-85 1))
   (val body (get reply-85 2))
   (assert (= status 409) body))
@@ -1409,7 +1409,7 @@
   (val reply-87 (run (program-placed s V)))
   (:= s (get reply-87 0))
   (val sha (get reply-87 1))
-  (val task {"program" sha "revision" "r" "leaseSeconds" 10.0})
+  (val task {"program" sha "revision" "r" "leaseSeconds" 10.0 "memoryMiB" 1024})
   (val warm {"runtimeEnv" declared "ttlSeconds" 60 "holder" "svc-a"})
   (val routes [#("POST" "/tasks" task) #("PUT" "/detached/job-n" task) #("POST" "/warm" warm)])
   (for [#(method path base) routes]

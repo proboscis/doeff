@@ -195,7 +195,7 @@
   (<- placed (get tuple #(ClusterState str)) (program-placed (ClusterState) {"python" "3"}))
   (setv #(placed-state sha) placed)
   (val state (replace placed-state :group-limits GROUPS))
-  (<- parsed TaskBody (task-body-of (| {"program" sha "revision" "rev" "name" "bg" "needs" ["host-zeus"]} body)))
+  (<- parsed TaskBody (task-body-of (| {"program" sha "revision" "rev" "name" "bg" "needs" ["host-zeus"] "memoryMiB" 1024} body)))
   (val reply (submit-detached state key parsed 0))
   #(reply.status reply.body reply.state))
 

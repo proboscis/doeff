@@ -53,7 +53,7 @@
 (defk detached-reply [state sha key limits]
   {:pre [(: state ClusterState) (: sha str) (: key str) (: limits list)] :post [(: % tuple)] :tags {:context "doeff-cluster-test" :role "judgment"}}
   "送り手の本文(組の名乗り limits の JSON)を受け口と同じ解きで PUT /detached/<key> として送った #(status 答え 状態) を得るため。"
-  (<- body TaskBody (task-body-of {"program" sha "revision" "rev" "name" "check" "needs" ["host-zeus"] "limits" limits}))
+  (<- body TaskBody (task-body-of {"program" sha "revision" "rev" "name" "check" "needs" ["host-zeus"] "limits" limits "memoryMiB" 1024}))
   (val reply (submit-detached state key body 0))
   #(reply.status reply.body reply.state))
 
@@ -127,7 +127,7 @@
     (assert (= status 400) #(limits status answer))
     (assert (in word answer.message) #(word answer.message))
     (assert (= after.tasks state.tasks) after.tasks)
-    (<- body TaskBody (task-body-of {"program" sha "revision" "rev" "name" "check" "needs" ["host-zeus"] "limits" limits}))
+    (<- body TaskBody (task-body-of {"program" sha "revision" "rev" "name" "check" "needs" ["host-zeus"] "limits" limits "memoryMiB" 1024}))
     (setv #(_ task-status task-answer) (! (submit-task state body 0)))
     (assert (= task-status 400) #(limits task-status task-answer))
     (assert (in word task-answer.message) #(word task-answer.message))))
@@ -170,8 +170,8 @@
   {:pre [] :post [(: % dict)] :tags {:context "doeff-cluster-test" :role "program"}}
   "系の宣言の組 probe(機体ごとに 1 本)を名乗る長い task 2 本を出し、1 本目が置かれた後の GET /state を返すため。宣言に無い組を名乗る
    3 本目は送る所で断られる(DetachedRefused)。"
-  (<- (submit-detached-task (slow-add 30.0 1) :needs LOCAL :key "probe-1" :lease-seconds 5.0 :limits #((TaskLimit :group "probe"))))
-  (<- (submit-detached-task (slow-add 30.0 2) :needs LOCAL :key "probe-2" :lease-seconds 5.0 :limits #((TaskLimit :group "probe"))))
+  (<- (submit-detached-task (slow-add 30.0 1) :needs LOCAL :key "probe-1" :lease-seconds 5.0 :limits #((TaskLimit :group "probe")) :memory-mib 1024))
+  (<- (submit-detached-task (slow-add 30.0 2) :needs LOCAL :key "probe-2" :lease-seconds 5.0 :limits #((TaskLimit :group "probe")) :memory-mib 1024))
   (var placed None)
   (var waited 0.0)
   (while (is placed None)
@@ -185,7 +185,7 @@
   (<- state dict (ReadCoordinator "/state"))
   (var refused None)
   (try
-    (<- (submit-detached-task (slow-add 1.0 3) :needs LOCAL :key "nobody-1" :lease-seconds 5.0 :limits #((TaskLimit :group "nobody"))))
+    (<- (submit-detached-task (slow-add 1.0 3) :needs LOCAL :key "nobody-1" :lease-seconds 5.0 :limits #((TaskLimit :group "nobody")) :memory-mib 1024))
     (except [error DetachedRefused]
       (:= refused (str error))))
   (| state {"refusedNobody" refused}))
