@@ -1001,11 +1001,81 @@ def test_coordinator_prepare_job_is_not_removed_by_ttl(prepared: list[Manifest])
     assert "ttlSecondsAfterFinished" not in _mapping(job["spec"], "Job の spec")
 
 
-def test_coordinator_prepare_builds_alone_with_only_the_job(prepared: list[Manifest]) -> None:
-    """組む Job の dir は、その dir だけで組み立てられ、Job 1 つだけを出す — 版を写すために読む ../coordinator の物は出力から外れ、
-    coordinator の物は coordinator/ の Kustomization だけが持つ。Flux は coordinator/ と別の Kustomization で当て、coordinator/ の
-    Kustomization がその終わりを待つ(ADR-DOE-CLUSTER-003 R2)。"""
-    assert [(doc["kind"], _role(doc)) for doc in prepared] == [("Job", "prepare")]
+def test_coordinator_prepare_builds_alone_with_only_the_job_and_its_priority_class(prepared: list[Manifest]) -> None:
+    """組む Job の dir は、その dir だけで組み立てられ、PriorityClass 1 つと Job 1 つだけを出す — 版を写すために読む ../coordinator の物は
+    出力から外れ、coordinator の物は coordinator/ の Kustomization だけが持つ。Flux は coordinator/ と別の Kustomization で当て、coordinator/ の
+    Kustomization がその終わりを待つ(ADR-DOE-CLUSTER-003 R2・R5)。"""
+    assert [(doc["kind"], _role(doc)) for doc in prepared if doc["kind"] != "PriorityClass"] == [("Job", "prepare")]
+    assert [_mapping(doc["metadata"], "metadata")["name"] for doc in _priority_classes(prepared)] == [
+        COORDINATOR_PRIORITY_CLASS
+    ]
+    assert len(prepared) == 2, [(doc["kind"], _mapping(doc["metadata"], "metadata")["name"]) for doc in prepared]
+
+
+# 組む Job の 1 回の試しが止まった(hang)時に切る秒(ADR-DOE-CLUSTER-003 R4)。Pod の spec に置く — Pod の期限は kubelet が Pod を受けた
+# 刻(status.startTime)から数え、置けずに Pending の間は数えない。Job の spec に置くと Pending の間も数え、一度も走らずに Failed になる
+# (2026-11-02 の版上げは、atlas の memory の requests の和が allocatable の 98%・空き 359Mi で request 512Mi の Pod が置けず、20 分で
+# DeadlineExceeded になった)。Job の名は版で決まり、Flux は Failed の Job を作り直さないので、次の版上げか人の手まで固まった。
+PREPARE_HANG_SECONDS = 1200
+
+
+def test_coordinator_prepare_job_waits_while_unplaced_and_cuts_a_hang_of_its_run(prepared: list[Manifest]) -> None:
+    """組む Job の期限は Pod の spec が持ち(走った時間だけを数える)、Job の spec は期限を持たない — 置けない間は Pending で待ち、空いた
+    時に人の手なしに組み終える。Job が失敗するのは組めない時(非 0 で終わる・1 回の試しが期限を越えて止まる)だけ(ADR-DOE-CLUSTER-003 R4)。"""
+    (job,) = _prepare_jobs(prepared)
+    assert "activeDeadlineSeconds" not in _mapping(job["spec"], "Job の spec"), (
+        "Job の spec の activeDeadlineSeconds は置けない(Pending の)間も数え、置き場の不足を組みの失敗と同じ Failed にする"
+    )
+    assert _pod_spec(job).get("activeDeadlineSeconds") == PREPARE_HANG_SECONDS
+
+
+# 組む Job と coordinator の PriorityClass(ADR-DOE-CLUSTER-003 R5)。値は既定の 0(PriorityClass を持たない一般の Pod)より上で、
+# user が定義できる上限 10 億(API の上限 — storage と node の system の class はこの辺りから上を使う)より下 — 追い出すのは一般の Pod だけ。
+COORDINATOR_PRIORITY_CLASS = "doeff-cluster-coordinator"
+USER_PRIORITY_CEILING = 1_000_000_000
+
+
+def _priority_classes(built: list[Manifest]) -> list[Manifest]:
+    return [doc for doc in built if doc["kind"] == "PriorityClass"]
+
+
+def test_coordinator_and_its_prepare_job_outrank_the_default_pods_on_their_node(
+    rendered: list[Manifest], prepared: list[Manifest]
+) -> None:
+    """組む Job と coordinator は atlas に固定され他の node へ逃げられないので、置き場を他の workload の量に任せない — 同じ
+    PriorityClass(既定の 0 より上・PreemptLowerPriority)を持ち、node の memory の空きが足りない時は、低い Pod を追い出して置かれる。
+    coordinator も持つのは、Recreate で旧い Pod を止めた拍に空いた memory を他の Pod が先に取ると、新しい Pod が置けず全部の worker が
+    coordinator に届かないままになるから(ADR-DOE-CLUSTER-003 R5)。"""
+    (job,) = _prepare_jobs(prepared)
+    (coordinator,) = _deployments(rendered, "coordinator")
+    assert _pod_spec(job).get("priorityClassName") == COORDINATOR_PRIORITY_CLASS
+    assert _pod_spec(coordinator).get("priorityClassName") == COORDINATOR_PRIORITY_CLASS
+    (priority,) = _priority_classes(prepared)
+    value = priority["value"]
+    assert isinstance(value, int) and 0 < value < USER_PRIORITY_CEILING, f"PriorityClass の値 {value!r} が 0 と 10 億の間に無い"
+    assert priority.get("preemptionPolicy") == "PreemptLowerPriority"
+    assert priority.get("globalDefault") is False, "既定の class にすると、一般の Pod も同じ値になって追い出せる相手が居なくなる"
+
+
+def test_the_priority_class_is_applied_before_the_pods_that_name_it(rendered: list[Manifest]) -> None:
+    """PriorityClass は組む Job の dir(Flux が先に当てる Kustomization)が持ち、coordinator/ と根の deploy/k8s は持たない — coordinator/ が
+    持つと、coordinator の Kustomization は組む Job の終わりを待つので、初めて当てる時に Job の Pod が無い class を名指して作られず
+    (admission が断る)、2 つの Kustomization が互いを待って止まる(ADR-DOE-CLUSTER-003 R5)。"""
+    assert _priority_classes(_build(K8S / "coordinator")) == []
+    assert _priority_classes(rendered) == []
+
+
+# Flux の印: 当てが template の変えられない(immutable)欄で断られた時に、その物を消して作り直す。
+FLUX_FORCE = "kustomize.toolkit.fluxcd.io/force"
+
+
+def test_a_prepare_job_changed_at_the_same_version_is_recreated_not_refused(prepared: list[Manifest]) -> None:
+    """Job の template は変えられない — 版を変えずに組む Job の template を変える commit を Flux が当てると、当てが断られて
+    Kustomization が Ready にならず、coordinator が当たらない。組む Job は Flux の force の印を持ち、断られた時は作り直される(組み済みの
+    root なら秒で終わる)(ADR-DOE-CLUSTER-003 R2)。"""
+    (job,) = _prepare_jobs(prepared)
+    annotations = _mapping(_mapping(job["metadata"], "metadata").get("annotations", {}), "Job の annotations")
+    assert annotations.get(FLUX_FORCE) == "Enabled"
 
 
 # coordinator の版の行だけを変えた版上げの見本の版(doeff の歴史の commit — 中身は問わず、今の宣言の版と違えばよい)。

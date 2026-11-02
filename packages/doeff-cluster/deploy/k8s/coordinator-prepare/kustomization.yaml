@@ -1,20 +1,22 @@
 # coordinator の版上げの前に、上げ先の版の自己起動の root を組む Job 1 つ(coordinator-prepare.yaml — 訳と動き方はその頭の註・
 # docs/adr/defadr_doeff_cluster_003_coordinator_root_is_prepared_before_the_bump.hy)。Flux はこの dir を coordinator/ と別の
-# Kustomization で当て、Job が終わる(wait)まで coordinator/ を当てない(dependsOn)。
+# Kustomization で当て、Job が終わる(wait)まで coordinator/ を当てない(dependsOn)。Job と coordinator が名指す PriorityClass
+# (priority-class.yaml — 訳はその頭の註)もこの dir が持つ(coordinator/ より先に当たるため)。
 #
 # 版の定義元は coordinator/coordinator.yaml の WORKER_DOEFF_COMMIT の行 1 つ(ADR-DOE-CLUSTER-003 R3)。組み立ての時に ../coordinator を
 # 読み、その行の値を Job の env と名の末尾へ写す(replacements)。読んだ coordinator の物は local-config の印で出力から外す — この
-# Kustomization が当てるのは Job だけで、coordinator の物は coordinator/ の Kustomization だけが持つ。版上げの commit は coordinator.yaml の
+# Kustomization が当てるのは PriorityClass と Job だけで、coordinator の物は coordinator/ の Kustomization だけが持つ。版上げの commit は coordinator.yaml の
 # 1 行だけを変えればよい(前は 3 か所を手で揃える形で、10-12 18:37 の a53f417cc が coordinator の版だけを上げ、Job は前の版のまま Ready に
 # なって coordinator は上げ先の root を Pod の中で組んだ。着地の列は doeff の検を走らせないので、揃える事を検に頼めない)。
 apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
 resources:
   - ../coordinator
+  - priority-class.yaml
   - coordinator-prepare.yaml
 patches:
   # ../coordinator の物の全部(名は coordinator/ の宣言の物と同じ — 足したら名をここにも足す。漏れると、この Kustomization が同じ物を
-  # 持ち合う — tests/test_k8s_declarations.py の test_coordinator_prepare_builds_alone_with_only_the_job が赤にする)。
+  # 持ち合う — tests/test_k8s_declarations.py の test_coordinator_prepare_builds_alone_with_only_the_job_and_its_priority_class が赤にする)。
   - target: { name: "^(coordinator|agent-worker-coordinator-nodes|coord-wal-backup)$" }
     patch: |-
       apiVersion: v1

@@ -13,6 +13,14 @@
 #   組み終えてから Deployment coordinator が入れ替わる。新しい Pod の boot.sh は印を見て「準備済み」で秒で起動する。組めなければ Job が
 #   失敗し、coordinator は古い版のまま動き続ける(組めない root で止まらない)。
 #
+# 置けない間は待つ(ADR-DOE-CLUSTER-003 R4): 期限は Job の spec でなく Pod の spec に置く。Pod の期限は kubelet が Pod を受けた刻から
+#   数え、node の空きが足りずに Pending の間は数えない — 置けない間は Pending で待ち、空いた時に組み終えて Kustomization が人の手なしに
+#   Ready に戻る。Job の spec の期限は Pending の間も数え、一度も走らずに Failed にし(2026-11-02 の版上げ)、Job の名は版で決まり Flux は
+#   Failed の Job を作り直さないので、次の版上げか人の手まで固まった。Job が失敗するのは組めない時(非 0 で終わる・1 回の試しが 20 分を
+#   越えて止まる)だけ。置き場は PriorityClass が守る(priority-class.yaml・R5)。
+# template を変える時: Job の template は変えられない(immutable)ので、版を変えずに template を変える commit は Flux の当てが断られる。
+#   Flux の印 force で、断られた時は Job を消して作り直す(組み済みの root なら秒で終わる)。
+#
 # 版: この file に版を書かない。WORKER_DOEFF_COMMIT の値と Job の名の末尾は、組み立ての時に kustomization.yaml の replacements が
 #   coordinator/coordinator.yaml の WORKER_DOEFF_COMMIT の行(版の定義元 1 つ)から写す — 名の末尾と env の値の `commit` は写される場所の印。
 #   版上げの commit は coordinator.yaml の 1 行だけを変える。名に版を入れるので、Job の template を変えずに版ごとに新しい Job になり、
@@ -31,18 +39,21 @@ metadata:
   name: coordinator-prepare-commit
   namespace: agent-worker
   labels: { app: agent-worker-coordinator-prepare }
+  annotations: { kustomize.toolkit.fluxcd.io/force: Enabled }
 spec:
   backoffLimit: 1
-  activeDeadlineSeconds: 1200
   template:
     metadata:
       labels: { app: agent-worker-coordinator-prepare }
     spec:
       restartPolicy: Never
+      # 1 回の試しの止まり(hang)を切る秒 — 走った時間だけを数える(上の註「置けない間は待つ」)。
+      activeDeadlineSeconds: 1200
       automountServiceAccountToken: false
       enableServiceLinks: false
       # coordinator の node(Deployment coordinator の nodeSelector と同じ値 — tests/test_k8s_declarations.py が確かめる)。
       nodeSelector: { kubernetes.io/hostname: atlas }
+      priorityClassName: doeff-cluster-coordinator
       securityContext: { runAsUser: 1000, runAsGroup: 1000, runAsNonRoot: true, fsGroup: 1000 }
       initContainers:
         # hostPath を新しく作った時は root の持ち物なので、uid 1000 へ渡す(coordinator の own-state と同じ)。

@@ -1,0 +1,19 @@
+# coordinator の上げ先の root を組む Job と coordinator の PriorityClass(ADR-DOE-CLUSTER-003 R5)。
+#
+# なぜ: 2 つは atlas に固定され(同じ hostPath の root を同じ path で組む・使う)、他の node へ逃げられない。置き場(memory の requests)を
+#   誰も守らないと、空きは atlas に載る他の workload の量しだいになる — 2026-11-02 の版上げは requests の和が allocatable の 98%(空き
+#   359Mi)で、request 512Mi の組む Job が置けなかった。既定の 0 の Pod 同士では、scheduler は追い出せる相手を持たない。
+# 値: 既定の 0(PriorityClass を持たない一般の Pod)より上で、storage と node の system の class(9 億〜)より十分下。node の memory の
+#   空きが足りない時だけ、0 の Pod を足りる分だけ追い出す(scheduler は値の高い物・早く起きた物から残す)。追い出された Pod は自分の
+#   controller が作り直し、組む Job が終わる(Pod が Succeeded になる)と置き場が戻る。
+# 置き場所: この dir(Flux が coordinator/ より先に当てる Kustomization)が持つ — coordinator/ が持つと、初めて当てる時に組む Job の
+#   Pod が無い class を名指して作られず(admission が断る)、coordinator/ の Kustomization はその Job の終わりを待つので、互いを待って止まる。
+apiVersion: scheduling.k8s.io/v1
+kind: PriorityClass
+metadata:
+  name: doeff-cluster-coordinator
+  labels: { app.kubernetes.io/part-of: agent-worker }
+value: 10000000
+globalDefault: false
+preemptionPolicy: PreemptLowerPriority
+description: "doeff-cluster の coordinator と、その上げ先の root を組む Job — 固定の node の memory が混んでいても置かれる"

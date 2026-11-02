@@ -66,6 +66,9 @@ spec:
       automountServiceAccountToken: true
       enableServiceLinks: false
       nodeSelector: { kubernetes.io/hostname: atlas }
+      # 既定の 0 の Pod より上(ADR-DOE-CLUSTER-003 R5 — class は ../coordinator-prepare/priority-class.yaml が持つ)。Recreate で旧い Pod を
+      # 止めた拍に、空いた memory を atlas の他の Pod が先に取っても、低い Pod を追い出して置かれる(置けないと全部の worker が届かない)。
+      priorityClassName: doeff-cluster-coordinator
       securityContext: { runAsUser: 1000, runAsGroup: 1000, runAsNonRoot: true, fsGroup: 1000 }
       initContainers:
         # hostPath は root の持ち物で作られるので、uid 1000 へ渡す。
