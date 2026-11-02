@@ -11,6 +11,10 @@ if TYPE_CHECKING:
     from doeff_cluster._sim.checkout_git_script import GitRemote as GitRemote
     from doeff_cluster._sim.checkout_git_script import GitRev as GitRev
     from doeff_cluster._sim.checkout_git_script import git_command as git_command
+    from doeff_cluster._sim.child_processes import ChildOrigin as ChildOrigin
+    from doeff_cluster._sim.child_processes import DescendantsOf as DescendantsOf
+    from doeff_cluster._sim.child_processes import SimChildren as SimChildren
+    from doeff_cluster._sim.child_processes import SimDescendant as SimDescendant
     from doeff_cluster._sim.k8s_services import held_kube_services as held_kube_services
     from doeff_cluster._sim.k8s_supplied import OBJECT_PATH as OBJECT_PATH
     from doeff_cluster._sim.k8s_supplied import HeldEntry as HeldEntry
@@ -772,6 +776,7 @@ _LAZY_EXPORTS: dict[str, str] = {
     "AwaitWarm": "doeff_cluster._shared.intent.warm_model",
     "CancelDetached": "doeff_cluster._shared.intent.detached_model",
     "ChangeHostTruth": "doeff_cluster._sim.local",
+    "ChildOrigin": "doeff_cluster._sim.child_processes",
     "ClientLink": "doeff_cluster._sim.local",
     "CoordinatorEnded": "doeff_cluster._sim.local",
     "CoordinatorEnvironOf": "doeff_cluster._sim.local",
@@ -783,6 +788,7 @@ _LAZY_EXPORTS: dict[str, str] = {
     "CrashCoordinator": "doeff_cluster._shared.intent.cluster_control",
     "CutWorker": "doeff_cluster._sim.local",
     "DeclareRollout": "doeff_cluster._sim.local",
+    "DescendantsOf": "doeff_cluster._sim.child_processes",
     "DowntimeOf": "doeff_cluster._sim.local",
     "DrainGeneration": "doeff_cluster._sim.local",
     "DrainWorker": "doeff_cluster._sim.local",
@@ -878,7 +884,9 @@ _LAZY_EXPORTS: dict[str, str] = {
     "SettleDeployment": "doeff_cluster._sim.local",
     "SharedRows": "doeff_cluster._sim.local",
     "SignalJob": "doeff_cluster._worker.intent.worker_model",
+    "SimChildren": "doeff_cluster._sim.child_processes",
     "SimDeadlockError": "doeff_cluster._sim.local",
+    "SimDescendant": "doeff_cluster._sim.child_processes",
     "SimLivenessError": "doeff_cluster._sim.local",
     "SimMachine": "doeff_cluster._sim.local",
     "SimOutside": "doeff_cluster._sim.local",
