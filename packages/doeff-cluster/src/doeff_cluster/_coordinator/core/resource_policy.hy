@@ -150,7 +150,8 @@
                                #^ (| Placement None) [placement None]]
   "Service を今動かしている process。ok = 担い手の worker が今の宣言の spec(版と設定の指紋・割り当ての世代)で running と
    報告している。ok でなければ state(NotReady | Unknown)と reason と、理由の種類 kind(NotReadyKind — 版の判定 version-state が
-   文を読まずに分けるため)を持つ。kind が NOT-RUNNING なら担い手の行 row(行に載っていなければ None)も持つ。
+   文を読まずに分けるため)を持つ。kind が NOT-RUNNING なら担い手の行 row(行に載っていなければ None)も、REVISION-MISMATCH・
+   SPEC-MISMATCH なら動いている process の行 row も持つ(旧い版を動かしたまま新しい版の準備に失敗した事を版の判定が読む)。
    ok・state・reason の意味は readiness・入れ替えの合図(ready-instance)・drain・計器が読むので変えない。
    placement = 見る置き先(既定 = いまの置き先。drain で並べた置き先(surge)の process を見る時はそれを渡す — drain_policy)。"
   (setv job (next (gfor j state.jobs :if (= j.spec.name name) j) None))
@@ -196,7 +197,8 @@
   (when (and (!= row.running-revision job.spec.revision)
              (or (is job.spec.content None) (not (spec-hash-matches job.spec row.spec-hash))))
     (return (no "NotReady" NotReadyKind.REVISION-MISMATCH
-                (.format "版が違う(動いている版 {}・宣言 {}){}" row.running-revision job.spec.revision note))))
+                (.format "版が違う(動いている版 {}・宣言 {}){}" row.running-revision job.spec.revision note)
+                :row row)))
   (setv want (spec-hash job.spec))
   (when (not row.instance)
     (return (no "NotReady" NotReadyKind.NO-INSTANCE
@@ -204,7 +206,8 @@
   (when (not (spec-hash-matches job.spec row.spec-hash))
     (return (no "NotReady" NotReadyKind.SPEC-MISMATCH
                 (.format "動いている process は前の宣言(設定か版)で起こした物(指紋 {}・宣言 {})— 起こし直しを待っている{}"
-                         row.spec-hash want note))))
+                         row.spec-hash want note)
+                :row row)))
   (when (and (is-not row.placement None) (!= row.placement a.generation))
     (return (no "NotReady" NotReadyKind.PLACEMENT-MISMATCH
                 (.format "動いている process は前の割り当ての世代 {} で起こした物(いま {})" row.placement a.generation))))
@@ -441,11 +444,14 @@
     JobPhase.RUNNING VersionState.UNKNOWN))
 
 
-(defn #^ VersionState not-ready-version [#^ NotReadyKind kind #^ (| JobPhase None) phase #^ bool retryable]
+(defn #^ VersionState not-ready-version [#^ NotReadyKind kind #^ (| JobPhase None) phase #^ bool retryable
+                                         #^ bool [stuck False]]
   ;; defk にできない: coordinator の純粋な判断(Program の外 — version-state)が呼ぶ
   "running-process が ok でない理由の種類 → 版の判定の状態(Unknown の答えは version-state が先に Unknown にする)。phase・retryable は
    種類が NOT-RUNNING の時だけ読む: 担い手の行の phase(None = 行にまだ載っていない = 宣言を受け取っていない)と ENV-FAILED を
-   再試行するか。種類を足したら写し先をここに足す(漏れると網羅の検査が赤になる)。"
+   再試行するか。stuck は種類が REVISION-MISMATCH・SPEC-MISMATCH の時だけ読む: 動いている process の行が、新しい版の実行環境の
+   準備の再試行しない失敗を運んでいる(recreate の job が旧い版を動かしたまま新しい版を準備できない — 入れ替えは進まないので
+   NOT-RUNNING の再試行しない ENV-FAILED と同じく Blocked)。種類を足したら写し先をここに足す(漏れると網羅の検査が赤になる)。"
   (match kind
     ;; 宣言を消した直後・replicas 0 で止めている途中(停止の述語が止まっていないと答えた = process がまだ生きている)。
     NotReadyKind.NO-DECLARATION VersionState.UPDATING
@@ -458,10 +464,10 @@
     ;; — #2804。途絶しても動かし続けてよい印を渡した job は Unknown なのでここへ来ない)。
     NotReadyKind.CARRIER-SILENT VersionState.UPDATING
     NotReadyKind.NOT-RUNNING (if (is phase None) VersionState.UPDATING (phase-version phase retryable))
-    NotReadyKind.REVISION-MISMATCH VersionState.UPDATING
+    NotReadyKind.REVISION-MISMATCH (if stuck VersionState.BLOCKED VersionState.UPDATING)
     ;; process の世代を報告しない古い worker — worker を上げるまで進まない。
     NotReadyKind.NO-INSTANCE VersionState.BLOCKED
-    NotReadyKind.SPEC-MISMATCH VersionState.UPDATING
+    NotReadyKind.SPEC-MISMATCH (if stuck VersionState.BLOCKED VersionState.UPDATING)
     NotReadyKind.PLACEMENT-MISMATCH VersionState.UPDATING))
 
 
@@ -469,12 +475,15 @@
   ;; defk にできない: coordinator の純粋な判断(Program の外 — version-state)が呼ぶ
   "running-process の NotReady の答え → 版の判定(理由は running-process の文)。担い手の行が coordinator の知らない phase を
    持つ時は Unknown(既定の状態へ倒さない)。"
-  ;; row は種類が NOT-RUNNING の答えだけが持つ(担い手の行 — 行に載っていなければ None)。
+  ;; row は種類が NOT-RUNNING の答え(担い手の行 — 行に載っていなければ None)と REVISION-MISMATCH・SPEC-MISMATCH の答え(動いている
+  ;; process の行)が持つ。
   (setv row (.get proc "row") reason (get proc "reason")
-        phase (if (is row None) None (phase-named row.phase)))
+        phase (if (is row None) None (phase-named row.phase))
+        ;; 新しい版の準備の再試行しない失敗を運ぶ行(worker_policy の job-status — recreate の job の旧い版を動かしたままの失敗)。
+        stuck (and (is-not row None) (bool row.failure-kind) (is-not row.retryable True)))
   (if (and (is-not row None) (is phase None))
       (VersionVerdict :state VersionState.UNKNOWN :reason (+ "担い手が coordinator の知らない phase を報告した: " reason))
-      (VersionVerdict :state (not-ready-version (get proc "kind") phase (and (is-not row None) (is row.retryable True)))
+      (VersionVerdict :state (not-ready-version (get proc "kind") phase (and (is-not row None) (is row.retryable True)) stuck)
                       :reason reason)))
 
 

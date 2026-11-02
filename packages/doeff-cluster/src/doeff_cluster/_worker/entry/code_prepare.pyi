@@ -46,6 +46,9 @@ store: Incomplete
 def usable_cpus() -> _Program[int, object]:
     ...
 
+def usable_memory() -> _Program[int | None, object]:
+    ...
+
 @dataclass(frozen=True)
 class BakeSources(EffectBase):
     items: tuple
