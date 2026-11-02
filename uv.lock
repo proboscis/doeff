@@ -43,6 +43,7 @@ members = [
     "doeff-run",
     "doeff-secret",
     "doeff-seedream",
+    "doeff-stream",
     "doeff-system-one",
     "doeff-time",
     "doeff-traverse",
@@ -651,6 +652,7 @@ dev = [
     { name = "doeff-records" },
     { name = "doeff-run" },
     { name = "doeff-secret" },
+    { name = "doeff-stream" },
     { name = "doeff-system-one" },
     { name = "doeff-time" },
     { name = "doeff-traverse" },
@@ -711,6 +713,7 @@ dev = [
     { name = "doeff-records", editable = "packages/doeff-records" },
     { name = "doeff-run", editable = "packages/doeff-run" },
     { name = "doeff-secret", editable = "packages/doeff-secret" },
+    { name = "doeff-stream", editable = "packages/doeff-stream" },
     { name = "doeff-system-one", editable = "packages/doeff-system-one" },
     { name = "doeff-time", editable = "packages/doeff-time" },
     { name = "doeff-traverse", editable = "packages/doeff-traverse" },
@@ -1592,6 +1595,23 @@ provides-extras = ["dev"]
 
 [package.metadata.requires-dev]
 dev = []
+
+[[package]]
+name = "doeff-stream"
+version = "0.1.0"
+source = { editable = "packages/doeff-stream" }
+dependencies = [
+    { name = "doeff" },
+    { name = "doeff-core-effects" },
+    { name = "doeff-events" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "doeff", editable = "." },
+    { name = "doeff-core-effects", editable = "packages/doeff-core-effects" },
+    { name = "doeff-events", editable = "packages/doeff-events" },
+]
 
 [[package]]
 name = "doeff-system-one"

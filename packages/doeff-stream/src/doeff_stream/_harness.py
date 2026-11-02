@@ -1,0 +1,92 @@
+"""The test harness: give a step a list of inputs and read the states and effects it answered.
+
+``replay`` calls the step the way ``fold`` does — no VM, no task, no bus — and checks the step's answers with the
+same check. It also holds the inputs to what the runtime can deliver: the end of a run comes only for a run that is
+running, and no input comes after ``Finish``. So a test writes the ends of the runs it expects
+(``Answered(key, value)``, ``Raised(key, error)``, ``Cancelled(key)``) among the other inputs and asserts the trace.
+"""
+
+from collections.abc import Callable, Hashable, Iterable
+from dataclasses import dataclass
+from typing import Generic, TypeVar
+
+from doeff_stream._step import (
+    Answered,
+    Cancelled,
+    Finish,
+    Next,
+    Raised,
+    Run,
+    StepEffect,
+    checked_next,
+)
+
+S = TypeVar("S")
+
+
+@dataclass(frozen=True)
+class Stepped(Generic[S]):
+    """One call of the step: the input it was given, the state it answered and the effects it asked for."""
+
+    input: object
+    state: S
+    effects: tuple[StepEffect, ...]
+
+
+@dataclass(frozen=True)
+class Replay(Generic[S]):
+    """The trace of a replay: the initial state and each step, in input order."""
+
+    initial: S
+    steps: tuple[Stepped[S], ...]
+
+    @property
+    def states(self) -> tuple[S, ...]:
+        """The state after each input."""
+        return tuple(stepped.state for stepped in self.steps)
+
+    @property
+    def effects(self) -> tuple[StepEffect, ...]:
+        """Every effect the step asked for, in order."""
+        return tuple(effect for stepped in self.steps for effect in stepped.effects)
+
+    @property
+    def final(self) -> S:
+        """The state after the last input (the initial state when there was none)."""
+        return self.steps[-1].state if self.steps else self.initial
+
+    @property
+    def running(self) -> frozenset[Hashable]:
+        """The keys of the runs whose end has not been given yet."""
+        started: set[Hashable] = set()
+        for stepped in self.steps:
+            if isinstance(stepped.input, Answered | Raised | Cancelled):
+                started.discard(stepped.input.key)
+            started.update(effect.key for effect in stepped.effects if isinstance(effect, Run))
+        return frozenset(started)
+
+    @property
+    def finished(self) -> Finish | None:
+        """The ``Finish`` the step answered, if it did."""
+        last = self.steps[-1].effects if self.steps else ()
+        return last[-1] if last and isinstance(last[-1], Finish) else None
+
+
+def replay(step: Callable[[S, object], Next[S]], initial: S, inputs: Iterable[object]) -> Replay[S]:
+    """Give ``step`` each of ``inputs`` from ``initial`` and answer the trace.
+
+    Refused like the runtime refuses it: an answer that is not a valid ``Next``. Refused because the runtime never
+    delivers it: the end of a run that is not running, and an input after ``Finish``.
+    """
+    trace: Replay[S] = Replay(initial, ())
+    for event in inputs:
+        if trace.finished is not None:
+            raise ValueError(f"input {event!r} after Finish: the fold has ended")
+        running = trace.running
+        if isinstance(event, Answered | Raised | Cancelled):
+            if event.key not in running:
+                raise ValueError(f"end of the run {event.key!r}, which is not running")
+            running = running - {event.key}
+        answer = checked_next(step(trace.final, event), running)
+        trace = Replay(initial, (*trace.steps, Stepped(event, answer.state, answer.effects)))
+    return trace

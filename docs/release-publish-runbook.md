@@ -80,6 +80,7 @@ root の tag でも単独でも出さない。どれかを公開すると決め�
 | `doeff-codex` | agent の backend の部品(`codex app-server` の process の寿命を持ち、その stdout の行を読む) | 2026-10-10 に新設(3c7c9b87)。公開の入れ方がまだ無い |
 | `doeff-cluster` | cluster の実行の部品(coordinator・worker・lease・rollout) | 2026-09-25 に新設(eae6a774)。公開の入れ方がまだ無い |
 | `doeff-records` | 記録の保存の effect の部品(版つきの行・変更と追記の log) | 2026-09-26 に新設(12f92505)。公開の入れ方がまだ無い |
+| `doeff-stream` | 入力の source の merge と fold の runtime の部品(step の effect を task で走らせ、終わりを入力に戻す) | 2026-11-02 に新設。公開の入れ方がまだ無い |
 | `doeff-docker` | 試しの実行の adapter | 公開の入れ方がまだ無い |
 | `doeff-validation` | 独立した確かめを束ねる部品 | 2026-09-26 に新設(96b5de54)。公開の入れ方がまだ無い |
 | `doeff-jev` | 判断の provider の部品(`doeff-system-one` の TypeSafe Jev の handler) | 2026-09-22 に新設(e190a8c6)。公開の入れ方がまだ無い |
