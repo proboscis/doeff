@@ -8,7 +8,7 @@
 (require doeff-hy.macros [deftest defk <- val])
 (import copy)
 (import dataclasses)
-(import doeff [run with_handlers Program])
+(import doeff [Perform run with_handlers Program])
 (import doeff_core_effects [scheduled])
 (import doeff_time [SimClock sim-time-handler Delay])
 (import doeff_hy._frozen [FrozenMap])
@@ -40,8 +40,9 @@
 (defk put [table key value [expect None] [idempotency-key None]]
   {:pre [(: table str) (: key tuple) (: value dict) (: expect (| ExpectAbsent ExpectAny None)) (: idempotency-key (| str None))]
    :post [(: % (| Written Conflict Refused Unreachable))]}
-  "表 table の行 key に差分 value を書く書きを撃つため(期待の既定は ExpectAny)。"
-  (<- answer (PutRow table key (FrozenMap value) (if (is expect None) (ExpectAny) expect) :idempotency-key idempotency-key))
+  "表 table の行 key に差分 value を書く書きを撃つため(期待の既定は ExpectAny)。断り(Refused)も置き場の答えの値として見るため、
+   宣言を開かずに(Perform)値のまま受ける(<- だと Raise になる)。"
+  (<- answer (Perform (PutRow table key (FrozenMap value) (if (is expect None) (ExpectAny) expect) :idempotency-key idempotency-key)))
   answer)
 
 

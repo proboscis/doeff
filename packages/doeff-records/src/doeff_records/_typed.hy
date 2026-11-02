@@ -22,7 +22,7 @@
 (import doeff_hy._frozen [FrozenMap frozen-json-object])
 (import doeff_hy._wire_codec [Codec row-codec-of])
 (import doeff_hy._wire_malformed [Malformed])
-(import doeff_records._values [Row Missing Page Written Conflict RowChanged RowRemoved ListCursor WatchCursor ExpectAbsent
+(import doeff_records._values [Row Missing Page Written RowChanged RowRemoved ListCursor WatchCursor ExpectAbsent
                               ExpectVersion ExpectAny checked-table-name])
 (import doeff_records._effects [ReadRow ListRows PutRow DEFAULT-LIST-LIMIT])
 
@@ -166,11 +166,11 @@
 
 (defk put-typed [#^ (get RowType M) row-type #^ tuple key #^ M value #^ object expect]
   {:pre [(: row-type RowType) (: key tuple) (: value row-type.model) (: expect (| ExpectAbsent ExpectVersion ExpectAny))]
-   :post [(: % "TypedWritten | TypedConflict | Refused | Unreachable")]}
+   :post [(: % "TypedWritten | TypedConflict")]}
   "行の全体の像を書く: value = 行の型の値(値が None の欄は消す)/ expect = ExpectAbsent | ExpectVersion | ExpectAny。
-   答え = TypedWritten | TypedConflict | Refused | Unreachable。"
+   答え = TypedWritten | TypedConflict(期待が今の行と合わない — PutRow の値の答えをそのまま返す。呼び手が読み直して撃ち直す)。
+   PutRow が失敗と宣言した Refused・Unreachable は <- が Raise にして呼び手へ逃がす(値で受けたい呼び手は on-raise か result で包む)。"
   (<- answer (PutRow row-type.table key (fields-of-value row-type value) expect))
-  (cond
-    (isinstance answer Written) (TypedWritten answer.version (value-of-fields row-type answer.value) answer.position)
-    (isinstance answer Conflict) (TypedConflict (typed-current row-type answer.current))
-    True answer))
+  (if (isinstance answer Written)
+      (TypedWritten answer.version (value-of-fields row-type answer.value) answer.position)
+      (TypedConflict (typed-current row-type answer.current))))

@@ -1,6 +1,6 @@
 ;; 表ごとの行の型で読み書きする層(_typed.hy)— 呼び手は欄 → 値の写像を見ずに、行の型(素の defrecord)で読み書きする。
 ;; 同じ筋書きを memory と PostgreSQL の handler の両方で回す(層は handler を足さないので、どの組の上でも同じ答え)。
-(require doeff-hy.macros [deftest <- val])
+(require doeff-hy.macros [deftest <- val on-raise])
 (import dataclasses [dataclass replace])
 (import enum [StrEnum])
 (import doeff_hy._frozen [FrozenMap])
@@ -210,8 +210,10 @@
                               (TypedRow #("n1") (Part :id "n1" :label "b" :state "open") 2)))
           #(newer older))
   ;; method に値を入れた像は今どおり断る(理由の文に欄の名)。
-  (<- valued (harness.as-writer MAKER (put-typed NEWER-PARTS #("n1") (replace newer.value :method "pane")
-                                                 (ExpectVersion 2))))
+  ;; 断りは put-typed の中の PutRow の失敗(Refused)で、<- が Raise にして逃がす — on-raise で値へ戻して見る。
+  (<- valued (harness.as-writer MAKER (on-raise (put-typed NEWER-PARTS #("n1") (replace newer.value :method "pane")
+                                                           (ExpectVersion 2))
+                                                (Refused reason) (Refused reason))))
   (assert (and (isinstance valued Refused) (in "method" valued.reason)) valued)
   ;; 宣言の外の None だけの書きは、空の差分の書き(変わる欄が無い書き)と同じ答え: 行の値を変えずに版が 1 進む。
   (<- only-none (harness.as-writer MAKER (PutRow "parts" #("n1") (FrozenMap {"method" None}) (ExpectVersion 2))))
