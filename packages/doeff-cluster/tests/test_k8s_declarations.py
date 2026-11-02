@@ -1029,6 +1029,16 @@ def test_coordinator_prepare_job_waits_while_unplaced_and_cuts_a_hang_of_its_run
     assert _pod_spec(job).get("activeDeadlineSeconds") == PREPARE_HANG_SECONDS
 
 
+def test_a_removed_try_of_the_prepare_job_is_not_counted_as_a_failure(prepared: list[Manifest]) -> None:
+    """組む Job の試しが消された時(kubelet の memory 不足の eviction・より高い class の追い出し・drain — Pod の condition
+    DisruptionTarget)は backoffLimit に数えず作り直す — 消された試しが 2 度で Job が Failed になると、置けなかった時と同じく次の版上げまで
+    固まる。非 0 の終わりと期限切れは今まで通り失敗に数える(規則は DisruptionTarget の Ignore 1 つだけ)(ADR-DOE-CLUSTER-003 R4)。"""
+    (job,) = _prepare_jobs(prepared)
+    policy = _mapping(_mapping(job["spec"], "Job の spec").get("podFailurePolicy"), "podFailurePolicy")
+    assert policy == {"rules": [{"action": "Ignore", "onPodConditions": [{"type": "DisruptionTarget"}]}]}
+    assert _pod_spec(job)["restartPolicy"] == "Never", "podFailurePolicy は restartPolicy Never の Job だけが持てる"
+
+
 # 組む Job と coordinator の PriorityClass(ADR-DOE-CLUSTER-003 R5)。値は既定の 0(PriorityClass を持たない一般の Pod)より上で、
 # user が定義できる上限 10 億(API の上限 — storage と node の system の class はこの辺りから上を使う)より下 — 追い出すのは一般の Pod だけ。
 COORDINATOR_PRIORITY_CLASS = "doeff-cluster-coordinator"

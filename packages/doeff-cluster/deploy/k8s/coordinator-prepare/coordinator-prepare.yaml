@@ -17,7 +17,9 @@
 #   数え、node の空きが足りずに Pending の間は数えない — 置けない間は Pending で待ち、空いた時に組み終えて Kustomization が人の手なしに
 #   Ready に戻る。Job の spec の期限は Pending の間も数え、一度も走らずに Failed にし(2026-11-02 の版上げ)、Job の名は版で決まり Flux は
 #   Failed の Job を作り直さないので、次の版上げか人の手まで固まった。Job が失敗するのは組めない時(非 0 で終わる・1 回の試しが 20 分を
-#   越えて止まる)だけ。置き場は PriorityClass が守る(priority-class.yaml・R5)。
+#   越えて止まる)だけ。置き場は PriorityClass が守る(priority-class.yaml・R5)。試しが消された時(node の memory 不足の kubelet の
+#   eviction・より高い class の追い出し・drain — Pod の condition DisruptionTarget)も組めない事ではないので、podFailurePolicy で backoffLimit に
+#   数えずに作り直す(atlas は requests の和が allocatable に近く、memory 不足の eviction が起きている)。
 # template を変える時: Job の template は変えられない(immutable)ので、版を変えずに template を変える commit は Flux の当てが断られる。
 #   Flux の印 force で、断られた時は Job を消して作り直す(組み済みの root なら秒で終わる)。
 #
@@ -42,6 +44,10 @@ metadata:
   annotations: { kustomize.toolkit.fluxcd.io/force: Enabled }
 spec:
   backoffLimit: 1
+  # 消された試し(DisruptionTarget)は失敗に数えない — 非 0 の終わりと期限切れだけが backoffLimit を使う(上の註「置けない間は待つ」)。
+  podFailurePolicy:
+    rules:
+      - { action: Ignore, onPodConditions: [ { type: DisruptionTarget } ] }
   template:
     metadata:
       labels: { app: agent-worker-coordinator-prepare }

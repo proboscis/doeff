@@ -8,6 +8,8 @@
 #   controller が作り直し、組む Job が終わる(Pod が Succeeded になる)と置き場が戻る。
 # 置き場所: この dir(Flux が coordinator/ より先に当てる Kustomization)が持つ — coordinator/ が持つと、初めて当てる時に組む Job の
 #   Pod が無い class を名指して作られず(admission が断る)、coordinator/ の Kustomization はその Job の終わりを待つので、互いを待って止まる。
+# 外す時: 走っている Pod は class の値を持ったまま動くが、class を消すと coordinator の新しい Pod(Recreate・版上げ)と組む Job の Pod は
+#   admission に断られて作られない — 先に Job と Deployment coordinator の priorityClassName を外し、当たってから class を外す。
 apiVersion: scheduling.k8s.io/v1
 kind: PriorityClass
 metadata:

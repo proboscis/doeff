@@ -91,12 +91,14 @@
      (interpretation
        "置き場を守る形は 2 つを比べ、PriorityClass を採る。(a) atlas の memory の予算に組む Job の 512Mi を書いて検で守る形は採らない — atlas に載る他の workload は別の repo が宣言し、この repo の検はその requests を読めないので、書いた予算を守る者が居ない(11-02 も、他の repo の固定の Pod が増えて空きが 359Mi になった)。(b) PriorityClass は scheduler が守る: 空きが足りない時だけ、既定の 0 の Pod を足りる分だけ追い出す(値の高い物・早く起きた物から残す)。害は、atlas が満ちた時の版上げ 1 回ごとに 0 の Pod が少し追い出される事 — 追い出された Pod は自分の controller が作り直し、組む Job が終わる(秒〜数分)と置き場が戻る。長く走る Job(12 時間の copy など)が追い出されると進みを失うが、atlas が満ちている事の害の 1 つで、版上げが人の手まで止まる害より小さい、と判じた。")
      (interpretation
+       "追い出す相手を doeff 自身の物に絞る形は今は採らない。preemptionPolicy Never は列の先頭に立つだけで、既に載っている Pod を動かさないので、長く載る Pod で満ちた 11-02 は同じく止まる。atlas の worker に負の値の class を付けても、scheduler は重要な順に戻すので、0 の新しい Pod が先に追い出される相手に決まり絞れない。絞れる唯一の形は doeff が持つ 512Mi の placeholder(Job より低い class の pause の Pod を atlas に常に置く)だが、atlas の requests を常に 512Mi 使い、Job が走る間に他の Pod が入れば次の版上げでは 0 の Pod を追い出す(穴は部分的)。他の repo の Pod を動かさない事を重く見る時に足す。待つ間・2 回目の試しの間は prepare の Kustomization が timeout 25m ごとに HealthCheckFailed になって 1 分後に待ち直す — Job は Failed でなく、Ready の表示が揺れるだけ。")
+     (interpretation
        "coordinator も同じ class を持つ。Recreate は旧い Pod を止めてから新しい Pod を作るので、その拍に空いた 1536Mi を Pending だった atlas の他の Pod が先に取ると、新しい coordinator は置けず、全部の worker が coordinator に届かないままになる(組む Job が置けない事より重い)。値は既定の 0 より上で、storage と node の system の class(9 億〜20 億)より十分下の 1000 万 — 追い出すのは一般の Pod だけ。")]
   :decision
     [(rule R1 "coordinator の上げ先の版の root は、Job coordinator-prepare-<commit>(deploy/k8s/coordinator-prepare)が boot.sh の役 prepare で組む。Job は Deployment coordinator と同じ node・同じ hostPath を同じ絶対 path /work に mount し(root は組んだ時の絶対 path を持つ)、記録の /work/coord は mount せず、資格(ServiceAccount の token・上に載る系の ConfigMap)を持たない。自分の cgroup で組み、走っている coordinator の CPU を食わない。")
      (rule R2 "Flux は deploy/k8s/coordinator-prepare を別の Kustomization(wait: true)で当て、deploy/k8s/coordinator の Kustomization は dependsOn でその Kustomization が同じ revision で Ready(Job が終わった)になるまで当たらない。Job が失敗すれば coordinator は古い版のまま動き続ける。Job は ttlSecondsAfterFinished を持たない — TTL が消すと Flux が次の照合で作り直すので、古い版の Job は名の版が変わって宣言から外れた時に Flux の prune が消す(組んだ root と bytecode の保存先は hostPath に残る)。Job は Flux の印 kustomize.toolkit.fluxcd.io/force: Enabled を持つ — Job の template は変えられないので、版を変えずに template を変える commit は当てが断られて coordinator が当たらなくなる。印があれば Flux は断られた Job を消して作り直す(組み済みの root なら秒で終わる)。")
      (rule R3 "版の定義元は coordinator/coordinator.yaml の WORKER_DOEFF_COMMIT の行 1 つ。Job の env WORKER_DOEFF_COMMIT と名の末尾は coordinator-prepare.yaml に書かず、coordinator-prepare/ の組み立ての時に ../coordinator を読んで replacements で写す(読んだ coordinator の物は local-config の印で出力から外し、この Kustomization は R5 の PriorityClass と Job だけを当てる)。版上げの commit は coordinator.yaml の 1 行だけを変える — 揃える約束を検に頼まない(着地の列は検を走らせない)。")
-     (rule R4 "組む Job の期限は Pod の template の spec.activeDeadlineSeconds(1200 秒 — 1 回の試しの止まりを切る)が持ち、Job の spec は activeDeadlineSeconds を持たない。置けない間(node の空きが足りない Pending)は Job は失敗せずに待ち、置けた時に組み終えて prepare の Kustomization が人の手なしに Ready に戻る。Job が失敗するのは組めない時(非 0 で終わる・試しが期限を越える)だけ。")
+     (rule R4 "組む Job の期限は Pod の template の spec.activeDeadlineSeconds(1200 秒 — 1 回の試しの止まりを切る)が持ち、Job の spec は activeDeadlineSeconds を持たない。置けない間(node の空きが足りない Pending)は Job は失敗せずに待ち、置けた時に組み終えて prepare の Kustomization が人の手なしに Ready に戻る。Job が失敗するのは組めない時(非 0 で終わる・試しが期限を越える)だけ。試しが消された時(kubelet の memory 不足の eviction・より高い class の追い出し・drain — Pod の condition DisruptionTarget)も組めない事ではないので、Job の podFailurePolicy(DisruptionTarget を Ignore)で backoffLimit に数えずに作り直す。")
      (rule R5 "組む Job と Deployment coordinator は PriorityClass doeff-cluster-coordinator(値 1000 万・PreemptLowerPriority・globalDefault false)を持ち、node の memory の空きが足りない時は既定の 0 の Pod を追い出して置かれる。class は coordinator-prepare/ が持つ(Flux が coordinator/ より先に当てる — coordinator/ が持つと、初めて当てる時に Job の Pod が無い class を名指して作られず、coordinator/ の Kustomization はその Job を待つので互いを待って止まる)。")]
   :laws
     [(law the-prepare-job-builds-the-coordinators-version
@@ -118,11 +120,13 @@
                      "packages/doeff-cluster/tests/test_k8s_declarations.py::test_coordinator_prepare_builds_alone_with_only_the_job_and_its_priority_class"]
        :wiring "配線済み(2026-10-12)。Flux の順(R2 の wait と dependsOn)は上に載る系の repo の Flux の宣言が持ち、この repo の検の外")
      (law the-prepare-job-waits-while-it-cannot-be-placed
-       :statement "for_all 役 prepare の Job J: J の spec は activeDeadlineSeconds を持たない ∧ J の Pod の template の spec.activeDeadlineSeconds = 1200"
+       :statement "for_all 役 prepare の Job J: J の spec は activeDeadlineSeconds を持たない ∧ J の Pod の template の spec.activeDeadlineSeconds = 1200 ∧ J の podFailurePolicy = DisruptionTarget の Ignore の規則 1 つ"
        :counterexamples
          [(counterexample "期限を Job の spec に置く — 置けずに Pending の間も数え、Pod が一度も走らずに Failed になる。Job の名は版で決まり Flux は Failed の Job を作り直さないので、次の版上げか人の手まで coordinator の Kustomization が当たらない(2026-11-02)")
-          (counterexample "期限を外す — 組みが止まった(hang)時に Job が終わらず、coordinator は古い版のまま、prepare の Kustomization は失敗の形を持たずに待ち続ける")]
-       :enforced-by ["packages/doeff-cluster/tests/test_k8s_declarations.py::test_coordinator_prepare_job_waits_while_unplaced_and_cuts_a_hang_of_its_run"]
+          (counterexample "期限を外す — 組みが止まった(hang)時に Job が終わらず、coordinator は古い版のまま、prepare の Kustomization は失敗の形を持たずに待ち続ける")
+          (counterexample "podFailurePolicy を持たない — atlas の memory 不足の kubelet の eviction(10-29〜11-01 に atlas の worker が 5 回)で試しが 2 度消されると Job が Failed になり、置けなかった時と同じく固まる")]
+       :enforced-by ["packages/doeff-cluster/tests/test_k8s_declarations.py::test_coordinator_prepare_job_waits_while_unplaced_and_cuts_a_hang_of_its_run"
+                     "packages/doeff-cluster/tests/test_k8s_declarations.py::test_a_removed_try_of_the_prepare_job_is_not_counted_as_a_failure"]
        :wiring "配線済み(2026-11-02)")
      (law the-coordinator-and-its-prepare-job-outrank-the-default-pods
        :statement "for_all 役 prepare の Job J と Deployment coordinator C: priorityClassName(J) = priorityClassName(C) = doeff-cluster-coordinator ∧ 0 < value(その class) < 10 億 ∧ preemptionPolicy = PreemptLowerPriority ∧ globalDefault = false ∧ その class は coordinator-prepare/ だけが持つ"
