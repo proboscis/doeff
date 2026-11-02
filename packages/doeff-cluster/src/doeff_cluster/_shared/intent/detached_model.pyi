@@ -37,6 +37,7 @@ class SubmitDetached(EffectBase):
     priority: int = 0
     limits: tuple[TaskLimit, ...] = ...
     notify: str = ''
+    memory_mib: int | None = None
 
     def __post_init__(self) -> None:
         ...

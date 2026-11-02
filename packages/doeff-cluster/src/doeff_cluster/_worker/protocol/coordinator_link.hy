@@ -65,7 +65,7 @@
 (import doeff_cluster._worker.protocol.heartbeat [env-heartbeat-part heartbeat-body status-report])
 (import doeff_cluster._worker.core.account_token [TokenClaims TokenState token-claims token-state token-read-due])
 (import doeff_cluster._worker.core.room_rules [RoomReading RoomState WorkerRoom room-of-text room-read-due room-line])
-(import doeff_cluster._worker.core.load_rules [LoadPaths LoadReading load-read-due machine-load-of fresh-line])
+(import doeff_cluster._worker.core.load_rules [LoadPaths LoadReading load-read-due machine-load-of fresh-line task-uses-of])
 (import doeff_cluster._worker.core.eviction_rules [EvictionLine])
 (import doeff_cluster._worker.protocol.eviction_line [EvictionCell])
 
@@ -852,8 +852,13 @@
       (when (!= reason state.load-reason)
         (<- (slog (if reason (+ "worker: 機体の空きを測れない — heartbeat に載せない: " reason) "worker: 機体の空きを測れた — heartbeat に載せる")
                   :level (if reason "warning" "info"))))
+      ;; 見張りの最後の読みの task ごとの memory の今の使いを添える(古い読みは名乗らない — load_rules.task-uses-of)。
+      (var task-uses None)
+      (when (is-not state.eviction None)
+        (<- told (| tuple None) (task-uses-of state.eviction.uses state.eviction.uses-at-ms now-ms))
+        (:= task-uses told))
       (setv state.load-reason reason
-            state.measured (if (is reading None) None reading.load)
+            state.measured (if (is reading None) None (replace reading.load :task-uses task-uses))
             state.load-ticks (if (is reading None) None reading.ticks))))
   None)
 

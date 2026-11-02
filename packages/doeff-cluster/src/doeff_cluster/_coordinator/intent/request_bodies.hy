@@ -189,11 +189,16 @@
    MachineLoad): at-ms = 読んだ刻(worker の壁の時計の epoch ms)・cpus = CPU の数・cpu-busy = 前の読みからの CPU の使いの割合(0〜1 —
    None = まだ数えられない)・memory-total-MiB / memory-available-MiB = kubelet の下の worker は追い出しの線の大きさと追い出しまでの
    空き、それ以外は MemTotal / MemAvailable(MiB — worker/core/eviction_rules の line-memory)・cpu-some-avg10 / cpu-full-avg10 /
-   memory-some-avg10 / memory-full-avg10 = PSI の avg10(%— None = PSI の無い機体・full の行の無い kernel の cpu)。coordinator は
-   保存せず、task の置き先をこの値から数え(core/measured_room)、GET /state の worker の行に写す。"
+   memory-some-avg10 / memory-full-avg10 = PSI の avg10(%— None = PSI の無い機体・full の行の無い kernel の cpu)・task-memory-MiB =
+   走っている task ごとの memory の今の使い(task の id → MiB — 見張りの最後の読みの task の木の rss の和。None = 名乗らない〔見張りの
+   読みが古い・測りの前の版の worker〕— 置き先は名乗られない task の要りの全部を予約する)。coordinator は保存せず、task の置き先を
+   この値から数え(core/measured_room)、GET /state の worker の行に写す。"
   {:tags {:context "coordinator" :role "type" :reads "json"} :names :camel :unknown :ignore
    :check [(> cpus 0) (or (is cpu-busy None) (<= 0 cpu-busy 1)) (>= memory-total-MiB memory-available-MiB 0)
-           (all (gfor v #(cpu-some-avg10 cpu-full-avg10 memory-some-avg10 memory-full-avg10) (or (is v None) (>= v 0))))]}
+           (all (gfor v #(cpu-some-avg10 cpu-full-avg10 memory-some-avg10 memory-full-avg10) (or (is v None) (>= v 0))))
+           (or (is task-memory-MiB None)
+               (all (gfor #(k v) (.items task-memory-MiB)
+                          (and (isinstance k str) (isinstance v int) (not (isinstance v bool)) (>= v 0)))))]}
   (#^ int at-ms)
   (#^ int cpus)
   (#^ int memory-total-MiB)
@@ -202,7 +207,8 @@
   (setv #^ (| float None) cpu-some-avg10 None)
   (setv #^ (| float None) cpu-full-avg10 None)
   (setv #^ (| float None) memory-some-avg10 None)
-  (setv #^ (| float None) memory-full-avg10 None))
+  (setv #^ (| float None) memory-full-avg10 None)
+  (setv #^ (| dict None) task-memory-MiB None))
 
 
 (defwire HeartbeatBody
@@ -286,6 +292,8 @@
   (setv #^ object limits None)
   ;; 終わりの知らせ先(2026-10-21 — 切り離した task だけが読む。None = 知らせない)。形は判断が読む。
   (setv #^ object notify None)
+  ;; memory の要り(2026-11-02 — 1 本の山の MiB。置き先が測った空きから「要り − 今の使い」を予約する)。形は判断が読む。
+  (setv #^ object memory-MiB None)
   (setv #^ object format 1))
 
 

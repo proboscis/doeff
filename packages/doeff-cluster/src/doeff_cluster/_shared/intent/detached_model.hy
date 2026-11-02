@@ -84,6 +84,10 @@
   ;; 知らせ先(2026-10-21): 終わった時に結末を知らせる先を呼び手が決めた 1 語で名乗る(空 = 知らせない)。coordinator は
   ;; 中身を読まず、task が終わりへ移った歩で 1 度だけ出口(outbox — 下の節)へ積む。同じ key の送り直しの比べには入れない。
   (setv #^ str notify "")
+  ;; memory の要り(2026-11-02): task 1 本の memory の山(MiB)。coordinator の置き先は、置いた task ごとに測った空きから「要り − 今の
+  ;; 使い」(まだ伸びる分)を予約し、要りが残りの空きに入る worker にだけ置く。needs の合うどの worker の線よりも大きい要りは積む時に
+  ;; 断る。None = 名乗らない(置き先は見込みの値で数える)。同じ key の送り直しの比べには入れない。形の検めは構築関数。
+  (setv #^ (| int None) memory-mib None)
   (defn #^ None __post-init__ [self]
     "environ が EnvVar の重ならない tuple であることを作る時に検める(名 → 値の写像・名の重なりを黙って受けない。予約の名・秘密の名は
      EnvVar が作る時に断る)。needs の検め(能力の名の空でない frozenset — 旧い Requirement の tuple を断る)は型の外 — 作り手は構築関数

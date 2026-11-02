@@ -47,7 +47,9 @@
       "startedMs" task.started-ms "finishedMs" task.finished-ms "leaseUntilMs" task.lease-until-ms}
      (if task.detached {"detached" True "key" task.key} {})
      ;; 名乗った同時数の上限の組(待つ理由を外から読む ReadDetachedQueue が groupLimits と照らす)— 名乗る task だけ。
-     (if task.limits {"limits" (task-limits-json task.limits)} {})))
+     (if task.limits {"limits" (task-limits-json task.limits)} {})
+     ;; memory の要り(MiB — 置き先が予約する 1 本の山・2026-11-02)— 名乗る task だけ。
+     (if (is task.memory-mib None) {} {"memoryMiB" task.memory-mib})))
 
 
 (defk spec-json [#^ JobSpec spec]
@@ -99,7 +101,8 @@
   (| {"id" offer.id "name" offer.name "revision" offer.revision "versions" (dict offer.versions) "program" offer.program}
      (if offer.detached {"detached" True "key" offer.key "leaseMs" offer.lease-ms "retainMs" offer.retain-ms "needs" (list offer.needs)} {})
      (if (is-not offer.runtime-env None) {"runtimeEnv" offer.runtime-env} {})
-     (if offer.environ {"environ" (dict offer.environ)} {})))
+     (if offer.environ {"environ" (dict offer.environ)} {})
+     (if (is offer.memory-mib None) {} {"memoryMiB" offer.memory-mib})))
 
 
 (defk heartbeat-reply-json [#^ HeartbeatReply reply]
@@ -135,12 +138,13 @@
    "jobs" (lfor s view.services (| (job-to-json s.job) {"resourceVersion" s.resource-version}))
    ;; memoryMiB = 枠の file の行の常駐の job の memory の予算(名乗った worker だけに載せる)。measured = 機体の測った空き
    ;; (heartbeat の measured の写し {atMs cpus cpuBusy memoryTotalMiB memoryAvailableMiB cpuSomeAvg10 cpuFullAvg10 memorySomeAvg10
-   ;; memoryFullAvg10} — 測れた worker だけに載せる)。taskRoom = 置き先の判断と同じ数えで、いま task を置ける数(測った空きから —
-   ;; 測りの無い worker は 0)。childEnviron = worker が job の子へ渡す環境変数の名(名の順 — 名乗った worker だけに載せる。名乗らない旧い
+   ;; memoryFullAvg10 taskMemoryMiB} — 測れた worker だけに載せる)。taskRoom = 置き先の判断と同じ数えで、いま task を置ける数(測った空き
+   ;; から — 測りの無い worker は 0)。taskMemoryRoomMiB = 置き先の判断と同じ数えで、いま置ける task の memory の要りの最大(測った空き −
+   ;; 床 − 置いた task の「要り − 今の使い」の和 — 負は詰めすぎ)。childEnviron = worker が job の子へ渡す環境変数の名(名の順 — 名乗った worker だけに載せる。名乗らない旧い
    ;; worker に空の列を出さない: 空の列は「子へ何も渡さない」と読まれる)。
    "workers" (dfor w view.workers
                    w.info.name (| {"provides" (list w.info.provides) "exclusive" (list w.info.exclusive) "derived" (list w.info.derived)
-                                   "node" w.info.node "taskRoom" w.task-room
+                                   "node" w.info.node "taskRoom" w.task-room "taskMemoryRoomMiB" w.task-memory-room-mib
                                    "silentMs" w.silent-ms
                                    "versions" (dict w.info.versions) "live" w.live "draining" w.draining}
                                   (if (is w.info.memory-mib None) {} {"memoryMiB" w.info.memory-mib})

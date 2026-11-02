@@ -22,6 +22,7 @@ from doeff_cluster._shared.core.supplied_spelling import supplied_spellings as s
 from doeff_cluster._shared.core.detached_rules import task_priority_refusal as task_priority_refusal
 from doeff_cluster._shared.core.detached_rules import task_limits_refusal as task_limits_refusal
 from doeff_cluster._shared.core.detached_rules import task_limits_of as task_limits_of
+from doeff_cluster._shared.core.detached_rules import task_memory_refusal as task_memory_refusal
 from doeff_cluster._coordinator.intent.cluster_model import ClusterJob as ClusterJob
 from doeff_cluster._coordinator.intent.cluster_model import ErrorReply as ErrorReply
 from doeff_cluster._coordinator.intent.cluster_model import TaskAccepted as TaskAccepted
@@ -111,6 +112,10 @@ from doeff_cluster._coordinator.core.program_policy import program_refs as progr
 from doeff_cluster._coordinator.core.measured_room import measured_room as measured_room
 from doeff_cluster._coordinator.core.measured_room import reserve_of as reserve_of
 from doeff_cluster._coordinator.core.measured_room import unseen_since as unseen_since
+from doeff_cluster._coordinator.core.measured_room import need_of as need_of
+from doeff_cluster._coordinator.core.measured_room import reserved_mib_of as reserved_mib_of
+from doeff_cluster._coordinator.core.measured_room import memory_room_mib as memory_room_mib
+from doeff_cluster._coordinator.core.measured_room import memory_line_mib as memory_line_mib
 JOB_ENTRY: str
 MAX_EVENTS: int
 BOARD_MAX_VALUE_BYTES: int
@@ -274,6 +279,12 @@ def memory_misfit(worker: WorkerInfo, load: dict[str, WorkerLoad], job: ClusterJ
 def task_room_of(worker: WorkerInfo, load: dict) -> _Program[int, object]:
     ...
 
+def task_memory_room_of(worker: WorkerInfo, load: dict) -> _Program[int, object]:
+    ...
+
+def memory_need_refusal(state: ClusterState, needs: tuple, memory_mib: int | None) -> _Program[str | None, object]:
+    ...
+
 def active_jobs(state: ClusterState) -> tuple:
     ...
 
@@ -379,7 +390,7 @@ def foreground_reserve_of(worker: WorkerInfo) -> _Program[int, object]:
 def background_reserve_of(worker: WorkerInfo) -> _Program[int, object]:
     ...
 
-def task_misfit(limits: tuple, priority: int, worker: WorkerInfo, room: int, held: dict, groups: Table, bg_held: int, bg_wanted: int) -> _Program[TaskUnplacedKind | None, object]:
+def task_misfit(limits: tuple, priority: int, worker: WorkerInfo, room: int, held: dict, groups: Table, bg_held: int, bg_wanted: int, need: int, memory_room: int) -> _Program[TaskUnplacedKind | None, object]:
     ...
 
 def limits_misfit(limits: tuple, worker: str, held: dict, groups: Table) -> _Program[TaskUnplacedKind | None, object]:

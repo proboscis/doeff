@@ -21,12 +21,12 @@
 (import doeff_cluster._shared.intent.protocol [ClusterTiming])
 (import doeff [run])
 (import doeff_cluster._shared.core.capabilities [environ-pairs])
-(import doeff_cluster._shared.core.detached_rules [task-priority-refusal task-limits-refusal task-limits-of task-notify-refusal])
+(import doeff_cluster._shared.core.detached_rules [task-priority-refusal task-limits-refusal task-limits-of task-notify-refusal task-memory-refusal])
 (import doeff_cluster._coordinator.intent.cluster_model [ClusterState TaskRecord ErrorReply DetachedSubmitted DetachedProgress DetachedUnknown DetachedWarming DetachedCancelled DetachedReleased])
 (import doeff_cluster._coordinator.core.cluster_rules [format-version-refusal])
 (import doeff_cluster._coordinator.intent.request_bodies [TaskBody])
 (import doeff_cluster._coordinator.core.cluster_policy [DETACHED-TERMINAL TASK-MAX-OPEN end-detached runtime-env-value-refusal task-id task-body-refusal needs-named program-versions
-                                                     limits-undeclared-refusal scan-rows])
+                                                     limits-undeclared-refusal scan-rows memory-need-refusal])
 (import doeff_cluster._shared.intent.detached_model [DETACHED-DEFAULT-LEASE-SECONDS DETACHED-DEFAULT-RETAIN-SECONDS OPEN-PHASES WARMING-PHASE
                                                     DetachedEnded DetachedOutbox DetachedOutboxAcked OUTBOX-ENDED OUTBOX-QUEUED-OVERDUE])
 
@@ -68,7 +68,8 @@
 
 (defn #^ Reply submit-detached [#^ ClusterState state #^ str key #^ TaskBody body #^ int now]
   "PUT /detached/<key>: 同じ key の行が在ればそれを返す(created = false)。name・needs・実行環境・子の環境変数(environ)が違えば 409
-   (同じ job id を別の仕事に使った呼び手の誤り — environ は Program の読む設定なので、違えば別の仕事)。無ければ待ちの行を作る。"
+   (同じ job id を別の仕事に使った呼び手の誤り — environ は Program の読む設定なので、違えば別の仕事)。無ければ待ちの行を作る。
+   memory の要り(memoryMiB)が needs の合うどの worker の線よりも大きい新しい task は 400 で断る(memory-need-refusal)。"
   (setv lease (if (is body.lease-seconds None) DETACHED-DEFAULT-LEASE-SECONDS body.lease-seconds)
         retain (if (is body.retain-seconds None) DETACHED-DEFAULT-RETAIN-SECONDS body.retain-seconds)
         refusal (or (format-version-refusal body.format)
@@ -80,6 +81,7 @@
                     (task-priority-refusal body.priority)
                     (task-limits-refusal body.limits)
                     (task-notify-refusal body.notify)
+                    (task-memory-refusal body.memory-MiB)
                     ;; 名乗った組は系の宣言に在る物だけ(値と範囲は宣言が持つ)。
                     (run (limits-undeclared-refusal state.group-limits body.limits))))
   (when refusal (return (Reply state 400 (ErrorReply :message refusal))))
@@ -93,6 +95,9 @@
           (Reply state 200 (DetachedSubmitted :key key :id existing.id :created False :phase existing.phase))
           (Reply state 409 (ErrorReply :message (.format "key {} は別の仕事(name {!r}・needs {}・environ の名 {})に使われている"
                                         key existing.name (list existing.needs) (lfor #(k _) existing.environ k)))))))
+  ;; needs の合うどの worker の線よりも大きい要りは、待っても置けないので積まずに断る(2026-11-02 — 今だけ空きの足りない task は積んで待つ)。
+  (setv too-big (run (memory-need-refusal state needs body.memory-MiB)))
+  (when too-big (return (Reply state 400 (ErrorReply :message too-big))))
   (setv open-count (len (lfor t (scan-rows state.tasks) :if (in t.phase OPEN-PHASES) t))
         detached-count (len (lfor t (.rows state.tasks) :if t.detached t)))
   (when (>= open-count TASK-MAX-OPEN)
@@ -108,7 +113,7 @@
                          :detached True :key key :retain-ms (int (* 1000 retain))
                          :runtime-env body.runtime-env :environ environ
                          :priority (or body.priority 0) :limits (task-limits-of body.limits)
-                         :notify (or body.notify "")))
+                         :notify (or body.notify "") :memory-mib body.memory-MiB))
   (Reply (replace state :tasks (.with-writes state.tasks #((TableWrite id task))) :next-task (+ state.next-task 1))
          200 (DetachedSubmitted :key key :id id :created True :phase task.phase)))
 

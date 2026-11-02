@@ -82,12 +82,13 @@
    told-unread = log に出した読めない訳・jobs-limit = 最後に書いた jobs の層の上限(None = まだ書いていない)・squeezed = 今の回に
    上限を jobs の使いより下げた続きの中・told-failure = log に出した jobs の層の失敗の訳・outside = 前の回の jobs と準備の層の外の
    working set(None = 前の回に数えられなかった — 増えを数えない)・growths = 回あたりの外の増え(負は 0・新しい MARGIN-WINDOW 回)・
-   margin = 最後の回の余裕(None = まだ)・told-margin = log に出した余裕・reserve = 最後の回の準備の取り置き。scheduler の task は 1 つの
-   thread で交互に走るので錠は要らない。"
+   margin = 最後の回の余裕(None = まだ)・told-margin = log に出した余裕・reserve = 最後の回の準備の取り置き・uses = 見張りの最後の読みの
+   job ごとの memory(JobUse の tuple — heartbeat の測りが task ごとの今の使いとして名乗る・2026-11-02)・uses-at-ms = その読みの刻(None =
+   まだ)。scheduler の task は 1 つの thread で交互に走るので錠は要らない。"
   (defn #^ None __init__ [self]
     (setv self.kubelet None self.node-read-ms None self.node-reason "" self.line None self.line-at-ms None self.told-kubelet None
           self.told-unread "" self.jobs-limit None self.squeezed False self.told-failure "" self.outside None
-          self.growths #() self.margin None self.told-margin None self.reserve 0)))
+          self.growths #() self.margin None self.told-margin None self.reserve 0 self.uses #() self.uses-at-ms None)))
 
 
 (defrecord LayerMemory

@@ -1,26 +1,39 @@
-;;; worker に task をあと幾つ置けるかを、worker が heartbeat で名乗る機体の測った空き(measured — CPU の使い・memory の空き・PSI)から
-;;; 数える純粋な判断。task の置き先(cluster_policy.place-tasks)と GET /state の taskRoom が cluster_policy.task-room-of を通して読む。
+;;; worker に task をあと幾つ置けるか・どの大きさの task まで置けるかを、worker が heartbeat で名乗る機体の測った空き(measured — CPU の
+;;; 使い・memory の空き・PSI・task ごとの memory の今の使い)と、task が名乗る memory の要り(SubmitDetached の memory-mib — 1 本の山の MiB)
+;;; から数える純粋な判断。task の置き先(cluster_policy.place-tasks)と GET /state の taskRoom・taskMemoryRoomMiB が cluster_policy の
+;;; task-room-of・task-memory-room-of を通して読む。
 ;;;
 ;;; 以前は worker ごとに手で書いた数(枠の file の taskReserve・backgroundRoom)から置いた task を引いた数を空きとした。手の数は機体の
 ;;; 実際の混み(他の Pod の CPU・memory の残り)を見ず、機体を足すたびに書き足し、混みの事故のたびに分け方を直した。今は:
-;;;   空き = min(CPU の空き − まだ測りに出ていない task, memory の空き − まだ測りに出ていない task, 上限 − 置いた task)
+;;;   数の空き       = min(CPU の空き − まだ測りに出ていない task, memory の枠, 上限 − 置いた task)
 ;;;   CPU の空き     = ⌊(cpus × (1 − cpu-busy) − CPU-FLOOR-CORES) / TASK-CORES⌋
-;;;   memory の空き  = ⌊(memory-available − MEMORY-FLOOR-MIB) / TASK-MEMORY-MIB⌋
+;;;   memory の枠    = ⌊memory の空き / MEMORY-SLOT-MIB⌋(予約の半分ずつの守りが数で読むための単位 — task の大きさの見込みではない)
 ;;;   上限           = ⌊cpus / TASK-CORES⌋(task-cap-of — 測りが遅れても CPU の数より多くは置かない)
+;;;   memory の空き  = memory-available − MEMORY-FLOOR-MIB − Σ 置いた task の max(0, 要り − 今の使い)(MiB — memory-room-mib)
 ;;;   まだ測りに出ていない task = 置いた task のうち、測った空きを載せた同じ heartbeat の状態の報告で動いていない物と、測った刻 −
-;;;                               TASK-RAMP-MS より後に置いた物(置いた直後・走り出した直後の task は CPU と memory をまだ使いきって
-;;;                               いない — 呼び手 cluster_policy.load-of が WorkerLoad.unseen に数える)
+;;;                               TASK-RAMP-MS より後に置いた物(置いた直後・走り出した直後の task は CPU をまだ使いきっていない —
+;;;                               呼び手 cluster_policy.load-of が WorkerLoad.unseen に数える)
+;;; task は、数の空きが在り、要りが memory の空き以下の worker にだけ置く(要りの大きさは数でなく MiB で比べる)。
+;;;
+;;; memory の要りの予約(2026-11-02): 以前は memory の空きを ⌊(空き − 床) / 1 GiB⌋ 本と数え、置いてから 10 秒
+;;; (TASK-RAMP-MS)だけ測りに出ていない task を引いた。日次の doeff の回は置いてから 15〜20 分かけて 0.9 → 5.2 GiB 超まで伸びるので、
+;;; 置いた時の空きは後の伸びを含まず、伸びる前の空きを見て軽い task を同じ worker に詰め、重い回が伸びた時に見張りに止められた
+;;; (11-02 12:05 の t27866)。今は置いた task ごとに「要り − 今の使い」(まだ伸びる分)を測った空きから引いて予約する。今の使いは worker が
+;;; 測りの task-memory-MiB(見張りの最後の読みの task ごとの memory — task の木の rss の和)で名乗り、名乗られない task は 0(要りの全部を
+;;; 予約する)。要りを名乗らない task(切り離さない task の RemoteJob・欄の前の保存の行)は UNDECLARED-TASK-MIB を要りと見込む。
+;;;
 ;;; CPU の PSI の some avg10 が CPU-PRESSURE-STOP 以上か、memory の some avg10 が MEMORY-PRESSURE-STOP 以上の間は 0(実行を待つ process が
 ;;; もう出ている機体へ足さない)。測った空きを名乗らない worker(/proc の無い機体・測りの前の版の worker)と、CPU の使いをまだ数えられない
 ;;; 読み(cpu-busy None — 初めの読み)は 0。
 ;;;
-;;; memory の空き(memory-available): worker が名乗る値。kubelet の下の worker は、kubelet が Pod を追い出す線までの空き(Pod の全部の
-;;; working set と allocatable の差・機体の線の近い方 — worker/core/eviction_rules)を名乗り、それ以外の worker は MemAvailable を名乗る。
-;;; 機体の MemAvailable が残っていても、allocatable の線を越えれば kubelet は worker の Pod を丸ごと追い出す(atlas の 10-30〜11-01 の
-;;; 5 回)ので、置き先は追い出しまでの空きで数える。
+;;; memory の空き(memory-available)と総量(memory-total): worker が名乗る値。kubelet の下の worker は、kubelet が Pod を追い出す線までの
+;;; 空き(Pod の全部の working set と allocatable の差・機体の線の近い方 — worker/core/eviction_rules)と線の大きさを名乗り、それ以外の
+;;; worker は MemAvailable と MemTotal を名乗る。機体の MemAvailable が残っていても、allocatable の線を越えれば kubelet は worker の Pod を
+;;; 丸ごと追い出す(atlas の 10-30〜11-01 の 5 回)ので、置き先は追い出しまでの空きで数える。線の大きさ − 床(memory-line-mib)は、その
+;;; worker が空いた時に受けうる要りの最大 — needs の合うどの worker の線よりも大きい要りの task は、積む時に断る(待っても入らない)。
 ;;;
 ;;; 常駐の job の分: 測った CPU の使いと memory の空きには、常駐の job が今使っている CPU と memory が入っている。空きはその残りから数えるので、
-;;; 常駐の job の測った使用量の分を残して task を置く(手書きの割合や数で残さない)。置いた後に task が膨らむ分は、機体の中の cgroup の層
+;;; 常駐の job の測った使用量の分を残して task を置く(手書きの割合や数で残さない)。置いた後に常駐の job が膨らむ分は、機体の中の cgroup の層
 ;;; (常駐の job の memory.min と CPU の重み・追い出しまでの空きから worker が掛け直す jobs の層の memory.max)が kernel で守る。数の値は
 ;;; 機体ごとに書かず、どの機体にも同じ値を使う。
 ;;;
@@ -31,9 +44,14 @@
 (import math [floor])
 (import doeff_cluster._coordinator.intent.request_bodies [MeasuredLoad])
 
-;; task 1 本に見込む CPU の数と memory(MiB)。会話の test や build の 1 本は、混んでいない機体で CPU 1 つ・memory 1 GiB 前後を使う。
+;; task 1 本に見込む CPU の数。会話の test や build の 1 本は、混んでいない機体で CPU 1 つ前後を使う。
 (val TASK-CORES 1)
-(val TASK-MEMORY-MIB 1024)
+;; memory の要りを名乗らない task に見込む要り(MiB)。要りを名乗る口の無い切り離さない task(RemoteJob — POST /tasks)と、要りの欄の
+;; 前に保存した行だけが使う(切り離した task は要りを名乗る — detached_rules.task-memory-refusal)。
+(val UNDECLARED-TASK-MIB 1024)
+;; 数の空きの memory の単位(MiB)。予約の半分ずつの守り(cluster_policy.task-misfit)は空きを数で読むので、memory の空き(要りの予約を
+;; 引いた MiB)もこの単位で数に写す。task を置けるかは要りと memory の空きの MiB で比べる(この単位で task の大きさを見込まない)。
+(val MEMORY-SLOT-MIB 1024)
 ;; 機体に残す空いた CPU と memory。CPU は常駐の job の揺れと、測りの間の増えの分。memory はその 512 MiB に、worker が jobs の層の上限で
 ;; 追い出しの線の手前に残す余裕 1024 MiB(worker/core/eviction_rules の EVICTION-MARGIN-BYTES — 宣言の無い機体の余裕で、task を受ける
 ;; 機体の宣言の値の最大〔atlas〕。task は追い出しまでの空きからこの余裕を引いた分までしか使えない)を足した値。
@@ -42,7 +60,8 @@
 ;; PSI の some avg10(%)がこの値以上の機体には置かない。CPU は実行を待つ process が出ている時間の割合、memory は回収で止まった時間の割合。
 (val CPU-PRESSURE-STOP 40.0)
 (val MEMORY-PRESSURE-STOP 10.0)
-;; 走り出した task の使いが測りに出きるまでの見込みの長さ(worker の測りの間 5 秒の 2 回分 — CPU の使いは前の読みとの間の増えで数える)。
+;; 走り出した task の CPU の使いが測りに出きるまでの見込みの長さ(worker の測りの間 5 秒の 2 回分 — CPU の使いは前の読みとの間の増えで
+;; 数える)。memory はこの見込みで数えない(task は分の単位で伸びる — 要りの予約で数える)。
 (val TASK-RAMP-MS 10000)
 ;; 予約 = 上限のこの分の 1。
 (val RESERVE-SHARE 6)
@@ -71,21 +90,52 @@
       (and (is-not measured.memory-some-avg10 None) (>= measured.memory-some-avg10 MEMORY-PRESSURE-STOP))))
 
 
-(defk measured-room [measured placed unseen]
-  {:pre [(: measured (| MeasuredLoad None)) (: placed int) (: unseen int)] :post [(: % int) (>= % 0)]
+(defk need-of [memory-mib]
+  {:pre [(: memory-mib (| int None))] :post [(: % int)] :tags {:context "coordinator" :role "judgment"}}
+  "task の memory の要り(MiB)を知るため: 名乗った要り memory-mib、名乗らない task(None)は UNDECLARED-TASK-MIB。"
+  (if (is memory-mib None) UNDECLARED-TASK-MIB memory-mib))
+
+
+(defk reserved-mib-of [need use]
+  {:pre [(: need int) (: use (| int None))] :post [(: % int) (>= % 0)] :tags {:context "coordinator" :role "judgment"}}
+  "置いた task 1 本が、測った memory の空きからまだ予約する分(MiB — これから伸びうる分)を知るため: max(0, 要り need − 今の使い use)。
+   今の使いを名乗られない task(None — 置いた直後・測りの前の版の worker)は要りの全部。"
+  (max 0 (- need (or use 0))))
+
+
+(defk memory-room-mib [measured reserved]
+  {:pre [(: measured (| MeasuredLoad None)) (: reserved int)] :post [(: % int)] :tags {:context "coordinator" :role "judgment"}}
+  "worker に新しく置ける task の要りの最大(MiB)を知るため: 測った memory の空き − MEMORY-FLOOR-MIB − reserved(置いた task の
+   reserved-mib-of の和)。負は 0 未満のまま返す(GET /state で詰めすぎを読めるように — 置き先は 0 以下の worker に置かない)。
+   測りの無い worker は 0。"
+  (if (is measured None) 0 (- measured.memory-available-MiB MEMORY-FLOOR-MIB reserved)))
+
+
+(defk memory-line-mib [measured]
+  {:pre [(: measured (| MeasuredLoad None))] :post [(: % (| int None))] :tags {:context "coordinator" :role "judgment"}}
+  "worker が空いた時に受けうる task の要りの最大(MiB)を知るため: 名乗った memory の総量(kubelet の下の worker は追い出しの線の大きさ)
+   − MEMORY-FLOOR-MIB。測りの無い worker は None(判じない)。積む時の断り(detached_policy の memory-need-refusal)が読む。"
+  (if (is measured None) None (- measured.memory-total-MiB MEMORY-FLOOR-MIB)))
+
+
+(defk measured-room [measured placed unseen reserved]
+  {:pre [(: measured (| MeasuredLoad None)) (: placed int) (: unseen int) (: reserved int)] :post [(: % int) (>= % 0)]
    :tags {:context "coordinator" :role "judgment"}}
-  "worker に task をあと幾つ置けるかを機体の測った空きから知るため(頭の註の式 — 0 以上): measured = heartbeat の測った空き(None =
-   名乗らない)・placed = その worker に置いた task の数・unseen = そのうち測りにまだ出ていない数。測りの無い・CPU の使いをまだ数えられない・
-   PSI の待ちが出ている機体は 0。"
+  "worker に task をあと幾つ置けるかを機体の測った空きから知るため(頭の註の数の空き — 0 以上): measured = heartbeat の測った空き(None =
+   名乗らない)・placed = その worker に置いた task の数・unseen = そのうち測りにまだ出ていない数・reserved = 置いた task の memory の
+   予約の和(MiB)。測りの無い・CPU の使いをまだ数えられない・PSI の待ちが出ている機体は 0。memory の空き(memory-room-mib)は
+   MEMORY-SLOT-MIB の枠の数に写す(測りに出ていない task は引かない — その使いは予約が既に引いている)。置ける task の大きさは
+   memory-room-mib が決める。"
   (when (or (is measured None) (is measured.cpu-busy None))
     (return 0))
   (when (! (pressured? measured))
     (return 0))
+  (<- memory-room int (memory-room-mib measured reserved))
   (val idle-cores (- (* measured.cpus (- 1 measured.cpu-busy)) CPU-FLOOR-CORES))
   (val cpu-room (- (floor (/ idle-cores TASK-CORES)) unseen))
-  (val memory-room (- (// (- measured.memory-available-MiB MEMORY-FLOOR-MIB) TASK-MEMORY-MIB) unseen))
+  (val memory-slots (// memory-room MEMORY-SLOT-MIB))
   (val cap-room (- (! (task-cap-of measured.cpus)) placed))
-  (max 0 (min cpu-room memory-room cap-room)))
+  (max 0 (min cpu-room memory-slots cap-room)))
 
 
 (defk reserve-of [measured]

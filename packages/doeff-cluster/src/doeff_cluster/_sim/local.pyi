@@ -315,6 +315,7 @@ from doeff_cluster._worker.core.room_rules import WorkerRoom as WorkerRoom
 from doeff_cluster._worker.core.room_rules import room_of_text as room_of_text
 from doeff_cluster._worker.core.room_rules import room_read_due as room_read_due
 from doeff_cluster._worker.core.load_rules import MachineLoad as MachineLoad
+from doeff_cluster._worker.core.load_rules import TaskMemory as TaskMemory
 from doeff_cluster._worker.entry.main import worker_on as worker_on
 from doeff_cluster._worker.intent.worker_model import WorkerPolicy as WorkerPolicy
 from doeff_cluster._worker.intent.worker_model import WorkerState as WorkerState
@@ -392,7 +393,7 @@ class SimMachine:
         ...
 ROOMY_MACHINE: SimMachine
 
-def machine_load_of(machine: SimMachine, running: int, at_ms: int, claims_cpus: int | None=None) -> _Program[MachineLoad, object]:
+def machine_load_of(machine: SimMachine, running: int, at_ms: int, claims_cpus: int | None=None, task_ids: tuple | None=None) -> _Program[MachineLoad, object]:
     ...
 
 @dataclass(frozen=True, kw_only=True)
