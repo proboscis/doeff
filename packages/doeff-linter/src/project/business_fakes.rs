@@ -473,7 +473,11 @@ pub struct Clause {
     pub node: usize,
     pub rel: String,
     pub handler: String,
+    /// 効果の定義元の正典の名(定義した module + 名)— 鍵・表の照らし・層の判じが読む。解けなかった効果は綴りのまま(解けなかった事は
+    /// 所見に出す)。
     pub effect: String,
+    /// 節の file が import で書いた綴り(索引の名 — 知らせの文と細目に出す)。
+    pub written: String,
     /// 節の形(`clause_shapes_in` で 1 度だけ求める — 規則の全部が同じ判じを読む)。
     pub shape: ClauseShape,
 }
@@ -729,7 +733,7 @@ mod tests {
     }
 
     fn clause(i: usize, effect: &str, forwards: bool) -> Clause {
-        Clause { node: i, rel: "app/sim/fake.hy".into(), handler: "fake".into(), effect: effect.into(), shape: shape(forwards) }
+        Clause { node: i, rel: "app/sim/fake.hy".into(), handler: "fake".into(), effect: effect.into(), written: effect.into(), shape: shape(forwards) }
     }
 
     #[test]
@@ -924,7 +928,7 @@ mod tests {
         for handler in ["a", "b", "c"] {
             let shape = shapes[&(handler.to_string(), "Place".to_string())];
             assert_eq!(shape, ClauseShape { forwards: true, answers: true }, "{} の形", handler);
-            let at = Clause { node: 0, rel: "app/sim/fake.hy".into(), handler: handler.into(), effect: "app.orders.intent.Place".into(), shape };
+            let at = Clause { node: 0, rel: "app/sim/fake.hy".into(), handler: handler.into(), effect: "app.orders.intent.Place".into(), written: "app.orders.intent.Place".into(), shape };
             let row: BTreeMap<String, String> = [(at.key(), "反例".to_string())].into();
             let clauses = vec![at];
             let (yes, no, empty) = (vec![true], vec![false], BTreeMap::new());
@@ -1036,6 +1040,7 @@ mod tests {
             rel: rel.into(),
             handler: handler.into(),
             effect: "app.orders.intent.Place".into(),
+            written: "app.orders.intent.Place".into(),
             shape: shape(forwards),
         };
         let clauses = vec![
