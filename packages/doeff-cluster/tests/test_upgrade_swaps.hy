@@ -76,7 +76,7 @@
 (defk running-task-across-the-swap []
   {:pre [] :post [(: % DetachedOutcome)] :tags {:context "doeff-cluster-test" :role "program"}}
   "場面 (b): a に 20 秒の切り離した task を出し、走り出した後で a を作り直す。答え = task の結末。"
-  (<- (submit-detached-task (slow-add 20.0 5) :key "k-run" :needs ON-X :lease-seconds LEASE))
+  (<- (submit-detached-task (slow-add 20.0 5) :key "k-run" :needs ON-X :lease-seconds LEASE :memory-mib 1024))
   (<- (Delay 3.0))
   (<- (swap-a (replace A :doeff-commit NEW)))
   (<- outcome (AwaitDetached "k-run"))
@@ -103,9 +103,9 @@
   {:pre [] :post [(: % tuple)] :tags {:context "doeff-cluster-test" :role "program"}}
   "場面 (c): a(測った空きで task 1 本)を 30 秒の task で埋め、次の task を queued にしてから coordinator を 10 秒止める。答え = 2 つの task の結末。"
   (<- (Delay 3.0))
-  (<- (submit-detached-task (slow-add 30.0 1) :key "k-busy" :needs ON-X :lease-seconds LEASE))
+  (<- (submit-detached-task (slow-add 30.0 1) :key "k-busy" :needs ON-X :lease-seconds LEASE :memory-mib 1024))
   (<- (Delay 3.0))
-  (<- (submit-detached-task (slow-add 1.0 2) :key "k-queued" :needs ON-X :lease-seconds LEASE))
+  (<- (submit-detached-task (slow-add 1.0 2) :key "k-queued" :needs ON-X :lease-seconds LEASE :memory-mib 1024))
   (<- (Delay 1.0))
   (<- (StopCoordinator 10.0))
   (<- (Delay 12.0))

@@ -97,7 +97,7 @@
   "pause 秒眠った後(拍の位相をずらす)に切り離した task を 1 つ置き、置いてから task の process が起きるまでの仮想の ms を返すため。"
   (<- (Delay pause))
   (<- asked int (now-epoch-ms))
-  (<- (submit-detached-task (slow-task sim-task-foundation 0.2) :key name :needs NET :name name))
+  (<- (submit-detached-task (slow-task sim-task-foundation 0.2) :key name :needs NET :name name :memory-mib 1024))
   (<- (AwaitDetached name :timeout-seconds 30.0))
   (<- id str (task-id-named name))
   (<- runs tuple (ProcessesOf (+ "task/" id)))
@@ -148,7 +148,7 @@
   "筋書き: 落ち着いた後、木の無い worker へ最初の task を置き、開始までの仮想の ms と結果を返すため(尺は start-latency と同じ 送信 → 開始)。"
   (<- (Delay SETTLE-SECONDS))
   (<- asked int (now-epoch-ms))
-  (<- (submit-detached-task (slow-task sim-task-foundation 0.2) :key "first" :needs NET :name "first"))
+  (<- (submit-detached-task (slow-task sim-task-foundation 0.2) :key "first" :needs NET :name "first" :memory-mib 1024))
   (<- outcome DetachedSucceeded (AwaitDetached "first" :timeout-seconds 30.0))
   (<- id str (task-id-named "first"))
   (<- runs tuple (ProcessesOf (+ "task/" id)))

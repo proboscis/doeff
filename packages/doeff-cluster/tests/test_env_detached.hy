@@ -71,7 +71,7 @@
   {:pre [(: keys tuple) (: n int)] :post [(: % dict)] :tags {:context "doeff-cluster-test" :role "program"}}
   "keys の task(slow-add — 答え = 100 + n + 順番)を全部送ってから、全部の答えを待つため(答え = key → 答え)。"
   (for [#(i key) (enumerate keys)]
-    (<- (submit-detached-task (slow-add 0.0 (+ n i)) :needs LOCAL :key key)))
+    (<- (submit-detached-task (slow-add 0.0 (+ n i)) :needs LOCAL :key key :memory-mib 1024)))
   (var got {})
   (for [key keys]
     (<- outcome (AwaitDetached key))
@@ -237,7 +237,7 @@
   (<- declared dict (runtime-env->json env))
   ;; 本文は置き場に置いた詰めた Program のキーを運ぶ(置いた状態 placed で送る — 断りは宣言と形の版だけによる)。
   (<- placed tuple (program-placed (ClusterState) {}))
-  (val base {"program" (get placed 1) "revision" "" "needs" ["net"] "leaseSeconds" 10})
+  (val base {"program" (get placed 1) "revision" "" "needs" ["net"] "leaseSeconds" 10 "memoryMiB" 1024})
   (val broken (| declared {"repos" [{"name" "app" "url" APP-URL "commit" "main"}]}))
   (for [body [(| base {"runtimeEnv" broken}) (| base {"format" 99})]]
     (assert (= (get (! (submit-task (get placed 0) (! (task-body-of body)) 0)) 1) 400) body)

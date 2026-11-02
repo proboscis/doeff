@@ -44,7 +44,7 @@
 (defk submit-and-await [key]
   {:pre [(: key str)] :post [(: % DetachedSucceeded)] :tags {:context "doeff-cluster-test" :role "program"}}
   "手元の道具の本体: task を 1 本送り、終わるまで待って答えを返す。"
-  (<- submitted DetachedSubmitted (submit-detached-task (slow-add 1.0 7) key :needs LOCAL :lease-seconds 5.0))
+  (<- submitted DetachedSubmitted (submit-detached-task (slow-add 1.0 7) key :needs LOCAL :lease-seconds 5.0 :memory-mib 1024))
   (assert (= submitted (DetachedSubmitted key True)) submitted)
   (<- outcome DetachedSucceeded (AwaitDetached key))
   outcome)
@@ -93,7 +93,7 @@
   (<- submitted DetachedSubmitted
       (with-handlers [(sim-time-handler :clock clock) (transport-http transport)]
         (with-detached-client COORDINATOR-URL REVISION env
-          (submit-detached-task (slow-add 1.0 7) "k-identity" :needs LOCAL :lease-seconds 5.0))))
+          (submit-detached-task (slow-add 1.0 7) "k-identity" :needs LOCAL :lease-seconds 5.0 :memory-mib 1024))))
   (assert (= submitted (DetachedSubmitted "k-identity" True)) submitted)
   (<- row TaskRecord (task-row coordinator "k-identity"))
   (<- declared dict (runtime-env->json env))
@@ -110,7 +110,7 @@
   (<- submitted DetachedSubmitted
       (with-handlers [(sim-time-handler :clock clock) (transport-http transport)]
         (with-detached-client COORDINATOR-URL REVISION env
-          (submit-detached-task (slow-add 1.0 7) "k-env-key" :needs LOCAL :lease-seconds 5.0))))
+          (submit-detached-task (slow-add 1.0 7) "k-env-key" :needs LOCAL :lease-seconds 5.0 :memory-mib 1024))))
   (assert (= submitted (DetachedSubmitted "k-env-key" True)) submitted)
   (val placed (lfor row (.rows coordinator.state.programs) row.versions))
   (assert (= placed [(! (process-versions {}))]) placed))

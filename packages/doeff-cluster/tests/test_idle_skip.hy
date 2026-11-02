@@ -261,7 +261,7 @@
   "筋書き: 静かな区間をはさんで、切り離した task(lease 60 秒・40 秒眠る)・宣言し直し・worker w1 の死・coordinator の 5 秒の止まりを
    順に入れ、task の答え・一生・process・盤の行を読むため。"
   (<- (Delay 30.0))
-  (<- (submit-detached-task (slow-task sim-task-foundation 40.0) :key "stretch" :needs NET :name "slow" :lease-seconds 60.0))
+  (<- (submit-detached-task (slow-task sim-task-foundation 40.0) :key "stretch" :needs NET :name "slow" :lease-seconds 60.0 :memory-mib 1024))
   (<- answer DetachedAwaited (AwaitDetached "stretch" :timeout-seconds 120.0))
   (<- (Delay QUIET-SECONDS))
   (<- (Redeclare (quitters-v2 sim-foundation)))

@@ -391,9 +391,11 @@ coordinator の状態(`GET /state`)から読み直します。受け手は `coor
 (import doeff_cluster [AwaitDetached CancelDetached ReleaseDetached DetachedSucceeded DetachedFailed DetachedLost])
 (val NET (frozenset ["cluster-net"]))      ; effect の needs は frozenset(空は構築関数が断る)
 ;; RemoteJob・SubmitDetached・WarmRuntimeEnv は構築関数(remote-job・submit-detached-task・warm-runtime-env)を通して出す。
-;; needs を検めてから effect を出し、答えを返す。
+;; needs を検めてから effect を出し、答えを返す。切り離した task は memory の要り :memory-mib(1 本の山の MiB)が必須で、
+;; 渡さない呼びは構築関数が TypeError で、本文に memoryMiB の無い PUT /detached は coordinator が 400 で断る。
 (<- total (remote-job (add-task production-foundation n) :needs NET :name "add"))
-(<- submitted (submit-detached-task (summarize production-foundation rows) :key job-id :needs NET :lease-seconds 60.0))
+(<- submitted (submit-detached-task (summarize production-foundation rows) :key job-id :needs NET :lease-seconds 60.0
+                                    :memory-mib 2048))
 ;; ... 呼び手が消えてもよい。別の process から同じ key で待てる ...
 (<- outcome (AwaitDetached job-id))
 ```

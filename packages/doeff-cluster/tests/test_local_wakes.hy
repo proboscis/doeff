@@ -98,7 +98,7 @@
 (defk wait-for-slow-task [key timeout-seconds]
   {:pre [(: key str) (: timeout-seconds (| float None))] :post [(: % DetachedWait)] :tags {:context "doeff-cluster-test" :role "program"}}
   "筋書き: SLOW-SECONDS 秒眠る task を key で送り、timeout-seconds まで待って、答えと起きた刻を読む。"
-  (<- (submit-detached-task (slow-task sim-task-foundation SLOW-SECONDS) :key key :needs NET :name "slow"))
+  (<- (submit-detached-task (slow-task sim-task-foundation SLOW-SECONDS) :key key :needs NET :name "slow" :memory-mib 1024))
   (<- started int (now-epoch-ms))
   (<- answer (AwaitDetached key :timeout-seconds timeout-seconds))
   (<- woke int (now-epoch-ms))

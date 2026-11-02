@@ -22,7 +22,7 @@
 (import doeff_cluster._coordinator.core.detached_policy [submit-detached])
 (import doeff_cluster._coordinator.protocol.cluster_json [task-record-to-json task-record-from-json])
 (import doeff_cluster._coordinator.protocol.replies [state-view-json])
-(import doeff_cluster._shared.core.detached_rules [task-memory-refusal task-placing-json])
+(import doeff_cluster._shared.core.detached_rules [task-memory-refusal task-memory-required-refusal task-placing-json])
 (import doeff_cluster._worker.core.memory_rules [JobUse])
 (import doeff_cluster._worker.core.load_rules [MachineLoad TaskMemory task-uses-of TASK-USES-FRESH-MS])
 (import doeff_cluster._worker.protocol.heartbeat [measured-json])
@@ -149,6 +149,26 @@
   (assert (in "memoryMiB" answer.message) answer.message)
   ;; 送り手の本文の欄: 名乗る時だけ memoryMiB を置く(旧い coordinator は知らない欄を捨てる)。
   (assert (= #((task-placing-json 0 #() 6144) (task-placing-json 0 #())) #({"memoryMiB" 6144} {}))))
+
+
+(deftest test-a-send-without-a-memory-need-is-refused-by-the-builder-and-the-door
+  ;; 切り離した task の要りは必須(2026-11-02): 要りを渡さない呼びも None も構築関数が送る前に TypeError で、本文に memoryMiB の無い
+  ;; PUT /detached を受け口が 400 で断り、行を積まない(名乗らない task を一律の見込みで数える道を閉じる)。
+  (assert (is-not (task-memory-required-refusal None) None))
+  (assert (is (task-memory-required-refusal 6144) None))
+  (assert (is-not (task-memory-required-refusal 0) None))
+  (with [raised (pytest.raises TypeError)]
+    (<- (submit-detached-task (noop) "k" :needs (frozenset #("host-atlas")))))
+  (assert (in "memory_mib" (str raised.value)) raised.value)
+  (with [raised (pytest.raises TypeError)]
+    (<- (submit-detached-task (noop) "k" :needs (frozenset #("host-atlas")) :memory-mib None)))
+  (assert (in "memoryMiB" (str raised.value)) raised.value)
+  (setv #(status answer state) (! (submitted "k" {})))
+  (assert (= status 400) #(status answer))
+  (assert (in "memoryMiB" answer.message) answer.message)
+  (assert (= (len (list (.rows state.tasks))) 0) state.tasks)
+  ;; 欄の前に保存した行(memory_mib の無い行)の読みは、今も名乗らない行として受ける(置き先は見込みの要りで数える)。
+  (assert (is (task-memory-refusal None) None)))
 
 
 (deftest test-a-need-larger-than-every-line-is-refused-and-a-short-room-waits

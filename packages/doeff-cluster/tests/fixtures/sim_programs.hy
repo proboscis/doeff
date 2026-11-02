@@ -210,7 +210,7 @@
   {:pre [(: n int) (: key str)] :post [(: % int)] :tags {:context "doeff-cluster-test" :role "program"}}
   "切り離した task を 1 本出して待ち(自分の reader を持つ add-task — 答え = 100 + n)、答えを盤の key に書いてから、準備できたと報告
    し続ける(sim の宿が SubmitDetached・AwaitDetached に本番と同じ要求で答えるかを見るため)。"
-  (<- submitted DetachedSubmitted (submit-detached-task (add-task sim-task-foundation n) :key "svc-detached" :needs NET :name "add"))
+  (<- submitted DetachedSubmitted (submit-detached-task (add-task sim-task-foundation n) :key "svc-detached" :needs NET :name "add" :memory-mib 1024))
   (<- outcome (AwaitDetached submitted.key))
   (<- (WriteShared key (OpaqueJson.of {"created" submitted.created
                                        "value" (if (isinstance outcome DetachedSucceeded) outcome.value None)
