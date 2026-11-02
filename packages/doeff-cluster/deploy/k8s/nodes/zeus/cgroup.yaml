@@ -35,6 +35,12 @@
 # 画面の socket へ 20 ms おきの ws の ping、Pod 25 core 超の秒): 重み無し p99 9.4 ms・最大 53 ms → services と worker 1000 で
 # p99 5.0 ms・最大 34 ms。cpu.idle は使わない(命令の層を何にでも譲らせると、会話の手番の命令が CPU の埋まった間ずっと止まる —
 # CLI を SCHED_IDLE にした時に手番が 25〜32% 伸びたのと同じ形)。
+# 層 deploy = 上に載る系の配備の宣言の CLI(1 回の起動が 1 本の process — 上に載る系の起動の入口が DOEFF_WORKER_CGROUP_DIR の下の
+# deploy へ自分を移してから CLI を exec する)。一括の仕事ではなく遅れに敏感な 1 本なので、cpu.weight を常駐の層と同じ 1000 に置く(常駐の
+# 層より上には置かない)。訳: commands(100)に居ると、load 100 以上の時に module の import の wall が CPU の秒の 2〜3 倍(19〜24 秒)に
+# 伸びた。値の出どころ(11-02 11:45 JST の zeus で手で作った一時の cgroup の試し): 重み 1000 で wall が CPU の 1.03〜1.13 倍・重み 100 で
+# 1.25〜1.52 倍。memory.max 4G = 測った RSS の峰(11-02 15:4x JST の zeus — 本番の回の宣言の process の VmHWM 0.6GB)に子の命令と
+# 2 本の重なりの余りを足した値。限る層なので、和は container の上限の内(守る層 26G + 限る層 68G)。
 #
 # 雛形の env の並び(WORK_DIR が 1 番・DRAIN_DEADLINE が 9 番)を動かさないよう、足す物は全部末尾へ足す。
 - op: add
@@ -71,6 +77,6 @@
 - { op: add, path: /spec/template/spec/containers/0/env/-, value: { name: WORKER_CGROUP_HOST, value: /host/cgroup } }
 - op: add
   path: /spec/template/spec/containers/0/env/-
-  value: { name: WORKER_CGROUP_LAYOUT, value: "worker:memory.min=2G,cpu.weight=1000 services:memory.min=13G,cpu.weight=1000 clis:memory.min=11G,cpu.weight=100 jobs:memory.max=36G,cpu.weight=100 commands:memory.max=28G,cpu.weight=100" }
+  value: { name: WORKER_CGROUP_LAYOUT, value: "worker:memory.min=2G,cpu.weight=1000 services:memory.min=13G,cpu.weight=1000 clis:memory.min=11G,cpu.weight=100 jobs:memory.max=36G,cpu.weight=100 commands:memory.max=28G,cpu.weight=100 deploy:memory.max=4G,cpu.weight=1000" }
 - { op: add, path: /spec/template/spec/containers/0/env/-, value: { name: DOEFF_WORKER_SERVICE_CGROUP, value: services } }
 - { op: add, path: /spec/template/spec/containers/0/env/-, value: { name: DOEFF_WORKER_JOB_CGROUP, value: jobs } }

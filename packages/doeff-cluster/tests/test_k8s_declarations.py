@@ -324,11 +324,14 @@ CGROUP_LAYOUT_SINCE = "2c1ac027a212bc59ceb304683130e7b69becbf0b"
 CGROUP_FIRST_LAYER = "worker"
 CGROUP_CHILD_LAYER = "commands"
 CGROUP_CLI_LAYER = "clis"
+# 上に載る系の配備の宣言の CLI を置く層(zeus だけ)。遅れに敏感な 1 本の process なので、CPU の重みは常駐の層と同じまで上げてよい
+# (常駐の層より上には置かない)・ほかの一括の仕事の層より上。
+CGROUP_DEPLOY_LAYER = "deploy"
 # 層を宣言する機体(全部の機体)→ 最初の層と常駐の job の層(DOEFF_WORKER_SERVICE_CGROUP)のほかに守る層・task の層
 # (DOEFF_WORKER_JOB_CGROUP)のほかに限る層。zeus でない機体は CLI も命令の層も使わない(CLI と命令を起こす上に載る系の常駐の job は
 # zeus に残る)。zeus でない機体の委ねる係と層の名は部品 ../deploy/k8s/cgroup-layers 1 つ。
 CGROUP_LAYERS = {
-    "zeus": ({CGROUP_CLI_LAYER}, {CGROUP_CHILD_LAYER}),
+    "zeus": ({CGROUP_CLI_LAYER}, {CGROUP_CHILD_LAYER, CGROUP_DEPLOY_LAYER}),
     "atlas": (set(), set()),
     "eos": (set(), set()),
     "helios": (set(), set()),
@@ -437,17 +440,22 @@ def test_helios_worker_guards_its_resident_jobs_above_their_estimated_peak(rende
 
 @pytest.mark.parametrize("node", sorted(CGROUP_LAYERS))
 def test_worker_puts_its_resident_layers_before_the_bulk_layers_on_the_cpu(rendered: list[Manifest], node: str) -> None:
-    """worker の本体と常駐の job の層の cpu.weight は、ほかの層(task・CLI・命令)の cpu.weight より高い。失敗ケース:
-    子に cpu を掛けない(重みの無い)層では、CPU が埋まった時に起きた画面の thread が CLI と task の thread と同じ重みで実行待ちに並び、
-    ws の ping の往復が 50〜140 ms に跳ねた。cpu.idle は掛けない(命令の層が CPU の埋まった間ずっと止まる)。"""
+    """worker の本体と常駐の job の層の cpu.weight は、一括の仕事の層(task・CLI・命令)の cpu.weight より高い。配備の宣言の CLI の層
+    (CGROUP_DEPLOY_LAYER)は常駐の層の重み以下で、一括の仕事の層より高い。失敗ケース: 子に cpu を掛けない(重みの無い)層では、CPU が
+    埋まった時に起きた画面の thread が CLI と task の thread と同じ重みで実行待ちに並び、ws の ping の往復が 50〜140 ms に跳ねた。
+    配備の層が一括の仕事と同じ重みでは、load 100 以上の時に宣言の CLI の import の wall が CPU の秒の 2〜3 倍に伸びた。cpu.idle は
+    掛けない(命令の層が CPU の埋まった間ずっと止まる)。"""
     worker = _worker_on(rendered, node)
     settings = dict(_layout(worker))
     service = str(_env_value(worker, "DOEFF_WORKER_SERVICE_CGROUP")["value"])
     weights = {name: int(values["cpu.weight"]) for name, values in settings.items() if "cpu.weight" in values}
     assert set(weights) == set(settings), settings
     resident = {CGROUP_FIRST_LAYER, service}
-    for bulk in set(settings) - resident:
-        assert all(weights[name] > weights[bulk] for name in resident), weights
+    prompt = {CGROUP_DEPLOY_LAYER} & set(settings)
+    for bulk in set(settings) - resident - prompt:
+        assert all(weights[name] > weights[bulk] for name in resident | prompt), weights
+    for name in prompt:
+        assert weights[name] <= min(weights[layer] for layer in resident), weights
     assert all("cpu.idle" not in values for values in settings.values()), settings
 
 
