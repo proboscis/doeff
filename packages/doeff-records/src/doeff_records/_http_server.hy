@@ -68,6 +68,10 @@
 ;;;     undeclared・名乗りの無い要求は unnamed)。表ごとの系列は起動の時に 0 で置き、呼び手 × 表の系列は最初の答えで現れる(宣言の表 ×
 ;;;     呼び手の組は数千 — 全部を 0 で置くと /metrics の本文と、数えるたびの断面の写しが重くなる)。区間の秒の系列(records_stage_*)に表の
 ;;;     名は付けない(区間 9 × 表 80 の観測の列になる — 遅い表は呼びの数と行の数から絞り、区間は操作ごとに読む)
+;;;   - 呼び手ごとの要求の数(一覧の読みの外の操作も重い呼び手を数で名指すため): answer-with が記録の操作の要求 1 つごとに、同じ呼び手の
+;;;     名(list-rows-caller の答え)× 操作の counter records_requests_caller_<呼び手>_op_<操作> を CountMetric で 1 つ数える(綴りと閉じた
+;;;     系列は wire の CALLER-OP-*)。本文を読めた要求だけを数える(本文の上限の越えの 400 は records_requests_<種>_<status> だけに入る)。
+;;;     表は付けず、起動の時に 0 で置かない(最初の要求で現れる)
 ;;;   - scheduler の thread の仕事の分け(ADR-DOE-RECORDS-002 — _loop_work.hy の頭の註): 受けの loop・要求の task・書きの門・変化の待ちは
 ;;;     全部 1 本の scheduler の thread の上で回るので、その thread は要求の受けと順の制御と、大きさが要求の本文か 1 行で決まる計算だけを持つ。
 ;;;     束の読みの行の読み解き(_pg.hy の decoded-batch)と束の読みの答えの綴り(_service.hy の answer-reply)は Compute を出す。入口の
@@ -110,7 +114,7 @@
 (import doeff_records._wire [ERROR-INTERNAL ERROR-MALFORMED ERROR-STORE-UNAVAILABLE ANSWER-METRICS ANSWER-METRIC-HELPS answer-metric operation-kind
                             operation-of server-timing-spelled])
 (import doeff_records._wire [WRITER-HEADER CALLER-HEADER IDEMPOTENCY-HEADER SERVER-TIMING-HEADER list-rows-caller list-rows-counts list-rows-metrics
-                            list-rows-metric-helps])
+                            list-rows-metric-helps caller-op-metric caller-op-metrics])
 (import doeff_records._store_choice [StorePressure PressureUnread])
 (import doeff_core_effects [CountMetric MeterSettings MeterSnapshot ObserveSecondsBatch ReadMeter SecondsObservation SecondsTotal])
 (import doeff_core_effects [memory-meter-handler])
@@ -208,7 +212,7 @@
    (StorePressure | PressureUnread)の Program(store-reach が届いた後に同じ上限の内で撃つ・None = 詰まりの無い置き場 = 0・#1858)・
    meter = 計器の handler(doeff の CountMetric と ReadMeter に答える・None = memory-meter-handler — 検が壊した計器を差す口・#2709)・
    served = 走っている木と世代(GET /served が答える・None = 知らない — 答えの commits と instance は null・#2742)・
-   callers = 一覧の読みを呼び手ごとに数える宣言の呼び手の名(X-Records-Caller の名乗りをこの名に限って数える — 空 = 名乗りは全部 undeclared)・
+   callers = 一覧の読みと要求の数を呼び手ごとに数える宣言の呼び手の名(X-Records-Caller の名乗りをこの名に限って数える — 空 = 名乗りは全部 undeclared)・
    compute-workers = 組み立てが開いた計算の pool の thread の数(GET /metrics の records_compute_workers — 利用率の割る数・None = 名乗らない)。"
   (#^ HttpAddress address)
   (#^ RecordsSchema schema)
@@ -647,7 +651,8 @@
    記録の handler は、要求の handler の入りと出と待ちの刻を要求の刻の帳面 book に打つ包み(stamped-handling)で被せる。
    要求ごとの外側の handler(serving.request-handlers — 検の仮想の時計)を被せる。GET /readyz は置き場を問い(readiness-answer)、
    GET /metrics は計器を描く(metrics-answer — どちらも身元を引く前に答える)。GET /served は走っている木と表の要約を答える
-   (served-answer — 身元も表の用意も問わない)。"
+   (served-answer — 身元も表の用意も問わない)。記録の操作の要求は、名乗りに照らした呼び手 × 操作の数を 1 つ数える(頭の註の呼び手ごとの
+   要求の数)。"
   (when (and (= request.method "GET") (= request.path PATH-METRICS))
     (return (! (metrics-answer serving.schema serving.compute-workers))))
   (when (and (= request.method "GET") (= request.path PATH-SERVED))
@@ -657,6 +662,9 @@
     (return (! (with-handlers [#* serving.request-handlers] (readiness-answer serving prepared)))))
   (val handler-for (if (is prepared None) (fn [writer] store-not-prepared) prepared))
   (<- caller str (list-rows-caller request.caller serving.callers))
+  (val operation (! (operation-of request.path)))
+  (when (is-not operation None)
+    (<- (CountMetric :name (! (caller-op-metric caller operation)) :amount 1.0)))
   (<- service (records-service serving.schema (fn [writer] (BodyWrapper stamped-handling book caller (handler-for writer)))))
   (<- answer (with-handlers [#* serving.request-handlers]
                             (respond service request)))
@@ -666,8 +674,10 @@
 (defk place-answer-metrics [serving]
   {:pre [(: serving RecordsServing)] :post [(: % None)] :tags {:context "records" :role "entry"}}
   "要求の数の系列(wire の ANSWER-METRICS)と表ごとの一覧の読みの系列(宣言の表と呼び手の閉じた組 — 名が重なる宣言は起動を止める)を
-   全部 0 で置くため(起動の時 1 回 — 読み手が「無い」と「0」を区別しなくて済み、区間の差が最初の 1 つ目の増えを取りこぼさない)。"
+   全部 0 で置くため(起動の時 1 回 — 読み手が「無い」と「0」を区別しなくて済み、区間の差が最初の 1 つ目の増えを取りこぼさない)。
+   呼び手ごとの要求の数の系列は、名の重なりと予約の語だけを確かめて 0 では置かない(wire の CALLER-OP-METRIC の註)。"
   (<- list-rows tuple (list-rows-metrics (tuple serving.schema.tables) serving.callers))
+  (<- (caller-op-metrics serving.callers))
   (for [metric (+ ANSWER-METRICS list-rows)]
     (<- (CountMetric :name metric :amount 0.0)))
   None)
@@ -920,7 +930,7 @@
   "検の殻の口 1 つの組み立て: schema = 置き場の宣言 / handler-for = 書き手の名 → 記録の handler(用意し終えた置き場の上) /
    request-handlers = 要求ごとの答えの外側に被せる handler の列(呼び手の仮想の時計・SQL の答え手)/ host・port(0 = 空いている port)/
    meter = 計器の handler(None = memory-meter-handler — 検が壊した計器を差す口・RecordsServing の meter へそのまま渡す)/
-   served = 走っている木と世代(RecordsServing の served へそのまま渡す・None = 知らない)/ callers = 一覧の読みを呼び手ごとに数える
+   served = 走っている木と世代(RecordsServing の served へそのまま渡す・None = 知らない)/ callers = 一覧の読みと要求の数を呼び手ごとに数える
    宣言の呼び手の名(RecordsServing の callers へそのまま渡す)/ maintenance = 手入れの周期(RecordsServing の maintenance へそのまま
    渡す・None = 手入れを立てない — 手入れが要求の答えを待たせない事を殻の上で確かめる検が渡す)。"
   (#^ RecordsSchema schema)

@@ -103,7 +103,7 @@
    long-poll — #3074。前の欄 poll-seconds は使い手が渡すのをやめた後に消した)。要求は常に HttpRequest の effect で出す(file の頭の註)。
    meter = 計器の答え手(doeff の CountMetric に答える handler — 送った要求を数える。None = 数えない・file の頭の註)/
    writer = 呼び手の名(在れば平文の見出し X-Records-Writer で送る — service は確かめずに書き手の名に使う・#2988)/
-   caller = 呼び手の job の名(在れば見出し X-Records-Caller で送る — service が一覧の読みを呼び手ごとに数える。許可には使わない)/
+   caller = 呼び手の job の名(在れば見出し X-Records-Caller で送る — service が一覧の読みと要求の数を呼び手ごとに数える。許可には使わない)/
    timed-operations = 往復の計時の行を出す操作の名(wire の操作の名・空 = 出さない — file の頭の註)。"
   (#^ str base-url)
   (setv #^ float request-timeout DEFAULT-REQUEST-TIMEOUT)

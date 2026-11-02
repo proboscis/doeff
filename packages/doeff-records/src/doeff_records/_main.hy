@@ -47,7 +47,7 @@
 ;;;   RECORDS_MAINTENANCE_SECONDS    手入れの間隔(既定 60)
 ;;;   RECORDS_KEEP_CHANGES_SECONDS   変更の列に残す秒(既定 604800 = 7 日 — これより遅れた読み手は Reset で一覧から読み直す)
 ;;;   RECORDS_ORIGIN_HOST            行に刻む機体の名(既定 = env HOSTNAME — k8s は pod の名を置く。どちらも無ければ起動しない)
-;;;   RECORDS_CALLERS                一覧の読みを呼び手ごとに数える呼び手の job の名(, で区切る・既定 = 無し — 要求の見出し X-Records-Caller の
+;;;   RECORDS_CALLERS                一覧の読みと要求の数を呼び手ごとに数える呼び手の job の名(, で区切る・既定 = 無し — 要求の見出し X-Records-Caller の
 ;;;                                  名乗りをこの名に限って数え、ほかの名乗りは undeclared に畳む。_http_server.hy の頭の註の一覧の読みの数)
 ;;; 表は起動時に CREATE ... IF NOT EXISTS だけを流す(既存の表を消さない・変えない)。既に在る表に足りない索引は、索引の用意の task が
 ;;; CREATE INDEX CONCURRENTLY で作る(_pg.hy の頭の註の「索引の用意」)。
