@@ -35,8 +35,8 @@
 (val TASK-CORES 1)
 (val TASK-MEMORY-MIB 1024)
 ;; 機体に残す空いた CPU と memory。CPU は常駐の job の揺れと、測りの間の増えの分。memory はその 512 MiB に、worker が jobs の層の上限で
-;; 追い出しの線の手前に残す余裕 1024 MiB(worker/core/eviction_rules の EVICTION-MARGIN-BYTES — task は追い出しまでの空きからこの余裕を
-;; 引いた分までしか使えない)を足した値。
+;; 追い出しの線の手前に残す余裕 1024 MiB(worker/core/eviction_rules の EVICTION-MARGIN-BYTES — 宣言の無い機体の余裕で、task を受ける
+;; 機体の宣言の値の最大〔atlas〕。task は追い出しまでの空きからこの余裕を引いた分までしか使えない)を足した値。
 (val CPU-FLOOR-CORES 1)
 (val MEMORY-FLOOR-MIB 1536)
 ;; PSI の some avg10(%)がこの値以上の機体には置かない。CPU は実行を待つ process が出ている時間の割合、memory は回収で止まった時間の割合。
