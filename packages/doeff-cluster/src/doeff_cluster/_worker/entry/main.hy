@@ -21,6 +21,7 @@
 (import doeff_core_effects [FileFailed PathKind PathStat ReadText StatPath WriteText]
         doeff_core_effects._file_effects [file-done])
 (import doeff_core_effects [os-file-handler offloaded-tree-handler offloaded-file-handler])
+(import doeff_cluster._foundation.compute_pool [worker-compute-handler])
 (import doeff_core_effects [subprocess-handler])
 (import doeff_core_effects [os-warm-process-handler])
 (import doeff_core_effects [os-proc-table-handler])
@@ -298,7 +299,8 @@
    (ForkFromWarm・PollWarmChild・SignalWarmChild・WriteWarmChildInput — process-host が出す)の本物の答え手は os-warm-process-handler(#3646)で、
    service の子の入力の pipe の書き口の表を session に持つので session-store の内側に置く。木の数えと消しと
    様子つきの歩き(MeasureTree・RemoveTree・StatTree)は offloaded-tree-handler が thread で待つ — env-host の掃除の task が詰まった disk の
-   上で木を数え・消す間も、10 万の file の bytecode の保存先を歩く間も、調整ループ(heartbeat)は回り続ける(#3715)。tick が触る同期の file の効果(WriteText・ReadText・StatPath・ListDirectory・MakeDirectory・RenamePath・ReadDiskFree)も offloaded-file-handler が thread で待つ。止めの合図(SIGTERM・SIGINT)は核の os-signal-stop-handler が答える — 信号の受け手を
+   上で木を数え・消す間も、10 万の file の bytecode の保存先を歩く間も、調整ループ(heartbeat)は回り続ける(#3715)。歩きの答えから
+   消す物を選ぶ純粋な計算(Compute)は worker-compute-handler が pool の thread で待つ(数十万の entry の選びの間も同じく回る)。tick が触る同期の file の効果(WriteText・ReadText・StatPath・ListDirectory・MakeDirectory・RenamePath・ReadDiskFree)も offloaded-file-handler が thread で待つ。止めの合図(SIGTERM・SIGINT)は核の os-signal-stop-handler が答える — 信号の受け手を
    最初の止めの問いで据え、その箱を session-store に置く(#3871 の単位 3)。Pod の止まりの観測(ObserveLeaving — local-host が問う)は
    leaving-observer が世代の file(boot-file — 無ければ止まりを読まない)の隣の印を、この process の世代(link.boot)と比べて答える(AL-D2p —
    印の書き手と形の module leaving_mark は読まない)。機体の memory の見張りが読む process の表と、止める SignalPid は os-proc-table-handler
@@ -316,7 +318,7 @@
   (if (is job-procs None) [] [(job-cgroup-placer job-procs)])
   [os-proc-table-handler
    process-exit-handler
-   os-file-handler offloaded-tree-handler offloaded-file-handler (session-store) os-warm-process-handler os-signal-stop-handler no-wakes (env-host envs) (code-host codes) (status-file status-path)
+   os-file-handler offloaded-tree-handler offloaded-file-handler worker-compute-handler (session-store) os-warm-process-handler os-signal-stop-handler no-wakes (env-host envs) (code-host codes) (status-file status-path)
    (lease-release lease-cell link-options) (coordinator-link link link-cell link-options watch-cell)]
   (if (is pod-labels None) [] [(pod-job-labels (get pod-labels 0) (get pod-labels 1))])
   [(probe-host probes) (warm-host warm) (process-host host) (leaving-observer boot-file link.boot) (memory-observer memory-cell) local-host tick-pauses]))
