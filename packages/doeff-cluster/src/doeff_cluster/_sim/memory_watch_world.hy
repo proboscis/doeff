@@ -31,9 +31,7 @@
 (import doeff_cluster._worker.protocol.observations [ObserveJobRoots])
 (import doeff_cluster._worker.protocol.memory_watch [MemoryWatchSettings])
 
-;; 模擬の表の container の頭(本番の worker の Pod の tini)と、群れの子 process の pid の始まり(sim の job の pid — NextPid の 1 から — と
-;; 重ならない大きさ)。
-(val INIT-PID 1)
+;; 群れの子 process の pid の始まり(sim の job の pid — NextPid の 1 から — と重ならない大きさ)。
 (val FLOOD-BASE-PID 10000000)
 
 
@@ -84,11 +82,12 @@
 
 (defk sim-proc-rows [roots task-rss-bytes floods]
   {:pre [(: roots tuple) (: task-rss-bytes int) (: floods tuple)] :post [(: % tuple)] :tags {:context "doeff-cluster" :role "judgment"}}
-  "process の表(ProcRow の列・pid の昇順)を作るため: container の頭(pid 1)・生きている job の根 roots(JobRoot の列 — 頭の直下・rss は
-   task-rss-bytes)・群れ floods の子(その job の根の直下 — 根が無い群れは出さない。job の根が 2 つ在れば最初の根に置く)。"
+  "process の表(ProcRow の列・pid の昇順)を作るため: 生きている job の根 roots(JobRoot の列 — 表の頭・rss は task-rss-bytes)・群れ
+   floods の子(その job の根の直下 — 根が無い群れは出さない。job の根が 2 つ在れば最初の根に置く)。container の頭(本番の tini)は
+   置かない — sim の job の pid は 1 から振られ、頭の pid 1 と重なると木が自分を親に持つ輪になる。"
   (val heads (dict (gfor root (reversed roots) #(root.name root.pid))))
-  (val base (+ #((ProcRow :pid INIT-PID :ppid 0 :start-ticks INIT-PID :rss-bytes MIB :comm "tini"))
-               (tuple (gfor root roots (ProcRow :pid root.pid :ppid INIT-PID :start-ticks root.pid :rss-bytes task-rss-bytes :comm "python")))))
+  (val base (tuple (sorted (gfor root roots (ProcRow :pid root.pid :ppid 0 :start-ticks root.pid :rss-bytes task-rss-bytes :comm "python"))
+                           :key (fn [row] row.pid))))
   (var next-pid FLOOD-BASE-PID)
   (var flooded [])
   (for [flood floods]

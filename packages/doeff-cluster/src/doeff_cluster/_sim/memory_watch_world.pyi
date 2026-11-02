@@ -13,7 +13,6 @@ from doeff_cluster._worker.core.memory_rules import JobRoot as JobRoot
 from doeff_cluster._worker.core.memory_rules import MIB as MIB
 from doeff_cluster._worker.protocol.observations import ObserveJobRoots as ObserveJobRoots
 from doeff_cluster._worker.protocol.memory_watch import MemoryWatchSettings as MemoryWatchSettings
-INIT_PID: int
 FLOOD_BASE_PID: int
 
 @dataclass(frozen=True, kw_only=True)
