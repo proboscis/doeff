@@ -209,9 +209,12 @@ pub enum ProjectRule {
     /// DOEFF145: 同じ dir の同じ名の .hy で kw-only の record(defrecord か、飾りに :kw-only True の dataclass を持つ defclass)を、
     /// 型の宣言(.pyi)が kw_only=True の無い @dataclass で宣言する — 型検査は位置の引数の呼びを通すが実行時は TypeError(#1191)。
     RecordStubNotKwOnly,
-    /// DOEFF143: 模擬の根から届き本番の入口から届かない定義が業務の効果に tap でなく答える(偽の handler)・外の世界の表と反例の表の腐り。
+    /// DOEFF143: 模擬の根から届き本番の入口から届かない定義が業務の効果に tap でなく答える(偽の handler)・外の世界の表の腐り(反例の表の古い行は DOEFF176)。
     ///宣言は architecture.hy の :business-fakes。
     BusinessEffectFake,
+    /// DOEFF176: 反例の表(:business-fakes の :counterexamples)の行が、わざと壊したどの handler の節にも当たらない — 古い行。
+    /// 判じは DOEFF143 と同じ 1 か所(偽物の数と古い行の数を別の番号で数えるため DOEFF143 から分けた)。宣言は :business-fakes。
+    StaleCounterexampleRow,
     /// DOEFF155: 組み立ての形の破れ — 組の file が残る・組み立ての 1 点の関数の形(土台の列 1 つ + 翻訳の層から import した翻訳の列)・
     /// defk 以外で書いた組み立て・列の並び・翻訳の列が別の service の翻訳を並べる・1 点が列を引数で受ける・
     /// 検証環境と検が翻訳の列を 1 点の外で並べる(#3408)。宣言は :assembly-shape。
@@ -319,6 +322,7 @@ impl ProjectRule {
         ProjectRule::UntypedStructuredValue,
         ProjectRule::RecordStubNotKwOnly,
         ProjectRule::BusinessEffectFake,
+        ProjectRule::StaleCounterexampleRow,
         ProjectRule::AssemblyShapeBroken,
         ProjectRule::AssemblyAnswerMisplaced,
         ProjectRule::TestOnlyFake,
@@ -404,6 +408,7 @@ impl ProjectRule {
             ProjectRule::UntypedStructuredValue => "DOEFF144",
             ProjectRule::RecordStubNotKwOnly => "DOEFF145",
             ProjectRule::BusinessEffectFake => "DOEFF143",
+            ProjectRule::StaleCounterexampleRow => "DOEFF176",
             ProjectRule::AssemblyShapeBroken => "DOEFF155",
             ProjectRule::AssemblyAnswerMisplaced => "DOEFF156",
             ProjectRule::TestOnlyFake => "DOEFF157",
@@ -472,6 +477,7 @@ impl ProjectRule {
             | ProjectRule::UntypedStructuredValue
             | ProjectRule::RecordStubNotKwOnly
             | ProjectRule::BusinessEffectFake
+            | ProjectRule::StaleCounterexampleRow
             | ProjectRule::AssemblyShapeBroken
             | ProjectRule::AssemblyAnswerMisplaced
             | ProjectRule::TestOnlyFake
@@ -583,6 +589,7 @@ impl ProjectRule {
             | ProjectRule::ServiceUntestedOnSim
             | ProjectRule::WorldHandlerWithoutContractTest
             | ProjectRule::BusinessEffectFake
+            | ProjectRule::StaleCounterexampleRow
             | ProjectRule::AssemblyShapeBroken
             | ProjectRule::AssemblyAnswerMisplaced
             | ProjectRule::TestOnlyFake
@@ -731,6 +738,7 @@ impl ProjectRule {
             | ProjectRule::WorldHandlerWithoutContractTest
             | ProjectRule::ServiceUntestedOnSim
             | ProjectRule::BusinessEffectFake
+            | ProjectRule::StaleCounterexampleRow
             | ProjectRule::AssemblyShapeBroken
             | ProjectRule::AssemblyAnswerMisplaced
             | ProjectRule::TestOnlyFake
@@ -863,6 +871,7 @@ impl ProjectRule {
             | ProjectRule::UntypedStructuredValue
             | ProjectRule::RecordStubNotKwOnly
             | ProjectRule::BusinessEffectFake
+            | ProjectRule::StaleCounterexampleRow
             | ProjectRule::AssemblyShapeBroken
             | ProjectRule::AssemblyAnswerMisplaced
             | ProjectRule::TestOnlyFake
@@ -962,6 +971,7 @@ impl ProjectRule {
             ProjectRule::UntypedStructuredValue => "公開面の型が素の写像・素の組",
             ProjectRule::RecordStubNotKwOnly => "型の宣言の @dataclass に kw_only=True が無い",
             ProjectRule::BusinessEffectFake => "業務の効果に答える偽の handler",
+            ProjectRule::StaleCounterexampleRow => "反例の表の当たらない古い行",
             ProjectRule::AssemblyShapeBroken => "組み立ての形の破れ",
             ProjectRule::AssemblyAnswerMisplaced => "翻訳の先か土台の答えが業務の効果",
             ProjectRule::TestOnlyFake => "検だけの偽物",
@@ -1035,6 +1045,7 @@ impl ProjectRule {
             | ProjectRule::UntypedStructuredValue
             | ProjectRule::RecordStubNotKwOnly
             | ProjectRule::BusinessEffectFake
+            | ProjectRule::StaleCounterexampleRow
             | ProjectRule::AssemblyShapeBroken
             | ProjectRule::AssemblyAnswerMisplaced
             | ProjectRule::TestOnlyFake
@@ -1131,6 +1142,7 @@ impl ProjectRule {
             ProjectRule::UntypedStructuredValue => "Untyped Structured Value",
             ProjectRule::RecordStubNotKwOnly => "Record Stub Not Kw Only",
             ProjectRule::BusinessEffectFake => "Business Effect Fake",
+            ProjectRule::StaleCounterexampleRow => "Stale Counterexample Row",
             ProjectRule::AssemblyShapeBroken => "Assembly Shape Broken",
             ProjectRule::AssemblyAnswerMisplaced => "Assembly Answer Misplaced",
             ProjectRule::TestOnlyFake => "Test Only Fake",
@@ -1208,6 +1220,7 @@ impl ProjectRule {
             ProjectRule::ProgramSleepsOnWallClock => "設定の `[tool.doeff-linter.program_sleep]` の置き場の Hy の program(defk・defp の本体 — 字面で内側に在る fn・defn・deff の中も)は、time.sleep・asyncio.sleep を呼ばない(import の別名 `(import time :as t)` の t.sleep・`(import asyncio [sleep])` で束ねた名・(Await (asyncio.sleep 秒)) の中の呼びも)— 時間は doeff-time の効果(Delay・WaitUntil・WaitWithin …)で待ち、1 秒が何であるかは呼び手が置く時間の handler が決める。秒が literal の 0 の譲りは数えない。壁の時計で待ってよいのは handler の実装だけ: defhandler の本体・引数の並びが [effect k] の定義・契約の辞書の :tags の :role が foundation(汎用の I/O の役 — handler からだけ呼ばれる helper)を自分で名乗る defk・defp。最上位の deff・defn(素の callable)は program でないので数えない(doeff の ADR-DOE-TIME-001 R1・R2・待ちは doeff の時間の効果で書く)",
             ProjectRule::HandlerArgumentHoldsState => "handler は接続の object や書き換える店を引数で受け取らない — 接続先と資格・設定は Ask で読み、client は本文の先頭の (session val client …) で 1 回だけ作り、状態は (session var …) で持つ(外側の handler が差し替え・観測できる)。引数に残す物は本文に architecture.hy の :handler-arguments の :keep-mark の註で理由を書く",
             ProjectRule::BusinessEffectFake => "業務の効果に答える偽物を作らない — 偽物は外の世界に触れる効果だけ。業務の操作は下の層の効果を出す defk で書き、検査は外の世界の handler だけを差し替える。模擬の根と本番の入口と業務の module は architecture.hy の :business-fakes で宣言する",
+            ProjectRule::StaleCounterexampleRow => "反例の表の行は、わざと壊した反例の handler が今も在る間だけ置く — 壊した handler を直したか消したら行も消す",
             ProjectRule::AssemblyShapeBroken => "組み立ては 1 点 — 組み立ての層の関数(引数 = 土台の値)が、土台の handler の列 1 つと、各 service の翻訳の層の翻訳の列の定数を並べるだけ。本番と模擬の違いは渡す土台の値だけで、組の file は残さない。翻訳の列は自分の service の翻訳だけを持ち、別の service の効果を出し直す列の外側にはそれに答える列を並べる。名前は architecture.hy の :assembly-shape で宣言する",
             ProjectRule::AssemblyAnswerMisplaced => "業務の効果の答えは翻訳の列の handler に置く — 翻訳の handler が出し直すのは業務を知らない汎用の効果か同じ列の効果(答える handler は外側)か他の service の公開の効果だけで、土台の handler は外の世界の効果にだけ答える",
             ProjectRule::TestOnlyFake => "検だけの偽物を作らない — 業務の handler は本番の 1 つだけで、検は土台(記録の効果・時計・外の相手)の handler の差し替えで組む。わざと壊した反例の handler は反例の表(:counterexamples)に理由つきで載せる",
@@ -1286,6 +1299,7 @@ impl ProjectRule {
             ProjectRule::UntypedStructuredValue => "欄の名前と型を持つ frozen の record(defrecord・defwire・dataclass)を定義して返す・持つ — :post は [(: % <record の型>)] で検める。キーで引く索引は dict[str, Row]・同じ型の列は tuple[X, ...] と中身の型を書く。値の形を外の系が決める境界なら登録簿に理由と共に載せる",
             ProjectRule::RecordStubNotKwOnly => "型の宣言の飾りを @dataclass(frozen=True, kw_only=True) にする",
             ProjectRule::BusinessEffectFake => "業務の操作を下の層の効果を出す defk で書き直して偽物を消す — 外の世界の効果なら外の世界の表に理由つきで足し、わざと壊した反例なら反例の表に載せる",
+            ProjectRule::StaleCounterexampleRow => "当たらなくなった反例の表の行(1 鍵 1 file の dir のその file)を消す",
             ProjectRule::AssemblyShapeBroken => "組の file の組み立てを組み立ての層の関数へ移して file を消す・関数を defk で書き、本体を [土台の列 翻訳の列 …] だけにする・別の service の翻訳は組み立ての層で別の列として並べる",
             ProjectRule::AssemblyAnswerMisplaced => "業務の効果に答える所を翻訳の列の handler へ移すか、答えを汎用の効果へ出し直す・出し直した効果に答える handler を列の前(外側)へ並べる",
             ProjectRule::TestOnlyFake => "検の組み立てを本番の handler + 土台の差し替えに書き直して偽物を消す — わざと壊した反例なら反例の表に載せる",
@@ -1423,6 +1437,7 @@ mod tests {
         ("DOEFF151", RuleFamily::Naming),
         ("DOEFF142", RuleFamily::Definition),
         ("DOEFF143", RuleFamily::Definition),
+        ("DOEFF176", RuleFamily::Definition),
         ("DOEFF155", RuleFamily::Definition),
         ("DOEFF156", RuleFamily::Definition),
         ("DOEFF157", RuleFamily::Definition),
