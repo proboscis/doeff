@@ -7,13 +7,16 @@
   HEAD と違えば入れない。
 - gc: 消すのは、最後に使った刻が日数より前で — 展開済みの wheel は hardlink の数が 1 の物・venv と環境はどの process も使っていない物・
   一時の物。同じ回に venv を消して hardlink の数が 1 に戻った展開済みの wheel も消す。count は何も消さない。前の gc から間が無ければ消さない。
-- upkeep: 環境変数を読んで seed と gc を順に撃ち、seed が落ちても gc を撃つ。空きが下限を下回れば seed しない。
+- upkeep: 環境変数を読んで seed と gc を順に撃ち、seed が落ちても gc を撃つ。空きが下限を下回れば seed しない。refresh は名指した node でだけ撃つ。
+- refresh: 空の cache に project ごとの取り込みを撃ち(venv は project の外)、組みの一時の環境を除いて pack し、lock の hash を
+  metadata に載せて PUT する。置いてある写しの hash が同じか、置いてから間が無ければ組まない。取り込みが落ちれば PUT しない。
 - boot.sh: doeff_uv_cache_upkeep は役 worker と prepare で、値が環境に在る時だけ道具を背後で起こし、標準出力に何も出さない。
 """
 
 from __future__ import annotations
 
 import datetime
+import email.utils
 import http.server
 import importlib.util
 import os
@@ -433,6 +436,172 @@ def test_upkeep_collects_when_seeding_fails(tmp_path: Path) -> None:
     )
     assert result["seed"]["reason"] == "failed"
     assert result["gc"]["ran"] is True
+
+
+def test_upkeep_refreshes_only_on_the_named_node() -> None:
+    env = {
+        "DOEFF_UV_CACHE_SEED_URL": "http://store/b/seed.tar.zst",
+        "DOEFF_UV_CACHE_SEED_REFRESH_NODE": "n1",
+        "DOEFF_UV_CACHE_SEED_REFRESH_PROJECTS": "/p/a:/p/b",
+        "DOEFF_UV_CACHE_SEED_REFRESH_EVERY_SECONDS": "60",
+        "UV": "/bin/uv",
+    }
+    settings = uv_cache.UpkeepSettings.from_env({**env, "NODE_NAME": "n1"})
+    assert settings.refresh_projects == (Path("/p/a"), Path("/p/b"))
+    assert settings.refresh_every_seconds == 60.0
+    assert settings.uv == "/bin/uv"
+    assert settings.refreshes
+    assert not uv_cache.UpkeepSettings.from_env({**env, "NODE_NAME": "n2"}).refreshes
+    assert not uv_cache.UpkeepSettings.from_env(env).refreshes
+    assert not uv_cache.UpkeepSettings.from_env({}).refreshes
+
+
+# ── refresh ───────────────────────────────────────────────────────────────
+
+
+class _StoreHandler(http.server.BaseHTTPRequestHandler):
+    """HEAD と PUT だけを答える object の置き場の代わり(object 1 つ — 本体・metadata・置いた刻)。"""
+
+    body: bytes | None = None
+    meta = ""
+    modified = 0.0
+    puts = 0
+
+    def do_HEAD(self) -> None:
+        if self.body is None:
+            self.send_response(404)
+            self.end_headers()
+            return
+        self.send_response(200)
+        self.send_header("Content-Length", str(len(self.body)))
+        self.send_header("Last-Modified", email.utils.formatdate(self.modified, usegmt=True))
+        if self.meta:
+            self.send_header(uv_cache.LOCKS_META, self.meta)
+        self.end_headers()
+
+    def do_PUT(self) -> None:
+        cls = type(self)
+        cls.body = self.rfile.read(int(self.headers["Content-Length"]))
+        cls.meta = self.headers.get(uv_cache.LOCKS_META, "")
+        cls.modified = time.time()
+        cls.puts += 1
+        self.send_response(200)
+        self.send_header("ETag", '"put"')
+        self.send_header("Content-Length", "0")
+        self.end_headers()
+
+    def log_message(self, *args: object) -> None:
+        return None
+
+
+@pytest.fixture
+def seed_store() -> Iterator[str]:
+    _StoreHandler.body, _StoreHandler.meta, _StoreHandler.modified, _StoreHandler.puts = (
+        None,
+        "",
+        0.0,
+        0,
+    )
+    server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), _StoreHandler)
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    try:
+        yield f"http://127.0.0.1:{server.server_address[1]}/bucket/seed.tar.zst"
+    finally:
+        server.shutdown()
+        server.server_close()
+
+
+@pytest.fixture
+def fake_uv(tmp_path: Path) -> Path:
+    """`uv sync … --project P --cache-dir C` の代わり: C に P の名の展開済みの項目を 1 つ書き、venv の置き場を P の外の
+    UV_PROJECT_ENVIRONMENT に作る(撃たれた引数を C の calls へ足す)。"""
+    script = _write(
+        tmp_path / "bin" / "uv",
+        "#!/bin/sh\n"
+        'while [ $# -gt 0 ]; do case "$1" in --project) p=$2; shift;; --cache-dir) c=$2; shift;; esac; shift; done\n'
+        'mkdir -p "$c/archive-v0/$(basename "$p")" "$UV_PROJECT_ENVIRONMENT"\n'
+        'echo ok > "$c/archive-v0/$(basename "$p")/mod.py"\n'
+        'mkdir -p "$c/builds-v0/x"\n',
+    )
+    script.chmod(0o755)
+    return script
+
+
+def _projects(tmp_path: Path) -> list[Path]:
+    return [
+        _write(tmp_path / "projects" / name / "uv.lock", f"lock {name}\n").parent
+        for name in ("alpha", "beta")
+    ]
+
+
+def _refresh(cache: Path, projects: list[Path], url: str, uv: Path, **kw: object) -> dict:
+    return uv_cache.refresh(
+        cache,
+        projects,
+        url,
+        None,
+        "us-east-1",
+        10.0,
+        every_seconds=kw.get("every_seconds", 3600.0),
+        min_free=0,
+        force=bool(kw.get("force", False)),
+        uv=str(uv),
+    )
+
+
+def test_locks_digest_follows_the_lock_content_and_order(tmp_path: Path) -> None:
+    alpha, beta = _projects(tmp_path)
+    first = uv_cache.locks_digest([alpha, beta])
+    assert first == uv_cache.locks_digest([alpha, beta])
+    assert first != uv_cache.locks_digest([beta, alpha])
+    _write(beta / "uv.lock", "lock beta 2\n")
+    assert first != uv_cache.locks_digest([alpha, beta])
+
+
+def test_refresh_builds_an_empty_cache_from_the_locks_and_puts_it_with_the_hash(
+    seed_store: str, fake_uv: Path, tmp_path: Path
+) -> None:
+    projects = _projects(tmp_path)
+    cache = tmp_path / "cache"
+    result = _refresh(cache, projects, seed_store, fake_uv)
+    assert result["refreshed"] is True
+    assert _StoreHandler.meta == uv_cache.locks_digest(projects) == result["locks"]
+    assert [s["project"] for s in result["synced"]] == [str(p) for p in projects]
+    unpacked = tmp_path / "unpacked"
+    packed = _write(tmp_path / "got.tar.zst", "")
+    packed.write_bytes(_StoreHandler.body or b"")
+    uv_cache.seed(unpacked, str(packed), None, "us-east-1", 10.0, force=False)
+    assert sorted(p.name for p in (unpacked / "archive-v0").iterdir()) == ["alpha", "beta"]
+    assert not (unpacked / "builds-v0").exists()
+    assert not list(cache.glob(uv_cache.REFRESH_BUILD + "*"))
+    assert not any((p / ".venv").exists() for p in projects)
+
+
+def test_refresh_skips_a_current_or_recent_copy_unless_forced(
+    seed_store: str, fake_uv: Path, tmp_path: Path
+) -> None:
+    projects = _projects(tmp_path)
+    cache = tmp_path / "cache"
+    _refresh(cache, projects, seed_store, fake_uv)
+    assert _refresh(cache, projects, seed_store, fake_uv)["reason"] == "current"
+    _write(projects[0] / "uv.lock", "lock alpha 2\n")
+    assert _refresh(cache, projects, seed_store, fake_uv)["reason"] == "recent"
+    assert _StoreHandler.puts == 1
+    _StoreHandler.modified = time.time() - 7200
+    assert _refresh(cache, projects, seed_store, fake_uv)["refreshed"] is True
+    assert _refresh(cache, projects, seed_store, fake_uv, force=True)["refreshed"] is True
+    assert _StoreHandler.puts == 3
+
+
+def test_refresh_does_not_put_when_a_sync_fails(seed_store: str, tmp_path: Path) -> None:
+    failing = _write(tmp_path / "bin" / "uv", "#!/bin/sh\nexit 2\n")
+    failing.chmod(0o755)
+    cache = tmp_path / "cache"
+    with pytest.raises(subprocess.CalledProcessError):
+        _refresh(cache, _projects(tmp_path), seed_store, failing)
+    assert _StoreHandler.puts == 0
+    assert not list(cache.glob(uv_cache.REFRESH_BUILD + "*"))
 
 
 # ── boot.sh ───────────────────────────────────────────────────────────────
