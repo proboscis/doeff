@@ -41,6 +41,22 @@
     True (and (= (type a) (type b)) (= a b))))
 
 
+(defn #^ object json-equal-token [#^ object value]  ; defk にできない: memory の置き場が錠の内で同期に呼ぶ索引の鍵の綴り(json-equal? と同じ作法の純関数)
+  "値 value の json-equal? の等しさの印(hash できる値 — None = 印を作れない値: 浮動小数の NaN と hash できない値)。2 つの値の印が
+   どちらも在る時、印が等しい事と json-equal? で等しい事は同じ — memory の置き場の索引(欄の値 → 鍵の綴り)の鍵にするため。真偽は数と
+   分け・数は数として比べ(1 と 1.0 は同じ印)・写像は欄の名と値の印の組・配列(list と tuple)は印の並び・ほかは型と値。"
+  (match value
+    (bool) #("b" value)
+    (float) :if (!= value value) None
+    (| (int) (float)) #("n" value)
+    (Mapping) (do (setv items (tuple (gfor #(name member) (.items value) #(name (json-equal-token member)))))
+                  (if (any (gfor #(_ token) items (is token None))) None #("m" (frozenset items))))
+    (| (list) (tuple)) (do (setv items (tuple (gfor member value (json-equal-token member))))
+                           (if (any (gfor token items (is token None))) None #("l" items)))
+    _ (try (do (hash value) #("o" (type value) value))
+           (except [TypeError] None))))
+
+
 (defn #^ str key-text [#^ (get tuple #(str ...)) key]  ; defk にできない: memory の置き場が錠の内で同期に呼ぶ置き場の読み書き(memory-read-row・memory-store-row・hidden-change? ほか)と、使い手の同期の畳みが呼ぶ純粋な綴り(defk にすると錠の内で Program を走らせる手が無く、素の呼びは Program の値を辞書の鍵に引いて黙って外れる)
   "鍵の綴り(JSON の配列・ASCII だけ)。頁の順はこの綴りの符号点の順 — PG では COLLATE \"C\" の順と同じになる。鍵は鍵の欄の順の文字列の tuple。"
   (json.dumps (list key) :separators #("," ":") :ensure-ascii True))

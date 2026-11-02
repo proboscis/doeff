@@ -87,7 +87,7 @@
 (import functools [partial])
 (import doeff_records._admission [Admitted AppendNew AppendReplay judge-expect judge-put judge-put-rows judge-append judged-diff
                                  retention-group-of key-head-of key-head-refusal where-refusal row-matches? row-matches-any? descending-value?
-                                 listed-row key-text canonical-json
+                                 listed-row key-text canonical-json json-equal-token
                                  next-watch-sequence
                                  epoch-ms terminal-row? body-digest row-expired? event-expired? judge-write-replay write-digest])
 
@@ -199,19 +199,25 @@
           self.appended-at-head {}
           ;; 表の名 → 鍵の綴りを並べた list の覚え(鍵の順の頁 memory-key-page-texts が頁ごとに表の全部の鍵を並べ直さないため)。
           ;; 置き場の中身から導ける物なので、錠と同じく pickle と copy は運ばず、戻した側は空から作る。
-          self.sorted-texts {}))
+          self.sorted-texts {}
+          ;; 表の名 → 宣言の index の欄 → 欄の値の印(admission.json-equal-token — 印を作れない値は None)→ その値の行の鍵の綴りを並べた
+          ;; list の覚え(絞りの読み memory-candidate-texts が表の全部の行を照らさず、合う行の候補だけを見るため — 本番の置き場が index で
+          ;; 引くのと同じ形)。読みが欄ごとに初めて使う時に作り、書きが直す。並べた鍵の覚え(sorted-texts)の無い表の覚えは古い物として
+          ;; 作り直す — 置き場の行を直に置く使い手は sorted-texts の表の覚えを外すだけで両方を外せる。sorted-texts と同じく運ばない。
+          self.indexed-texts {}))
   ;; 錠と呼び鈴は置き場の中身ではなく、この process の thread と実行の間の取り決め — pickle と copy は錠と呼び鈴を除いた中身だけを運び、
   ;; 戻した側で新しい錠と空の呼び鈴を作る(置き場を含む値を pickle する使い手 — worker の結果の file・coordinator の状態 — を壊さないため。
   ;; 呼び鈴は掛けた実行の中でしか意味を持たない)。
   (defn #^ dict __getstate__ [self]
     "pickle / copy が運ぶ中身を返すため(錠と呼び鈴を除く)。"
-    (dfor [name value] (.items self.__dict__) :if (not-in name #("lock" "bells" "sorted_texts")) name value))
+    (dfor [name value] (.items self.__dict__) :if (not-in name #("lock" "bells" "sorted_texts" "indexed_texts")) name value))
   (defn #^ None __setstate__ [self #^ dict state]
-    "pickle / copy から戻す時に中身を入れ、運んだ make-lock で新しい錠を作るため(並べた鍵の覚えは空から作る)。"
+    "pickle / copy から戻す時に中身を入れ、運んだ make-lock で新しい錠を作るため(並べた鍵の覚えと欄の値の覚えは空から作る)。"
     (.update self.__dict__ state)
     (setv self.lock (self.make-lock)
           self.bells {}
-          self.sorted-texts {}))
+          self.sorted-texts {}
+          self.indexed-texts {}))
   (deff __deepcopy__ [self memo]  ; defk にできない: copy.deepcopy が呼ぶ class の口(同期の呼び — Program を実行しない)
     {:pre [(: self MemoryStore) (: memo dict)] :post [(: % MemoryStore)] :tags {:context "records" :role "foundation"}}
     "置き場の写しを作るため(使い手の模擬の検が、種を置いた置き場を検ごとに写す — 写しへの書きは元の置き場に届かない)。書き換える
@@ -444,6 +450,7 @@
    期限を過ぎた行へ書く書きの片付け(writable-row)が同じ 1 つを使う。呼び鈴は鳴らさない(呼び手が鳴らす — 回収は消した表をまとめて 1 回)。"
   (setv stored (.pop (get store.rows table) text))
   (note-text-removed store table text)
+  (note-row-indexed store table text stored.row.value None)
   (+= store.head 1)
   (setv (get store.changed-at store.head) now-ms)
   ;; 保持の刈りの変更は書き手を持たないので、書きの控えを置かない(頭の註の「書きの控え」)。
@@ -556,11 +563,10 @@
 
 (defn #^ list memory-matching-texts [#^ MemoryStore store #^ TableDecl decl #^ str table-name #^ FrozenMap where #^ FrozenMap where-any #^ int now-ms]  ; defk にできない: 錠の内(read-at-now の operation)で同期に呼ぶ置き場の読み
   "表 table-name の行のうち、絞り(where・where-any)に合い、刻 now-ms で保持の期限を過ぎていない行の鍵の綴りを、綴りの順に返すため
-   (ListRows と CountRows が同じ行を数える 1 点)。鍵の欄の値の組の絞りは鍵で直に引いた行だけを見る(memory-keyed-texts)。ほかは並べた鍵の
-   覚え(memory-sorted-texts)を辿る — 上から読む頁の送りが頁ごとに表の全部の鍵を並べ直さない。"
+   (ListRows と CountRows が同じ行を数える 1 点)。絞りを当てる候補は memory-candidate-texts が選ぶ(鍵で直に引いた行・宣言の index の
+   欄の値の覚え・並べた鍵の覚え) — 上から読む頁の送りが頁ごとに表の全部の鍵を並べ直さない。"
   (setv table (get store.rows table-name)
-        keyed (memory-keyed-texts store decl where-any)
-        #(texts rest) (if (is keyed None) #((memory-sorted-texts store table-name) where-any) #(keyed.texts keyed.rest)))
+        #(texts rest) (memory-candidate-texts store decl table-name where where-any))
   (lfor text texts
         :if (memory-row-visible? decl (get table text) where rest now-ms)
         text))
@@ -580,7 +586,9 @@
   (setv texts (.get store.sorted-texts table-name))
   (when (is texts None)
     (setv texts (sorted (get store.rows table-name))
-          (get store.sorted-texts table-name) texts))
+          (get store.sorted-texts table-name) texts)
+    ;; 並べた鍵の覚えが無かった表の欄の値の覚えは、外の直の書き(行を直に置いて sorted-texts の覚えを外す使い手)の前の物かもしれない。
+    (.pop store.indexed-texts table-name None))
   texts)
 
 
@@ -600,15 +608,97 @@
   None)
 
 
+(defn #^ (| tuple None) field-slot [#^ (| FrozenMap None) value #^ str field]  ; defk にできない: 錠の内で同期に呼ぶ欄の値の覚えの読み書きの判じ(内包表記と for が行ごとに呼ぶ)
+  "行の値 value(None = 行が無い)の欄 field が欄の値の覚えのどこに入るか: #(印)(印は admission.json-equal-token — 印を作れない値は
+   None の印)/ None = 欄が無く、どの等しさの絞りにも合わない(row-matches? と row-matches-any? は欄の無い行を合わせない)。"
+  (if (and (is-not value None) (in field value)) #((json-equal-token (get value field))) None))
+
+
+(defn #^ None index-add [#^ dict index #^ (| tuple None) slot #^ str text]  ; defk にできない: 錠の内で同期に呼ぶ欄の値の覚えの書き
+  "欄の値の覚え index の slot(field-slot の答え)の並びへ鍵の綴り text を並びの位置で入れるため(slot が None なら入れない)。"
+  (when (is-not slot None)
+    (bisect.insort (.setdefault index (get slot 0) []) text))
+  None)
+
+
+(defn #^ None index-remove [#^ dict index #^ (| tuple None) slot #^ str text]  ; defk にできない: 錠の内で同期に呼ぶ欄の値の覚えの書き
+  "欄の値の覚え index の slot の並びから鍵の綴り text を外すため(空になった並びは印ごと外す — 覚えの大きさを今の値の数に保つ)。"
+  (when (is-not slot None)
+    (setv texts (get index (get slot 0)))
+    (del (get texts (bisect.bisect-left texts text)))
+    (when (not texts)
+      (del (get index (get slot 0)))))
+  None)
+
+
+(defn #^ None note-row-indexed [#^ MemoryStore store #^ str table-name #^ str text #^ (| FrozenMap None) old #^ (| FrozenMap None) new]  ; defk にできない: 錠の内で同期に呼ぶ置き場の書き(memory-store-row と remove-stored-row が行を置き換える・消す時)
+  "表 table-name の鍵の綴り text の行の値が old から new に変わった事(None = 行が無い)を、作ってある欄の値の覚えへ写すため。並べた鍵の
+   覚えの無い表の覚えは古い物(行を直に置いた使い手の後)なので、直さずに外す — 次の読みが作り直す。"
+  (when (not-in table-name store.sorted-texts)
+    (.pop store.indexed-texts table-name None)
+    (return None))
+  (for [#(field index) (.items (.get store.indexed-texts table-name {}))]
+    (setv before (field-slot old field) after (field-slot new field))
+    (when (!= before after)
+      (index-remove index before text)
+      (index-add index after text)))
+  None)
+
+
+(defn #^ dict memory-field-index [#^ MemoryStore store #^ str table-name #^ str field]  ; defk にできない: 錠の内(read-at-now の operation)で同期に呼ぶ置き場の読み
+  "表 table-name の宣言の index の欄 field の値の覚え(印 → 鍵の綴りの並び)を返すため(覚えが無ければ表の行から作って覚える)。返した dict と
+   並びは呼び手が変えない。"
+  (setv texts (memory-sorted-texts store table-name)
+        fields (.setdefault store.indexed-texts table-name {})
+        index (.get fields field))
+  (when (is index None)
+    (setv table (get store.rows table-name) index {})
+    (for [text texts]
+      (index-add index (field-slot (. (get table text) row value) field) text))
+    (setv (get fields field) index))
+  index)
+
+
+(defn #^ (| list None) memory-indexed-texts [#^ MemoryStore store #^ TableDecl decl #^ str table-name #^ FrozenMap where #^ FrozenMap where-any]  ; defk にできない: 錠の内(read-at-now の operation)で同期に呼ぶ置き場の読み
+  "絞り(where の等号・where-any の値の組)が名指す宣言の index の欄のうち、合い得る行の最も少ない欄の値の覚えから、その欄の値に合い得る
+   行の鍵の綴りを綴りの順に返すため(None = index の欄の絞りが無いか、どの欄の絞りの値にも印を作れない — 呼び手は並べた鍵を辿る)。
+   候補は欄の値の印が絞りの値の印と同じ行と、値の印を作れない行(json-equal? で照らすまで分からない)— 呼び手が候補に全部の絞りと期限を
+   当てるので、答えの行は表の全部の行を照らした時と同じ。本番の置き場が index で引くのと同じく、読みの手間を合う行の数に比例させる。"
+  (setv choices (tuple (gfor #(name members) (+ (tuple (gfor #(name wanted) (.items where) #(name #(wanted)))) (tuple (.items where-any)))
+                             :if (in name decl.indexes)
+                             :setv tokens (frozenset (gfor wanted members (json-equal-token wanted)))
+                             :if (not-in None tokens)
+                             :setv index (memory-field-index store table-name name)
+                             :setv runs (tuple (gfor token (+ (tuple tokens) #(None)) :if (in token index) (get index token)))
+                             #((sum (gfor run runs (len run))) runs))))
+  (when (not choices)
+    (return None))
+  (setv runs (get (min choices :key (fn [choice] (get choice 0))) 1))
+  (match (len runs)
+    0 []
+    1 (get runs 0)
+    _ (list (heapq.merge #* runs))))
+
+
+(defn #^ tuple memory-candidate-texts [#^ MemoryStore store #^ TableDecl decl #^ str table-name #^ FrozenMap where #^ FrozenMap where-any]  ; defk にできない: 錠の内(read-at-now の operation)で同期に呼ぶ置き場の読み
+  "絞り(where・where-any)を当てる候補の鍵の綴り(綴りの順)と、候補に当てる where-any を #(texts rest) で返すため(一覧・数え・鍵の順の頁の
+   1 点): 鍵の欄の値の組の絞りは鍵で直に引いた行(memory-keyed-texts — rest は鍵の欄を除いた組)/ 宣言の index の欄の等しさの絞りは
+   その欄の値の覚え(memory-indexed-texts)/ ほかは並べた鍵の覚え(memory-sorted-texts)。返した list は呼び手が変えない。"
+  (setv keyed (memory-keyed-texts store decl where-any))
+  (when (is-not keyed None)
+    (return #(keyed.texts keyed.rest)))
+  (setv indexed (memory-indexed-texts store decl table-name where where-any))
+  #((if (is indexed None) (memory-sorted-texts store table-name) indexed) where-any))
+
+
 (defn #^ list memory-key-page-texts [#^ MemoryStore store #^ TableDecl decl #^ ListRows ask #^ int now-ms]  ; defk にできない: 錠の内(read-at-now の operation)で同期に呼ぶ置き場の読み
   "鍵の順の頁(ListRows の並べる欄の無い読み)に出す行の鍵の綴りを、cursor の位置の後から綴りの順に最大 limit + 1 件返すため(limit 件を
    越える 1 件は続きの有無の判じだけに使う)。cursor の位置は並べた鍵の上を二分探しで探し、絞りは位置の後から綴りの順に当てて limit + 1 件
    見つけた所で止める — 頁ごとに表の全行を並べて絞りを当てると、頭からの頁送りの全読みが表の行の数の 2 乗になる(2026-10-31 の実測:
-   約 2.8 万行の表の読み込みで頁 1 枚 0.26 秒)。並べた鍵は置き場の覚え(memory-sorted-texts)を使う。鍵の欄の値の組の絞りは、鍵で直に
-   引いた行の並び(memory-keyed-texts)の上で同じく辿る。"
+   約 2.8 万行の表の読み込みで頁 1 枚 0.26 秒)。辿る並びは memory-candidate-texts が選ぶ(鍵で直に引いた行・宣言の index の欄の値の
+   覚え・並べた鍵の覚え)。"
   (setv table (get store.rows ask.table)
-        keyed (memory-keyed-texts store decl ask.where-any)
-        #(texts rest) (if (is keyed None) #((memory-sorted-texts store ask.table) ask.where-any) #(keyed.texts keyed.rest))
+        #(texts rest) (memory-candidate-texts store decl ask.table ask.where ask.where-any)
         start (if (is ask.cursor None) 0 (bisect.bisect-right texts ask.cursor.after-key)))
   (list (islice (gfor at (range start (len texts))
                       :setv text (get texts at)
@@ -691,8 +781,10 @@
   (setv spelled (canonical-json value)
         text (key-text key)
         stored (StoredRow (spelled-row key value spelled version) now-ms))
-  (when (not-in text (get store.rows table))
+  (setv earlier (.get (get store.rows table) text))
+  (when (is earlier None)
     (note-text-added store table text))
+  (note-row-indexed store table text (if (is earlier None) None earlier.row.value) stored.row.value)
   (setv (get (get store.rows table) text) stored)
   (+= store.head 1)
   (setv (get store.changed-at store.head) now-ms
