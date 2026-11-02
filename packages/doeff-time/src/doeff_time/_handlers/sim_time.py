@@ -28,6 +28,7 @@ from doeff_time._effects import (
     RaceWithinEffect,
     ScheduleAtEffect,
     SetTimeEffect,
+    SpendCpuEffect,
     TicksOutcome,
     WaitTicksEffect,
     WaitUntilEffect,
@@ -218,6 +219,24 @@ class SimTimeRuntime:
                 del self._mut_tick_runs[run.sequence]
         return TicksOutcome(value=first, passed=run.passed)
 
+    def _at_once(self, effect: GetTimeEffect | GetMonotonicEffect | SpendCpuEffect) -> datetime | float | None:
+        """The answer of an effect that resumes its caller with no task switch: a clock reading, or
+        the CPU span.
+
+        SpendCpu: the caller holds the CPU, so the clock moves forward by the span and the caller
+        resumes at once. Wake-ups that fell due during the span stay on the queue and run late, once
+        the normal tasks park again (the clock driver never moves the clock back — SimClock.advance_to);
+        the driver is already running while the queue holds one.
+        """
+        if isinstance(effect, SpendCpuEffect):
+            self._clock.advance_to(self._clock.current_time + _delay_span(effect.seconds))
+            return None
+        now = self._clock.current_time
+        # GetMonotonic reads the virtual clock's POSIX timestamp: virtual
+        # time only moves through Delay/WaitUntil/SetTime/SpendCpu, and callers use
+        # differences between readings.
+        return now if isinstance(effect, GetTimeEffect) else now.timestamp()
+
     def _timed_wait(self, effect: WaitWithinEffect[object] | WaitTicksEffect[object] | RaceWithinEffect[object]):
         """The Program that answers one of the timed waits (a sub-program that completes before the Transfer)."""
         match effect:
@@ -238,6 +257,7 @@ class SimTimeRuntime:
         | GetMonotonicEffect
         | ScheduleAtEffect
         | SetTimeEffect
+        | SpendCpuEffect
         | WaitWithinEffect
         | WaitTicksEffect
         | RaceWithinEffect,
@@ -272,13 +292,8 @@ class SimTimeRuntime:
             target_time = max(self._clock.current_time, effect.target)
             _ = yield self._wait_for_time(target_time)
             return (yield Transfer(k, None))
-        if isinstance(effect, (GetTimeEffect, GetMonotonicEffect)):
-            now = self._clock.current_time
-            # GetMonotonic reads the virtual clock's POSIX timestamp: virtual
-            # time only moves through Delay/WaitUntil/SetTime, and callers use
-            # differences between readings.
-            reading = now if isinstance(effect, GetTimeEffect) else now.timestamp()
-            return (yield Transfer(k, reading))
+        if isinstance(effect, (GetTimeEffect, GetMonotonicEffect, SpendCpuEffect)):
+            return (yield Transfer(k, self._at_once(effect)))
         if isinstance(effect, (WaitWithinEffect, WaitTicksEffect, RaceWithinEffect)):
             answer = yield self._timed_wait(effect)
             return (yield Transfer(k, answer))

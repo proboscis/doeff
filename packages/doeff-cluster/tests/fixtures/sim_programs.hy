@@ -9,7 +9,7 @@
 (import doeff_core_effects [Ask])
 (import doeff_core_effects [reader])
 (import doeff_core_effects [Discard Spawn Task Wait])
-(import doeff_time [Delay RaceOutcome RaceWithin TicksOutcome WaitTicks])
+(import doeff_time [Delay RaceOutcome RaceWithin SpendCpu TicksOutcome WaitTicks])
 (import doeff_cluster [now-epoch-ms])
 (import doeff_cluster [ProcessesOf])
 (import doeff_cluster [ReportMetrics])
@@ -104,10 +104,20 @@
   n)
 
 
+(defk ticking-into [ticks every]
+  {:pre [(: ticks list) (: every float)] :post [(: % None)] :tags {:context "doeff-cluster-test" :role "program"}}
+  "every 秒ごとに ticks の頭の数を 1 つ進め続ける task(同じ process のほかの task が回っているかを見る — 本体が Discard で捨てる)。"
+  (while True
+    (setv (get ticks 0) (+ (get ticks 0) 1))
+    (<- (Delay every)))
+  None)
+
+
 (defk passable-body [key]
   {:pre [(: key str)] :post [(: % int)] :tags {:context "doeff-cluster-test" :role "program"}}
-  "sim の外側が答える物(scheduler の Spawn / Wait / Discard・時計の Delay / GetTime と期限つきの待ち RaceWithin / WaitTicks)だけを使う本体: 子の task を
-   起こして待ち、経った時間と期限つきの待ちの答えを盤の key に書いてから、準備できたと報告し続ける。"
+  "sim の外側が答える物(scheduler の Spawn / Wait / Discard・時計の Delay / GetTime と期限つきの待ち RaceWithin / WaitTicks と CPU の秒 SpendCpu)だけを
+   使う本体: 子の task を起こして待ち、経った時間と期限つきの待ちの答えと、CPU を使う間に同じ process の刻む task が回った数を盤の key に書いてから、
+   準備できたと報告し続ける。"
   (<- started int (now-epoch-ms))
   (<- child Task (Spawn (do! (<- (Delay 0.5)) 21)))
   (<- half int (Wait child))
@@ -119,8 +129,19 @@
   ;; 走り続ける task を巻き戻さずに捨てる(Discard — scheduler の effect)。捨てた後も本体は続く。
   (<- dropped Task (Spawn (do! (<- (Delay 60.0)) 0)))
   (<- (Discard dropped))
+  ;; 手番を譲らずに CPU の秒を使う(SpendCpu — 時計の effect): 同じ process で刻む task はその間回らず、時計だけが進む。
+  (val ticks [0])
+  (<- ticker Task (Spawn (ticking-into ticks 0.01) :daemon True))
+  (<- (Delay 0.035))
+  (val before (get ticks 0))
+  (<- spend-from int (now-epoch-ms))
+  (<- (SpendCpu 0.15))
+  (<- spend-to int (now-epoch-ms))
+  (val during (- (get ticks 0) before))
+  (<- (Discard ticker))
   (<- (WriteShared key (OpaqueJson.of {"answer" (* 2 half) "elapsedMs" (- ended started)
-                                       "raced" raced.value "ticked" ticked.value "discarded" True})))
+                                       "raced" raced.value "ticked" ticked.value "discarded" True
+                                       "cpuMs" (- spend-to spend-from) "ticksBefore" before "ticksDuringCpu" during})))
   (while True
     (<- (ReportReady True "通った"))
     (<- (Delay 1.0)))

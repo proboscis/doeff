@@ -29,7 +29,8 @@
 ;;; 答える。Await は通さない(本番の子と同じく、本物の I/O を持つ Program は土台に await-handler を並べる — local.hy の頭の註)。表の外の effect は、
 ;;; Program と宿の答え(HOST-CONTRACT の 3 つとクラスタの約束の effect)のどちらも答えなければ、本番の子と同じ未処理の例外
 ;;; (doeff.UnhandledEffect)で process を落とす — sim の外側(検の handler・sim の世界)が本番には無い答えを黙って返さないため。
-;;; 時計のうち SetTime(仮想の時計を系ごと動かす)と ScheduleAt(時計の handler が外側で Spawn する = 柵の外で走る)は通さない。
+;;; 時計のうち SetTime(仮想の時計を系ごと動かす)と ScheduleAt(時計の handler が外側で Spawn する = 柵の外で走る)は通さない。CPU の秒
+;;; SpendCpu(手番を譲らずに時計を今から秒の分だけ進める — 本番の子では壁の時計の handler が thread を止める)は通す。
 ;;; 期限つきの待ち WaitWithin は通す — 期限は時計の handler が持ち(模擬の時計は列の 1 項・task を起こさない)、待つのは Program の
 ;;; future だけ(#2618)。
 ;;; 柵は Program の Spawn を包み直して(process の中の task として覚える — process の終わりで一緒に止める)外へ送り、その包みが出す
@@ -41,7 +42,7 @@
 (import collections.abc [Mapping])
 (import doeff_core_effects [Ask])
 (import doeff_core_effects [Spawn TaskCompleted Gather Wait Race Cancel Discard CreatePromise CompletePromise FailPromise CreateExternalPromise CreateSemaphore AcquireSemaphore ReleaseSemaphore])
-(import doeff_time [DelayEffect GetTimeEffect GetMonotonicEffect WaitUntilEffect WaitWithinEffect RaceWithinEffect WaitTicksEffect])
+(import doeff_time [DelayEffect GetTimeEffect GetMonotonicEffect WaitUntilEffect WaitWithinEffect RaceWithinEffect WaitTicksEffect SpendCpuEffect])
 
 
 (defrecord HostContract
@@ -67,10 +68,12 @@
 ;; sim の柵が外へ通す effect の型(頭の註)。scheduler の effect と doeff-time の時計の effect だけ。期限つきの待ち 3 つ(WaitWithin・
 ;; RaceWithin・WaitTicks)は同じ作り — 期限を時計の handler の待ち行列に置き、task を起こさない — なので 3 つとも通す(RaceWithin と
 ;; WaitTicks が欠けていて、上に載る系の job が止めの拍に出す RaceWithin が模擬でだけ落ちた)。task を巻き戻さずに捨てる Discard も
-;; scheduler の effect なので通す(欠けていて、期限と競わせた task を Discard で捨てる job の process が模擬でだけ落ちた)。
+;; scheduler の effect なので通す(欠けていて、期限と競わせた task を Discard で捨てる job の process が模擬でだけ落ちた)。手番を譲らずに CPU の
+;; 秒を使う SpendCpu も通す — 時計を今から先へだけ進め(系ごとの SetTime と違い、刻を置き換えない)、その間ほかの task を回さない形を、検が
+;; job の effect に掛けて模せるようにする(1 周が CPU を使う間、同じ process の出来事の受け取りが回らない型)。
 (val SIM-PASSABLE #(Spawn TaskCompleted Gather Wait Race Cancel Discard CreatePromise CompletePromise FailPromise CreateExternalPromise
                     CreateSemaphore AcquireSemaphore ReleaseSemaphore
-                    DelayEffect GetTimeEffect GetMonotonicEffect WaitUntilEffect WaitWithinEffect RaceWithinEffect WaitTicksEffect))
+                    DelayEffect GetTimeEffect GetMonotonicEffect WaitUntilEffect WaitWithinEffect RaceWithinEffect WaitTicksEffect SpendCpuEffect))
 
 
 (defk this-program-path []

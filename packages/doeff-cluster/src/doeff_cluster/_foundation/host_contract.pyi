@@ -26,6 +26,7 @@ from doeff_time import WaitUntilEffect as WaitUntilEffect
 from doeff_time import WaitWithinEffect as WaitWithinEffect
 from doeff_time import RaceWithinEffect as RaceWithinEffect
 from doeff_time import WaitTicksEffect as WaitTicksEffect
+from doeff_time import SpendCpuEffect as SpendCpuEffect
 
 @dataclass(frozen=True, kw_only=True)
 class HostContract:

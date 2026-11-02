@@ -20,6 +20,9 @@ installs them with it.
 - `ScheduleAt(time: datetime, program)` (`time` must be timezone-aware) — answers the spawned `Task`;
   `Wait(task)` answers `program`'s value, or raises its failure
 - `SetTime(time: datetime)` (for simulation handlers, `time` must be timezone-aware)
+- `SpendCpu(seconds)` — hold the CPU for `seconds` without yielding: the clock moves on by the span
+  while no other task of the scheduler runs (wall-clock handlers block the thread; `sim_time_handler`
+  moves the virtual clock forward without a task switch, and wake-ups that fell due run late)
 
 ## Conversions
 
@@ -42,7 +45,8 @@ installs them with it.
 ["async" "sync" "sim"]`): readings never go back, `Delay(d)` / `WaitUntil(t)` advance the clock by
 `d` / up to `t` (exactly on the virtual clock, with a small jitter bound on the wall clock), past
 targets return at once, other effects pass through, and `ScheduleAt` tasks run in time order and
-answer their program's value or failure through `Wait`. `SetTime` is simulation-only and stays out
+answer their program's value or failure through `Wait`, and `SpendCpu(d)` advances the clock by `d`
+while no other task runs (async and sim). `SetTime` is simulation-only and stays out
 of the shared contract. Note: the scheduled program runs under the handlers outside the time
 handler, so it cannot itself perform time effects.
 

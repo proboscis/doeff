@@ -18,6 +18,7 @@ from doeff_time._effects import (
     GetTimeEffect,
     RaceWithinEffect,
     ScheduleAtEffect,
+    SpendCpuEffect,
     WaitTicksEffect,
     WaitUntilEffect,
     WaitWithinEffect,
@@ -41,6 +42,7 @@ AsyncTimeEffect = (
     | WaitTicksEffect
     | RaceWithinEffect
     | ScheduleAtEffect
+    | SpendCpuEffect
 )
 
 
@@ -77,6 +79,19 @@ class AsyncTimeRuntime:
         yield _clock_wait(self._sleep, max(0.0, seconds))
         return DEADLINE_PASSED
 
+    def _at_once(self, effect: GetTimeEffect | GetMonotonicEffect | SpendCpuEffect) -> datetime | float | None:
+        """The answer of an effect that resumes its caller with no await: a clock reading, or the CPU span.
+
+        SpendCpu blocks the thread (not an Await): the event loop and the scheduler's other tasks do
+        not run until the span is over, as while a task computes without reaching a suspension point.
+        """
+        if isinstance(effect, SpendCpuEffect):
+            time.sleep(effect.seconds)
+            return None
+        if isinstance(effect, GetTimeEffect):
+            return self._now()
+        return float(self._monotonic())
+
     @do
     def handle(self, effect: AsyncTimeEffect, k: Any):
         # The annotation lets the VM skip this handler for every other effect, instead of
@@ -94,10 +109,8 @@ class AsyncTimeRuntime:
             wait_seconds = max(0.0, (effect.target - self._now()).total_seconds())
             yield _clock_wait(self._sleep, wait_seconds)
             return (yield Transfer(k, None))
-        if isinstance(effect, GetTimeEffect):
-            return (yield Transfer(k, self._now()))
-        if isinstance(effect, GetMonotonicEffect):
-            return (yield Transfer(k, float(self._monotonic())))
+        if isinstance(effect, (GetTimeEffect, GetMonotonicEffect, SpendCpuEffect)):
+            return (yield Transfer(k, self._at_once(effect)))
         if isinstance(effect, (WaitWithinEffect, WaitTicksEffect, RaceWithinEffect)):
             # The deadline is a daemon task sleeping on the wall clock, raced against the future(s) and
             # cancelled afterwards (daemon: abandoning it at root return is its lifecycle — #501).
