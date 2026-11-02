@@ -97,6 +97,7 @@ doeff-openai = { workspace = true }
 doeff-openrouter = { workspace = true }
 doeff-time = { workspace = true }
 doeff-events = { workspace = true }
+doeff-stream = { workspace = true }
 doeff-traverse = { workspace = true }
 doeff-docker = { workspace = true }
 doeff-secret = { workspace = true }
@@ -764,6 +765,15 @@ tests = [
 ]
 
 [[tool.doeff.contract-tests]]
+prefix = "packages/doeff-stream/"
+tests = [
+    "tests/test_public_api_known_violations.py::test_public_api_outside_effects_and_handlers_is_in_the_known_table[doeff-stream]",  # 公開名のうち effect と handler の外の物が既知の表と同じ
+    "packages/doeff-stream/tests/test_every_run_ends_as_one_input.py",  # 部品の task の終わりが値・例外・取り消しのどれでも入力 1 つ
+    "packages/doeff-stream/tests/test_fold_and_merge.py",  # merge の型・fold の終わり方・同じ bus の 2 つの fold
+    "packages/doeff-stream/tests/test_replay.py",  # test の harness が runtime と同じ断りをする
+]
+
+[[tool.doeff.contract-tests]]
 prefix = "packages/doeff-flow/"
 tests = [
     "tests/test_public_api_known_violations.py::test_public_api_outside_effects_and_handlers_is_in_the_known_table[doeff-flow]",  # 1.1 秒 — 公開名のうち effect と handler の外の物が既知の表と同じ
@@ -932,6 +942,7 @@ dev = [
     "doeff-codex",
     "doeff-records",
     "doeff-run",
+    "doeff-stream",
     "doeff-docker",
     "doeff-secret",
     "doeff-ml-nexus",
