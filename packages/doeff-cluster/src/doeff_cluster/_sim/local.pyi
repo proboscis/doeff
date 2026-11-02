@@ -78,6 +78,20 @@ from doeff_cluster._coordinator.entry.main import with_running_commit as with_ru
 from doeff_core_effects import EnvEntry as EnvEntry
 from doeff_core_effects import ProcessScript as ProcessScript
 from doeff_core_effects import scripted_process_handler as scripted_process_handler
+from doeff_cluster._sim.child_processes import SimChildren as SimChildren
+from doeff_cluster._sim.child_processes import ChildOrigin as ChildOrigin
+from doeff_cluster._sim.child_processes import CHILD_PROCESS_EFFECTS as CHILD_PROCESS_EFFECTS
+from doeff_cluster._sim.child_processes import child_processes as child_processes
+from doeff_cluster._sim.child_processes import descendants_reaped as descendants_reaped
+from doeff_cluster._sim.child_processes import descendant_ended as descendant_ended
+from doeff_cluster._sim.child_processes import KeepDescendant as KeepDescendant
+from doeff_cluster._sim.child_processes import DescendantEnded as DescendantEnded
+from doeff_cluster._sim.child_processes import DescendantOf as DescendantOf
+from doeff_cluster._sim.child_processes import SignalDescendant as SignalDescendant
+from doeff_cluster._sim.child_processes import CollectDescendant as CollectDescendant
+from doeff_cluster._sim.child_processes import DescendantsOf as DescendantsOf
+from doeff_cluster._sim.child_processes import SimDescendant as SimDescendant
+from doeff_cluster._sim.child_processes import ReapedDescendants as ReapedDescendants
 from doeff_cluster._foundation.coordinator_http import RESEND_PAUSE_SECONDS as RESEND_PAUSE_SECONDS
 from doeff_cluster._shared.core.resend import IDEMPOTENT_DEADLINE_SECONDS as IDEMPOTENT_DEADLINE_SECONDS
 from doeff_cluster._foundation.coordinator_inbox import StopState as StopState
@@ -626,6 +640,7 @@ class SimOutside:
     handlers: list[Callable[..., object]]
     effects: tuple[type, ...]
     per_process: Callable[[str, str], ProcessOutside] | None = None
+    children: SimChildren | None = None
 
 @dataclass(frozen=True, kw_only=True)
 class SimPlan:
@@ -643,6 +658,7 @@ class SimPlan:
     passable: tuple
     notice_broker: MemoryBroker
     per_process: Callable[[str, str], ProcessOutside] | None = None
+    children: SimChildren | None = None
     store: Callable | None = None
     deployments: dict | None = None
     nodes: dict | None = None
@@ -1122,6 +1138,8 @@ class SimChild:
     pid: int
     passable: tuple
     outside: tuple = ...
+    boot: str = ''
+    children: SimChildren | None = None
 
 def send_report(child: SimChild, kind: str, payload: dict) -> _Program[None, object]:
     ...

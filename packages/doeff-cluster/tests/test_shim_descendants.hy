@@ -2,7 +2,8 @@
 ;; 後、job の子孫は 1 つも生きていない。守るのは入れ物 shim(worker/entry/shim)— job を起こす前に自分を子孫の引き取り手
 ;; (PR_SET_CHILD_SUBREAPER)にし、止めの合図・worker の消失(標準入力の EOF)・job の自分での終わりの 3 つの道で、同じ片づけを 1 度だけ
 ;; 通してから終わる。
-;; 本物の process で確かめる(模擬の SimWorker は process を起こさないので、OS の引き取りを模せない)。範囲は Linux の worker。筋書きは本番の
+;; 本物の process で確かめる(模擬の SimWorker は process を起こさないので、OS の引き取りを模せない — 模擬の子 process の答え手
+;; _sim/child_processes が同じ契約を守るかは、file の末の契約の検が同じ筋書きと同じ判断で読む)。範囲は Linux の worker。筋書きは本番の
 ;; 組み立てのまま(tests/host_rig の run-on-host — process-host と本物の答え手)で、job は tests/fixtures/sleeper の --detached-grandchild
 ;; (別の session に、止めの合図を捨てて眠る孫を起こす)。方針は短くして(停止の猶予 1 秒・KILL の猶予 1 秒・shim の猶予 0.5 秒)1 file を
 ;; 60 秒に収める — 数は本番を写さず、関係(止め切りの時刻)だけを確かめる。
@@ -26,6 +27,14 @@
 (import doeff_cluster._worker.core.shim_timing [shim-deadline-ms])
 (import tests.host_rig [host-settings run-on-host job-ended])
 (import tests.test_entry_probe [wait-pid process-alive])
+(require doeff-hy.record [defrecord])
+(import dataclasses [dataclass])  ; defrecord の展開が名指す
+(import doeff_events [MemoryBroker])
+(import doeff_time [Delay])
+(import doeff_cluster [now-epoch-ms])
+(import doeff_cluster [sim-cluster SimWorker SimProcess SimOutside ProcessesOf DescendantsOf Redeclare])
+(import tests.fixtures.envs [sim-foundation])
+(import tests.fixtures.descendant_programs [descendant-hosts descendant-hosts-off descendant-outside])
 (import pytest)
 
 ;; この file の待ちは実時間が対象(何が対象かは名簿 tests/realtime_tests.toml のこの file の行)— realtime を名乗る file の中の眠りを、
@@ -247,4 +256,83 @@
     (assert (= (. (get broken 0) life pid) life.pid) broken)
     (assert (in "shim: 子孫の引き取りを使えない" log) log)
     (assert (= ended.exit-code 0) ended)
+    (finally (! (left-grandchild-stopped (/ tmp-path "beat.detached"))))))
+
+
+;; --- 模擬との契約(#2940 の条 C4b — _sim/child_processes の答え手): 筋書き 1(切り離した孫を起こす job を worker が止める)を、本物の shim
+;; (上の worker-stop-scene)と模擬(sim-cluster — 子 process の世界 SimOutside の children)の両方に流し、同じ判断 C4b で読む。模擬の
+;; job は tests/fixtures/descendant_programs.hy の parent(子 spawner が別の session に孫を起こす — sleeper の --detached-grandchild の写し)、
+;; 止めは宣言の取り下げ(:replicas 0 — worker が TERM で止める)。止め切りの時刻 = job の process の終わり。引き取りを外した変種は、本物 =
+;; tests/fixtures/shim_without_adoption・模擬 = SimChildren の adoption 偽。
+
+(defrecord SimStopSeen
+  "模擬の筋書き 1 が読んだ姿: stopped-ms = job の process が終わった刻(止め切り)・life = 別の session の孫の見え方。"
+  (#^ int stopped-ms)
+  (#^ DescendantLife life))
+
+
+(defk sim-job-ended [name tries]
+  {:pre [(: name str) (: tries int)] :post [(: % SimProcess)] :tags {:context "doeff-cluster-test" :role "program"}}
+  "job name の最初の process が終わるまで 0.5 秒ずつ読み、終わった記録を返すため(tries 回で終わらなければ AssertionError)。"
+  (var ended None)
+  (var left tries)
+  (while (and (is ended None) (> left 0))
+    (<- processes tuple (ProcessesOf name))
+    (val first (next (gfor p (sorted processes :key (fn [p] p.started-ms)) p) None))
+    (if (and (is-not first None) (is-not first.ended-ms None))
+        (:= ended first)
+        (do (:= left (- left 1))
+            (<- (Delay 0.5)))))
+  (assert (is-not ended None) (.format "{} の process が止まらない" name))
+  ended)
+
+
+(defk sim-stop-scene []
+  {:pre [] :post [(: % SimStopSeen)] :tags {:context "doeff-cluster-test" :role "program"}}
+  "模擬の筋書き 1: 子と孫が起きた後(3 秒)に job を取り下げ、job の process の終わり(止め切り)から WATCH-AFTER-MS の後に孫を見る。"
+  (<- (Delay 3.0))
+  (<- (Redeclare (descendant-hosts-off sim-foundation)))
+  (<- ended SimProcess (sim-job-ended "parent" 120))
+  (<- (Delay (/ WATCH-AFTER-MS 1000)))
+  (<- now int (now-epoch-ms))
+  (<- seen tuple (DescendantsOf "parent"))
+  (val grandchild (next (gfor d seen :if (and (= d.origin.root ended.pid) (= (get d.argv 0) "sleeper-grandchild")) d)))
+  (SimStopSeen :stopped-ms ended.ended-ms
+               :life (DescendantLife :pid grandchild.pid :label "別の session の孫(模擬)"
+                                     :last-alive-ms (if (is grandchild.ended-ms None) now grandchild.ended-ms))))
+
+
+(defk sim-stopped [adoption]
+  {:pre [(: adoption bool)] :post [(: % SimStopSeen)] :tags {:context "doeff-cluster-test" :role "program"}}
+  "模擬の筋書き 1 を、入れ物の shim が子孫を引き取る世界(adoption 真)か引き取りを外した変種(偽)で回すため。"
+  (<- outside SimOutside (descendant-outside adoption))
+  (<- seen SimStopSeen (sim-cluster :notice-broker (MemoryBroker) :workers #((SimWorker :name "w1" :provides (frozenset ["cluster-net"])))
+                                    :outside outside (descendant-hosts sim-foundation) (sim-stop-scene)))
+  seen)
+
+
+(deftest test-the-shim-and-the-sim-both-leave-no-detached-grandchild-after-the-stop [tmp-path]
+  {:skip-if (not LINUX) :skip-reason NOT-LINUX}
+  ;; 契約: 同じ筋書き 1 で、本物の shim も模擬の答え手も、別の session の孫を止め切りの後に残さない(C4b が緑)。
+  (try
+    (val real (! (worker-stop-scene tmp-path #() #())))
+    (<- real-broken (get tuple #(DescendantOutlivedTheStop ...)) (stopped-job-leaves-no-descendant (get real 1) #((get real 4))))
+    (<- sim SimStopSeen (sim-stopped True))
+    (<- sim-broken (get tuple #(DescendantOutlivedTheStop ...)) (stopped-job-leaves-no-descendant sim.stopped-ms #(sim.life)))
+    (assert (= #(real-broken sim-broken) #(#() #())) #(real-broken sim-broken))
+    (finally (! (left-grandchild-stopped (/ tmp-path "beat.detached"))))))
+
+
+(deftest test-without-adoption-the-shim-and-the-sim-both-name-the-detached-grandchild [tmp-path]
+  {:skip-if (not LINUX) :skip-reason NOT-LINUX}
+  ;; 契約の失敗ケース: 引き取りを外した変種(本物 = shim_without_adoption・模擬 = adoption 偽)では、両方で別の session の孫が止め切りの
+  ;; 後も生きていて、C4b がその孫を 1 つ名指す。
+  (try
+    (val real (! (worker-stop-scene tmp-path #() #(shim-swapped))))
+    (<- real-broken (get tuple #(DescendantOutlivedTheStop ...)) (stopped-job-leaves-no-descendant (get real 1) #((get real 4))))
+    (<- sim SimStopSeen (sim-stopped False))
+    (<- sim-broken (get tuple #(DescendantOutlivedTheStop ...)) (stopped-job-leaves-no-descendant sim.stopped-ms #(sim.life)))
+    (assert (= (len real-broken) 1) real-broken)
+    (assert (= (. (get real-broken 0) life pid) (. (get real 4) pid)) real-broken)
+    (assert (= sim-broken #((DescendantOutlivedTheStop :stopped-ms sim.stopped-ms :life sim.life))) sim-broken)
     (finally (! (left-grandchild-stopped (/ tmp-path "beat.detached"))))))
