@@ -18,6 +18,8 @@ from doeff import EffectBase as EffectBase
 from doeff import UnhandledEffect as UnhandledEffect
 from doeff import DoExpr as DoExpr
 from doeff import Program as Program
+from doeff import GetBoundaries as GetBoundaries
+from doeff_cluster._foundation.record_handlers import rewrap as rewrap
 from doeff_core_effects import Ask as Ask
 from doeff_core_effects import state as session_store
 from doeff_core_effects import await_handler as await_handler
@@ -1134,9 +1136,6 @@ def await_warm(link: SimLink, key: str, timeout_seconds: float) -> _Program[Warm
     ...
 
 class TrackedSpawn(Spawn):
-    ...
-
-def tracked_child(pid: int, body: Program | EffectBase, priority: int, daemon: bool) -> _Program[Incomplete, object]:
     ...
 
 def fence(pid: int, passable: tuple) -> _Handler:
