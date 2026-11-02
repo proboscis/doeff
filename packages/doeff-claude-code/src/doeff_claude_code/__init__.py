@@ -13,6 +13,7 @@ if TYPE_CHECKING:
     from doeff_claude_code._effects import ClaudeAnswerPermission as ClaudeAnswerPermission
     from doeff_claude_code._effects import ClaudeCloseSession as ClaudeCloseSession
     from doeff_claude_code._effects import ClaudeExportSession as ClaudeExportSession
+    from doeff_claude_code._effects import ClaudeExportSessionSide as ClaudeExportSessionSide
     from doeff_claude_code._effects import ClaudeInjectInput as ClaudeInjectInput
     from doeff_claude_code._effects import ClaudeInterruptTurn as ClaudeInterruptTurn
     from doeff_claude_code._effects import ClaudeLiveLimitExceeded as ClaudeLiveLimitExceeded
@@ -27,6 +28,7 @@ if TYPE_CHECKING:
     from doeff_claude_code._effects import Closed as Closed
     from doeff_claude_code._effects import CredentialReplaced as CredentialReplaced
     from doeff_claude_code._effects import ExportSessionOutcome as ExportSessionOutcome
+    from doeff_claude_code._effects import ExportSessionSideOutcome as ExportSessionSideOutcome
     from doeff_claude_code._effects import HomeCredentialSession as HomeCredentialSession
     from doeff_claude_code._effects import Idle as Idle
     from doeff_claude_code._effects import InputAlreadyRead as InputAlreadyRead
@@ -48,9 +50,11 @@ if TYPE_CHECKING:
     from doeff_claude_code._effects import SessionIdInUse as SessionIdInUse
     from doeff_claude_code._effects import SessionNotFound as SessionNotFound
     from doeff_claude_code._effects import SessionProcessDown as SessionProcessDown
+    from doeff_claude_code._effects import SessionSideExported as SessionSideExported
     from doeff_claude_code._effects import SessionState as SessionState
     from doeff_claude_code._effects import SessionStatus as SessionStatus
     from doeff_claude_code._effects import SessionWarmed as SessionWarmed
+    from doeff_claude_code._effects import SideFile as SideFile
     from doeff_claude_code._effects import StartTurnOutcome as StartTurnOutcome
     from doeff_claude_code._effects import TranscriptAbsent as TranscriptAbsent
     from doeff_claude_code._effects import TranscriptPresent as TranscriptPresent
@@ -201,6 +205,7 @@ _LAZY_EXPORTS: dict[str, str] = {
     "ClaudeAnswerPermission": "doeff_claude_code._effects",
     "ClaudeCloseSession": "doeff_claude_code._effects",
     "ClaudeExportSession": "doeff_claude_code._effects",
+    "ClaudeExportSessionSide": "doeff_claude_code._effects",
     "ClaudeInjectInput": "doeff_claude_code._effects",
     "ClaudeInterruptTurn": "doeff_claude_code._effects",
     "ClaudeLiveLimitExceeded": "doeff_claude_code._effects",
@@ -213,6 +218,7 @@ _LAZY_EXPORTS: dict[str, str] = {
     "Closed": "doeff_claude_code._effects",
     "CredentialReplaced": "doeff_claude_code._effects",
     "ExportSessionOutcome": "doeff_claude_code._effects",
+    "ExportSessionSideOutcome": "doeff_claude_code._effects",
     "HomeCredentialSession": "doeff_claude_code._effects",
     "Idle": "doeff_claude_code._effects",
     "InputAlreadyRead": "doeff_claude_code._effects",
@@ -234,9 +240,11 @@ _LAZY_EXPORTS: dict[str, str] = {
     "SessionIdInUse": "doeff_claude_code._effects",
     "SessionNotFound": "doeff_claude_code._effects",
     "SessionProcessDown": "doeff_claude_code._effects",
+    "SessionSideExported": "doeff_claude_code._effects",
     "SessionState": "doeff_claude_code._effects",
     "SessionStatus": "doeff_claude_code._effects",
     "SessionWarmed": "doeff_claude_code._effects",
+    "SideFile": "doeff_claude_code._effects",
     "StartTurnOutcome": "doeff_claude_code._effects",
     "TranscriptAbsent": "doeff_claude_code._effects",
     "TranscriptPresent": "doeff_claude_code._effects",

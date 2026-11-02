@@ -113,6 +113,9 @@ from doeff_claude_code._effects import PrintAnswered as PrintAnswered
 from doeff_claude_code._effects import PrintFailed as PrintFailed
 from doeff_claude_code._effects import PrintLimited as PrintLimited
 from doeff_claude_code._effects import PrintTimedOut as PrintTimedOut
+from doeff_claude_code._effects import ClaudeExportSessionSide as ClaudeExportSessionSide
+from doeff_claude_code._effects import SessionSideExported as SessionSideExported
+from doeff_claude_code._effects import SideFile as SideFile
 from doeff_claude_code._faults import ClaudeDropProcess as ClaudeDropProcess
 from doeff_claude_code._faults import ClaudeForgetSession as ClaudeForgetSession
 from doeff_claude_code._faults import ClaudeLiveProcess as ClaudeLiveProcess
@@ -250,6 +253,7 @@ class FakeClaudeWorld:
     respond: Callable[..., object] | None
     transcripts: Incomplete
     activity: Incomplete
+    side_files: Incomplete
     sessions: dict[str, FakeSession]
 
     def __init__(self, responder: Callable[..., object] | None=None, *, respond: Callable[..., object] | None=None, live_limit: int | None=None) -> None:
@@ -259,6 +263,9 @@ class FakeClaudeWorld:
         ...
 
     def transcript_key(self, home: Incomplete, cwd: str, session_id: str) -> Incomplete:
+        ...
+
+    def put_side_file(self, home: Incomplete, cwd: str, session_id: str, path: str, data: bytes, modified_ms: int) -> Incomplete:
         ...
 
 def reply_of(world: FakeClaudeWorld, text: str, memory: tuple) -> _Program[FakeReply, object]:
@@ -379,6 +386,9 @@ def fake_status(world: FakeClaudeWorld, request: ClaudeSessionStatus) -> Incompl
     ...
 
 def fake_export(world: FakeClaudeWorld, request: ClaudeExportSession) -> _Program[SessionExported | SessionNotFound, object]:
+    ...
+
+def fake_export_side(world: FakeClaudeWorld, request: ClaudeExportSessionSide) -> _Program[SessionSideExported | SessionNotFound, object]:
     ...
 
 def fake_drop(world: FakeClaudeWorld, session_id: str) -> _Program[bool, object]:
