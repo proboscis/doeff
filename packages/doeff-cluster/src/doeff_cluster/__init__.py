@@ -87,6 +87,9 @@ if TYPE_CHECKING:
     from doeff_cluster._sim.local import SimDeadlockError as SimDeadlockError
     from doeff_cluster._sim.local import SimLivenessError as SimLivenessError
     from doeff_cluster._sim.local import SimMachine as SimMachine
+    from doeff_cluster._sim.memory_watch_world import SimMemoryRead as SimMemoryRead
+    from doeff_cluster._sim.memory_watch_world import SimMemoryWatch as SimMemoryWatch
+    from doeff_cluster._sim.memory_watch_world import SimProcFlood as SimProcFlood
     from doeff_cluster._sim.local import SimOutside as SimOutside
     from doeff_cluster._sim.local import SimPreparation as SimPreparation
     from doeff_cluster._sim.local import SimProcess as SimProcess
@@ -105,6 +108,7 @@ if TYPE_CHECKING:
     from doeff_cluster._sim.local import WaitsOf as WaitsOf
     from doeff_cluster._sim.local import WallBackOf as WallBackOf
     from doeff_cluster._sim.local import WatchFailuresOf as WatchFailuresOf
+    from doeff_cluster._sim.local import MemoryReadsOf as MemoryReadsOf
     from doeff_cluster._sim.local import WorkerDied as WorkerDied
     from doeff_cluster._sim.local import WorkerEnded as WorkerEnded
     from doeff_cluster._sim.local import WorkerOf as WorkerOf
@@ -881,6 +885,9 @@ _LAZY_EXPORTS: dict[str, str] = {
     "SimDeadlockError": "doeff_cluster._sim.local",
     "SimLivenessError": "doeff_cluster._sim.local",
     "SimMachine": "doeff_cluster._sim.local",
+    "SimMemoryRead": "doeff_cluster._sim.memory_watch_world",
+    "SimMemoryWatch": "doeff_cluster._sim.memory_watch_world",
+    "SimProcFlood": "doeff_cluster._sim.memory_watch_world",
     "SimOutside": "doeff_cluster._sim.local",
     "SimPreparation": "doeff_cluster._sim.local",
     "SimProcess": "doeff_cluster._sim.local",
@@ -908,6 +915,7 @@ _LAZY_EXPORTS: dict[str, str] = {
     "WallBackOf": "doeff_cluster._sim.local",
     "WarmRuntimeEnv": "doeff_cluster._shared.intent.warm_model",
     "WatchFailuresOf": "doeff_cluster._sim.local",
+    "MemoryReadsOf": "doeff_cluster._sim.local",
     "WorkerDied": "doeff_cluster._sim.local",
     "WorkerEnded": "doeff_cluster._sim.local",
     "WorkerOf": "doeff_cluster._sim.local",
