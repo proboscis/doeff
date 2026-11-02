@@ -40,6 +40,9 @@ def json_bytes(value: object) -> int:
 def hyx_json_equalXquestion_markX(a: object, b: object) -> bool:
     ...
 
+def json_equal_token(value: object) -> object:
+    ...
+
 def key_text(key: tuple[str, ...]) -> str:
     ...
 
