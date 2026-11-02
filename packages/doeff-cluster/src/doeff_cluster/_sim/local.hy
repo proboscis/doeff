@@ -51,6 +51,10 @@
 ;;;     止めの節を回して自分で終わる。問いを受けていない process(受け手の無い process — 本番では既定の動きで終わる)と、KILL(猶予切れ)は、
 ;;;     今までどおり取り消す(exit -15)。外の世界(SimOutside の process ごとの組)が止めの問いを通すなら、合図が立つまでは外の答え手に
 ;;;     渡し(問いは外の答え・待ちは外の答えと TERM の先に来た方)、外の筋書きの止めもそのまま効く。
+;;;   - 子 process(SimOutside の children を渡した走りだけ — _sim/child_processes)= 本番の入れ物 shim の下の子の代役(#2940 の条 C4b)。
+;;;     柵のすぐ外の答え手が、job の process の StartProcess を台本の命令を本体とする task として走らせ、子孫の記録を世界に置く。世界は
+;;;     job の process の終わり(どの終わり方でも)でその子孫を、worker の世代の終わりでその世代の子孫を -9 で片づける(捨てる — 結果も
+;;;     知らせも書かない)。
 ;;;   - 筋書き(scenario)は検の側の呼び手(本番の detached-cluster などを積む機体の外の process)として、同じ coordinator-answers(送り手 sim-client)
 ;;;     の下で走る。別の送り手(実行環境の宣言・版の違う呼び手)が要る筋書きは ClientLink の値を置き換えて coordinator-answers を自分で被せる。
 ;;;
@@ -71,6 +75,8 @@
 ;;;   ReportsOf 名             coordinator に届いた ReportReady / ReportMetrics の列(SimReport)。
 ;;;   ReadinessOf 名            coordinator の Service の status の ready(ServiceReadiness — Ready / NotReady / Unknown / Missing)。
 ;;;   ProcessesOf 名            その job の process の列(SimProcess — 世代・worker・始まり・終わり・exit-code)。task は task/<id>。
+;;;   DescendantsOf 名          その job の process が StartProcess で起こした子孫の列(_sim/child_processes の SimDescendant — 起こした
+;;;                             process と世代・切り離したか・終わりと片づけ)。SimOutside の children を渡した走りだけが子孫を持つ。
 ;;;   AwaitProcessStarted 名    その job の最初の process が起きるまで待ち、その記録を返す(世界が process を記録した時に起きる)。
 ;;;   AwaitProcessEnded 名      契約の effect(process_model.hy — 本番は detached-cluster が coordinator を読んで答える)。sim では世界が
 ;;;                             答え、job の今の最後の process の終わりを世界が書いた時に待ち手の Promise を満たす(読み直さない)。
@@ -171,6 +177,9 @@
 (import doeff_cluster._coordinator.entry.main [load-state with-running-commit])
 (import doeff_core_effects [EnvEntry])
 (import doeff_core_effects [ProcessScript scripted-process-handler])
+(import doeff_cluster._sim.child_processes [SimChildren ChildOrigin CHILD-PROCESS-EFFECTS child-processes descendants-reaped descendant-ended
+                                           KeepDescendant DescendantEnded DescendantOf SignalDescendant CollectDescendant DescendantsOf
+                                           SimDescendant ReapedDescendants])
 (import doeff_cluster._foundation.coordinator_http [RESEND-PAUSE-SECONDS])
 (import doeff_cluster._shared.core.resend [IDEMPOTENT-DEADLINE-SECONDS])
 (import doeff_cluster._foundation.coordinator_inbox [StopState] doeff_cluster._shared.protocol.inbox [http-request])
@@ -725,7 +734,11 @@
   ;; 無い)なので文字列の注記。
   (#^ (get list (get Callable #(... object))) handlers)
   (#^ (get tuple #(type ...)) effects)
-  (setv #^ "Callable[[str, str], ProcessOutside] | None" per-process None))
+  (setv #^ "Callable[[str, str], ProcessOutside] | None" per-process None)
+  ;; job の process が StartProcess で起こす子の世界(_sim/child_processes の SimChildren — None = 模擬しない: 子 process の effect は柵を
+  ;; 通らず、job の土台が答える)。在れば、どの job の process の柵も子 process の effect を通し、柵の外の答え手が子を本番の shim と同じ
+  ;; 寿命で走らせる(job の process の終わりと worker の世代の終わりで子孫を -9 で片づける — #2940 の条 C4b)。
+  (setv #^ (| SimChildren None) children None))
 
 
 (defrecord SimPlan
@@ -755,6 +768,8 @@
   (#^ MemoryBroker notice-broker)
   ;; SimOutside.per-process と同じ型(文字列の注記の訳も同じ)。
   (setv #^ "Callable[[str, str], ProcessOutside] | None" per-process None)
+  ;; SimOutside.children(job の process の子の世界 — None = 模擬しない)。
+  (setv #^ (| SimChildren None) children None)
   (setv #^ (| Callable None) store None)
   (setv #^ (| dict None) deployments None)
   (setv #^ (| dict None) nodes None)
@@ -1186,7 +1201,8 @@
   (<- declaration Declaration (declaration-of system revision (or environ {}) runtime-env versions))
   (<- scaled ClusterTiming (scaled-timing SIM-TIMING-RATIO))
   (SimPlan :system system :declaration declaration :workers chosen :environ (or environ {}) :revision revision :versions versions
-           :per-process (if (is outside None) None outside.per-process) :store store :deployments deployments :runtime-env runtime-env :nodes nodes
+           :per-process (if (is outside None) None outside.per-process) :children (if (is outside None) None outside.children)
+           :store store :deployments deployments :runtime-env runtime-env :nodes nodes
            :watches-gone (is timing None)
            :start-ms start-ms :start-mono-ms start-mono-ms :timing (or timing scaled) :naming (ClusterNaming)
            :policy (or policy (WorkerPolicy))
@@ -1802,14 +1818,17 @@
   "sim の子 process 1 つに宿が答える物(宿の答え host-answers の引数)。ctx = 宿の契約の run-context・program-path = Program の path・
    environ = 宣言の :environ(上書きを重ねた物)か task の effect の :environ(名 → 値 — どちらも spec.environ)・link = coordinator へ話す口(送り手 = job の名・居る所 = worker)・
    pid = sim の中の process の番号・passable = 柵が外へ通す effect の型(SimPlan.passable)・outside = この process の外の handler の組
-   (SimOutside.per-process が作った物 — 柵の外側に並べる)。"
+   (SimOutside.per-process が作った物 — 柵の外側に並べる)・boot = process が走る worker の世代・children = 子 process の世界
+   (SimOutside.children — None = 模擬しない)。"
   (#^ RunContext ctx)
   (#^ str program-path)
   (#^ dict environ)
   (#^ SimLink link)
   (#^ int pid)
   (#^ tuple passable)
-  (setv #^ tuple outside #()))
+  (setv #^ tuple outside #())
+  (setv #^ str boot "")
+  (setv #^ (| SimChildren None) children None))
 
 
 (defk send-report [child kind payload]
@@ -1957,8 +1976,14 @@
     ;; 止めの合図の口(process-signals — 本番の SIGTERM の代役・#3145)は柵のすぐ外: 柵が通した止めの問いと待ちに答え、外の世界が
     ;; 通す時だけ外の答え手へ渡す。
     ;; 退きの知らせの口(process-notices — 本番の知らせの pipe の代役・#3672)も柵のすぐ外。
+    ;; 子 process の答え手(child-processes — 本番の shim の下の子と同じ寿命・#2940 の条 C4b)も柵のすぐ外: 子の task は柵より内の
+    ;; handler を持たない(本番の子は別の process)。
+    (val answerers (if (is child.children None)
+                       []
+                       [(child-processes (ChildOrigin :root child.pid :job child.ctx.job :worker child.ctx.worker :boot child.boot)
+                                         child.pid False child.children)]))
     (<- value (with-handlers [#* child.outside (business-wait-tap child.pid) (process-signals child.pid child.passable)
-                              (process-notices child.pid)
+                              (process-notices child.pid) #* answerers
                               (fence child.pid child.passable) (coordinator-answers child.link) (host-answers child)
                               (environ-table-reader child.environ)]
                              program))
@@ -2420,8 +2445,10 @@
     (val link (SimLink :queue parts.queue :actor spec.name :revision spec.revision :peer worker.name :versions plan.versions :timing plan.timing
                        :runtime-env child-env))
     (<- outside ProcessOutside (process-outside plan.per-process spec.name worker.name))
+    ;; 子 process の世界を持つ走りでは、柵が子 process の effect を外の答え手(run-fenced の child-processes)へ通す。
     (val child (SimChild :ctx ctx :program-path program-path :environ (dict spec.environ) :link link :pid pid
-                         :passable (+ plan.passable outside.effects) :outside outside.handlers))
+                         :passable (+ plan.passable outside.effects (if (is plan.children None) #() CHILD-PROCESS-EFFECTS))
+                         :outside outside.handlers :boot boot :children plan.children))
     (<- task Task (Spawn (sim-process worker.name spec child (.get truth.programs spec.program))))
     (<- (KeepHandle pid task))
     (resume (JobStarted :name spec.name :pid pid)))
@@ -3196,6 +3223,9 @@
   (session var current (dfor w plan.workers w.name w))
   (session var handles {})
   (session var children {})
+  ;; job の process が StartProcess で起こした子孫(_sim/child_processes — 番号 → SimDescendant)と、走っている子孫の task(番号 → Task)。
+  (session var descendants {})
+  (session var descendant-tasks {})
   (session var finished (frozenset))
   (session var kills {})
   (session var next-pid 0)
@@ -3355,6 +3385,47 @@
       (in pid finished) (<- (Cancel task))
       True (:= children (| children {pid (+ (.get children pid #()) #(task))})))
     (resume None))
+  ;; --- job の process の子孫(_sim/child_processes — 本番の shim の引き取りと片づけ・#2940 の条 C4b)---
+  (KeepDescendant [origin parent argv escaped task]
+    ;; 番号を配って記録を置く。起こした job の process がもう終わっていて片づけに当たるか、世代がもう終わっていれば、その場で片づける
+    ;; (覚える前に終わった process の子を走らせ続けない)。
+    (:= next-pid (+ next-pid 1))
+    (val pid next-pid)
+    (<- now int (now-epoch-ms))
+    (val truth (get hosts (host-key hosts origin.worker origin.boot)))
+    (val generation (if (or truth.down (!= truth.boot origin.boot)) #(origin.worker origin.boot) None))
+    (<- reaped ReapedDescendants (descendants-reaped
+                                   {pid (SimDescendant :pid pid :origin origin :parent parent :argv argv :escaped escaped :started-ms now)}
+                                   {pid task} (frozenset (gfor p finished :if (= p origin.root) p)) generation
+                                   (or (is plan.children None) plan.children.adoption) now))
+    (:= descendants (| descendants reaped.descendants))
+    (:= descendant-tasks (| descendant-tasks reaped.tasks))
+    (for [discarded reaped.discarded]
+      (<- (Discard discarded)))
+    (resume pid))
+  (DescendantEnded [pid code]
+    (<- now int (now-epoch-ms))
+    (<- ended ReapedDescendants (descendant-ended descendants descendant-tasks pid code now))
+    (:= descendants ended.descendants)
+    (:= descendant-tasks ended.tasks)
+    (resume None))
+  (DescendantOf [pid]
+    (resume (.get descendants pid)))
+  (SignalDescendant [pid code]
+    ;; 合図の受け手は台本の世界に無い — 走っている子孫は合図の刻に終わる(task を巻き戻さずに捨てる)。
+    (<- now int (now-epoch-ms))
+    (<- ended ReapedDescendants (descendant-ended descendants descendant-tasks pid code now))
+    (:= descendants ended.descendants)
+    (:= descendant-tasks ended.tasks)
+    (for [discarded ended.discarded]
+      (<- (Discard discarded)))
+    (resume (bool ended.discarded)))
+  (CollectDescendant [pid]
+    (when (in pid descendants)
+      (:= descendants (| descendants {pid (replace (get descendants pid) :collected True)})))
+    (resume None))
+  (DescendantsOf [name]
+    (resume (tuple (sorted (gfor d (.values descendants) :if (= d.origin.job name) d) :key (fn [d] d.pid)))))
   (NoteProcess [process]
     (:= log (+ log #(process)))
     ;; その job の最初の process を待つ AwaitProcessStarted の待ち手を起こす(読み直さない — 書きで起こす)。
@@ -3398,6 +3469,13 @@
       (:= children ends.children)
       (:= finished ends.finished)
       (:= end-waiters ends.end-waiters)
+      ;; 本番の shim は job の終わりで引き取った子孫を全部 SIGKILL する(#2940 の条 C4b)— その process を根とする子孫を -9 で片づける。
+      (<- reaped ReapedDescendants (descendants-reaped descendants descendant-tasks (frozenset [pid]) None
+                                                       (or (is plan.children None) plan.children.adoption) now))
+      (:= descendants reaped.descendants)
+      (:= descendant-tasks reaped.tasks)
+      (for [discarded reaped.discarded]
+        (<- (Discard discarded)))
       (<- (settle-process-ends ends False)))
     ;; 業務の task が出来事を待っている間に process が終われば、行き止まりの見張りを起こす(生きている task の数が変わる・#3078)。
     (val watching (if (or event-waits scenario-waiting) change-bells #()))
@@ -3445,6 +3523,14 @@
       (!= key name) (:= hosts (dfor #(k v) (.items hosts) :if (!= k key) k v))
       (= truth.boot boot) (:= hosts (| hosts {name (replace truth :down True :stopping False)})))
     (:= stop-waiters (dfor #(k v) (.items stop-waiters) :if (!= k key) k v))
+    ;; 世代の終わり(Pod の終わり)で、その世代の子孫は引き取りに依らず全部 -9 で終わる(#2940 の条 C4b — 切り離した孫も残らない)。
+    (<- now int (now-epoch-ms))
+    (<- reaped ReapedDescendants (descendants-reaped descendants descendant-tasks (frozenset) #(name boot)
+                                                     (or (is plan.children None) plan.children.adoption) now))
+    (:= descendants reaped.descendants)
+    (:= descendant-tasks reaped.tasks)
+    (for [discarded reaped.discarded]
+      (<- (Discard discarded)))
     (for [promise waiting]
       (<- (CompletePromise promise None)))
     (resume None))
@@ -3546,8 +3632,13 @@
     (:= children ends.children)
     (:= finished ends.finished)
     (:= end-waiters ends.end-waiters)
+    ;; 落ちた job の process の子孫も、本番の shim の片づけと同じく -9 で終わる(#2940 の条 C4b)。
+    (<- reaped ReapedDescendants (descendants-reaped descendants descendant-tasks (frozenset (gfor r victims r.pid)) None
+                                                     (or (is plan.children None) plan.children.adoption) now))
+    (:= descendants reaped.descendants)
+    (:= descendant-tasks reaped.tasks)
     ;; 殺された process は本物の SIGKILL と同じく巻き戻さずに捨てる(Discard — finally の effect は走らず、世界に何も届かない)。
-    (for [task mains]
+    (for [task (+ mains reaped.discarded)]
       (<- (Discard task)))
     (<- (settle-process-ends ends True))
     (resume (len victims)))
@@ -3572,8 +3663,13 @@
     (:= children ends.children)
     (:= finished ends.finished)
     (:= end-waiters ends.end-waiters)
+    ;; node ごと死んだ世代の子孫は、引き取りに依らず全部 -9 で終わる(Pod の中の process は残らない — #2940 の条 C4b)。
+    (<- reaped ReapedDescendants (descendants-reaped descendants descendant-tasks (frozenset (gfor r victims r.pid)) #(name truth.boot)
+                                                     (or (is plan.children None) plan.children.adoption) now))
+    (:= descendants reaped.descendants)
+    (:= descendant-tasks reaped.tasks)
     ;; 殺された process は本物の SIGKILL と同じく巻き戻さずに捨てる(Discard — finally の effect は走らず、世界に何も届かない)。
-    (for [task mains]
+    (for [task (+ mains reaped.discarded)]
       (<- (Discard task)))
     (<- (settle-process-ends ends True))
     (when (is-not resting None)
