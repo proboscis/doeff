@@ -2559,6 +2559,8 @@ struct FileMarks {
     deftests: HashMap<usize, String>,
     /// 空でない `:interpreters` を持つ deftest の始まりの行(DOEFF137)。
     interpreters: HashSet<usize>,
+    /// deftest の始まりの行 → `:interpreters` の要素のうち記号の物の綴り(DOEFF133 が名の定数の定義と、名 → 組み立ての表の組み立てへ辿る)。
+    interpreter_symbols: HashMap<usize, Vec<String>>,
 }
 
 impl FileMarks {
@@ -2582,6 +2584,7 @@ impl FileMarks {
         let line_of = |form: &Form| starts.partition_point(|start| *start <= form.span.start).saturating_sub(1);
         let mut deftests = HashMap::new();
         let mut interpreters = HashSet::new();
+        let mut interpreter_symbols = HashMap::new();
         let mut stack: Vec<&Form> = forms.iter().collect();
         while let Some(form) = stack.pop() {
             // 入れ子はどの括弧の中にも在る(defadr の :tests [(deftest …) …] の並びの中など)。
@@ -2604,17 +2607,29 @@ impl FileMarks {
             if let Some(marks) = option(":marks") {
                 deftests.insert(line_of(form), text(marks));
             }
-            // :interpreters の要素(file の外の定数の記号)は読み解かない — 空でない列かだけを見る(DOEFF137)。
-            if option(":interpreters").is_some_and(|value| matches!(&value.node, Node::Seq { items, .. } if !items.is_empty())) {
-                interpreters.insert(line_of(form));
+            // DOEFF137 は空でない列かだけを見る。DOEFF133 は要素の記号を名の定数の定義へ解いて辿る(文字列の要素は conftest の表が引く名で、
+            // Hy の索引では解けない)。
+            if let Some(Node::Seq { items, .. }) = option(":interpreters").map(|value| &value.node) {
+                if !items.is_empty() {
+                    interpreters.insert(line_of(form));
+                    let symbols: Vec<String> = items.iter().filter(|item| matches!(item.node, Node::Symbol)).map(text).collect();
+                    if !symbols.is_empty() {
+                        interpreter_symbols.insert(line_of(form), symbols);
+                    }
+                }
             }
         }
-        FileMarks { module, deftests, interpreters }
+        FileMarks { module, deftests, interpreters, interpreter_symbols }
     }
 
     /// テストの定義が空でない `:interpreters` を持つか(縁の検 — 本物と模擬の解釈器に同じ検を通す・DOEFF137)。
     fn runs_interpreters(&self, test: &Definition) -> bool {
         self.interpreters.contains(&(test.full_range.start.line as usize))
+    }
+
+    /// テストの定義の `:interpreters` の要素のうち記号の物の綴り(DOEFF133)。
+    fn interpreter_symbols(&self, test: &Definition) -> &[String] {
+        self.interpreter_symbols.get(&(test.full_range.start.line as usize)).map_or(&[], Vec::as_slice)
     }
 
     /// テストの定義か module の頭が、縁の印 mark を持つか。印の名は Python の綴り(`real_world`)と Hy の綴り(`real-world`)の両方で読む。
@@ -2864,6 +2879,43 @@ fn judge_test_kinds(
         .rev()
         .map(|(node, (rel, index))| (hy[*rel].definitions[*index].qualified_name.as_str(), node))
         .collect();
+    // deftest の :interpreters の記号 → 名の定数の定義と、その module の名 → 組み立ての表がその名に当てた組み立て(本物の側の組み立ては
+    // 網・cluster に届く — 契約の検は本物の側で縁)。索引の外の Python の関数は、ほかの名指しと同じく foreign で辿る。
+    let marks_of: HashMap<String, FileMarks> = graph
+        .rels
+        .iter()
+        .filter(|rel| hy[**rel].definitions.iter().any(|d| d.kind == DefinitionKind::Deftest))
+        .filter_map(|rel| std::fs::read_to_string(root.join(rel.as_str())).ok().map(|source| (rel.to_string(), FileMarks::read(&source))))
+        .collect();
+    let mut tables: HashMap<String, HashMap<String, Vec<String>>> = HashMap::new();
+    for rel in &graph.rels {
+        let Some(marks) = marks_of.get(rel.as_str()) else { continue };
+        let file = &hy[*rel];
+        let first = graph.base[rel.as_str()];
+        for (index, test) in file.definitions.iter().enumerate().filter(|(_, d)| d.kind == DefinitionKind::Deftest) {
+            for symbol in marks.interpreter_symbols(test) {
+                let Some(name) = file
+                    .references
+                    .iter()
+                    .filter(|r| !r.member && (r.name == *symbol || r.mangled == *symbol) && range_inside(&r.range, &test.full_range))
+                    .find_map(|r| r.target.clone())
+                else {
+                    continue;
+                };
+                let Some(&constant) = by_name.get(name.as_str()) else { continue };
+                let (owner_rel, _) = graph.nodes[constant];
+                let table = tables.entry(owner_rel.to_string()).or_insert_with(|| interpreter_table(root, owner_rel, &hy[owner_rel]));
+                let assemblies = table.get(&name).cloned().unwrap_or_default();
+                for target in std::iter::once(name).chain(assemblies) {
+                    if let Some(&callee) = by_name.get(target.as_str()) {
+                        graph.callers[callee].push(first + index);
+                    } else if python.names_function(&target) {
+                        graph.foreign.push((first + index, target, false));
+                    }
+                }
+            }
+        }
+    }
     let edge = |category: RawCategory| architecture.counts_as_edge(&[world_catalog::touch_of_raw(category)]);
     let mut answers: HashMap<String, python_reach::PythonReached> = HashMap::new();
     for (owner, target, is_carried) in std::mem::take(&mut graph.foreign) {
@@ -2899,8 +2951,7 @@ fn judge_test_kinds(
         if tests.is_empty() {
             continue;
         }
-        let Ok(source) = std::fs::read_to_string(root.join(rel.as_str())) else { continue };
-        let marks = FileMarks::read(&source);
+        let Some(marks) = marks_of.get(rel.as_str()) else { continue };
         for index in tests {
             let test = &file.definitions[index];
             let edge = reaches[first + index];
@@ -3067,6 +3118,38 @@ fn judge_contract_tests(root: &Path, architecture: &architecture::Architecture, 
         });
     }
     drafts
+}
+
+/// 契約の検の組み立ての module の名 → 組み立ての表(`(val INTERPRETERS {名の定数 組み立て …})`)— 辞書の literal の組のうち、鍵と値が
+/// どちらも記号で名の解ける物の、鍵の完全修飾名 → 値の完全修飾名の列(DOEFF133)。解釈器の名の定数は文字列で、組み立てを名指さない —
+/// 回る組み立ては conftest がこの表から引くので、表の組を名の定数から組み立てへの辺として読む。
+fn interpreter_table(root: &Path, rel: &str, file: &HyFileIndex) -> HashMap<String, Vec<String>> {
+    use doeff_indexer::hy_index::reader::{Delim, Form, Node, Reader};
+    let mut out: HashMap<String, Vec<String>> = HashMap::new();
+    let Ok(source) = std::fs::read_to_string(root.join(rel)) else { return out };
+    let text = |form: &Form| source.get(form.span.start..form.span.end).unwrap_or("").to_string();
+    let target_of = |symbol: &str| {
+        file.references.iter().filter(|r| !r.member && (r.name == symbol || r.mangled == symbol)).find_map(|r| r.target.clone())
+    };
+    let forms = Reader::new(&source, 0, source.len()).read_all();
+    let mut stack: Vec<&Form> = forms.iter().collect();
+    while let Some(form) = stack.pop() {
+        let Node::Seq { delim, items } = &form.node else { continue };
+        stack.extend(items.iter());
+        if *delim != Delim::Brace {
+            continue;
+        }
+        for pair in items.chunks(2) {
+            let [key, value] = pair else { continue };
+            if !matches!(key.node, Node::Symbol) || !matches!(value.node, Node::Symbol) {
+                continue;
+            }
+            if let (Some(key), Some(value)) = (target_of(&text(key)), target_of(&text(value))) {
+                out.entry(key).or_default().push(value);
+            }
+        }
+    }
+    out
 }
 
 /// 定義の中の文字列 literal のうち、解釈器の名の綴り `"module:名"` / `"module:名@<変種>"` の物 — 完全修飾名 → その文字列を持つ節
