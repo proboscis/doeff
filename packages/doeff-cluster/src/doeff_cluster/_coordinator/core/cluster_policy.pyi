@@ -62,6 +62,7 @@ from doeff_cluster._coordinator.intent.cluster_model import KeepMark as KeepMark
 from doeff_cluster._coordinator.intent.cluster_model import KnownExit as KnownExit
 from doeff_cluster._coordinator.intent.cluster_model import SupersededRun as SupersededRun
 from doeff_cluster._coordinator.intent.cluster_model import HandoverBlocker as HandoverBlocker
+from doeff_cluster._coordinator.intent.cluster_model import GenerationRow as GenerationRow
 from doeff_cluster._shared.intent.detached_model import TaskLimit as TaskLimit
 from doeff_cluster._shared.intent.detached_model import GroupLimit as GroupLimit
 from doeff_cluster._shared.intent.due_model import DueAt as DueAt
@@ -216,6 +217,9 @@ def eligible(state: ClusterState, job: ClusterJob, worker: WorkerInfo) -> bool:
 LIVE_PHASES: set[str]
 
 def service_rows(now: int, state: ClusterState, name: str, timing: ClusterTiming) -> tuple:
+    ...
+
+def elder_rows(now: int, state: ClusterState, worker: str, timing: ClusterTiming) -> tuple:
     ...
 
 def still_live_somewhere(now: int, state: ClusterState, name: str, timing: ClusterTiming) -> bool:
@@ -518,7 +522,16 @@ def worker_report(rows: tuple, now: int, endpoint: str | None, known: tuple) -> 
 def register_heartbeat(given: ClusterState, body: HeartbeatBody, now: int) -> _Program[ClusterState, object]:
     ...
 
-def absorb_superseded_heartbeat(state: ClusterState, name: str, boot: str, statuses: tuple, now: int) -> ClusterState:
+def absorb_superseded_heartbeat(state: ClusterState, name: str, boot: str, statuses: tuple, now: int, report: WorkerReport) -> ClusterState:
+    ...
+
+def elder_runs_written(state: ClusterState, name: str, boot: str, statuses: tuple, now: int, report: WorkerReport, overlapped: bool | None=None) -> ClusterState:
+    ...
+
+def elder_key(name: str, boot: str) -> str:
+    ...
+
+def elder_statuses_after(elders: Table, runs: tuple, name: str, boot: str, report: WorkerReport) -> Table:
     ...
 
 def superseded_runs_after(state: ClusterState, name: str, boot: str, statuses: tuple, now: int, overlapped: bool | None=None) -> tuple:

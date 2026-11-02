@@ -417,6 +417,14 @@
   (setv #^ (| int None) since-ms None))
 
 
+(defrecord GenerationRow
+  "worker の名の 1 つの世代が報告した状態の行 1 つ(cluster_policy.elder-rows・resource_policy.carrying-row): boot = その行を報告した
+   世代(分からなければ None)・row = 行(今の世代の報告か、ClusterObservations.elder-statuses の退いた世代の報告の job の行)。保存しない。"
+  {:tags {:context "coordinator" :role "type"}}
+  (#^ (| str None) boot)
+  (#^ StatusRow row))
+
+
 (defrecord HandoverBlocker
   "世代をまたぐ受け渡し(AL-D2k — cluster_policy.handover-pending)を止めている job 1 つ: 今の世代がまだ受け取れない
    job の名 job・入れ替えの形 update(handoff = 今の世代の process が Ready と数えられていない・recreate = 状態の行の phase が
@@ -806,12 +814,15 @@
    Deployment の最後の観測・nodes = node の名 → label の最後の観測(どちらも読み直す間隔を決める at を持つ)・readiness = Service の名 →
    準備の報告の列・metrics = Service の名 → 計器の報告の列(どちらも process の世代ごとに最新 1 つ・古い順・置き先の process の報告は
    他の送り手に押し出されない — resource_policy.keep-report)・statuses = worker の名 → その worker の最新の状態の報告(heartbeat ごとに
-   置き換える — #2904)。"
+   置き換える — #2904)・elder-statuses = 「<名>/<退いた世代>」→ 同じ名の新しい世代が名乗った後も job を動かしている退いた世代の
+   最新の状態の報告(その世代の組 SupersededRun が持つ job の行だけ — 受け渡しの間、job を今動かしている process の行を Service の
+   観測に出すため。鍵は保存の superseded/<名>/<世代> と同じで、組が外れた歩で一緒に外す — cluster_policy.elder-statuses-after)。"
   (setv #^ (get Table (| DeploymentSeen DeploymentUnreadable)) deployments (field :default-factory (partial table-of #())))
   (setv #^ (get Table (| NodeLabelsSeen NodeLabelsUnreadable)) nodes (field :default-factory (partial table-of #())))
   (setv #^ (get Table (get tuple #(ReadinessReport ...))) readiness (field :default-factory (partial table-of #())))
   (setv #^ (get Table (get tuple #(MetricsReport ...))) metrics (field :default-factory (partial table-of #())))
-  (setv #^ (get Table WorkerReport) statuses (field :default-factory (partial table-of #()))))
+  (setv #^ (get Table WorkerReport) statuses (field :default-factory (partial table-of #())))
+  (setv #^ (get Table WorkerReport) elder-statuses (field :default-factory (partial table-of #()))))
 
 
 (defrecord ObservedDeployment
@@ -822,14 +833,18 @@
 
 (defrecord ServiceObserved
   "資源の画面の Service の観測(resource_policy.resource-view — #2595): ready-reason = 準備の判定の理由・last-readiness = 最後に受けた準備の
-   報告(無ければ None — JSON の形は coordinator/protocol/replies が綴る)・process = 置き先の worker の最後の報告の行・version = 版の判定・
-   running = 生きている process の版の列・unplaced = 置き先が無ければその読み(UnplacedView — 置かれていれば None)。"
+   報告(無ければ None — JSON の形は coordinator/protocol/replies が綴る)・process = 置き先の worker で job を今動かしている process の
+   行(世代の受け渡しの間は、新しい世代が running を報告するまで退いた世代の行 — resource_policy.carrying-row)・version = 版の判定・
+   running = 生きている process の版の列・unplaced = 置き先が無ければその読み(UnplacedView — 置かれていれば None)・
+   process-boot = process の行を報告した世代(分からなければ None)・process-elder = その行が退いた世代の物か。"
   (#^ str ready-reason)
   (#^ (| ReadinessReport None) last-readiness)
   (#^ (| StatusRow None) process)
   (#^ VersionVerdict version)
   (#^ (get tuple #(LiveProcess ...)) running)
-  (setv #^ (| UnplacedView None) unplaced None))
+  (setv #^ (| UnplacedView None) unplaced None)
+  (setv #^ (| str None) process-boot None)
+  (setv #^ bool process-elder False))
 
 
 (defrecord WorkerObserved

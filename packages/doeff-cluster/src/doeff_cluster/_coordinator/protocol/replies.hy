@@ -257,7 +257,10 @@
     (isinstance observed ServiceObserved)
       {"readyReason" observed.ready-reason
        "lastReadiness" (! (readiness-report-json observed.last-readiness))
-       "process" (if (is observed.process None) None (status-row-to-json observed.process))
+       ;; job を今動かしている process の行に、その行を報告した世代(boot)と、退いた世代の行か(elder — 世代の受け渡しの間)を添える。
+       "process" (if (is observed.process None)
+                     None
+                     (| (status-row-to-json observed.process) {"boot" observed.process-boot "elder" observed.process-elder}))
        "version" (! (version-json observed.version observed.running))
        ;; 置き先が無ければ {kind needs missing pin sinceMs}・置かれていれば null。
        "unplaced" (if (is observed.unplaced None) None (! (unplaced-view-json observed.unplaced)))}

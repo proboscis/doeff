@@ -21,7 +21,7 @@
 (import doeff_cluster._shared.core.supplied_spelling [supplied-spellings])
 (import doeff_cluster._shared.core.detached_rules [task-priority-refusal task-limits-refusal task-limits-of])
 (import doeff_cluster._coordinator.intent.cluster_model [ClusterJob ErrorReply TaskAccepted TaskProgress TaskMissing TaskResultTaken BoardTally BoardUsage BoardWritten BoardConflict BoardRefused WorkerInfo TaskOffer WarmOffer HeartbeatReply ServiceView WorkerView StatusView StateView GroupLimitView GroupHeld BoardRow WorkerReport GenerationOrder Placement ClusterState TaskRecord EnvFailed HandoffPhase UnplacedKind UnplacedView TaskUnplacedKind WorkerLoad ACCEPTED-FORMATS PLACED-PHASES])
-(import doeff_cluster._coordinator.intent.cluster_model [NodeLabelsSeen KeepMark KnownExit SupersededRun HandoverBlocker])
+(import doeff_cluster._coordinator.intent.cluster_model [NodeLabelsSeen KeepMark KnownExit SupersededRun HandoverBlocker GenerationRow])
 (import doeff_cluster._shared.intent.detached_model [TaskLimit GroupLimit])
 (import doeff_cluster._shared.intent.due_model [DueAt DueNow DueNever])
 (import doeff_cluster._shared.core.due_policy [due-of-instants])
@@ -475,14 +475,29 @@
 
 (defn #^ tuple service-rows [#^ int now #^ ClusterState state #^ str name #^ ClusterTiming timing]
   "job name の process の行の母集団(worker の名の順): lease の内に報告した全部の worker の最新の報告のうち、名が一致する行と、
-   入れ替えで退いた process の行(行の名は <名>#retired-<世代>・retiredFrom = 名)。「まだどこかで動いているか」(still-live-somewhere)と
-   「どの版が動いているか」(resource_policy.live-processes)が同じ母集団を読むための定義点。"
+   入れ替えで退いた process の行(行の名は <名>#retired-<世代>・retiredFrom = 名)。同じ名の新しい世代が名乗った後も job を動かして
+   いる退いた世代の行(elder-rows)も入る — 受け渡しの間、job を動かしている process は退いた世代の物。「まだどこかで動いているか」
+   (still-live-somewhere)と「どの版が動いているか」(resource_policy.live-processes)が同じ母集団を読むための定義点。"
   (tuple (gfor #(wname st) (sorted (.items state.observations.statuses))
                :setv w (.row state.workers wname)
                :if (and (is-not w None) (alive now w timing.lease-ms))
-               row st.jobs
+               row (+ st.jobs (tuple (gfor e (elder-rows now state wname timing) e.row)))
                :if (or (= row.name name) (= row.retired-from name))
                row)))
+
+
+(defn #^ tuple elder-rows [#^ int now #^ ClusterState state #^ str worker #^ ClusterTiming timing]
+  ;; defk にできない: coordinator の純粋な判断(service-rows の内包表記と resource_policy.carrying-row — defn)が呼ぶ
+  "純粋: 名 worker の退いた世代のうち、組(SupersededRun)の最後の報告が lease の内の世代の、組の job の行(GenerationRow の列・世代の順)。
+   世代の受け渡しの間、job を今動かしている process の行を Service の観測(service-rows・resource_policy.carrying-row)に出すため。
+   黙った世代の行は数えない(handover-runs と同じ窓 — 黙った世代の process は止まったと読む)。"
+  (setv info (.row state.workers worker) current (if (is info None) None info.boot))
+  (tuple (gfor r state.superseded-runs
+               :if (and (= r.worker worker) (!= r.boot current) (< (- now r.seen-ms) timing.lease-ms))
+               :setv report (.row state.observations.elder-statuses (elder-key r.worker r.boot))
+               :if (is-not report None)
+               row report.jobs
+               (GenerationRow :boot r.boot :row row))))
 
 
 (defn #^ bool still-live-somewhere [#^ int now #^ ClusterState state #^ str name #^ ClusterTiming timing]
@@ -2042,7 +2057,9 @@
                                                   :statuses (.with-writes adopted.observations.statuses
                                                                           #((TableWrite name (replace current-report
                                                                                                       :jobs (! (rows-with-known-exits current-report.jobs known)))))))))
-              name boot statuses now)))
+              name boot statuses now
+              ;; 退いた世代の報告も今の世代の報告と同じ形で持つ(受け渡しの間、job を今動かしている process の行 — elder-statuses-after)。
+              (! (worker-report statuses now body.endpoint known)))))
   (setv envs (or body.envs (EnvsReport))
         caps (named-capabilities body.provides body.exclusive (is-not body.labels None) (.format "worker {} の名乗り" name))
         node body.node
@@ -2099,8 +2116,10 @@
         ;; いる組(SupersededRun)の種にする — 前の世代の次の heartbeat を待たずに、今の世代への最初の返事から印 elder-runs を付ける。
         seeded (if (and (= order GenerationOrder.NEWER) body.overlaps-elder (is-not previous None) (is-not previous.boot None)
                         (is-not previous-report None))
-                   (replace registered :superseded-runs (superseded-runs-after registered name previous.boot previous-report.jobs now
-                                                                               :overlapped True))
+                   (elder-runs-written registered name previous.boot previous-report.jobs now
+                                       ;; 前の世代の最新の報告を、組の job の行として持ち続ける(刻はこの heartbeat の後の知れた刻)。
+                                       (replace previous-report :jobs (! (rows-with-known-exits previous-report.jobs known)))
+                                       :overlapped True)
                    registered))
   ;; 今の世代(か新しい世代)の知らせた「今持っている印」で、印を持たなくなった job の約束を外す(#2804 — 退いた世代の heartbeat は
   ;; 上で抜けるので約束に触らない)。止まり始めの名乗り(body.stopping・#2819)は、その世代に置いて始まっていない task を
@@ -2109,12 +2128,53 @@
                       :keep-marks (! (released-keep-marks seeded.keep-marks name body.kept-when-cut-off))))
 
 
-(defn #^ ClusterState absorb-superseded-heartbeat [#^ ClusterState state #^ str name #^ str boot #^ tuple statuses #^ int now]
+(defn #^ ClusterState absorb-superseded-heartbeat [#^ ClusterState state #^ str name #^ str boot #^ tuple statuses #^ int now
+                                                  #^ WorkerReport report]
   "退いた世代の process がまだ走らせている切り離した task を最後まで見届けるため: その世代に置いた task の終わりの報告と
    lease の延長だけを写す。worker の名乗り(生存・label・容量・版・世代)・job の状態の報告・drain は今の世代の物なので触らない。
-   その世代が走らせている入れ替えの job の組(SupersededRun — 旧い Pod の preStop が待つ・AL-D2)も書き直す。"
-  (replace state :tasks (heard-tasks state name statuses now boot False None)
-                 :superseded-runs (superseded-runs-after state name boot statuses now)))
+   その世代が走らせている入れ替えの job の組(SupersededRun — 旧い Pod の preStop が待つ・AL-D2)と、組の job の行(report — この
+   heartbeat の報告を worker-report の形にした物)も書き直す(elder-runs-written)。"
+  (elder-runs-written (replace state :tasks (heard-tasks state name statuses now boot False None))
+                      name boot statuses now report))
+
+
+(defn #^ ClusterState elder-runs-written [#^ ClusterState state #^ str name #^ str boot #^ tuple statuses #^ int now
+                                          #^ WorkerReport report #^ (| bool None) [overlapped None]]
+  ;; defk にできない: coordinator の純粋な判断(absorb-superseded-heartbeat — defn)が呼ぶ
+  "純粋: 退いた世代 boot の報告(statuses と、それを worker-report の形にした report)の後の、退いた世代の組の列(superseded-runs-after)と
+   その組の job の行(ClusterObservations.elder-statuses — elder-statuses-after)を一緒に書くため。組と行を同じ歩で書くので、行は組が
+   job を持つ間だけ残る。"
+  (setv runs (superseded-runs-after state name boot statuses now :overlapped overlapped))
+  (replace state :superseded-runs runs
+                 :observations (replace state.observations
+                                        :elder-statuses (elder-statuses-after state.observations.elder-statuses runs name boot report))))
+
+
+(defn #^ str elder-key [#^ str name #^ str boot]
+  ;; defk にできない: coordinator の純粋な判断(elder-rows の内包表記・elder-statuses-after — defn)が呼ぶ
+  "退いた世代の報告の表(ClusterObservations.elder-statuses)の鍵 — 保存の superseded/<名>/<世代> と同じ組。"
+  (+ name "/" boot))
+
+
+(defn #^ Table elder-statuses-after [#^ Table elders #^ tuple runs #^ str name #^ str boot #^ WorkerReport report]
+  ;; defk にできない: coordinator の純粋な判断(elder-runs-written — defn)が呼ぶ
+  "純粋: 組の列 runs を書いた後の、退いた世代の報告の表 elders(世代の受け渡しの間、job を今動かしている process の行を Service の
+   観測に出すため — resource_policy.carrying-row と service-rows)。名 name の世代 boot の行を、report のうち組が持つ job の行(と、
+   その job から入れ替えで退いた process の行)だけにして置き直し、組の無い鍵の行を外す(覚える数は組の数と同じ)。同じ値の行は
+   書き直さない(版の比べの材料が heartbeat ごとに動かないように)。"
+  (setv run (next (gfor r runs :if (and (= r.worker name) (= r.boot boot)) r) None)
+        key (elder-key name boot)
+        live (frozenset (gfor r runs (elder-key r.worker r.boot)))
+        kept (if (is run None)
+                 None
+                 (replace report :jobs (tuple (gfor row report.jobs :if (in (or row.retired-from row.name) run.jobs) row))))
+        prior (.row elders key)
+        ;; 報告の刻 at は読まない(行の新しさは組の seen-ms で数える)ので、行が同じなら前の行のまま。
+        writes (+ (if (or (is kept None) (and (is-not prior None) (= prior.jobs kept.jobs) (= prior.endpoint kept.endpoint)))
+                      #()
+                      #((TableWrite key kept)))
+                  (tuple (gfor k (.keys elders) :if (not-in k live) (TableWrite k None)))))
+  (if writes (.with-writes elders writes) elders))
 
 
 (defn #^ tuple superseded-runs-after [#^ ClusterState state #^ str name #^ str boot #^ tuple statuses #^ int now
