@@ -195,15 +195,15 @@
   ;; 盲検 B: 送り手の名乗る欄を足して置き方がそれで数えると、提示の検を全部通りながら上限の値が送り手へ戻った。送り手の欄の集合と、数えの
   ;; 関数が受ける物を固定する — 足す時は、組の上限の数えに送り手の値を入れない事を確かめ(値と範囲の持ち主は系の宣言 GroupLimit だけ)、
   ;; この表を直す。notify(終わりの知らせ先)は出口へ積む判断(detached_policy.outbox-noted)だけが読み、下の数えの関数は
-  ;; 受けない。
+  ;; 受けない。memory-mib(memory の要り — 2026-11-02)は memory の空きの比べ(task-misfit の need)だけが読み、組の上限の数えは受けない。
   (assert (= (tuple (gfor f (fields TaskLimit) f.name)) #("group" "part"))
           "TaskLimit は組の名と区分だけ — 値・範囲・重さを task に名乗らせない(値の持ち主は系の宣言)")
   (assert (= (tuple (gfor f (fields SubmitDetached) f.name))
-             #("program" "key" "needs" "name" "lease_seconds" "retain_seconds" "environ" "priority" "limits" "notify"))
+             #("program" "key" "needs" "name" "lease_seconds" "retain_seconds" "environ" "priority" "limits" "notify" "memory_mib"))
           "SubmitDetached の欄を足す時は、組の上限の数えに入れない事を確かめてからこの表を直す")
   (assert (= (tuple (gfor f (fields TaskBody) f.name))
              #("program" "revision" "name" "needs" "requires" "env" "blob" "versions" "runtime_env" "environ" "lease_seconds"
-               "retain_seconds" "priority" "limits" "notify" "format"))
+               "retain_seconds" "priority" "limits" "notify" "memory_MiB" "format"))
           "TaskBody(受け口の本文)の欄を足す時は、組の上限の数えに入れない事を確かめてからこの表を直す")
   ;; 置き方の判断の関数は task の行(TaskRecord — 送り手の欄を全部持つ)を受けず、組の名乗り(TaskLimit の tuple)・置いた worker・
   ;; 置いている数・系の宣言の表だけを受ける。task の行を読むのは、置いている task の名乗りを射影する placed-claims と tasks-placed の
@@ -211,7 +211,7 @@
   (for [#(f params) [#(cluster_policy.hold-limits ["held" "limits" "worker" "groups"])
                      #(cluster_policy.limits-misfit ["limits" "worker" "held" "groups"])
                      #(cluster_policy.limit-holdings ["claims" "groups"])
-                     #(cluster_policy.task-misfit ["limits" "priority" "worker" "room" "held" "groups" "bg_held" "bg_wanted"])
+                     #(cluster_policy.task-misfit ["limits" "priority" "worker" "room" "held" "groups" "bg_held" "bg_wanted" "need" "memory_room"])
                      #(cluster_policy.placed-claims ["tasks"])]]
     (assert (= (list (. (inspect.signature f) parameters)) params) #(f.__name__ (inspect.signature f)))))
 

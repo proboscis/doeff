@@ -84,6 +84,7 @@ class WorkerLoad:
     tasks: int
     settle_mib: int
     unseen: int = 0
+    reserved_mib: int = 0
 
 @dataclass(frozen=True)
 class EnvFailed:
@@ -223,6 +224,7 @@ class WorkerView:
     live: bool
     draining: bool
     task_room: int
+    task_memory_room_mib: int = 0
 
 @dataclass(frozen=True, kw_only=True)
 class StatusView:
@@ -420,6 +422,7 @@ class HandoffWatch:
 
 class TaskUnplacedKind(StrEnum):
     TASK_NO_ROOM = 'task-no-room'
+    TASK_NO_MEMORY = 'task-no-memory'
     TASK_LIMITED = 'task-limited'
     TASK_RESERVED = 'task-reserved'
     TASK_BACKGROUND_RESERVED = 'task-background-reserved'
@@ -735,6 +738,7 @@ class TaskRecord:
     limits: tuple[TaskLimit, ...] = ...
     notify: str = ''
     queued_noticed_ms: int | None = None
+    memory_mib: int | None = None
 PLACED_PHASES: frozenset[str]
 ENDED_PHASES: frozenset[str]
 
@@ -797,6 +801,7 @@ class TaskOffer:
     needs: tuple[str, ...]
     runtime_env: dict[str, object] | None
     environ: tuple[tuple[str, str], ...]
+    memory_mib: int | None = None
 
 @dataclass(frozen=True, kw_only=True)
 class WarmOffer:

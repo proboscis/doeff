@@ -85,7 +85,9 @@
   {"atMs" load.at-ms "cpus" load.cpus "cpuBusy" load.cpu-busy
    "memoryTotalMiB" load.memory-total-mib "memoryAvailableMiB" load.memory-available-mib
    "cpuSomeAvg10" load.cpu-some-avg10 "cpuFullAvg10" load.cpu-full-avg10
-   "memorySomeAvg10" load.memory-some-avg10 "memoryFullAvg10" load.memory-full-avg10})
+   "memorySomeAvg10" load.memory-some-avg10 "memoryFullAvg10" load.memory-full-avg10
+   ;; task ごとの memory の今の使い(名乗る時だけ — 2026-11-02)。
+   #** (if (is load.task-uses None) {} {"taskMemoryMiB" (dfor u load.task-uses u.id u.mib)})})
 
 
 (defk status-report [statuses task-echo results]

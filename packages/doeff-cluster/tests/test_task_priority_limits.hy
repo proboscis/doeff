@@ -4,7 +4,7 @@
 (require doeff-hy.macros [deftest val <- defk])
 (val MODULE-TAGS {:context "doeff-cluster-test" :role "test"})
 (import doeff_cluster._coordinator.intent.request_bodies [MeasuredLoad])
-(import doeff_cluster._coordinator.core.measured_room [CPU-FLOOR-CORES MEMORY-FLOOR-MIB RESERVE-SHARE TASK-CORES TASK-MEMORY-MIB])
+(import doeff_cluster._coordinator.core.measured_room [CPU-FLOOR-CORES MEMORY-FLOOR-MIB RESERVE-SHARE TASK-CORES MEMORY-SLOT-MIB])
 
 (import dataclasses [replace])
 (import doeff_hy._table [Table])
@@ -36,7 +36,7 @@
    下の検の数は、以前の手書きの枠(capacity − 常駐の job・task-reserve)の空きと予約を、同じ空きと予約として写した物。"
   (WorkerInfo "zeus" #("host-zeus") 0
               :measured (MeasuredLoad :at-ms 0 :cpus (* RESERVE-SHARE TASK-CORES reserve) :cpu-busy 0.0 :memory-total-MiB 262144
-                                      :memory-available-MiB (+ MEMORY-FLOOR-MIB (* room TASK-MEMORY-MIB))
+                                      :memory-available-MiB (+ MEMORY-FLOOR-MIB (* room MEMORY-SLOT-MIB))
                                       :cpu-some-avg10 0.0 :cpu-full-avg10 0.0 :memory-some-avg10 0.0 :memory-full-avg10 0.0)
               :versions PY3))
 

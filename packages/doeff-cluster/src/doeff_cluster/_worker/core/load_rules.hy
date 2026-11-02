@@ -17,7 +17,7 @@
 (require doeff-hy.record [defrecord])
 (val MODULE-TAGS {:context "worker" :role "judgment"})
 (import dataclasses [dataclass])  ; defrecord の展開が名指す
-(import doeff_cluster._worker.core.memory_rules [MIB NodeMemory node-memory-of])
+(import doeff_cluster._worker.core.memory_rules [MIB NodeMemory JobUse TASK-PREFIX node-memory-of])
 (import doeff_cluster._worker.core.eviction_rules [EvictionLine line-memory])
 
 ;; 測りを読み直す間。PSI の avg10 が 10 秒の平均なので、その半分の間で読めば名乗る値の遅れは avg10 の窓の内に収まる。CPU の使いは
@@ -26,6 +26,9 @@
 ;; 見張りが数えた追い出しの線を名乗りに使う古さの上限(見張りの回の 5 秒の 3 回分 — 見張りが止まった・遅れた worker は古い空きを
 ;; 名乗らず、MemAvailable に戻る)。
 (val LINE-FRESH-MS (* 15 1000))
+;; 見張りが読んだ task ごとの memory の今の使いを名乗りに使う古さの上限(線と同じ — 見張りが止まった・遅れた worker は今の使いを
+;; 名乗らず、coordinator は名乗られない task の要りの全部を予約する)。
+(val TASK-USES-FRESH-MS LINE-FRESH-MS)
 ;; /proc/stat の頭の行 cpu の欄のうち、使いに数えない刻み(欄の位置 — 0 = user)。3 = idle・4 = iowait。
 (val IDLE-FIELDS #(3 4))
 ;; 頭の行 cpu の欄のうち、和に数える数(user nice system idle iowait irq softirq steal — 後ろの guest と guest_nice は user と nice に含まれる)。
@@ -56,11 +59,21 @@
   (#^ (| float None) full-avg10))
 
 
+(defrecord TaskMemory
+  "走っている task 1 本の memory の今の使い(heartbeat の measured の欄 taskMemoryMiB の 1 つ): id = task の id(job の名 task/<id> の
+   頭を外した物)・mib = 見張りの最後の読みの task の木の rss の和(MiB — 切り捨て)。"
+  {:check [(>= mib 0)]}
+  (#^ str id)
+  (#^ int mib))
+
+
 (defrecord MachineLoad
   "機体の測った空き 1 回分(heartbeat の欄 measured): at-ms = 読んだ刻(worker の壁の時計の epoch ms)・cpus = CPU の数・cpu-busy =
    前の読みからの CPU の使いの割合(0〜1 — 初めての読みと、刻みの進まない読みは None)・memory-total-mib / memory-available-mib =
    MemTotal / MemAvailable(MiB — 切り捨て)・cpu-some-avg10 / cpu-full-avg10 / memory-some-avg10 / memory-full-avg10 = PSI の avg10(%)
-   (PSI の file の無い機体と、full の行の無い kernel の cpu は None)。"
+   (PSI の file の無い機体と、full の行の無い kernel の cpu は None)・task-uses = 走っている task ごとの memory の今の使い(TaskMemory
+   の tuple — task-uses-of。None = 名乗らない〔見張りの読みが無いか古い〕— coordinator の置き先は名乗られない task の要りの全部を
+   予約する・2026-11-02)。"
   {:check [(> cpus 0) (or (is cpu-busy None) (<= 0 cpu-busy 1)) (>= memory-total-mib memory-available-mib 0)]}
   (#^ int at-ms)
   (#^ int cpus)
@@ -70,7 +83,8 @@
   (#^ (| float None) cpu-some-avg10)
   (#^ (| float None) cpu-full-avg10)
   (#^ (| float None) memory-some-avg10)
-  (#^ (| float None) memory-full-avg10))
+  (#^ (| float None) memory-full-avg10)
+  (setv #^ (| (get tuple #(TaskMemory ...)) None) task-uses None))
 
 
 (defrecord LoadReading
@@ -91,6 +105,18 @@
   "見張りが最後に数えた追い出しの線 line(line-at-ms = 数えた刻)を、名乗りに使える新しさの時だけ返すため(LINE-FRESH-MS の内 —
    古い・刻の無い・壁の時計が戻った読みは None で、名乗りは MemAvailable に戻る)。"
   (if (and (is-not line None) (is-not line-at-ms None) (<= 0 (- now-ms line-at-ms) LINE-FRESH-MS)) line None))
+
+
+(defk task-uses-of [uses uses-at-ms now-ms]
+  {:pre [(: uses tuple) (: uses-at-ms (| int None)) (: now-ms int)] :post [(: % (| tuple None))]
+   :tags {:context "worker" :role "judgment"}}
+  "見張りが最後に読んだ job ごとの memory(uses = JobUse の tuple・uses-at-ms = 読んだ刻)を、heartbeat で名乗る task ごとの今の使い
+   (TaskMemory の tuple — 名の頭 TASK-PREFIX の job だけ)にするため。coordinator の置き先が task の「要り − 今の使い」を予約するのに
+   読む。古い(TASK-USES-FRESH-MS を越えた)・刻の無い・壁の時計が戻った読みは None(名乗らない — 古い小さな使いで予約を減らさない)。"
+  (if (and (is-not uses-at-ms None) (<= 0 (- now-ms uses-at-ms) TASK-USES-FRESH-MS))
+      (tuple (gfor u uses :if (.startswith u.job TASK-PREFIX)
+                   (TaskMemory :id (cut u.job (len TASK-PREFIX) None) :mib (// u.bytes MIB))))
+      None))
 
 
 (defk cpu-ticks-of [text]

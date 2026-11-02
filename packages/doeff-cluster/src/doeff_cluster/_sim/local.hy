@@ -255,7 +255,7 @@
 (import doeff_cluster._shared.core.warm_rules [warm-state-of-json warm-wait-answer])
 (import doeff_cluster._worker.core.warm_rules [refusals-after])
 (import doeff_cluster._worker.core.room_rules [RoomReading RoomState WorkerRoom room-of-text room-read-due])
-(import doeff_cluster._worker.core.load_rules [MachineLoad])
+(import doeff_cluster._worker.core.load_rules [MachineLoad TaskMemory])
 ;; worker の世代は入口の組み立て(doeff_cluster._worker.entry.main の worker-on)を偽の宿の組の上で回す(本番の main と同じ口)。
 (import doeff_cluster._worker.entry.main [worker-on])
 (import doeff_cluster._worker.intent.worker_model [WorkerPolicy WorkerState WorldView CodeView CodeState ProcessView ProbeView ProbeState
@@ -319,21 +319,23 @@
 (val ROOMY-MACHINE (SimMachine :cpus 64 :memory-mib 262144))
 
 
-(defk machine-load-of [machine running at-ms [claims-cpus None]]
-  {:pre [(: machine SimMachine) (: running int) (: at-ms int) (: claims-cpus (| int None))] :post [(: % MachineLoad)]
+(defk machine-load-of [machine running at-ms [claims-cpus None] [task-ids None]]
+  {:pre [(: machine SimMachine) (: running int) (: at-ms int) (: claims-cpus (| int None)) (: task-ids (| tuple None))] :post [(: % MachineLoad)]
    :tags {:context "doeff-cluster" :role "judgment"}}
   "sim の worker が刻 at-ms に heartbeat の measured で名乗る機体の空き(本番の worker/core/load_rules の MachineLoad と同じ形)を、機体
    machine と走っている task の数 running から作るため。需要 = base-cores + running × task-cores・CPU の使い = min(1, 需要 / cpus)・
    CPU の PSI の some avg10 = 需要のうち CPU に載れない割合(%)・memory の空き = memory-mib − base-mib − running × task-mib(0 まで)・
    memory の PSI の some avg10 = 空きが全体の 5% を切ると 20(他は 0)。claims-cpus = 反例の世界だけの壊れた worker が名乗る CPU の数
-   (None = 機体の真実 — 名乗った数で CPU の使いを割り、機体を大きく見せる)。"
+   (None = 機体の真実 — 名乗った数で CPU の使いを割り、機体を大きく見せる)。task-ids = 走っている task の id(在れば task ごとの memory の
+   今の使いを task-mib として名乗る — 本番の見張りの読みの代役・2026-11-02。None = 名乗らない)。"
   (val cpus (if (is claims-cpus None) machine.cpus claims-cpus))
   (val demand (+ machine.base-cores (* running machine.task-cores)))
   (val available (max 0 (- machine.memory-mib machine.base-mib (* running machine.task-mib))))
   (MachineLoad :at-ms at-ms :cpus cpus :cpu-busy (min 1.0 (/ demand cpus)) :memory-total-mib machine.memory-mib
                :memory-available-mib available
                :cpu-some-avg10 (if (> demand cpus) (* 100.0 (/ (- demand cpus) demand)) 0.0) :cpu-full-avg10 0.0
-               :memory-some-avg10 (if (< (* available 20) machine.memory-mib) 20.0 0.0) :memory-full-avg10 0.0))
+               :memory-some-avg10 (if (< (* available 20) machine.memory-mib) 20.0 0.0) :memory-full-avg10 0.0
+               :task-uses (if (is task-ids None) None (tuple (gfor id task-ids (TaskMemory :id id :mib machine.task-mib))))))
 
 
 (defrecord SimWorker
@@ -1909,11 +1911,11 @@
   (RemoteJob [program needs name environ]
     (<- outcome (remote-outcome link program needs name environ))
     (resume (settled-value outcome)))
-  (SubmitDetached [program key needs name lease-seconds retain-seconds environ priority limits notify]
+  (SubmitDetached [program key needs name lease-seconds retain-seconds environ priority limits notify memory-mib]
     ;; 本番の detached-cluster と同じく、effect の EnvVar の tuple を本文の形(名 → 値の object)へ綴ってから送る(#2179)。
     (<- environ-body dict (env-mapping environ))
     (<- submitted (submit-detached link program key needs name (float lease-seconds) (float retain-seconds) environ-body
-                                   (| (task-placing-json priority limits) (task-notify-json notify))))
+                                   (| (task-placing-json priority limits memory-mib) (task-notify-json notify))))
     (resume submitted))
   (AwaitDetachedOutbox [prefix timeout-seconds kinds]
     (<- outbox DetachedOutboxAnswer (await-detached-outbox link prefix (tuple kinds) (float timeout-seconds)))
@@ -2119,8 +2121,8 @@
   (var measured None)
   (val machine worker.machine)
   (when (is-not machine None)
-    (<- load MachineLoad (machine-load-of machine (len (lfor p truth.processes :if (.startswith p.name "task/") p)) sent-at
-                                          :claims-cpus worker.claims-cpus))
+    (val task-ids (tuple (gfor p truth.processes :if (.startswith p.name "task/") (cut p.name 5 None))))
+    (<- load MachineLoad (machine-load-of machine (len task-ids) sent-at :claims-cpus worker.claims-cpus :task-ids task-ids))
     (:= measured load))
   (<- base dict (heartbeat-body :name worker.name :provides (tuple (sorted named)) :exclusive (tuple (sorted named-exclusive))
                                 :node worker.node

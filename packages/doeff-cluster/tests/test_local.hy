@@ -1140,7 +1140,7 @@
     (<- left int (measured-room (MeasuredLoad :at-ms 0 :cpus truth.cpus :cpu-busy truth.cpu-busy
                                               :memory-total-MiB truth.memory-total-mib :memory-available-MiB truth.memory-available-mib
                                               :cpu-some-avg10 truth.cpu-some-avg10 :memory-some-avg10 truth.memory-some-avg10)
-                                running 0))
+                                running 0 0))
     (:= room left)
     (when (> room 0) (:= running (+ running 1))))
   running)

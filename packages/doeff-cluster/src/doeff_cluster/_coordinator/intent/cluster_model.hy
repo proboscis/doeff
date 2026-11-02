@@ -155,13 +155,16 @@
   "worker 1 台の担っている数(cluster_policy.load-of の値): jobs = 常駐の job の置き先と並べた置き先(surge)の数・tasks = 置かれた task
    (PLACED-PHASES)の数・settle-mib = 置いた job と surge の落ち着いた memory(ClusterJob.settle-mib)の和(MiB — memory を知らない旧い
    保存の行の job は 0 と数える)・unseen = 置いた task のうち、worker の測った空き(measured)にまだ出ていない数(測った刻 −
-   measured_room.TASK-RAMP-MS より後に置いた task — 測りの無い worker は 0)。job の側の空き(memory-room-of・memory-misfit)は settle-mib と
-   worker の memory-mib から、task の空き(task-room-of)は worker の measured と tasks・unseen から求める。jobs は置く順にだけ使う。"
+   measured_room.TASK-RAMP-MS より後に置いた task — 測りの無い worker は 0)・reserved-mib = 置いた task の memory の予約の和(MiB —
+   task ごとの max(0, 要り − 測りの名乗る今の使い)・measured_room.reserved-mib-of — 2026-11-02)。job の側の空き(memory-room-of・
+   memory-misfit)は settle-mib と worker の memory-mib から、task の空き(task-room-of・task-memory-room-of)は worker の measured と
+   tasks・unseen・reserved-mib から求める。jobs は置く順にだけ使う。"
   {:tags {:context "coordinator" :role "type"}}
   (#^ int jobs)
   (#^ int tasks)
   (#^ int settle-mib)
-  (setv #^ int unseen 0))
+  (setv #^ int unseen 0)
+  (setv #^ int reserved-mib 0))
 
 
 (defclass [(dataclass :frozen True)] EnvFailed []
@@ -345,12 +348,14 @@
 
 (defrecord WorkerView
   "状態の画面の worker 1 つ: info = 名乗り・silent-ms = 最後の連絡からの長さ・live = heartbeat が lease の内か・draining = 期限の内の drain
-   か(担い手の名簿の読み ReadRunners の正本 — 2026-09-26)・task-room = いま task を置ける空き(cluster_policy.task-room-of の答え)。"
+   か(担い手の名簿の読み ReadRunners の正本 — 2026-09-26)・task-room = いま task を置ける空き(cluster_policy.task-room-of の答え)・
+   task-memory-room-mib = いま置ける task の memory の要りの最大(MiB — cluster_policy.task-memory-room-of の答え・2026-11-02)。"
   (#^ WorkerInfo info)
   (#^ int silent-ms)
   (#^ bool live)
   (#^ bool draining)
-  (#^ int task-room))
+  (#^ int task-room)
+  (setv #^ int task-memory-room-mib 0))
 
 
 (defrecord StatusView
@@ -669,12 +674,13 @@
 ;; 材料の判定(running-process・入れ替えの見張り・停止の述語)の答えは、理由の文ではなく下の閉じた型で運ぶ — version-state は種類を
 ;; 網羅の match で状態へ写し、文を読んで分けない。
 
-(defenum TaskUnplacedKind TASK-NO-ROOM TASK-LIMITED TASK-RESERVED TASK-BACKGROUND-RESERVED TASK-UNDECLARED TASK-UNMEASURED)
+(defenum TaskUnplacedKind TASK-NO-ROOM TASK-NO-MEMORY TASK-LIMITED TASK-RESERVED TASK-BACKGROUND-RESERVED TASK-UNDECLARED TASK-UNMEASURED)
 
 
 ;; 待っている task を置けない理由(cluster_policy.place-tasks が detail に書く文の種類 — cluster_policy.task-unplaced-text)。
 ;; TASK-NO-ROOM = 能力と版の合う生きた worker が在り、drain 中でも disk 尽きでもない worker も在るが、どれも測った空き(task-room-of —
-;; CPU・memory・PSI から数えた数)が 0・TASK-LIMITED = 空きは在るが、task の名乗った組の同時数の上限(系の宣言の GroupLimit の値)に
+;; CPU・memory・PSI から数えた数)が 0・TASK-NO-MEMORY = 数の空きの在る worker は在るが、どれも memory の空き(task-memory-room-of —
+;; 測った空き − 床 − 置いた task の「要り − 今の使い」の和)が task の要りに足りない(2026-11-02)・TASK-LIMITED = 空きは在るが、task の名乗った組の同時数の上限(系の宣言の GroupLimit の値)に
 ;; 達している・TASK-RESERVED = 空きは在るが、残りが worker の予約(measured_room.reserve-of)のうち優先 0 以上の task に残す半分
 ;; (切り上げ)だけで、負の優先の task(背景の仕事)はそこを使わない(2026-10-11・半分は 2026-10-14)・TASK-BACKGROUND-RESERVED = 空きは
 ;; 在るが、残りが予約のうち背景の仕事に残す半分(切り捨て)だけで、背景の仕事が待っている間は優先 0 以上の task はそこを使わない
@@ -1128,7 +1134,11 @@
   ;; queued-noticed-ms = 知らせ先を名乗った task が queued のまま期限(ClusterTiming.queued-notice-ms)を越え、出口へ待ちの行を積んだ刻
   ;; (None = まだ積んでいない)。積んだ印で、待ち続けても・読み手が受領して行を外しても 2 度目を積まない(detached_policy.queued-noticed)。
   ;; この欄の無い旧い行は None で読む。
-  (setv #^ (| int None) queued-noticed-ms None))
+  (setv #^ (| int None) queued-noticed-ms None)
+  ;; --- memory の要り(2026-11-02)---
+  ;; memory-mib = 送り手の名乗った 1 本の山(MiB)。置き先は測った memory の空きから「要り − 今の使い」を予約し、要りが入る worker に
+  ;; だけ置く(measured_room)。None = 名乗らない(切り離さない task・欄の前の行 — measured_room.UNDECLARED-TASK-MIB と見込む)。
+  (setv #^ (| int None) memory-mib None))
 
 
 ;; 担い手の worker に置いた task の phase(担い手の数・送る task・報告の吸い上げ・lease の延長で同じに扱う)。
@@ -1261,7 +1271,8 @@
   "heartbeat の返事で worker の process へ渡す task 1 つ(cluster_policy.tasks-for — 返事に載せる欄だけを TaskRecord から写す。lease の期限の
    ような拍ごとに変わる欄を持たないので、返事の等しさで worker の見え方を比べられる — watch_policy.worker-mark): id・name・revision・
    versions = 送り手の版・program = 詰めた Program の置き場のキー・detached / key / lease-ms / retain-ms / needs = 切り離した task が
-   引き取りのために運ぶ欄(切り離していなければ使わない)・runtime-env = 実行環境の宣言(無ければ None)・environ = 子の環境変数。"
+   引き取りのために運ぶ欄(切り離していなければ使わない)・runtime-env = 実行環境の宣言(無ければ None)・environ = 子の環境変数・
+   memory-mib = memory の要り(引き取った行が置き先の予約を続けるため — 名乗らない task は None)。"
   (#^ str id)
   (#^ str name)
   (#^ str revision)
@@ -1273,7 +1284,8 @@
   (#^ int retain-ms)
   (#^ (get tuple #(str ...)) needs)
   (#^ (| (get dict #(str object)) None) runtime-env)
-  (#^ (get tuple #((get tuple #(str str)) ...)) environ))
+  (#^ (get tuple #((get tuple #(str str)) ...)) environ)
+  (setv #^ (| int None) memory-mib None))
 
 
 (defrecord WarmOffer
