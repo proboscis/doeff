@@ -145,20 +145,21 @@ class Resources:
     limits: dict[str, str]
 
 
-# 機体の仕事だけを受ける worker の資源。取り分は小さく(機体が他の Pod で埋まっていても置ける)、memory の上限は cgroup の層の和
+# 機体の仕事だけを受ける worker の資源。memory の取り分は cgroup の層の memory.min の和以上(層の守る分 — 下の
+# test_worker_requests_at_least_the_memory_its_layers_guard)、memory の上限は cgroup の層の和
 # (worker の min + 常駐の job の予算 + task と準備の層の max — 越えたら kubelet が取り分を最も越えたこの Pod を先に追い出す)。task を
 # 受けない機体の上限は、前の上限(機体の memory の半分ほど)に準備の層の分 1536Mi を足した値(予算を前の値のまま残す)。
 HOST_ONLY_RESOURCES = {
     # atlas は上に載る系の日次の全体検証の task も受ける(1 本の上限は旧い専用の worker と同じ 16Gi 前後 — 2026-10-10 調整役 cisco-c8 の値)。
     # 機体の memory が足りずに kubelet がこの Pod を追い出しているので、層を置いても上限は上げない(予算の側を下げる)。
     "atlas": Resources(requests={"cpu": "500m", "memory": "1Gi"}, limits={"cpu": "8", "memory": "18Gi"}),
-    "eos": Resources(requests={"cpu": "250m", "memory": "512Mi"}, limits={"cpu": "2", "memory": "5632Mi"}),
+    "eos": Resources(requests={"cpu": "250m", "memory": "3840Mi"}, limits={"cpu": "2", "memory": "5632Mi"}),
     # helios は組の印 pool-helios の常駐の job 24 本(起動の山の和 約 31GiB・落ち着いた値の和 約 16.5GiB)を受ける。
-    "helios": Resources(requests={"cpu": "2", "memory": "4Gi"}, limits={"cpu": "12", "memory": "40Gi"}),
-    "k3s-0": Resources(requests={"cpu": "100m", "memory": "256Mi"}, limits={"cpu": "2", "memory": "3584Mi"}),
+    "helios": Resources(requests={"cpu": "2", "memory": "31Gi"}, limits={"cpu": "12", "memory": "40Gi"}),
+    "k3s-0": Resources(requests={"cpu": "100m", "memory": "1792Mi"}, limits={"cpu": "2", "memory": "3584Mi"}),
     "k3s-1": Resources(requests={"cpu": "100m", "memory": "256Mi"}, limits={"cpu": "2", "memory": "3584Mi"}),
-    "k3s-2": Resources(requests={"cpu": "100m", "memory": "256Mi"}, limits={"cpu": "2", "memory": "3584Mi"}),
-    "k3s-3": Resources(requests={"cpu": "250m", "memory": "512Mi"}, limits={"cpu": "3", "memory": "5632Mi"}),
+    "k3s-2": Resources(requests={"cpu": "100m", "memory": "1792Mi"}, limits={"cpu": "2", "memory": "3584Mi"}),
+    "k3s-3": Resources(requests={"cpu": "250m", "memory": "3840Mi"}, limits={"cpu": "3", "memory": "5632Mi"}),
 }
 
 
@@ -203,7 +204,7 @@ HOST_ONLY_ROOM = {
     for node, (reserve, pools) in HOST_ONLY_POOLS.items()
 }
 # 常駐の job の memory の予算(枠の file の欄 memoryMiB)= worker の container の memory の上限 − cgroup の層の worker の memory.min − task と
-# 準備の層(jobs)の memory.max(全部の機体 — zeus の命令の層は常駐の job の子の分なので引かない)。
+# 準備の層(jobs と、宣言する機体の prepare)の memory.max(全部の機体 — zeus の命令の層は常駐の job の子の分なので引かない)。
 # 予算は N+1 の判断の規則 3(置ける job の落ち着いた値の和 + 最悪の 1 台の停止で移る job の起動の山の上乗せ ≤ 予算)が読む。
 # 層の値の下限(nodes/<Node の名>/cgroup.yaml の値の決め方は ../deploy/k8s/cgroup-layers): worker の memory.min ≥ worker 自身の分 256 MiB
 # (worker の process の RSS 126〜132 MiB・2026-10-27 の 4 機体の実測に余裕を足す)。jobs の memory.max ≥ 準備の分 1536 MiB + task に空けて
@@ -262,12 +263,12 @@ def test_each_node_has_exactly_one_worker_named_after_it(rendered: list[Manifest
 
 def test_zeus_worker_is_one_deployment_with_100gi_memory_limit(zeus_worker: Manifest) -> None:
     """zeus の worker は 1 つで、資源の上限は memory 100Gi だけ(CPU の上限は置かない — 2026-10-11 調整役 cisco-c8 の頼み)、取り分は
-    CPU 4・memory 8Gi。"""
+    CPU 4・memory 26Gi(cgroup の層の memory.min の和)。"""
     spec = _mapping(zeus_worker["spec"], "spec")
     assert spec["replicas"] == 1
     resources = _mapping(_container(zeus_worker)["resources"], "resources")
     assert resources["limits"] == {"memory": "100Gi"}
-    assert resources["requests"] == {"cpu": "4", "memory": "8Gi"}
+    assert resources["requests"] == {"cpu": "4", "memory": "26Gi"}
 
 
 # 入れ替えで同じ機体に同じ名の worker の 2 つの世代を並べる機体(AL-D2): 新しい Pod を先に起こし、Ready になって
@@ -443,6 +444,37 @@ def test_worker_guards_its_resident_jobs_and_caps_its_tasks_and_commands(rendere
     limit = _bytes(str(limits["memory"]))
     total = sum(_bytes(settings[name]["memory.min"]) for name in guarded) + sum(_bytes(settings[name]["memory.max"]) for name in limited)
     assert total <= limit, f"守る層の min と限る層の max の和 {total} が container の上限 {limit} を越える"
+
+
+# 守る層の和が worker の memory の取り分を越えたまま残る機体 → 訳。Node の allocatable に、ほかの Pod の取り分の和と守る層の和が入らない
+# (2026-11-02 — atlas は取り分の和 19920 MiB に +6400 MiB で allocatable 20263 MiB を越え、k3s-1 は 1676 MiB に +1536 MiB で 2659 MiB を
+# 越える)。ほかの Pod の取り分を実の使いに合わせて下げるか、守る層の memory.min を下げるかを決めるまで、取り分を上げると worker が
+# 置けない。決めて直した機体はここから消す(strict の xfail — 直ったのに残すと赤)。
+GUARD_ABOVE_REQUEST_PENDING = {
+    "atlas": "ほかの Pod の取り分の和と守る層の和 7424 MiB が allocatable に入らない — 下げる側を決めるまで取り分 1Gi のまま",
+    "k3s-1": "ほかの Pod の取り分の和と守る層の和 1792 MiB が allocatable に入らない — 下げる側を決めるまで取り分 256Mi のまま",
+}
+
+
+@pytest.mark.parametrize(
+    "node",
+    [
+        pytest.param(node, marks=pytest.mark.xfail(strict=True, reason=GUARD_ABOVE_REQUEST_PENDING[node]))
+        if node in GUARD_ABOVE_REQUEST_PENDING
+        else node
+        for node in sorted(CGROUP_LAYERS)
+    ],
+)
+def test_worker_requests_at_least_the_memory_its_layers_guard(rendered: list[Manifest], node: str) -> None:
+    """worker の container の memory の取り分(requests)は、cgroup の層の memory.min の和(worker の本体と常駐の job と zeus の CLI の層)
+    以上。失敗ケース: kubelet は Node の memory が allocatable を越えた時、使いが取り分を最も越えた Pod から追い出す。守る層の和より小さい
+    取り分の worker は、守る層が守る常駐の job の memory だけで取り分を越え、毎回最初に追い出される(atlas の 10-30〜11-01 の 5 回 —
+    取り分 1Gi・守る層の和 7424 MiB)。scheduler も守る分を空きと数え、ほかの Pod を機体に載せすぎる。"""
+    worker = _worker_on(rendered, node)
+    guarded = sum(_bytes(values["memory.min"]) for _, values in _layout(worker) if "memory.min" in values)
+    requests = _mapping(_mapping(_container(worker)["resources"], "resources")["requests"], "requests")
+    request = _bytes(str(requests["memory"]))
+    assert request >= guarded, f"{node} の worker の memory の取り分 {request} が守る層の memory.min の和 {guarded} より小さい"
 
 
 def test_helios_worker_guards_its_resident_jobs_above_their_estimated_peak(rendered: list[Manifest]) -> None:
@@ -886,7 +918,11 @@ def test_the_memory_allowance_is_the_worker_limit_less_the_worker_and_its_tasks(
         limit = _bytes(str(_mapping(_mapping(_container(worker)["resources"], "resources")["limits"], "limits")["memory"]))
         settings = dict(_layout(worker))
         jobs = str(_env_value(worker, "DOEFF_WORKER_JOB_CGROUP")["value"])
-        allowance = (limit - _bytes(settings[CGROUP_FIRST_LAYER]["memory.min"]) - _bytes(settings[jobs]["memory.max"])) // 2**20
+        # 準備の層を宣言する機体は、前の準備の分を jobs と prepare に分けた(和は前のまま)— 両方を引く。
+        prepare = _bytes(settings[CGROUP_PREPARE_LAYER]["memory.max"]) if CGROUP_PREPARE_LAYER in settings else 0
+        allowance = (
+            limit - _bytes(settings[CGROUP_FIRST_LAYER]["memory.min"]) - _bytes(settings[jobs]["memory.max"]) - prepare
+        ) // 2**20
         assert _mapping(rows[node], node)["memoryMiB"] == allowance, node
 
 

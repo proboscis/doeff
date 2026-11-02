@@ -11,6 +11,8 @@ spec:
       containers:
         - name: worker
           # k3s-3 は CPU 6・memory 11.7Gi(allocatable)。
-          # 取り分は小さく(機体が他の Pod で埋まっていても置ける)、上限は cgroup の層の和(worker の min + 常駐の job の予算 + 準備の max
-          # — cgroup.yaml)が入る大きさ。準備の層の max が準備を抑えるので、ふだんの使いは前の上限 4Gi の頃と変わらない。
-          resources: { requests: { cpu: "250m", memory: 512Mi }, limits: { cpu: "3", memory: 5632Mi } }
+          # memory の取り分は cgroup の層の memory.min の和(worker の min + 常駐の job の min — cgroup.yaml)。kubelet は Node の memory が
+          # 足りない時、使いが取り分を最も越えた Pod から追い出す — 守る層の分を取り分に入れないと、この Pod が先に選ばれる。上限は cgroup の
+          # 層の和(worker の min + 常駐の job の予算 + 準備の max — cgroup.yaml)が入る大きさ。
+          # 準備の層の max が準備を抑えるので、ふだんの使いは前の上限 4Gi の頃と変わらない。
+          resources: { requests: { cpu: "250m", memory: 3840Mi }, limits: { cpu: "3", memory: 5632Mi } }

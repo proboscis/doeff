@@ -11,6 +11,8 @@ spec:
       containers:
         - name: worker
           # k3s-2 は CPU 4・memory 3.8Gi(allocatable)。cordon 中でも置く(雛形の toleration は operator Exists)。
-          # 取り分は小さく(機体が他の Pod で埋まっていても置ける)、上限は cgroup の層の和(worker の min + 常駐の job の予算 + 準備の max
-          # — cgroup.yaml)が入る大きさ。準備の層の max が準備を抑えるので、ふだんの使いは前の上限 2Gi の頃と変わらない。
-          resources: { requests: { cpu: "100m", memory: 256Mi }, limits: { cpu: "2", memory: 3584Mi } }
+          # memory の取り分は cgroup の層の memory.min の和(worker の min + 常駐の job の min — cgroup.yaml)。kubelet は Node の memory が
+          # 足りない時、使いが取り分を最も越えた Pod から追い出す — 守る層の分を取り分に入れないと、この Pod が先に選ばれる。上限は cgroup の
+          # 層の和(worker の min + 常駐の job の予算 + 準備の max — cgroup.yaml)が入る大きさ。
+          # 準備の層の max が準備を抑えるので、ふだんの使いは前の上限 2Gi の頃と変わらない。
+          resources: { requests: { cpu: "100m", memory: 1792Mi }, limits: { cpu: "2", memory: 3584Mi } }

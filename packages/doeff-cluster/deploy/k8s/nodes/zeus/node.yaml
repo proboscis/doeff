@@ -22,7 +22,9 @@ spec:
       containers:
         - name: worker
           # CPU の requests = 重み(cgroup の cpu.weight)。4 コアで重み 157 にし、同じ機体の他の Pod より先に CPU を受ける。
-          # memory の requests(取り分)8Gi は、落ち着いた時の使用量と起動の山の実測(2026-10-05)から。
+          # memory の requests(取り分)は cgroup の層の memory.min の和(worker 2G + services 13G + clis 11G — cgroup.yaml)。kubelet は
+          # Node の memory が足りない時、使いが取り分を最も越えた Pod から追い出す — 守る層の分を取り分に入れないと、この Pod が先に選ばれる
+          # (前の 8Gi は 2026-10-05 の落ち着いた時の使用量と起動の山の実測)。
           # 2026-10-09: memory の上限を 100Gi・CPU の上限を 16 へ(zeus の doeff worker に約 100GB を使わせ、
           # Pod の 20Gi の上限を直ちに外す)。
           # 同時に受ける処理の数は機体の memory の余白で決まるので、20Gi では同時に走る数が 5 本前後に留まった(15:5x の本番: 使用 18.4GiB /
@@ -30,7 +32,7 @@ spec:
           # 2026-10-11: CPU の上限を外す(この Pod が cpu.max 16 CPU に周期の
           # 43% で当たり、画面の job の最初の下書きの落ち 2.3% → 20.5% と 送り→最初の字 +3 秒の根の見立て)。
           # CPU の取り分(重み)は requests の 4 のまま。memory の上限 100Gi は変えない。戻す時は limits に cpu: "16" を足す。
-          resources: { requests: { cpu: "4", memory: 8Gi }, limits: { memory: 100Gi } }
+          resources: { requests: { cpu: "4", memory: 26Gi }, limits: { memory: 100Gi } }
           # mount の係へ頼む dir を渡す env WORKER_WORKSPACE_MOUNT_DIR は workspace-mount.yaml(JSON patch — ここで足すと env の頭に
           # 入り、generation.yaml が読む env の場所が動く)。
           volumeMounts:
