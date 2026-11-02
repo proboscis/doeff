@@ -3725,10 +3725,12 @@
     (resume steps-seen))
   (ClientLink []
     (resume (SimLink :queue parts.queue :actor CLIENT-NAME :revision plan.revision :peer CLIENT-NAME :versions plan.versions :timing plan.timing)))
-  (Redeclare [system environ]
+  (Redeclare [system environ revision]
     ;; その宣言し直しの上書き(渡されなければ最初の宣言の上書き)を新しい系に対して検めて重ねる(#3131 — 本番の declare と同じ 1 つの規則)。
     ;; 台数は本番の declare と同じく系の値の各 job の :replicas が行に載って書かれる(0 = 取り下げ — #3487)。
-    (<- declaration Declaration (declaration-of system plan.revision (if (is environ None) plan.environ environ) plan.runtime-env plan.versions))
+    ;; 版は渡されなければ最初の宣言の版(置き先を替える宣言し直しは新しい版を渡す)。
+    (<- declaration Declaration (declaration-of system (if (is revision None) plan.revision revision)
+                                                (if (is environ None) plan.environ environ) plan.runtime-env plan.versions))
     (<- link SimLink (control-link parts.queue plan.revision plan.versions plan.timing))
     (<- names tuple (apply-declaration link declaration))
     (resume names))

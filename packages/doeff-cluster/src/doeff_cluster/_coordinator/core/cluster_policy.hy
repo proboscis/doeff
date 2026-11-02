@@ -500,6 +500,16 @@
   (frozenset (gfor #(name d) (.items state.drains) :if (> d.until-ms now) name)))
 
 
+(defn #^ bool relocating [#^ int now #^ ClusterState state #^ ClusterJob job #^ Placement placed #^ ClusterTiming timing]
+  "入れ替え(handoff)の Service job の置き先 placed の担い手が、移し替えの期限の内で生きているのに、宣言の条件(pin と効く needs —
+   eligible)を満たさなくなったか(宣言し直しで置き先が替わった)。その job は drain の job と同じく、条件を満たす別の worker へ並べて
+   置き、並べた先が Ready になってから付け替える(drain_policy.advance-drains)— 担い手を先に外すと、新しい process が Ready になる
+   まで Ready の書き手が居ない(2026-11-02: 起き上がりに数分の同期が要る service で、置き先の替わる宣言し直しのたびに 6〜9 分)。
+   並べている間、担い手には版を据え置く印を返す(jobs-for — 担い手の上に新しい版を起こさない)。"
+  (setv w (.row state.workers placed.worker))
+  (and job.spec.handoff (> job.replicas 0) (is-not w None) (alive now w timing.reassign-after-ms) (not (eligible state job w))))
+
+
 (defn #^ bool can-take [#^ int now #^ ClusterState state #^ ClusterJob job #^ WorkerInfo w #^ dict load #^ ClusterTiming timing
                         #^ (| frozenset None) [draining None]]
   "job(と並べた置き先 surge)を新しく置ける worker か(生きている・条件を満たす・drain 中でない・memory の残りに job の settle が入る —
@@ -778,13 +788,19 @@
    - 担い手が条件を満たし、drain 中の担い手の上の入れ替えでない job で他へ移せる物でなく(移せるなら止めて移す — 置ける先が無ければ
      残して空白を作らない・入れ替えの job は drain_policy が並べてから付け替える)、担い手が移し替えの期限の内か、他へ移せない
      (外しても移らず、止めて起こし直す損だけが残る — #2804)。
-   いまの負荷は「他へ移せるか」の判断だけが読む — drain 中の worker も期限を過ぎて沈黙した担い手も無ければ求めない(#2655 — 調停の
-   1 周ごとの費用)。"
+   - 入れ替えの job で、担い手が条件を満たさなくなった(relocating)が、並べた置き先が在るか他へ移せる — 並べた先が Ready になるまで
+     旧い担い手に残す(drain_policy が付け替える)。移せる先が無ければ今までどおり外す。
+   いまの負荷は「他へ移せるか」の判断だけが読む — drain 中の worker も期限を過ぎて沈黙した担い手も、条件を満たさなくなった入れ替えの
+   担い手も無ければ求めない(#2655 — 調停の 1 周ごとの費用)。"
   (val draining (draining-workers state now))
   (val stale (any (gfor a (.rows state.placements)
                         :setv w (.row state.workers a.worker)
                         (and (is-not w None) (not (alive now w timing.reassign-after-ms))))))
-  (val load (if (or draining stale) (load-of state state.placements) {}))
+  (val moving (frozenset (gfor job (active-jobs state)
+                               :setv a (.row state.placements job.spec.name)
+                               :if (and (is-not a None) (relocating now state job a timing))
+                               job.spec.name)))
+  (val load (if (or draining stale moving) (load-of state state.placements) {}))
   (var kept {})
   (for [job (active-jobs state)]
     (val current (.row state.placements job.spec.name))
@@ -799,7 +815,15 @@
       (when (and (not promised) fit (or leaving (not awake)))
         (<- movable bool (movable? now state job current.worker load timing draining))
         (:= free movable))
-      (when (or promised (and fit (not (and leaving free)) (or awake (not free))))
+      ;; 条件を満たさなくなった入れ替えの担い手: 並べた置き先が在れば残す(並べた先は load で数えるので movable? に聞かない)・
+      ;; 無ければ他へ移せる時だけ残す(drain_policy が次に並べる)。
+      (var handing-over False)
+      (when (and (not promised) (in job.spec.name moving))
+        (if (is-not (.row state.surges job.spec.name) None)
+            (:= handing-over True)
+            (do (<- movable bool (movable? now state job current.worker load timing draining))
+                (:= handing-over movable))))
+      (when (or promised handing-over (and fit (not (and leaving free)) (or awake (not free))))
         (:= kept (| kept {job.spec.name current})))))
   kept)
 
@@ -914,7 +938,10 @@
    計器の報告に載せる(比べない欄なので、世代だけが変わっても worker は process を起こし直さない)。
    ready-instances = Service の名 → Ready と数えている process の世代の名(入れ替えの job に載せる・resource_policy.ready-instances が求める)。
    drain で並べた置き先(surge)がこの worker に在る job も載せる(新しい process を起こし、standby で lease を待つ)。
-   入れ替えを諦めた job(state.handoffs の ABANDONED — handoff_policy)には諦めの印を載せる(worker は新を止めて旧を残す)。"
+   入れ替えを諦めた job(state.handoffs の ABANDONED — handoff_policy)には諦めの印を載せる(worker は新を止めて旧を残す)。
+   条件を満たさなくなった担い手に残した入れ替えの job(relocating — 並べた先が Ready になるまで)には版を据え置く印を載せる(worker は
+   動いている旧い版をそのまま動かし、新しい版を準備も起動もしない — 新しい版は並べた先で起きる)。"
+  (setv info (.row state.workers worker))
   (tuple (gfor job state.jobs
                :setv placed (.row state.placements job.spec.name)
                :setv surge (.row state.surges job.spec.name)
@@ -925,7 +952,8 @@
                :setv watch (.row state.handoffs job.spec.name)
                (replace job.spec :placement a.generation
                         :ready-instance (.get (or ready-instances {}) job.spec.name)
-                        :handoff-abandoned (and (is-not watch None) (= watch.phase HandoffPhase.ABANDONED))))))
+                        :handoff-abandoned (and (is-not watch None) (= watch.phase HandoffPhase.ABANDONED))
+                        :hold-version (and job.spec.handoff (is a placed) (is-not info None) (not (eligible state job info)))))))
 
 
 ;; --- task ----------------------------------------------------------------------------
