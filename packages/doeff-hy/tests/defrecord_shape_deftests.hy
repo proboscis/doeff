@@ -65,9 +65,10 @@
   (assert (= (. (Shape :a 1) f) 9))
   (assert (= (lfor f (dataclasses.fields Shape) f.name) (lfor f (dataclasses.fields Twin) f.name)))
   (assert (all (gfor row rows (all row))) rows)
-  (assert (= Shape.b 2))
-  (assert (= Shape.d 0))
-  (assert (not (hasattr Shape "c")))
+  ;; 欄の既定値は欄の表が持つ(slots の型は欄の名の class の属性が slot の記述子 — dataclass の slots=True と同じ)。
+  (val defaults (dfor f (dataclasses.fields Shape) f.name f.default))
+  (assert (= #((get defaults "b") (get defaults "d")) #(2 0)) defaults)
+  (assert (is (get defaults "c") dataclasses.MISSING))
   (assert (dataclasses.is-dataclass Shape))
   (assert (= Shape.__match_args__ Twin.__match_args__ #()))
   (assert (= (repr Shape.__dataclass_params__) (repr Twin.__dataclass_params__)) #(Shape.__dataclass_params__ Twin.__dataclass_params__)))
@@ -169,6 +170,31 @@
     (setattr g "x" 3))
   (assert (= (repr g) "Grown(x=1)"))
   (assert (!= g (Bare :x 1))))
+
+
+(deftest test-a-record-value-keeps-its-fields-in-slots-not-a-dict
+  ;; 失敗ケース(直す前は赤): 実行の展開が slots を持たず、値 1 つごとに __dict__ の dict を持った(本番の画面で record の
+  ;; __dict__ が 約 0.6 GB・card [id])。直した後は欄が slots に入り、値は __dict__ を持たない。弱い参照の口は残す。
+  (<- _ (Pure None))
+  (import weakref)
+  (val s (Shape :a 1 :b 4 :c [1]))
+  (assert (not (hasattr s "__dict__")))
+  (assert (= (set Shape.__slots__) #{"a" "b" "c" "d" "e" "f" "job_id" "__weakref__"}) Shape.__slots__)
+  (assert (is (weakref.ref s) (weakref.ref s)))
+  ;; init を切った欄は型の欄の表の既定値を置く(slots の型は欄の既定値を class の属性に持たない)。
+  (assert (= s.f 9))
+  ;; pickle と copy は凍結の __setattr__ を通らずに値を戻す。
+  (assert (= (pickle.loads (pickle.dumps s)) s))
+  (assert (= (copy.copy s) s))
+  ;; slots にする前に pickle した値(state は __dict__ の辞書)も戻せる。
+  (val old (.__new__ object Shape))
+  (.__setstate__ old {"a" 1 "b" 4 "c" [1] "d" 0 "e" 1 "f" 9 "job_id" "j"})
+  (assert (= old s))
+  ;; 守りを持たない子の型の値は、子の __dict__ に置いた名も一緒に戻す。
+  (val g (Grown :x 1))
+  (setattr g "note" 2)
+  (val back (pickle.loads (pickle.dumps g)))
+  (assert (= #(back.x back.note) #(1 2))))
 
 
 (defrecord Checked

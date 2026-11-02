@@ -133,7 +133,7 @@
   (with [_ (static-view)]
     (assert (= (hy.repr (hy.macroexpand '(defrecord Plain #^ str key)))
                "'(do (defclass [(dataclass :frozen True :kw-only True)] Plain [] (annotate key str)))")))
-  (assert (in "(dataclass :init False :repr False :eq False :kw-only True)" (hy.repr (hy.macroexpand '(defrecord Plain #^ str key))))))
+  (assert (in "(dataclass :init False :repr False :eq False :kw-only True :slots True :weakref-slot True)" (hy.repr (hy.macroexpand '(defrecord Plain #^ str key))))))
 
 
 (deftest test-a-check-that-returns-a-program-is-refused

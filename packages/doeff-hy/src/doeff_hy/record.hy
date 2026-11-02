@@ -33,12 +33,15 @@
 ;;;   (TurnRecordRow :conversation-id c :turn-id t :phase "Running" :ended-at None)
 ;;;
 ;;; 展開: 型検査の投影(static-view)では (defclass [(dataclass :frozen True :kw-only True)] Name [] 欄 …)。
-;;; 実行では (defclass [(dataclass :init False :repr False :eq False :kw-only True)] Name [] 欄 … 関数 …) と仕上げ(record_runtime の
+;;; 実行では (defclass [(dataclass :init False :repr False :eq False :kw-only True :slots True :weakref-slot True)] Name [] 欄 … 関数 …) と仕上げ(record_runtime の
 ;;; seal-record)— dataclass には欄の表だけを作らせ、__init__(kw-only)・__repr__・__eq__・__hash__・凍結の __setattr__ / __delattr__ は
 ;;; 展開が書く(関数が module の code として .pyc に入り、読み込みの時に dataclass が関数の source を compile しない — 1 型 約 1 ms →
 ;;; 約 0.1 ms)。型ごとに書く関数は __init__(注記なし)・__eq__・__hash__ と :check の __post_init__ だけで、
 ;;; __repr__ と凍結の __setattr__ / __delattr__ は record_runtime の共有の 1 組を指し、型は欄の名の並びを tuple で持つ。docstring は実行の展開に置かず、__doc__ は欄の名から組む
 ;;; 共有の記述子(型ごとの関数と文が job の memory を 10 MB 越えて持った)。
+;;; 値は欄を slots に持ち、__dict__ を持たない(値 1 つごとの __dict__ が本番の画面で 約 0.6 GB を持った・card [id] —
+;;; 欄 35 の型で 1 個 約 2,000 → 約 410 bytes)。弱い参照の口(__weakref__)は残す。欄の既定値は欄の表(__dataclass_fields__)が持ち、
+;;; 型の属性からは読めない(dataclass の slots と同じ)。pickle と copy は共有の __setstate__ が凍結を通らずに値を戻す。
 ;;; 振る舞いは標準の dataclass(frozen・kw_only)と同じ(tests/defrecord_shape_deftests.hy が
 ;;; 突き合わせる)。欄の形を展開が読み切れない時(名を介した field・字面でない :init / :repr / :compare / :hash・欄の名 self / object・
 ;;; 本体が __init__ ほかを自分で書く)は投影と同じ展開(dataclass が関数を作る)にする。
@@ -288,7 +291,7 @@
                             put (fn [value] `(object.__setattr__ ~self-sym ~py ~value)))
                       (cond
                         (not (get s "init"))
-                          #(None (cond (get s "has-factory") (put (factory py)) (get s "has-value") (put `(. __class__ ~sym)) True None))
+                          #(None (cond (get s "has-factory") (put (factory py)) (get s "has-value") (put `(. (get (. __class__ __dataclass_fields__) ~py) default)) True None))
                         (get s "has-factory")
                           #(`[~sym ~missing] (put `(if (is ~sym ~missing) ~(factory py) ~sym)))
                         (and (= (get s "kind") "call") (get s "has-value"))
@@ -314,13 +317,14 @@
       ;; 型検査の投影と source には残る)、__doc__ は読んだ時に欄の名から組む共有の記述子にする(dataclass が docstring の無い型に
       ;; 読み込みの時に署名を計算しない)。
       `(do
-       (defclass [(dataclass :init False :repr False :eq False :kw-only True)] ~name []
+       (defclass [(dataclass :init False :repr False :eq False :kw-only True :slots True :weakref-slot True)] ~name []
          (setv __doc__ doeff_hy._record_runtime.RECORD-DOC
                __doeff-fields__ ~(names-of (lfor s specs (get s "py")))
                __doeff-repr-fields__ ~(names-of shown)
                __repr__ doeff_hy._record_runtime.record-repr
                __setattr__ doeff_hy._record_runtime.record-setattr
-               __delattr__ doeff_hy._record_runtime.record-delattr)
+               __delattr__ doeff_hy._record_runtime.record-delattr
+               __setstate__ doeff_hy._record_runtime.record-setstate)
          ~@(or class-vars [])
          ~@fields
          ~@post-init
