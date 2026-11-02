@@ -10,6 +10,10 @@ import re as re
 from doeff_cluster._worker.core.memory_rules import MIB as MIB
 from doeff_cluster._worker.core.memory_rules import NodeMemory as NodeMemory
 EVICTION_MARGIN_BYTES: int
+MARGIN_QUANTILE: float
+MARGIN_TICKS: int
+MARGIN_WINDOW: int
+MARGIN_MIN_SAMPLES: int
 PODS_CGROUP_NAMES: tuple[str, ...]
 KERNEL_SIZE: re.Pattern[str]
 KERNEL_UNITS: dict[str, int]
@@ -74,7 +78,16 @@ def line_memory(node: NodeMemory, line: EvictionLine | None) -> _Program[NodeMem
 def line_name(line: EvictionLine | None) -> _Program[str, object]:
     ...
 
-def jobs_limit(jobs_current: int, line: EvictionLine, margin: int, cap: int | None) -> _Program[int, object]:
+def jobs_limit(jobs_current: int, line: EvictionLine, margin: int, cap: int | None, reserve: int) -> _Program[int, object]:
+    ...
+
+def prepare_reserve(cap: int, current: int, populated: bool) -> _Program[int, object]:
+    ...
+
+def prepare_room(line: EvictionLine, margin: int, reserve: int) -> _Program[int, object]:
+    ...
+
+def margin_of(growths: tuple, floor: int) -> _Program[int, object]:
     ...
 
 def layer_memory_max(layout: str, layer: str) -> _Program[int | None, object]:

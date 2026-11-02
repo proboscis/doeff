@@ -58,7 +58,7 @@
 (val NODE-URL "https://api.test/api/v1/nodes/atlas")
 ;; 模擬の kernel が答える cgroup の file。
 (val KERNEL-PATHS #((+ PODS "/memory.max") (+ PODS "/memory.current") (+ PODS "/memory.stat") (+ HOST "/memory.stat")
-                    (+ JOBS "/memory.current")))
+                    (+ JOBS "/memory.current") (+ JOBS "/memory.stat")))
 
 
 ;; --- 判断 ---------------------------------------------------------------------------------------------------------------------------
@@ -125,14 +125,14 @@
   (val line (fn [room] (EvictionLine :kind LineKind.ALLOCATABLE :size-bytes ALLOCATABLE :used-bytes (- ALLOCATABLE room) :room-bytes room)))
   (val cap (* 10752 MIB))
   ;; 空きが広い時は静的な上限。
-  (<- wide int (jobs-limit (* 2 GIB) (line (* 12 GIB)) EVICTION-MARGIN-BYTES cap))
+  (<- wide int (jobs-limit (* 2 GIB) (line (* 12 GIB)) EVICTION-MARGIN-BYTES cap 0))
   ;; 空きが余裕より広い時は jobs の使い + 空き − 余裕(使いより上 — 跳ねられる分は空き − 余裕)。
-  (<- room int (jobs-limit (* 5 GIB) (line (* 3 GIB)) EVICTION-MARGIN-BYTES cap))
+  (<- room int (jobs-limit (* 5 GIB) (line (* 3 GIB)) EVICTION-MARGIN-BYTES cap 0))
   ;; 空きが余裕を割った時は使いより下(kernel が jobs の中で回収し、足りなければ止める)。
-  (<- squeeze int (jobs-limit (* 5 GIB) (line (* 512 MIB)) EVICTION-MARGIN-BYTES cap))
+  (<- squeeze int (jobs-limit (* 5 GIB) (line (* 512 MIB)) EVICTION-MARGIN-BYTES cap 0))
   ;; 線を越えた読み(空きが負)でも 0 より下には書かない。
-  (<- floor int (jobs-limit (* 1 GIB) (line (- (* 3 GIB))) EVICTION-MARGIN-BYTES cap))
-  (<- uncapped int (jobs-limit (* 2 GIB) (line (* 12 GIB)) EVICTION-MARGIN-BYTES None))
+  (<- floor int (jobs-limit (* 1 GIB) (line (- (* 3 GIB))) EVICTION-MARGIN-BYTES cap 0))
+  (<- uncapped int (jobs-limit (* 2 GIB) (line (* 12 GIB)) EVICTION-MARGIN-BYTES None 0))
   (assert (= #(wide room squeeze floor uncapped) #(cap (* 7 GIB) (- (* 5 GIB) (* 512 MIB)) 0 (* 13 GIB)))))
 
 
@@ -266,6 +266,7 @@
                   (= path (+ PODS "/memory.current")) (str pods)
                   (= path (+ PODS "/memory.stat")) (.format "anon {}\nfile 0\ninactive_file 0\n" pods)
                   (= path (+ HOST "/memory.stat")) (.format "anon {}\nfile 0\ninactive_file 0\n" (+ pods scene.system))
+                  (= path (+ JOBS "/memory.stat")) (.format "anon {}\ninactive_file 0\n" jobs)
                   True (str jobs))))
   (WriteText [path text]
     :when (= path (+ JOBS "/memory.max"))

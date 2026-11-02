@@ -19,11 +19,22 @@
 ;;;   線は無い(呼び手は機体の MemAvailable で見張る)。
 ;;; 追い出しまでの空き = 2 つの線の空きの小さい方(root の memory.stat の無い kernel は allocatable の線だけ)。
 ;;;
-;;; jobs の層の memory.max(jobs-limit)= jobs の今の使い(memory.current)+ 追い出しまでの空き − 余裕。上限は宣言の静的な値
-;;; (WORKER_CGROUP_LAYOUT の jobs の memory.max)、下限は 0。kernel は jobs の層の使いをこの値で止めるので、全部の Pod の working set は
-;;; 線 − 余裕 + 掛け直しの間のほかの伸びまでしか増えない。ほかの Pod や常駐の job が伸びて空きが縮んだ時は、jobs の層が先に縮む。
-;;; 余裕(EVICTION-MARGIN-BYTES)は、掛け直しの間(見張りの回の 5 秒)に jobs の層の外(ほかの Pod・常駐の job・worker の本体)が伸びる分を
-;;; 覆う。jobs の層の中の跳ね(atlas の 11-01 08:43 は 90 秒で約 5 GiB)は kernel が止めるので余裕に入れない。
+;;; jobs の層の memory.max(jobs-limit)= jobs の今の使い(memory.current)+ 追い出しまでの空き − 余裕 − 準備の取り置き。上限は宣言の
+;;; 静的な値(WORKER_CGROUP_LAYOUT の jobs の memory.max)、下限は 0。kernel は jobs の層の使いをこの値で止めるので、全部の Pod の working set
+;;; は 線 − 余裕 + 掛け直しの間のほかの伸びまでしか増えない。ほかの Pod や常駐の job が伸びて空きが縮んだ時は、jobs の層が先に縮む。
+;;; 余裕は、掛け直しの間(見張りの回の 5 秒)に jobs と準備の層の外(ほかの Pod・常駐の job・worker の本体)が伸びる分を覆う。jobs の層の
+;;; 中の跳ね(atlas の 11-01 08:43 は 90 秒で約 5 GiB)は kernel が止めるので余裕に入れない。
+;;;
+;;; 準備の層(prepare — keeper の版の準備・deploy/boot.sh の keeper_swap): 版上げに要る 1 回きりの短い仕事なので、task と同じ縮む層に
+;;; 置かない(縮めて殺しても memory は守れず、版上げだけが止まる — k3s-1 の 11-02 は jobs の上限 61〜139 MiB で準備の bytecode の焼きが
+;;; OOM で落ち続けた)。準備の層の memory.max は宣言の静的な値(準備の山)で、worker は掛け直さない。準備が走っている間(層に process が
+;;; 居る)は、その上限までの残り(上限 − 今の使い)を線の空きから先に取り置き、jobs の層の上限から引く(prepare-reserve)— 準備が山まで
+;;; 伸びても線を越えない。準備を始めてよいかは keeper が決める: worker は回ごとに「追い出しまでの空き − 余裕 − 取り置き」(prepare-room)
+;;; を keeper の読む file へ書き、keeper はそれが準備の層の上限より小さい間は準備を起こさずに待つ(OOM で殺さない)。
+;;;
+;;; 余裕(margin-of)は機体ごと: 機体の宣言の値(WORKER_EVICTION_MARGIN — 機体の 7 日の測りから決めた値・無ければ EVICTION-MARGIN-BYTES)を
+;;; 床にし、worker 自身が測った「jobs と準備の層の外の working set の回あたりの増え」の高い分位(MARGIN-QUANTILE)の MARGIN-TICKS 回分が
+;;; 床を越えれば、それを使う(機体に載る Pod が替わって伸びが大きくなった時に、宣言を書き直す前から覆う)。
 (require doeff-hy.macros [defk <- val])
 (require doeff-hy.record [defrecord defenum])
 (val MODULE-TAGS {:context "worker" :role "judgment"})
@@ -35,10 +46,16 @@
 (import re)
 (import doeff_cluster._worker.core.memory_rules [MIB NodeMemory])
 
-;; 余裕: 掛け直しの間に jobs の層の外が伸びる分。atlas の 7 日(Prometheus・30 秒ごと)で、worker の外の Pod の working set の和の 30 秒の
-;; 増えは p99 0.78 GiB・p999 1.73 GiB・最大 2.5 GiB(clickhouse と garage)。最大の増えを 30 秒に均すと 5 秒の回あたり 0.42 GiB — 1 GiB は
-;; 回が 2 回遅れても覆う。どの機体にも同じ値を使う(ほかの Pod の伸びは機体の大きさでなく、載る Pod で決まる)。
+;; 余裕の宣言の無い機体の余裕(margin-of の床): atlas の 7 日(Prometheus・30 秒ごと・11-01)で、worker の外の Pod の working set の和の
+;; 30 秒の増えは p99 0.78 GiB・p999 1.73 GiB・最大 2.5 GiB(clickhouse と garage)。最大の増えを 30 秒に均すと 5 秒の回あたり 0.42 GiB —
+;; 1 GiB は回が 2 回遅れても覆う。機体ごとの宣言の値の決め方は deploy/k8s/cgroup-layers/cgroup-layers.yaml の頭の註。
 (val #^ int EVICTION-MARGIN-BYTES (* 1024 MIB))
+;; worker 自身の測りから余裕を導く数: 回あたりの増えの分位・その何回分を覆うか(回が 1 回遅れても覆う)・増えを残す回の数(5 秒の回で
+;; 24 時間)・分位を使い始める回の数(1 時間 — それまでは宣言の床だけ)。
+(val MARGIN-QUANTILE 0.999)
+(val MARGIN-TICKS 2)
+(val MARGIN-WINDOW 17280)
+(val MARGIN-MIN-SAMPLES 720)
 ;; kubelet が Pod の全部を置く cgroup(Node の allocatable を掛ける cgroup)の名 — systemd の cgroup の driver と cgroupfs の driver。
 (val PODS-CGROUP-NAMES #("kubepods.slice" "kubepods"))
 ;; kernel の memory の値の綴り(memparse — 数 + 1 字の単位)と、k8s の量の綴り(数 + 単位)。
@@ -187,14 +204,43 @@
   (if (is line None) "machine" line.kind.value))
 
 
-(defk jobs-limit [jobs-current line margin cap]
-  {:pre [(: jobs-current int) (>= jobs-current 0) (: line EvictionLine) (: margin int) (>= margin 0) (: cap (| int None))]
+(defk jobs-limit [jobs-current line margin cap reserve]
+  {:pre [(: jobs-current int) (>= jobs-current 0) (: line EvictionLine) (: margin int) (>= margin 0) (: cap (| int None)) (: reserve int)
+         (>= reserve 0)]
    :post [(: % int) (>= % 0)] :tags {:context "worker" :role "judgment"}}
-  "jobs の層に掛ける memory.max を求めるため(頭の註): jobs の今の使い + 追い出しまでの空き − 余裕 を、0 と宣言の静的な上限 cap
-   (None = 上限なし)の間に収める。空きが余裕より小さければ jobs の今の使いより下になる — kernel が jobs の層の中で回収し、足りなければ
-   jobs の中の process を止める。"
-  (val wanted (max 0 (- (+ jobs-current line.room-bytes) margin)))
+  "jobs の層に掛ける memory.max を求めるため(頭の註): jobs の今の使い + 追い出しまでの空き − 余裕 − 準備の取り置き reserve を、0 と
+   宣言の静的な上限 cap(None = 上限なし)の間に収める。空きが余裕と取り置きの和より小さければ jobs の今の使いより下になる — kernel が
+   jobs の層の中で回収し、足りなければ jobs の中の process を止める(準備の層は縮めない)。"
+  (val wanted (max 0 (- (+ jobs-current line.room-bytes) margin reserve)))
   (if (is cap None) wanted (min cap wanted)))
+
+
+(defk prepare-reserve [cap current populated]
+  {:pre [(: cap int) (>= cap 0) (: current int) (>= current 0) (: populated bool)] :post [(: % int) (>= % 0)]
+   :tags {:context "worker" :role "judgment"}}
+  "準備の層の上限 cap までの残りのうち、線の空きから先に取り置く量を求めるため(頭の註): 準備が走っている(populated — 層に process が
+   居る)間は 上限 − 今の使い(使いが上限を越えた読みは 0)、走っていなければ 0(終わった準備の page cache の残りは取り置かない)。"
+  (if populated (max 0 (- cap current)) 0))
+
+
+(defk prepare-room [line margin reserve]
+  {:pre [(: line EvictionLine) (: margin int) (>= margin 0) (: reserve int) (>= reserve 0)] :post [(: % int)]
+   :tags {:context "worker" :role "judgment"}}
+  "keeper が新しい準備を起こしてよいかを判じる空き(頭の註)を求めるため: 追い出しまでの空き − 余裕 − 走っている準備の取り置き。
+   keeper はこれが準備の層の上限以上の時だけ準備を起こす(負もありうる — 線の手前に余裕が残っていない)。"
+  (- line.room-bytes margin reserve))
+
+
+(defk margin-of [growths floor]
+  {:pre [(: growths tuple) (: floor int) (>= floor 0)] :post [(: % int) (>= % floor)] :tags {:context "worker" :role "judgment"}}
+  "jobs の層の上限に残す余裕を求めるため(頭の註): growths = worker が測った、jobs と準備の層の外の working set の回あたりの増え(byte・
+   古い順・負は 0 に切った値)・floor = 機体の宣言の余裕。増えが MARGIN-MIN-SAMPLES 回に満たなければ floor、満ちれば floor と
+   「増えの MARGIN-QUANTILE 分位 × MARGIN-TICKS」の大きい方。分位は小さい方から数えた順位 ceil(q × n) の値(標本の値そのもの)。"
+  (when (< (len growths) MARGIN-MIN-SAMPLES)
+    (return floor))
+  (val ordered (sorted growths))
+  (val at (- (min (len ordered) (max 1 (ceil (* MARGIN-QUANTILE (len ordered))))) 1))
+  (max floor (* MARGIN-TICKS (get ordered at))))
 
 
 (defk layer-memory-max [layout layer]
