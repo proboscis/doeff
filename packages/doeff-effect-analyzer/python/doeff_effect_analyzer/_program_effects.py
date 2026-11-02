@@ -1205,6 +1205,13 @@ def _bind_opener_class() -> type:
     return BindOpener
 
 
+def _perform_class() -> type:
+    """doeff-vm の Perform の型 — ``Perform(effect)`` は effect を出す Program を組む(引数に渡れば Program の引数 — ``_is_program_expr``)。"""
+    from doeff import Perform
+
+    return Perform
+
+
 def _is_effect_class(obj: Any) -> bool:
     return isinstance(obj, type) and issubclass(obj, _effect_base())
 
@@ -2884,8 +2891,11 @@ def _is_program_expr(expr: ast.expr, scope: _Scope) -> bool:
             head = scope.resolve(func)
             # A lambda / nested def called here (``(on-raise (do! …) …)`` expands to
             # ``on_raise(…)(<local def>())``) is read as ``_local_call`` reads it.
+            # ``Perform(effect)`` handed on (``(timed-stage name (Perform effect))``) is read
+            # where it runs, as the same call yielded there is (``_performed_call``).
             return head is not UNBOUND and (
                 _is_effect_class(head)
+                or head is _perform_class()
                 or isinstance(head, _LocalFunction)
                 or (not isinstance(head, type) and _function_of(head) is not None)
             )
