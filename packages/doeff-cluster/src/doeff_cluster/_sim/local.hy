@@ -207,6 +207,10 @@
                          AwaitDetachedOutbox AckDetachedOutbox DetachedOutbox DetachedOutboxAnswer DetachedAckAnswer])
 (import doeff_cluster._worker.core.drain_client [DRAIN-DEADLINE-SECONDS DRAIN-TTL-MARGIN-SECONDS])
 (import doeff_cluster._worker.protocol.drain_requests [drain-request])
+(import doeff_cluster._worker.core.memory_rules [JobRoot MIB])
+(import doeff_cluster._worker.protocol.memory_watch [MemoryWatchSettings MemoryCell memory-watch-step])
+(import doeff_cluster._sim.memory_watch_world [SimMemoryWatch SimMemoryRead sim-watch-settings sim-proc-rows sim-meminfo-text sim-watch-answers
+                                              limited-cpu-seconds])
 (import doeff_cluster._worker.protocol.declared [DeclaredReply declared-reply-of-json declared-job-specs task-specs] doeff_cluster._worker.protocol.heartbeat [heartbeat-body status-report env-report env-heartbeat-part] doeff_cluster._worker.core.heartbeat_rules [desired-when-unreachable warm-env-of-row])
 (import doeff_cluster._worker.core.beat_policy [WatchKind WatchReading beat-interval-ms heartbeat-due watch-reading reply-revision
                       WATCH-RETRY-SECONDS WAKE-HOLD-SECONDS])
@@ -366,7 +370,9 @@
    刻は世界の時計のまま。処理の止まり StallWorker の明けの刻は世界の時計なので、壁を動かした worker と併せて使わない)・
    reads-room = 枠の file を読む worker(本番の --room-file を渡した worker — 世界の枠の file を WriteRoomFile が書き換え、worker は本番の
    room-noted と同じ間 room-read-due で読み直して、file の行の memory の予算・置ける組の印 pools を名乗る。組の
-   印は provides に足す。file を読めない・崩れた間は前に名乗った値(初めは SimWorker の memory-mib・組の印は無し)のまま)。"
+   印は provides に足す。file を読めない・崩れた間は前に名乗った値(初めは SimWorker の memory-mib・組の印は無し)のまま)・
+   memory-watch = 機体の memory の見張りを回す worker(SimMemoryWatch — 世代ごとに本物の見張りの 1 回を模擬の process の表の上で回し、
+   1 回の手間を処理の止まりに換える・sim/memory_watch_world。None = 回さない — 本番の入口だけが回す見張りを模擬で持たない既定)。"
   (#^ str name)
   (#^ (get frozenset str) provides)
   (setv #^ str doeff-commit "")
@@ -392,7 +398,8 @@
   (setv #^ (| int None) claims-cpus None)
   (setv #^ bool silent-notices False)
   (setv #^ bool steps-wall False)
-  (setv #^ bool reads-room False))
+  (setv #^ bool reads-room False)
+  (setv #^ (| SimMemoryWatch None) memory-watch None))
 
 
 (defrecord SimProcess
@@ -711,6 +718,12 @@
    :answer tuple
    :tags {:context "doeff-cluster" :role "intent"}})
 
+(defeffect MemoryReadsOf
+  "検の effect: worker name の模擬の memory の見張りの読みの記録の列(SimMemoryRead の tuple・読んだ順 — SimWorker の memory-watch)。"
+  {:fields [(: name str)]
+   :answer tuple
+   :tags {:context "doeff-cluster" :role "intent"}})
+
 (defeffect ClientLink
   "検の effect: 筋書きの送り手の口(SimLink — 送り手 sim-client)。値を置き換えて coordinator-answers を被せれば、実行環境の宣言や版の
    違う送り手として話せる。"
@@ -1018,6 +1031,11 @@
 (defeffect NoteWatchFailure
   "worker の世代の名指しの待ちの task が思わぬ例外で止まったことを記録し、その世代(今の世代なら)を拍ごとの heartbeat に戻す。"
   {:fields [(: failure SimWatchFailure)] :answer None :tags {:context "doeff-cluster" :role "intent"}})
+
+(defeffect NoteMemoryRead
+  "worker の世代の模擬の memory の見張りの 1 回の読みを記録し、載せる止まり(stalled-ms)が在れば、その世代(今の世代なら)の処理を読んだ刻
+   から止める(StallWorker と同じ stalled-until-ms — 長い方を残す)。"
+  {:fields [(: read SimMemoryRead)] :answer None :tags {:context "doeff-cluster" :role "intent"}})
 
 (defeffect WorkersStopping
   "全 worker が止まる時か(scenario が終わった後に真)。"
@@ -2639,6 +2657,49 @@
   boot)
 
 
+(defk sim-memory-watch [worker boot]
+  {:pre [(: worker SimWorker) (: boot str)] :post [(: % str)] :tags {:context "doeff-cluster" :role "program"}}
+  "worker の世代 1 つの機体の memory の見張り(本番の入口が調整ループの外に起こす背景の task の代役 — run-sim-worker が SimWorker の
+   memory-watch の在る世代にだけ起こす): 読みの間隔ごとに、宿の真実(生きている job の process)と群れから process の表と機体の file を
+   作り、本物の見張りの 1 回(memory-watch-step)を CPU の上限つきで走らせ、手間を記録して処理の止まりに換えるため
+   (sim/memory_watch_world の頭の註)。止まりの間は読まない(本番の塞がった scheduler は見張りも回さない)。世代が終わったら抜ける。"
+  (val watch worker.memory-watch)
+  (<- settings MemoryWatchSettings (sim-watch-settings watch))
+  (val cell (MemoryCell))
+  (val machine worker.machine)
+  (var going True)
+  (while going
+    (<- truth HostTruth (HostTruthOf worker.name boot))
+    (<- now int (now-epoch-ms))
+    (cond
+      (or truth.down (!= truth.boot boot)) (:= going False)
+      (< now truth.stalled-until-ms) (<- (Delay watch.sample-seconds))
+      True (do (val live (tuple (gfor p truth.processes :if (is p.exit-code None) p)))
+               (val roots (tuple (gfor p live (JobRoot :name p.name :pid p.pid))))
+               ;; 測った空きを名乗らない worker(machine が None — /proc の無い機体の代役)は /proc/meminfo も無い(見張りは読めない回にする)。
+               (var meminfo None)
+               (var task-bytes MIB)
+               (when (is-not machine None)
+                 (<- text str (sim-meminfo-text machine.memory-mib
+                                                (max 0 (- machine.memory-mib machine.base-mib (* (len live) machine.task-mib)))))
+                 (:= meminfo text)
+                 (:= task-bytes (* machine.task-mib MIB)))
+               ;; 表は上限の時計の外で作る(手間に数えるのは見張りの 1 回だけ — 本番の /proc の読みは os_proc_table の答え手の手間)。
+               (<- rows tuple (sim-proc-rows roots task-bytes watch.floods))
+               (<- spent tuple (limited-cpu-seconds (with-handlers [(sim-watch-answers settings meminfo roots rows) slog-discard-handler]
+                                                       (memory-watch-step settings cell))
+                                                     watch.cpu-limit-seconds))
+               (val seconds (get spent 0))
+               (val finished (get spent 1))
+               (val stall-seconds (cond (not finished) watch.unfinished-stall-seconds
+                                        (>= seconds watch.stall-floor-seconds) seconds
+                                        True 0.0))
+               (<- (NoteMemoryRead (SimMemoryRead :worker worker.name :boot boot :at now :rows (len rows) :cpu-seconds seconds
+                                                  :finished finished :stalled-ms (int (* 1000 stall-seconds)))))
+               (<- (Delay watch.sample-seconds)))))
+  boot)
+
+
 (defk run-sim-worker [worker policy boot]
   {:pre [(: worker SimWorker) (: policy WorkerPolicy) (: boot str)] :post [(: % str)] :tags {:context "doeff-cluster" :role "program"}}
   "worker の世代 1 つ: 本物の run-worker を、本番の入口と同じ組み立て(worker-on)で偽の宿の組の上で回す(止まれの合図で全 job を
@@ -2652,6 +2713,10 @@
   ;; sim-host の節の中から Spawn され、節の外側の handler だけを持つので、job の slog はこの捨てる handler に当たらず外の受け手へ届く。
   ;; 機体の壁の時計を筋書きが動かす worker(steps-wall)は、宿の外側に機体の壁の時計の代役を並べる(調整ループ・宿・子 process の
   ;; GetTime がずれる)。ほかの worker には並べない(時刻の読みの歩数を足さない)。
+  ;; 機体の memory の見張りを回す worker(memory-watch)は、本番の入口と同じく調整ループの外の背景の task として先に起こす(宿の節の外 —
+  ;; 世界と時計の handler だけを持つ)。世代が終わると自分で抜ける。
+  (when (is-not worker.memory-watch None)
+    (<- (Spawn (sim-memory-watch worker boot) :daemon True)))
   (<- (worker-on (+ (if worker.steps-wall [(worker-wall worker.name)] [])
                     [(sim-host worker boot plan parts) tick-pauses slog-discard-handler])
                  policy))
@@ -3255,6 +3320,7 @@
   (session var steps-seen #())
   (session var end-waiters {})
   (session var watch-failures #())
+  (session var memory-reads #())
   (session var start-waiters {})
   (session var ready-waiters #())
   (session var next-waiters #())
@@ -3494,6 +3560,16 @@
     (resume None))
   (WatchFailuresOf [name]
     (resume (tuple (gfor f watch-failures :if (= f.worker name) f))))
+  (NoteMemoryRead [read]
+    (:= memory-reads (+ memory-reads #(read)))
+    (val key (host-key hosts read.worker read.boot))
+    (val truth (get hosts key))
+    ;; 宿は起こさない(StallWorker と同じ — 止まりの間の heartbeat は送らず、明けは宿の期限 host-wakes が持つ)。
+    (when (and (> read.stalled-ms 0) (= truth.boot read.boot))
+      (:= hosts (| hosts {key (replace truth :stalled-until-ms (max truth.stalled-until-ms (+ read.at read.stalled-ms)))})))
+    (resume None))
+  (MemoryReadsOf [name]
+    (resume (tuple (gfor r memory-reads :if (= r.worker name) r))))
   (NotePreparation [preparation]
     (:= preparations (+ preparations #(preparation)))
     (resume None))
