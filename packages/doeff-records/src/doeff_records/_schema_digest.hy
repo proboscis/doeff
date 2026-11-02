@@ -15,6 +15,11 @@
 
 (defk schema-digests [schema]
   {:pre [(: schema RecordsSchema)] :post [(: % FrozenMap)] :tags {:context "records" :role "judgment"}}
-  "動いている置き場と使い手の木が、表の宣言が同じかを比べられるようにするため: 表の名 → 表の宣言の repr の sha256(64 字の 16 進)。"
+  "動いている置き場と使い手の木が、表の宣言が同じかを比べられるようにするため: 表の名 → 表の宣言の repr の sha256(64 字の 16 進)。
+   大きい欄の組(TableDecl.bulk — repr に出さない)は、空でない時だけ repr の後ろに「 bulk=<組の repr>」を足して綴る — 大きい欄の無い
+   表の要約は bulk を足す前の版と同じで、大きい欄を宣言した表だけ要約が変わる。"
   (FrozenMap (gfor #(table declaration) (.items schema.tables)
-                   #((str table) (.hexdigest (hashlib.sha256 (.encode (repr declaration) "utf-8")))))))
+                   :setv spelled (if declaration.bulk
+                                     (.format "{!r} bulk={!r}" declaration declaration.bulk)
+                                     (repr declaration))
+                   #((str table) (.hexdigest (hashlib.sha256 (.encode spelled "utf-8")))))))

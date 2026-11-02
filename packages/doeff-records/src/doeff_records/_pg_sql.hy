@@ -4,6 +4,11 @@
 ;;;
 ;;; 表の形(列の名と型)は別の置き場(状態の行の表 state_rows・追記の表 append_rows)と同じ形:
 ;;;   state_rows   PK = (ledger, key)・payload = 値の JSON の綴り・version は書くたびに 1 増える・epoch = 書いた時の置き場の版
+;;;                bulk = 値のうち大きい欄(TableDecl.bulk)の JSON の綴り(NULL = payload が値の全部)。表の後に足した列で、列の無い
+;;;                表にだけ足す(bulk-column-step — 既定の値の無い列なので表を書き直さない)。行の値 = payload と bulk の欄を合わせた写像で、
+;;;                同じ欄が両方に在れば payload の値。ListRows の外の読みは全部、合わせた綴り(stored-payload-expression)を payload の位置で
+;;;                選ぶ。ListRows は fields が大きい欄を 1 つも含まなければ列 bulk を選ばない(選ばない列の TOAST を PostgreSQL は開かない)。
+;;;                今の書き(upsert-row-statement)は値の全部を payload に置き、bulk を NULL にする。
 ;;;   append_rows  seq = bigserial・ledger = 追記の列の名・payload = {"idempotencyKey" "writer" "body"} の JSON の綴り(行と一緒に積んだ出来事
 ;;;                — PutRowsAppendEvents — は鍵 "position" {"epoch" "sequence"} も持つ。表の形は変えない)
 ;;; 足した物(この package の意味に要る物だけ):
@@ -708,8 +713,19 @@
        (! (remembered-at-step p))
        (! (table-step (.format "CREATE TABLE IF NOT EXISTS {p}write_keys (
            idempotency_key text PRIMARY KEY, body_digest text NOT NULL, answer text NOT NULL, last_seq bigint NOT NULL,
-           remembered_at bigint NOT NULL)" :p p))))
+           remembered_at bigint NOT NULL)" :p p)))
+       (! (bulk-column-step p)))
      added-steps))
+
+
+(defk bulk-column-step [prefix]
+  {:pre [(: prefix str)] :post [(: % SchemaStep)]
+   :tags {:context "records" :role "foundation"}}
+  "行の表に大きい欄の列 bulk(text NULL — 頭の註の state_rows)を足す表の用意の段を作るため(列が無い表にだけ流す)。既定の値の無い列
+   なので、PostgreSQL は既に在る行を書き直さない(表の定義だけを変える)。列を知らない旧い版の書きは bulk に触らない(NULL のまま)。"
+  (SchemaStep :statement (Statement :text (.format "ALTER TABLE {p}state_rows ADD COLUMN bulk text" :p prefix) :params #())
+              :index None
+              :column (AddedColumn :relation "state_rows" :column "bulk")))
 
 
 (defk remembered-at-step [prefix]
@@ -1106,32 +1122,52 @@
   (Clause :text (.format " AND {} IS NOT TRUE" expired.text) :params expired.params))
 
 
+(val STORED-PAYLOAD
+  ;; 行の値の綴り(頭の註の state_rows の bulk)。bulk の無い行は payload の綴りそのもの。在る行は 2 つの JSON の写像の綴りを、解かずに
+  ;; bulk の欄・payload の欄の順に継ぐ(`bulk[:-1] + "," + payload[1:]`)— 同じ欄が両方に在れば後ろの payload の値が読まれる(JSON の
+  ;; 写像の読みは同じ名の後ろの値を採る — 値を解く stored-value も答えを読む使い手も)。payload は鍵の欄を持つので空の写像にならない。
+  ;; 空の写像の bulk("{}")は継がない。
+  "(CASE WHEN bulk IS NULL THEN payload WHEN bulk = '{}' THEN payload ELSE left(bulk, -1) || ',' || substr(payload, 2) END)")
+
+
+(defk stored-payload-expression [with-bulk]
+  {:pre [(: with-bulk bool)] :post [(: % str)]
+   :tags {:context "records" :role "foundation"}}
+  "行の読みの文が payload の位置で選ぶ列の字面を作るため: with-bulk 真 = payload と bulk を合わせた綴り(STORED-PAYLOAD — 列名 payload)・
+   偽 = 列 payload だけ(列 bulk を選ばない — 大きい欄の本体を読まない ListRows の fields の約束)。"
+  (if with-bulk (.format "{} AS payload" STORED-PAYLOAD) "payload"))
+
+
 (defk read-row-statement [prefix table key expiry]
   {:pre [(: prefix str) (: table str) (: key str) (: expiry (| RowExpiry None))] :post [(: % Statement)]
    :tags {:context "records" :role "foundation"}}
   "行 1 つを読む文を作るため。expiry = 表の保持の期限の境(None = 期限の無い表)— 期限を過ぎた終端の行は、回収の前でも読みに出さない
-   (#3561)。"
+   (#3561)。値は payload と bulk を合わせた綴り(stored-payload-expression)。"
   (<- unexpired (unexpired-rows-filter "r" (if (is expiry None) #() #(expiry))))
-  (Statement :text (.format "SELECT key, payload, version, updated_at FROM {p}state_rows AS r WHERE ledger = :ledger AND key = :key{u}"
-                            :p prefix :u unexpired.text)
+  (<- payload (stored-payload-expression True))
+  (Statement :text (.format "SELECT key, {v}, version, updated_at FROM {p}state_rows AS r WHERE ledger = :ledger AND key = :key{u}"
+                            :p prefix :v payload :u unexpired.text)
              :params (+ (! (params-of #(#("ledger" table) #("key" key)))) unexpired.params)))
 
 
 (defk lock-row-statement [prefix table key]
   {:pre [(: prefix str) (: table str) (: key str)] :post [(: % Statement)]
    :tags {:context "records" :role "foundation"}}
-  "書きの判定に渡す今の行を行の錠(FOR UPDATE)つきで読む文を作るため。"
-  (Statement :text (.format "SELECT key, payload, version, updated_at FROM {p}state_rows WHERE ledger = :ledger AND key = :key FOR UPDATE"
-                            :p prefix)
+  "書きの判定に渡す今の行を行の錠(FOR UPDATE)つきで読む文を作るため。値は payload と bulk を合わせた綴り — 書く欄だけを今の行に重ねる
+   書き(admission.landed-value)が、大きい欄を落とした値を行と変更の列に書かないため。"
+  (<- payload (stored-payload-expression True))
+  (Statement :text (.format "SELECT key, {v}, version, updated_at FROM {p}state_rows WHERE ledger = :ledger AND key = :key FOR UPDATE"
+                            :p prefix :v payload)
              :params (! (params-of #(#("ledger" table) #("key" key))))))
 
 
-(defk list-rows-statement [prefix table key-fields scoped after-key where-json where-any-json limit expiry]
+(defk list-rows-statement [prefix table key-fields scoped after-key where-json where-any-json limit expiry [with-bulk True]]
   {:pre [(: prefix str) (: table str) (: key-fields tuple) (: scoped frozenset) (: after-key (| str None)) (: where-json dict)
-         (: where-any-json dict) (: limit int) (: expiry (| RowExpiry None))]
+         (: where-any-json dict) (: limit int) (: expiry (| RowExpiry None)) (: with-bulk bool)]
    :post [(: % Statement)]
    :tags {:context "records" :role "foundation"}}
   "鍵の綴りの順(COLLATE \"C\" = 符号点の順・鍵の綴りは ASCII だけ)の 1 頁 + 1 行(続きの有無を知るため)を読む文を作るため。
+   with-bulk = 列 bulk も選んで payload と合わせるか(偽 = 返す欄 fields が大きい欄を 1 つも含まない読み — 列 bulk を選ばない)。
    where-json = 欄 → 値の JSON の綴り(欄の名は宣言を通った英数字)。where-any-json = 欄 → 値の組の JSON の綴りの tuple(ListRows の
    where-any)。条件は row-filter(scoped = 表の欄の式の索引が在る欄の名の集合 — 在る欄は表の欄の式で照らし、絞りが全部そうなら
    ledger = :ledger を置かない・頭の註)。expiry = 表の保持の期限の境(None = 期限の無い表)— 期限を過ぎた終端の行は、回収の前でも頁に
@@ -1144,27 +1180,30 @@
   (val clauses (+ ledger-clauses after-clauses filter.clauses))
   (val pairs (+ ledger-pairs after-pairs #(#("limit" (+ limit 1)))))
   (<- unexpired (unexpired-rows-filter "r" (if (is expiry None) #() #(expiry))))
-  (Statement :text (.format "SELECT key, payload, version FROM {p}state_rows AS r WHERE {w}{u} ORDER BY key COLLATE \"C\" LIMIT :limit"
-                            :p prefix :w (.join " AND " clauses) :u unexpired.text)
+  (<- payload (stored-payload-expression with-bulk))
+  (Statement :text (.format "SELECT key, {v}, version FROM {p}state_rows AS r WHERE {w}{u} ORDER BY key COLLATE \"C\" LIMIT :limit"
+                            :p prefix :v payload :w (.join " AND " clauses) :u unexpired.text)
              :params (+ (! (params-of pairs)) filter.params unexpired.params)))
 
 
-(defk top-rows-statement [prefix table key-fields scoped descending-by ordered cursor where-json where-any-json limit expiry]
+(defk top-rows-statement [prefix table key-fields scoped descending-by ordered cursor where-json where-any-json limit expiry [with-bulk True]]
   {:pre [(: prefix str) (: table str) (: key-fields tuple) (: scoped frozenset) (: descending-by str) (.match FIELD-NAME-PATTERN descending-by)
          (: ordered bool) (: cursor (| ListCursor None)) (or (is cursor None) (is-not cursor.after-value None))
-         (: where-json dict) (: where-any-json dict) (: limit int) (: expiry (| RowExpiry None))]
+         (: where-json dict) (: where-any-json dict) (: limit int) (: expiry (| RowExpiry None)) (: with-bulk bool)]
    :post [(: % Statement)]
    :tags {:context "records" :role "foundation"}}
   "上から読む ListRows(descending-by — _effects.hy の ListRows の註)の 1 頁 + 1 行を読む文を作るため(向きを持つ文 ordered-rows-statement の
    下向き)。"
-  (<- statement Statement (ordered-rows-statement prefix table key-fields scoped descending-by ordered False cursor where-json where-any-json limit expiry))
+  (<- statement Statement (ordered-rows-statement prefix table key-fields scoped descending-by ordered False cursor where-json where-any-json limit expiry
+                                                        with-bulk))
   statement)
 
 
-(defk ordered-rows-statement [prefix table key-fields scoped field-name ordered ascending cursor where-json where-any-json limit expiry]
+(defk ordered-rows-statement [prefix table key-fields scoped field-name ordered ascending cursor where-json where-any-json limit expiry
+                              [with-bulk True]]
   {:pre [(: prefix str) (: table str) (: key-fields tuple) (: scoped frozenset) (: field-name str) (.match FIELD-NAME-PATTERN field-name)
          (: ordered bool) (: ascending bool) (: cursor (| ListCursor None)) (or (is cursor None) (is-not cursor.after-value None))
-         (: where-json dict) (: where-any-json dict) (: limit int) (: expiry (| RowExpiry None))]
+         (: where-json dict) (: where-any-json dict) (: limit int) (: expiry (| RowExpiry None)) (: with-bulk bool)]
    :post [(: % Statement)]
    :tags {:context "records" :role "foundation"}}
   "並べて読む ListRows(descending-by・ascending-by — _effects.hy の ListRows の註)の 1 頁 + 1 行(続きの有無を知るため)を読む文を作るため: 欄
@@ -1174,8 +1213,10 @@
    整数は int8 を越え得る — 並べる式と同じ型で比べる)。where・where-any(row-filter・scoped)と保持の期限の条件は list-rows-statement と
    同じ。並べる欄の条件は行ごとに照らす(索引の欄でなくてよい — 表の行に限る条件は絞りが持つ)。ordered = 欄が表の上から読む欄
    (TableDecl.descending — 頭の註の上から読む欄の索引)か: 真なら並べる式 ordered-expression で並べ、続きの位置を行の比べで照らし、条件
-   ledger = :ledger を置かない(索引の順に辿る形 — 上向きは同じ索引を逆に辿る: ASC NULLS FIRST, key ASC)。偽なら前の形。"
+   ledger = :ledger を置かない(索引の順に辿る形 — 上向きは同じ索引を逆に辿る: ASC NULLS FIRST, key ASC)。偽なら前の形。with-bulk =
+   列 bulk も選んで payload と合わせるか(list-rows-statement と同じ)。"
   (<- filter (row-filter table key-fields scoped where-json where-any-json))
+  (<- payload (stored-payload-expression with-bulk))
   (val beyond (if ascending ">" "<"))
   (val sort-order (if ascending "ASC" "DESC"))
   (val nulls (if ascending "NULLS FIRST" "NULLS LAST"))
@@ -1188,9 +1229,9 @@
                            #()
                            #((.format "({o}, key COLLATE \"C\") {b} (CAST(:after_value AS numeric), :after)" :o sorted-value :b beyond))))
     (val ordered-clauses (+ filter.clauses #((.format "{o} IS NOT NULL" :o sorted-value)) ordered-below))
-    (return (Statement :text (.format "SELECT key, payload, version FROM {p}state_rows AS r WHERE {w}{u}
+    (return (Statement :text (.format "SELECT key, {v}, version FROM {p}state_rows AS r WHERE {w}{u}
                        ORDER BY {o} {d} {n}, key COLLATE \"C\" {d} LIMIT :limit"
-                                      :p prefix :w (.join " AND " ordered-clauses) :u unexpired.text :o sorted-value :d sort-order :n nulls)
+                                      :p prefix :v payload :w (.join " AND " ordered-clauses) :u unexpired.text :o sorted-value :d sort-order :n nulls)
                        :params (+ (! (params-of pairs-tail)) filter.params unexpired.params))))
   (val ledger-clauses (if filter.ledger-free #() #("ledger = :ledger")))
   (val ledger-pairs (if filter.ledger-free #() #(#("ledger" table))))
@@ -1205,9 +1246,9 @@
                   #((.format "jsonb_typeof({o}) = 'number' AND ({o})::text ~ '^-?[0-9]+$'" :o ordered-field))
                   below-clauses))
   (val pairs (+ ledger-pairs pairs-tail))
-  (Statement :text (.format "SELECT key, payload, version FROM {p}state_rows AS r WHERE {w}{u}
+  (Statement :text (.format "SELECT key, {v}, version FROM {p}state_rows AS r WHERE {w}{u}
                        ORDER BY ({o})::text::numeric {d}, key COLLATE \"C\" {d} LIMIT :limit"
-                            :p prefix :w (.join " AND " clauses) :u unexpired.text :o ordered-field :d sort-order)
+                            :p prefix :v payload :w (.join " AND " clauses) :u unexpired.text :o ordered-field :d sort-order)
              :params (+ (! (params-of pairs)) filter.params unexpired.params)))
 
 
@@ -1255,17 +1296,18 @@
    scheduler の thread をそれぞれ 5〜9 秒塞ぎ、その間の要求が全部待った)。"
   (<- words (terminal-words terminal))
   (<- bound (params-of #(#("before_at" before-at))))
+  (<- payload (stored-payload-expression True))
   (if scoped
       (do (<- expression (table-field-expression "" table state-field))
           (<- states (field-in-condition expression "t" words))
-          (Statement :text (.format "SELECT key, payload, version, updated_at FROM {p}state_rows
+          (Statement :text (.format "SELECT key, {v}, version, updated_at FROM {p}state_rows
                        WHERE {s} AND updated_at <= :before_at ORDER BY key COLLATE \"C\""
-                                    :p prefix :s states.text)
+                                    :p prefix :v payload :s states.text)
                      :params (+ states.params bound)))
       (do (<- states (terminal-state-condition "payload" state-field "t" terminal))
-          (Statement :text (.format "SELECT key, payload, version, updated_at FROM {p}state_rows
+          (Statement :text (.format "SELECT key, {v}, version, updated_at FROM {p}state_rows
                        WHERE ledger = :ledger AND {s} AND updated_at <= :before_at ORDER BY key COLLATE \"C\""
-                                    :p prefix :s states.text)
+                                    :p prefix :v payload :s states.text)
                      :params (+ (! (params-of #(#("ledger" table)))) states.params bound)))))
 
 
@@ -1274,10 +1316,11 @@
          (: epoch int)]
    :post [(: % Statement)]
    :tags {:context "records" :role "foundation"}}
-  "行 1 つを書く(在れば置き換える)文を作るため。"
+  "行 1 つを書く(在れば置き換える)文を作るため。値の全部を payload に置き、列 bulk を NULL にする(前に大きい欄を bulk に分けて置いた行の
+   古い bulk を残さない — 残すと、この書きが外した欄が読みの合わせで戻る)。"
   (Statement :text (.format "INSERT INTO {p}state_rows (ledger, key, payload, version, updated_at, updated_by, origin_host, epoch)
                        VALUES (:ledger, :key, :payload, :version, :at, :writer, :origin_host, :epoch)
-                       ON CONFLICT (ledger, key) DO UPDATE SET payload = EXCLUDED.payload, version = EXCLUDED.version,
+                       ON CONFLICT (ledger, key) DO UPDATE SET payload = EXCLUDED.payload, bulk = NULL, version = EXCLUDED.version,
                          updated_at = EXCLUDED.updated_at, updated_by = EXCLUDED.updated_by,
                          origin_host = EXCLUDED.origin_host, epoch = EXCLUDED.epoch" :p prefix)
              :params (! (params-of #(#("ledger" table) #("key" key) #("payload" payload) #("version" version) #("at" at)

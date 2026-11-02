@@ -275,7 +275,8 @@
 
 (defn #^ (| NotIndexed None) where-refusal [#^ TableDecl decl #^ FrozenMap where #^ FrozenMap where-any]
   "ListRows の絞り(where の等号と where-any の値の組)が索引の無い欄を名指す時に、その欄を名の順に名指して断るため(memory と PostgreSQL の
-   置き場の 1 点)。"
+   置き場の 1 点)。大きい欄(TableDecl.bulk)は索引の欄にできないので、その絞りもここで断る — PostgreSQL の置き場が列 bulk に置いた欄を
+   payload の式で照らして答えが memory と食い違う事が無い。"
   (setv loose (tuple (sorted (gfor name (+ (tuple where) (tuple where-any))
                                    :if (not (or (in name decl.key-fields) (in name decl.indexes)))
                                    name))))

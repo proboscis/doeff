@@ -187,6 +187,9 @@ def index_steps(index: DeclaredIndex) -> _Program[tuple[SchemaStep, ...], object
 def schema_steps(prefix: str, schema: RecordsSchema) -> _Program[tuple[SchemaStep, ...], object]:
     ...
 
+def bulk_column_step(prefix: str) -> _Program[SchemaStep, object]:
+    ...
+
 def remembered_at_step(prefix: str) -> _Program[SchemaStep, object]:
     ...
 
@@ -282,6 +285,10 @@ def row_filter(table: str, key_fields: tuple, scoped: frozenset, where_json: dic
 
 def unexpired_rows_filter(alias: str, expiries: tuple) -> _Program[Clause, object]:
     ...
+STORED_PAYLOAD: str
+
+def stored_payload_expression(with_bulk: bool) -> _Program[str, object]:
+    ...
 
 def read_row_statement(prefix: str, table: str, key: str, expiry: RowExpiry | None) -> _Program[Statement, object]:
     ...
@@ -289,13 +296,13 @@ def read_row_statement(prefix: str, table: str, key: str, expiry: RowExpiry | No
 def lock_row_statement(prefix: str, table: str, key: str) -> _Program[Statement, object]:
     ...
 
-def list_rows_statement(prefix: str, table: str, key_fields: tuple, scoped: frozenset, after_key: str | None, where_json: dict, where_any_json: dict, limit: int, expiry: RowExpiry | None) -> _Program[Statement, object]:
+def list_rows_statement(prefix: str, table: str, key_fields: tuple, scoped: frozenset, after_key: str | None, where_json: dict, where_any_json: dict, limit: int, expiry: RowExpiry | None, with_bulk: bool=True) -> _Program[Statement, object]:
     ...
 
-def top_rows_statement(prefix: str, table: str, key_fields: tuple, scoped: frozenset, descending_by: str, ordered: bool, cursor: ListCursor | None, where_json: dict, where_any_json: dict, limit: int, expiry: RowExpiry | None) -> _Program[Statement, object]:
+def top_rows_statement(prefix: str, table: str, key_fields: tuple, scoped: frozenset, descending_by: str, ordered: bool, cursor: ListCursor | None, where_json: dict, where_any_json: dict, limit: int, expiry: RowExpiry | None, with_bulk: bool=True) -> _Program[Statement, object]:
     ...
 
-def ordered_rows_statement(prefix: str, table: str, key_fields: tuple, scoped: frozenset, field_name: str, ordered: bool, ascending: bool, cursor: ListCursor | None, where_json: dict, where_any_json: dict, limit: int, expiry: RowExpiry | None) -> _Program[Statement, object]:
+def ordered_rows_statement(prefix: str, table: str, key_fields: tuple, scoped: frozenset, field_name: str, ordered: bool, ascending: bool, cursor: ListCursor | None, where_json: dict, where_any_json: dict, limit: int, expiry: RowExpiry | None, with_bulk: bool=True) -> _Program[Statement, object]:
     ...
 
 def count_rows_statement(prefix: str, table: str, key_fields: tuple, scoped: frozenset, at_least: tuple | None, ordered: bool, where_json: dict, where_any_json: dict, expiry: RowExpiry | None) -> _Program[Statement, object]:
