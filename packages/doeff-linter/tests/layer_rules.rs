@@ -2504,6 +2504,51 @@ fn test_kind_follows_python_functions_into_their_subprocesses() {
     assert!(errors.iter().any(|e| e.as_str().unwrap().contains("tools/broken.py")), "構文の壊れた module を名乗る: {}", report);
 }
 
+/// 契約の検は `:interpreters [本物 相手役]` の名の定数(file の外の文字列の定数)で同じ deftest を両方の組み立てで回す。名の定数を import
+/// から定義へ解き、その module の名 → 組み立ての表がその名に当てた組み立てを deftest の届く先に足す — 本文が手元の定義だけを呼んでも、
+/// 本物の組み立てだけが外の世界に届けば縁(印が要る)。相手役だけを回す deftest は手元のまま(agora-controllers の契約の検の 25 件)。
+#[test]
+fn test_kind_follows_the_interpreters_to_their_assemblies() {
+    let files = [
+        ("app/foundation/host.hy", tags("shared", "foundation") + "(defk with-host [body] body)\n"),
+        ("app/billing/core/calc.hy", tags("billing", "judgment") + "(defk add [a b] (+ a b))\n"),
+        ("app/billing/core/stand.hy", tags("billing", "judgment") + "(defk with-stand [body] body)\n"),
+        (
+            "app/billing/tests/contract_handlers.hy",
+            "(import app.foundation.host [with-host])\n(import app.billing.core.stand [with-stand])\n\
+             (val REAL \"app.foundation.host:with-host@live\")\n(val STAND \"app.billing.core.stand:with-stand\")\n\
+             (defk under-real [program] (with-host program))\n(defk under-stand [program] (with-stand program))\n\
+             (val INTERPRETERS {REAL under-real STAND under-stand})\n"
+                .to_string(),
+        ),
+        (
+            "app/billing/tests/test_contract.hy",
+            "(import app.billing.tests.contract_handlers [REAL STAND])\n(import app.billing.core.calc [add])\n\
+             (deftest test-contract-marked {:interpreters [REAL STAND] :marks [\"real_world\"]} (<- n (add 1 2)) (assert n))\n\
+             (deftest test-contract-unmarked {:interpreters [REAL STAND]} (<- n (add 1 2)) (assert n))\n\
+             (deftest test-stand-only-marked {:interpreters [STAND] :marks [\"real_world\"]} (<- n (add 1 2)) (assert n))\n\
+             (deftest test-stand-only-good {:interpreters [STAND]} (<- n (add 1 2)) (assert n))\n"
+                .to_string(),
+        ),
+    ];
+    let dir = world_repo_with(&files, "", "[\"DOEFF133\"]");
+    let arch_path = dir.path().join("architecture.hy");
+    let text = std::fs::read_to_string(&arch_path).unwrap().replace(":foundation foundation", ":foundation foundation\n  :edge-mark \"real_world\"");
+    std::fs::write(&arch_path, text).unwrap();
+    let (_, report) = editor(dir.path());
+    assert_eq!(
+        keys(&report, "DOEFF133"),
+        vec![
+            "app/billing/tests/test_contract.hy::DOEFF133::test_contract_unmarked::edge",
+            "app/billing/tests/test_contract.hy::DOEFF133::test_stand_only_marked::local",
+        ],
+        "本物の組み立てに届く契約の検は縁(印つきは当てない)・相手役だけを回す検は手元: {}",
+        report
+    );
+    let unmarked = violation(&report, "app/billing/tests/test_contract.hy::DOEFF133::test_contract_unmarked::edge");
+    assert!(unmarked["message"].as_str().unwrap().contains("under-real → with-host → app.foundation.host:with-host"), "{}", unmarked["message"]);
+}
+
 /// 許可名簿の handler ごとに縁の検(空でない :interpreters を持ち、DOEFF133 と同じ図でその handler の定義に
 /// 届く deftest)が要る — 無ければ architecture.hy の名簿の要素で DOEFF137(critical・細目 = 名簿の綴り)。:interpreters の要素は
 /// file の外の定数の記号のまま(読み解かない)。理由つきの :contract-test (none …) の handler は判じない・理由の無い none は鳴る(#1796)。
