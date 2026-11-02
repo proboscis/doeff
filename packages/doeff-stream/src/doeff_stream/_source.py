@@ -3,14 +3,16 @@
 Four kinds of source feed a fold. Two are named by the caller: events other tasks publish on the bus
 (``subscribe``) and deadlines (``timers`` — ``TimerFired`` of the timers the step arms). Two are the runtime's own and
 are in every merge, so no fold can leave them out: the answer of an effect the step ran and the end of its task
-(``Answered`` / ``Raised`` / ``Cancelled``). ``merge`` joins the sources; ``Inputs.event_types`` is what the caller
+(``Answered`` / ``Raised`` / ``Cancelled``). Every merge also carries the bus's own two, which
+``subscribed_event_handler`` subscribes for every waiting subscriber: the stop signal (``StopArrived`` — the step
+decides the order of the stop and answers ``Finish``) and a failed signal source (``SourceFailed``). ``merge`` joins the sources; ``Inputs.event_types`` is what the caller
 subscribes the fold's bus handler to (``subscribed_event_handler(bus, name, inputs.event_types)``).
 """
 
 from collections.abc import Hashable
 from dataclasses import dataclass
 
-from doeff_events import TimerFired
+from doeff_events import SourceFailed, StopArrived, TimerFired
 
 from doeff_stream._step import Answered, Cancelled, Raised, RunEnd
 
@@ -61,12 +63,17 @@ def subscribe(*event_types: type) -> Source:
 
 
 def timers() -> Source:
-    """The deadlines of the timers the step arms (``Run(key, ArmTimer(tag, at))``): ``TimerFired(tag)``."""
+    """The deadlines of the timers the step arms (``Run(key, ArmTimer(tag, at))``): ``TimerFired(tag)``.
+
+    A ``TimerFired`` reaches every subscriber of the bus, not only the fold that armed it: folds sharing a bus keep
+    their tags apart (a tag that names the fold, as a key names its part).
+    """
     return Source((TimerFired,))
 
 
 def merge(*sources: Source) -> Inputs:
-    """One input stream of ``sources`` and the runtime's own (effect answers and task ends), in that order.
+    """One input stream of ``sources`` and the runtime's own (the stop signal, a failed source, effect answers and
+    task ends), in that order.
 
     A type two sources name is waited for once.
     """
@@ -75,4 +82,4 @@ def merge(*sources: Source) -> Inputs:
             raise TypeError(f"merge takes sources, got {type(source).__name__}")
     named = (event_type for source in sources for event_type in source.event_types)
     # dict.fromkeys keeps the first place of each type and drops the repeats.
-    return Inputs(tuple(dict.fromkeys((*named, RunEnded))))
+    return Inputs(tuple(dict.fromkeys((*named, StopArrived, SourceFailed, RunEnded))))

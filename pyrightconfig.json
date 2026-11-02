@@ -31,6 +31,7 @@
         "packages/doeff-records/src",
         "packages/doeff-secret/src",
         "packages/doeff-seedream/src",
+        "packages/doeff-stream/src",
         "packages/doeff-system-one/src",
         "packages/doeff-time/src",
         "packages/doeff-validation/src",

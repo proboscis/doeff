@@ -1,8 +1,11 @@
 """Sources, merge and the fold's life: what the fold waits for, how it ends, and what it leaves behind.
 
-- ``merge`` always carries the runtime's own inputs, once per type; ``subscribe`` refuses them.
+- ``merge`` always carries the runtime's own inputs (the stop signal and a failed source too), once per type;
+  ``subscribe`` refuses the run ends.
+- The stop signal reaches the step; a ``Run`` of a value that is not a program is refused by the fold.
 - External events, timers and run ends reach the step as one stream.
-- ``Finish`` cancels the runs still running and waits until they ended; a step that raises cancels them too.
+- ``Finish`` cancels the runs still running and waits until they ended; a step that raises and a cancelled fold
+  cancel them too.
 - Two folds on one bus each get the ends of their own runs only.
 - A bus handler not subscribed to the fold's inputs is named at the first wait.
 """
@@ -11,11 +14,13 @@ from dataclasses import dataclass
 from datetime import timedelta
 
 import pytest
-from doeff_core_effects import Spawn, TaskCancelledError, Wait
+from doeff_core_effects import Cancel, Spawn, TaskCancelledError, Wait
 from doeff_events import (
     ArmTimer,
     EventBus,
     Publish,
+    SourceFailed,
+    StopArrived,
     TimerFired,
     WaitForEvent,
     WaitForEvents,
@@ -54,8 +59,8 @@ class Poke:
 
 def test_merge_carries_the_runtime_inputs_once_and_last() -> None:
     inputs = merge(subscribe(Poke, Kick), timers(), subscribe(Poke))
-    assert inputs == Inputs((Poke, Kick, TimerFired, RunEnded))
-    assert merge() == Inputs((RunEnded,))
+    assert inputs == Inputs((Poke, Kick, TimerFired, StopArrived, SourceFailed, RunEnded))
+    assert merge() == Inputs((StopArrived, SourceFailed, RunEnded))
 
 
 @pytest.mark.parametrize("own", [Answered, Raised, Cancelled, RunEnded])
@@ -188,6 +193,58 @@ def test_a_step_that_raises_cancels_the_runs_still_running() -> None:
         return program()
 
     assert run_on_sim(observed(inputs, body)) == Unwound("r")
+
+
+def test_a_cancelled_fold_cancels_the_runs_still_running_and_waits_for_them() -> None:
+    # The fold's own waits raise again while it is cancelled: only the shielded close lets it wait for its runs.
+    def step(state: int, event: object) -> Next[int]:
+        if isinstance(event, Kick):
+            return Next(1, (Run("r", waits_and_tells_its_cancel("r")),))
+        return Next(state)
+
+    inputs = merge(subscribe(Kick))
+
+    def body(on_host):
+        @do
+        def program():
+            task = yield Spawn(on_host(fold(step, 0, inputs)))
+            yield Delay(1.0)
+            yield Publish(Kick())
+            yield Delay(1.0)
+            yield Cancel(task)
+            try:
+                yield Wait(task)
+            except TaskCancelledError:
+                # The fold ended only after its run unwound: the announcement is already queued.
+                told = yield WaitForEvents(Unwound)
+                return told
+            return ("the fold was not cancelled",)
+
+        return program()
+
+    assert run_on_sim(observed(inputs, body)) == (Unwound("r"),)
+
+
+def test_the_stop_signal_reaches_the_step() -> None:
+    def step(state: int, event: object) -> Next[int]:
+        match event:
+            case Kick():
+                return Next(1, (Run("stopper", Publish(StopArrived("shutdown"))),))
+            case StopArrived(reason=reason):
+                return Next(state, (Finish(reason),))
+            case _:
+                return Next(state)
+
+    assert kicked(step, 0, merge(subscribe(Kick))) == "shutdown"
+
+
+def test_a_run_of_something_that_is_not_a_program_is_refused_by_the_fold() -> None:
+    # Not a Raised of the run: the step's mistake is named where it was made.
+    def step(state: int, event: object) -> Next[int]:
+        return Next(state, (Run("bad", 7),)) if isinstance(event, Kick) else Next(state)  # type: ignore[arg-type]  # the check under test
+
+    with pytest.raises(TypeError, match="takes a Program or an effect"):
+        kicked(step, 0, merge(subscribe(Kick)))
 
 
 def test_two_folds_on_one_bus_get_the_ends_of_their_own_runs_only() -> None:

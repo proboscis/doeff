@@ -15,7 +15,7 @@ host = fold(step, 初期の状態, merge(subscribe(...), timers()))
 
 | 部品 | 口 | 中身 |
 |---|---|---|
-| Source | `subscribe(*types)`・`timers()` | 外の task が bus に出す出来事と、step が置いた timer の期限(`TimerFired`)。effect の答えと task の終わりは runtime 自身の source で、どの merge にも必ず入る |
+| Source | `subscribe(*types)`・`timers()` | 外の task が bus に出す出来事と、step が置いた timer の期限(`TimerFired`)。effect の答えと task の終わり、止めの合図(`StopArrived`)と合図の源の失敗(`SourceFailed`)は runtime 自身の source で、どの merge にも必ず入る |
 | merge | `merge(*sources) -> Inputs` | source を 1 つの入力の列にする。`Inputs.event_types` が fold の待つ型の全部 |
 | fold | `fold(step, initial, inputs)` | 入力を 1 つずつ step に渡し、答えの effect を順に実行する。`Finish(value)` で `value` を答える |
 | test の harness | `replay(step, initial, inputs) -> Replay` | VM を使わずに入力の列を step に与え、状態(`states`・`final`)と effect(`effects`)の列を返す |
@@ -24,21 +24,31 @@ host = fold(step, 初期の状態, merge(subscribe(...), timers()))
 
 | effect | 振る舞い |
 |---|---|
-| `Run(key, program)` | `program`(Program か effect)を新しい task で走らせる。終わりは `key` を持つ入力 1 つで戻る。走っている key の `Run` は断る |
+| `Run(key, program)` | `program`(Program か effect)を新しい task で走らせる。終わりは `key` を持つ入力 1 つで戻る。走っている key の `Run` と、Program でも effect でもない `program` は断る |
 | `CancelRun(key)` | `key` の task を取り消す。終わりはやはり 1 つの入力で戻る(取り消しが効けば `Cancelled`、先に終わっていればその終わり)。走っていない key は何もしない |
-| `Finish(value)` | fold を終える。答えの最後に置く。走っている task を取り消し、全部が終わるのを待ってから `value` を答える(その終わりは step に渡さない) |
+| `Finish(value)` | fold を終える。1 つの答えに 1 つまでで、どこに置いてもほかの effect の後に実行する。走っている task を取り消し、全部が終わるのを待ってから `value` を答える(その終わりは step に渡さない) |
 
 step が例外を上げた時、または fold の task が取り消された時は、走っている task を取り消してから例外を先へ通します。
 
 ## 終わりが必ず入力になる訳
 
-`Run` 1 つに task を 2 つ立てます。program を走らせる task と、それを `Wait` で見張る task です。見張りは `Try` で終わりを
+`Run` 1 つに task を 2 つ立てます。program を走らせる task と、それを `Wait` で見張る task です。見張りは try/except で終わりを
 受けて、値・例外・取り消しのどれでも `Publish` を 1 度します。`CancelRun` が取り消すのは program の task だけで、見張りは
 取り消しません。だから、始まる前に取り消された task の終わりも入力になります。program の task が `TaskCancelledError` で
 終わった時は、step がその key を取り消していれば `Cancelled`、自分で上げた物(取り消された別の task の待ち)なら `Raised` です。
 
 見張りの `Publish` は fold の購読者の列に積まれるので、step が別の入力を処理している間に終わった task も落ちません。同じ bus の
 別の fold が走らせた task の終わりは、その fold の物と見分けて読み捨てます。
+
+## step と run が守る約束
+
+| 約束 | 訳 |
+|---|---|
+| 部品ごとに key を分ける(`("fetch", item)` のように、頭に部品の名を置いた tuple) | 走っている key の `Run` は断られ、run の終わりは key でしか振り分けられない |
+| 同じ bus に fold を 2 つ置く時は、timer の tag も fold ごとに分ける | `TimerFired` は bus の全部の購読者に届き、run の終わりのようには fold を見分けない |
+| run の program は `WaitForEvent`・`WaitForEvents` をしない | run は fold の bus の handler の下で走るので、その待ちは fold の入力を横取りする |
+| run は取り消されたら終わる。外の世界を待つ run は自分の待ちに期限を付ける(`WaitWithin`) | fold は時計を持たず、`Finish` と例外の道は run が終わるまで待つ |
+| 止めの合図(`StopArrived`)を受けたら、step が止めの順を決めて `Finish` を返す | fold は止めの合図で勝手に止まらない |
 
 ## 組み立て
 

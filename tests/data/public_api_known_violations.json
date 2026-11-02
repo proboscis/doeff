@@ -6290,6 +6290,12 @@
    "module": "doeff_stream",
    "name": "Stepped",
    "訳": "test の harness replay が返す跡の値(step の入力・状態・effect の列)。replay は換算の関数の組で、その返す class を置く組が無い"
+  },
+  {
+   "package": "doeff-stream",
+   "module": "doeff_stream",
+   "name": "replay",
+   "訳": "test の harness: VM を使わずに入力の列を step に与え、fold と同じ検め(Run の program が Program か effect か)で答えを確かめて跡を返す。検めが EffectBase を読むので換算の関数の形に当たらず、harness を置く組が無い"
   }
  ]
 }

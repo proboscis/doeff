@@ -75,7 +75,11 @@ def _as_step_input(ended: RunEnded, running: _Running) -> RunEnd:
 
 @do
 def _close(running: dict[Hashable, _Running]) -> Generator[Any, Any, None]:
-    """Cancel every run still running and wait until each has ended (its watcher published its end)."""
+    """Cancel every run still running and wait until each has ended (its watcher published its end).
+
+    The wait has no deadline: the fold has no clock. A run that does not end once cancelled (it waits inside
+    ``shielded``, or never waits) holds the fold here — a run that waits on the outside world bounds its own wait.
+    """
     for entry in running.values():
         yield Cancel(entry.runner)
     for entry in running.values():
