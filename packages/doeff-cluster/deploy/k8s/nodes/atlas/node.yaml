@@ -16,12 +16,12 @@ spec:
           # 1Gi のこの worker が選ばれる — 10-30〜11-01 に 5 回)。ほかの Pod の working set の和は 7 日(10-26〜11-01・Prometheus の 30 秒
           # ごと)で中央 7.0・p99 11.0・最大 12.7 GiB なので、この worker が追い出されずに使えるのは中央 12.8・下の 10% 11.3・下の 1% 8.8・
           # 最小 7.1 GiB。
-          # 取り分は小さく(機体が他の Pod で埋まっていても置ける — atlas の request の和は allocatable の 92%)。上限 18Gi は cgroup の層の
-          # 和(cgroup.yaml — worker 256M + services 7168M + jobs 10752M = 17.75 GiB)が入る大きさで、使える量より大きい。追い出しの手前で
+          # memory の取り分は cgroup の層の memory.min の和(worker 256M + services 256M — cgroup.yaml)。上限 18Gi は層の和(worker 256M +
+          # services 256M + jobs 10752M = 10.75 GiB)と準備・task の山が入る大きさで、使える量より大きい。追い出しの手前で
           # 使いを止める線は上限でなく、worker が追い出しまでの空きから 5 秒ごとに掛け直す jobs の層の memory.max(cgroup.yaml の註)。
           # 上限は、最初の起動で doeff-vm の wheel を組む山と、上に載る系の日次の全体検証の task(:needs host-atlas・1 本の山は 12〜16Gi)を、
           # ほかの Pod の使いが小さい時に通す(2026-10-10 調整役 cisco-c8 の値 — 8Gi から 18Gi)。
-          resources: { requests: { cpu: "500m", memory: 1Gi }, limits: { cpu: "8", memory: 18Gi } }
+          resources: { requests: { cpu: "500m", memory: 512Mi }, limits: { cpu: "8", memory: 18Gi } }
           env:
             # job の子へ渡す名に Rust の toolchain の置き場(image の env)を足す — task が Rust の部品を組む時に rustup が toolchain を選ぶ。
             # 雛形の値の後ろに足すだけ(道具の cache の置き場は task が WORK_DIR から自分で作る)。

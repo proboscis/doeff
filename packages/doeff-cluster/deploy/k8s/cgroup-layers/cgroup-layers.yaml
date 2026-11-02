@@ -27,7 +27,7 @@
 #   (atlas の 1 GiB と同じ式 — eviction_rules の EVICTION-MARGIN-BYTES の註)。worker は回ごとに外の増えを測り、p999 × 2 が床を越えれば
 #   それを使う(載る Pod が替わった時に宣言の書き直しを待たない)。
 # - 枠の file の memoryMiB(常駐の job の memory の予算)= container の上限 − worker の memory.min − jobs の memory.max(zeus と同じ式)。
-# - services の memory.min = その予算から 256M を引いた値(守る層と限る層の和を container の上限の内に残す余り)。どの機体でも、1 台の
+# - services の memory.min(atlas と k3s-1 の外)= その予算から 256M を引いた値(守る層と限る層の和を container の上限の内に残す余り)。どの機体でも、1 台の
 #   worker の停止で移る常駐の job の落ち着いた値と起動の山(N+1 の判断 failover-refusals が予算に求める値)以上。
 # - container の上限 = 層の和が入る大きさ。task を受けない機体は、予算を前の値のまま残すよう、前の上限に準備の分を足した(前の予算は
 #   準備の memory を数えていなかった)。層が準備を jobs の max で抑えるので、ふだんの使いは上限を上げても増えない — 増えうるのは 1 台の停止で

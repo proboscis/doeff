@@ -152,12 +152,12 @@ class Resources:
 HOST_ONLY_RESOURCES = {
     # atlas は上に載る系の日次の全体検証の task も受ける(1 本の上限は旧い専用の worker と同じ 16Gi 前後 — 2026-10-10 調整役 cisco-c8 の値)。
     # 機体の memory が足りずに kubelet がこの Pod を追い出しているので、層を置いても上限は上げない(予算の側を下げる)。
-    "atlas": Resources(requests={"cpu": "500m", "memory": "1Gi"}, limits={"cpu": "8", "memory": "18Gi"}),
+    "atlas": Resources(requests={"cpu": "500m", "memory": "512Mi"}, limits={"cpu": "8", "memory": "18Gi"}),
     "eos": Resources(requests={"cpu": "250m", "memory": "3840Mi"}, limits={"cpu": "2", "memory": "5632Mi"}),
     # helios は組の印 pool-helios の常駐の job 24 本(起動の山の和 約 31GiB・落ち着いた値の和 約 16.5GiB)を受ける。
     "helios": Resources(requests={"cpu": "2", "memory": "31Gi"}, limits={"cpu": "12", "memory": "40Gi"}),
     "k3s-0": Resources(requests={"cpu": "100m", "memory": "1792Mi"}, limits={"cpu": "2", "memory": "3584Mi"}),
-    "k3s-1": Resources(requests={"cpu": "100m", "memory": "256Mi"}, limits={"cpu": "2", "memory": "3584Mi"}),
+    "k3s-1": Resources(requests={"cpu": "100m", "memory": "512Mi"}, limits={"cpu": "2", "memory": "3584Mi"}),
     "k3s-2": Resources(requests={"cpu": "100m", "memory": "1792Mi"}, limits={"cpu": "2", "memory": "3584Mi"}),
     "k3s-3": Resources(requests={"cpu": "250m", "memory": "3840Mi"}, limits={"cpu": "3", "memory": "5632Mi"}),
 }
@@ -446,30 +446,13 @@ def test_worker_guards_its_resident_jobs_and_caps_its_tasks_and_commands(rendere
     assert total <= limit, f"守る層の min と限る層の max の和 {total} が container の上限 {limit} を越える"
 
 
-# 守る層の和が worker の memory の取り分を越えたまま残る機体 → 訳。Node の allocatable に、ほかの Pod の取り分の和と守る層の和が入らない
-# (2026-11-02 — atlas は取り分の和 19920 MiB に +6400 MiB で allocatable 20263 MiB を越え、k3s-1 は 1676 MiB に +1536 MiB で 2659 MiB を
-# 越える)。ほかの Pod の取り分を実の使いに合わせて下げるか、守る層の memory.min を下げるかを決めるまで、取り分を上げると worker が
-# 置けない。決めて直した機体はここから消す(strict の xfail — 直ったのに残すと赤)。
-GUARD_ABOVE_REQUEST_PENDING = {
-    "atlas": "ほかの Pod の取り分の和と守る層の和 7424 MiB が allocatable に入らない — 下げる側を決めるまで取り分 1Gi のまま",
-    "k3s-1": "ほかの Pod の取り分の和と守る層の和 1792 MiB が allocatable に入らない — 下げる側を決めるまで取り分 256Mi のまま",
-}
-
-
-@pytest.mark.parametrize(
-    "node",
-    [
-        pytest.param(node, marks=pytest.mark.xfail(strict=True, reason=GUARD_ABOVE_REQUEST_PENDING[node]))
-        if node in GUARD_ABOVE_REQUEST_PENDING
-        else node
-        for node in sorted(CGROUP_LAYERS)
-    ],
-)
+@pytest.mark.parametrize("node", sorted(CGROUP_LAYERS))
 def test_worker_requests_at_least_the_memory_its_layers_guard(rendered: list[Manifest], node: str) -> None:
     """worker の container の memory の取り分(requests)は、cgroup の層の memory.min の和(worker の本体と常駐の job と zeus の CLI の層)
     以上。失敗ケース: kubelet は Node の memory が allocatable を越えた時、使いが取り分を最も越えた Pod から追い出す。守る層の和より小さい
     取り分の worker は、守る層が守る常駐の job の memory だけで取り分を越え、毎回最初に追い出される(atlas の 10-30〜11-01 の 5 回 —
-    取り分 1Gi・守る層の和 7424 MiB)。scheduler も守る分を空きと数え、ほかの Pod を機体に載せすぎる。"""
+    取り分 1Gi・守る層の和 7424 MiB)。scheduler も守る分を空きと数え、ほかの Pod を機体に載せすぎる。守る層は、今その worker に
+    置かれた常駐の job の分だけにする(組の相手の停止で受ける job の分を前もって守ると、Pod の取り分が Node に入らない — atlas・k3s-1)。"""
     worker = _worker_on(rendered, node)
     guarded = sum(_bytes(values["memory.min"]) for _, values in _layout(worker) if "memory.min" in values)
     requests = _mapping(_mapping(_container(worker)["resources"], "resources")["requests"], "requests")
