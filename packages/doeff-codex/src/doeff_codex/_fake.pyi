@@ -25,13 +25,18 @@ from doeff_codex._lines import ServerOverloadedHit as ServerOverloadedHit
 from doeff_codex._lines import SERVER_OVERLOADED_KIND as SERVER_OVERLOADED_KIND
 from doeff_codex._lines import UnauthorizedHit as UnauthorizedHit
 from doeff_codex._lines import UNAUTHORIZED_KIND as UNAUTHORIZED_KIND
+from doeff_codex._rollout import SESSION_META as SESSION_META
+from doeff_codex._rollout import window_of as window_of
+from doeff_codex._rollout import text_of as text_of
 from doeff_codex._effects import CodexStartTurn as CodexStartTurn
 from doeff_codex._effects import CodexSteerTurn as CodexSteerTurn
 from doeff_codex._effects import CodexInterruptTurn as CodexInterruptTurn
 from doeff_codex._effects import CodexReadTurnEvents as CodexReadTurnEvents
 from doeff_codex._effects import CodexAnswerRequest as CodexAnswerRequest
 from doeff_codex._effects import CodexCloseSession as CodexCloseSession
+from doeff_codex._effects import CodexExportThread as CodexExportThread
 from doeff_codex._effects import CodexLaunchCount as CodexLaunchCount
+from doeff_codex._effects import ThreadExported as ThreadExported
 from doeff_codex._effects import BackendLost as BackendLost
 from doeff_codex._effects import ToolsUnavailable as ToolsUnavailable
 from doeff_codex._effects import TurnStarted as TurnStarted
@@ -45,6 +50,7 @@ from doeff_codex._effects import NoTurnInFlight as NoTurnInFlight
 from doeff_codex._effects import UnknownTurn as UnknownTurn
 from doeff_codex._effects import NoSuchRequest as NoSuchRequest
 STEERED_PREFIX: str
+FAKE_STARTED_AT: str
 
 @dataclass(frozen=True, kw_only=True)
 class FakeReply:
@@ -68,9 +74,13 @@ class FakeThread:
     alive: Incomplete
     current: Incomplete
     next_seq: Incomplete
+    rollout: str | None
     turns: dict[str, FakeTurn]
 
-    def __init__(self, spec: CodexSessionSpec) -> None:
+    def __init__(self, spec: CodexSessionSpec, rollout: str | None) -> None:
+        ...
+
+    def note(self, line: dict) -> Incomplete:
         ...
 
     def add(self, turn: FakeTurn, record: Incomplete) -> Incomplete:
@@ -90,7 +100,22 @@ class FakeCodexWorld:
     def fresh_id(self, kind: str) -> str:
         ...
 
+    def forget_rollout(self, thread_id: str) -> Incomplete:
+        ...
+
+def fake_meta(thread_id: str) -> _Program[str, object]:
+    ...
+
+def fake_resumed(world: FakeCodexWorld, origin: ResumeThread, spec: CodexSessionSpec) -> _Program[FakeThread | ThreadUnknown, object]:
+    ...
+
 def fake_start(world: FakeCodexWorld, asked: CodexStartTurn) -> _Program[TurnStarted | ThreadUnknown | TurnInFlight, object]:
+    ...
+
+def fake_fresh(world: FakeCodexWorld, spec: CodexSessionSpec) -> _Program[FakeThread, object]:
+    ...
+
+def fake_export(world: FakeCodexWorld, asked: CodexExportThread) -> _Program[ThreadExported | ThreadUnknown, object]:
     ...
 
 def fake_read(world: FakeCodexWorld, asked: CodexReadTurnEvents) -> _Program[TurnEventPage | UnknownTurn, object]:

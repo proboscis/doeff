@@ -39,13 +39,22 @@ from doeff_codex._credential_home import credential_env as credential_env
 from doeff_codex._credential_home import state_db_claim as state_db_claim
 from doeff_codex._credential_home import state_db_release as state_db_release
 from doeff_codex._credential_home import repoint_state_db as repoint_state_db
+from doeff_codex._rollout import sessions_of as sessions_of
+from doeff_codex._rollout import read_thread_rollout as read_thread_rollout
+from doeff_codex._rollout import restore_rollout as restore_rollout
+from doeff_core_effects._offloaded_call import ThreadPerCall as ThreadPerCall
+from doeff_core_effects._offloaded_call import offloaded as offloaded
+from doeff_core_effects._offloaded_call import run_detached as run_detached
+from doeff_core_effects._offloaded_call import keep_nothing as keep_nothing
 from doeff_codex._effects import CodexStartTurn as CodexStartTurn
 from doeff_codex._effects import CodexSteerTurn as CodexSteerTurn
 from doeff_codex._effects import CodexInterruptTurn as CodexInterruptTurn
 from doeff_codex._effects import CodexReadTurnEvents as CodexReadTurnEvents
 from doeff_codex._effects import CodexAnswerRequest as CodexAnswerRequest
 from doeff_codex._effects import CodexCloseSession as CodexCloseSession
+from doeff_codex._effects import CodexExportThread as CodexExportThread
 from doeff_codex._effects import CodexLaunchCount as CodexLaunchCount
+from doeff_codex._effects import ThreadExported as ThreadExported
 from doeff_codex._effects import BackendLost as BackendLost
 from doeff_codex._effects import ToolsUnavailable as ToolsUnavailable
 from doeff_codex._effects import TurnStarted as TurnStarted
@@ -64,6 +73,7 @@ from doeff_codex._effects import NoSuchRequest as NoSuchRequest
 from doeff_codex._effects import ProcessStillAlive as ProcessStillAlive
 RETIRE_WAIT_SECONDS: Incomplete
 KEPT_TURNS: int
+ROLLOUT_THREADS: ThreadPerCall
 CLIENT_NAME: str
 CLIENT_VERSION: str
 
@@ -244,6 +254,9 @@ def repoint_in_background(base: str, bell: ExternalPromise) -> None:
 def start_repoint(base: str) -> _Program[ExternalPromise, object]:
     ...
 
+def carried_back(spec: CodexSessionSpec, origin: ResumeThread) -> _Program[str | None, object]:
+    ...
+
 def launch(host: CodexHost, runtime: SessionRuntime, spec: CodexSessionSpec, origin: FreshThread | ResumeThread) -> _Program[str | ThreadUnknown | LaunchFailed | RequestRefused, object]:
     ...
 
@@ -281,6 +294,9 @@ def close_session(host: CodexHost, asked: CodexCloseSession) -> _Program[Session
     ...
 
 def launch_count(host: CodexHost, thread_id: str) -> _Program[int, object]:
+    ...
+
+def export_thread(asked: CodexExportThread) -> _Program[ThreadExported | ThreadUnknown, object]:
     ...
 
 def codex_handler(host: Incomplete) -> _Handler:

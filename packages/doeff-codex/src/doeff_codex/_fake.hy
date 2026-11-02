@@ -3,23 +3,30 @@
 ;;; 本番の handler と同じ不変条件を守る(tests/test_scenarios.hy が両方に当てる): 1 つの会話に走っているターンは多くとも 1 つ・
 ;;; CodexStartTurn 1 回に終わりはちょうど 1 つ・出来事の seq は会話の中で単調に増える・同じ会話・同じ宣言の続きは process を起こし
 ;;; 直さない(数は CodexLaunchCount)。出来事は本番と同じ記録の型(lines.hy)で出す。待ちは doeff-time の時計(仮想の時計の下では一瞬)。
+;;; 会話の記録(rollout)も本番と同じ形で持つ: 1 行目は session_meta(payload の id と timestamp)で、ターンごとに入力と答えの 1 行を書き
+;;; 足す。取り出し(CodexExportThread)は本番と同じ読み方(rollout.hy の window-of と text-of)で答え、記録を外した会話(世界の
+;;; forget-rollout — 機体の掃除の模型)の続きは、持ち込む記録(ResumeThread.carry)が無ければ ThreadUnknown で断る。
 (require doeff-hy.macros [defhandler defk <- val var])
 (val MODULE-TAGS {:context "codex" :role "process"})
 (require doeff-hy.record [defrecord])
 (import collections.abc [Callable])
+(import json)
 (import dataclasses [dataclass])
 (import doeff_time [Delay])
 (import doeff_codex._values [CodexSessionSpec CodexTurn CodexEvent CodexInput FreshThread ResumeThread])
 (import doeff_codex._lines [TurnStarted :as TurnStartedLine TextDelta AgentMessageDone ItemStarted TurnError TurnEnded TurnStatus
                            UsageLimitHit USAGE-LIMIT-KIND ServerOverloadedHit SERVER-OVERLOADED-KIND UnauthorizedHit
                            UNAUTHORIZED-KIND])
+(import doeff_codex._rollout [SESSION-META window-of text-of])
 (import doeff_codex._effects [CodexStartTurn CodexSteerTurn CodexInterruptTurn CodexReadTurnEvents CodexAnswerRequest
-                             CodexCloseSession CodexLaunchCount BackendLost ToolsUnavailable TurnStarted Steered InterruptRequested
+                             CodexCloseSession CodexExportThread CodexLaunchCount ThreadExported BackendLost ToolsUnavailable TurnStarted Steered InterruptRequested
                              TurnEventPage SessionClosed ThreadUnknown TurnInFlight NoTurnInFlight UnknownTurn NoSuchRequest])
 
 ;; 走っているターンに足した入力を、そのターンの答えの文字の途中として見せる頭(替え玉の app-server と同じ規則 — 足した入力が
 ;; ターンに届いたことを筋書きが読めるように)。
 (val STEERED-PREFIX "steered:")
+;; fake の記録の 1 行目の timestamp(本番の codex の綴り — 置き場の導きが読む形)。
+(val FAKE-STARTED-AT "2026-11-02T00:00:00.000Z")
 
 
 (defrecord FakeReply
@@ -50,14 +57,19 @@
 
 (defclass FakeThread []
   "fake の 1 つの会話: spec = 今の process を起こした宣言 / launches = 起こした process の数 / alive = process が生きているか /
-   current = 今のターンの id / next-seq = 出来事の番号。"
-  (defn __init__ [self #^ CodexSessionSpec spec]
+   current = 今のターンの id / next-seq = 出来事の番号 / rollout = 会話の記録(jsonl の文字列 — 外した会話は None)。"
+  (defn __init__ [self #^ CodexSessionSpec spec #^ (| str None) rollout]
     (setv self.spec spec
           self.launches 1
           self.alive True
           self.current None
-          self.next-seq 0)
+          self.next-seq 0
+          self.rollout rollout)
     (setv #^ (get dict #(str FakeTurn)) self.turns {}))
+
+  (defn note [self #^ dict line]
+    "会話の記録に 1 行を書き足すため(本番の codex の rollout と同じく後ろへ足すだけ)。"
+    (setv self.rollout (+ self.rollout (json.dumps line :ensure-ascii False) "\n")))
 
   (defn add [self #^ FakeTurn turn record]
     "記録を seq を振ってターンの出来事に積むため(終わりの記録なら終わりにもする)。"
@@ -82,7 +94,37 @@
   (defn #^ str fresh-id [self #^ str kind]
     "thread・ターン・item の id を振るため。"
     (setv self.made (+ self.made 1))
-    (.format "fake-{}-{}" kind self.made)))
+    (.format "fake-{}-{}" kind self.made))
+
+  (defn forget-rollout [self #^ str thread-id]
+    "機体の掃除が会話の記録を外した事を模すため(process も降りた数えにする — 次の続きは記録を持ち込まなければ断られる)。"
+    (setv thread (get self.threads thread-id)
+          thread.rollout None
+          thread.alive False)))
+
+
+(defk fake-meta [#^ str thread-id]
+  {:pre [(: thread-id str)] :post [(: % str)] :tags {:context "codex" :role "judgment"}}
+  "純粋: 新しい会話の記録の 1 行目(本番の codex の session_meta の形 — 置き場の導きが読む id と timestamp)を作るため。"
+  (+ (json.dumps {"type" SESSION-META "timestamp" FAKE-STARTED-AT "payload" {"id" thread-id "timestamp" FAKE-STARTED-AT}}) "\n"))
+
+
+(defk fake-resumed [#^ FakeCodexWorld world #^ ResumeThread origin #^ CodexSessionSpec spec]
+  {:pre [(: world FakeCodexWorld) (: origin ResumeThread) (: spec CodexSessionSpec)] :post [(: % (| FakeThread ThreadUnknown))]
+   :tags {:context "codex" :role "process"}}
+  "続きの頼みの会話を引くため(本番の handler の carried-back と同じ規則): 記録が在れば持ち込む記録を使わない。記録を外した会話・世界が
+   知らない会話(別の機体の会話)は、持ち込む記録が在れば書き戻して続ける(起こし直しの数えになる)。記録も持ち込みも無ければ ThreadUnknown。"
+  (var thread (.get world.threads origin.thread-id))
+  (when (and (or (is thread None) (is thread.rollout None)) (is-not origin.carry None))
+    (when (is thread None)
+      (:= thread (FakeThread spec None))
+      (setv thread.launches 0
+            thread.alive False
+            (get world.threads origin.thread-id) thread))
+    (setv thread.rollout origin.carry))
+  (if (or (is thread None) (is thread.rollout None))
+      (ThreadUnknown :thread-id origin.thread-id :detail "fake の世界にこの thread の記録が無い")
+      thread))
 
 
 (defk fake-start [#^ FakeCodexWorld world #^ CodexStartTurn asked]
@@ -93,13 +135,13 @@
    降ろした数えにする(次のターンは起こし直す)。続きは同じ宣言で生きた process が在れば使い回した数え(起こし直しは launches を
    増やす)。"
   (val origin asked.origin)
-  (val thread (match origin
-                (ResumeThread) (.get world.threads origin.thread-id)
-                _ (do (setv made (FakeThread asked.spec))
-                      (setv (get world.threads (.fresh-id world "thread")) made)
-                      made)))
-  (when (is thread None)
-    (return (ThreadUnknown :thread-id origin.thread-id :detail "fake の世界にこの thread は無い")))
+  (<- found (| FakeThread ThreadUnknown)
+      (match origin
+        (ResumeThread) (fake-resumed world origin asked.spec)
+        _ (fake-fresh world asked.spec)))
+  (when (isinstance found ThreadUnknown)
+    (return found))
+  (val thread found)
   (val thread-id (next (gfor #(key value) (.items world.threads) :if (is value thread) key)))
   (when (is-not (.running thread) None)
     (return (TurnInFlight :turn (CodexTurn :thread-id thread-id :turn-id thread.current))))
@@ -113,6 +155,7 @@
   (setv (get thread.turns turn-id) turn
         thread.current turn-id)
   (val reply (world.respond asked.input))
+  (.note thread {"type" "turn" "turn_id" turn-id "input" asked.input.text "answer" (.join "" reply.pieces)})
   (.add thread turn (TurnStartedLine :thread-id thread-id :turn-id turn-id))
   (when (is-not reply.tools-lost None)
     (setv turn.end (ToolsUnavailable :detail reply.tools-lost)
@@ -145,6 +188,28 @@
     (do (.add thread turn (AgentMessageDone :thread-id thread-id :turn-id turn-id :item-id item-id :text (.join "" reply.pieces)))
         (.add thread turn (TurnEnded :thread-id thread-id :turn-id turn-id :status TurnStatus.COMPLETED))))
   (TurnStarted :turn (CodexTurn :thread-id thread-id :turn-id turn-id)))
+
+
+(defk fake-fresh [#^ FakeCodexWorld world #^ CodexSessionSpec spec]
+  {:pre [(: world FakeCodexWorld) (: spec CodexSessionSpec)] :post [(: % FakeThread)] :tags {:context "codex" :role "process"}}
+  "新しい会話を世界に開くため(記録は session_meta の 1 行から始まる)。"
+  (val thread-id (.fresh-id world "thread"))
+  (val made (FakeThread spec (! (fake-meta thread-id))))
+  (setv (get world.threads thread-id) made)
+  made)
+
+
+(defk fake-export [#^ FakeCodexWorld world #^ CodexExportThread asked]
+  {:pre [(: world FakeCodexWorld) (: asked CodexExportThread)] :post [(: % (| ThreadExported ThreadUnknown))]
+   :tags {:context "codex" :role "process"}}
+  "会話の記録を取り出すため(本番と同じ読み方 — window-of と text-of)。記録が無い・外した会話は ThreadUnknown。"
+  (val thread (.get world.threads asked.thread-id))
+  (val data (if (or (is thread None) (is thread.rollout None)) None (.encode thread.rollout "utf-8")))
+  (val start (if (is data None) None (! (window-of (len data) asked.tail-bytes asked.from-byte))))
+  (val text (if (is start None) None (! (text-of (cut data start None) (and (is asked.from-byte None) (> start 0))))))
+  (if (is text None)
+      (ThreadUnknown :thread-id asked.thread-id :detail "fake の世界にこの thread の記録が無い")
+      (ThreadExported :jsonl-text text)))
 
 
 (defk fake-read [#^ FakeCodexWorld world #^ CodexReadTurnEvents asked]
@@ -225,6 +290,9 @@
   (CodexCloseSession [thread-id reason]
     (<- closed (fake-close world effect))
     (resume closed))
+  (CodexExportThread [home thread-id from-byte tail-bytes]
+    (<- exported (fake-export world effect))
+    (resume exported))
   (CodexLaunchCount [thread-id]
     (<- count (fake-launch-count world thread-id))
     (resume count)))
