@@ -36,7 +36,8 @@
 
 (defhandler ignore-expectation []
   (PutRow [table key value expect]
-    (<- answer (PutRow table key value (ExpectAny)))
+    ;; 中継は宣言を開かずに(Perform)値のまま受ける: <- だと Refused・Unreachable が Raise になり、この節から出てしまう(R4)。PutRow の中継 5 つは同じ。
+    (<- answer (Perform (PutRow table key value (ExpectAny))))
     (resume answer)))
 
 (defhandler repeat-changes []
@@ -86,7 +87,7 @@
 (defhandler drop-write-positions
   ;; 書きの位置を名乗らない handler の顔(位置を足す前の書きの答えの形): Written と束の各項の position を捨てる。
   (PutRow [table key value expect]
-    (<- written (PutRow table key value expect))
+    (<- written (Perform (PutRow table key value expect)))
     (resume (if (isinstance written Written) (Written written.version written.value) written)))
   (PutRows [writes]
     ;; 中継は宣言を開かずに(Perform)値のまま受ける: <- だと RowsRefused・Unreachable が Raise になり、この節から出てしまう(R4)。
@@ -99,7 +100,7 @@
   ;; 書きの前の位置を名乗る handler の顔(書く前に読んだ置き場の頭を答えに載せる形): position の番号を 1 つ戻す — その位置から読む
   ;; WatchChanges が自分の書きを返し、書き手が自分の書きを「後の変更」と取り違える。
   (PutRow [table key value expect]
-    (<- written (PutRow table key value expect))
+    (<- written (Perform (PutRow table key value expect)))
     (resume (if (isinstance written Written)
                 (Written written.version written.value (WatchCursor written.position.epoch (- written.position.sequence 1)))
                 written))))
@@ -147,7 +148,7 @@
 (defhandler ignore-removals []
   ;; 欄を消せない handler の顔: 差分の None の欄を捨てて書く。
   (PutRow [table key value expect]
-    (<- answer (PutRow table key (dfor #(k v) (.items value) :if (is-not v None) k v) expect))
+    (<- answer (Perform (PutRow table key (dfor #(k v) (.items value) :if (is-not v None) k v) expect)))
     (resume answer)))
 
 (defhandler skip-pruning []
@@ -174,7 +175,7 @@
   "束を 1 行ずつの PutRow で書く(1 transaction でない handler の顔)— 途中の行が通らなくても、前の行は書いたまま残る。"
   (val written [])
   (for [#(index write) (enumerate writes)]
-    (.append written (! (PutRow write.table write.key write.value write.expect)))
+    (.append written (! (Perform (PutRow write.table write.key write.value write.expect))))
     (match (get written -1)
       (Conflict :current current) (return (RowsConflict index write.table write.key current))
       (Written) None
@@ -192,7 +193,7 @@
   (PutRow [table key value expect]
     (if (= writer "stranger")
         (resume (Refused "書き手の名で断る置き場"))
-        (do (<- answer (PutRow table key value expect))
+        (do (<- answer (Perform (PutRow table key value expect)))
             (resume answer)))))
 
 (defhandler forget-idempotency []

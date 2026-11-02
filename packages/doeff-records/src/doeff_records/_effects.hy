@@ -26,7 +26,7 @@
 (import doeff_records._values [ExpectAbsent ExpectVersion ExpectAny Expectation WatchCursor ListCursor Page checked-table-name
                               checked-field-name freeze-field StreamEnd StreamEmpty Unreachable checked-write-key EventsMoved EventsQuiet
                               Event EventAbsent EventRetired Changes Reset
-                              Appended Refused Events NotIndexed WrittenRows RowsConflict RowsRefused
+                              Appended Refused Events NotIndexed Written Conflict WrittenRows RowsConflict RowsRefused
                               WrittenAndAppended AppendRefused ReadRowAnswer CountRowsAnswer
                               ReadBatchAnswer PutRowAnswer AppendEventsAnswer
                               SignalSourceFactory SignalSourcePatience RequestPatience])
@@ -230,22 +230,33 @@
       (raise (ValueError (.format "ReadBatch の ListRows の limit の和 {} が上限 {} を越える(束を割るか limit を絞る)" listed LIST-LIMIT-MAX))))))
 
 
-(defclass [(dataclass :frozen True)] PutRow [(get EffectBase PutRowAnswer)]
+(defn #^ bool checked-put-row [#^ object ask]  ; defk にできない: defeffect の :pre が作る時に同期に呼ぶ検め(:pre は真偽を assert するので、断りは TypeError / ValueError で上げ、通れば True を返す)
+  "PutRow の欄(table・key・value・expect・idempotency-key)を作る時に検め、value を深く凍らせる — 行の書きの欄の検め(table → key →
+   NUL → value → expect)のあとに冪等キーを検める。断りの型と文言と順は defclass の時から変えない。写像の凍らせは欄を置き換えるので、
+   :pre には欄の値でなく effect 自身(ask)を渡す。"
+  (check-row-write ask "PutRow")
+  (checked-write-key ask.idempotency-key "PutRow.idempotency_key")
+  True)
+
+
+(defeffect PutRow
   "行を書く。value = 欄の差分の凍らせた写像(書く欄 → 値。書かない欄は今の値のまま・値 None = その欄を消す〔JSON merge patch の null と同じ〕)/
    expect = ExpectAbsent | ExpectVersion | ExpectAny。答え = Written | Conflict | Refused | Unreachable。
    idempotency-key = 書き 1 つの身元(冪等キー — None = 鍵の無い書き): 置き場は確定した鍵つきの書きの答えを
    WRITE-KEY-MEMORY-SECONDS の間覚え、同じ鍵・同じ本文(表・鍵・値・期待)の送り直しには期待を見ずに前の答え(Written の replayed 真)を
    返す。同じ鍵の別の本文は Refused。衝突・断りの答えは覚えない(書いていない)。HTTP の client は鍵の無い書きに要求ごとの鍵を作り、
    届かない書きの撃ち直しに同じ鍵を付ける(_http_client.hy の頭の註)。
-   書き手の名は欄に無い — handler を組む時に身元から入り、行と出来事に記録される(書きの判断には使わない・#2994)。"
-  (#^ str table)
-  (#^ tuple key)
-  (#^ FrozenMap value)
-  (#^ Expectation expect)
-  (setv #^ (| str None) idempotency-key None)
-  (defn #^ None __post_init__ [self]
-    (check-row-write self "PutRow")
-    (checked-write-key self.idempotency-key "PutRow.idempotency_key")))
+   書き手の名は欄に無い — handler を組む時に身元から入り、行と出来事に記録される(書きの判断には使わない・#2994)。
+   答えの分け方(ADR-DOE-CORE-EFFECTS-003 R5・R17): Written = 成功 / Conflict = 値(期待が今の行と合わないという版の負けで、呼び手が
+   読み直して撃ち直す CAS の繰り返しで普通に扱う答え — 失敗にして Raise で飛ばさず、不在にして Absent で飛ばさない)/ Refused = 失敗
+   (宣言が許さない書き・同じ冪等キーの別の本文 — <- は Raise(Refused) を出す)/ Unreachable = 失敗(<- は Raise(Unreachable) を出す)。
+   不在は無い。答える handler は今までどおり 4 つとも値で答える(R4)。"
+  {:fields [(: table str) (: key tuple) (: value FrozenMap) (: expect Expectation) (: idempotency-key (| str None) None)]
+   :pre [(checked-put-row self)]
+   :answer (| Written Conflict Refused Unreachable)
+   :failure [Refused Unreachable]
+   :value [Conflict]
+   :tags {:context "records" :role "foundation"}})
 
 
 (defclass [(dataclass :frozen True)] RowWrite []

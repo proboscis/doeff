@@ -17,6 +17,7 @@ from doeff_records._values import (
     AppendEventAnswer,
     AppendEventsAnswer,
     Changes,
+    Conflict,
     Event,
     EventRetired,
     Events,
@@ -47,6 +48,7 @@ from doeff_records._values import (
     WatchChangesAnswer,
     WatchCursor,
     WatchEventsAnswer,
+    Written,
     WrittenRows,
 )
 
@@ -62,6 +64,7 @@ def checked_limit(limit: object, what: str) -> int: ...
 def checked_watch_window(after: object, timeout: object) -> bool: ...
 def checked_watch_changes(tables: object, cursor: object, timeout: object, limit: object, streams: object) -> bool: ...
 def checked_read_window(after: object, limit: object, key_head: object) -> bool: ...
+def checked_put_row(ask: object) -> bool: ...
 def checked_put_rows(writes: object, idempotency_key: object) -> bool: ...
 def checked_list_rows(ask: object) -> bool: ...
 def check_free_of_nul(value: object, what: str) -> None: ...
@@ -105,6 +108,8 @@ class PutRow(EffectBase[PutRowAnswer]):
     value: FrozenMap
     expect: Expectation
     idempotency_key: str | None = None
+    # `<-` が束ねる名の型 = 答えから :failure(Refused・Unreachable)を除いた物(_effects.hy の defeffect と同じ — doeff_hy/_static_types.pyi の BoundRun)。
+    def __iter__(self) -> Generator[Any, Any, Written | Conflict]: ...
 
 @dataclass(frozen=True)
 class RowWrite:
