@@ -20,6 +20,7 @@ A factory given the program (``state(prog())``) and a handler called with no pro
 (``writer()(prog())``) are refused with a TypeError that names the call meant.
 """
 
+import functools
 import threading as _threading
 from collections.abc import Mapping
 from typing import Any
@@ -523,6 +524,43 @@ def _observe_await_bridge_future(future):
         )
 
 
+def _cancel_await_bridge(future, loop, awaited):
+    """ExternalPromise.on_cancel callback of one Await: cancel its bridge on the loop.
+
+    From Python 3.12 on, run_coroutine_threadsafe cancels a bridge task that has
+    not taken its first step before that step, so the bridge coroutine never
+    starts and never awaits ``awaited``. Left alone, such an ``awaited`` reached
+    the garbage collector unstarted and was reported as ``coroutine ... was never
+    awaited`` — or, when collected inside a namedtuple's ``__new__`` (a frame
+    with empty builtins), as ``KeyError: '__import__'`` from the warning's own
+    import. The cancel runs on the loop thread, the only thread that starts
+    ``awaited``, and closes ``awaited`` after the bridge task's pending first
+    step (a coroutine still unstarted then will never be started).
+    """
+    try:
+        loop.call_soon_threadsafe(_cancel_await_bridge_on_loop, future, loop, awaited)
+    except RuntimeError:
+        # The bridge loop is closed (atexit): nothing runs there any more.
+        future.cancel()
+
+
+def _cancel_await_bridge_on_loop(future, loop, awaited):
+    """Loop-thread half of _cancel_await_bridge: cancel the bridge, then close an unstarted ``awaited``."""
+    future.cancel()
+    # Queued behind the bridge task's first step, which run_coroutine_threadsafe
+    # queued before this callback.
+    loop.call_soon(_close_unstarted_coroutine, awaited)
+
+
+def _close_unstarted_coroutine(awaited):
+    """Release a cancelled Await's coroutine that never started, so no code of it runs and the
+    garbage collector does not report it as never awaited."""
+    import inspect
+
+    if inspect.iscoroutine(awaited) and inspect.getcoroutinestate(awaited) == inspect.CORO_CREATED:
+        awaited.close()
+
+
 class _AwaitedValue:
     """One-slot box carrying an awaited value from the bridge loop to the awaiter.
 
@@ -638,7 +676,7 @@ def _await_handler(effect: Await, k):
         fut = asyncio.run_coroutine_threadsafe(run_coro(), loop)
         fut.add_done_callback(_observe_await_bridge_future)
         # Thread-safe: schedules the bridge task's cancel on the loop.
-        ep.on_cancel(fut.cancel)
+        ep.on_cancel(functools.partial(_cancel_await_bridge, fut, loop, effect.coroutine))
         box = yield Wait(ep.future)
         return (yield Transfer(k, box.take()))
     yield Pass(effect, k)
