@@ -124,7 +124,7 @@
   {:pre [(: key str) (: seconds float)] :post [(: % DetachedSubmitted)] :tags {:context "doeff-cluster-test" :role "program"}}
   "検の task(走らせた世代の版を盤の swap/<key>/ に書き、seconds 秒で終わる)を key で 1 本出すため。"
   (<- submitted (submit-detached-task (generation-work machine-foundation key seconds) :key key :needs (frozenset ["local"])
-                                      :name "generation-work"))
+                                      :name "generation-work" :memory-mib 1024))
   (assert (isinstance submitted DetachedSubmitted) submitted)
   submitted)
 

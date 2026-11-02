@@ -148,7 +148,7 @@
   {:pre [] :post [(: % (| DetachedSucceeded DetachedLost))] :tags {:context "doeff-cluster-test" :role "program"}}
   "筋書き: lease 3 秒の切り離した task(20 秒眠る)を送り、終わりを待つ。"
   (<- (Delay SETTLE-SECONDS))
-  (<- (submit-detached-task (slow-task sim-task-foundation 20.0) :key "short-lease" :needs NET :name "slow" :lease-seconds 3.0))
+  (<- (submit-detached-task (slow-task sim-task-foundation 20.0) :key "short-lease" :needs NET :name "slow" :lease-seconds 3.0 :memory-mib 1024))
   (<- answer (AwaitDetached "short-lease" :timeout-seconds 60.0))
   answer)
 

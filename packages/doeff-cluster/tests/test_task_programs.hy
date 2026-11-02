@@ -127,7 +127,7 @@
   (<- worker tuple (beat (ClusterState) 0 []))
   (<- placed tuple (program-placed (get worker 0) V))
   (<- remote tuple (call (get placed 0) "POST" "/tasks" {"program" (get placed 1) "revision" "r" "needs" ["net"]} 10))
-  (<- detached tuple (call (get remote 0) "PUT" "/detached/job-b" {"program" (get placed 1) "revision" "r" "needs" ["net"]} 10))
+  (<- detached tuple (call (get remote 0) "PUT" "/detached/job-b" {"program" (get placed 1) "revision" "r" "needs" ["net"] "memoryMiB" 1024} 10))
   (<- reply tuple (beat (get detached 0) 20 []))
   (val rows (get reply 2 "tasks"))
   (assert (= (len rows) 2) rows)
@@ -148,7 +148,7 @@
   (<- loose tuple (program-placed (get remote-program 0) V "bG9vc2U="))
   (<- detached tuple (call (get loose 0) "PUT" "/detached/job-k"
                            {"program" (get kept 1) "revision" "r" "needs" ["net"] "leaseSeconds" 60.0
-                            "retainSeconds" (/ (* 3 PROGRAM-GRACE-MS) 1000)} 10))
+                            "retainSeconds" (/ (* 3 PROGRAM-GRACE-MS) 1000) "memoryMiB" 1024} 10))
   (val id (get detached 2 "task"))
   (<- remote tuple (call (get detached 0) "POST" "/tasks"
                          {"program" (get remote-program 1) "revision" "r" "needs" ["net"] "leaseSeconds" 3600.0} 10))
@@ -175,7 +175,7 @@
   ;; 引き取り、同じ返事に載せる(担い手の cache の Program で走り続ける — 置き場に Program が無くてよい)。
   (<- worker tuple (beat (ClusterState) 0 []))
   (<- placed tuple (program-placed (get worker 0) V))
-  (<- put tuple (call (get placed 0) "PUT" "/detached/job-c" {"program" (get placed 1) "revision" "r" "needs" ["net"]} 10))
+  (<- put tuple (call (get placed 0) "PUT" "/detached/job-c" {"program" (get placed 1) "revision" "r" "needs" ["net"] "memoryMiB" 1024} 10))
   (val id (get put 2 "task"))
   (<- reply tuple (beat (get put 0) 20 []))
   (val link (LinkRig "http://127.0.0.1:9" "w" #() 60000 :task-dir (str (/ tmp-path "tasks"))))
@@ -200,8 +200,8 @@
   ;; 終わっていない行は failed(理由つき — 走らせない)、終わった行は Program 無し(program None)で結果を保つ。
   (<- worker tuple (beat (ClusterState) 0 []))
   (<- placed tuple (program-placed (get worker 0) V))
-  (<- open tuple (call (get placed 0) "PUT" "/detached/job-open" {"program" (get placed 1) "revision" "r" "needs" ["net"]} 10))
-  (<- done tuple (call (get open 0) "PUT" "/detached/job-done" {"program" (get placed 1) "revision" "r" "needs" ["net"]} 10))
+  (<- open tuple (call (get placed 0) "PUT" "/detached/job-open" {"program" (get placed 1) "revision" "r" "needs" ["net"] "memoryMiB" 1024} 10))
+  (<- done tuple (call (get open 0) "PUT" "/detached/job-done" {"program" (get placed 1) "revision" "r" "needs" ["net"] "memoryMiB" 1024} 10))
   (val done-id (get done 2 "task"))
   (<- reported tuple (beat (get done 0) 20 [{"name" (+ "task/" done-id) "phase" "finished" "result" "R" "detail" ""}]))
   (val data (! (state-to-json (get reported 0))))
@@ -310,11 +310,11 @@
   (<- worker-b tuple (heartbeat-of (get worker-a 0) "wb" OTHER 0))
   (<- placed-a tuple (call (get worker-b 0) "PUT" (+ "/programs/" sha) {"blob" blob "versions" mine} 1))
   (assert (= (get placed-a 1) 200) placed-a)
-  (<- queued-a tuple (call (get placed-a 0) "PUT" "/detached/job-a" {"program" sha "revision" "ra" "needs" ["net"]} 2))
+  (<- queued-a tuple (call (get placed-a 0) "PUT" "/detached/job-a" {"program" sha "revision" "ra" "needs" ["net"] "memoryMiB" 1024} 2))
   (assert (= (get queued-a 1) 200) queued-a)
   (<- placed-b tuple (call (get queued-a 0) "PUT" (+ "/programs/" sha) {"blob" blob "versions" OTHER} 3))
   (assert (= (get placed-b 1) 200) placed-b)
-  (<- queued-b tuple (call (get placed-b 0) "PUT" "/detached/job-b" {"program" sha "revision" "rb" "needs" ["net"]} 4))
+  (<- queued-b tuple (call (get placed-b 0) "PUT" "/detached/job-b" {"program" sha "revision" "rb" "needs" ["net"] "memoryMiB" 1024} 4))
   (assert (= (get queued-b 1) 200) queued-b)
   (<- reply-a tuple (heartbeat-of (get queued-b 0) "wa" mine 5))
   (<- reply-b tuple (heartbeat-of (get reply-a 0) "wb" OTHER 5))

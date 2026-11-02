@@ -95,7 +95,7 @@
     (assert (in "RemoteJob.environ" (str raised.value)) raised.value)
     ;; SubmitDetached は EnvVar の tuple で受ける(#2179)— 名と値の規則は EnvVar を作る所で同じく断る。
     (with [(pytest.raises #(TypeError RuntimeEnvInvalid))]
-      (<- (submit-detached-task program "k" :needs NET :environ (tuple (gfor #(k v) (.items bad) (EnvVar :name k :value v)))))))
+      (<- (submit-detached-task program "k" :needs NET :environ (tuple (gfor #(k v) (.items bad) (EnvVar :name k :value v))) :memory-mib 1024))))
   (val fine {"ROWS_TOKEN_FILE" "/etc/rows/token" "ROWS_KEY_DIR" "/etc/rows" URL-NAME URL})
   (val fine-vars (tuple (gfor k (sorted fine) (EnvVar :name k :value (get fine k)))))
   (assert (= (. (RemoteJob program :needs NET :environ fine) environ) fine))
@@ -107,10 +107,10 @@
   ;; 断る(本文の写像に綴ると片方が黙って消える)。
   (val program (based-add 1))
   (with [raised (pytest.raises TypeError)]
-    (<- (submit-detached-task program "k" :needs NET :environ {URL-NAME URL})))
+    (<- (submit-detached-task program "k" :needs NET :environ {URL-NAME URL} :memory-mib 1024)))
   (assert (in "EnvVar の tuple" (str raised.value)) raised.value)
   (with [raised (pytest.raises TypeError)]
-    (<- (submit-detached-task program "k" :needs NET :environ #((EnvVar :name URL-NAME :value URL) (EnvVar :name URL-NAME :value "other")))))
+    (<- (submit-detached-task program "k" :needs NET :environ #((EnvVar :name URL-NAME :value URL) (EnvVar :name URL-NAME :value "other")) :memory-mib 1024)))
   (assert (in "名が重なる" (str raised.value)) raised.value))
 
 
@@ -132,7 +132,7 @@
   (<- placed tuple (program-placed (ClusterState) V))
   (val state (get placed 0))
   (val sha (get placed 1))
-  (val base {"program" sha "revision" "r" "needs" ["net"] "leaseSeconds" 10.0})
+  (val base {"program" sha "revision" "r" "needs" ["net"] "leaseSeconds" 10.0 "memoryMiB" 1024})
   (for [#(method path) [#("POST" "/tasks") #("PUT" "/detached/job-a")]]
     (for [#(environ word) [#({"DOEFF_WORKER_JOB" "x"} "DOEFF_WORKER_JOB")
                            #({"ROWS_TOKEN" "t"} "ROWS_TOKEN")
@@ -163,7 +163,7 @@
   (<- worker tuple (beat (ClusterState) 0))
   (<- placed tuple (program-placed (get worker 0) V))
   (val sha (get placed 1))
-  (val body {"program" sha "revision" "r" "needs" ["net"] "leaseSeconds" 10.0 "environ" {URL-NAME URL}})
+  (val body {"program" sha "revision" "r" "needs" ["net"] "leaseSeconds" 10.0 "environ" {URL-NAME URL} "memoryMiB" 1024})
   (<- remote tuple (call (get placed 0) "POST" "/tasks" body 10))
   (<- detached tuple (call (get remote 0) "PUT" "/detached/job-e" body 10))
   (<- plain tuple (call (get detached 0) "POST" "/tasks" (| body {"environ" {}}) 10))
@@ -185,7 +185,7 @@
   (<- placed tuple (program-placed (ClusterState) V))
   (val state (get placed 0))
   (val sha (get placed 1))
-  (val body {"program" sha "revision" "r" "needs" ["net"] "environ" {URL-NAME URL}})
+  (val body {"program" sha "revision" "r" "needs" ["net"] "environ" {URL-NAME URL} "memoryMiB" 1024})
   (<- first tuple (call state "PUT" "/detached/job-k" body 10))
   (assert (= (get first 1) 200) first)
   (<- again tuple (call (get first 0) "PUT" "/detached/job-k" body 11))
@@ -272,7 +272,7 @@
   "筋書き: 同じ Program(os-environ-reader で名を読む)を RemoteJob と SubmitDetached で :environ つきで送り、答えを返す。"
   (<- remote str (remote-job (environ-read URL-NAME) :needs LOCAL :environ {URL-NAME URL}))
   (<- submitted DetachedSubmitted (submit-detached-task (environ-read URL-NAME) :key "sim-env" :needs LOCAL
-                                                  :environ #((EnvVar :name URL-NAME :value "http://detached.invalid"))))
+                                                  :environ #((EnvVar :name URL-NAME :value "http://detached.invalid")) :memory-mib 1024))
   (<- awaited (AwaitDetached "sim-env"))
   #(remote submitted awaited))
 

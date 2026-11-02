@@ -131,7 +131,7 @@
       (:= refused (str error))))
   (for [i (range 3)]
     (<- (submit-detached-task (slow-add 30.0 i) :needs LOCAL :key (.format "llm-{}" i) :lease-seconds 5.0
-                              :limits #((TaskLimit :group "llm")))))
+                              :limits #((TaskLimit :group "llm")) :memory-mib 1024)))
   (<- (Delay 5.0))
   (<- state dict (ReadCoordinator "/state"))
   {"refused" refused "state" state})

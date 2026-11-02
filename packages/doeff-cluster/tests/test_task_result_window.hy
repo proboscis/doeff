@@ -86,7 +86,7 @@
   {:pre [(: key str)] :post [(: % WindowRun)] :tags {:context "doeff-cluster-test" :role "program"}}
   "筋書き: 切り離した task を key で出し、task の process が 0 で終わった刻に worker を殺して起こし直し、待ちの答えと task の
    process の記録を読む。"
-  (<- (submit-detached-task (slow-task sim-task-foundation TASK-SECONDS) :key key :needs NET :name "once-detached"))
+  (<- (submit-detached-task (slow-task sim-task-foundation TASK-SECONDS) :key key :needs NET :name "once-detached" :memory-mib 1024))
   (<- (Delay 0.1))
   (<- id str (task-id-named "once-detached"))
   (<- times tuple (kill-after-exit (+ "task/" id)))

@@ -21,7 +21,7 @@
 (import doeff_cluster._shared.intent.protocol [ClusterTiming])
 (import doeff [run])
 (import doeff_cluster._shared.core.capabilities [environ-pairs])
-(import doeff_cluster._shared.core.detached_rules [task-priority-refusal task-limits-refusal task-limits-of task-notify-refusal task-memory-refusal])
+(import doeff_cluster._shared.core.detached_rules [task-priority-refusal task-limits-refusal task-limits-of task-notify-refusal task-memory-required-refusal])
 (import doeff_cluster._coordinator.intent.cluster_model [ClusterState TaskRecord ErrorReply DetachedSubmitted DetachedProgress DetachedUnknown DetachedWarming DetachedCancelled DetachedReleased])
 (import doeff_cluster._coordinator.core.cluster_rules [format-version-refusal])
 (import doeff_cluster._coordinator.intent.request_bodies [TaskBody])
@@ -69,7 +69,8 @@
 (defn #^ Reply submit-detached [#^ ClusterState state #^ str key #^ TaskBody body #^ int now]
   "PUT /detached/<key>: 同じ key の行が在ればそれを返す(created = false)。name・needs・実行環境・子の環境変数(environ)が違えば 409
    (同じ job id を別の仕事に使った呼び手の誤り — environ は Program の読む設定なので、違えば別の仕事)。無ければ待ちの行を作る。
-   memory の要り(memoryMiB)が needs の合うどの worker の線よりも大きい新しい task は 400 で断る(memory-need-refusal)。"
+   memory の要り(memoryMiB)の無い本文と、要りが needs の合うどの worker の線よりも大きい新しい task は 400 で断る
+   (task-memory-required-refusal・memory-need-refusal)。"
   (setv lease (if (is body.lease-seconds None) DETACHED-DEFAULT-LEASE-SECONDS body.lease-seconds)
         retain (if (is body.retain-seconds None) DETACHED-DEFAULT-RETAIN-SECONDS body.retain-seconds)
         refusal (or (format-version-refusal body.format)
@@ -81,7 +82,8 @@
                     (task-priority-refusal body.priority)
                     (task-limits-refusal body.limits)
                     (task-notify-refusal body.notify)
-                    (task-memory-refusal body.memory-MiB)
+                    ;; 切り離した task は memory の要りを必須で名乗る(2026-11-02 — 要りの無い本文も断る)。
+                    (task-memory-required-refusal body.memory-MiB)
                     ;; 名乗った組は系の宣言に在る物だけ(値と範囲は宣言が持つ)。
                     (run (limits-undeclared-refusal state.group-limits body.limits))))
   (when refusal (return (Reply state 400 (ErrorReply :message refusal))))
