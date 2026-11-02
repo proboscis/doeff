@@ -109,6 +109,17 @@ def record_delattr(self: object, name: str) -> None:
     super(_frozen_owner(cls), self).__delattr__(name)
 
 
+def record_setstate(self: object, state: object) -> None:
+    """pickle・copy が値を戻すため(凍結の __setattr__ を通らずに置く — dataclass の frozen と slots の __setstate__ と同じ役)。
+    state は object.__getstate__ の形: slots だけの型は ``(None, {欄: 値})``・__dict__ を持つ子の型は ``(辞書, {欄: 値})``。
+    slots にする前に pickle した値の state(``{欄: 値}`` の辞書)も受ける。"""
+    parts = state if isinstance(state, tuple) else (state, None)
+    for part in parts:
+        if part:
+            for name, value in part.items():
+                object.__setattr__(self, name, value)
+
+
 def seal_record(cls: type, plain: tuple[str, ...], calls_post_init: bool) -> None:
     """展開が関数を書いた record を仕上げるため: __dataclass_params__ を今までの展開と同じ値に戻し、展開が字面の値と読んだ欄 plain の
     既定値が field の印(工場・init・repr・compare・hash を持つ Field)でない事を確かめる(名を介した field は展開が読めず、関数が
