@@ -363,6 +363,8 @@
   ;; 表を並べ直して木をたどるのは 1 回の読みに 1 度(job ごとの memory と止める単位で分けて使う)。
   (<- walks tuple (_job-walks reading.rows reading.roots))
   (<- uses tuple (_uses-of walks))
+  ;; heartbeat の測りが task ごとの今の使いとして名乗る(coordinator の置き先の予約 — load_rules.task-uses-of・2026-11-02)。
+  (setv cell.eviction.uses uses cell.eviction.uses-at-ms now-ms)
   (<- (noted-peaks cell uses reading.roots now-ms))
   (<- level MemoryLevel (memory-level reading.node settings.limits))
   (<- units tuple (_units-of walks))

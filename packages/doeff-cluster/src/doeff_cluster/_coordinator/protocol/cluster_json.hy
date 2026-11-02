@@ -62,7 +62,9 @@
                               "limits" (task-limits-json task.limits)}))
   ;; 待ちの知らせの印も、積んでいない行は欄を置かない(欄を知らない前の版へ戻しても、待っている行を旧い形と
   ;; 読んで failed にしない — 印を積んだ行だけが戻した版で failed になる)。
-  (setv unset (| (if task.notify #{} #{"notify"}) (if (is task.queued-noticed-ms None) #{"queued_noticed_ms"} #{})))
+  (setv unset (| (if task.notify #{} #{"notify"}) (if (is task.queued-noticed-ms None) #{"queued_noticed_ms"} #{})
+                 ;; memory の要りを名乗らない行も欄を置かない(同じ訳 — 2026-11-02)。
+                 (if (is task.memory-mib None) #{"memory_mib"} #{})))
   (dfor #(k v) (.items row) :if (not-in k unset) k v))
 
 
@@ -117,7 +119,9 @@
               ;; 終わりの知らせ先の欄の無い行は知らせない(足した欄)。
               :notify (stored-str data "notify" "")
               ;; 待ちの知らせの印の欄の無い行は、まだ積んでいない(足した欄)。
-              :queued-noticed-ms (stored-optional-int data "queued_noticed_ms")))
+              :queued-noticed-ms (stored-optional-int data "queued_noticed_ms")
+              ;; memory の要りの欄の無い行は名乗らない(足した欄 — 置き先は見込みの要りで数える)。
+              :memory-mib (stored-optional-int data "memory_mib")))
 
 
 (deff ended-to-json [#^ DetachedEnded ended]  ; defk にできない: 保存の綴り(durable_kv — Program の外)と返事の綴り(replies)が呼ぶ純粋な綴り

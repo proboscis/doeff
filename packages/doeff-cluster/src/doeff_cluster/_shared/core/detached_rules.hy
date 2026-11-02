@@ -39,6 +39,21 @@
   (if notify {"notify" notify} {}))
 
 
+;; memory の要り(SubmitDetached の memory-mib — 1 本の山の MiB)の上限。どの機体の線より大きい要りは coordinator が worker の測りと
+;; 照らして断る(detached_policy.memory-need-refusal)— これは数の書き違い(byte や KiB で書いた値)を送る前に断る粗い上限。
+(val TASK-MEMORY-MAX-MIB (* 1024 1024))
+
+
+(deff task-memory-refusal [#^ (| dict list tuple str int float bool None) value]  ; defk にできない: coordinator の本文の読み(Program の外)と構築関数が呼ぶ純粋な判断
+  {:pre [(: value (| dict list tuple str int float bool None))] :post [(: % (| str None))] :tags {:context "doeff-cluster" :role "judgment"}}
+  "task の本文の欄 memoryMiB(memory の要り — 1 本の山の MiB)が受けられない理由(None = 欄が無いか、1 以上 TASK-MEMORY-MAX-MIB
+   以下の整数)。真偽値は整数として受けない。"
+  (if (or (is value None)
+          (and (isinstance value int) (not (isinstance value bool)) (<= 1 value TASK-MEMORY-MAX-MIB)))
+      None
+      (.format "memoryMiB は 1 以上 {} 以下の整数(task 1 本の memory の山の MiB): {!r}" TASK-MEMORY-MAX-MIB value)))
+
+
 (val TASK-LIMIT-KEYS (frozenset #("group" "part")))
 
 
@@ -125,17 +140,20 @@
   (| {"scope" limit.scope "limit" limit.limit} (if limit.per-part {"perPart" True} {}) (if limit.system {"system" limit.system} {})))
 
 
-(deff task-placing-json [#^ int priority #^ tuple limits]  ; defk にできない: 本文の綴り(handler と模擬の宿 — Program の外)が呼ぶ純粋な綴り
-  {:pre [(: priority int) (: limits tuple)] :post [(: % dict)] :tags {:context "doeff-cluster" :role "judgment"}}
-  "置き方の名乗りの本文の欄(既定の値 = 優先 0・上限なしの欄は置かない — 旧い coordinator は知らない欄を捨てる)。"
+(deff task-placing-json [#^ int priority #^ tuple limits #^ (| int None) [memory-mib None]]  ; defk にできない: 本文の綴り(handler と模擬の宿 — Program の外)が呼ぶ純粋な綴り
+  {:pre [(: priority int) (: limits tuple) (: memory-mib (| int None))] :post [(: % dict)] :tags {:context "doeff-cluster" :role "judgment"}}
+  "置き方の名乗りの本文の欄(既定の値 = 優先 0・上限なし・memory の要りを名乗らないの欄は置かない — 旧い coordinator は知らない欄を捨てる)。"
   (| (if priority {"priority" priority} {})
-     (if limits {"limits" (task-limits-json limits)} {})))
+     (if limits {"limits" (task-limits-json limits)} {})
+     (if (is memory-mib None) {} {"memoryMiB" memory-mib})))
 
 
 (defk submit-detached-task [program key * [needs (frozenset)] [name ""] [lease-seconds DETACHED-DEFAULT-LEASE-SECONDS]
-                           [retain-seconds DETACHED-DEFAULT-RETAIN-SECONDS] [environ #()] [priority 0] [limits #()] [notify ""]]
+                           [retain-seconds DETACHED-DEFAULT-RETAIN-SECONDS] [environ #()] [priority 0] [limits #()] [notify ""]
+                           [memory-mib None]]
   {:pre [(: program Program) (: key str) (: needs (| frozenset tuple list set dict str None)) (: name str) (: lease-seconds float)
-         (: retain-seconds float) (: environ (| (get tuple #(EnvVar ...)) dict)) (: priority int) (: limits tuple) (: notify str)]
+         (: retain-seconds float) (: environ (| (get tuple #(EnvVar ...)) dict)) (: priority int) (: limits tuple) (: notify str)
+         (: memory-mib (| int None))]
    :post [(: % DetachedSubmitAnswer)]
    :tags {:context "doeff-cluster" :role "judgment"}}
   "SubmitDetached の構築関数 — 作り手はここを通す。needs が能力の名の空でない frozenset でなければ(書き忘れの空・旧い Requirement の
@@ -152,9 +170,11 @@
                        (task-limits-refusal (task-limits-json limits))
                        (.format "limits は TaskLimit の tuple: {!r}" limits))
                    ;; 知らせ先も受け口と同じ規則で、送る前に断る。
-                   (task-notify-refusal notify)))
+                   (task-notify-refusal notify)
+                   ;; memory の要りも受け口と同じ規則で、送る前に断る(2026-11-02)。
+                   (task-memory-refusal memory-mib)))
   (when placing (raise (TypeError (+ "SubmitDetached: " placing))))
   (<- answer DetachedSubmitAnswer
       (SubmitDetached program key :needs needs :name name :lease-seconds lease-seconds :retain-seconds retain-seconds :environ environ
-                      :priority priority :limits limits :notify notify))
+                      :priority priority :limits limits :notify notify :memory-mib memory-mib))
   answer)

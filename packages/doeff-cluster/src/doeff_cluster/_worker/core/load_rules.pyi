@@ -4,11 +4,14 @@ from doeff import Program as _Program
 from dataclasses import dataclass as dataclass
 from doeff_cluster._worker.core.memory_rules import MIB as MIB
 from doeff_cluster._worker.core.memory_rules import NodeMemory as NodeMemory
+from doeff_cluster._worker.core.memory_rules import JobUse as JobUse
+from doeff_cluster._worker.core.memory_rules import TASK_PREFIX as TASK_PREFIX
 from doeff_cluster._worker.core.memory_rules import node_memory_of as node_memory_of
 from doeff_cluster._worker.core.eviction_rules import EvictionLine as EvictionLine
 from doeff_cluster._worker.core.eviction_rules import line_memory as line_memory
 LOAD_READ_EVERY_MS: int
 LINE_FRESH_MS: int
+TASK_USES_FRESH_MS: int
 IDLE_FIELDS: tuple[int, ...]
 TICK_FIELDS: int
 
@@ -37,6 +40,14 @@ class Pressure:
         ...
 
 @dataclass(frozen=True, kw_only=True)
+class TaskMemory:
+    id: str
+    mib: int
+
+    def __post_init__(self) -> None:
+        ...
+
+@dataclass(frozen=True, kw_only=True)
 class MachineLoad:
     at_ms: int
     cpus: int
@@ -47,6 +58,7 @@ class MachineLoad:
     cpu_full_avg10: float | None
     memory_some_avg10: float | None
     memory_full_avg10: float | None
+    task_uses: tuple[TaskMemory, ...] | None = None
 
     def __post_init__(self) -> None:
         ...
@@ -60,6 +72,9 @@ def load_read_due(read_ms: int | None, now_ms: int) -> _Program[bool, object]:
     ...
 
 def fresh_line(line: EvictionLine | None, line_at_ms: int | None, now_ms: int) -> _Program[EvictionLine | None, object]:
+    ...
+
+def task_uses_of(uses: tuple, uses_at_ms: int | None, now_ms: int) -> _Program[tuple | None, object]:
     ...
 
 def cpu_ticks_of(text: str) -> _Program[CpuTicks, object]:
