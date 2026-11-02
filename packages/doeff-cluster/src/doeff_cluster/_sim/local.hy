@@ -28,8 +28,8 @@
 ;;;     を検める)、「柵(fence)→ クラスタの約束の答え(coordinator-answers)→ 宿の答え(host-answers)→ Program」の順に包んで、宿の
 ;;;     handler の節の中から Spawn する。Spawn は節の外側の handler(世界・時計)だけを持ち運ぶので、run-worker の中の handler も、他の
 ;;;     job の handler も混ざらない(service ごとの別のスコープ)。終わり(値・例外・取り消し)は世界へ書き、ObserveWorld が exit-code として
-;;;     返す。process の中で Spawn した task は柵が tracked-child で包み直して(元の継続のまま — 子の task は柵より内の handler を持ち
-;;;     運ぶ)把手を世界に覚えさせ、process の終わり(値・例外・止めの合図)で一緒に取り消し、殺された時(Crash・worker の死)は
+;;;     返す。process の中で Spawn した task は柵が起こし直し(柵までの handler の並びを張り直す — 子の task は柵より内の handler と柵を持ち
+;;;     運ぶ)、その把手を世界に覚えさせて Program へ返す。process の終わり(値・例外・止めの合図)で一緒に取り消し、殺された時(Crash・worker の死)は
 ;;;     一緒に捨てる(Discard — 巻き戻さない。本番は子 process ごと消える)。task の process は終わりを書く前に、結果を
 ;;;     coordinator へ直に届ける(本番の job_entry.run-task と同じ要求 —
 ;;;     task_result.task-result-request・#1387。届かなければ worker の heartbeat が運ぶ)。
@@ -130,8 +130,6 @@
 ;;;   - coordinator に届かない・断られた時の例外の型は RemoteJobFailed(本番は httpx の例外)。書きの要求は 1 回だけ送る(本番の
 ;;;     宛先の部品の routed-request は接続の段の失敗だけを間を置いて 4 回まで送り直す)。
 ;;;   - 実行環境の root は準備の中身(git・uv・disk)を模擬しない(env-prepare-seconds の後に揃うか env-failure で終わる)。disk は常に ok。
-;;;   - process の中で Spawn した task は 1 段の包み(tracked-child)の task として起きる(Program が受ける把手は包みの物 — 取り消し・待ち・
-;;;     答えは同じ)。
 ;;;   - AwaitProcessEnded は筋書きにだけ答える(世界の真実で答える — 本番の答えは coordinator の信念で、heartbeat の分だけ遅れる)。
 ;;;     job の Program が出すと柵で落ちる。
 ;;;   - AwaitDetached は読み直さず、模擬の coordinator がその task の終わりの phase を書いた時(Persist)に起きる(本番の detached-cluster は
@@ -157,7 +155,8 @@
 (import datetime [datetime timedelta])
 (import pathlib [Path])
 (import urllib.parse [quote :as url-quote])
-(import doeff [with-handlers EffectBase UnhandledEffect DoExpr Program])
+(import doeff [with-handlers EffectBase UnhandledEffect DoExpr Program GetBoundaries])
+(import doeff_cluster._foundation.record_handlers [rewrap])
 (import doeff_core_effects [Ask])
 (import doeff_core_effects [state :as session-store await-handler slog-handler slog-discard-handler])
 (import doeff_core_effects [scheduled CreatePromise CompletePromise Wait Spawn Gather Cancel Discard Promise Task Future TaskCancelledError Race shielded])
@@ -1742,35 +1741,23 @@
   "柵が包み直した Spawn の印(柵はこの形を包み直さずに通す — 包み直しを繰り返さない)。")
 
 
-(defk tracked-child [pid body priority daemon]
-  {:pre [(: pid int) (: body (| Program EffectBase)) (: priority int) (: daemon bool)] :post [(: % "body の答え")]
-   :tags {:context "doeff-cluster" :role "program"}}
-  "process pid の中で Spawn した task の本体: body を同じ handler の下の task として起こし、その把手を世界に覚えさせ(process の終わりで
-   取り消す)、答えを待って返すため。呼び手がこの task を取り消せば body も取り消す。body は本番の Spawn と同じく Program か効果 1 つ
-   (効果をそのまま Spawn する Program も、本番と同じく sim で走る — #2938)。"
-  (<- inner Task (TrackedSpawn body :priority priority :daemon daemon))
-  (<- (KeepChild pid inner))
-  (try
-    (<- value (Wait inner))
-    value
-    (except [TaskCancelledError]
-      (<- (Cancel inner))
-      (raise))))
-
-
 (defhandler fence [#^ int pid #^ tuple passable]
   {:tags {:context "doeff-cluster" :role "protocol"}}
   ;; 引数に残す理由: process の中で Spawn した task を、その process の番号で覚える(process の終わりで一緒に取り消す)。柵は宿の答えより
   ;; 外に在り、Program の effect ではない番号を Ask で問えない。
   ;; 宿の答えより外で、SIM-PASSABLE(scheduler と時計)の外の effect を本番の子と同じ未処理の例外で Program へ投げ返す(改訂 1 の B)。
   ;; これが無いと、sim の外側(検の handler・sim の世界)が本番には無い答えを黙って返し、本番で答えの無い effect が sim だけで通る。
-  ;; Spawn は tracked-child で包み直して元の継続のまま送る(reperform — 子の task は Program の中の handler と柵を持ち運ぶ。答えを受けて
-  ;; 把手を覚える形にすると、子の task が柵より内の handler を失う)。子の本体が起きた時に把手を世界に覚えさせる(KeepChild は柵の
-  ;; 仕組みの effect なので、ここだけは外へ通す)。本番の子 process の中の task は process と一緒に消える — 柵の外で動き続けさせない。
+  ;; Spawn は柵の節から起こし直す: 柵までの handler の並び(GetBoundaries k — 柵自身を含む)で子の Program を張り直し(scheduler の Spawn と
+  ;; 同じ張り直し — 子の task は Program の中の handler と柵を持ち運ぶ)、起きた task の把手を世界に覚えさせ(KeepChild)、その把手を
+  ;; Program へ返す。Program の Cancel・Discard・Wait は子の task そのものに効く(前は 1 段の包みの task の把手を返していたので、包みを
+  ;; Discard しても子の本体は生き残り、process の終わりの取り消しで巻き戻されて後始末の書きをした)。
+  ;; 本番の子 process の中の task は process と一緒に消える — 柵の外で動き続けさせない。
   (Spawn []
     :when (not (isinstance effect TrackedSpawn))
-    (reperform (TrackedSpawn (tracked-child pid effect.program effect.priority effect.daemon)
-                             :priority effect.priority :daemon effect.daemon)))
+    (<- chain list (GetBoundaries k))
+    (<- child Task (TrackedSpawn (rewrap effect.program chain) :priority effect.priority :daemon effect.daemon))
+    (<- (KeepChild pid child))
+    (resume child))
   (KeepChild []
     (reperform effect))
   ;; 止めの問いと待ちは process の信号の口(柵のすぐ外の process-signals — 本番の子 process の SIGTERM の代役・#3145)へ通す。

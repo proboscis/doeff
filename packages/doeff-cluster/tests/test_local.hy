@@ -35,7 +35,7 @@
 (import tests.fixtures.event_programs [stop-minders stop-ignorers])
 (import tests.fixtures.sim_programs [reserved-trio beacons beacons-v2 beacons-plus handoff-beacons handoff-beacons-v2 late-handoff-beacons-v2 handoff-beacons-v3 relay flavors fenced gpu-only
                                     lingering-handoff-beacons lingering-handoff-beacons-v2 lingering-handoff-beacons-v3
-                                    holding-unloadable Unloadable spawners quitters pulses detaching context-env-readers])
+                                    holding-unloadable Unloadable spawners quitters discarders pulses detaching context-env-readers])
 (import doeff_cluster [RuntimeEnv])
 (import doeff_cluster [runtime-env->json])
 (import doeff_cluster._coordinator.core.coordinator_invariants [acknowledged-writes-survive RevisionRead revision-never-goes-back
@@ -693,6 +693,27 @@
   (assert (= first.value 3) first)
   (assert (<= (get seen.just-after key "n") 5) seen.just-after)
   (assert (= (get seen.later key "n") (get seen.just-after key "n")) #(seen.just-after seen.later)))
+
+
+(defk watch-discarder []
+  {:pre [] :post [(: % Spawned)] :tags {:context "doeff-cluster-test" :role "program"}}
+  "筋書き: process が子を捨てて抜け終わるまで待ち、盤を読む。"
+  (<- (Delay 8.0))
+  (<- rows dict (SharedRows "drop/"))
+  (<- processes tuple (ProcessesOf "discarder"))
+  (Spawned :before {} :just-after rows :later rows :processes processes))
+
+
+(deftest test-a-discarded-task-is-not-unwound-when-its-process-ends
+  ;; process の中の task を Discard で捨てると、その task は二度と走らない(本番の子 process の中の Discard と同じ — 巻き戻さない)。process が
+  ;; 値で抜けた後の片づけ(覚えた子の取り消し)でも巻き戻されず、except の書きをしない。反例: 柵が Spawn を
+  ;; 1 段の包みの task で起こし、Program に包みの把手を返していた時は、Discard が包みだけを捨て、本体は生き残って process の終わりの取り消しで
+  ;; 巻き戻され、盤に unwound を書いた。
+  (<- seen Spawned (sim-cluster :notice-broker (MemoryBroker) (discarders sim-foundation) (watch-discarder)))
+  (val first (get seen.processes 0))
+  (assert (= first.exit-code 0) seen.processes)
+  (assert (in "drop/started" seen.later) seen.later)
+  (assert (not-in "drop/unwound" seen.later) seen.later))
 
 
 (defk ended-reader []

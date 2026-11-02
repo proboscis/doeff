@@ -8,7 +8,7 @@
 (import doeff [with-handlers DoExpr EffectBase Program])
 (import doeff_core_effects [Ask])
 (import doeff_core_effects [reader])
-(import doeff_core_effects [Discard Spawn Task Wait])
+(import doeff_core_effects [Discard Spawn Task Wait TaskCancelledError shielded])
 (import doeff_time [Delay RaceOutcome RaceWithin SpendCpu TicksOutcome WaitTicks])
 (import doeff_cluster [now-epoch-ms])
 (import doeff_cluster [ProcessesOf])
@@ -304,6 +304,32 @@
   r)
 
 
+(defk unwinding-child [key]
+  {:pre [(: key str)] :post [(: % None)] :tags {:context "doeff-cluster-test" :role "program"}}
+  "起きたと盤に書いて長く待ち、取り消しで巻き戻されたら、そのことを盤に書く子の task(捨てられた task は巻き戻されない — Discard の検)。"
+  (<- (WriteShared (+ key "started") (OpaqueJson.of {"started" True})))
+  (try
+    (<- (Delay 600.0))
+    (except [TaskCancelledError]
+      (<- (shielded (WriteShared (+ key "unwound") (OpaqueJson.of {"unwound" True}))))
+      (raise)))
+  None)
+
+(defk discarding-body [key]
+  {:pre [(: key str)] :post [(: % int)] :tags {:context "doeff-cluster-test" :role "program"}}
+  "子の task(unwinding-child)を起こし、Discard で捨ててから値で抜ける(process が終わる)本体。"
+  (<- child Task (Spawn (unwinding-child key)))
+  (<- (Delay 0.5))
+  (<- (Discard child))
+  (<- (Delay 0.5))
+  1)
+
+(defk discarding-program [foundation key]
+  {:pre [(: foundation Callable) (: key str)] :post [(: % int)] :tags {:context "doeff-cluster-test" :role "entry"}}
+  "service: discarding-body を土台で包む。"
+  (<- n int (foundation (discarding-body key)))
+  n)
+
 (defk spawning-program [foundation prefix beats]
   {:pre [(: foundation Callable) (: prefix str) (: beats int)] :post [(: % int)] :tags {:context "doeff-cluster-test" :role "entry"}}
   "service: spawning-body を土台で包む。"
@@ -435,6 +461,10 @@
 (defsystem spawners [#^ Callable foundation]
   "見本の系: 子の task に盤へ書き続けさせる service 1 つ(止まらない)"
   (spawner (spawning-program foundation "spawn/" 0) :replicas 1 :peak-mib 200 :settle-mib 100 :needs #{"cluster-net"}))
+
+(defsystem discarders [#^ Callable foundation]
+  "見本の系: 子の task を Discard で捨ててから値で抜ける service 1 つ"
+  (discarder (discarding-program foundation "drop/") :replicas 1 :peak-mib 200 :settle-mib 100 :needs #{"cluster-net"}))
 
 (defsystem quitters [#^ Callable foundation]
   "見本の系: 子の task に盤へ書かせ、自分は 3 拍で値を返して抜ける service 1 つ"
