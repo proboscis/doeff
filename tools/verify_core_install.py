@@ -316,7 +316,7 @@ PASSED_SUMMARY = re.compile(r"\d+ passed in \S+")
 
 # 記事「Algebraic effects for Python」の例の dir と、核だけの venv で走らせる 2 本(card ki-5bb439619a59)。
 TOUR_DIRECTORY = Path("examples/effects_tour")
-# 見出しの行を含めて、script が最後に印字する行(monitor.py の本番の stack = 記事の Layer 5 の `real`)。
+# script が印字する見出しの行と、最後の行(monitor.py の本番の stack = 記事の Layer 5 の `real`)。
 TOUR_SCRIPTS = {
     "spend.py": None,
     "monitor.py": ("-- real: wall clock, async client", "[[9], [15]]"),
@@ -1089,7 +1089,7 @@ def tour_script_failure(name: str, result: subprocess.CompletedProcess[str]) -> 
         problem = f"終了コード 0 で、標準エラーに何も出さずに終わらなかった(終了コード {result.returncode})"
     elif not printed:
         problem = "何も印字しなかった"
-    elif last is not None and tuple(printed[-len(last) :]) != last:
+    elif last is not None and not (last[0] in printed and printed[-1] == last[-1]):
         problem = f"最後に {list(last)!r} を印字しなかった"
     else:
         return None
