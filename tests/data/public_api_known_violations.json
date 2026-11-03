@@ -6223,7 +6223,7 @@
    "package": "doeff-cluster",
    "module": "doeff_cluster",
    "name": "SimMachine",
-   "訳": "模擬の worker(根の SimWorker)の欄 machine の型(card [id] — coordinator が task を測った空きで置くので、模擬の worker は載る機体の CPU と memory から測った空きを名乗る)。SimWorker を作る使い手が機体の大きさを名指すために根から出す。SimWorker と同じ組へ移る時に一緒に動く"
+   "訳": "模擬の worker(根の SimWorker)の欄 machine の型(coordinator が task を測った空きで置くので、模擬の worker は載る機体の CPU と memory から測った空きを名乗る)。SimWorker を作る使い手が機体の大きさを名指すために根から出す。SimWorker と同じ組へ移る時に一緒に動く"
   },
   {
    "package": "doeff-stream",
@@ -6301,7 +6301,7 @@
    "package": "doeff-cluster",
    "module": "doeff_cluster",
    "name": "WORKSPACE_SITE",
-   "訳": "作業場所の volume の本番の答え手 workspace-volumes-api に渡す本番の場所と待つ秒(Longhorn の namespace・値の ConfigMap・mount の係の頼みの dir — zeus の Pod の宣言と同じ path)。job の子は env WORKER_WORKSPACE_MOUNT_DIR を継がないので、使い手(agora-controllers)が本番の値を入口から受ける。宣言と同じ値である事は tests/test_workspace_mount.py と tests/test_workspace_volumes.py が縛る(card [id])"
+   "訳": "作業場所の volume の本番の答え手 workspace-volumes-api に渡す本番の場所と待つ秒(Longhorn の namespace・値の ConfigMap・mount の係の頼みの dir — zeus の Pod の宣言と同じ path)。job の子は env WORKER_WORKSPACE_MOUNT_DIR を継がないので、使い手(agora-controllers)が本番の値を入口から受ける。宣言と同じ値である事は tests/test_workspace_mount.py と tests/test_workspace_volumes.py が縛る"
   }
  ]
 }

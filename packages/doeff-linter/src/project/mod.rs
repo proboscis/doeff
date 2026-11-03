@@ -3217,7 +3217,7 @@ fn forward_edges(graph: &DefinitionGraph) -> Vec<Vec<usize>> {
 
 /// 効果の名(完全名)を定義元の正典の名へ解く読み(`crate::origins` の解き手)と、解けなかった綴り。DOEFF143・157・164・167・206 の
 /// 鍵・表の照らし・層の判じは、節の側も表の行の側も、ここで解いた名で読む(import の綴りで照らさない — 同じ効果を再 export する入口から
-/// import し直すだけで鍵が変わり、表の行が当たらなくなった・agora card [id])。
+/// import し直すだけで鍵が変わり、表の行が当たらなくなった)。
 struct EffectNames<'a> {
     origins: crate::origins::Origins<'a>,
     /// 解けなかった綴り → 初めに見た所。

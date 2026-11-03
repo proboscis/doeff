@@ -24,7 +24,7 @@
 ;;; table-of と写しで作った表は新しい系譜を始める(比べは前の道 — 基を分け合えば差分、ほかは全部の鍵)。記録は鍵だけを持つ(行を持たない)。
 ;;;
 ;;; 小さな表の持ち物 — agora の画面は行ごとの小さな表(返事の列・card の関係と tag)を 45 万個持ち、表 1 つごとの空の差分の dict・空の
-;;; frozenset・系譜(dict と Lock を持つ)が約 0.9 GB を占めた(card [id])。空の差分と消した鍵は module に 1 つの空の値
+;;; frozenset・系譜(dict と Lock を持つ)が約 0.9 GB を占めた。空の差分と消した鍵は module に 1 つの空の値
 ;;; (_NO-DELTA・_NO-REMOVED)を分け合い、系譜は初めて子を作る時に作る(子を作らない表は系譜を持たない — _line は None)。
 (import dataclasses [dataclass])
 (import collections.abc [Mapping])

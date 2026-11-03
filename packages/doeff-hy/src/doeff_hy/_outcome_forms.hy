@@ -143,7 +143,7 @@
    (_bind-yield — 名が Call を次の束ねまで持ち、長い loop で前の周の引数を生かし続けた)。
    渡さなければ gensym を作り、式の中で名を None に戻してから答える(`!` の式の中 — 文の del を置けない):
    `(. (get #(b (setx b None)) 0) value)` / `(yield (get #(b (setx b None)) 0))` — 組の 0 番に元の答えを取り、名を外して
-   から値を読むか yield する(yield の間も frame は Call を持たない — agora card [id])。解析器は両方の形を読む
+   から値を読むか yield する(yield の間も frame は Call を持たない)。解析器は両方の形を読む
    (doeff-effect-analyzer の _bind_expression・_released_name)。"
   (let [refused (plain-value-refusal expr)]
     (when (is-not refused None)

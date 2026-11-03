@@ -57,7 +57,7 @@ How it talks to Redis:
   whole too — the connection's handshake (redis-py's ``on_connect`` reads its answers with the client's call limit,
   which the subscriptions' client does not set), the kept streams' ends, ``SUBSCRIBE`` and the server's
   confirmation of every channel — and so is the close of a subscription: a server that takes the connection and
-  answers nothing never holds the subscriber's task (card [id] — durable attempts stuck before their
+  answers nothing never holds the subscriber's task (durable attempts stuck before their
   wait in agora, 2026-11-01). Only the subscriptions' wait for the next notice is held by ``silence_seconds``
   instead (above); TCP keep-alive stays on with the OS's intervals.
 - Kept channels are Redis Streams under the key ``doeff-events:kept:<channel>``:

@@ -54,7 +54,7 @@
    空の labels・annotations は欄ごと省き、load-balancer-class は書いた時だけ・LOAD-BALANCER は node の口を開けない — 頭の註は
    kube_service_model.hy)。口の protocol は TCP と書く(server-side apply は口の列を port と protocol の組で見分ける)。
    publishNotReadyAddresses は毎回 false と書く: 止まりかけ(Terminating)と NotReady の Pod を宛先から外す(手で true にした欄も、
-   [removed]
+   force の当て直しで field manager を移して戻す — 2026-11-03 に手の true が止まりかけの Pod へ接続を振り、半分が断られた)。"
   (val metadata (! (_metadata-of service)))
   (val spec (| {"type" service.type.value
                 "selector" (dict service.selector)

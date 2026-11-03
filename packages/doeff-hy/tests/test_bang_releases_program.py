@@ -1,4 +1,4 @@
-"""`(! e)` が束ねた後、束ねの一時の名(`_hy_gensym_bound_N`)に Program を残さない(agora card [id])。
+"""`(! e)` が束ねた後、束ねの一時の名(`_hy_gensym_bound_N`)に Program を残さない。
 
 `(! e)` は式の中に書くので、`<-` のように文の del を置けない(test_bind_releases_program.py)。展開は式の中で
 名を None に戻してから値を読むか yield する。ここは束ねた後の frame の locals に Call も Pure も残らない事と、

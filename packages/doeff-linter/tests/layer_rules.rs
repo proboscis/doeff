@@ -4130,7 +4130,7 @@ fn verification_handlers_answering_intent_effects_are_critical_except_pass_throu
     assert!(found["message"].as_str().unwrap().contains("自前で答える"), "{}", found);
 }
 
-/// 失敗ケース(agora card [id]): 効果の import の綴りを、定義元の module から再 export する入口(`app.billing` の根 —
+/// 失敗ケース: 効果の import の綴りを、定義元の module から再 export する入口(`app.billing` の根 —
 /// TYPE_CHECKING の `X as X` と `__getattr__` の名 → module の表)へ替えるだけでは、反例の表の行(定義元の綴りの鍵)は当たったままで、
 /// 層の判じ(intent の効果か)も変わらない。綴りを鍵にする実装では、入口の綴りの broken-ship が表に当たらず古い行(DOEFF176)と
 /// DOEFF206 の当たりになり、入口の綴りの Charge が intent と読まれず fake-charge の DOEFF206 が消える。

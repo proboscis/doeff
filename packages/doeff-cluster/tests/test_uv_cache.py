@@ -326,8 +326,7 @@ def _symlinked_venv(venv: Path, entry: Path, *, relative: bool = False) -> Path:
 
 def test_gc_keeps_entries_that_kept_symlink_venvs_point_at(tmp_path: Path) -> None:
     """symlink の venv は項目の hardlink の数を増やさない。残る venv(新しい・--links の置き場の物)と残る環境が symlink で指す項目は
-    [removed]
-    UV_LINK_MODE=symlink)。"""
+    消さず、消す venv だけが指していた項目は同じ回に消す(会話の .venv は UV_LINK_MODE=symlink で作る)。"""
     cache = tmp_path / "cache"
     entries = {
         name: _write(cache / "archive-v0" / name / "m.py", f"{name}\n").parent

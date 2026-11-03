@@ -1,4 +1,4 @@
-;;; 模擬の worker の機体の memory の見張り(card [id]): 本番の worker の入口だけが回す見張り(worker/protocol/memory_watch の
+;;; 模擬の worker の機体の memory の見張り: 本番の worker の入口だけが回す見張り(worker/protocol/memory_watch の
 ;;; memory-watch-step)を、sim の worker の世代ごとに、模擬の process の表と模擬の /proc/meminfo の上で回すための部品。回す係
 ;;; (sim/local の sim-memory-watch)が世代の宿の真実を読み、ここで表と file を作って本物の 1 回を走らせる。
 ;;;

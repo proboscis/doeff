@@ -39,7 +39,7 @@
 ;;; 約 0.1 ms)。型ごとに書く関数は __init__(注記なし)・__eq__・__hash__ と :check の __post_init__ だけで、
 ;;; __repr__ と凍結の __setattr__ / __delattr__ は record_runtime の共有の 1 組を指し、型は欄の名の並びを tuple で持つ。docstring は実行の展開に置かず、__doc__ は欄の名から組む
 ;;; 共有の記述子(型ごとの関数と文が job の memory を 10 MB 越えて持った)。
-;;; 値は欄を slots に持ち、__dict__ を持たない(値 1 つごとの __dict__ が本番の画面で 約 0.6 GB を持った・card [id] —
+;;; 値は欄を slots に持ち、__dict__ を持たない(値 1 つごとの __dict__ が本番の画面で 約 0.6 GB を持った —
 ;;; 欄 35 の型で 1 個 約 2,000 → 約 410 bytes)。弱い参照の口(__weakref__)は残す。欄の既定値は欄の表(__dataclass_fields__)が持ち、
 ;;; 型の属性からは読めない(dataclass の slots と同じ)。pickle と copy は共有の __setstate__ が凍結を通らずに値を戻す。
 ;;; 振る舞いは標準の dataclass(frozen・kw_only)と同じ(tests/defrecord_shape_deftests.hy が

@@ -18,8 +18,8 @@
 
 (val MODULE-TAGS {:context "doeff-cluster-test" :role "test"})
 
-;; 持ち主の id の形(Crockford の base32 の ULID・頭 c-)。
-(val OWNER "[id]")
+;; 持ち主の id の例(頭 c- と英大文字・数字 26 字 — 本番の id と同じ長さ)。
+(val OWNER "c-EXAMPLEOWNERID000000000001")
 ;; zeus の worker の container の mountinfo の形(/work は host の USB の SSD・係が付けた volume 2 つ・空白を含む path)。
 (val MOUNTINFO (.join "\n" #("13419 13415 0:902 / / rw,relatime master:1 - overlay overlay rw,lowerdir=/l"
                              "13423 13415 8:17 /agent-worker /work rw,noatime master:790 - ext4 /dev/sdb1 rw"
@@ -33,10 +33,10 @@
   (<- refusal (owner-refusal OWNER))
   (assert (is refusal None) refusal)
   (<- name (volume-name OWNER))
-  (assert (= name "ws-c-k973zx4fcyma7pz498c0464b7g") name)
+  (assert (= name "ws-c-exampleownerid000000000001") name)
   (assert (<= (len name) NAME-MAX-LENGTH))
   (<- ticket (ticket-id name))
-  (assert (= ticket "longhorn-api-ws-c-k973zx4fcyma7pz498c0464b7g") ticket))
+  (assert (= ticket "longhorn-api-ws-c-exampleownerid000000000001") ticket))
 
 
 (deftest test-ids-outside-the-name-rule-are-refused-before-any-volume

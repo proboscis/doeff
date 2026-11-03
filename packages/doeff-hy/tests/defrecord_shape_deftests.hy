@@ -174,7 +174,7 @@
 
 (deftest test-a-record-value-keeps-its-fields-in-slots-not-a-dict
   ;; 失敗ケース(直す前は赤): 実行の展開が slots を持たず、値 1 つごとに __dict__ の dict を持った(本番の画面で record の
-  ;; __dict__ が 約 0.6 GB・card [id])。直した後は欄が slots に入り、値は __dict__ を持たない。弱い参照の口は残す。
+  ;; __dict__ が 約 0.6 GB)。直した後は欄が slots に入り、値は __dict__ を持たない。弱い参照の口は残す。
   (<- _ (Pure None))
   (import weakref)
   (val s (Shape :a 1 :b 4 :c [1]))

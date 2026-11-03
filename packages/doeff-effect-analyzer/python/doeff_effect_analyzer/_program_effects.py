@@ -3029,8 +3029,8 @@ def _reads_name(expr: ast.expr, name: str) -> bool:
 def _released_name(expr: ast.expr) -> ast.Name | None:
     """The name doeff-hy's bind reads its answer from: ``b`` itself, or ``b`` read and set back
     to None in place — ``(b, (b := None))[0]`` (``(! e)`` cannot ``del`` it in an expression, so
-    the frame would hold the yielded Call until the line ran again — agora card
-    [id]). None for any other expression."""
+    the frame would hold the yielded Call until the line ran again). None for any other
+    expression."""
     match expr:
         case ast.Name():
             return expr

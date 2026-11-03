@@ -1,4 +1,4 @@
-"""Making a subscription on Redis is held to ``timeout_seconds`` as a whole (card [id]).
+"""Making a subscription on Redis is held to ``timeout_seconds`` as a whole.
 
 The subscriptions' client sets no limit on a call (its wait for a notice is held by the silence instead), so before
 this a server that took the connection and answered nothing held ``SubscribeChannels`` without a limit: redis-py's

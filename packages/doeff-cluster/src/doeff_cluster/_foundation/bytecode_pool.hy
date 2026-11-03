@@ -30,8 +30,8 @@
 ;;; 今の環境の macro に合うかの照らしだけは root の版の doeff-hy の古さの検め(guard)の物を使う(記録の形と照らし方は root の版の物 —
 ;;; import の時に照らすのも root の guard)。guard は module の名で引かず、root の guard が起動時(.pth)に SourceFileLoader に被せた口の
 ;;; 持ち主の module を sys.modules から引き、その bytecode_is_current と source_to_code_as_import を呼ぶ(guard-module)。口の持ち主の
-;;; [removed]
-;;; #2463・#2598 から変わらず、doeff-hy の tests/test_guard_hook_owner_contract.py が守る。
+;;; module の名は版で変わる(loader_hooks → 2026-10-29 の _loader_hooks)が、その module がこの 2 つの名を同じ引数の形で出す事は
+;;; 2026-10-02 の #2463・#2598 から変わらず、doeff-hy の tests/test_guard_hook_owner_contract.py が守る。
 ;;; 前は guard と python_bytecode を module の名で import したので、worker の版と root の版の doeff が組になり、名の置き場を内側へ移した
 ;;; doeff(2026-10-29)の root で、それより古い worker の準備が import の誤りで必ず落ちた(2026-11-01・ADR-DOE-BUILD-002 R7)。
 (setv MODULE-TAGS {:context "doeff-cluster" :role "foundation"})

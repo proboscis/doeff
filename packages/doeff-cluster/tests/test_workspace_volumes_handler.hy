@@ -60,9 +60,9 @@
 (val PARAMETERS (dict (get (yaml.safe-load (.read-text (/ DECLARED "storageclass.yaml") :encoding "utf-8")) "parameters")))
 (val TOKEN "worker-identity-token")
 (val NODE "zeus")
-(val OWNER "[id]")
-(val NAME "ws-c-k973zx4fcyma7pz498c0464b7g")
-(val OTHER "c-OTHERZX4FCYMA7PZ498C0464B")
+(val OWNER "c-EXAMPLEOWNERID000000000001")
+(val NAME "ws-c-exampleownerid000000000001")
+(val OTHER "c-EXAMPLEOTHERID00000000002")
 (val PLACE "/work/agent-workspaces/a-k973")
 (val PLACE-2 "/work/agent-workspaces/a-k973-2")
 ;; 検の場所: 本番と同じ path・短い秒(待つ筋書きが模擬の時計で速く終わる)。
@@ -1106,8 +1106,8 @@
 
 
 (deftest test-a-failed-snapshot-or-backup-keeps-the-volume
-  (for [#(flag reason) #(#("snapshot" "snapshot ws-c-k973zx4fcyma7pz498c0464b7g-cool-0 が失敗した: failed to create snapshot")
-                         #("backup" "backup ws-c-k973zx4fcyma7pz498c0464b7g-cool-0 が失敗した: failed to upload"))]
+  (for [#(flag reason) #(#("snapshot" "snapshot ws-c-exampleownerid000000000001-cool-0 が失敗した: failed to create snapshot")
+                         #("backup" "backup ws-c-exampleownerid000000000001-cool-0 が失敗した: failed to upload"))]
     (val api (LonghornWorld (WorkspaceVolumeWorld NODE :volumes #(WARM)) :snapshot-error (= flag "snapshot") :backup-error (= flag "backup")))
     (<- ran ApiRan (on-api api #((Step :verb "cool" :owner OWNER))))
     (assert (and (.startswith (get ran.outcomes 0) "refused: ") (in reason (get ran.outcomes 0))) ran.outcomes)
@@ -1385,7 +1385,7 @@
   (val cooling (get done 0))
   (val using (get done 1))
   (assert (and (= (len cooling) 1) (in "冷やす途中に使い始めた(ticket longhorn-api-" (get cooling 0))
-               (in "volume を消さない(backup ws-c-k973zx4fcyma7pz498c0464b7g-cool-0 は残す)" (get cooling 0)))
+               (in "volume を消さない(backup ws-c-exampleownerid000000000001-cool-0 は残す)" (get cooling 0)))
           cooling)
   (assert (= using #("already" "done" "done")) using)
   (assert (= api.held.volumes #((HeldVolume :name NAME :node NODE :mounted-at PLACE :formatted True :used-at 1.0))) api.held.volumes)

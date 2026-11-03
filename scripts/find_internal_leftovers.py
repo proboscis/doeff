@@ -391,6 +391,12 @@ KEEP: tuple[Keep, ...] = (
     Keep("packages/doeff-cluster/tests/test_supplied_held.hy", "4", "token shape", "test fake"),
     Keep("packages/doeff-cluster/tests/test_supplied_values.hy", "4", "token shape", "test fake"),
     Keep(
+        "packages/doeff-cluster/tests/test_uv_cache.py",
+        "4",
+        "token shape",
+        "AWS's published SigV4 example key (a test vector)",
+    ),
+    Keep(
         "packages/doeff-hy/src/doeff_hy_bytecode_guard/_macro_use.py",
         "1",
         "quote after a speaker (no time)",

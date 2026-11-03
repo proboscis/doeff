@@ -2,10 +2,10 @@
 
 doeff-hy's ``(! e)`` expands to ``(b, (b := None))[0].value if (b := open_bind(e)).__class__ is
 Pure else (yield (b, (b := None))[0])``: it cannot ``del`` the name in an expression, so it sets it
-back to None before answering — else the frame holds the yielded Call until the line runs again
-(agora card [id]).  The reader takes the release as no value of ``b`` (``b`` stays bound
-once, to the wrapper) and reads the yielded ``(b, …)[0]`` as ``b``: a Program written with ``(! e)``
-performs what the same Program written with ``<-`` performs, and nothing is left unresolved.
+back to None before answering — else the frame holds the yielded Call until the line runs again.
+The reader takes the release as no value of ``b`` (``b`` stays bound once, to the wrapper) and
+reads the yielded ``(b, …)[0]`` as ``b``: a Program written with ``(! e)`` performs what the same
+Program written with ``<-`` performs, and nothing is left unresolved.
 """
 
 import ast

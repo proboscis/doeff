@@ -679,7 +679,7 @@ def test_a_line_keeps_no_more_keys_than_its_table_holds() -> None:
 
 
 def test_small_tables_share_the_empty_layers_and_hold_no_line_until_a_child() -> None:
-    # 行ごとの小さな表(画面に 45 万個)は、空の差分・空の消した鍵・系譜を表 1 つごとに持たない(card [id])。
+    # 行ごとの小さな表(画面に 45 万個)は、空の差分・空の消した鍵・系譜を表 1 つごとに持たない。
     first, second = _table(3), _table(4)
     assert first._delta is second._delta and first._removed is second._removed
     assert first._line is None and second._line is None

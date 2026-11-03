@@ -359,9 +359,9 @@ def _install_raw(
     # Only a former factory holds itself through its closure (it answers itself when called with
     # no program — these are a few module-level handlers). The installers built per call
     # (``on_raise`` for every ``on-raise``) do not: an installer naming itself in its closure was a
-    # reference cycle left to the cycle collector on every build (agora-controllers card
-    # [id]). Both stay plain closures, so cloudpickle still carries them to a detached
-    # task (a weak reference in the closure could not be pickled).
+    # reference cycle left to the cycle collector on every build. Both stay plain closures, so
+    # cloudpickle still carries them to a detached task (a weak reference in the closure could not
+    # be pickled).
 
     install: Callable[..., object]
     if former_factory:

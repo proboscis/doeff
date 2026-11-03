@@ -561,7 +561,7 @@ def test_a_fence_admits_shielded_by_the_public_names_of_its_effects() -> None:
     """``shielded`` performs ``ShieldEnter`` and ``ShieldExit``, public names of
     ``doeff_core_effects``: a handler that admits only the effects it names can
     name them (the packages' cleanup performs them without the program writing
-    them), and the region still holds the cancellation off (card [id])."""
+    them), and the region still holds the cancellation off."""
     admitted = (ShieldEnter, ShieldExit, Spawn, Wait, Cancel, CreatePromise, CompletePromise)
     performed: set[type] = set()
 

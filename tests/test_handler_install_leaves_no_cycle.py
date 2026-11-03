@@ -5,8 +5,7 @@ builds one per call) are made on every call of the code that uses them. The inst
 hold itself through its closure (to name itself in its errors and to answer itself as a former
 factory), so every installer was a reference cycle: in the agora-kanban service ~850 ``on-raise``
 calls in 111 seconds left ~26,700 objects waiting for the free-threaded collector, which only runs
-when the tracked objects grow by a quarter and stops every thread for ~0.3-2 s
-(agora-controllers card [id]).
+when the tracked objects grow by a quarter and stops every thread for ~0.3-2 s.
 """
 
 import gc
