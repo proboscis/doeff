@@ -11,7 +11,8 @@
 ;;;   CreateWorkspaceVolume   持ち主の volume が無ければ作る。冷えている(backup だけが在る)なら一番新しい backup から戻す(在れば ALREADY —
 ;;;                           戻している途中なら戻し終わるまで待つ・消している途中なら消え終わってから戻す)
 ;;;   AttachWorkspaceVolume   持ち主の volume を、答え手の機体の node に attach し、Longhorn が付け終わるまで待つ
-;;;   MountWorkspaceVolume    attach した volume を path に mount する(path の dir は答え手が作る。空の volume には ext4 を作る)
+;;;   MountWorkspaceVolume    attach した volume を path に mount する(path の dir は答え手が作る。空の volume には ext4 を作る。中身の在る
+;;;                           dir には付けない — 中身を隠さない)
 ;;;   UmountWorkspaceVolume   path に付いた持ち主の volume を外す(何も付いていなければ ALREADY。使っている process が在れば断る)
 ;;;   DetachWorkspaceVolume   持ち主の volume の attach を外し、外れるまで待つ(まだどこかに mount されていれば断る)
 ;;;   CoolWorkspaceVolume     外れている持ち主の volume の backup を取り、完了を確かめてから volume を消す(無ければ ALREADY。使っている・
@@ -20,6 +21,11 @@
 ;;;                           volume が在れば断る)— 上に載る系が「この持ち主はもう使わない」と決めた時に出す
 ;;;   CoolIdleWorkspaceVolumes 外れている volume のうち、使い終わりから値の warmHours を過ぎた物と、置き場の空きが値の spareVolumes を
 ;;;                           割る分を、使い終わりの古い順に冷やす
+;;;   WorkspaceRoomShort      置き場が足りずに作らなかった(WorkspaceVolumeRefused の子 — fresh = 持ち主が中身を持たないか)
+;;;   WorkspaceRoom           ReadWorkspaceRoom の答え: 札の disk の残りの本数と値の spareVolumes
+;;;   ReadWorkspaceRoom       札の disk が受けられる volume の残りの本数を読む(何も変えない)
+;;;   WorkspacePlace          ReadWorkspacePlace の答え: 付ける先の様子(MOUNTED・READY・OUTSIDE・CLASH)
+;;;   ReadWorkspacePlace      持ち主の volume を付ける先の様子を読む(何も変えない)— 呼び手が、volume の外に中身を持つ持ち主を見分けるため
 ;;;
 ;;; 順: 作る(か戻す)→ attach → mount → (使う)→ umount → detach →(しばらく後に)冷やす → 次に使う時に作る(戻す)…→ 消す。
 ;;; どの effect も何度出しても同じ様子に揃う(2 度目は ALREADY)。1 つの volume は同時に 1 つの node・1 つの path にだけ付く(RWO)。
@@ -35,6 +41,12 @@
 
 
 (defenum WorkspaceOutcome DONE ALREADY RESTORED)
+
+;; 付ける先の様子(ReadWorkspacePlace の答え): MOUNTED = 持ち主の volume が付いている・READY = 何も付いておらず dir が無いか空(付けて
+;; よい)・OUTSIDE = 何も付いておらず dir に中身が在り、持ち主は volume も backup も持たない(持ち主の作業場所は volume の外に在る —
+;; 付けると中身を隠す)・CLASH = 別の物が付いている、か、dir に中身が在るのに持ち主が volume か backup を持つ(付けても付けなくても、
+;; どちらかの中身が見えなくなる)。
+(defenum WorkspacePlace MOUNTED READY OUTSIDE CLASH)
 
 
 (defrecord WorkspaceVolumeSite
@@ -140,6 +152,14 @@
   ;; 記録: 判断の外への報告(output — backup を消す)。
   (setv #^ (get ClassVar RecordSpec) __record-spec__ (RecordSpec :mode RecordMode.OUTPUT))
   (#^ str owner))
+
+
+(defclass [(dataclass :frozen True)] ReadWorkspacePlace [(get EffectBase WorkspacePlace)]
+  "持ち主 owner の volume を付ける先 path の様子を読む(頭の註)。"
+  ;; 記録: 外の世界の読み(read — mount の表・dir・Longhorn の物を読む・再生では記録の答えを返す)。
+  (setv #^ (get ClassVar RecordSpec) __record-spec__ (RecordSpec :mode RecordMode.READ))
+  (#^ str owner)
+  (#^ str path))
 
 
 (defclass [(dataclass :frozen True)] ReadWorkspaceRoom [(get EffectBase WorkspaceRoom)]

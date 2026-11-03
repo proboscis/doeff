@@ -12,6 +12,12 @@ class WorkspaceOutcome(StrEnum):
     ALREADY = 'already'
     RESTORED = 'restored'
 
+class WorkspacePlace(StrEnum):
+    MOUNTED = 'mounted'
+    READY = 'ready'
+    OUTSIDE = 'outside'
+    CLASH = 'clash'
+
 @dataclass(frozen=True, kw_only=True)
 class WorkspaceVolumeSite:
     longhorn_namespace: str
@@ -85,6 +91,12 @@ class CoolWorkspaceVolume(EffectBase[WorkspaceOutcome]):
 class PurgeWorkspaceVolume(EffectBase[WorkspaceOutcome]):
     __record_spec__: ClassVar[RecordSpec]
     owner: str
+
+@dataclass(frozen=True)
+class ReadWorkspacePlace(EffectBase[WorkspacePlace]):
+    __record_spec__: ClassVar[RecordSpec]
+    owner: str
+    path: str
 
 @dataclass(frozen=True)
 class ReadWorkspaceRoom(EffectBase[WorkspaceRoom]):
