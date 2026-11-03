@@ -14,8 +14,11 @@ from doeff_cluster._shared.intent.workspace_volume_model import CreateWorkspaceV
 from doeff_cluster._shared.intent.workspace_volume_model import DetachWorkspaceVolume as DetachWorkspaceVolume
 from doeff_cluster._shared.intent.workspace_volume_model import MountWorkspaceVolume as MountWorkspaceVolume
 from doeff_cluster._shared.intent.workspace_volume_model import PurgeWorkspaceVolume as PurgeWorkspaceVolume
+from doeff_cluster._shared.intent.workspace_volume_model import ReadWorkspaceRoom as ReadWorkspaceRoom
 from doeff_cluster._shared.intent.workspace_volume_model import UmountWorkspaceVolume as UmountWorkspaceVolume
 from doeff_cluster._shared.intent.workspace_volume_model import WorkspaceOutcome as WorkspaceOutcome
+from doeff_cluster._shared.intent.workspace_volume_model import WorkspaceRoom as WorkspaceRoom
+from doeff_cluster._shared.intent.workspace_volume_model import WorkspaceRoomShort as WorkspaceRoomShort
 from doeff_cluster._shared.intent.workspace_volume_model import WorkspaceVolumeRefused as WorkspaceVolumeRefused
 from doeff_cluster._shared.core.workspace_volume_rules import NAME_PREFIX as NAME_PREFIX
 from doeff_cluster._shared.core.workspace_volume_rules import WarmVolume as WarmVolume
@@ -78,6 +81,9 @@ def sim_now() -> _Program[float, object]:
 def sim_created(world: WorkspaceVolumeWorld, owner: str) -> _Program[WorkspaceOutcome, object]:
     ...
 
+def sim_slots(world: WorkspaceVolumeWorld) -> _Program[int, object]:
+    ...
+
 def sim_attached(world: WorkspaceVolumeWorld, owner: str) -> _Program[WorkspaceOutcome, object]:
     ...
 
@@ -97,6 +103,9 @@ def sim_purged(world: WorkspaceVolumeWorld, owner: str) -> _Program[WorkspaceOut
     ...
 
 def sim_idle_cooled(world: WorkspaceVolumeWorld) -> _Program[CoolingSweep, object]:
+    ...
+
+def sim_room(world: WorkspaceVolumeWorld) -> _Program[WorkspaceRoom, object]:
     ...
 
 def held_workspace_volumes(world: WorkspaceVolumeWorld) -> _Handler:

@@ -156,14 +156,40 @@
 
 (deftest test-free-slots-follow-the-longhorn-scheduling-line
   (val size 10737418240)
-  ;; zeus の USB の SSD の image(2026-11-03 の読み): 105 GB・予約 0・置いた 0 → 200% で 19 本。
-  (<- zeus (free-slots #((DiskRoom :maximum 105089261568 :reserved 0 :scheduled 0)) size 200))
-  (assert (= zeus 19) zeus)
+  ;; zeus の USB の SSD の image(2026-11-03 の読み): 105 GB・予約 0・置いた 0・空き 105 GB。名目の予約の線は 200% で 19 本、実の空きの
+  ;; 線は 105 GB / 10 GiB = 9 本(最小の空き 0%)・(105 − 26.3) GB / 10 GiB = 7 本(25%)— 少ない方が効く。空きが十分なら名目の 19 本。
+  (val empty (DiskRoom :maximum 105089261568 :reserved 0 :scheduled 0 :available 105089261568))
+  (<- unlined (free-slots #(empty) size 200 0))
+  (assert (= unlined 9) unlined)
+  (<- lined (free-slots #(empty) size 200 25))
+  (assert (= lined 7) lined)
+  (<- wide (free-slots #((DiskRoom :maximum 105089261568 :reserved 0 :scheduled 0 :available (* 100 size))) size 200 25))
+  (assert (= wide 19) wide)
   ;; 置いた分を引く。2 つの disk は足す。名目で溢れた disk は 0(負にしない)。
-  (<- two (free-slots #((DiskRoom :maximum (* 10 size) :reserved 0 :scheduled (* 3 size))
-                        (DiskRoom :maximum (* 10 size) :reserved (* 5 size) :scheduled (* 20 size)))
-                      size 200))
+  (<- two (free-slots #((DiskRoom :maximum (* 10 size) :reserved 0 :scheduled (* 3 size) :available (* 100 size))
+                        (DiskRoom :maximum (* 10 size) :reserved (* 5 size) :scheduled (* 20 size) :available (* 100 size)))
+                      size 200 25))
   (assert (= two 17) two))
+
+
+(deftest test-free-slots-stop-at-the-minimal-available-line
+  ;; 2026-11-03 16:2x JST の zeus-usb-workspace(名目 10 GiB の volume 79 本・過剰割り当てを 2000% に上げた繋ぎの下): 2 GiB の volume を
+  ;; 名目の予約の線では 583 本置けるが、実の空きは 62.7 GB で最小の空き 25%(26.3 GB)の線まで 36.4 GB — 名目まで書いて 16 本。
+  ;; 宣言の 200% では、今の予約 848 GB が上限 210 GB を越えているので 0 本。
+  (val gib 1073741824)
+  (val now (DiskRoom :maximum 105089261568 :reserved 0 :scheduled 848256040960 :available 62704844800))
+  (<- reserve (free-slots #((DiskRoom :maximum now.maximum :reserved 0 :scheduled now.scheduled :available (* 10000 gib))) (* 2 gib) 2000 25))
+  (assert (= reserve 583) reserve)
+  (<- both (free-slots #(now) (* 2 gib) 2000 25))
+  (assert (= both 16) both)
+  (<- declared (free-slots #(now) (* 2 gib) 200 25))
+  (assert (= declared 0) declared)
+  ;; 線を割った disk(空きが最小の空きより少ない)は 0(負にしない)。
+  (<- under (free-slots #((DiskRoom :maximum (* 100 gib) :reserved 0 :scheduled 0 :available (* 20 gib))) gib 200 25))
+  (assert (= under 0) under)
+  ;; 線の上がちょうど 1 本ぶんなら 1 本。
+  (<- one (free-slots #((DiskRoom :maximum (* 100 gib) :reserved 0 :scheduled 0 :available (* 26 gib))) gib 200 25))
+  (assert (= one 1) one))
 
 
 (deftest test-the-cooling-order-takes-the-stale-then-the-oldest

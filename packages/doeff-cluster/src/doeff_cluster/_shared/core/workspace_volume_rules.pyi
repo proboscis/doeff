@@ -49,12 +49,14 @@ class BackupView:
     state: str
     created_at: str
     url: str
+    volume_size: int = 0
 
 @dataclass(frozen=True, kw_only=True)
 class DiskRoom:
     maximum: int
     reserved: int
     scheduled: int
+    available: int
 
 @dataclass(frozen=True, kw_only=True)
 class WarmVolume:
@@ -100,7 +102,7 @@ def cooling_name(name: str, stamp: int) -> _Program[str, object]:
 def newest_backup(backups: tuple[BackupView, ...]) -> _Program[BackupView | None, object]:
     ...
 
-def free_slots(rooms: tuple[DiskRoom, ...], size_bytes: int, percentage: int) -> _Program[int, object]:
+def free_slots(rooms: tuple[DiskRoom, ...], size_bytes: int, percentage: int, minimal: int) -> _Program[int, object]:
     ...
 
 def cooling_order(warm: tuple[WarmVolume, ...], now: float, warm_seconds: float, slots: int, spare: int) -> _Program[tuple[str, ...], object]:

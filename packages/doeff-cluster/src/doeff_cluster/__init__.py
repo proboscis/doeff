@@ -210,6 +210,9 @@ if TYPE_CHECKING:
     from doeff_cluster._shared.intent.workspace_volume_model import (
         PurgeWorkspaceVolume as PurgeWorkspaceVolume,
     )
+    from doeff_cluster._shared.intent.workspace_volume_model import (
+        ReadWorkspaceRoom as ReadWorkspaceRoom,
+    )
     from doeff_cluster._shared.intent.metrics_model import ReportMetrics as ReportMetrics
     from doeff_cluster._shared.intent.process_model import AwaitProcessEnded as AwaitProcessEnded
     from doeff_cluster._shared.intent.protocol import (
@@ -569,6 +572,8 @@ if TYPE_CHECKING:
     from doeff_cluster._shared.intent.workspace_volume_model import WorkspaceVolumeRefused as WorkspaceVolumeRefused
     from doeff_cluster._shared.intent.workspace_volume_model import WorkspaceVolumeSite as WorkspaceVolumeSite
     from doeff_cluster._shared.intent.workspace_volume_model import CoolingSweep as CoolingSweep
+    from doeff_cluster._shared.intent.workspace_volume_model import WorkspaceRoom as WorkspaceRoom
+    from doeff_cluster._shared.intent.workspace_volume_model import WorkspaceRoomShort as WorkspaceRoomShort
     from doeff_cluster._shared.intent.semaphore_model import LEASE_MAX_TTL_MS as LEASE_MAX_TTL_MS
     from doeff_cluster._shared.intent.semaphore_model import LOST as LOST
     from doeff_cluster._shared.core.launch_rules import LaunchEnvMissing as LaunchEnvMissing
@@ -841,6 +846,7 @@ _LAZY_EXPORTS: dict[str, str] = {
     "CoolIdleWorkspaceVolumes": "doeff_cluster._shared.intent.workspace_volume_model",
     "CoolWorkspaceVolume": "doeff_cluster._shared.intent.workspace_volume_model",
     "PurgeWorkspaceVolume": "doeff_cluster._shared.intent.workspace_volume_model",
+    "ReadWorkspaceRoom": "doeff_cluster._shared.intent.workspace_volume_model",
     "EnvReport": "doeff_cluster._worker.intent.worker_model",
     "FailRoute": "doeff_cluster._sim.local",
     "ForgetProbes": "doeff_cluster._worker.intent.worker_model",
@@ -1318,6 +1324,8 @@ _LAZY_EXPORTS: dict[str, str] = {
     "WorkspaceVolumeRefused": "doeff_cluster._shared.intent.workspace_volume_model",
     "WorkspaceVolumeSite": "doeff_cluster._shared.intent.workspace_volume_model",
     "CoolingSweep": "doeff_cluster._shared.intent.workspace_volume_model",
+    "WorkspaceRoom": "doeff_cluster._shared.intent.workspace_volume_model",
+    "WorkspaceRoomShort": "doeff_cluster._shared.intent.workspace_volume_model",
     "LEASE_MAX_TTL_MS": "doeff_cluster._shared.intent.semaphore_model",
     "LOST": "doeff_cluster._shared.intent.semaphore_model",
     "LaunchEnvMissing": "doeff_cluster._shared.core.launch_rules",

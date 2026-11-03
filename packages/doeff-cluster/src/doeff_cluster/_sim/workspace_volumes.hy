@@ -11,6 +11,8 @@
 ;;;   * umount: 付ける先に何も無ければ ALREADY・別の volume なら断る・使っている process が在れば断る・ほかは外して DONE。
 ;;;   * detach: まだ mount されていれば断る・別の node に付いていれば断る・無い volume と外れた volume は ALREADY・ほかは外して DONE。
 ;;;   * 作る(戻す): volume が無く、その名の完了した backup が在れば戻して RESTORED(file system を持つ)。backup は在るが完了した物が無ければ断る。
+;;;   * 置き場: 作る(戻す)前に、札の disk の残り(capacity − volume の数)が無ければ作らずに WorkspaceRoomShort で断る(fresh = 戻す
+;;;     backup が無い)。残りの読み(ReadWorkspaceRoom)は同じ残りと spare-volumes を答える。
 ;;;   * 使った刻: attach(付けた時)と detach(外した時)が volume の used-at に今の刻を書く。
 ;;;   * 冷やす: 無い volume は ALREADY・付いている volume は断る・ほかは backup(<名>-cool-<刻>)を足して volume を消し DONE。
 ;;;   * 消す: volume が在れば断る・backup が無ければ ALREADY・最後の backup から keep-days の内なら断る・ほかは backup を消して DONE。
@@ -26,8 +28,9 @@
 (import doeff_time [GetTime])
 (import doeff_cluster._shared.intent.workspace_volume_model [AttachWorkspaceVolume CoolIdleWorkspaceVolumes CoolingSweep
                                                            CoolWorkspaceVolume CreateWorkspaceVolume DetachWorkspaceVolume
-                                                           MountWorkspaceVolume PurgeWorkspaceVolume UmountWorkspaceVolume
-                                                           WorkspaceOutcome WorkspaceVolumeRefused])
+                                                           MountWorkspaceVolume PurgeWorkspaceVolume ReadWorkspaceRoom
+                                                           UmountWorkspaceVolume WorkspaceOutcome WorkspaceRoom WorkspaceRoomShort
+                                                           WorkspaceVolumeRefused])
 (import doeff_cluster._shared.core.workspace_volume_rules [NAME-PREFIX WarmVolume cooling-name cooling-order owner-refusal ticket-id
                                                          volume-name])
 
@@ -136,14 +139,23 @@
   (<- now float (sim-now))
   (val backups (! (held-backups world name)))
   (val done (lfor backup backups :if (= backup.state "Completed") backup))
+  (val there (is-not (! (held-volume world name)) None))
+  (when (and (not there) (or done (not backups)) (< (! (sim-slots world)) 1))
+    (raise (WorkspaceRoomShort (str (! (sim-refused owner doing "札の disk がもう受けられない(模擬の世界の capacity)"))) (not done))))
   (cond
-    (is-not (! (held-volume world name)) None) WorkspaceOutcome.ALREADY
+    there WorkspaceOutcome.ALREADY
     done (do (! (put-volume world (HeldVolume :name name :formatted True :used-at now)))
              WorkspaceOutcome.RESTORED)
     backups (raise (! (sim-refused owner doing (+ "backup は在るが完了した物が無い(空で作らない): "
                                                   (.join "・" (gfor one backups (+ one.name " " one.state)))))))
     True (do (! (put-volume world (HeldVolume :name name :used-at now)))
              WorkspaceOutcome.DONE)))
+
+
+(defk sim-slots [world]
+  {:pre [(: world WorkspaceVolumeWorld)] :post [(: % int) (>= % 0)] :tags {:context "doeff-cluster" :role "foundation"}}
+  "世界 world の札の disk が、あと何本の volume を受けられるかを得るため(capacity − volume の数・負は 0)。"
+  (max 0 (- world.capacity (len world.volumes))))
 
 
 (defk sim-attached [world owner]
@@ -255,7 +267,7 @@
   "CoolIdleWorkspaceVolumes を世界 world に当てるため(頭の註の契約)。"
   (when world.down
     (raise (WorkspaceVolumeRefused "持ち主 全部 の volume を 冷やす順の読み できない — API server に届かない: 模擬の世界が down")))
-  (val slots (max 0 (- world.capacity (len world.volumes))))
+  (val slots (! (sim-slots world)))
   (val warm (tuple (gfor one world.volumes :if (is one.node None) (WarmVolume :name one.name :used-at one.used-at))))
   (<- now float (sim-now))
   (val order (! (cooling-order warm now (* world.warm-hours 3600.0) slots world.spare-volumes)))
@@ -267,10 +279,18 @@
   (CoolingSweep :slots slots :cooled cooled :failed #()))
 
 
+(defk sim-room [world]
+  {:pre [(: world WorkspaceVolumeWorld)] :post [(: % WorkspaceRoom)] :tags {:context "doeff-cluster" :role "foundation"}}
+  "ReadWorkspaceRoom を世界 world に当てるため(頭の註の契約)。"
+  (when world.down
+    (raise (WorkspaceVolumeRefused "持ち主 全部 の volume を 置き場の読み できない — API server に届かない: 模擬の世界が down")))
+  (WorkspaceRoom :slots (! (sim-slots world)) :spare world.spare-volumes))
+
+
 ;; 引数に残す理由: 世界は呼び手が作って走らせた後に読む記録の置き場(検と模擬の世界ごとに別の入れ物)。
 (defhandler held-workspace-volumes [#^ WorkspaceVolumeWorld world]
   {:tags {:context "doeff-cluster" :role "foundation"}}
-  ;; 模擬: 8 つの effect を世界に当てる(頭の註の契約)。
+  ;; 模擬: 9 つの effect を世界に当てる(頭の註の契約)。
   (CreateWorkspaceVolume [owner]
     (<- outcome WorkspaceOutcome (sim-created world owner))
     (resume outcome))
@@ -294,4 +314,7 @@
     (resume outcome))
   (CoolIdleWorkspaceVolumes []
     (<- sweep CoolingSweep (sim-idle-cooled world))
-    (resume sweep)))
+    (resume sweep))
+  (ReadWorkspaceRoom []
+    (<- room WorkspaceRoom (sim-room world))
+    (resume room)))

@@ -16,20 +16,26 @@ card 2)・測り ki-00f2d6af6581。
 
 ## handler(作る・attach・mount・umount・detach・冷やす・消す)
 
-持ち主の volume を扱う effect は 8 つで、入口 `doeff_cluster` から出す: `CreateWorkspaceVolume`・`AttachWorkspaceVolume`・
+持ち主の volume を扱う effect は 9 つで、入口 `doeff_cluster` から出す: `CreateWorkspaceVolume`・`AttachWorkspaceVolume`・
 `MountWorkspaceVolume`・`UmountWorkspaceVolume`・`DetachWorkspaceVolume`・`CoolWorkspaceVolume`・`PurgeWorkspaceVolume`・
-`CoolIdleWorkspaceVolumes`(答えは `WorkspaceOutcome` の DONE = 今した・ALREADY = 既にそうだった・RESTORED = backup から戻した(作る時
-だけ)、まとめて冷やすは `CoolingSweep`。できなければ `WorkspaceVolumeRefused`)。出所 = card ki-a2d67aa8203d(作る〜detach)・
-ki-c817a191ad4e(戻す・冷やす・消す)。
+`CoolIdleWorkspaceVolumes`・`ReadWorkspaceRoom`(答えは `WorkspaceOutcome` の DONE = 今した・ALREADY = 既にそうだった・RESTORED =
+backup から戻した(作る時だけ)、まとめて冷やすは `CoolingSweep`、残りの読みは `WorkspaceRoom`。できなければ `WorkspaceVolumeRefused`・
+置き場が足りなければその子の `WorkspaceRoomShort`)。出所 = card ki-a2d67aa8203d(作る〜detach)・ki-c817a191ad4e(戻す・冷やす・
+消す)・ki-3b60bfcdb6a2(置き場の数え)。
 
 | effect | 何をするか |
 |---|---|
-| `CreateWorkspaceVolume` | volume が無ければ作る。その名の完了した backup が在れば(冷えている)一番新しい物から戻して RESTORED(戻し終わるまで待つ)、無ければ空で DONE。在れば ALREADY — 戻す途中なら戻し終わりを、消す途中なら消え終わりを待ってから(同じ持ち主の次の頼みは先の戻しに相乗りする)。backup は在るが完了した物が無い名は空で作らずに断る |
-| `AttachWorkspaceVolume` | 前と同じ。ticket を置いた後に Volume へ使った刻の印(annotation `doeff-cluster/used-at` = epoch 秒)を書く |
+| `CreateWorkspaceVolume` | volume が無ければ作る。その名の完了した backup が在れば(冷えている)一番新しい物から戻して RESTORED(戻し終わるまで待つ)、無ければ空で DONE。在れば ALREADY — 戻す途中なら戻し終わりを、消す途中なら消え終わりを待ってから(同じ持ち主の次の頼みは先の戻しに相乗りする)。backup は在るが完了した物が無い名は空で作らずに断る。作る前に札の disk の残りを数え(節「置き場の数え」)、受けられなければ POST せずに `WorkspaceRoomShort` で断る。戻す volume は backup を取った時の大きさ(status.volumeSize)と値の大きさの大きい方で作る(Longhorn は backup より小さい volume への戻しを断る) |
+| `AttachWorkspaceVolume` | 前と同じ。ticket を置いた後に Volume へ使った刻の印(annotation `doeff-cluster/used-at` = epoch 秒)を書く。付くのを待つ間に Longhorn が replica を置けないと答え、replica がどこにも置かれていなければ(初めて付ける空の volume)、上限の秒まで待たずに volume を消して `WorkspaceRoomShort`(fresh)で断る |
 | `DetachWorkspaceVolume` | 前と同じ。外した後に使い終わりの刻の印を書く(冷やす順が読む) |
 | `CoolWorkspaceVolume` | 外れている volume を冷やす(節「寿命」の手順)。使っている・戻す途中・ほかの冷やす手順の途中の volume は触らずに断る |
 | `PurgeWorkspaceVolume` | 冷えた名の backup を消す(最後の backup から keepDays を過ぎた物だけ)。Longhorn の volume が在る名・途中の backup の在る名は断る |
 | `CoolIdleWorkspaceVolumes` | 外れている volume を、冷やす順(節「寿命」)に 1 つずつ冷やす。冷やせなかった物は訳を残して次へ進む |
+| `ReadWorkspaceRoom` | 札の disk が受けられる、値の大きさの volume の残りの本数(節「置き場の数え」)と値の spareVolumes を答える(何も変えない) |
+
+- 置き場の不足 `WorkspaceRoomShort` の `fresh`: True = 持ち主が中身を持たない(作るのは空の volume だった)。呼び手は、その持ち主を volume の
+  外の場所で始めてよい。False = 冷えた中身を backup から戻す所だった(中身は backup に残る)。呼び手は空の場所に落とさず、冷やして場所を
+  空けてから出し直す。
 
 - 使う側が勝つ: 冷やす途中に attach が来たら、冷やす側は volume を消さずに退く(attach は待たされない)。冷やす側は Volume を読み(版 R)、
   次に VolumeAttachment に使う ticket(冷やす手順の snapshot と backup の ticket の外)が無い事を確かめ、版 R の上でだけ消す(DELETE の
@@ -151,6 +157,26 @@ worker は CSI を通らずに Longhorn の volume を名指しで作るので�
    disk の在る node のどれかに置かれ、Longhorn が中身を戻す(status.restoreRequired が false になるまで待つ)。
 4. 使う機体の node に attach する。replica が別の node に置かれていれば、dataLocality best-effort がその node へ寄せる。
 5. mount して使う。戻した volume は file system を持つので mkfs しない。
+
+## 置き場の数え
+
+Longhorn は replica を disk に置く時、線を 2 つ照らす(v1.13 の replica の置き方): 名目の予約の線 = 置いた replica の名目の大きさの和
+(storageScheduled)+ 新しい volume の大きさ ≤ (storageMaximum − storageReserved)× 設定 storage-over-provisioning-percentage、実の空きの
+線 = storageAvailable − その volume の実の使用 > storageMaximum × 設定 storage-minimal-available-percentage。どちらかを外れる disk には
+置かず、置き先の無い volume を condition Scheduled False(reason ReplicaSchedulingFailure)・robustness faulted にする。
+
+- 置き先を決める時: Longhorn v1.13 は、外れている volume を作った時には replica の物を作るだけで disk に置かない(condition Scheduled は
+  True・replica の nodeID は空)。置き先は初めて付ける時か、backup から戻す時(Longhorn が付けて戻す)に決める。2026-11-03 16:2x JST の
+  本番の試し: 札 workspace の disk に置ける 1 GiB の volume は 30 秒経っても replica の nodeID が空のまま、札の無い disk を名指す volume は
+  1 秒の内に Scheduled False(`precheck new replica failed: tags not fulfilled`)・faulted になった。だから置き場の不足は作った時でなく
+  付ける時に現れ、付けの ticket は満たされないまま待つ(11-03 12:19 JST からの attach の 180 秒待ちの形)。
+- 作る前の数え(`room-slots`・`free-slots`): 札の disk ごとに、名目の予約の線の残りを大きさで割った本数と、実の空きの線の上の量を
+  大きさで割った本数(新しい volume が名目の大きさまで書いても線を割らない本数 — thin の volume の実の使用は名目より小さいので少なめに
+  数える側)の少ない方を足す。0 本なら作らない(Volume を POST しない — faulted の volume を作らない)。
+- 数えと付けの間の競り: 同じ disk に別の持ち主の作りが並ぶと(Pod の入れ替えで 2 つの世代の worker が並ぶ時も)、数えた後に残りが
+  尽きる。負けた側は付ける時に Longhorn の「置けない」を読み、replica がどこにも置かれていない(中身の無い)volume をその場で消して
+  `WorkspaceRoomShort` で断る(上限の秒まで待たない・faulted を残さない)。replica の置かれた volume(中身を持ちうる)は消さない。
+- 冷やす回の空きも同じ数え(2 つの線の少ない方)で読む — 実の空きが線に近づいた時も、空きが spareVolumes を割る分を冷やす。
 
 ## 置く disk(札 workspace)
 

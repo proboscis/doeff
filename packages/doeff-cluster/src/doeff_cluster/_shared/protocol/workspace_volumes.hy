@@ -7,9 +7,11 @@
 ;;;   volume-create-text      volume の名・級の parameters・大きさ → Longhorn の Volume の作成の本文の JSON の字(級の値の写し — README の表)
 ;;;   created-volume          CreateWorkspaceVolume: 値の ConfigMap と級(StorageClass)を読み、その名の完了した backup が在れば一番新しい物
 ;;;                           から戻し(spec.fromBackup)、無ければ空で Volume を POST する(201 = 作った・409 = 在った)。在る volume が戻す
-;;;                           途中なら戻し終わるまで、消す途中なら消え終わるまで待つ
+;;;                           途中なら戻し終わるまで、消す途中なら消え終わるまで待つ。POST の前に札の disk の残りを数え(room-held)、
+;;;                           受けられなければ作らずに置き場の不足 WorkspaceRoomShort で断る
 ;;;   attached-volume         AttachWorkspaceVolume: VolumeAttachment に ticket を置き、Volume に使った刻の印を書き、ticket が満たされ volume が
-;;;                           この node に付くまで待つ
+;;;                           この node に付くまで待つ。Longhorn が replica を置けないと答えた中身の無い volume は、待たずに消して断る
+;;;                           (dropped-unplaced — 戻しの待ちも同じ)
 ;;;   mounted-volume          MountWorkspaceVolume: 付ける先の dir を作り、係へ mount を頼む(既に付いていれば頼まない)
 ;;;   unmounted-volume        UmountWorkspaceVolume: 係へ umount を頼む(何も付いていなければ頼まない)
 ;;;   detached-volume         DetachWorkspaceVolume: mount が残っていないかを確かめ、ticket を外し、volume がこの node から外れるまで待ち、
@@ -17,8 +19,10 @@
 ;;;   cooled-volume           CoolWorkspaceVolume: 外れている volume の Snapshot と Backup を作って完了を待ち、使う ticket が無い事を確かめて、
 ;;;                           読んだ版の上でだけ Volume を消す
 ;;;   purged-volume           PurgeWorkspaceVolume: volume の無い名の BackupVolume を、最後の backup から keepDays を過ぎていれば消す
-;;;   idle-cooling            CoolIdleWorkspaceVolumes: 外れている volume・札の disk の空き・過剰割り当ての % を読み、冷やす順に冷やす
-;;;   workspace-volumes-api   8 つの effect の本番の答え手
+;;;   idle-cooling            CoolIdleWorkspaceVolumes: 外れている volume・札の disk の残り(room-slots)を読み、冷やす順に冷やす
+;;;   workspace-room          ReadWorkspaceRoom: 札の disk の残りの本数(room-slots — Longhorn の置く線 2 つ: 過剰割り当ての % の名目の
+;;;                           予約の線と、最小の空きの % の実の空きの線)と値の spareVolumes を読む
+;;;   workspace-volumes-api   9 つの effect の本番の答え手
 ;;;
 ;;; 仕組み: supplied_values・kube_services と同じく、doeff の汎用の effect(token の file の ReadText・HttpRequest・file の effect・doeff-time の
 ;;; Delay と GetMonotonic・機体の事実の ReadEnvironment)で問う。外側に、宛先が API server の要求を区画の CA で検める接続
@@ -32,7 +36,11 @@
 ;;; attach・別の node に ticket の在る volume の attach と detach・上限の秒の内に付かない・外れない・係が答えない・係が断った・mount の
 ;;; 残る volume の detach・付ける先に別の物・API server に届かない・断られた・token が読めない・答えの形が違う・backup は在るが完了した物が
 ;;; 無い名の作成(空で作らない)・上限の秒の内に戻らない・使っている volume と戻す途中の volume を冷やす・snapshot か backup が失敗した・冷やす
-;;; 途中に使い始めた(消さない)・volume の在る名と最後の backup から keepDays の内の名の backup を消す。
+;;; 途中に使い始めた(消さない)・volume の在る名と最後の backup から keepDays の内の名の backup を消す。置き場の不足は型を分ける
+;;; (WorkspaceRoomShort — WorkspaceVolumeRefused の子): 作る前の数えで札の disk が受けられない・付ける時か戻す時に Longhorn が replica を
+;;; 置けない(中身の無い volume は消してから断る)。fresh = 持ち主が中身を持たないか(呼び手が空の場所に落としてよいかを決める)。
+;;; 作る前の数えと作りの間の競り(同じ disk に別の持ち主の作りが並ぶ・Pod の入れ替えで 2 つの世代の worker が並ぶ)は数えでは除けない —
+;;; 負けた側は付ける時に Longhorn の「置けない」を読み、中身の無い volume を消して同じ断りで答える(faulted の volume を残さない)。
 ;;;
 ;;; 冷やす途中の attach(使う側が勝つ): attach は ticket を置いてから Volume に刻の印を書き、冷やす側は Volume を読み(版 R)、次に
 ;;; VolumeAttachment を読んで使う ticket が無い事を確かめ、版 R の上でだけ消す(DELETE の preconditions)。消せたなら印はまだ書かれていない
@@ -51,8 +59,9 @@
 (import doeff_time [Delay GetMonotonic GetTime])
 (import doeff_cluster._shared.intent.workspace_volume_model [AttachWorkspaceVolume CoolIdleWorkspaceVolumes CoolingSweep
                                                            CoolWorkspaceVolume CreateWorkspaceVolume DetachWorkspaceVolume
-                                                           MountWorkspaceVolume PurgeWorkspaceVolume UmountWorkspaceVolume
-                                                           WorkspaceOutcome WorkspaceVolumeRefused WorkspaceVolumeSite])
+                                                           MountWorkspaceVolume PurgeWorkspaceVolume ReadWorkspaceRoom
+                                                           UmountWorkspaceVolume WorkspaceOutcome WorkspaceRoom WorkspaceRoomShort
+                                                           WorkspaceVolumeRefused WorkspaceVolumeSite])
 (import doeff_cluster._shared.intent.supplied_model [WorkerFactName])
 (import doeff_cluster._shared.core.workspace_volume_rules [AttachStep AttachView BackupView DetachStep DiskRoom MountEntry
                                                          NAME-PREFIX USED-AT-KEY WarmVolume attach-step cooling-name
@@ -121,16 +130,27 @@
   (setv #^ bool is-group False))
 
 
+(defwire VolumeConditionWire
+  "Longhorn の Volume の condition 1 つのうち読む欄: type・status(字の True か False)・reason・message。"
+  {:tags {:context "doeff-cluster" :role "protocol" :reads "json"} :names :camel :unknown :ignore}
+  (setv #^ str type "")
+  (setv #^ str status "")
+  (setv #^ str reason "")
+  (setv #^ str message ""))
+
+
 (defwire VolumeStatusWire
   "Longhorn の Volume の status のうち読む欄: state(creating・detached・attaching・attached・detaching ほか)・currentNodeID・restoreRequired と
-   restoreInitiated(backup から戻す volume の、戻しが要る・始まった)。"
+   restoreInitiated(backup から戻す volume の、戻しが要る・始まった)・conditions(Scheduled = replica を置けたか)。"
   {:tags {:context "doeff-cluster" :role "protocol" :reads "json"}
-   :names {state "state" current-node-id "currentNodeID" restore-required "restoreRequired" restore-initiated "restoreInitiated"}
+   :names {state "state" current-node-id "currentNodeID" restore-required "restoreRequired" restore-initiated "restoreInitiated"
+           conditions "conditions"}
    :unknown :ignore}
   (setv #^ str state "")
   (setv #^ str current-node-id "")
   (setv #^ bool restore-required False)
-  (setv #^ bool restore-initiated False))
+  (setv #^ bool restore-initiated False)
+  (setv #^ (| (get tuple #(VolumeConditionWire ...)) None) conditions None))
 
 
 (defwire VolumeMetaWire
@@ -165,6 +185,24 @@
   (setv #^ (| (get tuple #(VolumeWire ...)) None) items None))
 
 
+(defwire ReplicaSpecWire
+  "Longhorn の Replica の spec のうち読む欄: nodeID(置いた node — 空 = まだ置いていない)。"
+  {:tags {:context "doeff-cluster" :role "protocol" :reads "json"} :names {node-id "nodeID"} :unknown :ignore}
+  (setv #^ str node-id ""))
+
+
+(defwire ReplicaWire
+  "Longhorn の Replica の一覧の 1 つのうち読む欄: spec。"
+  {:tags {:context "doeff-cluster" :role "protocol" :reads "json"} :names :camel :unknown :ignore}
+  (setv #^ (| ReplicaSpecWire None) spec None))
+
+
+(defwire ReplicaListWire
+  "Longhorn の Replica の一覧の GET の答えのうち読む欄: items。"
+  {:tags {:context "doeff-cluster" :role "protocol" :reads "json"} :names :camel :unknown :ignore}
+  (setv #^ (| (get tuple #(ReplicaWire ...)) None) items None))
+
+
 (defwire NamedMetaWire
   "Longhorn の物の metadata のうち読む欄: name。"
   {:tags {:context "doeff-cluster" :role "protocol" :reads "json"} :names :camel :unknown :ignore}
@@ -172,12 +210,14 @@
 
 
 (defwire BackupStatusWire
-  "Longhorn の Backup の status のうち読む欄: state・backupCreatedAt・url(戻す元)・error。"
+  "Longhorn の Backup の status のうち読む欄: state・backupCreatedAt・url(戻す元)・error・volumeSize(backup を取った時の volume の名目の
+   大きさ — byte の数の字)。"
   {:tags {:context "doeff-cluster" :role "protocol" :reads "json"} :names :camel :unknown :ignore}
   (setv #^ str state "")
   (setv #^ str backup-created-at "")
   (setv #^ str url "")
-  (setv #^ str error ""))
+  (setv #^ str error "")
+  (setv #^ str volume-size ""))
 
 
 (defwire BackupWire
@@ -234,10 +274,11 @@
 
 
 (defwire DiskStatusWire
-  "Longhorn の Node の status の disk 1 つのうち読む欄: storageMaximum・storageScheduled(byte)・conditions。"
+  "Longhorn の Node の status の disk 1 つのうち読む欄: storageMaximum・storageScheduled・storageAvailable(byte)・conditions。"
   {:tags {:context "doeff-cluster" :role "protocol" :reads "json"} :names :camel :unknown :ignore}
   (setv #^ int storage-maximum 0)
   (setv #^ int storage-scheduled 0)
+  (setv #^ int storage-available 0)
   (setv #^ (| (get tuple #(DiskConditionWire ...)) None) conditions None))
 
 
@@ -318,10 +359,21 @@
   (setv #^ (| AttachmentStatusWire None) status None))
 
 
+(defrecord Placing
+  "Volume の condition Scheduled の読み: failed = Longhorn が replica の置き先を見つけられないと答えている(status False・reason が
+   …SchedulingFailure — 名目の予約の線か実の空きの線で置けない・札を持つ disk が無いなど)・note = その reason と message(人が読む訳)。
+   Longhorn v1.13 は外れている volume の replica を作るだけで置かず(condition は True)、初めて付ける時か戻す時に置き先を決める
+   (2026-11-03 の本番の試し — README の節「置く disk」)。"
+  (#^ bool failed)
+  (#^ str note))
+
+
 (defrecord AttachRead
-  "volume 1 つの attach の読み: view = 判断に渡す様子・version = VolumeAttachment の resourceVersion(無ければ空)。"
+  "volume 1 つの attach の読み: view = 判断に渡す様子・version = VolumeAttachment の resourceVersion(無ければ空)・placing = Volume の
+   condition Scheduled の読み。"
   (#^ AttachView view)
-  (#^ str version))
+  (#^ str version)
+  (#^ Placing placing))
 
 
 (defrecord KeeperAnswer
@@ -333,14 +385,15 @@
 (defrecord VolumeRead
   "Longhorn の Volume 1 つの読み: name・version = resourceVersion・state = status.state(読めなければ空)・restoring = backup から戻す途中
    (spec.fromBackup が在り、戻しがまだ始まっていないか終わっていない)・deleting = 消す途中・used-at = 使った刻の印(epoch 秒 — 無ければ
-   作られた刻)・backup-target = spec.backupTargetName。"
+   作られた刻)・backup-target = spec.backupTargetName・placing = condition Scheduled の読み(Longhorn が replica を置けないと答えているか)。"
   (#^ str name)
   (#^ str version)
   (#^ str state)
   (#^ bool restoring)
   (#^ bool deleting)
   (#^ float used-at)
-  (#^ str backup-target))
+  (#^ str backup-target)
+  (#^ Placing placing))
 
 
 (defk refused [owner doing reason]
@@ -492,6 +545,16 @@
     (except [ValueError] None)))
 
 
+(defk placing-of [status]
+  {:pre [(: status VolumeStatusWire)] :post [(: % Placing)] :tags {:context "doeff-cluster" :role "protocol"}}
+  "Volume の status から、Longhorn が replica を置けないと答えているかを読むため(置けない volume を attach と戻しの上限の秒まで待たない)。"
+  (val found (next (gfor condition (or status.conditions #()) :if (= condition.type "Scheduled") condition) None))
+  (if (is found None)
+      (Placing :failed False :note "")
+      (Placing :failed (and (= found.status "False") (.endswith found.reason "SchedulingFailure"))
+               :note (.strip (.join " " #(found.reason found.message))))))
+
+
 (defk volume-read-of [owner doing held]
   {:pre [(: owner str) (: doing str) (: held VolumeWire)] :post [(: % VolumeRead)] :tags {:context "doeff-cluster" :role "protocol"}}
   "Volume の GET の答え held を、判断に使う読みにするため(頭の註の VolumeRead — 使った刻の印が無い・読めなければ作られた刻)。metadata の
@@ -504,11 +567,13 @@
   (<- created (| float None) (epoch-of meta.creation-timestamp))
   (when (or (not meta.name) (not meta.resource-version) (is created None))
     (raise (! (malformed-refusal owner doing "Volume の metadata(名・版・作られた刻)"))))
+  (<- placing Placing (placing-of status))
   (VolumeRead :name meta.name :version meta.resource-version :state status.state
               :restoring (and (bool spec.from-backup) (or (not status.restore-initiated) status.restore-required))
               :deleting (is-not meta.deletion-timestamp None)
               :used-at (if (is-not marked None) marked created)
-              :backup-target spec.backup-target-name))
+              :backup-target spec.backup-target-name
+              :placing placing))
 
 
 (defk volume-read [site owner doing name]
@@ -548,7 +613,8 @@
 (defk waited-restored [site owner doing name]
   {:pre [(: site WorkspaceVolumeSite) (: owner str) (: doing str) (: name str)] :post [(: % None)]
    :tags {:context "doeff-cluster" :role "protocol"}}
-  "backup から戻す途中の volume name が戻し終わるまで待つため(restore-seconds の内に終わらない・途中で消えた時は断る)。"
+  "backup から戻す途中の volume name が戻し終わるまで待つため(restore-seconds の内に終わらない・途中で消えた時は断る)。Longhorn が replica を
+   置けないと答え、replica がどこにも置かれていなければ、待たずに volume を消して置き場の不足で断る(中身は backup に残る — fresh False)。"
   (<- started float (GetMonotonic))
   (while True
     (<- read (| VolumeRead None) (volume-read site owner doing name))
@@ -556,6 +622,8 @@
       (raise (! (refused owner doing "戻す途中に volume が消えた"))))
     (when (not read.restoring)
       (return None))
+    (when read.placing.failed
+      (<- (dropped-unplaced site owner doing name read.placing.note False)))
     (<- now float (GetMonotonic))
     (when (> (- now started) site.restore-seconds)
       (raise (! (refused owner doing (.format "{} 秒の内に戻し終わらない(volume {})" site.restore-seconds (or read.state "?"))))))
@@ -574,7 +642,8 @@
   {:pre [(: item BackupWire)] :post [(: % BackupView)] :tags {:context "doeff-cluster" :role "protocol"}}
   "Backup の一覧の 1 つ item を、判断に渡す読みにするため(作った直後で status が無ければ、様子と刻と url は空)。"
   (val status (or item.status (BackupStatusWire)))
-  (BackupView :name (. (or item.metadata (NamedMetaWire)) name) :state status.state :created-at status.backup-created-at :url status.url))
+  (BackupView :name (. (or item.metadata (NamedMetaWire)) name) :state status.state :created-at status.backup-created-at :url status.url
+              :volume-size (if (.isdigit status.volume-size) (int status.volume-size) 0)))
 
 
 (defk backup-views [site owner doing name target]
@@ -603,12 +672,89 @@
   target)
 
 
+(defk room-short [owner doing reason fresh]
+  {:pre [(: owner str) (: doing str) (: reason str) (: fresh bool)] :post [(: % WorkspaceRoomShort)]
+   :tags {:context "doeff-cluster" :role "protocol"}}
+  "持ち主 owner の volume を置く場所が足りずに doing できなかった断りを、ほかの断りと同じ綴りで作るため(fresh = 中身を持たない持ち主か)。"
+  (<- refusal WorkspaceVolumeRefused (refused owner doing reason))
+  (WorkspaceRoomShort (str refusal) fresh))
+
+
+(defk class-disk-tags [parameters]
+  {:pre [(: parameters (get dict #(str str)))] :post [(: % (get tuple #(str ...)))] :tags {:context "doeff-cluster" :role "protocol"}}
+  "級の parameters の diskSelector(`,` で分けた札)を、置く disk の札の組にするため。"
+  (tuple (lfor tag (.split (.get parameters "diskSelector" "") ",") :if (.strip tag) (.strip tag))))
+
+
+(defk room-slots [site owner doing parameters size-bytes]
+  {:pre [(: site WorkspaceVolumeSite) (: owner str) (: doing str) (: parameters (get dict #(str str))) (: size-bytes int) (> size-bytes 0)]
+   :post [(: % int) (>= % 0)] :tags {:context "doeff-cluster" :role "protocol"}}
+  "級 parameters の札の disk が、名目の大きさ size-bytes の volume をあと何本受けられるかを、Longhorn の置く線 2 つ(設定の過剰割り当ての % と
+   最小の空きの % — free-slots)で数えるため(読めなければ断る)。"
+  (<- rooms tuple (disk-rooms site owner doing (! (class-disk-tags parameters))))
+  (<- percentage int (longhorn-percentage site owner doing "storage-over-provisioning-percentage"))
+  (<- minimal int (longhorn-percentage site owner doing "storage-minimal-available-percentage"))
+  (! (free-slots rooms size-bytes percentage minimal)))
+
+
+(defk room-held [site owner doing parameters size-bytes fresh]
+  {:pre [(: site WorkspaceVolumeSite) (: owner str) (: doing str) (: parameters (get dict #(str str))) (: size-bytes int) (> size-bytes 0)
+         (: fresh bool)]
+   :post [(: % None)] :tags {:context "doeff-cluster" :role "protocol"}}
+  "Volume を POST する前に、札の disk が名目の大きさ size-bytes の volume を受けられる事を確かめるため。受けられなければ作らずに置き場の不足で
+   断る(Longhorn は置けない Volume も受けて、付ける時に faulted にする — 作る側が先に数える)。"
+  (<- slots int (room-slots site owner doing parameters size-bytes))
+  (when (< slots 1)
+    (raise (! (room-short owner doing (.format "札の disk が名目 {} byte の volume をもう受けられない(Longhorn の置く線 — 名目の予約か実の空き)"
+                                               size-bytes)
+                          fresh))))
+  None)
+
+
+(defk replicas-placed [site owner doing name]
+  {:pre [(: site WorkspaceVolumeSite) (: owner str) (: doing str) (: name str)] :post [(: % bool)]
+   :tags {:context "doeff-cluster" :role "protocol" :reads "json"}}
+  "volume name の replica が 1 つでもどこかの disk に置かれているか(中身を持ちうるか)を、Longhorn の Replica の一覧で確かめるため。"
+  (<- answer HttpResponse (kube-answer owner doing "GET" (+ (! (longhorn-path site "replicas"))
+                                                            "?labelSelector=" (url-quote (+ "longhornvolume=" name) :safe ""))
+                                       None JSON-TYPE))
+  (when (!= (! (status-field answer.status)) 200)
+    (raise (! (status-refusal owner doing "Replica の一覧" answer))))
+  (<- held (| ReplicaListWire Malformed) (parse-json ReplicaListWire (! (text-field answer.text))))
+  (when (isinstance held Malformed)
+    (raise (! (malformed-refusal owner doing "Replica の一覧"))))
+  (any (gfor item (or held.items #()) (and (is-not item.spec None) (bool item.spec.node-id)))))
+
+
+(defk dropped-unplaced [site owner doing name note fresh]
+  {:pre [(: site WorkspaceVolumeSite) (: owner str) (: doing str) (: name str) (: note str) (: fresh bool)] :post [(: % None)]
+   :tags {:context "doeff-cluster" :role "protocol"}}
+  "Longhorn が replica を置けないと答えた volume name(訳 note)を、中身を持たない時(replica がどの disk にも置かれていない — 付いた事が
+   無い)にその場で消して置き場の不足で断るため(faulted の volume を残さず、付くのを上限の秒まで待たない)。replica の置かれた volume は
+   中身を持ちうるので消さずに戻る(呼び手が待ちを続ける)。消す前に読み直した版の上でだけ消す — 読んだ後に書きが入れば消さずに断る。"
+  (<- placed bool (replicas-placed site owner doing name))
+  (when placed
+    (return None))
+  (<- read (| VolumeRead None) (volume-read site owner doing name))
+  (var deleted (is read None))
+  (when (is-not read None)
+    (<- gone bool (deleted-volume site owner doing name read.version))
+    (:= deleted gone)
+    (when gone
+      (<- (waited-gone site owner doing name))))
+  (raise (! (room-short owner doing (+ "Longhorn が replica を置けない(" (or note "訳なし") ")"
+                                       (if deleted " — 中身の無い volume を消した" " — 読んだ後に書きが入ったので消さなかった"))
+                        fresh))))
+
+
 (defk created-volume [site owner]
   {:pre [(: site WorkspaceVolumeSite) (: owner str)] :post [(: % WorkspaceOutcome)] :tags {:context "doeff-cluster" :role "protocol"}}
   "持ち主 owner の volume が無ければ、値の ConfigMap の級と大きさで作るため。その名の完了した backup が在れば(冷えている)一番新しい物から
    戻し、戻し終わるまで待つ(RESTORED)。backup が無ければ空で作る(DONE)。在れば ALREADY — 中身に触らない。ただし戻す途中なら戻し
    終わるまで待ち(同じ持ち主の次の頼みが先の戻しに相乗りする)、消す途中(冷やす手順の終わり)なら消え終わってから戻す。同じ名の作成が
-   重なっても API server が 1 つだけを作り(409)、負けた側は勝った側の戻しを待つ。backup は在るが完了した物が無い名は、空で作らずに断る。"
+   重なっても API server が 1 つだけを作り(409)、負けた側は勝った側の戻しを待つ。backup は在るが完了した物が無い名は、空で作らずに断る。
+   作る前に札の disk の残りを数え(room-held)、受けられなければ POST せずに置き場の不足 WorkspaceRoomShort で断る。戻す volume は
+   backup を取った時の大きさ(と値の大きさの大きい方)で作る — Longhorn は backup より小さい volume への戻しを断る。"
   (val doing "作成")
   (<- name str (checked-name owner doing))
   (<- settings SettingsWire (workspace-settings site owner))
@@ -626,9 +772,11 @@
           (<- source (| BackupView None) (newest-backup backups))
           (when (and backups (is source None))
             (raise (! (refused owner doing (+ "backup は在るが完了した物が無い(空で作らない): " (.join "・" (gfor one backups (+ one.name " " (or one.state "?")))))))))
+          (val size (if (is source None) settings.size-bytes (max settings.size-bytes source.volume-size)))
+          (<- (room-held site owner doing parameters size (is source None)))
           (var body "")
           (try
-            (<- text str (volume-create-text site name parameters settings.size-bytes (if (is source None) "" source.url)))
+            (<- text str (volume-create-text site name parameters size (if (is source None) "" source.url)))
             (:= body text)
             (except [error ValueError]
               (raise (! (refused owner doing (+ "級 " settings.storage-class " を写せない: " (str error)))))))
@@ -670,11 +818,12 @@
   (when (isinstance volume Malformed)
     (raise (! (malformed-refusal owner doing "Volume の GET"))))
   (val status (or volume.status (VolumeStatusWire)))
+  (<- placing Placing (placing-of status))
   (<- answer HttpResponse (kube-answer owner doing "GET" (! (attachment-path site name)) None JSON-TYPE))
   (match (! (status-field answer.status))
     404 (return (AttachRead :view (AttachView :attachment False :ticket-node None :satisfied False :message "" :state status.state
                                               :current-node status.current-node-id :other-tickets #())
-                            :version ""))
+                            :version "" :placing placing))
     200 None
     _ (raise (! (status-refusal owner doing "VolumeAttachment の GET" answer))))
   (<- held (| AttachmentWire Malformed) (parse-json AttachmentWire (! (text-field answer.text))))
@@ -695,7 +844,8 @@
                                 :state status.state
                                 :current-node status.current-node-id
                                 :other-tickets (tuple (sorted (gfor key tickets :if (!= key own) key))))
-              :version held.metadata.resource-version))
+              :version held.metadata.resource-version
+              :placing placing))
 
 
 (defk ticket-put-text [name node version]
@@ -731,7 +881,9 @@
   {:pre [(: site WorkspaceVolumeSite) (: owner str)] :post [(: % WorkspaceOutcome)] :tags {:context "doeff-cluster" :role "protocol"}}
   "持ち主 owner の volume をこの機体の node に attach し、ticket が満たされ volume がその node に付くまで待つため(ticket を置いた = DONE・
    既に付いていた = ALREADY。無い volume・別の node に ticket の在る volume・上限の秒の内に付かない時は断る)。ticket を置いたら Volume に
-   使った刻の印を書く — 冷やす途中の volume を冷やす側に消させない(頭の註)。印を書く前に消されていたら、作る(戻す)から出し直すよう断る。"
+   使った刻の印を書く — 冷やす途中の volume を冷やす側に消させない(頭の註)。印を書く前に消されていたら、作る(戻す)から出し直すよう断る。
+   付くのを待つ間に Longhorn が replica を置けないと答え、replica がどこにも置かれていなければ(初めて付ける空の volume — 作る前の数えと
+   付けの間に置き場が尽きた)、上限の秒まで待たずに volume を消して置き場の不足で断る(fresh True)。"
   (val doing "attach")
   (<- name str (checked-name owner doing))
   (<- node str (worker-fact WorkerFactName.NODE_NAME))
@@ -752,7 +904,9 @@
                            (<- marked bool (marked-volume site owner doing name))
                            (when (not marked)
                              (raise (! (refused owner doing "ticket を置いた後に volume が消された(冷やされた — 作る(戻す)から出し直す)"))))))
-      AttachStep.WAIT (do (<- now float (GetMonotonic))
+      AttachStep.WAIT (do (when read.placing.failed
+                            (<- (dropped-unplaced site owner doing name read.placing.note True)))
+                          (<- now float (GetMonotonic))
                           (when (> (- now started) site.attach-seconds)
                             (raise (! (refused owner doing (.format "{} 秒の内に node {} に付かない(volume {}・node {}・ticket {})"
                                                                     site.attach-seconds node (or read.view.state "?")
@@ -1155,38 +1309,48 @@
       (when (and spec.allow-scheduling (is-not status None) (<= (set tags) (set (or spec.tags #())))
                  (any (gfor condition (or status.conditions #()) (and (= condition.type "Schedulable") (= condition.status "True")))))
         (:= rooms (+ rooms #((DiskRoom :maximum status.storage-maximum :reserved spec.storage-reserved
-                                       :scheduled status.storage-scheduled)))))))
+                                       :scheduled status.storage-scheduled :available status.storage-available)))))))
   rooms)
 
 
-(defk over-provisioning [site owner doing]
-  {:pre [(: site WorkspaceVolumeSite) (: owner str) (: doing str)] :post [(: % int)] :tags {:context "doeff-cluster" :role "protocol" :reads "json"}}
-  "Longhorn の設定 storage-over-provisioning-percentage(disk に名目で置ける量の %)を読むため(読めない・数でなければ断る)。"
-  (<- answer HttpResponse (kube-answer owner doing "GET" (+ (! (longhorn-path site "settings")) "/storage-over-provisioning-percentage")
-                                       None JSON-TYPE))
+(defk longhorn-percentage [site owner doing setting]
+  {:pre [(: site WorkspaceVolumeSite) (: owner str) (: doing str) (: setting str)] :post [(: % int)]
+   :tags {:context "doeff-cluster" :role "protocol" :reads "json"}}
+  "Longhorn の % の設定 setting(storage-over-provisioning-percentage = disk に名目で置ける量の %・storage-minimal-available-percentage =
+   置く disk に残す実の空きの %)を読むため(読めない・数でなければ断る)。"
+  (<- answer HttpResponse (kube-answer owner doing "GET" (+ (! (longhorn-path site "settings")) "/" (url-quote setting :safe "")) None JSON-TYPE))
   (when (!= (! (status-field answer.status)) 200)
-    (raise (! (status-refusal owner doing "Longhorn の設定 storage-over-provisioning-percentage の GET" answer))))
+    (raise (! (status-refusal owner doing (+ "Longhorn の設定 " setting " の GET") answer))))
   (<- held (| LonghornSettingWire Malformed) (parse-json LonghornSettingWire (! (text-field answer.text))))
   (when (or (isinstance held Malformed) (not (.isdigit held.value)))
-    (raise (! (malformed-refusal owner doing "Longhorn の設定 storage-over-provisioning-percentage"))))
+    (raise (! (malformed-refusal owner doing (+ "Longhorn の設定 " setting)))))
   (int held.value))
+
+
+(defk workspace-room [site]
+  {:pre [(: site WorkspaceVolumeSite)] :post [(: % WorkspaceRoom)] :tags {:context "doeff-cluster" :role "protocol"}}
+  "札の disk が受けられる、値の大きさの volume の残りの本数と、値の spareVolumes を読むため(ReadWorkspaceRoom の答え — 読めなければ断る)。"
+  (val owner "全部")
+  (val doing "置き場の読み")
+  (<- settings SettingsWire (workspace-settings site owner))
+  (<- parameters dict (class-parameters owner settings.storage-class))
+  (<- slots int (room-slots site owner doing parameters settings.size-bytes))
+  (WorkspaceRoom :slots slots :spare settings.spare-volumes))
 
 
 (defk idle-cooling [site]
   {:pre [(: site WorkspaceVolumeSite)] :post [(: % CoolingSweep)] :tags {:context "doeff-cluster" :role "protocol"}}
-  "外れている作業場所の volume のうち、冷やす順(cooling-order — 使い終わりから warmHours を過ぎた物と、札の disk の空きが spareVolumes を
-   割る分)の物を、古い順に 1 つずつ冷やすため(冷やせなかった物は訳を残して次へ進む)。読めない時は断る。"
+  "外れている作業場所の volume のうち、冷やす順(cooling-order — 使い終わりから warmHours を過ぎた物と、札の disk の空き(Longhorn の置く線
+   2 つの内 — room-slots)が spareVolumes を割る分)の物を、古い順に 1 つずつ冷やすため(冷やせなかった物は訳を残して次へ進む)。読めない
+   時は断る。"
   (val owner "全部")
   (val doing "冷やす順の読み")
   (<- settings SettingsWire (workspace-settings site owner))
   (<- parameters dict (class-parameters owner settings.storage-class))
-  (val tags (tuple (lfor tag (.split (.get parameters "diskSelector" "") ",") :if (.strip tag) (.strip tag))))
   (<- reads tuple (volume-reads site owner doing))
   (val warm (tuple (gfor one reads :if (and (= one.state "detached") (not one.restoring) (not one.deleting))
                          (WarmVolume :name one.name :used-at one.used-at))))
-  (<- rooms tuple (disk-rooms site owner doing tags))
-  (<- percentage int (over-provisioning site owner doing))
-  (<- slots int (free-slots rooms settings.size-bytes percentage))
+  (<- slots int (room-slots site owner doing parameters settings.size-bytes))
   (<- now datetime (GetTime))
   (<- order tuple (cooling-order warm (.timestamp now) (* settings.warm-hours 3600.0) slots settings.spare-volumes))
   (var cooled #())
@@ -1228,4 +1392,7 @@
     (resume outcome))
   (CoolIdleWorkspaceVolumes []
     (<- sweep CoolingSweep (idle-cooling site))
-    (resume sweep)))
+    (resume sweep))
+  (ReadWorkspaceRoom []
+    (<- room WorkspaceRoom (workspace-room site))
+    (resume room)))

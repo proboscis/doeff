@@ -32,6 +32,17 @@ class WorkspaceVolumeSite:
 class WorkspaceVolumeRefused(RuntimeError):
     ...
 
+class WorkspaceRoomShort(WorkspaceVolumeRefused):
+    fresh: bool
+
+    def __init__(self, message: str, fresh: bool) -> None:
+        ...
+
+@dataclass(frozen=True, kw_only=True)
+class WorkspaceRoom:
+    slots: int
+    spare: int
+
 @dataclass(frozen=True, kw_only=True)
 class CoolingSweep:
     slots: int
@@ -74,6 +85,10 @@ class CoolWorkspaceVolume(EffectBase[WorkspaceOutcome]):
 class PurgeWorkspaceVolume(EffectBase[WorkspaceOutcome]):
     __record_spec__: ClassVar[RecordSpec]
     owner: str
+
+@dataclass(frozen=True)
+class ReadWorkspaceRoom(EffectBase[WorkspaceRoom]):
+    __record_spec__: ClassVar[RecordSpec]
 
 @dataclass(frozen=True)
 class CoolIdleWorkspaceVolumes(EffectBase[CoolingSweep]):
