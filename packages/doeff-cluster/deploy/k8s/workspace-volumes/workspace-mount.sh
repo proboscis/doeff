@@ -85,7 +85,11 @@ case $verb in
     case $probed in
       2)
         # -m 0: 根の dir を使うのは worker の uid だけなので、root の予約(既定 5% — 10 GiB で 512 MiB)を置かない。
-        mkfs.ext4 -q -m 0 -E root_owner=1000:1000 "$device" </dev/null >>"$notes" 2>&1 || refuse "$device に ext4 を作れなかった"
+        # assume_storage_prezeroed=1(e2fsprogs 1.47 から): journal と inode の表を 0 で埋めない。ここへ来るのは blkid が何も
+        # 見ない新しい volume だけで、Longhorn の新しい volume は書いていない所を 0 で読む(replica は sparse file)。埋めると
+        # 10 GiB の volume ごとに journal 64 MiB と表 160 MiB を SSD へ書く(作っただけで使わない volume でも)。
+        mkfs.ext4 -q -m 0 -E root_owner=1000:1000,assume_storage_prezeroed=1 "$device" </dev/null >>"$notes" 2>&1 ||
+          refuse "$device に ext4 を作れなかった"
         say "空の $volume に ext4 を作った"
         ;;
       0)

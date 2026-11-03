@@ -298,7 +298,7 @@ def test_blank_volume_gets_an_ext4_owned_by_the_worker_then_is_mounted(bench: Be
     code, notes = bench.ask(f"mount ws-a {target}")
     assert code == 0, notes
     mkfs = [call for call in bench.calls() if call.startswith("mkfs.ext4 ")]
-    assert mkfs == [f"mkfs.ext4 -q -m 0 -E root_owner=1000:1000 {bench.devices / 'ws-a'}"]
+    assert mkfs == [f"mkfs.ext4 -q -m 0 -E root_owner=1000:1000,assume_storage_prezeroed=1 {bench.devices / 'ws-a'}"]
     assert bench.mounted() == {str(target): "252:1"}
 
 

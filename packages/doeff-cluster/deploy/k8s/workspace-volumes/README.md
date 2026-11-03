@@ -203,7 +203,7 @@ native sidecar — 宣言と訳は `../nodes/zeus/node.yaml` の註)がする。
 | 頼みの dir | env `WORKER_WORKSPACE_MOUNT_DIR`(= `/run/workspace-mount` — Pod ごとの emptyDir を係と worker が分け合う)。env の無い worker には係が無い |
 | 頼み | `<鍵>.tmp` に 1 行 `<命令> <volume の名> <付ける先>` を書き、`<鍵>.req` へ名を替える(鍵は頼みごとに別。`.` で始めない)。命令は mount・umount・fstrim |
 | 答え | 係は 0.2 秒ごとに `*.req` を見て script を読み直して走らせ、`<鍵>.out`(1 行目 = code 0 か 1・2 行目から訳と命令の出力)を置いて `<鍵>.req` を消す。頼み手は答えを読んだら消す |
-| mount | device は host の `/dev/longhorn/<volume の名>`(Longhorn の ticket で attach した後に在る)。file system が無ければ `mkfs.ext4 -m 0 -E root_owner=1000:1000` を打ってから付ける。同じ volume が既に付いていれば何もしない |
+| mount | device は host の `/dev/longhorn/<volume の名>`(Longhorn の ticket で attach した後に在る)。file system が無ければ `mkfs.ext4 -m 0 -E root_owner=1000:1000,assume_storage_prezeroed=1` を打ってから付ける(新しい volume は書いていない所を 0 で読むので、journal と inode の表を 0 で埋めない — 埋めると 10 GiB ごとに約 224 MiB を SSD へ書く)。同じ volume が既に付いていれば何もしない |
 | umount | 付いている物が名指した volume か照らしてから外す。使用中で外れなければ断る(lazy に外さない)。何も付いていなければ何もしない |
 | fstrim | 付いている物を照らしてから `fstrim -v`(冷やす前 — 節「寿命」) |
 | 断る物 | 3 つの命令の外・volume の名が英小文字・数字・`-` の外・付ける先が `/work` の下の在る dir でない・`.` か `..` か `//` を含む・symlink を通る・attach されていない・付ける先に別の物・volume が別の所に付いている・中身が ext4 でない(作り直さない) |
