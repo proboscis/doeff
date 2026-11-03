@@ -83,3 +83,16 @@ def test_a_former_factory_installer_still_answers_itself() -> None:
     installer = _install_raw(_pass_body, "test", former_factory=True)
     with pytest.warns(DeprecationWarning):
         assert installer() is installer
+
+
+@pytest.mark.parametrize("former_factory", [False, True], ids=["handler", "former-factory"])
+def test_an_installer_is_carried_by_cloudpickle(former_factory: bool) -> None:
+    """A detached task carries its handlers with cloudpickle: the installer's closure holds
+    only picklable values (a weak reference to itself could not be pickled)."""
+    import cloudpickle
+
+    from doeff.program import _install_raw
+
+    installer = _install_raw(_pass_body, "test", former_factory=former_factory)
+    carried = cloudpickle.loads(cloudpickle.dumps(installer))
+    assert carried.__name__ == installer.__name__
