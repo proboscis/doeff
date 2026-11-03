@@ -166,6 +166,15 @@ def ordered_within_index_name(prefix: str, table: str, equal_field: str, field_n
 def ordered_within_index(prefix: str, table: str, equal_field: str, field_name: str) -> _Program[DeclaredIndex, object]:
     ...
 
+def bulk_pending_condition(table: str) -> _Program[str, object]:
+    ...
+
+def bulk_pending_index_name(prefix: str, table: str) -> _Program[str, object]:
+    ...
+
+def bulk_pending_index(prefix: str, table: str) -> _Program[DeclaredIndex, object]:
+    ...
+
 def field_index(prefix: str, table: str, field_name: str, serves: bool) -> _Program[DeclaredIndex, object]:
     ...
 
@@ -314,10 +323,10 @@ def terminal_rows_statement(prefix: str, table: str, state_field: str, terminal:
 def upsert_row_statement(prefix: str, table: str, key: str, payload: str, bulk: str | None, version: int, at: int, writer: str, origin_host: str, epoch: int) -> _Program[Statement, object]:
     ...
 
-def bulk_candidates_statement(prefix: str, table: str, fields: tuple, limit: int) -> _Program[Statement, object]:
+def bulk_candidates_statement(prefix: str, table: str, limit: int) -> _Program[Statement, object]:
     ...
 
-def unmoved_count_statement(prefix: str, table: str, fields: tuple) -> _Program[Statement, object]:
+def unmoved_count_statement(prefix: str, table: str) -> _Program[Statement, object]:
     ...
 
 def move_bulk_statement(prefix: str, table: str, moves: str) -> _Program[Statement, object]:

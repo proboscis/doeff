@@ -1,9 +1,11 @@
 ;; 大きい欄(TableDecl.bulk)の版 2: 書きが大きい欄を列 bulk に分けて置き、手入れの移し(MoveBulkFields)が前の版の書いた行を分け直す。
-;;   - PutRow・PutRows・PutRowsAppendEvents の書きは、大きい欄を列 bulk に・残りを payload に置き(値に大きい欄の無い行は bulk が NULL)、
+;;   - PutRow・PutRows・PutRowsAppendEvents の書きは、大きい欄を列 bulk に・残りを payload に置き(値に大きい欄の無い行は bulk が分け終えた
+;;     印 '{}' — 分けていない行の索引に入らない)、
 ;;     変更の列には値の全部を積む。読みの答えは、分けない memory の置き場の答えと同じ値と版。
 ;;   - 大きい欄で並べる読み(descending-by・ascending-by)と下限で数える読み(CountRows の at-least)は、絞りと同じ所で NotIndexed に断る
 ;;     (並べる式も payload から読む — memory と PostgreSQL の置き場が同じ答え)。
-;;   - 移しは表ごとに limit 行まで分け直し、値・版・刻・書き手・置き場の版・変更の列を動かさない。候補を読んだ後に書かれた行は上書きせず、
+;;   - 移しは表ごとに分けていない行(bulk が NULL の行)を limit 行まで分け直し(大きい欄の無い行は印だけを置き、列 payload を書き直さない)、
+;;     値・版・刻・書き手・置き場の版・変更の列を動かさない。候補の読みと残りの数えは分けていない行の索引を引く。候補を読んだ後に書かれた行は上書きせず、
 ;;     後から前の版の形で書かれた行は次の回が拾う。残りの数は計器の gauge records_bulk_unmoved_<表> に出る。
 (require doeff-hy.macros [deftest defhandler defk <- val var on-raise])
 (import json)
@@ -18,7 +20,7 @@
 (import doeff_records._maintenance [MoveBulkFields BulkMoved SweepExpired Swept PruneChanges Pruned maintenance-tick bulk-metric-helps])
 (import doeff_records._admission [key-text canonical-json])
 (import doeff_records._pg [PreparedStore prepare-records-store drop-records-tables query-rows bulk-moves-json])
-(import doeff_records._pg_sql [bulk-candidates-statement move-bulk-statement])
+(import doeff_records._pg_sql [bulk-candidates-statement unmoved-count-statement move-bulk-statement bulk-pending-index-name])
 (import tests.interpreters [session-dsn PG-DSN-VARIABLE pg-skip-reason DATABASE ORIGIN-HOST open-postgres postgres-connections
                             fresh-prefix run-sql])
 
@@ -47,10 +49,10 @@
 
 
 (defn split-of [#^ dict value]
-  "値を、列 payload と列 bulk に置かれるべき 2 つの綴りにする(大きい欄の無い値は bulk が None)。"
+  "値を、列 payload と列 bulk に置かれるべき 2 つの綴りにする(大きい欄の無い値は bulk が分け終えた印 \"{}\")。"
   (setv moved (dfor #(field v) (.items value) :if (in field BULK) field v))
   #((canonical-json (dfor #(field v) (.items value) :if (not-in field BULK) field v))
-    (if moved (canonical-json moved) None)))
+    (if moved (canonical-json moved) "{}")))
 
 
 (defn stored-columns [prefix #^ str name]
@@ -64,6 +66,12 @@
 (defn change-count [prefix]
   (with [connection (open-postgres)]
     (get (.fetchone (.execute connection (.format "SELECT count(*) FROM {}row_changes" prefix))) 0)))
+
+
+(defn pending-count [prefix]
+  "表 notes の分けていない行(列 bulk が NULL の行)の数を素の SELECT で読む。"
+  (with [connection (open-postgres)]
+    (get (.fetchone (.execute connection (.format "SELECT count(*) FROM {}state_rows WHERE ledger = 'notes' AND bulk IS NULL" prefix))) 0)))
 
 
 (defn join-rows [prefix names]
@@ -111,7 +119,7 @@
                  (RowWrite "notes" #("n3") (get VALUES "n3") (ExpectAbsent)))))
   (<- (PutRowsAppendEvents #((RowWrite "notes" #("n4") (get VALUES "n4") (ExpectAbsent)))
                            #((EventAppend "journal" "k1" {"n" 1}))))
-  ;; n1 は題だけを書く(大きい欄は今の行から残る)・n2 は本文を null にして外す(大きい欄の無くなった行は列 bulk が NULL に戻る)。
+  ;; n1 は題だけを書く(大きい欄は今の行から残る)・n2 は本文を null にして外す(大きい欄の無くなった行は列 bulk が印 '{}' に戻る)。
   (<- (PutRow "notes" #("n1") (FrozenMap {"title" "alpha-2"}) (ExpectVersion 1)))
   (<- (PutRows #((RowWrite "notes" #("n2") {"title" "beta" "rank" 1 "body" None} (ExpectVersion 1)))))
   None)
@@ -150,7 +158,7 @@
     (setv answers (pg-run connections store (write-then-read)))
     ;; 読みの答えは分けない memory の置き場と同じ値と版。
     (assert (= answers memory) #(answers memory))
-    ;; 置いた列: n1(題を重ねた行)は大きい欄を bulk に・n2(本文を外した行)と n3 は bulk が NULL・n4(束の書き)は bulk に。
+    ;; 置いた列: n1(題を重ねた行)は大きい欄を bulk に・n2(本文を外した行)と n3 は bulk が印 '{}'・n4(束の書き)は bulk に。
     (setv n1 (| (whole-value "n1" (get VALUES "n1")) {"title" "alpha-2"}))
     (setv n2 (dfor #(f v) (.items (whole-value "n2" (get VALUES "n2"))) :if (!= f "body") f v))
     (for [#(name value) [#("n1" n1) #("n2" n2) #("n3" (whole-value "n3" (get VALUES "n3"))) #("n4" (whole-value "n4" (get VALUES "n4")))]]
@@ -163,7 +171,9 @@
                                                                 store.prefix)
                                             #((key-text #("n4")))))
                        0)))
-    (assert (= change (canonical-json (whole-value "n4" (get VALUES "n4")))) change))
+    (assert (= change (canonical-json (whole-value "n4" (get VALUES "n4")))) change)
+    ;; この版の書きは分けていない行を残さない(移しの候補と残りの数えは 0 行 — 移し終えた表の回は空の索引を引くだけ)。
+    (assert (= (pending-count store.prefix) 0) store.prefix))
   (with-pg check))
 
 
@@ -247,10 +257,13 @@
     (setv before (dfor name VALUES name (stored-columns store.prefix name)))
     (setv changes (change-count store.prefix))
     (setv read-before (pg-run connections store (read-everything)))
-    ;; 大きい欄を持つ行は n1・n2・n4 の 3 つ。1 行ずつの移しは 3 回で移し終え、残りは 2・1・0、4 回目は移す行が無い。
-    (setv answers (pg-run connections store (moved-rounds 4)))
-    (assert (= (tuple (gfor a answers (get a.moved "notes"))) #(1 1 1 0)) answers)
-    (assert (= (tuple (gfor a answers (get a.unmoved "notes"))) #(2 1 0 0)) answers)
+    ;; 前の版の形の行は 4 つ(大きい欄を持つ n1・n2・n4 と、大きい欄の無い n3)。1 行ずつの移しは 4 回で移し終え(n3 は印を置く)、
+    ;; 残りは 3・2・1・0、5 回目は移す行が無い。
+    (assert (= (pending-count store.prefix) 4) store.prefix)
+    (setv answers (pg-run connections store (moved-rounds 5)))
+    (assert (= (tuple (gfor a answers (get a.moved "notes"))) #(1 1 1 1 0)) answers)
+    (assert (= (tuple (gfor a answers (get a.unmoved "notes"))) #(3 2 1 0 0)) answers)
+    (assert (= (pending-count store.prefix) 0) store.prefix)
     (for [name VALUES]
       (setv after (stored-columns store.prefix name))
       ;; 列は書きと同じ綴りに分かれ(指数の小数も綴りのまま)、版・刻・書き手・置き場の版は動かない。
@@ -264,7 +277,7 @@
 (defk candidate-moves [store]
   {:pre [(: store PreparedStore)] :post [(: % str)] :tags {:context "records" :role "program"}}
   "移しの候補を読み、分け直しの引数の綴りを作るため(移しの文を流す前に書きを挟む検の口)。"
-  (<- statement (bulk-candidates-statement store.prefix "notes" BULK 1000))
+  (<- statement (bulk-candidates-statement store.prefix "notes" 1000))
   (<- records (query-rows store.database statement))
   (<- moves (bulk-moves-json BULK records))
   moves)
@@ -300,6 +313,27 @@
     (assert (= answer (BulkMoved :moved (FrozenMap {"notes" 1}) :unmoved (FrozenMap {"notes" 0}))) answer)
     (setv n3 (stored-columns store.prefix "n3"))
     (assert (= #((get n3 0) (get n3 1)) (split-of (whole-value "n3" (| (get VALUES "n3") {"body" "late"})))) n3))
+  (with-pg check))
+
+
+;; --- 分けていない行の索引 ------------------------------------------------------------------------------------
+
+(deftest test-the-move-reads-and-counts-through-the-pending-index
+  ;; 候補の読みと残りの数えの文は、分けていない行の索引(bulk-pending-index — 述語 ledger = '<表>' AND bulk IS NULL)に当たる
+  ;; (表の名を文に直に置くので planner が述語を証明できる)。前の形は表の全部の行を読み payload を jsonb に読み直した。
+  {:skip-if (not PG-DSN) :skip-reason PG-SKIP-REASON}
+  (defn check [connections store]
+    (pg-run connections store (put-values))
+    (join-rows store.prefix (sorted VALUES))
+    (setv index (run (bulk-pending-index-name store.prefix "notes")))
+    (setv candidates (run (bulk-candidates-statement store.prefix "notes" 1000)))
+    (setv counting (run (unmoved-count-statement store.prefix "notes")))
+    (with [connection (open-postgres)]
+      (.execute connection "SET enable_seqscan = off")
+      (for [text [(.replace candidates.text ":limit" "1000") counting.text]]
+        (setv plan (.join "\n" (gfor row (.fetchall (.execute connection (+ "EXPLAIN " text))) (get row 0))))
+        (assert (in index plan) #(text plan))
+        (assert (not-in "jsonb" plan) plan))))
   (with-pg check))
 
 

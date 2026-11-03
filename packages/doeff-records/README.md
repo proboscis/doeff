@@ -155,10 +155,11 @@ effect と型(定義・期待・答え)は入口 `doeff_records` から読む(`f
   (作る時に `ValueError`)。大きい欄は索引の欄でないので、`where`・`where_any` で絞る読みと、大きい欄で並べる読み(`descending_by`・
   `ascending_by`)・下限で数える読み(`CountRows` の `at_least`)は `NotIndexed`。repr に出さず、空でない時だけ表の要約(`schema_digests`)に
   足す — 大きい欄の無い表の要約は変わらない。書き(`PutRow`・`PutRows`・`PutRowsAppendEvents`)は大きい欄を列 `bulk` に、残りを `payload` に
-  置き(値に大きい欄が無ければ `bulk` は NULL)、変更の列には値の全部を積む。読みが `payload` と `bulk` を合わせる(同じ欄が両方に在れば
-  `payload` の値)。前の版が値の全部を `payload` に置いた行は、手入れの移し(`MaintenancePlan.move_bulk` — 既定で回す)が拍ごとに表ごと
-  1,000 行まで、読んだ時の版の行だけを書きと同じ綴りで分け直す(値・版・刻・変更の列は動かさない)。残りの行の数は計器の
-  `records_bulk_unmoved_<表>`、移した数は `records_bulk_moved_<表>`。
+  置き(値に大きい欄が無ければ `bulk` は分け終えた印 `'{}'`)、変更の列には値の全部を積む。読みが `payload` と `bulk` を合わせる(同じ欄が
+  両方に在れば `payload` の値)。前の版が書いた `bulk` が NULL の行(分けていない行)は、手入れの移し(`MaintenancePlan.move_bulk` — 既定で
+  回す)が拍ごとに表ごと 1,000 行まで、読んだ時の版の行だけを書きと同じ綴りで分け直す(大きい欄の無い行は印だけを置く・値・版・刻・変更の
+  列は動かさない)。候補の読みと残りの数えは表ごとの部分索引(`WHERE ledger = '<表>' AND bulk IS NULL`)で分けていない行だけを引き、
+  表の全部の行を読まない。残りの行の数は計器の `records_bulk_unmoved_<表>`、移した数は `records_bulk_moved_<表>`。
 
 追記の列は `StreamDecl(name, writers, retention, size_budget)`(`KeepFor` は積んでから秒の後に読みに出なくなり、その後の回収で消す。消した出来事の冪等キーは
 番号と本文の指紋だけを覚える — 消した後の同じキーの再送も、同じ本文なら前の番号・別の本文なら `Refused`。#3022)。

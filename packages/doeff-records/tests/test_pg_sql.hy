@@ -40,7 +40,7 @@
         doeff_records._pg_sql [in-list changes-statement terminal-rows-statement RowExpiry declared-indexes index-name table-index-name retired-index? table-shaped-index? table-field-index-name ordered-index-name ordered-within-index-name former-field-index-name
                               whole-field-index-name list-rows-statement top-rows-statement ordered-rows-statement read-row-statement
                               lock-row-statement upsert-row-statement STORED-PAYLOAD
-                              bulk-candidates-statement unmoved-count-statement move-bulk-statement])
+                              bulk-candidates-statement unmoved-count-statement move-bulk-statement bulk-pending-index bulk-pending-index-name])
 (import tests.interpreters [session-dsn PG-DSN-VARIABLE pg-skip-reason DATABASE ORIGIN-HOST open-postgres postgres-connections fresh-prefix run-sql prepared-store])
 (import doeff_records._main [store-pressure-pg])
 (import doeff_records._store_choice [StorePressure])
@@ -145,19 +145,20 @@
   (<- whole (whole-field-index-name "records_" "parts" "role"))
   (<- ordered (ordered-index-name "records_" "parts" "role"))
   (<- within (ordered-within-index-name "records_" "parts" "color" "role"))
+  (<- pending (bulk-pending-index-name "records_" "parts"))
   ;; 2026-10-23 と 2026-10-31 の本番の置き場の表ごとの索引の名の写しと、表の欄の式の索引の前の形(式 1 つの索引 fx_・全部の行の 2 列の
   ;; 索引 ft_)・上から読む索引の前の形(全部の行の索引 ox_・ow_)の名の写しも当たる(今の宣言は作らないので、索引の用意が外す)。
   (assert (.startswith field "records_fp_") field)
   (assert (.startswith former "records_fx_") former)
   (assert (.startswith whole "records_ft_") whole)
-  (for [name [field former whole ordered within "records_fx_3150ecd5e029_8a35885a0e07" "records_fx_8dca46428d00_2c17ecd3ddd1"
+  (for [name [field former whole ordered within pending "records_fx_3150ecd5e029_8a35885a0e07" "records_fx_8dca46428d00_2c17ecd3ddd1"
               "records_ft_e382b1ded37d_8a35885a0e07" "records_ox_27e90dfa57c3_6f9b9af3cd6e" "records_ow_bd51f9a00add_6f9b9af3cd6e"]]
     (<- hit (table-shaped-index? "records_" name))
     (assert hit name))
   (<- legacy (index-name "records_" "role"))
   (<- partial (table-index-name "records_" "parts" "role"))
   (for [name [legacy partial "records_state_rows_pkey" "records_fx_8dca46428d00" "records_fx_8dca46428d00_2c17ecd3ddd" "records_hand_fx_8dca46428d00_2c17ecd3ddd1"
-              "records_px_8dca46428d00_2c17ecd3ddd1"]]
+              "records_px_8dca46428d00_2c17ecd3ddd1" "records_bp_8dca46428d00_2c17ecd3ddd1"]]
     (<- missed (table-shaped-index? "records_" name))
     (assert (not missed) name))
   (<- elsewhere (table-shaped-index? "app_" field))
@@ -206,18 +207,21 @@
 
 
 (deftest test-the-bulk-move-statements-read-and-rewrite-only-unsplit-rows
-  ;; 手入れの移し(_pg_sql.hy の頭の註の state_rows): 候補の読みと残りの数えは、bulk が NULL で payload に大きい欄が残る行だけを名指し、
-  ;; 分け直しの文は読んだ時の版の行だけを書き換え、版・刻・書き手・置き場の版の列を書かない。
-  (<- candidates (bulk-candidates-statement "records_" "parts" #("body" "notes") 1000))
-  (<- unmoved (unmoved-count-statement "records_" "parts" #("body" "notes")))
+  ;; 手入れの移し(_pg_sql.hy の頭の註の state_rows): 候補の読みと残りの数えは、分けていない行の索引の述語と同じ字面の条件(表の名を
+  ;; 直に置く)だけで引き、payload を jsonb に読み直さない。分け直しの文は読んだ時の版の行だけを書き換え(payload が null の項は列 payload を
+  ;; 書き直さない)、版・刻・書き手・置き場の版の列を書かない。
+  (<- candidates (bulk-candidates-statement "records_" "parts" 1000))
+  (<- unmoved (unmoved-count-statement "records_" "parts"))
+  (<- index (bulk-pending-index "records_" "parts"))
+  (assert (.endswith index.text "ON records_state_rows (key) WHERE ledger = 'parts' AND bulk IS NULL") index.text)
   (for [statement [candidates unmoved]]
-    (assert (in "WHERE ledger = :ledger AND bulk IS NULL AND (payload::jsonb) ?| ARRAY[:b0, :b1]::text[]" statement.text) statement.text)
-    (assert (= (tuple (gfor p statement.params :if (.startswith p.name "b") #(p.name p.value))) #(#("b0" "body") #("b1" "notes")))
-            statement.params))
+    (assert (in "FROM records_state_rows WHERE ledger = 'parts' AND bulk IS NULL" statement.text) statement.text)
+    (assert (not-in "jsonb" statement.text) statement.text)
+    (assert (not-in ":ledger" statement.text) statement.text))
   (assert (.endswith candidates.text "LIMIT :limit") candidates.text)
   (assert (not-in "ORDER BY" candidates.text) candidates.text)
   (<- move (move-bulk-statement "records_" "parts" "[]"))
-  (assert (in "SET payload = moved.payload, bulk = moved.bulk" move.text) move.text)
+  (assert (in "SET payload = COALESCE(moved.payload, r.payload), bulk = moved.bulk" move.text) move.text)
   (assert (in "r.version = moved.version" move.text) move.text)
   (for [column ["version =" "updated_at" "updated_by" "origin_host" "epoch"]]
     (assert (not-in (+ "SET " column) move.text) #(column move.text))
