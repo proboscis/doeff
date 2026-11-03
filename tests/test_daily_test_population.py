@@ -135,7 +135,6 @@ EXCLUDED: dict[str, str] = {
         "の tools/verify_core_install.py --pypi が、PyPI の doeff と pytest だけの venv で例の dir を写した所で走らせる"
         "— 根の下に置くと repo の版と根の conftest.py の下で走る"
     ),
-    "tools/test_python_versions.py": "Python の版を回す道具の script",
 }
 
 

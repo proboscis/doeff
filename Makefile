@@ -4,7 +4,7 @@
 
 .PHONY: help install sync lint lint-ruff lint-pyright lint-semgrep lint-semgrep-docs lint-doeff lint-packages \
         test test-unit test-e2e test-changed test-packages print-package-extra-test-roots test-hy-floor test-rust test-all test-spec-audit-sa002 bench-smoke format check check-repo-hygiene \
-        pre-commit-install hooks-install enforcement-ledger docs-site docs-serve clean install-opencode-spec-gap-tdd
+        pre-commit-install hooks-install enforcement-ledger docs-site docs-serve clean
 
 # Default target
 help:
@@ -49,7 +49,6 @@ help:
 	@echo ""
 	@echo "Utilities:"
 	@echo "  make clean             Remove build artifacts and caches"
-	@echo "  make install-opencode-spec-gap-tdd Install OpenCode spec-gap-tdd symlinks"
 
 # =============================================================================
 # Setup
@@ -347,6 +346,3 @@ clean:
 	rm -rf dist build *.egg-info
 	find . -type d -name "__pycache__" -exec rm -rf {} + 2>/dev/null || true
 	find . -type f -name "*.pyc" -delete 2>/dev/null || true
-
-install-opencode-spec-gap-tdd:
-	bash scripts/install-opencode-spec-gap-tdd.sh

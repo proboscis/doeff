@@ -154,8 +154,8 @@
 - **doeff-traverse:** `sequential` is a handler, not a handler factory, for the same reason (ADR-DOE-API-002): write
   `sequential(prog)` and `[fail_handler, sequential]` (in Hy, `(sequential prog)` and `[fail-handler sequential]`)
   where you wrote `sequential()(prog)` and `(sequential)`. The former call `sequential()` still answers the same
-  handler for one release, with a `DeprecationWarning`. `tools/former_factory_call_rewrite.py` rewrites the former
-  calls of a repository (`census` counts them, `rewrite` edits the working tree).
+  handler for one release, with a `DeprecationWarning`. The rewrite script that edited the former calls of a repository was
+  deleted after the move (it stays in git history).
 - **doeff-git, doeff-openai, doeff-openrouter, doeff-conductor:** `production_handlers` (of the first three) and
   doeff-conductor's `agent_handler` and `git_handler` are handlers, not handler factories (ADR-DOE-API-002): write
   `production_handlers(prog)` and `[production_handlers, …, agent_handler, git_handler]` where you wrote

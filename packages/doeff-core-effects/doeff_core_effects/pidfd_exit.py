@@ -5,7 +5,7 @@
 
 Importing the old path gives the moved module itself, so ``mock.patch`` targets and isinstance checks on
 the old path act on the same objects, and ``python -m doeff_core_effects.pidfd_exit…`` runs the moved module. Deleted by
-``tools/hide_submodules.py finish`` once no repo reads the old path.
+hand once no repo reads the old path.
 """
 
 import sys
