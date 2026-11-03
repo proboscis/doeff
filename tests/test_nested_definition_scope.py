@@ -1,15 +1,17 @@
 """関数の本体の中に入れ子で書いた定義の macro(defk・defp・deftest・defmcp-tool・defeffect・deff ほか
-doeff_hy.macros が出す def の付く macro の全部と、doeff_hy.record の defrecord・defwire・defenum、持ち主の package が出す
-doeff_conductor.macros の defworkflow と doeff_cluster.macros の defsystem)が、
+doeff_hy.macros が出す def の付く macro の全部と、doeff_hy.record の defrecord・defwire・defenum)が、
 外の関数に局所の名を作らない事の検(macro の全部を検体で数え、class の本体と型検査の投影も検める)。
+持ち主の package が出す定義の macro(doeff_conductor.macros の defworkflow・doeff_cluster.macros の defsystem)は、
+同じ検め方を packages/doeff-conductor/tests/test_nested_defworkflow_scope.py と
+packages/doeff-cluster/tests/test_nested_defsystem_scope.py が持つ(2026-11-04 に分けた — root の tests が内輪の package を
+import しないため)。
 
 defk・defp・deftest の実行時の展開は、頭で `_doeff_do`・`_guard_statement_value`・`_doeff_effect_base` などの補助
 (と `doeff_hy`・`pytest`・`_doeff_QuotedForms`)を import する。関数の本体の中でそれを import すると、名が関数全体の
 局所の名になり、同じ関数で先に読む traverse / for/do の `_doeff_do`、本体の文の guard の `_guard_statement_value`、
 最後の値の guard の `_doeff_effect_base` が UnboundLocalError で落ちていた(fnk・do! の同じ不具合は
 tests/test_fnk_do_bang_scope.py)。defmcp-tool も展開の頭で `_doeff_do`・`McpToolDef`・`McpParamSchema` を import する。
-defeffect は `_doeff_effect_base`・`_doeff_dataclass`・`_doeff_ClassVar` などを、deff は宣言の `doeff_hy` を、defsystem は
-`doeff_hy`・`_doeff_cluster_service_model`・`_doeff_cluster_service_build` を、defrecord は `doeff_hy`(record_runtime・頭の辞書の宣言)を、defwire は加えて
+defeffect は `_doeff_effect_base`・`_doeff_dataclass`・`_doeff_ClassVar` などを、deff は宣言の `doeff_hy` を、defrecord は `doeff_hy`(record_runtime・頭の辞書の宣言)を、defwire は加えて
 `_doeff_ClassVar` を import する。
 module と class の本体の展開は包まない(`__qualname__` と引数なしの `super()` を保つ)。defhandler は tests/test_handle_scope.py
 が検め、ここでは不具合の再現の手順の形だけを置く。
@@ -58,16 +60,11 @@ _SCOPE_LEAKING_NAMES = frozenset(
         "_doeff_cast",
         "_doeff_object",
         "doeff_core_effects",
-        "_doeff_cluster_service_model",
-        "_doeff_cluster_service_build",
         "WithHandler",
         "Resume",
         "Transfer",
         "Pass",
         "_doeff_check_clause_endings_once",
-        "_conductor_defworkflow",
-        "_conductor_defphase",
-        "_conductor_agent_bang",
     }
 )
 
@@ -76,8 +73,6 @@ _HEADER = """
 (require doeff-hy.macros [defk defp defpp deftest defmcp-tool defeffect deff defhandler defpipeline
                           <- traverse for/do])
 (require doeff-hy.record [defrecord defwire defenum])
-(require doeff-conductor.macros [defworkflow defphase agent!])
-(require doeff-cluster.macros [defsystem])
 (import dataclasses [dataclass])
 (import enum [StrEnum])
 (import doeff_traverse [Traverse :as _doeff_traverse_Traverse])
@@ -286,17 +281,6 @@ _CASES = {
         lambda mod: mod.subject(5),
         ("doeff_hy", 6),
     ),
-    # 外の関数が module の段の doeff_hy を読んだ後に、入れ子の defsystem の import(doeff_hy・doeff_cluster)が来る
-    "defsystem-after-module-doeff-hy-read": (
-        """
-        (defn subject [x]
-          (setv owner (. doeff_hy __name__))
-          (defsystem lab [#^ object foundation] "lab" (job (fn [] None) :replicas 1 :peak-mib 200 :settle-mib 100))
-          #(owner (. lab __name__) x))
-        """,
-        lambda mod: mod.subject(5),
-        ("doeff_hy", "lab", 5),
-    ),
     # 外の関数が module の段の doeff_hy を読んだ後に、入れ子の defrecord の record_runtime の import(doeff_hy)が来る
     # (不具合の再現の手順)
     "defrecord-after-module-doeff-hy-read": (
@@ -341,20 +325,6 @@ _CASES = {
         """,
         _run_defk([1, 2, 3]),
         3,
-    ),
-    # 外の関数が module の段の `_conductor_defworkflow`(module の段の defworkflow の import)を読んだ後に、入れ子の
-    # defworkflow の import が来る — 本体の phase・agent! の import も外の関数の局所にしない
-    "defworkflow-after-module-conductor-read": (
-        """
-        (defworkflow module-flow :params {} :roles {})
-        (defn subject []
-          (setv before (. _conductor_defworkflow __name__))
-          (defworkflow flow :params {} :roles {"worker" {"profile" "p"}}
-            (defphase Build (agent! :role "worker" :class "test-verifiable" :prompt "p" :files #{"a.py"})))
-          #(before (len (. flow body))))
-        """,
-        lambda mod: mod.subject(),
-        ("defworkflow", 1),
     ),
     # 関数の中の class の本体の defk は class の段の展開のまま(method は module の globals の補助を読む)
     "defk-in-class-in-defn": (
@@ -411,10 +381,6 @@ _DEFINITION_SAMPLES: dict[str, tuple[str, frozenset[str]]] = {
         frozenset({"echo"}),
     ),
     "defhandler": ("(defhandler inner (Ask [k] (resume 1)))", frozenset({"inner"})),
-    "defsystem": (
-        '(defsystem lab [#^ object foundation] "lab" (job (fn [] None) :replicas 1 :peak-mib 200 :settle-mib 100))',
-        frozenset({"lab"}),
-    ),
     "defpipeline": (
         "(defpipeline daily [a] (+ 1 2) [b] (* a 2))",
         frozenset({"p_daily_a", "p_daily_b", "p_daily"}),
@@ -428,44 +394,22 @@ _DEFINITION_SAMPLES: dict[str, tuple[str, frozenset[str]]] = {
         frozenset({"Span"}),
     ),
     "defenum": ("(defenum Kind ALPHA BETA)", frozenset({"Kind"})),
-    "defworkflow": (
-        '(defworkflow flow :params {} :roles {"worker" {"profile" "p"}} '
-        '(defphase Build (agent! :role "worker" :class "test-verifiable" :prompt "p" :files #{"a.py"})))',
-        frozenset({"flow"}),
-    ),
 }
 
 
-# 名の付く macro のうち、名を束ねない物(式の macro — defworkflow の本体に置く phase の値を返す)
-_NOT_DEFINITION_MACROS = frozenset({"defphase"})
-
-
-#: 定義の macro を持ち主の package に置く Hy の module(doeff-hy の外)。
-_OWNER_MACRO_MODULES = ("doeff-conductor.macros", "doeff-cluster.macros")
-
-
-def _owner_macro_names() -> set[str]:
-    """`(require <持ち主の module> *)` が書き手の module に引く macro の名 — 持ち主の macro の module は Python から import せず、
-    書き手と同じに Hy の require で読む(この検の module 契約が許す依存の外)。"""
-    reader = types.ModuleType("owner_macro_names")
-    for module in _OWNER_MACRO_MODULES:
-        hy.eval(hy.read(f"(require {module} *)"), reader.__dict__, module=reader)
-    return {hy.unmangle(name) for name in vars(reader)[MACRO_TABLE]}
-
-
 def _exported_definition_macros() -> set[str]:
-    """`(require doeff-hy.macros [...])`・`(require doeff-hy.record [...])` と持ち主の module の require で書き手が引ける
-    定義の macro の名(handle.hy から出し直す defhandler を含む)。"""
+    """`(require doeff-hy.macros [...])`・`(require doeff-hy.record [...])` で書き手が引ける定義の macro の名(handle.hy から
+    出し直す defhandler を含む)。"""
     named = {
         hy.unmangle(name)
         for module in (doeff_hy.macros, doeff_hy.record)
         for name in vars(module)[MACRO_TABLE]
-    } | _owner_macro_names()
-    return {name for name in named if name.startswith("def") and name not in _NOT_DEFINITION_MACROS}
+    }
+    return {name for name in named if name.startswith("def")}
 
 
 def test_every_definition_macro_has_a_nested_sample() -> None:
-    """doeff_hy.macros・doeff_hy.record と持ち主の module(doeff_conductor.macros・doeff_cluster.macros)が出す定義の macro には、関数の本体の中に置く検体が要る — 検体の無い macro は、
+    """doeff_hy.macros・doeff_hy.record が出す定義の macro には、関数の本体の中に置く検体が要る — 検体の無い macro は、
     補助の import が外の関数の局所の名になるかを誰も検めない(足した macro は検体を足すまで赤)。"""
     assert _exported_definition_macros() == set(_DEFINITION_SAMPLES)
 
@@ -765,17 +709,15 @@ _PROJECTION_HEADER = """
 (require doeff-hy.macros [defk deff defp defpp deftest defmcp-tool defeffect defhandler defpipeline
                           <- traverse for/do])
 (require doeff-hy.record [defrecord defwire defenum])
-(require doeff-conductor.macros [defworkflow defphase agent!])
-(require doeff-cluster.macros [defsystem])
 (import dataclasses [dataclass])
 (import enum [StrEnum])
 (import doeff_hy)
 """
 
-# macro が展開の import に付ける別名の頭(expansion_names.PREFIX と、conductor の `_conductor_`)と、根の module の名 — 入れ子の scope がこれらの名を
+# macro が展開の import に付ける別名の頭(expansion_names.PREFIX)と、根の module の名 — 入れ子の scope がこれらの名を
 # 読むなら、module の段で束ねられていなければ pyright は未定義と読む(module の段の名だけが、入れ子の scope から引ける)。
-_PROJECTION_MACRO_NAME_PREFIXES = ("_doeff_", "_conductor_")
-_PROJECTION_ROOT_NAMES = frozenset({"doeff_hy", "doeff_core_effects", "doeff_cluster"})
+_PROJECTION_MACRO_NAME_PREFIXES = ("_doeff_",)
+_PROJECTION_ROOT_NAMES = frozenset({"doeff_hy", "doeff_core_effects"})
 
 
 def _projection_of(tmp_path: Path, body: str) -> ast.Module:
@@ -835,7 +777,6 @@ _STATIC_SCOPES_SOURCE = "(defn subject [] {source} None)\n(defclass Outer [] {so
 # 新しい補助の import が scope に残る時は、この表へ足す前に、入れ子の scope が読まない事を確かめる(読むなら module の段へ移す)。
 _IMPORTS_LEFT_IN_SCOPE = {
     "defeffect": frozenset({"_doeff_dataclass", "_doeff_effect_base"}),
-    "defworkflow": frozenset({"_conductor_agent_bang", "_conductor_defphase", "_conductor_defworkflow"}),
 }
 
 

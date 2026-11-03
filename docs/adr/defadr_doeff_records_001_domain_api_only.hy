@@ -11,7 +11,13 @@
 (require doeff-adr.macros [defadr rule law])
 (import doeff-adr.macros [fact interpretation counterexample])
 (require doeff-hy.macros [deftest val])
+(import pathlib [Path])
+(import typing [get-args])
+(import doeff-records [ReadRowAnswer Row Missing Unreachable])
 (import doeff_records._wire [OPERATIONS PATH-PREFIX])
+
+
+(val REPO-ROOT (. (Path __file__) parent parent parent))
 
 
 ;; The list of raw operations the wire exposes under /v1/records/ (10 on doeff main as of 2026-10-07). A change that adds one goes red as missing from this list.
@@ -70,5 +76,16 @@
        (assert (= PATH-PREFIX "/v1/records/") PATH-PREFIX)
        (assert (= (frozenset OPERATIONS) RAW-OPERATIONS)
                (+ "The wire's raw operations differ from the list (ADR-DOE-RECORDS-001 R4 — do not add raw operations. A change that removes one deletes it from RAW-OPERATIONS in the same change): "
-                  (str (sorted OPERATIONS)))))]
+                  (str (sorted OPERATIONS)))))
+     ;; Moved from ADR-DOE-CORE-EFFECTS-003 (2026-11-04) so that the core ADR does not import doeff-records. The fact it checks is the one
+     ;; ADR-DOE-CORE-EFFECTS-003 cites (its problem fact on doeff-records' failure answers and rules R5 and R14).
+     (deftest test-adr-doe-records-001-read-row-answer-mixes-success-absence-failure
+       ;; Fact: ReadRow's answer lists success, absence, and failure in one union (why ADR-DOE-CORE-EFFECTS-003 R5's declaration is needed — before stage 3, so there is no declaration yet).
+       ;; The three phrases are the Japanese text of packages/doeff-records/README.md, kept as \u escapes so the check still reads that file:
+       ;; "failure answers", "returned as values", "only composition errors are raised as exceptions".
+       (assert (= (get-args ReadRowAnswer) #(Row Missing Unreachable)))
+       (val readme (.read-text (/ REPO-ROOT "packages/doeff-records/README.md") :encoding "utf-8"))
+       (assert (in "\u5931\u6557\u306e\u7b54\u3048" readme))
+       (assert (in "\u5024\u3067\u8fd4\u3059" readme))
+       (assert (in "\u4f8b\u5916\u3067\u4e0a\u304c\u308b\u306e\u306f\u7d44\u307f\u7acb\u3066\u306e\u8aa4\u308a" readme)))]
   :plans [])
