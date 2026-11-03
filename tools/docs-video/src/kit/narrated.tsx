@@ -69,5 +69,7 @@ export const narrate = (page: string, said: Said, scenes: Scene[]) => {
       })}
     </AbsoluteFill>
   );
-  return {id: page, length, Video};
+  // The frame each scene ends on: gif.mjs cuts the page's GIF preview at one of these.
+  const ends = laid.map((_, i) => laid.slice(0, i + 1).reduce((sum, scene) => sum + scene.length, 0));
+  return {id: page, length, ends, Video};
 };
