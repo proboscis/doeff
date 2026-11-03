@@ -3,7 +3,7 @@
 ;; worker)、赤にしてはいけない物(機体ごとの job・1 台に縛る訳を宣言した job・replicas 0 の job)を赤にしない。数の枠の規則 2 は消した
 ;; (job は memory で数える): job の数が多くても memory に入れば赤にしない。
 ;; 失敗ケース = 1 台に縛られた job を通す・job の数で赤にする・1 件目で止めて残りの破りを隠す。
-(require doeff-hy.macros [defk deftest <- val])
+(require doeff-hy.macros [defk deftest <- val var])
 (val MODULE-TAGS {:context "doeff-cluster-test" :role "test"})
 (import pathlib [Path])
 (import re)
@@ -53,7 +53,10 @@
 (deftest test-many-jobs-within-the-memory-are-not-red-for-their-number
   ;; 規則 2(数の枠)は消した: 組 {a, b} に落ち着き 10・山 20 の job が 40 本でも、memory に入れば(40 × 10 + 40 × 10
   ;; = 800 ≤ 予算 800)赤にしない。予算を 1 減らすと memory の規則 3 が赤にする(数でなく memory が歯止め)。
-  (val jobs (tuple (gfor n (range 40) (! (resident (.format "p{:02}" n) #("pool-x") :peak 20 :settle 10)))))
+  ;; (! …) は gfor の中に置けない(内包は別の scope で yield できない — ADR-DOE-HY-003)ので、for の文で 1 本ずつ作る。
+  (var jobs #())
+  (for [n (range 40)]
+    (:= jobs #(#* jobs (! (resident (.format "p{:02}" n) #("pool-x") :peak 20 :settle 10)))))
   (<- many (judged #((! (host "a" #("pool-x") :memory 800)) (! (host "b" #("pool-x") :memory 800))) jobs))
   (assert (= many #()) many)
   (<- short (judged #((! (host "a" #("pool-x") :memory 799)) (! (host "b" #("pool-x") :memory 800))) jobs))
