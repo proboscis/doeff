@@ -266,6 +266,26 @@ LLM_EXAMPLE_ANSWER = "answer: No: an existing queue already does all of it, for 
 ARTICLE_EXAMPLE_DIRECTORY = Path("examples/testing_without_mocks")
 
 
+# カード・ゲームの戦い(examples/effects_tour/spire.py — 記事の中心の例)。seed を固定した全部の層の印字のうち、画面(1 層目)の
+# 後の行 — 1 層目の結末から最後まで。画面の行は 1 行目の見出しだけを見る。決定的なので、版が替わって答えが動いたら赤にする。
+SPIRE_FILE = Path("examples/effects_tour/spire.py")
+SPIRE_FIRST_LINE = '1. a scripted player on seed 7, on screen'
+SPIRE_LAST_LINES = (
+    "  -> ('win', 6)",
+    '2. a random bot on seed 3',
+    "  -> ('win', 4)",
+    '3. record that fight, then replay it with no dice and no player',
+    "  -> ('win', 4) ('win', 4) same: True tape: 32 answers",
+    '4. a Monte Carlo bot on seed 3',
+    "  -> ('win', 4)",
+    '5. 100 fights in parallel: random bot vs Monte Carlo bot',
+    '  -> random bot wins 0.73',
+    '  -> monte carlo wins 1.0',
+    '6. damage by card over 100 random fights',
+    "  -> {'Strike': 3663, 'Defend': 0, 'Bash': 632}",
+)
+
+
 @dataclass(frozen=True)
 class ArticleScript:
     """記事の例の script 1 回の走らせ方と、記事が見せる印字。"""
@@ -1187,6 +1207,37 @@ def _article_run_failure(
     return judge(result)
 
 
+def spire_failure(result: subprocess.CompletedProcess[str]) -> str | None:
+    """spire.py の結末が、0 で終わり、標準エラーが空で、見出しと 1 層目の後の行が決めた通りでない事を言う文(合えば None)。"""
+    printed = result.stdout.splitlines()
+    if result.returncode != 0 or result.stderr:
+        problem = f"終了コード 0 で、標準エラーに何も出さずに終わらなかった(終了コード {result.returncode})"
+    elif printed[:1] != [SPIRE_FIRST_LINE]:
+        problem = f"最初の行が {SPIRE_FIRST_LINE!r} でなかった"
+    elif tuple(printed[-len(SPIRE_LAST_LINES) :]) != SPIRE_LAST_LINES:
+        problem = f"最後の行が決めた {list(SPIRE_LAST_LINES)!r} と違った"
+    else:
+        return None
+    return f"{SPIRE_FILE.name} が{problem}\n{result.stdout}{result.stderr}"
+
+
+def check_spire(installed: Installed, place: Path, timeout: float) -> str | None:
+    """spire.py を、読み手と同じく写した dir で `python spire.py` と走らせ、落ちた訳を返す(通れば None)。"""
+    directory = place / SPIRE_FILE.parent.name
+    directory.mkdir()
+    shutil.copy(REPO / SPIRE_FILE, directory)
+    failure = _article_run_failure(
+        installed,
+        directory,
+        ["-W", "error", SPIRE_FILE.name],
+        verify_release_install.example_environment(place),
+        spire_failure,
+        timeout,
+    )
+    print_result(f"{SPIRE_FILE.name} が 6 つの層の答えを決めた通りに印字する", failure)
+    return failure
+
+
 def check_article_examples(installed: Installed, place: Path, timeout: float) -> list[str]:
     """紹介の記事の例の dir を核だけの venv で走らせ、pytest を足して dir の検を走らせ、落ちた事を言う文の列を返す(通れば空)。
 
@@ -1216,6 +1267,7 @@ def check_article_examples(installed: Installed, place: Path, timeout: float) ->
         )
         print_result(f"{script.label()} が記事の見せる行を印字する", failure)
         failures.extend([] if failure is None else [failure])
+    spire = check_spire(installed, place, timeout)
     _uv(["pip", "install", "--python", str(installed.python), "pytest"], place)
     tests_failure = _article_run_failure(
         installed,
@@ -1226,7 +1278,11 @@ def check_article_examples(installed: Installed, place: Path, timeout: float) ->
         timeout,
     )
     print_result("核の 4 個と pytest だけで、例の dir の pytest が全部通る", tests_failure)
-    return [*failures, *([] if tests_failure is None else [tests_failure])]
+    return [
+        *failures,
+        *([] if spire is None else [spire]),
+        *([] if tests_failure is None else [tests_failure]),
+    ]
 
 
 def tour_script_failure(name: str, result: subprocess.CompletedProcess[str]) -> str | None:
