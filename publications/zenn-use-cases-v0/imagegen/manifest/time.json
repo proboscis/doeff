@@ -5,11 +5,11 @@
     "generation_prompt": "time-svg-source.txt",
     "edit_prompts": [],
     "tool": "SVG (hand-written) + chromium screenshot",
-    "sha256": "ecfe4562d8db1d556f887532c8006a1c8fb8b731c70000f854bbceb2ab924daf",
+    "sha256": "a39c404ed9e4195d5c3399e67b0bd09ea16fc934adf13612f0afa31d77f90bfc",
     "width": 1200,
-    "height": 1080,
-    "bytes": 132595,
-    "review": "2026-10-16：週3の改稿のコード（job・skip_delay・3つの時計）と名前・値・矢印を目視確認。白背景の平面図として採用。"
+    "height": 1076,
+    "bytes": 162221,
+    "review": "2026-11-03：利用者のレビューの指摘（文言が不自然・質が低い）を受け、よくある書き方（time.sleepとモック）とdoeff（Delayと2つのハンドラ）の対比に描き直した。記事のコードの名前・値（fetch_with_retry・time.sleep(20)・job・Delay・sim_time_handler・async_time_handler・\"完了\"）を目視確認。"
   },
   {
     "id": "time-flow",
