@@ -1,0 +1,18 @@
+[
+ {"id": "i1", "text": "This is doeff: algebraic effects for Python. Here is a small card battle, written once."},
+ {"id": "i2", "text": "The battle only says what it needs: a random number, the player's move, a line for the screen, and a count of each card played."},
+ {"id": "i3", "text": "Each yield hands an effect outward. The battle never says who rolls the dice or who plays the cards."},
+ {"id": "p1", "text": "Layer one: a scripted player, seeded dice, and a screen that prints."},
+ {"id": "p2", "text": "Run it, and the fight prints turn by turn."},
+ {"id": "p3", "text": "It ends in a win on turn six. Nothing in battle changed. Only the handlers around it."},
+ {"id": "r1", "text": "Layer two: swap the player for a random bot. Same battle, same dice seed, and it wins on turn four."},
+ {"id": "r2", "text": "Layer three: record. A handler keeps every dice roll and every choice on a tape. This fight left thirty-two answers."},
+ {"id": "r3", "text": "Replay answers from the tape, with no dice and no player. The same fight, the same result."},
+ {"id": "m1", "text": "Layer four: a Monte Carlo bot. To choose a card, its handler plays out the rest of the fight, again and again."},
+ {"id": "m2", "text": "That handler runs battle itself, under dice and a random bot, and keeps the move that wins most often."},
+ {"id": "m3", "text": "A program is a value, so a handler can run it. On the same seed, this bot also wins on turn four."},
+ {"id": "w1", "text": "Layer five: a hundred fights in parallel, one task for each seed. Spawn them, then gather the results."},
+ {"id": "w2", "text": "The random bot wins seventy-three of a hundred."},
+ {"id": "w3", "text": "The Monte Carlo bot wins all one hundred. Same battle, different layers."},
+ {"id": "o1", "text": "doeff: algebraic effects for Python. From a scripted test to a bot that searches, stack the layers you need around the same code. pip install doeff."}
+]

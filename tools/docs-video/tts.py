@@ -24,7 +24,7 @@ import urllib.request
 import wave
 from pathlib import Path
 
-ENDPOINT = "https://api.openai.com/v1/audio/speech"
+ENDPOINT = os.environ.get("OPENAI_BASE_URL", "https://api.openai.com/v1").rstrip("/") + "/audio/speech"
 MODEL = "gpt-4o-mini-tts"
 VOICE = "marin"
 INSTRUCTIONS = (
