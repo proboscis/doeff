@@ -13,6 +13,7 @@
 ;;;   冷やす・戻す・消す 冷やして戻す通し(本番と模擬)・使っている volume は冷やさない・完了した backup の無い名は空で作らない・消すのは
 ;;;                     keepDays の後・まとめて冷やす順と空きの数(本番と模擬)。本番だけ: snapshot と backup の失敗で消さない・読んだ版が
 ;;;                     古い削除は読み直す・札の違う disk を数えない
+;;;   付ける先の様子    付ける先の様子の読み(MOUNTED・READY・OUTSIDE・CLASH — 本番と模擬)・中身の在る dir には付けない(隠さない)
 ;;;   置き場の数え      札の disk の残りが 0 なら作成も戻しも POST せずに置き場の不足で断る(fresh か否か — 本番と模擬)・残りの読み・
 ;;;                     実の空きの線で断る・付ける時に Longhorn が置けないと答えた空の volume は待たずに消す・replica の置かれた volume は
 ;;;                     消さない・置けない戻しは消して backup を残す・戻す volume は backup の大きさで作る
@@ -41,9 +42,9 @@
 (import doeff_time [Delay GetTime SimClock sim-time-handler])
 (import doeff_cluster._shared.intent.workspace_volume_model [AttachWorkspaceVolume CoolIdleWorkspaceVolumes CoolingSweep
                                                            CoolWorkspaceVolume CreateWorkspaceVolume DetachWorkspaceVolume
-                                                           MountWorkspaceVolume PurgeWorkspaceVolume ReadWorkspaceRoom
-                                                           UmountWorkspaceVolume WorkspaceOutcome WorkspaceRoom WorkspaceRoomShort
-                                                           WorkspaceVolumeRefused WorkspaceVolumeSite])
+                                                           MountWorkspaceVolume PurgeWorkspaceVolume ReadWorkspacePlace
+                                                           ReadWorkspaceRoom UmountWorkspaceVolume WorkspaceOutcome WorkspacePlace
+                                                           WorkspaceRoom WorkspaceRoomShort WorkspaceVolumeRefused WorkspaceVolumeSite])
 (import doeff_cluster._shared.core.workspace_volume_rules [USED-AT-KEY ticket-id volume-name])
 (import doeff_cluster._shared.protocol.workspace_volumes [workspace-volumes-api])
 (import doeff_cluster._shared.protocol.supplied_values [KUBE-API SERVICE-ACCOUNT-TOKEN-FILE])
@@ -97,7 +98,7 @@
 
 
 (defrecord Step
-  "筋書きの一手: verb = create・attach・mount・umount・detach・cool・purge・sweep・wait・owner = 持ち主の id(sweep と wait は使わない)・
+  "筋書きの一手: verb = create・attach・mount・umount・detach・cool・purge・sweep・room・place・wait・owner = 持ち主の id(sweep と wait は使わない)・
    path = 付ける先(mount と umount)・seconds = 待つ秒(wait)。"
   (#^ str verb)
   (setv #^ str owner "")
@@ -647,7 +648,8 @@
   (match step.verb
     "wait" (do (<- (Delay step.seconds)) (return "waited"))
     "sweep" (do (<- sweep CoolingSweep (CoolIdleWorkspaceVolumes)) (return (! (sweep-text sweep))))
-    "room" (do (<- room WorkspaceRoom (ReadWorkspaceRoom)) (return (.format "room slots={} spare={}" room.slots room.spare))))
+    "room" (do (<- room WorkspaceRoom (ReadWorkspaceRoom)) (return (.format "room slots={} spare={}" room.slots room.spare)))
+    "place" (do (<- place WorkspacePlace (ReadWorkspacePlace step.owner step.path)) (return (+ "place " place.value))))
   (val effect (match step.verb
                 "create" (CreateWorkspaceVolume step.owner)
                 "attach" (AttachWorkspaceVolume step.owner)
@@ -699,10 +701,13 @@
   ran)
 
 
-(defk on-sim [world steps [start 0.0]]
-  {:pre [(: world WorkspaceVolumeWorld) (: steps tuple) (: start float)] :post [(: % tuple)]}
-  "模擬の答え手で、世界 world に筋書き steps を(模擬の時計の刻 start から)当てた結末の組を得るため。"
-  (<- outcomes tuple (with_handlers [(sim-time-handler :clock (! (clock-from start))) (held-workspace-volumes world)] (run-steps steps)))
+(defk on-sim [world steps [start 0.0] [files WORKER-FILES]]
+  {:pre [(: world WorkspaceVolumeWorld) (: steps tuple) (: start float) (: files MemoryFiles)] :post [(: % tuple)]}
+  "模擬の答え手で、世界 world に筋書き steps を(模擬の時計の刻 start から・付ける先の dir の中身は memory の file files)当てた結末の組を
+   得るため。"
+  (<- outcomes tuple (with_handlers [(state) (memory-file-handler files) (sim-time-handler :clock (! (clock-from start)))
+                                     (held-workspace-volumes world)]
+                       (run-steps steps)))
   outcomes)
 
 
@@ -722,13 +727,14 @@
   (#^ MemoryFiles left))
 
 
-(defk both [make steps [start 0.0]]
-  {:pre [(: make Callable) (: steps tuple) (: start float)] :post [(: % BothRan)]}
-  "世界を作る関数 make で本番用と模擬用の世界を別に作り、筋書き steps を(模擬の時計の刻 start から)両方の答え手に当てるため。"
+(defk both [make steps [start 0.0] [files WORKER-FILES]]
+  {:pre [(: make Callable) (: steps tuple) (: start float) (: files MemoryFiles)] :post [(: % BothRan)]}
+  "世界を作る関数 make で本番用と模擬用の世界を別に作り、筋書き steps を(模擬の時計の刻 start から・memory の file files の上で)両方の
+   答え手に当てるため。"
   (val api (LonghornWorld (make)))
   (val sim (make))
-  (<- on-real ApiRan (on-api api steps WORKER-FILES start))
-  (<- on-held tuple (on-sim sim steps start))
+  (<- on-real ApiRan (on-api api steps files start))
+  (<- on-held tuple (on-sim sim steps start files))
   (BothRan :real on-real.outcomes :held on-held :api api :sim sim :left on-real.left))
 
 
@@ -1059,6 +1065,56 @@
   (assert (= (len (set versions)) 3) versions)
   (assert (= api.held.volumes #()) api.held.volumes)
   (assert (= api.held.backups #(COLD-BACKUP)) api.held.backups))
+
+
+;; --- 付ける先の様子(volume の外の中身を隠さない)--------------------------------------------------------------------
+
+;; 付ける先 PLACE に、volume の外で書かれた file 1 つが在る worker の file(本番の機体の dir に書いた作業場所の形)。
+(val FILLED-FILES (MemoryFiles :files (+ WORKER-FILES.files #((MemoryFile :path (+ PLACE "/notes.md") :content b"written outside a volume\n")))
+                               :dirs (+ WORKER-FILES.dirs #(PLACE))))
+;; 付ける先 PLACE が空の dir の worker の file(外した後に残る付ける先の dir)。
+(val EMPTY-DIR-FILES (MemoryFiles :files WORKER-FILES.files :dirs (+ WORKER-FILES.dirs #(PLACE))))
+
+
+(deftest test-the-place-is-read-the-same-on-both-handlers
+  (val mounted (HeldVolume :name NAME :node NODE :mounted-at PLACE :formatted True))
+  (val other (HeldVolume :name (! (volume-name OTHER)) :node NODE :mounted-at PLACE :formatted True))
+  (val place (Step :verb "place" :owner OWNER :path PLACE))
+  (val cases #(;; 何も無い・空の dir — 付けてよい。
+               #(#() #() WORKER-FILES "place ready")
+               #(#() #() EMPTY-DIR-FILES "place ready")
+               ;; 中身の在る dir で、持ち主は volume も backup も持たない — 持ち主の作業場所は volume の外。
+               #(#() #() FILLED-FILES "place outside")
+               ;; 中身の在る dir で、持ち主が温かい volume か backup を持つ — 付けても付けなくても一方が見えなくなる。
+               #(#(WARM) #() FILLED-FILES "place clash")
+               #(#() #(COLD-BACKUP) FILLED-FILES "place clash")
+               ;; 付いている物。
+               #(#(mounted) #() WORKER-FILES "place mounted")
+               #(#(other) #() WORKER-FILES "place clash")))
+  (for [#(volumes backups files wanted) cases]
+    (<- ran BothRan (both (fn [] (WorkspaceVolumeWorld NODE :volumes volumes :backups backups)) #(place) 0.0 files))
+    (assert (= ran.real #(wanted)) #(wanted ran.real))
+    (assert (= ran.held #(wanted)) #(wanted ran.held))
+    ;; 読むだけ — 書きの要求も係への頼みも無い。
+    (assert (all (gfor seen ran.api.seen (= seen.method "GET"))) ran.api.seen)
+    (assert (= ran.api.asked #()) ran.api.asked)))
+
+
+(deftest test-a-mount-never-hides-what-the-dir-holds-on-both-handlers
+  ;; 付ける先の dir に volume の外で書かれた中身が在る。mount は付けずに断る(本番は係へ頼まない)— 付けると中身が隠れる。
+  (val attached (HeldVolume :name NAME :node NODE :formatted True))
+  (<- ran BothRan (both (fn [] (WorkspaceVolumeWorld NODE :volumes #(attached))) #((Step :verb "mount" :owner OWNER :path PLACE)) 0.0
+                        FILLED-FILES))
+  (for [outcomes #(ran.real ran.held)]
+    (assert (and (= (! (kinds outcomes)) #("refused")) (in "に中身が在る(volume の外に書かれた物 — 付けると隠すので付けない)" (get outcomes 0)))
+            outcomes))
+  (assert (= ran.api.held.volumes #(attached)) ran.api.held.volumes)
+  (assert (= ran.sim.volumes #(attached)) ran.sim.volumes)
+  (assert (= ran.api.asked #()) ran.api.asked)
+  ;; 空の dir(外した後に残る付ける先)には付ける。
+  (<- empty BothRan (both (fn [] (WorkspaceVolumeWorld NODE :volumes #(attached))) #((Step :verb "mount" :owner OWNER :path PLACE)) 0.0
+                          EMPTY-DIR-FILES))
+  (assert (= #(empty.real empty.held) #(#("done") #("done"))) #(empty.real empty.held)))
 
 
 ;; --- 置き場の数え(作る前に数える・置けない volume を残さない)----------------------------------------------------------

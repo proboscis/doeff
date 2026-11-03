@@ -9,6 +9,7 @@ from doeff_hy._wire import Malformed as Malformed
 from doeff_hy._wire import parse_json as parse_json
 from doeff_hy._wire import parse_json_as as parse_json_as
 from doeff_core_effects import FileFailed as FileFailed
+from doeff_core_effects import ListDirectory as ListDirectory
 from doeff_core_effects import MakeDirectory as MakeDirectory
 from doeff_core_effects import PathKind as PathKind
 from doeff_core_effects import PathStat as PathStat
@@ -31,9 +32,11 @@ from doeff_cluster._shared.intent.workspace_volume_model import CreateWorkspaceV
 from doeff_cluster._shared.intent.workspace_volume_model import DetachWorkspaceVolume as DetachWorkspaceVolume
 from doeff_cluster._shared.intent.workspace_volume_model import MountWorkspaceVolume as MountWorkspaceVolume
 from doeff_cluster._shared.intent.workspace_volume_model import PurgeWorkspaceVolume as PurgeWorkspaceVolume
+from doeff_cluster._shared.intent.workspace_volume_model import ReadWorkspacePlace as ReadWorkspacePlace
 from doeff_cluster._shared.intent.workspace_volume_model import ReadWorkspaceRoom as ReadWorkspaceRoom
 from doeff_cluster._shared.intent.workspace_volume_model import UmountWorkspaceVolume as UmountWorkspaceVolume
 from doeff_cluster._shared.intent.workspace_volume_model import WorkspaceOutcome as WorkspaceOutcome
+from doeff_cluster._shared.intent.workspace_volume_model import WorkspacePlace as WorkspacePlace
 from doeff_cluster._shared.intent.workspace_volume_model import WorkspaceRoom as WorkspaceRoom
 from doeff_cluster._shared.intent.workspace_volume_model import WorkspaceRoomShort as WorkspaceRoomShort
 from doeff_cluster._shared.intent.workspace_volume_model import WorkspaceVolumeRefused as WorkspaceVolumeRefused
@@ -402,6 +405,15 @@ def keeper_answer(site: WorkspaceVolumeSite, owner: str, doing: str, verb: str, 
     ...
 
 def checked_path(owner: str, doing: str, path: str) -> _Program[str, object]:
+    ...
+
+def place_filled(owner: str, doing: str, target: str) -> _Program[bool, object]:
+    ...
+
+def owner_held(site: WorkspaceVolumeSite, owner: str, doing: str, name: str) -> _Program[bool, object]:
+    ...
+
+def place_read(site: WorkspaceVolumeSite, owner: str, path: str) -> _Program[WorkspacePlace, object]:
     ...
 
 def mounted_volume(site: WorkspaceVolumeSite, owner: str, path: str) -> _Program[WorkspaceOutcome, object]:

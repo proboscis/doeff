@@ -14,12 +14,19 @@ from doeff_cluster._shared.intent.workspace_volume_model import CreateWorkspaceV
 from doeff_cluster._shared.intent.workspace_volume_model import DetachWorkspaceVolume as DetachWorkspaceVolume
 from doeff_cluster._shared.intent.workspace_volume_model import MountWorkspaceVolume as MountWorkspaceVolume
 from doeff_cluster._shared.intent.workspace_volume_model import PurgeWorkspaceVolume as PurgeWorkspaceVolume
+from doeff_cluster._shared.intent.workspace_volume_model import ReadWorkspacePlace as ReadWorkspacePlace
 from doeff_cluster._shared.intent.workspace_volume_model import ReadWorkspaceRoom as ReadWorkspaceRoom
 from doeff_cluster._shared.intent.workspace_volume_model import UmountWorkspaceVolume as UmountWorkspaceVolume
 from doeff_cluster._shared.intent.workspace_volume_model import WorkspaceOutcome as WorkspaceOutcome
+from doeff_cluster._shared.intent.workspace_volume_model import WorkspacePlace as WorkspacePlace
 from doeff_cluster._shared.intent.workspace_volume_model import WorkspaceRoom as WorkspaceRoom
 from doeff_cluster._shared.intent.workspace_volume_model import WorkspaceRoomShort as WorkspaceRoomShort
 from doeff_cluster._shared.intent.workspace_volume_model import WorkspaceVolumeRefused as WorkspaceVolumeRefused
+from doeff_core_effects import FileFailed as FileFailed
+from doeff_core_effects import ListDirectory as ListDirectory
+from doeff_core_effects import PathKind as PathKind
+from doeff_core_effects import PathStat as PathStat
+from doeff_core_effects import StatPath as StatPath
 from doeff_cluster._shared.core.workspace_volume_rules import NAME_PREFIX as NAME_PREFIX
 from doeff_cluster._shared.core.workspace_volume_rules import WarmVolume as WarmVolume
 from doeff_cluster._shared.core.workspace_volume_rules import cooling_name as cooling_name
@@ -85,6 +92,12 @@ def sim_slots(world: WorkspaceVolumeWorld) -> _Program[int, object]:
     ...
 
 def sim_attached(world: WorkspaceVolumeWorld, owner: str) -> _Program[WorkspaceOutcome, object]:
+    ...
+
+def sim_filled(target: str) -> _Program[bool, object]:
+    ...
+
+def sim_place(world: WorkspaceVolumeWorld, owner: str, path: str) -> _Program[WorkspacePlace, object]:
     ...
 
 def sim_mounted(world: WorkspaceVolumeWorld, owner: str, path: str) -> _Program[WorkspaceOutcome, object]:

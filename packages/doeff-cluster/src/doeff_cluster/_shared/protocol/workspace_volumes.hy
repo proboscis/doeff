@@ -12,7 +12,8 @@
 ;;;   attached-volume         AttachWorkspaceVolume: VolumeAttachment に ticket を置き、Volume に使った刻の印を書き、ticket が満たされ volume が
 ;;;                           この node に付くまで待つ。Longhorn が replica を置けないと答えた中身の無い volume は、待たずに消して断る
 ;;;                           (dropped-unplaced — 戻しの待ちも同じ)
-;;;   mounted-volume          MountWorkspaceVolume: 付ける先の dir を作り、係へ mount を頼む(既に付いていれば頼まない)
+;;;   mounted-volume          MountWorkspaceVolume: 付ける先の dir を作り、係へ mount を頼む(既に付いていれば頼まない・中身の在る dir には
+;;;                           付けない — 隠さない)
 ;;;   unmounted-volume        UmountWorkspaceVolume: 係へ umount を頼む(何も付いていなければ頼まない)
 ;;;   detached-volume         DetachWorkspaceVolume: mount が残っていないかを確かめ、ticket を外し、volume がこの node から外れるまで待ち、
 ;;;                           使い終わりの刻の印を書く
@@ -22,7 +23,8 @@
 ;;;   idle-cooling            CoolIdleWorkspaceVolumes: 外れている volume・札の disk の残り(room-slots)を読み、冷やす順に冷やす
 ;;;   workspace-room          ReadWorkspaceRoom: 札の disk の残りの本数(room-slots — Longhorn の置く線 2 つ: 過剰割り当ての % の名目の
 ;;;                           予約の線と、最小の空きの % の実の空きの線)と値の spareVolumes を読む
-;;;   workspace-volumes-api   9 つの effect の本番の答え手
+;;;   place-read              ReadWorkspacePlace: mount の表・付ける先の dir・持ち主の volume と backup を読み、付ける先の様子を答える
+;;;   workspace-volumes-api   10 の effect の本番の答え手
 ;;;
 ;;; 仕組み: supplied_values・kube_services と同じく、doeff の汎用の effect(token の file の ReadText・HttpRequest・file の effect・doeff-time の
 ;;; Delay と GetMonotonic・機体の事実の ReadEnvironment)で問う。外側に、宛先が API server の要求を区画の CA で検める接続
@@ -54,14 +56,14 @@
 (import posixpath)
 (import urllib.parse [quote :as url-quote])
 (import doeff_hy._wire [Malformed parse-json parse-json-as])
-(import doeff_core_effects [FileFailed MakeDirectory PathKind PathStat ReadText RemoveTree RenamePath StatPath WriteText])
+(import doeff_core_effects [FileFailed ListDirectory MakeDirectory PathKind PathStat ReadText RemoveTree RenamePath StatPath WriteText])
 (import doeff_core_effects [HttpFailed HttpRequest HttpResponse])
 (import doeff_time [Delay GetMonotonic GetTime])
 (import doeff_cluster._shared.intent.workspace_volume_model [AttachWorkspaceVolume CoolIdleWorkspaceVolumes CoolingSweep
                                                            CoolWorkspaceVolume CreateWorkspaceVolume DetachWorkspaceVolume
-                                                           MountWorkspaceVolume PurgeWorkspaceVolume ReadWorkspaceRoom
-                                                           UmountWorkspaceVolume WorkspaceOutcome WorkspaceRoom WorkspaceRoomShort
-                                                           WorkspaceVolumeRefused WorkspaceVolumeSite])
+                                                           MountWorkspaceVolume PurgeWorkspaceVolume ReadWorkspacePlace
+                                                           ReadWorkspaceRoom UmountWorkspaceVolume WorkspaceOutcome WorkspacePlace
+                                                           WorkspaceRoom WorkspaceRoomShort WorkspaceVolumeRefused WorkspaceVolumeSite])
 (import doeff_cluster._shared.intent.supplied_model [WorkerFactName])
 (import doeff_cluster._shared.core.workspace_volume_rules [AttachStep AttachView BackupView DetachStep DiskRoom MountEntry
                                                          NAME-PREFIX USED-AT-KEY WarmVolume attach-step cooling-name
@@ -1012,10 +1014,60 @@
   path)
 
 
+(defk place-filled [owner doing target]
+  {:pre [(: owner str) (: doing str) (: target str)] :post [(: % bool)] :tags {:context "doeff-cluster" :role "protocol"}}
+  "何も付いていない付ける先 target に中身が在るか(dir の中に何か在る・dir でない物が在る)を読むため(無い path と空の dir は False。
+   読めなければ断る)。"
+  (<- held (| PathStat FileFailed) (StatPath target))
+  (when (isinstance held FileFailed)
+    (raise (! (refused owner doing (+ "付ける先 " target " が読めない: " held.detail)))))
+  (match held.kind
+    PathKind.MISSING False
+    PathKind.DIRECTORY (do (<- listed (| tuple FileFailed) (ListDirectory target))
+                           (when (isinstance listed FileFailed)
+                             (raise (! (refused owner doing (+ "付ける先 " target " の中が読めない: " listed.detail)))))
+                           (bool listed))
+    _ True))
+
+
+(defk owner-held [site owner doing name]
+  {:pre [(: site WorkspaceVolumeSite) (: owner str) (: doing str) (: name str)] :post [(: % bool)] :tags {:context "doeff-cluster" :role "protocol"}}
+  "持ち主 owner(volume の名 name)が中身を持ちうるか — Longhorn の volume か、その名の backup が在るか — を読むため。"
+  (<- read (| VolumeRead None) (volume-read site owner doing name))
+  (when (is-not read None)
+    (return True))
+  (<- settings SettingsWire (workspace-settings site owner))
+  (<- parameters dict (class-parameters owner settings.storage-class))
+  (<- target str (class-backup-target owner doing parameters))
+  (<- backups tuple (backup-views site owner doing name target))
+  (bool backups))
+
+
+(defk place-read [site owner path]
+  {:pre [(: site WorkspaceVolumeSite) (: owner str) (: path str)] :post [(: % WorkspacePlace)] :tags {:context "doeff-cluster" :role "protocol"}}
+  "持ち主 owner の volume を付ける先 path の様子を読むため(ReadWorkspacePlace の答え — WorkspacePlace の頭の註): 一番上に付いている物が
+   持ち主の volume なら MOUNTED・別の物なら CLASH。何も付いていなければ、dir が無いか空なら READY、中身が在れば持ち主が volume か backup を
+   持つかで CLASH か OUTSIDE。何も変えない。"
+  (val doing "付ける先の読み")
+  (<- name str (checked-name owner doing))
+  (<- target str (checked-path owner doing path))
+  (<- entries tuple (mount-table site owner doing))
+  (<- at (| MountEntry None) (mounted-at entries target))
+  (when (is-not at None)
+    (<- found (| str None) (volume-of-entry at))
+    (return (if (= found name) WorkspacePlace.MOUNTED WorkspacePlace.CLASH)))
+  (<- filled bool (place-filled owner doing target))
+  (when (not filled)
+    (return WorkspacePlace.READY))
+  (<- held bool (owner-held site owner doing name))
+  (if held WorkspacePlace.CLASH WorkspacePlace.OUTSIDE))
+
+
 (defk mounted-volume [site owner path]
   {:pre [(: site WorkspaceVolumeSite) (: owner str) (: path str)] :post [(: % WorkspaceOutcome)] :tags {:context "doeff-cluster" :role "protocol"}}
   "持ち主 owner の volume を path に mount するため(付けた = DONE・既に付いていた = ALREADY)。付ける先の dir は作り、外した後も残す。
-   付ける先に別の物が付いている・係が断った時は断る(attach していない volume は係が device の無い事で断る)。"
+   付ける先に別の物が付いている・中身の在る dir(volume の外に書かれた物 — 付けると隠す)・係が断った時は断る(attach していない volume は
+   係が device の無い事で断る)。"
   (val doing "mount")
   (<- name str (checked-name owner doing))
   (<- target str (checked-path owner doing path))
@@ -1026,6 +1078,9 @@
     (if (= found name)
         (return WorkspaceOutcome.ALREADY)
         (raise (! (refused owner doing (.format "{} には別の物({})が付いている" target at.source))))))
+  (<- filled bool (place-filled owner doing target))
+  (when filled
+    (raise (! (refused owner doing (+ target " に中身が在る(volume の外に書かれた物 — 付けると隠すので付けない)")))))
   (<- made (| FileFailed None) (MakeDirectory target))
   (when (isinstance made FileFailed)
     (raise (! (refused owner doing (+ "付ける先の dir を作れない: " made.detail)))))
@@ -1395,4 +1450,7 @@
     (resume sweep))
   (ReadWorkspaceRoom []
     (<- room WorkspaceRoom (workspace-room site))
-    (resume room)))
+    (resume room))
+  (ReadWorkspacePlace [owner path]
+    (<- place WorkspacePlace (place-read site owner path))
+    (resume place)))

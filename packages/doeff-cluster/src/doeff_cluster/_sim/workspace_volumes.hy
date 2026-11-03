@@ -6,7 +6,8 @@
 ;;;   * 名の条件を外れる持ち主の id は、何もせずに断る。
 ;;;   * 作る: 無ければ作って DONE・在れば ALREADY。届かない API server は断る。
 ;;;   * attach: 無い volume・別の node に付いている volume は断る。この node に付いていれば ALREADY・外れていれば付けて DONE。
-;;;   * mount: 付ける先が絶対の正規の path でない・付ける先に別の volume・この node に attach されていない・別の path に付いている時は断る。
+;;;   * mount: 付ける先が絶対の正規の path でない・付ける先に別の volume・付ける先の dir に中身が在る(隠さない — 外側の file の答え手で
+;;;     読む)・この node に attach されていない・別の path に付いている時は断る。
 ;;;     付ける先に同じ volume が付いていれば ALREADY・ほかは付けて DONE(空の volume は ext4 を作った事にする)。
 ;;;   * umount: 付ける先に何も無ければ ALREADY・別の volume なら断る・使っている process が在れば断る・ほかは外して DONE。
 ;;;   * detach: まだ mount されていれば断る・別の node に付いていれば断る・無い volume と外れた volume は ALREADY・ほかは外して DONE。
@@ -17,7 +18,9 @@
 ;;;   * 冷やす: 無い volume は ALREADY・付いている volume は断る・ほかは backup(<名>-cool-<刻>)を足して volume を消し DONE。
 ;;;   * 消す: volume が在れば断る・backup が無ければ ALREADY・最後の backup から keep-days の内なら断る・ほかは backup を消して DONE。
 ;;;   * まとめて冷やす: 外れている volume を cooling-order(空き = capacity − volume の数)の順に冷やす。
-;;; 模擬の世界の時間は doeff-time の GetTime(外側に時計の答え手が要る)。
+;;;   * 付ける先の読み: 付ける先に持ち主の volume が付いていれば MOUNTED・別の volume なら CLASH。何も付いていなければ、dir が無いか空なら
+;;;     READY・中身が在れば、持ち主の volume か backup が在る時 CLASH・無い時 OUTSIDE。
+;;; 模擬の世界の時間は doeff-time の GetTime(外側に時計の答え手が要る)。付ける先の dir の中身は外側の file の答え手(本番と同じ effect)。
 (require doeff-hy.macros [defhandler defk <- val var])
 (require doeff-hy.record [defrecord])
 (val MODULE-TAGS {:context "doeff-cluster" :role "foundation"})
@@ -28,9 +31,10 @@
 (import doeff_time [GetTime])
 (import doeff_cluster._shared.intent.workspace_volume_model [AttachWorkspaceVolume CoolIdleWorkspaceVolumes CoolingSweep
                                                            CoolWorkspaceVolume CreateWorkspaceVolume DetachWorkspaceVolume
-                                                           MountWorkspaceVolume PurgeWorkspaceVolume ReadWorkspaceRoom
-                                                           UmountWorkspaceVolume WorkspaceOutcome WorkspaceRoom WorkspaceRoomShort
-                                                           WorkspaceVolumeRefused])
+                                                           MountWorkspaceVolume PurgeWorkspaceVolume ReadWorkspacePlace
+                                                           ReadWorkspaceRoom UmountWorkspaceVolume WorkspaceOutcome WorkspacePlace
+                                                           WorkspaceRoom WorkspaceRoomShort WorkspaceVolumeRefused])
+(import doeff_core_effects [FileFailed ListDirectory PathKind PathStat StatPath])
 (import doeff_cluster._shared.core.workspace_volume_rules [NAME-PREFIX WarmVolume cooling-name cooling-order owner-refusal ticket-id
                                                          volume-name])
 
@@ -174,6 +178,36 @@
              WorkspaceOutcome.DONE)))
 
 
+(defk sim-filled [target]
+  {:pre [(: target str)] :post [(: % bool)] :tags {:context "doeff-cluster" :role "foundation"}}
+  "付ける先 target に中身が在るか(dir の中に何か在る・dir でない物が在る)を、外側の file の答え手で読むため(本番と同じ読み — 無い path・
+   空の dir・読めない path は False)。"
+  (<- held (| PathStat FileFailed) (StatPath target))
+  (when (isinstance held FileFailed)
+    (return False))
+  (match held.kind
+    PathKind.MISSING False
+    PathKind.DIRECTORY (do (<- listed (| tuple FileFailed) (ListDirectory target))
+                           (and (not (isinstance listed FileFailed)) (bool listed)))
+    _ True))
+
+
+(defk sim-place [world owner path]
+  {:pre [(: world WorkspaceVolumeWorld) (: owner str) (: path str)] :post [(: % WorkspacePlace)] :tags {:context "doeff-cluster" :role "foundation"}}
+  "ReadWorkspacePlace を世界 world に当てるため(頭の註の契約)。"
+  (val doing "付ける先の読み")
+  (val name (! (sim-name world owner doing True)))
+  (val target (! (sim-target owner doing path)))
+  (val there (lfor one world.volumes :if (= one.mounted-at target) one))
+  (when there
+    (return (if (= (. (get there 0) name) name) WorkspacePlace.MOUNTED WorkspacePlace.CLASH)))
+  (<- filled bool (sim-filled target))
+  (cond
+    (not filled) WorkspacePlace.READY
+    (or (is-not (! (held-volume world name)) None) (! (held-backups world name))) WorkspacePlace.CLASH
+    True WorkspacePlace.OUTSIDE))
+
+
 (defk sim-mounted [world owner path]
   {:pre [(: world WorkspaceVolumeWorld) (: owner str) (: path str)] :post [(: % WorkspaceOutcome)] :tags {:context "doeff-cluster" :role "foundation"}}
   "MountWorkspaceVolume を世界 world に当てるため(頭の註の契約)。"
@@ -182,9 +216,12 @@
   (val target (! (sim-target owner doing path)))
   (val there (lfor one world.volumes :if (= one.mounted-at target) one))
   (val volume (! (held-volume world name)))
+  (<- filled bool (sim-filled target))
+  (val covered (and (not there) filled))
   (cond
     (and there (= (. (get there 0) name) name)) WorkspaceOutcome.ALREADY
     there (raise (! (sim-refused owner doing (.format "{} には別の物({})が付いている" target (. (get there 0) name)))))
+    covered (raise (! (sim-refused owner doing (+ target " に中身が在る(volume の外に書かれた物 — 付けると隠すので付けない)"))))
     (or (is volume None) (!= volume.node world.node))
     (raise (! (sim-refused owner doing (+ "mount の係が断った: volume " name " がこの node に attach されていない"))))
     (is-not volume.mounted-at None)
@@ -290,7 +327,7 @@
 ;; 引数に残す理由: 世界は呼び手が作って走らせた後に読む記録の置き場(検と模擬の世界ごとに別の入れ物)。
 (defhandler held-workspace-volumes [#^ WorkspaceVolumeWorld world]
   {:tags {:context "doeff-cluster" :role "foundation"}}
-  ;; 模擬: 9 つの effect を世界に当てる(頭の註の契約)。
+  ;; 模擬: 10 の effect を世界に当てる(頭の註の契約)。
   (CreateWorkspaceVolume [owner]
     (<- outcome WorkspaceOutcome (sim-created world owner))
     (resume outcome))
@@ -298,7 +335,7 @@
     (<- outcome WorkspaceOutcome (sim-attached world owner))
     (resume outcome))
   (MountWorkspaceVolume [owner path]
-    (val outcome (! (sim-mounted world owner path)))
+    (<- outcome WorkspaceOutcome (sim-mounted world owner path))
     (resume outcome))
   (UmountWorkspaceVolume [owner path]
     (val outcome (! (sim-unmounted world owner path)))
@@ -317,4 +354,7 @@
     (resume sweep))
   (ReadWorkspaceRoom []
     (<- room WorkspaceRoom (sim-room world))
-    (resume room)))
+    (resume room))
+  (ReadWorkspacePlace [owner path]
+    (<- place WorkspacePlace (sim-place world owner path))
+    (resume place)))
