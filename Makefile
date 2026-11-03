@@ -59,14 +59,14 @@ install:
 	uv sync --group dev
 
 # Sync dependencies AND rebuild the Rust VM extension.
-# ALWAYS use this instead of bare `uv sync` when Rust sources changed.
-# ADR-DOE-ENFORCE-001 R4: VM conformance oracle は、どの build にも入っていて実行時に有効にする
-# (以前は cargo feature で make sync の build だけが検査つきになり、同じ venv が
-# 最後に組んだ経路で 15 倍速さを変えた)。doeff の pytest は root の conftest.py が有効にし、
-# tests/test_vm_invariant_checks_enabled.py が hard-fail で検査する(skip 禁止)。
-# だから make sync と素の uv sync は同じ build を作る。uv は doeff-vm の tool.uv.cache-keys(.rs・Cargo.toml・Cargo.lock・
-# doeff-vm-core を含む)の変化で build の口を呼び、口は同じ file の中身の鍵で wheel の保存先を先に引くので、Rust の source が
-# 変わった時だけ作業木の外の一時の target で 1 回組む(ADR-DOE-BUILD-001 — 失敗ケース =
+# ADR-DOE-ENFORCE-001 R4: the VM conformance oracle is in every build and is enabled at run time
+# (before, a cargo feature made only the make sync build checked, so the same venv changed speed 15x
+# depending on which path built it last). doeff's pytest enables it from the root conftest.py, and
+# tests/test_vm_invariant_checks_enabled.py checks it as a hard failure (no skip).
+# So make sync and a bare uv sync make the same build. uv calls the build hook when doeff-vm's tool.uv.cache-keys
+# (.rs, Cargo.toml, Cargo.lock, including doeff-vm-core) change, and the hook first looks up the wheel store by a key of
+# the same files' contents, so it builds once, in a temporary target outside the worktree, only when the Rust source
+# changed (ADR-DOE-BUILD-001 — failure case =
 # tests/test_land_install_follows_rust_keys.py)。
 sync:
 	uv sync --group dev
@@ -74,19 +74,19 @@ sync:
 pre-commit-install:
 	uv run pre-commit install
 
-# ADR-DOE-ENFORCE-001 R7: enforcement 台帳の著述時突合 hook(tracked 原本 =
-# scripts/git-hooks/pre-commit)。stage した file に semgrep の規則(.pre-commit-config.yaml の
-# 別名 semgrep-rules の項を uv.lock の版の pre-commit で)も当てる。pre-commit framework を使う機体は
-# make pre-commit-install 側でも同じ検査が入る(.pre-commit-config.yaml の
-# semgrep の項と enforcement-ledger)— こちらは venv 不要の素の git hook。worktree 共通の
-# hooks dir(git rev-parse --git-path hooks)へ入るので、一度の導入で全 worktree に効く。
+# ADR-DOE-ENFORCE-001 R7: authoring-time reconciliation hook for the enforcement ledger (tracked original =
+# scripts/git-hooks/pre-commit). It also applies the semgrep rules to the staged files (the items with alias
+# semgrep-rules in .pre-commit-config.yaml, run by the uv.lock version of pre-commit). Machines that use the pre-commit
+# framework get the same checks from make pre-commit-install (the semgrep items and enforcement-ledger in
+# .pre-commit-config.yaml) — this one is a plain git hook that needs no venv. It goes into the hooks dir shared by
+# all worktrees (git rev-parse --git-path hooks), so one install covers every worktree.
 hooks-install:
 	cp scripts/git-hooks/pre-commit "$$(git rev-parse --git-path hooks)/pre-commit"
 	chmod +x "$$(git rev-parse --git-path hooks)/pre-commit"
 
-# ADR-DOE-ENFORCE-001 R9: enforcement 台帳(docs/adr/enforcement-ledger.json)は生成物 — 手で書かず、これで作り直す。
-# 台帳から外れた項目(木から消えた law・検・規則)は名前で申告されるので、意図した削除かを確かめてから stage する。
-# 勘定は stdlib 単独の script(PEP 723)なので project の環境は要らない(doeff の sync を起こさない)。
+# ADR-DOE-ENFORCE-001 R9: the enforcement ledger (docs/adr/enforcement-ledger.json) is generated — do not edit it by hand; rebuild it with this.
+# Items that dropped out of the ledger (a law, test or rule removed from the tree) are reported by name; confirm the removal was intended before staging.
+# The count is a stdlib-only script (PEP 723), so it needs no project environment (it does not trigger a doeff sync).
 enforcement-ledger:
 	uv run --script scripts/check_enforcement_ledger.py --write
 
@@ -124,12 +124,12 @@ lint-doeff:
 	@echo "Running doeff-linter..."
 	@if command -v doeff-linter >/dev/null 2>&1; then \
 		root=0; doeff-linter --no-log doeff/ packages/ || root=$$?; \
-		echo "Running doeff-linter in packages/doeff-cluster (package の設定と architecture.hy で)..."; \
+		echo "Running doeff-linter in packages/doeff-cluster (with the package's settings and architecture.hy)..."; \
 		cluster=0; sh $(dir $(abspath $(lastword $(MAKEFILE_LIST))))scripts/lint-doeff-cluster.sh || cluster=$$?; \
 		[ "$$root" -eq 0 ] && [ "$$cluster" -eq 0 ]; \
 	else \
-		echo "doeff-linter が未導入のため検査できません。成功として扱いません。" >&2; \
-		echo "導入: make sync で .venv/bin/doeff-linter が入る — 「uv run make lint-doeff」 で走らせる(uv run が .venv/bin を PATH の先に置く)" >&2; \
+		echo "doeff-linter is not installed, so nothing was checked. This is not treated as success." >&2; \
+		echo "Install: make sync puts .venv/bin/doeff-linter in place — run it with \"uv run make lint-doeff\" (uv run puts .venv/bin first on PATH)" >&2; \
 		exit 127; \
 	fi
 
@@ -150,11 +150,11 @@ lint-packages:
 
 PYTEST_MEM_GUARD_MB ?= 8192
 PYTEST_MEM_GUARD_POLL_INTERVAL ?= 1.0
-# 見張りの設定は tests/conftest.py の option に命令行で渡す(conftest は環境を読まない — #2896)。
+# The guard settings are passed on the command line as tests/conftest.py options (conftest does not read the environment — #2896).
 PYTEST_MEMORY_OPTIONS := --mem-guard-mb=$(PYTEST_MEM_GUARD_MB) \
 	--mem-guard-poll-interval=$(PYTEST_MEM_GUARD_POLL_INTERVAL)
 
-# ADR-DOE-ENFORCE-001 R4: VM conformance oracle の Rust 側テスト(invariant-checks 有効)。
+# ADR-DOE-ENFORCE-001 R4: Rust-side tests of the VM conformance oracle (invariant-checks enabled).
 test-vm-invariants:
 	cd packages/doeff-vm-core && cargo test --features "invariant-checks python_bridge"
 
@@ -167,51 +167,51 @@ test-unit:
 test-e2e:
 	uv run pytest $(PYTEST_MEMORY_OPTIONS) -m "e2e"
 
-# 登記(ai land request)の前に手元で走らせる変えた所の検。分岐点(既定 git merge-base HEAD origin/main)から
-# 作業木までに変えた file が当たる契約の検の組(root の pyproject.toml の [[tool.doeff.contract-tests]])を先頭に、変えた検の file と
-# 逆依存の検を、下の test-packages と同じ session の境目(repo の根・package ごとの tests・PACKAGE_EXTRA_TEST_ROOTS)ごとに別の pytest で
-# 走らせ、合計 60 秒で打ち切る。終わらなかった file は「未測」と名指し、赤だけ rc 1。commit の hook では走らせない
-# (#1122・#794)。分岐点を変える: make test-changed TEST_CHANGED_ARGS="--base <rev>"。
+# Tests of the changed parts, run locally before registering (ai land request). From the fork point (default git merge-base HEAD origin/main)
+# to the worktree, it runs first the contract test sets that the changed files hit (the root pyproject.toml's [[tool.doeff.contract-tests]]),
+# then the changed test files and their reverse-dependent tests, in a separate pytest per session boundary (repo root, each package's tests,
+# PACKAGE_EXTRA_TEST_ROOTS — the same as test-packages below), and stops after 60 seconds in total. Files that did not finish are named as
+# "not measured"; only failures give rc 1. Not run from the commit hook (#1122, #794). To change the fork point: make test-changed TEST_CHANGED_ARGS="--base <rev>".
 TEST_CHANGED_ARGS ?=
 test-changed:
 	uv run --script scripts/run_changed_tests.py $(TEST_CHANGED_ARGS)
 
 # Run tests in all subpackages that have tests/ directories
-# - tests/ に Python の検が 1 本も無い package(doeff-indexer / doeff-linter — 検は Rust の cargo test、
-#   tests/fixtures の test_*.py は検体)は pytest に渡さない。検は test_*.py か test_*.hy(Hy の deftest か上から順に
-#   実行する script — root の ini の doeff_hy_test_files で doeff-adr の plugin が集める)。渡すと「収集 0 件」の rc 5 で loop が止まり、
-#   後ろの package が 1 本も走らない(2026-09-24 実測)。
-# - 実 API / 実 CLI を撃つ e2e は日次の門(.agents/land-queue.toml gate.full)と同じく除く(-m "not e2e")。
-# - PACKAGE_UV_RUN: 日次の門は make sync の直後に `uv run --no-sync` で呼ぶ(素の uv run の暗黙の再 sync で
-#   直前に組んだ VM を組み直さないように)。
-# - package の dir へ cd せず、repo の根から `pytest packages/<p>/tests` を呼ぶ。pytest の要約の FAILED 行は
-#   cwd からの相対なので、package の dir から走らせると `tests/test_cli.py::…` の形になり、同名の test file を
-#   持つ package どうしで失敗名が衝突する(日次の道具は失敗名を repo の根から pytest へそのまま渡す)。
-#   session は package ごとに独立のまま(1 session に畳むと同名の test file が衝突する)。
-# - 1 package の赤で止めず全 package を走らせ、最後に失敗の package を名指して 0 以外で終わる(test-rust と
-#   同じ形)。赤で止めると後ろの package が 1 本も走らないまま日次に見えない(ADR-DOE-ENFORCE-001 R8・
-#   tests/test_daily_test_population.py)。
-# - PACKAGE_PYTEST_DURATIONS: package ごとの session の終わりに、10 秒以上かかった検を長い順に本数の上限なしで出す(日次の log に
-#   1 本ごとの秒を残す)。2026-10-09 20:00 の日次で doeff-cluster が 814 → 1,740 秒に伸び、処理ステージ packages が時間切れに
-#   なったが、log にも台帳にも 1 本ごとの秒が無く、どの検が伸びたかを割れなかった。
+# - Packages with no Python test under tests/ (doeff-indexer / doeff-linter — their tests are Rust cargo test, and the
+#   test_*.py under tests/fixtures are fixtures) are not passed to pytest. A test is test_*.py or test_*.hy (a Hy deftest or a
+#   script run top to bottom — collected by the doeff-adr plugin via doeff_hy_test_files in the root ini). Passing them stops the loop
+#   with rc 5 ("0 collected") and none of the later packages run (measured 2026-09-24).
+# - e2e tests that hit a real API / real CLI are excluded (-m "not e2e"), as in the daily gate (.agents/land-queue.toml gate.full).
+# - PACKAGE_UV_RUN: the daily gate calls this with `uv run --no-sync` right after make sync (so the implicit re-sync of a bare uv run
+#   does not rebuild the VM just built).
+# - Do not cd into the package dir; call `pytest packages/<p>/tests` from the repo root. The FAILED lines in pytest's summary are
+#   relative to cwd, so running from the package dir gives `tests/test_cli.py::…`, and failure names collide between packages that
+#   have test files of the same name (the daily tool passes failure names to pytest as-is from the repo root).
+#   Sessions stay independent per package (folding them into one session makes same-named test files collide).
+# - Do not stop at one package's failure: run every package, then name the failed packages and exit non-zero (same shape as
+#   test-rust). Stopping at a failure leaves the later packages unrun and invisible in the daily run (ADR-DOE-ENFORCE-001 R8,
+#   tests/test_daily_test_population.py).
+# - PACKAGE_PYTEST_DURATIONS: at the end of each package session, print every test that took 10 seconds or more, longest first, with no
+#   count limit (keeps per-test seconds in the daily log). In the 2026-10-09 20:00 daily run doeff-cluster grew from 814 to 1,740 seconds
+#   and the packages stage timed out, but neither the log nor the ledger had per-test seconds, so the slow tests could not be found.
 PACKAGE_UV_RUN ?= uv run
-#   2026-10-11: 上限 20 本を外した(--durations=0)— package に 30 秒を越える検が 20 本を越えると残りが log に出ないため。
-#   root の段の pytest の命令(.agents/land-queue.toml)も同じ 2 つを持つ。
+#   2026-10-11: removed the 20-test limit (--durations=0) — with more than 20 tests over 30 seconds in a package, the rest did not reach the log.
+#   The root stage's pytest command (.agents/land-queue.toml) has the same two options.
 PACKAGE_PYTEST_DURATIONS ?= --durations=0 --durations-min=10
-# package の tests/ の外に在る検の根(package ごとの tests/ と同じく、根ごとに別の session で走らせる)。
-# - packages/doeff-cluster/src/doeff_cluster/_sim: 模擬の環境の下の deftest(各 service の入口の組み立てを模擬の handler の組で回す
-#   検 — doeff-linter の DOEFF136 は検がこの dir の下に在ることを求める・fixture は package の根の conftest.py(source は pytest を
-#   import しない — src の外で検の dir の祖先に当たる置き場))。
+# Test roots outside a package's tests/ (each root runs in its own session, like each package's tests/).
+# - packages/doeff-cluster/src/doeff_cluster/_sim: deftests under the simulated environment (tests that run each service's entry
+#   assembly with a set of simulated handlers — doeff-linter's DOEFF136 requires these tests to be under this dir; the fixtures are in the
+#   package root's conftest.py (source does not import pytest — a place outside src that is an ancestor of the test dir)).
 PACKAGE_EXTRA_TEST_ROOTS = packages/doeff-cluster/src/doeff_cluster/_sim
-# 母集団の根の定義はこの変数の 1 点。置き場の検(tests/test_daily_test_population.py)と、登記の前の入口の session の境目
-# (scripts/run_changed_tests.py の read_session_roots)は下の target で読む
-# (検の側に 2 つ目の一覧を書かない — 書くと、根を足した時に片方だけが古くなる)。
+# This variable is the single definition of the population roots. The placement test (tests/test_daily_test_population.py) and the
+# session boundaries of the pre-registration entry (read_session_roots in scripts/run_changed_tests.py) read it through the target below
+# (do not write a second list on the test side — if you do, adding a root leaves one of them stale).
 print-package-extra-test-roots:
 	@echo $(PACKAGE_EXTRA_TEST_ROOTS)
-# - PACKAGE_JOBS: 2 以上なら package の session を最大その本数だけ同時に走らせる(scripts/run_package_sessions.sh・出力は package ごとに
-#   溜めて元の順に出す)。既定 1 は下の直列の loop のまま。日次の門は .agents/land-queue.toml の packages の行で渡す。
-#   package の session は package ごとに独立で、同じ repo の根の cache を共有するだけ。重い package(PACKAGE_HEAVY_FIRST)を先に撃ち、
-#   最後に残る長い 1 本で全体が決まる形を避ける。
+# - PACKAGE_JOBS: at 2 or more, run up to that many package sessions at once (scripts/run_package_sessions.sh; output is buffered per
+#   package and printed in the original order). The default 1 keeps the serial loop below. The daily gate passes it on the packages line of
+#   .agents/land-queue.toml. Package sessions are independent and only share the repo root's cache. Heavy packages (PACKAGE_HEAVY_FIRST) start
+#   first, to avoid the whole run being decided by one long session left at the end.
 PACKAGE_JOBS ?= 1
 PACKAGE_HEAVY_FIRST = doeff-cluster doeff-adr doeff-hy-pytest doeff-hy
 test-packages:
@@ -253,18 +253,18 @@ test-packages:
 	done; \
 	if [ -n "$$failed" ]; then echo ""; echo "test-packages failed:$$failed"; exit 1; fi
 
-# doeff-hy の検を、doeff-hy の宣言の Hy の下限の版で走らせる(日次の処理ステージ hy-floor・ADR-DOE-ENFORCE-001 R8)。
-# - 下限は packages/doeff-hy/pyproject.toml の `"hy>=<下限>,<=<上限>"` の行から読む(版の写しをここに置かない)。変異の確かめは
-#   `make test-hy-floor HY_FLOOR=1.2.0` で下限を 1 つ下げて走らせる(1.2.0 では require の 10 本が赤)。
-# - 環境の Hy は lock の版のまま、`uv run --with hy==<下限>` で下限の版を重ねる(lock・環境を書き換えない)。R6 の検は uv.lock を読むので、
-#   重ねた Hy では赤にならない。
-# - test_bytecode_guard.py は除く: この file は uv.lock の版の Hy で包みを測る前提で、環境の Hy が lock の版でないと fixture が赤にする
-#   (重ねた Hy では 6 本が常に赤)。この file は packages の段が lock の版で測る。
-# - 所要は約 360〜600 秒(日次の約 5500 秒に足す)。PACKAGE_UV_RUN の `--no-sync` は呼び手が渡す(日次の門は make sync の直後に呼ぶ)。
+# Run doeff-hy's tests with the lower bound of the Hy version doeff-hy declares (daily stage hy-floor, ADR-DOE-ENFORCE-001 R8).
+# - The lower bound is read from the `"hy>=<lower>,<=<upper>"` line of packages/doeff-hy/pyproject.toml (no copy of the version here). To
+#   check that it bites, run `make test-hy-floor HY_FLOOR=1.2.0` with the bound one step lower (with 1.2.0, 10 require tests fail).
+# - The environment's Hy stays at the lock version; `uv run --with hy==<lower>` overlays the lower version (the lock and environment are not
+#   rewritten). The R6 test reads uv.lock, so it does not fail with the overlaid Hy.
+# - test_bytecode_guard.py is excluded: it measures the wrapping with the uv.lock version of Hy, and its fixture fails when the environment's
+#   Hy is not the lock version (6 tests always fail with the overlaid Hy). The packages stage measures this file with the lock version.
+# - Takes about 360–600 seconds (added to the daily run's ~5500 seconds). The caller passes PACKAGE_UV_RUN's `--no-sync` (the daily gate calls this right after make sync).
 HY_FLOOR ?= $(shell sed -n 's/^[[:space:]]*"hy>=\([0-9][0-9.]*\),.*/\1/p' packages/doeff-hy/pyproject.toml | head -1)
 test-hy-floor:
-	@test -n "$(HY_FLOOR)" || { echo "test-hy-floor: packages/doeff-hy/pyproject.toml に hy の下限が読めない"; exit 1; }
-	@echo "=== doeff-hy の検を Hy $(HY_FLOOR)(宣言の下限)で走らせる ==="
+	@test -n "$(HY_FLOOR)" || { echo "test-hy-floor: cannot read the hy lower bound from packages/doeff-hy/pyproject.toml"; exit 1; }
+	@echo "=== Running doeff-hy's tests with Hy $(HY_FLOOR) (the declared lower bound) ==="
 	$(PACKAGE_UV_RUN) --with "hy==$(HY_FLOOR)" pytest packages/doeff-hy/tests --ignore=packages/doeff-hy/tests/test_bytecode_guard.py -m "not e2e" $(PACKAGE_PYTEST_DURATIONS)
 
 # Run cargo test in every Rust crate under packages/ (first red does not hide the rest — every crate
@@ -325,9 +325,9 @@ check-repo-hygiene:
 # Docs site
 # =============================================================================
 
-# docs の site(mkdocs.yml)を、版を固定した mkdocs と Material(tools/docs_site/requirements.txt)で組む。workspace の venv は
-# 要らない。docs-site は CI(.github/workflows/docs-site.yml)と同じ --strict の build で、出力は DOCS_SITE_DIR(既定 site/)。
-# 組んだ後に theme の CSS と JS が在る事を確かめる — exclude_docs が theme の file を外しても --strict の build は落ちない。
+# Build the docs site (mkdocs.yml) with pinned mkdocs and Material (tools/docs_site/requirements.txt). The workspace venv is not
+# needed. docs-site is the same --strict build as CI (.github/workflows/docs-site.yml); the output goes to DOCS_SITE_DIR (default site/).
+# After the build it checks that the theme's CSS and JS exist — the --strict build does not fail when exclude_docs drops the theme's files.
 DOCS_SITE_RUN = uv run --no-project --python 3.12 --with-requirements tools/docs_site/requirements.txt
 DOCS_SITE_DIR ?= site
 
