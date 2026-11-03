@@ -12,7 +12,7 @@ You don't need any theory. If you know what `yield` does, you know most of what 
 
 If you know exceptions, think of an effect as an exception that a handler can answer, after which the code carries on from the line that raised it. That is how OCaml 5 introduces its effect handlers ("resumable exceptions"), and Python generators can already pause and resume, so the library supplies the rest: a VM in Rust that finds the handler for each effect and keeps track of the paused code.
 
-- An **effect** is a plain value that names an operation, such as `Spend(3)`, `Fetch(url)` or `Spawn(task)`. It does nothing by itself. You define your own as a class, or use ones that doeff's packages define.
+- An **effect** is a plain value that names an operation, such as `Spend(3)`, `Roll(6)` or `Spawn(task)`. It does nothing by itself. You define your own as a class, or use ones that doeff's packages define.
 - A **program** is a generator function under `@do`. At each `yield` of an effect it pauses.
 - A **handler** is a function of `(effect, k)` marked with `@handler`, which makes it a `@do` function too. It receives the effect together with `k`, the rest of the function, and decides what happens.
 - The **caller** picks the handlers, so the same function means different things under different handlers.
@@ -116,326 +116,417 @@ That is one layer. The rest of this post stacks several around one program.
 
 ## One program, layer by layer
 
-`monitor` checks two pages every half hour, one task per page. It yields seven kinds of effect: its own `Fetch`, `Spend`, `Log`, `Delay` and `GetTime`, and `Spawn` and `Gather` from doeff's packages. Nothing in it says where a page comes from, what spending means, how long half an hour takes, or where a log line goes:
+`battle` is a small deck-building fight in the spirit of the game Slay the Spire. You have 40 hit points and a deck of ten cards, and the enemy has 44 hit points. Each turn you draw five cards and have 3 energy to spend on them:
+
+| Card | Costs | Does |
+|---|---:|---|
+| Strike | 1 energy | 6 damage |
+| Defend | 1 energy | 5 block: the enemy's next hit is 5 smaller |
+| Bash | 2 energy | 8 damage, and the enemy takes 50% more damage for two turns |
+
+When you end your turn, the enemy does one of three things at random: it hits for 11, hits for 7, or bellows, which makes every later hit 3 stronger. The fight goes on until one side has no hit points left.
+
+`battle` yields four kinds of effect: `Roll` for a random number, `Choose` for the player's move, `Show` for a line on the screen, and `Played` for a statistic. Nothing in it says where the random numbers come from, who picks the cards, whether there is a screen, or whether anyone is counting:
 
 ~~~python
-# monitor.py (excerpt)
-import asyncio
-import heapq
-from dataclasses import dataclass
-from datetime import datetime, timedelta, timezone
-from itertools import count
+# spire.py (excerpt)
+import random
+import sys
+from dataclasses import dataclass, replace
 
-from doeff import Await, EffectBase, Gather, Pass, Resume, Spawn, Transfer, do, handler, run
-from doeff_core_effects.handlers import await_handler
-from doeff_core_effects.scheduler import (
-    PRIORITY_IDLE,
-    CompletePromise,
-    CreatePromise,
-    Wait,
-    scheduled,
-)
+from doeff import EffectBase, Gather, Resume, Spawn, do, handler, run
+from doeff_core_effects.scheduler import scheduled
 
 
-# The program: two tasks check a page every 30 minutes.
+# ---- Effects: everything the fight needs from the outside world.
 @dataclass(frozen=True)
-class Fetch(EffectBase):  # "get this page"
-    url: str
+class Roll(EffectBase):  # "give me a random number below n"
+    n: int
 
 
 @dataclass(frozen=True)
-class Spend(EffectBase):  # "the next step costs this much"
-    cost: int
+class Choose(EffectBase):  # "player: which card, or None to end the turn?"
+    state: Fight
+    hand: tuple[str, ...]
+    energy: int
 
 
 @dataclass(frozen=True)
-class Log(EffectBase):  # "write this line"
-    line: str
+class Show(EffectBase):  # "draw this on the screen"
+    text: str
 
 
 @dataclass(frozen=True)
-class Delay(EffectBase):  # "wait this many seconds"
-    seconds: float
+class Played(EffectBase):  # "a card was played" (for statistics)
+    card: str
+    damage: int
+
+
+# ---- The game: plain data and one @do program.
+CARDS = {"Strike": (1, 6, 0), "Defend": (1, 0, 5), "Bash": (2, 8, 0)}  # cost, damage, block
+DECK = ("Strike",) * 5 + ("Defend",) * 4 + ("Bash",)
 
 
 @dataclass(frozen=True)
-class GetTime(EffectBase):  # "what time is it?"
-    pass
+class Fight:
+    hp: int = 40
+    block: int = 0
+    enemy_hp: int = 44
+    vulnerable: int = 0  # turns the enemy takes +50% damage
+    enemy_strength: int = 0
+    draw: tuple[str, ...] = DECK
+    discard: tuple[str, ...] = ()
+    turn: int = 1
 
 
 @do
-def check(url: str, rounds: int):
-    sizes = []
-    for round_ in range(rounds):
-        if round_:
-            yield Delay(30 * 60)  # wait half an hour between checks
-        yield Spend(1)
-        page = yield Fetch(url)
-        now = yield GetTime()
-        yield Log(f"{now:%H:%M} {url} {len(page)} bytes")
-        sizes.append(len(page))
-    return sizes
+def draw_hand(s: Fight, n: int = 5):
+    """Draw n cards; the deck is shuffled by asking for a random position (Roll)."""
+    hand = []
+    for _ in range(n):
+        if not s.draw:
+            s = replace(s, draw=s.discard, discard=())
+        if not s.draw:
+            break
+        i = yield Roll(len(s.draw))
+        hand.append(s.draw[i])
+        s = replace(s, draw=s.draw[:i] + s.draw[i + 1 :])
+    return s, tuple(hand)
+
+
+def hit(s: Fight, card: str) -> tuple[Fight, int]:
+    """Play one card on the state: returns the new state and the damage dealt (a pure function)."""
+    cost, dmg, blk = CARDS[card]
+    dmg = dmg * 3 // 2 if s.vulnerable else dmg
+    s = replace(s, enemy_hp=s.enemy_hp - dmg, block=s.block + blk)
+    if card == "Bash":
+        s = replace(s, vulnerable=2)
+    return s, dmg
 
 
 @do
-def monitor(urls: list[str], rounds: int):
-    tasks = []
-    for url in urls:
-        tasks.append((yield Spawn(check(url, rounds))))
-    return (yield Gather(*tasks))
-~~~
-
-Install only `scheduled`, a reference handler for `Spawn` and `Gather`, and it stops at its first `Spend` with `UnhandledEffect`: none of these effects has a meaning until a handler gives it one.
-
-### Layer 1: answers for a test run
-
-~~~python
-# monitor.py (excerpt)
-# Layers: each one gives one effect its meaning.
-PAGES = {"a.example": "<p>up</p>", "b.example": "<p>all good</p>"}
-
-
-@handler
-def fake_web(effect: Fetch, k):  # I/O answered from a dict
-    return (yield Resume(k, PAGES[effect.url]))
-
-
-@handler
-def printed(effect: Log, k):  # log lines go to stdout
-    print(effect.line)
-    return (yield Resume(k, None))
-
-
-@handler
-def free(effect: Spend, k):  # spending costs nothing
-    yield Transfer(k, None)
-
-def virtual_clock(start: datetime):  # waits take no time
-    now = start
-    sleepers = []  # (wake-up time, order, promise), earliest first
-    order = count()
-    advancing = False
-
-    @do
-    def advance():  # idle priority: runs while every other task waits
-        nonlocal now, advancing
-        while sleepers:
-            now, _, promise = heapq.heappop(sleepers)
-            yield CompletePromise(promise, None)
-        advancing = False
-
-    @handler
-    def clock(effect: Delay | GetTime, k):
-        nonlocal advancing
-        if isinstance(effect, GetTime):
-            return (yield Resume(k, now))
-        promise = yield CreatePromise()
-        wake_up = now + timedelta(seconds=effect.seconds)
-        heapq.heappush(sleepers, (wake_up, next(order), promise))
-        if not advancing:
-            advancing = True
-            yield Spawn(advance(), priority=PRIORITY_IDLE, daemon=True)
-        yield Wait(promise.future)
-        return (yield Resume(k, None))
-
-    return clock
-
-
-START = datetime(2026, 11, 2, 9, 0, tzinfo=timezone.utc)
-URLS = ["a.example", "b.example"]
-
-
-def simulated(program):  # a virtual clock: 30-minute waits take no time
-    return scheduled(virtual_clock(START)(program))
-~~~
-
-~~~python
-print(run(simulated(printed(free(fake_web(monitor(URLS, 2)))))))
-~~~
-
-~~~text
-09:00 a.example 9 bytes
-09:00 b.example 15 bytes
-09:30 a.example 9 bytes
-09:30 b.example 15 bytes
-[[9, 9], [15, 15]]
-~~~
-
-Read the stack from the inside out. `fake_web` answers `Fetch` from a dict, `free` answers `Spend`, `printed` answers `Log`, and `simulated` installs two more handlers: `scheduled` for `Spawn` and `Gather`, and `virtual_clock` for `Delay` and `GetTime`. `virtual_clock` is the handler of about 20 lines above, and [One mechanism under all of it](#one-mechanism-under-all-of-it) shows how it picks the task that wakes next. The half hour between checks takes no time, and the lines of the two tasks come out in time order, the same order on every run.
-
-### Layer 2: a budget
-
-Swap `free` for a budget of three checks:
-
-~~~python
-# monitor.py (excerpt)
-def budget(limit: int):  # a task that finds the budget spent stops there
-    left = limit
-
-    @handler
-    def on_spend(effect: Spend, k):
-        nonlocal left
-        if effect.cost > left:
-            return "over budget"
-        left -= effect.cost
-        return (yield Resume(k, None))
-
-    return on_spend
-~~~
-
-~~~python
-print(run(simulated(printed(budget(3)(fake_web(monitor(URLS, 2)))))))
-~~~
-
-~~~text
-09:00 a.example 9 bytes
-09:00 b.example 15 bytes
-09:30 a.example 9 bytes
-[[9, 9], 'over budget']
-~~~
-
-Both tasks run under the same `budget(3)`, so it counts their checks together. The fourth `Spend`, the second check of `b.example`, finds nothing left. The handler returns `"over budget"` without resuming `k`, so that task stops there and its result is `"over budget"`, while the other task finishes. `check` has no `if` for any of this.
-
-### Layer 3: failures and retries
-
-Now the first two fetches fail, and a retry layer sits between the program and the web:
-
-~~~python
-# monitor.py (excerpt)
-class Flaky(Exception):
-    pass
-
-
-def flaky_web(failures: int):  # the first few fetches fail
-    left = failures
-
-    @handler
-    def on_fetch(effect: Fetch, k):
-        nonlocal left
-        if left > 0:
-            left -= 1
-            raise Flaky(f"503 from {effect.url}")
-        return (yield Resume(k, PAGES[effect.url]))
-
-    return on_fetch
-
-
-def retrying(times: int):  # ask the next handler out again on Flaky
-    @handler
-    def retry(effect: Fetch, k):
-        for attempt in range(1, times + 1):
-            try:
-                page = yield effect
+def battle(s: Fight = Fight()):
+    """Fight to the end. Returns ("win" | "lose", the turn it ended on)."""
+    while s.hp > 0 and s.enemy_hp > 0:
+        s = replace(s, block=0)
+        s, hand = yield draw_hand(s)
+        energy = 3
+        while energy > 0 and hand:
+            yield Show(f"T{s.turn} you {s.hp} ({s.block} block) | enemy {s.enemy_hp} | {energy} energy | {' '.join(hand)}")
+            pick = yield Choose(s, hand, energy)
+            if pick is None or CARDS[hand[pick]][0] > energy:
                 break
-            except Flaky as error:
-                if attempt == times:
-                    raise
-                yield Log(f"retry {attempt}: {error}")
-        return (yield Resume(k, page))
-
-    return retry
+            card = hand[pick]
+            hand = hand[:pick] + hand[pick + 1 :]
+            energy -= CARDS[card][0]
+            s, dmg = hit(s, card)
+            s = replace(s, discard=s.discard + (card,))
+            yield Played(card, dmg)
+            if s.enemy_hp <= 0:
+                return "win", s.turn
+        s = replace(s, discard=s.discard + hand)
+        intent = yield Roll(3)  # the enemy: 0 chomp 11, 1 thrash 7, 2 bellow (+3 strength)
+        if intent == 2:
+            s = replace(s, enemy_strength=s.enemy_strength + 3)
+            yield Show("   enemy bellows")
+        else:
+            raw = (11 if intent == 0 else 7) + s.enemy_strength
+            taken = max(0, raw - s.block)
+            s = replace(s, hp=s.hp - taken)
+            yield Show(f"   enemy hits for {raw}, you take {taken}")
+        s = replace(s, vulnerable=max(0, s.vulnerable - 1), turn=s.turn + 1)
+    return ("win" if s.enemy_hp <= 0 else "lose"), s.turn
 ~~~
+
+`hit` is a plain function: it works out what one card does to the state of the fight. `draw_hand` and `battle` are `@do` functions, because they yield effects. `battle` runs `draw_hand` by yielding it, and the `yield` gives back what `draw_hand` returned. `Fight` is frozen, so every change makes a new state with `replace`. That matters in Layer 4, where a bot takes the state out of a `Choose` and plays the rest of the fight from it.
+
+Run `battle()` with no handlers, and it stops at its first `Roll` with `UnhandledEffect`: none of these effects has a meaning until a handler gives it one.
+
+### Layer 1: a scripted player and a screen
 
 ~~~python
-print(run(simulated(printed(free(flaky_web(2)(retrying(3)(monitor(URLS, 2))))))))
-~~~
+# spire.py (excerpt)
+# ---- Layer 1: a scripted player and a screen.
+def dice(seed: int):
+    """Answer Roll from a generator seeded with `seed`: the same seed, the same fight."""
+    rng = random.Random(seed)
 
-~~~text
-retry 1: 503 from a.example
-retry 2: 503 from a.example
-09:00 a.example 9 bytes
-09:00 b.example 15 bytes
-09:30 a.example 9 bytes
-09:30 b.example 15 bytes
-[[9, 9], [15, 15]]
-~~~
-
-Inside a handler, `yield effect` performs the same effect again, and the next handler out answers it. A handler can yield other effects too: `retry` reports each failure with `Log`, which travels out to `printed` like any log line from `check`. An injected object answers a call and returns; a handler also holds `k`, so it decides whether the rest of the function runs, when, and with what.
-
-### Layer 4: watch every effect
-
-~~~python
-# monitor.py (excerpt)
-def recording(tape: list[str]):  # keep every effect the program yields
     @handler
-    def record(effect, k):
-        tape.append(type(effect).__name__)
-        return (yield Pass(effect, k))
+    def roll(effect: Roll, k):
+        return (yield Resume(k, rng.randrange(effect.n)))
 
-    return record
-~~~
+    return roll
 
-~~~python
-tape: list[str] = []
-run(simulated(printed(free(fake_web(recording(tape)(monitor(URLS, 1)))))))
-print(tape)
-~~~
 
-~~~text
-09:00 a.example 9 bytes
-09:00 b.example 15 bytes
-['Spawn', 'Spend', 'Fetch', 'GetTime', 'Log', 'Spawn', 'Spend', 'Fetch', 'GetTime', 'Log', 'Gather']
-~~~
+def scripted(moves: list):
+    """A player who follows a script (a test, or a replayed bug report); None ends the turn."""
+    moves = list(moves)
 
-`record` has no annotation, so it receives every effect that reaches it, writes down its type, and passes it out with `Pass`. The first `Fetch` travels like this:
+    @handler
+    def choose(effect: Choose, k):
+        return (yield Resume(k, moves.pop(0) if moves else None))
 
-```mermaid
-sequenceDiagram
-    participant check
-    participant record
-    participant fake_web
-    check->>record: yield Fetch(url), paused as k
-    Note over record: tape.append("Fetch")
-    record->>fake_web: Pass(Fetch(url), k)
-    fake_web->>check: Resume(k, page)
-```
-
-A handler only sees the effects that reach it: if a handler closer to the program answers an effect first, the outer one never sees it. The same shape records answers instead of names: `examples/testing_without_mocks/record_replay.py` records a language model's answers once and replays them in tests, with no model call at all.
-
-### Layer 5: the wall clock and real I/O
-
-~~~python
-# monitor.py (excerpt)
-async def slow_get(url: str) -> str:  # stand-in for an async HTTP client
-    await asyncio.sleep(0.01)
-    return PAGES[url]
+    return choose
 
 
 @handler
-def http_web(effect: Fetch, k):  # I/O over an async client
-    page = yield Await(slow_get(effect.url))
-    return (yield Resume(k, page))
-
-
-@handler
-def wall_clock(effect: Delay | GetTime, k):  # waits on asyncio
-    if isinstance(effect, GetTime):
-        return (yield Resume(k, datetime.now(timezone.utc)))
-    yield Await(asyncio.sleep(effect.seconds))
+def printed(effect: Show, k):
+    """The screen: print each line."""
+    print("   ", effect.text)
     return (yield Resume(k, None))
 
 
-def real(program):  # the wall clock and an async client
-    return scheduled(await_handler()(wall_clock(program)))
+@handler
+def silent(effect: Show, k):
+    """No screen: thousands of fights per second."""
+    return (yield Resume(k, None))
+
+
+@handler
+def quiet_stats(effect: Played, k):
+    """Nobody is counting."""
+    return (yield Resume(k, None))
 ~~~
 
 ~~~python
-run(real(printed(free(http_web(retrying(3)(monitor(URLS, 2)))))))
+moves = [0, 0, 0, None] * 20
+print(run(quiet_stats(printed(dice(7)(scripted(moves)(battle()))))))
 ~~~
 
-This is the same `monitor` on the wall clock, so this run really takes half an hour. `wall_clock` waits with `asyncio.sleep`, and `http_web` calls an async client. Both yield `Await` with a coroutine, and `await_handler` answers it. Only `slow_get` is `async`, so `async` does not spread up into `check` or `monitor`.
+~~~text
+    T1 you 40 (0 block) | enemy 44 | 3 energy | Defend Strike Defend Defend Strike
+    T1 you 40 (5 block) | enemy 44 | 2 energy | Strike Defend Defend Strike
+    T1 you 40 (5 block) | enemy 38 | 1 energy | Defend Defend Strike
+       enemy hits for 11, you take 1
+    T2 you 39 (0 block) | enemy 38 | 3 energy | Bash Strike Strike Strike Defend
+       enemy hits for 11, you take 11
+    T3 you 28 (0 block) | enemy 38 | 3 energy | Strike Strike Strike Defend Defend
+    T3 you 28 (0 block) | enemy 32 | 2 energy | Strike Strike Defend Defend
+    T3 you 28 (0 block) | enemy 26 | 1 energy | Strike Defend Defend
+       enemy hits for 11, you take 11
+    T4 you 17 (0 block) | enemy 20 | 3 energy | Defend Strike Defend Strike Bash
+       enemy bellows
+    T5 you 17 (0 block) | enemy 20 | 3 energy | Bash Strike Defend Strike Defend
+    T5 you 17 (0 block) | enemy 12 | 1 energy | Strike Defend Strike Defend
+       enemy hits for 14, you take 14
+    T6 you 3 (0 block) | enemy 3 | 3 energy | Strike Defend Defend Strike Strike
+('win', 6)
+~~~
+
+Read the stack from the inside out. `scripted` answers `Choose` from a list of positions in the hand, `dice(7)` answers `Roll` from a random generator seeded with 7, `printed` answers `Show` by printing the line, and `quiet_stats` answers `Played` by doing nothing. The result is who won and on which turn.
+
+The script plays the first card of the hand three times, then ends the turn. On turn 2 it is out of step and ends the turn without playing a card, which is what a script does. The same seed and the same script give the same fight on every run, so this stack is also a test: a bug report becomes a seed and a list of moves.
+
+### Layer 2: a random bot
+
+~~~python
+# spire.py (excerpt)
+def affordable(effect: Choose) -> list[int]:
+    """Positions in the hand of the cards the player has the energy for."""
+    return [i for i, c in enumerate(effect.hand) if CARDS[c][0] <= effect.energy]
+
+@handler
+def random_bot(effect: Choose, k):
+    """Play a random affordable card, or end the turn (the extra number is "end the turn")."""
+    options = affordable(effect)
+    i = yield Roll(len(options) + 1)
+    return (yield Resume(k, options[i] if i < len(options) else None))
+~~~
+
+~~~python
+print(run(quiet_stats(silent(dice(3)(random_bot(battle()))))))
+~~~
+
+~~~text
+('win', 4)
+~~~
+
+`random_bot` takes the place of `scripted`. It is a handler for `Choose`, and it yields an effect of its own: a `Roll` for a random position among the cards it has the energy for, where the one extra number means "end the turn". That `Roll` travels out to `dice(3)` like any `Roll` from `battle`. `silent` takes the place of `printed`, so nothing is printed. `battle` has not changed, and it does not know that nobody is at the screen.
+
+### Layer 3: record and replay
+
+~~~python
+# spire.py (excerpt)
+def record(tape: list):
+    """Keep every Roll and Choose answer on the tape, passing the effect on to the handlers outside."""
+
+    @handler
+    def recorder(effect: Roll | Choose, k):
+        answer = yield effect
+        tape.append(answer)
+        return (yield Resume(k, answer))
+
+    return recorder
+
+
+def replay(tape: list):
+    """Answer Roll and Choose from the tape: no dice, no player, the same fight."""
+    tape = list(tape)
+
+    @handler
+    def replayer(effect: Roll | Choose, k):
+        return (yield Resume(k, tape.pop(0)))
+
+    return replayer
+~~~
+
+~~~python
+tape: list = []
+first = run(quiet_stats(silent(dice(3)(random_bot(record(tape)(battle()))))))
+again = run(quiet_stats(silent(replay(tape)(battle()))))
+print(first, again, "same:", first == again, "tape:", len(tape), "answers")
+~~~
+
+~~~text
+('win', 4) ('win', 4) same: True tape: 32 answers
+~~~
+
+`recorder` sits closest to `battle` and takes both `Roll` and `Choose`. Inside a handler, `yield effect` performs the same effect again, so the next handler out answers it: `random_bot` answers `Choose`, and `dice(3)` answers `Roll`. `recorder` writes the answer on the tape and resumes `battle` with it. `random_bot` sits outside `recorder`, so the `Roll` it yields goes straight out to `dice(3)` and never reaches the tape: the tape keeps the bot's moves, not how the bot picked them.
+
+`replayer` answers both effects from the tape. The second run has no dice and no player, and it plays the same fight to the same end. The 32 answers are the whole fight. Keep them with a crash report, and the crash happens again, move for move.
+
+### Layer 4: a Monte Carlo bot
+
+~~~python
+# spire.py (excerpt)
+def monte_carlo(playouts: int):
+    """Try each move by running the rest of the fight `playouts` times, and pick the best.
+
+    The handler runs `battle` itself, under dice and a random bot. A playout starts from the next
+    turn's draw, which is a cheap approximation of "the rest of this turn".
+    """
+
+    @handler
+    def choose(effect: Choose, k):
+        best, best_score = None, -1.0
+        for i in [*affordable(effect), None]:
+            wins = 0
+            for n in range(playouts):
+                s = effect.state if i is None else hit(effect.state, effect.hand[i])[0]
+                if s.enemy_hp <= 0:
+                    wins += 1
+                    continue
+                result, _ = run(quiet_stats(silent(dice(n)(random_bot(battle(s))))))
+                wins += result == "win"
+            if wins / playouts > best_score:
+                best, best_score = i, wins / playouts
+        return (yield Resume(k, best))
+
+    return choose
+
+PLAYOUTS = 3  # per candidate move; the 100 Monte Carlo fights take well under a minute
+~~~
+
+~~~python
+print(run(quiet_stats(silent(dice(3)(monte_carlo(PLAYOUTS)(battle()))))))
+~~~
+
+~~~text
+('win', 4)
+~~~
+
+This is the layer the others lead up to. `monte_carlo` is a handler for `Choose`, and to answer it, it runs `battle` itself. For each card it could play, and for ending the turn, it plays that card on the state with `hit`, then runs the rest of the fight `playouts` times. Each of those runs is a new `run` with a stack of its own: `dice(n)` for the dice, `random_bot` for the player, and `silent` and `quiet_stats` for the screen and the statistics. The handler counts the wins and resumes the paused fight with the move that won most often.
+
+The bot needs no model of the game. It plays the real `battle`, the same function a person plays at the terminal, so when a card changes, the bot plays the changed card. `battle` knows nothing about bots, or about being run inside one of its own handlers. The fight that asked the question stays paused at its `Choose` the whole time, as `k`, and goes on only when the handler resumes it. The runs inside the handler answer their effects with their own handlers, so they do not use up the dice of the paused fight.
+
+The playouts are rough. Each one starts from the next turn's draw, so it leaves out the rest of the current hand, and three playouts per move is very few. The next layer measures how much better the bot plays anyway.
+
+### Layer 5: a hundred fights at once
+
+~~~python
+# spire.py (excerpt)
+@do
+def win_rate(player, fights: int):
+    """The same battle `fights` times, one task per seed; returns the share of wins."""
+    tasks = []
+    for seed in range(fights):
+        tasks.append((yield Spawn(silent(dice(seed)(player(battle()))))))
+    results = yield Gather(*tasks)
+    return sum(r == "win" for r, _ in results) / fights
+~~~
+
+~~~python
+print("random bot wins", run(scheduled(quiet_stats(win_rate(random_bot, 100)))))
+print("monte carlo wins", run(scheduled(quiet_stats(win_rate(monte_carlo(PLAYOUTS), 100)))))
+~~~
+
+~~~text
+random bot wins 0.73
+monte carlo wins 1.0
+~~~
+
+`win_rate` is a program too. It yields `Spawn` once per seed, which starts a `battle` as a task, then `Gather`, which waits for every task and gives back their results. `Spawn` and `Gather` are effects from doeff's packages, and `scheduled` is a reference handler for them. The tasks take turns on one thread, and `scheduled` switches between them where they yield.
+
+Each task carries its own stack: `silent`, `dice(seed)` and the player are installed around each `battle()` when the task is made, so the hundred fights do not share a random generator. The player is a parameter, so the same line runs `random_bot` or `monte_carlo(PLAYOUTS)`. On the same hundred seeds, the random bot wins 73 fights and the Monte Carlo bot wins all 100.
+
+### Layer 6: a damage count per card
+
+~~~python
+# spire.py (excerpt)
+def damage_stats(totals: dict):
+    """Add up the damage each card did into `totals`."""
+
+    @handler
+    def count(effect: Played, k):
+        totals[effect.card] = totals.get(effect.card, 0) + effect.damage
+        return (yield Resume(k, None))
+
+    return count
+~~~
+
+~~~python
+totals: dict = {}
+run(scheduled(damage_stats(totals)(win_rate(random_bot, 100))))
+print(totals)
+~~~
+
+~~~text
+{'Strike': 3663, 'Defend': 0, 'Bash': 632}
+~~~
+
+`damage_stats(totals)` takes the place of `quiet_stats`, outside `win_rate`. An effect that a task's own handlers do not take travels out to the handlers around the `Spawn` that started the task, so the `Played` of all hundred fights reach this one handler. `battle` has yielded `Played` for every card from the start, and it never had to know whether anyone was counting. Change a card's numbers, run this line again, and you see what the change did.
+
+### Production: a person at the terminal
+
+~~~python
+# spire.py (excerpt)
+@handler
+def human(effect: Choose, k):
+    """Ask at the terminal which card to play; an empty line (or a bad number) ends the turn."""
+    options = affordable(effect)
+    menu = "  ".join(f"[{i}] {effect.hand[i]}" for i in options)
+    answer = input(f"   play which? {menu}  [enter = end turn] > ").strip()
+    pick = int(answer) if answer.isdigit() and int(answer) in options else None
+    return (yield Resume(k, pick))
+
+
+def play() -> None:
+    """A fight against the enemy, played by a person; the dice are seeded from the clock."""
+    seed = random.SystemRandom().randrange(10**6)
+    print(f"seed {seed}")
+    print("->", run(quiet_stats(printed(dice(seed)(human(battle()))))))
+~~~
+
+~~~bash
+python spire.py play
+~~~
+
+`human` answers `Choose` by asking at the terminal with `input()`, and `play` seeds the dice from the system's random source. Next to Layer 1, only the player and the seed differ. The code that the bots played, the replay replayed and the statistics counted is the code the person plays.
 
 ### The stacks side by side
 
-| Run | Layers around `monitor`, from the inside out | What changes |
+| Run | Layers around `battle`, from the inside out | What changes |
 |---|---|---|
-| test | `fake_web`, `free`, `printed`, `simulated` | pages from a dict, half an hour in no time, the same order every run |
-| budgeted | `budget(3)` in place of `free` | the task that finds the budget spent stops there |
-| flaky | `retrying(3)` and `flaky_web(2)` in place of `fake_web` | failures are retried and logged |
-| watched | `recording(tape)` added inside `fake_web` | every effect is kept, in order |
-| production | `retrying(3)` and `http_web` in place of `fake_web`, `real` in place of `simulated` | the wall clock and an async client |
+| scripted | `scripted(moves)`, `dice(7)`, `printed`, `quiet_stats` | a fight that is the same on every run, on the screen; a test |
+| random bot | `random_bot` in place of `scripted`, `silent` in place of `printed` | the moves come from the same dice as the fight |
+| recorded | `record(tape)` added inside `random_bot` | every random number and every move is kept |
+| replayed | `replay(tape)` in place of the dice and the player | the same fight with no dice and no player |
+| Monte Carlo | `monte_carlo(PLAYOUTS)` in place of `random_bot` | the player's handler runs `battle` to choose each move |
+| win rate | each fight a task with its own `dice(seed)`, under `scheduled` | a hundred fights and the share of wins |
+| damage count | `damage_stats(totals)` in place of `quiet_stats` | the damage of each card over a hundred fights |
+| production | `human` in place of the player, dice seeded by the system | a person plays |
 
-`monitor` is the same function in every row. A mock, a fake clock or a custom event loop gives you one of these rows. Here each row is a stack of handlers a few lines long, and swapping one layer does not touch the others.
+`battle` is the same function in every row. Some rows replace an input, such as the dice or the player. The others do things an object passed in as an argument cannot do. `recorder` passes an effect on and keeps the answer. `random_bot` yields an effect of its own, which the next handler out answers. `monte_carlo` holds the paused fight as `k` while it runs the same program many more times, and resumes it once it has decided. `win_rate` gives every task its own stack, and `damage_stats` hears from all of them. Each of these is a handler a few lines long, and swapping one does not touch the others or `battle`.
 
 ## One mechanism under all of it
 
