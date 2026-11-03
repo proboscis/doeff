@@ -4,7 +4,7 @@
 ここには名ごとの形の読み(どの呼びを書き換えるか)を置かない — それは道具の側に在る。
 
 見る file(git の追跡する file): Python(``.py``・``.pyi``)・Hy(``.hy``・``.hyk``・``.hyp``)・markdown(``.md`` の code
-の囲み)。歴史の記録(``docs/design``・``docs/design-checks``・``docs/history``・``publications``・``evidence`` の dir・
+の囲み)。歴史の記録(``docs/design``・``docs/design-checks``・``docs/history``・``evidence`` の dir・
 ``CHANGELOG.md``)は数えるだけで書き換えない(tools/hide_submodules.py と同じ)。
 """
 
@@ -20,7 +20,7 @@ from pathlib import Path
 from typing import Literal
 
 #: 歴史として書き換えない所(木の根からの相対の頭・dir の名・file の名)。tools/hide_submodules.py と同じ。
-HISTORY_PREFIXES = ("docs/design/", "docs/design-checks/", "docs/history/", "publications/")
+HISTORY_PREFIXES = ("docs/design/", "docs/design-checks/", "docs/history/")
 HISTORY_DIR_NAMES = frozenset({"evidence"})
 HISTORY_FILE_NAMES = frozenset({"CHANGELOG.md"})
 #: 区画を 2 段目の dir で分ける根の dir。

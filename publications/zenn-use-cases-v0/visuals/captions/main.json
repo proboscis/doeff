@@ -1,7 +1,0 @@
-{
-  "concept_title": "budget(5)が、2回目のSpendで続きを捨てる",
-  "concept_caption": "1回目の`Spend(3)`は、残りの5に収まります。`budget`は`Resume`で`research`を再開し、tidesのメモができます。2回目の`Spend(3)`は、残りの2に収まりません。`budget`は続きの`k`を捨て、`\"over budget\"`が`run()`の結果になります。",
-  "flow_title": "recordが書き留めたFetchを、Passでfake_webへ渡す",
-  "flow_caption": "`check`が`Fetch(url)`を`yield`して止まると、まず内側の`record`に届きます。`record`は名を書き留めて`Pass`で外へ渡し、`fake_web`がページを渡して`check`を再開します。",
-  "hero_title": "doeff — 1つの処理に、ハンドラを重ねる。"
-}

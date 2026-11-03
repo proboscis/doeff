@@ -140,7 +140,7 @@ name = "doeff"
 # ⇒ 費用: 標準の library だけで追跡する file を読む(実測 約 3 秒)。make sync は要らない。後ろを止めない。
 # ⇒ 形の検: tests/misc/test_find_internal_leftovers.py。戻すには leftovers の行を消す。
 # 2026-11-04(戻せる): 段 japanese を足す。scripts/count_japanese.py が、追跡する text file の全部の行で日本語の字を含む行を数え、
-# dir ごと・拡張子ごとの表と合計を出す(publications/ は数えない)。今は数を出すだけで fail にしない(rc 0)。
+# dir ごと・拡張子ごとの表と合計を出す(publications/ は 2026-11-04 に doeff-publications repo へ移した)。今は数を出すだけで fail にしない(rc 0)。
 # ⇒ なぜ: repo 内の言語を英語に統一する決定(2026-11-04)の進みを、日次の結末で読むため。
 # ⇒ 替え方: 合計が 0 になった区切りの終わりで run の末尾に --fail-on-any を足す。戻すには japanese の行を消す。
 # ⇒ 形の検: tests/misc/test_count_japanese.py。標準の library だけ(実測 約 7 秒)・make sync は要らない。後ろを止めない。

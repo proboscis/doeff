@@ -60,7 +60,7 @@
     [(rule R1 "handler(f) は、f が def(lambda でない素の関数)なら @do 関数にして handler にする。f が @do 関数か、その partial か bound method なら、そのまま handler にする。既に印の付いた installer はそのまま返す。それ以外(lambda・素の method の bound method・callable の instance・builtin)は、作る所で TypeError「<名> is not a handler body」で断る。(effect, k) を取れない物と、どの effect にも当たらない注記は、前と同じく組む所で断る。yield の無い def が制御の式か effect を yield せずに返したら、走る時に TypeError で断り、return (yield …) の形を示す。")
      (rule R2 "with_handlers と stacked_handlers は、印 _doeff_is_handler_fn の付いた handler(@handler の def・defhandler・stacked_handlers の束)だけを取り、それ以外を組む所で TypeError「<名> is not a handler」で断る。中で handler() に通さない。")
      (rule R3 "GetHandlers(k) で読んだ handler の入れ直しは doeff.handler_utils.reinstaller が受け持ち、VM の WithHandler で直に入れる。新しい handler を作るのに使わない。")
-     (rule R4 "@handler の下に @do を書く形は deprecated。走る時は受け続け(PyPI の 0.7.0 の利用者の code と、毎日 PyPI の版で走らせる examples/testing_without_mocks と publications/zenn-use-cases-v0 の例のため)、repo の中では semgrep が断る。その 2 つの dir は、@handler だけの形を持つ版が PyPI に出た時に書き替える。")
+     (rule R4 "@handler の下に @do を書く形は deprecated。走る時は受け続け(PyPI の 0.7.0 の利用者の code と、毎日 PyPI の版で走らせる examples/testing_without_mocks と doeff-publications repo の publications/zenn-use-cases-v0 の例のため)、repo の中では semgrep が断る。その 2 つの dir は、@handler だけの形を持つ版が PyPI に出た時に書き替える。")
      (rule R5 ".semgrep.yaml の 4 規則が、試験の外で同じ形を書く所で断る: @handler の下の @do・@handler の def で yield しない制御の式の return・handler 類への lambda・同じ scope の @handler の無い def の handler の列への受け渡し。試験は断りを確かめるために断られる形をわざと作るので外す。")
      (rule R6 "書くその場面の助言は doeff の外(defjevrule)が持つ。doeff の側には R1〜R5 とその確かめだけを置く。")]
   :laws

@@ -84,7 +84,7 @@ import の根の外の file(呼び手)は、名が入口から読めて入口の
 import の根の中の file と ``--underscore-only`` は ``_`` の path だけを読む。Hy の ``require`` はいつも ``_`` の path。
 
 書き換えない file: 設計の記録(``pyproject.toml`` の ``[tool.doeff] record-dirs`` と ``docs/design/``)・``docs/history/``・
-``publications/``・``evidence`` の dir・``CHANGELOG.md``(歴史)、既知の表と許した物の表(表を直す card が扱う)、
+``evidence`` の dir・``CHANGELOG.md``(歴史)、既知の表と許した物の表(表を直す card が扱う)、
 移し替えの module。
 
 出力(stdout と ``--json``): 前と後の数 — 子・名(行き先ごと)・古い path を読む場所(前)・書き換えた場所(種類ごと)・
@@ -150,7 +150,7 @@ SHIM_NAMES_MORE = "#  "
 LINE_LIMIT = 100
 
 #: 歴史として書き換えない所(木の根からの相対の頭・dir の名・file の名)。
-HISTORY_PREFIXES = ("docs/design/", "docs/design-checks/", "docs/history/", "publications/")
+HISTORY_PREFIXES = ("docs/design/", "docs/design-checks/", "docs/history/")
 HISTORY_DIR_NAMES = frozenset({"evidence"})
 HISTORY_FILE_NAMES = frozenset({"CHANGELOG.md"})
 
