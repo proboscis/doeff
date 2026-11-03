@@ -596,7 +596,7 @@ The paths for users come first. The rest are for people who work on doeff itself
 | [`ide-plugins/`][map-ide-plugins] | users | editor plugins for PyCharm, VS Code and Neovim |
 | [`docs/adr/`][map-adr] | contributors | design decisions written as executable tests |
 | [`tests/`][map-tests], [`scripts/`][map-scripts], [`tools/`][map-tools], [`benchmarks/`][map-benchmarks] | contributors | the test suite, development tools and benchmarks |
-| [`publications/`][map-publications], [`images/`][map-images] | maintainers | drafts of articles about doeff and their images |
+| [`images/`][map-images] | maintainers | images used by the README |
 
 [`docs/README.md`][map-docs-readme] tells the user guides in `docs/` apart from the development
 records.
@@ -611,7 +611,6 @@ records.
 [map-scripts]: https://github.com/proboscis/doeff/tree/main/scripts
 [map-tools]: https://github.com/proboscis/doeff/tree/main/tools
 [map-benchmarks]: https://github.com/proboscis/doeff/tree/main/benchmarks
-[map-publications]: https://github.com/proboscis/doeff/tree/main/publications
 [map-images]: https://github.com/proboscis/doeff/tree/main/images
 [map-docs-readme]: https://github.com/proboscis/doeff/blob/main/docs/README.md
 

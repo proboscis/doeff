@@ -149,7 +149,7 @@
   handler with neither settings nor per-call state is a value; a factory without parameters is kept only when each call
   builds a handler over its own new state (`in_memory_cache_handler()`). `tools/handler_factory_census.py` lists the
   factories without parameters, and a test compares the list with `tests/data/zero_parameter_handler_factories.json`.
-  `examples/testing_without_mocks` and `publications/zenn-use-cases-v0` keep `await_handler()`, since they run daily
+  `examples/testing_without_mocks` and `publications/zenn-use-cases-v0` (now in the separate doeff-publications repo) keep `await_handler()`, since they run daily
   against the doeff on PyPI.
 - **doeff-traverse:** `sequential` is a handler, not a handler factory, for the same reason (ADR-DOE-API-002): write
   `sequential(prog)` and `[fail_handler, sequential]` (in Hy, `(sequential prog)` and `[fail-handler sequential]`)
@@ -162,7 +162,7 @@
   `production_handlers()(prog)` and `[production_handlers(), …, agent_handler(), git_handler()]`. The former calls
   still answer the same handler for one release, with a `DeprecationWarning`. doeff-git's `production_handlers` is
   still `github_handler` outside `git_local_handler`, as one handler (`doeff.program._former_factory_stack`).
-  `publications/zenn-use-cases-v0` keeps the calls, since it runs against the packages on PyPI.
+  `publications/zenn-use-cases-v0` (now in the separate doeff-publications repo) keeps the calls, since it runs against the packages on PyPI.
 - **doeff-core-effects:** `maybe` and `result` are handlers, not handler factories, for the same reason
   (ADR-DOE-API-002 — they have neither settings nor per-call state): write `maybe(prog)`, `result(prog)` and
   `result(maybe(prog))` (in Hy, `(maybe body)` and `(result body)`) where you wrote `maybe()(prog)` and
@@ -172,7 +172,7 @@
   `scheduled(prog, implementation="python")`), for the same reason (ADR-DOE-API-001 R6, ADR-DOE-API-002): it carries
   the handler marker, so it also stands in `with_handlers` and `stacked_handlers`. It is not a handler factory —
   `scheduled()` without a program is a `TypeError`.
-- `examples/testing_without_mocks` and `publications/zenn-use-cases-v0` write each handler as `@handler` alone on its
+- `examples/testing_without_mocks` and `publications/zenn-use-cases-v0` (now in the separate doeff-publications repo) write each handler as `@handler` alone on its
   `def`, now that 0.8.0 is on PyPI, and the semgrep rule that refuses `@handler @do` covers them too.
 - **Breaking (doeff-hy):** the import root `doeff_hy_bytecode_guard` exports only `install` (what the
   `doeff_hy_bytecode_guard.pth` startup line calls) and the types `MacroRecord` and `HyMacroUseWarning`
@@ -290,7 +290,7 @@
   same shapes outside the tests: `@handler` over `@do`, a `return Resume(...)` (or another control expression) under
   `@handler` without `yield`, a lambda given to `handler` or `with_handlers`, and a function of the same file without
   `@handler` given to `with_handlers` or `stacked_handlers`. `examples/testing_without_mocks` and
-  `publications/zenn-use-cases-v0` keep `@handler @do`, since they run daily against the doeff on PyPI; they move to
+  `publications/zenn-use-cases-v0` (now in the separate doeff-publications repo) keep `@handler @do`, since they run daily against the doeff on PyPI; they move to
   `@handler` alone with the next release. The README's cost table drops its plain-function row.
   `doeff_gemini.default_gemini_cost_handler` is now a handler, so `handlers=[default_gemini_cost_handler, ...]` keeps
   working; the raw dispatcher behind it is private, and `production_handlers(cost_handler=...)` still takes a raw

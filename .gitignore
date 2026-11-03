@@ -133,10 +133,3 @@ ORCH_PROMPT.md
 /python/
 
 
-# Repository-owned Zenn article visuals (override global image ignores)
-!/images/zenn-use-cases-v0/*.png
-# The images the article uses are under generated/ (the line above only covers the top level, so the 47 images of 2026-09-16 were left out)
-!/images/zenn-use-cases-v0/generated/
-!/images/zenn-use-cases-v0/generated/*.png
-# Hand-drawn source diagrams (overrides the global `*.svg` ignore)
-!/publications/zenn-use-cases-v0/visuals/*.svg

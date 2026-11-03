@@ -23,7 +23,7 @@ The six kinds:
    network addresses, and token or key shapes.
 5. Japanese-only note - a Japanese comment line (in code, or an HTML comment in docs) that also
    carries a kind 1-3 mark, and a Japanese or personal TODO. READMEs and the Japanese articles
-   under publications/ are written in Japanese on purpose and are left out.
+   under publications/ (moved to the doeff-publications repo on 2026-11-04) were written in Japanese on purpose and were left out.
 6. leftover file - files that neither users nor contributors need: raw verification records, old
    session records, build output, tool state, docs pages outside the site, drafts, empty files.
 
