@@ -1,18 +1,23 @@
-"""What a step reads and returns, and the one check the runtime and the replay both apply to its answer.
+"""What a step reads and returns, and the checks the runtime and the replay both apply to its answer.
 
-A step is a pure function ``step(state, input) -> Next(state, effects)``. The effects are values the runtime
+A step is a pure function ``step(state, input) -> Next(state, effects)``, or a function whose answer is a Program of
+that ``Next`` that performs no effect (a defk that only composes other defks). The effects are values the runtime
 carries out: ``Run`` starts a program in a task of its own, ``CancelRun`` cancels one, ``Finish`` ends the fold.
 Every ``Run`` comes back to the step as exactly one input with its key — ``Answered`` (the program's value),
 ``Raised`` (the exception it ended with) or ``Cancelled`` (it ended by the ``CancelRun`` of its key).
+
+A step's Program runs under ``_refuse_every_effect``: every effect it performs ends it with ``StepYieldedEffectError``.
+The fold and the replay evaluate it through the same ``step_answer``, so both see the same answer.
 """
 
-from collections.abc import Hashable
+from collections.abc import Callable, Generator, Hashable
 from dataclasses import dataclass
-from typing import Generic, TypeVar
+from typing import Any, Generic, TypeIs, TypeVar
 
-from doeff import DoExpr, EffectBase, Program
+from doeff import DoExpr, EffectBase, K, Program, do, handler
 
 S = TypeVar("S")
+T = TypeVar("T")
 
 
 @dataclass(frozen=True)
@@ -91,6 +96,61 @@ RunEnd = Answered | Raised | Cancelled
 """The inputs the runtime makes of a run's end: exactly one per ``Run``."""
 
 
+class StepYieldedEffectError(TypeError):
+    """A step's Program performed an effect. A step decides from its state and its input alone: what it needs from
+    the outside world comes as an input, and what it wants done goes out as a ``Run``.
+
+    Every effect is refused, not a list of them — ``Ask`` and the clock too, or the inputs would no longer decide
+    the replay. The step cannot catch this: its Program is not resumed, so the error is raised where the step's
+    answer is read (in the fold, or in the replay).
+    """
+
+    def __init__(self, step: str, effect: object) -> None:
+        super().__init__(
+            f"the step {step} performed the effect {type(effect).__name__}: a step answers Next(state, effects) "
+            "without effects — read the outside world as an input, ask for work with Run"
+        )
+        self.step = step
+        self.effect = effect
+
+
+@dataclass(frozen=True)
+class _Performed:
+    """What the step's Program ends with when it performed ``effect``: the handler's answer in place of the
+    Program's, so the Program is never resumed (a ``try`` in the step cannot catch the refusal)."""
+
+    effect: object
+
+
+@handler
+def _refuse_every_effect(effect: object, k: K) -> "_Performed":
+    """Every effect the step's Program performs ends it: the continuation ``k`` is dropped, not resumed."""
+    return _Performed(effect)
+
+
+def step_name(step: Callable[..., object]) -> str:
+    """The name an error gives ``step`` by."""
+    return getattr(step, "__qualname__", None) or getattr(step, "__name__", None) or repr(step)
+
+
+@do
+def step_answer(
+    step: Callable[..., object], answer: "Program[T]"
+) -> Generator[Any, Any, T]:
+    """The value of the step's Program ``answer``, evaluated under ``_refuse_every_effect``; ``StepYieldedEffectError``
+    when it performed an effect. The fold yields this and the replay runs it: one evaluation for both."""
+    value = yield _refuse_every_effect(answer)
+    if isinstance(value, _Performed):
+        raise StepYieldedEffectError(step_name(step), value.effect)
+    return value
+
+
+def is_program_answer(answer: "Next[S] | Program[Next[S]]") -> TypeIs["Program[Next[S]]"]:
+    """Whether the step answered a Program (to evaluate) rather than a value (to check as it is)."""
+    # The tuple form: to the type checker DoExpr is the union of the program nodes, at run time a virtual base.
+    return isinstance(answer, (DoExpr,))
+
+
 def checked_next(answer: "Next[S]", running: frozenset[Hashable]) -> "Next[S]":
     """``answer`` as the ``Next`` it must be, or the error naming what is wrong with it.
 
@@ -101,7 +161,9 @@ def checked_next(answer: "Next[S]", running: frozenset[Hashable]) -> "Next[S]":
     """
     # A step written in Hy or untyped Python is not held to its annotation: the answer is checked here.
     if not isinstance(answer, Next):
-        raise TypeError(f"a step answers Next(state, effects), got {type(answer).__name__}")
+        raise TypeError(
+            f"a step answers Next(state, effects) or a Program of it, got {type(answer).__name__}"
+        )
     effects: tuple[object, ...] = answer.effects
     started = set(running)
     for effect in effects:

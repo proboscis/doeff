@@ -10,8 +10,9 @@ The watcher is never cancelled by the fold (``CancelRun`` cancels the runner), s
 of a runner cancelled before it started. A runner that ended with ``TaskCancelledError`` is ``Cancelled`` only when the
 step cancelled it; one that raised it on its own (a wait on another cancelled task) is ``Raised``.
 
-The fold does not install a handler. The caller installs the bus handler subscribed to ``inputs.event_types``
-(``subscribed_event_handler``) and, for ``timers()``, the timer handler inside it — under ``scheduled``.
+The fold installs one handler, around a step's Program only: the one that refuses every effect (``step_answer``).
+The caller installs the bus handler subscribed to ``inputs.event_types`` (``subscribed_event_handler``) and, for
+``timers()``, the timer handler inside it — under ``scheduled``.
 """
 
 from collections.abc import Callable, Generator, Hashable
@@ -21,7 +22,7 @@ from typing import Any, TypeVar
 from doeff_core_effects import Cancel, Spawn, Task, TaskCancelledError, Wait, shielded
 from doeff_events import Publish, WaitForEvent
 
-from doeff import do
+from doeff import Program, do
 from doeff_stream._source import Inputs, RunEnded
 from doeff_stream._step import (
     Answered,
@@ -33,6 +34,8 @@ from doeff_stream._step import (
     Run,
     RunEnd,
     checked_next,
+    is_program_answer,
+    step_answer,
 )
 
 S = TypeVar("S")
@@ -89,9 +92,12 @@ def _close(running: dict[Hashable, _Running]) -> Generator[Any, Any, None]:
 
 @do
 def fold(
-    step: Callable[[S, object], Next[S]], initial: S, inputs: Inputs
+    step: Callable[[S, object], "Next[S] | Program[Next[S]]"], initial: S, inputs: Inputs
 ) -> Generator[Any, Any, object]:
     """Run ``step`` over the inputs of ``inputs`` from ``initial`` until it answers ``Finish(value)``; answer ``value``.
+
+    A step that answers a Program is evaluated under the handler that refuses every effect: its value is the
+    ``Next``, and an effect it performs raises ``StepYieldedEffectError`` here like any error of the step.
 
     Each input is one event of ``inputs.event_types`` (in the order the bus queued them) or the end of a run
     (``Answered`` / ``Raised`` / ``Cancelled``). If the step raises, or the fold's task is cancelled, the runs still
@@ -108,7 +114,10 @@ def fold(
                 if event.origin is not origin:
                     continue  # another fold's run on the same bus
                 event = _as_step_input(event, running.pop(event.key))
-            answer = checked_next(step(state, event), frozenset(running))
+            answer = step(state, event)
+            if is_program_answer(answer):
+                answer = yield step_answer(step, answer)
+            answer = checked_next(answer, frozenset(running))
             state = answer.state
             for effect in answer.effects:
                 match effect:
