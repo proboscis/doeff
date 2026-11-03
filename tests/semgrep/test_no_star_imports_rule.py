@@ -21,7 +21,7 @@ ROOT_NAME = "fixture_root"
 
 
 def _shim_text(old: str, new: str) -> str:
-    """移し替えの module の形(削除した hide_submodules の道具が置いた text と同じ形)。"""
+    """移し替えの module の形(削除した the former move tool の道具が置いた text と同じ形)。"""
     return (
         f"# moved-submodule-shim: {old} -> {new}\n"
         "import sys\n"

@@ -1694,7 +1694,7 @@ class _Sources:
         """``origin`` through the root's table of names read on first use (``_LAZY_EXPORTS``: name -> module).
 
         The ``if TYPE_CHECKING:`` imports name only the modules type checkers can read (a ``.py`` or a
-        ``.pyi`` — the former hide_submodules tool), so a value of a Hy module without a stub is named by the
+        ``.pyi`` — the former move tool), so a value of a Hy module without a stub is named by the
         table alone. ``None`` when the module has no table or the table does not have ``name``.
         """
         module = sys.modules.get(module_name)
