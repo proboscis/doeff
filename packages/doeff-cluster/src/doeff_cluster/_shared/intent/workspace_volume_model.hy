@@ -65,6 +65,24 @@
    埋めない)。")
 
 
+(defclass WorkspaceRoomShort [WorkspaceVolumeRefused]
+  "札の disk に volume を置く場所が足りず、作らなかった(作る前の数えか、作った後に Longhorn が replica を置けなかった — 置けなかった volume は
+   消してから断る)。fresh = 持ち主が中身を持たない(作るのは空の volume だった)か。False = 冷えた中身を backup から戻す所だった — 呼び手は
+   空の場所に落とさず、冷やして場所を空けてから出し直す。"
+  (defn __init__ [self #^ str message #^ bool fresh]
+    ;; defk にできない: 例外の作り手(raise が呼ぶ口)
+    "断りの文 message と、中身を持たない持ち主か fresh を持つため。"
+    (.__init__ (super) message)
+    (setv self.fresh fresh)))
+
+
+(defrecord WorkspaceRoom
+  "ReadWorkspaceRoom の答え: slots = 札の disk が受けられる、初めの大きさの volume の残りの本数(Longhorn の置く線 2 つ — 名目の予約の線と
+   実の空きの線 — の両方の内)・spare = 値の spareVolumes(冷やす回が空けておく本数 — slots がこれを割れば冷やす回が冷やす)。"
+  (#^ int slots)
+  (#^ int spare))
+
+
 (defrecord CoolingSweep
   "CoolIdleWorkspaceVolumes の答え: slots = 冷やす前に、札の disk が受けられる volume の残りの本数・cooled = 冷やした volume の名(冷やした
    順)・failed = 冷やせなかった volume の「<名>: <訳>」(使い始めた・backup が終わらないなど — 様子は前のまま)。"
@@ -122,6 +140,12 @@
   ;; 記録: 判断の外への報告(output — backup を消す)。
   (setv #^ (get ClassVar RecordSpec) __record-spec__ (RecordSpec :mode RecordMode.OUTPUT))
   (#^ str owner))
+
+
+(defclass [(dataclass :frozen True)] ReadWorkspaceRoom [(get EffectBase WorkspaceRoom)]
+  "札の disk が受けられる volume の残りの本数を読む(頭の註)。"
+  ;; 記録: 外の世界の読み(read — 置き場の様子を読む・再生では記録の答えを返す)。
+  (setv #^ (get ClassVar RecordSpec) __record-spec__ (RecordSpec :mode RecordMode.READ)))
 
 
 (defclass [(dataclass :frozen True)] CoolIdleWorkspaceVolumes [(get EffectBase CoolingSweep)]

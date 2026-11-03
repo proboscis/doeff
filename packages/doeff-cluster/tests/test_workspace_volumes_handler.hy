@@ -13,6 +13,9 @@
 ;;;   冷やす・戻す・消す 冷やして戻す通し(本番と模擬)・使っている volume は冷やさない・完了した backup の無い名は空で作らない・消すのは
 ;;;                     keepDays の後・まとめて冷やす順と空きの数(本番と模擬)。本番だけ: snapshot と backup の失敗で消さない・読んだ版が
 ;;;                     古い削除は読み直す・札の違う disk を数えない
+;;;   置き場の数え      札の disk の残りが 0 なら作成も戻しも POST せずに置き場の不足で断る(fresh か否か — 本番と模擬)・残りの読み・
+;;;                     実の空きの線で断る・付ける時に Longhorn が置けないと答えた空の volume は待たずに消す・replica の置かれた volume は
+;;;                     消さない・置けない戻しは消して backup を残す・戻す volume は backup の大きさで作る
 ;;;   並べて走らせる    (Spawn と模擬の時計)戻す途中に同じ持ち主の次の頼み(メッセージ)が来たら、先の戻しに相乗りして戻し終わりを待つ
 ;;;                     (戻すのは 1 度)・冷やす途中に使い始めたら冷やす側が退き volume が残る・消す途中に使い始めたら消え終わりを待って
 ;;;                     戻す・ticket を置いた直後に消された attach は作り直しを頼む断りを返す
@@ -38,8 +41,9 @@
 (import doeff_time [Delay GetTime SimClock sim-time-handler])
 (import doeff_cluster._shared.intent.workspace_volume_model [AttachWorkspaceVolume CoolIdleWorkspaceVolumes CoolingSweep
                                                            CoolWorkspaceVolume CreateWorkspaceVolume DetachWorkspaceVolume
-                                                           MountWorkspaceVolume PurgeWorkspaceVolume UmountWorkspaceVolume
-                                                           WorkspaceOutcome WorkspaceVolumeRefused WorkspaceVolumeSite])
+                                                           MountWorkspaceVolume PurgeWorkspaceVolume ReadWorkspaceRoom
+                                                           UmountWorkspaceVolume WorkspaceOutcome WorkspaceRoom WorkspaceRoomShort
+                                                           WorkspaceVolumeRefused WorkspaceVolumeSite])
 (import doeff_cluster._shared.core.workspace_volume_rules [USED-AT-KEY ticket-id volume-name])
 (import doeff_cluster._shared.protocol.workspace_volumes [workspace-volumes-api])
 (import doeff_cluster._shared.protocol.supplied_values [KUBE-API SERVICE-ACCOUNT-TOKEN-FILE])
@@ -73,6 +77,8 @@
 (val BUNDLES-PATH (+ LONGHORN-HEAD "/backupvolumes"))
 (val NODES-PATH (+ LONGHORN-HEAD "/nodes"))
 (val OVER-PROVISIONING-PATH (+ LONGHORN-HEAD "/settings/storage-over-provisioning-percentage"))
+(val MINIMAL-AVAILABLE-PATH (+ LONGHORN-HEAD "/settings/storage-minimal-available-percentage"))
+(val REPLICAS-PATH (+ LONGHORN-HEAD "/replicas"))
 ;; BackupVolume の名の尻(Longhorn は <volume の名>-<hash> にする — 相手役は固定の hash)。
 (val BUNDLE-TAIL "-5a2925a0")
 (val SETTINGS-PATH "/api/v1/namespaces/agent-worker/configmaps/workspace-volume")
@@ -116,14 +122,20 @@
    settle = ticket を置いた・外した後に Longhorn が付け終わる・外し終わるまでの読みの数・stuck = 付け終わらない・races = 先に 409 で断る
    書きの数・silent = 係が答えない・restore-settle と snapshot-settle と backup-settle と dying-settle = 戻し・snapshot・backup・消しが
    終わるまでの読みの数・snapshot-error と backup-error = 失敗する・stale-deletes = 版が古いと断る削除の数・vanish-after-ticket =
-   ticket を置いた直後に volume が消される回数(冷やす側の削除が間に入った)・extra-disks = 札の違う disk の組(数えない disk)。走らせた後に
-   読む物: pending = 付け外しの途中の読みの残り・leaving = 外す途中の volume の元の node・version = VolumeAttachment の版・revision =
-   Volume の版・restoring と sources = 戻す途中の読みの残りと戻す元・dying = 消す途中の読みの残り・snapshots と backups = 途中の
-   snapshot と backup・created = 作成の本文・seen = 受けた要求・asked = 係が受けた頼み。"
+   ticket を置いた直後に volume が消される回数(冷やす側の削除が間に入った)・extra-disks = 札の違う disk の組(数えない disk)・
+   available = 札 workspace の disk の実の空き(byte — None = 空の disk で storageMaximum と同じ)・minimal = 設定 storage-minimal-available-
+   percentage・unplaceable = 次に replica の置き先を決める時(空の volume を初めて付ける・backup から戻す)に、Longhorn が置けないと答える
+   回数(作る前の数えと付けの間に置き場が尽きた世界)・backup-size = backup が覚える volume の名目の大きさ(None = 値の大きさ)。名目の
+   予約の線は過剰割り当て 100% で、札 workspace の disk の storageMaximum は capacity 本ぶん(模擬の世界の残り capacity − volume の数と
+   揃う)。走らせた後に読む物: pending = 付け外しの途中の読みの残り・leaving = 外す途中の volume の元の node・version = VolumeAttachment の
+   版・revision = Volume の版・restoring と sources = 戻す途中の読みの残りと戻す元・dying = 消す途中の読みの残り・snapshots と backups =
+   途中の snapshot と backup・unplaced = replica をまだどこにも置いていない volume の名・failing = Longhorn が置けないと答えている volume の
+   名・created = 作成の本文・seen = 受けた要求・asked = 係が受けた頼み。"
   (defn #^ None __init__ [self #^ WorkspaceVolumeWorld held #^ dict [parameters None] #^ int [settle 0] #^ bool [stuck False]
                           #^ int [races 0] #^ bool [silent False] #^ int [restore-settle 0] #^ int [snapshot-settle 0]
                           #^ int [backup-settle 0] #^ int [dying-settle 0] #^ bool [snapshot-error False] #^ bool [backup-error False]
-                          #^ int [stale-deletes 0] #^ int [vanish-after-ticket 0] #^ tuple [extra-disks #()]]
+                          #^ int [stale-deletes 0] #^ int [vanish-after-ticket 0] #^ tuple [extra-disks #()]
+                          #^ (| int None) [available None] #^ int [minimal 25] #^ int [unplaceable 0] #^ (| int None) [backup-size None]]
     ;; defk にできない: class の作り手(Python が呼ぶ口)
     "相手役の世界を作るため。"
     (setv self.held held
@@ -132,8 +144,11 @@
           self.restore-settle restore-settle self.snapshot-settle snapshot-settle self.backup-settle backup-settle
           self.dying-settle dying-settle self.snapshot-error snapshot-error self.backup-error backup-error
           self.stale-deletes stale-deletes self.vanish-after-ticket vanish-after-ticket self.extra-disks extra-disks
+          self.available available self.minimal minimal self.unplaceable unplaceable
+          self.backup-size (if (is backup-size None) SIZE backup-size)
           self.pending {} self.leaving {} self.version 1 self.revision 1
           self.restoring {} self.sources {} self.dying {} self.snapshots {} self.backups {}
+          self.unplaced (set) self.failing (set)
           #^ (get tuple #(str ...)) self.created #()
           #^ (get tuple #(SeenRequest ...)) self.seen #()
           #^ (get tuple #(str ...)) self.asked #())))
@@ -183,11 +198,16 @@
                 helping {"state" "attached" "currentNodeID" NODE}
                 True {"state" "detached" "currentNodeID" ""}))
   (val restore (if (in name world.sources) {"restoreRequired" restoring "restoreInitiated" True} {}))
+  ;; Longhorn v1.13 は置き先を決められない volume に condition Scheduled False(reason ReplicaSchedulingFailure)を書く。
+  (val placing (if (in name world.failing)
+                   {"type" "Scheduled" "status" "False" "reason" "ReplicaSchedulingFailure"
+                    "message" "precheck new replica failed: insufficient storage"}
+                   {"type" "Scheduled" "status" "True" "reason" "" "message" ""}))
   {"metadata" (| {"name" name "resourceVersion" (str world.revision) "creationTimestamp" (! (iso-of 0.0))
                   "annotations" {USED-AT-KEY (str (int volume.used-at))}}
                  (if (in name world.dying) {"deletionTimestamp" (! (iso-of 0.0))} {}))
    "spec" (| {"backupTargetName" TARGET} (if (in name world.sources) {"fromBackup" (get world.sources name)} {}))
-   "status" (| status restore)})
+   "status" (| status restore {"conditions" [placing]})})
 
 
 (defk volume-answer [world name]
@@ -197,7 +217,8 @@
   (when (is volume None)
     (return (! (api-answer 404 {"kind" "Status" "reason" "NotFound"}))))
   (val payload (! (volume-payload world volume)))
-  (when (in name world.restoring)
+  ;; 置き先の無い戻しは進まない(replica が無い)。
+  (when (and (in name world.restoring) (not-in name world.failing))
     (val restore-left (max 0 (- (get world.restoring name) 1)))
     (setv (get world.restoring name) restore-left)
     (when (= restore-left 0)
@@ -208,8 +229,31 @@
     (setv (get world.dying name) dying-left)
     (when (= dying-left 0)
       (del (get world.dying name))
-      (setv world.held.volumes (tuple (gfor one world.held.volumes :if (!= one.name name) one)))))
+      (<- (forgotten world name))))
   (! (api-answer 200 payload)))
+
+
+(defk forgotten [world name]
+  {:pre [(: world LonghornWorld) (: name str)] :post [(: % None)]}
+  "相手役の Longhorn が volume name を消し終えた様子にするため(volume と、その replica の置き先と戻しの覚え)。"
+  (setv world.held.volumes (tuple (gfor one world.held.volumes :if (!= one.name name) one)))
+  (.discard world.unplaced name)
+  (.discard world.failing name)
+  (.pop world.restoring name None)
+  (.pop world.sources name None)
+  None)
+
+
+(defk placement-decided [world name]
+  {:pre [(: world LonghornWorld) (: name str)] :post [(: % None)]}
+  "replica をまだ置いていない volume name の置き先を、相手役の Longhorn が決める時(初めて付ける・戻す)の様子にするため(unplaceable の
+   回数だけ置けないと答え、ほかは置く)。"
+  (when (in name world.unplaced)
+    (if (> world.unplaceable 0)
+        (do (setv world.unplaceable (- world.unplaceable 1))
+            (.add world.failing name))
+        (.discard world.unplaced name)))
+  None)
 
 
 (defk attachment-answer [world name]
@@ -218,7 +262,7 @@
   (<- volume (held-volume world.held name))
   (when (is volume None)
     (return (! (api-answer 404 {"kind" "Status" "reason" "NotFound"}))))
-  (val waiting (or world.stuck (> (.get world.pending name 0) 0) (> (.get world.restoring name 0) 0)))
+  (val waiting (or world.stuck (> (.get world.pending name 0) 0) (> (.get world.restoring name 0) 0) (in name world.failing)))
   (val id (! (ticket-id name)))
   (val tickets (| (if (is volume.node None) {} {id {"id" id "type" "longhorn-api" "nodeID" volume.node}}) (! (helper-tickets world name))))
   (val statuses (if (is volume.node None)
@@ -252,6 +296,7 @@
       (do (setv (get world.leaving name) volume.node)
           (<- (changed world (replace volume :node None))))
       (do (assert (= (get ticket "type") "longhorn-api") ticket)
+          (<- (placement-decided world name))
           (<- (changed world (replace volume :node (get ticket "nodeID"))))))
   (setv (get world.pending name) world.settle world.version (+ world.version 1))
   ;; 冷やす側の削除が、ticket を置いた後・印を書く前に入った世界(頭の註の窓)。
@@ -286,16 +331,17 @@
     (return (! (api-answer 409 {"kind" "Status" "reason" "Conflict"}))))
   (if (> world.dying-settle 0)
       (setv (get world.dying name) world.dying-settle)
-      (setv world.held.volumes (tuple (gfor one world.held.volumes :if (!= one.name name) one))))
+      (<- (forgotten world name)))
   (! (api-answer 200 {"kind" "Status" "status" "Success"})))
 
 
-(defk backup-payload [backup state]
-  {:pre [(: backup HeldBackup) (: state str)] :post [(: % dict)]}
-  "Backup 1 つの GET の本文を綴るため。"
+(defk backup-payload [backup state size]
+  {:pre [(: backup HeldBackup) (: state str) (: size int)] :post [(: % dict)]}
+  "Backup 1 つの GET の本文を綴るため(size = backup が覚える volume の名目の大きさ)。"
   {"metadata" {"name" backup.name "labels" {"backup-volume" backup.volume "backup-target" TARGET}}
    "status" {"state" state "backupCreatedAt" (if (= state "Completed") (! (iso-of backup.created-at)) "")
-             "url" (if (= state "Completed") (.format "s3://longhorn-workspace@us-east-1/?backup={}&volume={}" backup.name backup.volume) "")}})
+             "url" (if (= state "Completed") (.format "s3://longhorn-workspace@us-east-1/?backup={}&volume={}" backup.name backup.volume) "")
+             "volumeSize" (str size)}})
 
 
 (defk selected-volume [path]
@@ -324,20 +370,20 @@
   "Backup の GET に答えるため(読むたびに残りを 1 つ減らし、0 で Completed — 世界の backup に足す — か Error)。"
   (val done (lfor one world.held.backups :if (= one.name backup) one))
   (when done
-    (return (! (api-answer 200 (! (backup-payload (get done 0) "Completed"))))))
+    (return (! (api-answer 200 (! (backup-payload (get done 0) "Completed" world.backup-size))))))
   (when (not-in backup world.backups)
     (return (! (api-answer 404 {"kind" "Status" "reason" "NotFound"}))))
   (val work (get world.backups backup))
   (<- now datetime (GetTime))
   (val held (HeldBackup :volume work.volume :name backup :created-at (.timestamp now)))
   (cond
-    world.backup-error (! (api-answer 200 (| (! (backup-payload held "Error"))
+    world.backup-error (! (api-answer 200 (| (! (backup-payload held "Error" world.backup-size))
                                              {"status" {"state" "Error" "error" "failed to upload: connection reset by peer"}})))
     (> work.left 1) (do (setv (get world.backups backup) (replace work :left (- work.left 1)))
-                        (! (api-answer 200 (! (backup-payload held "InProgress")))))
+                        (! (api-answer 200 (! (backup-payload held "InProgress" world.backup-size)))))
     True (do (del (get world.backups backup))
              (setv world.held.backups (+ world.held.backups #(held)))
-             (! (api-answer 200 (! (backup-payload held "Completed")))))))
+             (! (api-answer 200 (! (backup-payload held "Completed" world.backup-size)))))))
 
 
 (defk volumes-listed [world]
@@ -360,12 +406,27 @@
   (<- now datetime (GetTime))
   (when (is-not volume None)
     (return (! (api-answer 409 {"kind" "Status" "reason" "AlreadyExists"}))))
+  ;; Longhorn v1.13 は外れている volume の replica を作るだけで置かない — 置き先は初めて付ける時か、戻す時(付けて戻す)に決める。
+  (.add world.unplaced name)
   (when source
     (setv (get world.sources name) source)
-    (when (> world.restore-settle 0)
-      (setv (get world.restoring name) world.restore-settle)))
+    (<- (placement-decided world name))
+    (when (or (> world.restore-settle 0) (in name world.failing))
+      (setv (get world.restoring name) (max 1 world.restore-settle))))
   (<- (changed world (HeldVolume :name name :formatted (bool source) :used-at (.timestamp now))))
   (! (api-answer 201 {"metadata" {"name" name}})))
+
+
+(defk replicas-listed [world path]
+  {:pre [(: world LonghornWorld) (: path str)] :post [(: % HttpResponse)]}
+  "Replica の一覧(labelSelector longhornvolume で選ぶ)に答えるため(volume 1 つに replica 1 つ — 置いていなければ nodeID は空)。"
+  (val query (parse-qs (. (urlsplit path) query)))
+  (val chosen (get (.split (get (.get query "labelSelector" ["="]) 0) "=" 1) 1))
+  (<- volume (held-volume world.held chosen))
+  (! (api-answer 200 {"items" (if (is volume None)
+                                  []
+                                  [{"metadata" {"name" (+ chosen "-r-0")}
+                                    "spec" {"volumeName" chosen "nodeID" (if (in chosen world.unplaced) "" NODE)}}])})))
 
 
 (defk snapshot-made [world body]
@@ -394,9 +455,9 @@
   (val chosen (! (selected-volume path)))
   (var items [])
   (for [one world.held.backups :if (= one.volume chosen)]
-    (:= items (+ items [(! (backup-payload one one.state))])))
+    (:= items (+ items [(! (backup-payload one one.state world.backup-size))])))
   (for [#(name work) (.items world.backups) :if (= work.volume chosen)]
-    (:= items (+ items [(! (backup-payload (HeldBackup :volume work.volume :name name :created-at 0.0) "InProgress"))])))
+    (:= items (+ items [(! (backup-payload (HeldBackup :volume work.volume :name name :created-at 0.0) "InProgress" world.backup-size))])))
   (! (api-answer 200 {"items" items})))
 
 
@@ -426,16 +487,19 @@
 
 (defk nodes-payload [world]
   {:pre [(: world LonghornWorld)] :post [(: % dict)]}
-  "Longhorn の Node の一覧の本文を綴るため(zeus に札 workspace の disk 1 つ — 名目で capacity 本を受ける大きさ — と extra-disks)。"
+  "Longhorn の Node の一覧の本文を綴るため(zeus に札 workspace の disk 1 つ — 過剰割り当て 100% の名目で capacity 本を受ける大きさ・実の
+   空き available — と extra-disks)。"
   (val disk {"tags" ["ssd" "workspace"] "allowScheduling" True "storageReserved" 0})
-  (val room {"storageMaximum" (// (* world.held.capacity SIZE) 2) "storageScheduled" (* (len world.held.volumes) SIZE)
+  (val maximum (* world.held.capacity SIZE))
+  (val room {"storageMaximum" maximum "storageScheduled" (* (len world.held.volumes) SIZE)
+             "storageAvailable" (if (is world.available None) maximum world.available)
              "conditions" [{"type" "Ready" "status" "True"} {"type" "Schedulable" "status" "True"}]})
   (val extra (dfor #(index tags) (enumerate world.extra-disks) (+ "extra-" (str index)) tags))
   {"items" [{"metadata" {"name" NODE}
              "spec" {"disks" (| {"workspace-disk" disk}
                                 (dfor #(key tags) (.items extra) key {"tags" (list tags) "allowScheduling" True "storageReserved" 0}))}
              "status" {"diskStatus" (| {"workspace-disk" room}
-                                       (dfor key extra key {"storageMaximum" (* 100 SIZE) "storageScheduled" 0
+                                       (dfor key extra key {"storageMaximum" (* 100 SIZE) "storageScheduled" 0 "storageAvailable" (* 100 SIZE)
                                                             "conditions" [{"type" "Schedulable" "status" "True"}]}))}}]})
 
 
@@ -469,7 +533,9 @@
     (and (= request.method "GET") (.startswith path (+ BUNDLES-PATH "?"))) (! (bundles-listed world path))
     (and (= request.method "DELETE") (.startswith path (+ BUNDLES-PATH "/"))) (! (bundle-dropped world (cut path (+ (len BUNDLES-PATH) 1) None)))
     (and (= request.method "GET") (= path NODES-PATH)) (! (api-answer 200 (! (nodes-payload world))))
-    (and (= request.method "GET") (= path OVER-PROVISIONING-PATH)) (! (api-answer 200 {"metadata" {"name" "x"} "value" "200"}))
+    (and (= request.method "GET") (= path OVER-PROVISIONING-PATH)) (! (api-answer 200 {"metadata" {"name" "x"} "value" "100"}))
+    (and (= request.method "GET") (= path MINIMAL-AVAILABLE-PATH)) (! (api-answer 200 {"metadata" {"name" "x"} "value" (str world.minimal)}))
+    (and (= request.method "GET") (.startswith path (+ REPLICAS-PATH "?"))) (! (replicas-listed world path))
     (and (= request.method "GET") (.startswith path (+ ATTACHMENTS-PATH "/")))
     (do (<- answer HttpResponse (attachment-answer world (cut path (+ (len ATTACHMENTS-PATH) 1) None))) answer)
     (and (= request.method "PATCH") (.startswith path (+ ATTACHMENTS-PATH "/")))
@@ -580,7 +646,8 @@
   "筋書きの一手 step を effect で出し、結末の字(done・already・restored・sweep …・waited)を得るため(断りは呼び手が拾う)。"
   (match step.verb
     "wait" (do (<- (Delay step.seconds)) (return "waited"))
-    "sweep" (do (<- sweep CoolingSweep (CoolIdleWorkspaceVolumes)) (return (! (sweep-text sweep)))))
+    "sweep" (do (<- sweep CoolingSweep (CoolIdleWorkspaceVolumes)) (return (! (sweep-text sweep))))
+    "room" (do (<- room WorkspaceRoom (ReadWorkspaceRoom)) (return (.format "room slots={} spare={}" room.slots room.spare))))
   (val effect (match step.verb
                 "create" (CreateWorkspaceVolume step.owner)
                 "attach" (AttachWorkspaceVolume step.owner)
@@ -595,12 +662,15 @@
 
 (defk run-steps [steps]
   {:pre [(: steps tuple)] :post [(: % tuple)]}
-  "筋書き steps を順に effect で出し、結末の組(done・already・restored・refused: <断りの文> ほか)を得るため(断られても次の手へ進む)。"
+  "筋書き steps を順に effect で出し、結末の組(done・already・restored・refused: <断りの文>・置き場の不足は short-fresh: か
+   short-held: <断りの文> ほか)を得るため(断られても次の手へ進む)。"
   (var outcomes #())
   (for [step steps]
     (try
       (<- outcome str (step-outcome step))
       (:= outcomes (+ outcomes #(outcome)))
+      (except [error WorkspaceRoomShort]
+        (:= outcomes (+ outcomes #((+ (if error.fresh "short-fresh: " "short-held: ") (str error))))))
       (except [error WorkspaceVolumeRefused]
         (:= outcomes (+ outcomes #((+ "refused: " (str error))))))))
   outcomes)
@@ -638,8 +708,8 @@
 
 (defk kinds [outcomes]
   {:pre [(: outcomes tuple)] :post [(: % tuple)]}
-  "結末の組 outcomes から、断りの文を落とした種類の組(done・already・refused)を得るため。"
-  (tuple (gfor outcome outcomes (if (.startswith outcome "refused: ") "refused" outcome))))
+  "結末の組 outcomes から、断りの文を落とした種類の組(done・already・refused・short-fresh・short-held)を得るため。"
+  (tuple (gfor outcome outcomes (if (in ": " outcome) (get (.split outcome ": " 1) 0) outcome))))
 
 
 (defrecord BothRan
@@ -989,6 +1059,91 @@
   (assert (= (len (set versions)) 3) versions)
   (assert (= api.held.volumes #()) api.held.volumes)
   (assert (= api.held.backups #(COLD-BACKUP)) api.held.backups))
+
+
+;; --- 置き場の数え(作る前に数える・置けない volume を残さない)----------------------------------------------------------
+
+(deftest test-a-full-disk-is-refused-before-the-volume-is-posted-on-both-handlers
+  ;; 札の disk が受けられる残りが 0(capacity 2 に温かい volume 2 本)。新しい持ち主の作成も冷えた持ち主の戻しも、POST せずに置き場の
+  ;; 不足で断る(新しい持ち主 = fresh・冷えた持ち主 = 中身を持つ)。残りの読みは 0 本と値の spareVolumes 4 を答える。
+  (val cold-other (HeldBackup :volume (! (volume-name OTHER)) :name (+ (! (volume-name OTHER)) "-cool-0") :created-at 0.0))
+  (val full (fn [] (WorkspaceVolumeWorld NODE :capacity 2 :backups #(cold-other)
+                                         :volumes #((HeldVolume :name "ws-c-w1" :formatted True) (HeldVolume :name "ws-c-w2" :formatted True)))))
+  (<- ran BothRan (both full #((Step :verb "room") (Step :verb "create" :owner OWNER) (Step :verb "create" :owner OTHER))))
+  (for [outcomes #(ran.real ran.held)]
+    (assert (= (! (kinds outcomes)) #("room slots=0 spare=4" "short-fresh" "short-held")) outcomes)
+    (assert (in "もう受けられない" (get outcomes 1)) outcomes))
+  (assert (= ran.api.created #()) ran.api.created)
+  (assert (not (any (gfor seen ran.api.seen (= seen.method "POST")))) ran.api.seen)
+  (assert (= (len ran.api.held.volumes) 2) ran.api.held.volumes)
+  (assert (= (len ran.sim.volumes) 2) ran.sim.volumes)
+  ;; 1 本空けば(capacity 3)作る。
+  (<- room BothRan (both (fn [] (WorkspaceVolumeWorld NODE :capacity 3 :volumes #((HeldVolume :name "ws-c-w1" :formatted True))))
+                         #((Step :verb "room") (Step :verb "create" :owner OWNER) (Step :verb "room") (Step :verb "create" :owner OTHER))))
+  (assert (= room.real #("room slots=2 spare=4" "done" "room slots=1 spare=4" "done")) room.real)
+  (assert (= room.held room.real) room.held))
+
+
+(deftest test-the-real-space-line-refuses-a-disk-near-its-minimal-available
+  ;; 名目の予約の線は十分(capacity 20)だが、実の空きが最小の空き 25% の線の上に名目 1 本ぶんしか無い世界。1 本目は作り、2 本目は
+  ;; POST せずに断る(Longhorn は空きが線を越える disk にだけ置く — 置けない Volume を作らない)。
+  (val maximum (* 20 SIZE))
+  (val roomy (LonghornWorld (fresh) :available (+ (// maximum 4) SIZE)))
+  (<- ran ApiRan (on-api roomy #((Step :verb "room") (Step :verb "create" :owner OWNER))))
+  (assert (= ran.outcomes #("room slots=1 spare=4" "done")) ran.outcomes)
+  (val tight (LonghornWorld (fresh) :available (+ (// maximum 4) (// SIZE 2))))
+  (<- again ApiRan (on-api tight #((Step :verb "room") (Step :verb "create" :owner OTHER))))
+  (assert (= (! (kinds again.outcomes)) #("room slots=0 spare=4" "short-fresh")) again.outcomes)
+  (assert (= tight.created #()) tight.created))
+
+
+(deftest test-a-fresh-volume-longhorn-cannot-place-is-deleted-at-attach-without-waiting
+  ;; 作る前の数えは通ったが、付ける時に Longhorn が replica を置けないと答える(数えと付けの間に別の作りが残りを使った)。attach は
+  ;; 上限の秒(5 秒)まで待たず、replica の無い volume を消して置き場の不足(fresh)で断る — faulted の volume を残さない。
+  (val api (LonghornWorld (fresh) :unplaceable 1))
+  (<- ran ApiRan (on-api api #((Step :verb "create" :owner OWNER) (Step :verb "attach" :owner OWNER))))
+  (assert (= (! (kinds ran.outcomes)) #("done" "short-fresh")) ran.outcomes)
+  (assert (in "Longhorn が replica を置けない(ReplicaSchedulingFailure precheck new replica failed: insufficient storage) — 中身の無い volume を消した"
+              (get ran.outcomes 1))
+          ran.outcomes)
+  (assert (= api.held.volumes #()) api.held.volumes)
+  (assert (= api.failing (set)) api.failing)
+  ;; 待ちは読み直しの数回(上限の秒 5 / 0.5 秒 = 10 回の手前)で終わる。
+  (val reads (lfor seen api.seen :if (and (= seen.method "GET") (.startswith seen.path ATTACHMENTS-PATH)) seen))
+  (assert (<= (len reads) 2) (len reads))
+  ;; 次の頼みは、置き場が戻っていれば空で作り直して付く。
+  (<- next ApiRan (on-api api START))
+  (assert (= next.outcomes #("done" "done" "done")) next.outcomes))
+
+
+(deftest test-a-warm-volume-whose-replica-is-placed-is-not-deleted
+  ;; replica の置かれた(中身を持ちうる)volume は、Longhorn が置けないと答えても消さない — 付くのを上限の秒まで待って断る。
+  (val api (LonghornWorld (WorkspaceVolumeWorld NODE :volumes #(WARM))))
+  (.add api.failing NAME)
+  (<- ran ApiRan (on-api api #((Step :verb "attach" :owner OWNER))))
+  (assert (and (= (! (kinds ran.outcomes)) #("refused")) (in "5.0 秒の内に node zeus に付かない" (get ran.outcomes 0))) ran.outcomes)
+  (assert (= (tuple (gfor one api.held.volumes one.name)) #(NAME)) api.held.volumes)
+  (assert (not (any (gfor seen api.seen (= seen.method "DELETE")))) api.seen))
+
+
+(deftest test-a-restore-longhorn-cannot-place-is-deleted-and-the-backup-kept
+  ;; 冷えた持ち主の戻しで Longhorn が replica を置けない。戻しの待ちは上限の秒まで待たず、replica の無い volume を消して置き場の不足
+  ;; (中身を持つ — fresh でない)で断る。backup は残り、置き場が戻れば次の作成が戻す。
+  (val api (LonghornWorld (WorkspaceVolumeWorld NODE :backups #(COLD-BACKUP)) :unplaceable 1))
+  (<- ran ApiRan (on-api api (+ #((Step :verb "create" :owner OWNER)) START)))
+  (assert (= (! (kinds ran.outcomes)) #("short-held" "restored" "done" "done")) ran.outcomes)
+  (assert (= api.held.backups #(COLD-BACKUP)) api.held.backups)
+  (assert (= (len api.created) 2) api.created))
+
+
+(deftest test-a-restored-volume-is-made-as-large-as-its-backup
+  ;; backup を取った時の volume が値の大きさより大きい(使う間に広げた)。戻す volume は backup の大きさで作る(Longhorn は小さい volume
+  ;; への戻しを断る)。値より小さい backup は値の大きさで作る。
+  (for [#(kept wanted) #(#((* 3 SIZE) (* 3 SIZE)) #((// SIZE 2) SIZE))]
+    (val api (LonghornWorld (WorkspaceVolumeWorld NODE :backups #(COLD-BACKUP)) :backup-size kept))
+    (<- ran ApiRan (on-api api #((Step :verb "create" :owner OWNER))))
+    (assert (= ran.outcomes #("restored")) ran.outcomes)
+    (assert (= (get (json.loads (get api.created 0)) "spec" "size") (str wanted)) api.created)))
 
 
 ;; --- 並べて走らせる(戻す・冷やす途中に次の頼みが来る)------------------------------------------------------------------

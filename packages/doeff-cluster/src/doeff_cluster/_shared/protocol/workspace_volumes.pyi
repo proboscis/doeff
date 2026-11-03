@@ -31,8 +31,11 @@ from doeff_cluster._shared.intent.workspace_volume_model import CreateWorkspaceV
 from doeff_cluster._shared.intent.workspace_volume_model import DetachWorkspaceVolume as DetachWorkspaceVolume
 from doeff_cluster._shared.intent.workspace_volume_model import MountWorkspaceVolume as MountWorkspaceVolume
 from doeff_cluster._shared.intent.workspace_volume_model import PurgeWorkspaceVolume as PurgeWorkspaceVolume
+from doeff_cluster._shared.intent.workspace_volume_model import ReadWorkspaceRoom as ReadWorkspaceRoom
 from doeff_cluster._shared.intent.workspace_volume_model import UmountWorkspaceVolume as UmountWorkspaceVolume
 from doeff_cluster._shared.intent.workspace_volume_model import WorkspaceOutcome as WorkspaceOutcome
+from doeff_cluster._shared.intent.workspace_volume_model import WorkspaceRoom as WorkspaceRoom
+from doeff_cluster._shared.intent.workspace_volume_model import WorkspaceRoomShort as WorkspaceRoomShort
 from doeff_cluster._shared.intent.workspace_volume_model import WorkspaceVolumeRefused as WorkspaceVolumeRefused
 from doeff_cluster._shared.intent.workspace_volume_model import WorkspaceVolumeSite as WorkspaceVolumeSite
 from doeff_cluster._shared.intent.supplied_model import WorkerFactName as WorkerFactName
@@ -99,11 +102,19 @@ class RecurringSelectorWire:
     is_group: bool = False
 
 @dataclass(frozen=True, kw_only=True)
+class VolumeConditionWire:
+    type: str = ''
+    status: str = ''
+    reason: str = ''
+    message: str = ''
+
+@dataclass(frozen=True, kw_only=True)
 class VolumeStatusWire:
     state: str = ''
     current_node_id: str = ''
     restore_required: bool = False
     restore_initiated: bool = False
+    conditions: tuple[VolumeConditionWire, ...] | None = None
 
 @dataclass(frozen=True, kw_only=True)
 class VolumeMetaWire:
@@ -129,6 +140,18 @@ class VolumeListWire:
     items: tuple[VolumeWire, ...] | None = None
 
 @dataclass(frozen=True, kw_only=True)
+class ReplicaSpecWire:
+    node_id: str = ''
+
+@dataclass(frozen=True, kw_only=True)
+class ReplicaWire:
+    spec: ReplicaSpecWire | None = None
+
+@dataclass(frozen=True, kw_only=True)
+class ReplicaListWire:
+    items: tuple[ReplicaWire, ...] | None = None
+
+@dataclass(frozen=True, kw_only=True)
 class NamedMetaWire:
     name: str = ''
 
@@ -138,6 +161,7 @@ class BackupStatusWire:
     backup_created_at: str = ''
     url: str = ''
     error: str = ''
+    volume_size: str = ''
 
 @dataclass(frozen=True, kw_only=True)
 class BackupWire:
@@ -180,6 +204,7 @@ class DiskConditionWire:
 class DiskStatusWire:
     storage_maximum: int = 0
     storage_scheduled: int = 0
+    storage_available: int = 0
     conditions: tuple[DiskConditionWire, ...] | None = None
 
 @dataclass(frozen=True, kw_only=True)
@@ -236,9 +261,15 @@ class AttachmentWire:
     status: AttachmentStatusWire | None = None
 
 @dataclass(frozen=True, kw_only=True)
+class Placing:
+    failed: bool
+    note: str
+
+@dataclass(frozen=True, kw_only=True)
 class AttachRead:
     view: AttachView
     version: str
+    placing: Placing
 
 @dataclass(frozen=True, kw_only=True)
 class KeeperAnswer:
@@ -254,6 +285,7 @@ class VolumeRead:
     deleting: bool
     used_at: float
     backup_target: str
+    placing: Placing
 
 def refused(owner: str, doing: str, reason: str) -> _Program[WorkspaceVolumeRefused, object]:
     ...
@@ -291,6 +323,9 @@ def longhorn_path(site: WorkspaceVolumeSite, kind: str) -> _Program[str, object]
 def epoch_of(text: str) -> _Program[float | None, object]:
     ...
 
+def placing_of(status: VolumeStatusWire) -> _Program[Placing, object]:
+    ...
+
 def volume_read_of(owner: str, doing: str, held: VolumeWire) -> _Program[VolumeRead, object]:
     ...
 
@@ -313,6 +348,24 @@ def backup_views(site: WorkspaceVolumeSite, owner: str, doing: str, name: str, t
     ...
 
 def class_backup_target(owner: str, doing: str, parameters: dict[str, str]) -> _Program[str, object]:
+    ...
+
+def room_short(owner: str, doing: str, reason: str, fresh: bool) -> _Program[WorkspaceRoomShort, object]:
+    ...
+
+def class_disk_tags(parameters: dict[str, str]) -> _Program[tuple[str, ...], object]:
+    ...
+
+def room_slots(site: WorkspaceVolumeSite, owner: str, doing: str, parameters: dict[str, str], size_bytes: int) -> _Program[int, object]:
+    ...
+
+def room_held(site: WorkspaceVolumeSite, owner: str, doing: str, parameters: dict[str, str], size_bytes: int, fresh: bool) -> _Program[None, object]:
+    ...
+
+def replicas_placed(site: WorkspaceVolumeSite, owner: str, doing: str, name: str) -> _Program[bool, object]:
+    ...
+
+def dropped_unplaced(site: WorkspaceVolumeSite, owner: str, doing: str, name: str, note: str, fresh: bool) -> _Program[None, object]:
     ...
 
 def created_volume(site: WorkspaceVolumeSite, owner: str) -> _Program[WorkspaceOutcome, object]:
@@ -390,7 +443,10 @@ def volume_reads(site: WorkspaceVolumeSite, owner: str, doing: str) -> _Program[
 def disk_rooms(site: WorkspaceVolumeSite, owner: str, doing: str, tags: tuple[str, ...]) -> _Program[tuple[DiskRoom, ...], object]:
     ...
 
-def over_provisioning(site: WorkspaceVolumeSite, owner: str, doing: str) -> _Program[int, object]:
+def longhorn_percentage(site: WorkspaceVolumeSite, owner: str, doing: str, setting: str) -> _Program[int, object]:
+    ...
+
+def workspace_room(site: WorkspaceVolumeSite) -> _Program[WorkspaceRoom, object]:
     ...
 
 def idle_cooling(site: WorkspaceVolumeSite) -> _Program[CoolingSweep, object]:

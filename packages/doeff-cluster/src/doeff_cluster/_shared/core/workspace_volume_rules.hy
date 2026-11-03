@@ -15,7 +15,8 @@
 ;;;                         ticket を除く)
 ;;;   cooling-name          volume の名と刻 → 冷やす時の snapshot と backup の名(<名>-cool-<epoch 秒>)
 ;;;   newest-backup         backup の組 → 戻す元(完了した物のうち作られたのが一番新しい物 — 無ければ None)
-;;;   free-slots            札の disk の組と volume の大きさと過剰割り当ての % → まだ置ける volume の本数
+;;;   free-slots            札の disk の組と volume の大きさと過剰割り当ての % と最小の空きの % → まだ置ける volume の本数(Longhorn の
+;;;                         置く線 2 つ — 名目の予約の線と実の空きの線 — の両方の内)
 ;;;   cooling-order         外れている volume の組・今・温かく置く秒・空きの本数・空けておく本数 → 冷やす volume の名(使い終わりの古い順)
 ;;;
 ;;; device の見分け方: mount の係は attach した volume を host の /dev/longhorn/<名> の device で付ける(係の /host/dev/longhorn/<名>)。
@@ -77,19 +78,22 @@
 
 (defrecord BackupView
   "Longhorn の Backup 1 つの読み: name = Backup の名・state = 様子(Completed・InProgress・Error ほか)・created-at = status.backupCreatedAt
-   (ISO 8601 の UTC の字 — 字の順が刻の順。まだ無ければ空)・url = 戻す元の印(Volume の spec.fromBackup に書く字)。"
+   (ISO 8601 の UTC の字 — 字の順が刻の順。まだ無ければ空)・url = 戻す元の印(Volume の spec.fromBackup に書く字)・volume-size =
+   status.volumeSize(backup を取った時の volume の名目の大きさ byte — 戻す volume はこれより小さく作れない。読めなければ 0)。"
   (#^ str name)
   (#^ str state)
   (#^ str created-at)
-  (#^ str url))
+  (#^ str url)
+  (setv #^ int volume-size 0))
 
 
 (defrecord DiskRoom
   "札の disk 1 つの置き場の数(byte): maximum = storageMaximum・reserved = storageReserved・scheduled = storageScheduled(置いた volume の
-   名目の大きさの和)。"
+   名目の大きさの和)・available = storageAvailable(file system の実の空き)。"
   (#^ int maximum)
   (#^ int reserved)
-  (#^ int scheduled))
+  (#^ int scheduled)
+  (#^ int available))
 
 
 (defrecord WarmVolume
@@ -219,13 +223,20 @@
   (if done (max done :key (fn [backup] #(backup.created-at backup.name))) None))
 
 
-(defk free-slots [rooms size-bytes percentage]
-  {:pre [(: rooms (get tuple #(DiskRoom ...))) (: size-bytes int) (> size-bytes 0) (: percentage int) (>= percentage 0)]
+(defk free-slots [rooms size-bytes percentage minimal]
+  {:pre [(: rooms (get tuple #(DiskRoom ...))) (: size-bytes int) (> size-bytes 0) (: percentage int) (>= percentage 0)
+         (: minimal int) (<= 0 minimal 100)]
    :post [(: % int) (>= % 0)]}
-  "札の disk の組 rooms に、名目の大きさ size-bytes の volume をあと何本置けるかを得るため(Longhorn の置く線と同じ: disk ごとに
-   (maximum − reserved) × percentage% − scheduled を大きさで割った整数の和。負は 0)。"
+  "札の disk の組 rooms に、名目の大きさ size-bytes の volume をあと何本置けるかを得るため。disk ごとに、Longhorn が replica を置く線 2 つの
+   少ない方の本数を足す(負は 0):
+   - 名目の予約の線(設定 storage-over-provisioning-percentage = percentage): (maximum − reserved) × percentage% − scheduled を大きさで
+     割った整数。
+   - 実の空きの線(設定 storage-minimal-available-percentage = minimal): available − maximum × minimal% を大きさで割った整数。Longhorn は
+     空きがこの線を越える disk にだけ置く。新しい volume が名目の大きさまで書いても線を割らない本数を数える(thin の volume の実の使用は
+     名目より小さいので、少なめに数える側)。"
   (sum (gfor room rooms
-             (max 0 (// (- (// (* (- room.maximum room.reserved) percentage) 100) room.scheduled) size-bytes)))))
+             (max 0 (min (// (- (// (* (- room.maximum room.reserved) percentage) 100) room.scheduled) size-bytes)
+                         (// (- room.available (// (* room.maximum minimal) 100)) size-bytes))))))
 
 
 (defk cooling-order [warm now warm-seconds slots spare]
