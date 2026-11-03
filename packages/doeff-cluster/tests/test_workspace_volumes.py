@@ -6,7 +6,7 @@
   (2) 級の backup の先と群が、同じ dir で宣言した BackupTarget と backup の RecurringJob を名指し、ほかの volume と同じ群 default も持つ。
   (3) backup の RecurringJob は 1 時間ごとに backup を取り、volume ごとに数を決めて残す。
   (4) worker が読む値(ConfigMap workspace-volume)は file と同じで、級を名指し、名の頭と長さの上限が Longhorn の volume の名の上限
-      (40 字)に収まり、大きさは 10 GiB。
+      (40 字)に収まり、大きさは 2 GiB(広げる線は 0 と 100 の間・上限は大きさ以上)。
   (5) cloud の VPS の disk に札 workspace を付けない(この repo で disk の札を宣言している disk-share の宣言と組み立て)。
   (6) worker の組(Flux が当てる dir)がこの dir を組み立てに入れる。
 失敗ケース(赤になる事の検): replica 2・札 hot の級・札の無い級・WaitForFirstConsumer・既定の級・Delete・宣言に無い BackupTarget・backup で
@@ -215,7 +215,7 @@ def test_values_name_the_class_and_fit_longhorn_names(declared: list[Manifest]) 
     assert values["nameMaxLength"] == LONGHORN_NAME_LIMIT
     assert values["namePrefix"] == values["namePrefix"].lower()
     assert len(values["namePrefix"]) < values["nameMaxLength"]
-    assert values["sizeBytes"] == 10 * GIB
+    assert values["sizeBytes"] == 2 * GIB
     assert 0 < values["growBelowPercent"] < 100
     assert values["maxSizeBytes"] >= values["sizeBytes"]
     assert 0 < values["warmHours"] < values["keepDays"] * 24

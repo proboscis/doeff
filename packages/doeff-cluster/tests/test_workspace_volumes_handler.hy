@@ -1266,8 +1266,9 @@
 
 ;; この機体に付いて mount された持ち主の volume(冷やす回が空きを読む物)。
 (val MOUNTED (HeldVolume :name NAME :node NODE :mounted-at PLACE :formatted True))
-;; 値の大きさ(10 GiB)の 1 割。
+;; 値の大きさ(sizeBytes)の 1 割と、広げた後の名目(倍 — 上限は値の maxSizeBytes)。
 (val TENTH (// SIZE 10))
+(val GROWN (min MAX (* 2 SIZE)))
 
 
 (defk size-writes [api]
@@ -1278,21 +1279,21 @@
 
 
 (deftest test-a-mounted-volume-short-of-space-is-grown-online-by-the-sweep
-  ;; 付いた volume の file system の空きが値の growBelowPercent(50%)を割った(10 GiB のうち 6 GiB を使った)。冷やす回は名目を倍(上限の
-  ;; 値 maxSizeBytes 16 GiB)に書き、engine が広がる(読み 3 回)のを待ってから、係に file system を広げさせる。付けたまま — mount も
+  ;; 付いた volume の file system の空きが値の growBelowPercent(50%)を割った(値の大きさの 6 割を使った)。冷やす回は名目を倍(上限の
+  ;; 値 maxSizeBytes)に書き、engine が広がる(読み 3 回)のを待ってから、係に file system を広げさせる。付けたまま — mount も
   ;; ticket も触らない。
   (val api (LonghornWorld (WorkspaceVolumeWorld NODE :volumes #(MOUNTED)) :engine-settle 3 :used {NAME (* 6 TENTH)}))
   (<- ran ApiRan (on-api api #((Step :verb "sweep"))))
   (assert (.endswith (get ran.outcomes 0) (+ " failed= grown=" NAME)) ran.outcomes)
-  (assert (= (! (size-writes api)) [(str MAX)]) api.seen)
+  (assert (= (! (size-writes api)) [(str GROWN)]) api.seen)
   (assert (= api.asked #((.format "grow {} {}" NAME PLACE))) api.asked)
-  (assert (= (get api.fs-sizes NAME) MAX) api.fs-sizes)
+  (assert (= (get api.fs-sizes NAME) GROWN) api.fs-sizes)
   (assert (= api.held.volumes #(MOUNTED)) api.held.volumes)
   (assert (not (any (gfor seen api.seen (.startswith seen.path ATTACHMENTS-PATH)))) api.seen))
 
 
 (deftest test-a-volume-with-room-or-at-the-largest-size-is-not-grown
-  ;; 空きが線の上(10 GiB のうち 4 GiB を使った)の volume と、名目が上限の maxSizeBytes に居る volume(ほぼ満ちていても)は広げない
+  ;; 空きが線の上(値の大きさの 4 割を使った)の volume と、名目が上限の maxSizeBytes に居る volume(ほぼ満ちていても)は広げない
   ;; (名目の書きも係への頼みも無い)。
   (for [#(sizes used) #(#({} {NAME (* 4 TENTH)}) #({NAME MAX} {NAME (- MAX 1024)}))]
     (val api (LonghornWorld (WorkspaceVolumeWorld NODE :volumes #(MOUNTED)) :sizes sizes :fs-sizes sizes :used used))
@@ -1303,7 +1304,7 @@
 
 
 (deftest test-a-grow-the-disk-cannot-hold-is-refused-without-writing-the-size
-  ;; 札の disk の名目の残りが、広げる分(6 GiB)を受けられない(capacity 1 — 付いた 1 本で満ちた)。名目を書かずに、訳を残して次へ進む。
+  ;; 札の disk の名目の残りが、広げる分を受けられない(capacity 1 — 付いた 1 本で満ちた)。名目を書かずに、訳を残して次へ進む。
   (val api (LonghornWorld (WorkspaceVolumeWorld NODE :volumes #(MOUNTED) :capacity 1) :used {NAME (* 9 TENTH)}))
   (<- ran ApiRan (on-api api #((Step :verb "sweep"))))
   (assert (= ran.outcomes #((+ "sweep slots=0 cooled= failed=" NAME))) ran.outcomes)
@@ -1312,7 +1313,7 @@
 
 
 (deftest test-a-file-system-left-behind-its-volume-is-grown-without-doubling-again
-  ;; 前の広げが名目を書いた後、file system を広げる前に止まった(名目 16 GiB・file system 10 GiB)。次の回は名目を書き直さず(倍に
+  ;; 前の広げが名目を書いた後、file system を広げる前に止まった(名目は上限・file system は値の大きさのまま)。次の回は名目を書き直さず(倍に
   ;; しない)、係に file system だけを広げさせる。
   (val api (LonghornWorld (WorkspaceVolumeWorld NODE :volumes #(MOUNTED)) :sizes {NAME MAX} :used {NAME (* 6 TENTH)}))
   (<- ran ApiRan (on-api api #((Step :verb "sweep"))))
@@ -1328,7 +1329,7 @@
   (val api (LonghornWorld (WorkspaceVolumeWorld NODE :volumes #(MOUNTED)) :engine-stuck True :used {NAME (* 6 TENTH)}))
   (<- ran ApiRan (on-api api #((Step :verb "sweep"))))
   (assert (.endswith (get ran.outcomes 0) (+ " failed=" NAME)) ran.outcomes)
-  (assert (= (! (size-writes api)) [(str MAX)]) api.seen)
+  (assert (= (! (size-writes api)) [(str GROWN)]) api.seen)
   (assert (= api.asked #()) api.asked))
 
 
