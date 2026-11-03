@@ -259,7 +259,7 @@ def human(effect: Choose, k):
 
 
 def play() -> None:
-    """A fight against the enemy, played by a person; the dice are seeded from the clock."""
+    """A fight against the enemy, played by a person; the dice are seeded by the system."""
     seed = random.SystemRandom().randrange(10**6)
     print(f"seed {seed}")
     print("->", run(quiet_stats(printed(dice(seed)(human(battle()))))))

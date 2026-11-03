@@ -269,19 +269,24 @@ ARTICLE_EXAMPLE_DIRECTORY = Path("examples/testing_without_mocks")
 # カード・ゲームの戦い(examples/effects_tour/spire.py — 記事の中心の例)。seed を固定した全部の層の印字のうち、画面(1 層目)の
 # 後の行 — 1 層目の結末から最後まで。画面の行は 1 行目の見出しだけを見る。決定的なので、版が替わって答えが動いたら赤にする。
 SPIRE_FILE = Path("examples/effects_tour/spire.py")
-SPIRE_FIRST_LINE = '1. a scripted player on seed 7, on screen'
+# 記事の「Tests are one of the stacks」の検と、その dir を pytest の根にする設定(spire.py と並べて pytest で走らせる)。
+SPIRE_TEST_FILES = (
+    Path("examples/effects_tour/test_spire.py"),
+    Path("examples/effects_tour/pytest.ini"),
+)
+SPIRE_FIRST_LINE = "1. a scripted player on seed 7, on screen"
 SPIRE_LAST_LINES = (
     "  -> ('win', 6)",
-    '2. a random bot on seed 3',
+    "2. a random bot on seed 3",
     "  -> ('win', 4)",
-    '3. record that fight, then replay it with no dice and no player',
+    "3. record that fight, then replay it with no dice and no player",
     "  -> ('win', 4) ('win', 4) same: True tape: 32 answers",
-    '4. a Monte Carlo bot on seed 3',
+    "4. a Monte Carlo bot on seed 3",
     "  -> ('win', 4)",
-    '5. 100 fights in parallel: random bot vs Monte Carlo bot',
-    '  -> random bot wins 0.73',
-    '  -> monte carlo wins 1.0',
-    '6. damage by card over 100 random fights',
+    "5. 100 fights in parallel: random bot vs Monte Carlo bot",
+    "  -> random bot wins 0.73",
+    "  -> monte carlo wins 1.0",
+    "6. damage by card over 100 random fights",
     "  -> {'Strike': 3663, 'Defend': 0, 'Bash': 632}",
 )
 
@@ -1178,6 +1183,17 @@ def article_tests_failure(result: subprocess.CompletedProcess[str]) -> str | Non
     )
 
 
+def spire_tests_failure(result: subprocess.CompletedProcess[str]) -> str | None:
+    """test_spire.py の pytest の結末が、0 で終わり、最後の行が失敗も skip も警告も無い passed の要約の形でない事を言う文(合えば None)。"""
+    lines = result.stdout.splitlines()
+    if result.returncode == 0 and lines and PASSED_SUMMARY.fullmatch(lines[-1]):
+        return None
+    return (
+        f"{SPIRE_TEST_FILES[0]} の pytest が、終了コード 0 で全部通らなかった(終了コード {result.returncode})\n"
+        f"{result.stdout}{result.stderr}"
+    )
+
+
 def _article_run_failure(
     installed: Installed,
     directory: Path,
@@ -1223,9 +1239,11 @@ def spire_failure(result: subprocess.CompletedProcess[str]) -> str | None:
 
 def check_spire(installed: Installed, place: Path, timeout: float) -> str | None:
     """spire.py を、読み手と同じく写した dir で `python spire.py` と走らせ、落ちた訳を返す(通れば None)。"""
-    directory = place / SPIRE_FILE.parent.name
+    # 例の dir の全部は check_tour_examples が place / effects_tour に写すので、spire.py の組は別の dir に置く
+    directory = place / SPIRE_FILE.stem
     directory.mkdir()
-    shutil.copy(REPO / SPIRE_FILE, directory)
+    for path in (SPIRE_FILE, *SPIRE_TEST_FILES):
+        shutil.copy(REPO / path, directory)
     failure = _article_run_failure(
         installed,
         directory,
@@ -1278,10 +1296,20 @@ def check_article_examples(installed: Installed, place: Path, timeout: float) ->
         timeout,
     )
     print_result("核の 4 個と pytest だけで、例の dir の pytest が全部通る", tests_failure)
+    spire_tests = _article_run_failure(
+        installed,
+        place / SPIRE_FILE.stem,
+        ["-m", "pytest", "-q", "-W", "error", "-p", "no:cacheprovider"],
+        environment,
+        spire_tests_failure,
+        timeout,
+    )
+    print_result("核の 4 個と pytest だけで、spire.py の横の test_spire.py が全部通る", spire_tests)
     return [
         *failures,
         *([] if spire is None else [spire]),
         *([] if tests_failure is None else [tests_failure]),
+        *([] if spire_tests is None else [spire_tests]),
     ]
 
 
@@ -1309,10 +1337,10 @@ def tour_script_failure(name: str, result: subprocess.CompletedProcess[str]) -> 
 def check_tour_examples(installed: Installed, place: Path, timeout: float) -> list[str]:
     """記事 1 本目の例の dir から 2 本を、核だけの venv で写した dir から走らせ、落ちた事を言う文の列を返す(通れば空)。"""
     directory = place / TOUR_DIRECTORY.name
-    shutil.copytree(
-        REPO / TOUR_DIRECTORY, directory, ignore=shutil.ignore_patterns("__pycache__")
+    shutil.copytree(REPO / TOUR_DIRECTORY, directory, ignore=shutil.ignore_patterns("__pycache__"))
+    print(
+        f"  記事 1 本目の例({TOUR_DIRECTORY} — 記事が pip install doeff で走ると書く物)", flush=True
     )
-    print(f"  記事 1 本目の例({TOUR_DIRECTORY} — 記事が pip install doeff で走ると書く物)", flush=True)
     environment = verify_release_install.example_environment(place)
     failures: list[str] = []
     for name in TOUR_SCRIPTS:

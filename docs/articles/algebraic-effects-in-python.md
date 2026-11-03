@@ -1,10 +1,10 @@
 # Algebraic effects for Python: stack handlers around one unchanged program
 
-*Algebraic effects for Python: handlers get the rest of your program, so time, concurrency, retries, budgets and I/O become layers you stack around the same code.*
+*Algebraic effects for Python: handlers get the rest of your program, so dice, players, the screen, statistics and concurrency become layers you stack around the same code.*
 
 This post is about algebraic effects in Python, with doeff, an open-source library whose core is written in Rust. A function yields effects, operations it names, and a handler receives each one together with the rest of the function and decides how the function goes on.
 
-Any one of those decisions can be had another way: a mock for tests, a fake clock, a retry decorator, a custom event loop. What effects give you is one mechanism for all of them, so you can stack them around the same code and swap any one of them without touching it. This post builds one small program and adds those layers one at a time.
+Any one of those decisions can be had another way: a mock for tests, a seeded random generator, a player object passed in as an argument, a custom event loop. What effects give you is one mechanism for all of them, so you can stack them around the same code and swap any one of them without touching it. This post builds one small program and adds those layers one at a time.
 
 You don't need any theory. If you know what `yield` does, you know most of what you need.
 
@@ -501,7 +501,7 @@ def human(effect: Choose, k):
 
 
 def play() -> None:
-    """A fight against the enemy, played by a person; the dice are seeded from the clock."""
+    """A fight against the enemy, played by a person; the dice are seeded by the system."""
     seed = random.SystemRandom().randrange(10**6)
     print(f"seed {seed}")
     print("->", run(quiet_stats(printed(dice(seed)(human(battle()))))))
@@ -530,102 +530,86 @@ python spire.py play
 
 ## One mechanism under all of it
 
-doeff's packages define `Spawn`, `Gather`, `Wait`, `Race` and `Cancel` as effects, and `scheduled` is a reference handler for them, written like `budget`. It keeps the `k` of each waiting task, as in the table above, and transfers to it when the task can go on. Any handler can answer these effects instead. That is why the clock can be a handler. `virtual_clock`, the clock in Layer 1, parks each waiting task on a promise and holds its `k` until the promise completes. Its `advance` task has idle priority, so it runs only while every other task waits. It moves the clock to the earliest wake-up and wakes that task.
+Every handler in this post is a function of `(effect, k)`, and each one does with `k` one of the things in the first table:
 
-The clock reaches the scheduler only through effects any program can yield: `CreatePromise`, `Spawn`, `Wait` and `CompletePromise`. The scheduler knows nothing about time. The docs chapter [Why Effects?](https://github.com/proboscis/doeff/blob/main/docs/20-why-effects-over-di.md#virtual-time-hours-of-waiting-in-an-instant) walks through the same clock step by step.
+| The program yields | Handlers in this post |
+|---|---|
+| `Roll(n)` | `dice(seed)` answers from a seeded generator, `replay(tape)` from the tape, and `record(tape)` passes it on and keeps the answer |
+| `Choose(state, hand, energy)` | `scripted(moves)`, `random_bot`, `monte_carlo(PLAYOUTS)`, `human`, and the same `record(tape)` and `replay(tape)` |
+| `Show(text)` | `printed`, `silent` |
+| `Played(card, damage)` | `quiet_stats`, `damage_stats(totals)` |
+| `Spawn(program)`, `Gather(*tasks)` | `scheduled` |
 
-The effects that doeff's packages define work the same way as `Fetch` and `Spend`. Each has a reference handler, and you can install your own instead:
+`Roll`, `Choose`, `Show` and `Played` are classes in `spire.py`. `Spawn` and `Gather` come from doeff's packages, together with `Wait`, `Race` and `Cancel`, and `scheduled` is a reference handler for them, written in the same `(effect, k)` form as `dice`. It keeps the `k` of each waiting task, as in the "keeps it for later" row of the first table, and transfers to it when the task can go on. Nothing makes these effects special: any handler can answer them instead.
+
+The other effects that doeff's packages define work the same way as `Roll` and `Played`. Each has a reference handler, and you can install your own instead:
 
 | What | The program yields | A reference handler |
 |---|---|---|
-| State | `n = yield Get("fetched")` and `yield Put("fetched", n + 1)` | `state()` keeps a dict and resumes `k` with the value |
-| Exceptions | `result = yield Try(size(url))` gives `Ok(value)` or `Err(error)` | `try_handler`; any handler can also throw into the program with `ResumeThrow(k, error)` |
-| Concurrency | `task = yield Spawn(check(url))`, then `yield Gather(*tasks)` | `scheduled()` keeps the `k` of each waiting task |
-| Observation | `value, log = yield Listen(program)` | `listen_handler` collects the `Tell` lines of `program` |
-| I/O | `page = yield Fetch(url)` | a handler of your own, or a reference one: files, SQL and processes with `doeff[hy]`, HTTP with `doeff[http]` |
+| State | `n = yield Get("fights")` and `yield Put("fights", n + 1)` | `state()` keeps a dict and resumes `k` with the value |
+| Exceptions | `result = yield Try(battle())` gives `Ok(value)` or `Err(error)` | `try_handler`; any handler can also throw into the program with `ResumeThrow(k, error)` |
+| Concurrency | `task = yield Spawn(battle())`, then `yield Gather(*tasks)` | `scheduled` keeps the `k` of each waiting task |
+| Observation | `value, log = yield Listen(battle())` | `listen_handler` collects the `Tell` lines of the program |
+| I/O | an effect of your own, like `Show` | a handler of your own, like `printed`, or a reference one: files, SQL and processes with `doeff[hy]`, HTTP with `doeff[http]` |
 
-This shape suits trading programs, simulations and backtests: the same program can run over recorded market events, with a simulated clock and paper orders, and live, with the wall clock and an exchange. Only the handlers for time, market data and orders differ.
+This shape suits simulations and backtests. Layer 5 is a simulation: a hundred fights, each with its own dice. A trading strategy can run the same way over recorded market events with paper orders, and live with an exchange, and only the handlers for market data and orders differ. Time can be a handler too, a clock that moves forward only when every task waits; the third post in this series builds that clock around a trading example.
 
 ## Tests are one of the stacks
 
-Layer 1 above is a test. It is also the use most people meet first. Many Python test suites have a `mock.patch` that nobody wants to touch: it finds its target by a string, so moving an import can make it miss, and when it is missing the test can still pass while the real thing runs. With effects, a test installs handlers instead:
+Layer 1 is already a test: with a scripted player and seeded dice, the fight is the same on every run. That is also the use most people meet first. Many Python test suites have a `mock.patch` that nobody wants to touch: it finds its target by a string, so moving an import can make it miss, and when it is missing the test can still pass while the real thing runs. Written without effects, `battle` would call `random` and `input()` itself, and its tests would patch both by name. With effects, a test installs handlers instead:
 
 ~~~python
-# welcome.py
-from dataclasses import dataclass
-
-from doeff import EffectBase, do
-
-
-@dataclass(frozen=True)
-class LoadUser(EffectBase):
-    user_id: int
-
-
-@dataclass(frozen=True)
-class SendMail(EffectBase):
-    to: str
-    body: str
-
-
-@do
-def welcome(user_id: int):
-    user = yield LoadUser(user_id)
-    body = f"Welcome, {user.name}!"
-    yield SendMail(user.email, body)
-    return body
-~~~
-
-~~~python
-# test_welcome.py
+# test_spire.py
 from doeff import Resume, handler, run
 
-from infra import User
-from welcome import LoadUser, SendMail, welcome
+from spire import Fight, Played, battle, dice, quiet_stats, scripted, silent
 
 
-@handler
-def fake_load_user(effect: LoadUser, k):
-    return (yield Resume(k, User("Ada", "ada@example.com")))
+def test_a_strike_finishes_an_enemy_on_6_hit_points():
+    # seed 7 deals Defend Strike Defend Defend Strike, and the script plays the Strike
+    fight = battle(Fight(enemy_hp=6))
+    assert run(quiet_stats(silent(dice(7)(scripted([1])(fight))))) == ("win", 1)
 
 
-def test_welcome():
-    sent = []
+def test_bash_makes_the_next_strikes_hit_harder():
+    played = []
 
     @handler
-    def fake_send_mail(effect: SendMail, k):
-        sent.append((effect.to, effect.body))
+    def log(effect: Played, k):
+        played.append((effect.card, effect.damage))
         return (yield Resume(k, None))
 
-    assert run(fake_send_mail(fake_load_user(welcome(1)))) == "Welcome, Ada!"
-    assert sent == [("ada@example.com", "Welcome, Ada!")]
+    run(log(silent(dice(7)(scripted([0, 0, 0, None] * 20)(battle())))))
+    assert played[-3:] == [("Bash", 8), ("Strike", 9), ("Strike", 9)]
 ~~~
 
-Nothing is patched, and there is no string to keep in sync with your imports. The fakes are handlers like the layers above, with `@handler` on each, stacked around `welcome(1)` the same way. Now forget one of them:
+Nothing is patched, and there is no string to keep in sync with your imports. The first test starts from a state made by hand, an enemy on 6 hit points, which is easy because `Fight` is plain data. The second puts a handler of its own, `log`, in place of `quiet_stats`. It writes down every `Played` of the fight from Layer 1, and the test checks that the two Strikes after Bash do 9 damage instead of 6. Now leave out the handler for `Played`:
 
 ~~~python
-run(fake_load_user(welcome(1)))
+run(silent(dice(7)(scripted(moves)(battle()))))
 ~~~
 
 ~~~text
 doeff Traceback (most recent call last):
 
-  welcome()  welcome.py:22
-    yield SendMail(user.email, body)
+  battle()  spire.py:103
+    yield Played(card, dmg)
     handlers:
-      fake_load_user ↗
+      scripted ↗
+      dice ↗
+      silent ↗
 
-UnhandledEffect: no handler found for effect: SendMail (SendMail(to='ada@example.com', body='Welcome, Ada!'))
-  handlers in scope (innermost→outermost): fake_load_user
-  skipped by annotation: fake_load_user (effect: LoadUser) — a handler only sees the effects its effect parameter is annotated with
-  hint: install a handler for SendMail: run(fn(prog)), where fn is a def (effect: SendMail, k) marked with @handler that returns (yield Resume(k, value))
+UnhandledEffect: no handler found for effect: Played (Played(card='Defend', damage=0))
+  handlers in scope (innermost→outermost): scripted → dice → silent
+  skipped by annotation: scripted (effect: Choose), dice (effect: Roll), silent (effect: Show) — a handler only sees the effects its effect parameter is annotated with
+  hint: install a handler for Played: run(fn(prog)), where fn is a def (effect: Played, k) marked with @handler that returns (yield Resume(k, value))
 ~~~
 
-The run stops at the `yield` that nobody answered, and nothing real was called. Before Python's own traceback, doeff prints that `yield`, the handlers that were in scope, and why each one let the effect pass. The complete files, with the `mock.patch` version and its two failure modes side by side, are in [examples/testing_without_mocks](https://github.com/proboscis/doeff/tree/main/examples/testing_without_mocks).
+The run stops at the `yield` that nobody answered, and nothing after it runs. Before Python's own traceback, doeff prints that `yield`, the handlers that were in scope, and why each one let the effect pass. A forgotten `mock.patch` fails the other way: the real thing runs. [examples/testing_without_mocks](https://github.com/proboscis/doeff/tree/main/examples/testing_without_mocks) puts a `mock.patch` test and a handler test of the same small function side by side, with the two ways the patch goes wrong.
 
 ## Where doeff sits
 
-For a comparison, the same three small tasks were written five ways: the welcome email, a bank balance with a log, and three concurrent fetches. Lines were counted without blanks, comments or imports, and each test left out one replacement at a time to see what happens.
+For a comparison with the other effect libraries for Python, three tasks much smaller than `battle` were written five ways: a welcome email that loads a user and sends a mail, a bank balance with a log, and three concurrent fetches. Lines were counted without blanks, comments or imports, and each test left out one replacement at a time to see what happens.
 
 | | Plain Python | effect | effectful | doeff |
 |---|---|---|---|---|
@@ -635,7 +619,7 @@ For a comparison, the same three small tasks were written five ways: the welcome
 | State, log and concurrency built in | No | Concurrency via thread pool | No (use `asyncio`) | Yes |
 | Latest release | — | 2019 | 2026 | 2026 |
 
-Plain Python is the shortest and the easiest to read. effectful keeps your functions completely ordinary, which is a real advantage. doeff costs you `yield` and `@do` in the business code and more names to learn. In return, a handler holds the rest of the program, a missing handler is an error, one handler can wrap a whole program, and handlers stay per task under concurrency. In one test, two `asyncio` tasks each installed their own effectful handler, waited, and woke up in the order they had started. After the wait, the first task got the second task's answer, and the second got an unevaluated term. The same test with doeff kept them apart. This only matters if you install handlers inside tasks; installed once around `asyncio.run`, effectful behaves.
+Plain Python is the shortest and the easiest to read. effectful keeps your functions completely ordinary, which is a real advantage. doeff costs you `yield` and `@do` in the business code and more names to learn. In return, a handler holds the rest of the program, which is what `monte_carlo` and `scheduled` need, a missing handler is an error, one handler can wrap a whole program, and handlers stay per task under concurrency, as each fight's `dice(seed)` does in Layer 5. In one test, two `asyncio` tasks each installed their own effectful handler, waited, and woke up in the order they had started. After the wait, the first task got the second task's answer, and the second got an unevaluated term. The same test with doeff kept them apart. This only matters if you install handlers inside tasks; installed once around `asyncio.run`, effectful behaves.
 
 `returns`, a popular functional library with about 4.4K GitHub stars, gives you typed containers such as `Result`, but no handlers that resume your code, so it does not fit this comparison.
 
@@ -660,17 +644,19 @@ Every effect travels out to a handler and back. The benchmark in doeff's README 
 
 For many small tasks, `scheduled`, which runs in Rust by default since 0.7.0, costs about 17 µs per spawned task, against about 11 µs for `asyncio`.
 
-A few microseconds is noise next to a database query or an HTTP request. It is not noise inside a tight numeric loop. Keep tight numeric loops in plain Python and yield effects around them.
+The Monte Carlo bot of Layer 4 is the heaviest stack in this post. On the same i9-7980XE, with CPython 3.14.7 and doeff 0.8.0, one of its fights runs 144 playouts and takes 0.10 s of CPU time, the median over the hundred seeds of Layer 5, against 1.2 ms for a fight of the random bot.
+
+A few microseconds is noise next to a database query or an HTTP request. It is not noise inside a tight numeric loop. Keep tight numeric loops in plain Python and yield effects around them, the way `battle` calls the plain function `hit`.
 
 The script is `benchmarks/compare_libraries.py` in the repository, and the README's [Performance](https://github.com/proboscis/doeff#performance) section lists every case and how it was measured, if you want numbers from your own machine.
 
 ## Limits
 
 - doeff is 0.x. The API changed between 0.4 and 0.5. Since 0.6, `pip install doeff` installs only the core; the Hy language and the handlers written in it come with `pip install "doeff[hy]"`.
-- Continuations are one-shot. A handler can resume the paused code once, so tricks that resume twice, such as backtracking search, are out. Nondeterministic choice is out too; run the whole program again once per choice instead.
+- Continuations are one-shot. A handler can resume the paused code once, so tricks that resume twice, such as backtracking search, are out. Nondeterministic choice is out too; run the program again once per choice instead, the way `monte_carlo` runs `battle` again from the state in the `Choose` rather than resuming `k` once per move.
 - Effects are not in the types. The type checker does not check that the installed handlers answer every effect a program yields; a missing handler shows up as `UnhandledEffect` when the program runs.
-- Only the body of a `@do` function can perform an effect. A plain function it calls cannot, so as with `async`, `@do` spreads to the callers.
-- `yield` is not allowed inside a list comprehension, so a loop that performs effects becomes a `for` loop.
+- Only the body of a `@do` function can perform an effect. A plain function it calls cannot, so as with `async`, `@do` spreads to the callers: `hit` stays plain because it yields nothing, and `draw_hand` is a `@do` function because it yields `Roll`.
+- `yield` is not allowed inside a list comprehension, so a loop that performs effects becomes a `for` loop, like the one in `draw_hand`.
 - A handler without an annotation receives every effect. A fake without one can quietly answer effects that were meant for another handler.
 
 ## Try it
@@ -680,6 +666,6 @@ pip install doeff   # CPython 3.11 to 3.14; prebuilt wheels for Linux, macOS and
 python -m doeff demo
 ~~~
 
-[What doeff Is](https://github.com/proboscis/doeff/blob/main/docs/positioning/what-doeff-is.md) defines the mechanism, its uses and its limits. Every example in this post runs as shown with doeff 0.8.0 and nothing else. The complete files are in [examples/effects_tour](https://github.com/proboscis/doeff/tree/main/examples/effects_tour) and, for the tests, [examples/testing_without_mocks](https://github.com/proboscis/doeff/tree/main/examples/testing_without_mocks). The docs chapter [Why Effects?](https://github.com/proboscis/doeff/blob/main/docs/20-why-effects-over-di.md) compares effects with dependency injection and plain `async` at more length.
+[What doeff Is](https://github.com/proboscis/doeff/blob/main/docs/positioning/what-doeff-is.md) defines the mechanism, its uses and its limits. Every example in this post runs as shown with doeff 0.8.0 and nothing else, plus pytest for the tests. The battle is [examples/effects_tour/spire.py](https://github.com/proboscis/doeff/blob/main/examples/effects_tour/spire.py): `python spire.py` runs Layers 1 to 6, `python spire.py play` lets you play a fight at the terminal, and `pytest` in the same directory runs the two tests above. The docs chapter [Why Effects?](https://github.com/proboscis/doeff/blob/main/docs/20-why-effects-over-di.md) compares effects with dependency injection and plain `async` at more length.
 
 Where does this break down for you: code where the `yield` style gets in the way, or a case where a plain argument would have been simpler? Issues are open at https://github.com/proboscis/doeff/issues.
