@@ -1,5 +1,6 @@
 import React from 'react';
 import {Composition} from 'remotion';
+import {EndCard} from './kit/EndCard';
 import {FPS, HEIGHT, WIDTH} from './kit/theme';
 
 // A page's video as narrate() (kit/narrated.tsx) returns it: its id is the page's name under src/pages/ and the name
@@ -22,5 +23,7 @@ export const Root: React.FC = () => (
     {VIDEOS.map((video) => (
       <Composition key={video.id} id={video.id} component={video.Video} durationInFrames={video.length} fps={FPS} width={WIDTH} height={HEIGHT} />
     ))}
+    {/* The last frame of a page's GIF preview (gif.mjs renders it as a still with its own label). */}
+    <Composition id="gif-end-card" component={EndCard} durationInFrames={1} fps={FPS} width={WIDTH} height={HEIGHT} defaultProps={{label: 'Watch the full video'}} />
   </>
 );
