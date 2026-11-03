@@ -38,6 +38,7 @@ class SubmitDetached(EffectBase):
     limits: tuple[TaskLimit, ...] = ...
     notify: str = ''
     memory_mib: int | None = None
+    rerun: bool = False
 
     def __post_init__(self) -> None:
         ...
@@ -289,6 +290,7 @@ class ReadDetachedQueue(_doeff_effect_base[DetachedQueueAnswer]):
     key: str
 OUTBOX_ENDED: str
 OUTBOX_QUEUED_OVERDUE: str
+OUTBOX_RERAN: str
 OUTBOX_KINDS: frozenset[str]
 
 @dataclass(frozen=True, kw_only=True)

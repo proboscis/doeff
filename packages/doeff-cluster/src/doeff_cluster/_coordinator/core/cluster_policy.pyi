@@ -410,6 +410,15 @@ ENV_RETRIES: int
 def end_detached(task: TaskRecord, phase: str, now: int, detail: str, result: str | None=None) -> TaskRecord:
     ...
 
+def rerun_id(task: TaskRecord) -> str:
+    ...
+
+def gone_detached(task: TaskRecord, now: int, why: str) -> TaskRecord:
+    ...
+
+def put_gone(draft: TableDraft[TaskRecord], before: TaskRecord, after: TaskRecord) -> None:
+    ...
+
 def settle_detached(task: TaskRecord, now: int, lapsed: bool) -> _Program[TaskRecord | None, object]:
     ...
 
@@ -455,7 +464,7 @@ def tasks_for(state: ClusterState, worker: str, boot: str | None=None) -> tuple:
 def task_finished(task: TaskRecord, now: int, detail: str, result: str | None) -> TaskRecord:
     ...
 
-def absorb_detached_report(task: TaskRecord, status: StatusRow, now: int) -> TaskRecord:
+def absorb_detached_report(task: TaskRecord, status: StatusRow, now: int, stopping: bool=False) -> TaskRecord:
     ...
 
 def put_row(draft: TableDraft[TaskRecord], task: TaskRecord) -> None:

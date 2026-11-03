@@ -64,7 +64,9 @@
   ;; 読んで failed にしない — 印を積んだ行だけが戻した版で failed になる)。
   (setv unset (| (if task.notify #{} #{"notify"}) (if (is task.queued-noticed-ms None) #{"queued_noticed_ms"} #{})
                  ;; memory の要りを名乗らない行も欄を置かない(同じ訳 — 2026-11-02)。
-                 (if (is task.memory-mib None) #{"memory_mib"} #{})))
+                 (if (is task.memory-mib None) #{"memory_mib"} #{})
+                 ;; 走らせ直しを名乗らない行も欄を置かない(同じ訳 — 2026-11-04)。
+                 (if task.rerun #{} #{"rerun" "attempt"})))
   (dfor #(k v) (.items row) :if (not-in k unset) k v))
 
 
@@ -121,7 +123,10 @@
               ;; 待ちの知らせの印の欄の無い行は、まだ積んでいない(足した欄)。
               :queued-noticed-ms (stored-optional-int data "queued_noticed_ms")
               ;; memory の要りの欄の無い行は名乗らない(足した欄 — 置き先は見込みの要りで数える)。
-              :memory-mib (stored-optional-int data "memory_mib")))
+              :memory-mib (stored-optional-int data "memory_mib")
+              ;; 走らせ直しの欄の無い行は名乗らない・試行 1(足した欄)。
+              :rerun (stored-bool data "rerun" False)
+              :attempt (stored-int data "attempt" 1)))
 
 
 (deff ended-to-json [#^ DetachedEnded ended]  ; defk にできない: 保存の綴り(durable_kv — Program の外)と返事の綴り(replies)が呼ぶ純粋な綴り

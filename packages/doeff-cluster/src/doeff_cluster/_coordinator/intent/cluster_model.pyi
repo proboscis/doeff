@@ -739,6 +739,8 @@ class TaskRecord:
     notify: str = ''
     queued_noticed_ms: int | None = None
     memory_mib: int | None = None
+    rerun: bool = False
+    attempt: int = 1
 PLACED_PHASES: frozenset[str]
 ENDED_PHASES: frozenset[str]
 
@@ -802,6 +804,9 @@ class TaskOffer:
     runtime_env: dict[str, object] | None
     environ: tuple[tuple[str, str], ...]
     memory_mib: int | None = None
+    rerun: bool = False
+    attempt: int = 1
+    notify: str = ''
 
 @dataclass(frozen=True, kw_only=True)
 class WarmOffer:

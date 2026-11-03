@@ -408,20 +408,31 @@ coordinator の状態(`GET /state`)から読み直します。受け手は `coor
 | `ReleaseDetached` | `bool` | 終わった task の保持を解く。以後その key は `DetachedUnknown` で、同じ key で送り直せる |
 
 答えの型(失敗は例外ではなく値): `DetachedSucceeded`(値)・`DetachedFailed`(Program の例外)・`DetachedLost`(担い手の worker が
-死んだ — 走らせ直さない)・`DetachedCancelled`・`DetachedVersionMismatch`(送り手と受け側の版が違う)・`DetachedUnrunnable`(能力の合う
+死んだ — 走らせ直しを名乗らない task・名乗った task は上限の回数を使い切った時)・`DetachedCancelled`・`DetachedVersionMismatch`(送り手と受け側の版が違う)・`DetachedUnrunnable`(能力の合う
 worker が無い・コードを準備できない)・`DetachedUnknown`(知らない key)。
 
 - **lease は担い手が延ばす**: 担い手の worker の heartbeat が lease を延ばします。呼び手の問い合わせは lease に触りません。worker が
-  `lease-seconds` の間沈黙したら、その task は `DetachedLost` です。
+  `lease-seconds` の間沈黙したら、その task は `DetachedLost` です(走らせ直しを名乗った task は次の試行)。
 - **世代**: task は置いた時の worker の process の世代(heartbeat の `boot`)に付きます。lease を延ばすのは置いた世代の heartbeat だけです。
   同じ名の別の世代(Pod を作り直した後の新しい process・preStop の間の旧い process)の heartbeat は、その task の lease を延ばしも
   lost にもしません。
+- **走らせ直し**: 送り手が `submit-detached-task` の `:rerun True` を名乗った task は、担い手が消えた時(lease 切れ・止まり始めた worker が
+  子を止めた・止まり始めた worker の子が結果なしで終わった)に lost で終わらず、同じ key の次の試行として待ちの行へ戻り、能力の合う worker で
+  最初から走ります。結末は最後の試行の物です。
+  - 行の id は試行ごとに替わります(`<最初の id>-r<試行の番号>`)。worker の job の名は `task/<id>` なので、沈黙から戻った前の試行の process の報告と
+    結果の届けは受けられず、その job は返事から外れて worker に止められます(沈黙は死ではないので、同じ命令が 2 本 走り続けないための形です)。
+  - 回数は 3 回まで(`RERUN-LIMIT` — task 自身が担い手を落としている時に機体を落とし続けない)。使い切ると `DetachedLost` です。
+  - worker が生きている間に子だけが結果なしで終わった時(memory の見張り・OS に止められた)は走らせ直しません。task 自身が訳かもしれないからです。
+  - 試行が変わると、知らせ先を名乗った task は出口に行 `reran`(id = `<次の試行の id>/reran`)を積みます(読み手は `AwaitDetachedOutbox` の `kinds` で名乗る)。
+  - 2 度走って困る仕事は名乗りません。途中から続くのは Program が途中の結果を残す時だけです。lease は生死の窓(`ClusterTiming.lease-ms` = 10 秒)より
+    長く取ります(短いと、まだ生きていると数える消えた worker へ次の試行を置いて回数を無駄にします)。
 - **結果の後の消失**: 結果を受け取った後に worker が死んでも、結果は変わりません。子 process は終わる前に結果を coordinator へ直接
   送るので、子が終わった直後(worker の次の heartbeat の前)に worker が死んでも結果は届いています。結果は `retain-seconds`(既定
   24 時間・30 日まで)か `ReleaseDetached` まで持ちます。
 - **途絶**: worker は coordinator と途絶えても切り離した task を止めません(途絶が lease より長ければ coordinator が消失とし、再接続の
   返事から外れた時に止めます)。
-- **drain**: drain は worker の上の切り離した task が 0 になるまで `Drained` になりません(task は移せないので終わるのを待つ)。
+- **drain**: drain は worker の上の切り離した task が 0 になるまで `Drained` になりません(task は移せないので終わるのを待つ — 走らせ直しを名乗った
+  task も同じ。名乗った task の持ち主は drain せずに機体を止めてよい)。
 - handler: `detached-cluster`(coordinator の `/detached` の口と、宛先の部品の上の汎用の `HttpRequest` で話す)。手元では `sim-cluster` の偽の実行先が同じ
   要求の形で本物の coordinator へ送り、本物の worker が task を走らせます。担い手の死・停止・網の切断・drain・coordinator の停止は
   テストの effect(`KillWorker`・`StopWorker`・`StartWorker`・`CutWorker`・`DrainWorker`・`StopCoordinator`・`CrashCoordinator`)で再現します。
