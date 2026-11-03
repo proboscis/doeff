@@ -7,7 +7,6 @@ The VM classifies them via downcast (not tag-based getattr).
 import functools
 import types
 import warnings
-import weakref
 from collections.abc import Callable, Generator, Iterable
 from dataclasses import dataclass
 from inspect import CO_GENERATOR, CO_VARARGS
@@ -357,24 +356,33 @@ def _install_raw(
     check_handler_annotation(raw_handler)
     label = _handler_label(raw_handler)
     installer_name = label.name if name is None else name
-    # The installer does not hold itself through its closure: handlers are built per call
-    # (``on_raise`` for every ``on-raise``), and an installer naming itself in its closure was a
+    # Only a former factory holds itself through its closure (it answers itself when called with
+    # no program — these are a few module-level handlers). The installers built per call
+    # (``on_raise`` for every ``on-raise``) do not: an installer naming itself in its closure was a
     # reference cycle left to the cycle collector on every build (agora-controllers card
-    # [id]). It names itself by ``installer_name`` and, as a former factory, answers
-    # itself through a weak reference (the call holds it alive while it runs).
-    itself: weakref.ref[Callable[..., object]] | None = None
+    # [id]). Both stay plain closures, so cloudpickle still carries them to a detached
+    # task (a weak reference in the closure could not be pickled).
 
-    def install(program: object = _NO_PROGRAM) -> object:
-        if program is _NO_PROGRAM:
-            if former_factory:
+    install: Callable[..., object]
+    if former_factory:
+
+        def install_former_factory(program: object = _NO_PROGRAM) -> object:
+            if program is _NO_PROGRAM:
                 warnings.warn(
                     _called_as_former_factory(installer_name), DeprecationWarning, stacklevel=2
                 )
-                return None if itself is None else itself()
-            raise TypeError(_called_without_program(installer_name))
-        return WithHandlerType(body, program)
+                return install_former_factory
+            return WithHandlerType(body, program)
 
-    itself = weakref.ref(install)
+        install = install_former_factory
+    else:
+
+        def install_handler(program: object = _NO_PROGRAM) -> object:
+            if program is _NO_PROGRAM:
+                raise TypeError(_called_without_program(installer_name))
+            return WithHandlerType(body, program)
+
+        install = install_handler
     install.__name__ = installer_name
     install.__qualname__ = label.qualname if name is None else name
     install.__doc__ = label.doc
