@@ -22,6 +22,14 @@
 ;;; drain の頼みは 2 つの道で来る: POST /workers/<名>/drain(本番の preStop・手の頼み)と、止まり始めを名乗る heartbeat
 ;;; (absorb-stopping — sigterm などで preStop を通らずに止まる worker・#2819)。
 ;;; drain は期限(ttlSeconds・頼み直すたびに延びる)で消える。取り消しは DELETE /workers/<名>/drain。
+;;; 1 回の頼みの期限には短い上限(DRAIN-MAX-TTL-SECONDS)が在る: drain の命は頼み手の命に結ぶ。長く空けたい頼み手は上限の内に頼み直し、
+;;; 頼み手が切られたり落ちたりすれば(SIGKILL なら後始末も走らない)、最後の頼みから上限の内に drain が消える。drain の間 worker に仕事が
+;;; 置かれないので、頼み手の居ない drain が長く残ると、その worker の仕事を待つ物が全部止まる(2026-11-03: 期限 9000 秒の手の頼みの
+;;; 頼み手が 1 時間で切られ、drain が残りの 1.5 時間、誰にも持たれないまま worker を止めた)。
+;;; 上限を越える期限の扱いは頼みの形で分かれる:
+;;;   世代を付けない頼み = 断る(400)。drain を立てずに直ちに知らせる(黙って縮めると、頼み手は長く空いたつもりのまま上限で drain を失う)。
+;;;   世代つきの頼み(Pod の preStop)= 上限に縮めて受ける。preStop は数秒ごとに頼み直し、断ると drain をせずに Pod の停止へ進む。
+;;;     preStop の上限は Pod の宣言で上限より長くできる(DRAIN_DEADLINE)し、coordinator は worker より先に上がるので、古い版の preStop も来る。
 ;;; drain が付く先は頼みの形で決まる(#4177):
 ;;;   世代(boot)つきの頼み(Pod の preStop・止まり始めを告げる heartbeat)= その世代に付く。別の世代の heartbeat が来たら解ける
 ;;;     (cluster_policy.absorb-boot — Pod を作り直した後の worker は空けない)。
@@ -39,7 +47,7 @@
 (import doeff_cluster._coordinator.core.resource_policy [refuse service-readiness])
 
 (setv DRAIN-DEFAULT-TTL-SECONDS 300)          ; 頼み直さない drain が消えるまで(preStop は数秒ごとに頼み直す)
-(setv DRAIN-MAX-TTL-SECONDS (* 24 3600))
+(setv DRAIN-MAX-TTL-SECONDS 300)              ; 1 回の頼みの期限の上限(頭の註)
 
 
 ;; --- 頼む・取り消す -------------------------------------------------------------------------
@@ -52,15 +60,17 @@
         ttl (if (is body.ttl-seconds None) DRAIN-DEFAULT-TTL-SECONDS body.ttl-seconds)
         boot body.boot)
   (when (is worker None) (refuse 404 (+ "知らない worker: " name)))
-  (when (not (and (isinstance ttl #(int float)) (not (isinstance ttl bool)) (< 0 ttl (+ DRAIN-MAX-TTL-SECONDS 1))))
-    (refuse 400 (.format "ttlSeconds は 0 より大きく {} 以下: {!r}" DRAIN-MAX-TTL-SECONDS ttl)))
+  (when (not (and (isinstance ttl #(int float)) (not (isinstance ttl bool)) (< 0 ttl)))
+    (refuse 400 (.format "ttlSeconds は 0 より大きい数: {!r}" ttl)))
+  (when (and (is boot None) (> ttl DRAIN-MAX-TTL-SECONDS))
+    (refuse 400 (.format "ttlSeconds は {} 以下: {!r} — 長く空ける時は期限の内に頼み直す" DRAIN-MAX-TTL-SECONDS ttl)))
   ;; 今の世代でない頼み(退いた世代 = 旧い Pod の preStop・一度も見ていない世代 = 最初の heartbeat の前に消された新しい Pod の
   ;; preStop)は、同じ名の今の世代に drain を付けない(2026-09-27)。答えは superseded-worker-view(その世代に置いた task が
   ;; 終わるまで待たせる — 見ていない世代には task が無いので drained)。boot の無い頼み(版上げの Program・手の頼み)は名前に付ける。
   ;; 退いた世代の頼みは、その世代の Pod の止まりが始まった印でもある(AL-D2k): 重なりの組に leaving を付け、前の世代が残していた job を
   ;; 新しい世代へ渡させる(cluster_policy.superseded-reply)。
   (when (other-generation-boot state name boot) (return (superseded-leaving state name boot)))
-  (setv until (+ now (int (* 1000 ttl)))
+  (setv until (+ now (int (* 1000 (min ttl DRAIN-MAX-TTL-SECONDS))))
         current (.row state.drains name))
   (replace state :drains (.with-writes state.drains
                                        (tuple [(TableWrite name (if (and current (> current.until-ms now))

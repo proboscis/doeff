@@ -12,6 +12,7 @@
         doeff_cluster._coordinator.intent.cluster_model [Drain])
 (import doeff_cluster [http-request])
 (import doeff_cluster._coordinator.core.cluster_policy [jobs-for])
+(import doeff_cluster._coordinator.core.drain_policy [DRAIN-MAX-TTL-SECONDS])
 (import doeff_cluster [spec-hash])
 (import doeff_cluster [tick])
 (import doeff_cluster [responded])
@@ -394,7 +395,7 @@
   ;; 00:37:33 の 2 度目の入れ替えで走っていたターン 3 本が止まった)。
   (val c (Coord))
   (c.call "POST" "/workers/atlas/drain" {} :actor "drain@atlas")
-  (c.call "POST" "/workers/zeus/drain" {"ttlSeconds" 600} :actor "upgrade")
+  (c.call "POST" "/workers/zeus/drain" {"ttlSeconds" DRAIN-MAX-TTL-SECONDS} :actor "upgrade")
   (assert (is (. (.row c.state.drains "zeus") boot) None) (.row c.state.drains "zeus"))
   (for [boot ["b2" "b3"]]
     (c.advance 2)
@@ -705,6 +706,56 @@
           :actor None)
   (assert (= (. (.row c.state.tasks task.id) phase) "finished"))
   (assert (get (c.call "POST" "/workers/zeus/drain" {"boot" "old"} :actor "drain@zeus") "drain" "drained")))
+
+
+(deftest test-a-drain-ends-within-the-cap-once-its-holder-stops-asking
+  ;; 失敗ケース(2026-11-03): 手の頼み手が期限 9000 秒で drain を頼み、頼み手が 1 時間で切られた後も drain が 1.5 時間残って、その worker に
+  ;; 仕事が 1 つも置かれなかった。上限を越える世代なしの頼みは立たずに断られ、上限の内の頼みは頼み直しをやめると上限の内に消える。
+  (val c (Coord))
+  (c.call "POST" "/workers/zeus/drain" {"ttlSeconds" 9000} :actor "hand" :expect 400)
+  (assert (is (.row c.state.drains "zeus") None) c.state.drains)
+  (c.call "POST" "/workers/zeus/drain" {"ttlSeconds" (+ DRAIN-MAX-TTL-SECONDS 1)} :actor "hand" :expect 400)
+  (assert (is (.row c.state.drains "zeus") None) c.state.drains)
+  ;; 頼み直している間は、上限の何倍の時間でも drain が残り、仕事は置かれない。始めた時刻は最初の頼みのまま。
+  (c.call "POST" "/workers/zeus/drain" {"ttlSeconds" DRAIN-MAX-TTL-SECONDS} :actor "hand")
+  (val since (. (.row c.state.drains "zeus") since-ms))
+  (for [_ (range 6)]
+    (c.advance (- DRAIN-MAX-TTL-SECONDS 1))
+    (c.beat "zeus")
+    (c.call "POST" "/workers/zeus/drain" {"ttlSeconds" DRAIN-MAX-TTL-SECONDS} :actor "hand")
+    (assert (= (. (.row c.state.drains "zeus") since-ms) since) (.row c.state.drains "zeus"))
+    (assert (get (c.call "GET" "/workers/zeus") "draining")))
+  ;; もう 1 台は別の頼み手が空けたままにし、置ける先を zeus だけにする。
+  (c.call "POST" "/workers/atlas/drain" {} :actor "other")
+  (c.beat "atlas")
+  (c.call "POST" "/tasks" (c.task-body K3S) :actor "c-test")
+  (assert (= (. (.row c.state.tasks "t1") phase) "queued") (.row c.state.tasks "t1"))
+  ;; 頼み手が居なくなる: 上限の 1 秒前はまだ残り、上限を過ぎた拍に消え、同じ worker に task が置かれる。後始末の DELETE は来ない。
+  (c.advance (- DRAIN-MAX-TTL-SECONDS 1))
+  (c.beat "zeus")
+  (assert (get (c.call "GET" "/workers/zeus") "draining"))
+  (c.call "POST" "/workers/atlas/drain" {} :actor "other")
+  (c.advance 2)
+  (assert (is (.row c.state.drains "zeus") None) c.state.drains)
+  (assert (not (get (c.call "GET" "/workers/zeus") "draining")))
+  (c.beat "atlas")
+  (c.beat "zeus")
+  (c.call "POST" "/tasks" (c.task-body K3S) :actor "c-test")
+  (val t (.row c.state.tasks "t2"))
+  (assert (and (= t.worker "zeus") (!= t.phase "queued")) t))
+
+
+(deftest test-a-prestop-ask-over-the-cap-is-shortened-and-not-refused
+  ;; Pod の宣言の preStop の上限(DRAIN_DEADLINE)が上限より長い worker の頼み: 断ると drain をせずに Pod の停止へ進むので、上限に縮めて受ける。
+  ;; 頼み直しが止まれば(Pod が消えて次の世代が来ない)上限の内に消える。
+  (val c (Coord))
+  (c.call "POST" "/workers/zeus/drain" {"ttlSeconds" 21960 "boot" "b1"} :actor "drain@zeus")
+  (assert (= (. (.row c.state.drains "zeus") until-ms) (+ c.now (* 1000 DRAIN-MAX-TTL-SECONDS))) (.row c.state.drains "zeus"))
+  (c.advance 2)
+  (c.call "POST" "/workers/zeus/drain" {"ttlSeconds" 21960 "boot" "b1"} :actor "drain@zeus")
+  (assert (= (. (.row c.state.drains "zeus") until-ms) (+ c.now (* 1000 DRAIN-MAX-TTL-SECONDS))) (.row c.state.drains "zeus"))
+  (c.advance (+ DRAIN-MAX-TTL-SECONDS 1))
+  (assert (is (.row c.state.drains "zeus") None) c.state.drains))
 
 
 (deftest test-drain-requests-need-an-actor-and-a-known-worker

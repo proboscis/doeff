@@ -14,6 +14,7 @@
 
 ;; preStop の既定(秒)。上限は cluster.yaml の terminationGracePeriodSeconds より、worker の子の停止(stop-grace 10 秒 + KILL の
 ;; 猶予 5 秒)の分以上短くする。drain の期限は上限より長く取り、諦めた後もしばらく空けたままにする(次の世代の heartbeat で解ける)。
+;; 期限が coordinator の上限(drain_policy.DRAIN-MAX-TTL-SECONDS)を越える頼みは、coordinator が世代つきなら上限に縮めて受ける。
 (setv DRAIN-DEADLINE-SECONDS 90.0)
 (setv DRAIN-INTERVAL-SECONDS 2.0)
 (setv DRAIN-TTL-MARGIN-SECONDS 60.0)
