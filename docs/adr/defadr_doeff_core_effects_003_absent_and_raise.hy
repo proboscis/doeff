@@ -105,8 +105,7 @@
 (import dataclasses [dataclass fields])
 (import hy)
 (import pytest)
-(import typing [Never get-args])
-(import pathlib [Path])
+(import typing [Never])
 (import doeff [run with-handlers Ok Err Some Nothing Pass Try EffectBase DoExpr K])
 (import doeff [handler :as make-handler])
 (import doeff [UnhandledEffect])
@@ -116,15 +115,11 @@
 (import doeff-core-effects [Raise :as ProbeAliasedRaise])  ; R15's counterexample: an alias that cannot be recognized as Raise by name
 (import doeff-core-effects [maybe result RaiseCase]
         doeff-core-effects._outcomes [open-bind Outcomes])
-(import doeff-records [ReadRowAnswer Row Missing Unreachable])
 (import doeff-traverse [Fail])
 (import doeff-traverse [normalize-to-none])
 (import doeff-hy.handle [_check-clause-terminates])
 (import doeff-hy._declarations [EFFECT-KEYS])
 (import doeff-hy [ClauseEndingError])
-
-
-(val REPO-ROOT (. (Path __file__) parent parent parent))
 
 
 ;; ---------------------------------------------------------------------------
@@ -600,15 +595,6 @@
        (val succeeded (run (try-handler (probe-try (probe-one)))))
        (assert (isinstance succeeded Ok) succeeded)
        (assert (= (. succeeded value) 1)))
-     (deftest test-adr-doe-core-effects-003-records-answers-mix-success-absence-failure
-       ;; Fact: ReadRow's answer lists success, absence, and failure in one union (why R5's declaration is needed — before stage 3, so there is no declaration yet).
-       ;; The three phrases are the Japanese text of packages/doeff-records/README.md, kept as \u escapes so the check still reads that file:
-       ;; "failure answers", "returned as values", "only composition errors are raised as exceptions".
-       (assert (= (get-args ReadRowAnswer) #(Row Missing Unreachable)))
-       (val readme (.read-text (/ REPO-ROOT "packages/doeff-records/README.md") :encoding "utf-8"))
-       (assert (in "\u5931\u6557\u306e\u7b54\u3048" readme))
-       (assert (in "\u5024\u3067\u8fd4\u3059" readme))
-       (assert (in "\u4f8b\u5916\u3067\u4e0a\u304c\u308b\u306e\u306f\u7d44\u307f\u7acb\u3066\u306e\u8aa4\u308a" readme)))
      (deftest test-adr-doe-core-effects-003-handler-without-resume-ends-the-scope
        ;; Fact: the VM allows a handler that returns a value without resuming, and ends the scope with that value (the continuation is discarded)
        ;; — R1's Absent and R2's maybe shape can be written on the current VM (this is also why R15's run-time check is needed).

@@ -3,9 +3,11 @@
 import importlib.util
 import json
 import socket
+import sys
 import time
 import uuid
 from concurrent.futures import ThreadPoolExecutor
+from pathlib import Path
 from urllib.request import Request, urlopen
 
 import psycopg
@@ -18,9 +20,16 @@ from doeff_core_effects import (
     scheduled,
 )
 from doeff_time import SimClock, sim_time_handler
-from test_pooled_writer_admission import DSN, AcquireObserver
 
 from doeff import run, with_handlers
+
+# DSN と AcquireObserver の置き場は doeff-core-effects の tests の 1 か所(コピーを持たない — conftest の postgres_support と
+# 同じ借り方)。この検は 2026-11-04 に doeff-core-effects の tests から移した(核の検が doeff-records を読まないため)。
+CORE_EFFECTS_TESTS_DIR = Path(__file__).resolve().parents[2] / "doeff-core-effects" / "tests"
+if str(CORE_EFFECTS_TESTS_DIR) not in sys.path:
+    sys.path.insert(0, str(CORE_EFFECTS_TESTS_DIR))
+
+from test_pooled_writer_admission import DSN, AcquireObserver  # noqa: E402 - sys.path の後
 
 pytestmark = pytest.mark.skipif(not DSN, reason="explicit disposable PostgreSQL DSN required")
 

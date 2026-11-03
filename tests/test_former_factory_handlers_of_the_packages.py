@@ -1,9 +1,11 @@
 """The packages' handlers without settings are handler values, not factories called with no arguments
 (ADR-DOE-API-002).
 
-doeff-git, doeff-openai and doeff-openrouter's ``production_handlers`` and doeff-conductor's
-``agent_handler`` and ``git_handler`` are put in a stack as they are; the former call answers the same
-handler with a DeprecationWarning for one release.
+doeff-git, doeff-openai and doeff-openrouter's ``production_handlers`` are put in a stack as they
+are; the former call answers the same handler with a DeprecationWarning for one release.
+doeff-conductor's ``agent_handler`` and ``git_handler`` are checked the same way in
+packages/doeff-conductor/tests/test_former_factory_handlers.py (the root tests do not import the
+internal agent packages).
 
 former-factory-call-rewrite: keep — the tests call the former form on purpose.
 """
@@ -12,7 +14,6 @@ import warnings
 from pathlib import Path
 
 import pytest
-from doeff_conductor import agent_handler, git_handler
 from doeff_git import GitCommit, git_local_handler, github_handler
 from doeff_git import production_handlers as git_production_handlers
 from doeff_openai import production_handlers as openai_production_handlers
@@ -24,8 +25,6 @@ _FORMER_FACTORIES = {
     "doeff_git.production_handlers": git_production_handlers,
     "doeff_openai.production_handlers": openai_production_handlers,
     "doeff_openrouter.production_handlers": openrouter_production_handlers,
-    "doeff_conductor.agent_handler": agent_handler,
-    "doeff_conductor.git_handler": git_handler,
 }
 
 

@@ -344,9 +344,6 @@
     "vm-traceback-no-event-driven-active-chain-state"
   ],
   "adr_laws": [
-    "ADR-DOC-LINTER-SELECTABLE-SCOPE off-cancels-work",
-    "ADR-DOC-LINTER-SELECTABLE-SCOPE selected-files-only",
-    "ADR-DOC-LINTER-SELECTABLE-SCOPE selection-survives-reload",
     "ADR-DOE-ADR-001 every-executable-adr-is-collected",
     "ADR-DOE-ADR-001 gate-test-reads-the-sessions-own-collection",
     "ADR-DOE-ADR-001 strict-wiring-fails-closed",
@@ -566,7 +563,6 @@
     "ADR-DOE-TRACKER-001 tracker-is-written-in-english"
   ],
   "adr_deftest_enforcements": [
-    "ADR-DOC-LINTER-SELECTABLE-SCOPE test-doc-lint-modes-in-vscode",
     "ADR-DOE-ADR-001 test-adr-doe-adr-001-gate-test-spawns-no-nested-collection",
     "ADR-DOE-AGENTS-002 test-adr-doe-agents-002-conversation-evidence-vocabulary",
     "ADR-DOE-AGENTS-004 test-adr-doe-agents-004-capacity-denominator-is-launch-owned",
@@ -645,7 +641,6 @@
     "ADR-DOE-CORE-EFFECTS-003 test-adr-doe-core-effects-003-nesting-order-chooses-the-shape",
     "ADR-DOE-CORE-EFFECTS-003 test-adr-doe-core-effects-003-on-raise-refuses-python-exceptions-and-catch-all",
     "ADR-DOE-CORE-EFFECTS-003 test-adr-doe-core-effects-003-raise-in-a-handler-clause-skips-the-bodys-result",
-    "ADR-DOE-CORE-EFFECTS-003 test-adr-doe-core-effects-003-records-answers-mix-success-absence-failure",
     "ADR-DOE-CORE-EFFECTS-003 test-adr-doe-core-effects-003-result-and-maybe-values",
     "ADR-DOE-CORE-EFFECTS-003 test-adr-doe-core-effects-003-traverse-fail-resumes-with-a-substitute",
     "ADR-DOE-CORE-EFFECTS-003 test-adr-doe-core-effects-003-try-folds-exceptions-into-result",
@@ -703,6 +698,7 @@
     "ADR-DOE-HY-008 test-adr-doe-hy-008-judgments-reject-the-counterexamples",
     "ADR-DOE-HY-008 test-adr-doe-hy-008-reliance-probe-names-what-pypi-hy-lacks",
     "ADR-DOE-RECORDS-001 test-adr-doe-records-001-raw-operations-do-not-grow",
+    "ADR-DOE-RECORDS-001 test-adr-doe-records-001-read-row-answer-mixes-success-absence-failure",
     "ADR-DOE-RECORDS-002 test-adr-doe-records-002-every-wire-answer-has-one-spelling-place",
     "ADR-DOE-RECORDS-002 test-adr-doe-records-002-the-default-list-fits-the-wire-cap",
     "ADR-DOE-TIME-001 test-adr-doe-time-001-each-sleep-rule-is-read-by-its-polarity-test",
