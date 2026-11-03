@@ -1,7 +1,9 @@
 """The test harness: give a step a list of inputs and read the states and effects it answered.
 
-``replay`` calls the step the way ``fold`` does — no VM, no task, no bus — and checks the step's answers with the
-same check. It also holds the inputs to what the runtime can deliver: the end of a run comes only for a run that is
+``replay`` calls the step the way ``fold`` does — no task, no bus — and checks the step's answers with the same
+check. A step that answers a value runs without the VM. A step that answers a Program is evaluated on the VM through
+the fold's own ``step_answer`` (the handler that refuses every effect), one ``run`` per input. It also holds the
+inputs to what the runtime can deliver: the end of a run comes only for a run that is
 running, and no input comes after ``Finish``. So a test writes the ends of the runs it expects
 (``Answered(key, value)``, ``Raised(key, error)``, ``Cancelled(key)``) among the other inputs and asserts the trace.
 """
@@ -10,6 +12,7 @@ from collections.abc import Callable, Hashable, Iterable
 from dataclasses import dataclass
 from typing import Generic, TypeVar
 
+from doeff import Program, run
 from doeff_stream._step import (
     Answered,
     Cancelled,
@@ -19,6 +22,8 @@ from doeff_stream._step import (
     Run,
     StepEffect,
     checked_next,
+    is_program_answer,
+    step_answer,
 )
 
 S = TypeVar("S")
@@ -72,11 +77,14 @@ class Replay(Generic[S]):
         return last[-1] if last and isinstance(last[-1], Finish) else None
 
 
-def replay(step: Callable[[S, object], Next[S]], initial: S, inputs: Iterable[object]) -> Replay[S]:
+def replay(
+    step: Callable[[S, object], "Next[S] | Program[Next[S]]"], initial: S, inputs: Iterable[object]
+) -> Replay[S]:
     """Give ``step`` each of ``inputs`` from ``initial`` and answer the trace.
 
-    Refused like the runtime refuses it: an answer that is not a valid ``Next``. Refused because the runtime never
-    delivers it: the end of a run that is not running, and an input after ``Finish``.
+    Refused like the runtime refuses it: an answer that is not a valid ``Next``, and a step's Program that performs
+    an effect (``StepYieldedEffectError``). Refused because the runtime never delivers it: the end of a run that is not
+    running, and an input after ``Finish``.
     """
     trace: Replay[S] = Replay(initial, ())
     for event in inputs:
@@ -87,6 +95,9 @@ def replay(step: Callable[[S, object], Next[S]], initial: S, inputs: Iterable[ob
             if event.key not in running:
                 raise ValueError(f"end of the run {event.key!r}, which is not running")
             running = running - {event.key}
-        answer = checked_next(step(trace.final, event), running)
+        answer = step(trace.final, event)
+        if is_program_answer(answer):
+            answer = run(step_answer(step, answer))
+        answer = checked_next(answer, running)
         trace = Replay(initial, (*trace.steps, Stepped(event, answer.state, answer.effects)))
     return trace

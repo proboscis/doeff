@@ -26,7 +26,10 @@ class Started:
 
 
 def hosted(
-    step: Callable[[S, object], Next[S]], initial: S, inputs: Inputs, name: str = "host"
+    step: Callable[[S, object], "Next[S] | Program[Next[S]]"],
+    initial: S,
+    inputs: Inputs,
+    name: str = "host",
 ) -> Program[object]:
     """``fold`` under the handlers a host installs around it on a bus of its own."""
     return on_bus(EventBus(), name, inputs, fold(step, initial, inputs))
@@ -63,6 +66,8 @@ def _kick_then(body: Program[object]):
     return (yield Wait(task))
 
 
-def kicked(step: Callable[[S, object], Next[S]], initial: S, inputs: Inputs) -> object:
+def kicked(
+    step: Callable[[S, object], "Next[S] | Program[Next[S]]"], initial: S, inputs: Inputs
+) -> object:
     """Run ``fold(step, initial, inputs)`` on a bus of its own, its first input ``Kick()``; answer the fold's value."""
     return run_on_sim(on_bus(EventBus(), "host", inputs, _kick_then(fold(step, initial, inputs))))
