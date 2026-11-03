@@ -5,62 +5,62 @@
 
 
 (defadr ADR-DOE-AGENTS-001
-  :title "doeff-agents public result は AwaitResult schema channel のみ"
+  :title "doeff-agents public result is the AwaitResult schema channel only"
   :status "accepted"
   :scope ["doeff-agents" "doeff-agents.public-api" "agent-result-schema"]
   :problem
     [(fact
-       "旧 doeff-agents は agent に .agentd-result.json を書かせる transport を持っていたが、agent-created JSON result file は利用者が読まなくても runtime result contract として混入しやすい。"
+       "The old doeff-agents had a transport that made the agent write .agentd-result.json, but an agent-created JSON result file easily slips in as a runtime result contract even when users do not read it."
        :evidence "packages/doeff-agents/src/doeff_agents/_handlers/production.py")
      (fact
-       "doeff-agents は AgentSpec.result_schema と AwaitResultEffect / AwaitOutcome.result を公開 API として持つ。"
+       "doeff-agents exposes AgentSpec.result_schema and AwaitResultEffect / AwaitOutcome.result as its public API."
        :evidence "packages/doeff-agents/src/doeff_agents/_effects/agent.py")
      (fact
-       "schema validation と retry prompt は doeff-agents handler が所有している。"
+       "Schema validation and the retry prompt are owned by the doeff-agents handler."
        :evidence "packages/doeff-agents/src/doeff_agents/_handlers/production.py")
      (fact
-       "2026-07-02 の Nakagawa SBI L2 readiness では、agent pane に schema-valid な DOEFF_AGENT_RESULT_BEGIN/END block が出ていたが、通常監視幅と入力待ち判定の競合で AwaitResult.result として回収できなかった。"
+       "In the 2026-07-02 Nakagawa SBI L2 readiness run, a schema-valid DOEFF_AGENT_RESULT_BEGIN/END block appeared in the agent pane, but it could not be collected as AwaitResult.result because of a race between the normal monitoring capture width and the awaiting-input decision."
        :evidence "packages/doeff-agents/tests/test_session_backend.py::test_l2_await_result_uses_extended_capture_before_awaiting_input")
      (fact
-       "同じ失敗モードでは、AwaitOutcome.status が AWAITING_INPUT でも schema-valid result を持つ可能性があるため、effectful loop も status より result 値を優先する必要がある。"
+       "In the same failure mode, AwaitOutcome can carry a schema-valid result even when AwaitOutcome.status is AWAITING_INPUT, so the effectful loop must also prioritize the result value over the status."
        :evidence "packages/doeff-agents/tests/test_agent_launch_invariants.py::test_await_result_result_wins_over_awaiting_input_status")
      (fact
-       "Claude Code の `bypass permissions on` / `shift+tab to cycle` は常時フッターであり、長い MCP tool 実行中に出続けるため、これだけを AwaitResult の入力待ち根拠にすると schema result が出る直前に早期 FollowUp してしまう。"
+       "Claude Code's `bypass permissions on` / `shift+tab to cycle` is a permanent footer that stays visible during long MCP tool runs, so using it alone as evidence of awaiting input in AwaitResult triggers a premature FollowUp just before the schema result appears."
        :evidence "packages/doeff-agents/tests/test_monitor_claude.py::test_stable_claude_permission_footer_alone_does_not_block")
      (fact
-       "一度 BLOCKED と判定された Claude Code session は、現在 pane に入力待ち根拠がない場合 RUNNING に戻さなければ、長い MCP tool 実行中の安定画面を古い BLOCKED 状態のまま AwaitResult.AWAITING_INPUT として返してしまう。"
+       "Unless a Claude Code session once judged BLOCKED is returned to RUNNING when the current pane has no evidence of awaiting input, the stable screen during a long MCP tool run keeps the stale BLOCKED state and is returned as AwaitResult.AWAITING_INPUT."
        :evidence "packages/doeff-agents/tests/test_session_backend.py::test_l2_await_result_clears_stale_blocked_state_when_current_footer_is_not_input")
      (fact
-       "Claude Code の tmux pane は launch 直後や長い MCP tool 後に shell prompt 風の行を含むことがある。tmux session がまだ存在する間にこれだけで EXITED + result None を返すと、schema result が出る直前に caller が absent result retry を消費する。"
+       "A Claude Code tmux pane may contain shell-prompt-like lines right after launch or after a long MCP tool. Returning EXITED + result None on that alone while the tmux session still exists makes the caller consume an absent-result retry just before the schema result appears."
        :evidence "packages/doeff-agents/tests/test_session_backend.py::test_l2_await_result_does_not_finalize_absent_result_on_live_tmux_shell_prompt")
      (fact
-       "2026-07-02 の Nakagawa SBI L2 readiness では、Claude が長い readiness_blocker JSON を出した結果、tmux 可視 pane には DOEFF_AGENT_RESULT_END だけが残り、DOEFF_AGENT_RESULT_BEGIN が流れて AwaitResult が result を回収できなかった。"
+       "In the 2026-07-02 Nakagawa SBI L2 readiness run, Claude emitted a long readiness_blocker JSON, so only DOEFF_AGENT_RESULT_END remained in the visible tmux pane; DOEFF_AGENT_RESULT_BEGIN scrolled away and AwaitResult could not collect the result."
        :evidence "packages/doeff-agents/tests/test_session_backend.py::test_l2_await_result_uses_transcript_when_result_begin_scrolled_off_screen")
      (fact
-       "2026-07-02 の Nakagawa SBI L2 readiness では、Claude が account-state JSON をまだ描画中なのに AwaitResult が DOEFF_AGENT_RESULT_BEGIN だけで result block と見なし、validation follow-up を送って出力中の JSON を壊した。tmux pipe-pane transcript は ANSI/cursor 制御を含むため、BEGIN/END があっても JSON として抽出できないことがある。"
+       "In the 2026-07-02 Nakagawa SBI L2 readiness run, while Claude was still rendering an account-state JSON, AwaitResult treated DOEFF_AGENT_RESULT_BEGIN alone as a result block, sent a validation follow-up, and corrupted the JSON being printed. Because the tmux pipe-pane transcript contains ANSI/cursor control sequences, JSON may not be extractable from it even when BEGIN/END are present."
        :evidence "packages/doeff-agents/tests/test_session_backend.py::test_l2_await_result_waits_until_result_end_marker")
      (fact
-       "2026-07-02 の Nakagawa SBI L2 readiness では、compact single-line JSON を指示しても Claude Code の terminal UI が 80 桁付近で銘柄コードや数量の途中に物理改行を入れ、`5020.T` や `1000000000` が JSON token として壊れた。"
+       "In the 2026-07-02 Nakagawa SBI L2 readiness run, even though compact single-line JSON was requested, Claude Code's terminal UI inserted physical line breaks around column 80 in the middle of ticker codes and quantities, breaking `5020.T` and `1000000000` as JSON tokens."
        :evidence "packages/doeff-agents/tests/test_session_backend.py::test_result_payload_extract_repairs_terminal_wraps_inside_json_tokens")]
   :context
     [(interpretation
-       "agent が生成する JSON file は input/result/evidence/checkpoint のどの用途でも runtime contract にしない。結果は doeff-agents が管理する structured result channel で回収する。")
+       "An agent-generated JSON file is never a runtime contract, whether for input, result, evidence, or checkpoint. Results are collected through the structured result channel managed by doeff-agents.")
      (interpretation
-       "利用者が必要とする値は、LaunchSession 後に AwaitResult を perform し、schema 検証済みの AwaitOutcome.result として受け取る。diagnostic / evidence が必要なら result schema の field に含める。")]
+       "Users obtain the values they need by performing AwaitResult after LaunchSession and receiving the schema-validated AwaitOutcome.result. If diagnostics / evidence are needed, include them as fields of the result schema.")]
   :decision
-    [(rule R1 "doeff-agents 利用者は agent が作成した file を読んで結果を取得してはならない。")
-     (rule R2 "doeff-agents 利用者が受け取れる agent result は AwaitResultEffect が返す AwaitOutcome.result のみである。")
-     (rule R3 "result schema validation、invalid result retry、missing result retry は doeff-agents handler の責務である。")
-     (rule R4 "doeff-agents は agent に .agentd-result.json / result.json などの JSON result file を作らせない。")
-     (rule R5 "診断 / 証跡 / checkpoint が必要な caller は AgentSpec.result_schema に明示し、AwaitOutcome.result から受け取る。side-channel file を使わない。")
-     (rule R6 "AwaitResult は pane に schema-valid result block が存在する場合、agent がまだ起動中または入力待ち表示でも、その result を入力待ち判定より優先して返す。")
-     (rule R7 "AwaitResult effectful loop は AwaitOutcome.result が存在し validation_error がない場合、AwaitOutcome.status が AWAITING_INPUT でも待受を終了して caller に返す。")
-     (rule R8 "Claude Code の常時フッターだけを AwaitResult の AWAITING_INPUT 根拠にしてはならない。明示的な入力要求または permission prompt だけを入力待ちとして扱う。")
-     (rule R9 "doeff-agents は現在 pane に入力待ち根拠がない BLOCKED 状態を保持してはならない。古い BLOCKED は RUNNING に戻して AwaitResult を継続する。")
-     (rule R10 "tmux session がまだ存在する Claude Code L2 session では、shell prompt 風の表示だけで result absent を確定してはならない。結果がなければ heartbeat timeout として再監視する。")
-     (rule R11 "tmux backend の AwaitResult は可視 pane だけに依存せず、session 開始時からの transcript tail からも DOEFF_AGENT_RESULT_BEGIN/END block を回収する。ただし transcript fallback は JSON payload として抽出できる時だけ採用し、raw terminal 制御で壊れた block は結果として扱わない。")
-     (rule R12 "AwaitResult は DOEFF_AGENT_RESULT_BEGIN だけで result block と見なさず、対応する DOEFF_AGENT_RESULT_END が出るまで待つ。")
-     (rule R13 "AwaitResult は Claude Code の terminal wrap が JSON string / number / property name の途中へ入れた物理改行を搬送上のノイズとして復元する。workspace JSON file への退避を修復策にしてはならない。")]
+    [(rule R1 "doeff-agents users must not obtain results by reading files created by the agent.")
+     (rule R2 "The only agent result doeff-agents users can receive is the AwaitOutcome.result returned by AwaitResultEffect.")
+     (rule R3 "Result schema validation, invalid-result retry, and missing-result retry are the responsibility of the doeff-agents handler.")
+     (rule R4 "doeff-agents does not make the agent create JSON result files such as .agentd-result.json / result.json.")
+     (rule R5 "A caller that needs diagnostics / evidence / checkpoints declares them in AgentSpec.result_schema and receives them from AwaitOutcome.result. Side-channel files are not used.")
+     (rule R6 "When a schema-valid result block exists in the pane, AwaitResult returns that result in preference to the awaiting-input decision, even if the agent is still starting up or shows an awaiting-input display.")
+     (rule R7 "When AwaitOutcome.result is present and there is no validation_error, the AwaitResult effectful loop stops waiting and returns to the caller even if AwaitOutcome.status is AWAITING_INPUT.")
+     (rule R8 "Claude Code's permanent footer alone must not be the basis for AWAITING_INPUT in AwaitResult. Only an explicit input request or a permission prompt is treated as awaiting input.")
+     (rule R9 "doeff-agents must not retain a BLOCKED state when the current pane has no evidence of awaiting input. A stale BLOCKED is returned to RUNNING and AwaitResult continues.")
+     (rule R10 "For a Claude Code L2 session whose tmux session still exists, a shell-prompt-like display alone must not settle the result as absent. If there is no result, it is re-monitored as a heartbeat timeout.")
+     (rule R11 "AwaitResult on the tmux backend does not depend only on the visible pane; it also collects DOEFF_AGENT_RESULT_BEGIN/END blocks from the transcript tail since session start. However, the transcript fallback is adopted only when a JSON payload can be extracted, and a block corrupted by raw terminal control sequences is not treated as a result.")
+     (rule R12 "AwaitResult does not treat DOEFF_AGENT_RESULT_BEGIN alone as a result block; it waits until the matching DOEFF_AGENT_RESULT_END appears.")
+     (rule R13 "AwaitResult repairs physical line breaks that Claude Code's terminal wrap inserted in the middle of a JSON string / number / property name, treating them as transport noise. Falling back to a workspace JSON file must not be used as the remedy.")]
   :laws
     [(law await-result-only-public-boundary
        :statement "doeff_agents_user_result => AwaitResult(handle).result and not agent_created_file"

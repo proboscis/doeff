@@ -64,9 +64,9 @@ FORM_KEYS = {
     "defsemgrep": "adr_defsemgrep_enforcements",
 }
 LEDGER_COMMENT = (
-    "生成物 — 手で書かない。`make enforcement-ledger`(= scripts/check_enforcement_ledger.py --write)が"
-    "木から作る(ADR-DOE-ENFORCE-001 R5 / R9)。各項目は enforcement 資産 1 つの名で、減った項目は"
-    "この file の差分に名前で残る。commit の hook と既定 pytest がこの一覧と木の一致を検める。"
+    "Generated file — do not edit by hand. `make enforcement-ledger` (= scripts/check_enforcement_ledger.py --write) "
+    "builds it from the tree (ADR-DOE-ENFORCE-001 R5 / R9). Each entry is the name of one enforcement asset; a removed "
+    "entry stays visible by name in this file's diff. The commit hook and the default pytest check that this list matches the tree."
 )
 
 _CLOSERS = {"(": ")", "[": "]", "{": "}", "#(": ")", "#{": "}"}

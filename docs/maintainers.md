@@ -1,37 +1,36 @@
-# maintainer の設備(着地・検証)
+# Maintainer infrastructure (landing and verification)
 
-この文書は doeff の**maintainer 専用**の設備を集めたもの。doeff を依存として使う人・
-手元で開発する人には要らない。通常の導入は root `README.md` の install の行、開発は
-`CONTRIBUTING.md` の `## Development`(`make sync` と `uv run pytest`)で足りる。
+This document collects doeff's **maintainer-only** infrastructure. People who use doeff as a dependency or develop
+it locally do not need it. For a normal install, the install line of the root `README.md` is enough; for
+development, `## Development` in `CONTRIBUTING.md` (`make sync` and `uv run pytest`) is enough.
 
-## main への着地(2026-08-09〜)
+## Landing on main (since 2026-08-09)
 
-公開(origin main への push)は land queue の窓が行う — 変更は branch を push して `ai land request` で列へ(直 push は guard が block)。
+Publishing (pushing to origin main) is done by the land queue window — push your change as a branch and enqueue it with `ai land request` (a direct push is blocked by a guard).
 
-upstream 規約(検証済みでしか main を進めない)は 2026-08-09 から窓の battery が機械強制する。
+Since 2026-08-09, the upstream rule (main only advances with verified commits) is machine-enforced by the window's battery.
 
-窓を回す機体は `.agents/land-queue.toml` の `policy.runner` が決める — 2026-09-14 から `"pod"`(k3s の頭脳の pod の land-api・実行者 `land-runner@agora-1`・押す鍵 = Secret `land-key-doeff` の deploy key)。登記した Mac は「この repo の窓は pod が回す」と名乗って見送る。Mac の窓へ戻すには runner の行を消す。
+The machine that runs the window is decided by `policy.runner` in `.agents/land-queue.toml` — since 2026-09-14 it is `"pod"` (land-api in the brain pod on k3s, runner `land-runner@agora-1`, push key = the deploy key in Secret `land-key-doeff`). A registered Mac announces "this repo's window is run by the pod" and skips it. To return to a Mac window, delete the runner line.
 
-## `.agents/land-queue.toml` は maintainer の設備
+## `.agents/land-queue.toml` is maintainer infrastructure
 
-同 file は着地の窓の宣言で、maintainer の検証設備を持つ。`gate.full`(日次検証便
-`ai land verify` と full_paths 便だけが使う全量検査の逐語)・`gate.timeout_s`・
-focus mode の方策・`UV_CACHE_DIR` の lane 分離・実行面(zeus / k3s)の指定・
-`[test-admission]`(広範囲テストの走行の受付)がここに集まる。**doeff を使う・
-doeff を手元で開発するのに、この file を読む必要はない。**
+This file declares the landing window and holds the maintainer's verification infrastructure. `gate.full` (the
+verbatim full check, used only by the daily verification run `ai land verify` and the full_paths run),
+`gate.timeout_s`, the focus mode policy, the `UV_CACHE_DIR` lane separation, the choice of execution surface
+(zeus / k3s), and `[test-admission]` (admission for running broad tests) all live here. **You do not need to read
+this file to use doeff or to develop doeff locally.**
 
-## 追跡対象の衛生(雛形と fixture)
+## Hygiene of tracked files (templates and fixtures)
 
-`.gitignore` は実行時の状態(DB / SQLite / agent home / log)と生成物を除外する。
-`scripts/check-repo-hygiene.sh` が、除外の対象に当たる file を誤って追跡していないか
-検査する。
+`.gitignore` excludes runtime state (DB / SQLite / agent home / log) and generated artifacts.
+`scripts/check-repo-hygiene.sh` checks that no file matching those exclusions is tracked by mistake.
 
-`.env.*` や `*.jsonl` に当たる file を**意図して追跡したい**時(設定の雛形、テストの
-fixture)は、`.gitignore` を緩めるのではなく、同 script の allowlist(`case` 節)へ
-path を足し、**それを使う README かテストを同じ行のコメントに書く**。除外の規則は
-repo 全体の既定のまま保ち、例外は 1 箇所で名前と用途つきで宣言する。
+When you **intentionally want to track** a file matching `.env.*` or `*.jsonl` (a config template, a test
+fixture), do not loosen `.gitignore`; instead add the path to that script's allowlist (the `case` clause) and
+**write the README or test that uses it in a comment on the same line**. The exclusion rules stay the repo-wide
+default, and each exception is declared in one place with its name and purpose.
 
-2026-09-15 時点で、この allowlist に載せるべき file は 1 件も無い。
+As of 2026-09-15, there is no file that belongs on this allowlist.
 
-`python/` の規則は **repo 根の一時作業 dir だけ**を指す(`/python/`)。package の中の
-`python/`(例 `packages/doeff-indexer/python/`)は正規のソースなので対象外。
+The `python/` rule refers **only to the temporary work dir at the repo root** (`/python/`). A `python/` inside a
+package (e.g. `packages/doeff-indexer/python/`) is regular source and is not covered.

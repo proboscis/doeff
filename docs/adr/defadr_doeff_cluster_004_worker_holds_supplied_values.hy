@@ -1,11 +1,13 @@
-;;; Executable ADR: API server が止まっている間に置き直された job も、Secret・ConfigMap の参照の値を得て起動できるよう、worker が自分に
-;;; 置かれうる job の参照の値の写しを持ち、job の読みは API server に届かない時だけその写しで答える。
+;;; Executable ADR: so that a job re-placed while the API server is down can still get the values of its Secret and ConfigMap
+;;; references and start, a worker holds a copy of the referenced values of the jobs that could be placed on it, and a job's read
+;;; answers from that copy only when the API server cannot be reached.
 ;;;
-;;; 2026-10-29 23:30 JST に API server の在る機体 eos が止まり、eos で
-;;; 動いていた job が pool の atlas へ置き直されたが、起動で参照の値を API server に問い、届かずに 16 分で 17 回落ちた。それまで
-;;; supplied-values の、API server が止まった時の振る舞いを決めた ADR は無かった(docs/adr を「supplied」で読んで確かめた — 2026-10-30)。
+;;; At 2026-10-29 23:30 JST the machine eos, which hosts the API server, went down; the jobs that
+;;; ran on eos were re-placed onto atlas in the pool, but at startup they asked the API server for their referenced values, could not
+;;; reach it, and failed 17 times in 16 minutes. Until then no ADR decided how supplied-values behaves when the API server is down
+;;; (checked by reading docs/adr for "supplied" — 2026-10-30).
 ;;;
-;;; 戻し方: この ADR を足した commit を revert する。写しの file(<作業の根>/supplied-held)は残るが、誰も読まない(消すなら手で消す)。
+;;; Rollback: revert the commit that added this ADR. The copy files (<work root>/supplied-held) remain, but nothing reads them (delete them by hand if wanted).
 
 (require doeff-adr.macros [defadr rule law])
 (import doeff-adr.macros [fact interpretation counterexample])
@@ -16,7 +18,7 @@
 
 
 (defadr ADR-DOE-CLUSTER-004
-  :title "worker は、自分に置かれうる job の宣言の :environ の ConfigMap・Secret の参照(coordinator が heartbeat の返事の supplied で渡す綴り)の値を、API server が答えている間に作業の根の下の写し(file 0600・dir 0700)として持つ。job の読みは API server に届かない時(HttpFailed)だけ写しで答え、届いて断られた時は写しを読まない"
+  :title "A worker holds, while the API server answers, a copy under its work root (files 0600, dirs 0700) of the values of the ConfigMap and Secret references in the :environ of the declarations of the jobs that could be placed on it (the spellings the coordinator passes in the supplied field of the heartbeat reply). A job's read answers from the copy only when the API server cannot be reached (HttpFailed); when it is reached and refuses, the copy is not read"
   :status "accepted"
   :scope ["packages/doeff-cluster/src/doeff_cluster/_shared/core/supplied_spelling.hy"
           "packages/doeff-cluster/src/doeff_cluster/_shared/protocol/supplied_values.hy"
@@ -30,59 +32,59 @@
           "docs/adr/defadr_doeff_cluster_004_worker_holds_supplied_values.hy"]
   :problem
     [(fact
-       "job は宣言の :environ の参照の値を、起動の時に supplied-setting・supplied-directory で自区画の API server への GET 1 本で読む。届かないと SuppliedValueUnavailable で終わり、値を得る道は API server の他に無かった。"
-       :evidence "shared/protocol/supplied_values.hy の held-entries と entries-of-answer(この ADR の前の形)")
+       "At startup a job reads the values of the references in its declaration's :environ through supplied-setting and supplied-directory, with one GET to the API server of its own partition. If that is unreachable it ends with SuppliedValueUnavailable; there was no way to get the values other than the API server."
+       :evidence "held-entries and entries-of-answer in shared/protocol/supplied_values.hy (the form before this ADR)")
      (fact
-       "区画の API server は 1 台の機体の上に在る。その機体が止まると、どの機体の worker も値を得られない。job を 2 台に置けるようにしても、移る訳がその機体の停止の時は、移り先も起動に同じ API server が要り、必ず起動できない(移り先が、移る原因と同じ障害の範囲に入っている)。"
-       :evidence "実測(10-29 23:31〜23:47 JST・atlas の job が ConnectTimeout で 17 回落ちた)")]
+       "A partition's API server lives on one machine. When that machine stops, workers on every machine lose access to the values. Even if a job can be placed on two machines, when the reason for moving is that machine stopping, the destination also needs the same API server to start, so it can never start (the destination lies in the same failure domain as the cause of the move)."
+       :evidence "Measured (10-29 23:31-23:47 JST: the job on atlas failed 17 times with ConnectTimeout)")]
   :context
     [(interpretation
-       "control plane を複数台にする事・起こし直しの間隔を変える事はこの ADR の外。値の得方そのものを、API server の停止に耐える形にする。")
+       "Running the control plane on several machines, or changing the restart interval, is outside this ADR. This ADR makes the way values are obtained itself survive an API server outage.")
      (interpretation
-       "写しを job が読んだ時だけ書く形(読めた値を覚える)は採らない — 止まった機体から移って来る job は、移り先でまだ 1 度も読んでいない。置かれうる job の参照を前もって持つには、置き先の判断を持つ coordinator が worker ごとに綴りを並べる。")
+       "The form that writes the copy only when a job reads (remembering values that were read) is not taken — a job moving off a stopped machine has never read on its destination yet. To hold in advance the references of jobs that could be placed, the coordinator, which owns placement decisions, lists the spellings per worker.")
      (interpretation
-       "値を coordinator や記録の店に載せて配る形は採らない — Secret の中身を coordinator の task の行や記録の店に載せない(supplied_values の頭の註の決まり)。coordinator が運ぶのは綴りだけで、値は各 worker が自分の身元で API server から読む。")]
+       "The form that loads the values onto the coordinator or the record store and distributes them is not taken — Secret contents are not put on coordinator task rows or in the record store (the rule in the header comment of supplied_values). The coordinator carries only spellings; each worker reads the values from the API server under its own identity.")]
   :decision
-    [(rule R1 "coordinator は heartbeat の返事に supplied を載せる: その worker に置かれうる job(置く対象の宣言のうち pin と効く needs が合う物 — 生死・drain・空きは見ない)の宣言の :environ の、参照の綴り(shared/core/supplied_spelling の綴りの値)を重ねずに並べた列。名乗っていない worker・退いた世代への返事には欄を書かない(空の列は「何も持たない」の意味で、写しを全部消すので、知らない時に渡さない)。")
-     (rule R2 "Pod の worker(区画の CA で API server を検める口を組む worker)は値の写しの係を背景の task として回す。係は返事の綴りが変わった時・前に全部を読めてから 5 分を過ぎた時・前の回に届かない物が在った時に、綴りを物ごとに束ねて API server に 1 本ずつ問い、写しを <作業の根>/supplied-held/<worker の名>/<種類>/<namespace>/<名>.json に置き換えで書く(file 0600・作業の根から下の dir の全部の段 0700)。値 1 つの参照は宣言が名指したキーだけ、物 1 つ丸ごとの参照は全部のキーを持つ。届かない・token が読めない・401・5xx は前の写しを残し、403・404 は写しを消し、綴りから外れた写しは消す。")
-     (rule R3 "job の読み(held-entries)は、API server に届かない(HttpFailed)時だけ、job を回す worker の写し(機体の事実 WORK_ROOT と WORKER_NAME で引く)で答え、参照の綴りと写しを読んだ刻を warning の 1 行に出す。届いて断られた時(403・404 ほか)は写しを読まず今と同じく断る。写しも無ければ、届かない理由に写しの無い訳を添えて SuppliedValueUnavailable で断る。")
-     (rule R4 "値は log・coordinator の返事と task の行・記録の店に出さない。出すのは参照の綴り・数え・刻だけ。本番と模擬で同じ関数(hold-supplied・held-entries)が動き、模擬は doeff_cluster._sim.k8s_supplied の down の世界で試す。")]
+    [(rule R1 "The coordinator puts supplied in its heartbeat reply: the de-duplicated list of reference spellings (values of the spelling in shared/core/supplied_spelling) in the :environ of the declarations of the jobs that could be placed on that worker (the declarations to place whose pin and effective needs match — liveness, drain and free capacity are not considered). The field is not written in replies to a worker that has not named itself or to a retired generation (an empty list means 'hold nothing' and deletes every copy, so it is not sent when unknown).")
+     (rule R2 "A Pod worker (one that builds a client checking the API server with the partition's CA) runs the value-copy keeper as a background task. When the spellings in the reply change, when 5 minutes have passed since everything was last read in full, or when something was unreachable last round, the keeper groups the spellings by object, asks the API server once per object, and writes the copy by replacement to <work root>/supplied-held/<worker name>/<kind>/<namespace>/<name>.json (file 0600, every dir level below the work root 0700). A single-value reference holds only the key the declaration names; a whole-object reference holds every key. Unreachable, unreadable token, 401 and 5xx keep the previous copy; 403 and 404 delete the copy; copies no longer in the spellings are deleted.")
+     (rule R3 "A job's read (held-entries) answers from the copy of the worker running the job (looked up by the machine facts WORK_ROOT and WORKER_NAME) only when the API server cannot be reached (HttpFailed), and prints the reference spelling and the time the copy was read on one warning line. When the server is reached and refuses (403, 404 and others) the copy is not read and the read refuses as today. If there is no copy either, it refuses with SuppliedValueUnavailable, adding to the unreachable reason why there is no copy.")
+     (rule R4 "Values never appear in logs, in coordinator replies and task rows, or in the record store. Only reference spellings, counts and times appear. Production and simulation run the same functions (hold-supplied, held-entries); the simulation is tested in the down world of doeff_cluster._sim.k8s_supplied.")]
   :laws
     [(law a-job-placed-while-the-api-server-is-down-starts-from-the-copy
-       :statement "for_all 参照 r ∈ supplied(w) で、API server が答えていた間に w の係が r の写しを持った worker w: API server に届かない間に w に置かれた job の r の読みは、写しの値で答える"
+       :statement "for_all worker w and reference r ∈ supplied(w) for which w's keeper held a copy of r while the API server was answering: the read of r by a job placed on w while the API server is unreachable answers with the copied value"
        :counterexamples
-         [(counterexample "写しを持たない — API server の機体が止まると、移り先の job も起動で落ち続ける(10-29 23:31〜)")
-          (counterexample "写しを job が読んだ時だけ書く — 止まった機体から移って来た job は移り先で 1 度も読んでいない")]
+         [(counterexample "No copy is held — when the API server's machine stops, jobs on their destination keep failing at startup (10-29 23:31 onward)")
+          (counterexample "The copy is written only when a job reads — a job that moved off a stopped machine has never read on its destination")]
        :enforced-by ["packages/doeff-cluster/tests/test_supplied_held.hy::test-a-job-placed-while-the-api-server-is-down-starts-from-the-worker-copy"
                      "packages/doeff-cluster/tests/test_supplied_held.hy::test-a-directory-written-from-the-copy-has-every-held-key"
                      "packages/doeff-cluster/tests/test_supplied_held.hy::test-the-coordinator-names-only-the-spellings-of-jobs-the-worker-could-take"]
-       :wiring "配線済み(2026-10-30)")
+       :wiring "Wired (2026-10-30)")
      (law a-refused-value-is-not-answered-from-the-copy
-       :statement "for_all 参照 r: API server が届いて r を断った(403・404)時、r の読みは写しで答えず断る ∧ 係はその写しを消す。写しの無い r・別の worker の写し・宣言が名指さないキーは、届かない時も写しで答えない"
+       :statement "for_all reference r: when the API server is reached and refuses r (403, 404), the read of r refuses instead of answering from the copy ∧ the keeper deletes that copy. An r with no copy, another worker's copy, and keys the declaration does not name are not answered from a copy even when unreachable"
        :counterexamples
-         [(counterexample "届いた断りでも写しで答える — 消された・権限を外された値を使い続ける")
-          (counterexample "写しを worker の名で分けない — 同じ作業の根を分ける 2 つの worker が、互いの写しを「綴りから外れた」と消し合う")]
+         [(counterexample "Answering from the copy even on a refusal that was received — values that were deleted or whose permission was revoked stay in use")
+          (counterexample "Not separating copies by worker name — two workers sharing one work root delete each other's copies as no longer in the spellings")]
        :enforced-by ["packages/doeff-cluster/tests/test_supplied_held.hy::test-a-refused-or-unheld-reference-is-not-answered-from-a-copy"
                      "packages/doeff-cluster/tests/test_supplied_held.hy::test-the-copy-follows-the-declarations-and-the-api-server-answers"]
-       :wiring "配線済み(2026-10-30)")
+       :wiring "Wired (2026-10-30)")
      (law the-copy-is-private-and-its-values-stay-out-of-the-log
-       :statement "for_all 写しの file f と、その上の dir d(作業の根より下): mode(f) = 0600 ∧ mode(d) = 0700 ∧ 係と読みの log の行・coordinator の返事に値は字のままでも base64 でも載らない"
+       :statement "for_all copy file f and each dir d above it (below the work root): mode(f) = 0600 ∧ mode(d) = 0700 ∧ no value appears, neither verbatim nor base64, in log lines of the keeper and the read or in coordinator replies"
        :counterexamples
-         [(counterexample "MakeDirectory の mode に頼って途中の段を umask の mode で作る — 途中の段が他人の読める dir に成る")]
+         [(counterexample "Relying on the mode of MakeDirectory and creating intermediate levels with the umask mode — an intermediate level becomes a dir others can read")]
        :enforced-by ["packages/doeff-cluster/tests/test_supplied_held.hy::test-the-copy-is-private-and-its-values-stay-out-of-the-log"]
-       :wiring "配線済み(2026-10-30)")
+       :wiring "Wired (2026-10-30)")
      (law the-coordinator-and-the-reader-share-one-spelling
-       :statement "coordinator が並べる綴りと、値を読む部品が受ける綴りは、shared/core/supplied_spelling の同じ正規表現"
+       :statement "The spelling the coordinator lists and the spelling the value-reading part accepts are the same regular expression in shared/core/supplied_spelling"
        :counterexamples
-         [(counterexample "2 か所に綴りを書き、片方だけを変える — coordinator が並べない参照を job が読み、写しが無い")]
+         [(counterexample "Writing the spelling in two places and changing only one — a job reads a reference the coordinator does not list, and there is no copy")]
        :enforced-by ["docs/adr/defadr_doeff_cluster_004_worker_holds_supplied_values.hy::test-adr-doe-cluster-004-one-spelling"]
-       :wiring "配線済み(2026-10-30)")]
+       :wiring "Wired (2026-10-30)")]
   :enforcement
     [(deftest test-adr-doe-cluster-004-one-spelling
-       ;; 読む部品の綴りは shared/core の綴りそのもの(R1・R3 — 写しを持つ物と読む物が同じ字で決まる)。
+       ;; The reading part's spelling is the shared/core spelling itself (R1, R3 — the holder and the reader are decided by the same text).
        (assert (is reader.REF-SPELLING spelling.REF-SPELLING))
        (assert (is reader.OBJECT-SPELLING spelling.OBJECT-SPELLING))
-       ;; 参照でない値(URL・path)は並べず、値 1 つと物 1 つ丸ごとの参照は並べる。
+       ;; Values that are not references (URL, path) are not listed; single-value and whole-object references are.
        (<- found tuple (supplied-spellings #(#("A" "secret:ns/name/key") #("B" "configmap:ns/obj") #("C" "https://example.invalid/x")
                                              #("D" "/etc/x") #("E" "secret:ns/name/key"))))
        (assert (= found #("configmap:ns/obj" "secret:ns/name/key")) found))]

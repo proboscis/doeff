@@ -1,12 +1,12 @@
-;;; Executable ADR: slog は observability effect — Writer(Tell/Listen)からワイヤ型を分離し、
-;;; sink は「見える」がデフォルト、収集は Listen の値フローのみ(.log 属性 side-channel 全廃)。
+;;; Executable ADR: slog is an observability effect — its wire type is separated from Writer (Tell/Listen),
+;;; the sink is "visible" by default, and collection is only through Listen's value flow (the .log attribute side-channel is removed entirely).
 
 (require doeff-adr.macros [defadr defsemgrep rule law])
 (import doeff-adr.macros [fact interpretation counterexample])
 
 
 (defadr ADR-DOE-CORE-EFFECTS-001
-  :title "slog を SlogEffect として Writer から型分離し、slog_handler = stderr terminal sink、収集は Listen(types=(SlogEffect,)) の値フローに一本化する — handler install への mutable 収集属性(.log)は削除済み API として全面禁止"
+  :title "Separate slog from Writer by type as SlogEffect, make slog_handler = stderr terminal sink, and unify collection into the value flow of Listen(types=(SlogEffect,)) — a mutable collection attribute (.log) on a handler install is a removed API and is forbidden everywhere"
   :status "proposed"
   :scope ["packages/doeff-core-effects"
           "doeff/cli/run_services.py"
@@ -16,83 +16,83 @@
           "docs/adr/defadr_doeff_core_effects_001_slog_observability.hy"]
   :problem
     [(fact
-       "slog という名前(Go slog 由来の構造化ロギング語彙)は『yield すれば見える』という observability の期待を作るのに、実装は Writer の Tell と同一ワイヤ型(Slog = WriterTellEffect)で、slog_handler() は黙って list に集めるだけ。CLI の default_interpreter は slog_handler() を装備するがその収集結果は誰も読まずに捨てる — 使い手は slog を yield しても何も見えない(2026-07-13 実測: 素の run() では UnhandledEffect、slog_handler 装備では完全な沈黙)。"
+       "The name slog (structured-logging vocabulary from Go's slog) sets the observability expectation 'yield it and you see it', yet the implementation shares the same wire type as Writer's Tell (Slog = WriterTellEffect), and slog_handler() silently collects into a list. The CLI's default_interpreter installs slog_handler() but nobody reads the collected result and it is thrown away — a user who yields slog sees nothing (measured 2026-07-13: UnhandledEffect under a bare run(), complete silence with slog_handler installed)."
        :evidence "doeff/cli/run_services.py:191; packages/doeff-core-effects/doeff_core_effects/_handlers.py:135-154; packages/doeff-core-effects/doeff_core_effects/_effects.py:110-134")
      (fact
-       "default_interpreter のスタックでは slog_handler が writer() より内側に居るため Tell() も含む全 WriterTellEffect を slog_handler が先に consume し、writer() は何も collect しない — Writer と slog の conflation はデフォルト構成で既に機能していない。"
-       :evidence "doeff/cli/run_services.py:190-197 の wrap 順(reversed)")
+       "In the default_interpreter stack, slog_handler sits inside writer(), so slog_handler consumes every WriterTellEffect first, including Tell(), and writer() collects nothing — the conflation of Writer and slog already does not work in the default configuration."
+       :evidence "the wrap order (reversed) in doeff/cli/run_services.py:190-197")
      (fact
-       "handler install に mutable 収集属性を生やす .log side-channel は削除済み API のはずが enforcement 不在で生存/再生した(erosion)。生産者: handlers.py:89(writer)と handlers.py:153(slog_handler)。読者: tests/test_core_effects.py:170-171、tests/effects/http_request_support.hy:85、packages/doeff-vm/tests/test_pyvm.py:210。handlers.py:76 の docstring は実在しない handler_log にも言及。"
-       :evidence "packages/doeff-core-effects/doeff_core_effects/_handlers.py:76,89,153; git log -S 'install.log'(削除を記録した ADR なし)")
+       "The .log side-channel, which grows a mutable collection attribute on a handler install, was supposed to be a removed API but survived/regrew for lack of enforcement (erosion). Producers: handlers.py:89 (writer) and handlers.py:153 (slog_handler). Readers: tests/test_core_effects.py:170-171, tests/effects/http_request_support.hy:85, packages/doeff-vm/tests/test_pyvm.py:210. The docstring at handlers.py:76 also mentions a handler_log that does not exist."
+       :evidence "packages/doeff-core-effects/doeff_core_effects/_handlers.py:76,89,153; git log -S 'install.log' (no ADR recorded the removal)")
      (fact
-       "表示系 preset は現行 API に対して既に壊れている: log_display.py:94 は WriterTellEffect に存在しない effect.message を参照(現行は .msg/.kwargs)、旧 Pass() シグネチャも使用。tests/test_pass_then_typed_handler.py:54 も同属性を参照。sim_time.py:130 と docker dockerfile.hy:58 は WriterTellEffect に横から isinstance しており、型分離の影響面。"
+       "The display presets are already broken against the current API: log_display.py:94 references effect.message, which does not exist on WriterTellEffect (the current fields are .msg/.kwargs), and it also uses the old Pass() signature. tests/test_pass_then_typed_handler.py:54 references the same attribute. sim_time.py:130 and docker dockerfile.hy:58 do a side isinstance on WriterTellEffect and are within the blast radius of the type separation."
        :evidence "packages/doeff-preset/src/doeff_preset/handlers/log_display.py:90-102; packages/doeff-time/src/doeff_time/_handlers/sim_time.py:130; packages/doeff-docker/src/doeff_docker/_handlers/dockerfile.hy:58")]
   :context
     [(interpretation
-       "slog と Tell は正しいデフォルトが正反対の別エフェクトである: Writer(Tell)は『静かに蓄積してこそ正しい』データフロー、slog は『見えてこそ正しい』observability。同一ワイヤ型を共有する限り、どちらかのハンドラがもう一方の期待を裏切る構成(ログが黙って消える)が常に組めてしまう。業界の収束も同じ教訓を示す: Go slog と Python logging(lastResort)は『デフォルト sink = stderr』へ収束し、デフォルト nop の Rust log / OCaml Logs は有名な footgun になった。")
+       "slog and Tell are distinct effects whose correct defaults are opposite: Writer (Tell) is a data flow that is correct only when it accumulates quietly; slog is observability that is correct only when it is visible. As long as they share one wire type, a configuration in which one handler betrays the other's expectation (logs silently vanish) can always be built. The industry's convergence teaches the same lesson: Go slog and Python logging (lastResort) converged on 'default sink = stderr', while Rust log / OCaml Logs with a nop default became well-known footguns.")
      (interpretation
-       "Listen は tee(observer)であって sink ではない — listen_handler は collect した後 Pass で外へ流し続け、types 指定可能な汎用オブザーバである(handlers.py:205-236)。ゆえに sink の意味論変更と収集要求は独立であり、収集は Listen の値フロー (result, collected) で満たせる。handler オブジェクトに mutable 属性を生やす理由は存在しない。これは doeff-agents の『結果は AwaitOutcome.result のみ、side-channel ファイル禁止』と同型の境界規律。")
+       "Listen is a tee (observer), not a sink — listen_handler keeps passing effects outward with Pass after collecting them, and is a general observer whose types can be specified (handlers.py:205-236). Therefore changing the sink semantics and the need for collection are independent, and collection can be satisfied by Listen's value flow (result, collected). There is no reason to grow a mutable attribute on a handler object. This is the same boundary discipline as doeff-agents' 'the result is only AwaitOutcome.result; side-channel files are forbidden'.")
      (interpretation
-       "VM の『unhandled effect = エラー』は結合核の不変量。Python logging の lastResort 相当を VM に特例として入れると、1 エフェクト型だけ不変量を破る浸食になる。可視性の保証はエントリポイント(CLI・テストハーネス)がハンドラスタックに sink を標準装備することで実現する。")
+       "The VM's 'unhandled effect = error' is an invariant of the coupling core. Putting a Python-logging-style lastResort into the VM as a special case would be an erosion that breaks the invariant for just one effect type. The visibility guarantee is achieved by the entry points (CLI, test harness) installing a sink in the handler stack as standard.")
      (interpretation
-       "2026-07-13 統合裁定(main 0acce3a9 との merge): main は同じ .log 廃止を『State 収集 + writer_log()/slog_log() 値フロー + handler の installer 化 + handler からの direct IO 排除』で実施済みだった。統合形では slog_handler を表示だけに使う: slog_handler は表示専用の observability IO boundary(ShellRun handler と同型の境界 handler であり direct-IO 排除哲学と整合)、Tell の蓄積は main の writer + writer_log()(State 収集)を正とし、slog_log() は退役(表示専用 sink に読むべき state が無い。slog の収集は Listen の値フロー)。handler 形状は main の installer 形に統一。")]
+       "2026-07-13 integration ruling (merge with main 0acce3a9): main had already carried out the same .log removal as 'State collection + writer_log()/slog_log() value flow + handlers as installers + no direct IO from handlers'. In the integrated form slog_handler is used only for display: slog_handler is a display-only observability IO boundary (a boundary handler of the same shape as the ShellRun handler, consistent with the no-direct-IO philosophy); Tell accumulation follows main's writer + writer_log() (State collection); and slog_log() is retired (a display-only sink has no state to read; slog collection is Listen's value flow). The handler shape is unified on main's installer form.")]
   :decision
-    [(rule R1 "ワイヤ型分離: slog(msg, **kwargs) は新設 SlogEffect(msg, **kwargs) を返す。Slog エイリアスは SlogEffect を指すよう付け替える。WriterTellEffect は Tell() 専用に戻り、writer() / Listen の既定対象(types=(WriterTellEffect,))は無変更。SlogEffect と WriterTellEffect に継承関係を作らない(isinstance で相互に捕まらないこと)。")
-     (rule R2 "slog_handler は SlogEffect の表示専用 terminal sink(installer 形状、main 0acce3a9 に整合): rich 非依存の 1 行整形(level kwarg があれば使用、なければ INFO、残り kwargs は key=value)を stderr へ出力して consume(Resume k None)する。表示が唯一の仕事で、収集は一切しない(state も属性も持たない)。『slog_handler を入れたらログは見える』がハンドラ契約。stdout は使わない(プログラム結果専用)。stderr 書き込みは observability の IO boundary としてこの 1 handler に隔離する。")
-     (rule R3 "handler install に mutable 収集属性(.log 等)を生やす side-channel は全面禁止(削除済み API の正式記録)。収集の公認経路は 2 つ: slog は Listen(prog, types=(SlogEffect,)) の値フロー (result, collected)、Tell は writer(State 収集)+ writer が答える effect ReadWriterLog の値フロー(main 0acce3a9 の設計。読みの関数 writer_log() は 2026-10-27 に effect ReadWriterLog へ作り直した)。slog_log() は退役 — slog_handler が表示専用になった以上、読むべき slog state は存在しない。")
-     (rule R4 "unhandled SlogEffect は従来どおり UnhandledEffect(VM に lastResort 特例を入れない。Listen / Tell も handler 不在なら同様に loud)。可視性はエントリポイントの標準装備で保証する: doeff/cli/run_services.py の default_interpreter は slog_handler(stderr sink)を装備し、テストハーネス(将来の doeff_interpreter fixture を含む)も display sink を既定にする — pytest は stderr を capture するのでテスト出力は汚れず、ログを assert するテストだけ Listen を使う。")
-     (rule R5 "静音は明示 opt-in: slog_discard_handler(SlogEffect を黙って consume する installer 形状の sink)を提供する。slog_capture_handler は導入しない — 収集結果を返す手段が side-channel 属性しかなく(R3 違反)、Listen の値フローと完全に重複するため。")
-     (rule R6 "横から WriterTellEffect を isinstance している消費者は型分離に整合させる: sim_time のログ整形は SlogEffect を対象に変更、docker dockerfile.hy は用途に応じて対象型を明示、doeff-preset の表示系は現行 API(.msg/.kwargs、Pass(effect, k))へ修理して rich sink の差し替えとして提供するか退役する。存在しない effect.message 属性の参照は禁止。")]
+    [(rule R1 "Wire type separation: slog(msg, **kwargs) returns the new SlogEffect(msg, **kwargs). The Slog alias is repointed to SlogEffect. WriterTellEffect goes back to being for Tell() only, and the default target of writer() / Listen (types=(WriterTellEffect,)) is unchanged. No inheritance relation is created between SlogEffect and WriterTellEffect (neither may be caught by the other's isinstance).")
+     (rule R2 "slog_handler is a display-only terminal sink for SlogEffect (installer shape, consistent with main 0acce3a9): it writes a rich-independent one-line format (uses the level kwarg if present, otherwise INFO; remaining kwargs as key=value) to stderr and consumes the effect (Resume k None). Display is its only job; it does no collection at all (holds neither state nor attributes). 'Install slog_handler and logs are visible' is the handler contract. stdout is not used (it is reserved for the program's result). Writing to stderr is isolated in this one handler as the observability IO boundary.")
+     (rule R3 "A side-channel that grows a mutable collection attribute (.log etc.) on a handler install is forbidden everywhere (formal record of a removed API). There are 2 sanctioned collection paths: for slog, the value flow (result, collected) of Listen(prog, types=(SlogEffect,)); for Tell, writer (State collection) + the value flow of the effect ReadWriterLog that writer answers (main 0acce3a9's design; the reading function writer_log() was rebuilt as the effect ReadWriterLog on 2026-10-27). slog_log() is retired — now that slog_handler is display-only, there is no slog state to read.")
+     (rule R4 "An unhandled SlogEffect remains UnhandledEffect as before (no lastResort special case in the VM; Listen / Tell are equally loud without a handler). Visibility is guaranteed by what entry points install as standard: default_interpreter in doeff/cli/run_services.py installs slog_handler (stderr sink), and test harnesses (including a future doeff_interpreter fixture) also default to a display sink — pytest captures stderr, so test output stays clean, and only tests that assert on logs use Listen.")
+     (rule R5 "Silence is an explicit opt-in: provide slog_discard_handler (an installer-shaped sink that silently consumes SlogEffect). slog_capture_handler is not introduced — its only way to return the collected result would be a side-channel attribute (an R3 violation), and it would completely duplicate Listen's value flow.")
+     (rule R6 "Consumers that do a side isinstance on WriterTellEffect are aligned with the type separation: sim_time's log formatting targets SlogEffect instead; docker dockerfile.hy states its target type explicitly according to its purpose; doeff-preset's display code is either repaired to the current API (.msg/.kwargs, Pass(effect, k)) and offered as a rich sink replacement, or retired. Referencing the nonexistent effect.message attribute is forbidden.")]
   :laws
     [(law slog-tell-types-disjoint
        :statement "wire_type(slog) = SlogEffect and wire_type(Tell) = WriterTellEffect and SlogEffect is_not WriterTellEffect"
        :counterexamples
-         [(counterexample "writer() が slog の出力を collect する / slog_handler が Tell を consume して Writer が飾りになる(旧 default_interpreter の実態)")
-          (counterexample "SlogEffect を WriterTellEffect のサブクラスにして isinstance で両方に捕まる")])
+         [(counterexample "writer() collects slog output / slog_handler consumes Tell and Writer becomes decoration (what the old default_interpreter actually did)")
+          (counterexample "SlogEffect is made a subclass of WriterTellEffect and is caught by isinstance for both")])
      (law slog-is-visible-by-default
        :statement "installed(slog_handler) => every_yielded_SlogEffect_reaches_stderr"
        :counterexamples
-         [(counterexample "sink が list に集めるだけで表示せず、収集結果も捨てられる(2026-07-13 以前の default_interpreter)")
-          (counterexample "既定 sink が stdout に書き、プログラム結果と混ざる")])
+         [(counterexample "The sink only collects into a list without displaying, and the collected result is thrown away (default_interpreter before 2026-07-13)")
+          (counterexample "The default sink writes to stdout and mixes with the program's result")])
      (law no-handler-side-channel
        :statement "handler_install_exposes_no_mutable_collection_attribute; capture_flows_as_values_via_Listen"
        :counterexamples
-         [(counterexample "install.log = log で handler 属性から収集結果を読む(削除済み API の再生)")
-          (counterexample "収集用に slog_capture_handler を新設し、結果を属性やファイルで返す")])
+         [(counterexample "install.log = log, reading the collected result from a handler attribute (regrowth of a removed API)")
+          (counterexample "A new slog_capture_handler is added for collection and returns the result via an attribute or a file")])
      (law unhandled-slog-is-loud
        :statement "no_handler_in_scope(SlogEffect) => UnhandledEffect; no_vm_lastresort_special_case"
        :counterexamples
-         [(counterexample "VM が SlogEffect だけ stderr に流して実行を継続する(不変量の 1 型特例)")])]
+         [(counterexample "The VM sends only SlogEffect to stderr and continues execution (a one-type exception to the invariant)")])]
   :enforcement
-    ;; 実 pytest 群は tests/test_slog_semantics.py に landed(8 tests: stderr 可視性 /
-    ;; level 整形 / Listen 既定に slog 不混入 / slog_handler の Tell pass-through /
-    ;; Listen(types=(SlogEffect,)) 値フロー収集 / .log 属性不在 / unhandled loud /
-    ;; slog_discard_handler 無音)。installed 版 semgrep rules は .semgrep.yaml
+    ;; The real pytest suite landed in tests/test_slog_semantics.py (8 tests: stderr visibility /
+    ;; level formatting / slog not mixed into Listen's default / slog_handler passes Tell through /
+    ;; value-flow collection via Listen(types=(SlogEffect,)) / no .log attribute / unhandled is loud /
+    ;; slog_discard_handler is silent). The installed semgrep rules are in .semgrep.yaml
     ;; (no-handler-log-attribute / no-effect-message-attribute /
-    ;;  no-structured-payload-on-writer-tell / no-writer-tell-alias-slog)。
-    ;; ここは静的ガードの inline 自己検証。
+    ;;  no-structured-payload-on-writer-tell / no-writer-tell-alias-slog).
+    ;; This is the inline self-check of the static guards.
     [(defsemgrep no-handler-log-attribute
        :languages ["generic"]
        :pattern "install.log ="
-       :message "handler install への mutable 収集属性は ADR-DOE-CORE-EFFECTS-001 R3 違反(削除済み API)。収集は Listen(prog, types=(SlogEffect,)) の値フロー (result, collected) で行う。"
+       :message "A mutable collection attribute on a handler install violates ADR-DOE-CORE-EFFECTS-001 R3 (removed API). Collect through the value flow (result, collected) of Listen(prog, types=(SlogEffect,))."
        :bad ["install.log = log  # expose for inspection"]
        :good ["return install"])
      (defsemgrep no-effect-message-attribute
        :languages ["python"]
        :pattern "isinstance($E, WriterTellEffect) and isinstance($E.message, $T)"
-       :message "WriterTellEffect / SlogEffect に message 属性は存在しない(現行は .msg / .kwargs)。effect.message 参照は ADR-DOE-CORE-EFFECTS-001 R6 違反(壊れた preset の stale API)。他ドメイン effect の正当な .message フィールドと区別するため isinstance ガード付き形状で照合する。"
+       :message "WriterTellEffect / SlogEffect have no message attribute (the current fields are .msg / .kwargs). Referencing effect.message violates ADR-DOE-CORE-EFFECTS-001 R6 (stale API of the broken preset). Matched with an isinstance-guarded shape to distinguish it from the legitimate .message field of other domains' effects."
        :bad ["if isinstance(effect, WriterTellEffect) and isinstance(effect.message, dict):\n    pass"]
        :good ["if isinstance(effect, SlogEffect):\n    pass"])
      (defsemgrep no-writer-tell-alias-slog
        :languages ["python"]
        :pattern "from doeff_core_effects._effects import WriterTellEffect as Slog"
-       :message "WriterTellEffect を Slog 名で別名 import するのは ADR-DOE-CORE-EFFECTS-001 R1 が退役させた conflation の再生(memo_handlers 2026-07-13 実例)。observability は SlogEffect / slog()。"
+       :message "Importing WriterTellEffect under the alias Slog regrows the conflation that ADR-DOE-CORE-EFFECTS-001 R1 retired (seen in memo_handlers on 2026-07-13). Observability is SlogEffect / slog()."
        :bad ["from doeff_core_effects._effects import WriterTellEffect as Slog"]
        :good ["from doeff_core_effects._effects import Slog"])
      (defsemgrep no-structured-payload-on-writer-tell
        :languages ["python"]
        :pattern "WriterTellEffect($MSG, **$KW)"
-       :message "構造化ペイロード付きの WriterTellEffect 構築は ADR-DOE-CORE-EFFECTS-001 R1 違反。observability は SlogEffect(msg, **kwargs)、Tell は単一 message のみ。"
+       :message "Constructing a WriterTellEffect with a structured payload violates ADR-DOE-CORE-EFFECTS-001 R1. Observability is SlogEffect(msg, **kwargs); Tell takes a single message only."
        :bad ["return WriterTellEffect(msg, **kwargs)"]
        :good ["return SlogEffect(msg, **kwargs)"])]
   :plans ["docs/doeff-2026-07-13-slog-semantics-architecture-plan.md"])

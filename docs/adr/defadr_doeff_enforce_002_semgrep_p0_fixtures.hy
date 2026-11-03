@@ -5,28 +5,28 @@
 
 
 (defadr ADR-DOE-ENFORCE-002
-  :title "P0 semgrep ルールは hit/clean fixture で生存証明を常設する"
+  :title "P0 semgrep rules keep permanent hit/clean fixtures as proof of liveness"
   :status "proposed"
   :scope [".semgrep.yaml"
           "docs/adr/defadr_doeff_enforce_002_semgrep_p0_fixtures.hy"
           "docs/adr/enforcement-ledger.json"]
   :problem
     [(fact
-       "2026-07-14 棚卸しで 229 中 8 ルールが無音で死んでいた。"
+       "The 2026-07-14 inventory found 8 of 229 rules silently dead."
        :evidence "docs/semgrep-rules-inventory-2026-07-14.md")
      (fact
-       "一括ゲート(baseline 0)は「違反ゼロ」と「ルール死亡」を区別できない。"
+       "The bulk gate (baseline 0) cannot distinguish \"zero violations\" from \"rule is dead\"."
        :evidence "tests/test_semgrep_gate.py")]
   :decision
-    [(rule R1 "P0 の 16 ルールは hit/clean fixture を defsemgrep で常設する。")
-     (rule R2 "P1 以降への拡張は P0 の運用経験を見て別途裁定する。")]
+    [(rule R1 "The 16 P0 rules keep permanent hit/clean fixtures via defsemgrep.")
+     (rule R2 "Extending this to P1 and beyond is decided separately, based on operating experience with P0.")]
   :laws
     [(law p0-rule-liveness
        :statement
          "for_all p0_rule: fires_on(bad_fixture) AND not fires_on(good_fixture)"
        :counterexamples
          [(counterexample
-            "一括ゲートが green のまま P0 ルールの matcher または path 条件が死ぬ")])]
+            "A P0 rule's matcher or path condition dies while the bulk gate stays green")])]
   :enforcement
     [(defsemgrep p0-no-anthropic-api-key-agent-env
        "doeff-agents-no-anthropic-api-key-agent-env"
@@ -40,8 +40,8 @@
          "source" "command = 'claude --print'\n"}]
        [{"relative-path" "packages/doeff-agents/src/doeff_agents/_adapters/claude.py"
          "source" "command = 'claude'\n"}])
-     ;; enforcement-ledger は ADR 本文中の deftest 開始 token を raw count する。
-     ;; fixture 内の Hy source は実 enforcement ではないため token を分割する。
+     ;; enforcement-ledger raw-counts the deftest opening token in the ADR body.
+     ;; Hy source inside fixtures is not real enforcement, so the token is split.
      (defsemgrep p0-require-real-claude-result-retry-e2e
        "doeff-agents-require-real-claude-result-retry-e2e"
        [{"relative-path"

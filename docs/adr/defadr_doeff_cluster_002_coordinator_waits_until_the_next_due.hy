@@ -1,18 +1,18 @@
-;;; Executable ADR: doeff-cluster の coordinator は、要求の無い間、次に判断の答えが変わる刻か、要求か、停止か、外の出来事まで
-;;; 1 本で待つ — 1 秒ごとに起きて見に行かない。判断は期限ちょうどの刻に出る(1 秒の格子に丸めない)。
+;;; Executable ADR: while there are no requests, the doeff-cluster coordinator waits in one wait until the instant the answer of a judgment next changes, a request, a stop,
+;;; or an outside event — it does not wake every second to look. Judgments come out at exactly the due instant (not rounded to a 1-second grid).
 ;;;
-;;; 出自 = 2026-10-06 の決まり(決めた事は :problem の fact)を、Mac の調整役が 2026-10-07 に、本番も期限まで眠る形への答えと読んだ
-;;; (解釈である事を :problem に書く)。
+;;; Origin = the 2026-10-06 rule (what was decided is the :problem fact), which the Mac coordinator on 2026-10-07 read as the answer to having production also sleep until the due
+;;; (the :problem records that this is an interpretation).
 ;;;
-;;; 段: 単位 1(期限の答えの型・now + 1 の書き直し・次に起きる刻の純粋な判断と落ち着くまでの約束)は判断だけで、待ち方は変えない。
-;;; 単位 2 で調停ループ(core/program.hy の run-coordinator)を繋ぎ、1 秒の周期の設定(TICK-MS)とそれで起きる code(模擬の格子の上の
-;;; 静かな区間 — idle_policy)を同じ変更で消した(単位 2b)。worker の代役が眠る間の heartbeat は、模擬の受付の列がその刻に要求として渡す。
+;;; Stages: unit 1 (the due answer type, rewriting now + 1, the pure judgment of the next wake instant and the promise of settling) is judgment only and does not change how waiting works.
+;;; Unit 2 wired in the reconcile loop (run-coordinator in core/program.hy), and in the same change removed the 1-second period setting (TICK-MS) and the code that wakes on it (the quiet
+;;; interval on the simulated grid — idle_policy) (unit 2b). Heartbeats while a worker stand-in sleeps are handed over as requests at that instant by the simulated intake queue.
 ;;;
-;;; 戻し方: この ADR と単位 2 の commit を revert する(本番は 1 秒ごとの拍へ、模擬は格子の上の静かな区間へ戻る)。単位 1 の
-;;; 判断(期限の答えの型)は、待ち方を変えないので残してよい。
+;;; Rollback: revert this ADR and the unit 2 commits (production goes back to a 1-second beat, the simulation back to quiet intervals on the grid). The unit 1
+;;; judgment (the due answer type) does not change how waiting works, so it may stay.
 ;;;
-;;; 追補 R8(2026-10-16): 予定の起きる刻(R1)と比べて coordinator 自身の止まりを見つけ、止まっていた長さを
-;;; 沈黙に数えない(2026-10-13 の atlas の 3 分の止まり — 第 3 案)。戻し方は R8 の commit の revert。
+;;; Addendum R8 (2026-10-16): detect the coordinator's own stall by comparing against the scheduled wake instant (R1), and do not count the stalled length
+;;; as silence (the 3-minute stall of atlas on 2026-10-13 — option 3). Rollback is reverting the R8 commit.
 
 (require doeff-adr.macros [defadr rule law])
 (import doeff-adr.macros [fact interpretation counterexample])
@@ -28,16 +28,16 @@
 (import doeff_cluster [next-wake])
 
 
-;; ratchet 台帳 — 期限の関数の file に、数の (+ now 1) を期限として書く所の数(2026-10-07・単位 1a の後の実測)。
+;; ratchet ledger — the number of places in the due-function files that write the numeric (+ now 1) as a due (2026-10-07, measured after unit 1a).
 (val CORE "packages/doeff-cluster/src/doeff_cluster/_coordinator/core")
 (val NOW-PLUS-ONE-ROSTER
   {"cluster_policy.hy" 0
    "api_policy.hy" 0
-   "wake_policy.hy" 0})   ; rollout-due の Rollout の歩の刻の下限は消した(R5)
+   "wake_policy.hy" 0})   ; the lower bound on the Rollout step instant in rollout-due was removed (R5)
 
 
 (defadr ADR-DOE-CLUSTER-002
-  :title "doeff-cluster の coordinator は、要求の無い間、次に判断の答えが変わる刻(期限ちょうど)・要求・停止の合図・外の出来事のどれかまで 1 本で待つ。1 秒ごとに起きて見に行く拍を持たない。期限の関数は答えを「刻・今すぐ・無し」の閉じた型で返し、落ち着いた状態では今すぐを返さない"
+  :title "While there are no requests, the doeff-cluster coordinator waits in one wait until whichever comes first: the instant the answer of a judgment next changes (exactly the due), a request, a stop signal, or an outside event. It has no beat that wakes every second to look. Due functions return their answer as the closed type \"instant / now / never\", and never return now in a settled state"
   :status "accepted"
   :scope ["packages/doeff-cluster/src/doeff_cluster/_shared/intent/due_model.hy"
           "packages/doeff-cluster/src/doeff_cluster/_shared/core/due_policy.hy"
@@ -53,124 +53,124 @@
           "docs/adr/defadr_doeff_cluster_002_coordinator_waits_until_the_next_due.hy"]
   :problem
     [(fact
-       "2026-10-06 に、polling を要する所はすべて直し、polling は最後の手段とすると決めた。")
+       "On 2026-10-06 it was decided to fix every place that needs polling, and to make polling the last resort.")
      (fact
-       "2026-09-30 の決定(戻せる決定)は、次の期限まで眠る形を模擬の時計の下だけに入れ、本番の拍の間隔 1 秒と判断の刻を変えず、本番も期限まで眠る形(案 1)は決めずに残した。本番の 1 秒は tests/test_idle_skip.hy の test-the-production-inbox-keeps-the-one-second-tick(commit 86c8b2f94)が縛っていた。")
+       "The 2026-09-30 decision (a reversible decision) put the sleep-until-the-next-due shape only under the simulated clock, left production's 1-second beat interval and judgment instants unchanged, and left undecided whether production should also sleep until the due (option 1). Production's 1 second was bound by test-the-production-inbox-keeps-the-one-second-tick in tests/test_idle_skip.hy (commit 86c8b2f94).")
      (fact
-       "Mac の調整役は 2026-10-07 に、2026-10-06 の決まりを、残された判断(案 1)への答えと読み、本番も次の期限まで眠る形で進めると決めた — これは Mac の調整役の解釈で、案 1 を名指して選んだ記録ではない。")
+       "On 2026-10-07 the Mac coordinator read the 2026-10-06 rule as the answer to the open judgment (option 1) and decided to proceed with production also sleeping until the next due — this is the Mac coordinator's interpretation, not a record of option 1 being chosen by name.")
      (fact
-       "2026-10-13 02:22〜02:24 JST(17:21:19Z〜17:24:28Z)に atlas が 3 分止まり(containerd が答えず kubelet の PLEG が止まる・host の PSI の記録に空白)、atlas に載る本番の coordinator は落ちずに止まった。起きた最初の歩で全 worker の最後の連絡が lease-ms を越えていて全員を沈黙と数え、配る担当(turn-dispatcher)へ消えと戻りが 33 回届いた。dispatcher は 2026-10-16 に、置き場(atlas)は変えず、coordinator が自分の止まりを見つけて止まりの直後は lease 切れを数えない形(第 3 案)に決めた。")
+       "From 02:22 to 02:24 JST on 2026-10-13 (17:21:19Z to 17:24:28Z) atlas stalled for 3 minutes (containerd stopped answering and kubelet's PLEG stalled; a gap in the host's PSI records), and the production coordinator running on atlas stalled without crashing. On the first step after it woke, every worker's last contact was past lease-ms, all were counted as silent, and 33 disappearances and returns reached the dispatching owner (turn-dispatcher). On 2026-10-16 the dispatcher decided to keep the placement (atlas) and to have the coordinator detect its own stall and not count lease expiry right after a stall (option 3).")
      (fact
-       "coordinator は要求が無くても 1 秒ごとに起きて 1 歩を回す(core/program.hy の coordinator-step が IdleNextRequests に TICK-MS 1000 を渡し、本番の受付 shared/protocol/inbox.hy の http-requests が箱を 1 秒で打ち切る)。期限の関数は「まだ落ち着いていない」と「行が在れば次の拍」を数の now + 1 で返していた(cluster_policy.hy の liveness-due・task-due・sweep-due・idle_policy.hy の rollout-due)。"
-       :evidence "doeff origin/main e604d71de3 の行")]
+       "Even with no requests, the coordinator woke every second to run one step (coordinator-step in core/program.hy passed TICK-MS 1000 to IdleNextRequests, and http-requests in the production intake shared/protocol/inbox.hy cut off the inbox after 1 second). Due functions returned 'not yet settled' and 'the next beat if a row exists' as the numeric now + 1 (liveness-due, task-due, sweep-due in cluster_policy.hy; rollout-due in idle_policy.hy)."
+       :evidence "lines at doeff origin/main e604d71de3")]
   :context
     [(interpretation
-       "期限の関数が返す刻は、判断が比べに使う期限の値と同じ関数から求める。期限ちょうどで起きる形では、刻が 1 ms 早いと起きた時に判断が変わらず、関数が now より後の刻だけを見るので本当の変化の刻を飛ばす。遅いと判断が遅れる。1 秒の格子はこのずれを隠していた。")
+       "The instant a due function returns is computed from the same function as the due value the judgment uses for comparison. In the wake-at-exactly-the-due shape, if the instant is 1 ms early the judgment does not change on waking, and since the function only looks at instants after now it skips the real change instant. If it is late, the judgment is delayed. The 1-second grid hid this misalignment.")
      (interpretation
-       "数の now + 1 は「1 ms 先の期限」と「すぐもう 1 歩」を見分けられない。答えを閉じた型に分ければ、待ち方を決める側(調停ループ)が今すぐの歩と期限までの待ちを名で分けられる。")]
+       "The numeric now + 1 cannot distinguish 'a due 1 ms ahead' from 'one more step right away'. Splitting the answer into a closed type lets the side that decides how to wait (the reconcile loop) tell an immediate step from a wait until the due by name.")]
   :decision
-    [(rule R1 "coordinator は、何も変えない歩の後、次に起きる刻(core/wake_policy.hy の next-wake — 要求の無い歩の期限・Rollout の期限・返事を待たせている待ちの期限のいちばん早い答え)まで受付を 1 本で待つ。要求・停止の合図・外の出来事は待ちを起こす。1 秒の周期の設定(TICK-MS)と、それで起きる code は持たない(単位 2b で消した)。")
-     (rule R2 "判断は期限ちょうどの刻に出る。1 秒の格子に丸めない(格子を残して次の格子まで待つ形は、周期の定数が残るので採らない)。")
-     (rule R3 "期限の関数の答えは閉じた型 DueAt(刻)・DueNow(今すぐ — 今の刻で判断すれば状態が変わる)・DueNever(状態がこのままなら時刻では変わらない)。数の now + 1 を返さない。落ち着いた状態(要求の無い歩をもう 1 歩進めても変わらない)では DueNow を返さない。")
-     (rule R4 "要求を受けずに状態を変えた歩の後は、待たずにもう 1 歩進める(after-step)。要求を受けた歩の後は、次に起きる刻まで待つ — 要求で変わった状態が落ち着いていなければ期限の関数が DueNow を返す(R3)ので、要求ごとに空の歩を回さない(2026-10-07 の直し A・cisco-c8 の可。前は要求を受けた歩の後も必ずもう 1 歩回していた)。DueNow が UNSETTLED-STEP-LIMIT 歩を越えて続いたら、前後の状態で違う欄を名指して CoordinatorUnsettled で落ちる(黙って回り続けない)。")
-     (rule R5 "Rollout の相手の Kubernetes の Deployment は時間で読みに行かない(以前の Rollout の歩の間隔の下限 ROLLOUT-TICK-MS の 1 秒ごとの読みと、台数を持つ相手の 10 秒ごとの読み直しは消した)。coordinator は Rollout が観測を要る Deployment を list の後の watch で見張り(FollowDeployments・foundation/kube_client の follow)、見張りが変化を受け渡した時に受付の箱を起こす(外の出来事 — R1)。worker の置かれた node の label も時間で読みに行かない(以前の 60 秒ごとの読み直し NODE-LABELS-TTL-MS と、その期限 node-reread-due は消した)。coordinator は heartbeat で申告された node を同じ形で見張り(FollowNodes・foundation/kube_client の follow-node)、label の変化を受け渡した時に受付の箱を起こす。Rollout の歩は毎歩回るので、rollout-due は now より後の期限だけを返す。成功した Deployment への書きは、その書きの後の観測が届くまで出し直さない(rollout_policy.action-due — 見張りが伝える前の古い観測で同じ書きを重ねない。1 秒の間隔がこれを隠していた)。失敗した action(印の annotation を含む)は最後の失敗から倍々の間を空けて出し直し、その刻は終わった Rollout でも期限にする。見張りの stream は TCP の keepalive を付けた接続で受け、繋がったまま黙った相手を約 30 秒で読めなかった観測にする。")
-     (rule R6 "置いた切り離していない task の期限は、担い手が reassign-after-ms の窓の外に出る刻(place-tasks と同じ比べ)。置ける生きた worker の在る待っている task の期限は、その worker が lease-ms の窓の外に出る最初の刻(空き・drain の終わりは要求と掃除の期限が受ける)。")
-     (rule R7 "模擬だけの物(worker の代役が静かな拍を眠る事と、眠る前に預ける heartbeat)は受け手の層(模擬の受付の列 coordinator/protocol/request_queue.hy)に置く。列は預けた heartbeat をその刻に普通の heartbeat の要求として調停ループへ渡し、調停ループは本番と同じ要求だけを受ける(調停ループに模擬の材料を渡す effect を持たない — 前の IdleNextRequests・IdleTaken は消した)。")
-     (rule R8 "coordinator は process の中の自分の止まりを、前の歩の予定の外の長さ(前の歩の判断の刻から受付を待ち始めるまで + R1 の次に起きる刻からの寝過ごし — api_policy.stall-of)が lease-ms を越えた事で見つけ、前の歩の判断の刻から今までを止まっていた長さとして、起き直し(resume-after-downtime)と同じく経過・沈黙に数えない(api_policy.clocks-shifted で worker の最後の連絡・task の lease・Rollout の段の起点・入れ替えの期限・盤の lease と TTL の行・drain と温める表の行の期限・退いた世代の最後の報告をずらす — 止まりの直後の歩で、止まる前に生きていた worker を lease 切れに数えず job を移さず、頼み手が頼み直す期限も切らない)。ClusterState の欄は、ずらす(api_policy.STALL-SHIFTED-FIELDS)かずらさない(STALL-UNSHIFTED-FIELDS)のちょうど一方に必ず分ける — 期限を持つ欄を足す人に、止まりの後にその期限が切れてよいかを決めさせる(2026-10-16 の設計検証の盲検 A)。止まりの判断は stall-of の 1 つだけで、調停ループは別の閾・別の意味の止まりを作らない(盲検 B)。予定どおりの眠り(期限の刻まで待つ)は止まりに数えない。期限なしの待ちは寝過ごしを測らず、前の歩の長さだけで見つける。見つけた止まりは内訳(前の歩の長さ・寝過ごし)つきで 1 行の log に出す。採った代償: 予定の外の長さが lease-ms 以下の止まりは見つけない(直す前と同じ。予定の起きる刻までの眠りは数えないので、見つけない止まりは最大でおよそ lease の 2 倍)・止まりが歩ごとに続く間は経過を数えないので、その間は死んだ worker の判定も延びる(続けば止まりの行が歩ごとに出る)。置き場(本番の atlas)は変えない(2026-10-16)。")]
+    [(rule R1 "After a step that changes nothing, the coordinator waits on the intake in one wait until the next wake instant (next-wake in core/wake_policy.hy — the earliest of the due of a no-request step, the Rollout due, and the due of waits holding back a reply). A request, a stop signal, or an outside event wakes the wait. It has no 1-second period setting (TICK-MS) and no code that wakes on it (removed in unit 2b).")
+     (rule R2 "Judgments come out at exactly the due instant. They are not rounded to a 1-second grid (the shape that keeps the grid and waits until the next grid point is not adopted, because the period constant would remain).")
+     (rule R3 "The answer of a due function is the closed type DueAt(instant), DueNow (right now — judging at the current instant changes the state), or DueNever (if the state stays as is, time alone will not change it). It does not return the numeric now + 1. In a settled state (running one more no-request step changes nothing) it does not return DueNow.")
+     (rule R4 "After a step that changed state without receiving a request, run one more step without waiting (after-step). After a step that received a request, wait until the next wake instant — if the state changed by the request has not settled, the due function returns DueNow (R3), so no empty step is run per request (fix A of 2026-10-07, approved by cisco-c8; previously one more step was always run even after a step that received a request). If DueNow continues for more than UNSETTLED-STEP-LIMIT steps, fail with CoordinatorUnsettled naming the fields that differ between the before and after states (do not keep spinning silently).")
+     (rule R5 "The Kubernetes Deployments that a Rollout targets are not read on a timer (the former per-second read at ROLLOUT-TICK-MS, the lower bound on the interval between Rollout steps, and the every-10-seconds reread of targets that hold a replica count, were removed). The coordinator watches the Deployments that a Rollout needs to observe with a watch after a list (FollowDeployments, follow in foundation/kube_client), and wakes the intake inbox when the watch hands over a change (an outside event — R1). The labels of the node a worker is placed on are also not read on a timer (the former every-60-seconds reread NODE-LABELS-TTL-MS and its due node-reread-due were removed). The coordinator watches the nodes declared in heartbeats the same way (FollowNodes, follow-node in foundation/kube_client), and wakes the intake inbox when it hands over a label change. Rollout steps run every step, so rollout-due returns only dues after now. A write to a Deployment that succeeded is not reissued until an observation after that write arrives (rollout_policy.action-due — do not repeat the same write based on a stale observation from before the watch reports; the 1-second interval hid this). A failed action (including the marker annotation) is reissued with a doubling gap since the last failure, and that instant is a due even for a finished Rollout. The watch stream is received over a connection with TCP keepalive, so a peer that goes silent while still connected becomes an unreadable observation in about 30 seconds.")
+     (rule R6 "The due of a placed, non-detached task is the instant its holder falls outside the reassign-after-ms window (the same comparison as place-tasks). The due of a waiting task that has a live worker it can be placed on is the first instant that worker falls outside the lease-ms window (vacancies and the end of drain are covered by the request and sweep dues).")
+     (rule R7 "Simulation-only things (worker stand-ins sleeping through quiet beats, and the heartbeats they deposit before sleeping) live in the receiving layer (the simulated intake queue coordinator/protocol/request_queue.hy). The queue hands a deposited heartbeat to the reconcile loop at its instant as an ordinary heartbeat request, and the reconcile loop receives only the same requests as production (the reconcile loop has no effect that hands it simulation material — the former IdleNextRequests and IdleTaken were removed).")
+     (rule R8 "The coordinator detects its own in-process stall when the off-schedule length of the previous step (from the previous step's judgment instant until it started waiting on the intake + oversleep past the R1 next wake instant — api_policy.stall-of) exceeds lease-ms, and, like resume-after-downtime, does not count the time from the previous step's judgment instant until now (the stalled length) as elapsed time or silence (api_policy.clocks-shifted shifts the workers' last contact, task leases, the start of Rollout stages, the replacement dues, the board's lease and TTL rows, the dues of drain and warm-table rows, and the last report of retired generations — so on the step right after a stall, workers alive before the stall are not counted as lease-expired, jobs are not moved, and the due at which a requester re-requests does not expire). Every ClusterState field must be assigned to exactly one of shifted (api_policy.STALL-SHIFTED-FIELDS) or unshifted (STALL-UNSHIFTED-FIELDS) — forcing whoever adds a field with a due to decide whether that due may expire after a stall (blind test A of the 2026-10-16 design validation). The stall judgment is only stall-of, and the reconcile loop does not create a stall with a different threshold or a different meaning (blind test B). A scheduled sleep (waiting until the due instant) is not counted as a stall. A wait without a due does not measure oversleep and detects only via the previous step's length. A detected stall is written as a single log line with its breakdown (previous step's length, oversleep). Costs accepted: stalls whose off-schedule length is at most lease-ms are not detected (same as before the fix; since sleep until the scheduled wake instant is not counted, an undetected stall is at most about twice the lease); and while stalls continue step after step, elapsed time is not counted, so judging a dead worker is also delayed during that period (if it continues, a stall line appears every step). The placement (production atlas) is not changed (2026-10-16).")]
   :laws
     [(law due-answers-are-closed
-       :statement "for_all 期限の関数 f ∈ {liveness-due・task-due・sweep-due・tick-due・rollout-due・next-wake}・状態 s・刻 now: f(s, now) ∈ DueAt ∪ DueNow ∪ DueNever"
+       :statement "for_all due function f in {liveness-due, task-due, sweep-due, tick-due, rollout-due, next-wake}, state s, instant now: f(s, now) ∈ DueAt ∪ DueNow ∪ DueNever"
        :counterexamples
-         [(counterexample "liveness-due が生きていないと数える名の求め直しの違いを (+ now 1) で返す — 期限ちょうどで起きる形では 1 ms 先の期限と見分けられない(2026-10-06 の本線の形)")]
+         [(counterexample "liveness-due returns a difference in the recomputation of names counted as not alive as (+ now 1) — in the wake-at-exactly-the-due shape it cannot be told apart from a due 1 ms ahead (the mainline shape of 2026-10-06)")]
        :enforced-by ["packages/doeff-cluster/tests/test_due_answer.hy"
                      "packages/doeff-cluster/tests/test_next_wake.hy"]
-       :wiring "配線済み(2026-10-07・単位 1a f459781cc)— 期限の関数の :post が閉じた型を縛り、test_due_answer が今すぐ・無しの答えを断言する")
+       :wiring "wired (2026-10-07, unit 1a f459781cc) — the due functions' :post binds the closed type, and test_due_answer asserts the now and never answers")
      (law a-settled-state-is-never-due-now
-       :statement "for_all 状態 s・刻 now: tick(tick(s, now), now) = tick(s, now) ⇒ tick-due(tick(s, now), now) ≠ DueNow"
+       :statement "for_all state s, instant now: tick(tick(s, now), now) = tick(s, now) ⇒ tick-due(tick(s, now), now) ≠ DueNow"
        :counterexamples
-         [(counterexample "置ける生きた worker の無い待っている task を DueNow にする — 全部の worker が埋まっている・黙っている間に、期限まで待つ形が待たずの歩を回り続ける")]
+         [(counterexample "a waiting task with no live worker it can be placed on is made DueNow — while all workers are busy or silent, the wait-until-the-due shape keeps running no-wait steps")]
        :enforced-by ["packages/doeff-cluster/tests/test_due_answer.hy::test-a-settled-state-is-never-due-now"]
-       :wiring "配線済み(2026-10-07・単位 1a)— 落ち着いた 4 つの筋書き。誤った形では赤を手元で確かめた")
+       :wiring "wired (2026-10-07, unit 1a) — 4 settled scenarios; red with the wrong shape was confirmed locally")
      (law due-is-the-instant-the-judgment-changes
-       :statement "for_all 期限の関数 f と、それが答える判断 j・状態 s・刻 now: f(s, now) = DueAt(D) ⇒ j(s, D − 1) = j(s, now) ∧ j(s, D) ≠ j(s, now)(答えを変え得る刻の下限を返すと宣言した関数は、前半だけ)"
+       :statement "for_all due function f and the judgment j it answers, state s, instant now: f(s, now) = DueAt(D) ⇒ j(s, D − 1) = j(s, now) ∧ j(s, D) ≠ j(s, now) (for a function declared to return a lower bound of the instants that may change the answer, only the first half)"
        :counterexamples
-         [(counterexample "期限の関数が判断の比べ(>)と 1 ms ずれた刻(>=)を返す — 期限ちょうどで起きた時に判断が変わらず、関数は now より後だけを見るので本当の変化を飛ばす")]
-       :enforced-by ["packages/doeff-cluster/tests/test_idle_skip.hy(生死・掃除・task)"
-                     "packages/doeff-cluster/tests/test_quiet_due_placement_rollout.hy(入れ替え・Rollout の段)"
-                     "packages/doeff-cluster/tests/test_due_answer.hy(置いた task・待っている task)"
-                     "packages/doeff-cluster/tests/test_next_wake.hy(待ちの期限)"
-                     "packages/doeff-cluster/tests/test_due_boundaries.hy(readiness・止まり・node の読み直し)"]
-       :wiring "配線済み(2026-10-07・単位 1b)")
+         [(counterexample "a due function returns an instant (>=) 1 ms off from the judgment's comparison (>) — on waking at exactly the due the judgment does not change, and since the function looks only after now it skips the real change")]
+       :enforced-by ["packages/doeff-cluster/tests/test_idle_skip.hy (liveness, sweep, task)"
+                     "packages/doeff-cluster/tests/test_quiet_due_placement_rollout.hy (replacement, Rollout stages)"
+                     "packages/doeff-cluster/tests/test_due_answer.hy (placed tasks, waiting tasks)"
+                     "packages/doeff-cluster/tests/test_next_wake.hy (wait dues)"
+                     "packages/doeff-cluster/tests/test_due_boundaries.hy (readiness, stall, node reread)"]
+       :wiring "wired (2026-10-07, unit 1b)")
      (law an-unsettled-loop-fails-loudly
-       :statement "for_all 調停ループの歩の列: 続けて DueNow の歩の数 > UNSETTLED-STEP-LIMIT ⇒ CoordinatorUnsettled(文は前後の状態で違う欄の名を含む)"
+       :statement "for_all sequence of reconcile-loop steps: number of consecutive DueNow steps > UNSETTLED-STEP-LIMIT ⇒ CoordinatorUnsettled (the message includes the names of fields that differ between the before and after states)"
        :counterexamples
-         [(counterexample "今すぐが続く間、待たずに歩を回し続ける — CPU を使い続け、どの判断が落ち着かないかが分からない")]
+         [(counterexample "while now keeps continuing, steps keep running without waiting — CPU keeps being used and it is unclear which judgment does not settle")]
        :enforced-by ["packages/doeff-cluster/tests/test_next_wake.hy::test-a-coordinator-that-never-settles-fails-naming-the-moving-field"
                      "packages/doeff-cluster/tests/test_coordinator_idle_wait.hy::test-a-loop-that-never-settles-fails-loudly"]
-       :wiring "配線済み(2026-10-07・単位 2b)— 調停ループ run-coordinator が歩ごとに count-unsettled を通る(要求を受けた歩の変化は数えない)")
+       :wiring "wired (2026-10-07, unit 2b) — the reconcile loop run-coordinator goes through count-unsettled every step (changes from steps that received a request are not counted)")
      (law the-coordinator-wakes-only-for-a-due-a-request-a-stop-or-an-event
-       :statement "for_all 本番と模擬の coordinator・要求の無い区間 I: I の中で coordinator が起きる刻 ⊆ {next-wake の刻} ∪ {要求が届いた刻} ∪ {停止の合図の刻} ∪ {外の出来事の刻}"
+       :statement "for_all production and simulated coordinators, interval I with no requests: the instants at which the coordinator wakes within I ⊆ {next-wake instants} ∪ {instants a request arrived} ∪ {instants of a stop signal} ∪ {instants of an outside event}"
        :counterexamples
-         [(counterexample "受付の箱を 1 秒で打ち切り、要求の無い 3 秒に 3 歩回る(2026-10-07 の本線 — 壁の時計の模擬で実測)")]
+         [(counterexample "the intake inbox is cut off after 1 second, and 3 steps run in 3 seconds with no requests (the 2026-10-07 mainline — measured on the wall-clock simulation)")]
        :enforced-by ["packages/doeff-cluster/tests/test_coordinator_idle_wait.hy"
                      "packages/doeff-cluster/tests/test_idle_skip.hy::test-a-quiet-system-steps-only-for-requests-and-deadlines"]
-       :wiring "配線済み(2026-10-07・単位 2b)")
+       :wiring "wired (2026-10-07, unit 2b)")
      (law a-rollout-follows-its-deployments-by-events
-       :statement "for_all Rollout が Deployment の変化を待つ区間 I: I の中で coordinator が Kubernetes の Deployment を読みに行く数 = 0(見張りの始めの list と変化の出来事だけ)∧ Deployment が変わった刻 t に Rollout の処理ステージが進むなら、その刻は t(1 秒の格子に丸めない)"
+       :statement "for_all interval I in which a Rollout waits for a Deployment change: number of times the coordinator reads a Kubernetes Deployment within I = 0 (only the list at the start of the watch and the change events) ∧ if the Rollout's processing stage advances at the instant t a Deployment changed, that instant is t (not rounded to a 1-second grid)"
        :counterexamples
-         [(counterexample "Rollout の進行中は 1 秒ごとに Deployment を読みに行く(ROLLOUT-TICK-MS)— 静かな 20 秒に 19 回読み、Pod が揃った刻 …635370 ではなく次の格子 …636000 に StoppingOld へ進む(失敗ケース 44bff9355)")
-          (counterexample "成功した台数の書きの直後、見張りが結果を伝える前の古い観測で同じ書きを毎歩出し直す — 1 秒の間隔を消すと調停ループが落ち着かない(101 歩で CoordinatorUnsettled)")
-          (counterexample "同じ action の失敗の繰り返しで lastAction の at を最初の失敗の刻のまま残す・印の annotation の失敗を間を空けずに出し直す — 間の上限(60 秒)の後と annotation の失敗は毎歩出し直しになる")
-          (counterexample "繋がったまま黙った watch の stream(FIN も RST も来ない)を読みの打ち切り(5 分半)まで待ち、その間の古い観測で判断する — TCP の keepalive で約 30 秒で見つける")]
+         [(counterexample "while a Rollout is in progress, Deployments are read every second (ROLLOUT-TICK-MS) — 19 reads in a quiet 20 seconds, and it advances to StoppingOld not at the instant the Pods became ready …635370 but at the next grid point …636000 (failure case 44bff9355)")
+          (counterexample "right after a successful replica-count write, the same write is reissued every step based on a stale observation from before the watch reports the result — removing the 1-second interval makes the reconcile loop not settle (CoordinatorUnsettled at 101 steps)")
+          (counterexample "on repeated failures of the same action, lastAction's at is left at the first failure's instant, and a failing marker annotation is reissued without a gap — after the gap cap (60 seconds) and on annotation failures it becomes a reissue every step")
+          (counterexample "a watch stream that goes silent while still connected (neither FIN nor RST arrives) is waited on until the read cutoff (5.5 minutes), judging on stale observations meanwhile — TCP keepalive detects it in about 30 seconds")]
        :enforced-by ["packages/doeff-cluster/tests/test_rollout_kube_events.hy"
                      "packages/doeff-cluster/tests/test_kube_client_watch.hy"
                      "packages/doeff-cluster/tests/test_rollout_holes.hy::test-a-written-deployment-action-waits-for-an-observation-after-the-write"
                      "packages/doeff-cluster/tests/test_rollout_holes.hy::test-a-repeated-action-is-dated-at-its-last-attempt"
                      "packages/doeff-cluster/tests/test_rollout_holes.hy::test-a-failing-annotation-waits-for-the-retry-gap"
                      "packages/doeff-cluster/tests/test_kube_reads_off_loop.hy::test-the-emulated-k8s-wakes-the-loop-when-a-stalled-node-watch-answers"]
-       :wiring "配線済み(2026-10-08)")
+       :wiring "wired (2026-10-08)")
      (law a-node-label-is-followed-by-events
-       :statement "for_all worker の置かれた node の label が変わらない区間 I: I の中で coordinator が Kubernetes の Node を読みに行く数 = 0(見張りの始めの list と変化の出来事だけ)∧ label が変わった刻 t に受付の箱が起き、その歩で worker の導いた能力が新しい label から導き直される(次の周期の刻まで古い能力を持ち続けない)"
+       :statement "for_all interval I in which the labels of the node a worker is placed on do not change: number of times the coordinator reads a Kubernetes Node within I = 0 (only the list at the start of the watch and the change events) ∧ at the instant t a label changed, the intake inbox wakes and on that step the worker's derived capabilities are re-derived from the new labels (it does not keep stale capabilities until the next period instant)"
        :counterexamples
-         [(counterexample "node の label を 60 秒ごとに読み直す(NODE-LABELS-TTL-MS)— 静かな 150 秒に 2 回読み、会社の機体の label を外した刻の 1 秒後も worker が company-machine を持ち続ける(失敗ケース b2f856817)")]
+         [(counterexample "node labels are reread every 60 seconds (NODE-LABELS-TTL-MS) — 2 reads in a quiet 150 seconds, and 1 second after the company-machine label is removed the worker still has company-machine (failure case b2f856817)")]
        :enforced-by ["packages/doeff-cluster/tests/test_node_label_events.hy"
                      "packages/doeff-cluster/tests/test_kube_client_watch.hy::test-a-node-is-listed-by-name-and-a-label-change-reaches-on-body"
                      "packages/doeff-cluster/tests/test_kube_reads_off_loop.hy::test-the-emulated-k8s-wakes-the-loop-when-a-stalled-node-watch-answers"]
-       :wiring "配線済み(2026-10-08)")
+       :wiring "wired (2026-10-08)")
      (law a-sleeping-stand-in-changes-no-decision
-       :statement "for_all 筋書き: 期限だけで起きる走りと、余計に起こす走り(coordinator を 1 秒ごとに起こす)で、生存の印を外した耐久の状態の変わり目の列(判断とその刻)・置き場の最後の状態・筋書きの答えが等しい(worker の代役は本番と同じ待ちで周の間を待つ。前の形は代役が静かな拍を眠り、預けた heartbeat を列がその刻に渡した)"
+       :statement "for_all scenarios: between a run that wakes only on dues and a run that wakes extra (waking the coordinator every second), the sequence of durable state transitions with liveness markers removed (judgments and their instants), the final state of the store, and the scenario's answer are equal (worker stand-ins wait between rounds with the same wait as production; in the earlier shape, stand-ins slept through quiet beats and the queue handed over deposited heartbeats at their instants)"
        :counterexamples
-         [(counterexample "預けた heartbeat を、起きた時にまとめて調停ループへ渡す — 判断の刻が heartbeat の刻からずれる(前の静かな区間の形はこれを本番の判断で試して隠していた)")]
+         [(counterexample "deposited heartbeats are handed to the reconcile loop all at once on waking — judgment instants drift from the heartbeat instants (the earlier quiet-interval shape hid this by testing it against production judgments)")]
        :enforced-by ["packages/doeff-cluster/tests/test_idle_skip.hy"]
-       :wiring "配線済み(2026-10-07・単位 2b。眠る代役と預けの道は単位 5 で消した)")
+       :wiring "wired (2026-10-07, unit 2b; the sleeping stand-in and deposit path were removed in unit 5)")
      (law a-coordinator-stall-is-not-silence
-       :statement "for_all 前の歩の刻み p(判断の刻 j・待ち始めた刻 w・予定の起きる刻 d — 期限なしの待ちは d = 無しで max(0, now − d) = 0)と今の歩の刻 now: (w − j) + max(0, now − d) > lease-ms ⇒ 止まっていた長さ = now − j ∧ その歩の調停(tick)の時点で、前の歩に生きていた worker は生きている(止まる前に生きていた worker の WorkerGone を出さない)∧ その後 heartbeat の無い worker は、前の歩の時点の沈黙の残りの後に WorkerGone。(w − j) + max(0, now − d) ≤ lease-ms(期限 d ちょうどに起きた歩を含む)⇒ 止まっていた長さ = 0"
+       :statement "for_all pace p of the previous step (judgment instant j, instant waiting started w, scheduled wake instant d — for a wait without a due, d = none and max(0, now − d) = 0) and current step instant now: (w − j) + max(0, now − d) > lease-ms ⇒ stalled length = now − j ∧ at the time of that step's reconcile (tick), workers alive at the previous step are alive (no WorkerGone for workers alive before the stall) ∧ thereafter a worker with no heartbeat gets WorkerGone after the remainder of its silence as of the previous step. (w − j) + max(0, now − d) ≤ lease-ms (including a step that woke exactly at due d) ⇒ stalled length = 0"
        :counterexamples
-         [(counterexample "起きた最初の歩で、止まっていた 3 分を worker の沈黙に数える — 全 worker が同時に lease 切れになり、消えと戻りが 33 回出る(2026-10-13 の atlas・直す前の sim の筋書きで w1・w2 の WorkerGone が明けた刻に出る)")
-          (counterexample "前の歩からの経過だけで止まりを見分ける — worker の期限の刻(前の歩 + lease + 1)に起きた歩を止まりと数え、期限をずらし続けて、本当に黙った worker を沈黙と判じない")
-          (counterexample "ずらす欄の一覧に drain と盤の TTL の行が無い — 止まりの直後の歩で、生きている worker の drain と盤の行だけが切れる(2026-10-16 の設計検証の盲検 A が実測)")
-          (counterexample "調停ループが stall-of を通さずに、寝過ごしが 5 秒を越えた歩で自分の Stall を作ってずらす — 判断の test と模擬の test を通るのに、止まりの定義が 2 つになる(同じく盲検 B)")]
+         [(counterexample "on the first step after waking, the 3 stalled minutes are counted as worker silence — all workers lease-expire at once and 33 disappearances and returns come out (atlas on 2026-10-13; in the pre-fix sim scenario, WorkerGone for w1 and w2 comes out at the instant the stall ends)")
+          (counterexample "a stall is distinguished only by elapsed time since the previous step — a step that woke at a worker's due instant (previous step + lease + 1) is counted as a stall, dues keep being shifted, and a worker that really went silent is never judged silent")
+          (counterexample "the list of shifted fields lacks drain and the board's TTL rows — on the step right after a stall, only the drain and board rows of live workers expire (measured by blind test A of the 2026-10-16 design validation)")
+          (counterexample "the reconcile loop does not go through stall-of and instead creates its own Stall and shifts on a step whose oversleep exceeds 5 seconds — it passes the judgment test and the simulation test, yet there are two definitions of a stall (likewise blind test B)")]
        :enforced-by ["packages/doeff-cluster/tests/test_coordinator_stall.hy"
                      "packages/doeff-cluster/tests/test_coordinator_stall_loop.hy"
                      "packages/doeff-cluster/tests/test_coordinator_stall_on_sim.hy"]
-       :wiring "配線済み(2026-10-16)— 調停ループ run-coordinator が歩ごとに刻み StepPace を渡し、coordinator-step が調停の前に stall-resumed を通る。sim の StallCoordinator で coordinator を 3 分止める筋書きは、直す前の形で赤を手元で確かめた(sim が止めるのは受付の待ちの中 = 寝過ごしの枝。前の歩の長さの枝 — 保存の詰まり — は test_coordinator_stall の判断の検が持つ)")]
+       :wiring "wired (2026-10-16) — the reconcile loop run-coordinator passes the pace StepPace every step, and coordinator-step goes through stall-resumed before reconciling. The scenario that stalls the coordinator for 3 minutes with the sim's StallCoordinator was confirmed red locally with the pre-fix shape (the sim stalls inside the intake wait = the oversleep branch; the previous-step-length branch — a storage clog — is held by the judgment check in test_coordinator_stall)")]
   :enforcement
     [(deftest test-adr-doe-cluster-002-due-answers-are-closed
-       ;; 期限の関数は、期限の無い状態に DueNever・落ち着いていない状態に DueNow を返す(数の None・now + 1 ではない — R3)。
+       ;; Due functions return DueNever for a state with no due and DueNow for an unsettled state (not a numeric None or now + 1 — R3).
        (val timing (ClusterTiming))
        (val empty (ClusterState))
        (val expired (ClusterState :board (table-of #((TableWrite "k" (BoardRow :value 1 :version 1 :expires-ms 100 :size 1))))))
        (val answers [(run (liveness-due empty 0 timing)) (run (task-due empty 0 timing)) (run (sweep-due empty 0 timing))
                      (run (tick-due empty 0 timing)) (run (next-wake empty 0 timing (ClusterNaming) #()))])
        (assert (= answers [(DueNever) (DueNever) (DueNever) (DueNever) (DueNever)]) answers)
-       (assert (= (run (sweep-due expired 200 timing)) (DueNow)) "期限の過ぎた行の掃除は今すぐ"))
+       (assert (= (run (sweep-due expired 200 timing)) (DueNow)) "sweeping an expired row is due now"))
      (deftest test-adr-doe-cluster-002-no-number-now-plus-one
-       ;; 針: 期限の関数の file に、数の (+ now 1) を期限として書く所は台帳を超えない(新設は赤・削り忘れも赤 — R3)。
-       ;; wake_policy の Rollout の歩の刻の下限(max (+ now 1) …)は消した(R5)。
+       ;; Needle: places in the due-function files that write the numeric (+ now 1) as a due do not exceed the ledger (a new one is red, a forgotten removal is also red — R3).
+       ;; The lower bound on the Rollout step instant in wake_policy ((max (+ now 1) …)) was removed (R5).
        (val repo-root (. (Path __file__) parent parent parent))
        (val counts (dfor name NOW-PLUS-ONE-ROSTER
                          name (.count (.read-text (/ repo-root CORE name) :encoding "utf-8") "(+ now 1)")))
        (assert (= counts NOW-PLUS-ONE-ROSTER)
-               (+ "期限の関数の file の (+ now 1) の数が台帳と違う(ADR-DOE-CLUSTER-002 R3 — 今すぐは DueNow で返す。減らした便は "
-                  "NOW-PLUS-ONE-ROSTER を同じ便で削る): " (str counts))))]
+               (+ "the count of (+ now 1) in the due-function files differs from the ledger (ADR-DOE-CLUSTER-002 R3 — return now as DueNow; a change that reduces it "
+                  "trims NOW-PLUS-ONE-ROSTER in the same change): " (str counts))))]
   :plans [])

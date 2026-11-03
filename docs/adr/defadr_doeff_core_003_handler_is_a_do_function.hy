@@ -1,16 +1,16 @@
-;;; Executable ADR: handler は @handler を付けた def で、@handler がその def を @do 関数にする(handler の body はいつも @do 関数)。
-;;; @handler の下の @do は deprecated。handler() は def と @do 関数でない物を、with_handlers と stacked_handlers は handler でない物を、
-;;; 組む所で TypeError にして断り、印の無い物を中で handler にする fallback を持たない。
+;;; Executable ADR: a handler is a def decorated with @handler, and @handler turns that def into a @do function (a handler body is always a @do function).
+;;; @do under @handler is deprecated. handler() refuses anything that is neither a def nor a @do function, and with_handlers and stacked_handlers refuse anything
+;;; that is not a handler, with a TypeError at composition time; there is no fallback that turns an unmarked object into a handler internally.
 ;;;
-;;; 決めた順: まず @do 関数でない物を handler として受けないと決め(0.7.0 は素の関数を
-;;; handler にしていた)、続けて @handler だけで def を書けるようにし、@handler @do は deprecated にすると決めた(決めた事は :problem の fact)。
+;;; Order of decisions: first it was decided not to accept anything other than a @do function as a handler (0.7.0 turned plain functions
+;;; into handlers); then it was decided that a def may be written with @handler alone and that @handler @do is deprecated (the decisions are the :problem facts).
 ;;;
-;;; 書くその場面の助言は doeff の外(defjevrule)が持つ(R6)。doeff の側には、作る所と組む所の断り(R1・R2)・入れ直しの口(R3)・
-;;; deprecated の形(R4)・semgrep の 4 規則(R5)と、それらを確かめる deftest と pytest を置く。
+;;; Advice at the moment of writing lives outside doeff (defjevrule) (R6). The doeff side holds the refusals at construction and composition (R1, R2), the reinstall entry point (R3),
+;;; the deprecated shape (R4), the 4 semgrep rules (R5), and the deftests and pytest that check them.
 ;;;
-;;; 戻し方: 後の決定(@handler だけで書く)の前の形(handler は @do 関数だけを受ける)に戻すなら、doeff/program.py の _as_do_function を「@do 関数でなければ
-;;; 断る」に戻し、.semgrep.yaml の doeff-handler-over-do-is-deprecated を「@do の無い def への @handler を断る」規則に戻して、repo の
-;;; @handler の def に @do を足し直す。外すのは持ち主の言葉が在る時だけ。
+;;; Rollback: to return to the shape before the later decision (write with @handler alone), i.e. handlers accept only @do functions, change _as_do_function in doeff/program.py back to "refuse
+;;; anything that is not a @do function", change doeff-handler-over-do-is-deprecated in .semgrep.yaml back to a rule that "refuses @handler on a def without @do", and add @do back to the repo's
+;;; @handler defs. Remove this only on the maintainer's word.
 
 (require doeff-adr.macros [defadr defsemgrep rule law])
 (import doeff-adr.macros [fact interpretation counterexample])
@@ -20,66 +20,66 @@
 (import doeff [do :as doeff-do])
 
 
-;; defk にできない: defk は引数 (effect k) を handler と読んで断る。@handler が def を @do 関数にする事を見せる見本(R1)。
+;; Cannot be a defk: defk reads the arguments (effect k) as a handler and refuses. Sample showing that @handler turns a def into a @do function (R1).
 (defn [handler] passes-on [effect k]
-  "R1 の見本: @handler だけを付けた def。受けた effect をそのまま外へ渡す。"
+  "R1 sample: a def with only @handler. Passes the received effect outward unchanged."
   (yield (Pass effect k)))
 
-;; defk にできない: 上と同じ。yield せずに続けの Resume を返す反例の見本(R1 は走る所で断る)。
+;; Cannot be a defk: same as above. Counterexample sample that returns the continuation's Resume without yielding it (R1 refuses it at run time).
 (defn unrun-answer [effect k]
-  "R1 の反例の見本: 続けの Resume を yield せずに返す — 0.7.0 の素の関数の handler の形。"
+  "R1 counterexample sample: returns the continuation's Resume without yielding it — the shape of a 0.7.0 plain-function handler."
   (Resume k 1))
 
 
 (defadr ADR-DOE-CORE-003
-  :title "handler は @handler を付けた def で、@handler がその def を @do 関数にする。@handler の下の @do は deprecated。handler() は def と @do 関数でない物を、with_handlers と stacked_handlers は handler でない物を、組む所で TypeError にして断る。VM が持つ handler の入れ直しは reinstaller が受け持つ"
+  :title "A handler is a def decorated with @handler, and @handler turns that def into a @do function. @do under @handler is deprecated. handler() refuses anything that is neither a def nor a @do function, and with_handlers and stacked_handlers refuse anything that is not a handler, with a TypeError at composition time. Reinstalling handlers held by the VM is the job of reinstaller"
   :status "accepted"
-  :scope ["doeff/program.py (handler・with_handlers・stacked_handlers・_install_raw・_as_do_function)"
+  :scope ["doeff/program.py (handler, with_handlers, stacked_handlers, _install_raw, _as_do_function)"
           "doeff/handler_utils.py (reinstaller)"
-          ".semgrep.yaml (doeff-handler-over-do-is-deprecated・doeff-handler-yields-its-control・doeff-handler-is-not-a-lambda・doeff-handler-stack-takes-only-handlers)"
+          ".semgrep.yaml (doeff-handler-over-do-is-deprecated, doeff-handler-yields-its-control, doeff-handler-is-not-a-lambda, doeff-handler-stack-takes-only-handlers)"
           "docs/adr/defadr_doeff_core_003_handler_is_a_do_function.hy"]
   :problem
     [(fact
-       "公開の記事の審査で決めた事: with-handlers が中で @handler を付けるような fallback は禁じる。型の一貫性のため、@handler で正しく作られていない物が handler として渡されたら直ちにエラーにし、linter でも禁じる。doeff は @do の付いていない関数を基本的に受け付けない — handler は @do 関数でなければならず、@handler かつ @do でない関数を with-handlers に渡したら例外を出す。これが徹底されていなければ API が意図と違うので、p0 で直してから記事を書く。")
+       "Decided in the review of the published article: a fallback where with-handlers applies @handler internally is forbidden. For type consistency, anything not properly built with @handler that is passed as a handler is an immediate error, and the linter forbids it too. doeff basically does not accept functions without @do — a handler must be a @do function, and passing a function that is @handler but not @do to with-handlers raises an exception. If this is not enforced throughout, the API differs from its intent, so fix it as p0 before writing the article.")
      (fact
-       "続く審査で決めた事: return yield x と書く理由が無い事が問われ、どの handler にも @handler @do を書くのは冗長なので、@handler だけを許して @handler def … と書けるようにし、@handler @do は deprecated にする。")
+       "Decided in the following review: it was questioned why one would ever write return yield x, and writing @handler @do on every handler is redundant, so allow @handler alone so that @handler def … can be written, and deprecate @handler @do.")
      (fact
-       "0.7.0 の handler() は、docstring で「a @do function, a plain function, a bound method, a functools.partial or a callable instance」を受けると書き、素の関数を、返した DoExpr を VM が走らせる受け手として handler にした。yield を含む素の def を handler にすると、走る時に「handler must return DoExpr: expected DoExpr or EffectBase, got: <class 'generator'>」の RuntimeError になる。with_handlers は印の無い物を中で handler() に通す fallback を持った。"
-       :evidence "PyPI の doeff 0.7.0 の doeff/program.py の docstring と、0.7.0 で @handler だけを付けた yield の def を走らせた結果(2026-10-20)")
+       "In 0.7.0, handler()'s docstring said it accepts 'a @do function, a plain function, a bound method, a functools.partial or a callable instance', and it turned a plain function into a handler as a receiver whose returned DoExpr the VM runs. Making a plain def containing yield a handler causes, at run time, the RuntimeError 'handler must return DoExpr: expected DoExpr or EffectBase, got: <class 'generator'>'. with_handlers had a fallback that passed unmarked objects through handler() internally."
+       :evidence "The docstring of doeff/program.py in doeff 0.7.0 on PyPI, and the result of running a yielding def with only @handler on 0.7.0 (2026-10-20)")
      (fact
-       "try_handler・local_handler・listen_handler・Spawn・doeff-traverse は、GetHandlers(k) で読んだ内側の handler を handler() で入れ直していた。VM が持つのは生の受け手(@do 関数・defhandler の節の data・Rust の scheduler の SchedulerPrompt)で、@do 関数とは限らない。"
-       :evidence "packages/doeff-core-effects/doeff_core_effects/_handlers.py・packages/doeff-traverse/doeff_traverse/_handlers.py の _program_handler(h)")]
+       "try_handler, local_handler, listen_handler, Spawn, and doeff-traverse reinstalled the inner handlers read with GetHandlers(k) through handler(). What the VM holds are raw receivers (@do functions, defhandler clause data, the Rust scheduler's SchedulerPrompt), not necessarily @do functions."
+       :evidence "_program_handler(h) in packages/doeff-core-effects/doeff_core_effects/_handlers.py and packages/doeff-traverse/doeff_traverse/_handlers.py")]
   :context
     [(interpretation
-       "handler の body を @do 関数の 1 つの形にすると、型と読み手の前提が揃う。body の中で yield した物は走り、yield の値はその結果。return した値は handle した塊の答えになる。だから続けは return (yield Resume(k, v)) と書き、Resume(k, v) を返すだけでは走らない。")
+       "Making the handler body a single shape, a @do function, aligns the types with the reader's assumptions. What is yielded in the body runs, and the value of the yield is its result. The returned value becomes the answer of the handled block. So a continuation is written return (yield Resume(k, v)); merely returning Resume(k, v) does not run it.")
      (interpretation
-       "@handler が def を @do 関数にするので、@do を重ねて書く事は何も足さない。@do 関数を handler() に渡す形(Kleisli としても呼ぶ @do 関数・partial・bound method)は、同じ物を指すので受け続ける。")
+       "Because @handler turns a def into a @do function, stacking @do on top adds nothing. Passing a @do function to handler() (a @do function also called as a Kleisli arrow, a partial, a bound method) denotes the same thing, so it remains accepted.")
      (interpretation
-       "入れ直しは、一度入った handler をもう一度入れるだけで、新しい handler を作る事ではない。新しく作る口(handler())と入れ直しの口(reinstaller)を分ければ、作る口だけを厳しくできる。")]
+       "Reinstalling only installs again a handler that was already installed; it does not create a new handler. Separating the creation entry point (handler()) from the reinstall entry point (reinstaller) lets only the creation entry point be strict.")]
   :decision
-    [(rule R1 "handler(f) は、f が def(lambda でない素の関数)なら @do 関数にして handler にする。f が @do 関数か、その partial か bound method なら、そのまま handler にする。既に印の付いた installer はそのまま返す。それ以外(lambda・素の method の bound method・callable の instance・builtin)は、作る所で TypeError「<名> is not a handler body」で断る。(effect, k) を取れない物と、どの effect にも当たらない注記は、前と同じく組む所で断る。yield の無い def が制御の式か effect を yield せずに返したら、走る時に TypeError で断り、return (yield …) の形を示す。")
-     (rule R2 "with_handlers と stacked_handlers は、印 _doeff_is_handler_fn の付いた handler(@handler の def・defhandler・stacked_handlers の束)だけを取り、それ以外を組む所で TypeError「<名> is not a handler」で断る。中で handler() に通さない。")
-     (rule R3 "GetHandlers(k) で読んだ handler の入れ直しは doeff.handler_utils.reinstaller が受け持ち、VM の WithHandler で直に入れる。新しい handler を作るのに使わない。")
-     (rule R4 "@handler の下に @do を書く形は deprecated。走る時は受け続け(PyPI の 0.7.0 の利用者の code と、毎日 PyPI の版で走らせる examples/testing_without_mocks と doeff-publications repo の publications/zenn-use-cases-v0 の例のため)、repo の中では semgrep が断る。その 2 つの dir は、@handler だけの形を持つ版が PyPI に出た時に書き替える。")
-     (rule R5 ".semgrep.yaml の 4 規則が、試験の外で同じ形を書く所で断る: @handler の下の @do・@handler の def で yield しない制御の式の return・handler 類への lambda・同じ scope の @handler の無い def の handler の列への受け渡し。試験は断りを確かめるために断られる形をわざと作るので外す。")
-     (rule R6 "書くその場面の助言は doeff の外(defjevrule)が持つ。doeff の側には R1〜R5 とその確かめだけを置く。")]
+    [(rule R1 "handler(f): if f is a def (a plain function that is not a lambda), it is made a @do function and becomes a handler. If f is a @do function, or a partial or bound method of one, it becomes a handler as is. An already marked installer is returned as is. Anything else (lambda, bound method of a plain method, callable instance, builtin) is refused at construction with TypeError '<name> is not a handler body'. Objects that cannot take (effect, k), and annotations that match no effect, are refused at composition time as before. If a def without yield returns a control expression or an effect without yielding it, it is refused at run time with a TypeError that shows the return (yield …) shape.")
+     (rule R2 "with_handlers and stacked_handlers take only handlers carrying the mark _doeff_is_handler_fn (a @handler def, a defhandler, a stacked_handlers bundle), and refuse anything else at composition time with TypeError '<name> is not a handler'. They do not pass anything through handler() internally.")
+     (rule R3 "Reinstalling handlers read with GetHandlers(k) is the job of doeff.handler_utils.reinstaller, which installs them directly with the VM's WithHandler. It is not used to create new handlers.")
+     (rule R4 "Writing @do under @handler is deprecated. It stays accepted at run time (for users' code on PyPI 0.7.0, and for the examples in examples/testing_without_mocks and publications/zenn-use-cases-v0 in the doeff-publications repo, which run daily against the PyPI release), and semgrep refuses it inside the repo. Those 2 dirs are rewritten when a release supporting the @handler-only shape is out on PyPI.")
+     (rule R5 "The 4 rules in .semgrep.yaml refuse these shapes wherever they are written outside tests: @do under @handler; returning a control expression without yield in a @handler def; a lambda passed to handler functions; passing a def without @handler from the same scope into a handler list. Tests are excluded because they build the refused shapes on purpose to check the refusal.")
+     (rule R6 "Advice at the moment of writing lives outside doeff (defjevrule). The doeff side holds only R1–R5 and their checks.")]
   :laws
     [(law handler-is-a-do-function
        :statement "handler(f) ⇒ (is_def(f) ∧ body = do(f)) ∨ is_do_function(f) ∨ marked(f) ∨ TypeError ∧ with_handlers(hs, p) ⇒ ∀h∈hs. marked(h) ∨ TypeError"
        :counterexamples
-         [(counterexample "with_handlers([lambda effect, k: ...], prog) が中で handler() に通され、lambda が handler として走る")
-          (counterexample "@handler の def が return Resume(k, v) と書き、Resume が答えの値になって続けが走らないまま塊が終わる")
-          (counterexample "入れ直しのために handler() を緩め、新しく作る口でも callable の instance が通る")
-          (counterexample "@handler を付けた def を、@do の無い Kleisli でない物として別の約束で走らせる")]
+         [(counterexample "with_handlers([lambda effect, k: ...], prog) passes it through handler() internally, and the lambda runs as a handler")
+          (counterexample "A @handler def writes return Resume(k, v); the Resume becomes the answer value and the block ends without running the continuation")
+          (counterexample "handler() is loosened for reinstalling, and a callable instance passes through the creation entry point too")
+          (counterexample "A def with @handler is run under a different contract, as something that is not a Kleisli arrow and has no @do")]
        :enforced-by ["docs/adr/defadr_doeff_core_003_handler_is_a_do_function.hy::test-adr-doe-core-003-handler-makes-a-def-a-do-function"
                      "docs/adr/defadr_doeff_core_003_handler_is_a_do_function.hy::test-adr-doe-core-003-handler-stacks-take-only-handlers"
                      "tests/test_handler_is_a_do_function.py"
                      "tests/test_with_handlers_refuses_unmarked_program_function.py"
-                     "defsemgrep doeff-handler-over-do-is-deprecated・doeff-handler-yields-its-control・doeff-handler-is-not-a-lambda・doeff-handler-stack-takes-only-handlers"]
-       :wiring "配線済み(2026-10-20)— この file の deftest と defsemgrep、tests の 2 file。書く場面の助言は defjevrule(R6)")]
+                     "defsemgrep doeff-handler-over-do-is-deprecated, doeff-handler-yields-its-control, doeff-handler-is-not-a-lambda, doeff-handler-stack-takes-only-handlers"]
+       :wiring "Wired (2026-10-20) — this file's deftests and defsemgreps, and the 2 files under tests. Advice at the moment of writing is defjevrule (R6)")]
   :enforcement
     [(deftest test-adr-doe-core-003-handler-makes-a-def-a-do-function
-       ;; R1: def を @do 関数にして handler にし、@do 関数はそのまま受ける。lambda と builtin は作る所で、yield せずに返した Resume は走る所で断る。
+       ;; R1: a def is made a @do function and becomes a handler; a @do function is accepted as is. A lambda and a builtin are refused at construction, and a Resume returned without yield is refused at run time.
        (assert (is (getattr passes-on "_doeff_is_handler_fn" False) True))
        (assert (is (handler passes-on) passes-on))
        (assert (= (run (passes-on (Pure "ok"))) "ok"))
@@ -92,7 +92,7 @@
        (with [(pytest.raises TypeError :match "unrun_answer returned Resume")]
          (run ((handler unrun-answer) ((doeff-do (fn [] (yield (Ask "key")))))))))
      (deftest test-adr-doe-core-003-handler-stacks-take-only-handlers
-       ;; R2: with_handlers と stacked_handlers は印の無い物(素の def・@handler の無い @do 関数・lambda)を断り、handler を取る。
+       ;; R2: with_handlers and stacked_handlers refuse unmarked objects (a plain def, a @do function without @handler, a lambda) and take handlers.
        (val passes (doeff-do (fn [effect k] (yield (Pass effect k)))))
        (with [(pytest.raises TypeError :match "is not a handler")]
          (with-handlers [passes] (Pure "ok")))
@@ -137,8 +137,8 @@
         {"relative-path" "examples/example_installer.py"
          "source" "def answer(effect, k):\n    return (yield Resume(k, 1))\n\nprogram = with_handlers([handler(answer)], body())\n"}])]
   :plans ["docs/adr/defadr_doeff_core_003_handler_is_a_do_function.hy"
-          "doeff/program.py (_is_do_function・_as_do_function・_yields_its_control・_refuse_unmarked — handler・with_handlers・stacked_handlers)"
+          "doeff/program.py (_is_do_function, _as_do_function, _yields_its_control, _refuse_unmarked — handler, with_handlers, stacked_handlers)"
           "doeff/handler_utils.py (reinstaller)"
-          "packages/doeff-core-effects/doeff_core_effects/_handlers.py・packages/doeff-traverse/doeff_traverse/_handlers.py (入れ直しを reinstaller に)"
-          "tests/test_handler_is_a_do_function.py・tests/test_with_handlers_refuses_unmarked_program_function.py"
-          ".semgrep.yaml (4 規則)"])
+          "packages/doeff-core-effects/doeff_core_effects/_handlers.py, packages/doeff-traverse/doeff_traverse/_handlers.py (reinstalling moved to reinstaller)"
+          "tests/test_handler_is_a_do_function.py, tests/test_with_handlers_refuses_unmarked_program_function.py"
+          ".semgrep.yaml (4 rules)"])

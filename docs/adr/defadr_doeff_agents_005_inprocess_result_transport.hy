@@ -5,66 +5,66 @@
 
 
 (defadr ADR-DOE-AGENTS-005
-  :title "in-process result transport: report_result データチャネルのみ — 端末スクレイプ結果経路の全廃"
+  :title "in-process result transport: report_result data channel only — terminal-scrape result paths fully removed"
   :status "accepted"
   :scope ["doeff-agents" "doeff-agents._handlers.production" "doeff-agents._handlers.effectful"
           "doeff-agents.result-contract" "doeff-agents.inprocess-face"]
   :problem
     [(fact
-       "2026-07-10、nakagawa SBI recon readiness で agent は正しい 585 文字の 1 行 JSON blocker をマーカー(DOEFF_AGENT_RESULT_BEGIN/END)付きで 16:35:45 に出力済みだったが、TUI が 80 桁 pane で折り返した結果を verbatim パースする AwaitResult は 'Invalid control character' で確定失敗し、121 回の no-result poll の後 readiness が FAIL した。"
-       :evidence "zeus claude-home PVC projects/-tmp-readiness-sbi-recon-ui-mismatch-c92a96e2…/b86fb07b….jsonl; nak-pytest-agent-bfba24c7ab pod log; 折り返し再現スクリプト(同 payload を width 78 で wrap → json.loads 失敗)")
+       "On 2026-07-10, in nakagawa SBI recon readiness, the agent had already output a correct 585-character single-line JSON blocker with markers (DOEFF_AGENT_RESULT_BEGIN/END) at 16:35:45, but AwaitResult, which parsed verbatim the output the TUI had wrapped in an 80-column pane, failed definitively with 'Invalid control character', and readiness FAILed after 121 no-result polls."
+       :evidence "zeus claude-home PVC projects/-tmp-readiness-sbi-recon-ui-mismatch-c92a96e2…/b86fb07b….jsonl; nak-pytest-agent-bfba24c7ab pod log; wrap reproduction script (wrap the same payload at width 78 → json.loads fails)")
      (fact
-       "ADR 0035 R5(e5f2ef5c)は折り返し修復ヒューリスティックを『非可逆で一クラスの値を必ず壊すクローン』として削除し report_result を単一輸送路所有者と宣言したが、同コミットは『doeff-agentic が in-process tmux handler にまだ依存しているため raw pane 抽出は残す』と明記して非準拠面を出荷し続けた。この免除を検出する機械検査(deftest / semgrep / conformance 行)はゼロだった。"
-       :evidence "git show e5f2ef5c (commit message); packages/doeff-agents/conformance/README.md(in-process 行なし)")
+       "ADR 0035 R5 (e5f2ef5c) removed the wrap-repair heuristic as 'a lossy clone that always breaks one class of values' and declared report_result the single transport owner, but the same commit explicitly stated 'raw pane extraction is kept because doeff-agentic still depends on the in-process tmux handler' and kept shipping a non-conforming surface. There were zero machine checks (deftest / semgrep / conformance row) detecting this exemption."
+       :evidence "git show e5f2ef5c (commit message); packages/doeff-agents/conformance/README.md (no in-process row)")
      (fact
-       "利用者(proboscis-ema)は pin bump(edfac2a1, 6e5d2128→8526c105)で修復削除を無自覚に受け取り、レビューでは何も落ちず、実行時にのみ失敗が現れた。呼び出し側の失敗メッセージは outcome.validation-error を含んでおらず、パース失敗という根因は pytest 出力から不可視だった。"
-       :evidence "proboscis-ema edfac2a1; nakagawa sbi_recon.hy _recon-retry-message(修正前)")
+       "The user (proboscis-ema) unknowingly received the repair removal via a pin bump (edfac2a1, 6e5d2128→8526c105); nothing failed in review, and the failure appeared only at runtime. The caller's failure message did not include outcome.validation-error, so the root cause, a parse failure, was invisible in the pytest output."
+       :evidence "proboscis-ema edfac2a1; nakagawa sbi_recon.hy _recon-retry-message (before the fix)")
      (fact
-       "同日、Claude Code 2.1.206 が screen-reader バナー文言を '[Accessible screen reader mode: on]' から '[Screen Reader Mode: on via flag]' へ変更し、旧文言を要求する trust ダイアログ自動応答が沈黙、agent が 'Enter y/n:' で永久停止した。端末描画テキストへのキーイングはインスタンスではなくクラスとしてバージョン脆弱である。"
+       "On the same day, Claude Code 2.1.206 changed the screen-reader banner wording from '[Accessible screen reader mode: on]' to '[Screen Reader Mode: on via flag]'; the trust-dialog auto-responder that required the old wording went silent, and the agent stopped forever at 'Enter y/n:'. Keying on terminal-rendered text is version-fragile as a class, not as an isolated instance."
        :evidence "git show c1219b0e; tmux pane capture 2026-07-10 17:2x")
      (fact
-       "端末グリッド投影は非単射である: soft-wrap は空白を注入・喪失し、word-boundary wrap の修復は実在した空白を必ず失う。いかなる修復ヒューリスティックも全 payload に対して正しくなりえない。"
+       "The terminal grid projection is non-injective: soft-wrap injects and loses whitespace, and repairing a word-boundary wrap always loses whitespace that was really there. No repair heuristic can be correct for all payloads."
        :evidence "git show 5d404aee (agentd byte-faithful data channel, ADR 0035 R1)")]
   :context
     [(interpretation
-       "ADR 0035 の法は doeff-agents が出荷するすべてのハンドラ面に及ぶ: 結果は型付きデータチャネルに乗り、端末は観測(status・onboarding・watchdog)専用である。in-process 面は MCP ツールを呼び出し側 VM 内で実行する唯一の経路であり session-host が caller tools をホストするまで退役できない — だからこそ同じチャネルをこの面にも与える。免除して残すのではなく。")
+       "The law of ADR 0035 extends to every handler surface doeff-agents ships: results ride a typed data channel, and the terminal is for observation only (status, onboarding, watchdog). The in-process surface is the only path that runs MCP tools inside the caller's VM and cannot be retired until session-host hosts caller tools — which is exactly why this surface is given the same channel, rather than being kept as an exemption.")
      (interpretation
-       "スクレイプを『フォールバック』として残すのは無フォールバックより悪い: 短い payload では成功し長い payload で失敗するため、輸送の正しさが payload 長に依存する非決定的な系になる。法(ADR)・機構(コード)・利用者(pin 消費者)は one set で移行する。")]
+       "Keeping scraping as a 'fallback' is worse than no fallback: it succeeds for short payloads and fails for long ones, making a nondeterministic system whose transport correctness depends on payload length. The law (ADR), the mechanism (code), and the users (pin consumers) migrate as one set.")]
   :decision
-    [(rule R1 "in-process defhandler(tmux-agent-defhandler — AgentHandler の object を包む agent-handler-defhandler は ADR-DOE-API-001 R4 で消した)経由で launch される result_schema 付き L2 セッションは、必ず in-VM MCP サーバを持つ: domain tools + report_result ツール。spec.mcp_tools が空でも report_result のみのサーバを立てる。sink は launch 前に登録し、結果契約プロンプトは report_result ツールのみを指示する。")
-     (rule R2 "in-process AwaitResult が結果を解決する唯一の源は report された sink である(result-first、session 生死に関わらず勝つ)。端末バイト列を結果 payload としてパースすることを禁止する。pane capture は観測(status・ダイアログ・watchdog)専用として残る。")
-     (rule R3 "マーカー語彙(DOEFF_AGENT_RESULT_BEGIN/END)とその抽出・修復ヘルパは doeff-agents から削除する。マーカー印字指示・マーカーパースの再導入は本 ADR 違反(semgrep 検出)。")
-     (rule R4 "報告なしで terminal を観測したセッションは型付き no-result outcome(EXITED, result=None, validation_error は report_result を名指し, continuable=False)を返す。生存中で未報告なら heartbeat/awaiting-input 観測を返し続ける — solicitation 方針は呼び出し側の所有(ADR-DOE-AGENTS-002 R1 の in-process 対応物)。")
-     (rule R5 "tmux-agent-defhandler の LaunchSession の答え(doeff_agents._handlers.production._launch_session — 前の TmuxAgentHandler.handle_launch_session)は sink 未登録の schema spec に対して fail-fast する(型付き AgentLaunchError)。in-process 面の L1 agent() タスク経路は同期 await が server loop を饑餓させるためデータチャネルをホストできない — schema セッションは L2 LaunchSession 効果経路を使うこと。Mock/Scenario/Daemon ハンドラは各自の輸送を所有し R5 の対象外。")
-     (rule R6 "移行: doeff-agents を pin する消費者(doeff-agentic, proboscis-ema)は schema セッションを L2 経路へ移す。マーカー依存のテスト・プロンプト主張は本 ADR による意図的な破壊的変更である。")]
+    [(rule R1 "An L2 session with result_schema launched via the in-process defhandler (tmux-agent-defhandler — agent-handler-defhandler, which wrapped an AgentHandler object, was removed by ADR-DOE-API-001 R4) always has an in-VM MCP server: domain tools + the report_result tool. Even if spec.mcp_tools is empty, a server with only report_result is started. The sink is registered before launch, and the result-contract prompt directs the agent only to the report_result tool.")
+     (rule R2 "The only source from which in-process AwaitResult resolves a result is the reported sink (result-first; it wins regardless of whether the session is alive). Parsing terminal bytes as a result payload is forbidden. Pane capture remains for observation only (status, dialogs, watchdog).")
+     (rule R3 "The marker vocabulary (DOEFF_AGENT_RESULT_BEGIN/END) and its extraction/repair helpers are removed from doeff-agents. Reintroducing marker-printing instructions or marker parsing violates this ADR (detected by semgrep).")
+     (rule R4 "A session observed as terminal without a report returns a typed no-result outcome (EXITED, result=None, validation_error naming report_result, continuable=False). If it is alive and has not reported, it keeps returning heartbeat/awaiting-input observations — the solicitation policy is owned by the caller (the in-process counterpart of ADR-DOE-AGENTS-002 R1).")
+     (rule R5 "tmux-agent-defhandler's answer to LaunchSession (doeff_agents._handlers.production._launch_session — formerly TmuxAgentHandler.handle_launch_session) fails fast for a schema spec with no registered sink (typed AgentLaunchError). The in-process surface's L1 agent() task path cannot host the data channel because its synchronous await starves the server loop — schema sessions must use the L2 LaunchSession effect path. Mock/Scenario/Daemon handlers own their own transports and are outside R5.")
+     (rule R6 "Migration: consumers that pin doeff-agents (doeff-agentic, proboscis-ema) move schema sessions to the L2 path. Breaking marker-dependent tests and prompt assertions is an intentional breaking change of this ADR.")]
   :laws
     [(law results-never-ride-rendered-terminal
        :statement "result_payload => typed_data_channel(report_result) never terminal_scrape"
        :counterexamples
-         [(counterexample "pane capture / pipe-pane transcript から JSON を json.loads する結果経路を追加する")
-          (counterexample "『短い結果は折り返さないから安全』としてマーカー経路を限定復活させる")
-          (counterexample "折り返し修復ヒューリスティックを再導入する(ADR 0035 R5 の巻き戻し)")])
+         [(counterexample "a result path is added that runs json.loads on JSON from a pane capture / pipe-pane transcript")
+          (counterexample "the marker path is partially revived on the grounds that 'short results do not wrap, so it is safe'")
+          (counterexample "the wrap-repair heuristic is reintroduced (a rollback of ADR 0035 R5)")])
      (law schema-session-always-has-channel
        :statement "result_schema_set and inprocess_launch => in_vm_mcp_server_with_report_result registered_before_launch"
        :counterexamples
-         [(counterexample "mcp_tools が空なのでサーバを立てず、プロンプトだけ report_result を指示する(ツール不在で agent が迷子)")
-          (counterexample "sink 未登録のまま launch し、await が budget 満了まで no-result を空回りする")])
+         [(counterexample "since mcp_tools is empty no server is started, yet the prompt still directs report_result (the tool is absent and the agent is lost)")
+          (counterexample "launch proceeds without a registered sink, and await spins on no-result until the budget expires")])
      (law capture-is-observation-only
        :statement "capture_pane_or_transcript => status_dialog_watchdog_observation only"
        :counterexamples
-         [(counterexample "monitor の last_output に結果マーカーを探す fast-path を足す")])
+         [(counterexample "a fast-path is added that looks for result markers in the monitor's last_output")])
      (law tui-text-keys-on-stable-wording
        :statement "tui_text_detection => keyed_on_dialog_own_wording never version_dependent_banners"
        :counterexamples
-         [(counterexample "trust ダイアログ検知を '[Accessible screen reader mode: on]' バナー文言に依存させる(2.1.206 で沈黙した実績)")])]
+         [(counterexample "trust-dialog detection is made dependent on the '[Accessible screen reader mode: on]' banner wording (it actually went silent in 2.1.206)")])]
   :enforcement
     [(defsemgrep no-terminal-result-marker-vocabulary
        :languages ["generic"]
        :pattern "DOEFF_AGENT_RESULT_BEGIN"
-       :message "結果マーカー語彙は ADR-DOE-AGENTS-005 R3 で削除済み。結果は in-VM report_result データチャネル(make_report_result_tool + sink)で運ぶ。端末スクレイプ結果経路の再導入は本 ADR の supersede が先。"
+       :message "The result marker vocabulary was removed by ADR-DOE-AGENTS-005 R3. Results are carried by the in-VM report_result data channel (make_report_result_tool + sink). Reintroducing a terminal-scrape result path requires superseding this ADR first."
        :bad ["RESULT_BLOCK_BEGIN = \"DOEFF_AGENT_RESULT_BEGIN\""]
        :good ["sink = handler.create_result_sink(session_id)  # ADR-DOE-AGENTS-005 R1"])]
   :plans ["docs/adr/defadr_doeff_agents_005_inprocess_result_transport.hy"
-          "packages/doeff-agents/src/doeff_agents/_handlers/production.py (marker 語彙・抽出削除, sink-first await, launch fail-fast)"
-          "packages/doeff-agents/src/doeff_agents/_handlers/effectful.hy (schema セッションは常に in-VM server + report_result)"
-          "packages/doeff-agents/tests/test_inprocess_report_result.py (R1-R5 の機械検査)"])
+          "packages/doeff-agents/src/doeff_agents/_handlers/production.py (marker vocabulary and extraction removed, sink-first await, launch fail-fast)"
+          "packages/doeff-agents/src/doeff_agents/_handlers/effectful.hy (schema sessions always get in-VM server + report_result)"
+          "packages/doeff-agents/tests/test_inprocess_report_result.py (machine checks for R1-R5)"])

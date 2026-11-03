@@ -11,107 +11,107 @@
   :scope ["doeff-agentd" "agentd.monitor" "agentd.result-contract" "agentd.tui-boundary"]
   :problem
     [(fact
-       "2026-07-04 01:55 JST、無人 codex attend session が rate-limit 確認メニュー(`Approaching rate limits / Switch to gpt-5.4-mini …? › 1. Switch… 2. Keep current model … Press enter to confirm`)で停止した。ハードブロックではなく確認メニューであり、Enter を押す者がいないだけで session が死んだ。"
+       "At 2026-07-04 01:55 JST, an unattended codex attend session stopped at a rate-limit confirmation menu (`Approaching rate limits / Switch to gpt-5.4-mini …? › 1. Switch… 2. Keep current model … Press enter to confirm`). It was a confirmation menu, not a hard block; the session died only because nobody was there to press Enter."
        :evidence "ACP argus dashboard attend #1 capture; ~/.codex/sessions/2026/07/04/rollout-…019f28e8….jsonl")
      (fact
-       "2026-07-03 17:06 UTC、acp:issue:argus-git-mergeability-refresh の impl agent が起動 20 秒で turn-end に達し、invocation が `session reached turn-end without reporting a result via report_result` で失敗した。制御プレーンは 6 分後に WorkItem を reap し、dedup condition が残って issue が永久に再宣言不能になった(dogfood e2e の実ブロッカー)。"
+       "At 2026-07-03 17:06 UTC, the impl agent for acp:issue:argus-git-mergeability-refresh reached turn-end 20 seconds after startup, and the invocation failed with `session reached turn-end without reporting a result via report_result`. The control plane reaped the WorkItem 6 minutes later, the dedup condition remained, and the issue became permanently impossible to re-declare (a real blocker for the dogfood e2e)."
        :evidence "proboscis-agent-control-plane/.acp/event-store.sqlite events sequence 1963559..1965600")
      (fact
-       "ACP の investigation-agent も独立に同一クラスを診断済み: 「実装エージェントが実装結果を返さず終了した」(acp:issue:issue-defect-bef7dcf947e98cdb)。missing-result は namespace を跨いで再発している。"
+       "ACP's investigation-agent independently diagnosed the same class: \"the implementation agent exited without returning an implementation result\" (acp:issue:issue-defect-bef7dcf947e98cdb). Missing-result recurs across namespaces."
        :evidence "acp:issue:issue-defect-bef7dcf947e98cdb resourcePayload.body")
      (fact
-       "codex のメニューは idle REPL プロンプトと同じ `› ` グリフで描画される(`output_has_agent_idle_prompt` は `\\n› ` にマッチし、メニュー行 `› 1. Switch…` もマッチする)。現行ヒューリスティックではブロッキングメニューと turn-end を区別できない。"
+       "The codex menu is drawn with the same `› ` glyph as the idle REPL prompt (`output_has_agent_idle_prompt` matches `\\n› `, and the menu line `› 1. Switch…` matches too). The current heuristic cannot distinguish a blocking menu from turn-end."
        :evidence "agentd-rust-final:src/main.rs codex_update_dialog_selected_option / output_has_agent_idle_prompt")
      (fact
-       "turn-end で結果が無い場合は『agentd never re-prompts (hard rule 7 / ADR 0035 R4)』として即 fail していた。これは決定的失敗(schema-invalid payload, -32002)と観測(turn-end 時点で result が無い)の混同である。ADR 0035 が retries_used の再プロンプト経路を削除した履歴が示す通り、この区別は明文化しないと再び消される。"
-       :evidence "agentd-rust-final:src/main.rs monitor_once turn-end branch (旧コメント)")
+       "When there was no result at turn-end, the session failed immediately under 'agentd never re-prompts (hard rule 7 / ADR 0035 R4)'. This conflates a deterministic failure (schema-invalid payload, -32002) with an observation (no result at turn-end). As the history of ADR 0035 removing the retries_used re-prompt path shows, this distinction will be erased again unless it is written down."
+       :evidence "agentd-rust-final:src/main.rs monitor_once turn-end branch (old comment)")
      (fact
-       "`awaiting_response` latch はデーモン再起動時に一括クリアされる(main() の UPDATE)。bounded ループの回数を latch に載せると再起動で消える。回数は専用の永続カラムに置くしかない。"
+       "The `awaiting_response` latch is cleared in bulk on daemon restart (the UPDATE in main()). If the bounded loop's count were carried on the latch, it would vanish on restart. The count has to live in a dedicated persistent column."
        :evidence "agentd-rust-final:src/main.rs main() awaiting_response reset")
      (fact
-       "idle プロンプトに一致しない停止画面(ログインプロンプト、pager、未知のダイアログ)は turn-end に到達せず、pane capture が変わらなくても last_observed_at は毎 tick 更新されるため、既存のどの watchdog も発火しない。session はスロットを永久に占有する。"
-       :evidence "agentd-rust-final:src/main.rs monitor_once (last_observed_at は capture 成否のみで更新)")
+       "A stopped screen that does not match the idle prompt (login prompt, pager, unknown dialog) never reaches turn-end, and last_observed_at is updated every tick even when the pane capture does not change, so none of the existing watchdogs fire. The session occupies its slot forever."
+       :evidence "agentd-rust-final:src/main.rs monitor_once (last_observed_at is updated only on capture success/failure)")
      (fact
-       "2026-08-18(claude CLI 2.1.234 の自動更新後 4 時間)、走行中の turn を pane に描かない実物が観測された: prompt 投入 4〜10 秒後の観測断面が『空の ❯・spinner 無し・statusline は waiting for first response…』のまま、同時刻の会話 transcript には assistant 応答と tool 実行が記録されている。表示層のみの turn-end 判定(idle ∧ ¬active ∧ tail500 stable — monitor tick 1s では 1 秒の描画静止で stable 成立)が、走行中の attend 22 席を約 20 秒で run_failed / retryable=false に焼いた。うち 1 席の failed 断面は composer に『❯ Press up to edit queued messages』(markers.hy が『turn 走行中の明白な busy 証拠』と定義する状態)を映したまま『催促に応えなかった』と結論していた。"
-       :evidence "agentd.sqlite agent_session_events(session_result_solicited / session_blocked の output_snippet)× ~/.config/claude-*/projects/*/<sid>.jsonl の突合、2026-08-18 route-1dbd848847")]
+       "On 2026-08-18 (4 hours after the claude CLI auto-updated to 2.1.234), a real case was observed where a running turn was not drawn in the pane: the snapshot observed 4-10 seconds after prompt submission stayed at 'empty ❯, no spinner, statusline shows waiting for first response…', while the conversation transcript for the same time recorded assistant responses and tool executions. The display-layer-only turn-end decision (idle ∧ ¬active ∧ tail500 stable — with a 1s monitor tick, one second of no redraw makes it stable) burned 22 running attend seats into run_failed / retryable=false in about 20 seconds. The failed snapshot of one of those seats still showed '❯ Press up to edit queued messages' in the composer (the state markers.hy defines as 'clear busy evidence that a turn is running'), yet concluded 'did not respond to the solicitation'."
+       :evidence "cross-check of agentd.sqlite agent_session_events (output_snippet of session_result_solicited / session_blocked) × ~/.config/claude-*/projects/*/<sid>.jsonl, 2026-08-18 route-1dbd848847")]
   :context
     [(interpretation
-       "agentd が tmux/TUI 境界の唯一の所有者である。ピクセルとキー入力として現れるものはすべて agentd が観測・操作し、上流(doeff-agents / ACP)には型付き status と report_result データチャネルだけが見える。TUI 上の異常への対処を上流や人間に漏らすのは境界違反である。")
+       "agentd is the sole owner of the tmux/TUI boundary. Everything that appears as pixels and keystrokes is observed and operated by agentd; upstream (doeff-agents / ACP) sees only a typed status and the report_result data channel. Leaking the handling of TUI anomalies to upstream or to humans is a boundary violation.")
      (interpretation
-       "ADR 0012 / ACP hard rule 7 の分類は agentd 内部にも適用される: 決定的失敗(schema-invalid payload)は自動再試行しない。観測(turn-end 時に result が無い、pane が凍結している)は永続カウンタ付き bounded ループで再観測・是正する。バウンド超過は型付き terminal failure で終わる — 無限待ちは常に禁止。")]
+       "The classification of ADR 0012 / ACP hard rule 7 also applies inside agentd: deterministic failures (schema-invalid payload) are not retried automatically. Observations (no result at turn-end, a frozen pane) are re-observed and corrected by a bounded loop with a persistent counter. Exceeding the bound ends in a typed terminal failure — an infinite wait is always forbidden.")]
   :decision
-    [(rule R1 "contract session が valid な報告結果なしに turn-end へ達した事象は観測であり、決定的失敗ではない。agentd は『report_result を今すぐ 1 回だけ呼べ』という是正メッセージを送信し、次の turn-end を再観測する(solicitation)。")
-     (rule R2 "solicitation は永続・再起動生存のカウンタ(result_solicitations_used 列)で bounded(既定 2)。超過時は既存の terminal-without-result 失敗で終端し、ACP 4 値 discriminator は変えない。")
-     (rule R3 "schema-invalid な report_result(-32002)は決定的なまま: 即時拒否し、同一 payload を自動再検証しない。ただしその後 valid な結果無しで turn-end に達すれば R1 の solicitation ループに入る(agent は payload を直して再報告できる)。")
-     (rule R4 "solicitation 中の session status は non-terminal のまま。report_result はいつ着地しても result-first 読みで勝つ。solicitation 中に status を terminal にすることは禁止(-32003 で報告が弾かれるため)。")
-     (rule R5 "startup 完了後の run_to_completion session で、pane 内容が T 秒(既定 180)不変・active-work マーカー無し・idle REPL プロンプト無しのとき、設定可能な小型 LLM judge に pane capture を渡し、strict JSON {blocked, keys, reason} を得る。blocked なら keys をホワイトリスト検証の上 tmux で送出する。試行は永続カウンタ(prompt_unblock_attempts 列)で bounded(既定 3)。")
-     (rule R6 "turn-end-without-result の判定点では solicitation より先に judge を通す。codex メニューは idle プロンプトのグリフを描画するため、メニューへ solicitation を貼り付けると Enter が任意の選択肢を確定してしまう。")
-     (rule R7 "stall 判定点(R5)で judge 超過・parse 失敗・judge 利用不能なら、型付きで loud に失敗する(status=failed、last_validation_error は 'interactive-prompt-blocked:' で始まり、TerminalCause は interactive_prompt_blocked)。無限待ちは禁止。turn-end 判定点(R6)で judge 利用不能なら solicitation へ degrade する(bounded であり、hang にはならない)。")
-     (rule R8 "ACP 側 4 値 discriminator(ready / terminal-without-result / not-ready / session-gone)は不変。新しい失敗詳細は last_validation_error と TerminalCause(内部/監査用)で運ぶ。")
-     (rule R9 "既知ダイアログの決定的 fast-path dismisser は許容されるが、唯一の機構にしてはならない(既知プロンプトの設定列挙だけで抑止する案は棄却済み)。一般経路は judge である。")
-     (rule R-conversation-evidence-65b8 "turn の生死は表示層(pane 描画)単独で確定しない — 会話記録(kind 別 transcript 実体: claude = projects jsonl / codex = rollout)がデータ層の証拠面である。(i) 会話記録が鮮度窓(conversation-quiescence-seconds、既定 120)内に更新されている間、turn-end は宣言されない。(ii) 自分が配送した催促が composer に未消費で座っている(queued-messages)間、『催促に応えなかった』は成立しない — budget 超過の終端に至らない。(iii) 配送後に会話記録が進んだ(awaiting 基点 + margin 秒を超える mtime)なら awaiting_response latch は positive work evidence として clear される — 描画されない turn 開始を『turn never started』にしない。(iv) probe は反証面であって門ではない: 識別素材(identity / conversation / work_dir)が欠ける行・実体不在・観測不能は None で従来の表示層物理へ fallback し、挙動の退行はゼロ。pane 描画は CLI 版更新で変わる非契約面 — marker 逐語が 3 度破れた(2026-07-20 / 07-26 / 08-06)のと同じ理由で、turn の生死判定そのものを表示層に単独結合してはならない。")]
+    [(rule R1 "A contract session reaching turn-end without a valid reported result is an observation, not a deterministic failure. agentd sends a corrective message saying 'call report_result exactly once, now' and re-observes the next turn-end (solicitation).")
+     (rule R2 "Solicitation is bounded (default 2) by a persistent counter that survives restarts (the result_solicitations_used column). When exceeded, it terminates with the existing terminal-without-result failure, and the ACP 4-value discriminator is not changed.")
+     (rule R3 "A schema-invalid report_result (-32002) stays deterministic: it is rejected immediately and the same payload is not automatically revalidated. However, if turn-end is subsequently reached without a valid result, the R1 solicitation loop is entered (the agent can fix the payload and report again).")
+     (rule R4 "During solicitation the session status stays non-terminal. Whenever report_result lands, it wins under result-first reading. Making the status terminal during solicitation is forbidden (because the report would be rejected with -32003).")
+     (rule R5 "For a run_to_completion session after startup has completed, when the pane content is unchanged for T seconds (default 180), with no active-work marker and no idle REPL prompt, the pane capture is passed to a configurable small LLM judge to obtain strict JSON {blocked, keys, reason}. If blocked, the keys are whitelist-validated and then sent via tmux. Attempts are bounded (default 3) by a persistent counter (the prompt_unblock_attempts column).")
+     (rule R6 "At the turn-end-without-result decision point, the judge runs before solicitation. Because the codex menu draws the idle prompt glyph, pasting a solicitation into the menu makes Enter confirm an arbitrary option.")
+     (rule R7 "At the stall decision point (R5), if the judge bound is exceeded, parsing fails, or the judge is unavailable, it fails loudly and typed (status=failed, last_validation_error starts with 'interactive-prompt-blocked:', TerminalCause is interactive_prompt_blocked). An infinite wait is forbidden. At the turn-end decision point (R6), if the judge is unavailable, it degrades to solicitation (which is bounded and does not hang).")
+     (rule R8 "The ACP-side 4-value discriminator (ready / terminal-without-result / not-ready / session-gone) is unchanged. New failure details are carried in last_validation_error and TerminalCause (internal / audit use).")
+     (rule R9 "A deterministic fast-path dismisser for known dialogs is allowed, but it must not be the only mechanism (the proposal to suppress prompts only by enumerating known prompts in configuration was rejected). The general path is the judge.")
+     (rule R-conversation-evidence-65b8 "Whether a turn is alive is not settled by the display layer (pane rendering) alone — the conversation record (the per-kind transcript artifact: claude = projects jsonl / codex = rollout) is the data-layer evidence surface. (i) While the conversation record has been updated within the freshness window (conversation-quiescence-seconds, default 120), turn-end is not declared. (ii) While a solicitation we delivered sits unconsumed in the composer (queued-messages), 'did not respond to the solicitation' does not hold — it does not reach the budget-exceeded terminal state. (iii) If the conversation record advanced after delivery (mtime beyond the awaiting base time + margin seconds), the awaiting_response latch is cleared as positive work evidence — a turn start that was not drawn is not turned into 'turn never started'. (iv) The probe is a falsification surface, not a gate: rows missing identifying material (identity / conversation / work_dir), a missing artifact, or an unobservable state yield None and fall back to the existing display-layer physics, with zero behavior regression. Pane rendering is a non-contract surface that changes with CLI version updates — for the same reason the verbatim markers broke three times (2026-07-20 / 07-26 / 08-06), the turn liveness decision itself must not be coupled solely to the display layer.")]
   :laws
     [(law missing-result-is-observation-not-determinism
        :statement "turn_end_without_valid_result => bounded_solicitation before terminal_without_result"
        :counterexamples
-         [(counterexample "turn-end で result が無い session を solicitation なしで即 failed にする")
-          (counterexample "solicitation を『再試行』と呼んで hard rule 7 を理由に削除する(削除するなら本 ADR の supersede が先)")])
+         [(counterexample "a session with no result at turn-end is failed immediately without solicitation")
+          (counterexample "solicitation is called a 'retry' and removed citing hard rule 7 (removing it requires superseding this ADR first)")])
      (law invalid-payload-stays-deterministic
        :statement "schema_invalid_report_result => immediate_-32002 and no_automatic_revalidation_of_same_payload"
        :counterexamples
-         [(counterexample "-32002 の場で agentd が同一 payload を再検証・再試行する")
-          (counterexample "validation 失敗を solicitation カウンタ消費なしの自動 re-prompt に変える")])
+         [(counterexample "agentd revalidates / retries the same payload on the spot at -32002")
+          (counterexample "a validation failure is turned into an automatic re-prompt that does not consume the solicitation counter")])
      (law correction-counters-are-durable-and-bounded
        :statement "solicitation_count and unblock_attempts => dedicated_persistent_columns surviving daemon_restart"
        :counterexamples
-         [(counterexample "カウンタを awaiting_response のような再起動時クリアされる latch に載せる")
-          (counterexample "カウンタをメモリ上にだけ持ち、agentd 再起動で solicitation が無限に再開する")])
+         [(counterexample "the counter is carried on a latch that is cleared on restart, like awaiting_response")
+          (counterexample "the counter is held only in memory, so solicitation restarts indefinitely on agentd restart")])
      (law solicitation-keeps-session-non-terminal
        :statement "during_solicitation => status_non_terminal so report_result_can_land"
        :counterexamples
-         [(counterexample "solicitation 送信と同時に status を failed にして、届いた report_result が -32003 で弾かれる")])
+         [(counterexample "status is set to failed at the same time the solicitation is sent, and the report_result that arrives is rejected with -32003")])
      (law menu-glyph-is-not-turn-end
        :statement "turn_end_decision_point => judge_before_solicitation"
        :counterexamples
-         [(counterexample "codex rate-limit メニューへ solicitation テキストを貼り、Enter が選択中オプションを確定する")
-          (counterexample "idle プロンプト検出だけを根拠に pane が REPL であると断定する")])
+         [(counterexample "solicitation text is pasted into the codex rate-limit menu and Enter confirms the selected option")
+          (counterexample "the pane is asserted to be a REPL based only on idle prompt detection")])
      (law frozen-pane-terminates-typed
        :statement "pane_unchanged_beyond_T and not_active and not_idle_prompt => bounded_judge_then_typed_failure never_infinite_wait"
        :counterexamples
-         [(counterexample "judge が利用不能なので何もせず session を running のまま放置する")
-          (counterexample "judge を毎 tick 無制限に呼び続ける")])
+         [(counterexample "the judge is unavailable, so nothing is done and the session is left running")
+          (counterexample "the judge keeps being called every tick without limit")])
      (law discriminator-stability
        :statement "new_failure_kinds => last_validation_error_and_terminal_cause not_new_discriminator_values"
        :counterexamples
-         [(counterexample "interactive-prompt-blocked を ACP discriminator の第 5 値として追加する")])
+         [(counterexample "interactive-prompt-blocked is added as a fifth value of the ACP discriminator")])
      (law conversation-record-freshness-vetoes-turn-end
        :statement "conversation_record_updated_within_quiescence_window => turn_end_not_declared regardless_of_pane_idle_and_stable"
        :counterexamples
-         [(counterexample "pane が idle ∧ stable(2026-08-18 実物: 走行中 turn を描かない CLI)を根拠に、transcript が数秒前に更新されている席へ solicitation を発射し budget を焼く")
-          (counterexample "probe を『任意の pane に必須』の門にする — 識別素材の無い行(generic / conversation 未確定)や実体不在で turn-end 検出そのものが止まり、真に終わった turn が永久に検出されない")
-          (counterexample "鮮度でなく『前回観測との差分』を状態列に保存して比較する — 再起動・再 adopt で状態が消え、mtime 絶対時計比較(状態保存ゼロ)で足りる比較に耐久状態を増やす")])
+         [(counterexample "based on the pane being idle ∧ stable (the 2026-08-18 real case: a CLI that does not draw the running turn), a solicitation is fired at a seat whose transcript was updated seconds ago, burning the budget")
+          (counterexample "the probe is made a gate 'required for every pane' — for rows without identifying material (generic / conversation not yet determined) or with a missing artifact, turn-end detection itself stops, and a truly finished turn is never detected")
+          (counterexample "instead of freshness, a 'diff against the previous observation' is stored in a state column and compared — the state is lost on restart / re-adopt, and durable state is added to a comparison that an absolute-clock mtime comparison (zero stored state) already handles")])
      (law unconsumed-solicitation-is-not-nonresponse
        :statement "queued_messages_visible_in_composer => solicitation_exhaustion_terminal_forbidden"
        :counterexamples
-         [(counterexample "自分が配送した催促が『❯ Press up to edit queued messages』のまま未消費なのを観測しながら、『催促 2 回に応えなかった』を理由に run_failed / retryable=false で席を kill する(2026-08-18 実物断面)")])]
+         [(counterexample "while observing that a solicitation we delivered is still unconsumed as '❯ Press up to edit queued messages', the seat is killed with run_failed / retryable=false on the grounds of 'did not respond to 2 solicitations' (the 2026-08-18 real snapshot)")])]
   :enforcement
     [(deftest test-adr-doe-agents-002-conversation-evidence-vocabulary
-       ;; R-conversation-evidence-65b8 の機械面: 証拠面の effect 語彙と knob が
-       ;; 凍結既定値で実在する(性質 pin — 述語の綴りには依存しない)。
+       ;; Machine surface of R-conversation-evidence-65b8: the evidence-surface effect vocabulary and knobs
+       ;; exist with frozen default values (property pin — does not depend on predicate spelling).
        (import doeff_agents [ProbeConversationActivity FsFileMtime probe-conversation-activity fs-file-mtime]
                doeff_agents._sessionhost.effects [MonitorKnobs])
        (setv knobs (MonitorKnobs))
        (assert (= knobs.conversation-quiescence-seconds 120))
        (assert (= knobs.conversation-progress-margin-seconds 10))
-       ;; probe は kind × params の interface effect(per-kind impl 所有)。
+       ;; The probe is a kind × params interface effect (owned by the per-kind impl).
        (setv eff (probe-conversation-activity
                    "claude" {"work_dir" "/tmp" "effective_identity" {}
                              "conversation" {"session_id" "x"}}))
        (assert (isinstance eff ProbeConversationActivity))
        (assert (isinstance (fs-file-mtime "/tmp/x.jsonl") FsFileMtime))
-       ;; 反例テスト(実弾の再現)が package suite に実在する — 名の集合 pin。
-       ;; path は module __file__ 起点(ADR-010 cleanup-single-home と同じ
-       ;; editable-install 前提 — cwd に依存しない)。
+       ;; The counterexample tests (reproductions of the real incident) exist in the package suite — name-set pin.
+       ;; The path is rooted at module __file__ (same editable-install assumption as
+       ;; ADR-010 cleanup-single-home — does not depend on cwd).
        (import pathlib [Path])
        (import doeff_agents._sessionhost.policy :as policy-mod)
        (setv pkg-root (. (Path (. policy-mod __file__)) parent parent parent parent))
@@ -124,7 +124,7 @@
      (defsemgrep no-blanket-never-reprompts-claim
        :languages ["generic"]
        :pattern "agentd never re-prompts"
-       :message "『agentd never re-prompts』という無限定の主張は ADR-DOE-AGENTS-002 で偽になった。決定的失敗(-32002)は再検証しない/turn-end の missing result は bounded solicitation、と限定して書くこと。"
+       :message "The unqualified claim 'agentd never re-prompts' became false with ADR-DOE-AGENTS-002. Write it in qualified form: deterministic failures (-32002) are not revalidated / a missing result at turn-end goes through bounded solicitation."
        :bad ["// Deterministic failure — agentd never re-prompts (hard rule 7 / ADR 0035 R4)."]
        :good ["// Schema rejection is final for that payload (no automatic revalidation, ADR 0035 R4);\n// a missing result at turn-end enters the bounded solicitation loop (ADR-DOE-AGENTS-002 R1)."])]
   :plans ["docs/adr/defadr_doeff_agents_002_agentd_tui_boundary_contracts.hy"

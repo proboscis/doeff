@@ -1,18 +1,19 @@
-;;; Executable ADR: doeff-cluster の job が受け取るのは Program の値 1 つだけ — handler は Program の中の
-;;; with-handlers で与え、実行器(job_entry)は既定の handler を 1 つも足さない。service と task は同じ入口で、
-;;; 設定は Program の中の Ask と、それに答える os.environ を読む handler で読む。
+;;; Executable ADR: a doeff-cluster job accepts exactly one Program value — handlers are given by with-handlers inside the
+;;; Program, and the executor (job_entry) adds not a single default handler. Services and tasks share the same entry, and
+;;; settings are read by Ask inside the Program and a handler that answers it by reading os.environ.
 ;;;
-;;; 決めた事は :problem の fact に書いた。
+;;; What was decided is written in the facts of :problem.
 ;;;
-;;; 改訂 2026-09-27: R5 の記録係を「未決」から決定へ書き換えた — 記録と再生は Program の中の
-;;; with-handlers に置く handler で、runner は差し込まない(決めた事は :problem の fact)。同じ日に R5b を足した — 記録係より
-;;; 内側の handler は決定的でなければならない(記録係に届かない effect は再生で同じ計算が答え直す)。同じ日に R3b を足した —
-;;; 宣言の中の Program の値は task と同じく詰めた文字列(encode-program / decode-program)で運ぶ。同じ日に R4b を足した —
-;;; Program の宣言が書くのは必要な能力の名前(:needs)だけで、置き場所の名前(kind=k3s・role=agent-exp・機体の名前)は書かない。
-;;; 同じ日に R7 を足した — 旧い宣言を受け付ける移行の期間は置かず、旧い形は宣言の時点で理由つきで断る。
+;;; Revision 2026-09-27: R5's recorder was rewritten from 'undecided' to a decision — recording and replay are handlers placed in
+;;; the Program's with-handlers, and the runner does not insert them (what was decided is in the :problem facts). The same day R5b
+;;; was added — handlers inside the recorder must be deterministic (effects that do not reach the recorder are re-answered by the
+;;; same computation on replay). The same day R3b was added — a Program value in a declaration is carried, as for tasks, as a packed
+;;; string (encode-program / decode-program). The same day R4b was added — a Program's declaration writes only the names of the
+;;; capabilities it needs (:needs), never placement names (kind=k3s, role=agent-exp, machine names).
+;;; The same day R7 was added — there is no migration period accepting old declarations; old forms are refused at declaration time with a reason.
 ;;;
-;;; 戻し方: この ADR を足した commit を revert する(ADR の file 1 つと enforcement 台帳の数が消える)。R5 の改訂だけを
-;;; 戻すなら、その改訂の commit を revert する(R5 が「未決」の文へ、law runner-inserts-no-recorder が消える)。
+;;; Rollback: revert the commit that added this ADR (the one ADR file and the enforcement ledger count disappear). To roll back only
+;;; the R5 revision, revert that revision's commit (R5 returns to the 'undecided' text and law runner-inserts-no-recorder disappears).
 
 (require doeff-adr.macros [defadr rule law])
 (import doeff-adr.macros [fact interpretation counterexample])
@@ -23,18 +24,18 @@
 
 
 ;; ---------------------------------------------------------------------------
-;; ratchet 台帳 — 2026-09-27 時点の job_entry.hy で、実行器が Program の外から handler を足している
-;; 呼び出しの数(origin/main faf81b97 の実測)。終端は全部 0(R2)。針は「現在数 <= 台帳数」を強制し、
-;; 減らした便は同じ便で台帳を削る(削り忘れも赤)。
-;;   scheduled       — scheduler の handler を runner が包む(service と task で 1 つずつ)
-;;   env-handlers    — env の関数(import path)が組んだ handler の組を runner が包む(service と task で 1 つずつ)
-;;   recording-layer — effect の記録係を runner が足す(service だけ・R5 の決定で Program の中の handler へ移して 0 にする)
+;; Ratchet ledger — the number of calls in job_entry.hy as of 2026-09-27 through which the executor adds handlers from
+;; outside the Program (measured on origin/main faf81b97). The end state is all 0 (R2). The check enforces 'current count <= ledger
+;; count', and a change that reduces a count trims the ledger in the same change (forgetting to trim is also red).
+;;   scheduled       — the runner wraps with the scheduler's handler (one each for service and task)
+;;   env-handlers    — the runner wraps with the handler set built by the env function (an import path) (one each for service and task)
+;;   recording-layer — the runner adds the effect recorder (service only; by the R5 decision moved to a handler inside the Program, bringing it to 0)
 ;; ---------------------------------------------------------------------------
 
 (val RUNNER-HANDLER-ROSTER
   {"scheduled" 0
    "env-handlers" 0
-   "recording-layer" 0})  ; 2026-09-27 に全部 0(job_entry は (run program) だけ)
+   "recording-layer" 0})  ; all 0 on 2026-09-27 (job_entry is just (run program))
 
 (val JOB-ENTRY "packages/doeff-cluster/src/doeff_cluster/_worker/entry/job_entry.hy")
 
@@ -42,13 +43,13 @@
   {:pre [(: text str)]
    :post [(: % dict)]
    :tags {:context "doeff-cluster-adr" :role "judgment"}}
-  "job_entry の本文で、runner が Program の外から handler を足す呼び出しを種類ごとに数える(針と台帳の共通の物差し)。"
+  "Count, per kind, the calls in the body of job_entry through which the runner adds handlers from outside the Program (the shared measure of the check and the ledger)."
   (dfor name RUNNER-HANDLER-ROSTER
         name (len (re.findall (+ r"\(" (re.escape name) r"\s") text))))
 
 
 (defadr ADR-DOE-CLUSTER-001
-  :title "doeff-cluster の job(service も task も同じ API)が受け取るのは Program の値 1 つ(defk の関数を呼んだ結果)だけ。handler は Program の中の with-handlers で与え、実行器 job_entry は既定の handler を 1 つも足さない(scheduled と env の関数の包みも外す)。service の :env・:config・:env-config をやめ、設定は Program の中の Ask と os.environ を読む handler で読む。宣言が process へ渡す環境変数は宣言の値として持つ"
+  :title "A doeff-cluster job (services and tasks use the same API) accepts exactly one Program value (the result of calling a defk function). Handlers are given by with-handlers inside the Program, and the executor job_entry adds not a single default handler (the scheduled and env-function wrappers are removed too). The service :env, :config and :env-config are dropped; settings are read by Ask inside the Program and a handler reading os.environ. Environment variables the declaration passes to the process are kept as values of the declaration"
   :status "accepted"
   :scope ["packages/doeff-cluster/src/doeff_cluster/_worker/entry/job_entry.hy"
           "packages/doeff-cluster/src/doeff_cluster/_shared/intent/service_model.hy"
@@ -58,139 +59,139 @@
           "docs/adr/defadr_doeff_cluster_001_job_accepts_a_program.hy"]
   :problem
     [(fact
-       "handler や env を job として渡さない。job が受け取るのは Program であり、Program と handler の組ではない — doeff の handler は動的な scope の式だから。doeff の job の実行器は既定の handler を持たない。service だけ別の API を持つ理由は無く、設定が要れば Ask の effect と os.environ を読む handler で読める。")
+       "Handlers and env are not passed as a job. What a job accepts is a Program, not a pair of a Program and handlers — because a doeff handler is a dynamically scoped expression. The doeff job executor has no default handlers. There is no reason for services alone to have a separate API; if settings are needed they can be read with the Ask effect and a handler that reads os.environ.")
      (fact
-       "今の job_entry は service と task で入口が違う: service は --factory(関数の import path)と --config(本体の引数)と --env(handler の組を組む関数の import path)を受け、task は --blob(Program の値)と --env を受ける。どちらも runner が (scheduled (with-handlers <env の handler> program)) で包み、service はさらに記録係(recording-layer)を足す。"
-       :evidence "packages/doeff-cluster/src/doeff_cluster/_worker/entry/job_entry.hy(run-service・task-outcome・env-handlers・recording-layer)")
+       "Today job_entry has different entries for services and tasks: a service takes --factory (an import path of a function), --config (the body's arguments) and --env (an import path of a function that builds the handler set); a task takes --blob (a Program value) and --env. In both, the runner wraps with (scheduled (with-handlers <env handlers> program)), and for services it also adds the recorder (recording-layer)."
+       :evidence "packages/doeff-cluster/src/doeff_cluster/_worker/entry/job_entry.hy (run-service, task-outcome, env-handlers, recording-layer)")
      (fact
-       "service の宣言は :env(env の関数の import path)・:config(本体の引数)・:env-config(env だけが読む設定)を持ち、coordinator へは 2 つを重ねた平たい run.config が渡る。"
-       :evidence "packages/doeff-cluster/src/doeff_cluster/_shared/intent/service_model.hy(ServiceDef の env・config・env-config)")
+       "A service declaration has :env (an import path of the env function), :config (the body's arguments) and :env-config (settings only env reads), and the coordinator receives a flat run.config merging the two."
+       :evidence "packages/doeff-cluster/src/doeff_cluster/_shared/intent/service_model.hy (ServiceDef env, config, env-config)")
      (fact
-       "記録係: 記録係は VM の計装でなく handler の事として扱えるか(algebraic effect の handler は一般にその用途を支えるか)が問われ、支えるなら記録係は handler で作る、と決めた。")
+       "Recorder: the question was whether the recorder can be treated as a handler matter rather than VM instrumentation (whether algebraic effect handlers in general support that use); it was decided that if they do, the recorder is built as a handler.")
      (fact
-       "今の記録係は job_entry の recording-layer が、run.config の record 欄を見て env の handler の一番内側に足す(recording-handler・record_handlers.hy)。記録係は effect を外へ撃ち直して答えを書き留め、継続を再開する『間に入る handler』の形をしている。"
-       :evidence "packages/doeff-cluster/src/doeff_cluster/_worker/entry/job_entry.hy(recording-layer)・packages/doeff-cluster/src/doeff_cluster/_foundation/record_handlers.hy")
+       "Today the recorder is added by job_entry's recording-layer, which looks at the record field of run.config and adds it innermost among the env handlers (recording-handler, record_handlers.hy). The recorder has the shape of an 'in-between handler' that re-raises the effect outward, writes down the answer and resumes the continuation."
+       :evidence "packages/doeff-cluster/src/doeff_cluster/_worker/entry/job_entry.hy (recording-layer), packages/doeff-cluster/src/doeff_cluster/_foundation/record_handlers.hy")
      (fact
-       "残った問い: 記録係に届く前に答えられた effect を記録係は知り得ない。handler の形ではこれをどう解くのが普通か(答えは R5b)。")
+       "Remaining question: the recorder cannot know about effects answered before they reach it. How is this usually solved in the handler form (answer: R5b)?")
      (fact
-       "task は Program の値を encode-program で詰めた文字列(--blob の file)で運び、実行先が decode-program で解く。service は関数の参照(module:attr)と本体の引数の JSON(:config)で運び、実行先が関数を呼んで Program を作る — 同じ job なのに運び方が 2 つある。"
-       :evidence "packages/doeff-cluster/src/doeff_cluster/_shared/intent/remote_model.hy(encode-program・decode-program)・job_entry.hy(run-service・task-outcome)")
+       "A task carries its Program value as a string packed by encode-program (the --blob file), and the destination unpacks it with decode-program. A service is carried as a function reference (module:attr) and the JSON of the body's arguments (:config), and the destination calls the function to build the Program — two ways of carrying for the same job."
+       :evidence "packages/doeff-cluster/src/doeff_cluster/_shared/intent/remote_model.hy (encode-program, decode-program), job_entry.hy (run-service, task-outcome)")
      (fact
-       "置き場所: kind=k3s のような置き場所の指定は宣言に書かない。Program が要る物を宣言するのはよいが、宣言するのは実行器の置き場所ではなく必要な能力である。")
+       "Placement: a placement spec such as kind=k3s is not written in a declaration. A Program may declare what it needs, but what it declares is the capabilities it needs, not where the executor is placed.")
      (fact
-       "今の置き場所の指定は :requires(鍵と値の組)で、coordinator が worker のラベルと 1 つずつ等しいかを照らす(labels-satisfy)。書かれている値は置き場所の名前で、doeff-cluster の例と検は {\"kind\" \"k3s\"}、agora は {\"role\" \"agent-exp\"}(実験用の namespace の印)。"
-       :evidence "packages/doeff-cluster/src/doeff_cluster/_coordinator/core/cluster_policy.hy(labels-satisfy)・service_model.hy の頭の註(:requires {\"kind\" \"k3s\"})・packages/doeff-cluster/tests/test_detached.hy・agora-controllers controllers/runtime_env/declare.hy と controllers/agora_sim/tests/test_emulated_runtime_env_sender.hy(Requirement \"role\" \"agent-exp\")")
+       "Today's placement spec is :requires (key-value pairs), which the coordinator compares one by one for equality with worker labels (labels-satisfy). The values written are placement names: doeff-cluster's examples and checks use {\"kind\" \"k3s\"}, agora uses {\"role\" \"agent-exp\"} (the mark of the experimental namespace)."
+       :evidence "packages/doeff-cluster/src/doeff_cluster/_coordinator/core/cluster_policy.hy (labels-satisfy), the header comment of service_model.hy (:requires {\"kind\" \"k3s\"}), packages/doeff-cluster/tests/test_detached.hy, agora-controllers controllers/runtime_env/declare.hy and controllers/agora_sim/tests/test_emulated_runtime_env_sender.hy (Requirement \"role\" \"agent-exp\")")
      (fact
-       "移行: 旧い宣言は一切受け付けない。新旧が並ぶと、宣言の全体が紛らわしくなるため。")
+       "Migration: old declarations are not accepted at all. If old and new coexist, the declarations as a whole become confusing.")
      (fact
-       "再生が記録と食い違った時、今の再生の handler は ReplayDiverged を上げて止まる(再生の分岐)。"
-       :evidence "packages/doeff-cluster/src/doeff_cluster/_foundation/record_log.hy(ReplayDiverged)・record_handlers.hy・replay_main.hy")]
+       "When a replay disagrees with the record, today's replay handler raises ReplayDiverged and stops (replay divergence)."
+       :evidence "packages/doeff-cluster/src/doeff_cluster/_foundation/record_log.hy (ReplayDiverged), record_handlers.hy, replay_main.hy")]
   :context
     [(interpretation
-       "doeff の handler は動的な scope の式であり、Program の外に「handler の組」を別の値として持つと、同じ Program が実行器ごとに違う意味になる。handler を Program の中の with-handlers に置けば、job の意味は Program の値だけで決まり、手元の run・模擬・cluster の実行が同じ値を同じ意味で走らせる。")
+       "A doeff handler is a dynamically scoped expression; if a 'handler set' is held as a separate value outside the Program, the same Program means different things on different executors. If handlers are placed in with-handlers inside the Program, a job's meaning is decided by the Program value alone, and a local run, the simulation and the cluster run the same value with the same meaning.")
      (interpretation
-       "runner の既定の handler(scheduler・env の組)は、Program が自分で並べるべき物を実行器が暗黙に足している形で、どれが効いているかが Program から読めない。既定を 0 にすれば、足りない handler は Program の中で未処理の effect として表に出る。")
+       "The runner's default handlers (the scheduler, the env set) are the executor implicitly adding what the Program should list itself, and which ones are in effect cannot be read from the Program. With zero defaults, a missing handler surfaces as an unhandled effect inside the Program.")
      (interpretation
-       "設定を宣言の欄(:config・:env-config)で渡す形は、設定を読む専用の口を job API に増やす。設定の読みは Ask の effect と、それに答える os.environ を読む handler で書けるので、service だけ別の API を持つ理由は無い。process へ渡す環境変数そのものは、宣言の値(どの process に何を渡すか)として残す。")
+       "Passing settings through declaration fields (:config, :env-config) adds a dedicated settings channel to the job API. Reading settings can be written with the Ask effect and a handler answering it by reading os.environ, so there is no reason for services alone to have a separate API. The environment variables passed to the process themselves stay as values of the declaration (which process gets what).")
      (interpretation
-       "記録係より内側(Program 側)で答えられた effect は記録係に届かない。それでも再生が成り立つのは、内側の handler が決定的な場合だけ — 同じ入力(記録係が境目で記録した答え)から同じ計算で同じ答えを出し直せるからである。これは Temporal の『決定的なワークフロー + activity の結果の記録』、rr の『非決定の入力だけを記録する』と同じ考え方で、非決定(時計・乱数・I/O)をすべて境目の外(土台の handler)へ押し出せば、境目の記録だけで全体を再生できる。")]
+       "Effects answered inside the recorder (on the Program side) never reach it. Replay still works only when the inner handlers are deterministic — because they can reproduce the same answers from the same inputs (the answers the recorder recorded at the boundary) by the same computation. This is the same idea as Temporal's 'deterministic workflow + recorded activity results' and rr's 'record only nondeterministic input': if all nondeterminism (clock, randomness, I/O) is pushed outside the boundary (to the foundation handlers), recording at the boundary alone is enough to replay the whole.")]
   :decision
-    [(rule R1 "doeff-cluster の job が受け取るのは Program の値 1 つ(defk の関数を呼んだ結果)だけ。Program と handler の組を別々に受け取らない。handler は Program の中の with-handlers で与える。")
-     (rule R2 "実行器 job_entry は既定の handler を 1 つも足さない。今の scheduled の包みと env の関数(--env)の包みも外す。")
-     (rule R3 "service と task は同じ API(Program の値 1 つ)で起こす。service だけの --factory・--config の入口はやめる。")
-     (rule R3b "宣言の中の Program の値は、task と同じく詰めた文字列(encode-program / decode-program)で運ぶ。service と task で運び方を分けない。読みやすさは declare の表示で補う — 詰めた Program を解いて、呼んだ関数の名と引数を印字する。handler の値は宣言に入れず、defk の本体の中(with-handlers)で作る。戻し方: 関数の参照(module:attr)+ 引数の JSON を宣言に持ち、runner がその場で呼んで Program を作る形へ戻す(2026-09-27 追加)。")
-     (rule R4 "service の宣言の :env・:config・:env-config をやめる。設定は Program の中の Ask と、それに答える os.environ を読む handler(Program の側で並べる)で読む。宣言が process へ渡す環境変数は、宣言の値として持つ。")
-     (rule R4b "Program の宣言が書くのは必要な能力の名前(:needs #{\"claude-cli\" \"pg-network\"} など)だけで、置き場所の名前(kind=k3s・role=agent-exp・機体の名前)は書かない。worker が提供する能力はクラスタの設定(コードの外)で名乗り、coordinator は 必要 ⊆ 提供 の worker に置く。土台の handler も自分の要る能力を :needs で名乗り、それが Program の宣言の :needs に含まれていなければ doeff-linter の違反とする。会社の資格を使う土台は \"company-machine\" を名乗り、会社の機体の worker だけがそれを提供する — 会社の資格の境界を置き場所の仕組みが保証する。今の :requires(worker のラベルとの等しさの照合)は :needs に置き換える。戻し方: :needs を :requires(鍵と値の組)へ戻し、labels-satisfy の照合へ戻す(2026-09-27 追加)。")
-     (rule R7 "旧い宣言(service の :env・:config・:env-config・:requires、env の関数、declare の --config)を受け付ける移行の期間は置かない。新しい API(Program の値 1 つ・:needs)だけにし、旧い形は宣言の時点で理由つきで断る(黙って読み替えない)。使い手(agora-controllers)の書き直しは同じ切り替えで行う。理由: 旧い形と新しい形が並んで通ると、どちらが正しい書き方か、どの宣言がどちらの意味で動いているかが、読み手にも linter にも分からなくなる。戻し方: 旧い欄を受ける読みを足し戻し、新旧を併存させる(この条を足した commit の revert — 旧い宣言は再び断られなくなるが、新しい API の実装は別の便なので残る)(2026-09-27 追加)。")
-     (rule R5 "記録と再生は handler で行う(2026-09-27 決定 — 旧文『未決・案 A = Program の側で包む / 案 B = 実行器の観測の口』を置き換える)。形は今の effect-recorder と同じ間に入る handler: 記録は effect を外へ撃ち直して答えを書き留め、継続を再開する。再生は同じ場所で記録から答える。置き場は Program の中の with-handlers で、翻訳の handler と土台の handler の間(外の世界との境目 — 汎用の effect だけを記録する)。記録か再生かは置く handler で選び、どちらを置くかは Ask と os.environ を読む handler で決める。runner は記録係を差し込まない(今の recording-layer と run.config の record 欄をやめる)。WithObserve(見るだけで答えを見ない)はこの用途に使わず、tracing・ログの用途に限る。")
-     (rule R5b "記録係より内側(Program 側 — 業務の handler・翻訳の handler)の handler は決定的でなければならない。時計・乱数・I/O を自分で読まず、汎用の effect にして記録係の下の土台の handler で答えさせる。これで記録係に届かない effect は再生でも同じ計算で答え直され、境目の記録だけで再生が成り立つ。守りは doeff-linter の DOEFF106(生の副作用に直に触る定義は土台の層にだけ置く)で、破れは再生の分岐(ReplayDiverged)として出る。scheduler の並行の順番(どの task が先に進むか)は再生で決定的にならないので、live の扱い(順番の突き合わせ)で扱う(2026-09-27 追加)。")
-     (rule R6 "移行の間、runner が足している handler の呼び出しは RUNNER-HANDLER-ROSTER の数を超えない(新設は赤)。減らした便は同じ便で台帳を削る。")
-     (rule R8 "sim-cluster・手元の 1 台の cluster・k3s の cluster は同じ API(同じ入口・同じ宣言・同じ Program)で試す。置き場所の違いは handler(土台の handler の組)が吸い、命令の引数・環境の名の分岐で切り替えない(2026-10-02 追加 — 手元と cluster で試し方が違わないよう、違いは命令の引数でなく handler が吸う)。dotfiles ADR-DOTFILES-027 R-ca36606c と同じ決め — 命令の側の助言はそちらのルールが運ぶ。R4b(置き場所の名前を宣言に書かない)と同じ向きの、試し方の側の決め。追補(2026-10-03・戻せる決め・この決めの適用): (1) テストの「宣言する・準備ができるのを待つ・落とす」を、テスト専用の道具ではなく doeff-cluster の契約の effect として持つ。(2) 配備の土台は --foundation の引数でなく「型 → 土台」の表で選ぶ。(3) 壊すテスト(落とす・ネットワークを切る)は k3s の handler が答えず、sim-cluster と手元の 1 台の cluster で試す。実装は sim と手元の 1 台の分が milestone L(引数は足さず減らす・古い引数は使い手の付け替えが main に入ったら消す)、k3s の handler の分が milestone O(配らない)。戻し方 = 引数で分ける入口へ戻すなら実装の変更を revert する。場面で出る助言は dotfiles のルール cluster-kind-is-chosen-by-handler-table-not-cli-arg と breaking-tests-stay-off-k3s が運ぶ。")]
+    [(rule R1 "A doeff-cluster job accepts exactly one Program value (the result of calling a defk function). It does not accept a Program and a set of handlers separately. Handlers are given by with-handlers inside the Program.")
+     (rule R2 "The executor job_entry adds not a single default handler. Today's scheduled wrapper and env-function (--env) wrapper are removed too.")
+     (rule R3 "Services and tasks are started through the same API (one Program value). The service-only --factory and --config entries are dropped.")
+     (rule R3b "A Program value in a declaration is carried, as for tasks, as a packed string (encode-program / decode-program). Services and tasks do not differ in how they are carried. Readability is supplied by declare's display — it unpacks the packed Program and prints the called function's name and arguments. Handler values are not put in the declaration; they are built inside the defk body (with-handlers). Rollback: go back to holding a function reference (module:attr) + argument JSON in the declaration, with the runner calling it on the spot to build the Program (added 2026-09-27).")
+     (rule R4 "The service declaration's :env, :config and :env-config are dropped. Settings are read by Ask inside the Program and a handler answering it by reading os.environ (listed on the Program side). Environment variables the declaration passes to the process are kept as values of the declaration.")
+     (rule R4b "A Program's declaration writes only the names of the capabilities it needs (:needs #{\"claude-cli\" \"pg-network\"} and so on), never placement names (kind=k3s, role=agent-exp, machine names). The capabilities a worker provides are declared in the cluster configuration (outside the code), and the coordinator places a job on a worker with needed ⊆ provided. Foundation handlers also declare the capabilities they need with :needs, and if those are not included in the :needs of the Program's declaration it is a doeff-linter violation. A foundation that uses company credentials declares \"company-machine\", and only workers on company machines provide it — the placement mechanism guarantees the company credential boundary. Today's :requires (equality matching against worker labels) is replaced by :needs. Rollback: return :needs to :requires (key-value pairs) and to labels-satisfy matching (added 2026-09-27).")
+     (rule R7 "There is no migration period accepting old declarations (service :env, :config, :env-config, :requires, env functions, declare's --config). Only the new API (one Program value, :needs) remains, and old forms are refused at declaration time with a reason (not silently reinterpreted). The user (agora-controllers) is rewritten in the same switch. Reason: if old and new forms both pass, neither readers nor the linter can tell which is the correct way to write it, or which declaration runs with which meaning. Rollback: add back the reading of the old fields and let old and new coexist (revert the commit that added this rule — old declarations are no longer refused, but the new API's implementation was a separate change and stays) (added 2026-09-27).")
+     (rule R5 "Recording and replay are done by handlers (decided 2026-09-27 — replaces the old text 'undecided: option A = wrap on the Program side / option B = an observation hook of the executor'). The form is an in-between handler like today's effect-recorder: recording re-raises the effect outward, writes down the answer and resumes the continuation. Replay answers from the record at the same place. It is placed in with-handlers inside the Program, between the translation handlers and the foundation handlers (the boundary with the outside world — only generic effects are recorded). Recording versus replay is chosen by which handler is placed, and which one to place is decided by Ask and a handler reading os.environ. The runner does not insert the recorder (today's recording-layer and the record field of run.config are dropped). WithObserve (only watches, does not see answers) is not used for this; it is limited to tracing and logging.")
+     (rule R5b "Handlers inside the recorder (on the Program side — business handlers and translation handlers) must be deterministic. They do not read the clock, randomness or I/O themselves; they make these generic effects answered by the foundation handlers below the recorder. Then effects that do not reach the recorder are re-answered by the same computation on replay, and recording at the boundary alone is enough for replay. The guard is doeff-linter's DOEFF106 (definitions that touch raw side effects directly are placed only in the foundation layer), and a breach shows as replay divergence (ReplayDiverged). The order of the scheduler's concurrency (which task advances first) is not deterministic on replay, so it is handled as live (order matching) (added 2026-09-27).")
+     (rule R6 "During migration, the handler calls the runner adds do not exceed the counts in RUNNER-HANDLER-ROSTER (new ones are red). A change that reduces them trims the ledger in the same change.")
+     (rule R8 "sim-cluster, a local single-node cluster and the k3s cluster are tested through the same API (same entry, same declarations, same Program). Differences in placement are absorbed by handlers (the foundation handler set), not switched by command arguments or environment-name branches (added 2026-10-02 — so that testing locally and on the cluster does not differ, the difference is absorbed by handlers, not command arguments). The same decision as dotfiles ADR-DOTFILES-027 R-ca36606c — the command-side advice is carried by that rule. A testing-side decision in the same direction as R4b (no placement names in declarations). Addendum (2026-10-03, a reversible decision, an application of this one): (1) tests' 'declare, wait until ready, take down' is held as doeff-cluster contract effects, not as test-only tools. (2) The deployment foundation is chosen by a 'type → foundation' table, not by the --foundation argument. (3) Destructive tests (take down, cut the network) are not answered by the k3s handler; they are tested on sim-cluster and the local single-node cluster. The implementation for sim and the local single node is milestone L (no arguments added, arguments reduced; old arguments are removed once the users' re-wiring is on main), and the k3s handler part is milestone O (not shipped). Rollback = to go back to entries split by arguments, revert the implementation change. The situational advice is carried by the dotfiles rules cluster-kind-is-chosen-by-handler-table-not-cli-arg and breaking-tests-stay-off-k3s.")]
   :laws
     [(law job-entry-adds-no-handler
-       :statement "for_all job j (service / task): job_entry が j を走らせる時に足す handler の数 = 0 — j の Program の外で効く handler は無い"
+       :statement "for_all job j (service / task): the number of handlers job_entry adds when running j = 0 — no handler takes effect outside j's Program"
        :counterexamples
-         [(counterexample "job_entry が (scheduled (with-handlers (env-handlers …) program)) で包む — Program の外で scheduler と env の handler が効く(2026-09-27 の本線の形)")
-          (counterexample "runner が『既定で』時計や記録係を足す — Program を読んでもどの handler が効くか分からない")]
+         [(counterexample "job_entry wraps with (scheduled (with-handlers (env-handlers …) program)) — the scheduler and env handlers take effect outside the Program (the mainline form as of 2026-09-27)")
+          (counterexample "The runner adds a clock or a recorder 'by default' — reading the Program does not tell which handlers are in effect")]
        :enforced-by ["test-adr-doe-cluster-001-runner-handler-ratchet"]
-       :wiring "配線済み(2026-09-27)— 台帳の数は全部 0 で、job_entry が scheduled・env の関数・記録係の包みを 1 つでも書けば針が赤になる")
+       :wiring "Wired (2026-09-27) — every ledger count is 0, and the check turns red if job_entry writes even one scheduled, env-function or recorder wrapper")
      (law service-and-task-share-one-entry
-       :statement "for_all job j: j の入口の引数は Program の値 1 つ — service と task で入口の形が同じ"
+       :statement "for_all job j: the argument of j's entry is one Program value — the entry has the same form for services and tasks"
        :counterexamples
-         [(counterexample "service は --factory と --config、task は --blob で起こす — 同じ job なのに入口が 2 つある(2026-09-27 の本線の形)")
-          (counterexample "service の宣言に :env-config を書いて設定を渡す — 設定は Program の中の Ask と os.environ を読む handler で読める")]
+         [(counterexample "A service is started with --factory and --config and a task with --blob — two entries for the same job (the mainline form as of 2026-09-27)")
+          (counterexample "Passing settings by writing :env-config in a service declaration — settings can be read by Ask inside the Program and a handler reading os.environ")]
        :enforced-by ["test-adr-doe-cluster-001-one-entry-takes-a-program"]
-       :wiring "配線済み(2026-09-27)— job_entry の service・task・probe の入口が --factory・--env・--config を受けないことを針が検める")
+       :wiring "Wired (2026-09-27) — the check verifies that job_entry's service, task and probe entries do not accept --factory, --env or --config")
      (law runner-inserts-no-recorder
-       :statement "for_all job j: j の effect の記録・再生の handler は j の Program の中の with-handlers(翻訳の handler と土台の handler の間)に在り、runner(job_entry)は記録係を差し込まない — RUNNER-HANDLER-ROSTER の recording-layer は 0"
+       :statement "for_all job j: the handlers recording and replaying j's effects are in with-handlers inside j's Program (between the translation handlers and the foundation handlers), and the runner (job_entry) does not insert a recorder — recording-layer in RUNNER-HANDLER-ROSTER is 0"
        :counterexamples
-         [(counterexample "job_entry が run.config の record 欄を見て、env の handler の一番内側に recording-handler を足す(2026-09-27 の本線の形)— 記録の有無が Program から読めない")
-          (counterexample "記録に WithObserve を使う — 見るだけで答えを見ないので、再生に要る答えが残らない(WithObserve は tracing・ログの用途に限る)")
-          (counterexample "記録係を土台の handler の外側に置く — 翻訳の前の業務の effect まで記録し、外の世界との境目の汎用の effect だけを記録する形にならない")]
+         [(counterexample "job_entry looks at the record field of run.config and adds recording-handler innermost among the env handlers (the mainline form as of 2026-09-27) — whether recording happens cannot be read from the Program")
+          (counterexample "Using WithObserve for recording — it only watches and does not see answers, so the answers replay needs are not kept (WithObserve is limited to tracing and logging)")
+          (counterexample "Placing the recorder outside the foundation handlers — it records business effects before translation, not only the generic effects at the boundary with the outside world")]
        :enforced-by ["test-adr-doe-cluster-001-runner-handler-ratchet"]
-       :wiring "配線済み(2026-09-27)— 台帳の recording-layer は 0 で、job_entry が記録係を足せば針が赤になる。記録係を Program の中に置く形(boundary-recorder)は次の段")
+       :wiring "Wired (2026-09-27) — recording-layer in the ledger is 0, and the check turns red if job_entry adds a recorder. Placing the recorder inside the Program (boundary-recorder) is the next step")
      (law programs-declare-capabilities-not-places
-       :statement "for_all job j: j の宣言の :needs は能力の名前の集合で、置き場所の名前(kind・role・機体の名前)を含まない ∧ j が置かれた worker w について needs(j) ⊆ provides(w) ∧ for_all j の Program が並べる土台の handler f: needs(f) ⊆ needs(j) ∧ (\"company-machine\" ∈ provides(w) ⇔ w は会社の機体)"
+       :statement "for_all job j: the :needs of j's declaration is a set of capability names and contains no placement names (kind, role, machine names) ∧ for the worker w where j is placed, needs(j) ⊆ provides(w) ∧ for_all foundation handler f listed by j's Program: needs(f) ⊆ needs(j) ∧ (\"company-machine\" ∈ provides(w) ⇔ w is a company machine)"
        :counterexamples
-         [(counterexample "service の宣言に :requires {\"kind\" \"k3s\"} を書く — Program が要る物ではなく置き場所を名指し、同じ能力を持つ別の置き場所へ動かせない(2026-09-27 の本線の形)")
-          (counterexample "agora の宣言に role=agent-exp を書いて実験用の namespace を選ぶ — 置き場所の選び方がコードに入る")
-          (counterexample "会社の資格を読む土台の handler を並べた Program が :needs に company-machine を書かない — 会社でない機体の worker に置かれ、会社の資格の境界が破れる(linter の違反)")]
-       :enforced-by ["coordinator の置き方 cluster_policy.placeable(packages/doeff-cluster/tests/test_cluster_policy.hy)"
-                     "declare の土台の :needs の検め service_rules.foundation-needs-refusal(packages/doeff-cluster/tests/test_service_declaration.hy)"
-                     "doeff-linter(土台が並べる handler の :needs の照らし — 規則の番号は未定)"]
-       :wiring "一部配線(2026-09-28)— :needs の宣言(defk・defhandler・defsystem)・coordinator の needs ⊆ provides ∪ derived の置き方・company-machine を worker の自己申告でなく node の label から導く所・declare の土台の :needs ⊆ job の :needs は実装と検がある。土台が並べる handler の :needs の照らし(linter)は未配線")
+         [(counterexample "Writing :requires {\"kind\" \"k3s\"} in a service declaration — it names a placement rather than what the Program needs, and cannot move to another placement with the same capabilities (the mainline form as of 2026-09-27)")
+          (counterexample "Writing role=agent-exp in an agora declaration to choose the experimental namespace — the way of choosing placement enters the code")
+          (counterexample "A Program listing a foundation handler that reads company credentials does not write company-machine in :needs — it gets placed on a worker on a non-company machine and the company credential boundary is breached (a linter violation)")]
+       :enforced-by ["the coordinator's placement cluster_policy.placeable (packages/doeff-cluster/tests/test_cluster_policy.hy)"
+                     "declare's check of foundation :needs, service_rules.foundation-needs-refusal (packages/doeff-cluster/tests/test_service_declaration.hy)"
+                     "doeff-linter (matching the :needs of the handlers a foundation lists — rule number not yet assigned)"]
+       :wiring "Partly wired (2026-09-28) — the :needs declarations (defk, defhandler, defsystem), the coordinator's needs ⊆ provides ∪ derived placement, deriving company-machine from the node label rather than the worker's self-report, and declare's foundation :needs ⊆ job :needs have implementations and checks. Matching the :needs of the handlers a foundation lists (linter) is not wired")
      (law old-declarations-are-refused
-       :statement "for_all 宣言 d: d が旧い欄(:env・:config・:env-config・:requires)か env の関数か declare の --config を使う ⇒ 宣言の時点で理由の文つきで断られる(新しい API への読み替えも、警告だけで通すことも無い)"
+       :statement "for_all declaration d: d uses an old field (:env, :config, :env-config, :requires), an env function, or declare's --config ⇒ it is refused at declaration time with a reason text (it is neither reinterpreted into the new API nor passed with just a warning)"
        :counterexamples
-         [(counterexample "移行の間だけ :requires を :needs に読み替えて通す — 同じ系に新旧の宣言が並び、どちらの意味で置かれたかが宣言から読めない")
-          (counterexample "旧い :env を受けて警告を出すだけにする — 警告は読まれず、旧い形が残り続ける")
-          (counterexample "doeff-cluster だけ先に切り替え、agora-controllers の書き直しを後の便に回す — 本線の利用者が壊れた宣言のまま残る(同じ切り替えで行う)")]
-       :enforced-by ["packages/doeff-cluster/tests/test_old_declarations.hy ほか — 旧い形を断る入口ごとの反例(宣言の構成子・defsystem・declare の CLI・資源の口・PUT /jobs・保存の読み直し・heartbeat・worker の起動・task の本文・効果の構成子・job_entry・replay_main・probe)"]
-       :wiring "配線済み(2026-09-28)— doeff-cluster の旧い形を断る入口の全部に反例の検がある。agora-controllers の宣言の CLI の入口は書き直しで同じく断る")
+         [(counterexample "Reinterpreting :requires as :needs and passing it during migration only — old and new declarations coexist in one system, and the declaration does not tell with which meaning it was placed")
+          (counterexample "Accepting the old :env and only emitting a warning — warnings are not read and the old form lives on")
+          (counterexample "Switching doeff-cluster first and leaving the agora-controllers rewrite to a later change — the mainline user is left with broken declarations (done in the same switch)")]
+       :enforced-by ["packages/doeff-cluster/tests/test_old_declarations.hy and others — counterexamples per entry that refuses old forms (declaration constructors, defsystem, the declare CLI, the resource API, PUT /jobs, re-reading the store, heartbeat, worker startup, task body, effect constructors, job_entry, replay_main, probe)"]
+       :wiring "Wired (2026-09-28) — every doeff-cluster entry that refuses old forms has a counterexample check. agora-controllers' declaration CLI entry refuses them likewise through its rewrite")
      (law handlers-inside-the-recorder-are-deterministic
-       :statement "for_all 記録係より内側の handler h: h は時計・乱数・I/O を直に読まない(非決定の入力は汎用の effect として記録係の下の土台の handler が答える)— よって for_all 記録 r: r を再生した計算は、記録係に届かない effect についても記録の時と同じ答えを出し、ReplayDiverged を上げない(scheduler の並行の順番は live の扱いの突き合わせの外)"
+       :statement "for_all handler h inside the recorder: h does not read the clock, randomness or I/O directly (nondeterministic input is answered, as generic effects, by the foundation handlers below the recorder) — hence for_all record r: the computation replaying r gives, even for effects that do not reach the recorder, the same answers as at recording time and does not raise ReplayDiverged (the order of scheduler concurrency is outside, matched by the live handling)"
        :counterexamples
-         [(counterexample "翻訳の handler が time.time() を直に読んで答えを作る — 記録係に届かないので記録に残らず、再生で別の時刻になり分岐する")
-          (counterexample "業務の handler が random で抽選する — 再生で別の値になり、以降の effect の列が記録と食い違う(ReplayDiverged)")
-          (counterexample "Program 側の handler が file を直に読む — 再生の時の file の中身が記録の時と違えば答えが変わる")]
+         [(counterexample "A translation handler reads time.time() directly to build its answer — it does not reach the recorder, so it is not recorded, and the replay gets a different time and diverges")
+          (counterexample "A business handler draws with random — the replay gets a different value and the subsequent effect sequence disagrees with the record (ReplayDiverged)")
+          (counterexample "A Program-side handler reads a file directly — if the file's contents at replay time differ from recording time, the answer changes")]
        :enforced-by ["doeff-linter DOEFF106"]
-       :wiring "未配線(2026-09-27)— DOEFF106 は doeff-linter に未着地(wt/hy-lint-visibility ほか)。破れは実行時に再生の分岐(ReplayDiverged)として出るが、それは事後の検出で針ではない")
+       :wiring "Not wired (2026-09-27) — DOEFF106 has not landed in doeff-linter (wt/hy-lint-visibility and others). A breach shows at runtime as replay divergence (ReplayDiverged), but that is after-the-fact detection, not a check")
      (law every-cluster-is-tested-through-one-api
-       :statement "for_all 試しの置き場所 c ∈ {sim-cluster・手元の 1 台の cluster・k3s の cluster}: c で job を試す入口・宣言・Program は同じで、c の違いは土台の handler の組だけが吸う — 入口の引数や環境の名で code の道を切り替えない(R8)"
+       :statement "for_all test placement c ∈ {sim-cluster, local single-node cluster, k3s cluster}: the entry, declaration and Program used to test a job on c are the same, and the differences of c are absorbed only by the foundation handler set — code paths are not switched by entry arguments or environment names (R8)"
        :counterexamples
-         [(counterexample "k3s で試す時だけ --cluster k3s の引数で job_entry の道を切り替える — 置き場所の違いが handler でなく入口の分岐に入る")
-          (counterexample "手元の 1 台の cluster のために別の命令の入口を作る — 同じ Program が置き場所ごとに別の API で試される")
-          (counterexample "sim-cluster だけ coordinator を抜いて Program を直に回す — 手元のテストが本番の入口を通らない(実例の在る形)")]
-       :enforced-by ["dotfiles の助言 develop-locally-never-wait-for-deployment(ADR-DOTFILES-027 R-ca36606c)"]
-       :wiring "未配線(2026-10-02)— 機械の検は無い(試しの入口が置き場所ごとに分かれていないかを測る針は未設計)。今は書く拍の助言だけ")]
+         [(counterexample "Switching job_entry's path with a --cluster k3s argument only when testing on k3s — the placement difference enters an entry branch instead of a handler")
+          (counterexample "Making a separate command entry for the local single-node cluster — the same Program is tested through a different API per placement")
+          (counterexample "Skipping the coordinator for sim-cluster only and running the Program directly — local tests do not go through the production entry (a form with a real occurrence)")]
+       :enforced-by ["the dotfiles advice develop-locally-never-wait-for-deployment (ADR-DOTFILES-027 R-ca36606c)"]
+       :wiring "Not wired (2026-10-02) — there is no machine check (a check measuring whether the test entries are split per placement is not designed). For now there is only advice at writing time")]
   :enforcement
     [(deftest test-adr-doe-cluster-001-runner-handler-ratchet
-       ;; 針: job_entry が Program の外から handler を足す呼び出しは台帳を超えない(新設は赤)・台帳の削り忘れも赤。
+       ;; Check: calls through which job_entry adds handlers from outside the Program do not exceed the ledger (new ones are red); forgetting to trim the ledger is also red.
        (val repo-root (. (Path __file__) parent parent parent))
        (val text (.read-text (/ repo-root JOB-ENTRY) :encoding "utf-8"))
        (val counts (run (count-runner-handler-sites text)))
        (val grown (lfor [name n] (sorted (.items counts))
                          :if (> n (get RUNNER-HANDLER-ROSTER name))
-                         f"{name}: {n} > 台帳 {(get RUNNER-HANDLER-ROSTER name)}"))
+                         f"{name}: {n} > ledger {(get RUNNER-HANDLER-ROSTER name)}"))
        (assert (= grown [])
-               (+ "job_entry が Program の外から足す handler を増やした(ADR-DOE-CLUSTER-001 R2・R6 — "
-                  "handler は Program の中の with-handlers で与える): " (str grown)))
+               (+ "job_entry added more handlers from outside the Program (ADR-DOE-CLUSTER-001 R2, R6 — "
+                  "handlers are given by with-handlers inside the Program): " (str grown)))
        (val stale (lfor [name n] (sorted (.items counts))
                          :if (< n (get RUNNER-HANDLER-ROSTER name))
-                         f"{name}: 実体 {n} < 台帳 {(get RUNNER-HANDLER-ROSTER name)}"))
+                         f"{name}: actual {n} < ledger {(get RUNNER-HANDLER-ROSTER name)}"))
        (assert (= stale [])
-               (+ "台帳の削り忘れ(ADR-DOE-CLUSTER-001 R6 — 減らした便は RUNNER-HANDLER-ROSTER を同じ便で削る): "
+               (+ "Ledger not trimmed (ADR-DOE-CLUSTER-001 R6 — a change that reduces a count trims RUNNER-HANDLER-ROSTER in the same change): "
                   (str stale))))
      (deftest test-adr-doe-cluster-001-one-entry-takes-a-program
-       ;; 針: job_entry の入口は Program の値 1 つだけを受ける — 旧い入口の引数(--factory・--env・--config)が本文に在れば赤(R1・R3)。
+       ;; Check: job_entry's entry accepts only one Program value — red if an old entry argument (--factory, --env, --config) is in the body (R1, R3).
        (val repo-root (. (Path __file__) parent parent parent))
        (val text (.read-text (/ repo-root JOB-ENTRY) :encoding "utf-8"))
        (val old (lfor flag ["--factory" "--env" "--config"]
                       :if (re.search (+ r"add-argument\s+\w+\s+\"" (re.escape flag) "\"") text)
                       flag))
-       (assert (= old []) (+ "job_entry が旧い入口の引数を受けている(ADR-DOE-CLUSTER-001 R1・R3): " (str old))))
+       (assert (= old []) (+ "job_entry accepts old entry arguments (ADR-DOE-CLUSTER-001 R1, R3): " (str old))))
      (deftest test-adr-doe-cluster-001-ratchet-measure
-       ;; 物差しの実演: 包みの呼び出しは数え、同じ名の定義や別の名は数えない。
+       ;; Demonstration of the measure: wrapper calls are counted; a definition with the same name or a different name is not.
        (val sample (+ "(defn env-handlers [env config ctx] None)\n"
                        "(run (scheduled (with-handlers (env-handlers e {} ctx) program)))\n"
                        "(recording-layers x)\n"))

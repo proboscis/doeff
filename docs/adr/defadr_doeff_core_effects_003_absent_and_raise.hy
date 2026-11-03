@@ -1,67 +1,67 @@
-;;; Executable ADR(決定): 想定内の「不在」と「失敗」を、意味で分けた 2 つの effect — Absent(Maybe の側)と Raise(Result の側)— にする。
-;;; 出す側は最初から Absent / Raise を出し(Koka と同じ素直な書き方)、(<- x (危ない呼び)) の x は成功の値 T だけになる。答えを
-;;; Maybe / Result の値で受けたい所だけ、境目の handler(maybe・result・on-raise・absent-as)で畳む。effect に答える handler は値で答え、
-;;; 不在と失敗への変換は呼び手の側の <- が defeffect の宣言に従って行う。関数が出す effect は手で書かずに推論する。
+;;; Executable ADR (decision): expected "absence" and "failure" become 2 effects separated by meaning — Absent (the Maybe side) and Raise (the Result side).
+;;; The producing side performs Absent / Raise from the start (the same plain style as Koka), and the x in (<- x (risky-call)) is only the success value T. Only where
+;;; the answer should be received as a Maybe / Result value is it folded by a boundary handler (maybe, result, on-raise, absent-as). Handlers that answer effects answer with values,
+;;; and the conversion to absence and failure is done by <- on the caller's side following the defeffect declaration. The effects a function performs are inferred, not written by hand.
 ;;;
-;;; 論点は :problem の fact に在る(案を採ったのは論点 9)。状態は決定。実装は段階 1〜5(R16)で進め、この版で段階 1 と段階 2 を実装した:
-;;;   段階 1 = Absent / Raise の effect・境目の handler・defhandler の終わる節 (finish) と節の終わり方の検め(R15)
-;;;   段階 2 = defeffect の答えの宣言(:absent / :failure / :value)と、<- / ! の変換(:absent・Result / Option の値を開く形を含む)
-;;; 段階 3(doeff-records の effect に宣言を付ける)と段階 5(agora の呼び手の書き換え)は同じ版で effect ごとに切り替える
-;;; — 手順は R14。
+;;; The points at issue are in the :problem facts (the proposal was adopted at point 9). Status: decided. Implementation proceeds in stages 1 to 5 (R16); this version implements stages 1 and 2:
+;;;   stage 1 = the Absent / Raise effects, the boundary handlers, defhandler's ending clause (finish), and the check of how clauses end (R15)
+;;;   stage 2 = defeffect's answer declaration (:absent / :failure / :value) and the <- / ! conversion (including :absent and the shape that opens Result / Option values)
+;;; Stage 3 (attaching declarations to doeff-records' effects) and stage 5 (rewriting agora's callers) are switched per effect in the same change
+;;; — the procedure is R14.
 ;;;
-;;; 改訂の経緯(2026-09-27・書いている間): 初めの案は「成功だけを見る」範囲を字面のスコープ(macro success-only)で宣言する形だった。
-;;; 論点 7(success-only は要らないか)を受けて、f143ee92 の席が success-only を消す決定をした(戻せる決定 — R3)。
-;;; 同じ行の意味が呼び手で変わらない、という success-only の狙いは、出す側が最初から Absent / Raise を出す形で満たされる。
-;;; 2026-09-28: 提案から決定へ。決定・段階の計画(R16)・4 種類の失敗の割り当て(R17)・handler の節の終わり方(R15 —
-;;; 再開の書き忘れの懸念から)を足し、段階 1・2 の実装で決めた戻せる決定を :context の最後の interpretation に記した。
+;;; Revision history (2026-09-27, while writing): the initial proposal declared the 'look only at success' range as a lexical scope (macro success-only).
+;;; In response to point 7 (is success-only unnecessary?), the f143ee92 seat decided to remove success-only (a reversible decision — R3).
+;;; success-only's aim, that the meaning of the same line does not change with the caller, is met by the producing side performing Absent / Raise from the start.
+;;; 2026-09-28: from proposal to decision. Added the decision, the stage plan (R16), the assignment of the 4 kinds of failure (R17), and how handler clauses end (R15 —
+;;; from the concern about forgetting to resume), and recorded the reversible decisions made in implementing stages 1 and 2 in the last interpretation of :context.
 ;;;
-;;; 置き場の判断: effect の語彙(Absent・Raise)と境目の handler は Try と同じ doeff-core-effects に置く物なので、ADR-DOE-CORE-EFFECTS の
-;;; 3 つ目にした。<- の変換と defeffect の宣言と defhandler の終わる節は doeff-hy、effect の推論は doeff-effect-analyzer、規則は
-;;; doeff-linter の仕事で、:scope に並べる。
+;;; Placement: the effect vocabulary (Absent, Raise) and the boundary handlers belong in doeff-core-effects, the same place as Try, so this is the
+;;; third ADR-DOE-CORE-EFFECTS. The <- conversion, defeffect's declaration, and defhandler's ending clause are doeff-hy's job; effect inference is doeff-effect-analyzer's; rules are
+;;; doeff-linter's; they are listed in :scope.
 ;;;
-;;; 戻し方: 段階 2 の commit を revert すると <- は今までの (yield e) に戻り、defeffect の :absent / :failure / :value は知らない鍵になる。
-;;; 段階 1 の commit を revert すると Absent / Raise・境目の handler・finish が消え、defhandler の節の検めは提案の前の形に戻る。
-;;; 宣言を持つ effect はまだ無い(段階 3 の前)ので、どちらの revert も既存の呼び手の振る舞いを変えない。
+;;; Rollback: reverting the stage 2 commit returns <- to the previous (yield e), and defeffect's :absent / :failure / :value become unknown keys.
+;;; Reverting the stage 1 commit removes Absent / Raise, the boundary handlers, and finish, and defhandler's clause check returns to its pre-proposal shape.
+;;; No effect has a declaration yet (before stage 3), so neither revert changes the behavior of existing callers.
 ;;;
 ;;; ---------------------------------------------------------------------------
-;;; 書き方の例(論点 5 への答え — 段階 3 の後の形。revise-input は agora-controllers の関数)
+;;; Writing examples (the answer to point 5 — the shape after stage 3. revise-input is an agora-controllers function)
 ;;; ---------------------------------------------------------------------------
 ;;;
-;;; Before — agora-controllers の本線 eb2abb27 の controllers/protocol/conversation_input.hy:73-91(そのまま):
+;;; Before — controllers/protocol/conversation_input.hy:73-91 on agora-controllers mainline eb2abb27 (as is, with its strings translated):
 ;;;
 ;;;   (defk revise-input [revise]
 ;;;     {:pre [(: revise InputRevise)] :post [(: % (| WriteLanded WriteConflict WriteUnreachable))]
 ;;;      :effects [ReadRow PutRow ReadPlacedInput] :tags {:context "conversation-input" :role "protocol"}}
-;;;     "直しの書きを写すため: …"
+;;;     "To copy the revision write: …"
 ;;;     (<- body (| TypedRow Missing Unreachable) (read-typed PLACED-INPUT-TYPE #(revise.id)))
 ;;;     (match body
 ;;;       (Unreachable) (return (WriteUnreachable :detail body.detail))
-;;;       (Missing) (return (WriteConflict :detail (+ revise.id " の本文の行が無い")))
+;;;       (Missing) (return (WriteConflict :detail (+ revise.id " has no body row")))
 ;;;       _ None)
 ;;;     (<- placed (| PlacedInput None) (ReadPlacedInput :agent body.value.agent :ref revise.id))
 ;;;     (when (or (!= body.version revise.version) (is placed None) (!= placed.state LedgerState.PENDING))
-;;;       (return (WriteConflict :detail (+ revise.id " は読んだ後に変わった"))))
+;;;       (return (WriteConflict :detail (+ revise.id " changed after it was read"))))
 ;;;     (<- written (| BodyRecorded BodyUnreachable BodyConflict) (revise-placed-input revise.id revise.text revise.edit-id))
 ;;;     (match written
 ;;;       (BodyRecorded) (WriteLanded)
 ;;;       (BodyConflict) (WriteConflict :detail written.detail)
 ;;;       (BodyUnreachable) (WriteUnreachable :detail written.detail)))
 ;;;
-;;; After — 段階 1・2 で実装した形(成功の道だけを書き、失敗は 1 か所の on-raise で業務の答えの型へ畳む):
+;;; After — the shape implemented in stages 1 and 2 (write only the success path, and fold failures into the business answer type with a single on-raise):
 ;;;
 ;;;   (defk revise-input [revise]
 ;;;     {:pre [(: revise InputRevise)] :post [(: % (| WriteLanded WriteConflict WriteUnreachable))]
 ;;;      :tags {:context "conversation-input" :role "protocol"}}
-;;;     "直しの書きを写すため: …"
+;;;     "To copy the revision write: …"
 ;;;     (<- answer
 ;;;         (on-raise
 ;;;           (do!
 ;;;             (<- body (read-typed PLACED-INPUT-TYPE #(revise.id))
-;;;                 :absent (Conflict (+ revise.id " の本文の行が無い")))
+;;;                 :absent (Conflict (+ revise.id " has no body row")))
 ;;;             (<- placed (ReadPlacedInput :agent body.value.agent :ref revise.id)
-;;;                 :absent (Conflict (+ revise.id " は読んだ後に変わった")))
+;;;                 :absent (Conflict (+ revise.id " changed after it was read")))
 ;;;             (unless (and (= body.version revise.version) (= placed.state LedgerState.PENDING))
-;;;               (<- (Raise (Conflict (+ revise.id " は読んだ後に変わった")))))
+;;;               (<- (Raise (Conflict (+ revise.id " changed after it was read")))))
 ;;;             (<- (revise-placed-input revise.id revise.text revise.edit-id))
 ;;;             (WriteLanded))
 ;;;           (Conflict d)        (WriteConflict :detail d)
@@ -70,31 +70,31 @@
 ;;;           (BodyUnreachable d) (WriteUnreachable :detail d)))
 ;;;     answer)
 ;;;
-;;;   - 外から見た型は Before と同じ: revise-input : InputRevise → Program[WriteLanded | WriteConflict | WriteUnreachable] ! {ReadRow, PutRow,
-;;;     ReadPlacedInput}(Raise は on-raise が全部畳むので残らない)。手書きの :effects は推論(R13)に置き換わって消える。
-;;;   - revise-placed-input は版の負けと届かないを BodyConflict・BodyUnreachable で出すので、on-raise はその 2 つも受ける。受けないと
-;;;     Raise[BodyConflict | BodyUnreachable] が外へ漏れ、外から見た型が変わる(推論がそれを見せる)。
-;;;   - Conflict はこの例のための失敗の型(説明の文 d を持つ)で、doeff-records の Conflict(current)とは別。
-;;;   - :absent の受け手は on-raise の内側(束ねる行)に置かれるので、それが出す Raise は on-raise に届く(R4 の落とし穴には当たらない)。
-;;;   - on-raise の本文は Program の式 1 つ(複数の行は do! で包む)。maybe・result は設定の無い handler の値で(ADR-DOE-API-002 R1)、(maybe (ReadRow …)) のように宣言を持つ
-;;;     effect をそのまま渡してもよい(開いてから畳む)。
+;;;   - The type seen from outside is the same as Before: revise-input : InputRevise → Program[WriteLanded | WriteConflict | WriteUnreachable] ! {ReadRow, PutRow,
+;;;     ReadPlacedInput} (Raise does not remain because on-raise folds all of it). The hand-written :effects is replaced by inference (R13) and disappears.
+;;;   - revise-placed-input reports losing on version and being unreachable as BodyConflict and BodyUnreachable, so on-raise catches those 2 as well. If it did not,
+;;;     Raise[BodyConflict | BodyUnreachable] would leak outward and the type seen from outside would change (inference shows this).
+;;;   - Conflict is a failure type for this example (it carries a description text d), distinct from doeff-records' Conflict (current).
+;;;   - The :absent receiver is placed inside on-raise (on the bind line), so the Raise it performs reaches on-raise (it does not hit R4's pitfall).
+;;;   - The body of on-raise is a single Program expression (wrap multiple lines in do!). maybe and result are values of handlers without settings (ADR-DOE-API-002 R1), and an effect
+;;;     with a declaration may be passed directly, as in (maybe (ReadRow …)) (it is opened and then folded).
 ;;;
-;;; 業務の core では境目を書かない例 — notify-landed(本線には無い名。近い実物は controllers/core/land_notice.hy:53-70 の
-;;; post-notice・notify-outcome で、今は PostMessage の答え Accepted / Rejected / Unavailable を毎回 match で数えに写す):
+;;; An example that writes no boundary in the business core — notify-landed (a name not on the mainline. The close real counterparts are post-notice and notify-outcome in
+;;; controllers/core/land_notice.hy:53-70, which currently map PostMessage's answers Accepted / Rejected / Unavailable to counts with a match every time):
 ;;;
 ;;;   (defk notify-landed [outcome recipient]
 ;;;     {:pre [(: outcome LandOutcome) (: recipient str)] :post [(: % Accepted)]
 ;;;      :tags {:context "land-notice" :role "program"}}
-;;;     "便の結末 1 つを宛先 1 つへ置くため。断りと届かないは Raise のまま外へ出し、扱い方は組み立ての handler に任せる。"
+;;;     "To post one landing outcome to one recipient. Refusals and unreachability go outward as Raise, and how to handle them is left to the composition handlers."
 ;;;     (<- request (notice-request outcome recipient))
 ;;;     (<- (PostMessage request)))
 ;;;
-;;;   - 推論した型: notify-landed : LandOutcome × str → Program[Accepted] ! {Raise[Rejected | Unavailable], PostMessage}
-;;;     (PostMessage の宣言で Accepted を成功・Rejected と Unavailable を失敗とした場合)。
-;;;   - 呼び手は 1 件ずつ Traverse で回し、1 件ごとの失敗の扱いは Traverse の handler(組み立てで選ぶ)が決める。本番 = Rejected は
-;;;     飛ばして数えに載せる・Unavailable はその周期を終えて同じ位置から読み直す。模擬とテスト = 最初の Raise で止め、テストが理由を見る。
-;;;     1 件を飛ばすには 1 件ごとのスコープが要り、それを持つのが Traverse の handler(今は Fail を 1 件ごとに受ける。Raise を受けるのは
-;;;     実装の時に足す)。
+;;;   - Inferred type: notify-landed : LandOutcome × str → Program[Accepted] ! {Raise[Rejected | Unavailable], PostMessage}
+;;;     (when PostMessage's declaration makes Accepted success and Rejected and Unavailable failures).
+;;;   - The caller iterates item by item with Traverse, and per-item failure handling is decided by Traverse's handler (chosen at composition). Production = skip Rejected
+;;;     and add it to the counts, for Unavailable end that cycle and reread from the same position. Simulation and tests = stop at the first Raise and the test looks at the reason.
+;;;     Skipping one item needs a per-item scope, and Traverse's handler holds it (currently it catches Fail per item; catching Raise is added
+;;;     at implementation time).
 
 (require doeff-adr.macros [defadr rule law])
 (import doeff-adr.macros [fact interpretation counterexample])
@@ -113,7 +113,7 @@
 (import doeff-core-effects [try-handler])
 (import doeff-core-effects [Absent Raise]
         doeff-core-effects._effects [Resumption resumption-of])
-(import doeff-core-effects [Raise :as ProbeAliasedRaise])  ; R15 の反例: 名前では Raise と分からない別名
+(import doeff-core-effects [Raise :as ProbeAliasedRaise])  ; R15's counterexample: an alias that cannot be recognized as Raise by name
 (import doeff-core-effects [maybe result RaiseCase]
         doeff-core-effects._outcomes [open-bind Outcomes])
 (import doeff-records [ReadRowAnswer Row Missing Unreachable])
@@ -128,59 +128,59 @@
 
 
 ;; ---------------------------------------------------------------------------
-;; 生きた probe — 今の VM と macro で書ける形・書けない形の実演(R1・R2・R4・R5・R13 が立つ土台の事実)。
+;; Live probes — demonstrations of shapes that can and cannot be written with the current VM and macros (the facts R1, R2, R4, R5, R13 stand on).
 ;; ---------------------------------------------------------------------------
 
 (defeffect ProbeAbsent
-  "想定内の不在の見本(提案の時点の形 — 普通の effect。R1 の Absent は doeff_core_effects._effects.Absent)。"
+  "A sample of expected absence (the shape at the time of the proposal — an ordinary effect. R1's Absent is doeff_core_effects._effects.Absent)."
   {:fields [(: why str)]
    :answer Never
    :tags {:context "doeff-core-effects-adr" :role "intent"}})
 
 (defeffect ProbeRead
-  "handler が値で答える読みの見本(R4 — handler の節の中で effect を出すと、呼び手のスコープを飛び越えることを見せるため)。"
+  "A sample read that a handler answers with a value (R4 — to show that performing an effect inside a handler clause jumps over the caller's scope)."
   {:answer str
    :tags {:context "doeff-core-effects-adr" :role "intent"}})
 
 (defk probe-ending [value]
   {:pre [(: value (| str (type Nothing)))] :post [(: % (| str (type Nothing)))]
    :tags {:context "doeff-core-effects-adr" :role "program"}}
-  "受け手が再開せずにスコープを終える時の値を返す Program — 受け手の @do 関数がその値でスコープを終えるため。"
+  "A Program returning the value with which a receiver ends the scope without resuming — so the receiver's @do function ends the scope with that value."
   value)
 
-;; defk にできない: defk は引数 (effect k) を handler と読んで断る。handler は @handler を付けた @do 関数だけ(ADR-DOE-CORE-003)なので、
-;; VM が再開しない受け手を受けることを @do 関数の見本で見せる(defhandler では (finish 値) で書ける — R15)。
+;; Cannot be a defk: defk reads the arguments (effect k) as a handler and refuses. A handler is only a @do function marked with @handler (ADR-DOE-CORE-003), so
+;; a @do function sample shows that the VM accepts a receiver that does not resume (with defhandler it can be written as (finish value) — R15).
 (defn [make-handler] probe-maybe-handler [#^ EffectBase effect #^ K k]
-  "R2 の maybe の受け手の見本: ProbeAbsent を受けたら再開せず Nothing でスコープを終える(続きは捨てる)。ほかは外へ渡す。"
+  "A sample of R2's maybe receiver: on ProbeAbsent it does not resume and ends the scope with Nothing (the continuation is discarded). Others are passed outward."
   (if (isinstance effect ProbeAbsent)
       (return (yield (probe-ending Nothing)))
       (yield (Pass effect k))))
 
-;; defk にできない: probe-maybe-handler と同じ(VM が再開しない受け手を受けることを見せる見本)。
+;; Cannot be a defk: same as probe-maybe-handler (a sample showing that the VM accepts a receiver that does not resume).
 (defn [make-handler] probe-outer-handler [#^ EffectBase effect #^ K k]
-  "土台の handler より外側に置く受け手の見本: ProbeAbsent を受けたら印の文でスコープを終える — どの受け手が受けたかを見分けるため。"
+  "A sample receiver placed outside the foundation handler: on ProbeAbsent it ends the scope with a marker text — to tell which receiver caught it."
   (if (isinstance effect ProbeAbsent)
-      (return (yield (probe-ending "外側が受けた")))
+      (return (yield (probe-ending "the outer one caught it")))
       (yield (Pass effect k))))
 
 (defhandler probe-read-handler
-  "R4 の落とし穴の見本: ProbeRead に答える handler が、節の中で ProbeAbsent を出す(してはいけない形)。"
+  "A sample of R4's pitfall: a handler answering ProbeRead performs ProbeAbsent inside its clause (a shape that must not be used)."
   (ProbeRead []
-    (<- (ProbeAbsent "handler の節の中で出した"))
-    (resume "来ない")))
+    (<- (ProbeAbsent "performed inside a handler clause"))
+    (resume "never reached")))
 
 (defk probe-reads-then-continues [seen]
   {:pre [(: seen list)] :post [(: % int)]
    :tags {:context "doeff-core-effects-adr" :role "program"}}
-  "ProbeAbsent を出し、その後ろで seen に印を足す — 受け手が続きを捨てれば印は残らない。"
-  (<- (ProbeAbsent "行が無い"))
-  (.append seen "続いた")
+  "Performs ProbeAbsent and then appends a marker to seen — if the receiver discards the continuation, no marker remains."
+  (<- (ProbeAbsent "no row"))
+  (.append seen "continued")
   1)
 
 (defk probe-reads-a-row []
   {:pre [] :post [(: % str)]
    :tags {:context "doeff-core-effects-adr" :role "program"}}
-  "ProbeRead を 1 つ読んで返す本文(R4 の見本の呼び手)。"
+  "A body that reads one ProbeRead and returns it (the caller in R4's sample)."
   (<- row (ProbeRead))
   row)
 
@@ -188,39 +188,39 @@
   {:pre [] :post [(: % int)]
    :effects [ProbeAbsent]
    :tags {:context "doeff-core-effects-adr" :role "program"}}
-  "頭の辞書の :effects を手で書いた見本(R13 — 書けば __doeff_effects__ に残る)。"
-  (<- (ProbeAbsent "宣言つき"))
+  "A sample with :effects written by hand in the head dict (R13 — if written, it stays in __doeff_effects__)."
+  (<- (ProbeAbsent "declared"))
   1)
 
 (defk probe-boom []
   {:pre [] :post [(: % int)]
    :tags {:context "doeff-core-effects-adr" :role "program"}}
-  "Python の例外を上げる Program(R11 — 例外は実装の誤りの見本)。"
+  "A Program that raises a Python exception (R11 — a sample of an exception as an implementation error)."
   (raise (ValueError "boom")))
 
 (defk probe-one []
   {:pre [] :post [(: % int)]
    :tags {:context "doeff-core-effects-adr" :role "program"}}
-  "成功する Program(Try が Ok に畳む見本)。"
+  "A Program that succeeds (a sample Try folds into Ok)."
   1)
 
 (defk probe-try [program]
   {:pre [(: program DoExpr)] :post [(: % (| Ok Err))]
    :tags {:context "doeff-core-effects-adr" :role "program"}}
-  "program を Try で包み、例外を Result の値に畳んだ答えを返す。"
+  "Wraps program in Try and returns the answer with exceptions folded into a Result value."
   (<- answer (Try program))
   answer)
 
 (defk probe-fails-then-continues []
   {:pre [] :post [(: % tuple)]
    :tags {:context "doeff-core-effects-adr" :role "program"}}
-  "doeff-traverse の Fail を出し、再開された値で続ける。"
-  (<- substitute (Fail (ValueError "壊れた入力")))
-  #("続いた" substitute))
+  "Performs doeff-traverse's Fail and continues with the resumed value."
+  (<- substitute (Fail (ValueError "broken input")))
+  #("continued" substitute))
 
 
 ;; ---------------------------------------------------------------------------
-;; 段階 1・2 の probe — 実装した Absent / Raise・境目の handler・<- の変換・handler の節の終わり方
+;; Stage 1 and 2 probes — the implemented Absent / Raise, boundary handlers, <- conversion, and how handler clauses end
 ;; ---------------------------------------------------------------------------
 
 (defrecord ProbeFound
@@ -236,7 +236,7 @@
   #^ str detail)
 
 (defeffect ProbeDeclaredRead
-  "答えを 成功(ProbeFound)・不在(ProbeGone)・失敗(ProbeDown)に分けて宣言した読み(R5)。"
+  "A read whose answer is declared as split into success (ProbeFound), absence (ProbeGone), and failure (ProbeDown) (R5)."
   {:fields [(: key str)]
    :answer (| ProbeFound ProbeGone ProbeDown)
    :absent [ProbeGone]
@@ -244,15 +244,15 @@
    :tags {:context "doeff-core-effects-adr" :role "intent"}})
 
 (defeffect ProbePlainRead
-  "宣言の無い読み(答えの型は同じ union)— <- は答えをそのまま束ねる。"
+  "A read without a declaration (the answer type is the same union) — <- binds the answer as is."
   {:fields [(: key str)]
    :answer (| ProbeFound ProbeGone ProbeDown)
    :tags {:context "doeff-core-effects-adr" :role "intent"}})
 
-(val PROBE-TABLE {"a" (ProbeFound :value "A") "down" (ProbeDown :detail "網が落ちた")})
+(val PROBE-TABLE {"a" (ProbeFound :value "A") "down" (ProbeDown :detail "network is down")})
 
 (defhandler probe-rows
-  "PROBE-TABLE から読みに値で答える土台の handler(不在も失敗も答えの値 — R4)。"
+  "A foundation handler that answers reads from PROBE-TABLE with values (absence and failure are also answer values — R4)."
   {:tags {:context "doeff-core-effects-adr" :role "foundation"}}
   (ProbeDeclaredRead [key] (resume (.get PROBE-TABLE key (ProbeGone :key key))))
   (ProbePlainRead [key] (resume (.get PROBE-TABLE key (ProbeGone :key key)))))
@@ -260,97 +260,97 @@
 (defk probe-read-value [key]
   {:pre [(: key str)] :post [(: % str)]
    :tags {:context "doeff-core-effects-adr" :role "program"}}
-  "宣言を持つ読みを 1 つ束ねる — x は成功の型だけ(不在と失敗は Absent / Raise として逃げる)。"
+  "Binds one read with a declaration — x is only the success type (absence and failure escape as Absent / Raise)."
   (<- found (ProbeDeclaredRead key))
   found.value)
 
 (defk probe-read-plain [key]
   {:pre [(: key str)] :post [(: % (| ProbeFound ProbeGone ProbeDown))]
    :tags {:context "doeff-core-effects-adr" :role "program"}}
-  "宣言の無い読みを 1 つ束ねる — 答えをそのまま返す。"
+  "Binds one read without a declaration — returns the answer as is."
   (<- answer (ProbePlainRead key))
   answer)
 
 (defk probe-read-or-conflict [key]
   {:pre [(: key str)] :post [(: % str)]
    :tags {:context "doeff-core-effects-adr" :role "program"}}
-  "(e) この束ねの中で出た不在(奥の defk の中の物も)を ProbeConflict の失敗として投げる(<- の :absent)。"
-  (<- value (probe-read-value key) :absent (ProbeConflict :detail (+ key " の行が無い")))
+  "(e) Throws an absence performed within this bind (including one inside a deeper defk) as a ProbeConflict failure (<-'s :absent)."
+  (<- value (probe-read-value key) :absent (ProbeConflict :detail (+ key " has no row")))
   value)
 
 (defk probe-absent-then-note [seen]
   {:pre [(: seen list)] :post [(: % int)]
    :tags {:context "doeff-core-effects-adr" :role "program"}}
-  "Absent を出し、その後ろで seen に印を足す — 境目の handler が続きを捨てれば印は残らない。"
-  (<- (Absent "行が無い"))
-  (.append seen "続いた")
+  "Performs Absent and then appends a marker to seen — if the boundary handler discards the continuation, no marker remains."
+  (<- (Absent "no row"))
+  (.append seen "continued")
   1)
 
 (defk probe-raise-then-note [seen]
   {:pre [(: seen list)] :post [(: % int)]
    :tags {:context "doeff-core-effects-adr" :role "program"}}
-  "Raise を出し、その後ろで seen に印を足す。"
-  (<- (Raise (ProbeDown :detail "届かない")))
-  (.append seen "続いた")
+  "Performs Raise and then appends a marker to seen."
+  (<- (Raise (ProbeDown :detail "unreachable")))
+  (.append seen "continued")
   1)
 
 (defk probe-raises-python []
   {:pre [] :post [(: % str)]
    :tags {:context "doeff-core-effects-adr" :role "program"}}
-  "(d) Python の例外を上げる本文を on-raise で包む — 例外は受けない。"
+  "(d) Wraps a body that raises a Python exception in on-raise — the exception is not caught."
   (<- answer (on-raise (probe-boom) (ProbeConflict :detail d) d))
   (str answer))
 
 (defhandler probe-raising-read-handler
-  "(b) R4 の落とし穴の見本(してはいけない形): ProbeRead に答える handler が、節の中で Raise を出す。"
+  "(b) A sample of R4's pitfall (a shape that must not be used): a handler answering ProbeRead performs Raise inside its clause."
   {:tags {:context "doeff-core-effects-adr" :role "foundation"}}
   (ProbeRead []
-    (<- (Raise (ProbeConflict :detail "handler の節の中で出した")))
-    (resume "来ない")))
+    (<- (Raise (ProbeConflict :detail "performed inside a handler clause")))
+    (resume "never reached")))
 
 (defk probe-direct-default [key]
   {:pre [(: key str)] :post [(: % str)]
    :tags {:context "doeff-core-effects-adr" :role "program"}}
-  "absent-as の字面の中の <- の不在は既定値で再開し、続きが走る(R8)。"
-  (<- value (absent-as (ProbeFound :value "既定") (do! (<- found (ProbeDeclaredRead key)) (+ "続いた: " found.value))))
+  "An absence from <- in absent-as's literal text resumes with the default, and the continuation runs (R8)."
+  (<- value (absent-as (ProbeFound :value "default") (do! (<- found (ProbeDeclaredRead key)) (+ "continued: " found.value))))
   value)
 
 (defk probe-deep-default [key]
   {:pre [(: key str)] :post [(: % str)]
    :tags {:context "doeff-core-effects-adr" :role "program"}}
-  "呼んだ defk の奥の不在は再開せず、既定値でスコープを終える(R8)。"
-  (<- value (absent-as "既定" (do! (<- got (probe-read-value key)) (+ "続いた: " got))))
+  "An absence deep inside a called defk does not resume; the scope ends with the default (R8)."
+  (<- value (absent-as "default" (do! (<- got (probe-read-value key)) (+ "continued: " got))))
   value)
 
 (defk probe-written-absent-default []
   {:pre [] :post [(: % str)]
    :tags {:context "doeff-core-effects-adr" :role "program"}}
-  "直に書いた (<- (Absent …)) は再開せず、既定値でスコープを終える(R8)。"
-  (<- value (absent-as "既定" (do! (<- (Absent "書いた不在")) "続いた")))
+  "A directly written (<- (Absent …)) does not resume; the scope ends with the default (R8)."
+  (<- value (absent-as "default" (do! (<- (Absent "written absence")) "continued")))
   value)
 
 (defhandler probe-deadline [limit]
-  "普通の effect を意図して打ち切る節の見本(R15 — :finish-reason の理由つき)。"
+  "A sample clause that deliberately cuts off an ordinary effect (R15 — with a :finish-reason reason)."
   {:tags {:context "doeff-core-effects-adr" :role "foundation"}}
-  ;; 引数に残す理由: 検ごとに打ち切る閾値を変えるため(Ask で読むと検の組み立てが増える)
+  ;; Why it stays an argument: to vary the cut-off threshold per check (reading it with Ask would add to the check's composition)
   (ProbeRead []
-    :finish-reason "閾値を越えたら処理全体を止める(時間切れの見本)"
-    (if (> limit 0) (resume "読めた") (finish "打ち切った"))))
+    :finish-reason "stop the whole run when the threshold is exceeded (a timeout example)"
+    (if (> limit 0) (resume "read ok") (finish "cut off"))))
 
 (defhandler probe-aliased-raise-resumer
-  "R15 の反例(してはいけない形): 別名で import した Raise を resume する節 — 名前では分からないので、初めて本文に被せた時に断る。"
+  "R15's counterexample (a shape that must not be used): a clause that resumes a Raise imported under an alias — it cannot be recognized by name, so it is refused when first installed on a body."
   {:tags {:context "doeff-core-effects-adr" :role "foundation"}}
   (ProbeAliasedRaise [reason] (resume 0)))
 
 (defhandler probe-swallowing-handler
-  "R15 の反例(してはいけない形): 例外を黙らせる with の中の resume — 展開の時は通るが、resume せずに抜けるので実行の時に誤りにする。"
+  "R15's counterexample (a shape that must not be used): a resume inside a with that suppresses exceptions — it passes at expansion, but exits without resuming, so it is made an error at run time."
   {:tags {:context "doeff-core-effects-adr" :role "foundation"}}
-  (ProbeRead [] (with [(suppress ValueError)] (resume (int "数でない")))))
+  (ProbeRead [] (with [(suppress ValueError)] (resume (int "not a number")))))
 
 (defk probe-expansion-refusal [source]
   {:pre [(: source str)] :post [(: % str)]
    :tags {:context "doeff-core-effects-adr" :role "judgment"}}
-  "source を展開した時の誤りの文(通れば空の文字列)— 展開の時に断る macro の規則を検で見るため。"
+  "The error text when source is expanded (an empty string if it passes) — so a check can look at macro rules that refuse at expansion."
   (try
     (hy.eval (hy.read-many source))
     ""
@@ -359,7 +359,7 @@
 
 
 (defadr ADR-DOE-CORE-EFFECTS-003
-  :title "想定内の『不在』と『失敗』を、意味で分けた 2 つの effect — Absent(Maybe の側・中身を持たず説明の文だけ)と Raise(Result の側・理由を持つ)— にする。出す側は最初から Absent / Raise を出し、(<- x (危ない呼び)) の x は成功の値 T だけ。答えを Maybe / Result の値で受けたい所だけ境目の handler(maybe・result・on-raise・absent-as)で畳み、入れ子の順が組み合わせの型を決める。effect に答える handler は値で答え、不在と失敗への変換は呼び手の側の <- が defeffect の宣言に従って行う。関数が出す effect は手で書かずに doeff-effect-analyzer で推論し、関数の型を『戻り値 + 残りの effect の集合』として見せる"
+  :title "Expected 'absence' and 'failure' become 2 effects separated by meaning — Absent (the Maybe side, no content, only a description text) and Raise (the Result side, carries a reason). The producing side performs Absent / Raise from the start, and the x in (<- x (risky-call)) is only the success value T. Only where the answer should be received as a Maybe / Result value is it folded by a boundary handler (maybe, result, on-raise, absent-as), and the nesting order determines the combined type. Handlers that answer effects answer with values, and the conversion to absence and failure is done by <- on the caller's side following the defeffect declaration. The effects a function performs are not written by hand but inferred by doeff-effect-analyzer, and the function's type is shown as 'return value + set of remaining effects'"
   :status "accepted"
   :scope ["docs/adr/defadr_doeff_core_effects_003_absent_and_raise.hy"
           "packages/doeff-core-effects/doeff_core_effects/_effects.py"
@@ -379,221 +379,221 @@
           "packages/doeff-linter"]
   :problem
     [(fact
-       "論点 1〜3: (1) 主に成功の場合だけを見るコードでは、呼び手が Result / Maybe の値を受けたいか中の値だけを受けたいかが文脈で変わる。この範囲では成功だけを見る、と範囲で言える書き方が要るか。(2) 普段は Optional と Result を組み合わせる。出すのは Fail の effect か Nothing の effect か — algebraic effect で Maybe の文脈の Fail に当たる物は何か。(3) Absent か Fail を出し、受け方を範囲の handler で決める形にするか。")
+       "Points 1 to 3: (1) In code that mainly looks only at the success case, whether the caller wants to receive a Result / Maybe value or only the inner value changes with context. Is a way of writing needed that says, as a scope, 'within this scope look only at success'? (2) Optional and Result are usually combined. Should a Fail effect or a Nothing effect be performed — what in algebraic effects corresponds to Fail in a Maybe context? (3) Should it be a shape that performs Absent or Fail and decides how to receive it with a scoped handler?")
      (fact
-       "論点 4(R13 の出自): 今の defk は Fail や Absent を出す事を示さず、戻り値の型が Option か Result であるだけ。関数が Absent や Fail を出すかは読めなければならない。defk に :effects の欄を持たせる手もあるが、その中身は中で呼ぶ物によって変わる。")
+       "Point 4 (origin of R13): the current defk does not show that it performs Fail or Absent; its return type is just an Option or a Result. Whether a function performs Absent or Fail must be readable. One option is to give defk an :effects field, but its content changes depending on what is called inside.")
      (fact
-       "論点 5〜6(書き方の例と型の出自): (5) Fail と Absent を入れるとコードはどう見えるか。(6) この形は try-catch に似ているが差し替えられる。混ぜた書き方でも Fail / Absent を自分の流儀で扱えるなら、success-only の戻り値の型は Result[T] か、Absent / Fail を出す T か。")
+       "Points 5 to 6 (origin of the writing examples and the types): (5) What does code look like with Fail and Absent? (6) This shape resembles try-catch but can be swapped. If Fail / Absent can be handled in one's own style even with mixed writing, is success-only's return type Result[T], or T that performs Absent / Fail?")
      (fact
-       "論点 7〜8(success-only を消す決定と R9 の出自): (7) success-only が成功の場合だけを見るなら、success-only はそもそも要らず、(<- x (dangerous_call)) (<- y (maybe_1)) と書けば済むか。(8) 範囲を区切りたいのは、失敗の場合に何かしたい時だけか。")
+       "Points 7 to 8 (origin of the decision to remove success-only and of R9): (7) If success-only looks only at the success case, is success-only unnecessary in the first place, so that writing (<- x (dangerous_call)) (<- y (maybe_1)) suffices? (8) Is delimiting a scope wanted only when something should be done in the failure case?")
      (fact
-       "論点 9(この ADR を決定にした出自): この案で進め、doeff-record もこれらの effect を出すように直すと決めた。議論の要約: 繰り返し出る 4 種類の失敗(Unreachable・Missing・Refused・Conflict)のうち、Unreachable と Refused は Raise、Missing は Absent の effect にし、Conflict は値のまま。effect は積み重なるもう 1 本のデータの口である。4 種類はコードの本文では返す値の型ではなく effect になり、外の世界との境目(handler の答え・記録)と『何かしたい』境目(maybe・result・on-raise)ではデータになる。HTTP の状態コードも翻訳の層の 1 か所で 4 種類の失敗の effect に写す。")
+       "Point 9 (origin of making this ADR a decision): it was decided to proceed with this proposal and to fix doeff-record to perform these effects too. Summary of the discussion: of the 4 recurring kinds of failure (Unreachable, Missing, Refused, Conflict), Unreachable and Refused become Raise, Missing becomes the Absent effect, and Conflict stays a value. Effects are one more channel of data that stacks up. In the code body the 4 kinds become effects rather than return value types, and become data at the boundary with the outside world (handler answers, records) and at the 'want to do something' boundaries (maybe, result, on-raise). HTTP status codes are also mapped to the 4 kinds of failure effects in one place in the translation layer.")
      (fact
-       "論点 10(R15 の出自): handler の終わる場合では、再開を誤って書き忘れないよう注意が要る — coordinator が条件にした: 終わる節は明示の操作(finish)でだけ書ける・節のすべての道が resume・finish・transfer のどれかで終わらなければ展開の時に誤り・effect ごとの再開の扱いと照らす・普通の effect の打ち切りは理由の註つきだけ・実行の時に黙って止まらない"
-       :evidence "coordinator の追加の依頼(2026-09-27 夜)")
+       "Point 10 (origin of R15): in the case where a handler ends, care is needed not to forget resume by mistake — the coordinator made it a condition: an ending clause can be written only with an explicit operation (finish); if not every path of a clause ends in one of resume, finish, or transfer it is an error at expansion; check against each effect's resumption treatment; cutting off an ordinary effect only with a reason annotation; do not silently stop at run time"
+       :evidence "the coordinator's additional request (evening of 2026-09-27)")
      (fact
-       "doeff.result は Result と Maybe の値を持つ: Ok / Err は Rust の doeff_vm から再び出したもの(Ok は value、Err は error と captured_traceback を持つ)。Some は value を持つ不変の値、Nothing は偽と評価される 1 つだけの値で、Maybe = Some | Nothing。doeff の最上位からも同じ名で出る。Ok / Err は値で比べられない(Ok(1) == Ok(1) は偽 — 2026-09-28 に確かめた)。"
-       :evidence "doeff/result.py:19(Ok / Err)・:22-54(Some)・:57-85(Nothing — :78-79 の __bool__ は False)・:94(Maybe)・doeff/__init__.py:52-56")
+       "doeff.result has Result and Maybe values: Ok / Err are re-exported from Rust's doeff_vm (Ok has value, Err has error and captured_traceback). Some is an immutable value with value, Nothing is a single value that evaluates as false, and Maybe = Some | Nothing. They are also exported under the same names from doeff's top level. Ok / Err cannot be compared by value (Ok(1) == Ok(1) is false — confirmed 2026-09-28)."
+       :evidence "doeff/result.py:19 (Ok / Err), :22-54 (Some), :57-85 (Nothing — __bool__ at :78-79 is False), :94 (Maybe), doeff/__init__.py:52-56")
      (fact
-       "Try(program) は、program の中で上がった Python の例外を Err に、成功を Ok に畳む effect で、try_handler が受ける。try_handler は内側の handler を付け直して program を走らせ、except Exception で Err(e) を返す — 例外を値に写す口であって、値として返った答えの中の失敗(Unreachable など)は見ない。"
-       :evidence "packages/doeff-core-effects/doeff_core_effects/_effects.py(Try)・packages/doeff-core-effects/doeff_core_effects/_handlers.py(_try_handler — except Exception → Err)・doeff/__init__.py:68")
+       "Try(program) is an effect that folds a Python exception raised inside program into Err and success into Ok, caught by try_handler. try_handler reattaches the inner handlers, runs program, and returns Err(e) on except Exception — it is the entry point that maps exceptions to values, and it does not look at failures inside answers returned as values (Unreachable, etc.)."
+       :evidence "packages/doeff-core-effects/doeff_core_effects/_effects.py (Try), packages/doeff-core-effects/doeff_core_effects/_handlers.py (_try_handler — except Exception → Err), doeff/__init__.py:68")
      (fact
-       "doeff-records の effect は失敗を値で返す決まりで、README の表の列『失敗の答え(値で返す)』に並ぶ。例外で上がるのは組み立ての誤りと実装の誤りだけ。ReadRow の答えは Row | Missing | Unreachable — 成功(Row)・想定内の不在(Missing = 行が無い)・失敗(Unreachable = 置き場に届かない)が 1 つの union に並び、どれが成功でどれが失敗かは型に書かれていない。表ごとの型の層の read-typed も Missing と Unreachable をそのまま呼び手へ返す。"
-       :evidence "packages/doeff-records/README.md:11-19・:39・packages/doeff-records/src/doeff_records/_values.hy:279-280(Missing)・:371-373(Unreachable)・:387(ReadRowAnswer)・effects.hy:39-45(ReadRow)・typed.hy:114-118(read-typed)")
+       "doeff-records' effects follow the rule of returning failures as values, listed in the README table column 'failure answers (returned as values)'. Only composition errors and implementation errors are raised as exceptions. ReadRow's answer is Row | Missing | Unreachable — success (Row), expected absence (Missing = no row), and failure (Unreachable = cannot reach the store) are listed in one union, and which is success and which is failure is not written in the type. read-typed in the per-table type layer also returns Missing and Unreachable to the caller as is."
+       :evidence "packages/doeff-records/README.md:11-19, :39, packages/doeff-records/src/doeff_records/_values.hy:279-280 (Missing), :371-373 (Unreachable), :387 (ReadRowAnswer), effects.hy:39-45 (ReadRow), typed.hy:114-118 (read-typed)")
      (fact
-       "成功の道だけを書きたい呼び手は、答えを受けるたびに不在と失敗を手で分けている: agora-controllers の本線 eb2abb27 で、isinstance による Missing / Unreachable の判定が 43 file・74 行ある。revise-input(controllers/protocol/conversation_input.hy:73-91)は 19 行のうち 2 つの match と 1 つの when が不在と失敗の分岐で、:effects [ReadRow PutRow ReadPlacedInput] を手で書いている(:75)。"
-       :evidence "agora-controllers で git grep -P 'isinstance \\S+ (#?\\()?[^)]*(Missing|Unreachable)' origin/main -- '*.hy'(2026-09-27)・git show origin/main:controllers/protocol/conversation_input.hy")
+       "Callers that want to write only the success path split absence and failure by hand every time they receive an answer: on agora-controllers mainline eb2abb27, isinstance checks for Missing / Unreachable appear in 43 files on 74 lines. In revise-input (controllers/protocol/conversation_input.hy:73-91), of its 19 lines, 2 matches and 1 when are branches on absence and failure, and :effects [ReadRow PutRow ReadPlacedInput] is written by hand (:75)."
+       :evidence "git grep -P 'isinstance \\S+ (#?\\()?[^)]*(Missing|Unreachable)' origin/main -- '*.hy' in agora-controllers (2026-09-27), git show origin/main:controllers/protocol/conversation_input.hy")
      (fact
-       "revise-input が呼ぶ revise-placed-input の答えは BodyRecorded | BodyUnreachable | BodyConflict(どれも detail の文を持つ)、ReadPlacedInput の答えは PlacedInput か None(行が無い)。land_notice の post-notice は PostMessage の答え Accepted / Rejected / Unavailable を match で数えに写す。notify-landed という関数は本線にも履歴にも無い(書き方の例の名)。"
-       :evidence "agora-controllers origin/main eb2abb27: controllers/messaging/placed_input.hy:84-101・:167-168・controllers/scheduling/input_port.hy:130-131・controllers/core/land_notice.hy:53-70・git log --all -S 'notify-landed'(当たり 0)")
+       "The answer of revise-placed-input, which revise-input calls, is BodyRecorded | BodyUnreachable | BodyConflict (each carries a detail text), and the answer of ReadPlacedInput is a PlacedInput or None (no row). land_notice's post-notice maps PostMessage's answers Accepted / Rejected / Unavailable to counts with match. No function named notify-landed exists on the mainline or in history (it is the name in the writing example)."
+       :evidence "agora-controllers origin/main eb2abb27: controllers/messaging/placed_input.hy:84-101, :167-168, controllers/scheduling/input_port.hy:130-131, controllers/core/land_notice.hy:53-70, git log --all -S 'notify-landed' (0 hits)")
      (fact
-       "doeff には既に Fail という名の effect がある(doeff-traverse)。意味は『失敗の知らせ』で、handler が続きを代わりの値で再開できる — normalize_to_none は Fail を None で再開し、fail_handler は例外として投げ直す。try_call は Python の関数の例外を Fail にする。Traverse は 1 件ごとの失敗の扱いを handler に任せ、sequential は Traverse の中の未処理の Fail をその 1 件の失敗にする。"
-       :evidence "packages/doeff-traverse/doeff_traverse/_effects.py:20-38(Fail)・:40-51(Traverse — Handler decides … error strategy per item)・handlers.py:18-27(sequential)・:502-517(fail_handler)・:520-533(normalize_to_none)・helpers.py:9-22(try_call)")
+       "doeff already has an effect named Fail (doeff-traverse). Its meaning is 'a notice of failure', and a handler can resume the continuation with a substitute value — normalize_to_none resumes Fail with None, and fail_handler rethrows it as an exception. try_call turns a Python function's exception into Fail. Traverse leaves per-item failure handling to the handler, and sequential turns an unhandled Fail inside Traverse into the failure of that one item."
+       :evidence "packages/doeff-traverse/doeff_traverse/_effects.py:20-38 (Fail), :40-51 (Traverse — Handler decides … error strategy per item), handlers.py:18-27 (sequential), :502-517 (fail_handler), :520-533 (normalize_to_none), helpers.py:9-22 (try_call)")
      (fact
-       "提案の時点(2026-09-27)の defeffect の頭の辞書が受けるキーは :fields・:answer・:tags・:pre で、答えは :answer の 1 つの型(union でよい)として __doeff_answer__ に残るだけだった — union のどの型が成功・不在・失敗かを宣言する場所は無かった(段階 2 で :absent / :failure / :value を足した — R5)。doeff-records の effect は defeffect でなく素の defclass で書かれている。"
-       :evidence "packages/doeff-hy/src/doeff_hy/_declarations.hy(EFFECT-KEYS・defeffect-form)・packages/doeff-records/src/doeff_records/_effects.hy:39")
+       "At the time of the proposal (2026-09-27), the keys accepted by defeffect's head dict were :fields, :answer, :tags, :pre, and the answer only remained in __doeff_answer__ as the single type of :answer (a union is fine) — there was no place to declare which types of the union are success, absence, or failure (stage 2 added :absent / :failure / :value — R5). doeff-records' effects are written not with defeffect but with plain defclass."
+       :evidence "packages/doeff-hy/src/doeff_hy/_declarations.hy (EFFECT-KEYS, defeffect-form), packages/doeff-records/src/doeff_records/_effects.hy:39")
      (fact
-       "handler の節の中で出した effect は、その handler より外側の handler へ行き、本文とその handler の間に置いた受け手を飛び越える — この ADR のテスト effect-performed-in-a-handler-skips-the-callers-scope(提案の時点の probe)と raise-in-a-handler-clause-skips-the-bodys-result(実装した Raise と result)で確かめた。"
-       :evidence "この ADR の probe-read-handler・probe-raising-read-handler とテスト")
+       "An effect performed inside a handler clause goes to handlers outside that handler, skipping receivers placed between the body and that handler — confirmed by this ADR's tests effect-performed-in-a-handler-skips-the-callers-scope (a probe from the time of the proposal) and raise-in-a-handler-clause-skips-the-bodys-result (with the implemented Raise and result)."
+       :evidence "this ADR's probe-read-handler, probe-raising-read-handler and tests")
      (fact
-       "提案の時点(2026-09-27)の defhandler の節は、すべての分かれ道で resume / transfer / reperform / raise のどれかに届かないと展開の時に SyntaxError で断られ、続きを捨てて値で終える節は書けなかった(段階 1 で (finish 値) を足した — R15)。defk は引数の名が (effect k) の形だと handler と読んで断る。VM は、再開しないで値を返す handler を許し、その値でスコープを終える(続きは捨てられる)。再開せずに None を返して抜けた handler でも、VM は黙ってスコープを None で終える(2026-09-28 に確かめた — R15 の実行の時の検めの理由)。"
-       :evidence "packages/doeff-hy/src/doeff_hy/handle.hy(_terminates・_check-clause-terminates)・packages/doeff-hy/src/doeff_hy/macros.hy(_reject-handler-signature)・この ADR のテスト handler-without-resume-ends-the-scope と defhandler-clause-must-end-explicitly・uv run python で @do の handler が return None した時の run の答え(None)")
+       "At the time of the proposal (2026-09-27), a defhandler clause was refused with a SyntaxError at expansion unless every branch reached one of resume / transfer / reperform / raise, and a clause that discards the continuation and ends with a value could not be written (stage 1 added (finish value) — R15). defk reads an argument list of the shape (effect k) as a handler and refuses it. The VM allows a handler that returns a value without resuming and ends the scope with that value (the continuation is discarded). Even when a handler exits returning None without resuming, the VM silently ends the scope with None (confirmed 2026-09-28 — the reason for R15's run-time check)."
+       :evidence "packages/doeff-hy/src/doeff_hy/handle.hy (_terminates, _check-clause-terminates), packages/doeff-hy/src/doeff_hy/macros.hy (_reject-handler-signature), this ADR's tests handler-without-resume-ends-the-scope and defhandler-clause-must-end-explicitly, run's answer (None) when a @do handler returns None, via uv run python")
      (fact
-       "defk・deff・defp・defhandler の頭の辞書は既に :effects(その定義が出す effect の型の名の list・任意)を受け、__doeff_effects__ に残す(書かなければ None)。この宣言を読んで推論と照らす道具は無い(読むのは doeff-hy のテストだけ)。"
-       :evidence "packages/doeff-hy/src/doeff_hy/_declarations.hy:1-13・:26(CONTRACT-KEYS)・:59-70(effects-form)・git grep '__doeff_effects__'(当たりは declarations.hy と packages/doeff-hy/tests/test_declarations.py だけ)")
+       "The head dicts of defk, deff, defp, and defhandler already accept :effects (a list of names of effect types that the definition performs, optional) and keep it in __doeff_effects__ (None if not written). No tool reads this declaration and compares it to inference (only doeff-hy's tests read it)."
+       :evidence "packages/doeff-hy/src/doeff_hy/_declarations.hy:1-13, :26 (CONTRACT-KEYS), :59-70 (effects-form), git grep '__doeff_effects__' (hits only in declarations.hy and packages/doeff-hy/tests/test_declarations.py)")
      (fact
-       "doeff-effect-analyzer の Python の入口は、Program の関数が出す effect を、呼び先を推移的にたどって集める。Hy は macro を展開してから読み、defhandler の節(isinstance の分かれ道)から handler が受ける effect を読み、追えない物は unresolved と報告して黙って落とさない。引数で渡された Program(Spawn の子など)は carried として別に報告し、畳むかどうかは呼び手が決める。module の cache は process の中だけ。Rust の Hy の読み(hy_analyzer.rs の extract_effect_from_bind)は <- の形を 2〜4 要素でだけ読み、末尾の :absent <失敗> を知らない(段階 4 で直す)。"
-       :evidence "packages/doeff-effect-analyzer/README.md:7-58・python/doeff_effect_analyzer/program_effects.py:159-180(_MODULE_CACHE)・:590(analyze_program)・src/hy_analyzer.rs:418-438")
+       "doeff-effect-analyzer's Python entry point collects the effects a Program's function performs, following callees transitively. It reads Hy after macro expansion, reads the effects a handler catches from defhandler clauses (isinstance branches), and reports what it cannot follow as unresolved rather than silently dropping it. Programs passed as arguments (Spawn children, etc.) are reported separately as carried, and the caller decides whether to fold them. The module cache is in-process only. Rust's Hy reading (extract_effect_from_bind in hy_analyzer.rs) reads the <- shape only with 2 to 4 elements and does not know a trailing :absent <failure> (fixed in stage 4)."
+       :evidence "packages/doeff-effect-analyzer/README.md:7-58, python/doeff_effect_analyzer/program_effects.py:159-180 (_MODULE_CACHE), :590 (analyze_program), src/hy_analyzer.rs:418-438")
      (fact
-       "ADR-DOE-CLUSTER-001 は、job の runner が handler を 1 つも足さないこと(R2)と、記録と再生の handler を Program の中の翻訳の handler と土台の handler の間に置き、境目の答えを書き留めること(R5・R5b)を決めている。"
-       :evidence "docs/adr/defadr_doeff_cluster_001_job_accepts_a_program.hy:102・:108-109")
+       "ADR-DOE-CLUSTER-001 decides that the job runner adds no handlers at all (R2), and that the recording and replay handlers are placed between the translating handlers inside the Program and the foundation handlers, recording the answers at the boundary (R5, R5b)."
+       :evidence "docs/adr/defadr_doeff_cluster_001_job_accepts_a_program.hy:102, :108-109")
      (fact
-       "code-quality の方針は、未知の値を空文字・成功・既定の状態へ黙って変換しないことを求める。"
+       "The code-quality policy requires not silently converting unknown values to empty strings, success, or default states."
        :evidence "~/repos/code-quality/docs/policy.md:24-25")
      (fact
-       "段階 1・2 の実装の時点(2026-09-28)の実測: 今の VM は Ok / Err / Some / Nothing を yield すると誤り(expected DoExpr or EffectBase)にする — <- が値を開く形は、今まで誤りだった道だけに効く。<- の展開に足した open-bind の呼び出し(展開の中の import を含む)は 1 回の束ねで約 0.2µs。doeff の handler を持つ 115 file はすべて新しい節の検め(R15)を通り、agora-controllers の本線では 1 か所(controllers/protocol/webapp_reception.hy の AwaitRequest の節 — 型で場合を全部並べた match に最後の _ が無い)が断られる(doeff を上げる時に `_ (raise …)` の 1 行を足す)。"
-       :evidence "uv run python で yield Ok(1) を撃った VM の誤り・timeit(2026-09-28)・doeff の全 .hy と agora-controllers origin/main の全 .hy を hy_compile だけで展開した走査(2026-09-28)")]
+       "Measurements at the time of implementing stages 1 and 2 (2026-09-28): the current VM makes yielding Ok / Err / Some / Nothing an error (expected DoExpr or EffectBase) — the shape where <- opens values only affects paths that used to be errors. The open-bind call added to <-'s expansion (including the import inside the expansion) costs about 0.2µs per bind. All 115 doeff files with handlers pass the new clause check (R15), and on the agora-controllers mainline 1 place is refused (the AwaitRequest clause in controllers/protocol/webapp_reception.hy — a match listing all cases by type has no final _) (add a one-line `_ (raise …)` when upgrading doeff)."
+       :evidence "the VM error when firing yield Ok(1) via uv run python, timeit (2026-09-28), a scan expanding all of doeff's .hy and all of agora-controllers origin/main's .hy with hy_compile only (2026-09-28)")]
   :context
     [(interpretation
-       "文献では、中身を持たない失敗を Maybe の側に、理由を持つ失敗を Result(Either)の側に置く。Haskell の MonadFail の fail(説明の文を受けるが Maybe では捨てて Nothing にする)と Alternative の empty が前者、Plotkin と Pretnar の例外の raise・Koka の throw・Haskell の throwError が後者。Maybe の文脈で Fail に当たる物は何か、という問い(論点 2)の答えは、文献では fail / empty がまさに Maybe の側で、Result の側は raise / throw と呼ぶ、となる。この ADR は紛れを避けて、Maybe の側を Absent、Result の側を Raise と呼び、どちらにも Fail の名を使わない(doeff-traverse の Fail は再開できる別の意味を既に持つ)。")
+       "In the literature, a failure without content belongs to the Maybe side, and a failure with a reason to the Result (Either) side. Haskell's MonadFail fail (takes a description text but discards it in Maybe and becomes Nothing) and Alternative's empty are the former; Plotkin and Pretnar's exception raise, Koka's throw, and Haskell's throwError are the latter. The answer to the question 'what corresponds to Fail in a Maybe context' (point 2) is, in the literature, that fail / empty are exactly the Maybe side, and the Result side is called raise / throw. To avoid confusion this ADR calls the Maybe side Absent and the Result side Raise, and uses the name Fail for neither (doeff-traverse's Fail already has a different, resumable meaning).")
      (interpretation
-       "1 つの effect(Nothing だけ・Fail だけ)にすると、受け手が不在と失敗を分けられず、Result の中の Maybe と Maybe の中の Result を作り分けられない。2 つの effect に分ければ、受け手の handler の入れ子の順だけで組み合わせの型が決まる — モナド変換子の積み順(MaybeT (Either e) と ExceptT e Maybe)と同じことを、handler の順で言える。")
+       "With a single effect (only Nothing, or only Fail), the receiver cannot tell absence from failure, and cannot build a Maybe inside a Result versus a Result inside a Maybe. Splitting into 2 effects means the combined type is determined only by the nesting order of the receiving handlers — what monad transformer stacking order (MaybeT (Either e) versus ExceptT e Maybe) says can be said with handler order.")
      (interpretation
-       "答えを値で受けるか中身で受けるかは呼び手の文脈で変わる(論点 1)。初めの案はこれを『成功だけを見る』範囲の宣言(success-only)で表したが、範囲の内と外で同じ行の型が変わる。出す側が最初から Absent / Raise を出せば、(<- x (危ない呼び)) は誰に呼ばれても『T か、逃げる』の 1 通りで、行の型は呼び手で変わらない。値で受けたい呼び手だけが、その場で境目の handler で畳む(論点 7・8)。Koka の書き方と同じ。")
+       "Whether an answer is received as a value or as its content changes with the caller's context (point 1). The initial proposal expressed this with a declaration of a 'look only at success' scope (success-only), but then the type of the same line differs inside and outside the scope. If the producing side performs Absent / Raise from the start, (<- x (risky-call)) has exactly one meaning, 'T, or escape', whoever calls it, and the line's type does not change with the caller. Only callers that want a value fold it on the spot with a boundary handler (points 7 and 8). The same as Koka's style.")
      (interpretation
-       "effect に答える handler は、呼び手の本文より外側(組み立ての根)に置かれる。本文と handler の間には呼び手の maybe / result がある。handler の節の中で Absent / Raise を出すと、それは handler より外側へ行き、呼び手の maybe / result を飛び越える(fact と テストで確かめた)。だから不在と失敗への変換は handler の中でなく、呼び手の本文の中 — 答えを受け取る <- — で行う。handler は今までどおり値で答え、記録係も値を書き留める。")
+       "A handler that answers an effect is placed outside the caller's body (at the composition root). Between the body and the handler are the caller's maybe / result. If Absent / Raise is performed inside a handler clause, it goes outside the handler and skips the caller's maybe / result (confirmed by the fact and the test). So the conversion to absence and failure is done not in the handler but in the caller's body — at the <- that receives the answer. Handlers keep answering with values as before, and the recorder records values too.")
      (interpretation
-       "try-catch との比較(try-catch に似ているが差し替えられる、という論点 6 への答え):\n観点 | try-catch(例外) | Absent / Raise(この案)\n飛んでくる所 | どの行からでも(呼び先の奥の例外も) | Absent / Raise を出す行と、宣言で失敗を返す effect を受ける <- だけ\n何が飛ぶか | 書かれない(Java の検査例外は手書きで古くなる) | 推論した effect の集合に出る(R13)\n不在と失敗 | 区別しない(null か例外) | Absent と Raise で分け、組み合わせは入れ子の順で選ぶ\n既定値 | catch の中で値を返してスコープを終える | absent-as が既定値で再開できる\n方針の差し替え | catch は書いた所に固定 | 組み立ての handler で差し替える(本番と模擬で別)\n再生 | 例外は記録に残らない | handler は値で答え記録係が書き留めるので、再生でも同じ道を通る\n受け取り忘れ | 走らせて初めて分かる | job の入口の残りの effect で、書いた時点に拾える\n何でも受ける形 | catch (Exception) が書ける | on-raise は型のパターンだけ(何でも受ける形は展開の時に断る)\n見た目 | try … catch | on-raise … パターン — ほぼ同じ形なので、読み手は新しい考え方を覚えずに読める(利点)")
+       "Comparison with try-catch (the answer to point 6, that this resembles try-catch but can be swapped):\nAspect | try-catch (exceptions) | Absent / Raise (this proposal)\nWhere it flies from | any line (including exceptions deep in callees) | only lines that perform Absent / Raise, and <- that receives an effect declared to return failures\nWhat flies | not written (Java's checked exceptions are hand-written and go stale) | appears in the inferred effect set (R13)\nAbsence vs failure | not distinguished (null or exception) | split into Absent and Raise, with combinations chosen by nesting order\nDefaults | return a value in catch and end the scope | absent-as can resume with a default\nSwapping the policy | catch is fixed where written | swapped by composition handlers (different for production and simulation)\nReplay | exceptions are not left in records | handlers answer with values and the recorder records them, so replay goes down the same path\nForgetting to receive | found only when run | caught at writing time via the remaining effects of the job entry\nCatch-all shape | catch (Exception) can be written | on-raise takes only type patterns (catch-all shapes are refused at expansion)\nLook | try … catch | on-raise … patterns — almost the same shape, so readers can read it without learning a new way of thinking (an advantage)")
      (interpretation
-       "書き方の例(file の頭の註): revise-input の After は成功の道だけを書き、不在と失敗を 1 つの on-raise で業務の答えの型へ畳む。外から見た型(戻り値と残りの effect)は Before と同じで、手で書いた :effects は推論に置き換わって消える。notify-landed の例は、業務の core に境目を書かず、1 件ごとの失敗の扱いを組み立ての handler に任せる形。")
+       "Writing examples (the file's header comment): the After of revise-input writes only the success path and folds absence and failure into the business answer type with one on-raise. The type seen from outside (return value and remaining effects) is the same as Before, and the hand-written :effects is replaced by inference and disappears. The notify-landed example is the shape that writes no boundary in the business core and leaves per-item failure handling to composition handlers.")
      (interpretation
-       "既定の受け手は Absent / Raise を受けて続きを捨てるので、受けた後では再試行も既定値での再開もできない(続きが無い)。再試行は答えがまだ失敗の値のうち — 値で答える土台の handler の中 — で行う。既定値は effect ならではの形(Absent を受けた handler が既定値で続きを再開する)で書けるが、『知らない値を黙って既定値にしない』に触れるので、既定値を与える handler は書いた人が明示した物に限る。doeff-traverse の normalize_to_none(Fail を黙って None で再開する)は、明示しないと起きる形の実例。")
+       "The default receivers catch Absent / Raise and discard the continuation, so after catching neither retrying nor resuming with a default is possible (there is no continuation). Retrying is done while the answer is still a failure value — inside a foundation handler that answers with values. A default can be written in a shape unique to effects (a handler that caught Absent resumes the continuation with a default), but this touches 'do not silently turn unknown values into defaults', so handlers that supply defaults are limited to ones the writer made explicit. doeff-traverse's normalize_to_none (silently resumes Fail with None) is an actual example of the shape that happens when it is not explicit.")
      (interpretation
-       "記録と再生の handler(ADR-DOE-CLUSTER-001 R5)は、読みの effect の本物の答え(Unreachable のような失敗の値も)を境目の下で書き留める。<- の変換は本文の中の決定的な計算なので、再生でも同じ答えから同じ Absent / Raise が出る。")
+       "The recording and replay handlers (ADR-DOE-CLUSTER-001 R5) record the real answers of read effects (including failure values like Unreachable) below the boundary. <-'s conversion is a deterministic computation inside the body, so replay produces the same Absent / Raise from the same answer.")
      (interpretation
-       "関数が Absent・Raise を出すかどうかは、その関数が呼ぶ関数と、途中で置いた handler で決まる(論点 4)。手で書いた :effects は、呼び先が変わると黙って古くなる。呼び先を推移的にたどる推論(doeff-effect-analyzer)なら古くならない。関数の型は、戻り値(中身だけ — Maybe / Result に包まない)と、推論した残りの effect の集合の組として見せる。これは Eff などの論文の計算の型 A ! Δ と同じ考え方(Koka では exn int のように effect の列を戻り値の前に書く)。")
+       "Whether a function performs Absent or Raise is determined by the functions it calls and the handlers placed along the way (point 4). Hand-written :effects silently go stale when callees change. Inference that follows callees transitively (doeff-effect-analyzer) does not go stale. A function's type is shown as the pair of its return value (content only — not wrapped in Maybe / Result) and the inferred set of remaining effects. This is the same idea as the computation type A ! Δ in papers such as Eff (Koka writes the effect row before the return type, like exn int).")
      (interpretation
-       "R13 のために analyzer に足りない物は 3 つ: (1) Program の中で置いた handler(with-handlers・maybe・result・on-raise・<- の :absent の受け手)が受ける effect を集合から引く処理 — 今は Program の effect を集めるだけで、handler を引くのは env の coverage の側だけ。(2) 引数で渡された Program(carried)を、渡した先の意味に従って呼び手の側で畳む処理 — 今は呼び手が effect_types_with で明示して畳む。(3) 結果を cache して linter とエディタが読む形 — Jev の cache と同じ扱いで、保存のたびに module を import しない。今の cache は process の中の module の cache だけ。")
+       "What the analyzer lacks for R13 is 3 things: (1) subtracting from the set the effects caught by handlers placed inside a Program (with-handlers, maybe, result, on-raise, <-'s :absent receiver) — currently it only collects a Program's effects, and subtracting handlers happens only on the env coverage side. (2) folding Programs passed as arguments (carried) on the caller's side according to the meaning of where they are passed — currently the caller folds them explicitly with effect_types_with. (3) a form in which results are cached for the linter and the editor to read — treated like Jev's cache, without importing the module on every save. The current cache is only the in-process module cache.")
      (interpretation
-       "effect は積み重なるもう 1 本のデータの口である(論点 9)。4 種類の失敗は、本文の中では effect として外へ流れ、境目で値に戻る — 外の世界との境目(handler の答え・記録)では答えの値、呼び手が『何かしたい』境目(maybe・result・on-raise・absent-as)でも値。だから handler と記録の形は変えず(値で答える)、変わるのは本文の中の受け取り方(<- の開き)と、宣言(defeffect の :absent / :failure / :value)だけになる。doeff-records の handler を変えない理由も同じ: handler の節で Raise を出すと呼び手のスコープを飛び越える(R4)。")
+       "Effects are one more channel of data that stacks up (point 9). Inside the body the 4 kinds of failure flow outward as effects and turn back into values at boundaries — answer values at the boundary with the outside world (handler answers, records), and values too at the boundaries where the caller 'wants to do something' (maybe, result, on-raise, absent-as). So the shape of handlers and records does not change (they answer with values); what changes is only how answers are received in the body (opening by <-) and the declarations (defeffect's :absent / :failure / :value). The reason doeff-records' handlers do not change is the same: performing Raise in a handler clause skips the caller's scope (R4).")
      (interpretation
-       "段階 1・2 の実装で決めた戻せる決定(2026-09-28・この実装の担当が推奨どおり決めた — 戻し方は各項の後ろ):\n(1) maybe・result は Program を受ける関数(doeff_core_effects._outcomes)で、on-raise・absent-as は Program の式 1 つを受ける macro — 複数の行は do! で包む(handle・Try と同じ形。ADR の (maybe (<- (ReadRow …))) は (maybe (ReadRow …)) と書く)。戻し方: 本文の form を並べて受ける macro を足す。\n(2) handler の終わる節の名は (finish 値)、普通の effect を打ち切る理由は節の鍵 :finish-reason \"理由\"(Hy の reader は註を捨てるので、macro が読める鍵にした)。戻し方: 名と鍵を差し替える。\n(3) Raise の理由に Python の例外を置けない(Raise を作る時に TypeError)。<- が Err(Python の例外) を開く時は、Raise にせず例外のまま上げる(Try が畳んだ実装の誤りを業務の失敗に化けさせない — R11)。戻し方: effects.py の検めと outcomes.py の _open_value の 1 枝を消す。\n(4) <- の :absent <失敗> の失敗は、不在の時にだけ評価する値の式(効果は使えない — 展開の時に断る)。戻し方: open-bind に値を渡す形へ戻す。\n(5) <- と ! の展開は、束ねごとに doeff_core_effects._outcomes.open-bind を呼ぶ(import を展開の中に持つ — どこに書いた <- でも名前が解ける・1 回で約 0.2µs)。宣言の無い effect と Program には受け取った物そのものを返すので、yield する物・束ねる答え・例外は今までと同じ。展開の字面は変わる(tests/test_typed_effect_bind.py の形を直した)。戻し方: 段階 2 の commit の revert。\n(6) 効果の再開の扱いは effect の型の属性 __doeff_resumption__(Resumption)。宣言と節の照合は、名前で分かる物は展開の時、分からない物は handler を初めて本文に被せた時(定義の時にすると、handler より後に定義した effect の型を引けない)。戻し方: clause_endings.check-clause-endings-once の呼び出しを消す。\n(7) 節の終わりの検めを厳しくした: cond は最後が True、match は最後が番の無い _(名前 1 つの capture)、try は except の本体も終わること、入れ子の関数・内包表記の中の resume は数えない。戻し方: handle.hy の _terminates の枝を戻す。\n(8) 段階 4 の中身(この ADR の R16 の段階 4)は、段階 3 と 5 を同時に切り替える前に要る道具(古い分岐を拾う doeff-linter の規則・R13 の推論・Rust の analyzer の :absent の読み)と解した — coordinator の依頼に段階 4 の定義が無かったため。戻し方: R16 の段階 4 の文を差し替える。")
+       "Reversible decisions made in implementing stages 1 and 2 (2026-09-28, decided as recommended by the owner of this implementation — rollback after each item):\n(1) maybe and result are functions that take a Program (doeff_core_effects._outcomes), and on-raise and absent-as are macros that take one Program expression — multiple lines are wrapped in do! (the same shape as handle and Try. The ADR's (maybe (<- (ReadRow …))) is written (maybe (ReadRow …))). Rollback: add a macro that takes body forms in sequence.\n(2) The name of a handler's ending clause is (finish value), and the reason for cutting off an ordinary effect is the clause key :finish-reason \"reason\" (the Hy reader discards comments, so it was made a key the macro can read). Rollback: replace the name and the key.\n(3) A Python exception cannot be a Raise reason (TypeError when constructing Raise). When <- opens Err(Python exception), it raises the exception as is instead of making it Raise (so an implementation error folded by Try does not turn into a business failure — R11). Rollback: delete the check in effects.py and one branch of _open_value in outcomes.py.\n(4) The failure in <-'s :absent <failure> is a value expression evaluated only on absence (effects cannot be used — refused at expansion). Rollback: go back to the shape that passes a value to open-bind.\n(5) The expansion of <- and ! calls doeff_core_effects._outcomes.open-bind per bind (the import is inside the expansion — the name resolves wherever <- is written; about 0.2µs per call). For effects without a declaration and for Programs it returns exactly what it received, so what is yielded, the bound answer, and exceptions are the same as before. The literal text of the expansion changes (the shapes in tests/test_typed_effect_bind.py were fixed). Rollback: revert the stage 2 commit.\n(6) How an effect is resumed is the effect type attribute __doeff_resumption__ (Resumption). Matching declarations against clauses happens at expansion for what is identifiable by name, and for the rest when the handler is first installed on a body (doing it at definition time would not be able to look up effect types defined after the handler). Rollback: delete the call to clause_endings.check-clause-endings-once.\n(7) The clause-ending check was made stricter: cond's last must be True, match's last must be _ without a guard (a single-name capture), try's except bodies must also end, and resume inside nested functions and comprehensions does not count. Rollback: revert the branches of _terminates in handle.hy.\n(8) The content of stage 4 (stage 4 of this ADR's R16) was interpreted as the tools needed before switching stages 3 and 5 together (the doeff-linter rule that finds stale branches, R13's inference, the Rust analyzer reading :absent) — because the coordinator's request had no definition of stage 4. Rollback: replace the text of stage 4 in R16.")
      (interpretation
-       "段階 4 の古い分岐の規則(R14 (4) — 2026-10-23・この実装の担当が決めた戻せる決定。戻し方は各項の後ろ):\n(1) 規則の番号と題は DOEFF175 Stale Branch On A Declared Absent Or Failure、重さは critical で、既知の一覧(registry)では下げない — 毎回の切り替えの門なので、当たりが 0 になるまでその版を着地させない(lowered_by_registry を偽にしてある)。戻し方: rule.rs の目録の行を直す。\n(2) 当てるのは effect の頭を直に束ねた答え((<- x (E …))・(<- x T (E …))・(<- x (E …) :absent F)・(val x (! (E …)))・(match (! (E …)) …))だけ。defk を経由した答え((<- x (read-typed …)))は追わない — 経由する defk の戻りの型の枝は、その defk 自身の effect を切り替える版で直す。戻し方: 束ねた式の頭が defk なら defk の推論を辿る枝を足す(DOEFF127 の推論の世界が使える)。\n(3) 型は import と module で module まで解いて比べる(DOEFF122 と同じ — 同じ名の型が別の module にあっても、宣言した方だけ)。宣言の読みは DOEFF122 の failure_types_in を effect ごとに分けて使い回した。\n(4) 母集団は定義の規則の母集団(definitions の paths と test_paths — 検の呼び手も切り替えで古くなる)。ADR と doeff-core-effects の probe の検は doeff の母集団の外で、母集団を全 Hy の file に広げても当たりは 0(2026-10-23 の測り)。戻し方: 母集団を専用の節に分ける。\n(5) defhandler の節は定義ごと読まない(effect を受ける側で、答えを束ねる側ではない)。名の覚えは前から順に読み、束ね直した名・引数・for / with / let / except / comprehension / match の pattern で隠れた名は捨てる(見逃す方に倒す)。戻し方: 覚えを flow に沿って追う読みに替える。")]
+       "The stale-branch rule of stage 4 (R14 (4) — 2026-10-23, reversible decisions made by the owner of this implementation; rollback after each item):\n(1) The rule's number and title are DOEFF175 Stale Branch On A Declared Absent Or Failure, its severity is critical, and it is not lowered by the known-issue list (registry) — it is the gate of every switch, so that change is not landed until hits reach 0 (lowered_by_registry is set to false). Rollback: fix the catalog row in rule.rs.\n(2) It applies only to answers bound directly from an effect head ((<- x (E …)), (<- x T (E …)), (<- x (E …) :absent F), (val x (! (E …))), (match (! (E …)) …)). Answers via a defk ((<- x (read-typed …))) are not followed — the return-type branches of the defk in between are fixed in the change that switches that defk's own effect. Rollback: add a branch that follows the defk's inference when the head of the bound expression is a defk (DOEFF127's inference world can be used).\n(3) Types are resolved down to the module via imports and modules and then compared (the same as DOEFF122 — even if a type of the same name exists in another module, only the declared one). Reading the declarations reuses DOEFF122's failure_types_in, split per effect.\n(4) The population is that of the definition rules (definitions' paths and test_paths — callers in checks also go stale on a switch). The ADR's and doeff-core-effects' probe checks are outside doeff's population, and even widening the population to all Hy files gives 0 hits (measured 2026-10-23). Rollback: split the population into a dedicated section.\n(5) defhandler clauses are skipped per definition (they are the side that catches effects, not the side that binds answers). Names are remembered reading front to back, and names that are rebound or hidden by arguments, for / with / let / except / comprehension / match patterns are dropped (erring toward missing). Rollback: replace this with a reading that follows the flow.")]
   :decision
-    [(rule R1 "不在と失敗を、意味で分けた 2 つの effect にする。Absent(想定内の不在・Maybe の側)は中身を持たず、記録と調べ物のための説明の文だけを添える。Raise(e)(失敗・Result の側)は理由 e を持つ(理由に Python の例外は置けない — R11)。2 つの間に継承の関係を作らない(isinstance で互いに捕まらない)。境目の handler のうち maybe・result・on-raise と組み立ての方針の handler は、答えを返さず続きを捨てる。続きを再開してよいのは R8 の absent-as だけ。文献の fail / empty(Maybe の側)と raise / throw(Result の側)に当たる。失敗の側を Fail と呼ばない — 文献では Maybe の側の名であり、doeff-traverse の Fail(再開できる失敗の知らせ)とも紛れる。置き場は Try と同じ doeff-core-effects(doeff_core_effects._effects の Absent・Raise、doeff_core_effects._outcomes の境目の handler)。")
-     (rule R2 "Absent・Raise の受け取り方は、外側のスコープの境目の handler が決める。(maybe body) は Absent を Nothing に、成功を Some に写す。(result body) は Raise(e) を Err(e) に、成功を Ok に写す。組み合わせの型は入れ子の順で選ぶ: (result (maybe …)) は Result の中に Maybe(Ok(Some v)・Ok(Nothing)・Err(e))、(maybe (result …)) は Maybe の中に Result(Some(Ok v)・Some(Err e)・Nothing)。組み立ての方針の handler(1 件を飛ばして記録する・全体を止める)も Raise を受けてよい — 飛ばすのは受けたスコープ 1 つ分で、続きは戻らない。受け手の無い Absent / Raise は、ほかの effect と同じく未処理の effect として止まる(黙って Nothing や None にしない)。runner・env の組は境目の handler を既定で置かない(ADR-DOE-CLUSTER-001 R2)。")
-     (rule R3 "出す側は最初から Absent / Raise を出すのを既定にする(Koka と同じ素直な書き方)。defk の本文は直に (<- (Raise e)) / (<- (Absent 説明)) を出す — 本文は呼び手の動的なスコープで走るので、呼び手の maybe / result に届く。(<- x (危ない呼び)) の x は成功の値 T だけで、誰に呼ばれても『T か、逃げる』の 1 通り — 同じ行の意味が呼び手で変わらない。『成功だけを見る』範囲を宣言する構文(success-only)は置かない(2026-09-27・f143ee92 の席が推奨どおり決めた戻せる決定。戻し方: 範囲の宣言の macro を足し、R3 をその形の文へ戻す)。")
-     (rule R4 "effect に答える handler(ReadRow に答える土台の handler・翻訳の handler)は、節の中で Absent / Raise を出してはいけない。handler の節で出した effect はその handler より外側の handler へ行き、呼び手の本文のスコープ(maybe / result)を飛び越える:\n  組み立ての根: [外の受け手 … 土台の handler(ReadRow に答える)]   ← 外側\n    呼び手の本文: (result (maybe (<- row (ReadRow …))))              ← 内側\n  ReadRow は本文から外へ向かい、maybe・result を素通りして土台の handler に届く。土台の handler がそこで Absent を出すと、それは土台の handler より外へ行き、内側の maybe・result には戻らない。\nだから handler は今までどおり値で答え(記録係も値を書き留め、再生も変わらない)、呼び手の側の <- が defeffect の宣言(R5)に従って、不在の答えを Absent に、失敗の答えを Raise(答え)に変えて本文のスコープで出す。大事な落とし穴なので、doeff-linter の規則にする(R9 の 2 つ目の閉じる所と同じ規則)。")
-     (rule R5 "何を成功・不在・失敗・値とみなすかは effect ごとの defeffect の宣言で決め、型の名から推し量らない。形は {:answer (| Row Missing Unreachable Conflict) :absent [Missing] :failure [Unreachable] :value [Conflict]} — :absent / :failure / :value はどれも任意で、:answer の union の要素の list(None も書ける)。どれにも書かない要素が成功。要素が :answer に無い・2 つの鍵に重なるのは展開の時の誤り(:answer が union の form でない時は定義の時に Outcomes.declare が断る)。1 つでも書けば effect の型に __doeff_outcomes__(doeff_core_effects._outcomes.Outcomes)が付く。<- は宣言に従い、成功と値なら中身を束ね、不在なら Absent を、失敗なら Raise(答え)を出す。宣言の無い effect の答えは変換せず、答えのまま束ねる(yield する物も今までと同じ)。業務で普通に扱う答えは失敗と宣言しない — 例: PutRow の Conflict(版の負け)は CAS の繰り返しで普通に扱う答えなので :value と宣言する。不在を値で受けたい所は、その行を maybe で包む((maybe (ReadRow …)) は Maybe の値)。doeff-records の effect(今は defclass)は defeffect へ移してこの宣言を持つ(移し方は R14)。")
-     (rule R6 "役を 2 つに分ける(2026-09-27・f143ee92 の席が推奨どおり決めた戻せる決定)。開く(値 → effect): <- と ! だけ(! は <- と同じ開きを通る)— 宣言に従う変換(R5)、:absent <失敗>、Result / Option の値を渡すと開く形。畳む(effect → 値): 境目の handler maybe・result・on-raise・absent-as だけ。:absent <失敗> は <- の末尾の引数で、その 1 行の束ねを包む狭い受け手として、中で出た Absent(直にも、呼んだ defk の奥にも)を Raise(<失敗>) に変える(束ねる行と意味を同じ場所に置く。受け手は呼び手の本文の内側にあるので、出した Raise は呼び手の境目に届く)。<失敗> は不在の時にだけ評価する値の式で、効果は使えない。受け取った Result / Option の値は、もう一度 <- に渡せば開ける(Ok・Some → 中身、Err(e) → Raise(e)、Nothing → Absent。Err の中身が Python の例外なら例外のまま上げる — R11)— 値と effect を行き来でき、開くための別の構文は作らない。型(Option は doeff の Maybe = Some | Nothing):\n  (<- x (dangerous-call))      x : T\n  dangerous-call               : Program[T] ! {Raise[E], …}\n  (maybe body)                 : Program[Option[T]] ! {Raise[E], …}\n  (result body)                : Program[Result[T]] ! {Absent, …}\n  (result (maybe body))        : Program[Result[Option[T]]] ! {…}")
-     (rule R7 "境目の on-raise は (on-raise 本文 パターン [:if 番] 写し先 …) の形 — 失敗の型のパターン((型 欄 …) か (| (A …) (B …)))と、それを写す業務の答えだけを並べる。何でも受ける形(_・名前 1 つの capture・object・Exception・BaseException)は展開の時に断り、例外の型を名指す受けは作る時に断る(RaiseCase)。パターンに合わない Raise は受けずに外へ渡す。Python の例外(実装の誤り)は on-raise が受けない(Raise だけを見る)。番と写し先は値の式(効果は使えない)(2026-09-27・f143ee92 の席が推奨どおり決めた戻せる決定)。")
-     (rule R8 "(absent-as 既定値 本文) は、中で出た Absent を既定値に畳む(effect ならではの形 — Maybe を値で受けて既定値へ畳む手間が要らない)。『知らない値を黙って既定値にしない』(code-quality の方針)に触れるので、既定値を与える handler はその場に書いた (absent-as …) のような明示の物に限り、runner・env の組・土台の handler に既定値での再開を置かない。再開の値が型に合うのは、Absent が absent-as の字面の中の <- で値の代わりに出た時だけ — 本文が (do! …) なら、その字面の中に直に書いた <- と ! が出した不在だけを既定値で再開する(その束ねが既定値を受けて続く)。呼んだ defk の奥で出た Absent に既定値を返すと、奥の行が別の型の値を受ける。コードに直に書いた (<- (Absent …)) を再開すると、不在を前提にしない続きが走る。この 2 つの場合は再開せず、既定値で absent-as のスコープを終える。入れ子の do! / fnk / 関数の中の束ねは『奥』に数える。")
-     (rule R9 "境目の handler(maybe・result・on-raise・absent-as)を書くのは、不在か失敗に対して何かしたい所だけ。それ以外は成功の道だけを書き、Absent / Raise は外へ逃がす(try-catch を受け止めたい所にだけ書くのと同じ)。ただし構造上必ず閉じる所が 2 つある。(1) job の入口 — runner は handler を足さない(ADR-DOE-CLUSTER-001 R2)ので、service の本体の方針の handler(飛ばして記録・止める等)で閉じる。確かめ: job の Program の推論した残りの effect が空。(2) handler の節の中で Program を走らせて答える所(翻訳の handler)— handler の中から逃げた Raise は handler より外側へ行き呼び手のスコープを飛び越える(R4)ので、答えの値(業務の effect の答えの型)に閉じてから返す。確かめ: handler の節で走らせる Program の推論した残りの effect に Absent / Raise が無い — doeff-linter の新しい規則の候補(番号は未定)(2026-09-27・f143ee92 の席が推奨どおり決めた戻せる決定)。")
-     (rule R10 "再試行は Raise を受けてからではできない(続きが捨てられている)。答えがまだ失敗の値のうちに、値で答える土台の handler の中(Unreachable なら出し直す)で行う。")
-     (rule R11 "Python の例外は実装の誤りのまま扱う(doeff-records の決まりと同じ)。想定内の不在・失敗を例外で表さない — Raise の理由に Python の例外は置けない。Try(例外を Result に畳む)は今のまま残し、Absent / Raise と混ぜない — <- が Try の Err(例外) を開く時は Raise にせず例外のまま上げる。")
-     (rule R12 "記録と再生との関係: handler は値で答え、記録係は境目の下で本物の答え(失敗の値も)を書き留める(ADR-DOE-CLUSTER-001 R5)。<- の変換は本文の中の決定的な計算なので、再生でも同じ答えから同じ Absent / Raise が出る。Absent / Raise を記録係へ届く汎用の effect にしない(記録するのは読みの effect の答え)。")
-     (rule R13 "関数がどの effect を出すか(Absent・Raise を含む)は、手で書かずに doeff-effect-analyzer で推論する(呼び先を推移的にたどり、Hy は macro を展開してから読み、defhandler の節から受ける effect を読み、追えない物は unresolved と報告する)。関数の型は、戻り値(中身だけ・Maybe / Result に包まない)と推論した残りの effect の集合の組として見せる。表記の例: settle-landing : str → Program[Row] ! {Absent, Raise[Unreachable | Refused], ReadRow, PutRow}(Eff などの論文の計算の型 A ! Δ と同じ考え方)。handler で包むと、その handler が受ける effect が集合から消える。:effects(defk の頭の辞書に既にある任意のキー)は必須にしない。公開の境目にだけ上限として書き、推論 ⊆ 宣言を linter が確かめる(宣言が古くならない)。使い道: エディタの hover で残りの effect を出す/job の入口の Program の残りの effect が空であることを書いた時点で確かめる(R9 の 1 つ目)/core の定義の残りの effect に汎用の effect(通信・記録)が入れば層の違反として出す。analyzer に足りない物は :context の interpretation。")
-     (rule R14 "移し替え(段階 3 と段階 5 の切り替えの手順): 今の doeff-records の effect は失敗を値で返す決まり(README『失敗の答え(値で返す)』)。宣言を切り替えると、(match body (Missing) …) の既存の呼び手は Missing を見なくなる(決して通らない分岐が残る)。だから次の順で、effect ごとに(1 つの版で 1 つの effect — 一度に全部の effect を切り替えない)、doeff-records の宣言と agora の呼び手を同じ版で切り替える:\n(1) 切り替える effect E を 1 つ選ぶ(呼び手の少ない物から — ReadPlacedInput・PostMessage など。ReadRow は最後)。\n(2) doeff-records の E を defclass から defeffect へ移し、:absent / :failure / :value を R17 の割り当てで宣言する。E に答える handler は変えない(値で答える — handler の節で Raise を出すと呼び手のスコープを飛び越える: R4)。記録の形も変わらないので、既存の記録はそのまま再生できる。\n(3) 同じ版で agora の E の呼び手を書き換える: 不在・失敗を (match …) / isinstance で分けていた呼び手は成功の道だけにし、不在で何かしたい所は <- の :absent <失敗> か absent-as、失敗で何かしたい所は on-raise にする。Missing を普通の値として持ち回る・数える呼び手は (maybe …) で包み、Maybe の値(Missing の代わりに Nothing)を受ける形にする。:value と宣言した答え(Conflict)の呼び手は変えない。job の入口と、handler の節で Program を走らせる翻訳の handler で Absent / Raise を閉じる(R9)。\n(4) 古い分岐(E の不在・失敗と宣言した型を値として match / isinstance する分岐)は doeff-linter の規則が拾う(段階 4 の道具)。当たりが 0 になるまでその版を着地させない — law declarations-switch-one-effect-at-a-time。\n(5) 型の決まった書き換え(古い分岐の削除・maybe での包み・:absent への移し替え)は Sonnet 5 に任せる — effect ごとの手順(この R14)と linter の当たりの一覧を渡して機械的に進める。不在を何の失敗にするか・どこで閉じるかの判断が要る所は、その呼び手の持ち主が決める。\n(6) HTTP の答えの状態コードは、翻訳の層(HTTP の答えを業務の答えへ写す handler)の 1 か所で 4 種類に写し(R17)、呼び手に状態コードを見せない。")
-     (rule R15 "handler の節の終わり方(再開の書き忘れの懸念・論点 10): 節は resume(非末尾なら続きの答えが節へ戻る)・transfer・finish(続きを捨て、handler を置いたスコープの答えをその値にする)・reperform・raise のどれかで終わる。書き忘れは今までどおり誤り — 節のすべての道(if・cond・match・try の枝ごと。cond は最後が True、match は最後が番の無い _、try は except の本体も)が終わらなければ展開の時に SyntaxError。when・unless・and・or・loop・入れ子の関数と内包表記の中の resume は終わりに数えない。effect ごとに再開の扱いを宣言する(effect の型の属性 __doeff_resumption__ = doeff_core_effects._effects.Resumption: Raise = NEVER(誰も再開しない)・Absent = ABSENT_AS_ONLY(absent-as だけが再開する)・宣言しない普通の effect = REQUIRED)。宣言に反する節(Raise / Absent を resume・transfer する節、普通の effect を finish で打ち切る節)は違反 — 名前で分かる物(節の頭が Raise / Absent・finish の節に理由が無い)は展開の時に SyntaxError、分からない物(別名で import した Raise・__doeff_resumption__ を宣言した型)は handler を初めて本文に被せた時に ClauseEndingError。とくに Raise の resume は『失敗したのに成功したかのように続く』ので、宣言(NEVER)と展開の両方で断り、<- が開いた Raise / Absent を素の handler 関数が再開しても、開く側が RuntimeError にする。普通の effect を意図して打ち切る節(時間切れで処理全体を止める等)は、節に :finish-reason \"理由\" を書いた時だけ許す(理由の註を書いた deff と同じ扱い)。実行の時: 節が resume も finish もせずに抜けたら(例外を黙らせる with の中の resume など、展開の時に見えない道)、defhandler の包みが RuntimeError にする — VM は再開しない handler の値でスコープを黙って終えるため。素の Python の handler 関数(@do の関数・deff の handler)にはこの包みが無く、VM は『再開しないで値を返す』を正当な終わり方として受けるので、実行の時の検めは効かない(塞げない理由: finish と書き忘れを見分ける印が VM に無い — 見分けるには VM に明示の終わりの操作を足し、既存の Python の handler を全部書き換える必要がある)。素の handler 関数の終わり方は doeff-linter の規則の候補(番号は未定)。")
-     (rule R16 "段階の計画(2026-09-27・論点 9):\n段階 1(振る舞いを変えない・足すだけ): Absent / Raise の effect・境目の handler maybe・result・on-raise・absent-as(奥の不在は既定値でスコープを終える)・defhandler の終わる節 (finish) と節の終わり方の検め(R15)。\n段階 2(振る舞いを変えない — 宣言を持つ effect がまだ無い): defeffect の答えの宣言(R5)・<- と ! の変換・:absent・Result / Option の値を開く形(R6)・absent-as の字面の中の <- の再開(R8)。宣言の無い effect の <- は yield する物も束ねる答えも今までと同じ。\n段階 3: doeff-records の effect を defeffect へ移して宣言を付ける(handler は変えない)。\n段階 4: 段階 3 と 5 を切り替える前に要る道具 — 古い分岐を拾う doeff-linter の規則(R14 (4))・on-raise の何でも受ける形と handler の節の Absent / Raise の規則(R4・R9)・推論(R13)・Rust の analyzer の <- の :absent の読み。\n段階 5: agora の呼び手の書き換え。段階 3 と段階 5 は同時に — effect ごとに同じ版で — 切り替える(R14)。")
-     (rule R17 "繰り返し出る 4 種類の失敗の割り当て(論点 9): Unreachable(置き場・相手に届かない)と Refused(相手が断った)は失敗(:failure — <- は Raise を出す)、Missing(行が無い)は不在(:absent — <- は Absent を出す)、Conflict(版の負け)は値(:value — CAS の繰り返しで普通に扱う答え)。4 種類はコードの本文では effect、外の世界との境目(handler の答え・記録)と呼び手が何かしたい境目(maybe・result・on-raise・absent-as)ではデータ。HTTP の状態コードは翻訳の層の 1 か所でこの 4 種類に写す(例: 404 → Missing、409・412 → Conflict、401・403 → Refused、5xx と通信の失敗 → Unreachable — 写し方の表は翻訳の層が持つ)。\n追補(2026-09-28 — 5 つ目の失敗の種類): Malformed(外から来た JSON が型の約束の形でない — どの型の・どの欄が・なぜを持つ。doeff_hy._wire)は失敗(:failure — <- は Raise を出す)。相手の版の食い違いは運用で起きうるので、実装の誤りの例外ではなく業務の失敗として扱う。出所は defwire の解き手 parse / parse-json の 1 か所だけ(ADR-DOE-HY-007 R8)。段階 3 の切り替え(R14)までは parse は Malformed を値で返し(答えの型 = (| T Malformed))、呼び手は値で分ける。切り替えで parse を :failure の宣言つきにし、Raise(Malformed) に寄せる(effect ごとに 1 つの版で — 他の 4 種類と同じ手順)。案 A(defwire)が選ばれた後に、推奨どおり決めた戻せる決定。戻し方: この追補の文を消し、parse の答えを Malformed の値のままにする。\n追補(2026-10-23・段階 3 と 5 の最初の切り替え = ReadStreamEnd の席 — 4 種類の外の答え StreamEmpty): StreamEmpty(追記の列に出来事が 1 つも無い)は値(:value — <- は中身を束ねる)。列に出来事が 1 つも無いという事実を持つ答えで、番号 0 と混ぜない(doeff-records の README)ので、不在にして Absent で飛ばさず、呼び手が StreamEnd と分けて扱う。ReadStreamEnd の宣言 = {:answer (| StreamEnd StreamEmpty Unreachable) :failure [Unreachable] :value [StreamEmpty]}(成功 = StreamEnd・不在 = 無し)。答える handler は値で答えたまま(R4)。決めた席 = この card の担当(card の推奨どおり — 戻せる決定)。戻し方: この追補の文を消し、StreamEmpty を :value から :absent へ移す(StreamEmpty を値として分けている呼び手 — event_source の stream-starts・publish-appends の (isinstance end StreamEnd) の枝、法 law-stream-end-is-the-last-sequence ほかの StreamEmpty との比べ — は <- が Absent を出すので通らなくなる。(maybe …) か <- の :absent へ書き直す)。宣言を丸ごと戻すなら、defeffect を defclass へ戻し、event_source の reachable と ride-out-stall の on-raise を元の (<- answered ask) へ戻す。\n追補(2026-10-24・段階 3 と 5 の 2 つ目の切り替え = WatchEvents の席 — 4 種類の外の答え EventsQuiet): EventsQuiet(timeout まで追記の列の頭が進まなかった)は値(:value — <- は中身を束ねる)。期限まで進まなかったという普通の答えで、待つ呼び手(合図の源の publish-appends ほか)が毎回 EventsMoved と分けて扱うので、失敗にして Raise で飛ばさず、不在にして Absent で飛ばさない(after が頭より先でも誤りにしない)。WatchEvents の宣言 = {:answer (| EventsMoved EventsQuiet Unreachable) :failure [Unreachable] :value [EventsQuiet]}(成功 = EventsMoved・不在 = 無し)。答える handler(memory・pg・http_client・http_server)は値で答えたまま(R4)。決めた席 = この card の担当(card の推奨どおり — 戻せる決定)。戻し方: この追補の文を消し、EventsQuiet を :value から :absent へ移す(EventsQuiet を値として分けている呼び手 — event_source の publish-appends の (isinstance moved EventsMoved) の枝、検の WatchEvents の答えと (EventsQuiet) との比べ ほか — は <- が Absent を出すので通らなくなる。(maybe …) か <- の :absent へ書き直す)。宣言を丸ごと戻すなら、defeffect を defclass へ戻す(event_source の reachable と ride-out-stall の on-raise は、Raise を出す宣言が無ければ答えをそのまま通すので残してよい)。\n追補(2026-10-24・段階 3 と 5 の ReadEventByKey の席 — 4 種類の外の答え EventAbsent・EventRetired): EventAbsent(その鍵では追記の列に積まれていない)は不在(:absent — <- は Absent を出す。ReadRow の Missing と同じ意味)、EventRetired(積まれたが保持の期限で消えた出来事の番号を持つ)は値(:value — <- は中身を束ねる。呼び手が Event と分けて扱う普通の答えで、消えた事実を持つので不在にして Absent で飛ばさない)。ReadEventByKey の宣言 = {:answer (| Event EventAbsent EventRetired Unreachable) :absent [EventAbsent] :failure [Unreachable] :value [EventRetired]}(成功 = Event)。答える handler は値で答えたまま(R4)。決めた席 = この card の担当(card の推奨どおり — 戻せる決定)。戻し方: この追補の文を消し、割り当てを替える。EventAbsent を :absent から :value へ移すなら、不在を <- の :absent・maybe・absent-as で扱っていた呼び手を、EventAbsent を値として分ける isinstance の枝へ戻す。EventRetired を :value から :absent へ移すなら、EventRetired を値として分けている呼び手(isinstance の枝・法 law-keys-are-forgotten-after-their-memory ほか)は <- が Absent を出すので通らなくなり、(maybe …) か <- の :absent へ書き直す。宣言を丸ごと戻すなら、defeffect を defclass へ戻し、中継(Perform)を元の (<- answer effect) へ戻す。\n追補(2026-10-24・段階 3 と 5 の WatchChanges の席 — 4 種類の外の答え Reset): Reset(cursor の epoch が置き場の版と違う・刈った変更より前の位置)は値(:value — <- は中身を束ねる)。cursor の世代が置き場の版と違うという普通の答えで、呼び手が Reset の (epoch, floor) から最初に読み直して続けるので、失敗にして Raise で飛ばさず、不在にして Absent で飛ばさない。WatchChanges の宣言 = {:answer (| Changes Reset Unreachable) :failure [Unreachable] :value [Reset]}(成功 = Changes・不在 = 無し)。答える handler(memory・pg・http_client・http_server)は値で答えたまま(R4)。決めた席 = この card の担当(card の推奨どおり — 戻せる決定)。戻し方: この追補の文を消し、Reset を :value から :absent へ移す(Reset を値として分けている呼び手 — event_source の publish-changes の (Reset …) の腕、検の法 law-epoch-change-resets・law-maintenance-prunes-and-sweeps の Reset との比べ ほか — は <- が Absent を出すので通らなくなる。(maybe …) か <- の :absent へ書き直す)。Reset を :failure へ移すなら、同じ呼び手を on-raise へ書き直す。宣言を丸ごと戻すなら、defeffect を defclass へ戻し、検の on-raise(test_memory_faults・test_memory_outage)と中継の Perform(test_laws_catch_broken_handlers)を元の <- へ戻す(event_source の reachable と ride-out-stall の on-raise は、Raise を出す宣言が無ければ答えをそのまま通すので残してよい)。\n追補(2026-10-24・段階 3 と 5 の ReadEvents の席 — 4 種類の外の答え NotIndexed): NotIndexed(key-lookup を宣言していない列に冪等キーの頭の読み key-head を求めた)は失敗(:failure — <- は Raise を出す)。呼び手が列の宣言を読み違えた誤りで、読み直しても同じ答えになり続きが無いので、値にも不在にもせず失敗にする(ListRows の NotIndexed と同じ割り当てにそろえる)。ReadEvents の宣言 = {:answer (| Events Unreachable NotIndexed) :failure [Unreachable NotIndexed]}(成功 = Events・不在と値は無し)。答える handler(memory・pg・http_client・http_server)は値で答えたまま(R4)。決めた席 = この card の担当(card の推奨どおり — 戻せる決定)。戻し方: この追補の文を消し、NotIndexed を :failure から :value へ移す(NotIndexed を値として分ける呼び手 — 検の頭の読みの答えとの比べ ほか — は <- が Raise を出さなくなり、NotIndexed を値で受ける今までの形に戻る。laws.hy の法 7b は as-writer で撃つので <- を通らず、宣言を戻しても変わらない)。宣言を丸ごと戻すなら、defeffect を defclass へ戻す(呼び手の on-raise は、Raise を出す宣言が無ければ答えをそのまま通すので残してよい)。\n追補(2026-10-25・段階 3 と 5 の PutRows の席 — 4 種類の外の答え RowsConflict・RowsRefused): RowsConflict(束のある行の期待が今の行と合わない — 束は 1 行も書いていない)は値(:value — <- は中身を束ねる)。PutRow の Conflict(版の負け)と同じで、呼び手が読み直して撃ち直す CAS の繰り返しで普通に扱う答えなので、失敗にして Raise で飛ばさず、不在にして Absent で飛ばさない。RowsRefused(束のある行を宣言が許さない・同じ冪等キーの別の束の 0 行目 — 束は 1 行も書いていない)は失敗(:failure — <- は Raise を出す)。PutRow の Refused と同じ割り当てにそろえる。PutRows の宣言 = {:answer (| WrittenRows RowsConflict RowsRefused Unreachable) :failure [RowsRefused Unreachable] :value [RowsConflict]}(成功 = WrittenRows・不在は無し。Unreachable は R17 の割り当てどおり失敗)。答える handler(memory・pg・http_client・http_server)は値で答えたまま(R4)。決めた席 = この card の担当(card の推奨どおり — 戻せる決定)。戻し方: この追補の文を消し、割り当てを替える。RowsConflict を :value から :failure へ移すなら、RowsConflict を値として分ける呼び手(isinstance の枝・match の腕)を on-raise へ書き直す。RowsConflict を :absent へ移すなら、同じ呼び手は <- が Absent を出すので通らなくなり、(maybe …) か <- の :absent へ書き直す。RowsRefused を :failure から :value へ移すなら、<- が Raise を出さなくなり、RowsRefused を値で受ける今までの形に戻る(呼び手の on-raise は、Raise を出す宣言が無ければ答えをそのまま通すので残してよい)。宣言を丸ごと戻すなら、defeffect を defclass へ戻し、検の on-raise(test_memory_outage)と中継の Perform(test_memory_faults・test_laws_catch_broken_handlers)を元の <- へ戻す。\n追補(2026-10-31・段階 3 と 5 の ListRows の席 — 4 種類の外の答え Reset・NotIndexed): Reset(渡した cursor の位置の世代が置き場の版と違う・刈った変更より前の位置)は値(:value — <- は中身を束ねる)。位置の世代が置き場の版と違うという普通の答えで、呼び手が一覧の頭から読み直して続けるので、失敗にして Raise で飛ばさず、不在にして Absent で飛ばさない(WatchChanges の Reset と同じ割り当て)。NotIndexed(索引の無い欄で絞った)は失敗(:failure — <- は Raise を出す)。呼び手が絞りの欄を読み違えた誤りで、読み直しても同じ答えになり続きが無いので、値にも不在にもせず失敗にする(ReadEvents の NotIndexed と同じ割り当て。PostgreSQL の置き場が索引の用意の終わるまで返す NotIndexed も同じ失敗で、撃ち直す呼び手は on-raise で受ける)。Unreachable は上の割り当てどおり失敗。ListRows の宣言 = {:answer (| Page Reset Unreachable NotIndexed) :failure [Unreachable NotIndexed] :value [Reset]}(成功 = Page・不在 = 無し)。表ごとの行の型の層 list-typed はこの宣言を通り、TypedPage | Reset を返して Unreachable・NotIndexed は Raise で逃がす。答える handler(memory・pg・http_client・http_server)は値で答えたまま(R4)。決めた席 = この card の担当(card の推奨どおり — 戻せる決定)。戻し方: この追補の文を消し、割り当てを替える。Reset を :value から :absent へ移すなら、Reset を値として分けている呼び手(isinstance の枝・match の腕。doeff の中には無く、消費者の頁を辿る呼び手)は <- が Absent を出すので通らなくなり、(maybe …) か <- の :absent へ書き直す。Reset を :failure へ移すなら、同じ呼び手を on-raise へ書き直す。NotIndexed を :failure から :value へ移すなら、<- が Raise を出さなくなり、NotIndexed を値で受ける今までの形に戻る(呼び手の on-raise は、Raise を出す宣言が無ければ答えをそのまま通すので残してよい)。宣言を丸ごと戻すなら、defeffect を defclass へ戻し、list-typed の :post を元の型に戻し、検の on-raise(test_memory_faults・test_memory_outage)と中継の Perform(test_laws_catch_broken_handlers)を元の <- へ戻す(event_source の reachable の on-raise は、Raise を出す宣言が無ければ答えをそのまま通すので残してよい)。\n追補(2026-11-02・段階 3 と 5 の PutRow の席 — 4 種類の割り当ては上の決定のまま): PutRow の答えの 4 種類はどれも上の割り当てに入る。Written は成功、Conflict(期待が今の行と合わない版の負け)は値(:value — <- は中身を束ねる。呼び手が読み直して撃ち直す CAS の繰り返しで普通に扱う答えなので、失敗にして Raise で飛ばさず、不在にして Absent で飛ばさない)、Refused(宣言が許さない書き・同じ冪等キーの別の本文)と Unreachable は失敗(:failure — <- は Raise を出す)。不在は無い。PutRow の宣言 = {:answer (| Written Conflict Refused Unreachable) :failure [Refused Unreachable] :value [Conflict]}(PutRows の RowsConflict・RowsRefused はこの割り当てと同じ)。表ごとの行の型の層 put-typed はこの宣言を通り、TypedWritten | TypedConflict を返して Refused・Unreachable は Raise で逃がす。答える handler(memory・pg・http_client・http_server)は値で答えたまま(R4)。決めた席 = この切り替えの担当(上の割り当てのとおり — 戻せる決定)。戻し方: この追補の文を消し、割り当てを替える。Conflict を :value から :failure へ移すなら、Conflict を値として分ける呼び手(isinstance の枝・match の腕。put-typed の TypedConflict の枝を含む)を on-raise へ書き直す。Conflict を :absent へ移すなら、同じ呼び手は <- が Absent を出すので通らなくなり、(maybe …) か <- の :absent へ書き直す。Refused を :failure から :value へ移すなら、<- が Raise を出さなくなり、Refused を値で受ける今までの形に戻る(呼び手の on-raise は、Raise を出す宣言が無ければ答えをそのまま通すので残してよい)。宣言を丸ごと戻すなら、defeffect を defclass へ戻し、put-typed の :post を元の型(TypedWritten | TypedConflict | Refused | Unreachable)と枝(最後の True answer)に戻し、検の on-raise(test_memory_outage・test_typed_rows・test_client_internal_is_unreachable)と中継の Perform(test_memory_faults・test_memory_write_notes・test_laws_catch_broken_handlers)を元の <- へ戻す。")]
+    [(rule R1 "Absence and failure become 2 effects separated by meaning. Absent (expected absence, the Maybe side) has no content and carries only a description text for records and investigation. Raise(e) (failure, the Result side) carries a reason e (a Python exception cannot be the reason — R11). No inheritance relation is created between the 2 (they do not catch each other via isinstance). Among the boundary handlers, maybe, result, on-raise, and the composition policy handlers do not return an answer and discard the continuation. Only R8's absent-as may resume the continuation. They correspond to fail / empty (the Maybe side) and raise / throw (the Result side) in the literature. The failure side is not called Fail — in the literature that is the name of the Maybe side, and it would also be confused with doeff-traverse's Fail (a resumable notice of failure). They live in doeff-core-effects, the same place as Try (Absent and Raise in doeff_core_effects._effects, the boundary handlers in doeff_core_effects._outcomes).")
+     (rule R2 "How Absent and Raise are received is decided by the boundary handlers of the outer scope. (maybe body) maps Absent to Nothing and success to Some. (result body) maps Raise(e) to Err(e) and success to Ok. The combined type is chosen by the nesting order: (result (maybe …)) is a Maybe inside a Result (Ok(Some v), Ok(Nothing), Err(e)), and (maybe (result …)) is a Result inside a Maybe (Some(Ok v), Some(Err e), Nothing). Composition policy handlers (skip one item and record it, stop everything) may also catch Raise — what is skipped is the one scope that caught it, and the continuation does not come back. An Absent / Raise with no receiver stops as an unhandled effect like any other effect (it is not silently made Nothing or None). The runner and env sets place no boundary handlers by default (ADR-DOE-CLUSTER-001 R2).")
+     (rule R3 "By default the producing side performs Absent / Raise from the start (the plain style, as in Koka). A defk body directly performs (<- (Raise e)) / (<- (Absent description)) — the body runs in the caller's dynamic scope, so it reaches the caller's maybe / result. The x in (<- x (risky-call)) is only the success value T, and whoever calls it, there is exactly one meaning, 'T, or escape' — the meaning of the same line does not change with the caller. No syntax that declares a 'look only at success' scope (success-only) is provided (2026-09-27, a reversible decision made as recommended by the f143ee92 seat. Rollback: add a scope-declaring macro and change R3 back to text of that shape).")
+     (rule R4 "A handler that answers an effect (a foundation handler answering ReadRow, a translating handler) must not perform Absent / Raise inside its clauses. An effect performed in a handler clause goes to handlers outside that handler, skipping the scope of the caller's body (maybe / result):\n  composition root: [outer receivers … foundation handler (answers ReadRow)]   ← outer\n    caller's body: (result (maybe (<- row (ReadRow …))))              ← inner\n  ReadRow goes outward from the body, passes straight through maybe and result, and reaches the foundation handler. If the foundation handler performs Absent there, it goes outside the foundation handler and does not come back to the inner maybe and result.\nSo handlers keep answering with values as before (the recorder also records values, and replay does not change), and <- on the caller's side, following the defeffect declaration (R5), turns an absence answer into Absent and a failure answer into Raise(answer), performed in the body's scope. This is an important pitfall, so it becomes a doeff-linter rule (the same rule as R9's second place that must be closed).")
+     (rule R5 "What counts as success, absence, failure, or value is decided by each effect's defeffect declaration, not guessed from type names. The shape is {:answer (| Row Missing Unreachable Conflict) :absent [Missing] :failure [Unreachable] :value [Conflict]} — :absent / :failure / :value are all optional and are lists of members of the :answer union (None may be written). Members listed in none of them are success. A member not in :answer or overlapping across 2 keys is an expansion-time error (when :answer is not a union form, Outcomes.declare refuses at definition time). Writing even one attaches __doeff_outcomes__ (doeff_core_effects._outcomes.Outcomes) to the effect type. <- follows the declaration: for success and value it binds the content, for absence it performs Absent, for failure it performs Raise(answer). The answer of an effect without a declaration is not converted and is bound as is (what is yielded is also the same as before). Answers handled normally in the business are not declared as failures — e.g. PutRow's Conflict (losing on version) is an answer handled normally in CAS retries, so it is declared :value. Where absence should be received as a value, wrap that line in maybe ((maybe (ReadRow …)) is a Maybe value). doeff-records' effects (currently defclass) move to defeffect and get this declaration (how to move them is R14).")
+     (rule R6 "Split into 2 roles (2026-09-27, a reversible decision made as recommended by the f143ee92 seat). Opening (value → effect): only <- and ! (! goes through the same opening as <-) — the conversion following the declaration (R5), :absent <failure>, and the shape that opens a Result / Option value when passed one. Folding (effect → value): only the boundary handlers maybe, result, on-raise, absent-as. :absent <failure> is a trailing argument of <-; as a narrow receiver wrapping that one line's bind, it turns any Absent performed inside (directly or deep inside a called defk) into Raise(<failure>) (putting the meaning in the same place as the bind line; the receiver is inside the caller's body, so the Raise it performs reaches the caller's boundary). <failure> is a value expression evaluated only on absence, and cannot use effects. A received Result / Option value can be opened by passing it to <- again (Ok, Some → content; Err(e) → Raise(e); Nothing → Absent. If the content of Err is a Python exception, it is raised as the exception — R11) — values and effects can be converted back and forth, and no separate syntax for opening is created. Types (Option is doeff's Maybe = Some | Nothing):\n  (<- x (dangerous-call))      x : T\n  dangerous-call               : Program[T] ! {Raise[E], …}\n  (maybe body)                 : Program[Option[T]] ! {Raise[E], …}\n  (result body)                : Program[Result[T]] ! {Absent, …}\n  (result (maybe body))        : Program[Result[Option[T]]] ! {…}")
+     (rule R7 "The boundary on-raise has the shape (on-raise body pattern [:if guard] target …) — it lists only failure-type patterns ((Type field …) or (| (A …) (B …))) and the business answers they map to. Catch-all shapes (_, a single-name capture, object, Exception, BaseException) are refused at expansion, and a case naming an exception type is refused at construction (RaiseCase). A Raise matching no pattern is not caught and passes outward. Python exceptions (implementation errors) are not caught by on-raise (it looks only at Raise). Guards and targets are value expressions (cannot use effects) (2026-09-27, a reversible decision made as recommended by the f143ee92 seat).")
+     (rule R8 "(absent-as default body) folds an Absent performed inside into the default (a shape unique to effects — no need to receive a Maybe as a value and fold it into a default). This touches 'do not silently turn unknown values into defaults' (the code-quality policy), so handlers that supply defaults are limited to explicit ones like (absent-as …) written in place, and runner and env sets and foundation handlers do not place resumption with a default. The resumed value fits the type only when Absent was performed in place of a value by <- in absent-as's literal text — if the body is (do! …), only absences performed by <- and ! written directly in that literal text are resumed with the default (that bind receives the default and continues). Returning the default for an Absent performed deep inside a called defk would make the deep line receive a value of a different type. Resuming a (<- (Absent …)) written directly in code would run a continuation that does not assume absence. In these 2 cases it does not resume, and ends absent-as's scope with the default. Binds inside nested do! / fnk / functions count as 'deep'.")
+     (rule R9 "Boundary handlers (maybe, result, on-raise, absent-as) are written only where something should be done about absence or failure. Elsewhere only the success path is written, and Absent / Raise escape outward (the same as writing try-catch only where you want to catch). However, there are 2 places that must always be closed structurally. (1) The job entry — the runner adds no handlers (ADR-DOE-CLUSTER-001 R2), so it is closed with the service body's policy handlers (skip and record, stop, etc.). Check: the inferred remaining effects of the job's Program are empty. (2) Places that answer by running a Program inside a handler clause (translating handlers) — a Raise escaping from inside a handler goes outside the handler and skips the caller's scope (R4), so close it into an answer value (the business effect's answer type) before returning. Check: the inferred remaining effects of a Program run in a handler clause contain no Absent / Raise — a candidate new doeff-linter rule (number undecided) (2026-09-27, a reversible decision made as recommended by the f143ee92 seat).")
+     (rule R10 "Retrying cannot be done after catching Raise (the continuation has been discarded). Do it while the answer is still a failure value, inside a foundation handler that answers with values (for Unreachable, reissue).")
+     (rule R11 "Python exceptions are treated as implementation errors, as is (the same as the doeff-records rule). Expected absence and failure are not represented by exceptions — a Python exception cannot be a Raise reason. Try (folding exceptions into Result) stays as is and is not mixed with Absent / Raise — when <- opens Try's Err(exception), it raises the exception as is rather than making it Raise.")
+     (rule R12 "Relation to recording and replay: handlers answer with values, and the recorder records the real answers (including failure values) below the boundary (ADR-DOE-CLUSTER-001 R5). <-'s conversion is a deterministic computation inside the body, so replay produces the same Absent / Raise from the same answer. Absent / Raise are not made general effects that reach the recorder (what is recorded is the answers of read effects).")
+     (rule R13 "Which effects a function performs (including Absent and Raise) is not written by hand but inferred by doeff-effect-analyzer (following callees transitively, reading Hy after macro expansion, reading the effects caught from defhandler clauses, and reporting what it cannot follow as unresolved). A function's type is shown as the pair of its return value (content only, not wrapped in Maybe / Result) and the inferred set of remaining effects. Notation example: settle-landing : str → Program[Row] ! {Absent, Raise[Unreachable | Refused], ReadRow, PutRow} (the same idea as the computation type A ! Δ in papers such as Eff). Wrapping in a handler removes the effects that handler catches from the set. :effects (an optional key already in defk's head dict) is not made mandatory. It is written only at public boundaries as an upper bound, and the linter checks inferred ⊆ declared (the declaration does not go stale). Uses: show the remaining effects on editor hover / check at writing time that the remaining effects of the job entry Program are empty (the first of R9) / report a layer violation if general effects (communication, recording) enter the remaining effects of a core definition. What the analyzer lacks is the :context interpretation.")
+     (rule R14 "Migration (the procedure for switching stages 3 and 5): doeff-records' effects currently follow the rule of returning failures as values (README 'failure answers (returned as values)'). When a declaration is switched, existing callers of (match body (Missing) …) no longer see Missing (a branch that is never taken remains). So, in the following order, per effect (one effect per change — never switch all effects at once), switch doeff-records' declaration and agora's callers in the same change:\n(1) Pick one effect E to switch (starting with those with few callers — ReadPlacedInput, PostMessage, etc. ReadRow last).\n(2) Move doeff-records' E from defclass to defeffect, and declare :absent / :failure / :value per R17's assignment. The handlers answering E are not changed (they answer with values — performing Raise in a handler clause skips the caller's scope: R4). The record shape does not change either, so existing records can be replayed as is.\n(3) In the same change, rewrite agora's callers of E: callers that split absence and failure with (match …) / isinstance keep only the success path; where something should be done on absence, use <-'s :absent <failure> or absent-as, and where something should be done on failure, use on-raise. Callers that carry around or count Missing as an ordinary value are wrapped in (maybe …) and take the Maybe value (Nothing instead of Missing). Callers of answers declared :value (Conflict) are not changed. Close Absent / Raise at the job entry and in translating handlers that run Programs in handler clauses (R9).\n(4) Stale branches (branches that match / isinstance on the types declared as E's absence or failure as values) are found by a doeff-linter rule (stage 4's tool). The change is not landed until hits reach 0 — law declarations-switch-one-effect-at-a-time.\n(5) Type-determined rewrites (deleting stale branches, wrapping in maybe, moving to :absent) are delegated to Sonnet 5 — hand it the per-effect procedure (this R14) and the list of linter hits and proceed mechanically. Where a judgment is needed about which failure an absence becomes or where to close it, the maintainer of that caller decides.\n(6) HTTP answer status codes are mapped to the 4 kinds in one place in the translation layer (the handler that maps HTTP answers to business answers) (R17), and callers are not shown status codes.")
+     (rule R15 "How handler clauses end (the concern about forgetting to resume, point 10): a clause ends with one of resume (if not in tail position, the continuation's answer returns to the clause), transfer, finish (discards the continuation and makes that value the answer of the scope where the handler was placed), reperform, or raise. Forgetting is an error as before — if not every path of the clause (each branch of if, cond, match, try; cond's last is True, match's last is _ without a guard, and try's except bodies too) ends, it is a SyntaxError at expansion. resume inside when, unless, and, or, loops, nested functions, and comprehensions does not count as an ending. Each effect declares how it is resumed (the effect type attribute __doeff_resumption__ = doeff_core_effects._effects.Resumption: Raise = NEVER (no one resumes), Absent = ABSENT_AS_ONLY (only absent-as resumes), ordinary effects that declare nothing = REQUIRED). Clauses contradicting the declaration (clauses that resume / transfer Raise / Absent, clauses that cut off an ordinary effect with finish) are violations — those identifiable by name (clause head is Raise / Absent, a finish clause has no reason) are a SyntaxError at expansion, and those that are not (a Raise imported under an alias, a type declaring __doeff_resumption__) are a ClauseEndingError when the handler is first installed on a body. In particular, resuming Raise 'continues as if it succeeded although it failed', so it is refused both by declaration (NEVER) and at expansion, and even if a plain handler function resumes a Raise / Absent opened by <-, the opening side makes it a RuntimeError. A clause that deliberately cuts off an ordinary effect (stopping the whole run on timeout, etc.) is allowed only when the clause writes :finish-reason \"reason\" (the same treatment as a deff with a reason comment). At run time: if a clause exits without resume or finish (a resume inside a with that suppresses exceptions, or other paths invisible at expansion), the defhandler wrapper makes it a RuntimeError — because the VM silently ends the scope with the value of a handler that does not resume. Plain Python handler functions (@do functions, deff handlers) have no such wrapper, and the VM accepts 'return a value without resuming' as a legitimate ending, so the run-time check does not apply (why it cannot be closed: the VM has no marker to tell finish from a forgotten resume — telling them apart would require adding an explicit ending operation to the VM and rewriting all existing Python handlers). How plain handler functions end is a candidate doeff-linter rule (number undecided).")
+     (rule R16 "Stage plan (2026-09-27, point 9):\nStage 1 (no behavior change, additions only): the Absent / Raise effects, the boundary handlers maybe, result, on-raise, absent-as (a deep absence ends the scope with the default), defhandler's ending clause (finish) and the check of how clauses end (R15).\nStage 2 (no behavior change — no effect has a declaration yet): defeffect's answer declaration (R5), the <- and ! conversion, :absent, the shape that opens Result / Option values (R6), and resumption of <- in absent-as's literal text (R8). For <- on an effect without a declaration, both what is yielded and the bound answer are the same as before.\nStage 3: move doeff-records' effects to defeffect and attach declarations (handlers unchanged).\nStage 4: tools needed before switching stages 3 and 5 — the doeff-linter rule that finds stale branches (R14 (4)), the rules for catch-all on-raise and for Absent / Raise in handler clauses (R4, R9), inference (R13), and the Rust analyzer reading <-'s :absent.\nStage 5: rewriting agora's callers. Stages 3 and 5 are switched together — per effect, in the same change (R14).")
+     (rule R17 "Assignment of the 4 recurring kinds of failure (point 9): Unreachable (cannot reach the store or the peer) and Refused (the peer refused) are failures (:failure — <- performs Raise), Missing (no row) is absence (:absent — <- performs Absent), and Conflict (losing on version) is a value (:value — an answer handled normally in CAS retries). In the code body the 4 kinds are effects; at the boundary with the outside world (handler answers, records) and at the boundaries where the caller wants to do something (maybe, result, on-raise, absent-as) they are data. HTTP status codes are mapped to these 4 kinds in one place in the translation layer (e.g. 404 → Missing, 409 and 412 → Conflict, 401 and 403 → Refused, 5xx and transport failures → Unreachable — the mapping table is held by the translation layer).\nAddendum (2026-09-28 — a 5th kind of failure): Malformed (JSON from outside does not have the shape of the type contract — carries which type, which field, and why; doeff_hy._wire) is a failure (:failure — <- performs Raise). A version mismatch with the peer can happen in operation, so it is treated as a business failure, not an implementation-error exception. Its only source is the defwire decoders parse / parse-json (ADR-DOE-HY-007 R8). Until the stage 3 switch (R14), parse returns Malformed as a value (answer type = (| T Malformed)) and callers split on the value. At the switch, parse gets a :failure declaration and moves to Raise(Malformed) (one change per effect — the same procedure as the other 4 kinds). A reversible decision made as recommended after option A (defwire) was chosen. Rollback: delete this addendum text and keep parse's answer as the Malformed value.\nAddendum (2026-10-23, the first switch of stages 3 and 5 = the ReadStreamEnd seat — StreamEmpty, an answer outside the 4 kinds): StreamEmpty (the append log has no events at all) is a value (:value — <- binds the content). It is an answer carrying the fact that the log has no events at all and is not mixed with sequence number 0 (the doeff-records README), so it is not made an absence skipped via Absent; callers handle it separately from StreamEnd. ReadStreamEnd's declaration = {:answer (| StreamEnd StreamEmpty Unreachable) :failure [Unreachable] :value [StreamEmpty]} (success = StreamEnd, absence = none). The answering handler keeps answering with values (R4). Decided by = the owner of this card (as the card recommended — a reversible decision). Rollback: delete this addendum text and move StreamEmpty from :value to :absent (callers that split StreamEmpty as a value — the (isinstance end StreamEnd) branches of event_source's stream-starts and publish-appends, the comparisons with StreamEmpty in law law-stream-end-is-the-last-sequence and others — would no longer be reached because <- performs Absent; rewrite them to (maybe …) or <-'s :absent). To revert the declaration entirely, turn the defeffect back into a defclass, and turn the on-raise in event_source's reachable and ride-out-stall back into the original (<- answered ask).\nAddendum (2026-10-24, the second switch of stages 3 and 5 = the WatchEvents seat — EventsQuiet, an answer outside the 4 kinds): EventsQuiet (the head of the append log did not advance until the timeout) is a value (:value — <- binds the content). It is an ordinary answer that nothing advanced until the deadline, and waiting callers (the signal source's publish-appends and others) handle it separately from EventsMoved every time, so it is neither made a failure skipped via Raise nor an absence skipped via Absent (it is not an error even if after is ahead of the head). WatchEvents' declaration = {:answer (| EventsMoved EventsQuiet Unreachable) :failure [Unreachable] :value [EventsQuiet]} (success = EventsMoved, absence = none). The answering handlers (memory, pg, http_client, http_server) keep answering with values (R4). Decided by = the owner of this card (as the card recommended — a reversible decision). Rollback: delete this addendum text and move EventsQuiet from :value to :absent (callers that split EventsQuiet as a value — the (isinstance moved EventsMoved) branch of event_source's publish-appends, the checks' comparisons of WatchEvents' answer with (EventsQuiet), and others — would no longer be reached because <- performs Absent; rewrite them to (maybe …) or <-'s :absent). To revert the declaration entirely, turn the defeffect back into a defclass (the on-raise in event_source's reachable and ride-out-stall passes the answer through unchanged when there is no declaration performing Raise, so it may stay).\nAddendum (2026-10-24, the ReadEventByKey seat of stages 3 and 5 — EventAbsent and EventRetired, answers outside the 4 kinds): EventAbsent (nothing was appended to the log under that key) is absence (:absent — <- performs Absent; the same meaning as ReadRow's Missing), and EventRetired (carries the sequence number of an event that was appended but removed by the retention deadline) is a value (:value — <- binds the content; it is an ordinary answer callers handle separately from Event, and since it carries the fact of removal it is not made an absence skipped via Absent). ReadEventByKey's declaration = {:answer (| Event EventAbsent EventRetired Unreachable) :absent [EventAbsent] :failure [Unreachable] :value [EventRetired]} (success = Event). The answering handler keeps answering with values (R4). Decided by = the owner of this card (as the card recommended — a reversible decision). Rollback: delete this addendum text and change the assignment. If EventAbsent moves from :absent to :value, turn callers that handled absence with <-'s :absent, maybe, or absent-as back into isinstance branches that split EventAbsent as a value. If EventRetired moves from :value to :absent, callers that split EventRetired as a value (isinstance branches, law law-keys-are-forgotten-after-their-memory, and others) would no longer be reached because <- performs Absent; rewrite them to (maybe …) or <-'s :absent. To revert the declaration entirely, turn the defeffect back into a defclass and turn the relay (Perform) back into the original (<- answer effect).\nAddendum (2026-10-24, the WatchChanges seat of stages 3 and 5 — Reset, an answer outside the 4 kinds): Reset (the cursor's epoch differs from the store's version, or the position is before pruned changes) is a value (:value — <- binds the content). It is an ordinary answer that the cursor's generation differs from the store's version, and callers reread from the start using Reset's (epoch, floor) and continue, so it is neither made a failure skipped via Raise nor an absence skipped via Absent. WatchChanges' declaration = {:answer (| Changes Reset Unreachable) :failure [Unreachable] :value [Reset]} (success = Changes, absence = none). The answering handlers (memory, pg, http_client, http_server) keep answering with values (R4). Decided by = the owner of this card (as the card recommended — a reversible decision). Rollback: delete this addendum text and move Reset from :value to :absent (callers that split Reset as a value — the (Reset …) arm of event_source's publish-changes, the comparisons with Reset in the checks' laws law-epoch-change-resets and law-maintenance-prunes-and-sweeps, and others — would no longer be reached because <- performs Absent; rewrite them to (maybe …) or <-'s :absent). If Reset moves to :failure, rewrite the same callers to on-raise. To revert the declaration entirely, turn the defeffect back into a defclass and turn the checks' on-raise (test_memory_faults, test_memory_outage) and the relay Perform (test_laws_catch_broken_handlers) back into the original <- (the on-raise in event_source's reachable and ride-out-stall passes the answer through unchanged when there is no declaration performing Raise, so it may stay).\nAddendum (2026-10-24, the ReadEvents seat of stages 3 and 5 — NotIndexed, an answer outside the 4 kinds): NotIndexed (an idempotency-key head read key-head was requested on a log that does not declare key-lookup) is a failure (:failure — <- performs Raise). It is an error where the caller misread the log's declaration; rereading gives the same answer and there is no continuation, so it is made a failure rather than a value or absence (aligned with the assignment of ListRows' NotIndexed). ReadEvents' declaration = {:answer (| Events Unreachable NotIndexed) :failure [Unreachable NotIndexed]} (success = Events, no absence and no value). The answering handlers (memory, pg, http_client, http_server) keep answering with values (R4). Decided by = the owner of this card (as the card recommended — a reversible decision). Rollback: delete this addendum text and move NotIndexed from :failure to :value (callers that split NotIndexed as a value — the checks' comparisons with the head-read answer and others — would no longer get Raise from <-, and go back to the previous shape of receiving NotIndexed as a value. Law 7b in laws.hy fires via as-writer and does not go through <-, so reverting the declaration does not change it). To revert the declaration entirely, turn the defeffect back into a defclass (callers' on-raise passes the answer through unchanged when there is no declaration performing Raise, so it may stay).\nAddendum (2026-10-25, the PutRows seat of stages 3 and 5 — RowsConflict and RowsRefused, answers outside the 4 kinds): RowsConflict (a row's expectation in the batch does not match the current row — the batch wrote no rows at all) is a value (:value — <- binds the content). Like PutRow's Conflict (losing on version), it is an answer handled normally in CAS retries where the caller rereads and refires, so it is neither made a failure skipped via Raise nor an absence skipped via Absent. RowsRefused (a row in the batch is not allowed by the declaration, or row 0 of a different batch with the same idempotency key — the batch wrote no rows at all) is a failure (:failure — <- performs Raise). Aligned with the assignment of PutRow's Refused. PutRows' declaration = {:answer (| WrittenRows RowsConflict RowsRefused Unreachable) :failure [RowsRefused Unreachable] :value [RowsConflict]} (success = WrittenRows, no absence; Unreachable is a failure per R17's assignment). The answering handlers (memory, pg, http_client, http_server) keep answering with values (R4). Decided by = the owner of this card (as the card recommended — a reversible decision). Rollback: delete this addendum text and change the assignment. If RowsConflict moves from :value to :failure, rewrite callers that split RowsConflict as a value (isinstance branches, match arms) to on-raise. If RowsConflict moves to :absent, the same callers would no longer be reached because <- performs Absent; rewrite them to (maybe …) or <-'s :absent. If RowsRefused moves from :failure to :value, <- no longer performs Raise and the previous shape of receiving RowsRefused as a value returns (callers' on-raise passes the answer through unchanged when there is no declaration performing Raise, so it may stay). To revert the declaration entirely, turn the defeffect back into a defclass and turn the checks' on-raise (test_memory_outage) and the relay Perform (test_memory_faults, test_laws_catch_broken_handlers) back into the original <-.\nAddendum (2026-10-31, the ListRows seat of stages 3 and 5 — Reset and NotIndexed, answers outside the 4 kinds): Reset (the generation of the passed cursor's position differs from the store's version, or the position is before pruned changes) is a value (:value — <- binds the content). It is an ordinary answer that the position's generation differs from the store's version, and callers reread from the head of the listing and continue, so it is neither made a failure skipped via Raise nor an absence skipped via Absent (the same assignment as WatchChanges' Reset). NotIndexed (filtered on a column with no index) is a failure (:failure — <- performs Raise). It is an error where the caller misread the filter column; rereading gives the same answer and there is no continuation, so it is made a failure rather than a value or absence (the same assignment as ReadEvents' NotIndexed; the NotIndexed that the PostgreSQL store returns until index preparation finishes is the same failure, and callers that refire catch it with on-raise). Unreachable is a failure per the assignment above. ListRows' declaration = {:answer (| Page Reset Unreachable NotIndexed) :failure [Unreachable NotIndexed] :value [Reset]} (success = Page, absence = none). The per-table row-type layer list-typed goes through this declaration, returns TypedPage | Reset, and lets Unreachable and NotIndexed escape as Raise. The answering handlers (memory, pg, http_client, http_server) keep answering with values (R4). Decided by = the owner of this card (as the card recommended — a reversible decision). Rollback: delete this addendum text and change the assignment. If Reset moves from :value to :absent, callers that split Reset as a value (isinstance branches, match arms; none inside doeff, but callers that page through for consumers) would no longer be reached because <- performs Absent; rewrite them to (maybe …) or <-'s :absent. If Reset moves to :failure, rewrite the same callers to on-raise. If NotIndexed moves from :failure to :value, <- no longer performs Raise and the previous shape of receiving NotIndexed as a value returns (callers' on-raise passes the answer through unchanged when there is no declaration performing Raise, so it may stay). To revert the declaration entirely, turn the defeffect back into a defclass, turn list-typed's :post back into the original type, and turn the checks' on-raise (test_memory_faults, test_memory_outage) and the relay Perform (test_laws_catch_broken_handlers) back into the original <- (the on-raise in event_source's reachable passes the answer through unchanged when there is no declaration performing Raise, so it may stay).\nAddendum (2026-11-02, the PutRow seat of stages 3 and 5 — the assignment of the 4 kinds stays as decided above): the 4 kinds of PutRow's answer all fall within the assignment above. Written is success; Conflict (losing on version, where the expectation does not match the current row) is a value (:value — <- binds the content; it is an answer handled normally in CAS retries where the caller rereads and refires, so it is neither made a failure skipped via Raise nor an absence skipped via Absent); Refused (a write the declaration does not allow, or a different body with the same idempotency key) and Unreachable are failures (:failure — <- performs Raise). There is no absence. PutRow's declaration = {:answer (| Written Conflict Refused Unreachable) :failure [Refused Unreachable] :value [Conflict]} (PutRows' RowsConflict and RowsRefused follow the same assignment). The per-table row-type layer put-typed goes through this declaration, returns TypedWritten | TypedConflict, and lets Refused and Unreachable escape as Raise. The answering handlers (memory, pg, http_client, http_server) keep answering with values (R4). Decided by = the owner of this switch (per the assignment above — a reversible decision). Rollback: delete this addendum text and change the assignment. If Conflict moves from :value to :failure, rewrite callers that split Conflict as a value (isinstance branches, match arms; including put-typed's TypedConflict branch) to on-raise. If Conflict moves to :absent, the same callers would no longer be reached because <- performs Absent; rewrite them to (maybe …) or <-'s :absent. If Refused moves from :failure to :value, <- no longer performs Raise and the previous shape of receiving Refused as a value returns (callers' on-raise passes the answer through unchanged when there is no declaration performing Raise, so it may stay). To revert the declaration entirely, turn the defeffect back into a defclass, turn put-typed's :post back into the original type (TypedWritten | TypedConflict | Refused | Unreachable) and branch (the final True answer), and turn the checks' on-raise (test_memory_outage, test_typed_rows, test_client_internal_is_unreachable) and the relay Perform (test_memory_faults, test_memory_write_notes, test_laws_catch_broken_handlers) back into the original <-.")]
   :laws
     [(law absent-and-raise-are-distinct
-       :statement "Absent は中身を持たない(説明の文だけ)∧ Raise は理由を持つ ∧ Absent と Raise は継承の関係を持たない ∧ for_all 境目の handler h ∈ {maybe, result, on-raise, 組み立ての方針の handler}: h は Absent / Raise を受けて続きを再開しない"
+       :statement "Absent has no content (only a description text) ∧ Raise has a reason ∧ Absent and Raise have no inheritance relation ∧ for_all boundary handler h ∈ {maybe, result, on-raise, composition policy handlers}: h catches Absent / Raise and does not resume the continuation"
        :counterexamples
-         [(counterexample "不在も失敗も 1 つの Fail で出す — 受け手が不在と失敗を分けられず、Result の中の Maybe が作れない")
-          (counterexample "Raise を Absent の子の型にする — (maybe …) が失敗まで Nothing に潰し、理由が消える")
-          (counterexample "失敗の側を Fail と名づける — doeff-traverse の Fail(None で再開できる)と同じ名で、続きを捨てるかどうかが名前から読めない")]
+         [(counterexample "both absence and failure are performed as a single Fail — the receiver cannot tell absence from failure, and a Maybe inside a Result cannot be built")
+          (counterexample "Raise is made a subtype of Absent — (maybe …) crushes even failures into Nothing and the reason is lost")
+          (counterexample "the failure side is named Fail — the same name as doeff-traverse's Fail (resumable with None), so whether the continuation is discarded cannot be read from the name")]
        :enforced-by ["test-adr-doe-core-effects-003-absent-and-raise-are-distinct"]
-       :wiring "配線済み(2026-09-28)— 欄・継承・再開の宣言と、maybe / result が続きを再開しないことを検が確かめる。組み立ての方針の handler(Traverse の 1 件ごとの受け手)は段階 4 の後")
+       :wiring "wired (2026-09-28) — the check confirms the fields, the inheritance, the resumption declarations, and that maybe / result do not resume the continuation. Composition policy handlers (Traverse's per-item receivers) come after stage 4")
      (law fold-handlers-choose-the-shape
-       :statement "for_all スコープ s: s の外へ出る値の形は、s を囲む境目の handler の入れ子の順だけで決まる — (result (maybe b)) : Result[Maybe[T]] ∧ (maybe (result b)) : Maybe[Result[T]] ∧ 受け手の無い Absent / Raise は未処理の effect として止まる ∧ runner・env の組は境目の handler を置かない"
+       :statement "for_all scope s: the shape of the value leaving s is determined only by the nesting order of the boundary handlers around s — (result (maybe b)) : Result[Maybe[T]] ∧ (maybe (result b)) : Maybe[Result[T]] ∧ an Absent / Raise with no receiver stops as an unhandled effect ∧ the runner and env sets place no boundary handlers"
        :counterexamples
-         [(counterexample "runner や env の組が既定で maybe を置く — Program を読んでもどの形で返るか分からない(ADR-DOE-CLUSTER-001 R2 と同じ害)")
-          (counterexample "受け手の無い Raise を最上位で黙って None にする — 失敗が成功の値に化ける")]
+         [(counterexample "the runner or env set places maybe by default — reading the Program does not tell which shape comes back (the same harm as ADR-DOE-CLUSTER-001 R2)")
+          (counterexample "a Raise with no receiver is silently turned into None at the top level — a failure turns into a success value")]
        :enforced-by ["test-adr-doe-core-effects-003-nesting-order-chooses-the-shape"]
-       :wiring "配線済み(2026-09-28)— 入れ子の順の 6 通りと、受け手の無い Absent / Raise が UnhandledEffect で止まることを検が確かめる。runner が境目の handler を置かないことは ADR-DOE-CLUSTER-001 の台帳の検が見る")
+       :wiring "wired (2026-09-28) — the check confirms the 6 nesting-order cases and that an Absent / Raise with no receiver stops with UnhandledEffect. That the runner places no boundary handlers is checked by the ledger check of ADR-DOE-CLUSTER-001")
      (law a-bind-has-one-meaning
-       :statement "for_all 束ね (<- x e) の行 l: x の型は e の宣言だけで決まる成功の型 T で、l を呼ぶ側に置いた handler では変わらない — 不在・失敗は x に入らず Absent / Raise として逃げる ∧ :absent <失敗> はその束ねの中の不在だけを Raise(<失敗>) に写す"
+       :statement "for_all line l of a bind (<- x e): the type of x is the success type T determined only by e's declaration, and does not change with handlers placed on the side that calls l — absence and failure do not enter x but escape as Absent / Raise ∧ :absent <failure> maps only absences inside that bind to Raise(<failure>)"
        :counterexamples
-         [(counterexample "呼び手の handler で答えの型を切り替える — ある呼び手では Row、別の呼び手では Row | Missing | Unreachable が x に入り、中の (. row value) が壊れる")
-          (counterexample "『成功だけを見る』範囲を宣言する構文(success-only)を足す — 範囲の内と外で同じ行の型が変わり、書き方が 2 つ並ぶ")
-          (counterexample ":absent の受け手を呼び手のスコープの外(組み立ての根)に置く — 別の束ねの不在まで同じ失敗に写り、どの行の不在かが消える")]
+         [(counterexample "the answer type is switched by the caller's handler — Row enters x for one caller and Row | Missing | Unreachable for another, breaking the (. row value) inside")
+          (counterexample "a syntax that declares a 'look only at success' scope (success-only) is added — the type of the same line differs inside and outside the scope, and two ways of writing coexist")
+          (counterexample "the :absent receiver is placed outside the caller's scope (at the composition root) — absences from other binds are mapped to the same failure too, and which line was absent is lost")]
        :enforced-by ["test-adr-doe-core-effects-003-a-bind-has-one-meaning"
                      "test-adr-doe-core-effects-003-absent-option-maps-one-bind"]
-       :wiring "配線済み(2026-09-28)— 同じ束ねの行が maybe・result・on-raise のどの下でも成功の型を束ねることと、:absent の写しを検が確かめる")
+       :wiring "wired (2026-09-28) — the check confirms that the same bind line binds the success type under any of maybe, result, or on-raise, and the :absent mapping")
      (law handlers-answer-with-values
-       :statement "for_all effect E に答える handler h: h の節は Absent / Raise を出さず、E の答えの値で答える ∧ 不在と失敗への変換は呼び手の本文の <- が行う"
+       :statement "for_all handler h that answers effect E: h's clauses do not perform Absent / Raise and answer with values of E's answer ∧ the conversion to absence and failure is done by <- in the caller's body"
        :counterexamples
-         [(counterexample "ReadRow に答える土台の handler が、行が無い時に (<- (Absent 行が無い)) を出す — Absent は土台の handler より外へ行き、呼び手の maybe を飛び越えて未処理になる(または無関係の外の受け手に捕まる)")
-          (counterexample "翻訳の handler が節の中で業務の Program を走らせ、その Program の Raise を閉じずに返す — 同じく呼び手の result を飛び越える")
-          (counterexample "記録係が Raise を書き留める形にする — 答えの値が記録に残らず、再生で同じ変換を通れない")]
+         [(counterexample "a foundation handler answering ReadRow performs (<- (Absent no row)) when the row is missing — Absent goes outside the foundation handler, skips the caller's maybe and becomes unhandled (or is caught by an unrelated outer receiver)")
+          (counterexample "a translating handler runs a business Program inside its clause and returns without closing that Program's Raise — it likewise skips the caller's result")
+          (counterexample "the recorder is made to record Raise — the answer value is not left in the record, and replay cannot go through the same conversion")]
        :enforced-by ["test-adr-doe-core-effects-003-raise-in-a-handler-clause-skips-the-bodys-result"
                      "test-adr-doe-core-effects-003-declared-bind-opens-the-answer"]
-       :wiring "一部配線(2026-09-28)— 検は、handler の節で出した Raise が本文の result を飛び越えること(落とし穴の実演)と、<- が呼び手の本文で答えを開くことを確かめる。handler の節が Absent / Raise を出さないことを見る doeff-linter の規則は候補で番号は未定(段階 4)")
+       :wiring "partly wired (2026-09-28) — the check confirms that a Raise performed in a handler clause skips the body's result (demonstrating the pitfall) and that <- opens the answer in the caller's body. A doeff-linter rule checking that handler clauses do not perform Absent / Raise is a candidate with no number yet (stage 4)")
      (law outcomes-are-declared-on-the-effect
-       :statement "for_all effect の型 E, 答えの型 t ∈ answer(E): t が成功・不在・失敗・値のどれかは E の宣言(defeffect)から読める ∧ <- の変換はその宣言だけに従う(型の名を読まない)∧ 宣言の無い E の <- は yield する物も束ねる答えも変えない"
+       :statement "for_all effect type E, answer type t ∈ answer(E): whether t is success, absence, failure, or value can be read from E's declaration (defeffect) ∧ <-'s conversion follows only that declaration (does not read type names) ∧ <- on an E without a declaration changes neither what it yields nor the answer it binds"
        :counterexamples
-         [(counterexample "型の名に Missing・NotFound が含まれたら不在と推し量る — 名前を変えると意味が変わり、失敗の名を持つ新しい型は見落とす")
-          (counterexample "PutRow の Conflict を一律に失敗と決める — CAS の繰り返しで普通に扱う答えまで Raise になり、呼び手が毎回 on-raise で値へ戻す")
-          (counterexample "宣言の無い effect の答えの Missing も <- が Absent にする — 段階 3 の前に既存の呼び手の振る舞いが黙って変わる")]
+         [(counterexample "a type is guessed to be absence if its name contains Missing or NotFound — renaming changes the meaning, and new types with failure-like names are missed")
+          (counterexample "PutRow's Conflict is uniformly decided to be a failure — even answers handled normally in CAS retries become Raise, and callers turn them back into values with on-raise every time")
+          (counterexample "<- also turns Missing in the answer of an effect without a declaration into Absent — existing callers' behavior silently changes before stage 3")]
        :enforced-by ["test-adr-doe-core-effects-003-declared-bind-opens-the-answer"
                      "test-adr-doe-core-effects-003-undeclared-bind-is-unchanged"]
-       :wiring "配線済み(2026-09-28)— 宣言(Outcomes)・宣言に従う開き・宣言の無い effect の <- が同じ物を yield して同じ答えを束ねることを検が確かめる")
+       :wiring "wired (2026-09-28) — the check confirms the declaration (Outcomes), opening according to the declaration, and that <- on an effect without a declaration yields the same object and binds the same answer")
      (law on-raise-has-no-catch-all
-       :statement "for_all on-raise o: o のパターンはどれも失敗の型のパターン(型を問わない形・_・Exception を含まない)∧ o は Python の例外を受けない ∧ パターンに合わない Raise は o の外へ渡る"
+       :statement "for_all on-raise o: every pattern of o is a failure-type pattern (no type-agnostic shape, no _, no Exception) ∧ o does not catch Python exceptions ∧ a Raise matching no pattern passes outside o"
        :counterexamples
-         [(counterexample "何でも受ける on-raise(パターン _ で全部を WriteUnreachable にする)— 新しい失敗の型が増えても黙って同じ答えに潰れ、推論した effect の集合にも出ない")
-          (counterexample "on-raise が Python の例外も受ける — 実装の誤りが業務の失敗の答えに化ける")]
+         [(counterexample "a catch-all on-raise (pattern _ turning everything into WriteUnreachable) — even when new failure types are added they are silently crushed into the same answer, and they do not appear in the inferred effect set either")
+          (counterexample "on-raise also catches Python exceptions — implementation errors turn into business failure answers")]
        :enforced-by ["test-adr-doe-core-effects-003-on-raise-refuses-python-exceptions-and-catch-all"]
-       :wiring "配線済み(2026-09-28)— 何でも受けるパターンは展開の時に、例外の型を名指す受けは作る時に断り、Python の例外が on-raise を素通りすることを検が確かめる")
+       :wiring "wired (2026-09-28) — the check confirms that catch-all patterns are refused at expansion, cases naming an exception type are refused at construction, and Python exceptions pass straight through on-raise")
      (law defaults-are-explicit-handlers
-       :statement "for_all Absent を既定値で再開する handler h: h はその場に書いた明示の物(absent-as)∧ h が再開するのは absent-as の字面の中の <- が値の代わりに出した Absent だけ ∧ runner・env の組・土台の handler は Absent を再開しない"
+       :statement "for_all handler h that resumes Absent with a default: h is an explicit one written in place (absent-as) ∧ h resumes only an Absent performed in place of a value by <- in absent-as's literal text ∧ runner and env sets and foundation handlers do not resume Absent"
        :counterexamples
-         [(counterexample "土台の handler が Absent を受けたら空文字で再開する — 呼び手の知らない所で不在が値に化ける(doeff-traverse の normalize_to_none と同じ形)")
-          (counterexample "(absent-as 0 …) が、呼んだ defk の奥の (<- row (ReadRow …)) で出た Absent を 0 で再開する — 奥の行が Row の代わりに 0 を受ける")
-          (counterexample "(absent-as 0 …) が、コードに直に書いた (<- (Absent 説明)) を 0 で再開する — 不在を前提にしない続きが走る")]
+         [(counterexample "a foundation handler resumes with an empty string when it catches Absent — absence turns into a value without the caller knowing (the same shape as doeff-traverse's normalize_to_none)")
+          (counterexample "(absent-as 0 …) resumes with 0 an Absent performed by (<- row (ReadRow …)) deep inside a called defk — the deep line receives 0 instead of a Row")
+          (counterexample "(absent-as 0 …) resumes with 0 a (<- (Absent description)) written directly in code — a continuation that does not assume absence runs")]
        :enforced-by ["test-adr-doe-core-effects-003-absent-as-resumes-only-direct-binds"]
-       :wiring "一部配線(2026-09-28)— 字面の中の <- だけを再開し、奥の不在と直に書いた Absent ではスコープを終えることを検が確かめる。Absent を再開できるのが absent-as だけであることは R15 の節の検めと開く側の RuntimeError が守る。明示でない既定値の再開を見つける linter の規則は未定")
+       :wiring "partly wired (2026-09-28) — the check confirms that only <- in the literal text is resumed and that deep absences and directly written Absent end the scope. That only absent-as can resume Absent is guarded by R15's clause check and the RuntimeError on the opening side. A linter rule finding non-explicit default resumption is undecided")
      (law handler-clauses-end-explicitly
-       :statement "for_all defhandler / handle の節 c: c のすべての道が resume・transfer・finish・reperform・raise のどれかで終わる(展開の時)∧ c の終わり方が c の effect の Resumption に反しない(Raise・Absent を resume しない・普通の effect の finish には理由がある — 展開の時か、handler を初めて本文に被せた時)∧ c が実行の時に resume も finish もせずに抜けたら誤り(黙ってスコープを終えない)"
+       :statement "for_all clause c of defhandler / handle: every path of c ends in one of resume, transfer, finish, reperform, raise (at expansion) ∧ the way c ends does not contradict the Resumption of c's effect (does not resume Raise or Absent; a finish on an ordinary effect has a reason — at expansion, or when the handler is first installed on a body) ∧ if c exits at run time without resume or finish, it is an error (does not silently end the scope)"
        :counterexamples
-         [(counterexample "resume を書き忘れた節 (Tick [now] now) — 値を返して抜け、VM は黙ってスコープを now で終える")
-          (counterexample "枝の片方だけ resume する節 (Tick [now] (if (> now 1) (resume 1) None)) — 片方の道で黙ってスコープが None で終わる")
-          (counterexample "Raise を resume する節 (Raise [reason] (resume 0)) — 失敗したのに成功したかのように続く")
-          (counterexample "理由の無い打ち切り (Tick [now] (finish None)) — 書き忘れと見分けられない")
-          (counterexample "型で場合を並べた match に最後の _ が無い節 — 並べ漏れた値で黙って抜ける")]
+         [(counterexample "a clause that forgot resume (Tick [now] now) — it returns a value and exits, and the VM silently ends the scope with now")
+          (counterexample "a clause that resumes on only one branch (Tick [now] (if (> now 1) (resume 1) None)) — on one path the scope silently ends with None")
+          (counterexample "a clause that resumes Raise (Raise [reason] (resume 0)) — it continues as if it succeeded although it failed")
+          (counterexample "a cut-off without a reason (Tick [now] (finish None)) — cannot be told apart from a forgotten resume")
+          (counterexample "a clause whose match listing the cases by type has no final _ — it silently exits on a value missing from the list")]
        :enforced-by ["test-adr-doe-core-effects-003-defhandler-clause-must-end-explicitly"
                      "test-adr-doe-core-effects-003-clause-endings-checked-at-install-and-run"]
-       :wiring "一部配線(2026-09-28)— defhandler と handle の節は展開・初めて被せた時・実行の時の 3 点で検める。素の Python の handler 関数(@do の関数・deff の handler)の終わり方は doeff-linter の規則の候補で番号は未定(R15)")
+       :wiring "partly wired (2026-09-28) — defhandler and handle clauses are checked at 3 points: expansion, first install, and run time. How plain Python handler functions (@do functions, deff handlers) end is a candidate doeff-linter rule with no number yet (R15)")
      (law scopes-appear-only-where-failure-is-handled
-       :statement "for_all 境目の handler の置き場 b: b では不在か失敗に対して何かをする ∧ for_all job の Program j: 推論した残りの effect(j) = ∅(方針の handler で閉じる)∧ for_all handler の節で走らせる Program p: Absent ∉ 残り(p) ∧ Raise ∉ 残り(p)"
+       :statement "for_all placement b of a boundary handler: b does something about absence or failure ∧ for_all job Program j: inferred remaining effects(j) = ∅ (closed by policy handlers) ∧ for_all Program p run in a handler clause: Absent ∉ remaining(p) ∧ Raise ∉ remaining(p)"
        :counterexamples
-         [(counterexample "全部の呼び出しを result で包む — 成功の道だけのコードに Result の値の分岐が戻り、try-catch を全行に書くのと同じになる")
-          (counterexample "handler の節で走らせた Program の Raise が漏れる — 呼び手のスコープを飛び越えて未処理になる")
-          (counterexample "job の入口で閉じない — runner は handler を足さないので、Raise が未処理の effect として job を止める")]
+         [(counterexample "every call is wrapped in result — Result-value branches return to code that is only the success path, the same as writing try-catch on every line")
+          (counterexample "a Raise from a Program run in a handler clause leaks — it skips the caller's scope and becomes unhandled")
+          (counterexample "not closed at the job entry — the runner adds no handlers, so the Raise stops the job as an unhandled effect")]
        :enforced-by []
-       :wiring "未配線(2026-09-28)— analyzer は Program の中の handler を引かず、doeff-linter の規則も候補で番号は未定(段階 4)")
+       :wiring "not wired (2026-09-28) — the analyzer does not subtract handlers inside a Program, and the doeff-linter rule is also a candidate with no number yet (stage 4)")
      (law retry-happens-before-raise
-       :statement "for_all 再試行 r: r は答えがまだ失敗の値のうちに、値で答える土台の handler の中で行う — Raise を受けた handler は再試行しない(続きが無い)"
+       :statement "for_all retry r: r is done while the answer is still a failure value, inside a foundation handler that answers with values — a handler that caught Raise does not retry (there is no continuation)"
        :counterexamples
-         [(counterexample "(result …) の受け手が Err を見て同じ Program をもう一度走らせる — Program の前半の effect(書き)も繰り返される")]
+         [(counterexample "the receiver of (result …) sees Err and runs the same Program again — the effects (writes) in the first half of the Program are repeated too")]
        :enforced-by []
-       :wiring "未配線(2026-09-28)— 機械で確かめる物は無い")
+       :wiring "not wired (2026-09-28) — there is nothing to check mechanically")
      (law effects-are-inferred-not-hand-written
-       :statement "for_all 定義 f: f の出す effect の集合は推論(doeff-effect-analyzer)で得る ∧ f に :effects があれば 推論(f) ⊆ 宣言(f) を linter が確かめる ∧ :effects の無い f は違反ではない"
+       :statement "for_all definition f: the set of effects f performs is obtained by inference (doeff-effect-analyzer) ∧ if f has :effects, the linter checks inferred(f) ⊆ declared(f) ∧ an f without :effects is not a violation"
        :counterexamples
-         [(counterexample "全部の defk に :effects を書かせる — 呼び先が変わるたびに黙って古くなり、書き手に推論の代わりをさせる")
-          (counterexample "宣言の :effects だけを信じて推論と照らさない — 呼び先が Raise を出し始めても宣言は変わらず、job の入口の確かめが偽の緑になる")]
+         [(counterexample ":effects is required on every defk — it silently goes stale every time a callee changes, and makes the writer do the inference")
+          (counterexample "only the declared :effects is trusted without comparing to inference — even when a callee starts performing Raise the declaration does not change, and the job-entry check becomes a false green")]
        :enforced-by []
-       :wiring "未配線(2026-09-28)— analyzer は Program の中の handler を引かず、結果を道具が読む cache も無い。推論 ⊆ 宣言 の linter の規則は未定(段階 4)")
+       :wiring "not wired (2026-09-28) — the analyzer does not subtract handlers inside a Program, and there is no cache of results for tools to read. The linter rule for inferred ⊆ declared is undecided (stage 4)")
      (law declarations-switch-one-effect-at-a-time
-       :statement "for_all effect E の宣言を切り替えた版: E の不在・失敗の答えの型を値として match する呼び手は 0(doeff-linter が拾う)∧ 1 つの版で切り替える effect は、その呼び手を同じ版で書き換え終えた物だけ"
+       :statement "for_all change that switches the declaration of effect E: callers that match E's absence / failure answer types as values = 0 (doeff-linter finds them) ∧ the effects switched in one change are only those whose callers have been rewritten in the same change"
        :counterexamples
-         [(counterexample "ReadRow の宣言を切り替えたのに (match body (Missing) …) の分岐が残る — 決して通らない分岐が残り、読み手は不在がそこで扱われていると誤る")
-          (counterexample "doeff-records の 7 つの effect の宣言を一度に切り替える — 書き換えの漏れが一度に全部の呼び手へ広がる")
-          (counterexample "doeff-records の handler の節で Missing の時に Absent を出す形にして切り替える — 呼び手の maybe を飛び越える(R4)")]
+         [(counterexample "ReadRow's declaration is switched but a (match body (Missing) …) branch remains — a branch that is never taken remains, and readers wrongly believe absence is handled there")
+          (counterexample "the declarations of doeff-records' 7 effects are switched at once — omissions in the rewrite spread to every caller at once")
+          (counterexample "the switch is done by making doeff-records' handler clauses perform Absent on Missing — it skips the caller's maybe (R4)")]
        :enforced-by ["packages/doeff-linter/tests/stale_outcome_branch.rs::only_the_marked_lines_fire"
                      "packages/doeff-linter/tests/stale_outcome_branch.rs::a_hit_is_critical_and_keyed_by_the_definition_the_name_and_the_type"
                      "packages/doeff-linter/tests/stale_outcome_branch.rs::the_single_file_run_reports_the_same_lines"
                      "packages/doeff-linter/tests/stale_outcome_branch.rs::the_declaration_decides_not_the_name_of_the_type"
                      "packages/doeff-linter/tests/stale_outcome_branch.rs::the_registry_does_not_lower_a_hit"
                      "packages/doeff-linter/tests/stale_outcome_branch.rs::the_production_code_of_this_repo_has_no_stale_branches"]
-       :wiring "配線済み(2026-10-23)— 古い分岐を拾う doeff-linter の規則は DOEFF175(critical・既知の一覧で下げない)。defeffect が :absent / :failure で宣言した型を、その effect の答えを束ねた変数((<- x (E …))・(<- x T (E …))・(val x (! (E …))))か直に書いた (! (E …)) に対して、match の腕・isinstance(型の tuple・cond の枝も)で値として分ける所を当てる。:value の型・成功の型・宣言の無い effect・defhandler の節は当てない(packages/doeff-linter/tests/fixtures/stale_outcome_branch/ の「; 鳴る」の行 17 と一致)。日次の全体検証の処理ステージ rust(make test-rust の cargo test — tests/stale_outcome_branch.rs が根の設定でこの repo の本番の code を判じ、当たりを file と行で名指す)が当て、手元では make lint-doeff とエディタの 1 file の実行が出す。範囲は定義の規則の母集団(根の pyproject.toml の [tool.doeff-linter.definitions] — doeff は本体の 3 dir・agora-controllers は controllers・services・scripts)。definitions の節が無い repo(merge-queue・agent-commons)では判じない(rules の wired が偽)ので、その repo で effect を切り替える版の前に節を足す。defk を経由した答え((<- x (read-typed …)))は追わない — 経由する defk 自身の effect を切り替える版で、その defk の戻りの型の枝として直す")]
+       :wiring "wired (2026-10-23) — the doeff-linter rule that finds stale branches is DOEFF175 (critical, not lowered by the known-issue registry). It hits places where a type that defeffect declared with :absent / :failure is split as a value with a match arm or isinstance (including type tuples and cond branches) against a variable bound to that effect's answer ((<- x (E …)), (<- x T (E …)), (val x (! (E …)))) or a directly written (! (E …)). It does not hit :value types, success types, effects without a declaration, or defhandler clauses (matches the 17 lines marked as firing in packages/doeff-linter/tests/fixtures/stale_outcome_branch/). It is applied by the rust processing stage of the daily full verification (cargo test via make test-rust — tests/stale_outcome_branch.rs judges this repo's production code with the root settings and names hits by file and line), and locally by make lint-doeff and the editor's single-file run. The scope is the population of the definition rules ([tool.doeff-linter.definitions] in the root pyproject.toml — for doeff the 3 dirs of the main body, for agora-controllers controllers, services, and scripts). Repos without a definitions section (merge-queue, agent-commons) are not judged (rules' wired is false), so add the section before the change that switches an effect in such a repo. Answers routed through a defk ((<- x (read-typed …))) are not followed — they are fixed as branches on that defk's return type in the change that switches the defk's own effect")]
   :enforcement
     [(deftest test-adr-doe-core-effects-003-result-and-maybe-values
-       ;; 事実: doeff.result の Ok / Err / Some / Nothing は今の形で使える(R2 の境目の handler が返す値)。
+       ;; Fact: doeff.result's Ok / Err / Some / Nothing are usable in their current form (the values R2's boundary handlers return).
        (val boom (ValueError "boom"))
        (assert (= (. (Ok 1) value) 1))
        (assert (is (. (Err boom) error) boom))
        (assert (= (. (Some 2) value) 2))
-       (assert (not Nothing) "Nothing は偽と評価される 1 つだけの値")
-       ;; Maybe = Some[T] | Nothing の型の和(添字つきなので isinstance には渡せない)— 各項を名指しで確かめる。
+       (assert (not Nothing) "Nothing is a single value that evaluates as false")
+       ;; Maybe = the type union Some[T] | Nothing (subscripted, so it cannot be passed to isinstance) — check each member by name.
        (assert (isinstance (Some 2) Some))
        (assert (isinstance Nothing (type Nothing))))
      (deftest test-adr-doe-core-effects-003-try-folds-exceptions-into-result
-       ;; 事実: Try は Program の中の Python の例外を Err に、成功を Ok に畳む(R11 — 今のまま残す口)。
+       ;; Fact: Try folds a Python exception inside a Program into Err and success into Ok (R11 — the entry point kept as is).
        (val failed (run (try-handler (probe-try (probe-boom)))))
        (assert (isinstance failed Err) failed)
        (assert (isinstance (. failed error) ValueError) failed)
@@ -601,61 +601,67 @@
        (assert (isinstance succeeded Ok) succeeded)
        (assert (= (. succeeded value) 1)))
      (deftest test-adr-doe-core-effects-003-records-answers-mix-success-absence-failure
-       ;; 事実: ReadRow の答えは成功・不在・失敗が 1 つの union に並ぶ(R5 の宣言が要る理由 — 段階 3 の前なので宣言はまだ無い)。
+       ;; Fact: ReadRow's answer lists success, absence, and failure in one union (why R5's declaration is needed — before stage 3, so there is no declaration yet).
+       ;; The three phrases are the Japanese text of packages/doeff-records/README.md, kept as \u escapes so the check still reads that file:
+       ;; "failure answers", "returned as values", "only composition errors are raised as exceptions".
        (assert (= (get-args ReadRowAnswer) #(Row Missing Unreachable)))
        (val readme (.read-text (/ REPO-ROOT "packages/doeff-records/README.md") :encoding "utf-8"))
-       (assert (in "失敗の答え" readme))
-       (assert (in "値で返す" readme))
-       (assert (in "例外で上がるのは組み立ての誤り" readme)))
+       (assert (in "\u5931\u6557\u306e\u7b54\u3048" readme))
+       (assert (in "\u5024\u3067\u8fd4\u3059" readme))
+       (assert (in "\u4f8b\u5916\u3067\u4e0a\u304c\u308b\u306e\u306f\u7d44\u307f\u7acb\u3066\u306e\u8aa4\u308a" readme)))
      (deftest test-adr-doe-core-effects-003-handler-without-resume-ends-the-scope
-       ;; 事実: VM は、再開しないで値を返す handler を許し、その値でスコープを終える(続きは捨てられる)
-       ;; — R1 の Absent と R2 の maybe の形は、今の VM で書ける(R15 の実行の時の検めが要る理由でもある)。
+       ;; Fact: the VM allows a handler that returns a value without resuming, and ends the scope with that value (the continuation is discarded)
+       ;; — R1's Absent and R2's maybe shape can be written on the current VM (this is also why R15's run-time check is needed).
        (val seen [])
        (assert (is (run (with-handlers [probe-maybe-handler] (probe-reads-then-continues seen))) Nothing))
-       (assert (= seen []) "受け手が再開しないので、Absent の後ろは走らない"))
+       (assert (= seen []) "the receiver does not resume, so nothing after Absent runs"))
      (deftest test-adr-doe-core-effects-003-effect-performed-in-a-handler-skips-the-callers-scope
-       ;; 事実(R4 の落とし穴): handler の節の中で出した effect は、その handler より外側へ行く。本文の側に置いた
-       ;; maybe の受け手(本文と土台の handler の間)は飛び越えられ、土台の handler より外の受け手が受ける。
+       ;; Fact (R4's pitfall): an effect performed inside a handler clause goes outside that handler. The maybe receiver placed on the body side
+       ;; (between the body and the foundation handler) is skipped, and a receiver outside the foundation handler catches it.
        (val answer (run (with-handlers [probe-outer-handler probe-read-handler]
                           (with-handlers [probe-maybe-handler] (probe-reads-a-row)))))
-       (assert (= answer "外側が受けた") answer))
+       (assert (= answer "the outer one caught it") answer))
      (deftest test-adr-doe-core-effects-003-defhandler-clause-must-end-explicitly
-       ;; R15(展開の時): 値を返すだけの節・枝の片方だけ resume する節・Raise を resume する節・理由の無い打ち切り・最後の _ の
-       ;; 無い match は断られる。(finish 値) と理由つきの打ち切りは通る。
+       ;; R15 (at expansion): a clause that only returns a value, a clause that resumes on only one branch, a clause that resumes Raise, a cut-off without a reason, and a match without
+       ;; a final _ are refused. (finish value) and a cut-off with a reason pass.
+       ;; "Raise \u306e\u7bc0\u306f" / "Absent \u306e\u7bc0\u306f" ("the Raise clause" / "the Absent clause") are kept as \u escapes because
+       ;; packages/doeff-hy/src/doeff_hy/_clause_endings.hy emits that Japanese text.
        (var refused False)
        (try
          (_check-clause-terminates "ProbeAbsent" [(hy.models.Symbol "Nothing")])
          (except [SyntaxError]
            (:= refused True)))
-       (assert refused "値を返すだけの節は断られる")
+       (assert refused "a clause that only returns a value is refused")
        (_check-clause-terminates "ProbeAbsent" [(hy.read "(resume None)")])
        (_check-clause-terminates "ProbeAbsent" [(hy.read "(finish None)")])
        (val head "(require doeff-hy.macros [defhandler]) (import doeff_core_effects._effects [Raise Absent]) (defhandler probe-h ")
-       (assert (in "missing resume" (run (probe-expansion-refusal (+ head "(ProbeRead [] \"値\"))")))) "resume の書き忘れ")
-       (assert (in "missing resume" (run (probe-expansion-refusal (+ head "(ProbeRead [] (if True (resume 1) None)))")))) "枝の片方だけ")
-       (assert (in "missing resume" (run (probe-expansion-refusal (+ head "(ProbeRead [] (when True (resume 1))))")))) "when だけ")
-       (assert (in "missing resume" (run (probe-expansion-refusal (+ head "(ProbeRead [] (match 1 1 (resume 1) 2 (resume 2))))")))) "最後の _ の無い match")
-       (assert (in "Raise の節は" (run (probe-expansion-refusal (+ head "(Raise [reason] (resume 0)))")))) "Raise の resume")
-       (assert (in "Absent の節は" (run (probe-expansion-refusal (+ head "(Absent [why] (transfer 0)))")))) "Absent の再開")
-       (assert (in ":finish-reason" (run (probe-expansion-refusal (+ head "(ProbeRead [] (finish None)))")))) "理由の無い打ち切り")
+       (assert (in "missing resume" (run (probe-expansion-refusal (+ head "(ProbeRead [] \"value\"))")))) "forgotten resume")
+       (assert (in "missing resume" (run (probe-expansion-refusal (+ head "(ProbeRead [] (if True (resume 1) None)))")))) "only one branch")
+       (assert (in "missing resume" (run (probe-expansion-refusal (+ head "(ProbeRead [] (when True (resume 1))))")))) "when only")
+       (assert (in "missing resume" (run (probe-expansion-refusal (+ head "(ProbeRead [] (match 1 1 (resume 1) 2 (resume 2))))")))) "match without a final _")
+       (assert (in "Raise \u306e\u7bc0\u306f" (run (probe-expansion-refusal (+ head "(Raise [reason] (resume 0)))")))) "resuming Raise")
+       (assert (in "Absent \u306e\u7bc0\u306f" (run (probe-expansion-refusal (+ head "(Absent [why] (transfer 0)))")))) "resuming Absent")
+       (assert (in ":finish-reason" (run (probe-expansion-refusal (+ head "(ProbeRead [] (finish None)))")))) "cut-off without a reason")
        (assert (= "" (run (probe-expansion-refusal (+ head "(Raise [reason] (finish reason)) (Absent [why] (finish None)))")))))
-       (assert (= "" (run (probe-expansion-refusal (+ head "(ProbeRead [] :finish-reason \"時間切れ\" (finish None)))"))))))
+       (assert (= "" (run (probe-expansion-refusal (+ head "(ProbeRead [] :finish-reason \"timed out\" (finish None)))"))))))
      (deftest test-adr-doe-core-effects-003-clause-endings-checked-at-install-and-run
-       ;; R15(被せた時と実行の時): 別名で import した Raise の resume は初めて本文に被せた時に断り、展開の時に見えない道で
-       ;; resume も finish もせずに抜けた節は実行の時に誤りにする。理由つきの打ち切りは handler のスコープを値で終える。
+       ;; R15 (at install and at run): resuming a Raise imported under an alias is refused when first installed on a body, and a clause that exits without
+       ;; resume or finish on a path invisible at expansion is made an error at run time. A cut-off with a reason ends the handler's scope with a value.
+       ;; The match text "\u3069\u308c\u306b\u3082\u5c4a\u304b\u305a\u306b\u629c\u3051\u305f" ("exited without reaching any of them") is kept as \u escapes because
+       ;; packages/doeff-hy/src/doeff_hy/_clause_endings.hy emits that Japanese text.
        (with [(pytest.raises ClauseEndingError :match "Resumption.NEVER")]
          (probe-aliased-raise-resumer (probe-one)))
-       (with [(pytest.raises RuntimeError :match "どれにも届かずに抜けた")]
+       (with [(pytest.raises RuntimeError :match "\u3069\u308c\u306b\u3082\u5c4a\u304b\u305a\u306b\u629c\u3051\u305f")]
          (run (probe-swallowing-handler (probe-reads-a-row))))
-       (assert (= (run ((probe-deadline 1) (probe-reads-a-row))) "読めた"))
-       (assert (= (run ((probe-deadline 0) (probe-reads-a-row))) "打ち切った") "理由つきの finish はスコープを値で終える"))
+       (assert (= (run ((probe-deadline 1) (probe-reads-a-row))) "read ok"))
+       (assert (= (run ((probe-deadline 0) (probe-reads-a-row))) "cut off") "a finish with a reason ends the scope with a value"))
      (deftest test-adr-doe-core-effects-003-traverse-fail-resumes-with-a-substitute
-       ;; 事実: doeff-traverse の Fail は再開できる失敗の知らせで、normalize-to-none は None で続きを再開する
-       ;; — R1 が失敗の側を Fail と呼ばない理由で、R8 が既定値の再開を明示の handler に限る理由でもある。
-       (assert (= (run (normalize-to-none (probe-fails-then-continues))) #("続いた" None))))
+       ;; Fact: doeff-traverse's Fail is a resumable notice of failure, and normalize-to-none resumes the continuation with None
+       ;; — the reason R1 does not call the failure side Fail, and also the reason R8 limits resuming with a default to explicit handlers.
+       (assert (= (run (normalize-to-none (probe-fails-then-continues))) #("continued" None))))
      (deftest test-adr-doe-core-effects-003-declarations-carry-one-answer-and-optional-effects
-       ;; 事実: defeffect は :answer の型を持ち、答えの分け方(:absent / :failure / :value)は任意 — 書かなければ
-       ;; __doeff_outcomes__ は無い(R5)。defk の :effects は任意で、書けば __doeff_effects__ に残り、書かなければ None(R13)。
+       ;; Fact: defeffect holds the :answer type, and the split of the answer (:absent / :failure / :value) is optional — if not written,
+       ;; there is no __doeff_outcomes__ (R5). defk's :effects is optional; if written it stays in __doeff_effects__, otherwise None (R13).
        (assert (in ":answer" EFFECT-KEYS))
        (assert (all (gfor key [":absent" ":failure" ":value"] (in key EFFECT-KEYS))))
        (assert (is (. ProbeAbsent __doeff_answer__) Never))
@@ -663,82 +669,84 @@
        (assert (= (. probe-declared-effects __doeff_effects__) #(ProbeAbsent)))
        (assert (is (. probe-reads-then-continues __doeff_effects__) None)))
      (deftest test-adr-doe-core-effects-003-absent-and-raise-are-distinct
-       ;; R1: Absent は説明の文だけ・Raise は理由を持つ・互いに継承しない・Raise の理由に Python の例外は置けない・
-       ;; 境目の handler は続きを再開しない。
+       ;; R1: Absent has only a description text, Raise has a reason, neither inherits from the other, a Python exception cannot be a Raise reason,
+       ;; and boundary handlers do not resume the continuation.
        (assert (= (lfor f (fields Absent) f.name) ["why"]))
        (assert (= (lfor f (fields Raise) f.name) ["reason"]))
        (assert (not (or (issubclass Raise Absent) (issubclass Absent Raise))))
        (assert (= #((resumption-of Raise) (resumption-of Absent) (resumption-of ProbeRead))
                   #(Resumption.NEVER Resumption.ABSENT-AS-ONLY Resumption.REQUIRED)))
        (with [(pytest.raises TypeError)]
-         (Raise (ValueError "例外は理由にならない")))
+         (Raise (ValueError "an exception is not a reason")))
        (val seen [])
        (assert (is (run (maybe (probe-absent-then-note seen))) Nothing))
-       (assert (= (repr (run (result (probe-raise-then-note seen)))) "Err(ProbeDown(detail='届かない'))"))
-       (assert (= seen []) "maybe と result は続きを再開しない"))
+       (assert (= (repr (run (result (probe-raise-then-note seen)))) "Err(ProbeDown(detail='unreachable'))"))
+       (assert (= seen []) "maybe and result do not resume the continuation"))
      (deftest test-adr-doe-core-effects-003-nesting-order-chooses-the-shape
-       ;; (a) R2: (result (maybe b)) と (maybe (result b)) で形が変わる(Ok / Err は値で比べられないので repr で比べる)。
+       ;; (a) R2: the shape differs between (result (maybe b)) and (maybe (result b)) (Ok / Err cannot be compared by value, so compare by repr).
        (val shapes
          (lfor b [probe-one (fn [] (probe-absent-then-note [])) (fn [] (probe-raise-then-note []))]
                #((repr (run (result (maybe (b))))) (repr (run (maybe (result (b))))))))
        (assert (= shapes [#("Ok(Some(1))" "Some(Ok(1))")
                           #("Ok(Nothing)" "Nothing")
-                          #("Err(ProbeDown(detail='届かない'))" "Some(Err(ProbeDown(detail='届かない')))")])
+                          #("Err(ProbeDown(detail='unreachable'))" "Some(Err(ProbeDown(detail='unreachable')))")])
                shapes)
        (with [(pytest.raises UnhandledEffect)]
          (run (probe-absent-then-note [])))
        (with [(pytest.raises UnhandledEffect)]
          (run (probe-raise-then-note []))))
      (deftest test-adr-doe-core-effects-003-raise-in-a-handler-clause-skips-the-bodys-result
-       ;; (b) R4: handler の節の中で出した Raise は、本文を包んだ result を飛び越え、handler より外の result に届く
-       ;; (内側の result が受けていれば Ok(Err …) になるはず)。
+       ;; (b) R4: a Raise performed inside a handler clause skips the result wrapping the body and reaches the result outside the handler
+       ;; (if the inner result had caught it, it would be Ok(Err …)).
        (val answer (run (result (probe-raising-read-handler (result (probe-reads-a-row))))))
-       (assert (= (repr answer) "Err(ProbeConflict(detail='handler の節の中で出した'))") answer))
+       (assert (= (repr answer) "Err(ProbeConflict(detail='performed inside a handler clause'))") answer))
      (deftest test-adr-doe-core-effects-003-declared-bind-opens-the-answer
-       ;; R5・R6: 宣言を持つ effect の <- は成功を束ね、不在を Absent に、失敗を Raise(答え) に変えて呼び手のスコープで出す。
+       ;; R5, R6: <- on an effect with a declaration binds success, and turns absence into Absent and failure into Raise(answer), performed in the caller's scope.
        (assert (isinstance ProbeDeclaredRead.__doeff_outcomes__ Outcomes))
        (assert (= (run (probe-rows (maybe (probe-read-value "a")))) (Some "A")))
        (assert (is (run (probe-rows (maybe (probe-read-value "zz")))) Nothing))
-       (assert (= (repr (run (probe-rows (result (probe-read-value "down"))))) "Err(ProbeDown(detail='網が落ちた'))"))
-       (assert (is (run (probe-rows (maybe (ProbeDeclaredRead "zz")))) Nothing) "maybe に宣言を持つ effect をそのまま渡しても開く"))
+       (assert (= (repr (run (probe-rows (result (probe-read-value "down"))))) "Err(ProbeDown(detail='network is down'))"))
+       (assert (is (run (probe-rows (maybe (ProbeDeclaredRead "zz")))) Nothing) "passing an effect with a declaration directly to maybe also opens it"))
      (deftest test-adr-doe-core-effects-003-undeclared-bind-is-unchanged
-       ;; (c) R5: 宣言の無い effect の <- は、yield する物も束ねる答えも今までと同じ(不在・失敗の値もそのまま束ね、外へ何も出さない)。
+       ;; (c) R5: <- on an effect without a declaration yields the same thing and binds the same answer as before (absence and failure values are bound as is, nothing escapes).
        (val effect (ProbePlainRead "zz"))
-       (assert (is (open-bind effect) effect) "宣言の無い effect は同じ物を yield する")
+       (assert (is (open-bind effect) effect) "an effect without a declaration yields the same object")
        (val program (probe-read-plain "zz"))
-       (assert (is (open-bind program) program) "Program も同じ物を yield する")
-       (assert (= (run (probe-rows (probe-read-plain "zz"))) (ProbeGone :key "zz")) "不在の値をそのまま束ねる")
-       (assert (= (run (probe-rows (probe-read-plain "down"))) (ProbeDown :detail "網が落ちた")) "失敗の値をそのまま束ねる"))
+       (assert (is (open-bind program) program) "a Program also yields the same object")
+       (assert (= (run (probe-rows (probe-read-plain "zz"))) (ProbeGone :key "zz")) "binds the absence value as is")
+       (assert (= (run (probe-rows (probe-read-plain "down"))) (ProbeDown :detail "network is down")) "binds the failure value as is"))
      (deftest test-adr-doe-core-effects-003-a-bind-has-one-meaning
-       ;; R3: 同じ束ねの行(probe-read-value の <-)は、呼び手の maybe・result・on-raise のどの下でも成功の型を束ねる。
+       ;; R3: the same bind line (the <- in probe-read-value) binds the success type under any of the caller's maybe, result, or on-raise.
        (val under-maybe (run (probe-rows (maybe (probe-read-value "a")))))
        (val under-result (run (probe-rows (result (probe-read-value "a")))))
        (val under-on-raise (run (probe-rows (on-raise (probe-read-value "a") (ProbeDown :detail d) d))))
        (assert (= #(under-maybe (repr under-result) under-on-raise) #((Some "A") "Ok('A')" "A"))
                #(under-maybe under-result under-on-raise)))
      (deftest test-adr-doe-core-effects-003-absent-option-maps-one-bind
-       ;; (e) R6: <- の :absent は、その束ねの中の不在(呼んだ defk の奥の物も)を Raise(失敗) に写す。失敗はそのまま。
+       ;; (e) R6: <-'s :absent maps an absence inside that bind (including one deep inside a called defk) to Raise(failure). Failures pass through as is.
        (assert (= (repr (run (probe-rows (result (probe-read-or-conflict "zz")))))
-                  "Err(ProbeConflict(detail='zz の行が無い'))"))
+                  "Err(ProbeConflict(detail='zz has no row'))"))
        (assert (= (repr (run (probe-rows (result (probe-read-or-conflict "down")))))
-                  "Err(ProbeDown(detail='網が落ちた'))"))
+                  "Err(ProbeDown(detail='network is down'))"))
        (assert (= (repr (run (probe-rows (result (probe-read-or-conflict "a"))))) "Ok('A')")))
      (deftest test-adr-doe-core-effects-003-on-raise-refuses-python-exceptions-and-catch-all
-       ;; (d) R7: on-raise は Python の例外を受けない・何でも受けるパターンは展開の時に断る・例外の型を名指す受けは作る時に断る。
+       ;; (d) R7: on-raise does not catch Python exceptions, catch-all patterns are refused at expansion, and a case naming an exception type is refused at construction.
+       ;; "\u53d7\u3051\u3089\u308c\u306a\u3044" ("cannot be caught") is kept as \u escapes because
+       ;; packages/doeff-hy/src/doeff_hy/_outcome_forms.hy emits that Japanese text.
        (with [(pytest.raises ValueError :match "boom")]
          (run (probe-raises-python)))
        (for [pattern ["_" "reason" "(Exception)" "(object)"]]
-         (assert (in "受けられない" (run (probe-expansion-refusal (+ "(require doeff-hy.macros [on-raise]) (on-raise body " pattern " 0)"))))
+         (assert (in "\u53d7\u3051\u3089\u308c\u306a\u3044" (run (probe-expansion-refusal (+ "(require doeff-hy.macros [on-raise]) (on-raise body " pattern " 0)"))))
                  pattern))
        (with [(pytest.raises TypeError)]
          (RaiseCase #(ValueError) (fn [r] (Some r))))
-       (assert (= (run (on-raise (probe-raise-then-note []) (ProbeDown :detail d) d)) "届かない") "合う型の Raise は写す"))
+       (assert (= (run (on-raise (probe-raise-then-note []) (ProbeDown :detail d) d)) "unreachable") "a Raise of a matching type is mapped"))
      (deftest test-adr-doe-core-effects-003-absent-as-resumes-only-direct-binds
-       ;; R8: absent-as は字面の中の <- の不在だけを既定値で再開し、奥の不在と直に書いた Absent では既定値でスコープを終える。
+       ;; R8: absent-as resumes with the default only for absences from <- in its literal text, and ends the scope with the default for deep absences and directly written Absent.
        (val direct (run (probe-rows (probe-direct-default "zz"))))
        (val deep (run (probe-rows (probe-deep-default "zz"))))
        (val written (run (probe-written-absent-default)))
        (val present (run (probe-rows (probe-direct-default "a"))))
-       (assert (= #(direct deep written present) #("続いた: 既定" "既定" "既定" "続いた: A"))
+       (assert (= #(direct deep written present) #("continued: default" "default" "default" "continued: A"))
                #(direct deep written present)))]
-  :plans ["段階 3 と段階 5 の切り替えの手順 = この ADR の R14(effect ごとに同じ版で切り替える)"])
+  :plans ["the switching procedure for stage 3 and stage 5 = R14 of this ADR (switch per effect, in the same change)"])

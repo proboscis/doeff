@@ -1,12 +1,12 @@
-;;; Executable ADR: 記録の service(doeff-records)の生の操作(表と列の名と鍵を呼び手に選ばせて直に読み書きする操作)は、
-;;; cluster の外へ提供しない。外の呼び手(cluster の外の網・CLI・webapp)はドメインの API だけを使う。
+;;; Executable ADR: the raw operations of the records service (doeff-records) — operations that let the caller choose table and column names and keys and read/write directly —
+;;; are not offered outside the cluster. External callers (networks outside the cluster, CLI, webapp) use only the domain API.
 ;;;
-;;; この ADR は決定の記録で、doeff-records の code と wire の振る舞いは変えない。cluster の中の job が doeff-records の効果で
-;;; 読み書きする形がこの決定に当たるかは利用者に確かめている最中で、中の側の形は未定(R3)。
-;;; 外へ出ていないことの検査は doeff の外が持つ: dotfiles の linter(defjevrule)と、agora の repo の宣言のテスト。
-;;; doeff の側には、wire が出す生の操作の一覧を固定し、足すとテストが赤になる形だけを置く(R4)。
+;;; This ADR is a record of a decision and does not change the behavior of doeff-records' code or wire. Whether the pattern of jobs inside the cluster reading and writing with doeff-records'
+;;; effects falls under this decision is still being confirmed with the maintainer, and the shape on the inside is undecided (R3).
+;;; The checks that nothing is exposed outside live outside doeff: the dotfiles linter (defjevrule) and the declaration tests of the agora repo.
+;;; On the doeff side we only fix the list of raw operations the wire exposes, so that adding one turns the test red (R4).
 ;;;
-;;; 戻し方: この file を revert する(code と wire は変えていないので、それだけで戻る)。
+;;; Rollback: revert this file (code and wire are unchanged, so that alone rolls it back).
 
 (require doeff-adr.macros [defadr rule law])
 (import doeff-adr.macros [fact interpretation counterexample])
@@ -14,13 +14,13 @@
 (import doeff_records._wire [OPERATIONS PATH-PREFIX])
 
 
-;; wire が /v1/records/ の下に出す生の操作の一覧(2026-10-07 の doeff の main で 10)。足す変更はこの一覧に無い物として赤になる。
-;; 減らす変更は、同じ変更でこの一覧から削る。
-;; 2026-10-22: append-events(追記の束を 1 往復で積む — append-event の束ね。冪等キー・上限・断りは append-event と同じ答え)を足した。
-;; 日次の root の failing を直す変更で、AppendEvents の追加(README の記述あり)が一覧を更新しないまま本線に入っていたのを揃える。
-;; 2026-10-31: read-batch(行の読みの束を 1 往復で読む — 束に載せてよいのは read-row と list-rows だけ)・count-rows(一覧の読みと
-;; 同じ絞りの行の数)・put-rows-append-events(行の書きの束と追記の束を全部か 0 で積む)を足した。3 つの effect(2026-10-27〜30)が
-;; 一覧を更新しないまま本線に入っていたのを、日次の root の failing を直す変更で揃える。
+;; The list of raw operations the wire exposes under /v1/records/ (10 on doeff main as of 2026-10-07). A change that adds one goes red as missing from this list.
+;; A change that removes one deletes it from this list in the same change.
+;; 2026-10-22: added append-events (stores a batch of appends in one round trip — a bundle of append-event. Idempotency key, limits, and refusals give the same answers as append-event).
+;; A change fixing the daily root failing aligns this: the addition of AppendEvents (described in the README) had entered mainline without updating the list.
+;; 2026-10-31: added read-batch (reads a batch of row reads in one round trip — only read-row and list-rows may go in the batch), count-rows (the number of rows under
+;; the same filter as a list read), and put-rows-append-events (stores a batch of row writes and a batch of appends all-or-nothing). 3 effects (2026-10-27 to 30) had
+;; entered mainline without updating the list; a change fixing the daily root failing aligns this.
 (val RAW-OPERATIONS
   (frozenset #("read-row" "list-rows" "put-row" "put-rows" "watch-changes"
                "append-event" "append-events" "read-events" "read-event-by-key" "read-stream-end" "watch-events"
@@ -28,47 +28,47 @@
 
 
 (defadr ADR-DOE-RECORDS-001
-  :title "記録の service の生の操作(表と列を直に読み書きする操作)は cluster の外へ提供しない。外の呼び手はドメインの API だけを使う。cluster の中の形は利用者に確かめている最中で未定"
+  :title "Raw operations of the records service (operations that read and write tables and columns directly) are not offered outside the cluster. External callers use only the domain API. The shape inside the cluster is still being confirmed with the maintainer and is undecided"
   :status "accepted"
   :scope ["packages/doeff-records/src/doeff_records/_wire.hy"
           "packages/doeff-records/src/doeff_records/_service.hy"
           "docs/adr/defadr_doeff_records_001_domain_api_only.hy"]
   :problem
     [(fact
-       "2026-10-07 に決めた事: 汎用の DB の API を提供してはならない。read-row や list-rows のような生の API は出さず、すべてドメインの API だけにする。生の API の提供は defjevrule(dotfiles のルールの宣言)や linter で見つけて禁じ、赤にして直す。")
+       "Decision 2026-10-07: a general-purpose DB API must not be offered. Raw APIs such as read-row and list-rows are not exposed; everything is a domain API only. Offering a raw API is found and banned by defjevrule (dotfiles' rule declarations) or a linter, turned red, and fixed.")
      (fact
-       "2026-10-07 の doeff の main で、doeff-records の wire は /v1/records/ の下に 10 の生の操作を出している: read-row・list-rows・put-row・put-rows・watch-changes・append-event・read-events・read-event-by-key・read-stream-end・watch-events(_wire.hy の OPERATIONS)。HTTP で受けるのは service.hy。"
+       "On doeff main as of 2026-10-07, doeff-records' wire exposes 10 raw operations under /v1/records/: read-row, list-rows, put-row, put-rows, watch-changes, append-event, read-events, read-event-by-key, read-stream-end, watch-events (OPERATIONS in _wire.hy). service.hy receives them over HTTP."
        :evidence "packages/doeff-records/src/doeff_records/_wire.hy:26-42")]
   :context
     [(interpretation
-       "生の操作は、表と列の名と鍵を呼び手に選ばせる汎用の読み書きで、ドメインの意味(誰が何をしてよいか・どの形の値か)を持たない。外の呼び手がこれを直に使うと、ドメインの決まりを通らずに記録を読み書きできる。")
+       "Raw operations are general-purpose reads and writes that let the caller choose table and column names and keys, and carry no domain meaning (who may do what, what shape a value has). If external callers use them directly, records can be read and written without going through domain rules.")
      (interpretation
-       "「外」は cluster の外の網(tailnet を含む)・CLI・webapp を指す。cluster の中の job が doeff-records の効果(ReadRow など)で読み書きする事が生の API の提供に当たるかは、この決定からは決まらない — 利用者に確かめている最中。")]
+       "\"Outside\" means networks outside the cluster (including the tailnet), CLI, and webapp. Whether jobs inside the cluster reading and writing with doeff-records' effects (ReadRow, etc.) counts as offering a raw API is not settled by this decision — it is still being confirmed with the maintainer.")]
   :decision
-    [(rule R1 "記録の service の生の操作は、cluster の外(外の網・CLI・webapp)へ提供しない。")
-     (rule R2 "外の呼び手は、ドメインの API(用途ごとの名と型を持つ API)だけを使う。生の操作を外から呼ぶ経路を新しく作らない。")
-     (rule R3 "cluster の中の job が doeff-records の効果で読み書きする形がこの決定に当たるかは未定。確かめの答えが出るまで、中の側の形はこの ADR で決めない(答えが出たら規則を足すか、別の ADR にする)。")
-     (rule R4 "doeff の側では、wire が出す生の操作の一覧を RAW-OPERATIONS に固定する。一覧に無い操作を足す変更はテストで赤になる。操作を減らす変更は、同じ変更で一覧から削る。")
-     (rule R5 "外へ出ていないことの検査は doeff の外が持つ: dotfiles の linter(defjevrule の宣言・ADR-DOTFILES-027 の側)と、agora の repo の宣言のテスト(記録の service を tailnet へ出す宣言を赤にする)。")]
+    [(rule R1 "The records service's raw operations are not offered outside the cluster (external networks, CLI, webapp).")
+     (rule R2 "External callers use only the domain API (APIs with per-purpose names and types). No new path is created for calling raw operations from outside.")
+     (rule R3 "Whether the pattern of jobs inside the cluster reading and writing with doeff-records' effects falls under this decision is undecided. Until the confirmation is answered, this ADR does not decide the shape on the inside (once answered, add a rule or make a separate ADR).")
+     (rule R4 "On the doeff side, the list of raw operations the wire exposes is fixed in RAW-OPERATIONS. A change that adds an operation not in the list goes red in the test. A change that removes an operation deletes it from the list in the same change.")
+     (rule R5 "The checks that nothing is exposed outside live outside doeff: the dotfiles linter (defjevrule declarations, on the ADR-DOTFILES-027 side) and the declaration tests of the agora repo (which turn red a declaration exposing the records service to the tailnet).")]
   :laws
     [(law no-raw-operation-is-offered-outside
-       :statement "for_all 記録の service の公開 p: p が cluster の外から届く ⇒ p は生の操作に答えない"
+       :statement "for_all publication p of the records service: p is reachable from outside the cluster ⇒ p does not answer raw operations"
        :counterexamples
-         [(counterexample "記録の service のエンドポイント(8875)を tailnet へ出す宣言を置き、Mac の CLI や webapp が read-row・list-rows を直に呼ぶ")]
-       :enforced-by ["agora の repo の宣言のテスト"
-                     "dotfiles の linter(defjevrule)"]
-       :wiring "未配線(2026-10-07)— 検査は doeff の外の 2 つが作る。この file は決定の記録")
+         [(counterexample "A declaration exposes the records service endpoint (8875) to the tailnet, and a Mac CLI or webapp calls read-row and list-rows directly")]
+       :enforced-by ["declaration tests of the agora repo"
+                     "dotfiles linter (defjevrule)"]
+       :wiring "Unwired (2026-10-07) — the checks are built by the 2 parties outside doeff. This file is the record of the decision")
      (law the-raw-operation-list-does-not-grow
-       :statement "_wire.hy の OPERATIONS の集合 = RAW-OPERATIONS"
+       :statement "the set of OPERATIONS in _wire.hy = RAW-OPERATIONS"
        :counterexamples
-         [(counterexample "wire に生の操作を 1 つ足し、外の呼び手がそれを使う — 一覧と比べない形では、決定の後も生の操作が黙って増える")]
+         [(counterexample "Adding one raw operation to the wire, which external callers then use — without comparing against a list, raw operations silently grow even after the decision")]
        :enforced-by ["docs/adr/defadr_doeff_records_001_domain_api_only.hy::test-adr-doe-records-001-raw-operations-do-not-grow"]
-       :wiring "配線済み(2026-10-07)— この file のテスト")]
+       :wiring "Wired (2026-10-07) — the test in this file")]
   :enforcement
     [(deftest test-adr-doe-records-001-raw-operations-do-not-grow
-       ;; wire が出す生の操作は一覧のとおり(足すと赤・減らす変更は同じ変更で一覧を削る — R4)。
+       ;; The raw operations the wire exposes match the list (adding goes red; a change that removes deletes from the list in the same change — R4).
        (assert (= PATH-PREFIX "/v1/records/") PATH-PREFIX)
        (assert (= (frozenset OPERATIONS) RAW-OPERATIONS)
-               (+ "wire の生の操作が一覧と違う(ADR-DOE-RECORDS-001 R4 — 生の操作を足さない。減らす変更は RAW-OPERATIONS を同じ変更で削る): "
+               (+ "The wire's raw operations differ from the list (ADR-DOE-RECORDS-001 R4 — do not add raw operations. A change that removes one deletes it from RAW-OPERATIONS in the same change): "
                   (str (sorted OPERATIONS)))))]
   :plans [])
