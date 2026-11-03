@@ -1382,3 +1382,22 @@ def test_every_worker_mounts_the_optional_machine_ssh_secret_without_subpath(ren
     assert secret["secretName"] == "worker-machine-ssh"
     assert secret.get("optional") is True
     assert secret.get("defaultMode") == 0o400
+
+
+# zeus の worker の /tmp は memory(tmpfs の emptyDir — 機体の dir の tmp-in-memory.yaml の頭の註)。作っては消す一時の file の書きを SSD に
+# 届けない。上限は tmpfs の大きさにもなり、越える書きは ENOSPC で落ちる。
+ZEUS_TMP_SIZE_LIMIT = "8Gi"
+
+
+def test_zeus_worker_keeps_tmp_in_memory_with_a_size_limit(zeus_worker: Manifest) -> None:
+    """zeus の worker の container の /tmp は medium Memory の emptyDir で、sizeLimit を持つ(上限の無い tmpfs は Pod の memory を食い尽くせる)。"""
+    mount = _mount_at(zeus_worker, "/tmp")
+    assert "subPath" not in mount
+    assert _volume(zeus_worker, str(mount["name"]))["emptyDir"] == {"medium": "Memory", "sizeLimit": ZEUS_TMP_SIZE_LIMIT}
+
+
+@pytest.mark.parametrize("name", [node for node in NODES if node != "zeus"])
+def test_other_workers_keep_tmp_in_the_container(rendered: list[Manifest], name: str) -> None:
+    """zeus 以外の機体の worker は /tmp を mount しない(container の書き層のまま — 機体ごとの差は機体の dir だけが持つ)。"""
+    mounts = [_mapping(m, "volumeMount") for m in _sequence(_container(_worker_on(rendered, name)).get("volumeMounts", []), "volumeMounts")]
+    assert not [m for m in mounts if m["mountPath"] == "/tmp"], mounts
