@@ -1,11 +1,12 @@
-# README・docs・PyPI の頁に出る README の link が切れていない事を確かめる(取り組み doeff-publish の区切り 11)。
-# 中身は tools/check_links.py(標準ライブラリだけ — workspace を同期しない)。job は 2 つ:
-# - in-repo: 相対の link・main を指す GitHub の link・`#見出し` の anchor・PyPI の頁になる README の相対の path を、checkout の
-#   木で読む。網に出ないので push と pull request のたびに走らせる(file の改名や見出しの書き換えで切れた link を名指す)。
-#   同じ確かめは tests/test_check_links.py::test_repo_links_resolve_in_the_tree でも走る(Python Compatibility の root の tests)。
-#   こちらは切れた link の一覧を 1 つの名の job に出す。
-# - external: 外の link に要求を送る。相手の site の都合で揺れるので push では走らせず、週 1 回(月曜 03:17 UTC)と手で
-#   起こす時だけ走らせる。404・410・名の引けない host だけを赤にし、429・5xx・403・時間切れは「確かめられない」と印字する。
+# Checks that links in the README, the docs, and the README shown on the PyPI page are not broken (initiative doeff-publish, milestone 11).
+# The work is done by tools/check_links.py (standard library only — does not sync the workspace). Two jobs:
+# - in-repo: reads relative links, GitHub links pointing at main, `#heading` anchors, and the relative paths of READMEs that become
+#   PyPI pages, against the checkout tree. It needs no network, so it runs on every push and pull request (naming links broken by
+#   file renames or heading edits). The same check also runs as tests/test_check_links.py::test_repo_links_resolve_in_the_tree
+#   (root tests of Python Compatibility); this job lists the broken links under one job name.
+# - external: sends requests to external links. Results vary with the remote sites, so it does not run on push; it runs weekly
+#   (Mondays 03:17 UTC) and on manual dispatch. Only 404, 410 and unresolvable hosts are red; 429, 5xx, 403 and timeouts are
+#   printed as "could not verify".
 name: Links
 
 on:

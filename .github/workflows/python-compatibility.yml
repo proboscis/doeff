@@ -1,13 +1,15 @@
-# Python の版ごとの検 — 公開する核の 5 個(doeff・doeff-vm・doeff-core-effects・doeff-hy・doeff-hy-pytest)が、宣言した
-# requires-python の版(3.11〜3.15)で入り、検が通る事を確かめる。3.10 は 2026-10-01 に保守を終え、核は 3.11 からの
-# enum.StrEnum・ast.TryStar を使うので、核の requires-python は >=3.11(3.10 の利用者には PyPI の 0.4.1 が残る)。
+# Per-Python-version tests — checks that the 5 published core packages (doeff, doeff-vm, doeff-core-effects, doeff-hy,
+# doeff-hy-pytest) install and pass their tests on the declared requires-python versions (3.11–3.15). 3.10 reached end of life on
+# 2026-10-01 and the core uses enum.StrEnum and ast.TryStar from 3.11, so the core requires-python is >=3.11 (users on 3.10 keep
+# 0.4.1 on PyPI).
 #
-# workspace(uv sync)では走らせない: workspace の requires-python は全 member の交わりで、doeff-docker・doeff-ml-nexus の >=3.12 が
-# 3.11 の sync を断る(2026-04 に 3.10・3.11 で 5 回続けて落ち、手で止めた訳)。版ごとに素の venv を作り、
-# 核の 5 個を checkout から入れる — PyPI から入れた利用者と同じく、依存は uv.lock でなく各 package の宣言から解く。
-# 検は package ごとに別の pytest の session で走らせる(Makefile の test-packages と同じ境目 — 同じ名の検の file がぶつからない)。
-# free-threaded の 3.14t は実験の扱い(落ちても run を赤にしない)。3.13t は置かない: PyO3 が 3.14 より前の free-threaded の
-# CPython を支えず、doeff-hy が依る pydantic-core を組めない。
+# Not run in the workspace (uv sync): the workspace requires-python is the intersection over all members, and the >=3.12 of
+# doeff-docker and doeff-ml-nexus rejects a 3.11 sync (in 2026-04 it failed 5 times in a row on 3.10 and 3.11 and was stopped by
+# hand). Instead, a plain venv is created per version and the 5 core packages are installed from the checkout — as for users
+# installing from PyPI, dependencies are resolved from each package's declarations, not from uv.lock.
+# Tests run in a separate pytest session per package (same boundaries as test-packages in the Makefile — test files with the same
+# name do not collide). Free-threaded 3.14t is experimental (failures do not turn the run red). No 3.13t: PyO3 does not support
+# free-threaded CPython before 3.14, so pydantic-core, which doeff-hy depends on, cannot be built.
 name: Python Compatibility
 
 on:
@@ -21,9 +23,9 @@ jobs:
   pytest-matrix:
     runs-on: ubuntu-latest
     continue-on-error: ${{ matrix.experimental }}
-    # 検が子の process で呼ぶ `uv run`(CLI の検ほか)を、sync せずにこの venv で走らせる — workspace の sync は 3.11 を断り、3.12 から
-    # でも workspace の全部を組み直して検の時間切れになる。Python は uv の管理する各版の最新の patch だけを使う — runner の機体の
-    # Python 3.12.3 では、Hy 1.3.1 の runpy の当て物が Hy の script の実行(`hy file.hy`・runpy)で落ちる。
+    # Make `uv run` calls from test subprocesses (CLI tests and others) run in this venv without syncing — a workspace sync rejects
+    # 3.11, and even from 3.12 it rebuilds the whole workspace and the tests time out. Use only the latest patch of each uv-managed
+    # Python — with the runner's Python 3.12.3, Hy 1.3.1's runpy patch breaks running Hy scripts (`hy file.hy`, runpy).
     env:
       UV_PROJECT_ENVIRONMENT: ${{ github.workspace }}/.venv-ci
       UV_NO_SYNC: "1"
@@ -38,7 +40,7 @@ jobs:
             experimental: true
 
     steps:
-      # 履歴と tag を全部取る(検が git の履歴と tag を読む — tests/test_agentd_retirement.py の rollback の tag)。
+      # Fetch the full history and all tags (tests read git history and tags — the rollback tag in tests/test_agentd_retirement.py).
       - name: Checkout repository
         uses: actions/checkout@v4
         with:
@@ -50,13 +52,14 @@ jobs:
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
 
-      # 核の 5 個に足す検の道具: pytest の plugin・Hy の検の file(test_*.hy)を集める doeff-adr の plugin・検が import する部品
-      # (doeff-time・doeff-traverse・doeff-validation・cloudpickle・pyyaml — doeff-hy の macro の validate・check は doeff-validation を
-      # 読む)・build の口と型の検が子の process で呼ぶ maturin と pyright(版は uv.lock の dev の物)。doeff-core-effects は答え手の検が
-      # httpx と aiohttp と psycopg を読むので extra の http・http-server・postgres ごと入れる(httpx は既定の依存でなく extra http に在る)。
-      # docs の 19 章(agent の手引き)の例は doeff-agents の effect を yield するので、doeff-agents と、PyPI に
-      # 無い依存の doeff-claude-code・doeff-codex も checkout から入れる(tests/test_docs_page_examples.py が例を走らせる)。
-      # venv の bin を PATH に置き、検が呼ぶ python・hy・doeff をこの venv の物にする。
+      # Test tooling added to the 5 core packages: pytest plugins, the doeff-adr plugin that collects Hy test files (test_*.hy), parts
+      # the tests import (doeff-time, doeff-traverse, doeff-validation, cloudpickle, pyyaml — validate and check of the doeff-hy macros
+      # read doeff-validation), and maturin and pyright, which the build backend and type tests call in subprocesses (versions are the dev
+      # ones in uv.lock). doeff-core-effects is installed with the http, http-server and postgres extras because the handler tests read
+      # httpx, aiohttp and psycopg (httpx is in the http extra, not a default dependency).
+      # The examples in docs chapter 19 (agent guide) yield doeff-agents effects, so doeff-agents and its dependencies not on PyPI,
+      # doeff-claude-code and doeff-codex, are also installed from the checkout (tests/test_docs_page_examples.py runs the examples).
+      # Put the venv bin on PATH so the python, hy and doeff the tests call are this venv's.
       - name: Install the core packages into a fresh venv
         id: install
         run: |
@@ -72,11 +75,13 @@ jobs:
       - name: Verify doeff-vm import
         run: .venv-ci/bin/python -c "import doeff_vm; import doeff_vm.doeff_vm"
 
-      # 印 semgrep の検(repo の規則を semgrep で検める)は外す — 版の違いではなく repo の規則を見る検で、日次の検が持つ。外す検 =
-      # 核の外の重い部品(doeff-gemini・doeff-conductor・doeff-cluster と、doeff-agents の MCP の server の検)か、開発の道具(semgrep・pre-commit・
-      # doeff-linter)を要る検と、共有の runner で揺れる時間の比の検。足す時は訳と一緒にここへ書く。
-      # tests/test_public_api_known_violations.py は packages/ の下の 39 個の全部を import して公開名を既知の表と突き合わせる —
-      # 核の 5 個だけの venv では核の外の依存が無く、module が import できずに名を字面で読むので表とずれる(日次と登記の前の検が持つ)。
+      # Tests marked semgrep (checking the repo rules with semgrep) are excluded — they check repo rules, not version differences, and
+      # the daily check owns them. Excluded tests = those needing heavy non-core parts (doeff-gemini, doeff-conductor, doeff-cluster, and
+      # the doeff-agents MCP server tests) or development tools (semgrep, pre-commit, doeff-linter), and timing-ratio tests that are
+      # flaky on shared runners. When adding one, write the reason here with it.
+      # tests/test_public_api_known_violations.py imports all 39 packages under packages/ and compares their public names with a known
+      # table — in a venv with only the 5 core packages the non-core dependencies are missing, modules fail to import and names are read
+      # textually, so it diverges from the table (the daily and pre-landing checks own it).
       - name: Run tests (doeff and doeff-vm)
         if: ${{ !cancelled() && steps.install.outcome == 'success' }}
         run: |
@@ -107,7 +112,7 @@ jobs:
           .venv-ci/bin/python -m pytest -q -n auto -m "not e2e and not semgrep" packages/doeff-hy-pytest/tests \
             --deselect=packages/doeff-hy-pytest/tests/test_budget.py::test_an_outlier_changes_neither_the_outcomes_nor_the_exit_code_nor_the_warnings
 
-      # cargo bench の検の binary は CPython を埋め込むので、venv の Python と、その libpython の dir を渡す(Makefile の test-rust と同じ)。
+      # The cargo bench test binary embeds CPython, so pass the venv's Python and its libpython dir (same as test-rust in the Makefile).
       - name: Run benchmark smoke checks
         if: ${{ !cancelled() && steps.install.outcome == 'success' && matrix.python-version == '3.12' }}
         run: |
@@ -117,10 +122,11 @@ jobs:
           cd packages/doeff-vm-core
           cargo bench --features python_bridge --bench dispatch -- --test
 
-  # 核だけの入れ方の検 — pip install doeff と同じく extra 無しで入れた新しい venv で、入った物がちょうど核の 4 個(doeff・doeff-vm・
-  # doeff-core-effects・frozendict)で、README の Python の例が通り、Hy と HTTP の extra が要る使い方が足す extra の名を言う事を
-  # 確かめる(tools/verify_core_install.py)。上の job の venv は Hy と検の道具も入れ、3 個を editable で読むので、
-  # 核だけの入れ方が壊れても気づけない。版の扱いは上の job と同じ(3.14t は実験・Python は uv の管理する物)。
+  # Core-only install check — in a fresh venv installed with no extras, like pip install doeff, checks that the installed set is
+  # exactly the 4 core packages (doeff, doeff-vm, doeff-core-effects, frozendict), the README Python examples pass, and uses that need
+  # the Hy or HTTP extras name the extra to add (tools/verify_core_install.py). The venv of the job above also has Hy and the test
+  # tooling and reads 3 packages as editable, so it would not notice a broken core-only install. Version handling is the same as the
+  # job above (3.14t is experimental; Python is uv-managed).
   core-only-install:
     runs-on: ubuntu-latest
     continue-on-error: ${{ matrix.experimental }}
@@ -142,7 +148,7 @@ jobs:
       - name: Install uv
         uses: astral-sh/setup-uv@v6
 
-      # doeff-vm(PyO3 の拡張)を checkout から組む。
+      # Build doeff-vm (the PyO3 extension) from the checkout.
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
 
