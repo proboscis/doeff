@@ -1370,17 +1370,49 @@
   (replace task :phase phase :finished-ms now :detail detail :result result))
 
 
+;; 走らせ直し(2026-11-04): 送り手が名乗った切り離した task は、担い手が消えた時に lost で終わらず、同じ key の次の試行として待ちの行へ戻る。
+;; 名乗らない task は今までどおり lost。担い手が消えた道はどれも gone-detached を通る — lease 切れ(settle-detached)・止まり始めた worker が走って
+;; いた子を止めた(absorb-task-reports-into)・止まり始めた worker の報告で子が結果なしで終わった(absorb-detached-report)。
+;; 次の試行は行の id を替える(<最初の試行の id>-r<試行の番号> — rerun-id): worker の job の名は task/<id> なので、前の試行の process の報告と結果の
+;; 届けは行が無いので受けられず(absorb-task-reports-into・absorb-task-result)、返事から外れた job として worker に止められる(沈黙から戻った旧い
+;; process が同じ命令を 2 本目として走り続けない — 同じ worker の同じ世代に次の試行を置いた時も、旧い job を止めて新しい job を起こす)。
+;; 走らせ直しは RERUN-LIMIT 回まで: task 自身が担い手を落としている時(memory を使い尽くすなど)に機体を落とし続けない。
+(setv RERUN-LIMIT 3)
+;; 次の試行の行の id の区切り(task の頭と番号 — task-id・fresh-task-prefix — はこの綴りを持たない)。
+(setv RERUN-ID-MARK "-r")
+
+
+(defn #^ str rerun-id [#^ TaskRecord task]
+  "純粋: task の次の試行の行の id(節の頭の註)。"
+  (.format "{}{}{}" (get (.partition task.id RERUN-ID-MARK) 0) RERUN-ID-MARK (+ task.attempt 1)))
+
+
+(defn #^ TaskRecord gone-detached [#^ TaskRecord task #^ int now #^ str why]
+  "純粋: 担い手が消えた切り離した task の次の行(節の頭の註)。why = 消えた訳の 1 句。走らせ直しを名乗り上限の内なら、次の試行の待ちの行(key・
+   Program・置き方の名乗りは同じ。id が替わる — 呼び手は put-gone で前の行を消す。待ちの期限と知らせは積み直した刻から数える。前の試行の
+   worker の失敗の覚えは持ち越さない)。ほかは lost。"
+  (cond
+    (not task.rerun)
+      (end-detached task "lost" now (.format "{} — 走らせ直さない" why))
+    (> task.attempt RERUN-LIMIT)
+      (end-detached task "lost" now (.format "{} — 走らせ直しの上限 {} 回に達した" why RERUN-LIMIT))
+    True
+      (replace task :id (rerun-id task) :attempt (+ task.attempt 1) :phase "queued" :worker None :boot None :started-ms None
+               :submitted-ms now :lease-until-ms (+ now task.lease-ms) :reported False :queued-noticed-ms None
+               :avoid #() :env-attempts 0 :failure-kind "" :retryable False
+               :detail (.format "{} — 試行 {} を待つ" why (+ task.attempt 1)))))
+
+
 (defk settle-detached [task now lapsed]
   {:pre [(: task TaskRecord) (: now int) (: lapsed bool)] :post [(: % (| TaskRecord None))] :tags {:context "coordinator" :role "judgment"}}
   "純粋: 切り離した task 1 本の期限の判断。lapsed = 自分の期限(task-lapse-at の刻)が来た。保持の期限を過ぎた終わりの行は None(消す)。
-   置いた task の lease(担い手の worker の heartbeat が延ばす)が切れた = worker の死 = lost(走らせ直さない)。
-   呼び手の問い合わせは lease に触らない(呼び手が消えても task は続く)。"
+   置いた task の lease(担い手の worker の heartbeat が延ばす)が切れた = 担い手が消えた(gone-detached — 名乗らない task は lost・名乗った task は
+   id の替わった次の試行の行)。呼び手の問い合わせは lease に触らない(呼び手が消えても task は続く)。"
   (cond
     (in task.phase DETACHED-TERMINAL)
       (if lapsed None task)
     (and (in task.phase PLACED-PHASES) lapsed)
-      (end-detached task "lost" now
-                    (.format "担い手の worker {} の lease が切れた(worker の死とみなす — task は走らせ直さない)" task.worker))
+      (gone-detached task now (.format "担い手の worker {} の lease が切れた(worker の死とみなす)" task.worker))
     True task))
 
 
@@ -1476,7 +1508,10 @@
     (cond
       task.detached
         (do (<- kept (| TaskRecord None) (settle-detached task now lapsed))
-            (setv (get writes id) kept))
+            ;; 走らせ直しは行の id が替わる(前の行を消して次の試行の行を書く — 節 gone-detached の頭の註)。
+            (when (and (is-not kept None) (!= kept.id id))
+              (setv (get writes kept.id) kept))
+            (setv (get writes id) (if (and (is-not kept None) (!= kept.id id)) None kept)))
       ;; 呼び手が問い合わせを止めた(止まった)= task も要らない。担い手は次の heartbeat で子 process を止める。
       lapsed (setv (get writes id) None)
       (and (in task.phase PLACED-PHASES)
@@ -1489,6 +1524,10 @@
     (setv now-row (if (in id writes) (get writes id) task))
     (when (and (is-not now-row None) (= now-row.phase "queued"))
       (setv (get queue id) now-row)))
+  ;; この拍に積み直した次の試行の行(id が新しいので live に無い)も、この拍で置く。
+  (for [#(id row) (.items writes)]
+    (when (and (is-not row None) (not-in id live) (= row.phase "queued"))
+      (setv (get queue id) row)))
   ;; 保持側の行は書かず元の object のまま残す。期限(finished-ms + retain-ms + 1 — task-lapse-at と同じ式)が来た行は落とす(期限の来た拍だけ
   ;; 全行を読む)。finished-ms の無い行は毎拍 now から数えるので落ちない。
   (when (and (is-not earliest None) (>= now earliest))
@@ -1648,7 +1687,8 @@
                :if (and (in task.phase PLACED-PHASES) (= task.worker worker) (same-boot task boot))
                (TaskOffer :id task.id :name task.name :revision task.revision :versions task.versions :program task.program
                           :detached task.detached :key task.key :lease-ms task.lease-ms :retain-ms task.retain-ms :needs task.needs
-                          :runtime-env task.runtime-env :environ task.environ :memory-mib task.memory-mib))))
+                          :runtime-env task.runtime-env :environ task.environ :memory-mib task.memory-mib
+                          :rerun task.rerun :attempt task.attempt :notify task.notify))))
 
 
 (defn #^ TaskRecord task-finished [#^ TaskRecord task #^ int now #^ str detail #^ (| str None) result]
@@ -1659,12 +1699,16 @@
       (replace task :phase "finished" :finished-ms now :result result :detail detail)))
 
 
-(defn #^ TaskRecord absorb-detached-report [#^ TaskRecord task #^ StatusRow status #^ int now]
-  "切り離した task の終わりの報告 → 終わりの phase。結果を書かずに終わった子 process は lost(結果が無い = 消失)。"
+(defn #^ TaskRecord absorb-detached-report [#^ TaskRecord task #^ StatusRow status #^ int now #^ bool [stopping False]]
+  "切り離した task の終わりの報告 → 終わりの phase。結果を書かずに終わった子 process は lost(結果が無い = 消失)。stopping = この報告は止まり
+   始めた世代の物(機体の停止は worker と子へ同時に止めの合図を送るので、worker が止める前に子が結果なしで終わった報告が来る — 担い手が消えた
+   道の 1 つ。gone-detached)。止まり始めでない世代の子の消失(memory の見張りや OS に止められた子)は走らせ直さない — task 自身が訳かもしれない。"
   (setv phase status.phase detail status.detail)
   (cond
     (and (= phase "finished") (is-not status.result None))
       (task-finished task now detail status.result)
+    (and (= phase "finished") stopping)
+      (gone-detached task now (.format "止まり始めた担い手の子 process が結果を書かずに終わった({})" detail))
     (= phase "finished")
       (end-detached task "lost" now (.format "子 process が結果を書かずに終わった({})" detail))
     (= phase "code-failed") (end-detached task "code-failed" now detail)
@@ -1677,6 +1721,13 @@
   (setv old (.row draft task.id))
   (when (not (or (is task old) (= task old)))
     (.put draft task.id task)))
+
+
+(defn #^ None put-gone [#^ (get TableDraft TaskRecord) draft #^ TaskRecord before #^ TaskRecord after]
+  "下書きの task の行 before を after にする。走らせ直しで id が替わった時(gone-detached)は前の行を消す。"
+  (when (!= after.id before.id)
+    (.remove draft before.id))
+  (put-row draft after))
 
 
 (defn #^ None absorb-task-reports-into [#^ (get TableDraft TaskRecord) draft #^ str worker #^ tuple statuses #^ int now #^ (| str None) boot
@@ -1701,7 +1752,7 @@
           (.put draft task.id task))
         (cond
           (= phase "env-failed") (put-row draft (absorb-env-failure task worker status now))
-          task.detached (put-row draft (absorb-detached-report task status now))
+          task.detached (put-gone draft task (absorb-detached-report task status now stopping))
           (= phase "finished")
             (put-row draft (task-finished task now status.detail status.result))
           (= phase "code-failed")
@@ -1711,20 +1762,19 @@
     (for [id (sorted (.keys draft))]
       (setv task (.row draft id))
       (when (and (in task.phase PLACED-PHASES) (= task.worker worker) (same-boot task boot) (not-in id running))
-        (put-row draft
-                 (if (and task.detached task.reported)
-                     ;; 行を報告した後に消えた = 止まり始めた worker が走っていた子 process を止めた。切り離した task は走らせ直さない
-                     ;; (置き直すと同じ名の次の世代でもう 1 度走った — 2026-10-10 17:56 の作り直しの後)。
-                     (end-detached task "lost" now
-                                   (.format "担い手の worker {} が止まり始め、走っていた子 process を止めた — 走らせ直さない" worker))
-                     (replace task :phase "queued" :worker None :boot None :started-ms None
-                              :detail (.format "担い手の worker {} が始める前に止まり始めた — 置き直しを待つ" worker))))))))
+        (put-gone draft task
+                  (if (and task.detached task.reported)
+                      ;; 行を報告した後に消えた = 止まり始めた worker が走っていた子 process を止めた。走らせ直しを名乗らない task は lost
+                      ;; (置き直すと同じ名の次の世代でもう 1 度走った — 2026-10-10 17:56 の作り直しの後)。
+                      (gone-detached task now (.format "担い手の worker {} が止まり始め、走っていた子 process を止めた" worker))
+                      (replace task :phase "queued" :worker None :boot None :started-ms None
+                               :detail (.format "担い手の worker {} が始める前に止まり始めた — 置き直しを待つ" worker))))))))
 
 
 (defn #^ None renew-detached-into [#^ (get TableDraft TaskRecord) draft #^ str worker #^ (| str None) boot #^ int now]
   "純粋: 担い手の heartbeat: その worker に置いた切り離した task の lease を延ばす書きを下書き draft に貯める(lease は worker が延ばす)。
    延ばすのは置いた時と同じ process の世代の heartbeat だけ。別の世代の heartbeat では何もしない — 置いた世代の process が消えていれば
-   lease 切れで lost(settle-detached・走らせ直さない)。以前は別の世代の heartbeat が来た拍に lost にしていたが、同じ名の 2 つの世代が
+   lease 切れ(settle-detached — lost か、名乗った task は次の試行)。以前は別の世代の heartbeat が来た拍に lost にしていたが、同じ名の 2 つの世代が
    並んで動く間(旧い Pod の preStop の drain)は、旧い世代の heartbeat が新しい世代に置いた task を失わせた。"
   (for [t (.rows draft)]
     (when (and t.detached (in t.phase PLACED-PHASES) (= t.worker worker) (same-boot t boot))
@@ -2307,6 +2357,8 @@
               :phase "assigned" :worker worker :started-ms now :detached True :key key :boot boot
               :retain-ms (int-field echo "retainMs" 0) :runtime-env (.get echo "runtimeEnv") :environ (environ-pairs environ)
               :memory-mib (if (is (task-memory-refusal memory) None) memory None)
+              :rerun (is (.get echo "rerun") True) :attempt (int-field echo "attempt" 1)
+              :notify (if (isinstance (.get echo "notify") str) (.get echo "notify") "")
               :detail (.format "coordinator の置き場に行が無く、担い手 {} が走らせていた task を引き取った" worker)))
 
 

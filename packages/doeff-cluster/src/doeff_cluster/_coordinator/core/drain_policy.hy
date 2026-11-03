@@ -232,7 +232,7 @@
                                :if (and (is-not job None)
                                         (not (any (gfor w (.rows state.workers) (and (!= w.name name) (eligible state job w))))))
                                n))
-        ;; 切り離した task(2026-09-25)は移せない(走らせ直さない)ので、この worker の上で終わるまで drain を待たせる。
+        ;; 切り離した task(2026-09-25)は移せない(走らせ直しを名乗った task も途中の仕事を捨てて移さない)ので、この worker の上で終わるまで drain を待たせる。
         remaining (sorted (- (| (set placed) (set (live-rows state name)) (set (detached-rows state name))) (set unmovable)))
         moving (dfor n placed :setv s (.row state.surges n) :if (is-not s None) n s.worker)
         blocked {})

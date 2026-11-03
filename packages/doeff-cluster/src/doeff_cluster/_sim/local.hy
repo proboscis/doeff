@@ -198,7 +198,7 @@
                    warm-server-failure runners-change-of watch-query service-ready-of service-facts-of-json services-unreachable
                    detached-timing-of-state unknown-timing-confirmed detached-queue-of-state outbox-answer outbox-ack-answer outbox-path outbox-query])
 (import doeff_cluster._shared.core.capabilities [env-mapping])
-(import doeff_cluster._shared.core.detached_rules [task-placing-json task-notify-json])
+(import doeff_cluster._shared.core.detached_rules [task-placing-json task-notify-json task-rerun-json])
 (import doeff_cluster._shared.intent.detached_model [SubmitDetached AwaitDetached CancelDetached ReleaseDetached ReadRunners DetachedSubmitted
                          DetachedSubmitAnswer DetachedAwaited RunnersUnreachable WARMING-PHASE AwaitRunnersChange RunnersChangeAnswer
                          AwaitServiceReady ServiceReady RunnersChange RunnersWatchMissing ReadServices ServiceFact ServicesUnreachable
@@ -1898,11 +1898,11 @@
   (RemoteJob [program needs name environ]
     (<- outcome (remote-outcome link program needs name environ))
     (resume (settled-value outcome)))
-  (SubmitDetached [program key needs name lease-seconds retain-seconds environ priority limits notify memory-mib]
+  (SubmitDetached [program key needs name lease-seconds retain-seconds environ priority limits notify memory-mib rerun]
     ;; 本番の detached-cluster と同じく、effect の EnvVar の tuple を本文の形(名 → 値の object)へ綴ってから送る(#2179)。
     (<- environ-body dict (env-mapping environ))
     (<- submitted (submit-detached link program key needs name (float lease-seconds) (float retain-seconds) environ-body
-                                   (| (task-placing-json priority limits memory-mib) (task-notify-json notify))))
+                                   (| (task-placing-json priority limits memory-mib) (task-notify-json notify) (task-rerun-json rerun))))
     (resume submitted))
   (AwaitDetachedOutbox [prefix timeout-seconds kinds]
     (<- outbox DetachedOutboxAnswer (await-detached-outbox link prefix (tuple kinds) (float timeout-seconds)))
