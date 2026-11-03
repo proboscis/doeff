@@ -71,7 +71,7 @@ backup から戻した(作る時だけ)、まとめて冷やすは `CoolingSweep
 | recurringJobSelector | 群 workspace-backup と default | 1 時間ごとの backup と、ほかの volume と同じ snapshot の片付けと trim |
 | reclaimPolicy | Retain | 中身を消すのは寿命の「冷やす」と「消す」だけ(PVC から使った時も、PVC を消しただけで消えない) |
 | volumeBindingMode | Immediate | Pod が無いので、WaitForFirstConsumer では結ばれない |
-| 大きさ | 10 GiB(`workspace-volume.json` の sizeBytes) | thin — 書いた分だけ disk を使う。付いている間に空きが線を割れば、worker が付けたまま広げる(節「広げる」) |
+| 大きさ | 2 GiB(`workspace-volume.json` の sizeBytes — 訳は節「大きさ」) | thin — 書いた分だけ disk を使う。付いている間に空きが線を割れば、worker が付けたまま広げる(節「広げる」) |
 
 worker は CSI を通らずに Longhorn の volume を名指しで作るので、級の値を volume の欄へ自分で写す(Longhorn の CSI が PVC の時にする写しと
 同じ)。写し方:
@@ -128,10 +128,28 @@ worker は CSI を通らずに Longhorn の volume を名指しで作るので�
   6 時間 111・12 時間 549・24 時間 891・7 日 7,565・全部で 8,799 個・48 GB)。
 - Longhorn は volume を名目の大きさで数え、disk ごとに (容量 − 予約) × 200%(設定 storage-over-provisioning-percentage)までしか置かない。
   10 GiB の volume を 7 日温かく置くと約 7,500 本・75 TiB で、どの disk にも収まらない。
-- 今の札 workspace の disk(zeus の USB の SSD の上の 100 GiB の image — 2026-11-03 の読み: storageMaximum 105 GB・予約 0)に置ける 10 GiB
-  の volume は名目で 19 本(付いている物と温かい物の和)。昼の 1 時間に約 25 個の作業場所が動くので、2 時間の窓でも数の線(2)が先に効く。
-- spareVolumes = 4 の訳: 19 本のうち 15 本までを付いている・温かい物に使い、4 本を、次のまとめて冷やす回(数分ごと)までに始まる新しい
-  持ち主のために空けておく(昼の頃合いで 5 分に 2 本ほど)。前の 8 本は、disk が 72 本を受ける見込みの頃の値。
+- 今の札 workspace の disk(zeus の USB の SSD の上の 100 GiB の image — 2026-11-03 の読み: storageMaximum 105 GB・予約 0)に置ける
+  volume は名目で、10 GiB なら 19 本・2 GiB なら 97 本(付いている物と温かい物の和)。昼の 1 時間に約 25 個の作業場所が動くので、10 GiB
+  では 2 時間の窓でも数の線(2)が先に効いた。大きさの訳は節「大きさ」。
+- spareVolumes = 4 の訳: 付いている・温かい物の外に 4 本を、次のまとめて冷やす回(数分ごと)までに始まる新しい持ち主のために空けておく
+  (昼の頃合いで 5 分に 2 本ほど)。前の 8 本は、disk が 72 本を受ける見込みの頃の値。
+
+### 大きさ(sizeBytes = 2 GiB)
+
+名目の大きさは Longhorn が disk に予約する量で、実の使用ではない(thin)。だから作る大きさは、実の使用の分布の多くを広げずに受け、
+重い少数は付けたまま広げる(節「広げる」)幅にする。
+
+| 時(2026-11-03 JST・zeus の作業場所の volume の Longhorn の actualSize) | 本数 | <64 MiB | 64–512 MiB | 512 MiB–1 GiB | 1–2 GiB | 2–4 GiB | ≥4 GiB | p50 | p90 | 最大 |
+|---|---|---|---|---|---|---|---|---|---|---|
+| 17:28 | 56 | 5 | 36 | 0 | 13 | 2 | 0 | — | — | 3,611 MiB |
+| 17:55 | 38 | 5 | 23 | 0 | 8 | 2 | 0 | 268 MiB | 1,248 MiB | 3,611 MiB |
+
+- 読み方: 前の 10 GiB の volume は、空でも mkfs が journal と inode の表を 0 で埋めて約 228 MiB を使っていた(今は
+  `assume_storage_prezeroed` で埋めない — 新しい 1 GiB の volume の mkfs の直後は 680 KB)。64–512 MiB の多くはその上乗せだけの volume。
+- 2 GiB の訳: 名目の線で札の disk に 97 本(200% の時 — 昼の 2 時間の約 50 本と空けておく 4 本を受ける。10 GiB では 19 本)。
+  growBelowPercent 50 なら 1 GiB を使った所で広げ始め、上の分布では 1 度広げるのが約 4 本に 1 本、2 度広げるのが約 20 本に 1 本。
+- 戻す volume は backup を取った時の大きさで作る(Longhorn は backup より小さい volume への戻しを断る)。前に 10 GiB で作った持ち主は、
+  戻すたびに名目 10 GiB を持ち続ける。
 - 冷えている volume を次に使う時は、backup から戻す時間が掛かる(2026-11-03 の zeus の測り: 中身 50 MB で戻す 20.8 秒・attach 6.0 秒・
   mount 0.5 秒)。温かい volume でも attach と mount で約 6 秒掛かる。
 - 冷やす・戻す・消すは handler の仕事(節「handler」)。この dir は決まりと値だけを持つ。
@@ -184,8 +202,7 @@ Longhorn は replica を disk に置く時、線を 2 つ照らす(v1.13 の rep
 
 名目の大きさは、Longhorn が disk に予約する量(節「置き場の数え」の名目の予約の線)で、実の使用ではない。だから小さく作るほど 1 つの disk に
 多くの volume を置ける。使う間に大きな作業場所になった持ち主の volume は、付けたまま広げる(Longhorn v1.13 は付いている volume の
-spec.size の書きを online で広げる — 2026-11-03 の zeus の試し: 付けた 1 GiB の volume を 2 GiB に書き、engine の status.currentSize が約
-10 秒で 2 GiB になった)。
+spec.size の書きを online で広げる — 下の本番の試し)。
 
 | 値(`workspace-volume.json`) | 今 | 訳 |
 |---|---|---|
@@ -203,6 +220,16 @@ spec.size の書きを online で広げる — 2026-11-03 の zeus の試し: �
 - 戻す時: 冷やした volume の backup は、取った時の大きさを覚える。戻す volume はその大きさと sizeBytes の大きい方で作る(Longhorn は
   backup より小さい volume への戻しを断る)。
 - 模擬の答え手 `held-workspace-volumes` は file system の空きを持たないので広げない(答えの grown は空)。
+- 本番の試し(2026-11-03 17:45 JST・zeus-usb-workspace の試しの volume を付けて mount し、600 MiB を書いた後に handler と同じ手順を手で
+  打った — spec.size の merge patch → Engine の currentSize の読み → 係への grow の頼み):
+
+  | 回 | 名目 | spec.size を書いてから engine が広がるまで | resize2fs | file system の総量 |
+  |---|---|---|---|---|
+  | 1 | 1 GiB → 2 GiB | 16 秒 | 1 秒未満 | 1,020,702,720 → 2,077,073,408 byte |
+  | 2 | 2 GiB → 4 GiB | 246 秒(engine は要求を誤り無しに 4 分ほど持った) | 0.4 秒 | 2,077,073,408 → 4,189,814,784 byte |
+
+  中身(600 MiB の file の hash)は前後で同じ。2 回目のように engine の待ちが上限(attach-seconds 180 秒)を越えた回は断って訳を残し、次の
+  回が「前の広げの続き」として file system だけを広げる。
 
 ## 置く disk(札 workspace)
 
