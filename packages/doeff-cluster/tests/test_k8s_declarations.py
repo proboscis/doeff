@@ -129,11 +129,16 @@ def _mount_at(deployment: Manifest, path: str) -> dict[str, object]:
     return found[0]
 
 
-# 機体ごとの worker を置く Node の全部(会社の機体には置かない)。zeus の worker は上に載る系の仕事も受け、ほかの機体の worker は
-# 機体の仕事(能力 host-<Node の名> と host-systemd-readable を要る job)だけを受ける。
+# 機体ごとの worker を置く Node の全部(会社の機体には置かない)。zeus の worker は上に載る系の仕事も受け、helios と atlas の worker は
+# 上に載る系の仕事を余りの空きで受け(GUEST_NODES — ../deploy/k8s/guest-work)、ほかの機体の worker は機体の仕事(能力 host-<Node の名> と
+# host-systemd-readable を要る job)だけを受ける。
 NODES = ("atlas", "eos", "helios", "k3s-0", "k3s-1", "k3s-2", "k3s-3", "zeus")
-HOST_ONLY_NODES = tuple(node for node in NODES if node != "zeus")
+OTHER_NODES = tuple(node for node in NODES if node != "zeus")
+GUEST_NODES = ("atlas", "helios")
+HOST_ONLY_NODES = tuple(node for node in OTHER_NODES if node not in GUEST_NODES)
 HOST_ONLY_PROVIDES = "host-$(NODE_NAME),host-systemd-readable"
+# 余りの空きで受ける機体の能力: 機体の 2 つの後ろに、上に載る系が worker-env で置く能力の残り(空なら機体の仕事だけを受ける機体のまま)。
+GUEST_PROVIDES = "host-$(NODE_NAME),host-systemd-readable,$(WORKER_PROVIDES_GUEST_EXTRA)"
 PREPARE_DIR = "/opt/worker-prepare"
 
 
@@ -145,17 +150,20 @@ class Resources:
     limits: dict[str, str]
 
 
-# 機体の仕事だけを受ける worker の資源。memory の取り分は cgroup の層の memory.min の和以上(層の守る分 — 下の
+# zeus でない機体の worker の資源。memory の取り分は cgroup の層の memory.min の和以上(層の守る分 — 下の
 # test_worker_requests_at_least_the_memory_its_layers_guard)、memory の上限は cgroup の層の和
-# (worker の min + 常駐の job の予算 + task と準備の層の max — 越えたら kubelet が取り分を最も越えたこの Pod を先に追い出す)。task を
-# 受けない機体の上限は、前の上限(機体の memory の半分ほど)に準備の層の分 1536Mi を足した値(予算を前の値のまま残す)。
-HOST_ONLY_RESOURCES = {
+# (worker の min + 常駐の job の予算 + task と準備の層の max(と会話の CLI と命令の層の max)— 越えたら kubelet が取り分を最も越えたこの
+# Pod を先に追い出す)。task を受けない機体の上限は、前の上限(機体の memory の半分ほど)に準備の層の分 1536Mi を足した値(予算を前の値の
+# まま残す)。
+MACHINE_RESOURCES = {
     # atlas は上に載る系の日次の全体検証の task も受ける(1 本の上限は旧い専用の worker と同じ 16Gi 前後 — 2026-10-10 調整役 cisco-c8 の値)。
-    # 機体の memory が足りずに kubelet がこの Pod を追い出しているので、層を置いても上限は上げない(予算の側を下げる)。
-    "atlas": Resources(requests={"cpu": "500m", "memory": "512Mi"}, limits={"cpu": "8", "memory": "18Gi"}),
+    # 機体の memory が足りずに kubelet がこの Pod を追い出しているので、層を置いても前の上限 18Gi は上げなかった(予算の側を下げた)。
+    # 会話の CLI と命令の限る層(2G + 2G)の分だけを足して 22Gi(予算は変えない)。
+    "atlas": Resources(requests={"cpu": "500m", "memory": "512Mi"}, limits={"cpu": "8", "memory": "22Gi"}),
     "eos": Resources(requests={"cpu": "250m", "memory": "3840Mi"}, limits={"cpu": "2", "memory": "5632Mi"}),
-    # helios は組の印 pool-helios の常駐の job 24 本(起動の山の和 約 31GiB・落ち着いた値の和 約 16.5GiB)を受ける。
-    "helios": Resources(requests={"cpu": "2", "memory": "31Gi"}, limits={"cpu": "12", "memory": "40Gi"}),
+    # helios は組の印 pool-helios の常駐の job 24 本(起動の山の和 約 31GiB・落ち着いた値の和 約 16.5GiB)を受ける。上限は前の 40Gi に
+    # 会話の CLI と命令の限る層(5G + 3G)の分を足した 48Gi(worker の外の Pod の約 9 GiB と合わせて allocatable 58.2 GiB の内)。
+    "helios": Resources(requests={"cpu": "2", "memory": "31Gi"}, limits={"cpu": "12", "memory": "48Gi"}),
     "k3s-0": Resources(requests={"cpu": "100m", "memory": "1792Mi"}, limits={"cpu": "2", "memory": "3584Mi"}),
     "k3s-1": Resources(requests={"cpu": "100m", "memory": "512Mi"}, limits={"cpu": "2", "memory": "3584Mi"}),
     "k3s-2": Resources(requests={"cpu": "100m", "memory": "1792Mi"}, limits={"cpu": "2", "memory": "3584Mi"}),
@@ -185,9 +193,9 @@ SINGLE_MACHINE_POOLS = {
 }
 ATLAS_TASK_RESERVE = 3
 HELIOS_TASK_RESERVE = 1
-# 機体の仕事だけを受ける機体の枠 — 機体の名 → (task に空けておく数, 置ける組の印)。受ける job の数は手書きせず、coordinator が
+# zeus でない機体の枠 — 機体の名 → (task に空けておく数, 置ける組の印)。受ける job の数は手書きせず、coordinator が
 # memory の予算 memoryMiB と job の宣言の memory から数える。
-HOST_ONLY_POOLS = {
+MACHINE_POOLS = {
     "atlas": (ATLAS_TASK_RESERVE, ("pool-atlas-eos", "pool-atlas-k3s-0", "pool-atlas-k3s-2", "pool-atlas-k3s-3")),
     "eos": (0, ("pool-atlas-eos",)),
     "helios": (HELIOS_TASK_RESERVE, ("pool-helios",)),
@@ -197,7 +205,8 @@ HOST_ONLY_POOLS = {
     "k3s-3": (0, ("pool-atlas-k3s-3",)),
 }
 # 常駐の job の memory の予算(枠の file の欄 memoryMiB)= worker の container の memory の上限 − cgroup の層の worker の memory.min − task と
-# 準備の層(jobs と、宣言する機体の prepare)の memory.max(全部の機体 — zeus の命令の層は常駐の job の子の分なので引かない)。
+# 準備の層(jobs と、宣言する機体の prepare)の memory.max(全部の機体 — zeus の命令の層は常駐の job の子の分なので引かない)。会話の CLI の
+# 層を限る層に置く機体(GUEST_NODES)は、会話の CLI と命令の層の memory.max も引く(会話は常駐の job の予算の外の余りだけを使う)。
 # 予算は N+1 の判断の規則 3(置ける job の落ち着いた値の和 + 最悪の 1 台の停止で移る job の起動の山の上乗せ ≤ 予算)が読む。
 # 層の値の下限(nodes/<Node の名>/cgroup.yaml の値の決め方は ../deploy/k8s/cgroup-layers): worker の memory.min ≥ worker 自身の分 256 MiB
 # (worker の process の RSS 126〜132 MiB・2026-10-27 の 4 機体の実測に余裕を足す)。jobs の memory.max ≥ 準備の分 1536 MiB + task に空けて
@@ -331,13 +340,15 @@ SMALL_NODE_ROOM_MIB = 1024
 # (常駐の層より上には置かない)・ほかの一括の仕事の層より上。
 CGROUP_DEPLOY_LAYER = "deploy"
 # 層を宣言する機体(全部の機体)→ 最初の層と常駐の job の層(DOEFF_WORKER_SERVICE_CGROUP)のほかに守る層・task の層
-# (DOEFF_WORKER_JOB_CGROUP)のほかに限る層。zeus でない機体は CLI も命令の層も使わない(CLI と命令を起こす上に載る系の常駐の job は
-# zeus に残る)。zeus でない機体の委ねる係と層の名は部品 ../deploy/k8s/cgroup-layers 1 つ。
+# (DOEFF_WORKER_JOB_CGROUP)のほかに限る層。zeus の会話の CLI の層は守る層(会話を受ける主の機体)。上に載る系の仕事を余りの空きで受ける
+# 機体(GUEST_NODES)は会話の CLI と命令の層を両方とも限る層に置き、常駐の job の守りと予算の外の余りだけを使わせる。ほかの機体は CLI も
+# 命令の層も使わない(CLI と命令を起こす上に載る系の常駐の job が置かれない)。zeus でない機体の委ねる係と層の名は部品
+# ../deploy/k8s/cgroup-layers 1 つ。
 CGROUP_LAYERS = {
     "zeus": ({CGROUP_CLI_LAYER}, {CGROUP_CHILD_LAYER, CGROUP_DEPLOY_LAYER}),
-    "atlas": (set(), set()),
+    "atlas": (set(), {CGROUP_CLI_LAYER, CGROUP_CHILD_LAYER}),
     "eos": (set(), set()),
-    "helios": (set(), set()),
+    "helios": (set(), {CGROUP_CLI_LAYER, CGROUP_CHILD_LAYER}),
     "k3s-0": (set(), {CGROUP_PREPARE_LAYER}),
     "k3s-1": (set(), {CGROUP_PREPARE_LAYER}),
     "k3s-2": (set(), {CGROUP_PREPARE_LAYER}),
@@ -473,6 +484,33 @@ def test_zeus_worker_guards_its_resident_jobs_and_its_clis_above_their_measured_
     service = str(_env_value(zeus_worker, "DOEFF_WORKER_SERVICE_CGROUP")["value"])
     assert _bytes(settings[service]["memory.min"]) >= _bytes(ZEUS_SERVICE_USE), settings
     assert _bytes(settings[CGROUP_CLI_LAYER]["memory.min"]) >= _bytes(ZEUS_CLI_USE), settings
+
+
+@pytest.mark.parametrize("node", GUEST_NODES)
+def test_guest_worker_keeps_conversation_clis_and_commands_off_its_resident_jobs_guard(rendered: list[Manifest], node: str) -> None:
+    """余りの空きで会話を受ける機体(GUEST_NODES)の会話の CLI の層と命令の層は、memory.max と cpu.weight だけを持つ限る層
+    (memory.min を持たない — 守る分を取らない)で、重みは常駐の job の層より低い。worker と常駐の job の層の memory.min と、jobs・clis・
+    commands の memory.max の和は container の上限の内で、常駐の job の予算(枠の file の memoryMiB)は会話の 2 つの層の外 — 予算と 2 つの
+    層の max と worker の min と jobs の max の和が上限にちょうど等しく、予算は常駐の job の層の memory.min 以上。
+    失敗ケース: 層が無いと上に載る系の会話の CLI は常駐の job の層 services に居続け、その memory.min の守りと予算を食う(helios の 30G・
+    atlas の 256M)。限る層の和が上限を越えると、会話が上限まで使った時に container の上限の回収が常駐の job の memory にも掛かる。予算に
+    会話の分を数えると、coordinator が常駐の job を会話の memory の上へ置き、常駐の job が先という順(helios はコアの計算が先)が崩れる。"""
+    worker = _worker_on(rendered, node)
+    settings = dict(_layout(worker))
+    service = str(_env_value(worker, "DOEFF_WORKER_SERVICE_CGROUP")["value"])
+    jobs = str(_env_value(worker, "DOEFF_WORKER_JOB_CGROUP")["value"])
+    conversation_layers = (CGROUP_CLI_LAYER, CGROUP_CHILD_LAYER)
+    for layer in conversation_layers:
+        assert set(settings[layer]) == {"memory.max", "cpu.weight"}, (layer, settings)
+        assert int(settings[layer]["cpu.weight"]) < int(settings[service]["cpu.weight"]), settings
+    limit = _bytes(str(_mapping(_mapping(_container(worker)["resources"], "resources")["limits"], "limits")["memory"]))
+    guarded = _bytes(settings[CGROUP_FIRST_LAYER]["memory.min"]) + _bytes(settings[service]["memory.min"])
+    limited = sum(_bytes(settings[name]["memory.max"]) for name in (jobs, *conversation_layers))
+    assert guarded + limited <= limit, f"{node}: 守る層 {guarded} + 限る層 {limited} が container の上限 {limit} を越える"
+    budget = int(str(_mapping(_room_rows()[node], node)["memoryMiB"])) * 2**20
+    outside = _bytes(settings[CGROUP_FIRST_LAYER]["memory.min"]) + limited
+    assert budget + outside == limit, f"{node}: 予算 {budget} が会話の層の外の余り {limit - outside} と違う"
+    assert budget >= _bytes(settings[service]["memory.min"]), (node, budget, settings)
 
 
 @pytest.mark.parametrize("node", sorted(CGROUP_LAYERS))
@@ -789,14 +827,14 @@ def test_upper_system_values_come_from_fixed_named_configmaps(
 @pytest.mark.parametrize("node", HOST_ONLY_NODES)
 def test_host_only_worker_offers_only_machine_capabilities(rendered: list[Manifest], node: str) -> None:
     """zeus でない機体の worker は、機体の能力 2 つだけを名乗り(上に載る系の能力の残り WORKER_PROVIDES_EXTRA を足さない)、枠は枠の file
-    の機体の行の task の予約と、置ける組の印(どちらも HOST_ONLY_POOLS)。上に載る系の
+    の機体の行の task の予約と、置ける組の印(どちらも MACHINE_POOLS)。上に載る系の
     準備の script(worker-prepare)は置かない — それは上に載る系の仕事を受ける worker の準備で、空の機体では通らない。
     反例: worker-env の能力の残りを名乗ると、その能力だけを要る上に載る系の job が memory 4GiB の機体へ置かれ得る。"""
     host_only = _worker_on(rendered, node)
     assert _env_value(host_only, "WORKER_PROVIDES")["value"] == HOST_ONLY_PROVIDES
     row = _mapping(_room_rows()[node], node)
-    assert row["taskReserve"] == HOST_ONLY_POOLS[node][0]
-    assert tuple(row["pools"]) == HOST_ONLY_POOLS[node][1]
+    assert row["taskReserve"] == MACHINE_POOLS[node][0]
+    assert tuple(row["pools"]) == MACHINE_POOLS[node][1]
     mounts = [
         _mapping(mount, "volumeMount")["mountPath"]
         for mount in _sequence(_container(host_only).get("volumeMounts", []), "volumeMounts")
@@ -825,12 +863,37 @@ def test_atlas_worker_passes_the_rust_toolchain_to_tasks(rendered: list[Manifest
         assert passed == expected, f"{node} の WORKER_PASS_ENV: {passed!r}"
 
 
-@pytest.mark.parametrize("node", HOST_ONLY_NODES)
-def test_host_only_worker_resources_fit_its_node(rendered: list[Manifest], node: str) -> None:
-    """zeus でない機体の worker の資源は、機体の大きさに合わせた値(HOST_ONLY_RESOURCES)。"""
+@pytest.mark.parametrize("node", GUEST_NODES)
+def test_guest_worker_offers_the_upper_systems_guest_capabilities_and_runs_its_prepare_script(rendered: list[Manifest], node: str) -> None:
+    """余りの空きで会話を受ける機体(GUEST_NODES)の worker は、機体の能力 2 つの後ろに上に載る系の置く能力の残り
+    $(WORKER_PROVIDES_GUEST_EXTRA)を名乗り(zeus の $(WORKER_PROVIDES_EXTRA) でない — zeus だけが持つ能力を名乗らない)、上に載る系の
+    準備の script を起動の前に走らせ(worker-prepare を mount する)、枠は枠の file の機体の行(MACHINE_POOLS)。作業場所の volume の mount の
+    係は置かない(余りで受ける仕事は機体の dir で始める — ../deploy/k8s/guest-work の註)。
+    反例: zeus の能力の残りを名乗ると、作業の dir の持ち主の能力を要る仕事(zeus と同じ path で作業の dir を読み書きする)が、その dir の
+    無い機体へ置かれる。準備の script を外すと、会話の CLI が要る道具が PATH に無い。係を置くと、作業場所の volume が網越しに zeus の
+    USB の SSD の replica へ書く(遅く、zeus の SSD の書きを増やす)。"""
+    guest = _worker_on(rendered, node)
+    assert _env_value(guest, "WORKER_PROVIDES")["value"] == GUEST_PROVIDES
+    assert not any(entry["name"] == "WORKER_WORKSPACE_MOUNT_DIR" for entry in _env(guest)), guest
+    assert "workspace-mount" not in [
+        _mapping(c, "initContainer")["name"] for c in _sequence(_pod_spec(guest)["initContainers"], "initContainers")
+    ]
+    row = _mapping(_room_rows()[node], node)
+    assert row["taskReserve"] == MACHINE_POOLS[node][0]
+    assert tuple(row["pools"]) == MACHINE_POOLS[node][1]
+    assert _mount_at(guest, PREPARE_DIR).get("readOnly") is True
+    env_from = _sequence(_container(guest)["envFrom"], "envFrom")
+    assert [
+        _mapping(_mapping(s, "envFrom")["configMapRef"], "configMapRef")["name"] for s in env_from
+    ] == ["worker-env"]
+
+
+@pytest.mark.parametrize("node", OTHER_NODES)
+def test_machine_worker_resources_fit_its_node(rendered: list[Manifest], node: str) -> None:
+    """zeus でない機体の worker の資源は、機体の大きさに合わせた値(MACHINE_RESOURCES)。"""
     resources = _mapping(_container(_worker_on(rendered, node))["resources"], "resources")
-    assert resources["requests"] == HOST_ONLY_RESOURCES[node].requests
-    assert resources["limits"] == HOST_ONLY_RESOURCES[node].limits
+    assert resources["requests"] == MACHINE_RESOURCES[node].requests
+    assert resources["limits"] == MACHINE_RESOURCES[node].limits
 
 
 def _room_rows() -> dict[str, object]:
@@ -910,8 +973,14 @@ def test_the_memory_allowance_is_the_worker_limit_less_the_worker_and_its_tasks(
         jobs = str(_env_value(worker, "DOEFF_WORKER_JOB_CGROUP")["value"])
         # 準備の層を宣言する機体は、前の準備の分を jobs と prepare に分けた(和は前のまま)— 両方を引く。
         prepare = _bytes(settings[CGROUP_PREPARE_LAYER]["memory.max"]) if CGROUP_PREPARE_LAYER in settings else 0
+        # 会話の CLI の層が限る層の機体は、会話の CLI と命令の層も引く(zeus の CLI の層は守る層で、CLI は常駐の job の子として予算に入る)。
+        conversations = (
+            _bytes(settings[CGROUP_CLI_LAYER]["memory.max"]) + _bytes(settings[CGROUP_CHILD_LAYER]["memory.max"])
+            if "memory.max" in settings.get(CGROUP_CLI_LAYER, {})
+            else 0
+        )
         allowance = (
-            limit - _bytes(settings[CGROUP_FIRST_LAYER]["memory.min"]) - _bytes(settings[jobs]["memory.max"]) - prepare
+            limit - _bytes(settings[CGROUP_FIRST_LAYER]["memory.min"]) - _bytes(settings[jobs]["memory.max"]) - prepare - conversations
         ) // 2**20
         assert _mapping(rows[node], node)["memoryMiB"] == allowance, node
 

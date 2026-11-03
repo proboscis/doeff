@@ -1,7 +1,7 @@
 # worker の組 — 全部の機体の worker が使う ServiceAccount(worker-account.yaml)とその権限(worker-cluster-admin.yaml)と、機体ごとの
 # worker(../nodes/<Node の名>/)。Flux はこの dir を 1 つの Kustomization で当てる。機体を足す時は ../nodes/<Node の名>/ を作り、ここの
-# resources に足す。会社でない機体の全部に 1 つずつ置く(会社の機体には置かない)。zeus の worker は上に載る系の仕事も受け、ほかの機体の
-# worker は機体の仕事だけを受ける(../host-only)。
+# resources に足す。会社でない機体の全部に 1 つずつ置く(会社の機体には置かない)。zeus の worker は上に載る系の仕事も受け、helios と
+# atlas の worker は上に載る系の仕事を余りの空きで受け(../guest-work)、ほかの機体の worker は機体の仕事だけを受ける(../host-only)。
 apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
 resources:

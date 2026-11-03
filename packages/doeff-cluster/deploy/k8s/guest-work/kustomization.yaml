@@ -1,0 +1,22 @@
+# 上に載る系の仕事を、機体の仕事の余りの空きで受ける worker の差(helios・atlas の dir が components で読む)。この dir だけでは当てない。
+# 機体の仕事だけを受ける差(../host-only)の代わりに読む。zeus との違い:
+# - 能力の残りは worker-env の WORKER_PROVIDES_GUEST_EXTRA(zeus の WORKER_PROVIDES_EXTRA でない)。上に載る系は、zeus だけが持つ能力
+#   (作業の dir の持ち主など)を名乗らせずに、余りで受ける仕事の能力だけをこの値に置く。値が空なら機体の仕事だけを受ける機体のまま — 上に
+#   載る系は値を入れる時を自分で決める(worker の env は起動の時に読むので、値を替えた後の次の起動から効く)。
+# - 上に載る系の準備の script(ConfigMap worker-prepare)は ../host-only と違って外さない。script は起動の前に毎回走るので、能力を
+#   名乗らない間に何をするか(しないか)は上に載る系の script が決める。
+# - 作業場所の volume の mount の係(zeus の sidecar workspace-mount)は置かない: 余りで受ける仕事の作業場所は機体の dir(作業の root の
+#   下)で始める。作業場所の volume の replica を置く disk(札 workspace)は zeus の USB の SSD だけで、網越しに付けると zeus の volume より
+#   uv sync が 3 倍・fsync が 7.6 倍遅く、書きも全部 zeus の SSD に掛かった(2026-11-04 の測り)。係の無い worker は volume の mount の頼みを
+#   断る(../workspace-volumes/README.md の節「mount の係」)。
+# 守りの層: 会話の CLI と命令は機体の dir の cgroup.yaml の限る層 clis・commands(memory.max・cpu.weight 100)に置かれ、常駐の job の
+# 層 services の memory.min と常駐の job の予算(枠の file の memoryMiB)の外 — 余りの空きの分だけを使う(../cgroup-layers の頭の註)。
+apiVersion: kustomize.config.k8s.io/v1alpha1
+kind: Component
+patches:
+  # 能力は行の場所を変えずに置き換える(../host-only と同じ訳 — k8s は $(名) を前の行で定義した env だけから展開する)。雛形の行の並びが
+  # 変わったら、test の操作が組み立てを止める。
+  - target: { group: apps, version: v1, kind: Deployment, name: doeff-worker }
+    patch: |-
+      - { op: test, path: /spec/template/spec/containers/0/env/5/name, value: WORKER_PROVIDES }
+      - { op: replace, path: /spec/template/spec/containers/0/env/5/value, value: "host-$(NODE_NAME),host-systemd-readable,$(WORKER_PROVIDES_GUEST_EXTRA)" }

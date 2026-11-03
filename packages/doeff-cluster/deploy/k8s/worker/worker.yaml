@@ -12,6 +12,8 @@
 #                             組の印)は置かない — 枠は下の worker-room(task の数は書かない — 測った空きで置く)。加えて次の 2 つを必ず置く(空の値でよい):
 #                               WORKER_PROVIDES_EXTRA  能力の残り(`,` で並べる)— 下の WORKER_PROVIDES の後ろに付く
 #                               WORKER_PASS_ENV_EXTRA  job の子へ渡す残りの env の名(`,` で並べる)— 下の WORKER_PASS_ENV の後ろに付く
+#                             上に載る系の仕事を余りの空きで受ける機体(../guest-work を読む機体)のためにもう 1 つ:
+#                               WORKER_PROVIDES_GUEST_EXTRA  その機体の能力の残り — WORKER_PROVIDES_EXTRA の代わりに付く
 #                             無いと $(名) が展開されずに残り、worker は能力の名か env の名の誤りを stderr に出して起動しない。
 #                             下の env と同じ名を置いても効かない(k8s は env を envFrom より優先する)。
 #   ConfigMap worker-prepare  起動の前に 1 度実行する script(キー prepare.sh・非 0 なら起動しない)。ConfigMap が無ければ実行しない。
