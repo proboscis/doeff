@@ -19,7 +19,7 @@ reclaimPolicy: Retain
 volumeBindingMode: Immediate
 allowVolumeExpansion: true
 parameters:
-  # 測り(card ki-00f2d6af6581・2026-11-01・zeus)で replica 1 は hostPath に対して pytest 1.06 倍・git clone 1.18 倍・1 file ごとに
+  # 測り(2026-11-01・zeus)で replica 1 は hostPath に対して pytest 1.06 倍・git clone 1.18 倍・1 file ごとに
   # fsync する小さい file 300 個 0.79 倍。replica 2 は書くたびに別の機体への網を往復し、fsync つきで 3.07 倍。1 本の守りは garage への
   # backup(backup.yaml)が持つ。
   numberOfReplicas: "1"

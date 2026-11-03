@@ -3,8 +3,8 @@
 ;;
 ;; 守る事: 家の外に預けた記録(CodexExportThread の答え)を持ち込めば、機体の掃除が rollout を外した後も同じ thread を続けられる
 ;; (書き戻す置き場は元と同じ — 本物の codex は別の日の dir に戻した記録を断る。2026-11-02 に zeus の一時の家で測った)。取り出しは
-;; 行の終わりまでで、前の写しの長さから後ろだけを読める。これが崩れると、codex の会話の記録を手元から外せない(/work が週 20G 増える —
-;; card ki-06ec6deda2d6)か、外した後の会話が続きから始められない。
+;; 行の終わりまでで、前の写しの長さから後ろだけを読める。これが崩れると、codex の会話の記録を手元から外せない(/work が週 20G 増える)か、
+;; 外した後の会話が続きから始められない。
 (require doeff-hy.macros [deftest defk <- val])
 (val MODULE-TAGS {:context "codex-test" :role "program"})
 (import dataclasses [replace])

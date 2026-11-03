@@ -78,7 +78,7 @@ spec:
         # 頼みの形や断る物を替えても Pod は作り直されない(この宣言を替えた時だけ作り直す — doeff worker は静的に保つ)。
         # device は host の /dev を /host/dev に置いて引く(attach のたびに増える device を見るため。container の /dev は起きた時の写しで
         # 増えない。/dev に重ねないのは、container の /dev の file — termination-log など — を host の /dev に作らないため)。
-        # 上に載る系の決まりとの合い方(通過点 AG — ms-5835ee6ab1f8: 上に載る系が持つ Pod は doeff worker だけ・zeus の doeff worker は
+        # 上に載る系の決まりとの合い方(通過点 AG: 上に載る系が持つ Pod は doeff worker だけ・zeus の doeff worker は
         # 1 つ・上に載る系の版上げで worker の Pod を作り直さない): 係は doeff worker の Pod の中の container で、Pod・Deployment・
         # DaemonSet を足さない(zeus の Pod は 1 つのまま)。宣言は doeff の repo のこの dir に在る。作業場所の volume は Pod を作らずに付ける
         # (attach は Longhorn の ticket・mount はこの係)。script は ConfigMap なので、頼みの形の替えでも Pod は作り直されない。

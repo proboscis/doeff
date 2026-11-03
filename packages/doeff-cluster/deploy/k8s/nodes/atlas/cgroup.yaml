@@ -6,8 +6,7 @@
 # 値:
 # - services の memory.min 256M: 今 atlas に置かれた常駐の job(機体の仕事 1 本・11-03 の services の層 116 MiB)の分。atlas が組の相手の
 #   停止で受ける job の分は前もって守らない — memory.min は同じ Node のほかの Pod から守れず、守る量を Pod の取り分に入れると atlas の
-#   allocatable に入らない(決定 2026-11-03・card ki-d5a23a242180)。予算(枠の file の
-#   memoryMiB)は変えない。
+#   allocatable に入らない。予算(枠の file の memoryMiB)は変えない。
 # - jobs の memory.max 10752M: 準備の分 1536M + task の予約 3 × 3G。task の和の最大 9345 MiB を通す。これは静的な上限で、worker は見張りの
 #   回(5 秒)ごとに jobs の層の memory.max を「jobs の今の使い + kubelet の追い出しまでの空き − 余裕 1 GiB」に掛け直す(この値が上限 —
 #   worker/core/eviction_rules・worker/protocol/eviction_line)。追い出しまでの空き = allocatable 19.79 GiB − Pod の全部の working set

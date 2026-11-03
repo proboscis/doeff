@@ -578,7 +578,7 @@
 (defk kept-and-carried [#^ Setting s]
   {:pre [(: s Setting)] :post [(: % dict)] :tags {:context "headless-codex-adapter-test" :role "program"}}
   "1 ターンの後に会話の記録を書き出して預け、記録を外し(fake は世界の forget-rollout・stub は rollout の file を消す — 機体の掃除の
-   模型)、持ち込みなしと持ち込みあり(resume_snapshot)で続けるため(card ki-06ec6deda2d6 — codex の記録を保管へ写して手元を離す)。"
+   模型)、持ち込みなしと持ち込みあり(resume_snapshot)で続けるため(codex の記録を保管へ写して手元を離す)。"
   (<- handle (launch s "codex-kept" "say hello" {}))
   (<- done (read-until handle ended s.timeout -1))
   (<- (Stop handle))
@@ -763,7 +763,7 @@
 (defk check-unauthorized-turn [#^ Read done]
   {:pre [(: done Read)] :post [(: % None)] :tags {:context "headless-codex-adapter-test" :role "program"}}
   "口座の資格の切れたターンの終わりが、codex の文を AgentAccountRefusal(語 unauthorized)で運ぶ事を確かめるため — agora は口座の断りの
-   在る失敗を claude の authentication_failed と同じ道で読み、その口座を外してターンを別の口座へ結び直す(card ki-148d925696be — 前は
+   在る失敗を claude の authentication_failed と同じ道で読み、その口座を外してターンを別の口座へ結び直す(前は
    ただの失敗で、配る担当が 401 の口座へ配り続けた)。利用枠切れ・混雑とは読まない。"
   (val end done.end)
   (assert (isinstance end AgentTurnFailed) end)

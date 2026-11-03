@@ -139,7 +139,7 @@
   ;; 資格の切れた口座(ChatGPT の口が全部 401)のターン: codex は繋ぎ直しの誤りの通知(willRetry 真)を重ねた後に、種類 other・HTTP の
   ;; status 無しの文「workspace routing discovery unauthorized (401)」で失敗の終わりにする(本番 2026-11-01 の口座の資格切れと同じ文)。
   ;; 種類も status も 401 を運ばないが、行の分類はその終わりに資格の断りの事実を載せる — 載せないと上の層はただの失敗と読み、同じ口座へ
-  ;; 配り続ける(card ki-148d925696be)。ほかの失敗の終わり(429・利用枠切れ・混雑)は資格の断りの事実を持たない。
+  ;; 配り続ける。ほかの失敗の終わり(429・利用枠切れ・混雑)は資格の断りの事実を持たない。
   (<- records (recorded-records "unauthorized"))
   (val ends (tuple (gfor record records :if (isinstance record TurnEnded) record)))
   (assert (= (tuple (gfor end ends end.status)) #(TurnStatus.FAILED)) ends)

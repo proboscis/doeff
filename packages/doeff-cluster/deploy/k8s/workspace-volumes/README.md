@@ -2,9 +2,8 @@
 
 worker は、持ち主(上に載る系が渡す id 1 つ)ごとに Longhorn の RWO volume を 1 つ持ち、持ち主が使う間だけ、使う機体の node に
 attach して作業場所の path に mount する。Pod は作らない — attach は Longhorn の VolumeAttachment の ticket(attacherType
-longhorn-api)、mkfs と mount は worker が行う(作業場所の path への見せ方は ki-c1a429da5761・handler は節「handler」)。
-この dir は、その volume の級・名・寿命・backup の決まりと、worker が読む値を持つ。出所 = card ki-e2e594d4ecfe(区切り ms-e60af528a048 の
-card 2)・測り ki-00f2d6af6581。
+longhorn-api)、mkfs と mount は worker が行う(作業場所の path への見せ方は節「mount の係」・handler は節「handler」)。
+この dir は、その volume の級・名・寿命・backup の決まりと、worker が読む値を持つ。
 
 | file | 何か |
 |---|---|
@@ -20,8 +19,7 @@ card 2)・測り ki-00f2d6af6581。
 `MountWorkspaceVolume`・`UmountWorkspaceVolume`・`DetachWorkspaceVolume`・`CoolWorkspaceVolume`・`PurgeWorkspaceVolume`・
 `CoolIdleWorkspaceVolumes`・`ReadWorkspaceRoom`・`ReadWorkspacePlace`(答えは `WorkspaceOutcome` の DONE = 今した・ALREADY = 既にそうだった・RESTORED =
 backup から戻した(作る時だけ)、まとめて冷やすは `CoolingSweep`、残りの読みは `WorkspaceRoom`、付ける先の読みは `WorkspacePlace`。できなければ `WorkspaceVolumeRefused`・
-置き場が足りなければその子の `WorkspaceRoomShort`)。出所 = card ki-a2d67aa8203d(作る〜detach)・ki-c817a191ad4e(戻す・冷やす・
-消す)・ki-3b60bfcdb6a2(置き場の数え・広げる)。
+置き場が足りなければその子の `WorkspaceRoomShort`)。
 
 | effect | 何をするか |
 |---|---|
@@ -89,7 +87,7 @@ worker は CSI を通らずに Longhorn の volume を名指しで作るので�
 
 ## 名
 
-- 名 = `ws-` + 持ち主の id を小文字にした物。例: id `c-K973ZX4FCYMA7PZ498C0464B7G` → `ws-c-k973zx4fcyma7pz498c0464b7g`(31 字)。
+- 名 = `ws-` + 持ち主の id を小文字にした物。例: id `c-EXAMPLEOWNERID000000000001` → `ws-c-exampleownerid000000000001`(31 字)。
 - 同じ名を、Longhorn の volume と volume の attach の ticket の印に使う。backup は Longhorn が label `backup-volume=<volume の名>`・
   `backup-target=garage-workspace` を付けて束ねる(束 BackupVolume の名は `<volume の名>-<hash>`・spec.volumeName が volume の名)。持ち主が
   冷えて戻っても名は替わらない — 戻す先も backup も名 1 つで引ける。
@@ -134,8 +132,8 @@ worker は CSI を通らずに Longhorn の volume を名指しで作るので�
   の volume は名目で 19 本(付いている物と温かい物の和)。昼の 1 時間に約 25 個の作業場所が動くので、2 時間の窓でも数の線(2)が先に効く。
 - spareVolumes = 4 の訳: 19 本のうち 15 本までを付いている・温かい物に使い、4 本を、次のまとめて冷やす回(数分ごと)までに始まる新しい
   持ち主のために空けておく(昼の頃合いで 5 分に 2 本ほど)。前の 8 本は、disk が 72 本を受ける見込みの頃の値。
-- 冷えた持ち主を次に使う時は、backup から戻す時間が掛かる(2026-11-03 の zeus の測り: 中身 50 MB で戻す 20.8 秒・attach 6.0 秒・mount
-  0.5 秒)。温かい持ち主でも attach と mount で約 6 秒掛かる。
+- 冷えている volume を次に使う時は、backup から戻す時間が掛かる(2026-11-03 の zeus の測り: 中身 50 MB で戻す 20.8 秒・attach 6.0 秒・
+  mount 0.5 秒)。温かい volume でも attach と mount で約 6 秒掛かる。
 - 冷やす・戻す・消すは handler の仕事(節「handler」)。この dir は決まりと値だけを持つ。
 
 ## backup
@@ -192,7 +190,7 @@ spec.size の書きを online で広げる — 2026-11-03 の zeus の試し: �
 | 値(`workspace-volume.json`) | 今 | 訳 |
 |---|---|---|
 | growBelowPercent | 50 | 付いている volume の file system の空きがこの % を割ったら広げる。冷やす回の間(数分)に、その時の空きを書き切らない幅 |
-| maxSizeBytes | 16 GiB | 広げる上限。1 つの持ち主が札の disk の名目を食い尽くさない幅(2026-11-03 の zeus の 56 本の実の使用は最大 3.6 GiB) |
+| maxSizeBytes | 16 GiB | 広げる上限。1 つの volume が札の disk の名目を食い尽くさない幅(2026-11-03 の zeus の 56 本の実の使用は最大 3.6 GiB) |
 
 - いつ: `CoolIdleWorkspaceVolumes`(上に載る系が数分ごとに出す program の回)が、冷やした後に、答え手の機体の mount の表に載る作業場所の
   volume の空きを 1 つずつ読む(`mounted-growth`)。file system の空きの減りは知らせを出さないので、付けている間は回ごとに読む。外れている
@@ -214,12 +212,12 @@ spec.size の書きを online で広げる — 2026-11-03 の zeus の試し: �
 - 2026-11-01 の時点で、札 workspace の disk は無い — 級を当てても、札を付けるまで volume は置かれない。zeus で今 Longhorn が使える SSD は
   札 hot の SATA SSD だけで、hot の disk は名簿の volume だけの物という決まりに当たる。作業場所の今の disk(zeus の USB の SSD・1.6 TB)は
   空きが 290 GB で、Longhorn が置く線(空きが容量の 25% — 設定 storage-minimal-available-percentage)を割っている。どちらに付けるかは
-  持ち主の決め(card ki-e2e594d4ecfe の発言に答えを書く)。
+  持ち主の決め。
 
 ## mount の係
 
 worker の container は特権を持たないので、mkfs・mount・umount・fstrim・resize2fs は同じ Pod の sidecar `workspace-mount`(root・privileged の
-native sidecar — 宣言と訳は `../nodes/zeus/node.yaml` の註)がする。今は zeus の worker にだけ在る(card ki-c1a429da5761)。
+native sidecar — 宣言と訳は `../nodes/zeus/node.yaml` の註)がする。今は zeus の worker にだけ在る。
 
 | 項目 | 決まり |
 |---|---|

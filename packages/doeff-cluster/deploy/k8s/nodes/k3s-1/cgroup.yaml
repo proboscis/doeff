@@ -3,7 +3,7 @@
 # 訳: k3s-1 は機体の仕事 1 本を走らせ、k3s-2 が止まると組の印 pool-k3s-1-k3s-2 の常駐の job 1 本を受ける。
 # 値:
 # - services の memory.min 256M: 今 k3s-1 に置かれた常駐の job(機体の仕事 1 本)の分。組の相手の停止で受ける job の分は前もって守らない
-#   (atlas と同じ訳 — ../atlas/cgroup.yaml・決定 2026-11-03・card ki-d5a23a242180)。予算(枠の file の memoryMiB)は変えない。
+#   (atlas と同じ訳 — ../atlas/cgroup.yaml)。予算(枠の file の memoryMiB)は変えない。
 # - jobs の memory.max 896M と prepare の memory.max 640M: 前の準備の分 1536M を、keeper の版の準備の層 prepare(準備の山 640M —
 #   ../../cgroup-layers の頭の註)と、jobs の層(実行環境と木の準備 — 同じ焼きの道具の山 640M に余りを足した値・task は来ない —
 #   枠の file の taskReserve 0)に分けた。和は前の 1536M のまま。

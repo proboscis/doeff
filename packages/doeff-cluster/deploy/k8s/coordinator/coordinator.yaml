@@ -249,7 +249,7 @@ spec:
             # coordinator を上げる。前の版 be893ad9d は 2017ad313 の祖先。
             # 6e1996649 = 置き先の条件が替わる宣言し直しも別の worker へ移せる版(1e50d45f5)に、古い worker が読む job の行の綴りの直し(048fd044b)
             # を足した版。機体の worker より先に coordinator を上げる。前の版 2017ad313 は 6e1996649 の祖先。
-            # fffb250ee = keeper の版の準備を準備の層で起こし、追い出しの線までの空きが無い間は待つ worker の版(card ki-16594ef9bba4)。
+            # fffb250ee = keeper の版の準備を準備の層で起こし、追い出しの線までの空きが無い間は待つ worker の版。
             # coordinator の process に効く差は無いが、worker の版を coordinator の版より新しくしない約束(版の向き)のため、k3s-0〜2 の
             # worker と同じ commit で上げる。前の版 6e1996649 は fffb250ee の祖先。
             - { name: WORKER_DOEFF_COMMIT, value: fa27b4642dd67a234436b45f02d547dd205a9c89 }

@@ -57,7 +57,7 @@
 ;;;   口座の資格の断り: 失敗の終わりの資格の断りの事実(TurnEnded.unauthorized = UnauthorizedHit — 上流の 401。codex は誤りの種類
 ;;;     unauthorized・HTTP の status 401 か、種類 other の文「workspace routing discovery unauthorized (401)」で名乗る)→
 ;;;     AgentTurnFailed.account_refusal(AgentAccountRefusal — error = UNAUTHORIZED-WORD・text = codex の文。claude の adapter の
-;;;     authentication_failed と同じ欄 — agora は同じ道で口座を外し、ターンを別の口座へ結び直す・card ki-148d925696be)。判定(種類・
+;;;     authentication_failed と同じ欄 — agora は同じ道で口座を外し、ターンを別の口座へ結び直す)。判定(種類・
 ;;;     status・文の照らし)は層 2(doeff-codex の lines.hy の unauthorized-of)が持ち、ここは運ぶだけ(account-refusal-of)。
 ;;;   道具を呼べない process: 層 2 の終わり ToolsUnavailable(codex が code mode を使えず道具の呼びを閉じたと名乗った process のターンを、
 ;;;     層 2 が model の文だけの答えの前に終えた物)→ AgentTurnFailed(detail = codex の警告の文・account_limit なし)。agora は失敗の
