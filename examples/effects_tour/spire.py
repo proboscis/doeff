@@ -1,13 +1,19 @@
 # spire.py — a small deck-building battle (in the spirit of Slay the Spire), as one doeff program.
-# The same `battle` runs under: a scripted player, a random bot, a Monte Carlo bot that simulates
-# the rest of the fight by running `battle` itself, a tape that replays a recorded fight exactly,
-# a thousand parallel fights for a win rate, and a trace of every card played.
+# `battle` says only what it needs from the outside world: Roll (a random number), Choose (the
+# player's move), Show (the screen) and Played (a statistic). Each layer below gives those effects
+# a meaning, and the same `battle` runs under every one of them:
+#   1. a scripted player and a screen        4. a Monte Carlo bot: its handler runs `battle` itself
+#   2. a random bot                          5. 100 fights in parallel tasks, for a win rate
+#   3. record and replay of a fight          6. a damage count per card
+#   +  production: a person at a terminal, choosing with input()      python spire.py play
+# Every seed is fixed, so the output is the same on every run. Needs only `pip install doeff`.
 from __future__ import annotations
 
 import random
+import sys
 from dataclasses import dataclass, replace
 
-from doeff import EffectBase, Gather, Pass, Resume, Spawn, do, handler, run
+from doeff import EffectBase, Gather, Resume, Spawn, do, handler, run
 from doeff_core_effects.scheduler import scheduled
 
 
@@ -54,19 +60,21 @@ class Fight:
 
 @do
 def draw_hand(s: Fight, n: int = 5):
+    """Draw n cards; the deck is shuffled by asking for a random position (Roll)."""
     hand = []
     for _ in range(n):
         if not s.draw:
             s = replace(s, draw=s.discard, discard=())
         if not s.draw:
             break
-        i = yield Roll(len(s.draw))  # shuffle by drawing a random card
+        i = yield Roll(len(s.draw))
         hand.append(s.draw[i])
         s = replace(s, draw=s.draw[:i] + s.draw[i + 1 :])
     return s, tuple(hand)
 
 
 def hit(s: Fight, card: str) -> tuple[Fight, int]:
+    """Play one card on the state: returns the new state and the damage dealt (a pure function)."""
     cost, dmg, blk = CARDS[card]
     dmg = dmg * 3 // 2 if s.vulnerable else dmg
     s = replace(s, enemy_hp=s.enemy_hp - dmg, block=s.block + blk)
@@ -77,6 +85,7 @@ def hit(s: Fight, card: str) -> tuple[Fight, int]:
 
 @do
 def battle(s: Fight = Fight()):
+    """Fight to the end. Returns ("win" | "lose", the turn it ended on)."""
     while s.hp > 0 and s.enemy_hp > 0:
         s = replace(s, block=0)
         s, hand = yield draw_hand(s)
@@ -108,8 +117,14 @@ def battle(s: Fight = Fight()):
     return ("win" if s.enemy_hp <= 0 else "lose"), s.turn
 
 
-# ---- Handlers: each gives one effect its meaning.
-def dice(seed: int):  # Roll answered by a seeded generator
+def affordable(effect: Choose) -> list[int]:
+    """Positions in the hand of the cards the player has the energy for."""
+    return [i for i, c in enumerate(effect.hand) if CARDS[c][0] <= effect.energy]
+
+
+# ---- Layer 1: a scripted player and a screen.
+def dice(seed: int):
+    """Answer Roll from a generator seeded with `seed`: the same seed, the same fight."""
     rng = random.Random(seed)
 
     @handler
@@ -119,23 +134,10 @@ def dice(seed: int):  # Roll answered by a seeded generator
     return roll
 
 
-@handler
-def printed(effect: Show, k):
-    print("   ", effect.text)
-    return (yield Resume(k, None))
+def scripted(moves: list):
+    """A player who follows a script (a test, or a replayed bug report); None ends the turn."""
+    moves = list(moves)
 
-
-@handler
-def silent(effect: Show, k):  # no screen: thousands of fights per second
-    return (yield Resume(k, None))
-
-
-@handler
-def quiet_stats(effect: Played, k):  # nobody is counting
-    return (yield Resume(k, None))
-
-
-def scripted(moves: list):  # a player who follows a script (a test, or a replayed bug report)
     @handler
     def choose(effect: Choose, k):
         return (yield Resume(k, moves.pop(0) if moves else None))
@@ -144,26 +146,76 @@ def scripted(moves: list):  # a player who follows a script (a test, or a replay
 
 
 @handler
-def random_bot(effect: Choose, k):  # plays a random affordable card
-    options = [i for i, c in enumerate(effect.hand) if CARDS[c][0] <= effect.energy]
-    i = yield Roll(len(options) + 1)  # +1: end the turn
+def printed(effect: Show, k):
+    """The screen: print each line."""
+    print("   ", effect.text)
+    return (yield Resume(k, None))
+
+
+@handler
+def silent(effect: Show, k):
+    """No screen: thousands of fights per second."""
+    return (yield Resume(k, None))
+
+
+@handler
+def quiet_stats(effect: Played, k):
+    """Nobody is counting."""
+    return (yield Resume(k, None))
+
+
+# ---- Layer 2: a random bot.
+@handler
+def random_bot(effect: Choose, k):
+    """Play a random affordable card, or end the turn (the extra number is "end the turn")."""
+    options = affordable(effect)
+    i = yield Roll(len(options) + 1)
     return (yield Resume(k, options[i] if i < len(options) else None))
 
 
-def monte_carlo(playouts: int):  # tries each card by running the rest of the fight `playouts` times
+# ---- Layer 3: record and replay.
+def record(tape: list):
+    """Keep every Roll and Choose answer on the tape, passing the effect on to the handlers outside."""
+
+    @handler
+    def recorder(effect: Roll | Choose, k):
+        answer = yield effect
+        tape.append(answer)
+        return (yield Resume(k, answer))
+
+    return recorder
+
+
+def replay(tape: list):
+    """Answer Roll and Choose from the tape: no dice, no player, the same fight."""
+    tape = list(tape)
+
+    @handler
+    def replayer(effect: Roll | Choose, k):
+        return (yield Resume(k, tape.pop(0)))
+
+    return replayer
+
+
+# ---- Layer 4: a Monte Carlo bot.
+def monte_carlo(playouts: int):
+    """Try each move by running the rest of the fight `playouts` times, and pick the best.
+
+    The handler runs `battle` itself, under dice and a random bot. A playout starts from the next
+    turn's draw, which is a cheap approximation of "the rest of this turn".
+    """
+
     @handler
     def choose(effect: Choose, k):
         best, best_score = None, -1.0
-        options = [i for i, c in enumerate(effect.hand) if CARDS[c][0] <= effect.energy]
-        for i in options + [None]:
+        for i in [*affordable(effect), None]:
             wins = 0
             for n in range(playouts):
                 s = effect.state if i is None else hit(effect.state, effect.hand[i])[0]
                 if s.enemy_hp <= 0:
                     wins += 1
                     continue
-                # finish this turn's hand with a random bot, then the rest of the fight
-                result, _ = run(quiet_stats(silent(dice(n)(random_bot(battle(replace(s, turn=s.turn)))))))
+                result, _ = run(quiet_stats(silent(dice(n)(random_bot(battle(s))))))
                 wins += result == "win"
             if wins / playouts > best_score:
                 best, best_score = i, wins / playouts
@@ -172,27 +224,21 @@ def monte_carlo(playouts: int):  # tries each card by running the rest of the fi
     return choose
 
 
-def recording(tape: list):  # keep every Roll and Choose answer
-    @handler
-    def record(effect: Roll | Choose, k):
-        answer = yield effect
-        tape.append(answer)
-        return (yield Resume(k, answer))
-
-    return record
-
-
-def replaying(tape: list):  # answer Roll and Choose from the tape: no dice, no player
-    tape = list(tape)
-
-    @handler
-    def replay(effect: Roll | Choose, k):
-        return (yield Resume(k, tape.pop(0)))
-
-    return replay
+# ---- Layer 5: 100 fights in parallel tasks.
+@do
+def win_rate(player, fights: int):
+    """The same battle `fights` times, one task per seed; returns the share of wins."""
+    tasks = []
+    for seed in range(fights):
+        tasks.append((yield Spawn(silent(dice(seed)(player(battle()))))))
+    results = yield Gather(*tasks)
+    return sum(r == "win" for r, _ in results) / fights
 
 
-def damage_stats(totals: dict):  # how much damage each card did
+# ---- Layer 6: a damage count per card.
+def damage_stats(totals: dict):
+    """Add up the damage each card did into `totals`."""
+
     @handler
     def count(effect: Played, k):
         totals[effect.card] = totals.get(effect.card, 0) + effect.damage
@@ -201,31 +247,53 @@ def damage_stats(totals: dict):  # how much damage each card did
     return count
 
 
-@do
-def win_rate(player, fights: int):  # the same battle, `fights` times, in parallel tasks
-    tasks = []
-    for seed in range(fights):
-        tasks.append((yield Spawn(silent(dice(seed)(player(battle()))))))
-    results = yield Gather(*tasks)
-    return sum(r == "win" for r, _ in results) / fights
+# ---- Production: a person at a terminal.
+@handler
+def human(effect: Choose, k):
+    """Ask at the terminal which card to play; an empty line (or a bad number) ends the turn."""
+    options = affordable(effect)
+    menu = "  ".join(f"[{i}] {effect.hand[i]}" for i in options)
+    answer = input(f"   play which? {menu}  [enter = end turn] > ").strip()
+    pick = int(answer) if answer.isdigit() and int(answer) in options else None
+    return (yield Resume(k, pick))
 
 
-if __name__ == "__main__":
+def play() -> None:
+    """A fight against the enemy, played by a person; the dice are seeded from the clock."""
+    seed = random.SystemRandom().randrange(10**6)
+    print(f"seed {seed}")
+    print("->", run(quiet_stats(printed(dice(seed)(human(battle()))))))
+
+
+def tour() -> None:
+    """Layers 1 to 6 in order. Fixed seeds: the output is the same on every run."""
     print("1. a scripted player on seed 7, on screen")
     moves = [0, 0, 0, None] * 20
     print("  ->", run(quiet_stats(printed(dice(7)(scripted(moves)(battle()))))))
 
-    print("2. record a fight, then replay it with no dice and no player")
+    print("2. a random bot on seed 3")
+    print("  ->", run(quiet_stats(silent(dice(3)(random_bot(battle()))))))
+
+    print("3. record that fight, then replay it with no dice and no player")
     tape: list = []
-    first = run(quiet_stats(silent(dice(3)(random_bot(recording(tape)(battle()))))))
-    again = run(quiet_stats(silent(replaying(tape)(battle()))))
+    first = run(quiet_stats(silent(dice(3)(random_bot(record(tape)(battle()))))))
+    again = run(quiet_stats(silent(replay(tape)(battle()))))
     print("  ->", first, again, "same:", first == again, "tape:", len(tape), "answers")
 
-    print("3. 100 fights in parallel: random bot vs Monte Carlo bot")
-    print("  -> random bot wins", run(scheduled(quiet_stats(win_rate(random_bot, 100)))))
-    print("  -> monte carlo wins", run(scheduled(quiet_stats(win_rate(monte_carlo(20), 100)))))
+    print("4. a Monte Carlo bot on seed 3")
+    print("  ->", run(quiet_stats(silent(dice(3)(monte_carlo(PLAYOUTS)(battle()))))))
 
-    print("4. damage by card over 100 random fights")
+    print("5. 100 fights in parallel: random bot vs Monte Carlo bot")
+    print("  -> random bot wins", run(scheduled(quiet_stats(win_rate(random_bot, 100)))))
+    print("  -> monte carlo wins", run(scheduled(quiet_stats(win_rate(monte_carlo(PLAYOUTS), 100)))))
+
+    print("6. damage by card over 100 random fights")
     totals: dict = {}
     run(scheduled(damage_stats(totals)(win_rate(random_bot, 100))))
     print("  ->", totals)
+
+
+PLAYOUTS = 3  # per candidate move; the 100 Monte Carlo fights take well under a minute
+
+if __name__ == "__main__":
+    play() if sys.argv[1:] == ["play"] else tour()
