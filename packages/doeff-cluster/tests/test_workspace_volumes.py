@@ -216,6 +216,8 @@ def test_values_name_the_class_and_fit_longhorn_names(declared: list[Manifest]) 
     assert values["namePrefix"] == values["namePrefix"].lower()
     assert len(values["namePrefix"]) < values["nameMaxLength"]
     assert values["sizeBytes"] == 10 * GIB
+    assert 0 < values["growBelowPercent"] < 100
+    assert values["maxSizeBytes"] >= values["sizeBytes"]
     assert 0 < values["warmHours"] < values["keepDays"] * 24
     assert values["spareVolumes"] >= 1
 

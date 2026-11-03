@@ -12,10 +12,12 @@
 #           既に同じ volume が付いていれば何もしない。
 #   umount  付ける先から外す。何も付いていなければ何もしない。使っている process が在って外れなければ断る(lazy に外さない)。
 #   fstrim  付いている volume の使っていない block を Longhorn へ返す(冷やす前 — README.md の節「寿命」)。
+#   grow    付いている volume の file system を、device の今の大きさまで付けたまま広げる(resize2fs — 頼み手が Longhorn の volume を
+#           広げた後。device が広がっていなければ何もしない)。
 # 答え(`<鍵>.out` — 書き切ってから名を替えて置く): 1 行目が結末の code(0 = した・既にそうだった / 1 = 断った・失敗した)、
 # 2 行目からが訳と命令の出力。頼み手は答えを読んだら消す。
 #
-# 断る物(何もせずに 1): 3 つの命令の外・volume の名が英小文字・数字・- の外・付ける先が作業の root の下でない・. か .. か // を
+# 断る物(何もせずに 1): 4 つの命令の外・volume の名が英小文字・数字・- の外・付ける先が作業の root の下でない・. か .. か // を
 # 含む・在る dir でない・symlink を通る・volume が node に attach されていない(device が無い)・付ける先に別の物が付いている・
 # volume が別の所に付いている・file system が ext4 でない(作り直さない — 中身を消さない)。
 #
@@ -27,7 +29,7 @@ set -u
 request=$1
 root=${WORKSPACE_MOUNT_ROOT:-/work}
 devices=${WORKSPACE_MOUNT_DEVICES:-/host/dev/longhorn}
-# blkid・mkfs.ext4・fstrim は /usr/sbin に在る。後ろに足す(前の道の命令を替えない)。
+# blkid・mkfs.ext4・fstrim・resize2fs・blockdev は /usr/sbin に在る。後ろに足す(前の道の命令を替えない)。
 PATH="$PATH:/usr/sbin:/sbin"
 
 answer=${request%.req}.out
@@ -51,7 +53,7 @@ mounted_at() { findmnt -rn -M "$1" -o MAJ:MIN | tail -n 1; }
 
 read -r verb volume target rest <"$request" || [ -n "${verb:-}" ] || refuse "頼み $request が読めない(空)"
 [ -z "${rest:-}" ] || refuse "頼みの欄が 3 つでない: '$verb $volume $target $rest'"
-case ${verb:-} in mount | umount | fstrim) ;; *) refuse "知らない命令 '${verb:-}'(mount・umount・fstrim だけ)" ;; esac
+case ${verb:-} in mount | umount | fstrim | grow) ;; *) refuse "知らない命令 '${verb:-}'(mount・umount・fstrim・grow だけ)" ;; esac
 case ${volume:-} in '' | -* | *[!a-z0-9-]*) refuse "volume の名 '${volume:-}' が英小文字・数字・- の外" ;; esac
 case ${target:-} in "$root"/?*) ;; *) refuse "付ける先 '${target:-}' が $root の下でない" ;; esac
 case $target/ in */../* | */./* | *//*) refuse "付ける先 '$target' が . か .. か // を含むか / で終わる" ;; esac
@@ -116,6 +118,13 @@ case $verb in
     [ -n "$have" ] || refuse "$target に何も付いていない"
     [ -n "$number" ] && [ "$have" = "$number" ] || refuse "$target に付いているのは $volume でない($have)"
     fstrim -v "$target" >>"$notes" 2>&1 || refuse "$target の fstrim が失敗した"
+    finish 0
+    ;;
+  grow)
+    [ -n "$have" ] || refuse "$target に何も付いていない"
+    [ -n "$number" ] && [ "$have" = "$number" ] || refuse "$target に付いているのは $volume でない($have)"
+    resize2fs "$device" >>"$notes" 2>&1 || refuse "$target の file system を広げられなかった"
+    say "$volume の file system を device の大きさ $(blockdev --getsize64 "$device" 2>/dev/null) byte まで広げた"
     finish 0
     ;;
 esac

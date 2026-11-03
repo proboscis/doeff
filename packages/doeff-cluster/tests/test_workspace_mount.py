@@ -10,11 +10,12 @@
   (4) 係は script を名の固定した ConfigMap workspace-mount から読み(subPath でない — 替えても Pod を作り直さない)、ConfigMap の中身は
       repo の script と同じ。係は host の /dev を見て、script の device の既定の dir はその下の longhorn。
   (5) 係は USB の SSD の印を確かめる init own-work の後に起き、/work が shared でなければ起動で止まる。
-確かめる事(script — 偽の命令〔stat・findmnt・blkid・mkfs.ext4・mount・umount・fstrim〕で回す):
+確かめる事(script — 偽の命令〔stat・findmnt・blkid・mkfs.ext4・mount・umount・fstrim・resize2fs・blockdev〕で回す):
   (6) 空の volume は uid 1000 の根と root の予約 0 の ext4 を作ってから付け、file system の在る volume は作らずに付ける。同じ物を 2 度
-      付けても 1 度だけ付ける。外す・fstrim は付いている物を名指しで照らしてからする。
+      付けても 1 度だけ付ける。外す・fstrim・広げる(resize2fs)は付いている物を名指しで照らしてからする。
 失敗ケース(断って何もしない事の検): 知らない命令・欄の数・volume の名・作業の root の外・. と ..・在る dir でない・symlink・attach されて
-いない・付ける先に別の物・別の所に付いた volume・ext4 でない中身と区画の表(作り直さない)・付いていない所の fstrim・別の物を外す・使用中で外れない。
+いない・付ける先に別の物・別の所に付いた volume・ext4 でない中身と区画の表(作り直さない)・付いていない所の fstrim と広げ・別の物を外す・
+別の物を広げる・使用中で外れない。
 """
 
 from __future__ import annotations
@@ -226,6 +227,13 @@ grep -v " $1\\$" "$FAKE/mounts" >"$FAKE/mounts.new"; mv "$FAKE/mounts.new" "$FAK
 echo "fstrim $*" >>"$FAKE/calls"
 echo "$2: 1 GiB (1073741824 bytes) trimmed"
 """,
+    "resize2fs": """
+echo "resize2fs $*" >>"$FAKE/calls"
+echo "The filesystem on $1 is now 1048576 (4k) blocks long."
+""",
+    "blockdev": """
+echo 4294967296
+""",
 }
 
 
@@ -333,6 +341,7 @@ def test_mounting_the_same_volume_twice_mounts_once(bench: Bench) -> None:
         ("mount ws-a {root}/link", "symlink"),
         ("mount ws-b {a}", "attach されていない"),
         ("fstrim ws-a {a}", "何も付いていない"),
+        ("grow ws-a {a}", "何も付いていない"),
     ],
     ids=[
         "verb",
@@ -347,6 +356,7 @@ def test_mounting_the_same_volume_twice_mounts_once(bench: Bench) -> None:
         "symlink",
         "not-attached",
         "fstrim-unmounted",
+        "grow-unmounted",
     ],
 )
 def test_out_of_the_rules_is_refused_and_nothing_runs(bench: Bench, line: str, problem: str) -> None:
@@ -431,6 +441,27 @@ def test_fstrim_runs_on_the_mounted_volume(bench: Bench) -> None:
     assert bench.calls()[-1] == f"fstrim -v {target}"
 
 
+def test_grow_resizes_the_mounted_volume_to_its_device(bench: Bench) -> None:
+    bench.attach("ws-a", "252:1", fs="ext4")
+    target = bench.dir("a")
+    assert bench.ask(f"mount ws-a {target}")[0] == 0
+    code, notes = bench.ask(f"grow ws-a {target}")
+    assert code == 0 and "4294967296 byte まで広げた" in notes, notes
+    assert bench.calls()[-1] == f"resize2fs {bench.devices / 'ws-a'}"
+    assert bench.mounted() == {str(target): "252:1"}
+
+
+def test_grow_does_not_resize_another_volume(bench: Bench) -> None:
+    bench.attach("ws-a", "252:1", fs="ext4")
+    bench.attach("ws-b", "252:2", fs="ext4")
+    target = bench.dir("a")
+    assert bench.ask(f"mount ws-a {target}")[0] == 0
+    code, notes = bench.ask(f"grow ws-b {target}")
+    assert code == 1 and "ws-b でない" in notes
+    assert not [call for call in bench.calls() if call.startswith("resize2fs ")]
+
+
 def test_script_runs_with_the_tools_of_the_image_on_its_path() -> None:
-    """script は blkid・mkfs.ext4・fstrim の在る /usr/sbin を道の後ろに足す(係の container の道に無くても引ける・偽の命令を替えない)。"""
+    """script は blkid・mkfs.ext4・fstrim・resize2fs の在る /usr/sbin を道の後ろに足す(係の container の道に無くても引ける・偽の命令を
+    替えない)。"""
     assert 'PATH="$PATH:/usr/sbin:/sbin"' in SCRIPT.read_text(encoding="utf-8")

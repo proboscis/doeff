@@ -54,6 +54,7 @@ class CoolingSweep:
     slots: int
     cooled: tuple[str, ...]
     failed: tuple[str, ...]
+    grown: tuple[str, ...] = ...
 
 @dataclass(frozen=True)
 class CreateWorkspaceVolume(EffectBase[WorkspaceOutcome]):

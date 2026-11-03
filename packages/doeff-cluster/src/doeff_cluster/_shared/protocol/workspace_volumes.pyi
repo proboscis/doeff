@@ -8,11 +8,13 @@ from urllib.parse import quote as url_quote
 from doeff_hy._wire import Malformed as Malformed
 from doeff_hy._wire import parse_json as parse_json
 from doeff_hy._wire import parse_json_as as parse_json_as
+from doeff_core_effects import DiskUsage as DiskUsage
 from doeff_core_effects import FileFailed as FileFailed
 from doeff_core_effects import ListDirectory as ListDirectory
 from doeff_core_effects import MakeDirectory as MakeDirectory
 from doeff_core_effects import PathKind as PathKind
 from doeff_core_effects import PathStat as PathStat
+from doeff_core_effects import ReadDiskUsage as ReadDiskUsage
 from doeff_core_effects import ReadText as ReadText
 from doeff_core_effects import RemoveTree as RemoveTree
 from doeff_core_effects import RenamePath as RenamePath
@@ -90,6 +92,8 @@ class SettingsWire:
     warm_hours: int
     spare_volumes: int
     keep_days: int
+    grow_below_percent: int = 0
+    max_size_bytes: int = 0
 
 @dataclass(frozen=True, kw_only=True)
 class ConfigMapWire:
@@ -131,6 +135,19 @@ class VolumeMetaWire:
 class VolumeSpecWire:
     from_backup: str = ''
     backup_target_name: str = ''
+    size: str = ''
+
+@dataclass(frozen=True, kw_only=True)
+class EngineStatusWire:
+    current_size: str = ''
+
+@dataclass(frozen=True, kw_only=True)
+class EngineWire:
+    status: EngineStatusWire | None = None
+
+@dataclass(frozen=True, kw_only=True)
+class EngineListWire:
+    items: tuple[EngineWire, ...] | None = None
 
 @dataclass(frozen=True, kw_only=True)
 class VolumeWire:
@@ -289,6 +306,7 @@ class VolumeRead:
     used_at: float
     backup_target: str
     placing: Placing
+    size: int = 0
 
 def refused(owner: str, doing: str, reason: str) -> _Program[WorkspaceVolumeRefused, object]:
     ...
@@ -435,6 +453,23 @@ def deleted_volume(site: WorkspaceVolumeSite, owner: str, doing: str, name: str,
     ...
 
 def tickets_of(name: str, view: AttachView) -> _Program[tuple[str, ...], object]:
+    ...
+
+def engine_size(site: WorkspaceVolumeSite, owner: str, doing: str, name: str) -> _Program[int, object]:
+    ...
+
+def waited_engine(site: WorkspaceVolumeSite, owner: str, doing: str, name: str, wanted: int) -> _Program[None, object]:
+    ...
+
+def grown_volume(site: WorkspaceVolumeSite, owner: str, path: str) -> _Program[WorkspaceOutcome, object]:
+    ...
+
+@dataclass(frozen=True, kw_only=True)
+class Growth:
+    grown: tuple[str, ...]
+    failed: tuple[str, ...]
+
+def mounted_growth(site: WorkspaceVolumeSite) -> _Program[Growth, object]:
     ...
 
 def cooled_volume(site: WorkspaceVolumeSite, owner: str) -> _Program[WorkspaceOutcome, object]:

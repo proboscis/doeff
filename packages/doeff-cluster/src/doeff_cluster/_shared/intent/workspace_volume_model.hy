@@ -7,7 +7,8 @@
 ;;;   WorkspaceVolumeSite     本番の答え手が読む場所と待つ秒: Longhorn の namespace・値の ConfigMap・mount の係の頼みの dir・mountinfo の
 ;;;                           file・attach と detach と係の答えと backup と戻しを待つ上限の秒・読み直す間の秒
 ;;;   WorkspaceVolumeRefused  できなかった(持ち主の id と volume の名・何をしようとしたか・理由を文に持つ — token は載せない)
-;;;   CoolingSweep            CoolIdleWorkspaceVolumes の答え: 冷やす前の空きの本数・冷やした volume の名・冷やせなかった volume と訳
+;;;   CoolingSweep            CoolIdleWorkspaceVolumes の答え: 冷やす前の空きの本数・冷やした volume の名・冷やせなかった(広げられ
+;;;                           なかった)volume と訳・広げた volume の名
 ;;;   CreateWorkspaceVolume   持ち主の volume が無ければ作る。冷えている(backup だけが在る)なら一番新しい backup から戻す(在れば ALREADY —
 ;;;                           戻している途中なら戻し終わるまで待つ・消している途中なら消え終わってから戻す)
 ;;;   AttachWorkspaceVolume   持ち主の volume を、答え手の機体の node に attach し、Longhorn が付け終わるまで待つ
@@ -20,7 +21,8 @@
 ;;;   PurgeWorkspaceVolume    冷えた持ち主の backup を消す(最後の backup から値の keepDays を過ぎた物だけ。backup が無ければ ALREADY・
 ;;;                           volume が在れば断る)— 上に載る系が「この持ち主はもう使わない」と決めた時に出す
 ;;;   CoolIdleWorkspaceVolumes 外れている volume のうち、使い終わりから値の warmHours を過ぎた物と、置き場の空きが値の spareVolumes を
-;;;                           割る分を、使い終わりの古い順に冷やす
+;;;                           割る分を、使い終わりの古い順に冷やす。答え手の機体に付いている volume のうち、file system の空きが値の
+;;;                           growBelowPercent を割った物は、名目の大きさを倍(上限は値の maxSizeBytes)にして付けたまま広げる
 ;;;   WorkspaceRoomShort      置き場が足りずに作らなかった(WorkspaceVolumeRefused の子 — fresh = 持ち主が中身を持たないか)
 ;;;   WorkspaceRoom           ReadWorkspaceRoom の答え: 札の disk の残りの本数と値の spareVolumes
 ;;;   ReadWorkspaceRoom       札の disk が受けられる volume の残りの本数を読む(何も変えない)
@@ -97,10 +99,12 @@
 
 (defrecord CoolingSweep
   "CoolIdleWorkspaceVolumes の答え: slots = 冷やす前に、札の disk が受けられる volume の残りの本数・cooled = 冷やした volume の名(冷やした
-   順)・failed = 冷やせなかった volume の「<名>: <訳>」(使い始めた・backup が終わらないなど — 様子は前のまま)。"
+   順)・failed = 冷やせなかった(広げられなかった)volume の「<名>: <訳>」(使い始めた・backup が終わらない・置き場が足りないなど — 様子は
+   前のまま)・grown = 付いている volume のうち、file system の空きが値の growBelowPercent を割って広げた物の名。"
   (#^ int slots)
   (#^ (get tuple #(str ...)) cooled)
-  (#^ (get tuple #(str ...)) failed))
+  (#^ (get tuple #(str ...)) failed)
+  (setv #^ (get tuple #(str ...)) grown #()))
 
 
 (defclass [(dataclass :frozen True)] CreateWorkspaceVolume [(get EffectBase WorkspaceOutcome)]

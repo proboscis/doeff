@@ -10,7 +10,7 @@ card 2)・測り ki-00f2d6af6581。
 |---|---|
 | `storageclass.yaml` | 級 `longhorn-workspace`(replica・置く disk・locality・backup の先と群)— 値の定義元 |
 | `backup.yaml` | backup の先 `garage-workspace`(BackupTarget)と 1 時間ごとの backup(RecurringJob `workspace-backup`) |
-| `workspace-volume.json` | worker が読む値(ConfigMap `workspace-volume`・namespace agent-worker): 級の名・名の頭と長さ・大きさ・寿命の時間 |
+| `workspace-volume.json` | worker が読む値(ConfigMap `workspace-volume`・namespace agent-worker): 級の名・名の頭と長さ・大きさ・寿命の時間・広げる線と上限 |
 | `workspace-mount.sh` | mount の係の script(ConfigMap `workspace-mount`・namespace agent-worker)— 節「mount の係」 |
 | `README.md` | この file(決まりと値の訳) |
 
@@ -21,7 +21,7 @@ card 2)・測り ki-00f2d6af6581。
 `CoolIdleWorkspaceVolumes`・`ReadWorkspaceRoom`・`ReadWorkspacePlace`(答えは `WorkspaceOutcome` の DONE = 今した・ALREADY = 既にそうだった・RESTORED =
 backup から戻した(作る時だけ)、まとめて冷やすは `CoolingSweep`、残りの読みは `WorkspaceRoom`、付ける先の読みは `WorkspacePlace`。できなければ `WorkspaceVolumeRefused`・
 置き場が足りなければその子の `WorkspaceRoomShort`)。出所 = card ki-a2d67aa8203d(作る〜detach)・ki-c817a191ad4e(戻す・冷やす・
-消す)・ki-3b60bfcdb6a2(置き場の数え)。
+消す)・ki-3b60bfcdb6a2(置き場の数え・広げる)。
 
 | effect | 何をするか |
 |---|---|
@@ -31,7 +31,7 @@ backup から戻した(作る時だけ)、まとめて冷やすは `CoolingSweep
 | `DetachWorkspaceVolume` | 前と同じ。外した後に使い終わりの刻の印を書く(冷やす順が読む) |
 | `CoolWorkspaceVolume` | 外れている volume を冷やす(節「寿命」の手順)。使っている・戻す途中・ほかの冷やす手順の途中の volume は触らずに断る |
 | `PurgeWorkspaceVolume` | 冷えた名の backup を消す(最後の backup から keepDays を過ぎた物だけ)。Longhorn の volume が在る名・途中の backup の在る名は断る |
-| `CoolIdleWorkspaceVolumes` | 外れている volume を、冷やす順(節「寿命」)に 1 つずつ冷やす。冷やせなかった物は訳を残して次へ進む |
+| `CoolIdleWorkspaceVolumes` | 外れている volume を、冷やす順(節「寿命」)に 1 つずつ冷やす。その後に、答え手の機体に付いている volume のうち file system の空きが線を割った物を付けたまま広げる(節「広げる」— 答えの grown)。冷やせなかった・広げられなかった物は訳を残して次へ進む |
 | `ReadWorkspaceRoom` | 札の disk が受けられる、値の大きさの volume の残りの本数(節「置き場の数え」)と値の spareVolumes を答える(何も変えない) |
 | `ReadWorkspacePlace` | 持ち主の volume を付ける先の様子を答える(何も変えない): MOUNTED = 持ち主の volume が付いている・READY = 何も付いておらず dir が無いか空・OUTSIDE = 何も付いておらず dir に中身が在り、持ち主は volume も backup も持たない(持ち主の作業場所は volume の外 — 置き場の不足で volume の外の場所で始めた持ち主)・CLASH = 別の物が付いている、か、dir に中身が在るのに持ち主が volume か backup を持つ |
 
@@ -73,7 +73,7 @@ backup から戻した(作る時だけ)、まとめて冷やすは `CoolingSweep
 | recurringJobSelector | 群 workspace-backup と default | 1 時間ごとの backup と、ほかの volume と同じ snapshot の片付けと trim |
 | reclaimPolicy | Retain | 中身を消すのは寿命の「冷やす」と「消す」だけ(PVC から使った時も、PVC を消しただけで消えない) |
 | volumeBindingMode | Immediate | Pod が無いので、WaitForFirstConsumer では結ばれない |
-| 大きさ | 10 GiB(`workspace-volume.json` の sizeBytes) | thin — 書いた分だけ disk を使う。足りなければ allowVolumeExpansion で広げる |
+| 大きさ | 10 GiB(`workspace-volume.json` の sizeBytes) | thin — 書いた分だけ disk を使う。付いている間に空きが線を割れば、worker が付けたまま広げる(節「広げる」) |
 
 worker は CSI を通らずに Longhorn の volume を名指しで作るので、級の値を volume の欄へ自分で写す(Longhorn の CSI が PVC の時にする写しと
 同じ)。写し方:
@@ -180,6 +180,31 @@ Longhorn は replica を disk に置く時、線を 2 つ照らす(v1.13 の rep
   尽きる。負けた側は付ける時に Longhorn の「置けない」を読み、replica がどこにも置かれていない(中身の無い)volume をその場で消して
   `WorkspaceRoomShort` で断る(上限の秒まで待たない・faulted を残さない)。replica の置かれた volume(中身を持ちうる)は消さない。
 - 冷やす回の空きも同じ数え(2 つの線の少ない方)で読む — 実の空きが線に近づいた時も、空きが spareVolumes を割る分を冷やす。
+- 広げる時も同じ数えで、名目の増え(新しい大きさ − 今の大きさ)を札の disk が受けられるかを確かめ、受けられなければ広げない(節「広げる」)。
+
+## 広げる
+
+名目の大きさは、Longhorn が disk に予約する量(節「置き場の数え」の名目の予約の線)で、実の使用ではない。だから小さく作るほど 1 つの disk に
+多くの volume を置ける。使う間に大きな作業場所になった持ち主の volume は、付けたまま広げる(Longhorn v1.13 は付いている volume の
+spec.size の書きを online で広げる — 2026-11-03 の zeus の試し: 付けた 1 GiB の volume を 2 GiB に書き、engine の status.currentSize が約
+10 秒で 2 GiB になった)。
+
+| 値(`workspace-volume.json`) | 今 | 訳 |
+|---|---|---|
+| growBelowPercent | 50 | 付いている volume の file system の空きがこの % を割ったら広げる。冷やす回の間(数分)に、その時の空きを書き切らない幅 |
+| maxSizeBytes | 16 GiB | 広げる上限。1 つの持ち主が札の disk の名目を食い尽くさない幅(2026-11-03 の zeus の 56 本の実の使用は最大 3.6 GiB) |
+
+- いつ: `CoolIdleWorkspaceVolumes`(上に載る系が数分ごとに出す program の回)が、冷やした後に、答え手の機体の mount の表に載る作業場所の
+  volume の空きを 1 つずつ読む(`mounted-growth`)。file system の空きの減りは知らせを出さないので、付けている間は回ごとに読む。外れている
+  volume は広げない(付けている間の回が読む)。
+- 手順(`grown-volume`): 付ける先の file system の空きを読む(statvfs)→ 線の上なら何もしない → 名目を倍(上限 maxSizeBytes)にした増えを
+  数える(受けられなければ広げずに訳を残す)→ Volume の spec.size を merge patch で書く → Engine(label `longhornvolume=<名>`)の
+  status.currentSize が新しい大きさになるまで待つ(上限 attach-seconds)→ mount の係へ grow を頼む(`resize2fs` — 付けたまま)。
+- 前の広げの続き: 名目が file system の 1.5 倍以上なら(名目を書いた後、file system を広げる前に止まった)、名目を書き直さず(倍にしない)、
+  engine を待って file system だけを広げる。
+- 戻す時: 冷やした volume の backup は、取った時の大きさを覚える。戻す volume はその大きさと sizeBytes の大きい方で作る(Longhorn は
+  backup より小さい volume への戻しを断る)。
+- 模擬の答え手 `held-workspace-volumes` は file system の空きを持たないので広げない(答えの grown は空)。
 
 ## 置く disk(札 workspace)
 
@@ -193,7 +218,7 @@ Longhorn は replica を disk に置く時、線を 2 つ照らす(v1.13 の rep
 
 ## mount の係
 
-worker の container は特権を持たないので、mkfs・mount・umount・fstrim は同じ Pod の sidecar `workspace-mount`(root・privileged の
+worker の container は特権を持たないので、mkfs・mount・umount・fstrim・resize2fs は同じ Pod の sidecar `workspace-mount`(root・privileged の
 native sidecar — 宣言と訳は `../nodes/zeus/node.yaml` の註)がする。今は zeus の worker にだけ在る(card ki-c1a429da5761)。
 
 | 項目 | 決まり |
@@ -201,12 +226,13 @@ native sidecar — 宣言と訳は `../nodes/zeus/node.yaml` の註)がする。
 | 見せ方 | 係の `/work` は mountPropagation Bidirectional、worker の container の `/work` は HostToContainer(同じ volume work = host の `/mnt/fast_ssd_usb/agent-worker` — host の `/mnt/fast_ssd_usb` は shared の mount)。係が `/work/<path>` に付けた volume は host を通って worker の `/work/<path>` に見える |
 | 入れ替え | mount は host の物なので、Pod の入れ替え(2 つの世代が同じ機体に並ぶ)でも残り、どちらの世代の worker にも係にも見える。係が止まっても外れない — 外すのは頼みだけ |
 | 頼みの dir | env `WORKER_WORKSPACE_MOUNT_DIR`(= `/run/workspace-mount` — Pod ごとの emptyDir を係と worker が分け合う)。env の無い worker には係が無い |
-| 頼み | `<鍵>.tmp` に 1 行 `<命令> <volume の名> <付ける先>` を書き、`<鍵>.req` へ名を替える(鍵は頼みごとに別。`.` で始めない)。命令は mount・umount・fstrim |
+| 頼み | `<鍵>.tmp` に 1 行 `<命令> <volume の名> <付ける先>` を書き、`<鍵>.req` へ名を替える(鍵は頼みごとに別。`.` で始めない)。命令は mount・umount・fstrim・grow |
 | 答え | 係は 0.2 秒ごとに `*.req` を見て script を読み直して走らせ、`<鍵>.out`(1 行目 = code 0 か 1・2 行目から訳と命令の出力)を置いて `<鍵>.req` を消す。頼み手は答えを読んだら消す |
 | mount | device は host の `/dev/longhorn/<volume の名>`(Longhorn の ticket で attach した後に在る)。file system が無ければ `mkfs.ext4 -m 0 -E root_owner=1000:1000,assume_storage_prezeroed=1` を打ってから付ける(新しい volume は書いていない所を 0 で読むので、journal と inode の表を 0 で埋めない — 埋めると 10 GiB ごとに約 224 MiB を SSD へ書く)。同じ volume が既に付いていれば何もしない |
 | umount | 付いている物が名指した volume か照らしてから外す。使用中で外れなければ断る(lazy に外さない)。何も付いていなければ何もしない |
 | fstrim | 付いている物を照らしてから `fstrim -v`(冷やす前 — 節「寿命」) |
-| 断る物 | 3 つの命令の外・volume の名が英小文字・数字・`-` の外・付ける先が `/work` の下の在る dir でない・`.` か `..` か `//` を含む・symlink を通る・attach されていない・付ける先に別の物・volume が別の所に付いている・中身が ext4 でない(作り直さない) |
+| grow | 付いている物を照らしてから `resize2fs <device>`(付けたまま device の今の大きさまで — 頼み手が Longhorn の volume を広げた後。device が広がっていなければ何もしない) |
+| 断る物 | 4 つの命令の外・volume の名が英小文字・数字・`-` の外・付ける先が `/work` の下の在る dir でない・`.` か `..` か `//` を含む・symlink を通る・attach されていない・付ける先に別の物・volume が別の所に付いている・中身が ext4 でない(作り直さない) |
 | 付ける先の dir | 頼み手(worker の uid)が作り、外した後も残す(係は dir を作らない・消さない) |
 
 - script を替える時: `workspace-mount.sh` を直して main に入れる。ConfigMap の名が固定なので Pod は作り直されず、kubelet が file を入れ替えた後

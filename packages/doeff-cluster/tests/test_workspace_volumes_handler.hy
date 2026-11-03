@@ -17,6 +17,9 @@
 ;;;   置き場の数え      札の disk の残りが 0 なら作成も戻しも POST せずに置き場の不足で断る(fresh か否か — 本番と模擬)・残りの読み・
 ;;;                     実の空きの線で断る・付ける時に Longhorn が置けないと答えた空の volume は待たずに消す・replica の置かれた volume は
 ;;;                     消さない・置けない戻しは消して backup を残す・戻す volume は backup の大きさで作る
+;;;   広げる            (本番だけ — 模擬の世界は file system の空きを持たない)冷やす回が、付いた volume の空きが線を割れば名目を倍に
+;;;                     書き、engine を待って係に file system を広げさせる・空きの在る物と上限の物は広げない・置き場が足りなければ
+;;;                     書かない・前の広げの続きは倍にしない・engine が広がらなければ係に頼まずに断る
 ;;;   並べて走らせる    (Spawn と模擬の時計)戻す途中に同じ持ち主の次の頼み(メッセージ)が来たら、先の戻しに相乗りして戻し終わりを待つ
 ;;;                     (戻すのは 1 度)・冷やす途中に使い始めたら冷やす側が退き volume が残る・消す途中に使い始めたら消え終わりを待って
 ;;;                     戻す・ticket を置いた直後に消された attach は作り直しを頼む断りを返す
@@ -35,7 +38,7 @@
 (import doeff_core_effects [MemoryFile MemoryFiles ReadMemoryFiles])
 (import doeff_core_effects [state])
 (import doeff_core_effects [memory-file-handler])
-(import doeff_core_effects [FileFailed PathKind PathStat ReadText RemoveTree RenamePath StatPath WriteText])
+(import doeff_core_effects [DiskUsage FileFailed PathKind PathStat ReadDiskUsage ReadText RemoveTree RenamePath StatPath WriteText])
 (import doeff_core_effects [HttpFailed HttpFailureKind HttpRequest HttpResponse])
 (import doeff_core_effects [EnvEntry ReadEnvironment])
 (import doeff_core_effects [Spawn Task Gather])
@@ -68,6 +71,7 @@
                                :attach-seconds 5.0 :detach-seconds 5.0 :mount-seconds 5.0 :backup-seconds 5.0 :restore-seconds 5.0
                                :poll-seconds 0.5))
 (val SIZE (get (json.loads SETTINGS-TEXT) "sizeBytes"))
+(val MAX (get (json.loads SETTINGS-TEXT) "maxSizeBytes"))
 (val TARGET (get PARAMETERS "backupTargetName"))
 (val DAY 86400.0)
 (val LONGHORN-HEAD "/apis/longhorn.io/v1beta2/namespaces/longhorn-system")
@@ -80,6 +84,7 @@
 (val OVER-PROVISIONING-PATH (+ LONGHORN-HEAD "/settings/storage-over-provisioning-percentage"))
 (val MINIMAL-AVAILABLE-PATH (+ LONGHORN-HEAD "/settings/storage-minimal-available-percentage"))
 (val REPLICAS-PATH (+ LONGHORN-HEAD "/replicas"))
+(val ENGINES-PATH (+ LONGHORN-HEAD "/engines"))
 ;; BackupVolume の名の尻(Longhorn は <volume の名>-<hash> にする — 相手役は固定の hash)。
 (val BUNDLE-TAIL "-5a2925a0")
 (val SETTINGS-PATH "/api/v1/namespaces/agent-worker/configmaps/workspace-volume")
@@ -126,17 +131,22 @@
    ticket を置いた直後に volume が消される回数(冷やす側の削除が間に入った)・extra-disks = 札の違う disk の組(数えない disk)・
    available = 札 workspace の disk の実の空き(byte — None = 空の disk で storageMaximum と同じ)・minimal = 設定 storage-minimal-available-
    percentage・unplaceable = 次に replica の置き先を決める時(空の volume を初めて付ける・backup から戻す)に、Longhorn が置けないと答える
-   回数(作る前の数えと付けの間に置き場が尽きた世界)・backup-size = backup が覚える volume の名目の大きさ(None = 値の大きさ)。名目の
-   予約の線は過剰割り当て 100% で、札 workspace の disk の storageMaximum は capacity 本ぶん(模擬の世界の残り capacity − volume の数と
-   揃う)。走らせた後に読む物: pending = 付け外しの途中の読みの残り・leaving = 外す途中の volume の元の node・version = VolumeAttachment の
+   回数(作る前の数えと付けの間に置き場が尽きた世界)・backup-size = backup が覚える volume の名目の大きさ(None = 値の大きさ)・
+   engine-settle = 名目の大きさを書いた後に engine が広がるまでの読みの数・engine-stuck = engine が広がらない・sizes = volume の名目の
+   大きさ(名 → byte — 無ければ値の大きさ)・fs-sizes = 付いた volume の file system の総量(名 → byte — 無ければ値の大きさ)・used =
+   file system の使用(名 → byte — 無ければ 0)。名目の予約の線は過剰割り当て 100% で、札 workspace の disk の storageMaximum は
+   capacity 本ぶん(模擬の世界の残り capacity − volume の数と揃う)・storageScheduled は名目の大きさの和。走らせた後に読む物: pending = 付け外しの途中の読みの残り・leaving = 外す途中の volume の元の node・version = VolumeAttachment の
    版・revision = Volume の版・restoring と sources = 戻す途中の読みの残りと戻す元・dying = 消す途中の読みの残り・snapshots と backups =
    途中の snapshot と backup・unplaced = replica をまだどこにも置いていない volume の名・failing = Longhorn が置けないと答えている volume の
-   名・created = 作成の本文・seen = 受けた要求・asked = 係が受けた頼み。"
+   名・engine-left = 名目の大きさを書いた後に engine が広がるまでの読みの残り・created = 作成の本文・seen = 受けた要求・asked = 係が
+   受けた頼み。"
   (defn #^ None __init__ [self #^ WorkspaceVolumeWorld held #^ dict [parameters None] #^ int [settle 0] #^ bool [stuck False]
                           #^ int [races 0] #^ bool [silent False] #^ int [restore-settle 0] #^ int [snapshot-settle 0]
                           #^ int [backup-settle 0] #^ int [dying-settle 0] #^ bool [snapshot-error False] #^ bool [backup-error False]
                           #^ int [stale-deletes 0] #^ int [vanish-after-ticket 0] #^ tuple [extra-disks #()]
-                          #^ (| int None) [available None] #^ int [minimal 25] #^ int [unplaceable 0] #^ (| int None) [backup-size None]]
+                          #^ (| int None) [available None] #^ int [minimal 25] #^ int [unplaceable 0] #^ (| int None) [backup-size None]
+                          #^ int [engine-settle 0] #^ bool [engine-stuck False] #^ (| dict None) [sizes None] #^ (| dict None) [fs-sizes None]
+                          #^ (| dict None) [used None]]
     ;; defk にできない: class の作り手(Python が呼ぶ口)
     "相手役の世界を作るため。"
     (setv self.held held
@@ -147,6 +157,8 @@
           self.stale-deletes stale-deletes self.vanish-after-ticket vanish-after-ticket self.extra-disks extra-disks
           self.available available self.minimal minimal self.unplaceable unplaceable
           self.backup-size (if (is backup-size None) SIZE backup-size)
+          self.engine-settle engine-settle self.engine-stuck engine-stuck
+          self.sizes (dict (or sizes {})) self.fs-sizes (dict (or fs-sizes {})) self.used (dict (or used {})) self.engine-left {}
           self.pending {} self.leaving {} self.version 1 self.revision 1
           self.restoring {} self.sources {} self.dying {} self.snapshots {} self.backups {}
           self.unplaced (set) self.failing (set)
@@ -207,7 +219,8 @@
   {"metadata" (| {"name" name "resourceVersion" (str world.revision) "creationTimestamp" (! (iso-of 0.0))
                   "annotations" {USED-AT-KEY (str (int volume.used-at))}}
                  (if (in name world.dying) {"deletionTimestamp" (! (iso-of 0.0))} {}))
-   "spec" (| {"backupTargetName" TARGET} (if (in name world.sources) {"fromBackup" (get world.sources name)} {}))
+   "spec" (| {"backupTargetName" TARGET "size" (str (.get world.sizes name SIZE))}
+             (if (in name world.sources) {"fromBackup" (get world.sources name)} {}))
    "status" (| status restore {"conditions" [placing]})})
 
 
@@ -309,11 +322,18 @@
 
 (defk volume-patched [world name body]
   {:pre [(: world LonghornWorld) (: name str) (: body str)] :post [(: % HttpResponse)]}
-  "Volume の merge patch(使った刻の印の annotation だけ)に答えるため。"
+  "Volume の merge patch(使った刻の印の annotation か、名目の大きさ spec.size — 付いている volume だけ広げられる)に答えるため。"
   (<- volume (held-volume world.held name))
   (when (is volume None)
     (return (! (api-answer 404 {"kind" "Status" "reason" "NotFound"}))))
   (val patch (json.loads body))
+  (when (= (list patch) ["spec"])
+    (assert (= (list (get patch "spec")) ["size"]) patch)
+    (assert (is-not volume.node None) volume)
+    (setv (get world.sizes name) (int (get patch "spec" "size"))
+          (get world.engine-left name) world.engine-settle)
+    (<- (changed world volume))
+    (return (! (api-answer 200 {}))))
   (assert (= (list patch) ["metadata"]) patch)
   (val mark (get patch "metadata" "annotations" USED-AT-KEY))
   (<- (changed world (replace volume :used-at (float mark))))
@@ -407,6 +427,7 @@
   (<- now datetime (GetTime))
   (when (is-not volume None)
     (return (! (api-answer 409 {"kind" "Status" "reason" "AlreadyExists"}))))
+  (setv (get world.sizes name) (int (get created "spec" "size")))
   ;; Longhorn v1.13 は外れている volume の replica を作るだけで置かない — 置き先は初めて付ける時か、戻す時(付けて戻す)に決める。
   (.add world.unplaced name)
   (when source
@@ -428,6 +449,31 @@
                                   []
                                   [{"metadata" {"name" (+ chosen "-r-0")}
                                     "spec" {"volumeName" chosen "nodeID" (if (in chosen world.unplaced) "" NODE)}}])})))
+
+
+(defk device-size [world name]
+  {:pre [(: world LonghornWorld) (: name str)] :post [(: % int)]}
+  "volume name の engine が今見せる block device の大きさを得るため(名目の大きさを書いた後、読みの残りが尽きるまでと engine-stuck の
+   世界では、前の大きさ = file system の総量のまま)。"
+  (if (or world.engine-stuck (> (.get world.engine-left name 0) 0))
+      (.get world.fs-sizes name SIZE)
+      (.get world.sizes name SIZE)))
+
+
+(defk engines-listed [world path]
+  {:pre [(: world LonghornWorld) (: path str)] :post [(: % HttpResponse)]}
+  "Engine の一覧(labelSelector longhornvolume で選ぶ)に答えるため(volume 1 つに engine 1 つ — 名目の大きさを書いた後は、読みの残りが
+   尽きるまで前の大きさを見せる。engine-stuck の世界は広がらない)。"
+  (val query (parse-qs (. (urlsplit path) query)))
+  (val chosen (get (.split (get (.get query "labelSelector" ["="]) 0) "=" 1) 1))
+  (<- volume (held-volume world.held chosen))
+  (val size (! (device-size world chosen)))
+  (val left (.get world.engine-left chosen 0))
+  (when (> left 0)
+    (setv (get world.engine-left chosen) (- left 1)))
+  (! (api-answer 200 {"items" (if (is volume None)
+                                  []
+                                  [{"metadata" {"name" (+ chosen "-e-0")} "status" {"currentSize" (str size)}}])})))
 
 
 (defk snapshot-made [world body]
@@ -492,7 +538,7 @@
    空き available — と extra-disks)。"
   (val disk {"tags" ["ssd" "workspace"] "allowScheduling" True "storageReserved" 0})
   (val maximum (* world.held.capacity SIZE))
-  (val room {"storageMaximum" maximum "storageScheduled" (* (len world.held.volumes) SIZE)
+  (val room {"storageMaximum" maximum "storageScheduled" (sum (gfor volume world.held.volumes (.get world.sizes volume.name SIZE)))
              "storageAvailable" (if (is world.available None) maximum world.available)
              "conditions" [{"type" "Ready" "status" "True"} {"type" "Schedulable" "status" "True"}]})
   (val extra (dfor #(index tags) (enumerate world.extra-disks) (+ "extra-" (str index)) tags))
@@ -537,6 +583,7 @@
     (and (= request.method "GET") (= path OVER-PROVISIONING-PATH)) (! (api-answer 200 {"metadata" {"name" "x"} "value" "100"}))
     (and (= request.method "GET") (= path MINIMAL-AVAILABLE-PATH)) (! (api-answer 200 {"metadata" {"name" "x"} "value" (str world.minimal)}))
     (and (= request.method "GET") (.startswith path (+ REPLICAS-PATH "?"))) (! (replicas-listed world path))
+    (and (= request.method "GET") (.startswith path (+ ENGINES-PATH "?"))) (! (engines-listed world path))
     (and (= request.method "GET") (.startswith path (+ ATTACHMENTS-PATH "/")))
     (do (<- answer HttpResponse (attachment-answer world (cut path (+ (len ATTACHMENTS-PATH) 1) None))) answer)
     (and (= request.method "PATCH") (.startswith path (+ ATTACHMENTS-PATH "/")))
@@ -604,17 +651,29 @@
       (in target world.held.busy) (+ "1\nworkspace-mount: " target " を外せなかった(使っている process が在るかもしれない)")
       True (do (<- (put-volume world.held (replace volume :mounted-at None)))
                (+ "0\nworkspace-mount: " name " を " target " から外した")))
+    (= verb "grow")
+    (cond
+      (not there) (+ "1\nworkspace-mount: " target " に何も付いていない")
+      (!= (. (get there 0) name) name) (+ "1\nworkspace-mount: " target " に付いているのは " name " でない")
+      True (do (val device (! (device-size world name)))
+               (setv (get world.fs-sizes name) device)
+               (+ "0\nworkspace-mount: " name " の file system を device の大きさ " (str device) " byte まで広げた")))
     True (+ "1\nworkspace-mount: 知らない命令 '" verb "'")))
 
 
 (defhandler keeper-peer [#^ LonghornWorld world]
   ;; 引数に残す理由: 係の相手役は Longhorn の相手役と同じ世界(attach された volume だけを付けられる)を読み書きする。
   ;; 係の相手役: 頼みの dir の `<鍵>.req` へ名を替える書きを受けて頼みを読み、答えの file を置き、頼みを消す(係と同じ — silent の世界は
-  ;; 頼みを置いたまま答えない)。答え手の process の mountinfo の読みにも答える。
+  ;; 頼みを置いたまま答えない)。答え手の process の mountinfo の読みと、付いた volume の file system の空きの読みにも答える。
   (ReadText [path]
     :when (= path SITE.mountinfo)
     (<- text str (mountinfo-of world))
     (resume text))
+  (ReadDiskUsage [path]
+    :when (any (gfor one world.held.volumes (= one.mounted-at path)))
+    (val volume (get (lfor one world.held.volumes :if (= one.mounted-at path) one) 0))
+    (val total (.get world.fs-sizes volume.name SIZE))
+    (resume (DiskUsage :total total :free (max 0 (- total (.get world.used volume.name 0))))))
   (RenamePath [source target]
     :when (and (isinstance target str) (.startswith target (+ SITE.mount-dir "/")) (.endswith target ".req"))
     (<- moved (| FileFailed None) (RenamePath source target))
@@ -637,9 +696,10 @@
 
 (defk sweep-text [sweep]
   {:pre [(: sweep CoolingSweep)] :post [(: % str)]}
-  "まとめて冷やす答え sweep を、結末の組に並べる字にするため(failed は断りの文の頭の volume の名だけ)。"
-  (.format "sweep slots={} cooled={} failed={}" sweep.slots (.join "," sweep.cooled)
-           (.join "," (gfor line sweep.failed (get (.split line ":" 1) 0)))))
+  "まとめて冷やす答え sweep を、結末の組に並べる字にするため(failed は断りの文の頭の volume の名だけ・広げた物が在れば grown を足す)。"
+  (+ (.format "sweep slots={} cooled={} failed={}" sweep.slots (.join "," sweep.cooled)
+              (.join "," (gfor line sweep.failed (get (.split line ":" 1) 0))))
+     (if sweep.grown (+ " grown=" (.join "," sweep.grown)) "")))
 
 
 (defk step-outcome [step]
@@ -1200,6 +1260,76 @@
     (<- ran ApiRan (on-api api #((Step :verb "create" :owner OWNER))))
     (assert (= ran.outcomes #("restored")) ran.outcomes)
     (assert (= (get (json.loads (get api.created 0)) "spec" "size") (str wanted)) api.created)))
+
+
+;; --- 広げる(付いた volume の空きが線を割れば、付けたまま広げる)------------------------------------------------------------
+
+;; この機体に付いて mount された持ち主の volume(冷やす回が空きを読む物)。
+(val MOUNTED (HeldVolume :name NAME :node NODE :mounted-at PLACE :formatted True))
+;; 値の大きさ(10 GiB)の 1 割。
+(val TENTH (// SIZE 10))
+
+
+(defk size-writes [api]
+  {:pre [(: api LonghornWorld)] :post [(: % list)]}
+  "相手役が受けた、Volume の名目の大きさ(spec.size)の書きの値を、受けた順に得るため。"
+  (lfor seen api.seen :if (and (= seen.method "PATCH") (.startswith seen.path VOLUMES-PATH) (in "spec" (json.loads seen.body)))
+        (get (json.loads seen.body) "spec" "size")))
+
+
+(deftest test-a-mounted-volume-short-of-space-is-grown-online-by-the-sweep
+  ;; 付いた volume の file system の空きが値の growBelowPercent(50%)を割った(10 GiB のうち 6 GiB を使った)。冷やす回は名目を倍(上限の
+  ;; 値 maxSizeBytes 16 GiB)に書き、engine が広がる(読み 3 回)のを待ってから、係に file system を広げさせる。付けたまま — mount も
+  ;; ticket も触らない。
+  (val api (LonghornWorld (WorkspaceVolumeWorld NODE :volumes #(MOUNTED)) :engine-settle 3 :used {NAME (* 6 TENTH)}))
+  (<- ran ApiRan (on-api api #((Step :verb "sweep"))))
+  (assert (.endswith (get ran.outcomes 0) (+ " failed= grown=" NAME)) ran.outcomes)
+  (assert (= (! (size-writes api)) [(str MAX)]) api.seen)
+  (assert (= api.asked #((.format "grow {} {}" NAME PLACE))) api.asked)
+  (assert (= (get api.fs-sizes NAME) MAX) api.fs-sizes)
+  (assert (= api.held.volumes #(MOUNTED)) api.held.volumes)
+  (assert (not (any (gfor seen api.seen (.startswith seen.path ATTACHMENTS-PATH)))) api.seen))
+
+
+(deftest test-a-volume-with-room-or-at-the-largest-size-is-not-grown
+  ;; 空きが線の上(10 GiB のうち 4 GiB を使った)の volume と、名目が上限の maxSizeBytes に居る volume(ほぼ満ちていても)は広げない
+  ;; (名目の書きも係への頼みも無い)。
+  (for [#(sizes used) #(#({} {NAME (* 4 TENTH)}) #({NAME MAX} {NAME (- MAX 1024)}))]
+    (val api (LonghornWorld (WorkspaceVolumeWorld NODE :volumes #(MOUNTED)) :sizes sizes :fs-sizes sizes :used used))
+    (<- ran ApiRan (on-api api #((Step :verb "sweep"))))
+    (assert (.endswith (get ran.outcomes 0) " failed=") ran.outcomes)
+    (assert (= (! (size-writes api)) []) api.seen)
+    (assert (= api.asked #()) api.asked)))
+
+
+(deftest test-a-grow-the-disk-cannot-hold-is-refused-without-writing-the-size
+  ;; 札の disk の名目の残りが、広げる分(6 GiB)を受けられない(capacity 1 — 付いた 1 本で満ちた)。名目を書かずに、訳を残して次へ進む。
+  (val api (LonghornWorld (WorkspaceVolumeWorld NODE :volumes #(MOUNTED) :capacity 1) :used {NAME (* 9 TENTH)}))
+  (<- ran ApiRan (on-api api #((Step :verb "sweep"))))
+  (assert (= ran.outcomes #((+ "sweep slots=0 cooled= failed=" NAME))) ran.outcomes)
+  (assert (= (! (size-writes api)) []) api.seen)
+  (assert (= api.asked #()) api.asked))
+
+
+(deftest test-a-file-system-left-behind-its-volume-is-grown-without-doubling-again
+  ;; 前の広げが名目を書いた後、file system を広げる前に止まった(名目 16 GiB・file system 10 GiB)。次の回は名目を書き直さず(倍に
+  ;; しない)、係に file system だけを広げさせる。
+  (val api (LonghornWorld (WorkspaceVolumeWorld NODE :volumes #(MOUNTED)) :sizes {NAME MAX} :used {NAME (* 6 TENTH)}))
+  (<- ran ApiRan (on-api api #((Step :verb "sweep"))))
+  (assert (.endswith (get ran.outcomes 0) (+ " failed= grown=" NAME)) ran.outcomes)
+  (assert (= (! (size-writes api)) []) api.seen)
+  (assert (= api.asked #((.format "grow {} {}" NAME PLACE))) api.asked)
+  (assert (= (get api.fs-sizes NAME) MAX) api.fs-sizes))
+
+
+(deftest test-an-engine-that-does-not-grow-is-refused-before-the-file-system
+  ;; Longhorn が名目の書きを受けたが、engine が広がらない。上限の秒(検の attach-seconds 5 秒)で断り、係には頼まない(名目は書いた
+  ;; まま — 次の回が file system だけを広げ直す)。
+  (val api (LonghornWorld (WorkspaceVolumeWorld NODE :volumes #(MOUNTED)) :engine-stuck True :used {NAME (* 6 TENTH)}))
+  (<- ran ApiRan (on-api api #((Step :verb "sweep"))))
+  (assert (.endswith (get ran.outcomes 0) (+ " failed=" NAME)) ran.outcomes)
+  (assert (= (! (size-writes api)) [(str MAX)]) api.seen)
+  (assert (= api.asked #()) api.asked))
 
 
 ;; --- 並べて走らせる(戻す・冷やす途中に次の頼みが来る)------------------------------------------------------------------

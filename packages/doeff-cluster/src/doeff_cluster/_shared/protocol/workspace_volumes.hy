@@ -20,7 +20,11 @@
 ;;;   cooled-volume           CoolWorkspaceVolume: 外れている volume の Snapshot と Backup を作って完了を待ち、使う ticket が無い事を確かめて、
 ;;;                           読んだ版の上でだけ Volume を消す
 ;;;   purged-volume           PurgeWorkspaceVolume: volume の無い名の BackupVolume を、最後の backup から keepDays を過ぎていれば消す
-;;;   idle-cooling            CoolIdleWorkspaceVolumes: 外れている volume・札の disk の残り(room-slots)を読み、冷やす順に冷やす
+;;;   idle-cooling            CoolIdleWorkspaceVolumes: 外れている volume・札の disk の残り(room-slots)を読み、冷やす順に冷やし、その後に
+;;;                           この機体に付いている volume の空きを 1 つずつ読んで広げる(mounted-growth)
+;;;   grown-volume            付いている volume 1 つの file system の空きが値の growBelowPercent を割っていれば、名目の予約の増えを数えて
+;;;                           (room-held)Volume の spec.size を倍(上限 maxSizeBytes)に書き、engine が広がるのを待ち(waited-engine)、
+;;;                           係へ grow(resize2fs)を頼む — 付けたまま。名目を書いた後に止まった前の広げは、file system だけを広げ直す
 ;;;   workspace-room          ReadWorkspaceRoom: 札の disk の残りの本数(room-slots — Longhorn の置く線 2 つ: 過剰割り当ての % の名目の
 ;;;                           予約の線と、最小の空きの % の実の空きの線)と値の spareVolumes を読む
 ;;;   place-read              ReadWorkspacePlace: mount の表・付ける先の dir・持ち主の volume と backup を読み、付ける先の様子を答える
@@ -56,7 +60,8 @@
 (import posixpath)
 (import urllib.parse [quote :as url-quote])
 (import doeff_hy._wire [Malformed parse-json parse-json-as])
-(import doeff_core_effects [FileFailed ListDirectory MakeDirectory PathKind PathStat ReadText RemoveTree RenamePath StatPath WriteText])
+(import doeff_core_effects [DiskUsage FileFailed ListDirectory MakeDirectory PathKind PathStat ReadDiskUsage ReadText RemoveTree RenamePath
+                            StatPath WriteText])
 (import doeff_core_effects [HttpFailed HttpRequest HttpResponse])
 (import doeff_time [Delay GetMonotonic GetTime])
 (import doeff_cluster._shared.intent.workspace_volume_model [AttachWorkspaceVolume CoolIdleWorkspaceVolumes CoolingSweep
@@ -103,14 +108,18 @@
 
 
 (defwire SettingsWire
-  "値の ConfigMap の workspace-volume.json のうち読む欄: storageClass = 級の名・sizeBytes = 大きさ(byte)・warmHours = 使い終わりから温かく
-   置く時間・spareVolumes = 札の disk に空けておく volume の本数・keepDays = 最後の backup から backup を消せるまでの日数。"
+  "値の ConfigMap の workspace-volume.json のうち読む欄: storageClass = 級の名・sizeBytes = 作る時の大きさ(byte)・warmHours = 使い終わりから
+   温かく置く時間・spareVolumes = 札の disk に空けておく volume の本数・keepDays = 最後の backup から backup を消せるまでの日数・
+   growBelowPercent = 付いている volume の file system の空きがこの % を割ったら広げる(0 = 広げない)・maxSizeBytes = 広げる上限(byte —
+   0 = 広げない)。広げる 2 つの欄は無い ConfigMap でも読める(無ければ広げない)。"
   {:tags {:context "doeff-cluster" :role "protocol" :reads "json"} :names :camel :unknown :ignore}
   (#^ str storage-class)
   (#^ int size-bytes)
   (#^ int warm-hours)
   (#^ int spare-volumes)
-  (#^ int keep-days))
+  (#^ int keep-days)
+  (setv #^ int grow-below-percent 0)
+  (setv #^ int max-size-bytes 0))
 
 
 (defwire ConfigMapWire
@@ -167,10 +176,30 @@
 
 
 (defwire VolumeSpecWire
-  "Longhorn の Volume の spec のうち読む欄: fromBackup(戻す元 — 空なら空で作った volume)・backupTargetName(backup の先)。"
+  "Longhorn の Volume の spec のうち読む欄: fromBackup(戻す元 — 空なら空で作った volume)・backupTargetName(backup の先)・size(名目の
+   大きさ — byte の数の字)。"
   {:tags {:context "doeff-cluster" :role "protocol" :reads "json"} :names :camel :unknown :ignore}
   (setv #^ str from-backup "")
-  (setv #^ str backup-target-name ""))
+  (setv #^ str backup-target-name "")
+  (setv #^ str size ""))
+
+
+(defwire EngineStatusWire
+  "Longhorn の Engine の status のうち読む欄: currentSize(engine が今見せている block device の大きさ — byte の数の字)。"
+  {:tags {:context "doeff-cluster" :role "protocol" :reads "json"} :names :camel :unknown :ignore}
+  (setv #^ str current-size ""))
+
+
+(defwire EngineWire
+  "Longhorn の Engine の一覧の 1 つのうち読む欄: status。"
+  {:tags {:context "doeff-cluster" :role "protocol" :reads "json"} :names :camel :unknown :ignore}
+  (setv #^ (| EngineStatusWire None) status None))
+
+
+(defwire EngineListWire
+  "Longhorn の Engine の一覧の GET の答えのうち読む欄: items。"
+  {:tags {:context "doeff-cluster" :role "protocol" :reads "json"} :names :camel :unknown :ignore}
+  (setv #^ (| (get tuple #(EngineWire ...)) None) items None))
 
 
 (defwire VolumeWire
@@ -387,7 +416,8 @@
 (defrecord VolumeRead
   "Longhorn の Volume 1 つの読み: name・version = resourceVersion・state = status.state(読めなければ空)・restoring = backup から戻す途中
    (spec.fromBackup が在り、戻しがまだ始まっていないか終わっていない)・deleting = 消す途中・used-at = 使った刻の印(epoch 秒 — 無ければ
-   作られた刻)・backup-target = spec.backupTargetName・placing = condition Scheduled の読み(Longhorn が replica を置けないと答えているか)。"
+   作られた刻)・backup-target = spec.backupTargetName・placing = condition Scheduled の読み(Longhorn が replica を置けないと答えているか)・
+   size = spec.size(名目の大きさ byte — 読めなければ 0)。"
   (#^ str name)
   (#^ str version)
   (#^ str state)
@@ -395,7 +425,8 @@
   (#^ bool deleting)
   (#^ float used-at)
   (#^ str backup-target)
-  (#^ Placing placing))
+  (#^ Placing placing)
+  (setv #^ int size 0))
 
 
 (defk refused [owner doing reason]
@@ -534,8 +565,8 @@
 
 (defk longhorn-path [site kind]
   {:pre [(: site WorkspaceVolumeSite) (: kind str)] :post [(: % str)] :tags {:context "doeff-cluster" :role "protocol"}}
-  "Longhorn の物の種類 kind(volumes・snapshots・backups・backupvolumes・nodes・settings の複数形)の、API server の上の一覧の path を組む
-   ため。"
+  "Longhorn の物の種類 kind(volumes・snapshots・backups・backupvolumes・nodes・settings・replicas・engines の複数形)の、API server の上の
+   一覧の path を組むため。"
   (+ LONGHORN-API "/namespaces/" (url-quote site.longhorn-namespace :safe "") "/" kind))
 
 
@@ -575,7 +606,8 @@
               :deleting (is-not meta.deletion-timestamp None)
               :used-at (if (is-not marked None) marked created)
               :backup-target spec.backup-target-name
-              :placing placing))
+              :placing placing
+              :size (if (.isdigit spec.size) (int spec.size) 0)))
 
 
 (defk volume-read [site owner doing name]
@@ -1202,6 +1234,116 @@
   (+ (if (is view.ticket-node None) #() #((! (ticket-id name)))) (! (using-tickets view.other-tickets))))
 
 
+(defk engine-size [site owner doing name]
+  {:pre [(: site WorkspaceVolumeSite) (: owner str) (: doing str) (: name str)] :post [(: % int) (>= % 0)]
+   :tags {:context "doeff-cluster" :role "protocol" :reads "json"}}
+  "volume name の engine が今見せている block device の大きさ(byte)を、Longhorn の Engine の一覧で読むため(engine が無い・大きさが
+   読めなければ 0)。"
+  (<- answer HttpResponse (kube-answer owner doing "GET" (+ (! (longhorn-path site "engines"))
+                                                            "?labelSelector=" (url-quote (+ "longhornvolume=" name) :safe ""))
+                                       None JSON-TYPE))
+  (when (!= (! (status-field answer.status)) 200)
+    (raise (! (status-refusal owner doing "Engine の一覧" answer))))
+  (<- held (| EngineListWire Malformed) (parse-json EngineListWire (! (text-field answer.text))))
+  (when (isinstance held Malformed)
+    (raise (! (malformed-refusal owner doing "Engine の一覧"))))
+  (max (gfor item (or held.items #())
+             :if (and (is-not item.status None) (.isdigit item.status.current-size))
+             (int item.status.current-size))
+       :default 0))
+
+
+(defk waited-engine [site owner doing name wanted]
+  {:pre [(: site WorkspaceVolumeSite) (: owner str) (: doing str) (: name str) (: wanted int) (> wanted 0)] :post [(: % None)]
+   :tags {:context "doeff-cluster" :role "protocol"}}
+  "名目の大きさを wanted に替えた volume name の engine が、その大きさの block device を見せるまで待つため(Longhorn は付いている volume を
+   online で広げる — 2026-11-03 の本番の試しで 1 GiB → 2 GiB が約 10 秒。attach-seconds の内に広がらなければ断る)。"
+  (<- started float (GetMonotonic))
+  (while True
+    (<- size int (engine-size site owner doing name))
+    (when (>= size wanted)
+      (return None))
+    (<- now float (GetMonotonic))
+    (when (> (- now started) site.attach-seconds)
+      (raise (! (refused owner doing (.format "{} 秒の内に Longhorn が {} byte に広げない(engine は {} byte)" site.attach-seconds wanted size)))))
+    (<- (Delay site.poll-seconds)))
+  None)
+
+
+(defk grown-volume [site owner path]
+  {:pre [(: site WorkspaceVolumeSite) (: owner str) (: path str)] :post [(: % WorkspaceOutcome)] :tags {:context "doeff-cluster" :role "protocol" :spells "json"}}
+  "path に付いた持ち主 owner の volume を、file system の空きが値の growBelowPercent を割っていれば、名目の大きさを倍(上限 maxSizeBytes)に
+   広げるため(広げた = DONE・要らない・上限に居る・広げない値 = ALREADY)。名目の予約が増える分を札の disk が受けられなければ広げずに
+   置き場の不足で断る(fresh False)。Volume の spec.size を書き、engine が広がるのを待ち、mount の係に file system を device の大きさまで
+   広げさせる(resize2fs — 付けたまま)。前の広げが file system の前で止まっていた(名目が file system の 1.5 倍以上)なら、名目は替えずに
+   file system だけを広げる(2 度倍にしない)。付いていない volume は断る。"
+  (val doing "広げる")
+  (<- name str (checked-name owner doing))
+  (<- target str (checked-path owner doing path))
+  (<- settings SettingsWire (workspace-settings site owner))
+  (when (or (<= settings.grow-below-percent 0) (<= settings.max-size-bytes 0))
+    (return WorkspaceOutcome.ALREADY))
+  (<- entries tuple (mount-table site owner doing))
+  (<- at (| MountEntry None) (mounted-at entries target))
+  (when (is at None)
+    (raise (! (refused owner doing (+ target " に何も付いていない")))))
+  (<- found (| str None) (volume-of-entry at))
+  (when (!= found name)
+    (raise (! (refused owner doing (.format "{} に付いているのは volume {} でない({})" target name at.source)))))
+  (<- usage (| DiskUsage FileFailed) (ReadDiskUsage target))
+  (when (isinstance usage FileFailed)
+    (raise (! (refused owner doing (+ target " の file system の空きが読めない: " usage.detail)))))
+  (when (>= (* usage.free 100) (* usage.total settings.grow-below-percent))
+    (return WorkspaceOutcome.ALREADY))
+  (<- read (| VolumeRead None) (volume-read site owner doing name))
+  (when (or (is read None) (<= read.size 0))
+    (raise (! (refused owner doing "volume の名目の大きさが読めない"))))
+  (val behind (>= (* read.size 2) (* usage.total 3)))
+  (val wanted (if behind read.size (min settings.max-size-bytes (* 2 read.size))))
+  (when (and (not behind) (<= wanted read.size))
+    (return WorkspaceOutcome.ALREADY))
+  (when (not behind)
+    (<- parameters dict (class-parameters owner settings.storage-class))
+    (<- (room-held site owner doing parameters (- wanted read.size) False))
+    (val body (json.dumps {"spec" {"size" (str wanted)}} :ensure-ascii False :sort-keys True))
+    (<- answer HttpResponse (kube-answer owner doing "PATCH" (! (volume-path site name)) body MERGE-PATCH-TYPE))
+    (when (!= (! (status-field answer.status)) 200)
+      (raise (! (status-refusal owner doing "Volume の大きさの書き" answer)))))
+  (<- (waited-engine site owner doing name wanted))
+  (<- grown KeeperAnswer (keeper-answer site owner doing "grow" name target))
+  (when (!= grown.code 0)
+    (raise (! (refused owner doing (+ "mount の係が file system を広げられなかった: " grown.notes)))))
+  WorkspaceOutcome.DONE)
+
+
+(defrecord Growth
+  "付いている volume の空きを読んで広げた結末: grown = 広げた volume の名・failed = 広げられなかった volume の「<名>: <訳>」。"
+  (#^ (get tuple #(str ...)) grown)
+  (#^ (get tuple #(str ...)) failed))
+
+
+(defk mounted-growth [site]
+  {:pre [(: site WorkspaceVolumeSite)] :post [(: % Growth)] :tags {:context "doeff-cluster" :role "protocol"}}
+  "この機体に付いている作業場所の volume を mount の表から読み、file system の空きが値の growBelowPercent を割った物を 1 つずつ広げるため
+   (冷やす回 — 上に載る系が数分ごとに出す CoolIdleWorkspaceVolumes の program の回 — が呼ぶ。file system の空きの減りは知らせを
+   出さないので、付けている間は冷やす回ごとに読む。広げられなかった物は訳を残して次へ進む)。"
+  (val owner "全部")
+  (val doing "広げる物の読み")
+  (<- entries tuple (mount-table site owner doing))
+  (var grown #())
+  (var failed #())
+  (for [entry entries]
+    (<- name (| str None) (volume-of-entry entry))
+    (when (and (is-not name None) (.startswith name NAME-PREFIX))
+      (try
+        (<- outcome WorkspaceOutcome (grown-volume site (cut name (len NAME-PREFIX) None) entry.mount-point))
+        (when (= outcome WorkspaceOutcome.DONE)
+          (:= grown (+ grown #(name))))
+        (except [error WorkspaceVolumeRefused]
+          (:= failed (+ failed #((+ name ": " (str error)))))))))
+  (Growth :grown grown :failed failed))
+
+
 (defk cooled-volume [site owner]
   {:pre [(: site WorkspaceVolumeSite) (: owner str)] :post [(: % WorkspaceOutcome)] :tags {:context "doeff-cluster" :role "protocol" :spells "json"}}
   "外れている持ち主 owner の volume を冷やすため(README の節「寿命」): Snapshot と Backup(名 <名>-cool-<刻>・label backup-volume と
@@ -1396,8 +1538,8 @@
 (defk idle-cooling [site]
   {:pre [(: site WorkspaceVolumeSite)] :post [(: % CoolingSweep)] :tags {:context "doeff-cluster" :role "protocol"}}
   "外れている作業場所の volume のうち、冷やす順(cooling-order — 使い終わりから warmHours を過ぎた物と、札の disk の空き(Longhorn の置く線
-   2 つの内 — room-slots)が spareVolumes を割る分)の物を、古い順に 1 つずつ冷やすため(冷やせなかった物は訳を残して次へ進む)。読めない
-   時は断る。"
+   2 つの内 — room-slots)が spareVolumes を割る分)の物を、古い順に 1 つずつ冷やし、その後に機体に付いている volume の空きを読んで広げる
+   ため(mounted-growth — 冷やして空けた置き場から広げる。冷やせなかった・広げられなかった物は訳を残して次へ進む)。読めない時は断る。"
   (val owner "全部")
   (val doing "冷やす順の読み")
   (<- settings SettingsWire (workspace-settings site owner))
@@ -1417,7 +1559,8 @@
         (:= cooled (+ cooled #(name))))
       (except [error WorkspaceVolumeRefused]
         (:= failed (+ failed #((+ name ": " (str error))))))))
-  (CoolingSweep :slots slots :cooled cooled :failed failed))
+  (<- growth Growth (mounted-growth site))
+  (CoolingSweep :slots slots :cooled cooled :failed (+ failed growth.failed) :grown growth.grown))
 
 
 (defhandler workspace-volumes-api [#^ WorkspaceVolumeSite site]
