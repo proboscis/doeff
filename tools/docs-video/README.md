@@ -76,7 +76,8 @@ The narration never uses a local text-to-speech model, and
 1. Read the page. Pick the 3 to 5 ideas a reader should leave with, in the page's order. Start from the
    idea, not from an API list: the first scene says what the page is about and why it matters.
 2. For every behaviour the video shows (an output, an order of events, a timing), write a small program
-   under `src/pages/<name>/measure/`, run it against doeff, and keep its output next to it as a `.log`.
+   under `src/pages/<name>/measure/`, run it against doeff (`uv run src/pages/<name>/measure/<program>.py > src/pages/<name>/measure/<program>.log`).
+   The `.log` files are generated and not committed (`.gitignore`); rerun a program to make its log again.
    The video shows only values that a run produced.
 3. Write `src/pages/<name>/narration.json`: a list of `{"id": "<scene letter><n>", "text": "…"}`, one short
    English sentence or two per headline. Write `doeff` as it is spelled; `tts.py` respells it for the voice.

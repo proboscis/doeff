@@ -3110,7 +3110,7 @@ rules:
   - id: doeff-no-star-imports
     patterns:
       - pattern: from $MODULE import *
-      # The moved-submodule shim of tools/hide_submodules.py (ADR-DOE-API-001 R5): its star import is read by
+      # The moved-submodule shim (ADR-DOE-API-001 R5; the tool that placed them is deleted): its star import is read by
       # type checkers only, and the module replaces itself with the moved module, so nothing is polluted.
       - pattern-not-inside: |
           if TYPE_CHECKING:

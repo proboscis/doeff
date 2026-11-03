@@ -1,3 +1,0 @@
-run(scheduled(main()))                        -> ['A', 'B']
-run(scheduled(main(), implementation="rust")) -> ['A', 'B']
-run(scheduled(main(), implementation="python")) -> ['A', 'B']

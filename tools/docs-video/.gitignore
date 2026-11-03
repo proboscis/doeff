@@ -2,3 +2,5 @@
 node_modules/
 out/
 public/
+# Output of the measure/ programs (see README: remake with the program next to it)
+src/pages/*/measure/*.log
