@@ -22,3 +22,5 @@ patches:
   # mount の係へ頼む dir の env(JSON patch — 末尾へ。係の宣言は node.yaml)。
   - path: workspace-mount.yaml
     target: { group: apps, version: v1, kind: Deployment, name: doeff-worker }
+  - path: tmp-in-memory.yaml
+    target: { group: apps, version: v1, kind: Deployment, name: doeff-worker }

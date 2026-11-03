@@ -1,0 +1,28 @@
+# zeus の worker の container の /tmp を memory(tmpfs の emptyDir)に置く(strategic merge patch)。
+#
+# 訳: /tmp は container の書き層(k3s の containerd の image の file — zeus の SSD の上の loop の file)に在り、作っては消す一時の file
+# (browser の profile・npm の木・Hy の一時 file)の書きが 2026-11-03 の測りで 123 GB/日・作り消し 1,720 万/日 SSD を通った。中身は作っては
+# 消すので溜まらない(測りの時の大きさ 183〜451 MB)。tmpfs に置けば書きは SSD に届かない。
+#
+# memory への影響: tmpfs の page は書いた process の cgroup(cgroup.yaml の層 — clis・commands・jobs など)に数えられ、Pod の上限 100Gi の
+# 内に入る(層の和の勘定は変わらない — 新しい層を作らない)。page cache と違い回収されず(zeus は swap が無い)、消すまで書いた層の memory を
+# 持つ。上限 sizeLimit 8Gi は測った大きさの 18 倍で、1 本の browser の検の木(node_modules 約 0.7 GB と build と profile)を何本か並べても
+# 届かない。越える書きは ENOSPC で落ち(tmpfs の size = sizeLimit)、Pod は追い出されない。/tmp に大きな物(数 GB の展開など)を置く仕事は
+# /scratch(disk)へ置く。
+#
+# 寿命: emptyDir は container の起こし直しを越えて残る(書き層の /tmp は起こし直しで消えた)。/tmp の keeper の状態の dir は、keeper が
+# pid の名前空間で前の container の物と見分けて忘れる(deploy/boot.sh の keeper_forget_other_pidns)。Pod の作り直しでは今までどおり消える。
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: doeff-worker
+  namespace: agent-worker
+spec:
+  template:
+    spec:
+      containers:
+        - name: worker
+          volumeMounts:
+            - { name: tmp, mountPath: /tmp }
+      volumes:
+        - { name: tmp, emptyDir: { medium: Memory, sizeLimit: 8Gi } }
