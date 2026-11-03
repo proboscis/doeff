@@ -1396,6 +1396,25 @@ def test_zeus_worker_keeps_tmp_in_memory_with_a_size_limit(zeus_worker: Manifest
     assert _volume(zeus_worker, str(mount["name"]))["emptyDir"] == {"medium": "Memory", "sizeLimit": ZEUS_TMP_SIZE_LIMIT}
 
 
+# zeus の worker の /dev/shm は memory(tmpfs の emptyDir — 機体の dir の dev-shm-in-memory.yaml の頭の註)。test の使い捨ての PostgreSQL の
+# data の書きを SSD に届けない(card ki-5ab9473f5328)。
+ZEUS_DEV_SHM_SIZE_LIMIT = "8Gi"
+
+
+def test_zeus_worker_has_a_sized_dev_shm_in_memory(zeus_worker: Manifest) -> None:
+    """zeus の worker の container の /dev/shm は medium Memory の emptyDir で、sizeLimit を持つ(既定の 64 MiB では PostgreSQL の data が入らない)。"""
+    mount = _mount_at(zeus_worker, "/dev/shm")
+    assert "subPath" not in mount
+    assert _volume(zeus_worker, str(mount["name"]))["emptyDir"] == {"medium": "Memory", "sizeLimit": ZEUS_DEV_SHM_SIZE_LIMIT}
+
+
+@pytest.mark.parametrize("name", [node for node in NODES if node != "zeus"])
+def test_other_workers_keep_the_default_dev_shm(rendered: list[Manifest], name: str) -> None:
+    """zeus 以外の機体の worker は /dev/shm を mount しない(container の既定の 64 MiB のまま)。"""
+    mounts = [_mapping(m, "volumeMount") for m in _sequence(_container(_worker_on(rendered, name)).get("volumeMounts", []), "volumeMounts")]
+    assert not [m for m in mounts if m["mountPath"] == "/dev/shm"], mounts
+
+
 @pytest.mark.parametrize("name", [node for node in NODES if node != "zeus"])
 def test_other_workers_keep_tmp_in_the_container(rendered: list[Manifest], name: str) -> None:
     """zeus 以外の機体の worker は /tmp を mount しない(container の書き層のまま — 機体ごとの差は機体の dir だけが持つ)。"""
