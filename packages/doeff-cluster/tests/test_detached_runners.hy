@@ -210,6 +210,34 @@
   (assert ok))
 
 
+(defk rerun-runs-on-the-next-generation []
+  {:pre [] :post [(: % bool)]}
+  ;; 走らせ直しを名乗った task(2026-11-04): a が死に、同じ名の次の世代が起きると、同じ key の次の試行がそこで走って値を返す(a が消えた間は待つ)。
+  ;; 同じ順の名乗らない task は lost のまま(同じ置き先の対照)。走らせ直す task の lease は生死の窓(10 秒)より長く取る(本番の既定は 60 秒)。
+  (<- (submit-detached-task (slow-add (* SLOW 4) 2) :key "k-again" :needs ON-X :lease-seconds 12.0 :memory-mib 1024 :rerun True))
+  (<- (submit-detached-task (slow-add (* SLOW 4) 3) :key "k-once" :needs ON-X :lease-seconds LEASE :memory-mib 1024))
+  (<- (Delay 2.0))
+  (<- lost int (KillWorker "a"))
+  (assert (= lost 2) lost)
+  (<- gone (AwaitDetached "k-once"))
+  (assert (isinstance gone DetachedLost) gone)
+  (<- (Delay AFTER-LEASE))
+  (<- waiting (AwaitDetached "k-again" :timeout-seconds 0.0))
+  (assert (and (isinstance waiting DetachedPending) (= waiting.phase "queued")) waiting)
+  (<- started bool (StartWorker "a"))
+  (assert started)
+  (<- done (AwaitDetached "k-again"))
+  (assert (= done (DetachedSucceeded 102)) done)
+  True)
+
+(deftest test-a-named-task-runs-again-on-the-next-generation-of-its-runner [rig-name tmp-path]
+  {:params {"rig_name" RIGS}}
+  (assert (isinstance rig-name str) rig-name)
+  (<- rig RunnersRig (open-named rig-name tmp-path))
+  (<- ok (run-on rig (rerun-runs-on-the-next-generation)))
+  (assert ok))
+
+
 (defk one-runner-dies []
   {:pre [] :post [(: % bool)]}
   ;; a だけが死ぬ: a の task は消え(走らせ直さない)、b の task は終わる。lease の後の名簿で a は生きていない。

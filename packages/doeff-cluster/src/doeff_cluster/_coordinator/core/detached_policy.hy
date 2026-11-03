@@ -11,7 +11,7 @@
 ;;;                                   → {"entries" [{id key notify phase detail failureKind finishedMs kind}]}
 ;;;   DELETE /outbox/<id>             出口の行を受領して外す → {"id" "acked"}(知らない id は acked = false)
 ;;;
-;;; 寿命の規則(置く・lease を worker が延ばす・worker の死 = lost・保持の期限)は cluster_policy の task の節(settle-detached・
+;;; 寿命の規則(置く・lease を worker が延ばす・worker の死 = lost か名乗った task の走らせ直し・保持の期限)は cluster_policy の task の節(settle-detached・gone-detached・
 ;;; renew-detached・absorb-detached-report)。ここは要求 1 件 → Reply(次の状態・status・本文)だけ。
 (require doeff-hy.macros [defk <- val var])
 (val MODULE-TAGS {:context "coordinator" :role "judgment"})
@@ -21,14 +21,14 @@
 (import doeff_cluster._shared.intent.protocol [ClusterTiming])
 (import doeff [run])
 (import doeff_cluster._shared.core.capabilities [environ-pairs])
-(import doeff_cluster._shared.core.detached_rules [task-priority-refusal task-limits-refusal task-limits-of task-notify-refusal task-memory-required-refusal])
+(import doeff_cluster._shared.core.detached_rules [task-priority-refusal task-limits-refusal task-limits-of task-notify-refusal task-rerun-refusal task-memory-required-refusal])
 (import doeff_cluster._coordinator.intent.cluster_model [ClusterState TaskRecord ErrorReply DetachedSubmitted DetachedProgress DetachedUnknown DetachedWarming DetachedCancelled DetachedReleased])
 (import doeff_cluster._coordinator.core.cluster_rules [format-version-refusal])
 (import doeff_cluster._coordinator.intent.request_bodies [TaskBody])
-(import doeff_cluster._coordinator.core.cluster_policy [DETACHED-TERMINAL TASK-MAX-OPEN end-detached runtime-env-value-refusal task-id task-body-refusal needs-named program-versions
+(import doeff_cluster._coordinator.core.cluster_policy [DETACHED-TERMINAL TASK-MAX-OPEN end-detached rerun-id runtime-env-value-refusal task-id task-body-refusal needs-named program-versions
                                                      limits-undeclared-refusal scan-rows memory-need-refusal])
 (import doeff_cluster._shared.intent.detached_model [DETACHED-DEFAULT-LEASE-SECONDS DETACHED-DEFAULT-RETAIN-SECONDS OPEN-PHASES WARMING-PHASE
-                                                    DetachedEnded DetachedOutbox DetachedOutboxAcked OUTBOX-ENDED OUTBOX-QUEUED-OVERDUE])
+                                                    DetachedEnded DetachedOutbox DetachedOutboxAcked OUTBOX-ENDED OUTBOX-QUEUED-OVERDUE OUTBOX-RERAN])
 
 (setv DETACHED-MAX-LEASE-SECONDS 3600)
 (setv DETACHED-MAX-RETAIN-SECONDS (* 30 24 3600))
@@ -82,6 +82,7 @@
                     (task-priority-refusal body.priority)
                     (task-limits-refusal body.limits)
                     (task-notify-refusal body.notify)
+                    (task-rerun-refusal body.rerun)
                     ;; 切り離した task は memory の要りを必須で名乗る(2026-11-02 — 要りの無い本文も断る)。
                     (task-memory-required-refusal body.memory-MiB)
                     ;; 名乗った組は系の宣言に在る物だけ(値と範囲は宣言が持つ)。
@@ -115,7 +116,7 @@
                          :detached True :key key :retain-ms (int (* 1000 retain))
                          :runtime-env body.runtime-env :environ environ
                          :priority (or body.priority 0) :limits (task-limits-of body.limits)
-                         :notify (or body.notify "") :memory-mib body.memory-MiB))
+                         :notify (or body.notify "") :memory-mib body.memory-MiB :rerun (is body.rerun True)))
   (Reply (replace state :tasks (.with-writes state.tasks #((TableWrite id task))) :next-task (+ state.next-task 1))
          200 (DetachedSubmitted :key key :id id :created True :phase task.phase)))
 
@@ -169,9 +170,13 @@
 ;; (cancel-detached)・担い手の途絶(settle-detached・absorb-task-reports-into)・走らなかった(place-tasks・absorb-detached-report)・
 ;; 実行環境を用意できない(end-env-failed)・値か例外の報告(task-finished)と散っているが、どの道もその歩の前後の task の行の差に現れる。
 ;; 道ごとに積まないので、道を足しても出口へ積み忘れない。task の process は知らせに関わらない(process の外で決まる終わりも同じ 1 点を通る)。
+;; 走らせ直し(cluster_policy.gone-detached)も同じ 1 点を通る: 行の id が替わるので、前の行が消えて次の試行の行が在る歩を、終わり(lost)でなく
+;; 走らせ直しの行(kind reran)として積む。
 
 ;; 出口の行の保持の長さ(読み手が受領しないまま — 知らせの係が止まっていた間の結末を失わない長さ)。
 (setv OUTBOX-RETAIN-MS (* 7 24 3600 1000))
+;; 走らせ直しの行の id の後ろ(id = <次の試行の task の id><この後ろ> — 終わりの行の id = task の id と重ならない)。
+(val RERAN-SUFFIX "/reran")
 
 
 (defn #^ (| DetachedEnded None) ended-of [#^ (| TaskRecord None) before #^ (| TaskRecord None) after #^ int now]
@@ -191,17 +196,44 @@
     True None))
 
 
+(defn #^ (| TaskRecord None) next-attempt-of [#^ (| TaskRecord None) before #^ (get Table TaskRecord) after]
+  "純粋: 1 歩の前の開いた task の行 before が走らせ直されたなら、歩の後の表 after の次の試行の行(None = 走らせ直されていない)。"
+  (if (and (is-not before None) before.rerun (not-in before.phase DETACHED-TERMINAL) (is (.row after before.id) None))
+      (.row after (rerun-id before))
+      None))
+
+
+(defn #^ (| DetachedEnded None) reran-of [#^ TaskRecord before #^ TaskRecord attempt #^ int now]
+  "純粋: 走らせ直された行 before と次の試行の行 attempt から、出口へ積む走らせ直しの行を知るため(知らせ先の無い task は None)。"
+  (if before.notify
+      (DetachedEnded :id (+ attempt.id RERAN-SUFFIX) :key (or attempt.key "") :notify attempt.notify :phase "queued"
+                     :detail (.format "担い手の worker {} が消えた — 試行 {} を最初から走らせる" before.worker attempt.attempt)
+                     :failure-kind "" :finished-ms now :kind OUTBOX-RERAN)
+      None))
+
+
 (defn #^ ClusterState outbox-noted [#^ ClusterState before #^ ClusterState after #^ int now]
-  "1 歩の前後の状態 before・after から、この歩で終わりへ移った知らせ先つきの task を出口へ 1 行ずつ積み、出口の保持の期限
-   (OUTBOX-RETAIN-MS)を過ぎた行を外すため(節の頭の註 — 終わりへの移りが通る 1 点)。同じ結末の id の行が出口に在れば積み直さない。
-   終わった task の待ちの行(queued-overdue)がまだ受領されずに在れば外す(待ちの知らせは古い — 終わりの行が代わりに知らせる)。
-   変わらなければ after をそのまま返す。"
-  (setv endings (tuple (gfor key (.changed-keys before.tasks after.tasks)
+  "1 歩の前後の状態 before・after から、この歩で終わりへ移った知らせ先つきの task と走らせ直された task を出口へ 1 行ずつ積み、出口の保持の
+   期限(OUTBOX-RETAIN-MS)を過ぎた行を外すため(節の頭の註 — 終わりへの移りが通る 1 点)。同じ id の行が出口に在れば積み直さない。
+   終わった task・走らせ直された task の待ちの行(queued-overdue)がまだ受領されずに在れば外す(待ちの知らせは古い — 終わりの行か走らせ直しの行が
+   代わりに知らせる)。変わらなければ after をそのまま返す。"
+  (setv changed (.changed-keys before.tasks after.tasks)
+        reruns (tuple (gfor key changed
+                            :setv attempt (next-attempt-of (.row before.tasks key) after.tasks)
+                            :if (is-not attempt None)
+                            #((.row before.tasks key) attempt)))
+        replaced (frozenset (gfor #(row _) reruns row.id))
+        endings (tuple (gfor key changed
+                             :if (not-in key replaced)
                              :setv ended (ended-of (.row before.tasks key) (.row after.tasks key) now)
                              :if (is-not ended None)
                              ended))
-        noted (tuple (gfor ended endings :if (is (.row after.outbox ended.id) None) (TableWrite ended.id ended)))
-        stale (tuple (gfor ended endings :setv overdue (+ ended.id QUEUED-OVERDUE-SUFFIX)
+        rerans (tuple (gfor #(row attempt) reruns
+                            :setv reran (reran-of row attempt now)
+                            :if (is-not reran None)
+                            reran))
+        noted (tuple (gfor ended (+ endings rerans) :if (is (.row after.outbox ended.id) None) (TableWrite ended.id ended)))
+        stale (tuple (gfor id (+ (tuple (gfor ended endings ended.id)) (tuple replaced)) :setv overdue (+ id QUEUED-OVERDUE-SUFFIX)
                            :if (is-not (.row after.outbox overdue) None)
                            (TableWrite overdue None)))
         expired (tuple (gfor e (.rows after.outbox) :if (< (+ e.finished-ms OUTBOX-RETAIN-MS) now) (TableWrite e.id None))))

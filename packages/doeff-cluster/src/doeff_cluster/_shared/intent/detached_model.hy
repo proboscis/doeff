@@ -89,6 +89,11 @@
   ;; 断る。要りは必須で、None(名乗らない)の送りは構築関数が TypeError で、受け口が 400 で断る(2026-11-02)。同じ key の送り直しの
   ;; 比べには入れない。形の検めは構築関数。
   (setv #^ (| int None) memory-mib None)
+  ;; 走らせ直しの名乗り(2026-11-04): 担い手の worker が消えた時(lease 切れ・止まり始めた worker が止めた)に、lost で終わらず同じ key の次の試行として
+  ;; 待ちの行へ戻す。次の試行は最初から走る(途中から続くのは Program が途中の結果を残す時だけ)ので、2 度走って困る仕事は名乗らない。沈黙から戻った
+  ;; 前の試行の process は worker が止める。回数は coordinator の上限まで(cluster_policy.RERUN-LIMIT)・試行が変わると知らせ先へ出口の行(kind reran)を
+  ;; 積む。同じ key の送り直しの比べには入れない。
+  (setv #^ bool rerun False)
   (defn #^ None __post-init__ [self]
     "environ が EnvVar の重ならない tuple であることを作る時に検める(名 → 値の写像・名の重なりを黙って受けない。予約の名・秘密の名は
      EnvVar が作る時に断る)。needs の検め(能力の名の空でない frozenset — 旧い Requirement の tuple を断る)は型の外 — 作り手は構築関数
@@ -169,7 +174,7 @@
 
 (defclass [(dataclass :frozen True)] DetachedLost []
   "task が消えた: 担い手の worker が死んだ(lease 切れ・worker の process の作り直し)か、子 process が結果を書かずに終わった。
-   走らせ直さない。"
+   走らせ直しを名乗らない task は走らせ直さない(名乗った task は上限の回数を使い切った時だけこの答え — SubmitDetached の rerun)。"
   (#^ str reason))
 
 
@@ -501,13 +506,16 @@
 ;;                   行(detached_policy の queued-noticed — 積んだ印は task の行の queued-noticed-ms に残り、受領して外しても積み直さない)。
 ;;                   phase は queued のまま・detail は置かれない理由(coordinator が task に書いた文)・finished-ms は期限超えを見た刻。
 ;;                   受領の前に task が終われば、終わりの行を積む歩で外す(待ちの知らせは古い)。
+;;   reran           走らせ直しを名乗った task(SubmitDetached の rerun)の担い手が消え、次の試行の待ちの行へ戻った歩で 1 度だけ積む行(id = <次の試行の
+;;                   task の id>/reran・phase = queued・detail = 消えた担い手と次の試行の番号・finished-ms = 戻した刻)。
 ;; 読み手は読む種類を名乗る(AwaitDetachedOutbox の kinds — 既定は ended だけ)。種類を名乗らない読み手(この欄の前の版)には ended の行しか
 ;; 出ないので、待ちの行を終わりと読み違えない。
 
 ;; 出口の行の種類の名。
 (val OUTBOX-ENDED "ended")
 (val OUTBOX-QUEUED-OVERDUE "queued-overdue")
-(val OUTBOX-KINDS (frozenset #(OUTBOX-ENDED OUTBOX-QUEUED-OVERDUE)))
+(val OUTBOX-RERAN "reran")
+(val OUTBOX-KINDS (frozenset #(OUTBOX-ENDED OUTBOX-QUEUED-OVERDUE OUTBOX-RERAN)))
 
 (defrecord DetachedEnded
   "出口の行 1 つ: id = 結末の id(task の id — coordinator の中で一意。読み手が重なりを除く鍵)・key = task の key・notify = 名乗った知らせ先・

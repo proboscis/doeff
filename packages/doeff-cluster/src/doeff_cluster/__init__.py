@@ -590,6 +590,7 @@ if TYPE_CHECKING:
     from doeff_cluster._shared.intent.detached_model import OUTBOX_ENDED as OUTBOX_ENDED
     from doeff_cluster._shared.intent.detached_model import (
         OUTBOX_QUEUED_OVERDUE as OUTBOX_QUEUED_OVERDUE,
+        OUTBOX_RERAN as OUTBOX_RERAN,
     )
     from doeff_cluster._shared.intent.protocol import PlainText as PlainText
     from doeff_cluster._shared.intent.process_model import ProcessEnded as ProcessEnded
@@ -1344,6 +1345,7 @@ _LAZY_EXPORTS: dict[str, str] = {
     "OBJECT_SPELLING": "doeff_cluster._shared.core.supplied_spelling",
     "OUTBOX_ENDED": "doeff_cluster._shared.intent.detached_model",
     "OUTBOX_QUEUED_OVERDUE": "doeff_cluster._shared.intent.detached_model",
+    "OUTBOX_RERAN": "doeff_cluster._shared.intent.detached_model",
     "PlainText": "doeff_cluster._shared.intent.protocol",
     "ProcessEnded": "doeff_cluster._shared.intent.process_model",
     "ProcessFacts": "doeff_cluster._shared.intent.runtime_identity_model",

@@ -1095,7 +1095,7 @@
   ;; --- 切り離した task(2026-09-25・SubmitDetached — detached_model.hy)---
   ;; detached = 呼び手の問い合わせと寿命を切り離した task。key = 呼び手の決めた job id(送り直しても同じ行)。
   ;; boot = 置いた時の worker の process の世代。lease は置いた世代の heartbeat だけが延ばし、置いた世代の heartbeat が lease の間
-  ;; 止まったら phase = lost(走らせ直さない)。同じ名の別の世代の heartbeat は延ばしも lost にもしない(2026-09-27)。
+  ;; 止まったら phase = lost(走らせ直しを名乗った task は次の試行 — 下の rerun)。同じ名の別の世代の heartbeat は延ばしも lost にもしない(2026-09-27)。
   ;; retain-ms = 終わった後に結果を持っておく長さ。
   ;; 切り離した task だけが使う phase: version-mismatch | lost | cancelled。
   (setv #^ bool detached False)
@@ -1138,7 +1138,13 @@
   ;; --- memory の要り(2026-11-02)---
   ;; memory-mib = 送り手の名乗った 1 本の山(MiB)。置き先は測った memory の空きから「要り − 今の使い」を予約し、要りが入る worker に
   ;; だけ置く(measured_room)。None = 名乗らない(切り離さない task・欄の前の行 — measured_room.UNDECLARED-TASK-MIB と見込む)。
-  (setv #^ (| int None) memory-mib None))
+  (setv #^ (| int None) memory-mib None)
+  ;; --- 担い手が消えた時の走らせ直し(2026-11-04)---
+  ;; rerun = 送り手が「担い手が消えたら走らせ直す」と名乗った(偽 = 今までどおり lost で終わる)。attempt = 何度目の試行か(1 から)。
+  ;; 走らせ直すと key はそのまま・行の id だけが替わる(cluster_policy.gone-detached — 前の試行の process の報告と結果の届けを id で除く)。
+  ;; 欄の無い旧い行は名乗らない・試行 1 で読む。
+  (setv #^ bool rerun False)
+  (setv #^ int attempt 1))
 
 
 ;; 担い手の worker に置いた task の phase(担い手の数・送る task・報告の吸い上げ・lease の延長で同じに扱う)。
@@ -1272,7 +1278,8 @@
    ような拍ごとに変わる欄を持たないので、返事の等しさで worker の見え方を比べられる — watch_policy.worker-mark): id・name・revision・
    versions = 送り手の版・program = 詰めた Program の置き場のキー・detached / key / lease-ms / retain-ms / needs = 切り離した task が
    引き取りのために運ぶ欄(切り離していなければ使わない)・runtime-env = 実行環境の宣言(無ければ None)・environ = 子の環境変数・
-   memory-mib = memory の要り(引き取った行が置き先の予約を続けるため — 名乗らない task は None)。"
+   memory-mib = memory の要り(引き取った行が置き先の予約を続けるため — 名乗らない task は None)・rerun / attempt / notify = 走らせ直しの
+   名乗りと試行の番号と知らせ先(引き取った行も同じ約束で続けるため)。"
   (#^ str id)
   (#^ str name)
   (#^ str revision)
@@ -1285,7 +1292,10 @@
   (#^ (get tuple #(str ...)) needs)
   (#^ (| (get dict #(str object)) None) runtime-env)
   (#^ (get tuple #((get tuple #(str str)) ...)) environ)
-  (setv #^ (| int None) memory-mib None))
+  (setv #^ (| int None) memory-mib None)
+  (setv #^ bool rerun False)
+  (setv #^ int attempt 1)
+  (setv #^ str notify ""))
 
 
 (defrecord WarmOffer

@@ -49,7 +49,9 @@
      ;; 名乗った同時数の上限の組(待つ理由を外から読む ReadDetachedQueue が groupLimits と照らす)— 名乗る task だけ。
      (if task.limits {"limits" (task-limits-json task.limits)} {})
      ;; memory の要り(MiB — 置き先が予約する 1 本の山・2026-11-02)— 名乗る task だけ。
-     (if (is task.memory-mib None) {} {"memoryMiB" task.memory-mib})))
+     (if (is task.memory-mib None) {} {"memoryMiB" task.memory-mib})
+     ;; 走らせ直しの名乗りと今の試行の番号 — 名乗る task だけ。
+     (if task.rerun {"rerun" True "attempt" task.attempt} {})))
 
 
 (defk spec-json [#^ JobSpec spec]
@@ -102,7 +104,10 @@
      (if offer.detached {"detached" True "key" offer.key "leaseMs" offer.lease-ms "retainMs" offer.retain-ms "needs" (list offer.needs)} {})
      (if (is-not offer.runtime-env None) {"runtimeEnv" offer.runtime-env} {})
      (if offer.environ {"environ" (dict offer.environ)} {})
-     (if (is offer.memory-mib None) {} {"memoryMiB" offer.memory-mib})))
+     (if (is offer.memory-mib None) {} {"memoryMiB" offer.memory-mib})
+     ;; 引き取った行が同じ約束で続けるための写し(worker は読まずに状態の報告へ添えて返す)。
+     (if offer.rerun {"rerun" True "attempt" offer.attempt} {})
+     (if offer.notify {"notify" offer.notify} {})))
 
 
 (defk heartbeat-reply-json [#^ HeartbeatReply reply]

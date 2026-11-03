@@ -466,6 +466,31 @@
   (assert ok))
 
 
+(defk runner-dies-and-the-named-task-runs-again [rig]
+  {:pre [(: rig Rig)] :post [(: % bool)]}
+  ;; 走らせ直しを名乗った task(2026-11-04): 担い手が死ぬと、同じ key の次の試行が次の担い手で走り、結末は次の試行の値。知らせ先へ試行が変わった
+  ;; 行が届く。担い手が起き直して次の試行が走る順は test_detached_runners.hy の筋書き。lease は生死の窓(ClusterTiming.lease-ms = 10 秒)より長く取る
+  ;; (本番の既定は 60 秒 — 短いと、まだ生きていると数える消えた担い手へ次の試行を置いて試行を無駄にする)。
+  (<- (submit-detached-task (slow-add (* rig.slow 10) 5) :needs LOCAL :key "k-rerun" :lease-seconds 12.0 :notify "l:c-a" :rerun True
+                            :memory-mib 1024))
+  (<- (await-observed rig "k-rerun" held-or-none "担い手の task の起こし"))
+  (<- lost int (KillWorker RUNNER))
+  (assert (= lost 1))
+  (<- told (AwaitDetachedOutbox "l:" 60.0 :kinds #(OUTBOX-RERAN)))
+  (assert (= (lfor e told.entries #(e.key e.kind)) [#("k-rerun" OUTBOX-RERAN)]) told)
+  (<- waiting (AwaitDetached "k-rerun" :timeout-seconds 0.0))
+  (assert (and (isinstance waiting DetachedPending) (= waiting.phase "queued")) waiting)
+  True)
+
+;; 模擬の時計の 2 つの組だけ(served の組は実時間で lease の 12 秒を待つ)。
+(deftest test-runner-death-sends-a-named-task-back-to-the-queue [rig-name tmp-path request]
+  {:params {"rig_name" (cut RIGS 2)}}
+  (assert (isinstance rig-name str) rig-name)
+  (<- rig Rig (open-named rig-name tmp-path request None))
+  (<- ok (run-scenario rig runner-dies-and-the-named-task-runs-again))
+  (assert ok))
+
+
 (defk cancel-open-and-finished [rig]
   {:pre [(: rig Rig)] :post [(: % bool)]}
   (<- (submit-detached-task (slow-add (* rig.slow 10) 6) :needs LOCAL :key "k-cancel" :lease-seconds rig.lease :memory-mib 1024))
@@ -742,6 +767,10 @@
 (import doeff_cluster._worker.core.policy [kept-when-cut-off])
 (import doeff_cluster._worker.protocol.declared [task-spec])
 (import doeff_cluster [submit-detached-task])
+(import doeff_cluster._coordinator.core.cluster_policy [RERUN-LIMIT])
+(import doeff_cluster._coordinator.intent.cluster_model [TaskRecord])
+(import doeff_cluster._coordinator.core.detached_policy [outbox-noted])
+(import doeff_cluster [OUTBOX-ENDED OUTBOX-RERAN])
 
 (setv T (ClusterTiming) V {"python" "3.14.0" "doeff" "1"})
 
@@ -762,14 +791,16 @@
                                                          (if (is boot-at None) {} {"bootAt" boot-at}))))
   reply)
 
-(defk put-detached [state key now [lease 10.0] [retain 100.0]]
-  {:pre [(: state ClusterState) (: key str) (: now int) (: lease float) (: retain float)] :post [(: % (get tuple #(ClusterState int (get dict #(str object)))))]
+(defk put-detached [state key now [lease 10.0] [retain 100.0] [extra None]]
+  {:pre [(: state ClusterState) (: key str) (: now int) (: lease float) (: retain float) (: extra (| (get dict #(str object)) None))]
+   :post [(: % (get tuple #(ClusterState int (get dict #(str object)))))]
    :tags {:context "doeff-cluster-test" :role "entry"}}
-  "切り離した task を key で 1 回送るため: 返り値 #(状態 status 本文)。"
+  "切り離した task を key で 1 回送るため(extra = 本文に足す欄): 返り値 #(状態 status 本文)。"
   ;; 詰めた Program を置き場に(版 V と一緒に)置いてから、本文は置き場のキーだけを運ぶ(service の宣言と同じ運び方)。
   (<- placed (get tuple #(ClusterState str)) (program-placed state V :now now))
-  (<- reply (get tuple #(ClusterState int (get dict #(str object)))) (call (get placed 0) "PUT" (+ "/detached/" key) now {"program" (get placed 1) "revision" "r" "needs" ["net"]
-                                                                        "leaseSeconds" lease "retainSeconds" retain "memoryMiB" 1024}))
+  (<- reply (get tuple #(ClusterState int (get dict #(str object)))) (call (get placed 0) "PUT" (+ "/detached/" key) now (| {"program" (get placed 1) "revision" "r" "needs" ["net"]
+                                                                        "leaseSeconds" lease "retainSeconds" retain "memoryMiB" 1024}
+                                                                       (or extra {}))))
   reply)
 
 (defk phase-of [state key]
@@ -884,6 +915,175 @@
   (:= s (! (tick s 10001 T)))
   (assert (= (. (.row s.tasks id) phase) "lost"))
   (assert (in "lease" (. (.row s.tasks id) detail))))
+
+
+;; --- 担い手が消えた時の走らせ直し(2026-11-04)------------------------------------------------------
+;; 走らせ直しを名乗った task は lost で終わらず、同じ key の次の試行の待ちの行へ戻る。行の id が替わるので、前の試行の process の報告と結果の
+;; 届けは受けられず、前の試行の job は worker の返事から外れて止められる。名乗らない task は上の検のとおり lost のまま。
+
+(val RERUN-BODY {"rerun" True "notify" "l:c-a"})
+
+
+(defk placed-rerun [key]
+  {:pre [(: key str)] :post [(: % tuple)] :tags {:context "doeff-cluster-test" :role "entry"}}
+  "走らせ直しを名乗った task を worker w の世代 b1 に置いて走らせた状態を作るため: 返り値 #(状態 task の id)。"
+  (val joined (! (beat (ClusterState) "w" 0)))
+  (val put (! (put-detached (get joined 0) key 0 :lease 10.0 :extra RERUN-BODY)))
+  (val id (get (get put 2) "task"))
+  (val running (! (beat (get put 0) "w" 1000 :statuses [{"name" (+ "task/" id) "phase" "running" "detail" ""}])))
+  (assert (= (. (.row (. (get running 0) tasks) id) phase) "assigned"))
+  #((get running 0) id))
+
+
+(defk row-of-key [state key]
+  {:pre [(: state ClusterState) (: key str)] :post [(: % TaskRecord)] :tags {:context "doeff-cluster-test" :role "entry"}}
+  "key の task の行(1 本だけ在る事も確かめる — 走らせ直しで同じ key の行を重ねない)。"
+  (val rows (lfor t (.rows state.tasks) :if (= t.key key) t))
+  (assert (= (len rows) 1) rows)
+  (get rows 0))
+
+
+(deftest test-a-named-task-whose-lease-lapsed-runs-as-the-next-attempt-on-the-next-generation
+  (val placed (! (placed-rerun "job-rerun")))
+  (val first-id (get placed 1))
+  ;; 世代 b1 が沈黙したまま lease が切れる。同じ key の待ちの行へ戻り、id が替わる。
+  (val lapsed (! (tick (get placed 0) 12000 T)))
+  (val waiting (! (row-of-key lapsed "job-rerun")))
+  (assert (= #(waiting.phase waiting.attempt waiting.worker waiting.boot waiting.reported) #("queued" 2 None None False)) waiting)
+  (assert (!= waiting.id first-id) waiting)
+  (assert (is (.row lapsed.tasks first-id) None) "前の試行の行は残さない")
+  ;; 同じ名の次の世代 b2 に置かれ、返事に載り、結末は最後の試行の物になる。
+  (val next-beat (! (beat lapsed "w" 13000 :boot "b2")))
+  (val next-state (get next-beat 0))
+  (val placed-row (! (row-of-key next-state "job-rerun")))
+  (assert (= #(placed-row.phase placed-row.boot placed-row.attempt) #("assigned" "b2" 2)) placed-row)
+  (val offers (get (get next-beat 2) "tasks"))
+  (assert (= (lfor o offers (get o "id")) [waiting.id]) offers)
+  (assert (= (lfor o offers #((get o "rerun") (get o "attempt") (get o "notify"))) [#(True 2 "l:c-a")]) offers)
+  (val ended (! (beat next-state "w" 14000 :boot "b2" :statuses [{"name" (+ "task/" waiting.id) "phase" "finished" "result" "R2" "detail" ""}])))
+  (val done (! (row-of-key (get ended 0) "job-rerun")))
+  (assert (= #(done.phase done.result) #("finished" "R2")) done))
+
+
+(deftest test-a-previous-attempt-that-comes-back-from-silence-is-not-offered-and-its-result-is-not-taken
+  ;; 沈黙は死ではない(memory が詰まって heartbeat だけが止まった — 2026-10-24 の zeus): 前の試行の子は動き続けている。戻った世代の報告も結果の届けも
+  ;; 次の試行を終わらせず、返事から外れた job は worker が止める。同じ worker の同じ世代に次の試行を置いても、返事には新しい id だけが載る。
+  (val placed (! (placed-rerun "job-silent")))
+  (val first-id (get placed 1))
+  (val lapsed (! (tick (get placed 0) 12000 T)))
+  (val second-id (. (! (row-of-key lapsed "job-silent")) id))
+  ;; 世代 b1 が戻り、前の試行の子を走らせていると報告する。
+  (val back (! (beat lapsed "w" 13000 :boot "b1" :statuses [{"name" (+ "task/" first-id) "phase" "running" "detail" ""}])))
+  (val back-state (get back 0))
+  (assert (= (lfor o (get (get back 2) "tasks") (get o "id")) [second-id]) (get back 2))
+  (val row (! (row-of-key back-state "job-silent")))
+  (assert (= #(row.id row.phase row.attempt) #(second-id "assigned" 2)) row)
+  ;; 前の試行の子が結果を直に届けても受けない(行が無い = 404)。報告の file の路も受けない。
+  (val late (! (call back-state "POST" (.format "/tasks/{}/result" first-id) 14000 {"worker" "w" "instance" "i" "result" "OLD" "format" 1})))
+  (assert (= (get late 1) 404) late)
+  (val reported (! (beat back-state "w" 15000 :boot "b1" :statuses [{"name" (+ "task/" first-id) "phase" "finished" "result" "OLD" "detail" ""}])))
+  (val after (! (row-of-key (get reported 0) "job-silent")))
+  (assert (= #(after.phase after.result) #("assigned" None)) after)
+  ;; 次の試行の結果だけを受ける。
+  (val taken (! (call (get reported 0) "POST" (.format "/tasks/{}/result" second-id) 16000 {"worker" "w" "instance" "i" "result" "NEW" "format" 1})))
+  (assert (= (get taken 1) 200) taken)
+  (val done (! (row-of-key (get taken 0) "job-silent")))
+  (assert (= #(done.phase done.result) #("finished" "NEW")) done))
+
+
+(deftest test-a-named-task-a-stopping-worker-stopped-goes-back-to-the-queue
+  ;; 止まり始めた worker が走っていた子を止めた道(名乗らない task は上の検のとおり lost)。
+  (val placed (! (placed-rerun "job-stop")))
+  (val stopped (! (beat (get placed 0) "w" 2000 :stopping True)))
+  (val row (! (row-of-key (get stopped 0) "job-stop")))
+  (assert (= #(row.phase row.attempt) #("queued" 2)) row)
+  (assert (in "止まり始め" row.detail) row.detail)
+  (assert (is (.row (. (get stopped 0) tasks) (get placed 1)) None) "前の試行の行は残さない"))
+
+
+(deftest test-a-child-without-a-result-is-rerun-only-when-the-worker-is-stopping
+  ;; 機体の停止は worker と子へ同時に止めの合図を送る: worker が止める前に、子が結果なしで終わった報告が止まり始めの heartbeat に載る。
+  ;; 走らせ直す。止まり始めでない世代の子の消失(memory の見張り・OS)は task 自身が訳かもしれないので lost のまま。
+  (val placed (! (placed-rerun "job-killed")))
+  (val status [{"name" (+ "task/" (get placed 1)) "phase" "finished" "detail" "exit -15"}])
+  (val stopped (! (beat (get placed 0) "w" 2000 :stopping True :statuses status)))
+  (val row (! (row-of-key (get stopped 0) "job-killed")))
+  (assert (= #(row.phase row.attempt) #("queued" 2)) row)
+  (val alive (! (beat (get placed 0) "w" 2000 :statuses status)))
+  (val lost (! (row-of-key (get alive 0) "job-killed")))
+  (assert (= lost.phase "lost") lost)
+  (assert (in "結果を書かずに" lost.detail) lost.detail))
+
+
+(deftest test-a-task-that-keeps-losing-its-worker-ends-lost-at-the-rerun-limit
+  ;; task 自身が担い手を落としている時に機体を落とし続けない: 上限の回数の後は lost で、訳を書く。
+  (var state (get (! (placed-rerun "job-poison")) 0))
+  (var now 1000)
+  (for [attempt (range 1 (+ RERUN-LIMIT 1))]
+    (:= now (+ now 11000))
+    (:= state (! (tick state now T)))
+    (assert (= (. (! (row-of-key state "job-poison")) attempt) (+ attempt 1)) state.tasks)
+    (:= now (+ now 100))
+    (:= state (get (! (beat state "w" now :boot (.format "b{}" (+ attempt 1)))) 0)))
+  (:= now (+ now 11000))
+  (:= state (! (tick state now T)))
+  (val ended (! (row-of-key state "job-poison")))
+  (assert (= ended.phase "lost") ended)
+  (assert (in "上限" ended.detail) ended.detail))
+
+
+(deftest test-a-rerun-tells-the-outbox-once-and-is-not-told-as-an-end
+  ;; 出口: 試行が変わった歩で行 reran を 1 つ。lost の終わりの行は積まない。種類を名乗らない読み手には出ない。最後の結末は終わりの行で 1 つ。
+  (val placed (! (placed-rerun "job-told")))
+  (val before (get placed 0))
+  (val lapsed (! (tick before 12000 T)))
+  (val noted (outbox-noted before lapsed 12000))
+  (val rows (lfor e (.rows noted.outbox) #(e.key e.kind e.phase)))
+  (assert (= rows [#("job-told" OUTBOX-RERAN "queued")]) rows)
+  (val row (get (.rows noted.outbox) 0))
+  (assert (in "試行 2" row.detail) row)
+  (val second-id (. (! (row-of-key lapsed "job-told")) id))
+  (val placed-next (get (! (beat noted "w" 13000 :boot "b2")) 0))
+  (val finished (get (! (call placed-next "POST" (.format "/tasks/{}/result" second-id) 14000 {"worker" "w" "instance" "i" "result" "R" "format" 1})) 0))
+  (val told (outbox-noted placed-next finished 14000))
+  (assert (= (sorted (lfor e (.rows told.outbox) e.kind)) (sorted [OUTBOX-ENDED OUTBOX-RERAN])) (.rows told.outbox))
+  ;; 知らせ先の無い task は積まない(走らせ直しは同じ)。
+  (val joined (! (beat (ClusterState) "w" 0)))
+  (val silent-put (! (put-detached (get joined 0) "job-quiet" 0 :extra {"rerun" True})))
+  (val silent-run (get (! (beat (get silent-put 0) "w" 1000)) 0))
+  (val silent-lapsed (! (tick silent-run 12000 T)))
+  (assert (= (. (! (row-of-key silent-lapsed "job-quiet")) attempt) 2))
+  (assert (= (.rows (. (outbox-noted silent-run silent-lapsed 12000) outbox)) #())))
+
+
+(deftest test-a-task-that-does-not-name-rerun-stays-lost-and-the-field-survives-the-saved-state
+  ;; 対照: 名乗らない task は lease 切れで lost(同じ id・試行 1)。名乗りと試行は状態の保存を越える・欄の形の誤りは断る。
+  (val joined (! (beat (ClusterState) "w" 0)))
+  (val put (! (put-detached (get joined 0) "job-plain" 0)))
+  (val id (get (get put 2) "task"))
+  (val run-state (get (! (beat (get put 0) "w" 1000)) 0))
+  (val lapsed (! (tick run-state 12000 T)))
+  (val plain (.row lapsed.tasks id))
+  (assert (= #(plain.phase plain.attempt plain.rerun) #("lost" 1 False)) plain)
+  (val refused (! (put-detached (get joined 0) "job-bad" 0 :extra {"rerun" "yes"})))
+  (assert (= (get refused 1) 400) refused)
+  (val kept (! (placed-rerun "job-kept")))
+  (val rerun-state (! (tick (get kept 0) 12000 T)))
+  (val back (! (state-from-json (json.loads (json.dumps (! (state-to-json rerun-state)))) 13000)))
+  (val row (! (row-of-key back "job-kept")))
+  (assert (= #(row.rerun row.attempt row.phase) #(True 2 "queued")) row))
+
+
+(deftest test-a-coordinator-that-lost-its-state-adopts-the-attempt-and-the-promise
+  ;; 状態を失った coordinator は、走っている試行の写しから同じ約束(走らせ直しの名乗り・試行の番号・知らせ先)で引き取る。
+  (val placed (! (placed-rerun "job-adopt")))
+  (val lapsed (! (tick (get placed 0) 12000 T)))
+  (val second (! (beat lapsed "w" 13000 :boot "b2")))
+  (val offer (get (get (get second 2) "tasks") 0))
+  (val fresh (get (! (beat (ClusterState) "w" 20000 :boot "b2"
+                           :statuses [{"name" (+ "task/" (get offer "id")) "phase" "running" "detail" "" "task" offer}])) 0))
+  (val row (! (row-of-key fresh "job-adopt")))
+  (assert (= #(row.rerun row.attempt row.notify row.phase) #(True 2 "l:c-a" "assigned")) row))
 
 
 ;; --- 同じ名の 2 つの世代(2026-09-27 04:44 JST の実測) ------------------------------------

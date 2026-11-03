@@ -159,7 +159,7 @@
 #   DetachedQueueAnswer DetachedQueueGroup DetachedQueueReason DetachedRefused DetachedSubmitAnswer
 #   DetachedSubmitted DetachedSucceeded DetachedTaskRowWire DetachedTiming DetachedTimingAnswer
 #   DetachedUnknown DetachedUnreachable DetachedUnrunnable DetachedVersionMismatch EnvVar GroupLimit
-#   MODULE_TAGS OPEN_PHASES OUTBOX_ENDED OUTBOX_KINDS OUTBOX_QUEUED_OVERDUE QueueTaskRowWire
+#   MODULE_TAGS OPEN_PHASES OUTBOX_ENDED OUTBOX_KINDS OUTBOX_QUEUED_OVERDUE OUTBOX_RERAN QueueTaskRowWire
 #   ReadDetachedQueue ReadDetachedTiming ReadRunners ReadServices ReleaseDetached RunnerFact
 #   RunnersAnswer RunnersChange RunnersChangeAnswer RunnersUnreachable RunnersWatchMissing
 #   ServiceFact ServiceListWire ServiceProcessWire ServiceReady ServiceRowSpecWire

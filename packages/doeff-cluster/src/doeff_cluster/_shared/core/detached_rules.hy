@@ -33,6 +33,20 @@
       (.format "notify は空白を持たない {} 字までの文字列(終わりの知らせ先): {!r}" TASK-NOTIFY-MAX-LENGTH value)))
 
 
+(deff task-rerun-refusal [#^ (| dict list tuple str int float bool None) value]  ; defk にできない: coordinator の本文の読み(Program の外)と構築関数が呼ぶ純粋な判断
+  {:pre [] :post [(: % (| str None))] :tags {:context "doeff-cluster" :role "judgment"}}
+  "task の本文の欄 rerun(担い手が消えた時の走らせ直しの名乗り)が受けられない理由(None = 欄が無いか、真偽の値)。"
+  (if (or (is value None) (isinstance value bool))
+      None
+      (.format "rerun は真偽の値(担い手が消えた時の走らせ直しの名乗り): {!r}" value)))
+
+
+(deff task-rerun-json [#^ bool rerun]  ; defk にできない: 本文の綴り(handler と模擬の宿 — Program の外)が呼ぶ純粋な綴り
+  {:pre [(: rerun bool)] :post [(: % dict)] :tags {:context "doeff-cluster" :role "judgment"}}
+  "走らせ直しの名乗りを本文の欄に綴るため(名乗らない task は欄を置かない)。"
+  (if rerun {"rerun" True} {}))
+
+
 (deff task-notify-json [#^ str notify]  ; defk にできない: 本文の綴り(handler と模擬の宿 — Program の外)が呼ぶ純粋な綴り
   {:pre [(: notify str)] :post [(: % dict)] :tags {:context "doeff-cluster" :role "judgment"}}
   "知らせ先の本文の欄を綴るため(空 = 知らせない は欄を置かない — 旧い coordinator は知らない欄を捨てる)。"
@@ -160,16 +174,16 @@
 
 
 (defk submit-detached-task [program key * memory-mib [needs (frozenset)] [name ""] [lease-seconds DETACHED-DEFAULT-LEASE-SECONDS]
-                           [retain-seconds DETACHED-DEFAULT-RETAIN-SECONDS] [environ #()] [priority 0] [limits #()] [notify ""]]
+                           [retain-seconds DETACHED-DEFAULT-RETAIN-SECONDS] [environ #()] [priority 0] [limits #()] [notify ""] [rerun False]]
   {:pre [(: program Program) (: key str) (: needs (| frozenset tuple list set dict str None)) (: name str) (: lease-seconds float)
-         (: retain-seconds float) (: environ (| (get tuple #(EnvVar ...)) dict)) (: priority int) (: limits tuple) (: notify str)
+         (: retain-seconds float) (: environ (| (get tuple #(EnvVar ...)) dict)) (: priority int) (: limits tuple) (: notify str) (: rerun bool)
          (: memory-mib (| int None))]
    :post [(: % DetachedSubmitAnswer)]
    :tags {:context "doeff-cluster" :role "judgment"}}
   "SubmitDetached の構築関数 — 作り手はここを通す。needs が能力の名の空でない frozenset でなければ(書き忘れの空・旧い Requirement の
    tuple・label の形の名)送る前に TypeError で断る(ADR-DOE-CLUSTER-001 R4b)。environ の形(EnvVar の重ならない tuple — 写像は断る)は
    型が作る時に検める。置き方の名乗り(priority = 置く順の優先・limits = 同時数の上限 TaskLimit の tuple)と知らせ先 notify(終わりの
-   出口へ積む先 — 空 = 知らせない)は受け口と同じ規則で検める。memory の要り memory-mib(1 本の山の MiB)は必須で、渡さない呼びも
+   出口へ積む先 — 空 = 知らせない)は受け口と同じ規則で検める。rerun = 担い手が消えた時に走らせ直す名乗り(SubmitDetached の rerun の註)。memory の要り memory-mib(1 本の山の MiB)は必須で、渡さない呼びも
    None も TypeError で断る(2026-11-02 — 受け口も要りの無い本文を 400 で断る)。検めた SubmitDetached をその場で出し、答え(DetachedSubmitted か DetachedUnreachable)を返す(defk は作った effect を
    値として返せない — doeff-hy の _guard-performed)。needs の検めを型(intent)の外のここに置くのは、intent が core の判断を読まないため(#2564)。
    (名を submit-detached にしないのは、coordinator の判断 detached_policy.submit-detached と sim の口 local.submit-detached が同じ名を持つため。)"
@@ -187,5 +201,5 @@
   (when placing (raise (TypeError (+ "SubmitDetached: " placing))))
   (<- answer DetachedSubmitAnswer
       (SubmitDetached program key :needs needs :name name :lease-seconds lease-seconds :retain-seconds retain-seconds :environ environ
-                      :priority priority :limits limits :notify notify :memory-mib memory-mib))
+                      :priority priority :limits limits :notify notify :memory-mib memory-mib :rerun rerun))
   answer)
