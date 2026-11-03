@@ -52,10 +52,13 @@
   {:pre [(: service KubeService)] :post [(: % str)] :tags {:context "doeff-cluster" :role "protocol" :spells "json"}}
   "宣言 service を server-side apply の本文の JSON の字へ綴るため(JSON の境界の 1 点 — 欄は k8s の Service と同じ名。宣言が持つ欄だけを書く:
    空の labels・annotations は欄ごと省き、load-balancer-class は書いた時だけ・LOAD-BALANCER は node の口を開けない — 頭の註は
-   kube_service_model.hy)。口の protocol は TCP と書く(server-side apply は口の列を port と protocol の組で見分ける)。"
+   kube_service_model.hy)。口の protocol は TCP と書く(server-side apply は口の列を port と protocol の組で見分ける)。
+   publishNotReadyAddresses は毎回 false と書く: 止まりかけ(Terminating)と NotReady の Pod を宛先から外す(手で true にした欄も、
+   [removed]
   (val metadata (! (_metadata-of service)))
   (val spec (| {"type" service.type.value
                 "selector" (dict service.selector)
+                "publishNotReadyAddresses" False
                 "ports" (lfor port service.ports {"name" port.name "port" port.port "targetPort" port.target-port "protocol" "TCP"})}
                (if (is service.load-balancer-class None) {} {"loadBalancerClass" service.load-balancer-class})
                (if (= service.type KubeServiceType.LOAD-BALANCER) {"allocateLoadBalancerNodePorts" False} {})))
