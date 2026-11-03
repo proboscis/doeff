@@ -362,7 +362,7 @@ coordinator の状態(`GET /state`)から読み直します。受け手は `coor
 | `GET '/events?kind=Service&name=<名>&limit=50'` | 誰がいつ何を書いたか |
 | `GET /metrics` | Prometheus の text(service の計器は label `service`・`worker` 付き・盤の行の数と大きさ・戻しの止まった Rollout) |
 | `GET /livez`・`GET /readyz` | 調停ループが最後に要求を取りに来てからの秒だけで答える(readyz は 30 秒・livez は 120 秒止まると 503) |
-| `POST /workers/<名>/drain`・`DELETE /workers/<名>/drain` | worker の drain の依頼と取り消し |
+| `POST /workers/<名>/drain`・`DELETE /workers/<名>/drain` | worker の drain の依頼と取り消し。1 回の頼みの期限(`ttlSeconds`)は 300 秒まで — 長く空ける頼み手は期限の内に頼み直し、頼み手が居なくなれば最後の頼みから上限の内に drain が消える(世代を付けない頼みの越えた期限は 400、世代つきの頼みは 300 秒に縮めて受ける) |
 | `POST /leases/<名>` | 名前付きの lease(`op` = claim / renew / release / drop) |
 | `POST /tasks`・`GET /tasks/<id>`・`DELETE /tasks/<id>` | task を出す(`{program(sha) revision needs name leaseSeconds format runtimeEnv?}`)・問い合わせる(lease を延ばす)・落とす |
 | `POST /tasks/<id>/result` | task の子 process が終わる前に結果を送る(`{worker instance result format}`)。置いた worker からなら task を終える・終わった task には何もしない(200)・別の worker は 409・知らない task は 404 |
