@@ -1,0 +1,4 @@
+doeff は、Python で Algebraic Effects を使えるライブラリです。ハンドラはプログラムの残りを受け取るので、時刻・並行処理・リトライ・予算・I/O を、同じコードの外側にレイヤーとして重ねられます。
+
+pip install doeff
+https://github.com/proboscis/doeff

@@ -1,5 +1,5 @@
 <svg xmlns="http://www.w3.org/2000/svg" width="1080" height="1060" viewBox="0 0 1080 1060">
-  <!-- メイン記事の冒頭の全体の図。処理がAskで依頼し、ハンドラがResumeで値を返して再開する往復を示す。 -->
+  <!-- メイン記事の冒頭の全体の図。処理がSpendをyieldして止まり、ハンドラが続きkと一緒に受け取って、Resumeで再開する往復と、重ねる層の例を示す。 -->
   <defs>
     <marker id="arrow" viewBox="0 0 12 12" refX="10" refY="6" markerWidth="5" markerHeight="5" orient="auto-start-reverse">
       <path d="M0,0 L12,6 L0,12 z" fill="#0f8b8d"/>
@@ -13,32 +13,32 @@
   <rect width="1080" height="1060" fill="#ffffff"/>
 
   <text x="60" y="190" font-family="DejaVu Sans, sans-serif" font-weight="bold" font-size="170" fill="#1f2d4d">doeff</text>
-  <text class="ja" x="60" y="290" font-size="58" font-weight="bold">処理を書く。動かし方は、選べる。</text>
-  <text class="ja teal" x="60" y="360" font-size="40">Pythonのエフェクトとハンドラのライブラリ</text>
+  <text class="ja" x="60" y="290" font-size="58" font-weight="bold">1つの処理に、ハンドラを重ねる。</text>
+  <text class="ja teal" x="60" y="360" font-size="40">Pythonの代数的エフェクトのライブラリ</text>
 
   <rect x="60" y="410" width="960" height="180" rx="24" fill="#e3f0fb" stroke="#9cc3e6" stroke-width="3"/>
   <text class="ja" x="95" y="470" font-size="40">処理の本体（@do）</text>
-  <text class="code" x="95" y="550" font-size="46" xml:space="preserve">name = yield Ask("name")</text>
+  <text class="code" x="95" y="550" font-size="46" xml:space="preserve">yield Spend(3)</text>
 
   <line x1="200" y1="600" x2="200" y2="700" stroke="#0f8b8d" stroke-width="8" marker-end="url(#arrow)"/>
-  <text class="ja" x="230" y="665" font-size="40">① 名前を依頼</text>
-  <line x1="640" y1="700" x2="640" y2="600" stroke="#0f8b8d" stroke-width="8" marker-end="url(#arrow)"/>
-  <text class="ja" x="670" y="665" font-size="40">② 花子を渡して再開</text>
+  <text class="ja" x="230" y="665" font-size="40">① 続きkと一緒に渡す</text>
+  <line x1="690" y1="700" x2="690" y2="600" stroke="#0f8b8d" stroke-width="8" marker-end="url(#arrow)"/>
+  <text class="ja" x="720" y="665" font-size="40">② 答えて再開</text>
 
   <rect x="60" y="710" width="960" height="180" rx="24" fill="#eee8f8" stroke="#b9a6e0" stroke-width="3"/>
   <text class="ja" x="95" y="770" font-size="40">ハンドラ（@handler）</text>
-  <text class="code" x="95" y="850" font-size="46" xml:space="preserve">yield Resume(k, "花子")</text>
+  <text class="code" x="95" y="850" font-size="46" xml:space="preserve">yield Resume(k, None)</text>
 
   <g class="ja" font-size="36">
-    <rect x="60" y="940" width="300" height="76" rx="38" fill="#e0f5ef"/>
-    <text x="210" y="991" text-anchor="middle">AIエージェント</text>
-    <rect x="380" y="940" width="184" height="76" rx="38" fill="#e0f5ef"/>
-    <text x="472" y="991" text-anchor="middle">仮想時間</text>
-    <rect x="584" y="940" width="148" height="76" rx="38" fill="#e0f5ef"/>
-    <text x="658" y="991" text-anchor="middle">ゲーム</text>
-    <rect x="752" y="940" width="184" height="76" rx="38" fill="#e0f5ef"/>
-    <text x="844" y="991" text-anchor="middle">永続実行</text>
-    <rect x="956" y="940" width="64" height="76" rx="32" fill="#e0f5ef"/>
-    <text x="988" y="991" text-anchor="middle">DI</text>
+    <rect x="60" y="940" width="112" height="76" rx="38" fill="#e0f5ef"/>
+    <text x="116" y="991" text-anchor="middle">予算</text>
+    <rect x="192" y="940" width="184" height="76" rx="38" fill="#e0f5ef"/>
+    <text x="284" y="991" text-anchor="middle">リトライ</text>
+    <rect x="396" y="940" width="184" height="76" rx="38" fill="#e0f5ef"/>
+    <text x="488" y="991" text-anchor="middle">仮想時間</text>
+    <rect x="600" y="940" width="112" height="76" rx="38" fill="#e0f5ef"/>
+    <text x="656" y="991" text-anchor="middle">観察</text>
+    <rect x="732" y="940" width="148" height="76" rx="38" fill="#e0f5ef"/>
+    <text x="806" y="991" text-anchor="middle">テスト</text>
   </g>
 </svg>

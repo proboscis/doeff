@@ -1,5 +1,5 @@
-<svg xmlns="http://www.w3.org/2000/svg" width="1080" height="1330" viewBox="0 0 1080 1330">
-  <!-- greetがAskで止まり、ハンドラがResumeで花子を渡し、挨拶がrun()の結果になるまでの順を示す。 -->
+<svg xmlns="http://www.w3.org/2000/svg" width="1080" height="1300" viewBox="0 0 1080 1300">
+  <!-- 4枚目の層で、最初のFetchがcheck→record→fake_web→checkと進む順を示す(英語の記事のsequenceDiagramの訳)。 -->
   <defs>
     <marker id="arrow" viewBox="0 0 12 12" refX="10" refY="6" markerWidth="5" markerHeight="5" orient="auto">
       <path d="M0,0 L12,6 L0,12 z" fill="#0f8b8d"/>
@@ -9,35 +9,37 @@
       .code { font-family: "DejaVu Sans Mono", "IPAGothic", monospace; fill: #1f2d4d; }
     </style>
   </defs>
-  <rect width="1080" height="1330" fill="#ffffff"/>
+  <rect width="1080" height="1300" fill="#ffffff"/>
 
-  <text class="ja" x="540" y="76" font-size="46" font-weight="bold" text-anchor="middle">Askを受け取り、値を渡して挨拶の続きを再開する</text>
+  <text class="ja" x="540" y="76" font-size="42" font-weight="bold" text-anchor="middle">recordが書き留めたFetchを、Passでfake_webへ渡す</text>
 
-  <rect x="60" y="120" width="960" height="200" rx="24" fill="#e0f5ef" stroke="#8fd3bf" stroke-width="3"/>
-  <text class="ja" x="95" y="178" font-size="40" font-weight="bold">① greet</text>
-  <text class="code" x="95" y="250" font-size="44" xml:space="preserve">name = yield Ask("name")</text>
-  <text class="ja" x="95" y="300" font-size="36">名前を依頼して、ここで止まる</text>
+  <rect x="60" y="120" width="960" height="190" rx="24" fill="#e0f5ef" stroke="#8fd3bf" stroke-width="3"/>
+  <text class="ja" x="95" y="176" font-size="40" font-weight="bold">① check</text>
+  <text class="code" x="95" y="244" font-size="44" xml:space="preserve">yield Fetch(url)</text>
+  <text class="ja" x="95" y="292" font-size="36">ページを頼んで止まる(続きがk)</text>
 
-  <line x1="200" y1="328" x2="200" y2="412" stroke="#0f8b8d" stroke-width="8" marker-end="url(#arrow)"/>
-  <text class="ja" x="230" y="384" font-size="38">VMが依頼と、続きkを届ける</text>
+  <line x1="200" y1="318" x2="200" y2="392" stroke="#0f8b8d" stroke-width="8" marker-end="url(#arrow)"/>
+  <text class="ja" x="230" y="368" font-size="38">内側のrecordに届く</text>
 
-  <rect x="60" y="420" width="960" height="230" rx="24" fill="#eee8f8" stroke="#b9a6e0" stroke-width="3"/>
-  <text class="ja" x="95" y="478" font-size="40" font-weight="bold">② ハンドラ</text>
-  <text class="code" x="330" y="478" font-size="36">handle_ask_effect</text>
-  <text class="code" x="95" y="560" font-size="44" xml:space="preserve">yield Resume(k, "花子")</text>
-  <text class="ja" x="95" y="620" font-size="36">k = 止まった処理の続き。「花子」で再開する</text>
+  <rect x="60" y="400" width="960" height="250" rx="24" fill="#eee8f8" stroke="#b9a6e0" stroke-width="3"/>
+  <text class="ja" x="95" y="456" font-size="40" font-weight="bold">② record(注釈なし)</text>
+  <text class="code" x="95" y="524" font-size="40" xml:space="preserve">tape.append("Fetch")</text>
+  <text class="code" x="95" y="584" font-size="40" xml:space="preserve">yield Pass(Fetch(url), k)</text>
+  <text class="ja" x="95" y="632" font-size="36">名を書き留め、答えずに外へ渡す</text>
 
-  <line x1="200" y1="658" x2="200" y2="742" stroke="#0f8b8d" stroke-width="8" marker-end="url(#arrow)"/>
-  <text class="ja" x="230" y="714" font-size="38">VMがgreetを再開する</text>
+  <line x1="200" y1="658" x2="200" y2="732" stroke="#0f8b8d" stroke-width="8" marker-end="url(#arrow)"/>
+  <text class="ja" x="230" y="708" font-size="38">外のfake_webに届く</text>
 
-  <rect x="60" y="750" width="960" height="230" rx="24" fill="#e0f5ef" stroke="#8fd3bf" stroke-width="3"/>
-  <text class="ja" x="95" y="808" font-size="40" font-weight="bold">③ greet</text>
-  <text class="ja" x="95" y="868" font-size="38">nameに「花子」が入り、次の行へ進む</text>
-  <text class="code" x="95" y="945" font-size="40" xml:space="preserve">return f"こんにちは、{name}さん"</text>
+  <rect x="60" y="740" width="960" height="190" rx="24" fill="#eee8f8" stroke="#b9a6e0" stroke-width="3"/>
+  <text class="ja" x="95" y="796" font-size="40" font-weight="bold">③ fake_web</text>
+  <text class="code" x="95" y="864" font-size="44" xml:space="preserve">yield Resume(k, page)</text>
+  <text class="ja" x="95" y="912" font-size="36">辞書のページで答える</text>
 
-  <line x1="200" y1="988" x2="200" y2="1072" stroke="#0f8b8d" stroke-width="8" marker-end="url(#arrow)"/>
+  <line x1="200" y1="938" x2="200" y2="1012" stroke="#0f8b8d" stroke-width="8" marker-end="url(#arrow)"/>
+  <text class="ja" x="230" y="988" font-size="38">checkが続きから進む</text>
 
-  <rect x="60" y="1080" width="960" height="190" rx="24" fill="#ffffff" stroke="#0f8b8d" stroke-width="5"/>
-  <text class="ja" x="95" y="1140" font-size="38">④ run()の結果</text>
-  <text class="ja" x="95" y="1225" font-size="56" font-weight="bold">こんにちは、花子さん</text>
+  <rect x="60" y="1020" width="960" height="210" rx="24" fill="#e0f5ef" stroke="#8fd3bf" stroke-width="3"/>
+  <text class="ja" x="95" y="1076" font-size="40" font-weight="bold">④ check</text>
+  <text class="code" x="95" y="1144" font-size="44" xml:space="preserve">page = yield Fetch(url)</text>
+  <text class="ja" x="95" y="1200" font-size="36">pageにページが入り、次の行へ進む</text>
 </svg>

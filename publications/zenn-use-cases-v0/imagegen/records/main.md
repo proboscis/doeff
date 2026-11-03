@@ -15,3 +15,5 @@ main-conceptとmain-flowをv3へ更新した。組み込みimagegenで生成・�
 - メインの3枚（main-hero・main-concept・main-flow）も、週1の仕上げに合わせて手で書いたSVGから作り直した。
 - 正本と作り方は[main-svg-source.txt](../main-svg-source.txt)に書いた。manifest.jsonの`tool`は時間の記事と同じ。
 - これで残りは40枚。
+
+2026-10-22、記事を英語の1本目「Algebraic effects for Python」の訳に置き換えた。main-conceptとmain-flowは、英語の記事の2つのsequenceDiagramを手で書いたSVG(../../visuals/main-concept.svg・main-flow.svg)で日本語の図にし、render_svg.mjsでPNGにした。main-heroも、前の本文のAskと花子の往復を、本文のSpendとResumeの往復と重ねる層の札に描き直した。
