@@ -1,18 +1,18 @@
-;;; Executable ADR: program は時間を doeff-time の効果(Delay・WaitUntil・WaitWithin など)を yield して待つ。time.sleep・asyncio.sleep で
-;;; 壁の時計を待つのは、時間の handler の実装((effect, k) を受ける関数)だけ。新しい素の sleep は semgrep の規則が ERROR で止める。
-;;; Hy の program(defk・defp)は semgrep が読めないので、doeff-linter の規則 DOEFF210 が同じ決まりを止める(R7)。
-;;; Hy の検も semgrep が読めないので、doeff-linter の規則 DOEFF211 が検の決まり(R3)を止める(R8)。
+;;; Executable ADR: programs wait for time by yielding doeff-time effects (Delay, WaitUntil, WaitWithin, etc.). Waiting on the wall clock with time.sleep or asyncio.sleep
+;;; is only for implementations of time handlers (functions that receive (effect, k)). A semgrep rule stops new bare sleeps with ERROR.
+;;; semgrep cannot read Hy programs (defk, defp), so the doeff-linter rule DOEFF210 enforces the same rule (R7).
+;;; semgrep cannot read Hy checks either, so the doeff-linter rule DOEFF211 enforces the rule for checks (R3) (R8).
 ;;;
-;;; 決めた事(2026-10-12)は下の :problem の fact に書いた。
+;;; The decision (2026-10-12) is written in the :problem fact below.
 ;;;
-;;; この冊は規則の中身(pattern・paths)を持たない。規則の定義は .semgrep.yaml の 1 か所で、冊は法の :enforced-by に規則の id と検の名を
-;;; `<repo の根からの path>::<名>` の形で書き、その名が今の木に在る事・規則が ERROR である事・極性の検がその規則を当てている事を
-;;; :enforcement の検で見る(規則を消す・WARNING に下げる・検の名を変えると赤)。名は、semgrep の設定なら規則の id・Python の検なら
-;;; module の段の関数・Hy の検なら deftest・Rust の検なら #[test] の関数。
+;;; This ADR file does not hold the rules' content (pattern, paths). The rules are defined in one place, .semgrep.yaml; the file writes the rule ids and check names in the laws' :enforced-by
+;;; as `<path from the repo root>::<name>`, and its :enforcement checks verify that each name exists in the current tree, that the rules are ERROR, and that the polarity checks apply those rules
+;;; (deleting a rule, lowering it to WARNING, or renaming a check is red). The name is the rule id for the semgrep config, a
+;;; module-level function for Python checks, a deftest for Hy checks, and a #[test] function for Rust checks.
 ;;;
-;;; 戻し方: この冊を足した commit を revert する(冊の file 1 つと enforcement-ledger.json の行)。規則そのものを外す時は、
-;;; .semgrep.yaml の doeff-no-sleep-in-programs・doeff-no-sleep-in-tests・doeff-agents-no-sleep-effect-hy と極性の検・名簿・この冊を同じ commit で消し、
-;;; docs/adr/enforcement-ledger.json を作り直す(ADR-DOE-ENFORCE-001 R5)。
+;;; Rollback: revert the commit that added this file (one ADR file and the enforcement-ledger.json rows). To remove the rules themselves,
+;;; delete doeff-no-sleep-in-programs, doeff-no-sleep-in-tests, and doeff-agents-no-sleep-effect-hy in .semgrep.yaml together with the polarity checks, the registry, and this file in the same commit,
+;;; and rebuild docs/adr/enforcement-ledger.json (ADR-DOE-ENFORCE-001 R5).
 
 (require doeff-adr.macros [defadr rule law])
 (import doeff-adr.macros [fact interpretation counterexample])
@@ -27,15 +27,15 @@
 
 
 ;; ---------------------------------------------------------------------------
-;; 台帳
+;; Ledger
 
 (val ADR-ID "ADR-DOE-TIME-001")
 (val THIS-FILE "docs/adr/defadr_doeff_time_001_programs_wait_by_time_effects.hy")
 
-;; sleep の規則の定義の 1 か所。
+;; The single place where the sleep rules are defined.
 (val SEMGREP-CONFIG ".semgrep.yaml")
 
-;; 規則の id → その極性の検の file(検体の `# 鳴る`〔Hy の検体は `; 鳴る`〕の行だけが当たる事を、SEMGREP-CONFIG の規則そのものを当てて見る検)。
+;; Rule id → its polarity check file (a check that applies the rule itself from SEMGREP-CONFIG and verifies that only the sample's `# fires` lines [`; fires` in Hy samples] hit).
 (val POLARITY-TESTS
   {"doeff-no-sleep-in-programs" "tests/semgrep/test_no_sleep_in_programs_rule.py"
    "doeff-no-sleep-in-tests" "tests/semgrep/test_no_sleep_in_tests_rule.py"
@@ -43,11 +43,11 @@
 
 
 ;; ---------------------------------------------------------------------------
-;; 判断(純関数)
+;; Judgments (pure functions)
 
 (defk rule-severities [config-text]
   {:pre [(: config-text str)] :post [(: % dict)] :tags {:context "doeff-time-adr" :role "judgment"}}
-  "semgrep の設定の文から、規則の id → その id を持つ規則の severity の並び(同じ id の規則が 2 つ在れば 2 つ並ぶ)。"
+  "From the semgrep config text: rule id → the list of severities of rules with that id (if 2 rules share an id, there are 2 entries)."
   (val rules (.get (or (yaml.safe-load config-text) {}) "rules" []))
   (dfor rule-id (sfor r rules (str (get r "id")))
         rule-id (lfor r rules :if (= (str (get r "id")) rule-id) (.get r "severity"))))
@@ -55,7 +55,7 @@
 
 (defk polarity-subject [source]
   {:pre [(: source str)] :post [(: % tuple)] :tags {:context "doeff-time-adr" :role "judgment"}}
-  "極性の検の source が当てる物: module の段の RULE の値(規則の id)と、CONFIG の式の中の文字列(設定の file の名)。書いていなければ None。"
+  "What a polarity check's source applies: the module-level RULE value (the rule id) and the string inside the CONFIG expression (the config file name). None if not written."
   (val assigned (dfor node (. (ast.parse source) body)
                       :if (and (isinstance node ast.Assign)
                                (= (len node.targets) 1)
@@ -74,7 +74,7 @@
 
 (defk deftest-names [text]
   {:pre [(: text str)] :post [(: % frozenset)] :tags {:context "doeff-time-adr" :role "judgment"}}
-  "Hy の source のどの深さでも、(deftest 名 …) の形の名を集める(文字列と註の中の綴りは形でないので数えない)。"
+  "Collect the names of (deftest name …) forms at any depth of Hy source (spellings inside strings and comments are not forms and are not counted)."
   (var pending (list (hy.read-many text)))
   (var names #{})
   (while pending
@@ -87,20 +87,20 @@
   (frozenset names))
 
 
-;; Rust の検: 行の頭(字下げだけ)の #[test] の次の行の fn の名。註にした検(// #[test]・// fn …)は行の頭が // なので当たらない。
+;; Rust checks: the fn name on the line after a #[test] at the start of a line (indentation only). Commented-out checks (// #[test], // fn …) start with // and do not match.
 (val RUST-TEST (re.compile r"^[ \t]*#\[test\][ \t]*\n[ \t]*fn[ \t]+([A-Za-z_][A-Za-z0-9_]*)" re.MULTILINE))
 
 
 (defk rust-test-names [text]
   {:pre [(: text str)] :post [(: % frozenset)] :tags {:context "doeff-time-adr" :role "judgment"}}
-  "Rust の source が検として定義する名(#[test] の付いた関数)。#[test] の無い関数と、註にした検は数えない。"
+  "The names Rust source defines as checks (functions with #[test]). Functions without #[test] and commented-out checks are not counted."
   (frozenset (.findall RUST-TEST text)))
 
 
 (defk check-names [rel text]
   {:pre [(: rel str) (: text str)] :post [(: % frozenset)] :tags {:context "doeff-time-adr" :role "judgment"}}
-  "file の中身 text が検として定義する名: semgrep の設定は規則の id・Python の検は module の段の関数の名・Hy の検は deftest の名・
-   Rust の検は #[test] の関数の名。"
+  "The names the file content text defines as checks: rule ids for the semgrep config, module-level function names for Python checks, deftest names for Hy checks,
+   and #[test] function names for Rust checks."
   (<- severities dict (rule-severities (if (= rel SEMGREP-CONFIG) text "")))
   (<- deftests frozenset (deftest-names (if (.endswith rel ".hy") text "")))
   (<- rust-tests frozenset (rust-test-names (if (.endswith rel ".rs") text "")))
@@ -114,11 +114,11 @@
 
 
 ;; ---------------------------------------------------------------------------
-;; 土台(file を読む)
+;; Foundation (reads files)
 
 (defk dead-checks [repo-root entries]
   {:pre [(: repo-root Path) (: entries list)] :post [(: % list)] :tags {:context "doeff-time-adr" :role "foundation"}}
-  "法の :enforced-by の項(`<repo の根からの path>::<名>`)のうち、今の木に在る規則・検を指していない物を、訳つきで挙げる。"
+  "Among the laws' :enforced-by entries (`<path from the repo root>::<name>`), list with reasons those that do not point to a rule or check in the current tree."
   (var dead [])
   (for [entry entries]
     (val parts (.partition entry "::"))
@@ -128,22 +128,22 @@
     (val text (if (.is-file path) (.read-text path :encoding "utf-8") ""))
     (<- names frozenset (check-names rel text))
     (when (not-in name names)
-      (:= dead (+ dead [f"{entry}: {rel} に {(or name "<名なし>")} という規則・検が無い"]))))
+      (:= dead (+ dead [f"{entry}: {rel} has no rule or check named {(or name "<no name>")}"]))))
   dead)
 
 
 (defadr ADR-DOE-TIME-001
-  :title "program は時間を doeff-time の効果(Delay・WaitUntil・WaitWithin など)を yield して待つ。time.sleep・asyncio.sleep で壁の時計を待つのは時間の handler の実装だけで、新しい素の sleep は .semgrep.yaml の規則が ERROR で止める"
+  :title "Programs wait for time by yielding doeff-time effects (Delay, WaitUntil, WaitWithin, etc.). Only implementations of time handlers wait on the wall clock with time.sleep or asyncio.sleep, and a rule in .semgrep.yaml stops new bare sleeps with ERROR"
   :status "accepted"
-  :scope [".semgrep.yaml(規則 doeff-no-sleep-in-programs・doeff-no-sleep-in-tests・doeff-agents-no-sleep-effect-hy)"
+  :scope [".semgrep.yaml(rules doeff-no-sleep-in-programs, doeff-no-sleep-in-tests, doeff-agents-no-sleep-effect-hy)"
           "packages/doeff-flow/examples/"
-          "packages/doeff-linter/src/project/program_sleep.rs(規則 DOEFF210)"
+          "packages/doeff-linter/src/project/program_sleep.rs(rule DOEFF210)"
           "packages/doeff-linter/tests/program_sleep.rs"
-          "pyproject.toml の [tool.doeff-linter.program_sleep]"
-          "packages/doeff-linter/src/project/test_sleep.rs(規則 DOEFF211)"
+          "pyproject.toml section [tool.doeff-linter.program_sleep]"
+          "packages/doeff-linter/src/project/test_sleep.rs(rule DOEFF211)"
           "packages/doeff-linter/tests/test_sleep.rs"
-          "pyproject.toml の [tool.doeff-linter.test_sleep]"
-          "packages/doeff-agents/src/doeff_agents/(tmux.py・agentd_client.py・io_handlers.hy・sessionhost/launch.hy・sessionhost/host.hy)"
+          "pyproject.toml section [tool.doeff-linter.test_sleep]"
+          "packages/doeff-agents/src/doeff_agents/(tmux.py, agentd_client.py, io_handlers.hy, sessionhost/launch.hy, sessionhost/host.hy)"
           "tests/semgrep/test_no_sleep_in_programs_rule.py"
           "tests/semgrep/test_no_sleep_in_tests_rule.py"
           "tests/semgrep/test_doeff_agents_no_sleep_effect_hy_rule.py"
@@ -153,46 +153,46 @@
           "docs/adr/defadr_doeff_time_001_programs_wait_by_time_effects.hy"]
   :problem
     [(fact
-       "2026-10-12 に決めた事: 待つ所に asyncio.sleep を使う理由は無く、doeff の時間の effect を使う。この決まりは linter で検める。"
-       :evidence "commit ba5513169 の message")
+       "Decision 2026-10-12: there is no reason to use asyncio.sleep where waiting happens; use doeff's time effects. This rule is checked by a linter."
+       :evidence "The message of commit ba5513169")
      (fact
-       "2026-10-12 の doeff の main では、sleep の規則は semgrep の doeff-no-sleep-in-tests だけだった。対象は tests/ だけ・severity は WARNING(main への取り込みを止めない)で、本体(src)に規則は無かった。tests/ で asyncio.sleep を含む file は 30 在った。"
-       :evidence "2026-10-12 22:4x に main の作業木を git grep で読んだ記録")
+       "On doeff main as of 2026-10-12, the only sleep rule was semgrep's doeff-no-sleep-in-tests. It covered only tests/, with severity WARNING (not blocking merges to main), and there was no rule for the core (src). There were 30 files under tests/ containing asyncio.sleep."
+       :evidence "Record of reading the main working tree with git grep at 2026-10-12 22:4x")
      (fact
-       "本体の @do の program の中の素の sleep は 7 か所在った(doeff-gemini structured_llm.py の再試行と upload の待ち・doeff-openai chat.py・embeddings.py・structured_llm.py・doeff-openrouter chat.py・doeff-seedream structured_llm.py の再試行の待ち)。再試行の道を通る検(openai 3・gemini 5)は実時間で 1〜2 秒待つか、asyncio.sleep を monkeypatch で差し替えていた。"
-       :evidence "commit ba5513169(2026-10-14 02:21 JST に main・7 か所を Delay に替え、規則 2 つを ERROR にした)")
+       "There were 7 bare sleeps inside @do programs in the core (the retry and upload waits in doeff-gemini structured_llm.py, and the retry waits in doeff-openai chat.py, embeddings.py, structured_llm.py, doeff-openrouter chat.py, and doeff-seedream structured_llm.py). Checks exercising the retry paths (openai 3, gemini 5) either waited 1–2 seconds in real time or replaced asyncio.sleep via monkeypatch."
+       :evidence "Commit ba5513169 (on main at 2026-10-14 02:21 JST; replaced the 7 places with Delay and made the 2 rules ERROR)")
      (fact
-       "2026-10-14 の main(4dffe90e5)では Hy の program に規則が無かった。DOEFF210 をその木に当てると、当たりは doeff-agents の sessionhost/substrate_herdr.hy の defk herdr-send-keys-io の 3 行(595・598・604)。同じ木で doeff-agents の program は自前の待ちの効果 2 つで待っていた: io_effects の Sleep(tmux.py の 3 か所・agentd_client.py の 1 か所 — driver-io-handler が time.sleep で答える)と sessionhost の ClockSleep(launch.hy の wait-for-launch-ready の 7 か所 — real-substrate が time.sleep で答える)。既存の規則 doeff-agents-no-sleep-effect は Python の class SleepEffect / def Sleep の名だけを見るので、どちらにも当たっていなかった。"
-       :evidence "DOEFF210 を足した commit の本文(main の木への当たり 3 件と変更の後の 0 件を書いた)")
+       "On main as of 2026-10-14 (4dffe90e5) there was no rule for Hy programs. Applying DOEFF210 to that tree hits 3 lines (595, 598, 604) of defk herdr-send-keys-io in doeff-agents' sessionhost/substrate_herdr.hy. In the same tree, doeff-agents programs waited with 2 home-grown wait effects: io_effects' Sleep (3 places in tmux.py and 1 in agentd_client.py — driver-io-handler answers with time.sleep) and sessionhost's ClockSleep (7 places in wait-for-launch-ready in launch.hy — real-substrate answers with time.sleep). The existing rule doeff-agents-no-sleep-effect looks only at the Python names class SleepEffect / def Sleep, so it hit neither."
+       :evidence "Body of the commit that added DOEFF210 (records 3 hits on the main tree and 0 after the change)")
      (fact
-       "2026-10-14 の main(2222d4e48)では Hy の検に規則が無かった。DOEFF211 をその木に当てると、当たりは 62 件・32 file(doeff-cluster 27・doeff-core-effects 17・doeff-agents 11・doeff-records 5・doeff-claude-code 2)。git grep で数えた行は 70 で、その内訳は実の呼び 61・文字列の中(子の process に渡す program の本文)7・秒が 0 の譲り 2。規則は grep に掛からない言い換え 1 件((.wait (threading.Event) 0.1))も当てた。62 件はどれも本物の thread・本物の asyncio の loop・本物の外の process(子 process・HTTP の server・PostgreSQL・herdr)を締め切りつきで待つ所で、仮想の時計へ替えられる待ちは無かった。"
-       :evidence "DOEFF211 を足した commit の本文")]
+       "On main as of 2026-10-14 (2222d4e48) there was no rule for Hy checks. Applying DOEFF211 to that tree gives 62 hits in 32 files (doeff-cluster 27, doeff-core-effects 17, doeff-agents 11, doeff-records 5, doeff-claude-code 2). The lines counted with git grep were 70: 61 real calls, 7 inside strings (program bodies passed to child processes), and 2 zero-second yields. The rule also caught 1 paraphrase that grep misses ((.wait (threading.Event) 0.1)). All 62 hits wait with a deadline on a real thread, a real asyncio loop, or a real external process (child process, HTTP server, PostgreSQL, herdr); none was a wait that could be switched to a virtual clock."
+       :evidence "Body of the commit that added DOEFF211")]
   :context
     [(interpretation
-       "program が Delay を yield すれば、1 秒が何であるかは呼び手が置く時間の handler が決める: async_time_handler・sync_time_handler は壁の時計で待ち、sim_time_handler は仮想の時計を進めるだけで待たない。program が time.sleep・asyncio.sleep を呼ぶと、どの handler を置いても壁の時計で待つので、その program の検は実時間の分だけ遅くなり、込んだ機体では時間切れで赤になる。")
+       "If a program yields Delay, what a second is is decided by the time handler the caller installs: async_time_handler and sync_time_handler wait on the wall clock, and sim_time_handler only advances a virtual clock without waiting. If a program calls time.sleep or asyncio.sleep, it waits on the wall clock whatever handler is installed, so checks of that program are slowed by the real time and go red with timeouts on busy machines.")
      (interpretation
-       "決まりの言う doeff の linter は Rust の doeff-linter(DOEFFnnn)とも読めるが、commit ba5513169 は .semgrep.yaml の規則で入れた。これは実装の担い手の選びで、決まりが semgrep を名指したわけではない。commit の hook と日次の走査が新しい所見を止める点は、どちらの道具でも同じ。")
+       "The doeff linter the rule refers to could also be read as the Rust doeff-linter (DOEFFnnn), but commit ba5513169 implemented it as .semgrep.yaml rules. That is the implementer's choice of tool; the rule did not name semgrep. Either tool equally stops new findings via the commit hook and the daily scan.")
      (interpretation
-       "program でも handler でもない Python の loop(CLI の見張りのポーリング・常時動く thread の loop)の素の sleep は、境界の入口に数えて規則の対象にしない。これは実装の担い手が 2026-10-14 に決めた戻せる判断(案 A)で、2026-10-12 の決まりには含まれない。")]
+       "Bare sleeps in Python loops that are neither programs nor handlers (polling in CLI watchers, loops of always-running threads) count as boundary entries and are not covered by the rule. This is a reversible judgment made by the implementer on 2026-10-14 (option A) and is not part of the 2026-10-12 decision.")]
   :decision
-    [(rule R1 "program(@do の関数・defk)は、時間を待つ時に doeff-time の効果(Delay・WaitUntil・WaitWithin・RaceWithin・ScheduleAt・WaitTicks)を yield する。time.sleep(x)・asyncio.sleep(x) を呼ばない(yield Await(asyncio.sleep(x)) と from time import sleep の sleep(x) を含む)。時間を待たずに 1 度譲るだけの sleep(0) は数えない。")
-     (rule R2 "壁の時計を待ってよいのは、時間の handler の実装((effect, k) を受ける関数と、そこからだけ呼ばれる helper)だけ。呼び手は program を走らせる所で時間の handler を選ぶ: 本番は async_time_handler()(await_handler の内)か sync_time_handler()、検は sim_time_handler()。")
-     (rule R3 "検は program を sim_time_handler の仮想の時計で走らせるか、待つ物(出来事)を名指して待つ。time.sleep・asyncio.sleep を呼んでよいのは、実時間そのもの(本物の thread・本物の asyncio の loop・外の process や library)が対象の検だけで、その検は pytest の marker realtime を名乗り、名簿 tests/realtime_tests.toml の [tests] に理由と一緒に載る(本物の process を待つ検の support の module も、同じ pytestmark の 1 行で名乗って載る)。どの検も本物の外の process を黒箱で動かす組は、規則の paths.exclude の dir として名簿の [suites] に理由と一緒に載る(載っているのは packages/doeff-agents/conformance)。規則の外へ出る道はこの 2 つの表だけで、行の注釈(nosemgrep)で規則を外さず、threading.Event().wait(秒) のように sleep を言い換えない。")
-     (rule R4 "新しい素の sleep は linter で止める: .semgrep.yaml の規則 doeff-no-sleep-in-programs と doeff-no-sleep-in-tests を severity ERROR で置く。規則の定義(pattern・paths)は .semgrep.yaml の 1 か所で、この冊にも他の冊にも写さない。形の正しさ(鳴るべき行だけが鳴る)は、規則ごとの極性の検が .semgrep.yaml の規則そのものを検体に当てて見る。")
-     (rule R5 "規則が見ていない所は、子の card が塞ぐまで R1・R3 の法の外に在る。2026-10-14 の時点で、法の外に残っている所は無い: tests/ の nosemgrep の 7 か所と conformance/ は R3 で塞いだ。Hy の program(defk・defp)の素の time.sleep と doeff-agents の自前の待ちの効果は R7 で塞いだ。tests の dir の下の Hy の file は R8 で塞いだ。新しく見つけた「規則が見ていない所」は、ここに子の card と一緒に書く。塞いだ変更は、足した規則・検を下の法の :enforced-by に同じ変更で足す。")
-     (rule R7 "Hy の program(defk・defp の本体)にも R1 が当たり、doeff-linter の規則 DOEFF210 が critical で止める(semgrep は Hy を読めない)。規則の定義は packages/doeff-linter/src/project/program_sleep.rs の 1 か所、母集団(program の置き場)は根の pyproject.toml の [tool.doeff-linter.program_sleep] の 1 か所(本体 — tests/ と examples/ は外)。Hy で壁の時計を待ってよい handler の実装は 3 つの形: defhandler の節・引数の並びが [effect k] の定義・handler からだけ呼ばれて本物の相手(子 process・端末)の実時間を待つ helper。helper は契約の辞書の :tags で :role \"foundation\"(汎用の I/O の役)を自分で名乗り、Delay にしない訳を docstring に書く(2026-10-14 の 2 つ: doeff-agents の herdr-send-keys-io — 本物の TUI が貼り付けを受け終える実時間・doeff-core-effects の group-gone-by — 取り消しの手当ては要求の答え手の積みが届かない新しい VM で回り、doeff-core-effects は doeff-time に依存しない)。deff・defn(素の callable)は効果を出せないので program に数えない — deff の是非は ADR-DOE-HY-004 が持つ。doeff-agents は自前の待ちの効果を持たない: program は doeff_time の Delay を yield し、本番の root(io_handlers.hy の run-driver-io・sessionhost/host.hy の run-hosted)が doeff-time の sync-time-handler を置く。自前の待ちの効果を Hy で定め直す形(名に Sleep / Delay を含む効果の defclass・defeffect と、sleep / …-sleep という名の作り手)は、.semgrep.yaml の規則 doeff-agents-no-sleep-effect-hy が ERROR で止める(R4 と同じ扱い — 定義は .semgrep.yaml の 1 か所・形は極性の検が見る)。")
-     (rule R8 "Hy の検(名が tests の dir の下の Hy の file — 検・検の道具・子の process に渡す job の本体 — と、どこに在っても検の名の Hy の file)にも R3 が当たり、doeff-linter の規則 DOEFF211 が critical で止める(semgrep は Hy を読めない。DOEFF210 と同じ器で、同じ読みの部品を使う)。規則の定義は packages/doeff-linter/src/project/test_sleep.rs の 1 か所、母集団(検の置き場)は根の pyproject.toml の [tool.doeff-linter.test_sleep] の 1 か所。realtime の名乗りは pytest が印として読む 3 つの形: deftest の meta の {:marks [\"realtime\"]}・素の関数の検の decorator (defn [pytest.mark.realtime] 名 [] …)・module の最上位の (val pytestmark pytest.mark.realtime)(helper が待つ file と検の道具は module の段で名乗る)。名乗った検は Python の検と同じ名簿 tests/realtime_tests.toml の [tests] に理由と一緒に載り、鍵の名は pytest が見せる形(- を _ に直した名)。検が別の process として起こす独立の script(job の本体・替え玉の CLI)は pytest を import しないので印を名乗れない — その file は節の exclude に file で名指し、その 1 行が名乗りの代わりで、名簿の [tests] に同じ path の行を持つ(2026-10-14 の 2 つ: doeff-cluster の tests/fixtures/sleeper.hy・doeff-claude-code の tests/stub_cli/claude.hy)。節の exclude の dir の行は、規則の検体の dir と名簿の [suites] の dir だけ。名乗り・file の名指しと名簿の [tests]、exclude の dir と [suites] が 1 対 1 である事は名簿の検が見る。規則と名簿の検が同じ形を名乗りと読む事は、同じ検体(packages/doeff-linter/tests/fixtures/test_sleep/)を両方が読んで確かめる。既知の当たりの表で下げる道は無い(lowered_by_registry が偽)。")
-     (rule R6 "戻し方: この冊だけを外すなら、冊を足した commit を revert する。規則を外す・WARNING に下げるなら、2026-10-12 の決まりを覆す事になるので、新しい決まりを :problem に書いてから、規則・極性の検・名簿・この冊を同じ commit で直す。")]
+    [(rule R1 "Programs (@do functions, defk) yield doeff-time effects (Delay, WaitUntil, WaitWithin, RaceWithin, ScheduleAt, WaitTicks) when waiting for time. They do not call time.sleep(x) or asyncio.sleep(x) (including yield Await(asyncio.sleep(x)) and sleep(x) from from time import sleep). sleep(0), which yields once without waiting for time, is not counted.")
+     (rule R2 "Only implementations of time handlers (functions receiving (effect, k), and helpers called only from them) may wait on the wall clock. The caller chooses the time handler where it runs the program: in production async_time_handler() (inside await_handler) or sync_time_handler(); in checks sim_time_handler().")
+     (rule R3 "Checks run programs on sim_time_handler's virtual clock, or wait by naming the thing (event) waited for. Only checks whose subject is real time itself (a real thread, a real asyncio loop, an external process or library) may call time.sleep or asyncio.sleep; such a check declares the pytest marker realtime and is listed with a reason in [tests] of the registry tests/realtime_tests.toml (support modules of checks that wait on real processes also declare it with the same single pytestmark line and are listed). A suite in which every check drives a real external process as a black box is listed with a reason in the registry's [suites] as a dir in the rule's paths.exclude (currently packages/doeff-agents/conformance). These 2 tables are the only ways out of the rule; do not take the rule off with line annotations (nosemgrep), and do not paraphrase sleep as threading.Event().wait(seconds) and the like.")
+     (rule R4 "New bare sleeps are stopped by a linter: the .semgrep.yaml rules doeff-no-sleep-in-programs and doeff-no-sleep-in-tests are placed with severity ERROR. The rule definitions (pattern, paths) live in one place, .semgrep.yaml, and are not copied into this file or any other ADR file. Shape correctness (only the lines that should fire fire) is verified by each rule's polarity check applying the .semgrep.yaml rule itself to samples.")
+     (rule R5 "Places the rules do not see are outside the laws of R1 and R3 until a child card closes them. As of 2026-10-14 no such place remains: the 7 nosemgrep places under tests/ and conformance/ were closed by R3. Bare time.sleep in Hy programs (defk, defp) and doeff-agents' home-grown wait effects were closed by R7. Hy files under tests dirs were closed by R8. Any newly found \"place the rules do not see\" is written here with a child card. The change that closes it adds the added rule or check to the :enforced-by of the law below in the same change.")
+     (rule R7 "R1 also applies to Hy programs (bodies of defk and defp), and the doeff-linter rule DOEFF210 stops them as critical (semgrep cannot read Hy). The rule is defined in one place, packages/doeff-linter/src/project/program_sleep.rs, and the population (where programs live) in one place, [tool.doeff-linter.program_sleep] in the root pyproject.toml (the core — tests/ and examples/ are excluded). Hy handler implementations allowed to wait on the wall clock take 3 shapes: defhandler clauses, definitions whose parameter list is [effect k], and helpers called only from handlers that wait for the real time of a real counterpart (child process, terminal). Such a helper declares :role \"foundation\" (the generic I/O role) itself in the :tags of its contract dict and writes in its docstring why it is not a Delay (the 2 as of 2026-10-14: doeff-agents' herdr-send-keys-io — the real time for a real TUI to finish receiving a paste; doeff-core-effects' group-gone-by — cancellation cleanup runs in a new VM not reached by the request handler stack, and doeff-core-effects does not depend on doeff-time). deff and defn (plain callables) cannot issue effects and are not counted as programs — whether deff is acceptable is owned by ADR-DOE-HY-004. doeff-agents has no home-grown wait effects: programs yield doeff_time's Delay, and the production roots (run-driver-io in io_handlers.hy, run-hosted in sessionhost/host.hy) install doeff-time's sync-time-handler. Re-defining home-grown wait effects in Hy (defclass / defeffect of effects whose name contains Sleep / Delay, and constructors named sleep / …-sleep) is stopped with ERROR by the .semgrep.yaml rule doeff-agents-no-sleep-effect-hy (treated like R4 — defined in one place in .semgrep.yaml, shape verified by a polarity check).")
+     (rule R8 "R3 also applies to Hy checks (Hy files whose path is under a tests dir — checks, check tools, and job bodies passed to child processes — and Hy files with check names wherever they are), and the doeff-linter rule DOEFF211 stops them as critical (semgrep cannot read Hy. Same vessel as DOEFF210, using the same reading components). The rule is defined in one place, packages/doeff-linter/src/project/test_sleep.rs, and the population (where checks live) in one place, [tool.doeff-linter.test_sleep] in the root pyproject.toml. The realtime declaration takes the 3 shapes pytest reads as marks: {:marks [\"realtime\"]} in deftest's meta, the decorator of a plain function check (defn [pytest.mark.realtime] name [] …), and module top-level (val pytestmark pytest.mark.realtime) (files where helpers wait and check tools declare at module level). Declared checks are listed with a reason in [tests] of the same registry as Python checks, tests/realtime_tests.toml, with key names in the form pytest shows (- replaced by _). Standalone scripts that checks launch as separate processes (job bodies, stand-in CLIs) do not import pytest and cannot declare marks — such a file is named by file in the section's exclude, that one line stands in for the declaration, and the registry's [tests] has a row with the same path (the 2 as of 2026-10-14: doeff-cluster's tests/fixtures/sleeper.hy and doeff-claude-code's tests/stub_cli/claude.hy). The dir rows of the section's exclude are only the rule's sample dir and the dirs in the registry's [suites]. The registry check verifies that declarations and file namings correspond 1:1 with the registry's [tests], and exclude dirs with [suites]. That the rule and the registry check read the same shapes as declarations is confirmed by both reading the same samples (packages/doeff-linter/tests/fixtures/test_sleep/). There is no way to lower it via a known-hits table (lowered_by_registry is false).")
+     (rule R6 "Rollback: to remove only this file, revert the commit that added it. Removing the rules or lowering them to WARNING would overturn the 2026-10-12 decision, so first write the new decision in :problem, then fix the rules, polarity checks, registry, and this file in the same commit.")]
   :laws
     [(law a-program-waits-by-a-time-effect
-       :statement "for_all 本体(doeff/ と packages の src)と examples/(packages/*/examples/ と根の examples/)の Python の program p(@do の関数)と、本体の Hy の program p(defk・defp の本体)・p の中の待ち w: w は doeff-time の効果の yield ∧ w ∉ {time.sleep(x)・asyncio.sleep(x) | x ≠ 0}(handler の実装の中は除く — Python は (effect, k) を受ける関数・Hy は defhandler の節と [effect k] を受ける定義と :role foundation を名乗る helper〔R7〕)"
+       :statement "for_all Python program p (@do function) in the core (doeff/ and packages' src) and examples/ (packages/*/examples/ and root examples/), and Hy program p in the core (bodies of defk, defp), and wait w inside p: w is a yield of a doeff-time effect ∧ w ∉ {time.sleep(x), asyncio.sleep(x) | x ≠ 0} (excluding inside handler implementations — in Python, functions receiving (effect, k); in Hy, defhandler clauses, definitions receiving [effect k], and helpers declaring :role foundation [R7])"
        :counterexamples
-         [(counterexample "再試行の間を yield Await(asyncio.sleep(delay)) で待つ(doeff-gemini structured_llm.py の ba5513169 の前の形)— 検は実時間で 1〜2 秒待つか asyncio.sleep を monkeypatch で差し替える")
-          (counterexample "@do の program の中で time.sleep(1.0) を呼ぶ — sim_time_handler を置いても仮想の時計は進まず、壁の時計で 1 秒かかる")
-          (counterexample "doeff-flow の例の @do の中で time.sleep(0.1) を呼ぶ(直す前の 15 か所の形)— 例は写される物なので、素の sleep が利用者の program に広がる")
-          (counterexample "Hy の defk の本体で (time.sleep 0.5) を呼ぶ — semgrep は Hy を読めないので doeff-no-sleep-in-programs は鳴らず、DOEFF210 が無ければ誰も止めない(DOEFF210 を足す前の形)")
-          (counterexample "program が package の自前の待ちの効果(doeff-agents の io の Sleep・sessionhost の ClockSleep の形)を yield し、その package の handler が time.sleep で答える — 字面に sleep は無いが、時間の handler を置いても仮想の時計は進まない(R7 で直す前の 11 か所)")
-          (counterexample "program の defk に :role \"foundation\" を名乗らせて眠りを通す — 名乗ってよいのは handler からだけ呼ばれ本物の相手の実時間を待つ helper だけで、訳を docstring に書く(R7)。規則は名乗りを信じるので、名乗りの是非は変更を読む人が見る")]
+         [(counterexample "Waiting between retries with yield Await(asyncio.sleep(delay)) (the shape of doeff-gemini structured_llm.py before ba5513169) — checks wait 1–2 seconds in real time or replace asyncio.sleep via monkeypatch")
+          (counterexample "Calling time.sleep(1.0) inside an @do program — even with sim_time_handler installed the virtual clock does not advance, and it takes 1 second on the wall clock")
+          (counterexample "Calling time.sleep(0.1) inside @do in doeff-flow examples (the shape of the 15 places before the fix) — examples get copied, so bare sleeps spread into users' programs")
+          (counterexample "Calling (time.sleep 0.5) in the body of a Hy defk — semgrep cannot read Hy, so doeff-no-sleep-in-programs does not fire, and without DOEFF210 nobody stops it (the shape before DOEFF210 was added)")
+          (counterexample "A program yields a package's home-grown wait effect (the shape of doeff-agents' io Sleep and sessionhost's ClockSleep), and that package's handler answers with time.sleep — no sleep appears literally, but even with a time handler installed the virtual clock does not advance (the 11 places before R7's fix)")
+          (counterexample "Letting a program defk declare :role \"foundation\" to let a sleep through — only helpers called only from handlers that wait for a real counterpart's real time may declare it, writing the reason in the docstring (R7). The rule trusts the declaration, so whether a declaration is legitimate is for the people reading the change to judge")]
        :enforced-by [".semgrep.yaml::doeff-no-sleep-in-programs"
                      "tests/semgrep/test_no_sleep_in_programs_rule.py::test_only_the_marked_lines_fire"
                      "tests/semgrep/test_no_sleep_in_programs_rule.py::test_examples_are_in_the_range"
@@ -208,25 +208,25 @@
                      "packages/doeff-agents/tests/sessionhost_launch_deftests.hy::test-launch-ready-gate-polls-by-the-time-effect"
                      "packages/doeff-agents/tests/sessionhost_launch_deftests.hy::test-launch-dialog-redraw-waits-by-the-time-effect"
                      "packages/doeff-agents/tests/sessionhost_host_deftests.hy::test-run-hosted-answers-a-delay-on-the-wall-clock"]
-       :wiring "配線済み(2026-10-14・ba5513169)— Python の規則は commit の hook(.pre-commit-config.yaml の別名 semgrep-rules)と日次の走査が当てる。doeff-agents の自前の待ちの効果を止める規則 doeff-agents-no-sleep-effect-hy は、同じ semgrep の走査が Hy の file に当てる(languages: generic)。Hy の規則 DOEFF210 は、日次の全体検証の処理ステージ rust(make test-rust の cargo test — packages/doeff-linter/tests/program_sleep.rs が根の設定でこの repo の本体を判じ、当たりを file と行で名指す)が当て、手元では make lint-doeff とエディタの 1 file の実行が出す。commit の hook には載っていない(根の doeff-linter の hook は Python の file だけを測る)。範囲は Python の本体と examples/・Hy の本体(R5・R7)。書く前の助言は agent-commons の条件つきルール doeff-program-waits-by-the-time-effect が出す(Hy の defk・defp・deftest と doeff の外の repo にも当たる・止めはしない)")
+       :wiring "Wired (2026-10-14, ba5513169) — the Python rules are applied by the commit hook (alias semgrep-rules in .pre-commit-config.yaml) and the daily scan. The rule doeff-agents-no-sleep-effect-hy, which stops doeff-agents' home-grown wait effects, is applied to Hy files by the same semgrep scan (languages: generic). The Hy rule DOEFF210 is applied by the rust stage of the daily full verification (cargo test via make test-rust — packages/doeff-linter/tests/program_sleep.rs judges this repo's core with the root settings and names hits by file and line), and locally by make lint-doeff and the editor's single-file run. It is not in the commit hook (the root doeff-linter hook measures only Python files). Coverage is the Python core and examples/, and the Hy core (R5, R7). Advice before writing is given by agent-commons' conditional rule doeff-program-waits-by-the-time-effect (it also applies to Hy defk, defp, deftest and to repos outside doeff; it does not block)")
      (law the-time-handler-decides-what-a-second-is
-       :statement "for_all program p・p の中の Delay(s): sim_time_handler の下では仮想の時計がちょうど s 進む ∧ async_time_handler・sync_time_handler の下では壁の時計で s 待つ(p の文は 3 つの時計で同じ)"
+       :statement "for_all program p and Delay(s) inside p: under sim_time_handler the virtual clock advances by exactly s ∧ under async_time_handler and sync_time_handler it waits s on the wall clock (p's text is the same for all 3 clocks)"
        :counterexamples
-         [(counterexample "時計ごとに program を書き分ける(検の時だけ待ちを飛ばす引数を program に足す)— 検が走らせる文と本番の文が別になる")]
+         [(counterexample "Writing programs differently per clock (adding an argument to the program that skips waits only in checks) — the text checks run and the text production runs diverge")]
        :enforced-by ["packages/doeff-time/tests/test_time_contract.hy::test-delay-advances-by-its-span"]
-       :wiring "配線済み — 同じ deftest が async・sync・sim の 3 つの解釈器で走る")
+       :wiring "Wired — the same deftest runs under 3 interpreters: async, sync, and sim")
      (law a-test-sleeps-only-when-it-declares-realtime
-       :statement "for_all 規則の範囲(名が tests の dir の下の .py と、どこに在っても検の名の file test_*.py・*_test.py・conftest.py)の Python の検 t と、Hy の規則の範囲(名が tests の dir の下の Hy の file と、どこに在っても検の名の Hy の file test_*.hy・*_test.hy〔R8〕)の Hy の検 t: t が time.sleep(x)・asyncio.sleep(x)(x ≠ 0)・threading.Event().wait(x) を呼ぶ ⇒ (t は marker realtime を名乗る ∧ t は名簿 tests/realtime_tests.toml の [tests] に理由と一緒に載る) ∨ (t の dir は規則の exclude に在る ∧ その dir は名簿の [suites] に理由と一緒に載る) ∨ (t は印を名乗れない独立の script で、Hy の規則の節の exclude に file で名指され、名簿の [tests] に理由と一緒に載る)。範囲に、規則を外す行の注釈は 0 件"
+       :statement "for_all Python check t in the rule's range (.py whose path is under a tests dir, and files with check names test_*.py, *_test.py, conftest.py wherever they are) and Hy check t in the Hy rule's range (Hy files whose path is under a tests dir, and Hy files with check names test_*.hy, *_test.hy wherever they are [R8]): t calls time.sleep(x), asyncio.sleep(x) (x ≠ 0), or threading.Event().wait(x) ⇒ (t declares marker realtime ∧ t is listed with a reason in [tests] of the registry tests/realtime_tests.toml) ∨ (t's dir is in the rule's exclude ∧ that dir is listed with a reason in the registry's [suites]) ∨ (t is a standalone script that cannot declare marks, named by file in the Hy rule section's exclude, and listed with a reason in the registry's [tests]). Within the range, line annotations that take the rule off number 0"
        :counterexamples
-         [(counterexample "結果が出るのを time.sleep(0.5) で待つ検 — 込んだ機体では 0.5 秒で足りずに赤、速い機体では毎回 0.5 秒を捨てる")
-          (counterexample "realtime を名乗るが名簿に載せない検 — 実時間の何が対象かが残らず、規則の除外が理由なしに増える")
-          (counterexample "sleep の行に nosemgrep の注釈を付けて規則を外す(直す前の 7 か所の形)— 名簿を通らずに実時間で待つ検が増え、理由は file の中の註にしか残らない")
-          (counterexample "time.sleep(0.1) を threading.Event().wait(0.1) に言い換える(agentd_real_agent_result_retry_e2e_support.py の _poll_pause の前の形)— 規則の pattern を避けるだけで、待ちは同じ")
-          (counterexample "規則の paths.exclude に dir を足して名簿の [suites] に載せない、または名が tests でない dir に検を置く — 規則の届かない所が理由なしに増える")
-          (counterexample "Hy の deftest の中で結果が出るのを (time.sleep 0.5) で待つ — semgrep は Hy を読めないので doeff-no-sleep-in-tests は鳴らず、DOEFF211 が無ければ誰も止めない(DOEFF211 を足す前の 62 件の形)")
-          (counterexample "Hy の検の (time.sleep 0.1) を (.wait (threading.Event) 0.1) や (.sleep time 0.1) に言い換える(test_compute_effects.hy の前の形)— 規則の読みを避けるだけで、待ちは同じ")
-          (counterexample "Hy の検の file を (setv pytestmark pytest.mark.realtime) や関数の中の束ねで名乗ったつもりにする — doeff-hy が印として記録しない形なので pytest は印を付けず、規則も名簿の検も名乗りと読まない")
-          (counterexample "pytest を import できる Hy の検や道具を、節の exclude に file で名指して規則から外す — 名指しは印を名乗れない独立の script だけの道で、名簿の検が赤にする")]
+         [(counterexample "A check that waits for a result with time.sleep(0.5) — on a busy machine 0.5 s is not enough and it goes red; on a fast machine it throws away 0.5 s every time")
+          (counterexample "A check that declares realtime but is not in the registry — what about real time is the subject is not recorded, and rule exclusions grow without reasons")
+          (counterexample "Taking the rule off by putting a nosemgrep annotation on the sleep line (the shape of the 7 places before the fix) — checks waiting in real time grow without going through the registry, and the reason survives only as a comment in the file")
+          (counterexample "Paraphrasing time.sleep(0.1) as threading.Event().wait(0.1) (the shape of _poll_pause in agentd_real_agent_result_retry_e2e_support.py before) — it merely dodges the rule's pattern; the wait is the same")
+          (counterexample "Adding a dir to the rule's paths.exclude without listing it in the registry's [suites], or putting checks in a dir not named tests — places the rule cannot reach grow without reasons")
+          (counterexample "Waiting for a result with (time.sleep 0.5) inside a Hy deftest — semgrep cannot read Hy, so doeff-no-sleep-in-tests does not fire, and without DOEFF211 nobody stops it (the shape of the 62 hits before DOEFF211 was added)")
+          (counterexample "Paraphrasing (time.sleep 0.1) in a Hy check as (.wait (threading.Event) 0.1) or (.sleep time 0.1) (the earlier shape of test_compute_effects.hy) — it merely dodges the rule's reading; the wait is the same")
+          (counterexample "Believing a Hy check file is declared via (setv pytestmark pytest.mark.realtime) or a binding inside a function — doeff-hy does not record these shapes as marks, so pytest does not mark them, and neither the rule nor the registry check reads them as declarations")
+          (counterexample "Taking a Hy check or tool that can import pytest out of the rule by naming it by file in the section's exclude — naming is a path only for standalone scripts that cannot declare marks, and the registry check turns it red")]
        :enforced-by [".semgrep.yaml::doeff-no-sleep-in-tests"
                      "tests/semgrep/test_no_sleep_in_tests_rule.py::test_only_the_marked_lines_fire"
                      "tests/semgrep/test_no_sleep_in_tests_rule.py::test_the_rule_reaches_test_named_files_outside_a_tests_dir"
@@ -243,46 +243,46 @@
                      "tests/semgrep/test_realtime_tests_registry.py::test_the_linter_excludes_exactly_the_registered_suites_and_its_own_samples"
                      "tests/semgrep/test_realtime_tests_registry.py::test_a_script_the_linter_names_does_not_also_declare"
                      "tests/semgrep/test_realtime_tests_registry.py::test_the_hy_scan_reads_the_declarations_the_rule_excuses"]
-       :wiring "配線済み(2026-10-14・ba5513169)— Python の規則は commit の hook と日次の走査が当てる。Hy の規則 DOEFF211 は、日次の全体検証の処理ステージ rust(make test-rust の cargo test — packages/doeff-linter/tests/test_sleep.rs が根の設定でこの repo の Hy の検を判じ、当たりを file と行で名指す)が当て、手元では make lint-doeff(packages/ の下の検)とエディタの 1 file の実行が出す。commit の hook には載っていない(根の doeff-linter の hook は Python の file だけを測る)。名簿との突き合わせ(Python と Hy の両方)は tests/semgrep/test_realtime_tests_registry.py が持つ")
+       :wiring "Wired (2026-10-14, ba5513169) — the Python rule is applied by the commit hook and the daily scan. The Hy rule DOEFF211 is applied by the rust stage of the daily full verification (cargo test via make test-rust — packages/doeff-linter/tests/test_sleep.rs judges this repo's Hy checks with the root settings and names hits by file and line), and locally by make lint-doeff (checks under packages/) and the editor's single-file run. It is not in the commit hook (the root doeff-linter hook measures only Python files). Reconciliation with the registry (both Python and Hy) is owned by tests/semgrep/test_realtime_tests_registry.py")
      (law the-sleep-rules-stop-as-errors-from-one-definition
-       :statement "for_all r ∈ {doeff-no-sleep-in-programs・doeff-no-sleep-in-tests・doeff-agents-no-sleep-effect-hy}: |{.semgrep.yaml の規則 | id = r}| = 1 ∧ severity(r) = ERROR ∧ r の極性の検は .semgrep.yaml の r そのものを当てる"
+       :statement "for_all r ∈ {doeff-no-sleep-in-programs, doeff-no-sleep-in-tests, doeff-agents-no-sleep-effect-hy}: |{rules in .semgrep.yaml | id = r}| = 1 ∧ severity(r) = ERROR ∧ r's polarity check applies r itself from .semgrep.yaml"
        :counterexamples
-         [(counterexample "severity を WARNING に下げる(2026-10-12 の形)— main への取り込みを止めず、tests/ に 30 file の sleep が残った")
-          (counterexample "規則の pattern をこの冊の defsemgrep に写す — 定義が 2 か所になり、片方だけ直した日に冊の検と本物の規則が別の物を見る")
-          (counterexample "極性の検の RULE を別の規則の id に書き換える — 検は緑のまま、sleep の規則の形は誰も見ていない")]
+         [(counterexample "Lowering severity to WARNING (the 2026-10-12 shape) — merges to main are not blocked, and sleeps remained in 30 files under tests/")
+          (counterexample "Copying the rule's pattern into a defsemgrep in this file — the definition exists in 2 places, and on the day only one is fixed the file's check and the real rule look at different things")
+          (counterexample "Rewriting a polarity check's RULE to another rule's id — the check stays green while nobody verifies the shape of the sleep rule")]
        :enforced-by ["docs/adr/defadr_doeff_time_001_programs_wait_by_time_effects.hy::test-adr-doe-time-001-the-sleep-rules-stop-as-errors"
                      "docs/adr/defadr_doeff_time_001_programs_wait_by_time_effects.hy::test-adr-doe-time-001-each-sleep-rule-is-read-by-its-polarity-test"]
-       :wiring "配線済み(この冊)")]
+       :wiring "Wired (this file)")]
   :enforcement
     [(deftest test-adr-doe-time-001-the-sleep-rules-stop-as-errors
-       ;; 規則は .semgrep.yaml に 1 つずつ在り、severity は ERROR(R4 — WARNING に下げる・消す・同じ id を 2 つ置くと赤)。
+       ;; Each rule exists exactly once in .semgrep.yaml with severity ERROR (R4 — lowering to WARNING, deleting, or placing the same id twice is red).
        (val repo-root (. (Path __file__) parent parent parent))
        (val severities (run (rule-severities (.read-text (/ repo-root SEMGREP-CONFIG) :encoding "utf-8"))))
        (for [rule-id POLARITY-TESTS]
          (assert (= (.get severities rule-id) ["ERROR"])
-                 (+ rule-id ": .semgrep.yaml に severity ERROR の規則がちょうど 1 つ在るはず(ADR-DOE-TIME-001 R4): "
+                 (+ rule-id ": .semgrep.yaml should have exactly 1 rule with severity ERROR (ADR-DOE-TIME-001 R4): "
                     (str (.get severities rule-id))))))
      (deftest test-adr-doe-time-001-each-sleep-rule-is-read-by-its-polarity-test
-       ;; 極性の検は、その規則の id を RULE に持ち、.semgrep.yaml を CONFIG に持つ(R4 — 規則の写しではなく本物を当てる)。
+       ;; A polarity check holds the rule's id in RULE and .semgrep.yaml in CONFIG (R4 — applies the real rule, not a copy).
        (val repo-root (. (Path __file__) parent parent parent))
        (for [#(rule-id rel) (.items POLARITY-TESTS)]
          (val subject (run (polarity-subject (.read-text (/ repo-root rel) :encoding "utf-8"))))
          (assert (= subject #(rule-id SEMGREP-CONFIG))
-                 (+ rel ": 極性の検が .semgrep.yaml の規則 " rule-id " を当てていない(ADR-DOE-TIME-001 R4): " (str subject)))))
+                 (+ rel ": the polarity check does not apply the .semgrep.yaml rule " rule-id " (ADR-DOE-TIME-001 R4): " (str subject)))))
      (deftest test-adr-doe-time-001-every-law-names-living-checks
-       ;; 法の :enforced-by の項は、どれも今の木に在る規則・検を指す(規則を消す・検の名を変えると赤 — 法が名だけ残らない)。
+       ;; Every :enforced-by entry of the laws points to a rule or check in the current tree (deleting a rule or renaming a check is red — laws do not survive as names only).
        (val repo-root (. (Path __file__) parent parent parent))
        (<- spec (GetAdr ADR-ID))
        (val laws (. spec laws))
        (val unbound (lfor l laws :if (not (.get l "enforced_by")) (get l "id")))
-       (assert (= unbound []) (+ "規則・検に結ばれていない法(ADR-DOE-TIME-001): " (str unbound)))
+       (assert (= unbound []) (+ "Laws not bound to any rule or check (ADR-DOE-TIME-001): " (str unbound)))
        (val entries (lfor l laws entry (get l "enforced_by") entry))
        (val rules (sfor entry entries :if (.startswith entry (+ SEMGREP-CONFIG "::")) (get (.partition entry "::") 2)))
-       (assert (= rules (set POLARITY-TESTS)) (+ "法が結ぶ規則と、極性の検の表の規則が違う: " (str (sorted rules))))
+       (assert (= rules (set POLARITY-TESTS)) (+ "The rules bound by laws differ from the rules in the polarity-check table: " (str (sorted rules))))
        (val dead (run (dead-checks repo-root entries)))
-       (assert (= dead []) (+ "法の :enforced-by が今の木に無い規則・検を指す(ADR-DOE-TIME-001): " (str dead))))
+       (assert (= dead []) (+ "Laws' :enforced-by points to rules or checks not in the current tree (ADR-DOE-TIME-001): " (str dead))))
      (deftest test-adr-doe-time-001-judgments-reject-the-counterexamples
-       ;; 反例: WARNING の規則・同じ id の 2 つの規則・別の規則を当てる極性の検・写しの設定を当てる極性の検は、上の検の比べで落ちる値になる。
+       ;; Counterexamples: a WARNING rule, 2 rules with the same id, a polarity check applying another rule, and a polarity check applying a copied config each yield values that fail the comparisons above.
        (val config "rules:\n  - id: a\n    severity: WARNING\n  - id: b\n    severity: ERROR\n  - id: b\n    severity: ERROR\n")
        (assert (= (run (rule-severities config)) {"a" ["WARNING"] "b" ["ERROR" "ERROR"]}))
        (assert (= (run (rule-severities "")) {}))
@@ -291,16 +291,16 @@
        (assert (= (run (polarity-subject "RULE = \"doeff-no-sleep-in-tests\"\nCONFIG = FIXTURES / \"copy.yaml\"\n"))
                   #("doeff-no-sleep-in-tests" "copy.yaml")))
        (assert (= (run (polarity-subject "import pytest\n")) #(None None)))
-       ;; 名の読み: 註・文字列の中の綴りと、class の中の method は検の名に数えない。
+       ;; Reading names: spellings inside comments and strings, and methods inside classes, are not counted as check names.
        (assert (= (run (check-names "tests/sample.py" "# def test_gone(): ...\ndef test_here():\n    pass\nclass T:\n    def test_inner(self):\n        pass\n"))
                   (frozenset #{"test_here"})))
        (assert (= (run (check-names "tests/sample.hy" ";; (deftest test-gone)\n(print \"(deftest test-text)\")\n(defadr X :enforcement [(deftest test-here (assert True))])\n"))
                   (frozenset #{"test-here"})))
        (assert (= (run (check-names SEMGREP-CONFIG config)) (frozenset #{"a" "b"})))
-       ;; Rust の検の名: #[test] の付いた関数だけ。補助の関数と、註にした検は数えない。
+       ;; Rust check names: only functions with #[test]. Helper functions and commented-out checks are not counted.
        (assert (= (run (check-names "tests/sample.rs" "fn helper() {}\n\n#[test]\nfn fires() {}\n\n// #[test]\n// fn gone() {}\n\n    #[test]\n    fn nested_in_a_mod() {}\n"))
                   (frozenset #{"fires" "nested_in_a_mod"})))
-       ;; 今の木に無い規則・無い file・名の無い項は、どれも結ばれていない項として挙がる。
+       ;; Rules not in the current tree, missing files, and entries without a name are all listed as unbound entries.
        (val repo-root (. (Path __file__) parent parent parent))
        (val missing [".semgrep.yaml::doeff-no-such-sleep-rule"
                      "tests/semgrep/test_no_such_file.py::test_only_the_marked_lines_fire"

@@ -1,16 +1,16 @@
-;;; Executable ADR: Rust の部品(doeff-vm・doeff-vm-core・doeff-linter・doeff-effect-analyzer・doeff-indexer)を組む・
-;;; 引く入口は 1 つ — build の口 tools/doeff_cargo_backend.py が、組む前に必ず「source の中身の hash を鍵にした wheel の保存先」を引く。
-;;; workflow の一覧を答える Rust の CLI の部品は 2026-10-30 に消し、同じ動詞を Python の CLI doeff-agentic が答える
-;;; (ADR-DOE-API-001 R28)。
+;;; Executable ADR: there is one entry that builds and fetches the Rust components (doeff-vm, doeff-vm-core, doeff-linter,
+;;; doeff-effect-analyzer, doeff-indexer) — the build backend tools/doeff_cargo_backend.py always looks up "the wheel store keyed by the hash of the source contents" before building.
+;;; The Rust CLI component that answered the workflow list was removed on 2026-10-30; the Python CLI doeff-agentic answers the same verbs
+;;; (ADR-DOE-API-001 R28).
 ;;;
-;;; 入口は 1 つにし、古い道は替える変更と同じ変更で消す。
+;;; Keep one entry, and remove the old path in the same change that replaces it.
 ;;;
-;;; 移す予定の入口(PENDING-ENTRIES): 鍵と保存先を自前で持つ所が 1 系統残る — commit の hook の doeff-linter の binary の置き場
-;;; (linter_snapshot)。台帳に無い新しい入口は赤・入口を消した変更が台帳の行を残すと赤(消した変更が同じ commit で行を削る)。
-;;; doeff-cluster の worker の native の wheel(git の tree hash の鍵・state/wheels — 実行環境の準備と起動の script)は入口を
-;;; `uv build --wheel` で通るだけの形にし、台帳の 4 行を消した(R7)。
+;;; Entries to be moved (PENDING-ENTRIES): one place still owns its key and store — the binary location of doeff-linter for the commit hook
+;;; (linter_snapshot). A new entry not in the ledger is red; a change that removes an entry but leaves its ledger row is red (the removing change deletes the row in the same commit).
+;;; The native wheel of the doeff-cluster worker (git tree hash key, state/wheels — the runtime-environment preparation and the boot script) was reduced to
+;;; only passing through the entry with `uv build --wheel`, and its 4 ledger rows were deleted (R7).
 ;;;
-;;; 戻し方: この ADR を足した commit を revert する(ADR の file 1 つと、build の口の保存先の形が前に戻る)。
+;;; Rollback: revert the commit that added this ADR (the one ADR file, and the store shape of the build backend, go back to before).
 
 (require doeff-adr.macros [defadr rule law])
 (import doeff-adr.macros [fact interpretation counterexample])
@@ -22,28 +22,28 @@
 
 
 ;; ---------------------------------------------------------------------------
-;; 台帳
+;; Ledger
 
-;; 入口そのもの(保存先を引いてから組む口)。
+;; The entry itself (the backend that looks up the store before building).
 (val ENTRY "tools/doeff_cargo_backend.py")
 
-;; 入口へ「無い時の組み方」を渡すだけの口(build の hook は入口の wheel_from_store・editable_from_store を呼ぶ)。
+;; Backends that only hand the entry "how to build when missing" (their build hooks call the entry's wheel_from_store and editable_from_store).
 (val COMPILERS #{"packages/doeff-indexer/doeff_indexer_build_backend.py"})
 
-;; 移す予定の入口 — path → 理由(消した変更が同じ commit で行を削る)。
+;; Entries to be moved — path → reason (the removing change deletes the row in the same commit).
 (val PENDING-ENTRIES
   {"packages/doeff-linter/scripts/linter_snapshot.py"
-   "commit の hook の doeff-linter の binary の置き場(sha と入力の鍵・cargo build --release)— 別の変更で入口の保存先へ移す"})
+   "binary location of doeff-linter for the commit hook (key of sha and inputs, cargo build --release) — to be moved to the entry's store in a separate change"})
 
-;; 走査で降りない dir(作業木・venv・生成物)と、検と文書の置き場(検は入口を呼んで確かめる側・文書は手順の写し)。
+;; Dirs the scan does not descend into (worktrees, venvs, build outputs), and where checks and docs live (checks call the entry to verify it; docs are copies of procedures).
 (val SCAN-SKIP-PARTS #{".git" ".venv" ".worktrees" "node_modules" "target" "__pycache__" "tests" "conformance"})
 (val SCAN-SKIP-PREFIXES #("docs/" ".github/"))
 
-;; Rust を組む・鍵を作る形の目印。`uv build --wheel` は入口(build の口)を通る呼びなので数えない(worker と起動の script は
-;; これだけで wheel を用意する)。
-;;   - Python: maturin の build の hook を呼ぶ(maturin.build_wheel・maturin.build_editable)・命令の列に "build" と "--release" が並ぶ
-;;     (cargo build --release)・名に native_key を持つ関数の定義。
-;;   - Hy: 註でない行の "build" "--release" の並び・(defk native-key の定義。
+;; Markers of the shapes that build Rust or make a key. `uv build --wheel` is a call that goes through the entry (the build backend), so it is not counted (the worker and the boot script
+;; prepare the wheel with this alone).
+;;   - Python: calling maturin's build hooks (maturin.build_wheel, maturin.build_editable), a command list with both "build" and "--release"
+;;     (cargo build --release), a function definition whose name contains native_key.
+;;   - Hy: the sequence "build" "--release" on a non-comment line, a definition (defk native-key.
 (val MATURIN-HOOKS #{"build_wheel" "build_editable"})
 (val BUILD-FLAGS #{"--release"})
 (val HY-BUILD-ARGV (re.compile r"\"build\"\s+\"--release\""))
@@ -51,11 +51,11 @@
 
 
 ;; ---------------------------------------------------------------------------
-;; 判断(純関数)
+;; Judgments (pure functions)
 
 (defk python-builds-rust [text]
   {:pre [(: text str)] :post [(: % bool)] :tags {:context "doeff-build-adr" :role "judgment"}}
-  "Python の source が Rust を組む・鍵を作る形を持つか(註と docstring は数えない — ast で読む)。"
+  "Whether a Python source has a shape that builds Rust or makes a key (comments and docstrings do not count — read with ast)."
   (val tree (try (ast.parse text) (except [SyntaxError] None)))
   (when (is tree None)
     (return False))
@@ -74,31 +74,31 @@
 
 (defk hy-builds-rust [text]
   {:pre [(: text str)] :post [(: % bool)] :tags {:context "doeff-build-adr" :role "judgment"}}
-  "Hy の source が Rust を組む・鍵を作る形を持つか(; で始まる註の行は数えない)。"
+  "Whether a Hy source has a shape that builds Rust or makes a key (comment lines starting with ; do not count)."
   (val code (.join "\n" (gfor line (.splitlines text) :if (not (.startswith (.lstrip line) ";")) line)))
   (bool (or (.search HY-BUILD-ARGV code) (.search HY-KEY-DEFINITION code))))
 
 (defk entry-violations [found]
   {:pre [(: found frozenset)] :post [(: % list)] :tags {:context "doeff-build-adr" :role "judgment"}}
-  "Rust を組む・鍵を作る file の集合 found のうち、入口・組み方の口・移す予定の台帳のどれでもない物(2 つ目の入口)と、入口が
-   見つからない事を挙げる。"
+  "Among the set found of files that build Rust or make a key, list those that are none of the entry, a compiler backend, or the to-be-moved ledger (a second entry), and
+   report when the entry is not found."
   (+ (lfor rel (sorted found)
            :if (and (!= rel ENTRY) (not-in rel COMPILERS) (not-in rel PENDING-ENTRIES))
-           f"{rel}: Rust を組む・鍵を作る 2 つ目の入口 — 組み方を {ENTRY} の wheel_from_store・editable_from_store に渡す")
-     (if (in ENTRY found) [] [f"{ENTRY}: 入口が Rust を組む形を持たない(入口が消えた)"])))
+           f"{rel}: a second entry that builds Rust or makes a key — hand the build to {ENTRY}'s wheel_from_store and editable_from_store")
+     (if (in ENTRY found) [] [f"{ENTRY}: the entry has no shape that builds Rust (the entry is gone)"])))
 
 (defk stale-pending [found]
   {:pre [(: found frozenset)] :post [(: % list)] :tags {:context "doeff-build-adr" :role "judgment"}}
-  "移す予定の台帳に在るのに、もう Rust を組む・鍵を作る形を持たない file(入口へ移した・消した)を挙げる — 移した変更が同じ commit で
-   台帳から削るため。"
+  "List files that are in the to-be-moved ledger but no longer have a shape that builds Rust or makes a key (moved to the entry, or removed) — so that the moving change deletes them
+   from the ledger in the same commit."
   (lfor rel (sorted PENDING-ENTRIES)
         :if (not-in rel found)
-        f"{rel}: もう自前で組まない — PENDING-ENTRIES から削る"))
+        f"{rel}: no longer builds on its own — delete it from PENDING-ENTRIES"))
 
 (defk compiler-hooks-use-the-store [text]
   {:pre [(: text str)] :post [(: % list)] :tags {:context "doeff-build-adr" :role "judgment"}}
-  "組み方の口の build の hook(build_wheel・build_editable)が入口の保存先(wheel_from_store・editable_from_store)を呼ぶか。答え =
-   呼ばない hook の名。"
+  "Whether the build hooks (build_wheel, build_editable) of a compiler backend call the entry's store (wheel_from_store, editable_from_store). Answer =
+   the names of the hooks that do not."
   (val wanted {"build_wheel" "wheel_from_store" "build_editable" "editable_from_store"})
   (lfor node (. (ast.parse text) body)
         :if (and (isinstance node ast.FunctionDef) (in node.name wanted))
@@ -109,11 +109,11 @@
 
 
 ;; ---------------------------------------------------------------------------
-;; 土台(file を読む)
+;; Foundation (reads files)
 
 (defk rust-building-files [repo-root]
   {:pre [(: repo-root Path)] :post [(: % frozenset)] :tags {:context "doeff-build-adr" :role "foundation"}}
-  "repo の中で Rust を組む・鍵を作る形を持つ Python と Hy の file の相対 path を集める(検・文書・作業木・venv を除く)。"
+  "Collect the relative paths of the Python and Hy files in the repo that have a shape that builds Rust or makes a key (excluding checks, docs, worktrees and venvs)."
   (var found #{})
   (for [p (sorted (.rglob repo-root "*"))
         :setv rel (.relative-to p repo-root)
@@ -131,7 +131,7 @@
 
 
 (defadr ADR-DOE-BUILD-001
-  :title "Rust の部品を組む・引く入口は build の口 tools/doeff_cargo_backend.py の 1 つ。口は組む前に必ず source の中身の hash を鍵にした wheel の保存先を引き、wheel の hook も editable の hook も同じ保存先の同じ wheel から答える。自前の鍵や保存先を持つ 2 つ目の入口を作らない"
+  :title "There is one entry that builds and fetches the Rust components: the build backend tools/doeff_cargo_backend.py. Before building, the backend always looks up the wheel store keyed by the hash of the source contents, and both the wheel hook and the editable hook answer from the same wheel in the same store. Do not create a second entry with its own key or store"
   :status "accepted"
   :scope ["tools/doeff_cargo_backend.py"
           "tools/rust_wheel_release.py"
@@ -143,84 +143,84 @@
           "docs/adr/defadr_doeff_build_001_one_rust_wheel_entry.hy"]
   :problem
     [(fact
-       "doeff の一部の package を更新するたびに doeff 全体を組んで image に焼き込む作業が要っていたが、これは筋が通らない。doeff-cluster や doeff-agents の変更は、doeff の Rust の VM を組み直す必要がほとんど無いはずである。")
+       "Every update to some doeff package required building all of doeff and baking it into an image, which makes no sense. A change to doeff-cluster or doeff-agents should almost never need to rebuild doeff's Rust VM.")
      (fact
-       "image を作る時も Makefile と cache の層を使い、組み直しの無駄を出さない。")
+       "Building images also uses a Makefile and cache layers, so as not to waste rebuilds.")
      (fact
-       "2026-10-06 の数(cc1-w38 の調べ・log の行で確かめた分): 日次の全体検証は task ごとに新しい HOME を作り wheel の保存先を子へ継がないので、doeff-vm を約 100 度・doeff-linter を 14 度組み直した(最初の依存の入れ 6m15s〜9m30s)。build の口の保存先は wheel の hook だけが引き、editable の hook(agora-controllers の doeff-vm・doeff の workspace の一員)は毎回 maturin を撃っていた。doeff-indexer の口は保存先を通らずに毎回 CLI の binary と拡張 module を組んでいた。"
-       :evidence "tools/doeff_cargo_backend.py の 2026-10-06 の版の頭の註「editable と sdist は引かない」")
+       "Counts on 2026-10-06 (investigation cc1-w38, confirmed by log lines): the daily full verification creates a new HOME per task and does not pass the wheel store to children, so it rebuilt doeff-vm about 100 times and doeff-linter 14 times (initial dependency install 6m15s to 9m30s). Only the wheel hook looked up the build backend's store; the editable hook (agora-controllers' doeff-vm, a member of the doeff workspace) fired maturin every time. The doeff-indexer backend bypassed the store and built the CLI binary and the extension module every time."
+       :evidence "the header comment of tools/doeff_cargo_backend.py as of 2026-10-06: \"editable and sdist do not look up\"")
      (fact
-       "鍵と保存先を自前で持つ所が 3 系統あった: build の口(中身の hash・$XDG_CACHE_HOME/doeff-cargo-wheels/<package>/<hash>/)・doeff-cluster の worker(doeff-vm と doeff-vm-core の git の tree hash・state/wheels/doeff-vm-<鍵>/)・commit の hook の linter(sha と入力の object id・doeff-linter-snapshots)。worker の鍵は Python の版と機体だけを足し、rustc・maturin の版と組みを変える環境変数と作業木の未 commit の変更を見ない。"
-       :evidence "packages/doeff-cluster/src/doeff_cluster/_shared/core/native_wheel.py・packages/doeff-linter/scripts/linter_snapshot.py")
+       "Three places owned their own key and store: the build backend (hash of contents, $XDG_CACHE_HOME/doeff-cargo-wheels/<package>/<hash>/), the doeff-cluster worker (git tree hash of doeff-vm and doeff-vm-core, state/wheels/doeff-vm-<key>/), and the commit-hook linter (sha and input object ids, doeff-linter-snapshots). The worker's key added only the Python version and the machine, and ignored the rustc and maturin versions, the environment variables that change the build, and uncommitted changes in the worktree."
+       :evidence "packages/doeff-cluster/src/doeff_cluster/_shared/core/native_wheel.py, packages/doeff-linter/scripts/linter_snapshot.py")
      (fact
-       "2026-10-07 19:47 と 18:5x: zeus の追随の腕(com.masui.land-arm.service)が ai live-plane slot の doeff 074c29efe を uv sync --frozen した時、build の口が保存先の鍵を作るために `rustc -V` を起こし、腕の PATH(dotfiles の cron_management/job_env.sh)に rustc が無いので FileNotFoundError で rc=1 に成った。保存先には同じ source の doeff-vm の wheel が 05:41 から在った。手の shell(~/.cargo/bin が在る)で同じ argv を撃つと rc=0(保存先の wheel を使い 1 秒)。"
-       :evidence "2026-10-07 の slot の同期の調べ(cc3-w56)・R4b")
+       "2026-10-07 19:47 and 18:5x: when zeus's follow arm (com.masui.land-arm.service) ran uv sync --frozen on doeff 074c29efe in the ai live-plane slot, the build backend started `rustc -V` to make the store key, and since there was no rustc on the arm's PATH (dotfiles cron_management/job_env.sh) it failed with FileNotFoundError, rc=1. The store had held a doeff-vm wheel for the same source since 05:41. Running the same argv in a hand shell (which has ~/.cargo/bin) gave rc=0 (using the stored wheel, 1 second)."
+       :evidence "the 2026-10-07 investigation of the slot sync (cc3-w56), R4b")
      (fact
-       "2026-10-22: merge-queue の宣言の環境が doeff を git の依存(rev 38bd248df)で入れると、doeff-effect-analyzer の dist-info は 38bd248df を名乗るのに、中の Python(program_effects.py・handler_effects.py)は bba41285 の物だった — 解析器は cache-keys を宣言せず既定の glob(Rust の入力だけ)で鍵を作り、Rust の変わらない 10-11 の wheel を wheel の hook がそのまま写した。節の effect の別名を読む直し 2641decc8 が入らず、merge-queue の閉じの検 6 本が赤だった。機体の外の置き場も同じ鍵の名なので、CI は Python だけを替えた版の wheel を上げ直さない。"
-       :evidence "merge-queue 043e356 の deploy/ledger/runtime の venv・/work/state/wheels/doeff-effect-analyzer-b1fdd886a41b96a96a46248a7c5829eb")]
+       "2026-10-22: when the merge-queue's declared environment installed doeff as a git dependency (rev 38bd248df), the doeff-effect-analyzer dist-info claimed 38bd248df, but the Python inside (program_effects.py, handler_effects.py) was from bba41285 — the analyzer declared no cache-keys and made its key with the default glob (Rust inputs only), so the wheel hook copied the 10-11 wheel whose Rust had not changed as-is. The fix 2641decc8 that reads clause effect aliases was missing, and 6 closure checks of the merge-queue were red. The off-machine location uses the same key names, so CI does not re-upload a wheel for a version that changed only Python."
+       :evidence "the deploy/ledger/runtime venv of merge-queue 043e356, /work/state/wheels/doeff-effect-analyzer-b1fdd886a41b96a96a46248a7c5829eb")]
   :context
     [(interpretation
-       "Rust の source が変わらない版上げで Rust を組み直さない事は、組む所が何か所あっても全部が同じ鍵の同じ保存先を先に引く時だけ保証できる。入口が 2 つあると、片方の鍵が見ない入力(rustc の版・未 commit の変更)で古い wheel を引くか、片方だけが保存先を持たずに毎回組む。build の口は uv sync・uv build・worker の uv build --wheel・起動の script のどれもが必ず通る所なので、入口をここに置けば、呼び手を数えずに全部へ効く。")
+       "Not rebuilding Rust on a version bump where the Rust source did not change can be guaranteed only when every place that builds, however many there are, first looks up the same store with the same key. With two entries, either one entry's key misses inputs (rustc version, uncommitted changes) and fetches a stale wheel, or only one has a store and the other builds every time. The build backend is the place that uv sync, uv build, the worker's uv build --wheel and the boot script all always pass through, so placing the entry here affects all of them without counting the callers.")
      (interpretation
-       "鍵は build の口の物を残す(source の中身・道具の版・機体・Python の ABI・組みを変える環境変数・build の設定)。中身の hash は git の object を要らず、未 commit の変更も拾う。tool.uv.cache-keys の宣言は「uv が口を呼ぶか」と「保存先の鍵」の 1 つの定義になる。python-source の file は、どちらの hook も保存先の wheel から取らず作業木から入れる(R2・R2b)— 鍵が Python を見なくても古い Python を渡さず、Python だけの変更で Rust を組み直さない。")
+       "Keep the build backend's key (source contents, tool versions, machine, Python ABI, environment variables that change the build, build settings). The content hash needs no git objects and also picks up uncommitted changes. The tool.uv.cache-keys declaration becomes the one definition of both \"whether uv calls the backend\" and \"the store key\". Files under python-source are installed from the worktree by both hooks, not taken from the stored wheel (R2, R2b) — even though the key does not look at Python, stale Python is not delivered, and a Python-only change does not rebuild Rust.")
      (interpretation
-       "保存先の並びは worker と同じ <package>-<鍵>/<wheel> と使った印 .used にし、日次の検証は worker の /work/state/wheels を置き場に渡す。worker の掃除(7 日使われない dir を消す)がそのまま効き、保存先の掃除を 2 つ持たない。cargo の target は組む時だけの一時の dir のまま(共有の target は中身の違う作業木の build を取り違え、その wheel が鍵の下に置かれると同じ鍵の build が全部それを引く)。")]
+       "The store layout is the same as the worker's, <package>-<key>/<wheel> with a usage marker .used, and the daily verification hands the worker's /work/state/wheels as the location. The worker's cleanup (removing dirs unused for 7 days) applies as-is, so there are not two store cleanups. The cargo target stays a temporary dir used only while building (a shared target confuses builds of worktrees with different contents, and once that wheel is placed under a key, every build with the same key fetches it).")]
   :decision
-    [(rule R1 "Rust の部品を組む・引く入口は tools/doeff_cargo_backend.py の stored_wheel 1 つ。build_wheel・build_editable はどちらも保存先を先に引き、在れば cargo も maturin も撃たない。無い時・壊れている時だけ組んで置いてから使う。")
-     (rule R2 "editable の hook は保存先の wheel から答える: 組み立ての成果物(native の拡張 module と maturin の include で wheel に入れる物)を source の木に置かず、editable の wheel の中身として venv の site-packages の __editable__.<名>.native/ に入れ(uv の RECORD が持つ)、python-source を路に足し finder を起こす .pth と、package の探し先を 成果物の dir → 作業木の dir にする finder と、dist-info の wheel を返す。訳: 木の git の名簿に無い file を消す写し(dotfiles の remote_check)が source の木の成果物を消しても uv の記録はその有無を知らず、次の uv sync が組み直さず import が落ちた(2026-10-07 04:00 の日次)。python-source を持たない package は保存先の wheel をそのまま返す。")
-     (rule R2b "R2 の追補(2026-10-22): wheel の hook も、python-source を持つ package では保存先の wheel から組み立ての成果物・data・dist-info(RECORD を除く)だけを取り、保存先の wheel が持つ python の package(と根の module)の file は作業木から入れ直して RECORD を書き直す。作業木の __pycache__・.pyc と、前の形が木に残した成果物は入れない。訳: 鍵が python-source を見ない package(doeff-effect-analyzer)では、Rust の同じ前の版の wheel が前の Python のまま git の依存の入れに渡った(上の 2026-10-22 の fact)。python-source を持たない package は保存先の wheel をそのまま渡す。失敗ケース = tests/test_wheel_store_entry.py の test_the_wheel_hook_takes_the_python_source_from_the_tree_and_only_the_build_products_from_the_store。")
-     (rule R3 "組み方が maturin だけでない package(doeff-indexer)は、無い時の組み方(Compile)を wheel_from_store・editable_from_store に渡す。自前で保存先・鍵を持たず、build の hook から maturin を直に撃たない。")
-     (rule R4 "鍵 = tool.uv.cache-keys の file(宣言が無ければ既定の glob)の中身と相対 path・rustc と maturin の版・機体・組む Python の ABI・組みを変える環境変数・build の設定。保存先の wheel から渡す file(組み立ての成果物・data・dist-info に入る物 — license-files も)に効く file はどれも宣言に並べる。python-source の file は R2・R2b のとおり作業木から入るので鍵に要らない(doeff-vm の宣言の doeff_vm/ の .py・.pyi・py.typed は、uv が非 editable の path の入れを作り直す合図として残る)。")
-     (rule R4b "R4 の追補(2026-10-07): 鍵の材料から rustc の版を外し、鍵は子 process を起こさずに作る(maturin の版は配布の記録 importlib.metadata から読む)。訳: 鍵は保存先を引く前に要るので、`rustc -V` を起こす形では PATH に rustc の無い環境が、保存先に同じ source の wheel が在っても鍵を作る所で落ちた。wheel の中身を決めるのは source・Python の ABI・機体・組みを変える環境変数(RUSTC・RUSTFLAGS・CARGO_PROFILE_* は R4 のとおり鍵に入る)・build の設定で、Python へ見せる ABI は C-API なので rustc の版は wheel の外へ出ない。失敗ケース = tests/test_wheel_store_entry.py の test_the_store_answers_without_rustc_on_the_path_and_without_a_child_process。")
-     (rule R4c "R4 の追補 2(2026-10-11・設計 docs/design/rust-wheel-distribution): 鍵の材料に libc の名と版(platform.libc_ver)を足す。訳: R5b の置き場の wheel は CI の glibc(ubuntu-24.04 = 2.39)で組むので、それより古い glibc の機体が同じ鍵で取ると import で落ちる。鍵が変わる 1 度だけ、どの機体も 1 回組み直すか置き場から取る。失敗ケース = tests/test_wheel_slot_key.py の test_another_libc_points_at_another_slot。")
-     (rule R5 "保存先 = env DOEFF_WHEEL_CACHE(無ければ $XDG_CACHE_HOME/doeff-cargo-wheels)の <package>-<鍵>/<wheel> と .used。使う前に RECORD の hash で確かめ、壊れていれば名指しの 1 行を出してその wheel を除き組み直す。")
-     (rule R5b "R5 の追補(2026-10-11・置き場は公開の release — doeff の CI だけが書き、誰でも取れる。資格・Pod を足さず、空の機体で Rust を組まなくなる): 入口は 手元の保存先 → 機体の外の置き場 → 組む の順に引く。置き場 = doeff の公開の GitHub の release rust-wheels の asset <package>-<鍵>.whl(env DOEFF_WHEEL_REMOTE で頭を替え、空の値なら引かない)。取った wheel は RECORD の hash で確かめ、本当の file 名を dist-info と WHEEL の Tag から作り直して手元の保存先へ置く。取れない時(404・網の失敗・20 秒の時間切れ・壊れた wheel)は名指しの 1 行を出して組む。置き場に書くのは doeff の GitHub Actions(.github/workflows/rust-wheels.yml → tools/rust_wheel_release.py)だけで、それも入口を `uv build --wheel` で通し、入口の報告の出どころが built の wheel だけを上げる(同じ名は上書きしない・800 個を越えたら古い順に消す)。入口は置き場に書かない。uv の find-links・index は使わない(uv は path・editable・git の依存にそれらを使わない)。報告の 1 行は出どころ source(local・remote・built)を足し、built の欄は R7 の読み手のために残す。失敗ケース = tests/test_wheel_remote_store.py(空の機体で偽の cargo が 1 度も呼ばれない — 受入 c1f9f7ae2)。")
-     (rule R6 "移す予定の入口(commit の hook の linter の binary)は台帳 PENDING-ENTRIES に理由つきで置く。台帳に無い新しい入口は赤。入口へ移した・消した変更は同じ commit で台帳の行を削る(残すと赤)。")
-     (rule R7 "doeff-cluster の worker(実行環境の準備の EnsureNativeWheel)と起動の script(worker/entry/boot_wheel)は、native の wheel を `uv build --wheel` で入口へ渡すだけにし、自前の鍵(git の tree hash)と置き場を持たない。保存先は入口の DOEFF_WHEEL_CACHE(worker の state/wheels)。入れる wheel は uv build が root の下の --out-dir(native_wheel.wheel_out_dir)に出した file で、どの版の入口でも出る(宣言の古い doeff の root も同じ形で通る)。入口が env DOEFF_WHEEL_REPORT の file に書く 1 行(組んだか)は観測だけで、書かない版の入口では由来を閉じた型の UNREPORTED にし、準備を止めず、組んだ・使ったのどちらにも埋めない — 読みの定義点は native_wheel.reported_built。")]
+    [(rule R1 "The one entry that builds and fetches the Rust components is stored_wheel in tools/doeff_cargo_backend.py. Both build_wheel and build_editable look up the store first, and if the wheel is there, fire neither cargo nor maturin. Only when it is missing or broken do they build, store, then use it.")
+     (rule R2 "The editable hook answers from the stored wheel: it does not place build products (the native extension module and what maturin's include puts into the wheel) in the source tree; it installs them as the editable wheel's contents into __editable__.<name>.native/ under the venv's site-packages (held by uv's RECORD), and returns a dist-info wheel with a .pth that adds python-source to the path and starts the finder, and a finder whose package search order is build-products dir → worktree dir. Reason: a copy that deletes files not in the tree's git listing (dotfiles remote_check) deleted the build products in the source tree, uv's records did not know whether they existed, the next uv sync did not rebuild, and import failed (the 2026-10-07 04:00 daily run). A package without python-source returns the stored wheel as-is.")
+     (rule R2b "Addendum to R2 (2026-10-22): the wheel hook too, for a package with python-source, takes only the build products, data and dist-info (except RECORD) from the stored wheel, re-installs the files of the Python packages (and root modules) that the stored wheel holds from the worktree, and rewrites RECORD. It does not include the worktree's __pycache__ and .pyc, nor build products that the former shape left in the tree. Reason: for a package whose key does not look at python-source (doeff-effect-analyzer), the wheel of the same earlier Rust version was handed to a git-dependency install with the earlier Python (the 2026-10-22 fact above). A package without python-source hands over the stored wheel as-is. Failure case = test_the_wheel_hook_takes_the_python_source_from_the_tree_and_only_the_build_products_from_the_store in tests/test_wheel_store_entry.py.")
+     (rule R3 "A package whose build is not maturin alone (doeff-indexer) hands how to build when missing (Compile) to wheel_from_store and editable_from_store. It owns no store or key of its own, and its build hooks do not fire maturin directly.")
+     (rule R4 "Key = the contents and relative paths of the files in tool.uv.cache-keys (the default glob if not declared), the rustc and maturin versions, the machine, the ABI of the Python being built for, the environment variables that change the build, and the build settings. Every file that affects files handed over from the stored wheel (build products, data, what goes into dist-info — license-files too) is listed in the declaration. Files under python-source come from the worktree as in R2 and R2b, so they are not needed in the key (the .py, .pyi and py.typed under doeff_vm/ in doeff-vm's declaration remain as the signal for uv to redo a non-editable path install).")
+     (rule R4b "Addendum to R4 (2026-10-07): drop the rustc version from the key material, and make the key without starting a child process (read the maturin version from the distribution record importlib.metadata). Reason: the key is needed before looking up the store, so with the shape that starts `rustc -V`, an environment without rustc on PATH failed at making the key even when the store had a wheel for the same source. What determines the wheel's contents is the source, the Python ABI, the machine, the environment variables that change the build (RUSTC, RUSTFLAGS, CARGO_PROFILE_* are in the key as in R4) and the build settings; the ABI exposed to Python is the C-API, so the rustc version does not leak outside the wheel. Failure case = test_the_store_answers_without_rustc_on_the_path_and_without_a_child_process in tests/test_wheel_store_entry.py.")
+     (rule R4c "Addendum 2 to R4 (2026-10-11, design docs/design/rust-wheel-distribution): add the libc name and version (platform.libc_ver) to the key material. Reason: R5b's remote wheels are built on CI's glibc (ubuntu-24.04 = 2.39), so a machine with an older glibc fetching them under the same key fails at import. Only once, when the key changes, does every machine rebuild once or fetch from the remote location. Failure case = test_another_libc_points_at_another_slot in tests/test_wheel_slot_key.py.")
+     (rule R5 "Store = <package>-<key>/<wheel> and .used under env DOEFF_WHEEL_CACHE (if absent, $XDG_CACHE_HOME/doeff-cargo-wheels). Before use, verify with the RECORD hashes; if broken, emit one line naming it, discard that wheel, and rebuild.")
+     (rule R5b "Addendum to R5 (2026-10-11; the remote location is a public release — only doeff's CI writes it and anyone can fetch it. No credentials or Pods are added, and empty machines no longer build Rust): the entry looks up local store → off-machine location → build, in that order. Location = the asset <package>-<key>.whl of the public GitHub release rust-wheels of doeff (env DOEFF_WHEEL_REMOTE replaces the prefix; an empty value disables the lookup). A fetched wheel is verified with the RECORD hashes, its real file name is rebuilt from the dist-info and the WHEEL Tag, and it is placed in the local store. When it cannot be fetched (404, network failure, 20-second timeout, broken wheel), emit one line naming it and build. Only doeff's GitHub Actions (.github/workflows/rust-wheels.yml → tools/rust_wheel_release.py) writes to the location, and it too passes through the entry with `uv build --wheel` and uploads only wheels whose origin in the entry's report is built (it does not overwrite the same name, and deletes the oldest first beyond 800). The entry does not write to the location. uv's find-links and index are not used (uv does not use them for path, editable or git dependencies). The one-line report adds the origin source (local, remote, built), and the built field stays for R7's readers. Failure case = tests/test_wheel_remote_store.py (on an empty machine the fake cargo is never called — acceptance c1f9f7ae2).")
+     (rule R6 "Entries to be moved (the commit-hook linter binary) are placed in the ledger PENDING-ENTRIES with a reason. A new entry not in the ledger is red. A change that moves an entry to the entry or removes it deletes the ledger row in the same commit (leaving it is red).")
+     (rule R7 "The doeff-cluster worker (EnsureNativeWheel in the runtime-environment preparation) and the boot script (worker/entry/boot_wheel) only hand the native wheel to the entry with `uv build --wheel`, and own no key (git tree hash) or location of their own. The store is the entry's DOEFF_WHEEL_CACHE (the worker's state/wheels). The wheel to install is the file uv build wrote to the --out-dir under the root (native_wheel.wheel_out_dir), which appears with any version of the entry (the old doeff root of a declaration passes in the same shape too). The one line the entry writes to the file in env DOEFF_WHEEL_REPORT (whether it built) is observation only; with an entry version that does not write it, the origin is the closed-type UNREPORTED, preparation is not stopped, and it is filled in as neither built nor used — the single definition point of the reading is native_wheel.reported_built.")]
   :laws
     [(law rust-builds-pass-through-one-entry
        :statement "for_all file f in doeff (excluding tests and docs): builds_or_keys_rust(f) => f == ENTRY or f in COMPILERS or f in PENDING-ENTRIES; and builds_or_keys_rust(ENTRY)"
        :counterexamples
-         [(counterexample "package の build の口が tools/doeff_cargo_backend.py を通さず maturin.build_editable を直に呼ぶ(2026-10-06 までの editable の形 — 日次の検証で doeff-vm を 1 日 約 100 度組んだ)")
-          (counterexample "新しい script が自前の鍵(native_key — git の tree hash)で wheel の置き場を作る(入口へ移す前の worker の native_wheel と同じ形)")
-          (counterexample "script が cargo build --release を直に撃つ(入口の保存先を通らない)")])
+         [(counterexample "a package's build backend calls maturin.build_editable directly without going through tools/doeff_cargo_backend.py (the editable shape until 2026-10-06 — the daily verification built doeff-vm about 100 times a day)")
+          (counterexample "a new script makes a wheel location with its own key (native_key — git tree hash) (the same shape as the worker's native_wheel before it moved to the entry)")
+          (counterexample "a script fires cargo build --release directly (not going through the entry's store)")])
      (law compiler-hooks-read-the-store
        :statement "for_all hook h in {build_wheel, build_editable} of every file in COMPILERS: calls(h, the matching store function of ENTRY)"
        :counterexamples
-         [(counterexample "doeff-indexer の build_editable が with cargo_target_dir(): maturin.build_editable(...) のまま(保存先を通らず毎回組む)")])
+         [(counterexample "doeff-indexer's build_editable stays as with cargo_target_dir(): maturin.build_editable(...) (builds every time without going through the store)")])
      (law pending-entries-do-not-outlive-their-cause
        :statement "for_all f in PENDING-ENTRIES: builds_or_keys_rust(f)"
        :counterexamples
-         [(counterexample "worker の native_wheel を入口へ移した変更が PENDING-ENTRIES の行を残す(台帳が黙って次の入口を許す)")])]
+         [(counterexample "the change that moved the worker's native_wheel to the entry leaves its PENDING-ENTRIES row (the ledger silently permits the next entry)")])]
   :enforcement
     [(deftest test-adr-doe-build-001-rust-builds-pass-through-one-entry
        (val repo-root (. (Path __file__) parent parent parent))
        (val found (run (rust-building-files repo-root)))
        (val violations (run (entry-violations found)))
-       (assert (= violations []) (+ "Rust を組む・鍵を作る 2 つ目の入口(ADR-DOE-BUILD-001 R1・R6): " (str violations))))
+       (assert (= violations []) (+ "a second entry that builds Rust or makes a key (ADR-DOE-BUILD-001 R1, R6): " (str violations))))
      (deftest test-adr-doe-build-001-compiler-hooks-read-the-store
        (val repo-root (. (Path __file__) parent parent parent))
        (val missing (lfor rel (sorted COMPILERS)
                           hook (run (compiler-hooks-use-the-store (.read-text (/ repo-root rel) :encoding "utf-8")))
                           f"{rel}: {hook}"))
-       (assert (= missing []) (+ "組み方の口の build の hook が保存先を通らない(ADR-DOE-BUILD-001 R3): " (str missing))))
+       (assert (= missing []) (+ "a compiler backend's build hook does not go through the store (ADR-DOE-BUILD-001 R3): " (str missing))))
      (deftest test-adr-doe-build-001-pending-entries-do-not-outlive-their-cause
        (val repo-root (. (Path __file__) parent parent parent))
        (val stale (run (stale-pending (run (rust-building-files repo-root)))))
-       (assert (= stale []) (+ "移した入口が台帳に残っている(ADR-DOE-BUILD-001 R6): " (str stale))))
+       (assert (= stale []) (+ "a moved entry remains in the ledger (ADR-DOE-BUILD-001 R6): " (str stale))))
      (deftest test-adr-doe-build-001-judgments-reject-the-counterexamples
-       ;; 反例: 入口を 2 つにした形(maturin の hook を直に呼ぶ口・cargo build --release を撃つ script・自前の鍵 native_key・Hy の
-       ;; native-key)は 2 つ目の入口として赤。uv build --wheel は入口を通る呼びなので数えない。註と docstring の中の綴りは数えない。
-       ;; 台帳の行は原因が消えると赤。
+       ;; Counterexamples: shapes that make two entries (a backend calling maturin's hook directly, a script firing cargo build --release, its own key native_key, Hy's
+       ;; native-key) are red as a second entry. uv build --wheel is a call through the entry, so it is not counted. Spellings inside comments and docstrings are not counted.
+       ;; A ledger row is red once its cause is gone.
        (assert (run (python-builds-rust "import maturin\ndef build_editable(d, c=None, m=None):\n    return maturin.build_editable(d, c, m)\n")))
        (assert (run (python-builds-rust "import subprocess\nsubprocess.run(['cargo', 'build', '--release'])\n")))
        (assert (not (run (python-builds-rust "import subprocess\nsubprocess.run(['uv', 'build', '--wheel', '--out-dir', 'x', 'pkg'])\n"))))
        (assert (run (python-builds-rust "def native_key(package, trees):\n    return package\n")))
-       (assert (not (run (python-builds-rust "\"\"\"cargo build --release の註\"\"\"\n# maturin.build_wheel を呼ばない\nx = ['build', 'docs']\n"))))
+       (assert (not (run (python-builds-rust "\"\"\"a note on cargo build --release\"\"\"\n# does not call maturin.build_wheel\nx = ['build', 'docs']\n"))))
        (assert (run (hy-builds-rust "(defk native-key [wheel] wheel)\n")))
        (assert (run (hy-builds-rust "(RunProcess :argv #(cargo \"build\" \"--release\"))\n")))
        (assert (not (run (hy-builds-rust "(RunProcess :argv #(uv \"build\" \"--wheel\" \"--out-dir\" tmp src))\n"))))
-       (assert (not (run (hy-builds-rust ";; uv \"build\" \"--wheel\" を撃たない\n"))))
+       (assert (not (run (hy-builds-rust ";; does not fire uv \"build\" \"--wheel\"\n"))))
        (val second "packages/doeff-new/build_backend.py")
        (assert (= (len (run (entry-violations (frozenset #{ENTRY second})))) 1))
        (assert (= (run (entry-violations (frozenset (| #{ENTRY} COMPILERS (set PENDING-ENTRIES))))) []))

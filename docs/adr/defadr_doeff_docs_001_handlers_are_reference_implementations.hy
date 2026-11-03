@@ -1,16 +1,16 @@
-;;; Executable ADR: doeff に組み込みの handler・特別な handler は無い。doeff の package が持つ handler(reader・state・writer・
-;;; scheduled・await_handler ほか)は参考実装で、利用者の handler と同じ形をしており、どれも利用者の handler に替えられる。
-;;; 文書(README・docs の site の page・package の README・code の docstring と注釈)は、handler・effect・scheduler・interpreter を
-;;; 組み込みの物・標準の物・特別な物として書かず、参考実装と書く。
+;;; Executable ADR: doeff has no built-in handlers and no special handlers. The handlers shipped by doeff's packages (reader, state, writer,
+;;; scheduled, await_handler, and others) are reference implementations, have the same shape as users' handlers, and can each be replaced by a user's handler.
+;;; Documentation (README, docs site pages, package READMEs, code docstrings and comments) does not describe handlers, effects, schedulers, or interpreters
+;;; as built-in, standard, or special; it calls them reference implementations.
 ;;;
-;;; 公開の記事の下書きの審査で決めた(決めた事は :problem の fact)。
+;;; Decided in the review of the draft of the published article (the decision is the :problem fact).
 ;;;
-;;; 書くその場面の助言は doeff の外が持つ: agent-commons の defjevrule doeff-handlers-are-reference-implementations(doeff を
-;;; 説明する文を書く時に、handler を組み込み・特別な物と書いたら思い出させる)。doeff の側には、読みの範囲の言い方を検める
-;;; deftest を置く(R3・R4)。
+;;; Advice at the moment of writing lives outside doeff: agent-commons' defjevrule doeff-handlers-are-reference-implementations (when writing text that
+;;; explains doeff, it reminds the writer if a handler is described as built-in or special). The doeff side holds a deftest that checks the wording
+;;; in the reading scope (R3, R4).
 ;;;
-;;; 戻し方: この file を足した commit を revert し、`make enforcement-ledger` で台帳を作り直す(code の振る舞いは変えていない —
-;;; 直したのは文書と docstring の言い方だけ)。外すのは持ち主の言葉が在る時だけ。agent-commons の助言も同じ時に退ける。
+;;; Rollback: revert the commit that added this file and rebuild the ledger with `make enforcement-ledger` (code behavior was not changed —
+;;; only the wording of documentation and docstrings was fixed). Remove this only on the maintainer's word. Retire the agent-commons advice at the same time.
 
 (require doeff-adr.macros [defadr rule law])
 (import doeff-adr.macros [fact interpretation counterexample])
@@ -22,15 +22,16 @@
 
 
 (val REPO-ROOT (. (Path __file__) parent parent parent))
-;; 読みの範囲の入口の file(repo の根)。
+;; Entry files of the reading scope (repo root).
 (val ENTRY-FILES #("README.md" "CONTRIBUTING.md"))
-;; code の docstring と注釈を読む file の拡張子。
+;; Suffixes of files whose docstrings and comments are read.
 (val CODE-SUFFIXES #(".py" ".pyi" ".hy" ".rs"))
-;; code の読みから外す dir(試験・例・試験の材料・測り — 反例や古い形を意図して持つ所)。
+;; Dirs excluded from reading code (tests, examples, test fixtures, benchmarks — places that hold counterexamples and old shapes on purpose).
 (val CODE-EXCLUDED-DIR (re.compile r"(?:^|/)(?:tests?|examples|fixtures|benchmarks)/"))
-;; mkdocs.yml の exclude_docs の許す一覧の行(`  !/<page>.md`)— docs の site に入る page の組。
+;; Lines of the allow list in mkdocs.yml's exclude_docs (`  !/<page>.md`) — the set of pages that go into the docs site.
 (val SITE-PAGE-LINE (re.compile r"^\s+!/(\S+\.md)$" re.M))
-;; handler を組み込み・標準・特別な物として書く言い方(R2)。Python の組み込みの関数・型の話(builtins)は当てない。
+;; Wordings that describe handlers as built-in, standard, or special (R2). Talk about Python's built-in functions and types (builtins) is not matched.
+;; The last 3 alternatives match the Japanese wordings (built-in / standard / special + handler, scheduler, effect, interpreter), written as \u escapes.
 (val SPECIAL-HANDLER-WORDING
   (re.compile
     (.join "|"
@@ -41,9 +42,9 @@
        r"\bbatteries[- ]included\b"
        r"\bdefault\s+(?:handlers?|scheduler)\b"
        r"\b(?:special|privileged)\s+handlers?\b"
-       r"組み込みの?\s*(?:handler|ハンドラ|scheduler|スケジューラ|effect|エフェクト|interpreter)"
-       r"標準の?\s*(?:handler|ハンドラ|effect|エフェクト|scheduler|スケジューラ)"
-       r"特別な\s*(?:handler|ハンドラ)"])
+       r"\u7d44\u307f\u8fbc\u307f\u306e?\s*(?:handler|\u30cf\u30f3\u30c9\u30e9|scheduler|\u30b9\u30b1\u30b8\u30e5\u30fc\u30e9|effect|\u30a8\u30d5\u30a7\u30af\u30c8|interpreter)"
+       r"\u6a19\u6e96\u306e?\s*(?:handler|\u30cf\u30f3\u30c9\u30e9|effect|\u30a8\u30d5\u30a7\u30af\u30c8|scheduler|\u30b9\u30b1\u30b8\u30e5\u30fc\u30e9)"
+       r"\u7279\u5225\u306a\s*(?:handler|\u30cf\u30f3\u30c9\u30e9)"])
     re.I))
 
 
@@ -51,8 +52,8 @@
   {:pre [(: tracked list) (: mkdocs-yml str)]
    :post [(: % list)]
    :tags {:context "doeff-docs-adr" :role "judgment"}}
-  "利用者が読む文書の file の組(R3)— 入口の file・docs の site の page(mkdocs.yml の exclude_docs の許す一覧)・
-  package の README・doeff と packages の code(試験・例・試験の材料・測りの dir を除く)。tracked は repo の file の path の列。"
+  "The set of documentation files users read (R3) — the entry files, the docs site pages (the allow list in mkdocs.yml's exclude_docs),
+  package READMEs, and the code of doeff and packages (excluding the tests, examples, test fixtures, and benchmarks dirs). tracked is the list of the repo's file paths."
   (val tracked-set (set tracked))
   (val site-pages (lfor page (SITE-PAGE-LINE.findall mkdocs-yml) (+ "docs/" page)))
   (val package-readmes (lfor path tracked :if (re.fullmatch r"packages/[^/]+/README\.md" path) path))
@@ -71,14 +72,14 @@
   {:pre [(: path str) (: text str)]
    :post [(: % list)]
    :tags {:context "doeff-docs-adr" :role "judgment"}}
-  "1 つの file の文から、handler を組み込み・標準・特別な物として書いた所の列(空 = 無い)— 1 つは `<path>:<行>: <当たった句>`(R2)。"
+  "From the text of one file, the list of places that describe a handler as built-in, standard, or special (empty = none) — each is `<path>:<line>: <matched phrase>` (R2)."
   (lfor [number line] (enumerate (.splitlines text) 1)
         found (SPECIAL-HANDLER-WORDING.finditer line)
         (+ path ":" (str number) ": " (.group found 0))))
 
 
 (defadr ADR-DOE-DOCS-001
-  :title "doeff に組み込みの handler・特別な handler は無い。doeff の package の handler は参考実装で、文書(README・docs の site の page・package の README・code の docstring と注釈)は handler を組み込み・標準・特別な物として書かず、参考実装と書く。読みの範囲に その言い方が戻らない事を deftest が確かめる"
+  :title "doeff has no built-in handlers and no special handlers. The handlers of doeff's packages are reference implementations, and documentation (README, docs site pages, package READMEs, code docstrings and comments) does not describe handlers as built-in, standard, or special but calls them reference implementations. A deftest checks that such wording does not return to the reading scope"
   :status "accepted"
   :scope ["README.md"
           "CONTRIBUTING.md"
@@ -89,39 +90,39 @@
           "docs/adr/defadr_doeff_docs_001_handlers_are_reference_implementations.hy"]
   :problem
     [(fact
-       "公開の記事の下書きの審査で決めた事: どの handler も組み込みの物ではなく、在るのは参考実装だけ。特別な handler が在るかのように書く事は禁じる。")
+       "Decided in the review of the draft of the published article: no handler is built in; there are only reference implementations. Writing as if special handlers existed is forbidden.")
      (fact
-       "実装の側に特別扱いの handler は無い。`doeff.run` は handler を 1 つも積まず、program に呼んで積んだ handler だけで走る(`default_handlers` は doeff から削除済みで、呼ぶと handler を program に呼んで積めと答える)。SPEC-009 R5-C も scheduler を user-space の参考実装と定める。"
-       :evidence "doeff/run.py の run・doeff/__init__.py の default_handlers(_Removed)・docs/history/specs/vm/SPEC-009-rust-vm-migration.md R5-C")
+       "On the implementation side no handler gets special treatment. `doeff.run` installs no handler at all and runs with only the handlers the program installs by calling them (`default_handlers` has been removed from doeff; calling it answers that handlers should be installed by calling them in the program). SPEC-009 R5-C also defines the scheduler as a user-space reference implementation."
+       :evidence "run in doeff/run.py, default_handlers (_Removed) in doeff/__init__.py, docs/history/specs/vm/SPEC-009-rust-vm-migration.md R5-C")
      (fact
-       "2026-10-25 の main(24b3cf155)の README・CONTRIBUTING・docs の site の page・package の README・docstring は、「the built-in scheduler」「built-in effects and handlers」「the standard effects and handlers」「Batteries included」「Core handlers」「Built-In Handlers」「built-in default interpreter」など 55 か所で、handler を組み込み・標準・特別な物として書いていた。"
-       :evidence "この ADR の reading-scope と SPECIAL-HANDLER-WORDING を 24b3cf155 の木に当てた結果(55 か所)")]
+       "On main as of 2026-10-25 (24b3cf155), the README, CONTRIBUTING, docs site pages, package READMEs, and docstrings described handlers as built-in, standard, or special in 55 places, such as 'the built-in scheduler', 'built-in effects and handlers', 'the standard effects and handlers', 'Batteries included', 'Core handlers', 'Built-In Handlers', and 'built-in default interpreter'."
+       :evidence "Result of applying this ADR's reading-scope and SPECIAL-HANDLER-WORDING to the tree of 24b3cf155 (55 places)")]
   :context
     [(interpretation
-       "原因は、handler に特別扱いが無いという設計を、文書の言い方として縛る法も検めも無かった事。package の handler を紹介する文が「built-in」「standard」の語を使い続け、読み手は doeff の核に特別な handler が在ると読む。")
+       "The cause was that there was neither a law nor a check binding the design 'no handler gets special treatment' to the wording of documentation. Text introducing package handlers kept using the words 'built-in' and 'standard', and readers read that doeff's core has special handlers.")
      (interpretation
-       "package の handler は doeff の利用者が書く handler と同じ形(`@do` の関数・`handler(raw)`)で、program に呼んで積んだ時だけ働く。だから文書が言えるのは「この package がこの effect の参考実装の handler を持つ」までで、「doeff に入っている」「標準の」とは言えない。")
+       "Package handlers have the same shape as the handlers doeff users write (a `@do` function, `handler(raw)`), and work only when the program installs them by calling them. So documentation can say at most 'this package has a reference-implementation handler for this effect', and cannot say 'included in doeff' or 'standard'.")
      (interpretation
-       "doeff run の CLI が marker の無い時に使う interpreter(`doeff.cli.run_services:default_interpreter`)も、参考実装の handler を積む 1 つの関数で、特別な handler ではない。文書は「fallback interpreter」と書く。")]
+       "The interpreter the doeff run CLI uses when there is no marker (`doeff.cli.run_services:default_interpreter`) is also just one function that installs reference-implementation handlers, not a special handler. Documentation calls it the 'fallback interpreter'.")]
   :decision
-    [(rule R1 "doeff に組み込みの handler・特別な handler は無い。doeff の package(doeff-core-effects ほか)の handler は参考実装で、どれも利用者の handler に替えられる。")
-     (rule R2 "文書は、handler・effect・scheduler・interpreter を組み込みの物(built-in)・標準の物(standard・core・stock・default)・特別な物(special)・同梱の便利な物(batteries included)として書かない。「参考実装(reference implementation)」「package が持つ handler」と書く。Python の組み込みの関数・型(builtins)の話はこの外。")
-     (rule R3 "R2 を当てる読みの範囲は、入口の file(README.md・CONTRIBUTING.md)・docs の site に入る page(mkdocs.yml の exclude_docs の許す一覧)・package の README・doeff と packages の code の docstring と注釈(試験・例・試験の材料・測りの dir は除く)。開発の記録(docs/history・docs/design・docs/adr ほか site の外の docs)は書いた時の記録として残し、直さない。")
-     (rule R4 "書くその場面の助言は doeff の外(agent-commons の defjevrule doeff-handlers-are-reference-implementations)が持つ。doeff の側には R3 の範囲を検める deftest を置く。")]
+    [(rule R1 "doeff has no built-in handlers and no special handlers. The handlers of doeff's packages (doeff-core-effects and others) are reference implementations, and each can be replaced by a user's handler.")
+     (rule R2 "Documentation does not describe handlers, effects, schedulers, or interpreters as built-in, standard (standard, core, stock, default), special, or bundled conveniences (batteries included). It writes 'reference implementation' or 'a handler the package has'. Talk about Python's built-in functions and types (builtins) is outside this rule.")
+     (rule R3 "The reading scope R2 applies to is: the entry files (README.md, CONTRIBUTING.md), the pages that go into the docs site (the allow list in mkdocs.yml's exclude_docs), package READMEs, and the docstrings and comments of the code of doeff and packages (excluding the tests, examples, test fixtures, and benchmarks dirs). Development records (docs/history, docs/design, docs/adr, and other docs outside the site) are kept as records of when they were written and are not fixed.")
+     (rule R4 "Advice at the moment of writing lives outside doeff (agent-commons' defjevrule doeff-handlers-are-reference-implementations). The doeff side holds a deftest that checks the R3 scope.")]
   :laws
     [(law handlers-are-written-as-reference-implementations
-       :statement "∀ file ∈ reading-scope(repo の file, mkdocs.yml). wording-findings(file, 文) = []"
+       :statement "∀ file ∈ reading-scope(repo files, mkdocs.yml). wording-findings(file, text) = []"
        :counterexamples
-         [(counterexample "README の handler の表に「the built-in scheduler, `scheduled(...)`」と書く — 読み手は scheduler が doeff の核の一部で、替えられないと読む")
-          (counterexample "package の README の頭を「The standard effects and handlers for doeff」と書く — package の handler が doeff の標準で、利用者の handler より格が上だと読める")
-          (counterexample "docstring に「Built-in handlers for notification effects」と書く — API の文書の生成物にも同じ言い方が出る")]
+         [(counterexample "The README's handler table says 'the built-in scheduler, `scheduled(...)`' — readers read that the scheduler is part of doeff's core and cannot be replaced")
+          (counterexample "A package README opens with 'The standard effects and handlers for doeff' — it reads as if the package's handlers were doeff's standard and ranked above users' handlers")
+          (counterexample "A docstring says 'Built-in handlers for notification effects' — the same wording also appears in the generated API docs")]
        :enforced-by ["docs/adr/defadr_doeff_docs_001_handlers_are_reference_implementations.hy::test-adr-doe-docs-001-reading-scope-writes-handlers-as-reference-implementations"
                      "docs/adr/defadr_doeff_docs_001_handlers_are_reference_implementations.hy::test-adr-doe-docs-001-special-handler-wording-is-named"
                      "docs/adr/defadr_doeff_docs_001_handlers_are_reference_implementations.hy::test-adr-doe-docs-001-reading-scope-covers-the-published-files"]
-       :wiring "配線済み(2026-10-26)— この file のテスト。書く場面の助言は agent-commons の defjevrule(R4)")]
+       :wiring "Wired (2026-10-26) — this file's tests. Advice at the moment of writing is agent-commons' defjevrule (R4)")]
   :enforcement
     [(deftest test-adr-doe-docs-001-reading-scope-writes-handlers-as-reference-implementations
-       ;; 今の木の読みの範囲に、handler を組み込み・標準・特別な物として書いた所が無い(R2・R3)。
+       ;; The reading scope of the current tree has no place that describes a handler as built-in, standard, or special (R2, R3).
        (val tracked (.split (. (subprocess.run ["git" "-C" (str REPO-ROOT) "ls-files"] :capture-output True :text True :check True) stdout)))
        (val scope (run (reading-scope tracked (.read-text (/ REPO-ROOT "mkdocs.yml") :encoding "utf-8"))))
        (val findings (lfor path scope
@@ -129,10 +130,11 @@
                            found (run (wording-findings path (.read-text (/ REPO-ROOT path) :encoding "utf-8" :errors "replace")))
                            found))
        (assert (= findings [])
-               (+ "handler を組み込み・標準・特別な物として書いた所が在る(ADR-DOE-DOCS-001 R2 — package の handler は参考実装と書く): "
+               (+ "Some places describe a handler as built-in, standard, or special (ADR-DOE-DOCS-001 R2 — call package handlers reference implementations): "
                   (str findings))))
      (deftest test-adr-doe-docs-001-special-handler-wording-is-named
-       ;; 反例の言い方を名指して断り、参考実装の言い方と Python の組み込みの話は通す(R2)。
+       ;; Name and refuse the counterexample wordings; let the reference-implementation wording and talk about Python builtins through (R2).
+       ;; The Japanese wordings are written as \u escapes (built-in handler / standard handler / special handler).
        (assert (= (run (wording-findings "README.md" "| holds it | the built-in scheduler, `scheduled(...)` |"))
                   ["README.md:1: built-in scheduler"]))
        (assert (= (run (wording-findings "x.md" "a\nThe standard effects and handlers for doeff.\nBuilt-In Handlers\n"))
@@ -141,15 +143,15 @@
                   ["x.py:1: Core handlers"]))
        (assert (= (run (wording-findings "x.md" "- **Batteries included.**\nthe stock scheduler\nthe default handlers"))
                   ["x.md:1: Batteries included" "x.md:2: stock scheduler" "x.md:3: default handlers"]))
-       (assert (= (run (wording-findings "x.md" "組み込みのハンドラ\n標準の handler\n特別なハンドラ"))
-                  ["x.md:1: 組み込みのハンドラ" "x.md:2: 標準の handler" "x.md:3: 特別なハンドラ"]))
+       (assert (= (run (wording-findings "x.md" "\u7d44\u307f\u8fbc\u307f\u306e\u30cf\u30f3\u30c9\u30e9\n\u6a19\u6e96\u306e handler\n\u7279\u5225\u306a\u30cf\u30f3\u30c9\u30e9"))
+                  ["x.md:1: \u7d44\u307f\u8fbc\u307f\u306e\u30cf\u30f3\u30c9\u30e9" "x.md:2: \u6a19\u6e96\u306e handler" "x.md:3: \u7279\u5225\u306a\u30cf\u30f3\u30c9\u30e9"]))
        (assert (= (run (wording-findings "x.md" (+ "Reference implementations of effects and handlers.\n"
                                                     "doeff-core-effects ships the reference handler `state`.\n"
                                                     "a builtin class, Python's built-in functions, `doeff_core_effects`\n"
                                                     "the fallback interpreter")))
                   [])))
      (deftest test-adr-doe-docs-001-reading-scope-covers-the-published-files
-       ;; 読みの範囲が、入口の file・site の page・package の README・code を持ち、試験と開発の記録を持たない(R3)。
+       ;; The reading scope holds the entry files, site pages, package READMEs, and code, and does not hold tests or development records (R3).
        (val tracked ["README.md" "CONTRIBUTING.md" "docs/index.md" "docs/history/specs/x.md" "docs/design/y.md"
                      "packages/doeff-notify/README.md" "packages/doeff-notify/src/doeff_notify/_handlers/__init__.py"
                      "packages/doeff-notify/tests/test_handlers.py" "doeff/program.py" "doeff/cli/run_services.py"

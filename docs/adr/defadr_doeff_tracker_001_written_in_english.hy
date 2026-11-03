@@ -1,14 +1,15 @@
-;;; Executable ADR: doeff の GitHub の tracker(issue・PR・comment)は英語で書き、持ち主の内部の仕組みを前提にした設計や作業の記録は
-;;; この tracker に書かず、持ち主の内部の追跡(作業ボード)に置く。
+;;; Executable ADR: doeff's GitHub tracker (issues, PRs, comments) is written in English, and design or work notes that assume
+;;; the maintainer's internal infrastructure are not written to this tracker; they go to the maintainer's internal tracker.
 ;;;
-;;; 開いた issue の日本語の記録の扱いは、案 a に決まった(案の中身は :problem の fact)。
+;;; The handling of the open Japanese issues was decided as option a (the content of the option is the :problem fact).
 ;;;
-;;; 書くその場面の助言は doeff の外が持つ: agent-commons の defjevrule doeff-tracker-is-written-in-english(命令が proboscis/doeff の
-;;; issue・PR・comment を書く時に出る・agent-commons 17d5d6b3)。doeff の側には、入口の file(AGENTS.md)の英語の段と、その段が残る事を
-;;; 確かめる deftest を置く(R2・R3)。今ある日本語の issue の扱いはこの ADR の外(持ち主の内部の追跡で別に進める)。
+;;; The advice at the moment of writing lives outside doeff: agent-commons' defjevrule doeff-tracker-is-written-in-english (fires when a command
+;;; writes an issue, PR, or comment on proboscis/doeff; agent-commons 17d5d6b3). On the doeff side we keep the English paragraph in the entry file
+;;; (AGENTS.md) and a deftest that checks the paragraph stays (R2, R3). Handling of the existing Japanese issues is outside this ADR (tracked separately
+;;; in the maintainer's internal tracker).
 ;;;
-;;; 戻し方: この file と AGENTS.md の段を足した commit を revert し、`make enforcement-ledger` で台帳を作り直す(code と wire は変えていない)。
-;;; 外すのは持ち主の言葉が在る時だけ。agent-commons の助言も同じ時に退ける。
+;;; Rollback: revert the commit that added this file and the AGENTS.md paragraph, and rebuild the ledger with `make enforcement-ledger` (no code or wire changed).
+;;; Retire it only on the maintainer's word. Retire the agent-commons advice at the same time.
 
 (require doeff-adr.macros [defadr rule law])
 (import doeff-adr.macros [fact interpretation counterexample])
@@ -22,82 +23,82 @@
 (val SECTION-HEADING "## Ownership & Write Authority (CRITICAL)")
 (val PARAGRAPH-LEAD "- **The tracker is written in English.**")
 (val REQUIRED-PHRASES #("Issues, pull requests, and comments" "written in English" "kept out of this tracker"))
-;; 入口の file の段に書かない内部の名(持ち主の内部の仕組みの名と、その記録の id の頭)。
+;; Internal names that must not appear in the entry file's paragraph (names of the maintainer's internal infrastructure and the id prefixes of its records).
 (val INTERNAL-NAME (re.compile r"(?i)\bagora\b|\bkanban\b|\bcard\b|\b(?:ki|lt|ci)-[0-9a-z]{6,}|\bc-[0-9a-z]{20,}"))
-;; 英語でない字(かな・漢字・全角)。
-(val NON-ENGLISH (re.compile "[぀-ヿ㐀-鿿＀-￯]"))
+;; Non-English characters (kana, kanji, full-width forms).
+(val NON-ENGLISH (re.compile "[\u3040-\u30ff\u3400-\u9fff\uff00-\uffef]"))
 
 
 (defk paragraph-problems [agents-md]
   {:pre [(: agents-md str)]
    :post [(: % list)]
    :tags {:context "doeff-tracker-adr" :role "judgment"}}
-  "AGENTS.md の本文から、英語で書く決まりの段の欠けの文の列(空 = 段が残っている)— 段は節 Ownership & Write Authority の中に在り、
-  要る句を持ち、英語だけで書かれ、内部の名を持たない(R2・R3)。"
+  "From the AGENTS.md text, the list of messages naming what is missing from the write-in-English paragraph (empty = the paragraph is intact).
+  The paragraph sits inside the section Ownership & Write Authority, holds the required phrases, is written only in English, and holds no internal names (R2, R3)."
   (when (not-in SECTION-HEADING agents-md)
-    (return [(+ "節 " SECTION-HEADING " が無い")]))
+    (return [(+ "section " SECTION-HEADING " is missing")]))
   (val section (get (.split (get (.split agents-md SECTION-HEADING 1) 1) "\n## " 1) 0))
   (val found (re.search (+ (re.escape PARAGRAPH-LEAD) r"[^\n]*(?:\n  [^\n]+)*") section))
   (when (is found None)
-    (return [(+ "節 " SECTION-HEADING " に段 " PARAGRAPH-LEAD " が無い")]))
+    (return [(+ "section " SECTION-HEADING " has no paragraph " PARAGRAPH-LEAD)]))
   (val paragraph (.join " " (.split (.group found 0))))
-  (+ (lfor phrase REQUIRED-PHRASES :if (not-in phrase paragraph) (+ "段に句 " (repr phrase) " が無い"))
+  (+ (lfor phrase REQUIRED-PHRASES :if (not-in phrase paragraph) (+ "paragraph lacks phrase " (repr phrase)))
      (if (is (NON-ENGLISH.search paragraph) None) []
-         [(+ "段に英語でない字が在る: " (repr (.group (NON-ENGLISH.search paragraph) 0)))])
+         [(+ "paragraph has a non-English character: " (repr (.group (NON-ENGLISH.search paragraph) 0)))])
      (if (is (INTERNAL-NAME.search paragraph) None) []
-         [(+ "段に内部の名が在る: " (str (INTERNAL-NAME.findall paragraph)))])))
+         [(+ "paragraph has internal names: " (str (INTERNAL-NAME.findall paragraph)))])))
 
 
 (defadr ADR-DOE-TRACKER-001
-  :title "doeff の GitHub の tracker(issue・PR・comment の題と本文)は英語で書く。持ち主の内部の仕組みを前提にした設計や作業の記録はこの tracker に書かず、持ち主の内部の追跡に置く。入口の file AGENTS.md がこの決まりを英語の段で持ち、段が残る事を deftest が確かめる"
+  :title "doeff's GitHub tracker (titles and bodies of issues, PRs, and comments) is written in English. Design or work notes that assume the maintainer's internal infrastructure are not written to this tracker; they go to the maintainer's internal tracker. The entry file AGENTS.md holds this rule as an English paragraph, and a deftest checks the paragraph stays"
   :status "accepted"
   :scope ["AGENTS.md"
           "docs/adr/defadr_doeff_tracker_001_written_in_english.hy"]
   :problem
     [(fact
-       "日本語の issue の扱いは案 a に決まった。案 a は、内部の記録を作業ボードへ移して閉じ、外の人に役立つ物は英語を足して残し、これからは英語で書く決まりを足す。公開の issue と内部の記録の置き場を分け、日本語の記録が混ざる原因を取り除く。")
+       "The handling of the Japanese issues was decided as option a. Option a moves the internal notes to the maintainer's internal tracker and closes them, keeps what is useful to outsiders with English added, and adds a rule to write in English from now on. It separates the place for public issues from the place for internal notes and removes the cause of Japanese notes mixing in.")
      (fact
-       "2026-10-18 の分類で、proboscis/doeff の開いた issue 90 件のうち 39 件が日本語だった。うち 7 件と下書きの PR 1 件は、持ち主の内部の仕組みを前提にした記録だった。"
-       :evidence "2026-10-18 の開いた issue と PR の分類(内部の追跡の報告)")
+       "In the 2026-10-18 classification, 39 of the 90 open issues on proboscis/doeff were in Japanese. Of these, 7 issues and 1 draft PR were notes that assumed the maintainer's internal infrastructure."
+       :evidence "Classification of open issues and PRs on 2026-10-18 (report in the internal tracker)")
      (fact
-       "2026-10-18 の main の AGENTS.md は、下流の agent に「issue を出す」とだけ書き、tracker に書く言葉と、内部の記録を置かない事を書いていなかった。"
-       :evidence "AGENTS.md の節 Ownership & Write Authority の Downstream-task agents の項(373ae2638)")]
+       "AGENTS.md on main as of 2026-10-18 told downstream agents only to \"file an issue\"; it did not say which language to write on the tracker, nor that internal notes must not be placed there."
+       :evidence "AGENTS.md, section Ownership & Write Authority, the Downstream-task agents item (373ae2638)")]
   :context
     [(interpretation
-       "原因は、持ち主の内部の agent が見つけた不具合や設計を、日本語のまま公開の issue に書いてきた事。公開の tracker と内部の記録の置き場が、決まりの上で分かれていなかった。")
+       "The cause is that bugs and designs found by the maintainer's internal agents were written to public issues as-is, in Japanese. As a matter of rule, the public tracker and the place for internal notes were not separated.")
      (interpretation
-       "tracker を読むのは repo の外の人で、内部の仕組みを知らない。内部の名(仕組みの名・記録の id)を前提にした文は、英語にしても外の人に読めない。だから英語で書く事と、内部の記録を置かない事を 1 つの決まりにする。")]
+       "The tracker is read by people outside the repo, who do not know the internal infrastructure. Text that assumes internal names (infrastructure names, record ids) is unreadable to outsiders even in English. So writing in English and keeping internal notes out are made one rule.")]
   :decision
-    [(rule R1 "proboscis/doeff の issue・PR・comment の題と本文は英語で書く。会話そのものの言葉(AGENTS.md の Communication の節)には依らない。")
-     (rule R2 "持ち主の内部の仕組みを前提にした設計や作業の記録は、この tracker に書かず、持ち主の内部の追跡に置く。tracker の文には内部の名(仕組みの名・記録の id)を書かない。")
-     (rule R3 "入口の file AGENTS.md の節 Ownership & Write Authority が、R1 と R2 を英語の段 1 つで持つ。段は英語だけで書き、内部の名を書かない。")
-     (rule R4 "書くその場面の助言は doeff の外(agent-commons の defjevrule doeff-tracker-is-written-in-english)が持つ。doeff の側には R3 の段とその deftest だけを置く。")]
+    [(rule R1 "Titles and bodies of issues, PRs, and comments on proboscis/doeff are written in English, independent of the language of the conversation itself (the Communication section of AGENTS.md).")
+     (rule R2 "Design or work notes that assume the maintainer's internal infrastructure are not written to this tracker; they go to the maintainer's internal tracker. Tracker text does not contain internal names (infrastructure names, record ids).")
+     (rule R3 "The section Ownership & Write Authority of the entry file AGENTS.md holds R1 and R2 in one English paragraph. The paragraph is written only in English and contains no internal names.")
+     (rule R4 "The advice at the moment of writing lives outside doeff (agent-commons' defjevrule doeff-tracker-is-written-in-english). The doeff side holds only the R3 paragraph and its deftest.")]
   :laws
     [(law tracker-is-written-in-english
-       :statement "AGENTS.md の節 Ownership & Write Authority に段 PARAGRAPH-LEAD が在る ∧ 段 ⊇ REQUIRED-PHRASES ∧ 段は英語の字だけ ∧ 段は内部の名を持たない"
+       :statement "AGENTS.md section Ownership & Write Authority has the paragraph PARAGRAPH-LEAD ∧ paragraph ⊇ REQUIRED-PHRASES ∧ the paragraph has only English characters ∧ the paragraph holds no internal names"
        :counterexamples
-         [(counterexample "AGENTS.md を整える変更で段が消え、tracker の言葉の決まりが入口の file から黙って無くなる — 下流の agent はまた日本語の issue を書く")
-          (counterexample "段を日本語に書き換える、または内部の仕組みの名を段に書く — 外の人が入口の file で読めない決まりになる")]
+         [(counterexample "A change tidying AGENTS.md drops the paragraph, and the tracker-language rule silently disappears from the entry file — downstream agents write Japanese issues again")
+          (counterexample "The paragraph is rewritten in Japanese, or an internal infrastructure name is written into it — the rule becomes unreadable to outsiders in the entry file")]
        :enforced-by ["docs/adr/defadr_doeff_tracker_001_written_in_english.hy::test-adr-doe-tracker-001-agents-md-keeps-the-english-paragraph"
                      "docs/adr/defadr_doeff_tracker_001_written_in_english.hy::test-adr-doe-tracker-001-broken-paragraphs-are-named"]
-       :wiring "配線済み(2026-10-18)— この file のテスト。書く場面の助言は agent-commons の defjevrule(R4)")]
+       :wiring "Wired (2026-10-18) — the tests in this file. The advice at the moment of writing is agent-commons' defjevrule (R4)")]
   :enforcement
     [(deftest test-adr-doe-tracker-001-agents-md-keeps-the-english-paragraph
-       ;; 今の AGENTS.md に、英語で書く決まりの段が欠けなく残る(R3)。
+       ;; The current AGENTS.md keeps the write-in-English paragraph intact (R3).
        (val problems (run (paragraph-problems (.read-text AGENTS-MD :encoding "utf-8"))))
        (assert (= problems [])
-               (+ "AGENTS.md の英語で書く決まりの段が欠けた(ADR-DOE-TRACKER-001 R3 — 段は節 Ownership & Write Authority に英語で残す): "
+               (+ "The write-in-English paragraph of AGENTS.md is broken (ADR-DOE-TRACKER-001 R3 — keep the paragraph in English in section Ownership & Write Authority): "
                   (str problems))))
      (deftest test-adr-doe-tracker-001-broken-paragraphs-are-named
-       ;; 反例(節が無い・段が無い・句が欠けた・日本語の段・内部の名を持つ段)を、段の欠けの判じが名指して断る。
+       ;; The paragraph judgment names and rejects the counterexamples (no section, no paragraph, missing phrase, Japanese paragraph, paragraph with internal names).
        (val good (+ SECTION-HEADING "\n\n" PARAGRAPH-LEAD " Issues, pull requests, and comments on\n  this repository are written in English."
                     " Internal notes are kept out of this tracker.\n\n## Next\n"))
        (assert (= (run (paragraph-problems good)) []))
-       (assert (= (run (paragraph-problems "# Repository Guidelines\n")) [(+ "節 " SECTION-HEADING " が無い")]))
+       (assert (= (run (paragraph-problems "# Repository Guidelines\n")) [(+ "section " SECTION-HEADING " is missing")]))
        (assert (= (run (paragraph-problems (+ SECTION-HEADING "\n\n- other\n\n## Next\n" PARAGRAPH-LEAD " written in English\n")))
-                  [(+ "節 " SECTION-HEADING " に段 " PARAGRAPH-LEAD " が無い")]))
+                  [(+ "section " SECTION-HEADING " has no paragraph " PARAGRAPH-LEAD)]))
        (assert (= (run (paragraph-problems (.replace good " Internal notes are kept out of this tracker." "")))
-                  ["段に句 'kept out of this tracker' が無い"]))
-       (assert (= (len (run (paragraph-problems (.replace good "written in English" "written in English(英語)")))) 1))
+                  ["paragraph lacks phrase 'kept out of this tracker'"]))
+       (assert (= (len (run (paragraph-problems (.replace good "written in English" "written in English(\u82f1\u8a9e)")))) 1))
        (assert (= (run (paragraph-problems (.replace good "Internal notes" "Agora card notes")))
-                  ["段に内部の名が在る: ['Agora', 'card']"])))])
+                  ["paragraph has internal names: ['Agora', 'card']"])))])

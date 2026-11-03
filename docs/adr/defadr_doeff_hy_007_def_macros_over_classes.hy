@@ -1,20 +1,20 @@
-;;; Executable ADR: 名を持ち道具が読む宣言は def* で書く。外の世界に触る class(client・store)と状態の変わる class
-;;; (模擬の store・キャッシュ)は作らず、土台の handler と session val / var に置く。値の class(Point2D)は許す。
+;;; Executable ADR: declarations that have a name and are read by tools are written with def*. Classes that touch the outside world (client, store) and classes
+;;; with changing state (fake stores, caches) are not created; they go into foundation handlers and session val / var. Value classes (Point2D) are allowed.
 ;;;
-;;; 決めた事は :problem の fact に在る。class より def* を選ぶ提案を採り、その後に的を 2 度絞った(class 全般 → 処理を持つ class →
-;;; 外の世界に触る class と状態の変わる class。値の class は許す)。判定は名前でなく中身の証拠で、理由の註は要らない。
+;;; The decisions are in the :problem facts. The proposal to choose def* over classes was adopted, and the target was then narrowed twice (classes in general → classes with behavior →
+;;; classes that touch the outside world and classes with changing state; value classes are allowed). The judgment is by evidence in the content, not by name, and no reason annotation is needed.
 ;;;
-;;; 置き場の判断: ADR-DOE-HY-004(関数の語彙は defk のみ)の続きに足さず、新しい冊にした。HY-004 は関数の定義
-;;; (defn / deff / defk)の語彙と、理由の註の無い deff の台帳を持つ冊で、型と class の定義は別の軸 — 同じ冊に混ぜると
-;;; 台帳・針・law が 2 つの軸にまたがる。この冊は HY-004(関数)・HY-005 R5(macro は doeff-hy にだけ置く)と組になる。
+;;; Placement decision: this was not appended to ADR-DOE-HY-004 (function vocabulary is defk only) but made a new ADR file. HY-004 is the file holding the vocabulary of function
+;;; definitions (defn / deff / defk) and the ledger of deff without reason annotations; type and class definitions are a separate axis — mixing them in the same file
+;;; would spread the ledger, probes, and laws over 2 axes. This file pairs with HY-004 (functions) and HY-005 R5 (macros live only in doeff-hy).
 ;;;
-;;; 追記(2026-09-28): 臭いの規則(doeff-linter DOEFF121〜125・Jev の DOEFF205)と、失敗の型の印
-;;; (defrecord の :failure True)を R9・R10(と Jev の R11)として足した。置き場の判断: ADR-DOE-CORE-EFFECTS-003(Absent / Raise)は同じ日に
-;;; 別の便(wt/absent-raise-impl)が大きく書き換えている最中で、同じ file に条を足すと着地で衝突する。臭いの規則は「道具が読む
-;;; 宣言(def*)で書く」この冊の R1 の続き — 失敗の型の印は defrecord の頭の辞書に置く宣言で、linter が実行せずに読む。
+;;; Addendum (2026-09-28): the smell rules (doeff-linter DOEFF121–125, Jev's DOEFF205) and the failure-type mark
+;;; (defrecord's :failure True) were added as R9 and R10 (and Jev's R11). Placement decision: ADR-DOE-CORE-EFFECTS-003 (Absent / Raise) was, on the same day,
+;;; in the middle of a large rewrite by another change (wt/absent-raise-impl), and adding clauses to the same file would conflict at landing. The smell rules continue this file's R1,
+;;; "write as declarations tools read (def*)" — the failure-type mark is a declaration placed in defrecord's head dict, which the linter reads without executing.
 ;;;
-;;; 戻し方: この ADR を足した commit を revert する(ADR の file 1 つが消える。DOEFF119 と defrecord の :tags / :check は
-;;; 別の便の実装なので、それぞれの commit を別に戻す)。
+;;; Rollback: revert the commit that added this ADR (one ADR file disappears. DOEFF119 and defrecord's :tags / :check are
+;;; implemented by other changes, so revert those commits separately).
 
 (require doeff-adr.macros [defadr rule law])
 (import doeff-adr.macros [fact interpretation counterexample])
@@ -24,22 +24,22 @@
 (import doeff_hy._wire [parse dump Malformed])
 
 
-;; 生きた probe — データの型は defrecord で 1 行に建ち、実行時の値はその型を呼んで作る。
+;; Live probe — a data type is built in one line with defrecord, and runtime values are made by calling that type.
 (defrecord ProbeBudgetRow
   #^ str name
   #^ int used
   #^ int limit)
 
-;; 生きた probe(R8)— JSON の境目の型は defwire で宣言し、parse で解いて確かめ、dump で JSON へ戻す。
+;; Live probe (R8) — a JSON boundary type is declared with defwire, decoded and checked with parse, and turned back into JSON with dump.
 (defwire ProbeBudgetWire
-  "予算の 1 行(JSON の境目)"
+  "One budget row (JSON boundary)"
   {:names :camel}
   #^ str name
   #^ int used-units)
 
 
 (defadr ADR-DOE-HY-007
-  :title "名を持ち道具(linter・索引・エディタ・型検査)が読む宣言は def*(doeff-hy に置き、読み方の規則つき)で書く。外の世界に触る class(method に生の副作用・資源を欄に持つ — client・store)は土台の handler(資源は session val)に、状態の変わる class(method が self を書き換える — 模擬の store・キャッシュ)は handler の session var に置き換える。値の class(欄が変わらず method は欄から計算するだけ — Point2D)・例外・Enum・Protocol・外の基底を継ぐ物は許す。欄だけの型は defrecord を勧める。判定は名前でなく中身の証拠(doeff-linter DOEFF119・理由の註は要らない)"
+  :title "Declarations that have a name and are read by tools (linter, index, editor, type checker) are written with def* (placed in doeff-hy, with reading rules). Classes that touch the outside world (raw side effects in methods, resources held in fields — client, store) are replaced by foundation handlers (resources in session val); classes with changing state (methods rewrite self — fake stores, caches) are replaced by a handler's session var. Value classes (fields do not change and methods only compute from fields — Point2D), exceptions, Enums, Protocols, and subclasses of external bases are allowed. defrecord is recommended for field-only types. The judgment is by evidence in the content, not by name (doeff-linter DOEFF119; no reason annotation needed)"
   :status "accepted"
   :scope ["docs/adr/defadr_doeff_hy_007_def_macros_over_classes.hy"
           "packages/doeff-hy/src/doeff_hy/record.hy"
@@ -49,144 +49,144 @@
           "packages/doeff-linter/src/project/smells.rs"]
   :problem
     [(fact
-       "class を作るより def* の macro を選び続けるべきかを検め、def* で進めると決めた。")
+       "Whether to keep choosing def* macros over creating classes was examined, and it was decided to proceed with def*.")
      (fact
-       "的の絞り込み: defclass そのものは使ってよいが、doeff + Hy の code で client のような物を class にする理由は無い。Point2D / Point3D のような値は class でよく、client と store は handler / effect で書く。")
+       "Narrowing the target: defclass itself may be used, but in doeff + Hy code there is no reason to make something like a client a class. Values such as Point2D / Point3D may be classes; clients and stores are written as handlers / effects.")
      (fact
-       "残った問い: AST や数値のような純粋なデータは data class でよく、全体の service はいつも handler / effect で書く。では、game の登場人物のような状態を持つ物はどう書くか。")
+       "Remaining question: pure data such as ASTs and numbers may be data classes, and whole-system services are always written as handlers / effects. Then how are stateful things such as game characters written?")
      (fact
-       "実測: agora-controllers に defclass 848・defrecord 338(coordinator の計測・2026-09-27)。同じ日のこの席の数え(git grep の出現数・origin/main 380ae943)は defclass 819・defrecord 414。doeff(origin/main 772a4405)は defclass 614・defrecord 98。"
+       "Measured: agora-controllers has defclass 848 and defrecord 338 (coordinator's count, 2026-09-27). This session's count on the same day (git grep occurrences, origin/main 380ae943) is defclass 819 and defrecord 414. doeff (origin/main 772a4405) has defclass 614 and defrecord 98."
        :evidence "git grep -c '(defclass' / '(defrecord' -- '*.hy'")
      (fact
-       "defrecord は doeff-hy が所有する template macro で、欄の名前と型を宣言した凍結の dataclass を 1 行で建てる。今は :tags と :check の節を持たない — 検めを要する型は素の defclass と __post_init__ で書かれている。"
-       :evidence "packages/doeff-hy/src/doeff_hy/record.hy(defrecord)・ADR-DOE-HY-005 R4")
+       "defrecord is a template macro owned by doeff-hy that builds, in one line, a frozen dataclass declaring field names and types. It currently has no :tags or :check clause — types that need checks are written as plain defclass with __post_init__."
+       :evidence "packages/doeff-hy/src/doeff_hy/record.hy (defrecord), ADR-DOE-HY-005 R4")
      (fact
-       "2026-09-28 に、臭いを拾う規則を doeff-linter に足すと決めた。題材は agora-controllers の controllers/kanban/core/tag_judgment.hy の decide-tag で、決めた時点の linter はこの file に何も出していなかった。")
+       "On 2026-09-28 it was decided to add smell-detecting rules to doeff-linter. The subject was decide-tag in agora-controllers' controllers/kanban/core/tag_judgment.hy; at the time of the decision the linter reported nothing on this file.")
      (fact
-       "decide-tag(agora-controllers 068dee21)の形: core の判断の中で (.get payload \"subject\") を (isinstance subject str) で検める / (match said (Refusal) (do (<- refused … (rejected (+ said.reason \": \" said.detail))) (return refused))) で受けた断りを包み直して返す / (<- bad-subject WritePlan …) の直後に (return bad-subject) / for の中で (:= writes (+ writes #(…)))。本線 0a528aa1 に当てると DOEFF121 78・122 9(Refusal に印を付けた後)・123 112・124 168・125 30。"
-       :evidence "doeff-linter wt/hy-smells の editor-json(agora-controllers wt/hy-smells)")
+       "The shape of decide-tag (agora-controllers 068dee21): inside a core judgment it checks (.get payload \"subject\") with (isinstance subject str) / it rewraps and returns a received refusal with (match said (Refusal) (do (<- refused … (rejected (+ said.reason \": \" said.detail))) (return refused))) / (return bad-subject) right after (<- bad-subject WritePlan …) / (:= writes (+ writes #(…))) inside a for. Applied to mainline 0a528aa1: DOEFF121 78, 122 9 (after marking Refusal), 123 112, 124 168, 125 30."
+       :evidence "editor-json of doeff-linter wt/hy-smells (agora-controllers wt/hy-smells)")
      (fact
-       "defk / deff / defp / defhandler / defeffect の頭の辞書は :tags を受け、定義の属性に残す。素の defclass にはタグの置き場が無く、タグから定義を並べる閲覧に現れない。"
+       "The head dicts of defk / deff / defp / defhandler / defeffect accept :tags and keep them as attributes of the definition. A plain defclass has no place for tags and does not appear in browsing that lists definitions by tag."
        :evidence "packages/doeff-hy/src/doeff_hy/_declarations.hy")
      (fact
-       "R8 の出自: wire.hy に在る JsonValue が直に使われていた。JsonValue を誰にも直に使わせず、pydantic のように実際に parse して検める形にする。")
+       "Origin of R8: JsonValue in wire.hy was being used directly. Nobody should use JsonValue directly; instead, like pydantic, actually parse and check.")
      (fact
-       "JSON の境目の型にも def* の macro を持てるかを検め、案 A(別の macro defwire)と案 B(defrecord に :wire の節)のうち案 A を選んだ。")
+       "Whether JSON boundary types can also have a def* macro was examined, and of option A (a separate macro defwire) and option B (a :wire clause on defrecord), option A was chosen.")
      (fact
-       "実測: agora-controllers の本線に JsonValue(名前を変えた素の dict — dict | list | str | int | float | bool | None)を使う file が 36・179 行。core 7 file の判断の関数が JsonValue を受けて素の dict / list を返し、protocol は JsonValue を手で分解して読む。定義は doeff_records._wire の他に TypeAlias の写しが 4 つ・その場の定義が 3 つ。"
-       :evidence "git grep -nwE 'JsonValue|JSONValue' -- controllers services(agora-controllers・2026-09-28)")]
+       "Measured: on agora-controllers' mainline, 36 files / 179 lines use JsonValue (a renamed plain dict — dict | list | str | int | float | bool | None). Judgment functions in 7 core files take JsonValue and return plain dict / list, and protocols read JsonValue by decomposing it by hand. Besides doeff_records._wire, there are 4 TypeAlias copies and 3 ad-hoc definitions."
+       :evidence "git grep -nwE 'JsonValue|JSONValue' -- controllers services (agora-controllers, 2026-09-28)")]
   :context
     [(interpretation
-       "def* の宣言は、名前・欄・契約・タグを macro の形で固定するので、linter・索引・エディタ・型検査が読み方の規則(HY-005 R5 の投影)1 つで読める。素の class は method の中に何でも書けるので、道具はそれが値の型なのか振る舞いなのかを読み分けられない。")
+       "A def* declaration fixes the name, fields, contract, and tags in the macro's shape, so the linter, index, editor, and type checker can read it with one set of reading rules (the HY-005 R5 projection). A plain class can contain anything in its methods, so tools cannot tell whether it is a value type or behavior.")
      (interpretation
-       "client・store のように外の世界に触る method は effect を通らないので、handler の差し替え(模擬)・記録と再生・層の規則(生の副作用は土台だけ)が効かず、生の副作用が土台の外に漏れる。接続や資源は土台の handler が (session val …) で持ち、状態は handler の (session var …) で持てば、どちらも effect の向こうに入る。")
+       "Methods that touch the outside world, like a client's or store's, do not go through effects, so handler substitution (fakes), record and replay, and layer rules (raw side effects only in the foundation) do not apply, and raw side effects leak outside the foundation. If connections and resources are held by a foundation handler with (session val …) and state by a handler's (session var …), both sit behind effects.")
      (interpretation
-       "値の class(Point2D・Point3D — 欄が変わらず、method は欄から計算するだけ)は外の世界にも変わる状態にも触らないので、上の害が無く許す。線は名前ではなく中身 — method の中に生の副作用があるか、資源を欄に持つか、self を書き換えるか — で引く。")
+       "Value classes (Point2D, Point3D — fields do not change and methods only compute from fields) touch neither the outside world nor changing state, so they have none of the harm above and are allowed. The line is drawn by content, not by name — whether methods contain raw side effects, whether fields hold resources, whether self is rewritten.")
      (interpretation
-       "dataclass の __post_init__ で書いていた検めは、defrecord の :check の節へ移す — 検めが型の宣言の一部として道具から読める。")
+       "Checks that were written in a dataclass's __post_init__ move to defrecord's :check clause — the checks become readable by tools as part of the type declaration.")
      (interpretation
-       "JSON を JsonValue のまま運ぶと、欄の名の綴り違いも型の違いも使う所まで見えず、読む関数ごとに手で分解する(同じ形の知識が呼び手の数だけ散る)。境目で一度だけ、型を宣言した値へ解いて確かめれば、内側は型のある値だけを見る。解き方は pydantic の TypeAdapter が持つ(欄の名の写し・知らない欄・厳しい型の検め・JSON Schema)ので、自前の分解の関数を書かない。宣言を def* にすると、欄と型と wire の名を道具が実行せずに読める(R1)。")]
+       "Carrying JSON as JsonValue hides misspelled field names and wrong types until the place of use, and every reading function decomposes it by hand (the same shape knowledge is scattered across every caller). If it is decoded and checked into a declared type once at the boundary, the inside sees only typed values. Decoding is done by pydantic's TypeAdapter (field-name mapping, unknown fields, strict type checks, JSON Schema), so no home-grown decomposition functions are written. Making the declaration a def* lets tools read fields, types, and wire names without executing (R1).")]
   :decision
-    [(rule R1 "名を持ち道具(linter・索引・エディタ・型検査)が読む宣言は def* で書く。def* の macro は doeff-hy に置き、読み方の規則(投影)を同じ便で持つ(ADR-DOE-HY-005 R4・R5)。")
-     (rule R2 "欄だけの型は defrecord で書くことを勧める(情報)。defrecord は :tags({:context … :role …})と :check(値を作る時の検め)の節を持つ。dataclass の __post_init__ に書いていた検めは :check へ移す。")
-     (rule R3 "外の世界に触る class(method に生の副作用がある・資源〔接続・file・socket〕を欄に持つ — client・store・手順を包む物。例 PgStore・Client)は作らない。土台の handler に置き換え、資源は (session val …) で持つ。")
-     (rule R4 "状態の変わる class(method が self を書き換える — 模擬の store・キャッシュ・ゲームのキャラクターのような entity。例 FakeRecordStore)は作らない(警告)。状態を持つ entity は、値を defrecord(不変)・振る舞いを新しい値を返す純粋な関数(defk)・状態を world の handler の (session var …) 1 か所に置き、変化は effect(例 GetCharacter・UpdateCharacter)で流す。理由: self を書き換えると変化が effect を通らず、模擬・記録と再生・並行が効かない。速さのために書き換えが要る時(大量の entity・numpy の配列・ECS)も、書き換えは handler の中だけで行う。")
-     (rule R5 "許す class: 値の class(欄が変わらず、method は欄から計算するだけ — Point2D・Point3D)・例外・Enum・Protocol・外の library の基底を継ぐ物。理由の註は要らない。判定は名前でなく中身の証拠(method の中の生の副作用・資源の欄・self の書き換え)で、正本は doeff-linter の DOEFF119。DOEFF119 と defrecord の :tags / :check が着地するまで、この冊の law は未配線。")
-     (rule R7 "区分の表: 純粋なデータ(AST・数値・Point2D)= defrecord(純粋な method は可)/ global な service(client・store)= 土台の handler と effect / 状態を持つ entity(ゲームのキャラクターなど)= 値(defrecord)+ 純粋な関数 + world の handler の session var。")
-     (rule R8 "JSON の境目の型は defwire で宣言する(doeff-hy の record.hy — 案 A)。書き方は defrecord と同じ欄の形に、頭の辞書 {:names :camel|:snake|:kebab|{欄 \"wire の名\" …} :unknown :reject|:ignore :tags … :check […]} を必ず置く(:names は必須 — wire の欄の名の写しを黙って決めない・明示の辞書は欄を全部名指す・:unknown の既定は :reject)。展開は defrecord をそのまま使い(凍結・キーワード引数だけ・:tags・:check)、型の __pydantic_config__ と __doeff_wire__(WireShape — 欄の名の写し・知らない欄の扱い・TypeAdapter)を置く。解き手は doeff_hy._wire の parse(JSON の値・凍らせた JSON)・parse-json(JSON の文字列)・dump・dump-json・json-schema の 1 か所で、型の検めは厳しい(文字列を数にしない・真偽を数にしない・配列は tuple の欄に・defenum の欄は値の綴り)。形の違う JSON の答えは Malformed(どの型の・どの欄が・なぜ — 5 つ目の失敗の種類・ADR-DOE-CORE-EFFECTS-003 R17)。Absent / Raise の段階 2 が本線に入るまで parse は Malformed を値で返し(答えの型 = (| T Malformed))、段階 3 の切り替えで Raise(Malformed) に寄せる。JSON の値(JsonValue — 唯一の定義は doeff_hy._json_value)に触ってよいのは、doeff_hy._wire と、送受信そのものを行う foundation の module だけ(doeff-linter DOEFF120 — 既存の分は使う repo の登録簿)。入れ子の欄の型も defwire の型にする。dump / dump-json は既定値と同じ欄を書かない(入れ子の型の欄も — `(setv #^ (| str None) x None)` の None は null でなく欄が無い。読みは無い欄を既定値で埋めるので往復する。既定値の無い欄は None でも null で書く。追補 2026-09-28: 画面の設定の行の入れ子の agent の宣言 — 契約が任意の欄を null でなく欄の無いことで表す。戻し方 = wire.hy の :exclude-defaults を外す)。戻し方: defwire を defrecord と手書きの TypeAdapter に展開し直す(使う側の parse / dump の書き方はそのまま)。この条は 2026-09-28 に足した。")
-     (rule R9 "臭いの規則(doeff-linter・決定的・重さの既定は warning): DOEFF121 = 判断の層(設定 smells.shape_check_layers)の定義が文字列の鍵の (.get x \"欄\") とその欄への isinstance で入力の形を検める(直し方 = protocol の境目で defwire の型に parse)/ DOEFF122 = match の腕が失敗の型を受け、受けた値かそれを包み直した値を return するだけ(手書きの例外の再送出 — 直し方 = (<- (Raise …)) と呼ぶ側の on-raise。成功の早い抜けは拾わない)/ DOEFF123 = (<- x T (f …)) の直後の (return x) で x を他で使わない(直し方 = (return (! (f …))) か Raise)/ DOEFF124 = 同じ値の 2 つ以上の欄を + か f 文字列で 1 本の文字列につなぐ / DOEFF125 = for / while の中の (:= xs (+ xs #(…)))(直し方 = 内包表記)。JsonValue・dict の型の注記は DOEFF120 の持ち分で重ねない。重さは初め info とし、Absent / Raise の段 1・2 が doeff の本線に入ったら warning に上げると決めていた — 2026-09-28 に入った(cf6ef9db)ので既定を warning にした。repo の設定 [tool.doeff-linter.rules.<ID>] severity で info に下げられる(error にはしない)。登録簿に載った既存の当たりは info。")
-     (rule R10 "失敗の型は名前で決め打ちせず、宣言から取る: (a) defeffect の :failure / :absent に挙げた型(ADR-DOE-CORE-EFFECTS-003 R5)、(b) defrecord の頭の辞書の :failure True(effect の答えでない失敗の値 — 検めの関数が返す断りなど)。印は defrecord が class の属性 __doeff_failure__ に残し、doeff-linter は実行せずに読む。型は file の import と定義の場所で module まで解くので、同じ名の型が別の module にあっても宣言した方だけが失敗の型になる。印の形の選び方(2026-09-28・f143ee92 の席が決めた戻せる決定): defeffect の :failure は型の列だが、defrecord の :failure は字面の True / False — 型そのものの性質だから。Absent / Raise の作業(doeff-hy の macros.hy・handle.hy)と同じ file を触らないよう、印は record.hy の defrecord にだけ置いた。戻し方: 頭の辞書の受ける鍵から :failure を外し、DOEFF122 を defeffect の宣言だけで判じる形に戻す。")
-     (rule R11 "Jev の規則 DOEFF205: 役が judgment / program の定義(定義の :tags か module の頭のタグ)に、入力の形の検めと業務の判断が混ざっているかを、混ざっている / 形の検めだけ / 判断だけ / どれでもない から Jev に選ばせる。物差しは repo の architecture.hy の層(設定 semantic.mixed_concerns.layer — agora は core)の説明。重さは warning まで(error にしない)。較正の正例 = decide-tag、反例 = 形の検めの無い純粋な判断(card-tags-of)。撃つのは --semantic / --semantic-all の時だけで、保存ごとの実行は cache を読むだけ(未判定は合格に数えない)。")
-     (rule R12 "service の依存(doeff-linter DOEFF116)で、依存先のどの層を読んでよいかは読む側の層ごとに architecture.hy の layer の :dependency-layers で宣言する(無ければ :open-layers — 既定は intent)。組み立ての entry に限り依存先の service の protocol(翻訳の handler)も読んでよいとする決まり(entry は全体を組む所だから)を、層の名を linter に書かずに宣言で表すため。agora は (layer entry … :dependency-layers [intent protocol])。:depends-on に無い service を読むのは今までどおり違反、:dependency-layers を持たない層は今までどおり :open-layers だけ(2026-09-28・f143ee92 の席が決めた戻せる決定。戻し方: layer の :dependency-layers を読む形を外し、DOEFF116 を :open-layers だけで判じる形に戻す)。")
-     (rule R13 "defk の定義を素で呼んで、その答えを値として使わない(doeff-linter DOEFF126・error)。defk を素で呼ぶと答えではなく Program が返り、型の誤りで落ちずに静かに間違った値として流れる — ある直しの便で、defk に改めた latest-by-ref を deff(text-at・expected-inputs)と検 4 file が素のまま呼んでいた(検で見つかった)。defn / deff を defk に改める便が何百と続くので、呼び手の取り残しを見張る。拾うのは答えを値として使う所(比べ・演算・組み込みの関数・method・属性・条件・繰り返しの元・record の欄)だけで、Program を受ける呼びへ渡す形・名への束ね・関数の答えとして返す形は拾わない(初版の『Program の位置の外は全部』は agora の本線で 239 件と外れが多かった)。追えない呼び(引数で受けた関数・method)も拾わない。coordinator が 2026-09-28 に決めた(戻せる — 戻し方: DOEFF126 を enable から外す。拾う所を広げるなら bare_calls.rs の VALUE_HEADS と位置の表を足す)。")
-     (rule R14 "DOEFF126 の見落とし 2 つを塞ぐ(coordinator の依頼 2026-09-28): (1) method の引数に渡す形 — (.append out (breach …)) のように defk の答えを method の引数に渡す所も、答えを値として使う所に数える。(2) 引数で受けた関数を素で呼ぶ形 — agora の L1550 で直した rows-by-text が引数 field-of を (setv value (field-of row)) と素で呼び、呼び手はそこに fnk(payload-of を呼ぶ)を渡していた。値は常に Program になり isinstance str が常に偽で索引が常に空だった。拾える範囲: repo の呼びで引数に repo の defk の名か (fnk …) を渡している物を集め、呼び先の最上位の定義の引数の並びでその引数を引き、本体の中でその引数を Program として渡す所の外で呼んでいれば、呼び先のその呼びを違反にする(名への束ねも違反)。拾えない範囲: 呼び手が defk を変数や欄に入れてから渡す形・partial などで包んで渡す形、呼び先がその引数をさらに別の関数へ渡して先で素で呼ぶ形(1 段だけ追う)、呼び先が method・入れ子の関数・名で引けない物、repo の外の呼び手。これらは型(:pre の Callable を Program を返す関数の型へ細かくする)か effect の推論(ADR-DOE-CORE-EFFECTS-003 R13)が持つ(2026-09-28・f143ee92 の席・戻せる — 戻し方: param_calls.rs を外し、method の引数を的だけに戻す)。(追記 2026-09-28・coordinator の依頼)さらに 2 つの形を拾う: (3) assert の引数 — (assert 条件 (describe …)) の文と条件も答えとして使う所(defk を条件に置くと Program は常に真で、検が常に通る)。(4) 素の呼びを名に束ねてから答えとして使う形 — agora の incident_placement.hy(直す前 9e2574a6^)の (setv … all (histories run)) の後の (get all job)。1 つの定義の中で setv・val・var・:=・let で defk の素の呼びを束ねた名が、答えとして使う所(比べ・組み込みの関数・method の的と引数・名の method の呼び all.get・属性・条件・繰り返しの元)に出れば、束ねた呼びを違反にする。その名を Program として渡す(run-on などへ)・返す形は拾わない。同じ名を (<- 名 …) でも束ねる定義はその名を追わない。拾えない範囲に足す: 束ねた名を別の定義へ渡してそこで答えとして使う形・欄や入れ物(dict・list)に入れてから取り出して使う形。直す前の形に当てて、(.items (histories run)) は前から拾え、(setv … all (histories run)) の後の使用はこの追記で拾えるようになったことを確かめた。")
-     (rule R6 "改訂の記録(2026-09-27):初版の『振る舞いを持つ class を作らない・外の library が class を要求する所だけ理由の註つきの逃げ道』は、的の絞り込み 2 つで R3〜R5 に置き換えた。戻し方: 的を広げ直すなら、この改訂の commit を revert する(初版の R2〜R5 と law へ戻る)。")]
+    [(rule R1 "Declarations that have a name and are read by tools (linter, index, editor, type checker) are written with def*. def* macros live in doeff-hy and ship their reading rules (projection) in the same change (ADR-DOE-HY-005 R4, R5).")
+     (rule R2 "Writing field-only types with defrecord is recommended (info). defrecord has :tags ({:context … :role …}) and :check (checks when a value is made) clauses. Checks that were written in a dataclass's __post_init__ move to :check.")
+     (rule R3 "Do not create classes that touch the outside world (raw side effects in methods, resources [connection, file, socket] held in fields — clients, stores, things wrapping procedures; e.g. PgStore, Client). Replace them with foundation handlers, and hold resources with (session val …).")
+     (rule R4 "Do not create classes with changing state (methods rewrite self — fake stores, caches, entities such as game characters; e.g. FakeRecordStore) (warning). A stateful entity puts its value in a defrecord (immutable), its behavior in pure functions returning new values (defk), and its state in one place, a world handler's (session var …), with changes flowing through effects (e.g. GetCharacter, UpdateCharacter). Reason: rewriting self means changes do not go through effects, so fakes, record and replay, and concurrency do not work. Even when mutation is needed for speed (many entities, numpy arrays, ECS), mutation happens only inside the handler.")
+     (rule R5 "Allowed classes: value classes (fields do not change and methods only compute from fields — Point2D, Point3D), exceptions, Enums, Protocols, and subclasses of external library bases. No reason annotation is needed. The judgment is by evidence in the content (raw side effects in methods, resource fields, rewriting self), not by name; the source of truth is doeff-linter's DOEFF119. Until DOEFF119 and defrecord's :tags / :check land, the laws of this file are unwired.")
+     (rule R7 "Classification table: pure data (AST, numbers, Point2D) = defrecord (pure methods allowed) / global services (client, store) = foundation handlers and effects / stateful entities (game characters, etc.) = value (defrecord) + pure functions + a world handler's session var.")
+     (rule R8 "JSON boundary types are declared with defwire (doeff-hy's record.hy — option A). It is written with the same field shape as defrecord, and always takes a head dict {:names :camel|:snake|:kebab|{field \"wire name\" …} :unknown :reject|:ignore :tags … :check […]} (:names is required — the mapping of wire field names is never decided silently; an explicit dict names every field; :unknown defaults to :reject). The expansion uses defrecord as-is (frozen, keyword arguments only, :tags, :check) and puts on the type __pydantic_config__ and __doeff_wire__ (WireShape — field-name mapping, handling of unknown fields, TypeAdapter). The decoders are in one place, doeff_hy._wire: parse (JSON value, frozen JSON), parse-json (JSON string), dump, dump-json, json-schema; type checks are strict (strings are not made numbers, booleans are not made numbers, arrays go into tuple fields, defenum fields use the value spelling). A JSON answer of the wrong shape is Malformed (which type, which field, why — the 5th failure kind, ADR-DOE-CORE-EFFECTS-003 R17). Until stage 2 of Absent / Raise is on mainline, parse returns Malformed as a value (answer type = (| T Malformed)), and at the stage 3 switch it moves to Raise(Malformed). Only doeff_hy._wire and the foundation modules that do the sending and receiving themselves may touch JSON values (JsonValue — its only definition is doeff_hy._json_value) (doeff-linter DOEFF120 — existing uses are in the using repo's registry). Nested field types are also defwire types. dump / dump-json do not write fields equal to their defaults (including nested-type fields — for `(setv #^ (| str None) x None)`, None means the field is absent, not null. Reading fills absent fields with defaults, so it round-trips. A field without a default is written as null even when None. Addendum 2026-09-28: the nested agent declaration in the screen settings row — the contract expresses optional fields by absence, not null. Rollback = remove :exclude-defaults in wire.hy). Rollback: re-expand defwire into defrecord plus a hand-written TypeAdapter (callers' parse / dump usage stays as is). This clause was added on 2026-09-28.")
+     (rule R9 "Smell rules (doeff-linter, deterministic, default severity warning): DOEFF121 = a definition in the judgment layer (setting smells.shape_check_layers) checks input shape with string-keyed (.get x \"field\") and isinstance on that field (fix = parse into a defwire type at the protocol boundary) / DOEFF122 = a match arm receives a failure type and only returns the received value or a rewrap of it (hand-written re-raise — fix = (<- (Raise …)) and on-raise at the caller; early successful exits are not flagged) / DOEFF123 = (return x) right after (<- x T (f …)) with x used nowhere else (fix = (return (! (f …))) or Raise) / DOEFF124 = joining 2 or more fields of the same value into one string with + or an f-string / DOEFF125 = (:= xs (+ xs #(…))) inside for / while (fix = comprehension). Type annotations of JsonValue and dict belong to DOEFF120 and are not duplicated. The severity was to start at info and be raised to warning once stages 1 and 2 of Absent / Raise were on doeff's mainline — they landed on 2026-09-28 (cf6ef9db), so the default was made warning. A repo setting [tool.doeff-linter.rules.<ID>] severity can lower it to info (not to error). Existing hits listed in the registry are info.")
+     (rule R10 "Failure types are not hard-coded by name; they are taken from declarations: (a) the types listed in defeffect's :failure / :absent (ADR-DOE-CORE-EFFECTS-003 R5), (b) :failure True in defrecord's head dict (failure values that are not effect answers — e.g. refusals returned by check functions). defrecord keeps the mark in the class attribute __doeff_failure__, and doeff-linter reads it without executing. Types are resolved down to the module through the file's imports and definition sites, so even if a same-named type exists in another module, only the declared one is a failure type. Choice of the mark's shape (2026-09-28, a reversible decision made by the f143ee92 session): defeffect's :failure is a list of types, but defrecord's :failure is a literal True / False — because it is a property of the type itself. To avoid touching the same files as the Absent / Raise work (doeff-hy's macros.hy, handle.hy), the mark was placed only on defrecord in record.hy. Rollback: remove :failure from the keys the head dict accepts, and return DOEFF122 to judging by defeffect declarations only.")
+     (rule R11 "Jev rule DOEFF205: for definitions whose role is judgment / program (the definition's :tags or the module's head tags), Jev chooses among mixed / shape checks only / judgment only / neither, as to whether input-shape checks and business judgment are mixed. The yardstick is the description of the layer in the repo's architecture.hy (setting semantic.mixed_concerns.layer — core for agora). Severity at most warning (never error). Calibration positive example = decide-tag, counterexample = a pure judgment without shape checks (card-tags-of). It fires only with --semantic / --semantic-all; runs on every save only read the cache (unjudged does not count as passing).")
+     (rule R12 "For service dependencies (doeff-linter DOEFF116), which layers of a dependency may be read is declared per reading layer with :dependency-layers on the layer in architecture.hy (if absent, :open-layers — default intent). This expresses, by declaration and without writing layer names into the linter, the rule that only the assembly entry may also read the dependency service's protocol (translation handlers) (because the entry is where the whole is assembled). agora has (layer entry … :dependency-layers [intent protocol]). Reading a service not in :depends-on is a violation as before, and a layer without :dependency-layers uses only :open-layers as before (2026-09-28, a reversible decision made by the f143ee92 session. Rollback: remove the reading of the layer's :dependency-layers and return DOEFF116 to judging by :open-layers only).")
+     (rule R13 "Do not call a defk definition bare and use its answer as a value (doeff-linter DOEFF126, error). Calling a defk bare returns a Program, not the answer, and it flows silently as a wrong value instead of failing with a type error — in one fix change, latest-by-ref, which had been changed to defk, was still being called bare by deffs (text-at, expected-inputs) and 4 check files (found by checks). Hundreds of changes converting defn / deff to defk are ongoing, so watch for callers left behind. Only places that use the answer as a value (comparison, arithmetic, built-in functions, methods, attributes, conditions, iteration sources, record fields) are flagged; passing to a call that accepts a Program, binding to a name, and returning as a function's answer are not flagged (the first version's 'everything outside Program positions' had 239 hits on agora's mainline, mostly misses). Calls that cannot be traced (functions received as arguments, methods) are not flagged either. Decided by the coordinator on 2026-09-28 (reversible — Rollback: remove DOEFF126 from enable. To widen what is flagged, extend VALUE_HEADS and the position table in bare_calls.rs).")
+     (rule R14 "Close two gaps in DOEFF126 (coordinator's request 2026-09-28): (1) passing as a method argument — places such as (.append out (breach …)) that pass a defk's answer as a method argument also count as using the answer as a value. (2) calling a function received as an argument bare — rows-by-text, fixed in agora's L1550, called its argument field-of bare as (setv value (field-of row)), and callers passed fnk (which calls payload-of) there. The value was always a Program, isinstance str was always false, and the index was always empty. Coverage: collect repo calls that pass a repo defk name or (fnk …) as an argument, look up that argument in the callee's top-level definition's parameter list, and if the body calls that parameter outside places that pass it as a Program, flag that call in the callee (binding to a name is also a violation). Not covered: callers that put a defk into a variable or field before passing it, or wrap it with partial etc.; callees that pass the parameter on to another function that calls it bare (only one level is traced); callees that are methods, nested functions, or not resolvable by name; callers outside the repo. These belong to types (narrowing :pre's Callable to a function type returning Program) or effect inference (ADR-DOE-CORE-EFFECTS-003 R13) (2026-09-28, the f143ee92 session, reversible — Rollback: remove param_calls.rs and return method arguments to targets only). (Addendum 2026-09-28, coordinator's request) Two more shapes are flagged: (3) assert arguments — the message and condition of (assert cond (describe …)) are also places that use the answer (with a defk as the condition the Program is always truthy and the check always passes). (4) binding a bare call to a name and then using it as an answer — in agora's incident_placement.hy (before the fix, 9e2574a6^), (get all job) after (setv … all (histories run)). If, within one definition, a name bound to a bare defk call by setv, val, var, :=, or let appears in a place that uses the answer (comparison, built-in functions, method targets and arguments, method calls on the name all.get, attributes, conditions, iteration sources), the bound call is flagged. Passing that name as a Program (to run-on etc.) or returning it is not flagged. A definition that also binds the same name with (<- name …) does not track that name. Added to not covered: passing the bound name to another definition and using it as an answer there; putting it into a field or container (dict, list) and taking it out to use. Applied to the pre-fix shape, it was confirmed that (.items (histories run)) was already flagged, and that the use after (setv … all (histories run)) is flagged with this addendum.")
+     (rule R6 "Revision record (2026-09-27): the first version's 'do not create classes with behavior; an escape hatch with a reason annotation only where an external library requires a class' was replaced by R3–R5 through two narrowings of the target. Rollback: to widen the target again, revert this revision's commit (back to the first version's R2–R5 and laws).")]
   :laws
     [(law world-touching-classes-become-foundation-handlers
-       :statement "for_all class c(Hy・例外・Enum・Protocol・外の基底を継ぐ物を除く): c の method に生の副作用が無く、c の欄に資源(接続・file・socket)が無い — 外の世界に触る物は土台の handler で、資源は session val"
+       :statement "for_all class c (excluding Hy, exceptions, Enums, Protocols, and subclasses of external bases): c's methods have no raw side effects, and c's fields hold no resources (connection, file, socket) — things that touch the outside world are foundation handlers, and resources are session val"
        :counterexamples
-         [(counterexample "(defclass PgStore [] (defn put [self row] (with [c (psycopg.connect self.dsn)] …))) — 書きが effect を通らず、模擬へ差し替えも記録と再生もできない")
-          (counterexample "(defclass BudgetClient [] (defn spend [self n] (requests.post self.url …))) — client は effect と土台の handler にする")]
+         [(counterexample "(defclass PgStore [] (defn put [self row] (with [c (psycopg.connect self.dsn)] …))) — writes do not go through effects, so neither substitution with a fake nor record and replay is possible")
+          (counterexample "(defclass BudgetClient [] (defn spend [self n] (requests.post self.url …))) — a client becomes an effect and a foundation handler")]
        :enforced-by ["doeff-linter DOEFF119"]
-       :wiring "未配線(2026-09-27)— DOEFF119 は doeff-linter に未着地")
+       :wiring "Unwired (2026-09-27) — DOEFF119 has not landed in doeff-linter")
      (law state-changing-classes-become-session-var
-       :statement "for_all class c(Hy・上と同じ除外): c の method は self を書き換えない — 変わる状態は handler の session var"
+       :statement "for_all class c (Hy, same exclusions as above): c's methods do not rewrite self — changing state is a handler's session var"
        :counterexamples
-         [(counterexample "(defclass FakeRecordStore [] (defn put [self row] (.append self.rows row))) — 模擬の store の状態が handler の外に在り、handler の差し替えで入れ替わらない")
-          (counterexample "キャッシュの class が (setv (get self.entries key) v) で覚える — 状態は (session var …) で持つ")
-          (counterexample "(defclass Character [] (defn take-damage [self n] (-= self.hp n))) — キャラクターの変化が effect を通らず、記録と再生・並行が効かない。値は defrecord、take-damage は新しい値を返す関数、状態は world の handler の session var に置き、UpdateCharacter で流す")]
+         [(counterexample "(defclass FakeRecordStore [] (defn put [self row] (.append self.rows row))) — the fake store's state lives outside the handler and is not swapped by handler substitution")
+          (counterexample "A cache class remembers with (setv (get self.entries key) v) — state is held with (session var …)")
+          (counterexample "(defclass Character [] (defn take-damage [self n] (-= self.hp n))) — character changes do not go through effects, so record and replay and concurrency do not work. The value goes in defrecord, take-damage is a function returning a new value, state goes in a world handler's session var, and it flows through UpdateCharacter")]
        :enforced-by ["doeff-linter DOEFF119"]
-       :wiring "未配線(2026-09-27)— DOEFF119 は doeff-linter に未着地(この law は警告)")
+       :wiring "Unwired (2026-09-27) — DOEFF119 has not landed in doeff-linter (this law is a warning)")
      (law value-classes-are-allowed
-       :statement "for_all class c: c の欄が変わらず、c の method が欄から計算するだけ ⇒ c は DOEFF119 の違反ではない(Point2D・Point3D)"
+       :statement "for_all class c: c's fields do not change and c's methods only compute from fields ⇒ c is not a DOEFF119 violation (Point2D, Point3D)"
        :counterexamples
-         [(counterexample "Point2D に norm の method があるだけで違反にする — 名前や method の有無で判定すると、害の無い値の class まで断る")]
+         [(counterexample "Flagging Point2D just because it has a norm method — judging by name or by the presence of methods rejects even harmless value classes")]
        :enforced-by ["doeff-linter DOEFF119"]
-       :wiring "未配線(2026-09-27)— DOEFF119 は doeff-linter に未着地")
+       :wiring "Unwired (2026-09-27) — DOEFF119 has not landed in doeff-linter")
      (law json-is-parsed-into-declared-types
-       :statement "for_all module m(doeff_hy._wire と architecture.hy の :wire-modules に名指した foundation の module を除く): m は JsonValue / JSONValue / JsonObject / JSONObject を使わない ∧ for_all JSON の値 v と defwire の型 T: parse(T, v) は T の値か Malformed(どの型の・どの欄が・なぜ)で、T の値なら parse(T, dump(parse(T, v))) = parse(T, v)"
+       :statement "for_all module m (excluding doeff_hy._wire and the foundation modules named in architecture.hy's :wire-modules): m does not use JsonValue / JSONValue / JsonObject / JSONObject ∧ for_all JSON value v and defwire type T: parse(T, v) is a value of T or Malformed (which type, which field, why), and if a value of T then parse(T, dump(parse(T, v))) = parse(T, v)"
        :counterexamples
-         [(counterexample "(defk state-of [row] {:pre [(: row JsonValue)] …} (.get row \"state\")) — JSON を手で分解して読む。綴り違いと型の違いが使う所まで見えない")
-          (counterexample "core の判断の関数が (: value JsonValue) を受けて素の dict を返す — 型のある値に解かずに内側へ運ぶ")
-          (counterexample "{\"landedAt\": \"3\"} を int の欄に黙って 3 として入れる — 型の違いを業務の失敗(Malformed)にせず飲み込む")]
+         [(counterexample "(defk state-of [row] {:pre [(: row JsonValue)] …} (.get row \"state\")) — reads JSON by decomposing it by hand. Misspellings and wrong types are invisible until the place of use")
+          (counterexample "A core judgment function takes (: value JsonValue) and returns a plain dict — carries it inside without decoding into a typed value")
+          (counterexample "Silently putting {\"landedAt\": \"3\"} into an int field as 3 — swallows the type mismatch instead of making it a business failure (Malformed)")]
        :enforced-by ["doeff-linter DOEFF120" "packages/doeff-hy/tests/defwire_deftests.hy"]
-       :wiring "一部配線(2026-09-28)— parse と dump の往復・型違いの Malformed は defwire_deftests.hy が確かめる。DOEFF120 は doeff-linter の別の便")
+       :wiring "Partly wired (2026-09-28) — defwire_deftests.hy checks the parse/dump round trip and Malformed on type mismatch. DOEFF120 is a separate change in doeff-linter")
      (law defk-answers-are-not-used-bare
-       :statement "for_all repo の defk f と呼び (f …): 呼びの答えを値として使う所(比べ・演算・組み込みの関数・method・属性・条件・繰り返しの元・record の欄)に無い — 答えは (<- x (f …)) か (! (f …)) で受ける"
+       :statement "for_all repo defk f and call (f …): the call's answer is not in a place that uses it as a value (comparison, arithmetic, built-in functions, methods, attributes, conditions, iteration sources, record fields) — the answer is received with (<- x (f …)) or (! (f …))"
        :counterexamples
-         [(counterexample "(defk text-at [ref] (.get (latest-by-ref ref) \"text\")) — latest-by-ref は defk。Program の .get を読み、答えのつもりで静かに間違う")]
+         [(counterexample "(defk text-at [ref] (.get (latest-by-ref ref) \"text\")) — latest-by-ref is a defk. It reads .get of a Program and is silently wrong while believing it is the answer")]
        :enforced-by ["doeff-linter DOEFF126"]
-       :wiring "配線(2026-09-28)— doeff-linter DOEFF126(wt/hy-defk-bare-call)")
+       :wiring "Wired (2026-09-28) — doeff-linter DOEFF126 (wt/hy-defk-bare-call)")
      (law judgment-does-not-check-json-shape
-       :statement "for_all 定義 d ∈ 判断の層: d の中に、文字列の鍵で読んだ欄 (.get x \"欄\") への isinstance が無い — 入力の形は通信の境目で型のある値に解く"
+       :statement "for_all definition d ∈ judgment layer: d contains no isinstance on a field read by string key (.get x \"field\") — input shape is decoded into typed values at the communication boundary"
        :counterexamples
-         [(counterexample "(val subject (.get payload \"subject\")) (when (not (isinstance subject str)) …) — core の判断が JSON の形を検めている")]
+         [(counterexample "(val subject (.get payload \"subject\")) (when (not (isinstance subject str)) …) — a core judgment checks the JSON shape")]
        :enforced-by ["doeff-linter DOEFF121"]
-       :wiring "配線(2026-09-28)— doeff-linter DOEFF121(wt/hy-smells)")
+       :wiring "Wired (2026-09-28) — doeff-linter DOEFF121 (wt/hy-smells)")
      (law failures-are-raised-not-returned
-       :statement "for_all match の腕 a: a の型が宣言した失敗の型 ⇒ a の本体は受けた値(か、それから作った値)を return するだけではない — 失敗は Raise で出し、受ける所は on-raise"
+       :statement "for_all match arm a: a's type is a declared failure type ⇒ a's body does not merely return the received value (or a value made from it) — failures are emitted with Raise and received with on-raise"
        :counterexamples
-         [(counterexample "(match said (Refusal) (do (<- refused Plan (rejected (+ said.reason \": \" said.detail))) (return refused)) (TagsAccepted) None) — 手書きの再送出")]
+         [(counterexample "(match said (Refusal) (do (<- refused Plan (rejected (+ said.reason \": \" said.detail))) (return refused)) (TagsAccepted) None) — hand-written re-raise")]
        :enforced-by ["doeff-linter DOEFF122"]
-       :wiring "配線(2026-09-28)— doeff-linter DOEFF122(wt/hy-smells)。失敗の型は宣言(defrecord :failure True・defeffect :failure / :absent)から")
+       :wiring "Wired (2026-09-28) — doeff-linter DOEFF122 (wt/hy-smells). Failure types come from declarations (defrecord :failure True, defeffect :failure / :absent)")
      (law binds-are-not-returned-straight-away
-       :statement "for_all (<- x T (f …)) の直後の (return x): x が定義の中で他に使われる"
+       :statement "for_all (return x) right after (<- x T (f …)): x is used elsewhere in the definition"
        :counterexamples
-         [(counterexample "(<- bad-subject WritePlan (rejected …)) (return bad-subject) — 名は返すためだけ")]
+         [(counterexample "(<- bad-subject WritePlan (rejected …)) (return bad-subject) — the name exists only to be returned")]
        :enforced-by ["doeff-linter DOEFF123"]
-       :wiring "配線(2026-09-28)— doeff-linter DOEFF123(wt/hy-smells)")
+       :wiring "Wired (2026-09-28) — doeff-linter DOEFF123 (wt/hy-smells)")
      (law typed-values-are-not-flattened-into-text
-       :statement "for_all + か f 文字列 e: e が同じ値の 2 つ以上の欄を文字列と一緒につながない"
+       :statement "for_all + or f-string e: e does not join 2 or more fields of the same value together with strings"
        :counterexamples
-         [(counterexample "(+ said.reason \": \" said.detail) — 型のある断りを 1 本の文字列に潰す")]
+         [(counterexample "(+ said.reason \": \" said.detail) — flattens a typed refusal into one string")]
        :enforced-by ["doeff-linter DOEFF124"]
-       :wiring "配線(2026-09-28)— doeff-linter DOEFF124(wt/hy-smells)")
+       :wiring "Wired (2026-09-28) — doeff-linter DOEFF124 (wt/hy-smells)")
      (law accumulators-are-not-rebuilt-in-loops
-       :statement "for_all for / while の本体: (:= xs (+ xs #(…))) / (setv xs (+ xs […])) が無い — 蓄えは内包表記で 1 度に作る"
+       :statement "for_all for / while body: no (:= xs (+ xs #(…))) / (setv xs (+ xs […])) — accumulations are built at once with a comprehension"
        :counterexamples
-         [(counterexample "(for [word adding] (:= writes (+ writes #((AttachTag …))))) — 毎回作り直す蓄え")]
+         [(counterexample "(for [word adding] (:= writes (+ writes #((AttachTag …))))) — an accumulation rebuilt every iteration")]
        :enforced-by ["doeff-linter DOEFF125"]
-       :wiring "配線(2026-09-28)— doeff-linter DOEFF125(wt/hy-smells)")
+       :wiring "Wired (2026-09-28) — doeff-linter DOEFF125 (wt/hy-smells)")
      (law judgments-do-not-mix-shape-checks
-       :statement "for_all 定義 d(役 judgment / program): d は入力の形の検めと業務の判断を混ぜない(Jev の判定・warning まで)"
+       :statement "for_all definition d (role judgment / program): d does not mix input-shape checks with business judgment (Jev's judgment, at most warning)"
        :counterexamples
-         [(counterexample "decide-tag — 形の検め(subject の型・add / remove の形)と札の付け外しの判断が 1 つの defk に並ぶ")]
+         [(counterexample "decide-tag — shape checks (subject's type, the shape of add / remove) and the judgment of attaching / removing tags sit side by side in one defk")]
        :enforced-by ["doeff-linter DOEFF205"]
-       :wiring "配線(2026-09-28)— doeff-linter DOEFF205(wt/hy-smells・Jev の cache を読む)")]
+       :wiring "Wired (2026-09-28) — doeff-linter DOEFF205 (wt/hy-smells, reads Jev's cache)")]
   :enforcement
     [(deftest test-adr-doe-hy-007-values-are-made-by-calling-a-defrecord-type
-       ;; 実演: データの型は defrecord の 1 行で建ち、値はその型を呼んで作る(凍結 — 書き換えは断られる)。
+       ;; Demonstration: a data type is built in one defrecord line, and values are made by calling that type (frozen — rewriting is refused).
        (val row (ProbeBudgetRow :name "lab" :used 3 :limit 10))
        (assert (= #(row.name row.used row.limit) #("lab" 3 10)))
        (assert (= row (ProbeBudgetRow :name "lab" :used 3 :limit 10)))
        (var refused False)
        (try
-         (setv row.used 4)  ; 値の中身の書き換えを試す(断られることの検)
+         (setv row.used 4)  ; try rewriting the value's contents (a check that it is refused)
          (except [FrozenInstanceError]
            (:= refused True)))
-       (assert refused "defrecord の値は凍結されている(書き換えは断られる)"))
+       (assert refused "defrecord values are frozen (rewriting is refused)"))
      (deftest test-adr-doe-hy-007-json-is-parsed-into-a-defwire-type
-       ;; 実演(R8): JSON は defwire の型へ解いて確かめる — 欄は wire の名で読み、型の違いは Malformed、dump で同じ JSON へ戻る。
+       ;; Demonstration (R8): JSON is decoded and checked into a defwire type — fields are read by wire name, type mismatches are Malformed, and dump returns the same JSON.
        (<- row (parse ProbeBudgetWire {"name" "lab" "usedUnits" 3}))
        (assert (= row (ProbeBudgetWire :name "lab" :used-units 3)))
        (<- raw (dump row))

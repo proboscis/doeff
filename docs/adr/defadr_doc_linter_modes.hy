@@ -2,34 +2,34 @@
 (import doeff-adr.macros [fact interpretation counterexample])
 
 (defadr ADR-DOC-LINTER-SELECTABLE-SCOPE
-  :title "文章・用語パネルの右上から検査範囲を3択で選択する"
+  :title "Select the check scope from three choices at the top right of the prose/terms panel"
   :status "accepted"
   :scope ["ide-plugins/vscode/doeff-runner/src/lint" "ide-plugins/vscode/doeff-runner/package.json"]
   :problem [(fact "The lint scope is selectable among three options: 1. only the opened files, 2. the whole project's files, 3. off.")
             (fact "The selector is a button in the row of icons at the top right of the panel.")]
-  :context [(interpretation "検出精度を少数の実例で評価する間も、必要に応じて全体検査や完全停止を自分で選べる必要がある。")]
-  :decision [(rule single-setting "docLint.mode の openFiles / workspace / off を設定の正本とし、右上の filter ボタンから選ぶ。選択は workspace ごとに保存する。")
-             (rule default-open-files "既定は開いているファイルのみ。タブにない文書を内部 API が読み込んでも検査対象にしない。用語の定義と参照も選択した範囲に限る。")
-             (rule changes-and-stop "全体モードの初回以後は変更ファイルを差分検査する。範囲変更では古い検査を中断し、オフでは予約を消す。永続キャッシュは削除しない。")
-             (rule rollback "前の版へ戻す場合は先に docLint.enabled=false を設定する。旧版は mode を解釈せず、起動時に全体検査するため。新版では off を選べば停止できる。")]
+  :context [(interpretation "Even while detection accuracy is being evaluated on a small number of real examples, the user must be able to choose a whole-project check or a full stop when needed.")]
+  :decision [(rule single-setting "docLint.mode with openFiles / workspace / off is the source of truth for the setting, chosen from the filter button at the top right. The choice is saved per workspace.")
+             (rule default-open-files "The default is open files only. A document that is not in a tab is not checked even if an internal API loads it. Term definitions and references are also limited to the selected scope.")
+             (rule changes-and-stop "After the first run in workspace mode, changed files are checked incrementally. A scope change aborts the old check; off clears the scheduled work. The persistent cache is not deleted.")
+             (rule rollback "Before rolling back to the previous version, set docLint.enabled=false first, because the old version does not interpret mode and runs a whole-project check at startup. In the new version, choosing off stops it.")]
   :laws [(law selected-files-only
-           :statement "openFiles の起動と編集では、閉じたファイルの列挙・読取・推論をしない。"
-           :counterexamples [(counterexample "全体の索引を作ってから開いたファイルだけを表示する。")])
+           :statement "On openFiles startup and edits, closed files are not enumerated, read, or inferred over."
+           :counterexamples [(counterexample "Build the whole-project index, then show only the open files.")])
          (law off-cancels-work
-           :statement "off への変更は実行中のプロセスと予約を停止し、未検査を合格として表示しない。"
-           :counterexamples [(counterexample "パネルを空にするだけで Jev への要求を続ける。")])
+           :statement "Switching to off stops the running process and the scheduled work, and does not display unchecked items as passed."
+           :counterexamples [(counterexample "Only empty the panel while continuing to send requests to Jev.")])
          (law selection-survives-reload
-           :statement "選択したモードは再読み込み後も維持され、同じ文章の判定は永続キャッシュから得る。"
-           :counterexamples [(counterexample "再読み込みで全体検査に戻る。")])]
+           :statement "The selected mode persists across reloads, and the verdict for the same text is obtained from the persistent cache."
+           :counterexamples [(counterexample "A reload returns to the whole-project check.")])]
   :enforcement [(deftest test-doc-lint-modes-in-vscode [machine-tool]
                   (import os pathlib subprocess)
-                  ;; 実物の VS Code が要る検。起動できる VS Code の無い機体(日次の worker)では、根の conftest の
-                  ;; machine_tool が「tool-absent」として未実行に名指す — 緑とは数えず、黙って skip にもしない。
-                  ;; VS Code の在る機体では、ここから先は今までどおり走る。
+                  ;; A check that needs a real VS Code. On a machine without a launchable VS Code (the daily-verification worker),
+                  ;; the root conftest's machine_tool names it as not run with "tool-absent" — not counted as green, and not silently skipped.
+                  ;; On a machine with VS Code, everything from here on runs as before.
                   (machine-tool (os.environ.get "DOC_MODES_VSCODE" "code") "--version")
                   (setv root (/ (. (pathlib.Path __file__) parent parent parent) "ide-plugins/vscode/doeff-runner"))
                   (setv result (subprocess.run ["node" "scripts/run-doc-modes-test.mjs"] :cwd root :check False))
                   (assert (= result.returncode 0)))]
-  :plans ["実機検証の環境: DOC_MODES_EXTENSION=検証対象の拡張、DOC_MODES_BINARY=doc-linter、DOC_MODES_VSCODE=Code実行ファイル、DOC_MODES_EVIDENCE=新しい結果ファイル。"
-          "Jev 通信だけをローカル HTTP に置換する。実 CLI・VS Code・永続キャッシュ・右上ボタンと同じ選択 UI・再読み込みを通す。"
-          "条件付き指示: dotfiles agent/jevrules/rules/doc_linter.hy。"])
+  :plans ["Environment for real-machine verification: DOC_MODES_EXTENSION=the extension under test, DOC_MODES_BINARY=doc-linter, DOC_MODES_VSCODE=the Code executable, DOC_MODES_EVIDENCE=a new result file."
+          "Replace only the Jev communication with local HTTP. Exercise the real CLI, VS Code, the persistent cache, the same selection UI as the top-right button, and reload."
+          "Conditional instruction: dotfiles agent/jevrules/rules/doc_linter.hy."])

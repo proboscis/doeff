@@ -1,11 +1,11 @@
-# 24. `@effectful` と `perform` — effect を Python の文法のまま書く
+# 24. `@effectful` and `perform` — writing effects in plain Python syntax
 
-`@effectful` の関数は、effect を `perform(effect)` という普通の関数呼び出しで書く。
-pyright は答えの型と「出してよい effect」の両方を検査し、実行時は import の時に
-`perform(e)` を `(yield e)` へ書き換えて、今の `@do` と同じ Program にする。
+An `@effectful` function writes each effect as an ordinary function call, `perform(effect)`.
+pyright checks both the answer type and the effects the function is allowed to perform; at run time, the
+import step rewrites `perform(e)` into `(yield e)`, producing the same Program as today's `@do`.
 
-下の 2 つの file(`clock.py` と `main.py`)を同じ dir に写すと、`python main.py` で走り、
-pyright(`strict`)でも mypy(`--strict`)でも赤が出ない。effect と `@effectful` の関数は `clock.py` に書く:
+Copy the two files below (`clock.py` and `main.py`) into the same dir and `python main.py` runs them, with no
+errors from pyright (`strict`) or mypy (`--strict`). The effects and the `@effectful` functions go in `clock.py`:
 
 ```python file=clock.py
 from dataclasses import dataclass
@@ -14,17 +14,17 @@ from doeff import EffectBase, Effects, effectful
 
 
 @dataclass(frozen=True)
-class ReadClock(EffectBase[int]):          # 答えの型は int(docs/23-static-typing.md)
+class ReadClock(EffectBase[int]):          # the answer type is int (docs/23-static-typing.md)
     pass
 
 
 @dataclass(frozen=True)
-class ReadShared(EffectBase[list[str]]):   # 答えは prefix で始まる key の list
+class ReadShared(EffectBase[list[str]]):   # the answer is the list of keys starting with prefix
     prefix: str
 
 
 @dataclass(frozen=True)
-class WriteShared(EffectBase[bool]):       # 答えは書けたかどうか
+class WriteShared(EffectBase[bool]):       # the answer is whether the write succeeded
     key: str
 
 
@@ -36,22 +36,22 @@ def elapsed(perform: Effects[ReadClock], since: int) -> int:
 
 @effectful
 def place_turns(perform: Effects[ReadShared | WriteShared | ReadClock]) -> int:
-    rows = perform(ReadShared("turn/"))    # rows: list[str](ReadShared の答えの型)
-    spent = perform(elapsed(400))          # 別の Program も perform で走らせる(spent: int)
+    rows = perform(ReadShared("turn/"))    # rows: list[str] (the answer type of ReadShared)
+    spent = perform(elapsed(400))          # another Program also runs through perform (spent: int)
     placed = 0
     for row in rows:
-        if perform(WriteShared(f"{row}/{spent}")):   # 答えは bool
+        if perform(WriteShared(f"{row}/{spent}")):   # the answer is bool
             placed += 1
     return placed
 ```
 
-- `perform` は関数の**最初の引数**(method では `self` の次)で受け、`Effects[...]` に
-  この関数が出してよい effect を並べる。戻り値の注記は普通の `-> int` のまま書く。
-- 呼ぶ側から見た型は `Callable[P, Expand[T, E]]`(`perform` の引数は消える)。`@do` と同じ型
-  なので、`@do` の Program と混ぜて使える。
+- `perform` is received as the function's **first parameter** (after `self` for a method), and `Effects[...]`
+  lists the effects this function may perform. The return annotation stays an ordinary `-> int`.
+- The type seen by callers is `Callable[P, Expand[T, E]]` (the `perform` parameter disappears). It is the same
+  type as `@do`, so it mixes freely with `@do` Programs.
 
-`main.py` は、`clock` を書き換えの対象に登録してから import し(下の「import の時の書き換え」)、
-3 つの effect に答える handler を付けて走らせる。handler は今のまま生成器と `typed_resume` で書く:
+`main.py` registers `clock` for rewriting before importing it (see "Import-time rewriting" below), then runs it
+with a handler that answers the three effects. Handlers are still written as generators with `typed_resume`:
 
 ```python file=main.py
 from collections.abc import Generator
@@ -59,11 +59,11 @@ from typing import Any
 
 from doeff import K, handler, install_import_hook, run, typed_resume
 
-install_import_hook("clock")               # clock を import する前に、書き換えを登録する
+install_import_hook("clock")               # register the rewrite before importing clock
 
 from clock import ReadClock, ReadShared, WriteShared, elapsed, place_turns
 
-program = elapsed(400)    # Expand[int, ReadClock] — まだ走らせていない Program(@do と同じ型)
+program = elapsed(400)    # Expand[int, ReadClock] — a Program not yet run (same type as @do)
 
 
 @handler
@@ -79,108 +79,112 @@ print(run(world(program)))        # 600
 print(run(world(place_turns())))  # 2
 ```
 
-## pyright が捕まえるもの
+## What pyright catches
 
-`tests/test_static_typing.py` のわざとの間違い 8 種を `perform` の形に書き直し、8 種とも赤に
-なることを `tests/test_effectful.py::test_pyright_types_perform_and_catches_each_mistake` で
-固定している。
+The 8 deliberate mistakes in `tests/test_static_typing.py` are rewritten in the `perform` form, and
+`tests/test_effectful.py::test_pyright_types_perform_and_catches_each_mistake` pins that all 8 are reported
+as errors.
 
-| 間違い | 赤 |
+| Mistake | Error |
 |---|---|
-| 答えの型違い `now: str = perform(ReadClock())` | `reportAssignmentType` |
-| 宣言に無い effect `perform(Delete("row"))`(`Effects[ReadClock]` の中) | `reportArgumentType` |
-| 呼んだ Program の effect が宣言に無い `perform(elapsed(1))`(`Effects[WriteShared]` の中) | `reportArgumentType` |
-| Program の結果の型違い `label: str = perform(elapsed(1))` | `reportAssignmentType` |
-| handler の答えの型違い `typed_resume(effect, k, "now")` | `reportArgumentType`(handler は今のまま生成器で書く) |
-| `Spawn` した子の effect が宣言に無い `perform(Spawn(elapsed(1)))` | `reportArgumentType` |
-| `Wait` の結果の型違い `text: str = perform(Wait(task))` | `reportAssignmentType` |
-| 引数の型違い `elapsed("1")` | `reportArgumentType` |
-| おまけ: `@effectful` の外で `perform` を呼ぶ | `reportUndefinedVariable`(`perform` はどこにも定義されていない) |
+| Wrong answer type `now: str = perform(ReadClock())` | `reportAssignmentType` |
+| Undeclared effect `perform(Delete("row"))` (inside `Effects[ReadClock]`) | `reportArgumentType` |
+| The called Program's effect is undeclared `perform(elapsed(1))` (inside `Effects[WriteShared]`) | `reportArgumentType` |
+| Wrong Program result type `label: str = perform(elapsed(1))` | `reportAssignmentType` |
+| Wrong handler answer type `typed_resume(effect, k, "now")` | `reportArgumentType` (handlers are still written as generators) |
+| The `Spawn`ed child's effect is undeclared `perform(Spawn(elapsed(1)))` | `reportArgumentType` |
+| Wrong `Wait` result type `text: str = perform(Wait(task))` | `reportAssignmentType` |
+| Wrong argument type `elapsed("1")` | `reportArgumentType` |
+| Bonus: calling `perform` outside `@effectful` | `reportUndefinedVariable` (`perform` is not defined anywhere) |
 
-仕組み: `Effects[E]` の `__call__` は `(self: Effects[X], effect: _Performable[X, T]) -> T`。
-`_Performable[X, T]` は「出す effect が X・答えが T」の形で、effect は自分自身を出して
-`EffectBase[T]` の T を答え、`Expand[T, E]` は E を出して T を答え、`Spawn(p)` は自分と p の
-effect を出して `Task[T]` を答える(docs/23 の型の宣言をそのまま読む)。`Effects` は E について
-反変なので、X が宣言の E に入らなければ引数の型が合わず赤になる。
+How it works: `Effects[E].__call__` is `(self: Effects[X], effect: _Performable[X, T]) -> T`.
+`_Performable[X, T]` is the shape "performs effects X, answers T": an effect performs itself and answers the T of
+`EffectBase[T]`, `Expand[T, E]` performs E and answers T, and `Spawn(p)` performs itself plus p's effects and
+answers `Task[T]` (it reads the type declarations of docs/23 as they are). `Effects` is contravariant in E, so if
+X does not fit inside the declared E, the argument type does not match and it is an error.
 
-## 書ける場所と、書き換えが断るもの
+## Where it can be written, and what the rewrite rejects
 
-`perform` は `@effectful` の関数本体そのものの中でだけ書ける(生成器を止められるのはそこだけ)。
-次のものは import の時の書き換えが `SyntaxError`(file と行を指す)で断る。同じ検査を import
-せずに走らせる道具が `doeff-effectful-check PATH ...`(CI や pre-commit に置ける)。
+`perform` can be written only directly in the body of an `@effectful` function (that is the only place where the
+generator can be suspended). The import-time rewrite rejects the following with a `SyntaxError` (pointing at file
+and line). `doeff-effectful-check PATH ...` runs the same check without importing (it can go in CI or pre-commit).
 
-- `@effectful` でない関数が `Effects[...]` の引数を取る
-- lambda・内包表記(list / set / dict)・生成器式・入れ子の普通の関数・class の本体の中の `perform`
-  (入れ子の関数は `@effectful` にすれば、中で `perform` を書いて `perform(inner(...))` で呼べる)
-- `perform` を値として渡す・代入する・返す
-- `@effectful` の本体に `yield` / `yield from` / `await` を直接書く(effect の書き方を 1 つにする)
-- `perform(...)` に渡す値が 1 つでない・関数に `perform` の引数が無い・`perform` に `Effects[...]` の注記が無い・`async def`
+- A function that is not `@effectful` takes an `Effects[...]` parameter
+- `perform` inside a lambda, a comprehension (list / set / dict), a generator expression, a nested plain function,
+  or a class body
+  (make the nested function `@effectful` and it can use `perform` inside and be called with `perform(inner(...))`)
+- Passing, assigning, or returning `perform` as a value
+- Writing `yield` / `yield from` / `await` directly in an `@effectful` body (one way to write effects)
+- `perform(...)` given other than exactly one value, a function without a `perform` parameter, `perform` without an
+  `Effects[...]` annotation, `async def`
 
-pyright だけでは lambda や内包表記の中の `perform` は赤にならない(型の上では普通の関数の
-呼び出しなので)。そこは書き換えと `doeff-effectful-check` が受け持つ。
+pyright alone does not flag `perform` inside a lambda or comprehension (at the type level it is an ordinary function
+call). The rewrite and `doeff-effectful-check` cover that.
 
-## import の時の書き換え
+## Import-time rewriting
 
-- 登録: `doeff.install_import_hook("mypkg")` を、その package を import する前に呼ぶ。
-  package の `__init__.py` に `install_import_hook(__name__)` と書くのが基本の形で、その下の
-  module がすべて対象になる(上の `main.py` のように、module 1 つの名も書ける)。登録した package の中でも、source に `effectful` の文字が無い
-  module は書き換えずに普通に compile する。
-- 登録していない module で `@effectful` を使うと、`@effectful` がその場で `TypeError` を出し、
-  どの package を登録すればよいかを文言で示す(書き換えの印 `__doeff_effectful__` が
-  module に無い、または版が違う時)。
-- 書き換えの中身: `perform(e)` → `(yield e)`、`perform` の引数を削除。結果は `@do` が受け取る
-  生成器の関数と同じで、`@do` と同じ `program_factory`(doeff/do.py)で Program にする。
-- traceback: 書き換えた node は元の呼び出しの位置(行と列)を持つので、traceback は元の
-  source の行を指す(`test_traceback_of_a_handler_error_points_at_the_perform_line`)。
-- bytecode の cache: `__pycache__/<名>.<cache_tag>-doeff-effectful-<版>.pyc`。版は書き換えの
-  module(`doeff/_effectful_rewrite.py`)の中身の hash なので、書き換えが変わると cache の名前が
-  変わり、古い cache は読まれない(pytest の assertion rewriting が名前に版を入れるのと同じ考え方)。
-  中身の有効性は標準の import と同じく source の mtime と大きさで判定する。
+- Registration: call `doeff.install_import_hook("mypkg")` before importing that package.
+  The basic form is writing `install_import_hook(__name__)` in the package's `__init__.py`, which covers every
+  module below it (a single module name also works, as in `main.py` above). Even inside a registered package, a
+  module whose source does not contain the text `effectful` is compiled normally without rewriting.
+- Using `@effectful` in an unregistered module makes `@effectful` raise a `TypeError` on the spot, whose message
+  says which package to register (when the module lacks the rewrite marker `__doeff_effectful__`, or its version
+  differs).
+- What the rewrite does: `perform(e)` → `(yield e)`, and the `perform` parameter is removed. The result is the same
+  kind of generator function `@do` takes, and it becomes a Program through the same `program_factory` as `@do`
+  (doeff/do.py).
+- Tracebacks: rewritten nodes keep the position (line and column) of the original call, so tracebacks point at the
+  original source line (`test_traceback_of_a_handler_error_points_at_the_perform_line`).
+- Bytecode cache: `__pycache__/<name>.<cache_tag>-doeff-effectful-<version>.pyc`. The version is a hash of the
+  contents of the rewrite module (`doeff/_effectful_rewrite.py`), so when the rewrite changes the cache name changes
+  and old caches are not read (the same idea as pytest's assertion rewriting putting a version in the name).
+  Validity of the contents is judged by the source's mtime and size, as with the standard import.
 
-## 実行時の意味と費用
+## Runtime semantics and cost
 
-- handler(`Resume` / `Transfer`)・入れ子の Program・method・`Spawn` / `Wait` / `Gather`・
-  `Cancel` で `finally` が走ること・まだ走らせていない Program を cloudpickle で別の process へ
-  送ることを、`tests/test_effectful.py` で確かめている。
-- 書き換えた関数の bytecode は `@do` + `yield` で書いた同じ関数と一致する(`co_code` が同じ)。
-  effect 1 回の費用(2026-09-23・`Transfer` の handler・20 万回の最良値):
-  `yield` 0.90 µs・`perform` 0.91 µs・`yield from` 1.00 µs。`perform` は `yield` と同じで、
-  `yield from` より約 10% 安い。
+- `tests/test_effectful.py` checks handlers (`Resume` / `Transfer`), nested Programs, methods,
+  `Spawn` / `Wait` / `Gather`, `finally` running on `Cancel`, and sending a not-yet-run Program to another process
+  with cloudpickle.
+- The bytecode of a rewritten function matches the same function written with `@do` + `yield` (same `co_code`).
+  Cost of one effect (2026-09-23, a `Transfer` handler, best of 200,000 runs):
+  `yield` 0.90 µs, `perform` 0.91 µs, `yield from` 1.00 µs. `perform` equals `yield` and is about 10% cheaper than
+  `yield from`.
 
-## Hy の側
+## The Hy side
 
-doeff-hy の型検査のための展開(`doeff-hy-check`・packages/doeff-hy/docs/static-check.md)は、
-`(<- x T e)` を `x: 'T' = _doeff_perform(e)` と出す。Python の `x = perform(e)` と同じ形で、
-`yield` も `yield from` も使わずに同じ答えの型が付く。Hy にはまだ effect の集合を書く口が無いので、
-`_doeff_perform` は宣言の突き合わせをせず、型の分からない値を Any として通す。実行時の Hy の展開は
-今のまま `(yield e)` でよい — それが `@effectful` の書き換えの結果と同じ形だから。
+doeff-hy's expansion for type checking (`doeff-hy-check`, packages/doeff-hy/docs/static-check.md) emits
+`(<- x T e)` as `x: 'T' = _doeff_perform(e)`. This is the same shape as Python's `x = perform(e)`, and gives the same
+answer type without using `yield` or `yield from`. Hy has no way yet to write an effect set, so `_doeff_perform`
+does not match against a declaration and passes values of unknown type as Any. The runtime Hy expansion can stay
+`(yield e)` — that is the same shape as the result of the `@effectful` rewrite.
 
-## `yield from` の形との関係
+## Relation to the `yield from` form
 
-docs/23 の `x = yield from Eff(...)` の形は、effect と Program の実行時の `__iter__`(Rust の
-`src/typing_support.rs`)と、型の宣言の `__iter__`(`doeff_vm/__init__.pyi` など)の 2 つで
-成り立っている。`perform` の形は**実行時の `__iter__` を使わない**(書き換えの結果は `yield e`)が、
-**型の宣言の `__iter__` は `_Performable` がそのまま読んでいる**。
+The `x = yield from Eff(...)` form of docs/23 rests on two things: the runtime `__iter__` of effects and Programs
+(Rust `src/typing_support.rs`) and the declared `__iter__` in the type stubs (`doeff_vm/__init__.pyi` and others).
+The `perform` form **does not use the runtime `__iter__`** (the rewrite produces `yield e`), but
+**`_Performable` reads the declared `__iter__` as is**.
 
-- 実行時の `__iter__` は、`yield from` の書き方を廃止すれば外せる。
-- 型の宣言の `__iter__` は、外すなら「出す effect と答えの型」を運ぶ別の宣言(例えば型だけの
-  専用の属性)へ移し、`_Performable` をそれに向け直してから外す。
-- `yield from` の書き方をやめるかどうか(利用者のコードへの影響)は別に決める。
+- The runtime `__iter__` can be removed once the `yield from` style is retired.
+- To remove the declared `__iter__`, first move "the effects performed and the answer type" to another declaration
+  (for example a type-only dedicated attribute), repoint `_Performable` at it, then remove it.
+- Whether to drop the `yield from` style (its impact on users' code) is decided separately.
 
-## 決めたこと(戻せる決定・2026-09-23)
+## Decisions (reversible, 2026-09-23)
 
-| 決めたこと | 理由 | 戻し方 |
+| Decision | Reason | Rollback |
 |---|---|---|
-| 出してよい effect は戻り値の注記ではなく `perform: Effects[E]` の引数で宣言する | `-> Program[int, E]` と書くと本体の `return n` が pyright の赤になり(`int` は `Program[int, E]` でない)、しかも大域の `perform(e: EffectBase[T]) -> T` は宣言に無い effect を捕まえられない(実測: 正しいコードで 2 件の赤・宣言に無い effect は 0 件)。引数にすると 8 種すべてを捕まえる | `Effects` と `effectful` の overload を変える |
-| 登録は package の名前で明示する(`install_import_hook`) | 全 module の source を読んで判定する方式は、関係の無い import の費用を増やす。登録を忘れた時は `@effectful` が名指しの誤りを出すので黙って壊れない | `EffectfulFinder.covers` を変える |
-| cache の版は書き換えの module の hash | 版の数字を手で上げ忘れると古い書き換えの cache が読まれる。hash なら書き換えを変えるたびに必ず変わる | `REWRITE_VERSION` を定数にする |
-| `Spawn` の型の宣言(`__iter__`)で、自分自身を `Spawn[_T, _E]` でなく `Spawn[Any, Any]` として出す | `perform(Spawn(p))` で p が何も出さない(`E = Never`)時、strict の pyright が宣言の並びから `Spawn[Unknown, Unknown]` を埋めて「部分的に Unknown」の赤を出したため(`yield from` の形では出ない)。宣言の並びは元から `Spawn[Any, Any]` と書くので、捕まえる物は変わらない。型だけの overload で止める案は、本線の型引数の既定値の変更と組むと `yield from Spawn(...)` を「合う overload が無い」にしたので採らない | scheduler.py の `__iter__` の注記の `Spawn[Any, Any]` を `Spawn[_T, _E]` に戻す |
-| Hy の型検査のための展開の `(<- x e)` を `_doeff_perform(e)` にした(`yield` を出さない) | Python の形と揃え、e を 1 回だけ出す。agora-controllers の `controllers/worker` で赤が変わらないこと(57 件・同じ集合)を確かめた | macros.hy の `_bind-yield` の静的な枝を `_doeff_bound(e, (yield e))` に戻す |
+| The effects a function may perform are declared by the `perform: Effects[E]` parameter, not the return annotation | Writing `-> Program[int, E]` makes the body's `return n` a pyright error (`int` is not `Program[int, E]`), and a global `perform(e: EffectBase[T]) -> T` cannot catch undeclared effects (measured: 2 errors on correct code, 0 for undeclared effects). As a parameter, it catches all 8 kinds | Change the overloads of `Effects` and `effectful` |
+| Registration is explicit by package name (`install_import_hook`) | Deciding by reading every module's source adds cost to unrelated imports. A forgotten registration makes `@effectful` raise a named error, so it does not break silently | Change `EffectfulFinder.covers` |
+| The cache version is a hash of the rewrite module | If a hand-maintained version number is not bumped, caches of the old rewrite get read. A hash always changes whenever the rewrite changes | Make `REWRITE_VERSION` a constant |
+| In the type declaration (`__iter__`) of `Spawn`, it performs itself as `Spawn[Any, Any]` rather than `Spawn[_T, _E]` | With `perform(Spawn(p))` where p performs nothing (`E = Never`), strict pyright filled in `Spawn[Unknown, Unknown]` from the declared union and reported a "partially Unknown" error (the `yield from` form does not). The declared union has always been written as `Spawn[Any, Any]`, so what gets caught does not change. A type-only overload fix was not adopted because, combined with the mainline change to type-parameter defaults, it made `yield from Spawn(...)` "no matching overload" | Change the `Spawn[Any, Any]` in the `__iter__` annotation in scheduler.py back to `Spawn[_T, _E]` |
+| Hy's type-checking expansion of `(<- x e)` became `_doeff_perform(e)` (no `yield` emitted) | Aligns with the Python form and emits e only once. Confirmed that the errors in agora-controllers' `controllers/worker` did not change (57, the same set) | Change the static branch of `_bind-yield` in macros.hy back to `_doeff_bound(e, (yield e))` |
 
-## まだ確かめていないこと・範囲の外
+## Not yet verified / out of scope
 
-- handler を `@effectful` で書くこと(handler は今のまま生成器と `typed_resume` で書く)。
-- pytest の test file(`test_*.py`)の中に直接 `@effectful` を書くこと: pytest の assertion
-  rewriting と import hook が重なるので、`@effectful` の関数は test file の外の module に置く。
-- `program_signature` は `@effectful` の関数の E を読まない(`perform` の引数ごと注記が消えるため)。
-- Python 3.10〜3.13 での実測(この測定は 3.14 の free-threaded 版)。
+- Writing handlers with `@effectful` (handlers are still written as generators with `typed_resume`).
+- Writing `@effectful` directly in a pytest test file (`test_*.py`): pytest's assertion rewriting and the import hook
+  overlap, so put `@effectful` functions in a module outside the test file.
+- `program_signature` does not read the E of an `@effectful` function (the annotation disappears along with the
+  `perform` parameter).
+- Measurements on Python 3.10–3.13 (this measurement used the free-threaded build of 3.14).

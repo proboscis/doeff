@@ -1,4 +1,4 @@
-;;; Executable ADR: defadr の存在と pytest collection の配線を自己検査する。
+;;; Executable ADR: self-check the existence of defadr files and their wiring into pytest collection.
 
 (require doeff-adr.macros [defadr defsemgrep rule law])
 (require doeff-hy.macros [deftest])
@@ -6,57 +6,57 @@
 
 
 (defadr ADR-DOE-ADR-001
-  :title "実行可能 ADR の存在と実際の pytest collection を全量照合する"
+  :title "Fully reconcile the existing executable ADRs with the actual pytest collection"
   :status "accepted"
   :scope ["doeff-adr" "pytest collection" "CI wiring"]
   :problem
     [(fact
-       "doeff・proboscis-ema・agent-control-plane の3リポジトリで defadr_*.hy が存在しても testpaths または CI 引数の外に置かれ、検査が無音で不活性化した。"
+       "In the 3 repositories doeff, proboscis-ema and agent-control-plane, defadr_*.hy files existed but sat outside testpaths or the CI arguments, and their checks were silently deactivated."
        :evidence "docs/crystallization/erosion-audit-2026-07-02.md")
      (fact
-       "pytest_collect_file は pytest が走査したファイルだけを受け取るため、collection root 外の defadr をプラグイン単独では従来発見できなかった。"
+       "pytest_collect_file receives only the files pytest scanned, so the plugin alone could not previously discover defadr files outside the collection root."
        :evidence "packages/doeff-adr/src/doeff_adr/_pytest_plugin.py")
      (fact
-       "doeff 自身の既定ゲートへの組み込み(tests/test_adr_wiring_gate.py)は、テストの中から strict の `pytest --collect-only` を子 process で撃ち、全 suite をもう 1 回収集していた。日次の全体検証(pod)で 2026-09-15 から 3 日連続で、この 1 本が pytest-timeout の 60 秒に当たり、thread 方式なので process ごと落ちて summary 行の無い赤になった(進捗 約 28 % の地点・失敗名の抽出 0 件)。pod の実測(2026-09-17): 全 1,549 本の収集は bytecode cache が冷たいと 135 秒・温かいと 3.7 秒(Mac は冷 19 秒・温 4 秒)。着地の機構は子を PYTHONDONTWRITEBYTECODE=1 で走らせるので、日次の走行では cache が書かれず、入れ子の収集は毎回冷たい。冷たい収集の大半は Hy の ADR 1 ファイルの compile で(docs/adr/defadr_doeff_agents_012_agentd_acp_arms.hy — Mac で 19 秒中 13 秒)、このファイルが 09-14 の 165 KB(この検は通過)から 09-15 の 285 KB・09-17 の 400 KB へ育って締切を越えた。"
-       :evidence "agora-1-0 の land-runs/doeff-verify-20260917-033009.log; dotfiles agentcli land.py の _hygiene_env")]
+       "doeff's own wiring into its default gate (tests/test_adr_wiring_gate.py) fired a strict `pytest --collect-only` in a child process from inside a test, collecting the whole suite a second time. In the daily full verification (pod), for 3 consecutive days from 2026-09-15, this one test hit pytest-timeout's 60 seconds, and since the method is thread, the whole process died and the run went red with no summary line (at about 28 % progress, 0 failure names extracted). Pod measurement (2026-09-17): collecting all 1,549 tests takes 135 seconds with a cold bytecode cache and 3.7 seconds with a warm one (Mac: 19 seconds cold, 4 seconds warm). The landing mechanism runs the child with PYTHONDONTWRITEBYTECODE=1, so the daily run writes no cache and the nested collection is cold every time. Most of the cold collection is compiling one Hy ADR file (docs/adr/defadr_doeff_agents_012_agentd_acp_arms.hy — 13 of 19 seconds on Mac), and this file grew from 165 KB on 09-14 (this check passed) to 285 KB on 09-15 and 400 KB on 09-17, crossing the deadline."
+       :evidence "agora-1-0 land-runs/doeff-verify-20260917-033009.log; _hygiene_env in dotfiles agentcli land.py")]
   :context
     [(interpretation
-       "設定ファイルを静的に推測するより、リポジトリ全体の候補と session.items の実測値を比較すれば testpaths・明示引数・ignore hook を同じ規則で扱える。")
+       "Rather than statically guessing from config files, comparing the repository-wide candidates with the measured session.items handles testpaths, explicit arguments and ignore hooks by the same rule.")
      (interpretation
-       "既存利用者への導入時の誤爆を避けるため通常 pytest は警告とし、CI 用コマンドだけを strict にする。")
+       "To avoid false failures when introducing this to existing users, plain pytest only warns, and only the CI command is strict.")
      (interpretation
-       "既定の起動(path 引数なし)の session は、既定の範囲をすでに収集し終えている。その収集結果そのものが測定値で、テストの中から 2 回目の収集を起こす理由が無い。収集の所要は suite の大きさと機体の遅さに比例するので、1 テストの締切の下に置けば、いつか必ず越える。")
+       "A session started the default way (no path arguments) has already finished collecting the default scope. That collection result itself is the measurement, and there is no reason to start a second collection from inside a test. Collection time is proportional to the suite size and the machine's slowness, so placed under a single test's deadline it will eventually exceed it.")
      (interpretation
-       "配線は収集の範囲の性質で、選択(-k / -m / --deselect)の性質ではない。doeff の正典ゲート自身が -m 'not e2e' で走る — 選択で落ちた ADR も範囲には届いている。")]
+       "Wiring is a property of the collection scope, not of selection (-k / -m / --deselect). doeff's canonical gate itself runs with -m 'not e2e' — an ADR dropped by selection has still reached the scope.")]
   :decision
-    [(rule R1 "pytest collection 完了時に、リポジトリ内の実行可能 ADR 候補と実際に収集された item のファイル集合を照合する。収集されたファイルの集合は選択(-k / -m / --deselect)が効く前に測る(2026-09-17 追補)。")
-     (rule R2 "既定モードは warn とし、strict では未収集 ADR を列挙して非ゼロ終了する。明示的な off は局所実行用に残す。")
-     (rule R3 "doeff-adr verify-wiring は strict の collect-only pytest を起動する。外部リポジトリは CI 一行ゲートとして使える。doeff 自身は pytest 正典(ADR-DOE-ENFORCE-001 R1)に従い tests/test_adr_wiring_gate.py で既定ゲートに常時組み込む。")
-     (rule R4 "defsemgrep は semgrep executable 不在を skip にせず fail-closed のまま維持する。wiring strict とは別の実行時依存検査として扱う。")
-     (rule R5 "session の中から配線を検めるテスト(doeff の tests/test_adr_wiring_gate.py)は、走っている session 自身の収集結果を plugin の口 doeff_adr._pytest_plugin.default_scope_wiring で読む。テストの中から 2 回目の収集(入れ子の pytest)を起こさない(2026-09-17 追加)。照合は session につき 1 回で、収集完了時の報告(R1 / R2)とこの口は同じ測定値を読む。path を名指しした session は既定の範囲について何も言えない(狭ければ偽の赤・広ければ偽の緑)ので、口は NotDefaultScope を返し、テストは合格ではなく skip として理由を名乗る。手元で確かめる口は `uv run pytest -k <テスト名>`(既定の範囲・収集 1 回)か R3 の `doeff-adr verify-wiring`。")]
+    [(rule R1 "When pytest collection finishes, reconcile the executable ADR candidates in the repository with the set of files of the items actually collected. The set of collected files is measured before selection (-k / -m / --deselect) takes effect (addendum 2026-09-17).")
+     (rule R2 "The default mode is warn; strict lists the uncollected ADRs and exits non-zero. An explicit off remains for local runs.")
+     (rule R3 "doeff-adr verify-wiring starts a strict collect-only pytest. External repositories can use it as a one-line CI gate. doeff itself, following the pytest canon (ADR-DOE-ENFORCE-001 R1), always wires it into the default gate via tests/test_adr_wiring_gate.py.")
+     (rule R4 "defsemgrep does not turn a missing semgrep executable into a skip; it stays fail-closed. It is treated as a runtime-dependency check separate from wiring strict.")
+     (rule R5 "A test that checks wiring from inside the session (doeff's tests/test_adr_wiring_gate.py) reads the running session's own collection result through the plugin entry point doeff_adr._pytest_plugin.default_scope_wiring. It does not start a second collection (nested pytest) from inside the test (added 2026-09-17). Reconciliation happens once per session, and the report at collection finish (R1 / R2) and this entry point read the same measurement. A session that names paths can say nothing about the default scope (narrower gives a false red, wider a false green), so the entry point returns NotDefaultScope and the test states the reason as a skip, not a pass. To check locally, use `uv run pytest -k <test name>` (default scope, one collection) or R3's `doeff-adr verify-wiring`.")]
   :laws
     [(law every-executable-adr-is-collected
        :statement "exists(defadr_file) => collected_by_configured_pytest_scope(defadr_file)"
        :counterexamples
-         [(counterexample "docs/adr/defadr_*.hy が存在するが testpaths は tests のみ")
-          (counterexample "CI が tests だけを明示して docs/adr を走査しない")])
+         [(counterexample "docs/adr/defadr_*.hy exists but testpaths is only tests")
+          (counterexample "CI names only tests explicitly and does not scan docs/adr")])
      (law strict-wiring-fails-closed
        :statement "uncollected_defadr and wiring_mode(strict) => nonzero_exit_with_paths"
        :counterexamples
-         [(counterexample "未収集 ADR があっても collected test の成功だけで CI が緑になる")])
+         [(counterexample "CI goes green on the success of collected tests alone even though there are uncollected ADRs")])
      (law gate-test-reads-the-sessions-own-collection
        :statement "in_session_gate_test(t) => reads(t, measured_collection(current_session)) AND NOT spawns(t, nested_collection); collected(session) measured_before selection(-k, -m, --deselect); explicit_path_args(session) => verdict(t) == NotDefaultScope, never green"
        :counterexamples
          [(counterexample
-             "2026-09-15〜17 実弾: テストの中から全 suite の `pytest --collect-only` を子 process で撃つ形 — 日次の全体検証(pod・bytecode cache なし)で収集が 135 秒かかり、1 テスト 60 秒の締切に 3 日連続で当たった。pytest-timeout の thread 方式は process ごと落とすので、通っていた約 430 本の結果も summary 行も失われ、日次の判定が 3 日成立しなかった")
+             "real incident 2026-09-15 to 17: the shape that fires a whole-suite `pytest --collect-only` in a child process from inside a test — in the daily full verification (pod, no bytecode cache) collection took 135 seconds and hit the 60-second per-test deadline 3 days in a row. pytest-timeout's thread method kills the whole process, so the results of the roughly 430 tests that had passed and the summary line were lost, and the daily verdict could not be reached for 3 days")
           (counterexample
-             "締切だけを伸ばす — 収集の所要は suite の大きさに比例するので、伸ばした締切もいずれ越える。全 suite の収集を 1 走行で 2 回払う形が残る")
+             "only extending the deadline — collection time is proportional to the suite size, so the extended deadline is eventually exceeded too. The shape that pays for whole-suite collection twice per run remains")
           (counterexample
-             "testpaths に docs/adr が無いまま `pytest tests docs/adr` と名指しした session の収集結果を、既定の範囲の答えとして読む — 名指しが全 ADR を収集するので緑になるが、既定の `uv run pytest` では ADR が沈黙したまま")
+             "reading the collection result of a session that names `pytest tests docs/adr`, while testpaths lacks docs/adr, as the answer for the default scope — naming collects every ADR so it is green, but in the default `uv run pytest` the ADRs stay silent")
           (counterexample
-             "選択の後の session.items で照合する — 正典ゲートは -m 'not e2e' で走り、`-k` の焦点走も既定の範囲を収集する。選択で落ちた ADR を未収集と数えると、配線が正しいのに赤になる")
+             "reconciling against session.items after selection — the canonical gate runs with -m 'not e2e', and a focused `-k` run also collects the default scope. Counting ADRs dropped by selection as uncollected goes red even though the wiring is correct")
           (counterexample
-             "名指しの session でテストを合格にする — 何も検めていない走行が緑を名乗る")])]
+             "passing the test in a session that names paths — a run that checked nothing claims green")])]
   :enforcement
     [(defsemgrep no-silent-off-wiring-default
        :languages ["generic"]
@@ -65,20 +65,20 @@
        :bad ["parser.addini(\"doeff_adr_wiring\", default=\"off\")"]
        :good ["parser.addini(\"doeff_adr_wiring\", default=\"warn\")"])
      (deftest test-adr-doe-adr-001-gate-test-spawns-no-nested-collection
-       ;; R5 + law gate-test-reads-the-sessions-own-collection の実在 pin。
-       ;; 挙動の実体は packages/doeff-adr/tests/test_wiring.py(既定の範囲の赤と緑・
-       ;; 名指しの session は NotDefaultScope・選択の前に測る、の 4 本)。
+       ;; Existence pin for R5 + law gate-test-reads-the-sessions-own-collection.
+       ;; The behavior itself is tested in packages/doeff-adr/tests/test_wiring.py (4 tests: red and green for the default scope,
+       ;; NotDefaultScope for a session that names paths, measured before selection).
        (import pathlib [Path])
        (setv root (get (. (Path __file__) parents) 2))
        (setv gate (.read-text (/ root "tests/test_adr_wiring_gate.py") :encoding "utf-8"))
        (assert (in "default_scope_wiring" gate)
-               "tests/test_adr_wiring_gate.py が session 自身の収集結果(plugin の口)を読んでいない — ADR-DOE-ADR-001 R5")
+               "tests/test_adr_wiring_gate.py does not read the session's own collection result (the plugin entry point) — ADR-DOE-ADR-001 R5")
        (assert (not (in "import subprocess" gate))
-               "tests/test_adr_wiring_gate.py が子 process を起こしている — 入れ子の全収集への退行(ADR-DOE-ADR-001 R5)")
+               "tests/test_adr_wiring_gate.py starts a child process — regression to nested full collection (ADR-DOE-ADR-001 R5)")
        (setv plugin (.read-text (/ root "packages/doeff-adr/src/doeff_adr/_pytest_plugin.py")
                                 :encoding "utf-8"))
        (assert (in "def default_scope_wiring(" plugin)
-               "plugin の口 default_scope_wiring が消えている — ADR-DOE-ADR-001 R5"))]
+               "the plugin entry point default_scope_wiring is gone — ADR-DOE-ADR-001 R5"))]
   :plans ["packages/doeff-adr/tests/test_wiring.py"
           "packages/doeff-adr/README.md"
           "tests/test_adr_wiring_gate.py"

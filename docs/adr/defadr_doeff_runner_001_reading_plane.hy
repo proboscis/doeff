@@ -1,61 +1,61 @@
-;;; Executable ADR: doeff-runner の読む面(ide-plugins/vscode/doeff-runner/src/read/)の不変 —
-;;; 面は索引だけを読み、source を書き換えず、構文をなぞらず、面の文字は labels の表から出す。
-;;; 設計の記録 = docs/design/hy-reading-plane/(v1〜v7 の design と decision)。
+;;; Executable ADR: invariants of doeff-runner's reading plane (ide-plugins/vscode/doeff-runner/src/read/) —
+;;; the plane reads only the index, does not rewrite source, does not imitate syntax, and takes its text from the labels table.
+;;; Design record = docs/design/hy-reading-plane/ (the design and decision files of v1–v7).
 
 (require doeff-adr.macros [defadr defsemgrep rule law])
 (import doeff-adr.macros [fact interpretation counterexample])
 
 
 (defadr ADR-DOE-RUNNER-001
-  :title "doeff-runner の読む面は索引だけを読み、source を書き換えない — 単位は定義・入口は tag の複数の軸・文字で出すのは本体だけ・面の文字は labels の表から"
+  :title "doeff-runner's reading plane reads only the index and does not rewrite source — the unit is the definition, the entry is multiple tag axes, only bodies are shown as text, and the plane's text comes from the labels table"
   :status "accepted"
   :scope ["ide-plugins/vscode/doeff-runner/src/read/"
           "ide-plugins/vscode/doeff-runner/src/read/labels.ts"
-          "packages/doeff-indexer(hy-index — 面が読む定義 × 属性の正本)"
-          "packages/doeff-linter/src/project/body_view.rs(本体の文字の読み方の 1 か所)"]
+          "packages/doeff-indexer(hy-index — source of truth for the definitions × attributes the plane reads)"
+          "packages/doeff-linter/src/project/body_view.rs(the single place that defines how body text is read)"]
   :problem
     [(fact
-       "doeff-hy の code を file と木で読むと、系の構造(context・role などの tag の軸・effect・呼び出し・型)が file の置き場の 1 軸に潰れる。変数などの scope を file と file の構造に縛るのは筋が通らない。木の構造は領域のすべての軸を覆えないので、系は 1 つの file の木でなく tag の複数の軸で整理されるべきである。"
+       "Reading doeff-hy code by file and tree collapses the system's structure (tag axes such as context and role, effects, calls, types) onto the single axis of where files are placed. Binding the scope of variables and such to files and file structure makes no sense. A tree structure cannot cover all axes of the domain, so the system should be organized not by a single file tree but by multiple tag axes."
        :evidence "docs/design/hy-reading-plane/records/decision-05be5e9de565.json")
      (fact
-       "読む面が自分で file を歩いて定義を集めると、hy-index(doeff-indexer)と別の 2 つ目の定義の一覧ができ、索引と面で定義の集合・位置・属性が食い違う。面の module は今は索引と linter の出力だけを受け取っている(2026-09-29 実測: src/read/ の 9 file に fs / child_process / findFiles / workspace.fs は 0 件)が、それを止める検査が無かった。"
+       "If the reading plane walks files itself to collect definitions, a second list of definitions separate from hy-index (doeff-indexer) appears, and the index and the plane disagree on the set, positions, and attributes of definitions. The plane's modules currently receive only the index and the linter output (measured 2026-09-29: 0 occurrences of fs / child_process / findFiles / workspace.fs in the 9 files of src/read/), but there was no check stopping that."
        :evidence "ide-plugins/vscode/doeff-runner/src/read/*.ts(2026-09-29 origin/main 8bae6543)")
      (fact
-       "source は手で編集しない。読む面に編集の機能があると、Hy の source を書き換える 2 つ目の入口が面の中に生まれ、読むための面という性格が崩れる。"
+       "Source is not edited by hand. If the reading plane had editing features, a second entry point for rewriting Hy source would appear inside the plane, and its character as a plane for reading would break down."
        :evidence "docs/design/hy-reading-plane/records/design-c718ca28a562.json")]
   :context
     [(interpretation
-       "Hy の file は定義の置き場で、系の構造は定義 × 属性の面(= hy-index)にある。この用途では、Hy は任意のデータと code を自由な形で蓄えられる所が優れた言語で、データの置き場に過ぎない。doeff-hy の系の構造は別の面に置く。したがって面は構造の層(索引)だけを読み、置き場の層(file)を直に読まない。")
+       "A Hy file is a place where definitions are stored; the system's structure lives in the definition × attribute plane (= hy-index). For this use, Hy is an excellent language because it can store arbitrary data and code in free form, and it is merely a place to store data. The structure of a doeff-hy system is put on a separate plane. Therefore the plane reads only the structure layer (the index) and does not read the storage layer (files) directly.")
      (interpretation
-       "Hy の form の読み方(本体の文字の組み立て)は doeff-linter の 1 か所(src/project/body_view.rs・editor-json の bodies)に置き、面は描くだけにして、読み方の写しを持たない。面が file を読まないことは、この 1 か所を守ることでもある。")
+       "How Hy forms are read (assembling the body text) lives in one place in doeff-linter (src/project/body_view.rs, the bodies of editor-json); the plane only draws and holds no copy of the reading logic. The plane not reading files also protects this single place.")
      (interpretation
-       "読む面は Scala の構文(using・/** */・=)をなぞらず、defk のような実体をより良い HTML の部品で見せる。構文をなぞらないことは静的な検査で縛れない(描き方の判断)ので、law の文として残す。")]
+       "The reading plane does not imitate Scala syntax (using, /** */, =), and shows entities such as defk with better HTML components. Not imitating syntax cannot be bound by a static check (it is a rendering judgment), so it is kept as the text of a law.")]
   :decision
-    [(rule R1 "読む面の単位は file ではなく定義で、入口は木ではなく tag の複数の軸(と effect・呼び出し・型・テスト・置き場)の切り替えと交差。1 つの定義 = 1 枚のカード(decision-05be5e9de565 — 案 D を採った。D は素の lisp よりずっと読みやすく、対象は defk だけでなく doeff-hy の code を読む面の全体)。")
-     (rule R2 "面(src/read/ の module)は file を自分で読まない。定義の一覧・軸の属性・位置は hy-index の置き場から、型・effect・本体の行は doeff-linter の editor-json から受け取る。fs / node:fs / child_process の import と vscode.workspace.findFiles・vscode.workspace.fs は面の外(hy/・lint/ の読み手)に置く。")
-     (rule R3 "面は読み取り専用: document を書き換える API(WorkspaceEdit・applyEdit・TextEditor.edit・document の save・saveAll)を面に置かない。source を直す時は各カードの open in editor で editor を開く(v1 R2)。")
-     (rule R4 "面は Scala などの構文をなぞらず、実体を HTML の部品で見せる。文字で出すのは本体だけで、本体の文字の形は承認済み(match の時の val / var の形 — 2026-09-28・decision-751eb42b8152)。形の正本は packages/doeff-linter/docs/SPECIFICATION.md 20 節(decision-ca54efb91260・v2 2.2・v3 2)。")
-     (rule R5 "面に出るラベルの文字は labels.ts の文字列の表 1 つから引く(ラベルは 引数 / 答え でなく args / return type とする・decision-ef207b6c19ad)。実体の種類のバッジ・tags の key・docstring・本体は source のまま。静的な検査は置かない: 日本語の文字列 literal を禁じると内部の例外文まで赤になり、英語の literal は CSS の class や id と区別できないため。レビューで見る。")
-     (rule R6 "戻し方: R2 / R3 を外す時は .semgrep.yaml の doeff-runner-reading-plane-reads-only-the-index / doeff-runner-reading-plane-is-read-only と、この ADR の enforcement を同じ commit で消し、docs/adr/enforcement-ledger.json を作り直す(ADR-DOE-ENFORCE-001 R5)。読む面そのものは設定 doeffRunner の読む面の切り替えで切れる。")]
+    [(rule R1 "The unit of the reading plane is the definition, not the file, and the entry is switching and intersecting multiple tag axes (plus effects, calls, types, tests, location), not a tree. One definition = one card (decision-05be5e9de565 — option D was adopted. D is much more readable than plain lisp, and the target is the whole plane for reading doeff-hy code, not only defk).")
+     (rule R2 "The plane (the modules in src/read/) does not read files itself. It receives the list of definitions, axis attributes, and positions from the hy-index store, and types, effects, and body lines from doeff-linter's editor-json. Imports of fs / node:fs / child_process and vscode.workspace.findFiles / vscode.workspace.fs are placed outside the plane (the readers in hy/ and lint/).")
+     (rule R3 "The plane is read-only: APIs that rewrite documents (WorkspaceEdit, applyEdit, TextEditor.edit, document save, saveAll) are not placed in the plane. To fix source, open the editor via each card's open in editor (v1 R2).")
+     (rule R4 "The plane does not imitate Scala or other syntax and shows entities with HTML components. Only bodies are shown as text, and the shape of body text is approved (the val / var shape for match — 2026-09-28, decision-751eb42b8152). The source of truth for the shape is section 20 of packages/doeff-linter/docs/SPECIFICATION.md (decision-ca54efb91260, v2 2.2, v3 2).")
+     (rule R5 "Label text shown on the plane is taken from one string table in labels.ts (labels are args / return type rather than the Japanese words for argument / answer, decision-ef207b6c19ad). Entity-kind badges, tag keys, docstrings, and bodies are as in the source. No static check is placed: banning Japanese string literals would turn even internal exception messages red, and English literals cannot be distinguished from CSS classes or ids. This is checked in review.")
+     (rule R6 "Rollback: when removing R2 / R3, delete doeff-runner-reading-plane-reads-only-the-index / doeff-runner-reading-plane-is-read-only in .semgrep.yaml and this ADR's enforcement in the same commit, and rebuild docs/adr/enforcement-ledger.json (ADR-DOE-ENFORCE-001 R5). The reading plane itself can be turned off with the reading-plane switch in the doeffRunner settings.")]
   :laws
     [(law reading-plane-reads-only-the-index
        :statement "module ∈ src/read/ => not reads_files(module) and definitions(module) ⊆ hy_index"
        :counterexamples
-         [(counterexample "面が vscode.workspace.findFiles で .hy を集め、索引に無い定義のカードを作る(索引と面で定義の集合が食い違う)")
-          (counterexample "面が fs.readFileSync で source を読み直して本体の文字を組み立てる(linter の 1 か所の読み方の写しができる)")])
+         [(counterexample "The plane collects .hy files with vscode.workspace.findFiles and makes cards for definitions not in the index (the index and the plane disagree on the set of definitions)")
+          (counterexample "The plane re-reads source with fs.readFileSync and assembles body text (a copy of the linter's single reading logic appears)")])
      (law reading-plane-is-read-only
        :statement "module ∈ src/read/ => no document mutation (WorkspaceEdit / applyEdit / TextEditor.edit / save)"
        :counterexamples
-         [(counterexample "カードの中の本体の文字をその場で直せる編集欄を足し、WorkspaceEdit で source へ書き戻す")
-          (counterexample "面を閉じる時に document.save() を呼ぶ")])
+         [(counterexample "Adding an edit field that lets body text in a card be fixed in place, writing back to source with WorkspaceEdit")
+          (counterexample "Calling document.save() when the plane closes")])
      (law reading-plane-labels-come-from-one-table
        :statement "label shown on the plane => LABELS[key] (labels.ts)"
        :counterexamples
-         [(counterexample "render.ts に 'callers' や '引数' の文字列を直に書き、labels.ts の表と食い違う")])]
+         [(counterexample "Writing strings such as 'callers' or a Japanese 'argument' label directly in render.ts, disagreeing with the labels.ts table")])]
   :enforcement
-    ;; installed 版の規則は .semgrep.yaml の 2 本(paths.include = **/doeff-runner/src/read/** — 検体の一時の木と
-    ;; 本物の木の両方で当たる)。本物の src/read/ が緑であり続けることは tests/semgrep/test_reading_plane_rules.py と
-    ;; .pre-commit-config.yaml の semgrep-reading-plane が検める。
+    ;; The installed rules are the 2 in .semgrep.yaml (paths.include = **/doeff-runner/src/read/** — they hit both the temporary tree of the samples and
+    ;; the real tree). That the real src/read/ stays green is checked by tests/semgrep/test_reading_plane_rules.py and
+    ;; semgrep-reading-plane in .pre-commit-config.yaml.
     [(defsemgrep doeff-runner-reading-plane-reads-only-the-index
        "doeff-runner-reading-plane-reads-only-the-index"
        [{"relative-path" "ide-plugins/vscode/doeff-runner/src/read/bad_node_fs.ts"

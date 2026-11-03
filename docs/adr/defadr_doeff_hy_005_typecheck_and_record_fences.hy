@@ -1,20 +1,20 @@
-;;; Executable ADR: Hy の柵の残り 2 本 —
-;;;   柵 3 TypeCheck の effect: 静的の型検査は常時・実行時の検査は handler で
-;;;        切り替える(既定 off・検で on)。
-;;;   柵 5 記録の足場の macro: 手番の記録の書き手が使う macro は doeff-hy に
-;;;        投影の規則と一緒に置き、各 repo に macro を生やさない。
+;;; Executable ADR: the remaining 2 Hy fences —
+;;;   Fence 3, the TypeCheck effect: static type checking is always on; runtime checking is
+;;;        switched by a handler (off by default, on in checks).
+;;;   Fence 5, record-scaffold macros: the macros used by turn-record writers live in doeff-hy
+;;;        together with their projection rules; no repo grows its own macros.
 ;;;
-;;; 出自 = agora-redesign 段 7 lane 7c(決定 1.4 の残り・
-;;; `docs/plans/decisions-merge-2026-09-12.md`)。柵 1(型つき `<-` と defk の
-;;; 署名)は段 0 で着地、柵 2(`"value"`・Any・object・裸の dict / list の禁止)と
-;;; pure 層の I/O import の lint は共通の品質検査の hy ルールで運転中。
+;;; Origin = agora-redesign stage 7 lane 7c (the rest of decision 1.4,
+;;; `docs/plans/decisions-merge-2026-09-12.md`). Fence 1 (typed `<-` and defk
+;;; signatures) landed in stage 0; fence 2 (ban on `"value"`, Any, object, bare dict / list) and
+;;; the lint against I/O imports in the pure layer run in the shared quality checks' hy rules.
 ;;;
-;;; 既知の形: algebraic effects(要求 = 値・handler = 実行の家・composition
-;;; root が家を選ぶ)。柵 3 は「実行時の検査」をその形の中へ入れる変更で、
-;;; 新しい仕組みを足していない。
+;;; Known shape: algebraic effects (request = value, handler = the place that executes, the composition
+;;; root chooses the handler). Fence 3 moves "runtime checking" into that shape;
+;;; it adds no new mechanism.
 ;;;
-;;; 語彙: ここは「道具」の層。手番(turn)は仕組みの語として記録の型名
-;;; (TurnRecord)にだけ現れ、domain の言葉には持ち込まない。
+;;; Vocabulary: this is the "tool" layer. Turn appears as a mechanism term only in the record type name
+;;; (TurnRecord) and is not carried into domain language.
 
 (require doeff-adr.macros [defadr rule law])
 (import doeff-adr.macros [fact interpretation counterexample])
@@ -30,13 +30,13 @@
 
 
 ;; ---------------------------------------------------------------------------
-;; 生きた probe — 境界の値を要求として確かめる program(柵 3 の使い方の実演)。
+;; Live probes — programs that check boundary values as requests (a demonstration of how fence 3 is used).
 ;; ---------------------------------------------------------------------------
 
 (defk agreeing-boundary [value]
   {:pre [(: value int)]
    :post [(: % int)]}
-  "境界の約束(int)と要求の期待(int)が一致している program。"
+  "A program where the boundary promise (int) and the request's expectation (int) agree."
   (<- _ (type-check "agreeing-boundary" "value" int value))
   value)
 
@@ -44,53 +44,53 @@
 (defk mismatched-boundary [value]
   {:pre [(: value int)]
    :post [(: % int)]}
-  "境界の約束(int)と要求の期待(str)が食い違っている program。
+  "A program where the boundary promise (int) and the request's expectation (str) disagree.
 
-   defk の契約は「呼び手との約束」で、TypeCheck の要求は「境界で現に受けた値」
-   を見る別の軸 — 食い違いは off では通り、on では赤になる。"
+   The defk contract is \"the promise to the caller\"; the TypeCheck request is a separate axis that looks at
+   \"the value actually received at the boundary\" — the mismatch passes when off and goes red when on."
   (<- _ (type-check "mismatched-boundary" "value" str value))
   value)
 
 
 ;; ---------------------------------------------------------------------------
-;; macro の凍結台帳 — `defmacro` を定義してよい file(2026-09-12 の実測)。
+;; Frozen macro ledger — the files allowed to define `defmacro` (measured 2026-09-12).
 ;;
-;; 新しい macro は doeff-hy にだけ置く(柵)。既存の所有者は凍結し、名簿の
-;; 外の file が `defmacro` を持ったら赤。doeff-hy の中で macro を増やすのは
-;; 自由(そこが macro の家)。
+;; New macros go only into doeff-hy (the fence). Existing owners are frozen; a file outside
+;; the roster that holds `defmacro` is red. Adding macros inside doeff-hy is
+;; free (that is the home of macros).
 ;; ---------------------------------------------------------------------------
 
 (setv MACRO-OWNER-ROSTER
   #{"packages/doeff-hy/src/doeff_hy/macros.hy"
     "packages/doeff-hy/src/doeff_hy/handle.hy"
     "packages/doeff-hy/src/doeff_hy/record.hy"
-    ;; R5 の裁定による移し(by-group の案):
-    ;; doeff-hy に残すのは effect・handler・test を書く macro と土台で、conductor の workflow の macro 13 個(旧 doeff_hy/conductor.hy)は
-    ;; doeff-conductor へ、系を宣言する defsystem(旧 doeff_hy/macros.hy)は doeff-cluster へ、持ち主の package に置く。
-    ;; 戻し方 = この 2 行を消し、macro を doeff-hy へ戻す(使い手の require を同じ pin で直す)。
+    ;; Move by the R5 ruling (the by-group option):
+    ;; doeff-hy keeps the macros for writing effects, handlers, and tests plus the foundation; the 13 conductor workflow macros (formerly doeff_hy/conductor.hy)
+    ;; go to doeff-conductor, and defsystem, which declares a system (formerly doeff_hy/macros.hy), goes to doeff-cluster — each in its owning package.
+    ;; Rollback = delete these 2 lines and move the macros back into doeff-hy (fix the users' require at the same pin).
     "packages/doeff-conductor/src/doeff_conductor/macros.hy"
     "packages/doeff-cluster/src/doeff_cluster/_shared/entry/macros.hy"
     "packages/doeff-adr/src/doeff_adr/macros.hy"
     "packages/doeff-domain/src/doeff_domain/macros.hy"
-    ;; R5 の裁定による増額: 出来事を待つ
-    ;; ループの macro event-loop(547314ac8)を、包む効果 WaitForEvent の package に置く。
-    ;; 戻し方 = この行を消し、event-loop を doeff-hy へ移す(agora の使い手の require を同じ pin で直す)。
+    ;; Addition by the R5 ruling: the event-waiting
+    ;; loop macro event-loop (547314ac8) lives in the package of the effect it wraps, WaitForEvent.
+    ;; Rollback = delete this line and move event-loop into doeff-hy (fix agora's users' require at the same pin).
     "packages/doeff-events/src/doeff_events/macros.hy"})
 
-;; 走査から除く木(一時複製・生成物・環境)。
+;; Trees excluded from the scan (temporary copies, build outputs, environments).
 (setv SCAN-SKIP-PARTS
   #{".git" ".venv" ".claude" ".worktrees" "__pycache__" "node_modules"
     "dist" ".mypy_cache" ".pytest_cache" "scratchpad" "attic"})
 
 
 (defn #^ tuple macro-owning-files [#^ Path repo-root]
-  "`defmacro` を持つ .hy の一覧(針と台帳の共通の物差し)。"
+  "The list of .hy files that hold `defmacro` (the shared yardstick for the probe and the ledger)."
   (setv found [])
   (for [source (sorted (.rglob repo-root "*.hy"))]
     (setv rel (.relative-to source repo-root))
     (when (& (set rel.parts) SCAN-SKIP-PARTS)
       (continue))
-    ;; 行頭の形だけを定義と数える — 検の見本の文字列の中の "(defmacro …)" は定義ではない
+    ;; Only the line-leading form counts as a definition — "(defmacro …)" inside a check's sample string is not a definition
     (when (re.search r"(?m)^\s*\(defmacro\s"
                      (.read-text source :encoding "utf-8" :errors "replace"))
       (.append found (str rel))))
@@ -98,14 +98,14 @@
 
 
 (defn #^ tuple contract-modules [#^ Path repo-root]
-  "共通の品質検査の module 契約(静的の検査が常時かかる面の宣言)。"
+  "The module contract of the shared quality checks (the declaration of the surface where static checks always apply)."
   (setv declaration (json.loads (.read-text (/ repo-root ".agents" "code-quality.json")
                                             :encoding "utf-8")))
   (tuple (get declaration "modules")))
 
 
 (defadr ADR-DOE-HY-005
-  :title "Hy の柵の残り 2 本: 実行時の型検査は TypeCheck の要求にして handler で切り替える(既定 off・静的は常時)。記録の足場の macro は doeff-hy に投影の規則と一緒に置き、各 repo に macro を生やさない(既存の所有者は凍結台帳)"
+  :title "The remaining 2 Hy fences: runtime type checking is a TypeCheck request switched by a handler (off by default; static is always on). Record-scaffold macros live in doeff-hy together with their projection rules; no repo grows its own macros (existing owners are in a frozen ledger)"
   :status "accepted"
   :scope ["docs/adr/defadr_doeff_hy_005_typecheck_and_record_fences.hy"
           "packages/doeff-hy/src/doeff_hy/_typecheck.hy"
@@ -114,73 +114,73 @@
           ".agents/code-quality.json"]
   :problem
     [(fact
-       "agora-redesign の決定 1.4 では、Hy の柵 7 本のうち残りは、TypeCheck の effect(静的は常時・実行時の検査は handler で切替)・記録の足場の macro・読み側の射影を operator に置かない事・新しい macro は doeff-hy に投影の規則と一緒に置く事、の 4 本。"
+       "In agora-redesign decision 1.4, the remaining 4 of the 7 Hy fences are: the TypeCheck effect (static always on, runtime checking switched by a handler), record-scaffold macros, not placing read-side projections in operator, and placing new macros in doeff-hy together with their projection rules."
        :evidence "agora-redesign docs/plans/decisions-merge-2026-09-12.md 1.4")
      (fact
-       "defk / deff の :pre / :post は展開時に無条件の assert (isinstance …) になる。切替の口が無いので、静的に分かる型を hot path で毎回払う。"
-       :evidence "packages/doeff-hy/src/doeff_hy/macros.hy の _expand-check")
+       "defk / deff :pre / :post expand into unconditional assert (isinstance …). With no switch, types that are statically known are paid for on the hot path every time."
+       :evidence "_expand-check in packages/doeff-hy/src/doeff_hy/macros.hy")
      (fact
-       "手番の記録の書き手が行を裸の dict で組むと、柵 2(`\"value\"`・Any・object・裸の dict / list の禁止)を破り、欄の綴り違いも型違いも実行時まで見えない。"
-       :evidence "決定 1.4 の柵 2(共通の品質検査 agent/quality の hy ルールで運転中)")
+       "When a turn-record writer builds a row as a bare dict, it breaks fence 2 (ban on `\"value\"`, Any, object, bare dict / list), and neither misspelled fields nor wrong types are visible until runtime."
+       :evidence "Fence 2 of decision 1.4 (running in the hy rules of the shared quality checks agent/quality)")
      (fact
-       "macro は repo ごとに生えると、静的検査がその意味を知らないまま欠測になる。共通の品質検査は macro を実行しないので、投影の規則(どう読むか)が checker 側に無い macro は『未対応』で検査の外に落ちる。"
-       :evidence "~/dotfiles/agent/quality/hy_projection.py の DOEFF_MACROS 固定表と declaration_import")
+       "When macros grow per repo, static checking does not know their meaning and goes blind. The shared quality checks do not execute macros, so a macro without projection rules (how to read it) on the checker side falls outside checking as 'unsupported'."
+       :evidence "The DOEFF_MACROS fixed table and declaration_import in ~/dotfiles/agent/quality/hy_projection.py")
      (fact
-       "実測 2026-09-12: doeff で `defmacro` を持つ .hy は 7 file(doeff-hy 4 / doeff-adr 1 / doeff-domain 1 / doeff-docker 1)。"
-       :evidence "本 ADR の MACRO-OWNER-ROSTER(走査条件同一の凍結断面)")]
+       "Measured 2026-09-12: 7 .hy files in doeff hold `defmacro` (doeff-hy 4 / doeff-adr 1 / doeff-domain 1 / doeff-docker 1)."
+       :evidence "This ADR's MACRO-OWNER-ROSTER (a frozen snapshot under the same scan conditions)")]
   :context
     [(interpretation
-       "型検査は二層に分かれる。静的は source を投影して常時かけるもので、切替の口を持たせるべきではない(切れる検査は切られる)。実行時は値そのものを見るもので、静的に見えない境界(外から来た値・台帳から読んだ行)にだけ要る — だから要求として出し、果たすかを handler に決めさせる。")
+       "Type checking splits into two layers. Static checking projects the source and always applies; it should not get a switch (a check that can be switched off will be switched off). Runtime checking looks at the values themselves and is needed only at boundaries invisible to static checking (values from outside, rows read from a ledger) — so it is issued as a request and the handler decides whether to perform it.")
      (interpretation
-       "既定を off にする理由は速さではなく意味だ。静的が常時効いている面で実行時にもう一度確かめるのは、同じことを二度言うだけで、赤の出どころを 2 つにする。検だけが on にすることで『静的に見えない境界はどこか』が検の側に明示される。")
+       "The reason for off by default is meaning, not speed. Re-checking at runtime on a surface where static checking always applies just says the same thing twice and gives red two sources. Having only checks turn it on makes 'which boundaries are invisible to static checking' explicit on the check side.")
      (interpretation
-       "記録の足場は「形」だけを持ち、「中身」は持たない。手番の記録の欄の正本は ACP の契約(docs/contracts)で、doeff-hy が知ってよいのは『欄の名前と型を宣言した凍結の record を建てる』という形だけ。ここに欄を書くと正本が 2 つになる。")
+       "The record scaffold holds only the \"shape\", not the \"content\". The source of truth for turn-record fields is the ACP contract (docs/contracts); all doeff-hy may know is the shape 'build a frozen record that declares field names and types'. Writing the fields here would create two sources of truth.")
      (interpretation
-       "macro を doeff-hy に集める理由は house style ではなく検査の到達である。macro と投影の規則が 1 対 1 で同じ便に置かれる限り、使う側の repo は宣言を 1 つも書かずに静的検査を通る。repo ごとに macro を生やすと、その repo の契約に macros を宣言する手間と、checker が現物の形を検証できる範囲の制約が毎回付いてくる。")]
+       "The reason to gather macros in doeff-hy is the reach of checking, not house style. As long as a macro and its projection rules ship 1:1 in the same change, a using repo passes static checking without writing a single declaration. If each repo grows its own macros, every time it brings the effort of declaring macros in that repo's contract and the limit on how far the checker can verify the actual shape.")]
   :decision
-    [(rule R1 "実行時の型検査は `doeff_hy._typecheck` の TypeCheck の要求として出す。果たす家は 2 つ(`type-checks-off` / `type-checks-on`)で、どちらを当てるかは composition root が選ぶ。既定は off。")
-     (rule R2 "静的の型検査に切替の口を作らない。Hy の面は共通の品質検査の module 契約に `typed: true` で登録し、投影と pyright が常時かかる状態を保つ。")
-     (rule R3 "赤の文言(何がどの型を期待して何だったか)の定義点は `type-check-verdict` の 1 点。handler の中に文言を埋めない。")
-     (rule R4 "記録の足場の macro は `doeff_hy.record` が所有し、共通の品質検査の投影の規則(`quality.hy_record`)と同じ便で出荷する。記録の欄(中身)はここに書かない。")
-     (rule R5 "新しい macro は doeff-hy にだけ置く。MACRO-OWNER-ROSTER の外の file が `defmacro` を持ったら赤。名簿を増やすのは管理者が裁定した時だけ。")]
+    [(rule R1 "Runtime type checking is issued as the TypeCheck request of `doeff_hy._typecheck`. There are 2 handlers that perform it (`type-checks-off` / `type-checks-on`), and the composition root chooses which to install. The default is off.")
+     (rule R2 "Do not create a switch for static type checking. Hy surfaces are registered in the shared quality checks' module contract with `typed: true`, keeping projection and pyright always applied.")
+     (rule R3 "The single definition point of the red message (which type was expected for what, and what it was) is `type-check-verdict`. Do not embed the message inside handlers.")
+     (rule R4 "Record-scaffold macros are owned by `doeff_hy.record` and ship in the same change as the shared quality checks' projection rules (`quality.hy_record`). Record fields (content) are not written here.")
+     (rule R5 "New macros go only into doeff-hy. A file outside MACRO-OWNER-ROSTER holding `defmacro` is red. The roster grows only when the administrator rules so.")]
   :laws
     [(law runtime-type-checks-are-off-by-default
        :statement "for_all program p with a broken TypeCheck: run(type_checks_off, p) returns the value unchanged and run(type_checks_on, p) raises TypeCheckError"
        :counterexamples
-         [(counterexample "既定の家が値を見る — 静的に分かる型を hot path で二度払い、赤の出どころが静的と実行時の 2 つに割れる")
-          (counterexample "on の家が値を見ない(要求を素通しする)— 検が『境界を確かめた』と言えるのに何も確かめていない(空の検査)")])
+         [(counterexample "The default handler looks at values — statically known types are paid twice on the hot path, and red has two sources, static and runtime")
+          (counterexample "The on handler does not look at values (passes the request through) — checks can claim 'the boundary was verified' while nothing was verified (an empty check)")])
      (law static-type-check-is-always-on
-       :statement "for_all hy module m in doeff_hy fences: contract(m).typed = true — 静的の検査に切替の口は無い"
+       :statement "for_all hy module m in doeff_hy fences: contract(m).typed = true — static checking has no switch"
        :counterexamples
-         [(counterexample "柵の module を typed: false で登録する — 実行時を off にした上で静的も外れ、型の保証が 1 つも残らない")])
+         [(counterexample "A fence module is registered with typed: false — with runtime already off, static checking is dropped too and no type guarantee remains")])
      (law new-macros-live-only-in-doeff-hy
-       :statement "for_all hy_file f with defmacro: f in MACRO-OWNER-ROSTER — 名簿の外に macro は生えない"
+       :statement "for_all hy_file f with defmacro: f in MACRO-OWNER-ROSTER — no macro grows outside the roster"
        :counterexamples
-         [(counterexample "repo の中の module が自分用の macro を定義する — 共通の品質検査は macro を実行しないので、その repo の契約に macros を宣言するまで使用側は欠測になる(検査の到達が静かに落ちる)")])]
+         [(counterexample "A module inside a repo defines its own macro — the shared quality checks do not execute macros, so users go blind until macros are declared in that repo's contract (the reach of checking silently drops)")])]
   :enforcement
     [(deftest test-adr-doe-hy-005-runtime-type-check-is-switched-by-the-handler
-       ;; 針: 同じ program を 2 つの家で回し、既定(off)は素通し・検(on)は赤。
+       ;; Probe: run the same program under 2 handlers; the default (off) passes through, checks (on) go red.
        (assert (= (run-without-type-checks (agreeing-boundary 7)) 7))
        (assert (= (run-without-type-checks (mismatched-boundary 7)) 7)
-               "既定の家が値を見ている(ADR-DOE-HY-005 R1 — 既定は off)")
+               "The default handler is looking at values (ADR-DOE-HY-005 R1 — default is off)")
        (assert (= (run-with-type-checks (agreeing-boundary 7)) 7))
        (setv raised None)
        (try
          (run-with-type-checks (mismatched-boundary 7))
          (except [error TypeCheckError] (setv raised error)))
        (assert (is-not raised None)
-               "検の家が値を見ていない(ADR-DOE-HY-005 R1 — 検で on)")
+               "The check handler is not looking at values (ADR-DOE-HY-005 R1 — on in checks)")
        (assert (in "mismatched-boundary" (str raised)))
        (assert (in "value" (str raised))))
      (deftest test-adr-doe-hy-005-verdict-is-the-single-definition-point
-       ;; 針: 文言の定義点が 1 つ(handler を通らずに同じ判断が撃てる)。
+       ;; Probe: the message has one definition point (the same judgment can be fired without going through a handler).
        (assert (is (type-check-verdict "owner" "x" str "ok") None))
        (setv verdict (type-check-verdict "owner" "x" str 7))
        (assert (is-not verdict None))
        (assert (in "owner" verdict))
        (assert (in "int" verdict)))
      (deftest test-adr-doe-hy-005-static-check-is-always-on
-       ;; 針: 柵の module が module 契約に typed: true で載っている。
+       ;; Probe: the fence modules are in the module contract with typed: true.
        (setv repo-root (. (Path __file__) parent parent parent))
        (setv modules (contract-modules repo-root))
        (setv fences ["packages/doeff-hy/src/doeff_hy/_typecheck.hy"
@@ -188,20 +188,20 @@
        (for [fence fences]
          (setv owners (lfor m modules :if (in fence (get m "paths")) m))
          (assert (= (len owners) 1)
-                 (+ "柵の module が契約に 1 つで載っていない(ADR-DOE-HY-005 R2): " fence))
+                 (+ "A fence module is not in the contract exactly once (ADR-DOE-HY-005 R2): " fence))
          (assert (get (get owners 0) "typed")
-                 (+ "柵の module が typed: false で登録されている"
-                    "(ADR-DOE-HY-005 R2 — 静的に切替の口は作らない): " fence))))
+                 (+ "A fence module is registered with typed: false"
+                    " (ADR-DOE-HY-005 R2 — no switch for static checking): " fence))))
      (deftest test-adr-doe-hy-005-macros-live-only-in-doeff-hy
-       ;; 針: 実測 = macro-owning-files、法 = MACRO-OWNER-ROSTER との一致。
+       ;; Probe: measured = macro-owning-files, law = equality with MACRO-OWNER-ROSTER.
        (setv repo-root (. (Path __file__) parent parent parent))
        (setv found (macro-owning-files repo-root))
        (setv strays (sorted (lfor rel found :if (not-in rel MACRO-OWNER-ROSTER) rel)))
        (assert (= strays [])
-               (+ "名簿の外の file が macro を定義している(ADR-DOE-HY-005 R5 — "
-                  "新しい macro は doeff-hy に投影の規則と一緒に置く): " (str strays)))
+               (+ "A file outside the roster defines a macro (ADR-DOE-HY-005 R5 — "
+                  "new macros go into doeff-hy together with their projection rules): " (str strays)))
        (setv stale (sorted (lfor rel MACRO-OWNER-ROSTER :if (not-in rel found) rel)))
        (assert (= stale [])
-               (+ "台帳の削り忘れ(ADR-DOE-HY-005 R5 — macro を消した便は名簿も"
-                  "同便で削る): " (str stale))))]
+               (+ "Stale ledger entries (ADR-DOE-HY-005 R5 — a change that deletes a macro removes it from the roster"
+                  " in the same change): " (str stale))))]
   :plans [])

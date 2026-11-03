@@ -1,13 +1,13 @@
 ;;; Executable ADR: koine session surface v0 stage 1 — session.adopt +
-;;; turn 打刻 + interactive/adopted 刈り取り免除(安全条項 1 の履行)。
+;;; turn stamping + reap exemption for interactive/adopted (fulfilling safety clause 1).
 ;;;
-;;; 改訂註(2026-08-17): 波 1-S1 / ADR-DOE-AGENTS-007 改訂・出自 =
-;;; design-conversation-liveness-sessionhost-wave1-2026-08-17.html 付録 4-2 S1・
-;;; 採番代行 = integration-lead〔暫定・koine 裁定 6f6a36d7 と同型〕。
-;;; 会話 ID(conversation_id)を登録・打刻・行引きの第一級の鍵にする改訂 —
-;;; R1(会話 index)/ R2(adopt の会話受理と冪等 3 分岐)/ R5(解決鍵の改組 —
-;;; 名前鍵は素の descriptor 限定)/ R7(probe なし行引き口)+ 法 2 本
-;;; (stamp-never-crosses-identities / conversation-lookup-never-probes)。
+;;; Revision note (2026-08-17): wave 1-S1 / ADR-DOE-AGENTS-007 revision; origin =
+;;; design-conversation-liveness-sessionhost-wave1-2026-08-17.html appendix 4-2 S1;
+;;; numbering by proxy = integration-lead [provisional; same shape as koine ruling 6f6a36d7].
+;;; A revision that makes the conversation ID (conversation_id) a first-class key for registration, stamping, and row lookup —
+;;; R1 (conversation index) / R2 (adopt accepting the conversation, with 3 idempotency branches) / R5 (restructured resolution keys —
+;;; the name key limited to bare descriptors) / R7 (probe-free row lookup port) + 2 laws
+;;; (stamp-never-crosses-identities / conversation-lookup-never-probes).
 
 (require doeff-adr.macros [defadr defsemgrep rule law])
 (require doeff-hy.macros [deftest])
@@ -15,87 +15,87 @@
 
 
 (defadr ADR-DOE-AGENTS-007
-  :title "koine session surface v0 stage 1 に sessionhost が第一実装として参加する — session.adopt(observation-only・実在確認→登記・会話 ID 受理)+ turn 打刻(descriptor 解決 = pane/conversation/素の名前・opaque wait)+ interactive/adopted の無条件刈り取り免除(安全条項 1)+ level-triggered liveness 導出 + 会話 ID 行引き口(波 1-S1 改訂)"
+  :title "sessionhost participates as the first implementation of koine session surface v0 stage 1 — session.adopt (observation-only, verify existence → register, accepts conversation ID) + turn stamping (descriptor resolution = pane/conversation/bare name, opaque wait) + unconditional reap exemption for interactive/adopted (safety clause 1) + level-triggered liveness derivation + conversation ID row lookup port (wave 1-S1 revision)"
   :status "accepted"
   :scope ["packages/doeff-agents (sessionhost: store / effects / policy / host / adopt / turn)"
           "packages/doeff-agents/conformance (S23-S27)"]
   :problem
     [(fact
-       "「今この系で誰が動いているか」に一枚で答える台帳の契約 = koine session surface v0(pavo ADR 0003 v2 の interface-first 裁定)。sessionhost は store・monitor・lifecycle enum・substrate 抽象(tmux/herdr)を実装済みで、欠けているのは adopt(既に生きている pane の事後登記)と turn 打刻のみだった。"
+       "The contract for a ledger that answers 'who is running in this system right now' in a single view = koine session surface v0 (the interface-first ruling of pavo ADR 0003 v2). sessionhost had already implemented the store, monitor, lifecycle enum, and substrate abstraction (tmux/herdr); the only missing pieces were adopt (after-the-fact registration of an already-live pane) and turn stamping."
        :evidence "~/repos/koine/surfaces/session/semantics-v0.md; ~/repos/pavo/adr/0003-runtime-unification.md R3/R6")
      (fact
-       "安全条項 1(reaper fail-closed・interactive は無条件刈り取り対象外)は実装前の sessionhost で red だった: is-run-to-completion の使用箇所は 4 つ(finalize の pane kill / result-first / turn-end / stall watchdog)のみで、interactive 行を terminal 化する経路が 5 本残っていた — boot watchdog(policy.hy 旧 472-488)/ stale reap(旧 492-505)/ launch timeout(旧 507-524)/ mux 生存確認(旧 526-550)/ zombie reaper(旧 552-568)。"
-       :evidence "packages/doeff-agents/conformance/test_s26_interactive_not_reaped.py(TDD red 2026-07-21: 4 経路が interactive 行を terminal 化することを実測)")
+       "Safety clause 1 (reaper fail-closed; interactive is never subject to unconditional reaping) was red in the pre-implementation sessionhost: is-run-to-completion was used in only 4 places (finalize's pane kill / result-first / turn-end / stall watchdog), and 5 paths remained that terminalize interactive rows — boot watchdog (policy.hy old 472-488) / stale reap (old 492-505) / launch timeout (old 507-524) / mux liveness check (old 526-550) / zombie reaper (old 552-568)."
+       :evidence "packages/doeff-agents/conformance/test_s26_interactive_not_reaped.py (TDD red 2026-07-21: measured that 4 paths terminalize interactive rows)")
      (fact
-       "launch timeout 経路は adopt と致命的に干渉する: adopt は観測のみで startup marker を見ないため、adopt 行は「status=running・observed_active_at=None」そのもの — 登記の 60 秒後(既定 knob)に必ず failed 化し、store の terminal guard が再活性を禁止するため、行が死んで pane だけ生き残る孤児化になる。adopt だけを足すと『登記が席を殺す』。"
-       :evidence "~/repos/koine/docs/turn-stamp-path.md 突合結果(重大発見の登記 2026-07-21); packages/doeff-agents/src/doeff_agents/_sessionhost/store.hy db-upsert-snapshot terminal guard")
+       "The launch timeout path interferes fatally with adopt: adopt only observes and does not look at the startup marker, so an adopt row is exactly 'status=running, observed_active_at=None' — it always turns failed 60 seconds after registration (default knob), and because the store's terminal guard forbids reactivation, the row dies while only the pane survives, an orphaning. Adding adopt alone means 'registration kills the seat'."
+       :evidence "~/repos/koine/docs/turn-stamp-path.md cross-check result (recording of a critical finding 2026-07-21); packages/doeff-agents/src/doeff_agents/_sessionhost/store.hy db-upsert-snapshot terminal guard")
      (fact
-       "ownership marker 列が存在しなかった(agent_sessions に owner/creator/adopted 列なし・owner_pid は daemon lease 用)ため、条文の opt-in marker + fail-closed 自体が表現できなかった。"
-       :evidence "packages/doeff-agents/tests/sessionhost_store_deftests.hy EXPECTED-COLUMNS(TDD red 2026-07-21)")
+       "There was no ownership marker column (agent_sessions had no owner/creator/adopted column; owner_pid is for the daemon lease), so the clause's opt-in marker + fail-closed could not even be expressed."
+       :evidence "packages/doeff-agents/tests/sessionhost_store_deftests.hy EXPECTED-COLUMNS (TDD red 2026-07-21)")
      (fact
-       "会話 ID が対話席用台帳に一切乗っていなかった(32 行中 0 行 — 仕事用は 8,570/12,078 行が持つ)ため、agora 側の読み手(全部が会話 ID 鍵)は台帳を引けず、打刻の到達率は 14.9%(不達 12,245 vs 到達 2,138)だった。さらに名前第二鍵の吸い込み実弾: 死んだ行 integration-lead(旧枠・登録 2026-07-21 の手動一発)が現役席の打刻を吸収し、turn_since が観測中に 3 回前進 — 死んだ会話の行が生きて見える形で読みを腐らせた。一覧の読み出しは 2.3〜4.8 秒/32 行(鏡原則の行ごと同期 probe が原因)で、拍ごとに読む消費者には載らない。"
-       :evidence "design-conversation-liveness-sessionhost-wave1-2026-08-17.html 付録 4-3(read-only 実測 4 本: agentd-herdr.sqlite 直読・daemon.status counter・socket 実測)")]
+       "The conversation ID was not on the interactive-seat ledger at all (0 of 32 rows — for work rows, 8,570/12,078 rows had it), so readers on the agora side (all keyed by conversation ID) could not look up the ledger, and the stamp delivery rate was 14.9% (12,245 undelivered vs 2,138 delivered). There was also a live case of name-secondary-key absorption: the dead row integration-lead (old slot; a one-off manual registration on 2026-07-21) absorbed the stamps of an active seat, and turn_since advanced 3 times during observation — a dead conversation's row looked alive and corrupted the reads. Listing took 2.3-4.8 seconds per 32 rows (caused by the per-row synchronous probe of the mirror principle), which does not fit consumers that read every beat."
+       :evidence "design-conversation-liveness-sessionhost-wave1-2026-08-17.html appendix 4-3 (4 read-only measurements: direct read of agentd-herdr.sqlite, daemon.status counter, socket measurement)")]
   :context
     [(interpretation
-       "契約の正本は koine(github.com/proboscis/koine surfaces/session/semantics-v0.md)であり、本 ADR は実装側変更の登記(cross-repo 原則 — pavo ADR 0003 R8)。sessionhost は surface v0 の subset(session のみ)の第一実装として参加する。安全条項 4 点は契約条文で後退禁止(R4)。")
+       "The source of truth for the contract is koine (github.com/proboscis/koine surfaces/session/semantics-v0.md), and this ADR records the implementation-side change (cross-repo principle — pavo ADR 0003 R8). sessionhost participates as the first implementation of a subset of surface v0 (session only). The 4 safety clauses are contract clauses that must not regress (R4).")
      (interpretation
-       "turn 打刻の書き込み経路は koine docs/turn-stamp-path.md が正本: 書き手は席自身の hook のみ(per-source 単一 writer)、hook は生 socket へ 1 行書いて応答を待たず閉じる(hard timeout ≤200ms・fail-open)。受け側の義務 = hung を作らないこと。席は session id を知らない — descriptor {pane_id, agent_name} を sessionhost が解決し、id 配布機構(env/file)は作らない。")
+       "The source of truth for the turn stamp write path is koine docs/turn-stamp-path.md: the only writer is the seat's own hook (single writer per source); the hook writes one line to the raw socket and closes without waiting for a response (hard timeout ≤200ms, fail-open). The receiving side's obligation = never create a hang. The seat does not know its session id — sessionhost resolves the descriptor {pane_id, agent_name}, and no id distribution mechanism (env/file) is built.")
      (interpretation
-       "liveness は導出であって状態ではない: stalled = open turn(holder='agent')のまま閾値超過、を wire 出力のたびに再導出する。turn-open の被覆は部分的(harness 内部再起動起点では発火しないことがある — 所見 3)なので、open/close の対を前提にした edge-triggered 実装は禁止。close 済み(WAIT 待ち)は経過時間によらず非 stalled — 待つのは agora の正常状態。")
+       "Liveness is a derivation, not state: stalled = an open turn (holder='agent') past the threshold, re-derived on every wire output. Coverage of turn-open is partial (it may not fire when starting from a harness-internal restart — finding 3), so an edge-triggered implementation that assumes open/close pairs is forbidden. A closed turn (waiting on WAIT) is non-stalled regardless of elapsed time — waiting is agora's normal state.")
      (interpretation
-       "波 1-S1 改訂(2026-08-17)の意味論の出自: 会話は宿りより長生きし(ADR-DOE-AGENTS-006 conversation-outlives-incarnation)、行は会話の 1 回の宿りの記録である。よって (1) 会話 ID は行の同一性を運ぶ鍵 — 打刻・行引きは conversation_json.session_id の完全一致でのみ引く(全欄横断の部分一致は『言及』を『登記』と読む)。(2) 下地(pane)の再利用で別会話が同じ substrate.ref に現れたら、それは新しい会話の新しい宿り = 新しい行であり、既存行の会話 identity を書き換えることは無い(store の COALESCE first-write-wins が最終防衛)。(3) 設計 S1 ③ の『名前解決は下地実在行に限定』は、打刻 hot path の substrate 不接触義務(既存法 turn-rpc-is-store-only — 打刻のたびの probe は反例に明文)と両立しないため、同値の store-only 機構で履行する: 識別子(pane_id / conversation_id)を運ぶ descriptor は名前鍵に落ちない。識別子鍵で引けない打刻は正直な no-op(unadopted counter)であり、登録の定期化(波 1 S2 便)が次の拍で行を供給する。")]
+       "Origin of the semantics of the wave 1-S1 revision (2026-08-17): a conversation outlives its incarnations (ADR-DOE-AGENTS-006 conversation-outlives-incarnation), and a row is the record of one incarnation of a conversation. Therefore (1) the conversation ID is the key that carries row identity — stamping and row lookup match only on exact equality of conversation_json.session_id (a partial match across all fields reads a 'mention' as a 'registration'). (2) If, by reuse of the underlying substrate (pane), a different conversation appears at the same substrate.ref, that is a new incarnation of a new conversation = a new row, and the conversation identity of the existing row is never rewritten (the store's COALESCE first-write-wins is the last line of defense). (3) Design S1 ③'s 'name resolution is limited to rows whose substrate exists' is incompatible with the stamping hot path's obligation not to touch the substrate (existing law turn-rpc-is-store-only — a probe on every stamp is explicitly a counterexample), so it is fulfilled by an equivalent store-only mechanism: a descriptor carrying an identifier (pane_id / conversation_id) never falls back to the name key. A stamp that cannot be looked up by an identifier key is an honest no-op (unadopted counter), and periodic registration (the wave 1 S2 batch) supplies the row on the next beat.")]
   :decision
-    [(rule R1 "sessionhost は koine session surface v0 の第一実装として参加する(subset = session のみ・契約の正本は koine)。schema 追加は additive migration の 4 列のみ: adopted(ownership marker・INTEGER NOT NULL DEFAULT 0)/ turn_holder / turn_since / turn_wait_json(opaque)。波 1-S1 改訂: 会話 ID の行引きのための expression index(idx_agent_sessions_conversation — json_extract(conversation_json, '$.session_id'))を additive に足す。列は増やさない — conversation_json は ADR-DOE-AGENTS-006 所有のまま(会話 identity の第 2 の置き場を作らない)。wire は既存封筒に additive(session.adopt / session.turn_open / session.turn_close / session.by_conversation / daemon.status counters / session.list の adopted filter)。koine 由来の新契約は typed 文字列 error_code(adopt_target_not_found)を使う — oracle の数値表(-32000..)は凍結語彙で、新語彙をそこへ足さない。")
-     (rule R2 "adopt は observation-only + 順序義務: substrate 実在確認(既存 TmuxHasSession effect — herdr backend では agent.get に解決される substrate 中立 probe)が成功したときのみ登記し、失敗は行を作らず typed error で返す(幻 turn-open の再発防止)。substrate への変異(キー送出・session 作成/破棄・FS 書き・配送)は adopt 経路で構造的に禁止(installed semgrep rule doeff-agents-adopt-must-not-mutate-substrate)。id は sessionhost 採番の不透明 id(uuid4)— 呼び手の名を id に埋め込まない。波 1-S1 改訂: adopt は任意の conversation_id(非空文字列)を受け、conversation_json へ {\"session_id\": <id>}(ADR-006 union の identity 成分)として書く。冪等は会話を考慮した 3 分岐 — (a) 同一 substrate.ref の非終端行に同じ会話が登記済み → 既存行をそのまま返す(書かない)。(b) 会話未登記(NULL)の行 → 会話を補充して返す(同一宿りの登記の完成 — store の COALESCE first-write-wins が最終防衛・event = session_conversation_discovered)。(c) 既存行が別の会話を登記 → 新しい行を鋳造する(下地再利用 = 新会話の新宿り。既存行の会話 identity は決して書き換えない)。conversation_id を運ばない adopt は従来どおり(同一 ref の非終端の最新行を返す)。")
-     (rule R3 "刈り取り免除は monitor-session-once の冒頭(booting arm より前)で判定する: 免除 = adopted OR 非 run_to_completion(interactive、および未知 lifecycle は fail-closed で刈らない — reap は run_to_completion の opt-in)。免除行に monitor がしてよいのは観測の記帳のみで、last_observed_at の更新を『monitor は生きて評価した上で刈らなかった』の witness として書く(S26 が assert する観測面)。status の terminal 遷移・finished_at/terminal_cause 書き込み・pane kill・solicitation 送出は禁止。installed semgrep rule doeff-agents-interactive-must-not-be-terminalized が『免除判定より前に :status terminal を書く形』を旧形として禁止する(旧 policy.hy で fire することを確認済み 2026-07-21)。")
-     (rule R4 "liveness は level-triggered 導出のみ: stalled = (turn_holder == 'agent') AND (now - turn_since > DOEFF_AGENTD_TURN_STALL_SECS、既定 1800)。store に stalled を書かない・status を変えない(signal only)。導出は wire 出力時(session.get / session.list / session.adopt の応答)に毎回行う。close 済み(holder = wait.who = user/work 等)は経過時間によらず非 stalled。鏡原則(条項 3)も同じ読み出し導出面: 免除・非終端行の wire に substrate_present / substrate_checked_at を毎回 probe して載せ、消滅 pane を exited と裁定せず・行を削除もしない。")
-     (rule R5 "turn RPC は substrate に一切触れない: descriptor 解決 + 3 列 UPDATE の単一 actor op のみ。≤200ms fire-and-forget の hook hot path が相手なので、hung を作らないことは受け側の条文義務(installed semgrep rule doeff-agents-turn-rpc-must-not-touch-substrate)。波 1-S1 改訂の解決鍵(descriptor = {pane_id, agent_name, conversation_id} — すべて任意・最低 1 つ): ① pane_id 第一鍵 — descriptor が conversation_id を運ぶ時は、別の会話を登記した行に落ちない(会話一致行 > 会話未登記〔NULL〕行の優先・別会話行は除外)。② conversation_id 第二鍵 — conversation_json.session_id の完全一致で会話の非終端最新行へ(pane 未登記の復活直後窓でも打刻が届く)。③ agent_name 鍵は descriptor が pane_id も conversation_id も運ばない時に限る(installed semgrep rule doeff-agents-turn-name-key-requires-bare-descriptor)— 識別子を運ぶ打刻の名前 fallback は吸い込み実弾(2026-08-17: 死んだ行が現役席の打刻を吸収)の形そのもの。候補が複数なら started_at DESC, session_id ASC の先頭(session.list と同じ全順序)。対象は従来どおり adopt 済み非終端行のみ。未 adopt / 識別子不一致の打刻は正直 no-op + 可視 counter(daemon.status counters.turn_stamp_unadopted — adopt 網羅の計器を兼ねる)で、エラーにも黙殺にもしない。wait は opaque 保存(読むのは holder に写す who のみ — kind 語彙の解釈権威は席側 wait_protocol.py)。turn RPC は監査 event / command を書かない(打刻は高頻度 hot path — 表の無限成長と遅延源を持ち込まない)。")
-     (rule R6 "既知限界の明示(条項 4 の裏面): 打刻は自己申告 — 『動いているが未打刻』の席は turn/stalled 面では不可視になり得る。wire は未打刻を field 省略(turn_* 不在)で正直に表現し、偽の open turn を合成しない。boot watchdog(BOOTING 行)は launch pipeline 所有のため、免除判定はそれより前に置くことで interactive の BOOTING 残置も刈らない(launcher 死亡時の BOOTING interactive 行は残置される — stage 2 以降の突合表示課題として登記)。counters は in-memory(永続化は実測需要が出てから)。")
-     (rule R7 "会話 ID → 行の行引き口(波 1-S1 改訂・wire method session.by_conversation {conversation_id})は probe なしの速い読み: 解決則 = 非終端の最新行、無ければ最新の terminal 行、無ければ null(全順序 = started_at DESC, session_id ASC — 会話資源契約草案の解決則〔conversationId → 生きた宿り高々 1、無ければ最新 terminal 宿り〕の store 面)。応答は wire snapshot + stalled 導出(store 読みのみ)で、substrate_present / substrate_checked_at は意図的に**不在**(stale な保存値を返すのではなく、field ごと載せない — 読み手は自分の substrate 観測と合成して生死を導出する。一覧 2.3〜4.8s/32 行の原因だった行ごと同期 probe をこの口に持ち込まない)。鏡原則(R4)は session.get / session.list / session.adopt の応答で不変 — この口はその代替ではなく、拍ごとに読む消費者(供給点)専用の素材読みである。adopted に限らない(会話 identity は台帳全域 — launch 起点の行も引ける)。")]
+    [(rule R1 "sessionhost participates as the first implementation of koine session surface v0 (subset = session only; the source of truth for the contract is koine). The schema additions are only 4 columns via additive migration: adopted (ownership marker, INTEGER NOT NULL DEFAULT 0) / turn_holder / turn_since / turn_wait_json (opaque). Wave 1-S1 revision: an expression index for conversation ID row lookup (idx_agent_sessions_conversation — json_extract(conversation_json, '$.session_id')) is added additively. No columns are added — conversation_json remains owned by ADR-DOE-AGENTS-006 (no second location for conversation identity is created). The wire is additive to the existing envelope (session.adopt / session.turn_open / session.turn_close / session.by_conversation / daemon.status counters / the adopted filter of session.list). New contracts originating from koine use a typed string error_code (adopt_target_not_found) — the oracle's numeric table (-32000..) is a frozen vocabulary, and new vocabulary is not added to it.")
+     (rule R2 "adopt is observation-only + an ordering obligation: it registers only when the substrate existence check (the existing TmuxHasSession effect — a substrate-neutral probe that resolves to agent.get on the herdr backend) succeeds; on failure it creates no row and returns a typed error (preventing a recurrence of phantom turn-open). Mutations of the substrate (sending keys, creating/destroying sessions, FS writes, delivery) are structurally forbidden on the adopt path (installed semgrep rule doeff-agents-adopt-must-not-mutate-substrate). The id is an opaque id minted by sessionhost (uuid4) — the caller's name is not embedded in the id. Wave 1-S1 revision: adopt accepts an optional conversation_id (non-empty string) and writes it to conversation_json as {\"session_id\": <id>} (the identity component of the ADR-006 union). Idempotency has 3 conversation-aware branches — (a) the same conversation is already registered on a non-terminal row with the same substrate.ref → return the existing row as is (no write). (b) A row with no registered conversation (NULL) → fill in the conversation and return it (completing the registration of the same incarnation — the store's COALESCE first-write-wins is the last line of defense; event = session_conversation_discovered). (c) The existing row registered a different conversation → mint a new row (substrate reuse = a new incarnation of a new conversation; the existing row's conversation identity is never rewritten). An adopt that carries no conversation_id behaves as before (returns the newest non-terminal row with the same ref).")
+     (rule R3 "The reap exemption is decided at the start of monitor-session-once (before the booting arm): exempt = adopted OR non-run_to_completion (interactive, and unknown lifecycles are fail-closed and not reaped — reaping is opt-in for run_to_completion). The only thing the monitor may do to an exempt row is record observations, writing the update of last_observed_at as the witness that 'the monitor was alive, evaluated, and did not reap' (the observation surface S26 asserts). Terminal status transitions, writing finished_at/terminal_cause, pane kill, and sending solicitations are forbidden. The installed semgrep rule doeff-agents-interactive-must-not-be-terminalized forbids, as the old form, 'writing :status terminal before the exemption decision' (confirmed to fire on the old policy.hy, 2026-07-21).")
+     (rule R4 "Liveness is only a level-triggered derivation: stalled = (turn_holder == 'agent') AND (now - turn_since > DOEFF_AGENTD_TURN_STALL_SECS, default 1800). stalled is not written to the store and status is not changed (signal only). The derivation is performed every time on wire output (responses of session.get / session.list / session.adopt). A closed turn (holder = wait.who = user/work, etc.) is non-stalled regardless of elapsed time. The mirror principle (clause 3) is the same read-time derivation surface: for exempt, non-terminal rows, substrate_present / substrate_checked_at are probed every time and put on the wire; a vanished pane is not ruled exited, and the row is not deleted either.")
+     (rule R5 "The turn RPC never touches the substrate: only descriptor resolution + a 3-column UPDATE as a single actor op. Because its counterpart is the ≤200ms fire-and-forget hook hot path, not creating a hang is the receiving side's contractual obligation (installed semgrep rule doeff-agents-turn-rpc-must-not-touch-substrate). Resolution keys of the wave 1-S1 revision (descriptor = {pane_id, agent_name, conversation_id} — all optional, at least 1): ① pane_id is the primary key — when the descriptor carries a conversation_id, it does not land on a row that registered a different conversation (rows matching the conversation take priority over rows with no registered conversation [NULL]; rows of a different conversation are excluded). ② conversation_id is the secondary key — exact match on conversation_json.session_id to the newest non-terminal row of the conversation (stamps arrive even in the window right after revival, before the pane is registered). ③ The agent_name key is used only when the descriptor carries neither pane_id nor conversation_id (installed semgrep rule doeff-agents-turn-name-key-requires-bare-descriptor) — a name fallback for a stamp that carries an identifier is exactly the shape of the live absorption case (2026-08-17: a dead row absorbed the stamps of an active seat). With multiple candidates, the first by started_at DESC, session_id ASC (the same total order as session.list). The targets remain, as before, only adopted non-terminal rows. A stamp that is not adopted / has no identifier match is an honest no-op + a visible counter (daemon.status counters.turn_stamp_unadopted — doubling as the gauge of adopt coverage), neither an error nor silently dropped. wait is stored opaquely (the only thing read is who, mapped to holder — the interpretive authority for the kind vocabulary is the seat-side wait_protocol.py). The turn RPC writes no audit event / command (stamping is a high-frequency hot path — no unbounded table growth or latency source is introduced).")
+     (rule R6 "Explicit known limits (the flip side of clause 4): stamping is self-reported — a seat that is 'running but not stamped' can be invisible on the turn/stalled surface. The wire honestly represents not-stamped by omitting the fields (turn_* absent) and does not synthesize a fake open turn. The boot watchdog (BOOTING rows) is owned by the launch pipeline, so placing the exemption decision before it also keeps interactive rows left in BOOTING from being reaped (BOOTING interactive rows are left behind when the launcher dies — recorded as a reconciliation display issue for stage 2 onward). counters are in-memory (persistence waits until measured demand appears).")
+     (rule R7 "The conversation ID → row lookup port (wave 1-S1 revision; wire method session.by_conversation {conversation_id}) is a fast probe-free read: resolution rule = the newest non-terminal row, else the newest terminal row, else null (total order = started_at DESC, session_id ASC — the store surface of the resolution rule in the draft conversation resource contract [conversationId → at most 1 live incarnation, else the newest terminal incarnation]). The response is the wire snapshot + the stalled derivation (store reads only), and substrate_present / substrate_checked_at are intentionally **absent** (rather than returning stale stored values, the fields are not included at all — the reader combines them with its own substrate observation to derive liveness. The per-row synchronous probe that caused listing to take 2.3-4.8s per 32 rows is not brought into this port). The mirror principle (R4) is unchanged in the responses of session.get / session.list / session.adopt — this port is not a substitute for it but a raw-material read dedicated to consumers that read every beat (supply points). It is not limited to adopted rows (conversation identity spans the whole ledger — rows originating from launch can be looked up too).")]
   :laws
     [(law interactive-rows-are-never-reaped
        :statement "monitor_terminalization => only_run_to_completion_rows; adopted_or_non_rtc_rows_never_transition_to_terminal_by_monitor"
        :counterexamples
-         [(counterexample "launch timeout / stale reap / zombie / mux 消滅 / boot watchdog のいずれかの arm が lifecycle=interactive または adopted=1 の行を failed/exited にする")
-          (counterexample "免除判定を booting arm や stale arm の後ろに置き、先行 arm が interactive 行に到達できる順序にする")])
+         [(counterexample "any of the launch timeout / stale reap / zombie / mux vanished / boot watchdog arms makes a row with lifecycle=interactive or adopted=1 failed/exited")
+          (counterexample "place the exemption decision after the booting arm or the stale arm, in an order where a preceding arm can reach interactive rows")])
      (law adopt-verifies-then-registers
        :statement "adopt => substrate_existence_check_precedes_upsert; failed_adopt_leaves_no_row; adopt_never_mutates_substrate"
        :counterexamples
-         [(counterexample "行を先に upsert してから実在確認し、失敗時に行を消す(消し損ねが幻 turn-open になる)")
-          (counterexample "adopt 中に TmuxSendKeys / TmuxNewSession / TmuxKillSession / FsWriteTextAtomic / DeliverMessage を呼ぶ")])
+         [(counterexample "upsert the row first, then check existence, and delete the row on failure (a failed delete becomes a phantom turn-open)")
+          (counterexample "call TmuxSendKeys / TmuxNewSession / TmuxKillSession / FsWriteTextAtomic / DeliverMessage during adopt")])
      (law ledger-mirrors-reality
        :statement "vanished_substrate_of_exempt_row => derived_divergence_display_only; never_terminalize_never_delete"
        :counterexamples
-         [(counterexample "免除行の pane 消滅を検知して行を exited にする・行を DELETE する")
-          (counterexample "substrate_present を列として保存し、現実でなく保存値を wire に返す")])
+         [(counterexample "detect a vanished pane of an exempt row and make the row exited / DELETE the row")
+          (counterexample "store substrate_present as a column and return the stored value, not reality, on the wire")])
      (law liveness-is-level-triggered-derivation
        :statement "stalled => derived_at_read_time_from_turn_holder_and_turn_since; never_stored_never_mutates_status; closed_turn_never_stalled"
        :counterexamples
-         [(counterexample "stalled を列や status 値として store に書く")
-          (counterexample "turn-open event の受信をトリガに stalled タイマーを張る(open 欠落で永久に沈黙する edge-triggered)")
-          (counterexample "close 済み(WAIT 待ち)の行を経過時間で stalled 化する")])
+         [(counterexample "write stalled to the store as a column or a status value")
+          (counterexample "set a stalled timer triggered by receiving a turn-open event (edge-triggered, falling silent forever when an open is missing)")
+          (counterexample "turn a closed (waiting on WAIT) row stalled based on elapsed time")])
      (law turn-rpc-is-store-only
        :statement "turn_stamp_path => row_lookup_plus_update_in_single_actor_op; no_substrate_effects_no_subprocess_no_delivery"
        :counterexamples
-         [(counterexample "turn_close で pane を capture して WAIT 文字列を再 parse する(解釈権威の複製 = 通訳 5 号)")
-          (counterexample "打刻のたびに substrate を probe して行の鮮度を『確認』してから書く(≤200ms 契約の遅延源)")])
+         [(counterexample "capture the pane on turn_close and re-parse the WAIT string (duplicating interpretive authority = interpreter no. 5)")
+          (counterexample "on every stamp, probe the substrate to 'confirm' the row's freshness before writing (a latency source against the ≤200ms contract)")])
      (law stamp-never-crosses-identities
        :statement "identity_bearing_stamp => lands_only_on_identity_compatible_row; name_key_requires_bare_descriptor; miss_is_honest_noop_with_counter"
        :counterexamples
-         [(counterexample "pane_id を運ぶ打刻が pane 不一致・名前一致の行に落ちる(吸い込み実弾 2026-08-17: 死んだ integration-lead 行が現役席の打刻を吸収し turn_since が前進 — 死んだ会話の行が生きて見える)")
-          (counterexample "conversation_id を運ぶ打刻が、別の会話を登記した pane 一致行に落ちる(下地再利用の窓で他会話の記録を汚す)")
-          (counterexample "識別子鍵の空振りを黙って落とす、またはエラーにする(正直 no-op + counter が契約 — 計器 = adopt 網羅の測度)")])
+         [(counterexample "a stamp carrying a pane_id lands on a row with a mismatched pane but a matching name (live absorption case 2026-08-17: the dead integration-lead row absorbed an active seat's stamps and turn_since advanced — a dead conversation's row looks alive)")
+          (counterexample "a stamp carrying a conversation_id lands on a pane-matching row that registered a different conversation (polluting another conversation's record in the substrate-reuse window)")
+          (counterexample "silently drop a miss on an identifier key, or make it an error (the contract is an honest no-op + counter — the gauge = the measure of adopt coverage)")])
      (law conversation-lookup-never-probes
        :statement "session_by_conversation => store_select_plus_derived_stalled_only; substrate_presence_fields_absent_not_stale; resolution_is_newest_active_else_newest_terminal"
        :counterexamples
-         [(counterexample "行引きの応答のために substrate へ同期 probe を撃つ(一覧 2.3〜4.8s/32 行の遅さをこの口へ再輸入する)")
-          (counterexample "substrate_present を保存値・古い写しから合成して載せる(不在は field 不在で正直に — 読み手の縮退語彙 unknown を潰す)")
-          (counterexample "conversation_json の部分一致・全欄横断の照合で行を引く(『言及』を『登記』と読む — 同一性欄の完全一致のみ)")])]
+         [(counterexample "fire a synchronous probe at the substrate to answer a row lookup (re-importing the slowness of 2.3-4.8s per 32 rows of listing into this port)")
+          (counterexample "synthesize substrate_present from stored values / old copies and include it (absence is honestly expressed by an absent field — doing otherwise crushes the reader's degraded-vocabulary value unknown)")
+          (counterexample "look up rows by partial match on conversation_json or by matching across all fields (reads a 'mention' as a 'registration' — only exact match on the identity field)")])]
   :enforcement
     [(deftest test-adr-doe-agents-007-reap-exemption-covers-interactive-and-adopted
-       ;; 免除述語の機械面: adopted と非 run_to_completion(interactive・未知
-       ;; lifecycle = fail-closed)が免除され、素の run_to_completion のみが
-       ;; reap の opt-in に残る。
+       ;; Machine surface of the exemption predicate: adopted and non-run_to_completion (interactive, unknown
+       ;; lifecycle = fail-closed) are exempt, and only plain run_to_completion remains
+       ;; opted in to reaping.
        (import doeff_agents [SessionRow])
        (import doeff_agents._sessionhost.policy [reap-exempt])
        (defn mk [lifecycle adopted]
@@ -126,10 +126,10 @@
        [{"relative-path" "packages/doeff-agents/src/doeff_agents/_sessionhost/turn.hy"
          "source" "(deff db-turn-stamp [conn pane-id]\n  (.execute conn \"UPDATE agent_sessions SET turn_holder = ? WHERE session_id = ?\")\n  None)\n"}])
      (deftest test-adr-doe-agents-007-stamp-never-crosses-identities
-       ;; 法 stamp-never-crosses-identities の機械面(波 1-S1 改訂・実 SQLite):
-       ;; 識別子(pane / conversation)を運ぶ打刻は名前鍵に落ちない・
-       ;; pane 鍵は別会話を名乗る行に落ちない・素の名前 descriptor だけが
-       ;; 名前鍵を使える。吸い込み実弾(2026-08-17)の regression pin。
+       ;; Machine surface of law stamp-never-crosses-identities (wave 1-S1 revision, real SQLite):
+       ;; a stamp carrying an identifier (pane / conversation) never falls back to the name key;
+       ;; the pane key never lands on a row claiming a different conversation; only a bare name descriptor
+       ;; can use the name key. Regression pin for the live absorption case (2026-08-17).
        (import sqlite3)
        (import doeff_agents._sessionhost.store [db-migrate])
        (import doeff_agents._sessionhost.turn [db-resolve-turn-target])
@@ -143,20 +143,20 @@
               "VALUES (?, ?, ?, 'claude', '', 'running', 'tmux', '{}', "
               "'2026-08-17T00:00:00+00:00', 1, ?)")
            #(sid name pane conv)))
-       ;; 実弾の形: 死んだ行(旧 pane)と同名の現役席が別 pane から打刻する
+       ;; The live case's shape: an active seat with the same name as a dead row (old pane) stamps from a different pane
        (seed "dead-row" "integration-lead" "%old-pane" None)
        (assert (is (db-resolve-turn-target conn "%live-pane" "integration-lead" None)
                    None))
        (assert (is (db-resolve-turn-target conn "%live-pane" "integration-lead" "c-new")
                    None))
-       ;; 素の名前 descriptor だけが名前鍵に届く
+       ;; Only a bare name descriptor reaches the name key
        (assert (= (db-resolve-turn-target conn None "integration-lead" None)
                   "dead-row"))
-       ;; pane 鍵は別会話を名乗る行に落ちない・会話一致なら届く
+       ;; The pane key does not land on a row claiming a different conversation; it does when the conversation matches
        (seed "conv-row" "seat-c" "%pane-c" "{\"session_id\":\"c1\"}")
        (assert (is (db-resolve-turn-target conn "%pane-c" None "c2") None))
        (assert (= (db-resolve-turn-target conn "%pane-c" None "c1") "conv-row"))
-       ;; conversation 第二鍵: pane 未登記でも会話の行へ届く
+       ;; conversation secondary key: reaches the conversation's row even when the pane is not registered
        (assert (= (db-resolve-turn-target conn "%moved" None "c1") "conv-row"))
        (.close conn))
      (defsemgrep turn-name-key-requires-bare-descriptor
@@ -166,9 +166,9 @@
        [{"relative-path" "packages/doeff-agents/src/doeff_agents/_sessionhost/turn.hy"
          "source" "(deff db-resolve-turn-target [conn pane-id agent-name conversation-id]\n  (when (and (is pane-id None) (is conversation-id None) (is-not agent-name None))\n    (setv row (.fetchone (.execute conn base-name-sql)))\n    (when (is-not row None) (return (get row 0))))\n  None)\n"}])]
   :plans ["docs/adr/defadr_doeff_agents_007_koine_session_surface.hy"
-          "packages/doeff-agents/src/doeff_agents/_sessionhost/store.hy(additive 4 列 + adopted filter + 会話 index + db-session-by-conversation〔波 1-S1〕)"
-          "packages/doeff-agents/src/doeff_agents/_sessionhost/policy.hy(reap-exempt 免除 arm + turn-stalled 導出)"
-          "packages/doeff-agents/src/doeff_agents/_sessionhost/adopt.hy(adopt program — observation-only + 会話受理と冪等 3 分岐〔波 1-S1〕)"
-          "packages/doeff-agents/src/doeff_agents/_sessionhost/turn.hy(descriptor 解決 = pane/conversation/素の名前 + 3 列 UPDATE〔波 1-S1〕)"
-          "packages/doeff-agents/src/doeff_agents/_sessionhost/host.hy(RPC dispatch + counters + wire 導出 + session.by_conversation〔波 1-S1〕)"
-          "packages/doeff-agents/conformance/test_s23..s27(black-box 検定 — 将来 koine 側へ移設可能。S23/S25 は波 1-S1 改訂を pin)"])
+          "packages/doeff-agents/src/doeff_agents/_sessionhost/store.hy (additive 4 columns + adopted filter + conversation index + db-session-by-conversation [wave 1-S1])"
+          "packages/doeff-agents/src/doeff_agents/_sessionhost/policy.hy (reap-exempt exemption arm + turn-stalled derivation)"
+          "packages/doeff-agents/src/doeff_agents/_sessionhost/adopt.hy (adopt program — observation-only + conversation acceptance and 3 idempotency branches [wave 1-S1])"
+          "packages/doeff-agents/src/doeff_agents/_sessionhost/turn.hy (descriptor resolution = pane/conversation/bare name + 3-column UPDATE [wave 1-S1])"
+          "packages/doeff-agents/src/doeff_agents/_sessionhost/host.hy (RPC dispatch + counters + wire derivation + session.by_conversation [wave 1-S1])"
+          "packages/doeff-agents/conformance/test_s23..s27 (black-box checks — can be moved to the koine side in the future. S23/S25 pin the wave 1-S1 revision)"])

@@ -1,5 +1,5 @@
-;;; Executable ADR: readiness/idle 判定物理の単一の家 — ADR-004
-;;; protocol-physics-has-one-home 法の readiness への具体化と enforcement 供給。
+;;; Executable ADR: a single home for readiness/idle detection physics — the concretization of ADR-004's
+;;; protocol-physics-has-one-home law for readiness, and its enforcement supply.
 
 (require doeff-adr.macros [defadr defsemgrep rule law])
 (require doeff-hy.macros [deftest])
@@ -7,7 +7,7 @@
 
 
 (defadr ADR-DOE-AGENTS-008
-  :title "readiness/idle 判定の物理事実(pattern 文字列・trust-prompt 述語・repl-idle 予算既定値)は定義箇所を 1 箇所に限る — gate 形式は doeff-free leaf の doeff_agents/_ready_physics.hy、observation 形式は impls/markers.hy、予算既定値は effects.hy MonitorKnobs 語彙。消費者(adapters / _session.py / launch.hy / host.hy)は import 参照のみ"
+  :title "The physical facts of readiness/idle detection (pattern strings, trust-prompt predicate, repl-idle budget default) are defined in exactly one place — the gate form in the doeff-free leaf doeff_agents/_ready_physics.hy, the observation form in impls/markers.hy, the budget default in the effects.hy MonitorKnobs vocabulary. Consumers (adapters / _session.py / launch.hy / host.hy) only import and reference them"
   :status "accepted"
   :scope ["packages/doeff-agents/src/doeff_agents/_adapters"
           "packages/doeff-agents/src/doeff_agents/_session.py"
@@ -15,48 +15,48 @@
           "packages/doeff-agents/src/doeff_agents/_sessionhost"]
   :problem
     [(fact
-       "claude の readiness が 2 つの生きた家に fork していた: adapters/claude.py の CLAUDE_READY_PATTERN(screen-reader mode の footer 「shift+tab to cycle」)と markers.hy の has-idle-prompt(通常 TUI mode の行頭 `❯`)。両 stack は起動 argv 自体も fork している(legacy = --ax-screen-reader 付き / sessionhost impls/claude_code.hy = なし)— 同一 kind の物理が 2 実装に散り『見ていた方だけ直る』ADR-004 の反例そのもの(2026-07-05 trust-dialog 永久ハングの構造)。"
-       :evidence "adapters/claude.py CLAUDE_READY_PATTERN(移動前 :20)/ sessionhost/impls/markers.hy has-idle-prompt / impls/claude_code.hy build-claude-argv")
+       "claude's readiness had forked into 2 live homes: CLAUDE_READY_PATTERN in adapters/claude.py (the screen-reader mode footer 'shift+tab to cycle') and has-idle-prompt in markers.hy (the line-leading `❯` of normal TUI mode). The two stacks also fork the startup argv itself (legacy = with --ax-screen-reader / sessionhost impls/claude_code.hy = without) — the physics of the same kind scattered across 2 implementations, so 'only the one being looked at gets fixed', which is exactly the counterexample of ADR-004 (the structure of the 2026-07-05 trust-dialog permanent hang)."
+       :evidence "adapters/claude.py CLAUDE_READY_PATTERN (before the move :20) / sessionhost/impls/markers.hy has-idle-prompt / impls/claude_code.hy build-claude-argv")
      (fact
-       "codex の readiness は同一 TUI mode の物理が 2 形式で二重定義されていた: adapters/codex.py の CODEX_READY_PATTERN(単発 gate 用 regex — MCP-boot 排他 \\A(?!...) + menu 選択 marker 排他 (?!\\d+\\.) 込み)と markers.hy の述語群(has-idle-prompt + is-starting-mcp-servers + detect-dialog 優先順)。片方だけの修正で無音 drift する。"
-       :evidence "adapters/codex.py CODEX_READY_PATTERN(移動前 :23)/ markers.hy has-idle-prompt・is-starting-mcp-servers・detect-dialog")
+       "codex's readiness had the physics of the same TUI mode defined twice in 2 forms: CODEX_READY_PATTERN in adapters/codex.py (a regex for a one-shot gate — including the MCP-boot exclusion \\A(?!...) and the menu selection marker exclusion (?!\\d+\\.)) and the predicate group in markers.hy (has-idle-prompt + is-starting-mcp-servers + detect-dialog precedence). A fix to only one side drifts silently."
+       :evidence "adapters/codex.py CODEX_READY_PATTERN (before the move :23) / markers.hy has-idle-prompt, is-starting-mcp-servers, detect-dialog")
      (fact
-       "repl-idle 予算 120s の literal が 2 箇所に定義されていた: launch.hy(コメントは退役 Rust の Duration::from_secs(120) を『oracle 定数』と呼び複製を正当化 — ADR-004 R7/U1『退役 Rust は正しさの基準ではない』と矛盾する言語構造)と effects.hy MonitorKnobs 既定値。boot watchdog 予算(launch timeout + repl-idle 予算)は両者が同値であることに依存しており、drift は watchdog の誤裁定になる。"
-       :evidence "sessionhost/launch.hy(移動前 :79-81)/ sessionhost/effects.hy MonitorKnobs repl-idle-max-wait-seconds / sessionhost/host.hy boot watchdog 予算材料")
+       "The literal for the 120s repl-idle budget was defined in 2 places: launch.hy (whose comment called the retired Rust's Duration::from_secs(120) an 'oracle constant' to justify the copy — a linguistic structure that contradicts ADR-004 R7/U1 'the retired Rust is not the standard of correctness') and the effects.hy MonitorKnobs default. The boot watchdog budget (launch timeout + repl-idle budget) depends on the two being equal, and drift turns into a wrong verdict by the watchdog."
+       :evidence "sessionhost/launch.hy (before the move :79-81) / sessionhost/effects.hy MonitorKnobs repl-idle-max-wait-seconds / sessionhost/host.hy boot watchdog budget inputs")
      (fact
-       "screen-reader trust prompt の物理(version-stable な y/n 行 3 点一致)が session.py に孤立していた — markers.hy の R9 trust dialog(通常 mode)の sibling が別の家に居る形。一本化の検定作図で第 2 の divergence も発見(登記のみ・修正は follow-up): verbatim first-paint capture(claude_screen_reader_trust_dialog.txt)は『Please answer y or n.』を含まず、この述語は初回描画では match しない — 実運用の初回 dismissal は generic onboarding pattern(『Yes, I trust this folder』)側が拾っており、本述語が効くのは入力拒否後の re-prompt のみ。"
-       :evidence "session.py _screen_reader_trust_prompt_visible(移動前 :467)/ tests/data/ready_screens/claude_screen_reader_trust_dialog.txt(first-paint に『Please answer y or n.』非在)")
+       "The physics of the screen-reader trust prompt (a 3-point match on the version-stable y/n line) was isolated in session.py — a sibling of markers.hy's R9 trust dialog (normal mode) living in a different home. While drafting the unification check, a second divergence was also found (recorded only; the fix is a follow-up): the verbatim first-paint capture (claude_screen_reader_trust_dialog.txt) does not contain 'Please answer y or n.', so this predicate does not match on the first paint — in practice the first dismissal is picked up by the generic onboarding pattern ('Yes, I trust this folder'), and this predicate only takes effect on the re-prompt after input is rejected."
+       :evidence "session.py _screen_reader_trust_prompt_visible (before the move :467) / tests/data/ready_screens/claude_screen_reader_trust_dialog.txt ('Please answer y or n.' absent from the first paint)")
      (fact
-       "一本化の作図中に実 divergence を発見(本 ADR では登記のみ・修正は別 issue): codex trust-dialog frame(`› 1. Yes, continue`)を gate regex は menu 先読みで拒否するが、has-idle-prompt 単独は composer と誤認して受理する。markers.hy の detect-dialog に codex trust 検出は無い(sessionhost は per-kind pre-launch が workspace を事前 trust するため通常この frame に到達しない)が、skip_trust_setup 経路と trust 失敗時に wait-for-repl-idle が prompt を trust menu へ paste しうる潜在穴。fail-open 挙動を expected に固定する歴史ピンは置かない(ADR-004 R8 と同判断)。"
+       "A real divergence was found while drafting the unification (only recorded in this ADR; the fix is a separate issue): the gate regex rejects the codex trust-dialog frame (`› 1. Yes, continue`) via the menu lookahead, but has-idle-prompt alone mistakes it for the composer and accepts it. markers.hy's detect-dialog has no codex trust detection (sessionhost normally never reaches this frame because the per-kind pre-launch pre-trusts the workspace), but it is a latent hole where, on the skip_trust_setup path and on trust failure, wait-for-repl-idle could paste the prompt into the trust menu. No historical pin that fixes the fail-open behavior as expected is added (same judgment as ADR-004 R8)."
        :evidence "tests/data/ready_screens/codex_trust_dialog.txt(verbatim: `› 1. Yes, continue`)/ launch.hy wait-for-repl-idle / impls/codex.hy codex-pre-launch")]
   :context
     [(interpretation
-       "本 ADR は新法ではなく、受理済み ADR-DOE-AGENTS-004 の law protocol-physics-has-one-home の readiness 物理への具体化 + enforcement 供給である。『家が 1 つ』とは各物理事実の定義箇所が 1 箇所という意味であり、形式(gate 用 regex と observation 用述語)の複数性そのものは禁じない — 形式間の一致は parity 検定で機械執行する。")
+       "This ADR is not a new law but the concretization, for readiness physics, of law protocol-physics-has-one-home of the accepted ADR-DOE-AGENTS-004, plus its enforcement supply. 'One home' means each physical fact is defined in one place; the multiplicity of forms itself (regex for gates and predicates for observation) is not forbidden — agreement between the forms is mechanically enforced by a parity check.")
      (interpretation
-       "gate 形式の家を markers.hy でなく doeff-free leaf(ready_physics.hy)に分けるのは、package root が明文で保つ『命令型 session transport API は doeff VM を import せずに動く』性質のため: markers.hy は effects.hy(→ doeff)を引き込むので、adapters から直接 import すると transport の import graph に VM が入る。leaf は import ゼロ(hy 言語ランタイムのみ)。")
+       "The home of the gate form is split into a doeff-free leaf (ready_physics.hy) rather than markers.hy because of the property the package root explicitly maintains, 'the imperative session transport API works without importing the doeff VM': markers.hy pulls in effects.hy (→ doeff), so importing it directly from adapters would bring the VM into the transport's import graph. The leaf has zero imports (only the hy language runtime).")
      (interpretation
-       "claude の 2 mode fork(screen-reader vs 通常 TUI)は『物理が 2 つある』のではなく『同一 kind の 2 つの描画 mode の物理』— 家が 1 つなら両事実は並んで文書化され drift が構造的に不可能になる。mode の統一(= legacy 命令型 stack の退役・ADR-004 R2 の in-process defhandler 束縛への合流)は別 issue の follow-up。gemini は sessionhost impl を持たない legacy-only kind で物理の定義は既に 1 箇所(gemini.py)のみ — 重複が無いため移動しない(sessionhost に偽の家を作らない)。")]
+       "claude's 2-mode fork (screen-reader vs normal TUI) is not 'two physics' but 'the physics of 2 rendering modes of the same kind' — with one home, both facts are documented side by side and drift becomes structurally impossible. Unifying the mode (= retiring the legacy imperative stack and merging into ADR-004 R2's in-process defhandler binding) is a follow-up in a separate issue. gemini is a legacy-only kind with no sessionhost impl, and its physics are already defined in only one place (gemini.py) — there is no duplication, so it is not moved (no fake home is created in sessionhost).")]
   :decision
-    [(rule R1 "readiness のテキスト物理は定義 1 箇所: gate 形式(ready pattern 文字列・screen-reader trust prompt 述語)= doeff_agents/_ready_physics.hy(doeff-free leaf)、observation 形式(has-idle-prompt / dialog 検出等)= sessionhost/impls/markers.hy。adapters / _session.py は import 参照のみで、pattern literal の再定義は installed semgrep rule doeff-agents-ready-pattern-literal-outside-physics-home が ban する。")
-     (rule R2 "repl-idle 予算既定値(120s)の literal は sessionhost/effects.hy(MonitorKnobs knob 語彙)にのみ置く。launch.hy(ready gate 予算 fallback)と host.hy(boot watchdog 予算材料)は import 参照 — installed semgrep rule doeff-agents-repl-idle-budget-literal-single-home が sessionhost 内の再定義を ban する。")
-     (rule R3 "codex の gate regex と observation 述語は同一物理の 2 形式であり、両 gate が定義される全 fixture frame(ready / mcp-boot / login / update-dialog)で判定が一致すること(parity)。一致検定は tests/test_ready_physics_single_home.py が verbatim fixture で執行する。既知 divergence(trust-dialog frame)は problem fact 5 の別 issue で解消するまで parity 対象外 — expected に固定しない。")
-     (rule R4 "退役 Rust(rollback tag agentd-rust-final に保存)を readiness 物理の『oracle』と呼ぶ文言は本 ADR が触った物理帯(ready_physics.hy / markers.hy header / launch.hy 予算コメント / adapters)から除去した。出自表記は『退役 Rust 移植出典(rollback 専用・正しさの基準ではない — ADR-004 R7/U1)』とし、物理の正当性根拠は conformance fixture(tests/data/ready_screens/ の verbatim capture)と conformance suite に置く。残余モジュール(policy.hy / host.hy / store.hy / substrate.hy 等)の同種文言の一掃は follow-up。")]
+    [(rule R1 "The text physics of readiness are defined in one place: the gate form (ready pattern strings, the screen-reader trust prompt predicate) = doeff_agents/_ready_physics.hy (doeff-free leaf); the observation form (has-idle-prompt / dialog detection, etc.) = sessionhost/impls/markers.hy. adapters / _session.py only import and reference them, and redefining a pattern literal is banned by the installed semgrep rule doeff-agents-ready-pattern-literal-outside-physics-home.")
+     (rule R2 "The literal for the repl-idle budget default (120s) lives only in sessionhost/effects.hy (the MonitorKnobs knob vocabulary). launch.hy (the ready gate budget fallback) and host.hy (boot watchdog budget inputs) import and reference it — the installed semgrep rule doeff-agents-repl-idle-budget-literal-single-home bans redefinition within sessionhost.")
+     (rule R3 "codex's gate regex and observation predicates are 2 forms of the same physics, and their verdicts must agree (parity) on every fixture frame where both gates are defined (ready / mcp-boot / login / update-dialog). The agreement check is enforced by tests/test_ready_physics_single_home.py on verbatim fixtures. The known divergence (trust-dialog frame) is excluded from parity until it is resolved in the separate issue of problem fact 5 — it is not fixed as expected.")
+     (rule R4 "Wording that calls the retired Rust (preserved at rollback tag agentd-rust-final) the 'oracle' of readiness physics has been removed from the physics band this ADR touched (ready_physics.hy / markers.hy header / launch.hy budget comment / adapters). The provenance is written as 'ported from the retired Rust (rollback only; not the standard of correctness — ADR-004 R7/U1)', and the basis for the physics' correctness is placed in conformance fixtures (verbatim captures in tests/data/ready_screens/) and the conformance suite. Sweeping the same kind of wording out of the remaining modules (policy.hy / host.hy / store.hy / substrate.hy, etc.) is a follow-up.")]
   :laws
     [(law readiness-facts-have-one-defining-module
        :statement "readiness_fact(kind, mode) => exactly_one_defining_module; consumers_import_never_redefine"
        :counterexamples
-         [(counterexample "adapter に ready pattern literal を再定義し、markers/ready_physics 側だけ修正されて無音 drift する(claude trust-hang 2026-07-05 の再演構造)")
-          (counterexample "repl-idle 予算 120 を新モジュールに literal でコピーし、『退役 Rust の定数と同じ値だから』とコメントで正当化する")
-          (counterexample "gemini など単一の家しか無い kind の物理を sessionhost へ複製して『統一』と称する(偽の家 — 重複の新設)")])
+         [(counterexample "redefine a ready pattern literal in an adapter, and only the markers/ready_physics side gets fixed, drifting silently (a replay of the structure of the claude trust-hang of 2026-07-05)")
+          (counterexample "copy the repl-idle budget 120 as a literal into a new module and justify it with a comment 'because it is the same value as the retired Rust constant'")
+          (counterexample "duplicate into sessionhost the physics of a kind that has only one home, such as gemini, and call it 'unification' (a fake home — creating new duplication)")])
      (law gate-and-observation-formalisms-must-agree
        :statement "same_fact_in_two_formalisms => machine_checked_parity_on_shared_frames; divergence_is_red_not_documentation"
        :counterexamples
-         [(counterexample "codex gate regex だけ修正して markers 述語を放置する(またはその逆)— parity 検定が red になるべき変更")
-          (counterexample "発見済み divergence を expected 値としてテストに固定し、修正 issue を立てない(fail-open の歴史ピン — ADR-004 R8 違反)")])]
+         [(counterexample "fix only the codex gate regex and leave the markers predicate alone (or vice versa) — a change that the parity check should turn red")
+          (counterexample "fix a discovered divergence in a test as the expected value and file no fix issue (a fail-open historical pin — violates ADR-004 R8)")])]
   :enforcement
     [(deftest test-adr-doe-agents-008-adapters-import-canonical-patterns
-       ;; 家の identity: adapter property が返すのは leaf の定数オブジェクト
-       ;; そのもの(is 一致)。literal 再定義では同一オブジェクトにならない。
+       ;; Identity of the home: what the adapter property returns is the leaf's constant object
+       ;; itself (is-identical). A redefined literal would not be the same object.
        (import doeff_agents._adapters.claude [ClaudeAdapter])
        (import doeff_agents._adapters.codex [CodexAdapter])
        (import doeff_agents._ready-physics :as ready-physics)
@@ -65,9 +65,9 @@
        (assert (is (. (CodexAdapter) ready-pattern)
                    ready-physics.CODEX-READY-PATTERN)))
      (deftest test-adr-doe-agents-008-budget-single-home
-       ;; 予算の一貫性: effects(家)・launch(import 先)・MonitorKnobs 既定が
-       ;; 同値。literal の不在は semgrep rule + test_ready_physics_single_home
-       ;; の source 検査が担う。
+       ;; Budget consistency: effects (the home), launch (the importer), and the MonitorKnobs default are
+       ;; equal. The absence of the literal is covered by the semgrep rule + the source check in
+       ;; test_ready_physics_single_home.
        (import doeff_agents._sessionhost.effects :as fx)
        (import doeff_agents._sessionhost.launch :as launch)
        (assert (= fx.REPL-IDLE-MAX-WAIT-SECONDS 120))
@@ -85,12 +85,12 @@
      (defsemgrep repl-idle-budget-literal-outside-home
        "doeff-agents-repl-idle-budget-literal-single-home"
        [{"relative-path" "packages/doeff-agents/src/doeff_agents/_sessionhost/launch.hy"
-         "source" ";; 予算の再定義(旧形)\n(setv REPL-IDLE-MAX-WAIT-SECONDS 120)\n"}]
+         "source" ";; budget redefinition (old form)\n(setv REPL-IDLE-MAX-WAIT-SECONDS 120)\n"}]
        [{"relative-path" "packages/doeff-agents/src/doeff_agents/_sessionhost/launch.hy"
          "source" "(import doeff_agents._sessionhost.effects [REPL-IDLE-MAX-WAIT-SECONDS])\n"}])]
-  :plans ["packages/doeff-agents/src/doeff_agents/_ready_physics.hy(gate 形式の家 — doeff-free leaf)"
-          "packages/doeff-agents/src/doeff_agents/_sessionhost/impls/markers.hy(observation 形式の家)"
-          "packages/doeff-agents/src/doeff_agents/_sessionhost/effects.hy(予算既定値の家)"
-          "packages/doeff-agents/tests/test_ready_physics_single_home.py(identity + parity + source 検査)"
-          "follow-up issue: codex trust-frame の fail-closed 化(problem fact 5)"
-          "follow-up issue: legacy 命令型 stack の退役 / claude 起動 mode の統一 / 残余 oracle 文言の一掃"])
+  :plans ["packages/doeff-agents/src/doeff_agents/_ready_physics.hy (home of the gate form — doeff-free leaf)"
+          "packages/doeff-agents/src/doeff_agents/_sessionhost/impls/markers.hy (home of the observation form)"
+          "packages/doeff-agents/src/doeff_agents/_sessionhost/effects.hy (home of the budget default)"
+          "packages/doeff-agents/tests/test_ready_physics_single_home.py (identity + parity + source check)"
+          "follow-up issue: make the codex trust frame fail-closed (problem fact 5)"
+          "follow-up issue: retire the legacy imperative stack / unify the claude startup mode / sweep the remaining oracle wording"])

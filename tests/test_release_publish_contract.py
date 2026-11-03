@@ -22,10 +22,10 @@ WORKFLOWS = ROOT / ".github" / "workflows"
 PUBLISH_WORKFLOW = WORKFLOWS / "publish.yml"
 
 # The runbook's three release classification tables and its post-publish section.
-ROOT_RELEASE_TABLE = "### root の tag で出す部品"
-INDEPENDENT_RELEASE_TABLE = "### 単独で出す部品"
-NOT_PUBLISHED_TABLE = "### 公開しない部品"
-POST_PUBLISH_SECTION = "## 出した後の確かめ"
+ROOT_RELEASE_TABLE = "### Packages released by the root tag"
+INDEPENDENT_RELEASE_TABLE = "### Packages released independently"
+NOT_PUBLISHED_TABLE = "### Packages not published"
+POST_PUBLISH_SECTION = "## Checks after publishing"
 
 # What the root tag publishes: the packages released under one version — `pip install doeff`
 # installs doeff, doeff-vm and doeff-core-effects, and the `hy` extra adds doeff-hy and
@@ -443,7 +443,7 @@ def test_reusable_calls_grant_the_id_token_their_nested_uploads_request() -> Non
 def test_runbook_documents_both_pypi_credentials() -> None:
     runbook = RUNBOOK.read_text(encoding="utf-8")
 
-    assert "## PyPI の資格" in runbook
+    assert "## PyPI credentials" in runbook
     assert "Trusted Publishing" in runbook
     assert "pending publisher" in runbook
     assert "| Workflow name | `publish.yml` |" in runbook

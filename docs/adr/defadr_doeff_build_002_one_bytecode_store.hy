@@ -1,13 +1,13 @@
-;;; Executable ADR: bytecode(.pyc の中身の code と、閉包の歩みが読む import の名)を引く・足す保存先は 1 つ — doeff-hy の
-;;; doeff_hy_bytecode_guard/_code_store.py。鍵は source の中身と、中身の読みを変える物(Hy の source は module 名と Hy の版・Python の版の印・
-;;; 最適化の段)だけで、版(commit)と木の path に依らない。macro の出所の中身は鍵に入れず、当たった code の記録を今の環境の macro の file と
-;;; 照らす(合わなければ焼き直す)。鍵 1 つには macro の環境ごとの entry が並び、焼き直した code は今の環境の entry として足す(R2b — 他の
-;;; 環境の entry を上書きしない)。
+;;; Executable ADR: there is one store to look up and add bytecode (the code inside a .pyc, and the import names the closure walk reads) — doeff-hy's
+;;; doeff_hy_bytecode_guard/_code_store.py. The key is only the source content and what changes how that content is read (for Hy source: the module name and the Hy version; the Python version tag;
+;;; the optimization level), independent of the version (commit) and the tree path. The content of the macro origins is not in the key; the record on the hit code is checked against
+;;; the macro files of the current environment (rebaked on mismatch). One key holds entries side by side per macro environment, and rebaked code is added as the current environment's entry (R2b — it does
+;;; not overwrite other environments' entries).
 ;;;
-;;; 実行環境の用意を速くする側で直し、worker の bytecode の保存を、版をまたいで中身で引ける形にする。
+;;; This is fixed on the side of making runtime-environment preparation faster: the worker's bytecode storage is made content-addressable across versions.
 ;;;
-;;; 戻し方: この ADR を足した commit を revert する(ADR の file 1 つと、worker の bytecode の準備が前の root からの引き継ぎに戻る)。保存先の
-;;; 中身は消してよい物(無ければ作り直すだけ)。
+;;; Rollback: revert the commit that added this ADR (one ADR file, and the worker's bytecode preparation goes back to carrying over from the previous root). The store's
+;;; contents may be deleted (they are simply rebuilt when missing).
 
 (require doeff-adr.macros [defadr rule law])
 (import doeff-adr.macros [fact interpretation counterexample])
@@ -19,25 +19,25 @@
 
 
 ;; ---------------------------------------------------------------------------
-;; 台帳
+;; Ledger
 
-;; 保存先の入口(並び・鍵・使った印・壊れた entry の扱いの定義点)。
+;; The store's entry point (the single definition of the layout, key, use marks and handling of broken entries).
 (val ENTRY "packages/doeff-hy/src/doeff_hy_bytecode_guard/_code_store.py")
 
-;; worker の bytecode の準備の道具(入口を worker の版の file として path で読む所)と、起動の script(保存先の既定を置く所)。
+;; The worker's bytecode preparation tools (where the entry point is read by path as a file of the worker's version) and the boot script (where the store default is set).
 (val PREPARE-TOOL "packages/doeff-cluster/src/doeff_cluster/_worker/entry/code_prepare.hy")
 (val POOL-TOOL "packages/doeff-cluster/src/doeff_cluster/_foundation/bytecode_pool.hy")
 (val BOOT-SCRIPT "packages/doeff-cluster/deploy/boot.sh")
 (val UPKEEP "packages/doeff-cluster/src/doeff_cluster/_worker/core/env_upkeep.hy")
 
-;; 保存先の entry を綴る形の目印(種類の末尾 .code・.imports の文字列 — 入口の外にこの綴りが在れば 2 つ目の保存先)。doeff-hy-check の
-;; 展開の cache(doeff_hy/_static_cache — 型検査の展開・.json と .txt)は bytecode の保存先ではないので当たらない。
+;; Marker of spelling a store entry (the kind-suffix strings .code and .imports — this spelling outside the entry point is a second store). doeff-hy-check's
+;; expansion cache (doeff_hy/_static_cache — type-check expansions, .json and .txt) is not a bytecode store, so it does not match.
 (val ENTRY-SUFFIX (re.compile r"[\"']\.(?:code|imports)[\"']"))
-;; 前の版の木から .pyc を引き継ぐ形(古い保存の形 — 道具の引数 --from / --changed)の目印。
+;; Marker of carrying .pyc over from the previous version's tree (the old storage form — the tool arguments --from / --changed).
 (val CARRY-ARGUMENT (re.compile r"\"--(?:from|changed)\""))
 
-;; .pyc の置き場の知識(__pycache__ の dir の名・.pyc の末尾・source から .pyc の path を求める関数)の目印。doeff-cluster の中でこれを綴って
-;; よいのは焼く道具の module と模擬の世界だけ(R3b — 木を置く翻訳や準備の program が .pyc を置くと、前の root からの 2 本目の引き継ぎになる)。
+;; Marker of knowledge of where .pyc files live (the __pycache__ dir name, the .pyc suffix, functions computing a .pyc path from a source). Inside doeff-cluster only the
+;; baking tool's modules and the simulated world may spell it (R3b — if the tree-placing translation or a preparation program places .pyc, that is a second carry-over from the previous root).
 (val PLACEMENT-TOKEN (re.compile r"[\"']__pycache__[\"']|[\"']\.pyc[\"']|\bpyc[-_]path\b|\bcache[-_]from[-_]source\b"))
 (val CLUSTER-SRC "packages/doeff-cluster/src/doeff_cluster")
 (val BYTECODE-TOOL-FILES #{"packages/doeff-cluster/src/doeff_cluster/_foundation/bytecode_pool.hy"
@@ -47,53 +47,53 @@
                            "packages/doeff-cluster/src/doeff_cluster/_worker/core/bake_plan.hy"
                            "packages/doeff-cluster/src/doeff_cluster/_worker/intent/code_model.hy"
                            "packages/doeff-cluster/src/doeff_cluster/_sim/env_world.hy"})
-;; 走査で降りない dir(作業木・venv・生成物)と、検と文書の置き場。
+;; Dirs the scan does not descend into (worktrees, venvs, build outputs), and where checks and docs live.
 (val SCAN-SKIP-PARTS #{".git" ".venv" ".worktrees" "node_modules" "target" "__pycache__" "tests" "conformance"})
 (val SCAN-SKIP-PREFIXES #("docs/" ".github/"))
 
 
 ;; ---------------------------------------------------------------------------
-;; 判断(純関数)
+;; Judgments (pure functions)
 
 (defk spells-store-layout [text]
   {:pre [(: text str)] :post [(: % bool)] :tags {:context "doeff-build-adr" :role "judgment"}}
-  "source が保存先の entry(種類の末尾 .code・.imports)を自分で綴るか(; と # で始まる註の行は数えない)。"
+  "Whether the source spells a store entry itself (the kind suffixes .code and .imports); comment lines starting with ; or # are not counted."
   (val code (.join "\n" (gfor line (.splitlines text) :if (not (.startswith (.lstrip line) #(";" "#"))) line)))
   (bool (.search ENTRY-SUFFIX code)))
 
 
 (defk layout-violations [found]
   {:pre [(: found frozenset)] :post [(: % list)] :tags {:context "doeff-build-adr" :role "judgment"}}
-  "保存先の entry を綴る file の集合 found のうち、入口でない物(2 つ目の保存先)と、入口が綴りを持たない事を挙げる。"
+  "From the set found of files spelling a store entry, list those that are not the entry point (a second store), and the entry point not having the spelling."
   (+ (lfor rel (sorted found) :if (!= rel ENTRY)
-           f"{rel}: bytecode の保存先の entry を自分で綴る 2 つ目の保存先 — {ENTRY} の entry-path・CODE-SUFFIX・IMPORTS-SUFFIX を使う")
-     (if (in ENTRY found) [] [f"{ENTRY}: 入口が保存先の並びを持たない(入口が消えた)"])))
+           f"{rel}: a second store spelling bytecode store entries itself — use entry-path, CODE-SUFFIX and IMPORTS-SUFFIX of {ENTRY}")
+     (if (in ENTRY found) [] [f"{ENTRY}: the entry point does not hold the store layout (the entry point is gone)"])))
 
 
 (defk carries-from-a-previous-tree [text]
   {:pre [(: text str)] :post [(: % bool)] :tags {:context "doeff-build-adr" :role "judgment"}}
-  "bytecode の準備の道具の source が、前の版の木から引き継ぐ引数(--from・--changed)を持つか(; で始まる註の行は数えない)。"
+  "Whether the source of a bytecode preparation tool has arguments that carry over from the previous version's tree (--from, --changed); comment lines starting with ; are not counted."
   (val code (.join "\n" (gfor line (.splitlines text) :if (not (.startswith (.lstrip line) ";")) line)))
   (bool (.search CARRY-ARGUMENT code)))
 
 
 (defk spells-bytecode-placement [text]
   {:pre [(: text str)] :post [(: % bool)] :tags {:context "doeff-build-adr" :role "judgment"}}
-  "source が .pyc の置き場の知識(PLACEMENT-TOKEN)を綴るか(; と # で始まる註の行は数えない)— R3b の判断。"
+  "Whether the source spells knowledge of where .pyc files live (PLACEMENT-TOKEN); comment lines starting with ; or # are not counted — the R3b judgment."
   (val code (.join "\n" (gfor line (.splitlines text) :if (not (.startswith (.lstrip line) #(";" "#"))) line)))
   (bool (.search PLACEMENT-TOKEN code)))
 
 
 (defk placement-violations [found]
   {:pre [(: found frozenset)] :post [(: % list)] :tags {:context "doeff-build-adr" :role "judgment"}}
-  "doeff-cluster の中で .pyc の置き場を綴る file の集合 found のうち、焼く道具の module と模擬の世界(BYTECODE-TOOL-FILES)でない物を挙げる。"
+  "From the set found of files inside doeff-cluster spelling where .pyc files live, list those that are not the baking tool's modules or the simulated world (BYTECODE-TOOL-FILES)."
   (lfor rel (sorted found) :if (not-in rel BYTECODE-TOOL-FILES)
-        f"{rel}: .pyc の置き場(__pycache__・.pyc・pyc-path)を綴る — .pyc を root に置くのは焼く道具だけ(code_store の link-pyc 経由)。前の root から .pyc を持ち越す 2 本目の道になる"))
+        f"{rel}: spells where .pyc lives (__pycache__, .pyc, pyc-path) — only the baking tool places .pyc in a root (via code_store's link-pyc). This becomes a second path carrying .pyc over from the previous root"))
 
 (defk module-name-of [part]
   {:pre [(: part hy.models.Object)] :post [(: % (| str None))] :tags {:context "doeff-build-adr" :role "judgment"}}
-  "import・require の form の部品 1 つが module の名なら、その綴り(a.b.c)を返すため — Hy は点の付いた名 a.b を (. a b) の form に読む
-   ので、Symbol だけを見ると点の付いた名を見落とす。名でない部品(引く名の並び [x y] など)は None。"
+  "If one part of an import or require form is a module name, return its spelling (a.b.c) — Hy reads a dotted name a.b as the form (. a b),
+   so looking only at Symbols misses dotted names. Parts that are not names (a list of imported names [x y] and so on) give None."
   (cond (isinstance part hy.models.Symbol) (str part)
         (and (isinstance part hy.models.Expression) (> (len part) 1) (= (str (get part 0)) ".")
              (all (gfor p (cut part 1 None) (isinstance p hy.models.Symbol))))
@@ -103,8 +103,8 @@
 
 (defk root-doeff-names [text]
   {:pre [(: text str)] :post [(: % list)] :tags {:context "doeff-build-adr" :role "judgment"}}
-  "Hy の source の最上位の import・require の form が引く module の名のうち、doeff で始まる物を挙げる — R7 の判断(焼く道具は root の
-   venv の python で走るので、doeff の名を引くとそれは root の版の doeff の物になる)。"
+  "List the module names starting with doeff among those the top-level import and require forms of a Hy source pull in — the R7 judgment (the baking tool runs on the root's
+   venv python, so a doeff name it pulls in is the root version's doeff)."
   (var names [])
   (for [form (hy.read-many text)
         :if (and (isinstance form hy.models.Expression) form (in (str (get form 0)) #("import" "require")))
@@ -115,11 +115,11 @@
   names)
 
 ;; ---------------------------------------------------------------------------
-;; 土台(file を読む)
+;; Foundation (reads files)
 
 (defk store-layout-files [repo-root]
   {:pre [(: repo-root Path)] :post [(: % frozenset)] :tags {:context "doeff-build-adr" :role "foundation"}}
-  "repo の中で保存先の entry を綴る Python と Hy の file の相対 path を集める(検・文書・作業木・venv を除く)。"
+  "Collect the relative paths of Python and Hy files in the repo that spell a store entry (excluding checks, docs, worktrees and venvs)."
   (var found #{})
   (for [p (sorted (.rglob repo-root "*"))
         :setv rel (.relative-to p repo-root)
@@ -136,7 +136,7 @@
 
 (defk placement-files [repo-root]
   {:pre [(: repo-root Path)] :post [(: % frozenset)] :tags {:context "doeff-build-adr" :role "foundation"}}
-  "doeff-cluster の source(CLUSTER-SRC の下の Python と Hy)のうち、.pyc の置き場の知識を綴る file の相対 path を集める。"
+  "Collect the relative paths of doeff-cluster source files (Python and Hy under CLUSTER-SRC) that spell knowledge of where .pyc files live."
   (var found #{})
   (for [p (sorted (.rglob (/ repo-root CLUSTER-SRC) "*"))
         :if (and (in p.suffix #(".py" ".hy")) (not (.is-symlink p)) (.is-file p) (not-in "__pycache__" p.parts))]
@@ -147,7 +147,7 @@
 
 
 (defadr ADR-DOE-BUILD-002
-  :title "bytecode を引く・足す保存先は doeff-hy の code_store 1 つ。鍵は source の中身と中身の読みを変える物だけで版に依らず、macro の出所は当たった code の記録で照らす。worker の bytecode の準備は前の版の木から引き継がず、保存先から書いて中身の変わった物だけを焼く"
+  :title "There is one store to look up and add bytecode: doeff-hy's code_store. The key is only the source content and what changes how it is read, independent of the version, and macro origins are checked through the record on the hit code. The worker's bytecode preparation does not carry over from the previous version's tree; it writes from the store and bakes only what changed in content"
   :status "accepted"
   :scope ["packages/doeff-hy/src/doeff_hy_bytecode_guard/_code_store.py"
           "packages/doeff-hy/src/doeff_hy_bytecode_guard/_loader_hooks.py"
@@ -158,121 +158,121 @@
           "docs/adr/defadr_doeff_build_002_one_bytecode_store.hy"]
   :problem
     [(fact
-       "full test は 4 時間に 1 回までとし、1 つのテストは 30 秒を超えない事を確実にする。")
+       "The full test runs at most once every 4 hours, and it is made certain that no single test exceeds 30 seconds.")
      (fact
-       "image を作る時も Makefile と cache の層を使い、組み直しの無駄を出さない。")
+       "Building images also uses the Makefile and cache layers, with no wasted rebuilds.")
      (fact
-       "直し方(2026-10-07 01:5x に決めた・戻せる): test_same_program_daily.hy は実行環境の用意を速くする側で直す — worker の bytecode の保存を、版をまたいで中身で引ける形にする(版が替わっても、変わった file だけを焼き直す)。依存と写しの保存も日次の間で残す。失敗ケースの件は、テストの中の起こし直しの上限を短くする。")
+       "The fix (decided 2026-10-07 01:5x, reversible): test_same_program_daily.hy is fixed on the side of making runtime-environment preparation faster — the worker's bytecode storage is made content-addressable across versions (when the version changes, only changed files are rebaked). Dependency and copy storage also persist between daily runs. For the failure-case tests, the restart limit inside the test is shortened.")
      (fact
-       "測り(日次の Pod): test_same_program_daily.hy の正常の件 162 秒のうち 148.6 秒が実行環境の用意で、bytecode の準備 1,130 file が 94.7 秒。zeus の手元(nice 10)でも正常の件 153.8 秒のうち bytecode の処理ステージ 123.9 秒(閉包の歩み 61.3 秒・焼き 59.0 秒)。テストの worker は空の /work で起き、引き継ぎ元の root が無いので全部を焼いた。"
-       :evidence "手元の測りの完成マーカーの bytecode の欄")
+       "Measured (daily Pod): of 162 seconds for the normal case of test_same_program_daily.hy, 148.6 seconds were runtime-environment preparation, and bytecode preparation of 1,130 files took 94.7 seconds. On zeus locally (nice 10) too, of 153.8 seconds for the normal case, the bytecode processing stage took 123.9 seconds (closure walk 61.3 seconds, baking 59.0 seconds). The test worker started on an empty /work and had no root to carry over from, so it baked everything."
+       :evidence "The bytecode field of the completion marker of the local measurement")
      (fact
-       "直す前の形: worker の準備は .pyc を root の木の中にだけ置き、次の版は完成済みの root の木から変わっていない file(git diff の外)の .pyc を hardlink で引き継いだ。閉包の歩みの import の名も、木の根に残す表を引き継ぎ元の木から使い回した。引き継ぎ元の選びは Python と Hy の版・同じ repo の完成済みの root に限るので、新しい worker・空の /work・root を消した後・テストの 1 台の cluster では全部を焼き直した。同じ中身の code の保存先は doeff-hy の import の口にだけ在り(DOEFF_HY_CODE_STORE)、準備の道具は使わなかった。"
-       :evidence "packages/doeff-cluster/src/doeff_cluster/_worker/core/env_prepare.hy の carry-source(この変更の前の版)・worker/entry/code_prepare.hy の --from と --changed")
+       "The form before the fix: worker preparation placed .pyc only inside the root's tree, and the next version hardlinked the .pyc of unchanged files (outside git diff) from the completed root's tree. The closure walk's import names were also reused from a table left at the root of the carry-over tree. Choosing the carry-over source was limited to the same Python and Hy versions and a completed root of the same repo, so a new worker, an empty /work, after a root was deleted, and a single-node test cluster rebaked everything. A store for identical code content existed only in doeff-hy's import hook (DOEFF_HY_CODE_STORE), and the preparation tool did not use it."
+       :evidence "carry-source in packages/doeff-cluster/src/doeff_cluster/_worker/core/env_prepare.hy (the version before this change), --from and --changed in worker/entry/code_prepare.hy")
      (fact
-       "測り(2026-10-12 09:0x JST・zeus): 実行環境の準備は同じ版の source でも 1 回に 100〜600 本の Hy の bytecode を焼き直した(02:53 JST より前は 0〜10 本・bytecode の段 10〜40 秒 → 後は 30〜600 本・40〜550 秒。06 時台の 1 時間は 6 回で 2,763 本・1,366 秒)。鍵 1 つに entry 1 つの並びで、準備(worker の道具 — 記録の印 6)と作業木の import(DOEFF_HY_CODE_STORE を worker から継ぐ・doeff の版は作業木ごとに違う — 記録の印 5 など)が、同じ鍵の entry を互いに古いと見て焼き直し、上書きし合った。最新の root の Hy の source 1,094 本の entry を、その root の環境で照らすと、使える 797・記録の印 5 で使えない 295(どれも作業木が書いた)・digest が合わない 2。")]
+       "Measured (2026-10-12 09:0x JST, zeus): runtime-environment preparation rebaked 100-600 Hy bytecode files per run even for source of the same version (before 02:53 JST, 0-10 files and 10-40 seconds of bytecode stage → after, 30-600 files and 40-550 seconds; in the 06:00 hour, 6 runs rebaked 2,763 files in 1,366 seconds). With one entry per key, the preparation (the worker's tool — record version 6) and imports in worktrees (inheriting DOEFF_HY_CODE_STORE from the worker; the doeff version differs per worktree — record version 5 and others) each saw the other's entry for the same key as stale, rebaked and overwrote each other. Checking the entries of the 1,094 Hy sources of the latest root in that root's environment: 797 usable, 295 unusable with record version 5 (all written by worktrees), 2 with mismatched digests.")]
   :context
     [(interpretation
-       "版が替わっても中身の同じ source を焼き直さない事は、鍵が中身だけで決まる保存先を、準備の道具も import の口も同じ 1 つの入口で引く時だけ保証できる。前の木からの引き継ぎは、引き継ぎ元の root が在る時にだけ効き、在るかは worker の state と掃除に依る — 鍵を版や木に結ぶと、効かない場合(新しい worker・テスト)が必ず残る。")
+       "Not rebaking source whose content is unchanged across versions can be guaranteed only when a store keyed by content alone is looked up through the same single entry point by both the preparation tool and the import hook. Carrying over from the previous tree works only when the source root exists, and whether it exists depends on worker state and cleanup — tying the key to a version or a tree always leaves cases where it does not work (new workers, tests).")
      (interpretation
-       "Hy の source の展開は macro の出所の中身に依るが、出所は compile するまで分からない。だから出所の中身は鍵に入れず、code の定数の末尾の記録(doeff-hy の records — 出所の module 名と中身の sha256)を、使う時に今の環境の import の路で引き直した file と照らす。合わなければ焼き直し、同じ鍵の entry を書き直す。Python の source の compile は module 名と Hy の版に依らないので、鍵は中身・Python の版の印・最適化の段だけ。")
+       "Expanding Hy source depends on the content of the macro origins, but the origins are not known until compiling. So origin content is not in the key; the record at the end of the code's constants (doeff-hy's records — the origin module names and the sha256 of their content) is checked at use time against the files re-resolved through the current environment's import path. On mismatch, rebake and rewrite the entry of the same key. Compiling Python source does not depend on the module name or the Hy version, so its key is only the content, the Python version tag and the optimization level.")
      (interpretation
-       "準備の道具は準備する root の venv の python で走り、root の版の doeff を import する。root の版の doeff-hy は保存先の入口を持たない版でありうるので、道具は worker の版の doeff-hy の code_store.py を path で読む(bake_plan と同じ置き方)。入口は標準 library だけを import する。")
+       "The preparation tool runs on the venv python of the root being prepared and imports the root version's doeff. The root version's doeff-hy may be a version without the store's entry point, so the tool reads the worker version's doeff-hy code_store.py by path (placed the same way as bake_plan). The entry point imports only the standard library.")
      (interpretation
-       "保存先の並びと掃除は native の wheel の保存先(ADR-DOE-BUILD-001)と同じ作法: <dir>/<鍵の頭>/<鍵の残り><種類>(source の code は鍵の dir の下に macro の環境ごと — R2b)・使うたびに時刻を進める・7 日使われない物を worker の掃除が消す・書きは一時の file からの置き換え・壊れた entry は名指して除き作り直す。保存先の dir は env DOEFF_HY_CODE_STORE で、worker の起動の script が $WORK_DIR/state/doeff-hy-code-store を既定に置く(日次の全体検証の task と同じ dir)。")]
+       "The store's layout and cleanup follow the same practice as the native wheel store (ADR-DOE-BUILD-001): <dir>/<key head>/<key rest><kind> (source code goes under the key's dir per macro environment — R2b), the time is advanced on every use, the worker's cleanup removes what is unused for 7 days, writes replace from a temporary file, and broken entries are named, removed and rebuilt. The store dir is env DOEFF_HY_CODE_STORE, and the worker's boot script defaults it to $WORK_DIR/state/doeff-hy-code-store (the same dir as the daily full-verification task).")]
   :decision
-    [(rule R1 "bytecode を引く・足す保存先は doeff-hy の code_store.py 1 つ。並び・鍵・使った印・壊れた entry の扱いはここだけが綴り、import の口(loader_hooks)と worker の準備の道具(code_prepare・bytecode_pool)はこの関数を呼ぶ。")
-     (rule R2 "code の鍵 = source の中身・Python の版の印・最適化の段、Hy の source はさらに module 名と Hy の版。macro の出所の中身は、当たった code の記録を今の環境の file と照らして確かめ、合わなければ焼き直して同じ鍵の entry を書き直す。")
-     (rule R2b "R2 の追補(2026-10-12・根治の案): 鍵 1 つの dir に macro の環境ごとの code の entry を並べる — <dir>/<鍵の頭 2 字>/<鍵の残り>/<記録の指紋>.code(鍵の印 doeff-hy/code-store/3)。記録の指紋 = code の定数の末尾(doeff-hy の記録)の sha256 の頭 32 字(code_store.code-fingerprint — 記録の欄の意味は読まず、記録の印の違う版の記録にも同じ作り方が効く)。引く側は使った時刻の新しい順に照らし、合う最初の 1 つを使い、その entry の時刻だけを進める。焼き直した code は今の環境の entry として足し、他の環境の entry は上書きしない(読めない記録の entry も除かない — 他の版の書き手の物)。足した entry の時刻は鍵の他の entry のどれよりも前に置き(今から 1 日より前にはしない)、照らして使われて初めて前へ出す。鍵 1 つの entry は 16 個(CODE-ENTRIES-PER-KEY)までで、越えたら今足した entry を残して時刻の古い物から除く — 一度きりの環境(macro を直している作業木の検)の entry は互いを除き合い、使い続けている entry を押し出さない。上限を越える数の環境が同じ鍵を順に使っても、外れるのは越えた分だけ(設計検証の盲検 A — 足した entry を頭に置いた形では、17 の環境で毎巡全部が外れた)。R2 の「同じ鍵の entry を書き直す」は、記録の同じ entry を書き直す事に読み替える。訳: 鍵 1 つに entry 1 つでは、doeff の版の違う書き手(実行環境の準備と作業木の import)が同じ鍵を交互に上書きし、互いに焼き直した(上の測り)。失敗ケース = packages/doeff-hy/tests/test_bytecode_guard.py の test_two_macro_versions_taking_turns_on_one_store_stop_expanding_from_the_second_round・test_two_record_generations_taking_turns_on_one_store_keep_each_others_entries(盲検 B)・packages/doeff-cluster/tests/test_code_prepare_content_store.py の test_e_two_macro_versions_taking_turns_do_not_rebake_each_other・packages/doeff-hy/tests/test_code_store_entries.py。")
-     (rule R2c "R2b の追補(2026-10-12): import の口は、作業木の .pyc が source に合っても、その .pyc の記録が今の環境の macro に合わない時は、compile し直す前に鍵の entry を R2b と同じ照らしで引く。合う entry が在れば compile せずにそれを使い、.pyc を読んだ .pyc と同じ方式(timestamp か hash)で書き直す。合う entry が無ければ今どおり compile し、今の環境の entry として足す。訳: .pyc が在るというだけで保存先を引かないと、兄弟の doeff を替えて使い回す作業木(配備の宣言の木・長く使う会話の木)の最初の import が、保存先に同じ版の entry が揃っていても木の Hy の module を全部 compile し直した(2026-10-12・agora_sim の検 1 本の収集で約 880 本・CPU 約 670 秒)。失敗ケース = packages/doeff-hy/tests/test_bytecode_guard.py の test_a_stale_pyc_in_a_reused_tree_takes_the_stores_matching_entry_without_compiling・test_a_stale_checked_hash_pyc_takes_the_stores_matching_entry_and_is_rewritten_in_the_same_form(合う entry が無い側 = test_a_stale_pyc_with_no_matching_entry_in_the_store_compiles_and_adds_the_entry)。")
-     (rule R3 "worker の bytecode の準備は前の版の木から .pyc も import の名も引き継がない(--from・--changed・引き継ぎ元の選びを持たない)。.pyc は保存先の code から書き、無い物と今の macro に合わない物だけを焼いて足す。閉包の import の名も source の中身の鍵で保存先から引く(種類 .imports)。")
-     (rule R3b "R3 の追補(2026-10-17・設計検証の盲検 B): root の木に .pyc を置くのは焼く道具だけ。doeff-cluster の中で .pyc の置き場の知識(\"__pycache__\"・\".pyc\" の綴り・pyc-path・cache_from_source)を持つのは、焼く道具の module(bytecode_pool・code_prepare・code_plan・bake_plan・code_model)と模擬の世界だけ。訳: 写し元の root の .pyc を、木を置く翻訳の別の effect で新しい root へ hardlink する実装は、R3 の検(道具の --from・--changed)も木の形の検も通った。持ち越した .pyc は保存先の使った印を進めないので、掃除が root の使う保存先の .pyc と code を 7 日で消し、変わった Python の source の古い .pyc が完成した root に残った(盲検 B の実測 — 保存先の .pyc 24 → 0・次の root の新しい byte 188,416)。失敗ケース = この冊の test-adr-doe-build-002-only-the-bytecode-tool-places-pyc と judgments-reject-the-counterexamples の盲検 B の行。")
-     (rule R4 "保存先の dir は env DOEFF_HY_CODE_STORE。worker の起動の script は既定を $WORK_DIR/state/doeff-hy-code-store に置き、呼び手の値を優先する(手元の 1 台の cluster のテストは件をまたいで同じ dir を渡す)。")
-     (rule R5 "7 日使われない entry は worker の掃除が消す(native の wheel と同じ 7 日 — CODE-STORE-UNUSED-SECONDS = WHEEL-UNUSED-SECONDS)。")
-     (rule R5b "R5 の追補(2026-10-12): 掃除は、自分も下の物も全部 7 日動いていない保存先の dir を dir ごと消す(env_store の unused-store-names)。使った entry の在る dir と、作ったばかりの空の dir は残す。訳: R2b の鍵の dir は版ごとの source の数だけ増えるので、entry だけを消すと空の dir が残り続け、保存先の歩きが読む数が増え続ける。失敗ケース = packages/doeff-cluster/tests/test_env_store.hy の test-the-sweep-removes-unused-code-entries-in-key-dirs-and-the-dirs-left-unused。")
-     (rule R6 "R3 の追補(2026-10-17): worker の焼く道具は、木の .pyc を保存先の中身の同じ file への hardlink で置く — 種類 .pyc・名 = .pyc の中身の sha256・読み取り専用(code_store.link-pyc)。保存先の code から置く .pyc は頭の後ろに entry の中身をそのまま並べ(code_store.current-entry — marshal し直さない)、焼いた code の entry は焼いた .pyc の頭の後ろの bytes そのものにする(add-code の data)ので、同じ code の .pyc は root をまたいで 1 つの file。置けない時(別の file system・link の数の上限)は今どおり中身を書き、理由を準備の記録に 1 度ずつ出す。保存先の .pyc も R5 の掃除で消える(木の名は残る)。木の .pyc を書き直す手(焼く道具・import の口・Python の import)はどれも一時の file から置き換えるので、hardlink の先(他の木の .pyc と保存先)は変わらない。前の版の木からは引き継がない(R3 のまま — 分け合う先は保存先)。訳: root ごとに同じ中身の .pyc を新しく書くと、root を消した後も macOS の local snapshot がその中身を 24 時間持ち、Mac の worker の作業 disk の空きが root の作り直しの数だけ減った(10-17 の Mac の root 1 本で木の .pyc 100.6 MB が私有)。失敗ケース = packages/doeff-cluster/tests/test_code_prepare_content_store.py の test_f_trees_baked_from_the_store_share_one_file_per_pyc・test_g_rebaking_one_tree_does_not_write_through_the_shared_pyc・test_h_a_one_commit_root_writes_a_tenth_or_less_where_cp_refuses_gnu_options・packages/doeff-hy/tests/test_code_store_pyc_links.py。")
-     (rule R7 "R1 の追補(2026-11-01): worker の焼く道具(bytecode_pool)は root の venv の python で走るが、root の版の doeff の package から名を import しない(doeff・doeff_core_effects・doeff-hy の macro も — 標準 library と hy だけ)。.pyc の path と PEP 552 の頭は道具が自分で組む。Hy の source の compile(記録を付ける)と、在る .pyc・保存先の code の照らしは root の guard の物を使い(記録の形と照らし方は root の版の物)、guard は module の名で引かず、root の guard が起動時に SourceFileLoader に被せた口(get_code・source_to_code)の持ち主の module を sys.modules から引いて、その bytecode_is_current と source_to_code_as_import を呼ぶ。guard の側は、口の持ち主の module がこの 2 つの名を同じ引数の形で出し続ける(持ち主の module の名は変えてよい)。訳: 道具が guard と python_bytecode を module の名で import したので、worker の版と root の版の doeff が組になり、名の置き場を内側へ移した doeff(2026-10-29)の root で、古い worker の準備が import の誤りで必ず落ち、新しい版の root を 1 時間置けなかった(2026-11-01)。失敗ケース = packages/doeff-cluster/tests/test_bytecode_pool_reads_no_root_doeff.py・packages/doeff-hy/tests/test_guard_hook_owner_contract.py・この冊の test-adr-doe-build-002-the-bake-tool-imports-no-doeff-name。")]
+    [(rule R1 "There is one store to look up and add bytecode: doeff-hy's code_store.py. Only it spells the layout, key, use marks and handling of broken entries; the import hook (loader_hooks) and the worker's preparation tools (code_prepare, bytecode_pool) call its functions.")
+     (rule R2 "Code key = source content, Python version tag and optimization level; for Hy source also the module name and the Hy version. The content of the macro origins is verified by checking the record on the hit code against the files of the current environment; on mismatch, rebake and rewrite the entry of the same key.")
+     (rule R2b "Addendum to R2 (2026-10-12, root fix): one key's dir holds code entries side by side per macro environment — <dir>/<first 2 chars of key>/<key rest>/<record fingerprint>.code (key tag doeff-hy/code-store/3). Record fingerprint = the first 32 chars of the sha256 of the end of the code's constants (doeff-hy's record) (code_store.code-fingerprint — it does not interpret the record's fields, so the same construction works for records of a different record version). The reader checks in order of most recent use, uses the first that matches, and advances only that entry's time. Rebaked code is added as the current environment's entry, without overwriting other environments' entries (entries with unreadable records are not removed either — they belong to writers of other versions). An added entry's time is set before every other entry of the key (but not more than 1 day before now), and moves forward only once checked and used. One key holds up to 16 entries (CODE-ENTRIES-PER-KEY); beyond that, the entry just added is kept and the oldest by time are removed — entries of one-off environments (checks in worktrees editing macros) remove each other and do not push out entries in continuing use. Even if more environments than the limit use the same key in turn, only the excess misses (design-validation blind test A — in a form that put the added entry at the head, with 17 environments every round missed entirely). R2's 'rewrite the entry of the same key' is read as rewriting the entry with the same record. Reason: with one entry per key, writers on different doeff versions (runtime-environment preparation and worktree imports) overwrote the same key alternately and rebaked each other's work (the measurement above). Failure cases = test_two_macro_versions_taking_turns_on_one_store_stop_expanding_from_the_second_round and test_two_record_generations_taking_turns_on_one_store_keep_each_others_entries (blind test B) in packages/doeff-hy/tests/test_bytecode_guard.py, test_e_two_macro_versions_taking_turns_do_not_rebake_each_other in packages/doeff-cluster/tests/test_code_prepare_content_store.py, and packages/doeff-hy/tests/test_code_store_entries.py.")
+     (rule R2c "Addendum to R2b (2026-10-12): when a worktree's .pyc matches the source but that .pyc's record does not match the current environment's macros, the import hook looks up the key's entries with the same check as R2b before recompiling. If a matching entry exists it uses it without compiling and rewrites the .pyc in the same scheme (timestamp or hash) as the .pyc it read. If none matches, it compiles as today and adds the entry as the current environment's. Reason: when the store was not looked up merely because a .pyc existed, the first import in a worktree reused while swapping the sibling doeff (the deployment-declaration tree, a long-lived conversation tree) recompiled every Hy module of the tree even though the store had entries of the same version (2026-10-12: about 880 files and about 670 CPU seconds for collecting one agora_sim check). Failure cases = test_a_stale_pyc_in_a_reused_tree_takes_the_stores_matching_entry_without_compiling and test_a_stale_checked_hash_pyc_takes_the_stores_matching_entry_and_is_rewritten_in_the_same_form in packages/doeff-hy/tests/test_bytecode_guard.py (the no-matching-entry side = test_a_stale_pyc_with_no_matching_entry_in_the_store_compiles_and_adds_the_entry).")
+     (rule R3 "The worker's bytecode preparation carries over neither .pyc nor import names from the previous version's tree (it has no --from, --changed or carry-over source selection). .pyc are written from the store's code, and only what is missing or does not match the current macros is baked and added. The closure's import names are also looked up from the store by the key of the source content (kind .imports).")
+     (rule R3b "Addendum to R3 (2026-10-17, design-validation blind test B): only the baking tool places .pyc in a root's tree. Inside doeff-cluster, only the baking tool's modules (bytecode_pool, code_prepare, code_plan, bake_plan, code_model) and the simulated world hold knowledge of where .pyc lives (the spellings \"__pycache__\" and \".pyc\", pyc-path, cache_from_source). Reason: an implementation that hardlinked the source root's .pyc into a new root through a separate effect of the tree-placing translation passed both the R3 check (the tool's --from, --changed) and the tree-shape check. Carried-over .pyc do not advance the store's use marks, so the cleanup deleted the .pyc and code of the store the root used after 7 days, and stale .pyc of changed Python sources remained in the completed root (measured in blind test B — store .pyc 24 → 0, new bytes of the next root 188,416). Failure cases = this file's test-adr-doe-build-002-only-the-bytecode-tool-places-pyc and the blind-test-B lines of judgments-reject-the-counterexamples.")
+     (rule R4 "The store dir is env DOEFF_HY_CODE_STORE. The worker's boot script defaults it to $WORK_DIR/state/doeff-hy-code-store and lets the caller's value take precedence (local single-node cluster tests pass the same dir across cases).")
+     (rule R5 "Entries unused for 7 days are removed by the worker's cleanup (the same 7 days as native wheels — CODE-STORE-UNUSED-SECONDS = WHEEL-UNUSED-SECONDS).")
+     (rule R5b "Addendum to R5 (2026-10-12): the cleanup removes, as a whole, a store dir in which neither it nor anything below it has moved for 7 days (env_store's unused-store-names). Dirs containing used entries and freshly created empty dirs are kept. Reason: R2b's key dirs grow with the number of sources per version, so removing only entries leaves empty dirs forever and the number the store walk reads keeps growing. Failure case = test-the-sweep-removes-unused-code-entries-in-key-dirs-and-the-dirs-left-unused in packages/doeff-cluster/tests/test_env_store.hy.")
+     (rule R6 "Addendum to R3 (2026-10-17): the worker's baking tool places a tree's .pyc as a hardlink to a file of the same content in the store — kind .pyc, name = sha256 of the .pyc content, read-only (code_store.link-pyc). A .pyc placed from the store's code puts the entry's content right after the header as-is (code_store.current-entry — no re-marshal), and the entry of baked code is exactly the bytes after the header of the baked .pyc (add-code's data), so the .pyc of the same code is one file across roots. When it cannot be placed (a different file system, the link-count limit) it writes the content as today and logs the reason once each in the preparation record. The store's .pyc are also removed by R5's cleanup (the tree's names remain). Every hand that rewrites a tree's .pyc (the baking tool, the import hook, Python's import) replaces from a temporary file, so the hardlink targets (other trees' .pyc and the store) do not change. Nothing is carried over from the previous version's tree (R3 stands — what is shared is the store). Reason: writing .pyc of identical content anew per root meant that after a root was deleted macOS local snapshots kept that content for 24 hours, and the free space on the Mac worker's work disk dropped with each root rebuild (on 10-17 one Mac root privately held 100.6 MB of tree .pyc). Failure cases = test_f_trees_baked_from_the_store_share_one_file_per_pyc, test_g_rebaking_one_tree_does_not_write_through_the_shared_pyc and test_h_a_one_commit_root_writes_a_tenth_or_less_where_cp_refuses_gnu_options in packages/doeff-cluster/tests/test_code_prepare_content_store.py, and packages/doeff-hy/tests/test_code_store_pyc_links.py.")
+     (rule R7 "Addendum to R1 (2026-11-01): the worker's baking tool (bytecode_pool) runs on the root's venv python but imports no names from the root version's doeff packages (not doeff, doeff_core_effects, or doeff-hy's macros — only the standard library and hy). The tool builds the .pyc path and the PEP 552 header itself. Compiling Hy source (attaching the record) and checking existing .pyc and store code use the root's guard (the record form and the way of checking are the root version's); the guard is not looked up by module name — the tool takes from sys.modules the module owning the hooks the root's guard installed on SourceFileLoader at startup (get_code, source_to_code), and calls its bytecode_is_current and source_to_code_as_import. On the guard side, the module owning the hooks keeps exporting these two names with the same argument shapes (the owner module's name may change). Reason: the tool imported guard and python_bytecode by module name, so the worker version's and the root version's doeff became coupled; on a root of a doeff that had moved those names inside (2026-10-29), the old worker's preparation always failed with an import error, and a root of the new version could not be placed for an hour (2026-11-01). Failure cases = packages/doeff-cluster/tests/test_bytecode_pool_reads_no_root_doeff.py, packages/doeff-hy/tests/test_guard_hook_owner_contract.py, and this file's test-adr-doe-build-002-the-bake-tool-imports-no-doeff-name.")]
   :laws
     [(law one-bytecode-store-entry
        :statement "for_all file f in doeff (excluding tests and docs): spells_store_layout(f) => f == ENTRY; and spells_store_layout(ENTRY)"
        :counterexamples
-         [(counterexample "import の口(loader_hooks)が自分で os.path.join(store, key[:2], key[2:] + \".code\") を綴る(この変更の前の形 — 準備の道具が同じ保存先を引けなかった)")
-          (counterexample "worker の道具が自前の dir に .pyc の cache を置く(3 つ目の保存先)")])
+         [(counterexample "The import hook (loader_hooks) spells os.path.join(store, key[:2], key[2:] + \".code\") itself (the form before this change — the preparation tool could not look up the same store)")
+          (counterexample "A worker tool puts a .pyc cache in its own dir (a third store)")])
      (law the-prepare-tool-does-not-carry-from-a-previous-tree
        :statement "not carries_from_a_previous_tree(PREPARE-TOOL)"
        :counterexamples
-         [(counterexample "道具の引数に --from <前の木> と --changed <差の一覧> が残る(引き継ぎ元の無い準備で全部を焼き直す道が残る)")])
+         [(counterexample "--from <previous tree> and --changed <list of diffs> remain among the tool's arguments (leaving a path where preparation without a carry-over source rebakes everything)")])
      (law only-the-bytecode-tool-places-pyc
        :statement "for_all file f in packages/doeff-cluster/src: spells_bytecode_placement(f) => f in BYTECODE-TOOL-FILES"
        :counterexamples
-         [(counterexample "木を置く翻訳(env_translation)に (val PYCACHE-DIR \"__pycache__\") と、写し元の木の .pyc を新しい root へ LinkFile で置く effect の答えを足す(盲検 B — R3 の検と木の形の検を通り、保存先の使った印が進まず掃除が使っている .pyc を消した)")])
+         [(counterexample "Adding (val PYCACHE-DIR \"__pycache__\") to the tree-placing translation (env_translation) and an effect answer that places the source tree's .pyc into the new root with LinkFile (blind test B — it passed the R3 check and the tree-shape check, the store's use marks did not advance, and the cleanup deleted .pyc in use)")])
      (law the-worker-defaults-the-store-under-its-state
        :statement "boot.sh exports DOEFF_HY_CODE_STORE defaulting to $WORK_DIR/state/doeff-hy-code-store, and the prepare tool reads the store entry from the worker's own doeff-hy"
        :counterexamples
-         [(counterexample "起動の script が既定を置かず、worker の道具が利用者の HOME の cache(Pod では消える dir)へ書く")])
+         [(counterexample "The boot script sets no default and the worker tool writes to the cache in the user's HOME (a dir that disappears in a Pod)")])
      (law the-bake-tool-imports-no-doeff-name
        :statement "root_doeff_names(POOL-TOOL) == []"
        :counterexamples
-         [(counterexample "焼く道具が (import doeff_hy_bytecode_guard [bytecode-is-current]) で照らしを引く(2026-11-01 の形 — 入口の名を内側へ移した doeff の root で準備が必ず落ちた)")
-          (counterexample "焼く道具が (require doeff-hy.macros [defk val]) で定義を書く(macro が root の版の doeff-hy の物になる)")])]
+         [(counterexample "The baking tool pulls the check in with (import doeff_hy_bytecode_guard [bytecode-is-current]) (the 2026-11-01 form — preparation always failed on a root of a doeff that had moved the entry's names inside)")
+          (counterexample "The baking tool writes definitions with (require doeff-hy.macros [defk val]) (the macros become the root version's doeff-hy's)")])]
   :enforcement
     [(deftest test-adr-doe-build-002-one-bytecode-store-entry
        (val repo-root (. (Path __file__) parent parent parent))
        (val found (run (store-layout-files repo-root)))
        (val violations (run (layout-violations found)))
-       (assert (= violations []) (+ "bytecode の 2 つ目の保存先(ADR-DOE-BUILD-002 R1): " (str violations))))
+       (assert (= violations []) (+ "a second bytecode store (ADR-DOE-BUILD-002 R1): " (str violations))))
      (deftest test-adr-doe-build-002-the-prepare-tool-does-not-carry-from-a-previous-tree
        (val repo-root (. (Path __file__) parent parent parent))
        (for [rel #(PREPARE-TOOL POOL-TOOL)]
          (assert (not (run (carries-from-a-previous-tree (.read-text (/ repo-root rel) :encoding "utf-8"))))
-                 (+ rel ": 前の版の木から引き継ぐ引数が残る(ADR-DOE-BUILD-002 R3)"))))
+                 (+ rel ": arguments carrying over from the previous version's tree remain (ADR-DOE-BUILD-002 R3)"))))
      (deftest test-adr-doe-build-002-only-the-bytecode-tool-places-pyc
        (val repo-root (. (Path __file__) parent parent parent))
        (val found (run (placement-files repo-root)))
        (val violations (run (placement-violations found)))
-       (assert (= violations []) (+ ".pyc を root に置く 2 本目の道(ADR-DOE-BUILD-002 R3b): " (str violations)))
-       (assert (in "packages/doeff-cluster/src/doeff_cluster/_foundation/bytecode_pool.hy" found) "焼く道具の綴りを見つけない — 走査の範囲が壊れた"))
+       (assert (= violations []) (+ "a second path placing .pyc in a root (ADR-DOE-BUILD-002 R3b): " (str violations)))
+       (assert (in "packages/doeff-cluster/src/doeff_cluster/_foundation/bytecode_pool.hy" found) "the baking tool's spelling was not found — the scan range is broken"))
      (deftest test-adr-doe-build-002-the-worker-defaults-the-store-under-its-state
        (val repo-root (. (Path __file__) parent parent parent))
        (val boot (.read-text (/ repo-root BOOT-SCRIPT) :encoding "utf-8"))
        (assert (in "export DOEFF_HY_CODE_STORE=\"${DOEFF_HY_CODE_STORE:-$WORK_DIR/state/doeff-hy-code-store}\"" boot)
-               "起動の script が保存先の既定を worker の state の下に置かない(ADR-DOE-BUILD-002 R4)")
+               "the boot script does not default the store under the worker's state (ADR-DOE-BUILD-002 R4)")
        (val tool (.read-text (/ repo-root PREPARE-TOOL) :encoding "utf-8"))
        (assert (in "\"doeff-hy\" \"src\" \"doeff_hy_bytecode_guard\" \"_code_store.py\"" tool)
-               "準備の道具が worker の版の doeff-hy の保存先の入口を読まない(ADR-DOE-BUILD-002 R1)")
+               "the preparation tool does not read the store entry point of the worker version's doeff-hy (ADR-DOE-BUILD-002 R1)")
        (val upkeep (.read-text (/ repo-root UPKEEP) :encoding "utf-8"))
        (assert (in "(val CODE-STORE-UNUSED-SECONDS WHEEL-UNUSED-SECONDS)" upkeep)
-               "保存先の掃除の日数が native の wheel と同じでない(ADR-DOE-BUILD-002 R5)"))
+               "the store's cleanup days are not the same as native wheels' (ADR-DOE-BUILD-002 R5)"))
      (deftest test-adr-doe-build-002-the-bake-tool-imports-no-doeff-name
        (val repo-root (. (Path __file__) parent parent parent))
        (<- names list (root-doeff-names (.read-text (/ repo-root POOL-TOOL) :encoding "utf-8")))
-       (assert (= names []) (+ POOL-TOOL ": root の版の doeff の名を import する(ADR-DOE-BUILD-002 R7): " (str names)))
-       ;; 反例: 2026-11-01 の形(guard を module の名で引く)と doeff-hy の macro の require は赤。註の中の名は数えない。
+       (assert (= names []) (+ POOL-TOOL ": imports names of the root version's doeff (ADR-DOE-BUILD-002 R7): " (str names)))
+       ;; Counterexample: the 2026-11-01 form (looking up guard by module name) and requiring doeff-hy's macros are red. Names inside comments are not counted.
        (<- old list (root-doeff-names (+ "(require doeff-hy.macros [defk val])\n(import os)\n(import doeff_hy_bytecode_guard [bytecode-is-current])\n"
                                          "(import doeff_core_effects._python_bytecode [pyc-path])\n")))
        (assert (= old ["doeff-hy.macros" "doeff_hy_bytecode_guard" "doeff_core_effects._python_bytecode"]) (str old))
        (<- clean list (root-doeff-names ";; (import doeff [run])\n(import importlib.machinery)\n(import hy)\n"))
        (assert (= clean []) (str clean)))
      (deftest test-adr-doe-build-002-judgments-reject-the-counterexamples
-       ;; 反例: 入口の外で entry を綴る形(Python・Hy の .code と .imports の末尾)は 2 つ目の保存先として赤。註の行の綴りは数えない。
-       ;; 前の版の木から引き継ぐ引数は赤。
+       ;; Counterexample: spelling an entry outside the entry point (the .code and .imports suffixes in Python and Hy) is red as a second store. Spellings on comment lines are not counted.
+       ;; Arguments carrying over from the previous version's tree are red.
        (assert (run (spells-store-layout "entry = os.path.join(store, key[:2], key[2:] + '.code')\n")))
        (assert (run (spells-store-layout "(val path (posixpath.join store (cut key 0 2) (+ (cut key 2 None) \".imports\")))\n")))
-       (assert (not (run (spells-store-layout "# \".code\" の entry は code_store が綴る\n"))))
+       (assert (not (run (spells-store-layout "# the \".code\" entry is spelled by code_store\n"))))
        (assert (not (run (spells-store-layout "return cache_dir / key[:2] / f\"{key}.json\"\n"))))
        (val second "packages/doeff-cluster/src/doeff_cluster/_worker/core/pyc_cache.hy")
        (assert (= (len (run (layout-violations (frozenset #{ENTRY second})))) 1))
        (assert (= (run (layout-violations (frozenset #{ENTRY}))) []))
        (assert (= (len (run (layout-violations (frozenset #{second})))) 2))
        (assert (run (carries-from-a-previous-tree "(.add-argument parser \"--from\" :action \"append\")\n")))
-       (assert (not (run (carries-from-a-previous-tree ";; 前は \"--from\" で引き継いだ\n"))))
-       ;; 反例(R3b・盲検 B): 木を置く翻訳が .pyc の置き場を綴る行は赤。註の行と、文の中の __pycache__ の語(引用符の無い物)は数えない。
+       (assert (not (run (carries-from-a-previous-tree ";; formerly carried over with \"--from\"\n"))))
+       ;; Counterexample (R3b, blind test B): a line where the tree-placing translation spells where .pyc lives is red. Comment lines and the word __pycache__ inside prose (without quotes) are not counted.
        (assert (run (spells-bytecode-placement "(val PYCACHE-DIR \"__pycache__\")\n")))
        (assert (run (spells-bytecode-placement "(when (.endswith e.name \".pyc\") (<- (LinkFile a b)))\n")))
        (assert (run (spells-bytecode-placement "(import doeff_core_effects._python_bytecode [pyc-path])\n")))
        (assert (run (spells-bytecode-placement "cache = importlib.util.cache_from_source(path)\n")))
-       (assert (not (run (spells-bytecode-placement ";; 追跡しない物(.venv・__pycache__)は写さない\n"))))
-       (assert (not (run (spells-bytecode-placement "\"追跡しない物(.venv・__pycache__・焼いた印)は写さない\"\n"))))
+       (assert (not (run (spells-bytecode-placement ";; untracked things (.venv, __pycache__) are not copied\n"))))
+       (assert (not (run (spells-bytecode-placement "\"untracked things (.venv, __pycache__, baked marks) are not copied\"\n"))))
        (val tree "packages/doeff-cluster/src/doeff_cluster/_worker/protocol/env_translation.hy")
        (assert (= (len (run (placement-violations (frozenset #{tree "packages/doeff-cluster/src/doeff_cluster/_foundation/bytecode_pool.hy"})))) 1))
        (assert (= (run (placement-violations (frozenset #{"packages/doeff-cluster/src/doeff_cluster/_worker/core/code_plan.hy"}))) [])))]

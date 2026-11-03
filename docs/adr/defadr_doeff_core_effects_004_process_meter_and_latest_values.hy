@@ -1,14 +1,14 @@
-;;; Executable ADR(決定): 動き続ける process の計器(数え上げ・秒の観測・今の値)・run をまたぐ最新の値の受け渡し・heap の凍結を、業務を
-;;; 知らない汎用の effect にし、本物の答え手と memory の答え手が同じ契約のテストを通す。
+;;; Executable ADR (decision): make the instruments of a long-running process (counting, observing seconds, current values), the handoff of the latest
+;;; value across runs, and heap freezing into generic effects that know nothing of the business, and have the real answerer and the memory answerer pass the same contract tests.
 ;;;
-;;; agora-controllers の画面は、計器(Meter)・破れの台帳・起動の同期の進みを
-;;; 同じ object として処理ループの run と probe の別の run に渡していた。層を分けると、翻訳の層(protocol)は土台の object を import
-;;; できないので、効果で渡すしかない。agora の ADR「環境は handler の組で選ぶ」R8 は「翻訳の先は doeff の汎用の effect だけ。無ければ doeff に
-;;; 足す」と決めており、doeff の origin/main に汎用の計器の effect は無かった(manager が packages の全体を名前で検索して確かめた・
-;;; 2026-09-29 19:33 JST)。
+;;; The agora-controllers screen passed its instrument (Meter), the breach ledger, and the startup-sync progress
+;;; as the same object to the processing-loop run and to the separate probe run. Once the layers are split, the translation layer (protocol) cannot import the foundation's
+;;; objects, so the only way to pass them is through effects. agora's ADR 'the environment is chosen by a set of handlers' R8 decided that 'the translation target is only doeff's generic effects; if one is missing,
+;;; add it to doeff', and doeff's origin/main had no generic instrument effect (confirmed by the manager by searching all of packages by name,
+;;; 2026-09-29 19:33 JST).
 ;;;
-;;; 戻し方: この ADR を足した commit を revert する(新しい module 9 つと検が消える。既存の公開の形は変えていないので、使い手が無ければ
-;;; 何も壊れない)。agora-controllers の doeff-min-commit を前の sha へ戻す。
+;;; Rollback: revert the commit that added this ADR (the 9 new modules and the checks disappear; no existing public shape was changed, so with no users
+;;; nothing breaks). Set agora-controllers' doeff-min-commit back to the previous sha.
 
 (require doeff-adr.macros [defadr defsemgrep rule law])
 (require doeff-hy.macros [deftest val do! <-])
@@ -16,7 +16,7 @@
 
 
 (defadr ADR-DOE-CORE-EFFECTS-004
-  :title "動き続ける process の計器・最新の値・heap の凍結を汎用の effect にする — 1 つの名の中の書きは 1 度に見え、名をまたぐ書きは保証しない"
+  :title "Make the instruments, latest values, and heap freezing of a long-running process into generic effects — a write within one name is seen all at once; writes across names are not guaranteed to be"
   :status "accepted"
   :scope ["packages/doeff-core-effects/doeff_core_effects/_meter_effects.hy"
           "packages/doeff-core-effects/doeff_core_effects/_process_meter.hy"
@@ -29,58 +29,58 @@
           "packages/doeff-core-effects/doeff_core_effects/_scripted_freeze.hy"]
   :problem
     [(fact
-       "agora-controllers の画面の計器 Meter(controllers/screen/entry/meter.py・592 行)は、画面の型で答えの起点を決める判断と、counter・gauge・秒の合計を積む汎用の部分と、time.monotonic・uuid・gc.callbacks・threading の生の副作用を 1 つの class に持っていた。処理ループの run が書き、probe の別の run(/metrics・/latency/samples)が lock を待たずに読む。")
+       "The agora-controllers screen's instrument Meter (controllers/screen/entry/meter.py, 592 lines) held in one class the judgment that decides the origin of an answer from the screen's types, a generic part that accumulates counters, gauges, and sums of seconds, and the raw side effects of time.monotonic, uuid, gc.callbacks, and threading. The processing-loop run writes, and the separate probe run (/metrics, /latency/samples) reads without waiting for the lock.")
      (fact
-       "層を分けると、翻訳の層は土台の object を import できず、土台は業務の型を読めない。run をまたいで渡すには effect が要る。doeff の origin/main には汎用の計器の effect が無く、在るのは doeff-cluster の ReportMetrics(coordinator への報告)と doeff-jev-proxy の ReadCounters(用途が決まっている)だけだった。"
-       :evidence "manager の決め(2026-09-29 19:46 JST)")
+       "Once the layers are split, the translation layer cannot import the foundation's objects, and the foundation cannot read the business types. Passing something across runs needs an effect. doeff's origin/main had no generic instrument effect; all it had were doeff-cluster's ReportMetrics (reporting to the coordinator) and doeff-jev-proxy's ReadCounters (fixed purpose)."
+       :evidence "the manager's decision (2026-09-29 19:46 JST)")
      (fact
-       "handler の中の状態(session の値)は 1 つの run の中にしか無い。probe は処理ループが計算している間も答えるために別の run(別の thread)で走るので、session の値では同じ計器を読めない。"
-       :evidence "agora-controllers controllers/foundation/side_run.hy の頭の註")]
+       "State inside a handler (session values) exists only within one run. The probe runs in a separate run (a separate thread) so that it can answer while the processing loop is computing, so session values cannot read the same instrument."
+       :evidence "the header comment of agora-controllers controllers/foundation/side_run.hy")]
   :context
     [(interpretation
-       "置き場は doeff-core-effects。業務も cluster も知らない、動き続ける process の汎用の effect だから(隣の stop_signal・thread_pool_compute・scheduler_channel と同じ種類)。doeff-cluster の ReportMetrics は coordinator へ断面を送る effect で役が違うので、断面の形(counters・gauges・秒の合計と回数)だけを揃えて、後で ReadMeter の答えを ReportMetrics へ渡せるようにした。")
+       "The home is doeff-core-effects, because these are generic effects of a long-running process that know neither the business nor the cluster (the same kind as the neighboring stop_signal, thread_pool_compute, and scheduler_channel). doeff-cluster's ReportMetrics is an effect that sends a snapshot to the coordinator and has a different role, so only the shape of the snapshot (counters, gauges, sums and counts of seconds) was aligned, so that ReadMeter's answer can later be passed to ReportMetrics.")
      (interpretation
-       "本物の置き場を class にしない(ADR-DOE-HY-007 R3・R4 — lock と gc の callback を持ち、状態が変わる)。答え手の module が「名前 → 置き場」を process に 1 つ持ち、同じ名前で入れた答え手どうし(別の run・別の thread)が同じ置き場を読み書きする。process に 1 つの物を module が持つ先例 = doeff_core_effects/_handlers.py の Await の橋。答え手の引数は変わらない値(名前と設定)だけ。戻せる決定。")
+       "The real store is not made a class (ADR-DOE-HY-007 R3, R4 — it holds a lock and a gc callback, and its state changes). The answerer's module holds one 'name → store' map per process, and answerers installed with the same name (in different runs, different threads) read and write the same store. Precedent for a module holding a one-per-process object = the Await bridge in doeff_core_effects/_handlers.py. The answerer's arguments are only immutable values (name and settings). A reversible decision.")
      (interpretation
-       "heap の凍結を計器と別の module にした。計器は観測を積んで読むだけで process の振る舞いを変えない。凍結は process の GC の状態を変える操作で、計器を持たない program も使う。一緒に置くと、計器を差し替える模擬が GC の操作まで一緒に差し替える形になる(manager の決めの条件 2)。")
+       "Heap freezing is a separate module from the instruments. Instruments only accumulate and read observations and do not change the process's behavior. Freezing is an operation that changes the process's GC state, and programs without instruments use it too. Putting them together would mean that a fake replacing the instruments also replaces the GC operation (condition 2 of the manager's decision).")
      (interpretation
-       "最新の値の鍵は文字列ではなく値の型ちょうど。読み手は答えの型を鍵から知れる(agora の設定の読み — Ask の鍵 = 型 — と同じ作法)。同じ型を 2 つの持ち主が置くと食い違うので、持ち主ごとに別の型を置く。戻し方 = key の欄を足す。")
+       "The key of a latest value is not a string but exactly the value's type. A reader knows the answer's type from the key (the same convention as agora's settings reads — Ask key = type). If 2 owners publish the same type they conflict, so each owner publishes a distinct type. Rollback = add a key field.")
      (interpretation
-       "計器の書きは 1 回の effect で 1 つの名だけを変える。agora の画面の Meter は 1 回の出来事の書き(全数と内訳など、名をまたぐ)を 1 度に見せていたが、この形では名をまたぐと守れない。Prometheus の client の普通の約束と同じなのでこの形を採り、名をまたいで 1 度に見せたい読み手は 1 つの名に畳むか、食い違いを許す。まとめて書く effect(例 RecordMetrics)は、要ると分かった時に足す(足すだけで済む)。agora の側で今の性質に頼る検と不変条件の一覧は agora の側に書く(manager の決めの条件 2)。")]
+       "An instrument write changes only one name per effect. agora's screen Meter showed the writes of one event (total and breakdown, etc., across names) all at once, but this shape cannot keep that across names. This shape is adopted because it matches the usual contract of a Prometheus client; a reader that wants to see something across names at once folds it into one name or tolerates the discrepancy. An effect that writes in bulk (e.g. RecordMetrics) is added when it turns out to be needed (adding it is enough). The list of agora-side checks and invariants that rely on the current property is written on the agora side (condition 2 of the manager's decision).")]
   :decision
-    [(rule R1 "計器の effect は 5 つ(meter_effects.hy): CountMetric(name・amount = 1.0 — counter に足す。amount = 0 は 0 を置く)・ObserveSeconds(name・seconds — 秒の合計と回数に積み、設定の桁の表の当たる桁ごとの累積の counter <name>_<label> と <name>_<inf-label> も進める)・ObserveSecondsBatch(observations = SecondsObservation(name・seconds)の列 — ObserveSeconds を列の順に 1 つずつ撃ったのと同じ断面へ 1 回で積む。1 つの出来事で何度も秒を観測する呼び手が効果を撃つ回数を 1 回にするため。列の名をまたぐ書きは R6 のとおり約束しない)・SetGauge(name・value — 置き換える)・ReadMeter(答え = MeterSnapshot)。答えは ReadMeter の外はどれも None。設定は MeterSettings(buckets・inf-label・gc-pause-name)。")
-     (rule R2 "最新の値の effect は 3 つ(latest_effects.hy): PublishLatest(value — 型 type(value) をキーに置き換える)・ReadLatest(kind — その型ちょうどの最新の値か None)・AwaitLatest(kind・seen — その型の最新の値が seen と別の物〔is で比べる〕になるまで待ち、その値を答える。既に別なら待たない。待つのは呼び鈴〔CreateExternalPromise〕で、置いた側の PublishLatest が鳴らす。上限は持たず、上限まで待つ呼び手は時計の task と Race にかけて負けた方を Cancel する — 取り消された待ちは呼び鈴を外す。待ちは仮想の時計を止めない park の形・scheduled の下で使う。書き手の run が置いた断面を、別の run が一定の間隔では確かめ直さずに置かれた時に読むために足した)。置く値は変わらない値にする。")
-     (rule R3 "heap の凍結の effect は 1 つ(heap_effects.hy): CollectAndFreeze(答え = 凍らせた object の数)。計器と module を分ける。")
-     (rule R4 "答え手は本物と I/O の無い物を module で分ける: process-meter-handler(process_meter.hy)と memory-meter-handler(memory_meter.hy)・process-latest-handler(process_latest.hy)と memory-latest-handler(memory_latest.hy)・gc-freeze-handler(gc_freeze.hy)と scripted-freeze-handler(scripted_freeze.hy)。時計・gc・thread に触るのは本物の module だけで、effect の module と I/O の無い答え手の module は触らない。本物の 3 つは doeff-linter の実 I/O の handler の目録(packages/doeff-linter/data/world_handlers.json)に載せる — 使い手の repo が architecture.hy の :world-handlers の :wraps で名指せるように(載せない I/O の無い答え手は目録の決まりどおり外す)。")
-     (rule R5 "本物の計器と最新の値は、同じ名前で入れた答え手どうしが別の run・別の thread でも 1 つの置き場を読み書きする。読みは書き手の lock を待たない(今の断面の参照を 1 つ取る)。GC の停止の callback は lock を取らない(lock を持つ thread の中で回収が始まると、取り直しで自分を待って止まる)。同じ名前で違う設定を入れると ValueError で断る。置き場は process の終わりまで残る。")
-     (rule R6 "計器の 1 回の書きは 1 つの名の中(秒の合計・回数・その名の桁の counter)で 1 度に見える。名をまたぐ書きは 1 度に見えるとは限らない — 2 つの名への書きの間の読みは、片方だけ進んだ断面を見る。")
-     (rule R7 "本物と I/O の無い答え手は同じ契約のテストを通す: packages/doeff-core-effects/tests の test_meter_contract.hy・test_latest_contract.hy・test_heap_freeze.hy の :interpreters。本物だけの性質(run・thread をまたぐ共有・違う設定を断る・GC の停止)は test_process_meter.hy・test_process_latest.hy。")
-     (rule R8 "この変更は足すだけ。既にある doeff の型・関数・import の名を変えない。")]
+    [(rule R1 "There are 5 instrument effects (meter_effects.hy): CountMetric (name, amount = 1.0 — adds to a counter; amount = 0 sets 0); ObserveSeconds (name, seconds — accumulates into the sum and count of seconds, and also advances the cumulative counters <name>_<label> for each matching bucket in the settings' bucket table and <name>_<inf-label>); ObserveSecondsBatch (observations = a sequence of SecondsObservation (name, seconds) — accumulates in one go into the same snapshot as firing ObserveSeconds one by one in sequence order, so that a caller observing seconds many times in one event fires the effect only once; writes across the names in the sequence are not promised, per R6); SetGauge (name, value — replaces); ReadMeter (answer = MeterSnapshot). Every answer other than ReadMeter's is None. Settings are MeterSettings (buckets, inf-label, gc-pause-name).")
+     (rule R2 "There are 3 latest-value effects (latest_effects.hy): PublishLatest (value — replaces the entry keyed by type type(value)); ReadLatest (kind — the latest value of exactly that type, or None); AwaitLatest (kind, seen — waits until the latest value of that type is a different object from seen [compared with is] and answers that value. If it already differs, it does not wait. The wait is on a doorbell [CreateExternalPromise], rung by the publisher's PublishLatest. It has no timeout; a caller that waits up to a limit races it against a clock task and Cancels the loser — a cancelled wait removes its doorbell. The wait is a park that does not stop the virtual clock, used under scheduled. It was added so that another run can read a snapshot published by the writer's run when it is published, instead of re-checking at a fixed interval). Published values are immutable values.")
+     (rule R3 "There is 1 heap-freezing effect (heap_effects.hy): CollectAndFreeze (answer = the number of objects frozen). It is in a separate module from the instruments.")
+     (rule R4 "Real and I/O-free answerers are split by module: process-meter-handler (process_meter.hy) and memory-meter-handler (memory_meter.hy); process-latest-handler (process_latest.hy) and memory-latest-handler (memory_latest.hy); gc-freeze-handler (gc_freeze.hy) and scripted-freeze-handler (scripted_freeze.hy). Only the real modules touch the clock, gc, and threads; the effect modules and the I/O-free answerer modules do not. The 3 real ones are listed in doeff-linter's catalog of real-I/O handlers (packages/doeff-linter/data/world_handlers.json) — so that a user's repo can name them in :wraps of :world-handlers in architecture.hy (the I/O-free answerers are left out, per the catalog's rules).")
+     (rule R5 "For the real instruments and latest values, answerers installed with the same name read and write one store even across runs and threads. Reads do not wait for the writer's lock (they take one reference to the current snapshot). The GC-pause callback does not take the lock (if collection starts in the thread holding the lock, re-acquiring it would wait on itself and hang). Installing the same name with different settings is refused with ValueError. The store lives until the process ends.")
+     (rule R6 "One instrument write is seen all at once within one name (sum of seconds, count, and that name's bucket counters). Writes across names are not necessarily seen all at once — a read between writes to 2 names sees a snapshot in which only one has advanced.")
+     (rule R7 "Real and I/O-free answerers pass the same contract tests: the :interpreters of test_meter_contract.hy, test_latest_contract.hy, and test_heap_freeze.hy in packages/doeff-core-effects/tests. Properties only the real ones have (sharing across runs and threads, refusing different settings, GC pauses) are in test_process_meter.hy and test_process_latest.hy.")
+     (rule R8 "This change only adds. It does not rename any existing doeff type, function, or import.")]
   :laws
     [(law meter-write-is-whole-within-one-name
        :statement "write(meter, name) => every_read_sees(summary(name), buckets(name)) both_before or both_after"
        :counterexamples
-         [(counterexample "ObserveSeconds が秒の回数を先に差し替え、桁の counter を後で差し替える — 間の読みが回数 3・inf の桁 2 を見る")
-          (counterexample "別の thread の読みが書き手の途中の dict を読み、1 つの名の中が半分だけ書かれた断面を見る")])
+         [(counterexample "ObserveSeconds swaps in the count of seconds first and the bucket counters later — a read in between sees count 3 and inf bucket 2")
+          (counterexample "A read in another thread reads the writer's dict mid-write and sees a snapshot in which one name is only half written")])
      (law meter-writes-across-names-are-not-atomic
        :statement "write(meter, a); write(meter, b) => a_read_between may_see(a) without(b)"
        :counterexamples
-         [(counterexample "読み手が全数(answers)と内訳(answers_entity_*)の和がいつも等しいと決めて検める — 間の読みで食い違い、正しい計器を赤と読む")
-          (counterexample "ADR や註が「1 回の出来事の書きは名をまたいでも 1 度に見える」と約束する — この形の答え手は守れない")])
+         [(counterexample "A reader assumes the total (answers) always equals the sum of the breakdown (answers_entity_*) and checks it — a read in between disagrees, and a correct instrument is read as red")
+          (counterexample "An ADR or comment promises 'the writes of one event are seen all at once even across names' — answerers of this shape cannot keep that")])
      (law real-and-memory-answer-one-contract
        :statement "effect in {meter, latest, heap} => real_answerer and io_free_answerer pass the_same_deftests"
        :counterexamples
-         [(counterexample "memory の答え手だけが amount = 0 で名を置かず、模擬では「無い」と「0」が区別できない")
-          (counterexample "本物だけが桁の counter を積み、模擬の検は桁の数を見られない")])
+         [(counterexample "Only the memory answerer does not set the name on amount = 0, so in the fake 'absent' and '0' cannot be told apart")
+          (counterexample "Only the real one accumulates bucket counters, so checks against the fake cannot see bucket counts")])
      (law raw-side-effects-stay-in-real-answerers
        :statement "module in {effects, io_free_answerers} => imports none_of(gc, threading, time)"
        :counterexamples
-         [(counterexample "memory_meter.hy が time.monotonic で GC の停止を測り、模擬の答えが実時計で揺れる")
-          (counterexample "meter_effects.hy の純関数が threading.Lock を取り、模擬の検が thread に触る")])]
+         [(counterexample "memory_meter.hy measures GC pauses with time.monotonic, and the fake's answers wobble with the real clock")
+          (counterexample "A pure function in meter_effects.hy takes a threading.Lock, and checks against the fake touch threads")])]
   :enforcement
     [(deftest test-adr-doe-core-effects-004-one-name-is-written-at-once
-       ;; law meter-write-is-whole-within-one-name の機械面(1 つの run の中): 観測のたびに読み、inf の桁と回数がいつも同じ。
-       ;; thread をまたぐ面は packages/doeff-core-effects/tests/test_process_meter.hy の test-a-reader-in-another-thread-never-sees-half-of-one-name。
+       ;; Mechanical side of law meter-write-is-whole-within-one-name (within one run): read after every observation; the inf bucket and the count are always equal.
+       ;; The cross-thread side is test-a-reader-in-another-thread-never-sees-half-of-one-name in packages/doeff-core-effects/tests/test_process_meter.hy.
        (import doeff [run with_handlers])
        (import doeff_core_effects [state])
        (import doeff_core_effects [MeterBucket MeterSettings ObserveSeconds ReadMeter])
@@ -94,7 +94,7 @@
        (for [snapshot snapshots]
          (assert (= (get snapshot.counters "fold_le_inf") (float (. (get snapshot.durations "fold") count))))))
      (deftest test-adr-doe-core-effects-004-two-names-are-not-written-at-once
-       ;; law meter-writes-across-names-are-not-atomic の反例の検: 2 つの名への書きの間の読みは、片方だけ進んだ断面を見る。
+       ;; Counterexample check for law meter-writes-across-names-are-not-atomic: a read between writes to 2 names sees a snapshot in which only one has advanced.
        (import doeff [run with_handlers])
        (import doeff_core_effects [state])
        (import doeff_core_effects [CountMetric MeterSettings ReadMeter])
@@ -111,18 +111,18 @@
        (assert (not-in "answers_entity_board" between.counters))
        (assert (= (get after.counters "answers_entity_board") 1.0)))
      (deftest test-adr-doe-core-effects-004-io-free-modules-import-no-clock-gc-or-thread
-       ;; law raw-side-effects-stay-in-real-answerers の機械面: effect の module と I/O の無い答え手の module の import を読む。
+       ;; Mechanical side of law raw-side-effects-stay-in-real-answerers: read the imports of the effect modules and the I/O-free answerer modules.
        (import pathlib [Path])
        (import re)
        (val root (/ (. (Path __file__) parent parent parent) "packages" "doeff-core-effects" "doeff_core_effects"))
        (val io-free ["_meter_effects.hy" "_memory_meter.hy" "_latest_effects.hy" "_memory_latest.hy" "_heap_effects.hy" "_scripted_freeze.hy"])
        (val raw (re.compile r"\(import\s+(gc|threading|time)\b"))
        (val found (lfor file io-free :if (.search raw (.read-text (/ root file) :encoding "utf-8")) file))
-       (assert (= found []) (.format "時計・gc・thread を import している I/O の無い module: {!r}" found)))]
+       (assert (= found []) (.format "I/O-free modules that import the clock, gc, or threads: {!r}" found)))]
   :plans ["docs/adr/defadr_doeff_core_effects_004_process_meter_and_latest_values.hy"
           "packages/doeff-core-effects/tests/test_meter_contract.hy"
           "packages/doeff-core-effects/tests/test_process_meter.hy"
           "packages/doeff-core-effects/tests/test_latest_contract.hy"
           "packages/doeff-core-effects/tests/test_process_latest.hy"
           "packages/doeff-core-effects/tests/test_heap_freeze.hy"
-          "agora-controllers: 画面の計器をこの effect へ移す"])
+          "agora-controllers: move the screen's instruments onto these effects"])

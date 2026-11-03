@@ -1,21 +1,24 @@
-;;; Executable ADR: 関数語彙は defk のみ — defn を禁止し(Python との境界も含む・
-;;; 例外は macro の展開の時に呼ぶ関数だけ)、deff は「defk にできない」理由の註と
-;;; :tags つきの逃げ道としてだけ許す。理由の註の無い deff は凍結台帳(ratchet)で
-;;; 単調減少させる。defk / deff の契約の辞書には :tags を必須にする。
+;;; Executable ADR: the function vocabulary is defk only — defn is forbidden (including at the Python boundary;
+;;; the only exception is functions called at macro-expansion time), and deff is allowed only as an escape hatch with a
+;;; "cannot be defk" reason comment and :tags. deff without a reason comment is made to decrease monotonically via a frozen
+;;; ledger (ratchet). :tags is required in the contract dict of defk / deff.
 ;;;
-;;; 初版(2026-08-21): defadr で deff を全部禁じ、defk だけを使う。
-;;; 改訂(2026-09-27): defn を禁じて defk だけを許し、避けられない所だけ deff を許す
-;;;   — 定義に tag を付ける事を強いるため。
-;;;   (R4「台帳が空になったら deff の macro を消す」は取り下げ — deff は避けられない所の逃げ道として残る)
+;;; The "reason comment" is `; <reason marker>: <reason>` on the definition line. The reason marker is DEFF-REASON-MARK below,
+;;; which equals doeff-linter's `definitions.deff_reason_marker` (a Japanese phrase meaning "cannot be defk").
 ;;;
-;;; 追記(2026-09-27・決めた事は :problem の fact): 設定を読むこと・検の補助・framework と
-;;;   process の入口は deff の理由にしない方向。deff の理由の受け入れは doeff-linter の DOEFF203(Jev)が判じる(R6〜R9)。
+;;; First version (2026-08-21): forbid all deff via defadr and use only defk.
+;;; Revision (2026-09-27): forbid defn and allow only defk, allowing deff only where unavoidable
+;;;   — to force definitions to carry tags.
+;;;   (R4 "delete the deff macro once the ledger is empty" is withdrawn — deff remains as the escape hatch where unavoidable)
 ;;;
-;;; 戻し方: この改訂の commit を revert する(ADR の条・針・台帳の数え方が 2026-08-21 版へ戻る)。
+;;; Addendum (2026-09-27; what was decided is in the :problem facts): reading settings, check helpers, and framework and
+;;;   process entry points are not to be reasons for deff. Acceptance of a deff reason is judged by doeff-linter's DOEFF203 (Jev) (R6-R9).
 ;;;
-;;; 2 語彙の併存は呼び出し規約の分裂(直接呼び vs <- bind)であり、file 内の
-;;; 既存慣行を写すエージェント書き手は deff を再生産し続ける — 禁止の法と
-;;; 機械の針が無い限り収束しない(W1b/W2 便自身が 4 つの deff を新設した実測)。
+;;; Rollback: revert this revision's commit (the ADR's clauses, probe, and ledger counting return to the 2026-08-21 version).
+;;;
+;;; Two coexisting vocabularies split the calling convention (direct call vs <- bind), and agent authors copying
+;;; existing in-file practice keep reproducing deff — it does not converge without a forbidding law and
+;;; a mechanical probe (measured: the W1b/W2 batches themselves added 4 new deffs).
 
 (require doeff-adr.macros [defadr rule law])
 (import doeff-adr.macros [fact interpretation counterexample])
@@ -27,9 +30,9 @@
 
 
 ;; ---------------------------------------------------------------------------
-;; 生きた probe — 移行レシピの実演: 純粋な検証ロジックは defk の退化形
-;; (bind ゼロ)でそのまま書け、handler ゼロの run で直接回る。deff にしか
-;; 書けない形は存在しない(表現力の反例が無いことの実行可能な証拠)。
+;; Live probe — demonstration of the migration recipe: pure validation logic can be written as-is in the degenerate
+;; form of defk (zero binds) and runs directly under run with zero handlers. No shape exists that can only be
+;; written as deff (executable evidence that there is no expressiveness counterexample).
 ;; ---------------------------------------------------------------------------
 
 (defk probe-pure-validator [value]
@@ -40,34 +43,34 @@
 
 
 ;; ---------------------------------------------------------------------------
-;; ratchet 台帳 — 2026-08-21 時点の実測(23 file・227 定義)。file 単位で
-;; 「現在数 <= 台帳数」を針が強制する: 新設は必ず赤、削減は緑(台帳は
-;; 変換便が同便で削る — R3)。ここに無い file の deff は 0 でなければならない。
-;; 計測は textual(regex)— コメント・文字列内の「開き括弧 + deff + 空白」も
-;; 数える(台帳と針が同じ物差しである限り ratchet は一貫する)。
-;; 2026-09-27 の改訂から、同じ行に「; defk にできない: <理由>」の註がある deff は
-;; 数えない(R1 の逃げ道 — 理由を名乗った deff は台帳の外で許す)。台帳の数は
-;; 改訂の時点で理由の註を持つ deff が 0 だったので変わらない。
-;; 2026-10-01: 「同じ行」は deff の定義の行 = `(deff` から引数の並びが閉じる行まで
-;; (doeff-linter の DOEFF111 が註を探す範囲と同じ)。引数を複数の行に折った deff は註を並びの閉じる行に置くので、
-;; `(deff` の 1 行目だけを見ると註のある deff を数えていた(doeff-cluster の 6 定義・日次の root の赤)。
-;; 直前の註だけの行は今までどおり数える(linter はそこも受けるが、この台帳は定義の行に限る)。
+;; ratchet ledger — measured as of 2026-08-21 (23 files, 227 definitions). Per file, the probe enforces
+;; "current count <= ledger count": a new one is always red, a reduction is green (the ledger is
+;; trimmed by the conversion batch in the same batch — R3). deff in a file not listed here must be 0.
+;; Measurement is textual (regex) — it also counts "open paren + deff + whitespace" inside comments and strings
+;; (the ratchet stays consistent as long as the ledger and the probe use the same yardstick).
+;; Since the 2026-09-27 revision, a deff with a "; <reason marker>: <reason>" comment on the same line is
+;; not counted (R1's escape hatch — a deff that names its reason is allowed outside the ledger). The ledger counts
+;; did not change because at the time of the revision 0 deffs had a reason comment.
+;; 2026-10-01: "the same line" means the deff's definition lines = from `(deff` to the line where the argument list closes
+;; (the same range in which doeff-linter's DOEFF111 looks for the comment). A deff whose arguments are folded over several lines puts the comment on the line where the list closes,
+;; so looking only at the first `(deff` line counted deffs that had a comment (6 definitions in doeff-cluster; red in the daily root run).
+;; A comment-only line just before is still counted as before (the linter accepts it too, but this ledger is limited to the definition lines).
 ;; ---------------------------------------------------------------------------
 
 (setv DEFF-ROSTER
   {"docs/adr/defadr_doeff_agents_007_koine_session_surface.hy" 4
    "docs/adr/defadr_doeff_hy_003_bang_evaluation_position.hy" 1
    "packages/doeff-agents/src/doeff_agents/_sessionhost/adopt.hy" 1
-   ;; 38 → 37: 自前の待ちの effect ClockSleep の構築子 clock-sleep を消した(待ちは doeff-time の Delay)。
+   ;; 38 -> 37: removed clock-sleep, the constructor of the homegrown wait effect ClockSleep (waiting is doeff-time's Delay).
    "packages/doeff-agents/src/doeff_agents/_sessionhost/effects.hy" 37
-   ;; 34 → 33: session host を effect で起こす形にした時に host-binary-path を消した(台帳の削りが遅れていた)。
+   ;; 34 -> 33: removed host-binary-path when the session host was changed to be started via an effect (the ledger trim had lagged).
    "packages/doeff-agents/src/doeff_agents/_sessionhost/host.hy" 33
    "packages/doeff-agents/src/doeff_agents/_sessionhost/impls/channel.hy" 1
    "packages/doeff-agents/src/doeff_agents/_sessionhost/impls/claude_code.hy" 2
    "packages/doeff-agents/src/doeff_agents/_sessionhost/impls/codex.hy" 5
    "packages/doeff-agents/src/doeff_agents/_sessionhost/impls/markers.hy" 30
    "packages/doeff-agents/src/doeff_agents/_sessionhost/launch.hy" 5
-   ;; 29 → 25: 境界の env の語彙の 4 本を agent_env.hy へ defn で出した(R1 の Python との境界 — deff の焼却ではない)。
+   ;; 29 -> 25: moved 4 boundary env vocabulary functions out to agent_env.hy as defn (R1's Python boundary — not a deff burn-down).
    "packages/doeff-agents/src/doeff_agents/_sessionhost/policy.hy" 25
    "packages/doeff-agents/src/doeff_agents/_sessionhost/schema.hy" 3
    "packages/doeff-agents/src/doeff_agents/_sessionhost/store.hy" 34
@@ -82,25 +85,25 @@
    "tests/semgrep/fixtures/python/packages/doeff-agents/src/doeff_agents/_sessionhost/impls/provider_failure_verbatim_forbidden.hy" 1
    "tests/semgrep/fixtures/python/packages/doeff-agents/src/doeff_agents/_sessionhost/turn_touches_substrate_forbidden.hy" 1})
 
-;; 走査から除く木: 一時複製(worktree/scratchpad)・生成物・環境・
-;; packages/doeff-hy(macro の所有者 — deff の定義と、その意味論を検証する
-;; 自身のテスト。deff の macro は R4 の改訂で残るので、ここの字面は正当)。
+;; Trees excluded from the scan: temporary copies (worktree/scratchpad), build outputs, environments,
+;; packages/doeff-hy (the macro owner — the deff definition and its own tests verifying its
+;; semantics. The deff macro remains under R4's revision, so the text there is legitimate).
 (setv SCAN-SKIP-PARTS
   #{".git" ".venv" ".claude" ".worktrees" "__pycache__" "node_modules"
     "dist" ".mypy_cache" ".pytest_cache" "scratchpad"})
 
-(setv DEFF-REASON-MARK "defk にできない")
+(setv DEFF-REASON-MARK "defk \u306b\u3067\u304d\u306a\u3044")
 (setv DEFF-HEAD-PATTERN (re.compile r"\(deff\s"))
-;; 引数の並びの括弧を数える時の字句: 文字列と註はまとめて 1 つ(中の括弧を数えない)・括弧は 1 字ずつ。
+;; Tokens used when counting brackets of the argument list: a string or a comment is one token (brackets inside are not counted); brackets are one character each.
 (setv DEFF-HEAD-TOKEN (re.compile r"\"(?:\\.|[^\"\\])*\"|;[^\n]*|[\[\]]"))
 
 (defk deff-head [text start]
   {:pre [(: text str) (: start int)]
    :post [(: % str)]
    :tags {:context "doeff-hy-adr" :role "judgment"}}
-  "deff の定義の行 — `(deff` から引数の並びが閉じる行の終わりまで — を切り出すため(doeff-linter の DOEFF111 が註を探す
-   『定義の行(頭から引数の終わりまで)』と同じ範囲。引数が多い deff は並びを複数の行に折り、註を並びの閉じる行に置く)。
-   引数の並びが `(deff` の行で開かない時(註や文の中の『(deff』の字面)は、その 1 行だけ。"
+  "To cut out a deff's definition lines — from `(deff` to the end of the line where the argument list closes (the same range as the
+   'definition lines (from the head to the end of the arguments)' in which doeff-linter's DOEFF111 looks for the comment. A deff with many arguments folds the list over several lines and puts the comment on the line where the list closes).
+   When the argument list does not open on the `(deff` line (the text '(deff' inside a comment or prose), only that one line."
   (val newline (.find text "\n" start))
   (val line-end (if (= newline -1) (len text) newline))
   (val open (.find text "[" start line-end))
@@ -119,7 +122,7 @@
   {:pre [(: text str)]
    :post [(: % int)]
    :tags {:context "doeff-hy-adr" :role "judgment"}}
-  "理由の註(定義の行の「defk にできない」)を持たない deff の定義の数 — 台帳の物差し。"
+  "The number of deff definitions without a reason comment (the reason marker on the definition lines) — the ledger's yardstick."
   (var n 0)
   (for [m (.finditer DEFF-HEAD-PATTERN text)]
     (<- head (deff-head text (.start m)))
@@ -131,7 +134,7 @@
   {:pre [(: repo-root Path)]
    :post [(: % dict)]
    :tags {:context "doeff-hy-adr" :role "foundation"}}
-  "repo 内 .hy の、理由の註の無い deff の定義数を file 別に数える(針と台帳の共通物差し)。"
+  "Count, per file, the deff definitions without a reason comment in the repo's .hy files (the yardstick shared by the probe and the ledger)."
   (setv counts {})
   (for [p (sorted (.rglob repo-root "*.hy"))]
     (setv rel (str (.relative-to p repo-root)))
@@ -146,7 +149,7 @@
 
 
 (defadr ADR-DOE-HY-004
-  :title "関数語彙は defk のみ: defn は禁止(Python との境界も含む・例外は macro の展開の時に呼ぶ関数だけ)、deff は defk にできない所の逃げ道として同じ行の理由の註と :tags つきでだけ許し、defk / deff の契約の辞書には :tags を必須にする。理由の註の無い既存の deff は凍結台帳の ratchet で単調減少させ、変換は呼び出し規約(<- bind)込みの一括出荷で台帳を同便で削る — 語彙の併存は file 慣行の複製で自己増殖し、タグを書けない定義は並べて閲覧できないため、法と針なしには収束しない"
+  :title "The function vocabulary is defk only: defn is forbidden (including at the Python boundary; the only exception is functions called at macro-expansion time), deff is allowed only as an escape hatch where defk is impossible, with a same-line reason comment and :tags, and :tags is required in the contract dict of defk / deff. Existing deff without a reason comment is decreased monotonically via a frozen-ledger ratchet, and conversion ships in one batch including the calling convention (<- bind), trimming the ledger in the same batch — coexisting vocabularies self-propagate by copying in-file practice, and definitions that cannot carry tags cannot be listed and browsed, so it does not converge without a law and a probe"
   :status "accepted"
   :scope ["docs/adr/defadr_doeff_hy_004_defk_only.hy"
           "packages/doeff-agents"
@@ -155,146 +158,146 @@
           "packages/doeff-linter"]
   :problem
     [(fact
-       "doeff-hy は契約つき関数の語彙を 2 つ持つ: deff(素関数・直接呼び)と defk(kleisli program・<- bind で合成)。同じ :pre/:post 契約面を持ちながら呼び出し規約だけが分裂している。"
+       "doeff-hy has two vocabularies for contracted functions: deff (plain function, direct call) and defk (kleisli program, composed with <- bind). They share the same :pre/:post contract surface, yet only the calling convention is split."
        :evidence "packages/doeff-hy/src/doeff_hy/macros.hy:447(deff)/ :498(defk)")
      (fact
-       "初版の方針(2026-08-21): defadr で deff を全部禁じ、defk だけを使う。")
+       "Policy of the first version (2026-08-21): forbid all deff via defadr and use only defk.")
      (fact
-       "実測 2026-08-21: doeff repo の deff は 23 file・227 定義(packages 219 / docs-adr 5 / tests 3)。下流 agent-control-plane の apps は deff 0・defk 3,065 — 収束の終端状態は下流で既に本番実証済み。"
-       :evidence "本 ADR の DEFF-ROSTER(走査条件同一の凍結断面)")
+       "Measured 2026-08-21: the doeff repo has 23 files and 227 deff definitions (packages 219 / docs-adr 5 / tests 3). Downstream agent-control-plane apps have 0 deff and 3,065 defk — the converged end state is already proven in production downstream."
+       :evidence "This ADR's DEFF-ROSTER (a frozen snapshot under identical scan conditions)")
      (fact
-       "2 語彙は放置で自己増殖する: 2026-08-20〜21 の W1b/W2 便自身が、file 内の既存慣行(admission 群・effect constructor 群が deff)を写して新しい deff を 4 つ追加した。書き手はエージェントであり、局所慣行の複製が既定動作である。"
-       :evidence "doeff 92dc4fbb(admit-context-file)/ 84ada9b2(admit-workspace-seed・git-run ほか)")
+       "Left alone, the two vocabularies self-propagate: the W1b/W2 batches of 2026-08-20 to 21 themselves copied existing in-file practice (the admission group and effect constructor group were deff) and added 4 new deffs. The authors are agents, and copying local practice is their default behavior."
+       :evidence "doeff 92dc4fbb (admit-context-file) / 84ada9b2 (admit-workspace-seed, git-run, and others)")
      (fact
-       "deff→defk の変換は定義の書き換えだけでは完結しない: 呼び出しが直接呼びから <- bind に変わるため、呼び手自身が program である必要があり、変換は呼び出し木を遡って連鎖する。機械的な一括置換は壊れる。"
-       :evidence "defk 展開 = @do generator(macros.hy:498-)— 直接呼びは Program 値が返るだけで実行されない")
+       "A deff->defk conversion is not complete by rewriting the definition alone: the call changes from a direct call to a <- bind, so the caller itself must be a program, and the conversion cascades up the call tree. A mechanical bulk replacement breaks."
+       :evidence "defk expansion = @do generator (macros.hy:498-) — a direct call only returns a Program value and does not execute")
      (fact
-       "改訂の方針(2026-09-27): defn を禁じて defk だけを許し、避けられない所だけ deff を許す — 定義に tag を付ける事を強いるため。背景: dir は service → layer で分け、VS Code の navigator が tag で部品を並べられるようにする。")
+       "Policy of the revision (2026-09-27): forbid defn and allow only defk, allowing deff only where unavoidable — to force definitions to carry tags. Background: directories are split service -> layer, so that the VS Code navigator can list components by tag.")
      (fact
-       "defk / deff / defp / defhandler の契約の辞書は :tags {:context … :role …} を受け、定義の属性 __doeff_tags__ に残す。defn は契約の辞書を持たないので :tags を書けず、タグから定義を並べる閲覧(VS Code のパネル)に現れない。"
-       :evidence "packages/doeff-hy/src/doeff_hy/_declarations.hy(CONTRACT-KEYS・TAG-KEYS・ROLES)")
+       "The contract dict of defk / deff / defp / defhandler accepts :tags {:context … :role …} and keeps it in the definition's attribute __doeff_tags__. defn has no contract dict, so it cannot carry :tags and does not appear in browsing that lists definitions by tag (the VS Code panel)."
+       :evidence "packages/doeff-hy/src/doeff_hy/_declarations.hy (CONTRACT-KEYS, TAG-KEYS, ROLES)")
      (fact
-       "実測 2026-09-27: doeff repo の packages・docs・tests の .hy に defn / defn/a が 269 file・2,135 定義ある(packages/doeff-hy の macro の実装を含む)。2026-08-21 版の R1 は Python との境界の defn を対象外にしていた。"
+       "Measured 2026-09-27: the .hy files under packages, docs, and tests of the doeff repo contain 269 files and 2,135 defn / defn/a definitions (including the macro implementation in packages/doeff-hy). R1 of the 2026-08-21 version excluded defn at the Python boundary."
        :evidence "grep -rEc '\\(defn(/a)?\\s' --include='*.hy' packages docs tests")
      (fact
-       "追記の方針(2026-09-27): 設定を読む事は Ask のような effect の出番で、deff の理由にならない。deftest でない検は禁じる。doeff-cluster の process の入口は defk でない関数を要しない形にし、doeff-cluster の job API は別に議論する。deff の理由の文が受け入れられるかは Jev が判じる。")
+       "Policy of the addendum (2026-09-27): reading settings is a job for an effect such as Ask and is not a reason for deff. Checks that are not deftest are forbidden. doeff-cluster's process entry points are reshaped so they do not require non-defk functions, and doeff-cluster's job API is discussed separately. Whether the text of a deff reason is accepted is judged by Jev.")
      (fact
-       "agora-controllers の本線 d99194b4 で『defk にできない』の註は 682 件あり、推定の内訳は 検の補助 166・組み立て 127・その他 112・process の入口 82・同上 81・外の library の callback 71・framework の入口 43。本当に素の callable が要る場面と、呼び手を Program にすれば済む場面(組み立て = handlers-of・検 = deftest)が区別されていなかった。"
-       :evidence "doeff 683dd0e8(wt/hy-reason-kinds・doeff-linter の DOEFF111 / DOEFF203)の commit message")]
+       "On agora-controllers main d99194b4 there are 682 reason-marker comments, with an estimated breakdown of check helpers 166, assembly 127, other 112, process entry points 82, 'ditto' 81, external library callbacks 71, framework entry points 43. Cases that truly need a plain callable were not distinguished from cases where making the caller a Program suffices (assembly = handlers-of, checks = deftest)."
+       :evidence "commit message of doeff 683dd0e8 (wt/hy-reason-kinds, doeff-linter's DOEFF111 / DOEFF203)")]
   :context
     [(interpretation
-       "語彙が 1 つなら呼び出し規約も 1 つで、エージェント書き手が誤る余地が構造的に消える。純粋ロジックは defk の退化形(bind ゼロ)でそのまま書け、handler ゼロの run で回る — deff にしか書けない形は無いので、統一のコストは移行だけで表現力の損失は無い。")
+       "With one vocabulary there is one calling convention, and the room for agent authors to err disappears structurally. Pure logic can be written as-is in defk's degenerate form (zero binds) and runs under run with zero handlers — there is no shape that can only be written as deff, so the cost of unification is only the migration, with no loss of expressiveness.")
      (interpretation
-       "big-bang 変換は呼び出し規約の連鎖ゆえに危険。ratchet(新設は針で即赤・既存は台帳で凍結・変換便が台帳を同便で削る)が、回帰ゼロと漸進燃焼を両立する唯一の形。")
+       "A big-bang conversion is dangerous because of the calling-convention cascade. The ratchet (new ones immediately red via the probe, existing ones frozen in the ledger, the conversion batch trims the ledger in the same batch) is the only shape that achieves both zero regressions and gradual burn-down.")
      (interpretation
-       "2026-08-21 版は『disallow』の終端を deff の macro の削除と読み、R4 に置いた。2026-09-27 の決定はこれを改める: 外の library の callback・Python から同期で呼ばれる境界・pytest の fixture のような framework の規約は、Program ではなく素の callable を要求するので defk にできない。そこで defn を使うとタグを書けない定義が残る。deff は素の callable でありながら契約の辞書(:tags を含む)を持てるので、避けられない所の逃げ道として deff を残し、defn の方を消す。禁止の焦点は『deff という語彙』から『タグを書けない定義(defn)と、理由を名乗らない deff』へ移る。")
+       "The 2026-08-21 version read the end state of 'disallow' as deleting the deff macro and put it in R4. The 2026-09-27 decision revises this: external library callbacks, boundaries called synchronously from Python, and framework conventions such as pytest fixtures require a plain callable, not a Program, so they cannot be defk. Using defn there leaves definitions that cannot carry tags. deff is a plain callable yet can have a contract dict (including :tags), so deff is kept as the escape hatch where unavoidable, and defn is the one removed. The focus of the ban moves from 'the deff vocabulary' to 'definitions that cannot carry tags (defn) and deff that does not name its reason'.")
      (interpretation
-       "判定の正本は doeff-linter とする(defn の禁止・deff の理由の註・:tags の必須)。この ADR の針(DEFF-ROSTER の ratchet)は理由の註の無い deff の数だけを持ち、linter の規則と二重に数えない。linter の規則が本線に着地するまで、該当の law は未配線(enforcement なし)と明示する。")]
+       "The source of truth for judgment is doeff-linter (the defn ban, the deff reason comment, required :tags). This ADR's probe (the DEFF-ROSTER ratchet) holds only the count of deff without a reason comment and does not double-count with the linter rules. Until the linter rules land on main, the corresponding laws are explicitly marked unwired (no enforcement).")]
   :decision
-    [(rule R1 "関数は defk で書く(repo 全域 — production・tests・docs/adr。除外は macro 所有者 packages/doeff-hy のみ)。handler は defhandler、テスト本体は deftest、入口は defp。defn / defn/a は禁止し、Python との境界(interop)も対象に含める。例外は macro の展開の時に呼ぶ関数(eval-and-compile / eval-when-compile の中)だけ。素の callable が要る所(外の library の callback・Python から同期で呼ばれる境界・pytest の fixture のような framework の規約)は deff を逃げ道として使い、同じ行に『; defk にできない: <理由>』を書く。2026-08-21 版の『Python interop 境界の素の defn は対象外』は取り下げる(2026-09-27 改訂)。")
-     (rule R1b "defk と deff の契約の辞書には :tags {:context <文脈> :role <役>} を必須にする。鍵と役の一覧は doeff-hy の declarations(TAG-KEYS・ROLES)と各 repo の doeff-linter の設定に従う(2026-09-27 新設)。")
-     (rule R2 "理由の註の無い既存の deff(2026-08-21 時点で 227 定義)は DEFF-ROSTER に凍結する。針は file 単位で 現在数 <= 台帳数 を強制し、台帳外 file の理由の註の無い deff は 0 を強制する — いかなる新設・移設も赤。台帳は『defk にできる物を減らす』向きにだけ動く。")
-     (rule R3 "変換(burn-down)は、定義の defk 化と全呼び出し site の <- bind 化と DEFF-ROSTER の該当行の削減を 1 便で一括出荷する。台帳の減少と実削除は常に同期する。")
-     (rule R4 "【2026-09-27 取り下げ】旧文: DEFF-ROSTER が空になったら deff macro 本体とその意味論テストを packages/doeff-hy から削除する。改訂後: deff の macro は R1 の逃げ道として残す。DEFF-ROSTER が空になっても macro は消さない(台帳が空 = 理由を名乗らない deff が 0 になった状態)。")
-     (rule R5 "台帳の増額・除外の新設は、管理者が明示に認めた時だけ行う。針の走査条件(SCAN-SKIP-PARTS・doeff-hy 除外)の変更も同様。")
-     (rule R6 "設定・環境(env の値・設定の file)を読むことは deff の理由にならない。読みは Ask などの effect で書き、値は handler が答える(2026-09-27 追記)。")
-     (rule R7 "検(テスト)は deftest だけで書く。pytest の素の test 関数・検の補助の素の関数(値を組む口・fixture の代わり)は禁止し、補助は defk にして deftest の本体から <- で受ける。R1 の『pytest の fixture のような framework の規約』は deff の理由の例から外す(2026-09-27 追記)。")
-     (rule R8 "deff の理由(同じ行の『; defk にできない: <理由>』)は自由な文で書く。受け入れるかは doeff-linter の DOEFF203(Jev)が、その repo の architecture.hy に宣言した受け入れ可の理由と照らして決める。註の有無・形は DOEFF111 が検める(2026-09-27 追記)。")
-     (rule R9 "【2026-09-28 改訂】旧文: framework・process の入口(doeff-cluster の job_entry の env の関数など)は deff の理由にしない方向とする。doeff-cluster の job API の議論が決まるまで、既存の入口の素の関数は登録簿で持ち、新設はしない(2026-09-27 追記)。改訂後: doeff-cluster の job の入口は deff の理由にしない — job は Program だけを受ける(ADR-DOE-CLUSTER-001)ので、入口の env の関数・handler の列を返す関数は defk にして job の Program の中で呼ぶ。pytest の hook のような framework が素の関数として呼ぶ入口は、受け入れる理由のまま(R10)。改訂の出自 = agora-controllers の architecture.hy の :plain-callable-reasons(L1443)と揃える(2026-09-28)。")
-     (rule R10 "deff の理由として受け入れるのは 3 種だけ(agora-controllers の architecture.hy の :plain-callable-reasons と同じ・DOEFF203 の Jev がこの一覧と理由の文を照らす): (1) 外の library が素の関数として呼ぶ callback(sorted の key・pydantic の validator・playwright の handler・with_handlers に渡す関数・thread や process の起動口)、(2) framework が素の関数として呼ぶ入口(pytest の hook・fixture の外枠・console script の main)— doeff-cluster の job の入口は含めない、(3) macro の展開の時に走る関数(Program の外でしか意味を持たない)。受け入れない型(:rejected-plain-callable-reasons と同じ 7 つ・直し方つき): 組み立て(handler の列や土台 — handlers-of・foundation・settings-of → defk にし job の Program の中で呼ぶ)/ 設定・環境変数・資格の file の読み(→ Ask などの effect で読む defk・R6)/ 検の補助・検の組み立て・筋書きの部品(→ defk にして deftest の中で <- で呼ぶ・R7)/ 純粋なので内包表記や式の途中から呼びたい(→ defk にし呼ぶ側を for と <- / ! に書き直す)/ 速さ(→ defk にし、遅ければ doeff 側で defk の呼び出しの費用を下げる)/ 呼び方を保つ・他の branch や呼び手が素で呼んでいる(→ defk にし呼び手を <- / ! で直す)/ doeff の実行の外で呼ばれる(Python の入口が handler の列を受ける・run の外で使う → 呼ぶ側を Program にする・job の入口は R9 の形)。一覧の正本は repo の architecture.hy で、この条はその doeff 側の写し — 片方だけ直さない(2026-09-28)。")]
+    [(rule R1 "Functions are written with defk (repo-wide — production, tests, docs/adr; the only exclusion is the macro owner packages/doeff-hy). Handlers are defhandler, test bodies are deftest, entry points are defp. defn / defn/a are forbidden, including at the Python boundary (interop). The only exception is functions called at macro-expansion time (inside eval-and-compile / eval-when-compile). Where a plain callable is needed (external library callbacks, boundaries called synchronously from Python, framework conventions such as pytest fixtures), use deff as the escape hatch and write '; <reason marker>: <reason>' on the same line. The 2026-08-21 version's 'plain defn at the Python interop boundary is out of scope' is withdrawn (2026-09-27 revision).")
+     (rule R1b "The contract dict of defk and deff requires :tags {:context <context> :role <role>}. The lists of keys and roles follow doeff-hy's declarations (TAG-KEYS, ROLES) and each repo's doeff-linter settings (added 2026-09-27).")
+     (rule R2 "Existing deff without a reason comment (227 definitions as of 2026-08-21) is frozen in DEFF-ROSTER. The probe enforces current count <= ledger count per file, and enforces 0 deff without a reason comment in files outside the ledger — any new addition or relocation is red. The ledger moves only in the direction of 'reducing things that can be defk'.")
+     (rule R3 "A conversion (burn-down) ships, in one batch, the definition's change to defk, the change of every call site to <- bind, and the reduction of the corresponding DEFF-ROSTER line. The ledger decrease and the actual deletion are always in sync.")
+     (rule R4 "[Withdrawn 2026-09-27] Old text: once DEFF-ROSTER is empty, delete the deff macro itself and its semantics tests from packages/doeff-hy. After revision: the deff macro remains as R1's escape hatch. Even when DEFF-ROSTER is empty the macro is not deleted (empty ledger = the state where deff that does not name its reason is 0).")
+     (rule R5 "Increasing a ledger count or adding a new exclusion happens only when the maintainer explicitly approves it. The same applies to changing the probe's scan conditions (SCAN-SKIP-PARTS, the doeff-hy exclusion).")
+     (rule R6 "Reading settings or environment (env values, settings files) is not a reason for deff. Reads are written with an effect such as Ask, and the handler answers the value (added 2026-09-27).")
+     (rule R7 "Checks (tests) are written only with deftest. Plain pytest test functions and plain check-helper functions (value builders, fixture substitutes) are forbidden; helpers are made defk and received with <- from the deftest body. R1's 'framework conventions such as pytest fixtures' is removed from the examples of deff reasons (added 2026-09-27).")
+     (rule R8 "A deff reason (the same-line '; <reason marker>: <reason>') is written as free text. Whether it is accepted is decided by doeff-linter's DOEFF203 (Jev), by checking it against the acceptable reasons declared in that repo's architecture.hy. The presence and shape of the comment are checked by DOEFF111 (added 2026-09-27).")
+     (rule R9 "[Revised 2026-09-28] Old text: framework and process entry points (such as the env function of doeff-cluster's job_entry) are not to be reasons for deff. Until the doeff-cluster job API discussion is settled, existing plain entry-point functions are kept in a registry and no new ones are added (added 2026-09-27). After revision: doeff-cluster job entry points are not a reason for deff — a job accepts only a Program (ADR-DOE-CLUSTER-001), so entry-point env functions and functions returning a handler list are made defk and called inside the job's Program. Entry points that a framework calls as plain functions, such as pytest hooks, remain an accepted reason (R10). Origin of the revision = aligning with :plain-callable-reasons (L1443) in agora-controllers' architecture.hy (2026-09-28).")
+     (rule R10 "Only 3 kinds are accepted as deff reasons (same as :plain-callable-reasons in agora-controllers' architecture.hy; DOEFF203's Jev checks the reason text against this list): (1) callbacks that an external library calls as plain functions (sorted's key, pydantic validators, playwright handlers, functions passed to with_handlers, thread or process launch points), (2) entry points that a framework calls as plain functions (pytest hooks, the outer shell of fixtures, a console script's main) — not including doeff-cluster job entry points, (3) functions that run at macro-expansion time (meaningful only outside a Program). Rejected kinds (the same 7 as :rejected-plain-callable-reasons, with fixes): assembly (handler lists or foundations — handlers-of, foundation, settings-of -> make it defk and call it inside the job's Program) / reading settings, environment variables, or credential files (-> a defk that reads via an effect such as Ask; R6) / check helpers, check assembly, scenario parts (-> make it defk and call it with <- inside deftest; R7) / it is pure so I want to call it from inside a comprehension or mid-expression (-> make it defk and rewrite the caller with for and <- / !) / speed (-> make it defk, and if slow, lower the cost of defk calls on the doeff side) / preserving the calling style, or other branches or callers call it plainly (-> make it defk and fix the callers with <- / !) / it is called outside doeff execution (a Python entry point receives a handler list, used outside run -> make the caller a Program; job entry points take R9's shape). The source of truth for the list is the repo's architecture.hy, and this clause is its doeff-side copy — do not fix only one side (2026-09-28).")]
   :laws
     [(law defk-only-vocabulary
-       :statement "for_all hy_file f in repo \\ {packages/doeff-hy}: count_deff(f) <= DEFF-ROSTER.get(f, 0) — 台帳は単調非増加であり、新しい deff は存在できない"
+       :statement "for_all hy_file f in repo \\ {packages/doeff-hy}: count_deff(f) <= DEFF-ROSTER.get(f, 0) — the ledger is monotonically non-increasing, and no new deff can exist"
        :counterexamples
-         [(counterexample "2026-08-20 W1b 便が admit-context-file を deff で新設 — file 慣行の複製が deff を再生産する(針が無ければ収束しない)実測")
-          (counterexample "deff→defk の機械一括置換 — 直接呼びの site は Program 値を受け取るだけで実行されず、静かに no-op 化する(呼び出し規約の連鎖を無視した変換は壊れる)")]
+         [(counterexample "2026-08-20, the W1b batch added admit-context-file as a new deff — measured evidence that copying in-file practice reproduces deff (does not converge without a probe)")
+          (counterexample "A mechanical bulk deff->defk replacement — direct-call sites only receive a Program value without executing it and silently become no-ops (a conversion ignoring the calling-convention cascade breaks)")]
        :enforced-by ["test-adr-doe-hy-004-deff-ratchet" "test-adr-doe-hy-004-reasoned-deff-is-outside-the-roster"])
      (law defn-is-forbidden
-       :statement "for_all hy_file f in repo \\ {packages/doeff-hy}: defn / defn/a の定義は 0 — ただし eval-and-compile / eval-when-compile の中(macro の展開の時に呼ぶ関数)を除く"
+       :statement "for_all hy_file f in repo \\ {packages/doeff-hy}: defn / defn/a definitions are 0 — except inside eval-and-compile / eval-when-compile (functions called at macro-expansion time)"
        :counterexamples
-         [(counterexample "Python から同期で呼ばれる境界の関数を defn で書く — 素の callable が要るなら deff に理由の註と :tags を付けて書く(defn は契約の辞書を持てずタグから閲覧できない)")
-          (counterexample "小さな純粋関数を defn で書く — defk の退化形(bind ゼロ)で書ける")]
+         [(counterexample "Writing a boundary function called synchronously from Python as defn — if a plain callable is needed, write a deff with a reason comment and :tags (defn cannot have a contract dict and cannot be browsed by tag)")
+          (counterexample "Writing a small pure function as defn — it can be written in defk's degenerate form (zero binds)")]
        :enforced-by ["doeff-linter DOEFF110"]
-       :wiring "未配線(2026-09-27)— DOEFF110 は doeff-linter へ別の担当が足している最中で本線に未着地。着地までこの law を機械で検める針は無い")
+       :wiring "Unwired (2026-09-27) — DOEFF110 is being added to doeff-linter by another owner and has not landed on main. Until it lands there is no probe that mechanically checks this law")
      (law deff-names-its-reason
-       :statement "for_all deff 定義 d: 定義の行(`(deff` から引数の並びが閉じる行まで — doeff-linter の DOEFF111 と同じ範囲)に『; defk にできない: <理由>』がある、または d が DEFF-ROSTER の凍結分に数えられている"
+       :statement "for_all deff definition d: the definition lines (from `(deff` to the line where the argument list closes — the same range as doeff-linter's DOEFF111) contain '; <reason marker>: <reason>', or d is counted in DEFF-ROSTER's frozen portion"
        :counterexamples
-         [(counterexample "外の library の callback を理由の註なしの deff で新設する — 理由を名乗らない deff は defk にできる物と見分けられない")]
+         [(counterexample "Adding an external library callback as a new deff without a reason comment — a deff that does not name its reason cannot be told apart from something that could be defk")]
        :enforced-by ["doeff-linter DOEFF111" "test-adr-doe-hy-004-deff-ratchet"]
-       :wiring "一部配線(2026-09-27)— 台帳の ratchet(この ADR の deftest)は理由の註の無い deff の増加を赤にする。定義ごとの判定 DOEFF111 は doeff-linter に未着地")
+       :wiring "Partially wired (2026-09-27) — the ledger ratchet (this ADR's deftest) turns an increase in deff without a reason comment red. The per-definition judgment DOEFF111 has not landed in doeff-linter")
      (law definitions-carry-tags
-       :statement "for_all defk / deff 定義 d: d の契約の辞書に :tags {:context … :role …} がある"
+       :statement "for_all defk / deff definition d: d's contract dict has :tags {:context … :role …}"
        :counterexamples
-         [(counterexample "契約の辞書に :pre / :post だけを書いた defk — タグから並べる閲覧に現れない")]
+         [(counterexample "A defk whose contract dict has only :pre / :post — it does not appear in browsing that lists by tag")]
        :enforced-by ["doeff-linter DOEFF112"]
-       :wiring "未配線(2026-09-27)— DOEFF112 は doeff-linter に未着地。既存の defk の大半は :tags をまだ持たない")
+       :wiring "Unwired (2026-09-27) — DOEFF112 has not landed in doeff-linter. Most existing defk do not yet have :tags")
      (law deff-reason-is-accepted-by-jev
-       :statement "for_all deff 定義 d: d の理由の註がある ∧ DOEFF203(Jev)が d の理由を architecture.hy の受け入れ可の理由のどれかと判じる。設定・環境の読み・検の補助・組み立ては受け入れ可の理由に入らない"
+       :statement "for_all deff definition d: d has a reason comment ∧ DOEFF203 (Jev) judges d's reason to be one of the acceptable reasons in architecture.hy. Reading settings or environment, check helpers, and assembly are not acceptable reasons"
        :counterexamples
-         [(counterexample "env の値を読む関数を『; defk にできない: 設定を読むので』の deff で書く — 読みは Ask の effect で書ける(設定の読みは deff の理由にならない — R6)")
-          (counterexample "deftest の値を組む補助を『; defk にできない: 検の補助』の deff で書く — 補助は defk にして deftest から <- で受ける")
-          (counterexample "handler の組を並べる組み立てを deff で書く — 組み立ては defk(handlers-of)で書ける")]
+         [(counterexample "Writing a function that reads an env value as a deff with the reason 'because it reads settings' — the read can be written with the Ask effect (reading settings is not a reason for deff — R6)")
+          (counterexample "Writing a helper that builds values for a deftest as a deff with the reason 'check helper' — the helper is made defk and received with <- from the deftest")
+          (counterexample "Writing an assembly that lists a set of handlers as deff — assembly can be written as defk (handlers-of)")]
        :enforced-by ["doeff-linter DOEFF111" "doeff-linter DOEFF203"]
-       :wiring "未配線(2026-09-27)— DOEFF111 の新しい形と DOEFF203 は doeff-linter の wt/hy-reason-kinds にあり本線に未着地")
+       :wiring "Unwired (2026-09-27) — the new shape of DOEFF111 and DOEFF203 are in doeff-linter's wt/hy-reason-kinds and have not landed on main")
      (law checks-are-deftest-only
-       :statement "for_all 検 t: t は deftest で書かれている — 素の test 関数・検の補助の素の関数は 0"
+       :statement "for_all check t: t is written with deftest — plain test functions and plain check-helper functions are 0"
        :counterexamples
-         [(counterexample "pytest の素の test 関数(def test_… / defn test-…)で doeff の Program を検める")]
+         [(counterexample "Checking a doeff Program with a plain pytest test function (def test_… / defn test-…)")]
        :enforced-by ["doeff-linter DOEFF118"]
-       :wiring "未配線(2026-09-27)— DOEFF118 は doeff-linter に未着地(番号は coordinator の指定・規則は別の担当が足す)")]
+       :wiring "Unwired (2026-09-27) — DOEFF118 has not landed in doeff-linter (the number was assigned by the coordinator; the rule is being added by another owner)")]
   :enforcement
     [(deftest test-adr-doe-hy-004-deff-ratchet
-       ;; 針: 実測 = scan-deff-counts、法 = DEFF-ROSTER との file 単位比較。
+       ;; Probe: measurement = scan-deff-counts, law = per-file comparison against DEFF-ROSTER.
        (setv repo-root (. (Path __file__) parent parent parent))
        (setv counts (run (scan-deff-counts repo-root)))
        (setv violations [])
        (for [[rel n] (sorted (.items counts))]
          (setv allowed (.get DEFF-ROSTER rel 0))
          (when (> n allowed)
-           (.append violations f"{rel}: {n} > 台帳 {allowed}")))
+           (.append violations f"{rel}: {n} > ledger {allowed}")))
        (assert (= violations [])
-               (+ "新しい deff の定義は禁止(ADR-DOE-HY-004 R1 — defk で書く。"
-                  "既存の変換は R3 の一括出荷で台帳を同便で削る): "
+               (+ "New deff definitions are forbidden (ADR-DOE-HY-004 R1 — write defk. "
+                  "Conversions of existing ones trim the ledger in the same batch via R3's one-batch shipping): "
                   (str violations)))
-       ;; 台帳の腐り検知: 台帳に居るのに実体が台帳より大きく減った file は
-       ;; 台帳の削り忘れ(R3 の同期違反)— 警告でなく赤にする(腐った台帳は
-       ;; 次の新設をその file 内で 1 つ隠す)。
+       ;; Stale-ledger detection: a file in the ledger whose actual count dropped below the ledger
+       ;; means the ledger trim was forgotten (an R3 sync violation) — make it red, not a warning (a stale ledger
+       ;; hides the next new one in that file).
        (setv stale [])
        (for [[rel allowed] (sorted (.items DEFF-ROSTER))]
          (setv n (.get counts rel 0))
          (when (< n allowed)
-           (.append stale f"{rel}: 実体 {n} < 台帳 {allowed}")))
+           (.append stale f"{rel}: actual {n} < ledger {allowed}")))
        (assert (= stale [])
-               (+ "台帳の削り忘れ(ADR-DOE-HY-004 R3 — 変換便は DEFF-ROSTER を"
-                  "同便で削る): " (str stale))))
+               (+ "Ledger trim forgotten (ADR-DOE-HY-004 R3 — a conversion batch trims DEFF-ROSTER "
+                  "in the same batch): " (str stale))))
      (deftest test-adr-doe-hy-004-reasoned-deff-is-outside-the-roster
-       ;; R1 の逃げ道: 定義の行(`(deff` から引数の並びが閉じる行まで)に理由の註を持つ deff は台帳の物差しに数えない。
-       ;; 註の無い deff と、定義の行の外(直前の行・契約や本体の行)に註がある deff は数える。
-       (setv reasoned (+ "(" "deff on-sort-key [row]  ; defk にできない: sorted の key は Program を実行しない\n"))
+       ;; R1's escape hatch: a deff with a reason comment on its definition lines (from `(deff` to the line where the argument list closes) is not counted by the ledger's yardstick.
+       ;; A deff without a comment, and a deff whose comment is outside the definition lines (the line before, contract or body lines), are counted.
+       (setv reasoned (+ "(" "deff on-sort-key [row]  ; defk \u306b\u3067\u304d\u306a\u3044: sorted's key does not run a Program\n"))
        (setv bare (+ "(" "deff on-sort-key [row]\n"))
-       (setv detached (+ "; defk にできない: 別の行の註\n(" "deff on-sort-key [row]\n"))
+       (setv detached (+ "; defk \u306b\u3067\u304d\u306a\u3044: a comment on another line\n(" "deff on-sort-key [row]\n"))
        (assert (= (run (count-unexcused-deff reasoned)) 0))
        (assert (= (run (count-unexcused-deff bare)) 1))
        (assert (= (run (count-unexcused-deff detached)) 1))
-       ;; 引数の並びを折った deff: 並びの閉じる行の註は定義の行の註(doeff-cluster の 6 定義の形)。
+       ;; A deff with a folded argument list: a comment on the line where the list closes is a definition-line comment (the shape of the 6 doeff-cluster definitions).
        (setv folded (+ "(" "deff on-sort-key [#^ str key\n"
-                       "                  #^ int rank]  ; defk にできない: sorted の key は Program を実行しない\n"
+                       "                  #^ int rank]  ; defk \u306b\u3067\u304d\u306a\u3044: sorted's key does not run a Program\n"
                        "  {:pre [(: key str)] :post [(: % str)]}\n  key)\n"))
        (assert (= (run (count-unexcused-deff folded)) 0))
-       ;; 並びが閉じた後の行(契約の辞書・本体)の註は定義の行の外。
+       ;; A comment on a line after the list closes (contract dict, body) is outside the definition lines.
        (setv late (+ "(" "deff on-sort-key [#^ str key\n                  #^ int rank]\n"
-                     "  {:pre [(: key str)]}  ; defk にできない: 並びの後の行\n  key)\n"))
+                     "  {:pre [(: key str)]}  ; defk \u306b\u3067\u304d\u306a\u3044: a line after the list\n  key)\n"))
        (assert (= (run (count-unexcused-deff late)) 1))
-       ;; 文字列と註の中の括弧は並びの閉じに数えない — 既定値の "]" で頭を早く切らない。
+       ;; Brackets inside strings and comments do not count toward closing the list — a default value "]" does not cut the head early.
        (setv quoted (+ "(" "deff on-sort-key [#^ str [key \"]\"]\n"
-                       "                  #^ int rank]  ; defk にできない: sorted の key は Program を実行しない\n  key)\n"))
+                       "                  #^ int rank]  ; defk \u306b\u3067\u304d\u306a\u3044: sorted's key does not run a Program\n  key)\n"))
        (assert (= (run (count-unexcused-deff quoted)) 0))
-       ;; 並びが開かない字面(註の文の中の『(deff』の字面)はその 1 行だけを見る — 次の行の註を拾わない。
-       (setv prose (+ ";; 旧い (" "deff 呼びの説明\n(" "deff on-sort-key [row]  ; defk にできない: sorted の key\n"))
+       ;; Text where the list does not open (the text '(deff' inside comment prose) looks at that one line only — it does not pick up the comment on the next line.
+       (setv prose (+ ";; old (" "deff call explanation\n(" "deff on-sort-key [row]  ; defk \u306b\u3067\u304d\u306a\u3044: sorted's key\n"))
        (assert (= (run (count-unexcused-deff prose)) 1)))
      (deftest test-adr-doe-hy-004-pure-logic-lives-in-defk
-       ;; 移行レシピの実演: 純粋検証は defk の退化形で書け、handler ゼロの
-       ;; run で直接回る — deff にしか書けない形は無い。
+       ;; Demonstration of the migration recipe: pure validation can be written in defk's degenerate form and runs
+       ;; directly under run with zero handlers — there is no shape that can only be written as deff.
        (assert (= (run (probe-pure-validator "abc")) True))
        (assert (= (run (probe-pure-validator "/abs")) False))
        (assert (= (run (probe-pure-validator "")) False)))]
