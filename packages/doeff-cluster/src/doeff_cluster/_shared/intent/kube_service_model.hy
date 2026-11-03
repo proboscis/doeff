@@ -19,7 +19,8 @@
 ;;;
 ;;; 宣言が持つ欄だけを当てる(server-side apply): cluster が埋める欄(clusterIP・status・load balancer の実装が足す finalizer や annotation)と、
 ;;; 他の持ち主が足した欄には触らない。何度当てても同じ宣言なら同じ物になる(job が起動のたびに当て直してよい)。LOAD-BALANCER の Service に
-;;; node の口(NodePort)は開けない(load balancer の実装が Pod へ直に繋ぐ — 宛先を node の外の口へ広げない)。
+;;; node の口(NodePort)は開けない(load balancer の実装が Pod へ直に繋ぐ — 宛先を node の外の口へ広げない)。宛先は ready の Pod だけ
+;;; (publishNotReadyAddresses を毎回 false と当てる — 止まりかけ〔Terminating〕と NotReady の Pod へ接続を振らない)。
 (require doeff-hy.macros [val])
 (require doeff-hy.record [defenum defrecord])
 (val MODULE-TAGS {:context "doeff-cluster" :role "intent"})

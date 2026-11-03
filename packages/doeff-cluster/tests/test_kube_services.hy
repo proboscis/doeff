@@ -192,7 +192,7 @@
   (assert (= (json.loads inside)
              {"apiVersion" "v1" "kind" "Service"
               "metadata" {"name" "ledger" "namespace" "apps" "labels" {"app" "ledger"}}
-              "spec" {"type" "ClusterIP" "selector" {"app" "job-worker" "example.dev/node" "n1"}
+              "spec" {"type" "ClusterIP" "selector" {"app" "job-worker" "example.dev/node" "n1"} "publishNotReadyAddresses" False
                       "ports" [{"name" "http" "port" 8621 "targetPort" 8621 "protocol" "TCP"}]}})
           inside)
   ;; LOAD-BALANCER は class と annotation を書き、node の口を開けない。
@@ -201,6 +201,8 @@
   (assert (= #((get spec "type") (get spec "loadBalancerClass") (get spec "allocateLoadBalancerNodePorts"))
              #("LoadBalancer" "lb.example.dev" False))
           spec)
+  ;; どちらの種類も、止まりかけと NotReady の Pod を宛先に載せない(手で true にした欄を当て直しで戻す)。
+  (assert (is (get spec "publishNotReadyAddresses") False) spec)
   (assert (= (get (json.loads outside) "metadata" "annotations") {"lb.example.dev/hostname" "ledger"}) outside)
   ;; CLUSTER-IP は LoadBalancer の欄を書かない・空の annotation は欄ごと省く。
   (assert (not-in "loadBalancerClass" inside) inside)
