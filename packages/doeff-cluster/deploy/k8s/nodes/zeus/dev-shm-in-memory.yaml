@@ -1,0 +1,23 @@
+# zeus の worker の container の /dev/shm を 8Gi の memory(tmpfs の emptyDir)にする(strategic merge patch・card ki-5ab9473f5328)。
+#
+# 訳: 上に載る repo の test の使い捨ての PostgreSQL は、/dev/shm に 2 GiB 以上の空きが在れば data をそこに作り、
+# 足りなければ TMPDIR(zeus の SSD)に作る。container の既定の /dev/shm は 64 MiB なので、今は全部 SSD に書いている(2026-11-03 の測りで
+# zeus の sdb へ約 56 GB/日・親 card ki-5b1fbcdf7db1)。1 つの PostgreSQL は数十〜百数十 MB で、9 分の採取で同時に 6 つ。8Gi なら同時に
+# 30 を越えても 2 GiB の下限で TMPDIR へ戻る。Chromium・Playwright も /dev/shm を使う。
+#
+# memory への影響は tmp-in-memory.yaml の頭の註と同じ: page は書いた process の cgroup の層に数えられ、Pod の上限の内に入り、消すまで残る。
+# test は終わりに dir ごと消すので常には残らない(SIGKILL で止まった時だけ、Pod を作り直すまで残る)。越える書きは ENOSPC で落ちる。
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: doeff-worker
+  namespace: agent-worker
+spec:
+  template:
+    spec:
+      containers:
+        - name: worker
+          volumeMounts:
+            - { name: dshm, mountPath: /dev/shm }
+      volumes:
+        - { name: dshm, emptyDir: { medium: Memory, sizeLimit: 8Gi } }
