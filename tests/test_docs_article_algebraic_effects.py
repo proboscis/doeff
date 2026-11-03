@@ -6,18 +6,16 @@
 (tools/readme_examples.py)でなく、記事の書き方のまま読む:
 
 - 囲みは `~~~<言葉>` で始まる(``` の囲みは mermaid の図)。
-- python の囲みの頭の行が `# <名>.py` なら、その file の全部。`# <名>.py (excerpt)` なら、空行で区切った塊がその file の中に
-  そのままその順に在る。file は examples/effects_tour を先に、無ければ examples/testing_without_mocks から探す。
-  例外は test_welcome.py: 記事の版は handler を `@handler` だけで書く。例の dir の版は、日次で PyPI の 0.7.0 を入れて走らせる
-  ので `@handler @do` のまま(次の版を PyPI に出す時に書き替える)。記事の版は、例の dir の welcome.py・infra.py と並べて
-  pytest で通る事を見る。
+- python の囲みの頭の行が `# <名>.py` なら、examples/effects_tour のその file の全部。`# <名>.py (excerpt)` なら、空行で
+  区切った塊がその file の中にそのままその順に在る。記事が引く file は spend.py・spire.py・test_spire.py だけ。
+  test_spire.py は、spire.py と並べた dir で pytest が通る事も見る。
 - 頭の行の無い python の囲みは実行の行: 行は spire.py の tour() か play() の文(印字の頭の `"  ->"` を外した形も可)か、
-  偽の handler を 1 つ忘れた行。
+  handler を 1 つ忘れた行。
 - text の囲みは、spend.py の印字・spire.py の印字の 1 区切り(見出し「<数>. ...」の下。行の頭の `  -> ` を外す)・忘れた時の
   doeff の traceback の頭のどれかと同じ。
 
 [removed]
-監視の例 monitor.py は前半に残さない)。本文の主張のうち、走らせて確かめられる物も見る: handler 無しでは最初の Roll で
+監視の例 monitor.py の文を記事に残さない。前半は card [id]、後半は card [id])。本文の主張のうち、走らせて確かめられる物も見る: handler 無しでは最初の Roll で
 UnhandledEffect になる・同じ seed の戦いは毎回同じ・Monte Carlo の handler の中の run は外の dice を使わない。
 """
 
@@ -37,7 +35,6 @@ from tests.cli.cli_child import with_settings
 ROOT = Path(__file__).resolve().parents[1]
 ARTICLE = ROOT / "docs" / "articles" / "algebraic-effects-in-python.md"
 TOUR = ROOT / "examples" / "effects_tour"
-MOCKS = ROOT / "examples" / "testing_without_mocks"
 # 子 1 つの制限時間の、負荷で伸ばす前の値(秒)。1 本は 約 1 秒(多くは doeff の import)。
 CHILD_DEADLINE_SECONDS = 50
 # spire.py の tour は約 25 秒(Monte Carlo の 100 戦が大半)。spire.py の頭の約束は 60 秒以内。
@@ -48,18 +45,20 @@ _HEADER = re.compile(r"# (?P<name>\w+\.py)(?P<excerpt> \(excerpt\))?")
 _SEGMENT = re.compile(r"^(\d+)\. .*$\n", re.MULTILINE)
 # tour() の印字の頭の印。記事は印を外した行と印字を見せる。
 ARROW = "  -> "
-# 記事の前半の範囲と、そこに残してはいけない監視の例の言葉。
+# 記事の前半の範囲と、記事のどこにも残してはいけない監視の例の言葉。
 FRONT = ("## The idea", "## One mechanism under all of it")
 MONITOR_WORDS = re.compile(r"two pages|half(?:-| )an? hour|half hour|\bmonitor", re.IGNORECASE)
-# 記事の「Tests are one of the stacks」の、偽の handler を 1 つ忘れた行。
+# 記事の「Tests are one of the stacks」の、Played の handler を忘れた行(moves は Layer 1 の行の物)。
 FORGOT = (
     "from doeff import run\n"
-    "from test_welcome import fake_load_user\n"
-    "from welcome import welcome\n"
-    "run(fake_load_user(welcome(1)))\n"
+    "from spire import *\n"
+    "moves = [0, 0, 0, None] * 20\n"
+    "run(silent(dice(7)(scripted(moves)(battle()))))\n"
 )
-# 記事の test_welcome.py を例の dir の版と並べて走らせる時に写す、例の dir の file。
-MOCKS_FILES = ("welcome.py", "infra.py", "pytest.ini")
+# 記事が囲みで引いてよい例の file(全部 examples/effects_tour の物)。
+QUOTED_FILES = {"spend.py", "spire.py", "test_spire.py"}
+# 記事の test_spire.py を走らせる時に並べる、例の dir の file。
+SPIRE_FILES = ("spire.py", "pytest.ini")
 
 
 def _fences() -> list[tuple[str, str, int]]:
@@ -77,9 +76,8 @@ def _header(body: str) -> re.Match[str] | None:
 
 
 def _source(name: str) -> str:
-    """囲みの頭の行が名指す例の file の中身(effects_tour を先に探す)。"""
-    path = TOUR / name if (TOUR / name).exists() else MOCKS / name
-    return path.read_text(encoding="utf-8").rstrip("\n")
+    """囲みの頭の行が名指す effects_tour の file の中身。"""
+    return (TOUR / name).read_text(encoding="utf-8").rstrip("\n")
 
 
 def _child(
@@ -175,20 +173,17 @@ def _main_lines() -> set[str]:
     return {text for text in statements | unarrowed if text} | {FORGOT.splitlines()[-1]}
 
 
-def _welcome_dir(directory: Path) -> Path:
-    """記事の test_welcome.py を、例の dir の welcome.py・infra.py と並べた dir を directory に作る。"""
-    for name in MOCKS_FILES:
-        shutil.copy(MOCKS / name, directory / name)
-    (body,) = [body for _, body, _ in _fences() if body.startswith("# test_welcome.py\n")]
-    (directory / "test_welcome.py").write_text(body + "\n", encoding="utf-8")
+def _spire_dir(directory: Path) -> Path:
+    """記事の test_spire.py を、例の dir の spire.py と並べた dir を directory に作る。"""
+    for name in SPIRE_FILES:
+        shutil.copy(TOUR / name, directory / name)
+    (body,) = [body for _, body, _ in _fences() if body.startswith("# test_spire.py\n")]
+    (directory / "test_spire.py").write_text(body + "\n", encoding="utf-8")
     return directory
 
 
-# 記事の test_welcome.py は handler を @handler だけで書き、例の dir の版と違う — 下の pytest の検が受け持つ。
 _NAMED = [
-    (body, line)
-    for language, body, line in _fences()
-    if language == "python" and (header := _header(body)) and header["name"] != "test_welcome.py"
+    (body, line) for language, body, line in _fences() if language == "python" and _header(body)
 ]
 
 
@@ -217,11 +212,13 @@ def test_unnamed_python_fences_are_lines_the_examples_run() -> None:
     assert stray == []
 
 
-def test_text_fences_are_what_the_examples_print(
-    tmp_path: Path, deadline_scale_factor: float
-) -> None:
-    welcome = _welcome_dir(tmp_path)
-    forgot = _child([sys.executable, "-c", FORGOT], welcome, deadline_scale_factor).stderr
+def test_every_code_block_quotes_the_battle_or_spend() -> None:
+    named = {header["name"] for _, body, _ in _fences() if (header := _header(body))}
+    assert named == QUOTED_FILES
+
+
+def test_text_fences_are_what_the_examples_print(deadline_scale_factor: float) -> None:
+    forgot = _child([sys.executable, "-c", FORGOT], TOUR, deadline_scale_factor).stderr
     printed = {
         "spend.py": _printed("spend.py", deadline_scale_factor),
         # 忘れた時は、Python の traceback の前に doeff が印字する頭だけを記事が見せる
@@ -248,10 +245,14 @@ def _front() -> str:
     return text[text.index(FRONT[0]) : text.index(FRONT[1])]
 
 
+def test_the_article_has_no_monitor_words() -> None:
+    lines = ARTICLE.read_text(encoding="utf-8").splitlines()
+    found = [f"{n}: {line}" for n, line in enumerate(lines, 1) if MONITOR_WORDS.search(line)]
+    assert found == [], f"記事に監視の例の文が残っている: {found}"
+
+
 def test_the_front_half_is_the_battle_and_not_the_monitor() -> None:
     front = _front()
-    found = [line for line in front.splitlines() if MONITOR_WORDS.search(line)]
-    assert found == [], f"記事の前半に監視の例の文が残っている: {found}"
     # Layer 1〜6 と本番の節が spire.py の stack の順に並ぶ
     headings = re.findall(r"^### (.+)$", front, re.MULTILINE)
     assert [h.split(":")[0] for h in headings] == [
@@ -279,16 +280,16 @@ def test_the_monitor_words_check_finds_the_old_lines(line: str) -> None:
 def test_the_article_test_passes_beside_the_example_files(
     tmp_path: Path, deadline_scale_factor: float
 ) -> None:
-    welcome_dir = _welcome_dir(tmp_path)
+    spire_dir = _spire_dir(tmp_path)
     done = _child(
-        [sys.executable, "-m", "pytest", "-q", "-p", "no:cacheprovider", "test_welcome.py"],
-        welcome_dir,
+        [sys.executable, "-m", "pytest", "-q", "-p", "no:cacheprovider", "test_spire.py"],
+        spire_dir,
         deadline_scale_factor,
         PYTEST_DISABLE_PLUGIN_AUTOLOAD="1",
         PYTEST_ADDOPTS=None,
     )
     assert done.returncode == 0, f"{done.stdout[-3000:]}\n{done.stderr[-3000:]}"
-    assert re.match(r"1 passed\b", done.stdout.splitlines()[-1]), done.stdout
+    assert re.match(r"2 passed\b", done.stdout.splitlines()[-1]), done.stdout
 
 
 _CLAIMS = """
