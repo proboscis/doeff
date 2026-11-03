@@ -139,6 +139,11 @@ name = "doeff"
 #   通らずに入った物と、日時の無い出所の行・種類 2・種類 4 を main の木の全体で捕まえる。
 # ⇒ 費用: 標準の library だけで追跡する file を読む(実測 約 3 秒)。make sync は要らない。後ろを止めない。
 # ⇒ 形の検: tests/misc/test_find_internal_leftovers.py。戻すには leftovers の行を消す。
+# 2026-11-04(戻せる): 段 japanese を足す。scripts/count_japanese.py が、追跡する text file の全部の行で日本語の字を含む行を数え、
+# dir ごと・拡張子ごとの表と合計を出す(publications/ は数えない)。今は数を出すだけで fail にしない(rc 0)。
+# ⇒ なぜ: repo 内の言語を英語に統一する決定(2026-11-04)の進みを、日次の結末で読むため。
+# ⇒ 替え方: 合計が 0 になった区切りの終わりで run の末尾に --fail-on-any を足す。戻すには japanese の行を消す。
+# ⇒ 形の検: tests/misc/test_count_japanese.py。標準の library だけ(実測 約 7 秒)・make sync は要らない。後ろを止めない。
 full = [
 # 2026-10-22: lint と vscode を build の直後へ移した。10-21 の日次で root 2323 秒・packages 5281 秒が
 # 全体の上限 full_timeout_s を使い切り、最後に置いた lint が 240 秒で切られて未実行(budget-exhausted)になり、直した lint が緑になるかを測れなかった。
@@ -147,6 +152,7 @@ full = [
   { name = "lint", run = "sh scripts/gate_tools.sh linter && uv run --no-project python scripts/hook_finding_baseline.py --strict check doeff-linter && uv run --no-project --python 3.12 python scripts/hook_finding_baseline.py --strict check semgrep", pytest = false },
   { name = "vscode", run = "cd ide-plugins/vscode/doeff-runner && npm ci --no-audit --no-fund && npm run compile && npm run lint", pytest = false },
   { name = "leftovers", run = "uv run --no-project python scripts/find_internal_leftovers.py --fail-on 1,2,4", pytest = false },
+  { name = "japanese", run = "uv run --no-project python scripts/count_japanese.py --top 20", pytest = false },
   { name = "root", run = "UV_CACHE_DIR=${UV_CACHE_DIR:-${XDG_CACHE_HOME:-$HOME/.cache}/uv-lanes/land-doeff} make sync && UV_CACHE_DIR=${UV_CACHE_DIR:-${XDG_CACHE_HOME:-$HOME/.cache}/uv-lanes/land-doeff} PYTHONUNBUFFERED=1 uv run --no-sync pytest -q -m 'not e2e' --durations=0 --durations-min=10", pytest = true },
   { name = "packages", run = "UV_CACHE_DIR=${UV_CACHE_DIR:-${XDG_CACHE_HOME:-$HOME/.cache}/uv-lanes/land-doeff} make sync && gate_path=$(sh scripts/gate_tools.sh path) && PATH=$gate_path$PATH UV_CACHE_DIR=${UV_CACHE_DIR:-${XDG_CACHE_HOME:-$HOME/.cache}/uv-lanes/land-doeff} PYTHONUNBUFFERED=1 make test-packages PACKAGE_UV_RUN='uv run --no-sync' PACKAGE_JOBS=4", pytest = true },
   { name = "hy-floor", run = "UV_CACHE_DIR=${UV_CACHE_DIR:-${XDG_CACHE_HOME:-$HOME/.cache}/uv-lanes/land-doeff} make sync && UV_CACHE_DIR=${UV_CACHE_DIR:-${XDG_CACHE_HOME:-$HOME/.cache}/uv-lanes/land-doeff} PYTHONUNBUFFERED=1 make test-hy-floor PACKAGE_UV_RUN='uv run --no-sync'", pytest = true },
