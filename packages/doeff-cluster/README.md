@@ -424,8 +424,8 @@ worker が無い・コードを準備できない)・`DetachedUnknown`(知らな
   - 回数は 3 回まで(`RERUN-LIMIT` — task 自身が担い手を落としている時に機体を落とし続けない)。使い切ると `DetachedLost` です。
   - worker が生きている間に子だけが結果なしで終わった時(memory の見張り・OS に止められた)は走らせ直しません。task 自身が訳かもしれないからです。
   - 試行が変わると、知らせ先を名乗った task は出口に行 `reran`(id = `<次の試行の id>/reran`)を積みます(読み手は `AwaitDetachedOutbox` の `kinds` で名乗る)。
-  - 2 度走って困る仕事は名乗りません。途中から続くのは Program が途中の結果を残す時だけです。lease は生死の窓(`ClusterTiming.lease-ms` = 10 秒)より
-    長く取ります(短いと、まだ生きていると数える消えた worker へ次の試行を置いて回数を無駄にします)。
+  - 2 度走って困る仕事は名乗りません。途中から続くのは Program が途中の結果を残す時だけです。
+  - 次の試行は、積み直した刻より後に連絡のあった worker にだけ置きます(生死の窓の中でまだ生きていると数える消えた worker へ置いて回数を無駄にしない)。
 - **結果の後の消失**: 結果を受け取った後に worker が死んでも、結果は変わりません。子 process は終わる前に結果を coordinator へ直接
   送るので、子が終わった直後(worker の次の heartbeat の前)に worker が死んでも結果は届いています。結果は `retain-seconds`(既定
   24 時間・30 日まで)か `ReleaseDetached` まで持ちます。

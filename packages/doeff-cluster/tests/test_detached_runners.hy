@@ -213,8 +213,8 @@
 (defk rerun-runs-on-the-next-generation []
   {:pre [] :post [(: % bool)]}
   ;; 走らせ直しを名乗った task(2026-11-04): a が死に、同じ名の次の世代が起きると、同じ key の次の試行がそこで走って値を返す(a が消えた間は待つ)。
-  ;; 同じ順の名乗らない task は lost のまま(同じ置き先の対照)。走らせ直す task の lease は生死の窓(10 秒)より長く取る(本番の既定は 60 秒)。
-  (<- (submit-detached-task (slow-add (* SLOW 4) 2) :key "k-again" :needs ON-X :lease-seconds 12.0 :memory-mib 1024 :rerun True))
+  ;; 同じ順の名乗らない task は lost のまま(同じ置き先の対照)。
+  (<- (submit-detached-task (slow-add (* SLOW 4) 2) :key "k-again" :needs ON-X :lease-seconds LEASE :memory-mib 1024 :rerun True))
   (<- (submit-detached-task (slow-add (* SLOW 4) 3) :key "k-once" :needs ON-X :lease-seconds LEASE :memory-mib 1024))
   (<- (Delay 2.0))
   (<- lost int (KillWorker "a"))

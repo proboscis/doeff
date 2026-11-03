@@ -469,22 +469,20 @@
 (defk runner-dies-and-the-named-task-runs-again [rig]
   {:pre [(: rig Rig)] :post [(: % bool)]}
   ;; 走らせ直しを名乗った task(2026-11-04): 担い手が死ぬと、同じ key の次の試行が次の担い手で走り、結末は次の試行の値。知らせ先へ試行が変わった
-  ;; 行が届く。担い手が起き直して次の試行が走る順は test_detached_runners.hy の筋書き。lease は生死の窓(ClusterTiming.lease-ms = 10 秒)より長く取る
-  ;; (本番の既定は 60 秒 — 短いと、まだ生きていると数える消えた担い手へ次の試行を置いて試行を無駄にする)。
-  (<- (submit-detached-task (slow-add (* rig.slow 10) 5) :needs LOCAL :key "k-rerun" :lease-seconds 12.0 :notify "l:c-a" :rerun True
+  ;; 行が届く。担い手が起き直して次の試行が走る順は test_detached_runners.hy の筋書き。lease が生死の窓より短くても、消えた担い手へ次の試行を置かない。
+  (<- (submit-detached-task (slow-add (* rig.slow 10) 5) :needs LOCAL :key "k-rerun" :lease-seconds rig.lease :notify "l:c-a" :rerun True
                             :memory-mib 1024))
   (<- (await-observed rig "k-rerun" held-or-none "担い手の task の起こし"))
   (<- lost int (KillWorker RUNNER))
   (assert (= lost 1))
-  (<- told (AwaitDetachedOutbox "l:" 60.0 :kinds #(OUTBOX-RERAN)))
+  (<- told (AwaitDetachedOutbox "l:" (* rig.lease 8) :kinds #(OUTBOX-RERAN)))
   (assert (= (lfor e told.entries #(e.key e.kind)) [#("k-rerun" OUTBOX-RERAN)]) told)
   (<- waiting (AwaitDetached "k-rerun" :timeout-seconds 0.0))
   (assert (and (isinstance waiting DetachedPending) (= waiting.phase "queued")) waiting)
   True)
 
-;; 模擬の時計の 2 つの組だけ(served の組は実時間で lease の 12 秒を待つ)。
 (deftest test-runner-death-sends-a-named-task-back-to-the-queue [rig-name tmp-path request]
-  {:params {"rig_name" (cut RIGS 2)}}
+  {:params {"rig_name" RIGS}}
   (assert (isinstance rig-name str) rig-name)
   (<- rig Rig (open-named rig-name tmp-path request None))
   (<- ok (run-scenario rig runner-dies-and-the-named-task-runs-again))
@@ -963,6 +961,21 @@
   (val ended (! (beat next-state "w" 14000 :boot "b2" :statuses [{"name" (+ "task/" waiting.id) "phase" "finished" "result" "R2" "detail" ""}])))
   (val done (! (row-of-key (get ended 0) "job-rerun")))
   (assert (= #(done.phase done.result) #("finished" "R2")) done))
+
+
+(deftest test-the-next-attempt-goes-only-to-a-worker-heard-since-the-rerun
+  ;; lease が生死の窓より短い task: lease が切れた刻には、消えた worker をまだ生きていると数える。次の試行をそこへ置いて回数を使わない。連絡が戻れば置く。
+  (val joined (! (beat (ClusterState) "w" 0)))
+  (val put (! (put-detached (get joined 0) "job-short" 0 :lease 2.0 :extra RERUN-BODY)))
+  (val id (get (get put 2) "task"))
+  (val running (get (! (beat (get put 0) "w" 1000 :statuses [{"name" (+ "task/" id) "phase" "running" "detail" ""}])) 0))
+  (val lapsed (! (tick running 3500 T)))
+  (assert (< (- 3500 1000) T.lease-ms) "生死の窓の中で切れる")
+  (val row (! (row-of-key lapsed "job-short")))
+  (assert (= #(row.phase row.attempt row.worker) #("queued" 2 None)) row)
+  (val heard (! (beat lapsed "w" 3600 :boot "b2")))
+  (val placed (! (row-of-key (get heard 0) "job-short")))
+  (assert (= #(placed.phase placed.attempt placed.boot) #("assigned" 2 "b2")) placed))
 
 
 (deftest test-a-previous-attempt-that-comes-back-from-silence-is-not-offered-and-its-result-is-not-taken
