@@ -1,11 +1,11 @@
-# doeff の docs の site。中身は docs/index.md から辿る利用者向けの page だけ — 開発の記録(docs/adr・
-# docs/specs ほか)は入れない。page の組は 2 か所に書く: exclude_docs の許す一覧(この組の外の docs/ の file は site に入らない)と
-# nav(docs/index.md の目次と同じ節と順)。片方にだけ在る page は build が warning を出し、--strict の build を落とす
-# (validation の omitted_files と、nav の指す file が無い時の warning)。docs/index.md の目次と nav の食い違いは
-# tests/test_docs_site_pages.py が落とす。
+# The doeff docs site. It holds only the user-facing pages reached from docs/index.md — development records (docs/adr,
+# docs/specs and others) are left out. The page set is written in 2 places: the allow list of exclude_docs (docs/ files outside this set
+# do not enter the site) and nav (the same sections and order as the table of contents of docs/index.md). A page in only one of them makes
+# the build warn and fails the --strict build (validation's omitted_files, and the warning for a nav entry whose file is missing).
+# tests/test_docs_site_pages.py fails when the table of contents of docs/index.md and nav disagree.
 #
-# 組み方: make docs-site(tools/docs_site/requirements.txt の版で mkdocs build --strict)。CI は .github/workflows/docs-site.yml。
-# site の公開はまだしない — 公開の先(GitHub Pages など)が決まったら、その workflow に公開の job を足す。
+# Build: make docs-site (mkdocs build --strict with the versions in tools/docs_site/requirements.txt). CI is .github/workflows/docs-site.yml.
+# The site is not published yet — once a destination (GitHub Pages or similar) is chosen, add a publish job to that workflow.
 site_name: doeff
 site_description: Algebraic effects with one-shot continuations for Python, backed by a Rust VM
 repo_url: https://github.com/proboscis/doeff
@@ -14,9 +14,9 @@ edit_uri: edit/main/docs/
 docs_dir: docs
 site_dir: site
 
-# mkdocs 1.6 は theme の file(Material の CSS と JS — assets/ の下)にも exclude_docs を当てるので、assets/ の下を許す(`!/assets/`
-# では `*` に当たった file が戻らない。make docs-site が組んだ site に theme の CSS と JS が在る事を確かめる)。
-# 章の頭の GIF(assets/videos/<名>.gif)は GitHub の repo の画面の為の物で、site では hook が video に替えて描かないので写さない。
+# mkdocs 1.6 also applies exclude_docs to theme files (Material's CSS and JS — under assets/), so everything under assets/ is allowed
+# (with `!/assets/`, files matched by `*` do not come back; make docs-site checks that the built site has the theme's CSS and JS).
+# The GIFs at the head of chapters (assets/videos/<name>.gif) are for the GitHub repo view; on the site a hook draws a video instead, so they are not copied.
 exclude_docs: |
   *
   !/assets/**
@@ -128,7 +128,7 @@ markdown_extensions:
   - admonition
   - footnotes
   - tables
-  # 見出しの anchor を GitHub と同じ作り方にする — page の中の link(#overview--motivation など)は GitHub の上で書かれた。
+  # Make heading anchors the same way GitHub does — the in-page links (#overview--motivation and so on) were written on GitHub.
   - toc:
       permalink: true
       slugify: !!python/object/apply:pymdownx.slugs.slugify
@@ -136,15 +136,15 @@ markdown_extensions:
           case: lower
   - pymdownx.highlight
   - pymdownx.inlinehilite
-  # ```mermaid の囲みを図に描く(Material の作法)。
+  # Draw ```mermaid fences as diagrams (the Material way).
   - pymdownx.superfences:
       custom_fences:
         - name: mermaid
           class: mermaid
           format: !!python/name:pymdownx.superfences.fence_code_format
 
-# GitHub の上で読む形に書いた page を site でも同じに読ませる — site の外の repo の file への相対の link を GitHub の link にし、
-# 囲みの頭の言語の後の印(docs の例の検が読む excerpt など)を落とす。訳は hook の頭に書く。
+# Make pages written to be read on GitHub read the same on the site — turn relative links to repo files outside the site into GitHub links,
+# and drop the marks after the language at the head of a fence (such as the excerpts the docs example tests read). The reasons are at the head of the hook.
 hooks:
   - tools/docs_site/hooks.py
 

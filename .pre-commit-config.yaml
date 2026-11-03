@@ -1,34 +1,35 @@
 repos:
   - repo: local
     hooks:
-      # Python の semgrep と doeff-linter は、hook を据え付ける前からの所見(2026-10-02 に semgrep 74 件・linter の error 約 1,170 件)を
-      # 規則 × file の基点(scripts/hook_finding_baseline/)と比べ、増えた所見と基点の下げ忘れだけを止める。
-      # doeff-linter は、基点が名乗る組み立ての入力の鍵と同じ鍵の binary を land-arm の開発版 → 断面の置き場から探して呼ぶ
-      # (scripts/doeff_linter_locked.py・#2906 — 探し道の linter は見ない・hook の中では組まない)。置き場に無ければ「測れない」と
-      # 名指して通す — verbose で、通った時もその 1 行を見せる。
-      # semgrep の 3 項は uv.lock の版を uv の道具の置き場から呼ぶ(scripts/semgrep_locked.py・#2906)— 探し道や作業木の .venv の
-      # semgrep は機体と作業木の状態で版がずれ、.venv の無い作業木では uv が空の .venv を作っていた。
-      # uv で走る項は hook の python を `--python 3.12` で宣言する(標準の library だけの script — doeff を読む
-      # scripts/lint-doeff-cluster.sh の段は木の環境の python のまま)。semgrep_locked.py は走っている
-      # python の版を uv tool run へ渡す。宣言が無いと uv は木の .python-version(3.14t)を選び、semgrep の依存の ruamel-yaml-clib が
-      # 組めずに落ちる(Pod 2026-10-10)。
-      # semgrep の 4 項はどれも別名 semgrep-rules を持つ — 素の commit の hook(scripts/git-hooks/pre-commit・make hooks-install と
-      # agora の担当の Pod が入れる物)が `pre-commit run semgrep-rules` で同じ 4 項を撃つ。semgrep の項を足す時も
-      # 別名を書く(書き忘れは tests/test_lint_entrypoint_wiring.py の test_plain_hook_runs_every_semgrep_hook_of_the_config が赤にする)。
+      # The Python semgrep and doeff-linter compare the findings that predate installing the hook (on 2026-10-02: 74 semgrep findings,
+      # about 1,170 linter errors) with a per-rule-per-file baseline (scripts/hook_finding_baseline/), and stop only new findings and
+      # a baseline that was not lowered.
+      # doeff-linter looks up, in land-arm's development build and then the snapshot store, a binary with the same build-input key the
+      # baseline names, and calls it (scripts/doeff_linter_locked.py, #2906 — it does not use a linter from PATH and does not build
+      # inside the hook). If the store does not have it, it passes while naming it "cannot measure" — verbose, so that line shows even on success.
+      # The 3 semgrep items call the uv.lock version from uv's tool store (scripts/semgrep_locked.py, #2906) — semgrep from PATH or the
+      # worktree's .venv drifted in version by machine and worktree state, and in a worktree without .venv uv created an empty .venv.
+      # Items that run with uv declare the hook's python with `--python 3.12` (standard-library-only scripts — the
+      # scripts/lint-doeff-cluster.sh stage, which reads doeff, keeps the tree environment's python). semgrep_locked.py passes the running
+      # python version to uv tool run. Without the declaration uv picks the tree's .python-version (3.14t), and semgrep's dependency
+      # ruamel-yaml-clib fails to build (Pod, 2026-10-10).
+      # All 4 semgrep items have the alias semgrep-rules — the plain commit hook (scripts/git-hooks/pre-commit, installed by
+      # make hooks-install and by agora's worker Pods) fires the same 4 items with `pre-commit run semgrep-rules`. When adding a semgrep
+      # item, write the alias too (forgetting it turns test_plain_hook_runs_every_semgrep_hook_of_the_config in tests/test_lint_entrypoint_wiring.py red).
       - id: semgrep
         alias: semgrep-rules
-        name: semgrep architectural rules(Python・基点に無い所見だけ止める)
+        name: semgrep architectural rules (Python, stops only findings not in the baseline)
         entry: uv run --no-project --python 3.12 python scripts/hook_finding_baseline.py check semgrep
         language: system
         types: [python]
-        # 変更fileだけを検査する。全体走査は既存の日次lint/pytest側が担う。
+        # Check only the changed files. The full scan is done by the existing daily lint/pytest.
         pass_filenames: true
         verbose: true
-        # 規則の検体(違反をわざと書いた file)は tests/semgrep の検体の検が極性つきで
-        # 検める。ここで検めると、発火すべき検体を足す commit が毎回止まる(2026-09-26)。
+        # Rule fixtures (files that break the rules on purpose) are checked with polarity by the fixture tests
+        # under tests/semgrep. Checking them here would stop every commit that adds a fixture that should fire (2026-09-26).
         exclude: &semgrep-fixtures '^tests/semgrep/fixtures/'
 
-      # identifyにHyのtype tagは無い。Python専用linterへ渡さず、既存generic規則で検査する。
+      # identify has no type tag for Hy. Do not pass it to Python-only linters; check it with the existing generic rules.
       - id: semgrep-hy
         alias: semgrep-rules
         name: semgrep Hy architectural rules
@@ -40,8 +41,8 @@ repos:
         pass_filenames: true
         exclude: *semgrep-fixtures
 
-      # ADR-DOE-RUNNER-001 R2 / R3: 読む面(doeff-runner の src/read/)の TypeScript も同じ規則の file で検める。
-      # 規則の paths.include が src/read/ だけに当たるので、ほかの TypeScript は渡さない。
+      # ADR-DOE-RUNNER-001 R2 / R3: the TypeScript of the read side (doeff-runner's src/read/) is checked with the same rule file.
+      # The rules' paths.include only matches src/read/, so no other TypeScript is passed.
       - id: semgrep-reading-plane
         alias: semgrep-rules
         name: semgrep reading plane rules
@@ -50,69 +51,70 @@ repos:
         files: '^ide-plugins/vscode/doeff-runner/src/read/.*\.ts$'
         pass_filenames: true
 
-      # 汎用の package の業務の語の規則(doeff-packages-have-no-application-vocabulary)のように、文書・設定・
-      # 型の宣言にも当たる規則がある。Python と Hy は上の 2 項が渡すので、ここは日次の走査(tests/test_semgrep_gate.py — doeff/ と
-      # packages/)と同じ根の残り(.pyi・.md・.toml・.json・.sh・Dockerfile など)を全部渡す。どの package に当てるかは規則の paths の
-      # 1 か所が決め、この項は package の名を持たない — 持っていた時は、規則に package を足した便が項を直し忘れると素の hook が
-      # その package の文書を黙って通した(tests/test_lint_entrypoint_wiring.py の
-      # test_plain_hook_follows_the_rule_paths_for_documents)。広げた時点(2026-10-11)でこの範囲の 707 file の規則の所見は 0 件。
+      # Some rules also match documents, settings and type declarations, such as the rule against application vocabulary in
+      # generic packages (doeff-packages-have-no-application-vocabulary). Python and Hy are passed by the 2 items above, so this one
+      # passes all the rest (.pyi, .md, .toml, .json, .sh, Dockerfile, ...) under the same roots as the daily scan (tests/test_semgrep_gate.py —
+      # doeff/ and packages/). Which packages a rule applies to is decided in one place, the rule's paths; this item names no package —
+      # when it did, a change that added a package to a rule but forgot this item let the plain hook silently pass that package's
+      # documents (test_plain_hook_follows_the_rule_paths_for_documents in tests/test_lint_entrypoint_wiring.py). When this was widened
+      # (2026-10-11), the rules had 0 findings in the 707 files of this range.
       - id: semgrep-other-files
         alias: semgrep-rules
-        name: semgrep(doeff/ と packages/ の Python と Hy の外の file — 当てる所は規則の paths が選ぶ)
+        name: semgrep (files other than Python and Hy under doeff/ and packages/ — the rules' paths choose where they apply)
         entry: *semgrep-entry
         language: system
         files: '^(doeff|packages)/'
         exclude: '\.(py|hy|hyp|hyk)$'
         pass_filenames: true
 
-      # 素の commit の hook(scripts/git-hooks/pre-commit — agora の担当の Pod が入れる物)もこの項を id doeff-linter で撃つ。項の id を
-      # 替える便は素の hook の呼びも直す(tests/test_lint_entrypoint_wiring.py の
-      # test_plain_hook_runs_the_doeff_linter_baseline_hook_of_the_config が赤にする)。
+      # The plain commit hook (scripts/git-hooks/pre-commit — installed by agora's worker Pods) also fires this item by id doeff-linter.
+      # A change that renames the item's id also fixes the plain hook's call (test_plain_hook_runs_the_doeff_linter_baseline_hook_of_the_config
+      # in tests/test_lint_entrypoint_wiring.py turns red otherwise).
       - id: doeff-linter
-        name: doeff-linter(Python・基点に無い error だけ止める)
+        name: doeff-linter (Python, stops only errors not in the baseline)
         entry: uv run --no-project --python 3.12 python scripts/hook_finding_baseline.py check doeff-linter
         language: system
         types: [python]
         pass_filenames: true
         verbose: true
 
-      # packages/doeff-cluster は自分の設定(pyproject.toml の [tool.doeff-linter])と service・不変条件の宣言(architecture.hy)を
-      # 持つ。根で走る上の doeff-linter はそれを読まないので、package の dir に入って当てる(Hy の file も渡す)。script が
-      # architecture.hy を必ず足すので、:invariants を消す commit は DOEFF163 で止まる。検の dir(tests/)も渡す —
-      # package の設定の include で linter の歩く範囲に入り、定義の書き方の規則(今は critical と当たり 0 の規則)が判じる。
+      # packages/doeff-cluster has its own settings ([tool.doeff-linter] in pyproject.toml) and service and invariant declarations
+      # (architecture.hy). The root doeff-linter above does not read them, so this enters the package dir to apply them (Hy files are passed too).
+      # The script always adds architecture.hy, so a commit that removes :invariants is stopped by DOEFF163. The test dir (tests/) is passed
+      # too — the package settings' include puts it in the linter's walk, and the rules on how definitions are written (currently critical, 0 hits) judge it.
       - id: doeff-linter-doeff-cluster
-        name: doeff-linter (packages/doeff-cluster の設定と宣言で)
+        name: doeff-linter (with the settings and declarations of packages/doeff-cluster)
         entry: sh scripts/lint-doeff-cluster.sh
         language: system
         files: '^packages/doeff-cluster/(architecture\.hy|pyproject\.toml|(src|tests)/.*\.(hy|py))$'
         pass_filenames: true
 
-      # .hy を変える commit は、その隣の .pyi(doeff_hy._static_stub が .hy から作る生成物)を同じ commit で作り直す。各 package の
-      # test_generated_stubs が日次に同じ照らしを撃つが、commit の時に止めないと、作り直し忘れが main に入ってから failing になる
-      # (afaf956cd が kube.hy に import を足して kube.pyi を直し忘れた)。素の commit の hook も別名 hy-stubs で撃つ。
+      # A commit that changes a .hy regenerates the .pyi next to it (generated from the .hy by doeff_hy._static_stub) in the same commit.
+      # Each package's test_generated_stubs fires the same comparison daily, but without stopping it at commit time, a forgotten
+      # regeneration fails only after reaching main (afaf956cd added an import to kube.hy and did not fix kube.pyi). The plain commit hook also fires it by alias hy-stubs.
       - id: hy-stub-fresh
         alias: hy-stubs
-        name: .hy の隣の .pyi が作り直した物と同じか
+        name: the .pyi next to each .hy matches a fresh regeneration
         entry: uv run --no-project --python 3.12 python scripts/check_hy_stubs.py
         language: system
         files: '^packages/[^/]+/src/.*\.hy$'
         pass_filenames: true
 
-      # 公開の repo に、持ち主の chat の言葉を日付つきで写した引用を入れない。決定と理由は記録の
-      # 言葉で書き、出自は日付つきの短い決定の印か内部の tracker への参照にする。CI(.github/workflows/no-chat-quotes.yml)は
-      # 木の全体と push した commit の文を同じ script で見る。
+      # Do not put dated quotations of the owner's chat words into the public repo. Write decisions and reasons in the record's own
+      # words, and give the source as a short dated decision mark or a reference to the internal tracker. CI (.github/workflows/no-chat-quotes.yml)
+      # checks the whole tree and the messages of pushed commits with the same script.
       - id: no-chat-quotes
-        name: 持ち主の chat の言葉の日付つきの引用が無いか
+        name: no dated quotations of the owner's chat words
         entry: uv run --no-project --python 3.12 python scripts/check_no_operator_quotes.py
         language: system
         types: [text]
         pass_filenames: true
 
-      # ADR-DOE-ENFORCE-001 R5/R7/R9: enforcement 資産と台帳は同じ commit で動く。
-      # 勘定の家 = scripts/check_enforcement_ledger.py(stdlib 単独)。台帳は生成物 —
-      # 落ちたら `make enforcement-ledger` で作り直し、消えた項目を確かめて stage する。
-      # HEAD に既に在るずれは申告だけで、この commit 自身の増減が台帳に写っていれば通す(R9)。
-      # pre-commit 未使用の機体は make hooks-install(scripts/git-hooks/pre-commit)。
+      # ADR-DOE-ENFORCE-001 R5/R7/R9: enforcement assets and the ledger move in the same commit.
+      # Home of the count = scripts/check_enforcement_ledger.py (stdlib only). The ledger is generated —
+      # if this fails, rebuild it with `make enforcement-ledger`, check the removed items, and stage it.
+      # Drift already in HEAD is only reported; it passes when this commit's own additions and removals are reflected in the ledger (R9).
+      # Machines without pre-commit use make hooks-install (scripts/git-hooks/pre-commit).
       - id: enforcement-ledger
         name: enforcement ledger consistency (ADR-DOE-ENFORCE-001 R5/R7)
         entry: uv run --python 3.12 --script scripts/check_enforcement_ledger.py --staged

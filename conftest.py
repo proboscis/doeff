@@ -338,7 +338,7 @@ def pytest_configure(config):
     global _WATCHDOG_TIMEOUT, _WATCHDOG_BASE, _DEADLINE_SCALE  # noqa: PLW0603
 
     _run_semgrep_without_io_uring(config)
-    # 期限の倍率は機体の混みから読むので、枠を取った後(走り始める拍の混み)で読む。
+    # The deadline scale is read from machine load, so read it after taking the slot (the load at the moment the run starts).
     _hold_check_slot(config)
     _turn_vm_oracle_on(bool(config.getini(VM_INVARIANT_CHECKS_INI)))
 
@@ -723,11 +723,11 @@ def pytest_terminal_summary(terminalreporter):
 # Broad-test-run admission (agora toolchain, ADR-DOTFILES-027
 # "broad-test-runs-need-an-explicit-grant", 2026-09-15 / stage 11 lane 11k).
 #
-# 広範囲な選択の走行(この repo の全数 = 1,500 本超)は、頭脳が発行した期限つきの許可を
-# 1 回消費できた時だけ本体を走らせる。判定(広範囲か)・30 分の窓の合算・許可の消費は
-# **正本 1 点**(agora の道具立て ~/dotfiles/agent/tests/broad_run_admission.py)が持ち、
-# この repo は .agents/land-queue.toml の [test-admission] で**値だけ**を宣言する
-# (判定の写しをここへ置かない — 写すと方策を動かした日に片方だけ古い答えを返す)。
+# A run of a broad selection (the whole of this repo = over 1,500 tests) runs its bodies only when it could consume, once, a time-limited
+# grant issued by the brain. The decision (is it broad), the sum over a 30-minute window and the grant consumption are owned by
+# **one canonical place** (the agora toolchain's ~/dotfiles/agent/tests/broad_run_admission.py); this repo declares **only values**
+# in [test-admission] of .agents/land-queue.toml
+# (do not put a copy of the decision here — with a copy, changing the policy leaves one side giving a stale answer).
 #
 # The admission only binds where the agora toolchain is installed.  On a machine
 # that just has a clone of this repository there is no grant office and no
@@ -738,7 +738,7 @@ def pytest_terminal_summary(terminalreporter):
 # toolchain *is* present the hook is fail-closed (an unreadable policy or an
 # unobtainable grant stops the session before a single test body runs).
 _ADMISSION_CANON = Path.home() / "dotfiles" / "agent" / "tests" / "broad_run_admission.py"
-#: 固定の module 名 — 同じ走行の中で道具立て側の結線と同じ個体を見る(窓と印を共有する)。
+#: Fixed module name — within one run, see the same instance as the toolchain side's wiring (sharing the window and marks).
 _ADMISSION_MODULE = "ai_broad_run_admission"
 
 
@@ -759,11 +759,13 @@ def _broad_run_admission():
 
 
 def _hold_check_slot(config):
-    """収集の前に、機体の検の枠を 1 つ取る(埋まっていれば待つ)— 受付の正本の hold_check_slot へ委譲する。
+    """Before collection, take one machine check slot (wait if full) — delegated to the admission canon's hold_check_slot.
 
-    枠の値(本数・置き場・待ちの上限)と取り方は正本 1 点(~/dotfiles/agent/tests/machine_check_slots.py と隣の .json)が持ち、
-    ここは呼ぶだけ。受付は本体の前(pytest_collection_finish)にも同じ枠を取るが、Hy の検の収集は CPU を数分使うので収集の前に取る
-    (同じ config の 2 度目は何もしない・xdist の親は取らず子が取る)。正本が無い宿・口の無い古い正本の宿では取らない。
+    The slot values (count, location, wait limit) and how to take one are owned by one canonical place
+    (~/dotfiles/agent/tests/machine_check_slots.py and the .json next to it); this only calls it. Admission takes the same slot again
+    before the bodies (pytest_collection_finish), but collecting the Hy tests uses minutes of CPU, so it is taken before collection
+    (a second call for the same config does nothing; an xdist parent does not take one, its workers do). Not taken on hosts without
+    the canon or with an old canon that lacks the entry point.
     """
     admission = _broad_run_admission()
     hold = getattr(admission, "hold_check_slot", None) if admission is not None else None
@@ -772,7 +774,7 @@ def _hold_check_slot(config):
 
 
 def pytest_collection_finish(session):
-    """収集の後・本体の前の受付(広範囲なら許可を 1 回消費できた時だけ走らせる)。正本の無い宿は黙って素通し。"""
+    """Admission after collection, before the bodies (a broad run runs only if a grant could be consumed once). Silently passes on hosts without the canon."""
     admission = _broad_run_admission()
     if admission is not None:
         admission.collection_finish(session)
