@@ -419,6 +419,9 @@ def gone_detached(task: TaskRecord, now: int, why: str) -> TaskRecord:
 def put_gone(draft: TableDraft[TaskRecord], before: TaskRecord, after: TaskRecord) -> None:
     ...
 
+def heard_since_rerun(task: TaskRecord, worker: WorkerInfo) -> bool:
+    ...
+
 def settle_detached(task: TaskRecord, now: int, lapsed: bool) -> _Program[TaskRecord | None, object]:
     ...
 

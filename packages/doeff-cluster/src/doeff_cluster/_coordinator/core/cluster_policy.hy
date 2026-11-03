@@ -1377,6 +1377,8 @@
 ;; 届けは行が無いので受けられず(absorb-task-reports-into・absorb-task-result)、返事から外れた job として worker に止められる(沈黙から戻った旧い
 ;; process が同じ命令を 2 本目として走り続けない — 同じ worker の同じ世代に次の試行を置いた時も、旧い job を止めて新しい job を起こす)。
 ;; 走らせ直しは RERUN-LIMIT 回まで: task 自身が担い手を落としている時(memory を使い尽くすなど)に機体を落とし続けない。
+;; 次の試行は、積み直した刻より後に連絡のあった worker にだけ置く(heard-since-rerun): 生死の窓の中でまだ生きていると数える消えた worker へ置いて、
+;; また lease 切れで回数を使わない。
 (setv RERUN-LIMIT 3)
 ;; 次の試行の行の id の区切り(task の頭と番号 — task-id・fresh-task-prefix — はこの綴りを持たない)。
 (setv RERUN-ID-MARK "-r")
@@ -1401,6 +1403,11 @@
                :submitted-ms now :lease-until-ms (+ now task.lease-ms) :reported False :queued-noticed-ms None
                :avoid #() :env-attempts 0 :failure-kind "" :retryable False
                :detail (.format "{} — 試行 {} を待つ" why (+ task.attempt 1)))))
+
+
+(defn #^ bool heard-since-rerun [#^ TaskRecord task #^ WorkerInfo worker]
+  "純粋: task を worker に置いてよいか(節の頭の註)— 最初の試行は問わない。次の試行は、積み直した刻(submitted-ms)より後に worker の連絡があった時だけ。"
+  (or (= task.attempt 1) (>= worker.last-seen-ms task.submitted-ms)))
 
 
 (defk settle-detached [task now lapsed]
@@ -1551,7 +1558,7 @@
   (for [t (scan-rows placed.tasks) :if (and (< t.priority 0) (in t.phase PLACED-PHASES) (in t.worker bg-held))]
     (+= (get bg-held t.worker) 1))
   (for [task (.values queue) :if (and (= task.phase "queued") (< task.priority 0))]
-    (for [w (.rows state.workers) :if (and (alive now w timing.lease-ms) (can-run-task task w) (not-in w.name draining)
+    (for [w (.rows state.workers) :if (and (alive now w timing.lease-ms) (heard-since-rerun task w) (can-run-task task w) (not-in w.name draining)
                                            (env-room-on task w))]
       (<- bg-limited (| TaskUnplacedKind None) (limits-misfit task.limits w.name held state.group-limits))
       (when (is bg-limited None)
@@ -1561,7 +1568,7 @@
     (setv task (get queue id))
     (when (= task.phase "queued")
       ;; drain 中の worker には新しい task を置かない(置ける先が他に無ければ、drain が解けるまで待つ — 失敗にはしない)。
-      (setv able (lfor w (.rows state.workers) :if (and (alive now w timing.lease-ms) (can-run-task task w)) w)
+      (setv able (lfor w (.rows state.workers) :if (and (alive now w timing.lease-ms) (heard-since-rerun task w) (can-run-task task w)) w)
             ;; drain 中と、disk の尽きた worker(準備済みでない env の task)は避ける — 置ける先が他に無ければ待つ。
             able-now (lfor w able :if (and (not-in w.name draining) (env-room-on task w)) w))
       ;; task を置けるのは測った空き(task-room-of — 機体の CPU・PSI から数え、置いた task と測りにまだ出ていない task を引いた数)が在り、
