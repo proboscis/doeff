@@ -9,7 +9,7 @@
     "width": 1200,
     "height": 1076,
     "bytes": 162221,
-    "review": "2026-11-03：利用者のレビューの指摘（文言が不自然・質が低い）を受け、よくある書き方（time.sleepとモック）とdoeff（Delayと2つのハンドラ）の対比に描き直した。記事のコードの名前・値（fetch_with_retry・time.sleep(20)・job・Delay・sim_time_handler・async_time_handler・\"完了\"）を目視確認。"
+    "review": "2026-11-03 に描き直した版。前の版は文言が不自然で質が低いと判じられたので、よくある書き方（time.sleepとモック）とdoeff（Delayと2つのハンドラ）の対比に描き直した。記事のコードの名前・値（fetch_with_retry・time.sleep(20)・job・Delay・sim_time_handler・async_time_handler・\"完了\"）を目視確認。"
   },
   {
     "id": "time-flow",
