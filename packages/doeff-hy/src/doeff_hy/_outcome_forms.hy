@@ -141,12 +141,18 @@
    値の位置に字面の値を持つ式(`(if c None (f))` など)は、その枝で素の値を yield して実行の時に落ちるので、形を作る前に断る。
    bound = 答え(Pure か yield する Program)を持つ局所の名。呼び手が渡せば、束ねた後にその名を del して frame から外せる
    (_bind-yield — 名が Call を次の束ねまで持ち、長い loop で前の周の引数を生かし続けた)。
-   渡さなければ gensym を作る(`!` の式の中 — 文を置けない)。"
+   渡さなければ gensym を作り、式の中で名を None に戻してから答える(`!` の式の中 — 文の del を置けない):
+   `(. (get #(b (setx b None)) 0) value)` / `(yield (get #(b (setx b None)) 0))` — 組の 0 番に元の答えを取り、名を外して
+   から値を読むか yield する(yield の間も frame は Call を持たない — agora card [id])。解析器は両方の形を読む
+   (doeff-effect-analyzer の _bind_expression・_released_name)。"
   (let [refused (plain-value-refusal expr)]
     (when (is-not refused None)
       (raise (SyntaxError refused))))
   (let [module (if (is helpers None) (hy.gensym "outcomes") (Symbol helpers))
-        bound (if (is bound None) (hy.gensym "bound") bound)
+        release? (is bound None)
+        bound (if release? (hy.gensym "bound") bound)
+        ;; 名を外した後の答え: 呼び手が del しない時は、組の 0 番に元の答えを取って名を None に戻す(枝ごとに新しい形)
+        answer (fn [] (if release? `(get #(~bound (setx ~bound None)) 0) bound))
         imported (if (is helpers None)
                      `(setx ~module (__import__ "doeff_core_effects._outcomes" :fromlist #("open_bind")))
                      (Symbol helpers))
@@ -157,8 +163,8 @@
     ;; 局所の名と見て束ねが壊れる(defhandler の腕の引数 type で UnboundLocalError・L562 の後始末)。
     ;; 型は属性 __class__ で読み、名で引くのは gensym の束縛だけにする。
     `(if (is (. (setx ~bound ~opened) __class__) (. ~module Pure))
-         (. ~bound value)
-         (yield ~bound))))
+         (. ~(answer) value)
+         (yield ~(answer)))))
 
 
 (deff bind-form [form [helpers None]]  ; defk にできない: macro の展開の時に呼ぶ関数

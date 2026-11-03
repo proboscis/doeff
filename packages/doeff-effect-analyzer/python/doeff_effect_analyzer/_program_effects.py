@@ -2116,12 +2116,15 @@ def _element_wise(node: ast.AST) -> tuple[_Assignment, ...]:
 def _assignments(node: ast.AST) -> tuple[_Assignment, ...]:
     """What ``node`` binds, one target per value (what a name or attribute is bound to):
     ``x = v`` / ``x: T = v`` / ``(x := v)`` with one target, and ``(a, b) = (va, vb)`` element
-    by element (``_element_wise``).  () for any other node."""
+    by element (``_element_wise``).  () for any other node, and for the release of a ``(! e)``
+    bind's name (``_is_release`` — the name stays bound once, to what the bind yields)."""
     match node:
         case ast.Assign() if element_wise := _element_wise(node):
             return element_wise
         case ast.Assign(targets=[target], value=value):
             return (_Assignment(target, value),)
+        case ast.NamedExpr() if _is_release(node):
+            return ()
         case ast.NamedExpr(target=target, value=value):
             return (_Assignment(target, value),)
         case ast.AnnAssign(target=target, value=ast.expr() as value):
@@ -2994,7 +2997,8 @@ def _opening(expr: ast.expr, scope: _Scope) -> _Opening | None:
 def _bind_expression(expr: ast.expr, scope: _Scope) -> ast.Call | None:
     """The bind wrapper call ``W`` when ``expr`` is doeff-hy's bind expression
     ``b.value if (b := W).__class__ is <Pure> else (yield b)`` (``W`` = ``open_bind(e[, absent])``),
-    else None. The expression yields ``W`` unless ``W`` already answered."""
+    or the same with ``b`` released in place (``(! e)`` — ``_released_name``), else None. The
+    expression yields ``W`` unless ``W`` already answered."""
     match expr:
         case ast.IfExp(
             test=ast.Compare(
@@ -3004,12 +3008,58 @@ def _bind_expression(expr: ast.expr, scope: _Scope) -> ast.Call | None:
                 ),
                 ops=[ast.Is()],
             ),
-            body=ast.Attribute(value=ast.Name(id=body_name), attr="value"),
-            orelse=ast.Yield(value=ast.Name(id=yielded_name)),
-        ) if body_name == bound == yielded_name and _opening(wrapper, scope) is not None:
+            body=ast.Attribute(value=body, attr="value"),
+            orelse=ast.Yield(value=ast.expr() as yielded),
+        ) if (
+            _reads_name(body, bound)
+            and _reads_name(yielded, bound)
+            and _opening(wrapper, scope) is not None
+        ):
             return wrapper
         case _:
             return None
+
+
+def _reads_name(expr: ast.expr, name: str) -> bool:
+    """Whether ``expr`` reads the bind's name ``name`` (itself or released — ``_released_name``)."""
+    read = _released_name(expr)
+    return read is not None and read.id == name
+
+
+def _released_name(expr: ast.expr) -> ast.Name | None:
+    """The name doeff-hy's bind reads its answer from: ``b`` itself, or ``b`` read and set back
+    to None in place — ``(b, (b := None))[0]`` (``(! e)`` cannot ``del`` it in an expression, so
+    the frame would hold the yielded Call until the line ran again — agora card
+    [id]). None for any other expression."""
+    match expr:
+        case ast.Name():
+            return expr
+        case ast.Subscript(
+            value=ast.Tuple(
+                elts=[
+                    ast.Name(id=read) as name,
+                    ast.NamedExpr(target=ast.Name(id=released), value=ast.Constant(value=None)),
+                ]
+            ),
+            slice=ast.Constant(value=0),
+        ) if read == released:
+            return name
+        case _:
+            return None
+
+
+def _is_release(node: ast.NamedExpr) -> bool:
+    """Whether ``node`` is the ``(b := None)`` of a released ``(! e)`` name (``_released_name``):
+    not a value ``b`` holds for the reader, so ``b`` stays bound once (to ``W``)."""
+    match node:
+        case ast.NamedExpr(target=ast.Name(id=name), value=ast.Constant(value=None)):
+            return name.startswith(_BIND_NAME_PREFIX)
+        case _:
+            return False
+
+
+# The prefix of the name doeff-hy's open-form gives the bind it releases in place (``hy.gensym("bound")``).
+_BIND_NAME_PREFIX = "_hy_gensym_bound_"
 
 
 def _guard_globals_function() -> Any:
@@ -3236,6 +3286,8 @@ class _Reader:
     def _performed(self, expr: ast.expr, scope: _Scope, filename: str, facts: _Facts) -> None:
         """What performing ``expr`` (a yielded value) does: an effect, a Program call, a
         handled scope, a carried Program — or a place the reader cannot follow."""
+        # ``(! e)`` yields its bind's name released in place: read as the name (what it holds).
+        expr = _released_name(expr) or expr
         location = Location(filename, getattr(expr, "lineno", 0))
         if isinstance(expr, ast.IfExp):
             self._performed(expr.body, scope, filename, facts)

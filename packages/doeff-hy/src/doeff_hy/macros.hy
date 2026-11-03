@@ -1436,7 +1436,8 @@ defk {name}: {{:post [...]}} is required.
    (ADR-DOE-CORE-EFFECTS-003 R5・R6)。
    束ねた後は b を del する(`(del b)` を setv の次に置く・名の無い (<- expr) は答えを一時の名 a で受けて a も外す):
    b は yield した Program(Call — 関数と引数)を持つので、残すと同じ行が次に走るまで引数を生かす(長い loop の
-   generator で前の周の表を持ち続けた)。del は文なので、式の中の `!` はこの外。"
+   generator で前の周の表を持ち続けた)。del は文なので、式の中の `!` は open-form が式の中で名を None に戻す
+   (agora card [id])。"
   (import doeff-hy._outcome-forms [open-form])
   (setv bound (hy.gensym "bound"))
   (setv performed (open-form expr absent helpers bound))
@@ -1811,6 +1812,7 @@ the effect in the enclosing do-context.
           ;; Result / Maybe の値を開く — ADR-DOE-CORE-EFFECTS-003 R6)。型検査のための展開は `<-` と同じ
           ;; `_doeff_perform`(式の答えの型 — _bind-yield の静的な枝)。前は `(yield e)` で、注記の無い generator の
           ;; yield の値は Unknown なので、(! …) を使う所ごとに書き手に直せない Unknown の赤が出ていた。
+          ;; 束ねの名は bound を渡さないので、open-form が式の中で None に戻す(文の del を置けない)。
           (if (_static-view?)
               `(_doeff-perform ~(walk (get node 1) ctx))
               (do (import doeff-hy._outcome-forms [open-form])
