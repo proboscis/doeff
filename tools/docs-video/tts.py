@@ -24,7 +24,9 @@ import urllib.request
 import wave
 from pathlib import Path
 
-ENDPOINT = os.environ.get("OPENAI_BASE_URL", "https://api.openai.com/v1").rstrip("/") + "/audio/speech"
+ENDPOINT = "https://api.openai.com/v1/audio/speech"
+# A relay of the speech endpoint (OPENAI_BASE_URL, e.g. ending in /v1) replaces the host and the version.
+BASE_URL = os.environ.get("OPENAI_BASE_URL")
 MODEL = "gpt-4o-mini-tts"
 VOICE = "marin"
 INSTRUCTIONS = (
@@ -63,7 +65,7 @@ def say(key: str, text: str) -> bytes:
         }
     ).encode()
     request = urllib.request.Request(
-        ENDPOINT,
+        f"{BASE_URL.rstrip('/')}/audio/speech" if BASE_URL else ENDPOINT,
         data=body,
         headers={"Authorization": f"Bearer {key}", "Content-Type": "application/json"},
     )
