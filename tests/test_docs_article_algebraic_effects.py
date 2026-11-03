@@ -284,3 +284,11 @@ def test_the_article_does_not_say_an_ai_wrote_it() -> None:
 )
 def test_the_ai_authorship_check_finds_the_lines_it_forbids(line: str) -> None:
     assert _AI_AUTHORSHIP.search(line)
+
+
+def test_the_production_stack_calls_await_handler_as_the_published_version_does() -> None:
+    # PyPI の 0.8.0 の await_handler は factory — 値の形で書く `await_handler(wall_clock(program))` は TypeError で落ちる。
+    # 記事の Layer 5 と monitor.py の real() は、0.8.0 で動く同じ 1 行を書く(card ki-5bb439619a59)。
+    line = "return scheduled(await_handler()(wall_clock(program)))"
+    assert line in ARTICLE.read_text(encoding="utf-8")
+    assert line in (TOUR / "monitor.py").read_text(encoding="utf-8")

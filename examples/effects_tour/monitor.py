@@ -200,7 +200,7 @@ def wall_clock(effect: Delay | GetTime, k):  # waits on asyncio
 
 
 def real(program):  # the wall clock and an async client
-    return scheduled(await_handler(wall_clock(program)))
+    return scheduled(await_handler()(wall_clock(program)))
 
 
 if __name__ == "__main__":
@@ -217,3 +217,6 @@ if __name__ == "__main__":
     tape: list[str] = []
     run(simulated(printed(free(fake_web(recording(tape)(monitor(URLS, 1)))))))
     print(tape)
+
+    print("-- real: wall clock, async client")
+    print(run(real(printed(free(http_web(monitor(URLS, 1)))))))
