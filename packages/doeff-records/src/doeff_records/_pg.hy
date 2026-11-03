@@ -1483,13 +1483,14 @@
 
 (defn #^ tuple split-spellings [#^ tuple bulk #^ object value #^ str whole]  ; defk にできない: 書きの行ごとと移しの候補の行ごとに同期に呼ぶ純粋な綴り(移しは内包表記で 1,000 行を組む)
   "行の値 value(正規の綴り whole)を、列 payload と列 bulk に置く 2 つの綴りにするため(_pg_sql.hy の頭の註の state_rows): 大きい欄の名
-   bulk に当たる欄を bulk の綴りへ、残りを payload の綴りへ(どちらも正規の綴り — canonical-json)。値に大きい欄が無ければ #(whole None)
-   (列 bulk は NULL・綴り直さない)。"
+   bulk に当たる欄を bulk の綴りへ、残りを payload の綴りへ(どちらも正規の綴り — canonical-json)。値に大きい欄が無ければ綴り直さず、
+   大きい欄を宣言した表は #(whole "{}")(列 bulk は分け終えた印 '{}' — 移しの候補に出ない)・宣言しない表は #(whole None)(列 bulk は NULL)。"
   (setv moved (dfor #(name field) (.items value) :if (in name bulk) name field))
-  (if (not moved)
-      #(whole None)
-      #((canonical-json (dfor #(name field) (.items value) :if (not-in name bulk) name field))
-        (canonical-json moved))))
+  (cond
+    (not bulk) #(whole None)
+    (not moved) #(whole "{}")
+    True #((canonical-json (dfor #(name field) (.items value) :if (not-in name bulk) name field))
+           (canonical-json moved))))
 
 
 (defk staged-row [store origin-host writer table text current value now-ms epoch]
@@ -2345,22 +2346,25 @@
    :tags {:context "records" :role "foundation"}}
   "移しの候補の行(鍵・版・payload — bulk-candidates-statement)を、分け直した綴りの組 {key version payload bulk} の JSON の配列の綴りに
    するため(move-bulk-statement の引数)。綴りは書き(staged-row)と同じ split-spellings — 値を解いて正規の綴りに戻すので、数と文字列は
-   書いた時の綴りのまま(jsonb で組み直すと鍵の並び・空白・指数の数の綴りが変わる)。"
+   書いた時の綴りのまま(jsonb で組み直すと鍵の並び・空白・指数の数の綴りが変わる)。大きい欄の無い行は payload を null にする(列 payload を
+   書き直さず、分け終えた印 bulk '{}' だけを置く — move-bulk-statement)。"
   (json.dumps (lfor record records
                     :setv spelled (split-spellings bulk (json.loads (get record 2)) (get record 2))
-                    {"key" (get record 0) "version" (int (get record 1)) "payload" (get spelled 0) "bulk" (get spelled 1)})
+                    :setv marked (= (get spelled 1) "{}")
+                    {"key" (get record 0) "version" (int (get record 1)) "payload" (if marked None (get spelled 0)) "bulk" (get spelled 1)})
               :separators #("," ":") :ensure-ascii False))
 
 
 (defk moved-table [store gated table bulk limit]
   {:pre [(: store PreparedStore) (: gated bool) (: table str) (: bulk tuple) (: limit int)] :post [(: % TableMove)]
    :tags {:context "records" :role "foundation"}}
-  "表 table の、payload に大きい欄 bulk が残る行を limit 行まで分け直し、分け直した数と残りの数を返すため(MoveBulkFields の表 1 つ —
-   _maintenance.hy の頭の註の「大きい欄を移す」)。候補は錠の外で読み、分け直しは表の書きの錠の中の 1 文(書きと行の錠を取り合わない —
-   束の書きは行を書きの順に錠するので、錠の外の UPDATE とは順が食い違い得る)。文は読んだ時の版の行だけを書き換えるので、候補の読みの
-   後に書かれた行は上書きしない。残りの数は、候補が limit に満たなければ候補のうち書き換えなかった行の数、満てば数え直す(全部を数える
-   文は payload を jsonb に読み直すので、移し終えた後の回では流さない)。値は変わらないので変更の列に積まず、合図も出さない。"
-  (<- candidates (bulk-candidates-statement store.prefix table bulk limit))
+  "表 table の分けていない行(前の版の書いた bulk が NULL の行 — _pg_sql.hy の頭の註の state_rows)を limit 行まで分け直し(大きい欄の
+   無い行は分け終えた印を置き)、分け直した数と残りの数を返すため(MoveBulkFields の表 1 つ — _maintenance.hy の頭の註の「大きい欄を
+   移す」)。候補は錠の外で読み、分け直しは表の書きの錠の中の 1 文(書きと行の錠を取り合わない — 束の書きは行を書きの順に錠するので、
+   錠の外の UPDATE とは順が食い違い得る)。文は読んだ時の版の行だけを書き換えるので、候補の読みの後に書かれた行は上書きしない。残りの数は、
+   候補が limit に満たなければ候補のうち書き換えなかった行の数、満てば数え直す。候補の読みと数えは分けていない行の索引を引くので、
+   移し終えた表の回は空の索引を 1 度引くだけ。値は変わらないので変更の列に積まず、合図も出さない。"
+  (<- candidates (bulk-candidates-statement store.prefix table limit))
   (<- records (query-rows store.database candidates))
   (when (not records)
     (return (TableMove :moved 0 :unmoved 0)))
@@ -2371,7 +2375,7 @@
   (val moved (len rows))
   (when (< (len records) limit)
     (return (TableMove :moved moved :unmoved (- (len records) moved))))
-  (<- counting (unmoved-count-statement store.prefix table bulk))
+  (<- counting (unmoved-count-statement store.prefix table))
   (<- counted (query-rows store.database counting))
   (TableMove :moved moved :unmoved (int (get counted 0 0))))
 

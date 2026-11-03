@@ -8,9 +8,16 @@
 ;;;                表にだけ足す(bulk-column-step — 既定の値の無い列なので表を書き直さない)。行の値 = payload と bulk の欄を合わせた写像で、
 ;;;                同じ欄が両方に在れば payload の値。ListRows の外の読みは全部、合わせた綴り(stored-payload-expression)を payload の位置で
 ;;;                選ぶ。ListRows は fields が大きい欄を 1 つも含まなければ列 bulk を選ばない(選ばない列の TOAST を PostgreSQL は開かない)。
-;;;                書き(upsert-row-statement)は値のうち大きい欄を bulk に、残りを payload に置く(値に大きい欄の無い行は bulk が NULL)。
-;;;                前の版が値の全部を payload に置いた行は、手入れの移し(MoveBulkFields — bulk-candidates-statement・move-bulk-statement)が
-;;;                版を照らして分け直す(値・版・刻・変更の列は動かさない)。
+;;;                書き(upsert-row-statement)は値のうち大きい欄を bulk に、残りを payload に置く(大きい欄を宣言した表の、値に大きい欄の
+;;;                無い行は bulk が '{}' — 分け終えた印。宣言の無い表の行は NULL)。大きい欄を宣言した表で bulk が NULL の行は、前の版の
+;;;                書いた行(分けていない行)だけで、手入れの移し(MoveBulkFields — bulk-candidates-statement・move-bulk-statement)が版を
+;;;                照らして分け直す(値・版・刻・変更の列は動かさない)。
+;;;                分けていない行の索引(2026-11-04): 移しの候補の読みと残りの数えは、表ごとの部分索引 state_rows (key) WHERE ledger = '<表>'
+;;;                AND bulk IS NULL(bulk-pending-index — 名 = bp_)で、分けていない行だけを引く。前の形は条件 bulk IS NULL AND
+;;;                (payload::jsonb) ?| ARRAY[…] で、大きい欄の無い行も bulk が NULL のままだったので、表の行を全部 heap から読み payload を
+;;;                TOAST ごと jsonb に読み直した(本番の 40 GB の置き場で 1 分ごとの手入れの 1 文が 40 秒を越え、文の上限 6 秒で切れ、冷えた
+;;;                頁の読みで他の読みを 3 秒越えにした)。部分索引の項は分けていない行だけで、移し終えた表では空になり、新しい版の書きは
+;;;                述語に当たらないので索引に触らない。文は表の名を直に置く(引数にすると planner が述語を証明できず索引に当たらない)。
 ;;;   append_rows  seq = bigserial・ledger = 追記の列の名・payload = {"idempotencyKey" "writer" "body"} の JSON の綴り(行と一緒に積んだ出来事
 ;;;                — PutRowsAppendEvents — は鍵 "position" {"epoch" "sequence"} も持つ。表の形は変えない)
 ;;; 足した物(この package の意味に要る物だけ):
@@ -210,11 +217,11 @@
 ;; 旧い形の索引の名の接頭辞の後ろ(index-name の ix_<欄の指紋> と table-index-name の ix_<欄の指紋>_<表の指紋> — retired-index?)。
 (val RETIRED-INDEX-PATTERN (re.compile "ix_[0-9a-f]{12}(_[0-9a-f]{12})?"))
 ;; 宣言が作る表ごとの索引の名の接頭辞の後ろ(table-field-index-name の fp_・ordered-index-name の op_・ordered-within-index-name の wp_ —
-;; どれも <形>_<欄か欄の組の指紋>_<表の指紋> — table-shaped-index?)。ox_・ow_ は上から読む索引の前の形(全部の行の索引 — 頭の註の
+;; どれも <形>_<欄か欄の組の指紋>_<表の指紋>。bulk-pending-index-name の bp_<表の指紋> — table-shaped-index?)。ox_・ow_ は上から読む索引の前の形(全部の行の索引 — 頭の註の
 ;; 「上から読む索引を部分索引にする」)の名、fx_・ft_ は表の欄の式の索引の前の形(式 1 つの索引と全部の行の 2 列の索引 — 頭の註の
 ;; 「表の欄の式の索引の項を書きの刻の順に並べる」「表の欄の式の索引を部分索引にする」)の名で、今の宣言は作らないので、索引の用意が今の
 ;; 宣言に無い物として外す。
-(val TABLE-SHAPED-INDEX-PATTERN (re.compile "(fp|ft|fx|ox|ow|op|wp)_[0-9a-f]{12}_[0-9a-f]{12}"))
+(val TABLE-SHAPED-INDEX-PATTERN (re.compile "(fp|ft|fx|ox|ow|op|wp)_[0-9a-f]{12}_[0-9a-f]{12}|bp_[0-9a-f]{12}"))
 (val DEFAULT-PREFIX "records_")
 ;; 錠の鍵の接尾(接頭辞の後ろに区切りなしで続ける — 旧い版の錠の文の引数と同じ字面)。
 (val WRITER-LOCK-SUFFIX "records-writer")
@@ -584,6 +591,34 @@
                  :sampled True))
 
 
+(defk bulk-pending-condition [table]
+  {:pre [(: table str) (.match TABLE-NAME-PATTERN table)] :post [(: % str)]
+   :tags {:context "records" :role "foundation"}}
+  "表 table の分けていない行(前の版の書いた bulk が NULL の行 — 頭の註の state_rows)の条件を作るため。分けていない行の索引
+   (bulk-pending-index)の述語と、その索引で引く移しの文(bulk-candidates-statement・unmoved-count-statement)がこの 1 つを使い、述語と
+   文の条件の字面を揃える(表の名は宣言を通った名 — 文に直に置く。table-field-expression と同じ訳)。"
+  (.format "ledger = '{}' AND bulk IS NULL" table))
+
+
+(defk bulk-pending-index-name [prefix table]
+  {:pre [(: prefix str) (: table str)] :post [(: % str)]
+   :tags {:context "records" :role "foundation"}}
+  "表 table の分けていない行の索引(頭の註の state_rows)の名を作るため(接頭辞 31 字 + 15 字 — PostgreSQL の名の上限 63 字の内)。"
+  (<- table-digest (digest-of table))
+  (.format "{}bp_{}" prefix table-digest))
+
+
+(defk bulk-pending-index [prefix table]
+  {:pre [(: prefix str) (: table str) (.match TABLE-NAME-PATTERN table)] :post [(: % DeclaredIndex)]
+   :tags {:context "records" :role "foundation"}}
+  "大きい欄を宣言した表 table の分けていない行の索引 state_rows (key) WHERE ledger = '<表>' AND bulk IS NULL を作るため(頭の註の
+   state_rows — 速さだけの索引: 無くても移しは同じ行を分ける)。項は分けていない行だけなので、見積もりの統計は要らない。"
+  (<- name (bulk-pending-index-name prefix table))
+  (<- condition (bulk-pending-condition table))
+  (! (fixed-index name "state_rows"
+                  (.format "CREATE INDEX IF NOT EXISTS {i} ON {p}state_rows (key) WHERE {c}" :i name :p prefix :c condition))))
+
+
 (defk field-index [prefix table field-name serves]
   {:pre [(: prefix str) (: table str) (.match TABLE-NAME-PATTERN table) (: field-name str) (: serves bool)] :post [(: % DeclaredIndex)]
    :tags {:context "records" :role "foundation"}}
@@ -782,8 +817,9 @@
    無い時だけ(在る欄はその表の宣言した索引の欄の表の欄の式の索引が答える)。続いて表の名の順・欄の名の順の上から読む欄の索引(頭の註)。
    続いて表の名の順・(等号の欄, 上から読む欄) の順の等号の欄 × 上から読む欄の組の索引(頭の註)。
    続いて鍵の綴りの順の索引 state_rows (ledger, key COLLATE \"C\")(頭の註)。続いて覚えの外しの索引 retired_keys (ledger, remembered_at)
-   (頭の註の retired_keys — forget-keys-statement が引く)。最後に行の書きの冪等キーの覚えの外しの索引 write_keys (remembered_at)
-   (頭の註の write_keys — forget-write-keys-statement が引く)。"
+   (頭の註の retired_keys — forget-keys-statement が引く)。続いて行の書きの冪等キーの覚えの外しの索引 write_keys (remembered_at)
+   (頭の註の write_keys — forget-write-keys-statement が引く)。最後に大きい欄を宣言した表の名の順の分けていない行の索引(頭の註の
+   state_rows — 移しの候補の読みと残りの数えが引く)。"
   (val p prefix)
   (val separators (sorted (sfor decl (.values schema.streams) :if (isinstance decl.retention-group ByKeySuffix)
                                 decl.retention-group.separator)))
@@ -816,6 +852,11 @@
   (for [#(table equal field) within-pairs]
     (<- within-made (ordered-within-index p table equal field))
     (:= ordered (+ ordered #(within-made))))
+  (var pending #())
+  (for [table (sorted schema.tables)]
+    (when (. (get schema.tables table) bulk)
+      (<- pending-made (bulk-pending-index p table))
+      (:= pending (+ pending #(pending-made)))))
   (+ #((! (fixed-index (+ p "append_rows_ledger_at") "append_rows"
                        (.format "CREATE INDEX IF NOT EXISTS {p}append_rows_ledger_at ON {p}append_rows (ledger, at)" :p p))))
      groups
@@ -828,7 +869,8 @@
        (! (fixed-index (+ p "retired_keys_remembered") "retired_keys"
                        (.format "CREATE INDEX IF NOT EXISTS {p}retired_keys_remembered ON {p}retired_keys (ledger, remembered_at)" :p p)))
        (! (fixed-index (+ p "write_keys_remembered") "write_keys"
-                       (.format "CREATE INDEX IF NOT EXISTS {p}write_keys_remembered ON {p}write_keys (remembered_at)" :p p))))))
+                       (.format "CREATE INDEX IF NOT EXISTS {p}write_keys_remembered ON {p}write_keys (remembered_at)" :p p))))
+     pending))
 
 
 (defk relation-names [prefix relations]
@@ -1318,8 +1360,9 @@
          (: origin-host str) (: epoch int)]
    :post [(: % Statement)]
    :tags {:context "records" :role "foundation"}}
-  "行 1 つを書く(在れば置き換える)文を作るため。payload = 値のうち大きい欄を除いた綴り・bulk = 大きい欄の綴り(None = 値に大きい欄が
-   無い — 列 bulk を NULL にする。前に bulk に置いた古い欄を残すと、この書きが外した欄が読みの合わせで戻る)。"
+  "行 1 つを書く(在れば置き換える)文を作るため。payload = 値のうち大きい欄を除いた綴り・bulk = 大きい欄の綴り('{}' = 大きい欄を
+   宣言した表の、値に大きい欄が無い行 — 分け終えた印・None = 大きい欄を宣言しない表 — 列 bulk を NULL にする。どちらも前に bulk に置いた
+   古い欄を残さない — 残すと、この書きが外した欄が読みの合わせで戻る)。"
   (Statement :text (.format "INSERT INTO {p}state_rows (ledger, key, payload, bulk, version, updated_at, updated_by, origin_host, epoch)
                        VALUES (:ledger, :key, :payload, :bulk, :version, :at, :writer, :origin_host, :epoch)
                        ON CONFLICT (ledger, key) DO UPDATE SET payload = EXCLUDED.payload, bulk = EXCLUDED.bulk, version = EXCLUDED.version,
@@ -1329,38 +1372,35 @@
                                      #("writer" writer) #("origin_host" origin-host) #("epoch" epoch))))))
 
 
-(defk bulk-candidates-statement [prefix table fields limit]
-  {:pre [(: prefix str) (: table str) (: fields tuple) (> (len fields) 0) (: limit int) (> limit 0)] :post [(: % Statement)]
+(defk bulk-candidates-statement [prefix table limit]
+  {:pre [(: prefix str) (: table str) (: limit int) (> limit 0)] :post [(: % Statement)]
    :tags {:context "records" :role "foundation"}}
-  "表 table の、列 payload に大きい欄 fields のどれかが残る行(前の版の書きが値の全部を payload に置いた行 — 頭の註の state_rows)を
-   limit 行まで読む文を作るため(手入れの移しの候補 — 鍵・版・payload)。分け終えた行は bulk が NULL でないので、payload を jsonb に
-   読み直さずに外れる(大きい欄の無い行だけは bulk が NULL のまま毎回読み直す)。並べない(候補の全部を並べ替えずに頭の limit 行で止まる)。"
-  (<- members (in-list "b" fields))
-  (Statement :text (.format "SELECT key, version, payload FROM {p}state_rows
-                       WHERE ledger = :ledger AND bulk IS NULL AND (payload::jsonb) ?| ARRAY[{m}]::text[] LIMIT :limit"
-                            :p prefix :m members.text)
-             :params (+ (! (params-of #(#("ledger" table) #("limit" limit)))) members.params)))
+  "表 table の分けていない行(前の版の書きが値の全部を payload に置いた bulk が NULL の行 — 頭の註の state_rows)を limit 行まで読む文を
+   作るため(手入れの移しの候補 — 鍵・版・payload)。分けていない行の索引(bulk-pending-index)を引き、分け終えた行と他の表の行を読まない
+   (payload を jsonb に読み直さない — 大きい欄の有無は移しが値を解いて決める)。並べない(候補の全部を並べ替えずに頭の limit 行で止まる)。"
+  (<- condition (bulk-pending-condition table))
+  (Statement :text (.format "SELECT key, version, payload FROM {p}state_rows WHERE {c} LIMIT :limit" :p prefix :c condition)
+             :params (! (params-of #(#("limit" limit))))))
 
 
-(defk unmoved-count-statement [prefix table fields]
-  {:pre [(: prefix str) (: table str) (: fields tuple) (> (len fields) 0)] :post [(: % Statement)]
+(defk unmoved-count-statement [prefix table]
+  {:pre [(: prefix str) (: table str)] :post [(: % Statement)]
    :tags {:context "records" :role "foundation"}}
-  "表 table の、列 payload に大きい欄が残る行の数を 1 行で返す文を作るため(移しの残りの計器 — 候補の読みと同じ条件)。"
-  (<- members (in-list "b" fields))
-  (Statement :text (.format "SELECT count(*) FROM {p}state_rows
-                       WHERE ledger = :ledger AND bulk IS NULL AND (payload::jsonb) ?| ARRAY[{m}]::text[]"
-                            :p prefix :m members.text)
-             :params (+ (! (params-of #(#("ledger" table)))) members.params)))
+  "表 table の分けていない行の数を 1 行で返す文を作るため(移しの残りの計器 — 候補の読みと同じ条件・同じ索引。数えは残りの行の数に
+   比例し、表の行の数に依らない)。"
+  (<- condition (bulk-pending-condition table))
+  (Statement :text (.format "SELECT count(*) FROM {p}state_rows WHERE {c}" :p prefix :c condition) :params #()))
 
 
 (defk move-bulk-statement [prefix table moves]
   {:pre [(: prefix str) (: table str) (: moves str)] :post [(: % Statement)]
    :tags {:context "records" :role "foundation"}}
   "表 table の行を、読んだ時の版のまま分け直す文を作るため(手入れの移し — 頭の註の state_rows)。moves = 行ごとの
-   {key version payload bulk} の JSON の配列の綴り(retire-keys-statement と同じく引数 1 つで運び jsonb_to_recordset で展げる)。版が読んだ時と
+   {key version payload bulk} の JSON の配列の綴り(retire-keys-statement と同じく引数 1 つで運び jsonb_to_recordset で展げる)。payload が
+   null の項は列 payload を書き直さない(大きい欄の無い行に分け終えた印 bulk '{}' だけを置く — 同じ綴りを送り直して TOAST を書き直さない)。版が読んだ時と
    違う行(読みの後に書きが書き直した行)は書き換えない — 書きの値を上書きせず、残れば次の回の候補に出る。版・刻・書き手・置き場の版の
    列は動かさない。分け直した行の鍵を返す。"
-  (Statement :text (.format "UPDATE {p}state_rows AS r SET payload = moved.payload, bulk = moved.bulk
+  (Statement :text (.format "UPDATE {p}state_rows AS r SET payload = COALESCE(moved.payload, r.payload), bulk = moved.bulk
                        FROM jsonb_to_recordset(CAST(:moves AS jsonb)) AS moved(key text, version bigint, payload text, bulk text)
                        WHERE r.ledger = :ledger AND r.key = moved.key AND r.version = moved.version
                        RETURNING r.key" :p prefix)
