@@ -346,6 +346,11 @@ CGROUP_LAYERS = {
 # helios の常駐の job の層の memory.min の下限: helios へ移す常駐の job 29 本の memory の峰の見積もり 約 28 GiB(2026-11-01 の上に載る系の
 # 調べ — zeus の services の層の 54.6 時間の峰 35.3 GiB × 移す物の割合 79%)。
 HELIOS_SERVICE_PEAK = "28G"
+# zeus の守る層の memory.min の下限(11-03 13:2x JST — 上に載る系のコアの常駐の job が helios へ移った後の zeus の worker で測った使い):
+# 常駐の job の層 = zeus に残る 10 本の宣言の settle の和 2572 MiB(CLI を起こす job の本体を除く)+ その本体の RSS 929 MiB。会話の CLI の
+# 層 = 層の process の RSS の和 14827 MiB。
+ZEUS_SERVICE_USE = "3501M"
+ZEUS_CLI_USE = "14827M"
 # cgroup の層の CPU の重み(boot.sh の「cgroup の層」の CPU の重み): 層に cpu.weight・cpu.idle を書ける boot.sh
 # の最初の版。知らない版の boot.sh は cpu の file を宣言の誤りとして断り、worker が起動で止まる — だから cpu を書く層を宣言する worker の
 # 版は CGROUP_CPU_SINCE かその子孫。
@@ -458,6 +463,16 @@ def test_helios_worker_guards_its_resident_jobs_above_their_estimated_peak(rende
     helios = _worker_on(rendered, "helios")
     service = str(_env_value(helios, "DOEFF_WORKER_SERVICE_CGROUP")["value"])
     assert _bytes(dict(_layout(helios))[service]["memory.min"]) >= _bytes(HELIOS_SERVICE_PEAK)
+
+
+def test_zeus_worker_guards_its_resident_jobs_and_its_clis_above_their_measured_use(zeus_worker: Manifest) -> None:
+    """zeus の常駐の job の層と会話の CLI の層(CGROUP_CLI_LAYER)の memory.min は、それぞれ測った使い(ZEUS_SERVICE_USE・ZEUS_CLI_USE)
+    以上。失敗ケース: CLI の層の守る値が今の使いを下回ると、task と命令の層が上限まで使った時の container の上限の回収が、走っている
+    会話の CLI の memory に掛かる(常駐の job が helios へ移る前の 11G は、移った後の CLI の RSS の和 14827 MiB より小さい)。"""
+    settings = dict(_layout(zeus_worker))
+    service = str(_env_value(zeus_worker, "DOEFF_WORKER_SERVICE_CGROUP")["value"])
+    assert _bytes(settings[service]["memory.min"]) >= _bytes(ZEUS_SERVICE_USE), settings
+    assert _bytes(settings[CGROUP_CLI_LAYER]["memory.min"]) >= _bytes(ZEUS_CLI_USE), settings
 
 
 @pytest.mark.parametrize("node", sorted(CGROUP_LAYERS))

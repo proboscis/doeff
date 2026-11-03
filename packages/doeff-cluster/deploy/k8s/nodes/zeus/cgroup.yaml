@@ -40,7 +40,19 @@
 # 層より上には置かない)。訳: commands(100)に居ると、load 100 以上の時に module の import の wall が CPU の秒の 2〜3 倍(19〜24 秒)に
 # 伸びた。値の出どころ(11-02 11:45 JST の zeus で手で作った一時の cgroup の試し): 重み 1000 で wall が CPU の 1.03〜1.13 倍・重み 100 で
 # 1.25〜1.52 倍。memory.max 4G = 測った RSS の峰(11-02 15:4x JST の zeus — 本番の回の宣言の process の VmHWM 0.6GB)に子の命令と
-# 2 本の重なりの余りを足した値。限る層なので、和は container の上限の内(守る層 26G + 限る層 68G)。
+# 2 本の重なりの余りを足した値。限る層なので、和は container の上限の内。
+#
+# 常駐の job が別の機体へ移った後の値(11-03): 上に載る系のコアの常駐の job が helios の worker へ移り、zeus の常駐の job は 10 本(上に載る系
+# の 4 本と別の系の 6 本)になった。services の memory.min を 13G → 4G に下げ、空いた 9G を会話の CLI の層 clis の memory.min(11G → 20G)
+# へ回す(守る層の和 26G は変えない — node.yaml の取り分と同じ)。命令の層 commands の memory.max は、前から誰にも割り当てていなかった 6G
+# のうち 4G で 28G → 32G に上げ、2G は誰にも割り当てない余りに残す(守る層 26G + 限る層 72G = 98G)。値の出どころ(11-03 13:2x JST の zeus):
+# - services: 層の RSS の和 2.4GiB・anon 2.1GiB(memory.current 11.5GiB の残りは回収できる file と slab)。残る 10 本の宣言の settle の和
+#   は CLI を起こす job の本体を除いて 2.5GiB、その本体の RSS 0.9GiB — 和 3.4GiB に shim の分を足して 4G。
+# - clis: 層の RSS の和 14.5GiB・Pod の起動からの峰 27.1GiB。11G は今の使いより小さく、jobs と commands が上限まで使うと会話の CLI の
+#   memory が回収に掛かる。20G は今の使いを全部守り、峰との差だけが回収に掛かる。
+# - commands: Pod の起動からの 8.3 時間で memory.max に 4756 回当たり(OOM は 0 — 回収で止まる)、峰が上限の 28G に届いた。
+# CPU は層ごとの取り置きを持たない(cpu.weight だけ — CPU が埋まった時の分け方)ので、宣言は変えない。services の層が使わなくなった CPU は
+# そのまま他の層へ回る(11-03 の 60 秒の測り: services 1.7 core・clis 4.2・jobs 9.8・commands 0.5)。
 #
 # 雛形の env の並び(WORK_DIR が 1 番・DRAIN_DEADLINE が 9 番)を動かさないよう、足す物は全部末尾へ足す。
 - op: add
@@ -77,6 +89,6 @@
 - { op: add, path: /spec/template/spec/containers/0/env/-, value: { name: WORKER_CGROUP_HOST, value: /host/cgroup } }
 - op: add
   path: /spec/template/spec/containers/0/env/-
-  value: { name: WORKER_CGROUP_LAYOUT, value: "worker:memory.min=2G,cpu.weight=1000 services:memory.min=13G,cpu.weight=1000 clis:memory.min=11G,cpu.weight=100 jobs:memory.max=36G,cpu.weight=100 commands:memory.max=28G,cpu.weight=100 deploy:memory.max=4G,cpu.weight=1000" }
+  value: { name: WORKER_CGROUP_LAYOUT, value: "worker:memory.min=2G,cpu.weight=1000 services:memory.min=4G,cpu.weight=1000 clis:memory.min=20G,cpu.weight=100 jobs:memory.max=36G,cpu.weight=100 commands:memory.max=32G,cpu.weight=100 deploy:memory.max=4G,cpu.weight=1000" }
 - { op: add, path: /spec/template/spec/containers/0/env/-, value: { name: DOEFF_WORKER_SERVICE_CGROUP, value: services } }
 - { op: add, path: /spec/template/spec/containers/0/env/-, value: { name: DOEFF_WORKER_JOB_CGROUP, value: jobs } }
