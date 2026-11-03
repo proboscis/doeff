@@ -1,6 +1,6 @@
 # IDE plugins for doeff
 
-> **Needs components outside `pip install doeff`.** The plugins are built from this repository
+> **Needs components outside `pip install doeff`.** The plugins live in the private doeff-ide-plugins repository
 > (see below), and they call the `doeff-indexer` command. `doeff-indexer` 0.1.3 on PyPI gives
 > `doeff run` its auto-discovery, but none of its wheels (any platform) puts the command where its
 > entry point looks (`doeff-indexer --help` reports "binary not found"); this repository fixes that
@@ -12,10 +12,10 @@ git clone --depth 1 https://github.com/proboscis/doeff.git
 pip install doeff ./doeff/packages/doeff-indexer
 ```
 
-This repository ships two IDE integrations:
+The private repository `proboscis/doeff-ide-plugins` holds the IDE integrations:
 
-- **PyCharm / IntelliJ**: Kotlin plugin under `ide-plugins/pycharm`
-- **VS Code**: TypeScript extension under `ide-plugins/vscode/doeff-runner`
+- **PyCharm / IntelliJ**: Kotlin plugin under `pycharm` in the private repository `proboscis/doeff-ide-plugins`
+- **VS Code**: TypeScript extension under `vscode/doeff-runner` in the same repository
 
 Both rely on `doeff-indexer` to discover Programs, interpreters, Kleisli
 programs, and transformers. Install `doeff-indexer` and the `doeff` Python
@@ -29,7 +29,7 @@ indexer binary.
 - **Requirements**: Python plugin plus a Python SDK. `doeff-indexer` available on
   PATH or via `DOEFF_INDEXER_PATH`.
 - **Build/install**:
-  - `cd ide-plugins/pycharm`
+  - `cd pycharm` (in `doeff-ide-plugins`)
   - `./gradlew buildPlugin`
   - Install the produced ZIP from *Settings → Plugins → Install from disk*.
 - **Usage**: Click the gutter icon beside a `Program` annotation, pick
@@ -49,7 +49,7 @@ indexer binary.
 - **Requirements**: VS Code Python extension; `doeff` and `doeff-indexer` in the
   active environment (`DOEFF_INDEXER_PATH` if not on PATH).
 - **Build/package**:
-  - `cd ide-plugins/vscode/doeff-runner`
+  - `cd vscode/doeff-runner` (in `doeff-ide-plugins`)
   - `npm install`
   - `npm run compile`
   - Package: `npx @vscode/vsce package` (produces `doeff-runner-<ver>.vsix`)

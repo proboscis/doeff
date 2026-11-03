@@ -7,7 +7,7 @@ doeff.nvim calls all six) — the arguments and JSON of the Rust CLI this comman
 it and run the commands' programs under fake handlers: the recorded workflows live in
 memory, the tmux calls are recorded, the clock stands still and a Delay moves the workflow
 on. One test runs ``ps --json`` under the real handlers over a state directory on disk and
-pins its output to ``ide-plugins/test-fixtures/doeff-agentic-ps.json``, the file both
+pins its output to ``tests/fixtures/doeff-agentic-ps.json``, the file both
 plugins' tests read as what the CLI writes.
 """
 
@@ -467,7 +467,7 @@ def test_stop_text_and_an_unrecorded_id(world: FakeWorld):
 
 #: The ``ps --json`` the IDE plugins' tests read as the CLI's output (doeff-runner's
 #: src/test/workflows and doeff.nvim's tests/workflows_spec.lua).
-PLUGIN_PS_FIXTURE = Path(__file__).parents[3] / "ide-plugins/test-fixtures/doeff-agentic-ps.json"
+PLUGIN_PS_FIXTURE = Path(__file__).parent / "fixtures/doeff-agentic-ps.json"
 
 
 def test_ps_json_of_a_recorded_state_dir_is_the_fixture_the_plugins_read(tmp_path: Path):

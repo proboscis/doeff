@@ -593,7 +593,6 @@ The paths for users come first. The rest are for people who work on doeff itself
 | [`doeff/`][map-doeff], [`packages/`][map-packages] | users | the library and its add-on packages |
 | [`docs/index.md`][map-docs-index] | users | start here: guides and API notes |
 | [`examples/`][map-examples] | users | runnable examples |
-| [`ide-plugins/`][map-ide-plugins] | users | editor plugins for PyCharm, VS Code and Neovim |
 | [`docs/adr/`][map-adr] | contributors | design decisions written as executable tests |
 | [`tests/`][map-tests], [`scripts/`][map-scripts], [`tools/`][map-tools], [`benchmarks/`][map-benchmarks] | contributors | the test suite, development tools and benchmarks |
 | [`images/`][map-images] | maintainers | images used by the README |
@@ -605,7 +604,6 @@ records.
 [map-packages]: https://github.com/proboscis/doeff/tree/main/packages
 [map-docs-index]: https://github.com/proboscis/doeff/blob/main/docs/index.md
 [map-examples]: https://github.com/proboscis/doeff/tree/main/examples
-[map-ide-plugins]: https://github.com/proboscis/doeff/tree/main/ide-plugins
 [map-adr]: https://github.com/proboscis/doeff/tree/main/docs/adr
 [map-tests]: https://github.com/proboscis/doeff/tree/main/tests
 [map-scripts]: https://github.com/proboscis/doeff/tree/main/scripts

@@ -198,7 +198,7 @@ result = run(recorded_workflows_handler()(review_status()))
 (VS Code's doeff-runner and doeff.nvim) pass and write the JSON they read — the arguments and
 JSON of the Rust CLI this command replaced. Install it with `pip install doeff-agentic`. The
 JSON `ps --json` writes for a recorded state directory is pinned by
-`ide-plugins/test-fixtures/doeff-agentic-ps.json`, which both plugins' tests read. Each command runs a doeff program over the recorded-workflow effects
+`tests/fixtures/doeff-agentic-ps.json`, which both plugins' tests read. Each command runs a doeff program over the recorded-workflow effects
 (`AgenticListWorkflows`, `AgenticFindWorkflow`, `AgenticSendToAgent`, …) under
 `recorded_workflows_handler`.
 

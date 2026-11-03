@@ -41,16 +41,6 @@ repos:
         pass_filenames: true
         exclude: *semgrep-fixtures
 
-      # ADR-DOE-RUNNER-001 R2 / R3: the TypeScript of the read side (doeff-runner's src/read/) is checked with the same rule file.
-      # The rules' paths.include only matches src/read/, so no other TypeScript is passed.
-      - id: semgrep-reading-plane
-        alias: semgrep-rules
-        name: semgrep reading plane rules
-        entry: *semgrep-entry
-        language: system
-        files: '^ide-plugins/vscode/doeff-runner/src/read/.*\.ts$'
-        pass_filenames: true
-
       # Some rules also match documents, settings and type declarations, such as the rule against application vocabulary in
       # generic packages (doeff-packages-have-no-application-vocabulary). Python and Hy are passed by the 2 items above, so this one
       # passes all the rest (.pyi, .md, .toml, .json, .sh, Dockerfile, ...) under the same roots as the daily scan (tests/test_semgrep_gate.py —
