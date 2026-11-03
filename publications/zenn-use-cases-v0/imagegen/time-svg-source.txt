@@ -3,7 +3,7 @@
 - 正本：../visuals/time-concept.svg と ../visuals/time-flow.svg。
 - 図の仕様：../reviews/time-visuals.json。
 - PNGへの変換：../visuals/render_svg.mjs（playwright 1.62.1のchromiumで撮る）。
-  - time-concept：幅1200・高さ1080。
+  - time-concept：幅1200・高さ1076(2026-11-03に描き直した)。
   - time-flow：幅1200・高さ1040。
 - 出力先：リポジトリ直下の images/zenn-use-cases-v0/generated/。
 
