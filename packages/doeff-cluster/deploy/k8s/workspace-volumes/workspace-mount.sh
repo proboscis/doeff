@@ -14,12 +14,21 @@
 #   fstrim  付いている volume の使っていない block を Longhorn へ返す(冷やす前 — README.md の節「寿命」)。
 #   grow    付いている volume の file system を、device の今の大きさまで付けたまま広げる(resize2fs — 頼み手が Longhorn の volume を
 #           広げた後。device が広がっていなければ何もしない)。
+# overlayfs の頼み(1 行・空白で 3 つ): `<命令> <下の dir> <付ける先>`(仕事ごとに repo の checkout を丸ごと
+# 書き出さず、共有の読むだけの checkout の上に変えた file だけを書く):
+#   overlay   付ける先に、下の dir を下の層・`<付ける先>.up` を上の層・`<付ける先>.wk` を overlayfs の作業の dir にした overlay を付ける。
+#             下の dir は作業の root の下の base/ の下(共有の checkout の置き場)。上の層と作業の dir は頼み手が作る(同じ file system)。
+#             既に同じ下の dir の overlay が付いていれば何もしない。
+#   unoverlay 付ける先の overlay を外す(下の dir を照らしてから)。何も付いていなければ何もしない。上の層は消さない(頼み手が消す)。
 # 答え(`<鍵>.out` — 書き切ってから名を替えて置く): 1 行目が結末の code(0 = した・既にそうだった / 1 = 断った・失敗した)、
 # 2 行目からが訳と命令の出力。頼み手は答えを読んだら消す。
 #
-# 断る物(何もせずに 1): 4 つの命令の外・volume の名が英小文字・数字・- の外・付ける先が作業の root の下でない・. か .. か // を
+# 断る物(何もせずに 1): 6 つの命令の外・volume の名が英小文字・数字・- の外・付ける先が作業の root の下でない・. か .. か // を
 # 含む・在る dir でない・symlink を通る・volume が node に attach されていない(device が無い)・付ける先に別の物が付いている・
-# volume が別の所に付いている・file system が ext4 でない(作り直さない — 中身を消さない)。
+# volume が別の所に付いている・file system が ext4 でない(作り直さない — 中身を消さない)。overlay と unoverlay では、ほかに: path が
+# 英数字・. _ / - の外の字を持つ(overlayfs の option を区切る , と : を通さない)・下の dir が base/ の下でない・付ける先が base/ の下・
+# 上の層か作業の dir が在る dir でないか symlink を通る・付ける先が空でない(付けると中身が隠れる)・付ける先に別の下の dir の overlay
+# か overlay でない物が付いている。
 #
 # 値(sidecar の宣言と同じ — 検は tests/test_workspace_mount.py が偽の命令で回す時だけ替える):
 #   WORKSPACE_MOUNT_ROOT     作業の root(sidecar の /work — worker の /work と同じ volume work)
@@ -53,12 +62,69 @@ mounted_at() { findmnt -rn -M "$1" -o MAJ:MIN | tail -n 1; }
 
 read -r verb volume target rest <"$request" || [ -n "${verb:-}" ] || refuse "頼み $request が読めない(空)"
 [ -z "${rest:-}" ] || refuse "頼みの欄が 3 つでない: '$verb $volume $target $rest'"
-case ${verb:-} in mount | umount | fstrim | grow) ;; *) refuse "知らない命令 '${verb:-}'(mount・umount・fstrim・grow だけ)" ;; esac
+case ${verb:-} in mount | umount | fstrim | grow | overlay | unoverlay) ;;
+  *) refuse "知らない命令 '${verb:-}'(mount・umount・fstrim・grow・overlay・unoverlay だけ)" ;;
+esac
+
+# 作業の root の下の、在る・symlink を通らない dir である事(何の dir かを $1 で言う)。
+plain_dir() {
+  case ${2:-} in "$root"/?*) ;; *) refuse "$1 '${2:-}' が $root の下でない" ;; esac
+  case $2/ in */../* | */./* | *//*) refuse "$1 '$2' が . か .. か // を含むか / で終わる" ;; esac
+  [ -d "$2" ] || refuse "$1 $2 が在る dir でない(dir は頼み手が作る)"
+  [ "$(realpath -e "$2" 2>/dev/null)" = "$2" ] || refuse "$1 $2 が symlink を通る"
+}
+
+case $verb in overlay | unoverlay)
+  # overlayfs の頼み: 2 つ目の欄は volume の名でなく下の dir(共有の checkout)。
+  lower=$volume
+  for path in "$lower" "$target"; do
+    case $path in *[!A-Za-z0-9._/-]*) refuse "path '$path' が英数字・. _ / - の外の字を持つ(overlayfs の option を区切る , と : を通さない)" ;; esac
+  done
+  case $lower in "$root"/base/?*) ;; *) refuse "下の dir '$lower' が $root/base の下でない(共有の checkout の置き場の外)" ;; esac
+  case $target in "$root"/base/*) refuse "付ける先 '$target' が $root/base の下(共有の checkout の置き場に付けない)" ;; esac
+  plain_dir "下の dir" "$lower"
+  plain_dir "付ける先" "$target"
+  # 付ける先に今付いている overlay の下の dir(付いていなければ空・overlay でない物なら '-')。
+  have_type=$(findmnt -rn -M "$target" -o FSTYPE | tail -n 1)
+  have_options=$(findmnt -rn -M "$target" -o OPTIONS | tail -n 1)
+  case $have_type in
+    '') have_lower= ;;
+    overlay) have_lower=$(echo ",$have_options," | sed -n 's/.*,lowerdir=\([^,]*\),.*/\1/p') ;;
+    *) have_lower=- ;;
+  esac
+  case $verb in
+    overlay)
+      if [ -n "$have_lower" ]; then
+        [ "$have_lower" = "$lower" ] || refuse "$target には別の物(${have_type} ${have_lower})が付いている"
+        say "$target には既に $lower の overlay が付いている"
+        finish 0
+      fi
+      upper=$target.up
+      work=$target.wk
+      plain_dir "上の層" "$upper"
+      plain_dir "overlayfs の作業の dir" "$work"
+      [ -z "$(ls -A "$target")" ] || refuse "付ける先 $target が空でない(付けると中身が隠れる)"
+      mount -t overlay overlay -o "lowerdir=$lower,upperdir=$upper,workdir=$work" "$target" >>"$notes" 2>&1 ||
+        refuse "$lower の overlay を $target に付けられなかった"
+      say "$lower を下の層・$upper を上の層にした overlay を $target に付けた"
+      finish 0
+      ;;
+    unoverlay)
+      if [ -z "$have_lower" ]; then
+        say "$target には何も付いていない"
+        finish 0
+      fi
+      [ "$have_lower" = "$lower" ] || refuse "$target に付いているのは $lower の overlay でない(${have_type} ${have_lower})"
+      umount "$target" >>"$notes" 2>&1 || refuse "$target を外せなかった(使っている process が在るかもしれない)"
+      say "$lower の overlay を $target から外した"
+      finish 0
+      ;;
+  esac
+  ;;
+esac
+
 case ${volume:-} in '' | -* | *[!a-z0-9-]*) refuse "volume の名 '${volume:-}' が英小文字・数字・- の外" ;; esac
-case ${target:-} in "$root"/?*) ;; *) refuse "付ける先 '${target:-}' が $root の下でない" ;; esac
-case $target/ in */../* | */./* | *//*) refuse "付ける先 '$target' が . か .. か // を含むか / で終わる" ;; esac
-[ -d "$target" ] || refuse "付ける先 $target が在る dir でない(dir は頼み手が作る)"
-[ "$(realpath -e "$target" 2>/dev/null)" = "$target" ] || refuse "付ける先 $target が symlink を通る"
+plain_dir "付ける先" "$target"
 
 device=$devices/$volume
 # device の型と major:minor(Longhorn は attach した volume を host の /dev/longhorn/<名> の block device にする)。

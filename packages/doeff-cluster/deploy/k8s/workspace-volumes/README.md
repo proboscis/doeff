@@ -251,13 +251,16 @@ native sidecar — 宣言と訳は `../nodes/zeus/node.yaml` の註)がする。
 | 見せ方 | 係の `/work` は mountPropagation Bidirectional、worker の container の `/work` は HostToContainer(同じ volume work = host の `/mnt/fast_ssd_usb/agent-worker` — host の `/mnt/fast_ssd_usb` は shared の mount)。係が `/work/<path>` に付けた volume は host を通って worker の `/work/<path>` に見える |
 | 入れ替え | mount は host の物なので、Pod の入れ替え(2 つの世代が同じ機体に並ぶ)でも残り、どちらの世代の worker にも係にも見える。係が止まっても外れない — 外すのは頼みだけ |
 | 頼みの dir | env `WORKER_WORKSPACE_MOUNT_DIR`(= `/run/workspace-mount` — Pod ごとの emptyDir を係と worker が分け合う)。env の無い worker には係が無い |
-| 頼み | `<鍵>.tmp` に 1 行 `<命令> <volume の名> <付ける先>` を書き、`<鍵>.req` へ名を替える(鍵は頼みごとに別。`.` で始めない)。命令は mount・umount・fstrim・grow |
+| 頼み | `<鍵>.tmp` に 1 行 `<命令> <volume の名> <付ける先>`(overlay と unoverlay は `<命令> <下の dir> <付ける先>`)を書き、`<鍵>.req` へ名を替える(鍵は頼みごとに別。`.` で始めない)。命令は mount・umount・fstrim・grow・overlay・unoverlay |
 | 答え | 係は 0.2 秒ごとに `*.req` を見て script を読み直して走らせ、`<鍵>.out`(1 行目 = code 0 か 1・2 行目から訳と命令の出力)を置いて `<鍵>.req` を消す。頼み手は答えを読んだら消す |
 | mount | device は host の `/dev/longhorn/<volume の名>`(Longhorn の ticket で attach した後に在る)。file system が無ければ `mkfs.ext4 -m 0 -E root_owner=1000:1000,assume_storage_prezeroed=1` を打ってから付ける(新しい volume は書いていない所を 0 で読むので、journal と inode の表を 0 で埋めない — 埋めると 10 GiB ごとに約 224 MiB を SSD へ書く)。同じ volume が既に付いていれば何もしない |
 | umount | 付いている物が名指した volume か照らしてから外す。使用中で外れなければ断る(lazy に外さない)。何も付いていなければ何もしない |
 | fstrim | 付いている物を照らしてから `fstrim -v`(冷やす前 — 節「寿命」) |
 | grow | 付いている物を照らしてから `resize2fs <device>`(付けたまま device の今の大きさまで — 頼み手が Longhorn の volume を広げた後。device が広がっていなければ何もしない) |
-| 断る物 | 4 つの命令の外・volume の名が英小文字・数字・`-` の外・付ける先が `/work` の下の在る dir でない・`.` か `..` か `//` を含む・symlink を通る・attach されていない・付ける先に別の物・volume が別の所に付いている・中身が ext4 でない(作り直さない) |
+| overlay | 付ける先に、下の dir(`/work/base/` の下の共有の checkout)を下の層・`<付ける先>.up` を上の層・`<付ける先>.wk` を overlayfs の作業の dir にした overlay を付ける。仕事ごとに repo の作業の木を丸ごと書き出さず、変えた file だけを上の層に書く(USB の SSD の書きを減らす)。上の層と作業の dir は頼み手が作る。付ける先が空でなければ断る(中身が隠れる)。同じ下の dir の overlay が既に付いていれば何もしない |
+| unoverlay | 付いている overlay の下の dir を照らしてから外す。使用中で外れなければ断る。上の層は消さない(頼み手が消す)。何も付いていなければ何もしない |
+| 下の dir | `/work/base/` の下に頼み手が置き、overlay が付いている間は書き換えない(overlayfs は下の層の書き換えを想定しない)。係は下の dir を作らない・消さない |
+| 断る物 | 6 つの命令の外・volume の名が英小文字・数字・`-` の外・付ける先が `/work` の下の在る dir でない・`.` か `..` か `//` を含む・symlink を通る・attach されていない・付ける先に別の物・volume が別の所に付いている・中身が ext4 でない(作り直さない)。overlay と unoverlay では、ほかに path が英数字・`. _ / -` の外の字を持つ(overlayfs の option を区切る `,` と `:` を通さない)・下の dir が `/work/base/` の下でない・付ける先が `/work/base/` の下・上の層か作業の dir が無い・付ける先に別の下の dir の overlay か overlay でない物 |
 | 付ける先の dir | 頼み手(worker の uid)が作り、外した後も残す(係は dir を作らない・消さない) |
 
 - script を替える時: `workspace-mount.sh` を直して main に入れる。ConfigMap の名が固定なので Pod は作り直されず、kubelet が file を入れ替えた後

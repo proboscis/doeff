@@ -194,10 +194,19 @@ echo "block special file $(cat "$path")"
     "findmnt": """
 touch "$FAKE/mounts"
 target=
-while [ $# -gt 0 ]; do case $1 in -M) target=$2; shift ;; esac; shift; done
+column=MAJ:MIN
+while [ $# -gt 0 ]; do case $1 in -M) target=$2; shift ;; -o) column=$2; shift ;; esac; shift; done
 if [ -z "$target" ]; then cat "$FAKE/mounts"; exit 0; fi
 found=1
-while read -r number path; do [ "$path" = "$target" ] && { echo "$number"; found=0; }; done <"$FAKE/mounts"
+while read -r number path fstype options; do
+  [ "$path" = "$target" ] || continue
+  found=0
+  case $column in
+    FSTYPE) echo "${fstype:-ext4}" ;;
+    OPTIONS) echo "${options:-rw,relatime}" ;;
+    *) echo "$number" ;;
+  esac
+done <"$FAKE/mounts"
 exit $found
 """,
     "blkid": """
@@ -216,12 +225,17 @@ echo ext4 >"$FAKE/fs/$(basename "$device")"
 echo "mount $*" >>"$FAKE/calls"
 eval "target=\\${$#}"
 eval "device=\\${$(($# - 1))}"
+if [ "$1 $2" = "-t overlay" ]; then
+  [ ! -e "$FAKE/overlay-fails" ] || { echo "mount: $target: wrong fs type." >&2; exit 32; }
+  echo "0:99 $target overlay rw,relatime,$5,uuid=on" >>"$FAKE/mounts"
+  exit 0
+fi
 echo "$(cat "$device") $target" >>"$FAKE/mounts"
 """,
     "umount": """
 echo "umount $*" >>"$FAKE/calls"
 [ ! -e "$FAKE/busy" ] || { echo "umount: $1: target is busy." >&2; exit 32; }
-grep -v " $1\\$" "$FAKE/mounts" >"$FAKE/mounts.new"; mv "$FAKE/mounts.new" "$FAKE/mounts"
+awk -v target="$1" '$2 != target' "$FAKE/mounts" >"$FAKE/mounts.new"; mv "$FAKE/mounts.new" "$FAKE/mounts"
 """,
     "fstrim": """
 echo "fstrim $*" >>"$FAKE/calls"
@@ -260,7 +274,8 @@ class Bench:
     def mounted(self) -> dict[str, str]:
         mounts = self.fake / "mounts"
         lines = mounts.read_text(encoding="utf-8").splitlines() if mounts.exists() else []
-        return {line.split(" ", 1)[1]: line.split(" ", 1)[0] for line in lines}
+        # 1 行「<major:minor> <付けた先>」か、overlay なら「<major:minor> <付けた先> overlay <option>」— 付けた先 → 残りの欄。
+        return {line.split(" ")[1]: " ".join(line.split(" ")[:1] + line.split(" ")[2:]) for line in lines}
 
     def calls(self) -> list[str]:
         calls = self.fake / "calls"
@@ -465,3 +480,119 @@ def test_script_runs_with_the_tools_of_the_image_on_its_path() -> None:
     """script は blkid・mkfs.ext4・fstrim・resize2fs の在る /usr/sbin を道の後ろに足す(係の container の道に無くても引ける・偽の命令を
     替えない)。"""
     assert 'PATH="$PATH:/usr/sbin:/sbin"' in SCRIPT.read_text(encoding="utf-8")
+
+
+# --- overlayfs の頼み(共有の読むだけの checkout の上に、変えた file だけを書く) ----------------------------------------------
+
+
+def _layers(bench: Bench, name: str) -> tuple[Path, Path]:
+    """共有の checkout(base/ の下)と、付ける先・上の層・作業の dir を頼み手として作る。"""
+    lower = bench.root / "base" / "repo" / "abc123"
+    lower.mkdir(parents=True, exist_ok=True)
+    target = bench.dir(name)
+    Path(f"{target}.up").mkdir(exist_ok=True)
+    Path(f"{target}.wk").mkdir(exist_ok=True)
+    return lower, target
+
+
+def test_overlay_puts_the_shared_checkout_under_and_the_side_dir_over(bench: Bench) -> None:
+    lower, target = _layers(bench, "task-1")
+    code, notes = bench.ask(f"overlay {lower} {target}")
+    assert code == 0, notes
+    assert bench.calls() == [
+        f"mount -t overlay overlay -o lowerdir={lower},upperdir={target}.up,workdir={target}.wk {target}"
+    ]
+    assert bench.mounted()[str(target)].startswith("0:99 overlay ")
+
+
+def test_overlaying_the_same_checkout_twice_mounts_once(bench: Bench) -> None:
+    lower, target = _layers(bench, "task-1")
+    assert bench.ask(f"overlay {lower} {target}")[0] == 0
+    code, notes = bench.ask(f"overlay {lower} {target}")
+    assert code == 0 and "既に" in notes
+    assert len([call for call in bench.calls() if call.startswith("mount ")]) == 1
+
+
+def test_unoverlay_takes_off_the_named_overlay_and_keeps_the_upper_layer(bench: Bench) -> None:
+    lower, target = _layers(bench, "task-1")
+    assert bench.ask(f"overlay {lower} {target}")[0] == 0
+    assert bench.ask(f"unoverlay {lower} {target}")[0] == 0
+    assert bench.mounted() == {}
+    assert bench.calls()[-1] == f"umount {target}"
+    assert Path(f"{target}.up").is_dir()
+    code, notes = bench.ask(f"unoverlay {lower} {target}")
+    assert code == 0 and "何も付いていない" in notes
+
+
+@pytest.mark.parametrize(
+    ("line", "problem"),
+    [
+        ("overlay {root}/ws/other {t}", "base の下でない"),
+        ("overlay {lower} {root}/base/repo/x", "base の下(共有"),
+        ("overlay {lower},upperdir=/etc {t}", "の外の字"),
+        ("overlay {lower} {t}:x", "の外の字"),
+        ("overlay {root}/base/repo/none {t}", "在る dir でない"),
+        ("overlay {root}/base/link {t}", "symlink"),
+        ("overlay {lower} {root}/ws/bare", "上の層"),
+        ("unoverlay {lower} /etc", "の下でない"),
+    ],
+    ids=["lower-outside-base", "target-in-base", "comma", "colon", "no-lower", "lower-symlink", "no-upper", "outside-root"],
+)
+def test_overlay_out_of_the_rules_is_refused_and_nothing_runs(bench: Bench, line: str, problem: str) -> None:
+    lower, target = _layers(bench, "task-1")
+    (bench.root / "ws" / "other").mkdir()
+    (bench.root / "ws" / "bare").mkdir()
+    (bench.root / "base" / "repo" / "x").mkdir()
+    (bench.root / "base" / "link").symlink_to(lower)
+    code, notes = bench.ask(line.format(lower=lower, t=target, root=bench.root))
+    assert code == 1 and problem in notes, notes
+    assert bench.calls() == []
+    assert bench.mounted() == {}
+
+
+def test_overlay_does_not_hide_what_is_already_in_the_target(bench: Bench) -> None:
+    lower, target = _layers(bench, "task-1")
+    (target / "left.txt").write_text("書きかけ", encoding="utf-8")
+    code, notes = bench.ask(f"overlay {lower} {target}")
+    assert code == 1 and "空でない" in notes
+    assert bench.calls() == []
+
+
+def test_overlay_of_another_checkout_or_a_volume_at_the_target_is_not_covered(bench: Bench) -> None:
+    lower, target = _layers(bench, "task-1")
+    other = bench.root / "base" / "repo" / "def456"
+    other.mkdir()
+    assert bench.ask(f"overlay {lower} {target}")[0] == 0
+    code, notes = bench.ask(f"overlay {other} {target}")
+    assert code == 1 and "別の物" in notes
+    code, notes = bench.ask(f"unoverlay {other} {target}")
+    assert code == 1 and "overlay でない" in notes
+    assert str(target) in bench.mounted()
+
+    bench.attach("ws-a", "252:1", fs="ext4")
+    volume_dir = bench.dir("vol")
+    Path(f"{volume_dir}.up").mkdir()
+    Path(f"{volume_dir}.wk").mkdir()
+    assert bench.ask(f"mount ws-a {volume_dir}")[0] == 0
+    code, notes = bench.ask(f"overlay {lower} {volume_dir}")
+    assert code == 1 and "別の物" in notes
+    code, notes = bench.ask(f"unoverlay {lower} {volume_dir}")
+    assert code == 1 and "overlay でない" in notes
+    assert bench.mounted()[str(volume_dir)] == "252:1"
+
+
+def test_a_busy_overlay_is_not_taken_off_lazily(bench: Bench) -> None:
+    lower, target = _layers(bench, "task-1")
+    assert bench.ask(f"overlay {lower} {target}")[0] == 0
+    (bench.fake / "busy").touch()
+    code, notes = bench.ask(f"unoverlay {lower} {target}")
+    assert code == 1 and "外せなかった" in notes
+    assert str(target) in bench.mounted()
+
+
+def test_a_failed_overlay_mount_is_reported(bench: Bench) -> None:
+    lower, target = _layers(bench, "task-1")
+    (bench.fake / "overlay-fails").touch()
+    code, notes = bench.ask(f"overlay {lower} {target}")
+    assert code == 1 and "付けられなかった" in notes
+    assert bench.mounted() == {}
