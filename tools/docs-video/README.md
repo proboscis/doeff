@@ -24,9 +24,11 @@ A page links its still to its video, right below the page's opening paragraph:
 | The docs site (`make docs-site`) | A player with the still as its poster. The site hook (`tools/docs_site/hooks.py`) turns the link into a `<video>`. |
 
 A page can show the opening of its video moving on GitHub instead of the still: GitHub plays no mp4 in a
-repository view, but it animates a GIF. `node gif.mjs <name>` cuts the first 15 seconds into
-`docs/assets/videos/<name>.gif` (640 px wide, 10 frames a second, about 0.5 MB), and the page links the GIF
-to the video in the same way:
+repository view, but it animates a GIF. `node gif.mjs <name>` (or `--all`; run it under `agora-browser` or with
+`DOCS_VIDEO_CHROME` set) makes a trailer, not a cut-off opening: the first scenes up to the last scene boundary within
+15 seconds (the whole first scene when it is longer), then a 1.5 second end card "Watch the full video (m:ss)" that
+shows the video goes on and how long it is. It writes `docs/assets/videos/<name>.gif` (640 px wide, 10 frames a
+second, under 1.5 MB), and the page links the GIF to the video in the same way:
 
 ```markdown
 [![<what the video shows, in one sentence>](assets/videos/<name>.gif)](assets/videos/<name>.mp4)
@@ -63,7 +65,8 @@ The narration never uses a local text-to-speech model, and
 | `src/Root.tsx` | One `<Composition>` per page, with the id `<name>`: it finds every `narrate(...)` export under `src/pages/` itself, so a new page does not edit it. |
 | `tts.py` | Says `narration.json` through OpenAI's speech endpoint into `public/<name>/`, writes `durations.json`. |
 | `render.mjs` | Renders `docs/assets/videos/<name>.mp4` and `<name>.jpg`. |
-| `gif.mjs` | Cuts the opening of `docs/assets/videos/<name>.mp4` into `<name>.gif`, the moving still for GitHub. |
+| `gif.mjs` | Makes `<name>.gif` from the first scenes of `docs/assets/videos/<name>.mp4` plus an end card, the moving trailer for GitHub. |
+| `src/kit/EndCard.tsx` | The end card (the `gif-end-card` composition `gif.mjs` renders as a still). |
 | `stills.mjs` | Renders single frames as PNG, to check a layout without rendering the whole video. |
 
 `src/pages/home/` is the reference: the home page's video, scene by scene.
