@@ -240,7 +240,7 @@ No description provided.
 Global communication rules:
 - Write every PR body, Linear comment, handoff, blocker note, and review note for a maintainer who
   has not read the source code, run manifest, or prior issue thread.
-- Start with a plain Japanese summary of the decision, what was used, what was done, and why the
+- Start with a plain-language summary (English on GitHub: PR bodies and PR review comments) of the decision, what was used, what was done, and why the
   evidence supports the decision. Put detailed facts after that summary.
 - Prioritize readability and clarity over shortness. Do not omit meaning, definitions, units,
   method, or uncertainty just to make a message shorter. Use more sentences when that is needed for
@@ -251,11 +251,11 @@ Global communication rules:
   This is forbidden even when the facts are correct. Explain what each issue is, why the relation
   exists, and what event allows the blocked issue to continue.
 - For dependency comments, use this shape:
-  - `要約`: what decision was made and why.
+  - `Summary`: what decision was made and why.
   - `Issue map`: each ARC ID, title or purpose, role, and current owner.
   - `Why blocked`: which review, merge, artifact, credential, or human decision must happen first.
   - `Next`: who acts next and what event resumes the blocked work.
-- If a run or PR includes a `図解`, put the same diagram in the Linear issue comment too, not only in
+- If a run or PR includes a `Diagram`, put the same diagram in the Linear issue comment too, not only in
   the PR. Do not use relative image links in PR bodies or Linear comments. Use an absolute GitHub raw
   URL pinned to the pushed PR head SHA, and include a plain fallback GitHub blob link.
 
@@ -306,26 +306,26 @@ PR review stages:
    provenance, and safety review after the message review gate passes.
 
 Mandatory message review gate:
-- The PR body must first explain, in plain Japanese, what logic was tested or changed. Do not accept
+- The PR body must first explain, in plain English, what logic was tested or changed. Do not accept
   a PR that starts from metrics, filenames, or internal enum labels without explaining the method.
 - Do not accept a PR that exposes internal decision enums as the main wording. The summary must use
-  a plain Japanese decision label first, with the enum only in parentheses, for example
-  `判断: 追加調査に戻す（iterate）`, not `判断: iterate`.
+  a plain decision label first, with the enum only in parentheses, for example
+  `Decision: back to further investigation (iterate)`, not `Decision: iterate`.
 - Do not assume workflow terms are obvious to the reviewer. Any workflow term exposed in a PR or
   Linear comment, such as `iterate`, `implementation-ready`, `review-fix`, `message review gate`,
-  or `blocked`, must be explained in plain Japanese before or beside the term.
-- Do not accept raw English terms as prose in PR messages or Linear comments. English is allowed for
-  file paths, commands, code identifiers, schema fields, and enum values in parentheses after a
-  Japanese label. It is not allowed as the main wording for the reader-facing explanation.
+  or `blocked`, must be explained in plain words before or beside the term.
+- Do not accept raw workflow jargon as prose in PR messages or Linear comments. File paths, commands,
+  code identifiers, schema fields, and enum values are allowed in parentheses after a plain label.
+  They are not allowed as the main wording for the reader-facing explanation.
 - Do not accept a PR whose summary only becomes understandable after reading the code, artifact, or
   prior Linear thread. A first-time reviewer must be able to tell, from the first screen, what was
   changed, what rule or evidence was used, why the result is acceptable or not, and what happens
   next.
-- Do not treat a `図解` image as sufficient by itself. The PR body must still explain the logic in
+- Do not treat a `Diagram` image as sufficient by itself. The PR body must still explain the logic in
   prose, and the diagram must match that prose.
-- The Linear issue comment must also include the same `図解` link or image, with a short explanation
+- The Linear issue comment must also include the same `Diagram` link or image, with a short explanation
   of how to read it. Reject PR handoffs that put the diagram only in the PR body.
-- If the message review gate fails, post a Japanese review comment that names the missing
+- If the message review gate fails, post an English review comment that names the missing
   explanation items, move the Linear issue back to `In Progress`, and stop. Do not approve the PR
   and do not continue to implementation review in the same turn.
 
@@ -370,10 +370,10 @@ Outcome rules:
 - Do not finish a turn while the issue remains in `PR Review` unless a command or tool call is
   still actively running in this same turn. `PR Review` is an agent-active state and will be
   picked up again by Symphony.
-- If you find actionable issues or cannot approve the PR, post a concise Japanese review comment
+- If you find actionable issues or cannot approve the PR, post a concise English review comment
   with file/line references where possible, then move the Linear issue back to `In Progress` so
   the implementation agent can fix it.
-- If the PR is clean, post a concise Japanese clean-review comment summarizing what was checked,
+- If the PR is clean, post a concise English clean-review comment summarizing what was checked,
   then move the Linear issue to `In Review` for human review.
 - Do not move the issue to `Done` and do not merge.
 - If required credentials or permissions are missing, post a Japanese blocker comment explaining
@@ -384,7 +384,7 @@ Outcome rules:
   `In Progress`. The PR body must follow the standard PR body format below.
 - Explanation quality is a separate review gate from implementation quality. A technically correct
   implementation is not review-clean if the PR body fails to explain the logic, terms, units, or
-  user-facing decision in reader-friendly Japanese.
+  user-facing decision in reader-friendly English.
 {% else %}
 Operating rules:
 - Work only in the provided workspace copy.
@@ -461,47 +461,47 @@ Architecture and implementation rules:
   old patterns when applicable, then implement the change.
 
 Standard PR body format:
-Every PR body must be written in plain Japanese and use this structure. Keep the first two sections
-short enough to scan without opening artifacts. Prefer Japanese section names and Japanese
-sentences over mixed English/Japanese jargon.
+Every PR body must be written in plain English and use this structure (the repository language is
+English, decided 2026-11-04). Keep the first two sections short enough to scan without opening
+artifacts. Prefer plain sentences over jargon.
 
 ```markdown
-## 背景
+## Background
 - Linear: ARC-xxx
-- このPRの目的: <ユーザーの目的、検証した仮説、または解消した blocker を1〜2文で説明する>
-- 対象範囲: <今回含めたもの、意図的に含めなかったもの>
+- Purpose of this PR: <the user's goal, the hypothesis tested, or the blocker resolved, in 1–2 sentences>
+- Scope: <what this change includes, and what it intentionally leaves out>
 
-## 要約
-- 判断: <コードレビュー可能（implementation-ready）| 修正対応（review-fix）| 追加調査に戻す（iterate）| 保留（blocked）| 打ち切り（dead）>
-- 結論: <一目で分かる日本語の1〜2文。専門語や enum を並べるだけにしない>
-- 何をしたか: <何のデータ、コード、UI、artifact を使い、どのルールで変更または判定したか>
-- なぜこの判断か: <採用、修正、保留、または追加調査にした理由を、数字やファイル一覧の前に日本語で説明する>
-- 次にやること: <merge後の行動、追加検証、blocker解除、または人間の判断を受ける手順を1文で書く>
+## Summary
+- Decision: <ready for code review (implementation-ready) | review fixes (review-fix) | back to further investigation (iterate) | on hold (blocked) | stopped (dead)>
+- Conclusion: <1–2 sentences understandable at a glance; do not just list jargon or enums>
+- What was done: <which data, code, UI or artifacts were used, and by which rule they were changed or judged>
+- Why this decision: <the reason for adopting, fixing, holding or investigating further, explained in prose before numbers or file lists>
+- Next step: <in 1 sentence: the action after merge, further verification, unblocking, or how to get a human decision>
 
-## 図解
-- ![図解](https://github.com/<owner>/<repo>/raw/<head_sha>/<committed image path>)
-- 表示されない場合: https://github.com/<owner>/<repo>/blob/<head_sha>/<committed image path>
-- 図の読み方: <目的、入力、処理、検証、判定、次の対応の流れを2〜3文で説明する>
-- 画像生成: `imagegen` skill / <prompt or prompt file path>
+## Diagram
+- ![Diagram](https://github.com/<owner>/<repo>/raw/<head_sha>/<committed image path>)
+- If it does not render: https://github.com/<owner>/<repo>/blob/<head_sha>/<committed image path>
+- How to read the diagram: <2–3 sentences on the flow of goal, input, processing, verification, decision and next action>
+- Image generation: `imagegen` skill / <prompt or prompt file path>
 
-## 更新したもの
-- <commit 順ではなく、目的別に主要な code/artifact 変更をまとめる>
+## What changed
+- <the main code/artifact changes grouped by purpose, not by commit order>
 
-## 根拠
-| チェック | 結果 | 補足 |
+## Evidence
+| Check | Result | Notes |
 | --- | --- | --- |
-| 入力と出所 | <通過/失敗/保留> | <出所、対象範囲、利用した cache や session> |
-| 主要結果 | <値または要約> | <判断に効いた結果、失敗、比較、artifact> |
-| 検証 | <通過/失敗/保留> | <実行した command または blocker> |
+| Inputs and sources | <pass/fail/pending> | <source, scope, cache or session used> |
+| Main results | <value or summary> | <results, failures, comparisons or artifacts that drove the decision> |
+| Verification | <pass/fail/pending> | <command run, or blocker> |
 
-## レビュー観点
-- 主要ファイル/artifact: <paths>
-- 見てほしい点: <specific risks or assumptions>
+## Review focus
+- Main files/artifacts: <paths>
+- Please check: <specific risks or assumptions>
 
-## リスク / ブロッカー / 次の対応
-- リスク: <remaining uncertainty>
-- ブロッカー: <missing data/credential/relation, or none>
-- 次の対応: <state transition or follow-up issue>
+## Risks / blockers / next actions
+- Risks: <remaining uncertainty>
+- Blockers: <missing data/credential/relation, or none>
+- Next action: <state transition or follow-up issue>
 ```
 
 Rules for the PR body:
@@ -510,14 +510,14 @@ Rules for the PR body:
 - Readability and clarity are more important than being terse. A short message that hides the method,
   terms, units, uncertainty, or next action is a failed message. Add the sentences needed for a
   first-time reviewer to understand what happened without opening artifacts.
-- Decision labels must be written in Japanese first. Use the enum only as a stable machine-readable
+- Decision labels must be written as plain words first. Use the enum only as a stable machine-readable
   suffix.
-- Do not write a bare line such as `判断: iterate`, `判断: implementation-ready`, or
+- Do not write a bare line such as `Decision: iterate`, `Decision: implementation-ready`, or
   `Conclusion: done`. This is a message-review failure.
 - Use English identifiers only when they are code names, file paths, command output, schema fields,
-  or decision enum values. When an English metric or artifact name is needed, explain it in Japanese
+  or decision enum values. When a metric or artifact name is needed, explain it in plain words
   first and put the identifier in parentheses.
-- Include an explanatory `図解` image for complex implementation PRs, UI/media pipeline PRs, and
+- Include an explanatory `Diagram` image for complex implementation PRs, UI/media pipeline PRs, and
   research/artifact-heavy PRs. Load and follow the `imagegen` skill, generate a raster diagram that
   explains the hypothesis or code flow, commit the image under documentation or run artifacts, and
   include it in both the PR body and the Linear issue comment.

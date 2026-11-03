@@ -329,12 +329,12 @@ rules:
         - "**/doeff_cluster/**"
       exclude:
         - "**/doeff_cluster/_shared/intent/service_model.hy"
-        # code_prepare の import の静的な辿り(imported-names — #2027 で worker/core/code_plan.hy へ移した)は、import の記号(Hy の名)を
-        # Python の module の名に直すのに hy.mangle を使う — 設定の鍵を引数の名に直す写しではない(日次 t69 の誤検出・#639)。
+        # The static walk of code_prepare imports (imported-names — moved to worker/core/code_plan.hy in #2027) uses hy.mangle
+        # to turn an import symbol (a Hy name) into a Python module name — not a copy that turns config keys into argument names (false positive in daily t69 · #639).
         - "**/doeff_cluster/_worker/core/code_plan.hy"
-        # defsystem の展開(2026-10-27 に doeff-hy から移した)は、job の行の鍵(`:per-part` など)と Program の
-        # 呼び出しの名の引数を、展開が書く関数の引数の名・CallShape の kwargs の鍵に直すのに hy.mangle を使う — 設定の鍵を引数の名に
-        # 直す写しではない(run.config は通らない)。
+        # The defsystem expansion (moved from doeff-hy on 2026-10-27) uses hy.mangle to turn the job-row keys (`:per-part` etc.) and the
+        # named arguments of a Program call into the argument names of the function the expansion writes and the kwargs keys of CallShape — not
+        # a copy that turns config keys into argument names (it does not go through run.config).
         - "**/doeff_cluster/_shared/entry/_system_form.hy"
 
   - id: doeff-cluster-report-tables-are-read-by-their-owner
@@ -342,12 +342,12 @@ rules:
       - generic
     severity: ERROR
     message: >
-      Service ごとの報告の表(ClusterState.observations の readiness と metrics)を直に読むのは、表の持ち主だけ:
-      coordinator/core/resource_policy.hy(残し方 keep-report・placed-senders と、数える報告の選び running-process・
-      report-matches・current-report・service-readiness)と coordinator/core/metrics_policy.hy(計器)。他の module は
-      service-readiness などの持ち主の関数を呼ぶ。表から自分の規則で報告を選ぶと、置き先でない process(退いた世代の
-      worker が起こし直した process・止めた試行)の報告が置き先の判断を決める — 設計検証 2026-10-11 の盲検 B: 入れ替えの
-      諦めを、worker・指紋・割り当ての世代だけで選んだ Ready で止める写しが、提示した検査をすべて通った(AL-D2o)。表を読む判断が要るなら、持ち主の module に足す。
+      Only the owners of the per-Service report tables (readiness and metrics in ClusterState.observations) read them directly:
+      coordinator/core/resource_policy.hy (retention keep-report and placed-senders, and the selection of the reports that count: running-process,
+      report-matches, current-report, service-readiness) and coordinator/core/metrics_policy.hy (the meters). Other modules
+      call the owner's functions such as service-readiness. Selecting reports from the table by a rule of your own lets reports from processes that are not
+      the placement (a process restarted by a worker of a retired generation, a stopped attempt) decide placement — design validation 2026-10-11, blind test B: a copy that
+      stopped giving up a replacement on a Ready chosen only by worker, fingerprint and assignment generation passed every check offered (AL-D2o). If a decision needs to read the table, add it to the owner module.
     patterns:
       - pattern-regex: '\bobservations\s*\.\s*(readiness|metrics)\b'
     paths:
@@ -362,27 +362,27 @@ rules:
       - generic
     severity: ERROR
     message: >
-      worker の沈黙の起点(最後に届いた返事の刻の対 last-ok-ms・last-ok-mono-ms と、前の heartbeat の送りの始めの対 started-at・
-      started-mono-ms)は、対で書き、沈黙の計り worker/core/heartbeat_rules.hy の silent-ms の起点の引数(3 番目 = 壁の時計の刻・
-      4 番目 = 同じ持ち主の単調な時計の読み)としてだけ読む。起点を直に引く((- now state.last-ok-ms))・名に写して持ち出す・期限
-      (worker_due の beat-due・fence-due)へ生のまま渡す・対の片方だけを書く・2 つの引数を入れ替える、のどれも、途絶の柵と heartbeat
-      の送りを壁の時計の差だけ(か単調な時計の差だけ)で判じる道を作る — 途絶の最中に機体の壁の時計が戻ると、戻った分だけ自己停止が
-      遅れ、coordinator の移し替えの後まで job を動かす(条 C4・C2 の破り)。沈黙の長さが要るなら silent-ms の
-      答えを使い、壁の時計の枠の刻が要るなら「今の壁の時計 − silent-ms の答え」で写す。起点を書くのは、壁の時計と単調な時計を同じ所で
-      読んだ直後の 1 つの setv(か 1 つの record の作り)にする。
+      The anchors of worker silence (the time of the last reply received, the pair last-ok-ms / last-ok-mono-ms, and the start of the previous heartbeat send, the pair
+      started-at / started-mono-ms) are written as pairs and read only as the anchor arguments of silent-ms, the silence measure in worker/core/heartbeat_rules.hy (3rd = wall-clock time,
+      4th = the same owner's monotonic clock reading). Subtracting an anchor directly ((- now state.last-ok-ms)), copying it to a name and carrying it out, passing it raw to a deadline
+      (beat-due / fence-due in worker_due), writing only one half of the pair, or swapping the two arguments — each opens a path that judges the outage fence and the heartbeat
+      send by the wall-clock difference alone (or the monotonic difference alone). If the host wall clock steps back during an outage, self-stop is delayed by that amount
+      and the job keeps running past the coordinator's reassignment (breaks clauses C4 and C2). If you need the length of the silence, use the answer of
+      silent-ms; if you need a wall-clock frame time, derive it as "current wall clock − silent-ms answer". Write the anchors in one setv (or one record construction)
+      right after reading the wall clock and the monotonic clock at the same place.
     patterns:
       - pattern-either:
           - pattern-regex: '\.(?:last-ok-ms|last-ok-mono-ms|started-at|started-mono-ms)(?![\w-])'
           - pattern-regex: '(?<![\w-]):(?:last-ok-ms|last-ok-mono-ms)(?![\w-])'
           - pattern-regex: '\(\.\s+[\w.-]+\s+(?:last-ok-ms|last-ok-mono-ms|started-at|started-mono-ms)(?![\w-])'
-      # 読み: silent-ms の起点の引数(3・4 番目)に、同じ持ち主の対をこの順で渡す。今の刻の引数(1・2 番目)に起点を渡す形は外さない
-      # (設計検証の盲検 B の副次の観測 — 単調な差が 0 になり、壁の差だけで計る)。
+      # Reading: pass the same owner's pair, in this order, to the anchor arguments (3rd and 4th) of silent-ms. Passing an anchor to the current-time arguments (1st and 2nd) is not exempted
+      # (a side observation of blind test B in design validation — the monotonic difference becomes 0 and only the wall difference is measured).
       - pattern-not-regex: '\(silent-ms\s+(?:\((?:(?!\.(?:last-ok|started-))[^()])*\)|(?!\S*\.(?:last-ok|started-))[^\s()]+)\s+(?:\((?:(?!\.(?:last-ok|started-))[^()])*\)|(?!\S*\.(?:last-ok|started-))[^\s()]+)\s+([\w-]+)\.(?:last-ok-ms\s+\1\.last-ok-mono-ms|started-at\s+\1\.started-mono-ms)\s*\)'
-      # 書き: 同じ持ち主の対を 1 つの setv の隣り合う 2 組で書く。値に起点の読みを含む書き(起点を読み直して先へずらす形)は外さない。
+      # Writing: write the same owner's pair as two adjacent pairs of one setv. A write whose value contains a reading of an anchor (re-reading the anchor and shifting it forward) is not exempted.
       - pattern-not-regex: '([\w-]+)\.(?:last-ok-ms\s+(?:\((?:(?!\.(?:last-ok|started-))[^()])*\)|(?!\S*\.(?:last-ok|started-))[^\s()]+)\s+\1\.last-ok-mono-ms|started-at\s+(?:\((?:(?!\.(?:last-ok|started-))[^()])*\)|(?!\S*\.(?:last-ok|started-))[^\s()]+)\s+\1\.started-mono-ms)\s+(?:\((?:(?!\.(?:last-ok|started-))[^()])*\)|(?!\S*\.(?:last-ok|started-))[^\s()]+)'
-      # 書き(record の作り・replace): 鍵の対を隣り合う 2 組で渡す。
+      # Writing (record construction / replace): pass the key pair as two adjacent pairs.
       - pattern-not-regex: '(?<![\w-]):last-ok-ms\s+(?:\((?:(?!\.(?:last-ok|started-))[^()])*\)|(?!\S*\.(?:last-ok|started-))[^\s()]+)\s+:last-ok-mono-ms\s+(?:\((?:(?!\.(?:last-ok|started-))[^()])*\)|(?!\S*\.(?:last-ok|started-))[^\s()]+)'
-      # 在るかどうかの問い(まだ 1 度も送っていない)は長さを作らない。
+      # A presence check (nothing sent yet) does not make a length.
       - pattern-not-regex: '\(is-not\s+[\w-]+\.started-at\s+None\)'
     paths:
       include:
@@ -393,15 +393,15 @@ rules:
       - generic
     severity: ERROR
     message: >
-      doeff-cluster の中で時計の effect(doeff-time の GetTime・GetMonotonic)に答えるのは、doeff-time の答え手(本番 =
-      async-time-handler・sync-time-handler を引数なしで — 機体の壁の時計と CLOCK_MONOTONIC・検と模擬 = sim-time-handler)と、模擬の機体の
-      壁の時計の代役(sim/local.hy の worker-wall)だけ。worker の沈黙の計り(worker/core/heartbeat_rules.hy の silent-ms)は、GetTime が
-      機体の眠りの間も進む生の壁の時計で、GetMonotonic が壁の時計の step に動かされない戻らない時計である事に依る — 壁の差が suspend を
-      拾い、単調な差が壁の戻りを守る。時計の effect に答える handler を足す・答え手に源(now・monotonic)を渡すと、計りも起点も検も
-      1 文字も変えずに、この前提だけが崩れる(設計検証の盲検 B: 入口で壁の時計を「起動の刻 + 単調な時計の経過」に替える handler が
-      提示した検査を全部通り、30 秒の suspend の後も自己停止を決めなかった)。時計の源を替える必要が在るなら、
-      替えた源の下で沈黙の契約の検(packages/doeff-cluster/tests/test_silence_wall_clock_step.hy の台本)が緑である事を示し、この規則の
-      許す形を同じ変更で足す。
+      Within doeff-cluster, the only things that answer the clock effects (GetTime and GetMonotonic of doeff-time) are the doeff-time handlers (production =
+      async-time-handler / sync-time-handler with no arguments — the host wall clock and CLOCK_MONOTONIC; tests and simulation = sim-time-handler) and the stand-in for the simulated host's
+      wall clock (worker-wall in sim/local.hy). The worker silence measure (silent-ms in worker/core/heartbeat_rules.hy) relies on GetTime being
+      the raw wall clock that keeps advancing while the host sleeps, and on GetMonotonic being a clock that never goes back and is not moved by wall-clock steps — the wall difference catches suspend,
+      and the monotonic difference guards against the wall clock going back. Adding a handler that answers the clock effects, or passing a source (now / monotonic) to the handlers, breaks only this premise
+      without changing a single character of the measure, the anchors or the tests (design validation, blind test B: a handler that replaced the wall clock at the entry with "start time + monotonic elapsed"
+      passed every check offered and did not decide to self-stop even after a 30-second suspend). If the clock source must change,
+      show that the silence contract test (the script packages/doeff-cluster/tests/test_silence_wall_clock_step.hy) is green under the new source, and add the allowed
+      form to this rule in the same change.
     patterns:
       - pattern-either:
           - pattern-regex: '\((?:GetTimeEffect|GetMonotonicEffect)\s+\['
@@ -417,16 +417,16 @@ rules:
       - generic
     severity: ERROR
     message: >
-      汎用の package(doeff-cluster・doeff-records・doeff-claude-code・doeff-codex)は、上に載る業務の系の語を書かない — agora・kanban・
-      conversation・budget・artifact・herdr・hypha・mediagen・sporocarp・acp・controllers/・controllers.・clients/hy(大文字小文字を
-      区別しない・前が英字でない時)。汎用の部品が業務の系を名指すと、境界が file の文字から崩れる。註・docstring・README の
-      repo の名や issue の参照も同じ(repo の名を付けた issue の参照は「#<番号>」と番号だけで書く)。語の一覧の定義元はこの規則 1 つ(元は 3 package の
-      tests/test_no_application_vocabulary.hy の写し。写しの差は、.pyi を全部で見る・doeff-records の宣言の
-      欄の名 size-budget を全部で許す形に揃えた)。semgrep は file の中身しか見ないので、file の名は
-      tests/test_package_file_names_have_no_application_vocabulary.py がこの規則の語の一覧を読んで確かめる。
+      General-purpose packages (doeff-cluster, doeff-records, doeff-claude-code, doeff-codex) do not write the words of the business systems built on top of them — agora, kanban,
+      conversation, budget, artifact, herdr, hypha, mediagen, sporocarp, acp, controllers/, controllers., clients/hy (case-
+      insensitive, when not preceded by a letter). When a general-purpose part names a business system, the boundary erodes starting from the text of the file. The same holds for repo names
+      and issue references in comments, docstrings and READMEs (write an issue reference that carries a repo name as just "#<number>"). This rule is the single definition of the word list (it was copied in
+      tests/test_no_application_vocabulary.hy of 3 packages; differences from the copies: all .pyi files are checked, and the declaration field name size-budget of
+      doeff-records is allowed everywhere). semgrep only sees file contents, so file names are checked by
+      tests/test_package_file_names_have_no_application_vocabulary.py, which reads this rule's word list.
     patterns:
       - pattern-regex: '(?i)(?<![a-z])(agora|kanban|conversation|budget|artifact|herdr|hypha|mediagen|sporocarp|acp|controllers/|controllers\.|clients/hy)'
-      # doeff-records の宣言の欄の名(size-budget / size_budget)は業務の語ではない。
+      # The declaration field name of doeff-records (size-budget / size_budget) is not a business word.
       - pattern-not-regex: '(?i)size[-_]budget'
     paths:
       include:
@@ -442,12 +442,12 @@ rules:
       - generic
     severity: ERROR
     message: >
-      doeff-agents は外の CLI の行(JSON)の形を解かない — 解くのは層 2 の package(doeff-codex の lines・doeff-claude-code の lines)
-      だけで、doeff-agents(層 3 の adapter)はその型つきの記録だけを読む(層の決まり — headless の境は効果と handler で
-      はっきり分ける)。doeff-agents の src に wire の型と JSON の解き手(defwire・doeff_hy._wire・OpaqueJson・
-      parse-json)を書かない。要る欄が層 2 の記録に無ければ、層 2 に wire の型と記録を足す。出自 = 設計検証の
-      盲検 B(層 2 が道具の item を中を読まずに運び、層 3 が自前の defwire で codex の JSON を解く実装が、名指しの検・pre-commit・
-      型検査を全部通った)。検 = tests/semgrep/test_doeff_agents_wire_json_rule.py。
+      doeff-agents does not decode the shape of external CLI lines (JSON) — only the layer-2 packages (lines of doeff-codex, lines of doeff-claude-code) do,
+      and doeff-agents (the layer-3 adapter) reads only their typed records (layer rule — the headless boundary is split clearly by effects and
+      handlers). Do not write wire types or JSON decoders (defwire, doeff_hy._wire, OpaqueJson,
+      parse-json) in the doeff-agents src. If a needed field is missing from the layer-2 record, add the wire type and record to layer 2. Origin = design validation
+      blind test B (an implementation where layer 2 carried tool items without reading them and layer 3 decoded codex JSON with its own defwire passed the named checks, pre-commit
+      and type checking). Test = tests/semgrep/test_doeff_agents_wire_json_rule.py.
     patterns:
       - pattern-regex: '(?<![\w-])(defwire|OpaqueJson|parse-json|parse_json)(?![\w-])|doeff_hy\._?wire'
     paths:
@@ -725,7 +725,7 @@ rules:
     paths:
       include:
         - /packages/doeff-agents/**
-        # hit fixture(規則が現に火を噴くことの証拠 — 本体の走査対象の外に置く)
+        # hit fixture (evidence that the rule actually fires — kept outside the main scan target)
         - "**/_sessionhost/turn_carried_key_as_launch_flag_forbidden.hy"
 
   - id: doeff-agents-auto-memory-dir-spelling-has-one-home
@@ -785,18 +785,18 @@ rules:
     severity: ERROR
     message: >
       ADR-DOE-AGENTS-004 R7 / retired-impl-lives-only-in-git-history law
-      (issue #575): 退役 Rust 参照実装への参照 — crate path
-      packages/doeff-agentd と module 名 doeff_agentd — は禁止。現役実装は
-      session host(packages/doeff-agents の sessionhost)。rollback
-      座標は git tag agentd-rust-final(in-tree 凍結コピーは持たない —
-      凍結保存は二重メンテ #573/PR#574 と素の pytest の退役 gate 束縛 #556
-      を生んだ)。移植出典表記は agentd-rust-final:src/main.rs:行番号 形式で
-      書く。契約語彙(agentd_client・DOEFF_AGENTD_BIN・agentd.sqlite・
-      doeff-agentd-<user>.sock 等)は issue #575 の射程外で無罪。
+      (issue #575): references to the retired Rust reference implementation — the crate path
+      packages/doeff-agentd and the module name doeff_agentd — are forbidden. The live implementation is
+      the session host (sessionhost in packages/doeff-agents). The rollback
+      coordinate is the git tag agentd-rust-final (no in-tree frozen copy —
+      frozen copies caused double maintenance #573/PR#574 and the retirement gate being bound to plain pytest #556).
+      Cite ported sources in the form agentd-rust-final:src/main.rs:<line>.
+      Contract vocabulary (agentd_client, DOEFF_AGENTD_BIN, agentd.sqlite,
+      doeff-agentd-<user>.sock, etc.) is outside the scope of issue #575 and allowed.
     pattern-regex: 'packages/doeff-agentd|doeff_agentd'
     paths:
       exclude:
-        # 散文(歴史記述)と ADR 法文書(反例 fixture が禁止文字列を含む)は対象外
+        # Prose (historical record) and ADR law documents (counter-example fixtures contain the forbidden strings) are out of scope
         - '**/*.md'
         - '**/defadr_*.hy'
 
@@ -864,11 +864,11 @@ rules:
       include:
         - /packages/doeff-agents/**
 
-  # 上の規則の Hy の分(ADR-DOE-TIME-001 R7): 上は Python の class / def / import の名だけを見るので、Hy の定義
-  # (io_effects.hy の Sleep と sleep・_sessionhost/effects.hy の ClockSleep と clock-sleep)に当たらず、doeff-agents の program は
-  # 自前の待ちの効果で待っていた。Hy で待ちの効果(名に Sleep / Delay を含む EffectBase の defclass・defeffect)と、その構築子
-  # (名が sleep か -sleep で終わる定義)を定め直す形を止める。program の中の素の time.sleep は doeff-linter の DOEFF210 が持つ。
-  # 極性の検 = tests/semgrep/test_doeff_agents_no_sleep_effect_hy_rule.py。
+  # The Hy part of the rule above (ADR-DOE-TIME-001 R7): the rule above only sees Python class / def / import names, so it missed the Hy definitions
+  # (Sleep and sleep in io_effects.hy, ClockSleep and clock-sleep in _sessionhost/effects.hy), and doeff-agents programs
+  # waited with their own wait effects. This stops redefining, in Hy, a wait effect (a defclass / defeffect of EffectBase whose name contains Sleep / Delay) and its constructor
+  # (a definition whose name is sleep or ends with -sleep). A bare time.sleep inside a program is owned by DOEFF210 of doeff-linter.
+  # Polarity test = tests/semgrep/test_doeff_agents_no_sleep_effect_hy_rule.py.
   - id: doeff-agents-no-sleep-effect-hy
     languages: [generic]
     severity: ERROR
@@ -1367,14 +1367,14 @@ rules:
         - "**/examples/**"
         - "**/fixtures/**"
         - "**/doeff_hy/macros.hy"
-        # 採用実装(#533)では bang 展開機構が macros.hy と handle.hy に跨るため、
-        # 移植元(#534 実装)の macros.hy 除外と同じ意図で handle.hy も除外する。
+        # In the adopted implementation (#533) the bang expansion spans macros.hy and handle.hy, so
+        # handle.hy is excluded with the same intent as the macros.hy exclusion of the source port (the #534 implementation).
         - "**/doeff_hy/handle.hy"
 
-  # tombstone(2026-07-14): 退役済みパターン cache-handler-no-result-duck-typing の再発防止として意図的に維持。現行の非fixture対象ゼロは想定内。
+  # tombstone(2026-07-14): kept on purpose to prevent the retired pattern cache-handler-no-result-duck-typing from coming back. Zero non-fixture targets today is expected.
   - id: cache-handler-no-result-duck-typing
     metadata:
-      tombstone: "2026-07-14 inventory: stale scope の回帰墓標"
+      tombstone: "2026-07-14 inventory: regression tombstone for a stale scope"
     languages: [python]
     severity: ERROR
     message: >
@@ -1474,10 +1474,10 @@ rules:
         - /tests/**
         - /packages/**/tests/**
 
-  # tombstone(2026-07-14): 退役済みパターン handler-filter-no-type-hint-fail-open の再発防止として意図的に維持。現行の非fixture対象ゼロは想定内。
+  # tombstone(2026-07-14): kept on purpose to prevent the retired pattern handler-filter-no-type-hint-fail-open from coming back. Zero non-fixture targets today is expected.
   - id: handler-filter-no-type-hint-fail-open
     metadata:
-      tombstone: "2026-07-14 inventory: stale scope の回帰墓標"
+      tombstone: "2026-07-14 inventory: regression tombstone for a stale scope"
     languages: [python]
     severity: ERROR
     message: >
@@ -1507,10 +1507,10 @@ rules:
       include:
         - /doeff/__init__.py
         - /doeff/types.py
-  # tombstone(2026-07-14): 退役済みパターン no-public-semaphore-lifecycle-hooks の再発防止として意図的に維持。現行の非fixture対象ゼロは想定内。
+  # tombstone(2026-07-14): kept on purpose to prevent the retired pattern no-public-semaphore-lifecycle-hooks from coming back. Zero non-fixture targets today is expected.
   - id: no-public-semaphore-lifecycle-hooks
     metadata:
-      tombstone: "2026-07-14 inventory: 退役済み API/path の回帰墓標"
+      tombstone: "2026-07-14 inventory: regression tombstone for a retired API/path"
     languages: [python]
     severity: ERROR
     message: >
@@ -1529,10 +1529,10 @@ rules:
       include:
         - /doeff/effects/semaphore.py
 
-  # tombstone(2026-07-14): 退役済みパターン no-python-semaphore-handle-class の再発防止として意図的に維持。現行の非fixture対象ゼロは想定内。
+  # tombstone(2026-07-14): kept on purpose to prevent the retired pattern no-python-semaphore-handle-class from coming back. Zero non-fixture targets today is expected.
   - id: no-python-semaphore-handle-class
     metadata:
-      tombstone: "2026-07-14 inventory: 退役済み API/path の回帰墓標"
+      tombstone: "2026-07-14 inventory: regression tombstone for a retired API/path"
     languages: [python]
     severity: ERROR
     message: >
@@ -1545,10 +1545,10 @@ rules:
       include:
         - /doeff/effects/semaphore.py
 
-  # tombstone(2026-07-14): 退役済みパターン doeff-pinjected-no-intercept の再発防止として意図的に維持。現行の非fixture対象ゼロは想定内。
+  # tombstone(2026-07-14): kept on purpose to prevent the retired pattern doeff-pinjected-no-intercept from coming back. Zero non-fixture targets today is expected.
   - id: doeff-pinjected-no-intercept
     metadata:
-      tombstone: "2026-07-14 inventory: 退役済み API/path の回帰墓標"
+      tombstone: "2026-07-14 inventory: regression tombstone for a retired API/path"
     languages: [python]
     severity: ERROR
     message: >
@@ -1611,10 +1611,10 @@ rules:
       category: vm-protocol
       issue: VM-PROTO-006
 
-  # tombstone(2026-07-14): 退役済みパターン no-uv-run-python-execution-context-class の再発防止として意図的に維持。現行の非fixture対象ゼロは想定内。
+  # tombstone(2026-07-14): kept on purpose to prevent the retired pattern no-uv-run-python-execution-context-class from coming back. Zero non-fixture targets today is expected.
   - id: no-uv-run-python-execution-context-class
     metadata:
-      tombstone: "2026-07-14 inventory: 退役済み API/path の回帰墓標"
+      tombstone: "2026-07-14 inventory: regression tombstone for a retired API/path"
     languages: [python]
     severity: ERROR
     message: >
@@ -1627,10 +1627,10 @@ rules:
       include:
         - "**/doeff/_types_internal.py"
 
-  # tombstone(2026-07-14): 退役済みパターン no-uv-run-python-run-result-class の再発防止として意図的に維持。現行の非fixture対象ゼロは想定内。
+  # tombstone(2026-07-14): kept on purpose to prevent the retired pattern no-uv-run-python-run-result-class from coming back. Zero non-fixture targets today is expected.
   - id: no-uv-run-python-run-result-class
     metadata:
-      tombstone: "2026-07-14 inventory: 退役済み API/path の回帰墓標"
+      tombstone: "2026-07-14 inventory: regression tombstone for a retired API/path"
     languages: [python]
     severity: ERROR
     message: >
@@ -1792,7 +1792,7 @@ rules:
       category: architecture
       rationale: "Cancel state ownership — SPEC-SCHED-001, ISSUE-CORE-502"
 
-  # tombstone(2026-07-14): 退役済みパターン doeff-no-inline-spawn-coercion-wrapper の再発防止として意図的に維持。現行の非fixture対象ゼロは想定内。
+  # tombstone(2026-07-14): kept on purpose to prevent the retired pattern doeff-no-inline-spawn-coercion-wrapper from coming back. Zero non-fixture targets today is expected.
   - id: doeff-no-inline-spawn-coercion-wrapper
     pattern: |
       @do
@@ -1812,7 +1812,7 @@ rules:
     languages: [python]
     severity: ERROR
     metadata:
-      tombstone: "2026-07-14 inventory: 退役済み API/path の回帰墓標"
+      tombstone: "2026-07-14 inventory: regression tombstone for a retired API/path"
       category: architecture
       issue: VM-HANDLER-METADATA-001
 
@@ -1866,10 +1866,10 @@ rules:
       include:
         - /packages/doeff-vm/src/pyvm.rs
 
-  # tombstone(2026-07-14): 退役済みパターン no-is-instance-from-in-handlers の再発防止として意図的に維持。現行の非fixture対象ゼロは想定内。
+  # tombstone(2026-07-14): kept on purpose to prevent the retired pattern no-is-instance-from-in-handlers from coming back. Zero non-fixture targets today is expected.
   - id: no-is-instance-from-in-handlers
     metadata:
-      tombstone: "2026-07-14 inventory: stale scope の回帰墓標"
+      tombstone: "2026-07-14 inventory: regression tombstone for a stale scope"
     pattern: is_instance_from($OBJ, $MODULE, $CLASS)
     message: |
       Use obj.is_instance_of::<RustPyClass>() / extract::<PyRef<RustPyClass>>() instead of
@@ -1881,10 +1881,10 @@ rules:
         - "**/packages/doeff-vm/src/handler.rs"
         - "**/packages/doeff-vm/src/scheduler.rs"
 
-  # tombstone(2026-07-14): 退役済みパターン no-state-handler-take-unwrap の再発防止として意図的に維持。現行の非fixture対象ゼロは想定内。
+  # tombstone(2026-07-14): kept on purpose to prevent the retired pattern no-state-handler-take-unwrap from coming back. Zero non-fixture targets today is expected.
   - id: no-state-handler-take-unwrap
     metadata:
-      tombstone: "2026-07-14 inventory: stale scope の回帰墓標"
+      tombstone: "2026-07-14 inventory: regression tombstone for a stale scope"
     pattern: $X.take().unwrap()
     message: >
       BANNED: StateHandler Modify resume invariants must use explicit expect messages,
@@ -1895,10 +1895,10 @@ rules:
       include:
         - "**/packages/doeff-core-effects/src/handlers/mod.rs"
 
-  # tombstone(2026-07-14): 退役済みパターン no-python-effect-class-shadowing の再発防止として意図的に維持。現行の非fixture対象ゼロは想定内。
+  # tombstone(2026-07-14): kept on purpose to prevent the retired pattern no-python-effect-class-shadowing from coming back. Zero non-fixture targets today is expected.
   - id: no-python-effect-class-shadowing
     metadata:
-      tombstone: "2026-07-14 inventory: 退役済み API/path の回帰墓標"
+      tombstone: "2026-07-14 inventory: regression tombstone for a retired API/path"
     pattern-either:
       - pattern: |
           class StateGetEffect(EffectBase):
@@ -2011,7 +2011,7 @@ rules:
       issue: VM-DECOMPOSE-002
       principle: SRP, composition-over-inheritance
 
-  # tombstone(2026-07-14): 退役済みパターン vm-decompose-no-use-super-wildcard の再発防止として意図的に維持。現行の非fixture対象ゼロは想定内。
+  # tombstone(2026-07-14): kept on purpose to prevent the retired pattern vm-decompose-no-use-super-wildcard from coming back. Zero non-fixture targets today is expected.
   - id: vm-decompose-no-use-super-wildcard
     pattern: use super::*;
     paths:
@@ -2027,12 +2027,12 @@ rules:
     languages: [rust]
     severity: ERROR
     metadata:
-      tombstone: "2026-07-14 inventory: stale scope の回帰墓標"
+      tombstone: "2026-07-14 inventory: regression tombstone for a stale scope"
       category: vm-decomposition
       issue: VM-DECOMPOSE-002
       principle: explicit-dependencies
 
-  # tombstone(2026-07-14): 退役済みパターン vm-decompose-no-pub-fields-on-substructs の再発防止として意図的に維持。現行の非fixture対象ゼロは想定内。
+  # tombstone(2026-07-14): kept on purpose to prevent the retired pattern vm-decompose-no-pub-fields-on-substructs from coming back. Zero non-fixture targets today is expected.
   - id: vm-decompose-no-pub-fields-on-substructs
     patterns:
       - pattern-regex: "\\bpub\\s+[A-Za-z_][A-Za-z0-9_]*\\s*:"
@@ -2050,12 +2050,12 @@ rules:
     languages: [rust]
     severity: ERROR
     metadata:
-      tombstone: "2026-07-14 inventory: stale scope の回帰墓標"
+      tombstone: "2026-07-14 inventory: regression tombstone for a stale scope"
       category: vm-decomposition
       issue: VM-DECOMPOSE-002
       principle: ISP, encapsulation
 
-  # tombstone(2026-07-14): 退役済みパターン doeff-no-python-task-id-extraction の再発防止として意図的に維持。現行の非fixture対象ゼロは想定内。
+  # tombstone(2026-07-14): kept on purpose to prevent the retired pattern doeff-no-python-task-id-extraction from coming back. Zero non-fixture targets today is expected.
   - id: doeff-no-python-task-id-extraction
     patterns:
       - pattern-inside: |
@@ -2073,7 +2073,7 @@ rules:
     languages: [python]
     severity: ERROR
     metadata:
-      tombstone: "2026-07-14 inventory: 退役済み API/path の回帰墓標"
+      tombstone: "2026-07-14 inventory: regression tombstone for a retired API/path"
       category: architecture
       rationale: "Layer boundary — Python must not inspect Rust handle internals"
 
@@ -2093,7 +2093,7 @@ rules:
       category: architecture
       rationale: "Scheduler state ownership — cancel state lives in Rust"
 
-  # tombstone(2026-07-14): 退役済みパターン scheduler-must-use-transfer-not-resume の再発防止として意図的に維持。現行の非fixture対象ゼロは想定内。
+  # tombstone(2026-07-14): kept on purpose to prevent the retired pattern scheduler-must-use-transfer-not-resume from coming back. Zero non-fixture targets today is expected.
   - id: scheduler-must-use-transfer-not-resume
     patterns:
       - pattern: "DoCtrl::Resume { continuation: $K, value: $V }"
@@ -2113,7 +2113,7 @@ rules:
     languages: [rust]
     severity: ERROR
     metadata:
-      tombstone: "2026-07-14 inventory: stale scope の回帰墓標"
+      tombstone: "2026-07-14 inventory: regression tombstone for a stale scope"
       spec: SPEC-SCHED-001
       section: "§resume_task, Invariant S1"
 
@@ -2236,8 +2236,8 @@ rules:
       category: architecture
       rationale: "CESK store ownership — Segment-only scope store, no dual-store sync"
 
-  # 許可の並びの WithBoundaries(1 歩で境の組を付ける命令・d0bbf9ea1 / 43ab0cf3c / 90fbae568)は、HTML の報告を見た上での
-  # 承認を経て足した。戻し方 = この 1 語を外す。
+  # WithBoundaries in the allow list (a one-step command that attaches the set of boundaries · d0bbf9ea1 / 43ab0cf3c / 90fbae568) was added
+  # after approval based on the HTML report. To revert = remove this one word.
   - id: doctrl-variants-require-approval
     pattern-regex: '(?ms)pub\s+enum\s+DoCtrl\s*\{(?:(?!^\}).)*^\s*(?!Pure\b|Eval\b|Expand\b|Apply\b|Perform\b|Resume\b|Transfer\b|ResumeThrow\b|TransferThrow\b|WithHandler\b|Pass\b|Delegate\b|WithObserve\b|WithBoundaries\b|GetTraceback\b|GetExecutionContext\b|GetHandlers\b|GetOuterHandlers\b|TailEval\b|AllocVar\b|ReadVar\b|WriteVar\b)[A-Za-z_][A-Za-z0-9_]*\s*(\{|,)'
     paths:
@@ -2266,7 +2266,7 @@ rules:
       category: architecture
       rationale: "Cleanup must use Python stack unwinding, not the removed Finally DoCtrl."
 
-  # tombstone(2026-07-14): 退役済みパターン doeff-cancel-must-be-effectful の再発防止として意図的に維持。現行の非fixture対象ゼロは想定内。
+  # tombstone(2026-07-14): kept on purpose to prevent the retired pattern doeff-cancel-must-be-effectful from coming back. Zero non-fixture targets today is expected.
   - id: doeff-cancel-must-be-effectful
     patterns:
       - pattern-inside: |
@@ -2287,7 +2287,7 @@ rules:
     languages: [python]
     severity: ERROR
     metadata:
-      tombstone: "2026-07-14 inventory: 退役済み API/path の回帰墓標"
+      tombstone: "2026-07-14 inventory: regression tombstone for a retired API/path"
       category: architecture
       rationale: "Cancel must be effectful per SPEC-SCHED-001"
 
@@ -2394,7 +2394,7 @@ rules:
       issue: VM-PROTO-003
       rationale: "No synthetic generator helpers in VM core"
 
-  # tombstone(2026-07-14): 退役済みパターン doeff-vm-proto-003-no-runtime-handler-dunder-probing の再発防止として意図的に維持。現行の非fixture対象ゼロは想定内。
+  # tombstone(2026-07-14): kept on purpose to prevent the retired pattern doeff-vm-proto-003-no-runtime-handler-dunder-probing from coming back. Zero non-fixture targets today is expected.
   - id: doeff-vm-proto-003-no-runtime-handler-dunder-probing
     patterns:
       - pattern-either:
@@ -2411,12 +2411,12 @@ rules:
     languages: [rust]
     severity: ERROR
     metadata:
-      tombstone: "2026-07-14 inventory: stale scope の回帰墓標"
+      tombstone: "2026-07-14 inventory: regression tombstone for a stale scope"
       category: vm-protocol
       issue: VM-PROTO-003
       rationale: "Eliminate runtime handler metadata probing"
 
-  # tombstone(2026-07-14): 退役済みパターン doeff-traceback-except-must-log の再発防止として意図的に維持。現行の非fixture対象ゼロは想定内。
+  # tombstone(2026-07-14): kept on purpose to prevent the retired pattern doeff-traceback-except-must-log from coming back. Zero non-fixture targets today is expected.
   - id: doeff-traceback-except-must-log
     patterns:
       - pattern-inside: |
@@ -2473,7 +2473,7 @@ rules:
     languages: [python]
     severity: ERROR
     metadata:
-      tombstone: "2026-07-14 inventory: stale scope の回帰墓標"
+      tombstone: "2026-07-14 inventory: regression tombstone for a stale scope"
       category: traceback-invariant
       issue: VM-FAILFAST-001C
 
@@ -2689,10 +2689,10 @@ rules:
       issue: conductor-fail-fast-swallows
       category: fail-fast
 
-  # tombstone(2026-07-14): 退役済みパターン no-string-match-error-detection の再発防止として意図的に維持。現行の非fixture対象ゼロは想定内。
+  # tombstone(2026-07-14): kept on purpose to prevent the retired pattern no-string-match-error-detection from coming back. Zero non-fixture targets today is expected.
   - id: no-string-match-error-detection
     metadata:
-      tombstone: "2026-07-14 inventory: stale scope の回帰墓標"
+      tombstone: "2026-07-14 inventory: regression tombstone for a stale scope"
     languages: [python]
     severity: ERROR
     message: >
@@ -2737,7 +2737,7 @@ rules:
       category: architecture
       rationale: "Effects layer must not depend on handlers layer"
 
-  # tombstone(2026-07-14): 退役済みパターン doeff-no-handler-def-in-effects の再発防止として意図的に維持。現行の非fixture対象ゼロは想定内。
+  # tombstone(2026-07-14): kept on purpose to prevent the retired pattern doeff-no-handler-def-in-effects from coming back. Zero non-fixture targets today is expected.
   - id: doeff-no-handler-def-in-effects
     patterns:
       - pattern: |
@@ -2756,11 +2756,11 @@ rules:
     languages: [python]
     severity: ERROR
     metadata:
-      tombstone: "2026-07-14 inventory: stale scope の回帰墓標"
+      tombstone: "2026-07-14 inventory: regression tombstone for a stale scope"
       category: architecture
       rationale: "Effects/handlers layer separation"
 
-  # tombstone(2026-07-14): 退役済みパターン doeff-no-handler-def-in-effects-untyped の再発防止として意図的に維持。現行の非fixture対象ゼロは想定内。
+  # tombstone(2026-07-14): kept on purpose to prevent the retired pattern doeff-no-handler-def-in-effects-untyped from coming back. Zero non-fixture targets today is expected.
   - id: doeff-no-handler-def-in-effects-untyped
     pattern-regex: "(?s)@do\\s*\\ndef\\s+[A-Za-z_][A-Za-z0-9_]*\\(\\s*effect\\s*,\\s*k\\s*\\):"
     paths:
@@ -2772,11 +2772,11 @@ rules:
     languages: [python]
     severity: ERROR
     metadata:
-      tombstone: "2026-07-14 inventory: stale scope の回帰墓標"
+      tombstone: "2026-07-14 inventory: regression tombstone for a stale scope"
       category: architecture
       rationale: "Effects/handlers layer separation"
 
-  # tombstone(2026-07-14): 退役済みパターン doeff-no-runtime-import-in-effects の再発防止として意図的に維持。現行の非fixture対象ゼロは想定内。
+  # tombstone(2026-07-14): kept on purpose to prevent the retired pattern doeff-no-runtime-import-in-effects from coming back. Zero non-fixture targets today is expected.
   - id: doeff-no-runtime-import-in-effects
     patterns:
       - pattern-either:
@@ -2792,7 +2792,7 @@ rules:
     languages: [python]
     severity: ERROR
     metadata:
-      tombstone: "2026-07-14 inventory: stale scope の回帰墓標"
+      tombstone: "2026-07-14 inventory: regression tombstone for a stale scope"
       category: architecture
 
   - id: doeff-no-handler-modification-in-run
@@ -2813,7 +2813,7 @@ rules:
       category: architecture
       rationale: "Handler immutability invariant — SPEC-EFF-011, ISSUE-CORE-495"
 
-  # tombstone(2026-07-14): 退役済みパターン doeff-no-thread-offload-in-async-run の再発防止として意図的に維持。現行の非fixture対象ゼロは想定内。
+  # tombstone(2026-07-14): kept on purpose to prevent the retired pattern doeff-no-thread-offload-in-async-run from coming back. Zero non-fixture targets today is expected.
   - id: doeff-no-thread-offload-in-async-run
     patterns:
       - pattern: asyncio.to_thread(...)
@@ -2826,7 +2826,7 @@ rules:
     languages: [python]
     severity: ERROR
     metadata:
-      tombstone: "2026-07-14 inventory: stale scope の回帰墓標"
+      tombstone: "2026-07-14 inventory: regression tombstone for a stale scope"
       category: architecture
       rationale: "VM boundary invariant — SPEC-EFF-011, ISSUE-CORE-495"
 
@@ -2984,17 +2984,17 @@ rules:
   # TIME
   # ---------------------------------------------------------------------------
 
-  # program は時間を待つ時に doeff-time の効果(Delay・WaitUntil・WaitWithin)を yield し、実時間に落とすのは
-  # 呼び手が入れた時間の handler の責務(async_time_handler = 壁の時計・sim_time_handler = 仮想の時計)。
-  # program の中の素の time.sleep / asyncio.sleep(Await(asyncio.sleep(…)) を含む)は handler を迂回して
-  # 壁の時計で待ち、検が仮想の時計で走れない。(effect, k) を受ける handler の実装の中は鳴らさない。
-  # sleep(0) は時間を待たず 1 度譲るだけなので鳴らさない(tests の規則と同じ)。範囲は本体(src)と例(examples/ — 本体が
-  # 手本にする物なので素の sleep を置かない)。
-  # Hy の program(defk・defp)は semgrep が読めないので、doeff-linter の規則 DOEFF210 が同じ決まりを止める(
-  # 定義 = packages/doeff-linter/src/project/program_sleep.rs・母集団 = pyproject.toml の [tool.doeff-linter.program_sleep])。
-  # 極性の検 = tests/semgrep/test_no_sleep_in_programs_rule.py(examples/ の範囲も同じ検が見る)。
-  # 法 = ADR-DOE-TIME-001 の a-program-waits-by-a-time-effect(docs/adr/defadr_doeff_time_001_programs_wait_by_time_effects.hy —
-  # 冊はこの規則の id と severity ERROR を検める。id を変える・消す時は冊の :enforced-by と同じ commit で直す)。
+  # When a program waits for time it yields a doeff-time effect (Delay, WaitUntil, WaitWithin); mapping it to real time is
+  # the job of the time handler the caller installed (async_time_handler = wall clock, sim_time_handler = virtual clock).
+  # A bare time.sleep / asyncio.sleep inside a program (including Await(asyncio.sleep(…))) bypasses the handler and
+  # waits on the wall clock, so tests cannot run on the virtual clock. It does not fire inside handler implementations that take (effect, k).
+  # sleep(0) does not wait for time, it only yields once, so it does not fire (same as the tests rule). Scope = the main code (src) and examples (examples/ — the main code
+  # uses them as models, so no bare sleep there).
+  # semgrep cannot read Hy programs (defk, defp), so doeff-linter rule DOEFF210 enforces the same rule (
+  # definition = packages/doeff-linter/src/project/program_sleep.rs, population = [tool.doeff-linter.program_sleep] in pyproject.toml).
+  # Polarity test = tests/semgrep/test_no_sleep_in_programs_rule.py (the same test also covers the examples/ scope).
+  # Law = a-program-waits-by-a-time-effect of ADR-DOE-TIME-001 (docs/adr/defadr_doeff_time_001_programs_wait_by_time_effects.hy —
+  # the record checks this rule's id and severity ERROR; when changing or removing the id, fix the record's :enforced-by in the same commit).
   - id: doeff-no-sleep-in-programs
     patterns:
       - pattern-either:
@@ -3041,25 +3041,25 @@ rules:
   # TESTING PATTERNS
   # ---------------------------------------------------------------------------
 
-  # 実時間そのもの(本物の thread・本物の asyncio の loop・本物の外の process)が対象の検は、検の側で pytest の marker
-  # `realtime` を名乗る — 関数の @pytest.mark.realtime か、module の pytestmark = pytest.mark.realtime。
-  # 規則はその中を鳴らさない。名乗った検は名簿 tests/realtime_tests.toml に理由と一緒に載せる(名簿と
-  # marker の食い違いは tests/semgrep/test_realtime_tests_registry.py が赤にする)。sleep(0) は時間を待たず
-  # 1 度譲るだけなので鳴らさない。await の無い asyncio.sleep(…)(yield
-  # Await(asyncio.sleep(1.5)) など)も鳴らし、severity は ERROR。
-  # 極性の検 = tests/semgrep/test_no_sleep_in_tests_rule.py。
-  # 法 = ADR-DOE-TIME-001 の a-test-sleeps-only-when-it-declares-realtime(冊はこの規則の id と severity ERROR を検める)。
+  # Tests whose subject is real time itself (real threads, a real asyncio loop, real external processes) declare the pytest marker
+  # `realtime` on the test side — @pytest.mark.realtime on the function, or pytestmark = pytest.mark.realtime on the module.
+  # The rule does not fire inside them. Declared tests are listed with a reason in the registry tests/realtime_tests.toml (a mismatch between the registry
+  # and the markers turns tests/semgrep/test_realtime_tests_registry.py red). sleep(0) does not wait for time,
+  # it only yields once, so it does not fire. asyncio.sleep(…) without await (yield
+  # Await(asyncio.sleep(1.5)) etc.) also fires, and severity is ERROR.
+  # Polarity test = tests/semgrep/test_no_sleep_in_tests_rule.py.
+  # Law = a-test-sleeps-only-when-it-declares-realtime of ADR-DOE-TIME-001 (the record checks this rule's id and severity ERROR).
   #
-  # 範囲と、外へ出る道:
-  # - 範囲 = 名が tests の dir の下の全部と、どこに在っても検の名の file(test_*.py・*_test.py・conftest.py)。
-  # - 外へ出る道は名簿の 2 つの表だけ。[tests] = 上の marker(本物の process を待つ検の support の module — pytest が
-  #   集めない file — も、同じ pytestmark の 1 行で名乗って載る)。[suites] = 下の paths.exclude の dir(どの検も本物の外の
-  #   process を黒箱で動かす組)で、exclude の行と 1 対 1。
-  # - 行の注釈(nosemgrep)で外す道は無い — 規則の範囲に 1 行でも在れば名簿の検が赤にする。
-  # - threading.Event().wait(秒) は誰も立てない合図を待つ = sleep の言い換えなので、同じく鳴らす。
-  # - Hy の検は semgrep が読めないので、同じ決まりを doeff-linter の規則 DOEFF211 が持つ(定義 =
-  #   packages/doeff-linter/src/project/test_sleep.rs・母集団 = pyproject.toml の [tool.doeff-linter.test_sleep])。名簿は同じ 1 つで、
-  #   [suites] の dir は 2 つの規則の両方が除く(下の paths.exclude と、その節の exclude の dir の行)。
+  # Scope, and the ways out:
+  # - Scope = everything under a directory named tests, and files with test names anywhere (test_*.py, *_test.py, conftest.py).
+  # - The only ways out are the two tables of the registry. [tests] = the marker above (support modules of tests that wait on real processes — files
+  #   pytest does not collect — also declare themselves with the same single pytestmark line and are listed). [suites] = the dirs in paths.exclude below (suites where every test drives
+  #   a real external process as a black box), one-to-one with the exclude lines.
+  # - There is no way out through a line annotation (nosemgrep) — a single such line within the rule's scope turns the registry test red.
+  # - threading.Event().wait(seconds) waits for a signal nobody sets = a rephrased sleep, so it fires too.
+  # - semgrep cannot read Hy tests, so doeff-linter rule DOEFF211 holds the same rule (definition =
+  #   packages/doeff-linter/src/project/test_sleep.rs, population = [tool.doeff-linter.test_sleep] in pyproject.toml). There is one shared registry, and
+  #   the [suites] dirs are excluded by both rules (paths.exclude below, and the exclude dir lines of that section).
   - id: doeff-no-sleep-in-tests
     patterns:
       - pattern-either:
@@ -3325,7 +3325,7 @@ rules:
   # TRACEBACK DEFAULT FORMAT
   # ---------------------------------------------------------------------------
 
-  # tombstone(2026-07-14): 退役済みパターン traceback-must-use-format-default の再発防止として意図的に維持。現行の非fixture対象ゼロは想定内。
+  # tombstone(2026-07-14): kept on purpose to prevent the retired pattern traceback-must-use-format-default from coming back. Zero non-fixture targets today is expected.
   - id: traceback-must-use-format-default
     patterns:
       - pattern-inside: |
@@ -3345,7 +3345,7 @@ rules:
     languages: [python]
     severity: ERROR
     metadata:
-      tombstone: "2026-07-14 inventory: stale scope の回帰墓標"
+      tombstone: "2026-07-14 inventory: regression tombstone for a stale scope"
       category: traceback
       spec: SPEC-TRACE-001
       rationale: "SPEC-TRACE-001 default format requirement"
@@ -3354,7 +3354,7 @@ rules:
   # DOEFF DOEXPR HIERARCHY ENFORCEMENT
   # ---------------------------------------------------------------------------
 
-  # tombstone(2026-07-14): 退役済みパターン doeff-doexpr-root-boundary-python の再発防止として意図的に維持。現行の非fixture対象ゼロは想定内。
+  # tombstone(2026-07-14): kept on purpose to prevent the retired pattern doeff-doexpr-root-boundary-python from coming back. Zero non-fixture targets today is expected.
   - id: doeff-doexpr-root-boundary-python
     patterns:
       - pattern-inside: |
@@ -3372,7 +3372,7 @@ rules:
     languages: [python]
     severity: ERROR
     metadata:
-      tombstone: "2026-07-14 inventory: stale scope の回帰墓標"
+      tombstone: "2026-07-14 inventory: regression tombstone for a stale scope"
       category: doexpr-hierarchy
       rationale: "run()/async_run() boundary must validate against single DoExpr root"
 
@@ -3475,12 +3475,12 @@ rules:
       category: layer-boundary
       rationale: "the VM is an implementation detail of doeff; users and subpackages see doeff's root only"
 
-  # job の道(入口・foundation・job の本体が読む doeff の module)は pydantic を読まない(job の道の全部が対象)。
-  # defwire の解き手は自前の doeff_hy/_wire_codec.py で、
-  # pydantic は照らしの道具 doeff_hy/_wire_parity.py(test の依存 doeff-hy[parity])だけが読む。LLM の出力を受ける doeff-openai・
-  # doeff-gemini・doeff-openrouter は範囲の外。Python は型検査の時だけの import(if TYPE_CHECKING)と、pydantic が自分で呼ぶ口
-  # __get_pydantic_core_schema__ の中の import(pydantic が既に読まれた時だけ走る — doeff_hy/_json_value.py)を断らない。
-  # 検 = tests/semgrep/test_job_path_imports_no_pydantic_rule.py(検体の fires の行だけが鳴り、実物の packages と doeff は鳴らない)。
+  # The job path (the entry, foundation, and doeff modules read by the job body) does not read pydantic (the whole job path is in scope).
+  # The defwire decoder is our own doeff_hy/_wire_codec.py,
+  # and pydantic is read only by the comparison tool doeff_hy/_wire_parity.py (test dependency doeff-hy[parity]). doeff-openai,
+  # doeff-gemini and doeff-openrouter, which receive LLM output, are out of scope. In Python, imports only for type checking (if TYPE_CHECKING) and imports inside
+  # __get_pydantic_core_schema__, the hook pydantic calls itself (runs only when pydantic is already loaded — doeff_hy/_json_value.py), are allowed.
+  # Test = tests/semgrep/test_job_path_imports_no_pydantic_rule.py (only the fires lines of the fixtures fire; the real packages and doeff do not).
   - id: doeff-job-path-imports-no-pydantic
     patterns:
       - pattern-either:
@@ -3496,7 +3496,7 @@ rules:
           def __get_pydantic_core_schema__(...):
               ...
     paths:
-      # 根に錨を置く(/ で始める — semgrep は錨の無い形を後の版で根からの形に読み替えると告げている)。検体の dir は名指して入れる。
+      # Anchor at the root (start with / — semgrep warns that a later version will read unanchored forms as root-relative). Fixture dirs are named explicitly.
       include:
         - "/doeff/**/*.py"
         - "/packages/**/*.py"
@@ -3519,7 +3519,7 @@ rules:
       category: layer-boundary
       rationale: "pydantic and pydantic_core cost every job process about 8 MB of Pss; the job path parses with doeff's own decoder"
 
-  # 上の規則の Hy の側(Hy の import の形 `(import pydantic [...])`・`(import json pydantic-core)` — 名の - は _ と同じ module)。
+  # The Hy side of the rule above (the Hy import forms `(import pydantic [...])` and `(import json pydantic-core)` — a - in a name is the same module as _).
   - id: doeff-job-path-imports-no-pydantic-hy
     pattern-regex: \(import\s[^()]*?(?<![\w.\-])pydantic([-_]core)?(?![\w\-])
     paths:
@@ -3561,7 +3561,7 @@ rules:
       issue: ISSUE-CORE-519
       rationale: "WithIntercept is the only supported interception API"
 
-  # tombstone(2026-07-14): 退役済みパターン no-withintercept-python-type-wrapper の再発防止として意図的に維持。現行の非fixture対象ゼロは想定内。
+  # tombstone(2026-07-14): kept on purpose to prevent the retired pattern no-withintercept-python-type-wrapper from coming back. Zero non-fixture targets today is expected.
   - id: no-withintercept-python-type-wrapper
     patterns:
       - pattern-inside: |
@@ -3580,7 +3580,7 @@ rules:
     languages: [python]
     severity: ERROR
     metadata:
-      tombstone: "2026-07-14 inventory: stale scope の回帰墓標"
+      tombstone: "2026-07-14 inventory: regression tombstone for a stale scope"
       category: architecture
       rationale: "WithIntercept filtering belongs to Rust VM dispatch"
 
@@ -3662,7 +3662,7 @@ rules:
       category: doexpr-perform
       rationale: "Effect data and dispatch control must be explicitly separated"
 
-  # tombstone(2026-07-14): 退役済みパターン doeff-vm-handle-map-no-anonymous-callmetadata の再発防止として意図的に維持。現行の非fixture対象ゼロは想定内。
+  # tombstone(2026-07-14): kept on purpose to prevent the retired pattern doeff-vm-handle-map-no-anonymous-callmetadata from coming back. Zero non-fixture targets today is expected.
   - id: doeff-vm-handle-map-no-anonymous-callmetadata
     patterns:
       - pattern-inside: |
@@ -3681,11 +3681,11 @@ rules:
     languages: [rust]
     severity: ERROR
     metadata:
-      tombstone: "2026-07-14 inventory: stale scope の回帰墓標"
+      tombstone: "2026-07-14 inventory: regression tombstone for a stale scope"
       category: vm-protocol
       rationale: "SPEC-VM-PROTOCOL §5.5 and §2 C7 require explicit callback metadata"
 
-  # tombstone(2026-07-14): 退役済みパターン doeff-vm-handle-flat-map-no-anonymous-callmetadata の再発防止として意図的に維持。現行の非fixture対象ゼロは想定内。
+  # tombstone(2026-07-14): kept on purpose to prevent the retired pattern doeff-vm-handle-flat-map-no-anonymous-callmetadata from coming back. Zero non-fixture targets today is expected.
   - id: doeff-vm-handle-flat-map-no-anonymous-callmetadata
     patterns:
       - pattern-inside: |
@@ -3704,7 +3704,7 @@ rules:
     languages: [rust]
     severity: ERROR
     metadata:
-      tombstone: "2026-07-14 inventory: stale scope の回帰墓標"
+      tombstone: "2026-07-14 inventory: regression tombstone for a stale scope"
       category: vm-protocol
       rationale: "SPEC-VM-PROTOCOL §5.5 and §2 C7 require explicit callback metadata"
 
@@ -3930,7 +3930,7 @@ rules:
   # SPEC-VM-014 ENFORCEMENT
   # ---------------------------------------------------------------------------
 
-  # tombstone(2026-07-14): 退役済みパターン vm-no-py-import-in-value-traceback の再発防止として意図的に維持。現行の非fixture対象ゼロは想定内。
+  # tombstone(2026-07-14): kept on purpose to prevent the retired pattern vm-no-py-import-in-value-traceback from coming back. Zero non-fixture targets today is expected.
   - id: vm-no-py-import-in-value-traceback
     pattern-regex: '\.import\("doeff_vm"\)'
     paths:
@@ -3943,7 +3943,7 @@ rules:
     languages: [rust]
     severity: ERROR
     metadata:
-      tombstone: "2026-07-14 inventory: stale scope の回帰墓標"
+      tombstone: "2026-07-14 inventory: regression tombstone for a stale scope"
       category: vm-protocol
       spec: SPEC-VM-014
 
@@ -3961,7 +3961,7 @@ rules:
       category: vm-protocol
       spec: SPEC-VM-014
 
-  # tombstone(2026-07-14): 退役済みパターン vm-no-spawn-site-on-py-spawn の再発防止として意図的に維持。現行の非fixture対象ゼロは想定内。
+  # tombstone(2026-07-14): kept on purpose to prevent the retired pattern vm-no-spawn-site-on-py-spawn from coming back. Zero non-fixture targets today is expected.
   - id: vm-no-spawn-site-on-py-spawn
     pattern-regex: 'spawn_site.*Option<Py<PyAny>>'
     paths:
@@ -3973,7 +3973,7 @@ rules:
     languages: [rust]
     severity: ERROR
     metadata:
-      tombstone: "2026-07-14 inventory: stale scope の回帰墓標"
+      tombstone: "2026-07-14 inventory: regression tombstone for a stale scope"
       category: vm-protocol
       spec: SPEC-VM-014
 
@@ -4135,13 +4135,13 @@ rules:
       category: public-api-renamed
 
   - id: doeff-public-api-no-subpackage-imports
-    # `from doeff.<sub> import …` のうち、取り込む名が全部 `_` で始まる(top level に出ない内部の名 — sentinel など)形は
-    # message の「module 固有の内部の名が要る時は下の package から」が許す形なので鳴らさない。
-    # 1 つ目 = 1 行の形(`as` の別名・末尾の comment 可)・2 つ目 = 括弧で囲んだ形(複数行・末尾の `,`・comment 可)。
-    # 公開の名が 1 つでも混ざる形・`import doeff.<sub>` は今まで通り鳴る。極性の検 = tests/semgrep/test_public_api_subpackage_imports_rule.py
-    # (検体 = tests/semgrep/fixtures/python/tests/public_api/)。
-    # 繰り返しは全部 possessive(`*+` `++`)— 括弧の中の空白と comment `(?:\s++|#[^\n]*+)*+` を戻らせると、`#` の多い comment 行で
-    # 切り方が指数に増え、規則が走査を止める。
+    # `from doeff.<sub> import …` where every imported name starts with `_` (internal names not exposed at top level — sentinels etc.)
+    # is the form the message allows ("use subpackage imports when you need module-specific internals"), so it does not fire.
+    # The 1st = the one-line form (`as` aliases and a trailing comment allowed); the 2nd = the parenthesized form (multi-line, trailing `,`, comments allowed).
+    # Forms mixing in even one public name, and `import doeff.<sub>`, still fire. Polarity test = tests/semgrep/test_public_api_subpackage_imports_rule.py
+    # (fixtures = tests/semgrep/fixtures/python/tests/public_api/).
+    # Every repetition is possessive (`*+` `++`) — letting the whitespace and comments inside the parentheses `(?:\s++|#[^\n]*+)*+` backtrack makes
+    # the number of splits grow exponentially on comment lines with many `#`, and the rule stops the scan.
     patterns:
       - pattern-either:
           - pattern-regex: '^from\s+doeff\.[A-Za-z0-9_.]+\s+import\s+'
@@ -4192,7 +4192,7 @@ rules:
   # register, but these rules prevent someone from adding the fields back to
   # the wrong struct.
 
-  # tombstone(2026-07-14): 退役済みパターン vm-scope-no-mode-on-vm-struct の再発防止として意図的に維持。現行の非fixture対象ゼロは想定内。
+  # tombstone(2026-07-14): kept on purpose to prevent the retired pattern vm-scope-no-mode-on-vm-struct from coming back. Zero non-fixture targets today is expected.
   - id: vm-scope-no-mode-on-vm-struct
     pattern-regex: 'pub\s+mode\s*:\s*(Mode|Signal)\b'
     paths:
@@ -4206,12 +4206,12 @@ rules:
     languages: [rust]
     severity: ERROR
     metadata:
-      tombstone: "2026-07-14 inventory: vm-g0-no-mode-register-on-vm と完全重複する回帰墓標"
+      tombstone: "2026-07-14 inventory: regression tombstone, an exact duplicate of vm-g0-no-mode-register-on-vm"
       category: vm-scope-structural
       spec: SPEC-VM-015
       invariant: INV-1
 
-  # tombstone(2026-07-14): 退役済みパターン vm-scope-no-pending-python-on-vm-struct の再発防止として意図的に維持。現行の非fixture対象ゼロは想定内。
+  # tombstone(2026-07-14): kept on purpose to prevent the retired pattern vm-scope-no-pending-python-on-vm-struct from coming back. Zero non-fixture targets today is expected.
   - id: vm-scope-no-pending-python-on-vm-struct
     pattern-regex: 'pub\s+pending_python\s*:\s*Option<PendingPython>'
     paths:
@@ -4224,12 +4224,12 @@ rules:
     languages: [rust]
     severity: ERROR
     metadata:
-      tombstone: "2026-07-14 inventory: stale scope の回帰墓標"
+      tombstone: "2026-07-14 inventory: regression tombstone for a stale scope"
       category: vm-scope-structural
       spec: SPEC-VM-015
       invariant: INV-1
 
-  # tombstone(2026-07-14): 退役済みパターン vm-scope-no-pending-error-context-on-vm-struct の再発防止として意図的に維持。現行の非fixture対象ゼロは想定内。
+  # tombstone(2026-07-14): kept on purpose to prevent the retired pattern vm-scope-no-pending-error-context-on-vm-struct from coming back. Zero non-fixture targets today is expected.
   - id: vm-scope-no-pending-error-context-on-vm-struct
     pattern-regex: 'pub\s+pending_error_context\s*:\s*Option<PyException>'
     paths:
@@ -4242,12 +4242,12 @@ rules:
     languages: [rust]
     severity: ERROR
     metadata:
-      tombstone: "2026-07-14 inventory: stale scope の回帰墓標"
+      tombstone: "2026-07-14 inventory: regression tombstone for a stale scope"
       category: vm-scope-structural
       spec: SPEC-VM-015
       invariant: INV-1
 
-  # tombstone(2026-07-14): 退役済みパターン vm-scope-no-eval-depth-on-interceptor-state の再発防止として意図的に維持。現行の非fixture対象ゼロは想定内。
+  # tombstone(2026-07-14): kept on purpose to prevent the retired pattern vm-scope-no-eval-depth-on-interceptor-state from coming back. Zero non-fixture targets today is expected.
   - id: vm-scope-no-eval-depth-on-interceptor-state
     pattern-regex: 'interceptor_eval_depth\s*:\s*usize'
     paths:
@@ -4260,12 +4260,12 @@ rules:
     languages: [rust]
     severity: ERROR
     metadata:
-      tombstone: "2026-07-14 inventory: stale scope の回帰墓標"
+      tombstone: "2026-07-14 inventory: regression tombstone for a stale scope"
       category: vm-scope-structural
       spec: SPEC-VM-015
       invariant: INV-1
 
-  # tombstone(2026-07-14): 退役済みパターン vm-scope-no-skip-stack-on-interceptor-state の再発防止として意図的に維持。現行の非fixture対象ゼロは想定内。
+  # tombstone(2026-07-14): kept on purpose to prevent the retired pattern vm-scope-no-skip-stack-on-interceptor-state from coming back. Zero non-fixture targets today is expected.
   - id: vm-scope-no-skip-stack-on-interceptor-state
     pattern-regex: 'interceptor_skip_stack\s*:\s*Vec<Marker>'
     paths:
@@ -4278,12 +4278,12 @@ rules:
     languages: [rust]
     severity: ERROR
     metadata:
-      tombstone: "2026-07-14 inventory: stale scope の回帰墓標"
+      tombstone: "2026-07-14 inventory: regression tombstone for a stale scope"
       category: vm-scope-structural
       spec: SPEC-VM-015
       invariant: INV-1
 
-  # tombstone(2026-07-14): 退役済みパターン vm-scope-no-saved-mode-on-dispatch-context の再発防止として意図的に維持。現行の非fixture対象ゼロは想定内。
+  # tombstone(2026-07-14): kept on purpose to prevent the retired pattern vm-scope-no-saved-mode-on-dispatch-context from coming back. Zero non-fixture targets today is expected.
   - id: vm-scope-no-saved-mode-on-dispatch-context
     pattern-regex: 'saved_mode\s*:\s*Mode'
     paths:
@@ -4296,12 +4296,12 @@ rules:
     languages: [rust]
     severity: ERROR
     metadata:
-      tombstone: "2026-07-14 inventory: stale scope の回帰墓標"
+      tombstone: "2026-07-14 inventory: regression tombstone for a stale scope"
       category: vm-scope-structural
       spec: SPEC-VM-015
       rejected-approach: save-restore
 
-  # tombstone(2026-07-14): 退役済みパターン vm-scope-no-saved-segment-on-dispatch-context の再発防止として意図的に維持。現行の非fixture対象ゼロは想定内。
+  # tombstone(2026-07-14): kept on purpose to prevent the retired pattern vm-scope-no-saved-segment-on-dispatch-context from coming back. Zero non-fixture targets today is expected.
   - id: vm-scope-no-saved-segment-on-dispatch-context
     pattern-regex: 'saved_segment\s*:\s*Option<SegmentId>'
     paths:
@@ -4314,7 +4314,7 @@ rules:
     languages: [rust]
     severity: ERROR
     metadata:
-      tombstone: "2026-07-14 inventory: stale scope の回帰墓標"
+      tombstone: "2026-07-14 inventory: regression tombstone for a stale scope"
       category: vm-scope-structural
       spec: SPEC-VM-015
       rejected-approach: save-restore
@@ -4323,7 +4323,7 @@ rules:
   # SPEC-VM-017 KLEISLI ENFORCEMENT
   # ---------------------------------------------------------------------------
 
-  # tombstone(2026-07-14): 退役済みパターン kleisli-trait-exists の再発防止として意図的に維持。現行の非fixture対象ゼロは想定内。
+  # tombstone(2026-07-14): kept on purpose to prevent the retired pattern kleisli-trait-exists from coming back. Zero non-fixture targets today is expected.
   - id: kleisli-trait-exists
     patterns:
       - pattern-regex: 'pub trait Kleisli'
@@ -4333,7 +4333,7 @@ rules:
     languages: [rust]
     severity: INFO
     metadata:
-      tombstone: "2026-07-14 inventory: stale scope の回帰墓標"
+      tombstone: "2026-07-14 inventory: regression tombstone for a stale scope"
       category: vm-architecture
       spec: SPEC-VM-017
       enforcement: existence
@@ -4341,7 +4341,7 @@ rules:
       kleisli.rs must contain 'pub trait Kleisli' (SPEC-VM-017 R1-A).
       This is the IR-level callable: T -> DoExpr[U].
 
-  # tombstone(2026-07-14): 退役済みパターン kleisli-value-variant-exists の再発防止として意図的に維持。現行の非fixture対象ゼロは想定内。
+  # tombstone(2026-07-14): kept on purpose to prevent the retired pattern kleisli-value-variant-exists from coming back. Zero non-fixture targets today is expected.
   - id: kleisli-value-variant-exists
     patterns:
       - pattern-regex: 'Kleisli\(crate::kleisli::KleisliRef\)'
@@ -4351,7 +4351,7 @@ rules:
     languages: [rust]
     severity: INFO
     metadata:
-      tombstone: "2026-07-14 inventory: stale scope の回帰墓標"
+      tombstone: "2026-07-14 inventory: regression tombstone for a stale scope"
       category: vm-architecture
       spec: SPEC-VM-017
       enforcement: existence
@@ -4427,10 +4427,10 @@ rules:
       CallArg has been removed (SPEC-VM-017 R1-K).
       Apply/Expand args are Vec<DoExpr>. Use DoExpr::Pure { value } for resolved values.
 
-  # tombstone(2026-07-14): 退役済みパターン trace-no-capture-log の再発防止として意図的に維持。現行の非fixture対象ゼロは想定内。
+  # tombstone(2026-07-14): kept on purpose to prevent the retired pattern trace-no-capture-log from coming back. Zero non-fixture targets today is expected.
   - id: trace-no-capture-log
     metadata:
-      tombstone: "2026-07-14 inventory: stale scope の回帰墓標"
+      tombstone: "2026-07-14 inventory: regression tombstone for a stale scope"
     pattern: capture_log
     paths:
       include:
@@ -4697,10 +4697,10 @@ rules:
         - "**/tests/**"
     pattern-regex: 'Frame::HandlerDispatch|Frame::DispatchOrigin|(?m)^\s*(HandlerDispatch|DispatchOrigin)\s*\{'
 
-  # tombstone(2026-07-14): 退役済みパターン vm-no-mutating-exception-enrichment-wrapper の再発防止として意図的に維持。現行の非fixture対象ゼロは想定内。
+  # tombstone(2026-07-14): kept on purpose to prevent the retired pattern vm-no-mutating-exception-enrichment-wrapper from coming back. Zero non-fixture targets today is expected.
   - id: vm-no-mutating-exception-enrichment-wrapper
     metadata:
-      tombstone: "2026-07-14 inventory: stale scope の回帰墓標"
+      tombstone: "2026-07-14 inventory: regression tombstone for a stale scope"
     languages: [rust]
     severity: ERROR
     message: |
@@ -4739,10 +4739,10 @@ rules:
         - "**/tests/**"
     pattern-regex: '\bActiveChainAssemblyState\b|\bpending_trace_events\b|\bCaptureEvent\b|\btrace_dispatches\b|\bdispatch_order\b|\btransfer_targets\b'
 
-  # tombstone(2026-07-14): 退役済みパターン scheduler-no-global-waiter-retain の再発防止として意図的に維持。現行の非fixture対象ゼロは想定内。
+  # tombstone(2026-07-14): kept on purpose to prevent the retired pattern scheduler-no-global-waiter-retain from coming back. Zero non-fixture targets today is expected.
   - id: scheduler-no-global-waiter-retain
     metadata:
-      tombstone: "2026-07-14 inventory: stale scope の回帰墓標"
+      tombstone: "2026-07-14 inventory: regression tombstone for a stale scope"
     languages: [rust]
     severity: ERROR
     message: |
@@ -4753,10 +4753,10 @@ rules:
         - "/packages/doeff-core-effects/src/scheduler/mod.rs"
     pattern-regex: 'self\.waiters\.retain\s*\('
 
-  # tombstone(2026-07-14): 退役済みパターン scheduler-no-global-owner-wait-scan の再発防止として意図的に維持。現行の非fixture対象ゼロは想定内。
+  # tombstone(2026-07-14): kept on purpose to prevent the retired pattern scheduler-no-global-owner-wait-scan from coming back. Zero non-fixture targets today is expected.
   - id: scheduler-no-global-owner-wait-scan
     metadata:
-      tombstone: "2026-07-14 inventory: stale scope の回帰墓標"
+      tombstone: "2026-07-14 inventory: regression tombstone for a stale scope"
     languages: [rust]
     severity: ERROR
     message: |
@@ -4767,10 +4767,10 @@ rules:
         - "/packages/doeff-core-effects/src/scheduler/mod.rs"
     pattern-regex: 'self\.waiters\.values\(\)\.any\s*\('
 
-  # tombstone(2026-07-14): 退役済みパターン scheduler-no-item-rescan-done-check の再発防止として意図的に維持。現行の非fixture対象ゼロは想定内。
+  # tombstone(2026-07-14): kept on purpose to prevent the retired pattern scheduler-no-item-rescan-done-check from coming back. Zero non-fixture targets today is expected.
   - id: scheduler-no-item-rescan-done-check
     metadata:
-      tombstone: "2026-07-14 inventory: stale scope の回帰墓標"
+      tombstone: "2026-07-14 inventory: regression tombstone for a stale scope"
     languages: [rust]
     severity: ERROR
     message: |
@@ -4781,10 +4781,10 @@ rules:
         - "/packages/doeff-core-effects/src/scheduler/mod.rs"
     pattern-regex: 'items\.iter\(\)\.(all|any)\(\|item\|\s*self\.is_done\(\*item\)\)'
 
-  # tombstone(2026-07-14): 退役済みパターン scheduler-no-external-waiter-iter-scan の再発防止として意図的に維持。現行の非fixture対象ゼロは想定内。
+  # tombstone(2026-07-14): kept on purpose to prevent the retired pattern scheduler-no-external-waiter-iter-scan from coming back. Zero non-fixture targets today is expected.
   - id: scheduler-no-external-waiter-iter-scan
     metadata:
-      tombstone: "2026-07-14 inventory: stale scope の回帰墓標"
+      tombstone: "2026-07-14 inventory: regression tombstone for a stale scope"
     languages: [rust]
     severity: ERROR
     message: |
@@ -5126,10 +5126,10 @@ rules:
   # ISSUE-VM-001 / PR G0: VM mutable-state audit
   # ---------------------------------------------------------------------------
 
-  # tombstone(2026-07-14): 退役済みパターン vm-g0-no-mode-register-on-vm の再発防止として意図的に維持。現行の非fixture対象ゼロは想定内。
+  # tombstone(2026-07-14): kept on purpose to prevent the retired pattern vm-g0-no-mode-register-on-vm from coming back. Zero non-fixture targets today is expected.
   - id: vm-g0-no-mode-register-on-vm
     metadata:
-      tombstone: "2026-07-14 inventory: vm-scope-no-mode-on-vm-struct の重複先となる正規回帰墓標"
+      tombstone: "2026-07-14 inventory: canonical regression tombstone that vm-scope-no-mode-on-vm-struct duplicates"
     languages: [rust]
     severity: ERROR
     message: |
@@ -5269,18 +5269,18 @@ rules:
     languages: [python]
     severity: ERROR
     message: >
-      ADR-DOE-CORE-EFFECTS-001 R3: handler install への mutable 収集属性
-      (.log)は削除済み API。収集は Listen(prog, types=(SlogEffect,)) の
-      値フロー (result, collected) で行う。handler は sink(表示/破棄)に徹する。
+      ADR-DOE-CORE-EFFECTS-001 R3: the mutable collection attribute on a handler install
+      (.log) is a removed API. Collect through the value flow (result, collected) of
+      Listen(prog, types=(SlogEffect,)). Handlers only act as sinks (display / discard).
     pattern: install.log = $LOG
 
   - id: no-effect-message-attribute
     languages: [python]
     severity: ERROR
     message: >
-      ADR-DOE-CORE-EFFECTS-001 R6: WriterTellEffect / SlogEffect に message
-      属性は存在しない(現行 API は .msg / .kwargs)。effect.message 参照は
-      stale API で、実行時 AttributeError になる。
+      ADR-DOE-CORE-EFFECTS-001 R6: WriterTellEffect / SlogEffect have no message
+      attribute (the current API is .msg / .kwargs). Referencing effect.message is
+      a stale API and raises AttributeError at run time.
     patterns:
       - pattern-either:
           - pattern: isinstance($E, WriterTellEffect) and isinstance($E.message, $T)
@@ -5300,9 +5300,9 @@ rules:
     languages: [python]
     severity: ERROR
     message: >
-      ADR-DOE-CORE-EFFECTS-001 R1: WriterTellEffect を Slog 名で別名 import
-      するのは退役した conflation の再生(memo_handlers 2026-07-13 で実例)。
-      observability は SlogEffect / slog() を使う。
+      ADR-DOE-CORE-EFFECTS-001 R1: importing WriterTellEffect under a Slog alias
+      revives the retired conflation (seen in memo_handlers on 2026-07-13).
+      Use SlogEffect / slog() for observability.
     patterns:
       - pattern-either:
           - pattern: from doeff_core_effects._effects import WriterTellEffect as Slog
@@ -5313,9 +5313,9 @@ rules:
     languages: [python]
     severity: ERROR
     message: >
-      ADR-DOE-CORE-EFFECTS-001 R1: 構造化ペイロード付き WriterTellEffect
-      構築は禁止。observability は SlogEffect(msg, **kwargs)、Tell は
-      単一 message のみ(Writer と slog はワイヤ型が分離されている)。
+      ADR-DOE-CORE-EFFECTS-001 R1: constructing a WriterTellEffect with a structured
+      payload is forbidden. Observability uses SlogEffect(msg, **kwargs); Tell carries
+      a single message only (Writer and slog have separate wire types).
     patterns:
       - pattern-either:
           - pattern: WriterTellEffect($MSG, **$KW)
@@ -5340,10 +5340,10 @@ rules:
     languages: [python]
     severity: ERROR
     message: >
-      ADR-DOE-PRESET-001: doeff-preset は退役済みパッケージ。表示の既定は
-      slog_handler(ADR-DOE-CORE-EFFECTS-001 R2 の stderr terminal sink)、
-      config Ask の既定値はエントリポイントの reader/lazy_ask env で与える。
-      preset 相当の合成が必要なら installer を明示的に重ねる。
+      ADR-DOE-PRESET-001: doeff-preset is a retired package. The default display is
+      slog_handler (the stderr terminal sink of ADR-DOE-CORE-EFFECTS-001 R2);
+      defaults for config Ask come from the entry point's reader/lazy_ask env.
+      If you need a preset-like composition, stack the installers explicitly.
     patterns:
       - pattern-either:
           - pattern: import doeff_preset
@@ -5365,8 +5365,8 @@ rules:
     pattern-regex: '\((import|require)\s+doeff[-_](hy|adr)|\b(import|from)\s+doeff_(hy|adr)\b'
     paths:
       include:
-        # ターゲット相対で照合される(directory scan では packages/ が prefix に
-        # 含まれない)ため、パッケージ名前空間ディレクトリで指定する。
+        # Matched relative to the target (in a directory scan, packages/ is not part of the
+        # prefix), so specify the package namespace directory.
         - "**/doeff_domain/**"
 
   - id: doeff-agents-adopt-must-not-mutate-substrate
@@ -5384,8 +5384,8 @@ rules:
     pattern-regex: '\((tmux-send-keys|tmux-new-session|tmux-kill-session|fs-write-text-atomic|deliver-message|TmuxSendKeys|TmuxNewSession|TmuxKillSession|FsWriteTextAtomic|DeliverMessage)\b'
     paths:
       include:
-        # ターゲット相対照合(directory scan では packages/ prefix 無し)の
-        # ため **/ 形式で指定する(doeff-domain ルールの教訓)。
+        # Matched relative to the target (no packages/ prefix in a directory scan),
+        # so use the **/ form (lesson from the doeff-domain rule).
         - "**/_sessionhost/adopt.hy"
         - "**/_sessionhost/adopt_mutates_substrate_forbidden.hy"
 
@@ -5431,7 +5431,7 @@ rules:
       - generic
     severity: ERROR
     message: >
-      ADR-DOE-AGENTS-007 R5 (波 1-S1 改訂) / law
+      ADR-DOE-AGENTS-007 R5 (wave 1-S1 revision) / law
       stamp-never-crosses-identities: the agent_name key of the turn-stamp
       descriptor resolution may be consulted ONLY when the descriptor
       carries NEITHER pane_id NOR conversation_id — guard the name branch
@@ -5583,9 +5583,9 @@ rules:
       - pattern-either:
           - pattern-regex: '"CLAUDE\.md"'
           - pattern-regex: '"skills"'
-          # ⚠ 行内に閉じる([^"] は改行を含むので、閉じないと開き引用符 1 つと
-          #   数行下の綴りが 1 致に巻き込まれる — D10 と同じ穴。対照 =
-          #   tests/semgrep/fixtures/.../seat_home_instruction_names_forbidden.hy の 8〜10 行)。
+          # ⚠ Stay within the line ([^"] includes newlines, so without excluding \n one opening quote and
+          #   a spelling several lines below get swallowed into one match — the same hole as D10. Counter-example =
+          #   lines 8–10 of tests/semgrep/fixtures/.../seat_home_instruction_names_forbidden.hy).
           - pattern-regex: '"[^"\n]*/(CLAUDE\.md|skills)"'
     paths:
       include:
@@ -5610,17 +5610,17 @@ rules:
       happen exactly in the file an exclude would open (the vessel that installs
       into the home).
     patterns:
-      # ⚠ 行内に閉じる([^"'] は改行を含むので、閉じないと隣の註の逐語まで 1 致に巻き込む)。
-      # ⚠ 当たるのは **path の要素としての `dotfiles`**(左は語の境界・右は `/` か閉じ引用符)で、
-      #   引用符の直後だけではない — 違反は `"/home/user/dotfiles/…"`・`f"{home}/dotfiles/…"`・
-      #   `(os.path.join home "dotfiles" …)`・`Path(home) / "dotfiles" / …`・単引用符でも書ける
-      #   (対照 = tests/semgrep/fixtures/.../host_checkout_layout_forbidden.{py,hy})。
-      #   `my-dotfiles/` `dotfiles-base/` `acp.dotfiles/` は語の境界で外れる。
+      # ⚠ Stay within the line ([^"'] includes newlines, so without excluding \n the match swallows the text of the neighbouring comment).
+      # ⚠ What matches is **`dotfiles` as a path element** (word boundary on the left, `/` or a closing quote on the right),
+      #   not only right after a quote — violations can be written as `"/home/user/dotfiles/…"`, `f"{home}/dotfiles/…"`,
+      #   `(os.path.join home "dotfiles" …)`, `Path(home) / "dotfiles" / …`, or with single quotes
+      #   (counter-examples = tests/semgrep/fixtures/.../host_checkout_layout_forbidden.{py,hy}).
+      #   `my-dotfiles/` `dotfiles-base/` `acp.dotfiles/` fall outside by the word boundary.
       - pattern-regex: '["''][^"''\n]*(?<![\w.-])dotfiles(?:/[^"''\n]*)?["'']'
-      # 射程外の既知の 1 件(別便で扱う): 定期便の verify の script の置き場 acp/effects.py
-      # VERIFY_SCRIPTS_RELDIR。直すには charter.kind = verify の契約に宣言の鍵を 1 本足す
-      # 別便が要るので、この 1 つの綴りだけを名指しで通す
-      # (paths.exclude ではない — 他のどの file に同じ綴りが現れても発火する)。
+      # One known case out of scope (handled separately): VERIFY_SCRIPTS_RELDIR in acp/effects.py, the location of the scheduled
+      # verify scripts. Fixing it needs a separate change that adds one declared key to the charter.kind = verify contract,
+      # so only this one spelling is let through by name
+      # (not paths.exclude — it fires if the same spelling appears in any other file).
       - pattern-not-regex: '"dotfiles/cron_management"'
     paths:
       include:
@@ -5685,11 +5685,11 @@ rules:
       not match (the head must be followed by a flag, a concatenation, or be
       bound to an argv name).
     pattern-either:
-      # 旗が続く頭: ["codex" "--yolo"] / ["claude", "-p"] / #("claude" "--print")
+      # Head followed by a flag: ["codex" "--yolo"] / ["claude", "-p"] / #("claude" "--print")
       - pattern-regex: '[\[(]\s*"(claude|codex)"\s*,?\s*"-'
-      # Hy の連結の頭: (+ ["codex"] …)
+      # Head of a Hy concatenation: (+ ["codex"] …)
       - pattern-regex: '\(\+\s+\[\s*"(claude|codex)"\s*\]'
-      # argv の名に結ぶ頭: (setv args ["codex" …]) / argv = ["claude", …]
+      # Head bound to an argv name: (setv args ["codex" …]) / argv = ["claude", …]
       - pattern-regex: '\b(args|argv|cmd|command)\s*(=\s*)?[\[(]\s*"(claude|codex)"'
     paths:
       include:
@@ -5766,18 +5766,18 @@ rules:
           - pattern-not-inside: driver_path_in($WORD, $ENV)
 
   # ---------------------------------------------------------------------------
-  # ADR-DOE-RUNNER-001: doeff-runner の読む面(src/read/)は索引だけを読み、書き換えない
+  # ADR-DOE-RUNNER-001: the reading plane of doeff-runner (src/read/) reads only the index and never rewrites
   # ---------------------------------------------------------------------------
   - id: doeff-runner-reading-plane-reads-only-the-index
     languages: [typescript]
     severity: ERROR
     message: >
-      ADR-DOE-RUNNER-001 R2(law reading-plane-reads-only-the-index): 読む面
-      (ide-plugins/vscode/doeff-runner/src/read/)は file を自分で読まない。定義の一覧・
-      軸の属性・位置は hy-index(doeff-indexer)の置き場から、型・effect・本体の行は
-      doeff-linter の editor-json から受け取る。fs / node:fs / child_process の import と
-      vscode.workspace.findFiles・vscode.workspace.fs は面の外(hy/・lint/ の読み手)に置く
-      (v1 制約 5)。
+      ADR-DOE-RUNNER-001 R2 (law reading-plane-reads-only-the-index): the reading plane
+      (ide-plugins/vscode/doeff-runner/src/read/) does not read files itself. It receives the definition list,
+      axis attributes and positions from the hy-index store (doeff-indexer), and types, effects and body lines
+      from doeff-linter's editor-json. Imports of fs / node:fs / child_process and
+      vscode.workspace.findFiles / vscode.workspace.fs belong outside the plane (the readers in hy/ and lint/)
+      (v1 constraint 5).
     paths:
       include:
         - "**/doeff-runner/src/read/**"
@@ -5802,11 +5802,11 @@ rules:
     languages: [typescript]
     severity: ERROR
     message: >
-      ADR-DOE-RUNNER-001 R3(law reading-plane-is-read-only): 読む面
-      (ide-plugins/vscode/doeff-runner/src/read/)は document を書き換えない — 編集の機能は
-      作らない(読む面の使い手は source を手で編集しない前提)。
-      WorkspaceEdit・applyEdit・TextEditor.edit・document の save を面に置かない。source を
-      直したい時は `open in editor` で editor を開く(v1 R2)。
+      ADR-DOE-RUNNER-001 R3 (law reading-plane-is-read-only): the reading plane
+      (ide-plugins/vscode/doeff-runner/src/read/) does not rewrite documents — no editing features
+      (the premise is that users of the reading plane do not edit source by hand).
+      Do not put WorkspaceEdit, applyEdit, TextEditor.edit or document save in the plane. To
+      fix the source, open the editor with `open in editor` (v1 R2).
     paths:
       include:
         - "**/doeff-runner/src/read/**"
@@ -5823,8 +5823,8 @@ rules:
     languages: [python]
     severity: ERROR
     message: >
-      記録からの収集は session 内で所有する。
-      pytest の class や module を process 全体で書き換えると、通常の収集と未知 plugin の hook を壊す。
+      Collection from records is owned within the session.
+      Rewriting pytest classes or modules process-wide breaks normal collection and the hooks of unknown plugins.
     pattern-either:
       - pattern: FixtureManager.$ATTR = $VALUE
       - pattern: Function.$ATTR = $VALUE
@@ -5839,8 +5839,8 @@ rules:
     languages: [generic]
     severity: ERROR
     message: >
-      pytest の非公開の収集部品は doeff_adr/_indexed_pytest.py だけが所有する。
-      他の module は型付きの収集境界を呼び、pytest 更新時の修正先を一か所に保つ。
+      Only doeff_adr/_indexed_pytest.py owns pytest's private collection internals.
+      Other modules call the typed collection boundary, keeping the place to fix on pytest upgrades in one spot.
     pattern-regex: '\b(Metafunc|FuncFixtureInfo|_fixturemanager)\b|\b_pytest\.python\b'
     paths:
       include:
@@ -5852,11 +5852,11 @@ rules:
     languages: [generic]
     severity: ERROR
     message: >
-      coordinator の core(調停ループ・行を出す側)は
-      行の送り先を知らない — 行は slog で出し、送りの配線は入口 coordinator/entry/main.hy だけが line_stamp の process_lines で持つ。
-      code-quality の module doeff-cluster-coordinator は core の program.hy と入口の main.hy を 1 つに持ち、入口のための line_stamp の
-      許しが core にも効くので、core からの import をこの規則で断る。区画 worker を _worker へ隠した後の
-      綴り doeff_cluster._worker.entry.line_stamp も、移し替えの module を通る古い綴りも断る。
+      The coordinator core (the reconcile loop, the side that emits lines) does not
+      know where its lines go — lines are emitted via slog, and the send wiring is held only by the entry coordinator/entry/main.hy through process_lines of line_stamp.
+      The code-quality module doeff-cluster-coordinator holds the core program.hy and the entry main.hy together, so the line_stamp
+      allowance meant for the entry also applies to the core; this rule therefore refuses imports from the core. It also refuses the spelling
+      doeff_cluster._worker.entry.line_stamp after the partition worker was hidden in _worker, and old spellings that go through the relocation module.
     pattern-regex: 'doeff_cluster\._?worker\.entry\.line_stamp'
     paths:
       include:

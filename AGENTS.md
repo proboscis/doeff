@@ -220,8 +220,8 @@ The following patterns are banned in production code. Agents must avoid these; r
 
 ## Commit & Pull Request Guidelines
 Recent history favors concise, imperative summaries (for example, `Fix cache invalidation` or `Add Gemini structured support`). Reference related issues in the body, note behavioral risks, and list validation commands you ran. Pull requests should describe the effect on core `doeff/` APIs versus optional `packages/` integrations, attach screenshots or traces when diagnostics change, and mention follow-up work in a checklist so maintainers can track it.
-# VS Code 拡張の更新
+# Updating the VS Code extension
 
-- doeff の VS Code 拡張を更新したら、変更範囲を検証し、通った変更を commit して通常の公開経路で main へ反映(push)する。その main から依存物を含む VSIX が自動配布され、標準プロファイルへインストールされたことを確認する。インストールされた成果物で動作と版を確認し、再読み込みが必要なら伝える。ローカルへの手動インストールだけを完了にせず、ユーザーに毎回 commit・push・インストールを依頼させない。
-- 未 merge の開発版を途中で確認する場合は、main を配る `agentcli.vsix_follow` と競合しない専用プロファイルを使う。専用プロファイルでの成功を標準プロファイルへの反映済みと報告しない。自動配布の記録を偽装したり、他の拡張の更新を無断で停止したりしない。
-- CLAUDE.md はこのファイルへの symlink なので、この節は両ランタイムへ適用する。
+- After updating doeff's VS Code extension, verify the changed scope, commit the passing change and land it on main (push) through the normal publishing path. Confirm that a VSIX including its dependencies is distributed automatically from that main and installed into the standard profile. Check behaviour and version with the installed artifact, and say so if a reload is needed. Do not count a manual local install alone as done, and do not make the user ask for commit, push and install every time.
+- To check an unmerged development build midway, use a dedicated profile that does not conflict with `agentcli.vsix_follow`, which distributes main. Do not report success in the dedicated profile as reflected in the standard profile. Do not fake the automatic distribution records or stop other extensions' updates without permission.
+- CLAUDE.md is a symlink to this file, so this section applies to both runtimes.

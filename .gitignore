@@ -35,7 +35,7 @@ wheels/
 *.egg
 MANIFEST
 
-# docs の site(make docs-site・mkdocs build の出力)
+# The docs site (output of make docs-site / mkdocs build)
 /site/
 
 # Testing
@@ -79,9 +79,9 @@ dmypy.json
 .doeff-lint.jsonl
 .doeff-flow/
 *.jsonl
-# 旧い版の coordinator の置き場の log(版上げの下見の検 test_deployed_state_upgrade.hy が読む fixture — 生成された log ではない)
+# Logs of an old-version coordinator store (a fixture read by the upgrade preview test test_deployed_state_upgrade.hy — not generated logs)
 !packages/doeff-cluster/tests/fixtures/coordinator_state_*/wal/wal.jsonl
-# codex の app-server の実物の行を録った物(行の分類の検 packages/doeff-codex/tests/test_lines.hy が読む fixture — 生成された log ではない)
+# Recorded real lines of codex's app-server (a fixture read by the line classification test packages/doeff-codex/tests/test_lines.hy — not generated logs)
 !packages/doeff-codex/tests/recorded/codex-*/*.jsonl
 *.db
 *.db-journal
@@ -135,8 +135,8 @@ ORCH_PROMPT.md
 
 # Repository-owned Zenn article visuals (override global image ignores)
 !/images/zenn-use-cases-v0/*.png
-# 記事が参照する採用画像は generated/ の下に在る(上の行は直下だけに効き、2026-09-16 の 47 枚は入らなかった)
+# The images the article uses are under generated/ (the line above only covers the top level, so the 47 images of 2026-09-16 were left out)
 !/images/zenn-use-cases-v0/generated/
 !/images/zenn-use-cases-v0/generated/*.png
-# 手で書いた図の正本(global の `*.svg` の除外を打ち消す)
+# Hand-drawn source diagrams (overrides the global `*.svg` ignore)
 !/publications/zenn-use-cases-v0/visuals/*.svg
