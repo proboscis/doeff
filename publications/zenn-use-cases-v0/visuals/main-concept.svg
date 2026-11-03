@@ -1,5 +1,5 @@
-<svg xmlns="http://www.w3.org/2000/svg" width="1080" height="960" viewBox="0 0 1080 960">
-  <!-- 同じgreetの依頼へ、2つのハンドラが違う名前を返し、run()の結果が変わることを示す。 -->
+<svg xmlns="http://www.w3.org/2000/svg" width="1080" height="1560" viewBox="0 0 1080 1560">
+  <!-- budget(5)(research(TOPICS))の実行を、やりとり1つずつ示す(英語の記事のsequenceDiagramの訳)。 -->
   <defs>
     <marker id="arrow" viewBox="0 0 12 12" refX="10" refY="6" markerWidth="5" markerHeight="5" orient="auto">
       <path d="M0,0 L12,6 L0,12 z" fill="#0f8b8d"/>
@@ -9,34 +9,45 @@
       .code { font-family: "DejaVu Sans Mono", "IPAGothic", monospace; fill: #1f2d4d; }
     </style>
   </defs>
-  <rect width="1080" height="960" fill="#ffffff"/>
+  <rect width="1080" height="1560" fill="#ffffff"/>
 
-  <text class="ja" x="540" y="78" font-size="50" font-weight="bold" text-anchor="middle">同じAskに、ハンドラが違う名前を返す</text>
+  <text class="ja" x="540" y="76" font-size="44" font-weight="bold" text-anchor="middle">budget(5)が、2回目のSpendで続きを捨てる</text>
 
-  <rect x="30" y="120" width="1020" height="190" rx="24" fill="#e0f5ef" stroke="#8fd3bf" stroke-width="3"/>
-  <text class="ja" x="65" y="180" font-size="40">処理の本体 greet()（どちらも同じ）</text>
-  <text class="code" x="65" y="265" font-size="46" xml:space="preserve">name = yield Ask("name")</text>
+  <rect x="60" y="120" width="960" height="190" rx="24" fill="#e0f5ef" stroke="#8fd3bf" stroke-width="3"/>
+  <text class="ja" x="95" y="176" font-size="40" font-weight="bold">① research</text>
+  <text class="code" x="95" y="244" font-size="44" xml:space="preserve">yield Spend(3)</text>
+  <text class="ja" x="95" y="292" font-size="36">1つ目の話題で止まる(続きがk)</text>
 
-  <line x1="280" y1="320" x2="280" y2="412" stroke="#0f8b8d" stroke-width="8" marker-end="url(#arrow)"/>
-  <text class="ja" x="305" y="378" font-size="38">依頼</text>
-  <line x1="800" y1="320" x2="800" y2="412" stroke="#0f8b8d" stroke-width="8" marker-end="url(#arrow)"/>
-  <text class="ja" x="825" y="378" font-size="38">依頼</text>
+  <line x1="200" y1="318" x2="200" y2="392" stroke="#0f8b8d" stroke-width="8" marker-end="url(#arrow)"/>
+  <text class="ja" x="230" y="368" font-size="38">Spendとkがbudgetに届く</text>
 
-  <rect x="30" y="420" width="500" height="380" rx="24" fill="#e3f0fb" stroke="#9cc3e6" stroke-width="3"/>
-  <text class="ja" x="60" y="480" font-size="40" font-weight="bold">花子を返すハンドラ</text>
-  <text class="code" x="60" y="532" font-size="34">handle_ask_effect</text>
-  <rect x="55" y="565" width="450" height="80" rx="14" fill="#ffffff"/>
-  <text class="code" x="75" y="620" font-size="40" xml:space="preserve">Resume(k, "花子")</text>
-  <text class="ja" x="60" y="702" font-size="36">run()の結果</text>
-  <text class="ja" x="60" y="764" font-size="44" font-weight="bold">こんにちは、花子さん</text>
+  <rect x="60" y="400" width="960" height="190" rx="24" fill="#eee8f8" stroke="#b9a6e0" stroke-width="3"/>
+  <text class="ja" x="95" y="456" font-size="40" font-weight="bold">② budget(5)</text>
+  <text class="ja" x="95" y="512" font-size="36">3は残りの5に収まる → left = 2</text>
+  <text class="code" x="95" y="568" font-size="44" xml:space="preserve">yield Resume(k, None)</text>
 
-  <rect x="550" y="420" width="500" height="380" rx="24" fill="#eee8f8" stroke="#b9a6e0" stroke-width="3"/>
-  <text class="ja" x="580" y="480" font-size="40" font-weight="bold">太郎を返すハンドラ</text>
-  <text class="code" x="580" y="532" font-size="34">handle_test_ask_effect</text>
-  <rect x="575" y="565" width="450" height="80" rx="14" fill="#ffffff"/>
-  <text class="code" x="595" y="620" font-size="40" xml:space="preserve">Resume(k, "太郎")</text>
-  <text class="ja" x="580" y="702" font-size="36">run()の結果</text>
-  <text class="ja" x="580" y="764" font-size="44" font-weight="bold">こんにちは、太郎さん</text>
+  <line x1="200" y1="598" x2="200" y2="672" stroke="#0f8b8d" stroke-width="8" marker-end="url(#arrow)"/>
+  <text class="ja" x="230" y="648" font-size="38">researchが続きから進む</text>
 
-  <text class="ja" x="540" y="890" font-size="42" text-anchor="middle">greetは同じまま。替えたのはハンドラだけ。</text>
+  <rect x="60" y="680" width="960" height="250" rx="24" fill="#e0f5ef" stroke="#8fd3bf" stroke-width="3"/>
+  <text class="ja" x="95" y="736" font-size="40" font-weight="bold">③ research</text>
+  <text class="ja" x="95" y="792" font-size="36">notes on tides のメモができる</text>
+  <text class="code" x="95" y="856" font-size="44" xml:space="preserve">yield Spend(3)</text>
+  <text class="ja" x="95" y="908" font-size="36">2つ目の話題で、また止まる</text>
+
+  <line x1="200" y1="938" x2="200" y2="1012" stroke="#0f8b8d" stroke-width="8" marker-end="url(#arrow)"/>
+  <text class="ja" x="230" y="988" font-size="38">Spendとkがbudgetに届く</text>
+
+  <rect x="60" y="1020" width="960" height="190" rx="24" fill="#fdecea" stroke="#e8a59c" stroke-width="3"/>
+  <text class="ja" x="95" y="1076" font-size="40" font-weight="bold">④ budget(5)</text>
+  <text class="ja" x="95" y="1132" font-size="36">3は残りの2に収まらない → kを捨てる</text>
+  <text class="code" x="95" y="1188" font-size="44" xml:space="preserve">return "over budget"</text>
+
+  <line x1="200" y1="1218" x2="200" y2="1292" stroke="#0f8b8d" stroke-width="8" marker-end="url(#arrow)"/>
+  <text class="ja" x="230" y="1268" font-size="38">researchは再開されない</text>
+
+  <rect x="60" y="1300" width="960" height="200" rx="24" fill="#fff6dc" stroke="#e5c66b" stroke-width="3"/>
+  <text class="ja" x="95" y="1356" font-size="40" font-weight="bold">⑤ run() の結果</text>
+  <text class="code" x="95" y="1424" font-size="44" xml:space="preserve">"over budget"</text>
+  <text class="ja" x="95" y="1476" font-size="36">2つ目の話題(moons)は調べられない</text>
 </svg>

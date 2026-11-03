@@ -39,6 +39,11 @@ Python の版ごとに:
    置く。--pypi の時だけ走らせる: 例の dir は PyPI の版に留めて書き、値の形の版が PyPI に出るまで書き
    換えない(ADR-DOE-API-002 R3)ので、checkout の版で走らせると checkout の API が変わるたびに落ちる。
 
+9. 記事「Algebraic effects for Python」の例のうち、記事の本番の stack(`real` — 実時間と await_handler)を含む monitor.py と、
+   spend.py を、写した dir で走らせ、0 で終わり、monitor.py が本番の stack の印字(`-- real: ...` の見出しと答え)を最後に
+   印字する事を確かめる。記事は「every example runs with doeff 0.8.0 alone」と書くので、PyPI の版でも走らせる(await_handler の
+   呼び方が入った版と合わないと TypeError で落ちる)。
+
 CI の Python の版ごとの検(.github/workflows/python-compatibility.yml の job core-only-install と
 .github/workflows/core-install-macos-windows.yml)が、--pypi 無しで 1〜7 を走らせる。
 
@@ -320,6 +325,15 @@ SEQUENTIAL_SECONDS = 0.6
 ARTICLE_TIMED_LINE = re.compile(r"(\d+\.\d+) s")
 # pytest -q の最後の行(失敗・skip・警告の無い形)。
 PASSED_SUMMARY = re.compile(r"\d+ passed in \S+")
+
+
+# 記事「Algebraic effects for Python」の例の dir と、核だけの venv で走らせる 2 本。
+TOUR_DIRECTORY = Path("examples/effects_tour")
+# script が印字する見出しの行と、最後の行(monitor.py の本番の stack = 記事の Layer 5 の `real`)。
+TOUR_SCRIPTS = {
+    "spend.py": None,
+    "monitor.py": ("-- real: wall clock, async client", "[[9], [15]]"),
+}
 
 
 @dataclass(frozen=True)
@@ -1215,6 +1229,50 @@ def check_article_examples(installed: Installed, place: Path, timeout: float) ->
     return [*failures, *([] if tests_failure is None else [tests_failure])]
 
 
+def tour_script_failure(name: str, result: subprocess.CompletedProcess[str]) -> str | None:
+    """effects_tour の script 1 本の結末が、0 で終わり、必要な最後の行を印字した形でない事を言う文(合えば None)。
+
+    標準エラーは、repo の版が旧い `await_handler()` の呼びに出す DeprecationWarning(その行と、警告が写す source の行)だけを許す。
+    """
+    last = TOUR_SCRIPTS[name]
+    printed = result.stdout.splitlines()
+    unexpected = [
+        line for line in result.stderr.splitlines() if line.strip() and "await_handler" not in line
+    ]
+    if result.returncode != 0 or unexpected:
+        problem = f"終了コード 0 で、標準エラーに何も出さずに終わらなかった(終了コード {result.returncode})"
+    elif not printed:
+        problem = "何も印字しなかった"
+    elif last is not None and not (last[0] in printed and printed[-1] == last[-1]):
+        problem = f"最後に {list(last)!r} を印字しなかった"
+    else:
+        return None
+    return f"{name} が{problem}\n{result.stdout}{result.stderr}"
+
+
+def check_tour_examples(installed: Installed, place: Path, timeout: float) -> list[str]:
+    """記事 1 本目の例の dir から 2 本を、核だけの venv で写した dir から走らせ、落ちた事を言う文の列を返す(通れば空)。"""
+    directory = place / TOUR_DIRECTORY.name
+    shutil.copytree(
+        REPO / TOUR_DIRECTORY, directory, ignore=shutil.ignore_patterns("__pycache__")
+    )
+    print(f"  記事 1 本目の例({TOUR_DIRECTORY} — 記事が pip install doeff で走ると書く物)", flush=True)
+    environment = verify_release_install.example_environment(place)
+    failures: list[str] = []
+    for name in TOUR_SCRIPTS:
+        failure = _article_run_failure(
+            installed,
+            directory,
+            [name],
+            environment,
+            functools.partial(tour_script_failure, name),
+            timeout,
+        )
+        print_result(f"{name} が通り、記事の本番の stack まで印字する", failure)
+        failures.extend([] if failure is None else [failure])
+    return failures
+
+
 def check_python(python_request: str, work: Path, timeout: float, source: Source) -> list[str]:
     """Python の版 1 つで、新しい venv に核だけを入れて確かめ、落ちた事を言う文の列を返す。"""
     place = work / f"py{python_request.replace('+', '-')}"
@@ -1244,6 +1302,7 @@ def check_python(python_request: str, work: Path, timeout: float, source: Source
             *check_public_names(installed, place, timeout),
             # venv に pytest を足すので最後に置く。
             *check_article_examples(installed, place, timeout),
+            *check_tour_examples(installed, place, timeout),
         ]
     return [
         *problems,
@@ -1254,7 +1313,7 @@ def check_python(python_request: str, work: Path, timeout: float, source: Source
         *check_demo(installed, place, timeout),
         # venv に pytest を足すので最後に置く。
         *check_llm_example(installed, place, timeout),
-        # 8 は走らせない — 記事の例は PyPI の版に留めて書く(ADR-DOE-API-002 R3)ので、checkout の版で走らせると checkout の
+        # 8 と 9 は走らせない — 記事の例は PyPI の版に留めて書く(ADR-DOE-API-002 R3)ので、checkout の版で走らせると checkout の
         # API が変わるたびに落ちる。確かめは --pypi だけが持つ。
     ]
 

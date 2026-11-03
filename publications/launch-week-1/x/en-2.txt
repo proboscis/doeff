@@ -1,0 +1,4 @@
+doeff brings algebraic effects to Python. Handlers get the rest of your program, so time, concurrency, retries, budgets and I/O become layers you stack around the same code.
+
+pip install doeff
+https://github.com/proboscis/doeff

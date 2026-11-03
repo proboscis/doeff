@@ -388,6 +388,40 @@ def test_the_article_check_runs_every_script_of_the_article() -> None:
     assert (directory / "pytest.ini").is_file()
 
 
+@pytest.mark.parametrize(
+    ("name", "returncode", "stdout", "stderr", "passes"),
+    [
+        ("spend.py", 0, "a\n", "", True),
+        ("monitor.py", 0, "-- real: wall clock, async client\n[[9], [15]]\n", "", True),
+        (
+            "monitor.py",
+            0,
+            "-- real: wall clock, async client\n[[9], [15]]\n",
+            "m.py:1: DeprecationWarning: await_handler() is deprecated\n  x = await_handler()\n",
+            True,
+        ),
+        ("monitor.py", 1, "", "TypeError: await_handler() takes 0 positional arguments\n", False),
+        ("monitor.py", 0, "[[9], [15]]\n", "", False),
+        ("spend.py", 0, "", "", False),
+    ],
+)
+def test_a_tour_script_passes_only_when_it_runs_through_the_production_stack(
+    name: str, returncode: int, stdout: str, stderr: str, passes: bool
+) -> None:
+    result = subprocess.CompletedProcess(["python"], returncode, stdout, stderr)
+    assert (tool.tour_script_failure(name, result) is None) is passes
+
+
+def test_the_tour_check_runs_the_files_whose_production_stack_the_article_shows() -> None:
+    # monitor.py の __main__ が本番の stack(real)を走らせ、道具が見る最後の 2 行が、その印字と同じである事。記事の Layer 5 の
+    # `real` の定義が monitor.py と一致する事は tests/test_docs_article_algebraic_effects.py が見る。
+    tour = ROOT / tool.TOUR_DIRECTORY
+    assert set(tool.TOUR_SCRIPTS) <= {path.name for path in tour.glob("*.py")}
+    main = (tour / "monitor.py").read_text(encoding="utf-8").split('if __name__ == "__main__":')[1]
+    assert 'print("-- real: wall clock, async client")' in main
+    assert "run(real(" in main
+
+
 @pytest.mark.parametrize("page", ["README.md", "docs/index.md"])
 def test_the_pages_that_say_the_llm_example_needs_only_doeff_link_to_it(page: str) -> None:
     # 道具が確かめる約束(pip install doeff だけで走る)を言う page が、確かめる例そのものを指している事。
