@@ -42,7 +42,7 @@ MODULE = """\
 (defk probe-submit [key needs]
   {:pre [(: key str) (: needs (get frozenset str))] :post [(: % bool)] :tags {:context "probe" :role "program"}}
   "切り離した task を構築関数で送り、答えの型で分ける。"
-  (<- answer DetachedSubmitAnswer (submit-detached-task (probe-body) key :needs needs :environ #((EnvVar :name "A" :value "x"))))
+  (<- answer DetachedSubmitAnswer (submit-detached-task (probe-body) key :needs needs :memory-mib 1024 :environ #((EnvVar :name "A" :value "x"))))
   (match answer
     (DetachedSubmitted :created created) created
     (DetachedUnreachable) False))
