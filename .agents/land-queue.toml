@@ -76,7 +76,7 @@ name = "doeff"
 # vsix の自動追随が組めなかった時の知らせ(#1043)が持つ。段は make sync を要らず(Python の母集団を呼ばない)、当時は zeus の login
 # shell の node 22 / npm 10 で走った(実測 2026-09-29: 緑 12 秒・case 'comment' を抜いた木で TS2322 の赤 rc 2)。2026-10-10 からは
 # atlas の Pod の node v24.19.0 / npm 11.17.0(/usr/local/bin)で走る。後ろを止めない。
-# 戻すには vscode の段の 1 行を消す。
+# 2026-11-04: ide-plugins/ を private repo doeff-ide-plugins へ移したので、段 vscode は外した(card ki-81963364b0bb)。
 # 2026-10-02(cisco-c8 の割り・戻せる): commit の hook と同じ「規則 × file の基点より増えた所見」の比べ
 # (scripts/hook_finding_baseline.py)を repo の全部の Python の file に当てる段 lint を足す — doeff-linter(基点の鍵の binary を
 # land-arm の開発版 → 断面の置き場から探す)と semgrep(uv.lock の版)。hook は binary が見つからない時「測れない」で通すので、
@@ -150,7 +150,6 @@ full = [
 # lint(基点の確かめ)と vscode は短い(実測 5〜25 秒、linter の組み直しでも数分)ので、重い root・packages より前に置く。戻すには 2 行を末尾へ戻す。
   { name = "build", run = "UV_CACHE_DIR=${UV_CACHE_DIR:-${XDG_CACHE_HOME:-$HOME/.cache}/uv-lanes/land-doeff} make sync", blocks_rest = true, pytest = false },
   { name = "lint", run = "sh scripts/gate_tools.sh linter && uv run --no-project python scripts/hook_finding_baseline.py --strict check doeff-linter && uv run --no-project --python 3.12 python scripts/hook_finding_baseline.py --strict check semgrep", pytest = false },
-  { name = "vscode", run = "cd ide-plugins/vscode/doeff-runner && npm ci --no-audit --no-fund && npm run compile && npm run lint", pytest = false },
   { name = "leftovers", run = "uv run --no-project python scripts/find_internal_leftovers.py --fail-on 1,2,4", pytest = false },
   { name = "japanese", run = "uv run --no-project python scripts/count_japanese.py --top 20", pytest = false },
   { name = "root", run = "UV_CACHE_DIR=${UV_CACHE_DIR:-${XDG_CACHE_HOME:-$HOME/.cache}/uv-lanes/land-doeff} make sync && UV_CACHE_DIR=${UV_CACHE_DIR:-${XDG_CACHE_HOME:-$HOME/.cache}/uv-lanes/land-doeff} PYTHONUNBUFFERED=1 uv run --no-sync pytest -q -m 'not e2e' --durations=0 --durations-min=10", pytest = true },

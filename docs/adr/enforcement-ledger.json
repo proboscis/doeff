@@ -1,7 +1,6 @@
 {
   "_comment": "Generated file — do not edit by hand. `make enforcement-ledger` (= scripts/check_enforcement_ledger.py --write) builds it from the tree (ADR-DOE-ENFORCE-001 R5 / R9). Each entry is the name of one enforcement asset; a removed entry stays visible by name in this file's diff. The commit hook and the default pytest check that this list matches the tree.",
   "defadr_files": [
-    "defadr_doc_linter_modes.hy",
     "defadr_doeff_adr_001_wiring_selfcheck.hy",
     "defadr_doeff_agents_001_await_result_public_boundary.hy",
     "defadr_doeff_agents_002_agentd_tui_boundary_contracts.hy",
@@ -48,7 +47,6 @@
     "defadr_doeff_preset_001_retirement.hy",
     "defadr_doeff_records_001_domain_api_only.hy",
     "defadr_doeff_records_002_scheduler_thread_admits_and_orders.hy",
-    "defadr_doeff_runner_001_reading_plane.hy",
     "defadr_doeff_time_001_programs_wait_by_time_effects.hy",
     "defadr_doeff_tracker_001_written_in_english.hy"
   ],
@@ -205,8 +203,6 @@
     "doeff-public-api-no-subpackage-imports",
     "doeff-public-docs-no-subpackage-imports",
     "doeff-pyvm-no-enum-catchall-arms",
-    "doeff-runner-reading-plane-is-read-only",
-    "doeff-runner-reading-plane-reads-only-the-index",
     "doeff-scheduler-spawn-must-capture-boundaries",
     "doeff-task-join-deprecated",
     "doeff-to-generator-must-wrap-doeff-generator",
@@ -563,9 +559,6 @@
     "ADR-DOE-RECORDS-002 the-compute-pool-wait-is-on-metrics",
     "ADR-DOE-RECORDS-002 the-maintenance-never-holds-the-serving-thread",
     "ADR-DOE-RECORDS-002 the-scheduler-thread-does-no-work-sized-by-stored-rows",
-    "ADR-DOE-RUNNER-001 reading-plane-is-read-only",
-    "ADR-DOE-RUNNER-001 reading-plane-labels-come-from-one-table",
-    "ADR-DOE-RUNNER-001 reading-plane-reads-only-the-index",
     "ADR-DOE-TIME-001 a-program-waits-by-a-time-effect",
     "ADR-DOE-TIME-001 a-test-sleeps-only-when-it-declares-realtime",
     "ADR-DOE-TIME-001 the-sleep-rules-stop-as-errors-from-one-definition",
@@ -772,8 +765,6 @@
     "ADR-DOE-ENFORCE-002 p0-scheduler-spawn-must-capture-boundaries",
     "ADR-DOE-ENFORCE-002 p0-vm-core-no-wildcard-unreachable-on-match",
     "ADR-DOE-ENFORCE-002 p0-vm-no-raw-runtime-or-type-throw",
-    "ADR-DOE-PRESET-001 no-doeff-preset-import",
-    "ADR-DOE-RUNNER-001 doeff-runner-reading-plane-is-read-only",
-    "ADR-DOE-RUNNER-001 doeff-runner-reading-plane-reads-only-the-index"
+    "ADR-DOE-PRESET-001 no-doeff-preset-import"
   ]
 }

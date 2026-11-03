@@ -116,9 +116,6 @@ EXCLUDED: dict[str, str] = {
         "tmux / herdr の実 pane を使う黒箱の交代ゲート(実モデルは使わない)。日次の宿で tmux が"
         "使えるかが未測定で、母集団へ入れるかは別の便で決める"
     ),
-    "ide-plugins/pycharm/test_program_detection.py": (
-        "PyCharm plugin の検出の検体(テスト関数を持たない)"
-    ),
     "packages/doeff-agentic/examples/": "例示の script(__main__ で走らせる)",
     "examples/test_llm_agent.py": (
         "利用者が例の llm_agent.py の隣に写して走らせる pytest の検の例。母集団の根(testpaths)の下の "
