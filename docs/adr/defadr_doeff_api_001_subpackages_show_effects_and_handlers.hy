@@ -237,7 +237,6 @@
                      "tests/test_public_api_known_violations.py::test_an_allowed_group_without_a_check_is_not_well_formed"
                      "tests/test_public_api_known_violations.py::test_an_allowed_row_without_a_reason_is_not_well_formed"
                      "tests/test_public_api_known_violations.py::test_the_allowed_table_is_well_formed"
-                     "tests/test_hide_submodules.py::test_a_name_in_the_allowed_table_goes_to_the_entry_and_finish_drops_its_row"
                      "tests/test_public_api_inventory.py::test_what_the_helper_reading_does_not_see"
                      "tests/test_public_api_known_violations.py::test_public_api_outside_effects_and_handlers_is_in_the_known_table"
                      "tests/test_public_api_inventory.py::test_names_are_typed_by_marker_return_type_and_return_shape"
@@ -356,8 +355,6 @@
        :enforced-by ["tests/test_public_api_known_violations.py::test_no_submodule_is_named_like_a_name_its_entry_shows"
                      "tests/test_public_api_known_violations.py::test_a_submodule_named_like_an_entry_name_turns_red_and_removing_it_turns_green"
                      "tests/test_public_api_known_violations.py::test_an_inner_package_entry_name_like_its_child_turns_red_and_moving_the_child_turns_green"
-                     "tests/test_hide_submodules.py::test_hide_refuses_a_child_named_like_a_name_the_entry_shows"
-                     "tests/test_hide_submodules.py::test_a_shim_does_not_guard_the_entry_name"
                      "docs/adr/defadr_doeff_api_001_subpackages_show_effects_and_handlers.hy::test-adr-doe-api-001-a-submodule-named-like-an-entry-name-turns-the-guard-red"
                      "docs/adr/defadr_doeff_api_001_subpackages_show_effects_and_handlers.hy::test-adr-doe-api-001-an-inner-package-entry-name-like-its-child-turns-the-guard-red"]
        :wiring "Wired (2026-10-30 — later extended to packages below the root) — the table's test checks each package in 2 ways: text matching (the syntax tree of the entry files of the root and of packages below the root (including _ packages) against the names of the children right below that package — independent of import order), and a fresh-process check (import the root, import the packages below the root one by one and note the entry names, import the public modules and old paths one by one, and if a noted entry name turned into a module, name after which import). The test runs neither in the merge queue nor in the commit hook; it runs in the daily full verification after merge (stage root). hide goes in the same direction as this check and refuses before moving a child of the same name")]

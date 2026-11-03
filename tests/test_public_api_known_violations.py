@@ -841,7 +841,7 @@ _EXTENSION_SUFFIXES = (".so", ".pyd")
 
 def _bound_by_entry(node: ast.stmt, root: str) -> Iterator[tuple[str, int]]:
     """入口の top level の文 1 つが束ねる名と行(子の module そのものを束ねる import と ``*`` は数えない)。"""
-    # match の文で書かない: commit の hook の semgrep が match の文を構文として読めない(tools/hide_submodules.py と同じ)。
+    # match の文で書かない: commit の hook の semgrep が match の文を構文として読めない(the former hide_submodules tool と同じ)。
     if isinstance(node, (ast.If, ast.Try)):
         handlers = node.handlers if isinstance(node, ast.Try) else []
         finals = node.finalbody if isinstance(node, ast.Try) else []
@@ -2930,7 +2930,7 @@ def test_a_doeff_part_imported_outside_doeff_turns_red(tmp_path: Path) -> None:
     assert part_imports(tmp_path) == []
 
 
-#: 隠した時の名の固定の列を印の下に持つ移し替えの module(tools/hide_submodules.py の書く形)。
+#: 隠した時の名の固定の列を印の下に持つ移し替えの module(the former hide_submodules tool の書く形)。
 PINNED_SHIM = MARKED_SHIM.replace(
     "\n",
     f"\n# moved-submodule-shim-names {FIXTURE_ROOT}.types:\n#   LIMIT PingResult\n#   helper\n",
@@ -3018,7 +3018,7 @@ def test_a_name_added_below_a_pinned_namespace_dir_shim_does_not_grow_the_public
 
     その移し替えの module は module でないので、目録が module の列だけから列を読むと読まれず、足した helper が古い path の
     公開名に加わって赤に戻った(doeff-cluster の区画 _sim・_record_store)。列の無い時は、
-    下の古い path を列の無い path に数える(tools/hide_submodules.py pin が列を書く移し替えの module に拾う)。
+    下の古い path を列の無い path に数える(the former hide_submodules tool (pin) が列を書く移し替えの module に拾う)。
     """
     below = f"{FIXTURE_ROOT}.types.sub"
     table = _fixture_table({SUBMODULE: [below], below: ["sub_helper"]})
@@ -3043,11 +3043,11 @@ def test_a_name_added_below_a_pinned_namespace_dir_shim_does_not_grow_the_public
 @pytest.mark.parametrize("package_dir", [path.name for path in tool.package_dirs(ROOT)])
 def test_every_moved_submodule_shim_pins_the_names_of_its_old_paths(package_dir: str) -> None:
     """移し替えの module の全部が、自分と下の module の古い path ごとに名の固定の列を持つ(列の無い古い path は、
-    移した先の _ の module に足した名を全部公開名に数えてしまう — tools/hide_submodules.py pin で列を書く)。"""
+    移した先の _ の module に足した名を全部公開名に数えてしまう — the former hide_submodules tool (pin) で列を書く)。"""
     layout = tool.read_layout(ROOT / "packages" / package_dir)
     assert not tool.unpinned_shim_modules(layout), (
         f"{package_dir}: 名の固定の列の無い移し替えの古い path が在る — "
-        f"`uv run python tools/hide_submodules.py pin --package packages/{package_dir}` で書く: "
+        f"名の固定の列を移し替えの module に書く: "
         + ", ".join(tool.unpinned_shim_modules(layout))
     )
 
@@ -3077,7 +3077,7 @@ def __dir__() -> list[str]:
 
 
 def _moved_shim(child: str) -> str:
-    """古い path の子 ``child`` の移し替えの module(tools/hide_submodules.py の殻と同じく sys.modules を差し替える)。"""
+    """古い path の子 ``child`` の移し替えの module(the former hide_submodules tool の殻と同じく sys.modules を差し替える)。"""
     return (
         f"# moved-submodule-shim: {FIXTURE_ROOT}.{child} -> {FIXTURE_ROOT}._{child}\n"
         f"# moved-submodule-shim-names {FIXTURE_ROOT}.{child}:\n"
@@ -3124,7 +3124,7 @@ def test_a_submodule_named_like_an_entry_name_turns_red_and_removing_it_turns_gr
 
 def _moved_package_shim(child: str, names: Mapping[str, str]) -> str:
     """古い path の子 package ``child`` の移し替えの module: 古い path も、その下の古い名も(meta path の finder が)移した先の
-    module そのもので答える(tools/hide_submodules.py の package の殻と同じ形)。``names`` は古い module の名から固定の列へ。"""
+    module そのもので答える(the former hide_submodules tool の package の殻と同じ形)。``names`` は古い module の名から固定の列へ。"""
     old, new = f"{FIXTURE_ROOT}.{child}", f"{FIXTURE_ROOT}._{child}"
     pins = "".join(f"# moved-submodule-shim-names {module}:\n#   {pinned}\n" for module, pinned in names.items())
     return (

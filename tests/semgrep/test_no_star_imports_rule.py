@@ -1,17 +1,13 @@
 """doeff-no-star-imports の極性の検。
 
-鳴らないべき形 = tools/hide_submodules.py の置く移し替えの module(module の子と package の子の 2 つの形 — ``if TYPE_CHECKING:``
-の star import の後に ``sys.modules[__name__] = import_module(…)`` で自分を移した module に差し替える)。道具の ``shim_text`` が作る
-text をそのまま当てるので、道具が形を変えて規則の外しから外れると、ここが赤になる。
+鳴らないべき形 = 移し替えの module(module の子と package の子の 2 つの形 — ``if TYPE_CHECKING:``
+の star import の後に ``sys.modules[__name__] = import_module(…)`` で自分を移した module に差し替える)。この test の ``_shim_text`` が書く形を当てる。
 鳴るべき形 = module の段の star import と、移し替えでない module の ``if TYPE_CHECKING:`` の中の star import。
 """
 
 from __future__ import annotations
 
-import importlib.util
-import sys
 from pathlib import Path
-from types import ModuleType
 
 import pytest
 from test_vm_failfast_semgrep_rules import _semgrep_results
@@ -24,29 +20,33 @@ RULE = "doeff-no-star-imports"
 ROOT_NAME = "fixture_root"
 
 
-def _hide_tool() -> ModuleType:
-    """tools/ の道具を読む(tools/ は package ではない)。"""
-    loaded = sys.modules.get("hide_submodules")
-    if loaded is not None:
-        return loaded
-    spec = importlib.util.spec_from_file_location(
-        "hide_submodules", REPO_ROOT / "tools" / "hide_submodules.py"
+def _shim_text(old: str, new: str) -> str:
+    """移し替えの module の形(削除した hide_submodules の道具が置いた text と同じ形)。"""
+    return (
+        f"# moved-submodule-shim: {old} -> {new}\n"
+        "import sys\n"
+        "from importlib import import_module\n"
+        "from typing import TYPE_CHECKING\n"
+        "\n"
+        "if TYPE_CHECKING:\n"
+        f"    from {new} import *  # noqa: F403  # nosemgrep: doeff-no-star-imports\n"
+        "\n"
+        'if __name__ == "__main__":\n'
+        "    import runpy\n"
+        "\n"
+        f'    runpy.run_module("{new}", run_name="__main__", alter_sys=True)\n'
+        "else:\n"
+        f'    sys.modules[__name__] = import_module("{new}")\n'
     )
-    assert spec is not None
-    assert spec.loader is not None
-    module = importlib.util.module_from_spec(spec)
-    sys.modules["hide_submodules"] = module
-    spec.loader.exec_module(module)
-    return module
 
 
 def test_the_moved_submodule_shims_do_not_fire_and_other_star_imports_do(tmp_path: Path) -> None:
-    tool = _hide_tool()
     root_dir = tmp_path / "src" / ROOT_NAME
     (root_dir / "_handlers").mkdir(parents=True)  # package の子(移した後の dir)
     for name in ("effects", "handlers"):
-        child = tool.Child(ROOT_NAME, name, root_dir)
-        child.shim.write_text(tool.shim_text(child, True, {}), encoding="utf-8")
+        (root_dir / f"{name}.py").write_text(
+            _shim_text(f"{ROOT_NAME}.{name}", f"{ROOT_NAME}._{name}"), encoding="utf-8"
+        )
     plain = tmp_path / "src" / "plain.py"
     plain.write_text(
         "from typing import TYPE_CHECKING\n"
