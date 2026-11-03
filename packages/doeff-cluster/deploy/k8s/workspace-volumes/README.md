@@ -16,25 +16,28 @@ card 2)・測り ki-00f2d6af6581。
 
 ## handler(作る・attach・mount・umount・detach・冷やす・消す)
 
-持ち主の volume を扱う effect は 9 つで、入口 `doeff_cluster` から出す: `CreateWorkspaceVolume`・`AttachWorkspaceVolume`・
+持ち主の volume を扱う effect は 10 で、入口 `doeff_cluster` から出す: `CreateWorkspaceVolume`・`AttachWorkspaceVolume`・
 `MountWorkspaceVolume`・`UmountWorkspaceVolume`・`DetachWorkspaceVolume`・`CoolWorkspaceVolume`・`PurgeWorkspaceVolume`・
-`CoolIdleWorkspaceVolumes`・`ReadWorkspaceRoom`(答えは `WorkspaceOutcome` の DONE = 今した・ALREADY = 既にそうだった・RESTORED =
-backup から戻した(作る時だけ)、まとめて冷やすは `CoolingSweep`、残りの読みは `WorkspaceRoom`。できなければ `WorkspaceVolumeRefused`・
+`CoolIdleWorkspaceVolumes`・`ReadWorkspaceRoom`・`ReadWorkspacePlace`(答えは `WorkspaceOutcome` の DONE = 今した・ALREADY = 既にそうだった・RESTORED =
+backup から戻した(作る時だけ)、まとめて冷やすは `CoolingSweep`、残りの読みは `WorkspaceRoom`、付ける先の読みは `WorkspacePlace`。できなければ `WorkspaceVolumeRefused`・
 置き場が足りなければその子の `WorkspaceRoomShort`)。出所 = card ki-a2d67aa8203d(作る〜detach)・ki-c817a191ad4e(戻す・冷やす・
 消す)・ki-3b60bfcdb6a2(置き場の数え)。
 
 | effect | 何をするか |
 |---|---|
 | `CreateWorkspaceVolume` | volume が無ければ作る。その名の完了した backup が在れば(冷えている)一番新しい物から戻して RESTORED(戻し終わるまで待つ)、無ければ空で DONE。在れば ALREADY — 戻す途中なら戻し終わりを、消す途中なら消え終わりを待ってから(同じ持ち主の次の頼みは先の戻しに相乗りする)。backup は在るが完了した物が無い名は空で作らずに断る。作る前に札の disk の残りを数え(節「置き場の数え」)、受けられなければ POST せずに `WorkspaceRoomShort` で断る。戻す volume は backup を取った時の大きさ(status.volumeSize)と値の大きさの大きい方で作る(Longhorn は backup より小さい volume への戻しを断る) |
+| `MountWorkspaceVolume` | 前と同じ。何も付いていない付ける先の dir に中身が在れば(volume の外に書かれた物)、付けずに断る — 付けると中身が隠れる |
 | `AttachWorkspaceVolume` | 前と同じ。ticket を置いた後に Volume へ使った刻の印(annotation `doeff-cluster/used-at` = epoch 秒)を書く。付くのを待つ間に Longhorn が replica を置けないと答え、replica がどこにも置かれていなければ(初めて付ける空の volume)、上限の秒まで待たずに volume を消して `WorkspaceRoomShort`(fresh)で断る |
 | `DetachWorkspaceVolume` | 前と同じ。外した後に使い終わりの刻の印を書く(冷やす順が読む) |
 | `CoolWorkspaceVolume` | 外れている volume を冷やす(節「寿命」の手順)。使っている・戻す途中・ほかの冷やす手順の途中の volume は触らずに断る |
 | `PurgeWorkspaceVolume` | 冷えた名の backup を消す(最後の backup から keepDays を過ぎた物だけ)。Longhorn の volume が在る名・途中の backup の在る名は断る |
 | `CoolIdleWorkspaceVolumes` | 外れている volume を、冷やす順(節「寿命」)に 1 つずつ冷やす。冷やせなかった物は訳を残して次へ進む |
 | `ReadWorkspaceRoom` | 札の disk が受けられる、値の大きさの volume の残りの本数(節「置き場の数え」)と値の spareVolumes を答える(何も変えない) |
+| `ReadWorkspacePlace` | 持ち主の volume を付ける先の様子を答える(何も変えない): MOUNTED = 持ち主の volume が付いている・READY = 何も付いておらず dir が無いか空・OUTSIDE = 何も付いておらず dir に中身が在り、持ち主は volume も backup も持たない(持ち主の作業場所は volume の外 — 置き場の不足で volume の外の場所で始めた持ち主)・CLASH = 別の物が付いている、か、dir に中身が在るのに持ち主が volume か backup を持つ |
 
 - 置き場の不足 `WorkspaceRoomShort` の `fresh`: True = 持ち主が中身を持たない(作るのは空の volume だった)。呼び手は、その持ち主を volume の
-  外の場所で始めてよい。False = 冷えた中身を backup から戻す所だった(中身は backup に残る)。呼び手は空の場所に落とさず、冷やして場所を
+  外の場所で始めてよい(その場所に書いた物は、後で volume を付けると隠れる — 呼び手は次から `ReadWorkspacePlace` の OUTSIDE で見分け、
+  volume を作らずに同じ場所で続ける)。False = 冷えた中身を backup から戻す所だった(中身は backup に残る)。呼び手は空の場所に落とさず、冷やして場所を
   空けてから出し直す。
 
 - 使う側が勝つ: 冷やす途中に attach が来たら、冷やす側は volume を消さずに退く(attach は待たされない)。冷やす側は Volume を読み(版 R)、
