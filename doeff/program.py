@@ -7,6 +7,7 @@ The VM classifies them via downcast (not tag-based getattr).
 import functools
 import types
 import warnings
+import weakref
 from collections.abc import Callable, Generator, Iterable
 from dataclasses import dataclass
 from inspect import CO_GENERATOR, CO_VARARGS
@@ -354,19 +355,27 @@ def _install_raw(
             f"{'' if taken == 1 else 's'})"
         )
     check_handler_annotation(raw_handler)
+    label = _handler_label(raw_handler)
+    installer_name = label.name if name is None else name
+    # The installer does not hold itself through its closure: handlers are built per call
+    # (``on_raise`` for every ``on-raise``), and an installer naming itself in its closure was a
+    # reference cycle left to the cycle collector on every build (agora-controllers card
+    # [id]). It names itself by ``installer_name`` and, as a former factory, answers
+    # itself through a weak reference (the call holds it alive while it runs).
+    itself: weakref.ref[Callable[..., object]] | None = None
 
     def install(program: object = _NO_PROGRAM) -> object:
         if program is _NO_PROGRAM:
             if former_factory:
                 warnings.warn(
-                    _called_as_former_factory(install.__name__), DeprecationWarning, stacklevel=2
+                    _called_as_former_factory(installer_name), DeprecationWarning, stacklevel=2
                 )
-                return install
-            raise TypeError(_called_without_program(install.__name__))
+                return None if itself is None else itself()
+            raise TypeError(_called_without_program(installer_name))
         return WithHandlerType(body, program)
 
-    label = _handler_label(raw_handler)
-    install.__name__ = label.name if name is None else name
+    itself = weakref.ref(install)
+    install.__name__ = installer_name
     install.__qualname__ = label.qualname if name is None else name
     install.__doc__ = label.doc
     install_meta = cast(Any, install)
