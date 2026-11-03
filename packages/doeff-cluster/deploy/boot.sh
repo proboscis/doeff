@@ -80,7 +80,9 @@
 #     6. SIGTERM・SIGINT: 生きている全部の世代へ SIGTERM を渡し、終わるのを待って抜ける。役 drain(preStop)は生きている全部の世代を
 #        世代つきで並べて drain し、その間 keeper は版を替えず、落ちた世代を起こし直さない(印 $DOEFF_KEEPER_DIR/leaving)。
 #   keeper の code は container の起動の版のまま(keeper そのものの直しは Pod の作り直しで効く)。世代の起動・準備・drain は、その世代の
-#   版の script と venv を使う。keeper の状態の dir は DOEFF_KEEPER_DIR(既定 /tmp/doeff-worker-keeper — container の中・Pod の作り直しで消える)。
+#   版の script と venv を使う。keeper の状態の dir は DOEFF_KEEPER_DIR(既定 /tmp/doeff-worker-keeper — container の中・Pod の作り直しで消える。
+#   /tmp が Pod の寿命の volume の機体では container の起こし直しを越えて残り、keeper は前の container の世代を忘れて起きる —
+#   keeper_forget_other_pidns)。
 #
 # 読み取りの鍵の表(WORKER_REPOS が在る時 — 設計 U5・U6):
 #   WORKER_REPOS = 空白で並べた「<url>=<鍵の名>」(鍵の名が空 = 鍵なしで読む公開の repo)。鍵の file = $WORKER_REPO_KEYS_DIR/<鍵の名>
@@ -540,6 +542,21 @@ keeper_alive() {
   [ "$k_state" != Z ]
 }
 
+# keeper の状態の dir に前の container の世代と準備が残っていたら忘れる。pid の file は書いた pid の名前空間の中でだけ意味を持ち、
+# container の起こし直し(Pod は同じ)は新しい名前空間で pid を 1 から振り直す — 残った pid が新しい container の別の process
+# (新しい世代そのものも)に当たり、keeper が前の世代と読んで drain して SIGTERM を送るか、準備中と読んで待ち続ける。/tmp が container
+# の書き層なら起こし直しで dir ごと消えるが、Pod の寿命の volume(tmpfs の emptyDir)なら残る。名前空間は $keeper_dir/pidns に書いて
+# 比べる。/proc の無い機体(macOS)は名前空間を読めず、比べずに今までどおり。
+keeper_forget_other_pidns() {
+  k_ns=$(readlink /proc/self/ns/pid 2>/dev/null || true)
+  if [ -d "$keeper_dir" ] && [ "$(cat "$keeper_dir/pidns" 2>/dev/null || true)" != "$k_ns" ]; then
+    keeper_log "状態の dir $keeper_dir は別の pid の名前空間(前の container)の物 — 残った世代と準備を忘れる"
+    rm -rf "$keeper_dir/gens" "$keeper_dir/prepare" "$keeper_dir/leaving"
+  fi
+  mkdir -p "$keeper_dir"
+  printf '%s\n' "$k_ns" >"$keeper_dir/pidns"
+}
+
 # 版の file の今の版(40 字の小文字の 16 進だけを受ける — 読めない・形の違う中身は空)。
 keeper_wanted() {
   k_want=$(tr -d ' \t\r\n' 2>/dev/null <"$WORKER_VERSION_FILE" || true)
@@ -796,6 +813,7 @@ keeper_run() {
   keeper_script=$0
   pod_ready=${DOEFF_WORKER_READY_FILE:-/tmp/doeff-worker-ready}
   pod_boot=${DOEFF_WORKER_BOOT_FILE:-/tmp/doeff-worker-boot}
+  keeper_forget_other_pidns
   mkdir -p "$keeper_dir/gens" "$keeper_dir/prepare"
   rm -f "$keeper_dir/leaving"
   target=$sha
