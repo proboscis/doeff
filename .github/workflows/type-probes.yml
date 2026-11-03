@@ -1,8 +1,9 @@
-# 核の 4 個(doeff・doeff-vm・doeff-core-effects・frozendict)だけを main から組んで新しい venv に入れ、型の probe(tests/type_probes/)
-# と README の Python の例を pyright と mypy にかけ、誤りの出る行が probe の印の通りである事を確かめる(取り組み doeff-publish の区切り 12)。
-# 中身は tools/verify_type_probes.py — 型の報告の抜けを直した所が使う人の入れ方で戻らない事と、開いている抜けが
-# 埋まった時に印を替えさせる事。型の道具の版は uv.lock の版。Python は requires-python の両端の 3.11 と 3.14(macOS と Windows の job と
-# 同じく素の 3.14)。doeff-vm は PyPI の wheel でなく source から組む(build の口 tools/doeff_cargo_backend.py — Rust の道具が要る)。
+# Builds only the 4 core packages (doeff, doeff-vm, doeff-core-effects, frozendict) from main into a fresh venv, runs pyright and
+# mypy on the type probes (tests/type_probes/) and the README Python examples, and checks that the lines with errors match the
+# probes' markers (initiative doeff-publish, milestone 12). The work is done by tools/verify_type_probes.py — fixed gaps in type
+# reporting must not come back under the install users do, and markers must be updated when an open gap gets filled. Type tool
+# versions are those in uv.lock. Python is 3.11 and 3.14, the two ends of requires-python (plain 3.14, like the macOS and Windows
+# job). doeff-vm is built from source, not taken as a PyPI wheel (build backend tools/doeff_cargo_backend.py — needs Rust).
 name: Type probes
 
 on:
@@ -19,7 +20,7 @@ jobs:
   type-probes:
     name: type probes (Python ${{ matrix.python }})
     runs-on: ubuntu-latest
-    # 核だけの入れ方の検(python-compatibility.yml の core-only-install)と同じく、uv の管理する Python だけを使う。
+    # Like the core-only install check (core-only-install in python-compatibility.yml), use only the uv-managed Python.
     env:
       UV_PYTHON_PREFERENCE: only-managed
     strategy:

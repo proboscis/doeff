@@ -1,11 +1,11 @@
-# docs の site(mkdocs.yml)を組めるかの検 — docs/index.md の目次から辿る利用者向けの page だけを、版を固定した mkdocs と Material
-# (tools/docs_site/requirements.txt)で --strict に組む。link の先の file や anchor が無い・nav と exclude_docs の許す一覧が食い違う時は
-# warning になり、--strict が run を落とす。手元では make docs-site が同じ命令。組んだ site は artifact docs-site に置く(落として
-# index.html を開けば読める)。
+# Checks that the docs site (mkdocs.yml) builds — only the user-facing pages reachable from the table of contents in docs/index.md,
+# built with --strict using pinned mkdocs and Material (tools/docs_site/requirements.txt). A missing link target file or anchor, or a
+# mismatch between nav and the exclude_docs allow list, becomes a warning and --strict fails the run. Locally, make docs-site runs the
+# same command. The built site is uploaded as the artifact docs-site (download it and open index.html).
 #
-# site はまだ出さない(取り組み doeff-publish の区切り 11 — 出すか・どこへ出すかは依頼書の答え次第)。出す時は、
-# この workflow に build の後で出す job を 1 つ足す(GitHub Pages なら、build の site/ を actions/upload-pages-artifact で上げ、
-# actions/deploy-pages で出す)。
+# The site is not published yet (initiative doeff-publish, milestone 11 — whether and where to publish depends on the answer to the
+# request). To publish, add one job after the build to this workflow (for GitHub Pages: upload the built site/ with
+# actions/upload-pages-artifact and publish with actions/deploy-pages).
 name: Docs site
 
 on:

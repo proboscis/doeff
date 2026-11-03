@@ -1,16 +1,18 @@
-# 今日来た人と同じく、PyPI の doeff を Linux・macOS・Windows の新しい venv に extra 無しで入れ、README の Python の例が注記の通りに
-# 印字する事を毎日確かめる(取り組み doeff-publish の区切り 16)。中身は tools/verify_core_install.py --pypi latest
-# (入った物がちょうど核の 4 個で、doeff の 3 個が PyPI から入った事・doeff と doeff-vm の README の Python の例 — README は入った
-# wheel の metadata の本文なので入った版の物・その例の import を型の check が公開の名と読む事・checkout の GitHub の main の
-# README の例 — 初めて来た人が読む物で、README が出した版より先へ進むとここが落ちる)。checkout から組む確かめ
-# (core-install-macos-windows.yml・python-compatibility.yml の core-only-install)と違い Rust の道具を入れず、doeff-vm は PyPI の wheel
-# だけを受ける — 機体と Python に合う wheel が PyPI に無ければ、install の段で落ちる。3.14 は素の 3.14 で頼む(core-install-macos-windows.yml
-# の頭の訳)。道具か workflow か、例を走らせる README(doeff と doeff-vm)を変えた main の push でも走る。
+# Every day, like a first-time user, install doeff from PyPI with no extras into fresh venvs on Linux, macOS and Windows, and check
+# that the README Python examples print what their annotations say (initiative doeff-publish, milestone 16). The work is done by
+# tools/verify_core_install.py --pypi latest: the installed set is exactly the 4 core packages, with the 3 doeff packages from PyPI;
+# the README Python examples of doeff and doeff-vm pass (the README is the installed wheel's metadata, so it matches the installed
+# version); the type checker reads the examples' imports as public names; and the README examples of main from the checkout pass
+# (this is what newcomers read, so this fails when the README gets ahead of the released version).
+# Unlike the checks that build from the checkout (core-install-macos-windows.yml, core-only-install in python-compatibility.yml),
+# no Rust toolchain is installed and doeff-vm comes only as a PyPI wheel — if PyPI has no wheel for the machine and Python, the
+# install step fails. 3.14 is requested as plain 3.14 (reason in the header of core-install-macos-windows.yml). Also runs on
+# pushes to main that change the tool, the workflow, or the READMEs whose examples it runs (doeff and doeff-vm).
 name: Core install from PyPI
 
 on:
   schedule:
-    # 毎日 06:17 JST
+    # Every day at 06:17 JST
     - cron: "17 21 * * *"
   workflow_dispatch:
   push:
@@ -30,7 +32,7 @@ jobs:
   core-install-from-pypi:
     name: core install from PyPI (${{ matrix.os }}, Python ${{ matrix.python }})
     runs-on: ${{ matrix.os }}
-    # runner の機体ごとに入っている Python の版と作りが違うため、uv の管理する Python だけを使う(他の核の確かめと同じ)。
+    # Runners differ in the Python version and build they ship, so use only the uv-managed Python (same as the other core checks).
     env:
       UV_PYTHON_PREFERENCE: only-managed
     strategy:

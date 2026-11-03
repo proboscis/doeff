@@ -1,10 +1,11 @@
-# macOS と Windows の機体で、`pip install doeff` の核の 4 個(doeff・doeff-vm・doeff-core-effects・frozendict)を main から組んで新しい
-# venv に入れ、README の Python の例が注記の通りに印字する事を確かめる(取り組み doeff-publish の区切り 9)。
-# 中身は tools/verify_core_install.py(手元の Linux と同じ道具 — 入った物がちょうど核の 4 個である事・doeff と doeff-vm の README の
-# Python の例・Hy と HTTP の extra が要る使い方が足す extra の名を言う事)。Python は requires-python の両端の 3.11 と 3.14。3.14 は素の
-# 3.14 で頼む — 新しい機体の uv の管理する Python では GIL の在る作りが入り(道具が interpreter の作りを印字する)、uv 0.13.1 は 3.14+gil に
-# 合う取り寄せを持たない(2026-10-17 の run が No interpreter found で落ちた)。doeff-vm は PyPI の wheel でなく、利用者の機体に合う wheel が無い時と同じく
-# source から組む(build の口 tools/doeff_cargo_backend.py — Rust の道具が要る)。
+# On macOS and Windows, build the 4 core packages of `pip install doeff` (doeff, doeff-vm, doeff-core-effects, frozendict) from main,
+# install them into a fresh venv, and check that the README Python examples print what their annotations say (initiative
+# doeff-publish, milestone 9). The work is done by tools/verify_core_install.py (the same tool as on local Linux): the installed set is
+# exactly the 4 core packages, the README Python examples of doeff and doeff-vm pass, and uses that need the Hy or HTTP extras name
+# the extra to add. Python is 3.11 and 3.14, the two ends of requires-python. 3.14 is requested as plain 3.14: on newer runners the
+# uv-managed Python installs a GIL build (the tool prints the interpreter build), and uv 0.13.1 has no download matching 3.14+gil
+# (the 2026-10-17 run failed with No interpreter found). doeff-vm is built from source, not taken as a PyPI wheel, just as when no
+# wheel matches a user's machine (build backend tools/doeff_cargo_backend.py — needs the Rust toolchain).
 name: Core install on macOS and Windows
 
 on:
@@ -21,8 +22,8 @@ jobs:
   core-install:
     name: core install (${{ matrix.os }}, Python ${{ matrix.python }})
     runs-on: ${{ matrix.os }}
-    # Linux の同じ確かめ(python-compatibility.yml の core-only-install)と同じく、uv の管理する Python だけを使う — runner の機体ごとに
-    # 入っている Python の版と作りが違うため。
+    # Like the same check on Linux (core-only-install in python-compatibility.yml), use only the uv-managed Python — runners differ
+    # in the Python version and build they ship.
     env:
       UV_PYTHON_PREFERENCE: only-managed
     strategy:
@@ -32,8 +33,9 @@ jobs:
         python: ["3.11", "3.14"]
 
     steps:
-      # packages/doeff-vm/doeff_cargo_backend.py は tools/doeff_cargo_backend.py への symlink(build の口の正本は 1 つ)。Windows の git の
-      # 既定(core.symlinks=false)は symlink を指し先の path を書いた file にし、build の口を読めずに doeff-vm を組めない。
+      # packages/doeff-vm/doeff_cargo_backend.py is a symlink to tools/doeff_cargo_backend.py (one source of truth for the build backend).
+      # Git on Windows defaults to core.symlinks=false, which turns the symlink into a file holding the target path; the build backend
+      # then cannot be read and doeff-vm cannot be built.
       - name: Check out symlinks as symlinks
         if: runner.os == 'Windows'
         run: git config --global core.symlinks true
