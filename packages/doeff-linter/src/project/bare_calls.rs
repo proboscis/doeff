@@ -13,6 +13,10 @@
 //! 内包表記の元)、record の欄(頭が大文字の型を作る呼び — doeff の package の effect は除く・repo の `defrecord` で宣言の型が Program か
 //! EffectBase を名指す欄も除く — `ProgramFields`)。その位置の中の `if`・`when`・`cond`・`do`・`let` の枝も
 //! 答えとして使う所のまま。
+//! repo の defk の呼びの引数のうち、受ける引数の `:pre` の型が Program を受け得ない型(`ValueParams` — 組み込みの値の型・None・repo の
+//! `defrecord`・`defwire`・`defenum` と、その `(get T …)`・`(of T …)`・`(| …)`)の位置も答えとして使う所(`(counts-sources-of (measure-rows-of standing))`
+//! — Call が渡り、:pre の型の検に実行の時に初めて当たって落ちる。実弾 = agora-controllers の job patrol が 2026-11-04 に起動の約 5 分後に毎回
+//! 落ちた。段が開く周期まで実行されず、merge と宣言を素通りした)。型の註の無い引数・Program・object・Any・知らない別名を受ける引数は拾わない。
 //! 拾わない: `(<- …)` の右辺・`(! …)`・`(return …)`、Program を受ける呼びの引数(repo の関数に渡す形も — Program を受けて走らせる
 //! 関数(run-on など)かもしれず、追えない)、名への束ね(後で Program として渡すかもしれない)。
 //!
@@ -33,21 +37,48 @@ use super::names::{hy_mangle, module_of};
 use super::rule::ProjectRule;
 use super::smells::{children, live, span_of, Hy, Scope};
 
-/// defk の集合(module まで含めた名・mangle 済み)。
+/// defk の集合(module まで含めた名・mangle 済み)と、各 defk の引数のうち `:pre` の型を名指した物(`ValueParams`)。
 #[derive(Debug, Clone, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct DefkNames {
     names: BTreeSet<String>,
+    /// module まで含めた defk の名 → 引数の並びと `:pre` の型(引数の型を 1 つも名指さない defk は載せない)。
+    #[serde(default)]
+    params: BTreeMap<String, ValueParams>,
+}
+
+/// defk 1 つの引数の並びと、`:pre` の `(: 名 型)` が名指す型。型は union の枝ごとに、Program を受け得ない組み込みの型・None なら空の綴り、
+/// それ以外は定義の file の import で module まで解いた名(呼びの所で repo の record の名と比べる — `ProgramFields::is_record`)。
+/// 枝の 1 つでも読めない形(文字列の註・型の引数・Program を名指すかもしれない式)の引数は載せない。
+#[derive(Debug, Clone, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct ValueParams {
+    /// 位置で渡せる引数の名(mangle 済み・`*` か `#*` の前まで)。
+    positional: Vec<String>,
+    /// 引数の名(mangle 済み)→ 型の union の枝。
+    types: BTreeMap<String, Vec<String>>,
+}
+
+impl ValueParams {
+    /// 引数の名(mangle 済み)が、Program を受け得ない型だけを名指すか(`records` = repo の record の型の名)。
+    fn refuses_program(&self, name: &str, records: &ProgramFields) -> bool {
+        self.types.get(name).is_some_and(|arms| !arms.is_empty() && arms.iter().all(|arm| arm.is_empty() || records.is_record(arm)))
+    }
 }
 
 impl DefkNames {
     /// module まで含めた名の列から作る(検のため)。
     pub fn of(names: &[&str]) -> Self {
-        DefkNames { names: names.iter().map(|n| n.to_string()).collect() }
+        DefkNames { names: names.iter().map(|n| n.to_string()).collect(), params: BTreeMap::new() }
     }
 
     /// 別の集合を足す。
     pub fn extend(&mut self, other: DefkNames) {
         self.names.extend(other.names);
+        self.params.extend(other.params);
+    }
+
+    /// defk(module まで含めた名)の引数の並びと型。
+    fn params_of(&self, qualified: &str) -> Option<&ValueParams> {
+        self.params.get(qualified)
     }
 
     /// module まで含めた名が defk か。
@@ -73,6 +104,16 @@ impl DefkNames {
             hasher.update(name.as_bytes());
             hasher.update([0u8]);
         }
+        for (name, params) in &self.params {
+            hasher.update(name.as_bytes());
+            hasher.update([1u8]);
+            hasher.update(params.positional.join(" ").as_bytes());
+            for (param, arms) in &params.types {
+                hasher.update([2u8]);
+                hasher.update(param.as_bytes());
+                hasher.update(arms.join(" ").as_bytes());
+            }
+        }
         format!("{:x}", hasher.finalize())
     }
 }
@@ -82,7 +123,10 @@ pub fn defk_names_in(source: &str, module: &str) -> DefkNames {
     let mut reader = Reader::new(source, 0, source.len());
     let forms = reader.read_all();
     let hy = Hy { src: source };
+    let bindings = super::facts::hy_bindings(source, module);
+    let scope = Scope { module, bindings: &bindings };
     let mut names = BTreeSet::new();
+    let mut params = BTreeMap::new();
     let mut pending: Vec<&Form> = forms.iter().collect();
     while let Some(form) = pending.pop() {
         let Some(items) = live(form) else { continue };
@@ -98,13 +142,84 @@ pub fn defk_names_in(source: &str, module: &str) -> DefkNames {
                     _ => hy.text(f),
                 });
                 if let Some(name) = name.filter(|n| !n.is_empty()) {
-                    names.insert(format!("{}.{}", module, hy_mangle(name)));
+                    let qualified = format!("{}.{}", module, hy_mangle(name));
+                    if let Some(found) = value_params_of(&hy, scope, &items).filter(|p| !p.types.is_empty()) {
+                        params.insert(qualified.clone(), found);
+                    }
+                    names.insert(qualified);
                 }
             }
             _ => {}
         }
     }
-    DefkNames { names }
+    DefkNames { names, params }
+}
+
+/// Program を受け得ない組み込みの型(Call はどれの instance でもない — `:pre` の isinstance が必ず断る)。
+const VALUE_BUILTINS: &[&str] = &[
+    "None", "str", "int", "float", "bool", "bytes", "bytearray", "complex", "tuple", "list", "dict", "set", "frozenset",
+];
+
+/// `(defk 名 [引数] {:pre [(: 名 型) …] …} …)` の引数の並びと型(`defk` の items — 名の前の decorator の列は読まない)。
+fn value_params_of(hy: &Hy<'_>, scope: Scope<'_>, items: &[&Form]) -> Option<ValueParams> {
+    let params = items.get(2).and_then(|p| p.bracket_items())?;
+    let mut positional = Vec::new();
+    let mut open = true;
+    for param in super::smells::live_items(params) {
+        let name = match &param.node {
+            Node::Symbol => hy.symbol(param),
+            Node::Annotated { target: Some(target), .. } => hy.symbol(target),
+            Node::Seq { delim: Delim::Bracket, .. } => param.bracket_items().and_then(|i| i.first()).and_then(|first| hy.symbol(first)),
+            _ => {
+                // `#* rest`・`#** kw` — その先は位置で渡せない。
+                open = false;
+                continue;
+            }
+        };
+        match name {
+            Some("*") => open = false,
+            Some("/") | None => {}
+            Some(name) if open && !name.starts_with('&') => positional.push(hy_mangle(name)),
+            Some(_) => {}
+        }
+    }
+    let contract = items.iter().skip(3).take(2).find(|f| f.is_brace())?;
+    let entries = match &contract.node {
+        Node::Seq { delim: Delim::Brace, items } => super::smells::live_items(items),
+        _ => return None,
+    };
+    let pre = entries.chunks(2).find(|pair| pair.first().is_some_and(|k| hy.text(k) == ":pre")).and_then(|pair| pair.get(1))?;
+    let mut types = BTreeMap::new();
+    for check in pre.bracket_items().map(super::smells::live_items).unwrap_or_default() {
+        let Some(parts) = live(check) else { continue };
+        let (Some(":"), Some(name), Some(ty)) = (parts.first().map(|h| hy.text(h)), parts.get(1).and_then(|n| hy.symbol(n)), parts.get(2)) else {
+            continue;
+        };
+        if let (Some(arms), 3) = (type_arms(hy, scope, ty), parts.len()) {
+            types.insert(hy_mangle(name), arms);
+        }
+    }
+    Some(ValueParams { positional, types })
+}
+
+/// 型の式の union の枝(組み込みの値の型・None は空の綴り、それ以外の名は module まで解いた名)。読めない形は None。
+fn type_arms(hy: &Hy<'_>, scope: Scope<'_>, ty: &Form) -> Option<Vec<String>> {
+    if let Some(name) = hy.symbol(ty) {
+        return Some(vec![if VALUE_BUILTINS.contains(&name) { String::new() } else { scope.qualify(name) }]);
+    }
+    let parts = live(ty)?;
+    match parts.first().and_then(|h| hy.symbol(h))? {
+        "|" => {
+            let mut arms = Vec::new();
+            for arm in &parts[1..] {
+                arms.extend(type_arms(hy, scope, arm)?);
+            }
+            Some(arms)
+        }
+        // `(get tuple #(X ...))`・`(of dict K V)` — isinstance が見るのは外側の型だけ。
+        "get" | "of" => type_arms(hy, scope, parts.get(1)?),
+        _ => None,
+    }
 }
 
 /// repo の Hy の file の defk の集合 — 集める file(`files`)と引き方(`reach`)を受ける(規則が無効なら空)。`(defk` の綴りを含む file だけを読み、最上位の defk の名を
@@ -134,6 +249,10 @@ pub fn defk_names_over(root: &Path, enabled: &BTreeSet<ProjectRule>, reach: fact
 #[derive(Debug, Clone, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct ProgramFields {
     fields: BTreeMap<String, BTreeSet<String>>,
+    /// repo の `defrecord`・`defwire`・`defenum` の型の名(module まで含めた名・mangle 済み)— Program を受け得ない型(defk の引数の
+    /// `:pre` の型がこれだけなら、その引数に置いた素の defk 呼びは答えとして使う所 — `ValueParams`)。
+    #[serde(default)]
+    records: BTreeSet<String>,
 }
 
 impl ProgramFields {
@@ -142,6 +261,7 @@ impl ProgramFields {
         for (record, fields) in other.fields {
             self.fields.entry(record).or_default().extend(fields);
         }
+        self.records.extend(other.records);
     }
 
     /// module まで含めた型の名の欄(mangle 済み)が Program を運ぶ宣言か。
@@ -149,9 +269,14 @@ impl ProgramFields {
         self.fields.get(record).is_some_and(|names| names.contains(field))
     }
 
+    /// module まで含めた型の名が repo の record(`defrecord`・`defwire`・`defenum`)か。
+    pub fn is_record(&self, qualified: &str) -> bool {
+        self.records.contains(qualified)
+    }
+
     /// 空か。
     pub fn is_empty(&self) -> bool {
-        self.fields.is_empty()
+        self.fields.is_empty() && self.records.is_empty()
     }
 }
 
@@ -167,7 +292,7 @@ fn names_program_type(annotation: &str) -> bool {
 }
 
 /// 1 つの source の最上位の `defrecord` の、宣言の型が Program か EffectBase を名指す欄(`<module>.<型の名>` → 欄の名)。
-/// 欄は `(#^ 型 名)` と `#^ 型 名` の 2 つの綴り(doeff-hy の defrecord)。
+/// 欄は `(#^ 型 名)` と `#^ 型 名` の 2 つの綴り(doeff-hy の defrecord)。最上位の `defrecord`・`defwire`・`defenum` の型の名も控える。
 pub fn program_fields_in(source: &str, module: &str) -> ProgramFields {
     let mut reader = Reader::new(source, 0, source.len());
     let forms = reader.read_all();
@@ -178,9 +303,15 @@ pub fn program_fields_in(source: &str, module: &str) -> ProgramFields {
         let Some(items) = live(form) else { continue };
         match items.first().and_then(|h| hy.symbol(h)) {
             Some("do" | "eval-and-compile" | "eval-when-compile") => pending.extend(items[1..].iter().copied()),
+            Some("defwire" | "defenum") => {
+                if let Some(name) = items.get(1).and_then(|f| hy.symbol(f)) {
+                    found.records.insert(format!("{}.{}", module, hy_mangle(name)));
+                }
+            }
             Some("defrecord") => {
                 let Some(name) = items.get(1).and_then(|f| hy.symbol(f)) else { continue };
                 let record = format!("{}.{}", module, hy_mangle(name));
+                found.records.insert(record.clone());
                 for item in items.iter().skip(2) {
                     let annotated = match &item.node {
                         Node::Annotated { .. } => Some(*item),
@@ -395,9 +526,17 @@ impl Walker<'_> {
             }
         };
         let binds = head == Some("<-");
+        // repo の defk の呼びの引数のうち、受ける引数の `:pre` の型が Program を受け得ない位置は答えとして使う所(Call が :pre の検で落ちる)。
+        let value_slots = qualified
+            .as_deref()
+            .filter(|_| is_defk)
+            .and_then(|q| self.defks.params_of(q))
+            .map(|params| self.value_slots(&items, params))
+            .unwrap_or_default();
         let last = items.len().saturating_sub(1);
         for (index, child) in items.iter().enumerate().skip(1) {
             let child_value = match head {
+                _ if value_slots.get(index).copied().unwrap_or(false) => true,
                 Some(h) if VALUE_HEADS.contains(&h) => true,
                 Some(".") => index == 1,
                 // method の的も引数も答えとして使う所(`(.get (f …) "欄")`・`(.append out (f …))`)。
@@ -444,6 +583,34 @@ impl Context {
 }
 
 impl Walker<'_> {
+    /// defk の呼び `(f a b :c d)` の items の位置ごとに、受ける引数の `:pre` の型が Program を受け得ないか(`#*`・`#**` の後の位置の引数は追わない)。
+    fn value_slots(&self, items: &[&Form], params: &ValueParams) -> Vec<bool> {
+        let mut slots = vec![false; items.len()];
+        let mut position = Some(0usize);
+        let mut index = 1;
+        while index < items.len() {
+            match &items[index].node {
+                Node::Keyword => {
+                    let name = hy_mangle(self.hy.text(items[index]).trim_start_matches(':'));
+                    if let Some(slot) = slots.get_mut(index + 1) {
+                        *slot = params.refuses_program(&name, self.fields);
+                    }
+                    index += 2;
+                    continue;
+                }
+                Node::Prefixed { prefix: Prefix::Unpack | Prefix::UnpackMapping, .. } => position = None,
+                _ => {
+                    if let Some(at) = position {
+                        slots[index] = params.positional.get(at).is_some_and(|name| params.refuses_program(name, self.fields));
+                        position = Some(at + 1);
+                    }
+                }
+            }
+            index += 1;
+        }
+        slots
+    }
+
     /// 定義の中で、defk の素の呼びを `setv`・`val`・`var`・`:=`・`let` で名に束ねた所を集める。同じ名を `(<- 名 …)` でも束ねる定義では
     /// その名を追わない(どちらの値か決まらない)。追うのは 1 つの定義の中だけ。
     fn bare_bindings(&self, definition: &Form) -> BTreeMap<String, (String, ByteSpan)> {
@@ -578,6 +745,73 @@ mod tests {
         // 追えない呼び(helper・method・引数の f)も拾わない。
         let bindings = [("run", "doeff"), ("with_handlers", "doeff"), ("Gather", "doeff"), ("Spawn", "doeff"), ("load", "lib")];
         assert!(found(source, &bindings).is_empty(), "{:?}", found(source, &bindings));
+    }
+
+    /// 1 つの source を repo の全部として、defk の名と record の表をその source から作って素の呼びを拾う(module m・import は無し)。
+    fn found_in_repo(source: &str) -> Vec<String> {
+        let bindings = BTreeMap::new();
+        let defks = defk_names_in(source, "m");
+        let fields = program_fields_in(source, "m");
+        bare_calls_with(source, Scope { module: "m", bindings: &bindings }, &defks, &fields).iter().map(|c| c.detail()).collect()
+    }
+
+    /// 受ける引数の `:pre` の型が Program を受け得ない(組み込みの値の型・None・repo の record)defk の呼びの引数に、defk を素で呼んで
+    /// 渡す形は拾う — 実弾 = agora-controllers の job patrol(2026-11-04)の `(counts-sources-of (measure-rows-of standing))`。
+    /// Call が渡り、:pre の型の検に実行の時に初めて当たって落ちた。位置の引数・keyword の引数・record の型の引数・枝の中も同じ。
+    #[test]
+    fn bare_defk_calls_passed_where_the_receiving_defk_refuses_programs_are_found() {
+        let source = r#"(defrecord StandingState "控え" (#^ int n))
+(defrecord ContinuingEntry "行" (#^ str word))
+(defk measure-rows-of [standing]
+  {:pre [(: standing (| StandingState None))] :post [(: % (get tuple #(ContinuingEntry ...)))]}
+  #())
+(defk counts-sources-of [measures]
+  {:pre [(: measures (get tuple #(ContinuingEntry ...)))] :post [(: % tuple)]}
+  measures)
+(defk fresh-standing [] {:post [(: % StandingState)]} (StandingState :n 1))
+(defk stage [standing]
+  (<- counts (get tuple #(str ...)) (counts-sources-of (measure-rows-of standing)))
+  counts)
+(defk by-keyword [standing]
+  (<- counts (counts-sources-of :measures (measure-rows-of standing)))
+  counts)
+(defk by-record []
+  (<- rows (measure-rows-of (fresh-standing)))
+  rows)
+(defk in-branch [standing flag]
+  (<- counts (counts-sources-of (if flag (measure-rows-of standing) #())))
+  counts)"#;
+        assert_eq!(
+            found_in_repo(source),
+            vec!["stage::measure_rows_of", "by_keyword::measure_rows_of", "by_record::fresh_standing", "in_branch::measure_rows_of"]
+        );
+    }
+
+    /// 受ける引数が Program を受けるかもしれない時は拾わない: 型の註の無い引数・Program・object・知らない別名・型の引数のある union の枝、
+    /// `#*` の後の位置、`<-` か `!` で値にしてから渡す形。
+    #[test]
+    fn bare_defk_calls_passed_where_the_receiving_defk_may_take_programs_are_not_found() {
+        let source = r#"(defrecord Row "行" (#^ str word))
+(defk rows-of [n] {:pre [(: n int)] :post [(: % tuple)]} #())
+(defk count-of [rows] {:pre [(: rows tuple)]} (len rows))
+(defk untyped [body] body)
+(defk run-twice [body] {:pre [(: body Program)]} (<- a body) a)
+(defk anything [value] {:pre [(: value object)]} value)
+(defk aliased [value] {:pre [(: value ProgramLike)]} value)
+(defk either [value] {:pre [(: value (| tuple Program))]} value)
+(defk spread [first #* rest] {:pre [(: first int) (: rest tuple)]} first)
+(defk caller [n]
+  (<- a (untyped (rows-of n)))
+  (<- b (run-twice (rows-of n)))
+  (<- c (anything (rows-of n)))
+  (<- d (aliased (rows-of n)))
+  (<- e (either (rows-of n)))
+  (<- f (spread #* xs (rows-of n)))
+  (<- rows (rows-of n))
+  (<- g (count-of rows))
+  (<- h (count-of (! (rows-of n))))
+  #(a b c d e f g h))"#;
+        assert!(found_in_repo(source).is_empty(), "{:?}", found_in_repo(source));
     }
 
     #[test]
