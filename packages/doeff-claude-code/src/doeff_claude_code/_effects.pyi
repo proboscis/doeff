@@ -48,6 +48,10 @@ class InputAlreadyRead:
     ref: str
 
 @dataclass(frozen=True)
+class NotGenerating:
+    ref: str
+
+@dataclass(frozen=True)
 class TurnEventPage:
     lines: tuple[ClaudeStreamLine, ...]
     next_seq: int
@@ -169,9 +173,13 @@ class ClaudeInjectInput(EffectBase[InputQueued | NoTurnInFlight | AttachmentRefu
     input: TurnInput
 
 @dataclass(frozen=True)
-class ClaudeInterruptTurn(EffectBase[InterruptRequested | InputAlreadyRead | NoTurnInFlight]):
+class ClaudeInterruptTurn(EffectBase[InterruptRequested | InputAlreadyRead | NotGenerating | NoTurnInFlight]):
     turn: ClaudeTurn
     for_input: str | None = None
+    only_while_generating: bool = False
+
+    def __post_init__(self) -> None:
+        ...
 
 @dataclass(frozen=True)
 class ClaudeReadTurnEvents(EffectBase[TurnEventPage | UnknownTurn]):
