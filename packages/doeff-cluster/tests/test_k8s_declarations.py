@@ -158,7 +158,7 @@ class Resources:
 MACHINE_RESOURCES = {
     # atlas は上に載る系の日次の全体検証の task も受ける(1 本の上限は旧い専用の worker と同じ 16Gi 前後 — 2026-10-10 調整役 cisco-c8 の値)。
     # 機体の memory が足りずに kubelet がこの Pod を追い出しているので、層を置いても前の上限 18Gi は上げなかった(予算の側を下げた)。
-    # 会話の CLI と命令の限る層(2G + 2G)の分だけを足して 22Gi(予算は変えない)。
+    # 会話の CLI と命令の限る層(1536M + 1536M)の分を足して 22Gi。
     "atlas": Resources(requests={"cpu": "500m", "memory": "512Mi"}, limits={"cpu": "8", "memory": "22Gi"}),
     "eos": Resources(requests={"cpu": "250m", "memory": "3840Mi"}, limits={"cpu": "2", "memory": "5632Mi"}),
     # helios は組の印 pool-helios の常駐の job 24 本(起動の山の和 約 31GiB・落ち着いた値の和 約 16.5GiB)を受ける。上限は前の 40Gi に
