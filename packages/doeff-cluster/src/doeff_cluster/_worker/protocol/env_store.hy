@@ -54,8 +54,8 @@
 (import doeff_cluster._worker.core.launch [entry-place-of-marker])
 (import doeff_cluster._worker.core.job_cgroup [placed-argv])
 (import doeff_cluster._worker.core.env_upkeep [RootInfo RootsTally PrepareLimits sweep-candidates sweep-choice sweep-wanted sweep-due roots-bytes kept-bytes
-                                              prepare-overdue env-capacity WHEEL-UNUSED-SECONDS CODE-STORE-UNUSED-SECONDS MemoryUse MemoryUnread WarmRoom
-                                              memory-use-of root-estimate build-memory-estimate reclaimable-bytes warm-refusal])
+                                              prepare-overdue env-capacity WHEEL-UNUSED-SECONDS CODE-STORE-UNUSED-SECONDS MemoryUse LayerMemoryUse MemoryUnread WarmRoom
+                                              memory-use-of layer-memory-use-of root-estimate build-memory-estimate reclaimable-bytes warm-refusal])
 (import doeff_cluster._worker.core.env_rules [ReadyAnswer launch-order prepare-request prepare-argv answer-of-text prepare-outcome
                                              overdue-failure root-project declared-project])
 (import doeff_cluster._worker.protocol.heartbeat [env-report])
@@ -105,7 +105,8 @@
    job-cgroup-placer が jobs の層へ置く)。準備の層は機体の配備が準備のために取り置く memory の上限で、worker は走っている準備の分を
    jobs の上限から引く(worker/core/eviction_rules の prepare-reserve)。jobs の層で焼くと、動く job と memory を分け合い、焼く子が層の
    上限で殺されて準備が落ちた(2026-11-02 の k3s-0 — jobs 896 MiB のうち動く job が約 450 MiB)。2 つの量の値は worker の
-   起動の引数(main.hy の --env-roots-cap・--env-min-free — 既定は boot.sh)。"
+   起動の引数(main.hy の --env-roots-cap・--env-min-free — 既定は boot.sh)。prepare-layer-dir = 準備の process が置かれる cgroup の層の dir
+   (先の組みの入口はこの層の memory で判じる — core/env_upkeep の warm-refusal。None = 層が無い機体・container の読みで判じる)。"
   (#^ str state)
   (#^ str hy-command)
   (#^ str platform)
@@ -122,7 +123,8 @@
   (setv #^ str cgroup-dir "/sys/fs/cgroup")
   (setv #^ (| str None) code-store None)
   (setv #^ (| str None) shared None)
-  (setv #^ (| str None) prepare-procs None))
+  (setv #^ (| str None) prepare-procs None)
+  (setv #^ (| str None) prepare-layer-dir None))
 
 
 (defrecord PendingEnv
@@ -654,9 +656,18 @@
 
 
 (defk read-memory [settings]
-  {:pre [(: settings EnvSettings)] :post [(: % (| MemoryUse MemoryUnread))]}
-  "worker の container の cgroup(v2)の memory.current と memory.max を読むため(先の組みの前 — #3748)。読めない file は None として
-   memory-use-of へ渡す(cgroup v1 の path・file が無い機体は MemoryUnread)。"
+  {:pre [(: settings EnvSettings)] :post [(: % (| MemoryUse LayerMemoryUse MemoryUnread))]}
+  "先の組みの前に memory を読むため: 組みの置かれる cgroup の層(prepare-layer-dir)が読めればその層の読み、読めなければ worker の container の
+   cgroup(v2)の memory.current と memory.max(#3748)。読めない file は None として渡す(cgroup v1 の path・file が無い機体は MemoryUnread)。"
+  (when (is-not settings.prepare-layer-dir None)
+    (<- layer-current (ReadText (+ settings.prepare-layer-dir "/memory.current")))
+    (<- layer-limit (ReadText (+ settings.prepare-layer-dir "/memory.max")))
+    (<- layer-stat (ReadText (+ settings.prepare-layer-dir "/memory.stat")))
+    (<- layer (| LayerMemoryUse MemoryUnread)
+        (layer-memory-use-of (if (isinstance layer-current str) layer-current None) (if (isinstance layer-limit str) layer-limit None)
+                             (if (isinstance layer-stat str) layer-stat None)))
+    (when (isinstance layer LayerMemoryUse)
+      (return layer)))
   (<- current (ReadText (+ settings.cgroup-dir "/memory.current")))
   (<- limit (ReadText (+ settings.cgroup-dir "/memory.max")))
   (<- memory (| MemoryUse MemoryUnread) (memory-use-of (if (isinstance current str) current None) (if (isinstance limit str) limit None)))
@@ -682,7 +693,7 @@
   (<- root-bytes int (root-estimate infos project))
   (<- peak int (build-memory-estimate infos project))
   (<- reclaimable int (reclaimable-bytes infos busy))
-  (<- memory (| MemoryUse MemoryUnread) (read-memory settings))
+  (<- memory (| MemoryUse LayerMemoryUse MemoryUnread) (read-memory settings))
   (val roots (match tally
                None None
                (RootsTally :bytes total) total))
@@ -690,8 +701,8 @@
                       :cap settings.roots-cap-bytes :memory memory :peak peak))
   (<- refused (| EnvFailure None) (warm-refusal room))
   ;; 行の欄の memory の読み(測れなければ -1)と、測れなかった訳。
-  (val memory-current (match memory (MemoryUse :current current) current _ -1))
-  (val memory-max (match memory (MemoryUse :limit limit) limit _ -1))
+  (val memory-current (match memory (MemoryUse :current current) current (LayerMemoryUse :working working) working _ -1))
+  (val memory-max (match memory (MemoryUse :limit limit) limit (LayerMemoryUse :limit limit) limit _ -1))
   (val unmeasured (match memory (MemoryUnread :reason reason) reason _ None))
   (match refused
     (EnvFailure :kind kind)

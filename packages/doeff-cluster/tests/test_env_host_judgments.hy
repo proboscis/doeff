@@ -44,7 +44,7 @@
 (import doeff_cluster._worker.protocol.env_translation [answer-json])
 (import doeff_cluster [env-host]
         doeff_cluster._worker.protocol.env_store [EnvSettings ENV-TOOL env-root WARM-REFUSED-LOG MEMORY-UNMEASURED-LOG])
-(import doeff_cluster._worker.core.env_upkeep [DEFAULT-ROOT-BYTES DEFAULT-BUILD-MEMORY-BYTES])
+(import doeff_cluster._worker.core.env_upkeep [DEFAULT-ROOT-BYTES DEFAULT-BUILD-MEMORY-BYTES prepare-layer-dir])
 (import doeff_cluster._worker.protocol.code_store [PREPARE-TOOL])
 (import doeff_cluster [ObserveEnvs])
 (import doeff_cluster._worker.protocol.declared [task-spec])
@@ -776,6 +776,89 @@
   (<- kind (| str None) (refused-kind seen))
   (assert (is kind None) seen)
   (assert (= (lfor #(name _) lines name) [MEMORY-UNMEASURED-LOG]) lines))
+
+
+(defk layer-room [tmp-path layer-files build-memory]
+  {:pre [(: tmp-path Path) (: layer-files dict) (: build-memory int)] :post [(: % WarmRun)] :tags {:context "doeff-cluster-test" :role "program"}}
+  "container は memory.max 4 GiB・memory.current 3.5 GiB(層の無い判じなら断る台)で、組みの置かれる層の file を layer-files(file の名 → 中身)で
+   置いた台で先の組みを回すため。build-memory = 同じ project の前の組みの山(見積もりの元)。答え = WarmRun。"
+  (<- cgroup str (cgroup-at tmp-path (str (+ (* 3 GIB) (* 512 MIB))) (str (* 4 GIB))))
+  (val layer (/ tmp-path "cgroup" "jobs"))
+  (.mkdir layer :parents True :exist-ok True)
+  (for [#(name text) (.items layer-files)]
+    (.write-text (/ layer name) (+ text "\n")))
+  (<- base EnvSettings (settings-at tmp-path :cgroup-dir cgroup))
+  (val settings (replace base :prepare-layer-dir (str layer)))
+  (<- env-1 RuntimeEnv (declared 1))
+  (<- (made-root settings "aaaaaaaaaaaaaaaaaaaaaaaa" env-1 100 1000 build-memory))
+  (<- fresh RuntimeEnv (declared 5))
+  (<- key str (env-key-of fresh))
+  (<- text str (declared-text fresh))
+  (val runs (ToolRuns))
+  (val notes (LogLines))
+  (<- seen WarmSeen (run-warm settings runs notes key text True))
+  (WarmRun :seen seen :launches (len runs.launches) :lines notes.lines))
+
+
+(defn layer-files [current limit inactive]  ; defk にできない: 検の値を組むだけの素の関数
+  "cgroup の層の memory の file の中身(byte の数から)。"
+  {"memory.current" (str current) "memory.max" (str limit) "memory.stat" (.format "anon 1\ninactive_file {}\nfile {}" inactive inactive)})
+
+
+(deftest test-a-warm-build-is-judged-by-the-layer-it-runs-in-not-by-the-whole-container [tmp-path]
+  ;; 失敗ケース: jobs の層 1.5 GiB に組みを置く worker は、container の memory.current(常駐の job と page cache を含む 3.5 GiB)+ 山 1 GiB が
+  ;; memory.max 4 GiB × 0.75 を越えても、層は working set 100 MiB + 山 1 GiB で入る。container で判じれば断って、宣言の後の準備まで待ちが残る。
+  (<- run WarmRun (layer-room tmp-path (layer-files (* 300 MIB) (+ GIB (* 512 MIB)) (* 200 MIB)) GIB))
+  (<- kind (| str None) (refused-kind run.seen))
+  (assert (is kind None) run.seen)
+  (assert (= run.launches 1) run.launches)
+  (assert (= run.lines #()) run.lines))
+
+
+(deftest test-a-warm-build-is-refused-when-the-layer-cannot-hold-it [tmp-path]
+  ;; 層の working set 1 GiB(動く組みか task)+ 山 1 GiB > 層の memory.max 1.5 GiB: 断る。log の行は層の読み(page cache 200 MiB を除く)。
+  (<- run WarmRun (layer-room tmp-path (layer-files (+ GIB (* 200 MIB)) (+ GIB (* 512 MIB)) (* 200 MIB)) GIB))
+  (<- kind (| str None) (refused-kind run.seen))
+  (assert (= kind EnvFailureKind.NO-MEMORY-ROOM.value) run.seen)
+  (assert (= run.launches 0) run.launches)
+  (assert (= (lfor #(name fields) run.lines #(name (get fields "memory_current") (get fields "memory_max") (get fields "peak_bytes")))
+             [#(WARM-REFUSED-LOG GIB (+ GIB (* 512 MIB)) GIB)])
+          run.lines))
+
+
+(deftest test-an-idle-layer-admits-a-build-whose-estimate-is-above-the-layer-limit [tmp-path]
+  ;; 準備の層 640 MiB で見積もり 1 GiB(container の山で測った値): 空いた層は通す — 組みは層の上限の内で走り、宣言の後の準備も同じ層で組む。
+  ;; 見積もりを切らずに判じれば、準備の層の小さい機体は先の組みが一度も通らず赤。
+  (<- run WarmRun (layer-room tmp-path (layer-files 0 (* 640 MIB) 0) GIB))
+  (<- kind (| str None) (refused-kind run.seen))
+  (assert (is kind None) run.seen)
+  (assert (= run.launches 1) run.launches))
+
+
+(deftest test-a-warm-build-is-refused-when-the-watch-lowered-the-layer-below-its-use [tmp-path]
+  ;; 機体の memory の見張りが追い出しの線の手前で層の上限を使いの下まで下げた(working set 500 MiB > 上限 400 MiB): 機体が苦しいので断る。
+  (<- run WarmRun (layer-room tmp-path (layer-files (* 500 MIB) (* 400 MIB) 0) (* 100 MIB)))
+  (<- kind (| str None) (refused-kind run.seen))
+  (assert (= kind EnvFailureKind.NO-MEMORY-ROOM.value) run.seen)
+  (assert (= run.launches 0) run.launches))
+
+
+(deftest test-an-unreadable-layer-falls-back-to-the-container-reading [tmp-path]
+  ;; 層の上限が max(宣言に memory.max の無い層)の台は container の線で判じる(3.5 GiB + 1 GiB > 3 GiB — 断る)。測れない側に倒さない。
+  (<- run WarmRun (layer-room tmp-path (layer-files (* 100 MIB) "max" 0) GIB))
+  (<- kind (| str None) (refused-kind run.seen))
+  (assert (= kind EnvFailureKind.NO-MEMORY-ROOM.value) run.seen)
+  (assert (= run.launches 0) run.launches))
+
+
+(deftest test-the-prepare-layer-wins-over-the-jobs-layer-and-no-layer-means-the-container []
+  ;; 組みの process の置き場と同じ順: 準備の層 → jobs の層 → 層なし(None = container の読み)。
+  (<- with-prepare (| str None) (prepare-layer-dir "/sys/fs/cgroup" "prepare" "jobs"))
+  (<- with-jobs (| str None) (prepare-layer-dir "/sys/fs/cgroup" None "jobs"))
+  (<- without (| str None) (prepare-layer-dir "/sys/fs/cgroup" None None))
+  (assert (= with-prepare "/sys/fs/cgroup/prepare"))
+  (assert (= with-jobs "/sys/fs/cgroup/jobs"))
+  (assert (is without None)))
 
 
 (defk memory-room [tmp-path current build-memory]
