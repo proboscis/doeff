@@ -27,9 +27,13 @@ host = fold(step, 初期の状態, merge(subscribe(...), timers()))
 |---|---|
 | `Run(key, program)` | `program`(Program か effect)を新しい task で走らせる。終わりは `key` を持つ入力 1 つで戻る。走っている key の `Run` と、Program でも effect でもない `program` は断る |
 | `CancelRun(key)` | `key` の task を取り消す。終わりはやはり 1 つの入力で戻る(取り消しが効けば `Cancelled`、先に終わっていればその終わり)。走っていない key は何もしない |
+| `Arm(tag, at)` | この fold の期限 `tag` を `at`(時刻帯つきの `datetime`)に置く。task は立てず、fold が timer の handler へ `ArmTimer` を渡す。`at` に `TimerFired(tag)` の入力で戻る。置いてある tag をもう一度置くと期限が動く。`timers()` を source に持たない fold では断る |
+| `Disarm(tag)` | この fold の期限 `tag` を外す。その `TimerFired` は戻らない。置いていない tag(外した・もう戻った物を含む)は何もしない |
 | `Finish(value)` | fold を終える。1 つの答えに 1 つまでで、どこに置いてもほかの effect の後に実行する。走っている task を取り消し、全部が終わるのを待ってから `value` を答える(その終わりは step に渡さない) |
 
-step が例外を上げた時、または fold の task が取り消された時は、走っている task を取り消してから例外を先へ通します。
+step が例外を上げた時、または fold の task が取り消された時は、置いたままの期限を外し、走っている task を取り消してから例外を先へ通します。`Finish` の時も置いたままの期限を外します。
+
+`Arm` の期限は、fold が自分の印と `tag` を組にした tag で timer の handler に置きます。`TimerFired` は bus の全部の購読者に届きますが、fold は自分の印の物だけを `TimerFired(tag)` に戻して step に渡し、同じ bus の別の fold の期限は読み捨てます。だから同じ bus の fold どうしが同じ tag を使っても混ざりません。期限 1 つの掛け直しに task も run の終わりも要りません(`Run(key, ArmTimer(tag, at))` は task を 2 つ立て、終わりの入力が 1 つ増えます)。
 
 ## 終わりが必ず入力になる訳
 
@@ -46,7 +50,7 @@ step が例外を上げた時、または fold の task が取り消された時
 | 約束 | 訳 |
 |---|---|
 | 部品ごとに key を分ける(`("fetch", item)` のように、頭に部品の名を置いた tuple) | 走っている key の `Run` は断られ、run の終わりは key でしか振り分けられない |
-| 同じ bus に fold を 2 つ置く時は、timer の tag も fold ごとに分ける | `TimerFired` は bus の全部の購読者に届き、run の終わりのようには fold を見分けない |
+| 同じ bus に fold を 2 つ置き、run で timer を置く(`Run(key, ArmTimer(tag, at))`)時は、その tag を fold ごとに分ける | run が置いた timer の `TimerFired` は bus の全部の購読者にそのまま届き、fold は見分けない(`Arm` の期限は fold が見分けるので分けなくてよい) |
 | step の Program は effect を出さない(`Ask`・時計・読み書き・`Wait`・`Spawn`・`WaitForEvent` のどれも) | fold が step の Program に全部の effect を断る handler を被せ、出した effect を `StepYieldedEffectError` で止める。外の世界は入力で読み、したい仕事は `Run` で頼む |
 | run の program は `WaitForEvent`・`WaitForEvents` をしない | run は fold の bus の handler の下で走るので、その待ちは fold の入力を横取りする |
 | run は取り消されたら終わる。外の世界を待つ run は自分の待ちに期限を付ける(`WaitWithin`) | fold は時計を持たず、`Finish` と例外の道は run が終わるまで待つ |
@@ -115,6 +119,8 @@ assert trace.final == 3
 ```
 
 `replay` は fold と同じ検めで step の答えを確かめ、runtime が渡さない入力(走っていない key の終わり・`Finish` の後の入力)を断ります。
+
+`Arm`・`Disarm` もほかの effect と同じく `effects` の列に載ります。期限が来る筋は、test が `TimerFired(tag)` を入力に書きます。`Replay.armed` は、置いて、まだ外しても戻ってもいない tag の集まりです。
 
 ## 模擬の土台で走らせる
 

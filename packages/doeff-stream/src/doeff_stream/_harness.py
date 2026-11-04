@@ -6,16 +6,23 @@ the fold's own ``step_answer`` (the handler that refuses every effect), one ``ru
 inputs to what the runtime can deliver: the end of a run comes only for a run that is
 running, and no input comes after ``Finish``. So a test writes the ends of the runs it expects
 (``Answered(key, value)``, ``Raised(key, error)``, ``Cancelled(key)``) among the other inputs and asserts the trace.
+``Arm`` and ``Disarm`` stand in the effects like the others; a test writes the ``TimerFired(tag)`` of a deadline it
+expects to come as an input (``Replay.armed`` = the tags set and not yet back).
 """
 
 from collections.abc import Callable, Hashable, Iterable
 from dataclasses import dataclass
 from typing import Generic, TypeVar
 
+from doeff_events import TimerFired
+
 from doeff import Program, run
 from doeff_stream._step import (
     Answered,
+    Arm,
     Cancelled,
+    CancelRun,
+    Disarm,
     Finish,
     Next,
     Raised,
@@ -69,6 +76,23 @@ class Replay(Generic[S]):
                 started.discard(stepped.input.key)
             started.update(effect.key for effect in stepped.effects if isinstance(effect, Run))
         return frozenset(started)
+
+    @property
+    def armed(self) -> frozenset[Hashable]:
+        """The tags of the deadlines set (``Arm``) and neither disarmed nor given back as ``TimerFired`` yet."""
+        tags: set[Hashable] = set()
+        for stepped in self.steps:
+            if isinstance(stepped.input, TimerFired):
+                tags.discard(stepped.input.tag)
+            for effect in stepped.effects:
+                match effect:
+                    case Arm(tag=tag):
+                        tags.add(tag)
+                    case Disarm(tag=tag):
+                        tags.discard(tag)
+                    case Run() | CancelRun() | Finish():
+                        pass
+        return frozenset(tags)
 
     @property
     def finished(self) -> Finish | None:

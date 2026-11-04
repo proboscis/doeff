@@ -63,10 +63,11 @@ def subscribe(*event_types: type) -> Source:
 
 
 def timers() -> Source:
-    """The deadlines of the timers the step arms (``Run(key, ArmTimer(tag, at))``): ``TimerFired(tag)``.
+    """The deadlines the step sets: ``TimerFired(tag)``.
 
-    A ``TimerFired`` reaches every subscriber of the bus, not only the fold that armed it: folds sharing a bus keep
-    their tags apart (a tag that names the fold, as a key names its part).
+    A deadline set with ``Arm(tag, at)`` comes to the fold that set it only (the fold tells its own apart). One set by
+    a run (``Run(key, ArmTimer(tag, at))``) reaches every subscriber of the bus, not only the fold that armed it:
+    folds sharing a bus keep those tags apart (a tag that names the fold, as a key names its part).
     """
     return Source((TimerFired,))
 
