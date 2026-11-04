@@ -1604,6 +1604,7 @@ dependencies = [
     { name = "doeff" },
     { name = "doeff-core-effects" },
     { name = "doeff-events" },
+    { name = "doeff-time" },
 ]
 
 [package.metadata]
@@ -1611,6 +1612,7 @@ requires-dist = [
     { name = "doeff", editable = "." },
     { name = "doeff-core-effects", editable = "packages/doeff-core-effects" },
     { name = "doeff-events", editable = "packages/doeff-events" },
+    { name = "doeff-time", editable = "packages/doeff-time" },
 ]
 
 [[package]]

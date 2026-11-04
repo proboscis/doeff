@@ -19,6 +19,7 @@ host = fold(step, 初期の状態, merge(subscribe(...), timers()))
 | merge | `merge(*sources) -> Inputs` | source を 1 つの入力の列にする。`Inputs.event_types` が fold の待つ型の全部 |
 | fold | `fold(step, initial, inputs)` | 入力を 1 つずつ step に渡し、答えの effect を順に実行する。`Finish(value)` で `value` を答える |
 | test の harness | `replay(step, initial, inputs) -> Replay` | 入力の列を step に与え、状態(`states`・`final`)と effect(`effects`)の列を返す。素の関数の step は VM を使わない。Program を返す step は、fold と同じ評価(effect を全部断る handler)で入力 1 つごとに VM の上で走らせる |
+| 模擬の土台 | `simulate_fold(step, initial, inputs, *, events, handlers, start_time)` | fold を本番と同じ形に組み、時計を仮の時計(`sim_time_handler`)に、bus を memory の `EventBus` にして走らせ、fold の答えを返す(節「模擬の土台で走らせる」) |
 
 ## step が返す effect
 
@@ -114,3 +115,25 @@ assert trace.final == 3
 ```
 
 `replay` は fold と同じ検めで step の答えを確かめ、runtime が渡さない入力(走っていない key の終わり・`Finish` の後の入力)を断ります。
+
+## 模擬の土台で走らせる
+
+`replay` は step だけを測ります。run の program まで含めて fold を走らせて測る時は `simulate_fold` を使います。
+
+```python
+from doeff_stream import merge, simulate_fold, subscribe, timers
+
+result = simulate_fold(
+    step,
+    None,
+    merge(subscribe(Poke), timers()),
+    events=(Poke(),),                 # fold の最初の入力(この順)
+    handlers=(simulated_fetch,),      # run の effect に答える呼び手の模擬の handler(先頭が外側)
+    start_time=T0,                    # 仮の時計の始まり(None なら sim_time_handler の既定)
+)
+```
+
+- 組み方は節「組み立て」の本番の形と同じです。違いは時計と bus の 2 つだけです: 時計は `sim_time_handler`(全部の task が待つ時にだけ時が進む)、bus はこの呼びだけの memory の `EventBus` です。`scheduled`・`subscribed_event_handler`(`inputs.event_types` を購読)・`timer_handler`・`fold` は本番と同じ物です。
+- `events` は fold が最初に待つ前に bus へ順に出し、step の最初の入力になります。型は `inputs` が購読する型に限ります。その後の入力は run の終わり・step が置いた timer・run が出す出来事から来ます。
+- `handlers` は bus と timer の handler の内側(fold の側)に `with_handlers` の順で被せます。run の program の effect はまずこの handler に届き、handler は `Publish`・timer の設置・仮の時計の待ちを使えます。
+- fold の例外(step の例外・`StepYieldedEffectError` など)は、この呼びからそのまま上がります。

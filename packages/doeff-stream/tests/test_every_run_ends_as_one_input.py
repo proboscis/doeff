@@ -25,12 +25,13 @@ from doeff_stream import (
     Raised,
     Run,
     merge,
+    simulate_fold,
     subscribe,
     timers,
 )
 from doeff_stream._fold import _watch
 from doeff_stream._source import RunEnded
-from stream_test_support import T0, Kick, Started, forever, kicked, on_bus, run_on_sim
+from stream_test_support import T0, Kick, Started, forever, on_bus, run_on_sim
 
 from doeff import do
 
@@ -86,7 +87,9 @@ def recording(first_effects: tuple, on_started: dict | None = None, expected_end
 
 
 def run_case(step) -> tuple:
-    return kicked(step, (), merge(subscribe(Kick, Started), timers()))
+    return simulate_fold(
+        step, (), merge(subscribe(Kick, Started), timers()), events=(Kick(),), start_time=T0
+    )
 
 
 def ends_of(seen: tuple) -> list:
