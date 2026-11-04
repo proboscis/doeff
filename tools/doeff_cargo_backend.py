@@ -54,6 +54,8 @@ target を共有すると、先に作った作業木の source は後の build �
 実測)— その wheel が鍵の下に置かれると、同じ鍵の build が全部それを引く。利用者が CARGO_TARGET_DIR を
 渡した時はそこに組み、消さない — Rust を直すセッションが差分の build を使うための口(`CARGO_TARGET_DIR=<dir> uv sync`)。cargo では
 env の CARGO_TARGET_DIR が config の build.target-dir(と CARGO_BUILD_TARGET_DIR)に勝つので、口の一時の dir はそれらの設定にも勝つ。
+一時の dir を使う build は、中間物の置き場 CARGO_BUILD_BUILD_DIR も同じ一時の dir に向ける。環境が置き場を memory などへ向けていても(zeus の
+worker)、1 回の build の中間物を後に残さない。利用者が CARGO_TARGET_DIR を渡した時は環境の値のまま。
 一時の dir の名には build の process の pid を入れる(doeff-cargo-target-<pid>-<乱字>)。SIGTERM・SIGKILL で止められた build は後始末を
 しないので、次の build が入口で、持ち主の process が居ない dir を片づける。
 
@@ -92,6 +94,7 @@ from typing import Literal, TypeAlias
 import maturin
 
 TARGET_ENV = "CARGO_TARGET_DIR"
+BUILD_DIR_ENV = "CARGO_BUILD_BUILD_DIR"
 TEMP_PREFIX = "doeff-cargo-target-"
 WHEEL_CACHE_ENV = "DOEFF_WHEEL_CACHE"
 # 機体の外の置き場の頭を替える env(空の値なら置き場を引かない — 頭の註の置き場)。
@@ -112,7 +115,7 @@ BUILD_ENV_NAMES = frozenset({"RUSTFLAGS", "CARGO_ENCODED_RUSTFLAGS", "RUSTC", "M
 BUILD_ENV_PREFIXES = ("CARGO_PROFILE_", "CARGO_BUILD_", "MATURIN_", "PYO3_")
 # 上の接頭辞に当たるが、組む場所と並べる数だけを変えて中身を変えない名 — 鍵に入れると作業木や機体の混み方ごとに置き場が割れて
 # 共有が効かなくなる。
-PLACE_ONLY_ENV_NAMES = frozenset({"CARGO_BUILD_TARGET_DIR", "CARGO_BUILD_JOBS"})
+PLACE_ONLY_ENV_NAMES = frozenset({"CARGO_BUILD_TARGET_DIR", BUILD_DIR_ENV, "CARGO_BUILD_JOBS"})
 # native の拡張 module の file の末尾(editable で venv の成果物の dir へ入れる組み立ての成果物)。
 NATIVE_SUFFIXES = (".so", ".pyd", ".dylib")
 
@@ -189,7 +192,9 @@ def cargo_target_dir() -> Iterator[Path]:
             root = Path(tempfile.gettempdir())
             _sweep_orphans(root)
             made = Path(tempfile.mkdtemp(prefix=f"{TEMP_PREFIX}{os.getpid()}-", dir=root))
+            build_dir = os.environ.get(BUILD_DIR_ENV)
             os.environ[TARGET_ENV] = str(made)
+            os.environ[BUILD_DIR_ENV] = str(made)
             try:
                 yield made
             finally:
@@ -198,6 +203,11 @@ def cargo_target_dir() -> Iterator[Path]:
                         del os.environ[TARGET_ENV]
                     case str():
                         os.environ[TARGET_ENV] = absent
+                match build_dir:
+                    case None:
+                        del os.environ[BUILD_DIR_ENV]
+                    case str():
+                        os.environ[BUILD_DIR_ENV] = build_dir
                 shutil.rmtree(made)
         case str() as given:
             yield Path(given)

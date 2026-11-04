@@ -226,6 +226,20 @@ def test_a_given_target_dir_is_used_and_kept(tmp_path: Path) -> None:
     assert _leftovers(temp_root) == []
 
 
+def test_a_temporary_target_keeps_the_intermediates_out_of_the_given_build_dir(tmp_path: Path) -> None:
+    """環境が CARGO_BUILD_BUILD_DIR を向けていても(zeus の worker)、一時の target の build は中間物を一時の dir に置いて消す。失敗ケース: 向けた先に
+    build ごとの中間物が残ると、memory の置き場を uv sync の度に食う。"""
+    newer = _two_checkouts(tmp_path).newer
+    temp_root = tmp_path / "tmp"
+    temp_root.mkdir()
+    build_dir = tmp_path / "build-dir"
+
+    _build(newer, tmp_path / "wheels", [*_build_env(temp_root, None), f"CARGO_BUILD_BUILD_DIR={build_dir}"])
+
+    assert not build_dir.exists()
+    assert _leftovers(temp_root) == []
+
+
 def test_every_maturin_package_builds_through_the_backend() -> None:
     """maturin で組む doeff の package は、どれも口を通る(新しい Rust の package が作業木に target を作り直さない)。"""
     maturin_packages = sorted(
