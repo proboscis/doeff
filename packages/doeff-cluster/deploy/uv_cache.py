@@ -18,9 +18,10 @@ cache で依存を取り込むと、wheel の無い package(free-threaded の 3.
            並べて組まない)。どれが落ちても訳を 1 行出して続け、0 で終わる。
   pack    cache を tar.zst 1 file にする。入れない物: 錠(.lock)・作りかけ(.tmp*)・組みの一時の環境(builds-v*)・`uv run --with` の
            環境(environments-v*)・interpreter の問い合わせの控え(interpreter-v*)。
-  publish  pack した file を S3 互換の object storage の URL(path の形 http(s)://<host>/<bucket>/<key>)へ PUT する。PUT が 5xx・
+  publish  pack した file を S3 互換の object storage の URL(s3://<bucket>/<key> か path の形 http(s)://<host>/<bucket>/<key> —
+           下の「資格と置き場」)へ PUT する。PUT が 5xx・
            時間切れ・接続の切れで落ちれば、30・60・120・240・480 秒を待って 5 回まで試し直す(refresh の PUT も同じ)。
-  seed     cache に印(.doeff-uv-seed.json)が無ければ、URL(S3 の path の形か file の path)の tar.zst を取り寄せ、cache の中の一時の dir に
+  seed     cache に印(.doeff-uv-seed.json)が無ければ、URL(s3://・S3 の path の形の http(s) か file の path)の tar.zst を取り寄せ、cache の中の一時の dir に
            展開してから、cache に無い物だけを rename で入れる(在る物は替えない — 走っている uv の索引と展開済みの項目を壊さない)。
            展開済みの wheel の項目(archive-v*)を先に入れ、索引(wheels-v*・sdists-v* など)を後に入れる。入れ終えたら印を書く。印が在れば
            何もしない(--force で入れ直す)。
@@ -53,9 +54,12 @@ cache で依存を取り込むと、wheel の無い package(free-threaded の 3.
            数・disk の byte・file system の空き)を答えに載せる。--every-seconds を渡すと、前の gc の印(.doeff-uv-gc.json)がその秒より
            新しい時は何もしない。同じ cache の gc と seed は錠(.doeff-uv-gc.lock・.doeff-uv-seed.lock)で 1 つに限る。
 
-資格(publish と、http(s) の seed): --secret <namespace>/<name> を渡すと、その k8s の Secret の鍵 access-key-id・secret-access-key を
-Pod の ServiceAccount の token(標準の path)で API server から読む。渡さなければ環境変数 AWS_ACCESS_KEY_ID・AWS_SECRET_ACCESS_KEY を
-使い、どちらも無ければ署名しない。署名は SigV4(--region・既定 us-east-1・payload は UNSIGNED-PAYLOAD)。
+資格と置き場(publish・refresh と、file の path でない seed): --secret <namespace>/<name> を渡すと、その k8s の Secret の鍵
+access-key-id・secret-access-key と endpoint(在れば)を Pod の ServiceAccount の token(標準の path)で API server から読む。渡さなければ
+環境変数 AWS_ACCESS_KEY_ID・AWS_SECRET_ACCESS_KEY と AWS_ENDPOINT_URL_S3(無ければ AWS_ENDPOINT_URL — aws cli と同じ名)を使い、資格が
+無ければ署名しない。URL が s3://<bucket>/<key> なら、要求は <endpoint>/<bucket>/<key> へ送る(endpoint が無ければ断る)ので、bucket と key
+が同じ 2 つの置き場(例 Garage と nemo)は、Secret の名 1 つ(upkeep なら DOEFF_UV_CACHE_SEED_SECRET)で切り替わる。URL が http(s) なら
+その URL へ送り、Secret の endpoint は読まない。署名は SigV4(--region・既定 us-east-1・payload は UNSIGNED-PAYLOAD)。
 
 標準の library だけを使う(依存を取り込む前の cache に入れる道具なので、取り込みに頼らない)。Python 3.14 以上(zstd は 3.14 の
 compression.zstd・型の註の前方の参照は 3.14 の遅れて読む註で解く)。
@@ -203,8 +207,8 @@ def sigv4_headers(
     return out
 
 
-def secret_credentials(ref: str, sa_dir: Path = SA_DIR) -> Credentials:
-    """k8s の Secret <namespace>/<name> の access-key-id・secret-access-key を ServiceAccount の token で読む。"""
+def read_secret(ref: str, keys: tuple[str, ...], sa_dir: Path = SA_DIR) -> dict[str, str]:
+    """k8s の Secret <namespace>/<name> の鍵のうち keys に在る物の値(decode した文字列)を ServiceAccount の token で読む。"""
     namespace, _, name = ref.partition("/")
     if not namespace or not name:
         raise SystemExit(f"uv-cache: --secret は <namespace>/<name>: {ref!r}")
@@ -228,20 +232,45 @@ def secret_credentials(ref: str, sa_dir: Path = SA_DIR) -> Credentials:
     if response.status != 200:
         raise SystemExit(f"uv-cache: Secret {ref} を読めない(HTTP {response.status})")
     data = json.loads(body).get("data") or {}
-    try:
-        return Credentials(
-            base64.b64decode(data["access-key-id"]).decode(),
-            base64.b64decode(data["secret-access-key"]).decode(),
-        )
-    except KeyError as missing:
-        raise SystemExit(f"uv-cache: Secret {ref} に鍵 {missing} が無い") from None
+    return {key: base64.b64decode(data[key]).decode() for key in keys if key in data}
 
 
-def resolve_credentials(secret: str | None) -> Credentials | None:
+@dataclass(frozen=True)
+class Target:
+    """要求を送る先 1 つ: url = http(s) の URL か file の path・credentials = 署名の資格(None なら署名しない)。"""
+
+    url: str
+    credentials: Credentials | None
+
+
+def resolve_store(url: str, secret: str | None) -> Target:
+    """--url と --secret を、要求を送る http(s) の URL と資格に解く(頭の註の「資格と置き場」)。file の path は資格なしでそのまま。"""
+    if "://" not in url:
+        return Target(url, None)
     if secret:
-        return secret_credentials(secret)
-    key, value = os.environ.get("AWS_ACCESS_KEY_ID"), os.environ.get("AWS_SECRET_ACCESS_KEY")
-    return Credentials(key, value) if key and value else None
+        data = read_secret(secret, ("access-key-id", "secret-access-key", "endpoint"))
+        try:
+            credentials: Credentials | None = Credentials(
+                data["access-key-id"], data["secret-access-key"]
+            )
+        except KeyError as missing:
+            raise SystemExit(f"uv-cache: Secret {secret} に鍵 {missing} が無い") from None
+        endpoint = data.get("endpoint", "")
+    else:
+        key, value = os.environ.get("AWS_ACCESS_KEY_ID"), os.environ.get("AWS_SECRET_ACCESS_KEY")
+        credentials = Credentials(key, value) if key and value else None
+        endpoint = os.environ.get("AWS_ENDPOINT_URL_S3") or os.environ.get("AWS_ENDPOINT_URL", "")
+    parts = urllib.parse.urlsplit(url)
+    if parts.scheme != "s3":
+        return Target(url, credentials)
+    if not parts.netloc or parts.path in ("", "/"):
+        raise SystemExit(f"uv-cache: s3 の URL は s3://<bucket>/<key>: {url!r}")
+    if not endpoint:
+        raise SystemExit(
+            f"uv-cache: {url} の置き場の入口が無い — --secret の Secret の鍵 endpoint か、"
+            "--secret が無ければ環境変数 AWS_ENDPOINT_URL_S3(か AWS_ENDPOINT_URL)に書く"
+        )
+    return Target(f"{endpoint.rstrip('/')}/{parts.netloc}{parts.path}", credentials)
 
 
 def _connection(url: str, timeout: float) -> tuple[http.client.HTTPConnection, str]:
@@ -1261,10 +1290,9 @@ def upkeep(cache: Path, settings: UpkeepSettings, part: int = PART) -> dict[str,
         seeded = {"seeded": False, "reason": "low-free"}
     elif settings.seed_url:
         try:
-            remote = "://" in settings.seed_url
-            credentials = resolve_credentials(settings.seed_secret or None) if remote else None
+            source = resolve_store(settings.seed_url, settings.seed_secret or None)
             seeded = seed(
-                cache, settings.seed_url, credentials, "us-east-1", 300.0, force=False, part=part
+                cache, source.url, source.credentials, "us-east-1", 300.0, force=False, part=part
             )
         except (SystemExit, OSError, tarfile.TarError, http.client.HTTPException) as error:
             say(f"seed: 入れられない — {error}(片付けと起動は続ける)")
@@ -1290,12 +1318,12 @@ def upkeep(cache: Path, settings: UpkeepSettings, part: int = PART) -> dict[str,
     refreshed: dict[str, object] = {"refreshed": False, "reason": "unset"}
     if settings.refreshes:
         try:
-            remote = "://" in settings.seed_url
+            target = resolve_store(settings.seed_url, settings.seed_secret or None)
             refreshed = refresh(
                 cache,
                 list(settings.refresh_projects),
-                settings.seed_url,
-                resolve_credentials(settings.seed_secret or None) if remote else None,
+                target.url,
+                target.credentials,
                 "us-east-1",
                 300.0,
                 every_seconds=settings.refresh_every_seconds,
@@ -1317,6 +1345,41 @@ def upkeep(cache: Path, settings: UpkeepSettings, part: int = PART) -> dict[str,
 # ── 入口 ────────────────────────────────────────────────────────────────────
 
 
+def store_verb(args: argparse.Namespace, cache: Path, target: Target) -> dict[str, object]:
+    """置き場を使う動詞(publish・seed・refresh)を、解いた置き場 target で撃つ。"""
+    match args.verb:
+        case "publish":
+            packed = pack(cache, args.out)
+            put = http_put_file(target.url, args.out, target.credentials, args.region, args.timeout)
+            say(
+                f"publish: {target.url} へ {packed['bytes']} byte を置いた(pack {packed['seconds']} 秒)"
+            )
+            return {**packed, "verb": "publish", "url": target.url, **put}
+        case "seed":
+            return seed(
+                cache,
+                target.url,
+                target.credentials,
+                args.region,
+                args.timeout,
+                args.force,
+                args.workers,
+            )
+        case _:  # refresh(main が渡すのは publish・seed・refresh だけ)
+            return refresh(
+                cache,
+                [p.resolve() for p in args.project],
+                target.url,
+                target.credentials,
+                args.region,
+                args.timeout,
+                every_seconds=args.every_seconds,
+                min_free=int(args.min_free_gib * (1 << 30)),
+                force=args.force,
+                uv=os.environ.get("UV", "").strip() or "uv",
+            )
+
+
 def main(argv: list[str] | None = None) -> int:
     """命令の口(動詞と旗は頭の註)。答えの JSON を標準出力へ 1 行出すため。"""
     parser = argparse.ArgumentParser(prog="uv_cache.py", description=__doc__.splitlines()[0])
@@ -1333,9 +1396,13 @@ def main(argv: list[str] | None = None) -> int:
             )
         if name in ("publish", "seed", "refresh"):
             p.add_argument(
-                "--url", required=True, help="S3 の path の形の URL(seed は file の path も)"
+                "--url",
+                required=True,
+                help="s3://<bucket>/<key> か S3 の path の形の http(s) の URL(seed は file の path も)",
             )
-            p.add_argument("--secret", help="資格の k8s の Secret <namespace>/<name>")
+            p.add_argument(
+                "--secret", help="資格と置き場の入口(endpoint)の k8s の Secret <namespace>/<name>"
+            )
             p.add_argument("--region", default="us-east-1")
             p.add_argument(
                 "--timeout", type=float, default=300.0, help="HTTP の 1 回の読み書きの上限の秒"
@@ -1408,43 +1475,8 @@ def main(argv: list[str] | None = None) -> int:
     match args.verb:
         case "pack":
             answer(pack(cache, args.out))
-        case "publish":
-            packed = pack(cache, args.out)
-            put = http_put_file(
-                args.url, args.out, resolve_credentials(args.secret), args.region, args.timeout
-            )
-            say(
-                f"publish: {args.url} へ {packed['bytes']} byte を置いた(pack {packed['seconds']} 秒)"
-            )
-            answer({**packed, "verb": "publish", "url": args.url, **put})
-        case "seed":
-            credentials = resolve_credentials(args.secret) if "://" in args.url else None
-            answer(
-                seed(
-                    cache,
-                    args.url,
-                    credentials,
-                    args.region,
-                    args.timeout,
-                    args.force,
-                    args.workers,
-                )
-            )
-        case "refresh":
-            answer(
-                refresh(
-                    cache,
-                    [p.resolve() for p in args.project],
-                    args.url,
-                    resolve_credentials(args.secret) if "://" in args.url else None,
-                    args.region,
-                    args.timeout,
-                    every_seconds=args.every_seconds,
-                    min_free=int(args.min_free_gib * (1 << 30)),
-                    force=args.force,
-                    uv=os.environ.get("UV", "").strip() or "uv",
-                )
-            )
+        case "publish" | "seed" | "refresh":
+            answer(store_verb(args, cache, resolve_store(args.url, args.secret)))
         case "upkeep":
             answer(upkeep(cache, UpkeepSettings.from_env(dict(os.environ))))
         case "count" | "gc":
