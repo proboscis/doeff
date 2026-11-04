@@ -37,7 +37,7 @@
 (import doeff [with_handlers])
 (import doeff_core_effects [MemoryFile MemoryFiles ReadMemoryFiles])
 (import doeff_core_effects [state])
-(import doeff_core_effects [memory-file-handler])
+(import doeff_core_effects [memory-file-handler slog-discard-handler])
 (import doeff_core_effects [DiskUsage FileFailed PathKind PathStat ReadDiskUsage ReadText RemoveTree RenamePath StatPath WriteText])
 (import doeff_core_effects [HttpFailed HttpFailureKind HttpRequest HttpResponse])
 (import doeff_core_effects [EnvEntry ReadEnvironment])
@@ -47,9 +47,10 @@
                                                            CoolWorkspaceVolume CreateWorkspaceVolume DetachWorkspaceVolume
                                                            MountWorkspaceVolume PurgeWorkspaceVolume ReadAttachedWorkspaceVolumes ReadWorkspacePlace
                                                            ReadWorkspaceRoom UmountWorkspaceVolume WorkspaceOutcome WorkspacePlace
-                                                           WorkspaceRoom WorkspaceRoomShort WorkspaceVolumeRefused WorkspaceVolumeSite])
+                                                           WorkspaceClusterUnreachable WorkspaceRoom WorkspaceRoomShort WorkspaceVolumeRefused
+                                                           WorkspaceVolumeSite])
 (import doeff_cluster._shared.core.workspace_volume_rules [USED-AT-KEY ticket-id volume-name])
-(import doeff_cluster._shared.protocol.workspace_volumes [workspace-volumes-api])
+(import doeff_cluster._shared.protocol.workspace_volumes [SettingsWire workspace-settings workspace-volumes-api])
 (import doeff_cluster._shared.protocol.supplied_values [KUBE-API SERVICE-ACCOUNT-TOKEN-FILE])
 (import doeff_cluster._sim.workspace_volumes [HeldBackup HeldVolume WorkspaceVolumeWorld held-volume held-workspace-volumes put-volume])
 
@@ -134,7 +135,7 @@
    回数(作る前の数えと付けの間に置き場が尽きた世界)・backup-size = backup が覚える volume の名目の大きさ(None = 値の大きさ)・
    engine-settle = 名目の大きさを書いた後に engine が広がるまでの読みの数・engine-stuck = engine が広がらない・sizes = volume の名目の
    大きさ(名 → byte — 無ければ値の大きさ)・fs-sizes = 付いた volume の file system の総量(名 → byte — 無ければ値の大きさ)・used =
-   file system の使用(名 → byte — 無ければ 0)。名目の予約の線は過剰割り当て 100% で、札 workspace の disk の storageMaximum は
+   file system の使用(名 → byte — 無ければ 0)。settings-gone = 値の ConfigMap が消された(GET に 404 — 筋書きの途中で立てる)。名目の予約の線は過剰割り当て 100% で、札 workspace の disk の storageMaximum は
    capacity 本ぶん(模擬の世界の残り capacity − volume の数と揃う)・storageScheduled は名目の大きさの和。走らせた後に読む物: pending = 付け外しの途中の読みの残り・leaving = 外す途中の volume の元の node・version = VolumeAttachment の
    版・revision = Volume の版・restoring と sources = 戻す途中の読みの残りと戻す元・dying = 消す途中の読みの残り・snapshots と backups =
    途中の snapshot と backup・unplaced = replica をまだどこにも置いていない volume の名・failing = Longhorn が置けないと答えている volume の
@@ -164,6 +165,7 @@
           self.unplaced (set) self.failing (set)
           #^ (get tuple #(str ...)) self.created #()
           #^ (get tuple #(SeenRequest ...)) self.seen #()
+          #^ bool self.settings-gone False
           #^ (get tuple #(str ...)) self.asked #())))
 
 
@@ -576,6 +578,7 @@
   (val path request.path)
   (cond
     (!= request.authorization (+ "Bearer " TOKEN)) (! (api-answer 401 {"kind" "Status" "reason" "Unauthorized"}))
+    (and (= request.method "GET") (= path SETTINGS-PATH) world.settings-gone) (! (api-answer 404 {"kind" "Status" "reason" "NotFound"}))
     (and (= request.method "GET") (= path SETTINGS-PATH)) (! (api-answer 200 {"data" {"workspace-volume.json" SETTINGS-TEXT}}))
     (and (= request.method "GET") (= path CLASS-PATH)) (! (api-answer 200 {"parameters" world.parameters}))
     (and (= request.method "POST") (= path VOLUMES-PATH))
@@ -757,6 +760,8 @@
       (:= outcomes (+ outcomes #(outcome)))
       (except [error WorkspaceRoomShort]
         (:= outcomes (+ outcomes #((+ (if error.fresh "short-fresh: " "short-held: ") (str error))))))
+      (except [error WorkspaceClusterUnreachable]
+        (:= outcomes (+ outcomes #((+ "unreachable: " (str error))))))
       (except [error WorkspaceVolumeRefused]
         (:= outcomes (+ outcomes #((+ "refused: " (str error))))))))
   outcomes)
@@ -914,8 +919,8 @@
   (val make (fn [] (WorkspaceVolumeWorld NODE :down True)))
   (<- ran BothRan (both make #((Step :verb "create" :owner OWNER) (Step :verb "attach" :owner OWNER))))
   (val real ran.real) (val held ran.held) (val api ran.api) (val sim ran.sim) (val left ran.left)
-  (assert (= (! (kinds real)) #("refused" "refused")) real)
-  (assert (= (! (kinds held)) #("refused" "refused")) held)
+  (assert (= (! (kinds real)) #("unreachable" "unreachable")) real)
+  (assert (= (! (kinds held)) #("unreachable" "unreachable")) held)
   (assert (in "API server に届かない" (get real 0)) real)
   (assert (= sim.volumes #()) sim.volumes))
 
@@ -1500,5 +1505,127 @@
 (deftest test-when-the-attachments-cannot-be-read-the-read-is-refused-not-answered-empty
   ;; 失敗ケース: 読めない時に空で答えると、呼び手は「付いた volume は無い」と読み違える。断る(模擬の落ちた世界も同じ)。
   (<- ran BothRan (both (fn [] (WorkspaceVolumeWorld NODE :down True)) #((Step :verb "attached"))))
-  (assert (= (! (kinds ran.real)) #("refused")) ran.real)
-  (assert (= (! (kinds ran.held)) #("refused")) ran.held))
+  (assert (= (! (kinds ran.real)) #("unreachable")) ran.real)
+  (assert (= (! (kinds ran.held)) #("unreachable")) ran.held))
+
+
+;; --- 区画の基盤の止まり(API server に届かない・5xx か 429)と値の ConfigMap の写し(agora card [id])----------------
+
+(val HELD-ROOT "/work/state")
+(val HELD-PATH "/work/state/workspace-volume-held/agent-worker/workspace-volume.json")
+(val ROOTED-FILES (MemoryFiles :files WORKER-FILES.files :dirs (+ WORKER-FILES.dirs #(HELD-ROOT))))
+
+
+(defhandler status-peer [#^ int status]
+  ;; 引数に残す理由: API server が答える status は筋書きごとの外の世界の形。
+  ;; API server 宛ての要求の全部に status で答える(503「apiserver not ready」・429 — 後ろの記録の置き場が詰まった API server の答え)。
+  (HttpRequest [method url headers body failures-as-values]
+    :when (and (isinstance url str) (.startswith url KUBE-API))
+    (<- answer HttpResponse (api-answer status {"kind" "Status" "message" "apiserver not ready"}))
+    (resume answer)))
+
+
+(defhandler rooted-environ [#^ str node #^ str root]
+  ;; 引数に残す理由: 答え手の機体の node と作業の根は筋書きごとの外の世界の形。
+  ;; 機体の事実の読み(ReadEnvironment)に NODE_NAME と WORK_DIR を答える(本番は worker が子の process へ渡す環境変数)。
+  (ReadEnvironment [names]
+    (val facts {"NODE_NAME" node "WORK_DIR" root})
+    (resume (tuple (gfor name names :if (in name facts) (EnvEntry :name name :value (get facts name)))))))
+
+
+(defk on-status [status steps]
+  {:pre [(: status int) (: steps tuple)] :post [(: % tuple)]}
+  "本番の答え手で、API server がどの要求にも status で答える世界に筋書き steps を当てた結末の組を得るため。"
+  (<- outcomes tuple (with_handlers [(state) (memory-file-handler WORKER-FILES) (sim-time-handler :clock (! (clock-from 0.0))) (node-environ NODE)
+                                     (status-peer status) (workspace-volumes-api SITE)]
+                       (run-steps steps)))
+  outcomes)
+
+
+(deftest test-a-5xx-or-429-from-the-api-server-is-told-apart-as-a-cluster-fault
+  ;; 失敗ケース(agora card [id]): API server が 503「apiserver not ready」・500・429 で答えた断りは、Longhorn・mount の係の断りと
+  ;; 型で分ける(WorkspaceClusterUnreachable)。呼び手(上に載る系)は文を読まずに型で「時間で晴れる」と読み、間を置いて出し直す。前の形は
+  ;; 思わぬ status の断り WorkspaceVolumeRefused と同じ型で、呼び手は置き直しても変わりうる断りと数え、上限を数分で使い切った。
+  (for [status #(503 500 429)]
+    (<- outcomes tuple (on-status status #((Step :verb "create" :owner OWNER) (Step :verb "attach" :owner OWNER) (Step :verb "room"))))
+    (assert (= (! (kinds outcomes)) #("unreachable" "unreachable" "unreachable")) #(status outcomes))
+    (assert (in (str status) (get outcomes 0)) outcomes)))
+
+
+(deftest test-a-4xx-from-the-api-server-stays-a-plain-refusal
+  ;; 反例: 届いて断られた答え(403 — 権限・404 — 無い・422 — 形)は基盤の止まりでない。待っても晴れないので WorkspaceClusterUnreachable に
+  ;; しない(呼び手が限り無く待たない)。
+  (for [status #(403 404 422)]
+    (<- outcomes tuple (on-status status #((Step :verb "create" :owner OWNER))))
+    (assert (= (! (kinds outcomes)) #("refused")) #(status outcomes))))
+
+
+(defk settings-twice [world root second]
+  {:pre [(: world LonghornWorld) (: root (| str None)) (: second Callable)] :post [(: % tuple)]}
+  "値の ConfigMap を 1 度読み(読めた世界)、世界を second で変えてから 2 度目を読んだ答えの組(SettingsWire か断りの字)と、終わりの memory の
+   file を得るため。root = 作業の根(None = 事実の無い worker)。"
+  (val environ (if (is root None) (node-environ NODE) (rooted-environ NODE root)))
+  (<- ran tuple
+      (with_handlers [slog-discard-handler (state) (memory-file-handler ROOTED-FILES) (sim-time-handler :clock (! (clock-from 1000.0))) environ
+                      (longhorn-peer world) (workspace-volumes-api SITE)]
+        (do-settings-twice world second)))
+  ran)
+
+
+(defk settings-or-refusal [world]
+  {:pre [(: world LonghornWorld)] :post [(: % (| SettingsWire str))]}
+  "値の ConfigMap を読んだ答えか、断りの種類と文(unreachable: … か refused: …)を得るため。"
+  (try
+    (<- settings SettingsWire (workspace-settings SITE OWNER))
+    (return settings)
+    (except [error WorkspaceClusterUnreachable]
+      (return (+ "unreachable: " (str error))))
+    (except [error WorkspaceVolumeRefused]
+      (return (+ "refused: " (str error))))))
+
+
+(defk do-settings-twice [world second]
+  {:pre [(: world LonghornWorld) (: second Callable)] :post [(: % tuple)]}
+  "settings-twice の中身(handler の内側で回す筋書き)を回すため。"
+  (<- first (| SettingsWire str) (settings-or-refusal world))
+  (second world)
+  (<- again (| SettingsWire str) (settings-or-refusal world))
+  (<- left MemoryFiles (ReadMemoryFiles))
+  #(first again left))
+
+
+(val go-down (fn [world] (setv world.held.down True)))
+
+
+(deftest test-the-settings-are-answered-from-the-held-copy-when-the-api-server-is-unreachable
+  ;; 通る例(agora card [id]): 読めた時に写しを作業の根の下に持ち(0600)、API server に届かない時はその写しで同じ値を答える。
+  (val api (LonghornWorld (fresh)))
+  (<- ran tuple (settings-twice api HELD-ROOT go-down))
+  (val first (get ran 0)) (val again (get ran 1)) (val left (get ran 2))
+  (assert (isinstance first SettingsWire) first)
+  (assert (= again first) again)
+  (val held (next (gfor one left.files :if (= one.path HELD-PATH) one) None))
+  (assert (is-not held None) (tuple (gfor one left.files one.path)))
+  (assert (= held.mode 0o600) held)
+  (assert (= (get (json.loads (.decode held.content "utf-8")) "text") SETTINGS-TEXT) held))
+
+
+(deftest test-without-a-held-copy-an-unreachable-api-server-is-still-refused
+  ;; 反例: 写しの無い worker(作業の根の事実が無い)は、届かない時に既定の値で埋めず、基盤の止まりの型で断る。
+  (val api (LonghornWorld (fresh)))
+  (<- ran tuple (settings-twice api None go-down))
+  (val first (get ran 0)) (val again (get ran 1)) (val left (get ran 2))
+  (assert (isinstance first SettingsWire) first)
+  (assert (isinstance again str) again)
+  (assert (.startswith again "unreachable: ") again)
+  (assert (not (any (gfor one left.files (= one.path HELD-PATH)))) left))
+
+
+(deftest test-a-refusal-that-reached-the-api-server-does-not-read-the-held-copy
+  ;; 反例: 届いて断られた時(ConfigMap が消された — 404)は写しで答えない(消された値を使い続けない)。
+  (val api (LonghornWorld (fresh)))
+  (val gone (fn [world] (setv world.settings-gone True)))
+  (<- ran tuple (settings-twice api HELD-ROOT gone))
+  (val first (get ran 0)) (val again (get ran 1)) (val left (get ran 2))
+  (assert (isinstance first SettingsWire) first)
+  (assert (and (isinstance again str) (.startswith again "refused: ")) again))

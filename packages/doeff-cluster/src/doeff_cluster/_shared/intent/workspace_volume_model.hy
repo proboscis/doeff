@@ -23,6 +23,7 @@
 ;;;   CoolIdleWorkspaceVolumes 外れている volume のうち、使い終わりから値の warmHours を過ぎた物と、置き場の空きが値の spareVolumes を
 ;;;                           割る分を、使い終わりの古い順に冷やす。答え手の機体に付いている volume のうち、file system の空きが値の
 ;;;                           growBelowPercent を割った物は、名目の大きさを倍(上限は値の maxSizeBytes)にして付けたまま広げる
+;;;   WorkspaceClusterUnreachable 区画の API server に届かない・5xx か 429 で答えた(WorkspaceVolumeRefused の子 — 基盤の止まりで、時間で晴れる)
 ;;;   WorkspaceRoomShort      置き場が足りずに作らなかった(WorkspaceVolumeRefused の子 — fresh = 持ち主が中身を持たないか)
 ;;;   WorkspaceRoom           ReadWorkspaceRoom の答え: 札の disk の残りの本数と値の spareVolumes
 ;;;   ReadWorkspaceRoom       札の disk が受けられる volume の残りの本数を読む(何も変えない)
@@ -80,6 +81,11 @@
 (defclass WorkspaceVolumeRefused [RuntimeError]
   "作業場所の volume の操作ができなかった(持ち主の id と volume の名・何をしようとしたか・理由を文に持つ — token は載せない・既定の値で
    埋めない)。")
+
+
+(defclass WorkspaceClusterUnreachable [WorkspaceVolumeRefused]
+  "区画の API server に届かなかった・API server が 5xx か 429(混んでいる)で答えた(区画の基盤の止まり — 時間で晴れる。Longhorn・mount の係の
+   断りや置き場の不足と型で分ける — 呼び手は間を置いて出し直す。文は WorkspaceVolumeRefused と同じ形)。")
 
 
 (defclass WorkspaceRoomShort [WorkspaceVolumeRefused]
