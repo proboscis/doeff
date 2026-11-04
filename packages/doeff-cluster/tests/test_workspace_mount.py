@@ -118,6 +118,19 @@ def test_sidecar_spreads_its_mounts_to_the_worker_through_the_host(pod: Manifest
     assert _volume(pod, "work")["hostPath"] == {"path": WORK_ROOT, "type": "Directory"}
 
 
+def test_the_nemo_work_areas_reach_the_atlas_worker_through_the_host(rendered: list[Manifest]) -> None:
+    """nemo の作業場の daemon(上に載る系の宣言)が host に付けた mount が、特権の無い atlas の worker に届く。"""
+    atlas = next(d for d in rendered if d["kind"] == "Deployment" and d["metadata"]["name"] == "doeff-worker-atlas")["spec"]["template"]["spec"]
+    worker = _worker(atlas)
+    assert _mount(worker, "/work").get("mountPropagation") == "HostToContainer"
+    assert _mount(worker, "/work/nemo-workspace").get("mountPropagation") == "HostToContainer"
+    assert _volume(atlas, "nemo-workspace")["hostPath"] == {
+        "path": "/mnt/hot_ssd_nvme/nemo-workspace",
+        "type": "DirectoryOrCreate",
+    }
+    assert "privileged" not in (worker.get("securityContext") or {})
+
+
 def test_sidecar_stacks_nothing_under_the_work_root(pod: Manifest) -> None:
     """係の /work の下に別の volume を重ねない(Bidirectional では重ねた mount まで host へ広がる)。"""
     stacked = [m["mountPath"] for m in _sidecar(pod)["volumeMounts"] if m["mountPath"].startswith("/work/")]

@@ -28,3 +28,15 @@ spec:
             # 雛形の値の後ろに足すだけ(道具の cache の置き場は task が WORK_DIR から自分で作る)。
             - name: WORKER_PASS_ENV
               value: "NODE_NAME,WORKER_NAME,WORKER_HOST_SYSTEMD_ROOT,WORK_DIR,KUBERNETES_SERVICE_HOST,KUBERNETES_SERVICE_PORT,$(WORKER_PASS_ENV_EXTRA),RUSTUP_HOME"
+          volumeMounts:
+            # 作業の root は HostToContainer: nemo の作業場の daemon(DaemonSet nemo-workspace-atlas — 上に載る系の
+            # deploy/nemo/workspace.yaml)が host の /var/lib/agent-worker/toolset/worktrees の下に付けた mount が、この container の同じ path に
+            # 見える。この container から外へは広げない(特権が要らない)。
+            - { name: work, mountPath: /work, mountPropagation: HostToContainer }
+            # daemon の root(頼みの socket・層・view・Pod の使う binary)。atlas の根の disk は分け前が満ちているので、nvme1 の pool の dataset に
+            # 在る。daemon と同じ path に見せる(作業場の .git の link と alternates がこの path を指す)。
+            - { name: nemo-workspace, mountPath: /work/nemo-workspace, mountPropagation: HostToContainer }
+      volumes:
+        # DirectoryOrCreate: pool が import されていない時も worker を起動で止めない(作業場だけが使えない — daemon の番人が止まる)。
+        - name: nemo-workspace
+          hostPath: { path: /mnt/hot_ssd_nvme/nemo-workspace, type: DirectoryOrCreate }
