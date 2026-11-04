@@ -369,6 +369,63 @@
   (assert (not (dialogue.input-already-read (DialogueState) "inj-1"))))
 
 
+(defn tool-call-line [#^ str call-id [parent None]]
+  "本体の会話(parent None)か subagent の中(parent = 親の呼びの id)の assistant の行で、道具 Bash を 1 つ呼ぶ実物の形の行。"
+  {"type" "assistant" "parent_tool_use_id" parent "session_id" SID
+   "message" {"id" "msg_x" "model" "claude-opus-5-5" "role" "assistant" "stop_reason" "tool_use"
+              "content" [{"type" "tool_use" "id" call-id "name" "Bash" "input" {"command" "sleep 60"}}]}})
+
+(defn tool-result-line [#^ str call-id [parent None]]
+  "tool-call-line の呼び call-id に答える user の行(実物の形)。"
+  {"type" "user" "parent_tool_use_id" parent "session_id" SID
+   "message" {"role" "user" "content" [{"type" "tool_result" "tool_use_id" call-id "content" "ok"}]}})
+
+
+(deftest test-a-generation-only-interrupt-is-allowed-only-while-the-model-generates
+  ;; 生成の間だけの止め(利用者の言葉を、CLI が生成を終えるのを待たずに読ませる止め)を出すかの判断: 本体の道具が走っておらず、名指した
+  ;; 注入がまだ読まれておらず、CLI が止めの受理を名乗る時だけ。道具の実行中は止めない(道具の区切りで読まれる)。
+  (val injected (. (dialogue.inject (started) (TurnInput "user words" "inj-1")) state))
+  (assert (dialogue.generation-interruptible injected "inj-1"))
+  ;; 本体の会話が道具を呼んだ — 結果の行を読むまで道具の実行中で、止めない。
+  (val calling (. (read-record injected (tool-call-line "toolu_1")) state))
+  (assert (= calling.open-calls #("toolu_1")) calling.open-calls)
+  (assert (not (dialogue.generation-interruptible calling "inj-1")))
+  ;; subagent の中の道具の呼びと答えは、本体の道具(Agent)の途中 — 本体の走っている道具を変えない。
+  (val inner (. (read-record (. (read-record calling (tool-call-line "toolu_sub" "toolu_1")) state)
+                             (tool-result-line "toolu_sub" "toolu_1")) state))
+  (assert (= inner.open-calls #("toolu_1")) inner.open-calls)
+  (assert (not (dialogue.generation-interruptible inner "inj-1")))
+  ;; 本体の道具の結果を読んだ後は、再び生成の間(ただし CLI はこの区切りで注入を読むので、読めば止めない)。
+  (val answered (. (read-record inner (tool-result-line "toolu_1")) state))
+  (assert (= answered.open-calls #()) answered.open-calls)
+  (assert (dialogue.generation-interruptible answered "inj-1"))
+  (assert (not (dialogue.generation-interruptible (. (read-record answered (lifecycle "inj-1" "started")) state) "inj-1")))
+  ;; 許可の答えを待つ間は生成の途中でない。
+  (val asking (. (read-record injected {"type" "control_request" "request_id" "perm-1"
+                                        "request" {"subtype" "can_use_tool" "tool_name" "Bash" "input" {"command" "ls"}}}) state))
+  (assert asking.permissions asking.permissions)
+  (assert (not (dialogue.generation-interruptible asking "inj-1")))
+  ;; 止めの受理(interrupt_receipt_v1)を名乗らない CLI は、止めると SIGINT で注入を捨てる — 止めない。
+  (val no-receipt {"type" "system" "subtype" "init" "session_id" SID "capabilities" ["msg_lifecycle_v1"]})
+  (val plain (. (read-record (. (dialogue.begin-turn (DialogueState) (TurnInput "hello" "msg-1")) state) no-receipt) state))
+  (assert (not (dialogue.generation-interruptible (. (dialogue.inject plain (TurnInput "x" "inj-1")) state) "inj-1")))
+  ;; result の後に注入を待つ間(CLI の手番が閉じた)は、CLI が注入を自分で走らせる — 止めない。
+  (val swallowed (. (read-record injected SUCCESS-RESULT) state))
+  (assert (not swallowed.cli-turn-open))
+  (assert (not (dialogue.generation-interruptible swallowed "inj-1")))
+  ;; 名指した入力が足した注入でない・手番の外は止めない。
+  (assert (not (dialogue.generation-interruptible injected "never-added")))
+  (assert (not (dialogue.generation-interruptible (DialogueState) "inj-1"))))
+
+
+(deftest test-the-running-tools-are-forgotten-when-the-turn-closes
+  ;; 走っている道具の覚え(open-calls)は手番を閉じると消え、次の手番へ持ち越さない(止めて閉じた手番の道具が、次の手番の生成を道具の
+  ;; 実行中と取り違えさせない)。
+  (val calling (. (read-record (started) (tool-call-line "toolu_1")) state))
+  (assert (= calling.open-calls #("toolu_1")))
+  (assert (= (. (dialogue.close-session calling) state open-calls) #())))
+
+
 (deftest test-an-interrupted-end-tells-whether-the-process-stays
   ;; 止めた手番の終わりは、同じ CLI の process が会話に残るかを運ぶ(#3672 の決め 6 — control の止めは手番だけを止めて process を残し、
   ;; SIGINT の形と会話を閉じる止めは process を降ろす)。使い手(層 3 の AgentTurnInterrupted.cli_kept)はこの欄で、降りた CLI の貸与を

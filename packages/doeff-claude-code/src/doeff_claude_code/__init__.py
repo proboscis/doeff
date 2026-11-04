@@ -38,6 +38,7 @@ if TYPE_CHECKING:
     from doeff_claude_code._effects import NoSuchRequest as NoSuchRequest
     from doeff_claude_code._effects import NoSuchSession as NoSuchSession
     from doeff_claude_code._effects import NoTurnInFlight as NoTurnInFlight
+    from doeff_claude_code._effects import NotGenerating as NotGenerating
     from doeff_claude_code._effects import PrintAnswered as PrintAnswered
     from doeff_claude_code._effects import PrintFailed as PrintFailed
     from doeff_claude_code._effects import PrintLimited as PrintLimited
@@ -228,6 +229,7 @@ _LAZY_EXPORTS: dict[str, str] = {
     "NoSuchRequest": "doeff_claude_code._effects",
     "NoSuchSession": "doeff_claude_code._effects",
     "NoTurnInFlight": "doeff_claude_code._effects",
+    "NotGenerating": "doeff_claude_code._effects",
     "PrintAnswered": "doeff_claude_code._effects",
     "PrintFailed": "doeff_claude_code._effects",
     "PrintLimited": "doeff_claude_code._effects",

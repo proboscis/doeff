@@ -83,6 +83,7 @@ from doeff_claude_code._effects import TurnStarted as TurnStarted
 from doeff_claude_code._effects import InputQueued as InputQueued
 from doeff_claude_code._effects import InterruptRequested as InterruptRequested
 from doeff_claude_code._effects import InputAlreadyRead as InputAlreadyRead
+from doeff_claude_code._effects import NotGenerating as NotGenerating
 from doeff_claude_code._effects import TurnEventPage as TurnEventPage
 from doeff_claude_code._effects import Answered as Answered
 from doeff_claude_code._effects import SessionClosed as SessionClosed
@@ -370,7 +371,7 @@ def running_turn_of(world: FakeClaudeWorld, turn: ClaudeTurn) -> Incomplete:
 def fake_inject(world: FakeClaudeWorld, request: ClaudeInjectInput) -> _Program[InputQueued | NoTurnInFlight, object]:
     ...
 
-def fake_interrupt(world: FakeClaudeWorld, request: ClaudeInterruptTurn) -> _Program[InterruptRequested | InputAlreadyRead | NoTurnInFlight, object]:
+def fake_interrupt(world: FakeClaudeWorld, request: ClaudeInterruptTurn) -> _Program[InterruptRequested | InputAlreadyRead | NotGenerating | NoTurnInFlight, object]:
     ...
 
 def fake_read_events(world: FakeClaudeWorld, request: ClaudeReadTurnEvents) -> _Program[TurnEventPage | UnknownTurn, object]:

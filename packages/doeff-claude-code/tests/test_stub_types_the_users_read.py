@@ -130,8 +130,8 @@ EXPECTED: dict[str, dict[str, Declared]] = {
             fields={"turn": "ClaudeTurn", "input": "TurnInput"},
         ),
         "ClaudeInterruptTurn": Declared(
-            bases=("EffectBase[InterruptRequested | InputAlreadyRead | NoTurnInFlight]",),
-            fields={"turn": "ClaudeTurn", "for_input": "str | None"},
+            bases=("EffectBase[InterruptRequested | InputAlreadyRead | NotGenerating | NoTurnInFlight]",),
+            fields={"turn": "ClaudeTurn", "for_input": "str | None", "only_while_generating": "bool"},
         ),
         "ClaudeReadTurnEvents": Declared(
             bases=("EffectBase[TurnEventPage | UnknownTurn]",),

@@ -671,6 +671,12 @@
   (<- outcome (CodexInterruptTurn session.turn))
   (isinstance outcome InterruptRequested))
 
+(defk turn-running [#^ CodexHeadlessSession session]
+  {:pre [(: session CodexHeadlessSession)] :post [(: % bool)] :tags {:context "headless-adapter" :role "judgment"}}
+  "生成の間だけの止めに、止めずに答えるため(codex は生成の途中かを名乗らない): 走っているターンが在るか。"
+  (<- (pull session 0.0))
+  (is-not session.turn None))
+
 (defk stop [#^ CodexHeadlessSession session #^ str reason]
   {:pre [(: session CodexHeadlessSession) (: reason str)] :post [(: % None)] :tags {:context "headless-adapter" :role "judgment"}}
   "session を止めるため(冪等)。走っていたターンは cli_kept 偽の AgentTurnInterrupted で終わり、待たせた入力は discarded の行方で閉じる。"
@@ -752,9 +758,13 @@
     (<- (deliver (get state.sessions handle.session-id) (or input-ref fresh) (CodexInput :text message :images images) mode))
     (resume handle))
 
-  (InterruptEffect [handle]
+  ;; 生成の間だけの止め(only-while-generating)は、層 2 の codex が生成の途中か道具の実行中かを名乗らないので出さない — 走っている
+  ;; ターンが在れば止めずに真で答える(分からない時は道具を止めない — InterruptEffect の契約)。
+  (InterruptEffect [handle for-input only-while-generating]
     :when (in handle.session-id state.sessions)
-    (<- asked (interrupt (get state.sessions handle.session-id)))
+    (<- asked (if only-while-generating
+                  (turn-running (get state.sessions handle.session-id))
+                  (interrupt (get state.sessions handle.session-id))))
     (resume asked))
 
   (WarmSessionEffect [handle]

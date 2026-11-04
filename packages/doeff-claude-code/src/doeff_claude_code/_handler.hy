@@ -71,8 +71,8 @@
 (import doeff_hy._json_lines [whole-lines-end])
 (import doeff_claude_code._effects [ClaudeStartTurn ClaudeInjectInput ClaudeInterruptTurn ClaudeReadTurnEvents
                                    ClaudeAnswerPermission ClaudeCloseSession ClaudeSessionStatus ClaudeExportSession
-                                   TurnStarted InputQueued InterruptRequested InputAlreadyRead TurnEventPage Answered SessionClosed
-                                   SessionStatus SessionExported SessionNotFound Idle TurnRunning Closed TranscriptPresent TranscriptAbsent
+                                   TurnStarted InputQueued InterruptRequested InputAlreadyRead NotGenerating TurnEventPage Answered
+                                   SessionClosed SessionStatus SessionExported SessionNotFound Idle TurnRunning Closed TranscriptPresent TranscriptAbsent
                                    CarryRefused LaunchFailed AttachmentRefused NoTurnInFlight UnknownTurn NoSuchRequest
                                    ProcessStillAlive ClaudeWarmSession SessionWarmed ClaudeLiveLimitExceeded
                                    ClaudeReplaceSessionCredential CredentialReplaced NoSuchSession SessionProcessDown
@@ -1609,15 +1609,19 @@
     (apply-transition runtime binding transition))
   (InputQueued input.ref))
 
-(defn interrupt-turn [#^ ClaudeCodeHost host #^ ClaudeTurn turn #^ (| str None) for-input]
+(defn interrupt-turn [#^ ClaudeCodeHost host #^ ClaudeTurn turn #^ (| str None) for-input #^ bool only-while-generating]
   "走っている手番を止めるため。for-input(早く読ませたい足した入力の ref)を名指した止めは、CLI がその入力をもう読んでいれば止めずに
-   InputAlreadyRead で答える — 読んだかの判断は CLI の行を読む同じ lock の中で対話の状態(dialogue.input-already-read)から取る。"
+   InputAlreadyRead で答える — 読んだかの判断は CLI の行を読む同じ lock の中で対話の状態(dialogue.input-already-read)から取る。
+   生成の間だけの止め(only-while-generating)は、CLI が生成の途中で入力を生き残らせて止められる時だけ止め、ほか(道具が走っている
+   など)は止めずに NotGenerating で答える — 判断は同じ lock の中の dialogue.generation-interruptible。"
   (setv runtime (.runtime host turn.session-id))
   (when (is runtime None) (return (NoTurnInFlight turn.session-id)))
   (with [runtime.lock]
     (setv in-flight (is-not (in-flight-log runtime turn) None))
     (when (and in-flight (is-not for-input None) (dialogue.input-already-read runtime.state for-input))
       (return (InputAlreadyRead for-input)))
+    (when (and in-flight only-while-generating (not (dialogue.generation-interruptible runtime.state for-input)))
+      (return (NotGenerating for-input)))
     (setv transition (if in-flight (dialogue.interrupt runtime.state (str (uuid.uuid4))) None))
     (setv binding runtime.binding)
     (when (or (is transition None) (is binding None)) (return (NoTurnInFlight turn.session-id)))
@@ -1873,8 +1877,8 @@
     (resume outcome))
   (ClaudeInjectInput [turn input]
     (resume (inject-input host turn input)))
-  (ClaudeInterruptTurn [turn for-input]
-    (resume (interrupt-turn host turn for-input)))
+  (ClaudeInterruptTurn [turn for-input only-while-generating]
+    (resume (interrupt-turn host turn for-input only-while-generating)))
   (ClaudeReadTurnEvents [turn after-seq wait-up-to]
     (<- page (read-events host effect))
     (resume page))

@@ -1526,12 +1526,27 @@ class InterruptEffect(AgentEffectBase, EffectBase[bool]):
     cannot tell whether an input was read stop the turn as if ``for_input``
     were absent.
 
+    ``only_while_generating`` (requires ``for_input``) asks to stop only while
+    the agent is generating, so that the named input is read now instead of
+    after the generation ends.  The turn is stopped only when no tool is
+    running, the named input is still unread, and the agent can keep that
+    input across the stop; otherwise the turn is left running and the input
+    is read at the next tool boundary.  A running tool is never stopped by
+    this request.  Handlers that cannot tell whether the agent is generating
+    leave the turn running.
+
     Yields: bool (True = a turn was running; it was asked to stop, or the
-    named input was already read and the turn was left running)
+    named input was already read, or the agent was not generating, and the
+    turn was left running)
     """
 
     handle: SessionHandle
     for_input: str | None = None
+    only_while_generating: bool = False
+
+    def __post_init__(self) -> None:
+        if self.only_while_generating and self.for_input is None:
+            raise ValueError("InterruptEffect.only_while_generating requires for_input")
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -1933,8 +1948,12 @@ def Stop(handle: SessionHandle) -> StopEffect:  # noqa: N802
     return StopEffect(handle=handle)
 
 
-def Interrupt(handle: SessionHandle, *, for_input: str | None = None) -> InterruptEffect:  # noqa: N802
-    return InterruptEffect(handle=handle, for_input=for_input)
+def Interrupt(  # noqa: N802
+    handle: SessionHandle, *, for_input: str | None = None, only_while_generating: bool = False
+) -> InterruptEffect:
+    return InterruptEffect(
+        handle=handle, for_input=for_input, only_while_generating=only_while_generating
+    )
 
 
 def WarmSession(handle: SessionHandle) -> WarmSessionEffect:  # noqa: N802

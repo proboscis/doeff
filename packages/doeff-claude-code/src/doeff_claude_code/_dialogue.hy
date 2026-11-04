@@ -9,7 +9,9 @@
 ;;;   host の手番は続く(中間の result)。
 ;;; - 止める: まだ読まれていない注入が在り CLI が interrupt_receipt_v1 を名乗った時だけ control_request interrupt(process は残り、
 ;;;   答えの still_queued の注入が次の CLI の手番として走る)。それ以外は SIGINT。入力を名指した止め(その入力を早く読ませるための止め)は、
-;;;   名指した入力がもう読まれていれば出さない(input-already-read — 読み終えた手番を止めない)。
+;;;   名指した入力がもう読まれていれば出さない(input-already-read — 読み終えた手番を止めない)。生成の間だけの止め(利用者の言葉を、
+;;;   CLI が生成を終えるのを待たずに読ませるための止め)は、本体の道具が走っておらず、control_request で名指した入力を生き残らせられる時
+;;;   だけ出す(generation-interruptible — 道具は止めない)。
 ;;; - #603 の直し: claude 2.1.282 の SIGINT は result(subtype error_during_execution・terminal_reason aborted_streaming)を出して
 ;;;   から降りる。止めるを求めた後の result は失敗ではなく Interrupted に写す(求めていない aborted_streaming は Failed のまま・
 ;;;   terminal_reason つき)。
@@ -46,7 +48,7 @@
 (import doeff_hy._frozen [thaw-json])
 (import doeff_claude_code._values [TurnInput ImageAttachment PrintContent Allow Deny])
 (import doeff_claude_code._lines [Completed Failed Interrupted BackendLost Init InputFate ControlResponse PermissionRequested
-                                 AssistantMessage TurnResult Usage ModelWindow HookNotice ClaudeLineKind INPUT-FATES
+                                 AssistantMessage ToolResult TurnResult Usage ModelWindow HookNotice ClaudeLineKind INPUT-FATES
                                  INPUT-FATE-TERMINAL merged-windows RateLimit AccountLimitHit RATE-LIMIT-REJECTED
                                  ASSISTANT-ERROR-RATE-LIMIT AccountRefusalHit ACCOUNT-REFUSAL-ERRORS ModelRefusalHit
                                  STOP-REASON-REFUSAL stderr-tail-within CostMark mark-of-result per-turn-model-usage])
@@ -98,7 +100,8 @@
    当たった事実(拒まれた限度の行と、限度の答え — AccountLimitHit・まだ無ければ None・#3983)/ refusal-hit = この host の手番に読んだ、
    口座の側が要求を断った事実(本体の assistant の行の error が ACCOUNT-REFUSAL-ERRORS の語 — AccountRefusalHit・まだ無ければ None)/
    model-refusal-hit = この host の手番に読んだ、model の安全装置が要求を断った事実(本体の assistant の行の stop_reason が
-   STOP-REASON-REFUSAL — ModelRefusalHit・まだ無ければ None)。"
+   STOP-REASON-REFUSAL — ModelRefusalHit・まだ無ければ None)/ open-calls = この host の手番の本体の会話(parent_tool_use_id が null)で
+   CLI が呼んだ道具のうち、結果の行(tool_result)をまだ読んでいない呼びの id(空 = 本体の道具が走っていない — 生成の間だけの止めが読む)。"
   (setv #^ str session-id "")
   (setv #^ bool in-flight False)
   (setv #^ bool cli-turn-open False)
@@ -118,7 +121,8 @@
   (setv #^ bool awaiting-first-input False)
   (setv #^ (| AccountLimitHit None) limit-hit None)
   (setv #^ (| AccountRefusalHit None) refusal-hit None)
-  (setv #^ (| ModelRefusalHit None) model-refusal-hit None))
+  (setv #^ (| ModelRefusalHit None) model-refusal-hit None)
+  (setv #^ (get tuple #(str ...)) open-calls #()))
 
 (defclass [(dataclass :frozen True)] Transition []
   "遷移の答え: 次の状態・stdin へ書く行・host の手番の終わり(無ければ None)・retire(この行で process を降ろす訳 — 無ければ
@@ -196,6 +200,16 @@
    名乗らない CLI では読んだかが分からないので偽(名指さない止めと同じに止める — 止めが黙って効かなくなる事を防ぐ)。"
   (and state.in-flight state.lifecycle (in ref state.turn-refs) (not-in ref (queued-refs state))))
 
+(defn #^ bool generation-interruptible [#^ DialogueState state #^ str ref]
+  "生成の間だけの止め(ClaudeInterruptTurn の only-while-generating)を出してよいか: 手番の途中で CLI の手番が開き(result の後に注入を
+   待つ間でない — その間は CLI が注入を自分で次の CLI の手番として走らせる)、本体の会話の道具が走っておらず(open-calls が空 — subagent は
+   本体の道具 Agent の 1 つ)、許可の答えを待っておらず、名指した入力 ref がまだ読まれていない注入(queued)で、CLI が止めの受理
+   (interrupt_receipt_v1)を名乗る — 止めは control_request の形になり、ref は生き残った入力として同じ process の次の CLI の手番で
+   走る。どれか 1 つでも欠ければ偽(止めない — 道具を止めず、SIGINT で手番を捨てず、分からない時は待つ)。CLI は生成の途中に足した
+   入力を生成の終わり(次の道具の区切りか手番の終わり)まで読まないので、利用者の言葉を先に読ませるための止め。"
+  (and state.in-flight state.cli-turn-open state.interrupt-receipt (not state.open-calls) (not state.permissions)
+       (in ref (queued-refs state))))
+
 
 ;; --- 手番の終わりの組み立て --------------------------------------------------------------------------
 
@@ -241,7 +255,7 @@
   (replace state :in-flight False :cli-turn-open False :turn-refs #() :injections #() :stop (NoStop)
            :deferred-result None :permissions #() :turn-usage (Usage)
            :last-call-usage None :last-call-model None :turn-windows #() :limit-hit None :refusal-hit None
-           :model-refusal-hit None))
+           :model-refusal-hit None :open-calls #()))
 
 (defn with-last-call [end #^ DialogueState state]
   "手番の終わりに、その手番で読んだ本体の最後の呼びの usage と model・model ごとの窓を載せるため(どの終わり方でも同じ 3 欄 — #3744)。
@@ -417,13 +431,26 @@
    block ごとの行は同じ usage を名乗るので、最後の行で置き換えてよい)。subagent の行は覚えない — 会話の context の大きさは本体の呼びの
    入力の側で数えるため(#3744)。本体の行が error rate_limit(CLI が答えの代わりに出した限度の文)なら、口座の限度に当たった事実に
    その文を足す(#3983 — 限度の種類と戻る刻は拒まれた限度の行から)。本体の行の error が口座の側の断りの語なら、口座の側が断った
-   事実を置く(refusal-hit-after)。本体の行の stop_reason が refusal なら、model の安全装置が断った事実を置く(model-refusal-after)。"
+   事実を置く(refusal-hit-after)。本体の行の stop_reason が refusal なら、model の安全装置が断った事実を置く(model-refusal-after)。
+   本体の行が呼んだ道具(tool_use の block)の id は、結果の行を読むまで走っている道具として覚える(open-calls — 生成の間だけの止めが読む)。"
   (if (is-not message.parent-tool-use-id None)
       (Transition :state state)
       (Transition :state (replace state :last-call-usage message.usage :last-call-model message.model
                                   :limit-hit (limit-hit-after state.limit-hit message)
                                   :refusal-hit (refusal-hit-after state.refusal-hit message)
-                                  :model-refusal-hit (model-refusal-after state.model-refusal-hit message)))))
+                                  :model-refusal-hit (model-refusal-after state.model-refusal-hit message)
+                                  :open-calls (+ state.open-calls (tuple (gfor call message.tool-calls
+                                                                               :if (not-in call.id state.open-calls)
+                                                                               call.id)))))))
+
+(defn on-tool-result [#^ DialogueState state #^ ToolResult result]
+  "user の行の tool_result: 本体の会話(parent_tool_use_id が null)の行なら、答えた呼びを走っている道具(open-calls)から外す(subagent の
+   中の道具の答えは本体の道具 Agent の途中 — 外さない)。生成の間だけの止めが、道具の実行中を生成と取り違えないため。"
+  (if (is-not result.parent-tool-use-id None)
+      (Transition :state state)
+      (do
+        (setv answered (frozenset (gfor answer result.answers answer.id)))
+        (Transition :state (replace state :open-calls (tuple (gfor call state.open-calls :if (not-in call answered) call)))))))
 
 (defn on-rate-limit [#^ DialogueState state #^ RateLimit limit]
   "rate_limit_event の行: 拒まれた(status rejected)なら、口座の限度に当たった事実に限度の種類と戻る刻を置く(#3983 — 限度の文は
@@ -495,5 +522,6 @@
     (isinstance kind PermissionRequested) (on-permission-request state kind)
     (isinstance kind TurnResult) (on-result state kind)
     (isinstance kind AssistantMessage) (on-assistant state kind)
+    (isinstance kind ToolResult) (on-tool-result state kind)
     (isinstance kind RateLimit) (on-rate-limit state kind)
     True (Transition :state state)))

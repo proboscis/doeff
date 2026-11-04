@@ -39,6 +39,12 @@
    — 走っている手番はそのまま続く。"
   (#^ str ref))
 
+(defclass [(dataclass :frozen True)] NotGenerating []
+  "生成の間だけの止め(ClaudeInterruptTurn の only-while-generating)で、CLI が今 model の生成の途中でない・名指した入力 ref を生き残らせて
+   止められない(本体の会話の道具が走っている・許可の答えを待っている・ref をもう読んだ・入力の運命か止めの受理を名乗らない CLI)ので
+   止めなかった — 走っている手番はそのまま続き、ref は次の道具の区切りか手番の終わりで読まれる。"
+  (#^ str ref))
+
 (defclass [(dataclass :frozen True)] TurnEventPage []
   "lines = after-seq より後の行(重複も欠落もなく)・next-seq = 次に渡す after-seq・end = 手番の終わり(まだなら None)。"
   (#^ (get tuple #(ClaudeStreamLine ...)) lines)
@@ -160,12 +166,19 @@
   (#^ ClaudeTurn turn)
   (#^ TurnInput input))
 
-(defclass [(dataclass :frozen True)] ClaudeInterruptTurn [(get EffectBase (| InterruptRequested InputAlreadyRead NoTurnInFlight))]
-  "手番を止める。答え = InterruptRequested | InputAlreadyRead | NoTurnInFlight(終わりは ClaudeReadTurnEvents の Interrupted で届く)。
-   for-input = この止めが早く読ませたい足した入力の ref(None = 名指さない止め)。名指した入力を CLI がもう読んでいれば止めずに
-   InputAlreadyRead で答える(読んだかを知るのは CLI と同じ process のこの層だけ — CLI が入力の運命を名乗らない版では名指さない止めと同じ)。"
+(defclass [(dataclass :frozen True)] ClaudeInterruptTurn [(get EffectBase (| InterruptRequested InputAlreadyRead NotGenerating NoTurnInFlight))]
+  "手番を止める。答え = InterruptRequested | InputAlreadyRead | NotGenerating | NoTurnInFlight(終わりは ClaudeReadTurnEvents の
+   Interrupted で届く)。for-input = この止めが早く読ませたい足した入力の ref(None = 名指さない止め)。名指した入力を CLI がもう読んでいれば
+   止めずに InputAlreadyRead で答える(読んだかを知るのは CLI と同じ process のこの層だけ — CLI が入力の運命を名乗らない版では名指さない
+   止めと同じ)。only-while-generating = 生成の間だけの止め(for-input が要る): CLI が model の生成の途中で、名指した入力をまだ読まず、
+   止めの受理で入力を生き残らせられる時だけ止め、ほか(道具が走っている・許可を待っている・分からない)は止めずに NotGenerating で答える
+   (道具は止めない — 生成の途中の入力は CLI が生成の終わりまで読まないので、生成を止めて先に読ませる)。"
   (#^ ClaudeTurn turn)
-  (setv #^ (| str None) for-input None))
+  (setv #^ (| str None) for-input None
+        #^ bool only-while-generating False)
+  (defn __post_init__ [self]
+    (when (and self.only-while-generating (is self.for-input None))
+      (raise (ValueError "ClaudeInterruptTurn の only-while-generating は for-input(早く読ませる入力)を要る")))))
 
 (defclass [(dataclass :frozen True)] ClaudeReadTurnEvents [(get EffectBase (| TurnEventPage UnknownTurn))]
   "手番の出来事を読む: after-seq より後の行を、新しい行か終わりが来るか wait-up-to 秒が過ぎるまで待って返す。
