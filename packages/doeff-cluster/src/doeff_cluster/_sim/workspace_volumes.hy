@@ -325,7 +325,7 @@
   (WorkspaceRoom :slots (! (sim-slots world)) :spare world.spare-volumes))
 
 
-(defk sim-attached [world]
+(defk sim-attached-volumes [world]
   {:pre [(: world WorkspaceVolumeWorld)] :post [(: % (get tuple #(AttachedWorkspaceVolume ...)))] :tags {:context "doeff-cluster" :role "foundation"}}
   "ReadAttachedWorkspaceVolumes を世界 world に当てるため(頭の註の契約 — 世界の機体の node に付いた volume を名の順に)。"
   (when world.down
@@ -369,5 +369,5 @@
     (<- place WorkspacePlace (sim-place world owner path))
     (resume place))
   (ReadAttachedWorkspaceVolumes []
-    (<- attached tuple (sim-attached world))
+    (<- attached tuple (sim-attached-volumes world))
     (resume attached)))
