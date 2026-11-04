@@ -4,6 +4,7 @@ from doeff import Program as _Program
 from doeff_hy._static_types import Handler as _Handler
 from dataclasses import dataclass as dataclass
 from datetime import datetime as datetime
+from datetime import timezone as timezone
 from urllib.parse import quote as url_quote
 from doeff_hy._wire import Malformed as Malformed
 from doeff_hy._wire import parse_json as parse_json
@@ -53,6 +54,7 @@ from doeff_cluster._shared.core.workspace_volume_rules import AttachStep as Atta
 from doeff_cluster._shared.core.workspace_volume_rules import AttachView as AttachView
 from doeff_cluster._shared.core.workspace_volume_rules import BACKUP_COMPLETED as BACKUP_COMPLETED
 from doeff_cluster._shared.core.workspace_volume_rules import BackupView as BackupView
+from doeff_cluster._shared.core.workspace_volume_rules import backup_volume_name as backup_volume_name
 from doeff_cluster._shared.core.workspace_volume_rules import CoolingPlan as CoolingPlan
 from doeff_cluster._shared.core.workspace_volume_rules import DetachStep as DetachStep
 from doeff_cluster._shared.core.workspace_volume_rules import DiskRoom as DiskRoom
@@ -100,6 +102,7 @@ HELD_SETTINGS_DIR: str
 JSON_TYPE: str
 MERGE_PATCH_TYPE: str
 RESTORE_REBUILDS: int
+BUNDLE_UNSEEN: str
 RESTORE_FAILURE_REASON: str
 ROBUSTNESS_FAULTED: str
 CLASS_PARAMETERS: frozenset[str]
@@ -223,6 +226,28 @@ class NamedListWire:
     items: tuple[NamedWire, ...] | None = None
 
 @dataclass(frozen=True, kw_only=True)
+class BundleStatusWire:
+    last_backup_name: str = ''
+
+@dataclass(frozen=True, kw_only=True)
+class BundleWire:
+    metadata: NamedMetaWire | None = None
+    status: BundleStatusWire | None = None
+
+@dataclass(frozen=True, kw_only=True)
+class BundleListWire:
+    items: tuple[BundleWire, ...] | None = None
+
+@dataclass(frozen=True, kw_only=True)
+class OwnedMetaWire:
+    name: str = ''
+    uid: str = ''
+
+@dataclass(frozen=True, kw_only=True)
+class OwnedWire:
+    metadata: OwnedMetaWire | None = None
+
+@dataclass(frozen=True, kw_only=True)
 class SnapshotStatusWire:
     ready_to_use: bool = False
     error: str = ''
@@ -342,6 +367,11 @@ class VolumeRead:
     actual: int = 0
     from_backup: str = ''
     restore_failure: str | None = None
+
+@dataclass(frozen=True, kw_only=True)
+class BundleRead:
+    name: str
+    last_backup: str
 
 def refused(owner: str, doing: str, reason: str) -> _Program[WorkspaceVolumeRefused, object]:
     ...
@@ -554,7 +584,19 @@ def mounted_growth(site: WorkspaceVolumeSite) -> _Program[Growth, object]:
 def cooled_volume(site: WorkspaceVolumeSite, owner: str) -> _Program[WorkspaceOutcome, object]:
     ...
 
-def backup_volume_names(site: WorkspaceVolumeSite, owner: str, doing: str, name: str, target: str) -> _Program[tuple[str, ...], object]:
+def bundle_reads(site: WorkspaceVolumeSite, owner: str, doing: str, name: str, target: str) -> _Program[tuple[BundleRead, ...], object]:
+    ...
+
+def bundle_made(site: WorkspaceVolumeSite, owner: str, doing: str, name: str, target: str) -> _Program[None, object]:
+    ...
+
+def bundle_ensured(site: WorkspaceVolumeSite, owner: str, doing: str, name: str, target: str) -> _Program[tuple[BundleRead, ...], object]:
+    ...
+
+def bundle_synced(site: WorkspaceVolumeSite, owner: str, doing: str, bundle: str) -> _Program[None, object]:
+    ...
+
+def bundle_caught_up(site: WorkspaceVolumeSite, owner: str, doing: str, name: str, target: str, backup: str) -> _Program[None, object]:
     ...
 
 def deleted_object(site: WorkspaceVolumeSite, owner: str, doing: str, kind: str, name: str) -> _Program[None, object]:

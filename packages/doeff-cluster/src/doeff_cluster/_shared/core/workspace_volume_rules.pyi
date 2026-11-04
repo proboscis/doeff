@@ -16,6 +16,7 @@ RESTORE_TICKET_PREFIX: str
 COOLING_MARK: str
 GROWING_MARK: str
 BACKUP_COMPLETED: str
+BUNDLE_HASH_LENGTH: int
 
 class AttachStep(StrEnum):
     PUT = 'put'
@@ -118,6 +119,9 @@ def growing_name(name: str, stamp: int) -> _Program[str, object]:
     ...
 
 def newest_backup(backups: tuple[BackupView, ...]) -> _Program[BackupView | None, object]:
+    ...
+
+def backup_volume_name(name: str, target: str) -> _Program[str, object]:
     ...
 
 def room_bytes(rooms: tuple[DiskRoom, ...], percentage: int, minimal: int) -> _Program[RoomBytes, object]:
