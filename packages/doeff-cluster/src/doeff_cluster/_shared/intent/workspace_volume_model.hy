@@ -28,6 +28,9 @@
 ;;;   ReadWorkspaceRoom       札の disk が受けられる volume の残りの本数を読む(何も変えない)
 ;;;   WorkspacePlace          ReadWorkspacePlace の答え: 付ける先の様子(MOUNTED・READY・OUTSIDE・CLASH)
 ;;;   ReadWorkspacePlace      持ち主の volume を付ける先の様子を読む(何も変えない)— 呼び手が、volume の外に中身を持つ持ち主を見分けるため
+;;;   AttachedWorkspaceVolume ReadAttachedWorkspaceVolumes の答えの 1 つ: 持ち主の id と使った刻
+;;;   ReadAttachedWorkspaceVolumes 答え手の機体の node に付いた持ち主の volume を読む(何も変えない)— 呼び手が、自分の覚えの外で付いたままの
+;;;                           volume(前の process が付けて残した物)を見つけるため。冷やす手順の snapshot と backup の ticket だけで付いた volume は数えない
 ;;;
 ;;; 順: 作る(か戻す)→ attach → mount → (使う)→ umount → detach →(しばらく後に)冷やす → 次に使う時に作る(戻す)…→ 消す。
 ;;; どの effect も何度出しても同じ様子に揃う(2 度目は ALREADY)。1 つの volume は同時に 1 つの node・1 つの path にだけ付く(RWO)。
@@ -95,6 +98,14 @@
    実の空きの線 — の両方の内)・spare = 値の spareVolumes(冷やす回が空けておく本数 — slots がこれを割れば冷やす回が冷やす)。"
   (#^ int slots)
   (#^ int spare))
+
+
+(defrecord AttachedWorkspaceVolume
+  "ReadAttachedWorkspaceVolumes の答えの 1 つ: owner = 持ち主の id(volume の名から頭を除いた物 — 名は小文字なので、id も小文字で答える。id の
+   条件は大文字と小文字を区別しない)・used-at = 使った刻の印(epoch 秒 — 無ければ作られた刻)。"
+  {:check [(!= owner "") (>= used-at 0.0)]}
+  (#^ str owner)
+  (#^ float used-at))
 
 
 (defrecord CoolingSweep
@@ -169,6 +180,12 @@
 (defclass [(dataclass :frozen True)] ReadWorkspaceRoom [(get EffectBase WorkspaceRoom)]
   "札の disk が受けられる volume の残りの本数を読む(頭の註)。"
   ;; 記録: 外の世界の読み(read — 置き場の様子を読む・再生では記録の答えを返す)。
+  (setv #^ (get ClassVar RecordSpec) __record-spec__ (RecordSpec :mode RecordMode.READ)))
+
+
+(defclass [(dataclass :frozen True)] ReadAttachedWorkspaceVolumes [(get EffectBase (get tuple #(AttachedWorkspaceVolume ...)))]
+  "答え手の機体の node に付いた持ち主の volume を読む(頭の註)。"
+  ;; 記録: 外の世界の読み(read — volume の様子を読む・再生では記録の答えを返す)。
   (setv #^ (get ClassVar RecordSpec) __record-spec__ (RecordSpec :mode RecordMode.READ)))
 
 

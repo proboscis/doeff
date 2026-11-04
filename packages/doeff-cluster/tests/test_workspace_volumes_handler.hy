@@ -45,7 +45,7 @@
 (import doeff_time [Delay GetTime SimClock sim-time-handler])
 (import doeff_cluster._shared.intent.workspace_volume_model [AttachWorkspaceVolume CoolIdleWorkspaceVolumes CoolingSweep
                                                            CoolWorkspaceVolume CreateWorkspaceVolume DetachWorkspaceVolume
-                                                           MountWorkspaceVolume PurgeWorkspaceVolume ReadWorkspacePlace
+                                                           MountWorkspaceVolume PurgeWorkspaceVolume ReadAttachedWorkspaceVolumes ReadWorkspacePlace
                                                            ReadWorkspaceRoom UmountWorkspaceVolume WorkspaceOutcome WorkspacePlace
                                                            WorkspaceRoom WorkspaceRoomShort WorkspaceVolumeRefused WorkspaceVolumeSite])
 (import doeff_cluster._shared.core.workspace_volume_rules [USED-AT-KEY ticket-id volume-name])
@@ -103,7 +103,7 @@
 
 
 (defrecord Step
-  "筋書きの一手: verb = create・attach・mount・umount・detach・cool・purge・sweep・room・place・wait・owner = 持ち主の id(sweep と wait は使わない)・
+  "筋書きの一手: verb = create・attach・mount・umount・detach・cool・purge・sweep・room・place・attached・wait・owner = 持ち主の id(sweep と wait は使わない)・
    path = 付ける先(mount と umount)・seconds = 待つ秒(wait)。"
   (#^ str verb)
   (setv #^ str owner "")
@@ -416,6 +416,17 @@
   (! (api-answer 200 {"items" items})))
 
 
+(defk attachments-listed [world]
+  {:pre [(: world LonghornWorld)] :post [(: % HttpResponse)]}
+  "VolumeAttachment の一覧に答えるため(読みの残りは減らさない・この答え手の ticket と、途中の snapshot と backup の ticket)。"
+  (var items [])
+  (for [volume world.held.volumes]
+    (val id (! (ticket-id volume.name)))
+    (val tickets (| (if (is volume.node None) {} {id {"id" id "type" "longhorn-api" "nodeID" volume.node}}) (! (helper-tickets world volume.name))))
+    (:= items (+ items [{"metadata" {"name" volume.name "resourceVersion" (str world.version)} "spec" {"attachmentTickets" tickets}}])))
+  (! (api-answer 200 {"items" items})))
+
+
 (defk volume-created [world body]
   {:pre [(: world LonghornWorld) (: body str)] :post [(: % HttpResponse)]}
   "Volume の POST に答えるため(在れば 409。spec.fromBackup が在れば、戻しの読みの数だけ戻す途中を見せる)。"
@@ -584,6 +595,7 @@
     (and (= request.method "GET") (= path MINIMAL-AVAILABLE-PATH)) (! (api-answer 200 {"metadata" {"name" "x"} "value" (str world.minimal)}))
     (and (= request.method "GET") (.startswith path (+ REPLICAS-PATH "?"))) (! (replicas-listed world path))
     (and (= request.method "GET") (.startswith path (+ ENGINES-PATH "?"))) (! (engines-listed world path))
+    (and (= request.method "GET") (= path ATTACHMENTS-PATH)) (! (attachments-listed world))
     (and (= request.method "GET") (.startswith path (+ ATTACHMENTS-PATH "/")))
     (do (<- answer HttpResponse (attachment-answer world (cut path (+ (len ATTACHMENTS-PATH) 1) None))) answer)
     (and (= request.method "PATCH") (.startswith path (+ ATTACHMENTS-PATH "/")))
@@ -709,7 +721,9 @@
     "wait" (do (<- (Delay step.seconds)) (return "waited"))
     "sweep" (do (<- sweep CoolingSweep (CoolIdleWorkspaceVolumes)) (return (! (sweep-text sweep))))
     "room" (do (<- room WorkspaceRoom (ReadWorkspaceRoom)) (return (.format "room slots={} spare={}" room.slots room.spare)))
-    "place" (do (<- place WorkspacePlace (ReadWorkspacePlace step.owner step.path)) (return (+ "place " place.value))))
+    "place" (do (<- place WorkspacePlace (ReadWorkspacePlace step.owner step.path)) (return (+ "place " place.value)))
+    "attached" (do (<- attached tuple (ReadAttachedWorkspaceVolumes))
+                   (return (+ "attached " (.join "," (gfor one attached (.format "{}@{}" one.owner (int one.used-at))))))))
   (val effect (match step.verb
                 "create" (CreateWorkspaceVolume step.owner)
                 "attach" (AttachWorkspaceVolume step.owner)
@@ -1412,3 +1426,32 @@
   (<- ran ApiRan (on-api api (+ #((Step :verb "attach" :owner OWNER)) START)))
   (assert (= (! (kinds ran.outcomes)) #("refused" "restored" "done" "done")) ran.outcomes)
   (assert (in "ticket を置いた後に volume が消された(冷やされた — 作る(戻す)から出し直す)" (get ran.outcomes 0)) ran.outcomes))
+
+
+(deftest test-the-volumes-attached-to-this-node-are-read-with-their-used-time
+  ;; 通る例(本番と模擬で同じ答え): この機体に付いた 2 本だけを、名の順に、持ち主の id(小文字)と使った刻で答える。別の node に付いた物と
+  ;; 外れている物は答えない。読みは何も変えない。
+  (val here-a (HeldVolume :name "ws-c-a1" :node NODE :formatted True :used-at 100.0))
+  (val here-b (HeldVolume :name "ws-c-b1" :node NODE :formatted True :used-at 200.0))
+  (val elsewhere (HeldVolume :name "ws-c-c1" :node "atlas" :formatted True :used-at 300.0))
+  (val idle (HeldVolume :name "ws-c-d1" :formatted True :used-at 400.0))
+  (<- ran BothRan (both (fn [] (WorkspaceVolumeWorld NODE :volumes #(here-b here-a elsewhere idle))) #((Step :verb "attached"))))
+  (assert (= ran.real #("attached c-a1@100,c-b1@200")) ran.real)
+  (assert (= ran.held ran.real) ran.held)
+  (assert (not (any (gfor seen ran.api.seen (!= seen.method "GET")))) ran.api.seen))
+
+
+(deftest test-a-volume-held-only-by-the-cooling-tickets-is-not-read-as-attached
+  ;; 失敗ケース: 冷やす手順の backup の ticket だけで Longhorn が付けている volume(外れている volume の冷やす途中)は、持ち主が使っている
+  ;; volume でない。付いたと答えると、呼び手が外しに来て冷やす手順と争う。
+  (val api (LonghornWorld (WorkspaceVolumeWorld NODE :volumes #((HeldVolume :name "ws-c-a1" :formatted True :used-at 100.0)))))
+  (setv (get api.backups "ws-c-a1-cool-1") (Pending :volume "ws-c-a1" :left 3))
+  (<- ran ApiRan (on-api api #((Step :verb "attached"))))
+  (assert (= ran.outcomes #("attached ")) ran.outcomes))
+
+
+(deftest test-when-the-attachments-cannot-be-read-the-read-is-refused-not-answered-empty
+  ;; 失敗ケース: 読めない時に空で答えると、呼び手は「付いた volume は無い」と読み違える。断る(模擬の落ちた世界も同じ)。
+  (<- ran BothRan (both (fn [] (WorkspaceVolumeWorld NODE :down True)) #((Step :verb "attached"))))
+  (assert (= (! (kinds ran.real)) #("refused")) ran.real)
+  (assert (= (! (kinds ran.held)) #("refused")) ran.held))

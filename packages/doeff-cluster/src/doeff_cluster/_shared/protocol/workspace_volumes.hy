@@ -28,7 +28,9 @@
 ;;;   workspace-room          ReadWorkspaceRoom: 札の disk の残りの本数(room-slots — Longhorn の置く線 2 つ: 過剰割り当ての % の名目の
 ;;;                           予約の線と、最小の空きの % の実の空きの線)と値の spareVolumes を読む
 ;;;   place-read              ReadWorkspacePlace: mount の表・付ける先の dir・持ち主の volume と backup を読み、付ける先の様子を答える
-;;;   workspace-volumes-api   10 の effect の本番の答え手
+;;;   attached-volumes        ReadAttachedWorkspaceVolumes: VolumeAttachment の一覧からこの答え手の ticket がこの機体の node を指す volume を選び、
+;;;                           Volume の一覧から使った刻を添えて答える(冷やす手順の snapshot と backup の ticket だけの volume は選ばない)
+;;;   workspace-volumes-api   11 の effect の本番の答え手
 ;;;
 ;;; 仕組み: supplied_values・kube_services と同じく、doeff の汎用の effect(token の file の ReadText・HttpRequest・file の effect・doeff-time の
 ;;; Delay と GetMonotonic・機体の事実の ReadEnvironment)で問う。外側に、宛先が API server の要求を区画の CA で検める接続
@@ -64,9 +66,9 @@
                             StatPath WriteText])
 (import doeff_core_effects [HttpFailed HttpRequest HttpResponse])
 (import doeff_time [Delay GetMonotonic GetTime])
-(import doeff_cluster._shared.intent.workspace_volume_model [AttachWorkspaceVolume CoolIdleWorkspaceVolumes CoolingSweep
+(import doeff_cluster._shared.intent.workspace_volume_model [AttachedWorkspaceVolume AttachWorkspaceVolume CoolIdleWorkspaceVolumes CoolingSweep
                                                            CoolWorkspaceVolume CreateWorkspaceVolume DetachWorkspaceVolume
-                                                           MountWorkspaceVolume PurgeWorkspaceVolume ReadWorkspacePlace
+                                                           MountWorkspaceVolume PurgeWorkspaceVolume ReadAttachedWorkspaceVolumes ReadWorkspacePlace
                                                            ReadWorkspaceRoom UmountWorkspaceVolume WorkspaceOutcome WorkspacePlace
                                                            WorkspaceRoom WorkspaceRoomShort WorkspaceVolumeRefused WorkspaceVolumeSite])
 (import doeff_cluster._shared.intent.supplied_model [WorkerFactName])
@@ -388,6 +390,19 @@
   (#^ AttachmentMetaWire metadata)
   (setv #^ (| AttachmentSpecWire None) spec None)
   (setv #^ (| AttachmentStatusWire None) status None))
+
+
+(defwire AttachmentItemWire
+  "VolumeAttachment の一覧の 1 つのうち読む欄: metadata の名(volume と同じ名)・spec(ticket)。"
+  {:tags {:context "doeff-cluster" :role "protocol" :reads "json"} :names :camel :unknown :ignore}
+  (#^ NamedMetaWire metadata)
+  (setv #^ (| AttachmentSpecWire None) spec None))
+
+
+(defwire AttachmentListWire
+  "VolumeAttachment の一覧の GET の答えのうち読む欄: items。"
+  {:tags {:context "doeff-cluster" :role "protocol" :reads "json"} :names :camel :unknown :ignore}
+  (setv #^ (| (get tuple #(AttachmentItemWire ...)) None) items None))
 
 
 (defrecord Placing
@@ -1535,6 +1550,39 @@
   (WorkspaceRoom :slots slots :spare settings.spare-volumes))
 
 
+(defk ticketed-names [site owner doing node]
+  {:pre [(: site WorkspaceVolumeSite) (: owner str) (: doing str) (: node str)] :post [(: % (get frozenset str))]
+   :tags {:context "doeff-cluster" :role "protocol" :reads "json"}}
+  "VolumeAttachment の一覧を読み、この答え手の ticket が node を指す作業場所の volume の名の集まりを作るため(冷やす手順の snapshot と backup の
+   ticket は別の id なので数えない)。"
+  (<- answer HttpResponse (kube-answer owner doing "GET" (! (longhorn-path site "volumeattachments")) None JSON-TYPE))
+  (when (!= (! (status-field answer.status)) 200)
+    (raise (! (status-refusal owner doing "VolumeAttachment の一覧" answer))))
+  (<- held (| AttachmentListWire Malformed) (parse-json AttachmentListWire (! (text-field answer.text))))
+  (when (isinstance held Malformed)
+    (raise (! (malformed-refusal owner doing "VolumeAttachment の一覧"))))
+  (var names #())
+  (for [item (or held.items #())]
+    (when (.startswith item.metadata.name NAME-PREFIX)
+      (val ticket (.get (or (and item.spec item.spec.attachment-tickets) {}) (! (ticket-id item.metadata.name))))
+      (when (and (is-not ticket None) (= ticket.node-id node))
+        (:= names (+ names #(item.metadata.name))))))
+  (frozenset names))
+
+
+(defk attached-volumes [site]
+  {:pre [(: site WorkspaceVolumeSite)] :post [(: % (get tuple #(AttachedWorkspaceVolume ...)))] :tags {:context "doeff-cluster" :role "protocol"}}
+  "この機体の node に、この答え手の ticket で付いた持ち主の volume を、名の順に読むため(ReadAttachedWorkspaceVolumes の答え)。消す途中の volume は
+   数えない。読めない時は断る。"
+  (val owner "全部")
+  (val doing "付いた volume の読み")
+  (<- node str (worker-fact WorkerFactName.NODE_NAME))
+  (<- ticketed (get frozenset str) (ticketed-names site owner doing node))
+  (<- reads tuple (volume-reads site owner doing))
+  (tuple (gfor one reads :if (and (in one.name ticketed) (not one.deleting))
+               (AttachedWorkspaceVolume :owner (cut one.name (len NAME-PREFIX) None) :used-at one.used-at))))
+
+
 (defk idle-cooling [site]
   {:pre [(: site WorkspaceVolumeSite)] :post [(: % CoolingSweep)] :tags {:context "doeff-cluster" :role "protocol"}}
   "外れている作業場所の volume のうち、冷やす順(cooling-order — 使い終わりから warmHours を過ぎた物と、札の disk の空き(Longhorn の置く線
@@ -1596,4 +1644,7 @@
     (resume room))
   (ReadWorkspacePlace [owner path]
     (<- place WorkspacePlace (place-read site owner path))
-    (resume place)))
+    (resume place))
+  (ReadAttachedWorkspaceVolumes []
+    (<- attached tuple (attached-volumes site))
+    (resume attached)))

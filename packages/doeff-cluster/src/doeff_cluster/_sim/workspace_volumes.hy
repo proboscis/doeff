@@ -20,6 +20,7 @@
 ;;;   * まとめて冷やす: 外れている volume を cooling-order(空き = capacity − volume の数)の順に冷やす。
 ;;;   * 付ける先の読み: 付ける先に持ち主の volume が付いていれば MOUNTED・別の volume なら CLASH。何も付いていなければ、dir が無いか空なら
 ;;;     READY・中身が在れば、持ち主の volume か backup が在る時 CLASH・無い時 OUTSIDE。
+;;;   * 付いた volume の読み: 世界の機体の node に付いた volume を、名の順に持ち主の id(小文字)と使った刻で答える。
 ;;; 模擬の世界の時間は doeff-time の GetTime(外側に時計の答え手が要る)。付ける先の dir の中身は外側の file の答え手(本番と同じ effect)。
 (require doeff-hy.macros [defhandler defk <- val var])
 (require doeff-hy.record [defrecord])
@@ -29,9 +30,9 @@
 (import datetime [datetime])
 (import posixpath)
 (import doeff_time [GetTime])
-(import doeff_cluster._shared.intent.workspace_volume_model [AttachWorkspaceVolume CoolIdleWorkspaceVolumes CoolingSweep
+(import doeff_cluster._shared.intent.workspace_volume_model [AttachedWorkspaceVolume AttachWorkspaceVolume CoolIdleWorkspaceVolumes CoolingSweep
                                                            CoolWorkspaceVolume CreateWorkspaceVolume DetachWorkspaceVolume
-                                                           MountWorkspaceVolume PurgeWorkspaceVolume ReadWorkspacePlace
+                                                           MountWorkspaceVolume PurgeWorkspaceVolume ReadAttachedWorkspaceVolumes ReadWorkspacePlace
                                                            ReadWorkspaceRoom UmountWorkspaceVolume WorkspaceOutcome WorkspacePlace
                                                            WorkspaceRoom WorkspaceRoomShort WorkspaceVolumeRefused])
 (import doeff_core_effects [FileFailed ListDirectory PathKind PathStat StatPath])
@@ -324,10 +325,19 @@
   (WorkspaceRoom :slots (! (sim-slots world)) :spare world.spare-volumes))
 
 
+(defk sim-attached [world]
+  {:pre [(: world WorkspaceVolumeWorld)] :post [(: % (get tuple #(AttachedWorkspaceVolume ...)))] :tags {:context "doeff-cluster" :role "foundation"}}
+  "ReadAttachedWorkspaceVolumes を世界 world に当てるため(頭の註の契約 — 世界の機体の node に付いた volume を名の順に)。"
+  (when world.down
+    (raise (WorkspaceVolumeRefused "持ち主 全部 の volume を 付いた volume の読み できない — API server に届かない: 模擬の世界が落ちている")))
+  (tuple (gfor one (sorted world.volumes :key (fn [one] one.name)) :if (= one.node world.node)
+               (AttachedWorkspaceVolume :owner (cut one.name (len NAME-PREFIX) None) :used-at one.used-at))))
+
+
 ;; 引数に残す理由: 世界は呼び手が作って走らせた後に読む記録の置き場(検と模擬の世界ごとに別の入れ物)。
 (defhandler held-workspace-volumes [#^ WorkspaceVolumeWorld world]
   {:tags {:context "doeff-cluster" :role "foundation"}}
-  ;; 模擬: 10 の effect を世界に当てる(頭の註の契約)。
+  ;; 模擬: 11 の effect を世界に当てる(頭の註の契約)。
   (CreateWorkspaceVolume [owner]
     (<- outcome WorkspaceOutcome (sim-created world owner))
     (resume outcome))
@@ -357,4 +367,7 @@
     (resume room))
   (ReadWorkspacePlace [owner path]
     (<- place WorkspacePlace (sim-place world owner path))
-    (resume place)))
+    (resume place))
+  (ReadAttachedWorkspaceVolumes []
+    (<- attached tuple (sim-attached world))
+    (resume attached)))

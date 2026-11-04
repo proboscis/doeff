@@ -211,6 +211,12 @@ if TYPE_CHECKING:
         PurgeWorkspaceVolume as PurgeWorkspaceVolume,
     )
     from doeff_cluster._shared.intent.workspace_volume_model import (
+        AttachedWorkspaceVolume as AttachedWorkspaceVolume,
+    )
+    from doeff_cluster._shared.intent.workspace_volume_model import (
+        ReadAttachedWorkspaceVolumes as ReadAttachedWorkspaceVolumes,
+    )
+    from doeff_cluster._shared.intent.workspace_volume_model import (
         ReadWorkspaceRoom as ReadWorkspaceRoom,
     )
     from doeff_cluster._shared.intent.workspace_volume_model import (
@@ -851,6 +857,8 @@ _LAZY_EXPORTS: dict[str, str] = {
     "CoolIdleWorkspaceVolumes": "doeff_cluster._shared.intent.workspace_volume_model",
     "CoolWorkspaceVolume": "doeff_cluster._shared.intent.workspace_volume_model",
     "PurgeWorkspaceVolume": "doeff_cluster._shared.intent.workspace_volume_model",
+    "AttachedWorkspaceVolume": "doeff_cluster._shared.intent.workspace_volume_model",
+    "ReadAttachedWorkspaceVolumes": "doeff_cluster._shared.intent.workspace_volume_model",
     "ReadWorkspaceRoom": "doeff_cluster._shared.intent.workspace_volume_model",
     "ReadWorkspacePlace": "doeff_cluster._shared.intent.workspace_volume_model",
     "EnvReport": "doeff_cluster._worker.intent.worker_model",

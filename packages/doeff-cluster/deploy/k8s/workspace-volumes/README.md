@@ -15,9 +15,9 @@ longhorn-api)、mkfs と mount は worker が行う(作業場所の path への�
 
 ## handler(作る・attach・mount・umount・detach・冷やす・消す)
 
-持ち主の volume を扱う effect は 10 で、入口 `doeff_cluster` から出す: `CreateWorkspaceVolume`・`AttachWorkspaceVolume`・
+持ち主の volume を扱う effect は 11 で、入口 `doeff_cluster` から出す: `CreateWorkspaceVolume`・`AttachWorkspaceVolume`・
 `MountWorkspaceVolume`・`UmountWorkspaceVolume`・`DetachWorkspaceVolume`・`CoolWorkspaceVolume`・`PurgeWorkspaceVolume`・
-`CoolIdleWorkspaceVolumes`・`ReadWorkspaceRoom`・`ReadWorkspacePlace`(答えは `WorkspaceOutcome` の DONE = 今した・ALREADY = 既にそうだった・RESTORED =
+`CoolIdleWorkspaceVolumes`・`ReadWorkspaceRoom`・`ReadWorkspacePlace`・`ReadAttachedWorkspaceVolumes`(答えは `WorkspaceOutcome` の DONE = 今した・ALREADY = 既にそうだった・RESTORED =
 backup から戻した(作る時だけ)、まとめて冷やすは `CoolingSweep`、残りの読みは `WorkspaceRoom`、付ける先の読みは `WorkspacePlace`。できなければ `WorkspaceVolumeRefused`・
 置き場が足りなければその子の `WorkspaceRoomShort`)。
 
@@ -32,6 +32,7 @@ backup から戻した(作る時だけ)、まとめて冷やすは `CoolingSweep
 | `CoolIdleWorkspaceVolumes` | 外れている volume を、冷やす順(節「寿命」)に 1 つずつ冷やす。その後に、答え手の機体に付いている volume のうち file system の空きが線を割った物を付けたまま広げる(節「広げる」— 答えの grown)。冷やせなかった・広げられなかった物は訳を残して次へ進む |
 | `ReadWorkspaceRoom` | 札の disk が受けられる、値の大きさの volume の残りの本数(節「置き場の数え」)と値の spareVolumes を答える(何も変えない) |
 | `ReadWorkspacePlace` | 持ち主の volume を付ける先の様子を答える(何も変えない): MOUNTED = 持ち主の volume が付いている・READY = 何も付いておらず dir が無いか空・OUTSIDE = 何も付いておらず dir に中身が在り、持ち主は volume も backup も持たない(持ち主の作業場所は volume の外 — 置き場の不足で volume の外の場所で始めた持ち主)・CLASH = 別の物が付いている、か、dir に中身が在るのに持ち主が volume か backup を持つ |
+| `ReadAttachedWorkspaceVolumes` | 答え手の機体の node に、この答え手の ticket で付いた持ち主の volume を、持ち主の id(小文字)と使った刻で答える(何も変えない)。冷やす手順の snapshot と backup の ticket だけで付いた volume は答えない。呼び手は、自分の覚えの外で付いたままの volume(前の process が付けて残した物)をこれで見つける |
 
 - 置き場の不足 `WorkspaceRoomShort` の `fresh`: True = 持ち主が中身を持たない(作るのは空の volume だった)。呼び手は、その持ち主を volume の
   外の場所で始めてよい(その場所に書いた物は、後で volume を付けると隠れる — 呼び手は次から `ReadWorkspacePlace` の OUTSIDE で見分け、
