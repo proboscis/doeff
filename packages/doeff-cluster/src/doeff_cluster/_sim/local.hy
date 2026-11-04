@@ -257,6 +257,7 @@
 (import doeff_cluster._worker.core.load_rules [MachineLoad TaskMemory])
 ;; worker の世代は入口の組み立て(doeff_cluster._worker.entry.main の worker-on)を偽の宿の組の上で回す(本番の main と同じ口)。
 (import doeff_cluster._worker.entry.main [worker-on])
+(import doeff_cluster._worker.intent.worker_model [ProgramGap ProgramUnfetched])
 (import doeff_cluster._worker.intent.worker_model [WorkerPolicy WorkerState WorldView CodeView CodeState ProcessView ProbeView ProbeState
                        DesiredJobs DesiredUnreadable ReadDesired ObserveWorld PublishStatus
                        PrepareCode PrepareEnv SweepEnvs StartJob JobStarted SignalJob ReapJob RetireJob ProbeEntry ForgetProbes
@@ -818,7 +819,7 @@
    codes = 準備(鍵 → SimPreparation)・probes = 入口の検め・statuses = 最後に出した状態の報告(heartbeat の本文)・last-ok-ms =
    coordinator が最後に返事をした時刻・last-ok-mono-ms = 同じ刻の単調な時計の読み(ms — 沈黙は 2 つの時計の長い方で計る・本番の
    LinkState と同じ・heartbeat_rules.silent-ms)・fence-ms = 自己停止の閾値・last-desired / last-warm = 最後に読めた job と task・温める表の行・
-   programs = 取った詰めた Program(sha → 文字列)・results = 終わった task の結果(id → 詰めた結果)・task-echo = 切り離した task の
+   programs = 取った詰めた Program(sha → 文字列)・program-failures = 最後の拍で取れなかった訳(sha → ProgramUnfetched)・results = 終わった task の結果(id → 詰めた結果)・task-echo = 切り離した task の
    返事の行(id → 行)・beats = coordinator が返事をした heartbeat の数・down = 死んだか止まった・stopping = 優雅な停止を頼まれた。
    heartbeat の切り離し(#1933 — 本番の coordinator への口の WatchCell と同じ意味・beat_policy): fresh = 前の heartbeat が届いた・
    sent-statuses = 前に届けた状態の報告・beat-interval-ms = 送る間隔・watch-after = 次の名指しの待ちの版(返事に版が無ければ None)・
@@ -845,6 +846,7 @@
   (#^ tuple last-desired)
   (#^ tuple last-warm)
   (#^ dict programs)
+  (#^ dict program-failures)
   (#^ dict results)
   (#^ dict task-echo)
   (setv #^ int beats 0)
@@ -1248,7 +1250,7 @@
    timing が上書きする)。"
   (HostTruth :boot (.format "{}-boot{}" name generation) :boot-at now :processes #() :codes {} :probes {} :statuses []
              :last-ok-ms now :last-ok-mono-ms now-mono-ms :fence-ms timing.fence-ms :keep-fence-ms timing.keep-fence-ms
-             :last-desired #() :last-warm #() :programs {} :results {} :task-echo {}))
+             :last-desired #() :last-warm #() :programs {} :program-failures {} :results {} :task-echo {}))
 
 
 (defk fresh-hosts [plan]
@@ -1297,7 +1299,10 @@
   {:pre [(: truth HostTruth) (: now int)] :post [(: % WorldView)] :tags {:context "doeff-cluster" :role "judgment"}}
   "宿の真実 → worker の観測(準備・子 process・入口の検め・待ちの子)にするため。"
   (<- codes tuple (codes-view truth.codes now))
-  (WorldView codes truth.processes (tuple (.values truth.probes)) :warm-children truth.warm-children))
+  ;; 手元に無い Program(本番の coordinator への口の program-gaps と同じ判じ — 最後に受け取った宣言のうち、取っていない物)。
+  (val gaps (tuple (gfor s truth.last-desired :if (and s.program (not-in s.program truth.programs))
+                         (ProgramGap :job s.name :failure (.get truth.program-failures s.program)))))
+  (WorldView codes truth.processes (tuple (.values truth.probes)) :warm-children truth.warm-children :program-gaps gaps))
 
 
 (defk run-context-of [worker spec attempt instance]
@@ -2079,17 +2084,25 @@
 
 
 (defk accepted-programs [link wanted known]
-  {:pre [(: link SimLink) (: wanted list) (: known dict)] :post [(: % dict)]
+  {:pre [(: link SimLink) (: wanted list) (: known dict)] :post [(: % tuple)]
    :tags {:context "doeff-cluster" :role "protocol"}}
   "宣言の job と task のうち、まだ取っていない詰めた Program を coordinator の /programs/<sha> から取るため(本番の
-   coordinator への口の fetched-programs と同じ — 中身の sha256 がキーと合わない物は取らない・取れなければ次の拍で試し直す)。"
+   coordinator への口の fetched-programs と同じ — 中身の sha256 がキーと合わない物は取らない・取れなければ次の拍で試し直す)。
+   答え = #(取った物 取れなかった訳)— どちらも sha の写像。"
   (var fetched {})
+  (var failures {})
   (for [sha wanted]
     (when (not-in sha known)
       (<- answer tuple (send-request link "GET" (+ "/programs/" sha) {} None))
-      (when (and (= (get answer 0) 200) (= (program-sha (get (get answer 1) "blob")) sha))
-        (:= fetched (| fetched {sha (get (get answer 1) "blob")})))))
-  fetched)
+      (val status (get answer 0))
+      (cond
+        (and (= status 200) (= (program-sha (get (get answer 1) "blob")) sha))
+          (:= fetched (| fetched {sha (get (get answer 1) "blob")}))
+        (= status 200)
+          (:= failures (| failures {sha (ProgramUnfetched :detail (+ "中身の sha256 がキーと合わない: " sha) :gone True)}))
+        True
+          (:= failures (| failures {sha (ProgramUnfetched :detail (.format "GET /programs の答え {}: {}" status (get answer 1)) :gone (= status 404))})))))
+  #(fetched failures))
 
 
 (defk beat-body [worker truth sent-at stopping plan]
@@ -2183,7 +2196,9 @@
           (val ids (sfor t (.get reply "tasks" []) (get t "id")))
           ;; 取った Program は送る前に読んだ真実(before)で足りる(取った Program を書くのはこの宿の heartbeat だけ・世代の確かめは
           ;; 後の書きの change-live-truth がする — 静かな周で世界へ問いを 1 つ減らす・#3871 の単位 5)。
-          (<- fetched dict (accepted-programs link (sorted (sfor s (+ jobs tasks) :if s.program s.program)) before.programs))
+          (<- accepted tuple (accepted-programs link (sorted (sfor s (+ jobs tasks) :if s.program s.program)) before.programs))
+          (val fetched (get accepted 0))
+          (val unfetched (get accepted 1))
           ;; 返事を待つ間に他の task が宿の真実を書く — 書く時に読み直す(その間に世代が終わっていれば抜ける)。読みと書きは世界への問い 1 つ。
           (val timing (.get reply "timing"))
           (val echo (dfor t (.get reply "tasks" []) :if (.get t "detached") (get t "id") (dict t)))
@@ -2197,6 +2212,7 @@
                                                                (int (get timing "keep_fence_ms"))
                                                                truth.keep-fence-ms)
                                             :programs (| truth.programs fetched)
+                                            :program-failures unfetched
                                             ;; 返事から外れた task の結果は落とす(本番の accept-tasks が結果の file を消すのと同じ)。
                                             :results (dfor #(k v) (.items truth.results) :if (in k ids) k v)
                                             :task-echo echo

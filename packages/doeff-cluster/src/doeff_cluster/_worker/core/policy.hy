@@ -31,7 +31,7 @@
 (import signal)
 (import doeff [run])
 (import doeff_traverse [sequence])
-(import doeff_cluster._worker.intent.worker_model [Action CodeState CodeView ProcessView WorldView StopStage JobStop ProbeState ProbeView ProbeStatus
+(import doeff_cluster._worker.intent.worker_model [Action CodeState CodeView ProcessView WorldView StopStage JobStop ProbeState ProbeView ProbeStatus ProgramGap
   Outcome JobRecord JobNotStarted WorkerPolicy JobStatus PrepareCode PrepareEnv SweepEnvs StartJob SignalJob ReapJob RetireJob ReleaseLeases
   ProbeEntry ForgetProbes WarmChildView WarmLaunch StartWarmChild StopWarmChild ForgetWarmChild
   StopReason SpecChanged Undeclared HandoffAbandoned Retired StartHold NotYetRead DeclarationRead] doeff_cluster._shared.intent.job_model [JobSpec JobPhase] doeff_cluster._shared.core.job_rules [spec-hash] doeff_cluster._worker.core.worker_rules [code-key probed-job retired-name ready-path RETIRED-MARK ENV-KEY-PREFIX])
@@ -208,6 +208,32 @@
          (>= (- now (or code.failed-ms 0)) policy.code-retry-ms)) #((prepare-action spec compile-jobs))
     True #()))
 
+(defn #^ (| ProgramGap None) program-gap-of [#^ WorldView world #^ JobSpec spec]  ; defk にできない: 純粋な判断の program-waits(Program の外の関数)が呼ぶ
+  "spec の job の Program の file が手元に無ければ、その観測(無ければ None)。"
+  (for [gap world.program-gaps]
+    (when (= gap.job spec.name) (return gap)))
+  None)
+
+
+(defn #^ bool program-waits [#^ WorldView world #^ JobSpec spec]  ; defk にできない: 純粋な判断の phase-of(Program の外の関数)が呼ぶ
+  "spec の job を、Program の file が届くまで起こさないか(起こしの段 ready-tree-step・入れ替えの replace-step と handoff-actions・状態の行の
+   phase-of が同じ述語を読む)。file が無いまま起こすと子の入口が読めずに終了 code 3 で落ち、coordinator に届かない間は取り直せないので
+   落ち続ける。待てば次に取れた拍で起こせる。ただし coordinator が渡さないと答えた(gone)task は起こす: 子の入口が TaskFailed を結果の
+   file に書くので、task が結果を持って終わる(待っても届かず、送り手が結果を待ち続ける)。gone の service は起こさず待つ — 終わる結果が
+   無く、落ちても起こし直すだけで、宣言し直せば版か sha が変わって解ける。"
+  (setv gap (program-gap-of world spec))
+  (and (is-not gap None)
+       (not (and spec.once (is-not gap.failure None) gap.failure.gone))))
+
+
+(defn #^ str program-wait-detail [#^ WorldView world #^ JobSpec spec]  ; defk にできない: 純粋な判断の job-status の文(Program の外の関数)が呼ぶ
+  "Program の file を待っている job の状態の行の文(取れなかった訳が在れば添える)。"
+  (setv gap (program-gap-of world spec))
+  (if (or (is gap None) (is gap.failure None))
+      "Program の取り寄せ待ち"
+      (.format "Program の取り寄せ待ち: {}" gap.failure.detail)))
+
+
 (defrecord StartStep
   "宣言の job 1 つを新しい版の起動へ進める判断の答え(#3713): 動いている process の無い job を起動する start-step と、recreate の job の
    旧い版を新しい版へ移す replace-step(2026-10-08)が返す。actions = この周期に実行する action(準備・検め・StartJob・旧の止め)・
@@ -262,7 +288,7 @@
 (defk ready-tree-step [now spec tree world record policy warm-keys]
   {:pre [(: now int) (: spec JobSpec) (: tree str) (: world WorldView) (: record JobRecord) (: policy WorkerPolicy) (: warm-keys frozenset)]
    :post [(: % StartStep)] :tags {:context "worker" :role "judgment"}}
-  "木が READY の job を起こすため: 入口の検めが通るまで起こさず、backoff の間は待つ。待ちの子から分かれる task(#3646)と、service を分ける
+  "木が READY の job を起こすため: 入口の検めが通るまで起こさず、Program の file が手元に無い間(program-waits)も起こさず、backoff の間は待つ。待ちの子から分かれる task(#3646)と、service を分ける
    root(warm-keys)の service は、道を warm_rules の warm-start が決める: 待ちの子が準備済みになるまで起こさず
    (待ちの子を起こすのは warm-child-actions)、分ける時は StartJob に root のキーを載せる。黙って入れ物 shim へ倒れない(service が shim で
    起きるのは warm-start が名指す訳 — 古い版の待ちの子・断りの上限 — の時だけ)。"
@@ -270,6 +296,7 @@
   (val path (warm-start spec world policy warm-keys))
   (cond
     (is-not gate None) (StartStep :actions gate :hold (! (probe-hold (probe-of world spec))))
+    (program-waits world spec) (StartStep :actions #() :hold StartHold.PROGRAM-WAIT)
     (in-backoff now record policy) (StartStep :actions #() :hold StartHold.BACKOFF)
     (= path WarmStart.WAIT) (StartStep :actions #() :hold StartHold.WARM-CHILD)
     ;; 同じ名の前の世代がこの job を動かしている(AL-D2f): 準備と検めは揃ったので、coordinator が印を外すまで起こさない(状態の行は
@@ -324,7 +351,7 @@
   "recreate の job の旧い版を宣言の新しい版へ移す action と、新しい版をまだ起動しない訳を 1 か所で決めるため(plan-job の止めの枝と、
    周期の終わりの見送りの行 start-holds が同じ判断を読む — 2026-10-08): 新しい版の木が READY でなければ準備だけ(準備中・失敗の後の
    作り直しの間を含む — 訳は prepare-hold)、木が揃っても入口の検めが通っていなければ検めだけ(走っている・落ちた間は待つ — 訳は
-   probe-hold)、新しい版を待ちの子から分ける service(warm-keys の root — warm_rules の warm-start が WAIT)は待ちの子が準備済みになるまで
+   probe-hold)、新しい版の Program の file が手元に無い間も待つ(訳は PROGRAM-WAIT — 旧を止めると新を起こせない空白ができる)、新しい版を待ちの子から分ける service(warm-keys の root — warm_rules の warm-start が WAIT)は待ちの子が準備済みになるまで
    待つ(訳は WARM-CHILD — 待ちの子を起こすのは warm-child-actions)。どの間も旧は動かしたまま。揃ったら旧を
    止める(SpecChanged)— 止め終えた次の周期で start-step が待たずに起動する(warm-start は旧の有無を読まないので、ここで WAIT でなければ
    start-step でも WAIT でない)。準備の action は方策の並べる数(compile-jobs-while-replacing)を載せる — 旧い service と焼きが同じ Pod の
@@ -336,12 +363,13 @@
     (is tree None) (StartStep :actions (prepare-actions now want world policy policy.compile-jobs-while-replacing)
                               :hold (! (prepare-hold code record)))
     (is-not gate None) (StartStep :actions gate :hold (! (probe-hold (probe-of world want))))
+    (program-waits world want) (StartStep :actions #() :hold StartHold.PROGRAM-WAIT)
     (= (warm-start want world policy warm-keys) WarmStart.WAIT) (StartStep :actions #() :hold StartHold.WARM-CHILD)
     True (StartStep :actions (stop-actions now process record policy (SpecChanged)) :hold None)))
 
 (defn #^ tuple handoff-actions [#^ int now #^ JobSpec want #^ ProcessView process #^ WorldView world #^ WorkerPolicy policy]
   "入れ替え: 新のコードが揃い、新の入口の検めが通るまでは旧を動かしたまま準備と検めだけ進め、通ったら旧を名から外す
-   (次の拍で新を同じ名で起こす)。検めが FAILED の間は旧を外さない(書き手の空白を作らない)。退いた process が既に上限 R
+   (次の拍で新を同じ名で起こす)。検めが FAILED の間と、新の Program の file が手元に無い間(program-waits)は旧を外さない(書き手の空白を作らない)。退いた process が既に上限 R
    (retired-limit-for — 宣言の retiredLimit か policy.retired-limit)だけ居れば、外さずに待つ — 退いた process が自分で終わるか寿命の
    上限で止まった拍で外す(同時に動くのは R + 1 まで・退いた process が回している仕事は切らない・#4072 の D-3 の改め)。"
   (setv tree (ready-path (code-of world (code-key want))))
@@ -349,6 +377,7 @@
       (do (setv gate (probe-actions now want tree world policy))
           (cond
             (is-not gate None) gate
+            (program-waits world want) #()
             (retired-room-full want process.name world policy) #()
             True #((RetireJob process.name process.pid (retired-name process.name (or process.instance (str process.pid)))))))
       ;; 焼く道具の並べる数は道具の既定のまま(絞るのは recreate の job の replace-step だけ — 2026-10-08)。
@@ -823,6 +852,8 @@
           (= code.state CodeState.FAILED) JobPhase.CODE-FAILED
           (is-not (probe-failure world want) None) JobPhase.PROBE-FAILED
           (is-not (probe-in-flight world want) None) JobPhase.PROBING
+          ;; Program の file を待っている間は準備の段階のまま(段階の語は足さず、理由は状態の行の文 — warm の待ちと同じ形)。
+          (program-waits world want) JobPhase.PREPARING
           (in-backoff now record policy) JobPhase.BACKOFF
           ;; 待ちの子が起動の断りの上限に達した task は、準備の失敗として終える。
           (and (forks-from-warm-child want) (warm-child-refused (warm-child-of world (warm-key-of want)) policy)) JobPhase.ENV-FAILED
@@ -908,6 +939,7 @@
           (.format "旧い版を動かしたまま — 新しい版を準備できない: {}" code.detail)
         (and replacing (is-not probe None)) (.format "旧い版を動かしたまま — 新の入口を読み込めない: {}" probe.detail)
         (and replacing (is-not probing None)) (.format "旧い版を動かしたまま — {}" (probing-detail probing))
+        (and replacing (program-waits world want)) (.format "旧い版を動かしたまま — {}" (program-wait-detail world want))
         ;; 検めの後、新しい版の待ちの子の準備を待っている間(replace-step の WARM-CHILD)。
         (and replacing (is-not (ready-path code) None) (= (warm-start want world policy warm-keys) WarmStart.WAIT))
           "旧い版を動かしたまま — 新しい版の待ちの子の準備中"
@@ -919,6 +951,9 @@
         ;; 入口の検めの間(撃ち直しの間も直前の失敗の理由を出す — 2026-09-27)。入れ替えの途中なら旧が動いていることも示す。
         (and (is-not probing None) handing-off) (.format "入れ替えを待つ(旧は動かしたまま)— {}" (probing-detail probing))
         (is-not probing None) (probing-detail probing)
+        ;; Program の file を待っている間(program-waits)。入れ替えの途中なら旧が動いていることも示す。動いている同じ spec の process は待たない。
+        (and handing-off (program-waits world want)) (.format "入れ替えを待つ(旧は動かしたまま)— {}" (program-wait-detail world want))
+        (and (is process None) (is-not want None) (program-waits world want)) (program-wait-detail world want)
         ;; 待ちの子が起動の断りの上限に達した task。
         (is-not refused None) (.format "待ちの子が {} 回続けて断った: {}" (+ refused.refusals 1) refused.detail)
         ;; 最後の StartJob が起こせなかった(backoff の後に起こし直す)。
