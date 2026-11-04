@@ -5125,7 +5125,11 @@ fn program_fields_over(root: &Path, enabled: &BTreeSet<ProjectRule>, reach: fact
     }
     let found: Vec<bare_calls::ProgramFields> = facts_cache::per_file_in(reach, root, "program-fields", "", files, |rel, path| {
         let source = std::fs::read_to_string(path).ok()?;
-        source.contains("(defrecord").then(|| bare_calls::program_fields_in(&source, &module_of(rel))).filter(|f| !f.is_empty())
+        ["(defrecord", "(defwire", "(defenum"]
+            .iter()
+            .any(|head| source.contains(head))
+            .then(|| bare_calls::program_fields_in(&source, &module_of(rel)))
+            .filter(|f| !f.is_empty())
     });
     for fields in found {
         all.extend(fields);
