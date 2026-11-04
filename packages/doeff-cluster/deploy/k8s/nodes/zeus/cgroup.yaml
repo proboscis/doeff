@@ -60,6 +60,8 @@
 # 54 MiB + 運用の読み 15 MiB = 138 MiB — 11-04 18:2x UTC にこの Pod で測った子の RSS の最大・値の決め方は ../../cgroup-layers の頭の註)に、
 # 運用の hy の 1 本(worker の本体の VmHWM 463 MiB)と重なりの余りを足した値。誰にも割り当てていなかった 2G のうち 1G を使い、和は
 # 守る層 26G + 限る層 73G = 99G。cpu.weight は前に居た worker の層と同じ 1000(配備の層と同じ扱い)。
+# cargo の中間物を memory に置いた後の値(11-04): 命令の層 commands の memory.max を 32G → 48G に上げ、container の上限を 100Gi → 116Gi に上げる(守る層 26G +
+# 限る層 89G = 115G — 誰にも割り当てない余り 1G は変えない)。足した 16G は tmpfs の上限と同じ(cargo-build-in-memory.yaml の頭の註)。
 #
 # 雛形の env の並び(WORK_DIR が 1 番・DRAIN_DEADLINE が 9 番)を動かさないよう、足す物は全部末尾へ足す。
 - op: add
@@ -96,7 +98,7 @@
 - { op: add, path: /spec/template/spec/containers/0/env/-, value: { name: WORKER_CGROUP_HOST, value: /host/cgroup } }
 - op: add
   path: /spec/template/spec/containers/0/env/-
-  value: { name: WORKER_CGROUP_LAYOUT, value: "worker:memory.min=2G,cpu.weight=1000 services:memory.min=4G,cpu.weight=1000 clis:memory.min=20G,cpu.weight=100 jobs:memory.max=36G,cpu.weight=100 commands:memory.max=32G,cpu.weight=100 deploy:memory.max=4G,cpu.weight=1000 exec:memory.max=1G,cpu.weight=1000" }
+  value: { name: WORKER_CGROUP_LAYOUT, value: "worker:memory.min=2G,cpu.weight=1000 services:memory.min=4G,cpu.weight=1000 clis:memory.min=20G,cpu.weight=100 jobs:memory.max=36G,cpu.weight=100 commands:memory.max=48G,cpu.weight=100 deploy:memory.max=4G,cpu.weight=1000 exec:memory.max=1G,cpu.weight=1000" }
 - { op: add, path: /spec/template/spec/containers/0/env/-, value: { name: DOEFF_WORKER_SERVICE_CGROUP, value: services } }
 - { op: add, path: /spec/template/spec/containers/0/env/-, value: { name: DOEFF_WORKER_JOB_CGROUP, value: jobs } }
 - { op: add, path: /spec/template/spec/containers/0/env/-, value: { name: WORKER_CGROUP_INIT_LAYER, value: exec } }
