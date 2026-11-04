@@ -43,8 +43,8 @@ spec:
             - { name: job-scratch, mountPath: /work/job-scratch }
       volumes:
         # Garage の bay の HDD(g5 = sdh・WD の CMR・xfs)の下の dir。Garage の data とは dir を分ける。type は Directory: HDD が mount されて
-        # いない時は dir が無いので、黙って根の SSD へ書かず、新しい Pod が起動で止まる(RollingUpdate なので旧い Pod は動いたまま)。dir は機体の
-        # 上に 1 度だけ uid 1000 の持ち物で置く。
+        # いない時は dir が無いので、黙って根の SSD へ書かず、新しい Pod が起動で止まる。atlas の strategy は Recreate で旧い Pod は先に消えるので、
+        # その間は worker が止まる。dir は機体の上に 1 度だけ uid 1000 の持ち物で置く(2026-11-05 03:03 JST に置いた)。
         - name: job-scratch
           hostPath: { path: /mnt/garage/g5/agent-worker-jobs, type: Directory }
         # DirectoryOrCreate: pool が import されていない時も worker を起動で止めない(作業場だけが使えない — daemon の番人が止まる)。
