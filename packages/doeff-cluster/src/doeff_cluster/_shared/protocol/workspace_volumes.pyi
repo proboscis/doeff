@@ -51,6 +51,7 @@ from doeff_cluster._shared.intent.workspace_volume_model import WorkspaceVolumeS
 from doeff_cluster._shared.intent.supplied_model import WorkerFactName as WorkerFactName
 from doeff_cluster._shared.core.workspace_volume_rules import AttachStep as AttachStep
 from doeff_cluster._shared.core.workspace_volume_rules import AttachView as AttachView
+from doeff_cluster._shared.core.workspace_volume_rules import BACKUP_COMPLETED as BACKUP_COMPLETED
 from doeff_cluster._shared.core.workspace_volume_rules import BackupView as BackupView
 from doeff_cluster._shared.core.workspace_volume_rules import CoolingPlan as CoolingPlan
 from doeff_cluster._shared.core.workspace_volume_rules import DetachStep as DetachStep
@@ -67,6 +68,7 @@ from doeff_cluster._shared.core.workspace_volume_rules import cooling_order as c
 from doeff_cluster._shared.core.workspace_volume_rules import detach_step as detach_step
 from doeff_cluster._shared.core.workspace_volume_rules import mount_entries as mount_entries
 from doeff_cluster._shared.core.workspace_volume_rules import mounted_at as mounted_at
+from doeff_cluster._shared.core.workspace_volume_rules import restore_node as restore_node
 from doeff_cluster._shared.core.workspace_volume_rules import room_bytes as room_bytes
 from doeff_cluster._shared.core.workspace_volume_rules import hyx_room_coversXquestion_markX as hyx_room_coversXquestion_markX
 from doeff_cluster._shared.core.workspace_volume_rules import newest_backup as newest_backup
@@ -97,6 +99,9 @@ SETTINGS_KEY: str
 HELD_SETTINGS_DIR: str
 JSON_TYPE: str
 MERGE_PATCH_TYPE: str
+RESTORE_REBUILDS: int
+RESTORE_FAILURE_REASON: str
+ROBUSTNESS_FAULTED: str
 CLASS_PARAMETERS: frozenset[str]
 CLASS_FS_TYPE: str
 
@@ -133,6 +138,7 @@ class VolumeConditionWire:
 @dataclass(frozen=True, kw_only=True)
 class VolumeStatusWire:
     state: str = ''
+    robustness: str = ''
     current_node_id: str = ''
     restore_required: bool = False
     restore_initiated: bool = False
@@ -253,6 +259,7 @@ class NodeStatusWire:
 
 @dataclass(frozen=True, kw_only=True)
 class NodeWire:
+    metadata: NamedMetaWire | None = None
     spec: NodeSpecWire | None = None
     status: NodeStatusWire | None = None
 
@@ -333,6 +340,8 @@ class VolumeRead:
     placing: Placing
     size: int = 0
     actual: int = 0
+    from_backup: str = ''
+    restore_failure: str | None = None
 
 def refused(owner: str, doing: str, reason: str) -> _Program[WorkspaceVolumeRefused, object]:
     ...
@@ -384,7 +393,7 @@ def held_settings_text(site: WorkspaceVolumeSite, detail: str) -> _Program[str |
 def class_parameters(owner: str, class_name: str) -> _Program[dict[str, str], object]:
     ...
 
-def volume_create_text(site: WorkspaceVolumeSite, name: str, parameters: dict[str, str], size_bytes: int, from_backup: str) -> _Program[str, object]:
+def volume_create_text(site: WorkspaceVolumeSite, name: str, parameters: dict[str, str], size_bytes: int, from_backup: str, node: str) -> _Program[str, object]:
     ...
 
 def longhorn_path(site: WorkspaceVolumeSite, kind: str) -> _Program[str, object]:
@@ -396,6 +405,9 @@ def epoch_of(text: str) -> _Program[float | None, object]:
 def placing_of(status: VolumeStatusWire) -> _Program[Placing, object]:
     ...
 
+def restore_failure_of(status: VolumeStatusWire) -> _Program[str | None, object]:
+    ...
+
 def volume_read_of(owner: str, doing: str, held: VolumeWire) -> _Program[VolumeRead, object]:
     ...
 
@@ -405,7 +417,7 @@ def volume_read(site: WorkspaceVolumeSite, owner: str, doing: str, name: str) ->
 def waited_gone(site: WorkspaceVolumeSite, owner: str, doing: str, name: str) -> _Program[None, object]:
     ...
 
-def waited_restored(site: WorkspaceVolumeSite, owner: str, doing: str, name: str) -> _Program[None, object]:
+def waited_restored(site: WorkspaceVolumeSite, owner: str, doing: str, name: str) -> _Program[bool, object]:
     ...
 
 def label_query(name: str, target: str) -> _Program[str, object]:
@@ -438,10 +450,19 @@ def room_waited(site: WorkspaceVolumeSite, owner: str, doing: str, parameters: d
 def room_made(site: WorkspaceVolumeSite, owner: str, doing: str, parameters: dict[str, str], demand: int, fresh: bool) -> _Program[None, object]:
     ...
 
+def restore_node_read(site: WorkspaceVolumeSite, owner: str, doing: str, parameters: dict[str, str], demand: int) -> _Program[str, object]:
+    ...
+
 def replicas_placed(site: WorkspaceVolumeSite, owner: str, doing: str, name: str) -> _Program[bool, object]:
     ...
 
 def dropped_unplaced(site: WorkspaceVolumeSite, owner: str, doing: str, name: str, note: str, fresh: bool) -> _Program[None, object]:
+    ...
+
+def dropped_failed_restore(site: WorkspaceVolumeSite, owner: str, doing: str, name: str, read: VolumeRead) -> _Program[bool, object]:
+    ...
+
+def restore_rebuilt(site: WorkspaceVolumeSite, owner: str, doing: str, name: str, rebuilds: int) -> _Program[int, object]:
     ...
 
 def created_volume(site: WorkspaceVolumeSite, owner: str) -> _Program[WorkspaceOutcome, object]:

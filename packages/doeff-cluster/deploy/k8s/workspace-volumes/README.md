@@ -23,13 +23,13 @@ backup から戻した(作る時だけ)、まとめて冷やすは `CoolingSweep
 
 | effect | 何をするか |
 |---|---|
-| `CreateWorkspaceVolume` | volume が無ければ作る。その名の完了した backup が在れば(冷えている)一番新しい物から戻して RESTORED(戻し終わるまで待つ)、無ければ空で DONE。在れば ALREADY — 戻す途中なら戻し終わりを、消す途中なら消え終わりを待ってから(同じ持ち主の次の頼みは先の戻しに相乗りする)。backup は在るが完了した物が無い名は空で作らずに断る。作る前に札の disk の線ごとの残りを、入る volume の大きさの byte で数え(節「置き場の数え」)、足りなければ外れた volume をその分だけ使い終わりの古い順に冷やしてから POST する。外れた volume を全部冷やしても足りない・冷やした後も足りない時だけ、POST せずに `WorkspaceRoomShort` で断る。戻す volume は backup を取った時の大きさ(status.volumeSize)と値の大きさの大きい方で作る(Longhorn は backup より小さい volume への戻しを断る) |
+| `CreateWorkspaceVolume` | volume が無ければ作る。その名の完了した backup が在れば(冷えている)一番新しい物から戻して RESTORED(戻し終わるまで待つ)、無ければ空で DONE。在れば ALREADY — 戻す途中なら戻し終わりを、消す途中なら消え終わりを待ってから(同じ持ち主の次の頼みは先の戻しに相乗りする)。backup は在るが完了した物が無い名は空で作らずに断る。作る前に札の disk の線ごとの残りを、入る volume の大きさの byte で数え(節「置き場の数え」)、足りなければ外れた volume をその分だけ使い終わりの古い順に冷やしてから POST する。外れた volume を全部冷やしても足りない・冷やした後も足りない時だけ、POST せずに `WorkspaceRoomShort` で断る。戻す volume は backup を取った時の大きさ(status.volumeSize)と値の大きさの大きい方で作り(Longhorn は backup より小さい volume への戻しを断る)、spec.nodeID に札の disk の node を書く。戻しの失敗を読めば待たず、戻す元の Backup が Completed の時だけ消して作り直す(節「戻しの失敗」) |
 | `MountWorkspaceVolume` | 前と同じ。何も付いていない付ける先の dir に中身が在れば(volume の外に書かれた物)、付けずに断る — 付けると中身が隠れる |
 | `AttachWorkspaceVolume` | 前と同じ。ticket を置いた後に Volume へ使った刻の印(annotation `doeff-cluster/used-at` = epoch 秒)を書く。付くのを待つ間に Longhorn が replica を置けないと答え、replica がどこにも置かれていなければ(初めて付ける空の volume)、上限の秒まで待たずに volume を消して `WorkspaceRoomShort`(fresh)で断る |
 | `DetachWorkspaceVolume` | 前と同じ。外した後に使い終わりの刻の印を書く(冷やす順が読む) |
-| `CoolWorkspaceVolume` | 外れている volume を冷やす(節「寿命」の手順)。使っている・戻す途中・ほかの冷やす手順の途中の volume は触らずに断る |
+| `CoolWorkspaceVolume` | 外れている volume を冷やす(節「寿命」の手順)。使っている・戻す途中・ほかの冷やす手順の途中の volume は触らずに断る。戻しに失敗した volume は backup せずに消す(節「戻しの失敗」) |
 | `PurgeWorkspaceVolume` | 冷えた名の backup を消す(最後の backup から keepDays を過ぎた物だけ)。Longhorn の volume が在る名・途中の backup の在る名は断る |
-| `CoolIdleWorkspaceVolumes` | 外れている volume を、冷やす順(節「寿命」)に 1 つずつ冷やす。その後に、答え手の機体に付いている volume のうち file system の空きが線を割った物を付けたまま広げる(節「広げる」— 答えの grown)。冷やせなかった・広げられなかった物は訳を残して次へ進む |
+| `CoolIdleWorkspaceVolumes` | 外れている volume を、冷やす順(節「寿命」)に 1 つずつ冷やす(戻しに失敗した volume は温かく置く時間を待たずに一番先に)。その後に、答え手の機体に付いている volume のうち file system の空きが線を割った物を付けたまま広げる(節「広げる」— 答えの grown)。冷やせなかった・広げられなかった物は訳を残して次へ進む |
 | `ReadWorkspaceRoom` | 札の disk の線ごとの残りの byte(名目の予約の線・実の空きの線 — 節「置き場の数え」。負 = 線を越えて置かれている)と値の spareBytes を答える(何も変えない) |
 | `ReadWorkspacePlace` | 持ち主の volume を付ける先の様子を答える(何も変えない): MOUNTED = 持ち主の volume が付いている・READY = 何も付いておらず dir が無いか空・OUTSIDE = 何も付いておらず dir に中身が在り、持ち主は volume も backup も持たない(持ち主の作業場所は volume の外 — 置き場の不足で volume の外の場所で始めた持ち主)・CLASH = 別の物が付いている、か、dir に中身が在るのに持ち主が volume か backup を持つ |
 | `ReadAttachedWorkspaceVolumes` | 答え手の機体の node に、この答え手の ticket で付いた持ち主の volume を、持ち主の id(小文字)と使った刻で答える(何も変えない)。冷やす手順の snapshot と backup の ticket だけで付いた volume は答えない。呼び手は、自分の覚えの外で付いたままの volume(前の process が付けて残した物)をこれで見つける |
@@ -58,7 +58,7 @@ backup から戻した(作る時だけ)、まとめて冷やすは `CoolingSweep
 - 外側に要る答え手: file(os)・環境(os.environ)・時計(doeff-time)・HTTP と、API server 宛ての要求を区画の CA で検める
   `in-cluster-api-routed`(job の本番の土台が並べる)。
 - 検: `tests/test_workspace_volumes_handler.hy`(本番の答え手を偽の Longhorn と偽の係の上で回し、模擬の答え手と同じ筋書きで結末と様子が
-  揃う事・失敗ケース・Spawn で並べた「戻す途中・冷やす途中・消す途中に次の頼みが来る」)と `tests/test_workspace_volume_rules.hy`。
+  揃う事・失敗ケース・失敗した戻しの作り直し・Spawn で並べた「戻す途中・冷やす途中・消す途中に次の頼みが来る」)と `tests/test_workspace_volume_rules.hy`。
 
 ## 級(StorageClass `longhorn-workspace`)
 
@@ -181,10 +181,34 @@ worker は CSI を通らずに Longhorn の volume を名指しで作るので�
 1. 戻す元を選ぶ: `kubectl -n longhorn-system get backups.longhorn.io -l backup-volume=ws-<id>,backup-target=garage-workspace` の
    state Completed のうち、status.backupCreatedAt が一番新しい物(その status.url が戻す元)。
 2. 壊れた node の volume が残っていれば消す(replica 1 の volume は、replica の在る node が戻るまで付かない)。
-3. 同じ名 `ws-<id>` の Longhorn の volume を、級の値(上の写し方の表)と spec.fromBackup = 選んだ backup の status.url で作る。札 workspace の
-   disk の在る node のどれかに置かれ、Longhorn が中身を戻す(status.restoreRequired が false になるまで待つ)。
+3. 同じ名 `ws-<id>` の Longhorn の volume を、級の値(上の写し方の表)と spec.fromBackup = 選んだ backup の status.url・spec.nodeID = 札 workspace の
+   disk の在る node で作る(節「戻しの失敗」の付け先)。その disk に置かれ、Longhorn が中身を戻す(status.restoreRequired が false になるまで待つ)。
 4. 使う機体の node に attach する。replica が別の node に置かれていれば、dataLocality best-effort がその node へ寄せる。
 5. mount して使う。戻した volume は file system を持つので mkfs しない。
+
+### 戻しの失敗
+
+Longhorn v1.13 は、replica の戻しが全部失敗すると volume を robustness faulted・state detached・condition Restore False(reason RestoreFailure)にし、
+status.restoreRequired を true のまま残す。戻し直さない(設定 auto-salvage は restoreRequired の volume を除く — 2026-11-04 20:48 JST に失敗した volume は
+2 時間後も faulted のまま)。replica が 1 本の級では、replica への戻しの要求が 1 度失敗すれば(負荷で約 3 分の DeadlineExceeded・node の止まり)この形になる。
+
+- 読み(`restore-failure-of`): restoreRequired が true で、外れていて、condition Restore の reason が RestoreFailure か robustness が faulted。戻す途中
+  (restoring)と読まない。付いたままの faulted は途中の様子(engine が落ちると Longhorn は外してから戻しを続ける)なので待つ。restoreRequired が false の
+  volume(戻し終わった・backup から戻していない)は faulted でも失敗と読まない — 消さない。
+- 作り直し(`CreateWorkspaceVolume`): 失敗を読めば restore-seconds を待たず、戻す元の Backup が Completed で使う ticket が無い時だけ、読んだ版の上で volume を
+  消し、消え終わってから同じ手順で作る。1 つの作成の中で 3 回(`RESTORE-REBUILDS`)作り直しても失敗すれば、最後の volume を残して Longhorn の訳を添えて
+  断る(次の頼みが読み直す)。戻す元が Completed でない(無い・途中・失敗)か使う ticket が在る時は、消さずに断る。Backup はどの道でも消さない。
+- 冷やす手順: 失敗した戻しの Snapshot と Backup を取らない(戻していない中身を backup にしない)。消すのは作り直しと同じ確かめの上で、温かく置く時間を待たず、
+  まとめて冷やす回と作る前の数えが一番先に消す(札の disk の予約を返す)。消せない物は訳を残して次へ進む。
+- 並ぶ時: 同じ volume の付けが並んでも(前の試行の付け・前もっての起動)、消しは 1 度しか通らない — 版が進めば DELETE は 409 で退いて読み直し(次の世代を
+  消さない)、消す途中は消え終わりを待ち、作りは API server が 1 つだけを通す。戻しの待ちの途中に volume が消えたら断らずに読み直し、次の世代の戻しに
+  相乗りする。付けが ticket を置けば、節「寿命」の「使う側が勝つ」と同じ順で消さない。
+- 付け先: 戻しの付け先は replica の node でなく、Longhorn が今の node → ticket の多い node → 持ち主 → 名の順の先頭で選ぶ(replica を見ない。v1.13 の
+  pickAttachmentTicketNodeID)。持ち主は作った直後に最初に reconcile した manager で決まるので、2026-11-04 には ws の付け 466 回のうち 101 回が zeus の外だった。
+  engine が別の node から網越しに replica の状態を読むと、その読みの 1 回の失敗でも戻しが失敗する。だから作る時に spec.nodeID を札の disk の node にする
+  (`restore-node`): 持ち主の manager がその node になり、戻しの ticket もその node に付く。dataLocality best-effort が replica を同じ node に寄せる。
+  Longhorn は戻し終わると spec.nodeID を空に戻すので、使う時の付け先は使う機体の ticket が決める。戻しの中身は replica が backup の先から直に読むので、これで
+  減るのは網越しの状態の読みだけ(backup の先の遅さで失敗する戻しは作り直しが受ける)。
 
 ## 置き場の数え
 

@@ -12,6 +12,7 @@
 ;;;   CreateWorkspaceVolume   持ち主の volume が無ければ作る。冷えている(backup だけが在る)なら一番新しい backup から戻す(在れば ALREADY —
 ;;;                           戻している途中なら戻し終わるまで待つ・消している途中なら消え終わってから戻す)。置き場が入る volume の大きさに
 ;;;                           足りなければ、外れた volume をその大きさの分だけ古い順に冷やしてから作る(冷やしても足りない時だけ断る)
+;;;                           戻しが失敗した volume は待たず、戻す元の backup が完了していれば消して戻し直す(上限まで失敗すれば断る)
 ;;;   AttachWorkspaceVolume   持ち主の volume を、答え手の機体の node に attach し、Longhorn が付け終わるまで待つ
 ;;;   MountWorkspaceVolume    attach した volume を path に mount する(path の dir は答え手が作る。空の volume には ext4 を作る。中身の在る
 ;;;                           dir には付けない — 中身を隠さない)
