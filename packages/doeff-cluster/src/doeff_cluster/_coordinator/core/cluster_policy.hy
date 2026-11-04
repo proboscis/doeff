@@ -1406,7 +1406,11 @@
    試行の待ちの行(key・Program・置き方の名乗りは同じ。id が替わる — 呼び手は put-gone で前の行を消す。待ちの期限と知らせは積み直した刻から
    数える。前の試行の worker の失敗の覚えと退きの印は持ち越さない)。detail には退きか消失かと、上限に数えた消失の数を書く(読み手が「上限に
    近い」と「入れ替えに当たった」を見分ける)。ほかは lost。"
-  (setv losses (if (is retiring None) (+ task.losses 1) task.losses))
+  (setv losses (if (is retiring None) (+ task.losses 1) task.losses)
+        note (if (is retiring None)
+                 (.format "{} — 試行 {} を待つ(上限に数えた消失 {}/{} 回)" why (+ task.attempt 1) losses RERUN-LIMIT)
+                 (.format "{} — 予定した退き({})なので上限に数えない — 試行 {} を待つ(上限に数えた消失 {}/{} 回)"
+                          why retiring (+ task.attempt 1) losses RERUN-LIMIT)))
   (cond
     (not task.rerun)
       (end-detached task "lost" now (.format "{} — 走らせ直さない" why))
@@ -1416,10 +1420,13 @@
       (replace task :id (rerun-id task) :attempt (+ task.attempt 1) :phase "queued" :worker None :boot None :started-ms None
                :submitted-ms now :lease-until-ms (+ now task.lease-ms) :reported False :queued-noticed-ms None
                :avoid #() :env-attempts 0 :failure-kind "" :retryable False :losses losses :retiring ""
-               :detail (if (is retiring None)
-                           (.format "{} — 試行 {} を待つ(上限に数えた消失 {}/{} 回)" why (+ task.attempt 1) losses RERUN-LIMIT)
-                           (.format "{} — 予定した退き({})なので上限に数えない — 試行 {} を待つ(上限に数えた消失 {}/{} 回)"
-                                    why retiring (+ task.attempt 1) losses RERUN-LIMIT)))))
+               :rerun-note note :detail note)))
+
+
+(defn #^ str waiting-detail [#^ TaskRecord task #^ str text]
+  "純粋: 待っている task の detail(待つ訳の文 text)。走らせ直した試行は、前の試行が退きか消失か(rerun-note)を頭に残す — 積み直した拍に
+   置き先が無くても、読み手が「入れ替えに当たった」と「上限に近い」を見分けられるように。"
+  (if task.rerun-note (.format "{} — {}" task.rerun-note text) text))
 
 
 (defn #^ (| str None) retiring-of [#^ TaskRecord task #^ ClusterState state #^ int now]
@@ -1657,7 +1664,7 @@
         ;; 理由は閉じた語(misfit-reason)の固定の文(task-unplaced-text)。既に同じ文なら書き換えない(調停が拍ごとに保存して版を進めない)。
         ;; drain 中・disk 尽きで置ける先が 1 つも無い(able-now が空)時は、今までどおり理由を書かずに待つ(空きの話ではない)。
         able-now
-          (let [text (! (task-unplaced-text (! (misfit-reason misfits))))]
+          (let [text (waiting-detail task (! (task-unplaced-text (! (misfit-reason misfits)))))]
             (when (!= task.detail text)
               (setv (get writes id) (replace task :detail text))))
         ;; 準備の一時の失敗の後に、置き直せる別の worker が無い: 最後の失敗で終える。
@@ -1694,8 +1701,8 @@
             (setv (get writes id)
                   (cond
                     (is ended None)
-                      (replace task :detail (.format "要る能力 {} の worker {} がいま連絡していない — 連絡が戻るまで待つ(待ちの期限 = 最後の連絡から {} 秒)"
-                                                     (list task.needs) names limit-s))
+                      (replace task :detail (waiting-detail task (.format "要る能力 {} の worker {} がいま連絡していない — 連絡が戻るまで待つ(待ちの期限 = 最後の連絡から {} 秒)"
+                                                                          (list task.needs) names limit-s)))
                     task.detached (end-detached task (unplaceable-phase task state now timing) now ended)
                     True (replace task :phase "failed" :finished-ms now :detail ended)))))))
   (task-writes state.tasks writes))
