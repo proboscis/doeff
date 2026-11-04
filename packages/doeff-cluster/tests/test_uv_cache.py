@@ -9,6 +9,8 @@
   一時の物。同じ回に venv を消して hardlink の数が 1 に戻った展開済みの wheel も消す。count は何も消さない。前の gc から間が無ければ消さない。
   予算を渡すと、cache だけが持つ byte(venv が hardlink で持つ中身を除き、cache の中で共に持つ中身は 1 度)が予算を越える分を、
   floor を過ぎた古い項目から消し、venv が hardlink か symlink で指す項目・process が読み込んだ項目は消さない。
+- 置き場: s3://<bucket>/<key> の URL は Secret の鍵 endpoint(Secret が無ければ AWS_ENDPOINT_URL_S3)へ送り、upkeep は Secret の名
+  だけを替えると別の置き場から入れ、戻すと元の置き場から入れる。endpoint が無ければ断る。http(s) の URL と file の path はそのまま。
 - upkeep: 環境変数を読んで seed と gc を順に撃ち、seed が落ちても gc を撃つ。空きが下限を下回れば seed しない。refresh は名指した node でだけ撃つ。
 - refresh: 空の cache に project ごとの取り込みを撃ち(venv は project の外)、組みの一時の環境を除いて pack し、lock の hash を
   metadata に載せて PUT する。置いてある写しの hash が同じか、置いてから間が無ければ組まない。取り込みが落ちれば PUT しない。
@@ -155,6 +157,8 @@ class _RangeHandler(http.server.BaseHTTPRequestHandler):
     etag = '"v1"'
     part_etag = '"v1"'
     ranges: tuple[str, ...] = ()
+    # 署名の access key の id(Authorization の Credential=<id>/…)を GET ごとに並べる。
+    keys: tuple[str, ...] = ()
     lock = threading.Lock()
 
     def do_HEAD(self) -> None:
@@ -167,8 +171,10 @@ class _RangeHandler(http.server.BaseHTTPRequestHandler):
         found = re.fullmatch(r"bytes=(\d+)-(\d+)", self.headers.get("Range", ""))
         assert found is not None
         start, end = int(found[1]), int(found[2])
+        signed = re.search(r"Credential=([^/]+)/", self.headers.get("Authorization", ""))
         with self.lock:
             type(self).ranges = (*type(self).ranges, self.headers["Range"])
+            type(self).keys = (*type(self).keys, signed[1] if signed else "")
         chunk = self.body[start : end + 1]
         self.send_response(206)
         self.send_header("Content-Length", str(len(chunk)))
@@ -592,6 +598,118 @@ def test_upkeep_refreshes_only_on_the_named_node() -> None:
     assert not uv_cache.UpkeepSettings.from_env({**env, "NODE_NAME": "n2"}).refreshes
     assert not uv_cache.UpkeepSettings.from_env(env).refreshes
     assert not uv_cache.UpkeepSettings.from_env({}).refreshes
+
+
+# ── 置き場(s3:// の URL と Secret の endpoint)────────────────────────────────
+
+
+def _secrets(monkeypatch: pytest.MonkeyPatch, stores: dict[str, dict[str, str]]) -> None:
+    """read_secret(k8s の API server の読み)の代わり: ref ごとの鍵と値のうち、問われた鍵だけを返す。"""
+
+    def read(ref: str, keys: tuple[str, ...], sa_dir: Path = uv_cache.SA_DIR) -> dict[str, str]:
+        return {key: value for key, value in stores[ref].items() if key in keys}
+
+    monkeypatch.setattr(uv_cache, "read_secret", read)
+
+
+def _store_secret(key: str, endpoint: str) -> dict[str, str]:
+    return {"access-key-id": key, "secret-access-key": f"{key}-secret", "endpoint": endpoint}
+
+
+def test_an_s3_url_goes_to_the_endpoint_of_the_named_secret(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _secrets(
+        monkeypatch,
+        {
+            "ns/garage": _store_secret("g", "http://garage:3900"),
+            "ns/nemo": _store_secret("n", "http://nemo:9000/"),
+        },
+    )
+    url = "s3://uv-cache-seed/seed.tar.zst"
+    assert uv_cache.resolve_store(url, "ns/garage") == uv_cache.Target(
+        "http://garage:3900/uv-cache-seed/seed.tar.zst", uv_cache.Credentials("g", "g-secret")
+    )
+    assert uv_cache.resolve_store(url, "ns/nemo") == uv_cache.Target(
+        "http://nemo:9000/uv-cache-seed/seed.tar.zst", uv_cache.Credentials("n", "n-secret")
+    )
+    assert uv_cache.resolve_store("http://other/b/k", "ns/nemo") == uv_cache.Target(
+        "http://other/b/k", uv_cache.Credentials("n", "n-secret")
+    )
+    assert uv_cache.resolve_store("/srv/seed.tar.zst", "ns/nemo") == uv_cache.Target(
+        "/srv/seed.tar.zst", None
+    )
+
+
+def test_an_s3_url_without_an_endpoint_is_refused(monkeypatch: pytest.MonkeyPatch) -> None:
+    _secrets(monkeypatch, {"ns/bare": {"access-key-id": "a", "secret-access-key": "b"}})
+    for name in (
+        "AWS_ENDPOINT_URL_S3",
+        "AWS_ENDPOINT_URL",
+        "AWS_ACCESS_KEY_ID",
+        "AWS_SECRET_ACCESS_KEY",
+    ):
+        monkeypatch.delenv(name, raising=False)
+    with pytest.raises(SystemExit, match="endpoint"):
+        uv_cache.resolve_store("s3://b/k", "ns/bare")
+    with pytest.raises(SystemExit, match="AWS_ENDPOINT_URL_S3"):
+        uv_cache.resolve_store("s3://b/k", None)
+    with pytest.raises(SystemExit, match="s3://<bucket>/<key>"):
+        uv_cache.resolve_store("s3://b/", "ns/bare")
+    monkeypatch.setenv("AWS_ENDPOINT_URL", "http://fallback:1")
+    monkeypatch.setenv("AWS_ENDPOINT_URL_S3", "http://env:9000")
+    assert uv_cache.resolve_store("s3://b/k", None) == uv_cache.Target("http://env:9000/b/k", None)
+
+
+@pytest.fixture
+def two_stores(source_cache: Path, tmp_path: Path) -> Iterator[dict[str, type[_RangeHandler]]]:
+    """同じ object を持つ 2 つの置き場(endpoint ごとの Range の GET の数え — 置き場ごとに別の handler の型)。"""
+    packed = tmp_path / "seed.tar.zst"
+    uv_cache.pack(source_cache, packed)
+    body = packed.read_bytes()
+    # 型の値は全部ここで決める(親の _RangeHandler の値は前の検が替えたまま残る)。
+    fields = {"body": body, "etag": '"v1"', "part_etag": '"v1"', "ranges": (), "keys": ()}
+    servers = [
+        http.server.ThreadingHTTPServer(("127.0.0.1", 0), type(name, (_RangeHandler,), fields))
+        for name in ("garage", "nemo")
+    ]
+    for server in servers:
+        threading.Thread(target=server.serve_forever, daemon=True).start()
+    try:
+        yield {
+            f"http://127.0.0.1:{server.server_address[1]}": server.RequestHandlerClass
+            for server in servers
+        }
+    finally:
+        for server in servers:
+            server.shutdown()
+            server.server_close()
+
+
+def test_upkeep_seeds_from_the_store_its_secret_names_and_switches_back(
+    two_stores: dict[str, type[_RangeHandler]], tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    (garage, from_garage), (nemo, from_nemo) = two_stores.items()
+    _secrets(
+        monkeypatch, {"ns/garage": _store_secret("g", garage), "ns/nemo": _store_secret("n", nemo)}
+    )
+    env = {
+        "DOEFF_UV_CACHE_SEED_URL": "s3://uv-cache-seed/seed.tar.zst",
+        "DOEFF_UV_CACHE_SEED_MIN_FREE_GIB": "0",
+    }
+    for step, (secret, endpoint, key) in enumerate(
+        [("ns/garage", garage, "g"), ("ns/nemo", nemo, "n"), ("ns/garage", garage, "g")]
+    ):
+        settings = uv_cache.UpkeepSettings.from_env({**env, "DOEFF_UV_CACHE_SEED_SECRET": secret})
+        target = tmp_path / f"cache-{step}"
+        before = {handler: len(handler.keys) for handler in (from_garage, from_nemo)}
+        seeded = uv_cache.upkeep(target, settings, part=97)["seed"]
+        assert seeded["seeded"] is True
+        assert seeded["source"] == f"{endpoint}/uv-cache-seed/seed.tar.zst"
+        assert (target / "archive-v0" / "AAA" / "pkg_a" / "__init__.py").read_text() == "a = 1\n"
+        used, unused = (from_garage, from_nemo) if endpoint == garage else (from_nemo, from_garage)
+        assert set(used.keys[before[used] :]) == {key}
+        assert len(unused.keys) == before[unused]
 
 
 # ── refresh ───────────────────────────────────────────────────────────────
