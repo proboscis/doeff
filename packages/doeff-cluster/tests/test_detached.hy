@@ -1161,8 +1161,8 @@
   (val back (! (state-from-json (json.loads (json.dumps (! (state-to-json lapsed)))) 13000)))
   (assert (= (. (! (row-of-key back "job-saved")) losses) 1))
   (val saved (! (state-to-json lapsed)))
-  (for [row (get saved "tasks")]
-    (.pop row "losses"))
+  (for [saved-row (get saved "tasks")]
+    (.pop saved-row "losses"))
   (val old (! (state-from-json (json.loads (json.dumps saved)) 13000)))
   (val row (! (row-of-key old "job-saved")))
   (assert (= #(row.attempt row.losses) #(2 1)) row))

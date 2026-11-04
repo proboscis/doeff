@@ -418,6 +418,9 @@ def rerun_id(task: TaskRecord) -> str:
 def gone_detached(task: TaskRecord, now: int, why: str, retiring: str | None=None) -> TaskRecord:
     ...
 
+def waiting_detail(task: TaskRecord, text: str) -> str:
+    ...
+
 def retiring_of(task: TaskRecord, state: ClusterState, now: int) -> str | None:
     ...
 

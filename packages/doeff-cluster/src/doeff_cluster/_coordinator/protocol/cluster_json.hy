@@ -68,7 +68,8 @@
                  ;; 走らせ直しを名乗らない行も欄を置かない(同じ訳 — 2026-11-04)。
                  (if task.rerun #{} #{"rerun" "attempt" "losses"})
                  ;; 退きの印の無い行も欄を置かない(同じ訳 — 2026-11-05)。
-                 (if task.retiring #{} #{"retiring"})))
+                 (if task.retiring #{} #{"retiring"})
+                 (if task.rerun-note #{} #{"rerun_note"})))
   (dfor #(k v) (.items row) :if (not-in k unset) k v))
 
 
@@ -131,7 +132,8 @@
               :attempt (stored-int data "attempt" 1)
               ;; 上限に数えた消失の数の欄の無い行は、前の試行を全部数えた(2026-11-05 の前は試行ごとに数えた)・退きの印なし(足した欄)。
               :losses (stored-int data "losses" (- (stored-int data "attempt" 1) 1))
-              :retiring (stored-str data "retiring" "")))
+              :retiring (stored-str data "retiring" "")
+              :rerun-note (stored-str data "rerun_note" "")))
 
 
 (deff ended-to-json [#^ DetachedEnded ended]  ; defk にできない: 保存の綴り(durable_kv — Program の外)と返事の綴り(replies)が呼ぶ純粋な綴り

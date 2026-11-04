@@ -744,6 +744,7 @@ class TaskRecord:
     attempt: int = 1
     losses: int = 0
     retiring: str = ''
+    rerun_note: str = ''
 PLACED_PHASES: frozenset[str]
 ENDED_PHASES: frozenset[str]
 
