@@ -4,7 +4,7 @@
 ;;;
 ;;; 契約(本番と同じ — tests/test_workspace_volumes_handler.hy が両方の答え手で同じ筋書きを回す):
 ;;;   * 名の条件を外れる持ち主の id は、何もせずに断る。
-;;;   * 作る: 無ければ作って DONE・在れば ALREADY。届かない API server は断る。
+;;;   * 作る: 無ければ作って DONE・在れば ALREADY。届かない API server は区画の基盤の止まり(WorkspaceClusterUnreachable)で断る。
 ;;;   * attach: 無い volume・別の node に付いている volume は断る。この node に付いていれば ALREADY・外れていれば付けて DONE。
 ;;;   * mount: 付ける先が絶対の正規の path でない・付ける先に別の volume・付ける先の dir に中身が在る(隠さない — 外側の file の答え手で
 ;;;     読む)・この node に attach されていない・別の path に付いている時は断る。
@@ -34,7 +34,7 @@
                                                            CoolWorkspaceVolume CreateWorkspaceVolume DetachWorkspaceVolume
                                                            MountWorkspaceVolume PurgeWorkspaceVolume ReadAttachedWorkspaceVolumes ReadWorkspacePlace
                                                            ReadWorkspaceRoom UmountWorkspaceVolume WorkspaceOutcome WorkspacePlace
-                                                           WorkspaceRoom WorkspaceRoomShort WorkspaceVolumeRefused])
+                                                           WorkspaceClusterUnreachable WorkspaceRoom WorkspaceRoomShort WorkspaceVolumeRefused])
 (import doeff_core_effects [FileFailed ListDirectory PathKind PathStat StatPath])
 (import doeff_cluster._shared.core.workspace_volume_rules [NAME-PREFIX WarmVolume cooling-name cooling-order owner-refusal ticket-id
                                                          volume-name])
@@ -111,7 +111,7 @@
   (when (is-not refusal None)
     (raise (! (sim-refused owner doing refusal))))
   (when (and api world.down)
-    (raise (! (sim-refused owner doing "API server に届かない: 模擬の世界が down"))))
+    (raise (WorkspaceClusterUnreachable (str (! (sim-refused owner doing "API server に届かない: 模擬の世界が down"))))))
   (! (volume-name owner)))
 
 
@@ -257,7 +257,7 @@
   (when (and (is-not volume None) (is-not volume.mounted-at None))
     (raise (! (sim-refused owner doing (+ "まだ " volume.mounted-at " に mount されている(先に umount)")))))
   (when world.down
-    (raise (! (sim-refused owner doing "API server に届かない: 模擬の世界が down"))))
+    (raise (WorkspaceClusterUnreachable (str (! (sim-refused owner doing "API server に届かない: 模擬の世界が down"))))))
   (<- now float (sim-now))
   (cond
     (or (is volume None) (is volume.node None)) WorkspaceOutcome.ALREADY
@@ -304,7 +304,7 @@
   {:pre [(: world WorkspaceVolumeWorld)] :post [(: % CoolingSweep)] :tags {:context "doeff-cluster" :role "foundation"}}
   "CoolIdleWorkspaceVolumes を世界 world に当てるため(頭の註の契約)。"
   (when world.down
-    (raise (WorkspaceVolumeRefused "持ち主 全部 の volume を 冷やす順の読み できない — API server に届かない: 模擬の世界が down")))
+    (raise (WorkspaceClusterUnreachable "持ち主 全部 の volume を 冷やす順の読み できない — API server に届かない: 模擬の世界が down")))
   (val slots (! (sim-slots world)))
   (val warm (tuple (gfor one world.volumes :if (is one.node None) (WarmVolume :name one.name :used-at one.used-at))))
   (<- now float (sim-now))
@@ -321,7 +321,7 @@
   {:pre [(: world WorkspaceVolumeWorld)] :post [(: % WorkspaceRoom)] :tags {:context "doeff-cluster" :role "foundation"}}
   "ReadWorkspaceRoom を世界 world に当てるため(頭の註の契約)。"
   (when world.down
-    (raise (WorkspaceVolumeRefused "持ち主 全部 の volume を 置き場の読み できない — API server に届かない: 模擬の世界が down")))
+    (raise (WorkspaceClusterUnreachable "持ち主 全部 の volume を 置き場の読み できない — API server に届かない: 模擬の世界が down")))
   (WorkspaceRoom :slots (! (sim-slots world)) :spare world.spare-volumes))
 
 
@@ -329,7 +329,7 @@
   {:pre [(: world WorkspaceVolumeWorld)] :post [(: % (get tuple #(AttachedWorkspaceVolume ...)))] :tags {:context "doeff-cluster" :role "foundation"}}
   "ReadAttachedWorkspaceVolumes を世界 world に当てるため(頭の註の契約 — 世界の機体の node に付いた volume を名の順に)。"
   (when world.down
-    (raise (WorkspaceVolumeRefused "持ち主 全部 の volume を 付いた volume の読み できない — API server に届かない: 模擬の世界が落ちている")))
+    (raise (WorkspaceClusterUnreachable "持ち主 全部 の volume を 付いた volume の読み できない — API server に届かない: 模擬の世界が落ちている")))
   (tuple (gfor one (sorted world.volumes :key (fn [one] one.name)) :if (= one.node world.node)
                (AttachedWorkspaceVolume :owner (cut one.name (len NAME-PREFIX) None) :used-at one.used-at))))
 
