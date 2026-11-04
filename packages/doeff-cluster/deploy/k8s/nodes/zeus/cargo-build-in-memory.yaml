@@ -1,0 +1,49 @@
+# zeus の worker の cargo の build の中間物を memory(tmpfs の emptyDir)に置く(JSON patch・card ki-1ad278628dab)。
+#
+# 訳: 2026-11-04 の測りで、cargo の target は file の byte で 約 710 GB/日(会話の Longhorn の volume の中 439・SSD 直 271)と作業場の SSD の書きの
+# 最大だった。volume の中の書きは disk で 約 2.2 倍になる。主は同じ所の build し直しなので、memory に置けば SSD に届かない。
+#
+# 向け方: env CARGO_BUILD_BUILD_DIR(cargo の build.build-dir・1.91 から)= /cargo-build/{workspace-path-hash}。cargo が作業木の path の hash に展開
+# するので、会話や job ごとの値を組まずに、作業木ごとに分かれる。CARGO_TARGET_DIR は使わない。訳は 2 つ:
+# - 値を 1 つ継ぐだけだと複数の作業木が 1 つの target を分け合い、cargo が別の作業木の build を黙って使う(tools/doeff_cargo_backend.py の頭の註 —
+#   cargo 1.96.1 で実測)。その wheel が保存先に入ると、同じ鍵の build が全部それを引く。
+# - target/debug/<名> を読む script と手順が動かなくなる。build-dir なら target/ の最終の成果物の場所は変わらない。
+# 残る SSD の書き: bin・lib の最終の成果物は target/ へ写る(置き場が別の file system なので hard link でなく copy — 変更の無い cargo build でも写す)。
+# mnemosyne(2026-11-04)で build し直し 1 回の file の byte は target/ 229 MB・memory 343 MB、cargo test --no-run は target/ 172 MB・memory 1,527 MB。
+#
+# 上限 sizeLimit 16Gi: mnemosyne の debug の build と test で 5.6 GiB を越える(11-04 の試し — 大きい build を 2 本と余りが同時に載る)。worker の
+# memory.limit 100Gi を 116Gi へ、層 commands の memory.max 32G を 48G へ、どちらもこの 16G だけ足す(node.yaml・cgroup.yaml)。tmpfs の page は回収
+# されず、書いた process の層に数えられるので、足さないと命令の memory と page cache の取り分がその分だけ減る。job が組むと層 jobs に数えられる
+# (jobs は足さない — 36G に対し 10-24 以降の峰は page cache を含めて 23.7G)。機体の空きの MemAvailable は 7 日の最小で 26.3 GiB なので、全部を
+# 使っても 10 GiB 残り、下の掃除が 12 GiB を割ると古い物から消す。
+#
+# 溢れた時・掃除の決まり: cargo-build-keeper.sh の頭の註。越える書きは ENOSPC で build が失敗し、自動では SSD へ戻らない(1 回を SSD に組む手は
+# `env -u CARGO_BUILD_BUILD_DIR cargo …`)。他の仕事の /tmp と /dev/shm は別の tmpfs なので巻き込まない。
+#
+# 寿命: Pod の作り直しで消える(次の build が組み直す)。入れ替えの間の古い Pod には env も mount も無いので、前と同じに target/ へ組む。
+#
+# 雛形の env の並び(WORK_DIR が 1 番・DRAIN_DEADLINE が 9 番)を動かさないよう末尾へ足す(node.yaml の strategic merge で足すと頭に入る)。
+- { op: add, path: /spec/template/spec/volumes/-, value: { name: cargo-build, emptyDir: { medium: Memory, sizeLimit: 16Gi } } }
+- { op: add, path: /spec/template/spec/volumes/-, value: { name: cargo-build-keeper-script, configMap: { name: cargo-build-keeper, defaultMode: 0444 } } }
+- { op: add, path: /spec/template/spec/containers/0/volumeMounts/-, value: { name: cargo-build, mountPath: /cargo-build } }
+- { op: add, path: /spec/template/spec/containers/0/env/-, value: { name: CARGO_BUILD_BUILD_DIR, value: "/cargo-build/{workspace-path-hash}" } }
+# 掃除の係(native sidecar): 特権は要らない(worker と同じ uid で同じ tmpfs を読み消しする — flock も同じ inode を見る)。
+- op: add
+  path: /spec/template/spec/initContainers/-
+  value:
+    name: cargo-build-keeper
+    image: zeus:5000/agent-worker-exp:in-c17f84e4dcaa
+    restartPolicy: Always
+    securityContext: { runAsUser: 1000, runAsGroup: 1000, runAsNonRoot: true }
+    resources: { requests: { cpu: 10m, memory: 16Mi }, limits: { cpu: 200m, memory: 64Mi } }
+    command: ["/bin/sh", "-c"]
+    args:
+      - |
+        echo "cargo-build-keeper: /cargo-build を見る" >&2
+        while :; do
+          sh /etc/cargo-build-keeper/cargo-build-keeper.sh || echo "cargo-build-keeper: code $? で終わった" >&2
+          sleep 10
+        done
+    volumeMounts:
+      - { name: cargo-build, mountPath: /cargo-build }
+      - { name: cargo-build-keeper-script, mountPath: /etc/cargo-build-keeper }
