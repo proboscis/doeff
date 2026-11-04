@@ -262,13 +262,13 @@ def test_each_node_has_exactly_one_worker_named_after_it(rendered: list[Manifest
         assert selector.get("doeff.dev/node") == node
 
 
-def test_zeus_worker_is_one_deployment_with_100gi_memory_limit(zeus_worker: Manifest) -> None:
-    """zeus の worker は 1 つで、資源の上限は memory 100Gi だけ(CPU の上限は置かない — 2026-10-11 調整役 cisco-c8 の頼み)、取り分は
+def test_zeus_worker_is_one_deployment_with_116gi_memory_limit(zeus_worker: Manifest) -> None:
+    """zeus の worker は 1 つで、資源の上限は memory 116Gi だけ(CPU の上限は置かない — 2026-10-11 調整役 cisco-c8 の頼み)、取り分は
     CPU 4・memory 26Gi(cgroup の層の memory.min の和)。"""
     spec = _mapping(zeus_worker["spec"], "spec")
     assert spec["replicas"] == 1
     resources = _mapping(_container(zeus_worker)["resources"], "resources")
-    assert resources["limits"] == {"memory": "100Gi"}
+    assert resources["limits"] == {"memory": "116Gi"}
     assert resources["requests"] == {"cpu": "4", "memory": "26Gi"}
 
 
@@ -979,8 +979,11 @@ def test_the_memory_allowance_is_the_worker_limit_less_the_worker_and_its_tasks(
             if "memory.max" in settings.get(CGROUP_CLI_LAYER, {})
             else 0
         )
+        # cargo の中間物の tmpfs の分(zeus の上限に足した分 — cargo-build-in-memory.yaml の頭の註)は命令の層の取り分で、常駐の job の予算へ回さない。
+        volumes = [_mapping(v, "volume") for v in _sequence(_pod_spec(worker)["volumes"], "volumes")]
+        cargo_build = sum(_bytes(str(_mapping(v["emptyDir"], "emptyDir")["sizeLimit"])) for v in volumes if v["name"] == "cargo-build")
         allowance = (
-            limit - _bytes(settings[CGROUP_FIRST_LAYER]["memory.min"]) - _bytes(settings[jobs]["memory.max"]) - prepare - conversations
+            limit - _bytes(settings[CGROUP_FIRST_LAYER]["memory.min"]) - _bytes(settings[jobs]["memory.max"]) - prepare - conversations - cargo_build
         ) // 2**20
         assert _mapping(rows[node], node)["memoryMiB"] == allowance, node
 
@@ -1463,6 +1466,29 @@ def test_zeus_worker_keeps_tmp_in_memory_with_a_size_limit(zeus_worker: Manifest
     mount = _mount_at(zeus_worker, "/tmp")
     assert "subPath" not in mount
     assert _volume(zeus_worker, str(mount["name"]))["emptyDir"] == {"medium": "Memory", "sizeLimit": ZEUS_TMP_SIZE_LIMIT}
+
+
+# zeus の worker の cargo の中間物は memory(tmpfs の emptyDir — 機体の dir の cargo-build-in-memory.yaml の頭の註)。
+ZEUS_CARGO_BUILD_SIZE_LIMIT = "16Gi"
+ZEUS_CARGO_BUILD_DIR = "/cargo-build"
+
+
+def test_zeus_worker_points_cargo_intermediates_at_a_sized_memory_mount(zeus_worker: Manifest) -> None:
+    """zeus の worker の CARGO_BUILD_BUILD_DIR は sizeLimit つきの medium Memory の emptyDir の下で、作業木ごとに分かれる形を持つ。失敗ケース:
+    作業木の hash の無い 1 つの値だと、作業木どうしが中間物を分け合い、cargo が別の作業木の build を黙って使う。"""
+    mount = _mount_at(zeus_worker, ZEUS_CARGO_BUILD_DIR)
+    assert _volume(zeus_worker, str(mount["name"]))["emptyDir"] == {"medium": "Memory", "sizeLimit": ZEUS_CARGO_BUILD_SIZE_LIMIT}
+    assert _env_value(zeus_worker, "CARGO_BUILD_BUILD_DIR")["value"] == f"{ZEUS_CARGO_BUILD_DIR}/{{workspace-path-hash}}"
+    assert "CARGO_TARGET_DIR" not in [entry["name"] for entry in _env(zeus_worker)]
+
+
+@pytest.mark.parametrize("name", [node for node in NODES if node != "zeus"])
+def test_other_workers_keep_cargo_intermediates_in_target(rendered: list[Manifest], name: str) -> None:
+    """zeus 以外の機体の worker は cargo の置き場を替えない(memory の取り分を足していない)。"""
+    worker = _worker_on(rendered, name)
+    assert "CARGO_BUILD_BUILD_DIR" not in [entry["name"] for entry in _env(worker)]
+    mounts = [_mapping(m, "volumeMount") for m in _sequence(_container(worker).get("volumeMounts", []), "volumeMounts")]
+    assert not [m for m in mounts if m["mountPath"] == ZEUS_CARGO_BUILD_DIR], mounts
 
 
 # zeus の worker の /dev/shm は memory(tmpfs の emptyDir — 機体の dir の dev-shm-in-memory.yaml の頭の註)。test の使い捨ての PostgreSQL の

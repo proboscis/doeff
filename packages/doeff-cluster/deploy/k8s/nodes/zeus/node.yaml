@@ -32,7 +32,8 @@ spec:
           # 2026-10-11: CPU の上限を外す(この Pod が cpu.max 16 CPU に周期の
           # 43% で当たり、画面の job の最初の下書きの落ち 2.3% → 20.5% と 送り→最初の字 +3 秒の根の見立て)。
           # CPU の取り分(重み)は requests の 4 のまま。memory の上限 100Gi は変えない。戻す時は limits に cpu: "16" を足す。
-          resources: { requests: { cpu: "4", memory: 26Gi }, limits: { memory: 100Gi } }
+          # 2026-11-04: memory の上限を 100Gi → 116Gi へ(cargo の中間物の tmpfs 16Gi の分 — cargo-build-in-memory.yaml の頭の註)。
+          resources: { requests: { cpu: "4", memory: 26Gi }, limits: { memory: 116Gi } }
           # mount の係へ頼む dir を渡す env WORKER_WORKSPACE_MOUNT_DIR は workspace-mount.yaml(JSON patch — ここで足すと env の頭に
           # 入り、generation.yaml が読む env の場所が動く)。
           volumeMounts:
