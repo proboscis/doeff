@@ -13,10 +13,10 @@ import {useSceneFrame} from '../../kit/warp';
 import DURATIONS from './durations.json';
 
 // The rest of the function, k, once it is a value a handler holds.
-const K = '#7cc4ff';
+export const K = '#7cc4ff';
 
 // A pill moving from (x0, y0) to (x1, y1) between two times; hidden before `from` and after `until`.
-const Moving: React.FC<{text: string; color: string; from: number; to: number; x0: number; y0: number; x1: number; y1: number; until?: number}> = ({
+export const Moving: React.FC<{text: string; color: string; from: number; to: number; x0: number; y0: number; x1: number; y1: number; until?: number}> = ({
   text, color, from, to, x0, y0, x1, y1, until = Infinity,
 }) => {
   const frame = useSceneFrame();
@@ -119,8 +119,8 @@ const Function: React.FC = () => {
 };
 
 // A stack of handlers drawn as rings around battle, innermost first.
-type Ring = {label: string; color?: string; glow?: boolean};
-type Geometry = {cx: number; cy: number; bw: number; bh: number; gap: number; font: number};
+export type Ring = {label: string; color?: string; glow?: boolean};
+export type Geometry = {cx: number; cy: number; bw: number; bh: number; gap: number; font: number};
 const BIG: Geometry = {cx: 420, cy: 410, bw: 230, bh: 110, gap: 38, font: 17};
 
 const ringBox = (g: Geometry, i: number) => {
@@ -129,7 +129,7 @@ const ringBox = (g: Geometry, i: number) => {
   return {left: g.cx - w / 2, top: g.cy - h / 2, w, h, right: g.cx + w / 2};
 };
 
-const Tower: React.FC<{rings: Ring[]; g?: Geometry; opacity?: number; note?: boolean; title?: string}> = ({rings, g = BIG, opacity = 1, note = false, title = 'battle()'}) => (
+export const Tower: React.FC<{rings: Ring[]; g?: Geometry; opacity?: number; note?: boolean; title?: string}> = ({rings, g = BIG, opacity = 1, note = false, title = 'battle()'}) => (
   <AbsoluteFill style={{opacity}}>
     {[...rings.keys()].reverse().map((i) => {
       const box = ringBox(g, i);
