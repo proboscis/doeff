@@ -14,12 +14,14 @@
 ;;;                     keepDays の後・まとめて冷やす順と空きの数(本番と模擬)。本番だけ: snapshot と backup の失敗で消さない・読んだ版が
 ;;;                     古い削除は読み直す・札の違う disk を数えない
 ;;;   付ける先の様子    付ける先の様子の読み(MOUNTED・READY・OUTSIDE・CLASH — 本番と模擬)・中身の在る dir には付けない(隠さない)
-;;;   置き場の数え      札の disk の残りが 0 なら作成も戻しも POST せずに置き場の不足で断る(fresh か否か — 本番と模擬)・残りの読み・
+;;;   置き場の数え      線ごとの残りの byte。冷やせる物が無く入らなければ作成も戻しも POST せずに置き場の不足で断る(fresh か否か —
+;;;                     本番と模擬)・入らなければ外れた volume を古い順に、入る大きさの分だけ冷やしてから作る・戻す(10 GiB の戻しは 2 GiB の
+;;;                     空き 4 本ぶんでは入らない — 本番と模擬)・実の使用 1 MB の volume は実の空きの線を空けない(本番と模擬)・残りの読み・
 ;;;                     実の空きの線で断る・付ける時に Longhorn が置けないと答えた空の volume は待たずに消す・replica の置かれた volume は
 ;;;                     消さない・置けない戻しは消して backup を残す・戻す volume は backup の大きさで作る
 ;;;   広げる            (本番だけ — 模擬の世界は file system の空きを持たない)冷やす回が、付いた volume の空きが線を割れば名目を倍に
 ;;;                     書き、engine を待って係に file system を広げさせる・空きの在る物と上限の物は広げない・置き場が足りなければ
-;;;                     書かない・前の広げの続きは倍にしない・engine が広がらなければ係に頼まずに断る
+;;;                     外れた volume を冷やしてから書き、冷やせる物が無ければ書かない・前の広げの続きは倍にしない・engine が広がらなければ係に頼まずに断る
 ;;;   並べて走らせる    (Spawn と模擬の時計)戻す途中に同じ持ち主の次の頼み(メッセージ)が来たら、先の戻しに相乗りして戻し終わりを待つ
 ;;;                     (戻すのは 1 度)・冷やす途中に使い始めたら冷やす側が退き volume が残る・消す途中に使い始めたら消え終わりを待って
 ;;;                     戻す・ticket を置いた直後に消された attach は作り直しを頼む断りを返す
@@ -130,13 +132,15 @@
    書きの数・silent = 係が答えない・restore-settle と snapshot-settle と backup-settle と dying-settle = 戻し・snapshot・backup・消しが
    終わるまでの読みの数・snapshot-error と backup-error = 失敗する・stale-deletes = 版が古いと断る削除の数・vanish-after-ticket =
    ticket を置いた直後に volume が消される回数(冷やす側の削除が間に入った)・extra-disks = 札の違う disk の組(数えない disk)・
-   available = 札 workspace の disk の実の空き(byte — None = 空の disk で storageMaximum と同じ)・minimal = 設定 storage-minimal-available-
-   percentage・unplaceable = 次に replica の置き先を決める時(空の volume を初めて付ける・backup から戻す)に、Longhorn が置けないと答える
-   回数(作る前の数えと付けの間に置き場が尽きた世界)・backup-size = backup が覚える volume の名目の大きさ(None = 値の大きさ)・
+   available = 札 workspace の disk の、volume を置く前の実の空き(byte — None = storageMaximum と同じ。置いた volume の実の使用 actual の
+   和を引いて答える)・unplaceable = 次に replica の置き先を決める時(空の volume を初めて付ける・backup から戻す)に、Longhorn が置けないと答える
+   回数(作る前の数えと付けの間に置き場が尽きた世界)・backup-size = backup が覚える volume の名目の大きさ(None = 値の大きさ — 模擬の
+   世界の backup が size を持てばその大きさ)・
    engine-settle = 名目の大きさを書いた後に engine が広がるまでの読みの数・engine-stuck = engine が広がらない・sizes = volume の名目の
    大きさ(名 → byte — 無ければ値の大きさ)・fs-sizes = 付いた volume の file system の総量(名 → byte — 無ければ値の大きさ)・used =
    file system の使用(名 → byte — 無ければ 0)。settings-gone = 値の ConfigMap が消された(GET に 404 — 筋書きの途中で立てる)。名目の予約の線は過剰割り当て 100% で、札 workspace の disk の storageMaximum は
-   capacity 本ぶん(模擬の世界の残り capacity − volume の数と揃う)・storageScheduled は名目の大きさの和。走らせた後に読む物: pending = 付け外しの途中の読みの残り・leaving = 外す途中の volume の元の node・version = VolumeAttachment の
+   capacity 本ぶん・storageScheduled は名目の大きさの和・設定 storage-minimal-available-percentage は模擬の世界の minimal(模擬の世界の
+   残りの byte と揃う)。走らせた後に読む物: pending = 付け外しの途中の読みの残り・leaving = 外す途中の volume の元の node・version = VolumeAttachment の
    版・revision = Volume の版・restoring と sources = 戻す途中の読みの残りと戻す元・dying = 消す途中の読みの残り・snapshots と backups =
    途中の snapshot と backup・unplaced = replica をまだどこにも置いていない volume の名・failing = Longhorn が置けないと答えている volume の
    名・engine-left = 名目の大きさを書いた後に engine が広がるまでの読みの残り・created = 作成の本文・seen = 受けた要求・asked = 係が
@@ -145,7 +149,7 @@
                           #^ int [races 0] #^ bool [silent False] #^ int [restore-settle 0] #^ int [snapshot-settle 0]
                           #^ int [backup-settle 0] #^ int [dying-settle 0] #^ bool [snapshot-error False] #^ bool [backup-error False]
                           #^ int [stale-deletes 0] #^ int [vanish-after-ticket 0] #^ tuple [extra-disks #()]
-                          #^ (| int None) [available None] #^ int [minimal 25] #^ int [unplaceable 0] #^ (| int None) [backup-size None]
+                          #^ (| int None) [available None] #^ int [unplaceable 0] #^ (| int None) [backup-size None]
                           #^ int [engine-settle 0] #^ bool [engine-stuck False] #^ (| dict None) [sizes None] #^ (| dict None) [fs-sizes None]
                           #^ (| dict None) [used None]]
     ;; defk にできない: class の作り手(Python が呼ぶ口)
@@ -156,7 +160,7 @@
           self.restore-settle restore-settle self.snapshot-settle snapshot-settle self.backup-settle backup-settle
           self.dying-settle dying-settle self.snapshot-error snapshot-error self.backup-error backup-error
           self.stale-deletes stale-deletes self.vanish-after-ticket vanish-after-ticket self.extra-disks extra-disks
-          self.available available self.minimal minimal self.unplaceable unplaceable
+          self.available available self.unplaceable unplaceable
           self.backup-size (if (is backup-size None) SIZE backup-size)
           self.engine-settle engine-settle self.engine-stuck engine-stuck
           self.sizes (dict (or sizes {})) self.fs-sizes (dict (or fs-sizes {})) self.used (dict (or used {})) self.engine-left {}
@@ -221,9 +225,9 @@
   {"metadata" (| {"name" name "resourceVersion" (str world.revision) "creationTimestamp" (! (iso-of 0.0))
                   "annotations" {USED-AT-KEY (str (int volume.used-at))}}
                  (if (in name world.dying) {"deletionTimestamp" (! (iso-of 0.0))} {}))
-   "spec" (| {"backupTargetName" TARGET "size" (str (.get world.sizes name SIZE))}
+   "spec" (| {"backupTargetName" TARGET "size" (str (.get world.sizes name (or volume.size SIZE)))}
              (if (in name world.sources) {"fromBackup" (get world.sources name)} {}))
-   "status" (| status restore {"conditions" [placing]})})
+   "status" (| status restore {"conditions" [placing] "actualSize" volume.actual})})
 
 
 (defk volume-answer [world name]
@@ -402,7 +406,7 @@
   "Backup の GET に答えるため(読むたびに残りを 1 つ減らし、0 で Completed — 世界の backup に足す — か Error)。"
   (val done (lfor one world.held.backups :if (= one.name backup) one))
   (when done
-    (return (! (api-answer 200 (! (backup-payload (get done 0) "Completed" world.backup-size))))))
+    (return (! (api-answer 200 (! (backup-payload (get done 0) "Completed" (or (. (get done 0) size) world.backup-size)))))))
   (when (not-in backup world.backups)
     (return (! (api-answer 404 {"kind" "Status" "reason" "NotFound"}))))
   (val work (get world.backups backup))
@@ -524,7 +528,7 @@
   (val chosen (! (selected-volume path)))
   (var items [])
   (for [one world.held.backups :if (= one.volume chosen)]
-    (:= items (+ items [(! (backup-payload one one.state world.backup-size))])))
+    (:= items (+ items [(! (backup-payload one one.state (or one.size world.backup-size)))])))
   (for [#(name work) (.items world.backups) :if (= work.volume chosen)]
     (:= items (+ items [(! (backup-payload (HeldBackup :volume work.volume :name name :created-at 0.0) "InProgress" world.backup-size))])))
   (! (api-answer 200 {"items" items})))
@@ -557,11 +561,11 @@
 (defk nodes-payload [world]
   {:pre [(: world LonghornWorld)] :post [(: % dict)]}
   "Longhorn の Node の一覧の本文を綴るため(zeus に札 workspace の disk 1 つ — 過剰割り当て 100% の名目で capacity 本を受ける大きさ・実の
-   空き available — と extra-disks)。"
+   空き available から置いた volume の実の使用を引いた物 — と extra-disks)。"
   (val disk {"tags" ["ssd" "workspace"] "allowScheduling" True "storageReserved" 0})
   (val maximum (* world.held.capacity SIZE))
-  (val room {"storageMaximum" maximum "storageScheduled" (sum (gfor volume world.held.volumes (.get world.sizes volume.name SIZE)))
-             "storageAvailable" (if (is world.available None) maximum world.available)
+  (val room {"storageMaximum" maximum "storageScheduled" (sum (gfor volume world.held.volumes (.get world.sizes volume.name (or volume.size SIZE))))
+             "storageAvailable" (- (if (is world.available None) maximum world.available) (sum (gfor volume world.held.volumes volume.actual)))
              "conditions" [{"type" "Ready" "status" "True"} {"type" "Schedulable" "status" "True"}]})
   (val extra (dfor #(index tags) (enumerate world.extra-disks) (+ "extra-" (str index)) tags))
   {"items" [{"metadata" {"name" NODE}
@@ -605,7 +609,7 @@
     (and (= request.method "DELETE") (.startswith path (+ BUNDLES-PATH "/"))) (! (bundle-dropped world (cut path (+ (len BUNDLES-PATH) 1) None)))
     (and (= request.method "GET") (= path NODES-PATH)) (! (api-answer 200 (! (nodes-payload world))))
     (and (= request.method "GET") (= path OVER-PROVISIONING-PATH)) (! (api-answer 200 {"metadata" {"name" "x"} "value" "100"}))
-    (and (= request.method "GET") (= path MINIMAL-AVAILABLE-PATH)) (! (api-answer 200 {"metadata" {"name" "x"} "value" (str world.minimal)}))
+    (and (= request.method "GET") (= path MINIMAL-AVAILABLE-PATH)) (! (api-answer 200 {"metadata" {"name" "x"} "value" (str world.held.minimal)}))
     (and (= request.method "GET") (.startswith path (+ REPLICAS-PATH "?"))) (! (replicas-listed world path))
     (and (= request.method "GET") (.startswith path (+ ENGINES-PATH "?"))) (! (engines-listed world path))
     (and (= request.method "GET") (= path ATTACHMENTS-PATH)) (! (attachments-listed world))
@@ -721,10 +725,18 @@
 
 (defk sweep-text [sweep]
   {:pre [(: sweep CoolingSweep)] :post [(: % str)]}
-  "まとめて冷やす答え sweep を、結末の組に並べる字にするため(failed は断りの文の頭の volume の名だけ・広げた物が在れば grown を足す)。"
-  (+ (.format "sweep slots={} cooled={} failed={}" sweep.slots (.join "," sweep.cooled)
-              (.join "," (gfor line sweep.failed (get (.split line ":" 1) 0))))
+  "まとめて冷やす答え sweep を、結末の組に並べる字にするため(failed は断りの文の頭の volume の名だけ・空けておく量を覆えなければ short・
+   広げた物が在れば grown を足す — 冷やす前の残りの byte は筋書きの room で読む)。"
+  (+ (.format "sweep cooled={} failed={}" (.join "," sweep.cooled) (.join "," (gfor line sweep.failed (get (.split line ":" 1) 0))))
+     (if sweep.covered "" " short")
      (if sweep.grown (+ " grown=" (.join "," sweep.grown)) "")))
+
+
+(defk room-text [room]
+  {:pre [(: room WorkspaceRoom)] :post [(: % str)]}
+  "残りの読み room を、結末の組に並べる字にするため(byte を値の大きさ sizeBytes の何本ぶんかで書く — 割り切れなければ byte のまま)。"
+  (val spelled (fn [amount] (if (= (% amount SIZE) 0) (+ (str (// amount SIZE)) "s") (str amount))))
+  (.format "room nominal={} actual={} spare={}" (spelled room.nominal) (spelled room.actual) (spelled room.spare)))
 
 
 (defk step-outcome [step]
@@ -733,7 +745,7 @@
   (match step.verb
     "wait" (do (<- (Delay step.seconds)) (return "waited"))
     "sweep" (do (<- sweep CoolingSweep (CoolIdleWorkspaceVolumes)) (return (! (sweep-text sweep))))
-    "room" (do (<- room WorkspaceRoom (ReadWorkspaceRoom)) (return (.format "room slots={} spare={}" room.slots room.spare)))
+    "room" (do (<- room WorkspaceRoom (ReadWorkspaceRoom)) (return (! (room-text room))))
     "place" (do (<- place WorkspacePlace (ReadWorkspacePlace step.owner step.path)) (return (+ "place " place.value)))
     "attached" (do (<- attached tuple (ReadAttachedWorkspaceVolumes))
                    (return (+ "attached " (.join "," (gfor one attached (.format "{}@{}" one.owner (int one.used-at))))))))
@@ -784,7 +796,7 @@
 (defk on-api [world steps [files WORKER-FILES] [start 0.0]]
   {:pre [(: world LonghornWorld) (: steps tuple) (: files MemoryFiles) (: start float)] :post [(: % ApiRan)]}
   "本番の答え手で、相手役の世界 world に筋書き steps を(模擬の時計の刻 start から)当てた結末の組と、終わりの memory の file を得るため。"
-  (<- ran ApiRan (with_handlers [(state) (memory-file-handler files) (sim-time-handler :clock (! (clock-from start))) (node-environ NODE)
+  (<- ran ApiRan (with_handlers [slog-discard-handler (state) (memory-file-handler files) (sim-time-handler :clock (! (clock-from start))) (node-environ NODE)
                                  (longhorn-peer world) (keeper-peer world) (workspace-volumes-api SITE)]
                    (finished-run steps)))
   ran)
@@ -1115,14 +1127,18 @@
 
 
 (deftest test-the-idle-sweep-cools-the-stale-and-then-the-oldest-on-both-handlers
-  ;; 値の spareVolumes は 4。空き 7(12 − 5)なら 2 時間を過ぎた a1・a2 だけ — 付いている a5 は古くても冷やさない。
-  ;; 空き 1(6 − 5)では 1 + 2 < 4 なので、2 時間の内の a3 を古い順に 1 本足す。空き 0(5 − 5)では外れた物を全部(0 + 4 = 4)。
-  (for [#(capacity wanted left) #(#(12 "sweep slots=7 cooled=ws-c-a1,ws-c-a2 failed=" #("ws-c-a3" "ws-c-a4" "ws-c-a5"))
-                                  #(6 "sweep slots=1 cooled=ws-c-a1,ws-c-a2,ws-c-a3 failed=" #("ws-c-a4" "ws-c-a5"))
-                                  #(5 "sweep slots=0 cooled=ws-c-a1,ws-c-a2,ws-c-a3,ws-c-a4 failed=" #("ws-c-a5")))]
-    (<- ran BothRan (both (fn [] (idle-world capacity)) #((Step :verb "sweep")) (* 10 3600.0)))
-    (assert (= ran.real #(wanted)) ran.real)
-    (assert (= ran.held #(wanted)) ran.held)
+  ;; 値の spareBytes は 16 GiB(値の大きさ 2 GiB の 8 本ぶん)。どの volume も名目 2 GiB。名目の残り 7 本ぶん(12 − 5)に、2 時間を過ぎた
+  ;; a1・a2 の 2 本ぶんを足せば 9 本ぶんで届く — a1・a2 だけ(付いている a5 は古くても冷やさない)。残り 5 本ぶんでは 7 本ぶん → a3 を
+  ;; 古い順に足して 8。残り 4 本ぶんでは外れた物を全部で 8。残り 3 本ぶんでは全部冷やしても 7 本ぶんで届かない → 2 時間を過ぎた物だけ
+  ;; (温かい a3・a4 は冷やしても届かないので残す)。
+  (for [#(capacity wanted left) #(#(12 "sweep cooled=ws-c-a1,ws-c-a2 failed=" #("ws-c-a3" "ws-c-a4" "ws-c-a5"))
+                                  #(10 "sweep cooled=ws-c-a1,ws-c-a2,ws-c-a3 failed=" #("ws-c-a4" "ws-c-a5"))
+                                  #(9 "sweep cooled=ws-c-a1,ws-c-a2,ws-c-a3,ws-c-a4 failed=" #("ws-c-a5"))
+                                  #(8 "sweep cooled=ws-c-a1,ws-c-a2 failed= short" #("ws-c-a3" "ws-c-a4" "ws-c-a5")))]
+    (<- ran BothRan (both (fn [] (idle-world capacity)) #((Step :verb "room") (Step :verb "sweep")) (* 10 3600.0)))
+    (val room (.format "room nominal={}s actual={}s spare=8s" (- capacity 5) capacity))
+    (assert (= ran.real #(room wanted)) ran.real)
+    (assert (= ran.held #(room wanted)) ran.held)
     (assert (= (tuple (gfor one ran.api.held.volumes one.name)) left) ran.api.held.volumes)
     (assert (= (tuple (gfor one ran.sim.volumes one.name)) left) ran.sim.volumes)
     (assert (= (len ran.api.held.backups) (- 5 (len left))) ran.api.held.backups)))
@@ -1130,8 +1146,8 @@
 
 (deftest test-the-idle-sweep-counts-only-disks-with-the-class-tag
   (val api (LonghornWorld (idle-world 12) :extra-disks #(#("hot" "ssd") #("ssd"))))
-  (<- ran ApiRan (on-api api #((Step :verb "sweep")) WORKER-FILES (* 10 3600.0)))
-  (assert (= ran.outcomes #("sweep slots=7 cooled=ws-c-a1,ws-c-a2 failed=")) ran.outcomes))
+  (<- ran ApiRan (on-api api #((Step :verb "room") (Step :verb "sweep")) WORKER-FILES (* 10 3600.0)))
+  (assert (= ran.outcomes #("room nominal=7s actual=12s spare=8s" "sweep cooled=ws-c-a1,ws-c-a2 failed=")) ran.outcomes))
 
 
 (deftest test-a-failed-snapshot-or-backup-keeps-the-volume
@@ -1209,15 +1225,17 @@
 ;; --- 置き場の数え(作る前に数える・置けない volume を残さない)----------------------------------------------------------
 
 (deftest test-a-full-disk-is-refused-before-the-volume-is-posted-on-both-handlers
-  ;; 札の disk が受けられる残りが 0(capacity 2 に温かい volume 2 本)。新しい持ち主の作成も冷えた持ち主の戻しも、POST せずに置き場の
-  ;; 不足で断る(新しい持ち主 = fresh・冷えた持ち主 = 中身を持つ)。残りの読みは 0 本と値の spareVolumes 4 を答える。
+  ;; 札の disk の名目の残りが 0(capacity 2 に付いている volume 2 本 — 冷やせる物が無い)。新しい持ち主の作成も冷えた持ち主の戻しも、
+  ;; POST せずに置き場の不足で断る(新しい持ち主 = fresh・冷えた持ち主 = 中身を持つ)。残りの読みは名目 0・実 2 本ぶんと値の spareBytes。
   (val cold-other (HeldBackup :volume (! (volume-name OTHER)) :name (+ (! (volume-name OTHER)) "-cool-0") :created-at 0.0))
   (val full (fn [] (WorkspaceVolumeWorld NODE :capacity 2 :backups #(cold-other)
-                                         :volumes #((HeldVolume :name "ws-c-w1" :formatted True) (HeldVolume :name "ws-c-w2" :formatted True)))))
+                                         :volumes #((HeldVolume :name "ws-c-w1" :node NODE :formatted True)
+                                                    (HeldVolume :name "ws-c-w2" :node NODE :formatted True)))))
   (<- ran BothRan (both full #((Step :verb "room") (Step :verb "create" :owner OWNER) (Step :verb "create" :owner OTHER))))
   (for [outcomes #(ran.real ran.held)]
-    (assert (= (! (kinds outcomes)) #("room slots=0 spare=4" "short-fresh" "short-held")) outcomes)
-    (assert (in "もう受けられない" (get outcomes 1)) outcomes))
+    (assert (= (! (kinds outcomes)) #("room nominal=0s actual=2s spare=8s" "short-fresh" "short-held")) outcomes)
+    (assert (in "もう受けられない" (get outcomes 1)) outcomes)
+    (assert (in "外れた volume を全部冷やしても足りない" (get outcomes 1)) outcomes))
   (assert (= ran.api.created #()) ran.api.created)
   (assert (not (any (gfor seen ran.api.seen (= seen.method "POST")))) ran.api.seen)
   (assert (= (len ran.api.held.volumes) 2) ran.api.held.volumes)
@@ -1225,20 +1243,83 @@
   ;; 1 本空けば(capacity 3)作る。
   (<- room BothRan (both (fn [] (WorkspaceVolumeWorld NODE :capacity 3 :volumes #((HeldVolume :name "ws-c-w1" :formatted True))))
                          #((Step :verb "room") (Step :verb "create" :owner OWNER) (Step :verb "room") (Step :verb "create" :owner OTHER))))
-  (assert (= room.real #("room slots=2 spare=4" "done" "room slots=1 spare=4" "done")) room.real)
+  (assert (= (cut room.real 3) #("room nominal=2s actual=3s spare=8s" "done" "room nominal=1s actual=3s spare=8s")) room.real)
   (assert (= room.held room.real) room.held))
+
+
+;; 冷やして空ける検の世界: 名目 2 GiB の外れた volume を使い終わりの古い順に w1・w2・w3(刻 0・1・2 時間)と、付いている volume 1 本。
+(val warm-three (fn [capacity [backups #()]]
+                  (WorkspaceVolumeWorld NODE :capacity capacity :backups backups
+                                        :volumes #((HeldVolume :name "ws-c-w1" :formatted True :used-at 0.0)
+                                                   (HeldVolume :name "ws-c-w2" :formatted True :used-at 3600.0)
+                                                   (HeldVolume :name "ws-c-w3" :formatted True :used-at 7200.0)
+                                                   (HeldVolume :name "ws-c-m1" :node NODE :formatted True :used-at 0.0)))))
+
+
+(deftest test-a-restore-larger-than-the-free-slots-cools-the-oldest-first-on-both-handlers
+  ;; 2026-11-04 08:05 JST の形: 名目の残りは値の大きさ 2 GiB の 4 本ぶん(8 GiB — 前の数えでは空けておく 4 本に届くので冷やさなかった)、
+  ;; 戻す backup は 10 GiB(5 本ぶん)。作る手は、外れた volume を古い順に 1 本(w1)冷やして 10 GiB を空けてから戻す(温かく置く 2 時間
+  ;; を待たない — 刻 2.5 時間)。残る w2・w3 は冷やさない。
+  (val cold (HeldBackup :volume NAME :name (+ NAME "-cool-0") :created-at 0.0 :size (* 5 SIZE)))
+  (<- ran BothRan (both (fn [] (warm-three 8 #(cold))) #((Step :verb "room") (Step :verb "create" :owner OWNER)) (* 2.5 3600.0)))
+  (for [#(outcomes volumes) #(#(ran.real ran.api.held.volumes) #(ran.held ran.sim.volumes))]
+    (assert (= outcomes #("room nominal=4s actual=8s spare=8s" "restored")) outcomes)
+    (assert (= (tuple (gfor one volumes one.name)) #("ws-c-w2" "ws-c-w3" "ws-c-m1" NAME)) volumes))
+  ;; [removed]
+  (assert (= (lfor one ran.api.held.backups one.volume) [NAME "ws-c-w1"]) ran.api.held.backups)
+  (assert (= (lfor one ran.sim.backups one.volume) [NAME "ws-c-w1"]) ran.sim.backups)
+  ;; 本番: 戻す volume は backup の大きさ(10 GiB)で、w1 を消した後に POST した。
+  (val posts (lfor #(at seen) (enumerate ran.api.seen) :if (and (= seen.method "POST") (= seen.path VOLUMES-PATH)) at))
+  (val deletes (lfor #(at seen) (enumerate ran.api.seen) :if (and (= seen.method "DELETE") (= seen.path (+ VOLUMES-PATH "/ws-c-w1"))) at))
+  (assert (and (= (len posts) 1) deletes (< (max deletes) (get posts 0))) ran.api.seen)
+  (assert (= (get (json.loads (get ran.api.created 0)) "spec" "size") (str (* 5 SIZE))) ran.api.created))
+
+
+(deftest test-a-new-volume-on-a-full-disk-cools-the-oldest-warm-volume-on-both-handlers
+  ;; 名目の残り 0(capacity 4 に 4 本)。新しい持ち主の作成は、外れた volume の一番古い w1 を冷やして 2 GiB を空けてから作る。
+  (<- ran BothRan (both (fn [] (warm-three 4)) #((Step :verb "create" :owner OWNER) (Step :verb "room")) (* 2.5 3600.0)))
+  (for [#(outcomes volumes) #(#(ran.real ran.api.held.volumes) #(ran.held ran.sim.volumes))]
+    (assert (= outcomes #("done" "room nominal=0s actual=4s spare=8s")) outcomes)
+    (assert (= (tuple (gfor one volumes one.name)) #("ws-c-w2" "ws-c-w3" "ws-c-m1" NAME)) volumes)))
+
+
+(deftest test-the-real-space-line-skips-a-one-mb-volume-on-both-handlers
+  ;; 名目の残りは十分(capacity 8 に 4 本)だが、実の空きの線(最小の空き 25% = 2 本ぶん)の上が 1 本ぶんに 2 MB 足りない: 付いた m1 が
+  ;; 実で 4 本ぶんと 1 MB、w2 が 1 本ぶん、一番古い w1 は 1 MB。w1 を冷やしても実の空きは 1 MB しか空かないので、次の古い w2 まで冷やして
+  ;; から作る(w3 は残す)。
+  (val mb 1000000)
+  (val heavy (fn [] (WorkspaceVolumeWorld NODE :capacity 8 :minimal 25
+                                          :volumes #((HeldVolume :name "ws-c-w1" :formatted True :used-at 0.0 :actual mb)
+                                                     (HeldVolume :name "ws-c-w2" :formatted True :used-at 3600.0 :actual SIZE)
+                                                     (HeldVolume :name "ws-c-w3" :formatted True :used-at 7200.0)
+                                                     (HeldVolume :name "ws-c-m1" :node NODE :formatted True :actual (+ (* 4 SIZE) mb))))))
+  (<- ran BothRan (both heavy #((Step :verb "room") (Step :verb "create" :owner OWNER)) (* 2.5 3600.0)))
+  (for [#(outcomes volumes) #(#(ran.real ran.api.held.volumes) #(ran.held ran.sim.volumes))]
+    (assert (= outcomes #((.format "room nominal=4s actual={} spare=8s" (- SIZE (* 2 mb))) "done")) outcomes)
+    (assert (= (tuple (gfor one volumes one.name)) #("ws-c-w3" "ws-c-m1" NAME)) volumes))
+  ;; 実の使用が 1 MB の物しか外れていなければ、全部冷やしても足りない — 冷やさずに断る。
+  (val light (fn [] (WorkspaceVolumeWorld NODE :capacity 8 :minimal 25
+                                          :volumes #((HeldVolume :name "ws-c-w1" :formatted True :used-at 0.0 :actual mb)
+                                                     (HeldVolume :name "ws-c-w2" :formatted True :used-at 3600.0 :actual mb)
+                                                     (HeldVolume :name "ws-c-m1" :node NODE :formatted True :actual (* 6 SIZE))))))
+  (<- none BothRan (both light #((Step :verb "create" :owner OWNER)) (* 2.5 3600.0)))
+  (for [#(outcomes volumes backups) #(#(none.real none.api.held.volumes none.api.held.backups) #(none.held none.sim.volumes none.sim.backups))]
+    (assert (= (! (kinds outcomes)) #("short-fresh")) outcomes)
+    (assert (= (len volumes) 3) volumes)
+    (assert (= backups #()) backups))
+  (assert (= none.api.created #()) none.api.created))
 
 
 (deftest test-the-real-space-line-refuses-a-disk-near-its-minimal-available
   ;; 名目の予約の線は十分(capacity 20)だが、実の空きが最小の空き 25% の線の上に名目 1 本ぶんしか無い世界。1 本目は作り、2 本目は
-  ;; POST せずに断る(Longhorn は空きが線を越える disk にだけ置く — 置けない Volume を作らない)。
+  ;; POST せずに断る(Longhorn は空きが線を越える disk にだけ置く — 置けない Volume を作らない。冷やせる物も無い)。
   (val maximum (* 20 SIZE))
-  (val roomy (LonghornWorld (fresh) :available (+ (// maximum 4) SIZE)))
+  (val roomy (LonghornWorld (WorkspaceVolumeWorld NODE :minimal 25) :available (+ (// maximum 4) SIZE)))
   (<- ran ApiRan (on-api roomy #((Step :verb "room") (Step :verb "create" :owner OWNER))))
-  (assert (= ran.outcomes #("room slots=1 spare=4" "done")) ran.outcomes)
-  (val tight (LonghornWorld (fresh) :available (+ (// maximum 4) (// SIZE 2))))
+  (assert (= ran.outcomes #("room nominal=20s actual=1s spare=8s" "done")) ran.outcomes)
+  (val tight (LonghornWorld (WorkspaceVolumeWorld NODE :minimal 25) :available (+ (// maximum 4) (// SIZE 2))))
   (<- again ApiRan (on-api tight #((Step :verb "room") (Step :verb "create" :owner OTHER))))
-  (assert (= (! (kinds again.outcomes)) #("room slots=0 spare=4" "short-fresh")) again.outcomes)
+  (assert (= (! (kinds again.outcomes)) #((.format "room nominal=20s actual={} spare=8s" (// SIZE 2)) "short-fresh")) again.outcomes)
   (assert (= tight.created #()) tight.created))
 
 
@@ -1370,12 +1451,25 @@
 
 
 (deftest test-a-grow-the-disk-cannot-hold-is-refused-without-writing-the-size
-  ;; 札の disk の名目の残りが、広げる分を受けられない(capacity 1 — 付いた 1 本で満ちた)。名目を書かずに、訳を残して次へ進む。
+  ;; 札の disk の名目の残りが、広げる分を受けられない(capacity 1 — 付いた 1 本で満ちた)。冷やせる物も無いので、名目を書かずに、訳を
+  ;; 残して次へ進む。
   (val api (LonghornWorld (WorkspaceVolumeWorld NODE :volumes #(MOUNTED) :capacity 1) :used {NAME (* 9 TENTH)}))
   (<- ran ApiRan (on-api api #((Step :verb "sweep"))))
-  (assert (= ran.outcomes #((+ "sweep slots=0 cooled= failed=" NAME))) ran.outcomes)
+  (assert (= ran.outcomes #((+ "sweep cooled= failed=" NAME " short"))) ran.outcomes)
   (assert (= (! (size-writes api)) []) api.seen)
   (assert (= api.asked #()) api.asked))
+
+
+(deftest test-a-grow-short-of-room-cools-a-warm-volume-first
+  ;; 名目の残り 0(capacity 2 に付いた 1 本と外れた 1 本 — 外れた物は 2 時間の内)。冷やす回は空けておく量に届かないので(全部冷やしても
+  ;; 1 本ぶん)冷やさないが、広げる手は増える 2 GiB を需要に外れた volume を冷やし、空いてから名目を書く。
+  (val api (LonghornWorld (WorkspaceVolumeWorld NODE :capacity 2 :volumes #(MOUNTED (HeldVolume :name "ws-c-w1" :formatted True)))
+                          :used {NAME (* 9 TENTH)}))
+  (<- ran ApiRan (on-api api #((Step :verb "sweep"))))
+  (assert (= ran.outcomes #((+ "sweep cooled= failed= short grown=" NAME))) ran.outcomes)
+  (assert (= (! (size-writes api)) [(str GROWN)]) api.seen)
+  (assert (= (tuple (gfor one api.held.volumes one.name)) #(NAME)) api.held.volumes)
+  (assert (= (lfor one api.held.backups one.volume) ["ws-c-w1"]) api.held.backups))
 
 
 (deftest test-a-file-system-left-behind-its-volume-is-grown-without-doubling-again

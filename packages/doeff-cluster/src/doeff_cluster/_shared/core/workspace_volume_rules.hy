@@ -16,9 +16,11 @@
 ;;;   cooling-name          volume の名と刻 → 冷やす時の snapshot と backup の名(<名>-cool-<epoch 秒>)
 ;;;   growing-name          volume の名と刻 → 広げた直後に取って消す snapshot の名(<名>-grow-<epoch 秒>)
 ;;;   newest-backup         backup の組 → 戻す元(完了した物のうち作られたのが一番新しい物 — 無ければ None)
-;;;   free-slots            札の disk の組と volume の大きさと過剰割り当ての % と最小の空きの % → まだ置ける volume の本数(Longhorn の
-;;;                         置く線 2 つ — 名目の予約の線と実の空きの線 — の両方の内)
-;;;   cooling-order         外れている volume の組・今・温かく置く秒・空きの本数・空けておく本数 → 冷やす volume の名(使い終わりの古い順)
+;;;   room-bytes            札の disk の組と過剰割り当ての % と最小の空きの % → 線ごとの残りの byte(Longhorn の置く線 2 つ — 名目の
+;;;                         予約の線と実の空きの線)
+;;;   room-covers?          線ごとの残りの byte と需要の byte → 両方の線が需要を覆うか
+;;;   cooling-order         外れている volume の組・今・温かく置く秒・線ごとの残り・需要の byte → 冷やす volume の名(使い終わりの古い
+;;;                         順)と、冷やした後に両方の線が需要を覆うか
 ;;;
 ;;; device の見分け方: mount の係は attach した volume を host の /dev/longhorn/<名> の device で付ける(係の /host/dev/longhorn/<名>)。
 ;;; mountinfo の source はその path なので、dir の名が longhorn で file の名が volume の名の source を、その volume の mount と読む。
@@ -99,10 +101,26 @@
   (#^ int available))
 
 
+(defrecord RoomBytes
+  "札の disk の組の置き場の残り(byte — 負 = 線を越えて置かれている): nominal = 名目の予約の線の残り・actual = 実の空きの線の上の量。"
+  (#^ int nominal)
+  (#^ int actual))
+
+
 (defrecord WarmVolume
-  "外れている(温かい)volume 1 つ: name = volume の名・used-at = 使い終わりの刻(epoch 秒 — 印 USED-AT-KEY が無ければ作られた刻)。"
+  "外れている(温かい)volume 1 つ: name = volume の名・used-at = 使い終わりの刻(epoch 秒 — 印 USED-AT-KEY が無ければ作られた刻)・
+   size = 名目の大きさ(spec.size の byte — 冷やせば名目の予約の線がこれだけ空く)・actual = 実の使用(status.actualSize の byte —
+   冷やせば実の空きの線がこれだけ空く)。"
   (#^ str name)
-  (#^ float used-at))
+  (#^ float used-at)
+  (setv #^ int size 0)
+  (setv #^ int actual 0))
+
+
+(defrecord CoolingPlan
+  "冷やす順の判断(cooling-order)の答え: names = 冷やす volume の名(冷やす順)・covered = 冷やした後に両方の線が需要を覆うか。"
+  (#^ (get tuple #(str ...)) names)
+  (#^ bool covered))
 
 
 (defk owner-refusal [owner]
@@ -233,31 +251,43 @@
   (if done (max done :key (fn [backup] #(backup.created-at backup.name))) None))
 
 
-(defk free-slots [rooms size-bytes percentage minimal]
-  {:pre [(: rooms (get tuple #(DiskRoom ...))) (: size-bytes int) (> size-bytes 0) (: percentage int) (>= percentage 0)
-         (: minimal int) (<= 0 minimal 100)]
-   :post [(: % int) (>= % 0)]}
-  "札の disk の組 rooms に、名目の大きさ size-bytes の volume をあと何本置けるかを得るため。disk ごとに、Longhorn が replica を置く線 2 つの
-   少ない方の本数を足す(負は 0):
-   - 名目の予約の線(設定 storage-over-provisioning-percentage = percentage): (maximum − reserved) × percentage% − scheduled を大きさで
-     割った整数。
-   - 実の空きの線(設定 storage-minimal-available-percentage = minimal): available − maximum × minimal% を大きさで割った整数。Longhorn は
-     空きがこの線を越える disk にだけ置く。新しい volume が名目の大きさまで書いても線を割らない本数を数える(thin の volume の実の使用は
-     名目より小さいので、少なめに数える側)。"
-  (sum (gfor room rooms
-             (max 0 (min (// (- (// (* (- room.maximum room.reserved) percentage) 100) room.scheduled) size-bytes)
-                         (// (- room.available (// (* room.maximum minimal) 100)) size-bytes))))))
+(defk room-bytes [rooms percentage minimal]
+  {:pre [(: rooms (get tuple #(DiskRoom ...))) (: percentage int) (>= percentage 0) (: minimal int) (<= 0 minimal 100)]
+   :post [(: % RoomBytes)]}
+  "札の disk の組 rooms の置き場の残りを、Longhorn が replica を置く線 2 つごとに byte で得るため(disk ごとの残りを、負も含めて足す —
+   級の volume を置く disk が 1 枚の時に正確。複数の disk では、1 本が 1 枚に収まるかを見ない近い数え):
+   - 名目の予約の線(設定 storage-over-provisioning-percentage = percentage): (maximum − reserved) × percentage% − scheduled。
+   - 実の空きの線(設定 storage-minimal-available-percentage = minimal): available − maximum × minimal%。Longhorn は空きがこの線を越える
+     disk にだけ置く。"
+  (RoomBytes :nominal (sum (gfor room rooms (- (// (* (- room.maximum room.reserved) percentage) 100) room.scheduled)))
+             :actual (sum (gfor room rooms (- room.available (// (* room.maximum minimal) 100))))))
 
 
-(defk cooling-order [warm now warm-seconds slots spare]
-  {:pre [(: warm (get tuple #(WarmVolume ...))) (: now float) (: warm-seconds float) (>= warm-seconds 0) (: slots int) (: spare int)
-         (>= spare 0)]
-   :post [(: % (get tuple #(str ...)))]}
-  "外れている volume の組 warm から、今 now に冷やす物の名を、使い終わりの古い順に得るため: (1) 使い終わりから warm-seconds を過ぎた物は
-   全部、(2) それでも空き slots と冷やす本数の和が spare に届かなければ、届くまで残りを古い順に足す(冷やした 1 本が 1 本の空きになる)。
-   同じ刻は名の順。"
+(defk room-covers? [room demand]
+  {:pre [(: room RoomBytes) (: demand int) (>= demand 0)] :post [(: % bool)]}
+  "置き場の残り room が、需要 demand(入れたい volume の名目の byte)を両方の線で覆うかを得るため。実の空きの線にも名目の大きさを当てる
+   (新しい volume が名目の大きさまで書いても線を割らない — thin の volume の実の使用は名目より小さいので、少なめに数える側)。"
+  (and (>= room.nominal demand) (>= room.actual demand)))
+
+
+(defk cooling-order [warm now warm-seconds room demand]
+  {:pre [(: warm (get tuple #(WarmVolume ...))) (: now float) (: warm-seconds float) (>= warm-seconds 0) (: room RoomBytes) (: demand int)
+         (>= demand 0)]
+   :post [(: % CoolingPlan)]}
+  "外れている volume の組 warm から、今 now に冷やす物を、使い終わりの古い順に決めるため: (1) 使い終わりから warm-seconds を過ぎた物は
+   全部、(2) 置き場の残り room に (1) の物が空ける byte を足しても線のどちらかが需要 demand に届かなければ、両方の線が届くまで残りを
+   古い順に足す(冷やした volume は名目の線に size・実の線に actual を空ける — 1 本を空き 1 本と数えない)。(2) を全部足しても届かなければ
+   (1) だけを答える(温かい volume を冷やしても入らない — covered は偽)。同じ刻は名の順。"
   (val ordered (sorted warm :key (fn [volume] #(volume.used-at volume.name))))
-  (val stale (lfor volume ordered :if (>= (- now volume.used-at) warm-seconds) volume.name))
-  (val rest (lfor volume ordered :if (not-in volume.name stale) volume.name))
-  (val short (max 0 (- spare slots (len stale))))
-  (tuple (+ stale (cut rest 0 short))))
+  (val stale (lfor volume ordered :if (>= (- now volume.used-at) warm-seconds) volume))
+  (val rest (lfor volume ordered :if (< (- now volume.used-at) warm-seconds) volume))
+  (var freed (RoomBytes :nominal (+ room.nominal (sum (gfor volume stale volume.size)))
+                        :actual (+ room.actual (sum (gfor volume stale volume.actual)))))
+  (var taken #())
+  (for [volume rest]
+    (<- enough bool (room-covers? freed demand))
+    (when (not enough)
+      (:= freed (RoomBytes :nominal (+ freed.nominal volume.size) :actual (+ freed.actual volume.actual)))
+      (:= taken (+ taken #(volume.name)))))
+  (<- covered bool (room-covers? freed demand))
+  (CoolingPlan :names (+ (tuple (gfor volume stale volume.name)) (if covered taken #())) :covered covered))

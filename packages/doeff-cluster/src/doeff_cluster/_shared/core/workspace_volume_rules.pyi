@@ -60,9 +60,21 @@ class DiskRoom:
     available: int
 
 @dataclass(frozen=True, kw_only=True)
+class RoomBytes:
+    nominal: int
+    actual: int
+
+@dataclass(frozen=True, kw_only=True)
 class WarmVolume:
     name: str
     used_at: float
+    size: int = 0
+    actual: int = 0
+
+@dataclass(frozen=True, kw_only=True)
+class CoolingPlan:
+    names: tuple[str, ...]
+    covered: bool
 
 def owner_refusal(owner: str) -> _Program[str | None, object]:
     ...
@@ -106,8 +118,11 @@ def growing_name(name: str, stamp: int) -> _Program[str, object]:
 def newest_backup(backups: tuple[BackupView, ...]) -> _Program[BackupView | None, object]:
     ...
 
-def free_slots(rooms: tuple[DiskRoom, ...], size_bytes: int, percentage: int, minimal: int) -> _Program[int, object]:
+def room_bytes(rooms: tuple[DiskRoom, ...], percentage: int, minimal: int) -> _Program[RoomBytes, object]:
     ...
 
-def cooling_order(warm: tuple[WarmVolume, ...], now: float, warm_seconds: float, slots: int, spare: int) -> _Program[tuple[str, ...], object]:
+def hyx_room_coversXquestion_markX(room: RoomBytes, demand: int) -> _Program[bool, object]:
+    ...
+
+def cooling_order(warm: tuple[WarmVolume, ...], now: float, warm_seconds: float, room: RoomBytes, demand: int) -> _Program[CoolingPlan, object]:
     ...

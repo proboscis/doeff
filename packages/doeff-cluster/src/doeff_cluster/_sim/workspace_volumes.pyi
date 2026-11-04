@@ -31,10 +31,13 @@ from doeff_core_effects import PathKind as PathKind
 from doeff_core_effects import PathStat as PathStat
 from doeff_core_effects import StatPath as StatPath
 from doeff_cluster._shared.core.workspace_volume_rules import NAME_PREFIX as NAME_PREFIX
+from doeff_cluster._shared.core.workspace_volume_rules import CoolingPlan as CoolingPlan
+from doeff_cluster._shared.core.workspace_volume_rules import RoomBytes as RoomBytes
 from doeff_cluster._shared.core.workspace_volume_rules import WarmVolume as WarmVolume
 from doeff_cluster._shared.core.workspace_volume_rules import cooling_name as cooling_name
 from doeff_cluster._shared.core.workspace_volume_rules import cooling_order as cooling_order
 from doeff_cluster._shared.core.workspace_volume_rules import owner_refusal as owner_refusal
+from doeff_cluster._shared.core.workspace_volume_rules import hyx_room_coversXquestion_markX as hyx_room_coversXquestion_markX
 from doeff_cluster._shared.core.workspace_volume_rules import ticket_id as ticket_id
 from doeff_cluster._shared.core.workspace_volume_rules import volume_name as volume_name
 
@@ -45,6 +48,8 @@ class HeldVolume:
     mounted_at: str | None = None
     formatted: bool = False
     used_at: float = 0.0
+    size: int = 0
+    actual: int = 0
 
 @dataclass(frozen=True, kw_only=True)
 class HeldBackup:
@@ -52,6 +57,8 @@ class HeldBackup:
     name: str
     created_at: float
     state: str = 'Completed'
+    size: int = 0
+    actual: int = 0
 
 class WorkspaceVolumeWorld:
     node: str
@@ -60,11 +67,13 @@ class WorkspaceVolumeWorld:
     busy: frozenset
     down: bool
     capacity: int
+    minimal: int
     warm_hours: int
-    spare_volumes: int
+    spare_bytes: int
     keep_days: int
+    size_bytes: int
 
-    def __init__(self, node: str, volumes: tuple=..., busy: frozenset=..., down: bool=False, backups: tuple=..., capacity: int=20, warm_hours: int=2, spare_volumes: int=4, keep_days: int=7) -> None:
+    def __init__(self, node: str, volumes: tuple=..., busy: frozenset=..., down: bool=False, backups: tuple=..., capacity: int=20, minimal: int=0, warm_hours: int=2, spare_bytes: int=17179869184, keep_days: int=7, size_bytes: int=2147483648) -> None:
         ...
 
 def held_volume(world: WorkspaceVolumeWorld, name: str) -> _Program[HeldVolume | None, object]:
@@ -91,7 +100,13 @@ def sim_now() -> _Program[float, object]:
 def sim_created(world: WorkspaceVolumeWorld, owner: str) -> _Program[WorkspaceOutcome, object]:
     ...
 
-def sim_slots(world: WorkspaceVolumeWorld) -> _Program[int, object]:
+def sim_room_bytes(world: WorkspaceVolumeWorld) -> _Program[RoomBytes, object]:
+    ...
+
+def sim_warm(world: WorkspaceVolumeWorld) -> _Program[tuple[WarmVolume, ...], object]:
+    ...
+
+def sim_room_made(world: WorkspaceVolumeWorld, owner: str, doing: str, demand: int, fresh: bool) -> _Program[None, object]:
     ...
 
 def sim_attached(world: WorkspaceVolumeWorld, owner: str) -> _Program[WorkspaceOutcome, object]:

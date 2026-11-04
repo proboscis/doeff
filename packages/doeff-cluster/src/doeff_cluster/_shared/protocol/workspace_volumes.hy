@@ -7,8 +7,9 @@
 ;;;   volume-create-text      volume の名・級の parameters・大きさ → Longhorn の Volume の作成の本文の JSON の字(級の値の写し — README の表)
 ;;;   created-volume          CreateWorkspaceVolume: 値の ConfigMap と級(StorageClass)を読み、その名の完了した backup が在れば一番新しい物
 ;;;                           から戻し(spec.fromBackup)、無ければ空で Volume を POST する(201 = 作った・409 = 在った)。在る volume が戻す
-;;;                           途中なら戻し終わるまで、消す途中なら消え終わるまで待つ。POST の前に札の disk の残りを数え(room-held)、
-;;;                           受けられなければ作らずに置き場の不足 WorkspaceRoomShort で断る
+;;;                           途中なら戻し終わるまで、消す途中なら消え終わるまで待つ。POST の前に札の disk の残りを入る大きさの byte で
+;;;                           数え(room-made)、足りなければ外れた volume をその分だけ古い順に冷やしてから作る。冷やしても足りなければ
+;;;                           作らずに置き場の不足 WorkspaceRoomShort で断る
 ;;;   attached-volume         AttachWorkspaceVolume: VolumeAttachment に ticket を置き、Volume に使った刻の印を書き、ticket が満たされ volume が
 ;;;                           この node に付くまで待つ。Longhorn が replica を置けないと答えた中身の無い volume は、待たずに消して断る
 ;;;                           (dropped-unplaced — 戻しの待ちも同じ)
@@ -20,14 +21,15 @@
 ;;;   cooled-volume           CoolWorkspaceVolume: 外れている volume の Snapshot と Backup を作って完了を待ち、使う ticket が無い事を確かめて、
 ;;;                           読んだ版の上でだけ Volume を消す
 ;;;   purged-volume           PurgeWorkspaceVolume: volume の無い名の BackupVolume を、最後の backup から keepDays を過ぎていれば消す
-;;;   idle-cooling            CoolIdleWorkspaceVolumes: 外れている volume・札の disk の残り(room-slots)を読み、冷やす順に冷やし、その後に
-;;;                           この機体に付いている volume の空きを 1 つずつ読んで広げる(mounted-growth)
+;;;   idle-cooling            CoolIdleWorkspaceVolumes: 外れている volume・札の disk の線ごとの残りの byte(room-read)を読み、値の
+;;;                           spareBytes を需要に冷やす順に冷やし、その後にこの機体に付いている volume の空きを 1 つずつ読んで広げる
+;;;                           (mounted-growth)
 ;;;   grown-volume            付いている volume 1 つの file system の空きが値の growBelowPercent を割っていれば、名目の予約の増えを数えて
-;;;                           (room-held)Volume の spec.size を倍(上限 maxSizeBytes)に書き、engine が広がるのを待ち(waited-engine)、
+;;;                           (room-made — 足りなければ冷やす)Volume の spec.size を倍(上限 maxSizeBytes)に書き、engine が広がるのを待ち(waited-engine)、
 ;;;                           係へ grow(resize2fs)を頼む — 付けたまま。名目を書いた後に止まった前の広げは、file system だけを広げ直す。
 ;;;                           広げた後に snapshot を 1 つ取って消し、Longhorn に expand の snapshot を子の小さい内に畳ませる(folded-expansion)
-;;;   workspace-room          ReadWorkspaceRoom: 札の disk の残りの本数(room-slots — Longhorn の置く線 2 つ: 過剰割り当ての % の名目の
-;;;                           予約の線と、最小の空きの % の実の空きの線)と値の spareVolumes を読む
+;;;   workspace-room          ReadWorkspaceRoom: 札の disk の線ごとの残りの byte(room-read — Longhorn の置く線 2 つ: 過剰割り当ての % の
+;;;                           名目の予約の線と、最小の空きの % の実の空きの線)と値の spareBytes を読む
 ;;;   place-read              ReadWorkspacePlace: mount の表・付ける先の dir・持ち主の volume と backup を読み、付ける先の様子を答える
 ;;;   attached-volumes        ReadAttachedWorkspaceVolumes: VolumeAttachment の一覧からこの答え手の ticket がこの機体の node を指す volume を選び、
 ;;;                           Volume の一覧から使った刻を添えて答える(冷やす手順の snapshot と backup の ticket だけの volume は選ばない)
@@ -46,7 +48,7 @@
 ;;; 残る volume の detach・付ける先に別の物・API server に届かない・断られた・token が読めない・答えの形が違う・backup は在るが完了した物が
 ;;; 無い名の作成(空で作らない)・上限の秒の内に戻らない・使っている volume と戻す途中の volume を冷やす・snapshot か backup が失敗した・冷やす
 ;;; 途中に使い始めた(消さない)・volume の在る名と最後の backup から keepDays の内の名の backup を消す。置き場の不足は型を分ける
-;;; (WorkspaceRoomShort — WorkspaceVolumeRefused の子): 作る前の数えで札の disk が受けられない・付ける時か戻す時に Longhorn が replica を
+;;; (WorkspaceRoomShort — WorkspaceVolumeRefused の子): 作る前の数えで、外れた volume を冷やしても札の disk が受けられない・付ける時か戻す時に Longhorn が replica を
 ;;; 置けない(中身の無い volume は消してから断る)。fresh = 持ち主が中身を持たないか(呼び手が空の場所に落としてよいかを決める)。区画の基盤の
 ;;; 止まりも型を分ける(WorkspaceClusterUnreachable — WorkspaceVolumeRefused の子): API server に届かない・API server が 5xx か 429 で答えた
 ;;; (分けるのは API server の答えを読む 2 か所 kube-answer と status-refusal だけ — 呼び手は文を読まずに型で分け、間を置いて出し直す)。
@@ -80,9 +82,9 @@
                                                            WorkspaceClusterUnreachable WorkspaceRoom WorkspaceRoomShort WorkspaceVolumeRefused
                                                            WorkspaceVolumeSite])
 (import doeff_cluster._shared.intent.supplied_model [WorkerFactName])
-(import doeff_cluster._shared.core.workspace_volume_rules [AttachStep AttachView BackupView DetachStep DiskRoom MountEntry
-                                                         NAME-PREFIX USED-AT-KEY WarmVolume attach-step cooling-name growing-name
-                                                         cooling-order detach-step free-slots mount-entries mounted-at
+(import doeff_cluster._shared.core.workspace_volume_rules [AttachStep AttachView BackupView CoolingPlan DetachStep DiskRoom MountEntry
+                                                         NAME-PREFIX RoomBytes USED-AT-KEY WarmVolume attach-step cooling-name growing-name
+                                                         cooling-order detach-step mount-entries mounted-at room-bytes room-covers?
                                                          newest-backup owner-refusal ticket-id TICKET-TYPE using-tickets
                                                          volume-mount-points volume-name volume-of-entry])
 (import doeff_cluster._shared.intent.supplied_model [WorkerFactMissing])
@@ -123,14 +125,15 @@
 
 (defwire SettingsWire
   "値の ConfigMap の workspace-volume.json のうち読む欄: storageClass = 級の名・sizeBytes = 作る時の大きさ(byte)・warmHours = 使い終わりから
-   温かく置く時間・spareVolumes = 札の disk に空けておく volume の本数・keepDays = 最後の backup から backup を消せるまでの日数・
+   温かく置く時間・spareBytes = 札の disk に空けておく量(byte — 線ごとの残りがこれを割れば冷やす回が冷やす。次に入りうる一番大きい
+   volume を覆う量 — README の節「寿命」。前の版が読んだ spareVolumes は読まない)・keepDays = 最後の backup から backup を消せるまでの日数・
    growBelowPercent = 付いている volume の file system の空きがこの % を割ったら広げる(0 = 広げない)・maxSizeBytes = 広げる上限(byte —
    0 = 広げない)。広げる 2 つの欄は無い ConfigMap でも読める(無ければ広げない)。"
   {:tags {:context "doeff-cluster" :role "protocol" :reads "json"} :names :camel :unknown :ignore}
   (#^ str storage-class)
   (#^ int size-bytes)
   (#^ int warm-hours)
-  (#^ int spare-volumes)
+  (#^ int spare-bytes)
   (#^ int keep-days)
   (setv #^ int grow-below-percent 0)
   (setv #^ int max-size-bytes 0))
@@ -166,16 +169,18 @@
 
 (defwire VolumeStatusWire
   "Longhorn の Volume の status のうち読む欄: state(creating・detached・attaching・attached・detaching ほか)・currentNodeID・restoreRequired と
-   restoreInitiated(backup から戻す volume の、戻しが要る・始まった)・conditions(Scheduled = replica を置けたか)。"
+   restoreInitiated(backup から戻す volume の、戻しが要る・始まった)・conditions(Scheduled = replica を置けたか)・actualSize(replica の
+   実の使用の byte — snapshot を含む。冷やせば実の空きの線がこれだけ空く)。"
   {:tags {:context "doeff-cluster" :role "protocol" :reads "json"}
    :names {state "state" current-node-id "currentNodeID" restore-required "restoreRequired" restore-initiated "restoreInitiated"
-           conditions "conditions"}
+           conditions "conditions" actual-size "actualSize"}
    :unknown :ignore}
   (setv #^ str state "")
   (setv #^ str current-node-id "")
   (setv #^ bool restore-required False)
   (setv #^ bool restore-initiated False)
-  (setv #^ (| (get tuple #(VolumeConditionWire ...)) None) conditions None))
+  (setv #^ (| (get tuple #(VolumeConditionWire ...)) None) conditions None)
+  (setv #^ int actual-size 0))
 
 
 (defwire VolumeMetaWire
@@ -444,7 +449,7 @@
   "Longhorn の Volume 1 つの読み: name・version = resourceVersion・state = status.state(読めなければ空)・restoring = backup から戻す途中
    (spec.fromBackup が在り、戻しがまだ始まっていないか終わっていない)・deleting = 消す途中・used-at = 使った刻の印(epoch 秒 — 無ければ
    作られた刻)・backup-target = spec.backupTargetName・placing = condition Scheduled の読み(Longhorn が replica を置けないと答えているか)・
-   size = spec.size(名目の大きさ byte — 読めなければ 0)。"
+   size = spec.size(名目の大きさ byte — 読めなければ 0)・actual = status.actualSize(実の使用 byte — 読めなければ 0)。"
   (#^ str name)
   (#^ str version)
   (#^ str state)
@@ -453,7 +458,8 @@
   (#^ float used-at)
   (#^ str backup-target)
   (#^ Placing placing)
-  (setv #^ int size 0))
+  (setv #^ int size 0)
+  (setv #^ int actual 0))
 
 
 (defk refused [owner doing reason]
@@ -727,7 +733,8 @@
               :used-at (if (is-not marked None) marked created)
               :backup-target spec.backup-target-name
               :placing placing
-              :size (if (.isdigit spec.size) (int spec.size) 0)))
+              :size (if (.isdigit spec.size) (int spec.size) 0)
+              :actual (max 0 status.actual-size)))
 
 
 (defk volume-read [site owner doing name]
@@ -840,27 +847,77 @@
   (tuple (lfor tag (.split (.get parameters "diskSelector" "") ",") :if (.strip tag) (.strip tag))))
 
 
-(defk room-slots [site owner doing parameters size-bytes]
-  {:pre [(: site WorkspaceVolumeSite) (: owner str) (: doing str) (: parameters (get dict #(str str))) (: size-bytes int) (> size-bytes 0)]
-   :post [(: % int) (>= % 0)] :tags {:context "doeff-cluster" :role "protocol"}}
-  "級 parameters の札の disk が、名目の大きさ size-bytes の volume をあと何本受けられるかを、Longhorn の置く線 2 つ(設定の過剰割り当ての % と
-   最小の空きの % — free-slots)で数えるため(読めなければ断る)。"
+(defk room-read [site owner doing parameters]
+  {:pre [(: site WorkspaceVolumeSite) (: owner str) (: doing str) (: parameters (get dict #(str str)))]
+   :post [(: % RoomBytes)] :tags {:context "doeff-cluster" :role "protocol"}}
+  "級 parameters の札の disk の残りを、Longhorn の置く線 2 つ(設定の過剰割り当ての % と最小の空きの % — room-bytes)ごとの byte で読むため
+   (読めなければ断る)。"
   (<- rooms tuple (disk-rooms site owner doing (! (class-disk-tags parameters))))
   (<- percentage int (longhorn-percentage site owner doing "storage-over-provisioning-percentage"))
   (<- minimal int (longhorn-percentage site owner doing "storage-minimal-available-percentage"))
-  (! (free-slots rooms size-bytes percentage minimal)))
+  (! (room-bytes rooms percentage minimal)))
 
 
-(defk room-held [site owner doing parameters size-bytes fresh]
-  {:pre [(: site WorkspaceVolumeSite) (: owner str) (: doing str) (: parameters (get dict #(str str))) (: size-bytes int) (> size-bytes 0)
+(defk warm-volumes [reads]
+  {:pre [(: reads (get tuple #(VolumeRead ...)))] :post [(: % (get tuple #(WarmVolume ...)))] :tags {:context "doeff-cluster" :role "protocol"}}
+  "Volume の読みの組 reads のうち、外れている(冷やせる)物を、冷やす順の判断に渡す形にするため(戻す途中・消す途中の物は除く — 名目の
+   大きさと実の使用を添える)。"
+  (tuple (gfor one reads :if (and (= one.state "detached") (not one.restoring) (not one.deleting))
+               (WarmVolume :name one.name :used-at one.used-at :size one.size :actual one.actual))))
+
+
+(defk room-waited [site owner doing parameters demand]
+  {:pre [(: site WorkspaceVolumeSite) (: owner str) (: doing str) (: parameters (get dict #(str str))) (: demand int) (> demand 0)]
+   :post [(: % RoomBytes)] :tags {:context "doeff-cluster" :role "protocol"}}
+  "冷やした後に、札の disk の残り(Longhorn が replica を消した後に書き直す storageScheduled と storageAvailable)が需要 demand を両方の
+   線で覆うまで読み直すため(detach-seconds の内に覆わなければ、最後の読みを答える — Longhorn の置き方は同じ数えを読むので、覆う前に
+   作ると付ける時に置けない)。"
+  (<- first RoomBytes (room-read site owner doing parameters))
+  (<- started float (GetMonotonic))
+  (var room first)
+  (var waiting (not (! (room-covers? first demand))))
+  (while waiting
+    (<- (Delay site.poll-seconds))
+    (<- again RoomBytes (room-read site owner doing parameters))
+    (<- now float (GetMonotonic))
+    (:= room again)
+    (:= waiting (and (not (! (room-covers? again demand))) (<= (- now started) site.detach-seconds))))
+  room)
+
+
+(defk room-made [site owner doing parameters demand fresh]
+  {:pre [(: site WorkspaceVolumeSite) (: owner str) (: doing str) (: parameters (get dict #(str str))) (: demand int) (> demand 0)
          (: fresh bool)]
    :post [(: % None)] :tags {:context "doeff-cluster" :role "protocol"}}
-  "Volume を POST する前に、札の disk が名目の大きさ size-bytes の volume を受けられる事を確かめるため。受けられなければ作らずに置き場の不足で
-   断る(Longhorn は置けない Volume も受けて、付ける時に faulted にする — 作る側が先に数える)。"
-  (<- slots int (room-slots site owner doing parameters size-bytes))
-  (when (< slots 1)
-    (raise (! (room-short owner doing (.format "札の disk が名目 {} byte の volume をもう受けられない(Longhorn の置く線 — 名目の予約か実の空き)"
-                                               size-bytes)
+  "Volume を POST する(名目を増やす)前に、札の disk の残りが需要 demand(入る volume の名目の byte — 戻しは backup の大きさ・広げは増え)を
+   両方の線で覆う事を確かめるため。覆わなければ、外れた volume を冷やす順(cooling-order — 温かく置く時間を待たず、使い終わりの古い順に、
+   両方の線が覆うまで)に冷やし、残りの読みが覆うまで待ってから戻る。外れた volume を全部冷やしても覆えない時と、冷やした後も覆わない時
+   だけ、作らずに置き場の不足で断る(Longhorn は置けない Volume も受けて、付ける時に faulted にする — 作る側が先に数える)。"
+  (<- room RoomBytes (room-read site owner doing parameters))
+  (when (! (room-covers? room demand))
+    (return None))
+  (val short (.format "札の disk が名目 {} byte の volume をもう受けられない(Longhorn の置く線の残り — 名目の予約 {} byte・実の空き {} byte)"
+                      demand room.nominal room.actual))
+  (<- reads tuple (volume-reads site owner doing))
+  (<- now datetime (GetTime))
+  (<- plan CoolingPlan (cooling-order (! (warm-volumes reads)) (.timestamp now) (float "inf") room demand))
+  (when (not plan.covered)
+    (raise (! (room-short owner doing (+ short " — 外れた volume を全部冷やしても足りない") fresh))))
+  (var cooled #())
+  (var failed #())
+  (for [name plan.names]
+    (try
+      (<- outcome WorkspaceOutcome (cooled-volume site (cut name (len NAME-PREFIX) None)))
+      (when (= outcome WorkspaceOutcome.DONE)
+        (:= cooled (+ cooled #(name))))
+      (except [error WorkspaceVolumeRefused]
+        (:= failed (+ failed #((+ name ": " (str error))))))))
+  (<- (slog "作る前に置き場を空けるため、外れた volume を冷やした" :owner owner :doing doing :demand demand :nominal room.nominal
+            :actual room.actual :cooled cooled :failed failed))
+  (<- after RoomBytes (room-waited site owner doing parameters demand))
+  (when (not (! (room-covers? after demand)))
+    (raise (! (room-short owner doing (.format "{} — 冷やした後も足りない(冷やした {} 本・冷やせなかった {} 本・名目の予約 {} byte・実の空き {} byte)"
+                                               short (len cooled) (len failed) after.nominal after.actual)
                           fresh))))
   None)
 
@@ -907,7 +964,8 @@
    戻し、戻し終わるまで待つ(RESTORED)。backup が無ければ空で作る(DONE)。在れば ALREADY — 中身に触らない。ただし戻す途中なら戻し
    終わるまで待ち(同じ持ち主の次の頼みが先の戻しに相乗りする)、消す途中(冷やす手順の終わり)なら消え終わってから戻す。同じ名の作成が
    重なっても API server が 1 つだけを作り(409)、負けた側は勝った側の戻しを待つ。backup は在るが完了した物が無い名は、空で作らずに断る。
-   作る前に札の disk の残りを数え(room-held)、受けられなければ POST せずに置き場の不足 WorkspaceRoomShort で断る。戻す volume は
+   作る前に札の disk の残りを入る volume の大きさの byte で数え(room-made)、足りなければ外れた volume をその分だけ古い順に冷やして
+   から POST する。冷やしても足りなければ POST せずに置き場の不足 WorkspaceRoomShort で断る。戻す volume は
    backup を取った時の大きさ(と値の大きさの大きい方)で作る — Longhorn は backup より小さい volume への戻しを断る。"
   (val doing "作成")
   (<- name str (checked-name owner doing))
@@ -927,7 +985,7 @@
           (when (and backups (is source None))
             (raise (! (refused owner doing (+ "backup は在るが完了した物が無い(空で作らない): " (.join "・" (gfor one backups (+ one.name " " (or one.state "?")))))))))
           (val size (if (is source None) settings.size-bytes (max settings.size-bytes source.volume-size)))
-          (<- (room-held site owner doing parameters size (is source None)))
+          (<- (room-made site owner doing parameters size (is source None)))
           (var body "")
           (try
             (<- text str (volume-create-text site name parameters size (if (is source None) "" source.url)))
@@ -1393,8 +1451,8 @@
 (defk grown-volume [site owner path]
   {:pre [(: site WorkspaceVolumeSite) (: owner str) (: path str)] :post [(: % WorkspaceOutcome)] :tags {:context "doeff-cluster" :role "protocol" :spells "json"}}
   "path に付いた持ち主 owner の volume を、file system の空きが値の growBelowPercent を割っていれば、名目の大きさを倍(上限 maxSizeBytes)に
-   広げるため(広げた = DONE・要らない・上限に居る・広げない値 = ALREADY)。名目の予約が増える分を札の disk が受けられなければ広げずに
-   置き場の不足で断る(fresh False)。Volume の spec.size を書き、engine が広がるのを待ち、mount の係に file system を device の大きさまで
+   広げるため(広げた = DONE・要らない・上限に居る・広げない値 = ALREADY)。名目の予約が増える分を札の disk が受けられなければ、作る時と
+   同じく増える byte を需要に外れた volume を冷やし(room-made)、冷やしても足りなければ広げずに置き場の不足で断る(fresh False)。Volume の spec.size を書き、engine が広がるのを待ち、mount の係に file system を device の大きさまで
    広げさせる(resize2fs — 付けたまま)。前の広げが file system の前で止まっていた(名目が file system の 1.5 倍以上)なら、名目は替えずに
    file system だけを広げる(2 度倍にしない)。付いていない volume は断る。"
   (val doing "広げる")
@@ -1424,7 +1482,7 @@
     (return WorkspaceOutcome.ALREADY))
   (when (not behind)
     (<- parameters dict (class-parameters owner settings.storage-class))
-    (<- (room-held site owner doing parameters (- wanted read.size) False))
+    (<- (room-made site owner doing parameters (- wanted read.size) False))
     (val body (json.dumps {"spec" {"size" (str wanted)}} :ensure-ascii False :sort-keys True))
     (<- answer HttpResponse (kube-answer owner doing "PATCH" (! (volume-path site name)) body MERGE-PATCH-TYPE))
     (when (!= (! (status-field answer.status)) 200)
@@ -1668,13 +1726,13 @@
 
 (defk workspace-room [site]
   {:pre [(: site WorkspaceVolumeSite)] :post [(: % WorkspaceRoom)] :tags {:context "doeff-cluster" :role "protocol"}}
-  "札の disk が受けられる、値の大きさの volume の残りの本数と、値の spareVolumes を読むため(ReadWorkspaceRoom の答え — 読めなければ断る)。"
+  "札の disk の線ごとの残りの byte と、値の spareBytes を読むため(ReadWorkspaceRoom の答え — 読めなければ断る)。"
   (val owner "全部")
   (val doing "置き場の読み")
   (<- settings SettingsWire (workspace-settings site owner))
   (<- parameters dict (class-parameters owner settings.storage-class))
-  (<- slots int (room-slots site owner doing parameters settings.size-bytes))
-  (WorkspaceRoom :slots slots :spare settings.spare-volumes))
+  (<- room RoomBytes (room-read site owner doing parameters))
+  (WorkspaceRoom :nominal room.nominal :actual room.actual :spare settings.spare-bytes))
 
 
 (defk ticketed-names [site owner doing node]
@@ -1712,22 +1770,21 @@
 
 (defk idle-cooling [site]
   {:pre [(: site WorkspaceVolumeSite)] :post [(: % CoolingSweep)] :tags {:context "doeff-cluster" :role "protocol"}}
-  "外れている作業場所の volume のうち、冷やす順(cooling-order — 使い終わりから warmHours を過ぎた物と、札の disk の空き(Longhorn の置く線
-   2 つの内 — room-slots)が spareVolumes を割る分)の物を、古い順に 1 つずつ冷やし、その後に機体に付いている volume の空きを読んで広げる
-   ため(mounted-growth — 冷やして空けた置き場から広げる。冷やせなかった・広げられなかった物は訳を残して次へ進む)。読めない時は断る。"
+  "外れている作業場所の volume のうち、冷やす順(cooling-order — 使い終わりから warmHours を過ぎた物と、札の disk の線ごとの残りの byte
+   (room-read)が値の spareBytes を割る分 — 冷やした volume が線ごとに空ける byte で数える)の物を、古い順に 1 つずつ冷やし、その後に
+   機体に付いている volume の空きを読んで広げるため(mounted-growth — 冷やして空けた置き場から広げる。冷やせなかった・広げられなかった
+   物は訳を残して次へ進む)。読めない時は断る。"
   (val owner "全部")
   (val doing "冷やす順の読み")
   (<- settings SettingsWire (workspace-settings site owner))
   (<- parameters dict (class-parameters owner settings.storage-class))
   (<- reads tuple (volume-reads site owner doing))
-  (val warm (tuple (gfor one reads :if (and (= one.state "detached") (not one.restoring) (not one.deleting))
-                         (WarmVolume :name one.name :used-at one.used-at))))
-  (<- slots int (room-slots site owner doing parameters settings.size-bytes))
+  (<- room RoomBytes (room-read site owner doing parameters))
   (<- now datetime (GetTime))
-  (<- order tuple (cooling-order warm (.timestamp now) (* settings.warm-hours 3600.0) slots settings.spare-volumes))
+  (<- plan CoolingPlan (cooling-order (! (warm-volumes reads)) (.timestamp now) (* settings.warm-hours 3600.0) room settings.spare-bytes))
   (var cooled #())
   (var failed #())
-  (for [name order]
+  (for [name plan.names]
     (try
       (<- outcome WorkspaceOutcome (cooled-volume site (cut name (len NAME-PREFIX) None)))
       (when (= outcome WorkspaceOutcome.DONE)
@@ -1735,7 +1792,8 @@
       (except [error WorkspaceVolumeRefused]
         (:= failed (+ failed #((+ name ": " (str error))))))))
   (<- growth Growth (mounted-growth site))
-  (CoolingSweep :slots slots :cooled cooled :failed (+ failed growth.failed) :grown growth.grown))
+  (CoolingSweep :nominal room.nominal :actual room.actual :cooled cooled :failed (+ failed growth.failed) :grown growth.grown
+                :covered plan.covered))
 
 
 (defhandler workspace-volumes-api [#^ WorkspaceVolumeSite site]

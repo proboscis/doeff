@@ -7,10 +7,11 @@
 ;;;   WorkspaceVolumeSite     本番の答え手が読む場所と待つ秒: Longhorn の namespace・値の ConfigMap・mount の係の頼みの dir・mountinfo の
 ;;;                           file・attach と detach と係の答えと backup と戻しを待つ上限の秒・読み直す間の秒
 ;;;   WorkspaceVolumeRefused  できなかった(持ち主の id と volume の名・何をしようとしたか・理由を文に持つ — token は載せない)
-;;;   CoolingSweep            CoolIdleWorkspaceVolumes の答え: 冷やす前の空きの本数・冷やした volume の名・冷やせなかった(広げられ
-;;;                           なかった)volume と訳・広げた volume の名
+;;;   CoolingSweep            CoolIdleWorkspaceVolumes の答え: 冷やす前の線ごとの残りの byte・冷やした volume の名・冷やせなかった(広げられ
+;;;                           なかった)volume と訳・広げた volume の名・空けておく量を覆えたか
 ;;;   CreateWorkspaceVolume   持ち主の volume が無ければ作る。冷えている(backup だけが在る)なら一番新しい backup から戻す(在れば ALREADY —
-;;;                           戻している途中なら戻し終わるまで待つ・消している途中なら消え終わってから戻す)
+;;;                           戻している途中なら戻し終わるまで待つ・消している途中なら消え終わってから戻す)。置き場が入る volume の大きさに
+;;;                           足りなければ、外れた volume をその大きさの分だけ古い順に冷やしてから作る(冷やしても足りない時だけ断る)
 ;;;   AttachWorkspaceVolume   持ち主の volume を、答え手の機体の node に attach し、Longhorn が付け終わるまで待つ
 ;;;   MountWorkspaceVolume    attach した volume を path に mount する(path の dir は答え手が作る。空の volume には ext4 を作る。中身の在る
 ;;;                           dir には付けない — 中身を隠さない)
@@ -20,13 +21,13 @@
 ;;;                           冷やす途中に使い始めた volume は消さずに断る)
 ;;;   PurgeWorkspaceVolume    冷えた持ち主の backup を消す(最後の backup から値の keepDays を過ぎた物だけ。backup が無ければ ALREADY・
 ;;;                           volume が在れば断る)— 上に載る系が「この持ち主はもう使わない」と決めた時に出す
-;;;   CoolIdleWorkspaceVolumes 外れている volume のうち、使い終わりから値の warmHours を過ぎた物と、置き場の空きが値の spareVolumes を
-;;;                           割る分を、使い終わりの古い順に冷やす。答え手の機体に付いている volume のうち、file system の空きが値の
-;;;                           growBelowPercent を割った物は、名目の大きさを倍(上限は値の maxSizeBytes)にして付けたまま広げる
+;;;   CoolIdleWorkspaceVolumes 外れている volume のうち、使い終わりから値の warmHours を過ぎた物と、置き場の残りが値の spareBytes を
+;;;                           割る分(線ごとの byte)を、使い終わりの古い順に冷やす。答え手の機体に付いている volume のうち、file system の
+;;;                           空きが値の growBelowPercent を割った物は、名目の大きさを倍(上限は値の maxSizeBytes)にして付けたまま広げる
 ;;;   WorkspaceClusterUnreachable 区画の API server に届かない・5xx か 429 で答えた(WorkspaceVolumeRefused の子 — 基盤の止まりで、時間で晴れる)
 ;;;   WorkspaceRoomShort      置き場が足りずに作らなかった(WorkspaceVolumeRefused の子 — fresh = 持ち主が中身を持たないか)
-;;;   WorkspaceRoom           ReadWorkspaceRoom の答え: 札の disk の残りの本数と値の spareVolumes
-;;;   ReadWorkspaceRoom       札の disk が受けられる volume の残りの本数を読む(何も変えない)
+;;;   WorkspaceRoom           ReadWorkspaceRoom の答え: 札の disk の線ごとの残りの byte と値の spareBytes
+;;;   ReadWorkspaceRoom       札の disk の線ごとの残りの byte を読む(何も変えない)
 ;;;   WorkspacePlace          ReadWorkspacePlace の答え: 付ける先の様子(MOUNTED・READY・OUTSIDE・CLASH)
 ;;;   ReadWorkspacePlace      持ち主の volume を付ける先の様子を読む(何も変えない)— 呼び手が、volume の外に中身を持つ持ち主を見分けるため
 ;;;   AttachedWorkspaceVolume ReadAttachedWorkspaceVolumes の答えの 1 つ: 持ち主の id と使った刻
@@ -89,9 +90,9 @@
 
 
 (defclass WorkspaceRoomShort [WorkspaceVolumeRefused]
-  "札の disk に volume を置く場所が足りず、作らなかった(作る前の数えか、作った後に Longhorn が replica を置けなかった — 置けなかった volume は
-   消してから断る)。fresh = 持ち主が中身を持たない(作るのは空の volume だった)か。False = 冷えた中身を backup から戻す所だった — 呼び手は
-   空の場所に落とさず、冷やして場所を空けてから出し直す。"
+  "札の disk に volume を置く場所が足りず、作らなかった(作る前の数えで、外れた volume を冷やしても入る大きさの分を空けられなかったか、
+   作った後に Longhorn が replica を置けなかった — 置けなかった volume は消してから断る)。fresh = 持ち主が中身を持たない(作るのは空の
+   volume だった)か。False = 冷えた中身を backup から戻す所だった — 呼び手は空の場所に落とさない(中身は backup に残る)。"
   (defn __init__ [self #^ str message #^ bool fresh]
     ;; defk にできない: 例外の作り手(raise が呼ぶ口)
     "断りの文 message と、中身を持たない持ち主か fresh を持つため。"
@@ -100,9 +101,10 @@
 
 
 (defrecord WorkspaceRoom
-  "ReadWorkspaceRoom の答え: slots = 札の disk が受けられる、初めの大きさの volume の残りの本数(Longhorn の置く線 2 つ — 名目の予約の線と
-   実の空きの線 — の両方の内)・spare = 値の spareVolumes(冷やす回が空けておく本数 — slots がこれを割れば冷やす回が冷やす)。"
-  (#^ int slots)
+  "ReadWorkspaceRoom の答え(byte — 負 = 線を越えて置かれている): nominal と actual = 札の disk の残り(Longhorn の置く線 2 つ — 名目の予約の
+   線と実の空きの線 — ごと)・spare = 値の spareBytes(冷やす回が空けておく量 — 線のどちらかがこれを割れば冷やす回が冷やす)。"
+  (#^ int nominal)
+  (#^ int actual)
   (#^ int spare))
 
 
@@ -115,13 +117,17 @@
 
 
 (defrecord CoolingSweep
-  "CoolIdleWorkspaceVolumes の答え: slots = 冷やす前に、札の disk が受けられる volume の残りの本数・cooled = 冷やした volume の名(冷やした
-   順)・failed = 冷やせなかった(広げられなかった)volume の「<名>: <訳>」(使い始めた・backup が終わらない・置き場が足りないなど — 様子は
-   前のまま)・grown = 付いている volume のうち、file system の空きが値の growBelowPercent を割って広げた物の名。"
-  (#^ int slots)
+  "CoolIdleWorkspaceVolumes の答え: nominal と actual = 冷やす前の札の disk の残り(byte — 名目の予約の線と実の空きの線)・cooled = 冷やした
+   volume の名(冷やした順)・failed = 冷やせなかった(広げられなかった)volume の「<名>: <訳>」(使い始めた・backup が終わらない・置き場が
+   足りないなど — 様子は前のまま)・grown = 付いている volume のうち、file system の空きが値の growBelowPercent を割って広げた物の名・
+   covered = 冷やす順が、冷やした後に両方の線が値の spareBytes を覆うと数えたか(偽 = 外れた volume を全部冷やしても届かないので、
+   warmHours を過ぎた物だけを冷やした)。"
+  (#^ int nominal)
+  (#^ int actual)
   (#^ (get tuple #(str ...)) cooled)
   (#^ (get tuple #(str ...)) failed)
-  (setv #^ (get tuple #(str ...)) grown #()))
+  (setv #^ (get tuple #(str ...)) grown #())
+  (setv #^ bool covered True))
 
 
 (defclass [(dataclass :frozen True)] CreateWorkspaceVolume [(get EffectBase WorkspaceOutcome)]
@@ -184,7 +190,7 @@
 
 
 (defclass [(dataclass :frozen True)] ReadWorkspaceRoom [(get EffectBase WorkspaceRoom)]
-  "札の disk が受けられる volume の残りの本数を読む(頭の註)。"
+  "札の disk の線ごとの残りの byte を読む(頭の註)。"
   ;; 記録: 外の世界の読み(read — 置き場の様子を読む・再生では記録の答えを返す)。
   (setv #^ (get ClassVar RecordSpec) __record-spec__ (RecordSpec :mode RecordMode.READ)))
 

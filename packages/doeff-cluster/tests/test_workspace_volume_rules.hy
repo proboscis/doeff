@@ -8,13 +8,14 @@
 ;;;                     書き換えない)・満たされて付いた → 付いた
 ;;;   detach の一手     別の node → 断る(失敗ケース)・この node → 外す・外れる途中 → 待つ・ほかの ticket が付けている → この答え手の分は外れた
 ;;;   冷やす            使っている印の ticket(冷やす手順の snapshot と backup の ticket を除く)・snapshot と backup の名(63 字まで)・
-;;;                     戻す元(完了した物の一番新しい物 — 途中・失敗・url の無い物は選ばない)・札の disk の空きの本数(Longhorn の置く線・
-;;;                     負は 0)・冷やす順(2 時間を過ぎた物は全部・足りない空きの分を古い順に・空きが足りていれば足さない)
+;;;                     戻す元(完了した物の一番新しい物 — 途中・失敗・url の無い物は選ばない)・札の disk の残りの byte(Longhorn の置く線
+;;;                     ごと — 負も足す)・冷やす順(2 時間を過ぎた物は全部・両方の線が需要の byte を覆うまで古い順に・冷やした volume が線ごとに
+;;;                     空ける byte は名目 = spec.size・実 = actualSize・覆えなければ 2 時間を過ぎた物だけ)
 (require doeff-hy.macros [deftest <- val])
 (import doeff_cluster._shared.core.workspace_volume_rules [AttachStep AttachView BackupView DetachStep DiskRoom MountEntry NAME-MAX-LENGTH
-                                                         NAME-PREFIX WarmVolume attach-step cooling-name cooling-order detach-step growing-name
-                                                         free-slots mount-entries mounted-at newest-backup owner-refusal ticket-id
-                                                         using-tickets volume-mount-points volume-name volume-of-entry])
+                                                         NAME-PREFIX CoolingPlan RoomBytes WarmVolume attach-step cooling-name cooling-order
+                                                         detach-step growing-name mount-entries mounted-at newest-backup owner-refusal room-bytes
+                                                         room-covers? ticket-id using-tickets volume-mount-points volume-name volume-of-entry])
 
 (val MODULE-TAGS {:context "doeff-cluster-test" :role "test"})
 
@@ -157,58 +158,86 @@
   (assert (is empty None) empty))
 
 
-(deftest test-free-slots-follow-the-longhorn-scheduling-line
-  (val size 10737418240)
-  ;; zeus の USB の SSD の image(2026-11-03 の読み): 105 GB・予約 0・置いた 0・空き 105 GB。名目の予約の線は 200% で 19 本、実の空きの
-  ;; 線は 105 GB / 10 GiB = 9 本(最小の空き 0%)・(105 − 26.3) GB / 10 GiB = 7 本(25%)— 少ない方が効く。空きが十分なら名目の 19 本。
-  (val empty (DiskRoom :maximum 105089261568 :reserved 0 :scheduled 0 :available 105089261568))
-  (<- unlined (free-slots #(empty) size 200 0))
-  (assert (= unlined 9) unlined)
-  (<- lined (free-slots #(empty) size 200 25))
-  (assert (= lined 7) lined)
-  (<- wide (free-slots #((DiskRoom :maximum 105089261568 :reserved 0 :scheduled 0 :available (* 100 size))) size 200 25))
-  (assert (= wide 19) wide)
-  ;; 置いた分を引く。2 つの disk は足す。名目で溢れた disk は 0(負にしない)。
-  (<- two (free-slots #((DiskRoom :maximum (* 10 size) :reserved 0 :scheduled (* 3 size) :available (* 100 size))
-                        (DiskRoom :maximum (* 10 size) :reserved (* 5 size) :scheduled (* 20 size) :available (* 100 size)))
-                      size 200 25))
-  (assert (= two 17) two))
+;; byte の単位(2 GiB = 作る時の大きさ・10 GiB と 16 GiB = 本番で戻された volume の大きさ・1 MB = 本番の外れた 2 GiB の volume の
+;; 多くの実の使用)。
+(val GIB 1073741824)
+(val MB 1000000)
 
 
-(deftest test-free-slots-stop-at-the-minimal-available-line
-  ;; 2026-11-03 16:2x JST の zeus-usb-workspace(名目 10 GiB の volume 79 本・過剰割り当てを 2000% に上げた繋ぎの下): 2 GiB の volume を
-  ;; 名目の予約の線では 583 本置けるが、実の空きは 62.7 GB で最小の空き 25%(26.3 GB)の線まで 36.4 GB — 名目まで書いて 16 本。
-  ;; 宣言の 200% では、今の予約 848 GB が上限 210 GB を越えているので 0 本。
-  (val gib 1073741824)
-  (val now (DiskRoom :maximum 105089261568 :reserved 0 :scheduled 848256040960 :available 62704844800))
-  (<- reserve (free-slots #((DiskRoom :maximum now.maximum :reserved 0 :scheduled now.scheduled :available (* 10000 gib))) (* 2 gib) 2000 25))
-  (assert (= reserve 583) reserve)
-  (<- both (free-slots #(now) (* 2 gib) 2000 25))
-  (assert (= both 16) both)
-  (<- declared (free-slots #(now) (* 2 gib) 200 25))
-  (assert (= declared 0) declared)
-  ;; 線を割った disk(空きが最小の空きより少ない)は 0(負にしない)。
-  (<- under (free-slots #((DiskRoom :maximum (* 100 gib) :reserved 0 :scheduled 0 :available (* 20 gib))) gib 200 25))
-  (assert (= under 0) under)
-  ;; 線の上がちょうど 1 本ぶんなら 1 本。
-  (<- one (free-slots #((DiskRoom :maximum (* 100 gib) :reserved 0 :scheduled 0 :available (* 26 gib))) gib 200 25))
-  (assert (= one 1) one))
+(deftest test-the-room-is-counted-in-bytes-on-each-longhorn-line
+  ;; zeus の USB の SSD の image(2026-11-03 の読み): 105 GB・予約 0・置いた 0・空き 105 GB。名目の予約の線は 200% で 210 GB、実の空きの
+  ;; 線は最小の空き 0% で 105 GB・25% で 105 − 26.3 GB。
+  (val maximum 105089261568)
+  (val empty (DiskRoom :maximum maximum :reserved 0 :scheduled 0 :available maximum))
+  (<- unlined (room-bytes #(empty) 200 0))
+  (assert (= unlined (RoomBytes :nominal (* 2 maximum) :actual maximum)) unlined)
+  (<- lined (room-bytes #(empty) 200 25))
+  (assert (= lined (RoomBytes :nominal (* 2 maximum) :actual (- maximum (// maximum 4)))) lined)
+  ;; 置いた分を引き、2 つの disk は足す。線を越えて置かれた disk は負のまま足す(空けても線の下は使えない)。
+  (<- two (room-bytes #((DiskRoom :maximum (* 10 GIB) :reserved 0 :scheduled (* 3 GIB) :available (* 100 GIB))
+                        (DiskRoom :maximum (* 10 GIB) :reserved (* 5 GIB) :scheduled (* 20 GIB) :available (* 100 GIB)))
+                      200 25))
+  (assert (= two.nominal (+ (* 17 GIB) (* -10 GIB))) two)
+  ;; 2026-11-03 16:2x JST の zeus-usb-workspace(過剰割り当て 2000% の繋ぎの下): 実の空き 62.7 GB は最小の空き 25%(26.3 GB)の線まで
+  ;; 36.4 GB。宣言の 200% では、今の予約 848 GB が上限 210 GB を越えて負。
+  (val now (DiskRoom :maximum maximum :reserved 0 :scheduled 848256040960 :available 62704844800))
+  (<- declared (room-bytes #(now) 200 25))
+  (assert (= declared (RoomBytes :nominal (- (* 2 maximum) 848256040960) :actual (- 62704844800 (// maximum 4)))) declared)
+  (assert (< declared.nominal 0) declared))
 
 
-(deftest test-the-cooling-order-takes-the-stale-then-the-oldest
-  (val hour 3600.0)
-  (val warm #((WarmVolume :name "ws-d" :used-at (* 9.5 hour)) (WarmVolume :name "ws-a" :used-at 0.0)
-              (WarmVolume :name "ws-c" :used-at (* 9 hour)) (WarmVolume :name "ws-b" :used-at (* 7 hour))))
-  (val now (* 10 hour))
-  ;; 空きが足りていれば、2 時間を過ぎた物だけを古い順に。
-  (<- stale (cooling-order warm now (* 2 hour) 20 8))
-  (assert (= stale #("ws-a" "ws-b")) stale)
-  ;; 空き 5 と冷やす 2 で 7 < 8 → もう 1 本(残りの一番古い ws-c)。
-  (<- short (cooling-order warm now (* 2 hour) 5 8))
-  (assert (= short #("ws-a" "ws-b" "ws-c")) short)
-  ;; 空きが 0 なら、外れた物は全部(足りない数より少ない)。
-  (<- all (cooling-order warm now (* 2 hour) 0 8))
-  (assert (= all #("ws-a" "ws-b" "ws-c" "ws-d")) all)
-  ;; 何も外れていなければ何も冷やさない。
-  (<- none (cooling-order #() now (* 2 hour) 0 8))
-  (assert (= none #()) none))
+(deftest test-a-demand-is-covered-only-when-both-lines-hold-it
+  (for [#(room covered) #(#((RoomBytes :nominal (* 10 GIB) :actual (* 10 GIB)) True)
+                          #((RoomBytes :nominal (* 8 GIB) :actual (* 100 GIB)) False)
+                          #((RoomBytes :nominal (* 100 GIB) :actual (* 8 GIB)) False)
+                          #((RoomBytes :nominal (* -2 GIB) :actual (* 100 GIB)) False))]
+    (<- found bool (room-covers? room (* 10 GIB)))
+    (assert (= found covered) #(room found))))
+
+
+;; 刻 10 時間に、使い終わりが 0・7・9・9.5 時間の外れた volume 4 つ(どれも名目 2 GiB)。実の使用は ws-a が 1 MB・ws-b が 3 GiB・ws-c が
+;; 1 MB・ws-d が 5 GiB。
+(val HOUR 3600.0)
+(val NOW (* 10 HOUR))
+(val WARM #((WarmVolume :name "ws-d" :used-at (* 9.5 HOUR) :size (* 2 GIB) :actual (* 5 GIB))
+            (WarmVolume :name "ws-a" :used-at 0.0 :size (* 2 GIB) :actual MB)
+            (WarmVolume :name "ws-c" :used-at (* 9 HOUR) :size (* 2 GIB) :actual MB)
+            (WarmVolume :name "ws-b" :used-at (* 7 HOUR) :size (* 2 GIB) :actual (* 3 GIB))))
+(val AMPLE (* 1000 GIB))
+
+
+(deftest test-the-cooling-order-takes-the-stale-then-the-oldest-until-the-demand-is-covered
+  ;; 空きが需要を覆っていれば、2 時間を過ぎた物(ws-a・ws-b)だけを古い順に。
+  (<- stale (cooling-order WARM NOW (* 2 HOUR) (RoomBytes :nominal AMPLE :actual AMPLE) (* 16 GIB)))
+  (assert (= stale (CoolingPlan :names #("ws-a" "ws-b") :covered True)) stale)
+  ;; 名目の残り 4 GiB に ws-a・ws-b の 4 GiB を足して 8 GiB < 16 GiB → ws-c と ws-d も足して 12 GiB でもまだ届かない → 覆えないので
+  ;; 2 時間を過ぎた物だけ(温かい物を冷やしても入らない)。
+  (<- short (cooling-order WARM NOW (* 2 HOUR) (RoomBytes :nominal (* 4 GIB) :actual AMPLE) (* 16 GIB)))
+  (assert (= short (CoolingPlan :names #("ws-a" "ws-b") :covered False)) short)
+  ;; 名目の残り 8 GiB + 4 GiB = 12 GiB < 16 GiB → ws-c(14 GiB)→ ws-d(16 GiB)で届く。
+  (<- reach (cooling-order WARM NOW (* 2 HOUR) (RoomBytes :nominal (* 8 GIB) :actual AMPLE) (* 16 GIB)))
+  (assert (= reach (CoolingPlan :names #("ws-a" "ws-b" "ws-c" "ws-d") :covered True)) reach)
+  ;; 何も外れていなければ何も冷やさない(足りなければ覆えない)。
+  (<- none (cooling-order #() NOW (* 2 HOUR) (RoomBytes :nominal 0 :actual 0) (* 16 GIB)))
+  (assert (= none (CoolingPlan :names #() :covered False)) none))
+
+
+(deftest test-four-free-two-gib-slots-do-not-cover-a-ten-gib-restore
+  ;; 2026-11-04 08:05 JST の形: 名目の空きは 2 GiB の 4 本ぶん(8 GiB — 前の数えでは空けておく 4 本に届いて 1 本も冷やさなかった)。
+  ;; 10 GiB の戻しの需要には、使い終わりの古い 2 GiB の volume を 1 本冷やして 10 GiB にする(温かく置く時間を待たない)。
+  (<- plan (cooling-order WARM NOW (float "inf") (RoomBytes :nominal (* 8 GIB) :actual AMPLE) (* 10 GIB)))
+  (assert (= plan (CoolingPlan :names #("ws-a") :covered True)) plan)
+  ;; 16 GiB の戻しには 4 本(8 + 8 = 16 GiB)。
+  (<- larger (cooling-order WARM NOW (float "inf") (RoomBytes :nominal (* 8 GIB) :actual AMPLE) (* 16 GIB)))
+  (assert (= larger (CoolingPlan :names #("ws-a" "ws-b" "ws-c" "ws-d") :covered True)) larger))
+
+
+(deftest test-a-one-mb-volume-does-not-cover-the-real-space-line
+  ;; 実の空きの線の上が 8 GiB で 10 GiB の需要(名目は十分)。一番古い ws-a は名目 2 GiB でも実の使用は 1 MB — 冷やしても実の空きは
+  ;; ほぼ空かないので覆わず、次の古い ws-b(実の使用 3 GiB)へ進む。
+  (<- plan (cooling-order WARM NOW (float "inf") (RoomBytes :nominal AMPLE :actual (* 8 GIB)) (* 10 GIB)))
+  (assert (= plan (CoolingPlan :names #("ws-a" "ws-b") :covered True)) plan)
+  ;; 実の使用が 1 MB の物しか無ければ、全部冷やしても覆えない — 何も冷やさない。
+  (val tiny (tuple (gfor one WARM (WarmVolume :name one.name :used-at one.used-at :size one.size :actual MB))))
+  (<- none (cooling-order tiny NOW (float "inf") (RoomBytes :nominal AMPLE :actual (* 8 GIB)) (* 10 GIB)))
+  (assert (= none (CoolingPlan :names #() :covered False)) none))

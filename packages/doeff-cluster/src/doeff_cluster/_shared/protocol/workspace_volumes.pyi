@@ -52,10 +52,12 @@ from doeff_cluster._shared.intent.supplied_model import WorkerFactName as Worker
 from doeff_cluster._shared.core.workspace_volume_rules import AttachStep as AttachStep
 from doeff_cluster._shared.core.workspace_volume_rules import AttachView as AttachView
 from doeff_cluster._shared.core.workspace_volume_rules import BackupView as BackupView
+from doeff_cluster._shared.core.workspace_volume_rules import CoolingPlan as CoolingPlan
 from doeff_cluster._shared.core.workspace_volume_rules import DetachStep as DetachStep
 from doeff_cluster._shared.core.workspace_volume_rules import DiskRoom as DiskRoom
 from doeff_cluster._shared.core.workspace_volume_rules import MountEntry as MountEntry
 from doeff_cluster._shared.core.workspace_volume_rules import NAME_PREFIX as NAME_PREFIX
+from doeff_cluster._shared.core.workspace_volume_rules import RoomBytes as RoomBytes
 from doeff_cluster._shared.core.workspace_volume_rules import USED_AT_KEY as USED_AT_KEY
 from doeff_cluster._shared.core.workspace_volume_rules import WarmVolume as WarmVolume
 from doeff_cluster._shared.core.workspace_volume_rules import attach_step as attach_step
@@ -63,9 +65,10 @@ from doeff_cluster._shared.core.workspace_volume_rules import cooling_name as co
 from doeff_cluster._shared.core.workspace_volume_rules import growing_name as growing_name
 from doeff_cluster._shared.core.workspace_volume_rules import cooling_order as cooling_order
 from doeff_cluster._shared.core.workspace_volume_rules import detach_step as detach_step
-from doeff_cluster._shared.core.workspace_volume_rules import free_slots as free_slots
 from doeff_cluster._shared.core.workspace_volume_rules import mount_entries as mount_entries
 from doeff_cluster._shared.core.workspace_volume_rules import mounted_at as mounted_at
+from doeff_cluster._shared.core.workspace_volume_rules import room_bytes as room_bytes
+from doeff_cluster._shared.core.workspace_volume_rules import hyx_room_coversXquestion_markX as hyx_room_coversXquestion_markX
 from doeff_cluster._shared.core.workspace_volume_rules import newest_backup as newest_backup
 from doeff_cluster._shared.core.workspace_volume_rules import owner_refusal as owner_refusal
 from doeff_cluster._shared.core.workspace_volume_rules import ticket_id as ticket_id
@@ -102,7 +105,7 @@ class SettingsWire:
     storage_class: str
     size_bytes: int
     warm_hours: int
-    spare_volumes: int
+    spare_bytes: int
     keep_days: int
     grow_below_percent: int = 0
     max_size_bytes: int = 0
@@ -134,6 +137,7 @@ class VolumeStatusWire:
     restore_required: bool = False
     restore_initiated: bool = False
     conditions: tuple[VolumeConditionWire, ...] | None = None
+    actual_size: int = 0
 
 @dataclass(frozen=True, kw_only=True)
 class VolumeMetaWire:
@@ -328,6 +332,7 @@ class VolumeRead:
     backup_target: str
     placing: Placing
     size: int = 0
+    actual: int = 0
 
 def refused(owner: str, doing: str, reason: str) -> _Program[WorkspaceVolumeRefused, object]:
     ...
@@ -421,10 +426,16 @@ def room_short(owner: str, doing: str, reason: str, fresh: bool) -> _Program[Wor
 def class_disk_tags(parameters: dict[str, str]) -> _Program[tuple[str, ...], object]:
     ...
 
-def room_slots(site: WorkspaceVolumeSite, owner: str, doing: str, parameters: dict[str, str], size_bytes: int) -> _Program[int, object]:
+def room_read(site: WorkspaceVolumeSite, owner: str, doing: str, parameters: dict[str, str]) -> _Program[RoomBytes, object]:
     ...
 
-def room_held(site: WorkspaceVolumeSite, owner: str, doing: str, parameters: dict[str, str], size_bytes: int, fresh: bool) -> _Program[None, object]:
+def warm_volumes(reads: tuple[VolumeRead, ...]) -> _Program[tuple[WarmVolume, ...], object]:
+    ...
+
+def room_waited(site: WorkspaceVolumeSite, owner: str, doing: str, parameters: dict[str, str], demand: int) -> _Program[RoomBytes, object]:
+    ...
+
+def room_made(site: WorkspaceVolumeSite, owner: str, doing: str, parameters: dict[str, str], demand: int, fresh: bool) -> _Program[None, object]:
     ...
 
 def replicas_placed(site: WorkspaceVolumeSite, owner: str, doing: str, name: str) -> _Program[bool, object]:

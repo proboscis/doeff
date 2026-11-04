@@ -49,7 +49,8 @@ class WorkspaceRoomShort(WorkspaceVolumeRefused):
 
 @dataclass(frozen=True, kw_only=True)
 class WorkspaceRoom:
-    slots: int
+    nominal: int
+    actual: int
     spare: int
 
 @dataclass(frozen=True, kw_only=True)
@@ -62,10 +63,12 @@ class AttachedWorkspaceVolume:
 
 @dataclass(frozen=True, kw_only=True)
 class CoolingSweep:
-    slots: int
+    nominal: int
+    actual: int
     cooled: tuple[str, ...]
     failed: tuple[str, ...]
     grown: tuple[str, ...] = ...
+    covered: bool = True
 
 @dataclass(frozen=True)
 class CreateWorkspaceVolume(EffectBase[WorkspaceOutcome]):
