@@ -723,7 +723,7 @@
 (defeffect MemoryReadsOf
   "検の effect: worker name の模擬の memory の見張りの読みの記録の列(SimMemoryRead の tuple・読んだ順 — SimWorker の memory-watch)。"
   {:fields [(: name str)]
-   :answer tuple
+   :answer (get tuple #(SimMemoryRead ...))
    :tags {:context "doeff-cluster" :role "intent"}})
 
 (defeffect ClientLink

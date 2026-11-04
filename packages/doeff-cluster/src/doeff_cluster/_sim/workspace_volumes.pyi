@@ -73,7 +73,7 @@ class WorkspaceVolumeWorld:
     keep_days: int
     size_bytes: int
 
-    def __init__(self, node: str, volumes: tuple=..., busy: frozenset=..., down: bool=False, backups: tuple=..., capacity: int=20, minimal: int=0, warm_hours: int=2, spare_bytes: int=17179869184, keep_days: int=7, size_bytes: int=2147483648) -> None:
+    def __init__(self, node: str, volumes: tuple[HeldVolume, ...]=..., busy: frozenset=..., down: bool=False, backups: tuple[HeldBackup, ...]=..., capacity: int=20, minimal: int=0, warm_hours: int=2, spare_bytes: int=17179869184, keep_days: int=7, size_bytes: int=2147483648) -> None:
         ...
 
 def held_volume(world: WorkspaceVolumeWorld, name: str) -> _Program[HeldVolume | None, object]:

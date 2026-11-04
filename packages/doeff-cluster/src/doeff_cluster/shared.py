@@ -96,6 +96,7 @@
 #   WarmRuntimeEnv WarmState WarmUnreachable WarmWaitExpired effect_needs_problem env_key
 #   hyx_warm_state_XgreaterHthan_signXjson warm_key warm_runtime_env warm_state_of_json
 #   warm_wait_answer
+# moved-submodule-shim-names doeff_cluster.shared.core.workspace_volume_rules:
 # moved-submodule-shim-names doeff_cluster.shared.entry.boundary_recorder:
 #   HostContract MODULE_TAGS RECORD_MODES RECORD_MODE_KEY RECORD_OTLP_KEY REPLAY_STATE_KEY
 #   RecordingInstaller ReplayState RunContext boundary_recorder effect_replayer recording_handler
@@ -159,7 +160,7 @@
 #   DetachedQueueAnswer DetachedQueueGroup DetachedQueueReason DetachedRefused DetachedSubmitAnswer
 #   DetachedSubmitted DetachedSucceeded DetachedTaskRowWire DetachedTiming DetachedTimingAnswer
 #   DetachedUnknown DetachedUnreachable DetachedUnrunnable DetachedVersionMismatch EnvVar GroupLimit
-#   MODULE_TAGS OPEN_PHASES OUTBOX_ENDED OUTBOX_KINDS OUTBOX_QUEUED_OVERDUE OUTBOX_RERAN QueueTaskRowWire
+#   MODULE_TAGS OPEN_PHASES OUTBOX_ENDED OUTBOX_KINDS OUTBOX_QUEUED_OVERDUE QueueTaskRowWire
 #   ReadDetachedQueue ReadDetachedTiming ReadRunners ReadServices ReleaseDetached RunnerFact
 #   RunnersAnswer RunnersChange RunnersChangeAnswer RunnersUnreachable RunnersWatchMissing
 #   ServiceFact ServiceListWire ServiceProcessWire ServiceReady ServiceRowSpecWire
@@ -225,6 +226,7 @@
 # moved-submodule-shim-names doeff_cluster.shared.intent.warm_model:
 #   AwaitWarm MODULE_TAGS ReadWarmState RuntimeEnv WARM_KEY_LENGTH WarmAnswer WarmFailed WarmFailure
 #   WarmReady WarmRuntimeEnv WarmState WarmUnreachable WarmWaitAnswer WarmWaitExpired
+# moved-submodule-shim-names doeff_cluster.shared.intent.workspace_volume_model:
 # moved-submodule-shim-names doeff_cluster.shared.protocol.board_requests:
 #   MODULE_TAGS board_read_request board_write_request lease_request lease_vacate_answer
 #   lease_vacate_request lease_wait_answer lease_wait_request
@@ -338,6 +340,7 @@
 # moved-submodule-shim-names doeff_cluster.shared.protocol.task_result:
 #   CoordinatorRoute MODULE_TAGS PROTOCOL_FORMAT RouteOptions RoutedReply delivered_task_result
 #   now_epoch_ms route_failure route_of routed_request task_id_of_job task_result_request
+# moved-submodule-shim-names doeff_cluster.shared.protocol.workspace_volumes:
 """Moved:``doeff_cluster.shared`` is now ``doeff_cluster._shared`` (ADR-DOE-API-001 R5).
 
 Importing the old path gives the moved module itself, so ``mock.patch`` targets and isinstance checks on

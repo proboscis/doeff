@@ -156,6 +156,7 @@ from doeff_cluster._shared.protocol.detached import outbox_query as outbox_query
 from doeff_cluster._shared.core.capabilities import env_mapping as env_mapping
 from doeff_cluster._shared.core.detached_rules import task_placing_json as task_placing_json
 from doeff_cluster._shared.core.detached_rules import task_notify_json as task_notify_json
+from doeff_cluster._shared.core.detached_rules import task_rerun_json as task_rerun_json
 from doeff_cluster._shared.intent.detached_model import SubmitDetached as SubmitDetached
 from doeff_cluster._shared.intent.detached_model import AwaitDetached as AwaitDetached
 from doeff_cluster._shared.intent.detached_model import CancelDetached as CancelDetached
@@ -319,6 +320,8 @@ from doeff_cluster._worker.core.room_rules import room_read_due as room_read_due
 from doeff_cluster._worker.core.load_rules import MachineLoad as MachineLoad
 from doeff_cluster._worker.core.load_rules import TaskMemory as TaskMemory
 from doeff_cluster._worker.entry.main import worker_on as worker_on
+from doeff_cluster._worker.intent.worker_model import ProgramGap as ProgramGap
+from doeff_cluster._worker.intent.worker_model import ProgramUnfetched as ProgramUnfetched
 from doeff_cluster._worker.intent.worker_model import WorkerPolicy as WorkerPolicy
 from doeff_cluster._worker.intent.worker_model import WorkerState as WorkerState
 from doeff_cluster._worker.intent.worker_model import WorldView as WorldView
@@ -648,7 +651,7 @@ class WatchFailuresOf(_doeff_effect_base[tuple]):
     name: str
 
 @_doeff_dataclass(frozen=True)
-class MemoryReadsOf(_doeff_effect_base[tuple]):
+class MemoryReadsOf(_doeff_effect_base[tuple[SimMemoryRead, ...]]):
     name: str
 
 @_doeff_dataclass(frozen=True)
@@ -714,6 +717,7 @@ class HostTruth:
     last_desired: tuple
     last_warm: tuple
     programs: dict
+    program_failures: dict
     results: dict
     task_echo: dict
     beats: int = 0
@@ -1203,7 +1207,7 @@ def change_live_truth(name: str, boot: str, change: Callable) -> _Program[HostTr
 def statuses_written(truth: HostTruth, statuses: tuple) -> _Program[HostTruth, object]:
     ...
 
-def accepted_programs(link: SimLink, wanted: list, known: dict) -> _Program[dict, object]:
+def accepted_programs(link: SimLink, wanted: list, known: dict) -> _Program[tuple, object]:
     ...
 
 def beat_body(worker: SimWorker, truth: HostTruth, sent_at: int, stopping: bool, plan: SimPlan) -> _Program[dict, object]:

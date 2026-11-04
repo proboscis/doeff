@@ -94,7 +94,7 @@ class CollectDescendant(_doeff_effect_base[None]):
     pid: int
 
 @_doeff_dataclass(frozen=True)
-class DescendantsOf(_doeff_effect_base[tuple]):
+class DescendantsOf(_doeff_effect_base[tuple[SimDescendant, ...]]):
     name: str
 CHILD_PROCESS_EFFECTS: tuple[type, ...]
 

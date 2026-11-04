@@ -27,7 +27,7 @@ class SimProcFlood:
 
 @dataclass(frozen=True, kw_only=True)
 class SimMemoryWatch:
-    floods: tuple = ...
+    floods: tuple[SimProcFlood, ...] = ...
     sample_seconds: float = 5.0
     cpu_limit_seconds: float = 10.0
     stall_floor_seconds: float = 1.0
