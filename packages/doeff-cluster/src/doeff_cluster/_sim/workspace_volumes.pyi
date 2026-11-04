@@ -93,6 +93,9 @@ def sim_created(world: WorkspaceVolumeWorld, owner: str) -> _Program[WorkspaceOu
 def sim_slots(world: WorkspaceVolumeWorld) -> _Program[int, object]:
     ...
 
+def sim_attached(world: WorkspaceVolumeWorld, owner: str) -> _Program[WorkspaceOutcome, object]:
+    ...
+
 def sim_filled(target: str) -> _Program[bool, object]:
     ...
 
@@ -120,7 +123,7 @@ def sim_idle_cooled(world: WorkspaceVolumeWorld) -> _Program[CoolingSweep, objec
 def sim_room(world: WorkspaceVolumeWorld) -> _Program[WorkspaceRoom, object]:
     ...
 
-def sim_attached(world: WorkspaceVolumeWorld) -> _Program[tuple[AttachedWorkspaceVolume, ...], object]:
+def sim_attached_volumes(world: WorkspaceVolumeWorld) -> _Program[tuple[AttachedWorkspaceVolume, ...], object]:
     ...
 
 def held_workspace_volumes(world: WorkspaceVolumeWorld) -> _Handler:
