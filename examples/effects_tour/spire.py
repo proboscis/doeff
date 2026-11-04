@@ -3,7 +3,7 @@
 # player's move), Show (the screen) and Played (a statistic). Each layer below gives those effects
 # a meaning, and the same `battle` runs under every one of them:
 #   1. a scripted player and a screen        4. a Monte Carlo bot: its handler runs `battle` itself
-#   2. a random bot                          5. 100 fights in parallel tasks, for a win rate
+#   2. a random bot                          5. 100 fights, one task each, for a win rate
 #   3. record and replay of a fight          6. a damage count per card
 #   +  production: a person at a terminal, choosing with input()      python spire.py play
 # Every seed is fixed, so the output is the same on every run. Needs only `pip install doeff`.
@@ -224,7 +224,7 @@ def monte_carlo(playouts: int):
     return choose
 
 
-# ---- Layer 5: 100 fights in parallel tasks.
+# ---- Layer 5: 100 fights, one task each.
 @do
 def win_rate(player, fights: int):
     """The same battle `fights` times, one task per seed; returns the share of wins."""
@@ -283,7 +283,7 @@ def tour() -> None:
     print("4. a Monte Carlo bot on seed 3")
     print("  ->", run(quiet_stats(silent(dice(3)(monte_carlo(PLAYOUTS)(battle()))))))
 
-    print("5. 100 fights in parallel: random bot vs Monte Carlo bot")
+    print("5. 100 fights, one task each: random bot vs Monte Carlo bot")
     print("  -> random bot wins", run(scheduled(quiet_stats(win_rate(random_bot, 100)))))
     print("  -> monte carlo wins", run(scheduled(quiet_stats(win_rate(monte_carlo(PLAYOUTS), 100)))))
 
