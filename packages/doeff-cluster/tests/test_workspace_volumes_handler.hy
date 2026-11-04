@@ -22,6 +22,10 @@
 ;;;   広げる            (本番だけ — 模擬の世界は file system の空きを持たない)冷やす回が、付いた volume の空きが線を割れば名目を倍に
 ;;;                     書き、engine を待って係に file system を広げさせる・空きの在る物と上限の物は広げない・置き場が足りなければ
 ;;;                     外れた volume を冷やしてから書き、冷やせる物が無ければ書かない・前の広げの続きは倍にしない・engine が広がらなければ係に頼まずに断る
+;;;   失敗した戻し      (本番だけ — 模擬の世界の戻しは失敗しない)失敗した戻しは待たず、戻す元の Backup が Completed の時だけ読んだ版の上で消して
+;;;                     作り直す・戻す元が Completed でなければ消さずに断る・戻し終わった volume と Backup は消さない・作り直しの上限で Longhorn の訳を
+;;;                     添えて断る・付いている途中の faulted は待つ・冷やす手順は失敗した戻しを backup せずに消す・並んだ付けと冷やす回が消すと作るを
+;;;                     重ねない・戻す volume を札の disk の node で作る
 ;;;   並べて走らせる    (Spawn と模擬の時計)戻す途中に同じ持ち主の次の頼み(メッセージ)が来たら、先の戻しに相乗りして戻し終わりを待つ
 ;;;                     (戻すのは 1 度)・冷やす途中に使い始めたら冷やす側が退き volume が残る・消す途中に使い始めたら消え終わりを待って
 ;;;                     戻す・ticket を置いた直後に消された attach は作り直しを頼む断りを返す
@@ -52,7 +56,7 @@
                                                            WorkspaceClusterUnreachable WorkspaceRoom WorkspaceRoomShort WorkspaceVolumeRefused
                                                            WorkspaceVolumeSite])
 (import doeff_cluster._shared.core.workspace_volume_rules [USED-AT-KEY ticket-id volume-name])
-(import doeff_cluster._shared.protocol.workspace_volumes [SettingsWire workspace-settings workspace-volumes-api])
+(import doeff_cluster._shared.protocol.workspace_volumes [RESTORE-REBUILDS SettingsWire workspace-settings workspace-volumes-api])
 (import doeff_cluster._shared.protocol.supplied_values [KUBE-API SERVICE-ACCOUNT-TOKEN-FILE])
 (import doeff_cluster._sim.workspace_volumes [HeldBackup HeldVolume WorkspaceVolumeWorld held-volume held-workspace-volumes put-volume])
 
@@ -138,20 +142,25 @@
    世界の backup が size を持てばその大きさ)・
    engine-settle = 名目の大きさを書いた後に engine が広がるまでの読みの数・engine-stuck = engine が広がらない・sizes = volume の名目の
    大きさ(名 → byte — 無ければ値の大きさ)・fs-sizes = 付いた volume の file system の総量(名 → byte — 無ければ値の大きさ)・used =
-   file system の使用(名 → byte — 無ければ 0)。settings-gone = 値の ConfigMap が消された(GET に 404 — 筋書きの途中で立てる)。名目の予約の線は過剰割り当て 100% で、札 workspace の disk の storageMaximum は
+   file system の使用(名 → byte — 無ければ 0)。restore-failures = 次に作る戻しのうち失敗する本数(戻しの読みが尽きた所で Longhorn が
+   robustness faulted・state detached・condition Restore False にし、restoreRequired を true のまま残す — Longhorn v1.13)・disk-node = 札
+   workspace の disk の在る node の名(None = NODE)・before-delete = 次の Volume の DELETE の照らしの前に 1 度だけ呼ぶ関数(世界を受ける —
+   読みと DELETE の間に別の手が入った世界)。settings-gone = 値の ConfigMap が消された(GET に 404 — 筋書きの途中で立てる)。名目の予約の線は過剰割り当て 100% で、札 workspace の disk の storageMaximum は
    capacity 本ぶん・storageScheduled は名目の大きさの和・設定 storage-minimal-available-percentage は模擬の世界の minimal(模擬の世界の
    残りの byte と揃う)。走らせた後に読む物: pending = 付け外しの途中の読みの残り・leaving = 外す途中の volume の元の node・version = VolumeAttachment の
    版・revision = Volume の版・restoring と sources = 戻す途中の読みの残りと戻す元・dying = 消す途中の読みの残り・snapshots と backups =
    途中の snapshot と backup・unplaced = replica をまだどこにも置いていない volume の名・failing = Longhorn が置けないと答えている volume の
-   名・engine-left = 名目の大きさを書いた後に engine が広がるまでの読みの残り・created = 作成の本文・seen = 受けた要求・asked = 係が
-   受けた頼み。"
+   名・engine-left = 名目の大きさを書いた後に engine が広がるまでの読みの残り・doomed = 戻しの読みが尽きた所で失敗する volume の名・failed =
+   戻しに失敗した volume の名・faulted = ほかの訳で robustness faulted の volume の名・events = Volume の作り(make)・消しの受け(drop)・消え
+   終わり(gone)の順の記録・created = 作成の本文・seen = 受けた要求・asked = 係が受けた頼み。"
   (defn #^ None __init__ [self #^ WorkspaceVolumeWorld held #^ dict [parameters None] #^ int [settle 0] #^ bool [stuck False]
                           #^ int [races 0] #^ bool [silent False] #^ int [restore-settle 0] #^ int [snapshot-settle 0]
                           #^ int [backup-settle 0] #^ int [dying-settle 0] #^ bool [snapshot-error False] #^ bool [backup-error False]
                           #^ int [stale-deletes 0] #^ int [vanish-after-ticket 0] #^ tuple [extra-disks #()]
                           #^ (| int None) [available None] #^ int [unplaceable 0] #^ (| int None) [backup-size None]
                           #^ int [engine-settle 0] #^ bool [engine-stuck False] #^ (| dict None) [sizes None] #^ (| dict None) [fs-sizes None]
-                          #^ (| dict None) [used None]]
+                          #^ (| dict None) [used None] #^ int [restore-failures 0] #^ (| str None) [disk-node None]
+                          #^ (| Callable None) [before-delete None]]
     ;; defk にできない: class の作り手(Python が呼ぶ口)
     "相手役の世界を作るため。"
     (setv self.held held
@@ -161,6 +170,9 @@
           self.dying-settle dying-settle self.snapshot-error snapshot-error self.backup-error backup-error
           self.stale-deletes stale-deletes self.vanish-after-ticket vanish-after-ticket self.extra-disks extra-disks
           self.available available self.unplaceable unplaceable
+          self.restore-failures restore-failures self.disk-node (if (is disk-node None) NODE disk-node) self.before-delete before-delete
+          self.doomed (set) self.failed (set) self.faulted (set)
+          #^ (get tuple #(str ...)) self.events #()
           self.backup-size (if (is backup-size None) SIZE backup-size)
           self.engine-settle engine-settle self.engine-stuck engine-stuck
           self.sizes (dict (or sizes {})) self.fs-sizes (dict (or fs-sizes {})) self.used (dict (or used {})) self.engine-left {}
@@ -203,31 +215,48 @@
            (+ "backup-controller-" backup) {"id" (+ "backup-controller-" backup) "type" "backup-controller" "nodeID" NODE})))
 
 
+(defk restore-tickets [world name]
+  {:pre [(: world LonghornWorld) (: name str)] :post [(: % dict)]}
+  "volume name の restoreRequired の間に Longhorn が置く戻しの ticket(id → ticket)を得るため(Longhorn v1.13 — 失敗した戻しにも残る)。"
+  (val id (+ "volume-restore-controller-" name))
+  (if (or (> (.get world.restoring name 0) 0) (in name world.failed))
+      {id {"id" id "type" "volume-restore-controller" "nodeID" NODE}}
+      {}))
+
+
 (defk volume-payload [world volume]
   {:pre [(: world LonghornWorld) (: volume HeldVolume)] :post [(: % dict)]}
-  "Volume 1 つの GET の本文を、世界の様子から綴るため(付け外しの途中は attaching・detaching・戻す途中は attached で restoreRequired)。"
+  "Volume 1 つの GET の本文を、世界の様子から綴るため(付け外しの途中は attaching・detaching・戻す途中は attached で restoreRequired・戻しに
+   失敗した volume は detached・faulted で restoreRequired のまま condition Restore False)。"
   (val name volume.name)
   (val waiting (or world.stuck (> (.get world.pending name 0) 0)))
   (val restoring (> (.get world.restoring name 0) 0))
+  (val failed (in name world.failed))
   (val helping (bool (! (helper-tickets world name))))
   (val status (cond
+                failed {"state" "detached" "currentNodeID" ""}
                 restoring {"state" "attached" "currentNodeID" NODE}
                 (and (in name world.leaving) waiting) {"state" "detaching" "currentNodeID" (get world.leaving name)}
                 (is-not volume.node None) {"state" (if waiting "attaching" "attached") "currentNodeID" volume.node}
                 helping {"state" "attached" "currentNodeID" NODE}
                 True {"state" "detached" "currentNodeID" ""}))
-  (val restore (if (in name world.sources) {"restoreRequired" restoring "restoreInitiated" True} {}))
+  (val restore (if (in name world.sources) {"restoreRequired" (or restoring failed) "restoreInitiated" True} {}))
   ;; Longhorn v1.13 は置き先を決められない volume に condition Scheduled False(reason ReplicaSchedulingFailure)を書く。
   (val placing (if (in name world.failing)
                    {"type" "Scheduled" "status" "False" "reason" "ReplicaSchedulingFailure"
                     "message" "precheck new replica failed: insufficient storage"}
                    {"type" "Scheduled" "status" "True" "reason" "" "message" ""}))
+  (val restored (if failed
+                    {"type" "Restore" "status" "False" "reason" "RestoreFailure"
+                     "message" "All replica restore failed and the volume became Faulted"}
+                    {"type" "Restore" "status" "False" "reason" "" "message" ""}))
+  (val robustness (if (or failed (in name world.failing) (in name world.faulted)) "faulted" "unknown"))
   {"metadata" (| {"name" name "resourceVersion" (str world.revision) "creationTimestamp" (! (iso-of 0.0))
                   "annotations" {USED-AT-KEY (str (int volume.used-at))}}
                  (if (in name world.dying) {"deletionTimestamp" (! (iso-of 0.0))} {}))
    "spec" (| {"backupTargetName" TARGET "size" (str (.get world.sizes name (or volume.size SIZE)))}
              (if (in name world.sources) {"fromBackup" (get world.sources name)} {}))
-   "status" (| status restore {"conditions" [placing] "actualSize" volume.actual})})
+   "status" (| status restore {"conditions" [placing restored] "robustness" robustness "actualSize" volume.actual})})
 
 
 (defk volume-answer [world name]
@@ -243,6 +272,9 @@
     (setv (get world.restoring name) restore-left)
     (when (= restore-left 0)
       (del (get world.restoring name))
+      (when (in name world.doomed)
+        (.discard world.doomed name)
+        (.add world.failed name))
       (setv world.revision (+ world.revision 1))))
   (when (in name world.dying)
     (val dying-left (max 0 (- (get world.dying name) 1)))
@@ -259,8 +291,12 @@
   (setv world.held.volumes (tuple (gfor one world.held.volumes :if (!= one.name name) one)))
   (.discard world.unplaced name)
   (.discard world.failing name)
+  (.discard world.doomed name)
+  (.discard world.failed name)
+  (.discard world.faulted name)
   (.pop world.restoring name None)
   (.pop world.sources name None)
+  (setv world.events (+ world.events #("gone")))
   None)
 
 
@@ -284,7 +320,8 @@
     (return (! (api-answer 404 {"kind" "Status" "reason" "NotFound"}))))
   (val waiting (or world.stuck (> (.get world.pending name 0) 0) (> (.get world.restoring name 0) 0) (in name world.failing)))
   (val id (! (ticket-id name)))
-  (val tickets (| (if (is volume.node None) {} {id {"id" id "type" "longhorn-api" "nodeID" volume.node}}) (! (helper-tickets world name))))
+  (val tickets (| (if (is volume.node None) {} {id {"id" id "type" "longhorn-api" "nodeID" volume.node}}) (! (helper-tickets world name))
+                  (! (restore-tickets world name))))
   (val statuses (if (is volume.node None)
                     {}
                     {id {"id" id "satisfied" (not waiting)
@@ -349,6 +386,10 @@
 (defk volume-deleted [world name body]
   {:pre [(: world LonghornWorld) (: name str) (: body str)] :post [(: % HttpResponse)]}
   "Volume の DELETE に、preconditions の版を照らして答えるため(消す途中の読みの数だけ deletionTimestamp を見せてから消える)。"
+  (when (is-not world.before-delete None)
+    (val entered world.before-delete)
+    (setv world.before-delete None)
+    (entered world))
   (<- volume (held-volume world.held name))
   (when (is volume None)
     (return (! (api-answer 404 {"kind" "Status" "reason" "NotFound"}))))
@@ -356,6 +397,7 @@
   (when (or (!= version (str world.revision)) (> world.stale-deletes 0))
     (setv world.stale-deletes (max 0 (- world.stale-deletes 1)) world.revision (+ world.revision 1))
     (return (! (api-answer 409 {"kind" "Status" "reason" "Conflict"}))))
+  (setv world.events (+ world.events #("drop")))
   (if (> world.dying-settle 0)
       (setv (get world.dying name) world.dying-settle)
       (<- (forgotten world name)))
@@ -437,7 +479,8 @@
   (var items [])
   (for [volume world.held.volumes]
     (val id (! (ticket-id volume.name)))
-    (val tickets (| (if (is volume.node None) {} {id {"id" id "type" "longhorn-api" "nodeID" volume.node}}) (! (helper-tickets world volume.name))))
+    (val tickets (| (if (is volume.node None) {} {id {"id" id "type" "longhorn-api" "nodeID" volume.node}}) (! (helper-tickets world volume.name))
+                    (! (restore-tickets world volume.name))))
     (:= items (+ items [{"metadata" {"name" volume.name "resourceVersion" (str world.version)} "spec" {"attachmentTickets" tickets}}])))
   (! (api-answer 200 {"items" items})))
 
@@ -459,8 +502,12 @@
   (when source
     (setv (get world.sources name) source)
     (<- (placement-decided world name))
-    (when (or (> world.restore-settle 0) (in name world.failing))
+    (when (> world.restore-failures 0)
+      (setv world.restore-failures (- world.restore-failures 1))
+      (.add world.doomed name))
+    (when (or (> world.restore-settle 0) (in name world.failing) (in name world.doomed))
       (setv (get world.restoring name) (max 1 world.restore-settle))))
+  (setv world.events (+ world.events #("make")))
   (<- (changed world (HeldVolume :name name :formatted (bool source) :used-at (.timestamp now))))
   (! (api-answer 201 {"metadata" {"name" name}})))
 
@@ -568,7 +615,7 @@
              "storageAvailable" (- (if (is world.available None) maximum world.available) (sum (gfor volume world.held.volumes volume.actual)))
              "conditions" [{"type" "Ready" "status" "True"} {"type" "Schedulable" "status" "True"}]})
   (val extra (dfor #(index tags) (enumerate world.extra-disks) (+ "extra-" (str index)) tags))
-  {"items" [{"metadata" {"name" NODE}
+  {"items" [{"metadata" {"name" world.disk-node}
              "spec" {"disks" (| {"workspace-disk" disk}
                                 (dfor #(key tags) (.items extra) key {"tags" (list tags) "allowScheduling" True "storageReserved" 0}))}
              "status" {"diskStatus" (| {"workspace-disk" room}
@@ -1372,6 +1419,266 @@
     (assert (= (get (json.loads (get api.created 0)) "spec" "size") (str wanted)) api.created)))
 
 
+;; --- 失敗した戻し(本番だけ — 模擬の世界の戻しは失敗しない)--------------------------------------------------------------
+
+;; 冷えた持ち主の戻す元の字(相手役の Backup の url と同じ — 本番の 73 本でも Volume の spec.fromBackup と Backup の status.url は同じ字)。
+(val COLD-URL (.format "s3://longhorn-workspace@us-east-1/?backup={}&volume={}" COLD-BACKUP.name NAME))
+;; 戻すのに失敗した Longhorn の訳(v1.13 の condition Restore の reason と message)。
+(val RESTORE-NOTE "RestoreFailure All replica restore failed and the volume became Faulted")
+
+
+(defk failed-restore [backups]
+  {:pre [(: backups tuple)] :post [(: % LonghornWorld)]}
+  "持ち主の volume が戻しに失敗したまま残っている(COLD-URL から戻そうとした)世界を、backup の組 backups で作るため。"
+  (val api (LonghornWorld (WorkspaceVolumeWorld NODE :volumes #((HeldVolume :name NAME :formatted True)) :backups backups)))
+  (setv (get api.sources NAME) COLD-URL)
+  (.add api.failed NAME)
+  api)
+
+
+(defk requests-of [world method path]
+  {:pre [(: world LonghornWorld) (: method str) (: path str)] :post [(: % tuple)]}
+  "相手役の世界 world が受けた要求のうち、method で path から始まる物を得るため。"
+  (tuple (gfor seen world.seen :if (and (= seen.method method) (.startswith seen.path path)) seen)))
+
+
+(defk nothing-backed-up [world]
+  {:pre [(: world LonghornWorld)] :post [(: % bool)]}
+  "相手役の世界 world に、Snapshot も Backup も作られていないかを得るため(戻していない中身を backup にしない)。"
+  (and (not (! (requests-of world "POST" SNAPSHOTS-PATH))) (not (! (requests-of world "POST" BACKUPS-PATH)))))
+
+
+(deftest test-a-restore-that-fails-is-rebuilt-from-its-backup-without-waiting
+  ;; 戻しが 1 度失敗する。作成は上限の秒(5 秒)を待たず、失敗を読んだ版の上で volume を消し、消え終わってから同じ手順で戻し直して
+  ;; RESTORED。attach と mount が続く。Backup は残り、失敗した中身の Snapshot と Backup は作らない。
+  (val api (LonghornWorld (WorkspaceVolumeWorld NODE :backups #(COLD-BACKUP)) :restore-settle 2 :restore-failures 1))
+  (<- ran ApiRan (on-api api START))
+  (assert (= ran.outcomes #("restored" "done" "done")) ran.outcomes)
+  (assert (= api.events #("make" "drop" "gone" "make")) api.events)
+  (val after (get api.held.volumes 0))
+  (assert (= after (HeldVolume :name NAME :node NODE :mounted-at PLACE :formatted True :used-at after.used-at)) after)
+  (assert (< after.used-at SITE.restore-seconds) after)
+  (assert (= api.held.backups #(COLD-BACKUP)) api.held.backups)
+  (assert (! (nothing-backed-up api)) api.seen)
+  (assert (= (tuple (gfor body api.created (get (json.loads body) "spec" "fromBackup"))) #(COLD-URL COLD-URL)) api.created))
+
+
+(deftest test-a-failed-restore-found-by-the-next-attach-is-rebuilt
+  ;; 前の試行が残した失敗の戻しを、次の付けが読む。待たずに消して戻し直す(volume が在るので作らない形にしない)。消す版は読んだ版。
+  (<- api LonghornWorld (failed-restore #(COLD-BACKUP)))
+  (<- ran ApiRan (on-api api START))
+  (assert (= ran.outcomes #("restored" "done" "done")) ran.outcomes)
+  (assert (= api.events #("drop" "gone" "make")) api.events)
+  (assert (= api.held.backups #(COLD-BACKUP)) api.held.backups)
+  (assert (! (nothing-backed-up api)) api.seen)
+  (val deletes (! (requests-of api "DELETE" VOLUMES-PATH)))
+  (assert (= (len deletes) 1) deletes)
+  (assert (in "resourceVersion" (get (json.loads (. (get deletes 0) body)) "preconditions")) deletes))
+
+
+(deftest test-a-failed-restore-whose-backup-is-not-completed-is-kept-and-refused
+  ;; 失敗ケース: 戻す元の Backup が Completed でない(途中・失敗・無い — 別の Completed の Backup が在っても)。volume を消さず、Longhorn の
+  ;; 訳を添えて断る。作成も冷やす手順も同じ。Backup は 1 つも消さない。
+  (for [backups #(#((HeldBackup :volume NAME :name COLD-BACKUP.name :created-at 0.0 :state "InProgress"))
+                  #((HeldBackup :volume NAME :name COLD-BACKUP.name :created-at 0.0 :state "Error"))
+                  #()
+                  #((HeldBackup :volume NAME :name (+ NAME "-cool-9") :created-at 9.0)))]
+    (for [verb #("create" "cool")]
+      (<- api LonghornWorld (failed-restore backups))
+      (<- ran ApiRan (on-api api #((Step :verb verb :owner OWNER))))
+      (assert (= (! (kinds ran.outcomes)) #("refused")) ran.outcomes)
+      (assert (in "戻す元の backup が Completed でない" (get ran.outcomes 0)) ran.outcomes)
+      (assert (in RESTORE-NOTE (get ran.outcomes 0)) ran.outcomes)
+      (assert (= (tuple (gfor one api.held.volumes one.name)) #(NAME)) api.held.volumes)
+      (assert (= api.held.backups backups) api.held.backups)
+      (assert (not (! (requests-of api "DELETE" ""))) api.seen)
+      (assert (! (nothing-backed-up api)) api.seen))))
+
+
+(deftest test-a-finished-restore-and-a-warm-volume-are-never-deleted-as-failed
+  ;; 失敗ケース: 戻し終わった volume(restoreRequired false)と backup から戻していない volume が faulted でも、失敗の戻しと読まない。作成は
+  ;; ALREADY で中身に触らず、Volume も Backup も消さない。
+  (for [source #(COLD-URL None)]
+    (val api (LonghornWorld (WorkspaceVolumeWorld NODE :volumes #((HeldVolume :name NAME :formatted True)) :backups #(COLD-BACKUP))))
+    (when source
+      (setv (get api.sources NAME) source))
+    (.add api.faulted NAME)
+    (<- ran ApiRan (on-api api #((Step :verb "create" :owner OWNER))))
+    (assert (= ran.outcomes #("already")) ran.outcomes)
+    (assert (= (tuple (gfor one api.held.volumes one.name)) #(NAME)) api.held.volumes)
+    (assert (= api.held.backups #(COLD-BACKUP)) api.held.backups)
+    (assert (not (! (requests-of api "DELETE" ""))) api.seen)))
+
+
+(deftest test-a-restore-that-keeps-failing-is-refused-with-longhorns-reason
+  ;; 失敗ケース: 戻しが失敗し続ける。作り直しは RESTORE-REBUILDS 回で止め、Longhorn の訳を添えて断る。Backup は残り、最後の volume は残す
+  ;; (次の付けが読み直す)。負荷が引いた次の付けは戻る。
+  (val api (LonghornWorld (WorkspaceVolumeWorld NODE :backups #(COLD-BACKUP)) :restore-failures 99))
+  (<- ran ApiRan (on-api api #((Step :verb "create" :owner OWNER))))
+  (assert (= (! (kinds ran.outcomes)) #("refused")) ran.outcomes)
+  (assert (in RESTORE-NOTE (get ran.outcomes 0)) ran.outcomes)
+  (assert (in (.format "{} 回続けて失敗した" (+ RESTORE-REBUILDS 1)) (get ran.outcomes 0)) ran.outcomes)
+  (assert (= (len (! (requests-of api "DELETE" VOLUMES-PATH))) RESTORE-REBUILDS) api.seen)
+  (assert (= (len api.created) (+ RESTORE-REBUILDS 1)) api.created)
+  (assert (= api.failed #{NAME}) api.failed)
+  (assert (= api.held.backups #(COLD-BACKUP)) api.held.backups)
+  (setv api.restore-failures 0)
+  (<- again ApiRan (on-api api START))
+  (assert (= again.outcomes #("restored" "done" "done")) again.outcomes))
+
+
+(deftest test-a-fault-while-the-restore-is-still-attached-is-waited-out
+  ;; 付いたままの faulted は途中の様子(engine が落ちると Longhorn は外してから戻しを続ける — 外れて faulted のまま残った物だけが終わった
+  ;; 失敗)。消さずに待ち、戻し終われば RESTORED。
+  (val api (LonghornWorld (WorkspaceVolumeWorld NODE :backups #(COLD-BACKUP)) :restore-settle 4))
+  (.add api.faulted NAME)
+  (<- ran ApiRan (on-api api #((Step :verb "create" :owner OWNER))))
+  (assert (= ran.outcomes #("restored")) ran.outcomes)
+  (assert (not (! (requests-of api "DELETE" ""))) api.seen))
+
+
+(deftest test-cooling-deletes-a-failed-restore-without-backing-it-up
+  ;; 冷やす手順は、戻していない中身の Snapshot と Backup を作らずに失敗の戻しを消す(札の disk の予約を返す — 中身は戻す元の backup に
+  ;; 在る)。次の付けは戻す元から戻す。
+  (<- api LonghornWorld (failed-restore #(COLD-BACKUP)))
+  (<- ran ApiRan (on-api api (+ #((Step :verb "cool" :owner OWNER)) START)))
+  (assert (= ran.outcomes #("done" "restored" "done" "done")) ran.outcomes)
+  (assert (= api.events #("drop" "gone" "make")) api.events)
+  (assert (= api.held.backups #(COLD-BACKUP)) api.held.backups)
+  (assert (! (nothing-backed-up api)) api.seen))
+
+
+(deftest test-the-sweep-deletes-a-failed-restore-before-its-warm-hours
+  ;; 使い終わりから温かく置く時間を過ぎていなくても、まとめて冷やす回は失敗の戻しを消す(待つ物が無い)。温かい volume は残す。消せない
+  ;; 失敗の戻しは failed に訳を残して次へ進む。
+  (val warm (HeldVolume :name (! (volume-name OTHER)) :formatted True :used-at (- DAY 60.0)))
+  (<- api LonghornWorld (failed-restore #(COLD-BACKUP)))
+  (setv api.held.volumes (+ api.held.volumes #(warm)))
+  (<- ran ApiRan (on-api api #((Step :verb "sweep")) WORKER-FILES DAY))
+  (assert (= ran.outcomes #((.format "sweep cooled={} failed=" NAME))) ran.outcomes)
+  (assert (= (tuple (gfor one api.held.volumes one.name)) #(warm.name)) api.held.volumes)
+  (assert (! (nothing-backed-up api)) api.seen)
+  (<- kept LonghornWorld (failed-restore #()))
+  (<- swept ApiRan (on-api kept #((Step :verb "sweep")) WORKER-FILES DAY))
+  (assert (= swept.outcomes #((.format "sweep cooled= failed={}" NAME))) swept.outcomes)
+  (assert (= (tuple (gfor one kept.held.volumes one.name)) #(NAME)) kept.held.volumes)
+  (assert (! (nothing-backed-up kept)) kept.seen))
+
+
+(deftest test-a-full-disk-gives-up-a-failed-restore-first
+  ;; 札の disk が 1 本しか受けない。別の持ち主を作る前の数えは、失敗の戻しを backup せずに消して置き場を空ける。
+  (val api (LonghornWorld (WorkspaceVolumeWorld NODE :volumes #((HeldVolume :name NAME :formatted True)) :backups #(COLD-BACKUP) :capacity 1)))
+  (setv (get api.sources NAME) COLD-URL)
+  (.add api.failed NAME)
+  (<- ran ApiRan (on-api api #((Step :verb "create" :owner OTHER))))
+  (assert (= ran.outcomes #("done")) ran.outcomes)
+  (assert (= (tuple (gfor one api.held.volumes one.name)) #((! (volume-name OTHER)))) api.held.volumes)
+  (assert (! (nothing-backed-up api)) api.seen))
+
+
+(deftest test-a-failed-restore-in-use-is-not-deleted
+  ;; 失敗ケース: 失敗の戻しに使う ticket が在れば消さずに断る(Longhorn が戻しのために置く ticket は使っている印に数えない)。
+  (<- api LonghornWorld (failed-restore #(COLD-BACKUP)))
+  (setv api.held.volumes #((HeldVolume :name NAME :node NODE :formatted True)))
+  (<- ran ApiRan (on-api api #((Step :verb "create" :owner OWNER))))
+  (assert (= (! (kinds ran.outcomes)) #("refused")) ran.outcomes)
+  (assert (in "使っている(ticket longhorn-api-" (get ran.outcomes 0)) ran.outcomes)
+  (assert (in RESTORE-NOTE (get ran.outcomes 0)) ran.outcomes)
+  (assert (not (! (requests-of api "DELETE" ""))) api.seen))
+
+
+(deftest test-two-attaches-on-a-failed-restore-rebuild-it-once
+  ;; 前の試行の付けと次の付けが並び、同じ戻しの失敗を読む。消しは 1 度(消す途中は待つ)・消え終わるまで作らない・作り直しも 1 度で、
+  ;; 片方が戻し、もう片方はその戻しに相乗りする。
+  (val api (LonghornWorld (WorkspaceVolumeWorld NODE :backups #(COLD-BACKUP)) :restore-settle 4 :restore-failures 1 :dying-settle 4))
+  (<- done tuple (together-on-api api #((Step :verb "create" :owner OWNER)) #((Step :verb "create" :owner OWNER)) 0.25))
+  (assert (= (sorted (gfor one done (get one 0))) ["already" "restored"]) done)
+  (assert (= api.events #("make" "drop" "gone" "make")) api.events)
+  (assert (= (len (! (requests-of api "DELETE" VOLUMES-PATH))) 1) api.seen)
+  (assert (= api.restoring {}) api.restoring)
+  (assert (= api.failed (set)) api.failed)
+  (assert (= api.held.backups #(COLD-BACKUP)) api.held.backups))
+
+
+(deftest test-two-attaches-that-both-read-the-failure-delete-it-once
+  ;; 両方が失敗を読む世界: 先の付けの消しの受けの後(消す途中)に、もう片方の付けが来る。もう片方は消さず、消え終わりを待って戻しに合流する。
+  (<- api LonghornWorld (failed-restore #(COLD-BACKUP)))
+  (setv api.dying-settle 6)
+  (<- done tuple (together-on-api api START START 0.0))
+  (assert (= (sorted (gfor one done (get one 0))) ["already" "restored"]) done)
+  (assert (= (sorted (gfor one done (get one 1))) ["already" "done"]) done)
+  (assert (= api.events #("drop" "gone" "make")) api.events)
+  (assert (= (len (! (requests-of api "DELETE" VOLUMES-PATH))) 1) api.seen))
+
+
+(deftest test-a-delete-on-a-stale-read-never-touches-the-rebuilt-volume
+  ;; 読みと DELETE の間に、別の付けが消して作り直した(次の世代の戻しが走っている)。古い版の DELETE は 409 で退き、次の世代の戻しに
+  ;; 相乗りする。消しの受けは無く、作り直しの回数も使わない。
+  (<- api LonghornWorld (failed-restore #(COLD-BACKUP)))
+  (setv api.before-delete (fn [world]
+                            (.discard world.failed NAME)
+                            (setv (get world.restoring NAME) 2)
+                            (setv world.revision (+ world.revision 1))))
+  (<- ran ApiRan (on-api api #((Step :verb "create" :owner OWNER))))
+  (assert (= ran.outcomes #("already")) ran.outcomes)
+  (assert (= api.events #()) api.events)
+  (assert (= api.created #()) api.created)
+  (assert (= (tuple (gfor one api.held.volumes one.name)) #(NAME)) api.held.volumes))
+
+
+(deftest test-an-attach-between-the-ticket-read-and-the-delete-wins
+  ;; 使う側が勝つ: ticket の確かめの後に、付けが ticket を置いて印を書いた(版が進む)。DELETE は 409 で退き、読み直して使っている印を
+  ;; 読み、消さずに断る。
+  (<- api LonghornWorld (failed-restore #(COLD-BACKUP)))
+  (setv api.before-delete (fn [world]
+                            (setv world.held.volumes #((HeldVolume :name NAME :node NODE :formatted True)))
+                            (setv world.revision (+ world.revision 1))))
+  (<- ran ApiRan (on-api api #((Step :verb "create" :owner OWNER))))
+  (assert (= (! (kinds ran.outcomes)) #("refused")) ran.outcomes)
+  (assert (in "使っている(ticket longhorn-api-" (get ran.outcomes 0)) ran.outcomes)
+  (assert (= api.events #()) api.events)
+  (assert (= (tuple (gfor one api.held.volumes one.name)) #(NAME)) api.held.volumes))
+
+
+(deftest test-a-stale-delete-does-not-use-up-the-rebuilds
+  ;; 読んだ版が古い 409 は作り直しに数えない: 上限の回数の 409 の後でも消して戻す。
+  (<- api LonghornWorld (failed-restore #(COLD-BACKUP)))
+  (setv api.stale-deletes (+ RESTORE-REBUILDS 1))
+  (<- ran ApiRan (on-api api #((Step :verb "create" :owner OWNER))))
+  (assert (= ran.outcomes #("restored")) ran.outcomes)
+  (assert (= api.events #("drop" "gone" "make")) api.events))
+
+
+(deftest test-a-sweep-beside-an-attach-does-not-overlap-the-rebuild
+  ;; 冷やす回の消しの途中に付けが来る。付けは消え終わりを待って戻す。消しは 1 度・作りは 1 度。
+  (<- api LonghornWorld (failed-restore #(COLD-BACKUP)))
+  (setv api.dying-settle 4)
+  (<- done tuple (together-on-api api #((Step :verb "cool" :owner OWNER)) START 0.25))
+  (assert (= done #(#("done") #("restored" "done" "done"))) done)
+  (assert (= api.events #("drop" "gone" "make")) api.events)
+  (assert (! (nothing-backed-up api)) api.seen))
+
+
+(deftest test-a-restored-volume-is-created-on-the-node-of-the-workspace-disk
+  ;; 戻す Volume は spec.nodeID に札 workspace の disk の node を書く(engine と replica を同じ node に置く — 答え手の機体の node でなく
+  ;; disk の node)。空の volume には書かない(使う時の ticket が付け先を決める)。
+  (val api (LonghornWorld (WorkspaceVolumeWorld NODE :backups #(COLD-BACKUP)) :disk-node "hestia"))
+  (<- ran ApiRan (on-api api #((Step :verb "create" :owner OWNER))))
+  (assert (= ran.outcomes #("restored")) ran.outcomes)
+  (assert (= (get (json.loads (get api.created 0)) "spec" "nodeID") "hestia") api.created)
+  (val blank (LonghornWorld (fresh) :disk-node "hestia"))
+  (<- made ApiRan (on-api blank #((Step :verb "create" :owner OWNER))))
+  (assert (= made.outcomes #("done")) made.outcomes)
+  (assert (not-in "nodeID" (get (json.loads (get blank.created 0)) "spec")) blank.created))
+
+
+(deftest test-a-rebuilt-restore-is-created-on-the-node-of-the-workspace-disk-too
+  (val api (LonghornWorld (WorkspaceVolumeWorld NODE :backups #(COLD-BACKUP)) :restore-failures 1 :disk-node "hestia"))
+  (<- ran ApiRan (on-api api #((Step :verb "create" :owner OWNER))))
+  (assert (= ran.outcomes #("restored")) ran.outcomes)
+  (assert (= (tuple (gfor body api.created (get (json.loads body) "spec" "nodeID"))) #("hestia" "hestia")) api.created))
+
+
 ;; --- 広げる(付いた volume の空きが線を割れば、付けたまま広げる)------------------------------------------------------------
 
 ;; この機体に付いて mount された持ち主の volume(冷やす回が空きを読む物)。
@@ -1515,7 +1822,7 @@
 (defk together-on-api [world first second seconds]
   {:pre [(: world LonghornWorld) (: first tuple) (: second tuple) (: seconds float)] :post [(: % tuple)]}
   "本番の答え手で、相手役の世界 world に 2 つの筋書きを並べて当てた結末の組の組を得るため。"
-  (<- done tuple (with_handlers [(state) (memory-file-handler WORKER-FILES) (sim-time-handler :clock (! (clock-from 0.0)))
+  (<- done tuple (with_handlers [slog-discard-handler (state) (memory-file-handler WORKER-FILES) (sim-time-handler :clock (! (clock-from 0.0)))
                                  (node-environ NODE) (longhorn-peer world) (keeper-peer world) (workspace-volumes-api SITE)]
                    (side-by-side first second seconds)))
   done)
@@ -1603,7 +1910,7 @@
   (assert (= (! (kinds ran.held)) #("unreachable")) ran.held))
 
 
-;; --- 区画の基盤の止まり(API server に届かない・5xx か 429)と値の ConfigMap の写し(agora card [id])----------------
+;; --- 区画の基盤の止まり(API server に届かない・5xx か 429)と値の ConfigMap の写し(card [id])----------------
 
 (val HELD-ROOT "/work/state")
 (val HELD-PATH "/work/state/workspace-volume-held/agent-worker/workspace-volume.json")
@@ -1637,7 +1944,7 @@
 
 
 (deftest test-a-5xx-or-429-from-the-api-server-is-told-apart-as-a-cluster-fault
-  ;; 失敗ケース(agora card [id]): API server が 503「apiserver not ready」・500・429 で答えた断りは、Longhorn・mount の係の断りと
+  ;; 失敗ケース(card [id]): API server が 503「apiserver not ready」・500・429 で答えた断りは、Longhorn・mount の係の断りと
   ;; 型で分ける(WorkspaceClusterUnreachable)。呼び手(上に載る系)は文を読まずに型で「時間で晴れる」と読み、間を置いて出し直す。前の形は
   ;; 思わぬ status の断り WorkspaceVolumeRefused と同じ型で、呼び手は置き直しても変わりうる断りと数え、上限を数分で使い切った。
   (for [status #(503 500 429)]
@@ -1692,7 +1999,7 @@
 
 
 (deftest test-the-settings-are-answered-from-the-held-copy-when-the-api-server-is-unreachable
-  ;; 通る例(agora card [id]): 読めた時に写しを作業の根の下に持ち(0600)、API server に届かない時はその写しで同じ値を答える。
+  ;; 通る例(card [id]): 読めた時に写しを作業の根の下に持ち(0600)、API server に届かない時はその写しで同じ値を答える。
   (val api (LonghornWorld (fresh)))
   (<- ran tuple (settings-twice api HELD-ROOT go-down))
   (val first (get ran 0)) (val again (get ran 1)) (val left (get ran 2))

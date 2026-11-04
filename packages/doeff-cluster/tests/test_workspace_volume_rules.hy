@@ -7,14 +7,14 @@
 ;;;   attach の一手     VolumeAttachment がまだ無い → 待つ・ticket が無い → 置く・別の node → 断る(失敗ケース — 別の機体の ticket を
 ;;;                     書き換えない)・満たされて付いた → 付いた
 ;;;   detach の一手     別の node → 断る(失敗ケース)・この node → 外す・外れる途中 → 待つ・ほかの ticket が付けている → この答え手の分は外れた
-;;;   冷やす            使っている印の ticket(冷やす手順の snapshot と backup の ticket を除く)・snapshot と backup の名(63 字まで)・
+;;;   冷やす            使っている印の ticket(Longhorn が冷やす手順と戻しのために置く ticket を除く)・snapshot と backup の名(63 字まで)・
 ;;;                     戻す元(完了した物の一番新しい物 — 途中・失敗・url の無い物は選ばない)・札の disk の残りの byte(Longhorn の置く線
 ;;;                     ごと — 負も足す)・冷やす順(2 時間を過ぎた物は全部・両方の線が需要の byte を覆うまで古い順に・冷やした volume が線ごとに
 ;;;                     空ける byte は名目 = spec.size・実 = actualSize・覆えなければ 2 時間を過ぎた物だけ)
 (require doeff-hy.macros [deftest <- val])
 (import doeff_cluster._shared.core.workspace_volume_rules [AttachStep AttachView BackupView DetachStep DiskRoom MountEntry NAME-MAX-LENGTH
                                                          NAME-PREFIX CoolingPlan RoomBytes WarmVolume attach-step cooling-name cooling-order
-                                                         detach-step growing-name mount-entries mounted-at newest-backup owner-refusal room-bytes
+                                                         detach-step growing-name mount-entries mounted-at newest-backup owner-refusal restore-node room-bytes
                                                          room-covers? ticket-id using-tickets volume-mount-points volume-name volume-of-entry])
 
 (val MODULE-TAGS {:context "doeff-cluster-test" :role "test"})
@@ -241,3 +241,30 @@
   (val tiny (tuple (gfor one WARM (WarmVolume :name one.name :used-at one.used-at :size one.size :actual MB))))
   (<- none (cooling-order tiny NOW (float "inf") (RoomBytes :nominal AMPLE :actual (* 8 GIB)) (* 10 GIB)))
   (assert (= none (CoolingPlan :names #() :covered False)) none))
+
+
+(deftest test-the-restore-ticket-of-longhorn-is-not-a-user
+  ;; Longhorn が戻しのために置く ticket は、失敗した戻しに残っても使っている印でない。ほかの持ち主の ticket は使っている印のまま。
+  (<- users (using-tickets #("volume-restore-controller-ws-c-1" "csi-abc")))
+  (assert (= users #("csi-abc")) users))
+
+
+(deftest test-a-restore-runs-on-the-node-of-the-disk-that-can-hold-it
+  ;; 札の disk の在る node(1 枚ならその node)。複数なら、需要を両方の線で覆う disk のうち名目の残りが一番大きい disk の node(同じなら名の順)。
+  ;; 覆う disk が無ければ空(spec.nodeID を書かない — Longhorn が選ぶ)。
+  (val small (DiskRoom :node "alpha" :maximum 100 :reserved 0 :scheduled 80 :available 100))
+  (val large (DiskRoom :node "beta" :maximum 100 :reserved 0 :scheduled 20 :available 100))
+  (val same (DiskRoom :node "gamma" :maximum 100 :reserved 0 :scheduled 20 :available 100))
+  (val dry (DiskRoom :node "delta" :maximum 100 :reserved 0 :scheduled 0 :available 5))
+  (<- only (restore-node #(small) 100 0 10))
+  (assert (= only "alpha") only)
+  (<- larger (restore-node #(small large) 100 0 10))
+  (assert (= larger "beta") larger)
+  (<- tied (restore-node #(same large) 100 0 10))
+  (assert (= tied "beta") tied)
+  (<- real (restore-node #(dry small) 100 0 10))
+  (assert (= real "alpha") real)
+  (<- none (restore-node #(small dry) 100 0 50))
+  (assert (= none "") none)
+  (<- empty (restore-node #() 100 0 10))
+  (assert (= empty "") empty))

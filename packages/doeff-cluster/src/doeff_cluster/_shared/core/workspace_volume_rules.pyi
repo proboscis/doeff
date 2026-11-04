@@ -12,6 +12,7 @@ DEVICE_DIR_NAME: str
 MOUNTINFO_ESCAPE: Incomplete
 USED_AT_KEY: str
 COOLING_TICKET_PREFIXES: tuple[str, ...]
+RESTORE_TICKET_PREFIX: str
 COOLING_MARK: str
 GROWING_MARK: str
 BACKUP_COMPLETED: str
@@ -58,6 +59,7 @@ class DiskRoom:
     reserved: int
     scheduled: int
     available: int
+    node: str = ''
 
 @dataclass(frozen=True, kw_only=True)
 class RoomBytes:
@@ -125,4 +127,7 @@ def hyx_room_coversXquestion_markX(room: RoomBytes, demand: int) -> _Program[boo
     ...
 
 def cooling_order(warm: tuple[WarmVolume, ...], now: float, warm_seconds: float, room: RoomBytes, demand: int) -> _Program[CoolingPlan, object]:
+    ...
+
+def restore_node(rooms: tuple[DiskRoom, ...], percentage: int, minimal: int, demand: int) -> _Program[str, object]:
     ...

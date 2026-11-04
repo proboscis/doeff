@@ -11,8 +11,8 @@
 ;;;   volume-mount-points   mount の行の組と volume の名 → その volume の device が付いている path の組
 ;;;   attach-step           Longhorn の様子 → attach の次の一手(ticket を置く・待つ・付いた・別の node に付いている)
 ;;;   detach-step           Longhorn の様子 → detach の次の一手(ticket を外す・待つ・外れた・別の node に付いている)
-;;;   using-tickets         VolumeAttachment の ticket の id の組 → 冷やす手順の外の ticket(使っている印 — 冷やす側の snapshot と backup の
-;;;                         ticket を除く)
+;;;   using-tickets         VolumeAttachment の ticket の id の組 → Longhorn の手順の外の ticket(使っている印 — 冷やす側の snapshot と backup の
+;;;                         ticket と戻しの ticket を除く)
 ;;;   cooling-name          volume の名と刻 → 冷やす時の snapshot と backup の名(<名>-cool-<epoch 秒>)
 ;;;   growing-name          volume の名と刻 → 広げた直後に取って消す snapshot の名(<名>-grow-<epoch 秒>)
 ;;;   newest-backup         backup の組 → 戻す元(完了した物のうち作られたのが一番新しい物 — 無ければ None)
@@ -21,6 +21,8 @@
 ;;;   room-covers?          線ごとの残りの byte と需要の byte → 両方の線が需要を覆うか
 ;;;   cooling-order         外れている volume の組・今・温かく置く秒・線ごとの残り・需要の byte → 冷やす volume の名(使い終わりの古い
 ;;;                         順)と、冷やした後に両方の線が需要を覆うか
+;;;   restore-node          札の disk の組と過剰割り当ての % と最小の空きの % と需要の byte → backup から戻す volume を付ける node(需要を覆う
+;;;                         disk のうち名目の残りが一番大きい物の node — 無ければ空)
 ;;;
 ;;; device の見分け方: mount の係は attach した volume を host の /dev/longhorn/<名> の device で付ける(係の /host/dev/longhorn/<名>)。
 ;;; mountinfo の source はその path なので、dir の名が longhorn で file の名が volume の名の source を、その volume の mount と読む。
@@ -48,6 +50,8 @@
 (val USED-AT-KEY "doeff-cluster/used-at")
 ;; 冷やす手順の snapshot と backup のために Longhorn が置く ticket の id の頭(外れている volume を、frontend を問わずに付ける)。
 (val COOLING-TICKET-PREFIXES #("snapshot-controller-" "backup-controller-"))
+;; backup から戻す間(restoreRequired の間 — 失敗した戻しにも残る)に Longhorn が置く ticket の id の頭(Longhorn v1.13 の volume restore controller)。
+(val RESTORE-TICKET-PREFIX "volume-restore-controller-")
 ;; 冷やす時の snapshot と backup の名の中の印。
 (val COOLING-MARK "-cool-")
 ;; 広げた直後に取って消す snapshot の名の中の印(README の節「広げる」の「expand の snapshot を畳む」)。
@@ -94,11 +98,12 @@
 
 (defrecord DiskRoom
   "札の disk 1 つの置き場の数(byte): maximum = storageMaximum・reserved = storageReserved・scheduled = storageScheduled(置いた volume の
-   名目の大きさの和)・available = storageAvailable(file system の実の空き)。"
+   名目の大きさの和)・available = storageAvailable(file system の実の空き)・node = disk の在る node の名。"
   (#^ int maximum)
   (#^ int reserved)
   (#^ int scheduled)
-  (#^ int available))
+  (#^ int available)
+  (setv #^ str node ""))
 
 
 (defrecord RoomBytes
@@ -224,9 +229,10 @@
 
 (defk using-tickets [ids]
   {:pre [(: ids (get tuple #(str ...)))] :post [(: % (get tuple #(str ...)))]}
-  "VolumeAttachment の ticket の id の組 ids のうち、冷やす手順の snapshot と backup の ticket でない物(使っている印 — この答え手の
-   ticket・CSI・ほかの持ち主)を、名の順に得るため。"
-  (tuple (sorted (gfor id ids :if (not (any (gfor prefix COOLING-TICKET-PREFIXES (.startswith id prefix)))) id))))
+  "VolumeAttachment の ticket の id の組 ids のうち、Longhorn が冷やす手順の snapshot と backup・戻しのために置く ticket でない物(使っている印 —
+   この答え手の ticket・CSI・ほかの持ち主)を、名の順に得るため。"
+  (val own (+ COOLING-TICKET-PREFIXES #(RESTORE-TICKET-PREFIX)))
+  (tuple (sorted (gfor id ids :if (not (any (gfor prefix own (.startswith id prefix)))) id))))
 
 
 (defk cooling-name [name stamp]
@@ -291,3 +297,20 @@
       (:= taken (+ taken #(volume.name)))))
   (<- covered bool (room-covers? freed demand))
   (CoolingPlan :names (+ (tuple (gfor volume stale volume.name)) (if covered taken #())) :covered covered))
+
+
+(defk restore-node [rooms percentage minimal demand]
+  {:pre [(: rooms (get tuple #(DiskRoom ...))) (: percentage int) (>= percentage 0) (: minimal int) (<= 0 minimal 100) (: demand int) (>= demand 0)]
+   :post [(: % str)]}
+  "札の disk の組 rooms から、backup から戻す volume の engine を置く node を決めるため(replica と同じ node に付け、engine が網越しに replica の
+   状態を読まない — README の節「戻しの失敗」): 需要 demand を両方の線で覆う disk のうち、名目の予約の線の残りが一番大きい disk の node(同じなら
+   node の名の順の先頭)。覆う disk が無ければ空(spec.nodeID を書かない — Longhorn が選ぶ)。"
+  (var chosen "")
+  (var most -1)
+  (for [room (sorted rooms :key (fn [room] room.node))]
+    (<- lines RoomBytes (room-bytes #(room) percentage minimal))
+    (<- fits bool (room-covers? lines demand))
+    (when (and fits (> lines.nominal most))
+      (:= chosen room.node)
+      (:= most lines.nominal)))
+  chosen)
