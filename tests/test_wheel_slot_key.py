@@ -20,7 +20,7 @@ BACKEND = REPO / "tools" / "doeff_cargo_backend.py"
 # 鍵に入る環境変数の名(どれも同じ source の build で中身を変える)。
 BUILD_ENV = ("RUSTFLAGS", "CARGO_ENCODED_RUSTFLAGS", "CARGO_PROFILE_RELEASE_STRIP", "CARGO_PROFILE_RELEASE_DEBUG", "CARGO_BUILD_TARGET", "MATURIN_PEP517_ARGS", "PYO3_PYTHON")
 # 鍵に入らない環境変数の名(組む場所・並べる数・関係の無い物 — 作業木をまたいで wheel を共有する効き目を保つ)。
-PLACE_ENV = ("CARGO_TARGET_DIR", "CARGO_BUILD_TARGET_DIR", "CARGO_BUILD_JOBS", "PATH")
+PLACE_ENV = ("CARGO_TARGET_DIR", "CARGO_BUILD_TARGET_DIR", "CARGO_BUILD_BUILD_DIR", "CARGO_BUILD_JOBS", "PATH")
 
 
 def _backend() -> ModuleType:
