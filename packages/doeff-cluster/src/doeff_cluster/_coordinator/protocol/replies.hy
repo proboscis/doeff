@@ -50,8 +50,8 @@
      (if task.limits {"limits" (task-limits-json task.limits)} {})
      ;; memory の要り(MiB — 置き先が予約する 1 本の山・2026-11-02)— 名乗る task だけ。
      (if (is task.memory-mib None) {} {"memoryMiB" task.memory-mib})
-     ;; 走らせ直しの名乗りと今の試行の番号 — 名乗る task だけ。
-     (if task.rerun {"rerun" True "attempt" task.attempt} {})))
+     ;; 走らせ直しの名乗りと今の試行の番号と上限に数えた消失の数 — 名乗る task だけ。
+     (if task.rerun {"rerun" True "attempt" task.attempt "losses" task.losses} {})))
 
 
 (defk spec-json [#^ JobSpec spec]
@@ -106,7 +106,7 @@
      (if offer.environ {"environ" (dict offer.environ)} {})
      (if (is offer.memory-mib None) {} {"memoryMiB" offer.memory-mib})
      ;; 引き取った行が同じ約束で続けるための写し(worker は読まずに状態の報告へ添えて返す)。
-     (if offer.rerun {"rerun" True "attempt" offer.attempt} {})
+     (if offer.rerun {"rerun" True "attempt" offer.attempt "losses" offer.losses} {})
      (if offer.notify {"notify" offer.notify} {})))
 
 

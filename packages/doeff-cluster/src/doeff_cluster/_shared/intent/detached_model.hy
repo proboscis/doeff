@@ -91,7 +91,7 @@
   (setv #^ (| int None) memory-mib None)
   ;; 走らせ直しの名乗り(2026-11-04): 担い手の worker が消えた時(lease 切れ・止まり始めた worker が止めた)に、lost で終わらず同じ key の次の試行として
   ;; 待ちの行へ戻す。次の試行は最初から走る(途中から続くのは Program が途中の結果を残す時だけ)ので、2 度走って困る仕事は名乗らない。沈黙から戻った
-  ;; 前の試行の process は worker が止める。回数は coordinator の上限まで(cluster_policy.RERUN-LIMIT)・試行が変わると知らせ先へ出口の行(kind reran)を
+  ;; 前の試行の process は worker が止める。回数は coordinator の上限まで(cluster_policy.RERUN-LIMIT — 予定した退きで止まった試行は数えない)・試行が変わると知らせ先へ出口の行(kind reran)を
   ;; 積む。同じ key の送り直しの比べには入れない。
   (setv #^ bool rerun False)
   (defn #^ None __post-init__ [self]
