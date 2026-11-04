@@ -1156,9 +1156,12 @@
   ;; 試行ごとに増える(行の id の番号)ので、数えた回数は別の欄で持つ。
   ;; retiring = 担い手の世代に drain が掛かったまま、その世代が退いた印(訳の 1 句 — 空 = 印なし)。世代つきの drain は新しい世代の
   ;; heartbeat で解ける(cluster_policy.absorb-boot)ので、前の世代の lease が切れる刻には drain の行がもう無い — 解ける拍に task へ写す。
-  ;; 欄の無い旧い行は losses = attempt − 1(前の試行を全部数えた)・印なしで読む。
+  ;; rerun-note = この試行を積み直した訳(前の試行が予定した退きか消失かと、上限に数えた消失の数 — 空 = 最初の試行)。待つ間の detail の
+  ;; 頭に残す(cluster_policy.waiting-detail — 置き先の無い拍の待ちの文で消さない)。
+  ;; 欄の無い旧い行は losses = attempt − 1(前の試行を全部数えた)・印なし・訳なしで読む。
   (setv #^ int losses 0)
-  (setv #^ str retiring ""))
+  (setv #^ str retiring "")
+  (setv #^ str rerun-note ""))
 
 
 ;; 担い手の worker に置いた task の phase(担い手の数・送る task・報告の吸い上げ・lease の延長で同じに扱う)。
