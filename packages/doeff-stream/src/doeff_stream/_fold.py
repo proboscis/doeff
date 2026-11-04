@@ -10,6 +10,11 @@ The watcher is never cancelled by the fold (``CancelRun`` cancels the runner), s
 of a runner cancelled before it started. A runner that ended with ``TaskCancelledError`` is ``Cancelled`` only when the
 step cancelled it; one that raised it on its own (a wait on another cancelled task) is ``Raised``.
 
+An ``Arm`` / ``Disarm`` starts no task: the fold performs ``ArmTimer`` / ``DisarmTimer`` itself, under a ``_FoldTimer``
+tag (the fold's ``origin`` and the step's tag). Its ``TimerFired`` reaches every subscriber of the bus; the fold takes
+those of its own origin, gives the step ``TimerFired(tag)``, and reads past the other folds' ones. A ``TimerFired``
+whose tag is not a ``_FoldTimer`` (a ``Run`` of ``ArmTimer``) reaches the step as it is.
+
 The fold installs one handler, around a step's Program only: the one that refuses every effect (``step_answer``).
 The caller installs the bus handler subscribed to ``inputs.event_types`` (``subscribed_event_handler``) and, for
 ``timers()``, the timer handler inside it — under ``scheduled``.
@@ -20,14 +25,16 @@ from dataclasses import dataclass, replace
 from typing import Any, TypeVar
 
 from doeff_core_effects import Cancel, Spawn, Task, TaskCancelledError, Wait, shielded
-from doeff_events import Publish, WaitForEvent
+from doeff_events import ArmTimer, DisarmTimer, Publish, TimerFired, WaitForEvent
 
 from doeff import Program, do
 from doeff_stream._source import Inputs, RunEnded
 from doeff_stream._step import (
     Answered,
+    Arm,
     Cancelled,
     CancelRun,
+    Disarm,
     Finish,
     Next,
     Raised,
@@ -49,6 +56,15 @@ class _Running:
     runner: Task[object]
     watcher: Task[None]
     cancelled: bool = False
+
+
+@dataclass(frozen=True)
+class _FoldTimer:
+    """The tag the timer handler holds for the ``Arm(tag, …)`` of the fold ``origin``: one fold's tags never meet
+    another's in the handler's queue, and its ``TimerFired`` tells which fold it is for."""
+
+    origin: object
+    tag: Hashable
 
 
 @do
@@ -76,13 +92,69 @@ def _as_step_input(ended: RunEnded, running: _Running) -> RunEnd:
     return ended.end
 
 
+@dataclass(frozen=True)
+class _Foreign:
+    """What ``_own_input`` answers for an input of another fold on the same bus: the fold reads past it."""
+
+
+_FOREIGN = _Foreign()
+
+
+def _own_input(
+    event: object, origin: object, running: dict[Hashable, _Running], armed: set[Hashable]
+) -> object:
+    """The input the step is given for the bus event ``event`` of the fold ``origin``, or ``_FOREIGN``.
+
+    A run end or a deadline of this fold leaves the fold's tables (``running`` / ``armed``) here.
+    """
+    match event:
+        case RunEnded(origin=other) if other is not origin:
+            return _FOREIGN
+        case RunEnded(key=key):
+            return _as_step_input(event, running.pop(key))
+        case TimerFired(tag=_FoldTimer(origin=other)) if other is not origin:
+            return _FOREIGN
+        case TimerFired(tag=_FoldTimer(tag=tag)):
+            armed.discard(tag)
+            return TimerFired(tag)
+        case _:
+            # An event of a source, or a TimerFired of a Run: the step reads it as it is.
+            return event
+
+
 @do
-def _close(running: dict[Hashable, _Running]) -> Generator[Any, Any, None]:
-    """Cancel every run still running and wait until each has ended (its watcher published its end).
+def _set_deadline(
+    effect: Arm | Disarm, origin: object, inputs: Inputs, armed: set[Hashable]
+) -> Generator[Any, Any, None]:
+    """Hand the step's ``Arm`` / ``Disarm`` to the timer handler under the fold's own tag, and keep ``armed``."""
+    match effect:
+        case Arm(tag=tag, at=at):
+            if TimerFired not in inputs.event_types:
+                raise ValueError(
+                    f"Arm of the tag {tag!r} in a fold without timers() among its sources: "
+                    "its TimerFired would never reach the step"
+                )
+            yield ArmTimer(_FoldTimer(origin, tag), at)
+            armed.add(tag)
+        case Disarm(tag=tag):
+            if tag in armed:
+                yield DisarmTimer(_FoldTimer(origin, tag))
+                armed.discard(tag)
+
+
+@do
+def _close(
+    origin: object, running: dict[Hashable, _Running], armed: set[Hashable]
+) -> Generator[Any, Any, None]:
+    """Disarm the deadlines still set, cancel every run still running and wait until each has ended (its watcher
+    published its end).
 
     The wait has no deadline: the fold has no clock. A run that does not end once cancelled (it waits inside
     ``shielded``, or never waits) holds the fold here — a run that waits on the outside world bounds its own wait.
     """
+    for tag in armed:
+        yield DisarmTimer(_FoldTimer(origin, tag))
+    armed.clear()
     for entry in running.values():
         yield Cancel(entry.runner)
     for entry in running.values():
@@ -99,21 +171,23 @@ def fold(
     A step that answers a Program is evaluated under the handler that refuses every effect: its value is the
     ``Next``, and an effect it performs raises ``StepYieldedEffectError`` here like any error of the step.
 
-    Each input is one event of ``inputs.event_types`` (in the order the bus queued them) or the end of a run
-    (``Answered`` / ``Raised`` / ``Cancelled``). If the step raises, or the fold's task is cancelled, the runs still
-    running are cancelled, the fold waits until each has ended, and the error goes on.
+    Each input is one event of ``inputs.event_types`` (in the order the bus queued them), the end of a run
+    (``Answered`` / ``Raised`` / ``Cancelled``) or the deadline of an ``Arm`` (``TimerFired(tag)``). If the step raises,
+    or the fold's task is cancelled, the deadlines still set are disarmed, the runs still running are cancelled, the
+    fold waits until each has ended, and the error goes on.
     """
     origin = object()
     # The fold's own table of the runs it started (key -> tasks): its loop state, never shared.
     running: dict[Hashable, _Running] = {}
+    # The tags of the step's deadlines set and not yet fired or disarmed: the fold disarms them when it ends.
+    armed: set[Hashable] = set()
     state = initial
     try:
         while True:
             event = yield WaitForEvent(*inputs.event_types)
-            if isinstance(event, RunEnded):
-                if event.origin is not origin:
-                    continue  # another fold's run on the same bus
-                event = _as_step_input(event, running.pop(event.key))
+            event = _own_input(event, origin, running, armed)
+            if event is _FOREIGN:
+                continue
             answer = step(state, event)
             if is_program_answer(answer):
                 answer = yield step_answer(step, answer)
@@ -130,10 +204,12 @@ def fold(
                         if entry is not None and not entry.cancelled:
                             yield Cancel(entry.runner)
                             running[key] = replace(entry, cancelled=True)
+                    case Arm() | Disarm():
+                        yield _set_deadline(effect, origin, inputs, armed)
                     case Finish(value=value):
-                        yield _close(running)
+                        yield _close(origin, running, armed)
                         return value
     except Exception:
         # Shielded: in a fold whose own task is being cancelled, every wait outside a shield raises again.
-        yield shielded(_close(running))
+        yield shielded(_close(origin, running, armed))
         raise

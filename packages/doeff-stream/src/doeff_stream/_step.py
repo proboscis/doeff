@@ -2,7 +2,8 @@
 
 A step is a pure function ``step(state, input) -> Next(state, effects)``, or a function whose answer is a Program of
 that ``Next`` that performs no effect (a defk that only composes other defks). The effects are values the runtime
-carries out: ``Run`` starts a program in a task of its own, ``CancelRun`` cancels one, ``Finish`` ends the fold.
+carries out: ``Run`` starts a program in a task of its own, ``CancelRun`` cancels one, ``Arm`` / ``Disarm`` set and
+take back a deadline of the fold's own (no task), ``Finish`` ends the fold.
 Every ``Run`` comes back to the step as exactly one input with its key — ``Answered`` (the program's value),
 ``Raised`` (the exception it ended with) or ``Cancelled`` (it ended by the ``CancelRun`` of its key).
 
@@ -12,6 +13,7 @@ The fold and the replay evaluate it through the same ``step_answer``, so both se
 
 from collections.abc import Callable, Generator, Hashable
 from dataclasses import dataclass
+from datetime import datetime
 from typing import Any, Generic, TypeIs, TypeVar
 
 from doeff import DoExpr, EffectBase, K, Program, do, handler
@@ -46,6 +48,35 @@ class CancelRun:
 
 
 @dataclass(frozen=True)
+class Arm:
+    """Set the deadline ``tag`` of this fold at ``at`` (a timezone-aware instant). At ``at`` it comes back to the step
+    as the input ``TimerFired(tag)``; the fold needs ``timers()`` among its sources.
+
+    No task: the fold hands the deadline to the timer handler itself (``ArmTimer``), under a tag that names the fold,
+    so the deadline of another fold on the same bus never reaches this step, whatever its tag. Arming a tag that is
+    set moves its deadline. A deadline still set when the fold ends is disarmed then.
+    """
+
+    tag: Hashable
+    at: datetime
+
+    def __post_init__(self) -> None:
+        # Checked here, not at the timer handler: the step's mistake is named where it was made.
+        if not isinstance(self.at, datetime):
+            raise TypeError(f"Arm takes a datetime, got {type(self.at).__name__}")
+        if self.at.tzinfo is None or self.at.utcoffset() is None:
+            raise ValueError("Arm takes a timezone-aware datetime")
+
+
+@dataclass(frozen=True)
+class Disarm:
+    """Take back the deadline ``tag`` of this fold: its ``TimerFired`` does not come. A tag that is not set (never
+    armed, disarmed, or already fired) is no error."""
+
+    tag: Hashable
+
+
+@dataclass(frozen=True)
 class Finish:
     """End the fold with ``value``: the effect after which the step is not called again.
 
@@ -57,7 +88,7 @@ class Finish:
     value: object
 
 
-StepEffect = Run | CancelRun | Finish
+StepEffect = Run | CancelRun | Arm | Disarm | Finish
 """Everything a step may ask the runtime to do."""
 
 
@@ -178,11 +209,12 @@ def checked_next(answer: "Next[S]", running: frozenset[Hashable]) -> "Next[S]":
                 if key in started:
                     raise ValueError(f"Run of the key {key!r}, whose run has not come back yet")
                 started.add(key)
-            case CancelRun() | Finish():
+            case CancelRun() | Arm() | Disarm() | Finish():
                 pass
             case _:
                 raise TypeError(
-                    f"a step's effects are Run, CancelRun or Finish, got {type(effect).__name__}"
+                    "a step's effects are Run, CancelRun, Arm, Disarm or Finish, "
+                    f"got {type(effect).__name__}"
                 )
     finishes = tuple(effect for effect in answer.effects if isinstance(effect, Finish))
     if len(finishes) > 1:
