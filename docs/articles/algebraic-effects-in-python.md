@@ -370,6 +370,8 @@ print(first, again, "same:", first == again, "tape:", len(tape), "answers")
 
 ### Layer 4: a Monte Carlo bot
 
+[![The Monte Carlo bot answers one Choose: the fight that asked waits as k while the handler runs battle itself from each candidate move, counts the wins and resumes k](../assets/videos/article-monte-carlo.gif)](../assets/videos/article-monte-carlo.mp4)
+
 To answer `Choose`, `monte_carlo` runs `battle` itself, many times, while the fight that asked stays paused as `k`. It needs no model of the game: it plays the real `battle`, so when a card changes, the bot plays the changed card. The runs inside the handler have their own stacks, so they do not use up the dice of the paused fight. The playouts are rough: each starts from the next turn's draw, and three per move is very few. The next layer measures how much better the bot plays anyway.
 
 <details markdown="1">
