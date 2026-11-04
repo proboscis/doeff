@@ -18,8 +18,10 @@
 # 書き出さず、共有の読むだけの checkout の上に変えた file だけを書く):
 #   overlay   付ける先に、下の dir を下の層・`<付ける先>.up` を上の層・`<付ける先>.wk` を overlayfs の作業の dir にした overlay を付ける。
 #             下の dir は作業の root の下の base/ の下(共有の checkout の置き場)。上の層と作業の dir は頼み手が作る(同じ file system)。
-#             既に同じ下の dir の overlay が付いていれば何もしない。
+#             既に同じ下の dir の overlay が付いていれば何もしない。redirect_dir=on: 下の層の dir の rename を EXDEV で断らない(付けないと
+#             Python の os.rename が落ちる)。noatime: 読むだけで上の層へ書かない。
 #   unoverlay 付ける先の overlay を外す(下の dir を照らしてから)。何も付いていなければ何もしない。上の層は消さない(頼み手が消す)。
+#             `<付ける先>.wk/work` だけは係が消す — kernel が root の mode 000 で作り whiteout を残すので、worker の uid では消せない。
 # 答え(`<鍵>.out` — 書き切ってから名を替えて置く): 1 行目が結末の code(0 = した・既にそうだった / 1 = 断った・失敗した)、
 # 2 行目からが訳と命令の出力。頼み手は答えを読んだら消す。
 #
@@ -104,7 +106,7 @@ case $verb in overlay | unoverlay)
       plain_dir "上の層" "$upper"
       plain_dir "overlayfs の作業の dir" "$work"
       [ -z "$(ls -A "$target")" ] || refuse "付ける先 $target が空でない(付けると中身が隠れる)"
-      mount -t overlay overlay -o "lowerdir=$lower,upperdir=$upper,workdir=$work" "$target" >>"$notes" 2>&1 ||
+      mount -t overlay overlay -o "lowerdir=$lower,upperdir=$upper,workdir=$work,redirect_dir=on,noatime" "$target" >>"$notes" 2>&1 ||
         refuse "$lower の overlay を $target に付けられなかった"
       say "$lower を下の層・$upper を上の層にした overlay を $target に付けた"
       finish 0
@@ -112,11 +114,16 @@ case $verb in overlay | unoverlay)
     unoverlay)
       if [ -z "$have_lower" ]; then
         say "$target には何も付いていない"
-        finish 0
+      else
+        [ "$have_lower" = "$lower" ] || refuse "$target に付いているのは $lower の overlay でない(${have_type} ${have_lower})"
+        umount "$target" >>"$notes" 2>&1 || refuse "$target を外せなかった(使っている process が在るかもしれない)"
+        say "$lower の overlay を $target から外した"
       fi
-      [ "$have_lower" = "$lower" ] || refuse "$target に付いているのは $lower の overlay でない(${have_type} ${have_lower})"
-      umount "$target" >>"$notes" 2>&1 || refuse "$target を外せなかった(使っている process が在るかもしれない)"
-      say "$lower の overlay を $target から外した"
+      # 外した後(前の回が消す前に止まった時も)。root で消すので、作業の dir が symlink なら通らない。
+      if [ -e "$target.wk" ]; then
+        plain_dir "overlayfs の作業の dir" "$target.wk"
+        rm -rf "$target.wk/work" >>"$notes" 2>&1 || refuse "$target.wk/work を消せなかった"
+      fi
       finish 0
       ;;
   esac
