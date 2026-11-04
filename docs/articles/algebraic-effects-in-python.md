@@ -1,21 +1,16 @@
 # Algebraic effects for Python: stack handlers around one unchanged program
 
-*Algebraic effects for Python: handlers get the rest of your program, so dice, players, the screen, statistics and concurrency become layers you stack around the same code.*
+Algebraic effects in Python, with doeff, an open-source library whose core is written in Rust. A function yields effects, operations it names, and a handler receives each one together with the rest of the function and decides how the function goes on.
 
-This post is about algebraic effects in Python, with doeff, an open-source library whose core is written in Rust. A function yields effects, operations it names, and a handler receives each one together with the rest of the function and decides how the function goes on.
+This post stacks such handlers around one small program, one layer at a time; if you know what `yield` does, you know most of what you need.
 
-Any one of those decisions can be had another way: a mock for tests, a seeded random generator, a player object passed in as an argument, a custom event loop. What effects give you is one mechanism for all of them, so you can stack them around the same code and swap any one of them without touching it. This post builds one small program and adds those layers one at a time.
-
-You don't need any theory. If you know what `yield` does, you know most of what you need.
+[![One card fight as one function: its effects travel out to handlers stacked around it, and the stacks change while the function does not](../assets/videos/article-opening.gif)](../assets/videos/article-opening.mp4)
 
 ## The idea: an exception a handler can resume
 
-If you know exceptions, think of an effect as an exception that a handler can answer, after which the code carries on from the line that raised it. That is how OCaml 5 introduces its effect handlers ("resumable exceptions"), and Python generators can already pause and resume, so the library supplies the rest: a VM in Rust that finds the handler for each effect and keeps track of the paused code.
+Think of an effect as an exception a handler can answer, after which the code carries on from the line that raised it. A **program** is a generator function under `@do`, an **effect** is a plain value it yields, and a **handler** is a function of `(effect, k)`, where `k` is the rest of the function. The caller picks the handlers, so the same function means different things under different handlers.
 
-- An **effect** is a plain value that names an operation, such as `Spend(3)`, `Roll(6)` or `Spawn(task)`. It does nothing by itself. You define your own as a class, or use ones that doeff's packages define.
-- A **program** is a generator function under `@do`. At each `yield` of an effect it pauses.
-- A **handler** is a function of `(effect, k)` marked with `@handler`, which makes it a `@do` function too. It receives the effect together with `k`, the rest of the function, and decides what happens.
-- The **caller** picks the handlers, so the same function means different things under different handlers.
+Resuming and dropping are two of six things a handler can do with `k`:
 
 | The handler | Written as | The program |
 |---|---|---|
@@ -26,7 +21,8 @@ If you know exceptions, think of an effect as an exception that a handler can an
 | keeps it for later | stores `k`, then `yield Transfer(k, value)` while handling a later effect | waits until the handler continues it |
 | drops it | `return value`, without resuming `k` | stops at the `yield`; `value` is the result of everything under the handler |
 
-Here is the smallest version. `research` yields one `Spend` per topic and knows nothing about what spending means:
+<details markdown="1">
+<summary>spend.py: the smallest version, with a budget that resumes or drops <code>k</code></summary>
 
 ~~~python
 # spend.py
@@ -89,13 +85,9 @@ refused
 over budget
 ~~~
 
-`@handler` makes the function under it a `@do` function and a handler, so a handler is always a `@do` function. Like any `@do` function, it hands `Resume(k, None)` to doeff by yielding it, and the `yield` gives back what the rest of `research` returned: `return (yield Resume(k, None))` passes that result on as the handler's own. Called on a program, a handler installs itself around it: `free(research(TOPICS))` is `research(TOPICS)` with `free` installed around it. The annotation `effect: Spend` tells doeff which effects the handler takes.
+</details>
 
-- `free` answers with `Transfer(k, None)`. `research` runs to the end.
-- `refuse` returns without touching `k`. `research` stops at its first `Spend`, and `"refused"` is the result of the whole run.
-- `budget(5)` keeps what is left between effects. The first `Spend` costs 3 and the handler resumes `k`. The second finds 2 left, so the handler returns `"over budget"`, and the second topic is never researched.
-
-Here is the run of `budget(5)(research(TOPICS))`, one message at a time:
+Follow the run of `budget(5)(research(TOPICS))` below: `k` is a value, and the handler decides what happens to it.
 
 ```mermaid
 sequenceDiagram
@@ -112,21 +104,12 @@ sequenceDiagram
     budget->>run: "over budget"
 ```
 
-That is one layer. The rest of this post stacks several around one program.
-
 ## One program, layer by layer
 
-`battle` is a small deck-building fight in the spirit of the game Slay the Spire. You have 40 hit points and a deck of ten cards, and the enemy has 44 hit points. Each turn you draw five cards and have 3 energy to spend on them:
+`battle` is a small deck-building fight in the spirit of the game Slay the Spire. It yields four kinds of effect: `Roll`, `Choose`, `Show` and `Played`. Nothing in it says where the random numbers come from, who picks the cards, whether there is a screen, or whether anyone is counting. In every layer below, `battle` is the same function.
 
-| Card | Costs | Does |
-|---|---:|---|
-| Strike | 1 energy | 6 damage |
-| Defend | 1 energy | 5 block: the enemy's next hit is 5 smaller |
-| Bash | 2 energy | 8 damage, and the enemy takes 50% more damage for two turns |
-
-When you end your turn, the enemy does one of three things at random: it hits for 11, hits for 7, or bellows, which makes every later hit 3 stronger. The fight goes on until one side has no hit points left.
-
-`battle` yields four kinds of effect: `Roll` for a random number, `Choose` for the player's move, `Show` for a line on the screen, and `Played` for a statistic. Nothing in it says where the random numbers come from, who picks the cards, whether there is a screen, or whether anyone is counting:
+<details markdown="1">
+<summary>spire.py (excerpt): the four effects and <code>battle</code></summary>
 
 ~~~python
 # spire.py (excerpt)
@@ -238,11 +221,14 @@ def battle(s: Fight = Fight()):
     return ("win" if s.enemy_hp <= 0 else "lose"), s.turn
 ~~~
 
-`hit` is a plain function: it works out what one card does to the state of the fight. `draw_hand` and `battle` are `@do` functions, because they yield effects. `battle` runs `draw_hand` by yielding it, and the `yield` gives back what `draw_hand` returned. `Fight` is frozen, so every change makes a new state with `replace`. That matters in Layer 4, where a bot takes the state out of a `Choose` and plays the rest of the fight from it.
-
-Run `battle()` with no handlers, and it stops at its first `Roll` with `UnhandledEffect`: none of these effects has a meaning until a handler gives it one.
+</details>
 
 ### Layer 1: a scripted player and a screen
+
+`scripted` answers `Choose` from a list, and `dice(7)` answers `Roll` from a seeded generator. The same seed and script give the same fight on every run, so a bug report becomes a seed and a list of moves.
+
+<details markdown="1">
+<summary>The handlers of Layer 1, the run and what it prints</summary>
 
 ~~~python
 # spire.py (excerpt)
@@ -313,11 +299,14 @@ print(run(quiet_stats(printed(dice(7)(scripted(moves)(battle()))))))
 ('win', 6)
 ~~~
 
-Read the stack from the inside out. `scripted` answers `Choose` from a list of positions in the hand, `dice(7)` answers `Roll` from a random generator seeded with 7, `printed` answers `Show` by printing the line, and `quiet_stats` answers `Played` by doing nothing. The result is who won and on which turn.
-
-The script plays the first card of the hand three times, then ends the turn. On turn 2 it is out of step and ends the turn without playing a card, which is what a script does. The same seed and the same script give the same fight on every run, so this stack is also a test: a bug report becomes a seed and a list of moves.
+</details>
 
 ### Layer 2: a random bot
+
+`random_bot` takes the place of `scripted`, and `silent` takes the place of `printed`. It yields a `Roll` of its own, which travels out to `dice(3)` like any `Roll` from `battle`.
+
+<details markdown="1">
+<summary><code>random_bot</code>, the run and what it prints</summary>
 
 ~~~python
 # spire.py (excerpt)
@@ -341,9 +330,14 @@ print(run(quiet_stats(silent(dice(3)(random_bot(battle()))))))
 ('win', 4)
 ~~~
 
-`random_bot` takes the place of `scripted`. It is a handler for `Choose`, and it yields an effect of its own: a `Roll` for a random position among the cards it has the energy for, where the one extra number means "end the turn". That `Roll` travels out to `dice(3)` like any `Roll` from `battle`. `silent` takes the place of `printed`, so nothing is printed. `battle` has not changed, and it does not know that nobody is at the screen.
+</details>
 
 ### Layer 3: record and replay
+
+`record` passes each effect on and keeps the answer, and `replay` answers from the tape. The 32 answers are the whole fight: keep them with a crash report, and the crash happens again, move for move.
+
+<details markdown="1">
+<summary><code>record</code> and <code>replay</code>, the runs and what they print</summary>
 
 ~~~python
 # spire.py (excerpt)
@@ -381,11 +375,14 @@ print(first, again, "same:", first == again, "tape:", len(tape), "answers")
 ('win', 4) ('win', 4) same: True tape: 32 answers
 ~~~
 
-`recorder` sits closest to `battle` and takes both `Roll` and `Choose`. Inside a handler, `yield effect` performs the same effect again, so the next handler out answers it: `random_bot` answers `Choose`, and `dice(3)` answers `Roll`. `recorder` writes the answer on the tape and resumes `battle` with it. `random_bot` sits outside `recorder`, so the `Roll` it yields goes straight out to `dice(3)` and never reaches the tape: the tape keeps the bot's moves, not how the bot picked them.
-
-`replayer` answers both effects from the tape. The second run has no dice and no player, and it plays the same fight to the same end. The 32 answers are the whole fight. Keep them with a crash report, and the crash happens again, move for move.
+</details>
 
 ### Layer 4: a Monte Carlo bot
+
+To answer `Choose`, `monte_carlo` runs `battle` itself, many times, while the fight that asked stays paused as `k`. It needs no model of the game: it plays the real `battle`, so when a card changes, the bot plays the changed card. The runs inside the handler have their own stacks, so they do not use up the dice of the paused fight. The playouts are rough: each starts from the next turn's draw, and three per move is very few. The next layer measures how much better the bot plays anyway.
+
+<details markdown="1">
+<summary><code>monte_carlo</code>, the run and what it prints</summary>
 
 ~~~python
 # spire.py (excerpt)
@@ -425,13 +422,14 @@ print(run(quiet_stats(silent(dice(3)(monte_carlo(PLAYOUTS)(battle()))))))
 ('win', 4)
 ~~~
 
-This is the layer the others lead up to. `monte_carlo` is a handler for `Choose`, and to answer it, it runs `battle` itself. For each card it could play, and for ending the turn, it plays that card on the state with `hit`, then runs the rest of the fight `playouts` times. Each of those runs is a new `run` with a stack of its own: `dice(n)` for the dice, `random_bot` for the player, and `silent` and `quiet_stats` for the screen and the statistics. The handler counts the wins and resumes the paused fight with the move that won most often.
-
-The bot needs no model of the game. It plays the real `battle`, the same function a person plays at the terminal, so when a card changes, the bot plays the changed card. `battle` knows nothing about bots, or about being run inside one of its own handlers. The fight that asked the question stays paused at its `Choose` the whole time, as `k`, and goes on only when the handler resumes it. The runs inside the handler answer their effects with their own handlers, so they do not use up the dice of the paused fight.
-
-The playouts are rough. Each one starts from the next turn's draw, so it leaves out the rest of the current hand, and three playouts per move is very few. The next layer measures how much better the bot plays anyway.
+</details>
 
 ### Layer 5: a hundred fights at once
+
+`win_rate` yields `Spawn` once per seed and then `Gather`, and each task carries its own stack. The tasks take turns on one thread, and `scheduled` switches between them where they yield. On the same hundred seeds, the random bot wins 73 fights and the Monte Carlo bot wins all 100.
+
+<details markdown="1">
+<summary><code>win_rate</code>, the runs and what they print</summary>
 
 ~~~python
 # spire.py (excerpt)
@@ -455,11 +453,14 @@ random bot wins 0.73
 monte carlo wins 1.0
 ~~~
 
-`win_rate` is a program too. It yields `Spawn` once per seed, which starts a `battle` as a task, then `Gather`, which waits for every task and gives back their results. `Spawn` and `Gather` are effects from doeff's packages, and `scheduled` is a reference handler for them. The tasks take turns on one thread, and `scheduled` switches between them where they yield.
-
-Each task carries its own stack: `silent`, `dice(seed)` and the player are installed around each `battle()` when the task is made, so the hundred fights do not share a random generator. The player is a parameter, so the same line runs `random_bot` or `monte_carlo(PLAYOUTS)`. On the same hundred seeds, the random bot wins 73 fights and the Monte Carlo bot wins all 100.
+</details>
 
 ### Layer 6: a damage count per card
+
+`damage_stats` takes the place of `quiet_stats`, outside `win_rate`. An effect a task's own handlers do not take travels out past the `Spawn`, so the `Played` of all hundred fights reach this one handler.
+
+<details markdown="1">
+<summary><code>damage_stats</code>, the run and what it prints</summary>
 
 ~~~python
 # spire.py (excerpt)
@@ -484,9 +485,14 @@ print(totals)
 {'Strike': 3663, 'Defend': 0, 'Bash': 632}
 ~~~
 
-`damage_stats(totals)` takes the place of `quiet_stats`, outside `win_rate`. An effect that a task's own handlers do not take travels out to the handlers around the `Spawn` that started the task, so the `Played` of all hundred fights reach this one handler. `battle` has yielded `Played` for every card from the start, and it never had to know whether anyone was counting. Change a card's numbers, run this line again, and you see what the change did.
+</details>
 
 ### Production: a person at the terminal
+
+`human` answers `Choose` with `input()`, and the code the bots played is the code the person plays.
+
+<details markdown="1">
+<summary><code>human</code> and <code>play</code></summary>
 
 ~~~python
 # spire.py (excerpt)
@@ -511,9 +517,11 @@ def play() -> None:
 python spire.py play
 ~~~
 
-`human` answers `Choose` by asking at the terminal with `input()`, and `play` seeds the dice from the system's random source. Next to Layer 1, only the player and the seed differ. The code that the bots played, the replay replayed and the statistics counted is the code the person plays.
+</details>
 
 ### The stacks side by side
+
+`battle` is the same function in every stack, and some of them replace an input, such as the dice or the player. The others do things an object passed in as an argument cannot: keep the answer, yield an effect of their own, hold the paused fight as `k`.
 
 | Run | Layers around `battle`, from the inside out | What changes |
 |---|---|---|
@@ -526,11 +534,9 @@ python spire.py play
 | damage count | `damage_stats(totals)` in place of `quiet_stats` | the damage of each card over a hundred fights |
 | production | `human` in place of the player, dice seeded by the system | a person plays |
 
-`battle` is the same function in every row. Some rows replace an input, such as the dice or the player. The others do things an object passed in as an argument cannot do. `recorder` passes an effect on and keeps the answer. `random_bot` yields an effect of its own, which the next handler out answers. `monte_carlo` holds the paused fight as `k` while it runs the same program many more times, and resumes it once it has decided. `win_rate` gives every task its own stack, and `damage_stats` hears from all of them. Each of these is a handler a few lines long, and swapping one does not touch the others or `battle`.
-
 ## One mechanism under all of it
 
-Every handler in this post is a function of `(effect, k)`, and each one does with `k` one of the things in the first table:
+Every handler in this post is a function of `(effect, k)`. `Spawn` and `Gather` come from doeff's packages, and `scheduled` is a reference handler for them, written in the same form as `dice`. Nothing makes these effects special: any handler can answer them instead.
 
 | The program yields | Handlers in this post |
 |---|---|
@@ -540,9 +546,7 @@ Every handler in this post is a function of `(effect, k)`, and each one does wit
 | `Played(card, damage)` | `quiet_stats`, `damage_stats(totals)` |
 | `Spawn(program)`, `Gather(*tasks)` | `scheduled` |
 
-`Roll`, `Choose`, `Show` and `Played` are classes in `spire.py`. `Spawn` and `Gather` come from doeff's packages, together with `Wait`, `Race` and `Cancel`, and `scheduled` is a reference handler for them, written in the same `(effect, k)` form as `dice`. It keeps the `k` of each waiting task, as in the "keeps it for later" row of the first table, and transfers to it when the task can go on. Nothing makes these effects special: any handler can answer them instead.
-
-The other effects that doeff's packages define work the same way as `Roll` and `Played`. Each has a reference handler, and you can install your own instead:
+The other effects that doeff's packages define work the same way, and you can install your own handler instead:
 
 | What | The program yields | A reference handler |
 |---|---|---|
@@ -552,11 +556,12 @@ The other effects that doeff's packages define work the same way as `Roll` and `
 | Observation | `value, log = yield Listen(battle())` | `listen_handler` collects the `Tell` lines of the program |
 | I/O | an effect of your own, like `Show` | a handler of your own, like `printed`, or a reference one: files, SQL and processes with `doeff[hy]`, HTTP with `doeff[http]` |
 
-This shape suits simulations and backtests. Layer 5 is a simulation: a hundred fights, each with its own dice. A trading strategy can run the same way over recorded market events with paper orders, and live with an exchange, and only the handlers for market data and orders differ. Time can be a handler too, a clock that moves forward only when every task waits; the third post in this series builds that clock around a trading example.
-
 ## Tests are one of the stacks
 
-Layer 1 is already a test: with a scripted player and seeded dice, the fight is the same on every run. That is also the use most people meet first. Many Python test suites have a `mock.patch` that nobody wants to touch: it finds its target by a string, so moving an import can make it miss, and when it is missing the test can still pass while the real thing runs. Written without effects, `battle` would call `random` and `input()` itself, and its tests would patch both by name. With effects, a test installs handlers instead:
+Layer 1 is already a test: with a scripted player and seeded dice, the fight is the same on every run. Many Python test suites have a `mock.patch` that finds its target by a string, so moving an import can make it miss, and the test can still pass while the real thing runs. With effects, a test installs handlers instead, and nothing is patched.
+
+<details markdown="1">
+<summary>test_spire.py: two tests, nothing patched</summary>
 
 ~~~python
 # test_spire.py
@@ -583,7 +588,9 @@ def test_bash_makes_the_next_strikes_hit_harder():
     assert played[-3:] == [("Bash", 8), ("Strike", 9), ("Strike", 9)]
 ~~~
 
-Nothing is patched, and there is no string to keep in sync with your imports. The first test starts from a state made by hand, an enemy on 6 hit points, which is easy because `Fight` is plain data. The second puts a handler of its own, `log`, in place of `quiet_stats`. It writes down every `Played` of the fight from Layer 1, and the test checks that the two Strikes after Bash do 9 damage instead of 6. Now leave out the handler for `Played`:
+</details>
+
+Leave out a handler and the run stops at the `yield` nobody answered, as below. [examples/testing_without_mocks](https://github.com/proboscis/doeff/tree/main/examples/testing_without_mocks) puts a `mock.patch` test and a handler test side by side.
 
 ~~~python
 run(silent(dice(7)(scripted(moves)(battle()))))
@@ -605,11 +612,9 @@ UnhandledEffect: no handler found for effect: Played (Played(card='Defend', dama
   hint: install a handler for Played: run(fn(prog)), where fn is a def (effect: Played, k) marked with @handler that returns (yield Resume(k, value))
 ~~~
 
-The run stops at the `yield` that nobody answered, and nothing after it runs. Before Python's own traceback, doeff prints that `yield`, the handlers that were in scope, and why each one let the effect pass. A forgotten `mock.patch` fails the other way: the real thing runs. [examples/testing_without_mocks](https://github.com/proboscis/doeff/tree/main/examples/testing_without_mocks) puts a `mock.patch` test and a handler test of the same small function side by side, with the two ways the patch goes wrong.
-
 ## Where doeff sits
 
-For a comparison with the other effect libraries for Python, three tasks much smaller than `battle` were written five ways: a welcome email that loads a user and sends a mail, a bank balance with a log, and three concurrent fetches. Lines were counted without blanks, comments or imports, and each test left out one replacement at a time to see what happens.
+Three tasks much smaller than `battle` were written in each library, and each test left out one replacement at a time. Plain Python is the shortest and the easiest to read, and effectful keeps your functions completely ordinary. doeff costs you `yield` and `@do` in the business code and more names to learn. In return, a handler holds the rest of the program, a missing handler is an error, and handlers stay per task under concurrency.
 
 | | Plain Python | effect | effectful | doeff |
 |---|---|---|---|---|
@@ -619,11 +624,7 @@ For a comparison with the other effect libraries for Python, three tasks much sm
 | State, log and concurrency built in | No | Concurrency via thread pool | No (use `asyncio`) | Yes |
 | Latest release | — | 2019 | 2026 | 2026 |
 
-Plain Python is the shortest and the easiest to read. effectful keeps your functions completely ordinary, which is a real advantage. doeff costs you `yield` and `@do` in the business code and more names to learn. In return, a handler holds the rest of the program, which is what `monte_carlo` and `scheduled` need, a missing handler is an error, one handler can wrap a whole program, and handlers stay per task under concurrency, as each fight's `dice(seed)` does in Layer 5. In one test, two `asyncio` tasks each installed their own effectful handler, waited, and woke up in the order they had started. After the wait, the first task got the second task's answer, and the second got an unevaluated term. The same test with doeff kept them apart. This only matters if you install handlers inside tasks; installed once around `asyncio.run`, effectful behaves.
-
-`returns`, a popular functional library with about 4.4K GitHub stars, gives you typed containers such as `Result`, but no handlers that resume your code, so it does not fit this comparison.
-
-Outside Python, the closest is OCaml 5. Its handlers also receive the continuation, a continuation can be resumed only once, and effects are not in the types. Koka goes further on both:
+Outside Python, the closest is OCaml 5, and Koka goes further on both resuming more than once and effects in the types.
 
 | | Resume more than once | Effects in the types |
 |---|---|---|
@@ -633,31 +634,22 @@ Outside Python, the closest is OCaml 5. Its handlers also receive the continuati
 
 ## What it costs
 
-Every effect travels out to a handler and back. The benchmark in doeff's README measures the CPU time of one round trip, with 50 samples of each case, on a shared Intel i9-7980XE under Linux with CPython 3.14.7.
+Every effect travels out to a handler and back: about 4.3 µs with doeff, against 0.13 µs for a plain function call. That is noise next to a database query or an HTTP request, and it is not noise inside a tight numeric loop. Keep tight numeric loops in plain Python and yield effects around them, the way `battle` calls the plain function `hit`.
 
-| One effect round trip | µs per effect (median) |
+| One effect round trip (median, CPython 3.14.7, a shared Intel i9-7980XE) | µs per effect |
 |---|---:|
 | Plain Python function call | 0.13 |
 | doeff, a `@handler` with `Resume` | 4.3 |
 | effect 1.1.0 | 12.7 |
 | effectful 0.4.0 | 57.9 |
 
-For many small tasks, `scheduled`, which runs in Rust by default since 0.7.0, costs about 17 µs per spawned task, against about 11 µs for `asyncio`.
-
-The Monte Carlo bot of Layer 4 is the heaviest stack in this post. On the same i9-7980XE, with CPython 3.14.7 and doeff 0.8.0, one of its fights runs 144 playouts and takes 0.10 s of CPU time, the median over the hundred seeds of Layer 5, against 1.2 ms for a fight of the random bot.
-
-A few microseconds is noise next to a database query or an HTTP request. It is not noise inside a tight numeric loop. Keep tight numeric loops in plain Python and yield effects around them, the way `battle` calls the plain function `hit`.
-
-The script is `benchmarks/compare_libraries.py` in the repository, and the README's [Performance](https://github.com/proboscis/doeff#performance) section lists every case and how it was measured, if you want numbers from your own machine.
-
 ## Limits
 
-- doeff is 0.x. The API changed between 0.4 and 0.5. Since 0.6, `pip install doeff` installs only the core; the Hy language and the handlers written in it come with `pip install "doeff[hy]"`.
-- Continuations are one-shot. A handler can resume the paused code once, so tricks that resume twice, such as backtracking search, are out. Nondeterministic choice is out too; run the program again once per choice instead, the way `monte_carlo` runs `battle` again from the state in the `Choose` rather than resuming `k` once per move.
-- Effects are not in the types. The type checker does not check that the installed handlers answer every effect a program yields; a missing handler shows up as `UnhandledEffect` when the program runs.
-- Only the body of a `@do` function can perform an effect. A plain function it calls cannot, so as with `async`, `@do` spreads to the callers: `hit` stays plain because it yields nothing, and `draw_hand` is a `@do` function because it yields `Roll`.
-- `yield` is not allowed inside a list comprehension, so a loop that performs effects becomes a `for` loop, like the one in `draw_hand`.
-- A handler without an annotation receives every effect. A fake without one can quietly answer effects that were meant for another handler.
+- doeff is 0.x, and the API changed between 0.4 and 0.5.
+- Continuations are one-shot, so tricks that resume twice, such as backtracking search, are out, and so is nondeterministic choice.
+- Effects are not in the types, so a missing handler shows up as `UnhandledEffect` when the program runs.
+- Only the body of a `@do` function can perform an effect, so `@do` spreads to the callers, and `yield` is not allowed inside a list comprehension.
+- A handler without an annotation receives every effect, so a fake without one can quietly answer effects meant for another handler.
 
 ## Try it
 
@@ -666,6 +658,4 @@ pip install doeff   # CPython 3.11 to 3.14; prebuilt wheels for Linux, macOS and
 python -m doeff demo
 ~~~
 
-[What doeff Is](https://github.com/proboscis/doeff/blob/main/docs/positioning/what-doeff-is.md) defines the mechanism, its uses and its limits. Every example in this post runs as shown with doeff 0.8.0 and nothing else, plus pytest for the tests. The battle is [examples/effects_tour/spire.py](https://github.com/proboscis/doeff/blob/main/examples/effects_tour/spire.py): `python spire.py` runs Layers 1 to 6, `python spire.py play` lets you play a fight at the terminal, and `pytest` in the same directory runs the two tests above. The docs chapter [Why Effects?](https://github.com/proboscis/doeff/blob/main/docs/20-why-effects-over-di.md) compares effects with dependency injection and plain `async` at more length.
-
-Where does this break down for you: code where the `yield` style gets in the way, or a case where a plain argument would have been simpler? Issues are open at https://github.com/proboscis/doeff/issues.
+Every example in this post runs as shown with doeff 0.8.0 and nothing else, plus pytest for the tests. The battle is [examples/effects_tour/spire.py](https://github.com/proboscis/doeff/blob/main/examples/effects_tour/spire.py), and `python spire.py play` lets you play a fight at the terminal. Where does this break down for you? Issues are open at https://github.com/proboscis/doeff/issues.

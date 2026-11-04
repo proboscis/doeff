@@ -1,0 +1,10 @@
+[
+ {"id": "o1", "text": "This is one function: a small card fight. It asks for dice, a player, a screen and a count. It never says who answers."},
+ {"id": "o2", "text": "Each question is an effect. It travels out to a handler, and the handler also gets the rest of the function, called k."},
+ {"id": "o3", "text": "Stack handlers around it. A scripted player and a screen give the same fight on every run."},
+ {"id": "o4", "text": "Swap in a random bot and take the screen away. The function does not change."},
+ {"id": "o5", "text": "Add a recorder, and thirty-two answers replay the whole fight, with no dice and no player."},
+ {"id": "o6", "text": "A Monte Carlo bot answers a question by running the fight itself, while the fight that asked waits as k."},
+ {"id": "o7", "text": "Run a hundred fights at once, each with its own dice. The random bot wins seventy-three. The Monte Carlo bot wins all one hundred."},
+ {"id": "o8", "text": "One function, unchanged, in every stack. That is algebraic effects in Python, with doeff."}
+]
