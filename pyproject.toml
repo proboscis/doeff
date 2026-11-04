@@ -791,6 +791,7 @@ tests = [
     "packages/doeff-stream/tests/test_every_run_ends_as_one_input.py",  # a component task ending with a value, an exception or a cancellation becomes exactly one input
     "packages/doeff-stream/tests/test_fold_and_merge.py",  # merge types, how fold ends, 2 folds on the same bus
     "packages/doeff-stream/tests/test_replay.py",  # the test harness refuses the same things as the runtime
+    "packages/doeff-stream/tests/test_simulate_fold.py",  # the simulated host: events first, the caller's handlers inside the bus, the virtual clock
 ]
 
 [[tool.doeff.contract-tests]]

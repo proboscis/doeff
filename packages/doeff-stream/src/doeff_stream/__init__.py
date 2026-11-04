@@ -7,10 +7,13 @@
   Program of that ``Next`` that performs no effect (``StepYieldedEffectError`` otherwise); the runtime runs each ``Run``
   in a task and gives the step exactly one input for its end — ``Answered``, ``Raised`` or ``Cancelled``.
 - ``replay``: the test harness. A list of inputs in, the states and effects out.
+- ``simulate_fold``: the fold as a host assembles it, on a virtual clock and a memory bus of its own. A list of
+  inputs and the caller's (simulated) handlers in, the fold's value out.
 """
 
 from doeff_stream._fold import fold
 from doeff_stream._harness import Replay, Stepped, replay
+from doeff_stream._sim import simulate_fold
 from doeff_stream._source import Inputs, Source, merge, subscribe, timers
 from doeff_stream._step import (
     Answered,
@@ -43,6 +46,7 @@ __all__ = [
     "fold",
     "merge",
     "replay",
+    "simulate_fold",
     "subscribe",
     "timers",
 ]

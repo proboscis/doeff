@@ -22,11 +22,12 @@ from doeff_stream import (
     StepYieldedEffectError,
     merge,
     replay,
+    simulate_fold,
     subscribe,
 )
 from doeff_stream import _harness as harness
 from doeff_time import Delay
-from stream_test_support import Kick, forever, kicked
+from stream_test_support import T0, Kick, forever
 
 from doeff import Ask, Get, Program, Pure, do
 
@@ -139,8 +140,10 @@ def test_a_program_step_folds_to_the_same_value_as_the_plain_step() -> None:
         return on_kick
 
     inputs = merge(subscribe(Kick))
-    plain = kicked(kicked_shop(shop), Shop(), inputs)
-    program = kicked(kicked_shop(shop_program), Shop(), inputs)
+    plain = simulate_fold(kicked_shop(shop), Shop(), inputs, events=(Kick(),), start_time=T0)
+    program = simulate_fold(
+        kicked_shop(shop_program), Shop(), inputs, events=(Kick(),), start_time=T0
+    )
     assert plain == program == ("tea", "rice")
 
 
@@ -251,5 +254,7 @@ def test_a_step_effect_in_the_fold_cancels_the_runs_and_raises() -> None:
         return Next(state)
 
     with pytest.raises(StepYieldedEffectError) as refused:
-        kicked(asks_on_the_answer, (), merge(subscribe(Kick)))
+        simulate_fold(
+            asks_on_the_answer, (), merge(subscribe(Kick)), events=(Kick(),), start_time=T0
+        )
     assert type(refused.value.effect).__name__ == "Ask"

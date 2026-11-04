@@ -13,6 +13,8 @@ dependencies = [
     "doeff-core-effects>=0.1.0",
     # Inputs reach the fold through the bus (Publish / WaitForEvent) and deadlines as TimerFired.
     "doeff-events>=0.1.0",
+    # simulate_fold runs the fold on the virtual clock (sim_time_handler).
+    "doeff-time>=0.1.0",
 ]
 
 [build-system]
@@ -26,3 +28,4 @@ packages = ["src/doeff_stream"]
 doeff = { workspace = true }
 doeff-core-effects = { workspace = true }
 doeff-events = { workspace = true }
+doeff-time = { workspace = true }

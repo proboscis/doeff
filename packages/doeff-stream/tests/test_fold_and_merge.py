@@ -37,12 +37,13 @@ from doeff_stream import (
     Run,
     fold,
     merge,
+    simulate_fold,
     subscribe,
     timers,
 )
 from doeff_stream._source import RunEnded
 from doeff_time import Delay
-from stream_test_support import T0, Kick, forever, kicked, run_on_sim
+from stream_test_support import T0, Kick, forever, run_on_sim
 
 from doeff import do
 
@@ -98,7 +99,9 @@ def test_events_timers_and_run_ends_reach_the_step_as_one_stream() -> None:
             case _:
                 return Next(seen)
 
-    seen = kicked(step, (), merge(subscribe(Kick, Poke), timers()))
+    seen = simulate_fold(
+        step, (), merge(subscribe(Kick, Poke), timers()), events=(Kick(),), start_time=T0
+    )
     assert seen[0] == Kick()
     assert set(seen[1:-1]) == {Answered("arm", None), Poke(), Answered("poker", None)}
     assert seen.index(Poke()) < seen.index(Answered("poker", None))
@@ -235,7 +238,10 @@ def test_the_stop_signal_reaches_the_step() -> None:
             case _:
                 return Next(state)
 
-    assert kicked(step, 0, merge(subscribe(Kick))) == "shutdown"
+    assert (
+        simulate_fold(step, 0, merge(subscribe(Kick)), events=(Kick(),), start_time=T0)
+        == "shutdown"
+    )
 
 
 def test_a_run_of_something_that_is_not_a_program_is_refused_by_the_fold() -> None:
@@ -244,7 +250,7 @@ def test_a_run_of_something_that_is_not_a_program_is_refused_by_the_fold() -> No
         return Next(state, (Run("bad", 7),)) if isinstance(event, Kick) else Next(state)  # type: ignore[arg-type]  # the check under test
 
     with pytest.raises(TypeError, match="takes a Program or an effect"):
-        kicked(step, 0, merge(subscribe(Kick)))
+        simulate_fold(step, 0, merge(subscribe(Kick)), events=(Kick(),), start_time=T0)
 
 
 def test_two_folds_on_one_bus_get_the_ends_of_their_own_runs_only() -> None:

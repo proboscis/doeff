@@ -6298,6 +6298,12 @@
    "訳": "test の harness: VM を使わずに入力の列を step に与え、fold と同じ検め(Run の program が Program か effect か)で答えを確かめて跡を返す。検めが EffectBase を読むので換算の関数の形に当たらず、harness を置く組が無い"
   },
   {
+   "package": "doeff-stream",
+   "module": "doeff_stream",
+   "name": "simulate_fold",
+   "訳": "模擬の土台: fold を本番と同じ形に組み、時計を sim_time_handler に・bus を memory の EventBus にして run で走らせ、fold の答えを返す。呼び手の模擬の handler で job を測る使い手(agora の job の乗せ換え)が組み方を写さずに済むよう公開する。program を走らせて値を返すので effect・handler・program の helper のどの組にも当たらない。組み方は packages/doeff-stream/tests/test_simulate_fold.py が縛る"
+  },
+  {
    "package": "doeff-cluster",
    "module": "doeff_cluster",
    "name": "WORKSPACE_SITE",
