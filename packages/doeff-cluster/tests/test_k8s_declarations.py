@@ -11,6 +11,7 @@
 
 from __future__ import annotations
 
+import os
 import re
 import shutil
 import subprocess
@@ -886,6 +887,48 @@ def test_guest_worker_offers_the_upper_systems_guest_capabilities_and_runs_its_p
     assert [
         _mapping(_mapping(s, "envFrom")["configMapRef"], "configMapRef")["name"] for s in env_from
     ] == ["worker-env"]
+
+
+def _boots_with(start_line: str, tmp_path: Path, prepare: str) -> subprocess.CompletedProcess[str]:
+    """雛形の起動の行を、準備の script と起動の script だけ手元の物に替えて sh で走らせる。起動の script は名乗る能力を出す。"""
+    script = tmp_path / "prepare.sh"
+    script.write_text(prepare, encoding="utf-8")
+    boot = tmp_path / "boot.sh"
+    boot.write_text('#!/bin/sh\necho "boot WORKER_PROVIDES=$WORKER_PROVIDES"\n', encoding="utf-8")
+    boot.chmod(0o755)
+    version = tmp_path / "version"
+    version.write_text("abc\n", encoding="utf-8")
+    line = start_line.replace("/opt/worker-prepare/prepare.sh", str(script)).replace("/opt/worker-boot.sh", str(boot)).replace("$$", "$")
+    environ = {
+        "PATH": os.environ["PATH"],
+        "HOME": str(tmp_path),
+        "NODE_NAME": "n",
+        "WORKER_VERSION_FILE": str(version),
+        "WORKER_PROVIDES": "host-n,host-systemd-readable,upper-work",
+    }
+    return subprocess.run(["/bin/sh", "-c", line], env=environ, capture_output=True, text=True, timeout=10, check=False)
+
+
+def _start_line(deployment: Manifest) -> str:
+    args = _sequence(_container(deployment)["args"], "args")
+    assert args[:2] == ["/bin/sh", "-c"], args
+    return str(args[2])
+
+
+def test_guest_worker_starts_with_the_machine_capabilities_when_the_prepare_script_fails(rendered: list[Manifest], tmp_path: Path) -> None:
+    """余りの空きで受ける機体の worker は、上に載る系の準備の script が落ちても、機体の能力 2 つだけを名乗って起動する(機体の常駐の job を
+    止めない)。script が通れば上に載る系の能力を名乗る。反例: zeus の雛形の行は script の非 0 で止まる(準備が要る機体の約束 — zeus は
+    準備の無い道具で会話を受けない)。script の失敗で能力を戻さずに起動すると、道具の無い機体に上に載る系の仕事が置かれる。"""
+    start = _start_line(_worker_on(rendered, GUEST_NODES[0]))
+    failed = _boots_with(start, tmp_path, "exit 7\n")
+    assert failed.returncode == 0, failed
+    assert "boot WORKER_PROVIDES=host-n,host-systemd-readable\n" == failed.stdout, failed
+    assert "準備の script が落ちた" in failed.stderr, failed
+    passed = _boots_with(start, tmp_path, "exit 0\n")
+    assert "boot WORKER_PROVIDES=host-n,host-systemd-readable,upper-work\n" == passed.stdout, passed
+    stopped = _boots_with(_start_line(_worker_on(rendered, "zeus")), tmp_path, "exit 7\n")
+    assert stopped.returncode != 0, stopped
+    assert stopped.stdout == "", stopped
 
 
 @pytest.mark.parametrize("node", OTHER_NODES)
