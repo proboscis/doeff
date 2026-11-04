@@ -513,7 +513,7 @@ def test_overlay_puts_the_shared_checkout_under_and_the_side_dir_over(bench: Ben
     code, notes = bench.ask(f"overlay {lower} {target}")
     assert code == 0, notes
     assert bench.calls() == [
-        f"mount -t overlay overlay -o lowerdir={lower},upperdir={target}.up,workdir={target}.wk {target}"
+        f"mount -t overlay overlay -o lowerdir={lower},upperdir={target}.up,workdir={target}.wk,redirect_dir=on,noatime {target}"
     ]
     assert bench.mounted()[str(target)].startswith("0:99 overlay ")
 
@@ -535,6 +535,35 @@ def test_unoverlay_takes_off_the_named_overlay_and_keeps_the_upper_layer(bench: 
     assert Path(f"{target}.up").is_dir()
     code, notes = bench.ask(f"unoverlay {lower} {target}")
     assert code == 0 and "何も付いていない" in notes
+
+
+def test_unoverlay_clears_what_the_kernel_left_in_the_work_dir_and_keeps_the_work_dir(bench: Bench) -> None:
+    lower, target = _layers(bench, "task-1")
+    assert bench.ask(f"overlay {lower} {target}")[0] == 0
+    left = Path(f"{target}.wk/work")
+    left.mkdir()
+    (left / "#1c7d4").touch()
+    assert bench.ask(f"unoverlay {lower} {target}")[0] == 0
+    assert not left.exists() and Path(f"{target}.wk").is_dir() and Path(f"{target}.up").is_dir()
+
+
+def test_unoverlay_of_a_stopped_clear_finishes_it_without_a_mount(bench: Bench) -> None:
+    lower, target = _layers(bench, "task-1")
+    left = Path(f"{target}.wk/work")
+    left.mkdir()
+    code, notes = bench.ask(f"unoverlay {lower} {target}")
+    assert code == 0 and "何も付いていない" in notes and not left.exists()
+    assert not any(call.startswith("umount") for call in bench.calls())
+
+
+def test_unoverlay_does_not_clear_through_a_symlinked_work_dir(bench: Bench) -> None:
+    lower, target = _layers(bench, "task-1")
+    outside = bench.root / "outside"
+    (outside / "work").mkdir(parents=True)
+    Path(f"{target}.wk").rmdir()
+    Path(f"{target}.wk").symlink_to(outside)
+    code, notes = bench.ask(f"unoverlay {lower} {target}")
+    assert code == 1 and "symlink" in notes and (outside / "work").is_dir()
 
 
 @pytest.mark.parametrize(

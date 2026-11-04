@@ -307,8 +307,8 @@ native sidecar — 宣言と訳は `../nodes/zeus/node.yaml` の註)がする。
 | umount | 付いている物が名指した volume か照らしてから外す。使用中で外れなければ断る(lazy に外さない)。何も付いていなければ何もしない |
 | fstrim | 付いている物を照らしてから `fstrim -v`(冷やす前 — 節「寿命」) |
 | grow | 付いている物を照らしてから `resize2fs <device>`(付けたまま device の今の大きさまで — 頼み手が Longhorn の volume を広げた後。device が広がっていなければ何もしない) |
-| overlay | 付ける先に、下の dir(`/work/base/` の下の共有の checkout)を下の層・`<付ける先>.up` を上の層・`<付ける先>.wk` を overlayfs の作業の dir にした overlay を付ける。仕事ごとに repo の作業の木を丸ごと書き出さず、変えた file だけを上の層に書く(USB の SSD の書きを減らす)。上の層と作業の dir は頼み手が作る。付ける先が空でなければ断る(中身が隠れる)。同じ下の dir の overlay が既に付いていれば何もしない |
-| unoverlay | 付いている overlay の下の dir を照らしてから外す。使用中で外れなければ断る。上の層は消さない(頼み手が消す)。何も付いていなければ何もしない |
+| overlay | 付ける先に、下の dir(`/work/base/` の下の共有の checkout)を下の層・`<付ける先>.up` を上の層・`<付ける先>.wk` を overlayfs の作業の dir にした overlay を付ける。仕事ごとに repo の作業の木を丸ごと書き出さず、変えた file だけを上の層に書く(USB の SSD の書きを減らす)。option は `redirect_dir=on`(下の層の dir の rename を通す)と `noatime`。上の層と作業の dir は頼み手が作る。付ける先が空でなければ断る(中身が隠れる)。同じ下の dir の overlay が既に付いていれば何もしない |
+| unoverlay | 付いている overlay の下の dir を照らしてから外す。使用中で外れなければ断る。上の層は消さない(頼み手が消す)。何も付いていなければ外さない。`<付ける先>.wk/work` は kernel が root の mode 000 で作るので、外した後に係が消す(`<付ける先>.wk` が symlink を通るなら断る)|
 | 下の dir | `/work/base/` の下に頼み手が置き、overlay が付いている間は書き換えない(overlayfs は下の層の書き換えを想定しない)。係は下の dir を作らない・消さない |
 | 断る物 | 6 つの命令の外・volume の名が英小文字・数字・`-` の外・付ける先が `/work` の下の在る dir でない・`.` か `..` か `//` を含む・symlink を通る・attach されていない・付ける先に別の物・volume が別の所に付いている・中身が ext4 でない(作り直さない)。overlay と unoverlay では、ほかに path が英数字・`. _ / -` の外の字を持つ(overlayfs の option を区切る `,` と `:` を通さない)・下の dir が `/work/base/` の下でない・付ける先が `/work/base/` の下・上の層か作業の dir が無い・付ける先に別の下の dir の overlay か overlay でない物 |
 | 付ける先の dir | 頼み手(worker の uid)が作り、外した後も残す(係は dir を作らない・消さない) |
