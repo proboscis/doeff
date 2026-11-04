@@ -13,6 +13,9 @@
 ;;;   冷やす・戻す・消す 冷やして戻す通し(本番と模擬)・使っている volume は冷やさない・完了した backup の無い名は空で作らない・消すのは
 ;;;                     keepDays の後・まとめて冷やす順と空きの数(本番と模擬)。本番だけ: snapshot と backup の失敗で消さない・読んだ版が
 ;;;                     古い削除は読み直す・札の違う disk を数えない
+;;;   束 BackupVolume   (本番だけ — 模擬の世界は束を持たない)backup の先の全体の同期が落ちていても、冷やす手順は束を作って今回の backup を
+;;;                     指すのを確かめてから消し、戻しは束を作ってから POST する・束が backup を指さない間は volume を消さない・在る束は
+;;;                     作らない・webhook がまだ束を見ない 422 は上限の秒の内だけ出し直す
 ;;;   付ける先の様子    付ける先の様子の読み(MOUNTED・READY・OUTSIDE・CLASH — 本番と模擬)・中身の在る dir には付けない(隠さない)
 ;;;   置き場の数え      線ごとの残りの byte。冷やせる物が無く入らなければ作成も戻しも POST せずに置き場の不足で断る(fresh か否か —
 ;;;                     本番と模擬)・入らなければ外れた volume を古い順に、入る大きさの分だけ冷やしてから作る・戻す(10 GiB の戻しは 2 GiB の
@@ -36,6 +39,7 @@
 (import collections.abc [Callable])
 (import dataclasses [dataclass replace])  ; defrecord の展開が名指す・相手役の様子の書き換え
 (import datetime [datetime timezone])
+(import hashlib)
 (import json)
 (import pathlib [Path])
 (import urllib.parse [parse-qs urlsplit])
@@ -92,8 +96,11 @@
 (val MINIMAL-AVAILABLE-PATH (+ LONGHORN-HEAD "/settings/storage-minimal-available-percentage"))
 (val REPLICAS-PATH (+ LONGHORN-HEAD "/replicas"))
 (val ENGINES-PATH (+ LONGHORN-HEAD "/engines"))
-;; BackupVolume の名の尻(Longhorn は <volume の名>-<hash> にする — 相手役は固定の hash)。
-(val BUNDLE-TAIL "-5a2925a0")
+(val TARGETS-PATH (+ LONGHORN-HEAD "/backuptargets"))
+;; 相手役の BackupTarget の uid(束 BackupVolume の持ち主の参照に書かれる)。
+(val TARGET-UID "5d1c0e7e-0000-4000-8000-backuptarget")
+;; Longhorn v1.13 の webhook が、束の無い volume の戻しを断る訳(422)。
+(val BUNDLE-UNSEEN-TEXT "cannot get backup volume for backup target garage-workspace and volume {}: backupVolumes \"\" not found")
 (val SETTINGS-PATH "/api/v1/namespaces/agent-worker/configmaps/workspace-volume")
 (val CLASS-PATH "/apis/storage.k8s.io/v1/storageclasses/longhorn-workspace")
 (val WORKER-FILES (MemoryFiles :files #((MemoryFile :path SERVICE-ACCOUNT-TOKEN-FILE :content (.encode (+ TOKEN "\n") "utf-8")))
@@ -152,7 +159,10 @@
    途中の snapshot と backup・unplaced = replica をまだどこにも置いていない volume の名・failing = Longhorn が置けないと答えている volume の
    名・engine-left = 名目の大きさを書いた後に engine が広がるまでの読みの残り・doomed = 戻しの読みが尽きた所で失敗する volume の名・failed =
    戻しに失敗した volume の名・faulted = ほかの訳で robustness faulted の volume の名・events = Volume の作り(make)・消しの受け(drop)・消え
-   終わり(gone)の順の記録・created = 作成の本文・seen = 受けた要求・asked = 係が受けた頼み。"
+   終わり(gone)の順の記録・created = 作成の本文・seen = 受けた要求・asked = 係が受けた頼み。束 BackupVolume: target-stalled = backup の先の
+   全体の同期が落ち続けている(Longhorn が束を作らない — 束は手で作られた物 bundles だけ。落ちていなければ backup の在る volume に束が在る)・
+   bundle-stalled = 束 1 本の同期も落ちる(束の lastBackupName が空のまま)・bundle-lag = 束が在っても webhook の cache がまだ見ず、戻しの
+   Volume の POST を 422 で断る回数。走らせた後に読む物: bundles = 手で作られた束の volume の名。"
   (defn #^ None __init__ [self #^ WorkspaceVolumeWorld held #^ dict [parameters None] #^ int [settle 0] #^ bool [stuck False]
                           #^ int [races 0] #^ bool [silent False] #^ int [restore-settle 0] #^ int [snapshot-settle 0]
                           #^ int [backup-settle 0] #^ int [dying-settle 0] #^ bool [snapshot-error False] #^ bool [backup-error False]
@@ -160,7 +170,8 @@
                           #^ (| int None) [available None] #^ int [unplaceable 0] #^ (| int None) [backup-size None]
                           #^ int [engine-settle 0] #^ bool [engine-stuck False] #^ (| dict None) [sizes None] #^ (| dict None) [fs-sizes None]
                           #^ (| dict None) [used None] #^ int [restore-failures 0] #^ (| str None) [disk-node None]
-                          #^ (| Callable None) [before-delete None]]
+                          #^ (| Callable None) [before-delete None] #^ bool [target-stalled False] #^ bool [bundle-stalled False]
+                          #^ int [bundle-lag 0]]
     ;; defk にできない: class の作り手(Python が呼ぶ口)
     "相手役の世界を作るため。"
     (setv self.held held
@@ -171,6 +182,8 @@
           self.stale-deletes stale-deletes self.vanish-after-ticket vanish-after-ticket self.extra-disks extra-disks
           self.available available self.unplaceable unplaceable
           self.restore-failures restore-failures self.disk-node (if (is disk-node None) NODE disk-node) self.before-delete before-delete
+          self.target-stalled target-stalled self.bundle-stalled bundle-stalled self.bundle-lag bundle-lag
+          self.bundles (set)
           self.doomed (set) self.failed (set) self.faulted (set)
           #^ (get tuple #(str ...)) self.events #()
           self.backup-size (if (is backup-size None) SIZE backup-size)
@@ -496,6 +509,11 @@
   (<- now datetime (GetTime))
   (when (is-not volume None)
     (return (! (api-answer 409 {"kind" "Status" "reason" "AlreadyExists"}))))
+  ;; Longhorn v1.13 の webhook は、束の無い(か cache がまだ見ない)volume の戻しを 422 で断る。
+  (when (and source (or (not (! (bundle-held? world name))) (> world.bundle-lag 0)))
+    (when (! (bundle-held? world name))
+      (setv world.bundle-lag (- world.bundle-lag 1)))
+    (return (! (api-answer 422 {"kind" "Status" "reason" "Invalid" "message" (.format BUNDLE-UNSEEN-TEXT name)}))))
   (setv (get world.sizes name) (int (get created "spec" "size")))
   ;; Longhorn v1.13 は外れている volume の replica を作るだけで置かない — 置き先は初めて付ける時か、戻す時(付けて戻す)に決める。
   (.add world.unplaced name)
@@ -588,19 +606,65 @@
   (! (api-answer 200 {})))
 
 
+(defk bundle-of [volume]
+  {:pre [(: volume str)] :post [(: % str)]}
+  "volume の束 BackupVolume の名を、Longhorn v1.13 の types.GetBackupVolumeNameFromVolumeName の綴りで得るため(答え手の綴りと別に書く —
+   <名>-<字「<名>-<先>」の SHA-256 の 16 進の頭 8 字>)。"
+  (+ volume "-" (cut (.hexdigest (hashlib.sha256 (.encode (+ volume "-" TARGET) "utf-8"))) 0 8)))
+
+
+(defk bundle-held? [world volume]
+  {:pre [(: world LonghornWorld) (: volume str)] :post [(: % bool)]}
+  "volume の束が cluster に在るかを得るため(手で作られた束か、全体の同期が落ちていなければ backup の在る volume)。"
+  (or (in volume world.bundles)
+      (and (not world.target-stalled) (any (gfor one world.held.backups (= one.volume volume))))))
+
+
+(defk bundle-last [world volume]
+  {:pre [(: world LonghornWorld) (: volume str)] :post [(: % str)]}
+  "volume の束の lastBackupName を得るため(束 1 本の同期が書く — 完了した backup のうち一番新しい物。同期が落ちていれば空)。"
+  (val done (lfor one world.held.backups :if (and (= one.volume volume) (= one.state "Completed")) one))
+  (if (or world.bundle-stalled (not done)) "" (. (max done :key (fn [one] #(one.created-at one.name))) name)))
+
+
 (defk bundles-listed [world path]
   {:pre [(: world LonghornWorld) (: path str)] :post [(: % HttpResponse)]}
-  "BackupVolume の一覧(labelSelector で選ぶ)に答えるため(backup の在る volume に束 1 つ)。"
+  "BackupVolume の一覧(labelSelector で選ぶ)に答えるため(束の在る volume に束 1 つ — status は同期の読み)。"
   (val chosen (! (selected-volume path)))
-  (val held (any (gfor one world.held.backups (= one.volume chosen))))
-  (! (api-answer 200 {"items" (if held [{"metadata" {"name" (+ chosen BUNDLE-TAIL)} "spec" {"volumeName" chosen}}] [])})))
+  (val held (and (is-not chosen None) (! (bundle-held? world chosen))))
+  (! (api-answer 200 {"items" (if held
+                                  [{"metadata" {"name" (! (bundle-of chosen))} "spec" {"volumeName" chosen}
+                                    "status" {"lastBackupName" (! (bundle-last world chosen))}}]
+                                  [])})))
+
+
+(defk bundle-made [world body]
+  {:pre [(: world LonghornWorld) (: body str)] :post [(: % HttpResponse)]}
+  "BackupVolume の POST に答えるため(Longhorn の同期と同じ名・label・持ち主・spec を確かめる。在れば 409 — 名が重なり 2 本にならない)。"
+  (val made (json.loads body))
+  (val volume (get made "spec" "volumeName"))
+  (assert (= (get made "metadata" "name") (! (bundle-of volume))) made)
+  (assert (= (get made "metadata" "labels") {"backup-volume" volume "backup-target" TARGET}) made)
+  (assert (= (get made "metadata" "ownerReferences")
+             [{"apiVersion" "longhorn.io/v1beta2" "kind" "BackupTarget" "name" TARGET "uid" TARGET-UID}]) made)
+  (assert (= (get made "spec" "backupTargetName") TARGET) made)
+  (when (! (bundle-held? world volume))
+    (return (! (api-answer 409 {"kind" "Status" "reason" "AlreadyExists"}))))
+  (.add world.bundles volume)
+  (! (api-answer 201 made)))
 
 
 (defk bundle-dropped [world bundle]
   {:pre [(: world LonghornWorld) (: bundle str)] :post [(: % HttpResponse)]}
   "BackupVolume の DELETE に答えるため(束の backup を全部消す)。"
-  (assert (.endswith bundle BUNDLE-TAIL) bundle)
-  (val volume (cut bundle 0 (- (len bundle) (len BUNDLE-TAIL))))
+  (var volumes [])
+  (for [known (| (set world.bundles) (set (gfor one world.held.backups one.volume)))]
+    (<- named str (bundle-of known))
+    (when (= named bundle)
+      (:= volumes (+ volumes [known]))))
+  (assert (= (len volumes) 1) bundle)
+  (val volume (get volumes 0))
+  (.discard world.bundles volume)
   (setv world.held.backups (tuple (gfor one world.held.backups :if (!= one.volume volume) one)))
   (! (api-answer 200 {})))
 
@@ -654,6 +718,12 @@
     (and (= request.method "DELETE") (.startswith path (+ BACKUPS-PATH "/"))) (! (backup-dropped world (cut path (+ (len BACKUPS-PATH) 1) None)))
     (and (= request.method "GET") (.startswith path (+ BUNDLES-PATH "?"))) (! (bundles-listed world path))
     (and (= request.method "DELETE") (.startswith path (+ BUNDLES-PATH "/"))) (! (bundle-dropped world (cut path (+ (len BUNDLES-PATH) 1) None)))
+    (and (= request.method "POST") (= path BUNDLES-PATH)) (! (bundle-made world request.body))
+    (and (= request.method "PATCH") (.startswith path (+ BUNDLES-PATH "/")))
+    (do (assert (= request.content-type "application/merge-patch+json") request)
+        (assert (in "syncRequestedAt" (get (json.loads request.body) "spec")) request)
+        (! (api-answer 200 {})))
+    (and (= request.method "GET") (= path (+ TARGETS-PATH "/" TARGET))) (! (api-answer 200 {"metadata" {"name" TARGET "uid" TARGET-UID}}))
     (and (= request.method "GET") (= path NODES-PATH)) (! (api-answer 200 (! (nodes-payload world))))
     (and (= request.method "GET") (= path OVER-PROVISIONING-PATH)) (! (api-answer 200 {"metadata" {"name" "x"} "value" "100"}))
     (and (= request.method "GET") (= path MINIMAL-AVAILABLE-PATH)) (! (api-answer 200 {"metadata" {"name" "x"} "value" (str world.held.minimal)}))
@@ -1153,7 +1223,7 @@
   (assert (= #(api.held.backups sim.backups) #(#() #())) #(api.held.backups sim.backups))
   ;; 本番は束(BackupVolume)を消す。
   (val drops (lfor seen api.seen :if (= seen.method "DELETE") seen.path))
-  (assert (= drops [(+ BUNDLES-PATH "/" NAME BUNDLE-TAIL)]) drops)
+  (assert (= drops [(+ BUNDLES-PATH "/" (! (bundle-of NAME)))]) drops)
   ;; 温かい volume の在る名は、日数に関わらず消さない。
   (val warm (fn [] (WorkspaceVolumeWorld NODE :volumes #(WARM) :backups #(COLD-BACKUP))))
   (<- kept BothRan (both warm #((Step :verb "purge" :owner OWNER)) (* 30 DAY)))
@@ -2030,3 +2100,80 @@
   (val first (get ran 0)) (val again (get ran 1)) (val left (get ran 2))
   (assert (isinstance first SettingsWire) first)
   (assert (and (isinstance again str) (.startswith again "refused: ")) again))
+
+
+;; 束 BackupVolume(README の節「寿命」と「backup」・card #[id] の元の 2026-11-04 04:3x〜12:5x UTC — backup の先の全体の同期が
+;; 落ち続け、初めて冷やした名の束ができず、冷えた volume を Longhorn の webhook が戻さなかった)。
+
+(defk bundle-before [api path]
+  {:pre [(: api LonghornWorld) (: path str)] :post [(: % bool)]}
+  "相手役の世界 api が、束 BackupVolume の POST を、path の Volume への最初の DELETE か POST より前に受けたかを得るため。"
+  (val methods #("DELETE" "POST"))
+  (val made (next (gfor #(index seen) (enumerate api.seen) :if (and (= seen.method "POST") (= seen.path BUNDLES-PATH)) index) None))
+  (val touched (next (gfor #(index seen) (enumerate api.seen) :if (and (in seen.method methods) (.startswith seen.path path)) index) None))
+  (and (is-not made None) (is-not touched None) (< made touched)))
+
+
+(deftest test-cooling-keeps-the-volume-while-its-bundle-does-not-name-the-new-backup
+  ;; 全体の同期も束 1 本の同期も落ちている世界: backup は Completed でも、束が今回の backup を指さないので戻せる事を確かめられない。
+  (val api (LonghornWorld (WorkspaceVolumeWorld NODE :volumes #(WARM)) :target-stalled True :bundle-stalled True))
+  (<- ran ApiRan (on-api api #((Step :verb "cool" :owner OWNER))))
+  (val outcome (get ran.outcomes 0))
+  (assert (and (.startswith outcome "refused: ") (in (+ "束 BackupVolume が backup " NAME "-cool-0 を指さない") outcome)
+               (in "volume を消さない(backup は残す)" outcome))
+          ran.outcomes)
+  (assert (= api.held.volumes #(WARM)) api.held.volumes)
+  (assert (= (tuple (gfor one api.held.backups one.name)) #((+ NAME "-cool-0"))) api.held.backups)
+  (assert (= (! (requests-of api "DELETE" VOLUMES-PATH)) #()) api.seen)
+  ;; 束が無かったので Longhorn と同じ名で作り、同期を 1 度だけ頼んだ。
+  (assert (= api.bundles #{NAME}) api.bundles)
+  (<- syncs tuple (requests-of api "PATCH" BUNDLES-PATH))
+  (assert (= (tuple (gfor seen syncs seen.path)) #((+ BUNDLES-PATH "/" (! (bundle-of NAME))))) api.seen))
+
+
+(deftest test-cooling-makes-the-missing-bundle-so-the-volume-comes-back-while-the-target-sync-is-down
+  ;; 全体の同期が落ちている世界(束 1 本の同期は通る): 冷やす手順が束を作り、束が今回の backup を指してから消すので、次の作りが戻せる。
+  (val api (LonghornWorld (WorkspaceVolumeWorld NODE :volumes #(WARM)) :target-stalled True))
+  (<- ran ApiRan (on-api api (+ #((Step :verb "cool" :owner OWNER)) START)))
+  (assert (= ran.outcomes #("done" "restored" "done" "done")) ran.outcomes)
+  (assert (! (bundle-before api VOLUMES-PATH)) api.seen)
+  (assert (= api.bundles #{NAME}) api.bundles)
+  ;; 戻しの POST は 1 度で通った(webhook は束を見た)。
+  (assert (= (len (! (requests-of api "POST" VOLUMES-PATH))) 1) api.seen))
+
+
+(deftest test-a-cold-name-without-a-bundle-gets-one-before-the-restore-is-posted
+  ;; 直しの前に冷やされ、全体の同期が落ちていて束の無い名: 戻しの前に束を作るので、webhook の 422 で断られない。
+  (val api (LonghornWorld (WorkspaceVolumeWorld NODE :backups #(COLD-BACKUP)) :target-stalled True))
+  (<- ran ApiRan (on-api api #((Step :verb "create" :owner OWNER))))
+  (assert (= ran.outcomes #("restored")) ran.outcomes)
+  (assert (! (bundle-before api VOLUMES-PATH)) api.seen)
+  (assert (= (len (! (requests-of api "POST" VOLUMES-PATH))) 1) api.seen)
+  (assert (= (get (json.loads (get api.created 0)) "spec" "fromBackup")
+             (.format "s3://longhorn-workspace@us-east-1/?backup={}&volume={}" COLD-BACKUP.name NAME))
+          api.created))
+
+
+(deftest test-a-bundle-already-there-is-neither-made-again-nor-asked-to-sync
+  ;; 全体の同期が通る世界: 束は Longhorn が作り、今回の backup を指しているので、答え手は束を作らず同期も頼まない。
+  (val api (LonghornWorld (WorkspaceVolumeWorld NODE :volumes #(WARM))))
+  (<- ran ApiRan (on-api api (+ #((Step :verb "cool" :owner OWNER)) #((Step :verb "create" :owner OWNER)))))
+  (assert (= ran.outcomes #("done" "restored")) ran.outcomes)
+  (assert (= (! (requests-of api "POST" BUNDLES-PATH)) #()) api.seen)
+  (assert (= (! (requests-of api "PATCH" BUNDLES-PATH)) #()) api.seen)
+  (assert (= api.bundles (set)) api.bundles))
+
+
+(deftest test-a-restore-the-webhook-refuses-before-it-sees-the-new-bundle-is-posted-again
+  ;; 束を作った直後は、webhook の cache がまだ束を見ずに 422 で断る事がある — 上限の秒の内は間を置いて出し直す。
+  (val api (LonghornWorld (WorkspaceVolumeWorld NODE :backups #(COLD-BACKUP)) :target-stalled True :bundle-lag 2))
+  (<- ran ApiRan (on-api api #((Step :verb "create" :owner OWNER))))
+  (assert (= ran.outcomes #("restored")) ran.outcomes)
+  (assert (= (len (! (requests-of api "POST" VOLUMES-PATH))) 3) api.seen)
+  ;; 失敗ケース: 上限の秒(検の場所は 5 秒・間 0.5 秒)を過ぎても見なければ、Longhorn の訳を添えて断る。
+  (val stuck (LonghornWorld (WorkspaceVolumeWorld NODE :backups #(COLD-BACKUP)) :target-stalled True :bundle-lag 1000))
+  (<- refused ApiRan (on-api stuck #((Step :verb "create" :owner OWNER))))
+  (val outcome (get refused.outcomes 0))
+  (assert (and (.startswith outcome "refused: ") (in "Longhorn が束 BackupVolume を見ない" outcome) (in "cannot get backup volume" outcome))
+          refused.outcomes)
+  (assert (= stuck.held.volumes #()) stuck.held.volumes))
