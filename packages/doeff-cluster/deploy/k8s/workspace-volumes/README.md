@@ -8,6 +8,7 @@ longhorn-api)、mkfs と mount は worker が行う(作業場所の path への�
 | file | 何か |
 |---|---|
 | `storageclass.yaml` | 級 `longhorn-workspace`(replica・置く disk・locality・backup の先と群)— 値の定義元 |
+| `scratch-storageclass.yaml` | 級 `longhorn-scratch` — 持ち主の volume でなく、zeus の worker の Pod の `/scratch`(Pod ごとの一時の volume・Pod と一緒に消える・backup しない)。同じ札 workspace の disk に置く(`../nodes/zeus/scratch-on-longhorn.yaml`) |
 | `backup.yaml` | backup の先 `garage-workspace`(BackupTarget)と 1 時間ごとの backup(RecurringJob `workspace-backup`) |
 | `workspace-volume.json` | worker が読む値(ConfigMap `workspace-volume`・namespace agent-worker): 級の名・名の頭と長さ・大きさ・寿命の時間・広げる線と上限 |
 | `workspace-mount.sh` | mount の係の script(ConfigMap `workspace-mount`・namespace agent-worker)— 節「mount の係」 |

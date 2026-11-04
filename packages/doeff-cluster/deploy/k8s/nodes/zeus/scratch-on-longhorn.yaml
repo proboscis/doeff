@@ -1,0 +1,38 @@
+# zeus の worker の作業場所(disk)/scratch を、kubelet の disk の emptyDir でなく、Pod ごとの Longhorn の volume(generic ephemeral
+# volume・級 longhorn-scratch — ../../workspace-volumes/scratch-storageclass.yaml)に置く(strategic merge patch)。
+#
+# 訳: emptyDir は kubelet の disk(zeus の /var/lib/kubelet — USB の SSD の上の loop の file)の上に在り、sizeLimit が無いので worker の
+# 子の大きな一時 file(Rust の build の target など)がそのまま kubelet の disk を埋める。埋まると node が DiskPressure になり、kubelet が
+# zeus の Pod を全部追い出す(2026-11-05 07:4x JST)。sizeLimit を付けても、越えた時に kubelet が worker の Pod ごと
+# 追い出すので、worker の仕事が全部止まる事は変わらない。
+# Longhorn の volume は大きさの決まった別の file system なので、溢れても /scratch への書きが ENOSPC で落ちるだけで、kubelet の disk も
+# 作業の root(/work)も埋めない。
+#
+# 寿命: emptyDir と同じ — Pod を作るたびに k8s が空の PVC を作り、Pod が消えると PVC と Longhorn の volume が消える(級の reclaimPolicy
+# Delete)。入れ替えの間(maxSurge 1)は新旧の Pod が別々の volume を持つ。Pod の中の持ち主ごとの dir を作る・消すのは上に載る系
+# (作業場所の volume を付け外す時)。
+# 大きさ: 64 GiB。11-05 の Pod の 15 時間の中身は 13 GB(どれも Rust の build の target)。名目は Longhorn の札の disk の予約に数えられる
+# (入れ替えの間は 2 つ分)が、thin なので書いた分だけ disk を使う。
+# 起動: Pod は volume が付くまで container を起こさない。Longhorn が volume を作れない時、新しい Pod は待ち続ける(入れ替えでは旧い Pod が
+# 動いたまま — maxUnavailable 0)。worker は既に Longhorn の PVC(moneta-backup)に頼っている。
+# fsGroup 1000(雛形)で、kubelet が volume の根を worker の group に渡す。
+# 戻す時は、この patch を kustomization.yaml の patches から外す(雛形の emptyDir に戻る)。
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: doeff-worker
+  namespace: agent-worker
+spec:
+  template:
+    spec:
+      volumes:
+        - name: scratch
+          emptyDir: null
+          ephemeral:
+            volumeClaimTemplate:
+              metadata:
+                labels: { doeff.dev/volume: scratch }
+              spec:
+                accessModes: [ReadWriteOnce]
+                storageClassName: longhorn-scratch
+                resources: { requests: { storage: 64Gi } }

@@ -11,6 +11,7 @@
 
 from __future__ import annotations
 
+import json
 import os
 import re
 import shutil
@@ -1587,6 +1588,50 @@ def test_other_workers_keep_tmp_in_the_container(rendered: list[Manifest], name:
     """zeus 以外の機体の worker は /tmp を mount しない(container の書き層のまま — 機体ごとの差は機体の dir だけが持つ)。"""
     mounts = [_mapping(m, "volumeMount") for m in _sequence(_container(_worker_on(rendered, name)).get("volumeMounts", []), "volumeMounts")]
     assert not [m for m in mounts if m["mountPath"] == "/tmp"], mounts
+
+
+# zeus の worker の /scratch は kubelet の disk の外の、Pod ごとの Longhorn の volume(機体の dir の scratch-on-longhorn.yaml の頭の註)。
+# emptyDir は kubelet の disk を埋めて node を DiskPressure にし、sizeLimit は越えると Pod ごと追い出される(2026-11-05)。
+SCRATCH_CLASS = "longhorn-scratch"
+ZEUS_SCRATCH_SIZE = "64Gi"
+
+
+def _storage_class(rendered: list[Manifest], name: str) -> dict[str, object]:
+    found = [doc for doc in rendered if doc["kind"] == "StorageClass" and _mapping(doc["metadata"], "metadata")["name"] == name]
+    assert len(found) == 1, f"StorageClass {name} がちょうど 1 つ無い: {found!r}"
+    return found[0]
+
+
+def test_zeus_worker_keeps_scratch_on_a_pod_owned_longhorn_volume(zeus_worker: Manifest) -> None:
+    """zeus の worker の /scratch は emptyDir でなく generic ephemeral volume で、級 longhorn-scratch の大きさの決まった RWO の volume。"""
+    mount = _mount_at(zeus_worker, "/scratch")
+    assert "subPath" not in mount
+    volume = _volume(zeus_worker, str(mount["name"]))
+    assert "emptyDir" not in volume, volume
+    template = _mapping(_mapping(volume["ephemeral"], "ephemeral")["volumeClaimTemplate"], "volumeClaimTemplate")
+    claim = _mapping(template["spec"], "volumeClaimTemplate の spec")
+    assert claim["storageClassName"] == SCRATCH_CLASS
+    assert claim["accessModes"] == ["ReadWriteOnce"]
+    assert claim["resources"] == {"requests": {"storage": ZEUS_SCRATCH_SIZE}}
+
+
+def test_scratch_class_is_a_local_throwaway_volume_on_the_workspace_disk(rendered: list[Manifest]) -> None:
+    """級 longhorn-scratch は Pod と一緒に消え(Delete)、札 workspace の disk に 1 本だけ機体の中に置き、backup の群を名指さない。"""
+    declared = _storage_class(rendered, SCRATCH_CLASS)
+    assert declared["provisioner"] == "driver.longhorn.io"
+    assert declared["reclaimPolicy"] == "Delete"
+    parameters = _mapping(declared["parameters"], "parameters")
+    assert parameters["numberOfReplicas"] == "1"
+    assert parameters["diskSelector"] == "workspace"
+    assert parameters["dataLocality"] == "strict-local"
+    assert [group["name"] for group in json.loads(str(parameters["recurringJobSelector"]))] == ["default"]
+
+
+@pytest.mark.parametrize("name", [node for node in NODES if node != "zeus"])
+def test_other_workers_keep_scratch_in_an_empty_dir(rendered: list[Manifest], name: str) -> None:
+    """zeus 以外の機体には札 workspace の disk が無い — worker の /scratch は雛形の emptyDir のまま。"""
+    worker = _worker_on(rendered, name)
+    assert _volume(worker, str(_mount_at(worker, "/scratch")["name"])) == {"name": "scratch", "emptyDir": {}}
 
 
 # atlas の worker は job の cwd の根を Garage の bay の HDD の下へ出す(boot.sh の jobs_root_link)。根の SSD の寿命を延ばすため。
