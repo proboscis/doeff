@@ -30,6 +30,7 @@
 (require doeff-hy.record [defrecord])
 (import dataclasses [dataclass])
 (import doeff_cluster._shared.intent.runtime_env_model [EnvFailure EnvFailureKind])
+(import doeff_cluster._worker.core.eviction_rules [stat-bytes working-set])
 
 ;; 既定の値(設計 U10 — 実測で直す)。
 (val WHEEL-UNUSED-SECONDS (* 7 24 3600)) ; どの root からも使われず 7 日経った native の wheel を消す
@@ -235,7 +236,8 @@
 ;; 無いので、本番の 2Gi の container の入口の線(× 0.75 = 1.5GiB)の 3 分の 1 の 512 MiB に置く(初めの組みを 1 本は通し、実測で置き換える)。
 (val DEFAULT-BUILD-MEMORY-BYTES (* 512 1024 1024))
 ;; memory の入口の線(memory.max に掛ける割合)。c2-w28 の外の見張りは 2Gi の 1.6GiB(0.8)か oom_kill で組みを取り消すので、入口はそれより下の
-;; 0.75 に置く — 0.9 だと入口を通った組みを見張りが途中で取り消す形が残る(#3748 の c2-w36 の決め)。
+;; 0.75 に置く — 0.9 だと入口を通った組みを見張りが途中で取り消す形が残る(#3748 の c2-w36 の決め)。cgroup の層の無い container の線で、
+;; 組みの置かれる層が在る worker はこの線で判じない(warm-refusal の no-memory-room)。
 (val MEMORY-ROOM-RATIO 0.75)
 
 
@@ -243,6 +245,14 @@
   "worker の container の cgroup(v2)の memory の読み: current = memory.current・limit = memory.max(byte)。"
   {:tags {:context "worker" :role "type"}}
   (#^ int current)
+  (#^ int limit))
+
+
+(defrecord LayerMemoryUse
+  "組みの process が置かれる cgroup の層の memory の読み: working = 層の working set(memory.current − memory.stat の inactive_file — 回収できる
+   page cache を数えない)・limit = 層の memory.max(byte — 機体の memory の見張りが掛け直した今の値)。"
+  {:tags {:context "worker" :role "type"}}
+  (#^ int working)
   (#^ int limit))
 
 
@@ -264,7 +274,7 @@
   (#^ (| int None) roots)
   (#^ int reclaimable)
   (#^ int cap)
-  (#^ (| MemoryUse MemoryUnread) memory)
+  (#^ (| MemoryUse LayerMemoryUse MemoryUnread) memory)
   (#^ int peak))
 
 
@@ -281,6 +291,30 @@
     _ :if (= cap "max") (MemoryUnread :reason "memory.max が max(container の memory の上限が無い)")
     _ :if (not (and (.isdigit now) (.isdigit cap))) (MemoryUnread :reason (.format "memory.current {!r} か memory.max {!r} が数でない" now cap))
     _ (MemoryUse :current (int now) :limit (int cap))))
+
+
+(defk layer-memory-use-of [current limit stat]
+  {:pre [(: current (| str None)) (: limit (| str None)) (: stat (| str None))] :post [(: % (| LayerMemoryUse MemoryUnread))]
+   :tags {:context "worker" :role "judgment"}}
+  "組みの置かれる cgroup の層の memory.current・memory.max・memory.stat の中身(読めなければ None)を層の読みにするため。読めない・上限が
+   max(無い)・数でない時は MemoryUnread(呼び手は container の読みに戻る)。"
+  (<- use (| MemoryUse MemoryUnread) (memory-use-of current limit))
+  (when (or (isinstance use MemoryUnread) (is stat None))
+    (return (if (isinstance use MemoryUnread) use (MemoryUnread :reason "memory.stat が読めない(file が無い)"))))
+  (try
+    (<- inactive int (stat-bytes stat "inactive_file"))
+    (except [error ValueError]
+      (return (MemoryUnread :reason (str error)))))
+  (<- working int (working-set use.current inactive))
+  (LayerMemoryUse :working working :limit use.limit))
+
+
+(defk prepare-layer-dir [cgroup-root prepare jobs]
+  {:pre [(: cgroup-root str) (: prepare (| str None)) (: jobs (| str None))] :post [(: % (| str None))] :tags {:context "worker" :role "judgment"}}
+  "組みの process が置かれる cgroup の層の dir を決めるため: 準備の層(prepare)が宣言された機体はそこ、無い機体は jobs の層(外側の
+   job-cgroup-placer が置く)。どちらも無ければ None(container の読みで判じる)。"
+  (val layer (or prepare jobs))
+  (if layer (+ cgroup-root "/" layer) None))
 
 
 (defk latest-of-project [roots project]
@@ -319,7 +353,11 @@
    始めてよければ None。順は disk の空き → roots の上限 → memory:
      no-disk-room    空き < 空きの最低 + root 1 つの見積もり
      over-roots-cap  roots の合計 + root 1 つの見積もり − 掃除で空けられる分 > 上限(まだ数えていなければ判じない)
-     no-memory-room  memory.current + 組みの山の見積もり > memory.max × MEMORY-ROOM-RATIO(memory を測れなければ判じない — 呼び手が
+     no-memory-room  組みの置かれる層が読める時: 層の working set + 組みの山の見積もり(層の上限を上限に) > 層の memory.max。層の上限は組みの
+                     子だけを抑えるので(常駐の job と worker は別の層で守る)、層の外の使いでは断らない — 準備が同じ層で組むのに断ると宣言の後に
+                     待ちが移るだけになる。見積もりを層の上限で切るので、空いた層はいつも通す(見積もりは container の山で測った値で層の上限を
+                     越えうる・組みは層の上限の内で走る)。機体の見張りが層の上限を使いの下まで下げた時は断る。
+                     層が無い時: memory.current + 組みの山の見積もり > memory.max × MEMORY-ROOM-RATIO。memory を測れなければ判じない(呼び手が
                      測っていない印を立てる)"
   (val need-free (+ room.min-free room.root-bytes))
   (match room
@@ -332,6 +370,10 @@
       (EnvFailure :kind EnvFailureKind.OVER-ROOTS-CAP :retryable False
                   :detail (.format "先の組みを断った: roots の合計 {} byte + root 1 つの見積もり {} byte − 掃除で空けられる {} byte > 上限 {} byte"
                                    total extra freed cap))
+    (WarmRoom :memory (LayerMemoryUse :working working :limit limit) :peak peak) :if (> (+ working (min peak limit)) limit)
+      (EnvFailure :kind EnvFailureKind.NO-MEMORY-ROOM :retryable False
+                  :detail (.format "先の組みを断った: 層の working set {} byte + 組みの山の見積もり {} byte > 層の memory.max {} byte"
+                                   working (min peak limit) limit))
     (WarmRoom :memory (MemoryUse :current current :limit limit) :peak peak) :if (> (+ current peak) (* limit MEMORY-ROOM-RATIO))
       (EnvFailure :kind EnvFailureKind.NO-MEMORY-ROOM :retryable False
                   :detail (.format "先の組みを断った: memory.current {} byte + 組みの山の見積もり {} byte > memory.max {} byte × {}"

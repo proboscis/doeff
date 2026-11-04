@@ -70,6 +70,7 @@
 (import doeff_cluster._worker.protocol.leaving_observer [leaving-observer])
 (import doeff_cluster._worker.protocol.memory_observer [memory-observer])
 (import doeff_cluster._worker.protocol.env_store [EnvSettings env-host])
+(import doeff_cluster._worker.core.env_upkeep [prepare-layer-dir])
 (import doeff_cluster._worker.protocol.process_clock [process-clock])
 (import doeff_cluster._worker.core.job_cgroup [CGROUP-ROOT job-cgroup-procs])
 (import doeff_cluster._worker.protocol.job_cgroup [job-cgroup-placer])
@@ -520,7 +521,10 @@
                           :code-store (if (= args.code-store "off") None args.code-store)
                           ;; 世代をまたいで分け合う dir(Python・wheel・mirror と錠 — AL-D2)。
                           :shared (str shared-dir)
-                          :prepare-procs prepare-procs)
+                          :prepare-procs prepare-procs
+                          ;; 先の組みの入口が memory を読む層(準備の層か jobs の層 — core/env_upkeep の warm-refusal)。
+                          :prepare-layer-dir (run (prepare-layer-dir cgroup-root (.get machine-env PREPARE-CGROUP-VAR)
+                                                                     (.get machine-env JOB-CGROUP-VAR))))
         ;; 入口の検め(service の job の木を worker の実行環境で読み込めるか — 起こす前に試す)。
         probes (ProbeSettings :python interpreter :hy-command hy-command :layout layout
                               :probe-dir places.probe :shim shim))
