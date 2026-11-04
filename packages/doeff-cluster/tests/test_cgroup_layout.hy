@@ -33,15 +33,60 @@
   scope)
 
 
-(defk run-layout [tmp-path ns-root layout [wait "2"]]
-  {:pre [(: tmp-path Path) (: ns-root Path) (: layout str) (: wait str)] :post [(: % subprocess.CompletedProcess)]
+(defk run-layout [tmp-path ns-root layout [wait "2"] [init-layer ""]]
+  {:pre [(: tmp-path Path) (: ns-root Path) (: layout str) (: wait str) (: init-layer str)] :post [(: % subprocess.CompletedProcess)]
    :tags {:context "doeff-cluster-test" :role "program"}}
-  "ROLE=cgroup で boot.sh を起こす(host の見えと名前空間の根を検の tmp に向ける)— 層が作る物と断りを外から読むため。"
+  "ROLE=cgroup で boot.sh を起こす(host の見えと名前空間の根を検の tmp に向ける・init-layer = WORKER_CGROUP_INIT_LAYER — 空なら渡さない)
+   — 層が作る物と断りを外から読むため。"
   (subprocess.run ["sh" BOOT-SH]
-                  :env {"PATH" (os.environ.get "PATH" "") "HOME" (str tmp-path) "ROLE" "cgroup"
-                        "WORKER_CGROUP_HOST" (str (/ tmp-path "host")) "WORKER_CGROUP_NS_ROOT" (str ns-root)
-                        "WORKER_CGROUP_WAIT" wait "WORKER_CGROUP_LAYOUT" layout}
+                  :env (| {"PATH" (os.environ.get "PATH" "") "HOME" (str tmp-path) "ROLE" "cgroup"
+                           "WORKER_CGROUP_HOST" (str (/ tmp-path "host")) "WORKER_CGROUP_NS_ROOT" (str ns-root)
+                           "WORKER_CGROUP_WAIT" wait "WORKER_CGROUP_LAYOUT" layout}
+                          (if init-layer {"WORKER_CGROUP_INIT_LAYER" init-layer} {}))
                   :capture-output True :text True :timeout 30))
+
+
+(val INIT-LAYOUT "worker:memory.min=2G services:memory.min=24G jobs:memory.max=36G exec:memory.max=1G")
+
+
+(deftest test-the-init-layer-takes-only-the-init-and-the-first-layer-takes-the-rest [#^ Path tmp-path]
+  ;; init の層(boot.sh の「init の層」): container の init(pid 1)だけを init の層へ、ほかを最初の層へ移す — runc は kubectl exec・
+  ;; readinessProbe・preStop を init の cgroup へ入れるので、その memory は init の層の memory.max で止まる。失敗ケース(11-04 12:59 UTC の
+  ;; zeus): init が worker の本体と同じ上限の無い層に居て、exec の grep 2 本の 69 GB が機体の全体の OOM まで止まらなかった。
+  (<- scope Path (fake-container tmp-path))
+  (.write-text (/ scope "cgroup.procs") "1\n4242\n4243\n")
+  (<- done subprocess.CompletedProcess (run-layout tmp-path scope INIT-LAYOUT :init-layer "exec"))
+  (assert (= done.returncode 0) done.stderr)
+  ;; 模擬の cgroup.procs は file なので、移した pid は最後の 1 つが残る。
+  (assert (= (.strip (.read-text (/ scope "exec" "cgroup.procs"))) "1"))
+  (assert (= (.strip (.read-text (/ scope "worker" "cgroup.procs"))) "4243"))
+  (assert (= (.strip (.read-text (/ scope "exec" "memory.max"))) "1G")))
+
+
+(deftest test-a-bad-init-layer-is-refused-before-any-layer-is-made [#^ Path tmp-path]
+  ;; 失敗ケース: init の層が宣言に無い・memory.max を持たない・最初の層と同じだと、exec の命令は上限の無い層に入ったまま起動する。
+  ;; 宣言を読む段で名指して断り、層は作らない。
+  (<- scope Path (fake-container tmp-path))
+  (.write-text (/ scope "cgroup.procs") "1\n4242\n")
+  (for [#(layout layer part) #(#(INIT-LAYOUT "probe" "init の層 probe が WORKER_CGROUP_LAYOUT に無い")
+                               #("worker:memory.min=2G exec:cpu.weight=1000" "exec" "init の層 exec に memory.max が無い")
+                               #("worker:memory.max=2G jobs:memory.max=1G" "worker" "最初の層")
+                               ;; 後ろの層の memory.max を init の層の物と読まない。
+                               #("worker:memory.min=2G exec:memory.min=1G jobs:memory.max=1G" "exec" "init の層 exec に memory.max が無い"))]
+    (<- done subprocess.CompletedProcess (run-layout tmp-path scope layout :init-layer layer))
+    (assert (= done.returncode 2) done)
+    (assert (in part done.stderr) done.stderr)
+    (assert (= (sorted (gfor p (.iterdir scope) p.name)) ["cgroup.procs" "cgroup.subtree_control"]) "層を作らない")))
+
+
+(deftest test-an-init-outside-the-container-cgroup-is-refused-before-any-layer-is-made [#^ Path tmp-path]
+  ;; 失敗ケース: init(pid 1)が container の cgroup に居ない(Pod の中で pid の名前空間を分け合い、pid 1 が別の container の pause)と、
+  ;; exec の命令は init の層でなく worker の本体の層へ入り続ける。層を作る前に断る。
+  (<- scope Path (fake-container tmp-path))
+  (<- done subprocess.CompletedProcess (run-layout tmp-path scope INIT-LAYOUT :init-layer "exec"))
+  (assert (= done.returncode 2) done)
+  (assert (in "init(pid 1)が" done.stderr) done.stderr)
+  (assert (= (sorted (gfor p (.iterdir scope) p.name)) ["cgroup.procs" "cgroup.subtree_control"]) "層を作らない"))
 
 
 (deftest test-the-layout-moves-every-process-to-the-first-layer-and-writes-each-value [#^ Path tmp-path]
