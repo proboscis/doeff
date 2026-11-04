@@ -12,12 +12,14 @@
 ;;;   * umount: 付ける先に何も無ければ ALREADY・別の volume なら断る・使っている process が在れば断る・ほかは外して DONE。
 ;;;   * detach: まだ mount されていれば断る・別の node に付いていれば断る・無い volume と外れた volume は ALREADY・ほかは外して DONE。
 ;;;   * 作る(戻す): volume が無く、その名の完了した backup が在れば戻して RESTORED(file system を持つ)。backup は在るが完了した物が無ければ断る。
-;;;   * 置き場: 作る(戻す)前に、札の disk の残り(capacity − volume の数)が無ければ作らずに WorkspaceRoomShort で断る(fresh = 戻す
-;;;     backup が無い)。残りの読み(ReadWorkspaceRoom)は同じ残りと spare-volumes を答える。
+;;;   * 置き場: 作る(戻す)前に、札の disk の線ごとの残りの byte(名目 = capacity × size-bytes − volume の名目の和・実 = 同じ大きさ −
+;;;     volume の実の使用の和 − 最小の空き minimal%)が入る大きさ(戻しは backup の大きさ)を覆わなければ、外れた volume を本番と同じ
+;;;     冷やす順(cooling-order — 温かく置く時間を待たない)で冷やしてから作る。冷やしても覆えなければ作らずに WorkspaceRoomShort で断る
+;;;     (fresh = 戻す backup が無い)。残りの読み(ReadWorkspaceRoom)は同じ残りと spare-bytes を答える。
 ;;;   * 使った刻: attach(付けた時)と detach(外した時)が volume の used-at に今の刻を書く。
 ;;;   * 冷やす: 無い volume は ALREADY・付いている volume は断る・ほかは backup(<名>-cool-<刻>)を足して volume を消し DONE。
 ;;;   * 消す: volume が在れば断る・backup が無ければ ALREADY・最後の backup から keep-days の内なら断る・ほかは backup を消して DONE。
-;;;   * まとめて冷やす: 外れている volume を cooling-order(空き = capacity − volume の数)の順に冷やす。
+;;;   * まとめて冷やす: 外れている volume を cooling-order(線ごとの残りの byte・需要 = spare-bytes)の順に冷やす。
 ;;;   * 付ける先の読み: 付ける先に持ち主の volume が付いていれば MOUNTED・別の volume なら CLASH。何も付いていなければ、dir が無いか空なら
 ;;;     READY・中身が在れば、持ち主の volume か backup が在る時 CLASH・無い時 OUTSIDE。
 ;;;   * 付いた volume の読み: 世界の機体の node に付いた volume を、名の順に持ち主の id(小文字)と使った刻で答える。
@@ -36,38 +38,44 @@
                                                            ReadWorkspaceRoom UmountWorkspaceVolume WorkspaceOutcome WorkspacePlace
                                                            WorkspaceClusterUnreachable WorkspaceRoom WorkspaceRoomShort WorkspaceVolumeRefused])
 (import doeff_core_effects [FileFailed ListDirectory PathKind PathStat StatPath])
-(import doeff_cluster._shared.core.workspace_volume_rules [NAME-PREFIX WarmVolume cooling-name cooling-order owner-refusal ticket-id
-                                                         volume-name])
+(import doeff_cluster._shared.core.workspace_volume_rules [NAME-PREFIX CoolingPlan RoomBytes WarmVolume cooling-name cooling-order
+                                                         owner-refusal room-covers? ticket-id volume-name])
 
 
 (defrecord HeldVolume
   "模擬の世界の volume 1 つ: name = volume の名・node = attach された node(None = 外れている)・mounted-at = 付いている path(None = 付いて
    いない)・formatted = file system を持つか(初めて mount した時に作る・backup から戻した volume は持つ)・used-at = 使った刻(epoch 秒 —
-   作った時・attach と detach が書く)。"
+   作った時・attach と detach が書く)・size = 名目の大きさ(byte — 0 = 世界の size-bytes)・actual = 実の使用(byte)。"
   (#^ str name)
   (setv #^ (| str None) node None)
   (setv #^ (| str None) mounted-at None)
   (setv #^ bool formatted False)
-  (setv #^ float used-at 0.0))
+  (setv #^ float used-at 0.0)
+  (setv #^ int size 0)
+  (setv #^ int actual 0))
 
 
 (defrecord HeldBackup
   "模擬の世界の backup 1 つ: volume = volume の名・name = backup の名・created-at = 作った刻(epoch 秒)・state = 様子(Completed・
-   InProgress・Error)。"
+   InProgress・Error)・size と actual = 取った時の volume の名目の大きさと実の使用(byte — 0 の size = 世界の size-bytes。戻す volume は
+   この大きさで作る)。"
   (#^ str volume)
   (#^ str name)
   (#^ float created-at)
-  (setv #^ str state "Completed"))
+  (setv #^ str state "Completed")
+  (setv #^ int size 0)
+  (setv #^ int actual 0))
 
 
 (defclass WorkspaceVolumeWorld []
   "模擬の答え手 held-workspace-volumes の世界と、volume の様子の入れ物 — 検と模擬の世界が、走らせた後に読むため。node = 答え手の機体の
    node・volumes = volume の様子(初めて作った順 — 書き換えるたびに組を作り直す)・backups = backup(作った順)・busy = 使っている process の
-   在る path(umount を断る)・down = API server に届かない世界か・capacity = 札の disk が名目で受ける volume の本数・warm-hours・
-   spare-volumes・keep-days = 値の ConfigMap の同じ名の値。"
+   在る path(umount を断る)・down = API server に届かない世界か・capacity = 札の disk の大きさ(作る時の大きさ size-bytes の volume の
+   本数で数える — 名目の予約の線は過剰割り当て 100% の capacity × size-bytes byte)・minimal = 実の空きの線の最小の空きの %・warm-hours・
+   spare-bytes・keep-days・size-bytes = 値の ConfigMap の warmHours・spareBytes・keepDays・sizeBytes。"
   (defn #^ None __init__ [self #^ str node #^ tuple [volumes #()] #^ frozenset [busy (frozenset)] #^ bool [down False]
-                          #^ tuple [backups #()] #^ int [capacity 20] #^ int [warm-hours 2] #^ int [spare-volumes 4]
-                          #^ int [keep-days 7]]
+                          #^ tuple [backups #()] #^ int [capacity 20] #^ int [minimal 0] #^ int [warm-hours 2]
+                          #^ int [spare-bytes 17179869184] #^ int [keep-days 7] #^ int [size-bytes 2147483648]]
     ;; defk にできない: class の作り手(Python が呼ぶ口)
     "入れ物を作るため(volumes と backups = 前から在る物)。"
     (setv self.node node
@@ -76,9 +84,11 @@
           self.busy busy
           self.down down
           self.capacity capacity
+          self.minimal minimal
           self.warm-hours warm-hours
-          self.spare-volumes spare-volumes
-          self.keep-days keep-days)))
+          self.spare-bytes spare-bytes
+          self.keep-days keep-days
+          self.size-bytes size-bytes)))
 
 
 (defk held-volume [world name]
@@ -145,11 +155,12 @@
   (val backups (! (held-backups world name)))
   (val done (lfor backup backups :if (= backup.state "Completed") backup))
   (val there (is-not (! (held-volume world name)) None))
-  (when (and (not there) (or done (not backups)) (< (! (sim-slots world)) 1))
-    (raise (WorkspaceRoomShort (str (! (sim-refused owner doing "札の disk がもう受けられない(模擬の世界の capacity)"))) (not done))))
+  (val source (if done (get done -1) None))
+  (when (and (not there) (or done (not backups)))
+    (<- (sim-room-made world owner doing (max world.size-bytes (if (is source None) 0 (or source.size world.size-bytes))) (not done))))
   (cond
     there WorkspaceOutcome.ALREADY
-    done (do (! (put-volume world (HeldVolume :name name :formatted True :used-at now)))
+    done (do (! (put-volume world (HeldVolume :name name :formatted True :used-at now :size source.size :actual source.actual)))
              WorkspaceOutcome.RESTORED)
     backups (raise (! (sim-refused owner doing (+ "backup は在るが完了した物が無い(空で作らない): "
                                                   (.join "・" (gfor one backups (+ one.name " " one.state)))))))
@@ -157,10 +168,41 @@
              WorkspaceOutcome.DONE)))
 
 
-(defk sim-slots [world]
-  {:pre [(: world WorkspaceVolumeWorld)] :post [(: % int) (>= % 0)] :tags {:context "doeff-cluster" :role "foundation"}}
-  "世界 world の札の disk が、あと何本の volume を受けられるかを得るため(capacity − volume の数・負は 0)。"
-  (max 0 (- world.capacity (len world.volumes))))
+(defk sim-room-bytes [world]
+  {:pre [(: world WorkspaceVolumeWorld)] :post [(: % RoomBytes)] :tags {:context "doeff-cluster" :role "foundation"}}
+  "世界 world の札の disk の線ごとの残りの byte を得るため(頭の註の契約 — 本番の room-bytes の数えを、過剰割り当て 100% の 1 枚の disk に
+   当てた物)。"
+  (val maximum (* world.capacity world.size-bytes))
+  (RoomBytes :nominal (- maximum (sum (gfor one world.volumes (or one.size world.size-bytes))))
+             :actual (- maximum (sum (gfor one world.volumes one.actual)) (// (* maximum world.minimal) 100))))
+
+
+(defk sim-warm [world]
+  {:pre [(: world WorkspaceVolumeWorld)] :post [(: % (get tuple #(WarmVolume ...)))] :tags {:context "doeff-cluster" :role "foundation"}}
+  "世界 world の外れている volume を、冷やす順の判断に渡す形にするため(名目の大きさと実の使用を添える)。"
+  (tuple (gfor one world.volumes :if (is one.node None)
+               (WarmVolume :name one.name :used-at one.used-at :size (or one.size world.size-bytes) :actual one.actual))))
+
+
+(defk sim-room-made [world owner doing demand fresh]
+  {:pre [(: world WorkspaceVolumeWorld) (: owner str) (: doing str) (: demand int) (> demand 0) (: fresh bool)] :post [(: % None)]
+   :tags {:context "doeff-cluster" :role "foundation"}}
+  "作る前に、世界 world の札の disk の残りが需要 demand を両方の線で覆う事を確かめるため。覆わなければ外れた volume を本番と同じ冷やす順
+   (温かく置く時間を待たない)で冷やし、冷やしても覆えなければ置き場の不足で断る(頭の註の契約)。"
+  (val room (! (sim-room-bytes world)))
+  (when (! (room-covers? room demand))
+    (return None))
+  (val short (.format "札の disk が名目 {} byte の volume をもう受けられない(模擬の世界の capacity — 名目の予約 {} byte・実の空き {} byte)"
+                      demand room.nominal room.actual))
+  (<- now float (sim-now))
+  (val plan (! (cooling-order (! (sim-warm world)) now (float "inf") room demand)))
+  (when (not plan.covered)
+    (raise (WorkspaceRoomShort (str (! (sim-refused owner doing (+ short " — 外れた volume を全部冷やしても足りない")))) fresh)))
+  (for [name plan.names]
+    (<- (sim-cooled world (cut name (len NAME-PREFIX) None))))
+  (when (not (! (room-covers? (! (sim-room-bytes world)) demand)))
+    (raise (WorkspaceRoomShort (str (! (sim-refused owner doing (+ short " — 冷やした後も足りない")))) fresh)))
+  None)
 
 
 (defk sim-attached [world owner]
@@ -277,7 +319,8 @@
   (cond
     (is volume None) WorkspaceOutcome.ALREADY
     (is-not volume.node None) (raise (! (sim-refused owner doing (+ "使っている(ticket " (! (ticket-id name)) ")"))))
-    True (do (setv world.backups (+ world.backups #((HeldBackup :volume name :name (! (cooling-name name (int now))) :created-at now)))
+    True (do (setv world.backups (+ world.backups #((HeldBackup :volume name :name (! (cooling-name name (int now))) :created-at now
+                                                                :size volume.size :actual volume.actual)))
                    world.volumes (tuple (gfor one world.volumes :if (!= one.name name) one)))
              WorkspaceOutcome.DONE)))
 
@@ -305,16 +348,15 @@
   "CoolIdleWorkspaceVolumes を世界 world に当てるため(頭の註の契約)。"
   (when world.down
     (raise (WorkspaceClusterUnreachable "持ち主 全部 の volume を 冷やす順の読み できない — API server に届かない: 模擬の世界が down")))
-  (val slots (! (sim-slots world)))
-  (val warm (tuple (gfor one world.volumes :if (is one.node None) (WarmVolume :name one.name :used-at one.used-at))))
+  (val room (! (sim-room-bytes world)))
   (<- now float (sim-now))
-  (val order (! (cooling-order warm now (* world.warm-hours 3600.0) slots world.spare-volumes)))
+  (val plan (! (cooling-order (! (sim-warm world)) now (* world.warm-hours 3600.0) room world.spare-bytes)))
   (var cooled #())
-  (for [name order]
+  (for [name plan.names]
     (<- outcome WorkspaceOutcome (sim-cooled world (cut name (len NAME-PREFIX) None)))
     (when (= outcome WorkspaceOutcome.DONE)
       (:= cooled (+ cooled #(name)))))
-  (CoolingSweep :slots slots :cooled cooled :failed #()))
+  (CoolingSweep :nominal room.nominal :actual room.actual :cooled cooled :failed #() :covered plan.covered))
 
 
 (defk sim-room [world]
@@ -322,7 +364,8 @@
   "ReadWorkspaceRoom を世界 world に当てるため(頭の註の契約)。"
   (when world.down
     (raise (WorkspaceClusterUnreachable "持ち主 全部 の volume を 置き場の読み できない — API server に届かない: 模擬の世界が down")))
-  (WorkspaceRoom :slots (! (sim-slots world)) :spare world.spare-volumes))
+  (val room (! (sim-room-bytes world)))
+  (WorkspaceRoom :nominal room.nominal :actual room.actual :spare world.spare-bytes))
 
 
 (defk sim-attached-volumes [world]

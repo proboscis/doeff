@@ -23,14 +23,14 @@ backup から戻した(作る時だけ)、まとめて冷やすは `CoolingSweep
 
 | effect | 何をするか |
 |---|---|
-| `CreateWorkspaceVolume` | volume が無ければ作る。その名の完了した backup が在れば(冷えている)一番新しい物から戻して RESTORED(戻し終わるまで待つ)、無ければ空で DONE。在れば ALREADY — 戻す途中なら戻し終わりを、消す途中なら消え終わりを待ってから(同じ持ち主の次の頼みは先の戻しに相乗りする)。backup は在るが完了した物が無い名は空で作らずに断る。作る前に札の disk の残りを数え(節「置き場の数え」)、受けられなければ POST せずに `WorkspaceRoomShort` で断る。戻す volume は backup を取った時の大きさ(status.volumeSize)と値の大きさの大きい方で作る(Longhorn は backup より小さい volume への戻しを断る) |
+| `CreateWorkspaceVolume` | volume が無ければ作る。その名の完了した backup が在れば(冷えている)一番新しい物から戻して RESTORED(戻し終わるまで待つ)、無ければ空で DONE。在れば ALREADY — 戻す途中なら戻し終わりを、消す途中なら消え終わりを待ってから(同じ持ち主の次の頼みは先の戻しに相乗りする)。backup は在るが完了した物が無い名は空で作らずに断る。作る前に札の disk の線ごとの残りを、入る volume の大きさの byte で数え(節「置き場の数え」)、足りなければ外れた volume をその分だけ使い終わりの古い順に冷やしてから POST する。外れた volume を全部冷やしても足りない・冷やした後も足りない時だけ、POST せずに `WorkspaceRoomShort` で断る。戻す volume は backup を取った時の大きさ(status.volumeSize)と値の大きさの大きい方で作る(Longhorn は backup より小さい volume への戻しを断る) |
 | `MountWorkspaceVolume` | 前と同じ。何も付いていない付ける先の dir に中身が在れば(volume の外に書かれた物)、付けずに断る — 付けると中身が隠れる |
 | `AttachWorkspaceVolume` | 前と同じ。ticket を置いた後に Volume へ使った刻の印(annotation `doeff-cluster/used-at` = epoch 秒)を書く。付くのを待つ間に Longhorn が replica を置けないと答え、replica がどこにも置かれていなければ(初めて付ける空の volume)、上限の秒まで待たずに volume を消して `WorkspaceRoomShort`(fresh)で断る |
 | `DetachWorkspaceVolume` | 前と同じ。外した後に使い終わりの刻の印を書く(冷やす順が読む) |
 | `CoolWorkspaceVolume` | 外れている volume を冷やす(節「寿命」の手順)。使っている・戻す途中・ほかの冷やす手順の途中の volume は触らずに断る |
 | `PurgeWorkspaceVolume` | 冷えた名の backup を消す(最後の backup から keepDays を過ぎた物だけ)。Longhorn の volume が在る名・途中の backup の在る名は断る |
 | `CoolIdleWorkspaceVolumes` | 外れている volume を、冷やす順(節「寿命」)に 1 つずつ冷やす。その後に、答え手の機体に付いている volume のうち file system の空きが線を割った物を付けたまま広げる(節「広げる」— 答えの grown)。冷やせなかった・広げられなかった物は訳を残して次へ進む |
-| `ReadWorkspaceRoom` | 札の disk が受けられる、値の大きさの volume の残りの本数(節「置き場の数え」)と値の spareVolumes を答える(何も変えない) |
+| `ReadWorkspaceRoom` | 札の disk の線ごとの残りの byte(名目の予約の線・実の空きの線 — 節「置き場の数え」。負 = 線を越えて置かれている)と値の spareBytes を答える(何も変えない) |
 | `ReadWorkspacePlace` | 持ち主の volume を付ける先の様子を答える(何も変えない): MOUNTED = 持ち主の volume が付いている・READY = 何も付いておらず dir が無いか空・OUTSIDE = 何も付いておらず dir に中身が在り、持ち主は volume も backup も持たない(持ち主の作業場所は volume の外 — 置き場の不足で volume の外の場所で始めた持ち主)・CLASH = 別の物が付いている、か、dir に中身が在るのに持ち主が volume か backup を持つ |
 | `ReadAttachedWorkspaceVolumes` | 答え手の機体の node に、この答え手の ticket で付いた持ち主の volume を、持ち主の id(小文字)と使った刻で答える(何も変えない)。冷やす手順の snapshot と backup の ticket だけで付いた volume は答えない。呼び手は、自分の覚えの外で付いたままの volume(前の process が付けて残した物)をこれで見つける |
 
@@ -110,9 +110,11 @@ worker は CSI を通らずに Longhorn の volume を名指しで作るので�
 | 冷えている | garage の backup だけ(Longhorn の volume は無い) | 冷やした時 | 次に使う時は backup から同じ名で戻してから付ける(節「backup」の戻し方) |
 | 消えた | どこにも無い | 消した時 | — |
 
-- 冷やす: 温かい volume のうち、(1) 使い終わってから warmHours(2 時間)を過ぎた物は全部、(2) それでも札 workspace の disk が受けられる
-  volume の残り(空き)と冷やす本数の和が spareVolumes(4 本)に届かなければ、届くまで残りを、使い終わりの古い順に(判断 = `cooling-order`・
-  空き = Longhorn の置く線 `free-slots`)。手順(`CoolWorkspaceVolume`)は Snapshot `<名>-cool-<epoch 秒>` を作る → 使えるまで待つ →
+- 冷やす: 温かい volume のうち、(1) 使い終わってから warmHours(2 時間)を過ぎた物は全部、(2) それでも札 workspace の disk の線ごとの
+  残りの byte に冷やす物が空ける byte を足して、線のどちらかが spareBytes(16 GiB)に届かなければ、両方が届くまで残りを、使い終わりの
+  古い順に(判断 = `cooling-order`・残り = Longhorn の置く線 `room-bytes`)。冷やした volume が空ける byte は線ごとに違う: 名目の予約の線
+  には spec.size、実の空きの線には status.actualSize(snapshot を含む実の使用 — 本番の外れた 2 GiB の volume の多くは約 1 MB で、冷やしても
+  実の空きはほぼ空かない)。(2) を全部足しても届かなければ (1) だけ(温かい volume を冷やしても入らない)。手順(`CoolWorkspaceVolume`)は Snapshot `<名>-cool-<epoch 秒>` を作る → 使えるまで待つ →
   同じ名の Backup(label backup-volume・backup-target)を作る → Completed まで待つ → 使う ticket が無い事を確かめて読んだ版の上で volume を
   消す → 消え終わるまで待つ。外れている volume は、Longhorn が snapshot と backup の ticket(frontend を問わない)で自分で付けて取る —
   worker は付けない・mount しない。backup の完了を確かめずに消さない(backup が Error なら volume を残して断る)。
@@ -132,8 +134,14 @@ worker は CSI を通らずに Longhorn の volume を名指しで作るので�
 - 今の札 workspace の disk(zeus の USB の SSD の上の 100 GiB の image — 2026-11-03 の読み: storageMaximum 105 GB・予約 0)に置ける
   volume は名目で、10 GiB なら 19 本・2 GiB なら 97 本(付いている物と温かい物の和)。昼の 1 時間に約 25 個の作業場所が動くので、10 GiB
   では 2 時間の窓でも数の線(2)が先に効いた。大きさの訳は節「大きさ」。
-- spareVolumes = 4 の訳: 付いている・温かい物の外に 4 本を、次のまとめて冷やす回(数分ごと)までに始まる新しい持ち主のために空けておく
-  (昼の頃合いで 5 分に 2 本ほど)。前の 8 本は、disk が 72 本を受ける見込みの頃の値。
+- spareBytes = 16 GiB の訳: 次に入りうる一番大きい volume(maxSizeBytes = 16 GiB — 広げた volume を冷やすと backup はその大きさを覚え、
+  戻す volume はその大きさで作る)を、次のまとめて冷やす回(数分ごと)を待たずに受けられる量。2026-11-04 17:0x JST の本番の名目の分布は、
+  外れた 113 本が 2 GiB 96・4 GiB 7・10 GiB 10、付いた 46 本が 2 GiB 35・4 GiB 3・8 GiB 2・10 GiB 5・16 GiB 1。前の値 spareVolumes(作る時の
+  大きさ 2 GiB の 4 本 = 8 GiB)は 10 GiB と 16 GiB の戻しを受けられないのに、冷やす回は足りていると数えた(2026-11-04 08:05 JST に戻しが
+  毎回断られた)。`workspace-volume.json` の spareVolumes は、前の版の worker が読む間だけ残す(この版は読まない)。
+- 作る・戻す・広げる手も同じ判断を使う: 線ごとの残りが入る volume の大きさ(戻しは backup の大きさ・広げは増える byte)を覆わなければ、
+  温かく置く時間を待たずに、外れた volume を古い順に、両方の線が覆うまで冷やし(`room-made`)、残りの読みが覆うのを待ってから POST する。
+  冷やす回(数分ごと)と空けておく量は前もっての空け、作る手の冷やしは入る物の大きさに合わせた空け。
 
 ### 大きさ(sizeBytes = 2 GiB)
 
@@ -190,14 +198,17 @@ Longhorn は replica を disk に置く時、線を 2 つ照らす(v1.13 の rep
   本番の試し: 札 workspace の disk に置ける 1 GiB の volume は 30 秒経っても replica の nodeID が空のまま、札の無い disk を名指す volume は
   1 秒の内に Scheduled False(`precheck new replica failed: tags not fulfilled`)・faulted になった。だから置き場の不足は作った時でなく
   付ける時に現れ、付けの ticket は満たされないまま待つ(11-03 12:19 JST からの attach の 180 秒待ちの形)。
-- 作る前の数え(`room-slots`・`free-slots`): 札の disk ごとに、名目の予約の線の残りを大きさで割った本数と、実の空きの線の上の量を
-  大きさで割った本数(新しい volume が名目の大きさまで書いても線を割らない本数 — thin の volume の実の使用は名目より小さいので少なめに
-  数える側)の少ない方を足す。0 本なら作らない(Volume を POST しない — faulted の volume を作らない)。
+- 作る前の数え(`room-read`・`room-bytes`・`room-covers?`): 札の disk ごとに、名目の予約の線の残りの byte と、実の空きの線の上の byte を、
+  負も含めて足す(級の volume を置く disk は今 1 枚 — 複数の disk では 1 本が 1 枚に収まるかを見ない近い数え)。入る volume の名目の
+  大きさが両方の線に収まれば作る(実の空きの線にも名目の大きさを当てる — 新しい volume が名目の大きさまで書いても線を割らない側)。
+  収まらなければ外れた volume を冷やしてから作り(節「寿命」)、冷やしても収まらなければ作らない(Volume を POST しない — faulted の
+  volume を作らない)。
 - 数えと付けの間の競り: 同じ disk に別の持ち主の作りが並ぶと(Pod の入れ替えで 2 つの世代の worker が並ぶ時も)、数えた後に残りが
   尽きる。負けた側は付ける時に Longhorn の「置けない」を読み、replica がどこにも置かれていない(中身の無い)volume をその場で消して
   `WorkspaceRoomShort` で断る(上限の秒まで待たない・faulted を残さない)。replica の置かれた volume(中身を持ちうる)は消さない。
-- 冷やす回の空きも同じ数え(2 つの線の少ない方)で読む — 実の空きが線に近づいた時も、空きが spareVolumes を割る分を冷やす。
-- 広げる時も同じ数えで、名目の増え(新しい大きさ − 今の大きさ)を札の disk が受けられるかを確かめ、受けられなければ広げない(節「広げる」)。
+- 冷やす回の残りも同じ数え(2 つの線ごと)で読む — 実の空きが線に近づいた時も、残りが spareBytes を割る分を冷やす。
+- 広げる時も同じ数えで、名目の増え(新しい大きさ − 今の大きさ)を札の disk が受けられるかを確かめ、受けられなければ外れた volume を
+  冷やしてから広げ、冷やしても足りなければ広げない(節「広げる」)。
 
 ## 広げる
 
@@ -214,7 +225,7 @@ spec.size の書きを online で広げる — 下の本番の試し)。
   volume の空きを 1 つずつ読む(`mounted-growth`)。file system の空きの減りは知らせを出さないので、付けている間は回ごとに読む。外れている
   volume は広げない(付けている間の回が読む)。
 - 手順(`grown-volume`): 付ける先の file system の空きを読む(statvfs)→ 線の上なら何もしない → 名目を倍(上限 maxSizeBytes)にした増えを
-  数える(受けられなければ広げずに訳を残す)→ Volume の spec.size を merge patch で書く → Engine(label `longhornvolume=<名>`)の
+  数える(受けられなければ外れた volume を冷やし、冷やしても足りなければ広げずに訳を残す)→ Volume の spec.size を merge patch で書く → Engine(label `longhornvolume=<名>`)の
   status.currentSize が新しい大きさになるまで待つ(上限 attach-seconds)→ mount の係へ grow を頼む(`resize2fs` — 付けたまま)。
 - 前の広げの続き: 名目が file system の 1.5 倍以上なら(名目を書いた後、file system を広げる前に止まった)、名目を書き直さず(倍にしない)、
   engine を待って file system だけを広げる。

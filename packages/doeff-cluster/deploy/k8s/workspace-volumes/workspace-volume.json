@@ -5,6 +5,7 @@
   "sizeBytes": 2147483648,
   "warmHours": 2,
   "spareVolumes": 4,
+  "spareBytes": 17179869184,
   "keepDays": 7,
   "growBelowPercent": 50,
   "maxSizeBytes": 17179869184

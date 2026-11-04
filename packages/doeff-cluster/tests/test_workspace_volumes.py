@@ -220,6 +220,8 @@ def test_values_name_the_class_and_fit_longhorn_names(declared: list[Manifest]) 
     assert values["maxSizeBytes"] >= values["sizeBytes"]
     assert 0 < values["warmHours"] < values["keepDays"] * 24
     assert values["spareVolumes"] >= 1
+    # 空けておく量は byte で、次に入りうる一番大きい volume(広げる上限 — 戻す volume は backup を取った時の大きさ)を覆う。
+    assert values["spareBytes"] >= values["maxSizeBytes"]
 
 
 def test_values_reach_the_worker_as_the_fixed_named_configmap(workers: list[Manifest]) -> None:
