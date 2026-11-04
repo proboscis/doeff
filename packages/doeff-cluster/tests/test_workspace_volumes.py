@@ -219,7 +219,8 @@ def test_values_name_the_class_and_fit_longhorn_names(declared: list[Manifest]) 
     assert 0 < values["growBelowPercent"] < 100
     assert values["maxSizeBytes"] >= values["sizeBytes"]
     assert 0 < values["warmHours"] < values["keepDays"] * 24
-    assert values["spareVolumes"] >= 1
+    # 本数の spareVolumes は 2026-11-05 に外した(card ki-4480d400cc71 — 空けておく量は byte の spareBytes だけで持つ)。
+    assert "spareVolumes" not in values
     # 空けておく量は byte で、次に入りうる一番大きい volume(広げる上限 — 戻す volume は backup を取った時の大きさ)を覆う。
     assert values["spareBytes"] >= values["maxSizeBytes"]
 
