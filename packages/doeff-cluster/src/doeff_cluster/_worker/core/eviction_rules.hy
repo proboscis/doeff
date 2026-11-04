@@ -255,6 +255,13 @@
   answer)
 
 
+(defk layout-layer-names [layout]
+  {:pre [(: layout str)] :post [(: % tuple)] :tags {:context "worker" :role "judgment"}}
+  "cgroup の層の宣言(layer-memory-max と同じ綴り)から、層の名を宣言の順に読むため(機体の memory の見張りが層ごとの memory.current を
+   log に出す — worker/protocol/memory_watch)。同じ名は 1 度だけ。"
+  (tuple (.fromkeys dict (gfor entry (.split layout) :setv name (get (.partition entry ":") 0) :if name name))))
+
+
 (defk pods-dir-of [cgroup-dir host-root]
   {:pre [(: cgroup-dir str) (: host-root str)] :post [(: % (| str None))] :tags {:context "worker" :role "judgment"}}
   "kubelet が Pod の全部を置く cgroup(kubepods — Node の allocatable を掛ける cgroup)の dir を、worker の container の cgroup の書ける見え

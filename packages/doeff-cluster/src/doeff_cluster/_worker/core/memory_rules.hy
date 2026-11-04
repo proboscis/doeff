@@ -87,10 +87,19 @@
   (#^ (| float None) full-avg10))
 
 
+(defrecord LayerMemory
+  "container の cgroup の中の層 1 つ(deploy/boot.sh の「cgroup の層」)の memory の読み: name = 層の名・current-bytes = その層の
+   memory.current(読めなければ None)。"
+  (#^ str name)
+  (#^ (| int None) current-bytes))
+
+
 (defrecord ContainerMemory
-  "worker の container の cgroup(v2)の memory の読み: current-bytes = memory.current・peak-bytes = memory.peak(読めない機体は None)。"
+  "worker の container の cgroup(v2)の memory の読み: current-bytes = memory.current・peak-bytes = memory.peak(読めない機体は None)・
+   layers = 層ごとの memory.current(LayerMemory の列 — 宣言の順・層の無い worker は空)。"
   (#^ (| int None) current-bytes)
-  (#^ (| int None) peak-bytes))
+  (#^ (| int None) peak-bytes)
+  (setv #^ (get tuple #(LayerMemory ...)) layers #()))
 
 
 (defrecord JobRoot
@@ -339,6 +348,16 @@
   (<- walks tuple (_job-walks rows roots))
   (<- uses tuple (_uses-of walks))
   uses)
+
+
+(defk largest-outside [rows walks]
+  {:pre [(: rows tuple) (: walks tuple)] :post [(: % (| ProcRow None))] :tags {:context "worker" :role "judgment"}}
+  "job の木の外(walks = _job-walks の答えのどの木にも居ない — worker の本体・init と、kubectl exec・readinessProbe・preStop の命令)で
+   rss のいちばん大きい process を引くため(無ければ None)。見張りは木の外の process を止めないので、尽きかけの訳が木の外に在る時に
+   誰が食ったかを log に残す(11-04 12:59 UTC の zeus — exec の grep 2 本の 69 GB は、kernel が OOM で止めた 1 本しか記録に残らなかった)。
+   同じ大きさなら pid の小さい物。"
+  (val inside (sfor w walks member w.walk.members member.pid))
+  (min (gfor r rows :if (not-in r.pid inside) r) :key (fn [r] #((- r.rss-bytes) r.pid)) :default None))
 
 
 (defrecord Gathering

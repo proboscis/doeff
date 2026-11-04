@@ -22,6 +22,10 @@
 ;;;                      物は job の外か、平常の大きさで動く小さい常駐の job だけ)時に、DANGER の 1 回につき 1 行: 機体の使用量・container の
 ;;;                      memory・その差(worker の外の使用量)と、平常の大きさなので止めなかった job。
 ;;;   MEMORY-UNREAD-LOG  読めない訳が変わった時に 1 行(読めない間は数えない・止めない)。
+;;; 様子の行・止める単位が無い行・最大の行は、層ごとの memory.current(欄 layers — <層>=<MiB> を宣言の順に空白で並べる・読めない層は ?)と、
+;;; job の木の外で rss のいちばん大きい process(欄 outside-largest — <pid>:<命令の名>=<MiB>・無ければ空)も載せる。訳: 見張りは job の木の外
+;;; (worker の本体・init と、kubectl exec・readinessProbe・preStop の命令)を止めないので、尽きかけの訳が木の外に在る時に、誰がどの層で
+;;; 食ったかを残す(11-04 12:59 UTC の zeus — exec の grep 2 本の 69 GB は、kernel が OOM で止めた 1 本しか記録に残らなかった)。
 ;;; 止めは guard が真の時だけ(偽は log だけ — 起動の引数 --memory-guard off)。止めた後 kill-cooldown-seconds は次を止めない(止めた木の
 ;;; memory が戻るのを待つ)。
 ;;; 平常の大きさ: 最大の行の間を閉じるたびに、その間の job の名ごとの最大を steady-windows 個まで残し(見張りが
@@ -37,12 +41,13 @@
 (import doeff_core_effects [slog])
 (import doeff_core_effects [ReadText FileFailed])
 (import doeff_core_effects [ProcessSignal])
-(import doeff_core_effects [ReadProcTable SignalPid])
+(import doeff_core_effects [ProcRow ReadProcTable SignalPid])
 (import doeff_time [Delay])
 (import doeff_cluster._shared.core.clock [now-epoch-ms datetime-of-epoch-ms])
 (import doeff_cluster._worker.protocol.observations [ObserveJobRoots])
-(import doeff_cluster._worker.core.memory_rules [MemoryLevel MemoryLimits NodeMemory ContainerMemory KillUnit JobUse JobSteady node-memory-of
-                                                cgroup-bytes-of memory-level _job-walks _uses-of _units-of steady-sizes spared-steady victim-of swarm-of])
+(import doeff_cluster._worker.core.memory_rules [MemoryLevel MemoryLimits NodeMemory ContainerMemory LayerMemory KillUnit JobUse JobSteady
+                                                node-memory-of cgroup-bytes-of memory-level _job-walks _uses-of _units-of largest-outside
+                                                steady-sizes spared-steady victim-of swarm-of])
 (import doeff_cluster._worker.core.eviction_rules [EvictionLine line-memory line-name])
 (import doeff_cluster._worker.protocol.eviction_line [EvictionSettings EvictionCell eviction-noted])
 
@@ -62,7 +67,8 @@
    最大の行の間隔・kill-cooldown-seconds = 止めた後に次を止めない秒・guard = 止めるか(偽は log だけ)・limits = 様子の閾・report-floor-bytes =
    最大の行に載せる job の最低・report-jobs = 最大の行に載せる job の数の上限・kill-mark-seconds = 止めた印を残す秒(調整ループが止めた
    process の終わりを回収するまでの間を十分に覆う)・steady-windows = 平常の大きさに数える最大の行の間の数(頭の註 — 既定 12 は 1 時間)・
-   eviction = 追い出しの線の読みの設定(頭の註 — None = kubelet の下に居ない worker・線を数えない)。"
+   eviction = 追い出しの線の読みの設定(頭の註 — None = kubelet の下に居ない worker・線を数えない)・layers = memory.current を log に出す
+   cgroup-dir の下の層の名(deploy/boot.sh の「cgroup の層」の宣言の順 — 空 = 層の無い worker)。"
   {:check [(> sample-seconds 0) (>= window-seconds sample-seconds) (>= kill-cooldown-seconds 0) (>= report-floor-bytes 0) (> report-jobs 0)
            (> kill-mark-seconds 0) (> steady-windows 0)]}
   (setv #^ str meminfo-path "/proc/meminfo")
@@ -77,7 +83,8 @@
   (setv #^ int report-jobs 12)
   (setv #^ float kill-mark-seconds 600.0)
   (setv #^ int steady-windows 12)
-  (setv #^ (| EvictionSettings None) eviction None))
+  (setv #^ (| EvictionSettings None) eviction None)
+  (setv #^ (get tuple #(str ...)) layers #()))
 
 
 (defrecord MemoryKill
@@ -162,15 +169,34 @@
   (<- peak-text (| str None) (text-or-none (+ settings.cgroup-dir "/memory.peak")))
   (<- current (| int None) (cgroup-bytes-of current-text))
   (<- peak (| int None) (cgroup-bytes-of peak-text))
+  (var layers #())
+  (for [name settings.layers]
+    (<- layer-text (| str None) (text-or-none (+ settings.cgroup-dir "/" name "/memory.current")))
+    (<- layer-bytes (| int None) (cgroup-bytes-of layer-text))
+    (:= layers (+ layers #((LayerMemory :name name :current-bytes layer-bytes)))))
   (<- roots tuple (ObserveJobRoots))
   (<- rows tuple (ReadProcTable))
-  (MemoryReading :node node :container (ContainerMemory :current-bytes current :peak-bytes peak) :roots roots :rows rows))
+  (MemoryReading :node node :container (ContainerMemory :current-bytes current :peak-bytes peak :layers layers) :roots roots :rows rows))
 
 
 (defk units-text [units count]
   {:pre [(: units tuple) (: count int)] :post [(: % str)] :tags {:context "worker" :role "protocol"}}
   "大きい単位の上位 count 個を log の欄 1 つの綴り(<job>:<頭の pid>:<命令の名>=<MiB> を空白で並べる)にするため。"
   (.join " " (gfor unit (cut units count) (.format "{}:{}:{}={}" unit.job unit.head.pid unit.head.comm (// unit.bytes (* 1024 1024))))))
+
+
+(defk layers-text [container]
+  {:pre [(: container ContainerMemory)] :post [(: % str)] :tags {:context "worker" :role "protocol"}}
+  "層ごとの memory.current を log の欄 1 つの綴り(<層>=<MiB> を宣言の順に空白で並べる・読めない層は ?)にするため(頭の註)。"
+  (.join " " (gfor layer container.layers
+                   (.format "{}={}" layer.name (if (is layer.current-bytes None) "?" (// layer.current-bytes (* 1024 1024)))))))
+
+
+(defk outside-text [rows walks]
+  {:pre [(: rows tuple) (: walks tuple)] :post [(: % str)] :tags {:context "worker" :role "protocol"}}
+  "job の木の外で rss のいちばん大きい process を log の欄 1 つの綴り(<pid>:<命令の名>=<MiB>・無ければ空)にするため(頭の註)。"
+  (<- largest (| ProcRow None) (largest-outside rows walks))
+  (if (is largest None) "" (.format "{}:{}={}" largest.pid largest.comm (// largest.rss-bytes (* 1024 1024)))))
 
 
 (defk raised-peak [peaks use now-ms]
@@ -207,11 +233,11 @@
                (JobMax :job name :bytes (max (+ (lfor m maxima :if (= m.job name) m.bytes) (lfor use uses :if (= use.job name) use.bytes)))))))
 
 
-(defk noted-window [settings cell reading uses now-ms]
-  {:pre [(: settings MemoryWatchSettings) (: cell MemoryCell) (: reading MemoryReading) (: uses tuple) (: now-ms int)] :post [(: % None)]
-   :tags {:context "worker" :role "protocol"}}
-  "最大の行の間の印に今の読みを足し、間が window-seconds を越えたら 1 行にし、間の job の最大を平常の大きさの元に残して(この間に
-   止めた job は除く)新しい間を始めるため。"
+(defk noted-window [settings cell reading walks uses now-ms]
+  {:pre [(: settings MemoryWatchSettings) (: cell MemoryCell) (: reading MemoryReading) (: walks tuple) (: uses tuple) (: now-ms int)]
+   :post [(: % None)] :tags {:context "worker" :role "protocol"}}
+  "最大の行の間の印に今の読みを足し、間が window-seconds を越えたら 1 行にし(walks = 今の読みの job の木 — 木の外の最大の欄)、間の job の
+   最大を平常の大きさの元に残して(この間に止めた job は除く)新しい間を始めるため。"
   (val node reading.node)
   (val marks (if (is cell.window None)
                  (WindowMarks :since-ms now-ms :jobs #() :min-available node.available-bytes :max-full node.full-avg10)
@@ -232,7 +258,8 @@
                     :line (! (line-name cell.eviction.line)) :jobs-limit-mib (! (mib-or-none cell.eviction.jobs-limit))
                     :margin-mib (! (mib-or-none cell.eviction.margin)) :max-full-avg10 merged.max-full
                     :container-current-mib (if (is reading.container.current-bytes None) None (// reading.container.current-bytes (* 1024 1024)))
-                    :container-peak-mib (if (is reading.container.peak-bytes None) None (// reading.container.peak-bytes (* 1024 1024)))))
+                    :container-peak-mib (if (is reading.container.peak-bytes None) None (// reading.container.peak-bytes (* 1024 1024)))
+                    :layers (! (layers-text reading.container)) :outside-largest (! (outside-text reading.rows walks))))
           (val kept (tuple (gfor m jobs :if (not-in m.job cell.window-killed) (JobSteady :job m.job :bytes m.bytes))))
           (setv cell.steady (tuple (cut (+ cell.steady #(kept)) (- settings.steady-windows) None)))
           (setv cell.window-killed (frozenset))
@@ -283,8 +310,8 @@
   None)
 
 
-(defk guarded [settings cell reading level units uses now-ms]
-  {:pre [(: settings MemoryWatchSettings) (: cell MemoryCell) (: reading MemoryReading) (: level MemoryLevel) (: units tuple)
+(defk guarded [settings cell reading walks level units uses now-ms]
+  {:pre [(: settings MemoryWatchSettings) (: cell MemoryCell) (: reading MemoryReading) (: walks tuple) (: level MemoryLevel) (: units tuple)
          (: uses tuple) (: now-ms int)]
    :post [(: % None)] :tags {:context "worker" :role "protocol"}}
   "DANGER の時に、止めの間隔を置いていちばん大きい単位を SIGKILL で止めるため(guard が偽なら止めない)。単位の process は頭から順に、
@@ -323,7 +350,8 @@
                 :container-current-mib current-mib :container-peak-mib peak-mib :outside-worker-mib outside-mib
                 :spared-steady (.join " " (gfor s spared (.format "{}={}/{}" s.job (// (sum (gfor u uses :if (= u.job s.job) u.bytes)) (* 1024 1024))
                                                                   (// s.bytes (* 1024 1024)))))
-                :full-avg10 node.full-avg10))
+                :full-avg10 node.full-avg10 :layers (! (layers-text reading.container))
+                :outside-largest (! (outside-text reading.rows walks))))
       (setv cell.told-no-victim True))
     (return None))
   (<- sent int (unit-signalled victim))
@@ -375,11 +403,11 @@
               :node-available-mib (// node.available-bytes (* 1024 1024)) :node-total-mib (// node.total-bytes (* 1024 1024))
               :some-avg10 node.some-avg10 :full-avg10 node.full-avg10 :line (! (line-name line))
               :container-current-mib (if (is reading.container.current-bytes None) None (// reading.container.current-bytes (* 1024 1024)))
-              :units listed))
+              :units listed :layers (! (layers-text reading.container)) :outside-largest (! (outside-text reading.rows walks))))
     (setv cell.level level))
-  (<- (guarded settings cell reading level units uses now-ms))
+  (<- (guarded settings cell reading walks level units uses now-ms))
   ;; 止めの後に最大の行の間を閉じる(今の読みで止めた job の最大を平常の大きさに残さない)。
-  (<- (noted-window settings cell reading uses now-ms))
+  (<- (noted-window settings cell reading walks uses now-ms))
   None)
 
 

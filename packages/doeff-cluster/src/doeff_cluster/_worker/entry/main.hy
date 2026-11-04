@@ -60,7 +60,7 @@
 (import doeff_cluster._worker.protocol.process_host [HostSettings process-host])
 (import doeff_cluster._worker.protocol.memory_watch [MemoryWatchSettings MemoryCell memory-watch-loop])
 (import doeff_cluster._worker.protocol.eviction_line [EvictionSettings])
-(import doeff_cluster._worker.core.eviction_rules [EVICTION-MARGIN-BYTES kernel-bytes-of layer-memory-max pods-dir-of])
+(import doeff_cluster._worker.core.eviction_rules [EVICTION-MARGIN-BYTES kernel-bytes-of layer-memory-max layout-layer-names pods-dir-of])
 (import doeff_cluster._worker.protocol.supplied_hold [SuppliedHoldSettings SuppliedHoldCell supplied-hold-loop])
 (import doeff_cluster._worker.protocol.warm_host [WarmSettings warm-host])
 (import doeff_cluster._worker.core.places [worker-places])
@@ -584,7 +584,11 @@
         ;; 機体の memory の見張りの設定。追い出しの線(CGROUP-HOST-VAR の註)は、Node の宣言を読む口 in-cluster-api-routed を組む Pod の
         ;; worker(pod-labels が在る)だけが数える。
         watch (MemoryWatchSettings :guard (= args.memory-guard "on")
-                                   :eviction (run (eviction-settings-of machine-env args.node (is-not pod-labels None)))))
+                                   :eviction (run (eviction-settings-of machine-env args.node (is-not pod-labels None)))
+                                   ;; 層ごとの memory.current を log に出す層の名(起動の script が層を作った worker だけ — CGROUP-DIR-VAR)。
+                                   :layers (if (.get machine-env CGROUP-DIR-VAR)
+                                               (run (layout-layer-names (.get machine-env CGROUP-LAYOUT-VAR "")))
+                                               #())))
   ;; handler の組を選び(本番の組)、その組の上で worker の Program を回す。
   (setv handlers (run (production-handlers host probes link link-cell link-options watch-cell lease-cell
                                            places.status codes envs warm (.get machine-env BOOT-FILE-VAR) memory-cell

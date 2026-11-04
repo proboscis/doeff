@@ -105,6 +105,12 @@
 #   最初の層に、今 worker の cgroup に居る process を全部移す(tini・この script・準備の残り)— cgroup v2 は process の居る cgroup の子に
 #   controller を掛けられないため。子には memory をいつも、cpu は cpu の file を書く層が在る時だけ掛ける。例:
 #     worker:memory.min=2G,cpu.weight=1000 services:memory.min=24G,cpu.weight=1000 jobs:memory.max=36G,cpu.weight=100
+#   init の層(WORKER_CGROUP_INIT_LAYER = 宣言の中の層の名 — 在る時だけ): container の init(この名前空間の pid 1 — tini)だけをその層へ移し、
+#   ほかの process は最初の層へ移す。訳: runc は kubectl exec・readinessProbe・preStop の process を container の cgroup へ入れようとし、
+#   子に controller を掛けた container の cgroup には入れられない(cgroup v2 は process の居る cgroup の子に controller を掛けられない)ので、
+#   init の居る cgroup へ入れる。init が worker の本体と同じ層に居ると、exec の命令の memory は worker の本体と同じ上限の無い層で増え、
+#   機体の全体の OOM まで止まらない(11-04 12:59 UTC の zeus — exec の grep 2 本が 69 GB)。init の層は memory.max を持つ限る層で、
+#   最初の層とは別の層(どちらも宣言を読む段で検める)。init が container の cgroup に居なければ断る(exec の命令が上限の層に入らない)。
 #   書ける見え: k8s の Pod の /sys/fs/cgroup は自分の container の cgroup を根とする読み取りだけの見えなので、機体の配備は host の cgroupfs を
 #   別の所に書ける形で置き、その場所を WORKER_CGROUP_HOST で渡す。script はその中から、名前空間の根(WORKER_CGROUP_NS_ROOT・既定
 #   /sys/fs/cgroup)と同じ inode の dir(= 自分の container の cgroup)を引く。WORKER_CGROUP_HOST が無ければ名前空間の根そのものに書く。
@@ -466,6 +472,21 @@ cgroup_layout() {
   done
   set +f
   [ -n "$first" ] || problems="$problems WORKER_CGROUP_LAYOUT に層が無い。"
+  init_layer=${WORKER_CGROUP_INIT_LAYER:-}
+  if [ -n "$init_layer" ]; then
+    init_entry=""
+    set -f
+    for entry in $WORKER_CGROUP_LAYOUT; do
+      [ "${entry%%:*}" != "$init_layer" ] || init_entry=$entry
+    done
+    set +f
+    case "$init_entry" in
+      '') problems="$problems init の層 $init_layer が WORKER_CGROUP_LAYOUT に無い。" ;;
+      *:memory.max=*|*,memory.max=*) ;;
+      *) problems="$problems init の層 $init_layer に memory.max が無い(exec の命令を限らない)。" ;;
+    esac
+    [ "$init_layer" != "$first" ] || problems="$problems init の層 $init_layer が最初の層(worker の本体の層)と同じ。"
+  fi
   [ -z "$problems" ] || cgroup_refused "宣言 WORKER_CGROUP_LAYOUT を読めない:$problems"
   ns_root=${WORKER_CGROUP_NS_ROOT:-/sys/fs/cgroup}
   if [ -n "${WORKER_CGROUP_HOST:-}" ]; then
@@ -484,6 +505,10 @@ cgroup_layout() {
     sleep 1
     waited=$((waited + 1))
   done
+  # init の層を宣言したのに init が container の cgroup に居ない(pid の名前空間を Pod の中で分け合う・init が別の cgroup)なら、層を作る
+  # 前に断る — exec の命令が上限の層に入らないまま黙って起動しない。
+  [ -z "$init_layer" ] || grep -qx 1 "$cgroup_dir/cgroup.procs" ||
+    cgroup_refused "init(pid 1)が $cgroup_dir に居ない — init の層 $init_layer へ移せず、exec の命令が上限の層に入らない"
   set -f
   for entry in $WORKER_CGROUP_LAYOUT; do
     name=${entry%%:*}
@@ -493,9 +518,14 @@ cgroup_layout() {
   tries=0
   while :; do
     for pid in $(cat "$cgroup_dir/cgroup.procs"); do
+      # init(pid 1)は init の層へ(頭の註の「init の層」)、ほかは最初の層へ。
+      to=$first
+      if [ -n "$init_layer" ] && [ "$pid" = 1 ]; then
+        to=$init_layer
+      fi
       # 読んだ後に終わった process は移せない(No such process)が、根にも残らないので飛ばす。
-      echo "$pid" >"$cgroup_dir/$first/cgroup.procs" 2>/dev/null || [ ! -d "/proc/$pid" ] ||
-        cgroup_refused "process $pid を層 $first へ移せない"
+      echo "$pid" >"$cgroup_dir/$to/cgroup.procs" 2>/dev/null || [ ! -d "/proc/$pid" ] ||
+        cgroup_refused "process $pid を層 $to へ移せない"
     done
     if echo "$controllers" >"$cgroup_dir/cgroup.subtree_control" 2>/dev/null; then
       break
