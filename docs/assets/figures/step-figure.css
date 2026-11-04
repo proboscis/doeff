@@ -1,0 +1,149 @@
+/* Click-through figures (step-figure.js). The roles and their colours are the ones the docs videos use (tools/docs-video/src/kit/theme.ts);
+   the surfaces come from the site's theme, so a figure follows the light and the dark scheme. */
+/* Material lays out every figure as a shrink-to-fit centred column; this one takes the width of the page. */
+.md-typeset .step-figure {
+  display: block;
+  width: 100%;
+  max-width: none;
+  text-align: left;
+}
+
+.step-figure {
+  --sf-effect: #6a4fe0;
+  --sf-handler: #0b8a72;
+  --sf-k: #b5620a;
+  --sf-now: rgba(214, 170, 0, .26);
+  --sf-k-tint: rgba(181, 98, 10, .14);
+  --sf-fail: #cf2f4c;
+  --sf-on-token: #fff;
+  --sf-line-height: 1.55;
+  container-type: inline-size;
+  margin: 1.5em 0;
+  padding: .6rem;
+  border: 1px solid var(--md-default-fg-color--lightest);
+  border-radius: .3rem;
+  background: var(--md-default-bg-color);
+}
+
+[data-md-color-scheme="slate"] .step-figure {
+  --sf-effect: #9d8cff;
+  --sf-handler: #3ecfb2;
+  --sf-k: #ffb86b;
+  --sf-now: rgba(255, 225, 77, .2);
+  --sf-k-tint: rgba(255, 184, 107, .16);
+  --sf-fail: #ff6b81;
+  --sf-on-token: #14161f;
+}
+
+/* Without the script the reader gets the GIF and the captions as a list. */
+.step-figure:not(.is-live) .sf-stage { display: none; }
+.step-figure.is-live .sf-steps { margin: .6rem 0 0; padding: 0; list-style: none; min-height: 3.4em; }
+.step-figure.is-live .sf-steps li { display: none; margin: 0; }
+.step-figure.is-live .sf-steps li.is-current { display: block; }
+.step-figure .sf-steps li { font-size: .68rem; line-height: 1.5; }
+.step-figure .sf-steps code { font-size: .92em; }
+
+.sf-stage { position: relative; cursor: pointer; overflow: hidden; }
+
+.sf-call {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: .3rem .6rem;
+  min-height: 1.6rem;
+  margin-bottom: .5rem;
+  padding: .2rem .5rem;
+  border-radius: .2rem;
+  background: var(--md-code-bg-color);
+  font-family: var(--md-code-font-family);
+  font-size: .62rem;
+}
+.sf-call .sf-result { display: inline-block; min-width: 7.5rem; min-height: 1.25rem; margin-left: auto; color: var(--md-default-fg-color--lighter); font-size: .9em; line-height: 1.25rem; text-align: center; border: 1px dashed var(--md-default-fg-color--lighter); border-radius: .8rem; }
+
+.sf-panels { display: grid; grid-template-columns: 1fr 1fr; gap: .5rem; }
+@container (max-width: 620px) { .sf-panels { grid-template-columns: 1fr; } }
+
+.sf-panel {
+  min-width: 0;
+  padding: .4rem .5rem .5rem;
+  border: 1px solid var(--md-default-fg-color--lightest);
+  border-radius: .2rem;
+  background: var(--md-code-bg-color);
+  opacity: .72;
+  transition: opacity .3s, border-color .3s;
+}
+.sf-panel.is-active { opacity: 1; }
+.sf-panel[data-panel="research"].is-active { border-color: var(--sf-effect); }
+.sf-panel[data-panel="handler"].is-active { border-color: var(--sf-handler); }
+
+.sf-head { display: flex; flex-wrap: wrap; gap: .1rem .6rem; justify-content: space-between; margin-bottom: .3rem; font-size: .6rem; font-weight: 700; }
+.sf-panel[data-panel="research"] .sf-head > :first-child { color: var(--sf-effect); }
+.sf-panel[data-panel="handler"] .sf-head > :first-child { color: var(--sf-handler); }
+
+.sf-vars { display: flex; flex-wrap: wrap; gap: .1rem .7rem; min-height: 1.1rem; margin-bottom: .3rem; font-family: var(--md-code-font-family); font-size: .58rem; color: var(--md-default-fg-color--light); }
+.sf-vars [data-slot] { color: var(--md-default-fg-color); font-weight: 700; }
+.sf-vars [data-slot].is-changed, .sf-head [data-slot].is-changed { animation: sf-flash .9s ease-out; }
+@keyframes sf-flash { from { background: var(--sf-now); } to { background: transparent; } }
+
+.sf-code { font-family: var(--md-code-font-family); font-size: .6rem; line-height: var(--sf-line-height); color: var(--md-code-fg-color); }
+.sf-line { min-height: calc(1em * var(--sf-line-height)); padding: 0 .2rem; white-space: pre; border-radius: .1rem; transition: background .3s, opacity .3s; }
+.sf-line.is-k { background: var(--sf-k-tint); box-shadow: inset 2px 0 0 var(--sf-k); }
+.sf-line.is-now { background: var(--sf-now); }
+.sf-line.is-dead { opacity: .45; text-decoration: line-through; }
+.sf-line .kw { color: var(--md-code-hl-keyword-color); }
+.sf-line .fn { color: var(--md-code-hl-function-color); }
+.sf-line .st { color: var(--md-code-hl-string-color); }
+.sf-line .co { color: var(--md-code-hl-comment-color); }
+
+.sf-inbox { display: grid; grid-template-columns: 1fr 1.4fr; gap: .35rem; margin-bottom: .35rem; }
+.sf-slot { position: relative; min-height: 2.2rem; padding-top: .75rem; border: 1px dashed var(--md-default-fg-color--lighter); border-radius: .2rem; }
+.sf-slot > div { height: 1.3rem; }
+.sf-slot > span { position: absolute; top: .05rem; left: .25rem; font-family: var(--md-code-font-family); font-size: .5rem; color: var(--md-default-fg-color--light); }
+
+.sf-waiting { min-height: 1.3rem; margin-top: .35rem; padding: .1rem .3rem; border-radius: .2rem; font-size: .56rem; line-height: 1.5; color: var(--md-default-fg-color--light); visibility: hidden; border: 1px solid var(--md-default-fg-color--lightest); }
+.sf-waiting.is-on { visibility: visible; }
+
+.sf-token {
+  position: absolute;
+  top: 0;
+  left: 0;
+  z-index: 2;
+  padding: .12rem .45rem;
+  border-radius: .8rem;
+  color: var(--sf-on-token);
+  font-family: var(--md-code-font-family);
+  font-size: .58rem;
+  font-weight: 700;
+  line-height: 1.5;
+  white-space: nowrap;
+  opacity: 0;
+  pointer-events: none;
+  transition: transform .7s cubic-bezier(.3, .7, .25, 1), opacity .25s;
+}
+.sf-token.is-shown { opacity: 1; }
+.sf-token.is-teleport { transition: none; }
+.sf-token[data-token="spend"] { background: var(--sf-effect); }
+.sf-token[data-token="k"] { background: var(--sf-k); }
+.sf-token[data-token="result"] { background: var(--sf-fail); }
+.sf-token small { font-size: .85em; font-weight: 400; }
+/* k drops out of the figure: nothing is left that can run the rest of the function. */
+.sf-token.is-dropped { opacity: 0; translate: 0 3.2rem; rotate: 14deg; transition: translate .9s cubic-bezier(.5, 0, .9, .5), rotate .9s, opacity .9s ease-in; }
+/* k goes back into the program: it travels first, then melts into the code. */
+.sf-token.is-merging { opacity: 0; transition: transform .7s cubic-bezier(.3, .7, .25, 1), opacity .3s .6s; }
+
+.sf-controls { display: flex; align-items: center; gap: .5rem; margin-top: .3rem; }
+.sf-controls .md-button { padding: .2em .9em; font-size: .62rem; cursor: pointer; }
+.sf-controls .md-button:disabled { opacity: .4; cursor: default; }
+.sf-dots { display: flex; flex: 1; flex-wrap: wrap; justify-content: center; gap: .25rem; }
+.sf-dots button { width: .55rem; height: .55rem; padding: 0; border-radius: 50%; background: var(--md-default-fg-color--lightest); cursor: pointer; }
+.sf-dots button.is-past { background: var(--md-default-fg-color--lighter); }
+.sf-dots button.is-current { background: var(--md-accent-fg-color); }
+
+/* The GIF (figure-gif.mjs) shows the stage and the caption; a reader of a GIF has nothing to click. */
+.step-figure.is-recording .sf-controls { display: none; }
+.step-figure.is-recording .sf-stage { cursor: default; }
+
+@media (prefers-reduced-motion: reduce) {
+  .sf-token, .sf-token.is-dropped, .sf-token.is-merging, .sf-line, .sf-panel { transition: none; }
+  .sf-vars [data-slot].is-changed, .sf-head [data-slot].is-changed { animation: none; }
+}
