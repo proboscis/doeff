@@ -1,0 +1,40 @@
+<!-- "Tests are one of the stacks" in docs/articles/algebraic-effects-in-python.md: the Layer 1 stack with the handler for Played
+     left out. The lines of the traceback are the ones the article quotes (what doeff prints for that run of spire.py). -->
+<div class="sf-stage">
+  <div class="sf-call">
+    <code data-slot="call"></code>
+    <span class="sf-mark" data-anchor="test" data-slot="test"></span>
+  </div>
+  <div class="sf-edge" data-anchor="edge"><span>outside every handler</span><span class="sf-edge-slot" data-anchor="edge-slot"></span></div>
+  <div class="sf-rings">
+    <div class="sf-ring" data-anchor="r4"><span class="sf-ring-name" data-anchor="n4"><span data-slot="r4"></span></span><div class="sf-ring" data-anchor="r3"><span class="sf-ring-name" data-anchor="n3"><span data-slot="r3"></span></span><div class="sf-ring" data-anchor="r2"><span class="sf-ring-name" data-anchor="n2"><span data-slot="r2"></span></span><div class="sf-ring" data-anchor="r1"><span class="sf-ring-name" data-anchor="n1"><span data-slot="r1"></span></span>
+      <div class="sf-core">
+        <div class="sf-core-head"><span>battle()</span><span class="sf-unchanged">0 lines changed</span></div>
+        <div class="sf-code">
+          <div class="sf-line">pick = <span class="kw">yield</span> Choose(s, hand, energy)</div>
+          <div class="sf-line">...</div>
+          <div class="sf-line" data-anchor="c-yield"><span class="kw">yield</span> Played(card, dmg)</div>
+          <div class="sf-line" data-anchor="c-after1"><span class="kw">if</span> s.enemy_hp &lt;= 0:</div>
+          <div class="sf-line" data-anchor="c-after2">    <span class="kw">return</span> <span class="st">"win"</span>, s.turn</div>
+        </div>
+      </div>
+    </div></div></div></div>
+  </div>
+  <div class="sf-trace" data-anchor="trace">UnhandledEffect: no handler found for effect: Played (Played(card='Defend', damage=0))
+  handlers in scope (innermost→outermost): scripted → dice → silent</div>
+  <div class="sf-aside" data-anchor="aside">
+    <div class="sf-head"><span>the same test with mock.patch</span><span class="sf-mark is-pass">test passes</span></div>
+    <div class="sf-line is-dead">with mock.patch(<span class="st">"spire.random.randrange"</span>, fake):</div>
+    <div class="sf-line" data-anchor="m-call">    battle()</div>
+    <div class="sf-line" data-anchor="m-real">random.randrange: the real one</div>
+  </div>
+  <div class="sf-token is-effect" data-token="played">Played(card='Defend', damage=0)</div>
+  <div class="sf-token is-fail" data-token="real">runs</div>
+</div>
+<ol class="sf-steps">
+  <li data-state='{"now": [], "marks": {"test": "is-pass"}, "values": {"call": "run(quiet_stats(silent(dice(7)(scripted(moves)(battle())))))", "test": "test passes", "r1": "scripted(moves)", "r2": "dice(7)", "r3": "silent", "r4": "quiet_stats"}}'>A test installs handlers instead of patching names.</li>
+  <li data-state='{"now": [], "marks": {"test": "is-pass", "r4": "is-off"}, "values": {"call": "run(silent(dice(7)(scripted(moves)(battle()))))", "r4": ""}}'>Now leave out the handler for <code>Played</code>.</li>
+  <li data-state='{"now": ["c-yield"], "marks": {"test": "is-pass", "r4": "is-off", "r1": "is-skip", "r2": "is-skip", "r3": "is-skip"}, "values": {"r1": "scripted (effect: Choose)", "r2": "dice (effect: Roll)", "r3": "silent (effect: Show)"}, "tokens": {"played": {"from": {"at": "c-yield", "place": "end"}, "via": [{"at": "n1", "place": "end"}, {"at": "n2", "place": "end"}], "at": "n3", "place": "end"}}}'><code>scripted</code>, <code>dice</code> and <code>silent</code> each let it pass: their annotations do not name <code>Played</code>.</li>
+  <li data-state='{"now": [], "marks": {"test": "is-fail", "r4": "is-off", "r1": "is-skip", "r2": "is-skip", "r3": "is-skip", "c-yield": "is-fail", "c-after1": "is-dead", "c-after2": "is-dead", "edge": "is-fail", "trace": "is-on"}, "values": {"test": "UnhandledEffect"}, "tokens": {"played": {"from": {"at": "n3", "place": "end"}, "at": "edge-slot"}}}'>The run stops at the <code>yield</code> nobody answered, and nothing after it runs.</li>
+  <li data-state='{"now": ["m-real"], "marks": {"test": "is-fail", "r4": "is-off", "r1": "is-skip", "r2": "is-skip", "r3": "is-skip", "c-yield": "is-fail", "c-after1": "is-dead", "c-after2": "is-dead", "edge": "is-fail", "aside": "is-on"}, "tokens": {"played": {"at": "edge-slot"}, "real": {"from": {"at": "m-call", "place": "end"}, "at": "m-real", "place": "end"}}}'>A forgotten <code>mock.patch</code> fails the other way: the real thing runs.</li>
+</ol>

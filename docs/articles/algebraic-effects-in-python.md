@@ -89,20 +89,7 @@ over budget
 
 Follow the run of `budget(5)(research(TOPICS))` below: `k` is a value, and the handler decides what happens to it.
 
-```mermaid
-sequenceDiagram
-    participant run as run()
-    participant budget as budget(5)
-    participant research
-    run->>research: run research(TOPICS) with budget(5) around it
-    research->>budget: yield Spend(3), paused as k
-    Note over budget: 3 fits in 5, so left = 2
-    budget->>research: Resume(k, None)
-    Note over research: notes on tides
-    research->>budget: yield Spend(3), paused as k
-    Note over budget: 3 does not fit in 2, so k is dropped
-    budget->>run: "over budget"
-```
+[![budget(5)(research(TOPICS)), step by step: the handler receives the effect and k, resumes k on the first Spend and drops it on the second](../assets/figures/handler-k.gif)](../assets/figures/handler-k.gif)
 
 ## One program, layer by layer
 
@@ -222,6 +209,10 @@ def battle(s: Fight = Fight()):
 ~~~
 
 </details>
+
+Here are the stacks the layers below build, one per step, with `battle` unchanged in the middle:
+
+[![The stacks around battle, step by step: each handler is a ring around battle, and each effect travels out to the ring that takes it, from a scripted player to a hundred fights and a person at the terminal](../assets/figures/six-stacks.gif)](../assets/figures/six-stacks.gif)
 
 ### Layer 1: a scripted player and a screen
 
@@ -611,6 +602,8 @@ UnhandledEffect: no handler found for effect: Played (Played(card='Defend', dama
   skipped by annotation: scripted (effect: Choose), dice (effect: Roll), silent (effect: Show) — a handler only sees the effects its effect parameter is annotated with
   hint: install a handler for Played: run(fn(prog)), where fn is a def (effect: Played, k) marked with @handler that returns (yield Resume(k, value))
 ~~~
+
+[![Leaving out the handler for Played, step by step: Played passes scripted, dice and silent, and the run stops at its yield; a forgotten mock.patch lets the real thing run instead](../assets/figures/missing-handler.gif)](../assets/figures/missing-handler.gif)
 
 ## Where doeff sits
 

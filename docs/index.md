@@ -152,7 +152,10 @@ components are listed separately under
 - **[Rust Scheduler](25-rust-scheduler.md)** - The scheduler implemented in Rust (default since 0.7.0) and in Python (opt-in): switching, why Rust is the default and when to choose Python, downstream extension points, measurements
 - **[Capability Classes](22-capability-classes.md)** - A four-class taxonomy predicting where effects pay off, retry under one-shot continuations, and adoption anti-patterns
 - **[CLI Architecture](cli-run-command-architecture.md)** - Run command pipeline design
-- **[Prototype: a handler receives k](articles/handler-k-figure.md)** - One click-through figure, to try the format
+
+### Articles
+
+- **[Algebraic effects for Python](articles/algebraic-effects-in-python.md)** - Handlers stacked around one unchanged card-game battle: a scripted player, bots, record and replay, a hundred fights, statistics and tests, with figures you click through
 
 ## Pages That Need Other Components
 
