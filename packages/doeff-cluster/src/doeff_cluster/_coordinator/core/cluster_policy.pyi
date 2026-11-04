@@ -415,13 +415,19 @@ RERUN_ID_MARK: str
 def rerun_id(task: TaskRecord) -> str:
     ...
 
-def gone_detached(task: TaskRecord, now: int, why: str) -> TaskRecord:
+def gone_detached(task: TaskRecord, now: int, why: str, retiring: str | None=None) -> TaskRecord:
+    ...
+
+def retiring_of(task: TaskRecord, state: ClusterState, now: int) -> str | None:
+    ...
+
+def retiring_marked(tasks: Table[TaskRecord], worker: str, boot: str | None, why: str) -> Table[TaskRecord]:
     ...
 
 def heard_since_rerun(task: TaskRecord, worker: WorkerInfo) -> bool:
     ...
 
-def settle_detached(task: TaskRecord, now: int, lapsed: bool) -> _Program[TaskRecord | None, object]:
+def settle_detached(task: TaskRecord, now: int, lapsed: bool, retiring: str | None=None) -> _Program[TaskRecord | None, object]:
     ...
 
 def unplaceable_phase(task: TaskRecord, state: ClusterState, now: int, timing: ClusterTiming) -> str:

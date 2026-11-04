@@ -1149,7 +1149,16 @@
   ;; 走らせ直すと key はそのまま・行の id だけが替わる(cluster_policy.gone-detached — 前の試行の process の報告と結果の届けを id で除く)。
   ;; 欄の無い旧い行は名乗らない・試行 1 で読む。
   (setv #^ bool rerun False)
-  (setv #^ int attempt 1))
+  (setv #^ int attempt 1)
+  ;; --- 予定した退きを走らせ直しの上限に数えない(2026-11-05)---
+  ;; losses = 予定した退きの外で担い手が消えた試行の数(走らせ直しの上限 RERUN-LIMIT に数えた回数 — cluster_policy.gone-detached)。
+  ;; 予定した退き(止まり始めた世代の報告で消えた試行・drain の掛かった世代の lease 切れ)は worker の側の操作なので数えない。attempt は
+  ;; 試行ごとに増える(行の id の番号)ので、数えた回数は別の欄で持つ。
+  ;; retiring = 担い手の世代に drain が掛かったまま、その世代が退いた印(訳の 1 句 — 空 = 印なし)。世代つきの drain は新しい世代の
+  ;; heartbeat で解ける(cluster_policy.absorb-boot)ので、前の世代の lease が切れる刻には drain の行がもう無い — 解ける拍に task へ写す。
+  ;; 欄の無い旧い行は losses = attempt − 1(前の試行を全部数えた)・印なしで読む。
+  (setv #^ int losses 0)
+  (setv #^ str retiring ""))
 
 
 ;; 担い手の worker に置いた task の phase(担い手の数・送る task・報告の吸い上げ・lease の延長で同じに扱う)。
@@ -1283,8 +1292,8 @@
    ような拍ごとに変わる欄を持たないので、返事の等しさで worker の見え方を比べられる — watch_policy.worker-mark): id・name・revision・
    versions = 送り手の版・program = 詰めた Program の置き場のキー・detached / key / lease-ms / retain-ms / needs = 切り離した task が
    引き取りのために運ぶ欄(切り離していなければ使わない)・runtime-env = 実行環境の宣言(無ければ None)・environ = 子の環境変数・
-   memory-mib = memory の要り(引き取った行が置き先の予約を続けるため — 名乗らない task は None)・rerun / attempt / notify = 走らせ直しの
-   名乗りと試行の番号と知らせ先(引き取った行も同じ約束で続けるため)。"
+   memory-mib = memory の要り(引き取った行が置き先の予約を続けるため — 名乗らない task は None)・rerun / attempt / losses / notify = 走らせ
+   直しの名乗りと試行の番号と上限に数えた消失の数と知らせ先(引き取った行も同じ約束で続けるため)。"
   (#^ str id)
   (#^ str name)
   (#^ str revision)
@@ -1300,6 +1309,7 @@
   (setv #^ (| int None) memory-mib None)
   (setv #^ bool rerun False)
   (setv #^ int attempt 1)
+  (setv #^ int losses 0)
   (setv #^ str notify ""))
 
 
