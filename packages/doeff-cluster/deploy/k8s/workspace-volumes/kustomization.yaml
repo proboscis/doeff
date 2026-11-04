@@ -5,6 +5,8 @@ apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
 resources:
   - storageclass.yaml
+  # worker の Pod の /scratch の級(Pod ごとの一時の volume — 使うのは zeus の worker)。
+  - scratch-storageclass.yaml
   - backup.yaml
 # 名の固定した ConfigMap workspace-volume(中身の hash を名に付けない)— worker は名指しで読む。値の訳は README.md の節「名」「寿命」。
 configMapGenerator:

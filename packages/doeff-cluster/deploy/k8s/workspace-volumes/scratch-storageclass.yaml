@@ -1,0 +1,28 @@
+# worker の Pod の作業場所(disk)/scratch の級 — Pod ごとに 1 つの Longhorn の volume(generic ephemeral volume)。使うのは
+# zeus の worker(../nodes/zeus/scratch-on-longhorn.yaml の頭の註に訳)。Pod が消えると k8s が PVC を消し、この級の reclaimPolicy
+# Delete で Longhorn の volume も消える(emptyDir と同じ寿命)。作業場所の volume の級 longhorn-workspace(storageclass.yaml)と同じ札の
+# disk に置くが、backup はしない(Pod の寿命の一時の場所)。
+# parameters は作った後に替えられない(k8s が断る)— 替える時は別の名の級を足し、zeus の patch の storageClassName を移す。
+apiVersion: storage.k8s.io/v1
+kind: StorageClass
+metadata:
+  name: longhorn-scratch
+  annotations:
+    storageclass.kubernetes.io/is-default-class: "false"
+provisioner: driver.longhorn.io
+# Pod と一緒に消える一時の場所。中身を残さない。
+reclaimPolicy: Delete
+volumeBindingMode: Immediate
+allowVolumeExpansion: true
+parameters:
+  # 1 本: Pod の寿命の一時の場所で、守る写しは要らない。網越しの replica は書くたびに往復する(storageclass.yaml の測り)。
+  numberOfReplicas: "1"
+  # 札 workspace の disk だけに置く(README.md の節「置く disk」— 今は zeus の USB の SSD の /mnt/longhorn-workspace だけ)。kubelet の
+  # disk(zeus の /var/lib/kubelet)の外。
+  diskSelector: "workspace"
+  # replica を付けた node から動かさない(1 本なので書きはいつも機体の中で済む)。
+  dataLocality: "strict-local"
+  fsType: "ext4"
+  staleReplicaTimeout: "2880"
+  # 既定の群 default だけ(6 時間ごとの trim — 消した file の block を disk へ返す — と snapshot の片付け)。backup の群は名指さない。
+  recurringJobSelector: '[{"name":"default","isGroup":true}]'

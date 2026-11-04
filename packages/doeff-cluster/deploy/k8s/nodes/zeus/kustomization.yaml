@@ -29,6 +29,9 @@ patches:
     target: { group: apps, version: v1, kind: Deployment, name: doeff-worker }
   - path: dev-shm-in-memory.yaml
     target: { group: apps, version: v1, kind: Deployment, name: doeff-worker }
+  # /scratch を kubelet の disk の外の Pod ごとの Longhorn の volume へ(頭の註に訳)。
+  - path: scratch-on-longhorn.yaml
+    target: { group: apps, version: v1, kind: Deployment, name: doeff-worker }
 # 名の固定した ConfigMap(機体の接尾辞つき)— 掃除の係の script。中身の hash を名に付けないので、script を替えても Pod は作り直されない。
 configMapGenerator:
   - name: cargo-build-keeper
