@@ -1,4 +1,4 @@
-"""mkdocs の hook — GitHub の上で読む形に書いた docs の page を、site の上でも同じに読めるように 3 つを直す。
+"""mkdocs の hook — GitHub の上で読む形に書いた docs の page を、site の上でも同じに読めるように 4 つを直す。
 
 1. site の外の repo の file へ張る相対の link を、GitHub の main の file への link に書き換える。docs の page は repo の file
    (packages/*/README.md・examples/・docs/specs/ の仕様)へ相対の link を張るが、site に入るのは docs/index.md から辿る page
@@ -10,6 +10,10 @@
    GitHub は markdown の video の要素を消すので、repo の画面では 1 こまの画像が mp4 への link になる。site では、その link を
    1 こまの画像を poster にした video の要素に替える(動画は tools/docs-video で作る)。画像を動画の頭の GIF
    (`assets/videos/<名>.gif` — GitHub の repo の画面で動く)にした page では、poster は同じ名の 1 こまの画像(<名>.jpg)にする。
+4. click で進む図を動くようにする。page は図を `[![<説明>](assets/figures/<名>.gif)](<link の先>)` の 1 行で書く — GitHub と Zenn では
+   同じ内容の GIF が動き、link の先へ飛べる。site では、その 1 行を図の本体(`docs/assets/figures/<名>.html` — 図の様式と動きは同じ dir の
+   step-figure.css と step-figure.js が持つ)に替える。script の動かない画面には GIF を残す。GIF は tools/docs-video/figure-gif.mjs が
+   同じ図から作るので、2 つの版の中身はずれない。本体の無い名は build を落とす。
 """
 
 from __future__ import annotations
@@ -34,6 +38,10 @@ SCHEME = re.compile(r"^[A-Za-z][A-Za-z0-9+.-]*:")
 # 1 こまの画像を mp4 への link にした形(markdown から組んだ後の HTML)。img の属性の順は問わない。
 VIDEO_LINK = re.compile(r'<a href="([^"]+\.mp4)">(<img\b[^>]*>)</a>')
 IMG_ATTR = re.compile(r'\b(src|alt)="([^"]*)"')
+# click で進む図の 1 行(markdown から組んだ後の HTML)。1 つの段落に図の GIF だけが在る形で、link は在っても無くてもよい。
+FIGURE_LINE = re.compile(
+    r'<p>(?:<a href="[^"]*">)?(<img\b[^>]*\bsrc="[^"]*assets/figures/([a-z0-9-]+)\.gif"[^>]*>)(?:</a>)?</p>'
+)
 
 
 def _github_url(
@@ -116,9 +124,27 @@ def videos_to_players(content: str) -> str:
     return VIDEO_LINK.sub(player, content)
 
 
+def figures_to_steps(content: str, docs_dir: Path) -> str:
+    """図の GIF だけの段落を、click で進む図の本体に替えるため(module の頭の 4)。"""
+
+    def figure(match: re.Match[str]) -> str:
+        """1 つの段落を図に替える。説明(alt)は読み上げの名に、GIF は script の動かない画面の代わりにする。"""
+        image, name = match.groups()
+        body = docs_dir / "assets" / "figures" / f"{name}.html"
+        if not body.is_file():
+            raise ValueError(f"{name}.gif を置く page に図の本体が無い: {body}")
+        label = dict(IMG_ATTR.findall(image)).get("alt", "")
+        return (
+            f'<figure class="step-figure" data-step-figure="{name}" aria-label="{label}">'
+            f"{body.read_text(encoding='utf-8')}<noscript>{image}</noscript></figure>"
+        )
+
+    return FIGURE_LINE.sub(figure, content)
+
+
 def on_page_content(content: str, page: Page, config: MkDocsConfig, files: Files) -> str:
-    """組んだ page の HTML で、章の動画の link を video の要素に替えるため(mkdocs の hook)。
+    """組んだ page の HTML で、図の GIF を click で進む図に、章の動画の link を video の要素に替えるため(mkdocs の hook)。
 
     mkdocs が link と画像の相対の path を site の path に直した後に呼ばれるので、path はそのまま使える。
     """
-    return videos_to_players(content)
+    return videos_to_players(figures_to_steps(content, Path(config.docs_dir).resolve()))

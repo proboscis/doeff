@@ -55,6 +55,7 @@ exclude_docs: |
   !/program-architecture-overview.md
   !/seedream.md
   !/positioning/what-doeff-is.md
+  !/articles/handler-k-figure.md
 
 nav:
   - Home: index.md
@@ -88,6 +89,7 @@ nav:
       - Rust Scheduler: 25-rust-scheduler.md
       - Capability Classes: 22-capability-classes.md
       - CLI Architecture: cli-run-command-architecture.md
+      - 'Prototype: a handler receives k': articles/handler-k-figure.md
   - Pages That Need Other Components:
       - CLI auto-discovery and IDE plugins:
           - CLI Auto-Discovery: 14-cli-auto-discovery.md
@@ -123,6 +125,12 @@ theme:
       toggle:
         icon: material/brightness-4
         name: Switch to light mode
+
+# The click-through figures (docs/assets/figures/): tools/docs_site/hooks.py puts a figure in the page, and these move it.
+extra_css:
+  - assets/figures/step-figure.css
+extra_javascript:
+  - assets/figures/step-figure.js
 
 markdown_extensions:
   - admonition

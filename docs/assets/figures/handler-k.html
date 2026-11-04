@@ -1,0 +1,55 @@
+<!-- budget(5)(research(TOPICS)) from docs/articles/algebraic-effects-in-python.md, step by step. The order of the steps is what
+     tools/docs_site/figures_measure/handler_k.py prints when it runs the same program with doeff. -->
+<div class="sf-stage">
+  <div class="sf-call">
+    <span>run(budget(5)(research(TOPICS)))</span>
+    <span class="sf-result" data-anchor="run-result">result</span>
+  </div>
+  <div class="sf-panels">
+    <section class="sf-panel" data-panel="research">
+      <div class="sf-head"><span>the program</span></div>
+      <div class="sf-vars"><span>topic = <span data-slot="topic"></span></span><span>notes = <span data-slot="notes"></span></span></div>
+      <div class="sf-code">
+        <div class="sf-line"><span class="kw">@do</span></div>
+        <div class="sf-line"><span class="kw">def</span> <span class="fn">research</span>(topics):</div>
+        <div class="sf-line" data-anchor="r-init">    notes = []</div>
+        <div class="sf-line" data-anchor="r-for">    <span class="kw">for</span> topic <span class="kw">in</span> topics:</div>
+        <div class="sf-line" data-anchor="r-yield">        <span class="kw">yield</span> Spend(3)</div>
+        <div class="sf-line" data-anchor="r-append">        notes.append(<span class="st">f"notes on {topic}"</span>)</div>
+        <div class="sf-line" data-anchor="r-return">    <span class="kw">return</span> notes</div>
+      </div>
+    </section>
+    <section class="sf-panel" data-panel="handler">
+      <div class="sf-head"><span>the handler</span><span data-slot="call"></span></div>
+      <div class="sf-vars"><span>left = <span data-slot="left"></span></span></div>
+      <div class="sf-inbox">
+        <div class="sf-slot"><span>effect</span><div data-anchor="in-effect"></div></div>
+        <div class="sf-slot"><span>k</span><div data-anchor="in-k"></div></div>
+      </div>
+      <div class="sf-code">
+        <div class="sf-line" data-anchor="h-def"><span class="kw">def</span> <span class="fn">on_spend</span>(effect: Spend, k):</div>
+        <div class="sf-line" data-anchor="h-if">    <span class="kw">if</span> effect.cost &gt; left:</div>
+        <div class="sf-line" data-anchor="h-drop">        <span class="kw">return</span> <span class="st">"over budget"</span></div>
+        <div class="sf-line" data-anchor="h-left">    left -= effect.cost</div>
+        <div class="sf-line" data-anchor="h-resume">    <span class="kw">return</span> (<span class="kw">yield</span> Resume(k, None))</div>
+      </div>
+      <div class="sf-waiting" data-anchor="waiting">First call: waiting at <code>yield Resume(k, None)</code></div>
+    </section>
+  </div>
+  <div class="sf-token" data-token="spend">Spend(3)</div>
+  <div class="sf-token" data-token="k">k <small>the rest of research</small></div>
+  <div class="sf-token" data-token="result">"over budget"</div>
+</div>
+<ol class="sf-steps">
+  <li data-state='{"active": "research", "now": ["r-for"], "values": {"topic": "\"tides\"", "notes": "[]", "left": "5", "call": ""}}'><code>run</code> starts <code>research</code> with <code>budget(5)</code> around it. The handler has 5 to spend.</li>
+  <li data-state='{"active": "research", "now": ["r-yield"], "marks": {"r-append": "is-k", "r-return": "is-k"}, "tokens": {"spend": {"at": "r-yield", "place": "end"}, "k": {"at": "r-return", "place": "end"}}}'><code>research</code> pauses at <code>yield Spend(3)</code>. Everything it has left to do is now a value: <code>k</code>.</li>
+  <li data-state='{"active": "handler", "now": ["h-def"], "marks": {"r-append": "is-k", "r-return": "is-k"}, "tokens": {"spend": {"at": "in-effect"}, "k": {"at": "in-k"}}, "values": {"call": "first call"}}'>The handler receives both: the effect and <code>k</code>. <code>research</code> now waits inside <code>k</code>.</li>
+  <li data-state='{"active": "handler", "now": ["h-if", "h-left"], "marks": {"r-append": "is-k", "r-return": "is-k"}, "tokens": {"spend": {"at": "in-effect"}, "k": {"at": "in-k"}}, "values": {"left": "2"}}'>3 fits in 5, so the handler takes it off the budget. 2 are left.</li>
+  <li data-state='{"active": "research", "now": ["h-resume", "r-append"], "marks": {"waiting": "is-on"}, "tokens": {"k": {"at": "r-yield", "place": "end", "merge": true}}, "values": {"notes": "[\"notes on tides\"]"}}'><code>Resume(k, None)</code> gives <code>k</code> back, and <code>research</code> goes on after its <code>yield</code>. This call of the handler stays paused.</li>
+  <li data-state='{"active": "research", "now": ["r-yield"], "marks": {"r-append": "is-k", "r-return": "is-k", "waiting": "is-on"}, "tokens": {"spend": {"at": "r-yield", "place": "end"}, "k": {"at": "r-return", "place": "end"}}, "values": {"topic": "\"moons\"", "call": ""}}'>Next topic. <code>research</code> pauses again, and a new <code>k</code> holds what is left from here.</li>
+  <li data-state='{"active": "handler", "now": ["h-def"], "marks": {"r-append": "is-k", "r-return": "is-k", "waiting": "is-on"}, "tokens": {"spend": {"at": "in-effect"}, "k": {"at": "in-k"}}, "values": {"call": "second call"}}'>A second call of the handler receives the new <code>Spend(3)</code> and the new <code>k</code>.</li>
+  <li data-state='{"active": "handler", "now": ["h-if", "h-drop"], "marks": {"r-append": "is-k", "r-return": "is-k", "waiting": "is-on"}, "tokens": {"spend": {"at": "in-effect"}, "k": {"at": "in-k"}, "result": {"at": "h-drop", "place": "end"}}}'>3 does not fit in 2. The handler returns <code>"over budget"</code> and never touches <code>k</code>.</li>
+  <li data-state='{"active": "handler", "now": ["h-drop"], "marks": {"r-append": "is-dead", "r-return": "is-dead", "waiting": "is-on"}, "tokens": {"k": {"at": "in-k", "drop": true}, "result": {"at": "h-drop", "place": "end"}}}'>That drops <code>k</code>. The rest of <code>research</code> can never run: no notes on moons.</li>
+  <li data-state='{"active": "handler", "now": ["h-resume"], "marks": {"r-append": "is-dead", "r-return": "is-dead", "waiting": "is-on"}, "tokens": {"result": {"at": "waiting"}}, "values": {"call": "first call"}}'>The first call's <code>yield Resume(k, None)</code> gives back <code>"over budget"</code>, and it returns that too.</li>
+  <li data-state='{"active": "run", "now": [], "marks": {"r-append": "is-dead", "r-return": "is-dead"}, "tokens": {"result": {"at": "run-result"}}, "values": {"call": ""}}'><code>"over budget"</code> is the result of the run. Resume <code>k</code> and the program goes on; drop it and the program stops.</li>
+</ol>
