@@ -16,6 +16,8 @@
 ;;;   cooling-name          volume の名と刻 → 冷やす時の snapshot と backup の名(<名>-cool-<epoch 秒>)
 ;;;   growing-name          volume の名と刻 → 広げた直後に取って消す snapshot の名(<名>-grow-<epoch 秒>)
 ;;;   newest-backup         backup の組 → 戻す元(完了した物のうち作られたのが一番新しい物 — 無ければ None)
+;;;   backup-volume-name    volume の名と backup の先の名 → その束 BackupVolume の名(Longhorn v1.13 と同じ <名>-<hash> — 手で作る束が
+;;;                         Longhorn の作る束と同じ名に重なり、2 本にならない)
 ;;;   room-bytes            札の disk の組と過剰割り当ての % と最小の空きの % → 線ごとの残りの byte(Longhorn の置く線 2 つ — 名目の
 ;;;                         予約の線と実の空きの線)
 ;;;   room-covers?          線ごとの残りの byte と需要の byte → 両方の線が需要を覆うか
@@ -31,6 +33,7 @@
 (val MODULE-TAGS {:context "doeff-cluster" :role "judgment"})
 (import dataclasses [dataclass])  ; defrecord の展開が使う
 (import enum [StrEnum])  ; defenum の展開が使う
+(import hashlib)
 (import posixpath)
 (import re)
 
@@ -58,6 +61,8 @@
 (val GROWING-MARK "-grow-")
 ;; backup の様子のうち、戻す元にできる物。
 (val BACKUP-COMPLETED "Completed")
+;; 束 BackupVolume の名の尻の hash の字数(Longhorn v1.13 の util.RandomIDLength — types.GetBackupVolumeNameFromVolumeName が切る長さ)。
+(val BUNDLE-HASH-LENGTH 8)
 
 
 (defenum AttachStep PUT WAIT READY ELSEWHERE)
@@ -255,6 +260,15 @@
    名の大きい物)。無ければ None。"
   (val done (lfor backup backups :if (and (= backup.state BACKUP-COMPLETED) backup.url backup.created-at) backup))
   (if done (max done :key (fn [backup] #(backup.created-at backup.name))) None))
+
+
+(defk backup-volume-name [name target]
+  {:pre [(: name str) (: target str) name target] :post [(: % str) (.startswith % (+ name "-"))]}
+  "volume name の backup の先 target の束 BackupVolume の名を得るため(Longhorn v1.13 の types.GetBackupVolumeNameFromVolumeName と同じ:
+   <名>-<字「<名>-<先>」の SHA-256 の 16 進の頭 8 字> — split-brain で束が作り直されないように Longhorn が名を決めている)。同じ名で作れば、
+   Longhorn の backup の先の同期が後から同じ束を作ろうとしても AlreadyExists で退き、同じ label の束が 2 本にならない(2 本在ると Longhorn は
+   戻しも backup も断る)。"
+  (+ name "-" (cut (.hexdigest (hashlib.sha256 (.encode (.strip (.format "{}-{}" name target)) "utf-8"))) 0 BUNDLE-HASH-LENGTH)))
 
 
 (defk room-bytes [rooms percentage minimal]

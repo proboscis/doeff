@@ -115,9 +115,11 @@ worker は CSI を通らずに Longhorn の volume を名指しで作るので�
   古い順に(判断 = `cooling-order`・残り = Longhorn の置く線 `room-bytes`)。冷やした volume が空ける byte は線ごとに違う: 名目の予約の線
   には spec.size、実の空きの線には status.actualSize(snapshot を含む実の使用 — 本番の外れた 2 GiB の volume の多くは約 1 MB で、冷やしても
   実の空きはほぼ空かない)。(2) を全部足しても届かなければ (1) だけ(温かい volume を冷やしても入らない)。手順(`CoolWorkspaceVolume`)は Snapshot `<名>-cool-<epoch 秒>` を作る → 使えるまで待つ →
-  同じ名の Backup(label backup-volume・backup-target)を作る → Completed まで待つ → 使う ticket が無い事を確かめて読んだ版の上で volume を
-  消す → 消え終わるまで待つ。外れている volume は、Longhorn が snapshot と backup の ticket(frontend を問わない)で自分で付けて取る —
-  worker は付けない・mount しない。backup の完了を確かめずに消さない(backup が Error なら volume を残して断る)。
+  同じ名の Backup(label backup-volume・backup-target)を作る → Completed まで待つ → その名の束 BackupVolume が在り、status.lastBackupName が
+  今回の Backup である事を確かめる(束が無ければ作る・指さなければ同期を 1 度頼む — 節「backup」の「束」)→ 使う ticket が無い事を確かめて
+  読んだ版の上で volume を消す → 消え終わるまで待つ。外れている volume は、Longhorn が snapshot と backup の ticket(frontend を問わない)で自分で付けて取る —
+  worker は付けない・mount しない。backup の完了を確かめずに消さない(backup が Error なら volume を残して断る)。束が今回の Backup を
+  backup の上限の秒(1800 秒)の内に指さなければ、volume を消さずに断る(戻せない冷えた volume を作らない — 次の冷やす回が冷やし直す)。
 - fstrim は冷やす時にしない(付けて mount すると、その間に来た使う頼みの mount と RWO で争う)。消したファイルの block は、使っている間の
   群 default の trim(毎時)で返る。
 - 消す: 使い終わってから keepDays(7 日)を過ぎ、上に載る系が「この持ち主はもう使わない」と答えた時に、その名の backup の束(BackupVolume)を消す。答えが無い・
@@ -172,6 +174,23 @@ worker は CSI を通らずに Longhorn の volume を名指しで作るので�
 | 何を残すか | volume の block の差分(Longhorn の backup)。1 時間ごとの backup は volume ごとに新しい 6 つ。冷やす時の backup は「消す」まで残す |
 | 失うかもしれない物 | 付いている間に node か disk が壊れた時: 最後の backup(多くて 1 時間前)の後の書き。温かい間に壊れた時: 最後に付いていた間の最後の backup の後の書き。今の hostPath(機体の disk 1 つ・backup 無し)より狭い |
 
+### 束(BackupVolume)
+
+- Longhorn v1.13 の webhook は、spec.fromBackup の Volume の作成を、その名と backup の先の束 BackupVolume が cluster に在る時だけ受ける
+  (無いと 422「cannot get backup volume for backup target garage-workspace and volume <名>: backupVolumes "" not found」)。
+- Longhorn が束を作るのは、BackupTarget の同期(pollInterval 5 分と、backup の完了の頼み)が bucket の全部の束を list できた時だけ。その
+  list の時間切れは設定 backup-execution-timeout の 1 分で、重さは bucket の束と object の数に比例する。2026-11-04 04:3x〜12:5x UTC に garage
+  の node(全部 atlas の上)が混み、list が 1 分を越えて同期が落ち続け、その間に初めて冷やした名の束ができず、冷えた会話が戻せなかった
+  (13:3x の測り: Longhorn と同じ辿りで 784 回の呼び出し・208 秒。12:54Z に同期が戻り、束が 112 本まとめてできた)。
+- そこで handler は、束が無ければ Longhorn と同じ形で作る: 名 `<volume の名>-<字「<名>-garage-workspace」の SHA-256 の 16 進の頭 8 字>`
+  (Longhorn の `types.GetBackupVolumeNameFromVolumeName` と同じ — 後から来る Longhorn の同期の作りは AlreadyExists で退き、同じ label の束が
+  2 本にならない)・label `backup-volume`・`backup-target`・持ち主 BackupTarget `garage-workspace`・spec の backupTargetName と volumeName。
+  Longhorn はその束を 1 本だけ同期する(その volume の backup だけを list し、Backup と lastBackupName を書く)— bucket の全体の list に懸からない。
+- 確かめ(2026-11-04 17:4x UTC・全体の同期が 17:06Z から落ちている間・試しの volume `bvtrial-baef-2`): 束の無い戻しは 422 で断られ、手で
+  作った束 `bvtrial-baef-2-f38f5748` を Longhorn は受けて 3 秒で同期し(lastBackupName を書いた)、その後の戻しは通った。
+- 冷やす手順は、束が今回の Backup を指してから volume を消す(節「寿命」)。戻す手順は、束が無ければ作ってから Volume を作る。作った直後に
+  webhook の cache がまだ束を見ない 422 は、戻しの上限の秒(1800 秒)の内だけ間を置いて出し直す。
+
 ### 別の node へ戻す手順
 
 冷えている volume を次に使う時と、volume の在る node か disk が壊れた時に、同じ手順で戻す。冷えている volume は `CreateWorkspaceVolume`
@@ -181,7 +200,7 @@ worker は CSI を通らずに Longhorn の volume を名指しで作るので�
 1. 戻す元を選ぶ: `kubectl -n longhorn-system get backups.longhorn.io -l backup-volume=ws-<id>,backup-target=garage-workspace` の
    state Completed のうち、status.backupCreatedAt が一番新しい物(その status.url が戻す元)。
 2. 壊れた node の volume が残っていれば消す(replica 1 の volume は、replica の在る node が戻るまで付かない)。
-3. 同じ名 `ws-<id>` の Longhorn の volume を、級の値(上の写し方の表)と spec.fromBackup = 選んだ backup の status.url・spec.nodeID = 札 workspace の
+3. その名の束 BackupVolume が無ければ作る(上の「束」)。同じ名 `ws-<id>` の Longhorn の volume を、級の値(上の写し方の表)と spec.fromBackup = 選んだ backup の status.url・spec.nodeID = 札 workspace の
    disk の在る node で作る(節「戻しの失敗」の付け先)。その disk に置かれ、Longhorn が中身を戻す(status.restoreRequired が false になるまで待つ)。
 4. 使う機体の node に attach する。replica が別の node に置かれていれば、dataLocality best-effort がその node へ寄せる。
 5. mount して使う。戻した volume は file system を持つので mkfs しない。

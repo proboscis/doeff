@@ -12,7 +12,7 @@
 ;;;                     ごと — 負も足す)・冷やす順(2 時間を過ぎた物は全部・両方の線が需要の byte を覆うまで古い順に・冷やした volume が線ごとに
 ;;;                     空ける byte は名目 = spec.size・実 = actualSize・覆えなければ 2 時間を過ぎた物だけ)
 (require doeff-hy.macros [deftest <- val])
-(import doeff_cluster._shared.core.workspace_volume_rules [AttachStep AttachView BackupView DetachStep DiskRoom MountEntry NAME-MAX-LENGTH
+(import doeff_cluster._shared.core.workspace_volume_rules [AttachStep AttachView BackupView backup-volume-name DetachStep DiskRoom MountEntry NAME-MAX-LENGTH
                                                          NAME-PREFIX CoolingPlan RoomBytes WarmVolume attach-step cooling-name cooling-order
                                                          detach-step growing-name mount-entries mounted-at newest-backup owner-refusal restore-node room-bytes
                                                          room-covers? ticket-id using-tickets volume-mount-points volume-name volume-of-entry])
@@ -156,6 +156,18 @@
   (assert (is nothing None) nothing)
   (<- empty (newest-backup #()))
   (assert (is empty None) empty))
+
+
+(deftest test-a-bundle-is-named-as-longhorn-names-it
+  ;; 本番の Longhorn v1.13 が作った束の名(2026-11-04 17:2x UTC の kubectl の読み)と、全体の同期が落ちている間に手で作った束の名(17:42Z —
+  ;; Longhorn が受け、1 本だけ同期した)。同じ名で作れば、後から来る Longhorn の同期の作りは AlreadyExists で退く。
+  (<- seen (backup-volume-name "ws-a-01f8jkd6e7yaggsssqtrvtxtsw" "garage-workspace"))
+  (assert (= seen "ws-a-01f8jkd6e7yaggsssqtrvtxtsw-513858ba") seen)
+  (<- trial (backup-volume-name "bvtrial-baef-2" "garage-workspace"))
+  (assert (= trial "bvtrial-baef-2-f38f5748") trial)
+  ;; 先が違えば名も違う(同じ volume を 2 つの先に置いても重ならない)。
+  (<- other (backup-volume-name "ws-a-01f8jkd6e7yaggsssqtrvtxtsw" "garage-other"))
+  (assert (and (!= other seen) (.startswith other "ws-a-01f8jkd6e7yaggsssqtrvtxtsw-") (= (len other) (len seen))) other))
 
 
 ;; byte の単位(2 GiB = 作る時の大きさ・10 GiB と 16 GiB = 本番で戻された volume の大きさ・1 MB = 本番の外れた 2 GiB の volume の
