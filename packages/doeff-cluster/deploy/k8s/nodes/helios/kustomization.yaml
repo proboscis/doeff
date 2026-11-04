@@ -1,4 +1,5 @@
-# helios の worker(doeff-worker-helios)= worker の雛形 + 上に載る系の仕事を余りの空きで受ける差(../../guest-work)+ cgroup の層の共通の部分
+# helios の worker(doeff-worker-helios)= worker の雛形 + 上に載る系の仕事を余りの空きで受ける差(../../guest-work)+ 上に載る系の準備が落ちても
+# 起動する差(../../guest-prepare-optional)+ cgroup の層の共通の部分
 # (../../cgroup-layers)+ helios の差(置く Node・資源の上限・cgroup の層の値)。
 apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
@@ -6,6 +7,7 @@ resources:
   - ../../worker
 components:
   - ../../guest-work
+  - ../../guest-prepare-optional
   - ../../cgroup-layers
 nameSuffix: -helios
 # 機体ごとの Deployment が互いの Pod を選ばないよう、selector と Pod の label に Node の名を足す。

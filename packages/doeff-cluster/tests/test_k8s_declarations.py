@@ -947,13 +947,14 @@ def test_guest_worker_starts_with_the_machine_capabilities_when_the_prepare_scri
     """余りの空きで受ける機体の worker は、上に載る系の準備の script が落ちても、機体の能力 2 つだけを名乗って起動する(機体の常駐の job を
     止めない)。script が通れば上に載る系の能力を名乗る。反例: zeus の雛形の行は script の非 0 で止まる(準備が要る機体の約束 — zeus は
     準備の無い道具で会話を受けない)。script の失敗で能力を戻さずに起動すると、道具の無い機体に上に載る系の仕事が置かれる。"""
-    start = _start_line(_worker_on(rendered, GUEST_NODES[0]))
-    failed = _boots_with(start, tmp_path, "exit 7\n")
-    assert failed.returncode == 0, failed
-    assert "boot WORKER_PROVIDES=host-n,host-systemd-readable\n" == failed.stdout, failed
-    assert "準備の script が落ちた" in failed.stderr, failed
-    passed = _boots_with(start, tmp_path, "exit 0\n")
-    assert "boot WORKER_PROVIDES=host-n,host-systemd-readable,upper-work\n" == passed.stdout, passed
+    for node in GUEST_NODES:
+        start = _start_line(_worker_on(rendered, node))
+        failed = _boots_with(start, tmp_path, "exit 7\n")
+        assert failed.returncode == 0, (node, failed)
+        assert "boot WORKER_PROVIDES=host-n,host-systemd-readable\n" == failed.stdout, (node, failed)
+        assert "準備の script が落ちた" in failed.stderr, (node, failed)
+        passed = _boots_with(start, tmp_path, "exit 0\n")
+        assert "boot WORKER_PROVIDES=host-n,host-systemd-readable,upper-work\n" == passed.stdout, (node, passed)
     stopped = _boots_with(_start_line(_worker_on(rendered, "zeus")), tmp_path, "exit 7\n")
     assert stopped.returncode != 0, stopped
     assert stopped.stdout == "", stopped
