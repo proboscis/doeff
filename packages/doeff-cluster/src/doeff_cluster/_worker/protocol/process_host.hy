@@ -319,7 +319,7 @@
   {:pre [(: settings HostSettings) (: spec JobSpec) (: argv tuple)] :post [(: % tuple)] :tags {:context "worker" :role "protocol"}}
   "shim の argv を、常駐の job(once が偽)なら service の兄弟の cgroup へ移ってから起こす形に包むため(
    worker/core/job_cgroup の service の類)。task と、置き分けない worker(service-procs が None)は argv のまま。外の job-cgroup-placer
-   はこの後に全部の子を job の兄弟へ包むので、常駐の job の子は job の兄弟を経て service の兄弟に落ち着く(内の包みが後に走る)。"
+   は既に包んだ argv を包み直さないので、常駐の job の子は job の兄弟を経ずに service の兄弟へ直に移る(placed-argv)。"
   (when (or spec.once (is settings.service-procs None))
     (return argv))
   (<- placed tuple (placed-argv settings.service-procs argv))
