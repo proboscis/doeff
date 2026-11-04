@@ -73,8 +73,8 @@
    在る path(umount を断る)・down = API server に届かない世界か・capacity = 札の disk の大きさ(作る時の大きさ size-bytes の volume の
    本数で数える — 名目の予約の線は過剰割り当て 100% の capacity × size-bytes byte)・minimal = 実の空きの線の最小の空きの %・warm-hours・
    spare-bytes・keep-days・size-bytes = 値の ConfigMap の warmHours・spareBytes・keepDays・sizeBytes。"
-  (defn #^ None __init__ [self #^ str node #^ tuple [volumes #()] #^ frozenset [busy (frozenset)] #^ bool [down False]
-                          #^ tuple [backups #()] #^ int [capacity 20] #^ int [minimal 0] #^ int [warm-hours 2]
+  (defn #^ None __init__ [self #^ str node #^ (get tuple #(HeldVolume ...)) [volumes #()] #^ frozenset [busy (frozenset)]
+                          #^ bool [down False] #^ (get tuple #(HeldBackup ...)) [backups #()] #^ int [capacity 20] #^ int [minimal 0] #^ int [warm-hours 2]
                           #^ int [spare-bytes 17179869184] #^ int [keep-days 7] #^ int [size-bytes 2147483648]]
     ;; defk にできない: class の作り手(Python が呼ぶ口)
     "入れ物を作るため(volumes と backups = 前から在る物)。"

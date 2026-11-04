@@ -6,6 +6,7 @@
 (val MODULE-TAGS {:context "worker" :role "protocol"})
 (import dataclasses [dataclass])
 (import doeff [EffectBase])
+(import doeff_cluster._worker.intent.worker_model [ProgramGap])
 
 
 (defclass [(dataclass :frozen True)] ObserveProcesses [EffectBase]
@@ -63,6 +64,6 @@
    見張りに続けて止められた常駐の job の起こし直しを止める(WorkerPolicy.memory-kill-limit)。")
 
 
-(defclass [(dataclass :frozen True)] ObservePrograms [EffectBase]
+(defclass [(dataclass :frozen True)] ObservePrograms [(get EffectBase (get tuple #(ProgramGap ...)))]
   "宣言の job のうち、Program の file が手元に無い物(ProgramGap の tuple — WorldView.program-gaps)。世界の観測のまとめ(local-host)が、
    Program の cache のただ 1 つの書き手である coordinator への口(worker/protocol/coordinator_link)へ問う。")

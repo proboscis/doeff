@@ -3406,6 +3406,20 @@
   {
    "package": "doeff-cluster",
    "module": "doeff_cluster",
+   "name": "AttachedWorkspaceVolume",
+   "組": "許した物 — effect の答えの型",
+   "決め": "ADR-DOE-API-001 R2"
+  },
+  {
+   "package": "doeff-cluster",
+   "module": "doeff_cluster",
+   "name": "ChildOrigin",
+   "組": "許した物 — effect の答えの型",
+   "決め": "ADR-DOE-API-001 R2"
+  },
+  {
+   "package": "doeff-cluster",
+   "module": "doeff_cluster",
    "name": "CoolingSweep",
    "組": "許した物 — effect の答えの型",
    "決め": "ADR-DOE-API-001 R2"
@@ -3441,6 +3455,20 @@
   {
    "package": "doeff-cluster",
    "module": "doeff_cluster",
+   "name": "ProgramGap",
+   "組": "許した物 — effect の答えの型",
+   "決め": "ADR-DOE-API-001 R2"
+  },
+  {
+   "package": "doeff-cluster",
+   "module": "doeff_cluster",
+   "name": "ProgramUnfetched",
+   "組": "許した物 — effect の答えの型",
+   "決め": "ADR-DOE-API-001 R2"
+  },
+  {
+   "package": "doeff-cluster",
+   "module": "doeff_cluster",
    "name": "ResolveFailure",
    "組": "許した物 — effect の答えの型",
    "決め": "ADR-DOE-API-001 R2"
@@ -3448,8 +3476,71 @@
   {
    "package": "doeff-cluster",
    "module": "doeff_cluster",
+   "name": "SimChildren",
+   "組": "許した物 — handler の設定の型",
+   "決め": "ADR-DOE-API-001 R2"
+  },
+  {
+   "package": "doeff-cluster",
+   "module": "doeff_cluster",
+   "name": "SimDescendant",
+   "組": "許した物 — effect の答えの型",
+   "決め": "ADR-DOE-API-001 R2"
+  },
+  {
+   "package": "doeff-cluster",
+   "module": "doeff_cluster",
+   "name": "SimMemoryRead",
+   "組": "許した物 — effect の答えの型",
+   "決め": "ADR-DOE-API-001 R2"
+  },
+  {
+   "package": "doeff-cluster",
+   "module": "doeff_cluster",
+   "name": "SimMemoryWatch",
+   "組": "許した物 — handler の設定の型",
+   "決め": "ADR-DOE-API-001 R2"
+  },
+  {
+   "package": "doeff-cluster",
+   "module": "doeff_cluster",
+   "name": "SimProcFlood",
+   "組": "許した物 — handler の設定の型",
+   "決め": "ADR-DOE-API-001 R2"
+  },
+  {
+   "package": "doeff-cluster",
+   "module": "doeff_cluster",
+   "name": "WorkspaceClusterUnreachable",
+   "組": "許した物 — 例外の型",
+   "決め": "ADR-DOE-API-001 R2"
+  },
+  {
+   "package": "doeff-cluster",
+   "module": "doeff_cluster",
    "name": "WorkspaceOutcome",
    "組": "許した物 — effect の答えの型",
+   "決め": "ADR-DOE-API-001 R2"
+  },
+  {
+   "package": "doeff-cluster",
+   "module": "doeff_cluster",
+   "name": "WorkspacePlace",
+   "組": "許した物 — effect の答えの型",
+   "決め": "ADR-DOE-API-001 R2"
+  },
+  {
+   "package": "doeff-cluster",
+   "module": "doeff_cluster",
+   "name": "WorkspaceRoom",
+   "組": "許した物 — effect の答えの型",
+   "決め": "ADR-DOE-API-001 R2"
+  },
+  {
+   "package": "doeff-cluster",
+   "module": "doeff_cluster",
+   "name": "WorkspaceRoomShort",
+   "組": "許した物 — 例外の型",
    "決め": "ADR-DOE-API-001 R2"
   },
   {

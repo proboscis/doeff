@@ -51,7 +51,7 @@
    unfinished-stall-seconds の間 worker を止める)・stall-floor-seconds = 止まりに換える手間の下限(未満の手間は記録だけ — 仮想の時計を
    CPU の揺れで揺らさない)・unfinished-stall-seconds = 上限を越えた読みに載せる止まり(本番の何十分に当たる — 既定 1 時間)。"
   {:check [(> sample-seconds 0) (> cpu-limit-seconds 0) (>= stall-floor-seconds 0) (> unfinished-stall-seconds 0)]}
-  (setv #^ tuple floods #())
+  (setv #^ (get tuple #(SimProcFlood ...)) floods #())
   (setv #^ float sample-seconds 5.0)
   (setv #^ float cpu-limit-seconds 10.0)
   (setv #^ float stall-floor-seconds 1.0)

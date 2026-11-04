@@ -55,6 +55,7 @@
 #   latest_of_project memory_use_of prepare_overdue recent_per_project reclaimable_bytes
 #   root_estimate roots_bytes sweep_candidates sweep_choice sweep_due sweep_target sweep_wanted
 #   warm_refusal
+# moved-submodule-shim-names doeff_cluster.worker.core.eviction_rules:
 # moved-submodule-shim-names doeff_cluster.worker.core.heartbeat_rules:
 #   CutOff DesiredJobs DesiredUnreadable ENV_KEY_PREFIX JobPhase JobStatus MODULE_TAGS WarmEnv
 #   desired_after_silence desired_when_unreachable env_key finished_task_id keep_marks_held
@@ -310,6 +311,7 @@
 #   sync_failure tail_of touch_progress tracked_entries tree_delta url_location uv_command
 #   uv_environment uv_variables volume_of_mountinfo wheel_in wheel_lock wheel_of write_replacing
 #   written_bytes
+# moved-submodule-shim-names doeff_cluster.worker.protocol.eviction_line:
 # moved-submodule-shim-names doeff_cluster.worker.protocol.heartbeat:
 #   CodeState CodeView ENV_KEY_PREFIX JobStatus MODULE_TAGS PROTOCOL_FORMAT announced_provides
 #   env_heartbeat_part env_report finished_task_id heartbeat_body status_report status_row

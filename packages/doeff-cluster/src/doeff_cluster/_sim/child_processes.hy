@@ -113,7 +113,7 @@
 
 (defeffect DescendantsOf
   "検の effect: job name の process が起こした子孫の記録の列(SimDescendant の tuple・起きた順)。"
-  {:fields [(: name str)] :answer tuple :tags {:context "doeff-cluster" :role "intent"}})
+  {:fields [(: name str)] :answer (get tuple #(SimDescendant ...)) :tags {:context "doeff-cluster" :role "intent"}})
 
 
 ;; 柵が job の process から外へ通す子 process の effect の型(答え手 child-processes が答える物 — 足したら同じ変更でここも足す)。

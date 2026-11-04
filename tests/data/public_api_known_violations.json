@@ -6310,6 +6310,42 @@
    "訳": "作業場所の volume の本番の答え手 workspace-volumes-api に渡す本番の場所と待つ秒(Longhorn の namespace・値の ConfigMap・mount の係の頼みの dir — zeus の Pod の宣言と同じ path)。job の子は env WORKER_WORKSPACE_MOUNT_DIR を継がないので、使い手(agora-controllers)が本番の値を入口から受ける。宣言と同じ値である事は tests/test_workspace_mount.py と tests/test_workspace_volumes.py が縛る"
   },
   {
+   "package": "doeff-cluster",
+   "module": "(submodule)",
+   "name": "doeff_cluster.shared.core.workspace_volume_rules",
+   "訳": "R15 の段 1 で区画 shared を _shared へ隠した後に普通の開発が足した module(作業場所の volume の名・札・冷やす順の判断)。移し替えの module shared.py が _shared の下の module を古い path でも見せるので目録に数えられる(名の固定の列は空 — 古い path からは名を出さない)。shared.py を消すと目録から消える"
+  },
+  {
+   "package": "doeff-cluster",
+   "module": "(submodule)",
+   "name": "doeff_cluster.shared.intent.workspace_volume_model",
+   "訳": "R15 の段 1 で区画 shared を _shared へ隠した後に普通の開発が足した module(作業場所の volume の effect と答えの型 — 使い手は入口から読む)。workspace_volume_rules と同じく、shared.py が古い path でも見せるので目録に数えられる(名の固定の列は空)。shared.py を消すと目録から消える"
+  },
+  {
+   "package": "doeff-cluster",
+   "module": "(submodule)",
+   "name": "doeff_cluster.shared.protocol.workspace_volumes",
+   "訳": "R15 の段 1 で区画 shared を _shared へ隠した後に普通の開発が足した module(作業場所の volume の本番の答え手 — Longhorn の API と mount の係への言い換え)。workspace_volume_rules と同じく、shared.py が古い path でも見せるので目録に数えられる(名の固定の列は空)。shared.py を消すと目録から消える"
+  },
+  {
+   "package": "doeff-cluster",
+   "module": "(submodule)",
+   "name": "doeff_cluster.worker.core.eviction_rules",
+   "訳": "R15 の段 1 で区画 worker を _worker へ隠した後に普通の開発が足した module(kubelet の追い出しの線から worker の memory の線を導く判断)。load_rules と同じく、移し替えの module worker.py が _worker の下の module を古い path でも見せるので目録に数えられる(名の固定の列は空 — 古い path からは名を出さない)。worker.py を消すと目録から消える"
+  },
+  {
+   "package": "doeff-cluster",
+   "module": "(submodule)",
+   "name": "doeff_cluster.worker.protocol.eviction_line",
+   "訳": "R15 の段 1 で区画 worker を _worker へ隠した後に普通の開発が足した module(追い出しの線と機体の測りを読む言い換え)。eviction_rules と同じく、worker.py が古い path でも見せるので目録に数えられる(名の固定の列は空)。worker.py を消すと目録から消える"
+  },
+  {
+   "package": "doeff-cluster",
+   "module": "doeff_cluster.shared.intent.detached_model",
+   "name": "OUTBOX_RERAN",
+   "訳": "切り離した task の走らせ直しが足した知らせ先の出口の行の種類(reran)。同じ module の OUTBOX_ENDED・OUTBOX_QUEUED_OVERDUE と同じく、AwaitDetachedOutbox の :kinds に渡す値で、使い手は入口から読む(古い path の名の固定の列には載せない)"
+  },
+  {
    "package": "doeff-stream",
    "module": "doeff_stream",
    "name": "fold",
