@@ -17,11 +17,13 @@
 #   allocatable 19.79 GiB を越えた — 10-30〜11-01 に 5 回・その時の container は 11.1〜12.0 GiB・機体の MemAvailable は 8〜11 GiB 残っていた)。
 #   上限を上げると追い出しの手前の使いを増やすので、予算の側を 8960 → 7424 に下げた。追い出しを止めるのは上限や層の静的な値でなく、
 #   追い出しまでの空きから掛け直す jobs の層の上限。
-# - clis の memory.max 2G・commands の memory.max 2G(会話の CLI とその命令 — 層の名と訳は ../helios/cgroup.yaml): atlas は機体の余りが
-#   小さいので、会話 1〜2 本の分だけ。helios と同じく限る層に置き、予算からも外す。container の上限は 18Gi → 22Gi(4G の分)— 予算は
-#   22Gi − worker 256M − jobs 10752M − clis 2G − commands 2G = 7424 MiB のまま。2 つの層は静的な上限のままで、追い出しの線から縮めるのは
+# - clis の memory.max 1536M・commands の memory.max 1536M(会話の CLI とその命令 — 層の名と訳は ../helios/cgroup.yaml): atlas は機体の余りが
+#   小さいので、会話 1 本の分だけ。helios と同じく限る層に置き、予算からも外す。container の上限は 22Gi のまま — 予算は
+#   22Gi − worker 256M − jobs 10752M − clis 1536M − commands 1536M = 8448 MiB。会話を受けると予算に機体の CLI ホストと同期の常駐の job(落ち着き
+#   1024 + 412 MiB)が載り、組の相手が止まった時の N+1(置ける job の和 6649 MiB + 移る job の山の上乗せ 1595 MiB = 8244 MiB)が前の 7424 MiB
+#   を越えるので、2 つの層を 2G から 1536M に下げた分を予算へ移した。2 つの層は静的な上限のままで、追い出しの線から縮めるのは
 #   jobs の層だけ: 会話の層が使った分は worker が読む Pod の working set に入るので、jobs の層が先に縮む(task が先に止まり、Pod は
-#   追い出されない)。2 つの層と worker と services の和(4.5 GiB)は、この worker が追い出されずに使える量の下の 1%(8.8 GiB)より小さい。
+#   追い出されない)。2 つの層と worker と services の和(3.5 GiB)は、この worker が追い出されずに使える量の下の 1%(8.8 GiB)より小さい。
 - op: add
   path: /spec/template/spec/containers/0/env/-
-  value: { name: WORKER_CGROUP_LAYOUT, value: "worker:memory.min=256M,cpu.weight=1000 services:memory.min=256M,cpu.weight=1000 jobs:memory.max=10752M,cpu.weight=100 clis:memory.max=2G,cpu.weight=100 commands:memory.max=2G,cpu.weight=100" }
+  value: { name: WORKER_CGROUP_LAYOUT, value: "worker:memory.min=256M,cpu.weight=1000 services:memory.min=256M,cpu.weight=1000 jobs:memory.max=10752M,cpu.weight=100 clis:memory.max=1536M,cpu.weight=100 commands:memory.max=1536M,cpu.weight=100" }
