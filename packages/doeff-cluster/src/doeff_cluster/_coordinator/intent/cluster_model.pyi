@@ -587,6 +587,7 @@ class BoardTally:
     rows: int
     bytes: int
     expiring: int
+    floor: int | None
 
 @dataclass(frozen=True, kw_only=True)
 class BoardUsage:

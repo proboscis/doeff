@@ -31,12 +31,35 @@
 (import doeff_cluster._shared.core.job_rules [spec-hash spec-hash-matches] doeff_cluster._shared.intent.job_model [JobSpec])
 
 
+;; 宣言の指紋の覚え(job の object の id → #(job 指紋) — 2026-11-04)。指紋は settle のたびに入れ替えの Service ごとに要り、
+;; 宣言を JSON に綴って sha256 を取る費用が coordinator の main thread の 2 割を占めた(stack の計り)。ClusterJob は書き換えない object で、宣言が
+;; 変わらない拍は同じ object が状態の jobs に残る(宣言し直すと新しい object になる)ので、object ごとに 1 度だけ求める。job そのものを
+;; 一緒に持つので、持っている間に id が別の object へ使い回されない。上限 FINGERPRINT-MEMO-MAX を越えたら全部を捨てて覚え直す。
+(setv _FINGERPRINTS {})
+(setv FINGERPRINT-MEMO-MAX 4096)
+
+
 (defn #^ str declaration-fingerprint [#^ ClusterJob job]  ; defk にできない: coordinator の純粋な判断(Program の外 — api_policy.settle)が呼ぶ
   "諦めを解く合図にする宣言の指紋: Service の宣言の保存の形(job-to-json)全体の指紋。process の形(spec-hash)に加えて、replicas・
-   readiness(期限を延ばす書き換えを含む)・条件の書き換えでも変わる — 宣言を書き換えれば、同じ process の形でも入れ替えを試し直す。"
-  (cut (.hexdigest (hashlib.sha256 (.encode (json.dumps (job-to-json job) :sort-keys True :ensure-ascii False :separators #("," ":"))
-                                            "utf-8")))
-       0 16))
+   readiness(期限を延ばす書き換えを含む)・条件の書き換えでも変わる — 宣言を書き換えれば、同じ process の形でも入れ替えを試し直す。
+   同じ job の object には覚えた値を返す(上の _FINGERPRINTS — 答えは object の中身だけで決まる)。"
+  (setv kept (.get _FINGERPRINTS (id job)))
+  (when (and (is-not kept None) (is (get kept 0) job))
+    (return (get kept 1)))
+  (setv fingerprint (cut (.hexdigest (hashlib.sha256 (.encode (json.dumps (job-to-json job) :sort-keys True :ensure-ascii False
+                                                                          :separators #("," ":"))
+                                                              "utf-8")))
+                         0 16))
+  (when (>= (len _FINGERPRINTS) FINGERPRINT-MEMO-MAX)
+    (.clear _FINGERPRINTS))
+  (setv (get _FINGERPRINTS (id job)) #(job fingerprint))
+  fingerprint)
+
+
+(defn #^ (| HandoffWatch None) kept-watch [#^ ClusterState state #^ ClusterJob job]  ; defk にできない: coordinator の純粋な判断(next-watch・handoff-due)が呼ぶ
+  "Service job の保存した見張りのうち、今の宣言で始めた物(宣言の指紋が同じ)。見張りを持たなければ指紋を求めない。"
+  (setv kept (.row state.handoffs job.spec.name))
+  (if (and (is-not kept None) (= kept.declaration (declaration-fingerprint job))) kept None))
 
 
 (defn #^ (| tuple None) carrier-rows [#^ ClusterState state #^ str name #^ int now #^ ClusterTiming timing]  ; defk にできない: coordinator の純粋な判断が呼ぶ
@@ -68,13 +91,12 @@
 
 (defn #^ (| HandoffWatch None) next-watch [#^ int now #^ ClusterState state #^ ClusterJob job #^ ClusterTiming timing]  ; defk にできない: coordinator の純粋な判断が呼ぶ
   "Service job の 1 拍後の見張り(持たないなら None)。規則は頭注の 1〜3。"
-  (setv name job.spec.name
-        fingerprint (declaration-fingerprint job)
-        kept (.row state.handoffs name)
-        watch (if (and (is-not kept None) (= kept.declaration fingerprint)) kept None))
+  ;; 入れ替えでない Service は指紋を求めずに抜ける(指紋は見張りを持つ時と、見張りを始める時だけ要る)。
   (when (not (and job.spec.handoff (> job.replicas 0)))
     (return None))
-  (setv rows (carrier-rows state name now timing))
+  (setv name job.spec.name
+        watch (kept-watch state job)
+        rows (carrier-rows state name now timing))
   (cond
     (is rows None) watch
     (not (retired-live rows name)) None
@@ -86,7 +108,7 @@
           (cond
             (= (get verdict "state") "Ready") None
             (is watch None)
-              (if (new-generation-live rows name job.spec) (HandoffWatch :declaration fingerprint :since-ms now) None)
+              (if (new-generation-live rows name job.spec) (HandoffWatch :declaration (declaration-fingerprint job) :since-ms now) None)
             (and (>= now (handoff-deadline watch job)) (= (get verdict "state") "NotReady"))
               (replace watch :phase HandoffPhase.ABANDONED :abandoned-ms now
                        :reason (.format "新の世代が {:g} 秒の間 Ready にならなかった(新を止めて旧を残す): {}"
@@ -102,14 +124,14 @@
    #3064)。担い手の報告が古くなる刻(carrier-stale-from — 古くなると判じずに持ち越す)と、判じる間の readiness の判定の期限
    (resource_policy.readiness-due)と、Ready を待っている見張りの諦めの期限(handoff-deadline)の最小。返すのは答えを変え得る刻の下限。
    handoff でない・replicas 0・担い手の報告が無いか古い・戻る先が無い・諦めた後は、時刻では変わらない。"
+  (when (not (and job.spec.handoff (> job.replicas 0)))
+    (return None))
   (val name job.spec.name)
-  (val fingerprint (declaration-fingerprint job))
-  (val kept (.row state.handoffs name))
-  (val watch (if (and (is-not kept None) (= kept.declaration fingerprint)) kept None))
+  (val watch (kept-watch state job))
   (val placed (.row state.placements name))
   (val st (if (is placed None) None (.row state.observations.statuses placed.worker)))
   (val rows (carrier-rows state name now timing))
-  (val judging (and job.spec.handoff (> job.replicas 0) (is-not rows None) (retired-live rows name)
+  (val judging (and (is-not rows None) (retired-live rows name)
                     (not (and (is-not watch None) (= watch.phase HandoffPhase.ABANDONED)))))
   (var reading None)
   (when judging
@@ -118,9 +140,7 @@
   (val dues (+ (if (is-not rows None) #((carrier-stale-from st timing)) #())
                (if (is-not reading None) #(reading) #())
                (if (and judging (is-not watch None)) #((handoff-deadline watch job)) #())))
-  (if (and job.spec.handoff (> job.replicas 0))
-      (min (gfor due dues :if (> due now) due) :default None)
-      None))
+  (min (gfor due dues :if (> due now) due) :default None))
 
 
 (defn #^ ClusterState watch-handoffs [#^ int now #^ ClusterState state #^ ClusterTiming timing]  ; defk にできない: coordinator の純粋な判断(api_policy.settle)が呼ぶ

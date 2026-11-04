@@ -409,14 +409,13 @@ ENV_RETRIES: int
 
 def end_detached(task: TaskRecord, phase: str, now: int, detail: str, result: str | None=None) -> TaskRecord:
     ...
+RERUN_LIMIT: int
+RERUN_ID_MARK: str
 
 def rerun_id(task: TaskRecord) -> str:
     ...
 
 def gone_detached(task: TaskRecord, now: int, why: str) -> TaskRecord:
-    ...
-
-def put_gone(draft: TableDraft[TaskRecord], before: TaskRecord, after: TaskRecord) -> None:
     ...
 
 def heard_since_rerun(task: TaskRecord, worker: WorkerInfo) -> bool:
@@ -471,6 +470,9 @@ def absorb_detached_report(task: TaskRecord, status: StatusRow, now: int, stoppi
     ...
 
 def put_row(draft: TableDraft[TaskRecord], task: TaskRecord) -> None:
+    ...
+
+def put_gone(draft: TableDraft[TaskRecord], before: TaskRecord, after: TaskRecord) -> None:
     ...
 
 def absorb_task_reports_into(draft: TableDraft[TaskRecord], worker: str, statuses: tuple, now: int, boot: str | None, stopping: bool) -> None:
@@ -636,6 +638,9 @@ def lease_write(state: ClusterState, name: str, body: LeaseBody, now: int) -> _P
     ...
 
 def value_size(value: dict | list | str | int | float | bool | None) -> int:
+    ...
+
+def expiry_floor_of(board: Table[BoardRow]) -> int | None:
     ...
 
 def board_tally_of(board: Table[BoardRow]) -> BoardTally:

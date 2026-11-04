@@ -1859,11 +1859,16 @@
 
 (defk sweep-board [state now]
   {:pre [(: state ClusterState) (: now int)] :post [(: % ClusterState)] :tags {:context "coordinator" :role "judgment"}}
-  "純粋: 期限を過ぎた盤の行を消した状態(期限つきの行が無ければ同じ object)。"
-  (setv gone (tuple (gfor #(k row) (.items state.board) :if (and (is-not row.expires-ms None) (<= row.expires-ms now)) k)))
-  (if (not gone)
-      state
-      (board-written state (tuple (gfor k gone (TableWrite k None))))))
+  "純粋: 期限を過ぎた盤の行を消した状態。期限つきの行が無い・期限の下限(BoardTally.floor)がまだ来ていなければ、盤の全行を読まずに
+   同じ object を返す。下限が来たら全行を読み、期限の来た行を消して、下限を残りのいちばん早い期限に求め直す(消す行が無くても —
+   次の拍から、求め直した下限が来るまで全行を読まない)。"
+  (setv tally (board-tally state))
+  (when (or (= tally.expiring 0) (and (is-not tally.floor None) (> tally.floor now)))
+    (return state))
+  (setv gone (tuple (gfor #(k row) (.items state.board) :if (and (is-not row.expires-ms None) (<= row.expires-ms now)) k))
+        swept (if gone (board-written state (tuple (gfor k gone (TableWrite k None)))) state)
+        kept (board-tally swept))
+  (replace swept :board-tally (replace kept :floor (expiry-floor-of swept.board))))
 
 
 (defk forget-silent-workers [state now timing]
@@ -1986,7 +1991,9 @@
    外す sweep-keep-marks の刻は担い手の沈黙の期限(kept-reassign-after-ms)なので liveness-due が求める・冷えた起動の数は数えるだけなので、
    刻を持たない。"
   (val used (if (> (.size state.programs) 0) (program-refs state) (frozenset)))
-  (val deadlines (+ (lfor row (.rows state.board) :if (is-not row.expires-ms None) row.expires-ms)
+  ;; 盤は期限の下限だけを入れる(全行を読まない — 下限が来ると sweep-board が全行を読んで求め直す。早く起きるのは構わない)。
+  (val tally (board-tally state))
+  (val deadlines (+ (cond (= tally.expiring 0) [] (is tally.floor None) [now] True [tally.floor])
                     (lfor d (.rows state.drains) d.until-ms)
                     (lfor w (.rows state.warms) w.until-ms)
                     (lfor #(sha row) (.items state.programs) :if (not-in sha used) (+ row.put-ms PROGRAM-GRACE-MS 1))))
@@ -2728,10 +2735,16 @@
   (len (.encode (json.dumps value :ensure-ascii False :separators #("," ":")) "utf-8")))
 
 
+(defn #^ (| int None) expiry-floor-of [#^ (get Table BoardRow) board]
+  "盤の全行のいちばん早い期限(期限つきの行が無ければ None)— BoardTally.floor を求め直す所(board-tally-of と sweep-board)。"
+  (min (gfor row (.rows board) :if (is-not row.expires-ms None) row.expires-ms) :default None))
+
+
 (defn #^ BoardTally board-tally-of [#^ (get Table BoardRow) board]
   "盤の全行から集計を求める(起動の読み直しと、集計をまだ持たない状態の最初の読みだけ — 書きごとには board-written が足し引きする)。"
   (BoardTally :rows (.size board) :bytes (sum (gfor row (.rows board) row.size))
-              :expiring (len (lfor row (.rows board) :if (is-not row.expires-ms None) row))))
+              :expiring (len (lfor row (.rows board) :if (is-not row.expires-ms None) row))
+              :floor (expiry-floor-of board)))
 
 
 (defn #^ BoardTally board-tally [#^ ClusterState state]
@@ -2741,11 +2754,12 @@
 
 (defn #^ ClusterState board-written [#^ ClusterState state #^ tuple writes]
   "盤へ書き(鍵ごとに 1 つの TableWrite・value None は消す)を当てた状態。集計は書く行・消す行の分だけ足し引きする(全行を読まない)。
+   期限の下限(BoardTally.floor)は書く行の期限との小さい方を取り、消しでは動かさない(期限つきの行が 0 になれば None)。
    書きが全部今の行そのものなら状態そのもの。"
   (setv board (.with-writes state.board writes))
   (when (is board state.board)
     (return state))
-  (setv tally (board-tally state) rows tally.rows size tally.bytes expiring tally.expiring)
+  (setv tally (board-tally state) rows tally.rows size tally.bytes expiring tally.expiring floor tally.floor)
   (for [write writes]
     (setv old (.row state.board write.key) new write.value)
     (when (is-not old None)
@@ -2755,8 +2769,10 @@
     (when (is-not new None)
       (+= rows 1)
       (+= size new.size)
-      (when (is-not new.expires-ms None) (+= expiring 1))))
-  (replace state :board board :board-tally (BoardTally :rows rows :bytes size :expiring expiring)))
+      (when (is-not new.expires-ms None)
+        (+= expiring 1)
+        (setv floor (if (is floor None) new.expires-ms (min floor new.expires-ms))))))
+  (replace state :board board :board-tally (BoardTally :rows rows :bytes size :expiring expiring :floor (if (= expiring 0) None floor))))
 
 
 (defn #^ BoardUsage board-usage [#^ ClusterState state]

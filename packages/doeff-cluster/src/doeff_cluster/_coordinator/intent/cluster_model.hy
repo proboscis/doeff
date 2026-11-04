@@ -909,11 +909,16 @@
 
 
 (defrecord BoardTally
-  "盤の行の集計(ClusterState.board-tally): rows = 行の数・bytes = 行の size の合計・expiring = 期限つきの行の数。盤の書きごとに
-   cluster_policy.board-written が足し引きして持ち回る(全行を読み直さない)。保存しない(読み直しで求め直す)。"
+  "盤の行の集計(ClusterState.board-tally): rows = 行の数・bytes = 行の size の合計・expiring = 期限つきの行の数・floor = 期限つきの
+   行の期限の下限(epoch ms — どの期限つきの行の expires-ms もこれより前でない・期限つきの行が無ければ None)。盤の書きごとに
+   cluster_policy.board-written が足し引きして持ち回る(全行を読み直さない)。保存しない(読み直しで求め直す)。
+   floor は下限で、ちょうどいちばん早い期限とは限らない: 書きは期限を足すたびに小さい方を取り、消し・期限の延ばしでは動かさない
+   (いちばん早い行を消すたびに全行を読み直さない)。期限の来た行の掃除(cluster_policy.sweep-board)は、floor が来るまで全行を読まず、
+   来た時に全行を読んで期限の来た行を消し、floor を残りのいちばん早い期限に求め直す。"
   (#^ int rows)
   (#^ int bytes)
-  (#^ int expiring))
+  (#^ int expiring)
+  (#^ (| int None) floor))
 
 
 (defrecord BoardUsage

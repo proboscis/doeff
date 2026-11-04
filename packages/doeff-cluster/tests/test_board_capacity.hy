@@ -260,8 +260,14 @@
 
 (defk tally-matches-all-rows [state]
   {:pre [(: state ClusterState)] :post [(: % bool)] :tags {:context "doeff-cluster-test" :role "judgment"}}
-  "持ち回った集計が、盤の全行から求め直した集計と同じか。"
-  (and (is-not state.board-tally None) (= state.board-tally (board-tally-of state.board))))
+  "持ち回った集計が、盤の全行から求め直した集計と同じか(期限の下限 floor は、全行のいちばん早い期限より後でなく、期限つきの行が
+   在る時だけ持つ)。"
+  (val kept state.board-tally)
+  (val fresh (board-tally-of state.board))
+  (and (is-not kept None)
+       (= #(kept.rows kept.bytes kept.expiring) #(fresh.rows fresh.bytes fresh.expiring))
+       (= (is kept.floor None) (is fresh.floor None))
+       (or (is fresh.floor None) (<= kept.floor fresh.floor))))
 
 (defclass CountingTable [Table]
   "全行を読んだ回数を数える Table(行の引き .row と書き with-writes は数えない)。"
