@@ -1,0 +1,24 @@
+# 上に載る系の準備の script が落ちても、機体の仕事を受ける worker を起こす差(機体の dir が components で読む)。この dir だけでは当てない。
+# 雛形の起動は script の非 0 で止まる。余りの空きで上に載る系の仕事を受ける機体は機体の仕事が先なので、準備の失敗(網の止まり・script の
+# 誤り)と止まり(上限 600 秒)で機体の常駐の job を止めない。一からの準備の測り(2026-11-04)は helios 417 秒・atlas 853 秒で、2 回目からは差分:
+# - 能力を機体の 2 つだけに戻して起動する。上に載る系の仕事は置かれず、その job は置き先の無い job として見回りに出る。
+# - 次の起動でまた準備を走らせる(準備の途中の物は残し、差分から続ける — atlas が一からになった時も次の起動で揃う)。
+# 能力の値は ../host-only と同じ。雛形の起動の行が変わったら、test の操作が組み立てを止める。
+apiVersion: kustomize.config.k8s.io/v1alpha1
+kind: Component
+patches:
+  - target: { group: apps, version: v1, kind: Deployment, name: doeff-worker }
+    patch: |-
+      - op: test
+        path: /spec/template/spec/containers/0/args/2
+        value: >-
+          if [ -f /opt/worker-prepare/prepare.sh ]; then sh /opt/worker-prepare/prepare.sh; fi
+          && export PATH="$HOME/.local/bin:$PATH" && WORKER_DOEFF_COMMIT="$$(cat "$WORKER_VERSION_FILE")"
+          && export WORKER_DOEFF_COMMIT && exec /opt/worker-boot.sh
+      - op: replace
+        path: /spec/template/spec/containers/0/args/2
+        value: >-
+          if [ -f /opt/worker-prepare/prepare.sh ]; then timeout 600 sh /opt/worker-prepare/prepare.sh
+          || { echo "worker: 準備の script が落ちた($$?)— 機体の能力だけで起動する" >&2; export WORKER_PROVIDES="host-$NODE_NAME,host-systemd-readable"; }; fi
+          && export PATH="$HOME/.local/bin:$PATH" && WORKER_DOEFF_COMMIT="$$(cat "$WORKER_VERSION_FILE")"
+          && export WORKER_DOEFF_COMMIT && exec /opt/worker-boot.sh
