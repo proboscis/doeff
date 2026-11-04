@@ -50,6 +50,14 @@ class WorkspaceRoom:
     spare: int
 
 @dataclass(frozen=True, kw_only=True)
+class AttachedWorkspaceVolume:
+    owner: str
+    used_at: float
+
+    def __post_init__(self) -> None:
+        ...
+
+@dataclass(frozen=True, kw_only=True)
 class CoolingSweep:
     slots: int
     cooled: tuple[str, ...]
@@ -101,6 +109,10 @@ class ReadWorkspacePlace(EffectBase[WorkspacePlace]):
 
 @dataclass(frozen=True)
 class ReadWorkspaceRoom(EffectBase[WorkspaceRoom]):
+    __record_spec__: ClassVar[RecordSpec]
+
+@dataclass(frozen=True)
+class ReadAttachedWorkspaceVolumes(EffectBase[tuple[AttachedWorkspaceVolume, ...]]):
     __record_spec__: ClassVar[RecordSpec]
 
 @dataclass(frozen=True)

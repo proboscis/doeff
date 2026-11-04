@@ -6,6 +6,7 @@ from dataclasses import dataclass as dataclass
 from dataclasses import replace as replace
 from datetime import datetime as datetime
 from doeff_time import GetTime as GetTime
+from doeff_cluster._shared.intent.workspace_volume_model import AttachedWorkspaceVolume as AttachedWorkspaceVolume
 from doeff_cluster._shared.intent.workspace_volume_model import AttachWorkspaceVolume as AttachWorkspaceVolume
 from doeff_cluster._shared.intent.workspace_volume_model import CoolIdleWorkspaceVolumes as CoolIdleWorkspaceVolumes
 from doeff_cluster._shared.intent.workspace_volume_model import CoolingSweep as CoolingSweep
@@ -14,6 +15,7 @@ from doeff_cluster._shared.intent.workspace_volume_model import CreateWorkspaceV
 from doeff_cluster._shared.intent.workspace_volume_model import DetachWorkspaceVolume as DetachWorkspaceVolume
 from doeff_cluster._shared.intent.workspace_volume_model import MountWorkspaceVolume as MountWorkspaceVolume
 from doeff_cluster._shared.intent.workspace_volume_model import PurgeWorkspaceVolume as PurgeWorkspaceVolume
+from doeff_cluster._shared.intent.workspace_volume_model import ReadAttachedWorkspaceVolumes as ReadAttachedWorkspaceVolumes
 from doeff_cluster._shared.intent.workspace_volume_model import ReadWorkspacePlace as ReadWorkspacePlace
 from doeff_cluster._shared.intent.workspace_volume_model import ReadWorkspaceRoom as ReadWorkspaceRoom
 from doeff_cluster._shared.intent.workspace_volume_model import UmountWorkspaceVolume as UmountWorkspaceVolume
@@ -91,9 +93,6 @@ def sim_created(world: WorkspaceVolumeWorld, owner: str) -> _Program[WorkspaceOu
 def sim_slots(world: WorkspaceVolumeWorld) -> _Program[int, object]:
     ...
 
-def sim_attached(world: WorkspaceVolumeWorld, owner: str) -> _Program[WorkspaceOutcome, object]:
-    ...
-
 def sim_filled(target: str) -> _Program[bool, object]:
     ...
 
@@ -119,6 +118,9 @@ def sim_idle_cooled(world: WorkspaceVolumeWorld) -> _Program[CoolingSweep, objec
     ...
 
 def sim_room(world: WorkspaceVolumeWorld) -> _Program[WorkspaceRoom, object]:
+    ...
+
+def sim_attached(world: WorkspaceVolumeWorld) -> _Program[tuple[AttachedWorkspaceVolume, ...], object]:
     ...
 
 def held_workspace_volumes(world: WorkspaceVolumeWorld) -> _Handler:

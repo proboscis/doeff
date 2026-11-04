@@ -26,6 +26,7 @@ from doeff_core_effects import HttpResponse as HttpResponse
 from doeff_time import Delay as Delay
 from doeff_time import GetMonotonic as GetMonotonic
 from doeff_time import GetTime as GetTime
+from doeff_cluster._shared.intent.workspace_volume_model import AttachedWorkspaceVolume as AttachedWorkspaceVolume
 from doeff_cluster._shared.intent.workspace_volume_model import AttachWorkspaceVolume as AttachWorkspaceVolume
 from doeff_cluster._shared.intent.workspace_volume_model import CoolIdleWorkspaceVolumes as CoolIdleWorkspaceVolumes
 from doeff_cluster._shared.intent.workspace_volume_model import CoolingSweep as CoolingSweep
@@ -34,6 +35,7 @@ from doeff_cluster._shared.intent.workspace_volume_model import CreateWorkspaceV
 from doeff_cluster._shared.intent.workspace_volume_model import DetachWorkspaceVolume as DetachWorkspaceVolume
 from doeff_cluster._shared.intent.workspace_volume_model import MountWorkspaceVolume as MountWorkspaceVolume
 from doeff_cluster._shared.intent.workspace_volume_model import PurgeWorkspaceVolume as PurgeWorkspaceVolume
+from doeff_cluster._shared.intent.workspace_volume_model import ReadAttachedWorkspaceVolumes as ReadAttachedWorkspaceVolumes
 from doeff_cluster._shared.intent.workspace_volume_model import ReadWorkspacePlace as ReadWorkspacePlace
 from doeff_cluster._shared.intent.workspace_volume_model import ReadWorkspaceRoom as ReadWorkspaceRoom
 from doeff_cluster._shared.intent.workspace_volume_model import UmountWorkspaceVolume as UmountWorkspaceVolume
@@ -281,6 +283,15 @@ class AttachmentWire:
     status: AttachmentStatusWire | None = None
 
 @dataclass(frozen=True, kw_only=True)
+class AttachmentItemWire:
+    metadata: NamedMetaWire
+    spec: AttachmentSpecWire | None = None
+
+@dataclass(frozen=True, kw_only=True)
+class AttachmentListWire:
+    items: tuple[AttachmentItemWire, ...] | None = None
+
+@dataclass(frozen=True, kw_only=True)
 class Placing:
     failed: bool
     note: str
@@ -494,6 +505,12 @@ def longhorn_percentage(site: WorkspaceVolumeSite, owner: str, doing: str, setti
     ...
 
 def workspace_room(site: WorkspaceVolumeSite) -> _Program[WorkspaceRoom, object]:
+    ...
+
+def ticketed_names(site: WorkspaceVolumeSite, owner: str, doing: str, node: str) -> _Program[frozenset[str], object]:
+    ...
+
+def attached_volumes(site: WorkspaceVolumeSite) -> _Program[tuple[AttachedWorkspaceVolume, ...], object]:
     ...
 
 def idle_cooling(site: WorkspaceVolumeSite) -> _Program[CoolingSweep, object]:
