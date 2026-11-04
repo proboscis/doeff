@@ -36,9 +36,10 @@
 (import doeff_core_effects [scripted-proc-table-handler])
 (import doeff_time [DelayEffect SimClock sim-time-handler])
 (import doeff_cluster [now-epoch-ms])
-(import doeff_cluster._worker.core.memory_rules [JobRoot JobSteady KillUnit MemoryLevel MemoryLimits MIB UnitKind _job-uses _kill-units
+(import doeff_cluster._worker.core.memory_rules [JobRoot JobSteady KillUnit MemoryLevel MemoryLimits MIB UnitKind _job-uses _job-walks _kill-units largest-outside
                                                 spared-steady steady-sizes victim-of])
 (import doeff_cluster [ObserveJobRoots])
+(import doeff_cluster._worker.core.eviction_rules [layout-layer-names])
 (import doeff_cluster._worker.protocol.memory_watch [MemoryWatchSettings MemoryCell memory-watch-loop MEMORY-WINDOW-LOG JOB-PEAK-LOG
                                                    MEMORY-LEVEL-LOG MEMORY-KILL-LOG MEMORY-NO-VICTIM-LOG MEMORY-UNREAD-LOG MEMORY-SWARM-KILL-LOG])
 
@@ -469,3 +470,62 @@
              #(#("svc" 11 3205 3 3)))
           kills)
   (assert (< spent (* 1.0 deadline-scale-factor)) #(spent deadline-scale-factor)))
+
+
+(defk layered-files [available-gib]
+  {:pre [(: available-gib float)] :post [(: % MemoryFiles)] :tags {:context "doeff-cluster-test" :role "judgment"}}
+  "node-files に、層 worker(1024 MiB)と jobs(512 MiB)の memory.current を足すため(層 exec の file は置かない — 読めない層)。"
+  (<- files MemoryFiles (node-files available-gib))
+  (MemoryFiles :dirs (+ files.dirs #("/sys/fs/cgroup/worker" "/sys/fs/cgroup/jobs"))
+               :files (+ files.files #((MemoryFile :path "/sys/fs/cgroup/worker/memory.current" :content (.encode (str (* 1024 MIB))))
+                                       (MemoryFile :path "/sys/fs/cgroup/jobs/memory.current" :content (.encode (str (* 512 MIB))))))))
+
+
+(defk watched-with-exec [settings files run-until-ms]
+  {:pre [(: settings MemoryWatchSettings) (: files MemoryFiles) (: run-until-ms int)] :post [(: % WatchSeen)]
+   :tags {:context "doeff-cluster-test" :role "program"}}
+  "watched と同じ事を、台本の表(world-rows)に job の木の外の kubectl exec の命令 grep(pid 30・init の子・900 MiB)を足して回すため。"
+  (<- rows tuple (world-rows))
+  (<- grep ProcRow (row 30 1 900 "grep"))
+  (val cell (MemoryCell))
+  (<- seen WatchSeen (with-handlers [(state) (sim-time-handler :clock (SimClock)) (memory-file-handler files)
+                                     (scripted-proc-table-handler (+ rows #(grep))) (memory-world cell None run-until-ms)]
+                       (watch-then-seen settings cell)))
+  seen)
+
+
+(deftest test-the-watch-logs-each-layer-and-the-largest-process-outside-the-job-trees
+  ;; 失敗ケース(11-04 12:59 UTC の zeus): kubectl exec の grep 2 本が init の層で 69 GB を持ち、見張りは「尽きかけだが止める単位が無い」と
+  ;; 言うだけで、どの層の誰が食ったかを残さなかった(kernel が OOM で止めた 1 本しか記録が無い)。最大の行・様子の行・止める単位の無い行に、
+  ;; 層ごとの memory.current(宣言の順・読めない層は ?)と、job の木の外で rss のいちばん大きい process(init の 1 MiB より大きい grep)を出す。
+  (val settings (MemoryWatchSettings :window-seconds 10.0 :layers #("worker" "exec" "jobs")))
+  (<- calm-files MemoryFiles (layered-files 16.0))
+  (<- calm WatchSeen (watched-with-exec settings calm-files 31000))
+  (<- windows tuple (lines-named calm.lines MEMORY-WINDOW-LOG))
+  (assert windows calm.lines)
+  (for [w windows]
+    (assert (= #((get w "layers") (get w "outside_largest")) #("worker=1024 exec=? jobs=512" "30:grep=900")) w))
+  ;; 尽きかけ: 様子の行と、job の単位を止め尽くした後の止める単位の無い行も同じ欄を持つ。木の外の grep は止めない(kernel の上限の仕事)。
+  (<- danger-files MemoryFiles (layered-files 1.6))
+  (<- danger WatchSeen (watched-with-exec settings danger-files 26000))
+  (<- levels tuple (lines-named danger.lines MEMORY-LEVEL-LOG))
+  (<- spared tuple (lines-named danger.lines MEMORY-NO-VICTIM-LOG))
+  (assert (and levels spared) danger.lines)
+  (for [told (+ levels spared)]
+    (assert (= #((get told "layers") (get told "outside_largest")) #("worker=1024 exec=? jobs=512" "30:grep=900")) told))
+  (assert (in 30 (sfor r danger.table r.pid)) danger.table))
+
+
+(deftest test-the-largest-process-outside-the-job-trees-skips-every-tree-member
+  ;; job の木の中の 2000 MiB の道具は木の外の最大に数えない。木の外が無ければ None。
+  (<- rows tuple (world-rows))
+  (<- grep ProcRow (row 30 1 900 "grep"))
+  (val roots #((JobRoot :name "svc" :pid 10) (JobRoot :name "task/1" :pid 20)))
+  (<- walks tuple (_job-walks (+ rows #(grep)) roots))
+  (<- largest (| ProcRow None) (largest-outside (+ rows #(grep)) walks))
+  (assert (= #(largest.pid largest.comm) #(30 "grep")) largest)
+  (<- inside-only tuple (_job-walks (cut rows 1 None) roots))
+  (<- none (| ProcRow None) (largest-outside (cut rows 1 None) inside-only))
+  (assert (is none None) none)
+  (<- names tuple (layout-layer-names "worker:memory.min=2G,cpu.weight=1000 jobs:memory.max=1G exec:memory.max=1G worker:cpu.weight=1"))
+  (assert (= names #("worker" "jobs" "exec")) names))
