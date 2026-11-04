@@ -1532,3 +1532,22 @@ def test_other_workers_keep_tmp_in_the_container(rendered: list[Manifest], name:
     """zeus 以外の機体の worker は /tmp を mount しない(container の書き層のまま — 機体ごとの差は機体の dir だけが持つ)。"""
     mounts = [_mapping(m, "volumeMount") for m in _sequence(_container(_worker_on(rendered, name)).get("volumeMounts", []), "volumeMounts")]
     assert not [m for m in mounts if m["mountPath"] == "/tmp"], mounts
+
+
+# atlas の worker は job の cwd の根を Garage の bay の HDD の下へ出す(boot.sh の jobs_root_link)。根の SSD の寿命を延ばすため。
+ATLAS_JOBS_ROOT = "/work/job-scratch"
+
+
+def test_atlas_keeps_the_jobs_of_the_worker_on_the_hdd(rendered: list[Manifest]) -> None:
+    """dir は type Directory: HDD が mount されていない時に黙って根の SSD へ書かず、Pod が起動で止まる。"""
+    worker = _worker_on(rendered, "atlas")
+    assert _env_value(worker, "WORKER_JOBS_ROOT")["value"] == ATLAS_JOBS_ROOT
+    mount = _mount_at(worker, ATLAS_JOBS_ROOT)
+    host_path = _mapping(_volume(worker, str(mount["name"]))["hostPath"], "hostPath")
+    assert host_path == {"path": "/mnt/garage/g5/agent-worker-jobs", "type": "Directory"}
+
+
+@pytest.mark.parametrize("name", [node for node in NODES if node != "atlas"])
+def test_other_workers_keep_the_jobs_in_the_generation_dir(rendered: list[Manifest], name: str) -> None:
+    """atlas 以外の機体の worker は job の cwd の根を動かさない(HDD の無い機体の宣言に紛れないように)。"""
+    assert "WORKER_JOBS_ROOT" not in [entry["name"] for entry in _env(_worker_on(rendered, name))]

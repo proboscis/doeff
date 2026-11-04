@@ -935,6 +935,27 @@ fi
 if [ -n "${WORKER_VERSION_FILE:-}" ] && [ -z "${DOEFF_WORKER_GENERATION:-}" ]; then
   keeper_run
 fi
+# WORKER_JOBS_ROOT(機体の宣言が別の disk を mount した dir・無ければ今までどおり世代の dir の下): job の cwd の根を世代ごとに
+# $WORKER_JOBS_ROOT/<世代> へ出し、世代の状態の dir の jobs をそこへの symlink にする。job の作業 dir(clone・venv・build の生成物・一時
+# file)は書きの量の大半で、消えてよい物なので、寿命の尽きる根の SSD から外せる。worker の本体の状態の file は根の disk に残すので、
+# 別の disk が混んでも本体の拍は待たない。退けた作業 dir の置き場は jobs の下なので、名の付け替えは今までどおり同じ file system の中で済む。
+jobs_root_link() {  # $1 = 世代の名 $2 = 世代の状態の dir
+  [ -n "${WORKER_JOBS_ROOT:-}" ] || return 0
+  mkdir -p "$WORKER_JOBS_ROOT/$1" "$2"
+  ln -sfn "$WORKER_JOBS_ROOT/$1" "$2/jobs"
+}
+generation_dir_drop() {  # $1 = 世代の dir
+  rm -rf "$1"
+  if [ -n "${WORKER_JOBS_ROOT:-}" ]; then rm -rf "${WORKER_JOBS_ROOT:?}/${1##*/}"; fi
+}
+jobs_root_sweep() {  # $1 = 世代の dir の根 — 世代の dir の無い置き場(消す途中で Pod が止まった世代の残り)を消す
+  [ -n "${WORKER_JOBS_ROOT:-}" ] || return 0
+  for place in "$WORKER_JOBS_ROOT"/*; do
+    [ -d "$place" ] && [ ! -d "$1/${place##*/}" ] || continue
+    rm -rf "$place"
+    echo "boot: 世代の dir の無い job の置き場 $place を消した" >&2
+  done
+}
 state_dir=$WORK_DIR/state
 # 前の世代の worker がまだ走っている(その dir の錠が持たれている)なら、worker に --overlaps-elder を渡す — coordinator は新しい世代の
 # 名乗りを前の世代の終わりの印と数えず、前の世代の process の lease を外さない(AL-D2e)。
@@ -953,12 +974,12 @@ if [ "${WORKER_GENERATION_DIRS:-}" = 1 ]; then
   for gen_dir in "$gen_root"/*; do
     [ -d "$gen_dir" ] && [ "$gen_dir" != "$gen_root/$generation" ] || continue
     if flock -n "$gen_dir/worker.lock" true 2>/dev/null; then
-      rm -rf "$gen_dir"
+      generation_dir_drop "$gen_dir"
       echo "boot: worker の終わった前の世代の dir $gen_dir を消した" >&2
     else
       echo "boot: 前の世代の dir $gen_dir はその worker が終わった後に消す" >&2
       overlaps_elder=--overlaps-elder
-      (flock "$gen_dir/worker.lock" rm -rf "$gen_dir" 9>&- && echo "boot: worker の終わった前の世代の dir $gen_dir を消した" >&2) 9>&- &
+      (flock "$gen_dir/worker.lock" true 9>&- && generation_dir_drop "$gen_dir" && echo "boot: worker の終わった前の世代の dir $gen_dir を消した" >&2) 9>&- &
     fi
   done
   # 世代の dir を使う前の worker(WORKER_DIR_LOCK — $WORK_DIR/worker.lock を持ち、$WORK_DIR/state を状態の dir にした)が置いた世代ごとの物
@@ -979,6 +1000,8 @@ if [ "${WORKER_GENERATION_DIRS:-}" = 1 ]; then
     ) 9>&- &
   fi
   state_dir=$gen_root/$generation/state
+  jobs_root_sweep "$gen_root"
+  jobs_root_link "$generation" "$state_dir"
   echo "boot: 世代の dir $state_dir(分け合う dir $WORK_DIR/state)${overlaps_elder:+ — 前の世代がまだ走っている}" >&2
 elif [ "${WORKER_DIR_LOCK:-}" = 1 ]; then
   exec 9>"$WORK_DIR/worker.lock"
