@@ -283,7 +283,7 @@ SPIRE_LAST_LINES = (
     "  -> ('win', 4) ('win', 4) same: True tape: 32 answers",
     "4. a Monte Carlo bot on seed 3",
     "  -> ('win', 4)",
-    "5. 100 fights in parallel: random bot vs Monte Carlo bot",
+    "5. 100 fights, one task each: random bot vs Monte Carlo bot",
     "  -> random bot wins 0.73",
     "  -> monte carlo wins 1.0",
     "6. damage by card over 100 random fights",
