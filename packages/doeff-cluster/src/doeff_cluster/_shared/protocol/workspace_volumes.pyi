@@ -18,11 +18,13 @@ from doeff_core_effects import ReadDiskUsage as ReadDiskUsage
 from doeff_core_effects import ReadText as ReadText
 from doeff_core_effects import RemoveTree as RemoveTree
 from doeff_core_effects import RenamePath as RenamePath
+from doeff_core_effects import WriteBytes as WriteBytes
 from doeff_core_effects import StatPath as StatPath
 from doeff_core_effects import WriteText as WriteText
 from doeff_core_effects import HttpFailed as HttpFailed
 from doeff_core_effects import HttpRequest as HttpRequest
 from doeff_core_effects import HttpResponse as HttpResponse
+from doeff_core_effects import slog as slog
 from doeff_time import Delay as Delay
 from doeff_time import GetMonotonic as GetMonotonic
 from doeff_time import GetTime as GetTime
@@ -41,6 +43,7 @@ from doeff_cluster._shared.intent.workspace_volume_model import ReadWorkspaceRoo
 from doeff_cluster._shared.intent.workspace_volume_model import UmountWorkspaceVolume as UmountWorkspaceVolume
 from doeff_cluster._shared.intent.workspace_volume_model import WorkspaceOutcome as WorkspaceOutcome
 from doeff_cluster._shared.intent.workspace_volume_model import WorkspacePlace as WorkspacePlace
+from doeff_cluster._shared.intent.workspace_volume_model import WorkspaceClusterUnreachable as WorkspaceClusterUnreachable
 from doeff_cluster._shared.intent.workspace_volume_model import WorkspaceRoom as WorkspaceRoom
 from doeff_cluster._shared.intent.workspace_volume_model import WorkspaceRoomShort as WorkspaceRoomShort
 from doeff_cluster._shared.intent.workspace_volume_model import WorkspaceVolumeRefused as WorkspaceVolumeRefused
@@ -71,11 +74,16 @@ from doeff_cluster._shared.core.workspace_volume_rules import using_tickets as u
 from doeff_cluster._shared.core.workspace_volume_rules import volume_mount_points as volume_mount_points
 from doeff_cluster._shared.core.workspace_volume_rules import volume_name as volume_name
 from doeff_cluster._shared.core.workspace_volume_rules import volume_of_entry as volume_of_entry
+from doeff_cluster._shared.intent.supplied_model import WorkerFactMissing as WorkerFactMissing
+from doeff_cluster._shared.core.clock import datetime_of_epoch_ms as datetime_of_epoch_ms
+from doeff_cluster._shared.core.clock import now_epoch_ms as now_epoch_ms
+from doeff_cluster._shared.protocol.supplied_values import FILE_MODE as FILE_MODE
 from doeff_cluster._shared.protocol.supplied_values import KUBE_API as KUBE_API
 from doeff_cluster._shared.protocol.supplied_values import REFUSAL_BODY_LIMIT as REFUSAL_BODY_LIMIT
 from doeff_cluster._shared.protocol.supplied_values import REQUEST_TIMEOUT_SECONDS as REQUEST_TIMEOUT_SECONDS
 from doeff_cluster._shared.protocol.supplied_values import SERVICE_ACCOUNT_TOKEN_FILE as SERVICE_ACCOUNT_TOKEN_FILE
 from doeff_cluster._shared.protocol.supplied_values import kube_headers as kube_headers
+from doeff_cluster._shared.protocol.supplied_values import private_dirs as private_dirs
 from doeff_cluster._shared.protocol.supplied_values import service_account_text as service_account_text
 from doeff_cluster._shared.protocol.supplied_values import status_field as status_field
 from doeff_cluster._shared.protocol.supplied_values import text_field as text_field
@@ -83,6 +91,7 @@ from doeff_cluster._shared.protocol.supplied_values import worker_fact as worker
 WORKSPACE_SITE: WorkspaceVolumeSite
 LONGHORN_API: str
 SETTINGS_KEY: str
+HELD_SETTINGS_DIR: str
 JSON_TYPE: str
 MERGE_PATCH_TYPE: str
 CLASS_PARAMETERS: frozenset[str]
@@ -329,6 +338,12 @@ def checked_name(owner: str, doing: str) -> _Program[str, object]:
 def kube_answer(owner: str, doing: str, method: str, path: str, body: str | None, content_type: str) -> _Program[HttpResponse, object]:
     ...
 
+def unreachable(owner: str, doing: str, reason: str) -> _Program[WorkspaceClusterUnreachable, object]:
+    ...
+
+def hyx_cluster_faultedXquestion_markX(status: int) -> _Program[bool, object]:
+    ...
+
 def status_refusal(owner: str, doing: str, what: str, answer: HttpResponse) -> _Program[WorkspaceVolumeRefused, object]:
     ...
 
@@ -342,6 +357,23 @@ def attachment_path(site: WorkspaceVolumeSite, name: str) -> _Program[str, objec
     ...
 
 def workspace_settings(site: WorkspaceVolumeSite, owner: str) -> _Program[SettingsWire, object]:
+    ...
+
+@dataclass(frozen=True, kw_only=True)
+class HeldSettingsWire:
+    read_at_ms: int
+    text: str
+
+def work_root() -> _Program[str | None, object]:
+    ...
+
+def held_settings_path(root: str, site: WorkspaceVolumeSite) -> _Program[str, object]:
+    ...
+
+def settings_held(site: WorkspaceVolumeSite, text: str) -> _Program[None, object]:
+    ...
+
+def held_settings_text(site: WorkspaceVolumeSite, detail: str) -> _Program[str | None, object]:
     ...
 
 def class_parameters(owner: str, class_name: str) -> _Program[dict[str, str], object]:

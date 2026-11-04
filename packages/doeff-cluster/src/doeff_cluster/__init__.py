@@ -583,6 +583,7 @@ if TYPE_CHECKING:
     from doeff_cluster._shared.intent.workspace_volume_model import CoolingSweep as CoolingSweep
     from doeff_cluster._shared.intent.workspace_volume_model import WorkspaceRoom as WorkspaceRoom
     from doeff_cluster._shared.intent.workspace_volume_model import WorkspaceRoomShort as WorkspaceRoomShort
+    from doeff_cluster._shared.intent.workspace_volume_model import WorkspaceClusterUnreachable as WorkspaceClusterUnreachable
     from doeff_cluster._shared.intent.workspace_volume_model import WorkspacePlace as WorkspacePlace
     from doeff_cluster._shared.intent.semaphore_model import LEASE_MAX_TTL_MS as LEASE_MAX_TTL_MS
     from doeff_cluster._shared.intent.semaphore_model import LOST as LOST
@@ -1340,6 +1341,7 @@ _LAZY_EXPORTS: dict[str, str] = {
     "CoolingSweep": "doeff_cluster._shared.intent.workspace_volume_model",
     "WorkspaceRoom": "doeff_cluster._shared.intent.workspace_volume_model",
     "WorkspaceRoomShort": "doeff_cluster._shared.intent.workspace_volume_model",
+    "WorkspaceClusterUnreachable": "doeff_cluster._shared.intent.workspace_volume_model",
     "WorkspacePlace": "doeff_cluster._shared.intent.workspace_volume_model",
     "LEASE_MAX_TTL_MS": "doeff_cluster._shared.intent.semaphore_model",
     "LOST": "doeff_cluster._shared.intent.semaphore_model",

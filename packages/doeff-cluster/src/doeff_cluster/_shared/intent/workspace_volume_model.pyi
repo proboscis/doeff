@@ -38,6 +38,9 @@ class WorkspaceVolumeSite:
 class WorkspaceVolumeRefused(RuntimeError):
     ...
 
+class WorkspaceClusterUnreachable(WorkspaceVolumeRefused):
+    ...
+
 class WorkspaceRoomShort(WorkspaceVolumeRefused):
     fresh: bool
 

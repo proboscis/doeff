@@ -21,6 +21,7 @@ from doeff_cluster._shared.intent.workspace_volume_model import ReadWorkspaceRoo
 from doeff_cluster._shared.intent.workspace_volume_model import UmountWorkspaceVolume as UmountWorkspaceVolume
 from doeff_cluster._shared.intent.workspace_volume_model import WorkspaceOutcome as WorkspaceOutcome
 from doeff_cluster._shared.intent.workspace_volume_model import WorkspacePlace as WorkspacePlace
+from doeff_cluster._shared.intent.workspace_volume_model import WorkspaceClusterUnreachable as WorkspaceClusterUnreachable
 from doeff_cluster._shared.intent.workspace_volume_model import WorkspaceRoom as WorkspaceRoom
 from doeff_cluster._shared.intent.workspace_volume_model import WorkspaceRoomShort as WorkspaceRoomShort
 from doeff_cluster._shared.intent.workspace_volume_model import WorkspaceVolumeRefused as WorkspaceVolumeRefused

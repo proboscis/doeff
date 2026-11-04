@@ -47,7 +47,13 @@
 ;;; 無い名の作成(空で作らない)・上限の秒の内に戻らない・使っている volume と戻す途中の volume を冷やす・snapshot か backup が失敗した・冷やす
 ;;; 途中に使い始めた(消さない)・volume の在る名と最後の backup から keepDays の内の名の backup を消す。置き場の不足は型を分ける
 ;;; (WorkspaceRoomShort — WorkspaceVolumeRefused の子): 作る前の数えで札の disk が受けられない・付ける時か戻す時に Longhorn が replica を
-;;; 置けない(中身の無い volume は消してから断る)。fresh = 持ち主が中身を持たないか(呼び手が空の場所に落としてよいかを決める)。
+;;; 置けない(中身の無い volume は消してから断る)。fresh = 持ち主が中身を持たないか(呼び手が空の場所に落としてよいかを決める)。区画の基盤の
+;;; 止まりも型を分ける(WorkspaceClusterUnreachable — WorkspaceVolumeRefused の子): API server に届かない・API server が 5xx か 429 で答えた
+;;; (分けるのは API server の答えを読む 2 か所 kube-answer と status-refusal だけ — 呼び手は文を読まずに型で分け、間を置いて出し直す)。
+;;;
+;;; 値の ConfigMap の写し: 値の ConfigMap を読めた時に、workspace-volume.json の字と読んだ刻を <作業の根>/workspace-volume-held/<namespace>/
+;;; <名>.json(0600・置き換えで書く・dir は 0700)に持ち、API server に届かない・5xx か 429 の時だけ、その写しで答える(読んだ刻を warning の
+;;; 1 行に出す)。届いて断られた時(404 ほか)と、写しが無い・読めない時は今と同じく断る。作業の根の分からない worker は写しを持たない。
 ;;; 作る前の数えと作りの間の競り(同じ disk に別の持ち主の作りが並ぶ・Pod の入れ替えで 2 つの世代の worker が並ぶ)は数えでは除けない —
 ;;; 負けた側は付ける時に Longhorn の「置けない」を読み、中身の無い volume を消して同じ断りで答える(faulted の volume を残さない)。
 ;;;
@@ -63,23 +69,26 @@
 (import posixpath)
 (import urllib.parse [quote :as url-quote])
 (import doeff_hy._wire [Malformed parse-json parse-json-as])
-(import doeff_core_effects [DiskUsage FileFailed ListDirectory MakeDirectory PathKind PathStat ReadDiskUsage ReadText RemoveTree RenamePath
+(import doeff_core_effects [DiskUsage FileFailed ListDirectory MakeDirectory PathKind PathStat ReadDiskUsage ReadText RemoveTree RenamePath WriteBytes
                             StatPath WriteText])
-(import doeff_core_effects [HttpFailed HttpRequest HttpResponse])
+(import doeff_core_effects [HttpFailed HttpRequest HttpResponse slog])
 (import doeff_time [Delay GetMonotonic GetTime])
 (import doeff_cluster._shared.intent.workspace_volume_model [AttachedWorkspaceVolume AttachWorkspaceVolume CoolIdleWorkspaceVolumes CoolingSweep
                                                            CoolWorkspaceVolume CreateWorkspaceVolume DetachWorkspaceVolume
                                                            MountWorkspaceVolume PurgeWorkspaceVolume ReadAttachedWorkspaceVolumes ReadWorkspacePlace
                                                            ReadWorkspaceRoom UmountWorkspaceVolume WorkspaceOutcome WorkspacePlace
-                                                           WorkspaceRoom WorkspaceRoomShort WorkspaceVolumeRefused WorkspaceVolumeSite])
+                                                           WorkspaceClusterUnreachable WorkspaceRoom WorkspaceRoomShort WorkspaceVolumeRefused
+                                                           WorkspaceVolumeSite])
 (import doeff_cluster._shared.intent.supplied_model [WorkerFactName])
 (import doeff_cluster._shared.core.workspace_volume_rules [AttachStep AttachView BackupView DetachStep DiskRoom MountEntry
                                                          NAME-PREFIX USED-AT-KEY WarmVolume attach-step cooling-name growing-name
                                                          cooling-order detach-step free-slots mount-entries mounted-at
                                                          newest-backup owner-refusal ticket-id TICKET-TYPE using-tickets
                                                          volume-mount-points volume-name volume-of-entry])
-(import doeff_cluster._shared.protocol.supplied_values [KUBE-API REFUSAL-BODY-LIMIT REQUEST-TIMEOUT-SECONDS SERVICE-ACCOUNT-TOKEN-FILE
-                                                      kube-headers service-account-text status-field text-field worker-fact])
+(import doeff_cluster._shared.intent.supplied_model [WorkerFactMissing])
+(import doeff_cluster._shared.core.clock [datetime-of-epoch-ms now-epoch-ms])
+(import doeff_cluster._shared.protocol.supplied_values [FILE-MODE KUBE-API REFUSAL-BODY-LIMIT REQUEST-TIMEOUT-SECONDS SERVICE-ACCOUNT-TOKEN-FILE
+                                                      kube-headers private-dirs service-account-text status-field text-field worker-fact])
 
 (val MODULE-TAGS {:context "doeff-cluster" :role "protocol"})
 
@@ -101,6 +110,8 @@
 (val LONGHORN-API "/apis/longhorn.io/v1beta2")
 ;; 値の ConfigMap の鍵(kustomization の configMapGenerator が file の名をそのまま鍵にする)。
 (val SETTINGS-KEY "workspace-volume.json")
+;; 値の ConfigMap の写しの dir の名(作業の根の下 — 頭の註)。
+(val HELD-SETTINGS-DIR "workspace-volume-held")
 (val JSON-TYPE "application/json")
 (val MERGE-PATCH-TYPE "application/merge-patch+json")
 ;; 級の parameters のうち、volume の欄へ写す物(README の写し方の表)。ほかの parameter は黙って捨てずに断る(級を替えた時に写しを足す)。
@@ -475,16 +486,33 @@
       (HttpRequest method (+ KUBE-API path) :headers headers :body body
                    :timeout-seconds REQUEST-TIMEOUT-SECONDS :max-retries 0 :failures-as-values True))
   (when (isinstance answer HttpFailed)
-    (raise (! (refused owner doing (+ "API server に届かない: " (! (text-field answer.detail)))))))
+    (raise (! (unreachable owner doing (+ "API server に届かない: " (! (text-field answer.detail)))))))
   answer)
+
+
+(defk unreachable [owner doing reason]
+  {:pre [(: owner str) (: doing str) (: reason str)] :post [(: % WorkspaceClusterUnreachable)] :tags {:context "doeff-cluster" :role "protocol"}}
+  "区画の基盤の止まり(API server に届かない・5xx か 429 — 頭の註)の断りを、refused と同じ文で作るため。"
+  (<- refusal WorkspaceVolumeRefused (refused owner doing reason))
+  (WorkspaceClusterUnreachable (str refusal)))
+
+
+(defk cluster-faulted? [status]
+  {:pre [(: status int)] :post [(: % bool)] :tags {:context "doeff-cluster" :role "protocol"}}
+  "純粋: API server の答えの status が区画の基盤の止まり(5xx — 例 503「apiserver not ready」・429 — 混んでいて断った)かを決めるため。"
+  (or (>= status 500) (= status 429)))
 
 
 (defk status-refusal [owner doing what answer]
   {:pre [(: owner str) (: doing str) (: what str) (: answer HttpResponse)] :post [(: % WorkspaceVolumeRefused)]
    :tags {:context "doeff-cluster" :role "protocol"}}
-  "API server が what(何の要求か)を思わぬ status で答えた断りを、status と本文の先頭を挙げて作るため。"
-  (! (refused owner doing (.format "{} に API server が {} で答えた: {}" what (! (status-field answer.status))
-                                   (cut (! (text-field answer.text)) 0 REFUSAL-BODY-LIMIT)))))
+  "API server が what(何の要求か)を思わぬ status で答えた断りを、status と本文の先頭を挙げて作るため。5xx と 429 は区画の基盤の止まり
+   WorkspaceClusterUnreachable(頭の註)。"
+  (val status (! (status-field answer.status)))
+  (val reason (.format "{} に API server が {} で答えた: {}" what status (cut (! (text-field answer.text)) 0 REFUSAL-BODY-LIMIT)))
+  (if (! (cluster-faulted? status))
+      (! (unreachable owner doing reason))
+      (! (refused owner doing reason))))
 
 
 (defk malformed-refusal [owner doing what]
@@ -507,21 +535,97 @@
 
 (defk workspace-settings [site owner]
   {:pre [(: site WorkspaceVolumeSite) (: owner str)] :post [(: % SettingsWire)] :tags {:context "doeff-cluster" :role "protocol" :reads "json"}}
-  "値の ConfigMap(site の settings-namespace と settings-name)の workspace-volume.json を読むため(読めない・無い・形が違えば断る)。"
+  "値の ConfigMap(site の settings-namespace と settings-name)の workspace-volume.json を読むため(読めない・無い・形が違えば断る)。読めたら
+   写しを持ち、API server に届かない・5xx か 429(WorkspaceClusterUnreachable)の時だけ、前に読めた写しで答える(頭の註の値の ConfigMap の写し)。"
   (val doing "作成")
   (val what (+ "ConfigMap " site.settings-namespace "/" site.settings-name))
-  (<- answer HttpResponse (kube-answer owner doing "GET" (+ "/api/v1/namespaces/" (url-quote site.settings-namespace :safe "")
-                                                             "/configmaps/" (url-quote site.settings-name :safe ""))
-                                       None JSON-TYPE))
-  (when (!= (! (status-field answer.status)) 200)
-    (raise (! (status-refusal owner doing (+ what " の GET") answer))))
-  (<- held (| ConfigMapWire Malformed) (parse-json ConfigMapWire (! (text-field answer.text))))
-  (when (or (isinstance held Malformed) (not-in SETTINGS-KEY (or held.data {})))
-    (raise (! (malformed-refusal owner doing (+ what " の鍵 " SETTINGS-KEY)))))
-  (<- settings (| SettingsWire Malformed) (parse-json SettingsWire (get held.data SETTINGS-KEY)))
+  (var text None)
+  (var fresh True)
+  (try
+    (<- answer HttpResponse (kube-answer owner doing "GET" (+ "/api/v1/namespaces/" (url-quote site.settings-namespace :safe "")
+                                                               "/configmaps/" (url-quote site.settings-name :safe ""))
+                                         None JSON-TYPE))
+    (when (!= (! (status-field answer.status)) 200)
+      (raise (! (status-refusal owner doing (+ what " の GET") answer))))
+    (<- held (| ConfigMapWire Malformed) (parse-json ConfigMapWire (! (text-field answer.text))))
+    (when (or (isinstance held Malformed) (not-in SETTINGS-KEY (or held.data {})))
+      (raise (! (malformed-refusal owner doing (+ what " の鍵 " SETTINGS-KEY)))))
+    (:= text (get held.data SETTINGS-KEY))
+    (except [error WorkspaceClusterUnreachable]
+      (<- copied (| str None) (held-settings-text site (str error)))
+      (when (is copied None)
+        (raise error))
+      (:= text copied)
+      (:= fresh False)))
+  (<- settings (| SettingsWire Malformed) (parse-json SettingsWire text))
   (when (isinstance settings Malformed)
     (raise (! (malformed-refusal owner doing (+ what " の " SETTINGS-KEY)))))
+  (when fresh
+    (<- (settings-held site text)))
   settings)
+
+
+(defwire HeldSettingsWire
+  "値の ConfigMap の写しの file の中身(頭の註): read-at-ms = API server から読んだ刻(epoch ms)・text = workspace-volume.json の字。"
+  {:tags {:context "doeff-cluster" :role "protocol" :reads "json"} :names :camel :unknown :ignore}
+  (#^ int read-at-ms)
+  (#^ str text))
+
+
+(defk work-root []
+  {:pre [] :post [(: % (| str None))] :tags {:context "doeff-cluster" :role "protocol"}}
+  "値の ConfigMap の写しを置く作業の根を機体の事実から得るため(事実の無い worker は None — 写しを持たない)。"
+  (var root None)
+  (try
+    (<- read str (worker-fact WorkerFactName.WORK_ROOT))
+    (:= root read)
+    (except [WorkerFactMissing]
+      (:= root None)))
+  root)
+
+
+(defk held-settings-path [root site]
+  {:pre [(: root str) (: site WorkspaceVolumeSite)] :post [(: % str)] :tags {:context "doeff-cluster" :role "protocol"}}
+  "純粋: 作業の根 root の下の、値の ConfigMap の写しの file の path を組むため(頭の註)。"
+  (posixpath.join root HELD-SETTINGS-DIR site.settings-namespace (+ site.settings-name ".json")))
+
+
+(defk settings-held [site text]
+  {:pre [(: site WorkspaceVolumeSite) (: text str)] :post [(: % None)] :tags {:context "doeff-cluster" :role "protocol" :spells "json"}}
+  "API server から読めた workspace-volume.json の字 text を、読んだ刻と一緒に写しの file へ置き換えで書くため(頭の註)。書けなければ warning の
+   1 行に残して進む(値は読めている — 次に読めた時に書き直す)。"
+  (<- root (| str None) (work-root))
+  (when (is root None)
+    (return None))
+  (val path (! (held-settings-path root site)))
+  (<- read-at-ms int (now-epoch-ms))
+  (<- made (| FileFailed None) (private-dirs root (posixpath.dirname path)))
+  (<- written (| FileFailed None)
+      (if (isinstance made FileFailed)
+          made
+          (WriteBytes path (.encode (json.dumps {"readAtMs" read-at-ms "text" text} :sort-keys True) "utf-8") :mode FILE-MODE :replace True)))
+  (when (isinstance written FileFailed)
+    (<- (slog "値の ConfigMap の写しを書けない" :level "warning" :path written.path :detail written.detail)))
+  None)
+
+
+(defk held-settings-text [site detail]
+  {:pre [(: site WorkspaceVolumeSite) (: detail str)] :post [(: % (| str None))] :tags {:context "doeff-cluster" :role "protocol" :reads "json"}}
+  "API server に届かない・5xx か 429(detail)の時に、前に読めた workspace-volume.json の字を写しの file から得るため(頭の註)。写しが在れば、
+   ConfigMap の名と写しを読んだ刻を warning の 1 行に出して答える。写しが無い・読めない・形が違えば None(呼び手は届かない断りのまま断る)。"
+  (<- root (| str None) (work-root))
+  (when (is root None)
+    (return None))
+  (val path (! (held-settings-path root site)))
+  (<- read (| str FileFailed) (ReadText path))
+  (when (isinstance read FileFailed)
+    (return None))
+  (<- parsed (| HeldSettingsWire Malformed) (parse-json HeldSettingsWire (! (text-field read))))
+  (when (isinstance parsed Malformed)
+    (return None))
+  (<- (slog (+ "ConfigMap " site.settings-namespace "/" site.settings-name " を写しで答える — " detail)
+            :level "warning" :read-at (.isoformat (datetime-of-epoch-ms parsed.read-at-ms))))
+  parsed.text)
 
 
 (defk class-parameters [owner class-name]
