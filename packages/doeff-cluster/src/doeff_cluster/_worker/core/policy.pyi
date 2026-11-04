@@ -16,6 +16,7 @@ from doeff_cluster._worker.intent.worker_model import JobStop as JobStop
 from doeff_cluster._worker.intent.worker_model import ProbeState as ProbeState
 from doeff_cluster._worker.intent.worker_model import ProbeView as ProbeView
 from doeff_cluster._worker.intent.worker_model import ProbeStatus as ProbeStatus
+from doeff_cluster._worker.intent.worker_model import ProgramGap as ProgramGap
 from doeff_cluster._worker.intent.worker_model import Outcome as Outcome
 from doeff_cluster._worker.intent.worker_model import JobRecord as JobRecord
 from doeff_cluster._worker.intent.worker_model import JobNotStarted as JobNotStarted
@@ -134,6 +135,15 @@ def prepare_action(spec: JobSpec, compile_jobs: int | None) -> PrepareCode | Pre
     ...
 
 def prepare_actions(now: int, spec: JobSpec, world: WorldView, policy: WorkerPolicy, compile_jobs: int | None) -> tuple:
+    ...
+
+def program_gap_of(world: WorldView, spec: JobSpec) -> ProgramGap | None:
+    ...
+
+def program_waits(world: WorldView, spec: JobSpec) -> bool:
+    ...
+
+def program_wait_detail(world: WorldView, spec: JobSpec) -> str:
     ...
 
 @dataclass(frozen=True, kw_only=True)

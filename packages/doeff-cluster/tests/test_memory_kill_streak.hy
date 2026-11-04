@@ -29,7 +29,7 @@
         doeff_cluster._worker.intent.worker_model [EnvDisk Outcome StartHold])
 (import doeff_cluster [plan records-after statuses]
         doeff_cluster._worker.core.policy [start-holds])
-(import doeff_cluster [ObserveProcesses ObserveCode ObserveEnvs ObserveEnvDisk ObserveProbes ObserveWarmChildren ObserveLeaving ObserveJobRoots])
+(import doeff_cluster [ObserveProcesses ObserveCode ObserveEnvs ObserveEnvDisk ObserveProbes ObserveWarmChildren ObserveLeaving ObservePrograms ObserveJobRoots])
 (import doeff_cluster._worker.protocol.memory_watch [MemoryWatchSettings MemoryCell memory-watch-step])
 (import doeff_cluster [memory-observer])
 (import doeff_cluster [local-host])
@@ -56,7 +56,8 @@
   (ObserveProbes [] (resume #()))
   (ObserveEnvDisk [] (resume (EnvDisk :free 10 :sweep-wanted False :pinned (frozenset))))
   (ObserveWarmChildren [] (resume #()))
-  (ObserveLeaving [] (resume False)))
+  (ObserveLeaving [] (resume False))
+  (ObservePrograms [] (resume #())))
 
 
 (defhandler job-root-and-quiet-log [#^ JobRoot root]

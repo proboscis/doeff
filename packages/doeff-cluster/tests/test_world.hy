@@ -5,14 +5,15 @@
 (val MODULE-TAGS {:context "doeff-cluster-test" :role "test"})
 (import doeff [run with-handlers])
 (import doeff_cluster [CodeState CodeView ObserveWorld WorldView]
-        doeff_cluster._worker.intent.worker_model [EnvDisk WarmChildView])
-(import doeff_cluster [ObserveProcesses ObserveCode ObserveEnvs ObserveEnvDisk ObserveProbes ObserveWarmChildren ObserveLeaving ObserveMemoryTight ObserveMemoryKills])
+        doeff_cluster._worker.intent.worker_model [EnvDisk ProgramGap WarmChildView])
+(import doeff_cluster [ObserveProcesses ObserveCode ObserveEnvs ObserveEnvDisk ObserveProbes ObserveWarmChildren ObserveLeaving ObserveMemoryTight ObserveMemoryKills ObservePrograms])
 (import doeff_cluster [local-host])
 
 (val CODE (CodeView "rev1" CodeState.READY :path "/c/rev1"))
 (val ENV (CodeView "env-0123" CodeState.PREPARING))
 (val DISK (EnvDisk :free 10 :sweep-wanted False :pinned (frozenset #("env-0123"))))
 (val CHILD (WarmChildView :key "env-0123" :pid 77 :started-ms 5))
+(val GAP (ProgramGap :job "svc"))
 
 
 (defhandler observed
@@ -25,11 +26,12 @@
   (ObserveWarmChildren [] (resume #(CHILD)))
   (ObserveLeaving [] (resume True))
   (ObserveMemoryTight [] (resume True))
-  (ObserveMemoryKills [] (resume (frozenset #(#("svc" 10))))))
+  (ObserveMemoryKills [] (resume (frozenset #(#("svc" 10)))))
+  (ObservePrograms [] (resume #(GAP))))
 
 
 (deftest test-the-world-gathers-every-observation
   (val world (run (with-handlers [observed local-host] (ObserveWorld))))
   (assert (isinstance world WorldView) world)
   (assert (= world (WorldView #(CODE ENV) #() #() :env-disk DISK :warm-children #(CHILD) :leaving True :memory-tight True
-                         :memory-killed (frozenset #(#("svc" 10))))) world))
+                         :memory-killed (frozenset #(#("svc" 10))) :program-gaps #(GAP))) world))

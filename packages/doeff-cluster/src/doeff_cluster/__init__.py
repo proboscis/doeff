@@ -420,6 +420,8 @@ if TYPE_CHECKING:
     from doeff_cluster._worker.intent.env_prepare_model import ProbeImports as ProbeImports
     from doeff_cluster._worker.intent.worker_model import ProbeState as ProbeState
     from doeff_cluster._worker.intent.worker_model import ProbeView as ProbeView
+    from doeff_cluster._worker.intent.worker_model import ProgramGap as ProgramGap
+    from doeff_cluster._worker.intent.worker_model import ProgramUnfetched as ProgramUnfetched
     from doeff_cluster._worker.intent.worker_model import ProcessStartedMs as ProcessStartedMs
     from doeff_cluster._worker.intent.worker_model import ProcessView as ProcessView
     from doeff_cluster._worker.entry.line_stamp import QueuedLine as QueuedLine
@@ -1182,6 +1184,7 @@ _LAZY_EXPORTS: dict[str, str] = {
     "ObserveJobRoots": "doeff_cluster._worker.protocol.observations",
     "ObserveLeaving": "doeff_cluster._worker.protocol.observations",
     "ObserveMemoryKills": "doeff_cluster._worker.protocol.observations",
+    "ObservePrograms": "doeff_cluster._worker.protocol.observations",
     "ObserveMemoryTight": "doeff_cluster._worker.protocol.observations",
     "ObserveProbes": "doeff_cluster._worker.protocol.observations",
     "ObserveProcesses": "doeff_cluster._worker.protocol.observations",
@@ -1190,6 +1193,8 @@ _LAZY_EXPORTS: dict[str, str] = {
     "ProbeImports": "doeff_cluster._worker.intent.env_prepare_model",
     "ProbeState": "doeff_cluster._worker.intent.worker_model",
     "ProbeView": "doeff_cluster._worker.intent.worker_model",
+    "ProgramGap": "doeff_cluster._worker.intent.worker_model",
+    "ProgramUnfetched": "doeff_cluster._worker.intent.worker_model",
     "ProcessStartedMs": "doeff_cluster._worker.intent.worker_model",
     "ProcessView": "doeff_cluster._worker.intent.worker_model",
     "QueuedLine": "doeff_cluster._worker.entry.line_stamp",

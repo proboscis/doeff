@@ -137,6 +137,20 @@
   (#^ str runtime-env))
 
 
+(defrecord ProgramUnfetched
+  "Program を coordinator から取れなかった訳: detail = 訳の 1 行・gone = coordinator の答えが使える Program を渡さない(置かれていない 404・
+   中身の sha256 がキーと違う — 待っても届かない。届かない・5xx は偽で、次の拍で取り直す)。"
+  (#^ str detail)
+  (#^ bool gone))
+
+
+(defrecord ProgramGap
+  "宣言の job 1 本の Program の file がこの worker の手元に無い(WorldView.program-gaps): job = job の名・failure = 最後に取れなかった訳
+   (None = まだ取りに行っていない)。"
+  (#^ str job)
+  (setv #^ (| ProgramUnfetched None) failure None))
+
+
 (defclass [(dataclass :frozen True)] WorldView []
   (#^ tuple codes)
   (#^ tuple processes)
@@ -156,7 +170,10 @@
   ;; 機体の memory の見張りが止めた job の process の印(#(process の名 根の pid) の frozenset — 見張りが止めた単位の属する job の根)。
   ;; 判断(policy の plan-job)は終わった process を回収する時にこれを読み、見張りに止められた終わりを数える(続けて止められた job の
   ;; 起こし直しを止める — WorkerPolicy.memory-kill-limit)。既定は空(見張りを持たない呼び手・模擬の環境)。
-  (setv #^ frozenset memory-killed (frozenset)))
+  (setv #^ frozenset memory-killed (frozenset))
+  ;; 宣言の job のうち、Program の file が手元に無い物(ProgramGap)。判断(policy の program-waits)は揃うまで job を起こさない — 子の入口は file を
+  ;; 読めないと終了 code 3 で落ちる。既定は空(Program を取り寄せない呼び手)。
+  (setv #^ tuple program-gaps #()))
 
 
 (defclass StopStage [Enum]
@@ -210,9 +227,10 @@
 ;;   LEAVING = この Pod の止まり(preStop の drain)が始まったので handoff の job の新しい試行を起こさない(WorldView.leaving — AL-D2p)・
 ;;   MEMORY-TIGHT = 機体の memory が逼迫(TIGHT か DANGER)の間、task を起こさない(WorldView.memory-tight — 常駐の job は見送らない)
 ;;   ・MEMORY-KILLED = 常駐の job が機体の memory の見張りに続けて止められた(WorkerPolicy.memory-kill-limit 回 —
-;;   起動のたびに同じ memory の山を作る job は、起こし直しても同じ所で止められる。宣言の spec が変わるまで起こさない)。
+;;   起動のたびに同じ memory の山を作る job は、起こし直しても同じ所で止められる。宣言の spec が変わるまで起こさない)
+;;   ・PROGRAM-WAIT = Program の file がまだ手元に無い(WorldView.program-gaps — 取れた次の拍で起こす)。
 (defenum StartHold PREPARING PREPARE-FAILED DISK-FULL PROBING PROBE-FAILED BACKOFF WARM-CHILD HANDOFF-ABANDONED ELDER-RUNS LEAVING MEMORY-TIGHT
-         MEMORY-KILLED)
+         MEMORY-KILLED PROGRAM-WAIT)
 
 
 ;; --- 待ちの子(#3646)-------------------------------------------------------------

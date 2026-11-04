@@ -61,3 +61,8 @@
   "機体の memory の見張りが止めた job の根の印(#(process の名 根の pid) の frozenset — WorldView.memory-killed)。世界の観測のまとめ
    (local-host)が、機体の memory の見張りの観測の答え手(worker/protocol/memory_observer)へ問う。判断は終わった process の回収で読み、
    見張りに続けて止められた常駐の job の起こし直しを止める(WorkerPolicy.memory-kill-limit)。")
+
+
+(defclass [(dataclass :frozen True)] ObservePrograms [EffectBase]
+  "宣言の job のうち、Program の file が手元に無い物(ProgramGap の tuple — WorldView.program-gaps)。世界の観測のまとめ(local-host)が、
+   Program の cache のただ 1 つの書き手である coordinator への口(worker/protocol/coordinator_link)へ問う。")

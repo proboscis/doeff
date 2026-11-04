@@ -7,7 +7,7 @@
 (import doeff_cluster._worker.core.memory_rules [MemoryLevel])
 (import doeff_cluster [ObserveWorld]
         doeff_cluster._worker.intent.worker_model [EnvDisk])
-(import doeff_cluster [ObserveProcesses ObserveCode ObserveEnvs ObserveEnvDisk ObserveProbes ObserveWarmChildren ObserveLeaving])
+(import doeff_cluster [ObserveProcesses ObserveCode ObserveEnvs ObserveEnvDisk ObserveProbes ObserveWarmChildren ObserveLeaving ObservePrograms])
 (import doeff_cluster._worker.protocol.memory_watch [MemoryCell])
 (import doeff_cluster [memory-observer])
 (import doeff_cluster [local-host])
@@ -21,7 +21,8 @@
   (ObserveProbes [] (resume #()))
   (ObserveEnvDisk [] (resume (EnvDisk :free 10 :sweep-wanted False :pinned (frozenset))))
   (ObserveWarmChildren [] (resume #()))
-  (ObserveLeaving [] (resume False)))
+  (ObserveLeaving [] (resume False))
+  (ObservePrograms [] (resume #())))
 
 
 (deftest test-the-world-reads-the-watch-level-as-memory-tightness

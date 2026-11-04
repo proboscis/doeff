@@ -112,6 +112,20 @@ class WarmEnv:
     runtime_env: str
 
 @dataclass(frozen=True)
+class ProgramUnfetched:
+    """Program を coordinator から取れなかった訳。"""
+
+    detail: str
+    gone: bool
+
+@dataclass(frozen=True)
+class ProgramGap:
+    """宣言の job 1 本の Program の file がこの worker の手元に無い。"""
+
+    job: str
+    failure: ProgramUnfetched | None = None
+
+@dataclass(frozen=True)
 class WorldView:
     codes: tuple[CodeView, ...]
     processes: tuple[ProcessView, ...]
@@ -121,6 +135,7 @@ class WorldView:
     leaving: bool = False
     memory_tight: bool = False
     memory_killed: frozenset[tuple[str, int]] = frozenset()
+    program_gaps: tuple[ProgramGap, ...] = ()
 
 class StopStage(Enum):
     TERM = "term"
@@ -184,6 +199,7 @@ class StartHold(StrEnum):
     LEAVING = "leaving"
     MEMORY_TIGHT = "memory-tight"
     MEMORY_KILLED = "memory-killed"
+    PROGRAM_WAIT = "program-wait"
 
 # --- 待ちの子(#3646)-------------------------------------------------------------
 

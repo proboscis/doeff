@@ -12,7 +12,7 @@
 (import doeff_core_effects [os-file-handler])
 (import doeff_cluster [ObserveWorld]
         doeff_cluster._worker.intent.worker_model [EnvDisk])
-(import doeff_cluster [ObserveProcesses ObserveCode ObserveEnvs ObserveEnvDisk ObserveProbes ObserveWarmChildren ObserveMemoryTight ObserveMemoryKills])
+(import doeff_cluster [ObserveProcesses ObserveCode ObserveEnvs ObserveEnvDisk ObserveProbes ObserveWarmChildren ObserveMemoryTight ObserveMemoryKills ObservePrograms])
 (import doeff_cluster [local-host])
 (import doeff_cluster._worker.protocol.leaving_mark [leaving-mark-written])
 (import doeff_cluster [leaving-observer])
@@ -32,7 +32,8 @@
   (ObserveEnvDisk [] (resume (EnvDisk :free 10 :sweep-wanted False :pinned (frozenset))))
   (ObserveWarmChildren [] (resume #()))
   (ObserveMemoryTight [] (resume False))
-  (ObserveMemoryKills [] (resume (frozenset))))
+  (ObserveMemoryKills [] (resume (frozenset)))
+  (ObservePrograms [] (resume #())))
 
 
 (deftest test-the-pre-stop-mark-tells-the-worker-its-pod-is-leaving [#^ Path tmp-path]

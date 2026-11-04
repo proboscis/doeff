@@ -47,7 +47,7 @@
 (import doeff_cluster._shared.core.clock [now-epoch-ms monotonic-ms-of datetime-of-epoch-ms])
 (import doeff_cluster._shared.core.remote_rules [program-sha])
 (import doeff_cluster._shared.core.native_wheel [current-platform])
-(import doeff_cluster._shared.protocol.coordinator_route [CoordinatorRoute RouteCell RouteOptions RoutedReply routed-request answer-json])
+(import doeff_cluster._shared.protocol.coordinator_route [CoordinatorRoute RouteCell RouteOptions RoutedReply RouteRefused routed-request answer-json])
 (import doeff_cluster._worker.core.beat_policy [WatchKind WatchReading beat-interval-ms heartbeat-due watch-reading reply-revision
                                                lifeline-due WATCH-RETRY-SECONDS WAKE-HOLD-SECONDS])
 (import doeff_cluster._shared.intent.protocol [ClusterTiming])
@@ -55,7 +55,8 @@
                                                     silent-ms])
 (import doeff_cluster._worker.core.launch [program-file-text spec-program-name])
 (import doeff_cluster._worker.core.heartbeat_rules [keep-marks-held])
-(import doeff_cluster._worker.intent.worker_model [DesiredJobs DesiredUnreadable HeartbeatSent ReadDesired PublishStatus BootMarks WakeSet
+(import doeff_cluster._worker.protocol.observations [ObservePrograms])
+(import doeff_cluster._worker.intent.worker_model [DesiredJobs DesiredUnreadable HeartbeatSent ReadDesired PublishStatus BootMarks WakeSet ProgramGap ProgramUnfetched
                                                  WorkerWakes])
 (import doeff_cluster._shared.intent.due_model [DueAt DueNow DueNever])
 (import doeff_cluster._shared.core.due_policy [earliest-due])
@@ -171,6 +172,9 @@
           self.task-dir task-dir self.versions (or versions {})
           ;; 詰めた Program の cache(/programs/<sha> から取る — 子 process の言い換えと同じ state dir の programs・改訂 1 の F)。
           self.program-dir (os.path.join (os.path.dirname (os.path.abspath task-dir)) "programs")
+          ;; 手元に在ると確かめた cache の file(program-dir からの相対 path — 拍の取り寄せ fetched-programs が書く)と、取れなかった file の訳
+          ;; (同じ path → ProgramUnfetched)。在ると確かめていない物は無いと読む(program-gaps — 起動の直後も・取り寄せが例外で抜けた拍も)。
+          self.programs-at-hand (frozenset) self.program-failures {}
           ;; 最後に届いた返事の刻(壁の時計の epoch ms と、同じ刻の単調な時計の ms — 届くたびに 2 つを一緒に書く)。
           self.last-ok-ms started-ms self.last-ok-mono-ms started-mono-ms
           ;; 最後に受け取った job と task の宣言(途絶の間も動かす書き手と切り離した task を選ぶ — worker_policy.kept-when-cut-off)。
@@ -291,29 +295,31 @@
 
 
 (defk fetched-program [cell options path sha versions]
-  {:pre [(: cell RouteCell) (: options RouteOptions) (: path str) (: sha str) (: versions tuple)] :post [(: % None)]
+  {:pre [(: cell RouteCell) (: options RouteOptions) (: path str) (: sha str) (: versions tuple)] :post [(: % (| ProgramUnfetched None))]
    :tags {:context "worker" :role "protocol" :reads "json"}}
   "詰めた Program 1 つを coordinator の /programs/<sha> から取り、子の入口が読む形の cache の file path({\"blob\" \"versions\"})に置くため。
    versions = 子の入口が比べる送り手の版(名の順の #(名 版) の組 — service は宣言の行の版・task は task の行の版。path はこの版で
    決まる — launch.spec-program-name)。答えの versions(coordinator の Program の行の版 — 同じ sha を後から置いた送り手の版に
    上書きされる)は使わない(#3762)。中身の
-   sha256 がキーと合わない物・取れない物は書かずに 1 行出す(次の拍で試し直す — 子は file が無いので起動の時に理由つきで落ちる)。"
+   sha256 がキーと合わない物・取れない物は書かず、取れなかった訳を返す(次の拍で試し直す — file が無い間は判断が job を起こさない・
+   policy の program-waits)。書けたら None。"
   (<- reply RoutedReply (routed-request cell.route "GET" (+ "/programs/" sha) options None None))
   (setv cell.route reply.route)
-  (var problem None)
+  (var failure None)
   (var body None)
   (try
     (<- read (answer-json reply.answer))
     (:= body read)
+    (except [error RouteRefused]
+      (:= failure (ProgramUnfetched :detail (repr error) :gone (= error.status 404))))
     (except [error Exception]
-      (:= problem (repr error))))
-  (when (and (is problem None) (!= (program-sha (get body "blob")) sha))
-    (:= problem (+ "中身の sha256 がキーと合わない: " sha)))
-  (if (is-not problem None)
-      (<- (slog (.format "worker: Program {} を取れない: {}" sha problem)))
-      (do (<- (file-done (MakeDirectory (os.path.dirname path))))
-          (<- (file-done (WriteText path (program-file-text (get body "blob") (dict versions)) :replace True)))))
-  None)
+      (:= failure (ProgramUnfetched :detail (repr error) :gone False))))
+  (when (and (is failure None) (!= (program-sha (get body "blob")) sha))
+    (:= failure (ProgramUnfetched :detail (+ "中身の sha256 がキーと合わない: " sha) :gone True)))
+  (when (is failure None)
+    (<- (file-done (MakeDirectory (os.path.dirname path))))
+    (<- (file-done (WriteText path (program-file-text (get body "blob") (dict versions)) :replace True))))
+  failure)
 
 
 (defk fetched-programs [state cell options specs]
@@ -321,9 +327,11 @@
   "宣言の job と task のうち、cache に無い詰めた Program を取り寄せ(改訂 1 の F — service と task で同じ仕組み)、返事から外れた task の
    Program の cache を、今の job と task のどれも参照していなければ消すため(task ごとの印 <id>.program から引く — service の job の
    Program は消さない)。cache の file は (Program のキー・版) ごと — service は宣言の行の版・task は task の行の版(#3762・
-   同じ sha でも版が違えば別の file を取る・launch.spec-program-name)。"
+   同じ sha でも版が違えば別の file を取る・launch.spec-program-name)。手元に在ると確かめた file と取れなかった訳を state に書き、
+   取れない訳の行は訳が替わった時だけ出す(取り直しは拍ごと — 途絶えが続く間に同じ行を並べない)。"
   (<- (file-done (MakeDirectory state.program-dir)))
   (var wanted #())
+  (var failures {})
   (for [s specs :if s.program]
     (<- name str (spec-program-name s))
     (when (not-in name wanted)
@@ -331,7 +339,13 @@
       (val path (os.path.join state.program-dir name))
       (<- found (ReadText path))
       (when (isinstance found FileFailed)
-        (<- (fetched-program cell options path s.program s.versions)))))
+        (<- failure (| ProgramUnfetched None) (fetched-program cell options path s.program s.versions))
+        (when (is-not failure None)
+          (:= failures (| failures {name failure}))
+          (when (!= failure (.get state.program-failures name))
+            (<- (slog (.format "worker: Program {} を取れない: {}" s.program failure.detail))))))))
+  (setv state.programs-at-hand (frozenset (gfor held wanted :if (not-in held failures) held))
+        state.program-failures failures)
   (val current (sfor s specs :if (.startswith s.name "task/") (cut s.name 5 None)))
   (<- entries (ListDirectory state.task-dir))
   (when (not (isinstance entries FileFailed))
@@ -963,6 +977,18 @@
   rows)
 
 
+(defk program-gaps [state]
+  {:pre [(: state LinkState)] :post [(: % tuple)] :tags {:context "worker" :role "judgment"}}
+  "最後に受け取った宣言の job と task のうち、Program の file が手元に在ると確かめていない物(ProgramGap)を求めるため。宣言と同じ入れ物から
+   拍ごとに導く(途絶の間は最後の宣言のまま — 取り寄せは止まるので、無い物は無いまま)。"
+  (var gaps #())
+  (for [s (+ state.last-jobs state.last-tasks) :if s.program]
+    (<- name str (spec-program-name s))
+    (when (not-in name state.programs-at-hand)
+      (:= gaps (+ gaps #((ProgramGap :job s.name :failure (.get state.program-failures name)))))))
+  gaps)
+
+
 (defhandler coordinator-link [#^ LinkState state #^ RouteCell cell #^ RouteOptions options #^ RouteCell watch-cell]
   ;; 引数に残す理由: 拍から拍へ持ち越す値(state)と宛先の状態(cell・待ちの watch-cell)は組み立てが作る入れ物・送り方は worker の process の値。
   (ReadDesired [env-report stopping]
@@ -1020,6 +1046,9 @@
     (<- due (| DueAt DueNow DueNever) (earliest-due #(beat fence resend)))
     (<- merged WakeSet (wakes-with outer due #() #()))
     (resume merged))
+  (ObservePrograms []
+    (<- gaps tuple (program-gaps state))
+    (resume gaps))
   (PublishStatus [statuses note]
     ;; 状態は次の heartbeat で送る。file にも書くので、同じ効果を外側の status-file へ回す。
     (<- rows list (status-rows state statuses))
