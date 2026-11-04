@@ -13,6 +13,7 @@ MOUNTINFO_ESCAPE: Incomplete
 USED_AT_KEY: str
 COOLING_TICKET_PREFIXES: tuple[str, ...]
 COOLING_MARK: str
+GROWING_MARK: str
 BACKUP_COMPLETED: str
 
 class AttachStep(StrEnum):
@@ -97,6 +98,9 @@ def using_tickets(ids: tuple[str, ...]) -> _Program[tuple[str, ...], object]:
     ...
 
 def cooling_name(name: str, stamp: int) -> _Program[str, object]:
+    ...
+
+def growing_name(name: str, stamp: int) -> _Program[str, object]:
     ...
 
 def newest_backup(backups: tuple[BackupView, ...]) -> _Program[BackupView | None, object]:

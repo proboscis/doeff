@@ -57,6 +57,7 @@ from doeff_cluster._shared.core.workspace_volume_rules import USED_AT_KEY as USE
 from doeff_cluster._shared.core.workspace_volume_rules import WarmVolume as WarmVolume
 from doeff_cluster._shared.core.workspace_volume_rules import attach_step as attach_step
 from doeff_cluster._shared.core.workspace_volume_rules import cooling_name as cooling_name
+from doeff_cluster._shared.core.workspace_volume_rules import growing_name as growing_name
 from doeff_cluster._shared.core.workspace_volume_rules import cooling_order as cooling_order
 from doeff_cluster._shared.core.workspace_volume_rules import detach_step as detach_step
 from doeff_cluster._shared.core.workspace_volume_rules import free_slots as free_slots
@@ -473,6 +474,9 @@ def waited_engine(site: WorkspaceVolumeSite, owner: str, doing: str, name: str, 
     ...
 
 def grown_volume(site: WorkspaceVolumeSite, owner: str, path: str) -> _Program[WorkspaceOutcome, object]:
+    ...
+
+def folded_expansion(site: WorkspaceVolumeSite, owner: str, doing: str, name: str) -> _Program[None, object]:
     ...
 
 @dataclass(frozen=True, kw_only=True)

@@ -218,6 +218,20 @@ spec.size の書きを online で広げる — 下の本番の試し)。
   status.currentSize が新しい大きさになるまで待つ(上限 attach-seconds)→ mount の係へ grow を頼む(`resize2fs` — 付けたまま)。
 - 前の広げの続き: 名目が file system の 1.5 倍以上なら(名目を書いた後、file system を広げる前に止まった)、名目を書き直さず(倍にしない)、
   engine を待って file system だけを広げる。
+- expand の snapshot を畳む(`folded-expansion`): 広げた後に Snapshot `<名>-grow-<epoch 秒>` を作り、使えるまで待って、その Snapshot を
+  消す(purge の終わりは待たない)。
+  - 訳: Longhorn v1 は広げるたびに、その時の head を system の snapshot `expand-<新しい大きさ>` にする。子が volume-head の間は消せず、
+    2→4→8→16 GiB と広げた volume には expand の snapshot が積まれる。毎時の backup の後の purge はそれを上から 1 つずつ消し、1 つ消す
+    たびに子(消す snapshot の上の物 — 前の消しで畳まれて膨らんだ物)の中身を親へ写して名を替える。同じ中身を積まれた数だけ書き直す。
+  - 測り(2026-11-04 06:33〜14:45 JST・zeus の instance-manager の log): 統合 190 回の計 2,259 秒のうち、expand の snapshot を畳む続きが
+    約 1,900 秒。1 回で 100〜340 秒の物がこの続きにだけ在る(例: ws-a-rrgn… は 07:43〜07:53 に同じ子を expand-16G・8G・4G・前の
+    snapshot へ 10・131・225・215 秒かけて写した)。12:28〜12:33 JST の 5 分は replica の書き 11.6 GB に対し volume の中の file の書き
+    0.2 GB で、その間 ws-a-gbqz… が expand の snapshot 3 つを 254 秒かけて畳んでいた。
+  - 畳み方: Snapshot の消しは Longhorn の snapshot の係が engine の SnapshotDelete と SnapshotPurge を出す。取った snapshot の子は
+    volume-head なので印が付くだけで残り、purge は expand の snapshot(system)を消す — 子は広げてから取るまでの書きだけなので写す量は
+    小さい。その下に残る前の backup の snapshot へは、広げる前の書き(次の backup の purge でも写す量)を 1 度写す。取った snapshot は次の
+    backup の purge が畳み、Snapshot の物はその時に消える。
+  - snapshot が取れない時は、広げは済んでいても失敗と数えて訳を残す(畳めなかった expand の snapshot は、前の形のまま backup の purge が畳む)。
 - 戻す時: 冷やした volume の backup は、取った時の大きさを覚える。戻す volume はその大きさと sizeBytes の大きい方で作る(Longhorn は
   backup より小さい volume への戻しを断る)。
 - 模擬の答え手 `held-workspace-volumes` は file system の空きを持たないので広げない(答えの grown は空)。
