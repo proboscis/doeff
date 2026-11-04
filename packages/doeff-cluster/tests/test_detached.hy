@@ -1145,7 +1145,7 @@
     (:= now (+ now 11000))
     (:= state (! (tick state now T)))
     (assert (= (. (! (row-of-key state "job-mixed")) losses) loss) (.rows state.tasks))
-    (+= boot 1)
+    (:= boot (+ boot 1))
     (:= now (+ now 100))
     (:= state (! (running-on state "job-mixed" (.format "b{}" boot) now))))
   (:= now (+ now 11000))
