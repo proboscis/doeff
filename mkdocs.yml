@@ -134,6 +134,8 @@ extra_javascript:
 
 markdown_extensions:
   - admonition
+  # Lets a page fold its code with <details markdown="1">: GitHub folds the same block, so one line of Markdown works in both places.
+  - md_in_html
   - footnotes
   - tables
   # Make heading anchors the same way GitHub does — the in-page links (#overview--motivation and so on) were written on GitHub.
