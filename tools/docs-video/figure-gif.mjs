@@ -62,7 +62,7 @@ await browser.close();
 
 const ffmpeg = (...args) => execFileSync('npx', ['remotion', 'ffmpeg', '-y', '-loglevel', 'error', ...args], {stdio: 'inherit'});
 const encode = (scale) => {
-  const filter = `scale=${scale}:-1:flags=lanczos,split[a][b];[a]palettegen=max_colors=64:stats_mode=diff[p];[b][p]paletteuse=dither=none:diff_mode=rectangle`;
+  const filter = `scale=${scale}:-1:flags=lanczos,split[a][b];[a]palettegen=max_colors=128:stats_mode=diff[p];[b][p]paletteuse=dither=none:diff_mode=rectangle`;
   ffmpeg('-framerate', String(FPS), '-i', path.join(tmp, '%05d.png'), '-vf', filter, '-loop', '0', out);
 };
 let scale = width;

@@ -69,7 +69,7 @@
   border: 1px solid var(--md-default-fg-color--lightest);
   border-radius: .2rem;
   background: var(--md-code-bg-color);
-  opacity: .72;
+  opacity: .85;
   transition: opacity .3s, border-color .3s;
 }
 .sf-panel.is-active { opacity: 1; }
