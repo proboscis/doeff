@@ -5,8 +5,8 @@
 # 16.7 分止まった。container の cgroup の中に層を作り、守る層(memory.min)と限る層(memory.max)を分ける — 1 本が際限なく増えても、
 # kernel は限る層の中だけで回収して OOM で止め、守る層は回収されない。
 #
-# 層(WORKER_CGROUP_LAYOUT — boot.sh の「cgroup の層」): worker = tini・起動の script・worker の本体(と kubectl exec・readinessProbe・
-# preStop — runc は init の cgroup へ入れる)・services = 常駐の job の shim と子(DOEFF_WORKER_SERVICE_CGROUP)・jobs = task・待ちの子・
+# 層(WORKER_CGROUP_LAYOUT — boot.sh の「cgroup の層」): worker = 起動の script・worker の本体・exec = init の tini だけ(と kubectl exec・
+# readinessProbe・preStop — runc は init の cgroup へ入れる・WORKER_CGROUP_INIT_LAYER・boot.sh の「init の層」)・services =常駐の job の shim と子(DOEFF_WORKER_SERVICE_CGROUP)・jobs = task・待ちの子・
 # 実行環境と木の準備・入口の検め(DOEFF_WORKER_JOB_CGROUP)・commands = job の子が自分の子を置く層(上に載る系の命令 — 書ける dir は
 # worker が DOEFF_WORKER_CGROUP_DIR で job の子へ渡す)。守る層の memory.min の和と限る層の memory.max の和は container の上限 100Gi の内
 # (限る層が上限まで使っても、container の上限の回収は守る層の min の分に掛からない)。限る層に memory.high は掛けない — 10-24 の試しで、
@@ -54,6 +54,13 @@
 # CPU は層ごとの取り置きを持たない(cpu.weight だけ — CPU が埋まった時の分け方)ので、宣言は変えない。services の層が使わなくなった CPU は
 # そのまま他の層へ回る(11-03 の 60 秒の測り: services 1.7 core・clis 4.2・jobs 9.8・commands 0.5)。
 #
+# 層 exec(init の層・11-05): 11-04 12:59 UTC に kubectl exec の grep 2 本が init と同じ上限の無い worker の層で anon 69 GB を持ち、機体の
+# 全体の OOM になった(見張りは木の外の process を止められず、jobs の層の上限を下げて無関係の 12 本を OOM kill した)。init の tini だけを
+# exec の層へ置き、exec の命令は kernel がこの層の中だけで止める。memory.max 1G = 要る量(readinessProbe 15 MiB + preStop の drain 2 本 ×
+# 54 MiB + 運用の読み 15 MiB = 138 MiB — 11-04 18:2x UTC にこの Pod で測った子の RSS の最大・値の決め方は ../../cgroup-layers の頭の註)に、
+# 運用の hy の 1 本(worker の本体の VmHWM 463 MiB)と重なりの余りを足した値。誰にも割り当てていなかった 2G のうち 1G を使い、和は
+# 守る層 26G + 限る層 73G = 99G。cpu.weight は前に居た worker の層と同じ 1000(配備の層と同じ扱い)。
+#
 # 雛形の env の並び(WORK_DIR が 1 番・DRAIN_DEADLINE が 9 番)を動かさないよう、足す物は全部末尾へ足す。
 - op: add
   path: /spec/template/spec/initContainers/-
@@ -89,6 +96,7 @@
 - { op: add, path: /spec/template/spec/containers/0/env/-, value: { name: WORKER_CGROUP_HOST, value: /host/cgroup } }
 - op: add
   path: /spec/template/spec/containers/0/env/-
-  value: { name: WORKER_CGROUP_LAYOUT, value: "worker:memory.min=2G,cpu.weight=1000 services:memory.min=4G,cpu.weight=1000 clis:memory.min=20G,cpu.weight=100 jobs:memory.max=36G,cpu.weight=100 commands:memory.max=32G,cpu.weight=100 deploy:memory.max=4G,cpu.weight=1000" }
+  value: { name: WORKER_CGROUP_LAYOUT, value: "worker:memory.min=2G,cpu.weight=1000 services:memory.min=4G,cpu.weight=1000 clis:memory.min=20G,cpu.weight=100 jobs:memory.max=36G,cpu.weight=100 commands:memory.max=32G,cpu.weight=100 deploy:memory.max=4G,cpu.weight=1000 exec:memory.max=1G,cpu.weight=1000" }
 - { op: add, path: /spec/template/spec/containers/0/env/-, value: { name: DOEFF_WORKER_SERVICE_CGROUP, value: services } }
 - { op: add, path: /spec/template/spec/containers/0/env/-, value: { name: DOEFF_WORKER_JOB_CGROUP, value: jobs } }
+- { op: add, path: /spec/template/spec/containers/0/env/-, value: { name: WORKER_CGROUP_INIT_LAYER, value: exec } }

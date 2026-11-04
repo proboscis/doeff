@@ -12,6 +12,6 @@
 #   ../../cgroup-layers の頭の註の式で 5 秒の回 2 つ分にした値。
 - op: add
   path: /spec/template/spec/containers/0/env/-
-  value: { name: WORKER_CGROUP_LAYOUT, value: "worker:memory.min=256M,cpu.weight=1000 services:memory.min=1536M,cpu.weight=1000 jobs:memory.max=896M,cpu.weight=100 prepare:memory.max=640M,cpu.weight=100" }
+  value: { name: WORKER_CGROUP_LAYOUT, value: "worker:memory.min=256M,cpu.weight=1000 services:memory.min=1536M,cpu.weight=1000 jobs:memory.max=896M,cpu.weight=100 prepare:memory.max=640M,cpu.weight=100 exec:memory.max=256M,cpu.weight=1000" }
 - { op: add, path: /spec/template/spec/containers/0/env/-, value: { name: DOEFF_WORKER_PREPARE_CGROUP, value: prepare } }
 - { op: add, path: /spec/template/spec/containers/0/env/-, value: { name: WORKER_EVICTION_MARGIN, value: 128M } }

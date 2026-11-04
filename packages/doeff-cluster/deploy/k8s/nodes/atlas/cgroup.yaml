@@ -24,6 +24,8 @@
 #   を越えるので、2 つの層を 2G から 1536M に下げた分を予算へ移した。2 つの層は静的な上限のままで、追い出しの線から縮めるのは
 #   jobs の層だけ: 会話の層が使った分は worker が読む Pod の working set に入るので、jobs の層が先に縮む(task が先に止まり、Pod は
 #   追い出されない)。2 つの層と worker と services の和(3.5 GiB)は、この worker が追い出されずに使える量の下の 1%(8.8 GiB)より小さい。
+# - exec の memory.max 512M(init の層 — 値の決め方は ../../cgroup-layers の頭の註): 要る量 138 MiB と運用の hy 1 本が通る値。atlas は追い出しの
+#   線に近いので、空き(8 GiB)の全部は取らない。使った分は Pod の working set に入り、jobs の層が先に縮む。
 - op: add
   path: /spec/template/spec/containers/0/env/-
-  value: { name: WORKER_CGROUP_LAYOUT, value: "worker:memory.min=256M,cpu.weight=1000 services:memory.min=256M,cpu.weight=1000 jobs:memory.max=10752M,cpu.weight=100 clis:memory.max=1536M,cpu.weight=100 commands:memory.max=1536M,cpu.weight=100" }
+  value: { name: WORKER_CGROUP_LAYOUT, value: "worker:memory.min=256M,cpu.weight=1000 services:memory.min=256M,cpu.weight=1000 jobs:memory.max=10752M,cpu.weight=100 clis:memory.max=1536M,cpu.weight=100 commands:memory.max=1536M,cpu.weight=100 exec:memory.max=512M,cpu.weight=1000" }

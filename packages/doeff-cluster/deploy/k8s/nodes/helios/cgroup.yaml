@@ -28,6 +28,8 @@
 #   8G を 2 つに分けた: 会話の CLI 1 本の RSS は約 1 GiB(zeus の clis の層 14827 MiB ÷ 会話 15 本前後 — 11-03)なので 5G で 4〜5 本、命令は
 #   その子の検め(pytest・uv sync)の分。守る層 31G + 限る層 16G = 47G ≤ 48Gi。
 # - 予算: 48Gi − worker 1G − jobs 8G − clis 5G − commands 3G = 31744 MiB(前と同じ)。
+# - exec(init の層 — 値の決め方は ../../cgroup-layers の頭の註): 512M = 残りの 1G の半分(要る量 138 MiB と運用の hy 1 本が通る)。
+#   守る層 31G + 限る層 16.5G ≤ 48Gi。
 - op: add
   path: /spec/template/spec/containers/0/env/-
-  value: { name: WORKER_CGROUP_LAYOUT, value: "worker:memory.min=1G,cpu.weight=1000 services:memory.min=30G,cpu.weight=1000 jobs:memory.max=8G,cpu.weight=100 clis:memory.max=5G,cpu.weight=100 commands:memory.max=3G,cpu.weight=100" }
+  value: { name: WORKER_CGROUP_LAYOUT, value: "worker:memory.min=1G,cpu.weight=1000 services:memory.min=30G,cpu.weight=1000 jobs:memory.max=8G,cpu.weight=100 clis:memory.max=5G,cpu.weight=100 commands:memory.max=3G,cpu.weight=100 exec:memory.max=512M,cpu.weight=1000" }

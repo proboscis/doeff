@@ -340,20 +340,29 @@ SMALL_NODE_ROOM_MIB = 1024
 # 上に載る系の配備の宣言の CLI を置く層(zeus だけ)。遅れに敏感な 1 本の process なので、CPU の重みは常駐の層と同じまで上げてよい
 # (常駐の層より上には置かない)・ほかの一括の仕事の層より上。
 CGROUP_DEPLOY_LAYER = "deploy"
+# init の層(boot.sh の「init の層」・WORKER_CGROUP_INIT_LAYER): init の tini だけを置く限る層。runc は kubectl exec・readinessProbe・preStop を
+# init の cgroup へ入れるので、その memory はこの層の memory.max で止まる(11-04 12:59 UTC の zeus — init が上限の無い worker の層に居て、
+# exec の grep 2 本の 69 GB が機体の全体の OOM になった)。層を知らない版の boot.sh は名を読まず、init を worker の層へ移したまま
+# 起動する(守りが無いまま)— だから init の層を宣言する worker の版は INIT_LAYER_SINCE かその子孫。要る量 = readinessProbe 15 MiB +
+# preStop の drain 2 本 × 54 MiB + 運用の読み 15 MiB(11-04 18:2x UTC に zeus の Pod で測った子の RSS の最大)。遅れに敏感な 1 本
+# (probe と preStop)なので、CPU の重みは配備の層と同じ扱い。
+CGROUP_INIT_LAYER = "exec"
+INIT_LAYER_SINCE = "42be13e1c223c88b84c64248f99fc3a9b44db444"
+INIT_LAYER_NEED_MIB = 15 + 2 * 54 + 15
 # 層を宣言する機体(全部の機体)→ 最初の層と常駐の job の層(DOEFF_WORKER_SERVICE_CGROUP)のほかに守る層・task の層
 # (DOEFF_WORKER_JOB_CGROUP)のほかに限る層。zeus の会話の CLI の層は守る層(会話を受ける主の機体)。上に載る系の仕事を余りの空きで受ける
 # 機体(GUEST_NODES)は会話の CLI と命令の層を両方とも限る層に置き、常駐の job の守りと予算の外の余りだけを使わせる。ほかの機体は CLI も
 # 命令の層も使わない(CLI と命令を起こす上に載る系の常駐の job が置かれない)。zeus でない機体の委ねる係と層の名は部品
 # ../deploy/k8s/cgroup-layers 1 つ。
 CGROUP_LAYERS = {
-    "zeus": ({CGROUP_CLI_LAYER}, {CGROUP_CHILD_LAYER, CGROUP_DEPLOY_LAYER}),
-    "atlas": (set(), {CGROUP_CLI_LAYER, CGROUP_CHILD_LAYER}),
-    "eos": (set(), set()),
-    "helios": (set(), {CGROUP_CLI_LAYER, CGROUP_CHILD_LAYER}),
-    "k3s-0": (set(), {CGROUP_PREPARE_LAYER}),
-    "k3s-1": (set(), {CGROUP_PREPARE_LAYER}),
-    "k3s-2": (set(), {CGROUP_PREPARE_LAYER}),
-    "k3s-3": (set(), set()),
+    "zeus": ({CGROUP_CLI_LAYER}, {CGROUP_CHILD_LAYER, CGROUP_DEPLOY_LAYER, CGROUP_INIT_LAYER}),
+    "atlas": (set(), {CGROUP_CLI_LAYER, CGROUP_CHILD_LAYER, CGROUP_INIT_LAYER}),
+    "eos": (set(), {CGROUP_INIT_LAYER}),
+    "helios": (set(), {CGROUP_CLI_LAYER, CGROUP_CHILD_LAYER, CGROUP_INIT_LAYER}),
+    "k3s-0": (set(), {CGROUP_PREPARE_LAYER, CGROUP_INIT_LAYER}),
+    "k3s-1": (set(), {CGROUP_PREPARE_LAYER, CGROUP_INIT_LAYER}),
+    "k3s-2": (set(), {CGROUP_PREPARE_LAYER, CGROUP_INIT_LAYER}),
+    "k3s-3": (set(), {CGROUP_INIT_LAYER}),
 }
 # helios の常駐の job の層の memory.min の下限: helios へ移す常駐の job 29 本の memory の峰の見積もり 約 28 GiB(2026-11-01 の上に載る系の
 # 調べ — zeus の services の層の 54.6 時間の峰 35.3 GiB × 移す物の割合 79%)。
@@ -456,6 +465,25 @@ def test_worker_guards_its_resident_jobs_and_caps_its_tasks_and_commands(rendere
 
 
 @pytest.mark.parametrize("node", sorted(CGROUP_LAYERS))
+def test_worker_puts_its_init_alone_in_a_capped_layer_on_a_boot_script_that_knows_it(rendered: list[Manifest], node: str) -> None:
+    """worker は init の層(CGROUP_INIT_LAYER)を WORKER_CGROUP_INIT_LAYER で名指し、その層は最初の層と別で、memory.max(要る量
+    INIT_LAYER_NEED_MIB 以上)だけを限りに持つ。worker の版は init の層を知る版(INIT_LAYER_SINCE)かその子孫。失敗ケース(11-04 12:59 UTC
+    の zeus): init が worker の本体と同じ上限の無い層に居て、kubectl exec の grep 2 本が 69 GB を持ち、機体の全体の OOM になった。層を
+    知らない版は名を読まず、init を上限の無い層に残す。"""
+    worker = _worker_on(rendered, node)
+    layout = _layout(worker)
+    settings = dict(layout)
+    assert _env_value(worker, "WORKER_CGROUP_INIT_LAYER")["value"] == CGROUP_INIT_LAYER, worker
+    assert layout[0][0] != CGROUP_INIT_LAYER, layout
+    assert set(settings[CGROUP_INIT_LAYER]) == {"memory.max", "cpu.weight"}, settings
+    assert _bytes(settings[CGROUP_INIT_LAYER]["memory.max"]) >= INIT_LAYER_NEED_MIB * 2**20, settings
+    version = _worker_version(rendered, node)
+    assert _same_or_ancestor(INIT_LAYER_SINCE, version), (
+        f"{node} の worker の版 {version} は init の層を知らない(INIT_LAYER_SINCE {INIT_LAYER_SINCE} の子孫でない)"
+    )
+
+
+@pytest.mark.parametrize("node", sorted(CGROUP_LAYERS))
 def test_worker_requests_at_least_the_memory_its_layers_guard(rendered: list[Manifest], node: str) -> None:
     """worker の container の memory の取り分(requests)は、cgroup の層の memory.min の和(worker の本体と常駐の job と zeus の CLI の層)
     以上。失敗ケース: kubelet は Node の memory が allocatable を越えた時、使いが取り分を最も越えた Pod から追い出す。守る層の和より小さい
@@ -527,7 +555,7 @@ def test_worker_puts_its_resident_layers_before_the_bulk_layers_on_the_cpu(rende
     weights = {name: int(values["cpu.weight"]) for name, values in settings.items() if "cpu.weight" in values}
     assert set(weights) == set(settings), settings
     resident = {CGROUP_FIRST_LAYER, service}
-    prompt = {CGROUP_DEPLOY_LAYER} & set(settings)
+    prompt = {CGROUP_DEPLOY_LAYER, CGROUP_INIT_LAYER} & set(settings)
     for bulk in set(settings) - resident - prompt:
         assert all(weights[name] > weights[bulk] for name in resident | prompt), weights
     for name in prompt:

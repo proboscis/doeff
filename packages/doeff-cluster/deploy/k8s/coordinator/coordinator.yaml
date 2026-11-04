@@ -264,7 +264,7 @@ spec:
             # 1 度、盤の期限の掃除は期限の下限が来るまで全行を読まない、GET /board は前置きで絞ってから並べる。機体の workspace の
             # volume の読み(4a2f27fb4・fb386921e — worker の側)も入る。worker の版は今のまま(coordinator を先に上げる)。
             # 前の版 62dfe5108 は b669a852f の祖先。
-            - { name: WORKER_DOEFF_COMMIT, value: f81d47e10ffa88fa7a2b92a91b55c4328526a2f2 }
+            - { name: WORKER_DOEFF_COMMIT, value: 42be13e1c223c88b84c64248f99fc3a9b44db444 }
             # coordinator の process 自身の行の名乗り(coordinator/entry/main の process-lines — job の名 coordinator/<namespace>・worker の
             # 名の欄 = Pod の名)。送り先(ConfigMap coordinator-env の DOEFF_JOB_LOG_OTLP)が無ければ読まない。
             - { name: POD_NAME, valueFrom: { fieldRef: { fieldPath: metadata.name } } }

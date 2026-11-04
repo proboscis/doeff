@@ -7,4 +7,4 @@
 # - container の上限 4Gi → 5632Mi: 予算 3840 を前の値のまま残し、準備の分を足した。
 - op: add
   path: /spec/template/spec/containers/0/env/-
-  value: { name: WORKER_CGROUP_LAYOUT, value: "worker:memory.min=256M,cpu.weight=1000 services:memory.min=3584M,cpu.weight=1000 jobs:memory.max=1536M,cpu.weight=100" }
+  value: { name: WORKER_CGROUP_LAYOUT, value: "worker:memory.min=256M,cpu.weight=1000 services:memory.min=3584M,cpu.weight=1000 jobs:memory.max=1536M,cpu.weight=100 exec:memory.max=256M,cpu.weight=1000" }

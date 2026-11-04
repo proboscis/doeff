@@ -4,7 +4,8 @@
 # 分け合い、1 本が上限の手前で回収を詰まらせると常駐の job も止まる(zeus の 10-24 06:03 JST の 16.7 分の止まりと同じ形)。CPU が埋まった
 # 時も、常駐の job の thread が一括の仕事の thread と同じ重みで実行待ちに並ぶ。
 #
-# 層の名: worker = tini・起動の script・worker の本体(と kubectl exec・readinessProbe)・services = 常駐の job の shim と子・jobs = task・
+# 層の名: worker = 起動の script・worker の本体・exec = init の tini だけ(と、runc が init の cgroup へ入れる kubectl exec・
+# readinessProbe・preStop — WORKER_CGROUP_INIT_LAYER・deploy/boot.sh の「init の層」)・services = 常駐の job の shim と子・jobs = task・
 # 待ちの子・実行環境と木の準備・入口の検め・keeper の版の準備(準備の層を宣言しない機体)・prepare = keeper の版の準備(宣言する機体
 # だけ — 機体の cgroup.yaml の DOEFF_WORKER_PREPARE_CGROUP)・clis と commands = 会話の CLI とその命令(上に載る系の仕事を余りの空きで
 # 受ける機体だけ — ../guest-work。zeus と違って clis も限る層)。値は機体の dir の cgroup.yaml の WORKER_CGROUP_LAYOUT。
@@ -12,6 +13,14 @@
 # 値の決め方(helios の外 — helios の値の訳は ../nodes/helios/cgroup.yaml):
 # - worker の memory.min 256M: worker の本体の RSS 126〜132 MiB(10-27 の 4 機体・11-01 の atlas 132 MiB)に余裕を足した、枠の file の worker
 #   自身の分と同じ値。
+# - exec の memory.max(init の層 — exec の命令が際限なく memory を増やしても、kernel はこの層の中だけで OOM で止める。11-04 12:59 UTC の
+#   zeus では exec の grep 2 本が init と同じ上限の無い worker の層で 69 GB を持ち、機体の全体の OOM になった): 要る量 = readinessProbe +
+#   preStop の drain 2 本(keeper の世代の重なり)+ 運用の読み。11-04 18:2x UTC に zeus の Pod で測った子の RSS の最大: readinessProbe
+#   (ROLE=ready)15 MiB・drain の hy(drain_main の import)54 MiB・tail -n 5000・grep -c・ps・du 12〜15 MiB — 和 15 + 2 × 54 + 15 = 138 MiB。
+#   ほかの層の値を変えずに置ける量(container の上限 − 守る層の min − 限る層の max)が 256M の機体(eos・k3s-0・k3s-2・k3s-3)と、それに
+#   揃えた k3s-1 は 256M。空きの大きい atlas・helios は 512M(zeus は 1G — ../nodes/zeus/cgroup.yaml)で、運用の hy の 1 本(worker の本体と同じ
+#   import で 300〜470 MiB)も通る値。cpu.weight は前に居た worker の層と同じ 1000(probe と preStop は遅れに敏感な 1 本 — 配備の層と同じ扱い)。
+#   予算(memoryMiB)からは引かない: exec の命令は前から worker の層に居て予算の外だった。
 # - jobs の memory.max = 準備の分 1536M + task の予約 × 3G。準備の分は、container の上限 2Gi の機体(k3s-0〜2)で準備が通っていた余地
 #   (2Gi − worker の本体と常駐の job の約 0.4 GiB。oom_kill は 11-01 までの 5 日で 0)。task の 1 本の分は枠の file の task の分と同じ 3G。
 #   この値は静的な上限: worker は見張りの回ごとに jobs の層の memory.max を、kubelet が Pod を追い出す線までの空き(Node の allocatable −
@@ -70,3 +79,4 @@
 - { op: add, path: /spec/template/spec/containers/0/env/-, value: { name: WORKER_CGROUP_HOST, value: /host/cgroup } }
 - { op: add, path: /spec/template/spec/containers/0/env/-, value: { name: DOEFF_WORKER_SERVICE_CGROUP, value: services } }
 - { op: add, path: /spec/template/spec/containers/0/env/-, value: { name: DOEFF_WORKER_JOB_CGROUP, value: jobs } }
+- { op: add, path: /spec/template/spec/containers/0/env/-, value: { name: WORKER_CGROUP_INIT_LAYER, value: exec } }
