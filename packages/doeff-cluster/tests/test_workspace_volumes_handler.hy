@@ -386,6 +386,15 @@
                                    {"readyToUse" (= work.left 0) "error" ""})})))
 
 
+(defk snapshot-dropped [world snap]
+  {:pre [(: world LonghornWorld) (: snap str)] :post [(: % HttpResponse)]}
+  "Snapshot の DELETE に答えるため(在れば途中の snapshot から外して 200・無ければ 404)。"
+  (when (not-in snap world.snapshots)
+    (return (! (api-answer 404 {"kind" "Status" "reason" "NotFound"}))))
+  (del (get world.snapshots snap))
+  (! (api-answer 200 {})))
+
+
 (defk backup-answer [world backup]
   {:pre [(: world LonghornWorld) (: backup str)] :post [(: % HttpResponse)]}
   "Backup の GET に答えるため(読むたびに残りを 1 つ減らし、0 で Completed — 世界の backup に足す — か Error)。"
@@ -583,6 +592,7 @@
     (and (= request.method "POST") (= path SNAPSHOTS-PATH)) (! (snapshot-made world request.body))
     (and (= request.method "GET") (.startswith path (+ SNAPSHOTS-PATH "/")))
     (do (<- answer HttpResponse (snapshot-answer world (cut path (+ (len SNAPSHOTS-PATH) 1) None))) answer)
+    (and (= request.method "DELETE") (.startswith path (+ SNAPSHOTS-PATH "/"))) (! (snapshot-dropped world (cut path (+ (len SNAPSHOTS-PATH) 1) None)))
     (and (= request.method "POST") (= path BACKUPS-PATH)) (! (backup-made world request.body))
     (and (= request.method "GET") (.startswith path (+ BACKUPS-PATH "?"))) (! (backups-listed world path))
     (and (= request.method "GET") (.startswith path (+ BACKUPS-PATH "/")))
@@ -1292,6 +1302,15 @@
         (get (json.loads seen.body) "spec" "size")))
 
 
+(defk snapshot-steps [api]
+  {:pre [(: api LonghornWorld)] :post [(: % list)]}
+  "相手役が受けた Snapshot の作りと消しを、受けた順に「<method> <snapshot の名>」の字で得るため(読みの GET は除く)。"
+  (lfor seen api.seen :if (and (.startswith seen.path SNAPSHOTS-PATH) (in seen.method #("POST" "DELETE")))
+        (+ seen.method " " (if (= seen.method "POST")
+                               (get (json.loads seen.body) "metadata" "name")
+                               (cut seen.path (+ (len SNAPSHOTS-PATH) 1) None)))))
+
+
 (deftest test-a-mounted-volume-short-of-space-is-grown-online-by-the-sweep
   ;; 付いた volume の file system の空きが値の growBelowPercent(50%)を割った(値の大きさの 6 割を使った)。冷やす回は名目を倍(上限の
   ;; 値 maxSizeBytes)に書き、engine が広がる(読み 3 回)のを待ってから、係に file system を広げさせる。付けたまま — mount も
@@ -1304,6 +1323,34 @@
   (assert (= (get api.fs-sizes NAME) GROWN) api.fs-sizes)
   (assert (= api.held.volumes #(MOUNTED)) api.held.volumes)
   (assert (not (any (gfor seen api.seen (.startswith seen.path ATTACHMENTS-PATH)))) api.seen))
+
+
+(deftest test-a-grown-volume-takes-and-drops-a-snapshot-to-fold-the-expand-snapshot
+  ;; 広げた後(係が file system を広げた後)に、snapshot <名>-grow-<刻> を 1 つ取り、使えるのを待ってから Snapshot を消す — Longhorn が
+  ;; 消しの purge で expand の snapshot へ小さな子を畳む(毎時の backup の後の purge が膨らんだ子を何度も写し直さない)。
+  (val api (LonghornWorld (WorkspaceVolumeWorld NODE :volumes #(MOUNTED)) :snapshot-settle 2 :used {NAME (* 6 TENTH)}))
+  (<- ran ApiRan (on-api api #((Step :verb "sweep"))))
+  (assert (.endswith (get ran.outcomes 0) (+ " failed= grown=" NAME)) ran.outcomes)
+  (val steps (! (snapshot-steps api)))
+  (assert (= (len steps) 2) steps)
+  (val mark (cut (get steps 0) (len "POST ") None))
+  (assert (.startswith mark (+ NAME "-grow-")) steps)
+  (assert (= steps [(+ "POST " mark) (+ "DELETE " mark)]) steps)
+  (assert (= api.snapshots {}) api.snapshots)
+  (val grow-at (next (gfor #(at seen) (enumerate api.seen) :if (= seen.method "PATCH") at)))
+  (val taken-at (next (gfor #(at seen) (enumerate api.seen) :if (and (= seen.method "POST") (= seen.path SNAPSHOTS-PATH)) at)))
+  (assert (< grow-at taken-at) api.seen))
+
+
+(deftest test-a-grow-whose-snapshot-fails-is-reported-as-failed
+  ;; 広げた後の snapshot が取れない(Longhorn が error を書き続ける)。広げは file system まで済んでいるが、畳めなかった訳を残して
+  ;; 失敗と数える(Snapshot は消さない — 次の backup の purge が expand の snapshot を畳む前の形に戻るだけ)。
+  (val api (LonghornWorld (WorkspaceVolumeWorld NODE :volumes #(MOUNTED)) :snapshot-error True :used {NAME (* 6 TENTH)}))
+  (<- ran ApiRan (on-api api #((Step :verb "sweep"))))
+  (assert (.endswith (get ran.outcomes 0) (+ " failed=" NAME)) ran.outcomes)
+  (assert (= (get api.fs-sizes NAME) GROWN) api.fs-sizes)
+  (<- steps list (snapshot-steps api))
+  (assert (= (lfor step steps (get (.split step " ") 0)) ["POST"]) steps))
 
 
 (deftest test-a-volume-with-room-or-at-the-largest-size-is-not-grown

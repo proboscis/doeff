@@ -24,7 +24,8 @@
 ;;;                           この機体に付いている volume の空きを 1 つずつ読んで広げる(mounted-growth)
 ;;;   grown-volume            付いている volume 1 つの file system の空きが値の growBelowPercent を割っていれば、名目の予約の増えを数えて
 ;;;                           (room-held)Volume の spec.size を倍(上限 maxSizeBytes)に書き、engine が広がるのを待ち(waited-engine)、
-;;;                           係へ grow(resize2fs)を頼む — 付けたまま。名目を書いた後に止まった前の広げは、file system だけを広げ直す
+;;;                           係へ grow(resize2fs)を頼む — 付けたまま。名目を書いた後に止まった前の広げは、file system だけを広げ直す。
+;;;                           広げた後に snapshot を 1 つ取って消し、Longhorn に expand の snapshot を子の小さい内に畳ませる(folded-expansion)
 ;;;   workspace-room          ReadWorkspaceRoom: 札の disk の残りの本数(room-slots — Longhorn の置く線 2 つ: 過剰割り当ての % の名目の
 ;;;                           予約の線と、最小の空きの % の実の空きの線)と値の spareVolumes を読む
 ;;;   place-read              ReadWorkspacePlace: mount の表・付ける先の dir・持ち主の volume と backup を読み、付ける先の様子を答える
@@ -73,7 +74,7 @@
                                                            WorkspaceRoom WorkspaceRoomShort WorkspaceVolumeRefused WorkspaceVolumeSite])
 (import doeff_cluster._shared.intent.supplied_model [WorkerFactName])
 (import doeff_cluster._shared.core.workspace_volume_rules [AttachStep AttachView BackupView DetachStep DiskRoom MountEntry
-                                                         NAME-PREFIX USED-AT-KEY WarmVolume attach-step cooling-name
+                                                         NAME-PREFIX USED-AT-KEY WarmVolume attach-step cooling-name growing-name
                                                          cooling-order detach-step free-slots mount-entries mounted-at
                                                          newest-backup owner-refusal ticket-id TICKET-TYPE using-tickets
                                                          volume-mount-points volume-name volume-of-entry])
@@ -1328,7 +1329,29 @@
   (<- grown KeeperAnswer (keeper-answer site owner doing "grow" name target))
   (when (!= grown.code 0)
     (raise (! (refused owner doing (+ "mount の係が file system を広げられなかった: " grown.notes)))))
+  (<- (folded-expansion site owner doing name))
   WorkspaceOutcome.DONE)
+
+
+(defk folded-expansion [site owner doing name]
+  {:pre [(: site WorkspaceVolumeSite) (: owner str) (: doing str) (: name str)] :post [(: % None)]
+   :tags {:context "doeff-cluster" :role "protocol" :spells "json"}}
+  "広げた volume name の expand の snapshot を、子が小さい内に Longhorn に畳ませるため(README の節「広げる」の「expand の snapshot を畳む」)。
+   Longhorn は広げるたびに今の head を system の snapshot expand-<大きさ> にし、子が volume-head の間は消せない。消されずに積まれた
+   expand の snapshot を、毎時の backup の後の purge が上から 1 つずつ消すと、そのたびに膨らんだ子を親へ写し直す(2026-11-04 の zeus で
+   1 回 100〜340 秒・同じ中身を 3〜4 度書いた)。広げた直後に snapshot <名>-grow-<刻> を取って Snapshot を消すと、Longhorn は消す snapshot
+   の印を付けて purge を走らせ、expand の snapshot へ小さな子(広げてからの書きだけ)を畳む。取った snapshot は子が volume-head なので
+   印のまま残り、次の backup の purge が畳む。purge の終わりは待たない(Longhorn が engine の purge を並べ直して続ける)。"
+  (<- now datetime (GetTime))
+  (val mark (! (growing-name name (int (.timestamp now)))))
+  (<- (created-object site owner doing "snapshots"
+                      (json.dumps {"apiVersion" "longhorn.io/v1beta2" "kind" "Snapshot"
+                                   "metadata" {"name" mark "namespace" site.longhorn-namespace}
+                                   "spec" {"volume" name "createSnapshot" True}}
+                                  :ensure-ascii False :sort-keys True)))
+  (<- (snapshot-taken site owner doing mark))
+  (<- (deleted-object site owner doing "snapshots" mark))
+  None)
 
 
 (defrecord Growth
