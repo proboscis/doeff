@@ -1,0 +1,9 @@
+[
+ {"id": "s1", "text": "win_rate is a program too. It yields Spawn once per seed, and each Spawn starts a battle as a task."},
+ {"id": "s2", "text": "Each task carries its own stack, so the hundred fights do not share a random generator."},
+ {"id": "s3", "text": "The tasks take turns on one thread. At each Spawn, scheduled keeps the k of win_rate and runs the new task. No effect of a fight reaches scheduled, so the task runs to its end, and then win_rate goes on."},
+ {"id": "s4", "text": "Gather waits for every task and gives back their results. Here, every fight has already ended."},
+ {"id": "s5", "text": "On the same hundred seeds, the random bot wins seventy-three fights."},
+ {"id": "s6", "text": "Change one argument, the player, and the Monte Carlo bot wins all one hundred."},
+ {"id": "s7", "text": "A task's own handlers do not take Played, so it travels out past the Spawn, and one handler hears all hundred fights."}
+]
