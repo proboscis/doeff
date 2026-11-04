@@ -742,6 +742,8 @@ class TaskRecord:
     memory_mib: int | None = None
     rerun: bool = False
     attempt: int = 1
+    losses: int = 0
+    retiring: str = ''
 PLACED_PHASES: frozenset[str]
 ENDED_PHASES: frozenset[str]
 
@@ -807,6 +809,7 @@ class TaskOffer:
     memory_mib: int | None = None
     rerun: bool = False
     attempt: int = 1
+    losses: int = 0
     notify: str = ''
 
 @dataclass(frozen=True, kw_only=True)

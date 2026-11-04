@@ -1045,6 +1045,129 @@
   (assert (in "上限" ended.detail) ended.detail))
 
 
+;; --- 予定した退きは走らせ直しの上限に数えない(2026-11-05)---------------------------------------------
+;; 版の入れ替え・Pod の作り直し・drain は worker の側の操作で、task の訳ではない。1 日に何度入れ替えても、走らせ直しを名乗った task が上限を
+;; 使い切って lost にならない。数えるのは退きの外で担い手が消えた試行(drain の掛かっていない世代の lease 切れ = 沈黙)だけ。
+
+(defk running-on [state key boot now]
+  {:pre [(: state ClusterState) (: key str) (: boot str) (: now int)] :post [(: % ClusterState)] :tags {:context "doeff-cluster-test" :role "entry"}}
+  "key の待っている試行を worker w の世代 boot に置き、子 process を起こした報告まで進めた状態を作るため。"
+  (val placed (get (! (beat state "w" now :boot boot)) 0))
+  (val row (! (row-of-key placed key)))
+  (assert (= #(row.phase row.boot) #("assigned" boot)) row)
+  (get (! (beat placed "w" (+ now 100) :boot boot :statuses [{"name" (+ "task/" row.id) "phase" "running" "detail" ""}])) 0))
+
+
+(deftest test-attempts-a-stopping-generation-stopped-do-not-count-toward-the-rerun-limit
+  ;; 止まり始めた世代が子を止めた道を上限より多く繰り返しても、待ちの行に戻り続け、数えた消失は 0 のまま。
+  (var state (get (! (placed-rerun "job-rolled")) 0))
+  (var now 1000)
+  (for [n (range 1 (+ RERUN-LIMIT 3))]
+    (val boot (.format "b{}" n))
+    (:= now (+ now 1000))
+    (:= state (get (! (beat state "w" now :boot boot :stopping True)) 0))
+    (val row (! (row-of-key state "job-rolled")))
+    (assert (= #(row.phase row.attempt row.losses) #("queued" (+ n 1) 0)) row)
+    ;; 次の試行の detail は、退いた世代と上限に数えなかった事を名指す(「上限に近い」と見分ける)。
+    (assert (in (.format "世代 {} が止まり始め" boot) row.detail) row.detail)
+    (assert (in "上限に数えない" row.detail) row.detail)
+    (:= now (+ now 1000))
+    (:= state (! (running-on state "job-rolled" (.format "b{}" (+ n 1)) now))))
+  (assert (= (. (! (row-of-key state "job-rolled")) phase) "assigned")))
+
+
+(deftest test-a-child-without-a-result-on-a-stopping-generation-does-not-count
+  ;; 止まり始めの heartbeat に載った、結果なしで終わった子の報告も予定した退き。
+  (val placed (! (placed-rerun "job-killed-planned")))
+  (val status [{"name" (+ "task/" (get placed 1)) "phase" "finished" "detail" "exit -15"}])
+  (val row (! (row-of-key (get (! (beat (get placed 0) "w" 2000 :stopping True :statuses status)) 0) "job-killed-planned")))
+  (assert (= #(row.phase row.attempt row.losses) #("queued" 2 0)) row)
+  (assert (in "世代 b1 が止まり始め" row.detail) row.detail))
+
+
+(deftest test-a-lease-that-lapses-while-the-generation-is-drained-does-not-count
+  ;; preStop が今の世代 b1 に drain を頼み、Pod が消えて lease が切れる(次の世代はまだ名乗っていない)。drain の頼み手を名指す。
+  (val placed (! (placed-rerun "job-drained")))
+  (val drained (get (! (call (get placed 0) "POST" "/workers/w/drain" 1500 {"boot" "b1"})) 0))
+  (val lapsed (! (tick drained 12000 T)))
+  (val row (! (row-of-key lapsed "job-drained")))
+  (assert (= #(row.phase row.attempt row.losses) #("queued" 2 0)) row)
+  (assert (in "drain(頼み手 test)" row.detail) row.detail)
+  (assert (in "上限に数えない" row.detail) row.detail))
+
+
+(deftest test-a-lease-that-lapses-after-the-drained-generation-was-replaced-does-not-count
+  ;; 本番の形: 世代 b1 に drain → Pod が作り直され、次の世代 b2 の heartbeat が drain を解く → その後に b1 の lease が切れる。drain の行は
+  ;; もう無いが、解けた拍に付いた退きの印で上限に数えない。
+  (val placed (! (placed-rerun "job-replaced")))
+  (val drained (get (! (call (get placed 0) "POST" "/workers/w/drain" 1500 {"boot" "b1"})) 0))
+  (val replaced (get (! (beat drained "w" 3000 :boot "b2")) 0))
+  (assert (is (.row replaced.drains "w") None) "次の世代の heartbeat が drain を解く")
+  (assert (in "世代 b1 に drain" (. (! (row-of-key replaced "job-replaced")) retiring)))
+  (val row (! (row-of-key (! (tick replaced 12000 T)) "job-replaced")))
+  (assert (= #(row.phase row.attempt row.losses row.retiring) #("queued" 2 0 "")) row)
+  (assert (in "世代 b2 に替わった" row.detail) row.detail)
+  ;; 退いた世代の Pod の preStop が、次の世代が名乗った後に drain を頼んだ形も同じ。
+  (val placed-late (! (placed-rerun "job-late-prestop")))
+  (val next-gen (get (! (beat (get placed-late 0) "w" 1500 :boot "b2")) 0))
+  (val prestop (get (! (call next-gen "POST" "/workers/w/drain" 2000 {"boot" "b1"})) 0))
+  (val late (! (row-of-key (! (tick prestop 12000 T)) "job-late-prestop")))
+  (assert (= #(late.phase late.losses) #("queued" 0)) late)
+  (assert (in "退いた世代 b1 が drain を頼んだ" late.detail) late.detail))
+
+
+(deftest test-a-lease-that-lapses-without-a-drain-still-counts
+  ;; 反例: 沈黙は死ではない。drain の掛かっていない世代の lease 切れ(memory が詰まって heartbeat が止まった形)は今までどおり数える。
+  ;; drain を頼んで取り下げた後の lease 切れも数える(退きの印は drain が掛かっている間か、掛かったまま世代が退いた時だけ)。
+  (val placed (! (placed-rerun "job-quiet-lapse")))
+  (val row (! (row-of-key (! (tick (get placed 0) 12000 T)) "job-quiet-lapse")))
+  (assert (= #(row.phase row.attempt row.losses) #("queued" 2 1)) row)
+  (assert (in (.format "上限に数えた消失 1/{} 回" RERUN-LIMIT) row.detail) row.detail)
+  (assert (not-in "上限に数えない" row.detail) row.detail)
+  (val again (! (placed-rerun "job-cancelled-drain")))
+  (val drained (get (! (call (get again 0) "POST" "/workers/w/drain" 1500 {"boot" "b1"})) 0))
+  (val cancelled (get (! (call drained "DELETE" "/workers/w/drain" 2000)) 0))
+  (val counted (! (row-of-key (! (tick cancelled 12000 T)) "job-cancelled-drain")))
+  (assert (= #(counted.phase counted.losses) #("queued" 1)) counted))
+
+
+(deftest test-planned-retirements-leave-the-whole-rerun-limit-for-real-losses
+  ;; 入れ替えに当たった後も、上限は退きの外の消失だけで使い切る: 退き 2 回の後、沈黙の lease 切れ RERUN-LIMIT 回までは走らせ直し、その次で lost。
+  (var state (get (! (placed-rerun "job-mixed")) 0))
+  (var now 1000)
+  (for [n (range 1 3)]
+    (:= now (+ now 1000))
+    (:= state (get (! (beat state "w" now :boot (.format "b{}" n) :stopping True)) 0))
+    (:= now (+ now 1000))
+    (:= state (! (running-on state "job-mixed" (.format "b{}" (+ n 1)) now))))
+  (var boot 3)
+  (for [loss (range 1 (+ RERUN-LIMIT 1))]
+    (:= now (+ now 11000))
+    (:= state (! (tick state now T)))
+    (assert (= (. (! (row-of-key state "job-mixed")) losses) loss) (.rows state.tasks))
+    (+= boot 1)
+    (:= now (+ now 100))
+    (:= state (! (running-on state "job-mixed" (.format "b{}" boot) now))))
+  (:= now (+ now 11000))
+  (val ended (! (row-of-key (! (tick state now T)) "job-mixed")))
+  (assert (= ended.phase "lost") ended)
+  (assert (in "上限" ended.detail) ended.detail))
+
+
+(deftest test-the-counted-losses-survive-the-saved-state-and-old-rows-count-every-attempt
+  ;; 数えた消失と退きの印は状態の保存を越える。欄の無い旧い行は前の試行を全部数えた(losses = attempt − 1)と読む。
+  (val placed (! (placed-rerun "job-saved")))
+  (val lapsed (! (tick (get placed 0) 12000 T)))
+  (val back (! (state-from-json (json.loads (json.dumps (! (state-to-json lapsed)))) 13000)))
+  (assert (= (. (! (row-of-key back "job-saved")) losses) 1))
+  (val saved (! (state-to-json lapsed)))
+  (for [row (get saved "tasks")]
+    (.pop row "losses"))
+  (val old (! (state-from-json (json.loads (json.dumps saved)) 13000)))
+  (val row (! (row-of-key old "job-saved")))
+  (assert (= #(row.attempt row.losses) #(2 1)) row))
+
+
 (deftest test-a-rerun-tells-the-outbox-once-and-is-not-told-as-an-end
   ;; 出口: 試行が変わった歩で行 reran を 1 つ。lost の終わりの行は積まない。種類を名乗らない読み手には出ない。最後の結末は終わりの行で 1 つ。
   (val placed (! (placed-rerun "job-told")))

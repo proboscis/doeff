@@ -595,11 +595,17 @@
   "世代に付いた drain(世代つきの頼み — Pod の preStop・止まり始めを告げる heartbeat)を、頼まれた時の世代と違う世代(Pod を作り直した後の
    worker)の heartbeat で解く。世代を持たない drain(世代を付けない頼み — 版上げの Program・手の頼み)は worker の名前に付き、どの世代の
    heartbeat でも解かない(頼み手の DELETE か期限まで保つ・#4177)。退いた世代の heartbeat はここへ来ない
-   (register-heartbeat が先に分ける — 旧い世代の heartbeat が新しい世代の drain を解かず、旧い世代の drain を付け直さない)。"
+   (register-heartbeat が先に分ける — 旧い世代の heartbeat が新しい世代の drain を解かず、旧い世代の drain を付け直さない)。
+   解く拍に、drain の掛かった世代に置いた切り離した task へ予定した退きの印を付ける(retiring-marked — その世代の lease が後で切れても、
+   走らせ直しの上限に数えない・2026-11-05)。"
   (setv d (.row state.drains name))
   (cond
     (or (is d None) (is boot None) (is d.boot None)) state
-    (!= d.boot boot) (replace state :drains (.with-writes state.drains (tuple [(TableWrite name None)])))
+    (!= d.boot boot)
+      (replace state :drains (.with-writes state.drains (tuple [(TableWrite name None)]))
+                     :tasks (retiring-marked state.tasks name d.boot
+                                             (.format "worker {} の世代 {} に drain(頼み手 {})が掛かったまま世代 {} に替わった"
+                                                      name d.boot (or d.actor "名乗らない") boot)))
     True state))
 
 
@@ -1377,6 +1383,11 @@
 ;; 届けは行が無いので受けられず(absorb-task-reports-into・absorb-task-result)、返事から外れた job として worker に止められる(沈黙から戻った旧い
 ;; process が同じ命令を 2 本目として走り続けない — 同じ worker の同じ世代に次の試行を置いた時も、旧い job を止めて新しい job を起こす)。
 ;; 走らせ直しは RERUN-LIMIT 回まで: task 自身が担い手を落としている時(memory を使い尽くすなど)に機体を落とし続けない。
+;; 上限に数えるのは、予定した退きの外で担い手が消えた試行だけ(TaskRecord.losses — 2026-11-05)。予定した退き = worker の
+;; 側の操作で世代が退いた(版の入れ替え・Pod の作り直し・drain): 止まり始めた世代の報告で消えた試行(absorb-task-reports-into・
+;; absorb-detached-report)と、task の世代に drain が掛かっている間か、drain が掛かったまま世代が退いた後に lease が切れた試行(retiring-of)。
+;; 退きは人と配備の操作の数だけ起きるので、数えなくても走らせ直しは止まる。drain の掛かっていない世代の lease 切れ(沈黙 — memory が詰まって
+;; heartbeat が止まった形)と、止まり始めでない世代の子の消失は今までどおり数える。
 ;; 次の試行は、積み直した刻より後に連絡のあった worker にだけ置く(heard-since-rerun): 生死の窓の中でまだ生きていると数える消えた worker へ置いて、
 ;; また lease 切れで回数を使わない。
 (setv RERUN-LIMIT 3)
@@ -1389,20 +1400,48 @@
   (.format "{}{}{}" (get (.partition task.id RERUN-ID-MARK) 0) RERUN-ID-MARK (+ task.attempt 1)))
 
 
-(defn #^ TaskRecord gone-detached [#^ TaskRecord task #^ int now #^ str why]
-  "純粋: 担い手が消えた切り離した task の次の行(節の頭の註)。why = 消えた訳の 1 句。走らせ直しを名乗り上限の内なら、次の試行の待ちの行(key・
-   Program・置き方の名乗りは同じ。id が替わる — 呼び手は put-gone で前の行を消す。待ちの期限と知らせは積み直した刻から数える。前の試行の
-   worker の失敗の覚えは持ち越さない)。ほかは lost。"
+(defn #^ TaskRecord gone-detached [#^ TaskRecord task #^ int now #^ str why #^ (| str None) [retiring None]]
+  "純粋: 担い手が消えた切り離した task の次の行(節の頭の註)。why = 消えた訳の 1 句。retiring = 予定した退きの訳(退いた世代と drain の
+   頼み手 — None = 予定した退きの外で消えた)。予定した退きの試行は上限に数えない(losses を足さない)。走らせ直しを名乗り上限の内なら、次の
+   試行の待ちの行(key・Program・置き方の名乗りは同じ。id が替わる — 呼び手は put-gone で前の行を消す。待ちの期限と知らせは積み直した刻から
+   数える。前の試行の worker の失敗の覚えと退きの印は持ち越さない)。detail には退きか消失かと、上限に数えた消失の数を書く(読み手が「上限に
+   近い」と「入れ替えに当たった」を見分ける)。ほかは lost。"
+  (setv losses (if (is retiring None) (+ task.losses 1) task.losses))
   (cond
     (not task.rerun)
       (end-detached task "lost" now (.format "{} — 走らせ直さない" why))
-    (> task.attempt RERUN-LIMIT)
-      (end-detached task "lost" now (.format "{} — 走らせ直しの上限 {} 回に達した" why RERUN-LIMIT))
+    (> losses RERUN-LIMIT)
+      (end-detached task "lost" now (.format "{} — 担い手が消えた試行が走らせ直しの上限 {} 回に達した" why RERUN-LIMIT))
     True
       (replace task :id (rerun-id task) :attempt (+ task.attempt 1) :phase "queued" :worker None :boot None :started-ms None
                :submitted-ms now :lease-until-ms (+ now task.lease-ms) :reported False :queued-noticed-ms None
-               :avoid #() :env-attempts 0 :failure-kind "" :retryable False
-               :detail (.format "{} — 試行 {} を待つ" why (+ task.attempt 1)))))
+               :avoid #() :env-attempts 0 :failure-kind "" :retryable False :losses losses :retiring ""
+               :detail (if (is retiring None)
+                           (.format "{} — 試行 {} を待つ(上限に数えた消失 {}/{} 回)" why (+ task.attempt 1) losses RERUN-LIMIT)
+                           (.format "{} — 予定した退き({})なので上限に数えない — 試行 {} を待つ(上限に数えた消失 {}/{} 回)"
+                                    why retiring (+ task.attempt 1) losses RERUN-LIMIT)))))
+
+
+(defn #^ (| str None) retiring-of [#^ TaskRecord task #^ ClusterState state #^ int now]
+  "純粋: 置いた切り離した task の担い手の世代が予定どおり退いているか(lease 切れを上限に数えるかを分けるため — 節の頭の註)。退いた印
+   (task.retiring — drain が掛かったまま世代が退いた)か、今その世代に掛かっている期限の内の drain(世代つきなら task の世代の物・
+   世代を付けない drain は名前に付く)があれば訳の 1 句。どちらも無ければ None(沈黙 — 上限に数える)。"
+  (setv d (if (is task.worker None) None (.row state.drains task.worker)))
+  (cond
+    task.retiring task.retiring
+    (and (is-not d None) (> d.until-ms now) (or (is d.boot None) (is task.boot None) (= d.boot task.boot)))
+      (.format "worker {} の世代 {} に drain(頼み手 {})が掛かっている" task.worker task.boot (or d.actor "名乗らない"))
+    True None))
+
+
+(defn #^ (get Table TaskRecord) retiring-marked [#^ (get Table TaskRecord) tasks #^ str worker #^ (| str None) boot #^ str why]
+  "純粋: worker の世代 boot に置いた開いた切り離した task に、予定した退きの印 why を付けた表(付ける行が無ければ同じ object)。世代つきの
+   drain が新しい世代の heartbeat で解ける拍(absorb-boot)と、退いた世代の Pod が drain を頼んだ拍(drain_policy.request-drain)に呼ぶ —
+   前の世代の lease が切れる刻には drain の行が無いので、印で退きと沈黙を分ける(retiring-of)。"
+  (setv writes (tuple (gfor t (scan-rows tasks)
+                            :if (and t.detached (in t.phase PLACED-PHASES) (= t.worker worker) (same-boot t boot) (not t.retiring))
+                            (TableWrite t.id (replace t :retiring why)))))
+  (if writes (.with-writes tasks writes) tasks))
 
 
 (defn #^ bool heard-since-rerun [#^ TaskRecord task #^ WorkerInfo worker]
@@ -1410,16 +1449,18 @@
   (or (= task.attempt 1) (>= worker.last-seen-ms task.submitted-ms)))
 
 
-(defk settle-detached [task now lapsed]
-  {:pre [(: task TaskRecord) (: now int) (: lapsed bool)] :post [(: % (| TaskRecord None))] :tags {:context "coordinator" :role "judgment"}}
-  "純粋: 切り離した task 1 本の期限の判断。lapsed = 自分の期限(task-lapse-at の刻)が来た。保持の期限を過ぎた終わりの行は None(消す)。
-   置いた task の lease(担い手の worker の heartbeat が延ばす)が切れた = 担い手が消えた(gone-detached — 名乗らない task は lost・名乗った task は
-   id の替わった次の試行の行)。呼び手の問い合わせは lease に触らない(呼び手が消えても task は続く)。"
+(defk settle-detached [task now lapsed [retiring None]]
+  {:pre [(: task TaskRecord) (: now int) (: lapsed bool) (: retiring (| str None))] :post [(: % (| TaskRecord None))]
+   :tags {:context "coordinator" :role "judgment"}}
+  "純粋: 切り離した task 1 本の期限の判断。lapsed = 自分の期限(task-lapse-at の刻)が来た。retiring = 担い手の世代が予定どおり退いている訳
+   (retiring-of — None = 退きの印が無い)。保持の期限を過ぎた終わりの行は None(消す)。置いた task の lease(担い手の worker の heartbeat が
+   延ばす)が切れた = 担い手が消えた(gone-detached — 名乗らない task は lost・名乗った task は id の替わった次の試行の行。退きの印のある
+   lease 切れは走らせ直しの上限に数えない)。呼び手の問い合わせは lease に触らない(呼び手が消えても task は続く)。"
   (cond
     (in task.phase DETACHED-TERMINAL)
       (if lapsed None task)
     (and (in task.phase PLACED-PHASES) lapsed)
-      (gone-detached task now (.format "担い手の worker {} の lease が切れた(worker の死とみなす)" task.worker))
+      (gone-detached task now (.format "担い手の worker {} の lease が切れた(worker の死とみなす)" task.worker) retiring)
     True task))
 
 
@@ -1514,7 +1555,9 @@
     (val lapsed (and (is-not lapse None) (>= now lapse)))
     (cond
       task.detached
-        (do (<- kept (| TaskRecord None) (settle-detached task now lapsed))
+        (do (<- kept (| TaskRecord None) (settle-detached task now lapsed
+                                                          ;; 退きの印は lease の切れた置いた行だけで読む(走査の毎拍に drain の行を引かない)。
+                                                          (if (and lapsed (in task.phase PLACED-PHASES)) (retiring-of task state now) None)))
             ;; 走らせ直しは行の id が替わる(前の行を消して次の試行の行を書く — 節 gone-detached の頭の註)。
             (when (and (is-not kept None) (!= kept.id id))
               (setv (get writes kept.id) kept))
@@ -1695,7 +1738,7 @@
                (TaskOffer :id task.id :name task.name :revision task.revision :versions task.versions :program task.program
                           :detached task.detached :key task.key :lease-ms task.lease-ms :retain-ms task.retain-ms :needs task.needs
                           :runtime-env task.runtime-env :environ task.environ :memory-mib task.memory-mib
-                          :rerun task.rerun :attempt task.attempt :notify task.notify))))
+                          :rerun task.rerun :attempt task.attempt :losses task.losses :notify task.notify))))
 
 
 (defn #^ TaskRecord task-finished [#^ TaskRecord task #^ int now #^ str detail #^ (| str None) result]
@@ -1715,7 +1758,8 @@
     (and (= phase "finished") (is-not status.result None))
       (task-finished task now detail status.result)
     (and (= phase "finished") stopping)
-      (gone-detached task now (.format "止まり始めた担い手の子 process が結果を書かずに終わった({})" detail))
+      (gone-detached task now (.format "止まり始めた担い手の子 process が結果を書かずに終わった({})" detail)
+                     (.format "worker {} の世代 {} が止まり始めを名乗った" task.worker task.boot))
     (= phase "finished")
       (end-detached task "lost" now (.format "子 process が結果を書かずに終わった({})" detail))
     (= phase "code-failed") (end-detached task "code-failed" now detail)
@@ -1773,7 +1817,8 @@
                   (if (and task.detached task.reported)
                       ;; 行を報告した後に消えた = 止まり始めた worker が走っていた子 process を止めた。走らせ直しを名乗らない task は lost
                       ;; (置き直すと同じ名の次の世代でもう 1 度走った — 2026-10-10 17:56 の作り直しの後)。
-                      (gone-detached task now (.format "担い手の worker {} が止まり始め、走っていた子 process を止めた" worker))
+                      (gone-detached task now (.format "担い手の worker {} が止まり始め、走っていた子 process を止めた" worker)
+                                     (.format "worker {} の世代 {} が止まり始めを名乗った" worker task.boot))
                       (replace task :phase "queued" :worker None :boot None :started-ms None
                                :detail (.format "担い手の worker {} が始める前に止まり始めた — 置き直しを待つ" worker))))))))
 
@@ -2372,6 +2417,8 @@
               :retain-ms (int-field echo "retainMs" 0) :runtime-env (.get echo "runtimeEnv") :environ (environ-pairs environ)
               :memory-mib (if (is (task-memory-refusal memory) None) memory None)
               :rerun (is (.get echo "rerun") True) :attempt (int-field echo "attempt" 1)
+              ;; 上限に数えた消失の数を運ばない写し(2026-11-05 の前の worker)は、前の試行を全部数えた。
+              :losses (int-field echo "losses" (- (int-field echo "attempt" 1) 1))
               :notify (if (isinstance (.get echo "notify") str) (.get echo "notify") "")
               :detail (.format "coordinator の置き場に行が無く、担い手 {} が走らせていた task を引き取った" worker)))
 

@@ -422,6 +422,13 @@ worker が無い・コードを準備できない)・`DetachedUnknown`(知らな
   - 行の id は試行ごとに替わります(`<最初の id>-r<試行の番号>`)。worker の job の名は `task/<id>` なので、沈黙から戻った前の試行の process の報告と
     結果の届けは受けられず、その job は返事から外れて worker に止められます(沈黙は死ではないので、同じ命令が 2 本 走り続けないための形です)。
   - 回数は 3 回まで(`RERUN-LIMIT` — task 自身が担い手を落としている時に機体を落とし続けない)。使い切ると `DetachedLost` です。
+    上限に数えるのは、予定した退きの外で担い手が消えた試行だけです(行の欄 `losses` — 試行の番号 `attempt` とは別に数える)。
+  - 予定した退き(版の入れ替え・Pod の作り直し・drain — worker の側の操作)で止まった試行は上限に数えません。予定した退きは、止まり始めた
+    世代の報告で消えた試行と、task の世代に drain が掛かっている間か、drain が掛かったまま世代が替わった後に lease が切れた試行です。
+    drain の掛かっていない世代の lease 切れ(沈黙 — memory が詰まって heartbeat が止まった形を含む)と、取り下げた drain の後の lease 切れは
+    数えます。退きは人と配備の操作の数だけ起きるので、数えなくても走らせ直しは止まります。
+  - 次の試行の detail は、退きか消失かと、上限に数えた消失の数(`上限に数えた消失 1/3 回`)を書きます。予定した退きなら、退いた世代と
+    drain の頼み手か止まり始めの名乗りも書きます(読み手が「上限に近い」と「入れ替えに当たった」を見分けられる)。
   - worker が生きている間に子だけが結果なしで終わった時(memory の見張り・OS に止められた)は走らせ直しません。task 自身が訳かもしれないからです。
   - 試行が変わると、知らせ先を名乗った task は出口に行 `reran`(id = `<次の試行の id>/reran`)を積みます(読み手は `AwaitDetachedOutbox` の `kinds` で名乗る)。
   - 2 度走って困る仕事は名乗りません。途中から続くのは Program が途中の結果を残す時だけです。
@@ -432,7 +439,8 @@ worker が無い・コードを準備できない)・`DetachedUnknown`(知らな
 - **途絶**: worker は coordinator と途絶えても切り離した task を止めません(途絶が lease より長ければ coordinator が消失とし、再接続の
   返事から外れた時に止めます)。
 - **drain**: drain は worker の上の切り離した task が 0 になるまで `Drained` になりません(task は移せないので終わるのを待つ — 走らせ直しを名乗った
-  task も同じ。名乗った task の持ち主は drain せずに機体を止めてよい)。
+  task も同じ。名乗った task の持ち主は、drain の上限(preStop の待ち)を延ばさずに機体を止めて入れ替えてよい — 止まった試行は次の世代で
+  最初から走り、上限には数えない)。
 - handler: `detached-cluster`(coordinator の `/detached` の口と、宛先の部品の上の汎用の `HttpRequest` で話す)。手元では `sim-cluster` の偽の実行先が同じ
   要求の形で本物の coordinator へ送り、本物の worker が task を走らせます。担い手の死・停止・網の切断・drain・coordinator の停止は
   テストの effect(`KillWorker`・`StopWorker`・`StartWorker`・`CutWorker`・`DrainWorker`・`StopCoordinator`・`CrashCoordinator`)で再現します。

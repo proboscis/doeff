@@ -43,7 +43,7 @@
 (import doeff_cluster._coordinator.intent.cluster_model [ClusterJob ClusterState Drain Placement DrainPhase DrainProgress WorkerDrainView])
 (import doeff_cluster._coordinator.intent.request_bodies [DrainBody])
 (import doeff_cluster._coordinator.core.cluster_policy [alive eligible effective-needs can-take draining-workers relocating load-of other-generation-boot handover-pending
-                                                       LIVE-PHASES MAX-EVENTS scan-rows])
+                                                       LIVE-PHASES MAX-EVENTS scan-rows retiring-marked])
 (import doeff_cluster._coordinator.core.resource_policy [refuse service-readiness])
 
 (setv DRAIN-DEFAULT-TTL-SECONDS 300)          ; 頼み直さない drain が消えるまで(preStop は数秒ごとに頼み直す)
@@ -69,7 +69,11 @@
   ;; 終わるまで待たせる — 見ていない世代には task が無いので drained)。boot の無い頼み(版上げの Program・手の頼み)は名前に付ける。
   ;; 退いた世代の頼みは、その世代の Pod の止まりが始まった印でもある(AL-D2k): 重なりの組に leaving を付け、前の世代が残していた job を
   ;; 新しい世代へ渡させる(cluster_policy.superseded-reply)。
-  (when (other-generation-boot state name boot) (return (superseded-leaving state name boot)))
+  ;; その世代に置いた切り離した task には予定した退きの印を付ける(lease が後で切れても走らせ直しの上限に数えない — cluster_policy.retiring-of)。
+  (when (other-generation-boot state name boot)
+    (return (replace (superseded-leaving state name boot)
+                     :tasks (retiring-marked state.tasks name boot
+                                             (.format "worker {} の退いた世代 {} が drain を頼んだ(頼み手 {})" name boot (or actor "名乗らない"))))))
   (setv until (+ now (int (* 1000 (min ttl DRAIN-MAX-TTL-SECONDS))))
         current (.row state.drains name))
   (replace state :drains (.with-writes state.drains
