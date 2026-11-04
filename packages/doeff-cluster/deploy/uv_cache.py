@@ -27,7 +27,8 @@ cache で依存を取り込むと、wheel の無い package(free-threaded の 3.
            何もしない(--force で入れ直す)。
   refresh  置き場の写しを、渡した project の lock(--project の dir の uv.lock)に合わせて作り直して置く。cache の中の一時の dir
            (.doeff-uv-refresh-*)の空の cache に、project ごとに `uv sync --frozen --no-install-workspace --no-install-local --all-groups
-           --all-packages` で第三者の依存だけを取り込み(venv も一時の dir に置く — project の dir に .venv を作らない)、その cache を pack
+           --all-packages` で第三者の依存だけを取り込み(venv と uv の TMPDIR も一時の dir に置く — project の dir に .venv を作らず、
+           source から組む gcc が埋まった /tmp で落ちない)、その cache を pack
            して PUT する。lock の中身の hash(並べた uv.lock の sha256)を object の metadata(x-amz-meta-doeff-uv-locks)に載せ、置いてある
            写しの hash が同じ時と、置いた刻(Last-Modified)が --every-seconds より新しい時は組まない(--force で組む)。空きが --min-free-gib
            を下回れば組まない。同じ cache の refresh は錠(.doeff-uv-refresh.lock)で 1 つに限る。
@@ -632,13 +633,14 @@ def published(
     return Published(digest=head.getheader(LOCKS_META, "").strip(), at=at)
 
 
-def sync_into(uv: str, project: Path, cache: Path, venv: Path) -> dict[str, object]:
-    """project の第三者の依存を cache へ取り込む(venv は渡した dir — project の dir に .venv を作らない)。落ちれば
-    CalledProcessError。"""
+def sync_into(uv: str, project: Path, cache: Path, venv: Path, tmp: Path) -> dict[str, object]:
+    """project の第三者の依存を cache へ取り込む(venv は渡した dir — project の dir に .venv を作らない。source から組む gcc の
+    一時 file は渡した dir tmp に書く — 外の /tmp は埋まっていることがある)。落ちれば CalledProcessError。"""
     began = time.monotonic()
     env = {
         **{k: v for k, v in os.environ.items() if k != "VIRTUAL_ENV"},
         "UV_PROJECT_ENVIRONMENT": str(venv),
+        "TMPDIR": str(tmp),
     }
     subprocess.run(
         [uv, *SYNC_ARGS, "--project", str(project), "--cache-dir", str(cache)],
@@ -689,8 +691,10 @@ def refresh(
         started = time.monotonic()
         build = Path(tempfile.mkdtemp(prefix=REFRESH_BUILD, dir=cache))
         try:
+            tmp = build / "tmp"
+            tmp.mkdir()
             synced = [
-                sync_into(uv, project, build / "cache", build / f"venv-{index}")
+                sync_into(uv, project, build / "cache", build / f"venv-{index}", tmp)
                 for index, project in enumerate(projects)
             ]
             packed = pack(build / "cache", build / Path(urllib.parse.urlsplit(url).path).name)

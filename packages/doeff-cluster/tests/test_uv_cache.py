@@ -864,6 +864,37 @@ def test_refresh_skips_a_current_or_recent_copy_unless_forced(
     assert _StoreHandler.puts == 3
 
 
+def test_refresh_gives_uv_a_tmpdir_under_the_build_dir(
+    seed_store: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """組みの gcc が書く一時 file は、埋まっているかもしれない外の TMPDIR でなく build の dir に書く(終わりに一緒に消える)。"""
+    outer = tmp_path / "outer-tmp"
+    outer.mkdir()
+    monkeypatch.setenv("TMPDIR", str(outer))
+    seen = tmp_path / "tmpdirs"
+    uv = _write(
+        tmp_path / "bin" / "uv",
+        "#!/bin/sh\n"
+        'while [ $# -gt 0 ]; do case "$1" in --project) p=$2; shift;; --cache-dir) c=$2; shift;; esac; shift; done\n'
+        'mkdir -p "$c/archive-v0/$(basename "$p")"\n'
+        'echo ok > "$c/archive-v0/$(basename "$p")/mod.py"\n'
+        f': > "$TMPDIR/cc-probe" && echo "$TMPDIR" >> {seen}\n',
+    )
+    uv.chmod(0o755)
+    cache = tmp_path / "cache"
+    assert _refresh(cache, _projects(tmp_path), seed_store, uv)["refreshed"] is True
+    tmpdirs = [Path(line) for line in seen.read_text().splitlines()]
+    assert len(tmpdirs) == 2
+    assert all(t.relative_to(cache).parts[0].startswith(uv_cache.REFRESH_BUILD) for t in tmpdirs)
+    assert not list(outer.iterdir())
+    assert not list(cache.glob(uv_cache.REFRESH_BUILD + "*"))
+    packed = _write(tmp_path / "got.tar.zst", "")
+    packed.write_bytes(_StoreHandler.body or b"")
+    unpacked = tmp_path / "unpacked"
+    uv_cache.seed(unpacked, str(packed), None, "us-east-1", 10.0, force=False)
+    assert not list(unpacked.rglob("cc-probe"))
+
+
 def test_refresh_does_not_put_when_a_sync_fails(seed_store: str, tmp_path: Path) -> None:
     failing = _write(tmp_path / "bin" / "uv", "#!/bin/sh\nexit 2\n")
     failing.chmod(0o755)
