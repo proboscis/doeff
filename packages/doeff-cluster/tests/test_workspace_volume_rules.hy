@@ -12,7 +12,7 @@
 ;;;                     負は 0)・冷やす順(2 時間を過ぎた物は全部・足りない空きの分を古い順に・空きが足りていれば足さない)
 (require doeff-hy.macros [deftest <- val])
 (import doeff_cluster._shared.core.workspace_volume_rules [AttachStep AttachView BackupView DetachStep DiskRoom MountEntry NAME-MAX-LENGTH
-                                                         NAME-PREFIX WarmVolume attach-step cooling-name cooling-order detach-step
+                                                         NAME-PREFIX WarmVolume attach-step cooling-name cooling-order detach-step growing-name
                                                          free-slots mount-entries mounted-at newest-backup owner-refusal ticket-id
                                                          using-tickets volume-mount-points volume-name volume-of-entry])
 
@@ -133,11 +133,14 @@
   (assert (= none #()) none))
 
 
-(deftest test-the-cooling-name-fits-a-kubernetes-name
+(deftest test-the-cooling-and-growing-names-fit-a-kubernetes-name
   (val longest (+ NAME-PREFIX (* "a" (- NAME-MAX-LENGTH (len NAME-PREFIX)))))
   (<- name (cooling-name longest 1793643381))
   (assert (= name (+ longest "-cool-1793643381")) name)
-  (assert (<= (len name) 63) (len name)))
+  (assert (<= (len name) 63) (len name))
+  (<- grow (growing-name longest 1793643381))
+  (assert (= grow (+ longest "-grow-1793643381")) grow)
+  (assert (<= (len grow) 63) (len grow)))
 
 
 (deftest test-the-newest-completed-backup-is-restored-from

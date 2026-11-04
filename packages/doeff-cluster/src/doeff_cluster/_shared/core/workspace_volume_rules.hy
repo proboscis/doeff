@@ -14,6 +14,7 @@
 ;;;   using-tickets         VolumeAttachment の ticket の id の組 → 冷やす手順の外の ticket(使っている印 — 冷やす側の snapshot と backup の
 ;;;                         ticket を除く)
 ;;;   cooling-name          volume の名と刻 → 冷やす時の snapshot と backup の名(<名>-cool-<epoch 秒>)
+;;;   growing-name          volume の名と刻 → 広げた直後に取って消す snapshot の名(<名>-grow-<epoch 秒>)
 ;;;   newest-backup         backup の組 → 戻す元(完了した物のうち作られたのが一番新しい物 — 無ければ None)
 ;;;   free-slots            札の disk の組と volume の大きさと過剰割り当ての % と最小の空きの % → まだ置ける volume の本数(Longhorn の
 ;;;                         置く線 2 つ — 名目の予約の線と実の空きの線 — の両方の内)
@@ -47,6 +48,8 @@
 (val COOLING-TICKET-PREFIXES #("snapshot-controller-" "backup-controller-"))
 ;; 冷やす時の snapshot と backup の名の中の印。
 (val COOLING-MARK "-cool-")
+;; 広げた直後に取って消す snapshot の名の中の印(README の節「広げる」の「expand の snapshot を畳む」)。
+(val GROWING-MARK "-grow-")
 ;; backup の様子のうち、戻す元にできる物。
 (val BACKUP-COMPLETED "Completed")
 
@@ -213,6 +216,13 @@
   "volume name を刻 stamp(epoch 秒)に冷やす時の snapshot と backup の名を得るため(<名>-cool-<刻> — 名は 40 字までなので k8s の名の 63 字に
    収まる)。"
   (+ name COOLING-MARK (str stamp)))
+
+
+(defk growing-name [name stamp]
+  {:pre [(: name str) (.startswith name NAME-PREFIX) (: stamp int) (>= stamp 0)] :post [(: % str) (<= (len %) 63)]}
+  "volume name を刻 stamp(epoch 秒)に広げた直後に取って消す snapshot の名を得るため(<名>-grow-<刻> — 名は 40 字までなので k8s の名の
+   63 字に収まる)。"
+  (+ name GROWING-MARK (str stamp)))
 
 
 (defk newest-backup [backups]
