@@ -55,7 +55,7 @@ exclude_docs: |
   !/program-architecture-overview.md
   !/seedream.md
   !/positioning/what-doeff-is.md
-  !/articles/handler-k-figure.md
+  !/articles/algebraic-effects-in-python.md
 
 nav:
   - Home: index.md
@@ -89,7 +89,8 @@ nav:
       - Rust Scheduler: 25-rust-scheduler.md
       - Capability Classes: 22-capability-classes.md
       - CLI Architecture: cli-run-command-architecture.md
-      - 'Prototype: a handler receives k': articles/handler-k-figure.md
+  - Articles:
+      - 'Algebraic effects for Python': articles/algebraic-effects-in-python.md
   - Pages That Need Other Components:
       - CLI auto-discovery and IDE plugins:
           - CLI Auto-Discovery: 14-cli-auto-discovery.md

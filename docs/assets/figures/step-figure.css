@@ -14,6 +14,7 @@
   --sf-k: #b5620a;
   --sf-now: rgba(214, 170, 0, .26);
   --sf-k-tint: rgba(181, 98, 10, .14);
+  --sf-handler-tint: rgba(11, 138, 114, .05);
   --sf-fail: #cf2f4c;
   --sf-on-token: #fff;
   --sf-line-height: 1.55;
@@ -31,6 +32,7 @@
   --sf-k: #ffb86b;
   --sf-now: rgba(255, 225, 77, .2);
   --sf-k-tint: rgba(255, 184, 107, .16);
+  --sf-handler-tint: rgba(62, 207, 178, .05);
   --sf-fail: #ff6b81;
   --sf-on-token: #14161f;
 }
@@ -122,14 +124,61 @@
 }
 .sf-token.is-shown { opacity: 1; }
 .sf-token.is-teleport { transition: none; }
-.sf-token[data-token="spend"] { background: var(--sf-effect); }
-.sf-token[data-token="k"] { background: var(--sf-k); }
-.sf-token[data-token="result"] { background: var(--sf-fail); }
+/* A token's class names its role: an effect, a continuation, a value a handler hands back, or what went wrong. */
+.sf-token.is-effect { background: var(--sf-effect); }
+.sf-token.is-k { background: var(--sf-k); }
+.sf-token.is-value { background: var(--sf-handler); }
+.sf-token.is-fail { background: var(--sf-fail); }
 .sf-token small { font-size: .85em; font-weight: 400; }
 /* k drops out of the figure: nothing is left that can run the rest of the function. */
 .sf-token.is-dropped { opacity: 0; translate: 0 3.2rem; rotate: 14deg; transition: translate .9s cubic-bezier(.5, 0, .9, .5), rotate .9s, opacity .9s ease-in; }
 /* k goes back into the program: it travels first, then melts into the code. */
 .sf-token.is-merging { opacity: 0; transition: transform .7s cubic-bezier(.3, .7, .25, 1), opacity .3s .6s; }
+
+/* Handlers around a program (six-stacks, missing-handler): each .sf-ring is one handler, drawn around what it handles, so the
+   rings read from the inside out like the calls do. A ring a step does not use is "is-off": it takes no room and draws nothing. */
+.sf-call [data-slot="call"] { flex: 1 1 14rem; overflow-wrap: anywhere; }
+.sf-call .sf-result.is-text { padding: 0 .5rem; color: var(--md-default-fg-color); border-style: solid; }
+.sf-call > .sf-mark { margin-left: auto; }
+.sf-mark { padding: 0 .45rem; border-radius: .8rem; font-weight: 700; white-space: nowrap; }
+.sf-mark.is-pass { color: var(--sf-on-token); background: var(--sf-handler); }
+.sf-mark.is-fail { color: var(--sf-on-token); background: var(--sf-fail); }
+
+.sf-edge { display: flex; flex-wrap: wrap; align-items: center; gap: .2rem .6rem; min-height: 1.4rem; margin-bottom: .3rem; padding: .1rem .4rem; border: 1px dashed var(--md-default-fg-color--lightest); border-radius: .2rem; font-size: .56rem; line-height: 1.2rem; color: var(--md-default-fg-color--light); }
+/* Room for the token that gets this far: beside the words, or under them on a narrow page. */
+.sf-edge-slot { flex: 0 0 13rem; height: 1.2rem; }
+.sf-edge.is-fail { border-color: var(--sf-fail); color: var(--sf-fail); }
+
+.sf-rings { font-family: var(--md-code-font-family); }
+.sf-ring { position: relative; padding: 1.25rem .45rem .45rem; border: 2px solid var(--sf-handler); border-radius: .4rem; background: var(--sf-handler-tint); transition: border-color .3s; }
+.sf-ring-name { position: absolute; top: .2rem; left: .5rem; right: .5rem; overflow: hidden; font-size: .56rem; font-weight: 700; line-height: 1rem; color: var(--sf-handler); white-space: nowrap; text-overflow: ellipsis; }
+/* A line inside a ring for what its handler does there (monte_carlo's runs of battle). */
+.sf-ring-room { display: none; height: 1.5rem; }
+.sf-ring-room.is-on { display: block; }
+.sf-ring.is-off { padding: 0; border-color: transparent; background: none; }
+.sf-ring.is-off > .sf-ring-name { display: none; }
+.sf-ring.is-new { animation: sf-ring-in .9s ease-out; }
+.sf-ring.is-skip > .sf-ring-name { color: var(--md-default-fg-color--light); }
+@keyframes sf-ring-in { from { border-color: var(--sf-now); background: var(--sf-now); } }
+.sf-ring-name [data-slot].is-changed { animation: sf-flash .9s ease-out; }
+
+.sf-core { padding: .35rem .5rem; border: 1px solid var(--md-default-fg-color--lighter); border-radius: .25rem; background: var(--md-code-bg-color); font-size: .58rem; }
+.sf-core-head { display: flex; flex-wrap: wrap; gap: .1rem .6rem; justify-content: space-between; font-weight: 700; color: var(--sf-effect); }
+.sf-core-head .sf-unchanged { font-weight: 400; color: var(--md-default-fg-color--light); }
+.sf-core .sf-code { margin-top: .25rem; }
+.sf-core .sf-line { white-space: pre-wrap; overflow-wrap: anywhere; }
+.sf-line.is-fail { box-shadow: inset 0 0 0 1.5px var(--sf-fail); }
+.sf-tasks { display: none; grid-template-columns: repeat(20, 1fr); gap: 2px; margin-top: .3rem; }
+.sf-tasks.is-on { display: grid; }
+.sf-tasks > span { aspect-ratio: 1; border: 1px solid var(--sf-handler); border-radius: 2px; background: var(--sf-k-tint); }
+
+.sf-trace { display: none; margin-top: .4rem; padding: .3rem .45rem; border-left: 3px solid var(--sf-fail); border-radius: .15rem; background: var(--md-code-bg-color); font-family: var(--md-code-font-family); font-size: .54rem; line-height: 1.5; white-space: pre-wrap; overflow-wrap: anywhere; }
+.sf-trace.is-on { display: block; }
+
+.sf-aside { display: none; margin-top: .5rem; padding: .35rem .5rem; border: 1px solid var(--md-default-fg-color--lighter); border-radius: .25rem; background: var(--md-code-bg-color); font-family: var(--md-code-font-family); font-size: .56rem; }
+.sf-aside.is-on { display: block; }
+.sf-aside .sf-head > :first-child { color: var(--md-default-fg-color--light); }
+.sf-aside .sf-line { white-space: pre-wrap; overflow-wrap: anywhere; }
 
 .sf-controls { display: flex; align-items: center; gap: .5rem; margin-top: .3rem; }
 .sf-controls .md-button { padding: .2em .9em; font-size: .62rem; cursor: pointer; }
@@ -144,6 +193,6 @@
 .step-figure.is-recording .sf-stage { cursor: default; }
 
 @media (prefers-reduced-motion: reduce) {
-  .sf-token, .sf-token.is-dropped, .sf-token.is-merging, .sf-line, .sf-panel { transition: none; }
-  .sf-vars [data-slot].is-changed, .sf-head [data-slot].is-changed { animation: none; }
+  .sf-token, .sf-token.is-dropped, .sf-token.is-merging, .sf-line, .sf-panel, .sf-ring { transition: none; }
+  .sf-vars [data-slot].is-changed, .sf-head [data-slot].is-changed, .sf-ring-name [data-slot].is-changed, .sf-ring.is-new { animation: none; }
 }

@@ -2,6 +2,7 @@
 // the page, and this script moves it one step per click. Each <li> of the fragment's .sf-steps is a step: its text is the caption,
 // and data-state says what the stage looks like at that step. No step depends on the click that led to it, so Back and the dots
 // work the same as Next, and figure-gif.mjs can record any step through figure.stepFigure.show(n).
+// A token with "from" (and "via") travels in that step from those anchors to its "at", whatever the step before showed.
 (() => {
   // A step lists only the values that change; every other value carries over from the steps before it.
   const statesOf = (steps) => {
@@ -26,6 +27,8 @@
     const rect = anchor.getBoundingClientRect();
     return {x: rect.left + rect.width / 2 - box.left, y: rect.top + rect.height / 2 - box.top};
   };
+
+  const still = window.matchMedia('(prefers-reduced-motion: reduce)');
 
   const build = (figure) => {
     const stage = figure.querySelector('.sf-stage');
@@ -61,11 +64,34 @@
 
     list.setAttribute('aria-live', 'polite');
     let current = 0;
+    let marked = [];
+    let size = '';
 
+    // A stop of a token's trip: the name of an anchor, or {at, place} like the token's own spec.
+    const transformAt = (token, stop) => {
+      const spec = typeof stop === 'string' ? {at: stop} : stop;
+      const {x, y} = pointFor(stage, anchors.get(spec.at), token, spec.place);
+      return `translate(${x}px, ${y}px) translate(-50%, -50%)`;
+    };
     const place = (token, spec) => {
-      const anchor = anchors.get(spec.at);
-      const {x, y} = pointFor(stage, anchor, token, spec.place);
-      token.style.transform = `translate(${x}px, ${y}px) translate(-50%, -50%)`;
+      token.style.transform = transformAt(token, spec);
+    };
+    // The trip of a token with "from": it shows at once where it starts, and goes through each "via" to where the step puts it.
+    const travel = (token, spec) => {
+      const stops = [spec.from, ...(spec.via ?? []), spec].map((stop) => transformAt(token, stop)).filter((stop, i, all) => i === 0 || stop !== all[i - 1]);
+      token.getAnimations().forEach((animation) => animation.cancel());
+      if (still.matches) return;
+      const delay = (spec.delay ?? 0) * 1000;
+      // A token that waits for its turn is not there yet: it shows when it starts to move.
+      if (delay) token.animate([{opacity: 0}, {opacity: 0}], {duration: delay});
+      if (stops.length > 1) {
+        token.animate(stops.map((transform) => ({transform})), {
+          duration: 600 * (stops.length - 1),
+          delay,
+          easing: 'cubic-bezier(.3, .7, .25, 1)',
+          fill: 'backwards',
+        });
+      }
     };
 
     const show = (n) => {
@@ -76,9 +102,12 @@
         dot.classList.toggle('is-current', i === n);
         dot.classList.toggle('is-past', i < n);
       });
-      for (const anchor of anchors.values()) anchor.classList.remove('is-now', 'is-k', 'is-dead', 'is-on');
-      for (const name of state.now ?? []) anchors.get(name).classList.add('is-now');
-      for (const [name, mark] of Object.entries(state.marks ?? {})) anchors.get(name).classList.add(mark);
+      for (const [node, names] of marked) node.classList.remove(...names);
+      marked = [
+        ...(state.now ?? []).map((name) => [anchors.get(name), ['is-now']]),
+        ...Object.entries(state.marks ?? {}).map(([name, mark]) => [anchors.get(name), mark.split(' ')]),
+      ];
+      for (const [node, names] of marked) node.classList.add(...names);
       for (const slot of slots) {
         const value = state.values[slot.dataset.slot] ?? '';
         if (slot.textContent !== value) {
@@ -96,8 +125,14 @@
           token.classList.remove('is-shown');
           continue;
         }
-        // A token that was hidden appears where it belongs; it does not fly in from where it last was.
-        if (!token.classList.contains('is-shown')) {
+        if (spec.from) {
+          token.classList.add('is-teleport', 'is-shown');
+          place(token, spec);
+          travel(token, spec);
+          void token.offsetWidth;
+          token.classList.remove('is-teleport');
+        } else if (!token.classList.contains('is-shown')) {
+          // A token that was hidden appears where it belongs; it does not fly in from where it last was.
           token.classList.add('is-teleport');
           place(token, spec);
           void token.offsetWidth;
@@ -111,6 +146,7 @@
       }
       back.disabled = n === 0;
       next.textContent = n === steps.length - 1 ? 'Replay' : 'Next';
+      size = sizeOf();
     };
 
     const advance = () => show(current === steps.length - 1 ? 0 : current + 1);
@@ -127,8 +163,12 @@
       event.preventDefault();
     });
 
-    // The layout changes the points the tokens sit on, so they are worked out again without a transition.
-    const replace = () => {
+    // The layout changes the points the tokens sit on, so they are worked out again without a transition. A step that changes the
+    // size of the stage has already placed its tokens, and is left to finish its moves.
+    const sizeOf = () => `${stage.offsetWidth}x${stage.offsetHeight}`;
+    const replace = (always) => {
+      if (!always && sizeOf() === size) return;
+      size = sizeOf();
       for (const token of tokens) {
         const spec = states[current].tokens?.[token.dataset.token];
         if (!spec) continue;
@@ -138,8 +178,8 @@
         token.classList.remove('is-teleport');
       }
     };
-    new ResizeObserver(replace).observe(stage);
-    document.fonts?.ready.then(replace);
+    new ResizeObserver(() => replace(false)).observe(stage);
+    document.fonts?.ready.then(() => replace(true));
 
     figure.classList.add('is-live');
     figure.tabIndex = 0;

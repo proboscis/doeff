@@ -102,3 +102,26 @@ The narration never uses a local text-to-speech model, and
 | Numbers on screen come from a run in `measure/`. | The video must hold true for anyone who runs the same code. |
 | English on screen and in the narration; no people drawn. | The docs are in English; the videos show code and its runs. |
 | Up to about 3 minutes, and at most 6 MB (`render.mjs` encodes at CRF 29; a video over 6 MB is rendered again with a higher CRF as the third argument). | The mp4 lives in the repository. |
+
+## Click-through figures
+
+A figure that the reader steps through by clicking (`docs/assets/figures/<name>.html`) is the other moving thing a page can
+show. The page writes one line, the figure's GIF as a link: `[![<what it shows>](../assets/figures/<name>.gif)](../assets/figures/<name>.gif)`.
+GitHub and Zenn show the GIF; on the site, `tools/docs_site/hooks.py` puts the figure in place of that line, and
+`docs/assets/figures/step-figure.js` and `step-figure.css` move it.
+
+1. Write the stage (`.sf-stage`) and one `<li>` per step in `.sf-steps`. Each `<li>` is the caption, and its `data-state` says what
+   the stage looks like at that step:
+
+   | Key | Meaning |
+   |---|---|
+   | `active` | the panel (`data-panel`) drawn with a strong border |
+   | `now` | anchors (`data-anchor`) to light up |
+   | `marks` | a class for an anchor: `is-k`, `is-dead`, `is-on`, `is-off` (a ring that takes no room), `is-new`, `is-skip`, `is-fail`, `is-pass` |
+   | `values` | text for each `data-slot`; a step lists only what changes |
+   | `tokens` | the pills shown and where: `at` and `place` (`"end"` = just past the anchor's text), `from` and `via` (the trip it makes in this step), `delay` (seconds before it shows and moves), `drop`, `merge`. A pill a step leaves out is hidden |
+
+2. `make docs-site`, then in this directory `node figure-gif.mjs articles/<page>/index.html <name>` (under `agora-browser`, with
+   `PLAYWRIGHT_MODULES` naming the `node_modules` that has playwright). The GIF is recorded from the built figure, so the two never differ.
+3. Check: `uv run pytest tests/test_docs_site_step_figures.py` (every step names only what the figure has, and every figure has its
+   GIF and the other way round) and `make docs-site`.

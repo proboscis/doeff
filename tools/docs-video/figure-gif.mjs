@@ -17,7 +17,8 @@ const {chromium} = require('playwright');
 const [pagePath, name] = process.argv.slice(2);
 if (!name) throw new Error('usage: node figure-gif.mjs <page in the built site> <name>');
 const FPS = 10;
-const MOVE_FRAMES = 11; // the slowest transition (a dropped k, .9 s) ends within this many frames
+// A step's frames run until its last move ends (a token that waits its turn, or travels through other anchors, moves for longer).
+const moveFrames = (endMs) => Math.min(60, Math.ceil(endMs / (1000 / FPS)) + 1);
 const HOLD_SECONDS = (chars) => Math.max(2.5, chars / 25); // long enough to read the caption at about 25 characters a second
 const MAX_BYTES = 3_000_000;
 const width = Number(process.env.FIGURE_WIDTH ?? 760);
@@ -36,6 +37,17 @@ await figure.evaluate((node) => {
   node.style.margin = '0';
 });
 const steps = await figure.evaluate((node) => node.stepFigure.length);
+// A step can make the figure taller (a traceback that opens, a ring that comes in), and every frame of a GIF has one size: the
+// figure is held at the height of its tallest step, so no frame is squeezed into the size of the first.
+await figure.evaluate((node) => {
+  let tallest = 0;
+  for (let n = 0; n < node.stepFigure.length; n++) {
+    node.stepFigure.show(n);
+    tallest = Math.max(tallest, node.getBoundingClientRect().height);
+  }
+  node.style.boxSizing = 'border-box';
+  node.style.height = `${Math.ceil(tallest)}px`;
+});
 
 let frame = 0;
 const shoot = async () => {
@@ -44,11 +56,13 @@ const shoot = async () => {
   return file;
 };
 for (let step = 0; step < steps; step++) {
-  await figure.evaluate((node, n) => {
+  const end = await figure.evaluate((node, n) => {
     node.stepFigure.show(n);
-    document.getAnimations().forEach((animation) => animation.pause());
+    const animations = document.getAnimations();
+    animations.forEach((animation) => animation.pause());
+    return Math.max(0, ...animations.map((animation) => animation.effect.getComputedTiming().endTime));
   }, step);
-  for (let i = 0; i < MOVE_FRAMES; i++) {
+  for (let i = 0; i < moveFrames(end); i++) {
     await figure.evaluate((_, ms) => document.getAnimations().forEach((animation) => (animation.currentTime = ms)), (i * 1000) / FPS);
     await shoot();
   }
