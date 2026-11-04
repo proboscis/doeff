@@ -49,5 +49,8 @@
 (defk placed-argv [procs argv]
   {:pre [(: procs str) (: argv tuple)] :post [(: % tuple)] :tags {:context "worker" :role "judgment"}}
   "子の argv を、兄弟の cgroup へ移ってから元の argv を exec する sh で包むため(頭の註)。内側の宿が自分の子を別の兄弟へ包んだ argv
-   (常駐の job の services・実行環境の準備の prepare)は、外の答え手の包みで jobs を経て、最後に pid を書く内の包みの兄弟に落ち着く。"
-  (+ #("/bin/sh" "-c" PLACE-SCRIPT procs) argv))
+   (常駐の job の services・実行環境の準備の prepare)は包み直さない — jobs の層の上限は追い出しの線から掛け直され 0 まで下がるので、jobs を
+   経ると移る前に OOM kill で止まる(2026-11-04 22:05 JST の k3s-0: 上限 0 MiB の間、準備の process が終了 -9 で 5 回続けて落ちた)。"
+  (if (= (cut argv 3) #("/bin/sh" "-c" PLACE-SCRIPT))
+      argv
+      (+ #("/bin/sh" "-c" PLACE-SCRIPT procs) argv)))

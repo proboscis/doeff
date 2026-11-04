@@ -145,8 +145,9 @@
   (assert (= plain SHIM-ARGV) plain))
 
 
-(deftest test-a-resident-job-passes-through-the-job-cgroup-and-settles-in-the-service-cgroup [#^ Path tmp-path]
-  ;; 本物の sh: 外の placer(jobs)と内の包み(services)を重ねた子は、jobs を経て services に落ち着く(最後に pid を書くのは内の包み)。
+(deftest test-a-child-placed-in-another-layer-never-passes-through-the-job-cgroup [#^ Path tmp-path]
+  ;; 本物の sh: 内の宿が別の層へ包んだ子(services・prepare)を外の placer(jobs)は包み直さない。jobs の層の上限は 0 まで下がるので、経ると
+  ;; 移る前に OOM kill で止まる(2026-11-04 22:05 JST の k3s-0 — 上限 0 MiB の間、準備の process が終了 -9 で 5 回続けて落ちた)。
   (val jobs (/ tmp-path "jobs.procs"))
   (val services (/ tmp-path "services.procs"))
   (.write-text jobs "")
@@ -155,7 +156,8 @@
   (<- outcome ProcessOutcome (with-handlers [subprocess-handler (job-cgroup-placer (str jobs))]
                                (RunProcess :argv inner)))
   (assert (= outcome.exit-code 0) outcome)
-  (assert (= (.strip (.read-text jobs)) (.strip (.read-text services)) (.strip outcome.stdout)) "同じ pid が jobs を経て services に書かれる"))
+  (assert (= (.strip (.read-text services)) (.strip outcome.stdout)) "pid が services に書かれる")
+  (assert (= (.read-text jobs) "") "jobs には書かない"))
 
 
 (deftest test-the-worker-reads-its-service-cgroup-under-the-writable-view
