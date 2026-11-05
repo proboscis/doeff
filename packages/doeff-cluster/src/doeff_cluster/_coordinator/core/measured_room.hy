@@ -5,8 +5,9 @@
 ;;;
 ;;; 以前は worker ごとに手で書いた数(枠の file の taskReserve・backgroundRoom)から置いた task を引いた数を空きとした。手の数は機体の
 ;;; 実際の混み(他の Pod の CPU・memory の残り)を見ず、機体を足すたびに書き足し、混みの事故のたびに分け方を直した。今は:
-;;;   数の空き       = min(CPU の空き − まだ測りに出ていない task, memory の枠, 上限 − 置いた task)
+;;;   数の空き       = min(max(CPU の空き − まだ測りに出ていない task, 層の床), memory の枠, 上限 − 置いた task)
 ;;;   CPU の空き     = ⌊(cpus × (1 − 普通の使い) − CPU-FLOOR-CORES) / TASK-CORES⌋
+;;;   層の床         = task の層の PSI を名乗る worker は TASK-LAYER-FLOOR − 置いた task・名乗らない worker は 0(layer-floor-of)
 ;;;   普通の使い     = cpu-busy − cpu-nice(nice > 0 の process の分を除いた CPU の使い — normal-busy-of)
 ;;;   memory の枠    = ⌊memory の空き / MEMORY-SLOT-MIB⌋(予約の半分ずつの守りが数で読むための単位 — task の大きさの見込みではない)
 ;;;   上限           = ⌊cpus / TASK-CORES⌋(task-cap-of — 測りが遅れても CPU の数より多くは置かない)
@@ -34,6 +35,14 @@
 ;;; 取り分を持つ)ので、置いた task が本当に動けるかは task の層の PSI で測り、待ちが閾値を越えれば 0 にする。memory の判定(空き・予約・
 ;;; memory の PSI)は優先度で分けない。測った空きを名乗らない worker(/proc の無い機体・測りの前の版の worker)と、CPU の使いをまだ数えられない
 ;;; 読み(cpu-busy None — 初めの読み)は 0。
+;;;
+;;; 層の床(2026-11-05): 他の service と同居する機体(16 core に常駐の service が載る機体)は、普通の優先度の service が CPU を 0.97〜1.00
+;;; まで使い、機体の CPU の PSI some が平常で 40〜60% と止めの線を跨ぐ。機体の全体の値だけで数えると、その機体を要る task は混みの切れ目
+;;; しか入れず、9 時間 1 本も置かれなかった(同じ日の 4 時間ごとの回が後ろに積もった)。task の層(job の cgroup)は配備が cgroup の重み
+;;; (cpu.weight と、Pod の下の worker は Pod の CPU の requests)で取り分を持つので、機体が埋まっていても置いた task は取り分の CPU で
+;;; 動ける。task の層の PSI を名乗る worker には、CPU の空きが 0 でも TASK-LAYER-FLOOR 本までは置く。取り分で足りるかは task の層の PSI が
+;;; 測る — 置いた task 自身が実行を待てば(some ≥ CPU-PRESSURE-STOP)床も 0(pressured?)。床は CPU の判定だけを緩め、memory の判定(空き・
+;;; 予約・memory の PSI)と上限はそのまま掛ける。task の層を名乗らない worker(層の無い機体・前の版)には床を掛けない(取り分を測れない)。
 ;;;
 ;;; memory の空き(memory-available)と総量(memory-total): worker が名乗る値。kubelet の下の worker は、kubelet が Pod を追い出す線までの
 ;;; 空き(Pod の全部の working set と allocatable の差・機体の線の近い方 — worker/core/eviction_rules)と線の大きさを名乗り、それ以外の
@@ -69,6 +78,9 @@
 ;; PSI の some avg10(%)がこの値以上の機体には置かない。CPU は実行を待つ process が出ている時間の割合、memory は回収で止まった時間の割合。
 (val CPU-PRESSURE-STOP 40.0)
 (val MEMORY-PRESSURE-STOP 10.0)
+;; task の層の PSI を名乗る worker に、CPU の空きが 0 でも置く task の数(頭の註の層の床)。取り分で動ける本数を測らずに増やさない —
+;; 2 本目からは CPU の空きで数える。
+(val TASK-LAYER-FLOOR 1)
 ;; 走り出した task の CPU の使いが測りに出きるまでの見込みの長さ(worker の測りの間 5 秒の 2 回分 — CPU の使いは前の読みとの間の増えで
 ;; 数える)。memory はこの見込みで数えない(task は分の単位で伸びる — 要りの予約で数える)。
 (val TASK-RAMP-MS 10000)
@@ -111,6 +123,13 @@
       (and (is-not measured.memory-some-avg10 None) (>= measured.memory-some-avg10 MEMORY-PRESSURE-STOP))))
 
 
+(defk layer-floor-of [measured placed]
+  {:pre [(: measured MeasuredLoad) (: placed int)] :post [(: % int)] :tags {:context "coordinator" :role "judgment"}}
+  "機体の CPU が埋まっていても task の層の取り分で置ける task の数を知るため(頭の註の層の床): task の層の PSI を名乗る worker は
+   TASK-LAYER-FLOOR − placed(置いた task の数)、名乗らない worker は 0。負は負のまま返す(呼び手が CPU の空きと大きい方を取る)。"
+  (if (is measured.task-cpu-some-avg10 None) 0 (- TASK-LAYER-FLOOR placed)))
+
+
 (defk need-of [memory-mib]
   {:pre [(: memory-mib (| int None))] :post [(: % int)] :tags {:context "coordinator" :role "judgment"}}
   "task の memory の要り(MiB)を知るため: 名乗った要り memory-mib、名乗らない task(None)は UNDECLARED-TASK-MIB。"
@@ -145,7 +164,7 @@
   "worker に task をあと幾つ置けるかを機体の測った空きから知るため(頭の註の数の空き — 0 以上): measured = heartbeat の測った空き(None =
    名乗らない)・placed = その worker に置いた task の数・unseen = そのうち測りにまだ出ていない数・reserved = 置いた task の memory の
    予約の和(MiB)。測りの無い・CPU の使いをまだ数えられない・PSI の待ちが出ている機体は 0。CPU の空きは普通の使い(normal-busy-of)
-   から数える。memory の空き(memory-room-mib)は
+   から数え、task の層の PSI を名乗る worker は層の床(layer-floor-of)を下回らない。memory の空き(memory-room-mib)は
    MEMORY-SLOT-MIB の枠の数に写す(測りに出ていない task は引かない — その使いは予約が既に引いている)。置ける task の大きさは
    memory-room-mib が決める。"
   (when (or (is measured None) (is measured.cpu-busy None))
@@ -156,9 +175,10 @@
   (<- busy float (normal-busy-of measured))
   (val idle-cores (- (* measured.cpus (- 1 busy)) CPU-FLOOR-CORES))
   (val cpu-room (- (floor (/ idle-cores TASK-CORES)) unseen))
+  (<- layer-floor int (layer-floor-of measured placed))
   (val memory-slots (// memory-room MEMORY-SLOT-MIB))
   (val cap-room (- (! (task-cap-of measured.cpus)) placed))
-  (max 0 (min cpu-room memory-slots cap-room)))
+  (max 0 (min (max cpu-room layer-floor) memory-slots cap-room)))
 
 
 (defk reserve-of [measured]
