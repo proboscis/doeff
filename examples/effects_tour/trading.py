@@ -1,15 +1,27 @@
 # trading.py — one trading strategy as a doeff program, run as a backtest over recorded bars,
 # under a risk layer that stops it, with retries against a flaky exchange, as a parameter sweep
-# in parallel tasks, as an exact replay of a recorded session, and live on asyncio.
+# in parallel tasks, as an exact replay of a recorded session, on a virtual clock (a day of
+# one-minute bars in an instant), on the wall clock (the same bars, really waited for), and live
+# on asyncio. The bars come from a fixed seed, so every line printed is the same on every run.
 from __future__ import annotations
 
 import asyncio
+import heapq
 import random
+import time
 from dataclasses import dataclass
+from datetime import datetime, timedelta, timezone
+from itertools import count
 
 from doeff import Await, EffectBase, Gather, Pass, Resume, Spawn, do, handler, run
 from doeff_core_effects.handlers import await_handler
-from doeff_core_effects.scheduler import scheduled
+from doeff_core_effects.scheduler import (
+    PRIORITY_IDLE,
+    CompletePromise,
+    CreatePromise,
+    Wait,
+    scheduled,
+)
 
 
 # ---- Effects: what a strategy needs from the outside world.
@@ -33,6 +45,16 @@ class Order(EffectBase):  # "buy or sell this many; tell me the fill price"
 @dataclass(frozen=True)
 class Log(EffectBase):  # "write this line"
     line: str
+
+
+@dataclass(frozen=True)
+class Delay(EffectBase):  # "wait this many seconds"
+    seconds: float
+
+
+@dataclass(frozen=True)
+class GetTime(EffectBase):  # "what time is it?"
+    pass
 
 
 # ---- The strategy: a moving-average crossover. It knows nothing about data feeds or exchanges.
@@ -174,6 +196,73 @@ def replaying(tape: list):  # answer bars and fills from the tape: no feed, no e
     return replay
 
 
+# ---- Time: the strategy never looks at a clock. A clock layer waits for the next bar and tells
+# the time; the strategy runs unchanged on either the virtual clock or the wall clock.
+def bar_clock(seconds: float):  # a bar arrives `seconds` after the previous one
+    @handler
+    def wait_for_bar(effect: Tick, k):
+        yield Delay(seconds)  # the clock outside decides what waiting means
+        return (yield Resume(k, (yield effect)))
+
+    return wait_for_bar
+
+
+def virtual_clock(start: datetime):  # waits take no time: the clock jumps to the next wake-up
+    now = start
+    sleepers = []  # (wake-up time, order, promise), earliest first
+    order = count()
+    advancing = False
+
+    @do
+    def advance():  # idle priority: runs while every other task waits
+        nonlocal now, advancing
+        while sleepers:
+            now, _, promise = heapq.heappop(sleepers)
+            yield CompletePromise(promise, None)
+        advancing = False
+
+    @handler
+    def clock(effect: Delay | GetTime, k):
+        nonlocal advancing
+        if isinstance(effect, GetTime):
+            return (yield Resume(k, now))
+        promise = yield CreatePromise()
+        heapq.heappush(sleepers, (now + timedelta(seconds=effect.seconds), next(order), promise))
+        if not advancing:
+            advancing = True
+            yield Spawn(advance(), priority=PRIORITY_IDLE, daemon=True)
+        yield Wait(promise.future)
+        return (yield Resume(k, None))
+
+    return clock
+
+
+@handler
+def wall_clock(effect: Delay | GetTime, k):  # waits on asyncio, the time is the machine's
+    if isinstance(effect, GetTime):
+        return (yield Resume(k, datetime.now(timezone.utc)))
+    yield Await(asyncio.sleep(effect.seconds))
+    return (yield Resume(k, None))
+
+
+@handler
+def stamped(effect: Log, k):  # log lines with the time of the clock outside
+    now = yield GetTime()
+    print(f"    {now:%H:%M} {effect.line}")
+    return (yield Resume(k, None))
+
+
+@do
+def finished_at(program):  # the program's answer and the time it ended
+    pnl = yield program
+    return pnl, (yield GetTime())
+
+
+def timed_backtest(bars: list[Bar], seconds: float):  # the backtest with a bar every `seconds`
+    strategy = bar_clock(seconds)(sma_cross(5, 20))
+    return recorded(bars)(paper(0.0005)(finished_at(strategy)))
+
+
 @do
 def sweep(bars: list[Bar], grid: list[tuple[int, int]]):  # every parameter pair, in parallel tasks
     tasks = []
@@ -211,7 +300,8 @@ def live(exchange: FakeExchange):  # Tick and Order over the async client, on th
     return trade
 
 
-BARS = random_walk(seed=1, n=300)
+BARS = random_walk(seed=1, n=300)  # 300 one-minute bars
+OPEN = datetime(2026, 11, 2, 9, 0, tzinfo=timezone.utc)  # the market opens at 09:00
 
 if __name__ == "__main__":
     print("1. backtest: recorded bars, paper fills with slippage")
@@ -233,5 +323,16 @@ if __name__ == "__main__":
     again = run(quiet(replaying(tape)(sma_cross(5, 20))))
     print("  ->", first, again, "same:", first == again, "tape:", len(tape), "answers")
 
-    print("6. live: the same strategy over an async exchange on the wall clock (60 bars)")
+    print("6. a virtual clock: 300 one-minute bars, 5 hours of market time, no waiting")
+    pnl, ended = run(scheduled(virtual_clock(OPEN)(stamped(timed_backtest(BARS, 60)))))
+    print(f"  -> pnl {pnl} at {ended:%H:%M}")
+
+    print("7. the wall clock: the same strategy, 60 bars 10 ms apart, really waited for")
+    started = time.monotonic()
+    pnl, _ = run(scheduled(await_handler()(wall_clock(quiet(timed_backtest(BARS[:60], 0.01))))))
+    print(f"  -> pnl {pnl} after at least 0.6 s: {time.monotonic() - started >= 0.6}")
+    same, _ = run(scheduled(virtual_clock(OPEN)(quiet(timed_backtest(BARS[:60], 0.01)))))
+    print(f"  -> the virtual clock gives pnl {same}, the same: {pnl == same}")
+
+    print("8. live: the same strategy over an async exchange on the wall clock (60 bars)")
     print("  -> pnl", run(scheduled(await_handler()(printed(live(FakeExchange(BARS[:60]))(sma_cross(5, 20)))))))
