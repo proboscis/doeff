@@ -5,6 +5,10 @@
 #   AWS_SECRET_ACCESS_KEY・AWS_ENDPOINTS)と bucket と key は、garage を持つ側が作る(中身はここに書かない)。Secret と bucket が揃う
 #   までは BackupTarget が available false のまま、backup は失敗として残る(volume の作成は断られない — 断られるのは BackupTarget が無い時)。
 #   prune: disabled — この file を外しても Flux は消さない(名指す volume の作成と backup が止まる)。
+#   pollInterval 1h: Longhorn は poll のたびに、この先の束 BackupVolume の全部に spec.syncRequestedAt と status の 2 回の書きをする。
+#   束は冷やした名ごとに 1 本で「消す」(7 日)まで残り、2026-11-05 に 1,173 本 — 5 分の poll では k8s の目録(kine)の書きの約 27%
+#   (毎秒 約 7 件)だった。handler は束を自分で作って 1 本だけの同期を頼み、Longhorn は backup の完了に束の同期を頼むので、
+#   作る・冷やす・戻すは poll を待たない(README の節「backup」の「束」)。
 # RecurringJob workspace-backup: 1 時間ごと(毎時 17 分 — ほかの Longhorn の job の 0・10・18・20・40 分を避ける)に、群 workspace-backup の
 #   attach している volume を backup し、この job の作った backup を volume ごとに新しい 6 つ残す。外れている volume は飛ばす
 #   (Longhorn の設定 allow-recurring-job-while-volume-detached が false — 外れている間は中身が変わらない)。worker が「冷やす」時に
@@ -19,7 +23,7 @@ metadata:
 spec:
   backupTargetURL: s3://longhorn-workspace@us-east-1/
   credentialSecret: longhorn-backup-garage
-  pollInterval: 5m0s
+  pollInterval: 1h0m0s
 ---
 apiVersion: longhorn.io/v1beta2
 kind: RecurringJob
