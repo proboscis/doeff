@@ -7,8 +7,10 @@
 ;;;       置かず、待ちの文で名指す
 ;;;   (3) 予約は上限の 1/6(CPU 36 の機体で 6 — 手で書いていた zeus の値)で、半分ずつ優先 0 以上の task と背景の仕事に残す
 ;;;   (4) GET /state の taskRoom は置き方と同じ数えで、worker の行に手書きの枠の欄は無い
+;;;   (5) 優先度を下げた process(nice > 0)の CPU の使いと、task の層の外の実行の待ちでは 0 にならない。普通の優先度の使いで埋まった機体と、
+;;;       task の層の task 自身が待つ機体は 0
 ;;; 失敗ケース = 混んだ機体へ手の数どおりに置く・置いたばかりの task を数えずに 1 拍で詰め込む・測りの無い worker に置く・
-;;; 空きの少ない機体を選ぶ・背景の仕事が大きい機体の最後の空きまで埋める。
+;;; 空きの少ない機体を選ぶ・背景の仕事が大きい機体の最後の空きまで埋める・譲る命令が CPU を埋めた機体を空き 0 と判じる。
 (require doeff-hy.macros [deftest val <- defk])
 (val MODULE-TAGS {:context "doeff-cluster-test" :role "test"})
 
@@ -22,7 +24,10 @@
 (import doeff_cluster._coordinator.core.measured_room [measured-room memory-room-mib reserve-of task-cap-of unseen-since TASK-RAMP-MS])
 (import doeff_cluster._coordinator.core.cluster_policy [tasks-placed task-unplaced-text state-view load-of])
 (import doeff_cluster._coordinator.protocol.replies [state-view-json])
-(import tests.program_rows [SAMPLE-TASK-PROGRAM reports-observed])
+(import tests.program_rows [SAMPLE-TASK-PROGRAM reports-observed heartbeat-of])
+(import doeff_cluster._coordinator.intent.request_bodies [HeartbeatBody])
+(import doeff_cluster._worker.core.load_rules [LoadReading machine-load-of])
+(import doeff_cluster._worker.protocol.heartbeat [measured-json])
 (import tests.state_rows [table-from-rows])
 
 (val T (ClusterTiming :lease-ms 10000 :fence-ms 10000 :reassign-after-ms 30000))
@@ -101,6 +106,70 @@
   (<- none int (measured-room None 0 0 0))
   (<- first-reading int (measured-room (! (load 8 None 60000)) 0 0 0))
   (assert (= #(none first-reading) #(0 0))))
+
+
+;; CPU 36 個の機体の 5 秒の読み(36 × 5 秒 × 100 刻み = 18000 刻み — 1 core = 500 刻み)の頭の行 cpu の刻みの増え(user nice system idle
+;; iowait irq softirq steal)。NICE-FULL = 2026-11-05 17:4x JST の zeus(nice 19 core・user 8・system 7・idle 0.1・残りは softirq)。
+;; NORMAL-FULL = 同じ和を普通の優先度の使い(user と system)が埋めた読み。
+(val TICKS-BEFORE #(100000 100000 100000 100000 100000 0 100000 0))
+(val NICE-FULL #(4000 9500 3500 50 0 0 950 0))
+(val NORMAL-FULL #(13500 0 3500 50 0 0 950 0))
+;; 256 GiB の機体に空き 200 GiB(memory は空いている — CPU の判定だけを見る)・memory の PSI は低い。
+(val ROOMY-MEMINFO "MemTotal:       268435456 kB\nMemFree:        104857600 kB\nMemAvailable:   209715200 kB\n")
+(val CALM-MEMORY-PSI "some avg10=0.50 avg60=0.40 avg300=0.30 total=100\nfull avg10=0.10 avg60=0.10 avg300=0.10 total=10\n")
+;; 同じ時の機体の CPU の PSI(some 76%)と task の層(jobs)の CPU の PSI(some 5.6%)。task の層の待ちを測った値 TASK-WAITING は 55%。
+(val MACHINE-CPU-PSI "some avg10=76.19 avg60=71.58 avg300=68.12 total=236200777739\nfull avg10=0.00 avg60=0.00 avg300=0.00 total=0\n")
+(val TASK-CPU-PSI "some avg10=5.63 avg60=8.04 avg300=5.16 total=42036329\nfull avg10=2.10 avg60=3.00 avg300=1.90 total=1234\n")
+(val TASK-WAITING-PSI "some avg10=55.00 avg60=50.00 avg300=45.00 total=99999999\nfull avg10=20.00 avg60=18.00 avg300=15.00 total=55555\n")
+
+
+(defk stat-text [ticks]
+  {:pre [(: ticks tuple)] :post [(: % str)] :tags {:context "doeff-cluster-test" :role "judgment"}}
+  "頭の行 cpu の刻み ticks(TICK-FIELDS の 8 欄)と行 cpu0〜cpu35 の /proc/stat の中身を作るため(guest と guest_nice は 0)。"
+  (+ "cpu  " (.join " " (gfor t ticks (str t))) " 0 0\n"
+     (.join "" (gfor i (range 36) (.format "cpu{} 0 0 0 0 0 0 0 0 0 0\n" i)))))
+
+
+(defk measured-from-proc [deltas task-psi]
+  {:pre [(: deltas tuple) (: task-psi (| str None))] :post [(: % MeasuredLoad)] :tags {:context "doeff-cluster-test" :role "judgment"}}
+  "/proc/stat の 2 回の読み(TICKS-BEFORE と、その刻みに deltas を足した読み)・機体の CPU の PSI MACHINE-CPU-PSI・task の層の
+   cpu.pressure の中身 task-psi(None = 層の無い worker)を、worker の測り(machine-load-of)と heartbeat の綴り(measured-json)と
+   coordinator の受け口の解き(heartbeat-of)に通した測った空きを作るため。"
+  (<- first LoadReading (machine-load-of (! (stat-text TICKS-BEFORE)) ROOMY-MEMINFO MACHINE-CPU-PSI CALM-MEMORY-PSI None 0
+                                         :task-cpu-pressure task-psi))
+  (val after (tuple (gfor #(b d) (zip TICKS-BEFORE deltas) (+ b d))))
+  (<- second LoadReading (machine-load-of (! (stat-text after)) ROOMY-MEMINFO MACHINE-CPU-PSI CALM-MEMORY-PSI first.ticks 5000
+                                          :task-cpu-pressure task-psi))
+  (<- spelled dict (measured-json second.load))
+  (<- body HeartbeatBody (heartbeat-of {"name" "zeus" "provides" [] "measured" spelled}))
+  body.measured)
+
+
+(deftest test-yielding-nice-use-and-its-waits-leave-room-but-normal-use-fills-it
+  ;; 譲る命令(nice > 0)が CPU を埋めた機体: 使い 0.997・nice の分 0.528 → 普通の使い 0.469 → 空いた CPU 36 × 0.531 − 1 = 18.1 → 18。
+  ;; 機体の PSI の some は 76% でも、task の層の some は 5.6% なので止めない。
+  (<- yielding MeasuredLoad (measured-from-proc NICE-FULL TASK-CPU-PSI))
+  (assert (= #((round yielding.cpu-busy 3) (round yielding.cpu-nice 3) yielding.cpu-some-avg10 yielding.task-cpu-some-avg10)
+             #(0.997 0.528 76.19 5.63))
+          yielding)
+  (<- room int (measured-room yielding 0 0 0))
+  (assert (= room 18) yielding)
+  ;; 失敗ケース(直す前の判定 = nice の分も task の層の PSI も読まない — 前の版の worker の名乗りと同じ): 同じ機体を 0 と判じる。
+  (<- before-fix int (measured-room (replace yielding :cpu-nice None :task-cpu-some-avg10 None) 0 0 0))
+  (assert (= before-fix 0))
+  ;; 普通の優先度の使いで埋まった機体は、task の層の待ちが低くても 0(CPU の空きが無い)。
+  (<- normal MeasuredLoad (measured-from-proc NORMAL-FULL TASK-CPU-PSI))
+  (assert (= #((round normal.cpu-busy 3) normal.cpu-nice) #(0.997 0.0)) normal)
+  (<- filled int (measured-room normal 0 0 0))
+  (assert (= filled 0) normal)
+  ;; nice の使いが多くても、task の層の task 自身が実行を待つ(some 55% ≥ 40%)機体は 0(譲りが cgroup の重みで効かない時の止め)。
+  (<- waiting MeasuredLoad (measured-from-proc NICE-FULL TASK-WAITING-PSI))
+  (<- stalled int (measured-room waiting 0 0 0))
+  (assert (= stalled 0) waiting)
+  ;; task の層の無い worker は機体の PSI で止める(譲る側の待ちと見分けられない — 前と同じ止め)。
+  (<- layerless MeasuredLoad (measured-from-proc NICE-FULL None))
+  (<- blind-to-layers int (measured-room layerless 0 0 0))
+  (assert (= #(layerless.task-cpu-some-avg10 blind-to-layers) #(None 0)) layerless))
 
 
 (deftest test-the-reserve-is-a-sixth-of-the-cap-and-unseen-tasks-count-from-the-reading

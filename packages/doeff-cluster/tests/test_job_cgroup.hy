@@ -12,7 +12,7 @@
 (import doeff_core_effects [EnvEntry EnvMode ProcessOutcome RunProcess StartProcess])
 (import dataclasses)
 (import doeff_cluster [JobSpec])
-(import doeff_cluster._worker.core.job_cgroup [job-cgroup-procs placed-argv])
+(import doeff_cluster._worker.core.job_cgroup [job-cgroup-procs layer-cpu-pressure placed-argv])
 (import doeff_cluster [job-cgroup-placer])
 (import doeff_cluster._worker.protocol.process_host [HostSettings shim-argv])
 (import doeff_cluster._worker.entry.main [CGROUP-DIR-VAR SERVICE-CGROUP-VAR cgroup-dir-environ job-cgroup-placed])
@@ -28,6 +28,13 @@
   ;; 本体の cgroup(…/main)の親の下の兄弟(…/jobs)へ子を置く。
   (<- procs str (job-cgroup-procs OWN "jobs"))
   (assert (= procs JOBS-PROCS) procs))
+
+
+(deftest test-the-task-layer-cpu-pressure-sits-beside-its-procs
+  ;; 測りが読む task の層の CPU の PSI は、子を置く兄弟の cgroup の dir の cpu.pressure。
+  (<- procs str (job-cgroup-procs "0::/kubepods/pod1/worker\n" "jobs" "/host/cgroup/c1"))
+  (<- pressure str (layer-cpu-pressure procs))
+  (assert (= #(procs pressure) #("/host/cgroup/c1/kubepods/pod1/jobs/cgroup.procs" "/host/cgroup/c1/kubepods/pod1/jobs/cpu.pressure"))))
 
 
 (deftest test-a-worker-without-a-sibling-to-place-its-jobs-refuses-to-start

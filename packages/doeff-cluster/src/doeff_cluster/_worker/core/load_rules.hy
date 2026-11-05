@@ -4,14 +4,20 @@
 ;;; 何のためか: 置き先を固定の枠(枠の file の memoryMiB・taskReserve)でなく、機体の今の空きで決める下ごしらえ。この段では heartbeat に
 ;;; 数を載せ、coordinator の GET /state で読めるようにするだけで、置き方の判断は変えない。
 ;;;
-;;; 読む file(どれも機体の全体の値 — container の中でも cgroup に縛られない):
+;;; 読む file(task の層の PSI のほかは機体の全体の値 — container の中でも cgroup に縛られない):
 ;;;   /proc/stat             頭の行 cpu の刻みの和(user nice system idle iowait irq softirq steal)と、行 cpuN の数(CPU の数)。
 ;;;                          使い = 前の読みからの (和 − idle − iowait) の増え / 和の増え。guest と guest_nice は user と nice に含まれるので足さない。
+;;;                          nice の分 = 同じ間の nice の増え / 和の増え(使いの内 — 優先度を下げた process〔nice > 0・SCHED_IDLE と nice〕の
+;;;                          使い。coordinator は使いからこの分を引いて、普通の優先度の task が使える CPU を数える — measured_room)。
 ;;;   /proc/meminfo          MemTotal と MemAvailable(memory の見張りと同じ読み — worker/core/memory_rules の node-memory-of)。kubelet の下の
 ;;;                          worker は、見張りが最後に数えた追い出しの線の大きさと追い出しまでの空き(worker/core/eviction_rules の
 ;;;                          line-memory — 見張りの DANGER と同じ量)を memory の総量と空きとして名乗る。
 ;;;   /proc/pressure/cpu     PSI の some と full の avg10(%)。full の行の無い古い kernel は full を None。
 ;;;   /proc/pressure/memory  PSI の some と full の avg10(%)。
+;;;   <task の層>/cpu.pressure  task を置く cgroup の層(worker/core/job_cgroup の兄弟の cgroup)の CPU の PSI の some の avg10(%)。層の在る
+;;;                          worker だけが読む(LoadPaths の task-cpu-pressure)。機体の PSI の some は、優先度を下げた process の実行の待ちでも
+;;;                          立つ(2026-11-05 の zeus: 優先度を下げた命令が nice 19 core を使う間、機体の some 76%・task の層の some 5.6%)。
+;;;                          task の層の値は、置いた task 自身が実行を待つかを測る。
 ;;; PSI の file の無い機体(PSI を切った kernel)は PSI の欄を None にし、/proc/stat か /proc/meminfo の読めない機体(Mac)は測りを名乗らない。
 (require doeff-hy.macros [defk <- val var])
 (require doeff-hy.record [defrecord])
@@ -31,25 +37,30 @@
 (val TASK-USES-FRESH-MS LINE-FRESH-MS)
 ;; /proc/stat の頭の行 cpu の欄のうち、使いに数えない刻み(欄の位置 — 0 = user)。3 = idle・4 = iowait。
 (val IDLE-FIELDS #(3 4))
+;; /proc/stat の頭の行 cpu の欄のうち、nice > 0 の process の刻み(欄の位置)。使いの内に数え、別に nice の分としても名乗る。
+(val NICE-FIELD 1)
 ;; 頭の行 cpu の欄のうち、和に数える数(user nice system idle iowait irq softirq steal — 後ろの guest と guest_nice は user と nice に含まれる)。
 (val TICK-FIELDS 8)
 
 
 (defrecord LoadPaths
-  "測りの読む file の置き場(頭の註): stat・meminfo・cpu-pressure・memory-pressure。既定は機体の /proc。"
+  "測りの読む file の置き場(頭の註): stat・meminfo・cpu-pressure・memory-pressure。既定は機体の /proc。task-cpu-pressure = task を
+   置く cgroup の層の cpu.pressure(None = 層の無い worker — 読まない)。"
   (setv #^ str stat "/proc/stat")
   (setv #^ str meminfo "/proc/meminfo")
   (setv #^ str cpu-pressure "/proc/pressure/cpu")
-  (setv #^ str memory-pressure "/proc/pressure/memory"))
+  (setv #^ str memory-pressure "/proc/pressure/memory")
+  (setv #^ (| str None) task-cpu-pressure None))
 
 
 (defrecord CpuTicks
   "/proc/stat の 1 回の読み: busy = 頭の行 cpu の和から idle と iowait を除いた刻み・total = 頭の行 cpu の刻みの和(TICK-FIELDS)・
-   cpus = 行 cpuN の数(今 online の CPU の数)。"
-  {:check [(>= busy 0) (>= total busy) (> cpus 0)]}
+   cpus = 行 cpuN の数(今 online の CPU の数)・nice = 頭の行 cpu の nice の刻み(busy の内)。"
+  {:check [(>= busy nice 0) (>= total busy) (> cpus 0)]}
   (#^ int busy)
   (#^ int total)
-  (#^ int cpus))
+  (#^ int cpus)
+  (setv #^ int nice 0))
 
 
 (defrecord Pressure
@@ -71,10 +82,13 @@
   "機体の測った空き 1 回分(heartbeat の欄 measured): at-ms = 読んだ刻(worker の壁の時計の epoch ms)・cpus = CPU の数・cpu-busy =
    前の読みからの CPU の使いの割合(0〜1 — 初めての読みと、刻みの進まない読みは None)・memory-total-mib / memory-available-mib =
    MemTotal / MemAvailable(MiB — 切り捨て)・cpu-some-avg10 / cpu-full-avg10 / memory-some-avg10 / memory-full-avg10 = PSI の avg10(%)
-   (PSI の file の無い機体と、full の行の無い kernel の cpu は None)・task-uses = 走っている task ごとの memory の今の使い(TaskMemory
+   (PSI の file の無い機体と、full の行の無い kernel の cpu は None)・cpu-nice = cpu-busy の内の nice の分(0〜1 — cpu-busy と同じ読みで
+   None)・task-cpu-some-avg10 = task の層の CPU の PSI の some の avg10(%— 層の無い・読めない worker は None)・task-uses = 走っている task ごとの memory の今の使い(TaskMemory
    の tuple — task-uses-of。None = 名乗らない〔見張りの読みが無いか古い〕— coordinator の置き先は名乗られない task の要りの全部を
    予約する・2026-11-02)。"
-  {:check [(> cpus 0) (or (is cpu-busy None) (<= 0 cpu-busy 1)) (>= memory-total-mib memory-available-mib 0)]}
+  {:check [(> cpus 0) (or (is cpu-busy None) (<= 0 cpu-busy 1)) (>= memory-total-mib memory-available-mib 0)
+           (or (is cpu-nice None) (and (is-not cpu-busy None) (<= 0 cpu-nice cpu-busy)))
+           (or (is task-cpu-some-avg10 None) (>= task-cpu-some-avg10 0))]}
   (#^ int at-ms)
   (#^ int cpus)
   (#^ (| float None) cpu-busy)
@@ -84,6 +98,8 @@
   (#^ (| float None) cpu-full-avg10)
   (#^ (| float None) memory-some-avg10)
   (#^ (| float None) memory-full-avg10)
+  (setv #^ (| float None) cpu-nice None)
+  (setv #^ (| float None) task-cpu-some-avg10 None)
   (setv #^ (| (get tuple #(TaskMemory ...)) None) task-uses None))
 
 
@@ -132,7 +148,7 @@
     (raise (ValueError "/proc/stat に行 cpuN が無い")))
   (val ticks (lfor v (cut (get heads 0) TICK-FIELDS) (int v)))
   (val total (sum ticks))
-  (CpuTicks :busy (- total (sum (gfor i IDLE-FIELDS (get ticks i)))) :total total :cpus cpus))
+  (CpuTicks :busy (- total (sum (gfor i IDLE-FIELDS (get ticks i)))) :total total :cpus cpus :nice (get ticks NICE-FIELD)))
 
 
 (defk pressure-of [text source]
@@ -160,25 +176,42 @@
       (min 1.0 (/ (- after.busy before.busy) (- after.total before.total)))))
 
 
-(defk machine-load-of [stat meminfo cpu-pressure memory-pressure before at-ms [line None]]
+(defk cpu-nice-between [before after]
+  {:pre [(: before (| CpuTicks None)) (: after CpuTicks)] :post [(: % (| float None))] :tags {:context "worker" :role "judgment"}}
+  "前の読み before から今の読み after までの CPU の使いのうち、nice > 0 の process の分の割合(0〜1 — 和の増えに対する nice の増え)を
+   知るため。cpu-busy-between が None の読みと、nice の刻みが戻った読みは None。"
+  (if (or (is before None) (<= after.total before.total) (< after.busy before.busy) (< after.nice before.nice))
+      None
+      (min 1.0 (/ (- after.nice before.nice) (- after.total before.total)))))
+
+
+(defk machine-load-of [stat meminfo cpu-pressure memory-pressure before at-ms [line None] [task-cpu-pressure None]]
   {:pre [(: stat str) (: meminfo str) (: cpu-pressure (| str None)) (: memory-pressure (| str None)) (: before (| CpuTicks None)) (: at-ms int)
-         (: line (| EvictionLine None))]
+         (: line (| EvictionLine None)) (: task-cpu-pressure (| str None))]
    :post [(: % LoadReading)] :tags {:context "worker" :role "judgment"}}
   "/proc/stat・/proc/meminfo・PSI の 2 つの file の中身(読めない PSI の file は None)と前の /proc/stat の読み before を、機体の測った
    空きにするため。line = 機体の memory の見張りが最後に数えた追い出しの線(worker/core/eviction_rules — None = 線が無いか古い)。
    線が在れば memory の総量と空きは線の大きさと追い出しまでの空き(見張りの DANGER と同じ量 — coordinator はこの空きで task を置く)、
-   無ければ MemTotal と MemAvailable。形の違う中身は ValueError(読みの訳 — 呼び手が名乗りを外す)。"
+   無ければ MemTotal と MemAvailable。task-cpu-pressure = task の層の cpu.pressure の中身(None = 層が無いか読めない)。形の違う中身は
+   ValueError(読みの訳 — 呼び手が名乗りを外す)。"
   (<- ticks CpuTicks (cpu-ticks-of stat))
   (<- busy (| float None) (cpu-busy-between before ticks))
+  (<- nice (| float None) (cpu-nice-between before ticks))
   (<- machine NodeMemory (node-memory-of meminfo memory-pressure))
   (<- memory NodeMemory (line-memory machine line))
   (var cpu None)
   (when (is-not cpu-pressure None)
     (<- read Pressure (pressure-of cpu-pressure "/proc/pressure/cpu"))
     (:= cpu read))
+  (var task-cpu None)
+  (when (is-not task-cpu-pressure None)
+    (<- read Pressure (pressure-of task-cpu-pressure "task の層の cpu.pressure"))
+    (:= task-cpu read))
   (LoadReading :load (MachineLoad :at-ms at-ms :cpus ticks.cpus :cpu-busy busy
                                   :memory-total-mib (// memory.total-bytes MIB) :memory-available-mib (// memory.available-bytes MIB)
                                   :cpu-some-avg10 (if (is cpu None) None cpu.some-avg10)
                                   :cpu-full-avg10 (if (is cpu None) None cpu.full-avg10)
-                                  :memory-some-avg10 memory.some-avg10 :memory-full-avg10 memory.full-avg10)
+                                  :memory-some-avg10 memory.some-avg10 :memory-full-avg10 memory.full-avg10
+                                  :cpu-nice (if (is nice None) None (min nice busy))
+                                  :task-cpu-some-avg10 (if (is task-cpu None) None task-cpu.some-avg10))
                :ticks ticks))

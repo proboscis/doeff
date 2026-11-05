@@ -836,7 +836,7 @@
   "機体の測った空き(CPU の使い・memory の空き・PSI — worker/core/load_rules)を LOAD-READ-EVERY-MS ごとに読み直し、次の heartbeat で
    名乗る値(state.measured)にするため。/proc/stat か /proc/meminfo を読めない・形の違う読みは名乗りを外し(古い値を今の値として
    名乗らない — CPU の使いの起点も捨て、戻った最初の読みは使いを None で名乗る)、訳が変わった時に log へ 1 行出す。PSI の file を
-   読めない機体は PSI の欄を None で名乗る。見張りの追い出しの線の入れ物(state.eviction)に新しい線が在れば、memory の総量と空きは線の
+   読めない機体は PSI の欄を None で名乗る(task の層の cpu.pressure も同じ — 層の無い worker は読まない)。見張りの追い出しの線の入れ物(state.eviction)に新しい線が在れば、memory の総量と空きは線の
    大きさと追い出しまでの空き(worker/core/load_rules の fresh-line・machine-load-of)。測らない worker(load-paths が None)は何もしない。"
   (val paths state.load-paths)
   (when (is-not paths None)
@@ -848,6 +848,10 @@
       (<- meminfo (| str FileFailed) (ReadText paths.meminfo))
       (<- cpu-pressure (| str FileFailed) (ReadText paths.cpu-pressure))
       (<- memory-pressure (| str FileFailed) (ReadText paths.memory-pressure))
+      (var task-cpu-pressure None)
+      (when (is-not paths.task-cpu-pressure None)
+        (<- read (| str FileFailed) (ReadText paths.task-cpu-pressure))
+        (:= task-cpu-pressure read))
       (var reading None)
       (var reason "")
       (cond
@@ -859,7 +863,8 @@
                    (if (is eviction None) (fresh-line None None now-ms) (fresh-line eviction.line eviction.line-at-ms now-ms)))
                (<- read LoadReading (machine-load-of stat meminfo (if (isinstance cpu-pressure str) cpu-pressure None)
                                                      (if (isinstance memory-pressure str) memory-pressure None)
-                                                     state.load-ticks now-ms line))
+                                                     state.load-ticks now-ms line
+                                                     (if (isinstance task-cpu-pressure str) task-cpu-pressure None)))
                (:= reading read)
                (except [error ValueError]
                  (:= reason (str error)))))

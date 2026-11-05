@@ -86,6 +86,9 @@
    "memoryTotalMiB" load.memory-total-mib "memoryAvailableMiB" load.memory-available-mib
    "cpuSomeAvg10" load.cpu-some-avg10 "cpuFullAvg10" load.cpu-full-avg10
    "memorySomeAvg10" load.memory-some-avg10 "memoryFullAvg10" load.memory-full-avg10
+   ;; nice の分と task の層の CPU の PSI(名乗る時だけ — 2026-11-05。無い欄は前の版の worker と同じに読まれる)。
+   #** (if (is load.cpu-nice None) {} {"cpuNice" load.cpu-nice})
+   #** (if (is load.task-cpu-some-avg10 None) {} {"taskCpuSomeAvg10" load.task-cpu-some-avg10})
    ;; task ごとの memory の今の使い(名乗る時だけ — 2026-11-02)。
    #** (if (is load.task-uses None) {} {"taskMemoryMiB" (dfor u load.task-uses u.id u.mib)})})
 

@@ -46,6 +46,13 @@
   (posixpath.join root (cut (posixpath.dirname own) 1 None) sibling "cgroup.procs"))
 
 
+(defk layer-cpu-pressure [procs]
+  {:pre [(: procs str)] :post [(: % str)] :tags {:context "worker" :role "judgment"}}
+  "兄弟の cgroup(procs = job-cgroup-procs の答えの cgroup.procs)の CPU の PSI の file の path を決めるため。機体の測り
+   (worker/core/load_rules の LoadPaths の task-cpu-pressure)が、task を置く層の実行の待ちを読む。"
+  (posixpath.join (posixpath.dirname procs) "cpu.pressure"))
+
+
 (defk placed-argv [procs argv]
   {:pre [(: procs str) (: argv tuple)] :post [(: % tuple)] :tags {:context "worker" :role "judgment"}}
   "子の argv を、兄弟の cgroup へ移ってから元の argv を exec する sh で包むため(頭の註)。内側の宿が自分の子を別の兄弟へ包んだ argv
