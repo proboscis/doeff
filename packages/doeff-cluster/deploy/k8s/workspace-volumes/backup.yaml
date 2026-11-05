@@ -5,10 +5,27 @@
 #   AWS_SECRET_ACCESS_KEY・AWS_ENDPOINTS)と bucket と key は、garage を持つ側が作る(中身はここに書かない)。Secret と bucket が揃う
 #   までは BackupTarget が available false のまま、backup は失敗として残る(volume の作成は断られない — 断られるのは BackupTarget が無い時)。
 #   prune: disabled — この file を外しても Flux は消さない(名指す volume の作成と backup が止まる)。
-#   pollInterval 1h: Longhorn は poll のたびに、この先の束 BackupVolume の全部に spec.syncRequestedAt と status の 2 回の書きをする。
-#   束は冷やした名ごとに 1 本で「消す」(7 日)まで残り、2026-11-05 に 1,173 本 — 5 分の poll では k8s の目録(kine)の書きの約 27%
-#   (毎秒 約 7 件)だった。handler は束を自分で作って 1 本だけの同期を頼み、Longhorn は backup の完了に束の同期を頼むので、
-#   作る・冷やす・戻すは poll を待たない(README の節「backup」の「束」)。
+#   pollInterval: 0 — backup の先の全体の同期の timer を止める。全体の同期(controller/backup_target_controller.go の reconcile →
+#   syncBackupVolume)は bucket の全部の束を BackupVolumeNameList で list し、cluster の全部の束の spec.syncRequestedAt を書いて束ごとの同期を
+#   一斉に起こす。その list と HEAD が bucket の目録を持つ garage の node(2026-11 は g1・g5)を 30 秒ほど埋め、/health と /metrics が 1.5〜6 秒
+#   答えない(2026-11-05 の測り)。この系は全体の同期を要らない — 束は handler が backup より先に作り、Longhorn は束 1 本だけを同期する
+#   (README の節「束」)。Longhorn v1.13.0 の source で読んだ全体の同期の引き金:
+#     1. BackupStoreTimer(backup_target_controller.go:1082〜): pollInterval ごとに BackupTarget の spec.syncRequestedAt を書く。0 なら timer を
+#        作らず、在る timer は止める(同 :444〜462)— この値で外す。
+#     2. backup の完了(backup_controller.go:406 → syncBackupVolume :1023〜): その volume の束が在れば束 1 本だけ、無ければ BackupTarget
+#        全体の同期を頼む — handler が volume を作る時(空でも戻しでも)と冷やす Backup の前に束を作るので外れる。
+#     3. credential の Secret の変更(kubernetes_secret_controller.go)、manager の API の UpdateBackupTarget(URL・Secret・pollInterval の
+#        変更)と SyncBackupTarget(UI の同期の釦)— 人の操作の時だけ。その時の 1 回の 30 秒は受ける。
+#     4. status.lastSyncedAt が 0 か spec.syncRequestedAt より前(isBackupTargetSyncRequired :573〜): どの reconcile でも全体の同期が走る
+#        (pollInterval 0 では engine image の出来事でも reconcile する — :162〜166)。同期の後の status の書きは reconcile の初めに読んだ版の
+#        上で出すので、同期の間(list だけで 40 秒ほど)に spec が書かれると conflict で落ち(Debug の log だけ)、lastSyncedAt が進まない。
+#        list が設定 backup-execution-timeout を越えた時も誤りで戻り、書かない(2026-11-05T19:01Z の log)。2026-11-04T19:44Z から進まな
+#        かったのはこの 2 つ。引き金 1・2 が消えれば同期の間に spec を書く物が無くなり、list の通る 1 度の同期で追いつく。
+#   0 にしても変わらない物: 束ごとの同期(束の spec.syncRequestedAt — backup の完了の頼みと handler の頼み)・Backup と束の lastBackupName の
+#   書き・backup そのもの。変わる物: status.available を timer で読み直さない(資格や入口が壊れても、次の backup の失敗で初めて見える)、
+#   bucket に在って cluster に無い束(別の cluster の backup など)を拾わない。
+#   2026-11-05 に一度 5 分から 1 時間にした(card ki-71615bf0d3a4): poll のたびに、この先の束の全部(1,173 本)に spec.syncRequestedAt と
+#   status の 2 回の書きが入り、5 分の poll では k8s の目録(kine)の書きの約 27%(毎秒 約 7 件)だった。0 ならその書きも無くなる。
 # RecurringJob workspace-backup: 1 時間ごと(毎時 17 分 — ほかの Longhorn の job の 0・10・18・20・40 分を避ける)に、群 workspace-backup の
 #   attach している volume を backup し、この job の作った backup を volume ごとに新しい 6 つ残す。外れている volume は飛ばす
 #   (Longhorn の設定 allow-recurring-job-while-volume-detached が false — 外れている間は中身が変わらない)。worker が「冷やす」時に
@@ -23,7 +40,7 @@ metadata:
 spec:
   backupTargetURL: s3://longhorn-workspace@us-east-1/
   credentialSecret: longhorn-backup-garage
-  pollInterval: 1h0m0s
+  pollInterval: 0s
 ---
 apiVersion: longhorn.io/v1beta2
 kind: RecurringJob

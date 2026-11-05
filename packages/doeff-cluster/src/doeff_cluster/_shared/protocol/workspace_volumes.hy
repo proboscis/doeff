@@ -10,7 +10,7 @@
 ;;;                           途中なら戻し終わるまで、消す途中なら消え終わるまで待つ。POST の前に札の disk の残りを入る大きさの byte で
 ;;;                           数え(room-made)、足りなければ外れた volume をその分だけ古い順に冷やしてから作る。冷やしても足りなければ
 ;;;                           作らずに置き場の不足 WorkspaceRoomShort で断る。戻す volume は札の disk の node で作る(restore-node-read)。
-;;;                           戻す名の束 BackupVolume が無ければ、POST の前に作る(bundle-ensured — 下の註の束)。
+;;;                           その名の束 BackupVolume が無ければ、POST の前に作る(空で作る時も戻す時も — bundle-ensured・下の註の束)。
 ;;;                           戻しの失敗を読めば待たず、戻す元の Backup が Completed の時だけ消して作り直す(restore-rebuilt — 下の註)
 ;;;   attached-volume         AttachWorkspaceVolume: VolumeAttachment に ticket を置き、Volume に使った刻の印を書き、ticket が満たされ volume が
 ;;;                           この node に付くまで待つ。Longhorn が replica を置けないと答えた中身の無い volume は、待たずに消して断る
@@ -20,8 +20,8 @@
 ;;;   unmounted-volume        UmountWorkspaceVolume: 係へ umount を頼む(何も付いていなければ頼まない)
 ;;;   detached-volume         DetachWorkspaceVolume: mount が残っていないかを確かめ、ticket を外し、volume がこの node から外れるまで待ち、
 ;;;                           使い終わりの刻の印を書く
-;;;   cooled-volume           CoolWorkspaceVolume: 外れている volume の Snapshot と Backup を作って完了を待ち、束 BackupVolume が今回の
-;;;                           Backup を指す事(bundle-caught-up — 下の註の束)と使う ticket が無い事を確かめて、読んだ版の上でだけ Volume を消す。戻しに失敗した volume は backup せずに消す(dropped-failed-restore)
+;;;   cooled-volume           CoolWorkspaceVolume: 外れている volume の束 BackupVolume が無ければ作り(bundle-ensured)、Snapshot と Backup を
+;;;                           作って完了を待ち、束 BackupVolume が今回の Backup を指す事(bundle-caught-up — 下の註の束)と使う ticket が無い事を確かめて、読んだ版の上でだけ Volume を消す。戻しに失敗した volume は backup せずに消す(dropped-failed-restore)
 ;;;   purged-volume           PurgeWorkspaceVolume: volume の無い名の BackupVolume を、最後の backup から keepDays を過ぎていれば消す
 ;;;   idle-cooling            CoolIdleWorkspaceVolumes: 外れている volume・札の disk の線ごとの残りの byte(room-read)を読み、値の
 ;;;                           spareBytes を需要に冷やす順に冷やし、その後にこの機体に付いている volume の空きを 1 つずつ読んで広げる
@@ -76,6 +76,10 @@
 ;;; そこで答え手は、束が無ければ Longhorn と同じ名・label・持ち主で自分で作り(bundle-made)、Longhorn にその束 1 本だけを同期させる(その
 ;;; volume の backup だけを list する — 全体の同期の成否に懸からない)。冷やす手順は束の lastBackupName が今回の Backup になるのを確かめて
 ;;; から volume を消し、確かめられなければ消さない(戻せない volume を作らない)。
+;;; 束は backup より先に作る(volume を作る時 — 空でも戻しでも — と、冷やす Backup を作る前): Longhorn の backup controller は Backup の完了に、
+;;; その volume の束が在れば束 1 本の同期を、無ければ backup の先の全体の同期を頼む(backup_controller.go の syncBackupVolume)。全体の同期は
+;;; bucket の全部の束を list し、bucket の目録を持つ garage の node を 30 秒ほど埋める(2026-11-05 の測り)。backup の先にまだ何も無い名の束は、
+;;; Longhorn の束ごとの同期が list を NotFound = 空と読み、volume.cfg の無い束を書かずに戻る(束を消さない・誤りにしない)。
 ;;;
 ;;; 冷やす途中の attach(使う側が勝つ): attach は ticket を置いてから Volume に刻の印を書き、冷やす側は Volume を読み(版 R)、次に
 ;;; VolumeAttachment を読んで使う ticket が無い事を確かめ、版 R の上でだけ消す(DELETE の preconditions)。消せたなら印はまだ書かれていない
@@ -1129,9 +1133,9 @@
    作る前に札の disk の残りを入る volume の大きさの byte で数え(room-made)、足りなければ外れた volume をその分だけ古い順に冷やして
    から POST する。冷やしても足りなければ POST せずに置き場の不足 WorkspaceRoomShort で断る。戻す volume は
    backup を取った時の大きさ(と値の大きさの大きい方)で作り — Longhorn は backup より小さい volume への戻しを断る — spec.nodeID に札の disk の
-   node を書く(restore-node-read)。戻す前に、その名の束 BackupVolume が無ければ作る(bundle-ensured — Longhorn の webhook は束の在る volume の
-   戻しだけを受け、束は backup の先の全体の同期でしか作られない。作った直後に webhook が束を見ない 422 は、restore-seconds の内だけ間を置いて
-   出し直す)。戻しの失敗を読めば待たず、消して同じ手順で作り直す(restore-rebuilt — 上限を過ぎれば Longhorn の訳を添えて
+   node を書く(restore-node-read)。POST の前に、その名の束 BackupVolume が無ければ作る(bundle-ensured — 空で作る時も戻す時も。Longhorn の
+   webhook は束の在る volume の戻しだけを受け、Longhorn は束の無い volume の backup の完了に backup の先の全体の同期を頼む — 頭の註の束。
+   作った直後に webhook が束を見ない 422 は、restore-seconds の内だけ間を置いて出し直す)。戻しの失敗を読めば待たず、消して同じ手順で作り直す(restore-rebuilt — 上限を過ぎれば Longhorn の訳を添えて
    断る。戻す元の Backup が Completed でない時と使う ticket が在る時は消さずに断る)。"
   (val doing "作成")
   (<- name str (checked-name owner doing))
@@ -1162,8 +1166,8 @@
           (var node "")
           (when (is-not source None)
             (<- chosen str (restore-node-read site owner doing parameters (! (settings-floors settings)) size))
-            (:= node chosen)
-            (<- (bundle-ensured site owner doing name target)))
+            (:= node chosen))
+          (<- (bundle-ensured site owner doing name target))
           (var body "")
           (try
             (<- text str (volume-create-text site name parameters size (if (is source None) "" source.url) node))
@@ -1733,7 +1737,8 @@
 
 (defk cooled-volume [site owner]
   {:pre [(: site WorkspaceVolumeSite) (: owner str)] :post [(: % WorkspaceOutcome)] :tags {:context "doeff-cluster" :role "protocol" :spells "json"}}
-  "外れている持ち主 owner の volume を冷やすため(README の節「寿命」): Snapshot と Backup(名 <名>-cool-<刻>・label backup-volume と
+  "外れている持ち主 owner の volume を冷やすため(README の節「寿命」): 束 BackupVolume が無ければ作り(bundle-ensured — backup の完了が
+   backup の先の全体の同期でなく束 1 本の同期を頼むように)、Snapshot と Backup(名 <名>-cool-<刻>・label backup-volume と
    backup-target)を作って完了を待ち、その volume の束 BackupVolume が在り lastBackupName が今回の Backup である事を確かめ(無ければ束を
    作る — bundle-caught-up。確かめられなければ volume を消さずに断り、次の回が冷やし直す)、Volume を読み(版)、VolumeAttachment に使う ticket が無い事を確かめてから、その版の上でだけ消し、
    消え終わるまで待つ(DONE)。volume が無ければ ALREADY(冷えているか、まだ作っていない)。使っている(ticket が在る・付いている)・
@@ -1761,6 +1766,7 @@
   (when (or seen.view.other-tickets (!= seen.view.state "detached"))
     (raise (! (refused owner doing (.format "ほかの冷やす手順か付け外しの途中(volume {}・ticket {})" (or seen.view.state "?")
                                             (or (.join "・" seen.view.other-tickets) "無し"))))))
+  (<- (bundle-ensured site owner doing name read.backup-target))
   (<- now datetime (GetTime))
   (val mark (! (cooling-name name (int (.timestamp now)))))
   (<- (created-object site owner doing "snapshots"
