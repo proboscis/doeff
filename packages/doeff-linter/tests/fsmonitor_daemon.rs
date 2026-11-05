@@ -1,6 +1,6 @@
-//! 常駐の process(`fsmonitor`)の答えが、作業木の変わりを追う事の試験。
+//! Test that the answers of the resident process (`fsmonitor`) follow changes in the working tree.
 #![cfg(target_os = "linux")]
-//! 一時 git repo を作り、編集・追加・削除・dir の増減・index の書き替えを起こして、問いの答えを見る。
+//! Creates a temporary git repo, makes edits, additions, deletions, directory additions and removals, and index rewrites, and checks the answers to queries.
 
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -16,7 +16,7 @@ fn git(repo: &Path, args: &[&str]) {
         .current_dir(repo)
         .env("GIT_CONFIG_GLOBAL", "/dev/null")
         .status()
-        .expect("git が走る");
+        .expect("git runs");
     assert!(status.success(), "git {args:?}");
 }
 
@@ -27,7 +27,7 @@ fn write(repo: &Path, rel: &str, text: &str) {
 }
 
 fn ask(dir: &Path, repo: &Path) -> Answer {
-    // 作業木の最初の問いは作る間 待たされる(常駐の process が起きる前の問いも在る)ので、数回試す。
+    // The first query on a working tree is made to wait while it is built (queries can also arrive before the resident process is up), so try a few times.
     for _ in 0..40 {
         if let Some(answer) = fsmonitor::ask(dir, repo) {
             if answer.ok {
@@ -36,7 +36,7 @@ fn ask(dir: &Path, repo: &Path) -> Answer {
         }
         std::thread::sleep(Duration::from_millis(100));
     }
-    panic!("常駐の process が答えない");
+    panic!("the resident process does not answer");
 }
 
 struct Setup {
@@ -65,7 +65,7 @@ fn setup(name: &str) -> Setup {
     write(&repo, "a/x.hy", "(defk x [] 1)\n");
     write(&repo, "b.py", "x = 1\n");
     write(&repo, "notes.txt", "memo\n");
-    // index に書く時刻より前の更新時刻にする(同じ刻の行は racy で、dirty と答えるのが正しい)。
+    // Use a modification time earlier than the time written to the index (a line with the same instant is racy, and answering dirty is correct).
     std::thread::sleep(Duration::from_millis(1200));
     git(&repo, &["add", "-A"]);
     let stop = Arc::new(AtomicBool::new(false));
@@ -75,7 +75,7 @@ fn setup(name: &str) -> Setup {
             daemon::run(&dir, Duration::from_millis(20), &stop, Duration::from_secs(3600));
         })
     };
-    // 常駐の process が socket を置くまで待つ(置く前の問いは、試験の binary 自身を常駐の process として起こそうとしてしまう)。
+    // Wait until the resident process places its socket (a query before that would try to start the test binary itself as the resident process).
     for _ in 0..100 {
         if fsmonitor::socket_path(&dir).exists() {
             break;
@@ -93,19 +93,19 @@ fn a_fresh_worktree_has_nothing_dirty_and_follows_edits_adds_and_removals() {
     assert!(answer.extras.is_empty() && answer.missing.is_empty());
     assert_eq!(answer.ident, GitIndex::read(&s.repo).unwrap().ident());
 
-    // 編集 — 答えの前に必ず入る(知らせは書き込みの中で積まれる)。
+    // Edit — always included before the answer (notifications are queued within the write).
     std::thread::sleep(Duration::from_millis(20));
     write(&s.repo, "a/x.hy", "(defk x [] 2222)\n");
     assert_eq!(ask(&s.dir, &s.repo).dirty, vec!["a/x.hy".to_string()]);
 
-    // 追加(新しい dir の下・深い所・拾わない拡張子)。
+    // Addition (under a new dir, deep down, an extension that is not picked up).
     write(&s.repo, "c/d/e/new.hy", "(defk n [] 1)\n");
     write(&s.repo, "c/skip.txt", "x\n");
     write(&s.repo, "node_modules/p/ignored.py", "x = 1\n");
     let answer = ask(&s.dir, &s.repo);
     assert_eq!(answer.extras, vec!["c/d/e/new.hy".to_string()]);
 
-    // 削除と、dir ごとの削除。
+    // Deletion, and deletion of a whole dir.
     std::fs::remove_file(s.repo.join("b.py")).unwrap();
     std::fs::remove_dir_all(s.repo.join("c")).unwrap();
     let answer = ask(&s.dir, &s.repo);

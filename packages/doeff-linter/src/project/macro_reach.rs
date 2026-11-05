@@ -1,16 +1,16 @@
-//! 層の宣言で DOEFF110(defn)から外した module の defn が、package のどれかの defmacro から届くか。
+//! Whether a defn in a module exempted from DOEFF110 (defn) by a layer declaration is reachable from any defmacro in the package.
 //!
-//! `:exempt [(rule "DOEFF110" "理由")]` で外す理由は「macro の展開の時点(と、macro が生成した code)に Python の関数として呼ばれ、
-//! Program を返せない」こと。その主張を名の届きで確かめる: package(宣言の file の dir)の Hy の file の全部の defmacro の form に
-//! 出る名を根にし、最上位の関数の定義(defn・defn/a・deff・defk・defp・defpp・`(setv 名 (fn …))`)の本体に出る名を辿って、届く名の
-//! 集合を作る。外した module の defn でも、どの defmacro からも届かない物は実行の時点の定義なので、外さずに DOEFF110 で鳴らす
-//! (#2877 の決め 2 の見張り — 外した module に実行の時点の定義が入ったら鳴る)。
+//! The reason for exempting via `:exempt [(rule "DOEFF110" "reason")]` is that the function "is called as a Python function at macro-expansion time (or by macro-generated code)
+//! and cannot return a Program". That claim is checked by name reachability: take as roots the names appearing in all defmacro forms of the Hy files in the package (the dir of the declaration file),
+//! then follow the names appearing in the bodies of top-level function definitions (defn, defn/a, deff, defk, defp, defpp, `(setv name (fn …))`) to build the set of
+//! reachable names. A defn in an exempted module that no defmacro reaches is a runtime-time definition, so it is not exempted and DOEFF110 fires
+//! (the guard for decision 2 of #2877 — it fires if a runtime-time definition gets into an exempted module).
 //!
-//! - defmacro の form は quasiquote の中も数える — 展開の時点の呼びと、展開した code が Python の関数として呼ぶ部品(defk の guard
-//!   など)の両方が「macro の持ち主の関数」だから。
-//! - 名は綴りだけで照らす(module を解かない)。同じ名の別の module の関数が届けば届いたと数える — 見逃す向きにだけ緩い。
-//!   `a.b.c` の形の名は段ごとにも数える(`(doeff_hy.declarations.effect-types …)` を `effect-types` として拾う)。
-//! - 検の dir(`tests` の段を持つ path)の file の defmacro は根に数えない(検の macro が呼ぶ関数は実行の時点の物と同じ扱い)。
+//! - Names inside quasiquote in a defmacro form are counted too — both the expansion-time calls and the parts that the expanded code calls as Python functions (such as defk's guard)
+//!   are "functions owned by the macro".
+//! - Names are compared by spelling only (modules are not resolved). A function of the same name in another module counts as reached — lenient only in the direction of missing a violation.
+//!   A name of the form `a.b.c` is also counted per segment (`(doeff_hy.declarations.effect-types …)` is picked up as `effect-types`).
+//! - defmacro in files of a test dir (a path with a `tests` segment) is not counted as a root (functions called by a test macro are treated the same as runtime-time ones).
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, OnceLock};
@@ -19,19 +19,19 @@ use doeff_indexer::hy_index::reader::{Form, Node, Reader};
 
 use super::names::hy_mangle;
 
-/// macro の定義の頭(defn_to_defk の MACROS と同じ)。
+/// Head of a macro definition (same as MACROS in defn_to_defk).
 const MACRO_HEADS: &[&str] = &["defmacro", "defmacro/g!", "defreader"];
-/// 名を辿る関数の定義の頭。
+/// Heads of function definitions whose names are followed.
 const FUNCTION_HEADS: &[&str] = &["defn", "defn/a", "deff", "defk", "defp", "defpp"];
 
-/// 1 つの source の読み: defmacro の form に出る名と、関数の定義の名 → 本体に出る名。
+/// Reading of one source: names appearing in defmacro forms, and function definition name -> names appearing in its body.
 #[derive(Debug, Default, PartialEq, Eq)]
 pub struct SourceReach {
     pub roots: BTreeSet<String>,
     pub bodies: BTreeMap<String, BTreeSet<String>>,
 }
 
-/// source 1 つを読む(最上位と `do`・`eval-and-compile`・`eval-when-compile` の中を最上位として見る)。
+/// Read one source (the top level and the insides of `do`, `eval-and-compile`, `eval-when-compile` are seen as top level).
 pub fn read_source(src: &str) -> SourceReach {
     let forms = Reader::new(src, 0, src.len()).read_all();
     let mut reach = SourceReach::default();
@@ -52,7 +52,7 @@ fn top_level(src: &str, form: &Form, reach: &mut SourceReach) {
         }
         _ if MACRO_HEADS.contains(&head) => reach.roots.extend(names_in(src, form)),
         _ if FUNCTION_HEADS.contains(&head) && items.len() >= 3 => {
-            // `(defn [decorators] name …)` は decorator の list を飛ばして名を読む。
+            // `(defn [decorators] name …)` skips the decorator list and reads the name.
             let name_form = if items[1].bracket_items().is_some() { &items[2] } else { &items[1] };
             if let Some(name) = defined_name(src, name_form) {
                 reach.bodies.entry(name).or_default().extend(names_in(src, form));
@@ -68,7 +68,7 @@ fn top_level(src: &str, form: &Form, reach: &mut SourceReach) {
     }
 }
 
-/// 定義の名(`#^ T 名` の注記を外す)。
+/// The name of a definition (drops the `#^ T name` annotation).
 fn defined_name(src: &str, form: &Form) -> Option<String> {
     match &form.node {
         Node::Symbol => Some(hy_mangle(text(src, form))),
@@ -77,7 +77,7 @@ fn defined_name(src: &str, form: &Form) -> Option<String> {
     }
 }
 
-/// form の中に出る全部の名(mangle 済み・`a.b.c` は全体と段ごと)。
+/// All names appearing inside a form (mangled; `a.b.c` is taken both whole and per segment).
 fn names_in(src: &str, form: &Form) -> BTreeSet<String> {
     let mut names = BTreeSet::new();
     walk(src, form, &mut names);
@@ -110,9 +110,9 @@ fn text<'a>(src: &'a str, form: &Form) -> &'a str {
     &src[form.span.start..form.span.end]
 }
 
-/// 根(defmacro に出る名)から関数の本体を辿って届く名の全部。
+/// All names reachable by following function bodies from the roots (names appearing in defmacro).
 pub fn reached(sources: &[SourceReach]) -> BTreeSet<String> {
-    // 呼びの辺(定義の名, 本体に出る名)— 同じ名の定義が 2 つの file に在れば両方の辺を持つ。
+    // Call edges (definition name, names appearing in its body) — if definitions of the same name are in two files, both edges are kept.
     let edges: BTreeSet<(&str, &str)> = sources
         .iter()
         .flat_map(|source| source.bodies.iter())
@@ -135,12 +135,12 @@ pub fn reached(sources: &[SourceReach]) -> BTreeSet<String> {
     seen
 }
 
-/// 宣言の file の dir(package)の Hy の file を読んで、defmacro から届く名(同じ package は 1 回の実行で 1 度だけ読む)。
-/// 検の dir(`tests` の段)の file は数えない。読めない file は飛ばす(届かない向き = 鳴る向きにだけ倒れる)。
+/// Read the Hy files of the declaration file's dir (package) and return the names reachable from defmacro (the same package is read only once per run).
+/// Files in a test dir (`tests` segment) are not counted. Unreadable files are skipped (fails only toward "not reached" = the firing direction).
 pub fn reached_in_package(package: &Path) -> Arc<BTreeSet<String>> {
     static MEMO: OnceLock<Mutex<HashMap<PathBuf, Arc<BTreeSet<String>>>>> = OnceLock::new();
     let memo = MEMO.get_or_init(Default::default);
-    if let Some(found) = memo.lock().expect("届きの memo").get(package) {
+    if let Some(found) = memo.lock().expect("reach memo").get(package) {
         return Arc::clone(found);
     }
     let sources: Vec<SourceReach> = super::hy_files::collect(package)
@@ -150,7 +150,7 @@ pub fn reached_in_package(package: &Path) -> Arc<BTreeSet<String>> {
         .map(|src| read_source(&src))
         .collect();
     let found = Arc::new(reached(&sources));
-    memo.lock().expect("届きの memo").insert(package.to_path_buf(), Arc::clone(&found));
+    memo.lock().expect("reach memo").insert(package.to_path_buf(), Arc::clone(&found));
     found
 }
 
@@ -168,11 +168,11 @@ mod tests {
         );
         let runtime = read_source("(defn thaw [x] x)\n(defn _guard [x] x)\n");
         let found = reached(&[macros, runtime]);
-        // 展開の時点の呼び(_expand)と、その本体が呼ぶ物(_spell)と、展開した code の呼び(quasiquote の中の段 _guard)は届く。
+        // Expansion-time call (_expand), what its body calls (_spell), and the call from expanded code (_guard, the segment inside quasiquote) are reached.
         for name in ["_expand", "_spell", "_guard"] {
-            assert!(found.contains(name), "{name} が届かない: {found:?}");
+            assert!(found.contains(name), "{name} is not reached: {found:?}");
         }
-        // 失敗ケース: どの macro からも届かない実行の時点の関数は届かない。
+        // Failure case: a runtime-time function that no macro reaches is not reached.
         assert!(!found.contains("thaw"), "{found:?}");
     }
 

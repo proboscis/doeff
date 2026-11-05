@@ -1,33 +1,33 @@
-//! DOEFF150・151: 使わないと決めた綴りと呼び(agora-controllers の check_vocabulary・check_controller_clock の
-//! 移し先)。
+//! DOEFF150, 151: spellings and calls decided not to be used (the destination of agora-controllers' check_vocabulary and check_controller_clock,
+//! which were moved here).
 //!
-//! 語と呼びの表は repo の architecture.hy の `:retired-words`・`:retired-calls` にだけ在り、ここには書かない。判定は file 1 つを
-//! 読めば決まるので repo 全体の索引を組まない — 名指しの path(`focus`)が在ればその下の file だけを読み、無ければ宣言の glob の
-//! 頭の dir だけを歩く。
-//!   * DOEFF150 `:in lines` — 行ごとに、語として単独で在る :words(前後が英字・`_`・`-` でない所)と :patterns の正規表現。
-//!     :rule-lines の綴りを含む行(規則そのものを述べる行)は数えない。数えるのは実際に使う code の中の綴りだけ(
-//!     #1762 の決定 Q2-3 — 註・docstring・文書の中の綴りは使っているわけではない):
-//!       - `.md` の file は数えない(file ごと)。
-//!       - Hy は `;` の註(文字列の外の `;` から行末)と、`def…` の形の docstring(名と引数の列・任意の {…} の meta の後の最初の
-//!         文字列で、後にまだ form が在る物)を数えない。
-//!       - Python は `#` の註(文字列の外)と docstring(行の最初の非空白から始まる三重引用符の文字列)を数えない。
-//!       - shell・toml・ほかの file は引用符の外の `#` の註(行頭か空白の後の `#` から行末 — `$#`・`${#…}` は註でない)を数えない。
-//!       - どの種類でも、1 行目の shebang(`#!`)の行は数える(退役語 direct-shebang の対象)。
-//!     記号・欄名と、docstring でない文字列は数える — command の文字列(`"cd x && PYTHONPATH=. hy"`)や env の key は実行される綴りなので。
-//!     群に :contract-files が在れば、契約の綴り(契約の file のキーの名と enum / const の値)に在る :words の語は、次の 3 か所でだけ
-//!     数えない(契約と wire の欄名は契約の綴りのまま書く):
-//!       - 文字列で中身がその語ちょうどの物 — Hy の普通の文字列(`"mail"`)と、Python(`.py`・`.pyi`)の接頭辞の無い 1 行の文字列
-//!         (`"mail"`・`'mail'`)。
-//!       - Hy の defwire の本体の欄の定義の名(`(#^ str mail)`・`(setv #^ T mail v)` — 欄の読み方は doeff-indexer の hy_index::fields)。
-//!       - Hy の defsystem の job の行の `:reads` / `:writes` の集合の文字列(`#{"record:mail"}` — 綴りは `<置き場>:<名>`)の、最初の
-//!         `:` の後の名の部分がその語ちょうどの物(名は記録の種類や表の名で、契約の綴りのまま書く)。
-//!     変数・引数・defrecord / defclass の欄・loop の変数・属性の読み(`x.mail`)は今どおり数え、:patterns は塗らない中身に当てる。
-//!   * DOEFF150 `:in names` — 定義の名だけ(Hy は `def…` の形と `setv`・`val`・`var` の左辺・Python は def と class の名)。
-//!   * DOEFF150 `:in paths` — file の名だけ(最後の `.` より前・dir の名と中身は見ない)。退役した名の file を置き直さない(#1369)。
-//!   * DOEFF151 — Hy の file の `(呼び …)` の形の呼び(頭の記号が :calls のどれか)。註・文字列・`#_` で読み捨てた form は数えない。
-//!     境目の部品(architecture.hy の `:boundary-parts`)の module の中では、呼びの綴りが生の副作用の目録で分類でき、その分類の
-//!     触れる先を部品が `:touches` に宣言している呼びだけを当てない(生の時計の呼びを通す所は部品の宣言
-//!     1 か所で決まり、DOEFF106 と同じ写し方なので 2 つの規則が食い違わない)。
+//! The word and call tables live only in the repo's architecture.hy as `:retired-words` and `:retired-calls`, and are not written here. A verdict depends on a single file,
+//! so no repo-wide index is built — if a named path (`focus`) is given only files under it are read, otherwise only the leading dir of the declared glob
+//! is walked.
+//!   * DOEFF150 `:in lines` — per line, :words standing alone as words (not preceded or followed by a letter, `_`, or `-`) and :patterns regular expressions.
+//!     Lines containing a :rule-lines spelling (lines that state the rule itself) are not counted. Only spellings in code that is actually used are counted (
+//!     decision Q2-3 of #1762 — spellings in comments, docstrings, and documents are not usage):
+//!       - `.md` files are not counted (per file).
+//!       - In Hy, `;` comments (from a `;` outside a string to end of line) and docstrings of `def…` forms (the first string after the name, the argument list, and an optional {…} meta,
+//!         when more forms follow it) are not counted.
+//!       - In Python, `#` comments (outside strings) and docstrings (triple-quoted strings starting at the first non-blank of a line) are not counted.
+//!       - In shell, toml, and other files, `#` comments outside quotes (from a `#` at line start or after whitespace to end of line — `$#` and `${#…}` are not comments) are not counted.
+//!       - For every kind, a first-line shebang (`#!`) is counted (target of the retired word direct-shebang).
+//!     Symbols, field names, and strings that are not docstrings are counted — command strings (`"cd x && PYTHONPATH=. hy"`) and env keys are spellings that get executed.
+//!     If a group has :contract-files, the :words that appear in contract spellings (key names of contract files and enum / const values) are not
+//!     counted in the following 3 places only (contract and wire field names are written in the contract's spelling):
+//!       - A string whose content is exactly that word — an ordinary Hy string (`"mail"`) and a Python (`.py`, `.pyi`) unprefixed one-line string
+//!         (`"mail"`, `'mail'`).
+//!       - The name of a field definition in the body of a Hy defwire (`(#^ str mail)`, `(setv #^ T mail v)` — how fields are read is doeff-indexer's hy_index::fields).
+//!       - In the strings of the `:reads` / `:writes` sets on a Hy defsystem job line (`#{"record:mail"}` — spelled `<store>:<name>`), the name part after the first
+//!         `:` that is exactly that word (the name is a record kind or table name, written in the contract's spelling).
+//!     Variables, arguments, defrecord / defclass fields, loop variables, and attribute reads (`x.mail`) are counted as before; :patterns are matched against the content with nothing blanked.
+//!   * DOEFF150 `:in names` — definition names only (in Hy, `def…` forms and the left side of `setv`, `val`, `var`; in Python, def and class names).
+//!   * DOEFF150 `:in paths` — file names only (before the last `.`; dir names and contents are not looked at). Files with retired names must not be put back (#1369).
+//!   * DOEFF151 — calls of the form `(call …)` in Hy files (the head symbol is one of :calls). Comments, strings, and forms discarded by `#_` are not counted.
+//!     Inside modules of boundary parts (architecture.hy's `:boundary-parts`), only calls whose spelling can be classified by the raw side-effect catalog, and whose classification's
+//!     target the part declares in `:touches`, are not matched (where raw clock calls are allowed is decided in one place, the part's declaration,
+//!     and it is copied the same way as DOEFF106, so the two rules do not disagree).
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
@@ -45,28 +45,28 @@ use super::names::module_of;
 use super::paths::relative_path;
 use super::world_catalog::touch_of_raw;
 
-/// 歩かない dir(隠し dir と生成物 — 宣言の glob の頭の dir より下で)。
+/// Dirs not walked (hidden dirs and generated output — below the leading dir of the declared glob).
 const SKIPPED_DIRS: &[&str] = &["node_modules", "target", "__pycache__", "venv", "site-packages"];
 
-/// 使わないと決めた綴りの当たり 1 つ。
+/// One hit of a spelling decided not to be used.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct WordHit {
     pub rel: String,
-    /// 当たった綴りの byte の範囲。
+    /// Byte range of the matched spelling.
     pub start: usize,
     pub end: usize,
     pub group: String,
-    /// 当たった綴り(語か、正規表現に当たった字面)。
+    /// The matched spelling (a word, or the text matched by a regular expression).
     pub spelling: String,
-    /// 登録簿の鍵の細目(:words は語・:patterns は群の名)。
+    /// Detail of the registry key (:words is the word, :patterns is the group name).
     pub detail: String,
     pub instead: String,
     pub place: WordPlace,
-    /// :in names の時の定義の名。
+    /// The definition name for :in names.
     pub name: Option<String>,
 }
 
-/// 使わないと決めた呼びの当たり 1 つ。
+/// One hit of a call decided not to be used.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CallHit {
     pub rel: String,
@@ -77,7 +77,7 @@ pub struct CallHit {
     pub instead: String,
 }
 
-/// 読んだ file 1 つの当たり(読めなければ理由)。
+/// The hits of one file read (or the reason it could not be read).
 pub struct FileHits {
     pub rel: String,
     pub path: PathBuf,
@@ -86,16 +86,16 @@ pub struct FileHits {
     pub calls: Vec<CallHit>,
 }
 
-/// 境目の部品の中で当てない呼び(DOEFF151)— 部品の module(mangle した dotted の綴り)→ その中で当てない
-/// 呼びの綴り。呼びの綴りが生の副作用の目録で分類でき、その分類の触れる先(DOEFF106 の boundary_allows と同じ `touch_of_raw`)を
-/// 部品が `:touches` に宣言している時だけ当てない。目録で分類できない呼び(効果の Now など)は、どの部品の中でも当てる。
+/// Calls not matched inside boundary parts (DOEFF151) — part module (mangled dotted spelling) -> the call
+/// spellings not matched inside it. A call is not matched only when its spelling can be classified by the raw side-effect catalog and the part declares the classification's target (the same `touch_of_raw` as DOEFF106's boundary_allows)
+/// in `:touches`. Calls the catalog cannot classify (such as the effect Now) are matched inside any part.
 #[derive(Debug, Default)]
 pub struct PartCalls {
     by_module: BTreeMap<String, BTreeSet<String>>,
 }
 
 impl PartCalls {
-    /// 呼びの群・部品の module → 触れる先(`Architecture::boundary_touches`)・生の副作用の目録から組む。
+    /// Built from the call groups, the part modules -> targets (`Architecture::boundary_touches`), and the raw side-effect catalog.
     pub fn new(calls: &[RetiredCalls], boundary: &BTreeMap<String, Vec<WorldTouch>>, catalog: &RawCatalog) -> PartCalls {
         let classified: Vec<(&str, WorldTouch)> =
             calls.iter().flat_map(|group| group.calls.iter()).filter_map(|call| raw_touch(call, catalog).map(|touch| (call.as_str(), touch))).collect();
@@ -111,14 +111,14 @@ impl PartCalls {
         PartCalls { by_module }
     }
 
-    /// file rel(根からの path)の中で呼び call を当てないか。
+    /// Whether call `call` is not matched inside file rel (path from the root).
     fn allows(&self, rel: &str, call: &str) -> bool {
         self.by_module.get(&mangle_dotted(&module_of(rel))).is_some_and(|allowed| allowed.contains(call))
     }
 }
 
-/// 呼びの綴りを生の副作用の目録で分類し、触れる先の語へ写す(dotted の名前の pattern か組み込みの名 — 目録の ignored に当たる名と、
-/// 分類できない名は None)。
+/// Classify a call spelling by the raw side-effect catalog and map it to a target word (a dotted-name pattern or a builtin name — names matching the catalog's ignored,
+/// and names that cannot be classified, give None).
 fn raw_touch(call: &str, catalog: &RawCatalog) -> Option<WorldTouch> {
     if catalog.ignored.iter().any(|pattern| matches_pattern(call, pattern)) {
         return None;
@@ -130,7 +130,7 @@ fn raw_touch(call: &str, catalog: &RawCatalog) -> Option<WorldTouch> {
         .map(|entry| touch_of_raw(entry.category))
 }
 
-/// glob を repo の根に錨を下ろして当てる(`**` は 0 個以上の段・`*` は段の中の任意の綴り・`/` の無い型は根の直下の file)。
+/// Match a glob anchored at the repo root (`**` is zero or more levels, `*` is any spelling within a level, a pattern without `/` is a file directly under the root).
 fn anchored(glob: &str, rel: &str) -> bool {
     let parts: Vec<&str> = glob.split('/').filter(|p| !p.is_empty()).collect();
     let path: Vec<&str> = rel.split('/').collect();
@@ -141,12 +141,12 @@ pub(super) fn selected(rel: &str, files: &[String], except: &[String]) -> bool {
     files.iter().any(|g| anchored(g, rel)) && !except.iter().any(|g| anchored(g, rel))
 }
 
-/// glob の頭の、`*` を含まない段(歩き始める所)。
+/// The leading level(s) of a glob that contain no `*` (where the walk starts).
 fn literal_head(glob: &str) -> String {
     glob.split('/').filter(|p| !p.is_empty()).take_while(|p| !p.contains('*')).collect::<Vec<_>>().join("/")
 }
 
-/// path の下の file(path が file ならそれだけ)。隠し dir と生成物の dir は歩かない。
+/// Files under path (just the file if path is a file). Hidden dirs and generated dirs are not walked.
 fn files_under(path: &Path) -> Vec<PathBuf> {
     if path.is_file() {
         return vec![path.to_path_buf()];
@@ -167,8 +167,8 @@ fn files_under(path: &Path) -> Vec<PathBuf> {
         .collect()
 }
 
-/// 宣言の glob(files)の候補の file(根からの path の順・重なりなし)— focus が在ればその下だけ、無ければ glob の頭の dir だけを
-/// 歩く(file 1 つで判じる規則の共通の読み — DOEFF144・145・150・151)。glob の選別(selected)は呼び手がする。
+/// Candidate files for the declared glob (files) (in order of path from the root, no overlap) — only under focus if given, otherwise only the leading dir of the glob is
+/// walked (the common reading for rules judged per file — DOEFF144, 145, 150, 151). The glob selection (selected) is done by the caller.
 pub(super) fn candidate_files<'g>(root: &Path, files: impl Iterator<Item = &'g String>, focus: Option<&[PathBuf]>) -> Vec<(String, PathBuf)> {
     let starts: Vec<PathBuf> = match focus {
         Some(paths) => paths.to_vec(),
@@ -188,7 +188,7 @@ pub(super) fn candidate_files<'g>(root: &Path, files: impl Iterator<Item = &'g S
     found
 }
 
-/// 語として単独で在るか(前後の文字が英字・`_`・`-` でない)。
+/// Whether it stands alone as a word (the characters before and after are not letters, `_`, or `-`).
 fn stands_alone(line: &str, at: usize, word: &str) -> bool {
     let glued = |c: char| c.is_ascii_alphabetic() || c == '_' || c == '-';
     let before = line[..at].chars().next_back().is_some_and(glued);
@@ -196,13 +196,13 @@ fn stands_alone(line: &str, at: usize, word: &str) -> bool {
     !before && !after
 }
 
-/// 綴り text の中の、語 word が単独で在る最初の位置。
+/// The first position in spelling text where word stands alone.
 fn find_word(text: &str, word: &str) -> Option<usize> {
     text.match_indices(word).map(|(at, _)| at).find(|&at| stands_alone(text, at, word))
 }
 
-/// 群を 1 つの行(か定義の名)に当てる。当たりごとに (相対の開始・終了・綴り・細目)。:words は words_text(契約の綴りの所を塗った
-/// 中身 — 塗らない群は text と同じ)に、:patterns は text に当てる。2 つは同じ長さで byte の位置が揃う。
+/// Match a group against one line (or a definition name). Per hit: (relative start, end, spelling, detail). :words are matched against words_text (the content with the contract-spelling places blanked
+/// — the same as text for groups that blank nothing), :patterns against text. The two have the same length and aligned byte positions.
 fn match_group(text: &str, words_text: &str, group: &RetiredWords, patterns: &[Regex]) -> Vec<(usize, usize, String, String)> {
     let mut out = Vec::new();
     for word in &group.words {
@@ -210,14 +210,14 @@ fn match_group(text: &str, words_text: &str, group: &RetiredWords, patterns: &[R
             out.push((at, at + word.len(), word.clone(), word.clone()));
         }
     }
-    // 正規表現は群で 1 件(同じ行に 2 つの型が当たっても 1 行と数える — 鍵の細目が群の名なので、件数は行の数)。
+    // A regular expression counts once per group (even if two patterns match the same line it counts as one line — the key detail is the group name, so the count is the number of lines).
     if let Some(m) = patterns.iter().find_map(|pattern| pattern.find(text)) {
         out.push((m.start(), m.end(), m.as_str().to_string(), group.name.clone()));
     }
     out
 }
 
-/// 1 行目が shebang(`#!`)なら、その行の終わり(註を探し始める所)。shebang の行は、どの種類の file でも数える。
+/// If the first line is a shebang (`#!`), the end of that line (where the comment search starts). The shebang line is counted for every kind of file.
 fn after_shebang(source: &str) -> usize {
     if source.starts_with("#!") {
         source.find('\n').map_or(source.len(), |at| at + 1)
@@ -226,13 +226,13 @@ fn after_shebang(source: &str) -> usize {
     }
 }
 
-/// 行の終わり(`\n` の位置か source の終わり)。
+/// End of line (the position of `\n`, or the end of the source).
 fn line_end(source: &str, from: usize) -> usize {
     source[from..].find('\n').map_or(source.len(), |at| from + at)
 }
 
-/// Hy の form の木から、文字列の範囲(註を探す時に飛ばす)と定義の docstring の範囲を集める。`#_` で読み捨てた form は読み直す
-/// (読み捨てた文字列の中の `;` を註と取り違えない)。
+/// From the Hy form tree, collect string ranges (skipped when looking for comments) and definition docstring ranges. Forms discarded by `#_` are re-read
+/// (so a `;` inside a discarded string is not mistaken for a comment).
 fn hy_strings_and_docstrings(source: &str, form: &Form, strings: &mut Vec<(usize, usize)>, docstrings: &mut Vec<(usize, usize)>) {
     if let Some(items) = form.paren_items() {
         if let Some(doc) = hy_docstring(source, items) {
@@ -254,9 +254,9 @@ fn hy_strings_and_docstrings(source: &str, form: &Form, strings: &mut Vec<(usize
     }
 }
 
-/// `def…` の形(頭の記号が def で始まる — defk・defn・deff・defclass・defhandler・deftest・defadr …)の docstring。名の前の decorator の
-/// `[…]`、名(記号か `#^ 型 名`)、名の後の引数の `[…]` 1 つと meta の `{…}` を飛ばした最初の form が、普通の文字列か bracket 文字列で、
-/// その後にまだ form が在る時だけ docstring とする(文字列だけが本体なら、それは答えの値)。
+/// The docstring of a `def…` form (head symbol starting with def — defk, defn, deff, defclass, defhandler, deftest, defadr …). The first form after skipping the decorator `[…]` before the name,
+/// the name (a symbol or `#^ type name`), and one argument `[…]` and meta `{…}` after the name, is a docstring only if it is an ordinary string or bracket string
+/// and more forms follow it (if the string is the whole body, it is the answer value).
 fn hy_docstring<'f>(source: &str, items: &'f [Form]) -> Option<&'f Form> {
     let items: Vec<&Form> = items.iter().filter(|f| !matches!(f.node, Node::Discarded)).collect();
     let (head, rest) = items.split_first()?;
@@ -278,7 +278,7 @@ fn hy_docstring<'f>(source: &str, items: &'f [Form]) -> Option<&'f Form> {
     is_doc.then_some(*doc)
 }
 
-/// Hy の数えない範囲 — `;` の註(文字列の外の `;` から行末まで)と定義の docstring。
+/// Uncounted ranges for Hy — `;` comments (from a `;` outside a string to end of line) and definition docstrings.
 fn hy_uncounted(source: &str) -> Vec<(usize, usize)> {
     let mut strings = Vec::new();
     let mut out = Vec::new();
@@ -307,8 +307,8 @@ fn hy_uncounted(source: &str) -> Vec<(usize, usize)> {
     out
 }
 
-/// Python の数えない範囲 — `#` の註(文字列の外)と docstring(行の最初の非空白から始まる三重引用符の文字列 — module・def・class の頭の
-/// 文字列の文)。
+/// Uncounted ranges for Python — `#` comments (outside strings) and docstrings (triple-quoted strings starting at the first non-blank of a line — a string statement at the head of a module, def, or class
+/// ).
 fn python_uncounted(source: &str) -> Vec<(usize, usize)> {
     let bytes = source.as_bytes();
     let mut out = Vec::new();
@@ -335,7 +335,7 @@ fn python_uncounted(source: &str) -> Vec<(usize, usize)> {
             }
             pos = end;
         } else if b.is_ascii_alphanumeric() || b == b'_' {
-            // 名の途中の英字を文字列の接頭辞と取り違えない(`attr"…"` は無いが、`bar'` のような綴りを飛ばす)。
+            // Do not mistake letters in the middle of a name for a string prefix (there is no `attr"…"`, but skip spellings like `bar'`).
             while pos < bytes.len() && (bytes[pos].is_ascii_alphanumeric() || bytes[pos] == b'_') {
                 pos += 1;
             }
@@ -346,13 +346,13 @@ fn python_uncounted(source: &str) -> Vec<(usize, usize)> {
     out
 }
 
-/// pos から始まる Python の文字列の接頭辞(r・b・u・f の 1〜2 字)の後の引用符の位置(文字列でなければ None)。名の途中は呼び手が飛ばす。
+/// The position of the quote after a Python string prefix (1-2 characters of r, b, u, f) starting at pos (None if it is not a string). The caller skips mid-name positions.
 fn python_string_prefix(bytes: &[u8], pos: usize) -> Option<usize> {
     let prefix = bytes[pos..].iter().take_while(|c| matches!(c, b'r' | b'R' | b'b' | b'B' | b'u' | b'U' | b'f' | b'F')).count();
     (prefix <= 2 && matches!(bytes.get(pos + prefix), Some(b'"' | b'\''))).then_some(pos + prefix)
 }
 
-/// 引用符 quote_at から始まる Python の文字列の終わり(閉じの後)。一重の文字列は行末で終わる(閉じない時)。
+/// The end (after the closing quote) of the Python string starting at quote at quote_at. A single-quoted string ends at end of line (when unclosed).
 fn python_string_end(bytes: &[u8], quote_at: usize, quote: u8, triple: bool) -> usize {
     let mut pos = quote_at + if triple { 3 } else { 1 };
     while pos < bytes.len() {
@@ -368,11 +368,11 @@ fn python_string_end(bytes: &[u8], quote_at: usize, quote: u8, triple: bool) -> 
     bytes.len()
 }
 
-/// shell・toml・ほかの file の数えない範囲 — 引用符の外の `#` の註(行頭か空白の後の `#` から行末まで — `$#`・`${#…}`・`a#b` は註でない)。
-/// shell の file(`.sh`)は引用符が行を跨ぎ、here-document(`<<EOF` … `EOF`)の中身は数える。ほかの file の引用符は行の中だけ。
+/// Uncounted ranges for shell, toml, and other files — `#` comments outside quotes (from a `#` at line start or after whitespace to end of line — `$#`, `${#…}`, and `a#b` are not comments).
+/// In shell files (`.sh`) quotes span lines, and the content of a here-document (`<<EOF` … `EOF`) is counted. In other files quotes are within a line only.
 fn hash_uncounted(rel: &str, source: &str) -> Vec<(usize, usize)> {
     static HEREDOC: OnceLock<Regex> = OnceLock::new();
-    let heredoc = HEREDOC.get_or_init(|| Regex::new(r#"(?:^|[^<])<<-?[ \t]*['"]?([A-Za-z_][A-Za-z0-9_]*)"#).expect("固定の正規表現"));
+    let heredoc = HEREDOC.get_or_init(|| Regex::new(r#"(?:^|[^<])<<-?[ \t]*['"]?([A-Za-z_][A-Za-z0-9_]*)"#).expect("fixed regular expression"));
     let shell = rel.ends_with(".sh");
     let bytes = source.as_bytes();
     let mut out = Vec::new();
@@ -380,7 +380,7 @@ fn hash_uncounted(rel: &str, source: &str) -> Vec<(usize, usize)> {
     let mut quote: Option<u8> = None;
     let mut heredoc_tag: Option<String> = None;
     let mut line_start = pos;
-    // 今の行の註の頭(here-document の印は註の前の code だけで探す)。
+    // The head of the comment on the current line (here-document markers are looked for only in the code before the comment).
     let mut comment_at: Option<usize> = None;
     while pos < bytes.len() {
         if let Some(tag) = &heredoc_tag {
@@ -428,13 +428,13 @@ fn hash_uncounted(rel: &str, source: &str) -> Vec<(usize, usize)> {
     out
 }
 
-/// Python の source として読む file か — `.py` と型の宣言の `.pyi`(註と docstring の塗り・契約の文字列・定義の名の
-/// 3 か所が別々に拡張子を見ていて、`.pyi` を Python として扱う所と扱わない所が食い違った。判定はこの 1 か所)。
+/// Whether the file is read as Python source — `.py` and the type-declaration `.pyi` (comment and docstring blanking, contract strings, and definition names
+/// each looked at the extension separately, and the places that treated `.pyi` as Python disagreed with those that did not. The decision is in this one place).
 fn is_python(rel: &str) -> bool {
     rel.ends_with(".py") || rel.ends_with(".pyi")
 }
 
-/// :in lines で読む中身 — 数えない範囲(註・docstring)を空白で塗った source(byte の位置と行は元のまま)。`.md` の file は数えないので None。
+/// Content read for :in lines — the source with uncounted ranges (comments, docstrings) blanked with spaces (byte positions and lines unchanged). None for `.md` files, which are not counted.
 fn counted_text(rel: &str, source: &str) -> Option<String> {
     if rel.ends_with(".md") {
         return None;
@@ -449,14 +449,14 @@ fn counted_text(rel: &str, source: &str) -> Option<String> {
     let mut bytes = source.as_bytes().to_vec();
     for (start, end) in uncounted {
         let end = end.min(bytes.len());
-        // 範囲の境は文字の境目(`;`・`#`・引用符・行末)なので、中を ASCII の空白で塗っても UTF-8 のまま。改行は残す。
+        // Range boundaries are character boundaries (`;`, `#`, quotes, end of line), so blanking the inside with ASCII spaces keeps it valid UTF-8. Newlines are kept.
         bytes[start..end].iter_mut().filter(|b| **b != b'\n').for_each(|b| *b = b' ');
     }
-    Some(String::from_utf8(bytes).expect("文字の境目で塗った"))
+    Some(String::from_utf8(bytes).expect("blanked at character boundaries"))
 }
 
-/// Hy の form の木から、契約の綴りの候補の範囲を集める — 普通の文字列(`"…"`)の中身と、defwire の本体の欄の定義の名と、
-/// defsystem の job の行の `:reads` / `:writes` の文字列の名の部分。
+/// From the Hy form tree, collect ranges of contract-spelling candidates — the content of ordinary strings (`"…"`), the names of field definitions in a defwire body, and
+/// the name part of the `:reads` / `:writes` strings on a defsystem job line.
 fn hy_contract_sites(source: &str, form: &Form, out: &mut Vec<(usize, usize)>) {
     if let Some(fields) = form.paren_items().and_then(|items| defwire_fields(source, items)) {
         out.extend(record_field_targets(source, &fields).into_iter().map(|target| (target.name.start, target.name.end)));
@@ -473,7 +473,7 @@ fn hy_contract_sites(source: &str, form: &Form, out: &mut Vec<(usize, usize)>) {
     }
 }
 
-/// `(defwire 名 [基底]? "doc"? {meta}? 欄 …)` の欄の form の列(defwire でなければ None)— 頭の読み方は hy-index の record_def と同じ。
+/// The list of field forms of `(defwire name [base]? "doc"? {meta}? field …)` (None if not a defwire) — the head is read the same as hy-index's record_def.
 fn defwire_fields<'f>(source: &str, items: &'f [Form]) -> Option<Vec<&'f Form>> {
     let items: Vec<&Form> = items.iter().filter(|f| !matches!(f.node, Node::Discarded)).collect();
     let (head, rest) = items.split_first()?;
@@ -493,9 +493,9 @@ fn defwire_fields<'f>(source: &str, items: &'f [Form]) -> Option<Vec<&'f Form>> 
     Some(rest.to_vec())
 }
 
-/// `(defsystem 名 [引数] "doc"? (job …) …)` の job の行の `:reads` / `:writes` の集合(`#{"<置き場>:<名>" …}` — doeff の欄)
-/// の各文字列の、最初の `:` の後の名の範囲(defsystem でなければ何も足さない)。置き場の綴り(records・record・
-/// ledger)は契約の語ではないので、名の部分だけを契約の綴りの候補にする(#3506 — `"record:mail"` の名 mail は記録の種類の契約の綴り)。
+/// For a defsystem job line `(defsystem name [args] "doc"? (job …) …)`, the `:reads` / `:writes` sets (`#{"<store>:<name>" …}` — a doeff field),
+/// the range of the name after the first `:` in each string (adds nothing if not a defsystem). The store spelling (records, record,
+/// ledger) is not a contract word, so only the name part becomes a contract-spelling candidate (#3506 — the name mail in `"record:mail"` is a contract spelling of a record kind).
 fn system_io_name_sites(source: &str, items: &[Form], out: &mut Vec<(usize, usize)>) {
     let Some(head) = items.first() else { return };
     if !matches!(head.node, Node::Symbol) || source.get(head.span.start..head.span.end) != Some("defsystem") {
@@ -519,7 +519,7 @@ fn system_io_name_sites(source: &str, items: &[Form], out: &mut Vec<(usize, usiz
     }
 }
 
-/// Python の、接頭辞の無い 1 行の文字列(`"…"`・`'…'`)の中身の範囲 — 註(`#` から行末)・三重引用符の文字列・接頭辞つきの文字列は除く。
+/// Content ranges of Python unprefixed one-line strings (`"…"`, `'…'`) — excluding comments (`#` to end of line), triple-quoted strings, and prefixed strings.
 fn python_contract_sites(source: &str) -> Vec<(usize, usize)> {
     let bytes = source.as_bytes();
     let mut out = Vec::new();
@@ -549,9 +549,9 @@ fn python_contract_sites(source: &str) -> Vec<(usize, usize)> {
     out
 }
 
-/// 契約の綴りの語 words を数えない所を空白で塗った中身(counted と同じ長さ・同じ行)— Hy は普通の文字列で中身がその語ちょうどの物と
-/// defwire の本体の欄の定義の名と defsystem の `:reads` / `:writes` の文字列の名の部分がその語ちょうどの物、Python(`.py`・`.pyi`)は接頭辞の無い 1 行の文字列で中身がその語ちょうどの物。契約の綴りの語が無い
-/// 群とほかの種類の file は None(塗らない)。
+/// The content with the places that do not count the contract-spelling words blanked with spaces (same length and lines as counted) — in Hy, ordinary strings whose content is exactly that word, and
+/// names of field definitions in a defwire body and the name part of defsystem `:reads` / `:writes` strings that are exactly that word; in Python (`.py`, `.pyi`), unprefixed one-line strings whose content is exactly that word. None for groups
+/// with no contract-spelling words and for other kinds of file (nothing blanked).
 fn contract_blanked(rel: &str, source: &str, counted: &str, words: &BTreeSet<&str>) -> Option<String> {
     if words.is_empty() {
         return None;
@@ -570,14 +570,14 @@ fn contract_blanked(rel: &str, source: &str, counted: &str, words: &BTreeSet<&st
     };
     let mut bytes = counted.as_bytes().to_vec();
     for (start, end) in sites.into_iter().filter(|&(start, end)| source.get(start..end).is_some_and(|text| words.contains(text))) {
-        // 範囲は語ちょうど(改行を含まない・文字の境目)なので、ASCII の空白で塗っても UTF-8 のまま。
+        // Ranges are exactly a word (no newline, on character boundaries), so blanking with ASCII spaces keeps it valid UTF-8.
         bytes[start..end].iter_mut().for_each(|b| *b = b' ');
     }
-    Some(String::from_utf8(bytes).expect("語の範囲ごと塗った"))
+    Some(String::from_utf8(bytes).expect("blanked the whole word range"))
 }
 
-/// 行ごとの当たり(:in lines)。註・docstring を塗った中身(counted_text)に当て、:rule-lines は元の行で見る。群の :contract-files の
-/// 綴りに在る語は、さらに契約の綴りの所(文字列の中身・defwire の欄の定義の名)を塗った中身で探す(contract_blanked)。
+/// Per-line hits (:in lines). Matched against the content with comments and docstrings blanked (counted_text), with :rule-lines checked against the original lines. For words in the group's :contract-files
+/// spellings, search further in the content with the contract-spelling places (string content, defwire field definition names) blanked (contract_blanked).
 fn line_hits(rel: &str, source: &str, counted: Option<&str>, group: &RetiredWords, patterns: &[Regex]) -> Vec<WordHit> {
     let mut out = Vec::new();
     let Some(counted) = counted else {
@@ -608,7 +608,7 @@ fn line_hits(rel: &str, source: &str, counted: Option<&str>, group: &RetiredWord
     out
 }
 
-/// Hy の form の木から定義の名の記号を集める(`def…` の形と `setv`・`val`・`var` の最初の名 — decorator の `[…]` と `#^ 型` は飛ばす)。
+/// From the Hy form tree, collect the symbols of definition names (the first name of `def…` forms and `setv`, `val`, `var` — the decorator `[…]` and `#^ type` are skipped).
 fn hy_definition_names(source: &str, form: &Form, out: &mut Vec<(usize, usize)>) {
     let text = |f: &Form| source.get(f.span.start..f.span.end).unwrap_or("");
     if let Some(items) = form.paren_items() {
@@ -639,7 +639,7 @@ fn hy_definition_names(source: &str, form: &Form, out: &mut Vec<(usize, usize)>)
     }
 }
 
-/// 定義の名の範囲(Hy と Python。ほかの file は無し)。
+/// Ranges of definition names (Hy and Python; none for other files).
 fn definition_names(rel: &str, source: &str) -> Vec<(usize, usize)> {
     let mut out = Vec::new();
     if rel.ends_with(".hy") {
@@ -649,14 +649,14 @@ fn definition_names(rel: &str, source: &str) -> Vec<(usize, usize)> {
         }
     } else if is_python(rel) {
         static PYTHON_DEFINITION: OnceLock<Regex> = OnceLock::new();
-        let python = PYTHON_DEFINITION.get_or_init(|| Regex::new(r"(?m)^[ \t]*(?:async[ \t]+)?(?:def|class)[ \t]+([A-Za-z_][A-Za-z0-9_]*)").expect("固定の正規表現"));
+        let python = PYTHON_DEFINITION.get_or_init(|| Regex::new(r"(?m)^[ \t]*(?:async[ \t]+)?(?:def|class)[ \t]+([A-Za-z_][A-Za-z0-9_]*)").expect("fixed regular expression"));
         out.extend(python.captures_iter(source).filter_map(|c| c.get(1)).map(|m| (m.start(), m.end())));
     }
     out.sort();
     out
 }
 
-/// 定義の名の当たり(:in names)。
+/// Hits of definition names (:in names).
 fn name_hits(rel: &str, source: &str, group: &RetiredWords, patterns: &[Regex]) -> Vec<WordHit> {
     let mut out = Vec::new();
     for (start, end) in definition_names(rel, source) {
@@ -678,7 +678,7 @@ fn name_hits(rel: &str, source: &str, group: &RetiredWords, patterns: &[Regex]) 
     out
 }
 
-/// file の名の当たり(:in paths)。名は最後の `.` より前(`.` の無い名はそのまま)で、dir の名は見ない。当たりの位置は file の頭。
+/// Hits of file names (:in paths). The name is before the last `.` (a name without `.` is used as is), and dir names are not looked at. The hit position is the head of the file.
 fn path_hits(rel: &str, group: &RetiredWords, patterns: &[Regex]) -> Vec<WordHit> {
     let file_name = rel.rsplit('/').next().unwrap_or(rel);
     let stem = file_name.rsplit_once('.').map_or(file_name, |(stem, _)| stem);
@@ -698,7 +698,7 @@ fn path_hits(rel: &str, group: &RetiredWords, patterns: &[Regex]) -> Vec<WordHit
         .collect()
 }
 
-/// Hy の form の木から、頭の記号が calls のどれかの呼びを集める。
+/// From the Hy form tree, collect calls whose head symbol is one of calls.
 fn hy_calls(source: &str, form: &Form, group: &RetiredCalls, rel: &str, out: &mut Vec<CallHit>) {
     if let Some(head) = form.paren_items().and_then(|items| items.iter().find(|f| !matches!(f.node, Node::Discarded))) {
         let spelled = source.get(head.span.start..head.span.end).unwrap_or("");
@@ -721,7 +721,7 @@ fn hy_calls(source: &str, form: &Form, group: &RetiredCalls, rel: &str, out: &mu
     }
 }
 
-/// 正規表現を組み終えた群(file ごとに組み直さない — agora の全体で 1 度だけ組む)。
+/// Groups with regular expressions already built (not rebuilt per file — built only once across all of agora).
 pub struct Prepared<'a> {
     words: Vec<(&'a RetiredWords, Vec<Regex>)>,
     calls: &'a [RetiredCalls],
@@ -730,26 +730,26 @@ pub struct Prepared<'a> {
 
 impl<'a> Prepared<'a> {
     pub fn new(words: &'a [RetiredWords], calls: &'a [RetiredCalls], parts: &'a PartCalls) -> Prepared<'a> {
-        // 読む時(architecture.rs)に確かめた正規表現なので、ここで読めないことは無い。
+        // These are regular expressions already checked at read time (architecture.rs), so failing to read them here cannot happen.
         let words = words.iter().map(|g| (g, g.patterns.iter().filter_map(|p| Regex::new(p).ok()).collect())).collect();
         Prepared { words, calls, parts }
     }
 
-    /// file rel をどれかの群が見るか。
+    /// Whether any group looks at file rel.
     fn wants(&self, rel: &str) -> bool {
         self.words.iter().any(|(g, _)| selected(rel, &g.files, &g.except)) || self.calls.iter().any(|g| rel.ends_with(".hy") && selected(rel, &g.files, &g.except))
     }
 }
 
-/// file 1 つ(根からの path rel と中身)を全部の群に当てる(1 file の実行 — 正規表現はここで組む)。
+/// Match one file (path rel from the root and its content) against all groups (a single-file run — the regular expressions are built here).
 pub fn judge(rel: &str, source: &str, words: &[RetiredWords], calls: &[RetiredCalls], parts: &PartCalls) -> (Vec<WordHit>, Vec<CallHit>) {
     judge_prepared(rel, source, &Prepared::new(words, calls, parts))
 }
 
-/// file 1 つを組み終えた群に当てる。
+/// Match one file against the groups already built.
 fn judge_prepared(rel: &str, source: &str, prepared: &Prepared) -> (Vec<WordHit>, Vec<CallHit>) {
     let mut word_hits = Vec::new();
-    // 註・docstring を塗った中身は file ごとに 1 度だけ作る(:in lines の群が在る時だけ)。
+    // The content with comments and docstrings blanked is built only once per file (only when there is an :in lines group).
     let mut counted: Option<Option<String>> = None;
     for (group, patterns) in prepared.words.iter().filter(|(g, _)| selected(rel, &g.files, &g.except)) {
         word_hits.extend(match group.place {
@@ -775,7 +775,7 @@ fn judge_prepared(rel: &str, source: &str, prepared: &Prepared) -> (Vec<WordHit>
     (word_hits, call_hits)
 }
 
-/// 宣言の群に当たる file を読んで判じる(focus が在ればその下の file だけ)。読めない file は理由を返す。
+/// Read and judge the files matching the declared groups (only files under focus if given). Files that cannot be read return a reason.
 pub fn find(root: &Path, words: &[RetiredWords], calls: &[RetiredCalls], parts: &PartCalls, focus: Option<&[PathBuf]>) -> (Vec<FileHits>, Vec<String>) {
     let prepared = Prepared::new(words, calls, parts);
     let globs = words.iter().flat_map(|g| g.files.iter()).chain(calls.iter().flat_map(|g| g.files.iter()));
@@ -791,9 +791,9 @@ pub fn find(root: &Path, words: &[RetiredWords], calls: &[RetiredCalls], parts: 
     )
 }
 
-/// file 1 つで判じる規則(DOEFF144・145・150・151)の共通の読み — 宣言の glob の候補(focus が在ればその下だけ)のうち wants が
-/// 選んだ file を並列に読み、judge に (根からの path・path・中身) を渡す。答えの在る file だけを候補の順に返し、読めない file と
-/// judge が返した理由は errors に積む。
+/// The common reading for rules judged per file (DOEFF144, 145, 150, 151) — read in parallel the files that wants selected among the declared glob candidates (only under focus if given),
+/// and pass (path from the root, path, content) to judge. Return only the files that have an answer, in candidate order; files that cannot be read and
+/// reasons returned by judge are pushed onto errors.
 pub(super) fn judge_files<'g, R: Send>(
     root: &Path,
     globs: impl Iterator<Item = &'g String>,
@@ -806,7 +806,7 @@ pub(super) fn judge_files<'g, R: Send>(
         .into_par_iter()
         .map(|(rel, path)| match std::fs::read_to_string(&path) {
             Ok(source) => judge(rel, path, source),
-            Err(error) => Err(format!("{}: 読めない: {}", rel, error)),
+            Err(error) => Err(format!("{}: cannot read: {}", rel, error)),
         })
         .collect();
     let mut found = Vec::new();
@@ -835,11 +835,11 @@ mod tests {
             rule_lines: rule_lines.iter().map(|w| w.to_string()).collect(),
             contracts: Default::default(),
             place,
-            instead: "代わり".into(),
+            instead: "instead".into(),
         }
     }
 
-    /// 契約の綴り contract を持つ :in lines の群(契約の file の path は検の見本 — 綴りは読んだ後の形で渡す)。
+    /// An :in lines group with contract spelling contract (the contract file path is a sample for the test — spellings are passed in their post-read form).
     fn with_contract(words_list: &[&str], contract: &[&str]) -> RetiredWords {
         let mut group = words(words_list, &[], WordPlace::Lines, &[]);
         group.contracts = super::super::architecture::ContractSpellings {
@@ -849,29 +849,29 @@ mod tests {
         group
     }
 
-    /// 契約の綴りに在る語は、Hy の文字列で中身がその語ちょうどの物と defwire の本体の欄の定義の名だけを数えない。
-    /// 変数・引数・defrecord の欄・loop の変数・属性の読み・語を含む長い文字列は数える。契約に無い語は今どおり数える。
+    /// Words in contract spellings are not counted only in Hy strings whose content is exactly that word and in defwire body field definition names.
+    /// Variables, arguments, defrecord fields, loop variables, attribute reads, and long strings containing the word are counted. Words not in the contract are counted as before.
     #[test]
     fn contract_spellings_skip_exact_strings_and_defwire_fields_only() {
         let group = with_contract(&["mail", "letter"], &["mail", "kind"]);
-        let quiet = "(defwire Carrier \"取った印\" {:names :camel} (#^ str job) (#^ str mail))\n\
+        let quiet = "(defwire Carrier \"a received mark\" {:names :camel} (#^ str job) (#^ str mail))\n\
                      (defwire Seen {:unknown :ignore} (setv #^ (| str None) mail None))\n\
                      (.append record chat id rows \"mail\")\n(setv row {\"kind\" \"mail\"})\n";
         assert!(spelled("a.hy", quiet, &group).is_empty(), "{:?}", spelled("a.hy", quiet, &group));
         let loud = "(setv mail 1)\n(defk send [mail] mail)\n(defrecord Row (#^ str mail))\n(lfor mail rows mail.id)\n\
-                    (setv s status.carrier.mail)\n(setv t \"mail の宛先\")\n(defwire W (#^ str letter))\n(setv u \"letter\")\n";
+                    (setv s status.carrier.mail)\n(setv t \"mail recipient\")\n(defwire W (#^ str letter))\n(setv u \"letter\")\n";
         assert_eq!(spelled("a.hy", loud, &group), vec!["mail", "mail", "mail", "mail", "mail", "mail", "letter", "letter"]);
-        // 同じ行の契約の文字列を飛ばしても、内部の名は数える(最初の当たりが文字列でも、その後の名を探す)。
+        // Even if a contract string on the same line is skipped, inner names are counted (even if the first hit is a string, the later name is searched for).
         assert_eq!(spelled("a.hy", "(setv mail \"mail\")\n(get row \"mail\" mail)\n", &group), vec!["mail", "mail"]);
         let hits = judge("a.hy", "(get row \"mail\" mail)\n", &[group.clone()], &[], &PartCalls::default()).0;
-        assert_eq!((hits[0].start, hits[0].end), (16, 20), "位置は文字列の後の名");
-        // 契約の綴りの無い群は、文字列も defwire の欄も今どおり数える。
+        assert_eq!((hits[0].start, hits[0].end), (16, 20), "the position is that of the name after the string");
+        // A group with no contract spelling counts strings and defwire fields as before.
         let plain = words(&["mail"], &[], WordPlace::Lines, &[]);
         assert_eq!(spelled("a.hy", "(defwire C (#^ str mail))\n(f \"mail\")\n", &plain), vec!["mail", "mail"]);
     }
 
-    /// defsystem の job の行の `:reads` / `:writes` の文字列(`<置き場>:<名>`)は、名の部分が契約の綴りの語
-    /// ちょうどなら数えない。契約に無い語の名・欄の外の同じ文字列・defsystem でない form の同じ欄は今どおり数える。
+    /// For the `:reads` / `:writes` strings (`<store>:<name>`) on a defsystem job line, if the name part is exactly a contract-spelling word,
+    /// it is not counted. Names of words not in the contract, the same strings outside fields, and the same fields in a non-defsystem form are counted as before.
     #[test]
     fn contract_spellings_skip_the_name_part_of_system_io_spellings_only() {
         let group = with_contract(&["mail", "letter"], &["mail"]);
@@ -882,24 +882,24 @@ mod tests {
         assert_eq!(spelled("a.hy", loud, &group), vec!["letter", "mail", "mail", "mail"]);
     }
 
-    /// Python(.py・.pyi)の接頭辞の無い 1 行の文字列で中身が契約の綴りの語ちょうどの物は数えない。名・属性・欄・
-    /// 接頭辞つきの文字列・語を含む長い文字列は数える。md・json などほかの file は塗らない。
+    /// Python (.py, .pyi) unprefixed one-line strings whose content is exactly a contract-spelling word are not counted. Names, attributes, fields,
+    /// prefixed strings, and long strings containing the word are counted. Other files such as md and json are not blanked.
     #[test]
     fn contract_spellings_skip_exact_python_strings_only() {
         let group = with_contract(&["mail"], &["mail"]);
-        let quiet = "MESSAGE_SOURCE_MAIL = \"mail\"\nINPUT_CARRIER_MAIL = 'mail'  # mail は註\nsend(kind=\"mail\")\n";
+        let quiet = "MESSAGE_SOURCE_MAIL = \"mail\"\nINPUT_CARRIER_MAIL = 'mail'  # mail is a comment\nsend(kind=\"mail\")\n";
         for rel in ["a.py", "a.pyi"] {
             assert!(spelled(rel, quiet, &group).is_empty(), "{} {:?}", rel, spelled(rel, quiet, &group));
         }
         let loud = "mail = 1\nx = row.mail\nclass V:\n    mail: str\ny = f\"mail\"\nz = \"mail box\"\n";
         assert_eq!(spelled("a.py", loud, &group), vec!["mail", "mail", "mail", "mail", "mail"]);
-        assert_eq!(spelled("a.json", "{\"kind\": \"mail\"}\n", &group), vec!["mail"], "json は塗らない");
+        assert_eq!(spelled("a.json", "{\"kind\": \"mail\"}\n", &group), vec!["mail"], "json is not blanked");
     }
 
     #[test]
     fn globs_are_anchored_at_the_root() {
         assert!(anchored("README.md", "README.md"));
-        assert!(!anchored("README.md", "docs/README.md"), "/ の無い型は根の直下だけ");
+        assert!(!anchored("README.md", "docs/README.md"), "a pattern without / matches only directly under the root");
         assert!(anchored("controllers/**/*.hy", "controllers/a/b.hy"));
         assert!(anchored("controllers/**/*.hy", "controllers/b.hy"));
         assert!(!anchored("controllers/**/*.hy", "scripts/b.hy"));
@@ -920,7 +920,7 @@ mod tests {
     fn patterns_hit_once_per_line_and_key_by_group() {
         let group = words(&[], &[r"会話\s*[（(]\s*(?:意味は|=)\s*agent", r"(?i)semantically\s+agent"], WordPlace::Lines, &[]);
         let (hits, _) = judge("a.txt", "会話(意味は agent)と 会話(= agent)は semantically agent\n会話は agent の手番の列を持つ\n", &[group], &[], &PartCalls::default());
-        assert_eq!(hits.len(), 1, "同じ行に 2 つの型が当たっても 1 行と数える");
+        assert_eq!(hits.len(), 1, "two patterns matching the same line still count as one line");
         assert_eq!(hits[0].detail, "g");
     }
 
@@ -928,7 +928,7 @@ mod tests {
     fn names_are_read_from_definitions_only() {
         let group = words(&[], &["(?i)conversation"], WordPlace::Names, &[]);
         let source = "(defk attend-conversation [x] \"conversation\")\n(defclass [(dataclass :frozen True)] ConversationRow [])\n\
-                      (setv CONVERSATION-KIND \"conversation\")\n(defn #^ str chat-of [row] row.chat) ; conversation の綴りは註だけ\n\
+                      (setv CONVERSATION-KIND \"conversation\")\n(defn #^ str chat-of [row] row.chat) ; spelling of conversation only in a comment\n\
                       (defrecord ChatSlice (#^ str chat))\n";
         let (hits, _) = judge("controllers/chat/rows.hy", source, &[group.clone()], &[], &PartCalls::default());
         let names: Vec<&str> = hits.iter().map(|h| h.name.as_deref().unwrap_or("")).collect();
@@ -940,108 +940,108 @@ mod tests {
     #[test]
     fn paths_are_file_names_not_dirs_or_contents() {
         let group = words(&["worker", "design_request"], &[r"^dispatch"], WordPlace::Paths, &[]);
-        let hit = |rel: &str| judge(rel, "(setv worker 1) ; worker の綴りは中身だけ\n", &[group.clone()], &[], &PartCalls::default()).0;
+        let hit = |rel: &str| judge(rel, "(setv worker 1) ; spelling of worker only in contents\n", &[group.clone()], &[], &PartCalls::default()).0;
         let details = |rel: &str| hit(rel).iter().map(|h| h.detail.clone()).collect::<Vec<_>>();
         assert_eq!(details("controllers/automation/core/worker.hy"), vec!["worker"]);
         assert_eq!(details("controllers/automation/core/design_request.hy"), vec!["design_request"]);
-        assert_eq!(details("controllers/automation/core/dispatch_probe.hy"), vec!["g"], ":patterns は群の名で鍵を作る");
-        assert!(hit("controllers/automation/core/worker_pool.hy").is_empty(), "別の語の一部は数えない");
-        assert!(hit("controllers/worker/program.hy").is_empty(), "dir の名は見ない");
-        assert!(hit("controllers/automation/core/program.hy").is_empty(), "中身の綴りは見ない");
+        assert_eq!(details("controllers/automation/core/dispatch_probe.hy"), vec!["g"], ":patterns build the key from the group name");
+        assert!(hit("controllers/automation/core/worker_pool.hy").is_empty(), "part of another word is not counted");
+        assert!(hit("controllers/worker/program.hy").is_empty(), "dir names are not looked at");
+        assert!(hit("controllers/automation/core/program.hy").is_empty(), "spellings in contents are not looked at");
         let found = hit("controllers/automation/core/worker.hy");
         assert_eq!((found[0].start, found[0].end, found[0].place), (0, 0, WordPlace::Paths));
     }
 
-    /// 当たった綴りの字面の並び(:in lines の群 group を file rel の中身 source に当てる)。
+    /// The sequence of matched spellings as text (match the :in lines group group against content source of file rel).
     fn spelled(rel: &str, source: &str, group: &RetiredWords) -> Vec<String> {
         judge(rel, source, &[group.clone()], &[], &PartCalls::default()).0.iter().map(|h| source[h.start..h.end].to_string()).collect()
     }
 
-    /// 実際に使う code の中の綴り — Hy の記号・欄名・command の文字列・ほかの文字列 — は数える。
+    /// Spellings in code that is actually used — Hy symbols, field names, command strings, other strings — are counted.
     #[test]
     fn hy_symbols_fields_and_command_strings_are_counted() {
         let group = words(&["ACP_CHECKOUT", "mail"], &[r"\bPYTHONPATH=", r#""PYTHONPATH""#], WordPlace::Lines, &[]);
         let source = "(setv ACP_CHECKOUT 1)\n(defrecord Row (#^ str mail))\n(setv row.mail 2)\n\
                       (defk run [] (RunProcess \"cd x && PYTHONPATH=. hy\"))\n(setv env {\"PYTHONPATH\" \".\"})\n";
         assert_eq!(spelled("a.hy", source, &group), vec!["ACP_CHECKOUT", "mail", "mail", "PYTHONPATH=", "\"PYTHONPATH\""]);
-        // 定義の頭の文字列でも、それだけが本体(答えの値)なら docstring ではない。
+        // Even a string at the head of a definition is not a docstring if it is the whole body (the answer value).
         assert_eq!(spelled("a.hy", "(defk mail-of [] \"mail\")\n", &group), vec!["mail"]);
-        // 定義でない form の最初の文字列・keyword の値の文字列は数える。
-        assert_eq!(spelled("a.hy", "(print \"mail\" 1)\n(defadr x :title \"mail の宛先\" :body 1)\n", &group), vec!["mail", "mail"]);
+        // The first string of a non-definition form and string values of keywords are counted.
+        assert_eq!(spelled("a.hy", "(print \"mail\" 1)\n(defadr x :title \"mail recipient\" :body 1)\n", &group), vec!["mail", "mail"]);
     }
 
-    /// 1 行目の shebang は、どの種類の file でも数える(退役語 direct-shebang の対象)。
+    /// A first-line shebang is counted for every kind of file (target of the retired word direct-shebang).
     #[test]
     fn shebang_lines_are_counted_in_every_kind_of_file() {
         let group = words(&[], &[r"^#!\s*/usr/bin/env\s+(hy|python[0-9.]*)\b"], WordPlace::Lines, &[]);
         for rel in ["scripts/run.hy", "scripts/run.py", "scripts/run.sh", "scripts/run"] {
             assert_eq!(spelled(rel, "#!/usr/bin/env hy\n(print 1)\n", &group), vec!["#!/usr/bin/env hy"], "{}", rel);
         }
-        assert!(spelled("scripts/run.sh", "echo 1\n#!/usr/bin/env hy\n", &group).is_empty(), "2 行目の #! は shell の註");
+        assert!(spelled("scripts/run.sh", "echo 1\n#!/usr/bin/env hy\n", &group).is_empty(), "a #! on line 2 is a shell comment");
     }
 
-    /// Hy の `;` の註と定義の docstring は数えない(文字列の中の `;` は註でない)。
+    /// Hy `;` comments and definition docstrings are not counted (a `;` inside a string is not a comment).
     #[test]
     fn hy_comments_and_docstrings_are_not_counted() {
         let group = words(&["mail"], &[], WordPlace::Lines, &[]);
-        let source = ";;; mail の頭の註\n(defk send [x]\n  {:pre [(: x int)]}\n  \"mail を送るため\n  (2 行目の mail)\"\n  (setv y x) ; mail は註\n  y)\n\
-                      (defclass [(dataclass)] Box [Base] \"mail の箱\" (#^ int n))\n(defhandler h {:tags {}} \"mail の訳\" (Ask [k] (resume k)))\n\
-                      (deftest test-mail-free \"mail の検\" (assert 1))\n(defn #^ int f [] \"mail\" 1)\n#_(defk g [] \"mail\" 1) ; mail\n";
+        let source = ";;; leading comment about mail\n(defk send [x]\n  {:pre [(: x int)]}\n  \"for sending mail\n  (mail on line 2)\"\n  (setv y x) ; mail is a comment\n  y)\n\
+                      (defclass [(dataclass)] Box [Base] \"mail box\" (#^ int n))\n(defhandler h {:tags {}} \"mail meaning\" (Ask [k] (resume k)))\n\
+                      (deftest test-mail-free \"mail check\" (assert 1))\n(defn #^ int f [] \"mail\" 1)\n#_(defk g [] \"mail\" 1) ; mail\n";
         assert!(spelled("a.hy", source, &group).is_empty(), "{:?}", spelled("a.hy", source, &group));
-        // 文字列の中の `;` の後は註でない。
+        // A `;` inside a string does not start a comment.
         assert_eq!(spelled("a.hy", "(setv s \"a ; mail\")\n", &group), vec!["mail"]);
     }
 
-    /// `.md` の file は :in lines で数えない(file ごと)。
+    /// `.md` files are not counted by :in lines (per file).
     #[test]
     fn markdown_files_are_not_counted() {
         let group = words(&["mail", "ACP_CHECKOUT"], &[], WordPlace::Lines, &[]);
-        assert!(spelled("docs/a.md", "# mail\n本文の mail と `ACP_CHECKOUT`\n```sh\nexport ACP_CHECKOUT=1\n```\n", &group).is_empty());
-        // :in paths は md でも file の名を見る(変えない)。
+        assert!(spelled("docs/a.md", "# mail\nbody mail and `ACP_CHECKOUT`\n```sh\nexport ACP_CHECKOUT=1\n```\n", &group).is_empty());
+        // :in paths looks at the file name even for md (unchanged).
         let paths = words(&["mail"], &[], WordPlace::Paths, &[]);
         assert_eq!(judge("docs/mail.md", "", &[paths], &[], &PartCalls::default()).0.len(), 1);
     }
 
-    /// Python の `#` の註と docstring(行頭の三重引用符の文字列)は数えない。ほかの文字列と名は数える。
+    /// Python `#` comments and docstrings (triple-quoted strings at line start) are not counted. Other strings and names are counted.
     #[test]
     fn python_comments_and_docstrings_are_not_counted() {
         let group = words(&["mail"], &[], WordPlace::Lines, &[]);
-        let source = "\"\"\"mail の module\n\n2 行目の mail\"\"\"\nimport os  # mail は註\n\ndef f(x):\n    r'''mail の関数'''\n    s = \"# mail\"\n    return x.mail\n\n\
-                      class C:\n    \"\"\"mail の class\"\"\"\n    t = 'it''s # not mail'\n";
-        assert_eq!(spelled("a.py", source, &group), vec!["mail", "mail", "mail"], "文字列の中の # は註でない・属性の名は数える");
-        assert_eq!(spelled("a.py", "x = f(\"\"\"mail\"\"\")\n", &group), vec!["mail"], "行の途中の三重引用符は docstring でない");
+        let source = "\"\"\"mail module\n\nmail on line 2\"\"\"\nimport os  # mail is a comment\n\ndef f(x):\n    r'''mail function'''\n    s = \"# mail\"\n    return x.mail\n\n\
+                      class C:\n    \"\"\"mail class\"\"\"\n    t = 'it''s # not mail'\n";
+        assert_eq!(spelled("a.py", source, &group), vec!["mail", "mail", "mail"], "a # inside a string is not a comment; attribute names are counted");
+        assert_eq!(spelled("a.py", "x = f(\"\"\"mail\"\"\")\n", &group), vec!["mail"], "a triple quote mid-line is not a docstring");
     }
 
-    /// 型の宣言の `.pyi` も Python として読む — docstring と `#` の註の中の語は数えず、欄・変数・定義の名は数える。
+    /// The type-declaration `.pyi` is also read as Python — words in docstrings and `#` comments are not counted, while field, variable, and definition names are.
     #[test]
     fn python_stub_files_are_read_as_python() {
         let group = words(&["mail"], &[], WordPlace::Lines, &[]);
-        let source = "\"\"\"mail の型の宣言\"\"\"\nfrom typing import Any  # mail は註\n\nclass View:\n    \"\"\"mail の欄を持つ\"\"\"\n    mail: int\n\nmail_default: Any\nmail = 1\n";
-        assert_eq!(spelled("a.pyi", source, &group), vec!["mail", "mail"], "docstring・註は数えず、欄 mail と変数 mail は数える");
-        assert_eq!(spelled("a.pyi", source, &group), spelled("a.py", source, &group), ".pyi と .py は同じに読む");
+        let source = "\"\"\"mail type declaration\"\"\"\nfrom typing import Any  # mail is a comment\n\nclass View:\n    \"\"\"has a mail field\"\"\"\n    mail: int\n\nmail_default: Any\nmail = 1\n";
+        assert_eq!(spelled("a.pyi", source, &group), vec!["mail", "mail"], "docstrings and comments are not counted; field mail and variable mail are");
+        assert_eq!(spelled("a.pyi", source, &group), spelled("a.py", source, &group), ".pyi and .py are read the same");
         let names = words(&[], &["(?i)conversation"], WordPlace::Names, &[]);
         let (stub, _) = judge("controllers/chat/rows.pyi", "def read_conversation(x: int) -> None: ...\nclass ChatRow: ...\n", &[names], &[], &PartCalls::default());
-        assert_eq!(stub.iter().map(|h| h.name.as_deref().unwrap_or("")).collect::<Vec<_>>(), vec!["read_conversation"], ".pyi の定義の名も読む");
+        assert_eq!(stub.iter().map(|h| h.name.as_deref().unwrap_or("")).collect::<Vec<_>>(), vec!["read_conversation"], ".pyi definition names are read too");
     }
 
-    /// shell・toml・ほかの file の `#` の註(引用符の外)は数えない。`$#`・`${#…}` と引用符の中の `#` は註でない。
+    /// `#` comments (outside quotes) in shell, toml, and other files are not counted. `$#`, `${#…}`, and `#` inside quotes are not comments.
     #[test]
     fn hash_comments_are_not_counted_in_shell_and_other_files() {
         let group = words(&["ACP_CHECKOUT"], &[r"\bPYTHONPATH="], WordPlace::Lines, &[]);
-        let source = "# ACP_CHECKOUT の頭の註\nexport PYTHONPATH=. # ACP_CHECKOUT は註\necho \"# ACP_CHECKOUT\"\necho $# ACP_CHECKOUT\n\
-                      echo ${#ACP_CHECKOUT}\necho a#ACP_CHECKOUT\ncat <<EOF\n# ACP_CHECKOUT は here-document の中身\nEOF\n";
+        let source = "# leading comment about ACP_CHECKOUT\nexport PYTHONPATH=. # ACP_CHECKOUT is a comment\necho \"# ACP_CHECKOUT\"\necho $# ACP_CHECKOUT\n\
+                      echo ${#ACP_CHECKOUT}\necho a#ACP_CHECKOUT\ncat <<EOF\n# ACP_CHECKOUT is here-document content\nEOF\n";
         assert_eq!(spelled("run.sh", source, &group), vec!["PYTHONPATH=", "ACP_CHECKOUT", "ACP_CHECKOUT", "ACP_CHECKOUT", "ACP_CHECKOUT", "ACP_CHECKOUT"]);
-        let toml = "# ACP_CHECKOUT の註\ncommand = \"PYTHONPATH=. hy x.hy\" # ACP_CHECKOUT\nkey = 'ACP_CHECKOUT'\n";
+        let toml = "# ACP_CHECKOUT comment\ncommand = \"PYTHONPATH=. hy x.hy\" # ACP_CHECKOUT\nkey = 'ACP_CHECKOUT'\n";
         assert_eq!(spelled(".agents/land-queue.toml", toml, &group), vec!["PYTHONPATH=", "ACP_CHECKOUT"]);
     }
 
     #[test]
     fn calls_are_heads_of_forms_not_comments_or_strings() {
         let group = RetiredCalls { name: "clock".into(), calls: vec!["Now".into(), "time.time".into()], files: vec!["**/*.hy".into()], except: Vec::new(), instead: "x".into() };
-        let source = ";; 効果 (Now) は退役した\n(setv a (Now))\n(setv b \"(Now)\")\n(setv c (time.time))\n#_(Now)\n(setv d Now)\n";
+        let source = ";; the effect (Now) is retired\n(setv a (Now))\n(setv b \"(Now)\")\n(setv c (time.time))\n#_(Now)\n(setv d Now)\n";
         let (_, hits) = judge("a.hy", source, &[], &[group.clone()], &PartCalls::default());
         assert_eq!(hits.iter().map(|h| h.call.as_str()).collect::<Vec<_>>(), vec!["Now", "time.time"]);
         let (_, none) = judge("a.py", "Now()\n", &[], &[group], &PartCalls::default());
-        assert!(none.is_empty(), "Python の file は数えない");
+        assert!(none.is_empty(), "Python files are not counted");
     }
 }

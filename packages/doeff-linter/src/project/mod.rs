@@ -1,10 +1,10 @@
-//! 層の規則(DOEFF101〜108)— repo の module の一覧と設定を見て判じる規則。Hy と Python の両方の file を読む。
+//! Layer rules (DOEFF101-108) — rules judged from the repo's module list and the settings. They read both Hy and Python files.
 //!
-//! 規則の中身は設定(`[tool.doeff-linter.layers]` ほか・`settings.rs`)から受け取り、層の名前・role・環境の語を
-//! Rust に書き込まない。Hy の事実は doeff-indexer の hy-index の解析(関数として呼ぶ)と読み取り器から取る。
+//! The substance of the rules comes from the settings (`[tool.doeff-linter.layers]` and others, `settings.rs`); layer names, roles and environment words are
+//! not written into Rust. Hy facts are taken from doeff-indexer's hy-index analysis (called as a function) and the reader.
 //!
-//! 流れ: 母集団の file を集める → file ごとに事実を読む(`facts.rs`)→ 規則ごとに違反の下書きを作る →
-//! law と登録簿の鍵を当てて重さを決める(`finish`)。
+//! Flow: collect the population files -> read facts per file (`facts.rs`) -> make draft violations per rule ->
+//! apply laws and registry keys to decide severity (`finish`).
 
 pub mod affected_tests;
 pub mod architecture;
@@ -100,10 +100,10 @@ use facts::{read_facts, ByteSpan, Language, ModuleFacts};
 use names::{environment_words_of, hy_mangle, is_upper_name, module_of};
 use registry::Registry;
 use rule::ProjectRule;
-// path の道具の定義は paths.rs。外の crate(tests)が読む名を残し、project の中の module は paths を直に読む(#2119)。
+// The definition of the path helpers is in paths.rs. The names read by outside crates (tests) are kept, and modules inside project read paths directly (#2119).
 pub use paths::{declared_rel, glob_matches, relative_path};
-// 診断の型の定義は report.rs・DOEFF137 の当たりの種類は contract_breach.rs。外の crate(main.rs・tests)が読む名を残し、project の中の
-// module と editor.rs は定義の module を直に読む(mod.rs を読み戻すと依存の輪になる — #2121)。
+// The definition of the diagnostic types is in report.rs, and the kinds of DOEFF137 hits are in contract_breach.rs. The names read by outside crates (main.rs, tests) are kept, and modules
+// inside project and editor.rs read the defining modules directly (re-reading through mod.rs makes a dependency cycle — #2121).
 pub use contract_breach::ContractTestBreach;
 pub use report::{Finding, FindingOrigin, ModuleSummary, ProjectReport, Standing};
 use paths::segments_match;
@@ -113,22 +113,22 @@ use layers::{LayerId, LayerSettings};
 use module_index::{ModuleIndex, Roads};
 use settings::{EnvironmentSettings, ProgramSleepSettings, ProjectSettings, TestSleepSettings};
 
-/// module の綴り → 置き場 の索引(import の先を層と service へ解くため)。
+/// Index of module spelling -> location (to resolve import targets to layers and services).
 type SiteIndex<'a> = ModuleIndex<'a, ModuleSite>;
 
-/// 何を判じるか — repo 全体か、保存前の内容の 1 file。
+/// What to judge — the whole repo, or one file with its pre-save contents.
 pub enum Target<'a> {
-    /// repo 全体。focus は命令の行で名指した path(None = 全部)— file 1 つで判じられる規則(DOEFF150・151)は、名指しが在れば
-    /// その下の file だけを読み、repo 全体を読まない(全体を読む規則が commit を止めた DOEFF133 の再発を防ぐ)。
-    /// ほかの規則は今までどおり全体を読み、出力を名指しの path で絞る。
+    /// The whole repo. focus is the path named on the command line (None = everything) — for rules that can be judged from one file (DOEFF150, 151), if something is named,
+    /// only the files under it are read and the whole repo is not read (preventing a recurrence of DOEFF133, where a rule that reads everything blocked a commit).
+    /// Other rules read everything as before, and the output is narrowed by the named path.
     Whole { focus: Option<&'a [PathBuf]> },
     Single { path: PathBuf, source: &'a str },
 }
 
 impl Target<'_> {
-    /// この実行が規則を判じるか— 全体の実行は有効な規則の全部(名指しの path が在る時は DOEFF166 を除く —
-    /// 当たる所見が名指しの外に在りうる)、1 file の実行は 1 file で判じると規則が名乗る物(`ProjectRule::judged_on_one_file`)だけ。
-    /// 判じない規則は有効でも走らせず、報告の `judged` に載せない(エディタがその規則の違反を全体の実行の結果のまま残す)。
+    /// Whether this run judges the rule — a whole run judges all enabled rules (except DOEFF166 when a path is named —
+    /// its hits may lie outside the named path), and a single-file run judges only those the rule declares judgeable from one file (`ProjectRule::judged_on_one_file`).
+    /// A rule that is not judged is not run even if enabled, and is not listed in the report's `judged` (the editor keeps that rule's violations as the whole run's result).
     pub fn judges(&self, rule: ProjectRule) -> bool {
         match self {
             Target::Whole { focus: None } => true,
@@ -138,7 +138,7 @@ impl Target<'_> {
     }
 }
 
-/// 違反の下書き(law と登録簿を当てる前)。
+/// A draft of a violation (before laws and the registry are applied).
 struct Draft {
     rule: ProjectRule,
     layer: Option<LayerId>,
@@ -146,14 +146,14 @@ struct Draft {
     path: PathBuf,
     range: Range,
     message: String,
-    /// 鍵の `<規則>` の後ろの細目(無ければ None)。
+    /// Detail after the `<rule>` of the key (None if none).
     detail: Option<String>,
     base: Severity,
-    /// 説明の材料。
+    /// Material for the explanation.
     explain: Explain,
 }
 
-/// 母集団の file 1 つ。
+/// One file of the population.
 #[derive(Debug, Clone)]
 struct SourceFile {
     rel: String,
@@ -161,7 +161,7 @@ struct SourceFile {
     language: Language,
 }
 
-/// 層の母集団の file 1 つ。
+/// One file of a layer's population.
 #[derive(Debug, Clone)]
 struct LayerFile {
     file: SourceFile,
@@ -169,30 +169,30 @@ struct LayerFile {
     site: ModuleSite,
 }
 
-/// module の置き場 — 層と、当たった置き場の実際の dir と、`*` の段に当たった service の名。
+/// A module's location — the layer, the actual dir of the matched location, and the name of the service matched by the `*` segment.
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct ModuleSite {
     layer: LayerId,
     dir: String,
     service: Option<String>,
-    /// 層を path ではなくタグの role から推したか(architecture.hy の宣言した置き場所の外の module)。
+    /// Whether the layer was inferred from the tag's role rather than the path (a module outside the locations declared in architecture.hy).
     by_tags: bool,
 }
 
-/// 層の規則を走らせる。root は正規化した repo の根、enabled は有効な規則。
+/// Runs the layer rules. root is the normalized repo root, enabled is the enabled rules.
 pub fn run(root: &Path, settings: &ProjectSettings, enabled: &BTreeSet<ProjectRule>, target: Target) -> ProjectReport {
     run_with(root, settings, enabled, target, &semantic::SemanticMode::CacheOnly)
 }
 
-/// 層の規則を走らせる(意味の規則をどう扱うかを選べる — 既定の `run` は cache を読むだけ)。
+/// Runs the layer rules (how to treat the semantic rules can be chosen — the default `run` only reads the cache).
 pub fn run_with(root: &Path, settings: &ProjectSettings, enabled: &BTreeSet<ProjectRule>, target: Target, semantic_mode: &semantic::SemanticMode) -> ProjectReport {
     let semantic_files: Vec<(LayerFile, Option<String>)>;
     let plain_files: Vec<(SourceFile, Option<String>)>;
-    // hy-index の file(生の副作用の証拠つき)— DOEFF119 と、DOEFF119 が何も出さない class だけを問う DOEFF204 が同じ物を読む。
+    // hy-index files (with evidence of raw side effects) — DOEFF119, and DOEFF204, which asks only about classes DOEFF119 emits nothing for, read the same thing.
     let mut indexes: HashMap<String, HyFileIndex> = HashMap::new();
     let mut report = ProjectReport::default();
-    // 1 file の実行で、書いた file が自分の引数を素で呼ぶ定義を持つなら、呼び手の事実を集める repo の読みを頭から別の thread で走らせ始める
-    // (登録簿・effect の世界・名指しの module の表が冷えた作業木で disk を待つ間に重ねる)。
+    // In a single-file run, if the written file has a definition that calls its own argument bare, start in another thread, from the beginning, the repo read that collects the callers' facts
+    // (overlapped with the wait on disk for the registry, the effect world, and the table of the named module on a cold worktree).
     let program_params = match &target {
         Target::Single { path, source } if enabled.contains(&ProjectRule::DefkCalledBare) && target.judges(ProjectRule::DefkCalledBare) => {
             match bare_call_population_rel(root, settings, enabled, path) {
@@ -212,13 +212,13 @@ pub fn run_with(root: &Path, settings: &ProjectSettings, enabled: &BTreeSet<Proj
     }
     report.errors.extend(registry.problems.iter().cloned());
     report.notes.extend(registry.notes.iter().cloned());
-    // この実行が判じる規則(`Target::judges`)。判じない規則は有効でも走らせない — 登録簿の当たらない行(DOEFF166)は repo 全体を当てた
-    // 時だけ判じ(名指しの file だけ・1 file の実行では、当たる所見が範囲の外に在りうる)、1 file の実行は 1 file で判じると名乗る規則
-    // だけを走らせる。
+    // The rules this run judges (`Target::judges`). A rule that is not judged is not run even if enabled — the unmatched rows of the registry (DOEFF166) are judged only
+    // when applied to the whole repo (in a named-files-only or single-file run, its hits may lie outside the range), and a single-file run runs only the rules that declare
+    // they are judged from one file.
     let judged_rules: BTreeSet<ProjectRule> = enabled.iter().copied().filter(|rule| target.judges(*rule)).collect();
-    // DOEFF166 を判じる全体の実行では、登録簿の鍵が名指す規則を enable に無くても同じ実行で当てる(lent)— 当たりは 166 の判じにだけ
-    // 使い、報告の前に外す。enable に 166 を含む一部の列だけを渡すと名指された規則が走らず、166 が黙って 0 件になっていた
-    // (#1992 の見逃し)。
+    // In a whole run that judges DOEFF166, the rules that the registry keys name are applied in the same run even if not in enable (lent) — the hits are used only
+    // for the judgment of 166 and removed before reporting. If only a partial list containing 166 was passed to enable, the named rules did not run and 166 silently found 0
+    // (the miss of #1992).
     let lent: BTreeSet<ProjectRule> = if judged_rules.contains(&ProjectRule::RegistryEntryStale) {
         rules_named_by_registry(&registry, settings).difference(&judged_rules).copied().collect()
     } else {
@@ -234,7 +234,7 @@ pub fn run_with(root: &Path, settings: &ProjectSettings, enabled: &BTreeSet<Proj
         || enabled.contains(&ProjectRule::WorldHandlerMisplaced);
     let mut drafts = Vec::new();
 
-    // 読めない Hy の file の知らせ(DOEFF128)の材料 — 全体なら repo の Hy の file の全部、1 file ならその保存前の中身。
+    // Material for the notice of unreadable Hy files (DOEFF128) — for a whole run, all of the repo's Hy files; for a single file, its pre-save contents.
     let unreadable_target: Option<(PathBuf, String)> = match &target {
         Target::Whole { .. } => None,
         Target::Single { path, source } => Some((path.clone(), source.to_string())),
@@ -245,7 +245,7 @@ pub fn run_with(root: &Path, settings: &ProjectSettings, enabled: &BTreeSet<Proj
                 let (found, errors) = crate::timing::timed("retired", || judge_retired_files(root, architecture, enabled, &raw.catalog, focus));
                 drafts.extend(found);
                 report.errors.extend(errors);
-                // DOEFF141 は宣言した定義の module と、届いた先の module の file だけを読む(名指しに関わらず小さい — repo 全体は読まない)。
+                // DOEFF141 reads only the files of the declared definitions' modules and of the modules reached (small regardless of what is named — it does not read the whole repo).
                 if enabled.contains(&ProjectRule::BlindDefinitionReads) && !architecture.blind_definitions.is_empty() {
                     let architecture_rel = declared_rel(root, &architecture.path);
                     let (found, errors) =
@@ -259,10 +259,10 @@ pub fn run_with(root: &Path, settings: &ProjectSettings, enabled: &BTreeSet<Proj
                             found.rel,
                             match &found.problem {
                                 blind::BlindProblem::ReadsWord { reached, word } => {
-                                    format!("{} から届く定義 {} が決めた材料の外の語 {} を読む", found.declared, reached, word)
+                                    format!("The definition {1} reached from {0} reads the word {2}, which is outside the decided material", found.declared, reached, word)
                                 }
-                                blind::BlindProblem::Imports { module } => format!("{} の module が {} を import する", found.declared, module),
-                                blind::BlindProblem::Missing { reason } => format!("宣言した定義 {} が無い — {}", found.declared, reason),
+                                blind::BlindProblem::Imports { module } => format!("The module of {} imports {}", found.declared, module),
+                                blind::BlindProblem::Missing { reason } => format!("The declared definition {} is missing — {}", found.declared, reason),
                             }
                         ),
                         detail: Some(found.detail),
@@ -273,7 +273,7 @@ pub fn run_with(root: &Path, settings: &ProjectSettings, enabled: &BTreeSet<Proj
                     }));
                     report.errors.extend(errors);
                 }
-                // DOEFF147 は宣言した定義の module の file だけを読む(名指しに関わらず小さい — repo 全体は読まない)。
+                // DOEFF147 reads only the file of the declared definition's module (small regardless of what is named — it does not read the whole repo).
                 if enabled.contains(&ProjectRule::DefinitionCallsUnlistedHead) && !architecture.allowed_heads.is_empty() {
                     let architecture_rel = declared_rel(root, &architecture.path);
                     let (found, errors) =
@@ -287,9 +287,9 @@ pub fn run_with(root: &Path, settings: &ProjectSettings, enabled: &BTreeSet<Proj
                             found.rel,
                             match &found.problem {
                                 allowed_heads::HeadProblem::Unlisted { head } => {
-                                    format!("{} の中で呼んでよい頭の一覧の外の ({} …) を呼ぶ", found.declared, head)
+                                    format!("{} calls ({} …), which is outside the list of heads it may call", found.declared, head)
                                 }
-                                allowed_heads::HeadProblem::Missing { reason } => format!("宣言した定義 {} が無い — {}", found.declared, reason),
+                                allowed_heads::HeadProblem::Missing { reason } => format!("The declared definition {} is missing — {}", found.declared, reason),
                             }
                         ),
                         detail: Some(found.detail),
@@ -300,7 +300,7 @@ pub fn run_with(root: &Path, settings: &ProjectSettings, enabled: &BTreeSet<Proj
                     }));
                     report.errors.extend(errors);
                 }
-                // DOEFF148 は群の :files の glob の頭の dir だけを歩く(repo 全体は読まない)。
+                // DOEFF148 walks only the head dirs of the groups' :files globs (it does not read the whole repo).
                 if enabled.contains(&ProjectRule::SpellingOutsideItsFiles) && !architecture.confined_spellings.is_empty() {
                     let architecture_rel = declared_rel(root, &architecture.path);
                     let (found, errors) = crate::timing::timed("confined-spellings", || {
@@ -310,13 +310,13 @@ pub fn run_with(root: &Path, settings: &ProjectSettings, enabled: &BTreeSet<Proj
                         let (message, detail) = match &found.problem {
                             confined_spellings::ConfinedProblem::Outside { count } => (
                                 match &found.first {
-                                    Some(first) => format!("{} — 綴りの群 {} を書いてよい file の外に {} か所(最初の当たり {})", found.rel, found.group, count, first),
-                                    None => format!("{} — 綴りの群 {} を書いてよい file の外に {} か所", found.rel, found.group, count),
+                                    Some(first) => format!("{} — spelling group {} appears in {} occurrence(s) outside the files allowed to write it (first match {})", found.rel, found.group, count, first),
+                                    None => format!("{} — spelling group {} appears in {} occurrence(s) outside the files allowed to write it", found.rel, found.group, count),
                                 },
                                 found.group.clone(),
                             ),
                             confined_spellings::ConfinedProblem::Missing => (
-                                format!("{} — 綴りの群 {} の :files に当たる file が無い", found.rel, found.group),
+                                format!("{} — no file matches :files of spelling group {}", found.rel, found.group),
                                 format!("{}:missing", found.group),
                             ),
                         };
@@ -334,7 +334,7 @@ pub fn run_with(root: &Path, settings: &ProjectSettings, enabled: &BTreeSet<Proj
                     }));
                     report.errors.extend(errors);
                 }
-                // DOEFF161 も宣言の :files の glob の頭の dir だけを歩く(repo 全体は読まない)。
+                // DOEFF161 also walks only the head dirs of the declaration's :files globs (it does not read the whole repo).
                 if enabled.contains(&ProjectRule::SpellingCountDiffers) && !architecture.counted_spellings.is_empty() {
                     let architecture_rel = declared_rel(root, &architecture.path);
                     let (found, errors) = crate::timing::timed("counted-spellings", || {
@@ -343,7 +343,7 @@ pub fn run_with(root: &Path, settings: &ProjectSettings, enabled: &BTreeSet<Proj
                     drafts.extend(found.into_iter().map(|found| {
                         let message = match &found.problem {
                             counted_spellings::CountProblem::Mismatch { found: count, wanted, within: Some(name) } => format!(
-                                "{} — 数を決めた綴り {} が定義 {} の中に {} か所({} のはず)",
+                                "{} — counted spelling {} appears {} occurrence(s) inside definition {} ({} expected)",
                                 found.rel,
                                 found.group,
                                 name,
@@ -351,10 +351,10 @@ pub fn run_with(root: &Path, settings: &ProjectSettings, enabled: &BTreeSet<Proj
                                 wanted.spelling()
                             ),
                             counted_spellings::CountProblem::Mismatch { found: count, wanted, within: None } => {
-                                format!("{} — 数を決めた綴り {} が {} か所({} のはず)", found.rel, found.group, count, wanted.spelling())
+                                format!("{} — counted spelling {} appears {} occurrence(s) ({} expected)", found.rel, found.group, count, wanted.spelling())
                             }
                             counted_spellings::CountProblem::Missing { reason } => {
-                                format!("{} — 数を決めた綴り {} の数える所が無い — {}", found.rel, found.group, reason)
+                                format!("{} — counted spelling {} has nothing to count — {}", found.rel, found.group, reason)
                             }
                         };
                         Draft {
@@ -371,17 +371,17 @@ pub fn run_with(root: &Path, settings: &ProjectSettings, enabled: &BTreeSet<Proj
                     }));
                     report.errors.extend(errors);
                 }
-                // DOEFF162 は宣言の :files の file だけを読む(repo 全体は読まない)。
+                // DOEFF162 reads only the files of the declaration's :files (it does not read the whole repo).
                 if enabled.contains(&ProjectRule::EffectOutsideCensus) && !architecture.effect_census.is_empty() {
                     let architecture_rel = declared_rel(root, &architecture.path);
                     let (found, errors) =
                         crate::timing::timed("effect-census", || effect_census::find(root, &architecture.effect_census, &architecture_rel));
                     drafts.extend(found.into_iter().map(|found| {
                         let what = match &found.problem {
-                            effect_census::CensusProblem::Unlisted { effect } => format!("effect {} が一覧 {} の外で宣言されている", effect, found.group),
-                            effect_census::CensusProblem::Twice { effect } => format!("effect {} が 2 度宣言されている(一覧 {})", effect, found.group),
-                            effect_census::CensusProblem::Undeclared { effect } => format!("一覧 {} の effect {} の宣言が無い", found.group, effect),
-                            effect_census::CensusProblem::NoFiles => format!("一覧 {} の :files に当たる file が無い", found.group),
+                            effect_census::CensusProblem::Unlisted { effect } => format!("effect {} is declared outside list {}", effect, found.group),
+                            effect_census::CensusProblem::Twice { effect } => format!("effect {} is declared twice (list {})", effect, found.group),
+                            effect_census::CensusProblem::Undeclared { effect } => format!("effect {} of list {} has no declaration", effect, found.group),
+                            effect_census::CensusProblem::NoFiles => format!("no file matches :files of list {}", found.group),
                         };
                         Draft {
                             rule: ProjectRule::EffectOutsideCensus,
@@ -397,7 +397,7 @@ pub fn run_with(root: &Path, settings: &ProjectSettings, enabled: &BTreeSet<Proj
                     }));
                     report.errors.extend(errors);
                 }
-                // DOEFF149 も宣言の :files の file だけを読む(repo 全体は読まない)。
+                // DOEFF149 also reads only the files of the declaration's :files (it does not read the whole repo).
                 if enabled.contains(&ProjectRule::FieldHoldersDiffer) && !architecture.field_holders.is_empty() {
                     let architecture_rel = declared_rel(root, &architecture.path);
                     let (found, errors) =
@@ -405,13 +405,13 @@ pub fn run_with(root: &Path, settings: &ProjectSettings, enabled: &BTreeSet<Proj
                     drafts.extend(found.into_iter().map(|found| {
                         let what = match &found.problem {
                             field_holders::HolderProblem::Unlisted { class } => {
-                                format!("class {} が {} の欄を持つ(持ち手の一覧 {} の外)", class, found.type_name, found.group)
+                                format!("class {} has fields of {} (outside holder list {})", class, found.type_name, found.group)
                             }
                             field_holders::HolderProblem::Absent { class } => {
-                                format!("持ち手の一覧 {} の class {} が {} の欄を持たない", found.group, class, found.type_name)
+                                format!("class {} of holder list {} does not have fields of {}", found.group, class, found.type_name)
                             }
-                            field_holders::HolderProblem::NoClass { class } => format!("持ち手の一覧 {} が名指す class {} が無い", found.group, class),
-                            field_holders::HolderProblem::NoFiles => format!("持ち手の一覧 {} の :files に当たる Python の file が無い", found.group),
+                            field_holders::HolderProblem::NoClass { class } => format!("class {} named by holder list {} is missing", class, found.group),
+                            field_holders::HolderProblem::NoFiles => format!("no Python file matches :files of holder list {}", found.group),
                         };
                         Draft {
                             rule: ProjectRule::FieldHoldersDiffer,
@@ -427,7 +427,7 @@ pub fn run_with(root: &Path, settings: &ProjectSettings, enabled: &BTreeSet<Proj
                     }));
                     report.errors.extend(errors);
                 }
-                // DOEFF159 は :files の glob の字義どおりの頭の dir だけを歩く(名指しに関わらず小さい — repo 全体は歩かない)。
+                // DOEFF159 walks only the head dirs of the :files globs taken literally (small regardless of what is named — it does not walk the whole repo).
                 if enabled.contains(&ProjectRule::CallOutsideDeclaredSites) && !architecture.call_sites.is_empty() {
                     let architecture_rel = declared_rel(root, &architecture.path);
                     let found = crate::timing::timed("call-sites", || call_sites::find(root, &architecture.call_sites, &architecture_rel));
@@ -443,7 +443,7 @@ pub fn run_with(root: &Path, settings: &ProjectSettings, enabled: &BTreeSet<Proj
                         rel: found.rel,
                     }));
                 }
-                // DOEFF160 も :files の glob の頭の dir だけを歩く(repo 全体は歩かない)。
+                // DOEFF160 also walks only the head dirs of the :files globs (it does not walk the whole repo).
                 if enabled.contains(&ProjectRule::BroadCatchOutsideCarrier) && !architecture.broad_catches.is_empty() {
                     let architecture_rel = declared_rel(root, &architecture.path);
                     let (found, errors) =
@@ -461,7 +461,7 @@ pub fn run_with(root: &Path, settings: &ProjectSettings, enabled: &BTreeSet<Proj
                     }));
                     report.errors.extend(errors);
                 }
-                // DOEFF144・145 も file 1 つで判じる(名指しが在ればその下だけを読む — repo 全体の索引を組まない)。
+                // DOEFF144 and 145 are also judged from one file each (if something is named, only files under it are read — the index of the whole repo is not built).
                 if let Some(selection) = architecture.typed_values.as_ref().filter(|_| enabled.contains(&ProjectRule::UntypedStructuredValue)) {
                     let (found, errors) = crate::timing::timed("typed-values", || typed_values::find(root, selection, focus));
                     drafts.extend(found.into_iter().flat_map(|file| typed_value_drafts(&file.rel, &file.path, &file.source, file.hits)));
@@ -486,7 +486,7 @@ pub fn run_with(root: &Path, settings: &ProjectSettings, enabled: &BTreeSet<Proj
                     .collect(),
                 _ => Vec::new(),
             };
-            // 名指しの実行で有効な規則がどれも file 1 つで決まる時は、名指しの file だけを読む(file_local_scope)。
+            // In a named run, when every enabled rule is decided by one file, read only the named files (file_local_scope).
             let scope = file_local_scope(focus, enabled);
             let env_files: Vec<SourceFile> = settings
                 .environment
@@ -506,7 +506,7 @@ pub fn run_with(root: &Path, settings: &ProjectSettings, enabled: &BTreeSet<Proj
                     .filter(|file| in_scope(&file.file.path, scope))
                     .map(|file| match std::fs::read_to_string(&file.file.path) {
                         Ok(source) => judge_layer_file(file, &source, layers, settings, enabled, &index, hy.get(&file.file.rel)),
-                        Err(error) => LayerJudgement { errors: vec![format!("{}: 読めない: {}", file.file.rel, error)], ..LayerJudgement::default() },
+                        Err(error) => LayerJudgement { errors: vec![format!("{}: cannot read: {}", file.file.rel, error)], ..LayerJudgement::default() },
                     })
                     .collect());
                 let mut crossings: BTreeSet<(String, String)> = BTreeSet::new();
@@ -524,7 +524,7 @@ pub fn run_with(root: &Path, settings: &ProjectSettings, enabled: &BTreeSet<Proj
                             .map(|file| {
                                 std::fs::read_to_string(&file.file.path)
                                     .map(|source| judge_lower_layer_uses(file, &source, layers, translation, decl, world))
-                                    .map_err(|error| format!("{}: 読めない: {}", file.file.rel, error))
+                                    .map_err(|error| format!("{}: cannot read: {}", file.file.rel, error))
                             })
                             .collect();
                         for result in judged {
@@ -541,7 +541,7 @@ pub fn run_with(root: &Path, settings: &ProjectSettings, enabled: &BTreeSet<Proj
                             .map(|file| {
                                 std::fs::read_to_string(&file.file.path)
                                     .map(|source| judge_translation_intents(file, &source, layers, translation, &index, world))
-                                    .map_err(|error| format!("{}: 読めない: {}", file.file.rel, error))
+                                    .map_err(|error| format!("{}: cannot read: {}", file.file.rel, error))
                             })
                             .collect();
                         for result in judged {
@@ -630,7 +630,7 @@ pub fn run_with(root: &Path, settings: &ProjectSettings, enabled: &BTreeSet<Proj
                                 path: root.join(&found.rel),
                                 rel: found.rel.clone(),
                                 range: Range { start, end: start },
-                                message: format!("{} — テストの形 {}({})— テストは deftest だけ", found.rel, found.form, found.detail),
+                                message: format!("{} — test form {} ({}) — tests must be deftest only", found.rel, found.form, found.detail),
                                 detail: Some(found.form.to_string()),
                                 base: Severity::Error,
                                 explain: Explain::TestFormNotDeftest { form: found.form, detail: found.detail },
@@ -646,7 +646,7 @@ pub fn run_with(root: &Path, settings: &ProjectSettings, enabled: &BTreeSet<Proj
                                 path: root.join(&hit.rel),
                                 rel: hit.rel.clone(),
                                 range: Range { start, end: start },
-                                message: format!("{} — 語彙 {} が判定の 1 点の外に {} 行(#146) — {}", hit.rel, hit.group, hit.count, hit.instead),
+                                message: format!("{} — vocabulary {} appears on {} lines outside the single point of judgment (#146) — {}", hit.rel, hit.group, hit.count, hit.instead),
                                 detail: Some(hit.group.clone()),
                                 base: Severity::Error,
                                 explain: Explain::VocabularyOutsideSinglePoint { group: hit.group, count: hit.count, instead: hit.instead },
@@ -667,15 +667,15 @@ pub fn run_with(root: &Path, settings: &ProjectSettings, enabled: &BTreeSet<Proj
                     let defks = crate::timing::timed("defk-names", || defk_names_for(root, enabled));
                     let program_params = crate::timing::timed("program-params", || program_params_for(root, enabled, &defks));
                     let program_fields = crate::timing::timed("program-fields", || program_fields_for(root, enabled));
-                    // 歩く範囲(根の下と設定の include — 根の外の検の dir も)。
+                    // The range walked (under the root plus the settings' include — also test dirs outside the root).
                     let files: Vec<SourceFile> = hy_files::walked(root, &settings.include)
                         .into_iter()
                         .filter_map(|(rel, path)| {
                             (is_definition_file(&rel, definitions) || is_test_file(&rel, definitions))
                                 .then_some(SourceFile { rel, path, language: Language::Hy })
                         })
-                        // 名指しが在れば、その下の file だけを判じる — 判定は file 1 つ(と全体の表)で決まり、出力は名指しの path で絞られる
-                        // (main の project_results と同じ述語)。全部を判じると、1 file の commit の hook で CPU 2.4 秒を使っていた。
+                        // If something is named, judge only the files under it — the judgment is decided by one file (and the whole-repo tables), and the output is narrowed by the named path
+                        // (the same predicate as main's project_results). Judging everything used 2.4 seconds of CPU in a one-file commit hook.
                         .filter(|file| focus.is_none_or(|only| only.iter().any(|p| file.path.starts_with(p))))
                         .collect();
                     let judged: Vec<Result<Vec<Draft>, String>> = crate::timing::timed("definitions-judge", || files
@@ -686,8 +686,8 @@ pub fn run_with(root: &Path, settings: &ProjectSettings, enabled: &BTreeSet<Proj
                                     let mut found = judge_definitions(file, &source, definitions, enabled, plain_callable_reasons(settings), hy.get(&file.rel));
                                     found.extend(judge_smells(file, &source, settings, definitions, enabled, &failure));
                                     found.extend(judge_stale_branches(file, &source, definitions, enabled, &failure));
-                                    // defk が 1 つも無い repo は、素の呼びも引数の呼びも当たらない(集合が空 — 1 file の実行は名指す module だけの集合なので、
-                                    // 空でも他の module に defk が在りうる。ここで外すのは全体の実行だけ)。
+                                    // A repo with no defk matches neither bare calls nor argument calls (the set is empty — a single-file run has a set of only the named modules,
+                                    // so even if empty, other modules may have defks. Only a whole run is excluded here).
                                     if !defks.is_empty() {
                                         found.extend(judge_bare_calls(file, &source, definitions, enabled, &defks, &program_params, &program_fields));
                                     }
@@ -696,7 +696,7 @@ pub fn run_with(root: &Path, settings: &ProjectSettings, enabled: &BTreeSet<Proj
                                     }
                                     without_exempted(found, &layer_exemption(&file.path))
                                 })
-                                .map_err(|error| format!("{}: 読めない: {}", file.rel, error))
+                                .map_err(|error| format!("{}: cannot read: {}", file.rel, error))
                         })
                         .collect());
                     for result in judged {
@@ -714,7 +714,7 @@ pub fn run_with(root: &Path, settings: &ProjectSettings, enabled: &BTreeSet<Proj
                         .map(|file| {
                             std::fs::read_to_string(&file.path)
                                 .map(|source| judge_json_value(file, &source, architecture, settings.layers.as_ref()))
-                                .map_err(|error| format!("{}: 読めない: {}", file.rel, error))
+                                .map_err(|error| format!("{}: cannot read: {}", file.rel, error))
                         })
                         .collect();
                     for result in judged {
@@ -732,7 +732,7 @@ pub fn run_with(root: &Path, settings: &ProjectSettings, enabled: &BTreeSet<Proj
                     .map(|(rel, path)| {
                         std::fs::read_to_string(path)
                             .map(|source| judge_handler_arguments(root, rel, &source, decl, &classes))
-                            .map_err(|error| format!("{}: 読めない: {}", rel, error))
+                            .map_err(|error| format!("{}: cannot read: {}", rel, error))
                     })
                     .collect();
                 for result in judged {
@@ -747,7 +747,7 @@ pub fn run_with(root: &Path, settings: &ProjectSettings, enabled: &BTreeSet<Proj
                     for file in &env_files {
                         match std::fs::read_to_string(&file.path) {
                             Ok(source) => drafts.extend(judge_environment_names(file, &source, env, hy.get(&file.rel))),
-                            Err(error) => report.errors.push(format!("{}: 読めない: {}", file.rel, error)),
+                            Err(error) => report.errors.push(format!("{}: cannot read: {}", file.rel, error)),
                         }
                     }
                 }
@@ -789,7 +789,7 @@ pub fn run_with(root: &Path, settings: &ProjectSettings, enabled: &BTreeSet<Proj
                     .unwrap_or_default(),
                 _ => Vec::new(),
             };
-            // 根の中の file は、全体の実行と同じく「根 + 根からの path」を出す(エディタが結果を差し替える鍵を揃えるため)。
+            // Files inside the root give "root + path from the root", as in a whole run (to align the keys by which the editor replaces results).
             let path = rel.as_ref().map(|r| root.join(r)).unwrap_or(path);
             let wants_index = wants_raw
                 || enabled.contains(&ProjectRule::EnvironmentName)
@@ -806,7 +806,7 @@ pub fn run_with(root: &Path, settings: &ProjectSettings, enabled: &BTreeSet<Proj
             if let (Some(layers), Some(rel)) = (&settings.layers, &rel) {
                 if let Some((site, language)) = classify_layer_file(rel, layers).or_else(|| infer_layer_site(rel, source, layers)) {
                     let file = LayerFile { file: SourceFile { rel: rel.clone(), path: path.clone(), language }, module: module_of(rel), site };
-                    // import の先は、書いた file が引く module だけを判じる(全部の層の module を並べて、置き場の外の file は中身から層を推す表は作らない)。
+            // For import targets, judge only the modules the written file looks up (do not build a table that lines up all layer modules and infers the layer of files outside the locations from their contents).
                     let index = named_site_index(root, layers, &file);
                     let judged = crate::timing::timed("single.layer-judge", || judge_layer_file(&file, source, layers, settings, enabled, &index, hy_file.as_ref()));
                     drafts.extend(judged.drafts);
@@ -822,8 +822,8 @@ pub fn run_with(root: &Path, settings: &ProjectSettings, enabled: &BTreeSet<Proj
                     report.errors.extend(judged.errors);
                 }
             }
-            // 層の置き場の外の Hy の file にも許可名簿の規則(DOEFF106・131)を当てる — 全体の実行の judge_unplaced_world と同じ判定を
-            // この file 1 つに(1 file の実行がこの 2 つを判じると名乗るため)。索引は上で組んだこの file の物だけ。
+            // Also apply the allowlist rules (DOEFF106, 131) to Hy files outside the layer locations — the same judgment as the whole run's judge_unplaced_world,
+            // for this one file (because a single-file run declares it judges these two). The index is only this file's, built above.
             if let (Some(architecture), Some(layers), Some(raw_spec), Some(rel)) =
                 (&settings.architecture, &settings.layers, settings.raw.as_ref().filter(|r| r.world_modules.is_some()), &rel)
             {
@@ -837,8 +837,8 @@ pub fn run_with(root: &Path, settings: &ProjectSettings, enabled: &BTreeSet<Proj
                     drafts.extend(judge_places(root, architecture, layers, &[file], enabled, PlaceScope::Single, Some(source)));
                 }
             }
-            // 定義の書き方の規則の名乗りは歩く範囲で引く — 根の外でも設定の include の dir の下なら `..` を含む相対(全体の実行の
-            // hy_files::walked と同じ名乗り)。
+            // The names of the definition-style rules are looked up by the walked range — even outside the root, a file under the settings' include dir has a relative path containing `..` (the same name as the whole run's
+            // hy_files::walked).
             let definition_rel = rel.clone().or_else(|| hy_files::walked_rel(root, &settings.include, &path));
             if let (Some(definitions), Some(rel)) = (&settings.definitions, &definition_rel) {
                 if wants_definitions(enabled)
@@ -847,10 +847,10 @@ pub fn run_with(root: &Path, settings: &ProjectSettings, enabled: &BTreeSet<Proj
                 {
                     let file = SourceFile { rel: rel.clone(), path: path.clone(), language: Language::Hy };
                     let mut found = crate::timing::timed("single.definitions", || judge_definitions(&file, source, definitions, enabled, plain_callable_reasons(settings), hy_file.as_ref()));
-                    // repo の事実は、書いた file が名指す module の file だけから作る(defk の名・record の欄 — module まで含めた名で引かれ、
-                    // 引く名は書いた file の記号を解いた名)。逆向きの依存 — 失敗の型(別の file の defeffect が宣言する)と引数に渡された Program
-                    // (別の file の呼び手が渡す)— は、引かれた時だけ、引く名を字面に含む file だけから作る(`SpelledFailures`・`SpelledCallers` —
-                    // 宣言も呼び手も、引く名の綴りを必ず含む)。class の frozen は同じ名の class が repo のどこかに在るかで決まるので、引かれた時に repo 全体から作る(`Deferred`)。
+                    // The repo's facts are built only from the files of modules the written file names (defk names, record fields — looked up by the name including the module, and
+                    // the looked-up name is the written file's symbol resolved). Reverse dependencies — failure types (declared by a defeffect in another file) and Programs passed as arguments
+                    // (passed by callers in other files) — are built only when looked up, and only from files that contain the looked-up name literally (`SpelledFailures`, `SpelledCallers` —
+                    // both the declaration and the caller must contain the spelling of the looked-up name). A class's frozen-ness is decided by whether a class of the same name exists anywhere in the repo, so it is built from the whole repo when looked up (`Deferred`).
                     let named_files = if enabled.contains(&ProjectRule::DefkCalledBare) {
                         let known = hy_files::by_module(root);
                         named_modules::files_of(&known, &named_modules::of_file(&known, &file.rel, source), None)
@@ -866,7 +866,7 @@ pub fn run_with(root: &Path, settings: &ProjectSettings, enabled: &BTreeSet<Proj
                     if enabled.contains(&ProjectRule::EffectsDisagreeWithInference) {
                         found.extend(crate::timing::timed("single.effect-mismatches", || judge_effect_mismatches(&file, source, definitions, effect_world.as_ref())));
                     }
-                    // 全体の実行と同じ 1 点で、層の宣言が名指しの module から外した定義の書き方の規則を落とす(#2913)。
+                    // At the same single point as a whole run, drop the definition-style rules for definitions that the layer declaration excluded from the named module (#2913).
                     drafts.extend(without_exempted(found, &layer_exemption(&file.path)));
                 }
             }
@@ -884,23 +884,23 @@ pub fn run_with(root: &Path, settings: &ProjectSettings, enabled: &BTreeSet<Proj
                 if enabled.contains(&ProjectRule::UntypedStructuredValue) && architecture.typed_values.as_ref().is_some_and(|s| typed_values::wants(rel, s)) {
                     match typed_values::judge(rel, source) {
                         Ok(hits) => drafts.extend(typed_value_drafts(rel, &path, source, hits)),
-                        Err(reason) => report.errors.push(format!("{}: DOEFF144 の判定が読めない({})", rel, reason)),
+                        Err(reason) => report.errors.push(format!("{}: cannot read the DOEFF144 judgment ({})", rel, reason)),
                     }
                 }
                 if let Some(selection) = architecture.record_stubs.as_ref().filter(|_| enabled.contains(&ProjectRule::RecordStubNotKwOnly)) {
                     if record_stubs::wants(rel, &path, selection) {
                         match record_stubs::judge_file(rel, &path, source) {
                             Ok(found) => drafts.extend(record_stub_drafts(rel, &path, source, found)),
-                            Err(reason) => report.errors.push(format!("{}: DOEFF145 の判定が読めない({})", rel, reason)),
+                            Err(reason) => report.errors.push(format!("{}: cannot read the DOEFF145 judgment ({})", rel, reason)),
                         }
                     } else if let Some((stub_rel, stub_path)) = record_stubs::stub_of_hy(rel, &path, selection) {
-                        // 保存前の .hy は stdin の中身で、隣の型の宣言(.pyi)は disk から読み、当たりは .pyi の path で出す。
+                        // The pre-save .hy is the stdin contents, the adjacent type declaration (.pyi) is read from disk, and the hit is reported at the .pyi path.
                         let judged = std::fs::read_to_string(&stub_path)
                             .map_err(|error| error.to_string())
                             .and_then(|stub| record_stubs::judge(source, &stub, &stub_rel).map(|found| (stub, found)));
                         match judged {
                             Ok((stub, found)) => drafts.extend(record_stub_drafts(&stub_rel, &stub_path, &stub, found)),
-                            Err(reason) => report.errors.push(format!("{}: DOEFF145 の判定が読めない({})", stub_rel, reason)),
+                            Err(reason) => report.errors.push(format!("{}: cannot read the DOEFF145 judgment ({})", stub_rel, reason)),
                         }
                     }
                 }
@@ -913,7 +913,7 @@ pub fn run_with(root: &Path, settings: &ProjectSettings, enabled: &BTreeSet<Proj
                     }
                 }
             }
-            // 名乗りは歩く範囲で引く(定義の書き方の規則と同じ — 根の外でも設定の include の dir の下なら `..` を含む相対)。
+            // The names are looked up by the walked range (the same as the definition-style rules — even outside the root, a file under the settings' include dir has a relative path containing `..`).
             let program_rel = rel.clone().or_else(|| hy_files::walked_rel(root, &settings.include, &path));
             if let (Some(places), Some(rel)) = (&settings.program_sleep, &program_rel) {
                 if enabled.contains(&ProjectRule::ProgramSleepsOnWallClock) && is_program_sleep_file(rel, places) {
@@ -929,14 +929,14 @@ pub fn run_with(root: &Path, settings: &ProjectSettings, enabled: &BTreeSet<Proj
             }
             if let (Some(decl), Some(rel)) = (settings.architecture.as_ref().and_then(|a| a.handler_arguments.as_ref()), &rel) {
                 if enabled.contains(&ProjectRule::HandlerArgumentHoldsState) && handler_arguments::in_population(rel, decl) {
-                    // class の frozen は名で引かれ、同じ名が frozen でない class が repo のどこかに在れば frozen でない(名指さない file の宣言が答えを変える)ので、
-                    // 型で判じる引数が在って引かれた時だけ repo 全体から作る(索引は Hy と Python の全 file — 3000 の事実)。変わっていない file の class は git の
-                    // blob の id で引き、中身を読まない(`class_index_by_blobs`)。
+                    // A class's frozen-ness is looked up by name, and if a class of the same name that is not frozen exists anywhere in the repo, it is not frozen (a declaration in an unnamed file changes the answer), so
+                    // it is built from the whole repo only when there are arguments judged by type and it is looked up (the index covers all Hy and Python files — 3000 facts). The classes of unchanged files are looked up by git's
+                    // blob id and their contents are not read (`class_index_by_blobs`).
                     let classes = deferred::Deferred::new(|| crate::timing::timed("handler-argument-classes", || handler_arguments::class_index_by_blobs(root, Some((rel.as_str(), source)))));
                     drafts.extend(crate::timing::timed("single.handler-arguments", || judge_handler_arguments(root, rel, source, decl, &classes)));
                 }
             }
-            // 同じ根・同じ overlay で組んだ表を返す — editor の見出しと束縛(版 2)が作り直さずに使う(1 回で 2 度組んでいた・#1033)。
+            // Return the table built with the same root and the same overlay — the editor's headings and bindings (version 2) use it without rebuilding (it used to be built twice in one run, #1033).
             report.world = effect_world;
         }
     }
@@ -967,8 +967,8 @@ pub fn run_with(root: &Path, settings: &ProjectSettings, enabled: &BTreeSet<Proj
             semantic_probes = probes;
         }
     }
-    // 索引(repo 全体の Hy・数百 MB)の後片づけは別の thread で — 実行の終わりを待たせない(1 file の commit の hook で 0.07 秒)。
-    // process が先に終われば片づけは OS が持つ。
+    // Cleanup of the index (the whole repo's Hy, hundreds of MB) is done in another thread — it does not make the end of the run wait (0.07 seconds in a one-file commit hook).
+    // If the process ends first, the OS takes care of the cleanup.
     crate::timing::timed("drop-index", || {
         std::thread::spawn(move || drop(indexes));
     });
@@ -976,7 +976,7 @@ pub fn run_with(root: &Path, settings: &ProjectSettings, enabled: &BTreeSet<Proj
         let stale = crate::timing::timed("stale-registry", || stale_registry_drafts(root, settings, enabled, &registry, &drafts));
         drafts.extend(stale);
     }
-    // 名指されて当てた規則(lent)の当たりは 166 の判じにだけ使った — enable に無い規則の所見は報告しない。
+    // The hits of the rules that were named and applied (lent) were used only for the judgment of 166 — findings of rules not in enable are not reported.
     drafts.retain(|draft| !lent.contains(&draft.rule));
     let labels = crate::timing::timed("labels", || judged_labels(root, settings, &mut report.errors));
     let (findings, dropped) = crate::timing::timed("finish", || finish(drafts, settings, &registry, &labels.false_positives));
@@ -985,22 +985,22 @@ pub fn run_with(root: &Path, settings: &ProjectSettings, enabled: &BTreeSet<Proj
         summary.false_positives = dropped;
         summary.labeled = labeled_summary(settings, &labels, &semantic_probes);
     }
-    // 読めない Hy の file は、有効な規則の一覧に関わらず知らせる(違反が欠けているのを黙らせない — DOEFF128)。
+    // Unreadable Hy files are reported regardless of the list of enabled rules (a missing violation is not silently hidden — DOEFF128).
     report.findings.extend(unreadable_findings(root, settings, &unreadable_target));
     report.judged = judged_rules;
     report.judged.insert(ProjectRule::UnreadableFile);
     report
 }
 
-/// 有効な規則の分の群(DOEFF150 が無効なら語の群は空・DOEFF151 が無効なら呼びの群は空)。
+/// The groups for the enabled rules (if DOEFF150 is disabled, the word groups are empty; if DOEFF151 is disabled, the call groups are empty).
 fn retired_groups<'a>(architecture: &'a architecture::Architecture, enabled: &BTreeSet<ProjectRule>) -> (&'a [architecture::RetiredWords], &'a [architecture::RetiredCalls]) {
     let words: &[architecture::RetiredWords] = if enabled.contains(&ProjectRule::RetiredWord) { &architecture.retired_words } else { &[] };
     let calls: &[architecture::RetiredCalls] = if enabled.contains(&ProjectRule::RetiredCall) { &architecture.retired_calls } else { &[] };
     (words, calls)
 }
 
-/// DOEFF150・151 を全体の実行で判じる(focus が在ればその下の file だけを読む)。境目の部品の中の呼びは catalog(DOEFF106 と同じ
-/// 生の副作用の目録)で分類して部品の :touches と照らす。
+/// Judges DOEFF150 and 151 in a whole run (if focus is given, reads only the files under it). The calls inside boundary parts are classified by the catalog (the same catalog of raw side effects
+/// as DOEFF106) and checked against the part's :touches.
 fn judge_retired_files(
     root: &Path,
     architecture: &architecture::Architecture,
@@ -1018,7 +1018,7 @@ fn judge_retired_files(
     (drafts, errors)
 }
 
-/// DOEFF144 の当たりを違反の下書きにする(file 1 つ分 — 鍵の細目は `<種類>:<名>`)。
+/// Turns the hits of DOEFF144 into draft violations (for one file — the key detail is `<kind>:<name>`).
 fn typed_value_drafts(rel: &str, path: &Path, source: &str, hits: Vec<typed_values::TypedHit>) -> Vec<Draft> {
     let lines = LineIndex::new(source);
     hits.into_iter()
@@ -1027,7 +1027,7 @@ fn typed_value_drafts(rel: &str, path: &Path, source: &str, hits: Vec<typed_valu
             layer: None,
             path: path.to_path_buf(),
             range: lines.range(hit.start, hit.end),
-            message: format!("{} — {} {} の型が {}(欄の名前と型を持つ型で表す)", rel, hit.what.label(), hit.name, hit.problem),
+            message: format!("{} — {} {} has type {} (express it with a type that has field names and types)", rel, hit.what.label(), hit.name, hit.problem),
             detail: Some(hit.detail()),
             base: Severity::Error,
             explain: Explain::UntypedStructuredValue { what: hit.what.label().to_string(), name: hit.name, problem: hit.problem },
@@ -1036,7 +1036,7 @@ fn typed_value_drafts(rel: &str, path: &Path, source: &str, hits: Vec<typed_valu
         .collect()
 }
 
-/// DOEFF145 の食い違いを違反の下書きにする(.pyi 1 つ分 — 鍵の細目は class の名)。
+/// Turns the mismatches of DOEFF145 into draft violations (for one .pyi — the key detail is the class name).
 fn record_stub_drafts(rel: &str, path: &Path, source: &str, mismatches: Vec<record_stubs::Mismatch>) -> Vec<Draft> {
     let lines = LineIndex::new(source);
     mismatches
@@ -1047,7 +1047,7 @@ fn record_stub_drafts(rel: &str, path: &Path, source: &str, mismatches: Vec<reco
             path: path.to_path_buf(),
             range: lines.range(m.start, m.end),
             message: format!(
-                "{} — class {} は同じ名の .hy で {}(実行時は欄を名でしか受けない)なのに、型の宣言の @dataclass に kw_only=True が無い",
+                "{} — class {} has a .hy of the same name with {} (at runtime fields are accepted only by name), but the type declaration's @dataclass lacks kw_only=True",
                 rel, m.name, m.form
             ),
             detail: Some(m.name.clone()),
@@ -1058,23 +1058,23 @@ fn record_stub_drafts(rel: &str, path: &Path, source: &str, mismatches: Vec<reco
         .collect()
 }
 
-/// 当たりを違反の下書きにする(file 1 つ分)。
+/// Turns hits into draft violations (for one file).
 fn retired_drafts(path: &Path, source: &str, words: Vec<retired::WordHit>, calls: Vec<retired::CallHit>) -> Vec<Draft> {
     let lines = LineIndex::new(source);
     let mut out: Vec<Draft> = words
         .into_iter()
         .map(|hit| {
             let what = match (&hit.place, &hit.name) {
-                (architecture::WordPlace::Paths, _) => format!("file の名に使わないと決めた綴り {}", hit.spelling),
-                (_, Some(name)) => format!("定義の名 {} に使わないと決めた綴り {}", name, hit.spelling),
-                (_, None) => format!("使わないと決めた綴り {}", hit.spelling),
+                (architecture::WordPlace::Paths, _) => format!("retired spelling {} in a file name", hit.spelling),
+                (_, Some(name)) => format!("definition name {} uses the retired spelling {}", name, hit.spelling),
+                (_, None) => format!("retired spelling {}", hit.spelling),
             };
             Draft {
                 rule: ProjectRule::RetiredWord,
                 layer: None,
                 path: path.to_path_buf(),
                 range: lines.range(hit.start, hit.end),
-                message: format!("{} — {}(群 {}・代わり: {})", hit.rel, what, hit.group, hit.instead),
+                message: format!("{} — {} (group {}, instead: {})", hit.rel, what, hit.group, hit.instead),
                 detail: Some(hit.detail),
                 base: Severity::Error,
                 explain: Explain::RetiredWord { group: hit.group, spelling: hit.spelling, instead: hit.instead, name: hit.name, place: hit.place },
@@ -1087,7 +1087,7 @@ fn retired_drafts(path: &Path, source: &str, words: Vec<retired::WordHit>, calls
         layer: None,
         path: path.to_path_buf(),
         range: lines.range(hit.start, hit.end),
-        message: format!("{} — 使わないと決めた呼び ({} …)(群 {}・代わり: {})", hit.rel, hit.call, hit.group, hit.instead),
+        message: format!("{} — retired call ({} …) (group {}, instead: {})", hit.rel, hit.call, hit.group, hit.instead),
         detail: Some(hit.call.clone()),
         base: Severity::Error,
         explain: Explain::RetiredCall { group: hit.group, call: hit.call, instead: hit.instead },
@@ -1096,12 +1096,12 @@ fn retired_drafts(path: &Path, source: &str, words: Vec<retired::WordHit>, calls
     out
 }
 
-/// 目録(同梱の物と、設定の追加)を読む。追加が読めなければ理由を積んで同梱の物だけで判じる。
+/// Reads the catalog (the bundled one plus the settings' additions). If an addition cannot be read, the reason is accumulated and only the bundled one is used for judging.
 fn raw_settings(root: &Path, settings: &ProjectSettings, errors: &mut Vec<String>) -> RawSettings {
     let bundled = match RawCatalog::bundled() {
         Ok(catalog) => catalog,
         Err(reason) => {
-            errors.push(format!("生の副作用の目録を読めない: {}", reason));
+            errors.push(format!("cannot read the catalog of raw side effects: {}", reason));
             let empty = RawCatalog { categories: Vec::new(), ignored: Vec::new(), exception_suffixes: Vec::new() };
             return RawSettings { catalog: empty, problems: Vec::new() };
         }
@@ -1120,7 +1120,7 @@ fn raw_settings(root: &Path, settings: &ProjectSettings, errors: &mut Vec<String
                     RawSettings { catalog, problems }
                 }
                 Err(reason) => {
-                    errors.push(format!("raw_side_effects.catalog_extra {} を読めない: {}", extra, reason));
+                    errors.push(format!("cannot read raw_side_effects.catalog_extra {}: {}", extra, reason));
                     RawSettings { catalog: bundled, problems: Vec::new() }
                 }
             }
@@ -1128,23 +1128,23 @@ fn raw_settings(root: &Path, settings: &ProjectSettings, errors: &mut Vec<String
     }
 }
 
-/// 名指しの実行(focus)で、有効な規則がどれも file 1 つの中身と設定だけで決まると名乗る(`ProjectRule::needs_whole_repo` が偽・Jev に
-/// 問う規則でない)時の、読む範囲(名指しの path)— commit の hook の形。当たりは名指しの file の中身だけで
-/// 決まり、出力も名指しの path で絞るので、名指しの外を読まなくても答えは同じ。repo 全体が要る規則が 1 つでも在れば None(全体を読む)。
-/// 以前は DOEFF106・131・108 が名指しの実行でも repo 全体の Hy の索引を組み、agora-controllers の 1 file で CPU 20〜60 秒・0.8〜1 GB を使った。
+/// For a named run (focus), when every enabled rule is declared to be decided by the contents of one file and the settings alone (`ProjectRule::needs_whole_repo` is false, and it is not a rule that
+/// asks Jev), the range to read (the named paths) — the commit hook's shape. The hits are decided by the contents of the named files alone,
+/// and the output is narrowed by the named path, so the answer is the same without reading outside the named ones. None (read everything) if even one rule needs the whole repo.
+/// Previously DOEFF106, 131 and 108 built the Hy index of the whole repo even in a named run, using 20-60 seconds of CPU and 0.8-1 GB for one file of agora-controllers.
 fn file_local_scope<'a>(focus: Option<&'a [PathBuf]>, enabled: &BTreeSet<ProjectRule>) -> Option<&'a [PathBuf]> {
     focus.filter(|_| enabled.iter().all(|rule| !rule.needs_whole_repo() && !rule.is_semantic()))
 }
 
-/// path が読む範囲(file_local_scope — None = 全部)の中か。
+/// Whether the path is inside the range to read (file_local_scope — None = everything).
 fn in_scope(path: &Path, scope: Option<&[PathBuf]>) -> bool {
     scope.is_none_or(|only| only.iter().any(|p| path.starts_with(p)))
 }
 
-/// 全体の実行の Hy の索引(repo の根からの path → file の索引)。経由の証拠(DOEFF107)が要る時は根の全体を、
-/// そうでなければ判じる file だけを索引する。読む範囲(scope)が在れば、その中の file だけを cache を通さずに読む — 経由は
-/// file をまたぐので辿らない(範囲を持つのは file 1 つで決まる規則だけの実行)。cache を通さないのは、cache の書き直しが渡した
-/// file の組に無い file を消えた物として扱い、全体の実行が置いた索引を消すため。
+/// The Hy index of a whole run (path from the repo root -> file index). When evidence through calls (DOEFF107) is needed, the whole root is indexed;
+/// otherwise only the files to be judged are indexed. If a read range (scope) exists, only the files in it are read, without going through the cache — following calls
+/// crosses files so it is not done (only a run of rules decided by one file has a range). The cache is not used because rewriting the cache would treat files not in the passed
+/// set of files as vanished and delete the index placed by a whole run.
 #[allow(clippy::too_many_arguments)]
 fn whole_hy_index(
     root: &Path,
@@ -1157,11 +1157,11 @@ fn whole_hy_index(
     scope: Option<&[PathBuf]>,
 ) -> HashMap<String, HyFileIndex> {
     let wants_env = enabled.contains(&ProjectRule::EnvironmentName) && settings.environment.is_some();
-    // DOEFF119 は業務の file の class の生の副作用(経由も)を見るので、全体の索引を作る。
+    // DOEFF119 looks at the raw side effects (also through calls) of classes in business files, so it builds the whole index.
     let wants_classes = (enabled.contains(&ProjectRule::ClassWithBehaviour) || enabled.contains(&ProjectRule::SemanticClassRole)) && settings.definitions.is_some();
-    // DOEFF133 はテストの file を含む全体の索引で、テストから定義を辿る。
-    // 許可名簿を書いた repo は、層の置き場の外の file にも DOEFF106・131 を当てる(#1147)ので、全体の索引を作る。
-    // DOEFF136 は模擬の環境の deftest から service の entry の層の定義へ届くかを見る。
+    // DOEFF133 uses the whole index including test files, and follows definitions from tests.
+    // A repo that has an allowlist applies DOEFF106, 131 also to files outside the layer locations (#1147), so it builds the whole index.
+    // DOEFF136 checks whether a deftest of a simulated environment reaches a definition in a service's entry layer.
     let wants_tests = ((enabled.contains(&ProjectRule::BusinessEffectFake)
         || enabled.contains(&ProjectRule::StaleCounterexampleRow)
         || enabled.contains(&ProjectRule::TestOnlyFake)
@@ -1184,8 +1184,8 @@ fn whole_hy_index(
     if !(wants_raw && settings.raw.is_some()) && !wants_env && !wants_classes && !wants_tests {
         return HashMap::new();
     }
-    // hy_index::index_root / index_paths と同じ組み方(集めた順に file ごとに読み、生の副作用を注記する)— ただし file ごとの読みを
-    // cache から引く(cached_hy_files)。経由の辿りは他の file の中身と目録で答えが変わるので毎回組む。
+    // The same construction as hy_index::index_root / index_paths (read each file in the collected order and annotate raw side effects) — except that the per-file read is
+    // drawn from the cache (cached_hy_files). The walk through calls is built every time because its answer changes with the contents of other files and the catalog.
     let (paths, via) = if (enabled.contains(&ProjectRule::RawSideEffectVia) && settings.raw.is_some()) || wants_classes || wants_tests {
         (crate::timing::timed("hy-index.collect", || hy_files::collect(root)), true)
     } else {
@@ -1204,20 +1204,20 @@ fn whole_hy_index(
         }),
         None => crate::timing::timed("hy-index.read", || cached_hy_files(root, &paths)),
     };
-    // 経由の辿りは、実 I/O を担うと宣言した定義(:world-handlers)に入らない — その先の生の副作用はその定義の責務で、
-    // 呼び手が届くと数える意味が無い(DOEFF107 の 39 件がすべてこの形だった)。
+    // The walk through calls does not enter definitions declared to bear real I/O (:world-handlers) — the raw side effects beyond them are that definition's responsibility, and
+    // there is no point counting that callers reach them (all 39 cases of DOEFF107 were this shape).
     let stops: BTreeSet<String> = settings.architecture.as_ref().map(|a| a.world_definition_targets().into_keys().collect()).unwrap_or_default();
     let trace = if via && scope.is_none() { hy_index::ViaTrace::Through { stops: &stops } } else { hy_index::ViaTrace::Skip };
     crate::timing::timed("hy-index.annotate", || hy_index::annotate_raw(&mut files, &raw.catalog, trace));
     files.into_iter().filter_map(|file| relative_path(root, Path::new(&file.path)).map(|rel| (rel, file))).collect()
 }
 
-/// Hy の file の索引(生の副作用の注記の前)を、file ごとの cache(facts_cache の種類 "hy-index"・binary の形)を通して読むため
-/// (1 file の実行でも repo 全体の索引を組むので、変わった file だけ読み直す)。答えは cache の無い
-/// hy_index::index_file と同じ — cache の形が契約の JSON の形では運べない欄も持つ(hy_index::CachedHyFile)。欄の数が合わない
-/// 壊れた cache はその file を読み直す。鍵は facts_cache と同じ(file の大きさと更新時刻・中身の hash・linter の binary の印と版)で、
-/// file の根からの path を鍵の名にする(根の下に無い file は絶対 path)。索引は file の絶対 path を持つので、置く値は path を空にし、
-/// 読んだ後で今の根の file の path を付ける — 作業木をまたいで同じ中身の file の索引を分け合うため。
+/// To read the Hy file index (before annotating raw side effects) through a per-file cache (facts_cache kind "hy-index", binary form)
+/// (a single-file run also builds the index of the whole repo, so only changed files are re-read). The answer is the same as
+/// hy_index::index_file without a cache — the cache shape also holds fields that the contract's JSON shape cannot carry (hy_index::CachedHyFile). A broken cache whose number of fields does not match
+/// causes that file to be re-read. The key is the same as facts_cache (the file's size and modification time, the content hash, and the linter binary's mark and version),
+/// with the file's path from the root as the key's name (an absolute path for a file not under the root). The index holds the file's absolute path, so the stored value has an empty path,
+/// and after reading, the current root's file path is attached — so that worktrees share the index of a file with the same contents.
 fn cached_hy_files(root: &Path, paths: &[PathBuf]) -> Vec<HyFileIndex> {
     let keyed: Vec<(String, PathBuf)> =
         paths.iter().map(|path| (relative_path(root, path).unwrap_or_else(|| path.to_string_lossy().into_owned()), path.clone())).collect();
@@ -1237,7 +1237,7 @@ fn cached_hy_files(root: &Path, paths: &[PathBuf]) -> Vec<HyFileIndex> {
     .collect()
 }
 
-/// path の拡張子から言語を決める(Hy でも Python でもなければ None)。
+/// Decides the language from the path's extension (None if neither Hy nor Python).
 fn language_of(path: &Path) -> Option<Language> {
     match path.extension().and_then(|e| e.to_str()) {
         Some("py") => Some(Language::Python),
@@ -1246,12 +1246,12 @@ fn language_of(path: &Path) -> Option<Language> {
     }
 }
 
-/// rel が dir の下(または dir そのもの)か。
+/// Whether rel is under dir (or is dir itself).
 fn under(rel: &str, dir: &str) -> bool {
     dir.is_empty() || rel == dir || rel.starts_with(&format!("{}/", dir))
 }
 
-/// rel が置き場の書き方(dir、または末尾 `*` の前方一致)に合うか。
+/// Whether rel matches the way a location is written (a dir, or a prefix match before a trailing `*`).
 fn matches_place(rel: &str, place: &str) -> bool {
     match place.strip_suffix('*') {
         Some(prefix) => rel.starts_with(prefix),
@@ -1259,8 +1259,8 @@ fn matches_place(rel: &str, place: &str) -> bool {
     }
 }
 
-/// 層の母集団の file か — どれかの層の置き場の下で、拡張子が合い、除く区切りを含まない。当たる置き場が 2 つ以上なら
-/// 段の多い方(より細かい置き場)を採り、同じなら層の順の先の方。
+/// Whether it is a file of a layer's population — under some layer's location, with a matching extension, and not containing an excluded segment. If two or more locations match,
+/// the one with more segments (the more specific location) is taken, and if equal, the earlier layer in the layer order.
 fn classify_layer_file(rel: &str, layers: &LayerSettings) -> Option<(ModuleSite, Language)> {
     let language = language_of(Path::new(rel))?;
     let extension = Path::new(rel).extension()?.to_str()?;
@@ -1280,8 +1280,8 @@ fn classify_layer_file(rel: &str, layers: &LayerSettings) -> Option<(ModuleSite,
     best.map(|(_, site)| (site, language))
 }
 
-/// 宣言した置き場所の外(architecture.hy の root の下)の module の層を、:role のタグから推す。role を許す層が 1 つならその層、
-/// 2 つ以上なら path の段に同じ名の層(層が先の dir)があればそれ。推せなければ None(層の規則の母集団に入らない)。
+/// Infers the layer of a module outside the declared locations (under architecture.hy's root) from the :role tag. If one layer allows the role, that layer;
+/// if two or more, the layer with the same name in a path segment (a layer-first dir), if any. None if it cannot be inferred (it is not in the population of the layer rules).
 fn infer_layer_site(rel: &str, source: &str, layers: &LayerSettings) -> Option<(ModuleSite, Language)> {
     let infer_root = layers.infer_root.as_ref()?;
     let language = language_of(Path::new(rel))?;
@@ -1289,8 +1289,8 @@ fn infer_layer_site(rel: &str, source: &str, layers: &LayerSettings) -> Option<(
     if !rel.starts_with(&format!("{}/", infer_root)) || !layers.extensions.contains(extension) || rel.split('/').any(|part| layers.exclude.contains(part)) {
         return None;
     }
-    // 推すのは層が先の dir(root の下の段に層の名がある — controllers/core/… など)の module だけ。旧い機能の dir は層の規則の母集団に入れない
-    // (前から入っていなかった物を増やさない)。
+    // Only modules of layer-first dirs (a layer name appears in a segment under root — controllers/core/… etc.) are inferred. Dirs of old features are not put into the population of the layer rules
+    // (what was not in it before is not added).
     let parts: Vec<&str> = rel.split('/').collect();
     let dirs = &parts[..parts.len().saturating_sub(1)];
     let by_path = (0..layers.layers.len()).map(LayerId).find(|id| dirs.contains(&layers.layers[id.0].name.as_str()))?;
@@ -1301,8 +1301,8 @@ fn infer_layer_site(rel: &str, source: &str, layers: &LayerSettings) -> Option<(
         .filter(|id| !roles.is_empty() && roles.iter().all(|role| layers.layers[id.0].roles.as_ref().is_some_and(|allowed| allowed.contains(role))))
         .collect();
     let dir = rel.rsplit_once('/').map(|(d, _)| d.to_string()).unwrap_or_default();
-    // role を許す層が 1 つならその層、2 つ以上なら path の段の層を選ぶ。タグで推せない(role が無い・どの層の役でもない)物は path の段の層に置き、
-    // タグの規則(DOEFF104・105)がその理由を出す。
+    // If one layer allows the role, that layer; if two or more, choose the layer of the path segment. What cannot be inferred by tag (no role, or a role of no layer) is placed in the layer of the path segment, and
+    // the tag rules (DOEFF104, 105) give the reason.
     let (layer, by_tags) = match candidates.as_slice() {
         [only] => (*only, true),
         [] => (by_path, false),
@@ -1311,7 +1311,7 @@ fn infer_layer_site(rel: &str, source: &str, layers: &LayerSettings) -> Option<(
     Some((ModuleSite { layer, dir, service: None, by_tags }, language))
 }
 
-/// 層の置き場の下の module を全部集める(層の順、層の中は path の順)。
+/// Collects all modules under the layer locations (in layer order, and in path order within a layer).
 fn collect_layer_files(root: &Path, layers: &LayerSettings) -> Vec<LayerFile> {
     let mut found: BTreeMap<String, LayerFile> = BTreeMap::new();
     let bases: BTreeSet<String> = layers.layers.iter().flat_map(|layer| layer.places.iter().map(|place| place.base())).collect();
@@ -1326,7 +1326,7 @@ fn collect_layer_files(root: &Path, layers: &LayerSettings) -> Vec<LayerFile> {
             }
         }
     }
-    // 宣言した置き場所の外の module は、タグの role から層を推して母集団に入れる(置き場所の違反は DOEFF114・115 が別に出す)。
+    // Modules outside the declared locations are put into the population with their layer inferred from the tag's role (location violations are emitted separately by DOEFF114, 115).
     if let Some(infer_root) = &layers.infer_root {
         for path in walk_files(&root.join(infer_root)) {
             let Some(rel) = relative_path(root, &path) else { continue };
@@ -1344,8 +1344,8 @@ fn collect_layer_files(root: &Path, layers: &LayerSettings) -> Vec<LayerFile> {
     out
 }
 
-/// 1 file の実行の module の置き場の索引 — `collect_layer_files` と同じ手順(置き場の宣言の下は path で決める・宣言の外で infer_root の下は中身から推す)を、
-/// 引かれた module の file だけに当てる。書いた file(`own`)は保存前の中身で判じた置き場で、自分の module について他の file を上書きする。
+/// The module location index of a single-file run — applies the same procedure as `collect_layer_files` (under the declared locations it is decided by path; outside the declaration and under infer_root it is inferred from contents)
+/// only to the files of the modules looked up. The written file (`own`) has the location judged from its pre-save contents, and overrides other files for its own module.
 fn named_site_index<'a>(root: &'a Path, layers: &'a LayerSettings, own: &LayerFile) -> SiteIndex<'a> {
     let bases: BTreeSet<String> = layers.layers.iter().flat_map(|layer| layer.places.iter().map(|place| place.base())).collect();
     SiteIndex::named(
@@ -1367,22 +1367,22 @@ fn named_site_index<'a>(root: &'a Path, layers: &'a LayerSettings, own: &LayerFi
     )
 }
 
-/// dir の下の file を全部集める(読めない枝は飛ばす・symlink は辿らない)。
+/// Collects all files under a dir (skipping unreadable branches; symlinks are not followed).
 fn walk_files(dir: &Path) -> Vec<PathBuf> {
     WalkDir::new(dir).follow_links(false).into_iter().filter_map(Result::ok).filter(|e| e.file_type().is_file()).map(|e| e.into_path()).collect()
 }
 
-/// 層の module 1 つを判じた結果(違反の下書き・地図の 1 行・読めなかった理由・別の service を読んだ組)。
+/// The result of judging one layer module (draft violations, one row of the map, the reason it could not be read, and the pairs that read another service).
 #[derive(Default)]
 struct LayerJudgement {
     drafts: Vec<Draft>,
     summary: Option<ModuleSummary>,
     errors: Vec<String>,
-    /// (この file の service, import した先の service) — 宣言したのに使っていない依存(DOEFF117)を見るため。
+    /// (this file's service, the service of the import target) — to find declared but unused dependencies (DOEFF117).
     crossings: Vec<(String, String)>,
 }
 
-/// 層の module 1 つを判じる(違反の下書き・地図の 1 行・読めなかった理由)。
+/// Judges one layer module (draft violations, one row of the map, the reason it could not be read).
 fn judge_layer_file(
     file: &LayerFile,
     source: &str,
@@ -1423,21 +1423,21 @@ fn judge_layer_file(
     if enabled.contains(&ProjectRule::LayerImportDirection) {
         drafts.extend(judge.import_direction(&facts, index));
     }
-    // DOEFF169: 層の置き場の Hy の file の全部(設定は要らない — 決して当たらない match の節)。
+    // DOEFF169: all Hy files in the layer locations (no settings needed — a match clause that never matches).
     if enabled.contains(&ProjectRule::MatchFieldHyphen) && file.file.language == Language::Hy {
         drafts.extend(judge.match_field_hyphens());
     }
-    // DOEFF170・171: 値を型だけで渡す層(architecture.hy の層の :wire-free True — agora の core)の Hy と Python の file(
-    // Python の欄は #2203 — .py の dataclass の欄の写像を黙って見逃していた)。
+    // DOEFF170, 171: Hy and Python files of layers that pass values by type only (architecture.hy's layer :wire-free True — agora's core)
+    // (the Python fields are #2203 — a mapping in a .py dataclass field was silently missed).
     let wire_free_rules = [ProjectRule::WireInWireFreeLayer, ProjectRule::BareMapInWireFreeLayer];
     if spec.wire_free && wire_free_rules.iter().any(|r| enabled.contains(r)) {
         drafts.extend(judge.wire_free(enabled));
     }
-    // DOEFF172: 写像の置き場の臭い — 層の置き場の Hy と Python の file の全部(欄は値を型だけで渡す層の外だけ — そこは DOEFF171・#2143 の (2))。
+    // DOEFF172: smell of where mappings are placed — all Hy and Python files in the layer locations (fields only outside the layers that pass values by type only — those are DOEFF171, (2) of #2143).
     if enabled.contains(&ProjectRule::DictOutsideItsPlace) {
         drafts.extend(judge.dict_smells(!spec.wire_free));
     }
-    // DOEFF168: 宣言の :layers の層の Hy の file だけ(業務の層 — 層の分からない置き場は層の規則の外)。
+    // DOEFF168: only Hy files of layers in the declaration's :layers (business layers — locations whose layer is unknown are outside the layer rules).
     if let Some(decl) = settings.architecture.as_ref().and_then(|a| a.environment_branches.as_ref()) {
         if enabled.contains(&ProjectRule::EnvironmentBranch) && file.file.language == Language::Hy && decl.layers.contains(&spec.name) {
             drafts.extend(judge.environment_branches(decl));
@@ -1458,8 +1458,8 @@ fn judge_layer_file(
             drafts.extend(judge.placed_dependencies(&facts, index, architecture));
         }
         if enabled.contains(&ProjectRule::ContextMatchesService) {
-            // :dir で dir と名の違う service(区画を _ の dir へ隠した — doeff の ADR-DOE-API-001 R15)は、:context を dir でなく
-            // service の名と照らす。
+            // For a service whose name differs from its dir via :dir (compartments hidden in a dir starting with _ — doeff's ADR-DOE-API-001 R15), :context is checked against
+            // the service's name, not the dir.
             let declared = judge.placement.service.as_deref().and_then(|s| architecture.service_by_dir(s));
             let shared = settings::ServiceSettings {
                 shared: architecture.shared.iter().cloned().collect(),
@@ -1485,7 +1485,7 @@ fn judge_layer_file(
         }
     }
     if let (Some(raw), Some(hy_file)) = (&settings.raw, hy_file) {
-        // 許可名簿を書いた repo では名簿の定義の module だけに許す(層では許さない)。
+        // In a repo that has an allowlist, only the modules of the allowlist's definitions are allowed (not allowed by layer).
         let allowed_here = match &raw.world_modules {
             Some(modules) => modules.contains(&architecture::mangle_dotted(&file.module)),
             None => raw.allowed.contains(&file.site.layer),
@@ -1499,7 +1499,7 @@ fn judge_layer_file(
             }
         }
     }
-    // Python の file の環境変数の読み— Hy の索引の外の `.py` にも、許しの判定は Hy の枝と同じ 1 つを使う。
+    // Reading environment variables in Python files — for `.py` outside the Hy index too, the same single allowance judgment as the Hy branch is used.
     if let (Some(raw), Language::Python, true) = (&settings.raw, file.file.language, enabled.contains(&ProjectRule::RawSideEffectDirect)) {
         let allowed_here = match &raw.world_modules {
             Some(modules) => modules.contains(&architecture::mangle_dotted(&file.module)),
@@ -1527,29 +1527,29 @@ fn judge_layer_file(
     LayerJudgement { drafts, summary: Some(summary), errors, crossings }
 }
 
-/// 層の module 1 つの判定に要る物をまとめた道具。
+/// A tool bundling what is needed for judging one layer module.
 struct LayerJudge<'a> {
     file: &'a LayerFile,
     source: &'a str,
     lines: &'a LineIndex<'a>,
     layers: &'a LayerSettings,
     layer: LayerId,
-    /// この file の層と、タグで名乗った役(説明の主体)。
+    /// This file's layer, and the role declared by tag (the subject of the explanation).
     placement: Placement,
 }
 
 impl<'a> LayerJudge<'a> {
-    /// 層の名前。
+    /// The layer's name.
     fn layer_name(&self, id: LayerId) -> &'a str {
         &self.layers.layers[id.0].name
     }
 
-    /// byte の範囲をエディタの範囲へ。
+    /// Converts a byte range to an editor range.
     fn range(&self, span: ByteSpan) -> Range {
         self.lines.range(span.start, span.end)
     }
 
-    /// 下書きを 1 つ作る。
+    /// Makes one draft.
     fn draft(&self, rule: ProjectRule, range: Range, message: String, detail: Option<String>, explain: Explain) -> Draft {
         Draft {
             explain,
@@ -1564,7 +1564,7 @@ impl<'a> LayerJudge<'a> {
         }
     }
 
-    /// DOEFF104: タグの無い定義(module の頭のタグも無い)と、何も名乗らない module。
+    /// DOEFF104: definitions with no tags (and no module-head tags either), and modules that claim nothing.
     fn declares_tags(&self, facts: &ModuleFacts) -> Option<Draft> {
         let rel = &self.file.file.rel;
         match (facts.untagged.first(), facts.module_tags.is_some(), facts.tagged.is_empty()) {
@@ -1573,7 +1573,7 @@ impl<'a> LayerJudge<'a> {
                 Some(self.draft(
                     ProjectRule::ModuleDeclaresTags,
                     self.range(first.span),
-                    format!("{} の定義 {} にタグが無い — 契約の辞書の :tags {{:context … :role …}} か、module の頭のタグで文脈と役を名乗る", rel, names.join("・")),
+                    format!("{} definition {} has no tags — declare context and role with the contract dict's :tags {{:context … :role …}} or with the module-head tags", rel, names.join(", ")),
                     None,
                     Explain::UntaggedDefinitions { placement: self.placement.clone(), names: names.iter().map(|n| n.to_string()).collect() },
                 ))
@@ -1581,7 +1581,7 @@ impl<'a> LayerJudge<'a> {
             (None, false, true) => Some(self.draft(
                 ProjectRule::ModuleDeclaresTags,
                 first_line_range(self.source),
-                format!("{} にタグ(:context と :role)が無い — 層の dir の下の module は文脈と役をタグで名乗る", rel),
+                format!("{} has no tags (:context and :role) — a module under a layer dir declares its context and role with tags", rel),
                 None,
                 Explain::NoTags { placement: self.placement.clone() },
             )),
@@ -1589,7 +1589,7 @@ impl<'a> LayerJudge<'a> {
         }
     }
 
-    /// DOEFF105: 実効のタグごとに、role と context があり role がこの層で許される物か。
+    /// DOEFF105: for each effective tag, whether it has a role and a context, and the role is allowed in this layer.
     fn role_matches_layer(&self, facts: &ModuleFacts) -> Vec<Draft> {
         let spec = &self.layers.layers[self.layer.0];
         let Some(allowed) = &spec.roles else { return Vec::new() };
@@ -1607,7 +1607,7 @@ impl<'a> LayerJudge<'a> {
                     ProjectRule::RoleMatchesLayer,
                     self.range(t.span),
                     format!(
-                        "{} の role {} は層 {} に置けない(:context と :role が要る・許す role = {})",
+                        "{} role {} cannot be placed in layer {} (:context and :role are required; allowed roles = {})",
                         self.file.file.rel, role, spec.name, allowed_text
                     ),
                     Some(role),
@@ -1617,7 +1617,7 @@ impl<'a> LayerJudge<'a> {
             .collect()
     }
 
-    /// DOEFF103: 型だけの層に関数と handler を置かない。
+    /// DOEFF103: do not place functions or handlers in a types-only layer.
     fn types_only(&self, facts: &ModuleFacts) -> Option<Draft> {
         let first = facts.functions.first()?;
         let names: Vec<&str> = facts.functions.iter().map(|n| n.name.as_str()).collect();
@@ -1625,10 +1625,10 @@ impl<'a> LayerJudge<'a> {
             ProjectRule::LayerTypesOnly,
             self.range(first.span),
             format!(
-                "{}({})が関数 / handler {} を定める — {} は型だけの層",
+                "{} ({}) defines function / handler {} — {} is a types-only layer",
                 self.file.file.rel,
                 self.layer_name(self.layer),
-                names.join("・"),
+                names.join(", "),
                 self.layer_name(self.layer)
             ),
             Some("definitions".to_string()),
@@ -1636,8 +1636,8 @@ impl<'a> LayerJudge<'a> {
         ))
     }
 
-    /// DOEFF170・171: 値を型だけで渡す層の defwire と、:pre / :post / 欄の型の写像・型の無い組(鍵の細目は `<種類>:<名>`)。読めない
-    /// file は DOEFF128 が知らせるので、ここは何も出さない。
+    /// DOEFF170, 171: defwire in a layer that passes values by type only, and mappings / untyped tuples in :pre / :post / field types (the key detail is `<kind>:<name>`). An unreadable
+    /// file is reported by DOEFF128, so nothing is emitted here.
     fn wire_free(&self, enabled: &BTreeSet<ProjectRule>) -> Vec<Draft> {
         let read = match self.file.file.language {
             Language::Hy => typed_values::wire_free_hits(self.source),
@@ -1653,9 +1653,9 @@ impl<'a> LayerJudge<'a> {
                     return None;
                 }
                 let message = if wire {
-                    format!("{} の defwire {} — 層 {} は値を型だけで渡す(wire の型は翻訳の層に置く)", self.file.file.rel, hit.name, layer)
+                    format!("{} defwire {} — layer {} passes values by type only (put wire types in the translation layer)", self.file.file.rel, hit.name, layer)
                 } else {
-                    format!("{} の {}({})の型が {} — 層 {} は写像も中身の型の無い組・列も受け渡さない", self.file.file.rel, hit.name, hit.what.kind(), hit.problem, layer)
+                    format!("{} {} ({}) has type {} — layer {} passes neither mappings nor tuples / sequences without element types", self.file.file.rel, hit.name, hit.what.kind(), hit.problem, layer)
                 };
                 let detail = hit.detail();
                 Some(self.draft(
@@ -1669,9 +1669,9 @@ impl<'a> LayerJudge<'a> {
             .collect()
     }
 
-    /// DOEFF172: handler の外で写像を組む定義と、欄の写像(数えるだけ — 重さ warning)。読めない file は DOEFF128 が知らせる。
+    /// DOEFF172: definitions that build a mapping outside a handler, and mapping fields (count only — severity warning). An unreadable file is reported by DOEFF128.
     fn dict_smells(&self, fields: bool) -> Vec<Draft> {
-        // Python には handler の外で写像を組む所の数え方が無い(Hy の形だけ)— Python は欄だけを数える。
+        // Python has no way to count places that build a mapping outside a handler (Hy forms only) — for Python only fields are counted.
         let read = match self.file.file.language {
             Language::Hy => typed_values::dict_smell_hits(self.source, fields),
             Language::Python if fields => typed_values::py_dict_smell_hits(self.source, &self.file.file.rel),
@@ -1682,9 +1682,9 @@ impl<'a> LayerJudge<'a> {
             .map(|hit| {
                 let field = hit.what == typed_values::DictSmellWhat::Field;
                 let message = if field {
-                    format!("{} の欄 {} の型が {} — 欄に写像を持たない(欄の名前と型を持つ型にする)", self.file.file.rel, hit.name, hit.problem)
+                    format!("{} field {} has type {} — do not hold a mapping in a field (use a type with named, typed fields)", self.file.file.rel, hit.name, hit.problem)
                 } else {
-                    format!("{} の {} が{} — 写像は cache のためだけに handler が持つ", self.file.file.rel, hit.name, hit.problem)
+                    format!("{} {} {} — a handler holds a mapping only for a cache", self.file.file.rel, hit.name, hit.problem)
                 };
                 let detail = hit.detail();
                 let mut draft = self.draft(
@@ -1700,7 +1700,7 @@ impl<'a> LayerJudge<'a> {
             .collect()
     }
 
-    /// DOEFF169: match の class pattern の keyword の欄の名に `-` が在る(当たった keyword 1 つに 1 件 — 鍵の細目は `<class>:<欄の名>`)。
+    /// DOEFF169: a keyword field name in a match class pattern contains `-` (one finding per matching keyword — the key detail is `<class>:<field name>`).
     fn match_field_hyphens(&self) -> Vec<Draft> {
         match_field_names::judge(self.source)
             .into_iter()
@@ -1709,7 +1709,7 @@ impl<'a> LayerJudge<'a> {
                     ProjectRule::MatchFieldHyphen,
                     self.range(ByteSpan { start: found.start, end: found.end }),
                     format!(
-                        "{} の match の class pattern ({} :{} …) は決して当たらない — Hy は keyword を属性名へ変換しないので :{} と書く",
+                        "{} match class pattern ({} :{} …) never matches — Hy does not convert keywords to attribute names, so write :{}",
                         self.file.file.rel,
                         found.class,
                         found.field,
@@ -1722,22 +1722,22 @@ impl<'a> LayerJudge<'a> {
             .collect()
     }
 
-    /// DOEFF102: この層に禁じた module を直に import しない。import の綴りの前方一致で照らす(同じ綴りか、その下位の module / 名 —
-    /// `urllib.request` は `urllib.request.urlopen` に当たり、`urllib.parse` には当たらない)。当たった module ごとに 1 件、位置は最初の import。
-    /// DOEFF168: 環境の名の値との比較と dry-run の印での分岐(当たった literal か記号 1 つに 1 件 — 鍵の細目は `value:<綴り>` か `flag:<綴り>`)。
+    /// DOEFF102: do not directly import modules forbidden to this layer. Compared by prefix of the import spelling (the same spelling, or a module / name below it —
+    /// `urllib.request` matches `urllib.request.urlopen` and does not match `urllib.parse`). One finding per matched module, positioned at the first import.
+    /// DOEFF168: comparison with an environment-name value and branching on a dry-run flag (one finding per matched literal or symbol — the key detail is `value:<spelling>` or `flag:<spelling>`).
     fn environment_branches(&self, decl: &architecture::EnvironmentBranches) -> Vec<Draft> {
         let spec = &self.layers.layers[self.layer.0];
         env_branch::judge(self.source, decl)
             .into_iter()
             .map(|found| {
                 let what = match &found.hit {
-                    env_branch::BranchHit::Value(value) => format!("環境の名の値 \"{}\" と比べて分岐する", value),
-                    env_branch::BranchHit::Flag(flag) => format!("dry-run の印 {} で分岐する", flag),
+                    env_branch::BranchHit::Value(value) => format!("branches by comparing with the environment-name value \"{}\"", value),
+                    env_branch::BranchHit::Flag(flag) => format!("branches on the dry-run flag {}", flag),
                 };
                 self.draft(
                     ProjectRule::EnvironmentBranch,
                     self.range(ByteSpan { start: found.start, end: found.end }),
-                    format!("{}({})が{} — 業務の層は環境を知らない(環境の違いは handler の組の差し替えで表す)", self.file.file.rel, spec.name, what),
+                    format!("{} ({}) {} — business layers do not know the environment (express environment differences by swapping handler sets)", self.file.file.rel, spec.name, what),
                     Some(found.hit.detail()),
                     Explain::EnvironmentBranch { placement: self.placement.clone(), hit: found.hit },
                 )
@@ -1761,7 +1761,7 @@ impl<'a> LayerJudge<'a> {
                 self.draft(
                     ProjectRule::LayerForbiddenModule,
                     self.range(span),
-                    format!("{}({})が module {} を import する — この層では直に import しない(I/O は許された層の handler が持つ)", self.file.file.rel, spec.name, top),
+                    format!("{} ({}) imports module {} — this layer does not import it directly (I/O belongs to the handlers of allowed layers)", self.file.file.rel, spec.name, top),
                     Some(top.to_string()),
                     Explain::ForbiddenModule { placement: self.placement.clone(), module: top.to_string() },
                 )
@@ -1769,14 +1769,14 @@ impl<'a> LayerJudge<'a> {
             .collect()
     }
 
-    /// DOEFF101 が破れと判じる import の先か — 母集団の module で、この file 自身でなく、層の許した層の外。
-    /// DOEFF116 は同じ import を二重に数えないため、これが真の import を判じない(層の向きの直しが先 — #1799)。
+    /// Whether this is an import target that DOEFF101 judges a breach — a module of the population, not this file itself, and outside the layers the layer allows.
+    /// DOEFF116 does not count the same import twice, so it does not judge imports for which this is true (fixing layer direction comes first — #1799).
     fn breaks_direction(&self, target: &str, index: &SiteIndex<'_>) -> bool {
         let Some(allowed) = &self.layers.layers[self.layer.0].allowed else { return false };
         resolve_target(target, index).is_some_and(|(owner, site)| owner != self.file.module && !allowed.contains(&site.layer))
     }
 
-    /// DOEFF101: import の先が母集団の module(かその中の名)で、許された層の外なら破れ。
+    /// DOEFF101: a breach if the import target is a module of the population (or a name inside it) outside the allowed layers.
     fn import_direction(&self, facts: &ModuleFacts, index: &SiteIndex<'_>) -> Vec<Draft> {
         let spec = &self.layers.layers[self.layer.0];
         let Some(allowed) = &spec.allowed else { return Vec::new() };
@@ -1784,7 +1784,7 @@ impl<'a> LayerJudge<'a> {
         for import in &facts.imports {
             first.entry(import.target.as_str()).or_insert(import.span);
         }
-        let allowed_text = allowed.iter().map(|id| self.layer_name(*id)).collect::<BTreeSet<_>>().into_iter().collect::<Vec<_>>().join("・");
+        let allowed_text = allowed.iter().map(|id| self.layer_name(*id)).collect::<BTreeSet<_>>().into_iter().collect::<Vec<_>>().join(", ");
         first
             .into_iter()
             .filter_map(|(target, span)| {
@@ -1797,7 +1797,7 @@ impl<'a> LayerJudge<'a> {
                     ProjectRule::LayerImportDirection,
                     self.range(span),
                     format!(
-                        "{}({})が {} の {} を import する — 層 {} が import してよい層は {}",
+                        "{} ({}) imports {} of {} — the layers that layer {} may import are {}",
                         self.file.file.rel,
                         spec.name,
                         self.layer_name(owner_layer),
@@ -1817,8 +1817,8 @@ impl<'a> LayerJudge<'a> {
             .collect()
     }
 
-    /// DOEFF109: service の境界 — この file(service A の守る層)が、別の service B の守る層の module を読んだら破れ。
-    /// B の開いた層(intent など)と共有の置き場と例外は読んでよい。service を持たない置き場(層が先の形)は判じない。
+    /// DOEFF109: service boundary — a breach if this file (a guarded layer of service A) reads a module in a guarded layer of another service B.
+    /// B's open layers (such as intent), the shared location and exceptions may be read. Locations without a service (layer-first form) are not judged.
     fn service_boundary(&self, facts: &ModuleFacts, index: &SiteIndex<'_>, services: &settings::ServiceSettings) -> Vec<Draft> {
         let Some(own) = self.placement.service.as_deref() else { return Vec::new() };
         if !services.guarded.contains(&self.layer) || services.shared.contains(own) {
@@ -1843,7 +1843,7 @@ impl<'a> LayerJudge<'a> {
                         ProjectRule::ServiceBoundary,
                         self.range(span),
                         format!(
-                            "{}(service {} の層 {})が service {} の層 {} の {} を import する — 別の service は intent を通して頼む",
+                            "{} (service {}, layer {}) imports from service {} layer {}: {} — ask another service through intent",
                             self.file.file.rel,
                             own,
                             self.layer_name(self.layer),
@@ -1867,10 +1867,10 @@ impl<'a> LayerJudge<'a> {
             .collect()
     }
 
-    /// DOEFF116: service の依存 — この file の service A が別の service B の module を読む時、B は A の :depends-on に在り、
-    /// 読む先は、この file の層が依存先で読んでよい層(層の :dependency-layers — 組み立ての entry は intent と protocol —、
-    /// 無ければ :open-layers の intent)であること。共有の置き場と foundation は service ではないので見ない。
-    /// 別の service を読んだ組は、宣言したのに使っていない依存(DOEFF117)のために返す。
+    /// DOEFF116: service dependencies — when service A of this file reads a module of another service B, B must be in A's :depends-on,
+    /// and what is read must be in a layer this file's layer may read in the dependency (the layer's :dependency-layers — the assembly entry gets intent and protocol —,
+    /// or, if absent, the intent of :open-layers). The shared location and foundation are not services, so they are not looked at.
+    /// The pairs of other services read are returned for dependencies that were declared but not used (DOEFF117).
     fn service_dependencies(
         &self,
         facts: &ModuleFacts,
@@ -1903,7 +1903,7 @@ impl<'a> LayerJudge<'a> {
                 continue;
             }
             let declared = own.is_some_and(|s| s.depends_on.contains(&other_name));
-            // 依存先が既にこの service に依存していれば、:depends-on に足すと service の間の依存が輪になる。
+            // If the dependency already depends on this service, adding it to :depends-on makes a cycle of dependencies between services.
             let reverse = architecture.services.iter().any(|s| s.name == other_name && s.depends_on.contains(&own_name));
             let readable = architecture.dependency_layers_for(self.layer_name(self.placement.layer));
             let open = readable.iter().any(|l| *l == self.layer_name(site.layer));
@@ -1916,7 +1916,7 @@ impl<'a> LayerJudge<'a> {
                 self.range(span),
                 if declared {
                     format!(
-                        "{}(service {}・層 {})が依存先 {} の層 {} の {} を読む — 層 {} が依存先で読めるのは {} だけ",
+                        "{} (service {}, layer {}) reads from dependency {} layer {}: {} — the only layer-{} reads allowed in a dependency are {}",
                         self.file.file.rel,
                         own_name,
                         self.layer_name(self.placement.layer),
@@ -1924,10 +1924,10 @@ impl<'a> LayerJudge<'a> {
                         self.layer_name(site.layer),
                         target,
                         self.layer_name(self.placement.layer),
-                        readable.join("・")
+                        readable.join(", ")
                     )
                 } else {
-                    format!("{}(service {})が :depends-on に無い service {} の {} を読む", self.file.file.rel, own_name, other_name, target)
+                    format!("{} (service {}) reads {} of service {}, which is not in :depends-on", self.file.file.rel, own_name, target, other_name)
                 },
                 Some(target.to_string()),
                 Explain::ServiceDependency {
@@ -1948,10 +1948,10 @@ impl<'a> LayerJudge<'a> {
         (drafts, crossings)
     }
 
-    /// DOEFF140: architecture.hy の :placed-dependencies の層の module(service と shared — 層が先の旧い dir と foundation は外)が、
-    /// root の下の層の置き場の外の module を import する。読む先は import の綴りから file を引いて決める(その file か親の module が
-    /// root の下に在り、層の索引に無く、package の印でない物)— 渡された file の import と置き場だけで判じ、repo 全体の索引は読まない。
-    /// 同じ module を何度読んでも 1 件(最初の import の所)。
+    /// DOEFF140: a module in a layer of architecture.hy's :placed-dependencies (service and shared — old layer-first dirs and foundation are excluded)
+    /// imports a module outside the layer locations under root. The target is decided by looking up a file from the import spelling (that file or its parent module is
+    /// under root, is not in the layer index, and is not a package marker) — judged only from the given file's imports and locations; the whole-repo index is not read.
+    /// Reading the same module any number of times is one finding (at the first import).
     fn placed_dependencies(&self, facts: &ModuleFacts, index: &SiteIndex<'_>, architecture: &architecture::Architecture) -> Vec<Draft> {
         if self.placement.service.is_none() || !architecture.placed_dependencies.iter().any(|l| l == self.layer_name(self.placement.layer)) {
             return Vec::new();
@@ -1978,7 +1978,7 @@ impl<'a> LayerJudge<'a> {
                     ProjectRule::PlacedDependency,
                     self.range(span),
                     format!(
-                        "{}(層 {})が層の置き場の外の module {}({})を import する — 層の置き場へ移した module だけに依存する",
+                        "{} (layer {}) imports module {} ({}) outside the layer locations — depend only on modules moved into the layer locations",
                         self.file.file.rel,
                         self.layer_name(self.placement.layer),
                         owner,
@@ -1991,8 +1991,8 @@ impl<'a> LayerJudge<'a> {
             .collect()
     }
 
-    /// DOEFF113: タグの :context と dir の service が食い違う(info)。名の `-` と `_` は同じに見る。共有の置き場は見ない。
-    /// `named` = dir を宣言した service の名(architecture.hy の :dir で dir と名が違う時に、dir でなく名と照らす)。
+    /// DOEFF113: a tag's :context and the dir's service disagree (info). `-` and `_` in names are treated as the same. The shared location is not looked at.
+    /// `named` = the names of services that declared a dir (when architecture.hy's :dir differs from the name, compare with the name, not the dir).
     fn context_matches_service(
         &self,
         facts: &ModuleFacts,
@@ -2014,7 +2014,7 @@ impl<'a> LayerJudge<'a> {
         let mut draft = self.draft(
             ProjectRule::ContextMatchesService,
             range,
-            format!("{} のタグの :context {} が、置き場の service {} と食い違う", self.file.file.rel, foreign.join("・"), own),
+            format!("{} tag :context {} disagrees with the location's service {}", self.file.file.rel, foreign.join(", "), own),
             Some(foreign.join("+")),
             Explain::ContextMismatch { placement: self.placement.clone(), service: own.to_string(), contexts: foreign.clone() },
         );
@@ -2022,13 +2022,13 @@ impl<'a> LayerJudge<'a> {
         Some(draft)
     }
 
-    /// DOEFF106: 定義の中の生の副作用の直接の証拠(強い証拠は error、弱い証拠は warning)。入れ子の定義と外の定義で
-    /// 同じ証拠が重なる時は、いちばん内側の定義に 1 度だけ数える。
-    /// `.py` の file の環境変数の読みを DOEFF106 の知らせにするため(python_env.rs の env_reads — Hy の raw_direct と同じ文の形)。
+    /// DOEFF106: direct evidence of raw side effects inside a definition (strong evidence is an error, weak evidence a warning). When the same evidence overlaps between a nested definition and
+    /// an outer one, it is counted only once, for the innermost definition.
+    /// To turn environment-variable reads in `.py` files into DOEFF106 findings (env_reads in python_env.rs — the same statement shapes as Hy's raw_direct).
     fn python_env_direct(&self, raw: &raw_settings::RawSettingsSpec) -> Vec<Draft> {
         let allowed = match &raw.world_modules {
-            Some(_) => "生の副作用に触ってよいのは architecture.hy の :world-handlers(外の世界に触れてよい定義の許可名簿)の定義の module だけ".to_string(),
-            None => format!("生の副作用に触ってよい層は {}", raw.allowed.iter().map(|id| self.layer_name(*id)).collect::<Vec<_>>().join("・")),
+            Some(_) => "only modules of definitions in architecture.hy's :world-handlers (the allow-list of definitions that may touch the outside world) may touch raw side effects".to_string(),
+            None => format!("the layers that may touch raw side effects are {}", raw.allowed.iter().map(|id| self.layer_name(*id)).collect::<Vec<_>>().join(", ")),
         };
         python_env::env_reads(self.source)
             .into_iter()
@@ -2037,7 +2037,7 @@ impl<'a> LayerJudge<'a> {
                     ProjectRule::RawSideEffectDirect,
                     self.lines.range(read.start, read.end),
                     format!(
-                        "定義 {}({})が生の副作用 {}({})に直に触る — {}",
+                        "definition {} ({}) directly touches raw side effect {} ({}) — {}",
                         read.definition,
                         self.layer_name(self.layer),
                         read.name,
@@ -2063,8 +2063,8 @@ impl<'a> LayerJudge<'a> {
     fn raw_direct(&self, hy_file: &HyFileIndex, raw: &raw_settings::RawSettingsSpec, module: &str) -> Vec<Draft> {
         let definitions = &hy_file.definitions;
         let allowed = match &raw.world_modules {
-            Some(_) => "生の副作用に触ってよいのは architecture.hy の :world-handlers(外の世界に触れてよい定義の許可名簿)の定義の module だけ".to_string(),
-            None => format!("生の副作用に触ってよい層は {}", raw.allowed.iter().map(|id| self.layer_name(*id)).collect::<Vec<_>>().join("・")),
+            Some(_) => "only modules of definitions in architecture.hy's :world-handlers (the allow-list of definitions that may touch the outside world) may touch raw side effects".to_string(),
+            None => format!("the layers that may touch raw side effects are {}", raw.allowed.iter().map(|id| self.layer_name(*id)).collect::<Vec<_>>().join(", ")),
         };
         innermost_raw_evidence(definitions)
             .into_iter()
@@ -2076,7 +2076,7 @@ impl<'a> LayerJudge<'a> {
                     ProjectRule::RawSideEffectDirect,
                     evidence.range,
                     format!(
-                        "定義 {}({})が生の副作用 {}({})に直に触る — {}",
+                        "definition {} ({}) directly touches raw side effect {} ({}) — {}",
                         definition.name,
                         self.layer_name(self.layer),
                         evidence.name,
@@ -2102,8 +2102,8 @@ impl<'a> LayerJudge<'a> {
             .collect()
     }
 
-    /// DOEFF131: :wraps に挙げた doeff の実 I/O の handler を、名簿の定義(とその中の入れ子の定義)の外で名指す所。
-    /// 値として渡す参照(with-handlers の列)と呼び出しの両方を数え、同じ定義の同じ handler は 1 件にまとめる。
+    /// DOEFF131: places that name a doeff real-I/O handler listed in :wraps outside the allow-list definitions (and definitions nested inside them).
+    /// Counts both references passed as values (the list of with-handlers) and calls, and merges the same handler in the same definition into one finding.
     fn world_handler_named(&self, hy_file: &HyFileIndex, architecture: &architecture::Architecture) -> Vec<Draft> {
         let definitions = &hy_file.definitions;
         world_handler_spots(hy_file, architecture)
@@ -2111,12 +2111,12 @@ impl<'a> LayerJudge<'a> {
             .map(|spot| {
                 let WorldSpot { owner, spelling, allowed, range } = spot;
                 let definition = owner.map(|i| definition_label(&definitions[i])).unwrap_or_else(|| "module の top level".to_string());
-                let shown = owner.map(|i| definitions[i].name.clone()).unwrap_or_else(|| "module の top level".to_string());
+                let shown = owner.map(|i| definitions[i].name.clone()).unwrap_or_else(|| "module top level".to_string());
                 self.draft(
                     ProjectRule::WorldHandlerNamedOutsideList,
                     range,
                     format!(
-                        "{} が doeff の実 I/O の handler {} を名指す — 名指してよいのは architecture.hy の :world-handlers の定義({})だけ",
+                        "{} names doeff real-I/O handler {} — only the definitions in architecture.hy's :world-handlers ({}) may name it",
                         shown,
                         spelling,
                         allowed
@@ -2128,9 +2128,9 @@ impl<'a> LayerJudge<'a> {
             .collect()
     }
 
-    /// DOEFF107: 呼ぶ定義を通した生の副作用(info・経路つき)。全体の実行だけが経由の証拠を持つ。
-    /// 同じ経路と同じ証拠を外の定義と入れ子の定義の両方が持つ時は内側だけに数え、1 つの定義で経路と証拠の名が同じ物
-    /// (同じ関数の中の 2 か所の `.stat` など)は 1 件にまとめる。
+    /// DOEFF107: raw side effects through the definitions called (info, with the path). Only a whole run has the evidence through calls.
+    /// When both an outer definition and a nested definition have the same path and the same evidence, it is counted only for the inner one, and within one definition the same path and evidence name
+    /// (such as two `.stat` in the same function) are merged into one finding.
     fn raw_via(&self, hy_file: &HyFileIndex) -> Vec<Draft> {
         let definitions = &hy_file.definitions;
         let mut groups: BTreeMap<ViaSpot, Vec<EvidenceRef>> = BTreeMap::new();
@@ -2175,7 +2175,7 @@ impl<'a> LayerJudge<'a> {
                     ProjectRule::RawSideEffectVia,
                     definition.range,
                     format!(
-                        "定義 {} は {} を通して生の副作用 {}({})に届く({})",
+                        "definition {} reaches, through {}, raw side effect {} ({}) ({})",
                         definition.name,
                         path.join(" → "),
                         via.evidence.name,
@@ -2198,7 +2198,7 @@ impl<'a> LayerJudge<'a> {
     }
 }
 
-/// 証拠の位置(file・範囲・名前)— 入れ子の定義と外の定義で重なる証拠を 1 つに見分けるため。
+/// Position of evidence (file, range, name) — to distinguish evidence that overlaps between a nested definition and an outer one.
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
 struct EvidenceSpot {
     path: String,
@@ -2207,14 +2207,14 @@ struct EvidenceSpot {
     name: String,
 }
 
-/// 経由の証拠の位置(経路の定義の名の列と、行き着いた証拠)。
+/// Position of evidence through calls (the list of definition names on the path, and the evidence reached).
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
 struct ViaSpot {
     through: Vec<String>,
     evidence: EvidenceSpot,
 }
 
-/// 経由の知らせ 1 件の単位(定義・経路・証拠の名 — 同じ関数の中の同じ名の証拠は 1 件)。
+/// The unit of one through-call notice (definition, path, evidence name — evidence of the same name in the same function is one finding).
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
 struct ViaReport {
     definition: usize,
@@ -2222,14 +2222,14 @@ struct ViaReport {
     name: String,
 }
 
-/// file の索引の中の証拠の在り処(定義の添字と、その定義の証拠の列の添字)。
+/// Where evidence is in the file's index (the definition's index, and the index in that definition's evidence list).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 struct EvidenceRef {
     definition: usize,
     evidence: usize,
 }
 
-/// 鍵に使う定義の綴り(入れ子は `外.内`・mangle 済み)。
+/// The definition spelling used in keys (a nested one is `outer.inner`, mangled).
 fn definition_label(definition: &Definition) -> String {
     match &definition.container {
         Some(container) => format!("{}.{}", hy_mangle(container), hy_mangle(&definition.name)),
@@ -2237,7 +2237,7 @@ fn definition_label(definition: &Definition) -> String {
     }
 }
 
-/// import の先を母集団の module へ解く(module そのもの、または `module.名`)。母集団の外なら None。
+/// Resolves an import target to a module of the population (the module itself, or `module.name`). None if outside the population.
 fn resolve_target<'i>(target: &'i str, index: &SiteIndex<'_>) -> Option<(&'i str, ModuleSite)> {
     if let Some(site) = index.get(target) {
         return Some((target, site));
@@ -2246,8 +2246,8 @@ fn resolve_target<'i>(target: &'i str, index: &SiteIndex<'_>) -> Option<(&'i str
     index.get(owner).map(|site| (owner, site))
 }
 
-/// import の綴りが指す root の下の module(その物か親の module)の綴りと file の path — 無い・root の外・package の印なら None。
-/// Hy の綴りの `-` は file の名の `_` に読む。
+/// The spelling and file path of the module under root that an import spelling points to (that module or its parent) — None if absent, outside root, or a package marker.
+/// `-` in a Hy spelling is read as `_` in a file name.
 fn unplaced_owner(target: &str, root_module: &str, repo: &Path) -> Option<(String, String)> {
     let target = target.replace('-', "_");
     let parent = target.rsplit_once('.').map(|(owner, _)| owner.to_string());
@@ -2266,23 +2266,23 @@ fn unplaced_owner(target: &str, root_module: &str, repo: &Path) -> Option<(Strin
     None
 }
 
-// --- architecture.hy の置き場(DOEFF114・115)と使っていない依存(DOEFF117)---------------
+// --- Locations in architecture.hy (DOEFF114, 115) and unused dependencies (DOEFF117) ---------------
 
-/// 全体か 1 file か(DOEFF115 の dir の知らせを、全体では dir ごとに 1 度、1 file ではその file に出す)。
+/// Whole run or single file (DOEFF115's dir notice is emitted once per dir in a whole run, and on that file in a single-file run).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum PlaceScope {
     Whole,
     Single,
 }
 
-/// root の下の module か(拡張子が層の設定に在り、除く区切りを含まない)。
+/// Whether this is a module under root (its extension is in the layer settings and it contains no excluded segment).
 fn is_architecture_file(rel: &str, architecture: &architecture::Architecture, layers: &LayerSettings) -> bool {
     let root = layers::normalize_dir(&architecture.root);
     let extension_ok = Path::new(rel).extension().and_then(|e| e.to_str()).is_some_and(|e| layers.extensions.contains(e));
     extension_ok && rel.starts_with(&format!("{}/", root)) && !rel.split('/').any(|part| layers.exclude.contains(part))
 }
 
-/// root の下の module を全部集める(path の順)。
+/// Collects all modules under root (in path order).
 fn collect_architecture_files(root: &Path, architecture: &architecture::Architecture, layers: &LayerSettings) -> Vec<SourceFile> {
     let mut files: Vec<SourceFile> = walk_files(&root.join(layers::normalize_dir(&architecture.root)))
         .into_iter()
@@ -2296,23 +2296,23 @@ fn collect_architecture_files(root: &Path, architecture: &architecture::Architec
     files
 }
 
-/// file の置き場の宣言との照らし(宣言どおり・宣言されていない置き場所の file・宣言に無い dir)。
+/// Comparison of a file against the location declarations (as declared, a file in an undeclared location, a dir not in the declaration).
 enum PlaceVerdict {
     Declared,
     UndeclaredPlace(explain::PlaceProblem),
     UndeclaredDirectory { dir: String, problem: explain::DirectoryProblem },
 }
 
-/// file 1 つを宣言に照らす。
+/// Checks one file against the declaration.
 fn place_verdict(rel: &str, architecture: &architecture::Architecture) -> PlaceVerdict {
     let root = layers::normalize_dir(&architecture.root);
     let rest = rel.strip_prefix(&format!("{}/", root)).unwrap_or(rel);
-    // package の印(`__init__.py`・`__init__.hy`)は置き場の module ではない。
+    // Package markers (`__init__.py`, `__init__.hy`) are not modules of a location.
     if Path::new(rel).file_stem().is_some_and(|stem| stem == "__init__") {
         return PlaceVerdict::Declared;
     }
     let parts: Vec<&str> = rest.split('/').collect();
-    // 模擬の環境の置き場(:verification-environment)の下は宣言どおり — service ではない置き場。
+    // Under the simulated environment's location (:verification-environment) counts as declared — a location that is not a service.
     if let (Some(place), [first, _, ..]) = (architecture.verification_environment.as_deref(), parts.as_slice()) {
         if *first == place {
             return PlaceVerdict::Declared;
@@ -2354,7 +2354,7 @@ fn place_verdict(rel: &str, architecture: &architecture::Architecture) -> PlaceV
     }
 }
 
-/// DOEFF114・115: root の下の module を architecture.hy の宣言に照らす。115 は全体では dir ごとに最初の file に 1 度だけ出す。
+/// DOEFF114, 115: checks modules under root against architecture.hy's declarations. In a whole run, 115 is emitted only once per dir, at the first file.
 fn judge_places(
     root: &Path,
     architecture: &architecture::Architecture,
@@ -2366,7 +2366,7 @@ fn judge_places(
 ) -> Vec<Draft> {
     let _ = root;
     let mut drafts = Vec::new();
-    // 移し先の案: service は :context のタグ(`-` は `_`)、層は :role のタグから推した層か、推せなければ今の path の段の層の名。
+    // Proposed destination: the service from the :context tag (`-` becomes `_`), the layer from the layer inferred from the :role tag, or, if it cannot be inferred, the layer name of the current path segment.
     let destination = |file: &SourceFile| -> String {
         let source = match single_source {
             Some(text) => Some(text.to_string()),
@@ -2382,7 +2382,7 @@ fn judge_places(
             .unwrap_or_else(|| "<service>".to_string());
         let parts: Vec<&str> = file.rel.split('/').collect();
         let by_path = layers.layers.iter().find(|l| parts[..parts.len().saturating_sub(1)].contains(&l.name.as_str())).map(|l| l.name.clone());
-        // :role のタグをすべて許す層がちょうど 1 つの時にその層。
+        // The layer, if exactly one layer allows all the :role tags.
         let roles: Vec<String> = facts.tag_sets().iter().filter_map(|t| t.role.clone()).filter(|r| !r.is_empty()).collect();
         let by_roles = || {
             let fitting: Vec<&layers::LayerSpec> = layers
@@ -2395,8 +2395,8 @@ fn judge_places(
                 _ => None,
             }
         };
-        // 層は定義の :role から推し(置き場所が誤っているから DOEFF114 が出る — 今の path の段は案にならない)、推せない時だけ path の段の層の名。
-        let layer = by_roles().or(by_path).unwrap_or_else(|| "<層>".to_string());
+        // The layer is inferred from the definition's :role (DOEFF114 is emitted because the location is wrong — the current path segment cannot be the proposal), and only when it cannot be inferred, the layer name of the path segment.
+        let layer = by_roles().or(by_path).unwrap_or_else(|| "<layer>".to_string());
         let name = parts.last().copied().unwrap_or("");
         let root_dir = layers::normalize_dir(&architecture.root);
         match architecture.foundation.as_deref() == Some(layer.as_str()) {
@@ -2424,7 +2424,7 @@ fn judge_places(
                     drafts.push(draft(
                         ProjectRule::UndeclaredPlace,
                         zero_range(),
-                        format!("{} は宣言されていない置き場所に在る", file.rel),
+                        format!("{} is in an undeclared location", file.rel),
                         None,
                         Explain::UndeclaredPlace { rel: file.rel.clone(), problem, root: architecture.root.clone(), destination: destination(file) },
                         file.rel.clone(),
@@ -2432,12 +2432,12 @@ fn judge_places(
                 }
             }
             PlaceVerdict::UndeclaredDirectory { dir, problem } => {
-                // 宣言の外の dir の module も file ごとに出す(エディタで file ごとに見え、移し先の案が file ごとに付く)。
+                // A module in a dir outside the declaration is also emitted per file (visible per file in the editor, with a destination proposal attached per file).
                 if enabled.contains(&ProjectRule::UndeclaredPlace) {
                     drafts.push(draft(
                         ProjectRule::UndeclaredPlace,
                         zero_range(),
-                        format!("{} は宣言されていない置き場所に在る", file.rel),
+                        format!("{} is in an undeclared location", file.rel),
                         None,
                         Explain::UndeclaredPlace {
                             rel: file.rel.clone(),
@@ -2453,7 +2453,7 @@ fn judge_places(
                     drafts.push(draft(
                         ProjectRule::UndeclaredDirectory,
                         zero_range(),
-                        format!("dir {} は architecture.hy に宣言されていない", dir),
+                        format!("dir {} is not declared in architecture.hy", dir),
                         None,
                         Explain::UndeclaredDirectory { dir: dir.clone(), problem },
                         dir,
@@ -2465,13 +2465,13 @@ fn judge_places(
     drafts
 }
 
-/// file の頭の長さ 0 の範囲(置き場の違反は file まるごとに掛かる)。
+/// A zero-length range at the head of the file (a location violation applies to the whole file).
 fn zero_range() -> Range {
     let start = Position { line: 0, character: 0 };
     Range { start, end: start }
 }
 
-/// DOEFF117(info): 宣言した依存を、その service のどの module も読んでいない。位置は architecture.hy の defservice の名。
+/// DOEFF117 (info): a declared dependency that no module of that service reads. Positioned at the defservice name in architecture.hy.
 fn judge_unused_dependencies(root: &Path, architecture: &architecture::Architecture, crossings: &BTreeSet<(String, String)>) -> Vec<Draft> {
     let rel = declared_rel(root, &architecture.path);
     let mut drafts = Vec::new();
@@ -2486,7 +2486,7 @@ fn judge_unused_dependencies(root: &Path, architecture: &architecture::Architect
                 rel: rel.clone(),
                 path: architecture.path.clone(),
                 range: service.range,
-                message: format!("service {} の :depends-on の {} を、{} のどの module も読んでいない", service.name, dependency, service.name),
+                message: format!("{}'s :depends-on entry {} is not read by any module of {}", service.name, dependency, service.name),
                 detail: Some(format!("{}>{}", service.name, dependency)),
                 base: Severity::Info,
                 explain: Explain::UnusedDependency { service: service.name.clone(), dependency: dependency.clone() },
@@ -2496,8 +2496,8 @@ fn judge_unused_dependencies(root: &Path, architecture: &architecture::Architect
     drafts
 }
 
-/// DOEFF132: 許可名簿の定義 1 本ずつ — module が層の置き場に在るか・その層が foundation か・Hy の module なら定義が在るか。
-/// 位置は architecture.hy の名簿の要素(全体の実行だけ)。
+/// DOEFF132: each definition of the allow-list one by one — whether the module is in a layer location, whether that layer is foundation, and, for a Hy module, whether the definition exists.
+/// Positioned at the element of the list in architecture.hy (whole run only).
 fn judge_world_handler_places(
     root: &Path,
     architecture: &architecture::Architecture,
@@ -2512,16 +2512,16 @@ fn judge_world_handler_places(
         let module = handler.definition.mangled_module();
         let file = layer_files.iter().find(|f| architecture::mangle_dotted(&f.module) == module);
         let problem = match file {
-            None => Some(format!("module {} が層の置き場に無い(無い module か、層の外の置き場)", handler.definition.module)),
+            None => Some(format!("module {} is not in a layer location (no such module, or a location outside the layers)", handler.definition.module)),
             Some(file) => {
                 let layer = &layers.layers[file.site.layer.0].name;
                 if Some(layer.as_str()) != foundation {
-                    Some(format!("{} は層 {} に在る — foundation の層にだけ置く", file.file.rel, layer))
+                    Some(format!("{} is in layer {} — place it only in the foundation layer", file.file.rel, layer))
                 } else {
                     let target = handler.definition.target();
                     match hy.get(&file.file.rel) {
                         Some(index) if !index.definitions.iter().any(|d| d.qualified_name == target) => {
-                            Some(format!("{} に定義 {} が無い", file.file.rel, handler.definition.name))
+                            Some(format!("{} has no definition {}", file.file.rel, handler.definition.name))
                         }
                         _ => None,
                     }
@@ -2536,7 +2536,7 @@ fn judge_world_handler_places(
                 rel: rel.clone(),
                 path: architecture.path.clone(),
                 range: handler.range,
-                message: format!("許可名簿の定義 {} — {}", spelling, problem),
+                message: format!("allow-list definition {} — {}", spelling, problem),
                 detail: Some(spelling.clone()),
                 base: Severity::Error,
                 explain: Explain::WorldHandlerMisplaced { definition: spelling, problem },
@@ -2546,22 +2546,22 @@ fn judge_world_handler_places(
     drafts
 }
 
-/// 定義の範囲 inner が outer の中に在るか(同じ範囲は入れ子ではない)。
+/// Whether definition range inner is inside outer (the same range is not nested).
 fn range_inside(inner: &Range, outer: &Range) -> bool {
     outer.start <= inner.start && inner.end <= outer.end && inner != outer
 }
 
 
-/// 1 つの test file の印の読み(file ごとに Hy の reader で 1 度だけ読む — deftest ごとに読み直さない)。
-/// module の印 = 最上位の `(val pytestmark 値)` / `(setv pytestmark 値)` の値の綴り。deftest の印 = deftest の始まりの行 → :marks の並びの
-/// 綴り(doeff-hy の deftest と同じ読み方 — 名の後の fixture の並び `[..]` を 1 つ外し、先頭の文字列を飛ばした最初の dict の :marks)。
-/// 註・検の本体の文字列の中の綴りは印ではない。defadr などの中に入れ子の deftest も読む。
+/// Reading of the marks of one test file (read once per file with the Hy reader — not re-read per deftest).
+/// Module marks = the spelling of the value of a top-level `(val pytestmark value)` / `(setv pytestmark value)`. Deftest marks = start line of the deftest -> the sequence of spellings in :marks
+/// (read the same way as doeff-hy's deftest — remove one fixture list `[..]` after the name, skip the leading string, and take :marks of the first dict).
+/// Spellings in comments or in strings inside a test body are not marks. Deftests nested inside defadr and the like are also read.
 struct FileMarks {
     module: Vec<String>,
     deftests: HashMap<usize, String>,
-    /// 空でない `:interpreters` を持つ deftest の始まりの行(DOEFF137)。
+    /// The start lines of deftests that have a non-empty `:interpreters` (DOEFF137).
     interpreters: HashSet<usize>,
-    /// deftest の始まりの行 → `:interpreters` の要素のうち記号の物の綴り(DOEFF133 が名の定数の定義と、名 → 組み立ての表の組み立てへ辿る)。
+    /// Start line of deftest -> spellings of the elements of `:interpreters` that are symbols (DOEFF133 follows from the definition of the name constant and the assembly of the name -> assembly table).
     interpreter_symbols: HashMap<usize, Vec<String>>,
 }
 
@@ -2581,7 +2581,7 @@ impl FileMarks {
                 _ => None,
             })
             .collect();
-        // 行の頭の byte の位置(form の始まりの行を二分探索で引く)。
+        // Byte position of the head of each line (look up the form's start line by binary search).
         let starts: Vec<usize> = std::iter::once(0).chain(source.match_indices('\n').map(|(at, _)| at + 1)).collect();
         let line_of = |form: &Form| starts.partition_point(|start| *start <= form.span.start).saturating_sub(1);
         let mut deftests = HashMap::new();
@@ -2589,7 +2589,7 @@ impl FileMarks {
         let mut interpreter_symbols = HashMap::new();
         let mut stack: Vec<&Form> = forms.iter().collect();
         while let Some(form) = stack.pop() {
-            // 入れ子はどの括弧の中にも在る(defadr の :tests [(deftest …) …] の並びの中など)。
+            // A nested one is inside any parentheses (e.g. in the :tests [(deftest …) …] list of defadr).
             let Node::Seq { delim, items } = &form.node else { continue };
             stack.extend(items.iter());
             if *delim != Delim::Paren || !items.first().is_some_and(|head| text(head) == "deftest") {
@@ -2609,8 +2609,8 @@ impl FileMarks {
             if let Some(marks) = option(":marks") {
                 deftests.insert(line_of(form), text(marks));
             }
-            // DOEFF137 は空でない列かだけを見る。DOEFF133 は要素の記号を名の定数の定義へ解いて辿る(文字列の要素は conftest の表が引く名で、
-            // Hy の索引では解けない)。
+            // DOEFF137 only looks at whether the list is non-empty. DOEFF133 resolves the element symbols to the definitions of name constants and follows them (string elements are names that the conftest table looks up,
+            // and cannot be resolved by the Hy index).
             if let Some(Node::Seq { items, .. }) = option(":interpreters").map(|value| &value.node) {
                 if !items.is_empty() {
                     interpreters.insert(line_of(form));
@@ -2624,17 +2624,17 @@ impl FileMarks {
         FileMarks { module, deftests, interpreters, interpreter_symbols }
     }
 
-    /// テストの定義が空でない `:interpreters` を持つか(縁の検 — 本物と模擬の解釈器に同じ検を通す・DOEFF137)。
+    /// Whether a test definition has a non-empty `:interpreters` (an edge test — passing the same test through real and simulated interpreters, DOEFF137).
     fn runs_interpreters(&self, test: &Definition) -> bool {
         self.interpreters.contains(&(test.full_range.start.line as usize))
     }
 
-    /// テストの定義の `:interpreters` の要素のうち記号の物の綴り(DOEFF133)。
+    /// Spellings of the elements of a test definition's `:interpreters` that are symbols (DOEFF133).
     fn interpreter_symbols(&self, test: &Definition) -> &[String] {
         self.interpreter_symbols.get(&(test.full_range.start.line as usize)).map_or(&[], Vec::as_slice)
     }
 
-    /// テストの定義か module の頭が、縁の印 mark を持つか。印の名は Python の綴り(`real_world`)と Hy の綴り(`real-world`)の両方で読む。
+    /// Whether a test definition or the module head has the edge mark `mark`. The mark's name is read in both the Python spelling (`real_world`) and the Hy spelling (`real-world`).
     fn carries(&self, test: &Definition, mark: &str) -> bool {
         let spellings = [mark.to_string(), mark.replace('_', "-")];
         let named = |text: &str| spellings.iter().any(|s| text.contains(&format!("\"{}\"", s)) || text.contains(&format!("mark.{}", s)));
@@ -2642,24 +2642,24 @@ impl FileMarks {
     }
 }
 
-/// 定義の間の辺(呼び出し・参照・入れ子)の図 — 全体の索引から 1 度だけ組む(DOEFF133・136 が使う)。
+/// The graph of edges between definitions (calls, references, nesting) — built once from the whole index (used by DOEFF133 and 136).
 struct DefinitionGraph<'h> {
     rels: Vec<&'h String>,
-    /// 定義 1 つ = 節 1 つ(file の順・file の中の添字の順)。
+    /// One definition = one node (in file order, then index order within a file).
     nodes: Vec<(&'h str, usize)>,
     base: HashMap<&'h str, usize>,
-    /// world[n] = その定義そのものが外の世界に触れる理由(名簿の定義の綴り・:wraps の handler の綴り・生の I/O の証拠の名)。
+    /// world[n] = the reason that definition itself touches the outside world (the spelling of an allow-list definition, the spelling of a :wraps handler, the name of raw I/O evidence).
     world: Vec<Option<String>>,
-    /// callers[n] = n に届く定義(辺の逆向き)。
+    /// callers[n] = definitions that reach n (the reverse direction of edges).
     callers: Vec<Vec<usize>>,
-    /// world_carried[n] = 系の値の中(defsystem の本体・:systems の :carriers の引数)で外の世界に触れる理由。
+    /// world_carried[n] = the reason it touches the outside world inside a system value (the body of defsystem, the arguments of :carriers in :systems).
     world_carried: Vec<Option<String>>,
-    /// carried[n] = 系の値の中の辺で n に届く定義(系の値として運ぶだけで、この場では回らない辺)。
+    /// carried[n] = definitions that reach n by an edge inside a system value (only carried as a system value; edges that do not run here).
     carried: Vec<Vec<usize>>,
-    /// runs[n] = その定義が系を回す入口(:systems の :runners)を名指す。
+    /// runs[n] = that definition names an entry that runs systems (:runners in :systems).
     runs: Vec<bool>,
-    /// 索引の外の名指し(節・名指した完全修飾名・系の値の中か)— 組む時に渡した `foreign` が認めた名だけ(DOEFF133 の
-    /// Python の関数)。
+    /// References outside the index (node, the fully qualified name named, whether inside a system value) — only names that the `foreign` passed at build time accepted (DOEFF133's
+    /// Python functions).
     foreign: Vec<(usize, String, bool)>,
 }
 
@@ -2667,7 +2667,7 @@ fn definition_graph<'h>(architecture: &architecture::Architecture, hy: &'h HashM
     definition_graph_with(architecture, hy, &|_| false)
 }
 
-/// 定義の辺の図を組み、索引の外の名のうち foreign が認めた物の名指しを `foreign` の欄に残す(辺にはしない — 読む側が決める)。
+/// Builds the graph of edges between definitions, and among names outside the index, leaves the references that foreign accepts in the `foreign` field (not as edges — the reading side decides).
 fn definition_graph_with<'h>(
     architecture: &architecture::Architecture,
     hy: &'h HashMap<String, HyFileIndex>,
@@ -2678,7 +2678,7 @@ fn definition_graph_with<'h>(
     let catalog = world_catalog::WorldCatalog::bundled();
     let wrapped = catalog.world_targets(architecture);
     let static_readers: BTreeSet<String> = architecture.static_readers.iter().map(|r| r.target()).collect();
-    // 系の値を組む物 = :carriers と、索引の defsystem の定義(その呼び出しの引数の土台は系の値として運ばれる)。
+    // What builds a system value = :carriers and the index's defsystem definitions (the foundation of the arguments of their calls is carried as a system value).
     let carriers: BTreeSet<String> = architecture
         .systems
         .iter()
@@ -2690,7 +2690,7 @@ fn definition_graph_with<'h>(
     let runners: BTreeSet<String> = architecture.systems.iter().flat_map(|s| s.runners.iter().map(|r| r.target())).collect();
     let mut rels: Vec<&String> = hy.keys().collect();
     rels.sort();
-    // 定義 1 つ = 節 1 つ(file の順・file の中の添字の順)。
+    // One definition = one node (in file order, then index order within a file).
     let mut nodes: Vec<(&str, usize)> = Vec::new();
     let mut base: HashMap<&str, usize> = HashMap::new();
     let mut by_name: HashMap<&str, usize> = HashMap::new();
@@ -2701,9 +2701,9 @@ fn definition_graph_with<'h>(
             nodes.push((rel.as_str(), index));
         }
     }
-    // world[n] = その定義そのものが外の世界に触れる理由(名簿の定義の綴り・:wraps の handler の綴り・生の I/O の証拠の名)。
+    // world[n] = the reason that definition itself touches the outside world (the spelling of an allow-list definition, the spelling of a :wraps handler, the name of raw I/O evidence).
     let mut world: Vec<Option<String>> = vec![None; nodes.len()];
-    // callers[n] = n に届く定義(辺の逆向き)。
+    // callers[n] = definitions that reach n (the reverse direction of edges).
     let mut callers: Vec<Vec<usize>> = vec![Vec::new(); nodes.len()];
     let mut world_carried: Vec<Option<String>> = vec![None; nodes.len()];
     let mut carried: Vec<Vec<usize>> = vec![Vec::new(); nodes.len()];
@@ -2714,7 +2714,7 @@ fn definition_graph_with<'h>(
         let first = base[rel.as_str()];
         let definitions = &file.definitions;
         for (index, definition) in definitions.iter().enumerate() {
-            // 縁に数えるのは :edge-touches の触れる先だけ(名簿の定義はその :touches・生の I/O は証拠の分類で判じる)。
+            // Only the :edge-touches targets count as an edge (an allow-list definition by its :touches, raw I/O by the classification of the evidence).
             if let Some((spelling, _)) = listed.get(&definition.qualified_name).filter(|(_, t)| architecture.counts_as_edge(t)) {
                 world[first + index] = Some(spelling.clone());
             } else if let Some(evidence) = definition
@@ -2726,7 +2726,7 @@ fn definition_graph_with<'h>(
                 world[first + index] = Some(evidence.name.clone());
             }
         }
-        // 入れ子: 外の定義は内の定義の届く先に届く(始まりの順に並べ、開いている定義の stack で親を引く)。
+        // Nesting: an outer definition reaches what the inner definition reaches (arrange in start order and look up the parent with a stack of open definitions).
         let mut order: Vec<usize> = (0..definitions.len()).collect();
         order.sort_by(|a, b| definitions[*a].full_range.start.cmp(&definitions[*b].full_range.start).then(definitions[*b].full_range.end.cmp(&definitions[*a].full_range.end)));
         let mut open: Vec<usize> = Vec::new();
@@ -2740,19 +2740,19 @@ fn definition_graph_with<'h>(
             open.push(index);
         }
         let in_import = |range: &Range| file.imports.iter().any(|imp| imp.range.start <= range.start && range.end <= imp.range.end);
-        // 読むだけの受け手(:static-readers)の呼び出しの引数の中の参照は、値として読まれるだけで実行されない — 辺にしない。
+        // References inside the arguments of calls to read-only receivers (:static-readers) are only read as values and not executed — they are not edges.
         let read_only: Vec<&Range> =
             file.calls.iter().filter(|c| c.target.as_deref().is_some_and(|t| static_readers.contains(t))).map(|c| &c.form_range).collect();
         let only_read = |range: &Range| read_only.iter().any(|form| range_inside(range, form));
-        // 系の値の中(:carriers の呼び出しの引数・defsystem の本体)の名は、系の値として運ばれるだけの辺(#1390)。
+        // Names inside a system value (the arguments of :carriers calls, the body of defsystem) are edges that are only carried as a system value (#1390).
         let carrier_forms: Vec<&Range> =
             file.calls.iter().filter(|c| c.target.as_deref().is_some_and(|t| carriers.contains(t))).map(|c| &c.form_range).collect();
         let in_carrier = |range: &Range| carrier_forms.iter().any(|form| range_inside(range, form));
-        // 辺になる名(索引の定義か :wraps の handler)だけを見る — ほかの名の持ち主の定義は引かない。
+        // Look only at names that become edges (index definitions or :wraps handlers) — do not look up the owner definitions of other names.
         let known = |t: &str| by_name.contains_key(t) || wrapped.contains_key(t) || runners.contains(t);
         let interesting = |t: &str| known(t) || foreign(t);
-        // 値を検めるだけの名指し(比べの form と assert の被演算子 — 索引の `Reference::inspected`)は、名指した値を呼ばず・被せず・渡さないので
-        // 辺にしない。呼ぶ・with-handlers の列に置く・他の定義の引数に渡す・比べの外で属性を読む名指しは今までどおり辺。
+        // A reference that only inspects a value (a comparison form or an operand of assert — the index's `Reference::inspected`) does not call, wrap or pass the named value, so
+        // it is not an edge. References that call, put in a with-handlers list, pass as an argument of another definition, or read an attribute outside a comparison are edges as before.
         let spots = file
             .references
             .iter()
@@ -2764,7 +2764,7 @@ fn definition_graph_with<'h>(
         for (target, owner, inside_carrier) in spots {
             let Some(owner_index) = owner else { continue };
             let owner = first + owner_index;
-            // :systems を宣言しない repo は今までどおり(defsystem の中の辺もふつうの辺 — 入口を知らないので、系の中を別に数えない)。
+            // A repo that does not declare :systems works as before (edges inside defsystem are ordinary edges — the entry is unknown, so the inside of a system is not counted separately).
             let is_carried = architecture.systems.is_some() && (inside_carrier || definitions[owner_index].kind == DefinitionKind::Defsystem);
             if !known(target) {
                 foreign_spots.push((owner, target.to_string(), is_carried));
@@ -2775,7 +2775,7 @@ fn definition_graph_with<'h>(
                 continue;
             }
             if let Some((spelling, _, touches)) = wrapped.get(target) {
-                // 目録の数えない行(:wraps に書けるだけの移行の間の行)は外の世界に触れない。
+                // Rows the catalog does not count (rows that can be written in :wraps only during migration) do not touch the outside world.
                 let counted = catalog.handlers.get(target).is_some_and(|h| h.counts());
                 if counted && architecture.counts_as_edge(touches) {
                     let slot = if is_carried { &mut world_carried[owner] } else { &mut world[owner] };
@@ -2793,14 +2793,14 @@ fn definition_graph_with<'h>(
     DefinitionGraph { rels, nodes, base, world, callers, world_carried, carried, runs, foreign: foreign_spots }
 }
 
-/// 定義の辺の図の上で、種の節へ届く節(DOEFF133・137 が使う)。reaches[n] = n から種へ届く・toward[n] = n から種へ向かう次の節
-/// (None なら n 自身が種)。
+/// Nodes that reach a seed node on the graph of edges between definitions (used by DOEFF133 and 137). reaches[n] = n reaches a seed; toward[n] = the next node from n toward a seed
+/// (None if n itself is a seed).
 struct Reach {
     reaches: Vec<bool>,
     toward: Vec<Option<usize>>,
 }
 
-/// 系を回す入口(:systems の :runners)に届く定義(入口を名指す定義から、ふつうの辺を逆向きに辿る)。
+/// Definitions that reach an entry that runs systems (:runners in :systems) (follow ordinary edges in reverse from the definitions that name the entry).
 fn running_nodes(graph: &DefinitionGraph) -> Vec<bool> {
     let mut running = graph.runs.clone();
     let mut queue: std::collections::VecDeque<usize> = (0..graph.nodes.len()).filter(|n| running[*n]).collect();
@@ -2815,9 +2815,9 @@ fn running_nodes(graph: &DefinitionGraph) -> Vec<bool> {
     running
 }
 
-/// 種の節から逆向きに辿る(DOEFF133 の縁の数えと同じ辿り方)。seeds[n] = n そのものが種・carried_seeds[n] = 系の値の中で n が種に触れる。
-/// 2 段: direct = 系の値の中の辺を通らずに届く・via_system = 系の値の中の辺を 1 度でも通って届く(#1390)。届く = 直に届くか、系の値の
-/// 中から届き、しかも系を回す入口にも届く(running)。
+/// Follows in reverse from the seed nodes (the same way as DOEFF133's edge counting). seeds[n] = n itself is a seed; carried_seeds[n] = n touches a seed inside a system value.
+/// Two stages: direct = reaches without passing an edge inside a system value; via_system = reaches by passing an edge inside a system value at least once (#1390). Reaches = reaches directly, or reaches from inside a system value
+/// and also reaches an entry that runs systems (running).
 fn reach_seeds(graph: &DefinitionGraph, seeds: &[bool], carried_seeds: &[bool], running: &[bool]) -> Reach {
     let (callers, carried, count) = (&graph.callers, &graph.carried, graph.nodes.len());
     let mut direct: Vec<bool> = seeds.to_vec();
@@ -2860,11 +2860,11 @@ fn reach_seeds(graph: &DefinitionGraph, seeds: &[bool], carried_seeds: &[bool], 
     Reach { reaches, toward }
 }
 
-/// DOEFF133: テストの種類を届く先から導く。定義の間の辺(呼び出し・参照・入れ子)を全体の索引から 1 度だけ組み、外の世界の側
-/// (名簿の定義・:wraps の handler を名指す定義・強い生の I/O の証拠を持つ定義)から逆向きに辿って「外の世界に届く定義」の集合を
-/// 求める。deftest がその集合に在れば縁(:edge-mark の印が要る)、無ければ手元(印を持たない)。Python の検は数えない(R6 で deftest へ)。
-/// Hy の定義が名指す repo の中の Python の関数は、その中の生の I/O の強い証拠と、名前で決まる呼び先(Python の関数・Hy の定義)まで
-/// 辿る(python_reach)。読めない Python の module は 2 つ目の答え(報告の誤り)に名乗る。
+/// DOEFF133: derives a test's kind from what it reaches. Builds the graph of edges between definitions (calls, references, nesting) once from the whole index, and follows in reverse from the outside-world side
+/// (allow-list definitions, definitions that name a :wraps handler, definitions with strong raw I/O evidence) to find the set of "definitions that reach the outside world". If a deftest is in that set it is an edge (the :edge-mark is required); otherwise it is local (no mark).
+/// Python tests are not counted (moved to deftest in R6).
+/// For Python functions in the repo that a Hy definition names, follows their strong raw I/O evidence and the callees decided by name (Python functions, Hy definitions)
+/// (python_reach). An unreadable Python module is named in the second answer (the report's errors).
 fn judge_test_kinds(
     root: &Path,
     architecture: &architecture::Architecture,
@@ -2881,8 +2881,8 @@ fn judge_test_kinds(
         .rev()
         .map(|(node, (rel, index))| (hy[*rel].definitions[*index].qualified_name.as_str(), node))
         .collect();
-    // deftest の :interpreters の記号 → 名の定数の定義と、その module の名 → 組み立ての表がその名に当てた組み立て(本物の側の組み立ては
-    // 網・cluster に届く — 契約の検は本物の側で縁)。索引の外の Python の関数は、ほかの名指しと同じく foreign で辿る。
+    // Symbols of a deftest's :interpreters -> the definitions of name constants, and the assembly that the module's name -> assembly table assigned to that name (the real side's assembly
+    // reaches the network and cluster — the contract test is an edge on the real side). Python functions outside the index are followed by foreign, like other references.
     let marks_of: HashMap<String, FileMarks> = graph
         .rels
         .iter()
@@ -2971,9 +2971,9 @@ fn judge_test_kinds(
                 reached.push(reason.clone());
             }
             let message = if edge {
-                format!("テスト {} は外の世界に届く(縁 — {})のに印 {} が無い", test.name, reached.join(" → "), mark)
+                format!("test {} reaches the outside world (edge — {}) but has no mark {}", test.name, reached.join(" → "), mark)
             } else {
-                format!("テスト {} は外の世界に届かない(手元)のに印 {} が在る", test.name, mark)
+                format!("test {} does not reach the outside world (local) but has the mark {}", test.name, mark)
             };
             drafts.push(Draft {
                 rule: ProjectRule::TestKindMismatch,
@@ -2991,12 +2991,12 @@ fn judge_test_kinds(
     (drafts, python_errors)
 }
 
-/// DOEFF137: 許可名簿の handler ごとに縁の検が在るかを判じる。縁の検 = 空でない `:interpreters` を持つ deftest のうち、DOEFF133 と
-/// 同じ定義の辺の図を辿ってその handler の定義に届く物(`:interpreters` の要素は file の外の定数の記号なので読み解かない)。
-/// 理由つきの `:contract-test (none …)` の handler は判じない・理由の無い `none` は縁の検が在っても鳴る。当たりの位置は architecture.hy の
-/// 名簿の要素・細目は名簿の綴り(#1796)。
-/// 相手役の名簿(:stand-ins)の組ごとにも、相手役と本物の両方に届く縁の検を数える(verified fake・Pact の形 — 同じ検を両方に流して
-/// 答えを照らす)。本物は索引の外(doeff などの package)に在ってよく、その時は本物を直に名指す定義から辿る。細目は「相手役->本物」。
+/// DOEFF137: judges for each handler of the allow-list whether an edge test exists. Edge test = among deftests with a non-empty `:interpreters`, one that follows the same graph of edges between definitions as DOEFF133
+/// and reaches that handler's definition (the elements of `:interpreters` are symbols of constants outside the file, so they are not resolved).
+/// A handler with `:contract-test (none …)` with a reason is not judged; a `none` without a reason fires even if an edge test exists. The finding is positioned at the allow-list element in architecture.hy,
+/// and the detail is the allow-list spelling (#1796).
+/// For each pair in the stand-in list (:stand-ins), it also counts edge tests that reach both the stand-in and the real one (verified fake, Pact shape — run the same test through both
+/// and compare the answers). The real one may be outside the index (a package such as doeff), in which case follow from the definitions that name the real one directly. The detail is "stand-in->real".
 fn judge_contract_tests(root: &Path, architecture: &architecture::Architecture, hy: &HashMap<String, HyFileIndex>) -> Vec<Draft> {
     let judged: Vec<&architecture::WorldHandler> =
         architecture.world_handlers.iter().filter(|h| !matches!(h.contract_test, architecture::ContractTest::Waived(_))).collect();
@@ -3007,7 +3007,7 @@ fn judge_contract_tests(root: &Path, architecture: &architecture::Architecture, 
     }
     let graph = definition_graph(architecture, hy);
     let running = running_nodes(&graph);
-    // 縁の検の節(空でない :interpreters を持つ deftest)— file ごとに 1 度だけ読む。
+    // Nodes of edge tests (deftests with a non-empty :interpreters) — read once per file.
     let mut contract_tests: Vec<usize> = Vec::new();
     for rel in &graph.rels {
         let file = &hy[*rel];
@@ -3043,9 +3043,9 @@ fn judge_contract_tests(root: &Path, architecture: &architecture::Architecture, 
         let Some(breach) = contract_test_breach(&handler.contract_test, covered) else { continue };
         let spelling = handler.definition.spelling();
         let message = match breach {
-            ContractTestBreach::NoEdgeTest => format!("許可名簿の handler {} に縁の検(空でない :interpreters を持ち、この handler に届く deftest)が無い", spelling),
+            ContractTestBreach::NoEdgeTest => format!("allow-list handler {} has no edge test (a deftest with a non-empty :interpreters that reaches this handler)", spelling),
             ContractTestBreach::NoneWithoutReason => {
-                format!("許可名簿の handler {} の :contract-test none に理由が無い(縁の検を求めない理由のテストの名を書く)", spelling)
+                format!("allow-list handler {} has no reason in :contract-test none (write the name of a test that explains why no edge test is required)", spelling)
             }
         };
         drafts.push(Draft {
@@ -3060,9 +3060,9 @@ fn judge_contract_tests(root: &Path, architecture: &architecture::Architecture, 
             explain: Explain::WorldHandlerWithoutContractTest { handler: spelling, breach },
         });
     }
-    // 名の定義(索引に在れば)と、その名を直に名指す定義(呼ぶ・値として渡す・属性を読む — 検めるだけの名指しと import は除く)と、
-    // その名を解釈器の名の文字列(`"module:名"` / `"module:名@<変種>"`)で綴る定義を種にして逆向きに辿る。索引の外の本物(doeff の
-    // handler など)は定義の節が無いので、名指す定義だけが種になる。
+    // Seeds are the definition of the name (if in the index), the definitions that name it directly (call, pass as a value, read an attribute — excluding inspection-only references and imports), and
+    // the definitions that spell it as an interpreter name string (`"module:name"` / `"module:name@<variant>"`), followed in reverse. A real one outside the index (such as doeff's
+    // handler) has no definition node, so only the definitions that name it become seeds.
     let spelled = if judged_stand_ins.is_empty() { HashMap::new() } else { spelled_handlers(root, &graph, hy) };
     let reach_of = |target: &str| -> Vec<bool> {
         let mut seeds = vec![false; graph.nodes.len()];
@@ -3098,13 +3098,13 @@ fn judge_contract_tests(root: &Path, architecture: &architecture::Architecture, 
         let (spelling, real) = (stand_in.definition.spelling(), stand_in.real.spelling());
         let message = match breach {
             ContractTestBreach::NoEdgeTest => format!(
-                "相手役 {} に、本物 {} と同じ契約の検(空でない :interpreters を持ち、相手役と本物の両方に届く deftest)が無い{}",
+                "stand-in {} has no contract test of the same contract as real {} (a deftest with a non-empty :interpreters that reaches both the stand-in and the real one){}",
                 spelling,
                 real,
-                if node_of.contains_key(target.as_str()) { "" } else { "(相手役の定義が索引に無い)" }
+                if node_of.contains_key(target.as_str()) { "" } else { " (the stand-in's definition is not in the index)" }
             ),
             ContractTestBreach::NoneWithoutReason => {
-                format!("相手役 {} の :contract-test none に理由が無い(契約の検を求めない理由のテストの名を書く)", spelling)
+                format!("stand-in {} has no reason in :contract-test none (write the name of a test that explains why no contract test is required)", spelling)
             }
         };
         drafts.push(Draft {
@@ -3122,9 +3122,9 @@ fn judge_contract_tests(root: &Path, architecture: &architecture::Architecture, 
     drafts
 }
 
-/// 契約の検の組み立ての module の名 → 組み立ての表(`(val INTERPRETERS {名の定数 組み立て …})`)— 辞書の literal の組のうち、鍵と値が
-/// どちらも記号で名の解ける物の、鍵の完全修飾名 → 値の完全修飾名の列(DOEFF133)。解釈器の名の定数は文字列で、組み立てを名指さない —
-/// 回る組み立ては conftest がこの表から引くので、表の組を名の定数から組み立てへの辺として読む。
+/// Module name of the assembly for contract tests -> assembly table (`(val INTERPRETERS {name-constant assembly …})`) — among the pairs of dict literals, those whose key and value are
+/// both symbols with resolvable names: the fully qualified name of the key -> the list of fully qualified names of the value (DOEFF133). Interpreter name constants are strings and do not name an assembly —
+/// the assembly that runs is looked up by conftest from this table, so the table's pairs are read as edges from a name constant to an assembly.
 fn interpreter_table(root: &Path, rel: &str, file: &HyFileIndex) -> HashMap<String, Vec<String>> {
     use doeff_indexer::hy_index::reader::{Delim, Form, Node, Reader};
     let mut out: HashMap<String, Vec<String>> = HashMap::new();
@@ -3154,9 +3154,9 @@ fn interpreter_table(root: &Path, rel: &str, file: &HyFileIndex) -> HashMap<Stri
     out
 }
 
-/// 定義の中の文字列 literal のうち、解釈器の名の綴り `"module:名"` / `"module:名@<変種>"` の物 — 完全修飾名 → その文字列を持つ節
-/// (DOEFF137 の相手役の組)。契約の検の組み立ては解釈器を名の文字列の定数で名指し、名 → 組み立ての表で handler に繋ぐので、
-/// 定数の定義は handler を参照しない(`(val OS-CONSOLE "controllers.foundation.console:os-console")`)— 綴りそのものを名指しに数える。
+/// String literals inside a definition that are interpreter-name spellings `"module:name"` / `"module:name@<variant>"` — fully qualified name -> the clauses holding that string
+/// (the counterpart pairs of DOEFF137). A contract test's assembly names the interpreter with a constant of the name string and connects it to the handler through a name -> assembly table,
+/// so the constant's definition does not reference the handler (`(val OS-CONSOLE "controllers.foundation.console:os-console")`) — the spelling itself counts as naming it.
 fn spelled_handlers(root: &Path, graph: &DefinitionGraph, hy: &HashMap<String, HyFileIndex>) -> HashMap<String, Vec<usize>> {
     use doeff_indexer::hy_index::reader::{Form, Node, Reader, StrKind};
     let mut out: HashMap<String, Vec<usize>> = HashMap::new();
@@ -3178,7 +3178,7 @@ fn spelled_handlers(root: &Path, graph: &DefinitionGraph, hy: &HashMap<String, H
             };
             let spelling = body.split_once('@').map_or(body, |(head, _)| head);
             let Some(named) = architecture::DefinitionRef::parse(spelling) else { continue };
-            // 文字列の行を囲む一番内の定義(始まりの最も遅い物)。
+            // The innermost definition enclosing the string's line (the one that starts latest).
             let line = starts.partition_point(|start| *start <= form.span.start).saturating_sub(1);
             let owner = definitions
                 .iter()
@@ -3194,7 +3194,7 @@ fn spelled_handlers(root: &Path, graph: &DefinitionGraph, hy: &HashMap<String, H
     out
 }
 
-/// handler 1 つの縁の検の宣言と、縁の検が届くか(求める時だけ問う)から、DOEFF137 の当たりを決める。
+/// Decides the DOEFF137 hits from a handler's edge-test declaration and whether the edge test reaches it (asked only when required).
 fn contract_test_breach(declared: &architecture::ContractTest, covered: impl FnOnce() -> bool) -> Option<ContractTestBreach> {
     match declared {
         architecture::ContractTest::Waived(_) => None,
@@ -3203,8 +3203,8 @@ fn contract_test_breach(declared: &architecture::ContractTest, covered: impl FnO
     }
 }
 
-/// 定義の辺の図の前向きの辺(callees[n] = n から届く定義)。系の値の中の辺(defsystem の本体・:carriers の引数)も本番では系が回すので
-/// 届く先に数える(DOEFF133 の縁の数えとは別 — #1390)。DOEFF143・155・156 が使う。
+/// The forward edges of the definition-edge graph (callees[n] = definitions reachable from n). Edges inside system values (the body of defsystem, the arguments of :carriers) are also run by the system in production,
+/// so they count as reachable (separate from how DOEFF133 counts edges — #1390). Used by DOEFF143, 155 and 156.
 fn forward_edges(graph: &DefinitionGraph) -> Vec<Vec<usize>> {
     let mut callees: Vec<Vec<usize>> = vec![Vec::new(); graph.nodes.len()];
     for (callee, (callers, carried)) in graph.callers.iter().zip(&graph.carried).enumerate() {
@@ -3215,12 +3215,12 @@ fn forward_edges(graph: &DefinitionGraph) -> Vec<Vec<usize>> {
     callees
 }
 
-/// 効果の名(完全名)を定義元の正典の名へ解く読み(`crate::origins` の解き手)と、解けなかった綴り。DOEFF143・157・164・167・206 の
-/// 鍵・表の照らし・層の判じは、節の側も表の行の側も、ここで解いた名で読む(import の綴りで照らさない — 同じ効果を再 export する入口から
-/// import し直すだけで鍵が変わり、表の行が当たらなくなった)。
+/// A reading that resolves an effect's name (fully qualified) to the canonical name of its defining origin (the resolver of `crate::origins`), and the spellings that could not be resolved. The keys, table matching and layer judgments of DOEFF143, 157, 164, 167 and 206
+/// read the names resolved here, on both the clause side and the table-row side (they do not match by import spelling — merely re-importing the same effect from an entry that re-exports it
+/// changed the key and table rows stopped matching).
 struct EffectNames<'a> {
     origins: crate::origins::Origins<'a>,
-    /// 解けなかった綴り → 初めに見た所。
+    /// Spellings that could not be resolved -> where first seen.
     unresolved: BTreeMap<String, String>,
 }
 
@@ -3229,8 +3229,8 @@ impl<'a> EffectNames<'a> {
         Self { origins, unresolved: BTreeMap::new() }
     }
 
-    /// 綴り `written`(file `from` に書いた名 — 無ければ根の起点だけで引く)の正典の名。解けない時は綴りのまま返し、解けなかった事を
-    /// 覚える(所見に出す — 黙って綴りに倒さない)。
+    /// The canonical name for the spelling `written` (a name written in file `from` — if none, looked up from the root origin only). If it cannot be resolved, the spelling is returned as is and the fact that it could not be resolved is
+    /// remembered (shown in the findings — it does not silently fall back to the spelling).
     fn name(&mut self, written: &str, from: Option<&str>, at: impl FnOnce() -> String) -> String {
         match self.origins.origin_from(written, from) {
             Some(origin) => origin,
@@ -3241,7 +3241,7 @@ impl<'a> EffectNames<'a> {
         }
     }
 
-    /// 鍵 `<path>::<handler>::<効果>`(`::` の無い鍵は効果の完全名そのもの)の効果の部分を正典の名へ解いた鍵。
+    /// For a key `<path>::<handler>::<effect>` (a key without `::` is the effect's fully qualified name itself), the key with the effect part resolved to the canonical name.
     fn key(&mut self, key: &str, at: impl FnOnce() -> String) -> String {
         match key.rsplit_once("::") {
             Some((place, effect)) => {
@@ -3252,34 +3252,34 @@ impl<'a> EffectNames<'a> {
         }
     }
 
-    /// 表(鍵 → 理由)の鍵を正典の名へ解いた表と、解いた鍵 → 表に書いた鍵の対応。同じ正典の鍵に 2 行が当たれば知らせる。
+    /// A table (key -> reason) with keys resolved to canonical names, and the mapping from resolved key -> key written in the table. If two rows hit the same canonical key, it is reported.
     fn table(&mut self, table: &BTreeMap<String, String>, dir: Option<&str>, problems: &mut Vec<String>) -> (BTreeMap<String, String>, BTreeMap<String, String>) {
         let mut out = BTreeMap::new();
         let mut written = BTreeMap::new();
         let shown = dir.unwrap_or("-");
         for (key, reason) in table {
-            let canonical = self.key(key, || format!("表 {} の行 {}", shown, key));
+            let canonical = self.key(key, || format!("table {} row {}", shown, key));
             if let Some(first) = written.insert(canonical.clone(), key.clone()) {
-                problems.push(format!("表 {} の行 {} と {} が、効果の定義元の名で同じ鍵 {} になる — 1 行にまとめる", shown, first, key, canonical));
+                problems.push(format!("rows {} and {} of table {} get the same key {} by the effect's defining-origin name — merge them into one row", first, key, shown, canonical));
             }
             out.insert(canonical, reason.clone());
         }
         (out, written)
     }
 
-    /// 解けなかった綴りの所見(1 綴り 1 行)。
+    /// Findings for the spellings that could not be resolved (one line per spelling).
     fn problems(&self) -> Vec<String> {
         self.unresolved
             .iter()
             .map(|(written, at)| {
-                format!("効果 {} の定義元を解けない({})— 定義の module の file も、そこへ辿る再 export も見つからない。綴りのまま照らした", written, at)
+                format!("cannot resolve the defining origin of effect {} ({}) — neither the defining module's file nor a re-export leading to it was found. Matched by the spelling as written", written, at)
             })
             .collect()
     }
 }
 
-/// 図の中の effect の節の全部と、その形(読まない file の節は数えない)。節の形はここで 1 度だけ求め、DOEFF143・155・156・157・158・164・
-/// 167・206 が同じ物を読む。`names` を渡せば節の効果を定義元の正典の名へ解く(渡さなければ索引の綴りのまま — DOEFF155・156 は参照の綴りと照らす)。
+/// All the effect clauses in the graph, and their shapes (clauses of unread files are not counted). The shape of a clause is computed only once here, and DOEFF143, 155, 156, 157, 158, 164,
+/// 167 and 206 read the same thing. If `names` is passed, the clause's effect is resolved to the canonical name of its defining origin (if not passed, the index's spelling as is — DOEFF155 and 156 match against the reference spelling).
 fn effect_clauses(
     root: &Path,
     graph: &DefinitionGraph,
@@ -3299,7 +3299,7 @@ fn effect_clauses(
         let Some(written) = d.handles.as_ref().and_then(|h| h.target.clone()) else { continue };
         let handler = d.container.clone().unwrap_or_default();
         let effect = match names.as_deref_mut() {
-            Some(names) => names.name(&written, Some(rel), || format!("{} の {} の節", rel, handler)),
+            Some(names) => names.name(&written, Some(rel), || format!("the clause of {} in {}", handler, rel)),
             None => written.clone(),
         };
         let file_shapes =
@@ -3311,7 +3311,7 @@ fn effect_clauses(
     clauses
 }
 
-/// DOEFF155・156: 組み立ての形の破れを知らせにする(判定は assembly_shape)。全体の索引が要る(全体の実行だけ)。
+/// DOEFF155 and 156: turns breaches of the assembly shape into notices (the judgment is in assembly_shape). Needs the whole index (whole runs only).
 fn judge_assembly_shape(
     root: &Path,
     architecture: &architecture::Architecture,
@@ -3321,7 +3321,7 @@ fn judge_assembly_shape(
     hy: &HashMap<String, HyFileIndex>,
     enabled: &BTreeSet<ProjectRule>,
 ) -> (Vec<Draft>, Vec<String>) {
-    // 定義の図から判定の材料を組んで渡す(図の型と組み立ては mod.rs に在り、assembly_shape は mod.rs を読まない — #2121)。
+    // Build the judgment inputs from the definition graph and pass them on (the graph's types and assembly are in mod.rs, and assembly_shape does not read mod.rs — #2121).
     let graph = definition_graph(architecture, hy);
     let inputs = assembly_shape::GraphInputs {
         callees: forward_edges(&graph),
@@ -3367,17 +3367,17 @@ fn judge_assembly_shape(
     (drafts, problems)
 }
 
-/// DOEFF143: 模擬の根と本番の入口から定義の辺の図を前向きに辿り、模擬の根からだけ届く effect の節(偽物)が業務の効果に tap でなく
-/// 答える所と、外の世界の表・反例の表の腐りを出す。全体の索引が要る(全体の実行だけ)。
-/// 判定と、読めない表の理由(errors へ)と、空と読んだ無い表の知らせ(notes へ)。
+/// DOEFF143: walks the definition-edge graph forward from the simulation roots and the production entries, and reports where an effect clause (a fake) reachable only from the simulation root answers a business effect, not as a tap,
+/// and the rot of the outside-world table and the counterexample table. Needs the whole index (whole runs only).
+/// The judgments, the reasons for unreadable tables (into errors), and the notices for tables read as empty because absent (into notes).
 struct FakesJudgement {
     drafts: Vec<Draft>,
     problems: Vec<String>,
     notes: Vec<String>,
 }
 
-/// 本番の入口(DOEFF143・164・165 と DOEFF207 が読む 1 か所): 本番の code の組の file の本番の組の関数・defsystem・__main__ の節が
-/// 名指す定義・入口の文字列が指す定義(#3496)。図の節の添字で返す(同じ節が 2 度入ることがある)。
+/// The production entries (one place read by DOEFF143, 164, 165 and DOEFF207): the definitions named by the clauses of the production assembly functions, defsystem and __main__ in the production code's assembly files, and
+/// the definitions that the entry strings point to (#3496). Returned as indexes of the graph's clauses (the same clause may enter twice).
 fn production_entry_roots(
     root: &Path,
     decl: &architecture::BusinessFakes,
@@ -3428,7 +3428,7 @@ fn production_entry_roots(
             entry_strings.extend(business_fakes::entry_names(&source, decl));
         }
     }
-    // 文字列の綴りは定義の完全名まで縮める(属性の綴りは定義へ)。
+    // A string spelling is shrunk to the definition's fully qualified name (an attribute spelling goes to the definition).
     for spelling in entry_strings {
         let mut name = spelling.as_str();
         loop {
@@ -3445,7 +3445,7 @@ fn production_entry_roots(
     production_roots
 }
 
-/// `roots` から前向きの辺(`forward_edges`)で届く節(根そのものを含む)。
+/// The clauses reachable from `roots` by forward edges (`forward_edges`) (including the roots themselves).
 fn reached_from(callees: &[Vec<usize>], roots: &[usize]) -> Vec<bool> {
     let mut seen = vec![false; callees.len()];
     let mut queue: std::collections::VecDeque<usize> = roots.iter().copied().collect();
@@ -3461,7 +3461,7 @@ fn reached_from(callees: &[Vec<usize>], roots: &[usize]) -> Vec<bool> {
     seen
 }
 
-/// DOEFF143 の判定(`FakesJudgement` を返す)。
+/// The judgment of DOEFF143 (returns `FakesJudgement`).
 fn judge_business_fakes(
     root: &Path,
     architecture: &architecture::Architecture,
@@ -3481,11 +3481,11 @@ fn judge_business_fakes(
         notes.extend(judged.notes);
         judged.reasons
     };
-    // 外の世界の表と反例の表は宣言(無い dir は綴りの誤り)・:unserved は違反を固定する縮める向きの表(無い dir = 空 — #1918)
+    // The outside-world table and the counterexample table are declarations (a nonexistent dir is a spelling error); :unserved is a shrink-only table that pins violations (nonexistent dir = empty — #1918)
     let external = table(&decl.external_effects, registry::Absent::Unreadable);
     let counterexamples = table(&decl.counterexamples, registry::Absent::Unreadable);
     let unserved = table(&decl.unserved, registry::Absent::Empty);
-    // 節の効果と表の行の効果は、どちらも定義元の正典の名で照らす(表の行は書いた綴りのまま — 知らせは書いた鍵で出す)。
+    // A clause's effect and a table row's effect are both matched by the canonical name of their defining origin (a table row stays in the spelling as written — notices are given with the key as written).
     let mut names = EffectNames::new(crate::origins::Origins::new(root, hy));
     let (external, external_written) = names.table(&external, decl.external_effects.as_deref(), &mut problems);
     let (counterexamples, counterexample_written) = names.table(&counterexamples, decl.counterexamples.as_deref(), &mut problems);
@@ -3502,7 +3502,7 @@ fn judge_business_fakes(
     for node in 0..count {
         by_name.entry(definition(node).qualified_name.as_str()).or_insert(node);
     }
-    // 模擬の根: 模擬の環境と組み立ての層の定義・組の file の模擬の組の関数。
+    // Simulation roots: definitions of the simulation environment and assembly layer, and the simulation assembly functions in the assembly files.
     let simulation_roots: Vec<usize> = (0..count)
         .filter(|&n| {
             let (rel, _) = graph.nodes[n];
@@ -3515,16 +3515,16 @@ fn judge_business_fakes(
     let reach = |roots: &[usize]| reached_from(&callees, roots);
     let simulated_nodes = reach(&simulation_roots);
     let produced_nodes = reach(&production_roots);
-    // 検の根: 検の file の定義の全部(検だけが使う本番の code の置き場の業務の写しも、ここから届く)。
+    // Test roots: all definitions of test files (business copies in the production code's location that only tests use are also reached from here).
     let test_roots: Vec<usize> = (0..count).filter(|&n| role(n) == FileRole::Test).collect();
     let tested_nodes = reach(&test_roots);
     let clauses = effect_clauses(root, &graph, hy, decl, Some(&mut names));
     let simulated: Vec<bool> = clauses.iter().map(|c| simulated_nodes[c.node]).collect();
     let produced: Vec<bool> = clauses.iter().map(|c| produced_nodes[c.node]).collect();
     let tested: Vec<bool> = clauses.iter().map(|c| tested_nodes[c.node]).collect();
-    // 層の名(intent と翻訳)は :assembly-shape から読む。効果の層は定義元の module の置き場で決める。
+    // Layer names (intent and translation) are read from :assembly-shape. An effect's layer is decided by the location of its defining-origin module.
     let layer_of = |rel: &str| layers.and_then(|l| classify_layer_file(rel, l).map(|(site, _)| l.layers[site.layer.0].name.clone()));
-    // 効果(完全名)が intent の層の効果か — DOEFF158・165 の節の読みと DOEFF206 の節と表の行の読みが同じ 1 つを使う。
+    // Whether an effect (fully qualified name) is an intent-layer effect — DOEFF158 and 165's clause reading and DOEFF206's clause and table-row reading use this same one.
     let effect_in_intent = |effect: &str| {
         let base = business_fakes::module_of_effect(effect).replace('.', "/");
         let layer = layer_of(&format!("{}.hy", base)).or_else(|| layer_of(&format!("{}.py", base)));
@@ -3533,7 +3533,7 @@ fn judge_business_fakes(
     let intent_effect: Vec<bool> = clauses.iter().map(|c| effect_in_intent(&c.effect)).collect();
     let translation_file: Vec<bool> =
         clauses.iter().map(|c| shape.is_some_and(|s| layer_of(&c.rel).as_deref() == Some(s.translation_layer.as_str()))).collect();
-    // 本番の code の Python の handler(索引の図の外)が isinstance で答える効果。
+    // Effects that production Python handlers (outside the index graph) answer with isinstance.
     let python_answered: BTreeSet<String> = WalkDir::new(root)
         .follow_links(false)
         .into_iter()
@@ -3546,7 +3546,7 @@ fn judge_business_fakes(
         .flat_map(|(module, source)| business_fakes::python_isinstance_effects(&source, &module).into_iter().map(move |effect| (effect, module.clone())))
         .collect::<Vec<_>>()
         .into_iter()
-        .map(|(effect, module)| names.name(&effect, None, || format!("module {} の isinstance", module)))
+        .map(|(effect, module)| names.name(&effect, None, || format!("isinstance in module {}", module)))
         .collect();
     let inputs = business_fakes::Inputs {
         clauses: &clauses,
@@ -3560,7 +3560,7 @@ fn judge_business_fakes(
         unserved: &unserved,
         python_answered: &python_answered,
     };
-    // 表の腐りの知らせ。反例の表の古い行は DOEFF176、外の世界の表の腐りは DOEFF143(偽物の数と古い行の数を別の番号で数える)。
+    // Notices of table rot. Stale rows of the counterexample table are DOEFF176; rot of the outside-world table is DOEFF143 (the number of fakes and the number of stale rows are counted under different numbers).
     let table_draft = |rule: ProjectRule, dir: &Option<String>, detail: String, subject: String, reason: &str| {
         let rel = dir.clone().unwrap_or_else(|| "architecture.hy".to_string());
         Draft {
@@ -3575,17 +3575,17 @@ fn judge_business_fakes(
             explain: Explain::BusinessEffectFake { subject, reason: reason.to_string() },
         }
     };
-    // 節 1 つの知らせ(鍵の細目 = `[<種類>:]<handler>::<効果>`)。
+    // Notice for one clause (key detail = `[<kind>:]<handler>::<effect>`).
     let clause_draft = |rule: ProjectRule, i: usize, kind: Option<&str>, what: String, reason: &str| {
         let clause = &clauses[i];
-        let explain = Explain::BusinessEffectFake { subject: format!("handler {} の節 {}", clause.handler, clause.written), reason: reason.to_string() };
+        let explain = Explain::BusinessEffectFake { subject: format!("clause {} of handler {}", clause.written, clause.handler), reason: reason.to_string() };
         Draft {
             rule,
             layer: None,
             path: root.join(&clause.rel),
             rel: clause.rel.clone(),
             range: definition(clause.node).range,
-            message: format!("{} の {} が{}", clause.rel, clause.handler, what),
+            message: format!("{}: handler {} {}", clause.rel, clause.handler, what),
             detail: Some(match kind {
                 Some(kind) => format!("{}:{}::{}", kind, clause.handler, clause.written),
                 None => format!("{}::{}", clause.handler, clause.written),
@@ -3594,11 +3594,11 @@ fn judge_business_fakes(
             explain,
         }
     };
-    // DOEFF165(#1561 K3): intent の層の効果ごとの網羅の表 — 同じ到達(模擬の根・本番の入口)と、deftest から前向きに届く定義から 3 列を読む。
+    // DOEFF165 (#1561 K3): the coverage table per intent-layer effect — reads 3 columns from the same reach (simulation roots and production entries) and from the definitions reachable forward from deftests.
     let coverage: Vec<Draft> = match shape.filter(|_| enabled.contains(&ProjectRule::IntentEffectUncovered)) {
         None => Vec::new(),
         Some(shape) => {
-            // 出す側の根は検の file の deftest だけ(検の helper から届くだけの定義を「テストした」に数えない — DOEFF157 の検の根とは別)。
+            // The emitting-side roots are only the deftests of test files (definitions merely reachable from a test helper are not counted as "tested" — separate from DOEFF157's test roots).
             let deftest_roots: Vec<usize> = test_roots.iter().copied().filter(|&n| definition(n).kind == DefinitionKind::Deftest).collect();
             let deftested = reach(&deftest_roots);
             let service_root = layers::normalize_dir(&architecture.root);
@@ -3613,7 +3613,7 @@ fn judge_business_fakes(
                 .filter(|&n| definition(n).kind == DefinitionKind::Defeffect && layer_of(graph.nodes[n].0).as_deref() == Some(shape.intent_layer.as_str()))
                 .map(|n| {
                     let effect = definition(n).qualified_name.clone();
-                    // 出す側 = この効果を名指す定義のうち、答え手(効果の節とその handler)と宣言そのものを除いた物で、deftest から届く物。
+                    // Emitting side = among the definitions that name this effect, those excluding the responders (the effect clause and its handler) and the declaration itself, that are reachable from a deftest.
                     let emitters: BTreeSet<String> = graph.callers[n]
                         .iter()
                         .chain(&graph.carried[n])
@@ -3642,9 +3642,9 @@ fn judge_business_fakes(
                         path: root.join(&row.facts.rel),
                         rel: row.facts.rel.clone(),
                         range: node.map(|n| definition(n).range).unwrap_or_else(zero_range),
-                        message: format!("intent の効果 {} の網羅の欠け: {} — {}", row.facts.effect, row.gap_words(), row.columns()),
+                        message: format!("intent effect {} has a coverage gap: {} — {}", row.facts.effect, row.gap_words(), row.columns()),
                         detail: Some(row.detail()),
-                        // 欠けは失敗(#1562 K4)。今ある欠けは repo の登録簿に載せ、載った欠けは finish が warning に下げる。
+                        // A gap is a failure (#1562 K4). Existing gaps go in the repo's registry, and finish lowers registered gaps to warning.
                         base: Severity::Error,
                         explain: Explain::IntentEffectCoverage {
                             effect: row.facts.effect.clone(),
@@ -3657,10 +3657,10 @@ fn judge_business_fakes(
                 .collect()
         }
     };
-    // DOEFF206(#3407): 違反を通す表の行(1 鍵 1 file — 行の file に当てる)と、検証環境の dir の中の節。
+    // DOEFF206 (#3407): table rows that let a violation through (one key per file — applied to the row's file) and clauses inside the verification environment's dir.
     let pass_rows: Vec<business_fakes::PassRow> = if enabled.contains(&ProjectRule::IntentFakedInVerification) {
         let mut rows = Vec::new();
-        // 外の世界の表の読みの誤りは上の table が出す。下の層を通す表と検だけの偽物の表は無い dir を空と読む(Registry の読み)。
+        // Read errors of the outside-world table are reported by the table above. For the lower-layer pass-through table and the test-only fake table, a nonexistent dir is read as empty (Registry's reading).
         for (dir, report) in [(&decl.external_effects, false), (&decl.lower_layer_passages, true), (&decl.test_only_fakes, true)] {
             let Some(dir) = dir else { continue };
             let read = Registry::load(root, std::slice::from_ref(dir), &[]);
@@ -3679,11 +3679,11 @@ fn judge_business_fakes(
         Vec::new()
     };
     let intent_fakes: Vec<Verdict> = if enabled.contains(&ProjectRule::IntentFakedInVerification) {
-        // 行の効果も定義元の名で層を判じる(再 export の入口の綴りの行も intent の効果と読む)。
+        // A row's effect also has its layer judged by its defining-origin name (a row spelled via a re-exporting entry is also read as an intent effect).
         let row_intent: Vec<bool> = pass_rows
             .iter()
             .map(|row| {
-                let canonical = business_fakes::PassRow { key: names.key(&row.key, || format!("表 {} の行 {}", row.table, row.key)), ..row.clone() };
+                let canonical = business_fakes::PassRow { key: names.key(&row.key, || format!("table {} row {}", row.table, row.key)), ..row.clone() };
                 effect_in_intent(canonical.effect())
             })
             .collect();
@@ -3707,36 +3707,36 @@ fn judge_business_fakes(
                 ProjectRule::BusinessEffectFake,
                 i,
                 None,
-                format!("業務の効果 {} に答える偽物(模擬の根からだけ届く)", clauses[i].written),
-                "模擬の根から届き本番の入口から届かない定義が業務の効果に答えを作っている。業務の操作は下の層の効果を出す defk で書き、検査は外の世界の handler だけを差し替える。",
+                format!("is a fake answering business effect {} (reachable only from the simulation root)", clauses[i].written),
+                "A definition reachable from the simulation root but not from the production entry builds answers to a business effect. Write business operations with a defk that emits lower-layer effects, and have tests swap only the outside-world handlers.",
             ),
             Verdict::LowerLayerFake(i) => clause_draft(
                 ProjectRule::BusinessEffectFake,
                 i,
                 Some("lower"),
-                format!("下の層の効果 {} に答える第 2 の偽物(模擬の根からだけ届く)", clauses[i].written),
-                "下の層の効果に答える偽物は下の層が持つ正典 1 つだけ。模擬は外の世界の handler と正典の偽物で組む。",
+                format!("is a second fake answering lower-layer effect {} (reachable only from the simulation root)", clauses[i].written),
+                "The fake answering a lower-layer effect is only the single canonical one that the lower layer owns. The simulation is built from outside-world handlers and the canonical fake.",
             ),
             Verdict::TestOnlyFake(i) => clause_draft(
                 ProjectRule::TestOnlyFake,
                 i,
                 None,
-                format!("{} に答える検だけの偽物(検の定義からだけ届く)", clauses[i].written),
-                "検だけから届く定義が業務の効果か下の層の効果に答えを作っている。業務の handler は本番の 1 つだけで、検は土台(記録の効果・時計・外の相手)の handler の差し替えで組む。わざと壊した反例なら反例の表に載せる。",
+                format!("is a test-only fake answering {} (reachable only from test definitions)", clauses[i].written),
+                "A definition reachable only from tests builds answers to a business effect or a lower-layer effect. The business handler is only the single production one, and tests are built by swapping handlers of the foundation (record effects, clock, outside parties). If it is a deliberately broken counterexample, list it in the counterexample table.",
             ),
             Verdict::IntentAnsweredOutside(i) => clause_draft(
                 ProjectRule::IntentAnswererNotTranslation,
                 i,
                 Some("outside"),
-                format!("intent の効果 {} に翻訳の層の外で答える(本番の入口から届く)", clauses[i].written),
-                "intent の効果に答えるのは翻訳の層の handler 1 つだけ(本番と模擬で同じ)。環境ごとの別の答え手や土台の handler で答えず、模擬は土台を差し替える。",
+                format!("answers intent effect {} outside the translation layer (reachable from the production entry)", clauses[i].written),
+                "Only a single translation-layer handler answers an intent effect (the same in production and simulation). Do not answer with a separate responder per environment or with a foundation handler; the simulation swaps the foundation.",
             ),
             Verdict::IntentAnsweredTwice(i, n) => clause_draft(
                 ProjectRule::IntentAnswererNotTranslation,
                 i,
                 Some("shared"),
-                format!("intent の効果 {} に答える翻訳の handler {} 個の 1 つ", clauses[i].written, n),
-                "intent の効果 1 つに答える翻訳の handler は 1 つだけ。答えを 1 つの handler にまとめる。",
+                format!("is one of {1} translation handlers answering intent effect {0}", clauses[i].written, n),
+                "Only a single translation handler answers one intent effect. Merge the answers into one handler.",
             ),
             Verdict::StaleCounterexample(key) => {
                 let key = counterexample_written.get(&key).cloned().unwrap_or(key);
@@ -3744,8 +3744,8 @@ fn judge_business_fakes(
                 ProjectRule::StaleCounterexampleRow,
                 &decl.counterexamples,
                 format!("counterexample-unused::{}", key),
-                format!("反例の表の {} はもう当たらない", key),
-                "反例の表の行は、わざと壊した反例の handler が今も在る間だけ置く — 表から外す。",
+                format!("{} of the counterexample table no longer matches", key),
+                "A row of the counterexample table is kept only while the deliberately broken counterexample handler still exists — remove it from the table.",
             )
             }
             Verdict::UnusedExternal(effect) => {
@@ -3754,25 +3754,25 @@ fn judge_business_fakes(
                 ProjectRule::BusinessEffectFake,
                 &decl.external_effects,
                 format!("external-unused::{}", effect),
-                format!("外の世界の表の {} にどの偽物も答えない", effect),
-                "外の世界の表は偽物が答える外の世界の効果の宣言 — 答える偽物が無い行は表から外す(表を腐らせない)。",
+                format!("no fake answers {} of the outside-world table", effect),
+                "The outside-world table declares outside-world effects that fakes answer — remove a row with no answering fake from the table (do not let the table rot).",
             )
             }
             Verdict::IntentPassedByTable(r) => {
                 let row = &pass_rows[r];
-                let subject = format!("表 {} の行 {}", row.table, row.key);
+                let subject = format!("table {} row {}", row.table, row.key);
                 Draft {
                     rule: ProjectRule::IntentFakedInVerification,
                     layer: None,
                     path: root.join(&row.origin),
                     rel: row.origin.clone(),
                     range: zero_range(),
-                    message: format!("{} が intent の層の効果 {} を通す(検証環境の自前の答えを許す表の行)", subject, row.effect()),
+                    message: format!("{} passes the intent-layer effect {} (a table row allowing the verification environment its own answer)", subject, row.effect()),
                     detail: Some(format!("pass:{}", row.key)),
                     base: Severity::Error,
                     explain: Explain::IntentFakedInVerification {
                         subject,
-                        reason: "intent の層の効果は表で外の世界と名乗らせない — 外の世界に触るのは土台の効果で、intent の効果には検証環境でも本番の翻訳の handler(層 protocol)が答える。表の行を消し、翻訳の下の土台の handler を差し替える。".to_string(),
+                        reason: "An intent-layer effect is not allowed to be declared outside-world by the table — what touches the outside world is a foundation effect, and an intent effect is answered by the production translation handler (layer protocol) even in the verification environment. Delete the table row and swap the foundation handler under the translation.".to_string(),
                     },
                 }
             }
@@ -3784,12 +3784,12 @@ fn judge_business_fakes(
                     path: root.join(&clause.rel),
                     rel: clause.rel.clone(),
                     range: definition(clause.node).range,
-                    message: format!("{} の {} が intent の層の効果 {} に自前で答える(検証環境の中)", clause.rel, clause.handler, clause.written),
+                    message: format!("{}: handler {} answers the intent-layer effect {} by itself (inside the verification environment)", clause.rel, clause.handler, clause.written),
                     detail: Some(format!("verification:{}::{}", clause.handler, clause.written)),
                     base: Severity::Error,
                     explain: Explain::IntentFakedInVerification {
-                        subject: format!("検証環境の handler {} の節 {}", clause.handler, clause.written),
-                        reason: "検証環境が intent の効果に答えると、本番の翻訳の handler が手元で 1 度も走らないまま緑になる。答えは本番の翻訳の handler に任せ、その下の土台の handler だけを差し替える。外すのは、どの終わりも受けた効果をそのまま外へ渡す節(出し直しの答えをそのまま resume する・reperform する・:when の節)と、反例の表に載せたわざと壊した節だけ。片方の枝でだけ自前で答える節も、表の行が無ければ当たる。".to_string(),
+                        subject: format!("clause {} of verification-environment handler {}", clause.written, clause.handler),
+                        reason: "If the verification environment answers an intent effect, it goes green without the production translation handler ever running locally. Leave the answer to the production translation handler and swap only the foundation handler beneath it. The only exceptions are a clause that passes the received effect straight outward at every ending (resumes the re-emitted answer as is, reperforms it, or a :when clause), and a deliberately broken clause listed in the counterexample table. A clause that answers by itself in only one branch also matches if there is no table row.".to_string(),
                     },
                 }
             }
@@ -3799,8 +3799,8 @@ fn judge_business_fakes(
                 ProjectRule::BusinessEffectFake,
                 &decl.external_effects,
                 format!("external-unserved::{}", effect),
-                format!("外の世界の表の {} に本番の入口から届く答え手が無い", effect),
-                "外と名乗った効果には本番の答え手が要る(偽物 1 つで通さない)— 本番の handler を書くか、業務の効果なら下の層の効果で書く。今の不足は :unserved の表に理由と担い手つきで載せる。",
+                format!("no responder reachable from the production entry for {} of the outside-world table", effect),
+                "An effect declared outside-world needs a production responder (a single fake does not let it pass) — write the production handler, or if it is a business effect, write it with a lower-layer effect. List the current shortfall in the :unserved table with a reason and an owner.",
             )
             }
         })
@@ -3819,10 +3819,10 @@ fn judge_business_fakes(
             Some(dir) => clause_coverage::ClauseClaims::load(root, dir),
             None => clause_coverage::ClauseClaims::default(),
         };
-        // 名乗りの鍵も、節の鍵と同じ定義元の名で照らす。
+        // The declared key is also matched by the same defining-origin name as the clause's key.
         claims.by_key = std::mem::take(&mut claims.by_key)
             .into_iter()
-            .map(|(key, breaks)| (names.key(&key, || format!("反例の表の行 {}", key)), breaks))
+            .map(|(key, breaks)| (names.key(&key, || format!("counterexample table row {}", key)), breaks))
             .collect();
         let (found, claim_problems) = judge_clause_coverage(architecture, &graph, hy, &clauses, &produced, &counterexamples, &claims);
         drafts.extend(found.into_iter().map(|d| Draft { path: root.join(&d.rel), ..d }));
@@ -3833,8 +3833,8 @@ fn judge_business_fakes(
     FakesJudgement { drafts, problems, notes }
 }
 
-/// DOEFF136: service ごとに、entry の層の定義から呼び手を逆向きに辿り、模擬の環境(:verification-environment)の下の deftest に
-/// 1 本も届かなければ、その defservice を出す。entry の層を持たない service は数えない。
+/// DOEFF136: for each service, walks callers backward from the entry-layer definitions, and if no deftest under the simulation environment (:verification-environment)
+/// is reached, reports that defservice. A service with no entry layer is not counted.
 fn judge_untested_services(architecture: &architecture::Architecture, hy: &HashMap<String, HyFileIndex>) -> Vec<Draft> {
     let Some(place) = architecture.verification_environment.as_deref() else { return Vec::new() };
     let root = layers::normalize_dir(&architecture.root);
@@ -3847,7 +3847,7 @@ fn judge_untested_services(architecture: &architecture::Architecture, hy: &HashM
     let on_sim = |node: usize| under(graph.nodes[node].0, &sim) && definition(node).kind == DefinitionKind::Deftest;
     let mut drafts = Vec::new();
     for (service, seeds, entry) in architecture.services.iter().filter_map(|s| entry_seeds(&root, s, &graph).map(|(n, e)| (s, n, e))) {
-        // entry の層を宣言しても定義が 0 本なら、回す組み立てが無い(数えない)。
+        // If the entry layer is declared but has 0 definitions, there is no assembly to run (not counted).
         if seeds.is_empty() {
             continue;
         }
@@ -3860,7 +3860,7 @@ fn judge_untested_services(architecture: &architecture::Architecture, hy: &HashM
                 tested = true;
                 break;
             }
-            // 系の値の中の辺も数える(模擬の環境の検が系を組むだけでも、組み立ての entry に届いている)。
+            // Edges inside system values are also counted (even if the simulation environment's test only builds the system, it reaches the assembly's entry).
             for &caller in graph.callers[node].iter().chain(graph.carried[node].iter()) {
                 if !seen[caller] {
                     seen[caller] = true;
@@ -3877,7 +3877,7 @@ fn judge_untested_services(architecture: &architecture::Architecture, hy: &HashM
             rel: "architecture.hy".to_string(),
             path: PathBuf::from("architecture.hy"),
             range: service.range,
-            message: format!("service {} の entry の層({} 本の定義)に、模擬の環境 {} の deftest が 1 本も届かない", service.name, seeds.len(), sim),
+            message: format!("service {}'s entry layer ({} definitions) is not reached by any deftest of the simulation environment {}", service.name, seeds.len(), sim),
             detail: Some(service.name.clone()),
             base: Severity::Error,
             explain: Explain::ServiceUntestedOnSim { service: service.name.clone(), entry, definitions: seeds.len(), sim: sim.clone() },
@@ -3886,7 +3886,7 @@ fn judge_untested_services(architecture: &architecture::Architecture, hy: &HashM
     drafts
 }
 
-/// DOEFF163: code を持つ service の不変条件の宣言の欠けを、defservice の位置の下書きにする(鍵の細目 = service の名・関数の欠けは `::` と名指し)。
+/// DOEFF163: turns gaps in a code-holding service's invariant declarations into drafts at the defservice's position (key detail = the service's name; a missing function is named with `::`).
 fn judge_service_invariants(root: &Path, architecture: &architecture::Architecture, hy: &HashMap<String, HyFileIndex>) -> Vec<Draft> {
     let rel = declared_rel(root, &architecture.path);
     invariants::gaps(architecture, hy)
@@ -3911,7 +3911,7 @@ fn judge_service_invariants(root: &Path, architecture: &architecture::Architectu
         .collect()
 }
 
-/// DOEFF173: code を持つ service の系の宣言の欠けを、defservice の位置の下書きにする(鍵の細目 = service の名・系の欠けは `::` と名指し)。
+/// DOEFF173: turns gaps in a code-holding service's system declarations into drafts at the defservice's position (key detail = the service's name; a missing system is named with `::`).
 fn judge_service_systems(root: &Path, architecture: &architecture::Architecture, hy: &HashMap<String, HyFileIndex>) -> Vec<Draft> {
     let rel = declared_rel(root, &architecture.path);
     system_decls::gaps(root, architecture, hy)
@@ -3936,9 +3936,9 @@ fn judge_service_systems(root: &Path, architecture: &architecture::Architecture,
         .collect()
 }
 
-/// DOEFF207 の job でない書き手: 本番の入口(DOEFF143 と同じ `production_entry_roots`)から前向きに届く defk・deff が、契約の `:writes`
-/// で名乗った組(系の job から土台の値で渡る task の Program)。本番の入口は `:business-fakes` の宣言で決まるので、
-/// 宣言の無い repo・`:outside-writers` を書いていない repo では空(job の :writes だけを数える)。模擬だけの定義は届かないので数えない。
+/// Non-job writers of DOEFF207: the defk and deff reachable forward from the production entries (the same `production_entry_roots` as DOEFF143) that are the pairs declared by the contract's `:writes`
+/// (a task Program that passes from a system job as a foundation value). The production entries are decided by the `:business-fakes` declaration,
+/// so it is empty in a repo with no declaration or a repo that does not write `:outside-writers` (only the job's :writes are counted). Simulation-only definitions are not reached, so not counted.
 fn reachable_function_writers(root: &Path, architecture: &architecture::Architecture, hy: &HashMap<String, HyFileIndex>) -> BTreeSet<String> {
     let (Some(_), Some(decl)) = (architecture.outside_writers.as_ref(), architecture.business_fakes.as_ref()) else {
         return BTreeSet::new();
@@ -3961,7 +3961,7 @@ fn reachable_function_writers(root: &Path, architecture: &architecture::Architec
     writers
 }
 
-/// DOEFF207: 本番の系の job の読み書きの欄の欠けと、書き手の無い読みを、job の行の位置の下書きにする(鍵の細目 = 系::job::欄 か 系::job::組)。
+/// DOEFF207: turns gaps in the read/write fields of production system jobs, and reads with no writer, into drafts at the job row's position (key detail = system::job::field or system::job::pair).
 fn judge_system_access(root: &Path, architecture: &architecture::Architecture, hy: &HashMap<String, HyFileIndex>) -> Vec<Draft> {
     system_access::gaps(root, architecture, hy, &reachable_function_writers(root, architecture, hy))
         .into_iter()
@@ -3983,8 +3983,8 @@ fn judge_system_access(root: &Path, architecture: &architecture::Architecture, h
         .collect()
 }
 
-/// DOEFF208: 本番の code が記録の変更の待ちで job を起こす所を、呼びの頭の位置の下書きにする(鍵の細目 = 定義の名::頭の綴り)と、
-/// 読めない file の理由。
+/// DOEFF208: turns the places where production code wakes a job by waiting on a record change into drafts at the call head's position (key detail = definition name::head spelling), and
+/// the reasons for unreadable files.
 fn judge_record_waits(root: &Path, decl: &architecture::BusinessFakes) -> (Vec<Draft>, Vec<String>) {
     let (found, problems) = record_waits::find(root, decl);
     let drafts = found
@@ -4000,7 +4000,7 @@ fn judge_record_waits(root: &Path, decl: &architecture::BusinessFakes) -> (Vec<D
                 base: Severity::Error,
                 explain: Explain::RecordChangeWakesJob {
                     subject: found.subject(),
-                    reason: "記録は記録、起動は起動。記録の変更を待って job を起こすと、記録の置き場が出来事の運び手を兼ね、待ちの秒と読み直しの分だけ反応が遅れ、置き場の負荷が待ち手の数に比例して増える。起こす知らせは出来事の基盤から受け、記録は書くだけにする — 起動や繋ぎ直しの時に追いつく読みは待たない 1 回の読み(秒 0)で足りる。".to_string(),
+                    reason: "A record is a record, and a start is a start. If you wake a job by waiting for a record change, the record store doubles as the carrier of events, the reaction is delayed by the waiting seconds and the re-reading, and the store's load grows in proportion to the number of waiters. Receive the waking notice from the event infrastructure and only write the record — a catch-up read at startup or reconnection is enough as a single non-waiting read (0 seconds).".to_string(),
                 },
                 rel: found.rel,
                 message,
@@ -4010,8 +4010,8 @@ fn judge_record_waits(root: &Path, decl: &architecture::BusinessFakes) -> (Vec<D
     (drafts, problems)
 }
 
-/// DOEFF209: 本番の code の Program が同じ物を時間の待ちを挟んで繰り返し取りに行く所を、呼びの頭の位置の下書きにする(鍵の細目 =
-/// 定義の名::頭の綴り::区分)と、読めない file の理由。
+/// DOEFF209: turns the places where production code's Program repeatedly fetches the same thing with time waits in between into drafts at the call head's position (key detail =
+/// definition name::head spelling::category), and the reasons for unreadable files.
 fn judge_timed_refetch(root: &Path, decl: &architecture::BusinessFakes) -> (Vec<Draft>, Vec<String>) {
     let (found, problems) = timed_refetch::find(root, decl);
     let drafts = found
@@ -4026,8 +4026,8 @@ fn judge_timed_refetch(root: &Path, decl: &architecture::BusinessFakes) -> (Vec<
                 detail: Some(found.detail()),
                 base: Severity::Error,
                 explain: Explain::PollingOnTimer {
-                    subject: format!("{}(区分 {})", found.subject(), found.refetch.label()),
-                    reason: "時間で取りに行くのは最後の手段(取りに行く繰り返しは全部直す対象)。間隔を置いて同じ物を取りに行くと、変わりへの反応が間隔の分だけ遅れ、変わらない間も相手を読み続け、負荷が取りに行く手の数に比例して増える。起こすのは相手の変わりの知らせ(出来事)にし、起きる刻が行や予定から決まる期限はその刻を掛ける。".to_string(),
+                    subject: format!("{} (category {})", found.subject(), found.refetch.label()),
+                    reason: "Polling by time is a last resort (every polling loop is a target to fix). Fetching the same thing at intervals delays the reaction to a change by the interval, keeps reading the other party while nothing changes, and makes the load grow in proportion to the number of pollers. What wakes should be the other party's change notice (an event), and for a deadline whose wake time is decided by a row or a schedule, schedule that time.".to_string(),
                 },
                 rel: found.rel,
                 message,
@@ -4037,7 +4037,7 @@ fn judge_timed_refetch(root: &Path, decl: &architecture::BusinessFakes) -> (Vec<
     (drafts, problems)
 }
 
-/// seeds から呼び手を逆向きに辿って届く deftest(DOEFF136 と同じ辺 — 呼び出し・参照・入れ子と、系の値の中の辺)。
+/// The deftests reached by walking callers backward from seeds (the same edges as DOEFF136 — calls, references, nesting, and edges inside system values).
 fn deftests_reaching(graph: &DefinitionGraph, hy: &HashMap<String, HyFileIndex>, seeds: &[usize]) -> BTreeSet<usize> {
     let mut seen = vec![false; graph.nodes.len()];
     let mut queue: std::collections::VecDeque<usize> = seeds.iter().copied().collect();
@@ -4058,15 +4058,15 @@ fn deftests_reaching(graph: &DefinitionGraph, hy: &HashMap<String, HyFileIndex>,
     found
 }
 
-/// service の入口の定義(図の節)と、知らせに書く入口の綴り — DOEFF136・164・167 の母集団と、届くかを辿る種。`:entry-modules` を書いた
-/// service はその module の file の定義(層の dir を持たない repo — DOEFF163 の「code を持つ service」と同じ決め)、
-/// 書かない service は entry の層の dir(`<root>/<dir>/entry`)の下の定義。どちらも無い service は None(数えない)。
+/// A service's entry definitions (the graph's clauses), and the entry spelling written in notices — the population of DOEFF136, 164 and 167, and the seeds from which reachability is traced. A service that writes `:entry-modules`
+/// uses the definitions in those modules' files (a repo with no layer dirs — decided the same as DOEFF163's "code-holding service"),
+/// and a service that does not uses the definitions under the entry-layer dir (`<root>/<dir>/entry`). A service with neither is None (not counted).
 fn entry_seeds(root: &str, service: &architecture::ArchService, graph: &DefinitionGraph) -> Option<(Vec<usize>, String)> {
     match &service.entry_modules {
         Some(modules) => {
             let files: Vec<String> = modules.iter().map(|m| invariants::module_path(m)).collect();
             let seeds = (0..graph.nodes.len()).filter(|n| files.iter().any(|f| graph.nodes[*n].0 == f)).collect();
-            Some((seeds, files.join("・")))
+            Some((seeds, files.join(", ")))
         }
         None if service.layers.iter().any(|l| l == "entry") => {
             let entry = format!("{}/{}/entry", root, service.dir);
@@ -4076,9 +4076,9 @@ fn entry_seeds(root: &str, service: &architecture::ArchService, graph: &Definiti
     }
 }
 
-/// DOEFF164: service ごとの壊した handler の反例の有無。反例の節 = 反例の表の鍵に当たり本番の入口から届かない節。
-/// 節の効果の定義元の file を含む service の dir が持ち主(どの service の下にも無ければ土台の効果)。反例の節に届く deftest の 1 本でも
-/// その service の entry の層の定義に(DOEFF136 と同じ図を逆向きに)届けば有り。母集団は DOEFF136 と同じ(entry の層に定義を持つ service)。
+/// DOEFF164: whether each service has a counterexample of a broken handler. A counterexample clause = a clause that matches a key of the counterexample table and is not reachable from the production entry.
+/// The owner is the service dir that contains the file of the clause's effect's defining origin (an effect under no service's dir is a foundation effect). It counts as present if even one deftest reaching a counterexample clause
+/// reaches the service's entry-layer definitions (walking the same graph as DOEFF136 backward). The population is the same as DOEFF136 (services with definitions in the entry layer).
 fn judge_counterexample_coverage(
     architecture: &architecture::Architecture,
     graph: &DefinitionGraph,
@@ -4102,7 +4102,7 @@ fn judge_counterexample_coverage(
     let mut services = Vec::new();
     let mut entries = Vec::new();
     for (service, seeds, entry) in architecture.services.iter().filter_map(|s| entry_seeds(&root, s, graph).map(|(n, e)| (s, n, e))) {
-        // entry の層を宣言しても定義が 0 本なら、回す組み立てが無い(DOEFF136 と同じく数えない)。
+        // If the entry layer is declared but has 0 definitions, there is no assembly to run (not counted, same as DOEFF136).
         if seeds.is_empty() {
             continue;
         }
@@ -4120,7 +4120,7 @@ fn judge_counterexample_coverage(
                 path: PathBuf::from("architecture.hy"),
                 range: service.range,
                 message: format!(
-                    "service {} に壊した handler の反例が無い(反例の表 {} 節のうち候補 {} 節 — どれに届く deftest も {} に届かない)",
+                    "service {} has no counterexample of a broken handler (of {} counterexample-table clauses, {} are candidates — no deftest reaching any of them reaches {})",
                     service.name,
                     cases.len(),
                     missing.candidates,
@@ -4139,9 +4139,9 @@ fn judge_counterexample_coverage(
         .collect()
 }
 
-/// DOEFF167: service ごと・条ごとの反例の網羅。効く反例の節と母集団は DOEFF164 と同じ(反例の表に在り本番の入口から
-/// 届かない節・entry の層に定義を持つ service)。節が名乗る条は反例の表の行の `breaks:`(claims)から読み、節に届く deftest の 1 本でも
-/// service の entry の層に届けば、その条は有り。返りの 2 つ目 = 宣言に無い service か条を名乗る `breaks:` の理由(表の読めない行)。
+/// DOEFF167: counterexample coverage per service and per clause. The effective counterexample clauses and the population are the same as DOEFF164 (clauses in the counterexample table that are not reachable from
+/// the production entry, and services with definitions in the entry layer). The clause a counterexample clause claims is read from the counterexample table row's `breaks:` (claims), and if even one deftest reaching the clause reaches
+/// the service's entry layer, that clause is covered. The second return value = the reasons for `breaks:` claiming a service or clause not in the declaration (unreadable rows of the table).
 fn judge_clause_coverage(
     architecture: &architecture::Architecture,
     graph: &DefinitionGraph,
@@ -4166,7 +4166,7 @@ fn judge_clause_coverage(
     let mut services = Vec::new();
     let mut declared_services = Vec::new();
     for (service, seeds, _) in architecture.services.iter().filter_map(|s| entry_seeds(&root, s, graph).map(|(n, e)| (s, n, e))) {
-        // entry の層を宣言しても定義が 0 本なら、回す組み立てが無い(DOEFF164 と同じく数えない)。
+        // If the entry layer is declared but has 0 definitions, there is no assembly to run (not counted, same as DOEFF164).
         if seeds.is_empty() {
             continue;
         }
@@ -4212,9 +4212,9 @@ fn judge_clause_coverage(
     (drafts, problems)
 }
 
-/// 生の副作用の直接の証拠のうち、入れ子で重なる物はいちばん内側の定義に 1 度だけ(DOEFF106 の母集団)。
-/// 境目の部品(architecture.hy の :boundary-parts)の module の中で、触れる先が宣言に入る生の副作用の証拠か
-/// (DOEFF106 が当たりにしない)。種類の外の証拠と、宣言の無い module の証拠は今どおり当たる。
+/// Among direct evidence of raw side effects, nested overlapping ones are attributed once to the innermost definition (the population of DOEFF106).
+/// Within the modules of boundary parts (:boundary-parts of architecture.hy), whether the evidence is of a raw side effect whose target falls within the declaration
+/// (DOEFF106 does not count it as a hit). Evidence outside the kinds, and evidence in modules with no declaration, still match as before.
 fn boundary_allows(raw: &raw_settings::RawSettingsSpec, module: &str, category: hy_index::RawCategory) -> bool {
     raw.boundary
         .get(&architecture::mangle_dotted(module))
@@ -4236,7 +4236,7 @@ fn innermost_raw_evidence(definitions: &[Definition]) -> Vec<EvidenceRef> {
     chosen.into_values().collect()
 }
 
-/// DOEFF131 の当たり 1 つ(持ち主の定義の添字 — top level の式なら None・handler の綴り・名指してよい名簿の定義の文・位置)。
+/// One hit of DOEFF131 (the owner definition's index — None for a top-level expression; the handler's spelling; the roster definition's sentence that may name it; the position).
 struct WorldSpot {
     owner: Option<usize>,
     spelling: String,
@@ -4244,8 +4244,8 @@ struct WorldSpot {
     range: Range,
 }
 
-/// 目録の実 I/O の handler を、名簿の定義(とその中の入れ子の定義)の外で名指す所(参照と呼び出し — import の行は数えない)。
-/// 同じ定義の同じ handler は 1 件。
+/// Places that name a catalog real-I/O handler outside the roster definitions (and the nested definitions inside them) (references and calls — import lines are not counted).
+/// The same handler in the same definition is one finding.
 fn world_handler_spots(hy_file: &HyFileIndex, architecture: &architecture::Architecture) -> Vec<WorldSpot> {
     let wrapped = world_catalog::WorldCatalog::bundled().world_targets(architecture);
     let listed = architecture.world_definition_targets();
@@ -4260,7 +4260,7 @@ fn world_handler_spots(hy_file: &HyFileIndex, architecture: &architecture::Archi
     let catalog = world_catalog::WorldCatalog::bundled();
     let mut chosen: BTreeMap<(Option<usize>, String), Range> = BTreeMap::new();
     for (target, range) in spots {
-        // 目録の数えない行(:wraps に書けるだけの移行の間の行)は数えない。
+        // Catalog rows that are not counted (migration-period rows that can only be written in :wraps) are not counted.
         if !wrapped.contains_key(target) || !catalog.handlers.get(target).is_some_and(|h| h.counts()) {
             continue;
         }
@@ -4275,15 +4275,15 @@ fn world_handler_spots(hy_file: &HyFileIndex, architecture: &architecture::Archi
         .into_iter()
         .map(|((owner, target), range)| {
             let (spelling, by, _) = &wrapped[&target];
-            let allowed = if by.is_empty() { "名簿のどの定義もこの handler を :wraps に挙げていない".to_string() } else { by.join("・") };
+            let allowed = if by.is_empty() { "no definition in the roster lists this handler in :wraps".to_string() } else { by.join(", ") };
             WorldSpot { owner, spelling: spelling.clone(), allowed, range }
         })
         .collect()
 }
 
-/// 層の置き場の外の Hy の file(層の外の dir・architecture の :root の外の :raw-io-roots)にも、許可名簿の規則
-/// DOEFF106・131 を当てる — 外の世界に触れてよいのは名簿の定義だけで、置き場の破れ(DOEFF114)の file も例外ではない。検の file
-/// (path の段に tests・名が test_ か conftest)と :exclude の段は外す(縁のテストは DOEFF133 が持つ)。
+/// Also applies the roster-permission rules DOEFF106 and 131 to Hy files outside the layer locations (dirs outside the layers, :raw-io-roots outside architecture's :root)
+/// — only the roster definitions may touch the outside world, and files breaching the locations (DOEFF114) are no exception. Test files
+/// (tests in a path segment, a name that is test_ or conftest) and :exclude segments are removed (edge tests belong to DOEFF133).
 fn judge_unplaced_world(
     root: &Path,
     architecture: &architecture::Architecture,
@@ -4310,11 +4310,11 @@ fn judge_unplaced_world(
         }
         let file = &hy[rel];
         let definitions = &file.definitions;
-        // 実行できる ADR の冊(defadr を持つ file)は pytest が集めるテストの冊 — 検の file と同じく外す。
+        // A volume of executable ADRs (a file with defadr) is a volume of tests that pytest collects — excluded like test files.
         if definitions.iter().any(|d| d.kind == DefinitionKind::Defadr) {
             continue;
         }
-        // deftest(ADR の冊の law の検を含む)の中の実 I/O はテストの持ち分(縁のテスト — DOEFF133)で、ここでは数えない。
+        // Real I/O inside a deftest (including the law tests of ADR volumes) is the tests' share (edge tests — DOEFF133) and is not counted here.
         let in_test = |index: usize| {
             let target = &definitions[index];
             target.kind == DefinitionKind::Deftest
@@ -4344,7 +4344,7 @@ fn judge_unplaced_world(
                     ProjectRule::RawSideEffectDirect,
                     evidence.range,
                     format!(
-                        "定義 {}(層の置き場の外)が生の副作用 {}({})に直に触る — 生の副作用に触ってよいのは architecture.hy の :world-handlers の定義の module だけ",
+                        "definition {} (outside the layer locations) directly touches raw side effect {} ({}) — only the modules of definitions in architecture.hy's :world-handlers may touch raw side effects",
                         definition.name,
                         evidence.name,
                         evidence.category.as_str()
@@ -4357,12 +4357,12 @@ fn judge_unplaced_world(
         if enabled.contains(&ProjectRule::WorldHandlerNamedOutsideList) {
             for spot in world_handler_spots(file, architecture).into_iter().filter(|s| !s.owner.is_some_and(in_test)) {
                 let label = spot.owner.map(|i| definition_label(&definitions[i])).unwrap_or_else(|| "module の top level".to_string());
-                let shown = spot.owner.map(|i| definitions[i].name.clone()).unwrap_or_else(|| "module の top level".to_string());
+                let shown = spot.owner.map(|i| definitions[i].name.clone()).unwrap_or_else(|| "module top level".to_string());
                 drafts.push(draft(
                     ProjectRule::WorldHandlerNamedOutsideList,
                     spot.range,
                     format!(
-                        "{}(層の置き場の外)が doeff の実 I/O の handler {} を名指す — 名指してよいのは architecture.hy の :world-handlers の定義({})だけ",
+                        "{} (outside the layer locations) names doeff's real I/O handler {} — only the definitions in architecture.hy's :world-handlers ({}) may name it",
                         shown, spot.spelling, spot.allowed
                     ),
                     format!("{}::world::{}", label, spot.spelling),
@@ -4374,9 +4374,9 @@ fn judge_unplaced_world(
     drafts
 }
 
-// --- 意味の規則(DOEFF201・202 — Jev)---------------------------------------------------
+// --- Semantic rules (DOEFF201, 202 — Jev) ---------------------------------------------------
 
-/// 意味の問いを当てる定義の kind(型と関数と handler — 値の束縛・検・macro は問わない)。
+/// The kind of definition to which a semantic question is applied (types, functions and handlers — value bindings, tests and macros are not asked).
 fn semantic_kind(kind: DefinitionKind) -> bool {
     matches!(
         kind,
@@ -4394,11 +4394,11 @@ fn semantic_kind(kind: DefinitionKind) -> bool {
     )
 }
 
-/// 較正の例の kind の綴りを 'static にするための一覧(semantic_kind と同じ kind)。
+/// A list for making the spelling of a calibration example's kind 'static (the same kinds as semantic_kind).
 const SEMANTIC_KIND_NAMES: &[&str] = &["defn", "defn/a", "defk", "deff", "defp", "defpp", "defhandler", "defeffect", "defclass", "defrecord", "defenum"];
 
-/// DOEFF203・204 の入力 — 業務の Hy の file・architecture.hy の受け入れる理由と受け入れない型(名・説明・直し方)・註の目印・
-/// 定義の規則のタグの読み方(class の形を読むため)・hy-index の file(DOEFF119 と同じ証拠で問う class を選ぶため)。
+/// Input of DOEFF203 and 204 — business Hy files; architecture.hy's acceptable reasons and unacceptable types (name, description, how to fix); the comment marker;
+/// how to read the definition rules' tags (for reading the class shape); and the hy-index files (for choosing the classes to ask about with the same evidence as DOEFF119).
 struct PlainCallableInput<'a> {
     files: Vec<(SourceFile, Option<String>)>,
     accepted: Vec<architecture::ReasonKind>,
@@ -4408,7 +4408,7 @@ struct PlainCallableInput<'a> {
     indexes: &'a HashMap<String, HyFileIndex>,
 }
 
-/// 規則と問いの対応。
+/// Correspondence between rules and questions.
 fn semantic_rule(question: semantic::SemanticQuestion) -> ProjectRule {
     match question {
         semantic::SemanticQuestion::BusinessDecision => ProjectRule::SemanticBusinessDecision,
@@ -4419,20 +4419,20 @@ fn semantic_rule(question: semantic::SemanticQuestion) -> ProjectRule {
     }
 }
 
-/// Jev の答えのある定義 1 つ — 人の判定との突き合わせの材料(閾値に届かず違反にならなかった定義も含む)。
+/// One definition that has a Jev answer — material for comparison with human judgment (including definitions that did not reach the threshold and so were not violations).
 struct SemanticProbe {
     rule: ProjectRule,
-    /// 鍵の law を引く層(層を問う規則 DOEFF201・202 だけ)。
+    /// The layer used to look up the key's law (only for the rules that ask about layers, DOEFF201 and 202).
     layer: Option<LayerId>,
     rel: String,
-    /// 鍵の細目(mangle した定義の名)。
+    /// Key detail (the mangled definition name).
     detail: String,
     probability: f64,
-    /// 今の閾値で違反になるか。
+    /// Whether it is a violation at the current threshold.
     flagged: bool,
 }
 
-/// DOEFF201・202: 設定した層の Hy の最上位の定義を Jev の問いにし、cache を読むか(既定)撃つ(--semantic)。答えの無い定義は未判定の数。
+/// DOEFF201 and 202: turns the top-level definitions of the configured layers' Hy into Jev questions, and reads the cache (default) or fires (--semantic). A definition with no answer counts as unjudged.
 fn judge_semantic(
     root: &Path,
     settings: &semantic::SemanticSettings,
@@ -4448,7 +4448,7 @@ fn judge_semantic(
     let mut errors = Vec::new();
     let gateway: Option<semantic::HttpGateway> = match mode {
         semantic::SemanticMode::CacheOnly => None,
-        // 覚えている時だけの問いは代理にだけ撃つ(代理でない宛先では cache だけ — 本物の Jev を呼ばない)。token が無ければ黙って cache だけ。
+        // A question only if remembered is fired only at the proxy (for a non-proxy destination only the cache is used — the real Jev is not called). Without a token, silently only the cache.
         semantic::SemanticMode::Peek => match (target.proxy, settings.proxy.as_ref()) {
             (true, Some(proxy)) => semantic::HttpGateway::new(target, proxy.peek_timeout).ok(),
             _ => None,
@@ -4456,15 +4456,15 @@ fn judge_semantic(
         _ => match semantic::HttpGateway::new(target, settings.timeout) {
             Ok(gateway) => Some(gateway),
             Err(reason) => {
-                errors.push(format!("意味の規則: {}", reason));
+                errors.push(format!("semantic rules: {}", reason));
                 None
             }
         },
     };
     let mut items = Vec::new();
-    // file ごとの Hy の索引は、下の問いの節(層の問い・DOEFF203・DOEFF205)で共有する — 同じ file を節ごとに索引し直すと、1 file の実行で
-    // 34KB の file に約 0.02 秒ずつ 3 回かかっていた。どの節も同じ file を同じ中身で読む(1 file の実行は stdin の
-    // 中身・全体の実行は disk)ので、答えは変わらない。
+    // The per-file Hy index is shared by the question sections below (layer questions, DOEFF203, DOEFF205) — re-indexing the same file per section cost, in a single-file run,
+    // about 0.02 seconds each, 3 times, for a 34KB file. Every section reads the same file with the same contents (stdin contents for a single-file run,
+    // disk for a whole run), so the answer does not change.
     let mut indexed: HashMap<String, HyFileIndex> = HashMap::new();
     let mut roles_of: HashMap<String, Vec<String>> = HashMap::new();
     for (file, source) in files {
@@ -4483,7 +4483,7 @@ fn judge_semantic(
             None => match std::fs::read_to_string(&file.file.path) {
                 Ok(text) => text,
                 Err(error) => {
-                    errors.push(format!("{}: 読めない: {}", file.file.rel, error));
+                    errors.push(format!("{}: could not read: {}", file.file.rel, error));
                     continue;
                 }
             },
@@ -4520,7 +4520,7 @@ fn judge_semantic(
             }
         }
     }
-    // DOEFF203: 種類を名乗った deff ごとに、種類の一覧 + none から理由を選ばせる。
+    // DOEFF203: for each deff that declared a kind, have Jev choose a reason from the list of kinds + none.
     let pairs = |reasons: &[architecture::ReasonKind]| reasons.iter().map(|r| (r.name.clone(), r.description.clone())).collect::<Vec<_>>();
     let (accepted, rejected) = (pairs(&plain.accepted), pairs(&plain.rejected));
     if settings.plain_callable.is_some() && enabled.contains(&ProjectRule::SemanticPlainCallable) && !plain.accepted.is_empty() {
@@ -4530,7 +4530,7 @@ fn judge_semantic(
                 None => match std::fs::read_to_string(&file.path) {
                     Ok(text) => text,
                     Err(error) => {
-                        errors.push(format!("{}: 読めない: {}", file.rel, error));
+                        errors.push(format!("{}: could not read: {}", file.rel, error));
                         continue;
                     }
                 },
@@ -4542,7 +4542,7 @@ fn judge_semantic(
                 let comment = parse_reason_comment(&line, &plain.marker).or_else(|| {
                     previous.trim_start().starts_with(';').then(|| parse_reason_comment(&previous, &plain.marker)).flatten()
                 });
-                // 理由の註が在り、空でも「同上」でもない deff だけを問う(それ以外は DOEFF111 が決定的に出す)。
+                // Ask only about a deff that has a reason comment that is neither empty nor "same as above" (anything else is emitted deterministically by DOEFF111).
                 let Some(ReasonComment { kind: stated_kind, detail }) = comment else { continue };
                 if is_not_a_reason(&detail) {
                     continue;
@@ -4565,7 +4565,7 @@ fn judge_semantic(
             }
         }
     }
-    // DOEFF204: DOEFF119 が何も出さず、処理を持つ method のある class だけを、value / external-world / stateful / other から選ばせる。
+    // DOEFF204: only classes for which DOEFF119 emits nothing and that have a method with processing, have Jev choose from value / external-world / stateful / other.
     if settings.class_role.is_some() && enabled.contains(&ProjectRule::SemanticClassRole) {
         if let Some(reading) = &plain.tags {
             for (file, source) in &plain.files {
@@ -4574,7 +4574,7 @@ fn judge_semantic(
                     None => match std::fs::read_to_string(&file.path) {
                         Ok(text) => text,
                         Err(error) => {
-                            errors.push(format!("{}: 読めない: {}", file.rel, error));
+                            errors.push(format!("{}: could not read: {}", file.rel, error));
                             continue;
                         }
                     },
@@ -4604,9 +4604,9 @@ fn judge_semantic(
             }
         }
     }
-    // DOEFF205: 役が judgment / program の定義(定義の :tags か module の頭のタグ)に、形の検めと判断が混ざっているかを問う。
-    // 母集団は definitions の file から、層の宣言の exclude(`tests`・`conftest.py` など)に当たる path を除いた物 — DOEFF201・202(層の
-    // file から集める)と同じ外し方にする。除かないと検の置き場の定義まで Jev に問い、業務の判断の当たりに混ざる。
+    // DOEFF205: ask whether a definition whose role is judgment / program (the definition's :tags or the module-head tags) mixes shape checking and judgment.
+    // The population is the definitions files minus paths matching the layer declaration's exclude (`tests`, `conftest.py`, etc.) — excluded the same way as DOEFF201 and 202 (collected from the layer
+    // files). Otherwise even the definitions in test locations would be asked of Jev and mix into the hits for business judgment.
     if let (Some(mixed), Some(reading)) = (&settings.mixed_concerns, &plain.tags) {
         if enabled.contains(&ProjectRule::SemanticMixedConcerns) {
             let spec = &layers.layers[mixed.layer.0];
@@ -4616,7 +4616,7 @@ fn judge_semantic(
                     None => match std::fs::read_to_string(&file.path) {
                         Ok(text) => text,
                         Err(error) => {
-                            errors.push(format!("{}: 読めない: {}", file.rel, error));
+                            errors.push(format!("{}: could not read: {}", file.rel, error));
                             continue;
                         }
                     },
@@ -4647,12 +4647,12 @@ fn judge_semantic(
             }
         }
     }
-    // 較正の見張りの例(同梱の正例と反例)を、その問いを当てる最初の層の説明で組む。
+    // Build the calibration watch's examples (the bundled positive and counter examples) with the description of the first layer to which that question applies.
     let calibration: Vec<(semantic::SemanticItem, bool)> = semantic::calibration_examples()
         .into_iter()
         .filter_map(|example| {
             let rule = ProjectRule::parse(&example.rule)?;
-            // 較正は有効な規則の問いだけ(DOEFF203 だけの実行で DOEFF201・202 の例を撃たない)。
+            // Calibration covers only the questions of enabled rules (a run with only DOEFF203 does not fire the DOEFF201 and 202 examples).
             if !enabled.contains(&rule) {
                 return None;
             }
@@ -4710,7 +4710,7 @@ fn judge_semantic(
                     rel: item.rel.clone(),
                     path: item.path.clone(),
                     range: item.range,
-                    message: format!("{} の {} は Jev の判定で形の検めと判断が混ざっている(p={:.2})", item.rel, item.name, probability),
+                    message: format!("{}: {} is judged by Jev to mix shape checking and judgment (p={:.2})", item.rel, item.name, probability),
                     detail: Some(hy_mangle(&item.name)),
                     base,
                     explain: Explain::MixedConcerns { name: item.name.clone(), kind: item.kind, probability, layer },
@@ -4731,7 +4731,7 @@ fn judge_semantic(
                     rel: item.rel.clone(),
                     path: item.path.clone(),
                     range: item.range,
-                    message: format!("{} の defclass {} は Jev の判定で {}(p={:.2})", item.rel, item.name, chosen, probability),
+                    message: format!("{}: defclass {} is judged by Jev to be {} (p={:.2})", item.rel, item.name, chosen, probability),
                     detail: Some(hy_mangle(&item.name)),
                     base,
                     explain: Explain::ClassRoleDoubt { name: item.name.clone(), chosen, probability, fields },
@@ -4749,14 +4749,14 @@ fn judge_semantic(
                     .sum();
                 let base = settings.plain_callable_severity(accepted_kind.is_some(), probability, rejected_total)?;
                 let stated = item.state.pointer("/stated_reason/text").and_then(|v| v.as_str()).unwrap_or("").to_string();
-                let verdict = if accepted_kind.is_some() { "受け入れる理由に近いが疑わしい" } else { "受け入れられない" };
+                let verdict = if accepted_kind.is_some() { "close to an accepted reason but doubtful" } else { "not accepted" };
                 return Some(Draft {
                     rule: ProjectRule::SemanticPlainCallable,
                     layer: None,
                     rel: item.rel.clone(),
                     path: item.path.clone(),
                     range: item.range,
-                    message: format!("{} の deff {} の理由は{}(Jev の選択 = {} p={:.2})", item.rel, item.name, verdict, chosen, probability),
+                    message: format!("{}: the reason of deff {} is {} (Jev's choice = {} p={:.2})", item.rel, item.name, verdict, chosen, probability),
                     detail: Some(hy_mangle(&item.name)),
                     base,
                     explain: Explain::PlainCallableDoubt {
@@ -4793,7 +4793,7 @@ fn judge_semantic(
                 path: item.path.clone(),
                 range: item.range,
                 message: format!(
-                    "{} の {}({})— Jev の判定 p={:.2}: {}",
+                    "{}: {} ({}) — Jev's judgment p={:.2}: {}",
                     item.rel,
                     item.name,
                     spec.name,
@@ -4815,7 +4815,7 @@ fn judge_semantic(
             layer: layered.then_some(item.layer),
             rel: item.rel.clone(),
             detail: hy_mangle(&item.name),
-            // 選ぶ形の問いは的の語の確率(較正の見張りと同じ読み方 — 選んだ語の確率ではない)
+            // A choosing question uses the probability of the target word (the same reading as the calibration watch — not the probability of the chosen word)
             probability: semantic::target_probability(item.question, answer),
             flagged: draft.is_some(),
         });
@@ -4824,9 +4824,9 @@ fn judge_semantic(
     (drafts, summary, errors, probes)
 }
 
-// --- 定義の書き方(DOEFF110〜112)------------------------------------------------------
+// --- How definitions are written (DOEFF110-112) ------------------------------------------------------
 
-/// 定義の書き方の規則のどれかが有効か。
+/// Whether any of the definition-writing rules is enabled.
 fn wants_definitions(enabled: &BTreeSet<ProjectRule>) -> bool {
     if enabled.iter().any(|rule| rule.is_smell())
         || enabled.contains(&ProjectRule::DefkCalledBare)
@@ -4840,12 +4840,12 @@ fn wants_definitions(enabled: &BTreeSet<ProjectRule>) -> bool {
         .any(|rule| enabled.contains(rule))
 }
 
-/// 検の置き場(DOEFF118 の母集団)の Hy の file か。
+/// Whether it is a Hy file in the test locations (the population of DOEFF118).
 fn is_test_file(rel: &str, definitions: &settings::DefinitionSettings) -> bool {
     language_of(Path::new(rel)) == Some(Language::Hy) && definitions.test_paths.iter().any(|pattern| glob_matches(pattern, rel))
 }
 
-/// 定義の規則の母集団の file か(置き場の 1 つの下 — 置き場が空なら全部 — で、除く置き場・区切りに当たらない Hy の file)。
+/// Whether it is a file in the population of the definition rules (under one of the locations — if the locations are empty, all — and a Hy file not matching an excluded location or separator).
 fn is_definition_file(rel: &str, definitions: &settings::DefinitionSettings) -> bool {
     language_of(Path::new(rel)) == Some(Language::Hy)
         && (definitions.paths.is_empty() || definitions.paths.iter().any(|place| matches_place(rel, place)))
@@ -4853,10 +4853,10 @@ fn is_definition_file(rel: &str, definitions: &settings::DefinitionSettings) -> 
         && !rel.split('/').any(|part| definitions.exclude_parts.contains(part))
 }
 
-/// 層の宣言(file から上へ最も近い architecture.hy)の `:exempt` が、この file の module を名指しで外した定義の書き方の規則
-/// (ProjectRule::exemptible_by_layer の物だけ)と、DOEFF110 を外す時に限って要る「package のどれかの
-/// defmacro から届く名」(macro_reach)。Python の文ごとの規則と同じ 1 点(crate::population)で決める。宣言を読めない時は何も
-/// 外さない — 黙って緑にしない(読めない宣言は同じ package の Python の file の DOEFF032 が名指す)。
+/// The definition-writing rules (only those of ProjectRule::exemptible_by_layer) that the layer declaration's (the nearest architecture.hy above the file) `:exempt` removed by naming this file's module,
+/// and, only when DOEFF110 is removed, the "names reachable from any
+/// defmacro of the package" (macro_reach). Decided at the same one point as Python's per-statement rules (crate::population). If the declaration cannot be read, nothing is
+/// removed — it does not silently go green (an unreadable declaration is named by DOEFF032 of the Python files of the same package).
 struct LayerExemption {
     rules: BTreeSet<ProjectRule>,
     reached: Option<Arc<BTreeSet<String>>>,
@@ -4877,8 +4877,8 @@ fn layer_exemption(path: &Path) -> LayerExemption {
     }
 }
 
-/// 外した規則の当たりを落とす。DOEFF110 は package のどれかの defmacro から届く defn だけを落とし、届かない defn(実行の時点の
-/// 定義 — #2877 の決め 2 の見張り)は理由を足して残す。
+/// Drops the hits of removed rules. For DOEFF110, drops only the defn reachable from any defmacro of the package, and keeps a defn that is not reachable (a definition at
+/// execution time — the watch of decision 2 of #2877) with the reason added.
 fn without_exempted(found: Vec<Draft>, exemption: &LayerExemption) -> Vec<Draft> {
     found
         .into_iter()
@@ -4890,7 +4890,7 @@ fn without_exempted(found: Vec<Draft>, exemption: &LayerExemption) -> Vec<Draft>
                 || matches!((&exemption.reached, &draft.detail), (Some(reached), Some(name)) if reached.contains(name));
             (!reached).then(|| Draft {
                 message: format!(
-                    "{} — 層の宣言が DOEFF110 から外した module だが、package のどの defmacro からも届かない(実行の時点の定義)",
+                    "{} — a module the layer declaration excluded from DOEFF110, but no defmacro of the package reaches it (a definition at execution time)",
                     draft.message
                 ),
                 ..draft
@@ -4899,24 +4899,24 @@ fn without_exempted(found: Vec<Draft>, exemption: &LayerExemption) -> Vec<Draft>
         .collect()
 }
 
-/// architecture.hy が宣言した、素の関数を許す理由の種類(無ければ空)。
+/// The kinds of reason for allowing a plain function that architecture.hy declared (empty if none).
 fn plain_callable_reasons(settings: &ProjectSettings) -> &[architecture::ReasonKind] {
     settings.architecture.as_ref().map(|a| a.plain_callable_reasons.as_slice()).unwrap_or(&[])
 }
 
-/// file の path と根からの path から repo の根を出す(基底の module が repo の中かを見るため)。
+/// Derives the repo root from the file's path and its path from the root (to see whether a base module is in the repo).
 fn repo_root_of(file: &SourceFile) -> Option<PathBuf> {
     let depth = file.rel.split('/').count();
     file.path.ancestors().nth(depth).map(Path::to_path_buf)
 }
 
-/// 例外・Enum・Protocol のような、名で分かる許す基底(repo の中で定めた例外の子も含めるため、名の終わりで見る)。
+/// Allowed bases recognized by name, such as exceptions, Enum and Protocol (looked at by the end of the name, so children of exceptions defined inside the repo are included).
 fn is_allowed_base_name(base: &str) -> bool {
     let last = base.rsplit('.').next().unwrap_or(base);
     ["Error", "Exception", "Warning", "Enum", "Flag", "Protocol", "NamedTuple", "TypedDict"].iter().any(|suffix| last.ends_with(suffix))
 }
 
-/// 基底が repo の外(外の library・組み込み)の class か。束縛の module の先頭の段が repo の根に在れば repo の中。
+/// Whether a base is a class outside the repo (an outside library or a built-in). If the first segment of the bound module is in the repo root, it is inside the repo.
 fn is_external_base(base: &str, bindings: &BTreeMap<String, String>, local: &BTreeSet<&str>, root: Option<&Path>) -> bool {
     let head = base.split('.').next().unwrap_or(base);
     if local.contains(base) {
@@ -4924,7 +4924,7 @@ fn is_external_base(base: &str, bindings: &BTreeMap<String, String>, local: &BTr
     }
     let module = match bindings.get(base).or_else(|| bindings.get(head)) {
         Some(module) => module.clone(),
-        // 束縛の無い裸の名は組み込み(Exception・object …)。
+        // A bare name with no binding is a built-in (Exception, object ...).
         None if !base.contains('.') => return true,
         None => base.to_string(),
     };
@@ -4935,19 +4935,19 @@ fn is_external_base(base: &str, bindings: &BTreeMap<String, String>, local: &BTr
     }
 }
 
-/// DOEFF119 の class 1 つの判定(閉じた集合)。
+/// The verdict for one class under DOEFF119 (a closed set).
 #[derive(Debug, Clone, PartialEq)]
 enum ClassJudgement {
-    /// 例外・Enum・Protocol・外の library の基底を継ぐ class、または欄だけでも処理を持つ method も無い物 — 何も出さない。
+    /// A class that inherits an exception, Enum, Protocol or a base from an outside library, or one with only fields and no method that has processing — emits nothing.
     Allowed,
-    /// 決定的に分かった区分(外の世界 / 状態 / 欄だけ)。
+    /// A classification decided deterministically (outside world / state / fields only).
     Found(explain::ClassShapeFacts, explain::ClassVerdict),
-    /// 処理を持つ method があるが、証拠も書き換えも見えない — 値の class か窓口かを Jev(DOEFF204)に問う。
+    /// There is a method with processing, but neither evidence nor rewriting is visible — ask Jev (DOEFF204) whether it is a value class or a gateway.
     AskJev,
 }
 
-/// DOEFF119: defclass を中身の証拠で分ける — method か欄の初期値の生の副作用(強い証拠・直接か経由)は外の世界、
-/// __init__ 等の外で self の欄を書き換える method は状態、処理を持つ method が無ければ欄だけ。名前では判じない。
+/// DOEFF119: classify a defclass by the evidence in its contents — raw side effects (strong evidence, direct or via a call) in a method or a field's initial value mean outside world,
+/// a method that rewrites a self field outside __init__ and the like means state, and if there is no method with processing it is fields only. It is not judged by name.
 fn judge_class(
     class: &facts::ClassFact,
     bindings: &BTreeMap<String, String>,
@@ -4961,7 +4961,7 @@ fn judge_class(
     }
     let dataclass = class.decorators.iter().any(|d| d == "dataclass" || d.ends_with(".dataclass"));
     let shape = explain::ClassShapeFacts { bases, dataclass };
-    // 生の副作用の証拠 — class の定義そのもの(欄の初期値の式を含む)と、class の中の定義(method・欄)。
+    // Evidence of raw side effects — the class definition itself (including the expressions of field initial values) and the definitions inside the class (methods, fields).
     let own = |d: &&doeff_indexer::hy_index::Definition| {
         (d.container.is_none() && hy_mangle(&d.name) == class.name.name && d.kind == DefinitionKind::Defclass)
             || d.container.as_deref().is_some_and(|c| hy_mangle(c) == class.name.name)
@@ -4986,7 +4986,7 @@ fn judge_class(
         return ClassJudgement::Found(shape, explain::ClassVerdict::ExternalWorld { evidence });
     }
     let dunder = |name: &str| name.starts_with("__") && name.ends_with("__");
-    // 作る時(__init__・__post_init__・__new__)に欄を置くのは書き換えに数えない。
+    // Placing fields at construction time (__init__, __post_init__, __new__) does not count as rewriting.
     let mutations: Vec<String> = class
         .methods
         .iter()
@@ -5002,14 +5002,14 @@ fn judge_class(
     }
 }
 
-/// 理由の註 `; <目印>(<種類>): <詳細>` を読んだ結果(種類の括弧は半角でも全角でもよい。種類の無い旧い形は kind = None)。
+/// The result of reading a reason comment `; <marker>(<kind>): <detail>` (the parentheses of the kind may be half-width or full-width. In the old form with no kind, kind = None).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ReasonComment {
     pub kind: Option<String>,
     pub detail: String,
 }
 
-/// 行の註(`;` の後)から理由の註を読む。目印は設定の deff_reason_marker(末尾の `:` は外して比べる)。
+/// Reads a reason comment from the comment of a line (after `;`). The marker is the settings' deff_reason_marker (compared with the trailing `:` removed).
 pub fn parse_reason_comment(line: &str, marker: &str) -> Option<ReasonComment> {
     let base = marker.trim_end_matches([':', '：']).trim();
     let (_, comment) = line.split_once(';')?;
@@ -5027,13 +5027,13 @@ pub fn parse_reason_comment(line: &str, marker: &str) -> Option<ReasonComment> {
     Some(ReasonComment { kind: kind.filter(|k| !k.is_empty()), detail })
 }
 
-/// 理由の文が、その定義に固有の理由になっていないか(空・「同上」とその変形)。
+/// Whether the reason text fails to be a reason specific to that definition (empty, "same as above" and its variants).
 fn is_not_a_reason(detail: &str) -> bool {
     let text = detail.trim();
     text.is_empty() || ["同上", "上と同じ", "上に同じ", "前と同じ", "同前"].iter().any(|word| text.starts_with(word))
 }
 
-/// 行の頭の byte の位置(offset を含む行と、その前の行)の本文を返す。
+/// Returns the text of the line at the head byte position (the line containing the offset, and the line before it).
 fn line_and_previous(source: &str, offset: usize) -> (String, String) {
     let offset = offset.min(source.len());
     let line_start = source[..offset].rfind('\n').map(|at| at + 1).unwrap_or(0);
@@ -5047,16 +5047,16 @@ fn line_and_previous(source: &str, offset: usize) -> (String, String) {
     (source[line_start..line_end].to_string(), previous)
 }
 
-/// DOEFF122 の失敗の型の宣言を repo の Hy の file から集める(規則が有効な時だけ — 無ければ空)。`:failure` / `:absent` の綴りを
-/// 含む file だけを読み、宣言の型は file の import と module で module まで含めた名に解く。読めない file は飛ばす。
+/// Collects, from the repo's Hy files, the failure-type declarations for DOEFF122 (only when the rule is enabled — otherwise empty). Reads only files
+/// that contain the spelling `:failure` / `:absent`, and resolves the declared types to names including the module using the file's imports and module. Unreadable files are skipped.
 fn failure_types_for(root: &Path, enabled: &BTreeSet<ProjectRule>, reading: &layers::TagReading) -> smells::FailureTypes {
     let mut all = smells::FailureTypes::default();
-    // 失敗の型は DOEFF122、effect ごとの宣言は DOEFF175 が引く — どちらも無効なら宣言を集めない。
+    // Failure types are consulted by DOEFF122 and per-effect declarations by DOEFF175 — if both are disabled, declarations are not collected.
     if !enabled.contains(&ProjectRule::FailureRethrow) && !enabled.contains(&ProjectRule::StaleOutcomeBranch) {
         return all;
     }
-    // file ごとの失敗の型は、その file の中身とタグの読み方(設定)で決まる — 読み方の指紋を印に含めて file ごとに覚え、
-    // 変わった file だけ読み直す(#1033)。集合の和なので、束ねる順は答えを変えない。
+    // A file's failure types are decided by the file's contents and the tag-reading setting — the fingerprint of the reading is included in the mark, remembered per file, and
+    // only changed files are re-read (#1033). It is a union of sets, so the order of combining does not change the answer.
     let files = hy_rel_files(root);
     let found: Vec<smells::FailureTypes> =
         facts_cache::per_file_keyed(root, smells::FAILURE_TYPES_KIND, &smells::failure_types_key(reading), &files, |rel, path| smells::failure_types_of_file(rel, path, reading));
@@ -5066,7 +5066,7 @@ fn failure_types_for(root: &Path, enabled: &BTreeSet<ProjectRule>, reading: &lay
     all
 }
 
-/// 読めない Hy の file を DOEFF128 の違反にする(全体 = 規則が読む Hy の file を並べて読む・1 file = 保存前の中身だけ)。
+/// Turns unreadable Hy files into DOEFF128 violations (whole = read the Hy files that rules read, one after another; single file = only the pre-save contents).
 fn unreadable_findings(root: &Path, settings: &ProjectSettings, single: &Option<(PathBuf, String)>) -> Vec<Finding> {
     match single {
         Some((path, source)) => {
@@ -5078,7 +5078,7 @@ fn unreadable_findings(root: &Path, settings: &ProjectSettings, single: &Option<
                 Vec::new()
             }
         }
-        // 歩く範囲(根の下と設定の include)の file — 定義の規則の母集団と同じ一覧。
+        // Files in the walked range (under the root, and the settings' include) — the same list as the population of the definition rules.
         None => hy_files::walked(root, &settings.include)
             .par_iter()
             .filter_map(|(rel, path)| {
@@ -5089,8 +5089,8 @@ fn unreadable_findings(root: &Path, settings: &ProjectSettings, single: &Option<
     }
 }
 
-/// どれかの規則が読む file か(層の置き場・定義の規則の母集団・検の置き場・業務の名の母集団)— 規則が読まない file(文書の中の
-/// 抜き書きなど)は、読めなくても違反が欠けないので知らせない。
+/// Whether any rule reads the file (layer locations, the population of definition rules, test locations, the population of business names) — a file that no rule reads (such as an excerpt inside a
+/// document) does not lose any violation even if unreadable, so it is not reported.
 fn is_judged_file(rel: &str, source: &str, settings: &ProjectSettings) -> bool {
     let layered = settings.layers.as_ref().is_some_and(|layers| classify_layer_file(rel, layers).or_else(|| infer_layer_site(rel, source, layers)).is_some());
     let defined = settings.definitions.as_ref().is_some_and(|d| is_definition_file(rel, d) || is_test_file(rel, d));
@@ -5100,24 +5100,24 @@ fn is_judged_file(rel: &str, source: &str, settings: &ProjectSettings) -> bool {
     layered || defined || named || programs || tests
 }
 
-/// DOEFF126 の defk の集合を repo の Hy の file から集める(規則が有効な時だけ — 無ければ空)。`(defk` の綴りを含む file だけを読み、
-/// 最上位の defk の名を module まで含めた名にする。読めない file は飛ばす。
+/// Collects the set of defks for DOEFF126 from the repo's Hy files (only when the rule is enabled — otherwise empty). Reads only files that contain the spelling `(defk`, and
+/// makes the top-level defk names into names including the module. Unreadable files are skipped.
 fn defk_names_for(root: &Path, enabled: &BTreeSet<ProjectRule>) -> bare_calls::DefkNames {
     bare_calls::defk_names_over(root, enabled, facts_cache::Reach::Whole, &hy_rel_files(root))
 }
 
-/// repo の Hy の file(根からの path と絶対 path — 歩いた順)。
+/// The repo's Hy files (path from the root and absolute path — in walk order).
 fn hy_rel_files(root: &Path) -> Vec<(String, PathBuf)> {
     hy_files::collect(root).into_iter().filter_map(|path| relative_path(root, &path).map(|rel| (rel, path))).collect()
 }
 
-/// DOEFF126 が答えとして数えない record の欄(宣言の型が Program か EffectBase を名指す欄)を repo の Hy の file から集める(規則が
-/// 有効な時だけ — 無ければ空)。`(defrecord` の綴りを含む file だけを読む。defk の名と同じく file ごとに覚え、変わった file だけ読み直す。
+/// Collects, from the repo's Hy files, the record fields that DOEFF126 does not count as answers (fields whose declared type names Program or EffectBase) (only when the rule
+/// is enabled — otherwise empty). Reads only files that contain the spelling `(defrecord`. Like the defk names, remembered per file, and only changed files are re-read.
 fn program_fields_for(root: &Path, enabled: &BTreeSet<ProjectRule>) -> bare_calls::ProgramFields {
     program_fields_over(root, enabled, facts_cache::Reach::Whole, &hy_rel_files(root))
 }
 
-/// `program_fields_for` の本体 — 集める file と引き方を受ける(`defk_names_over` と同じ。record の型は module まで含めた名で引かれる)。
+/// The body of `program_fields_for` — receives the files to collect and how to look up (the same as `defk_names_over`. A record's type is looked up by a name including the module).
 fn program_fields_over(root: &Path, enabled: &BTreeSet<ProjectRule>, reach: facts_cache::Reach, files: &[(String, PathBuf)]) -> bare_calls::ProgramFields {
     let mut all = bare_calls::ProgramFields::default();
     if !enabled.contains(&ProjectRule::DefkCalledBare) {
@@ -5137,20 +5137,20 @@ fn program_fields_over(root: &Path, enabled: &BTreeSet<ProjectRule>, reach: fact
     all
 }
 
-/// DOEFF127・130・174 の表(repo の Hy の file 全部の型・effect・defk と推論)— どれかの規則が有効な時だけ 1 度作る。1 file の実行はその file を
-/// stdin の中身で読む。推論の読み方は defk の見出し(editor-json の signatures)と同じ `signatures::World` の 1 か所。
+/// The table for DOEFF127, 130 and 174 (types, effects, defks and inference over all the repo's Hy files) — built once, only when any of the rules is enabled. A single-file run reads that file from
+/// the stdin contents. How inference is read is in the one place `signatures::World`, the same as the defk headings (signatures of editor-json).
 fn effect_world_for(root: &Path, settings: &ProjectSettings, enabled: &BTreeSet<ProjectRule>, overlay: Option<(&str, &str)>) -> Option<signatures::World> {
     let definitions = settings.definitions.is_some() && enabled.contains(&ProjectRule::EffectsDisagreeWithInference);
     let translation = settings.translation.is_some() && settings.layers.is_some() && enabled.contains(&ProjectRule::TranslationEmitsIntent);
     let lower_layer = settings.translation.is_some() && settings.layers.is_some() && lower_layer_decl(settings).is_some() && enabled.contains(&ProjectRule::LowerLayerInDomain);
-    // 1 file の実行(overlay = 保存前の中身)は、書いた file が名指す module の file だけで表を作る(`World::build_for_file`)。
+    // A single-file run (overlay = the pre-save contents) builds the table only from the files of the modules the written file names (`World::build_for_file`).
     (definitions || translation || lower_layer).then(|| match overlay {
         Some((rel, source)) => signatures::World::build_for_file(root, rel, source),
         None => signatures::World::build(root, None),
     })
 }
 
-/// DOEFF142: 1 file の defhandler の引数の当たり → 下書き(critical — 責務の境界)。
+/// DOEFF142: matches of defhandler parameters in one file -> drafts (critical — a boundary of responsibility).
 fn judge_handler_arguments(root: &Path, rel: &str, source: &str, decl: &architecture::HandlerArguments, classes: &dyn handler_arguments::ClassLookup) -> Vec<Draft> {
     let lines = LineIndex::new(source);
     handler_arguments::findings_in(source, decl, classes)
@@ -5163,7 +5163,7 @@ fn judge_handler_arguments(root: &Path, rel: &str, source: &str, decl: &architec
                 path: root.join(rel),
                 rel: rel.to_string(),
                 range: lines.range(found.span.start, found.span.end),
-                message: format!("{} の {} が引数 {}({}{})を取る — 接続先と設定は Ask、client は (session val …)、状態は (session var …) で持つ", rel, found.handler, found.param, found.kind.word(), type_part),
+                message: format!("{}: {} takes parameter {} ({}{}) — hold the connection target and settings with Ask, a client with (session val …), and state with (session var …)", rel, found.handler, found.param, found.kind.word(), type_part),
                 detail: Some(found.detail()),
                 base: Severity::Error,
                 explain: Explain::HandlerArgumentHoldsState { handler: found.handler.clone(), param: found.param.clone(), kind: found.kind.word(), type_text: found.type_text.clone() },
@@ -5172,14 +5172,14 @@ fn judge_handler_arguments(root: &Path, rel: &str, source: &str, decl: &architec
         .collect()
 }
 
-/// DOEFF130 の母集団 — 翻訳の層(設定の handler_layers)の Hy の module。
+/// The population of DOEFF130 — Hy modules of the translation layer (the settings' handler_layers).
 fn is_translation_file(file: &LayerFile, translation: &settings::TranslationSettings) -> bool {
     file.file.language == Language::Hy && translation.handler_layers.contains(&file.site.layer)
 }
 
-/// DOEFF130: 翻訳の層の handler が業務の intent を出す所を判じる(error — 責務の境界の違反)。業務の intent = 撃った呼びの頭が、
-/// 設定の intent_layers の module の大文字の名(型)で、handler と同じ service の物(他の service の公開の intent は数えない)。撃った呼びの頭が repo の defk なら、その先を max_depth 段まで辿る —
-/// 定義の本文の名だけでは、import した関数を経由した intent がすり抜ける(#942 の独立レビュー)。
+/// DOEFF130: judge where a translation-layer handler emits a business intent (error — a violation of the responsibility boundary). A business intent = a fired call whose head is
+/// a capitalized name (a type) of a module in the settings' intent_layers and belongs to the same service as the handler (public intents of other services are not counted). If the fired call's head is a repo defk, follow it down to max_depth levels —
+/// names in the definition's own text alone would let an intent through via an imported function (the independent review of #942).
 fn judge_translation_intents(
     file: &LayerFile,
     source: &str,
@@ -5190,13 +5190,13 @@ fn judge_translation_intents(
 ) -> Vec<Draft> {
     let intent_layer_of = |qualified: &str| -> Option<LayerId> {
         let (module, name) = qualified.rsplit_once('.')?;
-        // 型の名(頭が大文字)だけ — intent の層は型だけを置く
+        // Only type names (capitalized head) — the intent layer holds only types
         if !name.starts_with(|c: char| c.is_ascii_uppercase()) {
             return None;
         }
         let site = index.get(module).or_else(|| index.get(&format!("{}.__init__", module)))?;
-        // 他の service の公開の intent を出すのは翻訳の仕事(DOEFF156 の「他の service の公開の効果」と同じ読み)。
-        // 止めるのは handler と同じ service の intent だけ。どちらかの service が決まらない(層が先の置き場)時は、今までどおり数える。
+        // Emitting another service's public intent is the translation's job (the same reading as DOEFF156's "public effects of other services").
+        // Only intents of the same service as the handler are stopped. If either service cannot be decided (a layer-first location), it is counted as before.
         let other_service = matches!((&site.service, &file.site.service), (Some(intent), Some(handler)) if intent != handler);
         (translation.intent_layers.contains(&site.layer) && !other_service).then_some(site.layer)
     };
@@ -5209,11 +5209,11 @@ fn judge_translation_intents(
             let intent_layer = intent_layer_of(&intent.qualified).map(|id| layers.layers[id.0].name.clone()).unwrap_or_default();
             let message = match intent.via() {
                 Some(via) => format!(
-                    "{} の handler {}(層 {})が {} を経由して、層 {} の業務の intent {} を出す — 翻訳の handler は doeff の汎用の effect だけを出す",
+                    "{}: handler {} (layer {}) goes through {} and emits, from layer {}, the business intent {} — a translation handler emits only doeff's generic effects",
                     file.file.rel, intent.handler, handler_layer, via, intent_layer, intent.effect()
                 ),
                 None => format!(
-                    "{} の handler {}(層 {})が層 {} の業務の intent {} を出す — 翻訳の handler は doeff の汎用の effect だけを出す",
+                    "{}: handler {} (layer {}) emits, from layer {}, the business intent {} — a translation handler emits only doeff's generic effects",
                     file.file.rel, intent.handler, handler_layer, intent_layer, intent.effect()
                 ),
             };
@@ -5232,25 +5232,25 @@ fn judge_translation_intents(
         .collect()
 }
 
-/// DOEFF174 の母集団 — 業務の層(設定の domain_layers)の Hy の module。
+/// The population of DOEFF174 — Hy modules of the business layers (the settings' domain_layers).
 fn is_domain_file(file: &LayerFile, translation: &settings::TranslationSettings) -> bool {
     file.file.language == Language::Hy && translation.domain_layers.contains(&file.site.layer)
 }
 
-/// DOEFF174 の下の層の宣言 — architecture.hy の :business-fakes の :lower-layer-modules(空なら判じない)。
+/// The lower-layer declaration of DOEFF174 — :lower-layer-modules of :business-fakes in architecture.hy (not judged if empty).
 fn lower_layer_decl(settings: &ProjectSettings) -> Option<&architecture::BusinessFakes> {
     settings.architecture.as_ref()?.business_fakes.as_ref().filter(|decl| !decl.lower_layer_modules.is_empty())
 }
 
-/// DOEFF174 の handler の package — :lower-layer-modules の綴り 1 つの、最後の区切りを外した module(`doeff_records.effects` →
-/// `doeff_records`)。区切りが無ければ綴りそのもの。同じ package の別の module(合図の源・記録の client)の handler も数えるため。
+/// The handler package of DOEFF174 — for one spelling of :lower-layer-modules, the module with the last separator removed (`doeff_records.effects` ->
+/// `doeff_records`). If there is no separator, the spelling itself. So that handlers of other modules of the same package (signal source, record client) are also counted.
 fn lower_layer_package(pattern: &str) -> &str {
     let module = pattern.trim_end_matches('*').trim_end_matches('.');
     module.rsplit_once('.').map(|(package, _)| package).unwrap_or(module)
 }
 
-/// DOEFF174: 業務の層の定義が、下の層の効果を出す所(defk を辿って届く形も)と、下の層の package の handler を被せる所を判じる
-/// (error — 責務の境界の違反)。
+/// DOEFF174: judge where a business-layer definition emits a lower-layer effect (including forms reached by following defks) and where it wraps a handler of a lower-layer package
+/// (error — a violation of the responsibility boundary).
 fn judge_lower_layer_uses(
     file: &LayerFile,
     source: &str,
@@ -5264,8 +5264,8 @@ fn judge_lower_layer_uses(
         let module = business_fakes::module_of_effect(qualified);
         packages.iter().any(|package| module == *package || module.starts_with(&format!("{}.", package)))
     };
-    // 効果 = :lower-layer-modules の module の物。同じ package の別の module の、repo の外の定義(doeff_records.typed の read-typed など
-    // 効果を包む defk)を実行する所も数える — repo の外の定義は推論の表に無く、その先の効果まで辿れないので、実行した時点で生の操作とみなす。
+    // Effects = those of modules in :lower-layer-modules. Running a definition outside the repo in another module of the same package (a defk that wraps an effect, such as read-typed of doeff_records.typed)
+    // is also counted — a definition outside the repo is not in the inference table and its effects cannot be followed, so the moment it is run it is regarded as a raw operation.
     let is_effect = |qualified: &str| {
         business_fakes::lower_layer_module(business_fakes::module_of_effect(qualified), decl)
             || (is_handler(qualified) && !world.definitions.contains_key(qualified))
@@ -5277,15 +5277,15 @@ fn judge_lower_layer_uses(
         .map(|found| {
             let message = match (&found.kind, found.via()) {
                 (signatures::LowerLayerKind::Handler, _) => format!(
-                    "{} の定義 {}(層 {})が下の層の handler {} を被せる — 記録の service の生の操作に答える handler を被せるのは組み立ての層の仕事で、業務の層はドメインの効果だけを出す",
+                    "{}: definition {} (layer {}) wraps the lower-layer handler {} — wrapping a handler that answers the record service's raw operations is the job of the assembly layer; a business layer emits only domain effects",
                     file.file.rel, found.definition, layer, found.name()
                 ),
                 (_, Some(via)) => format!(
-                    "{} の定義 {}(層 {})が {} を経由して、下の層の効果 {} を出す — 記録の service の生の操作は handler の仕事で、業務の層はドメインの効果だけを出す",
+                    "{}: definition {} (layer {}) goes through {} and emits the lower-layer effect {} — raw operations of the record service are the handler's job; a business layer emits only domain effects",
                     file.file.rel, found.definition, layer, via, found.name()
                 ),
                 (_, None) => format!(
-                    "{} の定義 {}(層 {})が下の層の効果 {} を出す — 記録の service の生の操作は handler の仕事で、業務の層はドメインの効果だけを出す",
+                    "{}: definition {} (layer {}) emits the lower-layer effect {} — raw operations of the record service are the handler's job; a business layer emits only domain effects",
                     file.file.rel, found.definition, layer, found.name()
                 ),
             };
@@ -5304,8 +5304,8 @@ fn judge_lower_layer_uses(
         .collect()
 }
 
-/// DOEFF127: 業務の Hy の file の defk のうち `:effects` を宣言した物で、宣言と推論が合わない所を判じる。違反の場所 = 宣言に無い
-/// effect に至る撃った呼びの頭 / 起こさない effect の `:effects` の中の名(見出しに数を出さず、違反している所に出すため — #849)。
+/// DOEFF127: among the defks of business Hy files, for those that declare `:effects`, judge where the declaration and the inference disagree. Violation location = the head of the fired call that reaches an effect
+/// not in the declaration / the name inside `:effects` of an effect that is not raised (shown at the violating place rather than as a count in the heading — #849).
 fn judge_effect_mismatches(
     file: &SourceFile,
     source: &str,
@@ -5323,13 +5323,13 @@ fn judge_effect_mismatches(
             let (start, end) = mismatch.span();
             let message = match &mismatch {
                 signatures::EffectMismatch::Undeclared { definition, effect, via: Some(via), .. } => {
-                    format!("{} の defk {} が {} を経由して、:effects に無い effect {} を起こす", file.rel, definition, via, effect)
+                    format!("{}: defk {} goes through {} and raises effect {}, which is not in :effects", file.rel, definition, via, effect)
                 }
                 signatures::EffectMismatch::Undeclared { definition, effect, via: None, .. } => {
-                    format!("{} の defk {} が :effects に無い effect {} を撃つ", file.rel, definition, effect)
+                    format!("{}: defk {} fires effect {}, which is not in :effects", file.rel, definition, effect)
                 }
                 signatures::EffectMismatch::Unused { definition, effect, .. } => {
-                    format!("{} の defk {} は :effects に {} を書いているが、起こしていない", file.rel, definition, effect)
+                    format!("{}: defk {} lists {} in :effects but does not raise it", file.rel, definition, effect)
                 }
             };
             Draft {
@@ -5347,8 +5347,8 @@ fn judge_effect_mismatches(
         .collect()
 }
 
-/// 1 file の実行で DOEFF126 を判じる file(定義の規則の母集団の Hy の file)なら、その名乗り(根からの相対 — 根の外でも設定の include の dir の下なら `..` を含む相対)。
-/// `Target::Single` の定義の書き方の規則の枝と同じ条件で、実行の頭に先読みを始めるかを決める(合わなくても答えは変わらない — 引く時に読む)。
+/// If this is a file for which a single-file run judges DOEFF126 (a Hy file in the population of the definition rules), its name (relative to the root — if outside the root but under a settings include dir, a relative path containing `..`).
+/// With the same condition as the definition-style rule branch of `Target::Single`, decides whether to start prefetching at the start of the run (the answer does not change if it does not match — it is read when looked up).
 fn bare_call_population_rel(root: &Path, settings: &ProjectSettings, enabled: &BTreeSet<ProjectRule>, path: &Path) -> Option<String> {
     let definitions = settings.definitions.as_ref()?;
     let rel = relative_path(root, path).or_else(|| hy_files::walked_rel(root, &settings.include, path))?;
@@ -5356,7 +5356,7 @@ fn bare_call_population_rel(root: &Path, settings: &ProjectSettings, enabled: &B
     (wants_definitions(enabled) && in_population).then_some(rel)
 }
 
-/// DOEFF126: 業務の Hy の file(検の置き場も)で、defk の定義を素で呼んでいる所を判じる(error — 静かな誤りなので)。
+/// DOEFF126: judge where a business Hy file (test locations too) calls a defk definition bare (error — because it is a silent mistake).
 fn judge_bare_calls(
     file: &SourceFile,
     source: &str,
@@ -5374,7 +5374,7 @@ fn judge_bare_calls(
     let module = module_of(&file.rel);
     let facts = read_facts(Language::Hy, source, &module, &definitions.tags);
     let scope = smells::Scope { module: &module, bindings: &facts.bindings };
-    // 宣言の型が Program か EffectBase を名指す record の欄に置いた素の呼びは数えない。
+    // Bare calls placed in a record field whose declared type names Program or EffectBase are not counted.
     let mut drafts: Vec<Draft> = bare_calls::bare_calls_with(source, scope, defks, program_fields)
         .into_iter()
         .map(|call| Draft {
@@ -5383,13 +5383,13 @@ fn judge_bare_calls(
             rel: file.rel.clone(),
             path: file.path.clone(),
             range: lines.range(call.span.start, call.span.end),
-            message: format!("{} の {} が defk {} を素で呼ぶ — 答えではなく Program が返る", file.rel, call.definition, call.callee),
+            message: format!("{}: {} calls defk {} bare — a Program is returned, not the answer", file.rel, call.definition, call.callee),
             detail: Some(call.detail()),
             base: Severity::Error,
             explain: Explain::BareDefkCall { call },
         })
         .collect();
-    // 引数で受けた関数を素で呼ぶ形 — 呼び手がその引数に defk か fnk を渡している時だけ。
+    // Forms that call bare a function received as an argument — only when the caller passes a defk or fnk as that argument.
     drafts.extend(param_calls::param_calls_in(source, scope, defks, program_params).into_iter().map(|call| Draft {
         rule: ProjectRule::DefkCalledBare,
         layer: None,
@@ -5397,7 +5397,7 @@ fn judge_bare_calls(
         path: file.path.clone(),
         range: lines.range(call.span.start, call.span.end),
         message: format!(
-            "{} の {} が引数 {} を素で呼ぶ — 呼び手({})が {} を渡すので、答えではなく Program が返る",
+            "{}: {} calls argument {} bare — the caller ({}) passes {}, so a Program is returned, not the answer",
             file.rel, call.definition, call.param, call.caller, call.passed
         ),
         detail: Some(call.detail()),
@@ -5407,7 +5407,7 @@ fn judge_bare_calls(
     drafts
 }
 
-/// DOEFF126 の 2 つ目の形の材料 — repo の全部の呼びのうち、引数に defk か fnk を渡している物(規則が有効な時だけ)。
+/// Material for the second form of DOEFF126 — among all calls in the repo, those that pass a defk or fnk as an argument (only when the rule is enabled).
 fn program_params_for(
     root: &Path,
     enabled: &BTreeSet<ProjectRule>,
@@ -5417,8 +5417,8 @@ fn program_params_for(
     if !enabled.contains(&ProjectRule::DefkCalledBare) || defks.is_empty() {
         return params;
     }
-    // file ごとの結果は、その file の中身と repo 全体の defk の名(defks)で決まる。defks の指紋を印に含めて file ごとに覚え、
-    // defks が変わらない間は変わった file だけ解析し直す(defks が変われば全部を作り直す・#1026)。
+    // A file's result is decided by the file's contents and the names of defks across the whole repo (defks). The fingerprint of defks is included in the mark and remembered per file,
+    // and while defks does not change, only changed files are re-analyzed (if defks changes, everything is rebuilt, #1026).
     let files = hy_rel_files(root);
     let found: Vec<param_calls::ProgramParams> =
         facts_cache::per_file_keyed(root, "program-params", &defks.digest(), &files, |rel, path| {
@@ -5435,13 +5435,13 @@ fn program_params_for(
     params
 }
 
-/// DOEFF121 の問いを当てる定義の種類(関数と handler)。
+/// The kinds of definitions to which the DOEFF121 question applies (functions and handlers).
 fn is_judgment_kind(kind: DefinitionKind) -> bool {
     matches!(kind, DefinitionKind::Defk | DefinitionKind::Deff | DefinitionKind::Defn | DefinitionKind::DefnAsync | DefinitionKind::Defp | DefinitionKind::Defpp)
 }
 
-/// DOEFF175: 宣言を切り替えた effect の古い分岐(effect が不在・失敗と宣言した型を、その答えを束ねた変数に対して値として分ける枝)を判じる。
-/// 定義の規則の母集団(定義の置き場と検の置き場)の Hy の file 全部が対象 — 検の呼び手も effect の切り替えで古くなる。重さは error(critical)。
+/// DOEFF175: judge stale branches on an effect whose declaration was switched (a branch that separates, as values, a type the effect declared as absent or failure, on a variable bound to its answer).
+/// The target is all the Hy files of the definition-rule population (definition locations and test locations) — test callers also go stale when an effect is switched. The severity is error (critical).
 fn judge_stale_branches(
     file: &SourceFile,
     source: &str,
@@ -5464,7 +5464,7 @@ fn judge_stale_branches(
             path: file.path.clone(),
             range: lines.range(branch.span.start, branch.span.end),
             message: format!(
-                "{} の {} — {} は {} を{}と宣言した。<- は {} に {} を束ねないので、この枝({})は通らない — maybe / on-raise / :absent へ",
+                "{} {} — {} declared {} as {}. <- does not bind {} to {}, so this branch ({}) is never taken — use maybe / on-raise / :absent",
                 file.rel,
                 branch.definition,
                 branch.effect,
@@ -5481,8 +5481,8 @@ fn judge_stale_branches(
         .collect()
 }
 
-/// DOEFF121〜125: 業務の Hy の file の臭いを判じる(重さの既定は warning — Absent / Raise が本線に入ったので info から上げた(ADR-DOE-HY-007 R9)。
-/// 設定の rules.<ID>.severity で info に下げられる。登録簿に載った warning は info)。
+/// DOEFF121-125: judge smells in business Hy files (the default severity is warning — raised from info because Absent / Raise entered the mainline (ADR-DOE-HY-007 R9).
+/// It can be lowered to info with the settings' rules.<ID>.severity. A warning listed in the registry becomes info).
 fn judge_smells(
     file: &SourceFile,
     source: &str,
@@ -5494,7 +5494,7 @@ fn judge_smells(
     if !is_definition_file(&file.rel, definitions) || !enabled.iter().any(|rule| rule.is_smell()) {
         return Vec::new();
     }
-    // DOEFF121 は判断の層(smells.shape_check_layers)の file だけ — 層は path の置き場所か、層が先の dir ならタグから推す。
+    // DOEFF121 applies only to files of judgment layers (smells.shape_check_layers) — the layer is inferred from the path location or, for a layer-first dir, from the tag.
     let shape_checks = enabled.contains(&ProjectRule::ShapeCheckInJudgment)
         && match (&settings.smells, &settings.layers) {
             (Some(smell), Some(layers)) => classify_layer_file(&file.rel, layers)
@@ -5519,15 +5519,15 @@ fn judge_smells(
                 return None;
             }
             let message = match &smell.kind {
-                smells::SmellKind::ShapeCheck { field, .. } => format!("{} の {} が欄 \"{}\" の形を isinstance で検める", file.rel, smell.definition, field),
+                smells::SmellKind::ShapeCheck { field, .. } => format!("{}: {} checks the shape of field \"{}\" with isinstance", file.rel, smell.definition, field),
                 smells::SmellKind::FailureRethrow { failure_type, subject } => {
-                    format!("{} の {} が失敗 {}({})を return し直す", file.rel, smell.definition, failure_type, subject)
+                    format!("{}: {} returns failure {} ({}) again", file.rel, smell.definition, failure_type, subject)
                 }
-                smells::SmellKind::BindThenReturn { name } => format!("{} の {} が {} を束ねてすぐ返す", file.rel, smell.definition, name),
+                smells::SmellKind::BindThenReturn { name } => format!("{}: {} binds {} and returns it right away", file.rel, smell.definition, name),
                 smells::SmellKind::FieldsJoined { value, fields } => {
-                    format!("{} の {} が {} の欄 {} を文字列につなぐ", file.rel, smell.definition, value, fields.join("・"))
+                    format!("{}: {} joins into a string the fields of {}: {}", file.rel, smell.definition, value, fields.join("・"))
                 }
-                smells::SmellKind::RebuiltAccumulator { name } => format!("{} の {} がループの中で {} を作り直す", file.rel, smell.definition, name),
+                smells::SmellKind::RebuiltAccumulator { name } => format!("{}: {} rebuilds {} inside a loop", file.rel, smell.definition, name),
             };
             Some(Draft {
                 rule,
@@ -5544,7 +5544,7 @@ fn judge_smells(
         .collect()
 }
 
-/// DOEFF110〜112: file の定義の書き方を判じる(defn の禁止・deff の理由の註・定義のタグ必須)。
+/// DOEFF110-112: judge how a file's definitions are written (the ban on defn, the reason comment of deff, required tags on definitions).
 fn judge_definitions(
     file: &SourceFile,
     source: &str,
@@ -5584,12 +5584,12 @@ fn judge_definitions(
             let name = class.name.name.clone();
             let (message, base) = match &verdict {
                 explain::ClassVerdict::ExternalWorld { evidence } => {
-                    (format!("{} の defclass {} は外の世界に触る({})— 土台の handler にする", file.rel, name, evidence.join("・")), Severity::Error)
+                    (format!("{}: defclass {} touches the outside world ({}) — make it a foundation handler", file.rel, name, evidence.join("・")), Severity::Error)
                 }
                 explain::ClassVerdict::Stateful { mutations } => {
-                    (format!("{} の defclass {} は変わる状態を持つ({})— 状態は handler の (session var …) へ", file.rel, name, mutations.join("・")), Severity::Warning)
+                    (format!("{}: defclass {} holds mutable state ({}) — put state in a handler's (session var …)", file.rel, name, mutations.join("・")), Severity::Warning)
                 }
-                explain::ClassVerdict::DataOnly => (format!("{} の defclass {} は欄だけ — defrecord にできる", file.rel, name), Severity::Info),
+                explain::ClassVerdict::DataOnly => (format!("{}: defclass {} is fields only — it can be a defrecord", file.rel, name), Severity::Info),
             };
             let mut found = draft(ProjectRule::ClassWithBehaviour, class.name.span, message, name.clone(), Explain::ClassShape { name, shape, verdict });
             found.base = base;
@@ -5607,7 +5607,7 @@ fn judge_definitions(
             drafts.push(draft(
                 ProjectRule::TestIsDeftest,
                 definition.name.span,
-                format!("{} の {} は {} で書かれた検 — deftest で書く", file.rel, name, head),
+                format!("{}: {} is a test written with {} — write it with deftest", file.rel, name, head),
                 name.clone(),
                 Explain::TestNotDeftest { name: name.clone(), head: head.to_string() },
             ));
@@ -5617,7 +5617,7 @@ fn judge_definitions(
         }
         let (line, previous) = line_and_previous(source, definition.start);
         let same_line = parse_reason_comment(&line, &definitions.deff_reason_marker);
-        // 直前の行は、註だけの行の時に限って読む(前の定義の行末の註を取り違えない)。
+        // The previous line is read only when it is a comment-only line (so the end-of-line comment of the previous definition is not mistaken).
         let comment = same_line.clone().or_else(|| {
             previous.trim_start().starts_with(';').then(|| parse_reason_comment(&previous, &definitions.deff_reason_marker)).flatten()
         });
@@ -5629,13 +5629,13 @@ fn judge_definitions(
             drafts.push(draft(
                 ProjectRule::DefnForbidden,
                 definition.name.span,
-                format!("{} の {} は {} で書かれている — defk で書く", file.rel, name, head),
+                format!("{}: {} is written with {} — write it with defk", file.rel, name, head),
                 name.clone(),
                 Explain::DefnForbidden { name: name.clone(), head: head.to_string(), declared_kind: declared_kind.clone() },
             ));
         }
         if enabled.contains(&ProjectRule::DeffNeedsReason) && head == "deff" {
-            // 決定的に判じるのは「註が無い・理由が空・同上とその変形」だけ。受け入れるかは Jev(DOEFF203)が決める。
+            // What is judged deterministically is only "no comment, empty reason, same as above and its variants". Whether to accept the reason is decided by Jev (DOEFF203).
             let problem = match &comment {
                 None => Some(explain::DeffReasonProblem::Missing),
                 Some(ReasonComment { detail, .. }) if is_not_a_reason(detail) => Some(explain::DeffReasonProblem::NoDetail { detail: detail.clone() }),
@@ -5645,7 +5645,7 @@ fn judge_definitions(
                 let found = draft(
                     ProjectRule::DeffNeedsReason,
                     definition.name.span,
-                    format!("{} の deff {} の理由の註 — {}", file.rel, name, problem.short()),
+                    format!("{}: reason comment of deff {} — {}", file.rel, name, problem.short()),
                     name.clone(),
                     Explain::DeffWithoutReason {
                         name: name.clone(),
@@ -5664,7 +5664,7 @@ fn judge_definitions(
                 drafts.push(draft(
                     ProjectRule::DefinitionTagsRequired,
                     definition.name.span,
-                    format!("{} の {}({})の :tags に {} が無い", file.rel, name, head, missing.join("・")),
+                    format!("{}: {} ({}) lacks {} in :tags", file.rel, name, head, missing.join("・")),
                     name.clone(),
                     Explain::DefinitionTagsMissing {
                         name: name.clone(),
@@ -5680,35 +5680,35 @@ fn judge_definitions(
     drafts
 }
 
-// --- JsonValue の使い場所(DOEFF120)---------------------------------------------------
+// --- Where JsonValue is used (DOEFF120) ---------------------------------------------------
 
-/// DOEFF120 が数える名 — 素の dict・list・str … を名で包んだだけの型(JsonObject = dict[str, JsonValue] も同じ逃げ道)。
+/// Names counted by DOEFF120 — types that merely wrap a plain dict, list, str ... with a name (JsonObject = dict[str, JsonValue] is the same escape hatch).
 const JSON_VALUE_NAMES: &[&str] = &["JsonValue", "JSONValue", "JsonObject", "JSONObject"];
 
-/// どの repo でも JsonValue を使ってよい汎用の解き手の module(doeff-hy の defwire の実行時・doeff-records の wire)。
-/// module の綴りの末尾の段で照らす(doeff の repo の `packages/doeff-hy/src/doeff_hy/_wire.hy` = `packages.doeff-hy.src.doeff_hy._wire` も当たる)。
+/// Modules of the generic resolvers that may use JsonValue in any repo (the runtime of doeff-hy's defwire, and doeff-records' wire).
+/// Matched against the last segment of the module spelling (doeff's repo `packages/doeff-hy/src/doeff_hy/_wire.hy` = `packages.doeff-hy.src.doeff_hy._wire` also matches).
 const BUILTIN_WIRE_MODULES: &[&str] = &["doeff_hy._wire", "doeff_records._wire"];
 
-/// DOEFF120 の母集団で降りない dir(`.` で始まる隠し dir も降りない — `.venv`・`.git`・`.worktrees` …)。
+/// Dirs not descended into in the DOEFF120 population (hidden dirs starting with `.` are also not descended into — `.venv`, `.git`, `.worktrees` ...).
 const JSON_VALUE_SKIPPED_DIRS: &[&str] = &["node_modules", "target", "__pycache__", "venv", "site-packages"];
 
-/// DOEFF120 の許しの判定(閉じた集合)。
+/// The allowance verdict of DOEFF120 (a closed set).
 enum JsonValueAllowance {
-    /// JsonValue を使ってよい。
+    /// JsonValue may be used.
     Allowed,
-    /// 使えない(訳は説明に出す)。
+    /// May not be used (the reason is shown in the explanation).
     Refused(explain::JsonValueRefusal),
 }
 
-/// DOEFF120 の許しの方針 — module が JsonValue を使ってよいかを、この 1 か所だけで決める。
+/// The allowance policy of DOEFF120 — decides in this one place only whether a module may use JsonValue.
 ///
-/// 方針は差し替えられる形にしてある: 許す場所の決め方を変える時(例: defwire の macro が生む解き手の中だけを許す形へ移る時)は、
-/// この関数の中身だけを替える。呼び手(母集団・名の数え方・鍵・説明の形)は変わらない。
+/// The policy is designed to be swappable: when changing how the allowed places are decided (e.g. moving to allow only inside the resolvers generated by the defwire macro),
+/// change only the body of this function. The callers (population, how names are counted, key, shape of the explanation) do not change.
 ///
-/// 今の方針(JsonValue に触ってよいのは、汎用の解き手と、送受信そのものを行う foundation だけ):
-/// 1. 組み込みの汎用の解き手(`BUILTIN_WIRE_MODULES`)は許す。
-/// 2. architecture.hy の `:wire-modules` の pattern に当たり、かつ foundation の層(`:foundation` の層の置き場)に在る module は許す。
-/// 3. `:wire-modules` に当たっても foundation の外なら許さない(訳を説明に出す)。当たらなければ許さない。
+/// The current policy (only the generic resolvers and the foundation that does the sending and receiving itself may touch JsonValue):
+/// 1. The built-in generic resolvers (`BUILTIN_WIRE_MODULES`) are allowed.
+/// 2. A module that matches a `:wire-modules` pattern of architecture.hy and is in the foundation layer (the location of the `:foundation` layer) is allowed.
+/// 3. A module that matches `:wire-modules` but is outside foundation is not allowed (the reason is shown in the explanation). One that does not match is not allowed.
 fn json_value_allowance(rel: &str, module: &str, architecture: &architecture::Architecture, layers: Option<&LayerSettings>) -> JsonValueAllowance {
     if BUILTIN_WIRE_MODULES.iter().any(|parser| module == *parser || module.ends_with(&format!(".{}", parser))) {
         return JsonValueAllowance::Allowed;
@@ -5729,21 +5729,21 @@ fn json_value_allowance(rel: &str, module: &str, architecture: &architecture::Ar
     }
 }
 
-/// module の綴りの pattern の照合(`.` 区切り — `*` は段の中の任意の綴り・`**` は 0 個以上の段。test_paths の glob と同じ照らし方)。
+/// Matching a module-spelling pattern (`.`-separated — `*` is any spelling within a segment and `**` is zero or more segments. The same matching as the glob of test_paths).
 fn module_pattern_matches(pattern: &str, module: &str) -> bool {
     let pattern: Vec<&str> = pattern.split('.').collect();
     let module: Vec<&str> = module.split('.').collect();
     segments_match(&pattern, &module)
 }
 
-/// DOEFF120 の母集団の file か — Hy か Python で、隠し dir と `JSON_VALUE_SKIPPED_DIRS` の下でない。
+/// Whether a file is in the DOEFF120 population — a Hy or Python file not under a hidden dir or `JSON_VALUE_SKIPPED_DIRS`.
 fn is_json_value_file(rel: &str) -> bool {
     let parts: Vec<&str> = rel.split('/').collect();
     let dirs = &parts[..parts.len().saturating_sub(1)];
     language_of(Path::new(rel)).is_some() && !dirs.iter().any(|dir| dir.starts_with('.') || JSON_VALUE_SKIPPED_DIRS.contains(dir))
 }
 
-/// DOEFF120 の母集団(repo の Hy と Python の file の全部・path の順)。
+/// The DOEFF120 population (all the repo's Hy and Python files — in path order).
 fn collect_json_value_files(root: &Path) -> Vec<SourceFile> {
     let walker = WalkDir::new(root).follow_links(false).into_iter().filter_entry(|entry| {
         let name = entry.file_name().to_string_lossy();
@@ -5763,7 +5763,7 @@ fn collect_json_value_files(root: &Path) -> Vec<SourceFile> {
     files
 }
 
-/// DOEFF120: module 1 つの JsonValue の使用を数え、許されない module なら 1 件出す(位置は最初の使用・数とほかの行は説明に)。
+/// DOEFF120: count the JsonValue uses of one module and, if the module is not allowed, emit one finding (the position is the first use; the count and other lines go in the explanation).
 fn judge_json_value(file: &SourceFile, source: &str, architecture: &architecture::Architecture, layers: Option<&LayerSettings>) -> Option<Draft> {
     if !JSON_VALUE_NAMES.iter().any(|name| source.contains(name)) {
         return None;
@@ -5798,7 +5798,7 @@ fn judge_json_value(file: &SourceFile, source: &str, architecture: &architecture
         path: file.path.clone(),
         range: lines.range(first.start, first.end),
         message: format!(
-            "{} が {} を {} か所で使う — JsonValue に触ってよいのは汎用の解き手と :wire-modules に挙げた foundation の送受信の module だけ",
+            "{} uses {} in {} places — JsonValue may be touched only by the generic resolvers and the foundation send/receive modules listed in :wire-modules",
             file.rel,
             names.join("・"),
             uses.count
@@ -5809,20 +5809,20 @@ fn judge_json_value(file: &SourceFile, source: &str, architecture: &architecture
     })
 }
 
-// --- 眠りの規則(DOEFF210・211)の歩き ----------------------------------------------------
+// --- Walk of the sleep rules (DOEFF210, 211) ----------------------------------------------------
 
-/// 眠りの規則の全体の実行: 歩く範囲(根の下と設定の include)の Hy の file のうち母集団に当たる物を 1 つずつ読んで判じる —
-/// 名指しが在れば、その下の file だけを判じる(定義の規則と同じ述語)。
+/// Whole run of the sleep rules: reads and judges, one at a time, the Hy files in the walked range (under the root, and the settings' include) that match the population —
+/// if there are named paths, judges only the files under them (the same predicate as the definition rules).
 struct SleepWalk<'a> {
     root: &'a Path,
     include: &'a [PathBuf],
     focus: Option<&'a [PathBuf]>,
-    /// 時間の計測の名。
+    /// Name of the time measurement.
     label: &'static str,
 }
 
 impl SleepWalk<'_> {
-    /// 母集団の file ごとの下書き(読めない file は訳)。
+    /// Drafts per file of the population (the reason for an unreadable file).
     fn judge(&self, in_population: impl Fn(&str) -> bool, judge: impl Fn(&SourceFile, &str) -> Vec<Draft> + Sync) -> Vec<Result<Vec<Draft>, String>> {
         let files: Vec<SourceFile> = hy_files::walked(self.root, self.include)
             .into_iter()
@@ -5834,16 +5834,16 @@ impl SleepWalk<'_> {
             files
                 .par_iter()
                 .map(|file| {
-                    std::fs::read_to_string(&file.path).map(|source| judge(file, &source)).map_err(|error| format!("{}: 読めない: {}", file.rel, error))
+                    std::fs::read_to_string(&file.path).map(|source| judge(file, &source)).map_err(|error| format!("{}: could not read: {}", file.rel, error))
                 })
                 .collect()
         })
     }
 }
 
-// --- program の眠り(DOEFF210)----------------------------------------------------------
+// --- Sleep in programs (DOEFF210) ----------------------------------------------------------
 
-/// program の置き場の file か(置き場の 1 つの下 — 置き場が空なら全部 — で、除く置き場・区切りに当たらない Hy の file)。
+/// Whether a file is in a program location (under one of the locations — all if the locations are empty — and a Hy file that matches neither an excluded location nor a separator).
 fn is_program_sleep_file(rel: &str, places: &ProgramSleepSettings) -> bool {
     language_of(Path::new(rel)) == Some(Language::Hy)
         && (places.paths.is_empty() || places.paths.iter().any(|place| matches_place(rel, place)))
@@ -5851,7 +5851,7 @@ fn is_program_sleep_file(rel: &str, places: &ProgramSleepSettings) -> bool {
         && !rel.split('/').any(|part| places.exclude_parts.contains(part))
 }
 
-/// DOEFF210: program(defk・defp)の中の壁の時計の眠りを、呼びの form の位置の下書きにする(鍵の細目 = program の名::眠りの関数)。
+/// DOEFF210: turn wall-clock sleeps inside programs (defk, defp) into drafts at the call form's position (key detail = program name::sleep function).
 fn judge_program_sleep(file: &SourceFile, source: &str) -> Vec<Draft> {
     let lines = LineIndex::new(source);
     program_sleep::judge(source)
@@ -5862,21 +5862,21 @@ fn judge_program_sleep(file: &SourceFile, source: &str) -> Vec<Draft> {
             path: file.path.clone(),
             rel: file.rel.clone(),
             range: lines.range(hit.start, hit.end),
-            message: format!("{} — program {} が {} で壁の時計を待つ(時間は doeff-time の効果で待つ)", file.rel, hit.definition, hit.callee),
+            message: format!("{} — program {} waits on the wall clock with {} (wait using doeff-time effects for time)", file.rel, hit.definition, hit.callee),
             detail: Some(hit.detail()),
             base: Severity::Error,
             explain: Explain::ProgramSleepsOnWallClock {
-                subject: format!("program {} の中の {} の呼び", hit.definition, hit.callee),
-                reason: "program が time.sleep・asyncio.sleep を呼ぶと、どの時間の handler を置いても壁の時計で待つ — その program の検は仮想の時計(sim-time-handler)で走れず、実時間の分だけ遅くなり、込んだ機体では時間切れで赤になる。program は doeff-time の効果(Delay など)を出し、1 秒が何であるかは呼び手が置く時間の handler が決める。壁の時計で待つのは handler の実装の責務(doeff の ADR-DOE-TIME-001 R1・R2)。".to_string(),
+                subject: format!("call of {} in program {}", hit.callee, hit.definition),
+                reason: "If a program calls time.sleep or asyncio.sleep, it waits on the wall clock whatever time handler is installed — its test cannot run on a virtual clock (sim-time-handler), is slowed by the real time, and on a busy machine goes red by timeout. A program emits doeff-time effects (such as Delay), and what one second means is decided by the time handler the caller installs. Waiting on the wall clock is the responsibility of the handler implementation (doeff's ADR-DOE-TIME-001 R1, R2).".to_string(),
             },
         })
         .collect()
 }
 
-// --- 検の眠り(DOEFF211)---------------------------------------------------------------
+// --- Sleep in tests (DOEFF211) ---------------------------------------------------------------
 
-/// 検の置き場の file か(path の区切りに置き場の dir の名を持つか、file の名が検の名の glob に合う Hy の file で、除く置き場(dir の下か、
-/// 名指しの file そのもの)に当たらない)。
+/// Whether a file is in a test location (a Hy file whose path has a test-location dir name as a segment, or whose file name matches the test-name glob, and that does not match an excluded location (under a dir, or
+/// the named file itself)).
 fn is_test_sleep_file(rel: &str, places: &TestSleepSettings) -> bool {
     let (dirs, name) = match rel.rsplit_once('/') {
         Some((dirs, name)) => (dirs, name),
@@ -5887,7 +5887,7 @@ fn is_test_sleep_file(rel: &str, places: &TestSleepSettings) -> bool {
         && !places.exclude.iter().any(|place| matches_place(rel, place))
 }
 
-/// DOEFF211: realtime を名乗らない検の中の壁の時計の眠りを、呼びの form の位置の下書きにする(鍵の細目 = 包む定義の名::眠りの関数)。
+/// DOEFF211: turn wall-clock sleeps inside tests that do not claim realtime into drafts at the call form's position (key detail = enclosing definition name::sleep function).
 fn judge_test_sleep(file: &SourceFile, source: &str) -> Vec<Draft> {
     let lines = LineIndex::new(source);
     test_sleep::judge(source)
@@ -5898,20 +5898,20 @@ fn judge_test_sleep(file: &SourceFile, source: &str) -> Vec<Draft> {
             path: file.path.clone(),
             rel: file.rel.clone(),
             range: lines.range(hit.start, hit.end),
-            message: format!("{} — 検の {} が {} で壁の時計を待つ(実時間が対象なら realtime を名乗る・そうでなければ出来事か仮想の時計で待つ)", file.rel, hit.definition, hit.callee),
+            message: format!("{} — test {} waits on the wall clock with {} (if real time is the subject, claim realtime; otherwise wait on an event or a virtual clock)", file.rel, hit.definition, hit.callee),
             detail: Some(hit.detail()),
             base: Severity::Error,
             explain: Explain::TestSleepsOnWallClock {
-                subject: format!("検の {} の中の {} の呼び", hit.definition, hit.callee),
-                reason: "検が time.sleep・asyncio.sleep で待つと、待つ物(出来事)が名指されず、実時間の分だけ遅くなり、込んだ機体では時間切れで赤になる。検は program に doeff-time の効果(Delay など)を出させて仮想の時計(sim-time-handler)で走らせるか、待つ出来事を名指して待つ。実時間そのもの(本物の thread・本物の asyncio の loop・本物の外の process)が対象の検だけが realtime を名乗り、理由と一緒に名簿に載る(doeff の ADR-DOE-TIME-001 R3)。".to_string(),
+                subject: format!("call of {} in test {}", hit.callee, hit.definition),
+                reason: "If a test waits with time.sleep or asyncio.sleep, what it waits for (an event) is not named, it is slowed by the real time, and on a busy machine goes red by timeout. A test either has the program emit doeff-time effects (such as Delay) and runs it on a virtual clock (sim-time-handler), or names the event to wait for. Only tests whose subject is real time itself (a real thread, a real asyncio loop, a real external process) claim realtime, and they are listed in the roster together with a reason (doeff's ADR-DOE-TIME-001 R3).".to_string(),
             },
         })
         .collect()
 }
 
-// --- 環境の語(DOEFF108)---------------------------------------------------------------
+// --- Environment words (DOEFF108) ---------------------------------------------------------------
 
-/// 業務の file か(置き場の 1 つの下で、除く置き場・区切りに当たらず、拡張子が合う)。
+/// Whether a file is a business file (under one of the locations, not matching an excluded location or separator, and with a matching extension).
 fn is_environment_file(rel: &str, env: &EnvironmentSettings) -> bool {
     let extension_ok = Path::new(rel).extension().and_then(|e| e.to_str()).is_some_and(|e| env.extensions.contains(e));
     extension_ok
@@ -5920,7 +5920,7 @@ fn is_environment_file(rel: &str, env: &EnvironmentSettings) -> bool {
         && !rel.split('/').any(|part| env.exclude_parts.contains(part))
 }
 
-/// 業務の file を全部集める(path の順)。
+/// Collects all business files (in path order).
 fn collect_environment_files(root: &Path, env: &EnvironmentSettings) -> Vec<SourceFile> {
     let mut found = BTreeMap::new();
     for place in &env.paths {
@@ -5941,7 +5941,7 @@ fn collect_environment_files(root: &Path, env: &EnvironmentSettings) -> Vec<Sour
     found.into_values().collect()
 }
 
-/// 定義が名を見る対象か — handler(defhandler と、`[effect k]` を受ける do の関数)と、組み立ての file の最上位の定義。
+/// Whether a definition is a target whose name is checked — a handler (defhandler, and a do function receiving `[effect k]`) and a top-level definition of an assembly file.
 fn names_business_handler(definition: &Definition, assembly_file: bool) -> bool {
     if definition.container.is_some() {
         return false;
@@ -5952,7 +5952,7 @@ fn names_business_handler(definition: &Definition, assembly_file: bool) -> bool 
     assembly_file || definition.kind == DefinitionKind::Defhandler || dispatch
 }
 
-/// DOEFF108: 業務の file の名と、handler・組み立ての関数の名に環境の語が無いか(名前だけで判じる — 到達の解析はしない)。
+/// DOEFF108: check that the names of business files and of handlers and assembly functions have no environment words (judged by name alone — no reachability analysis).
 fn judge_environment_names(file: &SourceFile, source: &str, env: &EnvironmentSettings, hy_file: Option<&HyFileIndex>) -> Vec<Draft> {
     let mut drafts = Vec::new();
     let file_name = file.rel.rsplit('/').next().unwrap_or(&file.rel);
@@ -5972,7 +5972,7 @@ fn judge_environment_names(file: &SourceFile, source: &str, env: &EnvironmentSet
     if !words.is_empty() {
         drafts.push(draft(
             first_line_range(source),
-            format!("{} の file の名が環境の語({})を含む — 業務の file と handler は環境を知らない。環境で差し替えるのは土台の汎用の handler だけ", file.rel, words.join("・")),
+            format!("{}: the file name contains an environment word ({}) — business files and handlers do not know the environment. Only the generic handlers of the foundation are swapped per environment", file.rel, words.join("・")),
             None,
             Explain::EnvironmentName { subject: NameSubject::File { stem: stem.to_string() }, words: words.clone() },
         ));
@@ -5993,7 +5993,7 @@ fn judge_environment_names(file: &SourceFile, source: &str, env: &EnvironmentSet
         }
         drafts.push(draft(
             definition.range,
-            format!("{} の {} が環境の語({})を含む — 業務の file と handler は環境を知らない。環境で差し替えるのは土台の汎用の handler だけ", file.rel, name, words.join("・")),
+            format!("{}: {} contains an environment word ({}) — business files and handlers do not know the environment. Only the generic handlers of the foundation are swapped per environment", file.rel, name, words.join("・")),
             Some(name.clone()),
             Explain::EnvironmentName { subject: NameSubject::Definition { name, kind: definition.kind.as_str() }, words },
         ));
@@ -6001,9 +6001,9 @@ fn judge_environment_names(file: &SourceFile, source: &str, env: &EnvironmentSet
     drafts
 }
 
-// --- 仕上げ -------------------------------------------------------------------------------
+// --- Finishing -------------------------------------------------------------------------------
 
-/// 違反の鍵 `<repo の根からの path>::<law の名か規則の ID>[::<細目>]`(登録簿・誤判定の一覧が照らす綴り — 組むのはここ 1 か所)。
+/// The violation key `<path from the repo root>::<law name or rule ID>[::<detail>]` (the spelling that the registry and the false-positive list match against — built in this one place).
 fn finding_key(law: Option<&LawSpec>, rule: ProjectRule, rel: &str, detail: Option<&str>) -> String {
     let segment = law.map(|l| l.name.as_str()).unwrap_or_else(|| rule.id());
     match detail {
@@ -6012,19 +6012,19 @@ fn finding_key(law: Option<&LawSpec>, rule: ProjectRule, rel: &str, detail: Opti
     }
 }
 
-/// 鍵の区切り(`<path>::<law の名か規則の ID>[::<細目>]` の 2 つ目)が指す規則のうち、この実行で判じた物(有効・意味の規則でない・
-/// 照合中でない)。区切りから規則を引けない鍵(登録簿の dir を共用する他の検の鍵)と、判じていない規則の鍵は空。
+/// Among the rules named by the key's separator (the second of `<path>::<law name or rule ID>[::<detail>]`), those judged in this run (enabled, not a semantic rule, and
+/// not being reconciled). Keys whose rule cannot be looked up from the separator (keys of other checks sharing the registry dir) and keys of rules that were not judged are empty.
 fn judged_rules_of(key: &str, settings: &ProjectSettings, enabled: &BTreeSet<ProjectRule>) -> Vec<ProjectRule> {
     named_rules_of(key, settings).into_iter().filter(|rule| enabled.contains(rule)).collect()
 }
 
-/// 登録簿の鍵のどれかが名指す規則(DOEFF166 が判じられる物)— 166 が有効な全体の実行が、enable に無くても同じ実行で当てる列。
+/// The rules named by any registry key (those DOEFF166 can judge) — the list that a whole run with 166 enabled applies in the same run even if absent from enable.
 fn rules_named_by_registry(registry: &Registry, settings: &ProjectSettings) -> BTreeSet<ProjectRule> {
     registry.keys.iter().flat_map(|key| named_rules_of(key, settings)).collect()
 }
 
-/// 鍵の区切りが名指す規則のうち、DOEFF166 が判じられる物(意味の規則でない・照合中でない — 意味の規則は Jev に問うので自動では
-/// 当てない)。区切りから規則を引けない鍵は空。
+/// Among the rules named by a key's separator, those DOEFF166 can judge (not semantic rules, not being reconciled — semantic rules ask Jev, so they are not
+/// applied automatically). Keys whose rule cannot be looked up from the separator are empty.
 fn named_rules_of(key: &str, settings: &ProjectSettings) -> Vec<ProjectRule> {
     let Some(segment) = key.split("::").nth(1) else { return Vec::new() };
     let named: Vec<ProjectRule> = match ProjectRule::parse(segment) {
@@ -6043,7 +6043,7 @@ fn named_rules_of(key: &str, settings: &ProjectSettings) -> Vec<ProjectRule> {
     named.into_iter().filter(|rule| !rule.is_semantic() && !settings.registry.reconciling.contains(rule)).collect()
 }
 
-/// DOEFF166: 登録簿の鍵のうち、この実行で判じた規則の鍵で、どの下書きの鍵にも当たらない物を下書きにする(鍵の順・鍵の細目 = 登録簿の鍵)。
+/// DOEFF166: among registry keys, those for rules judged in this run that match none of the drafts' keys become drafts (in key order; key detail = the registry key).
 fn stale_registry_drafts(root: &Path, settings: &ProjectSettings, enabled: &BTreeSet<ProjectRule>, registry: &Registry, drafts: &[Draft]) -> Vec<Draft> {
     let found: BTreeSet<String> = drafts
         .iter()
@@ -6058,7 +6058,7 @@ fn stale_registry_drafts(root: &Path, settings: &ProjectSettings, enabled: &BTre
             if rules.is_empty() {
                 return None;
             }
-            let source = registry.origins.get(key).cloned().unwrap_or_else(|| "登録簿".to_string());
+            let source = registry.origins.get(key).cloned().unwrap_or_else(|| "registry".to_string());
             let ids: Vec<String> = rules.iter().map(|rule| rule.id().to_string()).collect();
             Some(Draft {
                 rule: ProjectRule::RegistryEntryStale,
@@ -6066,7 +6066,7 @@ fn stale_registry_drafts(root: &Path, settings: &ProjectSettings, enabled: &BTre
                 path: root.join(&source),
                 rel: source.clone(),
                 range: zero_range(),
-                message: format!("登録簿 {} の鍵 {} はもう当たらない({} を repo 全体に当てた)— 行を消す", source, key, ids.join("・")),
+                message: format!("registry {} key {} no longer matches ({} was applied to the whole repo) — delete the line", source, key, ids.join("・")),
                 detail: Some(key.clone()),
                 base: Severity::Error,
                 explain: Explain::RegistryEntryStale { key: key.clone(), source, rules: ids },
@@ -6075,14 +6075,14 @@ fn stale_registry_drafts(root: &Path, settings: &ProjectSettings, enabled: &BTre
         .collect()
 }
 
-/// 人の判定の一覧(意味の規則の誤判定と正例 — 鍵 → 理由)。
+/// The list of human verdicts (false positives and true positives of semantic rules — key -> reason).
 #[derive(Debug, Default)]
 struct JudgedLabels {
     false_positives: BTreeMap<String, String>,
     true_positives: BTreeMap<String, String>,
 }
 
-/// 意味の規則の設定の誤判定の一覧と正例の一覧を読む。両方に載った鍵は食い違いとして理由を積み、どちらとしても読まない。
+/// Reads the settings' list of false positives and list of true positives of semantic rules. A key listed in both is accumulated as a conflict reason and read as neither.
 fn judged_labels(root: &Path, settings: &ProjectSettings, errors: &mut Vec<String>) -> JudgedLabels {
     let Some(semantic) = &settings.semantic else { return JudgedLabels::default() };
     let negatives = registry::JudgedKeys::load(root, &semantic.false_positives, registry::Absent::Unreadable);
@@ -6092,14 +6092,14 @@ fn judged_labels(root: &Path, settings: &ProjectSettings, errors: &mut Vec<Strin
     let mut labels = JudgedLabels { false_positives: negatives.reasons, true_positives: positives.reasons };
     let both: Vec<String> = labels.false_positives.keys().filter(|k| labels.true_positives.contains_key(*k)).cloned().collect();
     for key in both {
-        errors.push(format!("判定の一覧の食い違い: {} が誤判定の一覧と正例の一覧の両方に在る — どちらとしても読まない", key));
+        errors.push(format!("conflict in verdict lists: {} is in both the false-positive list and the true-positive list — read as neither", key));
         labels.false_positives.remove(&key);
         labels.true_positives.remove(&key);
     }
     labels
 }
 
-/// 人の判定と Jev の答えを突き合わせる(鍵の順)。一覧に載っても答えの無い(未判定の・今は無い)定義は listed にだけ数える。
+/// Matches human verdicts against Jev's answers (in key order). A definition that is listed but has no answer (unjudged, or no longer present) is counted only in listed.
 fn labeled_summary(settings: &ProjectSettings, labels: &JudgedLabels, probes: &[SemanticProbe]) -> semantic::LabeledSummary {
     let mut summary = semantic::LabeledSummary::default();
     summary.positives.listed = labels.true_positives.len();
@@ -6120,8 +6120,8 @@ fn labeled_summary(settings: &ProjectSettings, labels: &JudgedLabels, probes: &[
     summary
 }
 
-/// 下書きに law・鍵・登録簿・照合中を当てて違反にする(path と位置の順)。意味の規則の当たりで鍵が誤判定の一覧に載った物は出さない
-/// (返す数 = 外した数)。
+/// Turns drafts into violations by applying law, key, registry and reconciling (in path and position order). Those hit by a semantic rule whose key is in the false-positive list are not emitted
+/// (the returned count = the number removed).
 fn finish(drafts: Vec<Draft>, settings: &ProjectSettings, registry: &Registry, false_positives: &BTreeMap<String, String>) -> (Vec<Finding>, usize) {
     let narrator = Narrator { layers: settings.layers.as_ref(), raw: settings.raw.as_ref() };
     let mut dropped = 0;
@@ -6134,7 +6134,7 @@ fn finish(drafts: Vec<Draft>, settings: &ProjectSettings, registry: &Registry, f
                 dropped += 1;
                 return None;
             }
-            // DOEFF206 は登録簿で下げない(載っても手つかずの当たりのまま)。
+            // DOEFF206 is not lowered by the registry (even if listed, the hit stays untouched).
             let registered = registry.keys.contains(&key) && draft.rule.lowered_by_registry();
             let base = settings.severity.get(&draft.rule).copied().unwrap_or(draft.base);
             let reconciling = settings.registry.reconciling.contains(&draft.rule);
@@ -6143,7 +6143,7 @@ fn finish(drafts: Vec<Draft>, settings: &ProjectSettings, registry: &Registry, f
             } else {
                 match (registered, base) {
                     (true, Severity::Error) => settings.registered_severity.get(&draft.rule).copied().unwrap_or(Severity::Warning),
-                    // 登録簿に載った warning(移行の間の旧い形など)は info に下げる。
+                    // A warning listed in the registry (such as an old form during migration) is lowered to info.
                     (true, Severity::Warning) => Severity::Info,
                     (_, base) => base,
                 }
@@ -6179,7 +6179,7 @@ fn finish(drafts: Vec<Draft>, settings: &ProjectSettings, registry: &Registry, f
     (findings, dropped)
 }
 
-/// 判じる規則の集合(`enable`・`disable` を展開した ID の列から。None は全部)。
+/// The set of rules to judge (from the list of IDs with `enable` and `disable` expanded. None means all).
 pub fn enabled_rules(enabled_ids: Option<&[String]>) -> BTreeSet<ProjectRule> {
     match enabled_ids {
         None => ProjectRule::ALL.iter().copied().collect(),
@@ -6198,7 +6198,7 @@ mod contract_test_breach_tests {
 
     #[test]
     fn waived_none_with_doeff_contract_test_passes_without_an_edge_test() {
-        // DOEFF137: 理由(doeff 側の契約テストの名)つきの none は、縁の検が無くても鳴らない。
+        // DOEFF137: a none with a reason (the name of a contract test on the doeff side) does not fire even if there is no edge test.
         let waived = ContractTest::Waived(ContractTestWaiver::DoeffContractTest(node("packages/doeff-core-effects/tests/test_http.hy::test-contract")));
         assert_eq!(contract_test_breach(&waived, || false), None);
         let covered_here = ContractTest::Waived(ContractTestWaiver::CoveredByRepoTest(node("tests/test_main.hy::test-main")));
@@ -6207,7 +6207,7 @@ mod contract_test_breach_tests {
 
     #[test]
     fn none_without_reason_rings_even_when_an_edge_test_exists() {
-        // 理由の無い none は鳴る — 縁の検が届いていても宣言の誤りとして鳴らす(黙って通さない・#1796)。
+        // A none without a reason fires — even if an edge test reaches it, it fires as a declaration error (it is not passed silently, #1796).
         assert_eq!(contract_test_breach(&ContractTest::NoneWithoutReason, || false), Some(ContractTestBreach::NoneWithoutReason));
         assert_eq!(contract_test_breach(&ContractTest::NoneWithoutReason, || true), Some(ContractTestBreach::NoneWithoutReason));
     }
@@ -6245,8 +6245,8 @@ mod judged_rules_tests {
 
     #[test]
     fn a_single_file_run_does_not_judge_rules_judged_only_on_the_whole_repo() {
-        // 1 file の実行は DOEFF166(登録簿の当たらない行)などの repo 全体でだけ判じる規則を判じない。全体の実行は
-        // 判じ、名指しの path の全体の実行は 166 だけを判じない(当たる所見が名指しの外に在りうる)。
+        // A single-file run does not judge rules judged only across the whole repo, such as DOEFF166 (registry lines that match nothing). A whole run
+        // judges it, and a whole run with named paths judges everything except 166 (its hits may lie outside the named paths).
         let single = Target::Single { path: PathBuf::from("/repo/app/core/x.hy"), source: "" };
         let whole = Target::Whole { focus: None };
         let focus = [PathBuf::from("/repo/app/core/x.hy")];
@@ -6254,7 +6254,7 @@ mod judged_rules_tests {
         assert!(!single.judges(ProjectRule::RegistryEntryStale));
         assert!(whole.judges(ProjectRule::RegistryEntryStale));
         assert!(!named.judges(ProjectRule::RegistryEntryStale));
-        // repo 全体を歩く規則(DOEFF141・162)は 1 file では判じない。1 file の枝を持つ規則(DOEFF101・106・110)は判じる。
+        // Rules that walk the whole repo (DOEFF141, 162) are not judged in a single file. Rules that have a single-file branch (DOEFF101, 106, 110) are judged.
         for rule in [ProjectRule::BlindDefinitionReads, ProjectRule::EffectOutsideCensus, ProjectRule::VocabularyOutsideSinglePoint] {
             assert!(!single.judges(rule), "{}", rule.id());
             assert!(whole.judges(rule) && named.judges(rule), "{}", rule.id());
@@ -6262,7 +6262,7 @@ mod judged_rules_tests {
         for rule in [ProjectRule::LayerImportDirection, ProjectRule::RawSideEffectDirect, ProjectRule::DefnForbidden] {
             assert!(single.judges(rule) && whole.judges(rule) && named.judges(rule), "{}", rule.id());
         }
-        // 全体の実行は有効な規則を全部判じる(名指しの実行は 166 の 1 つだけを除く)。
+        // A whole run judges all the enabled rules (a run with named paths excludes only 166).
         assert!(ProjectRule::ALL.iter().all(|rule| whole.judges(*rule)));
         let not_named: Vec<&str> = ProjectRule::ALL.iter().filter(|rule| !named.judges(**rule)).map(|rule| rule.id()).collect();
         assert_eq!(not_named, vec!["DOEFF166"]);
@@ -6270,7 +6270,7 @@ mod judged_rules_tests {
 
     #[test]
     fn the_report_names_only_judged_rules_and_runs_nothing_else_on_a_single_file() {
-        // 1 file の実行の報告は、有効でも 1 file で判じない規則を judged に載せず、有効な規則に関わらず出す DOEFF128 は載せる。
+        // A single-file run's report does not put in judged the rules that are enabled but not judged on a single file, and does include DOEFF128, which is emitted regardless of the enabled rules.
         let root = tempfile::TempDir::new().unwrap();
         let settings = ProjectSettings::default();
         let enabled: BTreeSet<ProjectRule> = [ProjectRule::RegistryEntryStale, ProjectRule::DefnForbidden].into_iter().collect();

@@ -1,18 +1,18 @@
-//! DOEFF032: 規則の母集団の宣言の破れ
+//! DOEFF032: Violation of the rule population declaration
 //!
-//! 層の宣言は、名指しの module に限って規則を母集団から外せる(`(layer 名 :modules [..] :exempt [(rule 規則 ID "理由")]
-//! :forbid-modules [..])`)。外すのは Program の外の code(Python の起動の時点で `.pth` から入る見張りほか)だけで、そこに業務の code が
-//! 入ると、外した規則がその code にも当たらなくなる。この規則は次の 2 つを error にする:
-//!   - 外した層の module が、その層の `:forbid-modules` の module を import している(外した層に業務の code が入った)
-//!   - file を持つ package の architecture.hy を読めず、その file の母集団を決められない(外さずに、読めないことを名指す)
+//! A layer declaration may exempt rules from the population only for named modules (`(layer NAME :modules [..] :exempt [(rule RULE-ID "reason")]
+//! :forbid-modules [..])`). What is exempted is only code outside a Program (the watcher entered via `.pth` at Python startup, and the like); if business code
+//! gets in there, the exempted rules no longer apply to that code either. This rule makes the following two cases errors:
+//!   - A module of an exempted layer imports a module in that layer's `:forbid-modules` (business code entered the exempted layer)
+//!   - The architecture.hy of a package that has files cannot be read, so the population of those files cannot be decided (name the unreadable file instead of exempting)
 //!
-//! 当たりは、file ごとに最も近い architecture.hy を引く 1 点(crate::population — lib::lint_source_at)が出す。文ごとの文脈(RuleContext)は
-//! file の層を持たないので、この規則の check は何も返さず、規則の名と有効・無効の口(設定の enable / disable)だけを持つ。
+//! The hits are emitted at a single point that looks up the nearest architecture.hy for each file (crate::population — lib::lint_source_at). The per-statement context (RuleContext) has
+//! no layer for the file, so this rule's check returns nothing and only holds the rule name and the enable / disable switch (enable / disable in the settings).
 
 use crate::models::{RuleContext, Violation};
 use crate::rules::base::LintRule;
 
-/// この規則の ID。当たりを出す crate::population はここから借りる(規則の側は母集団の 1 点を知らない — 依存の向きを 1 つにする)。
+/// The ID of this rule. crate::population, which emits the hits, borrows it from here (the rule side does not know the population's single point — this keeps the dependency in one direction).
 pub const RULE_ID: &str = "DOEFF032";
 
 pub struct RulePopulationDeclarationRule;
@@ -35,11 +35,11 @@ impl LintRule for RulePopulationDeclarationRule {
     }
 
     fn description(&self) -> &str {
-        "規則の母集団から外した層に業務の code が入っている・母集団を決める宣言を読めない"
+        "Business code is in a layer exempted from the rule population, or the declaration that decides the population cannot be read"
     }
 
     fn check(&self, _context: &RuleContext) -> Vec<Violation> {
-        // 当たりは crate::population が file ごとに出す(上の頭注)。
+        // Hits are emitted per file by crate::population (see the header note above).
         Vec::new()
     }
 }

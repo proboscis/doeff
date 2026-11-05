@@ -2,22 +2,22 @@
 //!
 //! Forbid direct access to environment variables.
 //!
-//! os を指す名・os.environ を指す名・os.getenv を指す名は、file の import 文から作る表(utils の OsEnvNames)で解く —
-//! `import os as x` の `x.environ` / `x.getenv`、`from os import environ [as e]` の `environ` / `e`、
-//! `from os import getenv [as g]` の `getenv` / `g` も、素の `os.environ` / `os.getenv` と同じに当たる。
-//! 表は file に 1 度だけ作るので、この規則は module 全体を見る(RuleReach::Module — 本体は file に 1 度だけ当てる)。
-//! 文は utils の each_statement で全部を 1 度ずつ辿り(入れ子の本体の一覧は本体の再帰と同じ 1 か所)、文ごとに自分の式だけを見る。
-//! 式・pattern は種類を全部辿る(網羅の match)。手で並べた種類の外を黙って飛ばすと、`or` の中ほかを見落とす。
+//! Names pointing to os, names pointing to os.environ, and names pointing to os.getenv are resolved with a table built from the file's import statements (utils' OsEnvNames) —
+//! `x.environ` / `x.getenv` for `import os as x`, `environ` / `e` for `from os import environ [as e]`,
+//! and `getenv` / `g` for `from os import getenv [as g]` all match the same as a plain `os.environ` / `os.getenv`.
+//! The table is built once per file, so this rule looks at the whole module (RuleReach::Module — the body is applied once per file).
+//! Statements are all visited once each with utils' each_statement (the list of nested bodies is in the same one place as the body recursion), and each statement looks only at its own expressions.
+//! Expressions and patterns are visited for every kind (an exhaustive match). Silently skipping kinds outside a hand-written list would miss things such as the inside of an `or`.
 //!
-//! 当てるのは os.environ・os.getenv への参照そのもの(foundation の handler の外の
-//! 環境変数の読みは linter が見つける違反。環境変数の読みは foundation の handler の中だけ。そこは層の宣言の `:exempt` が外す)。
-//! 参照の 1 つは 1 件 — その形で文を分ける:
-//!   * 添字 `os.environ[...]`(読み・書き・del)と method の呼び出し `os.environ.<method>(...)`・`os.getenv(...)` — 前からの文のまま。
-//!   * `in` / `not in` の右辺の `os.environ` — 有無を見る読み。
-//!   * 呼ばずに参照する `os.getenv`・`os.environ.<名>`(`g = os.getenv`・`f(os.environ.get)`)。
-//!   * それ以外の所に現れる `os.environ`(引数・代入・return・`dict(os.environ)`・`{**os.environ}`・三項の枝・`os.environ = …`)— 値として使う。
-//! 添字・呼び出し・`in` の当たりの中の `os.environ` は別に数えない(1 つの読みを 2 度数えない)。素の名の束ね直し(`environ = …`・
-//! `del environ`)は os に触れないので当てない(名の表は file の全体で 1 つ — 束ね直した後の素の名の読みは今までどおり当たる)。
+//! What it matches is the reference to os.environ / os.getenv itself (reading environment variables
+//! outside a foundation handler is a violation the linter finds. Reading environment variables belongs only inside a foundation handler. The layer declaration's `:exempt` excludes that place).
+//! One reference is one finding — the message is split by that form:
+//!   * Subscript `os.environ[...]` (read, write, del) and method calls `os.environ.<method>(...)` and `os.getenv(...)` — the message stays as before.
+//!   * `os.environ` on the right of `in` / `not in` — a read that checks presence.
+//!   * `os.getenv` and `os.environ.<name>` referenced without being called (`g = os.getenv`, `f(os.environ.get)`).
+//!   * `os.environ` appearing anywhere else (an argument, assignment, return, `dict(os.environ)`, `{**os.environ}`, a ternary branch, `os.environ = …`) — used as a value.
+//! The `os.environ` inside a subscript, call, or `in` match is not counted separately (one read is not counted twice). Rebinding a plain name (`environ = …`,
+//! `del environ`) does not touch os, so it does not match (the name table is one per whole file — a read of a plain name after rebinding still matches as before).
 
 use crate::models::{RuleContext, Severity, Violation};
 use crate::rules::base::{LintRule, RuleReach};
@@ -27,15 +27,15 @@ use rustpython_ast::{
     Pattern, Ranged, Stmt, TypeParam, WithItem,
 };
 
-/// 新しく当てる形(値として使う・有無を見る・呼ばずに参照する)の文の後半 — 前からの文の勧め(依存の注入)に、読む場所を足す。
+/// The second half of the message for the newly matched forms (used as a value, checking presence, referenced without being called) — adds where to read to the earlier message's recommendation (dependency injection).
 const READ_IN_FOUNDATION: &str = "Read environment variables only in a foundation handler; \
      use dependency injection to receive configuration values.";
 
-/// 式そのものが指す、環境変数の読みの入口。
+/// The entry point of an environment-variable read that an expression points to itself.
 enum Referent {
-    /// os.environ(`<os の名>.environ`・environ を指す素の名)
+    /// os.environ (`<name of os>.environ`, or a plain name pointing to environ)
     Environ,
-    /// os.getenv(`<os の名>.getenv`・getenv を指す素の名)
+    /// os.getenv (`<name of os>.getenv`, or a plain name pointing to getenv)
     Getenv,
 }
 
@@ -47,10 +47,10 @@ impl NoOsEnvironRule {
     }
 }
 
-/// 文 1 つの式を辿り、当たりを積む。
+/// Visits the expressions of one statement and accumulates matches.
 struct EnvironReads<'a> {
     file_path: &'a str,
-    /// file の import 文から作った、環境変数の読みを指す名の表。
+    /// A table, built from the file's import statements, of names that point to environment-variable reads.
     names: &'a OsEnvNames,
     violations: Vec<Violation>,
 }
@@ -66,7 +66,7 @@ impl<'a> EnvironReads<'a> {
         ));
     }
 
-    /// 文の自分の式(入れ子の文の本体は除く — each_statement が 1 つずつ渡す)。
+    /// A statement's own expressions (excluding the bodies of nested statements — each_statement passes them one at a time).
     fn stmt(&mut self, stmt: &Stmt) {
         match stmt {
             Stmt::FunctionDef(func) => {
@@ -144,8 +144,8 @@ impl<'a> EnvironReads<'a> {
         }
     }
 
-    /// 式が os.environ / os.getenv そのものを指すか。素の名は読む時(Load)だけ — 束ね直し(`environ = …`)と消し(`del environ`)は
-    /// 名を付け替えるだけで os に触れない。`os.environ = …`・`del os.environ` は os の属性を書くので当たる。
+    /// Whether an expression points to os.environ / os.getenv itself. A plain name counts only when read (Load) — rebinding (`environ = …`) and deleting (`del environ`) only
+    /// rename the name and do not touch os. `os.environ = …` and `del os.environ` write an attribute of os, so they match.
     fn referent(&self, expr: &Expr) -> Option<Referent> {
         let rebinds_a_name =
             matches!(expr, Expr::Name(name) if !matches!(name.ctx, ExprContext::Load));
@@ -160,12 +160,12 @@ impl<'a> EnvironReads<'a> {
         }
     }
 
-    /// 式 1 つ。os.environ / os.getenv そのものなら、添字・呼び出し・`in` の外に現れた参照として当て(中は辿らない)、
-    /// そうでなければ種類ごとに辿る。
+    /// One expression. If it is os.environ / os.getenv itself, it matches as a reference that appears outside a subscript, call, or `in` (without visiting inside),
+    /// and otherwise it is visited by kind.
     fn expr(&mut self, expr: &Expr) {
         let at = expr.range().start().to_usize();
         match self.referent(expr) {
-            // os.environ を値として使う(引数・代入・return・dict(os.environ)・{**os.environ}・三項の枝・os.environ = … ほか)
+            // os.environ used as a value (an argument, assignment, return, dict(os.environ), {**os.environ}, a ternary branch, os.environ = …, etc.)
             Some(Referent::Environ) => self.hit(
                 format!(
                     "Using os.environ as a value is forbidden. {}",
@@ -173,7 +173,7 @@ impl<'a> EnvironReads<'a> {
                 ),
                 at,
             ),
-            // os.getenv を呼ばずに参照する(g = os.getenv・f(os.getenv))
+            // os.getenv referenced without being called (g = os.getenv, f(os.getenv))
             Some(Referent::Getenv) => self.hit(
                 format!(
                     "Referring to os.getenv without calling it is forbidden. {}",
@@ -185,10 +185,10 @@ impl<'a> EnvironReads<'a> {
         }
     }
 
-    /// os.environ / os.getenv そのものでない式の中を辿る。
+    /// Visits inside an expression that is not os.environ / os.getenv itself.
     fn parts(&mut self, expr: &Expr) {
         match expr {
-            // os.environ["KEY"](別名の x.environ["KEY"]・e["KEY"] も・書き `= …` と del も)— 添字の元の os.environ は別に数えない
+            // os.environ["KEY"] (also the alias x.environ["KEY"], e["KEY"], and write `= …` and del) — the os.environ at the base of the subscript is not counted separately
             Expr::Subscript(subscript) => {
                 if self.names.is_environ(&subscript.value) {
                     self.hit(
@@ -202,8 +202,8 @@ impl<'a> EnvironReads<'a> {
                 }
                 self.expr(&subscript.slice);
             }
-            // os.environ.get() / os.getenv()(別名の x.environ.get()・e.get()・x.getenv()・g() も・書きの .update() ほかも)—
-            // 呼んだ os.environ.<method> と os.getenv は別に数えない
+            // os.environ.get() / os.getenv() (also the aliases x.environ.get(), e.get(), x.getenv(), g(), and the write .update(), etc.) —
+            // the called os.environ.<method> and os.getenv are not counted separately
             Expr::Call(call) => {
                 match &*call.func {
                     Expr::Attribute(attr) if self.names.is_environ(&attr.value) => self.hit(
@@ -271,7 +271,7 @@ impl<'a> EnvironReads<'a> {
             Expr::Await(await_expr) => self.expr(&await_expr.value),
             Expr::Yield(yield_expr) => self.optional(yield_expr.value.as_deref()),
             Expr::YieldFrom(yield_from) => self.expr(&yield_from.value),
-            // "KEY" in os.environ / "KEY" not in os.environ — 有無を見る読み(右辺の os.environ は別に数えない)
+            // "KEY" in os.environ / "KEY" not in os.environ — a read that checks presence (the os.environ on the right is not counted separately)
             Expr::Compare(compare) => {
                 self.expr(&compare.left);
                 for (op, right) in compare.ops.iter().zip(&compare.comparators) {
@@ -293,7 +293,7 @@ impl<'a> EnvironReads<'a> {
                 self.optional(formatted.format_spec.as_deref());
             }
             Expr::JoinedStr(joined) => self.exprs(&joined.values),
-            // 呼ばずに参照する os.environ.<名>(get = os.environ.get・os.environ.copy)— 元の os.environ は別に数えない
+            // os.environ.<name> referenced without being called (get = os.environ.get, os.environ.copy) — the base os.environ is not counted separately
             Expr::Attribute(attr) => {
                 if self.names.is_environ(&attr.value) {
                     self.hit(
@@ -423,8 +423,8 @@ impl LintRule for NoOsEnvironRule {
         "Forbid direct access to environment variables"
     }
 
-    /// 名の表を file の import 文から 1 度だけ作るので、module 全体を見る(本体は file に 1 度だけ当てる — 文ごとに当てると、
-    /// 文の数だけ表を作り直す)。
+    /// The name table is built only once from the file's import statements, so it looks at the whole module (the body is applied once per file — applying per statement would
+    /// rebuild the table as many times as there are statements).
     fn reach(&self) -> RuleReach {
         RuleReach::Module
     }
@@ -452,8 +452,8 @@ mod tests {
     use rustpython_ast::{Mod, Stmt};
     use rustpython_parser::{parse, Mode};
 
-    /// 規則を、linter 本体(lib の lint_source)と同じ単位で当てる — 規則の見る単位(reach)どおりに文を渡す
-    /// (module なら file に 1 度・文なら入れ子の文まで 1 つずつ・部分木なら上の段の文だけ)。
+    /// Applies the rule in the same unit as the linter proper (lib's lint_source) — passes statements according to the rule's viewing unit (reach)
+    /// (for a module, once per file; for a statement, one at a time down to nested statements; for a subtree, only the statements of the upper level).
     fn check_code(code: &str) -> Vec<Violation> {
         let ast = parse(code, Mode::Module, "test.py").unwrap();
         let rule = NoOsEnvironRule::new();
@@ -479,7 +479,7 @@ mod tests {
         }
     }
 
-    /// 当たりの文(message)の並び。
+    /// The sequence of matched messages.
     fn messages(code: &str) -> Vec<String> {
         check_code(code).into_iter().map(|violation| violation.message).collect()
     }
@@ -531,7 +531,7 @@ def get_config(api_key: str) -> dict:
         assert_eq!(violations.len(), 0);
     }
 
-    /// `or` の中の読みに当たる(直す前は式の辿りが BoolOp を持たず 0 件)。
+    /// Matches a read inside an `or` (before the fix, the expression visit had no BoolOp and found 0).
     #[test]
     fn test_read_inside_or_is_seen() {
         let code = r#"
@@ -541,7 +541,7 @@ root = os.environ.get("XDG_CACHE_HOME", "").strip() or "~/.cache"
         assert_eq!(check_code(code).len(), 1);
     }
 
-    /// 手で並べた種類の外の式(単項演算・リスト・辞書・f-string・lambda・内包・名つき式・関数の既定値と注釈)の中の読みに当たる。
+    /// Matches a read inside expressions outside the hand-written list (unary operations, lists, dicts, f-strings, lambdas, comprehensions, named expressions, function defaults and annotations).
     #[test]
     fn test_reads_inside_every_kind_of_expression_are_seen() {
         let code = r#"
@@ -560,8 +560,8 @@ def g(root=os.getenv("G")) -> os.environ["T"]:
         assert_eq!(check_code(code).len(), 9);
     }
 
-    /// 入れ子の文(関数・class の method)の中の読みは 1 度ずつ数える(2 度数えない)。本体の再帰を通した数は lib の検
-    /// (関数の中の読みは 1 度だけ)も見る。
+    /// A read inside a nested statement (a function, a class's method) is counted once each (not twice). The count through the body recursion is also checked by lib's test
+    /// (a read inside a function is only once).
     #[test]
     fn test_reads_in_nested_statements_are_counted_once_each() {
         let code = r#"
@@ -575,10 +575,10 @@ class Settings:
         assert_eq!(check_code(code).len(), 2);
     }
 
-    // 別名の読み— 直す前は名が文字どおり `os` の時だけ見ていて、どれも 0 件だった。
-    // 別名でも当たりの文は素の os.environ / os.getenv の時と同じ。
+    // Reads through an alias — before the fix, only names that were literally `os` were looked at, and all of these found 0.
+    // Even with an alias, the matched message is the same as for a plain os.environ / os.getenv.
 
-    /// `import os as x` の 3 形(x.environ.get()・x.environ[...]・x.getenv())。
+    /// The 3 forms of `import os as x` (x.environ.get(), x.environ[...], x.getenv()).
     #[test]
     fn test_reads_through_import_os_as_alias_are_seen() {
         let code = r#"
@@ -590,7 +590,7 @@ c = x.getenv("C")
         assert_eq!(messages(code), vec![ENVIRON_GET, ENVIRON_SUBSCRIPT, GETENV]);
     }
 
-    /// `from os import environ` の素の名 environ(environ.get()・environ[...])。
+    /// The plain name environ of `from os import environ` (environ.get(), environ[...]).
     #[test]
     fn test_reads_through_from_os_import_environ_are_seen() {
         let code = r#"
@@ -601,7 +601,7 @@ b = environ["B"]
         assert_eq!(messages(code), vec![ENVIRON_GET, ENVIRON_SUBSCRIPT]);
     }
 
-    /// `from os import environ as e` の別名 e(e.get()・e[...])。
+    /// The alias e of `from os import environ as e` (e.get(), e[...]).
     #[test]
     fn test_reads_through_from_os_import_environ_as_alias_are_seen() {
         let code = r#"
@@ -612,7 +612,7 @@ b = e["B"]
         assert_eq!(messages(code), vec![ENVIRON_GET, ENVIRON_SUBSCRIPT]);
     }
 
-    /// `from os import getenv` の素の名 getenv と、`from os import getenv as g` の別名 g。
+    /// The plain name getenv of `from os import getenv`, and the alias g of `from os import getenv as g`.
     #[test]
     fn test_reads_through_from_os_import_getenv_and_its_alias_are_seen() {
         let code = r#"
@@ -624,7 +624,7 @@ b = g("B")
         assert_eq!(messages(code), vec![GETENV, GETENV]);
     }
 
-    /// 関数の中の import 文の別名も、その関数の中の読み(と、表は file の全体で 1 つなので file の他の所の読み)に当たる。
+    /// An alias from an import statement inside a function also matches reads inside that function (and, since the table is one per whole file, reads elsewhere in the file).
     #[test]
     fn test_aliases_imported_inside_a_function_are_seen() {
         let code = r#"
@@ -636,8 +636,8 @@ def settings():
         assert_eq!(messages(code), vec![ENVIRON_SUBSCRIPT, ENVIRON_GET, GETENV]);
     }
 
-    /// os を指さない名は当たらない: 別の module の environ・getenv、os 以外の module の別名の environ 属性、
-    /// 相対の `from .os import environ`、`import os.path as p` の p、"environ" を鍵に持つ辞書。
+    /// Names that do not point to os do not match: environ and getenv of another module, an environ attribute of an alias of a non-os module,
+    /// a relative `from .os import environ`, p of `import os.path as p`, a dict that has "environ" as a key.
     #[test]
     fn test_names_not_bound_to_os_are_not_seen() {
         let code = r#"
@@ -660,7 +660,7 @@ request.environ.get("H")
         assert_eq!(messages(code), Vec::<String>::new());
     }
 
-    /// 書き込み(`os.environ[...] = ...`)と消し(`del os.environ[...]`)も環境変数への直の触れ方として当たる。
+    /// Writes (`os.environ[...] = ...`) and deletes (`del os.environ[...]`) also match as direct touches of environment variables.
     #[test]
     fn test_writes_and_deletes_are_seen() {
         let code = r#"
@@ -671,8 +671,8 @@ del os.environ["B"]
         assert_eq!(check_code(code).len(), 2);
     }
 
-    // os.environ・os.getenv への参照そのもの(foundation の handler の外の環境変数の読みは違反)
-    // — 直す前は添字・呼び出しの形だけを見ていて、下の新しい形はどれも 0 件だった。
+    // References to os.environ / os.getenv themselves (reading environment variables outside a foundation handler is a violation)
+    // — before the fix, only the subscript and call forms were looked at, and all the new forms below found 0.
 
     const ENVIRON_VALUE: &str = "Using os.environ as a value is forbidden. \
          Read environment variables only in a foundation handler; \
@@ -684,7 +684,7 @@ del os.environ["B"]
          Read environment variables only in a foundation handler; \
          use dependency injection to receive configuration values.";
 
-    /// 呼ばずに参照する os.environ.<名> の文。
+    /// A statement of os.environ.<name> referenced without being called.
     fn environ_member_reference(member: &str) -> String {
         format!(
             "Referring to os.environ.{} without calling it is forbidden. \
@@ -694,7 +694,7 @@ del os.environ["B"]
         )
     }
 
-    /// 呼び出しの引数(位置・名つき)として渡す os.environ。
+    /// os.environ passed as a call argument (positional or keyword).
     #[test]
     fn test_environ_passed_as_an_argument_is_seen() {
         let code = r#"
@@ -706,7 +706,7 @@ copied = dict(os.environ)
         assert_eq!(messages(code), vec![ENVIRON_VALUE; 3]);
     }
 
-    /// 代入・注釈つきの代入・return の値の os.environ。
+    /// os.environ as the value of an assignment, an annotated assignment, or a return.
     #[test]
     fn test_environ_assigned_or_returned_is_seen() {
         let code = r#"
@@ -719,7 +719,7 @@ def current():
         assert_eq!(messages(code), vec![ENVIRON_VALUE; 3]);
     }
 
-    /// 展開する os.environ(`{**os.environ}`・`[*os.environ]`・`f(**os.environ)`)。
+    /// An unpacked os.environ (`{**os.environ}`, `[*os.environ]`, `f(**os.environ)`).
     #[test]
     fn test_environ_unpacked_is_seen() {
         let code = r#"
@@ -731,7 +731,7 @@ run(**os.environ)
         assert_eq!(messages(code), vec![ENVIRON_VALUE; 3]);
     }
 
-    /// 三項の枝・`or` の値の os.environ。
+    /// os.environ as a ternary branch or an `or` value.
     #[test]
     fn test_environ_in_a_conditional_branch_is_seen() {
         let code = r#"
@@ -743,7 +743,7 @@ c = given or os.environ
         assert_eq!(messages(code), vec![ENVIRON_VALUE; 3]);
     }
 
-    /// 引数の既定値の os.environ(関数と lambda)。
+    /// os.environ as an argument default (of a function and a lambda).
     #[test]
     fn test_environ_as_a_default_value_is_seen() {
         let code = r#"
@@ -755,7 +755,7 @@ pick = lambda env=os.environ: env
         assert_eq!(messages(code), vec![ENVIRON_VALUE; 2]);
     }
 
-    /// `in` / `not in` の右辺の os.environ(式の中と if の条件)。
+    /// os.environ on the right of `in` / `not in` (inside an expression and in an if condition).
     #[test]
     fn test_membership_in_environ_is_seen() {
         let code = r#"
@@ -768,7 +768,7 @@ if "C" in os.environ:
         assert_eq!(messages(code), vec![ENVIRON_MEMBERSHIP; 3]);
     }
 
-    /// 呼ばずに参照する os.getenv(代入・引数・return)。
+    /// os.getenv referenced without being called (assignment, argument, return).
     #[test]
     fn test_getenv_referred_without_calling_is_seen() {
         let code = r#"
@@ -781,7 +781,7 @@ def reader():
         assert_eq!(messages(code), vec![GETENV_REFERENCE; 3]);
     }
 
-    /// 呼ばずに参照する os.environ の method(`get = os.environ.get`・`f(os.environ.copy)`)。
+    /// A method of os.environ referenced without being called (`get = os.environ.get`, `f(os.environ.copy)`).
     #[test]
     fn test_environ_method_referred_without_calling_is_seen() {
         let code = r#"
@@ -798,8 +798,8 @@ snapshot(os.environ.copy)
         );
     }
 
-    /// 別名でも同じ形で当たる: `import os as x` の x.environ・x.getenv、`from os import environ [as e]`・
-    /// `from os import getenv [as g]` の素の名。
+    /// Matches in the same form even through an alias: x.environ and x.getenv of `import os as x`, and the plain names of `from os import environ [as e]` and
+    /// `from os import getenv [as g]`.
     #[test]
     fn test_references_through_aliases_are_seen() {
         let code = r#"
@@ -828,8 +828,8 @@ lookup(g)
         );
     }
 
-    /// 書きの形は 1 件ずつ: 添字の書き・del(前からの添字の文)、書きの method(前からの呼び出しの文)、
-    /// os.environ そのものの付け替え(`|=`・`=` — 値として使う文)。
+    /// The forms of writes are one finding each: a subscript write or del (the earlier subscript statement), a write method (the earlier call statement),
+    /// and rebinding os.environ itself (`|=`, `=` — a statement using it as a value).
     #[test]
     fn test_writes_are_seen_once_each() {
         let code = r#"
@@ -863,7 +863,7 @@ os.environ = {}
         );
     }
 
-    /// 1 つの読みは 1 件のまま: 添字・呼び出し・`in` の中の os.environ を別に数えない。入れ子の読みはそれぞれ 1 件。
+    /// One read stays one finding: the os.environ inside a subscript, call, or `in` is not counted separately. Each nested read is one finding.
     #[test]
     fn test_one_read_is_counted_once() {
         let code = r#"
@@ -892,8 +892,8 @@ run(os.environ["H"])
         );
     }
 
-    /// os を指さない environ・getenv は、値・`in`・参照の形でも当たらない: 別の object の属性(request.environ・my.environ・
-    /// my.getenv)、文字列の "environ"、import の無い素の名、os の別の属性。
+    /// environ and getenv that do not point to os do not match, even as a value, in `in`, or as a reference: an attribute of another object (request.environ, my.environ,
+    /// my.getenv), the string "environ", a plain name with no import, another attribute of os.
     #[test]
     fn test_references_not_bound_to_os_are_not_seen() {
         let code = r#"
@@ -913,7 +913,7 @@ sep = os.sep
         assert_eq!(messages(code), Vec::<String>::new());
     }
 
-    /// 素の名の束ね直し(代入・for の束ね・名つき式・del)は os に触れないので当たらない。
+    /// Rebinding a plain name (assignment, a for binding, a named expression, del) does not touch os, so it does not match.
     #[test]
     fn test_rebinding_a_bare_name_is_not_seen() {
         let code = r#"

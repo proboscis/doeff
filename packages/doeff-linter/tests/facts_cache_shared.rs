@@ -1,8 +1,8 @@
-//! 事実の cache を作業木の間で分け合う検— 一時の置き場で binary を走らせ、置き場に新しく書かれた byte を数える。
+//! A test that the facts cache is shared among worktrees — runs the binary in a temporary store and counts the bytes newly written to the store.
 //!
-//! zeus は作業木が 1 日に数百本作られ、checkout で全 file の更新時刻が新しくなるので、作業木ごとに事実の cache(約 208MB)を全部作り直し、
-//! 1 時間に約 3.4GB を USB の SSD へ書いていた。事実は file の中身・根からの path・linter の印だけで決まるので、同じ中身の file の事実は
-//! 作業木が違っても 1 つを分け合い、作業木ごとには file → 事実の鍵の小さな表だけを置く。
+//! On zeus, hundreds of worktrees are made per day and a checkout refreshes every file's modification time, so the whole facts cache (about 208MB) was rebuilt per worktree,
+//! writing about 3.4GB per hour to a USB SSD. A fact is determined only by the file's contents, its path from the root, and the linter's marker, so facts of files with the same contents are
+//! shared as one even across different worktrees, and per worktree only a small table of file -> fact key is put.
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
@@ -22,15 +22,15 @@ test_paths = ["tests/**/test_*.hy"]
 allowed_layers = ["foundation"]
 "#;
 
-const ARCHITECTURE: &str = r#"(defarchitecture sample :root "app" :layers [(layer core :summary "核") (layer foundation :summary "土台")] :foundation foundation)
+const ARCHITECTURE: &str = r#"(defarchitecture sample :root "app" :layers [(layer core :summary "Core") (layer foundation :summary "Foundation")] :foundation foundation)
 "#;
 
 const MODULES: usize = 24;
 
-/// 1 module の中身 — 定義を十数本持つ(事実が 1 file で数 KB になる大きさ)。modules 同士が呼び合うので、推論の世界も file をまたぐ。
+/// The contents of one module — has a dozen or so definitions (a size where the facts become several KB per file). Modules call each other, so the inference world also spans files.
 fn module_source(i: usize) -> String {
     let mut text = String::from("(import time)\n");
-    // 実際の module は import を十数本持つ(module の依存の事実が、表の 1 行より大きくなる)。
+    // A real module has a dozen or so imports (the module-dependency fact becomes larger than one row of the table).
     for k in 1..=12 {
         text.push_str(&format!("(import app.core.mod{})\n", (i + k) % MODULES));
     }
@@ -48,7 +48,7 @@ fn module_source(i: usize) -> String {
     text
 }
 
-/// 作業木 1 本ぶんの repo を dir に作る。同じ関数で作れば、中身が同じで更新時刻だけ違う木になる(checkout し直した作業木)。
+/// Builds one worktree's repo in dir. Built with the same function, it is a tree with the same contents and only different modification times (a re-checked-out worktree).
 fn checkout(dir: &Path) {
     std::fs::write(dir.join("pyproject.toml"), CONFIG).unwrap();
     std::fs::write(dir.join("architecture.hy"), ARCHITECTURE).unwrap();
@@ -58,8 +58,8 @@ fn checkout(dir: &Path) {
     }
 }
 
-/// binary を root で走らせて出力(editor-json)を返す。cache = Some(dir) ならその置き場の cache を使い、None なら使わない。
-/// `DOEFF_LINTER_CHECK_SLOT` は機体の検の枠の再入の印 — この検は機体の枠を待たずに走らせる。
+/// Runs the binary at root and returns the output (editor-json). If cache = Some(dir) it uses the cache in that store, and if None it uses none.
+/// `DOEFF_LINTER_CHECK_SLOT` is the re-entry marker of the machine's check slot — this test runs without waiting for the machine's slot.
 fn lint(root: &Path, cache: Option<&Path>) -> String {
     let mut command = Command::new(env!("CARGO_BIN_EXE_doeff-linter"));
     command
@@ -76,7 +76,7 @@ fn lint(root: &Path, cache: Option<&Path>) -> String {
     String::from_utf8(output.stdout).unwrap()
 }
 
-/// 置き場の file の (大きさ, 更新時刻)(path ごと)。
+/// (size, modification time) of the files in the store (per path).
 fn snapshot(cache: &Path) -> HashMap<PathBuf, (u64, SystemTime)> {
     walkdir::WalkDir::new(cache)
         .into_iter()
@@ -93,26 +93,26 @@ fn total(snapshot: &HashMap<PathBuf, (u64, SystemTime)>) -> u64 {
     snapshot.values().map(|(len, _)| len).sum()
 }
 
-/// before の後に置き場へ新しく書かれた byte(新しい file か、更新された file の大きさ)。
+/// Bytes newly written to the store after before (the size of a new file or an updated file).
 fn written_since(before: &HashMap<PathBuf, (u64, SystemTime)>, cache: &Path) -> u64 {
     snapshot(cache).iter().filter(|(path, stamp)| before.get(*path) != Some(stamp)).map(|(_, (len, _))| len).sum()
 }
 
-/// 置き場の file(根の記録 `root.path` を除く)の中身のどこかに text が在る path。
+/// Paths of files in the store (excluding the root record `root.path`) that contain text somewhere in their contents.
 fn files_containing(cache: &Path, text: &str) -> Vec<PathBuf> {
     walkdir::WalkDir::new(cache)
         .into_iter()
         .filter_map(Result::ok)
         .filter(|e| e.file_type().is_file())
-        // 根の dir の `root.path` は、その根の path を記録する物(根が消えた dir の片づけが読む)— 分け合う事実ではない。
+        // The root dir's `root.path` records that root's path (read by the cleanup of dirs whose root is gone) — not a shared fact.
         .filter(|e| e.file_name() != "root.path")
         .filter(|e| std::fs::read(e.path()).is_ok_and(|bytes| bytes.windows(text.len()).any(|w| w == text.as_bytes())))
         .map(|e| e.path().to_path_buf())
         .collect()
 }
 
-/// 受入の条: 同じ commit を checkout した 2 つの作業木で、2 本目が事実の cache の下に新しく書く byte は 1 本目の 10% 未満。
-/// 答えは cache を使わない実行と同じ(位置の path は 2 本目の作業木の file を指す)。
+/// Acceptance test: in 2 worktrees checked out at the same commit, the bytes the 2nd newly writes under the facts cache are under 10% of the 1st's.
+/// The answer is the same as a run that uses no cache (location paths point to the 2nd worktree's files).
 #[test]
 fn a_second_checkout_of_the_same_tree_writes_less_than_a_tenth_of_the_first() {
     let cache = tempfile::TempDir::new().unwrap();
@@ -123,12 +123,12 @@ fn a_second_checkout_of_the_same_tree_writes_less_than_a_tenth_of_the_first() {
     lint(first.path(), Some(cache.path()));
     let after_first = snapshot(cache.path());
     let written_first = total(&after_first);
-    assert!(written_first > 100_000, "1 本目が置いた事実が小さすぎて比べにならない: {written_first} byte");
-    // 事実の種類(Hy の索引・signature の事実と推論・defk の名・失敗の型・record の欄・引数の呼び)が置かれている。
+    assert!(written_first > 100_000, "the facts put by the 1st are too small to compare: {written_first} bytes");
+    // The kinds of facts (Hy index, signature facts and inference, defk names, failure types, record fields, argument calls) are put.
     for kind in ["hy-index.bin", "signature-facts.bin", "signature-summaries.bin", "defk-names.json", "program-params.json"] {
         assert!(
             after_first.keys().any(|path| path.components().any(|c| c.as_os_str() == kind)),
-            "{kind} の事実が置かれていない: {:?}",
+            "no fact of {kind} was put: {:?}",
             after_first.keys().collect::<Vec<_>>()
         );
     }
@@ -137,27 +137,27 @@ fn a_second_checkout_of_the_same_tree_writes_less_than_a_tenth_of_the_first() {
     let written_second = written_since(&after_first, cache.path());
     assert!(
         written_second * 10 < written_first,
-        "2 本目の作業木が事実の cache の下に新しく書いた byte {written_second} が、1 本目 {written_first} の 10% 以上"
+        "the bytes {written_second} newly written by the 2nd worktree under the facts cache are 10% or more of the 1st's {written_first}"
     );
-    assert_eq!(cached, lint(second.path(), None), "分け合った事実から出した答えが、cache を使わない実行と違う");
+    assert_eq!(cached, lint(second.path(), None), "the answer from the shared facts differs from a run that uses no cache");
 }
 
-/// 置き場に作業木の絶対 path が残らない(残ると、別の作業木が読んだ事実が他の作業木の file を指す)。
+/// No worktree absolute path remains in the store (if it did, a fact read by another worktree would point at a file of a different worktree).
 #[test]
 fn no_working_tree_path_is_left_in_the_shared_facts() {
     let cache = tempfile::TempDir::new().unwrap();
     let tree = tempfile::TempDir::new().unwrap();
     checkout(tree.path());
     let output = lint(tree.path(), Some(cache.path()));
-    // この実行が位置の path を出している(= 事実が path を持つ種類を通っている)ことの確かめ。
+    // Confirm that this run emits location paths (= it passes through the kinds of facts that hold paths).
     let canonical = std::fs::canonicalize(tree.path()).unwrap();
-    assert!(output.contains(canonical.to_str().unwrap()), "出力に作業木の path が無い — 位置の path を通る検になっていない");
+    assert!(output.contains(canonical.to_str().unwrap()), "the output has no worktree path — this is not a test that passes through location paths");
     for text in [canonical.to_str().unwrap(), tree.path().to_str().unwrap()] {
-        assert_eq!(files_containing(cache.path(), text), Vec::<PathBuf>::new(), "置き場に作業木の path {text} が残った");
+        assert_eq!(files_containing(cache.path(), text), Vec::<PathBuf>::new(), "the worktree path {text} remained in the store");
     }
 }
 
-/// 1 file を書き換えた作業木が新しく書くのは、その file の事実と表だけ — 他の file の事実は作り直さない。
+/// A worktree that rewrote 1 file newly writes only that file's fact and the table — facts of other files are not rebuilt.
 #[test]
 fn editing_one_file_writes_only_that_files_facts() {
     let cache = tempfile::TempDir::new().unwrap();
@@ -170,16 +170,16 @@ fn editing_one_file_writes_only_that_files_facts() {
     std::thread::sleep(std::time::Duration::from_millis(20));
     let edited = tree.path().join("app/core/mod3.hy");
     let mut text = std::fs::read_to_string(&edited).unwrap();
-    // defk を足さない書き換え(defk の名の指紋が変わると、引数の呼びの事実は全部作り直される — 別の話)。
+    // A rewrite that does not add a defk (if the fingerprint of defk names changes, all argument-call facts are rebuilt — a different matter).
     text.push_str("(defn added [x] (+ x 1))\n");
     std::fs::write(&edited, text).unwrap();
     let cached = lint(tree.path(), Some(cache.path()));
     let written = written_since(&after_first, cache.path());
-    assert!(written * 10 < written_first, "1 file の書き換えで新しく書いた byte {written} が、全体 {written_first} の 10% 以上");
-    assert_eq!(cached, lint(tree.path(), None), "書き換えの後の答えが、cache を使わない実行と違う");
+    assert!(written * 10 < written_first, "the bytes {written} newly written by rewriting 1 file are 10% or more of the total {written_first}");
+    assert_eq!(cached, lint(tree.path(), None), "the answer after the rewrite differs from a run that uses no cache");
 }
 
-/// 同じ作業木の 2 回目は何も書かない(事実も表も)。
+/// The 2nd run of the same worktree writes nothing (neither facts nor the table).
 #[test]
 fn a_second_run_in_the_same_tree_writes_no_facts() {
     let cache = tempfile::TempDir::new().unwrap();
@@ -191,15 +191,15 @@ fn a_second_run_in_the_same_tree_writes_no_facts() {
     let rewritten: Vec<PathBuf> = snapshot(cache.path())
         .into_iter()
         .filter(|(path, stamp)| after_first.get(path) != Some(stamp))
-        // 使った印(中身は空)と、置き場の走査の時刻の記録は毎回更新される。
+        // The used marker (empty contents) and the record of the store scan time are updated every time.
         .filter(|(path, _)| !matches!(path.file_name().and_then(|n| n.to_str()), Some("used" | ".swept" | ".swept-cap")))
         .map(|(path, _)| path)
         .collect();
-    assert_eq!(rewritten, Vec::<PathBuf>::new(), "変わっていない作業木の 2 回目が cache を書き直した");
+    assert_eq!(rewritten, Vec::<PathBuf>::new(), "the 2nd run of an unchanged worktree rewrote the cache");
 }
 
-/// `--affected-tests`(module の依存の事実 — `module-dependencies`)も、作業木をまたいで分け合う。git が知る file を母集団にするので、
-/// 作業木は git の repo にする。
+/// `--affected-tests` (the module-dependency fact — `module-dependencies`) is also shared across worktrees. The population is the files git knows,
+/// so the worktree is made a git repo.
 #[test]
 fn module_dependencies_are_shared_between_checkouts_too() {
     let git = |dir: &Path, args: &[&str]| {
@@ -233,33 +233,33 @@ fn module_dependencies_are_shared_between_checkouts_too() {
     affected(first.path(), Some(cache.path()));
     let after_first = snapshot(cache.path());
     let written_first = total(&after_first);
-    assert!(after_first.keys().any(|path| path.components().any(|c| c.as_os_str() == "module-dependencies.json")), "module の依存の事実が置かれていない");
+    assert!(after_first.keys().any(|path| path.components().any(|c| c.as_os_str() == "module-dependencies.json")), "the module-dependency fact was not put");
 
     let cached = affected(second.path(), Some(cache.path()));
-    // 2 本目が書くのは根ごとの表だけ — 事実(`objects` の下)は 1 つも書かない。この検の module の依存の事実は小さく(1 file 数百 byte)、
-    // 表の 1 行と同じ桁なので、全体の 10% ではなく事実の有無で確かめる(全体の割合は上の検)。
+    // What the 2nd writes is only the per-root table — it writes no facts (under `objects`). This test's module-dependency facts are small (several hundred bytes per file),
+    // the same order as one table row, so it is checked by the presence of facts rather than 10% of the total (the ratio of the total is the test above).
     let written_facts: Vec<PathBuf> = snapshot(cache.path())
         .into_iter()
         .filter(|(path, stamp)| {
-            // 使った印 `used`(中身は空)は実行のたびに更新される。
+            // The used marker `used` (empty contents) is updated on every run.
             path.components().any(|c| c.as_os_str() == "objects") && path.file_name() != Some("used".as_ref()) && after_first.get(path) != Some(stamp)
         })
         .map(|(path, _)| path)
         .collect();
-    assert_eq!(written_facts, Vec::<PathBuf>::new(), "同じ中身の file の module の依存の事実を、2 本目の作業木が置き直した");
+    assert_eq!(written_facts, Vec::<PathBuf>::new(), "the 2nd worktree re-put the module-dependency facts of files with the same contents");
     let written_second = written_since(&after_first, cache.path());
-    assert!(written_second * 4 < written_first, "2 本目の作業木が新しく書いた表 {written_second} byte が、1 本目 {written_first} の 4 分の 1 以上");
+    assert!(written_second * 4 < written_first, "the table of {written_second} bytes newly written by the 2nd worktree is 1/4 or more of the 1st's {written_first}");
     assert_eq!(cached, affected(second.path(), None));
-    assert!(cached.contains("tests/test_mod0.hy"), "検の file に届いていない: {cached}");
+    assert!(cached.contains("tests/test_mod0.hy"), "the test file was not reached: {cached}");
 }
 
-// ── 複数の作業木が事実を分け合う時の、事実の寿命─────────────────────────────
-// 事実は根をまたいで分け合うので、1 つの根の表だけからは「もう要らない」と決められない。引く手順が「この根はもう読まない」と事実を
-// 消すと、提示の検査(答えの比べ・1 つの作業木の書き換え)は全部通るのに、別の作業木が使う事実が消えて書き直しになる。消せるのは片づけ
-// (上限・古い順)だけ。
+// ── Lifetime of facts when several worktrees share them─────────────────────────────
+// Facts are shared across roots, so one root's table alone cannot decide "no longer needed". If the lookup path deleted facts on the grounds that "this root no longer reads them",
+// all the presentation checks (comparing answers, rewriting one worktree) would pass while facts used by another worktree vanished and had to be rewritten. Only cleanup
+// (limit, oldest first) may delete.
 
-/// 同じ commit の作業木 A・B を走らせた後、A で 1 file を書き換えて走らせる。B は何も変えずにもう一度走る。A の実行は B が使う事実を
-/// 消さず、B の 2 回目は事実を 1 つも書かない。
+/// After running worktrees A and B at the same commit, rewrite 1 file in A and run. Then B runs once more without changing anything. A's run does not
+/// delete the facts B uses, and B's 2nd run writes no facts.
 #[test]
 fn editing_in_one_tree_does_not_remove_facts_another_tree_uses() {
     let cache = tempfile::TempDir::new().unwrap();
@@ -278,17 +278,17 @@ fn editing_in_one_tree_does_not_remove_facts_another_tree_uses() {
     lint(a.path(), Some(cache.path()));
     let facts_after_a = facts(cache.path());
     let removed: Vec<&PathBuf> = facts_before.keys().filter(|path| !facts_after_a.contains_key(*path)).collect();
-    assert!(removed.is_empty(), "A の実行が、B も使う事実 {} 個を消した: {:?}", removed.len(), removed);
+    assert!(removed.is_empty(), "A's run deleted {} facts that B also uses: {:?}", removed.len(), removed);
 
     let after_a = snapshot(cache.path());
     let cached_b = lint(b.path(), Some(cache.path()));
-    assert_eq!(cached_b, lint(b.path(), None), "B の答えが cache を使わない実行と違う");
+    assert_eq!(cached_b, lint(b.path(), None), "B's answer differs from a run that uses no cache");
     let rewritten = written_facts_since(&after_a, cache.path());
-    assert_eq!(rewritten, 0, "変えていない作業木 B の 2 回目が事実を {rewritten} byte 書き直した");
+    assert_eq!(rewritten, 0, "B's 2nd run of an unchanged worktree rewrote {rewritten} bytes of facts");
 }
 
-/// 作業木 A が別の commit へ移って走った後に、元の commit の新しい作業木 C が走る。C が新しく書く byte は A の 1 本目の 10% 未満
-/// (A が前の commit の事実を消していない)。
+/// After worktree A moves to a different commit and runs, a new worktree C of the original commit runs. The bytes C newly writes are under 10% of A's 1st
+/// (A did not delete the facts of the previous commit).
 #[test]
 fn a_tree_that_moves_on_does_not_make_the_next_checkout_of_its_old_commit_rewrite() {
     let cache = tempfile::TempDir::new().unwrap();
@@ -311,11 +311,11 @@ fn a_tree_that_moves_on_does_not_make_the_next_checkout_of_its_old_commit_rewrit
     checkout(c.path());
     let cached_c = lint(c.path(), Some(cache.path()));
     let written_c = written_since(&after_move, cache.path());
-    assert!(written_c * 10 < written_first, "元の commit の新しい作業木 C が書いた byte {written_c} が、A の 1 本目 {written_first} の 10% 以上");
-    assert_eq!(cached_c, lint(c.path(), None), "C の答えが cache を使わない実行と違う");
+    assert!(written_c * 10 < written_first, "the bytes {written_c} written by the new worktree C of the original commit are 10% or more of A's 1st {written_first}");
+    assert_eq!(cached_c, lint(c.path(), None), "C's answer differs from a run that uses no cache");
 }
 
-/// 置き場の事実 1 つずつ(`objects/` の下で、使った印 `used` と一時 file を除く)。
+/// Facts one by one in the store (under `objects/`, excluding the used marker `used` and temporary files).
 fn facts(cache: &Path) -> HashMap<PathBuf, (u64, SystemTime)> {
     snapshot(&cache.join("objects"))
         .into_iter()
@@ -323,7 +323,7 @@ fn facts(cache: &Path) -> HashMap<PathBuf, (u64, SystemTime)> {
         .collect()
 }
 
-/// before の後に `objects/` の下へ新しく書かれた事実の byte。
+/// Fact bytes newly written under `objects/` after before.
 fn written_facts_since(before: &HashMap<PathBuf, (u64, SystemTime)>, cache: &Path) -> u64 {
     facts(cache).iter().filter(|(path, stamp)| before.get(*path) != Some(stamp)).map(|(_, (len, _))| len).sum()
 }

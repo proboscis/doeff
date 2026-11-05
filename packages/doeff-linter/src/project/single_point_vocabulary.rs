@@ -1,16 +1,16 @@
-//! DOEFF146: 判定を 1 か所に閉じ込めた語彙(#1192・#1371 — 元は agora-controllers の一時の検
+//! DOEFF146: vocabulary whose judgment is confined to one place (#1192, #1371 — originally a temporary check in agora-controllers
 //! check_screen_slice_single_point.hy)。
 //!
-//! architecture.hy の `:single-point-vocabulary [(vocabulary-scope "名" :patterns [r"…"] :files [..] :except [..] :instead "…") …]`
-//! で群を宣言する。群ごとに `:files` の glob に当たった Hy の file(`:except` に挙げた file を除く)を読み、註(`;` から行末・
-//! 文字列の外)を落とした本文に `:patterns` のどれかが当たる行が 1 行でもあれば file ごとに 1 件出す(critical)。判定は `:except`
-//! の file(通常は 1 つ = 判定の 1 点)だけが持ってよく、他の file がこの語彙を読むと「第 2 の判定」が生えたことになる。
-//! 註を落とすのは DOEFF150(:retired-words の :in lines — 註・docstring を数えない)と同じ向きの判断 —
-//! この規則は「判定の二重化」を見るので、判定でないことを述べる註(例: 「routedTo はここで読まない」)まで赤にしない。
-//! 判定は字面の行で読む(この語彙を使わずに済む形かは linter には分からない — repo の宣言が「これは判定の語彙だ」と決める)。
-//! ただし欄を 1 対 1 で写すだけの行(`:routed-to d.routed-to`・`"routedTo" request.routed-to` — 判断も分岐も無い)は数えない
-//! (#1762 の決定 Q2)。値をそのまま運ぶ行は判定を持たず、それを数えると判定の 1 点の外で欄を渡すだけの
-//! 行まで「第 2 の判定」になる。
+//! Declares groups with `:single-point-vocabulary [(vocabulary-scope "name" :patterns [r"…"] :files [..] :except [..] :instead "…") …]` in architecture.hy.
+//! For each group, reads the Hy files matching the `:files` glob (excluding files listed in `:except`), and if any line of the body with comments (from `;` to end of line,
+//! outside strings) removed matches any of `:patterns`, emits one hit per file (critical). Only the `:except`
+//! files (normally 1 = the single point of the judgment) may hold the judgment; if another file reads this vocabulary, a "second judgment" has sprouted.
+//! Removing comments is a decision in the same direction as DOEFF150 (:retired-words' :in lines — comments and docstrings are not counted) —
+//! since this rule looks at "duplication of judgment", it does not turn red even for comments that state something is not a judgment (e.g. "routedTo is not read here").
+//! The judgment is read on literal lines (the linter cannot tell whether a form avoids using this vocabulary — the repo's declaration decides "this is the judgment vocabulary").
+//! However, lines that only copy a field 1:1 (`:routed-to d.routed-to`, `"routedTo" request.routed-to` — no decision or branch) are not counted
+//! (decision Q2 of #1762). A line that carries a value as is holds no judgment, and counting it would make even lines that just pass a field outside the
+//! single point of the judgment a "second judgment".
 
 use std::path::{Path, PathBuf};
 
@@ -20,24 +20,24 @@ use regex::Regex;
 use super::architecture::VocabularyScope;
 use super::paths::{glob_matches, relative_path};
 
-/// 判断・分岐の形(註と文字列を落とした行に当てる)— これを含む行は、写すだけの行ではない。
+/// Forms of decision/branch (applied to lines with comments and strings removed) — a line containing one is not a copy-only line.
 static JUDGMENT: Lazy<Regex> = Lazy::new(|| {
     Regex::new(r"\((?:if|when|unless|cond|match|case|and|or|not|is|is-not|in|not-in|=|!=|<|>|<=|>=)[\s)]|:if\b").unwrap()
 });
 
-/// 欄を写す対 1 つ = 鍵(keyword `:名` か文字列の鍵)と、その後ろの属性の読み(`名.欄` — 段は 1 つ以上)。元の行に当てる。
+/// One pair that copies a field = a key (keyword `:name` or a string key) and the attribute read after it (`name.field` — one or more levels). Applied to the original line.
 static COPY_PAIR: Lazy<Regex> = Lazy::new(|| {
     Regex::new(r#"(?::[A-Za-z][\w-]*|"(?:[^"\\]|\\.)*")\s+[A-Za-z_][\w-]*(?:\.[A-Za-z_][\w-]*)+"#).unwrap()
 });
 
-/// 行の中の byte の位置 → 文字の番号(註と文字列を落とした写しは文字ごとに 1 文字を置くので、元の行と文字の番号がそろう —
-/// byte の位置は多 byte の文字の所でずれる)。
+/// Byte position within a line -> character index (the copy with comments and strings removed puts one character per character, so character indices line up with the original line —
+/// byte positions drift at multi-byte characters).
 fn char_index(line: &str, byte: usize) -> usize {
     line[..byte].chars().count()
 }
 
-/// 欄を 1 対 1 で写すだけの行か: 判断・分岐の形を含まず、語彙の当たりがどれも「鍵 + 属性の読み」の対の中にある(#1800)。
-/// code = 註と文字列を落とした行(当たりはここで探す — 註と文字列の中は数えない)・source = 同じ行の元の字面(文字列の鍵を読む)。
+/// Whether it is a line that only copies fields 1:1: it contains no decision/branch form, and every vocabulary hit is inside a pair of "key + attribute read" (#1800).
+/// code = the line with comments and strings removed (hits are searched here — inside comments and strings is not counted); source = the original text of the same line (string keys are read).
 fn copies_only(code: &str, source: &str, regexes: &[Regex]) -> bool {
     if JUDGMENT.is_match(code) {
         return false;
@@ -52,7 +52,7 @@ fn copies_only(code: &str, source: &str, regexes: &[Regex]) -> bool {
         })
 }
 
-/// 文字列と註(`;` から行末)を空白に置き換える(括弧の対応と行・列の位置は保つ)。
+/// Replaces strings and comments (from `;` to end of line) with whitespace (preserving bracket matching and line/column positions).
 fn strip_comments(text: &str) -> String {
     let mut out = String::with_capacity(text.len());
     let mut in_string = false;
@@ -90,24 +90,24 @@ fn strip_comments(text: &str) -> String {
     out
 }
 
-/// 見つけた当たり 1 つ(file × 群)。
+/// One hit found (file x group).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct VocabularyHit {
     pub rel: String,
-    /// 群の名(登録簿の鍵の細目)。
+    /// Name of the group (detail of the registry key).
     pub group: String,
-    /// 最初に当たった行(0 始まり)。
+    /// The first line that matched (0-based).
     pub line: u32,
-    /// 当たった行の数。
+    /// The number of lines that matched.
     pub count: usize,
     pub instead: String,
 }
 
-/// 歩かない dir(隠し dir と生成物)。
+/// Dirs not walked (hidden dirs and generated output).
 const SKIPPED_DIRS: &[&str] = &["node_modules", "target", "__pycache__", "venv", "site-packages"];
 
-/// 歩く Hy の file(根からの path・path の順)— focus(命令の行の名指し)が在ればその下だけを歩き、無ければ根の全体を歩く。
-/// 隠し dir と生成物の下の file は、どちらの歩き方でも数えない(名指しがその中の file でも、全体の実行と同じ答えにするため)。
+/// Hy files to walk (path from the root, in path order) — if focus (the path named on the command line) exists, walks only under it; otherwise walks the whole root.
+/// Files under hidden dirs and generated output are counted in neither way of walking (so that even if the named path is inside them, the answer matches the whole run).
 fn walked_hy_files(root: &Path, focus: Option<&[PathBuf]>) -> Vec<String> {
     let starts: Vec<PathBuf> = match focus {
         Some(paths) => paths.to_vec(),
@@ -135,9 +135,9 @@ fn walked_hy_files(root: &Path, focus: Option<&[PathBuf]>) -> Vec<String> {
     rels
 }
 
-/// `:single-point-vocabulary` の群ごとに `:except` の外の当たりを探す(群の宣言の順・path の順)。repo は 1 度だけ歩き(群ごとに
-/// 歩き直さない)、focus が在ればその下の file だけを読む — 当たりは file ごとにその file に付くので、答えは全体を読んで名指しで
-/// 絞った時と同じ(1 file の commit の hook で repo の全部の Hy を読んでいた)。
+/// For each group of `:single-point-vocabulary`, searches for hits outside `:except` (in group declaration order, path order). The repo is walked only once (not re-walked per group),
+/// and if focus exists, only files under it are read — since a hit is attached to its file, the answer is the same as reading everything and then narrowing
+/// by the named path (a one-file commit hook was reading all of the repo's Hy).
 pub fn find(root: &Path, scopes: &[VocabularyScope], focus: Option<&[PathBuf]>) -> Vec<VocabularyHit> {
     let mut out = Vec::new();
     let walked = walked_hy_files(root, focus);
@@ -187,7 +187,7 @@ mod tests {
             patterns: vec![r"\bJOB-PHASE-[A-Z]+\b".to_string()],
             files: vec!["glue/**".to_string()],
             except: vec!["glue/slice.hy".to_string()],
-            instead: "glue/slice.hy の答えを読む".to_string(),
+            instead: "read the answer in glue/slice.hy".to_string(),
         }];
         let hits = find(dir.path(), &scopes, None);
         assert_eq!(hits.len(), 1, "{:?}", hits);
@@ -203,7 +203,7 @@ mod tests {
         std::fs::create_dir_all(dir.path().join("glue")).unwrap();
         std::fs::write(
             dir.path().join("glue/queue.hy"),
-            "; JOB-PHASE-RUNNING はここで読まない\n(setv label \"JOB-PHASE-RUNNING\")\n(when (= phase JOB-PHASE-RUNNING) 1)\n",
+            "; JOB-PHASE-RUNNING is not read here\n(setv label \"JOB-PHASE-RUNNING\")\n(when (= phase JOB-PHASE-RUNNING) 1)\n",
         )
         .unwrap();
         std::fs::write(dir.path().join("glue/slice.hy"), "(setv JOB-PHASE-RUNNING \"Running\")\n").unwrap();
@@ -212,11 +212,11 @@ mod tests {
             patterns: vec![r"\bJOB-PHASE-[A-Z]+\b".to_string()],
             files: vec!["glue/**".to_string()],
             except: vec!["glue/slice.hy".to_string()],
-            instead: "glue/slice.hy の答えを読む".to_string(),
+            instead: "read the answer in glue/slice.hy".to_string(),
         }];
         let hits = find(dir.path(), &scopes, None);
         assert_eq!(hits.len(), 1, "{:?}", hits);
-        assert_eq!(hits[0].line, 2, "註と文字列の中の当たりは数えない: {:?}", hits);
+        assert_eq!(hits[0].line, 2, "hits inside comments and strings are not counted: {:?}", hits);
         assert_eq!(hits[0].count, 1);
     }
 
@@ -226,13 +226,13 @@ mod tests {
             patterns: vec![r"\broutedTo\b".to_string(), r"\brouted-to\b".to_string()],
             files: vec!["glue/**".to_string()],
             except: vec!["glue/slice.hy".to_string()],
-            instead: "glue/slice.hy の答えを読む".to_string(),
+            instead: "read the answer in glue/slice.hy".to_string(),
         }]
     }
 
     #[test]
     fn a_line_that_only_copies_the_field_is_not_counted() {
-        // 欄を 1 対 1 で写すだけの行(keyword の鍵・文字列の鍵・日本語の註が前に在る行)は数えない。
+        // Lines that only copy a field 1:1 (a keyword key, a string key, a line preceded by a Japanese comment) are not counted.
         let dir = tempfile::tempdir().unwrap();
         std::fs::create_dir_all(dir.path().join("glue")).unwrap();
         std::fs::write(
@@ -250,7 +250,7 @@ mod tests {
 
     #[test]
     fn a_line_that_judges_the_field_is_still_counted() {
-        // 反例(#1800): 同じ欄でも、判断・分岐を持つ行・鍵の無い読み・欄を鍵にして別の値を置く行は写すだけではない — 1 行ずつ数える。
+        // Counterexample (#1800): even for the same field, a line with a decision/branch, a read with no key, or a line that uses the field as a key and puts another value is not copy-only — counted line by line.
         let dir = tempfile::tempdir().unwrap();
         std::fs::create_dir_all(dir.path().join("glue")).unwrap();
         std::fs::write(
@@ -279,7 +279,7 @@ mod tests {
             patterns: vec![r"\bJOB-PHASE-[A-Z]+\b".to_string()],
             files: vec!["glue/**".to_string()],
             except: vec![],
-            instead: "glue/slice.hy の答えを読む".to_string(),
+            instead: "read the answer in glue/slice.hy".to_string(),
         }];
         assert!(find(dir.path(), &scopes, None).is_empty());
     }
@@ -294,15 +294,15 @@ mod tests {
             patterns: vec![r"\bJOB-PHASE-[A-Z]+\b".to_string()],
             files: vec!["glue/**".to_string()],
             except: vec!["glue/slice.hy".to_string()],
-            instead: "glue/slice.hy の答えを読む".to_string(),
+            instead: "read the answer in glue/slice.hy".to_string(),
         }];
         assert!(find(dir.path(), &scopes, None).is_empty());
     }
 
     #[test]
     fn named_paths_read_only_the_named_files_with_the_same_answer() {
-        // 名指しの実行の当たりは、全体の実行の当たりを名指しで絞った物と同じ(名指しの外の b.hy は出ない)。
-        // 隠し dir の下の file は名指しても数えない(全体の実行と同じ)。読めない file は全体でも黙って飛ばす(今までどおり)。
+        // A named run's hits are the same as the whole run's hits narrowed by the named path (b.hy outside the named path does not appear).
+        // Files under hidden dirs are not counted even when named (same as the whole run). Unreadable files are silently skipped even in a whole run (as before).
         let dir = tempfile::tempdir().unwrap();
         std::fs::create_dir_all(dir.path().join("glue")).unwrap();
         std::fs::create_dir_all(dir.path().join("glue/.hidden")).unwrap();
@@ -315,7 +315,7 @@ mod tests {
             patterns: vec![r"\bJOB-PHASE-[A-Z]+\b".to_string()],
             files: vec!["glue/**".to_string()],
             except: vec![],
-            instead: "答えを読む".to_string(),
+            instead: "read the answer".to_string(),
         }];
         let whole = find(dir.path(), &scopes, None);
         assert_eq!(whole.iter().map(|h| h.rel.as_str()).collect::<Vec<_>>(), vec!["glue/a.hy", "glue/b.hy"]);

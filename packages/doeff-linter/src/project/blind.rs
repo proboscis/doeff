@@ -1,15 +1,15 @@
-//! DOEFF141: 決めた材料だけで判じる定義(agora-controllers の入口の保証の判定
-//! controllers/screen/tests/entrance_guarantee_rules.hy の 9 点のうち、一般の形で持てる 2 点の移し先)。
+//! DOEFF141: definitions judged only from fixed materials (destination for the 2 of the 9 points of agora-controllers' entrance-guarantee check
+//! controllers/screen/tests/entrance_guarantee_rules.hy that can be held in a general form).
 //!
-//! architecture.hy の `:blind-definitions [(blind "module:名" :forbid-words [..] :no-imports True :allow-requires [..] :why "…")]` の
-//! 定義ごとに:
-//!   * 定義から呼び出しと名指し(値として渡す所)で推移的に届く repo の Hy の定義の本体(入れ子の定義を含む・註は除く)に、
-//!     :forbid-words の綴りが部分一致で現れたら、届いた定義と語ごとに 1 件(`<定義の名>:<語>`)。helper へ逃がしてもすり抜けない。
-//!   * :no-imports なら、定義の module の import と require(:allow-requires に挙げた module の require は macro の読み込みなので除く)
-//!     ごとに 1 件(`import:<module>`)— 推移閉包は「呼ぶ」側しか辿らないので、材料を引き込む口はここで塞ぐ。
-//!   * 宣言した定義が見つからない(module の Hy の file が無い・定義が無い)なら architecture.hy の位置で 1 件(`missing`)。
-//! 読むのは宣言した module と、届いた先の module の file だけ(索引はその file ごとに 1 度 — repo 全体は読まない)。
-//! 届く先は索引が名前を解いた先(`target`)で、repo の中に Hy の file が在る module だけを辿る(外の package と Python は辿らない)。
+//! For each definition in architecture.hy's `:blind-definitions [(blind "module:name" :forbid-words [..] :no-imports True :allow-requires [..] :why "…")]`,
+//! as follows:
+//!   * If a spelling from :forbid-words appears (as a substring) in the body of any repo Hy definition transitively reachable from the definition by calls and by naming (passing as a value)
+//!     (including nested definitions, excluding comments), one violation per reached definition and word (`<definition name>:<word>`). Escaping into a helper does not slip through.
+//!   * If :no-imports, one violation per import and require in the definition's module (requires of modules listed in :allow-requires are macro loads, so they are excluded)
+//!     (`import:<module>`) — the transitive closure follows only the "calls" side, so the entrance that pulls in materials is closed here.
+//!   * If a declared definition is not found (no Hy file for the module, or no such definition), one violation at architecture.hy's position (`missing`).
+//! Only the declared module and the module files of the reached targets are read (the index is built once per file — the whole repo is not read).
+//! Reach targets are what the index resolved names to (`target`), and only modules that have a Hy file in the repo are followed (external packages and Python are not followed).
 
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::path::Path;
@@ -19,39 +19,39 @@ use doeff_indexer::hy_index::{self, HyFileIndex, Range, RawSettings};
 use super::architecture::BlindDefinition;
 use crate::position::{offset_of, LineIndex};
 
-/// 当たりの種類(閉じた 3 つ)。
+/// Kind of violation (a closed set of 3).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum BlindProblem {
-    /// 届いた定義 reached の本体に語 word が在る。
+    /// The reached definition `reached` has the word `word` in its body.
     ReadsWord { reached: String, word: String },
-    /// 定義の module が import / require を持つ。
+    /// The definition's module has an import / require.
     Imports { module: String },
-    /// 宣言した定義が見つからない。
+    /// The declared definition was not found.
     Missing { reason: String },
 }
 
-/// 当たり 1 つ。
+/// One violation.
 #[derive(Debug, Clone)]
 pub struct BlindFinding {
-    /// 宣言の綴り(`module:名`)。
+    /// The declared spelling (`module:name`).
     pub declared: String,
     pub why: String,
-    /// 当たりの file(根からの path)と、その中の位置。Missing は architecture.hy。
+    /// The file of the violation (path from the root) and the position in it. For Missing, architecture.hy.
     pub rel: String,
     pub range: Range,
     pub problem: BlindProblem,
-    /// 登録簿の鍵の細目。
+    /// Details of the registry key.
     pub detail: String,
 }
 
-/// 読んだ module 1 つ(索引と中身)。
+/// One module read (index and contents).
 struct Loaded {
     rel: String,
     source: String,
     index: HyFileIndex,
 }
 
-/// module の索引を file ごとに 1 度だけ作る置き場。
+/// Store that builds each module's index only once per file.
 struct Modules<'a> {
     root: &'a Path,
     raw: &'a RawSettings,
@@ -60,7 +60,7 @@ struct Modules<'a> {
 }
 
 impl<'a> Modules<'a> {
-    /// mangle した dotted の module の綴り → repo の中の Hy の file(無ければ None)。
+    /// Mangled dotted module spelling -> Hy file in the repo (None if absent).
     fn load(&mut self, module: &str) -> Option<&Loaded> {
         if !self.loaded.contains_key(module) {
             let rel = format!("{}.hy", module.replace('.', "/"));
@@ -68,7 +68,7 @@ impl<'a> Modules<'a> {
             let loaded = match std::fs::read_to_string(&path) {
                 Ok(source) => hy_index::index_paths(self.root, &[path.clone()], self.raw).files.into_iter().next().map(|index| Loaded { rel, source, index }),
                 Err(error) if path.exists() => {
-                    self.errors.push(format!("{}: 読めない: {}", rel, error));
+                    self.errors.push(format!("{}: unreadable: {}", rel, error));
                     None
                 }
                 Err(_) => None,
@@ -78,7 +78,7 @@ impl<'a> Modules<'a> {
         self.loaded.get(module).and_then(Option::as_ref)
     }
 
-    /// 完全修飾名 target の定義の在りか(module と、file の定義の添字)— module は target の頭の段のうち、repo に Hy の file の在る最も長い物。
+    /// Where the fully qualified name `target` is defined (the module, and the index of the definition in the file) — the module is the longest leading-segment prefix of target that has a Hy file in the repo.
     fn locate(&mut self, target: &str) -> Option<(String, usize)> {
         let parts: Vec<&str> = target.split('.').collect();
         for cut in (1..parts.len()).rev() {
@@ -95,7 +95,7 @@ fn inside(inner: &Range, outer: &Range) -> bool {
     outer.start <= inner.start && inner.end <= outer.end
 }
 
-/// Hy の source の註(`;` から行末 — 文字列の中の `;` は除く)を空白に潰す。byte の長さを変えないので、位置はそのまま元の source の位置。
+/// Blank out comments in Hy source (from `;` to end of line — `;` inside strings is excluded). The byte length is unchanged, so positions stay the same as in the original source.
 fn without_comments(text: &str) -> String {
     let mut out = String::with_capacity(text.len());
     let (mut in_string, mut escaped, mut in_comment) = (false, false, false);
@@ -133,7 +133,7 @@ fn without_comments(text: &str) -> String {
     out
 }
 
-/// 宣言 1 つを判じる。
+/// Judge one declaration.
 fn judge_one(blind: &BlindDefinition, modules: &mut Modules, architecture_rel: &str) -> Vec<BlindFinding> {
     let declared = blind.definition.spelling();
     let finding = |rel: String, range: Range, problem: BlindProblem, detail: String| BlindFinding { declared: declared.clone(), why: blind.why.clone(), rel, range, problem, detail };
@@ -146,12 +146,12 @@ fn judge_one(blind: &BlindDefinition, modules: &mut Modules, architecture_rel: &
             loaded.index.imports.iter().map(|i| (i.module.clone(), i.is_require, i.range)).collect::<Vec<_>>(),
         ),
         None => {
-            let reason = format!("module {} の Hy の file({}.hy)が repo に無い", blind.definition.module, module.replace('.', "/"));
+            let reason = format!("Hy file ({}.hy) for module {} is not in the repo", module.replace('.', "/"), blind.definition.module);
             return vec![finding(architecture_rel.to_string(), blind.range, BlindProblem::Missing { reason }, "missing".to_string())];
         }
     };
     if !has_root {
-        let reason = format!("{} に定義 {} が無い", rel, blind.definition.name);
+        let reason = format!("{} has no definition {}", rel, blind.definition.name);
         return vec![finding(architecture_rel.to_string(), blind.range, BlindProblem::Missing { reason }, "missing".to_string())];
     }
     let mut out = Vec::new();
@@ -163,11 +163,11 @@ fn judge_one(blind: &BlindDefinition, modules: &mut Modules, architecture_rel: &
                 out.push(finding(rel.clone(), range, BlindProblem::Imports { module: imported }, detail));
             }
         }
-        // 同じ module を 2 つの形で読む時(import と require)も、鍵は module ごとに 1 つ。
+        // When the same module is read in two forms (import and require), there is still one key per module.
         let mut seen: BTreeSet<String> = BTreeSet::new();
         out.retain(|f| seen.insert(f.detail.clone()));
     }
-    // 届く定義の推移閉包(完全修飾名)— 入れ子の定義は外の定義の範囲の中に在るので、外の定義の本体と辺に含まれる。
+    // Transitive closure of reachable definitions (fully qualified names) — nested definitions lie inside the outer definition's range, so they are included in the outer definition's body and edges.
     let mut reached: BTreeMap<String, (String, usize)> = BTreeMap::new();
     let mut queue: Vec<String> = vec![root_target.clone()];
     while let Some(target) = queue.pop() {
@@ -209,7 +209,7 @@ fn judge_one(blind: &BlindDefinition, modules: &mut Modules, architecture_rel: &
     out
 }
 
-/// 宣言の全部を判じる。architecture_rel は architecture.hy の根からの path(見つからない宣言の位置)。
+/// Judge all declarations. architecture_rel is the path of architecture.hy from the root (the position for declarations not found).
 pub fn find(root: &Path, blinds: &[BlindDefinition], raw: &RawSettings, architecture_rel: &str) -> (Vec<BlindFinding>, Vec<String>) {
     let mut modules = Modules { root, raw, loaded: HashMap::new(), errors: Vec::new() };
     let found: Vec<BlindFinding> = blinds.iter().flat_map(|blind| judge_one(blind, &mut modules, architecture_rel)).collect();
@@ -222,11 +222,11 @@ mod tests {
 
     #[test]
     fn comments_become_spaces_of_the_same_length() {
-        let text = "(defk f [x] ; view.policy は読まない\n  \"a;b\" x) ;; 末尾";
+        let text = "(defk f [x] ; view.policy is not read\n  \"a;b\" x) ;; trailing";
         let stripped = without_comments(text);
         assert_eq!(stripped.len(), text.len());
         assert!(!stripped.contains("view.policy"));
-        assert!(stripped.contains("\"a;b\""), "文字列の中の ; は註でない");
+        assert!(stripped.contains("\"a;b\""), "; inside a string is not a comment");
         assert!(stripped.contains("\n  \"a;b\" x)"));
     }
 }

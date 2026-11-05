@@ -1,8 +1,8 @@
-//! 処理ステージごとの時間を stderr へ出す計器(環境変数 `DOEFF_LINTER_TIMING` が在る時だけ)。
+//! Instrument that prints per-stage timings to stderr (only when the environment variable `DOEFF_LINTER_TIMING` is set).
 //!
-//! 書き込み直後の hook の 1 回が CPU 3 秒かかっていた— どの処理ステージが重いかを、
-//! 答え(stdout の JSON)を変えずに測るため。並列の処理は壁時計だと重さが隠れるので、process の CPU 秒
-//! (`/proc/self/stat` の utime + stime)の差も出す。読めない機体では CPU 秒の欄を `?` にする。
+//! A single hook run right after a write took 3 seconds of CPU: this measures which processing stage is heavy,
+//! without changing the answer (the JSON on stdout). Parallel work hides its weight behind wall-clock time, so the
+//! difference in process CPU seconds (utime + stime from `/proc/self/stat`) is printed too. On machines where it cannot be read, the CPU-seconds field is `?`.
 
 use std::time::Instant;
 
@@ -10,14 +10,14 @@ const ENV: &str = "DOEFF_LINTER_TIMING";
 
 fn cpu_seconds() -> Option<f64> {
     let stat = std::fs::read_to_string("/proc/self/stat").ok()?;
-    // comm は括弧の中に空白を含みうるので、最後の ')' の後ろから数える(utime = 14 番目・stime = 15 番目)。
+    // comm may contain spaces inside its parentheses, so count from after the last ')' (utime = field 14, stime = field 15).
     let rest = stat.get(stat.rfind(')')? + 2..)?;
     let fields: Vec<&str> = rest.split_whitespace().collect();
     let ticks: f64 = fields.get(11)?.parse::<f64>().ok()? + fields.get(12)?.parse::<f64>().ok()?;
     Some(ticks / 100.0)
 }
 
-/// `f` を走らせ、計器が有効なら `doeff-linter-timing: <label> wall=<秒> cpu=<秒>` を 1 行 stderr へ出す。
+/// Runs `f` and, if the instrument is enabled, prints one line to stderr: `doeff-linter-timing: <label> wall=<seconds> cpu=<seconds>`.
 pub fn timed<T>(label: &str, f: impl FnOnce() -> T) -> T {
     if std::env::var_os(ENV).is_none() {
         return f();
@@ -32,7 +32,7 @@ pub fn timed<T>(label: &str, f: impl FnOnce() -> T) -> T {
     out
 }
 
-/// 計器が有効なら `doeff-linter-timing: <label> <欄>=<数>` を 1 行 stderr へ出す(段の時間でなく、数えた物の数 — 例: 中身を実際に読んだ file の数)。
+/// If the instrument is enabled, prints one line to stderr: `doeff-linter-timing: <label> <field>=<number>` (not a stage time but a count of things, e.g. the number of files whose contents were actually read).
 pub fn count(label: &str, field: &str, value: usize) {
     if std::env::var_os(ENV).is_some() {
         eprintln!("doeff-linter-timing: {label} {field}={value}");

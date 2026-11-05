@@ -1,10 +1,10 @@
-//! 機体の検の枠の門の検— 重い mode の doeff-linter は、HOME の下の正本
-//! (`dotfiles/agent/tests/machine_check_slots.py`)の命令の包み `run` へ自分を渡し、枠を取ってから走る。
+//! Test of the machine's check-slot gate — doeff-linter in heavy mode passes itself to the command wrapper `run` of the canonical source under HOME
+//! (`dotfiles/agent/tests/machine_check_slots.py`), and runs after taking a slot.
 //!
-//! 本物の正本を写した検は、HOME を一時の dir に向け、正本の module の写しと、K = 1・置き場 = 一時の dir の宣言を隣に置いて撃つ
-//! (走っている機体の枠 /tmp/agora-check-slots に触らない — dotfiles の agent/tests/test_machine_check_slots.py と同じ形)。
-//! 正本は撃つ機体の HOME の dotfiles から写す — 無い機体では、何を確かめられないかを名乗って赤にする(未実行を合格にしない)。
-//! 門の道の形(どの mode が正本を通るか・同じ引数・再入の印)は、引数と env を記して命令を exec する偽の正本で見る。
+//! The tests that copy the real canonical source point HOME at a temporary dir, place a copy of the canonical module and a declaration of K = 1 and store = a temporary dir next to it, and fire
+//! (they do not touch the running machine's slots /tmp/agora-check-slots — same form as dotfiles' agent/tests/test_machine_check_slots.py).
+//! The canonical source is copied from the dotfiles under the HOME of the machine that fires — on a machine without it, the test goes red stating what cannot be verified (an unrun test is not passed).
+//! The shape of the gate path (which modes go through the canonical source, the same arguments, the re-entry marker) is checked with a fake canonical source that records arguments and env and execs the command.
 
 use std::fs;
 use std::io::Write;
@@ -13,29 +13,29 @@ use std::process::{Child, Command, Stdio};
 use std::time::{Duration, Instant};
 
 const LINTER: &str = env!("CARGO_BIN_EXE_doeff-linter");
-/// 子の process を待つ上限。
+/// Upper bound for waiting on a child process.
 const DONE: Duration = Duration::from_secs(60);
 
-/// 撃つ機体の正本(HOME の下)。無ければ何を確かめられないかを名乗って赤。
+/// The canonical source of the firing machine (under HOME). If missing, red, stating what cannot be verified.
 fn real_canon() -> PathBuf {
-    let home = std::env::var_os("HOME").expect("HOME が無い");
+    let home = std::env::var_os("HOME").expect("HOME is not set");
     let canon = Path::new(&home).join("dotfiles/agent/tests/machine_check_slots.py");
     assert!(
         canon.is_file(),
-        "正本 {} が無い — この検は機体の検の枠の正本(dotfiles)を HOME に置いた機体で走る(枠を待つ linter を確かめられない)",
+        "canonical source {} is missing — this test runs on a machine that placed the machine check-slot canonical source (dotfiles) under HOME (cannot verify the linter that waits for a slot)",
         canon.display()
     );
     canon
 }
 
-/// 撃つ機体の python(linter が正本を走らせる時と同じ `uv python find`)。
+/// The python of the firing machine (same `uv python find` as when the linter runs the canonical source).
 fn python() -> PathBuf {
-    let found = Command::new("uv").args(["python", "find"]).output().expect("uv を起こせない");
+    let found = Command::new("uv").args(["python", "find"]).output().expect("cannot start uv");
     assert!(found.status.success(), "uv python find: {}", String::from_utf8_lossy(&found.stderr));
     PathBuf::from(String::from_utf8_lossy(&found.stdout).trim())
 }
 
-/// lint する小さな repo(Python の file 1 つ・DOEFF016 = 相対 import の当たり 1 件 — lint が走れば終了 1)。
+/// A small repo to lint (one Python file; DOEFF016 = one relative-import hit — if lint runs, exit 1).
 fn small_repo(root: &Path) -> PathBuf {
     let repo = root.join("repo");
     fs::create_dir_all(&repo).unwrap();
@@ -44,18 +44,18 @@ fn small_repo(root: &Path) -> PathBuf {
     repo
 }
 
-/// HOME を一時の dir に向けた linter の命令。uv が python を探す置き場は撃つ機体のまま(HOME を替えても同じ python を見つける)。
+/// The linter command with HOME pointed at a temporary dir. The place where uv looks for python stays the firing machine's (finds the same python even if HOME changes).
 fn linter_under(home: &Path, repo: &Path) -> Command {
     let mut command = Command::new(LINTER);
     command.current_dir(repo).env("HOME", home).env_remove("DOEFF_LINTER_CHECK_SLOT");
     if std::env::var_os("UV_PYTHON_INSTALL_DIR").is_none() && std::env::var_os("XDG_DATA_HOME").is_none() {
-        let real_home = std::env::var_os("HOME").expect("HOME が無い");
+        let real_home = std::env::var_os("HOME").expect("HOME is not set");
         command.env("XDG_DATA_HOME", Path::new(&real_home).join(".local/share"));
     }
     command
 }
 
-/// 条件が成り立つまで待つ。ポーリングの訳: 別の process が枠を取った・待ちを名乗った事を知らせる口は無い(検体の外の観測)。
+/// Waits until a condition holds. Reason for polling: there is no channel for another process to announce that it took a slot or declared a wait (observation outside the fixture).
 fn wait_until(what: &str, mut ready: impl FnMut() -> bool) {
     let deadline = Instant::now() + DONE;
     while !ready() {
@@ -76,14 +76,14 @@ fn finish(mut child: Child, what: &str) -> std::process::ExitStatus {
         }
         if Instant::now() >= deadline {
             let _ = child.kill();
-            panic!("{what} が終わらない");
+            panic!("{what} did not finish");
         }
         std::thread::sleep(Duration::from_millis(50));
     }
 }
 
-/// 正本の写しと、K = 1・1 枠の process の数 1・置き場 = 一時の dir・待ちの上限 = wait_s の宣言を置いた HOME と、その正本と
-/// 枠 0 の file。宣言の鍵は正本が要る物を全部書く(processesPerSlot が無いと、正本は宣言を読めずに枠を取らずに走る)。
+/// A HOME with a copy of the canonical source and a declaration of K = 1, 1 process per slot, store = a temporary dir, wait limit = wait_s, plus that canonical source and
+/// the file for slot 0. The declaration's keys write everything the canonical source needs (without processesPerSlot the canonical source cannot read the declaration and runs without taking a slot).
 fn canon_home(root: &Path, wait_s: u64) -> (PathBuf, PathBuf, PathBuf) {
     let home = root.join("home");
     let tests_dir = home.join("dotfiles/agent/tests");
@@ -97,7 +97,7 @@ fn canon_home(root: &Path, wait_s: u64) -> (PathBuf, PathBuf, PathBuf) {
     (home, canon, slots.join("slot-0.lock"))
 }
 
-/// 保持者 = 正本の包みで枠を 1 本取り、stdin を閉じるまで持つ命令(枠を取ったのを見てから返す)。
+/// Holder = a command that takes 1 slot via the canonical source's wrapper and holds it until stdin is closed (returns after seeing the slot taken).
 fn holding(home: &Path, canon: &Path, slot: &Path) -> Child {
     let python = python();
     let holder = Command::new(&python)
@@ -110,15 +110,15 @@ fn holding(home: &Path, canon: &Path, slot: &Path) -> Child {
         .stdin(Stdio::piped())
         .spawn()
         .unwrap();
-    wait_until("保持者が枠を取らない", || read(slot).starts_with("pid "));
+    wait_until("the holder did not take the slot", || read(slot).starts_with("pid "));
     holder
 }
 
-/// 正本が枠を持つ process の子へ継ぐ内部の印(env の名)— 正本の source の `HOLDER_ENV = "…"` から読む(この検に名を写さない)。
+/// The internal marker (env name) the canonical source passes down to children of the process holding a slot — read from `HOLDER_ENV = "…"` in the canonical source's source (the name is not copied into this test).
 fn canon_holder_env() -> String {
     let text = read(&real_canon());
-    let line = text.lines().find(|line| line.starts_with("HOLDER_ENV = ")).expect("正本に HOLDER_ENV の行が無い");
-    line.split('"').nth(1).expect("HOLDER_ENV の値").to_string()
+    let line = text.lines().find(|line| line.starts_with("HOLDER_ENV = ")).expect("no HOLDER_ENV line in the canonical source");
+    line.split('"').nth(1).expect("value of HOLDER_ENV").to_string()
 }
 
 #[test]
@@ -142,26 +142,26 @@ fn a_linter_beyond_the_slots_waits_names_the_holder_and_runs_when_one_frees() {
         waiting.contains(&format!("保持 pid {} long-check", holder.id())) && waiting.contains("待つのは doeff-linter lint repo"),
         "{waiting}"
     );
-    assert!(linter.try_wait().unwrap().is_none(), "枠が埋まっているのに linter が走り終えた");
-    assert!(!read(&slot).contains("doeff-linter"), "枠が埋まっているのに linter が枠を取った");
+    assert!(linter.try_wait().unwrap().is_none(), "the linter finished although the slot was full");
+    assert!(!read(&slot).contains("doeff-linter"), "the linter took the slot although it was full");
 
-    // 保持者が解いた拍に linter が枠を取り、lint して終わる(枠を取った名乗り・lint の当たり・終われば解く)。
+    // When the holder releases, the linter takes the slot on that beat, lints, and finishes (announces taking the slot, lint hits, releases when done).
     holder.stdin.take().unwrap().write_all(b"").unwrap();
-    assert!(finish(holder, "保持者").success());
+    assert!(finish(holder, "holder").success());
     let output = linter.wait_with_output().unwrap();
     let stdout = String::from_utf8_lossy(&output.stdout);
     let err = read(&err_path);
-    assert_eq!(output.status.code(), Some(1), "当たり(DOEFF016)で 1 のはず: {stdout}\n{err}");
+    assert_eq!(output.status.code(), Some(1), "should be 1 from a hit (DOEFF016): {stdout}\n{err}");
     assert!(stdout.contains("DOEFF016"), "{stdout}");
     assert!(err.contains("を取った") && err.contains("— doeff-linter lint repo"), "{err}");
-    assert_eq!(read(&slot), "", "linter が終わっても枠の名乗りが残った");
+    assert_eq!(read(&slot), "", "the slot announcement remained after the linter finished");
 }
 
 #[test]
 fn a_stale_holder_marker_does_not_let_the_linter_skip_a_full_slot_and_the_expiry_exits_75() {
-    // 入れ子かどうか(祖先が枠を持つか)は正本だけが判じる — 正本の内部の印(env)を継いだだけの linter は、印の指す pid が
-    // 枠を持っていなければ内側ではない(保持者が退いた後に残った子・背景の子 — 盲検 B)。
-    // 枠が埋まったままなら待ちの上限で lint をせずに終わり、linter の公開の終了コード 75(未実行)を返す。
+    // Whether it is nested (whether an ancestor holds a slot) is judged only by the canonical source — a linter that merely inherited the canonical source's internal marker (env) is not inside
+    // if the pid the marker points to does not hold a slot (a child left after the holder left, a background child — blind review B).
+    // If the slot stays full, it ends at the wait limit without linting and returns the linter's public exit code 75 (not run).
     let tmp = tempfile::TempDir::new().unwrap();
     let (home, canon, slot) = canon_home(tmp.path(), 2);
     let repo = small_repo(tmp.path());
@@ -173,15 +173,15 @@ fn a_stale_holder_marker_does_not_let_the_linter_skip_a_full_slot_and_the_expiry
         .output()
         .unwrap();
     holder.stdin.take().unwrap().write_all(b"").unwrap();
-    assert!(finish(holder, "保持者").success());
+    assert!(finish(holder, "holder").success());
     let stdout = String::from_utf8_lossy(&output.stdout);
     let err = String::from_utf8_lossy(&output.stderr);
-    assert_eq!(output.status.code(), Some(75), "印を継いだだけの linter が枠の外で走った: {stdout}\n{err}");
-    assert!(!stdout.contains("DOEFF016"), "未実行のはずが lint した: {stdout}");
+    assert_eq!(output.status.code(), Some(75), "a linter that merely inherited the marker ran outside a slot: {stdout}\n{err}");
+    assert!(!stdout.contains("DOEFF016"), "it was supposed to be not run but it linted: {stdout}");
     assert!(err.contains("埋まっているので待つ") && err.contains("doeff-linter lint repo は未実行"), "{err}");
 }
 
-/// 偽の正本 — 引数と再入の印を 1 行ずつ記し、`--` の後の命令を exec する(枠は取らない)。
+/// A fake canonical source — records arguments and the re-entry marker one line each, and execs the command after `--` (takes no slot).
 const FAKE_CANON: &str = r#"import json, os, sys
 with open(os.path.join(os.path.dirname(__file__), "calls.jsonl"), "a") as log:
     log.write(json.dumps({"argv": sys.argv[1:], "gated": os.environ.get("DOEFF_LINTER_CHECK_SLOT")}) + "\n")
@@ -210,14 +210,14 @@ fn a_repo_scan_hands_itself_and_its_arguments_to_the_canon_once() {
     assert_eq!(output.status.code(), Some(1), "{}", String::from_utf8_lossy(&output.stderr));
     assert!(String::from_utf8_lossy(&output.stdout).contains("DOEFF016"));
     let seen = calls(&log);
-    assert_eq!(seen.len(), 1, "正本を 1 度だけ通る(exec された linter は印で通らない): {seen:?}");
+    assert_eq!(seen.len(), 1, "passes through the canonical source only once (the exec'd linter does not pass through, by the marker): {seen:?}");
     let argv: Vec<String> = seen[0]["argv"].as_array().unwrap().iter().map(|v| v.as_str().unwrap().to_string()).collect();
     let exe = fs::canonicalize(LINTER).unwrap();
     assert_eq!(
         argv,
         ["run", "--label", "doeff-linter lint repo", "--", exe.to_str().unwrap(), "--no-log", "--output-format", "json", "."]
     );
-    assert_eq!(seen[0]["gated"], "1", "包みへ渡す時に再入の印を付ける(子孫の linter が python を通らない)");
+    assert_eq!(seen[0]["gated"], "1", "a re-entry marker is attached when handing to the wrapper (descendant linters do not pass through python)");
 }
 
 #[test]
@@ -230,9 +230,9 @@ fn cheap_and_caller_bounded_modes_do_not_go_through_the_canon() {
         vec!["--split-rules", "tool.py"],
         vec!["--affected-tests", "tool.py", "--test-pattern", "test_*.py"],
     ] {
-        // 一時の repo は git の木でない — `--split-rules`・`--affected-tests` は git を読めずに断りうる。見るのは正本を通らない事だけ。
+        // The temporary repo is not a git tree — `--split-rules` and `--affected-tests` may refuse for being unable to read git. What is checked is only that they do not pass through the canonical source.
         let output = linter_under(&home, &repo).args(&args).output().unwrap();
-        assert!(output.status.code().is_some(), "{args:?} が信号で死んだ: {}", String::from_utf8_lossy(&output.stderr));
+        assert!(output.status.code().is_some(), "{args:?} died by a signal: {}", String::from_utf8_lossy(&output.stderr));
     }
     let mut stdin_run = linter_under(&home, &repo)
         .args(["--output-format", "editor-json", "--no-log", "--stdin", "--path", "tool.py"])
@@ -242,10 +242,10 @@ fn cheap_and_caller_bounded_modes_do_not_go_through_the_canon() {
         .unwrap();
     stdin_run.stdin.take().unwrap().write_all(b"import os\n").unwrap();
     assert!(stdin_run.wait_with_output().unwrap().status.code().is_some());
-    assert_eq!(calls(&log), Vec::<serde_json::Value>::new(), "軽い mode が正本を通った");
+    assert_eq!(calls(&log), Vec::<serde_json::Value>::new(), "a light mode passed through the canonical source");
 }
 
-/// small_repo を git の木にし、pyproject.toml だけを基点に commit して、当たり(DOEFF016)を持つ tool.py を stage する。
+/// Makes small_repo a git tree, commits only pyproject.toml as the baseline, and stages tool.py, which has a hit (DOEFF016).
 fn stage_in_git(repo: &Path) {
     let git = |args: &[&str]| {
         let output = Command::new("git")
@@ -261,14 +261,14 @@ fn stage_in_git(repo: &Path) {
     };
     git(&["init", "-q", "-b", "main"]);
     git(&["add", "pyproject.toml"]);
-    git(&["commit", "-q", "-m", "基点"]);
+    git(&["commit", "-q", "-m", "baseline"]);
     git(&["add", "tool.py"]);
 }
 
-/// commit の前の検査は test ではないので — ほかの検の後ろで待たせない: commit の hook
-/// (`--commit-hook`)は stage した file に file 1 つで決まる規則を当てる短い止める検査で、自分の CPU 秒の上限(timeout_s)を持つ。
-/// 親も、親が stage した path に撃つ子の linter(editor-json)も正本を通らない — 枠の待ちで commit が止まらない。
-/// 子が走った事は、stage した tool.py の当たり(DOEFF016)で止まる事で見る。
+/// The pre-commit check is not a test, so — do not make it wait behind other tests: the commit hook
+/// (`--commit-hook`) is a short blocking check that applies per-file rules to staged files, and has its own CPU-second limit (timeout_s).
+/// Neither the parent nor the child linter (editor-json) fired on the paths the parent staged passes through the canonical source — a commit does not stop on a slot wait.
+/// That the child ran is seen by stopping on the hit of the staged tool.py (DOEFF016).
 #[test]
 fn the_commit_hook_and_its_child_linters_do_not_go_through_the_canon() {
     let tmp = tempfile::TempDir::new().unwrap();
@@ -285,9 +285,9 @@ fn the_commit_hook_and_its_child_linters_do_not_go_through_the_canon() {
         .output()
         .unwrap();
     let err = String::from_utf8_lossy(&output.stderr);
-    assert_eq!(output.status.code(), Some(1), "stage した tool.py の当たり(DOEFF016)で止まるはず: {err}");
-    assert!(err.contains("stage した file の破れ: tool.py:1: DOEFF016"), "{err}");
-    assert_eq!(calls(&log), Vec::<serde_json::Value>::new(), "commit の hook(親か子の linter)が正本を通った");
+    assert_eq!(output.status.code(), Some(1), "should stop on the hit (DOEFF016) of the staged tool.py: {err}");
+    assert!(err.contains("violation in staged file: tool.py:1: DOEFF016"), "{err}");
+    assert_eq!(calls(&log), Vec::<serde_json::Value>::new(), "the commit hook (the parent or the child linter) passed through the canonical source");
 }
 
 #[test]
@@ -297,17 +297,17 @@ fn a_linter_inside_the_gate_or_without_a_canon_runs_directly() {
     let repo = small_repo(tmp.path());
     let inside = linter_under(&home, &repo).args(["--no-log", "."]).env("DOEFF_LINTER_CHECK_SLOT", "1").output().unwrap();
     assert_eq!(inside.status.code(), Some(1));
-    assert_eq!(calls(&log), Vec::<serde_json::Value>::new(), "印の付いた linter が正本をもう 1 度通った");
+    assert_eq!(calls(&log), Vec::<serde_json::Value>::new(), "a linter marked as such passed through the canonical source again");
 
     let bare_home = tmp.path().join("bare-home");
     fs::create_dir_all(&bare_home).unwrap();
     let bare = linter_under(&bare_home, &repo).args(["--no-log", "."]).output().unwrap();
     assert_eq!(bare.status.code(), Some(1));
     let said = String::from_utf8_lossy(&bare.stderr);
-    assert!(!said.contains("機体の検の枠") && !said.contains("check-slot:"), "正本の無い機体で枠の名乗りを出した: {said}");
+    assert!(!said.contains("machine check slot") && !said.contains("check-slot:"), "正本の無い機体で枠の名乗りを出した: {said}");
 }
 
-/// linter の source から `//` の註を除いた code。
+/// The code of the linter's source with `//` comments removed.
 fn code_of(path: &Path) -> String {
     read(path).lines().map(|line| line.split("//").next().unwrap_or("")).collect::<Vec<_>>().join("\n")
 }
@@ -323,15 +323,15 @@ fn rust_sources(dir: &Path) -> Vec<PathBuf> {
 
 #[test]
 fn the_linter_keeps_no_copy_of_the_slot_values() {
-    // 値の持ち主は正本の隣の宣言 1 つ(K・置き場・待ちの上限)。linter の code はその値も宣言の file の名も綴らない —
-    // 綴るのは正本の在処(HOME からの相対)だけ。正本の内部の印(枠を持つ process の子へ継ぐ env の名)も綴らない —
-    // 入れ子の判定を linter に写さない(盲検 B)。
+    // The owner of the values is one declaration next to the canonical source (K, store, wait limit). The linter's code spells neither those values nor the declaration file's name —
+    // it spells only the canonical source's location (relative to HOME). It also does not spell the canonical source's internal marker (the env name passed to children of a slot-holding process) —
+    // the nesting decision is not copied into the linter (blind review B).
     let holder_env = canon_holder_env();
     let declaration_path = real_canon().with_file_name("machine_check_slots.json");
     let declaration: serde_json::Value = serde_json::from_str(&read(&declaration_path)).unwrap();
-    let dir = declaration["dir"].as_str().expect("宣言の dir");
-    let slots = declaration["slots"].as_u64().expect("宣言の slots").to_string();
-    let wait = declaration["waitLimitSeconds"].as_f64().expect("宣言の waitLimitSeconds");
+    let dir = declaration["dir"].as_str().expect("dir of the declaration");
+    let slots = declaration["slots"].as_u64().expect("slots of the declaration").to_string();
+    let wait = declaration["waitLimitSeconds"].as_f64().expect("waitLimitSeconds of the declaration");
     let sources = rust_sources(&Path::new(env!("CARGO_MANIFEST_DIR")).join("src"));
     let gate = Path::new(env!("CARGO_MANIFEST_DIR")).join("src/check_slot.rs");
     assert!(sources.contains(&gate));
@@ -350,7 +350,7 @@ fn the_linter_keeps_no_copy_of_the_slot_values() {
                 [slots.clone(), format!("{wait}"), format!("{}", wait as u64)]
                     .into_iter()
                     .filter(|value| tokens.contains(&value.as_str()))
-                    .map(|value| format!("{}: 数 {value}", path.display()))
+                    .map(|value| format!("{}: number {value}", path.display()))
                     .collect()
             } else {
                 Vec::new()
@@ -358,5 +358,5 @@ fn the_linter_keeps_no_copy_of_the_slot_values() {
             named.into_iter().chain(numbers)
         })
         .collect();
-    assert_eq!(copies, Vec::<String>::new(), "枠の値の写しが linter の code に在る");
+    assert_eq!(copies, Vec::<String>::new(), "a copy of the slot value is in the linter's code");
 }

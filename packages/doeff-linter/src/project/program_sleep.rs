@@ -1,61 +1,61 @@
-//! DOEFF210: Hy の program は壁の時計で眠らない(doeff の ADR-DOE-TIME-001 R1・R2)。
+//! DOEFF210: a Hy program does not sleep on the wall clock (doeff ADR-DOE-TIME-001 R1, R2).
 //!
-//! program(defk・defp の本体 — @do の generator)が時間を待つ時は doeff-time の効果(Delay・WaitUntil・WaitWithin …)を出し、
-//! 1 秒が何であるかは呼び手が置く時間の handler が決める。program が `time.sleep` / `asyncio.sleep` を呼ぶと、どの handler を
-//! 置いても壁の時計で待ち、その program の検は仮想の時計で走れない。Python の同じ決まりは semgrep の規則
-//! doeff-no-sleep-in-programs が持つ — semgrep は Hy を読めないので、Hy の分はここが持つ。program の置き場(母集団)は repo の
-//! 設定 `[tool.doeff-linter.program_sleep]` にだけ在り、ここには書かない。
+//! When a program (the body of defk or defp — an @do generator) waits for time, it emits doeff-time effects (Delay, WaitUntil, WaitWithin …), and
+//! what one second means is decided by the time handler the caller installs. If a program calls `time.sleep` / `asyncio.sleep`, it waits on the wall clock
+//! whichever handler is installed, and checks of that program cannot run on a virtual clock. The same rule for Python is held by the semgrep rule
+//! doeff-no-sleep-in-programs — semgrep cannot read Hy, so the Hy side is held here. Where programs live (the population) exists only in the repo
+//! setting `[tool.doeff-linter.program_sleep]` and is not written here.
 //!
-//! 当てる形(Hy の form の木):
-//!   * defk・defp の本体の中(字面で内側に在る fn・defn・deff の中も)の、頭が `time.sleep` / `asyncio.sleep` の呼び。
-//!     `(import time :as t)` の別名の `t.sleep`、`(import asyncio [sleep])`・`(import time [sleep :as nap])` で束ねた名の呼びも。
-//!     `(Await (asyncio.sleep 秒))` は中の呼びが当たる。
-//! 当てない形:
-//!   * 秒が literal の 0 の呼び(`(asyncio.sleep 0)`・`(time.sleep 0.0)` — 時間を待たずに 1 度譲るだけ)。
-//!   * handler の実装(壁の時計で待つのは handler の責務): defhandler の本体・引数の並びが `[effect k]` の定義(defk・deff・
-//!     defn・fn)・契約の辞書の `:tags` の `:role` が `foundation`(汎用の I/O の役)の defk・defp。最後の 1 つは handler から
-//!     だけ呼ばれる helper の名乗り — 定義が自分の辞書に書いた時だけ読み、module の頭のタグでは外さない。
-//!   * program でない定義(最上位の deff・defn・defclass の method)— 素の callable は効果を出せない。deff の是非は
-//!     DOEFF111・203 が持つ。
-//!   * 註・`#_` で読み捨てた form・quote した form。
+//! Forms matched (Hy form tree):
+//!   * Inside the body of defk or defp (including fn, defn, deff nested lexically within), calls whose head is `time.sleep` / `asyncio.sleep`.
+//!     Also the alias `t.sleep` from `(import time :as t)`, and calls to names bound by `(import asyncio [sleep])` or `(import time [sleep :as nap])`.
+//!     For `(Await (asyncio.sleep seconds))`, the inner call is matched.
+//! Forms not matched:
+//!   * Calls whose seconds is the literal 0 (`(asyncio.sleep 0)`, `(time.sleep 0.0)` — they merely yield once without waiting for time).
+//!   * Handler implementations (waiting on the wall clock is the handler's responsibility): the body of defhandler, definitions whose argument list is `[effect k]` (defk, deff,
+//!     defn, fn), and defk/defp whose contract dict `:tags` has `:role` `foundation` (the generic I/O role). The last one is a declaration of a helper called
+//!     only from handlers — it is read only when the definition writes it in its own dict, and a module-head tag does not exempt it.
+//!   * Definitions that are not programs (top-level deff, defn, defclass methods) — a plain callable cannot emit effects. Whether deff is right is
+//!     held by DOEFF111 and 203.
+//!   * Comments, forms discarded with `#_`, and quoted forms.
 
 use std::collections::BTreeMap;
 
 use doeff_indexer::hy_index::reader::{Delim, Form, Node, Prefix, Reader, StrKind};
 
-/// 眠りの関数を持つ module(Python の標準の 2 つ)と、その関数の名。検の眠りの規則(DOEFF211・test_sleep.rs)も同じ 2 つを読む。
+/// The modules with a sleep function (the two in the Python standard library) and the function name. The test-sleep rule (DOEFF211, test_sleep.rs) reads the same two.
 pub(super) const SLEEP_MODULES: &[&str] = &["time", "asyncio"];
 pub(super) const SLEEP_NAME: &str = "sleep";
-/// program を定める頭(本体が @do の generator になる)。
+/// Heads that define a program (the body becomes an @do generator).
 const PROGRAM_HEADS: &[&str] = &["defk", "defp"];
-/// 引数の並びが `[effect k]` なら handler の実装として読む頭と、その頭の引数の並びの位置。
+/// Heads read as a handler implementation when the argument list is `[effect k]`, with the position of the argument list for that head.
 const CALLABLE_HEADS: &[(&str, usize)] = &[("defk", 2), ("deff", 2), ("defn", 2), ("defn/a", 2), ("fn", 1), ("fn/a", 1)];
-/// handler の実装の引数の並び。
+/// The argument list of a handler implementation.
 const HANDLER_PARAMS: &[&str] = &["effect", "k"];
-/// 汎用の I/O の役(handler からだけ呼ばれる helper の名乗り)。
+/// The generic I/O role (a declaration of a helper called only from handlers).
 const IO_ROLE: &str = "foundation";
-/// 契約の辞書を探す範囲(名の後の要素の数 — 引数の並びと docstring を飛ばす)。
+/// The range in which to look for the contract dict (number of elements after the name — skipping the argument list and docstring).
 const CONTRACT_REACH: usize = 4;
 
-/// 当たり 1 つ(眠りの呼びの form の byte の範囲・包む program の名・眠りの関数の綴り)。
+/// One hit (byte range of the sleep call form, name of the enclosing program, spelling of the sleep function).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ProgramSleepHit {
     pub start: usize,
     pub end: usize,
-    /// 包む program(defk・defp)の名。
+    /// Name of the enclosing program (defk, defp).
     pub definition: String,
-    /// 眠りの関数(`time.sleep` か `asyncio.sleep` — 別名で呼んでも元の綴り)。
+    /// The sleep function (`time.sleep` or `asyncio.sleep` — the original spelling even when called by an alias).
     pub callee: String,
 }
 
 impl ProgramSleepHit {
-    /// 鍵の細目(`<program の名>::<眠りの関数>`)。
+    /// Key detail (`<program name>::<sleep function>`).
     pub fn detail(&self) -> String {
         format!("{}::{}", self.definition, self.callee)
     }
 }
 
-/// Hy の中身 1 つを判じる(当たりは位置の順)。
+/// Judges one Hy content (hits in position order).
 pub fn judge(source: &str) -> Vec<ProgramSleepHit> {
     let mut reader = Reader::new(source, 0, source.len());
     let forms = reader.read_all();
@@ -66,24 +66,24 @@ pub fn judge(source: &str) -> Vec<ProgramSleepHit> {
     out
 }
 
-/// form の綴り。
+/// The spelling of a form.
 pub(super) fn text<'a>(source: &'a str, form: &Form) -> &'a str {
     source.get(form.span.start..form.span.end).unwrap_or("")
 }
 
-/// 読み捨てを除いた要素。
+/// Elements excluding discarded ones.
 pub(super) fn live(items: &[Form]) -> Vec<&Form> {
     items.iter().filter(|item| !matches!(item.node, Node::Discarded)).collect()
 }
 
-/// `( … )` の頭の記号の綴りと、読み捨てを除いた要素。
+/// The head symbol spelling of `( … )` and its elements excluding discarded ones.
 pub(super) fn headed<'a, 'f>(source: &'a str, form: &'f Form) -> Option<(&'a str, Vec<&'f Form>)> {
     let items = live(form.paren_items()?);
     let head = items.first().filter(|first| matches!(first.node, Node::Symbol)).map(|first| text(source, first))?;
     Some((head, items))
 }
 
-/// form の子(quote した form と読み捨てた form には入らない)。
+/// Children of a form (quoted forms and discarded forms are not entered).
 pub(super) fn children(form: &Form) -> Vec<&Form> {
     match &form.node {
         Node::Seq { items, .. } => live(items),
@@ -96,16 +96,16 @@ pub(super) fn children(form: &Form) -> Vec<&Form> {
     }
 }
 
-/// file の中で、module の列 modules のどれかの名 name(例 time・asyncio の sleep)を指す呼びの頭の綴り → 元の綴り(`<module>.<name>`)。
-/// 素の綴り `<module>.<name>` と、file の中の `(import …)`(関数の中の物も)が束ねた名を集める。
+/// Within a file, maps the head spelling of a call that refers to name (e.g. sleep of time, asyncio) in any of the modules to the original spelling (`<module>.<name>`).
+/// Collects the plain spelling `<module>.<name>` and the names bound by `(import …)` in the file (including those inside functions).
 pub(super) fn bound_names(source: &str, forms: &[Form], modules: &[&str], name: &str) -> BTreeMap<String, String> {
     let mut bound: BTreeMap<String, String> = modules.iter().map(|module| (format!("{}.{}", module, name), format!("{}.{}", module, name))).collect();
     forms.iter().for_each(|form| bind_imports(source, form, modules, name, &mut bound));
     bound
 }
 
-/// `(import …)` 1 つ(か、その子の中の物)が束ねた名を足す。`(import time)`・`(import time :as t)` は `<名>.sleep`、
-/// `(import time [sleep])`・`(import time [sleep :as nap])`・`(import time *)` は束ねた名そのもの。
+/// Adds the names bound by one `(import …)` (or ones within its children). `(import time)` and `(import time :as t)` give `<name>.sleep`;
+/// `(import time [sleep])`, `(import time [sleep :as nap])` and `(import time *)` give the bound name itself.
 fn bind_imports(source: &str, form: &Form, modules: &[&str], name: &str, bound_names: &mut BTreeMap<String, String>) {
     match headed(source, form) {
         Some(("import", items)) => {
@@ -133,7 +133,7 @@ fn bind_imports(source: &str, form: &Form, modules: &[&str], name: &str, bound_n
     }
 }
 
-/// 名を並べた import の `[…]` の中で name を束ねた名(`[sleep]` → `sleep`・`[sleep :as nap]` → `nap`・無ければ None)。
+/// The name bound for name inside the `[…]` of an import listing names (`[sleep]` -> `sleep`, `[sleep :as nap]` -> `nap`, None if absent).
 fn imported_name(source: &str, names: &Form, name: &str) -> Option<String> {
     let names = live(names.bracket_items()?);
     let at = names.iter().position(|bound| matches!(bound.node, Node::Symbol) && text(source, bound) == name)?;
@@ -143,19 +143,19 @@ fn imported_name(source: &str, names: &Form, name: &str) -> Option<String> {
     }
 }
 
-/// 秒が literal の 0 か(`0`・`0.0`・`0.`)。
+/// Whether the seconds is the literal 0 (`0`, `0.0`, `0.`).
 pub(super) fn is_zero(source: &str, seconds: &Form) -> bool {
     matches!(seconds.node, Node::Number) && text(source, seconds).parse::<f64>().is_ok_and(|value| value == 0.0)
 }
 
 struct Judge<'a> {
     source: &'a str,
-    /// 眠りの関数を指す呼びの頭の綴り → 元の綴り(`time.sleep` / `asyncio.sleep`)。
+    /// Head spelling of a call referring to a sleep function -> original spelling (`time.sleep` / `asyncio.sleep`).
     sleeps: BTreeMap<String, String>,
 }
 
 impl Judge<'_> {
-    /// form の木を歩く。`program` = 今いる program(defk・defp)の名(program の外・handler の実装の中は None)。
+    /// Walks the form tree. `program` = name of the program (defk, defp) we are in (None outside a program or inside a handler implementation).
     fn walk(&self, form: &Form, program: Option<&str>, out: &mut Vec<ProgramSleepHit>) {
         let mut inside = program;
         if let Some((head, items)) = headed(self.source, form) {
@@ -180,7 +180,7 @@ impl Judge<'_> {
         children(form).into_iter().for_each(|child| self.walk(child, inside, out));
     }
 
-    /// 引数の並びが `[effect k]` の定義か(handler の実装 — DOEFF130 の翻訳の handler と同じ見分け)。
+    /// Whether it is a definition whose argument list is `[effect k]` (a handler implementation — same recognition as the translating handler of DOEFF130).
     fn takes_effect_and_continuation(&self, head: &str, items: &[&Form]) -> bool {
         let Some((_, at)) = CALLABLE_HEADS.iter().find(|(callable, _)| *callable == head) else { return false };
         items
@@ -189,7 +189,7 @@ impl Judge<'_> {
             .is_some_and(|params| live(params).iter().map(|param| text(self.source, param)).eq(HANDLER_PARAMS.iter().copied()))
     }
 
-    /// 契約の辞書の `:tags` が汎用の I/O の役を名乗るか — 名の後の引数の並びと docstring を飛ばした最初の辞書を読む。
+    /// Whether `:tags` of the contract dict declares the generic I/O role — reads the first dict after the name, skipping the argument list and docstring.
     fn names_io_role(&self, items: &[&Form]) -> bool {
         let contract = items
             .iter()
@@ -204,7 +204,7 @@ impl Judge<'_> {
     }
 }
 
-/// 辞書 `{鍵 値 …}` の鍵 key の値。
+/// The value of key in a dict `{key value …}`.
 pub(super) fn value_of<'f>(source: &str, dict: &'f Form, key: &str) -> Option<&'f Form> {
     let entries = match &dict.node {
         Node::Seq { delim: Delim::Brace, items } => live(items),
@@ -216,7 +216,7 @@ pub(super) fn value_of<'f>(source: &str, dict: &'f Form, key: &str) -> Option<&'
     })
 }
 
-/// 文字列の literal の中身。
+/// The content of a string literal.
 pub(super) fn string<'a>(source: &'a str, form: &Form) -> Option<&'a str> {
     match &form.node {
         Node::Str { kind: StrKind::Plain | StrKind::Raw | StrKind::Bracket, body } => source.get(body.start..body.end),
@@ -228,7 +228,7 @@ pub(super) fn string<'a>(source: &'a str, form: &Form) -> Option<&'a str> {
 mod tests {
     use super::*;
 
-    /// 当たりの鍵の細目の列。
+    /// The list of key details of the hits.
     fn details(source: &str) -> Vec<String> {
         judge(source).iter().map(ProgramSleepHit::detail).collect()
     }
@@ -256,9 +256,9 @@ mod tests {
         assert_eq!(details("(import time [monotonic sleep :as nap])\n(defk a [] (nap 1))\n"), vec!["a::time.sleep"]);
         assert_eq!(details("(import time *)\n(defk a [] (sleep 1))\n"), vec!["a::time.sleep"]);
         assert_eq!(details("(import os time :as t asyncio [sleep :as rest])\n(defk a [] (t.sleep 1) (rest 2))\n"), vec!["a::time.sleep", "a::asyncio.sleep"]);
-        // 関数の中の import も読む。
+        // Imports inside functions are read too.
         assert_eq!(details("(defk a [] (import time :as clock) (clock.sleep 1))\n"), vec!["a::time.sleep"]);
-        // 眠りの module でない物の sleep は数えない(doeff-time の sleep でも、自前の関数でも)。
+        // A sleep from a module that is not a sleep module is not counted (neither doeff-time's sleep nor one's own function).
         assert!(details("(import mylib [sleep])\n(defk a [] (sleep 1))\n").is_empty());
         assert!(details("(import mylib :as time2)\n(defk a [] (time2.sleep 1))\n").is_empty());
     }
@@ -267,45 +267,45 @@ mod tests {
     fn nested_callables_inside_a_program_count_as_the_program() {
         assert_eq!(details("(defk a [] (run-later (fn [] (time.sleep 1))))\n"), vec!["a::time.sleep"]);
         assert_eq!(details("(defk a [] (defn helper [] (time.sleep 1)) (helper))\n"), vec!["a::time.sleep"]);
-        // 素の定義の中の program も program。
+        // A program inside a plain definition is still a program.
         assert_eq!(details("(defclass Box []\n  (defn build [self]\n    (defk inner [] (time.sleep 1))\n    inner))\n"), vec!["inner::time.sleep"]);
     }
 
     #[test]
     fn a_yield_of_zero_seconds_is_not_a_wait() {
         assert!(details("(defk a [] (<- (Await (asyncio.sleep 0))) (time.sleep 0.0) (asyncio.sleep 0 result))\n").is_empty());
-        // 0 でない literal と、値の分からない式は待ち。
+        // A non-zero literal and an expression of unknown value are waits.
         assert_eq!(details("(defk a [] (time.sleep 0.01) (time.sleep seconds) (time.sleep (- 1 1)))\n").len(), 3);
     }
 
     #[test]
     fn a_handler_implementation_may_sleep() {
-        // defhandler の節。
+        // A defhandler clause.
         assert!(details("(defhandler wall-clock\n  (Delay [seconds]\n    (time.sleep seconds)\n    (resume None)))\n").is_empty());
-        // program の本体の中に書いた defhandler の節も handler の実装(入れ子そのものは別の規則が止める)。
+        // A defhandler clause written inside a program body is also a handler implementation (the nesting itself is stopped by another rule).
         assert!(details("(defk build []\n  (defhandler wall-clock\n    (Delay [seconds]\n      (time.sleep seconds)\n      (resume None)))\n  wall-clock)\n").is_empty());
-        // (effect k) を受ける定義。
+        // A definition that takes (effect k).
         assert!(details("(defk raw-handler [effect k]\n  {:pre [] :post []}\n  (time.sleep 1)\n  (<- (Pass effect k)))\n").is_empty());
         assert!(details("(defk a [] (with-handler (fn [effect k] (time.sleep 1)) body))\n").is_empty());
-        // 汎用の I/O の役を名乗る helper(handler からだけ呼ばれる)。
+        // A helper declaring the generic I/O role (called only from handlers).
         let helper = "(defk group-gone-by [child deadline]\n  {:pre [(: deadline float)] :post [(: % bool)] :tags {:context \"process\" :role \"foundation\"}}\n  \"docstring\"\n  (time.sleep 0.02)\n  True)\n";
         assert!(details(helper).is_empty());
         assert!(details("(defp settle {:post [(: % None)] :tags {:context \"x\" :role \"foundation\"}} (time.sleep 1))\n").is_empty());
-        // docstring が辞書の前でも読む。
+        // Read even when a docstring comes before the dict.
         assert!(details("(defk a [] \"doc\" {:pre [] :post [] :tags {:context \"x\" :role \"foundation\"}} (time.sleep 1))\n").is_empty());
     }
 
     #[test]
     fn only_the_definitions_own_io_role_excuses_it() {
-        // 他の役・役の無い :tags・:tags の無い契約は program。
+        // Other roles, :tags without a role, and contracts without :tags are programs.
         assert_eq!(details("(defk a [] {:pre [] :post [] :tags {:context \"x\" :role \"program\"}} (time.sleep 1))\n"), vec!["a::time.sleep"]);
         assert_eq!(details("(defk a [] {:pre [] :post [] :tags {:context \"x\"}} (time.sleep 1))\n"), vec!["a::time.sleep"]);
         assert_eq!(details("(defk a [] {:pre [] :post []} (time.sleep 1))\n"), vec!["a::time.sleep"]);
-        // module の頭のタグは外さない(定義が自分で名乗る)。
+        // A module-head tag does not exempt (the definition declares it itself).
         assert_eq!(details("(val MODULE-TAGS {:context \"x\" :role \"foundation\"})\n(defk a [] {:pre [] :post []} (time.sleep 1))\n"), vec!["a::time.sleep"]);
-        // 本体の中の辞書は契約の辞書ではない。
+        // A dict inside the body is not a contract dict.
         assert_eq!(details("(defk a [] (setv t {:tags {:role \"foundation\"}}) (time.sleep 1))\n"), vec!["a::time.sleep"]);
-        // 引数の名が違う 2 引数の定義は handler の実装ではない。
+        // A two-argument definition with different argument names is not a handler implementation.
         assert_eq!(details("(defk a [effect continuation] (time.sleep 1))\n"), vec!["a::time.sleep"]);
     }
 

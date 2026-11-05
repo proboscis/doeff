@@ -1,8 +1,8 @@
-;;; DOEFF175(宣言を切り替えた effect の古い分岐 — ADR-DOE-CORE-EFFECTS-003 R14 (4))の検体 — effect が defeffect で不在・失敗と宣言した型を、
-;;; その effect の答えを束ねた変数に対して値として分ける枝(match の腕・isinstance)を鳴らし、:value と宣言した型・成功の型・宣言の無い effect・
-;;; defhandler の節・別の module の同じ名の型・束ね直した名・defk を経由した答えは鳴らさない。
-;;; 行末の「; 鳴る」が鳴るべき行の印: tests/stale_outcome_branch.rs が、印の行の集合と linter の当たりの行の集合を突き合わせる
-;;; (規則を外す・形を狭める・広げると、どれも集合が合わなくなって赤)。宣言は同じ dir の effects.hy(app.effects)。この file は実行しない(読むだけの検体)。
+;;; Fixture for DOEFF175 (stale branches on an effect whose declaration was switched — ADR-DOE-CORE-EFFECTS-003 R14 (4)) — fires on branches (match arms, isinstance) that split, as values, types an effect declared via defeffect as absent / failure,
+;;; on the variable bound to that effect's answer; and does not fire on types declared :value, success types, effects with no declaration,
+;;; defhandler clauses, same-named types from another module, rebound names, or answers that went through a defk.
+;;; A trailing "; fires" at the end of a line marks a line that should fire: tests/stale_outcome_branch.rs compares the set of marked lines with the set of linter hit lines
+;;; (removing the rule, or narrowing or widening the form, each makes the sets differ and goes red). The declarations are in effects.hy (app.effects) in the same dir. This file is never run (read-only fixture).
 (require doeff-hy.macros [defk deftest defhandler <- val var])
 (import app.effects [ReadRow PostRow PlainRead Row Missing Unreachable Conflict Accepted Refused Gone])
 (import app.effects :as effects)
@@ -11,152 +11,152 @@
 
 
 ;; ---------------------------------------------------------------------------
-;; 鳴る: 宣言した不在・失敗の型を、答えを束ねた変数に対して値として分ける
+;; Fires: a declared absent / failure type is split as a value on the variable bound to the answer
 
 (defk match-an-absent-arm [key]
   {:pre [(: key str)] :post [(: % (| str None))] :tags {:context "sample" :role "program"}}
-  "ReadRow は Missing を不在と宣言した — found は成功の Row だけなので、この腕は通らない。"
+  "ReadRow declared Missing as absent — found is only a successful Row, so this arm is never taken."
   (<- found (ReadRow key))
   (match found
-    (Missing) (return None)  ; 鳴る
+    (Missing) (return None)  ; fires
     (Row) found.value))
 
 
 (defk match-a-failure-arm [key]
   {:pre [(: key str)] :post [(: % (| str None))] :tags {:context "sample" :role "program"}}
-  "Unreachable は ReadRow の失敗の宣言(欄を取る pattern でも、型の頭で当たる)。"
+  "Unreachable is ReadRow's failure declaration (even a pattern that takes fields hits on the head of the type)."
   (<- found (ReadRow key))
   (match found
-    (Unreachable :detail why) (return why)  ; 鳴る
+    (Unreachable :detail why) (return why)  ; fires
     _ found.value))
 
 
 (defk match-an-alternation [key]
   {:pre [(: key str)] :post [(: % (| str None))] :tags {:context "sample" :role "program"}}
-  "`(| (A) (B))` の選択肢は 1 つずつ数える(同じ行に 2 件)。"
+  "Each alternative of `(| (A) (B))` is counted separately (2 hits on the same line)."
   (<- found (ReadRow key))
   (match found
-    (| (Missing) (Unreachable)) (return None)  ; 鳴る
+    (| (Missing) (Unreachable)) (return None)  ; fires
     (Row) found.value))
 
 
 (defk isinstance-an-absent [key]
   {:pre [(: key str)] :post [(: % (| str None))] :tags {:context "sample" :role "program"}}
-  "isinstance で不在の型を分ける。"
+  "Splits on the absent type with isinstance."
   (<- found (ReadRow key))
-  (when (isinstance found Missing)  ; 鳴る
+  (when (isinstance found Missing)  ; fires
     (return None))
   found.value)
 
 
 (defk isinstance-a-tuple [key]
   {:pre [(: key str)] :post [(: % (| str None))] :tags {:context "sample" :role "program"}}
-  "型の tuple は 1 つずつ数える(同じ行に 2 件)。"
+  "Each type in a tuple is counted separately (2 hits on the same line)."
   (<- found (ReadRow key))
-  (if (isinstance found #(Missing Unreachable))  ; 鳴る
+  (if (isinstance found #(Missing Unreachable))  ; fires
       None
       found.value))
 
 
 (defk isinstance-a-union [key]
   {:pre [(: key str)] :post [(: % (| str None))] :tags {:context "sample" :role "program"}}
-  "(| A B) の型の列も 1 つずつ数える(Row は成功の型なので数えない)。"
+  "Each type in a (| A B) type list is also counted separately (Row is a success type, so it is not counted)."
   (<- found (ReadRow key))
-  (if (isinstance found (| Row Unreachable))  ; 鳴る
+  (if (isinstance found (| Row Unreachable))  ; fires
       found
       None))
 
 
 (defk cond-branch [key]
   {:pre [(: key str)] :post [(: % (| str None))] :tags {:context "sample" :role "program"}}
-  "cond の枝の isinstance。"
+  "isinstance in a cond branch."
   (<- found (ReadRow key))
   (cond
-    (isinstance found Unreachable) None  ; 鳴る
+    (isinstance found Unreachable) None  ; fires
     True found.value))
 
 
 (defk typed-bind [key]
   {:pre [(: key str)] :post [(: % (| str None))] :tags {:context "sample" :role "program"}}
-  "型を注釈した束ね `(<- x T (E …))` も、effect の答えを束ねている。"
+  "A binding with a type annotation, `(<- x T (E …))`, also binds an effect's answer."
   (<- found (| Row Missing Unreachable) (ReadRow key))
   (match found
-    (Unreachable) None  ; 鳴る
+    (Unreachable) None  ; fires
     (Row) found.value))
 
 
 (defk bang-bound [key]
   {:pre [(: key str)] :post [(: % (| str None))] :tags {:context "sample" :role "program"}}
-  "(val x (! (E …))) で束ねた名。"
+  "A name bound with (val x (! (E …)))."
   (val found (! (ReadRow key)))
   (match found
-    (Missing) None  ; 鳴る
+    (Missing) None  ; fires
     (Row) found.value))
 
 
 (defk bang-subject [key]
   {:pre [(: key str)] :post [(: % (| str None))] :tags {:context "sample" :role "program"}}
-  "束ねずに (! (E …)) を直に分ける形(match の主・isinstance の主)。"
+  "A form that splits (! (E …)) directly without binding it (the subject of match / isinstance)."
   (match (! (ReadRow key))
-    (Missing) None  ; 鳴る
+    (Missing) None  ; fires
     (Row) "row")
-  (when (isinstance (! (ReadRow key)) Unreachable)  ; 鳴る
+  (when (isinstance (! (ReadRow key)) Unreachable)  ; fires
     (return None))
   key)
 
 
 (defk absent-suffix-bind [key]
   {:pre [(: key str)] :post [(: % (| str None))] :tags {:context "sample" :role "program"}}
-  "(<- x (E …) :absent F) で束ねた x も成功の値だけ(不在は F の失敗になる)。"
-  (<- found (ReadRow key) :absent (Conflict :detail "行が無い"))
+  "An x bound with (<- x (E …) :absent F) is also only a success value (absence becomes F's failure)."
+  (<- found (ReadRow key) :absent (Conflict :detail "no such row"))
   (match found
-    (Missing) None  ; 鳴る
+    (Missing) None  ; fires
     (Row) found.value))
 
 
 (defk module-alias [key]
   {:pre [(: key str)] :post [(: % (| str None))] :tags {:context "sample" :role "program"}}
-  "import の別名(module の名を前に付けた effect と型)も、module まで解いて比べる。"
+  "An import alias (an effect and type prefixed with the module name) is also resolved to the module before comparing."
   (<- found (effects.ReadRow key))
   (match found
-    (effects.Missing) None  ; 鳴る
+    (effects.Missing) None  ; fires
     (effects.Row) found.value))
 
 
 (defk a-second-effect [id]
   {:pre [(: id str)] :post [(: % (| str None))] :tags {:context "sample" :role "program"}}
-  "PostRow は Refused を失敗・Gone を不在と宣言した(effect ごとの宣言)。"
+  "PostRow declared Refused as failure and Gone as absent (declarations are per effect)."
   (<- ack (PostRow id))
   (match ack
-    (Refused) None  ; 鳴る
-    (Gone) None  ; 鳴る
+    (Refused) None  ; fires
+    (Gone) None  ; fires
     (Accepted) ack.id))
 
 
 (defk nested-in-a-branch [key ready]
   {:pre [(: key str)] :post [(: % (| str None))] :tags {:context "sample" :role "program"}}
-  "束ねも分岐も、when や if の中でも読む。"
+  "Both bindings and branches are read inside when and if as well."
   (when ready
     (<- found (ReadRow key))
     (match found
-      (Missing) (return None)  ; 鳴る
+      (Missing) (return None)  ; fires
       (Row) (return found.value)))
   None)
 
 
 (deftest reads-a-row-in-a-test
-  "検の呼び手も、effect の切り替えで古い分岐が残る。"
+  "Test callers also keep stale branches when an effect is switched."
   (<- found (ReadRow "k"))
-  (assert (not (isinstance found Missing)))  ; 鳴る
+  (assert (not (isinstance found Missing)))  ; fires
   (assert (= found.value "v")))
 
 
 ;; ---------------------------------------------------------------------------
-;; 鳴らない
+;; Does not fire
 
 (defk value-arm [key]
   {:pre [(: key str)] :post [(: % (| str None))] :tags {:context "sample" :role "program"}}
-  ":value と宣言した型(Conflict)の枝は、答えとして束ねられる値なので通る。"
+  "A branch on a type declared :value (Conflict) passes, since it is a value that can be bound as the answer."
   (<- found (ReadRow key))
   (match found
     (Conflict :detail why) why
@@ -165,7 +165,7 @@
 
 (defk success-arm [key]
   {:pre [(: key str)] :post [(: % (| str None))] :tags {:context "sample" :role "program"}}
-  "成功の型(Row)の枝は通る。"
+  "A branch on the success type (Row) passes."
   (<- found (ReadRow key))
   (when (isinstance found Row)
     (return found.value))
@@ -174,7 +174,7 @@
 
 (defk plain-effect [key]
   {:pre [(: key str)] :post [(: % (| str None))] :tags {:context "sample" :role "program"}}
-  "宣言の無い effect の答えは変換せずそのまま束ねるので、Missing も Unreachable も値として来る。"
+  "The answer of an effect with no declaration is bound as is, without conversion, so both Missing and Unreachable arrive as values."
   (<- found (PlainRead key))
   (when (isinstance found Unreachable)
     (return None))
@@ -184,7 +184,7 @@
 
 
 (defhandler row-handler
-  "defhandler の節は effect を受ける側(答えを作る側)— 節の中の match も、節の中で束ねた名への分岐も読まない。"
+  "A defhandler clause is the side that receives the effect (the side that makes the answer) — neither a match inside a clause nor a branch on a name bound inside a clause is read."
   {:tags {:context "sample" :role "foundation"}}
   (ReadRow [key]
     (match (lookup-row key)
@@ -200,7 +200,7 @@
 
 (defk another-modules-type [key]
   {:pre [(: key str)] :post [(: % (| str None))] :tags {:context "sample" :role "program"}}
-  "別の module の同じ名の型(app.other.Missing)は、宣言した型ではない。"
+  "A same-named type from another module (app.other.Missing) is not the declared type."
   (<- found (ReadRow key))
   (when (isinstance found other.Missing)
     (return None))
@@ -211,7 +211,7 @@
 
 (defk a-type-this-effect-did-not-declare [id]
   {:pre [(: id str)] :post [(: % (| str None))] :tags {:context "sample" :role "program"}}
-  "Missing は ReadRow が宣言した型で、PostRow は宣言していない(effect ごとの宣言)。"
+  "Missing is a type ReadRow declared, and PostRow did not declare it (declarations are per effect)."
   (<- ack (PostRow id))
   (match ack
     (Missing) None
@@ -220,7 +220,7 @@
 
 (defk a-rebound-name [key]
   {:pre [(: key str)] :post [(: % (| str None))] :tags {:context "sample" :role "program"}}
-  "束ね直した名は、もう effect の答えではない。"
+  "A rebound name is no longer the effect's answer."
   (<- found (ReadRow key))
   (setv found (Missing :key key))
   (match found
@@ -230,7 +230,7 @@
 
 (defk a-shadowing-parameter [key]
   {:pre [(: key str)] :post [(: % int)] :tags {:context "sample" :role "program"}}
-  "関数の引数で同じ名を束ねた中は、effect の答えではない。"
+  "Inside a scope where a function parameter binds the same name, it is not the effect's answer."
   (<- found (ReadRow key))
   (val score (fn [found] (match found (Missing) 0 _ 1)))
   (score found.value))
@@ -238,7 +238,7 @@
 
 (defk wrapped-in-maybe [key]
   {:pre [(: key str)] :post [(: % (| str None))] :tags {:context "sample" :role "program"}}
-  "maybe で包んだ答えは Maybe の値で、effect の答えではない(頭が effect でない)。"
+  "An answer wrapped in maybe is a Maybe value, not the effect's answer (the head is not an effect)."
   (<- wrapped (maybe (ReadRow key)))
   (match wrapped
     (Missing) None
@@ -247,7 +247,7 @@
 
 (defk a-nested-pattern [key]
   {:pre [(: key str)] :post [(: % (| str None))] :tags {:context "sample" :role "program"}}
-  "pattern の欄の中の型は答えの型ではない(Row の欄 value が Missing の形)。"
+  "A type inside a pattern's field is not the answer's type (the shape where Row's field value is Missing)."
   (<- found (ReadRow key))
   (match found
     (Row :value (Missing)) None
@@ -256,7 +256,7 @@
 
 (defk through-a-defk [key]
   {:pre [(: key str)] :post [(: % (| str None))] :tags {:context "sample" :role "program"}}
-  "defk を経由した答えは追わない(束ねた式の頭が effect でない)。"
+  "An answer that went through a defk is not followed (the head of the bound expression is not an effect)."
   (<- found (fetch-row key))
   (match found
     (Missing) None
@@ -265,7 +265,7 @@
 
 (defk quoted-form [key]
   {:pre [(: key str)] :post [(: % (| str None))] :tags {:context "sample" :role "program"}}
-  "quote した form は読まない。"
+  "A quoted form is not read."
   (<- found (ReadRow key))
   '(match found (Missing) None)
   found.value)

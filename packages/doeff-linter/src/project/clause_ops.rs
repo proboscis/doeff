@@ -1,30 +1,30 @@
-//! 節の操作の表(`data/clause_ops.json`)。
+//! The table of clause operations (`data/clause_ops.json`).
 //!
-//! defhandler の節の中で書く操作(続きを再開する・値で終える・外へ渡す・例外で抜ける)の名と終わり方の定義元は、doeff-hy の表
-//! `CLAUSE-OPS`(`packages/doeff-hy/src/doeff_hy/clause_ops.hy`)の 1 か所。Rust は Hy を評価できないので、linter は表から名・終わり方・
-//! 引数の数だけを書き出した file を読む(`scripts/export_clause_ops.py --write` が書く生成物 — 手で直さない)。名を linter の source に
-//! 書かない: 表に行を足せば file を書き直すだけで、節の判じ(business_fakes.rs)が追従する。file が表と食い違えば
-//! `tests/test_linter_clause_ops.py` が、business_fakes.rs に名を直に書けば同 file の検が赤にする。
+//! The names of the operations written inside a defhandler clause (resume the continuation, finish with a value, forward outward, leave by exception) and the definition of how each ends have a single source: doeff-hy's table
+//! `CLAUSE-OPS` (`packages/doeff-hy/src/doeff_hy/clause_ops.hy`). Rust cannot evaluate Hy, so the linter reads a file that has exported only the name, ending, and
+//! arity (a generated file written by `scripts/export_clause_ops.py --write` — do not edit by hand). Names are not written in the linter's source:
+//! adding a row to the table only requires rewriting the file, and the clause judgment (business_fakes.rs) follows. If the file disagrees with the table,
+//! `tests/test_linter_clause_ops.py` turns red, and if a name is written directly in business_fakes.rs, the check of the same file turns red.
 //!
-//! 形: `{"ops": [{"name": "…", "ending": "resumes" | "finishes" | "forwards" | "raises", "arity": 数 | null}]}`。
-//! 終わり方の読みはここで型にし(`Ending`)、判じ方は終わり方ごとに business_fakes.rs が持つ。この linter が知らない終わり方・判じられない
-//! 形の行は読みの時に断る(黙って数えない)。
+//! Shape: `{"ops": [{"name": "…", "ending": "resumes" | "finishes" | "forwards" | "raises", "arity": number | null}]}`.
+//! The reading of the ending is typed here (`Ending`), and business_fakes.rs holds how to judge for each ending. Rows with an ending this linter does not know, or a shape it cannot
+//! judge, are rejected at read time (not silently counted).
 
 use std::collections::BTreeSet;
 use std::sync::OnceLock;
 
 use serde::Deserialize;
 
-/// 節を終えた後に続きをどうするか(doeff-hy の `Ending` と同じ 4 つ)。
+/// What happens to the continuation after a clause ends (the same 4 as doeff-hy's `Ending`).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Ending {
-    /// 続きを値で再開する。
+    /// Resume the continuation with a value.
     Resumes,
-    /// 続きを捨て、handler を置いたスコープを値で終える。
+    /// Discard the continuation and finish the scope where the handler was installed with a value.
     Finishes,
-    /// 受けた効果と続きを外の handler へ渡す。
+    /// Forward the received effect and the continuation to the outer handler.
     Forwards,
-    /// 例外で節を抜ける。
+    /// Leave the clause by an exception.
     Raises,
 }
 
@@ -40,13 +40,13 @@ impl Ending {
     }
 }
 
-/// 表の行 1 つ。
+/// One row of the table.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ClauseOp {
-    /// 節の中で書く頭の名。
+    /// The head name written inside a clause.
     pub name: String,
     pub ending: Ending,
-    /// 引数の数(`None` = 問わない)。
+    /// Number of arguments (`None` = not constrained).
     pub arity: Option<usize>,
 }
 
@@ -62,31 +62,31 @@ struct TableRow {
     arity: Option<usize>,
 }
 
-/// 節の操作の表(行の順は file のまま)。
+/// The table of clause operations (row order is the same as the file).
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct ClauseOps {
     ops: Vec<ClauseOp>,
 }
 
 impl ClauseOps {
-    /// JSON の中身を表にする(読めない行は理由の列)。
+    /// Builds the table from JSON contents (unreadable rows are returned as a list of reasons).
     pub fn parse(text: &str) -> Result<ClauseOps, Vec<String>> {
-        let file: TableFile = serde_json::from_str(text).map_err(|e| vec![format!("clause_ops.json を読めない: {}", e)])?;
+        let file: TableFile = serde_json::from_str(text).map_err(|e| vec![format!("cannot read clause_ops.json: {}", e)])?;
         let mut problems = Vec::new();
         let mut seen = BTreeSet::new();
         let mut ops = Vec::new();
         for row in file.ops {
             if !seen.insert(row.name.clone()) {
-                problems.push(format!("clause_ops.json の {} が 2 度載っている", row.name));
+                problems.push(format!("{} is listed twice in clause_ops.json", row.name));
                 continue;
             }
             let Some(ending) = Ending::parse(&row.ending) else {
-                problems.push(format!("clause_ops.json の {} の ending {} をこの linter は知らない(src/project/clause_ops.rs の Ending と判じを足す)", row.name, row.ending));
+                problems.push(format!("this linter does not know ending {} of {} in clause_ops.json (add it to Ending in src/project/clause_ops.rs along with a judgment)", row.ending, row.name));
                 continue;
             };
-            // 渡す操作の判じは「引数なし」か「受けた効果 1 つ」の 2 形だけ(business_fakes.rs)。
+            // A forwarding operation is judged in only 2 shapes: "no arguments" or "one received effect" (business_fakes.rs).
             if ending == Ending::Forwards && !matches!(row.arity, Some(0 | 1)) {
-                problems.push(format!("clause_ops.json の {} は渡す操作で arity が {:?} — この linter が判じるのは 0 か 1 だけ", row.name, row.arity));
+                problems.push(format!("{} in clause_ops.json is a forwarding operation with arity {:?} — this linter judges only 0 or 1", row.name, row.arity));
                 continue;
             }
             ops.push(ClauseOp { name: row.name, ending, arity: row.arity });
@@ -98,21 +98,21 @@ impl ClauseOps {
         }
     }
 
-    /// 名の操作の行(表に無い名は `None`)。
+    /// The row of the operation with the name (`None` for a name not in the table).
     pub fn named(&self, name: &str) -> Option<&ClauseOp> {
         self.ops.iter().find(|op| op.name == name)
     }
 
-    /// 表の行(file の順)。
+    /// The rows of the table (in file order).
     pub fn iter(&self) -> impl Iterator<Item = &ClauseOp> {
         self.ops.iter()
     }
 
-    /// この binary に同梱した表(読みは 1 度だけ)。
+    /// The table bundled into this binary (read only once).
     pub fn bundled() -> &'static ClauseOps {
         static BUNDLED: OnceLock<ClauseOps> = OnceLock::new();
         BUNDLED.get_or_init(|| {
-            ClauseOps::parse(include_str!("../../data/clause_ops.json")).expect("同梱の clause_ops.json が読めない(検 bundled_table_is_well_formed が赤のはず)")
+            ClauseOps::parse(include_str!("../../data/clause_ops.json")).expect("the bundled clause_ops.json cannot be read (the check bundled_table_is_well_formed should be red)")
         })
     }
 }
@@ -121,24 +121,24 @@ impl ClauseOps {
 mod tests {
     use super::*;
 
-    /// 同梱の表は読め、終わり方が 4 つとも在る(判じの検が全部の終わり方を踏む前提)。
+    /// The bundled table is readable and has all 4 endings (premise: the judgment checks cover every ending).
     #[test]
     fn bundled_table_is_well_formed() {
         let table = ClauseOps::parse(include_str!("../../data/clause_ops.json")).unwrap_or_else(|problems| panic!("{}", problems.join("\n")));
         for ending in [Ending::Resumes, Ending::Finishes, Ending::Forwards, Ending::Raises] {
-            assert!(table.iter().any(|op| op.ending == ending), "{:?} の行が表に無い", ending);
+            assert!(table.iter().any(|op| op.ending == ending), "no row for {:?} in the table", ending);
         }
         assert!(table.named("no-such-operation").is_none());
     }
 
-    /// 読めない行は黙って数えず、理由で断る。
+    /// Unreadable rows are not silently counted but rejected with a reason.
     #[test]
     fn unreadable_rows_are_refused_with_a_reason() {
         let refuse = |text: &str| ClauseOps::parse(text).unwrap_err().join("\n");
         assert!(refuse(r#"{"ops": [{"name": "a", "ending": "teleports", "arity": 1}]}"#).contains("teleports"));
-        assert!(refuse(r#"{"ops": [{"name": "a", "ending": "finishes", "arity": 1}, {"name": "a", "ending": "raises", "arity": null}]}"#).contains("2 度"));
-        assert!(refuse(r#"{"ops": [{"name": "a", "ending": "forwards", "arity": 2}]}"#).contains("0 か 1"));
-        assert!(refuse(r#"{"ops": [{"name": "a", "ending": "forwards", "arity": null}]}"#).contains("0 か 1"));
-        assert!(refuse("not json").contains("読めない"));
+        assert!(refuse(r#"{"ops": [{"name": "a", "ending": "finishes", "arity": 1}, {"name": "a", "ending": "raises", "arity": null}]}"#).contains("twice"));
+        assert!(refuse(r#"{"ops": [{"name": "a", "ending": "forwards", "arity": 2}]}"#).contains("only 0 or 1"));
+        assert!(refuse(r#"{"ops": [{"name": "a", "ending": "forwards", "arity": null}]}"#).contains("only 0 or 1"));
+        assert!(refuse("not json").contains("cannot read"));
     }
 }

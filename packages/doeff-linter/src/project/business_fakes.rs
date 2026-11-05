@@ -1,33 +1,33 @@
-//! DOEFF143: 業務の効果に答える偽の handler を作らない(#1367 / #1189 — 元は agora-controllers の一時の検
-//! business_fakes_rules.hy の判定 A と D・#682・#715・#780)。
+//! DOEFF143: do not build fake handlers that answer business effects (#1367 / #1189 -- originally agora-controllers' temporary check
+//! business_fakes_rules.hy, judgments A and D, #682, #715, #780).
 //!
-//! 偽物 = 模擬の根から届き、本番の入口から届かない定義の中の effect の節。その節が業務の効果(定義元の module が
-//! `:business-modules` に当たる)に tap でなく答え、外の世界の効果の表(`:external-effects`)にも反例の表(`:counterexamples`)にも
-//! 無ければ critical。表の腐りも出す: 反例の表の行がもう当たらない(規則は DOEFF176 — 偽物の数と別に数える)・外の世界の表の行にどの偽物も答えない・外の世界の表の行に本番の
-//! 入口から届く答え手が無い(`:unserved` に理由つきで載せた物を除く)。偽物が下の層の効果(`:lower-layer-modules`)に tap でなく
-//! 答えるのも DOEFF143(下の層の偽物は repo の外の正典 1 つだけ — 元の判定 C)。
+//! A fake = a clause for an effect, inside a definition that is reached from the mock root and not reached from the production entry. If that clause answers (rather than taps) a business effect (the effect's defining module
+//! matches `:business-modules`) and is in neither the external-world effect table (`:external-effects`) nor the counterexample table (`:counterexamples`), it is critical.
+//! Rot in the tables is also reported: a row of the counterexample table no longer matches (the rule is DOEFF176 -- counted separately from the number of fakes), no fake answers a row of the external-world table, and a row of the external-world table has
+//! no answerer reachable from the production entry (except those listed with a reason in `:unserved`). A fake answering (rather than tapping) an effect of a lower layer (`:lower-layer-modules`)
+//! is also DOEFF143 (the fake of a lower layer is only the one canonical copy outside the repo -- the original judgment C).
 //!
-//! DOEFF157(元の判定 B): 検だけの偽物 = 検の file の定義から届き、本番の入口からも模擬の根からも届かない
-//! 定義の節。業務の効果か下の層の効果に tap でなく答え、外の世界の表にも反例の表にも無ければ critical。
+//! DOEFF157 (the original judgment B): a test-only fake = a clause of a definition reached from a definition in a test file and reached from neither the production entry nor the mock root.
+//! If it answers (rather than taps) a business effect or a lower-layer effect and is in neither the external-world table nor the counterexample table, it is critical.
 //!
-//! DOEFF158(#1377 — 元の判定 G): 本番の入口から届く節のうち、intent の層(`:assembly-shape :intent-layer`)の効果に tap でなく
-//! 答えるのは、翻訳の層(`:translation-layer`)の handler 1 つだけ。翻訳の層の外の答え手と、同じ効果に答える翻訳の handler の 2 つ目以降を出す。
+//! DOEFF158 (#1377 -- the original judgment G): among the clauses reached from the production entry, only one handler of the translation layer (`:translation-layer`) may answer (rather than tap) an effect of the intent layer (`:assembly-shape :intent-layer`).
+//! Answerers outside the translation layer, and the second and later translation handlers answering the same effect, are reported.
 //!
-//! DOEFF206(#3407・#3406): intent の層の効果には検証環境(`:verification-environment`)でも本番の翻訳の handler が
-//! 答える。検証環境の dir の節が intent の効果に自前で答える(どれかの終わりが自前の値を返す — 片方の枝だけでも)所と、違反を通す表(外の世界の表・
-//! 下の層を通す表・検だけの偽物の表)の行が intent の効果を通す所を出す。登録簿で下げない(この種の違反は doeff-linter が見つける)。
+//! DOEFF206 (#3407, #3406): for effects of the intent layer, the production translation handler also answers in the verification environment (`:verification-environment`).
+//! It reports where a clause in the verification environment's dir answers an intent effect on its own (any ending returns its own value -- even in just one branch), and where a row of the tables that let violations through (the external-world table,
+//! the table that passes lower layers, the table of test-only fakes) lets an intent effect through. It is not lowered by the registry (violations of this kind are found by doeff-linter).
 //!
-//! 届く先は DOEFF133・136 と同じ定義の辺の図(呼び出し・参照・入れ子)を根から前向きに辿る。全体の実行だけ(repo 全体の図が要る)。
-//! 模擬の根・本番の入口・業務の module・表の置き場は repo の宣言 `:business-fakes` から読み、ここには repo の名前を置かない。
+//! Reachability walks forward from the roots over the same definition-edge graph as DOEFF133 and 136 (calls, references, nesting). Whole runs only (the repo-wide graph is needed).
+//! The mock root, production entry, business modules, and table locations are read from the repo's declaration `:business-fakes`; no repo names are placed here.
 //!
-//! 節の判じは `clause_shapes_in` の 1 か所だけ(それまで DOEFF143 の広い読みと DOEFF206 の狭い読みが同じ節を
-//! 別に判じていた)。節の形 `ClauseShape` は 2 つの欄を持つ: forwards = どれかの終わりが受けた効果をそのまま外へ渡す・answers = どれかの
-//! 終わりが自前の値を返す。この file の「tap」は forwards の在る節(観測・障害の注入 — 片方の枝でだけ出し直す節も含む)を指し、
-//! 偽物の判じ(DOEFF143・155・156・157・158)はそれを外す。反例の表の当たり(DOEFF143・157 の表の照らし・164・167)と DOEFF206 は
-//! answers の在る節に表の行を求める。
+//! Clause judgment lives in a single place, `clause_shapes_in` (previously DOEFF143's broad reading and DOEFF206's narrow reading judged the same clause
+//! separately). The clause shape `ClauseShape` has two fields: forwards = some ending forwards the received effect outward as is; answers = some
+//! ending returns its own value. In this file, "tap" means a clause with forwards (observation, fault injection -- including a clause that reperforms in only one branch),
+//! and the fake judgments (DOEFF143, 155, 156, 157, 158) exclude it. The hits of the counterexample table (the table checks of DOEFF143 and 157, 164, 167) and DOEFF206
+//! require a table row for clauses that have answers.
 //!
-//! 節の終わりを作る操作の名は、この file に書かない。名と終わり方の定義元は doeff-hy の表 `CLAUSE-OPS` 1 か所で、linter はそこから
-//! 書き出した `data/clause_ops.json`(`clause_ops::ClauseOps`)を読む。ここが持つのは終わり方ごとの判じ方だけ。
+//! The names of the operations that make a clause ending are not written in this file. The source of truth for names and kinds of ending is one place, doeff-hy's table `CLAUSE-OPS`, and the linter reads
+//! `data/clause_ops.json` (`clause_ops::ClauseOps`) exported from it. What this file holds is only the judgment for each kind of ending.
 
 use std::collections::{BTreeMap, HashMap};
 
@@ -39,18 +39,18 @@ use super::clause_ops::{self, ClauseOps};
 use super::paths::glob_matches;
 use super::names::hy_mangle;
 
-/// file の役(宣言の綴りの型から決める)。
+/// The role of a file (decided from the type of the declaration's spelling).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum FileRole {
-    /// 読まない(:skip)。
+    /// Not read (:skip).
     Skipped,
-    /// 検の file(模擬の根にも本番の code にも数えない)。
+    /// A test file (counted as neither the mock root nor production code).
     Test,
-    /// 模擬の環境(模擬の根・本番の code ではない)。
+    /// A mock environment (neither a mock root nor production code).
     Simulation,
-    /// 組み立ての層(模擬の根で、本番の code でもある)。
+    /// The assembly layer (a mock root, and also production code).
     Assembly,
-    /// 本番の code。
+    /// Production code.
     Production,
 }
 
@@ -69,23 +69,23 @@ pub fn role_of(rel: &str, decl: &BusinessFakes) -> FileRole {
     }
 }
 
-/// 本番の code の file か(本番の code か組み立ての層で、:production を書けばそれに当たる物だけ)。
+/// Whether a file is production code (production code or the assembly layer; only those that match when :production is written).
 pub fn production_code(rel: &str, decl: &BusinessFakes) -> bool {
     matches!(role_of(rel, decl), FileRole::Production | FileRole::Assembly)
         && (decl.production.is_empty() || decl.production.iter().any(|p| glob_matches(p, rel)))
 }
 
-/// 組の file の定義か(:sets に当たる file の、名が prefix で始まる定義)。
+/// Whether a definition is in a set file (a definition, in a file matching :sets, whose name starts with prefix).
 pub fn set_member(rel: &str, name: &str, prefix: Option<&str>, decl: &BusinessFakes) -> bool {
     prefix.is_some_and(|p| !p.is_empty() && name.starts_with(p)) && decl.sets.iter().any(|s| glob_matches(s, rel))
 }
 
-/// module が業務の module か(`:business-modules` の綴り — `a.b` は a.b とその下・末尾 `*` は前方一致)。
+/// Whether a module is a business module (the spellings of `:business-modules` -- `a.b` is a.b and below it; a trailing `*` is prefix matching).
 pub fn business_module(module: &str, decl: &BusinessFakes) -> bool {
     listed(module, &decl.business_modules)
 }
 
-/// module が下の層の module か(`:lower-layer-modules` — 綴りは `:business-modules` と同じ)。
+/// Whether a module is a lower-layer module (`:lower-layer-modules` -- the spelling is the same as `:business-modules`).
 pub fn lower_layer_module(module: &str, decl: &BusinessFakes) -> bool {
     listed(module, &decl.lower_layer_modules)
 }
@@ -97,14 +97,14 @@ fn listed(module: &str, patterns: &[String]) -> bool {
     })
 }
 
-/// 効果が業務の効果か — 定義元の module が業務の module で、その file が検の file でも模擬の環境でもない(検や模擬の筋書きが
-/// 自分で定義した効果は業務の語彙ではない)。
+/// Whether an effect is a business effect -- the defining module is a business module, and that file is neither a test file nor a mock environment (effects that tests or mock scenarios
+/// defined themselves are not business vocabulary).
 pub fn business_effect(effect: &str, decl: &BusinessFakes) -> bool {
     let module = module_of_effect(effect);
     business_module(module, decl) && !matches!(role_of(&format!("{}.hy", module.replace('.', "/")), decl), FileRole::Test | FileRole::Simulation)
 }
 
-/// 効果の完全名 → 定義元の module。
+/// Full name of an effect -> the defining module.
 pub fn module_of_effect(effect: &str) -> &str {
     effect.rsplit_once('.').map(|(m, _)| m).unwrap_or("")
 }
@@ -121,31 +121,31 @@ fn read_forms(source: &str) -> Vec<Form> {
     Reader::new(source, 0, source.len()).read_all()
 }
 
-/// 効果の節 1 つの形 — DOEFF143・155・156・157・158・164・167・206 が共に使う、ただ 1 つの判じ。
-/// 節の終わり(`resume`・`transfer`・`finish`・`reperform`・`pass`・`:when` の条件が偽の時の自動の reperform)を全部集め、2 つの欄に分ける。
-/// 1 つの節が両方を持つ事がある(片方の枝でだけ出し直す障害の注入・観測)。扱いは規則の側で決める: 表の行を要るかは `answers` で、
-/// 障害の注入・観測として偽物の判じから外すかは `forwards` で見る。
+/// The shape of one effect clause -- the single judgment shared by DOEFF143, 155, 156, 157, 158, 164, 167, and 206.
+/// Collects all the clause endings (`resume`, `transfer`, `finish`, `reperform`, `pass`, and the automatic reperform when the `:when` condition is false) and divides them into two fields.
+/// One clause may have both (fault injection or observation that reperforms in only one branch). How to treat it is decided on the rule side: whether a table row is required is seen by `answers`, and
+/// whether it is excluded from the fake judgment as fault injection or observation is seen by `forwards`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct ClauseShape {
-    /// どれかの終わりが受けた効果をそのまま外へ渡す — 出し直し(`(<- 名 [型] 出し直し)`・`(setv 名 (yield 出し直し))`)で束ねた名
-    /// (`(:= 名 束ねた名)` などで入れ直した名も)をそのまま `resume` / `transfer` する・同じ効果を出し直した節の `(resume None)`(答えを
-    /// 捨てる観測)・`(reperform effect の名か別名)`・`(pass)`・`:when` の節。出し直しには、別の handler に答えさせる
-    /// `(with_handlers [...] 出し直し)` も数える。`(resume (if 条件 A B))` は枝ごとの終わりに分ける。
+    /// Some ending forwards the received effect outward as is -- `resume` / `transfer` of a name bound by a reperform (`(<- name [type] reperform)`, `(setv name (yield reperform))`)
+    /// (including a name re-bound with `(:= name bound-name)` and the like) as is; `(resume None)` in a clause that reperformed the same effect (an observation that
+    /// discards the answer); `(reperform effect-name-or-alias)`; `(pass)`; and a `:when` clause. A reperform also counts `(with_handlers [...] reperform)`, which has another handler answer.
+    /// `(resume (if condition A B))` is divided into the endings of each branch.
     pub forwards: bool,
-    /// どれかの終わりが自前の値を返す — 束ねた名でない値の `resume` / `transfer`・`finish`・別の効果の `reperform`・別の handler の下の
-    /// 出し直しの答え(答えを作る handler を節が選ぶ)。forwards の終わりが 1 つも無い節も自前で答える節に数える。`raise` は終わりに数えない
-    /// (捕まえた例外を投げ直す観測と、自前の故障を区別できない)。
+    /// Some ending returns its own value -- `resume` / `transfer` of a value that is not a bound name, `finish`, `reperform` of another effect, and the answer of a reperform under another handler
+    /// (the clause chooses the handler that makes the answer). A clause with no forwards ending at all also counts as a clause that answers on its own. `raise` is not counted as an ending
+    /// (an observation that rethrows a caught exception cannot be told apart from a fault of its own).
     pub answers: bool,
 }
 
 impl ClauseShape {
-    /// 読めなかった節(file が読めない・節の頭が索引と合わない)の形 — 自前で答える節に数える(外す側に倒さない)。
+    /// The shape of a clause that could not be read (a file that cannot be read, or a clause head that does not match the index) -- counted as a clause that answers on its own (do not err toward excluding it).
     pub const ANSWERING: ClauseShape = ClauseShape { forwards: false, answers: true };
 }
 
-/// 節の本体(節の頭の後ろ・引数の並びの後ろの form の並び)の形。節の終わりを作る操作は表 `ops` の名・終わり方・引数の数で読む。
+/// The shape of a clause body (the sequence of forms after the clause head and the argument list). The operations that make clause endings are read by the name, kind of ending, and argument count in the table `ops`.
 fn clause_shape(source: &str, params: &[&str], body: &[Form], head: &str, ops: &ClauseOps) -> ClauseShape {
-    /// 受けた effect の名と、その別名(`(val 名 X)`・`(setv 名 X)` の X が effect か別名 — 本体の全部から集める)。
+    /// The name of the received effect and its aliases (the X of `(val name X)` or `(setv name X)` is the effect or an alias -- collected from the whole body).
     fn aliases<'s>(source: &'s str, form: &Form, out: &mut Vec<&'s str>) -> bool {
         let Node::Seq { items, .. } = &form.node else { return false };
         let mut grew = false;
@@ -158,14 +158,14 @@ fn clause_shape(source: &str, params: &[&str], body: &[Form], head: &str, ops: &
         }
         items.iter().fold(grew, |grew, item| aliases(source, item, out) || grew)
     }
-    // 受けた効果は名 `effect` で束ねられる。節の欄に `effect` の名が在れば(`(RecordAs [principal effect] …)` など)、その名は欄の値で、
-    // 受けた効果ではない。
+    // The received effect is bound to the name `effect`. If the clause's fields have the name `effect` (such as `(RecordAs [principal effect] …)`), that name is the field's value,
+    // not the received effect.
     let mut effect_names: Vec<&str> = if params.contains(&"effect") { Vec::new() } else { vec!["effect"] };
     while body.iter().fold(false, |grew, form| aliases(source, form, &mut effect_names) || grew) {}
-    /// 出し直しの式か — effect の名か別名・節が受けた引数をそのまま並べた `(頭 …)` の呼び(`:欄` の語は数えない)・`(yield 出し直し)`・
-    /// `(Perform 出し直し)`(宣言を開かずに出し直す中継の書き方 — `(<- 名 (Perform effect))`・ADR-DOE-CORE-EFFECTS-003 R4)・
-    /// 別の handler の下での出し直し `(with_handlers [...] 出し直し)`(綴り `with-handlers`・`with-handler` も同じ)。
-    /// 出し直しなら Some(別の handler の下か)。
+    /// Whether an expression is a reperform -- the effect's name or alias, a `(head …)` call that lists the clause's received arguments as they are (`:field` words are not counted), `(yield reperform)`,
+    /// `(Perform reperform)` (the way to write a relay that reperforms without opening the declaration -- `(<- name (Perform effect))`, ADR-DOE-CORE-EFFECTS-003 R4), and
+    /// a reperform under another handler `(with_handlers [...] reperform)` (the spellings `with-handlers` and `with-handler` are the same).
+    /// If it is a reperform, Some(whether it is under another handler).
     fn reissue(source: &str, form: &Form, head: &str, params: &[&str], effect_names: &[&str]) -> Option<bool> {
         match &form.node {
             Node::Symbol => effect_names.contains(&text(source, form)).then_some(false),
@@ -183,28 +183,28 @@ fn clause_shape(source: &str, params: &[&str], body: &[Form], head: &str, ops: &
             _ => None,
         }
     }
-    /// 名が指しうる値の (渡すか, 自前で答えるか) — 出し直しの答えは (真, 別の handler の下か)・それ以外の値は (偽, 真)。
-    /// 枝の合流の後は、枝ごとの値の OR。
+    /// (forward?, answers on its own?) of the values a name can point to -- the answer of a reperform is (true, whether under another handler); any other value is (false, true).
+    /// After branches merge, the OR of the per-branch values.
     type Held = (bool, bool);
     const OTHER: Held = (false, true);
-    /// 節の終わり 1 つ。
+    /// One clause ending.
     enum Ending {
-        /// 受けた効果をそのまま外へ渡す(`(reperform effect)`・`(pass)`)。
+        /// Forwards the received effect outward as is (`(reperform effect)`, `(pass)`).
         Forward,
-        /// 自前の値。
+        /// Its own value.
         Own,
-        /// 記号の値の `resume` / `transfer` — その終わりに届く束ね(同じ枝の中で終わりより前の最も近い束ね)が指す値。
+        /// `resume` / `transfer` of a symbol value -- the value pointed to by the binding that reaches that ending (the nearest binding before the ending in the same branch).
         Value(Held),
-        /// `(resume None)`(同じ効果を出し直した節なら、答えを捨てて None で返す観測 — 渡す終わりに数える)。
+        /// `(resume None)` (in a clause that reperformed the same effect, an observation that discards the answer and returns None -- counted as a forwarding ending).
         Nothing,
     }
-    /// 本体を歩いて集める物。
+    /// What is collected by walking the body.
     #[derive(Default)]
     struct Walked<'s> {
-        /// 歩いている所に届く束ね — 名と、その名が指しうる値。`if`・`when`・`unless`・`cond` の枝ごとに分け、枝の後で合わせる
-        /// (枝をまたいで名を混ぜない — 名の付け方で判じが変わらない)。
+        /// The bindings that reach the place being walked -- names and the values each name can point to. Divided per branch of `if`, `when`, `unless`, and `cond`, and merged after the branches
+        /// (names are not mixed across branches -- the judgment does not change with how names are given).
         bound: Vec<(&'s str, Held)>,
-        /// 本体のどこかで同じ効果を出し直したか(名に束ねない `(<- 出し直し)` も含む)。
+        /// Whether the same effect was reperformed somewhere in the body (including `(<- reperform)` not bound to a name).
         reissued: bool,
         endings: Vec<Ending>,
     }
@@ -212,13 +212,13 @@ fn clause_shape(source: &str, params: &[&str], body: &[Form], head: &str, ops: &
         fn held(&self, name: &str) -> Option<Held> {
             self.bound.iter().find(|(bound, _)| *bound == name).map(|&(_, held)| held)
         }
-        /// 名を束ね直す(前の束ねを覆う)。
+        /// Rebinds a name (covers the previous binding).
         fn bind(&mut self, name: &'s str, held: Held) {
             self.bound.retain(|(bound, _)| *bound != name);
             self.bound.push((name, held));
         }
     }
-    /// 再開する操作の値の終わり — `(if 条件 A B)` は枝ごとの終わりに分ける。
+    /// The values of the endings of an operation that resumes -- `(if condition A B)` is divided into the endings of each branch.
     fn value_endings(source: &str, form: &Form, walked: &mut Walked) {
         match &form.node {
             Node::Symbol if text(source, form) == "None" => walked.endings.push(Ending::Nothing),
@@ -233,8 +233,8 @@ fn clause_shape(source: &str, params: &[&str], body: &[Form], head: &str, ops: &
             _ => walked.endings.push(Ending::Own),
         }
     }
-    /// 分かれる式の枝を、枝ごとに前の束ねから歩き、枝の後で束ねを合わせる(同じ名は枝ごとの値の OR)。どの枝も通らない道が在れば
-    /// (`when`・else の無い `if`・`True` で終わらない `cond`)、前の束ねもその道の束ねとして合わせる。
+    /// Walks the branches of a branching expression one by one from the previous bindings and merges the bindings after the branches (the same name is the OR of the per-branch values). If there is a path that passes through no branch
+    /// (`when`, an `if` without else, a `cond` not ending in `True`), the previous bindings are also merged in as the bindings of that path.
     fn branches<'s>(
         source: &'s str,
         alternatives: &[&[Form]],
@@ -260,12 +260,12 @@ fn clause_shape(source: &str, params: &[&str], body: &[Form], head: &str, ops: &
     fn walk<'s>(source: &'s str, form: &Form, reissue: &dyn Fn(&Form) -> Option<bool>, ops: &ClauseOps, walked: &mut Walked<'s>) {
         let Node::Seq { delim, items } = &form.node else { return };
         if *delim == Delim::Paren {
-            // `:=` は読みの上で記号でなく keyword の形なので、頭の綴りで見る。
+            // `:=` is in keyword form, not a symbol, in the reader, so look at it by the head's spelling.
             let word = head_symbol(source, items).or_else(|| items.first().map(|f| text(source, f)).filter(|t| *t == ":="));
             let op = word.and_then(|word| ops.named(word));
             match (word, op, items.as_slice()) {
-                // (<- 名 [型] 出し直し)・(<- 出し直し)
-                // 名は値を歩いた後に束ね、出し直しでない値の束ねも前の束ねを覆う。
+                // (<- name [type] reperform), (<- reperform)
+                // The name is bound after walking the value, and binding a value that is not a reperform also covers the previous binding.
                 (Some("<-"), _, [_, .., last]) => {
                     let chosen = reissue(last);
                     walked.reissued |= chosen.is_some();
@@ -275,12 +275,12 @@ fn clause_shape(source: &str, params: &[&str], body: &[Form], head: &str, ops: &
                     }
                     return;
                 }
-                // 名から名への入れ直し `(:= 名 名)` は入れた名の値を引き継ぐ(`(:= answer closed)` など)。
+                // A re-binding from name to name `(:= name name)` inherits the value of the name put in (such as `(:= answer closed)`).
                 (Some(":=" | "setv" | "val"), _, [_, name, value]) if matches!(name.node, Node::Symbol) => {
                     walk(source, value, reissue, ops, walked);
                     let held = match value.paren_items() {
                         _ if matches!(value.node, Node::Symbol) => walked.held(text(source, value)).unwrap_or(OTHER),
-                        // (setv 名 (yield 出し直し))
+                        // (setv name (yield reperform))
                         Some(inner) if head_symbol(source, inner) == Some("yield") => match reissue(value) {
                             Some(chosen) => {
                                 walked.reissued = true;
@@ -293,7 +293,7 @@ fn clause_shape(source: &str, params: &[&str], body: &[Form], head: &str, ops: &
                     walked.bind(text(source, name), held);
                     return;
                 }
-                // 分かれる式 — 条件は前の束ねの上で歩き、枝ごとに束ねを分ける。
+                // Branching expressions -- the condition is walked over the previous bindings, and bindings are split per branch.
                 (Some("if"), _, [_, test, then]) => {
                     walk(source, test, reissue, ops, walked);
                     branches(source, &[std::slice::from_ref(then)], true, reissue, ops, walked);
@@ -309,7 +309,7 @@ fn clause_shape(source: &str, params: &[&str], body: &[Form], head: &str, ops: &
                     branches(source, &[body], true, reissue, ops, walked);
                     return;
                 }
-                // (cond 条件 枝 …)・古い綴りの (cond [条件 枝 …] …)。最後の条件が `True`・`else`・`:else` なら、どの枝も通らない道は無い。
+                // (cond condition branch …), and the old spelling (cond [condition branch …] …). If the last condition is `True`, `else`, or `:else`, there is no path that passes through no branch.
                 (Some("cond"), _, [_, arms @ ..]) if !arms.is_empty() => {
                     let bracketed: Option<Vec<&[Form]>> = arms.iter().map(Form::bracket_items).collect();
                     let (alternatives, last_test): (Vec<&[Form]>, Option<&Form>) = match bracketed {
@@ -326,30 +326,30 @@ fn clause_shape(source: &str, params: &[&str], body: &[Form], head: &str, ops: &
                     branches(source, &alternatives, falls_through, reissue, ops, walked);
                     return;
                 }
-                // 節の操作 — 名と終わり方と引数の数は表 `ops` から読み、終わり方ごとに判じる。
+                // Clause operations -- the name, kind of ending, and argument count are read from the table `ops`, and judged per kind of ending.
                 (_, Some(op), [_, args @ ..]) => match (op.ending, op.arity, args) {
-                    // 続きを値で再開する操作は、値 1 つなら値の中身で判じる。
+                    // An operation that resumes the continuation with a value is judged by the value's contents if it is a single value.
                     (clause_ops::Ending::Resumes, Some(1), [value]) => {
                         value_endings(source, value, walked);
                         return;
                     }
-                    // 値の形が違う再開と、値で終える操作は自前の値。
+                    // A resume whose value has a different shape, and an operation that ends with a value, are its own value.
                     (clause_ops::Ending::Resumes | clause_ops::Ending::Finishes, _, _) => {
                         walked.endings.push(Ending::Own);
                         return;
                     }
-                    // 引数の無い渡す操作は、受けた効果をそのまま渡す。引数つきなら終わりに数えず、中を読み続ける。
+                    // A forwarding operation with no arguments forwards the received effect as is. With arguments it is not counted as an ending and the inside continues to be read.
                     (clause_ops::Ending::Forwards, Some(0), []) => {
                         walked.endings.push(Ending::Forward);
                         return;
                     }
                     (clause_ops::Ending::Forwards, Some(0), _) => {}
-                    // 受けた効果を引数に取る渡す操作は、出し直しの式を渡す時だけ渡す終わり(別の値なら自前)。
+                    // A forwarding operation that takes the received effect as an argument is a forwarding ending only when passed a reperform expression (any other value is its own).
                     (clause_ops::Ending::Forwards, _, _) => {
                         walked.endings.push(if args.len() == 1 && reissue(&args[0]).is_some() { Ending::Forward } else { Ending::Own });
                         return;
                     }
-                    // 例外で抜ける操作は終わりに数えない(捕まえた例外を投げ直す観測と、自前の故障を区別できない)— 中を読み続ける。
+                    // An operation that exits by an exception is not counted as an ending (an observation that rethrows a caught exception cannot be told apart from a fault of its own) -- the inside continues to be read.
                     (clause_ops::Ending::Raises, _, _) => {}
                 },
                 _ => {}
@@ -361,27 +361,27 @@ fn clause_shape(source: &str, params: &[&str], body: &[Form], head: &str, ops: &
     let mut walked = Walked::default();
     body.iter().for_each(|form| walk(source, form, &reissue, ops, &mut walked));
     let Walked { reissued, endings, .. } = walked;
-    // 終わりごとに (渡すか, 自前で答えるか)。別の handler の下の出し直しの答えは、受けた効果を外へ渡しつつ、答えを作る handler を節が選ぶので両方。
+    // For each ending, (forward?, answers on its own?). The answer of a reperform under another handler forwards the received effect outward while the clause chooses the handler that makes the answer, so both.
     let judged = |ending: &Ending| match ending {
         Ending::Forward => (true, false),
         Ending::Own => (false, true),
         Ending::Nothing => (reissued, !reissued),
         &Ending::Value(held) => held,
     };
-    // `:when 条件` の節は、条件が偽の時に doeff-hy の handle が自動で reperform する(doeff-hy handle.hy の Clause guards)。
+    // A clause with `:when condition` is automatically reperformed by doeff-hy's handle when the condition is false (Clause guards in doeff-hy handle.hy).
     let guarded = body.first().is_some_and(|form| text(source, form) == ":when");
     let forwards = guarded || endings.iter().any(|ending| judged(ending).0);
     let answers = !forwards || endings.iter().any(|ending| judged(ending).1);
     ClauseShape { forwards, answers }
 }
 
-/// file の defhandler の節ごとの形(鍵 = (handler の名, 節の頭の名))。同じ handler の同じ頭の節が 2 つ在れば、どちらの欄も OR で合わせる
-/// (どちらかが渡せば forwards・どちらかが答えれば answers)。節の操作の表は同梱の物(`ClauseOps::bundled`)。
+/// The shape of each defhandler clause of a file (key = (handler name, clause head name)). If there are two clauses with the same head in the same handler, both fields are merged by OR
+/// (forwards if either forwards; answers if either answers). The table of clause operations is the bundled one (`ClauseOps::bundled`).
 pub fn clause_shapes_in(source: &str) -> HashMap<(String, String), ClauseShape> {
     clause_shapes_with(source, ClauseOps::bundled())
 }
 
-/// `clause_shapes_in` の、節の操作の表を渡す形(表に行を足すと判じが追従する事を検が確かめる)。
+/// The form of `clause_shapes_in` that takes the table of clause operations (a test checks that adding a row to the table makes the judgment follow).
 pub fn clause_shapes_with(source: &str, ops: &ClauseOps) -> HashMap<(String, String), ClauseShape> {
     fn visit(source: &str, forms: &[Form], ops: &ClauseOps, out: &mut HashMap<(String, String), ClauseShape>) {
         for form in forms {
@@ -407,7 +407,7 @@ pub fn clause_shapes_with(source: &str, ops: &ClauseOps) -> HashMap<(String, Str
     out
 }
 
-/// process の入口の節 `(when (= __name__ "__main__") …)` の行の範囲(0 始まり・両端を含む)。
+/// The line range of the process entry clause `(when (= __name__ "__main__") …)` (0-based, both ends included).
 pub fn main_guard_lines(source: &str) -> Vec<(u32, u32)> {
     let line_of = |at: usize| source[..at].bytes().filter(|b| *b == b'\n').count() as u32;
     read_forms(source)
@@ -426,7 +426,7 @@ pub fn main_guard_lines(source: &str) -> Vec<(u32, u32)> {
         .collect()
 }
 
-/// 本文の中の入口の文字列(`"<module>:<名>"` — module の頭は `:entry-string-modules`)→ 定義の完全名(module.名 の mangle)。
+/// The entry strings in the body (`"<module>:<name>"` -- the module's head is `:entry-string-modules`) -> the definition's full name (the mangle of module.name).
 pub fn entry_names(source: &str, decl: &BusinessFakes) -> Vec<String> {
     if decl.entry_string_modules.is_empty() {
         return Vec::new();
@@ -438,7 +438,7 @@ pub fn entry_names(source: &str, decl: &BusinessFakes) -> Vec<String> {
     pattern.captures_iter(source).map(|c| format!("{}.{}", &c[1], hy_mangle(&c[2]))).collect()
 }
 
-/// Python の source の中の `isinstance(<何か>, X)` の X(import で完全名へ解いた物 — `from m import X` と `import m` の `m.X`)。
+/// The X of `isinstance(<something>, X)` in Python source (resolved to a full name through imports -- `from m import X` and `m.X` of `import m`).
 pub fn python_isinstance_effects(source: &str, importer: &str) -> Vec<String> {
     use rustpython_ast::{Expr, Mod, Stmt};
     let Ok(Mod::Module(module)) = rustpython_parser::parse(source, rustpython_parser::Mode::Module, "<business-fakes>") else { return Vec::new() };
@@ -536,112 +536,112 @@ pub fn python_isinstance_effects(source: &str, importer: &str) -> Vec<String> {
     out
 }
 
-/// 効果に答える節 1 つ(索引の effect の節と、その形)。
+/// One clause that answers an effect (the index's effect clause, and its shape).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Clause {
     pub node: usize,
     pub rel: String,
     pub handler: String,
-    /// 効果の定義元の正典の名(定義した module + 名)— 鍵・表の照らし・層の判じが読む。解けなかった効果は綴りのまま(解けなかった事は
-    /// 所見に出す)。
+    /// The canonical name of the effect's defining origin (defining module + name) -- read by keys, table checks, and layer judgments. An effect that could not be resolved stays as spelled (that it could not be resolved is
+    /// reported in the findings).
     pub effect: String,
-    /// 節の file が import で書いた綴り(索引の名 — 知らせの文と細目に出す)。
+    /// The spelling the clause's file wrote through import (the index's name -- shown in notice sentences and details).
     pub written: String,
-    /// 節の形(`clause_shapes_in` で 1 度だけ求める — 規則の全部が同じ判じを読む)。
+    /// The clause's shape (computed once by `clause_shapes_in` -- all the rules read the same judgment).
     pub shape: ClauseShape,
 }
 
 impl Clause {
-    /// 反例の表の鍵(`<path>::<handler>::<効果>`)。
+    /// The key of the counterexample table (`<path>::<handler>::<effect>`).
     pub fn key(&self) -> String {
         format!("{}::{}::{}", self.rel, self.handler, self.effect)
     }
 
-    /// 反例の表の当たりに数える節か — 本番の入口から届かず、自前で答える終わりを持ち(片方の枝だけでも)、鍵が表に在る。
-    /// DOEFF143・157 の表の照らしと DOEFF164・167 の反例の節が同じ条件を使う。
+    /// Whether this clause counts as a hit of the counterexample table -- not reached from the production entry, has an ending that answers on its own (even in one branch only), and its key is in the table.
+    /// The table checks of DOEFF143 and 157 and the counterexample clauses of DOEFF164 and 167 use the same condition.
     pub fn counterexample_in(&self, produced: bool, counterexamples: &BTreeMap<String, String>) -> bool {
         self.shape.answers && !produced && counterexamples.contains_key(&self.key())
     }
 }
 
-/// 判定の材料(図から求めた集合)と、判定の結果。
+/// The material for judgment (sets computed from the graph) and the judgment results.
 pub struct Inputs<'a> {
     pub clauses: &'a [Clause],
-    /// 模擬の根から届く節か(添字は Clause の順)。
+    /// Whether the clause is reached from the mock root (the index is in Clause order).
     pub simulated: &'a [bool],
-    /// 本番の入口から届く節か。
+    /// Whether the clause is reached from the production entry.
     pub produced: &'a [bool],
-    /// 検の file の定義から届く節か。
+    /// Whether the clause is reached from a definition in a test file.
     pub tested: &'a [bool],
-    /// 節の効果が intent の層の効果か。
+    /// Whether the clause's effect is an effect of the intent layer.
     pub intent_effect: &'a [bool],
-    /// 節が翻訳の層の file に在るか。
+    /// Whether the clause is in a file of the translation layer.
     pub translation_file: &'a [bool],
     pub external: &'a BTreeMap<String, String>,
     pub counterexamples: &'a BTreeMap<String, String>,
     pub unserved: &'a BTreeMap<String, String>,
-    /// 本番の code の Python の handler が答える効果(`isinstance(effect, X)` — 索引の図の外なので届く先を問わず本番の答え手に数える)。
+    /// Effects answered by Python handlers in production code (`isinstance(effect, X)` -- outside the index graph, so they count as production answerers regardless of reachability).
     pub python_answered: &'a std::collections::BTreeSet<String>,
 }
 
-/// 判定 1 件。
+/// One judgment.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Verdict {
-    /// 業務の効果の偽物(Clause の添字)。
+    /// A fake of a business effect (index into Clause).
     Fake(usize),
-    /// 下の層の効果の第 2 の偽物(DOEFF143)。
+    /// A second fake of a lower-layer effect (DOEFF143).
     LowerLayerFake(usize),
-    /// 検だけから届く偽物(DOEFF157)。
+    /// A fake reached only from tests (DOEFF157).
     TestOnlyFake(usize),
-    /// 翻訳の層の外の handler が intent の効果に答える(DOEFF158)。
+    /// A handler outside the translation layer answers an intent effect (DOEFF158).
     IntentAnsweredOutside(usize),
-    /// 同じ intent の効果に翻訳の handler が 2 つ以上答える(DOEFF158 — 節の添字と、答える handler の数)。
+    /// Two or more translation handlers answer the same intent effect (DOEFF158 -- the clause index, and the number of answering handlers).
     IntentAnsweredTwice(usize, usize),
-    /// 反例の表の行がもう当たらない。
+    /// A row of the counterexample table no longer matches.
     StaleCounterexample(String),
-    /// 外の世界の表の行にどの偽物も答えない。
+    /// No fake answers a row of the external-world table.
     UnusedExternal(String),
-    /// 外の世界の表の行に本番の答え手が無い。
+    /// A row of the external-world table has no production answerer.
     UnservedExternal(String),
-    /// DOEFF206: 違反を通す表(外の世界の表・下の層を通す表・検だけの偽物の表)の行が intent の層の効果を通す(添字は `PassRow` の順)。
+    /// DOEFF206: a row of a table that lets violations through (the external-world table, the table that passes lower layers, the table of test-only fakes) lets an intent-layer effect through (the index is in `PassRow` order).
     IntentPassedByTable(usize),
-    /// DOEFF206: 検証環境の dir の中の handler の節が intent の層の効果に自前の値を返す終わりを持ち、反例の表に行が無い(Clause の添字)。
+    /// DOEFF206: a handler clause inside the verification environment's dir has an ending that returns its own value for an intent-layer effect, and the counterexample table has no row (index into Clause).
     IntentAnsweredInVerification(usize),
 }
 
-/// 違反を通す表の行 1 つ(DOEFF206 の材料)。鍵は外の世界の表なら効果の完全名、ほかは `<path>::<handler>::<効果>`。
+/// One row of a table that lets violations through (the material for DOEFF206). The key is the effect's full name for the external-world table, and `<path>::<handler>::<effect>` for the others.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PassRow {
-    /// 表の dir(宣言の綴り)。
+    /// The table's dir (the declaration's spelling).
     pub table: String,
     pub key: String,
-    /// 行の file(root からの綴り)。
+    /// The row's file (spelled from the root).
     pub origin: String,
 }
 
 impl PassRow {
-    /// 行が通す効果(鍵の最後の `::` の後 — `::` の無い鍵はそのまま効果の完全名)。
+    /// The effect the row lets through (after the last `::` of the key -- a key without `::` is the effect's full name as is).
     pub fn effect(&self) -> &str {
         self.key.rsplit_once("::").map(|(_, effect)| effect).unwrap_or(&self.key)
     }
 }
 
-/// DOEFF206 の判定の材料。
+/// The material for the DOEFF206 judgment.
 pub struct IntentFakeInputs<'a> {
     pub clauses: &'a [Clause],
-    /// 節の効果が intent の層の効果か(Clause の順)。
+    /// Whether the clause's effect is an intent-layer effect (in Clause order).
     pub intent_effect: &'a [bool],
-    /// 節が検証環境の dir の中の file に在るか。
+    /// Whether the clause is in a file inside the verification environment's dir.
     pub in_verification: &'a [bool],
     pub counterexamples: &'a BTreeMap<String, String>,
     pub rows: &'a [PassRow],
-    /// 行の効果が intent の層の効果か(PassRow の順)。
+    /// Whether the row's effect is an intent-layer effect (in PassRow order).
     pub row_intent: &'a [bool],
 }
 
-/// DOEFF206: intent の層の効果は、模擬でも本番の翻訳の handler が答える — 検証環境が自前で答える節と、それを通す表の行を出す。
-/// 自前で答える終わりを 1 つでも持つ節(`ClauseShape::answers` — 一部の枝でだけ出し直す節も含む)は、反例の表に鍵
-/// (`<path>::<handler>::<効果>`)が在る時だけ外す(登録簿では下げない — 規則の側で決める)。
+/// DOEFF206: intent-layer effects are answered by the production translation handler even in mocks -- reports the clauses the verification environment answers on its own and the table rows that let them through.
+/// A clause with even one ending that answers on its own (`ClauseShape::answers` -- including a clause that reperforms in only some branches) is excluded only when the counterexample table has its key
+/// (`<path>::<handler>::<effect>`) (it is not lowered by the registry -- decided on the rule side).
 pub fn judge_intent_fakes(inputs: &IntentFakeInputs) -> Vec<Verdict> {
     let IntentFakeInputs { clauses, intent_effect, in_verification, counterexamples, rows, row_intent } = inputs;
     let rows = rows.iter().enumerate().filter(|(i, _)| row_intent[*i]).map(|(i, _)| Verdict::IntentPassedByTable(i));
@@ -661,16 +661,16 @@ pub fn judge(inputs: &Inputs, decl: &BusinessFakes) -> Vec<Verdict> {
     let mut hit_keys = std::collections::BTreeSet::new();
     let mut answered = std::collections::BTreeSet::new();
     let mut served: std::collections::BTreeSet<&str> = python_answered.iter().map(String::as_str).collect();
-    // intent の効果 → それに答える翻訳の handler(`<path>::<handler>`)と、その最初の節。
+    // Intent effect -> the translation handler that answers it (`<path>::<handler>`) and its first clause.
     let mut translators: BTreeMap<&str, BTreeMap<(&str, &str), usize>> = BTreeMap::new();
     for (i, clause) in clauses.iter().enumerate() {
-        // 本番から届かない節が自前で答える終わりを持ち、その鍵が反例の表に在れば、どの効果に答える節でも表の当たりに数える — 土台の効果
-        // (記録・時計・外の相手)に答える壊した handler も反例の表に載せられる。片方の枝でだけ出し直す
-        // 節も当たりに数える(下の偽物の判じからは外れるが、表の行は要る — DOEFF206・164・167 と同じ読み)。
+        // If a clause not reached from production has an ending that answers on its own and its key is in the counterexample table, it counts as a table hit whichever effect it answers -- a broken handler
+        // that answers a foundation effect (record, clock, outside party) can also be listed in the counterexample table. A clause that reperforms in only one branch
+        // also counts as a hit (it is excluded from the fake judgment below, but a table row is required -- the same reading as DOEFF206, 164, and 167).
         if clause.counterexample_in(produced[i], counterexamples) {
             hit_keys.insert(clause.key());
         }
-        // 受けた効果をそのまま外へ渡す終わりを持つ節は、障害の注入・観測として偽物の判じから外す。
+        // A clause with an ending that forwards the received effect outward as is is excluded from the fake judgment as fault injection or observation.
         if clause.shape.forwards {
             continue;
         }
@@ -688,7 +688,7 @@ pub fn judge(inputs: &Inputs, decl: &BusinessFakes) -> Vec<Verdict> {
         let business = outside && business_effect(&clause.effect, decl);
         let lower = lower_layer_module(module_of_effect(&clause.effect), decl);
         if test_only(i) {
-            // わざと壊した反例の handler(下の層の置き場の代役を含む)は反例の表で数え、それ以外は検だけの偽物。
+            // A deliberately broken counterexample handler (including stand-ins for a lower layer's location) is counted in the counterexample table; anything else is a test-only fake.
             if business || (outside && lower) {
                 let key = clause.key();
                 if counterexamples.contains_key(&key) {
@@ -734,29 +734,29 @@ pub fn judge(inputs: &Inputs, decl: &BusinessFakes) -> Vec<Verdict> {
     out
 }
 
-/// 反例の表の節 1 つ(DOEFF164 の材料): 節の効果の定義元の service(土台の効果なら None)と、節に届く deftest(図の節の添字)。
+/// One clause of the counterexample table (the material for DOEFF164): the service that defines the clause's effect (None for a foundation effect), and the deftests that reach the clause (indices of the graph's clauses).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CounterexampleCase {
     pub owner: Option<String>,
     pub tests: std::collections::BTreeSet<usize>,
 }
 
-/// entry の層を持つ service 1 つ(DOEFF164 の材料): 名と、その entry の層の定義に届く deftest(図の節の添字)。
+/// One service that has an entry layer (the material for DOEFF164): the name, and the deftests that reach the definitions of that entry layer (indices of the graph's clauses).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ServiceCase {
     pub name: String,
     pub entry_tests: std::collections::BTreeSet<usize>,
 }
 
-/// 反例の無い service 1 つ(DOEFF164 の判定)。candidates = その service の効果か土台の効果に答える反例の節の数。
+/// One service without counterexamples (the judgment of DOEFF164). candidates = the number of counterexample clauses that answer that service's effects or foundation effects.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct MissingCounterexample {
     pub service: usize,
     pub candidates: usize,
 }
 
-/// DOEFF164: service ごとに、反例の節のうち効果の持ち主がその service か土台の物(候補)を選び、候補に届く deftest の 1 本でも
-/// その service の entry に届けば「反例が有る」。1 本も無い service を返す(候補が 0 の service も返す)。
+/// DOEFF164: for each service, among the counterexample clauses, selects those whose effect's owner is that service or the foundation (candidates), and if even one deftest that reaches a candidate
+/// reaches that service's entry, "a counterexample exists". Returns the services with none (also returns services with 0 candidates).
 pub fn services_without_counterexample(cases: &[CounterexampleCase], services: &[ServiceCase]) -> Vec<MissingCounterexample> {
     services
         .iter()
@@ -796,7 +796,7 @@ mod tests {
         }
     }
 
-    /// 判じの検で使う節の形 — forwards の節は受けた効果をそのまま渡すだけ(答えない)・そうでない節は自前で答えるだけ。
+    /// The clause shape used in the judgment tests -- a forwards clause only forwards the received effect (does not answer); any other clause only answers on its own.
     fn shape(forwards: bool) -> ClauseShape {
         ClauseShape { forwards, answers: !forwards }
     }
@@ -819,8 +819,8 @@ mod tests {
         assert!(business_module("app.intent_rows", &d));
         assert!(!business_module("app.ordersx", &d));
         assert!(business_effect("app.orders.intent.rows.ReadRow", &d));
-        assert!(!business_effect("app.orders.tests.world.ReadWorld", &d)); // 検が自分で定義した効果
-        assert!(!business_effect("app.sim.script.Step", &d)); // 模擬の筋書きの効果(業務の module でもない)
+        assert!(!business_effect("app.orders.tests.world.ReadWorld", &d)); // an effect the test defined itself
+        assert!(!business_effect("app.sim.script.Step", &d)); // an effect of the mock scenario (and not in a business module)
     }
 
     #[test]
@@ -845,7 +845,7 @@ mod tests {
         assert_eq!(python_isinstance_effects(relative, "app.screen.entry.values"), vec!["app.screen.effects.Log".to_string()]);
     }
 
-    /// 節の形の判じ: 終わりごとに「受けた効果をそのまま渡す」か「自前の値」かを分け、節の 2 つの欄にする。
+    /// Clause shape judgment: for each ending, separates "forwards the received effect as is" from "its own value", giving the clause's two fields.
     #[test]
     fn clause_shapes_split_forwarding_and_answering_endings() {
         let source = r#"
@@ -887,35 +887,35 @@ mod tests {
         assert_eq!(at("ReadRow"), passes);
         assert_eq!(at("Tick"), passes);
         assert_eq!(at("Log"), passes);
-        assert_eq!(at("Relayed"), passes); // 宣言を開かない中継 (Perform effect) は (yield effect) と同じ出し直し
-        assert_eq!(at("RelayedAs"), passes); // 別名の中継
-        assert_eq!(at("RelayedChanged"), answers); // 別の effect の Perform は出し直しではない
-        assert_eq!(at("Bend"), answers); // 答えを変えて resume
-        assert_eq!(at("Swap"), answers); // 引数を変えて出し直した答え(同じ効果の出し直しではない)
-        assert_eq!(at("Keyed"), passes); // :欄 の語つきでも、受けた引数をそのまま並べた出し直し
-        assert_eq!(at("Aliased"), passes); // 受けた effect の別名の出し直し
+        assert_eq!(at("Relayed"), passes); // a relay that does not open the declaration (Perform effect) is a reperform, the same as (yield effect)
+        assert_eq!(at("RelayedAs"), passes); // a relay through an alias
+        assert_eq!(at("RelayedChanged"), answers); // a Perform of a different effect is not a reperform
+        assert_eq!(at("Bend"), answers); // resume with the answer changed
+        assert_eq!(at("Swap"), answers); // an answer reperformed with changed arguments (not a reperform of the same effect)
+        assert_eq!(at("Keyed"), passes); // even with a :field word, a reperform that lists the received arguments as they are
+        assert_eq!(at("Aliased"), passes); // a reperform of an alias of the received effect
         assert_eq!(at("Again"), passes); // (reperform effect)
-        assert_eq!(at("Renamed"), passes); // 別名の reperform
-        assert_eq!(at("Other"), answers); // 別の値の reperform は自前の答え
+        assert_eq!(at("Renamed"), passes); // a reperform of an alias
+        assert_eq!(at("Other"), answers); // a reperform of another value is its own answer
         assert_eq!(at("Old"), passes); // (pass)
-        assert_eq!(at("Guarded"), passes); // :when の偽の時の自動の reperform と、出し直しの答えの resume
-        assert_eq!(at("Elsewhere"), both); // 別の handler に答えさせる — 効果は外へ渡るが、答えを作る handler は節が選ぶ
-        assert_eq!(at("Handed"), both); // 別の handler の下の出し直しの答えを transfer
+        assert_eq!(at("Guarded"), passes); // the automatic reperform when :when is false, and a resume of a reperform's answer
+        assert_eq!(at("Elsewhere"), both); // has another handler answer -- the effect goes outward, but the clause chooses the handler that makes the answer
+        assert_eq!(at("Handed"), both); // transfer of the answer of a reperform under another handler
         assert_eq!(at("Ended"), answers); // finish
-        assert_eq!(at("Raised"), answers); // raise は終わりに数えず、渡す終わりも無い
-        assert_eq!(at("Seen"), passes); // 出し直して答えを捨てる観測の (resume None)
-        assert_eq!(at("Told"), passes); // 名に束ねない出し直しの後の (resume None)
-        assert_eq!(at("Silent"), answers); // 出し直さない (resume None) は自前の答え
-        assert_eq!(at("Kept"), passes); // 出し直しの答えを (:= 名 束ねた名) で入れ直して resume
-        assert_eq!(at("Wrapped"), answers); // 欄の名 effect は受けた効果ではない
-        assert_eq!(at("Trimmed"), both); // (resume (if 条件 A B)) の枝の 1 つが自前の値
-        assert_eq!(at("Twice"), both); // 同じ頭の 2 つの節は欄ごとに OR
+        assert_eq!(at("Raised"), answers); // raise is not counted as an ending, and there is no forwarding ending either
+        assert_eq!(at("Seen"), passes); // (resume None) of an observation that reperforms and discards the answer
+        assert_eq!(at("Told"), passes); // (resume None) after a reperform not bound to a name
+        assert_eq!(at("Silent"), answers); // (resume None) without a reperform is its own answer
+        assert_eq!(at("Kept"), passes); // re-binds a reperform's answer with (:= name bound-name) and resumes
+        assert_eq!(at("Wrapped"), answers); // the field named effect is not the received effect
+        assert_eq!(at("Trimmed"), both); // one of the branches of (resume (if condition A B)) is its own value
+        assert_eq!(at("Twice"), both); // two clauses with the same head are ORed per field
         assert_eq!(at("Own"), answers);
     }
 
-    /// 失敗ケース: 束ねた名は、その終わりに届く束ね(同じ枝の中で終わりより前の最も近い束ね)で引く。
-    /// 同じ名を 2 つの枝で別の出し直し(そのまま渡す出し直しと、引数を書き換えた出し直し)に束ねる節は、名を替えた同じ節と同じ形に
-    /// 判じる — 名を節の全体で 1 つの平らな表に集めると、書き換えの枝の `(resume answer)` が別の枝の束ねに当たり、answers が偽になる。
+    /// Failure case: a bound name is looked up by the binding that reaches that ending (the nearest binding before the ending in the same branch).
+    /// A clause that binds the same name in two branches to different reperforms (a reperform that forwards as is, and a reperform with rewritten arguments) is judged to have the same shape as the same clause with the names changed
+    /// -- if names were collected into one flat table for the whole clause, the rewriting branch's `(resume answer)` would hit another branch's binding, and answers would be false.
     #[test]
     fn clause_shapes_do_not_depend_on_how_bound_names_are_spelled() {
         let shape = |body: &str| {
@@ -939,20 +939,20 @@ mod tests {
         };
         for form in ["cond", "cond-brackets", "if", "when"] {
             let renamed = shape(&branched("tampered", "answer", form));
-            assert_eq!(renamed, (true, true), "{}: 書き換えの枝は自前で答え、渡す枝は渡す", form);
-            assert_eq!(shape(&branched("answer", "answer", form)), renamed, "{}: 両方の枝で同じ名 answer", form);
-            assert_eq!(shape(&branched("answer", "tampered", form)), renamed, "{}: 名を入れ替えても同じ形", form);
+            assert_eq!(renamed, (true, true), "{}: the rewriting branch answers on its own and the forwarding branch forwards", form);
+            assert_eq!(shape(&branched("answer", "answer", form)), renamed, "{}: the same name answer in both branches", form);
+            assert_eq!(shape(&branched("answer", "tampered", form)), renamed, "{}: the same shape even with the names swapped", form);
         }
-        // 終わりより前の最も近い束ねで引く — 後から束ね直した名は前の束ねを覆い、終わりより後の束ねは終わりに届かない。
+        // Looked up by the nearest binding before the ending -- a name re-bound later covers the earlier binding, and a binding after the ending does not reach the ending.
         assert_eq!(shape("(<- answer effect) (<- answer (HttpRequest method url :body changed)) (resume answer)"), (false, true));
         assert_eq!(shape("(<- answer (HttpRequest method url :body changed)) (<- answer effect) (resume answer)"), (true, false));
         assert_eq!(shape("(<- seen effect) (resume answer) (<- answer effect)"), (false, true));
-        // 枝の後では、枝ごとの束ねを合わせる(どちらの枝の値も届きうる)。
+        // After branches, the per-branch bindings are merged (a value from either branch can reach).
         assert_eq!(shape("(<- answer effect) (when (= method \"GET\") (<- answer (Other 2))) (resume answer)"), (true, true));
     }
 
-    /// 節の判じが読む操作の名は、同梱の表の行から来る: 表の行ごとに、終わり方どおりの節の形になる。表に行を足せば
-    /// この検が足した行も踏む。
+    /// The operation names the clause judgment reads come from the bundled table's rows: for each table row, the clause takes the shape matching its kind of ending. Adding a row to the table
+    /// makes this test step on the added row too.
     #[test]
     fn clause_shapes_follow_every_row_of_the_table() {
         let table = ClauseOps::bundled();
@@ -964,66 +964,66 @@ mod tests {
                 let shape = clause_shapes_with(&source, table)[&("h".to_string(), "Probe".to_string())];
                 (shape.forwards, shape.answers)
             };
-            // どの終わり方の操作も、受けた効果を渡す枝と並べて書く — 操作の終わりが自前の値なら答えも持つ。
+            // Write an operation of any kind of ending beside a branch that forwards the received effect -- if the operation's ending is its own value, it also has answers.
             let beside_forward = shape_of(format!("(if n (reperform effect) ({} {}))", word, args(op.arity.unwrap_or(1))));
             match op.ending {
                 clause_ops::Ending::Resumes | clause_ops::Ending::Finishes => {
-                    assert_eq!(beside_forward, (true, true), "{} は節を自前の値で終える", word);
+                    assert_eq!(beside_forward, (true, true), "{} ends the clause with its own value", word);
                 }
                 clause_ops::Ending::Raises => {
-                    assert_eq!(beside_forward, (true, false), "{} は終わりに数えない", word);
+                    assert_eq!(beside_forward, (true, false), "{} is not counted as an ending", word);
                 }
                 clause_ops::Ending::Forwards => {
-                    assert_eq!(beside_forward, (true, op.arity != Some(0)), "{} の引数が 0 でなければ、別の値を渡す終わりは自前", word);
-                    // 受けた効果をそのまま渡す書き方だけで書いた節は、答えを持たない。
+                    assert_eq!(beside_forward, (true, op.arity != Some(0)), "{}: if its argument count is not 0, an ending that forwards another value is its own", word);
+                    // A clause written only in the way that forwards the received effect as is has no answers.
                     let alone = match op.arity {
                         Some(0) => format!("({})", word),
                         _ => format!("({} effect)", word),
                     };
-                    assert_eq!(shape_of(alone), (true, false), "{} だけの節は渡すだけ", word);
+                    assert_eq!(shape_of(alone), (true, false), "a clause of only {} just forwards", word);
                 }
             }
         }
     }
 
-    /// 表に行を足すだけで判じが追従する(再現): 続きへ例外を投げる操作(再開する終わり方)の行を足すと、それまで
-    /// 終わりに数えなかった節が自前の値を持つ。判じの側には何も足さない。足す名は、本物の表に後から入る名と重ならない作り物。
+    /// Just adding a row to the table makes the judgment follow (reproduction): adding a row for an operation that throws an exception into the continuation (a resuming kind of ending) makes a clause that previously
+    /// was not counted as an ending have its own value. Nothing is added on the judgment side. The added name is a fabricated one that does not overlap names that enter the real table later.
     #[test]
     fn a_row_added_to_the_table_is_followed_by_the_judgement() {
         let source = "(defhandler h (Probe [n] (if n (reperform effect) (inject-fault (ValueError n)))))";
         let key = ("h".to_string(), "Probe".to_string());
         let bundled = ClauseOps::bundled();
-        assert!(bundled.named("inject-fault").is_none(), "この検は、表に無い名の操作を足す");
-        // 表に無い名の操作は、節の終わりに数えない。
+        assert!(bundled.named("inject-fault").is_none(), "this test adds an operation whose name is not in the table");
+        // An operation whose name is not in the table is not counted as a clause ending.
         assert_eq!(clause_shapes_with(source, bundled)[&key], ClauseShape { forwards: true, answers: false });
-        // 同梱の file と同じ形の text に行を 1 つ足した表で、同じ節を判じ直す。
+        // Re-judge the same clause with a table made by adding one row to text of the same shape as the bundled file.
         let mut file: serde_json::Value = serde_json::from_str(include_str!("../../data/clause_ops.json")).unwrap();
         file["ops"].as_array_mut().unwrap().push(serde_json::json!({"name": "inject-fault", "ending": "resumes", "arity": 1}));
         let extended = ClauseOps::parse(&file.to_string()).unwrap();
         assert_eq!(clause_shapes_with(source, &extended)[&key], ClauseShape { forwards: true, answers: true });
-        // 行を足しても、元の表の操作の判じは変わらない。
+        // Even after adding a row, the judgment of the original table's operations does not change.
         assert_eq!(
             clause_shapes_with("(defhandler h (Probe [n] (finish n)))", &extended)[&key],
             ClauseShape { forwards: false, answers: true }
         );
     }
 
-    /// 節の判じが読む操作の名は、表の外のこの file に書かない — 表を介さずに名を足すと赤。書くのは文字列の literal
-    /// (`"名"`)で、検の module と註は数えない。
+    /// The operation names the clause judgment reads are not written in this file outside the table -- adding a name without going through the table turns red. What counts is string literals
+    /// (`"name"`); the test module and comments are not counted.
     #[test]
     fn clause_operation_names_are_not_written_outside_the_table() {
         let source = include_str!("business_fakes.rs");
-        let code = &source[..source.find("#[cfg(test)]").expect("検の module の前までを読む")];
+        let code = &source[..source.find("#[cfg(test)]").expect("read up to before the test module")];
         let written: Vec<&str> = ClauseOps::bundled()
             .iter()
             .map(|op| op.name.as_str())
             .filter(|name| code.lines().filter(|line| !line.trim_start().starts_with("//")).any(|line| line.contains(&format!("\"{}\"", name))))
             .collect();
-        assert!(written.is_empty(), "表の操作の名を literal で書いている: {:?}", written);
+        assert!(written.is_empty(), "wrote the table's operation names as literals: {:?}", written);
     }
 
-    /// 片方の枝でだけ出し直す壊した handler(kn-w37 の 7 件目の書き直す前の形)は、書き方が 3 つ在っても
-    /// 同じ形 {forwards・answers} に判じ、DOEFF143・164・206 が同じ答えを出す: 反例の表に行が有れば どれも当たらず、無ければ 206 だけが当たる。
+    /// A broken handler that reperforms in only one branch (the form of kn-w37's 7th case before the rewrite) is judged to have the same shape {forwards, answers} even in the 3 ways of writing,
+    /// and DOEFF143, 164, and 206 give the same answer: if the counterexample table has a row none of them hit, and if not, only 206 hits.
     #[test]
     fn one_branch_forwarding_is_judged_alike_by_every_rule() {
         let source = r#"
@@ -1034,9 +1034,9 @@ mod tests {
         let shapes = clause_shapes_in(source);
         for handler in ["a", "b", "c"] {
             let shape = shapes[&(handler.to_string(), "Place".to_string())];
-            assert_eq!(shape, ClauseShape { forwards: true, answers: true }, "{} の形", handler);
+            assert_eq!(shape, ClauseShape { forwards: true, answers: true }, "shape of {}", handler);
             let at = Clause { node: 0, rel: "app/sim/fake.hy".into(), handler: handler.into(), effect: "app.orders.intent.Place".into(), written: "app.orders.intent.Place".into(), shape };
-            let row: BTreeMap<String, String> = [(at.key(), "反例".to_string())].into();
+            let row: BTreeMap<String, String> = [(at.key(), "counterexample".to_string())].into();
             let clauses = vec![at];
             let (yes, no, empty) = (vec![true], vec![false], BTreeMap::new());
             let python_answered = std::collections::BTreeSet::new();
@@ -1056,7 +1056,7 @@ mod tests {
                     },
                     &decl(),
                 );
-                assert_eq!(verdicts, vec![], "DOEFF143 が {} を当てた(表の行 {} 件)", handler, table.len());
+                assert_eq!(verdicts, vec![], "DOEFF143 hit {} (table rows: {})", handler, table.len());
                 let intent = judge_intent_fakes(&IntentFakeInputs {
                     clauses: &clauses,
                     intent_effect: &yes,
@@ -1065,10 +1065,10 @@ mod tests {
                     rows: &[],
                     row_intent: &[],
                 });
-                assert_eq!(intent, expected_206, "DOEFF206 の {} の判じ(表の行 {} 件)", handler, table.len());
-                // DOEFF164・167 の反例の節の条件(mod.rs が同じ Clause::counterexample_in を読む)。
+                assert_eq!(intent, expected_206, "DOEFF206 judgment of {} (table rows: {})", handler, table.len());
+                // The condition for the counterexample clauses of DOEFF164 and 167 (mod.rs reads the same Clause::counterexample_in).
                 let counted = clauses.iter().filter(|c| c.counterexample_in(false, table)).count();
-                assert_eq!(counted, table.len(), "DOEFF164 の反例の節の数 {}", handler);
+                assert_eq!(counted, table.len(), "number of counterexample clauses of DOEFF164: {}", handler);
             }
         }
     }
@@ -1076,19 +1076,19 @@ mod tests {
     #[test]
     fn fakes_of_business_effects_are_red_and_the_tables_do_not_rot() {
         let clauses = vec![
-            clause(0, "app.orders.intent.WriteRow", false),       // 業務の効果の偽物 → 赤
-            clause(1, "app.orders.intent.ReadRow", true),         // tap → 数えない
-            clause(2, "app.clock.Now", false),                    // 業務でない
-            clause(3, "app.orders.intent.Send", false),           // 外の世界の表に在る
-            clause(4, "app.orders.intent.Broken", false),         // 反例の表に在る
-            clause(5, "app.orders.intent.Shared", false),         // 本番からも届く → 偽物でない
-            // 検の file のわざと壊した下の層の代役 → 反例の表の行に当たる(偽物ではない)
+            clause(0, "app.orders.intent.WriteRow", false),       // a fake of a business effect -> red
+            clause(1, "app.orders.intent.ReadRow", true),         // tap -> not counted
+            clause(2, "app.clock.Now", false),                    // not business
+            clause(3, "app.orders.intent.Send", false),           // in the external-world table
+            clause(4, "app.orders.intent.Broken", false),         // in the counterexample table
+            clause(5, "app.orders.intent.Shared", false),         // also reached from production -> not a fake
+            // a deliberately broken stand-in for a lower layer in a test file -> hits a row of the counterexample table (not a fake)
             clause(6, "lib.records.effects.ReadRow", false),
-            clause(7, "lib.records.effects.WriteRow", false),     // 模擬の偽物が下の層に答える → DOEFF143
-            clause(8, "app.orders.intent.Ship", false),           // 検だけから届く業務の偽物 → DOEFF157
-            clause(9, "lib.records.effects.Scan", false),         // 検だけから届く下の層の偽物 → DOEFF157
-            clause(10, "app.clock.Now", false),                   // 検だけから届くが業務でも下の層でもない
-            clause(11, "app.orders.intent.Ship", true),           // 検だけから届く tap
+            clause(7, "lib.records.effects.WriteRow", false),     // a mock fake answers a lower layer -> DOEFF143
+            clause(8, "app.orders.intent.Ship", false),           // a business fake reached only from tests -> DOEFF157
+            clause(9, "lib.records.effects.Scan", false),         // a lower-layer fake reached only from tests -> DOEFF157
+            clause(10, "app.clock.Now", false),                   // reached only from tests but neither business nor lower layer
+            clause(11, "app.orders.intent.Ship", true),           // a tap reached only from tests
         ];
         let n = clauses.len();
         let mut simulated = vec![true; n];
@@ -1097,19 +1097,19 @@ mod tests {
         simulated[8..].iter_mut().for_each(|s| *s = false);
         tested[8..].iter_mut().for_each(|t| *t = true);
         (simulated[6], tested[6]) = (false, true);
-        tested[5] = true; // 本番からも届けば検だけの偽物でない
+        tested[5] = true; // if also reached from production, it is not a test-only fake
         produced[5] = true;
         let intent_effect = vec![false; n];
         let translation_file = vec![false; n];
         let external: BTreeMap<String, String> =
-            [("app.orders.intent.Send".to_string(), "外の相手".to_string()), ("app.gone.Old".to_string(), "古い".to_string())].into();
+            [("app.orders.intent.Send".to_string(), "external party".to_string()), ("app.gone.Old".to_string(), "old".to_string())].into();
         let counterexamples: BTreeMap<String, String> = [
-            ("app/sim/fake.hy::fake::app.orders.intent.Broken".to_string(), "反例".to_string()),
-            ("app/sim/fake.hy::fake::app.orders.intent.Gone".to_string(), "古い反例".to_string()),
-            ("app/sim/fake.hy::fake::lib.records.effects.ReadRow".to_string(), "下の層の反例".to_string()),
+            ("app/sim/fake.hy::fake::app.orders.intent.Broken".to_string(), "counterexample".to_string()),
+            ("app/sim/fake.hy::fake::app.orders.intent.Gone".to_string(), "old counterexample".to_string()),
+            ("app/sim/fake.hy::fake::lib.records.effects.ReadRow".to_string(), "lower-layer counterexample".to_string()),
         ]
         .into();
-        let unserved: BTreeMap<String, String> = [("app.orders.intent.Send".to_string(), "#1 で書く".to_string())].into();
+        let unserved: BTreeMap<String, String> = [("app.orders.intent.Send".to_string(), "write in #1".to_string())].into();
         let python_answered = std::collections::BTreeSet::new();
         let verdicts = judge(
             &Inputs {
@@ -1151,12 +1151,12 @@ mod tests {
             shape: shape(forwards),
         };
         let clauses = vec![
-            at(0, "app/orders/protocol/a.hy", "translate", false), // 翻訳の handler 1 つ目
-            at(1, "app/orders/protocol/b.hy", "translate2", false), // 同じ効果に 2 つ目 → 2 つとも出す
-            at(2, "app/orders/entry/f.hy", "foundation", false),   // 翻訳の層の外 → 出す
-            at(3, "app/orders/entry/f.hy", "observe", true),       // tap は数えない
-            at(4, "app/sim/fake.hy", "fake", false),               // 本番から届かない → DOEFF158 の外
-            at(5, "app/orders/protocol/a.hy", "translate", false), // 同じ handler の 2 つ目の節は 1 つに数える
+            at(0, "app/orders/protocol/a.hy", "translate", false), // the first translation handler
+            at(1, "app/orders/protocol/b.hy", "translate2", false), // the second for the same effect -> report both
+            at(2, "app/orders/entry/f.hy", "foundation", false),   // outside the translation layer -> report
+            at(3, "app/orders/entry/f.hy", "observe", true),       // taps are not counted
+            at(4, "app/sim/fake.hy", "fake", false),               // not reached from production -> outside DOEFF158
+            at(5, "app/orders/protocol/a.hy", "translate", false), // a second clause of the same handler counts as one
         ];
         let n = clauses.len();
         let produced = vec![true, true, true, true, false, true];
@@ -1164,7 +1164,7 @@ mod tests {
         let tested = vec![false; n];
         let intent_effect = vec![true; n];
         let translation_file = vec![true, true, false, false, false, true];
-        let external = [("app.orders.intent.Place".to_string(), "外".to_string())].into();
+        let external = [("app.orders.intent.Place".to_string(), "external".to_string())].into();
         let empty = BTreeMap::new();
         let python_answered = std::collections::BTreeSet::new();
         let verdicts = judge(
@@ -1185,14 +1185,14 @@ mod tests {
         assert_eq!(verdicts, vec![Verdict::IntentAnsweredOutside(2), Verdict::IntentAnsweredTwice(0, 2), Verdict::IntentAnsweredTwice(1, 2)]);
     }
 
-    /// 土台の効果(業務でも下の層でもない)に答える壊した handler も反例の表に載せられる。
-    /// 本番から届く節は反例ではないので、表に在っても当たらない(腐り)。
+    /// A broken handler that answers a foundation effect (neither business nor a lower layer) can also be listed in the counterexample table.
+    /// A clause reached from production is not a counterexample, so even if it is in the table it does not hit (rot).
     #[test]
     fn counterexamples_of_foundation_effects_are_hits() {
         let clauses = vec![
-            clause(0, "app.clock.Now", false),   // 模擬の土台の壊した handler(turn_counterexamples の型)
-            clause(1, "app.clock.Tick", false),  // 検だけから届く土台の壊した handler
-            clause(2, "app.clock.Sleep", false), // 本番からも届く → 反例でない
+            clause(0, "app.clock.Now", false),   // a broken handler of the mock foundation (the type of turn_counterexamples)
+            clause(1, "app.clock.Tick", false),  // a broken handler of the foundation reached only from tests
+            clause(2, "app.clock.Sleep", false), // also reached from production -> not a counterexample
         ];
         let simulated = vec![true, false, true];
         let tested = vec![false, true, false];
@@ -1200,7 +1200,7 @@ mod tests {
         let flags = vec![false; clauses.len()];
         let key = |effect: &str| format!("app/sim/fake.hy::fake::{}", effect);
         let counterexamples: BTreeMap<String, String> =
-            ["app.clock.Now", "app.clock.Tick", "app.clock.Sleep"].iter().map(|e| (key(e), "土台の反例".to_string())).collect();
+            ["app.clock.Now", "app.clock.Tick", "app.clock.Sleep"].iter().map(|e| (key(e), "foundation counterexample".to_string())).collect();
         let empty = BTreeMap::new();
         let python_answered = std::collections::BTreeSet::new();
         let verdicts = judge(
@@ -1221,17 +1221,17 @@ mod tests {
         assert_eq!(verdicts, vec![Verdict::StaleCounterexample(key("app.clock.Sleep"))]);
     }
 
-    /// DOEFF164: 候補(効果の持ち主がその service か土台)に届く deftest の 1 本でも entry に届けば有り。
+    /// DOEFF164: exists if even one deftest that reaches a candidate (the effect's owner is that service or the foundation) reaches the entry.
     #[test]
     fn services_without_counterexample_are_found() {
         let tests = |nodes: &[usize]| nodes.iter().copied().collect::<std::collections::BTreeSet<usize>>();
         let case = |owner: Option<&str>, nodes: &[usize]| CounterexampleCase { owner: owner.map(str::to_string), tests: tests(nodes) };
         let service = |name: &str, nodes: &[usize]| ServiceCase { name: name.into(), entry_tests: tests(nodes) };
         let cases = vec![
-            case(Some("orders"), &[2]), // orders の反例 — orders の entry に届く
-            case(Some("orders"), &[3]), // orders の効果の反例が billing の entry に届いても billing の反例に数えない
-            case(None, &[5]),           // 土台の効果の反例 — 届いた service(stock)の反例に数える
-            case(Some("billing"), &[9]), // billing の効果の反例だが、その検は billing の entry に届かない
+            case(Some("orders"), &[2]), // a counterexample of orders -- reaches orders' entry
+            case(Some("orders"), &[3]), // a counterexample of an orders effect that reaches billing's entry is not counted as a billing counterexample
+            case(None, &[5]),           // a counterexample of a foundation effect -- counted as a counterexample of the service it reached (stock)
+            case(Some("billing"), &[9]), // a counterexample of a billing effect, but that test does not reach billing's entry
         ];
         let services = vec![service("orders", &[1, 2]), service("billing", &[3]), service("empty", &[]), service("stock", &[5])];
         assert_eq!(

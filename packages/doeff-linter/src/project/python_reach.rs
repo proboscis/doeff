@@ -1,20 +1,20 @@
-//! DOEFF133 の届く先を、Hy の定義が名指す repo の中の Python の関数(`.py`)の中まで辿る。
+//! Follows what DOEFF133 reaches into the Python functions (`.py`) in the repo that a Hy definition names.
 //!
-//! Hy の索引は Hy の file だけを読むので、deftest → Hy の定義 → import した Python の関数 → `subprocess.run` の形の到達は、
-//! 図の上で Python の関数の所で途切れ、テストは「手元」と判じられていた。ここは Python の関数 1 つずつの事実(生の副作用の
-//! 強い証拠と、名前で決まる呼び先)を rustpython の構文木から取り、Python の関数の間を辿って答える。
+//! The Hy index reads only Hy files, so a reach of the shape deftest -> Hy definition -> imported Python function -> `subprocess.run`
+//! was cut at the Python function on the graph, and the test was judged "local". Here, the facts of each Python function (strong evidence of raw side
+//! effects, and callees decided by name) are taken from the rustpython syntax tree, and the answer is given by following between Python functions.
 //!
-//! 読み方(Hy の生の副作用の証拠 — doeff-indexer の raw.rs — と同じ目録・同じ強さの規則):
-//! - 証拠 = import を通した完全な名前が目録の pattern に合う物(`subprocess.run`・`os.system`)と、import されていない
-//!   修飾の無い名前を呼び出しの頭に書いた組み込み(`open`)。例外の型(名の終わりが Error 等)と ignored の名は数えない。
-//!   method 名だけの弱い証拠は数えない(DOEFF133 は強い証拠だけを縁に数える)。
-//! - 型の注記(引数・答え・注記つきの代入の注記)と except の型は値の実行ではないので読まない。
-//! - 呼び先 = 名前で決まる物だけ: import した名、同じ module の top level の関数・class、class の中の `self.m` / `cls.m`。
-//!   class の名指しは構築(`__init__`・`__post_init__`・`__new__`)へ届く。値の上の属性(`obj.m()`)と実行時の import
-//!   (`importlib`)は名前で決まらず辿れない — Hy の定義の図と同じ範囲。
-//! - 辿る深さに上限は置かない(repo の中の関数の閉包を幅優先で全部辿る — 循環は 1 度訪ねた関数を訪ね直さないことで止める)。
-//! - module の在り処は repo の根からの相対 path(`a/b.py` か `a/b/__init__.py`)— Hy の索引の module 名と同じ基準。
-//!   読めない・構文の壊れた module は黙って「届かない」にせず、理由を `errors` に積む(報告の誤りの欄に出る)。
+//! How to read (the same catalog and the same strength rules as the Hy raw side-effect evidence — raw.rs of doeff-indexer):
+//! - Evidence = a fully qualified name through imports that matches a catalog pattern (`subprocess.run`, `os.system`), and a built-in
+//!   (`open`) written as an unqualified name at the head of a call without being imported. Exception types (names ending in Error, etc.) and ignored names are not counted.
+//!   Weak evidence by method name alone is not counted (DOEFF133 counts only strong evidence as an edge).
+//! - Type annotations (of arguments, answers, and annotated assignments) and except types are not executions of values, so they are not read.
+//! - Callees = only those decided by name: imported names, top-level functions and classes of the same module, and `self.m` / `cls.m` inside a class.
+//!   Naming a class reaches construction (`__init__`, `__post_init__`, `__new__`). Attributes on values (`obj.m()`) and runtime imports
+//!   (`importlib`) are not decided by name and cannot be followed — the same range as the graph of Hy definitions.
+//! - There is no limit on the depth followed (the closure of functions in the repo is followed breadth-first in full — cycles are stopped by not revisiting a function already visited).
+//! - A module's location is a path relative to the repo root (`a/b.py` or `a/b/__init__.py`) — the same basis as the Hy index's module names.
+//!   An unreadable or syntactically broken module is not silently treated as "does not reach"; the reason is pushed to `errors` (shown in the report's errors field).
 
 use std::cell::RefCell;
 use std::collections::{HashMap, HashSet, VecDeque};
@@ -29,39 +29,39 @@ use rustpython_parser::{parse, Mode};
 
 use super::names::absolute_module;
 
-/// 生の副作用の強い証拠 1 件(分類と、import を通した完全な名前か組み込みの名)。
+/// One piece of strong evidence of a raw side effect (the classification, and the fully qualified name through imports, or the built-in's name).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PythonEvidence {
     pub category: RawCategory,
     pub name: String,
 }
 
-/// Python の関数 1 つの事実。
+/// The facts of one Python function.
 #[derive(Debug, Clone, Default)]
 struct FunctionFacts {
     evidence: Vec<PythonEvidence>,
-    /// 名前で決まった呼び先・名指しの完全な名(repo の関数か Hy の定義かは問い合わせの時に引く)。
+    /// Callees and named full names decided by name (whether it is a repo function or a Hy definition is looked up at query time).
     callees: Vec<String>,
 }
 
-/// 読んだ Python の module 1 つ。
+/// One Python module that was read.
 #[derive(Debug, Default)]
 struct PythonModule {
-    /// 関数の module の中の名(`f`・`C.m`)→ 事実。
+    /// Name inside the module of the function (`f`, `C.m`) -> facts.
     functions: HashMap<String, FunctionFacts>,
     classes: HashSet<String>,
 }
 
-/// Hy の定義が名指した Python の関数から届く先。
+/// What is reached from a Python function that a Hy definition names.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct PythonReached {
-    /// 外の世界に触れる証拠へ届く最短の道(名指した関数 → … → 証拠の名)。届かなければ None。
+    /// The shortest path to evidence of touching the outside world (named function -> ... -> the evidence's name). None if not reached.
     pub world: Option<Vec<String>>,
-    /// Python の関数を通って名指す Hy の定義の完全修飾名(Hy の図の辺にする)。
+    /// Fully qualified names of the Hy definitions that name it through Python functions (to be edges of the Hy graph).
     pub hy: Vec<String>,
 }
 
-/// repo の中の Python の関数の到達の問い合わせ — module と答えを覚える(1 度の実行の中だけ)。
+/// Queries on the reach of Python functions in the repo — remembers modules and answers (only within one run).
 pub struct PythonReach<'a> {
     root: &'a Path,
     catalog: &'a RawCatalog,
@@ -74,17 +74,17 @@ impl<'a> PythonReach<'a> {
         PythonReach { root, catalog, modules: RefCell::new(HashMap::new()), errors: RefCell::new(Vec::new()) }
     }
 
-    /// 読めなかった module の理由(報告の誤りの欄へ)。
+    /// Reasons for modules that could not be read (for the report's errors field).
     pub fn errors(&self) -> Vec<String> {
         self.errors.borrow().clone()
     }
 
-    /// 完全な名が repo の中の Python の関数(か構築の在る class)を名指すか。
+    /// Whether a fully qualified name names a Python function in the repo (or a class that has construction).
     pub fn names_function(&self, full: &str) -> bool {
         !self.functions_of(full).is_empty()
     }
 
-    /// 完全な名が名指す関数から、名前で決まる呼び先を辿って届く先を答える。edge = 縁に数える分類か・is_hy = Hy の定義の名か。
+    /// From the function a fully qualified name names, follows callees decided by name and answers what is reached. edge = whether the classification counts as an edge, is_hy = whether it is the name of a Hy definition.
     pub fn reach(&self, full: &str, edge: &dyn Fn(RawCategory) -> bool, is_hy: &dyn Fn(&str) -> bool) -> PythonReached {
         let mut parent: HashMap<String, Option<String>> = HashMap::new();
         let mut queue: VecDeque<String> = VecDeque::new();
@@ -133,7 +133,7 @@ impl<'a> PythonReach<'a> {
         reached
     }
 
-    /// 完全な名が名指す関数の完全な名(module の最も長い一致 — 関数・class の method・class の構築)。
+    /// The fully qualified name of the function that a fully qualified name names (the longest module match — a function, a class's method, or class construction).
     fn functions_of(&self, full: &str) -> Vec<String> {
         let parts: Vec<&str> = full.split('.').collect();
         for split in (1..parts.len()).rev() {
@@ -156,7 +156,7 @@ impl<'a> PythonReach<'a> {
         Vec::new()
     }
 
-    /// 関数の完全な名の事実。
+    /// Facts for a function's fully qualified name.
     fn facts_of(&self, function: &str) -> Option<FunctionFacts> {
         let parts: Vec<&str> = function.split('.').collect();
         (1..parts.len()).rev().find_map(|split| {
@@ -165,7 +165,7 @@ impl<'a> PythonReach<'a> {
         })
     }
 
-    /// dotted の module 名の module(repo の根からの `a/b.py` か `a/b/__init__.py`)。無ければ None。
+    /// The module for a dotted module name (`a/b.py` or `a/b/__init__.py` from the repo root). None if absent.
     fn module(&self, dotted: &str) -> Option<Rc<PythonModule>> {
         if let Some(known) = self.modules.borrow().get(dotted) {
             return known.clone();
@@ -186,7 +186,7 @@ impl<'a> PythonReach<'a> {
         let source = match std::fs::read_to_string(self.root.join(&rel)) {
             Ok(source) => source,
             Err(error) => {
-                self.errors.borrow_mut().push(format!("DOEFF133: Python の module {} を読めない({}) — その関数の届く先は判じていない", rel, error));
+                self.errors.borrow_mut().push(format!("DOEFF133: cannot read Python module {} ({}) — what its functions reach was not judged", rel, error));
                 return None;
             }
         };
@@ -194,16 +194,16 @@ impl<'a> PythonReach<'a> {
             Ok(Mod::Module(module)) => Some(Rc::new(read_module(dotted, package, &module.body, self.catalog))),
             Ok(_) => None,
             Err(error) => {
-                self.errors.borrow_mut().push(format!("DOEFF133: Python の module {} を構文で読めない({}) — その関数の届く先は判じていない", rel, error));
+                self.errors.borrow_mut().push(format!("DOEFF133: cannot parse Python module {} ({}) — what its functions reach was not judged", rel, error));
                 None
             }
         }
     }
 }
 
-/// module の top level から関数と class の method の事実を読む。
+/// Reads the facts of functions and class methods from a module's top level.
 fn read_module(dotted: &str, package: bool, body: &[Stmt], catalog: &RawCatalog) -> PythonModule {
-    // 相対 import の基準: package の __init__ は自分が package、ふつうの module は親が package。
+    // Base of relative imports: a package's __init__ is itself the package; an ordinary module's parent is the package.
     let anchor = if package { format!("{}.__init__", dotted) } else { dotted.to_string() };
     let mut imports: HashMap<String, String> = HashMap::new();
     let mut defined: HashSet<String> = HashSet::new();
@@ -249,7 +249,7 @@ fn read_module(dotted: &str, package: bool, body: &[Stmt], catalog: &RawCatalog)
     module
 }
 
-/// import の文 1 つが束ねる名(束ねた名 → 完全な名)を足す。
+/// Adds the names that one import statement binds (bound name -> fully qualified name).
 fn record_import(stmt: &Stmt, anchor: &str, imports: &mut HashMap<String, String>) {
     match stmt {
         Stmt::Import(import) => {
@@ -257,7 +257,7 @@ fn record_import(stmt: &Stmt, anchor: &str, imports: &mut HashMap<String, String
                 let module = alias.name.to_string();
                 match &alias.asname {
                     Some(asname) => imports.insert(asname.to_string(), module),
-                    // `import a.b` は `a` を束ねる(`a.b.f` は書かれたとおりの完全な名)。
+                    // `import a.b` binds `a` (`a.b.f` is the fully qualified name as written).
                     None => {
                         let head = module.split('.').next().unwrap_or_default().to_string();
                         imports.insert(head.clone(), head)
@@ -282,7 +282,7 @@ fn record_import(stmt: &Stmt, anchor: &str, imports: &mut HashMap<String, String
     }
 }
 
-/// 名前の解決の場 — module 1 つの import と top level の名。
+/// The place for name resolution — one module's imports and top-level names.
 struct ModuleScope<'s> {
     dotted: &'s str,
     anchor: &'s str,
@@ -291,18 +291,18 @@ struct ModuleScope<'s> {
     catalog: &'s RawCatalog,
 }
 
-/// 名前の解決の結果。
+/// The result of name resolution.
 enum Resolved {
-    /// import を通した完全な名(目録と照らす・呼び先の候補)。
+    /// A fully qualified name through imports (checked against the catalog; a callee candidate).
     Imported(String),
-    /// 同じ module の名(呼び先の候補だけ — 目録とは照らさない)。
+    /// A name of the same module (only a callee candidate — not checked against the catalog).
     Own(String),
-    /// import されていない修飾の無い名(組み込みか局所の束縛)。
+    /// An unqualified name that is not imported (a built-in or a local binding).
     Unbound(String),
 }
 
 impl ModuleScope<'_> {
-    /// 関数の本体 1 つの事実(本体の中の import も数える)。
+    /// Facts of one function body (imports inside the body are counted too).
     fn facts(&self, body: &[Stmt], class: Option<&str>) -> FunctionFacts {
         let mut collector = Collector { anchor: self.anchor, local_imports: HashMap::new(), chains: Vec::new() };
         for stmt in body {
@@ -337,7 +337,7 @@ impl ModuleScope<'_> {
         facts
     }
 
-    /// dotted の書かれた名を完全な名へ直す(本体の中の import > module の import > module の top level の名 > self / cls)。
+    /// Turns a dotted name as written into a fully qualified name (import in the body > module's import > module's top-level name > self / cls).
     fn resolve(&self, chain: &[String], class: Option<&str>, local: &HashMap<String, String>) -> Resolved {
         let head = chain[0].as_str();
         let rest = &chain[1..];
@@ -351,12 +351,12 @@ impl ModuleScope<'_> {
         match (class, head, rest.first()) {
             (Some(class), "self" | "cls", Some(method)) => Resolved::Own(format!("{}.{}.{}", self.dotted, class, method)),
             _ if rest.is_empty() => Resolved::Unbound(head.to_string()),
-            // 局所の値の上の属性(`x.m`)は名前で決まらない。
+            // An attribute on a local value (`x.m`) is not decided by name.
             _ => Resolved::Unbound(String::new()),
         }
     }
 
-    /// 完全な名の目録の分類(例外の型と ignored の名は数えない)。
+    /// Classification of a fully qualified name in the catalog (exception types and ignored names are not counted).
     fn category_of(&self, full: &str) -> Option<RawCategory> {
         let last = full.rsplit('.').next().unwrap_or("");
         if self.catalog.exception_suffixes.iter().any(|s| last.ends_with(s.as_str())) || self.catalog.ignored.iter().any(|p| matches_pattern(full, p)) {
@@ -366,14 +366,14 @@ impl ModuleScope<'_> {
     }
 }
 
-/// 関数の本体の名の鎖(`a.b.c` — 頭が名で、残りが属性)と、呼び出しの頭か、を集める。本体の中の import も束ねる。
+/// Collects the chain of names in a function body (`a.b.c` — the head is a name and the rest are attributes) and whether it is the head of a call. Imports inside the body are also bound.
 struct Collector<'s> {
     anchor: &'s str,
     local_imports: HashMap<String, String>,
     chains: Vec<(Vec<String>, bool)>,
 }
 
-/// 名と属性だけでできた式の鎖(`a.b.c` → [a, b, c])。
+/// A chain of an expression made only of names and attributes (`a.b.c` -> [a, b, c]).
 fn chain_of(expr: &Expr) -> Option<Vec<String>> {
     match expr {
         Expr::Name(name) => Some(vec![name.id.to_string()]),
@@ -400,14 +400,14 @@ impl Fold<TextRange> for Collector<'_> {
     fn fold_stmt(&mut self, node: Stmt) -> Result<Stmt, Infallible> {
         record_import(&node, self.anchor, &mut self.local_imports);
         match &node {
-            // 注記つきの代入は値だけを読む(注記は値の実行ではない)。
+            // For an annotated assignment, read only the value (the annotation is not an execution of a value).
             Stmt::AnnAssign(assign) => {
                 if let Some(value) = &assign.value {
                     self.fold_expr((**value).clone())?;
                 }
                 Ok(node)
             }
-            // 入れ子の関数は本体・decorator・既定値を読み、答えの注記は読まない(引数の注記は fold_arg が飛ばす)。
+            // A nested function reads its body, decorators and defaults, and does not read the answer's annotation (fold_arg skips the argument annotations).
             Stmt::FunctionDef(f) => {
                 self.fold_nested(&f.body, &f.decorator_list, &f.args)?;
                 Ok(node)
@@ -433,12 +433,12 @@ impl Fold<TextRange> for Collector<'_> {
         rustpython_ast::fold::fold_expr(self, node)
     }
 
-    /// 引数の注記は読まない。
+    /// Argument annotations are not read.
     fn fold_arg(&mut self, node: Arg) -> Result<Arg, Infallible> {
         Ok(node)
     }
 
-    /// except の型は値の実行ではないので読まず、本体だけを読む。
+    /// An except type is not an execution of a value, so it is not read; only the body is read.
     fn fold_excepthandler(&mut self, node: ExceptHandler) -> Result<ExceptHandler, Infallible> {
         let ExceptHandler::ExceptHandler(handler) = &node;
         for stmt in &handler.body {

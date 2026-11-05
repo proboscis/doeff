@@ -1,9 +1,9 @@
-//! 名指しの実行(`-- <path>` — commit の hook が stage した path に当てる形)が読む範囲の検。
+//! Test of the scope read by a named run (`-- <path>` — the form where the commit hook applies to staged paths).
 //!
-//! file 1 つで決まると名乗る規則(`ProjectRule::needs_whole_repo` が偽)だけを当てる名指しの実行は、名指しの file の外を読まなくても
-//! 答えが同じ。以前は DOEFF106・131・108 が 1 file の実行でも repo 全体の Hy の索引を組み(agora-controllers で 1 回 CPU 20〜60 秒・
-//! 0.8〜1 GB)、commit の hook 1 回の memory の大半を占めていた。読んだ file は Hy の索引の cache(`hy-index.bin.d/`)に path の綴りで
-//! 残るので、cache の中の綴りで「何を読んだか」を外から確かめる。
+//! A named run that applies only rules claiming to be decided per file (`ProjectRule::needs_whole_repo` is false) gives the same answer without reading outside the named file.
+//! Previously DOEFF106, 131, and 108 built the Hy index of the whole repo even for a one-file run (once in agora-controllers: CPU 20-60 s,
+//! 0.8-1 GB), taking most of the memory of one commit hook run. The files read remain in the Hy index cache (`hy-index.bin.d/`) by path spelling,
+//! so "what was read" is checked from outside using the spellings in the cache.
 
 use serde_json::Value;
 use std::path::Path;
@@ -15,7 +15,7 @@ fn tags(context: &str, role: &str) -> String {
     format!("(val MODULE-TAGS {{:context \"{}\" :role \"{}\"}})\n", context, role)
 }
 
-/// 許可名簿(:world-handlers)と環境の語の宣言を持つ repo(層 core・foundation・entry・service billing)。
+/// A repo with an allow-list (:world-handlers) and environment-word declarations (layers core, foundation, entry, service billing).
 fn repo() -> tempfile::TempDir {
     let dir = tempfile::TempDir::new().unwrap();
     let architecture = r#"
@@ -27,7 +27,7 @@ fn repo() -> tempfile::TempDir {
   :foundation foundation
   :world-handlers [(world-handler "app.foundation.host:with-host" :touches [http file]
                      :wraps ["doeff_core_effects.os_file:os-file-handler"])])
-(defservice billing "請求" {:layers [core entry]})
+(defservice billing "Billing" {:layers [core entry]})
 "#;
     std::fs::write(dir.path().join("architecture.hy"), architecture).unwrap();
     let config = format!(
@@ -51,7 +51,7 @@ fn repo() -> tempfile::TempDir {
                    (defn fetch [] (httpx.get \"http://x\"))\n(defk run [body] (with-handlers [os-file-handler] body))\n",
         ),
         ("app/billing/entry/fake_charge.hy", tags("billing", "entry") + "(defhandler fake-charge [] (Charge [e k] (k 1)))\n"),
-        // 層の置き場の外の file(許可名簿の規則は当たる — judge_unplaced_world)。
+        // A file outside the layer locations (the allow-list rule hits — judge_unplaced_world).
         ("app/tools/probe.hy", "(import socket)\n(import doeff_core_effects.os_file [os-file-handler])\n(defn dial [] (socket.socket))\n(defk wrap [body] (with-handlers [os-file-handler] body))\n".to_string()),
     ];
     for (rel, text) in files {
@@ -65,7 +65,7 @@ fn repo() -> tempfile::TempDir {
 const FILES: [&str; 5] =
     ["app/foundation/host.hy", "app/foundation/sockets.hy", "app/billing/entry/main.hy", "app/billing/entry/fake_charge.hy", "app/tools/probe.hy"];
 
-/// binary を root で走らせ(path を名指せば名指しの実行)、3 規則の当たりの鍵を並べる。
+/// Runs the binary at root (naming a path makes it a named run) and lists the keys of the hits of the 3 rules.
 fn hit_keys(root: &Path, cache: &Path, paths: &[&str]) -> Vec<String> {
     let output = Command::new(env!("CARGO_BIN_EXE_doeff-linter"))
         .args(["--enable", RULES, "--output-format", "editor-json", "--no-log", "--"])
@@ -77,13 +77,13 @@ fn hit_keys(root: &Path, cache: &Path, paths: &[&str]) -> Vec<String> {
         .unwrap();
     let stdout = String::from_utf8_lossy(&output.stdout);
     let report: Value = serde_json::from_str(&stdout)
-        .unwrap_or_else(|e| panic!("JSON でない({}): {}\n{}", e, stdout, String::from_utf8_lossy(&output.stderr)));
+        .unwrap_or_else(|e| panic!("not JSON ({}): {}\n{}", e, stdout, String::from_utf8_lossy(&output.stderr)));
     let mut keys: Vec<String> = report["violations"].as_array().unwrap().iter().map(|v| v["key"].as_str().unwrap_or("").to_string()).collect();
     keys.sort();
     keys
 }
 
-/// cache の Hy の索引(`hy-index.bin.d/` の塊)に綴りが残る file(FILES のうち)。
+/// Files (among FILES) whose spelling remains in the cache's Hy index (chunks of `hy-index.bin.d/`).
 fn indexed_files(cache: &Path) -> Vec<&'static str> {
     let shards: Vec<Vec<u8>> = walkdir::WalkDir::new(cache)
         .into_iter()
@@ -99,16 +99,16 @@ fn a_focused_run_answers_like_the_whole_run_for_that_file() {
     let dir = repo();
     let cache = tempfile::TempDir::new().unwrap();
     let whole = hit_keys(dir.path(), cache.path(), &[]);
-    // 3 規則がどれも当たる repo であること(当たりが無いと比べが空で通る)。
+    // The repo must be one where all 3 rules hit (if there are no hits the comparison passes vacuously empty).
     for rule in ["::DOEFF106::", "::DOEFF131::", "::DOEFF108"] {
-        assert!(whole.iter().any(|k| k.contains(rule)), "{} が当たらない: {:?}", rule, whole);
+        assert!(whole.iter().any(|k| k.contains(rule)), "{} does not hit: {:?}", rule, whole);
     }
     for rel in FILES {
         let alone = tempfile::TempDir::new().unwrap();
         let expected: Vec<String> = whole.iter().filter(|k| k.starts_with(&format!("{}::", rel))).cloned().collect();
-        assert_eq!(hit_keys(dir.path(), alone.path(), &[rel]), expected, "{} の名指しの実行", rel);
-        // cache の温まった後の名指しの実行も同じ答え。
-        assert_eq!(hit_keys(dir.path(), cache.path(), &[rel]), expected, "{} の名指しの実行(cache あり)", rel);
+        assert_eq!(hit_keys(dir.path(), alone.path(), &[rel]), expected, "named run of {}", rel);
+        // The named run after the cache has warmed gives the same answer.
+        assert_eq!(hit_keys(dir.path(), cache.path(), &[rel]), expected, "named run of {} (with cache)", rel);
     }
 }
 
@@ -118,12 +118,12 @@ fn a_focused_run_of_file_local_rules_reads_only_the_named_file() {
     let cache = tempfile::TempDir::new().unwrap();
     hit_keys(dir.path(), cache.path(), &["app/billing/entry/main.hy"]);
     let others: Vec<&str> = indexed_files(cache.path()).into_iter().filter(|rel| *rel != "app/billing/entry/main.hy").collect();
-    assert!(others.is_empty(), "名指しの外の file を索引に読んだ: {:?}", others);
+    assert!(others.is_empty(), "files outside the named ones were read into the index: {:?}", others);
 }
 
 #[test]
 fn a_focused_run_keeps_the_whole_index_cache() {
-    // 名指しの実行は、全体の実行が置いた Hy の索引の cache から名指しの外の file を消さない(消えると次の全体の実行が読み直す)。
+    // A named run does not remove files outside the named ones from the Hy index cache placed by a whole run (if removed, the next whole run re-reads them).
     let dir = repo();
     let cache = tempfile::TempDir::new().unwrap();
     hit_keys(dir.path(), cache.path(), &[]);

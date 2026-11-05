@@ -1,7 +1,7 @@
-//! Jev の規則(DOEFF201・202・205)の問いに入れる線引き(architecture.hy の :semantic-lines)のテスト。
-//! 宣言は tests/fixtures/semantic_lines/architecture.hy(線引き 5 つと、線引きごとの鳴る例・鳴らない例 1 つずつ = 計 10)。
-//! 自動のテストは Jev の宛先を手元の偽の HTTP(127.0.0.1)にし、問いに線引きの文と例が入る事と、問いを組んで答えを受けるまでを確かめる。
-//! 本物の Jev に 10 例を 1 回だけ問うテストは #[ignore](手で走らせる — 下の ask_jev_the_line_examples_once)。
+//! Tests for the lines drawn into the Jev rules' (DOEFF201, 202, 205) questions (architecture.hy :semantic-lines).
+//! The declaration is tests/fixtures/semantic_lines/architecture.hy (5 lines, with one firing example and one silent example per line = 10 in total).
+//! The automated tests point the Jev destination at a local fake HTTP server (127.0.0.1), and check that the question contains the line text and examples, and that a question is built and an answer received.
+//! The test that asks the real Jev about the 10 examples once is #[ignore] (run by hand — ask_jev_the_line_examples_once below).
 
 use doeff_linter::project::architecture::Architecture;
 use doeff_linter::project::semantic::{LineExample, SemanticLine};
@@ -14,33 +14,33 @@ use std::path::Path;
 use std::process::{Command, Stdio};
 use std::sync::{Arc, Mutex};
 
-/// テストの宣言(線引き 5 つ・例 10・層 core と protocol)。
+/// The test declaration (5 lines, 10 examples, layers core and protocol).
 const ARCHITECTURE: &str = include_str!("fixtures/semantic_lines/architecture.hy");
 
-/// テストの宣言を読んだ物。
+/// The parsed test declaration.
 fn declared() -> Architecture {
-    Architecture::parse(ARCHITECTURE, Path::new("architecture.hy")).unwrap_or_else(|problems| panic!("テストの宣言が読めない: {:?}", problems))
+    Architecture::parse(ARCHITECTURE, Path::new("architecture.hy")).unwrap_or_else(|problems| panic!("cannot read the test declaration: {:?}", problems))
 }
 
-/// 偽の Jev(TypeSafe の direct の形)— 受けた問いの本文を全部控え、線引きに従って答える: 問われた定義の source が問いの線引きの
-/// 鳴る例なら違反の側(noul 0.93・Choice は mixed 0.97)、鳴らない例なら違反でない側、どちらでもなければ閾値の下(noul 0.3・judgment-only)。
-/// 較正の見張りの例(同梱の data/semantic_calibration.json)は名で幅の内に答える。
+/// A fake Jev (TypeSafe direct form) — records every question body it receives and answers according to the lines: if the asked definition's source is a firing
+/// example of the question's line, the violating side (noul 0.93, Choice mixed 0.97); if a silent example, the non-violating side; otherwise below the threshold (noul 0.3, judgment-only).
+/// The calibration watch examples (bundled data/semantic_calibration.json) are answered within the range by name.
 struct FakeJev {
     url: String,
     bodies: Arc<Mutex<Vec<Value>>>,
 }
 
-/// 問いの instructions の部品(1 つの鍵の object の列)から、鍵 key の中身を引く。
+/// From the question's instructions parts (a list of single-key objects), look up the content of key `key`.
 fn part<'a>(question: &'a Value, key: &str) -> &'a Value {
     question["instructions"].as_array().and_then(|parts| parts.iter().find_map(|p| p.get(key))).unwrap_or(&Value::Null)
 }
 
-/// 問いの instructions の部品の鍵(送った順)。
+/// The keys of the question's instructions parts (in the order sent).
 fn part_keys(question: &Value) -> Vec<String> {
     question["instructions"].as_array().map(|parts| parts.iter().filter_map(|p| p.as_object()?.keys().next().cloned()).collect()).unwrap_or_default()
 }
 
-/// 問われた定義の source が、問いの線引きの鳴る例か(Some(true))鳴らない例か(Some(false))どちらでもないか(None)。
+/// Whether the asked definition's source is a firing example of the question's line (Some(true)), a silent example (Some(false)), or neither (None).
 fn line_verdict(body: &Value) -> Option<bool> {
     let source = body["state"]["definition"]["source"].as_str()?;
     let lines = part(&body["questions"]["q"], "lines").as_array()?;
@@ -56,7 +56,7 @@ fn line_verdict(body: &Value) -> Option<bool> {
     })
 }
 
-/// 偽の Jev の答えの本文(問いの種類と線引きの判定から)。
+/// The body of the fake Jev's answer (from the kind of question and the line's judgment).
 fn fake_answer(body: &Value) -> Value {
     let name = body["state"]["definition"]["name"].as_str().unwrap_or("");
     let verdict = line_verdict(body);
@@ -79,7 +79,7 @@ fn fake_answer(body: &Value) -> Value {
     json!({"answers": {"q": {"noul": p}}, "usage": {"input_tokens": 100}, "model": "jev-test-1"})
 }
 
-/// 偽の Jev を立てる。
+/// Stand up the fake Jev.
 fn fake_jev() -> FakeJev {
     let listener = TcpListener::bind("127.0.0.1:0").unwrap();
     let url = format!("http://{}/v1/systemone", listener.local_addr().unwrap());
@@ -110,17 +110,17 @@ fn fake_jev() -> FakeJev {
     FakeJev { url, bodies }
 }
 
-/// 例の code の列。
+/// The list of example code.
 fn codes(examples: &[LineExample]) -> Vec<String> {
     examples.iter().map(|example| example.code.clone()).collect()
 }
 
-/// 線引きの鳴る例・鳴らない例の code(宣言の順)。
+/// The code of each line's firing and silent examples (in declaration order).
 fn examples(lines: &[SemanticLine]) -> (Vec<String>, Vec<String>) {
     (lines.iter().flat_map(|l| codes(&l.fires)).collect(), lines.iter().flat_map(|l| codes(&l.silent)).collect())
 }
 
-/// 例を問いに載る形に(why を書いた例は `{"code", "why"}`・書かない例は `{"code"}`)。
+/// Turn the examples into the form carried in the question (an example with why is `{"code", "why"}`; one without is `{"code"}`).
 fn wired(examples: &[LineExample]) -> Value {
     Value::Array(
         examples
@@ -133,7 +133,7 @@ fn wired(examples: &[LineExample]) -> Value {
     )
 }
 
-/// テストの repo — 宣言の architecture.hy と、線引き 1 の例を protocol の file・残りの例を core の file に 1 定義ずつ置く(定義の本文 = 例の code)。
+/// The test repo — the declaration's architecture.hy, with line 1's examples placed in a protocol file and the remaining examples in a core file, one definition each (definition body = the example's code).
 fn repo() -> tempfile::TempDir {
     let dir = tempfile::TempDir::new().unwrap();
     std::fs::write(dir.path().join("architecture.hy"), ARCHITECTURE).unwrap();
@@ -162,7 +162,7 @@ fn repo() -> tempfile::TempDir {
     dir
 }
 
-/// editor-json で走らせる(Jev の宛先は偽物・HOME は一時の dir — 本物の ~/.config/jev を読まない)。
+/// Run with editor-json (the Jev destination is fake, and HOME is a temp dir — the real ~/.config/jev is not read).
 fn run(root: &Path, jev: &str) -> (i32, Value, String) {
     let home = tempfile::TempDir::new().unwrap();
     let output = Command::new(env!("CARGO_BIN_EXE_doeff-linter"))
@@ -182,7 +182,7 @@ fn run(root: &Path, jev: &str) -> (i32, Value, String) {
     (output.status.code().unwrap_or(-1), value, stderr)
 }
 
-/// 問いの本文がどの規則の問いか(Choice の mixed = DOEFF205・noul は問いの文で 201 と 202 を分ける)。
+/// Which rule's question the question body is (Choice's mixed = DOEFF205; for noul, the question text separates 201 from 202).
 fn rule_of(body: &Value) -> &'static str {
     let q = &body["questions"]["q"];
     if q["criteria"].get("mixed").is_some() {
@@ -194,32 +194,32 @@ fn rule_of(body: &Value) -> &'static str {
     }
 }
 
-/// 規則 rule の違反を定義の名(mangle した綴り)で引く。
+/// Look up a violation of rule `rule` by definition name (mangled spelling).
 fn finding<'a>(report: &'a Value, rule: &str, mangled: &str) -> Option<&'a Value> {
     report["violations"].as_array().unwrap().iter().find(|v| v["rule"] == rule && v["key"].as_str().unwrap().ends_with(mangled))
 }
 
-/// 線引きごとの鳴る例・鳴らない例(計 10)を問いの JSON に入れ、偽の Jev の答えを受けて違反にする。
-/// 問いには、その規則の線引きの名・文(architecture.hy の :text のまま)・鳴る例・鳴らない例(:fires・:silent の code と why)が入る —
-/// 線引き 1 と 5 は DOEFF201、2 と 3 は DOEFF202、4 と 5 は DOEFF205。偽の Jev は問いの例に照らして答えるので、線引きの文か例を問いから
-/// 外すと鳴る例の違反が消えてこのテストが落ちる。
-/// #1995: 偽の Jev が受けた本文(実際に送った問い)の instructions は宣言の順の列 — 問いの文 → 一般の例・注 → 線引きの読み方 → 線引き。
-/// 鍵の object に戻すと部品の順が消えてこのテストが落ちる。
+/// Put each line's firing and silent examples (10 in total) into the question JSON, receive the fake Jev's answer, and turn it into violations.
+/// The question contains the rule's line name, text (as in architecture.hy :text), firing examples, and silent examples (code and why of :fires and :silent) —
+/// lines 1 and 5 are DOEFF201, 2 and 3 are DOEFF202, and 4 and 5 are DOEFF205. The fake Jev answers by checking the question's examples, so if the line text or examples are
+/// dropped from the question, the firing examples' violations disappear and this test fails.
+/// #1995: the instructions of the body the fake Jev received (the question actually sent) are a list in declaration order — question text -> general examples and notes -> how to read the lines -> lines.
+/// Reverting to a keyed object loses the part order and this test fails.
 #[test]
 fn line_examples_reach_the_questions_and_the_answers_come_back() {
     let arch = declared();
-    assert_eq!(arch.semantic_lines.len(), 5, "線引きは 5 つ");
-    assert!(arch.semantic_lines.iter().all(|l| l.fires.len() == 1 && l.silent.len() == 1), "線引きごとに鳴る例・鳴らない例 1 つずつ");
+    assert_eq!(arch.semantic_lines.len(), 5, "there are 5 lines");
+    assert!(arch.semantic_lines.iter().all(|l| l.fires.len() == 1 && l.silent.len() == 1), "one firing example and one silent example per line");
     let with_why: Vec<&str> = arch.semantic_lines.iter().filter(|l| l.fires.iter().chain(&l.silent).any(|e| e.why.is_some())).map(|l| l.name.as_str()).collect();
-    assert_eq!(with_why, ["線引き 4"], "why を書いた例は線引き 4 の 2 つ");
+    assert_eq!(with_why, ["Line 4"], "the examples with why are the 2 of line 4");
     let dir = repo();
     let jev = fake_jev();
     let (code, report, stderr) = run(dir.path(), &jev.url);
-    assert_eq!(code, 0, "Jev の違反は error にしない: {}", stderr);
+    assert_eq!(code, 0, "Jev violations are not errors: {}", stderr);
     let semantic = &report["semantic"];
     assert_eq!(semantic["calibration"], "ok", "{} {}", semantic, report["errors"]);
     assert_eq!(semantic["unjudged"], 0, "{}", semantic);
-    // 問う定義 = protocol の 2(DOEFF201)+ core の 8(DOEFF202)+ core の役 judgment の 8(DOEFF205)。
+    // Asked definitions = 2 in protocol (DOEFF201) + 8 in core (DOEFF202) + 8 of role judgment in core (DOEFF205).
     assert_eq!(semantic["judged"], 18, "{}", semantic);
     let bodies = jev.bodies.lock().unwrap().clone();
     let expected = |rule: &str| -> Vec<Value> {
@@ -235,28 +235,28 @@ fn line_examples_reach_the_questions_and_the_answers_come_back() {
         ("DOEFF205", vec!["question", "note", "lines_note", "lines"]),
     ] {
         let asked: Vec<&Value> = bodies.iter().filter(|b| rule_of(b) == rule).collect();
-        assert!(!asked.is_empty(), "{} の問いが無い", rule);
+        assert!(!asked.is_empty(), "no question for {}", rule);
         for body in asked {
             let question = &body["questions"]["q"];
-            assert_eq!(part_keys(question), order, "{} の問いの部品の順(送った本文)", rule);
-            assert_eq!(part(question, "lines"), &Value::Array(expected(rule)), "{} の問いの線引き", rule);
-            assert!(part(question, "lines_note").as_str().is_some_and(|note| note.contains("violating_examples")), "{} の問いに線引きの読み方が無い", rule);
+            assert_eq!(part_keys(question), order, "part order of the {} question (the body sent)", rule);
+            assert_eq!(part(question, "lines"), &Value::Array(expected(rule)), "lines of the {} question", rule);
+            assert!(part(question, "lines_note").as_str().is_some_and(|note| note.contains("violating_examples")), "the {} question has no note on how to read the lines", rule);
         }
     }
-    // why を書いた例は、送った問いに code と組で載る(線引き 4 の鳴らない例 join-chat)。
+    // An example with why is carried together with its code in the question sent (line 4's silent example join-chat).
     let join_chat_why = bodies
         .iter()
         .filter(|b| rule_of(b) == "DOEFF205")
         .find_map(|b| part(&b["questions"]["q"], "lines").as_array()?.iter().find_map(|l| l["complying_examples"][0]["why"].as_str().filter(|w| w.contains("join-problem"))))
         .map(str::to_string);
-    assert_eq!(join_chat_why.as_deref(), Some("形の確認は join-problem に任せ、その答えで断りの値を返すだけ。形の確認が無いので混ざらない。"));
+    assert_eq!(join_chat_why.as_deref(), Some("The shape check is left to join-problem, and this only returns a refusal value from its answer. There is no shape check, so nothing is mixed."));
     let names: Vec<(&str, &str)> = arch
         .semantic_lines
         .iter()
         .map(|line| (line.name.as_str(), line.rules.first().map(|q| q.id()).unwrap_or_default()))
         .collect();
-    assert_eq!(names, [("線引き 1", "DOEFF201"), ("線引き 2", "DOEFF202"), ("線引き 3", "DOEFF202"), ("線引き 4", "DOEFF205"), ("線引き 5", "DOEFF205")]);
-    // 線引きごとの鳴る例は warning、鳴らない例は出ない(10 例)。
+    assert_eq!(names, [("Line 1", "DOEFF201"), ("Line 2", "DOEFF202"), ("Line 3", "DOEFF202"), ("Line 4", "DOEFF205"), ("Line 5", "DOEFF205")]);
+    // Each line's firing example is a warning, and silent examples do not appear (10 examples).
     for (rule, fires, silent) in [
         ("DOEFF201", "access_of_held", "send_task"),
         ("DOEFF202", "tag_families_of", "beat_status"),
@@ -264,20 +264,20 @@ fn line_examples_reach_the_questions_and_the_answers_come_back() {
         ("DOEFF205", "classify_message", "join_chat"),
         ("DOEFF205", "progress_items", "list_limit_of"),
     ] {
-        let found = finding(&report, rule, fires).unwrap_or_else(|| panic!("{} の鳴る例 {} が鳴らない: {}", rule, fires, report["violations"]));
+        let found = finding(&report, rule, fires).unwrap_or_else(|| panic!("{} firing example {} does not fire: {}", rule, fires, report["violations"]));
         assert_eq!(found["severity"], "warning");
         assert_eq!(found["source"], "jev");
-        assert!(finding(&report, rule, silent).is_none(), "{} の鳴らない例 {} が鳴った", rule, silent);
+        assert!(finding(&report, rule, silent).is_none(), "{} silent example {} fired", rule, silent);
     }
     let jev_findings = report["violations"].as_array().unwrap().iter().filter(|v| v["source"] == "jev").count();
-    assert_eq!(jev_findings, 5, "鳴るのは鳴る例 5 つだけ: {}", report["violations"]);
+    assert_eq!(jev_findings, 5, "only the 5 firing examples fire: {}", report["violations"]);
 }
 
-/// 本物の Jev に 10 例を 1 回だけ問い、例ごとの確率と token 数を 1 行 1 例の JSON で出す(手で走らせる:
-/// `SEMANTIC_LINES_DEFINITIONS=<json> SEMANTIC_LINES_PROXY_URL=<url> cargo test --test semantic_lines -- --ignored --nocapture`)。
-/// 問う定義 = env SEMANTIC_LINES_DEFINITIONS の JSON(`[{"name", "rule", "path", "expect", "source"} …]` — 本物の定義の source。linter と同じく
-/// :tags を消して `source_limit` 字で切る)。線引きと層の説明はこのテストの architecture.hy の物。宛先 = Jev の呼び出しを覚える proxy
-/// (env SEMANTIC_LINES_PROXY_URL — proxy はキーを問わない)。較正の見張りは問わない(問うのは 10 例だけ)。
+/// Ask the real Jev about the 10 examples once, and output per-example probability and token count as one JSON line per example (run by hand:
+/// `SEMANTIC_LINES_DEFINITIONS=<json> SEMANTIC_LINES_PROXY_URL=<url> cargo test --test semantic_lines -- --ignored --nocapture`).
+/// Asked definitions = JSON at the path in env SEMANTIC_LINES_DEFINITIONS (`[{"name", "rule", "path", "expect", "source"} …]` — sources of real definitions. As the linter does,
+/// :tags are removed and the source is cut at `source_limit` characters). The lines and layer descriptions are those in this test's architecture.hy. Destination = a proxy that records Jev calls
+/// (env SEMANTIC_LINES_PROXY_URL — the proxy does not check keys). The calibration watch is not asked (only the 10 examples are asked).
 #[test]
 #[ignore]
 fn ask_jev_the_line_examples_once() {
@@ -285,8 +285,8 @@ fn ask_jev_the_line_examples_once() {
         .ok()
         .and_then(|path| std::fs::read_to_string(path).ok())
         .and_then(|text| serde_json::from_str(&text).ok())
-        .expect("SEMANTIC_LINES_DEFINITIONS に問う定義の JSON の path を渡す");
-    let url = std::env::var("SEMANTIC_LINES_PROXY_URL").expect("SEMANTIC_LINES_PROXY_URL に proxy の URL を渡す");
+        .expect("pass the path of the JSON of asked definitions in SEMANTIC_LINES_DEFINITIONS");
+    let url = std::env::var("SEMANTIC_LINES_PROXY_URL").expect("pass the proxy URL in SEMANTIC_LINES_PROXY_URL");
     let arch = declared();
     let layers = arch.layers_section();
     let bare = semantic::SemanticSettings::validate(&semantic::SemanticSection::default(), &mut |_, _| None, &mut Vec::new());
@@ -297,15 +297,15 @@ fn ask_jev_the_line_examples_once() {
     };
     let target = semantic::target_for_repo(Some(&proxy));
     let model = target.model.clone();
-    let gateway = semantic::HttpGateway::new(target, std::time::Duration::from_secs(120)).expect("proxy へ問う client を作れない");
+    let gateway = semantic::HttpGateway::new(target, std::time::Duration::from_secs(120)).expect("cannot create the client that asks the proxy");
     let at = doeff_indexer::hy_index::Position { line: 0, character: 0 };
     let range = doeff_indexer::hy_index::Range { start: at, end: at };
     let layer_of = |name: &str| {
-        let index = layers.order.iter().position(|l| l == name).expect("層が宣言に無い");
+        let index = layers.order.iter().position(|l| l == name).expect("layer is not in the declaration");
         (doeff_linter::project::layers::LayerId(index), layers.describe[name].clone())
     };
     let ask = |definition: &Value| -> Value {
-        let text = |key: &str| definition[key].as_str().unwrap_or_else(|| panic!("定義の {} が無い: {}", key, definition)).to_string();
+        let text = |key: &str| definition[key].as_str().unwrap_or_else(|| panic!("definition {} is missing: {}", key, definition)).to_string();
         let (name, rule, path, source) = (text("name"), text("rule"), text("path"), text("source"));
         let item = match rule.as_str() {
             "DOEFF205" => {
@@ -318,7 +318,7 @@ fn ask_jev_the_line_examples_once() {
                 let (layer, description) = layer_of(layer_name);
                 semantic::item(&settings, &model, question, &path, Path::new(&path), &name, "defk", range, &source, layer, layer_name, &description)
             }
-            other => panic!("線引きを入れる問いの規則でない: {}", other),
+            other => panic!("not a rule whose question carries lines: {}", other),
         };
         match gateway.ask(&item.state, &item.question_json, semantic::Freshness::Remembered, &semantic::caller_of(item.question)) {
             Ok(asked) => json!({
@@ -331,7 +331,7 @@ fn ask_jev_the_line_examples_once() {
             Err(reason) => json!({"name": name, "rule": rule, "error": reason}),
         }
     };
-    // 10 例を並べて問う(1 件ずつ順に待たない)。出す順は渡した順。
+    // Ask all 10 examples together (not waiting for each in turn). Output order is the order passed.
     let answers: Vec<Value> = definitions.par_iter().map(ask).collect();
     for answer in answers {
         println!("{}", answer);

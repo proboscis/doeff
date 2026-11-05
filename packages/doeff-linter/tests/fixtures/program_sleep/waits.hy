@@ -1,7 +1,7 @@
-;;; DOEFF210(Hy の program は壁の時計で眠らない)の検体 — program(defk・defp)の中の time.sleep / asyncio.sleep を鳴らし、
-;;; handler の実装・時間の効果・0 秒の譲り・program でない定義は鳴らさない。
-;;; 行末の「; 鳴る」が鳴るべき行の印: tests/program_sleep.rs が、印の行の集合と linter の当たりの行の集合を突き合わせる
-;;; (規則を外す・除外を外す・除外を足すと、どれも集合が合わなくなって赤)。この file は実行しない(読むだけの検体)。
+;;; Fixture for DOEFF210 (Hy programs do not sleep on the wall clock) — fires on time.sleep / asyncio.sleep inside a program (defk, defp),
+;;; and does not fire on handler implementations, time effects, 0-second yields, or definitions that are not programs.
+;;; A trailing "; fires" at the end of a line marks a line that should fire: tests/program_sleep.rs compares the set of marked lines with the set of linter hit lines
+;;; (removing the rule, removing an exclusion, or adding an exclusion each makes the sets differ and goes red). This file is never run (read-only fixture).
 (require doeff-hy.macros [defk defp deff defhandler <- val var])
 (import asyncio)
 (import time)
@@ -12,73 +12,73 @@
 
 
 ;; ---------------------------------------------------------------------------
-;; 鳴る: program が handler を迂回して壁の時計で待つ
+;; Fires: a program waits on the wall clock, bypassing the handler
 
 (defk retry-after-a-pause [attempt]
   {:pre [(: attempt int)] :post [(: % None)] :tags {:context "sample" :role "program"}}
-  "再試行の間を壁の時計で待つ program。"
-  (time.sleep 1.0)  ; 鳴る
+  "A program that waits between retries on the wall clock."
+  (time.sleep 1.0)  ; fires
   None)
 
 
 (defk poll-until-ready [probe]
   {:pre [(callable probe)] :post [(: % bool)] :tags {:context "sample" :role "program"}}
-  "asyncio の眠りを Await に包んでも、待つのは壁の時計。"
+  "Even if wrapped in Await, an asyncio sleep waits on the wall clock."
   (var ready False)
   (while (not ready)
-    (<- (Await (asyncio.sleep 0.5)))  ; 鳴る
+    (<- (Await (asyncio.sleep 0.5)))  ; fires
     (:= ready (probe)))
   ready)
 
 
 (defk waits-through-aliases []
   {:pre [] :post [(: % None)] :tags {:context "sample" :role "program"}}
-  "import の別名と、名を並べた import で束ねた名。"
-  (clock.sleep 0.2)  ; 鳴る
-  (<- (Await (rest 0.2)))  ; 鳴る
+  "Names bound by an import alias and by an import that lists names."
+  (clock.sleep 0.2)  ; fires
+  (<- (Await (rest 0.2)))  ; fires
   None)
 
 
 (defp settle-then-go
   {:post [(: % None)] :tags {:context "sample" :role "program"}}
-  (time.sleep 0.3)  ; 鳴る
+  (time.sleep 0.3)  ; fires
   None)
 
 
 (defk sleeps-inside-a-nested-callable [run-now]
   {:pre [(callable run-now)] :post [(: % None)] :tags {:context "sample" :role "program"}}
-  "program の本体の中の fn は、字面で program の内側。"
-  (run-now (fn [] (time.sleep 0.1)))  ; 鳴る
+  "An fn inside a program body is, literally, inside the program."
+  (run-now (fn [] (time.sleep 0.1)))  ; fires
   None)
 
 
 (defk program-without-tags [seconds]
   {:pre [(: seconds float)] :post [(: % None)]}
-  "役を名乗らない定義は program(汎用の I/O の役は、名乗った定義だけ)。"
-  (time.sleep seconds)  ; 鳴る
+  "A definition that does not declare a role is a program (the general I/O role belongs only to definitions that declare it)."
+  (time.sleep seconds)  ; fires
   None)
 
 
 ;; ---------------------------------------------------------------------------
-;; 鳴らない: 時間の効果で待つ program
+;; Does not fire: a program that waits through a time effect
 
 (defk waits-by-the-time-effect [seconds]
   {:pre [(: seconds float)] :post [(: % None)] :tags {:context "sample" :role "program"}}
-  "1 秒が何であるかは、呼び手が置く時間の handler が決める。"
+  "What one second means is decided by the time handler the caller installs."
   (<- (Delay seconds))
   None)
 
 
 (defk yields-once []
   {:pre [] :post [(: % None)] :tags {:context "sample" :role "program"}}
-  "秒が literal の 0 の呼びは、時間を待たずに 1 度譲るだけ。"
+  "A call whose seconds is the literal 0 only yields once without waiting any time."
   (<- (Await (asyncio.sleep 0)))
   (time.sleep 0)
   None)
 
 
 ;; ---------------------------------------------------------------------------
-;; 鳴らない: handler の実装(壁の時計で待つのは handler の責務)
+;; Does not fire: handler implementations (waiting on the wall clock is the handler's responsibility)
 
 (defhandler wall-clock-time
   (DelayEffect [seconds]
@@ -87,8 +87,8 @@
 
 
 (defk raw-time-handler [effect k]
-  {:pre [] :post [(: % "handler の答え")] :tags {:context "sample" :role "protocol"}}
-  "(effect k) を受ける定義は handler の実装。"
+  {:pre [] :post [(: % "handler's answer")] :tags {:context "sample" :role "protocol"}}
+  "A definition that takes (effect k) is a handler implementation."
   (time.sleep 0.1)
   (<- answer (k None))
   answer)
@@ -96,24 +96,24 @@
 
 (defk settle-the-terminal [pane]
   {:pre [(: pane str)] :post [(: % None)] :tags {:context "sample" :role "foundation"}}
-  "handler の節からだけ呼ばれる helper — 本物の端末が貼り付けを受け終える実時間を待つ。汎用の I/O の役を自分の辞書で名乗る。"
+  "A helper called only from handler clauses — waits the real time a real terminal needs to finish receiving a paste. Declares the general I/O role in its own dict."
   (time.sleep 1.0)
   None)
 
 
 ;; ---------------------------------------------------------------------------
-;; 鳴らない: program でない定義・読まない form
+;; Does not fire: definitions that are not programs, and forms that are not read
 
-(deff blocking-callback [seconds]  ; defk にできない: threading.Thread が別の thread で呼ぶ callback
+(deff blocking-callback [seconds]  ; defk にできない: threading.Thread calls it as a callback on another thread
   {:pre [(: seconds float)] :post [(: % None)] :tags {:context "sample" :role "entry"}}
-  "素の callable は効果を出せない — 汎用の I/O の役を名乗らなくても program に数えない(この deff の是非は DOEFF111・203 が持つ)。"
+  "A plain callable cannot emit effects — it is not counted as a program even without declaring the general I/O role (whether this deff is justified is for DOEFF111 and 203)."
   (time.sleep seconds)
   None)
 
 
 (defk mentions-a-sleep-without-calling-it []
   {:pre [] :post [(: % str)] :tags {:context "sample" :role "judgment"}}
-  ;; (time.sleep 9) — 註の中
+  ;; (time.sleep 9) — inside a comment
   #_(time.sleep 9)
   (val quoted '(time.sleep 9))
   "(time.sleep 9)")

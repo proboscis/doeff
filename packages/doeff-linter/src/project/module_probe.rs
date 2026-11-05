@@ -1,18 +1,18 @@
-//! module の綴りから file を、tree を歩かずに探る(1 file の実行)。
+//! Find a file from a module spelling without walking the tree (single-file run).
 //!
-//! 1 file の実行が引く module は、書いた file が名指す数十個だけ。その file を探すのに repo の tree を全部歩くと(agora-controllers で約 1200 の dir)、
-//! 冷えた作業木では dir ごとに 1 回ずつ disk を読む(混んだ Pod で `iowait` が 12〜25% の時、1 回の歩きで 5〜11 秒かかった)。module の綴り `a.b.c` は
-//! 根からの path `a/b/c.<拡張子>` で、path の各段は dir か file の 1 つだけなので、根から段ごとに探れば足りる(1 module 数回の stat)。
+//! A single-file run looks up only a few dozen modules named by the written file. Walking the whole repo tree to find those files (about 1200 dirs in agora-controllers)
+//! reads the disk once per dir on a cold worktree (with `iowait` at 12-25% on a busy Pod, one walk took 5 to 11 seconds). A module spelling `a.b.c` is
+//! the path `a/b/c.<extension>` from the root, and each step of the path is exactly one dir or file, so probing step by step from the root is enough (a few stats per module).
 //!
-//! 探す範囲は、歩く物(`hy_index::collect_hy_files`・`walk_files`)と同じ — 根の下の通常の file(symlink は file でも dir でも辿らない)で、
-//! 歩く物が降りない dir の名(`skipped_dirs`)の下は探さない。module の綴りは `names::module_of`(最後の拡張子を外して `/` を `.` にする)の逆で、
-//! 段の名に `.` が入る path(`v1.2/x.hy` → `v1.2.x`)も、`.` で切る位置を全部試して見つける。
+//! The probed range is the same as that of the walkers (`hy_index::collect_hy_files`, `walk_files`) — regular files under the root (symlinks are followed neither as files nor as dirs),
+//! and nothing is probed under dir names the walkers do not descend into (`skipped_dirs`). A module spelling is the inverse of `names::module_of` (strip the last extension and turn `/` into `.`),
+//! and a path whose step name contains `.` (`v1.2/x.hy` -> `v1.2.x`) is also found by trying every position at which to cut on `.`.
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 
-/// module の綴り → その module の file(根からの path と絶対 path — path の順)。同じ綴りに当たる file(`a/b.hy` と `a/b.hyk`)は全部。
+/// Module spelling -> the module's files (path from the root and absolute path — in path order). All files matching the same spelling (`a/b.hy` and `a/b.hyk`).
 pub struct ModuleProbe {
     root: PathBuf,
     extensions: &'static [&'static str],
@@ -25,24 +25,24 @@ impl ModuleProbe {
         ModuleProbe { root: root.to_path_buf(), extensions, skipped_dirs, memo: Mutex::new(HashMap::new()) }
     }
 
-    /// module の file(同じ module は 2 度探さない)。無ければ空。
+    /// The module's files (the same module is never probed twice). Empty if none.
     pub fn files(&self, module: &str) -> Arc<Vec<(String, PathBuf)>> {
-        if let Some(found) = self.memo.lock().expect("module の探りの memo").get(module) {
+        if let Some(found) = self.memo.lock().expect("module probe memo").get(module) {
             return Arc::clone(found);
         }
         let found = Arc::new(self.probe(module));
-        self.memo.lock().expect("module の探りの memo").insert(module.to_string(), Arc::clone(&found));
+        self.memo.lock().expect("module probe memo").insert(module.to_string(), Arc::clone(&found));
         found
     }
 
-    /// module に当たる file が在るか。
+    /// Whether a file matching the module exists.
     pub fn contains(&self, module: &str) -> bool {
         !self.files(module).is_empty()
     }
 
     fn probe(&self, module: &str) -> Vec<(String, PathBuf)> {
         let parts: Vec<&str> = module.split('.').collect();
-        // 綴りは file の中の記号なので、path を外へ逃がす形(空の段・区切り・NUL)は探さない。
+        // The spelling is a symbol in a file, so shapes that would escape the path (empty step, separator, NUL) are not probed.
         if parts.iter().any(|part| part.is_empty() || part.contains(['/', '\\', '\0'])) {
             return Vec::new();
         }
@@ -53,7 +53,7 @@ impl ModuleProbe {
         found
     }
 
-    /// `dir`(根からの綴り `rel`)の下で、残りの段 `parts` に当たる file を探す。`.` で切る位置は全部試す(段の名に `.` が入る path のため)。
+    /// Under `dir` (spelling from the root `rel`), find files matching the remaining steps `parts`. Every position to cut on `.` is tried (for paths whose step name contains `.`).
     fn descend(&self, dir: &Path, rel: &str, parts: &[&str], out: &mut Vec<(String, PathBuf)>) {
         for take in 1..=parts.len() {
             let name = parts[..take].join(".");
@@ -93,7 +93,7 @@ mod tests {
         probe.files(module).iter().map(|(rel, _)| rel.clone()).collect()
     }
 
-    /// 歩く物(`hy_index::collect_hy_files` が module_of した綴りの表)と同じ答え。
+    /// The same answer as the walkers (the table of spellings that `hy_index::collect_hy_files` passed through module_of).
     #[test]
     fn it_finds_what_the_walk_finds() {
         let dir = tree(&["app/core/a.hy", "app/core/a.hyk", "app/core/b.py", "app/v1.2/x.hy", "app/.venv/lib/y.hy", "app/target/z.hy", "top.hy", "app/core/c.txt"]);
@@ -108,11 +108,11 @@ mod tests {
             want.sort();
             assert_eq!(rels(&probe, &module), want, "{module}");
         }
-        // 歩かない所と、Hy でない file と、在らない module は探しても無い。
+        // Places not walked, non-Hy files, and nonexistent modules are not found even if probed.
         for module in ["app.target.z", "app.venv.lib.y", "app.core.b", "app.core.c", "app.core.nothing", "app.core"] {
             assert!(!probe.contains(module), "{module}");
         }
-        // 段の名に `.` が入る path・同じ綴りに当たる複数の file。
+        // Step names containing `.`, and multiple files matching the same spelling.
         assert_eq!(rels(&probe, "app.v1.2.x"), vec!["app/v1.2/x.hy"]);
         assert_eq!(rels(&probe, "app.core.a"), vec!["app/core/a.hy", "app/core/a.hyk"]);
     }

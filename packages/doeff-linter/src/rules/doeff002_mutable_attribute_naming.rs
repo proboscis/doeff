@@ -284,8 +284,8 @@ class Reader:
 
     #[test]
     fn test_assignments_in_async_methods_and_every_nested_body_are_counted() {
-        // 失敗ケース: async def の method と、try の else・finally・match の
-        // case・for の else・組の左辺・method の中の関数の代入を数えず、9 つのうち plain の 1 つだけを所見にしていた。
+        // Failure case: counted none of the assignments in an async def method, the else and finally of try, a case of match,
+        // the else of for, the left side of a tuple, and a function inside a method, and reported only 1 of the 9 (plain) as a finding.
         let code = r#"
 class Reader:
     def __init__(self):
@@ -349,7 +349,7 @@ class Reader:
 
     #[test]
     fn test_a_nested_class_assigns_to_its_own_instance() {
-        // method の中の class の method の self は、その入れ子の class の object — 外の class の属性に数えず、入れ子の class の属性として 1 度だけ鳴る。
+        // The self of a method of a class inside a method is an object of that nested class — it is not counted as an attribute of the outer class, and fires once as an attribute of the nested class.
         let code = r#"
 class Outer:
     def make(self):
@@ -365,7 +365,7 @@ class Outer:
 
     #[test]
     fn test_assignments_in_init_bodies_stay_initialization() {
-        // 初期化の method の入れ子の本体(try の finally・with)の代入は、今までどおり初期化。
+        // Assignments in nested bodies of an init method (try's finally, with) are still initialization, as before.
         let code = r#"
 class Pool:
     def __init__(self):
@@ -377,11 +377,11 @@ class Pool:
         assert_eq!(check_code(code).len(), 0);
     }
 
-    // ---- 継承元(repo の外の基底)が持つ属性への書き ----
+    // ---- Writes to attributes owned by a base (a base outside the repo) ----
 
     #[test]
     fn an_attribute_the_class_sets_in_init_and_rewrites_elsewhere_is_reported_whatever_the_base() {
-        // 失敗ケース(鳴るべき形): class 自身の属性 — init で置き、別の method で書き換える。基底が repo の外の class でも鳴る。
+        // Failure case (shape that should fire): the class's own attribute — placed in init and rewritten in another method. It fires even if the base is a class outside the repo.
         let code = r#"
 from textual.app import App
 
@@ -399,7 +399,7 @@ class Monitor(App):
 
     #[test]
     fn a_write_to_an_attribute_of_a_base_outside_the_repo_is_not_reported() {
-        // 失敗ケース(鳴らないべき形): repo の外の基底が持つ属性への書き。class は置いていない(Textual は `sub_title` への書きで header を変える)。
+        // Failure case (shape that should not fire): a write to an attribute owned by a base outside the repo. The class does not place it (Textual changes the header by writing `sub_title`).
         let code = r#"
 from textual.app import App
 
@@ -413,7 +413,7 @@ class Monitor(App):
 
     #[test]
     fn a_base_outside_the_repo_that_the_table_does_not_list_owns_what_the_class_does_not_place() {
-        // 表に無い基底(属性の全部が見えない)でも、class が置いていない名は基底の物 — どの framework でも同じ形。
+        // Even with a base not in the table (whose attributes are not all visible), a name the class does not place belongs to the base — the same shape for any framework.
         let code = r#"
 from some_framework import Widget
 
@@ -428,7 +428,7 @@ class Pane(Widget):
 
     #[test]
     fn a_framework_attribute_in_the_table_is_the_bases_even_when_init_sets_it_too() {
-        // 実例: monitor_app.py の MonitorApp は `sub_title` を `__init__` でも置き、tick ごとに書き換える。表に在る名は継承元の物。
+        // Real example: MonitorApp in monitor_app.py also places `sub_title` in `__init__` and rewrites it on every tick. A name in the table belongs to the base.
         let code = r#"
 from textual.app import App
 
@@ -443,7 +443,7 @@ class MonitorApp(App):
         self.sub_title = "updated"
         self.interval = 5
 "#;
-        // sub_title は App の物(鳴らさない)。interval は class が置いた自分の物(鳴らす)。
+        // sub_title belongs to App (does not fire). interval is the class's own, placed by the class (fires).
         assert_eq!(reported_names(&check_code(code)), vec!["interval"]);
     }
 
@@ -543,14 +543,14 @@ class Leaf(Middle):
         self.kept = 1
         self.from_thing = 2
 "#;
-        // kept は Middle が置いた物(鳴らす)、from_thing はだれも置いていない — Thing の物。
+        // kept was placed by Middle (fires); from_thing was placed by nobody — it belongs to Thing.
         assert_eq!(reported_names(&check_code(code)), vec!["kept"]);
     }
 
     #[test]
     fn what_a_method_called_from_init_places_is_the_classes_own() {
-        // 実例: rope の MemoryDB は `__init__` が `self._load_files()` を呼び、_load_files が `self._files` を置く。基底は repo の外の class
-        // (Python 2 の UserDict.DictMixin)でも、init から呼ぶ method が置いた名は class 自身の物。
+        // Real example: rope's MemoryDB calls `self._load_files()` from `__init__`, and _load_files places `self._files`. Even if the base is a class outside the repo
+        // (Python 2's UserDict.DictMixin), a name placed by a method that init calls is the class's own.
         let code = r#"
 from some_framework import Thing
 
@@ -572,7 +572,7 @@ class Store(Thing):
         self._cache = {}
         self._never_placed = 1
 "#;
-        // _files と _cache は init から(2 段)呼ぶ method が置いた class 自身の物(鳴らす)。_never_placed はだれも置かない — Thing の物。
+        // _files and _cache were placed by a method called (two levels) from init, so they are the class's own (fire). _never_placed is placed by nobody — it belongs to Thing.
         assert_eq!(reported_names(&check_code(code)), vec!["_files", "_cache"]);
     }
 
@@ -633,7 +633,7 @@ class B(A):
         assert_eq!(result.violations.len(), 1);
     }
 
-    // 同じ repo の別の file の基底(import が指す file)。`.git` を持つ dir が repo の根。
+    // A base in another file of the same repo (the file an import points to). The dir that has `.git` is the repo root.
 
     fn repo_with(files: &[(&str, &str)]) -> tempfile::TempDir {
         let repo = tempfile::tempdir().unwrap();
@@ -658,7 +658,7 @@ class B(A):
         for import in [
             "from pkg.base import Counter",
             "from .base import Counter",
-            // pkg/__init__.py の再 export(`from .base import Counter`)を辿る
+            // Follows the re-export in pkg/__init__.py (`from .base import Counter`)
             "from pkg import Counter",
         ] {
             let source = format!("{import}\n\n\nclass Pulse(Counter):\n    def bump(self):\n        self.count += 1\n        self.lazy = 1\n");
@@ -667,7 +667,7 @@ class B(A):
                 ("src/pkg/base.py", COUNTER_BASE),
                 ("src/pkg/child.py", &source),
             ]);
-            // count は Counter が置いた物(鳴らす)、lazy はだれも置かない — 基底が全部見えているので class 自身の物(鳴らす)。
+            // count was placed by Counter (fires); lazy was placed by nobody — all bases are visible, so it is the class's own (fires).
             assert_eq!(reported_names(&check_file(&repo, "src/pkg/child.py")), vec!["count", "lazy"], "{import}");
         }
     }
@@ -718,7 +718,7 @@ class B(A):
 
     #[test]
     fn a_module_inside_a_package_is_not_an_import_root() {
-        // `pkg/logging.py` は、pkg の中の file の `import logging` が指す module ではない(stdlib の logging)。
+        // `pkg/logging.py` is not the module that `import logging` in a file inside pkg points to (it is stdlib's logging).
         let repo = repo_with(&[
             ("pkg/__init__.py", ""),
             ("pkg/logging.py", "class Handler:\n    def __init__(self):\n        self.level = 0\n"),

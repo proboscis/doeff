@@ -1,44 +1,44 @@
-//! 機体の検の枠— 重い mode の doeff-linter は、起動の時に機体の検の枠の正本
-//! (`~/dotfiles/agent/tests/machine_check_slots.py`)の命令の包み `run` へ自分を渡し、枠を 1 つ取ってから走る。
+//! Machine check slots — a heavy-mode doeff-linter, at startup, hands itself to the command wrapper `run` of the canonical machine-check-slot source
+//! (`~/dotfiles/agent/tests/machine_check_slots.py`), takes one slot, and then runs.
 //!
-//! なぜ: 同じ機体(Pod)で同時に走る検の process 木を、正本の宣言の K 本までに絞る。doeff-linter は会話が直に撃つ道
-//! (`uv run doeff-linter`・poe の lint・land_lint_gate・日次の段・code-quality の中)が多く、道ごとに包むと
-//! 包み忘れた道が枠の外で走る(10-12 08:39 JST の zeus・load 105 で poe の lint 1 本 1.9 core と会話の直 2 本 0.64 core が枠の外)。
-//! binary の起動の 1 点で取れば、どの道から撃っても同じ枠に入る。commit の hook(`--commit-hook`)は検でなく止める検査なので
-//! 取らない(weight の註)。
+//! Why: limit the process trees of checks running at once on the same machine (Pod) to the K declared in the canonical source. doeff-linter is fired directly by
+//! conversations along many paths (`uv run doeff-linter`, poe lint, land_lint_gate, the daily stage, inside code-quality), and wrapping per path
+//! leaves forgotten paths running outside the slots (at 10-12 08:39 JST on zeus with load 105, one poe lint at 1.9 cores and two direct conversation runs at 0.64 core ran outside the slots).
+//! Taking the slot at the single point of binary startup puts every path into the same slots. The commit hook (`--commit-hook`) is a blocking inspection, not a check, so it
+//! takes none (see the weight note).
 //!
-//! 形: 自分の process を python へ exec し(pid は同じ — 呼び手の信号と時間切れは今までどおりこの pid に届く)、
-//! `python <正本> run --label <名> -- <自分> <同じ引数>` で走り直す。正本が枠を取り(埋まっていれば保持者を名乗って待ち、待ちの
-//! 上限で終了 75)、自分を子で走らせ、終われば解く。包みが SIGKILL で死ねば子も死ぬ(正本の die_with_wrapper)。
-//! 枠の値(本数・置き場・待ちの上限)と取り方は正本と隣の machine_check_slots.json だけが持ち、ここは持たない —
-//! ここが持つのは正本の在処と、どの mode が重いかと、再入の印だけ。
-//! 枠を持つ process の子孫(pytest の中の linter・包んだ段の中の linter)は、正本が祖先の列で読んで 2 つ目を取らない。
-//! 包みから起こされた linter には再入の印(GATED_ENV)が付き、その子孫は python を通らない。枠を取らない `--commit-hook` が
-//! 起こす子の linter(editor-json — 重い mode の形)にも同じ印が付き、hook の一部として枠の外で走る。
-//! 正本の無い機体(dotfiles を置かない機体)と、python を見つけられない時は、枠を取らずに走る(正本が宣言を読めない時と同じ)。
-//! 費え: 重い mode の 1 回に `uv python find` と python の起動で 0.2〜0.6 秒(zeus の load 70〜90 で測った)。
+//! Shape: exec this process into python (same pid — the caller's signals and timeouts still reach this pid as before),
+//! and re-run as `python <canon> run --label <name> -- <self> <same args>`. The canonical source takes a slot (if full, it announces the holder and waits, exiting 75
+//! at the wait limit), runs this process as a child, and releases the slot when done. If the wrapper dies by SIGKILL the child dies too (die_with_wrapper in the canonical source).
+//! The slot values (count, location, wait limit) and how to take them are held only by the canonical source and the adjacent machine_check_slots.json, not here —
+//! what is held here is only the location of the canonical source, which modes are heavy, and the re-entry mark.
+//! Descendants of a slot-holding process (a linter inside pytest, a linter inside a wrapped stage) are recognized by the canonical source via the ancestor chain and do not take a second slot.
+//! A linter started from the wrapper carries the re-entry mark (GATED_ENV), and its descendants do not go through python. The child linter started by `--commit-hook`, which takes no slot
+//! (editor-json — a heavy-mode shape), also carries the same mark and runs outside the slots as part of the hook.
+//! On a machine without the canonical source (a machine without dotfiles), or when python cannot be found, it runs without taking a slot (same as when the canonical source cannot read its declaration).
+//! Cost: 0.2 to 0.6 seconds per heavy-mode run for `uv python find` and starting python (measured at zeus load 70 to 90).
 
 use std::ffi::{OsStr, OsString};
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
-/// 再入の印 — 包みが起こした linter(とその子孫)と、`--commit-hook` が起こす子の linter(commit_hook::run_linter)に付く。
-/// 付いていれば包みへ渡さない。
+/// Re-entry mark — set on a linter started by the wrapper (and its descendants) and on the child linter started by `--commit-hook` (commit_hook::run_linter).
+/// If set, it is not handed to the wrapper.
 pub const GATED_ENV: &str = "DOEFF_LINTER_CHECK_SLOT";
 
-/// 正本の置き場(HOME からの相対)— agora の各 repo の root の conftest が受付の正本を読む置き場と同じ根。
+/// Location of the canonical source (relative to HOME) — the same root from which the root conftest of each agora repo reads the intake canonical source.
 pub const CANON_UNDER_HOME: &str = "dotfiles/agent/tests/machine_check_slots.py";
 
-/// 実行の重さ — 枠を取るか。
+/// Weight of the run — whether it takes a slot.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Weight {
-    /// 枠を取らない(表を出すだけ・呼び手が短い上限で切る問い)。
+    /// Takes no slot (only prints a table, or a query the caller cuts off with a short limit).
     Light,
-    /// 枠を取る(repo か path の束を lint する)。名は保持者の名乗りに入る mode の名。
+    /// Takes a slot (lints a repo or a set of paths). The name is the mode name that goes into the holder's announcement.
     Heavy(&'static str),
 }
 
-/// mode の判定に要る引数の欄(main の Args から写す)。
+/// Argument fields needed to decide the mode (copied from Args in main).
 #[derive(Debug, Clone, Copy, Default)]
 pub struct Mode {
     pub list_rules: bool,
@@ -50,16 +50,16 @@ pub struct Mode {
     pub editor_json: bool,
 }
 
-/// 実行の重さを決める(純粋)。
+/// Decides the weight of the run (pure).
 ///
-/// 取らない: `--list-rules`・`--split-rules`(規則の表を出すだけ — CPU 0 秒)/ `--affected-tests`(検を選ぶ問い・CPU 1.8 秒
-/// 0.15 core — 呼び手 land_focus_gate は 30 秒で切り、測れなければ逆依存の検を足さないので、待つと検が落ちる)/ `--stdin`
-/// (保存前の 1 file — 書き込み直後の hook は全体 3 秒で切って黙って通すので、待つと hook が効かなくなる)/ `--commit-hook`
-/// (test でなく、stage した file に file 1 つで決まる規則を当てる止める検査 — 子の linter 1 回ごとに自分の CPU 秒の上限
-/// [tool.doeff-linter.commit_hook] timeout_s を持つ。枠に並ぶと pytest と型の検の後ろで最長 20 分待ち、会話の道具の上限で commit が
-/// 切れた — commit の前の検査は test ではないので、ほかの検の後ろで待たせない。
-/// 子の linter も取らない — commit_hook::run_linter が GATED_ENV を付けて起こす)。
-/// 取る: `--hook`(Cursor の stop hook — workspace の全体)・editor-json と text / json の repo 全体(CPU 100 秒超)。
+/// Does not take: `--list-rules`, `--split-rules` (only print the rule table — 0 CPU seconds) / `--affected-tests` (a query that selects checks, 1.8 CPU seconds,
+/// 0.15 core — its caller land_focus_gate cuts it off at 30 seconds, and if it cannot measure it adds no reverse-dependency checks, so waiting would make checks fail) / `--stdin`
+/// (one file before saving — the hook right after a write cuts off at 3 seconds overall and silently passes, so waiting would disable the hook) / `--commit-hook`
+/// (not a test but a blocking inspection that applies rules decidable per single file to staged files — each child linter run has its own CPU-second limit
+/// [tool.doeff-linter.commit_hook] timeout_s. Queued behind the slots it waited up to 20 minutes behind pytest and type checks, and the commit was
+/// cut off by the limit of the conversation's tool — a pre-commit inspection is not a test, so it must not wait behind other checks.
+/// The child linter takes none either — commit_hook::run_linter starts it with GATED_ENV set).
+/// Takes: `--hook` (Cursor's stop hook — the whole workspace), editor-json and text / json over a whole repo (over 100 CPU seconds).
 pub fn weight(mode: Mode) -> Weight {
     if mode.list_rules || mode.split_rules || mode.affected_tests || mode.stdin || mode.commit_hook {
         Weight::Light
@@ -72,7 +72,7 @@ pub fn weight(mode: Mode) -> Weight {
     }
 }
 
-/// 保持者の名乗り(純粋)— mode の名と、走らせた dir の名(作業木の名)。会話の id は正本が足す。
+/// Holder's announcement (pure) — the mode name and the name of the dir it ran in (the worktree name). The conversation id is added by the canonical source.
 pub fn label(mode_name: &str, cwd: Option<&Path>) -> String {
     let place = cwd
         .and_then(|dir| dir.file_name())
@@ -81,7 +81,7 @@ pub fn label(mode_name: &str, cwd: Option<&Path>) -> String {
     format!("doeff-linter {}{}", mode_name, place)
 }
 
-/// 正本の `run` へ自分を渡す命令の列(純粋)— `[python, 正本, run, --label, 名, --, 自分, 引数…]`。
+/// The command list that hands itself to the canonical `run` (pure) — `[python, canon, run, --label, name, --, self, args…]`.
 pub fn gate_command(python: &Path, canon: &Path, label: &str, exe: &Path, args: &[OsString]) -> Vec<OsString> {
     let head: [&OsStr; 6] = [
         python.as_os_str(),
@@ -98,36 +98,36 @@ pub fn gate_command(python: &Path, canon: &Path, label: &str, exe: &Path, args: 
         .collect()
 }
 
-/// 正本の在処(HOME の下)。HOME が無いか正本が無ければ None。
+/// Location of the canonical source (under HOME). None if HOME is unset or the canonical source is absent.
 fn canon_path() -> Option<PathBuf> {
     let home = std::env::var_os("HOME").filter(|value| !value.is_empty())?;
     let canon = Path::new(&home).join(CANON_UNDER_HOME);
     canon.is_file().then_some(canon)
 }
 
-/// 正本を走らせる python — `uv python find` の答え(作業木の venv が在ればそれ)。機体の python3 や venv の bin を直に探さない
-/// (2026-09-25 — python は uv で選び、機体の python や venv を直に使わない)。
-/// 正本は標準の library だけで走る。`uv run` で包まないのは、uv が子を起こして待つ形だと、呼び手の SIGKILL が uv だけを殺し、
-/// 包みと linter が孤児で残るため(exec した python は linter と同じ pid)。
+/// The python that runs the canonical source — the answer of `uv python find` (the worktree venv if present). Do not look up the machine's python3 or the venv's bin directly
+/// (2026-09-25 — python is chosen via uv, never the machine's python or venv directly).
+/// The canonical source runs on the standard library only. It is not wrapped in `uv run` because, with uv starting a child and waiting, the caller's SIGKILL kills only uv,
+/// leaving the wrapper and the linter orphaned (the exec'd python has the same pid as the linter).
 fn python_for_canon() -> Result<PathBuf, String> {
     let found = Command::new("uv")
         .args(["python", "find"])
         .output()
-        .map_err(|error| format!("python を探す uv を起こせない({error})"))?;
+        .map_err(|error| format!("cannot start uv to find python ({error})"))?;
     let text = String::from_utf8_lossy(&found.stdout).trim().to_string();
     if found.status.success() && !text.is_empty() {
         Ok(PathBuf::from(text))
     } else {
         Err(format!(
-            "`uv python find` が python を答えない(終了 {:?}・{})",
+            "`uv python find` returned no python (exit {:?}, {})",
             found.status.code(),
             String::from_utf8_lossy(&found.stderr).trim()
         ))
     }
 }
 
-/// 重い mode の起動で、正本の `run` へ自分を渡す(exec — 戻らない)。印が付いている・正本が無い時は何もせず戻る。
-/// 渡せなかった時(python が無い・exec の失敗)は 1 行名乗って戻り、枠を取らずに走る。
+/// At heavy-mode startup, hands itself to the canonical `run` (exec — does not return). Returns doing nothing if the mark is set or the canonical source is absent.
+/// If handing over fails (no python, exec failure), prints one line and returns, running without taking a slot.
 #[cfg(unix)]
 pub fn enter(weight: Weight) {
     use std::os::unix::process::CommandExt;
@@ -144,14 +144,14 @@ pub fn enter(weight: Weight) {
     let exe = match std::env::current_exe() {
         Ok(exe) => exe,
         Err(error) => {
-            eprintln!("doeff-linter: 機体の検の枠を取らずに走る — 自分の path を読めない({error})");
+            eprintln!("doeff-linter: running without taking a machine check slot — cannot read own path ({error})");
             return;
         }
     };
     let python = match python_for_canon() {
         Ok(python) => python,
         Err(reason) => {
-            eprintln!("doeff-linter: 機体の検の枠を取らずに走る — {reason}");
+            eprintln!("doeff-linter: running without taking a machine check slot — {reason}");
             return;
         }
     };
@@ -160,13 +160,13 @@ pub fn enter(weight: Weight) {
     let command = gate_command(&python, &canon, &label(mode_name, cwd.as_deref()), &exe, &args);
     let error = Command::new(&command[0]).args(&command[1..]).env(GATED_ENV, "1").exec();
     eprintln!(
-        "doeff-linter: 機体の検の枠を取らずに走る — 正本 {} を {} で起こせない({error})",
+        "doeff-linter: running without taking a machine check slot — cannot start canonical source {} with {} ({error})",
         canon.display(),
         python.display()
     );
 }
 
-/// Unix でない機体には正本の命令の包みが無い(flock と /proc の祖先の列で数える)— 枠を取らずに走る。
+/// A non-Unix machine has no canonical command wrapper (it counts via flock and the /proc ancestor chain) — runs without taking a slot.
 #[cfg(not(unix))]
 pub fn enter(_weight: Weight) {}
 

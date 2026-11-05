@@ -1,16 +1,16 @@
-//! 事実の置き場(M-store)— 作業木をまたいで分け合う事実を、1 つずつ file で置く・読む・並べる・消す。
+//! The facts store (M-store) — puts, reads, lists, and removes, one file each, the facts shared across worktrees.
 //!
-//! この file が持つ知識: 置き場の配置(dir の段・file の名・一時 file の名)・鍵の作り方・符号化・更新時刻の取り決め。
-//! 他の file はこれを知らない — 事実の path を作れるのはここだけ(`object_path` は非公開)で、他の file は鍵で読み・置き、片づけは
-//! `list` が返した物だけを `remove` する。配置を替えても(段を増やす・符号化を替える)直すのはこの file だけ。
+//! Knowledge held by this file: the store layout (dir levels, file names, temporary file names), how keys are made, the encoding, and the conventions for modification times.
+//! No other file knows these — only this file can build a fact's path (`object_path` is private); other files read and put by key, and cleanup
+//! `remove`s only what `list` returned. Even if the layout changes (more levels, a different encoding), only this file needs fixing.
 //!
-//! 取り決め:
-//! - 事実は置いたら書き換えない(一時 file から rename)。同じ鍵なら同じ内容。消すのは片づけ(sweep)だけで、片づけの外(引く手順)は消さない —
-//!   事実は根をまたいで分け合うので、1 つの根の表だけからは「もう要らない」と決められない(盲検 B)。
-//! - file の更新時刻 = 最後に使われた時刻の目安。置いた時に付き、読んだ時は OBJECT_TOUCH_SECONDS より古ければ今にする。精度は
-//!   OBJECT_TOUCH_SECONDS(1 日)で、「読まれている事実」を片づけから守る物ではない — 読めなくなれば呼び手が作り直す(答えは変わらない)。
-//!   守るのは「置いてから(か読んで更新してから)IN_USE_SECONDS の内の事実」だけ(sweep が判じる)。
-//! - 読めない・壊れた・形の違う事実は None(呼び手が作り直す)。
+//! Conventions:
+//! - A fact is never rewritten once put (rename from a temporary file). The same key means the same contents. Only cleanup (sweep) deletes; nothing outside cleanup (the lookup path) deletes —
+//!   facts are shared across roots, so one root's table alone cannot decide "no longer needed" (blind review B).
+//! - A file's modification time = a guide to when it was last used. It is set when put, and on read it is set to now if older than OBJECT_TOUCH_SECONDS. Its precision is
+//!   OBJECT_TOUCH_SECONDS (1 day), and it does not protect "facts being read" from cleanup — if one becomes unreadable the caller rebuilds it (the answer does not change).
+//!   What is protected is only "facts within IN_USE_SECONDS since put (or since last read and refreshed)" (sweep judges this).
+//! - An unreadable, broken, or wrongly shaped fact is None (the caller rebuilds it).
 
 use rayon::prelude::*;
 use serde::de::DeserializeOwned;
@@ -21,7 +21,7 @@ use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::{SystemTime, UNIX_EPOCH};
 
-/// 事実の形(頭の註)。
+/// The shape of a fact (the header comment).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(super) enum Format {
     Json,
@@ -37,21 +37,21 @@ impl Format {
     }
 }
 
-/// 根をまたいで分け合う事実の置き場の dir の名(置き場の根の直下)。
+/// The name of the dir of the store of facts shared across roots (directly under the store root).
 pub(super) const OBJECTS_DIR: &str = "objects";
-/// 事実を読んだ時、最後に使われた時刻(file の更新時刻)がこの秒より古ければ今に更新する — 上限を超えた時に、よく読まれる事実
-/// (どの作業木も使う main の file)を古い順の先頭にしないため。1 日にしてあるのは、更新時刻を付け直すたびに file が「更新された」と数えられ
-/// (数える)、事実の 1 日分の 1 だけが毎時間の書きに混ざるのを許す大きさにするため。
+/// When a fact is read, if its last-used time (the file's modification time) is older than this many seconds it is updated to now — so that, when the limit is exceeded, frequently read facts
+/// (files of main that every worktree uses) are not at the front of the oldest-first order. It is set to 1 day because each re-stamping of the modification time makes the file count as "updated"
+/// (it is counted), so the interval is sized to let only 1/(1 day) of the facts mix into the hourly writes.
 pub(super) const OBJECT_TOUCH_SECONDS: u64 = 24 * 3600;
-/// 書きかけの一時 file がこの秒より古ければ、打ち切られた実行の残りとして並べる時に消す。
+/// A half-written temporary file older than this many seconds is deleted when listing, as the leftover of an aborted run.
 const OBJECT_TMP_STALE_SECONDS: u64 = 3600;
-/// 上限を数える時、事実 1 つの大きさの下限(byte)— 空に近い事実も disk では 1 block を使う。
+/// The lower bound of one fact's size when counting toward the limit (bytes) — even a nearly empty fact uses 1 block on disk.
 const OBJECT_MIN_BYTES: u64 = 4096;
 
-/// 事実 1 つの置き場の鍵(中身から決まる hash の頭 16 byte)。
+/// The store key of one fact (the first 16 bytes of a hash determined by the contents).
 pub(super) type ObjectKey = [u8; 16];
 
-/// 鍵の材料(それぞれの長さを前に付けて続ける — 材料の切れ目が違えば鍵も違う)から、事実の置き場の鍵を作る。
+/// Builds a fact's store key from key material (each part is followed by its length — if the part boundaries differ, so does the key).
 pub(super) fn object_key(parts: &[&[u8]]) -> ObjectKey {
     let mut hasher = Sha256::new();
     for part in parts {
@@ -64,19 +64,19 @@ pub(super) fn object_key(parts: &[&[u8]]) -> ObjectKey {
     key
 }
 
-/// 事実 1 つの file の path(`<置き場>/<hash の頭 2 字>/<残り>` — 1 つの dir に file を集めすぎない)。非公開 — 配置の知識はこの file だけが持つ。
+/// The path of one fact's file (`<store>/<first 2 chars of the hash>/<rest>` — so that not too many files gather in one dir). Private — only this file holds the knowledge of the layout.
 fn object_path(objects: &Path, key: &ObjectKey) -> PathBuf {
     let name: String = key.iter().map(|byte| format!("{byte:02x}")).collect();
     objects.join(&name[..2]).join(&name[2..])
 }
 
-/// 事実を置く途中の一時 file の path(事実の file と同じ dir・`.<名>.<pid>.tmp`)。
+/// The path of the temporary file while putting a fact (same dir as the fact's file, `.<name>.<pid>.tmp`).
 fn temporary_path(object: &Path) -> PathBuf {
     let name = object.file_name().and_then(|n| n.to_str()).unwrap_or("object");
     object.with_file_name(format!(".{name}.{}.tmp", std::process::id()))
 }
 
-/// 一時 file の名か(`temporary_path` が作る名 — 事実を並べる時に見分ける)。
+/// Whether it is a temporary file's name (the name `temporary_path` makes — told apart when listing facts).
 fn is_temporary(name: &str) -> bool {
     name.starts_with('.') && name.ends_with(".tmp")
 }
@@ -95,18 +95,18 @@ fn decode_value<T: DeserializeOwned>(bytes: &[u8], format: Format) -> Option<T> 
     }
 }
 
-/// 値に今の根の絶対 path が入っていないかの見張り(置く前に事実の綴りを調べる)。根の絶対 path を持つ値は作業木ごとに綴りが違うので、置き場に
-/// 置くと別の作業木が読んだ事実が他の作業木の file を指す — 呼び手が path を持たない形で置き、読んだ後に bind で付ける約束(facts_cache の
-/// 頭の註)を、呼び手の記憶ではなく置く所で確かめる(設計検証の盲検 B — 新しい種類が約束を忘れても、置かずに作り直すだけで答えは正しい)。
+/// A watch for whether the current root's absolute path is in a value (checks the fact's spelling before putting). A value that holds the root's absolute path spells differently per worktree, so if it were put
+/// in the store, a fact read by another worktree would point at a file of a different worktree — the contract that callers put it in a path-free form and attach the path with bind after reading (the header comment of facts_cache)
+/// is checked at the point of putting rather than relying on the caller's memory (blind review B of the design verification — even if a new kind forgets the contract, it just rebuilds without putting, and the answer is still correct).
 pub(super) struct LeakGuard {
     needles: Vec<Vec<u8>>,
 }
 
-/// 見張りが破られた(根の絶対 path を持つ値を置こうとした)回数。検が読む。
+/// The number of times the watch was breached (an attempt to put a value holding the root's absolute path). Read by tests.
 pub(super) static LEAKED: AtomicUsize = AtomicUsize::new(0);
 
 impl LeakGuard {
-    /// 根の絶対 path(与えられた綴りと正規化した綴り)を探す綴りにする。短すぎる綴り(`/` など)は、どの値にも当たってしまうので使わない。
+    /// Turns the root's absolute path (the given spelling and the normalized spelling) into spellings to search for. Spellings too short (such as `/`) would match any value, so they are not used.
     pub(super) fn of(root: &Path) -> LeakGuard {
         let mut needles: Vec<Vec<u8>> = Vec::new();
         for candidate in [Some(root.to_path_buf()), std::fs::canonicalize(root).ok()].into_iter().flatten() {
@@ -123,7 +123,7 @@ impl LeakGuard {
     }
 }
 
-/// 事実を読む(無い・壊れた・形の違う事実は None — 呼び手が作り直す)。最後に使われた時刻が OBJECT_TOUCH_SECONDS より古ければ今にする。
+/// Reads a fact (a missing, broken, or wrongly shaped fact is None — the caller rebuilds it). If the last-used time is older than OBJECT_TOUCH_SECONDS, sets it to now.
 pub(super) fn read_object<T: DeserializeOwned>(objects: &Path, key: &ObjectKey, format: Format) -> Option<T> {
     let path = object_path(objects, key);
     let mut file = std::fs::File::open(&path).ok()?;
@@ -137,7 +137,7 @@ pub(super) fn read_object<T: DeserializeOwned>(objects: &Path, key: &ObjectKey, 
         .and_then(|at| SystemTime::now().duration_since(at).ok())
         .is_some_and(|age| age.as_secs() >= OBJECT_TOUCH_SECONDS);
     if stale {
-        // 印を付けられなくても答えには関わらない(古い順が少しずれるだけ)
+        // Being unable to stamp it does not affect the answer (the oldest-first order is only slightly off)
         let _ = file.set_modified(SystemTime::now()).or_else(|_| {
             std::fs::File::options().write(true).open(&path).and_then(|writable| writable.set_modified(SystemTime::now()))
         });
@@ -145,7 +145,7 @@ pub(super) fn read_object<T: DeserializeOwned>(objects: &Path, key: &ObjectKey, 
     Some(value)
 }
 
-/// 事実を置く(一時 file から rename)。置いた byte を返す(置けなければ 0)。値に根の絶対 path が入っていれば置かない(見張り — `LeakGuard`)。
+/// Puts a fact (rename from a temporary file). Returns the bytes put (0 if it could not be put). Does not put if the value holds the root's absolute path (the watch — `LeakGuard`).
 pub(super) fn write_object<T: Serialize>(objects: &Path, key: &ObjectKey, value: &T, format: Format, guard: &LeakGuard) -> u64 {
     let path = object_path(objects, key);
     let Some(dir) = path.parent() else { return 0 };
@@ -154,9 +154,9 @@ pub(super) fn write_object<T: Serialize>(objects: &Path, key: &ObjectKey, value:
     }
     let Some(bytes) = encode_value(value, format) else { return 0 };
     if guard.finds_in(&bytes) {
-        // 1 つの実行で 1 度だけ知らせる(種類ごとに数千の事実が同じ誤りで並ぶ)。答えは作り直した値のまま正しい。
+        // Notify only once per run (thousands of facts per kind line up with the same mistake). The answer stays correct as the rebuilt value.
         if LEAKED.fetch_add(1, Ordering::Relaxed) == 0 {
-            eprintln!("doeff-linter: 事実の cache: 根の絶対 path を持つ値は置き場に置かない(呼び手が path を持たない形で置き、bind で付ける約束 — facts_cache の頭の註)");
+            eprintln!("doeff-linter: facts cache: values holding the root's absolute path are not put in the store (the contract is that callers put them in a path-free form and attach the path with bind — the header comment of facts_cache)");
         }
         return 0;
     }
@@ -172,17 +172,17 @@ pub(super) fn write_object<T: Serialize>(objects: &Path, key: &ObjectKey, value:
     bytes.len() as u64
 }
 
-/// 置き場にある事実 1 つ(片づけが数え、古い順に `remove` する)。path は持たせるだけで、外へは出さない。
+/// One fact in the store (cleanup counts them and `remove`s them oldest first). The path is only held, not exposed.
 pub(super) struct StoredObject {
-    /// 最後に使われた時刻(UNIX 秒 — file の更新時刻)。
+    /// Last-used time (UNIX seconds — the file's modification time).
     pub(super) used: u64,
-    /// 上限へ数える大きさ(byte — OBJECT_MIN_BYTES を下限にする)。
+    /// Size counted toward the limit (bytes — with OBJECT_MIN_BYTES as the lower bound).
     pub(super) bytes: u64,
     path: PathBuf,
 }
 
-/// 置き場にある事実を全部並べる(配置の深さに依らない — 置き場の根の直下の file〔使った印〕は事実ではない)。打ち切られた実行が残した古い
-/// 一時 file はここで消す。
+/// Lists all facts in the store (independent of the depth of the layout — a file directly under the store root [the used marker] is not a fact). Old
+/// temporary files left by aborted runs are deleted here.
 pub(super) fn list(objects: &Path, now: u64) -> Vec<StoredObject> {
     walkdir::WalkDir::new(objects)
         .min_depth(2)
@@ -203,7 +203,7 @@ pub(super) fn list(objects: &Path, now: u64) -> Vec<StoredObject> {
         .collect()
 }
 
-/// 事実を消す(消せたか)。消した事実は次に要る時に作り直される(答えは変わらない)。
+/// Removes a fact (whether it was removed). A removed fact is rebuilt the next time it is needed (the answer does not change).
 pub(super) fn remove(object: StoredObject) -> bool {
     std::fs::remove_file(object.path).is_ok()
 }
@@ -220,8 +220,8 @@ mod tests {
         LeakGuard { needles: Vec::new() }
     }
 
-    /// 置いた事実は全部並ぶ — 配置を替えても(段が深くなっても)片づけの数えから漏れない(設計検証の盲検 A: 1 行の配置の変更で、
-    /// 検が全部通ったまま事実の上限が効かなくなった)。置き場の根の直下の使った印は事実に数えない。
+    /// All facts that were put are listed — even if the layout changes (levels get deeper) they are not missed by cleanup's count (blind review A of the design verification: one line of layout change
+    /// left all tests passing while the facts limit stopped working). The used marker directly under the store root is not counted as a fact.
     #[test]
     fn every_object_written_is_listed_and_a_deeper_layout_is_still_counted() {
         let dir = tempfile::tempdir().unwrap();
@@ -232,15 +232,15 @@ mod tests {
         }
         std::fs::write(dir.path().join("objects").join("used"), b"").unwrap();
         assert_eq!(list(&dir.path().join("objects"), 0).len(), keys.len());
-        // 配置が変わって事実が深い所に在っても数える(配置の深さに依らない)。
+        // Facts are counted even if the layout changed and they are in a deeper place (independent of layout depth).
         let deeper = objects.join("aa").join("bb").join("cc");
         std::fs::create_dir_all(&deeper).unwrap();
         std::fs::write(deeper.join("fact"), b"y").unwrap();
         assert_eq!(list(&dir.path().join("objects"), 0).len(), keys.len() + 1);
     }
 
-    /// 一時 file の名は、置く側(temporary_path)と並べる側(is_temporary)が同じ決まりを共有する — 置く側の名を替えても片づけの見分けが
-    /// 外れない。古い物だけ消え、新しい物(書いている最中かもしれない)は残る。
+    /// A temporary file's name follows a convention shared by the putting side (temporary_path) and the listing side (is_temporary) — even if the putting side's name changes, cleanup's recognition
+    /// does not drift. Only old ones are deleted; new ones (possibly being written) remain.
     #[test]
     fn a_temporary_made_by_the_writer_is_recognised_by_the_lister() {
         let dir = tempfile::tempdir().unwrap();
@@ -254,12 +254,12 @@ mod tests {
         std::fs::write(&stale, b"half").unwrap();
         std::fs::write(&fresh, b"half").unwrap();
         set_mtime(&stale, SystemTime::now() - std::time::Duration::from_secs(2 * OBJECT_TMP_STALE_SECONDS));
-        assert!(list(&dir.path().join("objects"), SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs()).is_empty(), "一時 file を事実に数えた");
-        assert!(!stale.exists(), "古い一時 file が残った");
-        assert!(fresh.exists(), "新しい一時 file まで消した");
+        assert!(list(&dir.path().join("objects"), SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs()).is_empty(), "temporary files were counted as facts");
+        assert!(!stale.exists(), "the old temporary file remained");
+        assert!(fresh.exists(), "even the new temporary file was deleted");
     }
 
-    /// 根の絶対 path を持つ値は置かない(見張り)— path を持たない値は置く。
+    /// A value holding the root's absolute path is not put (the watch) — a value without a path is put.
     #[test]
     fn a_value_holding_the_root_path_is_not_stored() {
         let dir = tempfile::tempdir().unwrap();
@@ -268,14 +268,14 @@ mod tests {
         let guard = LeakGuard::of(&root);
         let leaking = format!("{}/app/a.hy", root.display());
         let before = LEAKED.load(Ordering::Relaxed);
-        assert_eq!(write_object(&objects, &object_key(&[b"leak"]), &leaking, Format::Json, &guard), 0, "根の path を持つ値を置いた");
-        assert_eq!(write_object(&objects, &object_key(&[b"leak"]), &leaking, Format::Compact, &guard), 0, "binary の形でも置いた");
+        assert_eq!(write_object(&objects, &object_key(&[b"leak"]), &leaking, Format::Json, &guard), 0, "a value holding the root's path was put");
+        assert_eq!(write_object(&objects, &object_key(&[b"leak"]), &leaking, Format::Compact, &guard), 0, "it was put even in the binary form");
         assert!(LEAKED.load(Ordering::Relaxed) >= before + 2);
-        assert!(list(&dir.path().join("objects"), 0).is_empty(), "置かなかった値が置き場に在る");
-        assert!(write_object(&objects, &object_key(&[b"ok"]), &"app/a.hy".to_string(), Format::Json, &guard) > 0, "path を持たない値を置けない");
+        assert!(list(&dir.path().join("objects"), 0).is_empty(), "a value that was not to be put is in the store");
+        assert!(write_object(&objects, &object_key(&[b"ok"]), &"app/a.hy".to_string(), Format::Json, &guard) > 0, "a value without a path could not be put");
     }
 
-    /// 見張りが根の綴りを短い物で探して、どの値にも当たる事は無い。
+    /// The watch never matches every value by searching for a short spelling of the root.
     #[test]
     fn a_too_short_root_makes_no_needle() {
         assert!(LeakGuard::of(Path::new("/")).needles.is_empty());

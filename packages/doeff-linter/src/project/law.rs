@@ -1,23 +1,23 @@
-//! law の対応の検めた形 — law の名・文・当たる層と、law に書かれた規則の ID(層の規則か、既存の Python の規則か)。
-//! 説明(`explain`)と設定の組み立て(`settings`)が読む(settings.rs から分けた)。
+//! Validated form of a law mapping — the law's name, text, the layers it applies to, and the rule IDs written in the law (layer rules or existing Python rules).
+//! Read by the explanation (`explain`) and the settings assembly (`settings`) (split out of settings.rs).
 
 use std::collections::BTreeSet;
 
 use super::layers::LayerId;
 use super::rule::ProjectRule;
 
-/// law の対応 1 件(検めた後)。
+/// One law mapping (after validation).
 #[derive(Debug, Clone)]
 pub struct LawSpec {
     pub name: String,
     pub adr: Option<String>,
     pub statement: String,
     pub rules: Vec<ProjectRuleOrExternal>,
-    /// 当たる層(空なら全部)。
+    /// Layers it applies to (all layers if empty).
     pub layers: BTreeSet<LayerId>,
 }
 
-/// law に書かれた規則の ID — 層の規則(閉じた一覧)か、既存の Python の規則の ID。
+/// A rule ID written in a law — a layer rule (closed list) or the ID of an existing Python rule.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ProjectRuleOrExternal {
     Project(ProjectRule),
@@ -25,7 +25,7 @@ pub enum ProjectRuleOrExternal {
 }
 
 impl ProjectRuleOrExternal {
-    /// 規則の ID の綴りを返す(出力と照合のため)。
+    /// Returns the spelling of the rule ID (for output and matching).
     pub fn id(&self) -> &str {
         match self {
             ProjectRuleOrExternal::Project(rule) => rule.id(),

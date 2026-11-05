@@ -1,18 +1,18 @@
-//! DOEFF160: 広い例外の捕捉は運搬の境界だけ(#1415 — 元は agora-controllers の一時の判定
-//! controllers/screen/tests/fault_boundary_rules.hy の (d))。
+//! DOEFF160: broad exception catches only at carrier boundaries (#1415 — originally agora-controllers' temporary check
+//! (d) of controllers/screen/tests/fault_boundary_rules.hy).
 //!
-//! architecture.hy の `:broad-catches [(broad-catch "名" :files [..] :except [..] :carriers [(carrier "module:名" :event "出来事")] :why "…")]`
-//! の群ごとに、:files の glob に当たる Hy・Python の file(:except を除く)の広い捕捉を集める。広い捕捉とは:
-//!   * Hy: `(except [] …)` と、捕まえる型の form に BROAD_NAMES の記号(`.` で区切った最後の段)が在る `(except [型] …)`・`(except [名 型] …)`。
-//!     文字列・註・`#_` の中は捕捉でない(読み取り器の木で歩く)。
-//!   * Python: 型の無い `except:` と、型が BROAD_NAMES の名・属性・その組の `except …:`(rustpython の構文木で歩く)。
-//! 許すのは :carriers の定義(Hy の file の top level の form)の中の Hy の捕捉で、捕捉が例外を名で束縛し(`(except [名 型] …)`)、
-//! その捕捉の form の中の `(出来事 …)` の呼びが、その名を引数に直に渡す物だけ(握りつぶさずに列へ運ぶ境界)。そのうえで:
-//!   * 運搬の境界の外の広い捕捉 → file ごとに 1 件(`<名>:outside`・位置 = 最初の捕捉)。
-//!   * 境界の中の広い捕捉が名を束縛しない・その名を出来事へ渡さない → 境界ごとに 1 件(`<名>:unbound:<定義の名>`)。
-//!   * 境界の定義が無い → architecture.hy の位置で 1 件(`<名>:missing:<定義の名>`)。
-//!   * :files に当たる file が 0 → 1 件(`<名>:empty`)。
-//! 母集団 0 と消えた定義を緑にしない。Python の file は構文木が読めなければ errors へ積む(黙って 0 件にしない)。
+//! architecture.hy `:broad-catches [(broad-catch "NAME" :files [..] :except [..] :carriers [(carrier "module:NAME" :event "EVENT")] :why "…")]`
+//! For each group, collects the broad catches in Hy and Python files matching the :files globs (excluding :except). A broad catch is:
+//!   * Hy: `(except [] …)`, and `(except [TYPE] …)` / `(except [NAME TYPE] …)` where the type form contains a symbol from BROAD_NAMES (the last segment split on `.`).
+//!     Anything inside strings, comments, or `#_` is not a catch (walked on the reader's tree).
+//!   * Python: an `except:` with no type, and an `except …:` whose type is a name, attribute, or tuple of them from BROAD_NAMES (walked on the rustpython syntax tree).
+//! What is allowed is only a Hy catch inside a :carriers definition (a top-level form of a Hy file) that binds the exception to a name (`(except [NAME TYPE] …)`) and
+//! whose catch form contains an `(EVENT …)` call passing that name directly as an argument (a boundary that carries it into the list instead of swallowing it). Then:
+//!   * A broad catch outside a carrier boundary -> 1 finding per file (`<name>:outside`, position = the first catch).
+//!   * A broad catch inside a boundary that does not bind a name, or does not pass the name to the event -> 1 finding per boundary (`<name>:unbound:<definition name>`).
+//!   * A boundary definition is missing -> 1 finding at the position in architecture.hy (`<name>:missing:<definition name>`).
+//!   * 0 files match :files -> 1 finding (`<name>:empty`).
+//! A population of 0 and vanished definitions are not turned green. For a Python file whose syntax tree cannot be read, push to errors (do not silently count 0).
 
 use std::path::Path;
 
@@ -26,46 +26,46 @@ use super::spelling_scope::selected_files;
 use super::top_level;
 use crate::position::LineIndex;
 
-/// 捕まえると広い捕捉になる型の名(契約の破れ〔AssertionError〕とその上の型)。
+/// Names of types whose catch is broad (the contract violation [AssertionError] and the types above it).
 const BROAD_NAMES: &[&str] = &["Exception", "BaseException", "AssertionError"];
 
-/// 当たりの種類(閉じた 4 つ)。
+/// The kind of finding (a closed set of 4).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum BroadCatchProblem {
-    /// 運搬の境界の外の広い捕捉(file の中の数)。
+    /// A broad catch outside a carrier boundary (the count within the file).
     Outside { count: usize },
-    /// 境界の中の広い捕捉が、例外を名で束縛して出来事へ渡していない。
+    /// A broad catch inside a boundary that does not bind the exception to a name and pass it to the event.
     Unbound { carrier: String, event: String },
-    /// 境界の定義が無い。
+    /// The boundary definition is missing.
     Missing { carrier: String, reason: String },
-    /// :files に当たる file が 0。
+    /// 0 files match :files.
     Empty,
 }
 
-/// 当たり 1 つ。
+/// One finding.
 #[derive(Debug, Clone)]
 pub struct BroadCatchFinding {
-    /// 群の名。
+    /// The name of the group.
     pub group: String,
     pub why: String,
-    /// 当たりの file(根からの path)と、その中の位置。Missing と Empty は architecture.hy。
+    /// The file of the finding (path from the root) and the position within it. Missing and Empty are architecture.hy.
     pub rel: String,
     pub range: Range,
     pub problem: BroadCatchProblem,
-    /// 登録簿の鍵の細目。
+    /// The detail of the registry key.
     pub detail: String,
 }
 
-/// 見つけた広い捕捉 1 つ(byte の範囲)。
+/// One broad catch found (a byte range).
 struct Catch {
     rel: String,
     start: usize,
     end: usize,
-    /// Hy の捕捉が例外を束縛した名(Python と束縛の無い捕捉は None)。
+    /// The name the Hy catch bound the exception to (None for Python and for catches with no binding).
     bound: Option<String>,
 }
 
-/// 境界 1 つの在りか。
+/// The location of one boundary.
 struct Located<'c> {
     carrier: &'c BroadCatchCarrier,
     rel: String,
@@ -81,7 +81,7 @@ fn is_broad_name(name: &str) -> bool {
     BROAD_NAMES.contains(&name.rsplit('.').next().unwrap_or(name))
 }
 
-/// form の木の中に広い型の記号が在るか。
+/// Whether a broad type symbol is in the form tree.
 fn names_broad(source: &str, form: &Form) -> bool {
     match &form.node {
         Node::Symbol => is_broad_name(&source[form.span.start..form.span.end]),
@@ -92,7 +92,7 @@ fn names_broad(source: &str, form: &Form) -> bool {
     }
 }
 
-/// `(except [..] …)` の form なら、広いかと束縛した名。広くない捕捉と捕捉でない form は None。
+/// If the form is an `(except [..] …)` form, whether it is broad and the bound name. None for a non-broad catch and for a form that is not a catch.
 fn broad_hy_catch(source: &str, form: &Form) -> Option<Option<String>> {
     let items = form.paren_items()?;
     let [head, spec, ..] = items else { return None };
@@ -107,7 +107,7 @@ fn broad_hy_catch(source: &str, form: &Form) -> Option<Option<String>> {
     }
 }
 
-/// Hy の木を歩き、広い捕捉を集める。
+/// Walks the Hy tree and collects broad catches.
 fn collect_hy(source: &str, rel: &str, form: &Form, out: &mut Vec<Catch>) {
     match &form.node {
         Node::Seq { items, .. } => {
@@ -122,9 +122,9 @@ fn collect_hy(source: &str, rel: &str, form: &Form, out: &mut Vec<Catch>) {
     }
 }
 
-/// 型の式が広いか(名・属性・その組)。
+/// Whether the type expression is broad (a name, attribute, or tuple of them).
 fn expr_is_broad(expr: &Expr) -> bool {
-    // 型の位置に来うる式は名・属性・組だけを見る(呼びや添字で型を作る捕捉は広さを静的に決められないので数えない)。
+    // For expressions that can appear in the type position, look only at names, attributes, and tuples (a catch that builds the type with a call or subscript has a breadth that cannot be decided statically, so it is not counted).
     if let Expr::Name(name) = expr {
         is_broad_name(name.id.as_str())
     } else if let Expr::Attribute(attribute) = expr {
@@ -147,7 +147,7 @@ fn python_handlers(rel: &str, handlers: &[ExceptHandler], out: &mut Vec<Catch>) 
     }
 }
 
-/// Python の文の列を歩き、広い捕捉を集める(式の中に捕捉は無いので、文の入れ子だけを歩く)。
+/// Walks a list of Python statements and collects broad catches (there is no catch inside an expression, so only nested statements are walked).
 fn collect_python(rel: &str, body: &[Stmt], out: &mut Vec<Catch>) {
     for stmt in body {
         match stmt {
@@ -205,7 +205,7 @@ fn collect_python(rel: &str, body: &[Stmt], out: &mut Vec<Catch>) {
     }
 }
 
-/// form の木の中に、頭が event で、名 bound を直に引数に持つ呼びが在るか。
+/// Whether the form tree contains a call whose head is event and that has the name bound directly as an argument.
 fn passes_to(source: &str, form: &Form, event: &str, bound: &str) -> bool {
     match &form.node {
         Node::Seq { delim, items } => {
@@ -220,22 +220,22 @@ fn passes_to(source: &str, form: &Form, event: &str, bound: &str) -> bool {
     }
 }
 
-/// 境界の中の捕捉が、束縛した名を出来事へ渡しているか(捕捉の form を読み直して確かめる)。
+/// Whether the catch inside a boundary passes the bound name to the event (re-reads the catch form to check).
 fn carries(source: &str, catch: &Catch, event: &str) -> bool {
     let Some(bound) = &catch.bound else { return false };
     Reader::new(source, catch.start, catch.end).read_all().iter().any(|form| passes_to(source, form, event, bound))
 }
 
-/// 境界の定義を探す(Hy の file の top level の定義)。
+/// Looks up the boundary definition (a top-level definition of a Hy file).
 fn locate<'c>(root: &Path, carrier: &'c BroadCatchCarrier) -> Result<Located<'c>, String> {
     let rel = format!("{}.hy", carrier.definition.mangled_module().replace('.', "/"));
-    let source = std::fs::read_to_string(root.join(&rel)).map_err(|_| format!("module {} の Hy の file({})が読めない", carrier.definition.module, rel))?;
+    let source = std::fs::read_to_string(root.join(&rel)).map_err(|_| format!("cannot read the Hy file ({}) of module {}", rel, carrier.definition.module))?;
     let top = Reader::new(&source, 0, source.len()).read_all();
-    let form = top_level::definition(&source, &top, &carrier.definition.name).ok_or_else(|| format!("{} に定義 {} が無い", rel, carrier.definition.name))?;
+    let form = top_level::definition(&source, &top, &carrier.definition.name).ok_or_else(|| format!("definition {} is missing in {}", carrier.definition.name, rel))?;
     Ok(Located { carrier, rel, start: form.span.start, end: form.span.end })
 }
 
-/// 群 1 つを判じる。読めなかった file は errors へ積む。
+/// Judges one group. Files that could not be read are pushed to errors.
 fn judge_one(root: &Path, declared: &BroadCatch, architecture_rel: &str, errors: &mut Vec<String>) -> Vec<BroadCatchFinding> {
     let finding = |rel: String, range: Range, problem: BroadCatchProblem, detail: String| BroadCatchFinding {
         group: declared.name.clone(),
@@ -267,7 +267,7 @@ fn judge_one(root: &Path, declared: &BroadCatch, architecture_rel: &str, errors:
         let source = match std::fs::read_to_string(root.join(rel)) {
             Ok(source) => source,
             Err(error) => {
-                errors.push(format!("{}: 読めない: {}", rel, error));
+                errors.push(format!("{}: cannot read: {}", rel, error));
                 continue;
             }
         };
@@ -281,7 +281,7 @@ fn judge_one(root: &Path, declared: &BroadCatch, architecture_rel: &str, errors:
                 Ok(Mod::Module(module)) => collect_python(rel, &module.body, &mut catches),
                 Ok(Mod::Interactive(_) | Mod::Expression(_) | Mod::FunctionType(_)) => {}
                 Err(error) => {
-                    errors.push(format!("{}: Python の構文木が読めない(広い捕捉を数えられない): {}", rel, error));
+                    errors.push(format!("{}: cannot read the Python syntax tree (broad catches cannot be counted): {}", rel, error));
                     continue;
                 }
             }
@@ -292,7 +292,7 @@ fn judge_one(root: &Path, declared: &BroadCatch, architecture_rel: &str, errors:
         if let Some(first) = outside.first() {
             out.push(finding(rel.clone(), lines.range(first.start, first.start + 1), BroadCatchProblem::Outside { count: outside.len() }, "outside".to_string()));
         }
-        // 境界ごとに、名を出来事へ渡さない捕捉(境界ごとに 1 件・位置 = 最初の物)。
+        // For each boundary, a catch that does not pass the name to the event (1 finding per boundary, position = the first one).
         for place in &located {
             let event = &place.carrier.event;
             if let Some(first) = catches.iter().filter(|catch| within(catch).is_some_and(|p| std::ptr::eq(p, place))).find(|catch| !carries(&source, catch, event)) {
@@ -308,19 +308,19 @@ fn judge_one(root: &Path, declared: &BroadCatch, architecture_rel: &str, errors:
     out
 }
 
-/// 当たりの 1 行の文(知らせの message と説明の「これは」が同じ文を使う)。
+/// The one-line sentence of a finding (the notice's message and the explanation's "this is" use the same sentence).
 pub fn describe(group: &str, problem: &BroadCatchProblem) -> String {
     match problem {
-        BroadCatchProblem::Outside { count } => format!("広い例外の捕捉が運搬の境界の外に {} 件在る(群 {})", count, group),
+        BroadCatchProblem::Outside { count } => format!("{} broad exception catch(es) are outside a carrier boundary (group {})", count, group),
         BroadCatchProblem::Unbound { carrier, event } => {
-            format!("運搬の境界 {} の広い捕捉が、例外を名で束縛して ({} …) へ渡していない(群 {})", carrier, event, group)
+            format!("the broad catch of carrier boundary {} does not bind the exception to a name and pass it to ({} …) (group {})", carrier, event, group)
         }
-        BroadCatchProblem::Missing { carrier, reason } => format!("群 {} の運搬の境界 {} が無い — {}", group, carrier, reason),
-        BroadCatchProblem::Empty => format!("群 {} の :files に当たる Hy・Python の file が 0", group),
+        BroadCatchProblem::Missing { carrier, reason } => format!("carrier boundary {} of group {} is missing — {}", carrier, group, reason),
+        BroadCatchProblem::Empty => format!("no Hy or Python files match :files of group {}", group),
     }
 }
 
-/// 群の全部を判じる。architecture_rel は architecture.hy の根からの path(見つからない境界と空の母集団の位置)。
+/// Judges all groups. architecture_rel is the path of architecture.hy from the root (the position of missing boundaries and an empty population).
 pub fn find(root: &Path, declarations: &[BroadCatch], architecture_rel: &str) -> (Vec<BroadCatchFinding>, Vec<String>) {
     let mut errors = Vec::new();
     let found = declarations.iter().flat_map(|declared| judge_one(root, declared, architecture_rel, &mut errors)).collect();
@@ -352,7 +352,7 @@ mod tests {
         let text = "(try (a) (except [] 1) (except [ValueError] 2) (except [e Exception] 3) (except [e [KeyError builtins.BaseException]] 4)\n\
                     (except [AssertionError] 5))\n;; (except [Exception] x)\n\"(except [] y)\" #_(except [] z)";
         let found = hy_catches(text);
-        assert_eq!(found.len(), 4, "狭い捕捉・註・文字列・#_ の中は数えない");
+        assert_eq!(found.len(), 4, "catches that are narrow, in comments, in strings, or inside #_ are not counted");
         assert_eq!(found[0].bound, None);
         assert_eq!(found[1].bound.as_deref(), Some("e"));
         assert_eq!(found[3].bound, None);

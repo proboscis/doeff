@@ -1,18 +1,18 @@
-//! DOEFF126 の 2 つ目の形の材料 — 1 file の実行で、呼び先の名を字面に含む file だけから「呼び手が引数に渡した Program」を集める。
+//! Material for the second form of DOEFF126 — in a single-file run, collect "Programs the caller passed as arguments" only from files that contain the callee's name in their text.
 //!
-//! 1 file の検査が引くのは「書いた file の関数が呼び先の呼び」の事実だけ(`param_calls_in` が自分の引数を素で呼ぶ定義の名で引く)。全体の実行は
-//! repo の Hy の全部の呼びから事実を作る(`program_params_for`)が、その作り方を 1 file の実行で踏むと、冷えた作業木の最初の 1 回で repo の Hy の
-//! 約 2900 file を全部読んで(defk の名)全部解析し直す(8〜13 秒 — hook の期限は 4 秒)。引く事実は呼び先が決まっているので、全部作る必要は無い。
+//! A single-file check pulls only the facts of "calls to callees made by functions in the written file" (`param_calls_in` pulls by the names of definitions that call their own arguments bare). A whole run
+//! builds facts from all Hy calls in the repo (`program_params_for`), but following that approach in a single-file run would read all of the repo's Hy on the first run in a cold working tree
+//! (about 2,900 files, for defk names) and re-analyze all of them (8 to 13 seconds — the hook's deadline is 4 seconds). The facts to pull have fixed callees, so building everything is unnecessary.
 //!
-//! 呼び手の file は、呼び先の定義の名(mangle 済み)の綴りを字面に必ず含む(`spelling` — 綴れる形と、綴りを決められない名は絞らない事)。含む file だけを解析し、
-//! 他は読んだだけで捨てる。
+//! A caller's file always contains the spelling of the callee definition's name (already mangled) in its text (`spelling` — the shapes that can be spelled, and the rule that names whose spelling cannot be fixed are not narrowed). Only files that contain it are analyzed;
+//! the others are read and then discarded.
 //!
-//! 呼び手の事実を引くのは実行の中で他の表を作った後になるので、書いた file が引きうる呼び先は実行の頭で見積もり、repo の読みを先に別の thread で走らせ始める
-//! (`SpelledCallers::started` — 冷えた作業木ではどの段も disk の待ちなので重ねる)。見積りは実際に引く呼び先を全部含み、収まらなければ引く時に読み直す。
+//! Pulling a caller's facts happens in a run after other tables are built, so the callees the written file may pull are estimated at the start of the run, and the repo read is started earlier on a separate thread
+//! (`SpelledCallers::started` — in a cold working tree every stage waits on disk, so they are overlapped). The estimate includes every callee actually pulled; if it does not fit, the read is redone when pulling.
 //!
-//! 渡した記号が defk かは、repo 全体の defk の名(全部の file を読む)でなく、引かれた module の file だけで決める(`defk_names_over` の名指し —
-//! 記号は module まで解かれ、defk の名は `module.名` で、その module の file だけで答えが同じ)。答え(事実とその並び)は `program_params_for` が作る物と
-//! 同じ: 解析する file は `hy_rel_files` の順、事実は file の中の呼びの順。
+//! Whether a passed symbol is a defk is decided not by the defk names of the whole repo (reading all files) but only by the file of the module being pulled (the naming of `defk_names_over` —
+//! a symbol is resolved up to its module, a defk's name is `module.name`, and the answer is the same from that module's file alone). The answer (the facts and their order) is the same as what `program_params_for` builds:
+//! files are analyzed in `hy_rel_files` order, and facts are in the order of calls within a file.
 
 use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
@@ -32,26 +32,26 @@ use super::smells::Scope;
 use super::spelling::Spelling;
 use super::{facts, hy_files, named_modules};
 
-/// 引かれた時に呼び先の名を字面に含む file から集める「呼び手が引数に渡した Program」(1 file の実行)。
+/// "Programs the caller passed as arguments", collected when requested from files that contain the callee's name in their text (single-file run).
 pub struct SpelledCallers<'a> {
     root: &'a Path,
     enabled: &'a BTreeSet<ProjectRule>,
-    /// 字面が合って解析した file の数(検のため)。
+    /// The number of files analyzed because the text matched (for tests).
     analyzed: AtomicUsize,
-    /// 実行の頭で先に走らせ始めた読み(`started`)。引く呼び先がその読みの呼び先に収まれば、これを待って使う。
+    /// The read started early at the start of the run (`started`). If the callee being pulled fits within that read's callees, wait for it and use it.
     started: Mutex<Option<JoinHandle<Started>>>,
 }
 
-/// 先に走らせ始めた読みの結果 — どの呼び先の名で字面を探したかと、repo の Hy の全 file の読み。
+/// The result of the read that was started early — which callee names the text was searched for, and the read of all Hy files in the repo.
 struct Started {
     callees: Vec<String>,
     scans: Vec<(String, PathBuf, Scan)>,
 }
 
-/// 呼び先 1 つの字面の探り方。
+/// How to probe the text for one callee.
 struct Needle {
     callee: String,
-    /// 呼び先の名(最後の段)の綴り。
+    /// The spelling of the callee's name (its last component).
     spelling: Spelling,
 }
 
@@ -62,18 +62,18 @@ impl Needle {
     }
 }
 
-/// file 1 つを読んだ結果。
+/// The result of reading one file.
 #[derive(Default)]
 struct Scan {
-    /// 字面が合った file の中身。
+    /// The contents of a file whose text matched.
     source: Option<String>,
-    /// `(defk` の綴りを含むか。
+    /// Whether it contains the spelling `(defk`.
     mentions_defk: bool,
 }
 
-/// repo の tree を歩きながら file の中身を読む(dir を開く待ちと file を読む待ちを重ねる — 冷えた作業木では 1 回ごとに disk を 1 回待つ)。
-/// 字面が合った file の中身だけ持つ。別の作業木が読んだ中身は、git の blob の id で綴りの覚えを引き、どの呼び先の名も綴らないと分かれば読まない
-/// (`blob_spell::scan`)。
+/// Read file contents while walking the repo tree (overlapping the wait for opening dirs and the wait for reading files — in a cold working tree each one waits on disk once).
+/// Keep only the contents of files whose text matched. For contents read by another working tree, look up the spelling memory by the git blob id, and skip reading if it is known that no callee name is spelled
+/// (`blob_spell::scan`).
 fn read_scans(root: &Path, callees: &[String]) -> Vec<(String, PathBuf, Scan)> {
     let needles: Vec<Needle> = callees.iter().map(|callee| Needle::of(callee)).collect();
     blob_spell::scan(root, "program-params.scan", |spell| needles.iter().any(|needle| spell.may_spell(&needle.spelling)))
@@ -98,9 +98,9 @@ impl<'a> SpelledCallers<'a> {
         SpelledCallers { root, enabled, analyzed: AtomicUsize::new(0), started: Mutex::new(None) }
     }
 
-    /// 書いた file(`rel`・`source`)が自分の引数を素で呼ぶ定義を持つなら、その呼び先の名で repo の読みを今すぐ別の thread で走らせ始める。
-    /// 呼び手の事実を引くのは、実行の中で defk の名・登録簿・effect の世界を作った後になる。冷えた作業木ではそれぞれが disk の待ちなので、頭から重ねる。
-    /// 呼び先は defk の集まりが空の見積り(`asked_callees` — 実際に引く呼び先を全部含む)で決める。引く呼び先が収まらなければ、引く時に読み直す。
+    /// If the written file (`rel`, `source`) has a definition that calls its own argument bare, start reading the repo right now on a separate thread, using that callee's name.
+    /// Pulling a caller's facts happens in a run after the defk names, the registry, and the effect world are built. In a cold working tree each of those waits on disk, so overlap them from the start.
+    /// The callees are decided by the estimate with an empty set of defks (`asked_callees` — it includes every callee actually pulled). If the callee being pulled does not fit, the read is redone when pulling.
     pub fn started(root: &'a Path, enabled: &'a BTreeSet<ProjectRule>, rel: &str, source: &str) -> Self {
         let callers = Self::new(root, enabled);
         if !enabled.contains(&ProjectRule::DefkCalledBare) {
@@ -123,12 +123,12 @@ impl<'a> SpelledCallers<'a> {
         callers
     }
 
-    /// 字面が合って解析した file の数。
+    /// The number of files analyzed because the text matched.
     pub fn analyzed(&self) -> usize {
         self.analyzed.load(Ordering::SeqCst)
     }
 
-    /// `callees` の字面を探した repo の Hy の全 file の読み — 先に走らせ始めた読みがあり、呼び先が収まるならそれ(待つ)、でなければ今読む。
+    /// The read of all Hy files in the repo that searched for the text of `callees` — if there is a read started early and the callees fit, use it (wait); otherwise read now.
     fn scans_for(&self, callees: &[String]) -> Vec<(String, PathBuf, Scan)> {
         let started = self.started.lock().unwrap_or_else(PoisonError::into_inner).take();
         if let Some(handle) = started {
@@ -141,7 +141,7 @@ impl<'a> SpelledCallers<'a> {
         read_scans(self.root, callees)
     }
 
-    /// `symbols`(module まで解いた記号)のうち defk の物 — 記号の module の file だけで決める。
+    /// Of `symbols` (symbols resolved up to the module), those that are defks — decided only from the symbol's module file.
     fn defks_among(&self, symbols: &BTreeSet<&str>) -> DefkNames {
         let known = hy_files::by_module(self.root);
         let modules: BTreeSet<String> = symbols.iter().filter_map(|symbol| symbol.rsplit_once('.')).map(|(module, _)| module.to_string()).collect();
@@ -183,7 +183,7 @@ impl ProgramParamsLookup for SpelledCallers<'_> {
                     settled[at].push(fact);
                 }
             }
-            // repo に defk が 1 つも無ければ、全体の実行は事実を作らない(`(fnk …)` の事実も)— 同じ答えにする。
+            // If the repo has no defk at all, the whole run builds no facts (including the `(fnk …)` facts) — give the same answer.
             if settled.iter().any(|facts| !facts.is_empty()) && !proved_defk {
                 let with_defk: Vec<(&str, &PathBuf)> = scans.iter().filter(|(_, _, scan)| scan.mentions_defk).map(|(rel, path, _)| (rel.as_str(), path)).collect();
                 let defines = crate::timing::timed("program-params.has-defk", || {
@@ -210,7 +210,7 @@ mod tests {
         BTreeSet::from([ProjectRule::DefkCalledBare])
     }
 
-    /// 木 `files`(根からの path と中身)を置いた repo。
+    /// A repo with the tree `files` (path from the root, and contents) placed.
     fn repo(files: &[(&str, &str)]) -> tempfile::TempDir {
         let dir = tempfile::TempDir::new().unwrap();
         for (rel, text) in files {
@@ -221,8 +221,8 @@ mod tests {
         dir
     }
 
-    /// repo の Hy の全部から作る事実 — 全体の実行(`program_params_for`)と同じ作り方: 全部の file の defk の名を集め、全部の file の呼びから積む(歩く物は
-    /// `hy_index::collect_hy_files` — 検の相手と歩き方を分ける)。
+    /// Facts built from all of the repo's Hy — built the same way as the whole run (`program_params_for`): collect the defk names of all files and accumulate from the calls of all files (the walker is
+    /// `hy_index::collect_hy_files` — the test's counterpart and the way it walks are kept separate).
     fn whole(root: &Path) -> ProgramParams {
         let files: Vec<(String, String)> = collect_hy_files(root)
             .into_iter()
@@ -246,7 +246,7 @@ mod tests {
         params
     }
 
-    /// 呼び先の名を字面に含む file だけから作る事実 — 1 file の実行が使う物(呼び先の並びと同じ順)。
+    /// Facts built only from files that contain the callee's name in their text — what a single-file run uses (in the same order as the callees).
     fn named(root: &std::path::Path, callees: &[String]) -> (Vec<Vec<PassedProgram>>, usize) {
         let enabled = enabled();
         let callers = SpelledCallers::new(root, &enabled);
@@ -293,33 +293,33 @@ mod tests {
 ",
             ),
             ("app/other.hy", "(defk unrelated [x] x)\n"),
-            ("app/docs.hy", "; rows-by-text を呼ぶ例は user_a にある\n(defn note [] \"rows_by_text\")\n"),
-            // 名の綴りを長い記号の途中に含むだけの file(module の path の段・別の名の前半)は、呼びの頭ではない。
+            ("app/docs.hy", "; an example calling rows-by-text is in user_a\n(defn note [] \"rows_by_text\")\n"),
+            // Files that merely contain the name's spelling in the middle of a longer symbol (a module path component, or the first half of another name) are not call heads.
             ("app/longer.hy", "(import controllers.rows-by-text.system)\n(defk rows-by-text-all [x] x)\n(defk all-rows-by-text [x] x)\n"),
         ]
     }
 
-    /// 呼び先を字面で絞って作った事実は、repo の全部から作った事実と、事実もその並びも同じ(呼び先ごとに)。
+    /// Facts built by narrowing callees by text are the same as facts built from all of the repo, in both facts and order (per callee).
     #[test]
     fn the_facts_for_a_callee_equal_the_facts_made_from_the_whole_repo() {
         let dir = repo(&sample());
         let whole = whole(dir.path());
         let mut callees = whole.callees();
-        // 事実の無い呼び先と、定義の無い呼び先も、空と答える。
+        // Callees with no facts and callees with no definition also answer empty.
         callees.extend(["app.hof.twice", "app.nowhere.missing", "app.hof.rows_by_text_not"].map(String::from));
-        assert!(callees.len() >= 6, "検の材料が足りない: {callees:?}");
+        assert!(callees.len() >= 6, "not enough test material: {callees:?}");
         let (facts, _) = named(dir.path(), &callees);
         for (callee, found) in callees.iter().zip(&facts) {
             assert_eq!(found.as_slice(), whole.of(callee), "{callee}");
         }
-        // 空の比べで通らない: 記号(位置と keyword)・fnk・module 修飾・別名・同じ module の呼びが、どれも事実になっている。
+        // It does not pass vacuously by comparing empties: symbols (positional and keyword), fnk, module-qualified, aliased, and same-module calls all become facts.
         assert_eq!(whole.of("app.hof.rows_by_text").len(), 5);
         assert_eq!(whole.of("app.hof.safe_one").len(), 1);
         assert_eq!(whole.of("app.hof._private_fn").len(), 1);
         assert_eq!(whole.of("app.hof.hyx_checkXquestion_markX").len(), 1);
     }
 
-    /// 1 度に複数の呼び先を引いても、1 つずつ引いた時と同じ(file を読むのは 1 度)。
+    /// Pulling several callees at once gives the same result as pulling one at a time (files are read once).
     #[test]
     fn asking_for_several_callees_at_once_gives_the_same_facts_as_asking_one_by_one() {
         let dir = repo(&sample());
@@ -331,18 +331,18 @@ mod tests {
         }
     }
 
-    /// 呼び先の名を字面に含む file だけを解析する(`-` でも `_` でも綴った file・コメントや文字列にだけ綴った file も含む。含まない file は解析しない)。
+    /// Analyze only files that contain the callee's name in their text (including files that spell it with either `-` or `_`, and files that spell it only in a comment or string. Files that do not contain it are not analyzed).
     #[test]
     fn only_the_files_that_spell_the_callee_name_are_analyzed() {
         let dir = repo(&sample());
-        // hof(定義と同じ module の呼び)・user_a(`-`)・user_b(`_`)・user_c(module 修飾)・docs(コメントと文字列)。payload と other は綴らない。
+        // hof (a call in the same module as the definition), user_a (`-`), user_b (`_`), user_c (module-qualified), docs (comment and string). payload and other do not spell it.
         let (_, analyzed) = named(dir.path(), &["app.hof.rows_by_text".to_string()]);
         assert_eq!(analyzed, 5);
         let (_, analyzed) = named(dir.path(), &["app.hof.safe_one".to_string()]);
-        assert_eq!(analyzed, 2, "safe-one を綴るのは hof(定義)と user_b だけ");
+        assert_eq!(analyzed, 2, "only hof (the definition) and user_b spell safe-one");
     }
 
-    /// 名に識別子でない文字が入る(mangle が `hyx_` へ逃がした)名は、綴りを決められないので字面で絞らない — それでも答えは同じ。
+    /// A name containing non-identifier characters (that mangle escaped to `hyx_`) cannot have its spelling fixed, so the text does not narrow it — the answer is still the same.
     #[test]
     fn a_name_that_mangle_escapes_is_not_narrowed_but_still_gives_the_same_facts() {
         let dir = repo(&sample());
@@ -352,7 +352,7 @@ mod tests {
         assert_eq!(facts[0].as_slice(), whole(dir.path()).of(&callee));
     }
 
-    /// repo に defk が 1 つも無ければ、全体の実行は `(fnk …)` を渡す事実も作らない — 1 file の実行も同じ。defk が在れば作る。
+    /// If the repo has no defk at all, the whole run builds no facts that pass `(fnk …)` either — a single-file run is the same. If a defk exists, they are built.
     #[test]
     fn without_any_defk_in_the_repo_no_facts_are_made_like_the_whole_run() {
         let lib = ("lib.hy", "(defn apply-it [f] (f 1))\n");
@@ -366,29 +366,29 @@ mod tests {
         assert_eq!(named(with.path(), &callee).0[0].as_slice(), whole(with.path()).of(&callee[0]));
     }
 
-    /// 実行の頭で先に走らせ始めた読みを使っても、事実もその並びも変わらない。引く呼び先が見積りに収まらなければ、引く時に読み直して同じ答えを返す。
+    /// Using the read started early at the start of the run changes neither the facts nor their order. If the callee being pulled does not fit the estimate, it re-reads when pulling and returns the same answer.
     #[test]
     fn a_read_started_early_gives_the_same_facts_and_falls_back_when_the_callees_do_not_fit() {
         let dir = repo(&sample());
         let whole = whole(dir.path());
         let enabled = enabled();
-        // hof.hy の素の呼びを持つ定義: rows-by-text(`setv`)・_private-fn・check?。safe-one は `<-` の右辺なので素の呼びではない。
+        // Definitions in hof.hy with bare calls: rows-by-text (`setv`), _private-fn, check?. safe-one is the right-hand side of `<-`, so it is not a bare call.
         let callers = SpelledCallers::started(dir.path(), &enabled, "app/hof.hy", HOF);
-        assert!(callers.started.lock().unwrap().is_some(), "先に読み始めていない");
+        assert!(callers.started.lock().unwrap().is_some(), "the read was not started early");
         let fits = ["app.hof.rows_by_text".to_string(), "app.hof._private_fn".to_string()];
         let facts = callers.passed_to_all(&fits);
         for (callee, found) in fits.iter().zip(&facts) {
             assert_eq!(found.as_slice(), whole.of(callee), "{callee}");
         }
-        assert!(callers.started.lock().unwrap().is_none(), "待った読みが残っている");
-        // 見積りに無い呼び先(safe-one)は、先の読みを使えないので読み直す — 答えは同じ。
+        assert!(callers.started.lock().unwrap().is_none(), "the awaited read remains");
+        // A callee not in the estimate (safe-one) cannot use the early read, so it re-reads — the answer is the same.
         let again = SpelledCallers::started(dir.path(), &enabled, "app/hof.hy", HOF);
         let unfit = ["app.hof.safe_one".to_string()];
         assert_eq!(again.passed_to_all(&unfit)[0].as_slice(), whole.of(&unfit[0]));
-        assert_eq!(whole.of(&unfit[0]).len(), 1, "検の材料が足りない");
+        assert_eq!(whole.of(&unfit[0]).len(), 1, "not enough test material");
     }
 
-    /// 書いた file に素の呼びを持つ定義が無ければ、先に読み始めない(読みを無駄にしない)。
+    /// If the written file has no definition with a bare call, the read is not started early (do not waste the read).
     #[test]
     fn nothing_is_read_early_when_the_written_file_calls_no_parameter_bare() {
         let dir = repo(&sample());
@@ -399,7 +399,7 @@ mod tests {
         assert!(SpelledCallers::started(dir.path(), &off, "app/hof.hy", HOF).started.lock().unwrap().is_none());
     }
 
-    /// 見積り(defk の集まりが空)は、実際の集まりで引く呼び先を全部含む。
+    /// The estimate (with an empty set of defks) includes every callee pulled with the actual set.
     #[test]
     fn the_estimate_with_no_defks_contains_every_callee_asked_with_the_real_defks() {
         let source = "(defk apply-all [rows f] (for [r rows] (setv v (f r))) rows)\n(defk through [rows g] (! (apply-all rows (fnk [r] (g r)))))\n(defk direct [rows h] (setv w (h rows)) w)\n(defk calm [rows k] (<- v (k rows)) v)\n(defk wrapped [rows m] (! (step-of (m rows))))\n";
@@ -408,6 +408,6 @@ mod tests {
         let guess = asked_callees(source, scope, &DefkNames::default());
         let real = asked_callees(source, scope, &DefkNames::of(&["app.m.step_of", "app.m.apply_all"]));
         assert!(real.iter().all(|callee| guess.contains(callee)), "{real:?} ⊄ {guess:?}");
-        assert!(guess.contains(&"app.m.wrapped".to_string()) && !real.contains(&"app.m.wrapped".to_string()), "検の材料が足りない: {guess:?} / {real:?}");
+        assert!(guess.contains(&"app.m.wrapped".to_string()) && !real.contains(&"app.m.wrapped".to_string()), "not enough test material: {guess:?} / {real:?}");
     }
 }

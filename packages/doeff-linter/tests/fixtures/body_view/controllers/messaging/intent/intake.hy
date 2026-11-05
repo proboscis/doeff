@@ -1,15 +1,15 @@
-;;; 本体の文字のテストの fixture — agora-controllers d89796e67 の controllers/messaging/intent/intake.hy から、
-;;; core/conversation_input.hy の run-input-request が撃つ effect(SettleIntake)と答えの型だけを写した。
+;;; Fixture for the body-text tests — copied from agora-controllers d89796e67 controllers/messaging/intent/intake.hy,
+;;; only the effect (SettleIntake) fired by run-input-request in core/conversation_input.hy and its answer types.
 (require doeff-hy.macros [defeffect val])
 (require doeff-hy.record [defrecord])
 
-(defrecord IntakeSettlement "結末" (#^ str request-id))
-(defrecord IntakeSettleLanded "積めた" (#^ str request-id))
-(defrecord IntakeSettleRefused "断られた" (#^ str detail))
-(defrecord IntakeUnreachable "届かない" (#^ str detail))
+(defrecord IntakeSettlement "Outcome" (#^ str request-id))
+(defrecord IntakeSettleLanded "Landed" (#^ str request-id))
+(defrecord IntakeSettleRefused "Refused" (#^ str detail))
+(defrecord IntakeUnreachable "Unreachable" (#^ str detail))
 
 (defeffect SettleIntake
-  "列 intake に要求 1 つの結末を積む(答え = 頭の註)。"
+  "Land the outcome of one request on the intake queue (answer = the head annotation)."
   {:fields [(: settlement IntakeSettlement)]
    :answer (| IntakeSettleLanded IntakeSettleRefused IntakeUnreachable)
    :tags {:context "messaging" :role "intent"}})

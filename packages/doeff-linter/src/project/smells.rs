@@ -1,17 +1,17 @@
-//! 臭いの規則(DOEFF121〜125)— 業務の Hy の定義の中の、型と effect で書けるのに手で書いた形を拾う。
+//! Smell rules (DOEFF121 to 125) — pick up forms in business Hy definitions that could be written with types and effects but were written by hand.
 //!
-//! 臭いの規則を足す。題材は agora-controllers の controllers/kanban/core/tag_judgment.hy の decide-tag。
-//! どれも決定的な形の照らしで、重さの既定は warning(ADR-DOE-HY-007 R9 — Absent / Raise が本線に入ったので info から上げた)。
+//! Adds the smell rules. The subject matter is decide-tag in agora-controllers' controllers/kanban/core/tag_judgment.hy.
+//! All of them compare deterministic shapes, and the default severity is warning (ADR-DOE-HY-007 R9 — raised from info once Absent / Raise entered the main line).
 //!
-//! - DOEFF121: 判断の層(設定の `smells.shape_check_layers`)の定義が、文字列の鍵の `(.get x "欄")` と、その欄への `isinstance` で
-//!   入力の形を検める(JSON の形の検めが core に入っている)。
-//! - DOEFF122: match の腕が、失敗の型(宣言から取る — defrecord の `:failure True` と defeffect の `:failure` / `:absent`)を受けて、
-//!   受けた値をそのまま、または包み直して return するだけ(手書きの例外の再送出)。
-//! - DOEFF123: `(<- x T (f …))` の直後に `(return x)` が来て、x を他で使わない。
-//! - DOEFF124: 同じ値の 2 つ以上の欄を、文字列と一緒に `+`(か f 文字列)で 1 本の文字列につなぐ。
-//! - DOEFF125: for / while の中の `(:= xs (+ xs #(…)))`・`(setv xs (+ xs […]))`(毎回作り直す蓄え)。
+//! - DOEFF121: a definition in a judgment layer (the setting `smells.shape_check_layers`) checks the shape of its input with `(.get x "field")` using a string key and `isinstance` on that field
+//!   (a JSON shape check has crept into core).
+//! - DOEFF122: a match arm receives a failure type (taken from declarations — defrecord's `:failure True` and defeffect's `:failure` / `:absent`) and
+//!   merely returns the received value as it is or re-wrapped (a hand-written re-raise of an exception).
+//! - DOEFF123: `(return x)` comes right after `(<- x T (f …))`, and x is used nowhere else.
+//! - DOEFF124: two or more fields of the same value are joined with strings into one string by `+` (or an f-string).
+//! - DOEFF125: `(:= xs (+ xs #(…)))` or `(setv xs (+ xs […]))` inside for / while (an accumulator rebuilt each time).
 //!
-//! Hy は doeff-indexer の読み取り器で form の木にしてから読む(Hy の読み取り部を写さない)。
+//! Hy is turned into a tree of forms with doeff-indexer's reader before being read (the Hy reading part is not copied).
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;
@@ -22,32 +22,32 @@ use super::facts::{read_facts, ByteSpan, Language};
 use super::layers::TagReading;
 use super::names::{hy_mangle, module_of};
 
-/// 臭いの種類と、説明の文に差し込む材料(閉じた集合)。
+/// The kinds of smell, and the material inserted into the explanation text (a closed set).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum SmellKind {
-    /// DOEFF121: 文字列の鍵で読んだ欄を isinstance で検める。
+    /// DOEFF121: isinstance checks a field read with a string key.
     ShapeCheck { field: String, holder: String },
-    /// DOEFF122: 失敗の型の腕が、受けた値を return し直すだけ。
+    /// DOEFF122: an arm for a failure type merely returns the received value again.
     FailureRethrow { failure_type: String, subject: String },
-    /// DOEFF123: 束ねてすぐ返すだけの `<-`。
+    /// DOEFF123: a `<-` that merely binds and returns immediately.
     BindThenReturn { name: String },
-    /// DOEFF124: 同じ値の欄を文字列につなぐ。
+    /// DOEFF124: fields of the same value joined into a string.
     FieldsJoined { value: String, fields: Vec<String> },
-    /// DOEFF125: ループの中で毎回作り直す蓄え。
+    /// DOEFF125: an accumulator rebuilt on each pass of a loop.
     RebuiltAccumulator { name: String },
 }
 
-/// 臭い 1 件(どの定義の、どこで)。
+/// One smell (in which definition, and where).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Smell {
-    /// 定義の名(mangle 済み)。
+    /// The definition's name (already mangled).
     pub definition: String,
     pub span: ByteSpan,
     pub kind: SmellKind,
 }
 
 impl Smell {
-    /// 登録簿の鍵の細目(`<定義>::<名>`)— 同じ定義の同じ名の臭いは 1 件に数える。
+    /// Detail of the registry key (`<definition>::<name>`) — smells of the same name in the same definition count as one.
     pub fn detail(&self) -> String {
         let name = match &self.kind {
             SmellKind::ShapeCheck { field, .. } => hy_mangle(field),
@@ -59,8 +59,8 @@ impl Smell {
     }
 }
 
-/// 1 つの effect が defeffect で不在(`:absent`)・失敗(`:failure`)と宣言した型(module まで含めた名・mangle 済み)。
-/// `<-` と `!` はこの型を答えの値として束ねず、Absent / Raise として逃がす(ADR-DOE-CORE-EFFECTS-003 R5)。DOEFF175 が引く。
+/// The types that an effect declared in defeffect as absent (`:absent`) or failure (`:failure`) (names including the module, already mangled).
+/// `<-` and `!` do not bind these types as answer values but let them escape as Absent / Raise (ADR-DOE-CORE-EFFECTS-003 R5). DOEFF175 consults this.
 #[derive(Debug, Clone, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct EffectOutcomes {
     pub absent: BTreeSet<String>,
@@ -68,7 +68,7 @@ pub struct EffectOutcomes {
 }
 
 impl EffectOutcomes {
-    /// 型(module まで含めた名)が不在と宣言されていれば `Absent`、失敗と宣言されていれば `Failure`(宣言が無ければ None)。
+    /// `Absent` if the type (name including the module) is declared absent, `Failure` if declared failure (None if not declared).
     pub fn declared(&self, qualified: &str) -> Option<DeclaredAs> {
         if self.absent.contains(qualified) {
             Some(DeclaredAs::Absent)
@@ -80,16 +80,16 @@ impl EffectOutcomes {
     }
 }
 
-/// 宣言の種類(defeffect の `:absent` か `:failure`)。
+/// The kind of declaration (defeffect's `:absent` or `:failure`).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum DeclaredAs {
     Absent,
     Failure,
 }
 
-/// 失敗の型の集合(module まで含めた名・mangle 済み — `controllers.core.kanban_write_rules.Refusal`)— 宣言から集める。
-/// 型の名から推し量らない。同じ名の型が別の module にあっても、宣言した方だけが失敗の型になる。
-/// `effects` は defeffect ごとの宣言(module まで含めた effect の名 → 不在と失敗の型)— DOEFF175 が使う。
+/// The set of failure types (names including the module, already mangled — `controllers.core.kanban_write_rules.Refusal`) — collected from declarations.
+/// They are not inferred from type names. Even if a type of the same name exists in another module, only the declared one becomes a failure type.
+/// `effects` holds the declarations per defeffect (effect name including the module → absent and failure types) — used by DOEFF175.
 #[derive(Debug, Clone, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct FailureTypes {
     names: BTreeSet<String>,
@@ -97,7 +97,7 @@ pub struct FailureTypes {
     effects: BTreeMap<String, EffectOutcomes>,
 }
 
-/// 名を解く材料 — file の module の綴りと、import の束縛(名 → module)。
+/// Material for resolving names — the file's module spelling and import bindings (name → module).
 #[derive(Debug, Clone, Copy)]
 pub struct Scope<'a> {
     pub module: &'a str,
@@ -105,8 +105,8 @@ pub struct Scope<'a> {
 }
 
 impl Scope<'_> {
-    /// 型の綴りを module まで含めた名に解く — `(import m [T])` の T は `m.T`、`(import m :as n)` の `n.T` は `m.T`、
-    /// 束縛の無い裸の名はこの file の定義(`<module>.T`)。
+    /// Resolve a type's spelling to a name including the module — T in `(import m [T])` is `m.T`, `n.T` in `(import m :as n)` is `m.T`,
+    /// and a bare name with no binding is a definition in this file (`<module>.T`).
     pub fn qualify(&self, spelled: &str) -> String {
         let mangled: Vec<String> = spelled.split('.').map(hy_mangle).collect();
         let head = spelled.split('.').next().unwrap_or(spelled);
@@ -120,12 +120,12 @@ impl Scope<'_> {
     }
 }
 
-/// 名が失敗の型かを引ける物 — repo 全体から集めた集合(`FailureTypes`)か、引かれた時に型の名を綴る宣言の file だけから集める物(`SpelledFailures`・1 file の実行)。
+/// Something that can answer whether a name is a failure type — either a set collected from the whole repo (`FailureTypes`), or one collected, when asked, only from the declaration files that spell the type's name (`SpelledFailures`; single-file run).
 pub trait FailureLookup {
-    /// module まで含めた名が失敗の型か。
+    /// Whether the name including the module is a failure type.
     fn is_failure(&self, qualified: &str) -> bool;
 
-    /// module まで含めた名の effect が defeffect で不在・失敗と宣言した型(宣言が無い effect・effect でない名は None)。
+    /// The types that the effect with the name including the module declared absent or failure in defeffect (None for an effect with no declaration or a name that is not an effect).
     fn effect_outcomes(&self, qualified_effect: &str) -> Option<EffectOutcomes>;
 }
 
@@ -140,17 +140,17 @@ impl FailureLookup for FailureTypes {
 }
 
 impl FailureTypes {
-    /// module まで含めた名の列から作る(検のため)。
+    /// Build from a list of names including the module (for tests).
     pub fn of(names: &[&str]) -> Self {
         FailureTypes { names: names.iter().map(|n| n.to_string()).collect(), effects: BTreeMap::new() }
     }
 
-    /// module まで含めた名が失敗の型か。
+    /// Whether the name including the module is a failure type.
     pub fn contains(&self, qualified: &str) -> bool {
         self.names.contains(qualified)
     }
 
-    /// 別の集合を足す。
+    /// Add another set.
     pub fn extend(&mut self, other: FailureTypes) {
         self.names.extend(other.names);
         for (effect, outcomes) in other.effects {
@@ -160,39 +160,39 @@ impl FailureTypes {
         }
     }
 
-    /// 宣言の数(報告のため)。
+    /// The number of declarations (for reporting).
     pub fn len(&self) -> usize {
         self.names.len()
     }
 
-    /// 空か。
+    /// Whether it is empty.
     pub fn is_empty(&self) -> bool {
         self.names.is_empty() && self.effects.is_empty()
     }
 }
 
-/// 失敗の型の事実の種類(file ごとの cache の置き場の名)— 全体の実行(`failure_types_for`)と 1 file の実行(`spelled_failures`)が同じ置き場を使う。
+/// The kind of failure-type facts (the name of the per-file cache location) — the whole run (`failure_types_for`) and the single-file run (`spelled_failures`) use the same location.
 pub const FAILURE_TYPES_KIND: &str = "failure-types";
 
-/// file ごとの失敗の型は、その file の中身とタグの読み方(設定)で決まる — 読み方の指紋が cache の印の `key`。
+/// A file's failure types are decided by its contents and the tag-reading method (settings) — the fingerprint of the reading method is the cache mark's `key`.
 pub fn failure_types_key(reading: &TagReading) -> String {
     use sha2::{Digest, Sha256};
     format!("{:x}", Sha256::digest(format!("{reading:?}").as_bytes()))
 }
 
-/// 失敗の型の宣言(`defrecord` の `:failure True` と `defeffect` の `:failure` / `:absent`)を持ちうる file の中身か — どちらの綴りも無い file は宣言を持たない。
+/// Whether the contents are of a file that may hold failure-type declarations (`defrecord`'s `:failure True` and `defeffect`'s `:failure` / `:absent`) — a file with neither spelling holds no declarations.
 pub fn has_failure_declaration_spelling(source: &str) -> bool {
     source.contains(":failure") || source.contains(":absent")
 }
 
-/// 中身を読んだ Hy の file 1 つが宣言する失敗の型(空の事は在る — 綴りは在るが宣言でない file)。
+/// The failure types declared by one Hy file whose contents were read (empty is possible — a file that has the spelling but is not a declaration).
 pub fn failure_types_of_source(rel: &str, source: &str, reading: &TagReading) -> FailureTypes {
     let module = module_of(rel);
     let facts = read_facts(Language::Hy, source, &module, reading);
     failure_types_in(source, Scope { module: &module, bindings: &facts.bindings })
 }
 
-/// Hy の file 1 つが宣言する失敗の型(`:failure` か `:absent` を綴らない file・宣言の無い file は None)。全体の実行と 1 file の実行が同じ作り方を使う。
+/// The failure types declared by one Hy file (None for a file that does not spell `:failure` or `:absent`, or has no declarations). The whole run and the single-file run use the same construction.
 pub fn failure_types_of_file(rel: &str, path: &Path, reading: &TagReading) -> Option<FailureTypes> {
     let source = std::fs::read_to_string(path).ok()?;
     if !has_failure_declaration_spelling(&source) {
@@ -202,8 +202,8 @@ pub fn failure_types_of_file(rel: &str, path: &Path, reading: &TagReading) -> Op
     (!found.is_empty()).then_some(found)
 }
 
-/// 1 つの source の失敗の型の宣言 — `(defrecord 名 "doc"? {… :failure True …} …)` の名と、
-/// `(defeffect 名 "doc"? {… :failure [A B] :absent [C] …})` の列の型(scope で module まで含めた名に解く)。
+/// The failure-type declarations of one source — the names of `(defrecord name "doc"? {… :failure True …} …)`, and
+/// the types in the lists of `(defeffect name "doc"? {… :failure [A B] :absent [C] …})` (resolved by scope to names including the module).
 pub fn failure_types_in(source: &str, scope: Scope<'_>) -> FailureTypes {
     let mut reader = Reader::new(source, 0, source.len());
     let forms = reader.read_all();
@@ -232,7 +232,7 @@ pub fn failure_types_in(source: &str, scope: Scope<'_>) -> FailureTypes {
                     names.extend(qualified.iter().cloned());
                     if key == ":failure" { outcomes.failure = qualified } else { outcomes.absent = qualified }
                 }
-                // effect ごとの宣言(DOEFF175 — どの effect がどの型を不在・失敗と宣言したか)。
+                // Per-effect declarations (DOEFF175 — which effect declared which types absent or failure).
                 if let (Some(effect), false) = (items.get(1).and_then(|n| hy.symbol(n)), outcomes.absent.is_empty() && outcomes.failure.is_empty()) {
                     effects.insert(format!("{}.{}", scope.module, hy_mangle(effect)), outcomes);
                 }
@@ -243,7 +243,7 @@ pub fn failure_types_in(source: &str, scope: Scope<'_>) -> FailureTypes {
     FailureTypes { names, effects }
 }
 
-/// 1 つの source の臭いを全部拾う。`shape_checks` は DOEFF121 を当てるか(判断の層の file だけ)。scope は match の腕の型を解くため。
+/// Pick up all smells of one source. `shape_checks` is whether to apply DOEFF121 (only files in judgment layers). scope is for resolving the types of match arms.
 pub fn smells_in(source: &str, scope: Scope<'_>, failure: &dyn FailureLookup, shape_checks: bool) -> Vec<Smell> {
     let mut reader = Reader::new(source, 0, source.len());
     let forms = reader.read_all();
@@ -256,7 +256,7 @@ pub fn smells_in(source: &str, scope: Scope<'_>, failure: &dyn FailureLookup, sh
         }
         hy.walk(form, &name, &Judge { failure, scope }, form, false, &mut smells);
         for smell in smells {
-            // 同じ定義の同じ細目は最初の 1 件だけ(鍵を 1 つにする)。
+            // Only the first of the same detail in the same definition (so there is one key).
             if !found.iter().any(|f| f.kind_id() == smell.kind_id() && f.detail() == smell.detail()) {
                 found.push(smell);
             }
@@ -266,7 +266,7 @@ pub fn smells_in(source: &str, scope: Scope<'_>, failure: &dyn FailureLookup, sh
 }
 
 impl Smell {
-    /// 種類の番号(重なりの判定のため)。
+    /// The kind's number (for judging overlap).
     fn kind_id(&self) -> u8 {
         match self.kind {
             SmellKind::ShapeCheck { .. } => 1,
@@ -278,17 +278,17 @@ impl Smell {
     }
 }
 
-/// `( … )` の中身(読み捨てを除く)。
+/// The contents of `( … )` (excluding discarded reads).
 pub(super) fn live(form: &Form) -> Option<Vec<&Form>> {
     form.paren_items().map(live_items)
 }
 
-/// 列の中身から読み捨て(`#_`)を除く。
+/// Remove discarded reads (`#_`) from a sequence's contents.
 pub(super) fn live_items(items: &[Form]) -> Vec<&Form> {
     items.iter().filter(|item| !matches!(item.node, Node::Discarded)).collect()
 }
 
-/// form の子(列の中身・注記の的・前置きの中身)。
+/// The children of a form (the contents of a sequence, the target of an annotation, the contents of a prefix).
 pub(super) fn children(form: &Form) -> Vec<&Form> {
     match &form.node {
         Node::Seq { items, .. } => live_items(items),
@@ -298,38 +298,38 @@ pub(super) fn children(form: &Form) -> Vec<&Form> {
     }
 }
 
-/// form の範囲を ByteSpan にする。
+/// Make a form's range a ByteSpan.
 pub(super) fn span_of(form: &Form) -> ByteSpan {
     ByteSpan { start: form.span.start, end: form.span.end }
 }
 
-/// 定義の頭(臭いを探す定義)。
+/// The head of a definition (the definitions to search for smells).
 const DEFINITION_HEADS: &[&str] = &["defk", "deff", "defn", "defn/a", "defp", "defpp", "defhandler"];
 
-/// ループの頭(DOEFF125 の「毎回」)。内包表記(lfor・gfor)は蓄えを作り直さないので数えない。
+/// The head of a loop (DOEFF125's "each time"). Comprehensions (lfor, gfor) do not rebuild an accumulator, so they are not counted.
 const LOOP_HEADS: &[&str] = &["for", "while"];
 
-/// 束ねの頭(DOEFF121 と DOEFF122 が「値を名に置いた」と読む形)。
+/// The head of a binding (the forms DOEFF121 and DOEFF122 read as "put a value in a name").
 const BINDING_HEADS: &[&str] = &["val", "var", "setv", "setx", ":=", "<-"];
 
-/// DOEFF122 の材料 — 失敗の型の集合と、型の綴りを解く scope。
+/// Material for DOEFF122 — the set of failure types, and the scope that resolves type spellings.
 struct Judge<'a> {
     failure: &'a dyn FailureLookup,
     scope: Scope<'a>,
 }
 
-/// Hy の source と、form の綴りを読む道具。
+/// A Hy source, and the tool that reads form spellings.
 pub(super) struct Hy<'a> {
     pub(super) src: &'a str,
 }
 
 impl<'a> Hy<'a> {
-    /// form の綴り。
+    /// A form's spelling.
     pub(super) fn text(&self, form: &Form) -> &'a str {
         self.src.get(form.span.start..form.span.end).unwrap_or("")
     }
 
-    /// 記号の綴り(記号でなければ None)。
+    /// A symbol's spelling (None if not a symbol).
     pub(super) fn symbol(&self, form: &Form) -> Option<&'a str> {
         match form.node {
             Node::Symbol => Some(self.text(form)),
@@ -337,7 +337,7 @@ impl<'a> Hy<'a> {
         }
     }
 
-    /// 列の頭の綴り(記号か keyword — `(:= x v)` の `:=` は keyword として読まれる)。
+    /// The spelling of a sequence's head (a symbol or keyword — the `:=` of `(:= x v)` is read as a keyword).
     pub(super) fn head(&self, form: &Form) -> Option<&'a str> {
         let items = form.paren_items()?;
         let first = items.iter().find(|i| !matches!(i.node, Node::Discarded))?;
@@ -347,7 +347,7 @@ impl<'a> Hy<'a> {
         }
     }
 
-    /// 字面の文字列(f 文字列・bytes を除く)の中身。
+    /// The contents of a literal string (excluding f-strings and bytes).
     fn string_literal(&self, form: &Form) -> Option<&'a str> {
         match &form.node {
             Node::Str { kind: StrKind::Plain | StrKind::Raw | StrKind::Bracket, body } => self.src.get(body.start..body.end),
@@ -355,7 +355,7 @@ impl<'a> Hy<'a> {
         }
     }
 
-    /// 頭の辞書が名(と docstring)の直後にあるか(defrecord の頭の辞書の位置)。
+    /// Whether the head dict comes right after the name (and docstring) (the position of defrecord's head dict).
     fn header_position(&self, rest: &[&Form]) -> bool {
         match rest {
             [first, ..] if first.is_brace() => true,
@@ -364,7 +364,7 @@ impl<'a> Hy<'a> {
         }
     }
 
-    /// 辞書の key の値。
+    /// The value of a dict's key.
     fn dict_value<'f>(&self, dict: &'f Form, key: &str) -> Option<&'f Form> {
         let items = match &dict.node {
             Node::Seq { delim: Delim::Brace, items } => live_items(items),
@@ -376,7 +376,7 @@ impl<'a> Hy<'a> {
         })
     }
 
-    /// 最上位の定義(`do` と `eval-and-compile` の中も)の名と form。
+    /// The names and forms of top-level definitions (including inside `do` and `eval-and-compile`).
     fn definitions<'f>(&self, forms: &[&'f Form]) -> Vec<(String, &'f Form)> {
         let mut out = Vec::new();
         for form in forms {
@@ -402,7 +402,7 @@ impl<'a> Hy<'a> {
         out
     }
 
-    /// `(.get x "欄")` なら (x の綴り・欄) を返す。
+    /// For `(.get x "field")`, return (x's spelling, field).
     fn string_key_get(&self, form: &Form) -> Option<(String, String)> {
         let items = live(form)?;
         match items.as_slice() {
@@ -413,9 +413,9 @@ impl<'a> Hy<'a> {
         }
     }
 
-    /// DOEFF121: 定義の中の、文字列の鍵で読んだ欄への isinstance を拾う。
+    /// DOEFF121: pick up isinstance on a field read with a string key within a definition.
     fn shape_checks(&self, definition: &Form, name: &str, out: &mut Vec<Smell>) {
-        // 1. 名に置いた欄: (val n (.get x "欄")) など。
+        // 1. A field put in a name: (val n (.get x "field")) and so on.
         let mut bound: Vec<(String, String, String, ByteSpan)> = Vec::new();
         self.each(definition, &mut |form| {
             let Some(items) = live(form) else { return };
@@ -428,7 +428,7 @@ impl<'a> Hy<'a> {
                 }
             }
         });
-        // 2. (isinstance 名 T) か (isinstance (.get x "欄") T)。
+        // 2. (isinstance name T) or (isinstance (.get x "field") T).
         self.each(definition, &mut |form| {
             let Some(items) = live(form) else { return };
             let [head, checked, ..] = items.as_slice() else { return };
@@ -446,7 +446,7 @@ impl<'a> Hy<'a> {
         });
     }
 
-    /// 列の頭の綴り(記号か keyword)を form 1 つから。
+    /// The spelling of a sequence's head (a symbol or keyword) from one form.
     pub(super) fn head_text(&self, form: &Form) -> Option<&'a str> {
         match form.node {
             Node::Symbol | Node::Keyword => Some(self.text(form)),
@@ -454,7 +454,7 @@ impl<'a> Hy<'a> {
         }
     }
 
-    /// form とその子孫を前から順に訪ねる。
+    /// Visit a form and its descendants in order from the front.
     fn each(&self, form: &Form, visit: &mut dyn FnMut(&Form)) {
         visit(form);
         for child in children(form) {
@@ -462,7 +462,7 @@ impl<'a> Hy<'a> {
         }
     }
 
-    /// 式が names のどれか(`名` か `名.欄`)を参照するか。
+    /// Whether an expression refers to any of names (`name` or `name.field`).
     fn refers(&self, form: &Form, names: &BTreeSet<String>) -> bool {
         let mut found = false;
         self.each(form, &mut |f| {
@@ -476,7 +476,7 @@ impl<'a> Hy<'a> {
         found
     }
 
-    /// 定義の中で記号 name(`name` か `name.欄`)が出る回数。
+    /// The number of times the symbol name (`name` or `name.field`) appears within a definition.
     fn uses(&self, definition: &Form, name: &str) -> usize {
         let mut count = 0;
         self.each(definition, &mut |f| {
@@ -489,7 +489,7 @@ impl<'a> Hy<'a> {
         count
     }
 
-    /// DOEFF122〜125 を拾いながら木を下る。`in_loop` は for / while の中か。
+    /// Descend the tree while picking up DOEFF122 to 125. `in_loop` is whether we are inside for / while.
     fn walk(&self, form: &Form, name: &str, judge: &Judge<'_>, definition: &Form, in_loop: bool, out: &mut Vec<Smell>) {
         let head = self.head(form);
         if let Some(items) = live(form) {
@@ -499,7 +499,7 @@ impl<'a> Hy<'a> {
                 Some(":=" | "setv" | "setx") if in_loop => self.rebuilt_accumulator(form, &items, name, out),
                 _ => {}
             }
-            // DOEFF123: 並んだ 2 つの子 (<- x …) (return x)。
+            // DOEFF123: two adjacent children (<- x …) (return x).
             for pair in items.windows(2) {
                 self.bind_then_return(pair[0], pair[1], name, definition, out);
             }
@@ -513,7 +513,7 @@ impl<'a> Hy<'a> {
         }
     }
 
-    /// DOEFF122: `(match 主 (失敗の型 …) 腕 …)` の腕が、受けた値(か、それから作った値)を return するだけ。
+    /// DOEFF122: the arm of `(match subject (failure-type …) arm …)` merely returns the received value (or a value made from it).
     fn failure_rethrows(&self, items: &[&Form], name: &str, judge: &Judge<'_>, out: &mut Vec<Smell>) {
         let Some(subject) = items.get(1) else { return };
         let subject_name = self.symbol(subject).map(str::to_string);
@@ -522,7 +522,7 @@ impl<'a> Hy<'a> {
             let pattern = items[index];
             index += 1;
             let mut bound: BTreeSet<String> = subject_name.iter().cloned().collect();
-            // `:as 名` と `:if 条件` を飛ばす(:as の名は受けた値の別名)。
+            // Skip `:as name` and `:if condition` (the name of :as is an alias for the received value).
             while index + 1 < items.len() && matches!(items[index].node, Node::Keyword) {
                 if self.text(items[index]) == ":as" {
                     if let Some(alias) = self.symbol(items[index + 1]) {
@@ -535,9 +535,9 @@ impl<'a> Hy<'a> {
             index += 1;
             let Some(pattern_items) = live(pattern) else { continue };
             let Some(type_name) = pattern_items.first().and_then(|h| self.symbol(h)) else { continue };
-            // 失敗の型かの問いは、腕が受けた値を返すだけの形と分かってから最後に引く(失敗の型の集合は repo 全体の宣言から集める — 1 file の実行は
-            // 引かれた時だけ集める。腕の形が先に外れる大半の腕は、集合を引かない)。
-            // pattern の中で束ねた名も受けた値の一部。
+            // The question of whether it is a failure type is asked last, after it is known that the arm has the shape of merely returning the received value (the set of failure types is collected from declarations across the whole repo — a single-file run
+            // collects it only when asked. Most arms, whose shape fails first, never consult the set).
+            // A name bound in the pattern is also part of the received value.
             for part in &pattern_items[1..] {
                 self.each(part, &mut |f| {
                     if let Some(symbol) = self.symbol(f).filter(|s| *s != "_") {
@@ -554,7 +554,7 @@ impl<'a> Hy<'a> {
             if self.symbol(ret) != Some("return") {
                 continue;
             }
-            // 腕の中で受けた値から作った名(`(<- x T (rejected (+ said.reason …)))`)も、受けた値の包み直し。
+            // A name made from the received value inside the arm (`(<- x T (rejected (+ said.reason …)))`) is also a re-wrapping of the received value.
             for form in before {
                 let Some(parts) = live(form) else { continue };
                 let is_binding = parts.first().and_then(|h| self.head_text(h)).is_some_and(|h| BINDING_HEADS.contains(&h));
@@ -577,7 +577,7 @@ impl<'a> Hy<'a> {
         }
     }
 
-    /// DOEFF123: `(<- x …)` の直後の `(return x)` で、x を定義の中で他に使わない。
+    /// DOEFF123: `(return x)` immediately after `(<- x …)`, with x used nowhere else in the definition.
     fn bind_then_return(&self, first: &Form, second: &Form, name: &str, definition: &Form, out: &mut Vec<Smell>) {
         let (Some(bind), Some(ret)) = (live(first), live(second)) else { return };
         if bind.len() < 3 || bind.first().and_then(|h| self.symbol(h)) != Some("<-") {
@@ -593,7 +593,7 @@ impl<'a> Hy<'a> {
         }
     }
 
-    /// DOEFF124: `(+ …)` が文字列と、同じ値の 2 つ以上の欄(`v.a`・`(str v.b)`)をつなぐ。
+    /// DOEFF124: `(+ …)` joins strings with two or more fields of the same value (`v.a`, `(str v.b)`).
     fn joined_fields(&self, form: &Form, items: &[&Form], name: &str, out: &mut Vec<Smell>) {
         let args = &items[1..];
         let has_text = args.iter().any(|a| matches!(a.node, Node::Str { .. }));
@@ -614,7 +614,7 @@ impl<'a> Hy<'a> {
         self.push_joined(span_of(form), &fields, name, out);
     }
 
-    /// DOEFF124 の f 文字列の形: `f"{v.a}: {v.b}"`。
+    /// The shape of DOEFF124's f-string: `f"{v.a}: {v.b}"`.
     fn joined_fields_in_fstring(&self, form: &Form, body: &str, name: &str, out: &mut Vec<Smell>) {
         let mut fields = Vec::new();
         for piece in body.split('{').skip(1) {
@@ -628,7 +628,7 @@ impl<'a> Hy<'a> {
         self.push_joined(span_of(form), &fields, name, out);
     }
 
-    /// 同じ値の欄が 2 つ以上なら DOEFF124 を積む。
+    /// Push DOEFF124 if there are two or more fields of the same value.
     fn push_joined(&self, span: ByteSpan, fields: &[(String, String)], name: &str, out: &mut Vec<Smell>) {
         let values: BTreeSet<&String> = fields.iter().map(|(v, _)| v).collect();
         for value in values {
@@ -644,7 +644,7 @@ impl<'a> Hy<'a> {
         }
     }
 
-    /// DOEFF125: ループの中の `(:= xs (+ xs #(…)))`・`(setv xs (+ xs […]))`。
+    /// DOEFF125: `(:= xs (+ xs #(…)))` or `(setv xs (+ xs […]))` inside a loop.
     fn rebuilt_accumulator(&self, form: &Form, items: &[&Form], name: &str, out: &mut Vec<Smell>) {
         let [_, target, value] = items else { return };
         let Some(target) = self.symbol(target) else { return };
@@ -661,7 +661,7 @@ impl<'a> Hy<'a> {
     }
 }
 
-/// path が Hy の file か(失敗の型の宣言を集める母集団)。
+/// Whether the path is a Hy file (the population from which failure-type declarations are collected).
 pub fn is_hy(path: &Path) -> bool {
     matches!(path.extension().and_then(|e| e.to_str()), Some("hy" | "hyk" | "hyp"))
 }
@@ -670,7 +670,7 @@ pub fn is_hy(path: &Path) -> bool {
 mod tests {
     use super::*;
 
-    /// 臭いを (種類の番号・細目) の列にする(module m・import なし — 失敗の型は `m.<名>` で渡す)。
+    /// Turn the smells into a list of (kind number, detail) (module m, no imports — failure types are passed as `m.<name>`).
     fn found(source: &str, failure: &[&str], shape: bool) -> Vec<(u8, String)> {
         let bindings = BTreeMap::new();
         smells_in(source, Scope { module: "m", bindings: &bindings }, &FailureTypes::of(failure), shape).iter().map(|s| (s.kind_id(), s.detail())).collect()
@@ -678,19 +678,19 @@ mod tests {
 
     #[test]
     fn failure_types_come_from_declarations_not_names() {
-        let source = r#"(defrecord Refusal "断り" {:failure True} #^ str reason)
+        let source = r#"(defrecord Refusal "refusal" {:failure True} #^ str reason)
 (defrecord Accepted {:tags {:context "c" :role "type"}} #^ str word)
 (defrecord Rejection #^ str reason)
-(defeffect ReadRow "行を読む" {:fields [key] :answer (| Row Missing Unreachable) :absent [Missing] :failure [store.Unreachable]})
+(defeffect ReadRow "reads a row" {:fields [key] :answer (| Row Missing Unreachable) :absent [Missing] :failure [store.Unreachable]})
 "#;
         let bindings: BTreeMap<String, String> = [("store".to_string(), "app.store".to_string())].into_iter().collect();
         let types = failure_types_in(source, Scope { module: "app.rules", bindings: &bindings });
-        // defrecord の宣言はこの module の名、defeffect の列は import で解いた名。
+        // defrecord's declaration is a name in this module, while defeffect's list is names resolved by import.
         assert!(types.contains("app.rules.Refusal") && types.contains("app.rules.Missing") && types.contains("app.store.Unreachable"));
-        // 名が失敗らしくても、宣言が無ければ失敗の型ではない。別の module の同じ名も違う型。
+        // Even if a name looks like a failure, it is not a failure type without a declaration. The same name in another module is also a different type.
         assert!(!types.contains("app.rules.Rejection") && !types.contains("app.rules.Accepted") && !types.contains("app.webapp.Refusal"));
         assert_eq!(types.len(), 3);
-        // 腕の型の綴りを解く: import した名・別名の module・裸の名(この file の定義)。
+        // Resolve the spelling of an arm's type: an imported name, a module of an alias, and a bare name (a definition in this file).
         let scope_bindings: BTreeMap<String, String> =
             [("Refusal".to_string(), "app.rules".to_string()), ("r".to_string(), "app.rules".to_string())].into_iter().collect();
         let scope = Scope { module: "app.core.x", bindings: &scope_bindings };
@@ -709,7 +709,7 @@ mod tests {
   size)"#;
         assert_eq!(found(bad, &[], true), vec![(1, "decide::subject".to_string()), (1, "decide::by".to_string())]);
         assert!(found(bad, &[], false).is_empty());
-        // 型のある値の isinstance と、鍵の無い get は当たらない。
+        // isinstance on a typed value, and get without a key, do not match.
         let good = "(defk decide [row] (when (isinstance row.subject str) 1) (val x (get row 0)) (isinstance x int))";
         assert!(found(good, &[], true).is_empty());
     }
@@ -728,15 +728,15 @@ mod tests {
     (Accepted) (return (Accepted :word "w")))
   (<- third (| Accepted Refusal) (verdict x))
   (match third
-    (Refusal) (do (log "断った") (return (Plan :why "固定の文")))
+    (Refusal) (do (log "refused") (return (Plan :why "fixed text")))
     (Accepted) None)
   (match (verdict x)
     (Refusal) :as r (return r)
     _ None))"#;
         let hits: Vec<(u8, String)> = found(source, &["m.Refusal"], false).into_iter().filter(|(k, _)| *k == 2).collect();
-        // said(包み直し)・again(pattern で束ねた欄)・:as の別名は当たる。受けた値を使わない腕と成功の腕は当たらない。
+        // said (re-wrapped), again (a field bound in a pattern), and the alias of :as match. Arms that do not use the received value, and success arms, do not match.
         assert_eq!(hits, vec![(2, "decide::said".to_string()), (2, "decide::again".to_string()), (2, "decide::Refusal".to_string())]);
-        // 宣言が無ければ(失敗の型が空)何も出さない。
+        // Without declarations (the set of failure types is empty), nothing is emitted.
         assert!(found(source, &[], false).iter().all(|(k, _)| *k != 2));
     }
 
@@ -760,7 +760,7 @@ mod tests {
   (val c (+ "at " (str p.x) "," (str p.y)))
   (val d f"{said.reason}: {said.detail}")
   (val e (+ said.reason ": " other.detail)))"#;
-        // 数の和(文字列の無い +)と、違う値の欄は当たらない。
+        // Sums of numbers (a + with no strings) and fields of different values do not match.
         assert_eq!(found(source, &[], false), vec![(4, "f::said".to_string()), (4, "f::p".to_string())]);
     }
 

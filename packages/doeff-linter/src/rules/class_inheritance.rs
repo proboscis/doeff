@@ -1,22 +1,22 @@
-//! class が自分で置く属性と、継承元が持つ属性の見分け(DOEFF002)。
+//! Telling apart attributes a class places itself from attributes its parents own (DOEFF002).
 //!
-//! DOEFF002 は init の外で書き換える属性を `_mut_` の名にさせる。継承元(framework)が定義した属性へ書く class は、名を変えると
-//! framework が読まなくなる(Textual の `App.sub_title` は、書くと header の表示が変わる)。属性の名が class 自身の物か継承元の物かを、
-//! ここが class ごとに答える:
+//! DOEFF002 makes attributes mutated outside init use a `_mut_` name. For a class that writes to an attribute defined by a parent (framework), renaming it would make the
+//! framework stop reading it (writing Textual's `App.sub_title` changes the header display). Whether an attribute name belongs to the class itself or a parent is
+//! answered here, per class:
 //!
-//! - 自分で置く = init(`__init__`・`__post_init__`・`__set_name__`)と構築(`__new__`)が `self` へ書く名・そこから `self.<method>()` で
-//!   呼ぶ同じ class の method が書く名・class の欄に書いた名(注釈つきの欄・代入・method・入れ子の class・`__slots__` の名)。
-//! - 継承元は class の基底を import から解く。同じ repo の class(同じ file・import が指す file)は、その class が自分で置く名を持ち上げて
-//!   読み、その基底へも降りる。repo の外の基底は属性の全部が見えない — 見えない基底(opaque)が 1 つでも在れば、class とその repo の中の継承元が
-//!   置いていない名は、見えない基底が持つ名と読む。
-//! - repo の外の基底が持つと分かっている名は表(`data/framework_attributes.json`)で足す。表の名は、class 自身が init でも置いていても継承元の名。
-//!   属性を持たないと分かっている基底(`object`・`abc.ABC` ほか)は、見えない基底に数えない。
+//! - Placed by itself = names written to `self` by init (`__init__`, `__post_init__`, `__set_name__`) and construction (`__new__`), names written by methods of the same class
+//!   called from there as `self.<method>()`, and names written in the class body (annotated fields, assignments, methods, nested classes, `__slots__` names).
+//! - Parents are resolved from the class's bases via imports. For a class in the same repo (same file, or the file an import points to), the names it places itself are lifted and
+//!   read, and its bases are descended into too. Bases outside the repo do not expose all their attributes — if there is even one invisible (opaque) base, a name that the class and its in-repo parents
+//!   do not place is read as a name owned by the invisible base.
+//! - Names known to be owned by a base outside the repo are added from a table (`data/framework_attributes.json`). Names in the table are parent names even if the class also places them in init.
+//!   Bases known to have no attributes (`object`, `abc.ABC`, and others) are not counted as invisible bases.
 //!
-//! 同じ repo の class を探す道(import が指す file): 絶対 import は、読んでいる file の上の dir(`.git` の dir まで)のうち `__init__.py` を持たない
-//! dir(import の起点になる dir — package の dir は起点ではない)と、その `src` から module の path を引く。相対 import は読んでいる file の dir から
-//! 段の数だけ上る。`__init__.py` の再 export(`from .a import B`・`__getattr__` の名 → module の表)は、効果の名の解きと同じ
-//! `crate::origins` の辿りで 8 段まで辿る。どれでも見つからない・読めない class は repo の外と同じに読む
-//! (属性の全部が見えない基底)— 外れる向きは「鳴らさない」だけで、鳴らす向きに外れない。
+//! The path to find a class in the same repo (the file an import points to): an absolute import is resolved by taking the module path from the directories above the file being read (up to the `.git` dir)
+//! that lack `__init__.py` (dirs that serve as import roots — a package dir is not a root) and from its `src`. A relative import climbs from the dir of the file being read
+//! by the number of levels. Re-exports in `__init__.py` (`from .a import B`, names of `__getattr__` -> module table) are followed up to 8 levels by the same
+//! `crate::origins` walk used to resolve effect names. A class that cannot be found or read is read the same as one outside the repo
+//! (a base whose attributes are not all visible) — the failure direction is only "do not fire", never toward firing.
 
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::convert::Infallible;
@@ -31,18 +31,18 @@ use serde::Deserialize;
 use crate::origins::{dotted_parts, import_roots_within, lazy_exports, lookup, python_bindings, reexport_hop, Binding, MAX_REEXPORT_DEPTH, PYTHON_FILES};
 use crate::utils::nested_bodies;
 
-/// 初期化の method — ここで `self` へ書く名は class が置く名で、DOEFF002 は鳴らさない。`__set_name__` は descriptor の初期化
-/// (class が作られる時に 1 度だけ呼ばれる — PEP 487)。
+/// Initialization methods — names written to `self` here are names the class places, and DOEFF002 does not fire. `__set_name__` is descriptor initialization
+/// (called once when the class is created — PEP 487).
 const INIT_METHODS: [&str; 3] = ["__init__", "__post_init__", "__set_name__"];
 
-/// `self` への書きが在る method の種類。
+/// The kind of method that contains writes to `self`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Phase {
-    /// `__init__`・`__post_init__`・`__set_name__` — 初期化。DOEFF002 は鳴らさない。
+    /// `__init__`, `__post_init__`, `__set_name__` — initialization. DOEFF002 does not fire.
     Init,
-    /// `__new__` — 構築。属性を置く場所だが、DOEFF002 は今までどおり初期化に数えず鳴らす。
+    /// `__new__` — construction. A place where attributes are set, but DOEFF002 still does not count it as initialization and fires, as before.
     Construct,
-    /// それ以外の method — 作った後の書き換え。
+    /// Any other method — mutation after construction.
     Later,
 }
 
@@ -57,13 +57,13 @@ impl Phase {
         }
     }
 
-    /// この method の書きは、class が属性を置く書きか。
+    /// Whether writes in this method are writes where the class places attributes.
     pub fn introduces(self) -> bool {
         self != Phase::Later
     }
 }
 
-/// `self.<名>` への書き 1 つ(文の始まりの位置つき)。
+/// One write to `self.<name>` (with the position of the start of the statement).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SelfWrite {
     pub name: String,
@@ -71,7 +71,7 @@ pub struct SelfWrite {
     pub phase: Phase,
 }
 
-/// class の method(`def` と `async def`)の本体の `self` への書きを、書いた順に全部。
+/// All writes to `self` in the bodies of the class's methods (`def` and `async def`), in the order written.
 pub fn self_writes(class_def: &StmtClassDef) -> Vec<SelfWrite> {
     let mut writes = Vec::new();
     for stmt in &class_def.body {
@@ -82,7 +82,7 @@ pub fn self_writes(class_def: &StmtClassDef) -> Vec<SelfWrite> {
     writes
 }
 
-/// class の本体の method(`def` か `async def`)の名と本体。
+/// The name and body of a method (`def` or `async def`) in the class body.
 fn method_of(stmt: &Stmt) -> Option<(&str, &[Stmt])> {
     match stmt {
         Stmt::FunctionDef(func) => Some((func.name.as_str(), func.body.as_slice())),
@@ -91,8 +91,8 @@ fn method_of(stmt: &Stmt) -> Option<(&str, &[Stmt])> {
     }
 }
 
-/// method の本体とその中の入れ子の本体(本体の一覧は `nested_bodies` の 1 か所)で `self` へ書いた名。入れ子の class は飛ばす:
-/// その method の `self` は入れ子の class の object。
+/// Names written to `self` in a method body and the nested bodies in it (the list of bodies lives in one place, `nested_bodies`). Nested classes are skipped:
+/// the `self` of that method is an object of the nested class.
 fn collect_body_writes(body: &[Stmt], phase: Phase, writes: &mut Vec<SelfWrite>) {
     for stmt in body {
         collect_stmt_writes(stmt, phase, writes);
@@ -105,7 +105,7 @@ fn collect_body_writes(body: &[Stmt], phase: Phase, writes: &mut Vec<SelfWrite>)
     }
 }
 
-/// 文 1 つが自分で `self` へ書く名(入れ子の本体の分は含まない)。
+/// Names that one statement itself writes to `self` (excluding those from nested bodies).
 fn collect_stmt_writes(stmt: &Stmt, phase: Phase, writes: &mut Vec<SelfWrite>) {
     let offset = stmt.range().start().to_usize();
     match stmt {
@@ -120,7 +120,7 @@ fn collect_stmt_writes(stmt: &Stmt, phase: Phase, writes: &mut Vec<SelfWrite>) {
     }
 }
 
-/// 代入の左辺の `self.X`(組・list・starred の中も)。
+/// `self.X` on the left side of an assignment (including inside tuples, lists, and starred).
 fn collect_target_writes(target: &Expr, offset: usize, phase: Phase, writes: &mut Vec<SelfWrite>) {
     match target {
         Expr::Tuple(tuple) => {
@@ -142,7 +142,7 @@ fn collect_target_writes(target: &Expr, offset: usize, phase: Phase, writes: &mu
     }
 }
 
-/// `self.<名>` の名。
+/// The name in `self.<name>`.
 fn self_attribute(expr: &Expr) -> Option<&str> {
     if let Expr::Attribute(attribute) = expr {
         if let Expr::Name(name) = &*attribute.value {
@@ -154,8 +154,8 @@ fn self_attribute(expr: &Expr) -> Option<&str> {
     None
 }
 
-/// class の欄(本体の直下と、if・try ほかの入れ子の本体)に書いた名: 注釈つきの欄・代入の名・method と入れ子の class の名・
-/// `__slots__` に並べた名。
+/// Names written in the class's fields (directly under the body, and in nested bodies of if, try, etc.): annotated fields, assignment names, names of methods and nested classes, and
+/// names listed in `__slots__`.
 fn class_level_names(body: &[Stmt], names: &mut BTreeSet<String>) {
     for stmt in body {
         match stmt {
@@ -186,7 +186,7 @@ fn class_level_names(body: &[Stmt], names: &mut BTreeSet<String>) {
     }
 }
 
-/// 代入の左辺が束ねる素の名(組・list・starred の中も)。
+/// Plain names bound by the left side of an assignment (including inside tuples, lists, and starred).
 fn bound_names(target: &Expr, names: &mut BTreeSet<String>) {
     match target {
         Expr::Name(name) => {
@@ -199,7 +199,7 @@ fn bound_names(target: &Expr, names: &mut BTreeSet<String>) {
     }
 }
 
-/// `__slots__ = ("a", "b")` の文字列の名(1 つの文字列・組・list)。
+/// The string names of `__slots__ = ("a", "b")` (a single string, tuple, or list).
 fn slot_names(value: &Expr, names: &mut BTreeSet<String>) {
     match value {
         Expr::Constant(constant) => {
@@ -213,12 +213,12 @@ fn slot_names(value: &Expr, names: &mut BTreeSet<String>) {
     }
 }
 
-/// class の基底の 1 つ。
+/// One base of a class.
 #[derive(Debug, Clone, PartialEq, Eq)]
 enum BaseRef {
-    /// 名か属性の連なり(`Base`・`mod.Base`・添字つきの `Generic[T]` は添字を外した `Generic`)。
+    /// A name or attribute chain (`Base`, `mod.Base`; a subscripted `Generic[T]` becomes `Generic` with the subscript removed).
     Dotted(Vec<String>),
-    /// 呼び出し・starred など、名では指せない基底。
+    /// A base that cannot be pointed to by name, such as a call or starred.
     Opaque,
 }
 
@@ -237,20 +237,20 @@ fn base_ref(expr: &Expr) -> BaseRef {
     }
 }
 
-/// module の class 1 つの事実。
+/// Facts about one class in a module.
 #[derive(Debug)]
 struct ClassFacts {
     name: String,
-    /// class 文の始まりの位置(class を 1 つに決める鍵)。
+    /// Position of the start of the class statement (the key that identifies one class).
     offset: usize,
-    /// module の直下(関数や class の中でない)か。別の file から import できるのはこの class だけ。
+    /// Whether it is directly under the module (not inside a function or class). Only such classes can be imported from another file.
     module_level: bool,
-    /// class 自身が置く名(init と構築の `self` への書き + class の欄の名)。
+    /// Names the class itself places (writes to `self` in init and construction + names in the class body).
     introduced: BTreeSet<String>,
     bases: Vec<BaseRef>,
 }
 
-/// `self.<名>(…)` の呼びの名(呼びの中・入れ子の本体の中も)。
+/// Names of `self.<name>(…)` calls (including inside calls and nested bodies).
 #[derive(Default)]
 struct SelfCalls {
     names: BTreeSet<String>,
@@ -277,8 +277,8 @@ impl Fold<TextRange> for SelfCalls {
     }
 }
 
-/// 初期化(init と構築)から `self.<method>()` の呼びで届く、同じ class の method の名(呼びの先の先も)。init の組の method 自身は含めない。
-/// 初期化が呼ぶ補助の method が置く属性も、class が構築の間に置く名(`__init__` が `self._load()` を呼び、`_load` が `self._files` を置く)。
+/// Names of methods of the same class reachable from initialization (init and construction) through `self.<method>()` calls (including calls of calls). The methods of the init group themselves are not included.
+/// Attributes placed by helper methods that initialization calls are also names the class places during construction (`__init__` calls `self._load()`, and `_load` places `self._files`).
 fn initialization_helpers(class_def: &StmtClassDef) -> BTreeSet<String> {
     let methods: HashMap<&str, &[Stmt]> = class_def.body.iter().filter_map(method_of).collect();
     let mut pending: Vec<&str> = methods.keys().copied().filter(|name| Phase::of_method(name).introduces()).collect();
@@ -286,7 +286,7 @@ fn initialization_helpers(class_def: &StmtClassDef) -> BTreeSet<String> {
     while let Some(name) = pending.pop() {
         let mut calls = SelfCalls::default();
         for stmt in methods[name] {
-            // 誤りの型が Infallible なので、結果は常に Ok
+            // The error type is Infallible, so the result is always Ok
             let _ = calls.fold_stmt(stmt.clone());
         }
         for called in calls.names {
@@ -322,7 +322,7 @@ fn class_facts(class_def: &StmtClassDef, module_level: bool) -> ClassFacts {
     }
 }
 
-/// module の class を書いた順に全部(関数と class の中の class も)。
+/// All classes of a module in the order written (including classes inside functions and classes).
 fn collect_classes(body: &[Stmt], module_level: bool, classes: &mut Vec<ClassFacts>) {
     for stmt in body {
         match stmt {
@@ -341,12 +341,12 @@ fn collect_classes(body: &[Stmt], module_level: bool, classes: &mut Vec<ClassFac
     }
 }
 
-/// module 1 つの事実: class と import の束ね。
+/// Facts about one module: the bundle of classes and imports.
 #[derive(Debug)]
 struct ModuleFacts {
     path: PathBuf,
     bindings: HashMap<String, Binding>,
-    /// `__getattr__` で遅れて読む名の表(名 → module)。
+    /// Table of names loaded lazily by `__getattr__` (name -> module).
     lazy: HashMap<String, String>,
     classes: Vec<ClassFacts>,
 }
@@ -363,12 +363,12 @@ impl ModuleFacts {
     }
 }
 
-/// repo の外の基底について分かっている事(同梱の `data/framework_attributes.json`)。
+/// What is known about bases outside the repo (the bundled `data/framework_attributes.json`).
 #[derive(Debug, Deserialize)]
 struct Catalog {
-    /// 属性を 1 つも持たないと分かっている基底の完全な名。
+    /// Full names of bases known to have no attributes at all.
     transparent_bases: BTreeSet<String>,
-    /// 基底の完全な名 → その基底が持つと分かっている属性(基底の属性の全部ではない)。
+    /// Full name of a base -> attributes known to be owned by that base (not all attributes of the base).
     framework_attributes: BTreeMap<String, BTreeSet<String>>,
 }
 
@@ -376,13 +376,13 @@ fn catalog() -> &'static Catalog {
     static CATALOG: OnceLock<Catalog> = OnceLock::new();
     CATALOG.get_or_init(|| {
         serde_json::from_str(include_str!("../../data/framework_attributes.json"))
-            .expect("同梱の framework_attributes.json が読めない(検 bundled_catalog_is_well_formed が赤のはず)")
+            .expect("the bundled framework_attributes.json cannot be read (the test bundled_catalog_is_well_formed should be red)")
     })
 }
 
 type FileCache = Mutex<HashMap<PathBuf, Option<Arc<ModuleFacts>>>>;
 
-/// file → 読んだ module の事実(読めなかった file は None)。1 回の実行の中で同じ file を 1 度だけ読む。
+/// File -> module facts read (None for a file that could not be read). The same file is read only once per run.
 fn file_cache() -> &'static FileCache {
     static CACHE: OnceLock<FileCache> = OnceLock::new();
     CACHE.get_or_init(|| Mutex::new(HashMap::new()))
@@ -396,7 +396,7 @@ fn facts_of_file(path: &Path) -> Option<Arc<ModuleFacts>> {
     if let Some(hit) = locked(file_cache()).get(path) {
         return hit.clone();
     }
-    // 読みと構文解析は鎖の外で行う(別の file を読む実行を待たせない)。同時に読んだ時は先に置いた方を使う。
+    // Reading and parsing happen outside the lock (so as not to block runs that read other files). When read concurrently, the one stored first is used.
     let facts = std::fs::read_to_string(path)
         .ok()
         .and_then(|source| parse(&source, Mode::Module, &path.to_string_lossy()).ok())
@@ -415,21 +415,21 @@ fn absolute_path(file_path: &str) -> PathBuf {
     })
 }
 
-/// この実行の repo の根(main が設定から決めた根)。上の dir を探す道の上限 — `.git` の無い木(commit の hook の HEAD の木・日次の写し)でも、
-/// `.git` のある作業木と同じ dir だけを探すため。
+/// The repo root of this run (the root main decided from the config). The upper limit of the path that searches upward dirs — so that even a tree without `.git` (the HEAD tree of a commit hook, a daily copy)
+/// searches only the same dirs as a working tree that has `.git`.
 static REPO_ROOT: OnceLock<PathBuf> = OnceLock::new();
 
-/// 実行の repo の根を覚える(1 度だけ)。覚えなければ `.git` を持つ dir を根とみなす。
+/// Remember the repo root of the run (only once). If not remembered, the dir containing `.git` is regarded as the root.
 pub fn set_repo_root(root: &Path) {
     let _ = REPO_ROOT.set(root.to_path_buf());
 }
 
-/// 絶対 import を引く起点の dir(近い順)。
+/// Origin dirs (nearest first) from which absolute imports are resolved.
 fn import_roots(from: &Path) -> Vec<PathBuf> {
     import_roots_within(from, REPO_ROOT.get().map(PathBuf::as_path).filter(|root| from.starts_with(root)))
 }
 
-/// import が指す module の file(level = 相対 import の点の数・0 は絶対)。
+/// The file of the module an import points to (level = number of dots of a relative import; 0 means absolute).
 fn module_file(from: &Path, level: u32, parts: &[String]) -> Option<PathBuf> {
     let found = if level > 0 {
         let mut dir = from.parent()?.to_path_buf();
@@ -446,25 +446,25 @@ fn module_file(from: &Path, level: u32, parts: &[String]) -> Option<PathBuf> {
     Some(found.canonicalize().unwrap_or(found))
 }
 
-/// 基底を解いた先。
+/// What a base resolved to.
 enum Resolved {
-    /// 同じ repo の class(module の事実と、その中の class の並びの添字)。
+    /// A class in the same repo (the module's facts, and the index into that module's class list).
     Class(Arc<ModuleFacts>, usize),
-    /// repo の外の基底(import から解いた完全な名 — 解けなければ None)。
+    /// A base outside the repo (the full name resolved from imports — None if it cannot be resolved).
     External(Option<String>),
 }
 
-/// class を探した結果。
+/// The result of looking up a class.
 enum Found {
     Class(Arc<ModuleFacts>, usize),
-    /// module が repo の中に無い(repo の外の基底)。
+    /// The module is not in the repo (a base outside the repo).
     NotInRepo,
-    /// module は repo の中に在るが、読めないか class が見つからない。
+    /// The module is in the repo, but it cannot be read or the class cannot be found.
     Unreadable,
 }
 
-/// module の中で、位置 `before` より前に書いた同じ名の class(同じ file の基底)。module の直下の class を優先し、無ければ
-/// 関数や class の中でも 1 つだけならそれ。
+/// A class of the same name written before position `before` in the module (a base in the same file). A class directly under the module is preferred; otherwise,
+/// one inside a function or class if there is exactly one.
 fn local_class(module: &ModuleFacts, name: &str, before: usize) -> Option<usize> {
     if let Some(index) = module.classes.iter().rposition(|class| class.module_level && class.name == name && class.offset < before) {
         return Some(index);
@@ -476,7 +476,7 @@ fn local_class(module: &ModuleFacts, name: &str, before: usize) -> Option<usize>
     }
 }
 
-/// import が指す module の class を探す。
+/// Look up the class in the module an import points to.
 fn find_class(from: &Path, level: u32, module_parts: &[String], class_name: &str, depth: usize) -> Found {
     let Some(file) = module_file(from, level, module_parts) else {
         return Found::NotInRepo;
@@ -490,7 +490,7 @@ fn find_class(from: &Path, level: u32, module_parts: &[String], class_name: &str
     }
 }
 
-/// module の直下の class、無ければ `from .a import B` の再 export の先の class。
+/// A class directly under the module, otherwise the class at the destination of a `from .a import B` re-export.
 fn class_in(target: &Arc<ModuleFacts>, name: &str, depth: usize) -> Option<(Arc<ModuleFacts>, usize)> {
     if let Some(index) = target.classes.iter().rposition(|class| class.module_level && class.name == name) {
         return Some((Arc::clone(target), index));
@@ -506,7 +506,7 @@ fn class_in(target: &Arc<ModuleFacts>, name: &str, depth: usize) -> Option<(Arc<
     }
 }
 
-/// `class` の基底 `base` を、同じ repo の class か repo の外の基底かに解く。
+/// Resolve base `base` of `class` to either a class in the same repo or a base outside the repo.
 fn resolve(module: &Arc<ModuleFacts>, class: &ClassFacts, base: &BaseRef) -> Resolved {
     let BaseRef::Dotted(parts) = base else {
         return Resolved::External(None);
@@ -524,7 +524,7 @@ fn resolve(module: &Arc<ModuleFacts>, class: &ClassFacts, base: &BaseRef) -> Res
         }
         Some(Binding::Module { dotted }) => (0, dotted_parts(dotted).chain(rest.iter().cloned()).collect()),
         Some(Binding::Ambiguous) => return Resolved::External(None),
-        // import していない素の名は組み込み(`object` ほか)
+        // A plain name that is not imported is a builtin (`object` and others)
         None if parts.len() == 1 => return Resolved::External(Some(head.clone())),
         None => return Resolved::External(None),
     };
@@ -541,19 +541,19 @@ fn resolve(module: &Arc<ModuleFacts>, class: &ClassFacts, base: &BaseRef) -> Res
     }
 }
 
-/// class の継承の見え方。
+/// How a class's inheritance appears.
 #[derive(Debug, Default, Clone, PartialEq, Eq)]
 pub struct Inheritance {
-    /// class 自身と、同じ repo の継承元が置く名。
+    /// Names placed by the class itself and by parents in the same repo.
     pub introduced: BTreeSet<String>,
-    /// repo の外の継承元が持つと分かっている名(表に載る物)。
+    /// Names known to be owned by parents outside the repo (those in the table).
     pub framework: BTreeSet<String>,
-    /// 属性の全部が見えない継承元(repo の外の基底・読めない基底)が在るか。
+    /// Whether there is a parent whose attributes are not all visible (a base outside the repo, or an unreadable base).
     pub opaque: bool,
 }
 
 impl Inheritance {
-    /// 属性 `name` は継承元の物と読むか: 表の名か、見えない継承元が在って class と repo の中の継承元が置いていない名。
+    /// Whether attribute `name` is read as a parent's: a name in the table, or, when an invisible parent exists, a name that the class and its in-repo parents do not place.
     pub fn is_inherited(&self, name: &str) -> bool {
         self.framework.contains(name) || (self.opaque && !self.introduced.contains(name))
     }
@@ -594,7 +594,7 @@ impl Walk {
     }
 }
 
-/// 読んでいる file の class の事実(file 1 つにつき 1 度だけ作り、class ごとの問いに答える)。
+/// Facts about the classes of the file being read (built once per file, answering per-class queries).
 pub struct FileClasses {
     facts: Arc<ModuleFacts>,
 }
@@ -604,13 +604,13 @@ impl FileClasses {
         Self { facts: Arc::new(ModuleFacts::of(ast, absolute_path(file_path))) }
     }
 
-    /// `class_def`(この file の class)の継承の見え方。
+    /// The inheritance appearance of `class_def` (a class in this file).
     pub fn inheritance(&self, class_def: &StmtClassDef) -> Inheritance {
         let offset = class_def.range.start().to_usize();
         let mut walk = Walk::default();
         match self.facts.classes.iter().find(|class| class.offset == offset) {
             Some(class) => walk.class(&self.facts, class),
-            // 構文木と事実が食い違う時は、見えない継承元が在る物として鳴らさない側へ
+            // When the syntax tree and the facts disagree, treat it as having an invisible parent, on the do-not-fire side
             None => walk.inheritance.opaque = true,
         }
         walk.inheritance
@@ -627,15 +627,15 @@ mod tests {
         assert!(!catalog.transparent_bases.is_empty());
         assert!(!catalog.framework_attributes.is_empty());
         for name in catalog.transparent_bases.iter().chain(catalog.framework_attributes.keys()) {
-            assert!(!name.is_empty() && name.split('.').all(|part| !part.is_empty()), "完全な名でない: {name:?}");
+            assert!(!name.is_empty() && name.split('.').all(|part| !part.is_empty()), "not a full name: {name:?}");
         }
         for (class, attributes) in &catalog.framework_attributes {
-            assert!(!attributes.is_empty(), "{class} の属性が空(属性を持たない基底は transparent_bases へ)");
-            assert!(!catalog.transparent_bases.contains(class), "{class} が transparent_bases と framework_attributes の両方に在る");
+            assert!(!attributes.is_empty(), "{class} has empty attributes (bases without attributes belong in transparent_bases)");
+            assert!(!catalog.transparent_bases.contains(class), "{class} is in both transparent_bases and framework_attributes");
             for attribute in attributes {
                 assert!(
                     !attribute.is_empty() && attribute.chars().all(|c| c.is_alphanumeric() || c == '_'),
-                    "{class} の属性の名が識別子でない: {attribute:?}"
+                    "attribute name of {class} is not an identifier: {attribute:?}"
                 );
             }
         }
@@ -709,19 +709,19 @@ class Held(Base):
         std::fs::write(root.join("pkg/src/inner/__init__.py"), "").unwrap();
         let file = root.join("pkg/src/inner/mod.py");
         let roots = import_roots_within(&file, None);
-        assert!(!roots.contains(&root.join("pkg/src/inner")), "package の dir は起点でない");
+        assert!(!roots.contains(&root.join("pkg/src/inner")), "a package dir is not a root");
         assert_eq!(roots, vec![root.join("pkg/src"), root.join("pkg/src/src"), root.join("pkg"), root.to_path_buf(), root.join("src")]);
     }
 
     #[test]
     fn import_roots_stop_at_the_given_repo_root_whether_or_not_there_is_a_git_dir() {
-        // `.git` の無い木(commit の hook の HEAD の木・日次の写し)でも、根の上の dir は探さない。
+        // Even for a tree without `.git` (the HEAD tree of a commit hook, a daily copy), dirs above the root are not searched.
         let tree = tempfile::tempdir().unwrap();
         let root = tree.path().join("tree");
         std::fs::create_dir_all(root.join("pkg")).unwrap();
         let file = root.join("pkg/mod.py");
         assert_eq!(import_roots_within(&file, Some(&root)), vec![root.join("pkg"), root.join("pkg/src"), root.clone(), root.join("src")]);
         let above = import_roots_within(&file, None);
-        assert!(above.contains(&tree.path().to_path_buf()), "根を知らなければ上の dir まで探す: {above:?}");
+        assert!(above.contains(&tree.path().to_path_buf()), "without knowing the root, it searches up to the upper dirs: {above:?}");
     }
 }

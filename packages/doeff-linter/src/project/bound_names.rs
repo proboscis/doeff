@@ -1,38 +1,38 @@
-//! 群の綴りに結んだ名(DOEFF148 の `:names-bound-in [<path> …]`)— 名指した Hy の file の中で、群の綴りに当たる値に結んだ名も群の
-//! 綴りにする部品。結び = 宣言の `:environ {"名" "値" …}` の組の名(doeff-cluster の job の宣言 — 値は参照の綴り)と、最上位の
-//! `(val 名 値)`・`(setv 名 値)` の名(と Python へ mangle した名)。足した名に当たる値に結んだ名も、増えなくなるまで足す(宣言の参照の名
-//! → それを持つ定数の名 → その定数を並べた列)。
-//! 秘密の置き場を指す参照の名を群が正規表現の写しで持つと、新しい参照の名(キーの入れ替えの旧いキーの参照など)を宣言に足しても群が
-//! 守らず、他の file で読んでも赤にならない(agora-controllers の群 web-push-private-key)。
-//! 導くのは architecture.hy を読む時(architecture.rs の names_bound_in)で、この file は結びの読みと導きの純な部品だけを持つ
-//! (architecture に頼らない — DOEFF148 の判じ confined_spellings.rs は architecture の群を読むので、ここに置くと依存が輪になる)。
+//! Names bound to a group's spelling (DOEFF148's `:names-bound-in [<path> …]`) — a part that, within the named Hy files, also treats names bound to values matching a group's
+//! spelling as part of the group's spelling. Bindings = names in the declaration's `:environ {"name" "value" …}` pairs (a doeff-cluster job declaration — the value is a reference spelling) and the names of top-level
+//! `(val name value)` / `(setv name value)` (plus the Python-mangled names). Names bound to values matching the added names are added too, until nothing more is added (a declaration's reference name
+//! → the constant name holding it → the sequence listing that constant).
+//! If a group keeps the names of references pointing at a secret storage as a copy in a regular expression, then even when a new reference name (such as the old key's reference in a key rotation) is added to a declaration the group
+//! does not guard it, and reading it in another file does not turn red (the group web-push-private-key of agora-controllers).
+//! The derivation happens when architecture.hy is read (names_bound_in in architecture.rs); this file holds only the pure parts: reading bindings and deriving.
+//! (It does not depend on architecture — DOEFF148's judge confined_spellings.rs reads architecture's groups, so putting it here would make a dependency cycle.)
 
 use doeff_indexer::hy_index::reader::{Delim, Form, Node, Reader, StrKind};
 
 use super::names::hy_mangle;
 use super::spelling_scope::code_text;
 
-/// 結びの形(閉じた 2 つ)。
+/// Form of a binding (a closed set of two).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum BindingForm {
-    /// 宣言の `:environ {"名" "値" …}` の組(名は文字列 — 環境変数の名・値は文字列の literal)。
+    /// A pair in the declaration's `:environ {"name" "value" …}` (the name is a string — an environment variable name; the value is a string literal).
     Environ,
-    /// 最上位の `(val 名 値)` / `(setv 名 値)`(名は Hy の記号 — Python の名へ mangle した綴りも数える・値は form の綴り)。
+    /// A top-level `(val name value)` / `(setv name value)` (the name is a Hy symbol — its spelling mangled into a Python name is counted too; the value is the form's spelling).
     Constant,
 }
 
-/// 名と値の結び 1 つ(:names-bound-in の file の中)。value は当てる綴り — :environ の組は文字列の値、定数は値の form の註を落とした
-/// 綴り(参照の名の列 `#("…" "…")`・組み立て `(+ 名 "…")` も当てる — 文の綴りで判じる DOEFF148 と同じ読み)。
+/// One binding of a name to a value (within a :names-bound-in file). value is the spelling to match — for :environ pairs it is the string value; for a constant it is the value form's spelling with comments removed
+/// (a sequence of reference names `#("…" "…")` and a construction `(+ name "…")` are matched too — the same reading as DOEFF148, which judges by statement spelling).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Binding {
     pub name: String,
     pub value: String,
     pub form: BindingForm,
-    /// 結びの在る file(repo の根からの path)。
+    /// The file holding the binding (path from the repo root).
     pub origin: String,
 }
 
-/// 群の綴りに結んだ名 1 つと、その名の綴りの正規表現(Hy の記号は mangle した名も)と、結びの在る file。
+/// One name bound to a group's spelling, the regular expression of that name's spelling (including the mangled name for Hy symbols), and the file holding the binding.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct BoundName {
     pub name: String,
@@ -40,8 +40,8 @@ pub struct BoundName {
     pub origin: String,
 }
 
-/// Hy の file rel の source の結びを読む(宣言の `:environ` の組はどの深さでも・`(val|setv 名 値)` は最上位だけ — 関数の中の束縛の名は
-/// その関数の外で意味を持たない)。註は落としてから読む。括弧か文字列が閉じていなければ None。
+/// Read the bindings in source of Hy file rel (`:environ` pairs of declarations at any depth; `(val|setv name value)` at top level only — names bound inside a function have no meaning
+/// outside that function). Comments are dropped before reading. None if parentheses or strings are not closed.
 pub fn bindings_of(rel: &str, source: &str) -> Option<Vec<Binding>> {
     let code = code_text(rel, source);
     let mut reader = Reader::new(&code, 0, code.len());
@@ -59,7 +59,7 @@ pub fn bindings_of(rel: &str, source: &str) -> Option<Vec<Binding>> {
     Some(out)
 }
 
-/// 群の綴り patterns(正規表現)に当たる値に結んだ名を、結びの順に導く(足した名の綴りに当たる値に結んだ名も、増えなくなるまで)。
+/// Derive names bound to values matching the group spellings patterns (regular expressions), in binding order (including names bound to values matching the spellings of added names, until nothing more is added).
 pub fn names_bound_to(patterns: &[String], bindings: &[Binding]) -> Vec<BoundName> {
     let mut regexes: Vec<regex::Regex> = patterns.iter().filter_map(|p| regex::Regex::new(p).ok()).collect();
     let mut out: Vec<BoundName> = Vec::new();
@@ -90,8 +90,8 @@ pub fn names_bound_to(patterns: &[String], bindings: &[Binding]) -> Vec<BoundNam
     }
 }
 
-/// 名の綴りに当たる正規表現(端が語の字なら `\b` を付ける — `KEY_REF` は `KEY_REFS` に当たらない。Hy の `-` は語の字でないので、
-/// `KEY-REF-ENV` は `MY-KEY-REF-ENV` にも当たる — 手で書いた `\bKEY-REF-ENV\b` の写しと同じ広さ。広く当たる向きは赤で見え、黙らない)。
+/// Regular expression matching a name's spelling (a `\b` is added if the edge is a word character — `KEY_REF` does not match `KEY_REFS`. Hy's `-` is not a word character,
+/// so `KEY-REF-ENV` also matches `MY-KEY-REF-ENV` — the same breadth as a hand-written copy `\bKEY-REF-ENV\b`. A direction that matches broadly shows up red and is not silent).
 fn literal_pattern(name: &str) -> String {
     let word = |c: char| c.is_alphanumeric() || c == '_';
     let head = if name.chars().next().is_some_and(word) { r"\b" } else { "" };
@@ -99,12 +99,12 @@ fn literal_pattern(name: &str) -> String {
     format!("{}{}{}", head, regex::escape(name), tail)
 }
 
-/// form の綴り。
+/// Spelling of a form.
 fn text<'s>(source: &'s str, form: &Form) -> &'s str {
     source.get(form.span.start..form.span.end).unwrap_or("")
 }
 
-/// 文字列の literal の値(普通の文字列・r"…"・bracket 文字列 — f-string と bytes は値が決まらないので読まない)。
+/// Value of a string literal (plain strings, r"…", bracket strings — f-strings and bytes have no fixed value, so they are not read).
 fn string_of(source: &str, form: &Form) -> Option<String> {
     match &form.node {
         Node::Str { kind: StrKind::Plain | StrKind::Raw | StrKind::Bracket, body } => source.get(body.start..body.end).map(|t| t.replace("\\\"", "\"")),
@@ -120,7 +120,7 @@ fn string_of(source: &str, form: &Form) -> Option<String> {
     }
 }
 
-/// 読み捨てを除いた列の中身(列でなければ None)。
+/// The contents of a sequence excluding discarded reads (None if not a sequence).
 fn live_items(form: &Form) -> Option<Vec<&Form>> {
     match &form.node {
         Node::Seq { items, .. } => Some(items.iter().filter(|i| !matches!(i.node, Node::Discarded)).collect()),
@@ -135,7 +135,7 @@ fn live_items(form: &Form) -> Option<Vec<&Form>> {
     }
 }
 
-/// 最上位の `(val 名 値)` / `(setv 名 値)`(名に型の注記 `#^ T 名` が付いても読む・値は form の綴り)。
+/// A top-level `(val name value)` / `(setv name value)` (read even if the name carries a type annotation `#^ T name`; the value is the form's spelling).
 fn constant_of(rel: &str, source: &str, form: &Form) -> Option<Binding> {
     let items = form.paren_items()?.iter().filter(|i| !matches!(i.node, Node::Discarded)).collect::<Vec<_>>();
     let [head, name, value] = items.as_slice() else { return None };
@@ -157,8 +157,8 @@ fn constant_of(rel: &str, source: &str, form: &Form) -> Option<Binding> {
     Some(Binding { name: name.to_string(), value: text(source, value).to_string(), form: BindingForm::Constant, origin: rel.to_string() })
 }
 
-/// form の中の `:environ {"名" "値" …}` の組をどの深さでも集める(doeff-cluster の job の宣言の行 — defsystem の :environ は文字列の
-/// 鍵と文字列の値の dict の literal だけを受ける)。
+/// Collect `:environ {"name" "value" …}` pairs in forms at any depth (the rows of a doeff-cluster job declaration — a defsystem's :environ accepts only a dict literal of
+/// string keys and string values).
 fn environ_pairs(rel: &str, source: &str, form: &Form, out: &mut Vec<Binding>) {
     let Some(items) = live_items(form) else {
         return;
@@ -183,17 +183,17 @@ fn environ_pairs(rel: &str, source: &str, form: &Form, out: &mut Vec<Binding>) {
 mod tests {
     use super::*;
 
-    /// 宣言の `:environ` の組(文字列の値)はどの深さでも、`(val|setv 名 値)`(値は form の綴り・註は落とす)は最上位だけを読む。
+    /// `:environ` pairs of declarations (string values) are read at any depth; `(val|setv name value)` (the value is the form's spelling, comments dropped) only at top level.
     #[test]
     fn bindings_are_environ_pairs_and_top_level_constants() {
-        let source = "(defsystem s [f]\n  \"系\"\n  (job (job f) :replicas 1 :environ {\"KEY_REF\" \"secret:ns/vapid/k\" \"PORT\" \"8872\"}))\n\
-                      (val KEY-REF-ENV \"KEY_REF\")\n(setv #^ str TYPED \"KEY_REF\")\n(val REFS #(KEY-REF-ENV ; 註の KEY_REF\n  \"KEY_REF\"))\n\
+        let source = "(defsystem s [f]\n  \"system\"\n  (job (job f) :replicas 1 :environ {\"KEY_REF\" \"secret:ns/vapid/k\" \"PORT\" \"8872\"}))\n\
+                      (val KEY-REF-ENV \"KEY_REF\")\n(setv #^ str TYPED \"KEY_REF\")\n(val REFS #(KEY-REF-ENV ; note on KEY_REF\n  \"KEY_REF\"))\n\
                       (defk read [] (val local \"KEY_REF\") local)\n";
         let names: Vec<(String, String, BindingForm, String)> =
             bindings_of("s/keys.hy", source).unwrap().into_iter().map(|b| (b.name, b.value, b.form, b.origin)).collect();
         let at = |name: &str, value: &str, form: BindingForm| (name.to_string(), value.to_string(), form, "s/keys.hy".to_string());
-        // 註は byte の数だけの空白になる(spelling_scope::code_text — 位置を保つ)。
-        let refs = format!("#(KEY-REF-ENV {}\n  \"KEY_REF\")", " ".repeat("; 註の KEY_REF".len()));
+        // A comment becomes as many spaces as its byte count (spelling_scope::code_text — positions are preserved).
+        let refs = format!("#(KEY-REF-ENV {}\n  \"KEY_REF\")", " ".repeat("; note on KEY_REF".len()));
         assert_eq!(
             names,
             vec![
@@ -207,14 +207,14 @@ mod tests {
         assert_eq!(bindings_of("s/keys.hy", "(val A \"x\""), None);
     }
 
-    /// 群の綴りに当たる値に結んだ名を導き、導いた名に当たる値に結んだ名も導く(宣言の参照の名 → それを持つ定数の名と mangle した名 →
-    /// その定数を並べた列・組み立てた名 — 盲検の後の見直しで、値が literal の定数だけを読むと参照の列の名が黙って抜けると分かった)。
-    /// 名は語の境で当てる(KEY_REF は KEY_REFS に当たらない)。
+    /// Derive names bound to values matching the group spellings, then also derive names bound to values matching the derived names (a declaration's reference name → the constant name holding it and its mangled name →
+    /// the sequence listing that constant or the constructed name — after a blind review, it turned out that reading only constants whose values are literals silently drops the names of reference sequences).
+    /// Names are matched at word boundaries (KEY_REF does not match KEY_REFS).
     #[test]
     fn names_bound_to_the_spelling_are_derived_until_none_grow() {
         let source = "(val KEY-REF-ENV \"KEY_REF\")\n(val OTHER-ENV \"PORT\")\n(val REFS #(KEY-REF-ENV))\n\
                       (val OLD-REF-ENV (+ KEY-REF-ENV \"_OLD\"))\n\
-                      (defsystem s [f] \"系\" (job (job f) :replicas 1 :environ {\"KEY_REF\" \"secret:ns/vapid/k\" \"PORT\" \"8872\"}))\n";
+                      (defsystem s [f] \"system\" (job (job f) :replicas 1 :environ {\"KEY_REF\" \"secret:ns/vapid/k\" \"PORT\" \"8872\"}))\n";
         let bindings = bindings_of("s/keys.hy", source).unwrap();
         let derived = names_bound_to(&[r"vapid".to_string()], &bindings);
         let bound = |name: &str, patterns: &[&str]| BoundName {
@@ -233,7 +233,7 @@ mod tests {
         );
         let all: Vec<regex::Regex> = derived.iter().flat_map(|n| n.patterns.iter()).map(|p| regex::Regex::new(p).unwrap()).collect();
         assert!(all.iter().any(|re| re.is_match("(supplied-setting KEY-REF-ENV)")));
-        assert!(!all.iter().any(|re| re.is_match("KEY_REFSET は別の名")));
+        assert!(!all.iter().any(|re| re.is_match("KEY_REFSET is another name")));
         assert_eq!(names_bound_to(&[r"nowhere".to_string()], &bindings), vec![]);
     }
 }

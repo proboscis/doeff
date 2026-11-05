@@ -1,28 +1,28 @@
-//! 作業木の git の index が持つ blob の id で、file の中身を読まずに「その中身」を名指す。
+//! Names "that content" without reading the file's contents, using the blob id held by the working tree's git index.
 //!
-//! 冷えた作業木の最初の 1 回は、repo の Hy の約 2900 file を 1 つずつ開いて読む(作業木ごとに別の inode なので、1 file ごとに disk を待つ)。
-//! 別の作業木が同じ中身を読んで結果を置いていても、(path・更新時刻)は作業木ごとに違うので引けない。git の index は、checkout の時に各 file の
-//! (大きさ・更新時刻・inode)と blob の id(中身の SHA-1)を 1 file にまとめて持っている。今の file の stat が index の行と同じなら、中身は index の
-//! blob と同じ(git 自身が `git status` で中身を読まずに使う判断と同じ)ので、blob の id が中身の鍵になり、作業木をまたいで結果を分け合える。
+//! The first run on a cold working tree opens and reads about 2900 Hy files of the repo one by one (each working tree has different inodes, so every file waits on the disk).
+//! Even if another working tree has read the same contents and stored the result, (path, mtime) differs per working tree, so it cannot be looked up. The git index holds, for each file at checkout time,
+//! (size, mtime, inode) and the blob id (SHA-1 of the contents) in one file. If the current file's stat equals the index row, the contents are the same as the index's
+//! blob (the same judgment that git itself uses in `git status` without reading contents), so the blob id becomes the key of the contents and results can be shared across working trees.
 //!
-//! 信じない時(全部「中身を読む」へ倒れる — 答えは変わらず遅くなるだけ):
-//! - index が読めない・版が 2〜3 でない(版 4 は path を前の行から縮める)・分割 index(`link`)・root が git の作業木の頂上でない。
-//! - 行の stat が今の file と違う(大きさ・更新時刻の秒と ns・inode の下位 32 bit)。
-//! - 行の更新時刻が index file の更新時刻以後(git の racy と同じ — index を書いた瞬間と同じ刻の書き込みは、stat が同じままでも中身が違いうる)。
-//! - 衝突の行(stage が 0 でない)。
+//! When it does not trust the index (everything falls back to "read the contents": the answer does not change, it is only slower):
+//! - The index cannot be read, the version is not 2-3 (version 4 compresses paths against the previous row), it is a split index (`link`), or the root is not the top of a git working tree.
+//! - The row's stat differs from the current file (size, mtime seconds and ns, low 32 bits of the inode).
+//! - The row's mtime is at or after the index file's mtime (the same as git's racy case: a write at the same instant the index was written can have different contents even with an identical stat).
+//! - A conflict row (stage is not 0).
 //!
-//! 置く時は、読んだ中身から git と同じ綴り(`blob <長さ>\0<中身>`)で SHA-1 を作り、index の id と同じ時だけ置く(`blob_id`)。clean の filter や改行の変換が
-//! 在る作業木は、index の id が作業木の中身の hash と一致しないので、置かれない(引かれることも無い)。
+//! When storing, it builds a SHA-1 from the contents it read, in git's own form (`blob <length>\0<contents>`), and stores only if it equals the index's id (`blob_id`). A working tree with a clean filter or newline conversion
+//! does not store, since the index's id does not match the hash of the working tree's contents (and nothing is looked up either).
 
 use std::collections::HashMap;
 use std::fs::Metadata;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, OnceLock, PoisonError};
 
-/// 根ごとに 1 度だけ読んだ index(読めなかった根は None を覚える)— 1 回の実行の中で、登録簿の読みと repo の Hy の読みが同じ index を 2 度読まない。
+/// An index read once per root (a root that could not be read is remembered as None), so that within one run the registry read and the repo Hy read do not read the same index twice.
 static READ: OnceLock<Mutex<HashMap<PathBuf, Option<Arc<GitIndex>>>>> = OnceLock::new();
 
-/// index の行 1 つ(stage 0)。
+/// One index row (stage 0).
 struct Entry {
     mtime_sec: u32,
     mtime_nsec: u32,
@@ -32,20 +32,20 @@ struct Entry {
     oid: [u8; 20],
 }
 
-/// 作業木の index を読んだ物 — (path〔root からの綴り〕・行)を index の並び(path の byte の順)で。
+/// The working tree's index as read: (path [spelling from root], row) in index order (byte order of path).
 pub struct GitIndex {
     entries: Vec<(String, Entry)>,
-    /// index file 自身の更新時刻(秒・ns)。
+    /// Mtime of the index file itself (seconds, ns).
     stamp: (u64, u32),
-    /// index file の名乗り(更新時刻の秒・ns・大きさ・inode)— 読む前の stat から取る。常駐の process(`fsmonitor`)が読んだ index と今の index が同じ物かを比べる。
+    /// Identity of the index file (mtime seconds, ns, size, inode), taken from the stat before reading. Used to compare whether the index read by a resident process (`fsmonitor`) is the same as the current index.
     ident: Ident,
 }
 
-/// index file の名乗り(更新時刻の秒・ns・大きさ・inode)。git は index を書き直す時に新しい file へ rename するので、書き替わると inode と更新時刻が変わる。
+/// Identity of the index file (mtime seconds, ns, size, inode). git renames a new file into place when it rewrites the index, so a rewrite changes the inode and the mtime.
 pub type Ident = (u64, u32, u64, u64);
 
 impl GitIndex {
-    /// `root`(git の作業木の頂上)の index を読む。信じられなければ None。
+    /// Reads the index of `root` (the top of the git working tree). None if it cannot be trusted.
     pub fn read(root: &Path) -> Option<GitIndex> {
         let path = index_path(root)?;
         let meta = std::fs::metadata(&path).ok()?;
@@ -55,12 +55,12 @@ impl GitIndex {
         Some(GitIndex { entries: parse(&bytes)?, stamp, ident })
     }
 
-    /// 読んだ index file の名乗り。
+    /// Identity of the index file that was read.
     pub fn ident(&self) -> Ident {
         self.ident
     }
 
-    /// path が `prefix`(`/` で終わる dir の綴り)で始まる通常の file の行の path — index の並びで。
+    /// Paths of the regular-file rows whose path starts with `prefix` (a dir spelling ending in `/`), in index order.
     pub fn paths_under<'a>(&'a self, prefix: &'a str) -> impl Iterator<Item = &'a str> + 'a {
         let from = self.entries.partition_point(|(path, _)| path.as_str() < prefix);
         self.entries[from..]
@@ -70,24 +70,24 @@ impl GitIndex {
             .map(|(path, _)| path.as_str())
     }
 
-    /// 通常の file の行(mode 100644・100755)の blob の id — file の今の stat は見ない(今の file がその行と同じかは、呼び手が別に知っている)。
+    /// The blob id of a regular-file row (mode 100644, 100755); it does not look at the file's current stat (whether the current file equals that row is known separately by the caller).
     pub fn regular_oid(&self, rel: &str) -> Option<[u8; 20]> {
         let at = self.entries.binary_search_by(|(path, _)| path.as_str().cmp(rel)).ok()?;
         let entry = &self.entries[at].1;
         (entry.mode & 0o170_000 == 0o100_000).then_some(entry.oid)
     }
 
-    /// `root` の index — 1 回の実行の中で根ごとに 1 度だけ読む(前提は `hy_files` と同じ: 実行の間に index は書き替わらないと見る。書き替わっていても、
-    /// 行の stat と今の file の比べが外れて「中身を読む」へ倒れるだけ)。並ぶ thread が同時に引いても、読むのは 1 度。
+    /// The index of `root`: read once per root within one run (the premise is the same as `hy_files`: the index is assumed not to be rewritten during the run. Even if it is rewritten,
+    /// the comparison of the row's stat with the current file just misses and falls back to "read the contents"). Even if parallel threads look it up at once, it is read only once.
     pub fn of(root: &Path) -> Option<Arc<GitIndex>> {
         let memo = READ.get_or_init(Default::default);
         let mut memo = memo.lock().unwrap_or_else(PoisonError::into_inner);
         memo.entry(root.to_path_buf()).or_insert_with(|| crate::timing::timed("git-index.read", || GitIndex::read(root)).map(Arc::new)).clone()
     }
 
-    /// `rel` の file の stat(`meta`)が index の行と同じなら、その blob の id。
+    /// The blob id if the stat (`meta`) of the file `rel` equals the index row.
     pub fn blob_of(&self, rel: &str, meta: &Metadata) -> Option<[u8; 20]> {
-        // index の行は path の byte の順に並ぶ(git の決まり)。並んでいない壊れた index では引けないだけ — 「中身を読む」へ倒れる。
+        // Index rows are in byte order of path (git's rule). A broken index that is not in order just cannot be looked up, falling back to "read the contents".
         let at = self.entries.binary_search_by(|(path, _)| path.as_str().cmp(rel)).ok()?;
         let entry = &self.entries[at].1;
         let (sec, nsec) = mtime_of(meta)?;
@@ -96,14 +96,14 @@ impl GitIndex {
         (same && !racy).then_some(entry.oid)
     }
 
-    /// 通常の file(mode 100644・100755)の行の(path・blob の id)を、index の並びで。symlink(120000)と submodule(160000)は含めない
-    /// (repo を歩く所は symlink を辿らず、通常の file だけを拾う)。
+    /// The (path, blob id) of the rows of regular files (mode 100644, 100755), in index order. Symlinks (120000) and submodules (160000) are not included
+    /// (the place that walks the repo does not follow symlinks and picks up only regular files).
     pub fn files(&self) -> impl Iterator<Item = (&str, [u8; 20])> {
         self.entries.iter().filter(|(_, entry)| entry.mode & 0o170_000 == 0o100_000).map(|(path, entry)| (path.as_str(), entry.oid))
     }
 }
 
-/// index の path — root/.git が dir ならその中、file(`gitdir: <path>`・作業木)ならその指す dir の中。
+/// Path of the index: inside root/.git if it is a dir; if it is a file (`gitdir: <path>`, a working tree), inside the dir it points to.
 pub(crate) fn index_path(root: &Path) -> Option<PathBuf> {
     let dot_git = root.join(".git");
     let meta = std::fs::metadata(&dot_git).ok()?;
@@ -116,7 +116,7 @@ pub(crate) fn index_path(root: &Path) -> Option<PathBuf> {
     Some(if target.is_absolute() { target.join("index") } else { root.join(target).join("index") })
 }
 
-/// 名乗り(更新時刻の秒・ns・大きさ・inode)。
+/// Identity (mtime seconds, ns, size, inode).
 #[cfg(unix)]
 pub fn ident_of(meta: &Metadata) -> Option<Ident> {
     use std::os::unix::fs::MetadataExt;
@@ -155,7 +155,7 @@ fn be32(bytes: &[u8], at: usize) -> Option<u32> {
     Some(u32::from_be_bytes(bytes.get(at..at + 4)?.try_into().ok()?))
 }
 
-/// index file(版 2・3)の行を読む(index の並びのまま)。版 4・分割 index は None。
+/// Reads the rows of an index file (versions 2 and 3), in index order as they are. None for version 4 or a split index.
 fn parse(bytes: &[u8]) -> Option<Vec<(String, Entry)>> {
     if bytes.get(..4)? != b"DIRC" {
         return None;
@@ -182,13 +182,13 @@ fn parse(bytes: &[u8]) -> Option<Vec<(String, Entry)>> {
         }
         let length = bytes.get(path_at..)?.iter().position(|byte| *byte == 0)?;
         let path = std::str::from_utf8(bytes.get(path_at..path_at + length)?).ok()?;
-        // 行は 8 byte の倍数に、path の後ろの NUL を 1〜8 個で揃える。
+        // Rows are padded to a multiple of 8 bytes with 1-8 NULs after the path.
         at = start + ((path_at - start + length + 8) & !7);
         if (flags >> 12) & 3 == 0 {
             entries.push((path.to_string(), Entry { mtime_sec, mtime_nsec, ino, mode, size, oid }));
         }
     }
-    // 行の後ろの拡張。分割 index(`link`)は行が別の file にあるので信じない。
+    // Extensions after the rows. A split index (`link`) is not trusted because its rows are in another file.
     while at + 8 <= bytes.len().saturating_sub(20) {
         let size = be32(bytes, at + 4)? as usize;
         if bytes.get(at..at + 4)? == b"link" {
@@ -199,7 +199,7 @@ fn parse(bytes: &[u8]) -> Option<Vec<(String, Entry)>> {
     Some(entries)
 }
 
-/// git の blob の id(`blob <長さ>\0<中身>` の SHA-1)。
+/// The git blob id (SHA-1 of `blob <length>\0<contents>`).
 pub fn blob_id(content: &[u8]) -> [u8; 20] {
     let mut sha = Sha1::new();
     sha.update(format!("blob {}\0", content.len()).as_bytes());
@@ -207,12 +207,12 @@ pub fn blob_id(content: &[u8]) -> [u8; 20] {
     sha.finish()
 }
 
-/// id の 16 進の綴り。
+/// Hexadecimal spelling of the id.
 pub fn hex(oid: &[u8; 20]) -> String {
     oid.iter().map(|byte| format!("{byte:02x}")).collect()
 }
 
-/// SHA-1(git の blob の id を作る所でだけ使う — 暗号の強さを頼む使い方ではない。依存を足さないために自前で持つ)。
+/// SHA-1 (used only where the git blob id is built; not meant for cryptographic strength. Kept in-house to avoid adding a dependency).
 struct Sha1 {
     state: [u32; 5],
     block: [u8; 64],
@@ -289,14 +289,14 @@ mod tests {
 
     #[test]
     fn the_blob_id_is_the_one_git_makes() {
-        // `printf 'hello\n' | git hash-object --stdin` と `git hash-object` の空の file。
+        // `printf 'hello\n' | git hash-object --stdin` and the empty file of `git hash-object`.
         assert_eq!(hex(&blob_id(b"hello\n")), "ce013625030ba8dba906f756967f9e9ca394464a");
         assert_eq!(hex(&blob_id(b"")), "e69de29bb2d1d6434b8b29ae775ad8c2e48c5391");
     }
 
     #[test]
     fn a_content_longer_than_one_block_gets_the_same_id_as_git() {
-        // `python3 -c "print('x'*200)" | git hash-object --stdin` を、1 block(64 byte)を何度もまたぐ長さで確かめた値。
+        // A value checked with `python3 -c "print('x'*200)" | git hash-object --stdin`, at a length that spans one block (64 bytes) many times.
         let text = format!("{}\n", "x".repeat(200));
         let expected = std::process::Command::new("git").args(["hash-object", "--stdin"]).stdin(std::process::Stdio::piped()).stdout(std::process::Stdio::piped()).spawn();
         let Ok(mut child) = expected else { return };

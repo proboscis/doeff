@@ -1,11 +1,11 @@
-//! DOEFF137(handler の縁の検)の当たりの種類。説明(explain.rs)と判定(mod.rs)が読む — mod.rs を読み戻さないよう自分の module に
-//! 置く。
+//! Kinds of DOEFF137 (handler edge-test) hits. Read by the explanation (explain.rs) and the judgement (mod.rs) — kept in its own module so
+//! it need not read back from mod.rs.
 
-/// DOEFF137 の当たりの種類。
+/// Kinds of DOEFF137 hits.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ContractTestBreach {
-    /// 縁の検を求める handler に、届く縁の検が無い。
+    /// A handler that requires an edge test has no edge test that reaches it.
     NoEdgeTest,
-    /// 理由の無い `:contract-test none`。
+    /// A `:contract-test none` without a reason.
     NoneWithoutReason,
 }

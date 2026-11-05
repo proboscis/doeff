@@ -39,8 +39,8 @@ static FILE_NOQA_REGEX: Lazy<Regex> = Lazy::new(|| {
     Regex::new(r"(?i)^file(?:\s*=\s*([A-Za-z0-9_\-,\s]+))?$").unwrap()
 });
 
-/// noqa の書き方の知らせ(NoqaWarning)を違反として出す時の規則の ID — Python の規則を走らせた file には必ず出しうる(`lint_source` が
-/// 出し、editor-json の `judged_rules` が Python の規則と一緒に名乗る)。
+/// Rule ID used when a noqa-syntax notice (NoqaWarning) is emitted as a violation — it can be emitted for any file the Python rules ran on (`lint_source`
+/// emits it, and editor-json's `judged_rules` claims it together with the Python rules).
 pub const NOQA_RULE_ID: &str = "NOQA001";
 
 /// A warning from noqa parsing

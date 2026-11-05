@@ -1,8 +1,8 @@
-//! 違反の説明 — 「これは何か(subject)」と「なぜ違反か(reason)」の文を作る。
+//! Explanation of violations: builds the "what this is (subject)" and "why it is a violation (reason)" sentences.
 //!
-//! 文の雛形は規則ごとにここの 1 か所だけに書き、層の名前・層の説明・role の説明・law の文は設定から差し込む(Rust に
-//! 層の意味を書かない)。層の説明が設定に無い層は、名前と置き場所と規則の決まりだけで文を作る。
-//! linter は違反が何で、なぜ違反かを言う。
+//! The sentence template for each rule is written in only this one place, and the layer name, layer description, role description, and law text are inserted from the settings (Rust does not
+//! hold the meaning of a layer). For a layer with no description in the settings, the sentence is built from only the name, the location, and the rule's convention.
+//! The linter says what a violation is and why it is a violation.
 
 use serde::Serialize;
 
@@ -10,248 +10,238 @@ use super::law::LawSpec;
 use super::layers::{LayerId, LayerSettings};
 use super::raw_settings::RawSettingsSpec;
 
-/// file がどの層に在るかと、その根拠(path の置き場所と、タグで名乗った役)。
+/// Which layer a file is in, and the grounds for it (the location of the path, and the role declared by the tag).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Placement {
     pub layer: LayerId,
-    /// 当たった置き場の実際の dir(例 controllers/land_notice/core)。
+    /// The actual dir of the location that matched (e.g. controllers/land_notice/core).
     pub dir: String,
-    /// 置き場の `*` の段に当たった service の名(層が先の形なら None)。
+    /// The name of the service that matched the `*` segment of the location (None if the layer comes first in the path).
     pub service: Option<String>,
-    /// 実効のタグの role(重なりを除き、出てきた順)。
+    /// The effective tag roles (duplicates removed, in order of appearance).
     pub roles: Vec<String>,
-    /// 層を path ではなくタグの role から推したか(宣言した置き場所の外の module)。
+    /// Whether the layer was inferred from the tag role rather than the path (a module outside the declared locations).
     pub by_tags: bool,
 }
 
-/// 語の後に助詞を付ける(英数字で終わる語は空白を挟む — 「core が」「層 core(業務)は」)。助詞が空なら語だけ。
-fn particle(word: &str, particle: &str) -> String {
-    if particle.is_empty() {
-        return word.to_string();
-    }
-    match word.chars().last() {
-        Some(c) if c.is_ascii_alphanumeric() || c == '_' || c == '-' => format!("{} {}", word, particle),
-        _ => format!("{}{}", word, particle),
-    }
-}
-
-/// DOEFF120 の主体の後半(「 3 か所で使う(最初 2 行目・ほかに 5・9 行目)」)。ほかの行は 20 まで並べ、残りは数だけ書く。
+/// The latter half of the DOEFF120 subject (" used in 3 places (first on line 2, others on lines 5, 9)"). Other lines are listed up to 20, and the rest are given as a count only.
 fn json_value_where(uses: &JsonValueUses) -> String {
     const SHOWN: usize = 20;
     let others = match uses.other_lines.len() {
-        0 if uses.count <= 1 => return format!(" 1 か所で使う({} 行目)", uses.first_line),
-        0 => return format!(" {} か所で使う(すべて {} 行目)", uses.count, uses.first_line),
+        0 if uses.count <= 1 => return format!(" used in 1 place (line {})", uses.first_line),
+        0 => return format!(" used in {} places (all on line {})", uses.count, uses.first_line),
         n if n > SHOWN => format!(
-            "{}・…(ほか {} 行)",
-            uses.other_lines[..SHOWN].iter().map(usize::to_string).collect::<Vec<_>>().join("・"),
+            "{}, … ({} more lines)",
+            uses.other_lines[..SHOWN].iter().map(usize::to_string).collect::<Vec<_>>().join(", "),
             n - SHOWN
         ),
-        _ => uses.other_lines.iter().map(usize::to_string).collect::<Vec<_>>().join("・"),
+        _ => uses.other_lines.iter().map(usize::to_string).collect::<Vec<_>>().join(", "),
     };
-    format!(" {} か所で使う(最初 {} 行目・ほかに {} 行目)", uses.count, uses.first_line, others)
+    format!(" used in {} places (first on line {}, others on lines {})", uses.count, uses.first_line, others)
 }
 
-/// 助詞の直後に英数字で始まる語が来る時は空白を挟む(「この file は service billing の…」)。
-fn lead(text: &str) -> String {
-    match text.chars().next() {
-        Some(c) if c.is_ascii_alphanumeric() => format!(" {}", text),
-        _ => text.to_string(),
+/// Capitalizes the first character (to start a sentence with a phrase such as "layer core").
+fn capitalize(text: &str) -> String {
+    let mut chars = text.chars();
+    match chars.next() {
+        Some(first) => first.to_uppercase().collect::<String>() + chars.as_str(),
+        None => String::new(),
     }
 }
 
-/// 宣言されていない置き場所の file の種類(DOEFF114)。
+/// The kind of file in a location that is not declared (DOEFF114).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum PlaceProblem {
-    /// root の直下の file。
+    /// A file directly under the root.
     DirectlyUnderRoot,
-    /// service(か shared)の dir の直下の file — 層の dir の中に無い。
+    /// A file directly under a service (or shared) dir: it is not inside a layer dir.
     DirectlyUnderService { service: String },
-    /// 宣言に無い dir(層が先の dir・旧い機能の dir・service の中の宣言に無い層)の中の file。
+    /// A file inside a dir not in the declarations (a layer-first dir, a dir of an old feature, or an undeclared layer inside a service).
     InUndeclaredDirectory { dir: String },
 }
 
-/// 宣言に無い dir の種類(DOEFF115)。
+/// The kind of dir not in the declarations (DOEFF115).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum DirectoryProblem {
-    /// root の直下の dir が、宣言した service でも shared・foundation・legacy でもない。
+    /// A dir directly under the root that is neither a declared service nor shared, foundation, or legacy.
     ServiceNotDeclared { dir: String, services: Vec<String> },
-    /// service の中の dir が、その service の宣言した層でない。
+    /// A dir inside a service that is not a layer the service declared.
     LayerNotDeclared { service: String, layer: String, declared: Vec<String> },
 }
 
-/// DOEFF119 が見た class の形(説明の文のため)。
+/// The shape of the class DOEFF119 saw (for the explanation text).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ClassShapeFacts {
-    /// 書かれた基底の綴り(どれも repo の中の class か、無い)。
+    /// The spelling of the written bases (each is a class inside the repo, or absent).
     pub bases: Vec<String>,
-    /// dataclass の decorator が付いているか。
+    /// Whether a dataclass decorator is attached.
     pub dataclass: bool,
 }
 
-/// DOEFF119 の判定(閉じた集合 — 許す class は違反を作らないのでここに無い)。
+/// The DOEFF119 verdict (a closed set; allowed classes make no violation, so they are not here).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ClassVerdict {
-    /// 外の世界に触る(method か欄の初期値に生の副作用の強い証拠がある)— error。証拠は `定義: 名` の綴り。
+    /// Touches the outside world (a method or a field's initial value has strong evidence of a raw side effect): error. The evidence is spelled `definition: name`.
     ExternalWorld { evidence: Vec<String> },
-    /// 変わる状態を持つ(method が self の欄を書き換える)— warning。`method: 欄` の綴り。
+    /// Holds mutable state (a method rewrites a field of self): warning. Spelled `method: field`.
     Stateful { mutations: Vec<String> },
-    /// 欄だけ(dunder 以外に処理を持つ method が無い)— defrecord を勧める info。
+    /// Fields only (no method with behavior other than dunder methods): an info that recommends defrecord.
     DataOnly,
 }
 
-/// DOEFF120 で module に JsonValue を許さなかった訳(閉じた集合 — 許した module は違反を作らないのでここに無い)。
+/// Why DOEFF120 did not allow JsonValue in a module (a closed set; allowed modules make no violation, so they are not here).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum JsonValueRefusal {
-    /// architecture.hy の :wire-modules のどれにも当たらない(組み込みの解き手でもない)。
+    /// It matches none of the :wire-modules in architecture.hy (and it is not a built-in resolver either).
     NotListed,
-    /// :wire-modules の pattern に当たるが、foundation の層に無い(送受信そのものは foundation だけが行う)。
+    /// It matches a pattern of :wire-modules but is not in the foundation layer (only foundation does the sending and receiving itself).
     ListedOutsideFoundation { pattern: String, foundation_dir: Option<String> },
 }
 
-/// DOEFF120 が数えた JsonValue の使用(module ごと)。行は 1 始まり。
+/// The uses of JsonValue that DOEFF120 counted (per module). Lines are 1-based.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct JsonValueUses {
-    /// 出てきた名(JsonValue・JsonObject …・重なりを除き出てきた順)。
+    /// The names that appeared (JsonValue, JsonObject, …; duplicates removed, in order of appearance).
     pub names: Vec<String>,
-    /// 使った数(import・定義・注釈・文字列の型の中の語を全部)。
+    /// The number of uses (all words in imports, definitions, annotations, and string types).
     pub count: usize,
-    /// 最初の使用の行。
+    /// The line of the first use.
     pub first_line: usize,
-    /// ほかの使用の行(重なりを除く・最初の行は含めない)。
+    /// The lines of the other uses (duplicates removed; the first line is not included).
     pub other_lines: Vec<usize>,
 }
 
-/// deff の理由の註の問題(DOEFF111)。
+/// Problems with the reason comment of deff (DOEFF111).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum DeffReasonProblem {
-    /// 註が無い。
+    /// There is no comment.
     Missing,
-    /// 理由が空か「同上」とその変形(その定義に固有の理由になっていない)。
+    /// The reason is empty or "ditto" and its variants (not a reason specific to that definition).
     NoDetail { detail: String },
 }
 
 impl DeffReasonProblem {
-    /// 短い 1 行(message のため)。
+    /// A short single line (for the message).
     pub fn short(&self) -> String {
         match self {
-            DeffReasonProblem::Missing => "理由の註が無い".to_string(),
-            DeffReasonProblem::NoDetail { detail } if detail.is_empty() => "理由が空".to_string(),
-            DeffReasonProblem::NoDetail { detail } => format!("理由が「{}」(この定義に固有の理由でない)", detail),
+            DeffReasonProblem::Missing => "no reason comment".to_string(),
+            DeffReasonProblem::NoDetail { detail } if detail.is_empty() => "the reason is empty".to_string(),
+            DeffReasonProblem::NoDetail { detail } => format!("the reason is \"{}\" (not specific to this definition)", detail),
         }
     }
 }
 
-/// 違反の主体が定義の名だけの時の種類(業務の file の名か、定義の名か)。
+/// The kind of case where the subject of a violation is only a definition name (a business file's name, or a definition's name).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum NameSubject {
     File { stem: String },
     Definition { name: String, kind: &'static str },
 }
 
-/// 規則ごとの説明の材料(規則の判定が見た事実だけ)。
+/// The material for the explanation of each rule (only facts that the rule's judgment saw).
 #[derive(Debug, Clone, PartialEq)]
 pub enum Explain {
-    /// DOEFF101: 許されない層の module を import した。
+    /// DOEFF101: imported a module of a layer that is not allowed.
     ImportDirection { placement: Placement, target: String, target_layer: LayerId, target_dir: String },
-    /// DOEFF102: 層で禁じた module を import した。
+    /// DOEFF102: imported a module forbidden in the layer.
     ForbiddenModule { placement: Placement, module: String },
-    /// DOEFF168: 業務の層の定義が環境の名の値と比べるか dry-run の印で分岐する(当たった綴りの種類)。
+    /// DOEFF168: a definition in a business layer branches by comparing with an environment-name value or by a dry-run flag (the kind of spelling that matched).
     EnvironmentBranch { placement: Placement, hit: super::env_branch::BranchHit },
-    /// DOEFF169: match の class pattern の keyword の欄の名に `-` が在る(class と欄の名)。
+    /// DOEFF169: a keyword field name of a match class pattern has a `-` (the class and the field name).
     MatchFieldHyphen { placement: Placement, class: String, field: String },
-    /// DOEFF170・171: 値を型だけで渡す層の defwire(wire が真)か、:pre / :post / 欄の型の写像・型の無い組(理由)。
+    /// DOEFF170 and 171: a defwire in a layer that passes values by type only (wire is true), or a :pre / :post / field-type mapping or untyped tuple (the reason).
     WireFree { placement: Placement, wire: bool, problem: String },
-    /// DOEFF172: 欄の写像(field が真)か、handler の外で写像を組む定義(理由)。
+    /// DOEFF172: a field mapping (field is true), or a definition that builds a mapping outside a handler (the reason).
     DictSmell { placement: Placement, field: bool, problem: String },
-    /// DOEFF103: 型だけの層に関数を置いた。
+    /// DOEFF103: put a function in a types-only layer.
     TypesOnly { placement: Placement, functions: Vec<String> },
-    /// DOEFF104: タグの無い定義がある。
+    /// DOEFF104: there are definitions without tags.
     UntaggedDefinitions { placement: Placement, names: Vec<String> },
-    /// DOEFF104: module が何も名乗っていない。
+    /// DOEFF104: the module declares nothing.
     NoTags { placement: Placement },
-    /// DOEFF105: タグの role が層に合わない(または role / context が無い)。
+    /// DOEFF105: the tag role does not fit the layer (or the role / context is missing).
     RoleMismatch { placement: Placement, role: Option<String>, context: Option<String> },
-    /// DOEFF106: 定義が生の副作用に直に触る。
+    /// DOEFF106: a definition directly touches a raw side effect.
     RawDirect { placement: Placement, definition: String, kind: &'static str, evidence: String, category: &'static str, weak: bool },
-    /// DOEFF131: 許可名簿の外の定義が、:wraps に挙げた doeff の実 I/O の handler を名指す。
+    /// DOEFF131: a definition outside the permitted roster names a real-I/O handler of doeff listed in :wraps.
     WorldHandlerNamed { placement: Placement, definition: String, wrapped: String, listed_by: String },
-    /// DOEFF132: 許可名簿の定義が実在しない・foundation の外に在る。
+    /// DOEFF132: a definition in the permitted roster does not exist or is outside foundation.
     WorldHandlerMisplaced { definition: String, problem: String },
-    /// DOEFF133: テストの種類と印が食い違う(edge = 縁なのに印が無い / 手元なのに印が在る)。
+    /// DOEFF133: the kind of test and its mark disagree (edge = an edge but no mark / local but has a mark).
     TestKindMismatch { test: String, edge: bool, mark: String, reached: Vec<String> },
-    /// DOEFF137: 許可名簿の handler(名簿の綴り)に届く縁の検(空でない :interpreters を持つ deftest)が無い。
+    /// DOEFF137: there is no edge test (a deftest with non-empty :interpreters) that reaches a handler (the roster's spelling) in the permitted roster.
     WorldHandlerWithoutContractTest { handler: String, breach: super::contract_breach::ContractTestBreach },
-    /// DOEFF137: 相手役の名簿の組(相手役・本物の綴り)の両方に届く契約の検(空でない :interpreters を持つ deftest)が無い。
+    /// DOEFF137: there is no contract test (a deftest with non-empty :interpreters) that reaches both of a stand-in roster pair (stand-in, real spelling).
     StandInWithoutContractTest { stand_in: String, real: String, breach: super::contract_breach::ContractTestBreach },
-    /// DOEFF135: deftest 以外のテストの形。
+    /// DOEFF135: a test form other than deftest.
     TestFormNotDeftest { form: &'static str, detail: String },
-    /// DOEFF146: 判定を1か所に閉じ込めた語彙が :except の外に在る。
+    /// DOEFF146: a vocabulary whose judgment was confined to one place is outside :except.
     VocabularyOutsideSinglePoint { group: String, count: usize, instead: String },
-    /// DOEFF148: 書いてよい file を決めた綴り(群の名・理由・当たりの種類)。
-    /// bound = 群の :names-bound-in から導いた名(空 = 導いていない)。
+    /// DOEFF148: a spelling restricted to the files where it may be written (group name, reason, kind of hit).
+    /// bound = names derived from the group's :names-bound-in (empty = none derived).
     ConfinedSpelling { group: String, why: String, problem: super::confined_spellings::ConfinedProblem, bound: Vec<String> },
-    /// DOEFF161: 数を決めた綴り(宣言の名・理由・当たりの種類)。
+    /// DOEFF161: a spelling whose count is fixed (declaration name, reason, kind of hit).
     CountedSpelling { group: String, why: String, problem: super::counted_spellings::CountProblem },
-    /// DOEFF162: effect の宣言の全体(一覧の名・理由・当たりの種類)。
+    /// DOEFF162: the whole of an effect declaration (list name, reason, kind of hit).
     EffectCensus { group: String, why: String, problem: super::effect_census::CensusProblem },
-    /// DOEFF149: 型の欄を持つ class の顔ぶれ(一覧の名・型の綴り・理由・当たりの種類)。
+    /// DOEFF149: the roster of classes that hold a typed field (list name, spelling of the type, reason, kind of hit).
     FieldHolders { group: String, type_name: String, why: String, problem: super::field_holders::HolderProblem },
-    /// DOEFF150: 使わないと決めた綴り(群の名・当たった綴り・代わりの語・:in names なら定義の名)。
+    /// DOEFF150: a spelling decided not to be used (group name, spelling that matched, replacement word, and for :in names the definition name).
     RetiredWord { group: String, spelling: String, instead: String, name: Option<String>, place: super::architecture::WordPlace },
-    /// DOEFF151: 使わないと決めた呼び。
+    /// DOEFF151: a call decided not to be used.
     RetiredCall { group: String, call: String, instead: String },
-    /// DOEFF141: 決めた材料だけで判じる定義(宣言の綴り・理由・当たりの種類)。
+    /// DOEFF141: a definition judged only from decided material (declared spelling, reason, kind of hit).
     BlindDefinition { declared: String, why: String, problem: super::blind::BlindProblem },
-    /// DOEFF147: 呼んでよい頭を決めた定義(宣言の綴り・理由・当たりの種類)。
+    /// DOEFF147: a definition whose callable heads are decided (declared spelling, reason, kind of hit).
     AllowedHeads { declared: String, why: String, problem: super::allowed_heads::HeadProblem },
-    /// DOEFF159: 頭を呼んでよい場所と回数(頭・理由・当たりの種類)。
+    /// DOEFF159: where and how many times a head may be called (head, reason, kind of hit).
     CallSites { head: String, why: String, problem: super::call_sites::CallSiteProblem },
-    /// DOEFF160: 広い例外の捕捉を置かない群(群の名・理由・当たりの種類)。
+    /// DOEFF160: groups where broad exception catches are not placed (group name, reason, kind of hit).
     BroadCatches { group: String, why: String, problem: super::broad_catches::BroadCatchProblem },
-    /// DOEFF140: 置き場の外の module への依存(この file の置き場・読む先の module・その file の root からの path)。
+    /// DOEFF140: a dependency on a module outside the locations (this file's location, the module read, and that file's path from the root).
     PlacedDependency { placement: Placement, owner: String, owner_rel: String },
-    /// DOEFF144: 公開面の型の注記の素の写像・素の組(どこの注記か・名・赤の理由)。
+    /// DOEFF144: a bare mapping or bare tuple in a type annotation of the public surface (where the annotation is, the name, the reason it is red).
     UntypedStructuredValue { what: String, name: String, problem: String },
-    /// DOEFF145: .pyi の @dataclass に kw_only=True が無い(class の名・.hy の側の書き方)。
+    /// DOEFF145: an @dataclass in .pyi without kw_only=True (the class name, how the .hy side is written).
     RecordStubNotKwOnly { class: String, form: String },
     ServiceUntestedOnSim { service: String, entry: String, definitions: usize, sim: String },
-    /// DOEFF163: code を持つ service の不変条件の宣言の欠け(service の名・欠けの文)。
+    /// DOEFF163: a gap in the invariant declarations of a service that has code (service name, text of the gap).
     ServiceInvariantsMissing { service: String, gap: String },
-    /// DOEFF173: code を持つ service の系の宣言の欠け(service の名・欠けの文)。
+    /// DOEFF173: a gap in the system declarations of a service that has code (service name, text of the gap).
     ServiceSystemMissing { service: String, gap: String },
-    /// DOEFF164: service の反例の無さ(service・entry の dir・反例の表の節の数・その service の effect か土台の effect に答える節の数)。
+    /// DOEFF164: a service without counterexamples (service, entry dir, number of sections in the counterexample table, number of sections that answer that service's effects or the foundation's effects).
     ServiceWithoutCounterexample { service: String, entry: String, counterexamples: usize, candidates: usize },
-    /// DOEFF167: 条ごとの反例の欠け(service・条 — 宣言の欠けは None・欠けの文)。
+    /// DOEFF167: a gap in counterexamples per clause (service, clause: None for a gap in the declaration, text of the gap).
     ClauseWithoutCounterexample { service: String, clause: Option<String>, gap: String },
-    /// DOEFF142: defhandler の引数が client・可変の店を取る。
+    /// DOEFF142: a defhandler's argument takes a client or a mutable store.
     HandlerArgumentHoldsState { handler: String, param: String, kind: &'static str, type_text: String },
-    /// DOEFF143・157・158: 業務の効果の偽物・表の腐り・検だけの偽物・intent の効果の答え手。
+    /// DOEFF143, 157, 158: a business-effect fake, a rotten table, a test-only fake, and the responder of an intent's effect.
     BusinessEffectFake { subject: String, reason: String },
-    /// DOEFF206: 検証環境が intent の層の効果に自前で答える節・違反を通す表の行が intent の層の効果を通す(主体と理由)。
+    /// DOEFF206: a section where the verification environment itself answers an intent-layer effect, or a row of a table that lets a violation pass lets an intent-layer effect through (subject and reason).
     IntentFakedInVerification { subject: String, reason: String },
-    /// DOEFF207: 本番の系の job の読み書きの欄の欠け・書き手の無い読み(主体 = 系::job・理由の文)。
+    /// DOEFF207: a gap in the read/write fields of a production system's job, or a read with no writer (subject = system::job, the reason text).
     SystemAccessUnwritten { subject: String, reason: String },
-    /// DOEFF208: 本番の code が記録の変更の待ちで job を起こす(主体 = 定義と呼び・理由の文)。
+    /// DOEFF208: production code wakes a job on a wait for a record change (subject = the definition and the call, the reason text).
     RecordChangeWakesJob { subject: String, reason: String },
-    /// DOEFF209: 同じ物を時間の待ちを挟んで繰り返し取りに行く(主体 = 定義と呼び・理由の文)。
+    /// DOEFF209: fetching the same thing repeatedly with a time wait in between (subject = the definition and the call, the reason text).
     PollingOnTimer { subject: String, reason: String },
-    /// DOEFF210: program が壁の時計で眠る(主体 = program の名と眠りの関数・理由の文)。
+    /// DOEFF210: a program sleeps on the wall clock (subject = the program's name and the sleeping function, the reason text).
     ProgramSleepsOnWallClock { subject: String, reason: String },
-    /// DOEFF211: 検が壁の時計で眠る(主体 = 包む定義の名と眠りの関数・理由の文)。
+    /// DOEFF211: a test sleeps on the wall clock (subject = the name of the wrapping definition and the sleeping function, the reason text).
     TestSleepsOnWallClock { subject: String, reason: String },
-    /// DOEFF166: 登録簿の鍵(source = 載った登録簿の file・rules = 鍵の区切りが指す、この実行で判じた規則の ID)がどの所見にも当たらない。
+    /// DOEFF166: a registry key (source = the registry file it is listed in, rules = the IDs of the rules judged in this run that the key's delimiter points to) matches no finding.
     RegistryEntryStale { key: String, source: String, rules: Vec<String> },
-    /// DOEFF165: intent の効果の網羅の表の 1 行(効果・持ち主の service・3 列・欠けの語句)。
+    /// DOEFF165: one row of the intent-effect coverage table (the effect, the owning service, three columns, and the phrase for the gap).
     IntentEffectCoverage { effect: String, service: String, columns: String, gaps: String },
-    /// DOEFF155・156: 組み立ての形の破れ・翻訳の先か土台の答えが業務の効果。
+    /// DOEFF155 and 156: a break in the shape of assembly; the translation target or the foundation's answerer is a business effect.
     AssemblyShape { subject: String, reason: String },
-    /// DOEFF106・131 を層の置き場の外の file に当てた当たり(層の説明の主体が無い — message をそのまま主体にする)。
+    /// A hit from applying DOEFF106 and 131 to a file outside the layer locations (there is no layer description subject, so the message itself is used as the subject).
     WorldOutsideLayers { subject: String },
-    /// DOEFF107: 定義が呼ぶ定義を通して生の副作用に届く。
+    /// DOEFF107: a definition reaches a raw side effect through the definitions it calls.
     RawVia { placement: Placement, definition: String, through: Vec<String>, evidence: String, category: &'static str },
-    /// DOEFF108: 業務の名に環境の語がある。
+    /// DOEFF108: a business name has an environment word.
     EnvironmentName { subject: NameSubject, words: Vec<String> },
-    /// DOEFF109: 別の service の守る層を import した。
+    /// DOEFF109: imported a layer guarded by another service.
     ServiceBoundary {
         placement: Placement,
         target: String,
@@ -261,17 +251,17 @@ pub enum Explain {
         open_layers: Vec<LayerId>,
         shared: Vec<String>,
     },
-    /// DOEFF110: defn / defn/a の定義。
+    /// DOEFF110: a definition of defn / defn/a.
     DefnForbidden { name: String, head: String, declared_kind: Option<super::architecture::ReasonKind> },
-    /// DOEFF111: 理由の註の無い・形の違う deff。
+    /// DOEFF111: a deff with no reason comment or with a wrong form.
     DeffWithoutReason { name: String, marker: String, problem: DeffReasonProblem, kinds: Vec<super::architecture::ReasonKind> },
-    /// DOEFF112: 定義の :tags に必須の鍵が無い。
+    /// DOEFF112: a required key is missing from the definition's :tags.
     DefinitionTagsMissing { name: String, head: String, missing: Vec<String>, has_tags: bool, module_default: bool },
-    /// DOEFF114: 宣言されていない置き場所の file。
+    /// DOEFF114: a file in a location that is not declared.
     UndeclaredPlace { rel: String, problem: PlaceProblem, root: String, destination: String },
-    /// DOEFF115: 宣言に無い dir。
+    /// DOEFF115: a dir not in the declarations.
     UndeclaredDirectory { dir: String, problem: DirectoryProblem },
-    /// DOEFF116: service の依存の宣言に反する import。
+    /// DOEFF116: an import that violates the service's dependency declaration.
     ServiceDependency {
         placement: Placement,
         own: String,
@@ -280,17 +270,17 @@ pub enum Explain {
         target_layer: LayerId,
         target_dir: String,
         declared: bool,
-        /// 依存先が既にこの service に依存している(:depends-on に足すと service の間の依存が輪になる)。
+        /// The target already depends on this service (adding it to :depends-on would make the dependency between services a cycle).
         reverse: bool,
         depends_on: Vec<String>,
-        /// この file の層が依存先で読んでよい層(層の :dependency-layers か :open-layers)。
+        /// The layers the target allows this file's layer to read (the layer's :dependency-layers or :open-layers).
         open_layers: Vec<String>,
-        /// この file の層が :dependency-layers で :open-layers より広く読める層か(組み立ての entry)。
+        /// Whether this file's layer is a layer that :dependency-layers lets read wider than :open-layers (the assembly entry).
         widened: bool,
     },
-    /// DOEFF117: 宣言したのに使っていない依存。
+    /// DOEFF117: a dependency that was declared but is not used.
     UnusedDependency { service: String, dependency: String },
-    /// DOEFF201・202: Jev の判定(意味の規則)。
+    /// DOEFF201 and 202: Jev's judgment (semantic rules).
     Semantic {
         placement: Placement,
         definition: String,
@@ -298,131 +288,131 @@ pub enum Explain {
         question: super::semantic::SemanticQuestion,
         probability: f64,
     },
-    /// DOEFF203: 名乗った素の関数の理由の種類が、Jev の判定で当たらない見込み。
-    /// DOEFF118: 検の置き場の、deftest でない検の関数。
+    /// DOEFF203: the kind of reason of a declared bare function is unlikely to hold according to Jev's judgment.
+    /// DOEFF118: a test function in a test location that is not a deftest.
     TestNotDeftest { name: String, head: String },
-    /// DOEFF119: 業務の code の defclass(外の世界に触る / 変わる状態を持つ / 欄だけ)。
+    /// DOEFF119: a defclass in business code (touches the outside world / holds mutable state / fields only).
     ClassShape { name: String, shape: ClassShapeFacts, verdict: ClassVerdict },
-    /// DOEFF126: defk の定義を素で呼んでいる。
+    /// DOEFF126: a defk definition is called bare.
     BareDefkCall { call: super::bare_calls::BareCall },
-    /// DOEFF126: 引数で受けた関数を素で呼んでいる(呼び手が defk か fnk を渡している)。
+    /// DOEFF126: a function received as an argument is called bare (the caller passes a defk or fnk).
     ParamCalledBare { call: super::param_calls::ParamCall },
-    /// DOEFF175: effect が不在・失敗と宣言した型を、その答えを束ねた変数に対して値として分ける古い分岐。
+    /// DOEFF175: an old branch that splits, as a value, a type declared as an effect's absence or failure, on a variable that bound that answer.
     StaleBranch { branch: super::stale_outcome_branches::StaleBranch },
-    /// DOEFF127: defk の `:effects` の宣言が推論と合わない。
+    /// DOEFF127: a defk's `:effects` declaration does not match the inference.
     EffectMismatch { mismatch: super::signatures::EffectMismatch },
-    /// DOEFF130: 翻訳の層の handler が業務の intent を出す(層の名は設定から)。
+    /// DOEFF130: a translation-layer handler emits a business intent (the layer name comes from the settings).
     TranslationIntent { intent: super::signatures::TranslationIntent, handler_layer: String, intent_layer: String },
-    /// DOEFF174: 業務の層の定義が下の層の効果を出すか、その package の handler を被せる(層の名・下の層の module の宣言)。
+    /// DOEFF174: a business-layer definition emits an effect of a lower layer, or wraps that package's handler (the layer name, the declaration of the lower-layer module).
     LowerLayerUse { found: super::signatures::LowerLayerUse, layer: String },
-    /// DOEFF121〜125: 臭いの規則(形の照らし)。
+    /// DOEFF121-125: smell rules (checking the shape).
     Smell { smell: super::smells::Smell },
-    /// DOEFF205: Jev が、判断の定義に形の検めと業務の判断が混ざっていると見た。
+    /// DOEFF205: Jev judged that a judgment definition mixes shape checking with business judgment.
     MixedConcerns { name: String, kind: &'static str, probability: f64, layer: String },
-    /// DOEFF204: Jev が、処理を持つ method のある class を外の世界の窓口か状態を持つ物と見た。
+    /// DOEFF204: Jev judged that a class with methods that do processing is a window to the outside world or holds state.
     ClassRoleDoubt { name: String, chosen: String, probability: f64, fields: Vec<String> },
-    /// DOEFF120: 許されない module が JsonValue を使う。
+    /// DOEFF120: a module that is not allowed uses JsonValue.
     JsonValueUse { module: String, uses: JsonValueUses, refusal: JsonValueRefusal },
     PlainCallableDoubt {
         definition: String,
         kind: &'static str,
-        /// 書かれた理由の文。
+        /// The stated reason text.
         stated: String,
-        /// Jev が選んだ答え(受け入れる理由・受け入れない型・none)と確率。
+        /// The answer Jev chose (an accepted reason, a rejected type, or none) and its probability.
         chosen: String,
         chosen_probability: f64,
-        /// 選んだ答えが受け入れる理由か。
+        /// Whether the chosen answer is an accepted reason.
         chosen_accepted: bool,
-        /// 選んだ答えの説明(none は None)。
+        /// The description of the chosen answer (None for none).
         chosen_description: Option<String>,
-        /// 受け入れない型の直し方(architecture.hy の :fix)。
+        /// How to fix a rejected type (:fix in architecture.hy).
         fix: Option<String>,
-        /// 受け入れない答えの確率の和。
+        /// The sum of the probabilities of the rejected answers.
         rejected_total: f64,
     },
-    /// DOEFF113: タグの :context が置き場の service と食い違う。`service` = 照らした service の名(:dir で dir と名が違えば名)。
+    /// DOEFF113: the tag's :context disagrees with the service of the location. `service` = the name of the service checked (the name if :dir makes the dir differ from the name).
     ContextMismatch { placement: Placement, service: String, contexts: Vec<String> },
 }
 
-/// 違反 1 件の説明(出力の explanation の欄)。
+/// The explanation of one violation (the explanation field of the output).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct Explanation {
     pub subject: String,
     pub reason: String,
-    /// 結びつけた ADR の law の :statement の逐語(無ければ null)。
+    /// The verbatim :statement of the ADR law linked to it (null if none).
     pub law_statement: Option<String>,
 }
 
-/// 文を作るための道具(層の設定と、生の副作用を許す層)。
+/// A tool for building sentences (the layer settings, and the layers allowed raw side effects).
 pub struct Narrator<'a> {
     pub layers: Option<&'a LayerSettings>,
     pub raw: Option<&'a RawSettingsSpec>,
 }
 
 impl<'a> Narrator<'a> {
-    /// 説明を作る(law が結びついていれば、その :statement を逐語で添える)。
+    /// Builds the explanation (if a law is linked, its :statement is attached verbatim).
     pub fn explain(&self, explain: &Explain, law: Option<&LawSpec>) -> Explanation {
         let (subject, reason) = match explain {
             Explain::ImportDirection { placement, target, target_layer, target_dir } => (
-                format!("import 先 {} は{}(path が {}/ の下) — {}", target, self.layer_phrase(*target_layer), target_dir, self.file_subject(placement)),
+                format!("import target {} is in {} (path under {}/) — {}", target, self.layer_phrase(*target_layer), target_dir, self.file_subject(placement)),
                 format!(
-                    "{}{} import してよいのは {} だけ。{}{}読むと、{}{}に触れる(模擬で handler を差し替えても、その所だけ本物に触る)。",
+                    "{} {} may import only {}. {} reading it from {} makes {} touch {} (even if handlers are swapped in the simulation, only that place touches the real thing).",
                     self.character(placement.layer),
-                    particle(&self.name(placement.layer), "が"),
+                    self.name(placement.layer),
                     self.allowed_imports(placement.layer),
                     self.target_character(*target_layer),
-                    particle(&self.name(placement.layer), "から"),
-                    particle(&self.name(placement.layer), "が"),
-                    particle(&format!("層 {} の持つ物", self.name(*target_layer)), "")
+                    self.name(placement.layer),
+                    self.name(placement.layer),
+                    format!("what layer {} holds", self.name(*target_layer))
                 ),
             ),
             Explain::MatchFieldHyphen { placement, class, field } => (
-                format!("match の class pattern ({} :{} …) — {}", class, field, self.file_subject(placement)),
-                "Hy の match は class pattern の keyword を属性名へ mangle しないまま Python の case に出す(`:a-b` は `case Class(a-b=…)`)。属性 `a-b` はどの値にも無いので、その節は値が何でも当たらず、黙って次の節(多くは既定の `_`)に倒れる。defk の中の match は doeff-hy が欄の名を属性名へ直すので当てない(この当たりは defk の外)。".to_string(),
+                format!("match class pattern ({} :{} …) — {}", class, field, self.file_subject(placement)),
+                "Hy's match emits the class pattern's keyword into Python's case without mangling it to an attribute name (`:a-b` becomes `case Class(a-b=…)`). No value has an attribute `a-b`, so that clause never matches whatever the value is and silently falls through to the next clause (often the default `_`). A match inside defk is not flagged because doeff-hy rewrites field names to attribute names (this hit is outside defk).".to_string(),
             ),
             Explain::DictSmell { placement, field, problem } => (
-                if *field { format!("欄の写像({}) — {}", problem, self.file_subject(placement)) } else { format!("{} — {}", problem, self.file_subject(placement)) },
-                "agora の data は DB に在り効果で読む。memory の写像は cache のためだけで、cache は効果の層(handler)が持つ。handler の外で写像を組む定義や欄の写像は、データを型の無い形で持ち回る臭い。写像を組むのが目的の 1 点(JSON の境界で綴る定義 — :post が写像)は数えない。".to_string()
+                if *field { format!("field mapping ({}) — {}", problem, self.file_subject(placement)) } else { format!("{} — {}", problem, self.file_subject(placement)) },
+                "agora's data lives in the DB and is read through effects. An in-memory mapping exists only for caching, and the cache is held by the effect layer (handler). A definition that builds a mapping outside a handler, or a field mapping, is a smell of carrying data around in an untyped form. A single point whose purpose is to build a mapping (a definition that spells it out at the JSON boundary, where :post is the mapping) is not counted.".to_string()
             ),
             Explain::WireFree { placement, wire, problem } => (
-                if *wire { format!("defwire の宣言 — {}", self.file_subject(placement)) } else { format!("{} — {}", problem, self.file_subject(placement)) },
-                "この層は値を型だけで受け渡す(defwire は core に置かない・データを引く写像は渡さずキー → 値の関数か効果にする)。wire の型と写像を組む綴りは翻訳の層の 1 点に置き、この層は欄の名前と型を持つ型(defrecord)だけを受け取り返す。写像や型の無い組が通ると、どの欄が在るかを読む形の確かめがこの層に入り込む。".to_string()
+                if *wire { format!("defwire declaration — {}", self.file_subject(placement)) } else { format!("{} — {}", problem, self.file_subject(placement)) },
+                "This layer passes values by type only (defwire is not placed in core; a mapping that fetches data is not passed but made a key -> value function or an effect). The spelling that builds the wire's type and mapping is placed at one point in the translation layer, and this layer only receives and returns types that have field names and types (defrecord). If a mapping or an untyped tuple gets through, checks that read which fields exist creep into this layer.".to_string()
             ),
             Explain::EnvironmentBranch { placement, hit } => (
                 match hit {
-                    super::env_branch::BranchHit::Value(value) => format!("環境の名の値 \"{}\" との比較 — {}", value, self.file_subject(placement)),
-                    super::env_branch::BranchHit::Flag(flag) => format!("dry-run の印 {} での分岐 — {}", flag, self.file_subject(placement)),
+                    super::env_branch::BranchHit::Value(value) => format!("comparison with the environment-name value \"{}\" — {}", value, self.file_subject(placement)),
+                    super::env_branch::BranchHit::Flag(flag) => format!("branch on the dry-run flag {} — {}", flag, self.file_subject(placement)),
                 },
-                "業務の層が環境の名や dry-run の印で分岐すると、業務の層が環境を知ることになり、本番と模擬で違う道を通る(模擬で確かめた道が本番の道でなくなる)。環境の違いは handler の組の差し替えだけで表す(architecture.hy の :environment-branches)。".to_string(),
+                "If a business layer branches on an environment name or a dry-run flag, the business layer comes to know the environment and takes different paths in production and in the simulation (the path checked in the simulation is no longer the production path). Express differences between environments only by swapping the set of handlers (:environment-branches in architecture.hy).".to_string(),
             ),
             Explain::ForbiddenModule { placement, module } => (
-                format!("import 先 {}(層 {} で禁じた I/O の module) — {}", module, self.name(placement.layer), self.file_subject(placement)),
+                format!("import target {} (an I/O module forbidden in layer {}) — {}", module, self.name(placement.layer), self.file_subject(placement)),
                 format!(
-                    "{}{} は外の世界に直に触る module なので、この層では使わない。I/O は{} handler が持ち、この層は effect を出す。",
+                    "{} {} is a module that touches the outside world directly, so it is not used in this layer. I/O is held by the handlers of {}, and this layer emits effects.",
                     self.character(placement.layer),
                     module,
-                    particle(&self.io_layers(), "の")
+                    self.io_layers()
                 ),
             ),
             Explain::TypesOnly { placement, functions } => (
-                format!("定義 {}(関数 / handler) — {}", functions.join("・"), self.file_subject(placement)),
+                format!("definition {} (function / handler) — {}", functions.join(", "), self.file_subject(placement)),
                 format!(
-                    "{}型の宣言だけを置く層なので、処理の中身を持つ関数と handler は置けない(別の層へ移す)。",
+                    "{} This layer holds only type declarations, so functions and handlers that contain processing cannot be placed here (move them to another layer).",
                     self.character(placement.layer)
                 ),
             ),
             Explain::UntaggedDefinitions { placement, names } => (
-                format!("定義 {}(タグ無し) — {}", names.join("・"), self.file_subject(placement)),
+                format!("definition {} (no tags) — {}", names.join(", "), self.file_subject(placement)),
                 format!(
-                    "層の dir は外の世界からの遠さだけを決め、文脈(context)と役(role)は定義のタグで名乗る。タグが無いと、この定義が層 {} で許される役({})かを確かめられない。",
+                    "The layer dir decides only the distance from the outside world; context and role are declared by a definition's tags. Without tags, it cannot be checked whether this definition has a role allowed in layer {} ({}).",
                     self.name(placement.layer),
                     self.allowed_roles(placement.layer)
                 ),
             ),
             Explain::NoTags { placement } => (
-                format!("この module はタグを何も名乗っていない — {}", self.file_subject(placement)),
+                format!("this module declares no tags at all — {}", self.file_subject(placement)),
                 format!(
-                    "層の dir は外の世界からの遠さだけを決め、文脈(context)と役(role)はタグで名乗る。タグが無いと、この module が層 {} で許される役({})かを確かめられない。",
+                    "The layer dir decides only the distance from the outside world; context and role are declared by tags. Without tags, it cannot be checked whether this module has a role allowed in layer {} ({}).",
                     self.name(placement.layer),
                     self.allowed_roles(placement.layer)
                 ),
@@ -430,161 +420,161 @@ impl<'a> Narrator<'a> {
             Explain::RoleMismatch { placement, role, context } => (self.role_subject(placement, role, context), self.role_reason(placement, role, context)),
             Explain::RawDirect { placement, definition, kind, evidence, category, weak } => (
                 format!(
-                    "定義 {}({})が {}({} の生の副作用・{})に直に触る — {}",
+                    "definition {} ({}) directly touches {} (a raw side effect of {}; {}) — {}",
                     definition,
                     kind,
                     evidence,
                     category,
-                    if *weak { "method 名だけで見つけた弱い証拠" } else { "import を通した名前か組み込みの強い証拠" },
+                    if *weak { "weak evidence found only from a method name" } else { "strong evidence: a name via an import, or a built-in" },
                     self.file_subject(placement)
                 ),
                 format!(
-                    "{}{} の I/O を直にすると、模擬で handler を差し替えてもこの定義だけ本物の世界に触る。effect を出して、{} handler に答えさせる。",
+                    "{} Doing {} I/O directly means that, even if handlers are swapped in the simulation, only this definition touches the real world. Emit an effect and let the handlers of {} answer.",
                     self.character(placement.layer),
                     category,
-                    particle(&self.io_layers(), "の")
+                    self.io_layers()
                 ),
             ),
             Explain::WorldHandlerNamed { placement, definition, wrapped, listed_by } => (
-                format!("{} が doeff の実 I/O の handler {} を名指す — {}", definition, wrapped, self.file_subject(placement)),
+                format!("{} names doeff's real-I/O handler {} — {}", definition, wrapped, self.file_subject(placement)),
                 format!(
-                    "{} は外の世界に触れる handler で、許可名簿では {} だけが中で動かしてよい。ここで直に被せると、模擬で handler の組を差し替えてもこの所だけ本物の世界に触る。名簿の定義 {} を使うか、この定義を名簿に載せる(foundation の層に置く)。",
+                    "{} is a handler that touches the outside world, and in the permitted roster only {} may run it inside. Wrapping it directly here means that, even if the set of handlers is swapped in the simulation, only this place touches the real world. Use the roster's definition {}, or add this definition to the roster (place it in the foundation layer).",
                     wrapped, listed_by, listed_by
                 ),
             ),
             Explain::WorldHandlerMisplaced { definition, problem } => (
-                format!("許可名簿の定義 {} — {}", definition, problem),
-                "外の世界に触れてよい定義は層 foundation にだけ置く(決まった dir に規則つきで置く)。名簿に在って実物が無い・foundation の外に在ると、名簿が外の世界に触れる所を言い当てなくなる。".to_string()
+                format!("definition {} in the permitted roster — {}", definition, problem),
+                "Definitions allowed to touch the outside world are placed only in layer foundation (in a fixed dir, under rules). If the roster has an entry with no real definition, or the definition is outside foundation, the roster no longer pins down where the outside world is touched.".to_string()
             ),
             Explain::TestKindMismatch { test, edge, mark, reached } => (
                 if *edge {
-                    format!("テスト {} は外の世界に届く(縁)のに印 {} が無い", test, mark)
+                    format!("test {} reaches the outside world (edge) but lacks the mark {}", test, mark)
                 } else {
-                    format!("テスト {} は外の世界に届かない(手元)のに印 {} が在る", test, mark)
+                    format!("test {} does not reach the outside world (local) but has the mark {}", test, mark)
                 },
                 if *edge {
-                    format!("届く道: {}。縁のテストは印で既定の pytest から外す — 印が無いと手元のテストの列に実 I/O が混ざる。", reached.join(" → "))
+                    format!("Path reached: {}. An edge test is excluded from the default pytest by a mark; without the mark, real I/O gets mixed into the list of local tests.", reached.join(" → "))
                 } else {
-                    "印は縁のテストの目印で、手元のテストに付けると既定の pytest から外れて回らなくなる。".to_string()
+                    "The mark identifies an edge test; attaching it to a local test removes it from the default pytest so it no longer runs.".to_string()
                 },
             ),
             Explain::WorldHandlerWithoutContractTest { handler, breach: super::contract_breach::ContractTestBreach::NoEdgeTest } => (
-                format!("許可名簿の handler {} に縁の検が無い", handler),
-                "縁の検 = :interpreters に本物(この handler)と模擬の解釈器を並べ、同じ deftest を両方に通す検。無いと、模擬が本物と同じに答えることを誰も見ておらず、手元の検が緑でも本番の答えは確かめていない。検の要らない handler は名簿の行に理由つきの :contract-test を書く(書き方は DOEFF137 の直し方)。".to_string(),
+                format!("handler {} in the permitted roster has no edge test", handler),
+                "Edge test = a test that lines up the real one (this handler) and the simulated interpreter in :interpreters and runs the same deftest through both. Without it, nobody checks that the simulation answers the same as the real one, and even if the local tests are green, production's answers have not been verified. For a handler that needs no test, write a :contract-test with a reason on the roster's row (how to write it is in the fix for DOEFF137).".to_string(),
             ),
             Explain::WorldHandlerWithoutContractTest { handler, breach: super::contract_breach::ContractTestBreach::NoneWithoutReason } => (
-                format!("許可名簿の handler {} の :contract-test none に理由が無い", handler),
-                "理由の無い none は、縁の検を求めない根拠を誰も確かめられない。契約を確かめるテストの名を理由として書く(書き方は DOEFF137 の直し方)。".to_string(),
+                format!("handler {} in the permitted roster: :contract-test none has no reason", handler),
+                "A none without a reason leaves nobody able to verify the grounds for not requiring an edge test. Write the name of the test that verifies the contract as the reason (how to write it is in the fix for DOEFF137).".to_string(),
             ),
             Explain::StandInWithoutContractTest { stand_in, real, breach: super::contract_breach::ContractTestBreach::NoEdgeTest } => (
-                format!("相手役 {} に、本物 {} と同じ契約の検が無い", stand_in, real),
-                "契約の検 = :interpreters に本物と相手役の解釈器を並べ、同じ deftest を両方に流して答えを照らす検(verified fake・Pact の形)。無いと、本物が変わっても相手役は古い答えのまま模擬が緑になり、通った code が本番で違う答えに会う。相手役の持ち主が検を保ち、本物が用意できない組だけ名簿の行に理由つきの :contract-test を書く(書き方は DOEFF137 の直し方)。".to_string(),
+                format!("stand-in {} has no contract test with the real one {}", stand_in, real),
+                "Contract test = a test that lines up the real one and the stand-in's interpreters in :interpreters, runs the same deftest through both, and compares the answers (verified fake, Pact style). Without it, even if the real one changes the stand-in keeps its old answers and the simulation stays green, and code that passed meets different answers in production. The stand-in's owner maintains the test, and only for pairs where the real one cannot be prepared, a :contract-test with a reason is written on the roster's row (how to write it is in the fix for DOEFF137).".to_string(),
             ),
             Explain::StandInWithoutContractTest { stand_in, breach: super::contract_breach::ContractTestBreach::NoneWithoutReason, .. } => (
-                format!("相手役 {} の :contract-test none に理由が無い", stand_in),
-                "理由の無い none は、相手役の契約の検を求めない根拠を誰も確かめられない。契約を確かめるテストの名を理由として書く(書き方は DOEFF137 の直し方)。".to_string(),
+                format!("stand-in {}: :contract-test none has no reason", stand_in),
+                "A none without a reason leaves nobody able to verify the grounds for not requiring the stand-in's contract test. Write the name of the test that verifies the contract as the reason (how to write it is in the fix for DOEFF137).".to_string(),
             ),
             Explain::TestFormNotDeftest { form, detail } => (
-                format!("テストの形 {} — {}", form, detail),
-                "テストは deftest だけ。pytest の外で走る検査や pytest の Python の形は、赤になっても誰も気づかない(#1104 の実測 — pytest の外の検査 5 本が赤のまま放置されていた)。".to_string(),
+                format!("test form {} — {}", form, detail),
+                "Tests are deftest only. Checks that run outside pytest and pytest-style Python forms go unnoticed even when they turn red (measured in #1104: five checks outside pytest were left red).".to_string(),
             ),
             Explain::VocabularyOutsideSinglePoint { group, count, instead } => (
-                format!("語彙 {} が :except の外に {} 行 — {}", group, count, instead),
-                "この語彙の判定は architecture.hy の :single-point-vocabulary が名指す 1 点だけに閉じ込める決まり。他の file が同じ語彙を読んで判定を写すと、直した時に写しの方を直し忘れて2つの判定が食い違う。".to_string(),
+                format!("vocabulary {} has {} lines outside :except — {}", group, count, instead),
+                "The rule is that the judgment on this vocabulary is confined to the one point that :single-point-vocabulary in architecture.hy names. If another file reads the same vocabulary and copies the judgment, then when it is fixed the copy is forgotten and the two judgments disagree.".to_string(),
             ),
             Explain::ConfinedSpelling { group, why, problem, bound } => match problem {
                 super::confined_spellings::ConfinedProblem::Outside { count } => (
-                    format!("綴りの群 {} が書いてよい file の外に {} か所", group, count),
+                    format!("spelling group {} appears in {} places outside the files where it may be written", group, count),
                     format!(
-                        "この綴りを書いてよい file は architecture.hy の :confined-spellings の :except で決めてある。外の file に書くと、その口を通らずに同じ事をする 2 つ目の場所ができる。{}理由: {}",
+                        "The files where this spelling may be written are decided by :except of :confined-spellings in architecture.hy. Writing it in an outside file creates a second place that does the same thing without going through that entry point. {}Reason: {}",
                         if bound.is_empty() {
                             String::new()
                         } else {
-                            format!("群の綴りには、:names-bound-in の file で群の綴りに当たる値に結んだ名も入る(導いた名: {})。", bound.join("・"))
+                            format!("The group's spellings also include names bound to a value that matches the group's spelling in the files of :names-bound-in (derived names: {}). ", bound.join(", "))
                         },
                         why
                     ),
                 ),
                 super::confined_spellings::ConfinedProblem::Missing => (
-                    format!("綴りの群 {} の :files に当たる file が無い", group),
-                    format!("読む file が 1 つも無いと、規則は何も見ずに緑になる(母集団 0 を緑にしない)。理由: {}", why),
+                    format!("no file matches :files of spelling group {}", group),
+                    format!("If there is no file to read, the rule turns green without seeing anything (a population of 0 is not made green). Reason: {}", why),
                 ),
             },
             Explain::CountedSpelling { group, why, problem } => match problem {
                 super::counted_spellings::CountProblem::Mismatch { found, wanted, within } => (
                     match within {
-                        Some(name) => format!("数を決めた綴り {} が定義 {} の中に {} か所({} のはず)", group, name, found, wanted.spelling()),
-                        None => format!("数を決めた綴り {} が {} か所({} のはず)", group, found, wanted.spelling()),
+                        Some(name) => format!("counted spelling {} appears {} times inside definition {} (expected {})", group, found, name, wanted.spelling()),
+                        None => format!("counted spelling {} appears {} times (expected {})", group, found, wanted.spelling()),
                     },
-                    format!("この綴りの数は architecture.hy の :counted-spellings で決めてある。数が変わると、決めた口の外に同じ事をする所が増えたか、決めた口が消えている。理由: {}", why),
+                    format!("The count of this spelling is fixed by :counted-spellings in architecture.hy. If the count changes, either more places doing the same thing have appeared outside the decided entry point, or the decided entry point is gone. Reason: {}", why),
                 ),
                 super::counted_spellings::CountProblem::Missing { reason } => (
-                    format!("数を決めた綴り {} の数える所が無い({})", group, reason),
-                    format!("数える file や定義が無いと、規則は何も見ずに緑になる(母集団 0 を緑にしない)。理由: {}", why),
+                    format!("counted spelling {} has nothing to count ({})", group, reason),
+                    format!("If there is no file or definition to count, the rule turns green without seeing anything (a population of 0 is not made green). Reason: {}", why),
                 ),
             },
             Explain::EffectCensus { group, why, problem } => {
-                let rule = "effect の全体は architecture.hy の :effect-census の一覧で閉じてある。黙って増えた effect は、決めた口の外に新しい外への要求を生やす。";
+                let rule = "The whole of effects is closed by the list of :effect-census in architecture.hy. An effect that grew silently creates a new request to the outside beyond the decided entry point. ";
                 match problem {
                     super::effect_census::CensusProblem::Unlisted { effect } => {
-                        (format!("effect {} が一覧 {} の外で宣言されている", effect, group), format!("{}理由: {}", rule, why))
+                        (format!("effect {} is declared outside list {}", effect, group), format!("{}Reason: {}", rule, why))
                     }
                     super::effect_census::CensusProblem::Twice { effect } => {
-                        (format!("effect {} が 2 度宣言されている(一覧 {})", effect, group), format!("{}理由: {}", rule, why))
+                        (format!("effect {} is declared twice (list {})", effect, group), format!("{}Reason: {}", rule, why))
                     }
                     super::effect_census::CensusProblem::Undeclared { effect } => {
-                        (format!("一覧 {} の effect {} の宣言が無い", group, effect), format!("{}理由: {}", rule, why))
+                        (format!("the declaration of effect {} in list {} is missing", effect, group), format!("{}Reason: {}", rule, why))
                     }
                     super::effect_census::CensusProblem::NoFiles => (
-                        format!("一覧 {} の :files に当たる file が無い", group),
-                        format!("読む file が 1 つも無いと、規則は何も見ずに緑になる(母集団 0 を緑にしない)。理由: {}", why),
+                        format!("no file matches :files of list {}", group),
+                        format!("If there is no file to read, the rule turns green without seeing anything (a population of 0 is not made green). Reason: {}", why),
                     ),
                 }
             }
             Explain::FieldHolders { group, type_name, why, problem } => {
                 let rule = format!(
-                    "{} の欄を持ってよい class は architecture.hy の :field-holders の一覧で閉じてある。ほかの class に同じ欄が生えると、その型の値の置き場が 2 つになる。",
+                    "The classes that may hold a field of {} are closed by the list of :field-holders in architecture.hy. If another class grows the same field, that type's values have two homes. ",
                     type_name
                 );
                 match problem {
                     super::field_holders::HolderProblem::Unlisted { class } => {
-                        (format!("class {} が {} の欄を持つ(持ち手の一覧 {} の外)", class, type_name, group), format!("{}理由: {}", rule, why))
+                        (format!("class {} holds a field of {} (outside the holder list {})", class, type_name, group), format!("{}Reason: {}", rule, why))
                     }
                     super::field_holders::HolderProblem::Absent { class } => {
-                        (format!("持ち手の一覧 {} の class {} が {} の欄を持たない", group, class, type_name), format!("{}理由: {}", rule, why))
+                        (format!("class {} in holder list {} does not hold a field of {}", class, group, type_name), format!("{}Reason: {}", rule, why))
                     }
                     super::field_holders::HolderProblem::NoClass { class } => {
-                        (format!("持ち手の一覧 {} が名指す class {} が無い", group, class), format!("{}理由: {}", rule, why))
+                        (format!("class {} named by holder list {} does not exist", class, group), format!("{}Reason: {}", rule, why))
                     }
                     super::field_holders::HolderProblem::NoFiles => (
-                        format!("持ち手の一覧 {} の :files に当たる Python の file が無い", group),
-                        format!("読む file が 1 つも無いと、規則は何も見ずに緑になる(母集団 0 を緑にしない)。理由: {}", why),
+                        format!("no Python file matches :files of holder list {}", group),
+                        format!("If there is no file to read, the rule turns green without seeing anything (a population of 0 is not made green). Reason: {}", why),
                     ),
                 }
             }
             Explain::RetiredWord { group, spelling, instead, name, place } => (
                 match (place, name) {
-                    (super::architecture::WordPlace::Paths, _) => format!("file の名の綴り {}(使わないと決めた名 — 群 {})", spelling, group),
-                    (_, Some(name)) => format!("定義の名 {}(使わないと決めた綴り {} — 群 {})", name, spelling, group),
-                    (_, None) => format!("綴り {}(使わないと決めた語 — 群 {})", spelling, group),
+                    (super::architecture::WordPlace::Paths, _) => format!("file-name spelling {} (a name decided not to be used — group {})", spelling, group),
+                    (_, Some(name)) => format!("definition name {} (spelling {} decided not to be used — group {})", name, spelling, group),
+                    (_, None) => format!("spelling {} (a word decided not to be used — group {})", spelling, group),
                 },
-                format!("この repo は architecture.hy の :retired-words でこの綴りを使わないと決めた(代わり: {})。旧い語が残ると、同じ物を 2 つの名で呼ぶ code と文書が増え、読み手が別の物と取り違える。", instead),
+                format!("This repo decided in :retired-words of architecture.hy not to use this spelling (replacement: {}). If an old word remains, code and documents multiply that call the same thing by two names, and readers mistake one for another.", instead),
             ),
             Explain::BlindDefinition { declared, why, problem } => (
                 match problem {
                     super::blind::BlindProblem::ReadsWord { reached, word } => {
-                        format!("{} から届く定義 {} の本体の綴り {}", declared, reached, word)
+                        format!("body spelling {} of definition {} reached from {}", word, reached, declared)
                     }
-                    super::blind::BlindProblem::Imports { module } => format!("{} の module の import {}", declared, module),
-                    super::blind::BlindProblem::Missing { reason } => format!("宣言した定義 {}({})", declared, reason),
+                    super::blind::BlindProblem::Imports { module } => format!("import {} in the module of {}", module, declared),
+                    super::blind::BlindProblem::Missing { reason } => format!("declared definition {} ({})", declared, reason),
                 },
                 match problem {
                     super::blind::BlindProblem::Missing { .. } => format!(
-                        "architecture.hy の :blind-definitions が名指す定義が無いと、規則は何も見ずに緑になる(母集団 0 を緑にしない)。理由: {}",
+                        "If there is no definition that :blind-definitions in architecture.hy names, the rule turns green without seeing anything (a population of 0 is not made green). Reason: {}",
                         why
                     ),
                     super::blind::BlindProblem::ReadsWord { .. } | super::blind::BlindProblem::Imports { .. } => format!(
-                        "この定義は決めた材料だけで判じると architecture.hy の :blind-definitions で宣言した。届く先の定義がほかの材料を読むか、module が依存を持つと、判断が宣言の外の材料で変わる。理由: {}",
+                        "This definition was declared in :blind-definitions of architecture.hy to be judged only from decided material. If a definition it reaches reads other material, or the module has a dependency, the judgment changes with material outside the declaration. Reason: {}",
                         why
                     ),
                 },
@@ -593,14 +583,14 @@ impl<'a> Narrator<'a> {
                 super::call_sites::describe(head, problem),
                 match problem {
                     super::call_sites::CallSiteProblem::Missing { .. } | super::call_sites::CallSiteProblem::Empty => format!(
-                        "architecture.hy の :call-sites が名指す場所か探す file が無いと、規則は何も見ずに緑になる(母集団 0 を緑にしない)。理由: {}",
+                        "If there is no place that :call-sites in architecture.hy names, or no file to search, the rule turns green without seeing anything (a population of 0 is not made green). Reason: {}",
                         why
                     ),
                     super::call_sites::CallSiteProblem::Outside { .. }
                     | super::call_sites::CallSiteProblem::Count { .. }
                     | super::call_sites::CallSiteProblem::Parent { .. }
                     | super::call_sites::CallSiteProblem::Branch { .. } => format!(
-                        "この頭を呼んでよい場所と回数は architecture.hy の :call-sites で決めてある。場所の外の呼びや回数の食い違いは、1 点に閉じ込めた境界が黙って 2 つ目を生やすか、境界が外れた形。理由: {}",
+                        "Where and how many times this head may be called is decided by :call-sites in architecture.hy. A call outside the places, or a mismatch in count, means the boundary confined to one point has silently grown a second one, or the boundary has come undone. Reason: {}",
                         why
                     ),
                 },
@@ -609,73 +599,73 @@ impl<'a> Narrator<'a> {
                 super::broad_catches::describe(group, problem),
                 match problem {
                     super::broad_catches::BroadCatchProblem::Missing { .. } | super::broad_catches::BroadCatchProblem::Empty => format!(
-                        "architecture.hy の :broad-catches が名指す運搬の境界か探す file が無いと、規則は何も見ずに緑になる(母集団 0 を緑にしない)。理由: {}",
+                        "If there is no carrier boundary that :broad-catches in architecture.hy names, or no file to search, the rule turns green without seeing anything (a population of 0 is not made green). Reason: {}",
                         why
                     ),
                     super::broad_catches::BroadCatchProblem::Outside { .. } | super::broad_catches::BroadCatchProblem::Unbound { .. } => format!(
-                        "広い例外の捕捉は契約の破れ(:pre / :post・型の束縛・assert)まで握りつぶす。許すのは architecture.hy の :broad-catches の :carriers で、捕まえた例外を名で束縛して決めた出来事に載せ、列へ運ぶ境界だけ。理由: {}",
+                        "A broad exception catch swallows even contract violations (:pre / :post, type bindings, assert). The only thing permitted is, per :carriers of :broad-catches in architecture.hy, a boundary that binds the caught exception to a name, puts it on a decided event, and carries it to the queue. Reason: {}",
                         why
                     ),
                 },
             ),
             Explain::AllowedHeads { declared, why, problem } => match problem {
                 super::allowed_heads::HeadProblem::Unlisted { head } => (
-                    format!("{} の中の ({} …)(呼んでよい頭の一覧の外)", declared, head),
+                    format!("({} …) inside {} (outside the list of heads that may be called)", head, declared),
                     format!(
-                        "この定義の中で呼んでよい頭は architecture.hy の :allowed-heads で決めてある。一覧の外の呼びが例外を上げると、それを受け止める境界の外で process ごと落ちる。理由: {}",
+                        "The heads that may be called inside this definition are decided by :allowed-heads in architecture.hy. If a call outside the list raises an exception, the whole process goes down outside the boundary that would catch it. Reason: {}",
                         why
                     ),
                 ),
                 super::allowed_heads::HeadProblem::Missing { reason } => (
-                    format!("宣言した定義 {}({})", declared, reason),
-                    format!("architecture.hy の :allowed-heads が名指す定義が無いと、規則は何も見ずに緑になる(母集団 0 を緑にしない)。理由: {}", why),
+                    format!("declared definition {} ({})", declared, reason),
+                    format!("If there is no definition that :allowed-heads in architecture.hy names, the rule turns green without seeing anything (a population of 0 is not made green). Reason: {}", why),
                 ),
             },
             Explain::RetiredCall { group, call, instead } => (
-                format!("呼び ({} …)(使わないと決めた呼び — 群 {})", call, group),
-                format!("この repo は architecture.hy の :retired-calls でこの呼びを退役させた(代わり: {})。退役した物を呼ぶ所が残ると、同じ役の物が 2 つ並び、座標や答えが黙って食い違う。", instead),
+                format!("call ({} …) (a call decided not to be used — group {})", call, group),
+                format!("This repo retired this call in :retired-calls of architecture.hy (replacement: {}). If places that call a retired thing remain, two things with the same role sit side by side, and coordinates and answers silently disagree.", instead),
             ),
             Explain::PlacedDependency { placement, owner, owner_rel } => (
-                format!("import 先 {}(path が {} — 層の置き場の外) — {}", owner, owner_rel, self.file_subject(placement)),
-                format!("置き場の決まっていない module {}({})に依存する。architecture.hy の :placed-dependencies の層は、層の置き場に在る module にだけ依存する — 置き場の外の module は層の規則(向き・タグ・service の境界)の外なので、それを読むとその規則を迂回できる。", owner, owner_rel),
+                format!("import target {} (path {}; outside the layer locations) — {}", owner, owner_rel, self.file_subject(placement)),
+                format!("Depends on module {} ({}) whose location is not decided. The layers of :placed-dependencies in architecture.hy depend only on modules inside the layer locations. A module outside the locations is outside the layer rules (direction, tags, service boundaries), so reading it bypasses those rules.", owner, owner_rel),
             ),
             Explain::UntypedStructuredValue { what, name, problem } => (
-                format!("{} {} の型 — {}", what, name, problem),
-                "構造を持つ値を素の写像や素の組で運ぶと、欄の名前と型が静的に見えず、綴りの誤りや欄の食い違いが実行まで見つからない(型検査が何も守らない)。欄の名前と型を持つ型で表す。".to_string(),
+                format!("type of {} {} — {}", what, name, problem),
+                "Carrying a structured value as a bare mapping or bare tuple hides field names and types statically, and spelling mistakes and field mismatches are not found until runtime (type checking protects nothing). Express it with a type that has field names and types.".to_string(),
             ),
             Explain::RecordStubNotKwOnly { class, form } => (
-                format!("型の宣言の class {}(.hy の側は {})", class, form),
-                "実行時の __init__ は欄を名でしか受けないのに、型の宣言は位置の引数を許す。型検査は位置の引数の呼びを通すが、実行時は TypeError になる — 型の宣言が実行時の形を偽る。".to_string(),
+                format!("type declaration class {} (the .hy side is {})", class, form),
+                "The runtime __init__ accepts fields only by name, but the type declaration allows positional arguments. Type checking passes calls with positional arguments, but at runtime they raise TypeError: the type declaration misrepresents the runtime shape.".to_string(),
             ),
             Explain::ServiceUntestedOnSim { service, entry, definitions, sim } => (
-                format!("service {} の組み立て {}({} 本の定義)", service, entry, definitions),
-                format!("{} の下の deftest から呼び出し・参照を辿っても届かない。本番の組み立てのまま handler だけを差し替えて回していない service は、業務の不変条件を確かめていない(未検証のまま配備しない)。", sim),
+                format!("assembly {} of service {} ({} definitions)", entry, service, definitions),
+                format!("It is not reached by following calls and references from any deftest under {}. A service that is not run with only the handlers swapped while keeping the production assembly has not verified its business invariants (do not deploy unverified).", sim),
             ),
             Explain::ServiceInvariantsMissing { service, gap } => (
-                format!("service {} の :invariants", service),
-                format!("{}。業務ロジックを「テストした」には、記録を受けて破りの列を返す純粋な不変条件の関数が service ごとに要る— 宣言が無い・名指しが外れている・判断でない関数では、何を確かめたかを linter が数えられない。", gap)
+                format!("service {} :invariants", service),
+                format!("{}. For business logic to be \"tested\", each service needs a pure invariant function that takes a record and returns a list of violations — if the declaration is missing, the naming is off, or the function is not a judgment, the linter cannot count what was verified.", gap)
             ),
             Explain::ServiceSystemMissing { service, gap } => (
-                format!("service {} の :system", service),
-                format!("{}。defsystem が在れば、その系は汎用の模擬 cluster のテストに自動で載って実行される — 宣言が無い・defsystem でない・土台が型つきの 1 つでない系は、テストが土台を組めず載らない(#2187)。", gap)
+                format!("service {} :system", service),
+                format!("{}. If a defsystem exists, that system is automatically placed in the test of the generic simulated cluster and run — a system whose declaration is missing, that is not a defsystem, or whose base is not a single typed one cannot have its base assembled by the test and is not placed (#2187).", gap)
             ),
             Explain::ServiceWithoutCounterexample { service, entry, counterexamples, candidates } => (
-                format!("service {} の組み立て {}", service, entry),
+                format!("assembly {} of service {}", entry, service),
                 format!(
-                    "反例の表の {} 節のうち、この service の effect か土台の effect に答える節は {} — そのどれに届く deftest も {} に届かない。わざと壊した handler で不変条件が赤になることを確かめていない service は、検が緑でも壊れた答えを見分けられるかが分からない。",
+                    "Of the {} sections of the counterexample table, the number that answer this service's effects or the foundation's effects is {} — no deftest reaching any of them reaches {}. A service that has not verified that its invariants turn red with a deliberately broken handler cannot tell whether its tests can distinguish a broken answer even when they are green.",
                     counterexamples, candidates, entry
                 ),
             ),
             Explain::ClauseWithoutCounterexample { service, clause, gap } => (
                 match clause {
-                    Some(clause) => format!("service {} の条 {}", service, clause),
-                    None => format!("service {} の :clauses", service),
+                    Some(clause) => format!("clause {} of service {}", clause, service),
+                    None => format!("service {} :clauses", service),
                 },
-                format!("{}。service に反例が 1 本あるだけでは、ほかの条を破る壊れた答えを見分けられるかが分からない — 条ごとに、その条を破る壊した handler の反例(反例の表の行の `breaks:`)か、反例を持たない理由(:clause-exemptions)が要る(ADR R2)。", gap)
+                format!("{}. Having just one counterexample for a service cannot tell whether broken answers that violate other clauses are distinguished — each clause needs a counterexample from a deliberately broken handler that violates that clause (the `breaks:` of a counterexample table row), or a reason for having no counterexample (:clause-exemptions) (ADR R2).", gap)
             ),
             Explain::HandlerArgumentHoldsState { handler, param, kind, type_text } => (
-                format!("handler {} の引数 {}({}{})", handler, param, kind, if type_text.is_empty() { String::new() } else { format!(" {}", type_text) }),
-                "引数で受けた client や店は外側の handler から差し替えも観測もできず、模擬の環境で handler の差し替えだけで回せない。接続先と資格・設定は Ask で読み、client は handler の本文の先頭の (session val client …) で 1 回だけ作り、状態は (session var …) で持つ。".to_string(),
+                format!("argument {} of handler {} ({}{})", param, handler, kind, if type_text.is_empty() { String::new() } else { format!(" {}", type_text) }),
+                "A client or store received as an argument cannot be swapped or observed from the outer handler, so the simulated environment cannot run by swapping handlers alone. Read the connection target, credentials, and settings with Ask, create the client only once with (session val client …) at the top of the handler body, and hold state with (session var …).".to_string(),
             ),
             Explain::BusinessEffectFake { subject, reason } => (subject.clone(), reason.clone()),
             Explain::IntentFakedInVerification { subject, reason } => (subject.clone(), reason.clone()),
@@ -685,22 +675,22 @@ impl<'a> Narrator<'a> {
             Explain::ProgramSleepsOnWallClock { subject, reason } => (subject.clone(), reason.clone()),
             Explain::TestSleepsOnWallClock { subject, reason } => (subject.clone(), reason.clone()),
             Explain::RegistryEntryStale { key, source, rules } => (
-                format!("登録簿 {} の鍵 {}", source, key),
-                format!("この実行で規則 {} を repo 全体に当てたが、この鍵に当たる所見が無い。載った破れを直した後に行を消し忘れると、同じ所に破れが戻っても登録簿が黙って warning に下げる(縮める向きの登録簿が緩んだまま)。", rules.join("・"))
+                format!("key {} of registry {}", key, source),
+                format!("This run applied rules {} to the whole repo, but no finding matches this key. If a row is forgotten after the listed violation is fixed, then even when the violation returns at the same place the registry silently lowers it to a warning (a registry that is supposed to only shrink stays loose).", rules.join(", "))
             ),
             Explain::IntentEffectCoverage { effect, service, columns, gaps } => (
-                format!("service {} の intent の効果 {}({})", service, effect, gaps),
-                format!("{}。intent の効果は、手元の検から届く定義が出し、模擬の根と本番の入口の両方から届く答え手を持って初めて、手元でテストした業務の操作になる。", columns)
+                format!("intent effect {} of service {} ({})", effect, service, gaps),
+                format!("{}. An intent effect becomes a business operation tested locally only when a definition reachable from the local tests emits it and there is an answerer reachable from both the simulated root and the production entry.", columns)
             ),
             Explain::AssemblyShape { subject, reason } => (subject.clone(), reason.clone()),
             Explain::WorldOutsideLayers { subject } => (
                 subject.clone(),
-                "層の置き場の外の file も、外の世界に触れてよいのは architecture.hy の :world-handlers の定義だけ。effect を出して名簿の定義の handler に答えさせるか、置き場を foundation に移して名簿に載せる。".to_string()
+                "Even for files outside the layer locations, only the definitions of :world-handlers in architecture.hy may touch the outside world. Emit an effect and let the roster definition's handler answer, or move the location to foundation and add it to the roster.".to_string()
             ),
             Explain::RawVia { placement, definition, through, evidence, category } => (
-                format!("定義 {} が {} を通して {}({} の生の副作用)に届く — {}", definition, through.join(" → "), evidence, category, self.file_subject(placement)),
+                format!("definition {} reaches, through {}, {} (a raw side effect of {}) — {}", definition, through.join(" → "), evidence, category, self.file_subject(placement)),
                 format!(
-                    "{} 自身は直に触っていないが、呼ぶ定義 {} の先で {} の I/O に届く(違反ではなく知らせ)。経路の先を effect に替えれば、{}は外の世界から離れたままになる。",
+                    "{} does not touch it directly itself, but beyond the definition {} that it calls, it reaches {} I/O (a notice, not a violation). If the end of the path is replaced with an effect, {} stays away from the outside world.",
                     definition,
                     through.first().map(String::as_str).unwrap_or("?"),
                     category,
@@ -709,14 +699,14 @@ impl<'a> Narrator<'a> {
             ),
             Explain::ServiceBoundary { placement, target, target_service, target_layer, target_dir, open_layers, shared } => {
                 let own = placement.service.clone().unwrap_or_default();
-                let open: Vec<String> = open_layers.iter().map(|id| format!("層 {}", self.name(*id))).collect();
+                let open: Vec<String> = open_layers.iter().map(|id| format!("layer {}", self.name(*id))).collect();
                 let mut readable = open.clone();
                 if !shared.is_empty() {
-                    readable.push(format!("共有の置き場 {}", shared.join("・")));
+                    readable.push(format!("shared location {}", shared.join(", ")));
                 }
                 (
                     format!(
-                        "import 先 {} は service {} の{}(path が {}/ の下) — {}",
+                        "import target {} is in service {}'s {} (path under {}/) — {}",
                         target,
                         target_service,
                         self.layer_phrase(*target_layer),
@@ -724,7 +714,7 @@ impl<'a> Narrator<'a> {
                         self.file_subject(placement)
                     ),
                     format!(
-                        "service {} の層 {} が service {} の層 {} を読んでいる。service をまたいで判断や翻訳を読むと、{} の中身を変えた時に {} が壊れる。{} に頼むことは {} の intent を通す(別の service から読んでよいのは {} だけ)。",
+                        "Service {} (layer {}) is reading service {} (layer {}). Reading judgments or translations across services means that when the contents of {} change, {} breaks. Requests to {} go through {}'s intents (the only things another service may read are {}).",
                         own,
                         self.name(placement.layer),
                         target_service,
@@ -733,17 +723,17 @@ impl<'a> Narrator<'a> {
                         own,
                         target_service,
                         target_service,
-                        if readable.is_empty() { "無し".to_string() } else { readable.join("・") }
+                        if readable.is_empty() { "none".to_string() } else { readable.join(", ") }
                     ),
                 )
             }
             Explain::ContextMismatch { placement, service, contexts } => (
-                format!("タグの :context = {} — {}", contexts.join("・"), self.file_subject(placement)),
+                format!("tag :context = {} — {}", contexts.join(", "), self.file_subject(placement)),
                 format!(
-                    "dir は service {} を指すのに、タグは文脈 {} を名乗っている。タグで引いた時と dir で見た時に別の service に見える。:context を service の名に合わせるか、file を {} の dir へ移す(知らせ)。",
+                    "The dir points to service {}, but the tag declares context {}. The same file looks like a different service when looked up by tag and when looked at by dir. Match :context to the service name, or move the file to the dir of {} (notice).",
                     service,
-                    contexts.join("・"),
-                    contexts.join("・")
+                    contexts.join(", "),
+                    contexts.join(", ")
                 ),
             ),
             Explain::ClassShape { name, shape, verdict } => {
@@ -752,49 +742,49 @@ impl<'a> Narrator<'a> {
                     parts.push("dataclass".to_string());
                 }
                 if !shape.bases.is_empty() {
-                    parts.push(format!("基底 {}(repo の中)", shape.bases.join("・")));
+                    parts.push(format!("base {} (in the repo)", shape.bases.join(", ")));
                 }
                 match verdict {
                     ClassVerdict::ExternalWorld { evidence } => (
-                        format!("定義 {}({})— 外の世界に触る class(証拠 {})", name, parts.join("・"), evidence.join("・")),
-                        "method か欄の初期値が生の副作用(http・DB・file・process・時計 …)に触る。外の世界の窓口を class と method で書くと、effect と handler の差し替えを通らないので、模擬で差し替えてもこの class だけ本物に触り、閲覧のパネルにも linter の層の規則にも乗らない。".to_string(),
+                        format!("definition {} ({}) — a class that touches the outside world (evidence {})", name, parts.join(", "), evidence.join(", ")),
+                        "A method or a field's initial value touches a raw side effect (http, DB, file, process, clock …). If a window to the outside world is written with a class and methods, it does not go through the swapping of effects and handlers, so even when swapped in the simulation only this class touches the real thing, and it appears in neither the browsing panel nor the linter's layer rules.".to_string(),
                     ),
                     ClassVerdict::Stateful { mutations } => (
-                        format!("定義 {}({})— 変わる状態を持つ class(書き換え {})", name, parts.join("・"), mutations.join("・")),
-                        "method が self の欄を書き換える。状態が値の中に散ると、どこで何が変わったかを effect と handler の記録で追えず、模擬と本物で同じ流れを確かめられない。".to_string(),
+                        format!("definition {} ({}) — a class that holds mutable state (rewrites {})", name, parts.join(", "), mutations.join(", ")),
+                        "A method rewrites a field of self. If state is scattered inside values, the effect and handler records cannot trace where and what changed, and the simulation and the real thing cannot be verified to follow the same flow.".to_string(),
                     ),
                     ClassVerdict::DataOnly => (
-                        format!("定義 {}({}・欄だけ)", name, parts.join("・")),
-                        "欄だけの data class は defrecord で書ける。defrecord は :tags で文脈と役を名乗り、:check で値を検める(__post_init__ の検めは :check へ)。(知らせ — 違反ではない)".to_string(),
+                        format!("definition {} ({}; fields only)", name, parts.join(", ")),
+                        "A data class with fields only can be written with defrecord. defrecord declares context and role with :tags and checks values with :check (move __post_init__ checks to :check). (A notice, not a violation)".to_string(),
                     ),
                 }
             }
             Explain::Smell { smell } => smell_text(smell),
             Explain::ParamCalledBare { call } => (
                 format!(
-                    "定義 {}({})が引数 {} を素で呼んでいる — 呼び手 {} がそこに {} を渡す",
+                    "definition {} ({}) calls argument {} bare — caller {} passes {} there",
                     call.definition, call.container, call.param, call.caller, call.passed
                 ),
                 format!(
-                    "呼び手が {} に Program を返す関数({})を渡しているので、{} を素で呼ぶと答えではなく Program が返る。その Program は型の誤りで落ちずに値として流れ、答えを使ったつもりの所で静かに間違う(isinstance が常に偽・索引が常に空 …)。(<- x ({} …)) で受ける。",
+                    "The caller passes {} a function that returns a Program ({}), so calling {} bare returns a Program, not an answer. That Program flows on as a value without failing on a type error, and quietly goes wrong where the answer was supposed to be used (isinstance is always false, an index is always empty …). Receive it with (<- x ({} …)).",
                     call.param, call.passed, call.param, call.param
                 ),
             ),
             Explain::EffectMismatch { mismatch } => match mismatch {
                 super::signatures::EffectMismatch::Undeclared { definition, effect, via, .. } => (
                     match via {
-                        Some(via) => format!("defk {} が {} を経由して effect {} を起こしている", definition, via, effect),
-                        None => format!("defk {} が effect {} を撃っている", definition, effect),
+                        Some(via) => format!("defk {} raises effect {} via {}", definition, effect, via),
+                        None => format!("defk {} fires effect {}", definition, effect),
                     },
                     format!(
-                        "{} は :effects を宣言しているが、その中に {} が無い。:effects は定義が起こす effect の宣言で、handler の組がそれを受けるかを確かめる材料になる — 無い effect を起こすと、宣言を信じて組んだ handler の組で受けきれない。推論は本体で撃つ呼び((<- …)・(! …))を defk の中まで辿って集める(handler で受けた分は引かない)。",
+                        "{} declares :effects, but {} is not in it. :effects is a declaration of the effects a definition raises, and is material for checking whether a set of handlers receives them: if it raises an effect that is not declared, the set of handlers assembled trusting the declaration cannot receive it all. The inference collects the calls fired in the body ((<- …) and (! …)) following into defk (the part received by a handler is not subtracted).",
                         definition, effect
                     ),
                 ),
                 super::signatures::EffectMismatch::Unused { definition, effect, .. } => (
-                    format!("defk {} の :effects の {}", definition, effect),
+                    format!("{} in :effects of defk {}", effect, definition),
                     format!(
-                        "{} は :effects に {} を書いているが、本体で撃つ呼びを defk の中まで辿っても {} を起こしていない。起こさない effect の宣言は、handler の組に要らない受け手を求める。",
+                        "{} writes {} in :effects, but following the calls fired in the body into defk, it does not raise {}. A declaration of an effect that is not raised demands a receiver the set of handlers does not need.",
                         definition, effect, effect
                     ),
                 ),
@@ -802,31 +792,31 @@ impl<'a> Narrator<'a> {
             Explain::TranslationIntent { intent, handler_layer, intent_layer } => (
                 match intent.via() {
                     Some(via) => format!(
-                        "handler {}(層 {})が {} を経由して、層 {} の intent {} を出している",
-                        intent.handler, handler_layer, via, intent_layer, intent.effect()
+                        "handler {} (layer {}) emits intent {} of layer {} via {}",
+                        intent.handler, handler_layer, intent.effect(), intent_layer, via
                     ),
-                    None => format!("handler {}(層 {})が層 {} の intent {} を出している", intent.handler, handler_layer, intent_layer, intent.effect()),
+                    None => format!("handler {} (layer {}) emits intent {} of layer {}", intent.handler, handler_layer, intent.effect(), intent_layer),
                 },
                 format!(
-                    "層 {} の handler は受けた intent を doeff の汎用の effect(HttpRequest・記録の読み書き・時計・file・process・Ask …)へ出し直す翻訳で、業務の流れを持たない。{} は層 {} の業務の intent なので、それを出すと翻訳の handler が業務の判断と流れを抱え込み、責務の境界が崩れる。import した関数を経由しても同じ — 推論は本体で実行する呼び((<- …)・(! …))を defk の先まで辿る。intent を出す流れは層 core の program に置く。",
+                    "A handler of layer {} is a translation that re-emits the intents it receives as doeff's generic effects (HttpRequest, reading and writing records, clock, file, process, Ask …), and has no business flow. {} is a business intent of layer {}, so emitting it makes the translating handler hold business judgment and flow, and the boundary of responsibility collapses. The same holds when going through an imported function: the inference follows the calls executed in the body ((<- …) and (! …)) beyond defk. Place the flow that emits intents in a program of layer core.",
                     handler_layer, intent.effect(), intent_layer
                 ),
             ),
             Explain::LowerLayerUse { found, layer } => (
                 match (&found.kind, found.via()) {
-                    (super::signatures::LowerLayerKind::Handler, _) => format!("定義 {}(層 {})が下の層の handler {} を被せている", found.definition, layer, found.name()),
-                    (_, Some(via)) => format!("定義 {}(層 {})が {} を経由して、下の層の効果 {} を出している", found.definition, layer, via, found.name()),
-                    (_, None) => format!("定義 {}(層 {})が下の層の効果 {} を出している", found.definition, layer, found.name()),
+                    (super::signatures::LowerLayerKind::Handler, _) => format!("definition {} (layer {}) wraps the lower layer's handler {}", found.definition, layer, found.name()),
+                    (_, Some(via)) => format!("definition {} (layer {}) emits the lower layer's effect {} via {}", found.definition, layer, found.name(), via),
+                    (_, None) => format!("definition {} (layer {}) emits the lower layer's effect {}", found.definition, layer, found.name()),
                 },
                 format!(
-                    "{} は architecture.hy の :lower-layer-modules に並ぶ module(記録の service の生の操作)の物。生のデータを読み書きするのは handler の仕事で、業務の層はドメインの効果を出し、翻訳の層の handler がそれを生の操作へ言い換える。業務の層が生の効果を出すか、生の効果に答える handler を自分で被せると、業務の流れが記録の置き方を知り、外へドメインの API だけを出す境界が崩れる。import した defk を経由しても同じ — 推論は本体で実行する呼び((<- …)・(! …))を defk の先まで辿る。",
+                    "{} belongs to a module listed in :lower-layer-modules of architecture.hy (raw operations of the record service). Reading and writing raw data is the handler's job: a business layer emits domain effects, and a translation layer's handler rewrites them into raw operations. If a business layer emits raw effects, or wraps a handler that answers raw effects itself, the business flow comes to know how records are placed, and the boundary that exposes only the domain API to the outside collapses. The same holds when going through an imported defk: the inference follows the calls executed in the body ((<- …) and (! …)) beyond defk.",
                     found.qualified
                 ),
             ),
             Explain::StaleBranch { branch } => (
-                format!("定義 {} の {}({} は {} を{}と宣言した)", branch.definition, branch.form.word(), branch.effect, branch.ty, branch.declared_word()),
+                format!("{} of definition {} (effect {} declared {} as {})", branch.form.word(), branch.definition, branch.effect, branch.ty, branch.declared_word()),
                 format!(
-                    "{} は {} を{}と宣言した。<- と ! は {} の答えのうち宣言した型を束ねず、{}として呼び手のスコープへ逃がす(束ねる {} は成功の値だけ)ので、{} を値として分けるこの枝({})は通らない。effect を宣言つきに切り替えた版の後に残る古い分岐で、通らないまま黙って次の枝(多くは成功の枝)に倒れる。",
+                    "{} declared {} as {}. <- and ! do not bind the declared type among the answers of {}; they let it escape to the caller's scope as {} (the bound {} holds only the success value), so this branch that splits {} as a value ({}) never matches. It is an old branch left after the effect was switched to the declared version, and without matching it silently falls through to the next branch (often the success branch).",
                     branch.effect,
                     branch.ty,
                     branch.declared_word(),
@@ -841,122 +831,122 @@ impl<'a> Narrator<'a> {
                 ),
             ),
             Explain::BareDefkCall { call } => (
-                format!("定義 {}({})が defk {} を素で呼んでいる", call.definition, call.container, call.callee),
+                format!("definition {} ({}) calls defk {} bare", call.definition, call.container, call.callee),
                 format!(
-                    "{} は defk なので、素で呼ぶと答えではなく Program が返る。その Program は型の誤りで落ちずに値として流れ、答えを使ったつもりの所で静かに間違う(dict の .get・比べ・文字列への埋め込み)。Program として渡す所 — (<- x …) の右辺・(! …)・(return …)・Program を受ける呼びの引数 — で呼ぶ。repo の defk の呼びの引数でも、受ける引数の :pre の型が Program を受け得ない型(組み込みの値の型・None・repo の record)なら答えとして使う所 — 未実行の Call が渡り、:pre の型の検に実行の時に初めて当たって落ちる。(<- x …) で値にしてから渡す。",
+                    "{} is a defk, so calling it bare returns a Program, not an answer. That Program flows on as a value without failing on a type error, and quietly goes wrong where the answer was supposed to be used (a dict's .get, a comparison, embedding in a string). Call it where a Program is passed: the right-hand side of (<- x …), (! …), (return …), or an argument of a call that receives a Program. Even as an argument of a call to a defk of the repo, if the receiving argument's :pre type cannot accept a Program (a built-in value type, None, or a repo record), it is a place where the answer is used: an unexecuted Call is passed along and falls over only at run time, when it first meets the :pre type check. Make it a value with (<- x …) and then pass it.",
                     call.callee
                 ),
             ),
             Explain::MixedConcerns { name, kind, probability, layer } => (
-                format!("定義 {}({})", name, kind),
+                format!("definition {} ({})", name, kind),
                 format!(
-                    "Jev の判定 p={:.2}: 入力の形の検め(辞書の鍵を読む・isinstance・空の検め)と業務の判断が 1 つの定義に混ざっている見込み。層 {} の定義は型のある値を受けて判断だけをする — 形を検める所が判断の中に散ると、何が入力の形の違いで何が業務の断りかを型で分けられない。(意味の判定 — 外れなら誤判定の一覧に載せる)",
+                    "Jev's judgment p={:.2}: likely that a definition mixes checking of the input's shape (reading dictionary keys, isinstance, emptiness checks) with business judgment. A definition in layer {} receives typed values and only judges: if shape checks are scattered inside judgments, the type cannot separate what is a difference in input shape from what is a business refusal. (A semantic judgment — if wrong, add it to the list of misjudgments)",
                     probability, layer
                 ),
             ),
             Explain::ClassRoleDoubt { name, chosen, probability, fields } => (
                 format!(
-                    "定義 {}(defclass・欄 {})",
+                    "definition {} (defclass; fields {})",
                     name,
-                    if fields.is_empty() { "なし".to_string() } else { fields.join("・") }
+                    if fields.is_empty() { "none".to_string() } else { fields.join(", ") }
                 ),
                 match chosen.as_str() {
                     "external-world" => format!(
-                        "Jev の判定 p={:.2}: 外の世界の窓口 — 外から渡された client や store を欄に持ち、method で使っている見込み(生の呼び出しが見えなくても)。class の method にすると effect と handler の差し替えを通らない。(意味の判定 — 外れなら誤判定の一覧に載せる)",
+                        "Jev's judgment p={:.2}: a window to the outside world — likely holds a client or store passed from outside as a field and uses it in methods (even if no raw call is visible). Making it a class method does not go through the swapping of effects and handlers. (A semantic judgment — if wrong, add it to the list of misjudgments)",
                         probability
                     ),
                     _ => format!(
-                        "Jev の判定 p={:.2}: 状態を持つ class — method が自分か別の物の状態を変える見込み。状態が値の中に散ると、どこで何が変わったかを effect と handler の記録で追えない。(意味の判定 — 外れなら誤判定の一覧に載せる)",
+                        "Jev's judgment p={:.2}: a class that holds state — likely that a method changes the state of itself or of something else. If state is scattered inside values, the effect and handler records cannot trace where and what changed. (A semantic judgment — if wrong, add it to the list of misjudgments)",
                         probability
                     ),
                 },
             ),
             Explain::JsonValueUse { module, uses, refusal } => (
-                format!("module {} — {} を{}", module, uses.names.join("・"), json_value_where(uses)),
+                format!("module {} — {}{}", module, uses.names.join(", "), json_value_where(uses)),
                 format!(
-                    "JsonValue は素の dict・list・str … を名で包んだだけの型で、中の形を何も約束しない。使う側が手で分解して読むと、形の食い違いが読む所ごとに違う形で漏れる。JSON に触ってよいのは、defwire が生む汎用の解き手(doeff_hy._wire・doeff_records._wire)と、architecture.hy の :wire-modules に挙げた foundation の層の送受信の module だけで、ほかの module(protocol・intent・core …)は、解き手が一度に形を確かめた型のある値だけを見る。{}",
+                    "JsonValue is a type that merely wraps a bare dict, list, str … with a name, and promises nothing about the shape inside. If the user side takes it apart and reads it by hand, mismatches of shape leak out in a different form at each place that reads. Only the generic resolver that defwire generates (doeff_hy._wire, doeff_records._wire) and the sending and receiving modules of the foundation layer listed in :wire-modules of architecture.hy may touch JSON; other modules (protocol, intent, core …) see only typed values whose shape the resolver checked once. {}",
                     match refusal {
-                        JsonValueRefusal::NotListed => "この module は :wire-modules に無い。".to_string(),
+                        JsonValueRefusal::NotListed => "This module is not in :wire-modules.".to_string(),
                         JsonValueRefusal::ListedOutsideFoundation { pattern, foundation_dir: Some(dir) } => {
-                            format!("この module は :wire-modules の {} に当たるが、foundation の層({}/)に無いので許さない — 送受信そのものは foundation だけが行う。", pattern, dir)
+                            format!("This module matches {} in :wire-modules but is not in the foundation layer ({}/), so it is not allowed: only foundation does the sending and receiving itself.", pattern, dir)
                         }
                         JsonValueRefusal::ListedOutsideFoundation { pattern, foundation_dir: None } => {
-                            format!("この module は :wire-modules の {} に当たるが、architecture.hy に foundation の層が無いので許さない。", pattern)
+                            format!("This module matches {} in :wire-modules, but architecture.hy has no foundation layer, so it is not allowed.", pattern)
                         }
                     }
                 ),
             ),
             Explain::TestNotDeftest { name, head } => (
-                format!("定義 {}({})— 検の置き場の、名が test で始まる関数", name, head),
-                "検は deftest だけで書く。deftest は doeff の Program として走り、handler の組み合わせを明示して検める。素の関数や fn の束縛の検は pytest が Program の外で呼ぶので、effect と handler の差し替えを通らない。".to_string(),
+                format!("definition {} ({}) — a function in a test location whose name starts with test", name, head),
+                "Write tests only with deftest. deftest runs as a doeff Program and checks with an explicit combination of handlers. Tests that are bare functions or fn bindings are called by pytest outside a Program, so they do not go through the swapping of effects and handlers.".to_string(),
             ),
             Explain::DefnForbidden { name, head, .. } => (
-                format!("定義 {}({})", name, head),
-                "defn は契約の辞書を持てず、:tags を書けない — タグで層・役・文脈を名乗れないので、閲覧のパネルにも linter の役の規則にも乗らない。defk で書く(素の callable が避けられない時だけ deff)。".to_string(),
+                format!("definition {} ({})", name, head),
+                "defn cannot have a contract dict and cannot write :tags — it cannot declare layer, role, and context by tags, so it appears in neither the browsing panel nor the linter's role rules. Write it with defk (use deff only when a bare callable cannot be avoided).".to_string(),
             ),
             Explain::DeffWithoutReason { name, marker, problem, kinds } => {
                 let marker = marker.trim_end_matches([':', '\u{ff1a}']);
                 let list = if kinds.is_empty() {
                     String::new()
                 } else {
-                    format!("受け入れてよい理由は {}。", kinds.iter().map(|k| format!("{}({})", k.name, k.description)).collect::<Vec<_>>().join("・"))
+                    format!(" Accepted reasons: {}.", kinds.iter().map(|k| format!("{} ({})", k.name, k.description)).collect::<Vec<_>>().join(", "))
                 };
                 let subject = match problem {
-                    DeffReasonProblem::Missing => format!("定義 {}(deff)— 理由の註 `; {}: <理由>` が定義の行にも直前の行にも無い", name, marker),
-                    DeffReasonProblem::NoDetail { detail } if detail.is_empty() => format!("定義 {}(deff)— 理由の註の理由が空", name),
-                    DeffReasonProblem::NoDetail { detail } => format!("定義 {}(deff)— 理由の註が「{}」で、この定義に固有の理由でない", name, detail),
+                    DeffReasonProblem::Missing => format!("definition {} (deff) — the reason comment `; {}: <reason>` is on neither the definition's line nor the line just before", name, marker),
+                    DeffReasonProblem::NoDetail { detail } if detail.is_empty() => format!("definition {} (deff) — the reason in the reason comment is empty", name),
+                    DeffReasonProblem::NoDetail { detail } => format!("definition {} (deff) — the reason comment says \"{}\", which is not specific to this definition", name, detail),
                 };
                 (
                     subject,
                     format!(
-                        "deff は defk の契約(:pre・:post と effect の検査)を外す逃げ道なので、なぜ素の関数でなければならないかを、この定義に固有の文で書く(受け入れるかは Jev の DOEFF203 が理由の文と source を見て決める)。{}",
+                        "deff is an escape hatch that drops defk's contract (:pre, :post and the effect check), so write why it must be a bare function in a sentence specific to this definition (whether it is accepted is decided by Jev's DOEFF203, which looks at the reason sentence and the source).{}",
                         list
                     ),
                 )
             }
             Explain::DefinitionTagsMissing { name, head, missing, has_tags, module_default } => (
                 format!(
-                    "定義 {}({})の :tags に {} が無い{}",
+                    "definition {} ({}) lacks {} in :tags{}",
                     name,
                     head,
-                    missing.join("・"),
-                    if *has_tags { "" } else { "(契約の辞書に :tags そのものが無い)" }
+                    missing.join(", "),
+                    if *has_tags { "" } else { " (the contract dict has no :tags at all)" }
                 ),
                 format!(
-                    "定義は :tags で文脈(context)と役(role)を名乗る。タグが無いと、この定義がどの層のどの役かを linter も閲覧のパネルも知れない。{}",
+                    "A definition declares its context and role with :tags. Without tags, neither the linter nor the browsing panel can know which role in which layer this definition has. {}",
                     if *module_default {
-                        "module の頭のタグでも補えていない。"
+                        "The module-head tag does not fill it in either."
                     } else {
-                        "この repo の設定では module の頭のタグで補えない(module_default = false)— 定義ごとに書く。"
+                        "In this repo's settings the module-head tag cannot fill it in (module_default = false), so write it per definition."
                     }
                 ),
             ),
             Explain::UndeclaredPlace { rel, problem, root, .. } => (
                 match problem {
-                    PlaceProblem::DirectlyUnderRoot => format!("module {} — root {}/ の直下に在り、どの service の層にも入っていない", rel, root),
+                    PlaceProblem::DirectlyUnderRoot => format!("module {} — sits directly under root {}/ and is in no service's layer", rel, root),
                     PlaceProblem::DirectlyUnderService { service } => {
-                        format!("module {} — service {} の dir の直下に在り、層の dir(core・intent …)に入っていない", rel, service)
+                        format!("module {} — sits directly under the dir of service {} and is not in a layer dir (core, intent …)", rel, service)
                     }
-                    PlaceProblem::InUndeclaredDirectory { dir } => format!("module {} — dir {} は architecture.hy に宣言した置き場所ではない", rel, dir),
+                    PlaceProblem::InUndeclaredDirectory { dir } => format!("module {} — dir {} is not a location declared in architecture.hy", rel, dir),
                 },
                 format!(
-                    "コードは service → 層 の dir({}/<service>/<層>/)か shared・foundation に置く。層が先の dir(core・protocol …)も旧い機能の dir も宣言の外 — どの service の何の層かが置き場所から分からず、層の規則も閲覧も置き場所で決められない。既存の分は登録簿で受けるが、エディタでは常に見える。",
+                    "Code goes in a service -> layer dir ({}/<service>/<layer>/) or shared or foundation. Layer-first dirs (core, protocol …) and dirs of old features are outside the declarations: which layer of which service it is cannot be told from the location, and neither the layer rules nor browsing can be decided by location. Existing ones are accepted by the registry, but are always visible in the editor.",
                     root
                 ),
             ),
             Explain::UndeclaredDirectory { dir, problem } => match problem {
                 DirectoryProblem::ServiceNotDeclared { dir: name, services } => (
-                    format!("dir {} — service {} は architecture.hy に宣言されていない(宣言した service = {})", dir, name, if services.is_empty() { "無し".to_string() } else { services.join("・") }),
-                    "宣言に無い service の dir は、何の仕事で何に依存するかが分からない。defservice で宣言するか、中の module を宣言した service の層の dir へ移す。".to_string(),
+                    format!("dir {} — service {} is not declared in architecture.hy (declared services = {})", dir, name, if services.is_empty() { "none".to_string() } else { services.join(", ") }),
+                    "A service dir not in the declarations does not show what its job is or what it depends on. Declare it with defservice, or move the modules inside to the layer dirs of a declared service.".to_string(),
                 ),
                 DirectoryProblem::LayerNotDeclared { service, layer, declared } => (
-                    format!("dir {} — service {} の中の {} は、その service の宣言した層({})に無い", dir, service, layer, declared.join("・")),
-                    format!("service の中の dir は層(外の世界からの遠さ)だけで切る。{} は宣言した層でないので、中の module の層が決まらない。service の :layers に足すか、層の dir へ移す。", layer),
+                    format!("dir {} — {} inside service {} is not in the layers the service declared ({})", dir, layer, service, declared.join(", ")),
+                    format!("Dirs inside a service are cut only by layer (distance from the outside world). {} is not a declared layer, so the layer of the modules inside cannot be decided. Add it to the service's :layers or move it to a layer dir.", layer),
                 ),
             },
             Explain::ServiceDependency { placement, own, target, target_service, target_layer, target_dir, declared, depends_on, open_layers, widened, .. } => (
                 format!(
-                    "import 先 {} は service {} の{}(path が {}/ の下) — {}",
+                    "import target {} is in service {}'s {} (path under {}/) — {}",
                     target,
                     target_service,
                     self.layer_phrase(*target_layer),
@@ -965,12 +955,12 @@ impl<'a> Narrator<'a> {
                 ),
                 if *declared {
                     format!(
-                        "service {} は {} に依存すると宣言しているが、{}の module が読めるのは {} の {} だけ。{} の判断や翻訳を直に読むと、{} の中身を変えた時に {} が壊れる。{} に頼むことは {} の intent を通す。{}",
+                        "Service {} declares that it depends on {}, but modules in {} may read, of {}, only {}. Reading {}'s judgments or translations directly means that when the contents of {} change, {} breaks. Requests to {} go through {}'s intents.{}",
                         own,
                         target_service,
                         self.layer_phrase(placement.layer),
                         target_service,
-                        open_layers.join("・"),
+                        open_layers.join(", "),
                         target_service,
                         target_service,
                         own,
@@ -979,63 +969,63 @@ impl<'a> Narrator<'a> {
                         if *widened {
                             ""
                         } else {
-                            "(依存先のほかの層を読めるのは、architecture.hy の layer に :dependency-layers で広げた層 — 全体を組む組み立ての層 — だけ)"
+                            " (the other layers of the target can be read only by a layer that :dependency-layers in the layer of architecture.hy widens: the assembly layer that builds the whole)"
                         }
                     )
                 } else {
                     format!(
-                        "service {} の依存の宣言(:depends-on = {})に {} が無い。宣言に無い依存は、service の間の向きを architecture.hy から読めなくする。依存が要るなら :depends-on に足して {} の intent を通して頼み、要らないなら import を外す。",
+                        "The declaration of service {}'s dependencies (:depends-on = {}) does not include {}. An undeclared dependency makes the direction between services unreadable from architecture.hy. If the dependency is needed, add it to :depends-on and make requests through {}'s intents; if not, remove the import.",
                         own,
-                        if depends_on.is_empty() { "無し".to_string() } else { depends_on.join("・") },
+                        if depends_on.is_empty() { "none".to_string() } else { depends_on.join(", ") },
                         target_service,
                         target_service
                     )
                 },
             ),
             Explain::UnusedDependency { service, dependency } => (
-                format!("service {} の :depends-on の {}", service, dependency),
-                format!("{} のどの module も {} を読んでいない(知らせ)。使っていない依存の宣言は、service の間の向きを実物より多く見せる。要らなければ :depends-on から外す。", service, dependency),
+                format!("{} of :depends-on of service {}", dependency, service),
+                format!("No module of {} reads {} (a notice). A declaration of an unused dependency makes the direction between services look larger than the real one. If it is not needed, remove it from :depends-on.", service, dependency),
             ),
             Explain::Semantic { placement, definition, kind, question, probability } => (
-                format!("定義 {}({}) — {}", definition, kind, self.file_subject(placement)),
+                format!("definition {} ({}) — {}", definition, kind, self.file_subject(placement)),
                 format!(
-                    "Jev の判定 p={:.2} — {}。{}(これは決定的な規則ではなく意味の判定で、当たり外れを測っている途中 — 外れなら誤判定の一覧に載せる)",
+                    "Jev's judgment p={:.2} — {}. {} (This is not a deterministic rule but a semantic judgment, and its hit rate is still being measured — if wrong, add it to the list of misjudgments)",
                     probability,
                     question.meaning(),
                     self.character(placement.layer)
                 ),
             ),
             Explain::PlainCallableDoubt { definition, kind, stated, chosen, chosen_probability, chosen_accepted, chosen_description, fix, rejected_total } => (
-                format!("定義 {}({})— 書かれた理由「{}」", definition, kind, stated),
+                format!("definition {} ({}) — stated reason \"{}\"", definition, kind, stated),
                 match (chosen_accepted, chosen.as_str()) {
                     (true, _) => format!(
-                        "Jev の判定: 受け入れる理由 {}({})に近い(p={:.2})が、受け入れない答えの確率の和が {:.2} ある。理由の文をこの定義に固有に書き直すか、defk にできないかを確かめる。(意味の判定 — 外れなら誤判定の一覧に載せる)",
+                        "Jev's judgment: close to the accepted reason {} ({}) (p={:.2}), but the sum of the probabilities of the rejected answers is {:.2}. Rewrite the reason sentence specifically for this definition, or check whether it can be a defk. (A semantic judgment — if wrong, add it to the list of misjudgments)",
                         chosen,
                         chosen_description.clone().unwrap_or_default(),
                         chosen_probability,
                         rejected_total
                     ),
                     (false, "none") => format!(
-                        "Jev の判定 p={:.2}: この理由は受け入れられない — 宣言した受け入れる理由のどれにも当たらず、素の関数でなければならない理由が見えない。呼び手を Program にして defk にできる見込み。(意味の判定 — 外れなら誤判定の一覧に載せる)",
+                        "Jev's judgment p={:.2}: this reason is not accepted — it matches none of the declared accepted reasons, and no reason why it must be a bare function is visible. Likely it can be a defk by making the caller a Program. (A semantic judgment — if wrong, add it to the list of misjudgments)",
                         chosen_probability
                     ),
                     (false, _) => format!(
-                        "Jev の判定 p={:.2}: この理由は受け入れられない — 近い型は {}({})。{}(意味の判定 — 外れなら誤判定の一覧に載せる)",
+                        "Jev's judgment p={:.2}: this reason is not accepted — the closest type is {} ({}). {}(A semantic judgment — if wrong, add it to the list of misjudgments)",
                         chosen_probability,
                         chosen,
                         chosen_description.clone().unwrap_or_default(),
-                        fix.as_ref().map(|f| format!("直し方: {}。", f)).unwrap_or_default()
+                        fix.as_ref().map(|f| format!("How to fix: {}. ", f)).unwrap_or_default()
                     ),
                 },
             ),
             Explain::EnvironmentName { subject, words } => (
                 match subject {
-                    NameSubject::File { stem } => format!("業務の file の名 {}(環境の語 {} を含む)", stem, words.join("・")),
-                    NameSubject::Definition { name, kind } => format!("定義 {}({})の名(環境の語 {} を含む)", name, kind, words.join("・")),
+                    NameSubject::File { stem } => format!("name of business file {} (contains environment words {})", stem, words.join(", ")),
+                    NameSubject::Definition { name, kind } => format!("name of definition {} ({}) (contains environment words {})", name, kind, words.join(", ")),
                 },
                 format!(
-                    "業務の code は環境(本番・模擬・手元)を知らない。語 {} は環境の違いを表すので、業務の名に入ると環境ごとに業務の答え手が分かれ、模擬の緑が本番の道を確かめなくなる。環境の違いは土台の汎用の handler の差し替えだけで表す。",
-                    words.join("・")
+                    "Business code does not know the environment (production, simulation, local). The word(s) {} express a difference of environment, so if they enter a business name, the business answerers split per environment, and a green in the simulation no longer verifies the production path. Express differences of environment only by swapping the foundation's generic handlers.",
+                    words.join(", ")
                 ),
             ),
         };
@@ -1043,245 +1033,245 @@ impl<'a> Narrator<'a> {
         Explanation { subject, reason, law_statement }
     }
 
-    /// 違反ごとに変わる直し方(無ければ規則の既定の 1 行)。
+    /// The fix that varies per violation (if none, the rule's default single line).
     pub fn hint(&self, explain: &Explain) -> Option<String> {
-        const WORLD_FIX: &str = "外の世界の窓口は土台の handler にする — 資源(接続・client・file の手)は defhandler の直下の (session val …) に持ち、ListRows・PutRow などの effect に答える(模擬なら模擬の土台の handler)";
-        const STATE_FIX: &str = "値は defrecord(不変)、振る舞いは新しい値を返す純粋な関数、状態は world などの handler の (session var …) 1 か所に置き、変化は effect で流す。速さのために書き換えが要る時も書き換えは handler の中だけ";
-        const PROGRAM_WAYS: &str = "組み立て(handler の並び)なら `(defk handlers-of [foundation])` に・テストなら deftest に・値を組む補助なら defk にして `(<- …)` で呼ぶ";
+        const WORLD_FIX: &str = "Make the window to the outside world a foundation handler: hold resources (connections, clients, file handles) directly under defhandler with (session val …) and answer effects such as ListRows and PutRow (in the simulation, the simulation's foundation handler)";
+        const STATE_FIX: &str = "Values are defrecord (immutable), behavior is pure functions that return new values, state goes in one place in a handler's (session var …) such as world, and changes flow as effects. Even when rewriting is needed for speed, rewrite only inside the handler";
+        const PROGRAM_WAYS: &str = "make an assembly (a list of handlers) `(defk handlers-of [foundation])`, a test a deftest, and a helper that builds values a defk called with `(<- …)`";
         match explain {
             Explain::DefnForbidden { declared_kind: Some(kind), .. } => {
-                Some(format!("deff にする(理由 {} — {})。同じ行に `; defk にできない: <誰がどう呼ぶか>` と :tags を書く", kind.name, kind.description))
+                Some(format!("Make it a deff (reason {} — {}). On the same line write `; defk にできない: <who calls it and how>` and :tags", kind.name, kind.description))
             }
             Explain::DefnForbidden { declared_kind: None, .. } => {
-                Some(format!("defk にする(素の関数でなければならない理由が見当たらない)— {}", PROGRAM_WAYS))
+                Some(format!("Make it a defk (no reason is visible why it must be a bare function): {}", PROGRAM_WAYS))
             }
             Explain::ClassShape { verdict: ClassVerdict::ExternalWorld { .. }, .. } => Some(WORLD_FIX.to_string()),
             Explain::ClassShape { verdict: ClassVerdict::Stateful { .. }, .. } => Some(STATE_FIX.to_string()),
             Explain::Smell { smell } => Some(
                 match &smell.kind {
-                    super::smells::SmellKind::ShapeCheck { .. } => "形の検めは protocol の境目で defwire の型に parse し(形が合わなければ解く所で失敗)、この定義は型のある値を受けて判断だけをする",
-                    super::smells::SmellKind::FailureRethrow { .. } => "失敗は (<- (Raise 失敗の値)) で出し(呼び手へ手で return し直さない)、受けて写す所だけ呼ぶ側で (on-raise 本文 (Refusal r) 写し先) と受ける(ADR-DOE-CORE-EFFECTS-003 R3・R7)",
-                    super::smells::SmellKind::BindThenReturn { .. } => "(return (! (f …))) と 1 つにするか、失敗なら (<- (Raise …)) で出す",
-                    super::smells::SmellKind::FieldsJoined { .. } => "型のある値のまま渡す(欄を文字列に潰さない)— 文にするのは人に見せる境目の 1 か所だけ",
-                    super::smells::SmellKind::RebuiltAccumulator { .. } => "蓄えは内包表記(lfor)で 1 度に作る — ループの中で (+ xs #(…)) の作り直しを重ねない",
+                    super::smells::SmellKind::ShapeCheck { .. } => "Parse shape checks into a defwire type at the protocol boundary (if the shape does not fit, fail where it is resolved), and have this definition receive typed values and only judge",
+                    super::smells::SmellKind::FailureRethrow { .. } => "Raise a failure with (<- (Raise failure-value)) (do not re-return it to the caller by hand), and only at the place that receives and maps it, receive it on the calling side with (on-raise body (Refusal r) target) (ADR-DOE-CORE-EFFECTS-003 R3, R7)",
+                    super::smells::SmellKind::BindThenReturn { .. } => "Merge it into a single (return (! (f …))), or for a failure raise it with (<- (Raise …))",
+                    super::smells::SmellKind::FieldsJoined { .. } => "Pass typed values as they are (do not flatten fields into a string): turn them into a sentence only at the one boundary that shows them to people",
+                    super::smells::SmellKind::RebuiltAccumulator { .. } => "Build the accumulation in one go with a comprehension (lfor): do not keep rebuilding with (+ xs #(…)) inside a loop",
                 }
                 .to_string(),
             ),
             Explain::RetiredWord { instead, .. } => Some(format!(
-                "{} に書き換える。契約の綴り(wire の欄名・契約の値)なら、群の :contract-files の契約の file に在るかを確かめる(在れば文字列と defwire の欄の定義は数えない)",
+                "Rewrite it to {}. If it is a contract spelling (a wire field name or a contract value), check whether it is in a contract file of the group's :contract-files (if so, strings and defwire field definitions are not counted)",
                 instead
             )),
-            Explain::RetiredCall { instead, .. } => Some(format!("{} に置き換える", instead)),
+            Explain::RetiredCall { instead, .. } => Some(format!("Replace it with {}", instead)),
             Explain::StaleBranch { branch } => Some(match branch.declared {
                 super::smells::DeclaredAs::Absent => format!(
-                    "{} の枝を消して成功の道だけにする — 不在で何かしたい所は (<- {} ({} …) :absent <失敗>) か absent-as、不在を値として持ち回る所は {} を (maybe ({} …)) で包んで Nothing を受ける(R14 (3))",
+                    "Remove the {} branch and keep only the success path. Where something should be done on absence, use (<- {} ({} …) :absent <failure>) or absent-as; where absence is carried around as a value, wrap {} in (maybe ({} …)) and receive Nothing (R14 (3))",
                     branch.ty, branch.subject, branch.effect, branch.effect, branch.effect
                 ),
                 super::smells::DeclaredAs::Failure => format!(
-                    "{} の枝を消して成功の道だけにする — 失敗で何かしたい所は on-raise (on-raise 本文 ({} d) 写し先)、値として持ち回る所は (result ({} …)) で包んで Err を受ける(R14 (3))",
+                    "Remove the {} branch and keep only the success path. Where something should be done on failure, use on-raise (on-raise body ({} d) target); where it is carried around as a value, wrap it in (result ({} …)) and receive Err (R14 (3))",
                     branch.ty, branch.ty, branch.effect
                 ),
             }),
-            Explain::MatchFieldHyphen { field, .. } => Some(format!(":{} を :{} と書くか、その match を defk の中へ移す(defk は欄の名を属性名へ直す)— 直すと今まで当たらなかった節が当たるようになるので、その定義の検を実行する", field, field.replace('-', "_"))),
-            Explain::WireFree { wire: true, .. } => Some("defwire を翻訳の層(protocol)へ移し、この層には欄名を持たない defrecord を置いて protocol が読んで渡す".to_string()),
-            Explain::WireFree { .. } => Some("写像は欄の名前と型を持つ defrecord にするか、データを引く写像(索引・表)はキー → 値の関数か効果にする".to_string()),
-            Explain::DictSmell { field: true, .. } => Some("欄の写像を、欄の名前と型を持つ defrecord にする".to_string()),
-            Explain::DictSmell { .. } => Some("データを引く写像はキー → 値の関数か効果にし、cache は handler の session に置く — JSON を組むなら :post が写像の綴りの 1 点に寄せる".to_string()),
-            Explain::EnvironmentBranch { .. } => Some("環境で変わる振る舞いを effect にして、環境ごとの handler(本番・模擬・dry-run)に答えさせる — 業務の層の定義は環境の名も dry-run の印も読まない".to_string()),
-            Explain::PlacedDependency { owner_rel, .. } => Some(format!("{} を層の置き場(<root>/<service>/<層>/)へ移すか、要る型を intent へ移して読む — 直せない既存の当たりは登録簿に載せる", owner_rel)),
-            Explain::MixedConcerns { .. } => Some("形の検めは protocol の境目で defwire の型に parse し(形が合わなければ解く所で失敗)、この定義は型のある値を受けて判断だけをする".to_string()),
+            Explain::MatchFieldHyphen { field, .. } => Some(format!("Write :{} as :{}, or move that match into a defk (defk rewrites field names to attribute names). Fixing it makes clauses that did not match until now match, so run the tests of that definition", field, field.replace('-', "_"))),
+            Explain::WireFree { wire: true, .. } => Some("Move the defwire to the translation layer (protocol), place in this layer a defrecord with no field names, and have protocol read it and pass it".to_string()),
+            Explain::WireFree { .. } => Some("Make the mapping a defrecord with field names and types, or make a mapping that fetches data (an index or table) a key -> value function or an effect".to_string()),
+            Explain::DictSmell { field: true, .. } => Some("Make the field mapping a defrecord with field names and types".to_string()),
+            Explain::DictSmell { .. } => Some("Make a mapping that fetches data a key -> value function or an effect, and put the cache in the handler's session; when building JSON, gather it at the one point where the :post spelling is a mapping".to_string()),
+            Explain::EnvironmentBranch { .. } => Some("Make behavior that varies by environment an effect and let the handler of each environment (production, simulation, dry-run) answer it: definitions in a business layer read neither the environment name nor the dry-run flag".to_string()),
+            Explain::PlacedDependency { owner_rel, .. } => Some(format!("Move {} into a layer location (<root>/<service>/<layer>/), or move the type you need into an intent and read it from there; list existing hits that cannot be fixed in the registry", owner_rel)),
+            Explain::MixedConcerns { .. } => Some("Parse shape checks into a defwire type at the protocol boundary (if the shape does not fit, fail where it is resolved), and have this definition receive typed values and only judge".to_string()),
             Explain::ClassRoleDoubt { chosen, .. } if chosen == "external-world" => Some(WORLD_FIX.to_string()),
             Explain::ClassRoleDoubt { .. } => Some(STATE_FIX.to_string()),
-            Explain::ClassShape { verdict: ClassVerdict::DataOnly, .. } => Some("defrecord にする(:tags で文脈と役・:check で値の検め)".to_string()),
-            Explain::UndeclaredPlace { destination, .. } => Some(format!("{} へ移す(service は :context のタグ、層は定義の :role のタグから推した案 — 推せない時だけ今の置き場所の層)", destination)),
+            Explain::ClassShape { verdict: ClassVerdict::DataOnly, .. } => Some("Make it a defrecord (declare context and role with :tags, check values with :check)".to_string()),
+            Explain::UndeclaredPlace { destination, .. } => Some(format!("Move it to {} (a proposal inferred from the :context tag for the service and the definition's :role tag for the layer; the current location's layer only when it cannot be inferred)", destination)),
             Explain::ServiceDependency { own, target, target_service, declared: false, reverse: true, .. } => Some(format!(
-                "{} は既に {} に依存しているので、:depends-on に足すと service の間の依存が輪になる — {} の型を {} の intent か shared へ移し、{} がそこを読む形にする(既に在る {} → {} の向きに揃える)",
+                "{} already depends on {}, so adding it to :depends-on would make the dependency between services a cycle: move the type {} into {}'s intent or into shared and have {} read it there (align with the existing direction {} -> {})",
                 target_service, own, target, own, target_service, target_service, own
             )),
             Explain::JsonValueUse { refusal: JsonValueRefusal::ListedOutsideFoundation { pattern, foundation_dir: Some(dir) }, .. } => Some(format!(
-                "送受信そのものを {}/ の module へ移して :wire-modules はそこを指すか、{} を :wire-modules から外し、この module は defwire の型のある値を使う",
+                "Move the sending and receiving itself into a module under {}/ and have :wire-modules point there, or remove {} from :wire-modules and have this module use defwire's typed values",
                 dir, pattern
             )),
             Explain::PlainCallableDoubt { chosen_accepted: false, fix: Some(fix), .. } => Some(fix.clone()),
-            Explain::PlainCallableDoubt { .. } => Some(format!("defk にできないかを確かめる — {}", PROGRAM_WAYS)),
+            Explain::PlainCallableDoubt { .. } => Some(format!("Check whether it can be a defk: {}", PROGRAM_WAYS)),
             Explain::DeffWithoutReason { problem: DeffReasonProblem::Missing, .. } => {
-                Some(format!("素の関数でなければならないなら `; defk にできない: <誰がどう呼ぶか>` を書く。そうでなければ defk にする — {}", PROGRAM_WAYS))
+                Some(format!("If it must be a bare function, write `; defk にできない: <who calls it and how>`. Otherwise make it a defk: {}", PROGRAM_WAYS))
             }
             Explain::DeffWithoutReason { problem: DeffReasonProblem::NoDetail { .. }, .. } => {
-                Some(format!("この定義に固有の理由(誰が・どう呼ぶか)を書く(「同上」は使わない)。書けないなら defk にする — {}", PROGRAM_WAYS))
+                Some(format!("Write a reason specific to this definition (who calls it and how); do not use \"同上\" (\"ditto\"). If you cannot write one, make it a defk: {}", PROGRAM_WAYS))
             }
             _ => None,
         }
     }
 
-    /// module の層を何で決めたか(path の置き場所・タグ・両方の食い違い)。
+    /// What decided a module's layer (the location of the path, a tag, or a mismatch between the two).
     pub fn layer_reason(&self, placement: &Placement) -> String {
         if placement.by_tags {
             return format!(
-                "タグで決めた — {}/ は architecture.hy の宣言した置き場所ではないので、タグの role = {} から{}と推した",
+                "Decided by tag — {}/ is not a location declared in architecture.hy, so it was inferred from tag role = {} as {}",
                 placement.dir,
-                placement.roles.join("・"),
-                lead(&self.site_phrase(placement))
+                placement.roles.join(", "),
+                self.site_phrase(placement)
             );
         }
-        let base = format!("path の置き場所で決めた — {}/ の下は{}", placement.dir, lead(&self.site_phrase(placement)));
+        let base = format!("Decided by the path location — under {}/ is {}", placement.dir, self.site_phrase(placement));
         if placement.roles.is_empty() {
-            return format!("{}(タグで役を名乗っていない)", base);
+            return format!("{} (the role is not declared by a tag)", base);
         }
         let foreign: Vec<&String> = placement.roles.iter().filter(|r| !self.role_allowed(placement.layer, r)).collect();
         if foreign.is_empty() {
-            return format!("{}。タグの role = {} もこの層の役", base, placement.roles.join("・"));
+            return format!("{}. The tag role = {} is also a role of this layer", base, placement.roles.join(", "));
         }
-        let homes: Vec<String> = foreign.iter().map(|r| format!("タグの role {} は{}", r, self.role_home(r))).collect();
+        let homes: Vec<String> = foreign.iter().map(|r| format!("tag role {} is {}", r, self.role_home(r))).collect();
         format!(
-            "path とタグが食い違う — path の置き場所 {}/ では{}、{}(層は path で決める)",
+            "the path and the tag disagree — at the path location {}/ it is {}, {} (the layer is decided by the path)",
             placement.dir,
-            lead(&self.site_phrase(placement)),
-            homes.join("、")
+            self.site_phrase(placement),
+            homes.join(", ")
         )
     }
 
-    // --- 部品 -------------------------------------------------------------------------
+    // --- Parts -------------------------------------------------------------------------
 
-    /// 層の名前。
+    /// The layer's name.
     fn name(&self, id: LayerId) -> String {
         self.layers.and_then(|l| l.layers.get(id.0)).map(|l| l.name.clone()).unwrap_or_else(|| "?".to_string())
     }
 
-    /// 「service X の層 Y(要約)」(service の段が無ければ層だけ)。
+    /// "Layer Y of service X (summary)" (just the layer if there is no service segment).
     fn site_phrase(&self, placement: &Placement) -> String {
         match &placement.service {
-            Some(service) => format!("service {} の{}", service, self.layer_phrase(placement.layer)),
+            Some(service) => format!("{} of service {}", self.layer_phrase(placement.layer), service),
             None => self.layer_phrase(placement.layer),
         }
     }
 
-    /// 「層 X(要約)」。
+    /// "Layer X (summary)".
     fn layer_phrase(&self, id: LayerId) -> String {
         let summary = self.layers.and_then(|l| l.layers.get(id.0)).and_then(|l| l.description.summary.clone());
         match summary {
-            Some(summary) => format!("層 {}({})", self.name(id), summary),
-            None => format!("層 {}", self.name(id)),
+            Some(summary) => format!("layer {} ({})", self.name(id), summary),
+            None => format!("layer {}", self.name(id)),
         }
     }
 
-    /// 外の世界からの遠さ(層の順から)。
+    /// Distance from the outside world (from the order of layers).
     fn distance(&self, id: LayerId) -> String {
         let count = self.layers.map(|l| l.layers.len()).unwrap_or(0);
         match id.0 {
-            0 => "外の世界から最も遠い層".to_string(),
-            index if count > 0 && index + 1 == count => "外の世界に最も近い層".to_string(),
-            index => format!("外の世界からの遠さの順で {} 番目の層", index + 1),
+            0 => "the layer farthest from the outside world".to_string(),
+            index if count > 0 && index + 1 == count => "the layer closest to the outside world".to_string(),
+            index => format!("layer number {} in order of distance from the outside world", index + 1),
         }
     }
 
-    /// 層の性格の文(「層 core(要約)は外の世界から最も遠い層で、X を知り、Y は知らない。」)。
+    /// The sentence describing a layer's character ("Layer core (summary) is the layer farthest from the outside world; it knows X and does not know Y.").
     fn character(&self, id: LayerId) -> String {
         let description = self.layers.and_then(|l| l.layers.get(id.0)).map(|l| l.description.clone()).unwrap_or_default();
-        let mut text = format!("{}{}", particle(&self.layer_phrase(id), "は"), self.distance(id));
+        let mut text = format!("{} is {}", capitalize(&self.layer_phrase(id)), self.distance(id));
         match (&description.knows, &description.does_not_know) {
-            (Some(knows), Some(not)) => text.push_str(&format!("で、{}知り、{}知らない。", particle(knows, "を"), particle(not, "は"))),
-            (Some(knows), None) => text.push_str(&format!("で、{}知る。", particle(knows, "を"))),
-            (None, Some(not)) => text.push_str(&format!("で、{}知らない。", particle(not, "は"))),
-            (None, None) => text.push('。'),
+            (Some(knows), Some(not)) => text.push_str(&format!("; it knows {} and does not know {}.", knows, not)),
+            (Some(knows), None) => text.push_str(&format!("; it knows {}.", knows)),
+            (None, Some(not)) => text.push_str(&format!("; it does not know {}.", not)),
+            (None, None) => text.push('.'),
         }
         text
     }
 
-    /// import 先の層の性格(「層 foundation(要約)は X を持つので、」)。
+    /// The character of the import target's layer ("The import target, layer foundation (summary), has X, so").
     fn target_character(&self, id: LayerId) -> String {
         let knows = self.layers.and_then(|l| l.layers.get(id.0)).and_then(|l| l.description.knows.clone());
         match knows {
-            Some(knows) => format!("import 先の{}{}持つので、", particle(&self.layer_phrase(id), "は"), particle(&knows, "を")),
-            None => format!("import 先の{}{}なので、", particle(&self.layer_phrase(id), "は"), self.distance(id)),
+            Some(knows) => format!("The import target, {}, has {}, so", self.layer_phrase(id), knows),
+            None => format!("The import target, {}, is {}, so", self.layer_phrase(id), self.distance(id)),
         }
     }
 
-    /// file の主体の文(「この file は層 core — path が controllers/core/ の下、タグの role = translation」)。
+    /// The subject sentence of a file ("This file is in layer core — path is under controllers/core/, tag role = translation").
     fn file_subject(&self, placement: &Placement) -> String {
         let tags = if placement.roles.is_empty() {
-            "タグで役を名乗っていない".to_string()
+            "the role is not declared by a tag".to_string()
         } else {
-            format!("タグの role = {}", placement.roles.join("・"))
+            format!("tag role = {}", placement.roles.join(", "))
         };
-        format!("この file は{} — path が {}/ の下、{}", lead(&self.site_phrase(placement)), placement.dir, tags)
+        format!("This file is in {} — path is under {}/, {}", self.site_phrase(placement), placement.dir, tags)
     }
 
-    /// 層が import してよい層の並び。
+    /// The list of layers a layer may import.
     fn allowed_imports(&self, id: LayerId) -> String {
         let spec = self.layers.and_then(|l| l.layers.get(id.0));
         match spec.and_then(|s| s.allowed.as_ref()) {
             Some(allowed) => {
-                let names: Vec<String> = allowed.iter().map(|a| format!("層 {}", self.name(*a))).collect();
-                names.join("・")
+                let names: Vec<String> = allowed.iter().map(|a| format!("layer {}", self.name(*a))).collect();
+                names.join(", ")
             }
-            None => "どの層でも".to_string(),
+            None => "any layer".to_string(),
         }
     }
 
-    /// 層で許す role の並び。
+    /// The list of roles a layer allows.
     fn allowed_roles(&self, id: LayerId) -> String {
         let spec = self.layers.and_then(|l| l.layers.get(id.0));
         match spec.and_then(|s| s.roles.as_ref()) {
             Some(roles) => roles.iter().cloned().collect::<Vec<_>>().join(" / "),
-            None => "設定に無い".to_string(),
+            None => "not in the settings".to_string(),
         }
     }
 
-    /// role がその層で許されるか。
+    /// Whether a role is allowed in that layer.
     fn role_allowed(&self, id: LayerId, role: &str) -> bool {
         self.layers.and_then(|l| l.layers.get(id.0)).and_then(|s| s.roles.as_ref()).is_none_or(|roles| roles.contains(role))
     }
 
-    /// role を許す層の文(「層 protocol の役」・無ければ「どの層の役でもない」)。
+    /// The phrase for the layers that allow a role ("a role of layer protocol", or "not a role of any layer" if none).
     fn role_home(&self, role: &str) -> String {
         let homes: Vec<String> = self
             .layers
-            .map(|l| l.layers.iter().filter(|s| s.roles.as_ref().is_some_and(|r| r.contains(role))).map(|s| format!("層 {}", s.name)).collect())
+            .map(|l| l.layers.iter().filter(|s| s.roles.as_ref().is_some_and(|r| r.contains(role))).map(|s| format!("layer {}", s.name)).collect())
             .unwrap_or_default();
         if homes.is_empty() {
-            "どの層の役でもない(今の role の一覧に無い)".to_string()
+            "not a role of any layer (not in the current list of roles)".to_string()
         } else {
-            format!("{}役", particle(&homes.join("・"), "の"))
+            format!("a role of {}", homes.join(", "))
         }
     }
 
-    /// role の説明(設定に在れば「role X(説明)」)。
+    /// The description of a role (if it is in the settings, "role X (description)").
     fn role_phrase(&self, role: &str) -> String {
         match self.layers.and_then(|l| l.role_descriptions.get(role)) {
-            Some(text) => format!("role {}({})", role, text),
+            Some(text) => format!("role {} ({})", role, text),
             None => format!("role {}", role),
         }
     }
 
-    /// 生の副作用を許す層の文。
+    /// The phrase for the layers allowed raw side effects.
     fn io_layers(&self) -> String {
         if self.raw.is_some_and(|r| r.world_modules.is_some()) {
-            return "architecture.hy の :world-handlers(外の世界に触れてよい定義の許可名簿)の定義の module".to_string();
+            return "the modules of the definitions in :world-handlers of architecture.hy (the permitted roster of definitions allowed to touch the outside world)".to_string();
         }
         match self.raw.filter(|r| !r.allowed.is_empty()) {
-            Some(raw) => raw.allowed.iter().map(|id| format!("層 {}", self.name(*id))).collect::<Vec<_>>().join("・"),
-            None => "外の世界に触ってよい層".to_string(),
+            Some(raw) => raw.allowed.iter().map(|id| format!("layer {}", self.name(*id))).collect::<Vec<_>>().join(", "),
+            None => "the layers allowed to touch the outside world".to_string(),
         }
     }
 
-    /// DOEFF105 の主体(食い違いを書く)。
+    /// The subject of DOEFF105 (states the mismatch).
     fn role_subject(&self, placement: &Placement, role: &Option<String>, context: &Option<String>) -> String {
         let role_text = match role.as_deref().filter(|r| !r.is_empty()) {
-            Some(role) => format!("タグの role = {}", role),
-            None => "タグに role が無い".to_string(),
+            Some(role) => format!("tag role = {}", role),
+            None => "the tag has no role".to_string(),
         };
         let context_text = match context.as_deref().filter(|c| !c.is_empty()) {
             Some(context) => format!("context = {}", context),
-            None => "context が無い".to_string(),
+            None => "no context".to_string(),
         };
         let mismatch = match role.as_deref().filter(|r| !r.is_empty() && !self.role_allowed(placement.layer, r)) {
-            Some(role) => format!(" — path とタグが食い違う(role {} は{})", role, self.role_home(role)),
+            Some(role) => format!(" — the path and the tag disagree (role {} is {})", role, self.role_home(role)),
             None => String::new(),
         };
         format!(
-            "この file は{} — path が {}/ の下、{}・{}{}",
-            lead(&self.site_phrase(placement)),
+            "This file is in {} — path is under {}/, {}, {}{}",
+            self.site_phrase(placement),
             placement.dir,
             role_text,
             context_text,
@@ -1289,53 +1279,53 @@ impl<'a> Narrator<'a> {
         )
     }
 
-    /// DOEFF105 の理由。
+    /// The reason for DOEFF105.
     fn role_reason(&self, placement: &Placement, role: &Option<String>, context: &Option<String>) -> String {
         let allowed = self.allowed_roles(placement.layer);
         match (role.as_deref().filter(|r| !r.is_empty()), context.as_deref().filter(|c| !c.is_empty())) {
             (Some(role), _) if !self.role_allowed(placement.layer, role) => format!(
-                "{}{}。{}ここに置けない。層 {} で許す role = {}。",
-                particle(&self.role_phrase(role), "は"),
+                "{} is {}. {}, so it cannot be placed here. Roles allowed in layer {}: {}.",
+                self.role_phrase(role),
                 self.role_home(role),
-                self.character(placement.layer).trim_end_matches('。').to_string() + "ので、",
+                self.character(placement.layer).trim_end_matches('.').to_string(),
                 self.name(placement.layer),
                 allowed
             ),
             (None, _) => format!(
-                "役(role)を名乗らないと、この定義が層 {} に置いてよい物かを確かめられない。層 {} で許す role = {}。",
+                "Without declaring a role, it cannot be checked whether this definition may be placed in layer {}. Roles allowed in layer {}: {}.",
                 self.name(placement.layer),
                 self.name(placement.layer),
                 allowed
             ),
-            (Some(_), None) => "文脈(context)を名乗らないと、どの業務の定義かをタグで引けない。:context も書く。".to_string(),
-            (Some(_), Some(_)) => format!("タグは層 {} の決まりに合っている。", self.name(placement.layer)),
+            (Some(_), None) => "Without declaring a context, it cannot be looked up by tag which business a definition belongs to. Write :context too.".to_string(),
+            (Some(_), Some(_)) => format!("The tag fits the rules of layer {}.", self.name(placement.layer)),
         }
     }
 }
 
-/// 臭い 1 件の subject と reason(DOEFF121〜125)。
+/// The subject and reason of one smell (DOEFF121-125).
 fn smell_text(smell: &super::smells::Smell) -> (String, String) {
     use super::smells::SmellKind;
     match &smell.kind {
         SmellKind::ShapeCheck { field, holder } => (
-            format!("定義 {} — {} の欄 \"{}\" を文字列の鍵で読み、isinstance で形を検めている", smell.definition, holder, field),
-            "判断の層に JSON の形の検めが入っている。形を検める所が判断の中に散ると、何が入力の形の違いで何が業務の断りかを型で分けられず、同じ検めが呼ぶ所ごとに写される。形は通信の境目で型のある値に解き、判断は型のある値だけを見る。(知らせ)".to_string(),
+            format!("definition {} — reads the field \"{}\" of {} with a string key and checks the shape with isinstance", smell.definition, field, holder),
+            "A check of the JSON shape has entered a layer of judgment. If shape checks are scattered inside judgments, the type cannot separate what is a difference in input shape from what is a business refusal, and the same check is copied at every place that calls it. Resolve the shape into a typed value at the communication boundary, and let judgments see only typed values. (A notice)".to_string(),
         ),
         SmellKind::FailureRethrow { failure_type, subject } => (
-            format!("定義 {} — match の腕が失敗の型 {} を受け、{} をそのまま(か包み直して)return している", smell.definition, failure_type, subject),
-            "受けた失敗を 1 段ずつ手で return し直すのは、例外の再送出を手で書いた形。呼ぶ段ごとに同じ腕が要り、1 か所でも写し忘れると失敗が成功の道へ流れる。失敗は Raise で出し、受けて写したい境目だけで on-raise で受ける。(失敗の型は defrecord の :failure True と defeffect の :failure / :absent の宣言から取る)".to_string(),
+            format!("definition {} — a match arm receives the failure type {} and returns {} as it is (or rewrapped)", smell.definition, failure_type, subject),
+            "Re-returning a received failure by hand one level at a time is the form of hand-writing the re-raise of an exception. The same arm is needed at every calling level, and if even one place forgets to copy it, the failure flows into the success path. Raise a failure with Raise, and receive it with on-raise only at the boundary where you want to receive and map it. (Failure types are taken from defrecord's :failure True and the :failure / :absent declarations of defeffect)".to_string(),
         ),
         SmellKind::BindThenReturn { name } => (
-            format!("定義 {} — (<- {} …) の直後に (return {}) だけが続く", smell.definition, name, name),
-            format!("{} は返すためだけの名で、ほかで使われない。束ねと return を 1 つにすれば名が要らない — 失敗を返しているなら Raise で出す形が正しい。", name),
+            format!("definition {} — (<- {} …) is directly followed by only (return {})", smell.definition, name, name),
+            format!("{} is a name used only for returning and is not used elsewhere. If the binding and the return are merged into one, no name is needed; if it is returning a failure, the correct form is to raise it with Raise.", name),
         ),
         SmellKind::FieldsJoined { value, fields } => (
-            format!("定義 {} — {} の欄 {} を 1 本の文字列につないでいる", smell.definition, value, fields.join("・")),
-            "型のある値を文字列に潰すと、受け手は欄を読み直せず(文字列を切り分けるしかない)、欄の意味が型から消える。値のまま渡し、文にするのは人に見せる境目だけにする。".to_string(),
+            format!("definition {} — joins the fields {} of {} into a single string", smell.definition, fields.join(", "), value),
+            "Flattening a typed value into a string leaves the receiver unable to read the fields again (it can only split the string), and the meaning of the fields disappears from the type. Pass the value as it is, and turn it into a sentence only at the boundary that shows it to people.".to_string(),
         ),
         SmellKind::RebuiltAccumulator { name } => (
-            format!("定義 {} — ループの中で {} を (+ {} …) で毎回作り直している", smell.definition, name, name),
-            "蓄えを毎回作り直すと、長さに比例した写しが繰り返されて 2 乗の手間になり、名の書き換えも増える。内包表記で 1 度に作れば、書き換えも作り直しも要らない。".to_string(),
+            format!("definition {} — rebuilds {} every time with (+ {} …) inside a loop", smell.definition, name, name),
+            "Rebuilding the accumulation every time repeats copies proportional to the length, which makes the work quadratic, and also adds more rebinding of the name. If it is built in one go with a comprehension, neither rebinding nor rebuilding is needed.".to_string(),
         ),
     }
 }
@@ -1346,7 +1336,7 @@ mod tests {
     use crate::project::layers::{LayerDescription, LayerSpec, TagReading};
     use std::collections::{BTreeMap, BTreeSet};
 
-    /// 層 2 つ(core に説明あり・foundation は説明なし)の設定。
+    /// Settings with two layers (core has a description; foundation has none).
     fn layers() -> LayerSettings {
         let spec = |name: &str, dir: &str, roles: &[&str], description: LayerDescription| LayerSpec {
             name: name.to_string(),
@@ -1365,16 +1355,16 @@ mod tests {
                     "app/core",
                     &["judgment"],
                     LayerDescription {
-                        summary: Some("業務の判断".into()),
-                        knows: Some("業務の判断".into()),
-                        does_not_know: Some("通信の手段".into()),
+                        summary: Some("business judgment".into()),
+                        knows: Some("business judgment".into()),
+                        does_not_know: Some("means of communication".into()),
                         question: None,
                     },
                 ),
                 spec("foundation", "app/foundation", &["foundation", "translation"], LayerDescription::default()),
             ],
             infer_root: None,
-            role_descriptions: [("translation".to_string(), "翻訳の handler".to_string())].into_iter().collect::<BTreeMap<_, _>>(),
+            role_descriptions: [("translation".to_string(), "translation handler".to_string())].into_iter().collect::<BTreeMap<_, _>>(),
             exclude: BTreeSet::new(),
             extensions: BTreeSet::new(),
             tags: TagReading {
@@ -1398,20 +1388,20 @@ mod tests {
         let narrator = Narrator { layers: Some(&settings), raw: None };
         let placement = Placement { layer: LayerId(0), dir: "app/core".into(), service: None, roles: vec!["translation".into()], by_tags: false };
         let explain = Explain::RoleMismatch { placement: placement.clone(), role: Some("translation".into()), context: Some("peer".into()) };
-        let law = LawSpec { name: "role-law".into(), adr: None, statement: "role は層に合う".into(), rules: Vec::new(), layers: BTreeSet::new() };
+        let law = LawSpec { name: "role-law".into(), adr: None, statement: "role fits the layer".into(), rules: Vec::new(), layers: BTreeSet::new() };
         let out = narrator.explain(&explain, Some(&law));
         assert_eq!(
             out.subject,
-            "この file は層 core(業務の判断) — path が app/core/ の下、タグの role = translation・context = peer — path とタグが食い違う(role translation は層 foundation の役)"
+            "This file is in layer core (business judgment) — path is under app/core/, tag role = translation, context = peer — the path and the tag disagree (role translation is a role of layer foundation)"
         );
         assert_eq!(
             out.reason,
-            "role translation(翻訳の handler)は層 foundation の役。層 core(業務の判断)は外の世界から最も遠い層で、業務の判断を知り、通信の手段は知らないので、ここに置けない。層 core で許す role = judgment。"
+            "role translation (translation handler) is a role of layer foundation. Layer core (business judgment) is the layer farthest from the outside world; it knows business judgment and does not know means of communication, so it cannot be placed here. Roles allowed in layer core: judgment."
         );
-        assert_eq!(out.law_statement.as_deref(), Some("role は層に合う"));
+        assert_eq!(out.law_statement.as_deref(), Some("role fits the layer"));
         assert_eq!(
             narrator.layer_reason(&placement),
-            "path とタグが食い違う — path の置き場所 app/core/ では層 core(業務の判断)、タグの role translation は層 foundation の役(層は path で決める)"
+            "the path and the tag disagree — at the path location app/core/ it is layer core (business judgment), tag role translation is a role of layer foundation (the layer is decided by the path)"
         );
     }
 
@@ -1424,14 +1414,14 @@ mod tests {
             &Explain::ImportDirection { placement, target: "app.foundation.io.send".into(), target_layer: LayerId(1), target_dir: "app/foundation".into() },
             None,
         );
-        assert!(out.subject.starts_with("import 先 app.foundation.io.send は層 foundation(path が app/foundation/ の下)"), "{}", out.subject);
-        // foundation には説明が無い — 層の順から「外の世界に最も近い層」とだけ言う。
+        assert!(out.subject.starts_with("import target app.foundation.io.send is in layer foundation (path under app/foundation/)"), "{}", out.subject);
+        // foundation has no description: from the order of layers it is only said to be "the layer closest to the outside world".
         assert_eq!(
             out.reason,
-            "層 core(業務の判断)は外の世界から最も遠い層で、業務の判断を知り、通信の手段は知らない。core が import してよいのは 層 core だけ。import 先の層 foundation は外の世界に最も近い層なので、core から読むと、core が層 foundation の持つ物に触れる(模擬で handler を差し替えても、その所だけ本物に触る)。"
+            "Layer core (business judgment) is the layer farthest from the outside world; it knows business judgment and does not know means of communication. core may import only layer core. The import target, layer foundation, is the layer closest to the outside world, so reading it from core makes core touch what layer foundation holds (even if handlers are swapped in the simulation, only that place touches the real thing)."
         );
         assert_eq!(out.law_statement, None);
         let untagged = Placement { layer: LayerId(1), dir: "app/foundation".into(), service: None, roles: Vec::new(), by_tags: false };
-        assert_eq!(narrator.layer_reason(&untagged), "path の置き場所で決めた — app/foundation/ の下は層 foundation(タグで役を名乗っていない)");
+        assert_eq!(narrator.layer_reason(&untagged), "Decided by the path location — under app/foundation/ is layer foundation (the role is not declared by a tag)");
     }
 }

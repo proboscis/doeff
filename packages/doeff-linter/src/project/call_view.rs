@@ -1,28 +1,28 @@
-//! 定義の本体の呼びを `f(a, b)` の形で見せる表示の置き換え — editor-json の `rewrites`。
+//! Display replacement that shows the calls in a definition body in the form `f(a, b)` — the `rewrites` of editor-json.
 //!
-//! 呼びを `(f a b)` でなく `f(a,b)` の形で見せ、束縛も `int x <- some-func(0) + 1` のように
-//! 読める形にする。式の途中の effect は `!` の印を残す案 A。
-//! 読むための表示だけで、source の Hy はそのまま(書く向きの変換は持たない)。式の形を読むのはここ 1 か所で、エディタは
-//! 置き換えを描くだけ(Hy を読み直さない)。
+//! Shows a call as `f(a,b)` instead of `(f a b)`, and also makes a binding readable, as in `int x <- some-func(0) + 1`.
+//! Proposal A leaves the `!` mark for an effect in the middle of an expression.
+//! It is a display for reading only; the Hy source stays as it is (there is no conversion in the writing direction). Reading the shape of expressions is in this one place, and the editor only
+//! draws the replacements (it does not re-read Hy).
 //!
-//! 置き換えは「元の文字を隠す範囲と、そこに見せる文字」の列(edit)で表す。名・引数・字面は元の文字のまま残すので、
-//! エディタの定義へ飛ぶ機能・hover はその位置でそのまま効く。並べ替えが要る所(method の `(.m obj a)` → `obj.m(a)`)だけ、
-//! 名を挿し込む文字で見せる。
+//! A replacement is expressed as a list (edit) of "a range of original characters to hide, and the characters to show there". Names, arguments and literals remain as the original characters,
+//! so the editor's jump-to-definition and hover work as they are at that position. Only where reordering is needed (a method's `(.m obj a)` -> `obj.m(a)`),
+//! the name is shown with inserted characters.
 //!
-//! | lisp | 表示 |
+//! | lisp | display |
 //! |---|---|
 //! | `(f a b)` | `f(a, b)` |
 //! | `(f a :key v)` | `f(a, key=v)` |
 //! | `(.get row "k")` | `row.get("k")` |
-//! | `(+ a b)`・`(= a b)`・`(is x None)`・`(not x)` | `a + b`・`a == b`・`x is None`・`not x`(優先順位が変わる所だけ括弧) |
-//! | `(! (f a))` | `!f(a)`(撃つ呼びが effect なら、その effect の名を添えてエディタが装置の絵を描く) |
-//! | `(<- (f a))`(名の無い `<-`) | `<- f(a)` |
-//! | `(Effect a)`(effect の値を作る) | `Effect(a)`(effect の名を添える) |
+//! | `(+ a b)`, `(= a b)`, `(is x None)`, `(not x)` | `a + b`, `a == b`, `x is None`, `not x` (parentheses only where precedence changes) |
+//! | `(! (f a))` | `!f(a)` (if the call being fired is an effect, the effect's name is attached and the editor draws a device glyph) |
+//! | `(<- (f a))` (a nameless `<-`) | `<- f(a)` |
+//! | `(Effect a)` (creating an effect value) | `Effect(a)` (the effect's name is attached) |
 //!
-//! 置き換えるのは defk / deff の本体だけ(見出しと契約の辞書は見出しの係の持ち物)。制御の形(`when`・`if`・`match`・`for` …)と
-//! 知らない macro は lisp のまま — 呼びと見なすのは、頭が呼べる物だと分かる時だけ(import した名・repo の定義・Python の組み込み・
-//! 定義の中の局所の名・`a.b` の形の名)。`require` で入る macro は import の表に載らないので呼びにならない。
-//! 字下げは作り直さない: 引数が次の行へ続く所は、前の引数の後ろに `,` を挿すだけで改行と字下げは元のまま。
+//! Only the bodies of defk / deff are replaced (the heading and the contract dict belong to the heading's owner). Control forms (`when`, `if`, `match`, `for` ...) and
+//! unknown macros stay lisp — a form is treated as a call only when its head is known to be callable (an imported name, a repo definition, a Python built-in,
+//! a local name in the definition, a name of the form `a.b`). Macros that come in via `require` are not in the import table, so they are not calls.
+//! Indentation is not rebuilt: where arguments continue onto the next line, only a `,` is inserted after the previous argument, and line breaks and indentation stay as the original.
 
 use std::collections::HashSet;
 
@@ -37,9 +37,9 @@ use super::signatures::{
 };
 use super::smells::live;
 
-// --- 契約の形 ------------------------------------------------------------------------------
+// --- Shape of the contract ------------------------------------------------------------------------------
 
-/// 置き換えの種類(契約の閉じた集合)。
+/// Kind of replacement (a closed set of the contract).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "lowercase")]
 pub enum RewriteKind {
@@ -49,11 +49,11 @@ pub enum RewriteKind {
     Method,
     /// `(+ a b)` → `a + b`
     Infix,
-    /// `(- a)`・`(not a)` → `-a`・`not a`
+    /// `(- a)`, `(not a)` -> `-a`, `not a`
     Prefix,
     /// `(! e)` → `!e`
     Perform,
-    /// 名の無い `(<- e)` → `<- e`
+    /// A nameless `(<- e)` -> `<- e`
     Bind,
     /// `(get x k)` → `x[k]`
     Subscript,
@@ -61,71 +61,71 @@ pub enum RewriteKind {
     Attribute,
 }
 
-/// 元の文字の範囲を隠し、そこに `text` を見せる(範囲が空なら挿すだけ・`text` が空なら隠すだけ)。
+/// Hides the range of original characters and shows `text` there (if the range is empty, it only inserts; if `text` is empty, it only hides).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct RewriteEdit {
     pub range: Range,
     pub text: String,
-    /// `text` の前に effect の装置の絵を描く時の effect の名(絵はエディタが名から選ぶ)。無ければ null。
+    /// The effect's name when drawing the effect's device glyph before `text` (the editor chooses the glyph from the name). null if none.
     pub effect: Option<String>,
 }
 
-/// 部品(呼びの頭)の種類。
+/// Kind of a part (the head of a call).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "lowercase")]
 pub enum PartRole {
-    /// defeffect か repo の外の effect(effect の値を作る)
+    /// A defeffect or an effect outside the repo (creating an effect value)
     Effect,
     /// defk
     Defk,
     /// deff
     Deff,
-    /// repo の型の名(record などを作る)
+    /// A repo type's name (creating a record, etc.)
     Type,
-    /// import した名・この file の定義
+    /// An imported name, or a definition of this file
     Function,
-    /// Python の組み込み
+    /// A Python built-in
     Builtin,
-    /// 定義の中の局所の名(引数・束縛)
+    /// A local name in the definition (an argument or binding)
     Local,
-    /// `(.m obj …)` の m
+    /// The m of `(.m obj …)`
     Method,
 }
 
-/// 置き換えた式の部品 1 つ(hover が型と定義への link を出すため)。
+/// One part of a replaced expression (so that hover can show the type and a link to the definition).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct RewritePart {
-    /// 元の文字の中の名の範囲。
+    /// The range of the name within the original characters.
     pub range: Range,
     pub name: String,
     pub role: PartRole,
-    /// repo の中の定義(組み込み・repo の外の名は null)。
+    /// The definition in the repo (null for built-ins and names outside the repo).
     pub definition: Option<Location>,
-    /// 呼びの答えの型(defk / deff の答え・effect の値の答え・型の名なら型そのもの。分からなければ null)。
+    /// The type of the call's answer (the answer of a defk / deff, the answer of an effect value, or the type itself if it is a type name; null if unknown).
     pub answer: Option<TypeRef>,
 }
 
-/// 置き換え 1 つ(括弧の組 1 つ)。入れ子の呼びは別の置き換えで、`parent` が外の置き換えの番号。
+/// One replacement (one pair of parentheses). A nested call is a separate replacement, and `parent` is the index of the outer replacement.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct Rewrite {
     pub kind: RewriteKind,
     pub path: String,
-    /// 元の式全体(括弧を含む)。
+    /// The whole original expression (including parentheses).
     pub range: Range,
-    /// 元の lisp の文字(一字一句)。
+    /// The original lisp characters (verbatim).
     pub original: String,
-    /// 置き換えた後の文字(中の置き換えも全部当てた物 — 改行と字下げは元のまま)。
+    /// The characters after replacement (with the inner replacements all applied — line breaks and indentation stay as the original).
     pub text: String,
-    /// この式の分の edit(中の式の分は中の置き換えが持つ)。本文の順。
+    /// The edits for this expression (the inner expressions' edits belong to the inner replacements). In body order.
     pub edits: Vec<RewriteEdit>,
     pub parts: Vec<RewritePart>,
-    /// 外側の置き換えの番号(`rewrites` の中の位置)。外側を元の lisp で見せる時は、中も元の lisp で見せる(括弧の要否が外に依るため)。
+    /// The index of the outer replacement (its position in `rewrites`). When the outer one is shown as the original lisp, the inner one is also shown as the original lisp (whether parentheses are needed depends on the outer one).
     pub parent: Option<usize>,
 }
 
-// --- 演算子 ---------------------------------------------------------------------------------
+// --- Operators ---------------------------------------------------------------------------------
 
-/// 優先順位(Python と同じ順 — 大きいほど強く結ぶ)。
+/// Precedence (the same order as Python — the larger, the tighter it binds).
 mod prec {
     pub const OR: u8 = 1;
     pub const AND: u8 = 2;
@@ -139,13 +139,13 @@ mod prec {
     pub const MUL: u8 = 10;
     pub const UNARY: u8 = 11;
     pub const POWER: u8 = 12;
-    /// `!e` — 撃った答えは値 1 つ(引数・演算の項に括弧は要らない)。
+    /// `!e` — the fired answer is a single value (no parentheses needed for arguments or operands).
     pub const PERFORM: u8 = 13;
-    /// 呼び・method・名・字面。
+    /// A call, method, name or literal.
     pub const ATOM: u8 = 16;
 }
 
-/// 中置の演算子(lisp の頭 → 表示・優先順位・同じ順位の連なりを括弧なしで読めるか)。
+/// Infix operators (lisp head -> display, precedence, whether a chain of the same precedence can be read without parentheses).
 fn infix(head: &str) -> Option<(&'static str, u8)> {
     Some(match head {
         "or" => ("or", prec::OR),
@@ -177,7 +177,7 @@ fn infix(head: &str) -> Option<(&'static str, u8)> {
     })
 }
 
-/// 前置の演算子(引数 1 つの時)。
+/// Prefix operators (when there is one argument).
 fn prefix(head: &str) -> Option<(&'static str, u8)> {
     Some(match head {
         "not" => ("not ", prec::NOT),
@@ -188,7 +188,7 @@ fn prefix(head: &str) -> Option<(&'static str, u8)> {
     })
 }
 
-/// 呼びとは読まない頭(制御の形・束縛・定義・Hy の特別な形と doeff-hy の macro)。局所の名や import に同じ綴りがあっても lisp のまま。
+/// Heads not read as calls (control forms, bindings, definitions, Hy special forms and doeff-hy macros). Even if a local name or an import has the same spelling, they stay lisp.
 const LISP_HEADS: &[&str] = &[
     "if", "when", "unless", "cond", "do", "match", "case", "for", "while", "let", "fn", "fnk", "fn/a", "lambda", "defn",
     "defn/a", "defk", "deff", "defp", "defmacro", "defclass", "defrecord", "defwire", "defenum", "defeffect", "defhandler",
@@ -199,7 +199,7 @@ const LISP_HEADS: &[&str] = &[
     "try-except", "unpack-iterable", "unpack-mapping", "nonlocal", "defmain", "comment", "lazy", "session",
 ];
 
-/// Python の組み込みの呼べる名(頭がこれなら呼び)。
+/// Callable names of Python built-ins (if the head is one of these, it is a call).
 const BUILTINS: &[&str] = &[
     "abs", "all", "any", "bool", "bytes", "callable", "chr", "dict", "dir", "divmod", "enumerate", "filter", "float",
     "format", "frozenset", "getattr", "hasattr", "hash", "id", "int", "isinstance", "issubclass", "iter", "len", "list",
@@ -208,40 +208,40 @@ const BUILTINS: &[&str] = &[
     "RuntimeError", "Exception", "NotImplementedError", "AssertionError", "StopIteration", "IndexError", "AttributeError",
 ];
 
-/// 局所の名を束ねる頭(最初の `[…]` の中の記号が名)。
+/// Heads that bind local names (the symbols in the first `[…]` are the names).
 const BINDER_BRACKETS: &[&str] = &["fn", "fnk", "lambda", "defn", "for", "lfor", "sfor", "dfor", "gfor", "let", "with", "except"];
 
-// --- 読み ---------------------------------------------------------------------------------
+// --- Reading ---------------------------------------------------------------------------------
 
-/// 式の置かれた場所(括弧が要るかを決める)。
+/// The place an expression is put (decides whether parentheses are needed).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Ctx {
-    /// 置き換えない lisp の形の中(`(when (and a b) …)`)— 演算は括弧を残す。
+    /// Inside a lisp form that is not replaced (`(when (and a b) …)`) — operations keep their parentheses.
     Lisp,
-    /// 引数・束縛の値・本体の文 — 括弧は要らない。
+    /// An argument, a binding's value, or a statement of the body — no parentheses needed.
     Free,
-    /// `!` の中 — effect の絵は `!` が持つ(呼びの頭には描かない)。
+    /// Inside `!` — the effect glyph belongs to `!` (it is not drawn on the call's head).
     Performed,
-    /// 中置の項(外の優先順位と、右の項か)。
+    /// An infix operand (the outer precedence, and whether it is the right operand).
     Operand { outer: u8, right: bool },
-    /// method の的・`!` の中身の前 — 名か呼びでないと括弧が要る。
+    /// The target of a method, or before the contents of `!` — parentheses are needed unless it is a name or a call.
     Receiver,
 }
 
 impl Ctx {
-    /// この場所に優先順位 `p` の式を括弧なしで置けないか。
+    /// Whether an expression of precedence `p` cannot be placed here without parentheses.
     fn needs_parens(self, p: u8) -> bool {
         match self {
             Ctx::Lisp => p < prec::PERFORM,
             Ctx::Free | Ctx::Performed => false,
-            // 同じ順位の右の項は括弧を残す(a - (b - c))。比べるの連なり a < b < c は意味が変わるので同じ順位でも残す
+            // A right operand of the same precedence keeps its parentheses (a - (b - c)). A comparison chain a < b < c changes meaning, so it keeps them even at the same precedence
             Ctx::Operand { outer, right } => p < outer || (p == outer && (right || outer == prec::COMPARE)),
             Ctx::Receiver => p < prec::ATOM,
         }
     }
 }
 
-/// 1 file の置き換えを作る(defk / deff の本体だけ)。
+/// Builds the replacements of one file (only the bodies of defk / deff).
 pub(super) fn file_rewrites(world: &World, reader: &FileReader, forms: &[Form]) -> Vec<Rewrite> {
     let file_names = file_level_names(reader, forms);
     let mut out = Vec::new();
@@ -263,21 +263,21 @@ pub(super) fn file_rewrites(world: &World, reader: &FileReader, forms: &[Form]) 
     out
 }
 
-/// 呼びと読める頭を決める名(定義の中の局所の名と、file の最上位の名)— 本体の文字(`body_view.rs`)が式 1 つずつ読むため。
+/// The names that decide which heads are read as calls (local names in the definition, and the file's top-level names) — so that the body view (`body_view.rs`) reads expressions one at a time.
 pub(super) struct CallNames {
     pub(super) locals: HashSet<String>,
     pub(super) file_names: HashSet<String>,
 }
 
 impl CallNames {
-    /// 定義 1 つの名(file の最上位の名は `file_names` で渡す)。
+    /// The names of one definition (the file's top-level names are passed in `file_names`).
     pub(super) fn of(reader: &FileReader, file_names: &HashSet<String>, shape: &DefinitionShape) -> CallNames {
         CallNames { locals: definition_locals(reader, shape), file_names: file_names.clone() }
     }
 }
 
-/// 本体の文字の式 1 つの置き換え(文の値の場所 = 括弧の要らない場所で読む)。effect を撃つ `!` は印を出さず、呼びの頭の
-/// effect の部品が絵を持つ(`(! (E a))` → `E(a)` — 読む面の本体の文字の表)。effect でない `!` は残す。
+/// A replacement of one expression of the body view (the place of a statement's value = read as a place where parentheses are not needed). The `!` that fires an effect gives no mark, and the effect part of the call's head
+/// carries the glyph (`(! (E a))` -> `E(a)` — the table of the body view for the reading surface). A `!` that is not an effect is kept.
 pub(super) fn expression_rewrites(world: &World, reader: &FileReader, names: &CallNames, form: &Form) -> Vec<Rewrite> {
     let mut walker =
         Walker { world, reader, locals: &names.locals, file_names: &names.file_names, bang: BangStyle::Glyph, out: Vec::new() };
@@ -287,7 +287,7 @@ pub(super) fn expression_rewrites(world: &World, reader: &FileReader, names: &Ca
     out
 }
 
-/// 定義の引数と、本体で束ねた局所の名。
+/// The definition's arguments, and the local names bound in the body.
 fn definition_locals(reader: &FileReader, shape: &DefinitionShape) -> HashSet<String> {
     let mut locals = HashSet::new();
     if let Some(params) = shape.params {
@@ -299,14 +299,14 @@ fn definition_locals(reader: &FileReader, shape: &DefinitionShape) -> HashSet<St
     locals
 }
 
-/// 撃つ式(`!` / `<-` の中身)の頭が effect ならその名(呼びと読む頭の決め方は置き換えと同じ)。
+/// If the head of a fired expression (the contents of `!` / `<-`) is an effect, its name (the way of deciding which heads are read as calls is the same as for replacements).
 pub(super) fn performed_effect(world: &World, reader: &FileReader, names: &CallNames, inner: &Form) -> Option<String> {
     let walker =
         Walker { world, reader, locals: &names.locals, file_names: &names.file_names, bang: BangStyle::Glyph, out: Vec::new() };
     walker.performed_effect(inner)
 }
 
-/// この file の最上位で定義・束縛した名(`defn`・`setv`・`val` … の名)。
+/// Names defined or bound at the top level of this file (the names of `defn`, `setv`, `val` ...).
 pub(super) fn file_level_names(reader: &FileReader, forms: &[Form]) -> HashSet<String> {
     let mut names = HashSet::new();
     for form in top_definitions(&reader.hy, forms) {
@@ -330,7 +330,7 @@ pub(super) fn file_level_names(reader: &FileReader, forms: &[Form]) -> HashSet<S
     names
 }
 
-/// form の中の記号を全部集める(引数の並び・`[x xs]` の束ね)。
+/// Collects all symbols in a form (the parameter list, the bindings of `[x xs]`).
 fn collect_symbols(reader: &FileReader, form: &Form, out: &mut HashSet<String>) {
     match &form.node {
         Node::Symbol => {
@@ -343,7 +343,7 @@ fn collect_symbols(reader: &FileReader, form: &Form, out: &mut HashSet<String>) 
     }
 }
 
-/// 定義の中で束ねた局所の名(`val`・`var`・`setv`・`<-`・`:=` の名と、`fn`・`for` … の最初の `[…]` の記号)。
+/// Local names bound inside a definition (the names of `val`, `var`, `setv`, `<-`, `:=`, and the symbols in the first `[…]` of `fn`, `for` ...).
 fn collect_locals(reader: &FileReader, form: &Form, out: &mut HashSet<String>) {
     let Some(items) = live(form) else {
         if let Node::Seq { items, .. } = &form.node {
@@ -389,21 +389,21 @@ fn collect_locals(reader: &FileReader, form: &Form, out: &mut HashSet<String>) {
     }
 }
 
-/// 呼びの頭の読み(何を呼ぶか)。
+/// Reading of the call's head (what is called).
 struct Callee {
     role: PartRole,
     definition: Option<Location>,
     answer: Option<TypeRef>,
-    /// effect の値を作る呼びなら effect の名。
+    /// If it is a call creating an effect value, the effect's name.
     effect: Option<String>,
 }
 
-/// effect を撃つ `!` の見せ方。
+/// How to show a `!` that fires an effect.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum BangStyle {
-    /// `!E(a)` — `!` を残し、`!` の edit が effect の名を持つ(editor の上の置き換え・17 節)。
+    /// `!E(a)` — keeps the `!`, and the `!` edit carries the effect's name (the replacement on the editor, section 17).
     Mark,
-    /// `E(a)` — `!` を出さず、呼びの頭の `(` の edit が effect の名を持つ(読む面の本体の文字)。effect でない `!` は残す。
+    /// `E(a)` — does not show the `!`, and the edit of the call head's `(` carries the effect's name (the body view for the reading surface). A `!` that is not an effect is kept.
     Glyph,
 }
 
@@ -425,13 +425,13 @@ impl Walker<'_, '_, '_> {
         self.reader.lines.position(offset).line
     }
 
-    /// `start..end` の文字を隠して `text` を見せる edit。
+    /// An edit that hides the characters `start..end` and shows `text`.
     fn edit(&self, start: usize, end: usize, text: &str, effect: Option<String>) -> RewriteEdit {
         RewriteEdit { range: self.range(start, end), text: text.to_string(), effect }
     }
 
-    /// 2 つの form の間を `sep` にする edit — 間が同じ行の空白だけなら空白を置き換え、改行や註を挟むなら前の form の後ろに
-    /// `sep` の空白を除いた物を挿す(改行と字下げは元のまま)。
+    /// An edit that makes `sep` between two forms — if the gap is only whitespace on the same line, the whitespace is replaced; if it spans a line break or comment, what remains of `sep` without its whitespace
+    /// is inserted after the previous form (line breaks and indentation stay as the original).
     fn separator(&self, before: &Form, after: &Form, sep: &str) -> RewriteEdit {
         let gap = self.reader.hy.src.get(before.span.end..after.span.start).unwrap_or("");
         if !gap.is_empty() && gap.chars().all(|c| c == ' ' || c == '\t') {
@@ -441,7 +441,7 @@ impl Walker<'_, '_, '_> {
         }
     }
 
-    /// 頭の記号を呼べる物として読む(呼びと読めなければ None — lisp のまま)。
+    /// Reads the head symbol as something callable (None if it cannot be read as a call — stays lisp).
     fn callee(&self, head: &str) -> Option<Callee> {
         if LISP_HEADS.contains(&head) || head.starts_with('.') || head.starts_with('#') {
             return None;
@@ -478,14 +478,14 @@ impl Walker<'_, '_, '_> {
         }
         let imported = self.reader.scope.bindings.contains_key(head.split('.').next().unwrap_or(head));
         if imported && world.is_foreign_effect(&qualified) {
-            // repo の外の effect(doeff 本体の Delay・Ask など — import した大文字の名で repo の型でも定義でもない)
+            // An effect outside the repo (doeff's own Delay, Ask, etc. — an imported capitalized name that is neither a repo type nor a definition)
             return Some(Callee { role: PartRole::Effect, definition: None, answer: None, effect: Some(last_segment(head).to_string()) });
         }
         if imported || self.file_names.contains(head) {
             return plain(PartRole::Function);
         }
         if head.contains('.') && !head.ends_with('.') {
-            // `json.dumps`・`self.f`・`request.of` — 名の中の属性の呼び(macro は属性にならない)
+            // `json.dumps`, `self.f`, `request.of` — a call of an attribute within a name (a macro does not become an attribute)
             return plain(PartRole::Function);
         }
         if BUILTINS.contains(&head) {
@@ -494,7 +494,7 @@ impl Walker<'_, '_, '_> {
         None
     }
 
-    /// form を読み、置き換えを足す(`parent` = 外の置き換えの番号)。
+    /// Reads a form and adds replacements (`parent` = the index of the outer replacement).
     fn walk(&mut self, form: &Form, ctx: Ctx, parent: Option<usize>) {
         match &form.node {
             Node::Seq { delim: Delim::Paren, .. } => self.walk_paren(form, ctx, parent),
@@ -511,7 +511,7 @@ impl Walker<'_, '_, '_> {
         }
     }
 
-    /// 子を lisp の中として読む(置き換えない形の中身)。
+    /// Reads the children as being inside lisp (the contents of a form that is not replaced).
     fn walk_lisp_children(&mut self, items: &[&Form], parent: Option<usize>) {
         for item in items {
             self.walk(item, Ctx::Lisp, parent);
@@ -585,7 +585,7 @@ impl Walker<'_, '_, '_> {
         }
     }
 
-    /// 新しい置き換えを足して番号を返す(edit と部品は後で入れる)。
+    /// Adds a new replacement and returns its index (edits and parts are filled in later).
     fn push(&mut self, kind: RewriteKind, form: &Form, parent: Option<usize>) -> usize {
         self.out.push(Rewrite {
             kind,
@@ -600,7 +600,7 @@ impl Walker<'_, '_, '_> {
         self.out.len() - 1
     }
 
-    /// 引数の並び(`a b :k v #* xs`)の区切りと keyword の edit を足し、引数を読む。`first_sep` は最初の引数の前の区切りを置く前の form。
+    /// Adds the separators and keyword edits of an argument list (`a b :k v #* xs`), and reads the arguments. `first_sep` is the form before which the separator before the first argument is placed.
     fn arguments(&mut self, index: usize, previous: &Form, args: &[&Form], mut opened: Option<RewriteEdit>) {
         let mut edits = Vec::new();
         let mut prev = previous;
@@ -678,7 +678,7 @@ impl Walker<'_, '_, '_> {
         self.arguments(index, head, args, Some(opened));
     }
 
-    /// `(.m obj a)` → `obj.m(a)`(的と m が別の行なら lisp のまま)。
+    /// `(.m obj a)` -> `obj.m(a)` (stays lisp if the target and m are on different lines).
     fn method(&mut self, form: &Form, head: &Form, name: &str, args: &[&Form], parent: Option<usize>) {
         let target = args[0];
         if self.line_of(form.span.start) != self.line_of(target.span.start) {
@@ -718,7 +718,7 @@ impl Walker<'_, '_, '_> {
         self.arguments(index, target, rest, Some(opened));
     }
 
-    /// `(op a b …)` → `a op b op …`(括弧が要る場所なら括弧を残す)。頭と最初の項が別の行なら lisp のまま。
+    /// `(op a b …)` -> `a op b op …` (keeps parentheses where they are needed). Stays lisp if the head and the first operand are on different lines.
     fn infix(&mut self, form: &Form, args: &[&Form], text: &str, p: u8, ctx: Ctx, parent: Option<usize>) {
         let first = args[0];
         if self.line_of(form.span.start) != self.line_of(first.span.start) {
@@ -742,7 +742,7 @@ impl Walker<'_, '_, '_> {
         self.out[index].edits.extend(edits);
     }
 
-    /// `(- a)` → `-a`・`(not a)` → `not a`。
+    /// `(- a)` -> `-a`, `(not a)` -> `not a`.
     fn prefix_op(&mut self, form: &Form, arg: &Form, text: &str, p: u8, ctx: Ctx, parent: Option<usize>) {
         if self.line_of(form.span.start) != self.line_of(arg.span.start) {
             let items = live(form).unwrap_or_default();
@@ -761,7 +761,7 @@ impl Walker<'_, '_, '_> {
         self.out[index].edits.extend(edits);
     }
 
-    /// `(get x a b)` → `x[a][b]`・`(. obj a b)` → `obj.a.b`(的と最初の鍵が別の行なら lisp のまま)。
+    /// `(get x a b)` -> `x[a][b]`, `(. obj a b)` -> `obj.a.b` (stays lisp if the target and the first key are on different lines).
     fn chain(&mut self, form: &Form, args: &[&Form], kind: RewriteKind, parent: Option<usize>) {
         let target = args[0];
         if self.line_of(form.span.start) != self.line_of(target.span.start) {
@@ -780,7 +780,7 @@ impl Walker<'_, '_, '_> {
             if gap.chars().all(|c| c == ' ' || c == '\t') {
                 edits.push(self.edit(before.span.end, key.span.start, &shown, None));
             } else {
-                // 鍵が次の行へ続く形は 1 行に並べられないので lisp のまま
+                // A form whose key continues onto the next line cannot be put on one line, so it stays lisp
                 self.out.truncate(index);
                 let items = live(form).unwrap_or_default();
                 self.walk_lisp_children(&items, parent);
@@ -792,7 +792,7 @@ impl Walker<'_, '_, '_> {
         self.out[index].edits.extend(edits);
     }
 
-    /// `(! e)` → `!e`(撃つ呼びが effect なら `!` に effect の名を添える)。
+    /// `(! e)` -> `!e` (if the call being fired is an effect, the effect's name is attached to the `!`).
     fn perform(&mut self, form: &Form, head: &Form, inner: &Form, ctx: Ctx, parent: Option<usize>) {
         if self.line_of(head.span.start) != self.line_of(inner.span.start) {
             self.walk(inner, Ctx::Lisp, parent);
@@ -815,13 +815,13 @@ impl Walker<'_, '_, '_> {
         self.out[index].edits.extend(edits);
     }
 
-    /// 撃つ式の頭が effect ならその名。
+    /// If the head of a fired expression is an effect, its name.
     fn performed_effect(&self, inner: &Form) -> Option<String> {
         let head = live(inner)?.first().and_then(|h| self.reader.hy.symbol(h))?;
         self.callee(head).and_then(|c| c.effect)
     }
 
-    /// `<-`: 名の無い `(<- e)` は `<- e` に、名のある `(<- x T e)` は束縛の係が描くので値だけ読む。
+    /// `<-`: a nameless `(<- e)` becomes `<- e`; a named `(<- x T e)` is drawn by the binding's owner, so only the value is read.
     fn bind(&mut self, form: &Form, head: &Form, args: &[&Form], parent: Option<usize>) {
         let absent_suffix = args.len() >= 3
             && matches!(args[args.len() - 2].node, Node::Keyword)
@@ -847,15 +847,15 @@ impl Walker<'_, '_, '_> {
     }
 }
 
-/// module まで含めた名の最後の区切り。
+/// The last separator of a name including its module.
 fn last_segment(name: &str) -> &str {
     name.rsplit('.').next().unwrap_or(name)
 }
 
-/// 置き換えごとに、置き換えた後の文字(中の置き換えも当てた物)を入れ、edit を本文の順に並べる。
+/// For each replacement, put in the characters after replacement (with the inner replacements applied), and arrange the edits in body order.
 fn fill_texts(reader: &FileReader, rewrites: &mut [Rewrite]) {
-    // 位置は行の表から戻す(source の頭から数え直さない)・編集の位置は 1 度だけ戻す(並べ替えの比べのたびに戻さない)— 1 file の
-    // 書き換えと編集の数の分だけ file の長さを数え直し、見出しの 1 回で 0.06〜0.08 秒かかっていた。
+    // Positions are converted back from the line table (not recounted from the head of the source), and the edit positions are converted only once (not on every comparison of sorting) — the length of the file was recounted
+    // as many times as the file's rewrites and edits, and it took 0.06-0.08 seconds for a single heading.
     let offset = |p: crate::position::Position| reader.lines.offset(p);
     let spans: Vec<(usize, usize)> = rewrites.iter().map(|r| (offset(r.range.start), offset(r.range.end))).collect();
     let mut all: Vec<(usize, usize, String)> = Vec::new();
@@ -870,7 +870,7 @@ fn fill_texts(reader: &FileReader, rewrites: &mut [Rewrite]) {
     for (rewrite, (start, end)) in rewrites.iter_mut().zip(spans) {
         let mut text = String::new();
         let mut at = start;
-        // all は始まりの順 — 範囲の始まりから二分探索で入り、始まりが範囲の終わりを越えたら止める(書き換えごとに全部の編集をなめない)
+        // all is in order of start — enter by binary search from the range's start, and stop when a start passes the range's end (do not scan all edits for each rewrite)
         let first = all.partition_point(|(s, _, _)| *s < start);
         for (s, e, shown) in all[first..].iter().take_while(|(s, _, _)| *s <= end).filter(|(_, e, _)| *e <= end) {
             if *s < at {
@@ -890,7 +890,7 @@ mod tests {
     use super::super::signatures::{read_file, World};
     use super::*;
 
-    /// 根に file を並べ、1 file の置き換えを読む。
+    /// Arrange the file under a root and read the replacements of one file.
     fn rewrites(files: &[(&str, &str)], target: &str) -> Vec<Rewrite> {
         let dir = tempfile::tempdir().unwrap();
         let root = dir.path().canonicalize().unwrap();
@@ -902,23 +902,23 @@ mod tests {
         let source = files.iter().find(|(rel, _)| *rel == target).unwrap().1;
         let world = World::build(&root, Some((target, source)));
         let rewrites = read_file(&world, &root, target, source, |reader, forms, _| file_rewrites(&world, reader, forms));
-        // 1 file の実行の表(書いた file が名指す module の file だけ)でも置き換えは同じ。
+        // The table of a single-file run (only the files the written file names) gives the same replacements.
         let named = World::build_for_file(&root, target, source);
         assert_eq!(read_file(&named, &root, target, source, |reader, forms, _| file_rewrites(&named, reader, forms)), rewrites, "{target}");
         rewrites
     }
 
-    /// 外側の置き換え(parent が無い物)の `元 → 表示` の対。
+    /// The pairs of `original -> display` of the outer replacements (those with no parent).
     fn shown(found: &[Rewrite]) -> Vec<(String, String)> {
         found.iter().filter(|r| r.parent.is_none()).map(|r| (r.original.clone(), r.text.clone())).collect()
     }
 
-    /// 1 つの defk の本体を読み、外側の置き換えの表示を返す。
+    /// Reads the body of one defk and returns the display of the outer replacements.
     fn body(lines: &str) -> Vec<String> {
         let intent = r#"
-(defrecord Row "行" (#^ str id))
-(defeffect ReadRow "行を読む" {:fields [(: id str)] :answer Row :tags {:context "d" :role "intent"}})
-(defeffect Emit "出す" {:fields [(: text str)] :answer None :tags {:context "d" :role "intent"}})
+(defrecord Row "Row" (#^ str id))
+(defeffect ReadRow "Read a row" {:fields [(: id str)] :answer Row :tags {:context "d" :role "intent"}})
+(defeffect Emit "Emit" {:fields [(: text str)] :answer None :tags {:context "d" :role "intent"}})
 "#;
         let core = format!(
             r#"(require doeff-hy.macros [defk <- val var])
@@ -980,22 +980,22 @@ mod tests {
   x)
 "#;
         let intent = r#"
-(defrecord Row "行" (#^ str id))
-(defeffect ReadRow "行を読む" {:fields [(: id str)] :answer Row :tags {:context "d" :role "intent"}})
-(defeffect Emit "出す" {:fields [(: text str)] :answer None :tags {:context "d" :role "intent"}})
+(defrecord Row "Row" (#^ str id))
+(defeffect ReadRow "Read a row" {:fields [(: id str)] :answer Row :tags {:context "d" :role "intent"}})
+(defeffect Emit "Emit" {:fields [(: text str)] :answer None :tags {:context "d" :role "intent"}})
 "#;
         let found = rewrites(&[("demo/intent.hy", intent), ("demo/core.hy", core)], "demo/core.hy");
         let texts: Vec<String> = shown(&found).into_iter().map(|(_, t)| t).collect();
         assert_eq!(texts, vec!["!some-func(0) + 1", "!ReadRow(\"id\")", "<- Emit(\"hi\")", "ReadRow(\"id\")", "ReadRow(\"id\")"]);
-        // 式の途中の defk の `!` は絵なし、effect の `!` は effect の名を持つ
+        // A defk's `!` in the middle of an expression has no glyph; an effect's `!` carries the effect's name
         let bang = |text: &str| found.iter().find(|r| r.kind == RewriteKind::Perform && r.text == text).unwrap().edits[0].effect.clone();
         assert_eq!(bang("!some-func(0)"), None);
         assert_eq!(bang("!ReadRow(\"id\")"), Some("ReadRow".to_string()));
-        // `!` の中の effect の呼びは絵を二重に持たない。`<-` の右辺と、値を作るだけの呼びは頭に絵を持つ
+        // An effect's call inside `!` does not carry the glyph twice. The right side of `<-` and calls that only create a value carry the glyph on the head
         let call_glyphs: Vec<Option<String>> =
             found.iter().filter(|r| r.kind == RewriteKind::Call && r.parts[0].role == PartRole::Effect).map(|r| r.edits[0].effect.clone()).collect();
         assert_eq!(call_glyphs, vec![None, Some("Emit".to_string()), Some("ReadRow".to_string()), Some("ReadRow".to_string())]);
-        // 部品は定義の位置と答えの型を持つ
+        // A part carries the definition's position and the answer's type
         let part = &found.iter().find(|r| r.text == "some-func(0)").unwrap().parts[0];
         assert_eq!(part.role, PartRole::Defk);
         assert!(part.definition.is_some());
@@ -1004,7 +1004,7 @@ mod tests {
 
     #[test]
     fn unknown_macros_and_control_forms_stay_lisp() {
-        // 知らない頭(require の macro・定義の無い名)と制御の形は lisp のまま。中の呼びだけ置き換える(演算は lisp の中で括弧を残す)
+        // Unknown heads (a macro from require, a name with no definition) and control forms stay lisp. Only the calls inside are replaced (operations keep parentheses inside lisp)
         assert_eq!(body("  (my-macro a b)"), Vec::<String>::new());
         assert_eq!(body("  (when (and a b) (shape-of a))"), vec!["(a and b)", "shape-of(a)"]);
         assert_eq!(body("  (lfor x items (len x))"), vec!["len(x)"]);

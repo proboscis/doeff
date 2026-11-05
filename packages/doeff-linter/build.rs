@@ -1,15 +1,15 @@
-//! この binary を組んだ doeff の commit を env DOEFF_LINTER_COMMIT として埋める(`--version` と editor-json の `linter` が名乗る)。
+//! Embeds the doeff commit this binary was built from as env DOEFF_LINTER_COMMIT (reported by `--version` and by `linter` in editor-json).
 //!
-//! - 自動の組み直し(dotfiles の agentcli doeff_linter_follow)は env DOEFF_LINTER_BUILD_COMMIT に 40 桁の sha を渡す — それをそのまま使う。
-//! - 手で組んだ時は `git rev-parse HEAD`。linter か indexer の dir に commit していない変更が在れば `+dirty` を付ける
-//!   (手元の変更を載せた binary が本線の commit を名乗らないため)。git が無ければ `unknown`。
+//! - Automatic rebuilds (dotfiles agentcli doeff_linter_follow) pass a 40-digit sha in env DOEFF_LINTER_BUILD_COMMIT — it is used as is.
+//! - For a manual build, use `git rev-parse HEAD`. If the linter or indexer dir has uncommitted changes, append `+dirty`
+//!   (so a binary carrying local changes does not claim the mainline commit). Without git, `unknown`.
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
-/// crate の dir で git を撃ち、成功した時の stdout(前後の空白を除く)を返す。
+/// Runs git in the crate dir and returns its stdout (trimmed) on success.
 ///
-/// env の `GIT_*` は外す: 別の repo の git の hook の中で組まれると(その repo の hook が `uv run` で環境を同期する時)、git が hook に
-/// 渡す `GIT_DIR` などが `-C` より勝ち、その repo の HEAD を doeff の commit として名乗る。
+/// Env `GIT_*` is removed: when built inside another repo's git hook (e.g. that repo's hook syncs the environment with `uv run`), the
+/// `GIT_DIR` etc. that git passes to the hook would take precedence over `-C`, and that repo's HEAD would be reported as the doeff commit.
 fn git(dir: &Path, args: &[&str]) -> Option<String> {
     let mut command = Command::new("git");
     for (name, _) in std::env::vars_os() {
@@ -23,9 +23,9 @@ fn git(dir: &Path, args: &[&str]) -> Option<String> {
 
 fn main() {
     println!("cargo:rerun-if-env-changed=DOEFF_LINTER_BUILD_COMMIT");
-    let crate_dir = PathBuf::from(std::env::var("CARGO_MANIFEST_DIR").expect("cargo が CARGO_MANIFEST_DIR を渡す"));
+    let crate_dir = PathBuf::from(std::env::var("CARGO_MANIFEST_DIR").expect("cargo passes CARGO_MANIFEST_DIR"));
     let indexer_dir = crate_dir.join("../doeff-indexer");
-    // 手で組む時に古い commit を名乗らないよう、HEAD の動き(commit・checkout)と source の変更で build.rs を撃ち直させる。
+    // So a manual build does not report a stale commit, re-run build.rs on HEAD movement (commit, checkout) and source changes.
     for dir in [crate_dir.join("src"), indexer_dir.join("src")] {
         println!("cargo:rerun-if-changed={}", dir.display());
     }

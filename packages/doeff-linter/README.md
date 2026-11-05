@@ -5,8 +5,8 @@ A high-performance linter for enforcing code quality and immutability patterns i
 ## Features
 
 - **27 specialized rules** for code quality, immutability, and workflow replay safety
-- **層の規則 DOEFF101〜108**(Hy と Python の両方): 純粋な層と外の世界に触る層の決まりを repo ごとの設定で判じる(下の「層の規則」)
-- **エディタ向けの出力** `--output-format editor-json`(doeff-runner が表示する。判定の正本はこの linter)
+- **Layer rules DOEFF101-108** (both Hy and Python): judge the conventions of the pure layers and the layers that touch the outside world, with per-repo settings (see "Layer rules" below)
+- **Editor output** `--output-format editor-json` (shown by doeff-runner. This linter is the source of truth for judgments)
 - **Configurable via pyproject.toml**
 - **noqa comments** for per-line rule suppression
 - **Fast** - written in Rust for maximum performance
@@ -83,144 +83,144 @@ skip_test_functions = true
 | DOEFF012 | No Append Loop Pattern | Use list comprehension instead of empty list + for loop append |
 | DOEFF013 | Prefer Maybe Monad | Use `Maybe[T]` instead of `Optional[T]` or `T \| None` |
 | DOEFF014 | No Try-Except Blocks | Use doeff's error handling effects instead of try-except |
-| DOEFF032 | Rule Population Declaration Breach | 規則の母集団から外した層(architecture.hy の `:exempt`)の module が業務の module を import している・package の宣言を読めず母集団を決められない |
-| DOEFF101 | Layer Import Direction | 層の module は設定で許した層の module だけを import する |
-| DOEFF102 | Layer Forbidden Module | 層ごとに禁じた module(I/O の module など)を直に import しない |
-| DOEFF103 | Types-Only Layer | 型だけの層に関数と handler を定めない |
-| DOEFF104 | Module Declares Tags | 層の module の定義はタグで文脈(context)と役(role)を名乗る |
-| DOEFF105 | Role Matches Layer | タグの role はその層で許された物 |
-| DOEFF106 | Raw Side Effect Placement | 生の副作用に直に触る定義は許された層にだけ置く(Hy) |
-| DOEFF107 | Raw Side Effect Via Call | 呼ぶ定義を通して生の副作用に届く定義の知らせ(info・Hy) |
-| DOEFF108 | Environment Name In Business Code | 業務の file・handler・組み立ての関数の名に環境の語を付けない |
-| DOEFF109 | Service Boundary | service A の判断と翻訳の層は、service B の同じ層を読まない(B の intent と共有の置き場は読める) |
-| DOEFF110 | No defn | Hy の定義は defn / defn/a ではなく defk で書く |
-| DOEFF111 | deff Needs A Reason | deff には `; defk にできない: <理由>` の註を付ける |
-| DOEFF112 | Definition Tags Required | defk・deff・defp・defhandler・defeffect は :tags で必須の鍵を名乗る |
-| DOEFF113 | Context Matches Service | タグの :context と置き場の service が食い違う(info) |
-| DOEFF119 | Class Touches The World Or Holds State | 外の世界に触る class は error・self を書き換える class は warning・欄だけの class は defrecord を勧める info |
-| DOEFF118 | Tests Are deftest | 検の置き場の検は deftest で書く(名が test の defn・deff・defk・fn の束縛を置かない) |
-| DOEFF121 | Shape Check In Judgment | 判断の層の定義が文字列の鍵の `(.get x "欄")` をその欄への isinstance で検める(JSON の形の検めは protocol の defwire へ) |
-| DOEFF122 | Hand-Written Failure Rethrow | match の腕が宣言した失敗の型を受け、受けた値か包み直した値を return するだけ(`(<- (Raise …))` と on-raise へ) |
-| DOEFF123 | Bind Then Return | `(<- x T (f …))` の直後の `(return x)` で x を他で使わない |
-| DOEFF124 | Fields Joined Into Text | 同じ値の 2 つ以上の欄を文字列と一緒に `+` か f 文字列でつなぐ |
-| DOEFF125 | Rebuilt Accumulator | for / while の中の `(:= xs (+ xs #(…)))`(内包表記へ) |
-| DOEFF128 | Unreadable Hy File | 規則が読む Hy の file を読み取り器が最後まで読めない(有効な規則に関わらず error — 違反が欠けているのを黙らせない) |
-| DOEFF126 | defk Called Bare | defk の答えを値として使う所(比べ・演算・組み込みの関数・method・条件・繰り返しの元・record の欄・受ける引数の `:pre` の型が Program を受け得ない defk の呼びの引数)で defk を素で呼ぶ(error) |
-| DOEFF127 | Effects Disagree With Inference | `:effects` を書いた defk が、宣言に無い effect を起こす(位置 = 経由した呼び)か、宣言した effect を起こさない(位置 = `:effects` の中の名)(warning) |
-| DOEFF175 | Stale Branch On A Declared Absent Or Failure | defeffect が `:absent` / `:failure` で宣言した型を、その effect の答えを束ねた変数(`(<- x (E …))`・`(val x (! (E …)))`)に対して match の腕・isinstance(型の tuple・cond の枝も)で値として分ける古い分岐(critical・登録簿で下げない — `<-` はその型を束ねないので枝は通らない。maybe / on-raise / `:absent` へ) |
-| DOEFF130 | Translation Emits Intent | 翻訳の層(既定 protocol)の handler — defhandler と `[effect k]` を受ける関数 — が業務の intent(既定 層 intent の型)を出す。import した defk の先まで辿る(上限は `translation_effects.max_depth`)(error・仕様 21 節) |
-| DOEFF120 | JsonValue Outside Wire Modules | JsonValue・JsonObject を使ってよいのは汎用の解き手と、architecture.hy の `:wire-modules` に挙げた foundation の送受信の module だけ |
+| DOEFF032 | Rule Population Declaration Breach | A module in a layer excluded from the rule population (`:exempt` in architecture.hy) imports a business module, or the package declaration cannot be read so the population cannot be decided |
+| DOEFF101 | Layer Import Direction | A layer's modules import only modules of the layers that the settings allow |
+| DOEFF102 | Layer Forbidden Module | Do not import directly the modules forbidden per layer (such as I/O modules) |
+| DOEFF103 | Types-Only Layer | Do not define functions or handlers in a types-only layer |
+| DOEFF104 | Module Declares Tags | Definitions in a layer's modules declare their context and role with tags |
+| DOEFF105 | Role Matches Layer | A tag's role is one allowed in that layer |
+| DOEFF106 | Raw Side Effect Placement | Definitions that touch raw side effects directly are placed only in allowed layers (Hy) |
+| DOEFF107 | Raw Side Effect Via Call | Notice (info, Hy) of a definition that reaches a raw side effect through the definitions it calls |
+| DOEFF108 | Environment Name In Business Code | Do not put environment words in the names of business files, handlers, or assembly functions |
+| DOEFF109 | Service Boundary | The judgment and translation layers of service A do not read the same layers of service B (B's intent and the shared location can be read) |
+| DOEFF110 | No defn | Write Hy definitions with defk, not defn / defn/a |
+| DOEFF111 | deff Needs A Reason | A deff needs a `; defk にできない: <reason>` comment (the marker text is configurable via `definitions.deff_reason_marker`) |
+| DOEFF112 | Definition Tags Required | defk, deff, defp, defhandler and defeffect declare the required keys in :tags |
+| DOEFF113 | Context Matches Service | A tag's :context disagrees with the service of its location (info) |
+| DOEFF119 | Class Touches The World Or Holds State | A class that touches the outside world is an error; a class that rewrites self is a warning; a class with only fields gets an info recommending defrecord |
+| DOEFF118 | Tests Are deftest | Tests in the test locations are written with deftest (do not place bindings of defn, deff, defk or fn whose name is test) |
+| DOEFF121 | Shape Check In Judgment | A definition in a judgment layer checks a string-keyed `(.get x "field")` with isinstance on that field (shape checks of JSON go to protocol's defwire) |
+| DOEFF122 | Hand-Written Failure Rethrow | A match arm receives a declared failure type and only returns the received value or a re-wrapped one (use `(<- (Raise …))` and on-raise) |
+| DOEFF123 | Bind Then Return | `(return x)` right after `(<- x T (f …))`, with x not used elsewhere |
+| DOEFF124 | Fields Joined Into Text | Two or more fields of the same value are joined with strings using `+` or an f-string |
+| DOEFF125 | Rebuilt Accumulator | `(:= xs (+ xs #(…)))` inside for / while (use a comprehension) |
+| DOEFF128 | Unreadable Hy File | The reader cannot read a Hy file that rules read to the end (an error regardless of which rules are enabled — a missing violation is not silenced) |
+| DOEFF126 | defk Called Bare | A defk is called bare where its answer is used as a value (comparison, arithmetic, built-in function, method, condition, source of iteration, record field, an argument of a defk call whose receiving parameter's `:pre` type cannot accept a Program) (error) |
+| DOEFF127 | Effects Disagree With Inference | A defk with `:effects` raises an effect not in the declaration (position = the call it went through) or does not raise a declared effect (position = the name inside `:effects`) (warning) |
+| DOEFF175 | Stale Branch On A Declared Absent Or Failure | A stale branch that separates, as values, the types declared by a defeffect in `:absent` / `:failure` — on a variable bound to that effect's answer (`(<- x (E …))`, `(val x (! (E …)))`) — by a match arm or isinstance (including a tuple of types and a cond branch) (critical; not lowered by the registry — `<-` does not bind that type, so the branch is never taken. Use maybe / on-raise / `:absent`) |
+| DOEFF130 | Translation Emits Intent | A handler of the translation layer (protocol by default) — a defhandler, or a function receiving `[effect k]` — emits a business intent (a type of the intent layer by default). Follows imported defks (the limit is `translation_effects.max_depth`) (error; spec section 21) |
+| DOEFF120 | JsonValue Outside Wire Modules | JsonValue and JsonObject may be used only by the generic resolvers and by the foundation send/receive modules listed in `:wire-modules` of architecture.hy |
 
-## 層の規則(Hy と Python)
+## Layer rules (Hy and Python)
 
-DOEFF101〜108 は、repo の module の一覧と設定を見て判じる規則です。「業務の判断を持つ純粋な層」と「外の世界に触る層」を
-分け、import の向き・タグ・生の副作用の置き場・環境の語を検査します。層の名前・role・環境の語・登録簿の置き場は Rust に
-書き込まず、すべて repo ごとの設定から受け取ります。設定の節が無い規則は何も出しません。
+DOEFF101-108 are rules judged from the repo's module list and the settings. They separate the "pure layer that holds business judgment" from the "layer that touches the outside world",
+and check the direction of imports, tags, where raw side effects are placed, and environment words. Layer names, roles, environment words and the location of the registry are not
+written into Rust; all of them are received from per-repo settings. A rule with no settings section emits nothing.
 
-Hy の file は doeff-indexer の hy-index の解析(関数として呼ぶ)と読み取り器で読みます。Python の file は rustpython で読みます。
-詳しい決まり(鍵の綴り・重さ・読み方)は [docs/SPECIFICATION.md](docs/SPECIFICATION.md)、規則ごとの例は
-[docs/rules/DOEFF101-108.md](docs/rules/DOEFF101-108.md) にあります。
+Hy files are read with the hy-index analysis of doeff-indexer (called as a function) and the reader. Python files are read with rustpython.
+For the detailed conventions (key spellings, severities, how to read), see [docs/SPECIFICATION.md](docs/SPECIFICATION.md); for per-rule examples, see
+[docs/rules/DOEFF101-108.md](docs/rules/DOEFF101-108.md).
 
 ```toml
 [tool.doeff-linter.layers]
-order = ["core", "intent", "protocol", "foundation", "entry"]   # 外の世界からの遠さの順
+order = ["core", "intent", "protocol", "foundation", "entry"]   # in order of distance from the outside world
 paths = { core = "app/core", intent = "app/intent", protocol = "app/protocol", foundation = "app/foundation", entry = "app/entry" }
-exclude = ["tests", "__pycache__", "conftest.py"]              # 層の規則の外に置く dir や file の名
-types_only = ["intent"]                                        # 関数と handler を定めない層(DOEFF103)
+exclude = ["tests", "__pycache__", "conftest.py"]              # names of dirs and files placed outside the layer rules
+types_only = ["intent"]                                        # layers that define no functions or handlers (DOEFF103)
 
-[tool.doeff-linter.layers.allow_imports]                       # 層ごとに import してよい層(DOEFF101)
+[tool.doeff-linter.layers.allow_imports]                       # layers each layer may import (DOEFF101)
 core = ["core", "intent"]
 intent = ["intent"]
 protocol = ["protocol", "intent"]
 foundation = ["foundation"]
 entry = ["core", "intent", "protocol", "foundation", "entry"]
 
-[tool.doeff-linter.layers.forbid_modules]                      # 層ごとに直に import しない module(DOEFF102)
+[tool.doeff-linter.layers.forbid_modules]                      # modules each layer must not import directly (DOEFF102)
 core = ["subprocess", "socket", "http", "urllib", "httpx"]
 
-[tool.doeff-linter.roles]                                      # role の閉じた一覧と、層ごとに許す role(DOEFF105)
+[tool.doeff-linter.roles]                                      # the closed list of roles, and the roles allowed per layer (DOEFF105)
 names = ["type", "judgment", "program", "intent", "protocol", "foundation", "entry"]
 [tool.doeff-linter.roles.by_layer]
 core = ["type", "judgment", "program"]
 intent = ["intent", "type"]
 
-[tool.doeff-linter.roles.describe]                             # role の説明(違反の理由の文に差し込む)
-translation = "翻訳の handler — 今は層 protocol の役"
+[tool.doeff-linter.roles.describe]                             # descriptions of roles (inserted into the violation reason text)
+translation = "Translation handler — currently the role of layer protocol"
 
-[tool.doeff-linter.layers.describe.core]                       # 層の説明(出力の layers と、違反の「なぜ」の文に使う)
-summary = "業務の判断と Program"
-knows = "業務の判断(いつ・誰に・何を)"
-does_not_know = "相手が誰か、どう通信するか"
-question = "通信の方法が変わってもこのコードは変わらないか?"
+[tool.doeff-linter.layers.describe.core]                       # descriptions of layers (used in the output's layers and the "why" text of violations)
+summary = "Business judgment and Programs"
+knows = "Business judgment (when, to whom, what)"
+does_not_know = "Who the counterparty is and how to communicate"
+question = "If the way of communicating changes, does this code stay the same?"
 
-[tool.doeff-linter.raw_side_effects]                           # 生の副作用に直に触ってよい層(DOEFF106・107)
+[tool.doeff-linter.raw_side_effects]                           # layers that may touch raw side effects directly (DOEFF106, 107)
 allowed_layers = ["foundation", "entry"]
 
-[tool.doeff-linter.environment_names]                          # 業務の名に付けない環境の語(DOEFF108)
+[tool.doeff-linter.environment_names]                          # environment words not to put in business names (DOEFF108)
 words = ["production", "emulated", "fake", "local", "machine", "wire"]
-paths = ["app/orders", "app/intent/daily_report_*"]            # 業務の file の置き場(末尾 * は前方一致)
+paths = ["app/orders", "app/intent/daily_report_*"]            # locations of business files (a trailing * is a prefix match)
 exclude = ["app/entry"]
 exclude_parts = ["tests"]
-assembly_files = ["handler_sets.hy"]                           # 最上位の定義の名を全部見る組み立ての file
+assembly_files = ["handler_sets.hy"]                           # assembly files where every top-level definition name is checked
 
-[[tool.doeff-linter.laws]]                                     # 規則と ADR の law の対応(出力の law・adr と鍵の綴り)
+[[tool.doeff-linter.laws]]                                     # mapping between rules and ADR laws (the output's law / adr and the key spelling)
 name = "core-imports-only-intent"
 adr = "ADR-APP-CHOOSE-ENVIRONMENT-BY-HANDLER-SET"
 rules = ["DOEFF101", "DOEFF102"]
 layers = ["core"]
-statement = "module ∈ 層 core の module ⇒ …"
+statement = "module ∈ modules of layer core ⇒ …"
 
-[tool.doeff-linter.registry]                                   # 既知の破れの登録簿と、照合中の規則
-dirs = ["scripts/layer_imports/BREACHES"]                      # 1 鍵 1 file(*.txt の 1 行目が鍵)
-files = []                                                     # 1 行 1 鍵
-reconciling = ["DOEFF104"]                                     # 照合中の規則は info に下げる
+[tool.doeff-linter.registry]                                   # registry of known breaches, and the rules being reconciled
+dirs = ["scripts/layer_imports/BREACHES"]                      # one key per file (line 1 of *.txt is the key)
+files = []                                                     # one key per line
+reconciling = ["DOEFF104"]                                     # rules being reconciled are lowered to info
 ```
 
-- 鍵: `<repo の根からの path>::<law の名、無ければ規則の ID>[::<細目>]`(細目 = import の先・`definitions`・role など)。
-- 重さ: 新しい破れは error、登録簿に載った破れは warning(`registered: true`)、照合中の規則は info。DOEFF106 の弱い証拠
-  (method 名だけで見つけた物)は warning、DOEFF107 は常に info。
-- 終了コード: 0 = error なし、1 = error あり、2 = 引数・設定の誤り(設定の名前の食い違いは黙って捨てない)、75 = 未実行
-  (機体の検の枠の待ちが上限を越え、lint を 1 つもせずに終わった — 撃ち直せる・赤でも緑でもない)。75 は重い mode(既定の実行・
-  editor-json の repo 全体・`--hook`・`--commit-hook`)だけが返す — 起動の時に HOME の下の検の枠の道具(置き場は
-  `src/check_slot.rs` の `CANON_UNDER_HOME`)の命令の包み `run` へ自分を渡して枠を取り、その包みの上限の終了コードがそのまま
-  linter の終了コードになる(`src/check_slot.rs`)。道具の無い機体では枠を取らずに走る。終了コードで判じる呼び手は 75 を未実行と読む。
-- 説明: 層の規則の違反は「これは何か(subject)」「なぜ違反か(reason)」「law の文」を持ち、editor-json の `explanation`・text の
-  出力・agent の hook の文に出ます。各 module の `layer_reason` は層を何で決めたか(path の置き場所・タグとの食い違い)です。
-- `noqa` の註は Python の文ごとの規則だけに効きます。層の規則の既知の破れは登録簿に鍵を置きます。
+- Key: `<path from the repo root>::<law name, or the rule ID if none>[::<detail>]` (detail = import target, `definitions`, role, etc.).
+- Severity: a new breach is an error, a breach listed in the registry is a warning (`registered: true`), and a rule being reconciled is info. The weak evidence of DOEFF106
+  (found only by a method name) is a warning, and DOEFF107 is always info.
+- Exit codes: 0 = no errors, 1 = errors, 2 = bad arguments or settings (a mismatch in setting names is not silently dropped), 75 = not run
+  (the wait for the machine's check slot exceeded the limit, so it ended without linting anything — it can be retried, and is neither red nor green). 75 is returned only by the heavy modes (the default run,
+  the whole repo with editor-json, `--hook`, `--commit-hook`) — at startup it hands itself to the command wrapper `run` of the check-slot tool under HOME (the location is
+  `CANON_UNDER_HOME` in `src/check_slot.rs`) to take a slot, and the wrapper's limit exit code becomes the
+  linter's exit code as is (`src/check_slot.rs`). On machines without the tool, it runs without taking a slot. Callers that judge by exit code should read 75 as not run.
+- Explanation: a layer-rule violation has "what this is (subject)", "why it is a violation (reason)" and "the law statement", which appear in editor-json's `explanation`, the text
+  output, and the agent hook's text. Each module's `layer_reason` is what decided the layer (the location of its path, or a mismatch with its tags).
+- `noqa` comments only affect the per-statement rules of Python. For a known breach of a layer rule, put a key in the registry.
 
-### 置き場のパターンと service(DOEFF109・113)
+### Location patterns and services (DOEFF109, 113)
 
-層の置き場は綴りの列で書け、段 `*` が service の名に当たります(移行の途中は層が先の形と service が先の形を並べる)。
+A layer's location can be written as a list of spellings, and the segment `*` matches a service name (during migration, the layer-first form and the service-first form are listed side by side).
 
 ```toml
 [tool.doeff-linter.layers]
 paths = { core = ["app/*/core", "app/core"], intent = ["app/*/intent", "app/intent"], foundation = "app/foundation" }
 
 [tool.doeff-linter.services]
-shared = ["shared"]                 # どの service からも読める置き場(app/shared/…)
+shared = ["shared"]                 # locations readable from every service (app/shared/…)
 guarded_layers = ["core", "protocol"]
-open_layers = ["intent"]            # 別の service から読んでよい層
+open_layers = ["intent"]            # layers that other services may read
 exceptions = [{ from = "orders", to = "billing" }]
-check_context = true                # タグの :context と service を照らす(DOEFF113・info)
+check_context = true                # check a tag's :context against the service (DOEFF113, info)
 ```
 
-2 つの置き場に当たる file は段の多い方(細かい方)を採ります。module の `service` と、説明の文(「service billing の層 core」)に出ます。
+A file matching two locations takes the one with more segments (the more specific). It appears in the module's `service` and in the explanation text ("layer core of service billing").
 
-### 定義の書き方(DOEFF110〜112)
+### How definitions are written (DOEFF110-112)
 
 ```toml
-[tool.doeff-linter.definitions]     # 母集団(paths が空なら repo の Hy の全部)
+[tool.doeff-linter.definitions]     # population (if paths is empty, all Hy of the repo)
 paths = ["app", "services"]
-exclude = ["packages/doeff-hy/src/doeff_hy/macros"]   # 例: macro の持ち主
+exclude = ["packages/doeff-hy/src/doeff_hy/macros"]   # e.g. the owner of the macros
 deff_reason_marker = "defk にできない:"
 
 [tool.doeff-linter.tags]
-required = ["context", "role"]      # DOEFF112 の必須の鍵
-module_default = true               # module の頭の MODULE-TAGS で補えるか
+required = ["context", "role"]      # keys required by DOEFF112
+module_default = true               # whether the module-head MODULE-TAGS can supply them
 ```
 
-登録簿に載った破れの重さは規則ごとに決められます(既定 warning・新しい破れは常に error)。設定と一緒に持ち運ぶ登録簿は
-`config_files`(設定 file の dir からの相対)に書きます。
+The severity of a breach listed in the registry can be set per rule (default warning; a new breach is always an error). A registry carried together with the settings is
+written in `config_files` (relative to the dir of the settings file).
 
 ```toml
 [tool.doeff-linter.rules.DOEFF110]
@@ -230,90 +230,90 @@ registered_severity = "info"
 config_files = ["definition-breaches.txt"]
 ```
 
-`eval-and-compile` / `eval-when-compile` の中の defn(マクロの展開の時の関数)は DOEFF110 の外です。既存の破れは登録簿
-(`registry.files` の 1 行 1 鍵・鍵 = `<path>::<規則>::<定義の名>`)に載せると warning になり、新しい破れだけが error になります。
+A defn inside `eval-and-compile` / `eval-when-compile` (a function used at macro expansion time) is outside DOEFF110. Existing breaches become warnings when listed in the registry
+(one key per line in `registry.files`; key = `<path>::<rule>::<definition name>`), and only new breaches are errors.
 
-### architecture.hy(service と層の唯一の宣言 — DOEFF114〜117)
+### architecture.hy (the single declaration of services and layers — DOEFF114-117)
 
-repo の一番上の `architecture.hy` に `defarchitecture`(root・層・shared・foundation)と `defservice`(説明・`:depends-on`・`:layers`・
-`:public-contract`)を
-書くと、doeff-linter が実行せずに読みます。在れば層・role・service は ここだけに書き、TOML には規則の入り切りと重さと登録簿を残します。
-形と、Tach・import-linter・Nx・Deptrac との対応は [docs/SPECIFICATION.md](docs/SPECIFICATION.md) の 9 節。
+If you write `defarchitecture` (root, layers, shared, foundation) and `defservice` (description, `:depends-on`, `:layers`,
+`:public-contract`) in the topmost `architecture.hy` of the repo, doeff-linter reads them without executing. When it exists, write layers, roles and services only there, leaving
+the rule on/off switches, severities and the registry in the TOML.
+For the shape, and the correspondence with Tach, import-linter, Nx and Deptrac, see section 9 of [docs/SPECIFICATION.md](docs/SPECIFICATION.md).
 
-### 意味の規則(DOEFF201・202 — Jev)
+### Semantic rules (DOEFF201, 202 — Jev)
 
-`--semantic`(指定の file か git で変わった file)と `--semantic-all` の時だけ Jev(TypeSafe)に問い、答えを repo の根の
-`.doeff-linter/semantic-cache/` に残します。`--semantic-changed` を足すと、中身が変わった定義(cache に答えの無い定義)だけを問います。
-書きかけで読めない定義は問いません。普段の実行は Jev を呼びません: エディタの 1 file(`--stdin`)は cache を読むだけ、全体の実行と hook は
-cache を読み、Jev の呼び出しを覚える代理(`[tool.doeff-linter.semantic] proxy_url`)が設定されていれば、cache に無い定義を代理に
-「覚えている時だけ」問います。重さは warning か info だけ。宛先とキーは doeff-jev と同じ決め方(`JEV_*` → `~/.config/jev/client.json` →
-TypeSafe 直・`TYPESAFE_API_KEY`)で、repo の `proxy_url` があれば代理(代理の token だけを送る)。詳しくは
-[docs/SPECIFICATION.md](docs/SPECIFICATION.md) の 10 節。
+Jev (TypeSafe) is asked only with `--semantic` (specified files, or files changed in git) and `--semantic-all`, and the answers are kept in `.doeff-linter/semantic-cache/` at the repo root.
+Adding `--semantic-changed` asks only about definitions whose contents changed (definitions with no answer in the cache).
+Definitions that are unfinished and unreadable are not asked. Normal runs do not call Jev: the editor's single file (`--stdin`) only reads the cache, and whole runs and hooks
+read the cache; if a proxy that remembers Jev calls (`[tool.doeff-linter.semantic] proxy_url`) is configured, definitions not in the cache are asked of the proxy
+"only when it remembers". The severity is only warning or info. The destination and key are decided as in doeff-jev (`JEV_*` -> `~/.config/jev/client.json` ->
+TypeSafe direct, `TYPESAFE_API_KEY`), and if the repo has `proxy_url`, the proxy is used (only the proxy's token is sent). For details see section 10 of
+[docs/SPECIFICATION.md](docs/SPECIFICATION.md).
 
-### 素の関数の理由と検の書き方(DOEFF110・111・118・203)
+### Reasons for plain functions, and how to write tests (DOEFF110, 111, 118, 203)
 
-deff には `; defk にできない: <自由な理由>` を書きます。決定的に違反にするのは註が無い・理由が空・「同上」だけ(DOEFF111)。
-理由を受け入れるかは Jev(DOEFF203)が、architecture.hy の `:plain-callable-reasons`(受け入れる理由)と
-`:rejected-plain-callable-reasons`(受け入れない型と直し方)から選んで決めます。検の置き場(`definitions.test_paths`)では検は deftest だけ(DOEFF118)。
-詳しくは [docs/SPECIFICATION.md](docs/SPECIFICATION.md) の 11 節。
+Write `; defk にできない: <free-form reason>` on a deff. What is deterministically a violation is: no comment, an empty reason, or only "same as above" (DOEFF111).
+Whether to accept the reason is decided by Jev (DOEFF203), choosing from architecture.hy's `:plain-callable-reasons` (acceptable reasons) and
+`:rejected-plain-callable-reasons` (types of unacceptable reasons and how to fix them). In test locations (`definitions.test_paths`), tests must be deftest only (DOEFF118).
+For details see section 11 of [docs/SPECIFICATION.md](docs/SPECIFICATION.md).
 
-### class の中身(DOEFF119・DOEFF204)
+### Contents of a class (DOEFF119, DOEFF204)
 
-defclass は名前ではなく中身で分けます。method か欄の初期値が生の副作用に触る class は error(土台の handler へ)、method が self の欄を
-書き換える class は warning(状態は handler の `(session var …)` へ)、欄だけの class は defrecord を勧める info。例外・Enum・Protocol・
-外の library の基底を継ぐ class は出しません。どれにも当たらない、処理を持つ method のある class だけを Jev(DOEFF204)に
-value / external-world / stateful / other で問います。詳しくは [docs/SPECIFICATION.md](docs/SPECIFICATION.md) の 12 節。
+defclass is classified by its contents, not by its name. A class whose methods or field initial values touch raw side effects is an error (move it to a foundation handler); a class whose methods rewrite its self fields is a
+warning (put the state in a handler's `(session var …)`); a class with only fields gets an info recommending defrecord. Classes that inherit exceptions, Enum, Protocol, or
+bases from outside libraries are not reported. Only classes that match none of these and have methods with processing are asked of Jev (DOEFF204)
+as value / external-world / stateful / other. For details see section 12 of [docs/SPECIFICATION.md](docs/SPECIFICATION.md).
 
-### JsonValue の使い場所(DOEFF120)
+### Where JsonValue is used (DOEFF120)
 
-`JsonValue`・`JSONValue`・`JsonObject`・`JSONObject`(素の dict を名で包んだだけの型)を使ってよいのは、汎用の解き手(`doeff_hy._wire`・
-`doeff_records._wire`)と、architecture.hy の `:wire-modules`(module の綴りの pattern)に挙げ、かつ foundation の層に在る送受信の module だけです。
-ほかの module は解き手が形を確かめた型のある値だけを見ます。module ごとに 1 件(鍵 `<path>::DOEFF120`)。`:wire-modules` に挙げても
-foundation の外なら許さず、説明に訳を書きます。許す場所の決め方は `json_value_allowance` の 1 か所で、差し替えられます。
-詳しくは [docs/rules/DOEFF120.md](docs/rules/DOEFF120.md) と [docs/SPECIFICATION.md](docs/SPECIFICATION.md) の 13 節。
+`JsonValue`, `JSONValue`, `JsonObject` and `JSONObject` (types that merely wrap a plain dict with a name) may be used only by the generic resolvers (`doeff_hy._wire`,
+`doeff_records._wire`) and by send/receive modules that are listed in architecture.hy's `:wire-modules` (a pattern of module spellings) and are also in the foundation layer.
+Other modules see only typed values whose shape a resolver has checked. One finding per module (key `<path>::DOEFF120`). A module listed in `:wire-modules` but
+outside foundation is not allowed, and the reason is written in the explanation. How the allowed places are decided is in one spot, `json_value_allowance`, and can be swapped.
+For details see [docs/rules/DOEFF120.md](docs/rules/DOEFF120.md) and section 13 of [docs/SPECIFICATION.md](docs/SPECIFICATION.md).
 
-### 臭いの規則(DOEFF121〜125・DOEFF205)
+### Smell rules (DOEFF121-125, DOEFF205)
 
-型と effect で書けるのに手で書いた形を拾います。重さの既定は warning
-(`[tool.doeff-linter.rules.<ID>] severity = "info"` で下げられる・error にはしない)。DOEFF121 は `[tool.doeff-linter.smells]
-shape_check_layers` に挙げた判断の層の file だけ、DOEFF122〜125 は `definitions` の母集団の全部に当たります。DOEFF122 の「失敗の型」は
-名前で決め打ちせず、defrecord の頭の辞書の `{:failure True}` と defeffect の `:failure` / `:absent` の宣言から取ります(import で
-module まで解く)。DOEFF205 は役が judgment / program の定義に形の検めと判断が混ざっているかを Jev に問います
-(`[tool.doeff-linter.semantic] mixed_concerns = { layer = "core" }`)。詳しくは [docs/SPECIFICATION.md](docs/SPECIFICATION.md) の 14 節。
+These pick up forms written by hand that could be written with types and effects. The default severity is warning
+(it can be lowered with `[tool.doeff-linter.rules.<ID>] severity = "info"`; never made an error). DOEFF121 applies only to files of the judgment layers listed in `[tool.doeff-linter.smells]
+shape_check_layers`, and DOEFF122-125 apply to the whole `definitions` population. The "failure type" of DOEFF122 is not hard-coded by
+name; it is taken from `{:failure True}` in the head dict of a defrecord and from the `:failure` / `:absent` declarations of a defeffect (resolved to the
+module through imports). DOEFF205 asks Jev whether a definition whose role is judgment / program mixes shape checks and judgment
+(`[tool.doeff-linter.semantic] mixed_concerns = { layer = "core" }`). For details see section 14 of [docs/SPECIFICATION.md](docs/SPECIFICATION.md).
 
-## 書き換えの命令(fix)
+## Rewrite commands (fix)
 
 ```bash
-# defn を defk に直し、repo の中の呼び手を <- / ! に書き換える(DOEFF110・DOEFF126)
+# Turn defn into defk, and rewrite callers inside the repo to <- / ! (DOEFF110, DOEFF126)
 doeff-linter fix defn-to-defk --path scripts/module_tags.hy
-doeff-linter fix defn-to-defk --path app/intent --dry-run                  # 書かずに計画だけ
-doeff-linter fix defn-to-defk --path scripts --report /tmp/fix.json        # 報告の JSON も書く
-doeff-linter fix defn-to-defk --path scripts --strict                      # 呼び手を全部直せる関数だけ変換する
+doeff-linter fix defn-to-defk --path app/intent --dry-run                  # only plan, do not write
+doeff-linter fix defn-to-defk --path scripts --report /tmp/fix.json        # also write a JSON report
+doeff-linter fix defn-to-defk --path scripts --strict                      # convert only functions whose callers can all be fixed
 ```
 
-- 定義: `(defn #^ R 名 [#^ T x …] …)` → `(defk 名 [x …] {:pre [(: x T) …] :post [(: % R)]} …)`。契約は `#^` の注記から組みます(defk の
-  macro が全部の引数の型と戻り値の型を要るので)。`(get list int)` のような型の引数つきの型は契約に元の型を書き、引数の注記は残します。
-  既定値が None の引数は `(| T None)`、`float` は `(| float int)`。既にある `{:pre … :post … :tags …}` は残し、足りない鍵だけ足します。
-- 呼び手: 名 1 つへの束ね `(setv x (f a))`・`(val x (f a))` は `(<- x (f a))`、それ以外(末尾も)は `(! (f a))`。file の require に `defk`・`<-`
-  が無ければ足します(`!` は defk の macro が展開する記号で、require する macro ではありません)。
-- 書き換えない所(判断の要る物に出す): 内包表記の中・素の関数(defn・deff・fn)の中・module の最上位・macro の中・`->` の段・関数そのものを
-  値として渡す所・Python と toml からの参照・import の別名。既に `<-` / `!` / `run` へ渡している defn は Program を返す組み立てなので変換しません。
-- 当てない形: dunder・`:async`・`defk にできない:`(設定の `definitions.deff_reason_marker`)か「defn のまま」の註・`eval-and-compile` の中・
-  class の method・除いた path(既定は `src/project/defn_to_defk.rs` の `DEFAULT_EXCLUDES`、`--exclude` で足す)。
-- 変換の後に同じ読み手で DOEFF126 を撃ち、残った素の呼びを報告します。終了コード 0 = 残りなし・1 = 残りあり・2 = 誤り。
+- Definition: `(defn #^ R name [#^ T x …] …)` -> `(defk name [x …] {:pre [(: x T) …] :post [(: % R)]} …)`. The contract is built from the `#^` annotations (the defk
+  macro requires the types of all parameters and the return type). For a type with type arguments such as `(get list int)`, the original type is written in the contract and the parameter's annotation is kept.
+  A parameter whose default is None becomes `(| T None)`, and `float` becomes `(| float int)`. An existing `{:pre … :post … :tags …}` is kept, and only missing keys are added.
+- Callers: a bind to a single name `(setv x (f a))` / `(val x (f a))` becomes `(<- x (f a))`; anything else (including the tail) becomes `(! (f a))`. If the file's require lacks `defk` or `<-`,
+  they are added (`!` is a symbol that the defk macro expands, not a macro to require).
+- Places not rewritten (reported as needing judgment): inside comprehensions, inside plain functions (defn, deff, fn), the module top level, inside macros, a `->` step, places that pass the function itself
+  as a value, references from Python and toml, and import aliases. A defn that is already passed to `<-` / `!` / `run` returns a Program (it is an assembly), so it is not converted.
+- Forms not applied: dunders, `:async`, a comment of `defk にできない:` (the settings' `definitions.deff_reason_marker`) or "keep as defn", inside `eval-and-compile`,
+  class methods, and excluded paths (the default is `DEFAULT_EXCLUDES` in `src/project/defn_to_defk.rs`; add more with `--exclude`).
+- After the conversion, DOEFF126 is run with the same reader, and the remaining bare calls are reported. Exit code 0 = none remaining, 1 = some remaining, 2 = error.
 
-## エディタ向けの出力(editor-json)
+## Editor output (editor-json)
 
 ```bash
-doeff-linter --output-format editor-json                              # repo 全体(cwd = repo の根)
-doeff-linter --output-format editor-json --stdin --path <file>        # 保存前の内容の 1 file
-doeff-linter --output-format editor-json --config lint.toml --root .  # 設定 file と repo の根を指定
+doeff-linter --output-format editor-json                              # whole repo (cwd = repo root)
+doeff-linter --output-format editor-json --stdin --path <file>        # one file with its pre-save contents
+doeff-linter --output-format editor-json --config lint.toml --root .  # specify the settings file and repo root
 ```
 
-出力は契約 lint-contract 版 1 の JSON 1 つです(`version`・`root`・`violations`・`modules`・`rules`・`errors`)。違反ごとに
-`rule`(DOEFF の ID)・`law`・`adr`・`severity`・`path`・`range`(0 始まりの行・UTF-16 の列)・`message`・`hint`・`key`・
-`registered` を持ちます。行だけの規則(DOEFF001〜031)も、その行の範囲を出します。形の詳細は
-[docs/SPECIFICATION.md](docs/SPECIFICATION.md)。既存の `--output-format json` の形は変えていません(層の規則の違反も同じ形で並びます)。
+The output is one JSON of the contract lint-contract version 1 (`version`, `root`, `violations`, `modules`, `rules`, `errors`). Each violation has
+`rule` (the DOEFF ID), `law`, `adr`, `severity`, `path`, `range` (0-based line, UTF-16 column), `message`, `hint`, `key`, and
+`registered`. Line-only rules (DOEFF001-031) also output the range of that line. For the details of the shape, see
+[docs/SPECIFICATION.md](docs/SPECIFICATION.md). The shape of the existing `--output-format json` is unchanged (layer-rule violations are listed in the same shape).
 
 ## Inline Suppression
 
@@ -367,10 +367,10 @@ Options:
       --exclude <PATTERNS>   Exclude paths matching patterns
       --force-exclude        Apply exclusion rules to explicit file paths
       --output-format <FMT>  Output format: text, json, editor-json [default: text]
-      --config <FILE>        設定 file(pyproject.toml の形か、[tool.doeff-linter] の中身だけの TOML)
-      --root <DIR>           repo の根(層の置き場・登録簿・鍵の path の基準)
-      --stdin                保存前の内容を stdin から読む(editor-json・--path と一緒に)
-      --path <FILE>          --stdin の内容をどの file として判じるか
+      --config <FILE>        Settings file (in the shape of pyproject.toml, or a TOML with only the contents of [tool.doeff-linter])
+      --root <DIR>           Repo root (the base for layer locations, the registry, and key paths)
+      --stdin                Read pre-save contents from stdin (with editor-json and --path)
+      --path <FILE>          Which file to judge the --stdin contents as
       --log-file <PATH>      Log violations to file [default: .doeff-lint.jsonl]
       --no-log               Disable logging to file
       --modified             Only lint git-modified files

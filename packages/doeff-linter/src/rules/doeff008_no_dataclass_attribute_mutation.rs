@@ -228,8 +228,8 @@ impl LintRule for NoDataclassAttributeMutationRule {
         "Dataclass instances should be immutable. Use dataclasses.replace() instead."
     }
 
-    /// module 全体の dataclass の名と instance を集めて見る規則なので、本体が file に 1 度だけ当てる(#2858 —
-    /// 文ごとに当てると、当たり 1 つを file の文の数だけ数えていた)。
+    /// This rule collects dataclass names and instances across the whole module, so the body applies it to the file exactly once (#2858 —
+    /// applying it per statement counted one hit as many times as the file had statements).
     fn reach(&self) -> RuleReach {
         RuleReach::Module
     }

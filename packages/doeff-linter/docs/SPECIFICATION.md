@@ -1,773 +1,773 @@
-# doeff-linter 層の規則とエディタ向けの出力 — 仕様
+# doeff-linter layer rules and editor-facing output — specification
 
-この文書は、層の規則 DOEFF101〜108 と `--output-format editor-json` の決まりを書く。規則の判定の正本は doeff-linter で、
-エディタ(doeff-runner)はこの出力を表示するだけで、自分では判定しない。
+This document describes the layer rules DOEFF101-108 and the conventions of `--output-format editor-json`. The source of truth for rule judgments is doeff-linter;
+the editor (doeff-runner) only displays this output and does not make judgments itself.
 
-## 1. 呼び出し
+## 1. Invocation
 
-| 呼び出し | 意味 |
+| Invocation | Meaning |
 |---|---|
-| `doeff-linter --output-format editor-json [<path>…]` | repo 全体を判じる。path を渡すと、その下の file の違反と module だけを出す(判定は全体で行う) |
-| `doeff-linter --output-format editor-json --stdin --path <file>` | stdin の内容を `<file>` として判じる(保存前の内容)。出すのはその file の違反と module だけ。repo 全体でだけ判じる規則は走らせない(判じた規則は `judged_rules` が名乗る — 2 節) |
-| `doeff-linter --output-format editor-json --semantic <file>` | 保存した `<file>` の定義を Jev に問うて判じる(意味の規則 — 10 節) |
-| `doeff-linter --output-format editor-json --stdin --path <file> --semantic --semantic-changed` | stdin の内容の定義のうち、中身が変わった定義(cache に答えの無い定義)だけを Jev に問う。書きかけで読めない定義は問わない(エディタが編集中に打つのが止まった時) |
-| `--config <file>` | 設定 file。`[tool.doeff-linter]` を持つ pyproject.toml の形でも、節の中身だけの TOML でもよい |
-| `--root <dir>` | repo の根。層の置き場・登録簿・鍵の path はここからの相対 |
-| `doeff-linter --output-format editor-json --baseline-report <file> [<path>…]` | 基点(main の先端)で走らせた editor-json の出力 `<file>` と比べ、基点に無い critical を `new_critical` に出す(下の「基点との比べ」) |
-| `doeff-linter --commit-hook --report-out <file>` | commit の hook(3 節「commit の hook が当てる範囲」)を走らせ、HEAD の版と stage した path の 2 つの測り(測った path の列・editor-json の違反・判じた規則)を 1 つの JSON で `<file>` に書く(3 節「commit の hook の報告」)。止める判定・終了コード・stderr の文は引数の無い時と同じ |
+| `doeff-linter --output-format editor-json [<path>…]` | Judges the whole repo. If a path is given, only the violations and modules of files under it are emitted (judgment is still made over the whole repo) |
+| `doeff-linter --output-format editor-json --stdin --path <file>` | Judges the stdin contents as `<file>` (pre-save contents). Only that file's violations and modules are emitted. Rules that judge only over the whole repo are not run (the rules judged are named by `judged_rules` — section 2) |
+| `doeff-linter --output-format editor-json --semantic <file>` | Judges the definitions of the saved `<file>` by asking Jev (semantic rules — section 10) |
+| `doeff-linter --output-format editor-json --stdin --path <file> --semantic --semantic-changed` | Asks Jev only about definitions in the stdin contents whose contents changed (definitions with no answer in the cache). Definitions that are half-written and unreadable are not asked (for when the editor stops typing during editing) |
+| `--config <file>` | The settings file. It may be in the form of a pyproject.toml with `[tool.doeff-linter]`, or a TOML containing only the section contents |
+| `--root <dir>` | The repo root. Layer locations, the registry, and key paths are relative to it |
+| `doeff-linter --output-format editor-json --baseline-report <file> [<path>…]` | Compares against the editor-json output `<file>` produced at the baseline (the tip of main), and emits criticals not present at the baseline in `new_critical` (see "Comparison with the baseline" below) |
+| `doeff-linter --commit-hook --report-out <file>` | Runs the commit hook (section 3, "Scope the commit hook applies to"), and writes the two measurements, the HEAD version and the staged paths (the list of measured paths, editor-json violations, and judged rules), as one JSON to `<file>` (section 3, "Commit hook report"). The blocking decision, exit code, and stderr text are the same as when there are no arguments |
 
-- 設定を探す順: `--config` があればそれ。無ければ今の dir から上へ、`[tool.doeff-linter]` を持つ pyproject.toml を探す。
-- repo の根: `--root` があればそれ。無ければ設定の `root = "<設定 file の dir からの相対の path>"`(monorepo の
-  package の `src/` を根にして module の名を import の名に揃える)。それも無ければ見つけた pyproject.toml の dir。`--config` を渡した時は
-  今の dir(設定の `root` は `--config` の file の dir から)。
-- `--stdin` と `--path` は editor-json の時だけ使える。`--stdin` に `--path` が無ければ終了コード 2。
+- Order of searching for settings: `--config` if given. Otherwise search upward from the current dir for a pyproject.toml that has `[tool.doeff-linter]`.
+- Repo root: `--root` if given. Otherwise the settings' `root = "<path relative to the settings file's dir>"` (for a monorepo,
+  make a package's `src/` the root so module names match import names). Otherwise the dir of the pyproject.toml found. When `--config` is given, it is
+  the current dir (the settings' `root` is relative to the dir of the `--config` file).
+- `--stdin` and `--path` can be used only with editor-json. `--stdin` without `--path` gives exit code 2.
 
-### 終了コード
+### Exit codes
 
-| コード | 意味 |
+| Code | Meaning |
 |---|---|
-| 0 | error の違反が無い(warning と info はあってもよい) |
-| 1 | error の違反がある(登録簿に無い新しい破れ) |
-| 2 | 引数の誤り・設定が読めない・設定の名前の食い違い・型の違う値(理由は stderr) |
-| 3 | error の違反は無いが、測れなかった物がある(緑ではない): 意味の規則で問うはずだった定義に答えを得られなかった(Jev に届かない・鍵が無い・較正が撃てない)か、名指した Hy の file が linter の歩く範囲の外(下の「名指しの範囲の外」・#2821) |
-| 4 | `--baseline-report` の時だけ: 基点に無い critical がある(新しい critical)。1・3 より先に判じる(2 は常に最優先) |
+| 0 | No error violations (warnings and info may be present) |
+| 1 | There are error violations (new violations not in the registry) |
+| 2 | Bad argument, unreadable settings, mismatched names in the settings, or a value of the wrong type (reason on stderr) |
+| 3 | No error violations, but something could not be measured (not green): a definition that semantic rules should have asked about got no answer (Jev unreachable, no key, or calibration could not be fired), or a named Hy file is outside the range the linter walks (see "Outside the named scope" below, #2821) |
+| 4 | Only with `--baseline-report`: there is a critical not present at the baseline (a new critical). Judged before 1 and 3 (2 always takes top priority) |
 
-### 名指しの範囲の外
+### Outside the named scope
 
-層の規則は、repo の根(`root`)の下を歩いた Hy の file だけを判じる。根の外の Hy の file(例: 根を `src` にした package の `tests/`)を
-名指しても何も判じられず、以前は終了コード 0 で黙った — 「測って通った」と読める。今は、名指した path(file か dir — dir はその下の
-Hy の file に開く)のうち歩く範囲の外の Hy の file を名指し、error の違反が無ければ終了コード 3 にする。
+Layer rules judge only the Hy files walked under the repo root (`root`). Naming a Hy file outside the root (for example, the `tests/` of a package whose root is `src`)
+judged nothing, and previously exited with code 0 silently — which can be read as "measured and passed". Now, among the named paths (file or dir — a dir expands to the Hy files
+under it), Hy files outside the walked range are named, and if there are no error violations the exit code is 3.
 
-- **text / json の出力**: 1 file 1 行を stderr に「`doeff-linter: 対象の外 — <path>(linter が歩く範囲 = 根 <root> の下の Hy の file の外 — …)`」。
-  `<path>` は正規化した絶対の path(違反の path と同じ形)。
-- **editor-json の出力**: 一番上の欄 `out_of_scope`(正規化した絶対の path の辞書順の列 — 違反の `path` と同じ形)。名指しの無い実行(`.`)と `--stdin` は `null`。
-  版は上げない(欄の追加)。commit の hook(`--commit-hook`)はこの欄を読んで 1 行ずつ名指す(止めはしない — 測っていない事を名指す)。
-- **数えない物**: Hy でない file(Python の規則は名指しの path から file を集めて当てるので、範囲の外でも測る)・在らない path・
-  `--modified`(名指しではない)・読んだ service と層の宣言の file(設定の `architecture` か根の `architecture.hy` — 根の外に置いても
-  宣言の規則が判じる。doeff-cluster の commit の hook は path を渡す時に必ずこの file を足す)。
-- **歩く範囲の中でも判じる規則の無い file は数えない**(今の版の限り): 層の置き場の外の file や、`:exclude` に当たる段(既定 `tests`)の
-  下の file は、根の下でも層の規則が判じないが、ここでは名指さない。判定を「どれかの規則が判じるか」(`project::is_judged_file`)に
-  広げるのは今は入れない(#2821 の決め 2 — 根の下の判じられない file を触る commit が止まるため。数は案 A-2 の表に)。
-- 戻し方: この欄・`project::hy_files::outside_walk` と 3 つの呼び手(通常の入口・editor-json・commit の hook)を消す。
+- **text / json output**: one line per file on stderr: "`doeff-linter: out of scope — <path>(outside the range the linter walks = Hy files under root <root> — …)`".
+  `<path>` is a normalized absolute path (the same form as a violation's path).
+- **editor-json output**: the top-level field `out_of_scope` (a list of normalized absolute paths in lexicographic order — the same form as a violation's `path`). `null` for a run with no names (`.`) and for `--stdin`.
+  The version is not bumped (a field addition). The commit hook (`--commit-hook`) reads this field and names them one per line (it does not block — it names what was not measured).
+- **Not counted**: non-Hy files (Python rules gather files from the named paths and apply, so they measure even outside the range), nonexistent paths,
+  `--modified` (it is not naming), and the service read and the layer declaration file (the settings' `architecture` or the root's `architecture.hy` — even if placed outside the root,
+  the declaration rules judge it. doeff-cluster's commit hook always adds this file when it passes paths).
+- **Files within the walked range that no rule judges are not counted** (as of the current version): files outside layer locations, and files under a segment matching `:exclude` (default `tests`)
+  are not judged by layer rules even under the root, but are not named here. Widening the criterion to "whether any rule judges it" (`project::is_judged_file`)
+  is not included now (decision 2 of #2821 — because it would block commits that touch files under the root that nothing judges. The numbers are in the table of plan A-2).
+- Reverting: remove this field, `project::hy_files::outside_walk`, and its 3 callers (the normal entry, editor-json, and the commit hook).
 
-### 歩く範囲に足す dir(設定の `include`)
+### Dirs added to the walked range (the `include` setting)
 
-`[tool.doeff-linter] include = ["tests"]`(設定 file の dir からの相対)— 根の外の dir を歩く範囲に足す。歩く範囲 = 根の下 + `include` の
-dir の下(1 か所の定義 = `project::hy_files::walked`)。
+`[tool.doeff-linter] include = ["tests"]` (relative to the settings file's dir) — adds a dir outside the root to the walked range. Walked range = under the root + under the
+`include` dirs (defined in one place = `project::hy_files::walked`).
 
-- **入る所**: 定義の書き方の規則の母集団(全体の実行と 1 file の実行 — `[tool.doeff-linter.definitions]` の `paths`・`test_paths` で選ぶ)・
-  読めない file(DOEFF128)・上の「名指しの範囲の外」の判定。**層の規則には入らない**(層の置き場は architecture の `:root` の下だけ)。
-  素の defk 呼び(DOEFF126)が比べる defk の名の集合は根の下から集める(`include` の dir の defk は数えない)。
-- **名乗り**: 根の外の file は根から `..` を含む相対(`../tests/x.hy` — 宣言の file の鍵と同じ `paths::declared_rel`)。違反の鍵・
-  `definitions.paths`(例 `"../tests"`)・`test_paths`(例 `"../tests/**/test_*.hy"`)はこの名乗りに当てる。
-- **無い dir** は設定の誤り(黙って何も歩かない形にしない)。
-- 戻し方: 設定の行を消す(package の設定)。機能ごと戻すなら `include`・`walked`・`walked_rel` と呼び手を消す。
+- **What it enters**: the population of the definition-writing rules (whole-project runs and one-file runs — selected by `paths` and `test_paths` of `[tool.doeff-linter.definitions]`),
+  unreadable files (DOEFF128), and the "outside the named scope" judgment above. **It does not enter the layer rules** (layer locations are only under architecture's `:root`).
+  The set of defk names that bare defk calls (DOEFF126) compare against is collected from under the root (defks in `include` dirs are not counted).
+- **Naming**: a file outside the root is a relative path from the root that contains `..` (`../tests/x.hy` — the same as the declaration file key `paths::declared_rel`). Violation keys,
+  `definitions.paths` (e.g. `"../tests"`), and `test_paths` (e.g. `"../tests/**/test_*.hy"`) are matched against this naming.
+- **A nonexistent dir** is a settings error (it does not silently walk nothing).
+- Reverting: delete the settings line (the package's settings). To revert the whole feature, delete `include`, `walked`, `walked_rel`, and their callers.
 
-### 基点との比べ(`--baseline-report`)
+### Comparison with the baseline (`--baseline-report`)
 
-マージ前の検査と commit の hook は、保存した既知の一覧を持たず、基点と commit の両方で linter を走らせ、commit の critical の識別子の集合が
-基点の集合に含まれていれば通す(#1762 の決定 A)。基点の側を走らせるのは呼び手の役で、linter は基点の出力 file を読んで比べるだけ
-(linter が git の木を組み直すと、事実の cache と repo の根の扱いが 2 重になるため)。
+The pre-merge check and the commit hook keep no saved list of known violations; they run the linter at both the baseline and the commit, and pass if the set of the commit's critical identifiers is
+contained in the baseline's set (decision A of #1762). Running the baseline side is the caller's job; the linter only reads the baseline's output file and compares
+(if the linter rebuilt the git tree itself, the fact cache and the handling of the repo root would be doubled).
 
-- **比べる物**: `level` が `critical` の違反(登録簿に載って warning に下がった物も含む — 重大さは登録簿で下げない)。
-- **識別子**: `<path>::<規則>::<名>`(行番号を含めない)。鍵を持つ違反は `key` そのもの、鍵の無い違反(Python の文ごとの規則)は名の代わりに `message`。
-- **件数ではなく集合**: 3 件直して 1 件足した commit は、件数が減っても新しい critical が 1 件ある。
-- **file の移動・改名**: 規則と名が同じで path だけ違い、基点のその識別子が今は消えている時は、1 対 1 で同じ破れとみなす。
-  基点の識別子が残ったまま別の path に同じ名が増えたら、新しい破れ。
-- **出力**: editor-json の一番上の欄 `new_critical`(識別子の辞書順の列)。基点と比べない時は `null`。版は上げない(欄の追加)。
-- **範囲**: path を名指した実行では、名指しの下の違反だけを比べる。基点の出力も同じ path の名指しで作る(呼び手の役)。
-- **既知の一覧を持たない規則**(登録簿で下げない規則 — DOEFF206〜209・211): path を名指した実行(commit の hook の stage した file・登録の前の
-  変えた所の検査)では、名指しの下のその規則の critical を、基点に同じ識別子が在っても全部 `new_critical` に入れる — 変えた file に
-  当たりが在れば止める(細かさは file 単位)。名指しの無い実行は基点の差だけ(全体の数は日次で出す)。
-  repo 全体が要ると名乗る規則(DOEFF206・207・209)は commit の hook では当てず、repo 全体の検証が見る(下の
-  「commit の hook が当てる範囲」)。
-  commit の hook は止める当たりを HEAD の版に同じ識別子が在るかで分けて書く(`commit_hook::split_by_head` — 止める判断は変えない):
-  無い物は「HEAD に無い critical: <識別子>」、在る物は
-  「変えた file の既存の当たり(main にも在る・この規則は既知の一覧で下げない): <識別子>」と書き、後者が在れば
-  「この file を変えるなら、その当たりも同じ変更で直す(hook を飛ばさない)」を 1 行足す(既存の当たりにも「HEAD に無い」と書いていて、
-  hook の不具合と読まれた)。
-- **誤り**: 基点の file が読めない・JSON でない・`violations` の列が無い・text / json の出力で使った時は終了コード 2。
-- 戻し方: この欄・引数・`src/baseline.rs` を消す(呼び手が使う前なら影響なし)。
+- **What is compared**: violations whose `level` is `critical` (including those lowered to warning by being in the registry — severity is not lowered by the registry).
+- **Identifier**: `<path>::<rule>::<name>` (line numbers not included). For a violation with a key, the `key` itself; for a violation without a key (Python's per-statement rules), the `message` in place of the name.
+- **A set, not a count**: a commit that fixed 3 and added 1 has one new critical even though the count dropped.
+- **File move / rename**: when the rule and name are the same, only the path differs, and the baseline's identifier is now gone, they are regarded as the same violation, one to one.
+  If the baseline's identifier remains and the same name appears at another path, it is a new violation.
+- **Output**: the top-level field `new_critical` of editor-json (a list of identifiers in lexicographic order). `null` when not compared with a baseline. The version is not bumped (a field addition).
+- **Scope**: in a run that names paths, only violations under the named paths are compared. The baseline's output is also produced by naming the same paths (the caller's job).
+- **Rules with no list of known violations** (rules the registry does not lower — DOEFF206-209, 211): in a run that names paths (the files staged for the commit hook, and the checks of
+  the changed parts before registration), every critical of that rule under the named paths goes into `new_critical`, even if the baseline has the same identifier — a changed file
+  with a hit is blocked (granularity is per file). A run with no names compares only against the baseline difference (the overall count is reported daily).
+  Rules that declare they need the whole repo (DOEFF206, 207, 209) are not applied in the commit hook; the whole-repo verification looks at them (see
+  "Scope the commit hook applies to" below).
+  The commit hook writes the blocking hits divided by whether the same identifier exists in the HEAD version (`commit_hook::split_by_head` — the blocking decision is unchanged):
+  those that do not are written as "not on HEAD critical: <identifier>", and those that do as
+  "existing hit in a changed file (also on main; this rule is not lowered by the known list): <identifier>", and if the latter exist, one line is added:
+  "If you change this file, fix that hit in the same change (do not skip the hook)" (existing hits were also written as "not in HEAD",
+  which was read as a hook malfunction).
+- **Errors**: exit code 2 if the baseline file is unreadable, is not JSON, has no `violations` list, or when used with text / json output.
+- Reverting: delete this field, the argument, and `src/baseline.rs` (no impact if no caller uses it yet).
 
-設定(pyproject の `[tool.doeff-linter]` のどの段でも・architecture.hy)に**この binary の知らない鍵**か、この binary に無い形の正しい
-規則の ID(`DOEFF` と 3 桁)がある時は、終了コード 2 で止めない。その鍵(参照)だけを読まずに残りの規則を走らせ、設定の file のその行に
-warning の違反 **DOEFF100**(設定の知らない鍵)を出す。設定は binary より先に進むことがあり(新しい鍵を書いた後、
-置き場の binary が本線から組み直されるまでの間)、そこで全体を止めるとエディタの違反の欄が空になり hook も黙るため。書き違いも同じ形で
-見える。DOEFF100 は `enable` の一覧に無くても出し、`disable` に名指した時だけ止まる。知っている鍵の正本は設定の struct の定義
-(`serde_ignored` が定義に無い鍵を path つきで集める — 鍵の表を手で持たない)。
+If the settings (any level of pyproject's `[tool.doeff-linter]`, or architecture.hy) contain a **key this binary does not know**, or a well-formed
+rule ID (`DOEFF` plus 3 digits) that this binary does not have, it does not stop with exit code 2. It skips reading only that key (reference), runs the remaining rules, and emits at that line of the settings file a
+warning violation **DOEFF100** (a key the settings do not know). Settings can get ahead of the binary (after a new key is written, until
+the binary in the store is rebuilt from the main line), and stopping everything then would empty the editor's violations pane and silence the hook. A typo
+looks the same way. DOEFF100 is emitted even if it is not in the `enable` list, and stops only when named in `disable`. The source of truth for known keys is the definition of the settings struct
+(`serde_ignored` collects keys that are not in the definition, with paths — no key table is kept by hand).
 
-`--version` は組んだ doeff の commit を名乗る(`doeff-linter 0.2.0 (doeff <commit>)`)。commit は組み立ての env
-`DOEFF_LINTER_BUILD_COMMIT`(自動の組み直しが渡す)か、手で組んだ時の git の HEAD(linter か indexer の dir に commit していない変更が
-在れば `+dirty`)。
+`--version` names the doeff commit it was built from (`doeff-linter 0.2.0 (doeff <commit>)`). The commit is the build env
+`DOEFF_LINTER_BUILD_COMMIT` (passed by the automatic rebuild), or, for a hand build, git's HEAD (`+dirty` if the linter or indexer dir has uncommitted changes
+).
 
-`--modified`(text・json)の時は、層の規則の違反も変更した file の物だけを出す。
+With `--modified` (text, json), layer-rule violations are also emitted only for changed files.
 
-登録簿に載った既知の破れ(warning)と照合中の規則の違反(info)では 1 にしない。CI や agent の hook で「新しい破れだけを止める」
-ためである(この決定は戻せる。戻すなら `EditorReport::has_errors` を違反の有無に替える)。
+Known violations in the registry (warning) and violations of rules under reconciliation (info) do not give exit code 1. This is so that CI and agent hooks "block only new violations"
+(this decision can be reverted; to revert, replace `EditorReport::has_errors` with whether any violation exists).
 
-## 2. editor-json の形(版 2)
+## 2. Shape of editor-json (version 2)
 
 ```jsonc
 {
   "version": 2,
-  "linter": {"version": "0.2.0", "commit": "<sha>"},  // この出力を作った binary と組んだ doeff の commit(版 1 への追加の欄)
-  "root": "/abs/repo",                       // 正規化した repo の根
-  "layers": [                                // 層の順(外の世界から遠い順)と説明 — 設定 layers.describe から(無い欄は null)
-    {"name": "core", "summary": "業務の判断と Program", "knows": "…", "does_not_know": "…", "question": "迷った時の問い"}
+  "linter": {"version": "0.2.0", "commit": "<sha>"},  // the binary that produced this output and the doeff commit it was built from (a field added to version 1)
+  "root": "/abs/repo",                       // normalized repo root
+  "layers": [                                // layer order (farthest from the outside world first) and descriptions — from settings layers.describe (fields not given are null)
+    {"name": "core", "summary": "business judgment and Program", "knows": "…", "does_not_know": "…", "question": "question to ask when unsure"}
   ],
   "violations": [
     {
-      "rule": "DOEFF101",                    // 規則の ID
-      "law": "core-imports-only-intent",     // 設定で結びつけた law の名(無ければ null)
-      "adr": "ADR-…",                        // law の ADR(無ければ null)
+      "rule": "DOEFF101",                    // rule ID
+      "law": "core-imports-only-intent",     // name of the law tied in settings (null if none)
+      "adr": "ADR-…",                        // the law's ADR (null if none)
       "severity": "error",                   // error | warning | info
       "path": "/abs/repo/controllers/core/goal.hy",
       "range": {"start": {"line": 12, "character": 8}, "end": {"line": 12, "character": 40}},
-      "message": "…",                        // 何が破れか(日本語)
-      "hint": "…",                           // 直し方の 1 行
-      "key": "controllers/core/goal.hy::core-imports-only-intent::controllers.foundation.records",  // 層の規則だけ。Python の規則は null
-      "registered": false,                   // 登録簿に載っているか
-      "base_severity": "error",              // 登録簿と照合中で下げる前の規則そのものの重さ(版 2 への欄の追加)
-      "standing": "new",                     // new(新しい)| registered(登録簿の既知)| reconciling(照合中で info に下げた)
-      "level": "critical",                   // 規則の重大さ(設定 rules.<ID>.level。無ければ base_severity から)— 登録簿で下げない
-      "explanation": {                       // 層の規則だけ(Python の規則は null)
-        "subject": "これは何か(import 先とその層・定義と kind・file の層と、それを何で決めたか)",
-        "reason": "なぜ違反か(層の説明と規則を結ぶ文)",
-        "law_statement": "結びつけた law の :statement の逐語 or null"
+      "message": "…",                        // what the violation is (English)
+      "hint": "…",                           // one line on how to fix it
+      "key": "controllers/core/goal.hy::core-imports-only-intent::controllers.foundation.records",  // layer rules only. null for Python rules
+      "registered": false,                   // whether it is in the registry
+      "base_severity": "error",              // the rule's own severity before lowering by the registry or reconciliation (field added in version 2)
+      "standing": "new",                     // new | registered (known in the registry) | reconciling (lowered to info while reconciling)
+      "level": "critical",                   // severity of the rule (settings rules.<ID>.level; otherwise from base_severity) — not lowered by the registry
+      "explanation": {                       // layer rules only (null for Python rules)
+        "subject": "what this is (the import target and its layer / the definition and its kind / the file's layer, and what decided it)",
+        "reason": "why it is a violation (a sentence connecting the layer's description and the rule)",
+        "law_statement": "verbatim :statement of the tied law, or null"
       }
     }
   ],
-  "modules": [                               // 層の母集団の module(地図の材料)
+  "modules": [                               // modules in the layer population (material for the map)
     {"path": "/abs/…/goal.hy", "layer": "core", "context": "kanban", "role": "program", "violations": 1,
-     "service": "kanban",                     // 置き場の `*` の段に当たった service(層が先の形なら null)
-     "layer_reason": "path の置き場所で決めた — controllers/core/ の下は層 core(…)。タグの role = program もこの層の役"}
+     "service": "kanban",                     // the service that matched the `*` segment of the location (null if layers come first)
+     "layer_reason": "decided by the path's location — under controllers/core/ is layer core (…). The tag role = program is also a role of this layer"}
   ],
-  "rules": [                                 // 有効な規則と、針の無い law(この実行で判じたかは judged_rules)
+  "rules": [                                 // enabled rules, and laws with no hook (whether judged in this run is in judged_rules)
     {"rule": "DOEFF101", "adr": "ADR-…", "statement": "core-imports-only-intent: …", "wired": true,
-     "title": "層の向きに逆らう import",      // 短い日本語の名(違反の形)
-     "family": "layer"}                       // 規則の家族(layer・tags・raw・naming・place・definition・class・wire・smell・jev・python・law)
+     "title": "import against the layer direction",      // short English name (the shape of the violation)
+     "family": "layer"}                       // rule family (layer, tags, raw, naming, place, definition, class, wire, smell, jev, python, law)
   ],
-  "judged_rules": ["DOEFF016", "DOEFF101", "NOQA001"],  // この実行で判じた規則の ID(辞書順・契約の更新 8)— 下の説明
-  "errors": [],                              // 読めなかった file・登録簿・目録の理由
-  "new_critical": null,                      // --baseline-report の時だけ: 基点に無い critical の識別子の列(1 節「基点との比べ」)
-  "out_of_scope": null                       // path を名指した実行の時だけ: 名指した Hy の file のうち歩く範囲の外の物(1 節「名指しの範囲の外」)
+  "judged_rules": ["DOEFF016", "DOEFF101", "NOQA001"],  // IDs of rules judged in this run (lexicographic order; contract update 8) — see below
+  "errors": [],                              // reasons for files, registry, and catalog that could not be read
+  "new_critical": null,                      // only with --baseline-report: list of identifiers of criticals not at the baseline (section 1, "Comparison with the baseline")
+  "out_of_scope": null                       // only for a run that names paths: named Hy files outside the walked range (section 1, "Outside the named scope")
 }
 ```
 
-- 位置は 0 始まりの行と UTF-16 の code unit の列(VS Code の Position と同じ)。日本語や絵文字を含む行でも列は UTF-16 で数える。
-- 行だけの規則(DOEFF001〜031)は、違反の文の頭から行末までを範囲にする。
-- `path` は正規化した絶対の path(symlink と `..` を解いた物)。repo の根の中の file は、全体の実行でも `--stdin` の実行でも `root` と repo の根からの path をつないだ物になり、エディタは同じ path で結果を差し替えられる。path の引数で絞る時も同じ正規化で比べる。
-- `modules[].context`・`role` は module の頭のタグ、無ければ最初の定義のタグ。層の母集団の外の file は `modules` に出ない。
-- `rules`: 有効な規則ごとに、結びつけた law があれば law ごとに 1 件(`statement` = `<law の名>: <law の文>`)、無ければ規則の文で 1 件。
-  設定の節が無い層の規則は `wired: false`(違反を出さない)。`rules` の空な law(針の無い law)は `rule` に law の名を入れて `wired: false`。
-  `title` は短い日本語の名(違反の形。針の無い law は「自動の判定がまだ無い決まり」)。`family` は規則の家族
-  (`layer`・`tags`・`raw`・`naming`・`place`・`definition`・`class`・`wire`・`smell`・`jev`・`python`・`law` の閉じた集合。
-  Python の文ごとの規則(DOEFF001〜031・NOQA001・知らない ID)は `python`、針の無い law は `law`)— エディタが規則の一覧を
-  束ねて見せる時に使う。名と家族の判定は linter が持ち、エディタは写しを持たない。
+- Positions are 0-based lines and UTF-16 code unit columns (the same as VS Code's Position). Columns are counted in UTF-16 even on lines containing Japanese or emoji.
+- Line-only rules (DOEFF001-031) take as the range from the start of the violation's text to the end of the line.
+- `path` is a normalized absolute path (with symlinks and `..` resolved). A file inside the repo root becomes `root` joined with the path from the repo root, in both whole runs and `--stdin` runs, so the editor can replace results by the same path. When narrowing by path arguments, they are compared with the same normalization.
+- `modules[].context` and `role` are the module's head tags, or the first definition's tags if none. Files outside the layer population do not appear in `modules`.
+- `rules`: for each enabled rule, one entry per tied law if it has any (`statement` = `<law name>: <law statement>`), otherwise one entry with the rule's statement.
+  A layer rule whose settings section is absent is `wired: false` (it emits no violations). A law with an empty `rules` (a law with no hook) puts the law's name in `rule` with `wired: false`.
+  `title` is a short English name (the shape of the violation; for a law with no hook, "a convention with no automatic check yet"). `family` is the rule family
+  (a closed set: `layer`, `tags`, `raw`, `naming`, `place`, `definition`, `class`, `wire`, `smell`, `jev`, `python`, `law`.
+  Python's per-statement rules (DOEFF001-031, NOQA001, unknown IDs) are `python`, and a law with no hook is `law`) — used when the editor groups and shows
+  the list of rules. The linter holds the judgment of names and families; the editor keeps no copy.
 
-- `severity` は下げた後の重さ、`base_severity` は規則そのものの重さ。登録簿に載った error は `registered_severity`(既定 warning)、
-  載った warning は info、照合中の規則は info に下がる。エディタはこの 2 つと `standing` で「重い規則の破れが新しい分・既知の分で何件残るか」
-  を数える(下げた理由の判定は linter が持つ)。Python の文ごとの規則は下げないので 2 つは同じで `standing` は `new`。
+- `severity` is the severity after lowering, and `base_severity` is the rule's own severity. An error in the registry goes to `registered_severity` (default warning),
+  a warning in it goes to info, and a rule under reconciliation goes to info. The editor uses these two and `standing` to count "how many violations of heavy rules remain, new versus known"
+  (the judgment of the reason for lowering is the linter's). Python's per-statement rules are not lowered, so the two are the same and `standing` is `new`.
 
-- `judged_rules`(契約の更新 8): この実行で判じた規則の ID(辞書順・重ねない)。判じた = その規則の当たりを
-  出し切った(0 件の規則も載る)。`violations` の規則はどれもこの列に入る。
-  - 全体の実行: 有効な規則の全部。path を名指した全体の実行は DOEFF166(登録簿の当たらない行)だけを除く(当たる所見が名指しの外に在りうる)。
-  - 1 file の実行(`--stdin --path`): Python の文ごとの規則の全部と、層の規則のうち 1 file で判じると規則が名乗る物
-    (`ProjectRule::judged_on_one_file`)。偽の規則 — 当たりが architecture.hy・登録簿の行・宣言した `:files` の群に付く規則
-    (DOEFF117・141・147〜149・159〜163・166)、定義の graph を repo 全体で辿る規則(DOEFF132・133・136・137・143・155〜158・164・165・167)、
-    1 file の枝をまだ持たない規則(DOEFF135・146)— は走らせず、この列に載らない。
-  - Python の規則を走らせる実行は noqa の書き方の知らせ `NOQA001` も載せる。設定の知らない鍵 DOEFF100 と読めない Hy の file DOEFF128 は、
-    有効な規則の一覧に関わらず両方の実行で載る。
-  - エディタは 1 file の実行の結果で、この列の規則の違反だけをその file について差し替え、列に無い規則の違反は全体の実行の結果のまま残す。
-    欄の無い古い出力は今までどおり file の違反を全部差し替える。
-  - `rules[]` の欄にしないのは、`rules[]` が有効な規則の一覧で、その外で出る違反の規則(NOQA001・enable に無くても出す DOEFF100 / DOEFF128)
-    を持たないため。版は上げない(欄の追加 — 版を上げると、版 1・2 だけを読む古いエディタが出力の全体を捨てて違反の欄が空になる)。
+- `judged_rules` (contract update 8): IDs of the rules judged in this run (lexicographic order, no duplicates). Judged = the rule's hits were
+  fully emitted (rules with 0 hits are listed too). Every rule in `violations` is in this list.
+  - Whole run: all enabled rules. A whole run that names paths excludes only DOEFF166 (lines of the registry that do not match) (matching findings may lie outside the named paths).
+  - One-file run (`--stdin --path`): all of Python's per-statement rules, and those layer rules that declare they can judge on one file
+    (`ProjectRule::judged_on_one_file`). False rules — rules whose hits attach to architecture.hy, registry lines, or a declared `:files` group
+    (DOEFF117, 141, 147-149, 159-163, 166), rules that follow the definition graph over the whole repo (DOEFF132, 133, 136, 137, 143, 155-158, 164, 165, 167),
+    and rules that do not yet have a one-file branch (DOEFF135, 146) — are not run and are not in this list.
+  - A run that runs Python's rules also lists the noqa notice `NOQA001`. DOEFF100 (a key the settings do not know) and DOEFF128 (an unreadable Hy file) are listed in both kinds of run,
+    regardless of the list of enabled rules.
+  - Using the result of a one-file run, the editor replaces only the violations of the rules in this list, for that file, and leaves violations of rules not in the list as in the whole run's result.
+    Old output with no such field replaces all of the file's violations as before.
+  - It is not made a field of `rules[]` because `rules[]` is the list of enabled rules and does not carry the rules of violations emitted outside it (NOQA001, and DOEFF100 / DOEFF128 which are emitted even if not in enable).
+    The version is not bumped (a field addition — bumping the version would make old editors that read only versions 1 and 2 discard the whole output and leave the violations pane empty).
 
-- `signatures`・`bindings`(版 2): `--stdin` の Hy の file の defk / deff の見出しと束縛の型。全体の実行では空の列。形と読み方は 16 節。
-- `rewrites`(版 2 への欄の追加): `--stdin` の Hy の file の、定義の本体の呼びを `f(a, b)` の形で見せる表示の置き換え。全体の実行では空の列。17 節。
-- `bodies`(版 2 への欄の追加): `--stdin` の Hy の file の、定義ごとの本体の文字の行(読む面が描く)。全体の実行では空の列。20 節。
+- `signatures`, `bindings` (version 2): the headings and binding types of defk / deff in a `--stdin` Hy file. Empty lists in a whole run. Shape and reading are in section 16.
+- `rewrites` (field added to version 2): display replacements for a `--stdin` Hy file that show calls in definition bodies in the form `f(a, b)`. Empty list in a whole run. Section 17.
+- `bodies` (field added to version 2): per-definition lines of body text in a `--stdin` Hy file (drawn by the reading pane). Empty list in a whole run. Section 20.
 
-### 説明の文(explanation・layer_reason)
+### Explanation sentences (explanation, layer_reason)
 
-- 文の雛形は規則ごとに `src/project/explain.rs` の 1 か所だけにあり、層の名前・置き場所・層の説明(`layers.describe`)・
-  role の説明(`roles.describe`)・生の副作用を許す層・law の文を設定から差し込む。Rust に層の意味は書かない。
-- 層の説明が無い層は、層の順(「外の世界から最も遠い層」「外の世界からの遠さの順で 2 番目の層」…)と規則の決まりだけで文を作る。
-- `layer_reason`: 層は path の置き場所で決める。タグの role がその層で許されない時は「path とタグが食い違う」と書き、その role を
-  許す層(無ければ「どの層の役でもない」)を添える。DOEFF105 の subject にも同じ食い違いを書く。
-- 人が読む出力(text)と agent の hook の文にも、層の規則の違反ごとに「これは」「なぜ」「law」「直し方」「鍵」の行を出す。
+- The sentence templates exist for each rule in one place only, `src/project/explain.rs`, and the layer name, location, layer description (`layers.describe`),
+  role description (`roles.describe`), layers that allow raw side effects, and the law's statement are inserted from the settings. No layer meaning is written in Rust.
+- A layer with no description gets its sentence built only from the layer order ("the layer farthest from the outside world", "the second layer in order of distance from the outside world", ...) and the rule's convention.
+- `layer_reason`: the layer is decided by the path's location. When the tag's role is not allowed in that layer, it says "the path and the tags disagree" and adds the layer
+  that allows that role (or "not a role of any layer" if none). The same disagreement is also written in DOEFF105's subject.
+- The human-readable output (text) and the agent hook's text also emit, for each layer-rule violation, lines for "what this is", "why", "law", "how to fix", and "key".
 
-## 3. 設定
+## 3. Settings
 
-節ごとの欄は README の「層の規則」の例のとおり。読む時に次を検め、1 つでも食い違えば終了コード 2 と理由の列を出す:
-順に 2 度出る層・`order` に無い層の名(`paths`・`allow_imports` の鍵と値・`forbid_modules`・`types_only`・`roles.by_layer`・
-`raw_side_effects.allowed_layers`・`laws[].layers`)・`roles.names` に無い role・層の規則でない `registry.reconciling`・doeff-linter に無い `laws[].rules` の ID・層を問わない規則(DOEFF108)だけの law の `layers`・空か `.` か絶対 path か `..` を含む層の置き場・入れ子の層の置き場・`layers` の無い `roles` と `tags`・`[tool.doeff-linter]` の直下と各節の知らない欄。
+The fields of each section are as in the README's "layer rules" example. On reading, the following are checked, and if any one disagrees it gives exit code 2 and a list of reasons:
+a layer appearing twice in `order`, a layer name not in `order` (keys and values of `paths` and `allow_imports`, `forbid_modules`, `types_only`, `roles.by_layer`,
+`raw_side_effects.allowed_layers`, `laws[].layers`), a role not in `roles.names`, a `registry.reconciling` that is not a layer rule, a `laws[].rules` ID not in doeff-linter, a `layers` of a law that has only layer-independent rules (DOEFF108), a layer location that is empty, `.`, an absolute path, or contains `..`, nested layer locations, `roles` and `tags` without `layers`, and unknown fields directly under `[tool.doeff-linter]` and in each section.
 
-| 節 | 欄 | 既定 |
+| Section | Fields | Default |
 |---|---|---|
-| `layers` | `order`・`paths`(層 → dir)・`exclude`(dir や file の名の完全一致)・`extensions` | extensions = hy・hyk・hyp・py |
-| `layers.allow_imports` | 層 → import してよい層 | 書かない層は制限しない |
-| `layers.forbid_modules` | 層 → 直に import しない module の綴り(前方一致 — `urllib.request` は `urllib.request.urlopen` に当たり `urllib.parse` には当たらない) | なし |
-| `layers` | `types_only`(層の名)・`function_definers` | defk・deff・defp・defpp・defhandler・defn |
-| `tags` | `module_variable_hy`・`module_variable_py`・`contract_definers`・`plain_definers`・`effect_definers`・`record_definers` | MODULE-TAGS・MODULE_TAGS・defk deff defp defpp defhandler・defn defclass defenum・defeffect・defrecord defwire(頭の辞書の `:tags` を定義のタグとして読む) |
-| `roles` | `names`・`by_layer`・`describe`(role → 説明。一覧から外した古い役も書ける) | by_layer の無い層は DOEFF105 を当てない |
-| `layers.describe.<層>` | `summary`・`knows`・`does_not_know`・`question` | 無ければ説明の欄は null |
-| `raw_side_effects` | `allowed_layers`・`catalog_extra`(hy-index の `--raw-catalog-extra` と同じ形の JSON) | — |
-| `environment_names` | `words`・`paths`・`exclude`・`exclude_parts`・`extensions`・`assembly_files` | extensions = hy・hyk・hyp・py |
-| `program_sleep` | `paths`・`exclude`・`exclude_parts`(DOEFF210 の母集団 = Hy の program の置き場。節が無ければ DOEFF210 は判じない) | paths が空なら repo の Hy の全部 |
-| `test_sleep` | `parts`・`names`・`exclude`(DOEFF211 の母集団 = Hy の検の置き場。節が無ければ DOEFF211 は判じない) | — |
-| `laws`(配列) | `name`・`adr`・`statement`・`rules`・`layers` | layers が空なら全部の層 |
-| `translation_effects` | `handler_layers`・`intent_layers`・`max_depth`(DOEFF130 — 21 節。DOEFF174 の到達も同じ `max_depth`)・`domain_layers`(DOEFF174 の業務の層 — 書いたなら名の誤りは設定の誤り) | protocol・intent・8・domain_layers は core・intent のうち宣言に在る層 |
-| `commit_hook` | `whole_repo_rules`(退役した鍵 — 読まずに 1 行で名乗る。repo 全体が要るかは規則が名乗り、hook はその規則を当てない)・`timeout_s`(子の linter 1 回ごとの上限の秒・0 は上限なし・越えたら測れなかったとして commit を止める — 下の「commit の hook の上限」) | なし・20 |
-| `registry` | `dirs`(1 鍵 1 file の dir)・`files`(1 行 1 鍵)・`config_files`(1 行 1 鍵・設定 file の dir からの相対)・`reconciling` | dirs と files は repo の根から |
-| `rules.<ID>` | `registered_severity`(登録簿に載った破れの重さ: error・warning・info) | warning |
-| `rules.<ID>` | `level`(規則の重大さ: critical・major・minor・info。どの規則でも書ける。登録簿で下げない — エディタが「手つかずの critical」を数える軸) | 下の「既定の重大さ」の表、表に無い規則は規則そのものの重さから(error = major・warning = minor・info = info) |
+| `layers` | `order`, `paths` (layer -> dir), `exclude` (exact match of dir or file names), `extensions` | extensions = hy, hyk, hyp, py |
+| `layers.allow_imports` | layer -> layers it may import | layers not written are unrestricted |
+| `layers.forbid_modules` | layer -> spellings of modules not to import directly (prefix match — `urllib.request` matches `urllib.request.urlopen` but not `urllib.parse`) | none |
+| `layers` | `types_only` (layer names), `function_definers` | defk, deff, defp, defpp, defhandler, defn |
+| `tags` | `module_variable_hy`, `module_variable_py`, `contract_definers`, `plain_definers`, `effect_definers`, `record_definers` | MODULE-TAGS, MODULE_TAGS, defk deff defp defpp defhandler, defn defclass defenum, defeffect, defrecord defwire (the head dict's `:tags` is read as the definition's tags) |
+| `roles` | `names`, `by_layer`, `describe` (role -> description. Old roles removed from the list can be written too) | DOEFF105 is not applied to layers with no by_layer |
+| `layers.describe.<layer>` | `summary`, `knows`, `does_not_know`, `question` | if absent, the description fields are null |
+| `raw_side_effects` | `allowed_layers`, `catalog_extra` (JSON in the same form as hy-index's `--raw-catalog-extra`) | — |
+| `environment_names` | `words`, `paths`, `exclude`, `exclude_parts`, `extensions`, `assembly_files` | extensions = hy, hyk, hyp, py |
+| `program_sleep` | `paths`, `exclude`, `exclude_parts` (the population of DOEFF210 = where Hy programs live. If the section is absent, DOEFF210 does not judge) | if paths is empty, all Hy of the repo |
+| `test_sleep` | `parts`, `names`, `exclude` (the population of DOEFF211 = where Hy tests live. If the section is absent, DOEFF211 does not judge) | — |
+| `laws` (array) | `name`, `adr`, `statement`, `rules`, `layers` | if layers is empty, all layers |
+| `translation_effects` | `handler_layers`, `intent_layers`, `max_depth` (DOEFF130 — section 21. DOEFF174's reach uses the same `max_depth`), `domain_layers` (DOEFF174's business layers — if written, a wrong name is a settings error) | protocol, intent, 8; domain_layers is whichever of core and intent are in the declaration |
+| `commit_hook` | `whole_repo_rules` (a retired key — not read, just named in one line. Whether a rule needs the whole repo is declared by the rule, and the hook does not apply that rule), `timeout_s` (the limit in seconds per child linter run; 0 means no limit; when exceeded, it is treated as unmeasurable and the commit is blocked — see "Commit hook limit" below) | none, 20 |
+| `registry` | `dirs` (a dir of one-key-one-file), `files` (one key per line), `config_files` (one key per line, relative to the settings file's dir), `reconciling` | dirs and files are from the repo root |
+| `rules.<ID>` | `registered_severity` (severity of a violation in the registry: error, warning, info) | warning |
+| `rules.<ID>` | `level` (severity of the rule: critical, major, minor, info. Can be written for any rule. Not lowered by the registry — the axis on which the editor counts "untouched criticals") | the "default severity" table below; rules not in the table take it from the rule's own severity (error = major, warning = minor, info = info) |
 
-`enable`・`disable` は Python の規則と層の規則の両方に効く(`ALL` は両方を含む)。
+`enable` and `disable` take effect on both Python rules and layer rules (`ALL` includes both).
 
-`--commit-hook` を撃つ linter は、各 repo が pin した doeff の commit の断面から機体で 1 度だけ組んだ物を使う — 組み立ての入口は
-`packages/doeff-linter/scripts/linter_snapshot.py`(`uv run --script <path> <doeff の checkout> <commit>` が置き場の binary の path を
-印字する・組めなければ 1 で終わり、呼び手は自分の環境の linter へ戻る)。repo は組み立てを写して持たない。
+The linter that fires `--commit-hook` is the one built once on the machine from the cross-section of the doeff commit each repo pinned — the entry point of the build is
+`packages/doeff-linter/scripts/linter_snapshot.py` (`uv run --script <path> <doeff checkout> <commit>` prints the path of the binary in the store;
+if it cannot build, it ends with 1 and the caller falls back to its own environment's linter). Repos do not keep a copy of the build.
 
-### commit の hook が当てる範囲(cisco-c8 の決め 2026-10-11)
+### Scope the commit hook applies to (cisco-c8's decision of 2026-10-11)
 
-`--commit-hook` は、有効な規則のうち file 1 つの中身と設定だけで決まる規則(`--split-rules` の `quick` — 宣言の file を変えたかを問わない)
-だけを、stage した path と、その HEAD の版(stage で消した file の HEAD の版を含む)に当てる。repo 全体(path `.`)は測らない。
+`--commit-hook` applies, among enabled rules, only those decided by the contents of a single file plus the settings (the `quick` of `--split-rules` — regardless of whether the declaration file changed),
+to the staged paths and to their HEAD versions (including the HEAD versions of files deleted in the stage). It does not measure the whole repo (path `.`).
 
-- 当てない物: repo 全体が要ると名乗る規則(`--list-rules` の `whole_repo` が真の規則)の当たり — stage した file の中の物も、変更の外の
-  file(architecture.hy・登録簿の表・別の source)に付く物も。宣言の file を変えた commit の、stage していない file に付く当たり。
-  どれも repo 全体の検証(各 repo の日次 — agora-controllers は 4 時間ごと)が見る。
-- 訳: repo 全体の比べ(先端の木と HEAD の木を repo 全体で測る)は agora-controllers で 1 回 45〜100 秒・1.5〜1.7 GB かかり、日次の赤を
-  直す 23 会話が同時に commit して機体を埋めた(zeus の load 102/24 core・swap 全部 — 2026-10-11)。repo 全体の規則は file 1 つに
-  当てても repo 全体の推論の世界を組む(DOEFF132 は 1 file で 28 秒・42 規則の合計で約 20 秒)ので、stage した path に当てる形でも軽くならない。
-- 門の口 `--split-rules` の分け(宣言の file を変えた変更は全部の規則を `whole` へ)は変えない — 呼び手が repo 全体の比べに使う。
+- What it does not apply: hits of rules that declare they need the whole repo (rules whose `whole_repo` in `--list-rules` is true) — both those inside staged files and those attached to files outside
+  the change (architecture.hy, registry tables, other sources). Hits attached to unstaged files in a commit that changed the declaration file.
+  All of these are looked at by the whole-repo verification (each repo's daily run — every 4 hours for agora-controllers).
+- Reason: the whole-repo comparison (measuring the tip tree and the HEAD tree over the whole repo) takes 45-100 seconds and 1.5-1.7 GB per run in agora-controllers, and the 23 conversations
+  fixing the daily red committed at the same time and filled the machine (zeus load 102/24 cores, swap all used — 2026-10-11). A whole-repo rule builds the whole-repo inference world even when
+  applied to one file (DOEFF132 takes 28 seconds on one file, about 20 seconds in total for 42 rules), so applying it only to staged paths does not make it lighter.
+- The split of the gate's entry `--split-rules` (a change to the declaration file sends all rules to `whole`) is unchanged — the caller uses it for the whole-repo comparison.
 
-### commit の hook の上限(元の issue #2723)
+### Commit hook limit (original issue #2723)
 
-`--commit-hook` は子の linter を 1 回ごとに上限の秒(`--commit-hook-timeout-s` が設定の `commit_hook.timeout_s` より勝つ・既定 20)で
-打ち切る。0 は上限なし(打ち切らずに終わりまで測る)。
+`--commit-hook` cuts off each child linter run at a limit in seconds (`--commit-hook-timeout-s` wins over the settings' `commit_hook.timeout_s`; default 20).
+0 means no limit (it measures to the end without cutting off).
 
-- 上限は子の CPU 秒で測る(`/proc/<pid>/stat` の utime・stime と待ち終えた子孫の cutime・cstime)。混んだ機体では
-  wall の秒だけが伸び、wall で測っていた時は、上限なしなら 0 件の commit が毎回切れて止まった(zeus の load 42〜73)。CPU を使わずに
-  終わらない子は、wall の予備の上限(上限 × 4)で切る。子の CPU 秒を読めない機体(/proc の無い Mac)は今までどおり wall の秒で測る。
-  判断は `cut_measure` の 1 か所で、止める行は物差しを名乗る(`CPU 秒の上限 N 秒で打ち切った`・`wall の上限 N 秒で打ち切った(この機体では
-  子の CPU 秒を読めない)`・`wall の予備の上限 M 秒で打ち切った(…CPU を使わずに終わらない子)`)。
+- The limit is measured in the child's CPU seconds (utime and stime in `/proc/<pid>/stat`, plus cutime and cstime of waited-for descendants). On a busy machine
+  only the wall seconds grow, and when it was measured by wall, a commit with 0 hits was cut off every time and blocked unless there was no limit (zeus load 42-73). A child that does not finish without using CPU
+  is cut off by a wall fallback limit (limit x 4). On a machine where the child's CPU seconds cannot be read (a Mac with no /proc), wall seconds are used as before.
+  The decision is in one place, `cut_measure`, and the blocking line names the yardstick (`cut off at the CPU-seconds limit of N s`, `cut off at the wall limit of N s (child CPU seconds
+  cannot be read on this machine)`, `cut off at the wall backstop limit of M s (... a child that does not finish without using CPU)`).
 
-- 打ち切った時は終了コード 1 で commit を止める(以前は 0 で通していて、作業役は通った commit を確かめ直さず、宣言の file を変えた
-  commit の DOEFF167 の当たりが main に入った)。
-- 止める時の stderr は 3 行(頭は `doeff-linter commit-hook: `):
-  1. どの比べを・どの木で・どの規則を・どの物差しの何秒の上限で打ち切ったか(`…を測れなかった — …の子の linter をCPU 秒の上限 N 秒で打ち切った。
-     この規則の当たりを確かめていないので commit を止める…`)。
-  2. `上限なしで同じ比べをやり直す命令: <命令>` — 同じ linter の絶対 path・`--commit-hook`・`--root <根>`・`--config <設定 file>`
-     (無ければ `--no-config`)・引数の `--enable` / `--disable`・`--commit-message <本文の file>`(渡されていれば)に
-     `--commit-hook-timeout-s 0` を足した 1 行。shell にそのまま貼れる形(空白などを含む語は ' で囲む)。
-  3. `この命令の終了コードが 0(止める当たりが 0 件)である事を確かめてから commit し直す。--no-verify は使わない`
-- 打ち切られなかった時の判じは変わらない。
-- HEAD の版を測る木は cache の根に repo ごとに 1 つ置いて差分で進めるので(#3858)、2 回目からは変わった file だけを書き換える。
+- When cut off, it blocks the commit with exit code 1 (before, it passed with 0, and workers did not re-check the commit that passed, and a DOEFF167 hit from a commit that changed
+  the declaration file got into main).
+- When it blocks, stderr has 3 lines (the head is `doeff-linter commit-hook: `):
+  1. Which comparison, on which tree, for which rules, was cut off at which yardstick's limit of how many seconds (`... could not be measured — the child linter of ... was cut off at the CPU-second limit of N seconds.
+     The hits of this rule have not been checked, so the commit is blocked ...`).
+  2. `Command to redo the same comparison without a limit: <command>` — one line made of the same linter's absolute path, `--commit-hook`, `--root <root>`, `--config <settings file>`
+     (or `--no-config` if none), the `--enable` / `--disable` arguments, and `--commit-message <file of the body>` (if given),
+     plus `--commit-hook-timeout-s 0`. In a form that can be pasted into a shell as is (words containing spaces and the like are enclosed in ').
+  3. `Confirm that this command exits with code 0 (0 hits that stop the commit) before committing again. Do not use --no-verify`
+- The judgment when not cut off is unchanged.
+- The tree that measures the HEAD version is placed one per repo under the cache root and advanced by diffs (#3858), so from the second run only changed files are rewritten.
 
-### commit の hook の報告(`--report-out`)
+### Commit hook report (`--report-out`)
 
-`--commit-hook --report-out <file>` は、hook の 2 回の測り(HEAD の版・stage した path)を 1 つの JSON で `<file>` に書く(相対の path は
-今の dir から)。会話の commit の hook がこの報告を会話 id つきで記録へ送り、会話が増やした・減らした違反を commit ごとに読む材料にする
-(設計の記録 project-health-ide の指摘 2)。
+`--commit-hook --report-out <file>` writes the hook's two measurements (the HEAD version and the staged paths) as one JSON to `<file>` (a relative path is from
+the current dir). A conversation's commit hook sends this report, with the conversation id, to the record, as material for reading, per commit, the violations the conversation added or removed
+(point 2 of the design record project-health-ide).
 
 ```jsonc
 {
-  "root": "/abs/repo",            // 先端の根(違反の path の根)
-  "code": 1,                      // hook の終了コード(下の「判じていない時」)
+  "root": "/abs/repo",            // root of the tip (the root of violation paths)
+  "code": 1,                      // the hook's exit code (see "When not judged" below)
   "measurements": [
-    { "target": "HEAD",  "paths": ["app/x.hy"], "violations": [ /* editor-json の違反(2 節) */ ], "judged_rules": ["DOEFF016", "NOQA001"] },
-    { "target": "stage", "paths": ["app/x.hy"], "violations": [ /* 同上 */ ], "judged_rules": ["DOEFF016", "NOQA001"] }
+    { "target": "HEAD",  "paths": ["app/x.hy"], "violations": [ /* editor-json violations (section 2) */ ], "judged_rules": ["DOEFF016", "NOQA001"] },
+    { "target": "stage", "paths": ["app/x.hy"], "violations": [ /* same */ ], "judged_rules": ["DOEFF016", "NOQA001"] }
   ]
 }
 ```
 
-- **測り**: `target` = 測った対象(`HEAD` = HEAD の版・`stage` = stage した path を作業木で測った版)。`paths` = 子の linter に渡した path
-  (根からの相対 — HEAD の版は、HEAD に在る stage した path と stage で消した file)。`violations` = 子の linter の editor-json の違反の形のまま
-  (2 節の `violations[]` — HEAD の版は HEAD の木の path を先端の根の下へ付け替えた後で、stage の版と同じ path で比べられる)。
-  `judged_rules` = 子の linter の editor-json の `judged_rules`(file 1 つで決まる規則だけ — repo 全体が要る規則は hook が当てないので載らない)。
-- **子を撃たない測り**(stage が空・当てる規則が無い・linter が読む path が無い・最初の commit や新しい file だけの HEAD の版): その測りの
-  `paths`・`violations`・`judged_rules` は空。測りは HEAD・stage の 2 件のまま。
-- **判じていない時**: 上限で打ち切った(終了コード 1)・git や linter が動かなかった(終了コード 2)時は `measurements` が空。
-- **変えない物**: 止める判定・終了コード・stderr の文(引数の無い時と同じ)。editor-json の版(子の出力の欄をそのまま運ぶ)。
-- **書けない時**: stderr に `doeff-linter commit-hook: 報告 <file> を書けない(終了コードは変えない): <理由>` を 1 行足し、終了コードは
-  変えない(診断の記録は commit を止めない)。
-- `--commit-hook` の無い実行と門の口 `--split-rules` に渡すと引数の誤り(終了コード 2)。上限なしでやり直す命令(上の「commit の hook の
-  上限」)には足さない。
-- 戻し方: 引数 `--report-out`・`commit_hook::Measurement`・`report_of` と `commit_hook::run` の書き出しを消す(送る hook が使う前なら影響なし)。
+- **Measurements**: `target` = what was measured (`HEAD` = the HEAD version, `stage` = the version of the staged paths measured in the working tree). `paths` = the paths passed to the child linter
+  (relative to the root — for the HEAD version, the staged paths that exist in HEAD plus files deleted in the stage). `violations` = in the same form as the child linter's editor-json violations
+  (`violations[]` in section 2 — for the HEAD version, after re-rooting the HEAD tree's paths under the tip's root, so they can be compared with the stage version by the same path).
+  `judged_rules` = the child linter's editor-json `judged_rules` (only rules decided by one file — rules that need the whole repo are not applied by the hook, so they are not listed).
+- **Measurements that fire no child** (empty stage, no rules to apply, no paths the linter reads, the HEAD version of a first commit or only-new files): that measurement's
+  `paths`, `violations`, and `judged_rules` are empty. There are still two measurements, HEAD and stage.
+- **When not judged**: when cut off at the limit (exit code 1) or when git or the linter did not run (exit code 2), `measurements` is empty.
+- **Unchanged**: the blocking decision, exit code, and stderr text (the same as when there are no arguments). The editor-json version (the child's output fields are carried as they are).
+- **When it cannot be written**: one line is added to stderr, `doeff-linter commit-hook: cannot write report <file> (exit code unchanged): <reason>`, and the exit code is
+  unchanged (recording diagnostics does not block the commit).
+- Passing it to a run without `--commit-hook`, or to the gate's entry `--split-rules`, is an argument error (exit code 2). It is not added to the no-limit redo command (the "Commit hook
+  limit" above).
+- Reverting: delete the argument `--report-out`, `commit_hook::Measurement`, `report_of`, and the write-out in `commit_hook::run` (no impact if the sending hook is not yet using it).
 
-### 既定の重大さ
+### Default severity
 
-責務の境界の違反は、どの repo でも critical(責務の境界を守る事が doeff の code を検で確かめられる形に保つ前提だから)。repo ごとに写すと片方が黙って古くなるので、既定の表は doeff-linter の 1 か所(`ProjectRule::default_level` —
-網羅の match で、新しい規則は決めずに足せない)に置き、repo の設定の `rules.<ID>.level` は既定と違う所だけを書く(書けば repo の宣言が勝つ)。
+Violations of responsibility boundaries are critical in every repo (because keeping the responsibility boundaries is the premise for keeping doeff code in a form that tests can verify). Copying per repo would let one side go silently stale, so the default table is placed in one place in doeff-linter (`ProjectRule::default_level` —
+an exhaustive match, so a new rule cannot be added without deciding), and a repo's `rules.<ID>.level` in settings writes only what differs from the default (if written, the repo's declaration wins).
 
-| 既定 | 規則 |
+| Default | Rules |
 |---|---|
-| critical — 責務の境界 | DOEFF101(層の向き)・102(層で禁じた module)・103(型だけの層の関数)・106(生の副作用の直接の証拠)・109(service の境界)・116(service の依存)・130(翻訳の handler が業務の intent を出す) |
-| critical — そのほか | DOEFF114・115(宣言に無い置き場所)・126(defk を素で呼ぶ — Program が値として流れる)・128(読めない file — 判定が欠け、0 件に見えても合格ではない)・210(program が handler を迂回して壁の時計で眠る) |
-| major — Jev の判定(較正が済むまで) | DOEFF201(翻訳の層の業務の判断)・202(判断の層の通信の手段)・205(形の検めと判断の混ざり) |
-| 規則そのものの重さから | 上に無い規則の全部(Python の文ごとの規則 DOEFF001〜031 も) |
+| critical — responsibility boundaries | DOEFF101 (layer direction), 102 (module forbidden in a layer), 103 (function in a types-only layer), 106 (direct evidence of a raw side effect), 109 (service boundary), 116 (service dependency), 130 (a translation handler emits a business intent) |
+| critical — others | DOEFF114, 115 (location not in the declaration), 126 (calling a defk bare — a Program flows as a value), 128 (unreadable file — judgment is missing, and 0 hits does not mean pass), 210 (a program bypasses the handler and sleeps on the wall clock) |
+| major — Jev's judgment (until calibration is done) | DOEFF201 (business judgment in a translation layer), 202 (means of communication in a judgment layer), 205 (shape checking mixed with judgment) |
+| from the rule's own severity | all rules not above (including Python's per-statement rules DOEFF001-031) |
 
-Jev の規則(201・202・205)は、較正が済んで信頼できるまで critical にしない(#942 で
-critical にしたのを戻した)。確率で info にも出るが、level は規則の軸なので info の当たりも major に数える(外れは誤判定の一覧へ — 10 節)。
+Jev's rules (201, 202, 205) are not made critical until calibration is done and they can be trusted (the change to
+critical in #942 was reverted). They can also come out as info by probability, but since level is an axis of the rule, info hits are counted as major too (misses go to the list of misjudgments — section 10).
 
-## 4. 母集団
+## 4. Population
 
-- **置き場のパターン**: `layers.paths` の値は綴りか綴りの列。段 `*` は service の名に当たる(1 つまで・段まるごと)。file が 2 つの置き場に
-  当たる時は段の多い方、同じなら層の順の先の方。
-- **定義の規則の母集団**(DOEFF110〜112): `definitions.paths` の下(空なら repo の Hy の全部 — `.venv`・`node_modules`・`target`・`.git` は降りない)で、
-  `definitions.exclude` の下でなく、区切りが `definitions.exclude_parts` に無い Hy の file。
+- **Location pattern**: the value of `layers.paths` is a spelling or a list of spellings. The segment `*` matches a service name (at most one, the whole segment). When a file
+  matches two locations, the one with more segments wins; if equal, the earlier layer in the layer order.
+- **Population of the definition rules** (DOEFF110-112): Hy files under `definitions.paths` (if empty, all Hy of the repo — `.venv`, `node_modules`, `target`, and `.git` are not descended into)
+  that are not under `definitions.exclude` and whose path segments are not in `definitions.exclude_parts`.
 
-- **層の母集団**: 各層の dir の下の file で、拡張子が `layers.extensions` に在り、path の区切りのどれも `layers.exclude` に無い物。
-  module の綴りは repo の根からの path の拡張子を外し `/` を `.` にした物(`__init__` もそのまま)。
-- **業務の file**(DOEFF108): `environment_names.paths` のどれかの下(末尾 `*` は path の前方一致)で、`exclude` の下になく、
-  区切りのどれも `exclude_parts` に無く、拡張子が `extensions` に在る物。
-- **program の置き場**(DOEFF210): 歩く範囲(根の下と設定の `include`)の Hy の file のうち、`program_sleep.paths` のどれかの下(空なら
-  全部・末尾 `*` は path の前方一致)で、`program_sleep.exclude` の下になく、区切りのどれも `program_sleep.exclude_parts` に無い物。
-  定義の規則の母集団(`definitions`)とは別に持つ — 定義の書き方の規則群を当てていない置き場の program にも、この規則だけを当てられる。
-- **検の置き場**(DOEFF211): 歩く範囲(根の下と設定の `include`)の Hy の file のうち、path の区切り(file の名を除く)のどれかが
-  `test_sleep.parts` に在るか、file の名が `test_sleep.names` の glob のどれかに合い、`test_sleep.exclude` のどれにも当たらない物
-  (exclude の行は dir ならその下・file ならその file そのもの・末尾 `*` は path の前方一致)。program の置き場とは別に持つ —
-  program の眠り(DOEFF210)は handler の実装を外し、検の眠り(DOEFF211)は realtime を名乗った所を外す。
+- **Layer population**: files under each layer's dir whose extension is in `layers.extensions` and none of whose path segments is in `layers.exclude`.
+  A module's spelling is the path from the repo root with the extension removed and `/` replaced with `.` (`__init__` is left as is).
+- **Business files** (DOEFF108): files under any of `environment_names.paths` (a trailing `*` is a prefix match on the path), not under `exclude`,
+  none of whose segments is in `exclude_parts`, and whose extension is in `extensions`.
+- **Program locations** (DOEFF210): among the Hy files in the walked range (under the root, plus the settings' `include`), those under any of `program_sleep.paths` (if empty,
+  all; a trailing `*` is a prefix match on the path), not under `program_sleep.exclude`, and none of whose segments is in `program_sleep.exclude_parts`.
+  It is kept separate from the population of the definition rules (`definitions`) — so this rule alone can be applied to programs in locations where the definition-writing rule group is not applied.
+- **Test locations** (DOEFF211): among the Hy files in the walked range (under the root, plus the settings' `include`), those where any path segment (excluding the file name) is in
+  `test_sleep.parts`, or the file name matches any glob of `test_sleep.names`, and which match none of `test_sleep.exclude`
+  (an exclude line means everything under it if it is a dir, the file itself if it is a file, and a trailing `*` is a prefix match on the path). It is kept separate from program locations —
+  a program's sleep (DOEFF210) excludes handler implementations, and a test's sleep (DOEFF211) excludes the places that declared realtime.
 
-## 5. 規則
+## 5. Rules
 
-鍵は `<repo の根からの path>::<段>[::<細目>]`。`<段>` は規則とその file の層に結びつけた law の名、無ければ規則の ID。
+A key is `<path from the repo root>::<segment>[::<detail>]`. `<segment>` is the name of the law tied to the rule and the file's layer, or the rule's ID if none.
 
-| 規則 | 判じ方 | 細目 | 位置 |
+| Rule | How it judges | Detail | Position |
 |---|---|---|---|
-| DOEFF101 | import の先を母集団の module(その物か、`module.名` の module)へ解き、自分以外で `allow_imports` の外の層なら破れ。母集団の外(doeff・標準の library)は数えない。同じ先の import は 1 件 | import の先の綴り | 最初の import の記号 |
-| DOEFF102 | import の先の綴りが `forbid_modules` のどれかと同じか、その下位の module / 名なら破れ(名の順に照らして最初に当たった物)。当たった module ごとに 1 件 | 当たった module の綴り | 最初の import の記号 |
-| DOEFF103 | `types_only` の層の module に関数の定義(Hy は `function_definers` の頭の最上位の式、Python は最上位の def)があれば 1 件 | `definitions` | 最初の関数の名 |
-| DOEFF104 | タグの無い定義があって module の頭のタグも無い、または定義が 1 つも無く頭のタグも無い | なし | 最初のタグの無い定義の名 / 1 行目 |
-| DOEFF105 | 実効のタグごとに、role か context が無いか空、または role が `roles.by_layer` の外なら破れ(1 module に同じ鍵が何度も出ることがある) | role(無ければ `None`) | タグの辞書 |
-| DOEFF106 | hy-index 版 3 の定義ごとの直接の証拠(raw.direct)が、`allowed_layers` の外の層の Hy の定義に在れば破れ。architecture.hy に `:world-handlers` を書いた repo では層で許さず、名簿の定義の module の file だけに許す(`allowed_layers` は書けない・raw_side_effects の節が無くても当たる)。強い証拠は error、弱い証拠は warning。入れ子で重なる証拠は内側の定義に 1 度 | `<定義>::<証拠の名>` | 証拠の記号 |
-| DOEFF107 | 経由の証拠(raw.via — 全体の実行だけ)を info で出す。経路つき。1 定義で経路と証拠の名が同じ物は 1 件。architecture.hy の `:world-handlers` に宣言した定義には入らない(その先の生の副作用はその定義の責務)。宣言した定義を通らない別の経路で届けば当たる | `<定義>::via::<経路>::<証拠の名>` | 定義の名 |
-| DOEFF131 | `:world-handlers` の `:wraps` に挙げた doeff の実 I/O の handler を、名簿の定義(とその中の入れ子の定義)の外で名指す。値として渡す参照(`with-handlers` の列)も呼び出しも数え、import の行は数えない。名指しの先は索引の参照の `target`(呼び出しと同じ名前の解決)。同じ定義の同じ handler は 1 件。既定の重大さ critical(#1140) | `<定義>::world::<module:名>` | 名指した記号 |
-| DOEFF106・131(層の外) | `:world-handlers` を書いた repo では、層の置き場の外の Hy の file(層の外の dir・`:root` の外で `:raw-io-roots` に挙げた dir — 書かなければ `:root` だけ)にも DOEFF106・131 を当てる。検の file(path の段の :exclude・名が test_ / conftest)・defadr を持つ file・deftest の中の当たりは外す(縁のテストは DOEFF133)。message に「層の置き場の外」 | DOEFF106・131 と同じ | 同じ |
-| DOEFF132 | `:world-handlers` の定義 1 本ずつ — module が層の置き場に無い(無い module か層の外)・foundation の外の層に在る・Hy の module に定義が無い。全体の実行だけ。既定の重大さ critical(#1141) | `<module:名>` | architecture.hy の名簿の要素 |
-| DOEFF133 | テストの種類(手元 / 縁)を届く先から導く — 全体の索引で定義の間の辺(呼び出し・参照・入れ子)を組み、名簿の定義・`:wraps` の handler を名指す定義・強い生の I/O の証拠を持つ定義から逆向きに辿る。届く deftest は縁で `:edge-mark` の印(deftest の `:marks` か module の `pytestmark`)が要り、届かない deftest は印を持たない。食い違いを critical で出し、縁の message に届く道を書く。Python の検は数えない(R6)。Hy の定義が名指す repo の中の Python の関数(repo の根からの `a/b.py` か `a/b/__init__.py`)は、その中の強い生の I/O の証拠(import を通した目録の名・呼び出しの頭の組み込み — 型の注記と except の型は数えない)と、名前で決まる呼び先(同じ module の関数・import した関数・class の構築と `self.m` / `cls.m`・Hy の定義へ戻る呼び)まで深さの上限なしに辿る。値の上の属性の呼びと実行時の import は辿らない(Hy の図と同じ範囲)。deftest の `:interpreters` の要素の記号は、import から名の定数の定義へ解き、その定義と、定義の module の辞書の literal の組 `{名の定数 組み立て …}`(conftest が名から引く名 → 組み立ての表)がその名に当てた組み立てを deftest の届く先に足す — 本物の組み立てだけが外の世界に届く契約の検は縁。文字列の要素(conftest の Python の表が引く名)は辿らない。構文の壊れた・読めない module は報告の errors に名乗る。`:edge-mark` を書いた時だけ当たる(#1142) | `<定義>::edge` / `<定義>::local` | deftest の名 |
-| DOEFF137 | 縁の検の無い許可名簿の handler — `:world-handlers` の handler ごとに、空でない `:interpreters` を持つ deftest(`:interpreters` の要素は file の外の定数の記号なので読み解かず、空でない列かだけを見る — deftest の設定の dict の読みは DOEFF133 の `:marks` と同じ)のうち、DOEFF133 と同じ定義の辺の図(呼び出し・参照・入れ子)を辿ってその handler の定義に届く物が 1 本も無ければ 1 件。`:interpreters` を持たない deftest が届くだけでは数えない。理由つきの `:contract-test (none …)` の handler は判じない・理由の無い `:contract-test none` は縁の検が在っても 1 件(#1796)。相手役の名簿 `:stand-ins` の組(相手役・本物)ごとにも、空でない `:interpreters` を持ち、同じ図で相手役の定義と本物の定義の両方に届く deftest(契約の検)が 1 本も無ければ 1 件(本物が索引の外の package に在る時は、本物を直に名指す定義から辿る。解釈器の名の文字列 `"module:名"` / `"module:名@<変種>"` を持つ定義もその handler を名指す定義に数える・`:contract-test` は `:world-handlers` と同じ)。全体の実行だけ・有効にする条件は DOEFF133 と同じ(`:world-handlers` と `:edge-mark`)。既定の重大さ critical | `<module:名>`・相手役の組は `<相手役 module:名>-><本物 module:名>` | architecture.hy の名簿の要素 |
-| DOEFF135 | テストは deftest だけ — `:test-forms {:tests [..] :check-scripts [..] :runners [..]}` の綴りの型で file を選び、:tests の Python の file の `def test_*`(python-test・件数を message に)、:tests の file の module ごとの skip(字下げの無い段の `pytest.skip`・`allow_module_level`・`pytestmark` の `mark.skip` — 束ねの名と印が別の行に在る複数行の束ねも括弧が閉じるまで読み、束ねの名の行を指す・#1426)、:check-scripts の file(check-script)、:runners の file(runner)を file ごとに 1 件。全体の実行だけ。既定の重大さ critical(#1144) | `python-test` / `module-skip` / `check-script` / `runner` | file の頭か最初の当たりの行 |
-| DOEFF136 | 模擬の環境で回していない service — `:verification-environment` を書いた repo で、entry の層を持つ service ごとに、その service の entry の層の dir(`<root>/<service の dir>/entry`)の定義から呼び手(呼び出し・参照・入れ子 — DOEFF133 と同じ図)を逆向きに辿り、模擬の環境の dir の下の deftest に 1 本も届かなければ defservice の位置で critical(鍵 = service の名)。entry の層を宣言しても定義が 0 本の service は数えない(回す組み立てが無い)。service の中の tests は模擬の環境の外なので数えない。索引は `defsystem`(doeff-cluster の系の宣言)も定義として読むので、deftest → defsystem → entry の経路も届く(R5・#1111)。 |
-| DOEFF163 | 不変条件を宣言していない service — code を持つ service(DOEFF136 と同じ母集団: :layers に entry があり、`<root>/<service の dir>/entry` の下に Hy の定義が 1 本以上。ただし defservice に `:entry-modules` を書いた service は宣言で母集団に入り、その module の Hy の file が無ければ 1 件)ごとに、defservice の `:invariants`(業務の不変条件の関数 `"module.path:関数"` の列)が無いか空なら 1 件、名指した関数の定義が repo の Hy の索引に無ければ 1 件、定義の `:tags` の `:role` が `judgment` でなければ 1 件(置き場は問わない — 模擬の環境の `*_invariants.hy` でよい)。位置は defservice の名。既定 critical、登録簿に載った欠けは warning。全体の実行だけ | `<service>` / `<service>::<module:関数>` / `<service>::entry::<module>` | defservice の名 |
-| DOEFF173 | 系を宣言していない service — architecture.hy の全 defservice ごとに(entry の層を持たない service も数える)、defservice の `:system`(cluster に置く系 `"module.path:defsystem の名"`・系が複数なら列)が無いか空なら 1 件、`:system {:exempt "理由"}` の理由が空なら 1 件(exempt を書いてよいのは、旧い経路に残す service か、process を持たない部品の service — main も deploy も無く、他の service が読むだけで使う。linter は理由の中身までは判じない)、名指した名ごとに(`:system {:part-of "module.path:defsystem の名"}` = その service の code が別の service の系の中で走る、の時は指した系 1 つに当て、置き場は「どこかの service の entry の層」に緩める — part-of でない宣言が他の service の系を指すのは赤): 定義が無い・defsystem でない(静的な記述 `__doeff_system__` を付けるのは defsystem だけ — 索引の種類で判じる)なら 1 件、module がその service の entry の層の外(`:entry-modules` の service はその module の外)なら 1 件、引数が 1 つでないなら 1 件、土台の引数に型の注記(`[#^ T foundation]`・doeff L983)が在ればその型の頭が素の `Callable`・写像・中身の型の無い組なら 1 件(注記は名として数え、job の関数の型は見ない)、注記が無ければ引数 1 つ(土台)を位置の引数で受ける job の関数ごとに、その引数の型(`:pre` の `(: 引数 型)`)が無いか、頭が素の `Callable`・写像・中身の型の無い組(`dict`・`Mapping`・`FrozenMap`・`tuple`・`list`・`Any`・`JsonBody` など)なら 1 件、土台を受ける job が 1 つも無ければ 1 件。defsystem が在れば汎用の模擬 cluster のテストに自動で載るので、系ごとのテストは求めない(DOEFF136 と対)。位置は defservice の名。既定 critical。全体の実行だけ | `<service>` / `<service>::exempt` / `<service>::<module:名>` / `<service>::<module:名>::params` / `<service>::<module:名>::unused` / `<service>::<module:名>::<job の関数>` | defservice の名 |
-| DOEFF142 | handler の引数に client・可変の店 — `:handler-arguments {:files [..] :exclude [..] :store-names [..] :store-suffixes [..] :keep-mark "…" :value-types [..]}` の :files に当たる Hy の file の `defhandler`(入れ子も)の引数 1 つずつを分ける: `client`(型の名の末尾が Client / Connection / Pool / Engine・名が client / conn / connection / …-client / …-conn)・`container`(dict / list / set / bytearray / MutableMapping … — `(get dict …)` を含む)・`object`(repo の Hy と Python の class の索引で frozen でない class と、索引に無い型 — frozen の dataclass・frozen の設定・Enum・NamedTuple・defrecord と :value-types は値)・`named`(型の注記が無く名が :store-names / :store-suffixes)。本文(次の最上位の form まで)に :keep-mark の註が在る handler は数えない。判定は渡した file だけで決まり、class の索引は file ごとのキャッシュで引く(1 file の実行でも repo を読み直さない)。既定の重大さ critical(#1366) | `<handler>::<引数>` | 引数の位置 |
-| DOEFF143 | 業務の効果に答える偽の handler — `:business-fakes {:simulation [..] :assembly [..] :tests [..] :skip [..] :production [..] :sets [..] :simulation-prefix "…" :production-prefix "…" :entry-string-modules [..] :entry-string-files [..] :business-modules [..] :lower-layer-modules [..] :external-effects "dir" :counterexamples "dir" :unserved "dir"}`。定義の辺の図(DOEFF133 と同じ・系の値の中の辺も本番で回る辺として数える)を、模擬の根(:simulation と :assembly の定義・:sets の file の :simulation-prefix の定義)と本番の入口(:production の file のうち :sets の :production-prefix の定義・defsystem・`(when (= __name__ "__main__") …)` の中の名・`"<module>:<名>"` の入口の文字列 — :entry-string-files の本文も読む)から前向きに辿る。模擬の根からだけ届く defhandler の節が、:business-modules の効果に tap でなく(下の節の形で、受けた効果をそのまま渡す終わりを 1 つも持たずに)答え、外の世界の表にも反例の表にも無ければ critical(鍵 = `<handler>::<効果>`)。模擬の根からだけ届く節が :lower-layer-modules の効果に tap でなく答えるのも critical(下の層の偽物は下の層の正典 1 つだけ・鍵 = `lower:<handler>::<効果>`)。表の腐りも出す: 外の世界の表の行にどの偽物も答えない・本番の答え手が無い(本番の code の Python の `isinstance(effect, X)` も答え手に数える・:unserved に載せた物を除く)。節の形(DOEFF143・155・156・157・158・164・167・206 が共に使う 1 つの判じ): 節の終わりごとに、受けた効果をそのまま外へ渡す(出し直し — `(<- 名 [型] effect)`・受けた引数をそのまま並べた `(<- 名 (頭 …))`・`(setv 名 (yield effect))`・`(with_handlers [...] 出し直し)` — で束ねた名か、それを `(:= 名 束ねた名)` などで入れ直した名の `resume` / `transfer`・同じ効果を出し直した節の `(resume None)`・`(reperform effect)`・`(pass)`・`:when` の節)か、自前の値(それ以外の値の `resume` / `transfer`・`finish`・別の値の `reperform`・`with_handlers` の下の出し直しの答え)かに分け、`(resume (if 条件 A B))` は枝ごとに分ける。渡す終わりを持つ節が tap(偽物の判じ DOEFF143・155・156・157・158 から外す — 片方の枝でだけ出し直す障害の注入も)、自前の値の終わりを持つ節が表の行を要する節(反例の表の当たり・DOEFF164・167・206)。両方を持つ節も在る。`raise` は終わりに数えない。節の欄に `effect` の名が在れば、その名は受けた効果ではない。同じ handler の同じ頭の節は欄ごとに OR で合わせる。節の終わりを作る操作(ここに挙げた `resume` ほか)の名・終わり方・引数の数は、この規則の source に書かず、doeff-hy の節の操作の表 `CLAUSE-OPS`(`packages/doeff-hy/src/doeff_hy/_clause_ops.hy`)から書き出した生成物 `data/clause_ops.json` を読む(`src/project/clause_ops.rs`)— 終わり方が再開する操作は値で・渡す操作は引数の有無と出し直しの式で・終える操作は自前の値で判じ、例外で抜ける操作は終わりに数えない。表に行を足したら `uv run python scripts/export_clause_ops.py --write` で書き直せば判じが追従する(書き直し忘れ・file への直書きは `tests/test_linter_clause_ops.py` が、source への名の直書きは business_fakes.rs の検が赤にする)。表は 1 鍵 1 file の dir(1 行目が鍵・2 行目から理由)。無い dir は、:unserved(違反を固定する縮める向きの表)なら空の表として読み(知らせ 1 行)、外の世界の表と反例の表(宣言)なら読めない(errors)。全体の実行だけ。既定の重大さ critical(#1189) | `<handler>::<効果>` / `lower:<handler>::<効果>` / `external-unused::…` / `external-unserved::…` | 節の位置・表の dir |
-| DOEFF176 | 反例の表の当たらない古い行 — 宣言は DOEFF143 と同じ `:business-fakes` の `:counterexamples`。反例の表の行が、わざと壊したどの handler の節にも当たらない(DOEFF157 の検だけから届く節も照らす — 業務の効果か :lower-layer-modules の効果に答える節。表の当たりに数えるのは自前の値を返す終わりを持つ節で、片方の枝でだけ出し直す節も数える)。判じは DOEFF143 と同じ 1 か所で、偽物(DOEFF143)の数と表の古い行の数を規則の番号で別に数えるために DOEFF143 から分けた。既定の重大さ critical・登録簿で下げる扱いは DOEFF143 と同じ | `counterexample-unused::<行の鍵>` | 表の dir |
-| DOEFF155 | 組み立ての形の破れ — `:assembly-shape {:translation-point "with-*-translation" :retired-function "…" :translations "…" :translation-layer "…" :intent-layer "…"}`(組み立ての層・組の file・業務の module・外の世界の表は `:business-fakes` から読む — 両方を書いた時だけ)。出す物: :sets の本番の file が残る・組み立ての層に :retired-function の定義が残る・組み立ての層の翻訳の列の 1 点(名が :translation-point の型の defk)の `(with-handlers [#* 列 …] 本体)` が翻訳の列でない import した名を並べる(翻訳の列 = :translation-layer の置き場の :translations の定数か、置き場の外の service の旧い module の列で要素が全部置き場の外の業務の答え手の物・同じ module の val の列は中へ開く)・列の並び(列が出し直す別の service の :intent-layer の効果に答える列が、それより前に無い)・:translations の定数が別の service の :translation-layer の定義を並べる・翻訳の列の 1 点が `#*` で自分の引数を並べる(列を呼び手から受けない)・`:verification-environment` の dir と :tests の file が、翻訳の列(1 点が並べてよい列と、組み立ての層が :translation-layer の handler か翻訳の列を束ねた列)を `#*` で開いて並べる(模擬と検は本番と同じ 1 点を呼ぶ)。全体の実行だけ。既定の重大さ critical(#1189) | `set-file` / `retired` / `stray:<名>` / `parameter:<引数>` / `loose:<列>` / `order:<列>:<効果>` / `own:<定義>` | 定義の位置・組の file・開いた所の定義 |
-| DOEFF156 | 翻訳の先か土台の答えが業務の効果 — 宣言は DOEFF155 と同じ。:translations の定数から届く翻訳の handler が、自分の答えない業務の効果を名指す(:intent-layer の効果は常に・それ以外は同じ列の handler が答えない物)・出し直した効果に答える同じ列の handler がどれも列の後ろに在る(定数が literal の列の時だけ)・:sets の file の組の関数(:simulation-prefix / :production-prefix)が届く handler のうち同じ module の :translations の外の物が業務の効果に tap でなく答える。業務の効果 = :business-modules の効果のうち外の世界の表に無い物。全体の実行だけ。既定の重大さ critical | `target:<handler>:<効果>` / `inner:<handler>:<効果>` / `foundation:<組の関数>:<handler>:<効果>` | handler か組の関数の位置 |
-| DOEFF157 | 検だけの偽物 — 宣言は DOEFF143 と同じ `:business-fakes`。検の根(:tests の file の定義の全部)から届き、本番の入口からも模擬の根からも届かない定義の節が、:business-modules か :lower-layer-modules の効果に tap でなく答え、外の世界の表にも反例の表にも無ければ critical(検だけが使う本番の code の置き場の業務の写しも数える)。わざと壊した反例の handler は反例の表に理由つきで載せる。全体の実行だけ。既定の重大さ critical(#1189) | `<handler>::<効果>` | 節の位置 |
-| DOEFF158 | intent の効果の答え手が翻訳の 1 つでない — 宣言は DOEFF155 と同じ(`:business-fakes` と `:assembly-shape` の両方)。本番の入口から届く節のうち、効果の定義元の module の置き場が :intent-layer の層で、tap でなく答える物を数える。節の file が :translation-layer の層の外なら critical、同じ効果に答える :translation-layer の handler が 2 つ以上ならその全部を出す(ADR R9 — 本番と模擬で同じ翻訳 1 つ)。全体の実行だけ。既定の重大さ critical | `outside:<handler>::<効果>` / `shared:<handler>::<効果>` | 節の位置 |
-| DOEFF164 | 壊した handler の反例が無い service — 宣言は DOEFF143 と同じ `:business-fakes` の `:counterexamples` と `:verification-environment`。反例の節 = 反例の表の鍵に当たり本番の入口から届かず、自前の値を返す終わりを持つ節(DOEFF143 の節の形)。節の効果の定義元の file を含む service の dir が持ち主(どの service の下にも無ければ土台の効果)。entry の層に定義を持つ service ごとに、持ち主がその service か土台の反例の節に(DOEFF136 と同じ図を逆向きに)届く deftest の 1 本でもその service の entry の層の定義に届けば有り、1 本も無ければ defservice の位置で critical(登録簿に載せれば registered_severity で下げる)。あわせて DOEFF143・157 の表の照らしは、本番から届かず自前の値を返す終わりを持つ節の鍵が表に在ればどの効果に答える節でも当たりに数える(土台の効果に答える壊した handler も表に載せられる)。全体の実行だけ。既定の重大さ critical(#1155) | service の名 | defservice の位置 |
-| DOEFF165 | intent の効果の網羅の欠け — 宣言は DOEFF158 と同じ(`:business-fakes` と `:assembly-shape` の両方)。宣言の file の置き場が :intent-layer の層の defeffect ごとに、DOEFF143 と同じ到達の図から 3 列を読む: 手元の検から出すか(検の file の定義から届く定義のうち、答え手〔効果の節・defhandler〕と宣言を除いてその効果を名指す物)・模擬の答え手(模擬の根から届く効果の節の handler)・本番の答え手(本番の入口から届く効果の節の handler)。どれかが空の効果を 1 件にし、本文と `--explain` に 3 列を出す。持ち主の service は宣言の file の置き場を dir に持つ defservice(最も長い前方一致)。Python の class で宣言した効果は数えない(索引の図の外)。全体の実行だけ。既定の重大さ critical(#1561 K3 の報告だけの表を失敗に。repo の登録簿に載った既知の欠けは warning) | `<service>::<効果>`(service の無い効果は `-::<効果>`) | 効果の宣言の位置 |
-| DOEFF206 | 検証環境が intent の効果に自前で答える — 宣言は `:business-fakes`・`:verification-environment`・`:assembly-shape`(:intent-layer)の 3 つ(有効にする条件は `:business-fakes` と `:verification-environment`。:intent-layer が無ければ当たりは 0)。当たりは 2 種類: (a) 違反を通す表 — `:external-effects`(鍵 = 効果の完全名)・`:lower-layer-passages`・`:test-only-fakes`(鍵 = `<path>::<handler>::<効果>`・最後の `::` の後が効果)— の行が、定義元の module の層が :intent-layer の効果を通す。行の file に出す。無い `:lower-layer-passages`・`:test-only-fakes` の dir は空と読む(知らせ 1 行)。(b) 検証環境の dir(`<root>/<:verification-environment>/` の下 — 置き場の免除 DOEFF114・115 と同じ読み・`Architecture::verification_environment_dir`)の handler の節が intent の層の効果に答える。外すのは、自前の値を返す終わりを 1 つも持たない節(DOEFF143 の節の形 — どの終わりも受けた効果をそのまま渡す)と、反例の表に鍵 `<path>::<handler>::<効果>` の在る節だけ。出し直した答えを変える・別の値を組む・枝の 1 つでだけ自前の値を渡す節は表の行が要る(DOEFF143・164・167 と同じ判じ)。intent の層の判じは DOEFF158・165 と同じ(効果の定義元の module の file の層)— doeff の package の効果は当たらない。全体の実行だけ。既定の重大さ critical。**登録簿で下げない**(載せても error・registered でない) | (a) `pass:<表の鍵>`・(b) `verification:<handler>::<効果>` | (a) 表の行の file・(b) 効果の節 |
-| DOEFF207 | 本番の系の job が読む外の置き場の組に書き手が無い — 宣言は architecture.hy の `:outside-writers {"<置き場>:<名>" "書き手" …}`(本番の系の job でない書き手 — 外の repo の道具・人の操作・job でない task — が書く組と、書き手の名の表)。書いた repo にだけ当たる。母集団は DOEFF173 と同じ本番の系(defservice の `:system` の名指しと `{:part-of …}` の指す系・同じ系は 1 度)— 本番の系でない模擬・検の defsystem の job は、読みも書き手も数えない。当たりは 2 種類: (a) 本番の系の job の行に `:reads` か `:writes` が無い(doeff の defsystem では任意の欄・使わなければ `#{}`)。(b) job の `:reads` の組が、どの本番の job の `:writes` にも、本番の入口から届く defk・deff の契約の `:writes` にも、`:outside-writers` の表にも無い(本番に書き手の無い記録を読み、手元の模擬では代役がその分を作って緑になる形)。job でない書き手(系の job から土台の値で渡る task の Program など)は、定義の契約の辞書に `:writes #{…}`(doeff-hy の FUNCTION-CONTRACT-KEYS・展開の時に形だけ検める)で名乗る。本番の入口は DOEFF143 と同じ(`:business-fakes` の本番の code の defsystem・本番の組の関数・`__main__` の節が名指す定義・入口の文字列)で、そこから前向きに届く定義の名乗りだけを数える — 模擬だけの定義・使われていない定義の名乗りは数えない。`:business-fakes` を書かない repo では job の `:writes` だけ。欄の値の形(文字列の集合・綴り `<置き場>:<名>`)は doeff-hy の defsystem の展開が検める — ここは綴りを集めて照らすだけ。名指した系が無い・defsystem でない時は DOEFF173 が出す。全体の実行だけ。既定の重大さ critical。**登録簿で下げない**(この種の違反は doeff-linter が見つける) | `<系>::<job>::reads`・`<系>::<job>::writes`(欄の欠け)・`<系>::<job>::<組>`(書き手の無い読み) | job の行 |
-| DOEFF208 | 本番の code が記録の変更の待ちで job を起こす — 宣言は `:business-fakes`(書いた repo にだけ当たる)。母集団は本番の code の Hy の file(`:production` に当たり、`:tests`・`:simulation`・`:skip` に当たらない file — DOEFF143 の本番の入口・DOEFF207 の job でない書き手と同じ範囲の宣言)から、doeff-records の package(path の段 `doeff_records`)の中を除いた物 — この規則は使い手を見る(効果と源の持ち主は、出来事の基盤へ替える時に源そのものを消す)。当たりは 2 種類: (a) 記録の変更を出来事の源にする — doeff-records の合図の源の工場 `read-signal-handler`・`records-signal-handler` の呼び(頭の綴りの最後の段で照らす — `event-source.read-signal-handler` も当たる)。(b) 記録の変更を待つ — `WatchChanges`・`WatchEvents` を、秒(`:timeout` か位置の引数の 3 つ目)が literal の 0(`0`・`0.0`)でない値で出す。変数・式・展開(`#*`・`#**`)は 0 と言えないので当たる。秒を書かない形は既定の 0(待たずに 1 回読む)で当たらない。当たらない物: 秒 0 の読み(受け手が起動や繋ぎ直しの時に記録を読んで追いつく形)・記録への書き・記録の効果に答える defhandler(直下の節の頭が `WatchChanges` / `WatchEvents`)の中の出し直し・`match` の pattern の綴り・註・`#_` で読み捨てた form。Python の file は見ない。全体の実行だけ。既定の重大さ critical。**登録簿で下げない**(今在る当たりを表に載せて通す形にしない — 記録を書いて記録を待つ設計を linter で見つけて禁じ、記録と起動を分ける) | `<囲む top level の定義の名>::<頭の綴り>`(例 `with-turn-events::read-signal-handler`・`waited-signal::WatchChanges`) | 呼びの頭の記号 |
-| DOEFF209 | 本番の code の Program が、同じ物を時間の待ちを挟んで繰り返し取りに行く — 宣言は `:business-fakes`(書いた repo にだけ当たる)。母集団は DOEFF208 と同じ本番の code の Hy の file(`:production` に当たり、`:tests`・`:simulation`・`:skip` に当たらない file)で、DOEFF208 と違い doeff-records の package の中も外さない(この規則は待ちの書き手そのものを見る)。見る物は起きる刻の出所: (1) 待ちの綴り — `(Delay 秒)`・`(WaitTicks _ 秒 …)`・module の名つきの `sleep`(`time.sleep` など)(秒が literal の 0 の譲りと、`(- 期限 今)` を含む期限の待ちは外す)・`ArmTimer` / `ArmedTimer` の刻(位置の 2 つ目か `:at`)が `(+ 今 …)` を含むか、`(+ 今 …)` から結んだ名を含む物。今 = 同じ定義の中で `GetTime`・`now-ms`・`clock-ms` と、引数の無い定義で本文がそれらを呼ぶ物から結んだ名と、その名を 1 つだけ受ける変換の呼びで結んだ名。繰り返しの中の待ちには、繰り返しの中で結んだ今だけを数える(繰り返しの前に 1 度読んだ今から求めた刻は毎回同じ刻)。(2) 補助 — repo を変わりが無くなるまで読み直して集める(名簿で持たない): 刻を渡す補助(引数が結び直しを辿って刻の位置へ流れる)・今を受ける補助(刻が `(+ 引数 …)` か、それから結んだ名を含む)・待ちを返す補助(繰り返しの外に待ちの綴りを持つ定義)・待ちで答える効果(`defhandler` の節が分岐を通らずに必ず待つ効果 — WatchChanges・WatchEvents の節は除く)。呼びの頭は同じ file の定義か `(import module [名])` で引き、引けない `a.b` は名の一致が 1 つだけの時に引く。(3) 繰り返し — `while`・`loop` の本体・`event-loop` の節の中か、自分を呼ぶ定義(`for` は有限の集まりを回す形なので数えない)。1 度だけ掛けて抜ける物は当てず、その定義を呼ぶ繰り返しの中の呼びが当たる。別の task を立てる呼び(`Spawn`・名に spawn を持つ包み)の中は見ない(渡した Program の 1 度の待ち)。(4) ライブラリへ問い直しの間隔を渡す鍵の引数 `:poll-seconds`(literal の 0 でない値)は繰り返しを問わず当たる。当たらない物: 行や予定から導いた期限・変わりを待つ時の上限の秒(DOEFF208 の側)・要求の timeout・`match` の pattern・handler の節の頭(`(Delay [秒] …)`)・quote と `#_` の中・doeff の scheduler の外の完了の拾い方(Python — 規則の外)・時間切れの期限(`ArmTimer` / `ArmedTimer` の tag が top level の `val` / `setv` の名で、その tag と比べる分岐 `(cond (= tag 名) 本体 …)` / `(if (= tag 名) 本体 …)` が母集団に 1 つ以上在り、本体が全部 繰り返しを抜ける `(stop …)` の物 — 止めの合図を待つ上限の秒。来た後に同じ読みを繰り返す本体が 1 つでも在る tag は外さない)。区分は鍵の細目の最後の段: `periodic`(純粋に時間で取り直す)・`retry`(届かない後の取り直し — 待ちの綴り・掛ける期限の tag・刻を結んだ式・囲む match の節の型・補助の名に retry / unreachable / unavailable が在るか、補助の中の待ちが全部 retry)。同じ定義の同じ頭・同じ区分の当たりは最初の場所の 1 件にまとめ、本文に残りの行を出す。場所に書いて通す理由: 当たりの行か、その直前に続く註だけの行に `; 時間で取り直す理由: <語>`(DOEFF111 の `; defk にできない: <理由>` と同じ置き方)。語は閉じた集合 — `相手に変更の知らせが無い: <相手> — <何で確かめたか>`(相手の名と確かめの根拠〔相手の API の文書の節・相手の code の行・試した命令と結果〕のどちらも空でない。変更の知らせを持つと分かっている相手〔Kubernetes・coordinator の GET /watch・doeff-events の基盤・記録の service の変更の合図 — 照らし方は相手の名を小文字にし空白を除き `_` を `-` に揃えた綴りが、別名〔kubernetes・k8s・kube-apiserver / coordinator・/watch / doeff-events / 記録のservice・記録の変更の合図・agora-record・doeff-records〕のどれかを含むか〕は通さず、本文に「この相手は変更の知らせを持つ」と出す)・`書くだけ: 生存の印` / `書くだけ: 報告` / `書くだけ: 期限の延長`・`届かない間だけの繋ぎ直し`(区分 retry の当たりだけ — 届かない印か失敗の答えが在る間だけ間を置いて繋がるかを試し、data を取りに行かず、戻ったら印を消す形)。語の外・区分の合わない語は通さず、本文に訳を足す。全体の実行だけ。既定の重大さ critical。**登録簿で下げない**(取りに行く繰り返しは全部直す対象で、最後の手段に限る) | `<囲む top level の定義の名>::<頭の綴り>::<区分>`(例 `watch-custody::wait-own-deadline::periodic`・`making-loop::ticked::retry`) | 呼びの頭の記号 |
-| DOEFF210 | Hy の program が壁の時計で眠る — 母集団は設定の `program_sleep`(program の置き場 — 書いた repo にだけ当たる・4 節)。defk・defp の本体の中(字面で内側に在る fn・defn・deff の中も)の、頭が `time.sleep` / `asyncio.sleep` の呼びが破れ。頭は file の中の import(関数の中の物も)から解く: `(import time :as t)` の `t.sleep`・`(import asyncio [sleep])` と `(import time [sleep :as nap])` で束ねた名・`(import time *)` の `sleep`。`(Await (asyncio.sleep 秒))` は中の呼びが当たる。当てない物: 秒が literal の 0 の呼び(1 度譲るだけ)・handler の実装(defhandler の本体・引数の並びが `[effect k]` の defk / deff / defn / fn・契約の辞書の `:tags` の `:role` が `foundation` の defk / defp — 定義が自分の辞書に書いた時だけで、module の頭のタグでは外さない)・program でない定義(最上位の deff・defn・defclass の method)・註・`#_`・quote した form。眠りの module でない物の `sleep`(自前の関数・他の library)は数えない。file 1 つで決まる(1 file の実行も判じる)。既定 critical(doeff の ADR-DOE-TIME-001 R1・R2 — Python の同じ決まりは semgrep の doeff-no-sleep-in-programs) | `<program の名>::<time.sleep か asyncio.sleep>` | 眠りの呼びの form |
-| DOEFF211 | Hy の検が、実時間が対象だと名乗らずに壁の時計で眠る — 母集団は設定の `test_sleep`(検の置き場 — 書いた repo にだけ当たる・4 節)。頭が `time.sleep` / `asyncio.sleep` の呼び(import の別名・束ねた名は DOEFF210 と同じ読み・method の綴り `(.sleep time 秒)` も)と、眠りの言い換え `(.wait (threading.Event) 秒)`(その場で作った Event を秒つきで待つ)が破れ。定義の種類は問わない(deftest・defn・defk・deff・class の method・最上位の式)。当てない物: 秒が literal の 0 の眠り・註・`#_`・quote・文字列の中・realtime を名乗った所 — module の最上位の `(val pytestmark pytest.mark.realtime)`(`var` も・値は印 1 つか印の list・tuple)を持つ file の全部、meta の map(引数の並びと先頭の文字列の後の最初の要素)の `:marks` に `"realtime"` を持つ deftest の中、decorator の並び(頭のすぐ後の `[…]`)に `pytest.mark.realtime` を持つ `defn` の中。`setv` の束ね・最上位でない束ね・deftest でない定義の map は名乗りではない(doeff-hy が pytest の印として記録する形だけを読む)。鍵の細目は `<包む最上位の定義の名>::<眠りの関数>`(定義の外は `<module>`)。登録簿では下げない。名乗った検を理由と一緒に載せる名簿との突き合わせは repo の側の検が持つ(doeff は tests/semgrep/test_realtime_tests_registry.py)。定義 = `src/project/test_sleep.rs`・検 = `tests/test_sleep.rs`(doeff の ADR-DOE-TIME-001 R8) |
-| DOEFF174 | 業務の層が下の層の効果か handler を直に使う — 宣言は architecture.hy の `:business-fakes` の `:lower-layer-modules`(書いた repo にだけ当たる・書かなければ規則の一覧で wired 偽)。母集団は業務の層(設定 `translation_effects.domain_layers`・書かなければ既定の名 core・intent のうち宣言に在る層)の Hy の file の最上位の定義(`defk`・`deff`・`defn`・`defp`・`defhandler`)。当たる物: (a) 本文で実行する呼び(`(<- …)`・`(! …)`)の頭が `:lower-layer-modules` の module の物(例 `doeff_records._effects` の `ReadRow`)— 頭が repo の defk なら DOEFF130 と同じ到達で `max_depth` の深さまで辿る(shared の defk を経て届く形も)。同じ package(`:lower-layer-modules` の綴りの最後の区切りを外した module — `doeff_records._effects` なら `doeff_records`)の別の module の、repo の外の定義(`doeff_records._typed` の `read-typed` など効果を包む defk)を実行する所も当てる — repo の外の定義は推論の表に無く、その先まで辿れないので、実行した時点で生の操作とみなす。(b) `with_handlers` の列の要素と `with_handler` / `WithHandler` の 1 つ目に置いた handler の名(要素が呼びなら頭、記号ならその記号、`#*` の展開なら中の記号)が同じ package の物(例 `doeff_records._event_source` の `read-signal-handler`・`doeff_records._http_client` の `http-records-handler`)。当たらない物: 値の型の import と使用(`Row`・`KeepFor`・`RowType`・`typed-row`・`ChangedRow`・`SignalTables` — 実行する呼びの頭にも被せる handler の列にも出ない物。module 単位では import を禁じない — `event_source` は型と handler を同じ module に置くため)・ドメインの効果(層 intent の型)・翻訳の層と土台の層と組み立ての層の定義・quote の中。**拾えない形**: 答えや引数で受けた handler を値のまま被せる所(`(with_handlers (list opened.handlers) …)` — 欄の読み・引数・式の handler は名が静的に決まらないので数えない。被せる値を作る側の翻訳の handler が、業務の層へ生の handler を渡さない形で直す)。定義ごと・名ごとに本文の順で最初の 1 か所。1 file の実行(エディタ)でも判じる。既定の重大さ critical・**既知の一覧(registry)で下げない**(記録の生の読み書きは handler の仕事で job の仕事ではない。業務の効果を handler が記録の効果へ翻訳し、job が記録の効果を生で出す形は linter で禁じる。範囲: cluster の中で記録の service の生の操作を使うのは handler〔protocol・foundation の層〕だけ・外にはドメインの API だけ) | `<定義の名(mangle)>::<効果か handler の module まで含めた名(mangle)>`(例 `tail_reading::doeff_records._event_source.read_signal_handler`) | 実行する呼びの頭・被せる handler の記号 |
-| DOEFF167 | 反例も外した理由も無い不変条件の条 — DOEFF164(service に反例が 1 本あれば緑)を条ごとに細かくした物。条の名は `:invariants` の関数が返す値で静的に読めないので、defservice の `:clauses ["条" …]` に宣言し、反例を持たない条は `:clause-exemptions {"条" "理由" …}` に理由を書く(`:clauses` の内・理由は空でない)。反例の節がどの条を破るかは、反例の表(`:counterexamples` の 1 鍵 1 file)の 2 行目から後の `breaks: <service>::<条> …` の行で名乗る。母集団と効く反例の節は DOEFF164 と同じ(entry の層に定義を持つ service・表の鍵に当たり本番の入口から届かない節)。条ごとに、名乗る節に届く deftest の 1 本でもその service の entry の層の定義に届けば有り、理由つきで外した条は数えず、どちらも無ければ defservice の位置で critical(鍵の細目 `<service>::<条>`)。`:clauses` を書かない code を持つ service は service の名で 1 つ。宣言に無い service か条を名乗る `breaks:`・綴りの誤りは設定の誤り(errors)。全体の実行だけ。既定の重大さ critical | `<service>::<条>`(宣言の欠けは service の名) | defservice の位置 |
-| DOEFF168 | 業務の層が環境の名の値や dry-run の印で分岐する — `:environment-branches` の `:layers` の層の Hy の file で、比べる form(`=`・`!=`・`is`・`is-not`・`in`・`not-in`)の引数(集まりの literal の要素も)と `match` の節の型に在る、`:values` の文字列の literal と、分岐の form(`if`・`when`・`unless` の条件・`cond` の各条件・`match` の主語)の中の `:flags` の名の記号(点で区切った最後の段を mangle して比べる)を数える。註・`#_` で読み捨てた form・quote した form・分岐の条件の外は数えない。層の分からない置き場は層の規則の外なので数えない。綴りと層は repo の宣言にだけ在る。既定の重大さ critical | `value:<綴り>` か `flag:<綴り>` | 当たった literal か記号 |
-| DOEFF169 | match の class pattern の keyword の欄の名に `-` が在る — 層の置き場の Hy の file の全部(設定は要らない)で、`match` の節の型(`:if` の守りは型に数えない)の中の class pattern(頭が `|` でない記号の丸括弧の form — 型の中の入れ子と class pattern の引数も辿る)の keyword の引数のうち、名に `-` を含む物を当てる。Hy 1.3.1 の `match` は class pattern の keyword を属性名へ mangle しないまま `case Class(a-b=…)` に出すので、その節はどの値にも当たらず、黙って次の節(多くは既定の `_`)に倒れる。`_` で書いた欄(`:a_b`)・位置引数の pattern・節の本体と守りの keyword・match の外・註・quote・`#_` は当てない。`(defk …)` の form の中(引数・契約・本体)も当てない — defk は展開の時に中の match の class pattern の欄の名を `hy.mangle` で属性名へ直す(doeff-hy の `doeff_hy/_match_fields.py`)ので、そこでは `:a-b` が当たる。鍵の細目は `<class>:<欄の名>`。既定の重大さ critical | `<class>:<欄の名>` | keyword の位置 |
-| DOEFF170 | 値を型だけで渡す層に defwire が在る — architecture.hy の層の `:wire-free True`(TOML の設定は `layers.wire_free`)を宣言した層の Hy の file の、最上位の `defwire` の宣言を当てる。wire の型(欄名の対応 `:names` を持つ宣言)と parse / dump は翻訳の層に置き、この層は欄名を持たない型だけを持つ。宣言した層が無い repo では判定が繋がらない。既定の重大さ critical | `wire:<名>` | defwire の名 |
-| DOEFF171 | 値を型だけで渡す層の契約と欄に写像・型の無い組 — `:wire-free True` の層の Hy の file の、defk・deff・defn の `:pre [(: 引数 T)]` と `:post [(: % T)]`、defclass・defrecord・defwire の欄の型(`(#^ T 名)`)と、同じ層の Python の file の class の欄の注記(dataclass・TypedDict・class の `名: T` — 足した。以前は Hy の file だけを数え、core の .py の `Mapping[` の欄を黙って見逃していた)のうち、写像(dict・Dict・Mapping・MutableMapping・JsonValue・JsonObject・JsonBody・OpaqueJson・FrozenMap — 中身の型の在る `(of dict K V)` も)・中身の型の無い組と列(tuple・list)・長さの決まった組・要素の型が開いた組を当てる(union の枝と入れ物の中身も見る — DOEFF144 の型の読みを使う)。同じ型の列(`(of tuple X ...)`・`(of list X)`)と型つきの record は当てない。並べ替えのキーの関数(名が `…key-of`・`sort-key`)の `:post` の組は外す。データを引く写像はキー → 値の関数か効果にし、写像を組む綴りは翻訳の層の 1 点に置く。既定の重大さ critical | `pre:<定義>:<引数>`・`post:<定義>`・`field:<Class>.<欄>` | 型の注記 |
-| DOEFF172 | 写像の置き場(臭い・数えるだけ)— 層の置き場の Hy の file の、最上位の defk・deff・defn の本体(先頭の docstring と契約の辞書を除く — 順を問わない・#2265。match の型の位置の `{…}` は値を組まないので数えない・#2310)で写像を組む所(`{…}`・`(dfor …)`・`(dict …)` — `#{…}` の集合は数えない)を定義ごとに数えて 1 件、値を型だけで渡す層(`:wire-free True`)の外の defclass・defrecord・defwire の欄と Python の file の class の欄の注記(#2203)の型が写像(DOEFF171 と同じ写像の語彙)なら欄ごとに 1 件。外の形を綴る・読むのが目的の 1 点は契約の `:tags` に `:spells` / `:reads` を外の形の名(`"json"`・`"http"`・`"env"`・`"schema"`・`"records"`(doeff-records の API の形)の閉じた一覧 — doeff-hy の SPELLS と同じ。一覧の外の値は名乗りと見なさない)で名乗れば数えない(値を型だけで渡す層では名乗っても数える)。中を読まない中継の型 `OpaqueJson` の欄(None との和を含む)は写像と数えない(他の写像との和は数える・#2515)。要素の型が `OpaqueJson` の tuple / list の欄(`(get tuple #(OpaqueJson ...))`・`(of tuple OpaqueJson ...)`・`tuple[OpaqueJson, ...]`・`list[OpaqueJson]` — None との和を含む)も中継を 0 個以上運ぶだけなので数えない(要素の型が OpaqueJson と他の写像の和なら数える・#2586)。`OpaqueJson` と写像でない型(record など)の和の欄(`(| OpaqueJson Record)`・`OpaqueJson | Record | None`)も中継と数えない(写像の枝を含む和は数える・#2629)。契約どおりの外の形の写像の欄を持つ defwire は、頭の辞書の `:tags` に `:spells` / `:reads` を形の名で名乗れば欄を数えない(defrecord は値の型なので名乗りを効かせない・#2515)。defhandler の中(cache は効果の層が持つ)と、`:post` が写像の定義(写像を組むのが目的の綴りの 1 点)は数えない。値を型だけで渡す層の欄は DOEFF171 が見る。当たりの重さは warning・既定の重大さ major(agora の data は DB に在り効果で読み、memory の写像は cache のためだけで handler が持つ) | `built:<定義>`・`field:<Class>.<欄>` | 定義の名か欄の型の注記 |
-| DOEFF175 | 宣言を切り替えた effect の古い分岐 — 定義の規則の母集団(`definitions` の `paths` と `test_paths` の Hy の file)の最上位の定義(`defk`・`deff`・`defn`・`defn/a`・`defp`・`defpp`・`deftest`)で、effect `E` の答えを束ねた名 x — `(<- x (E …))`・`(<- x T (E …))`・`(<- x (E …) :absent F)`・`(val|var|setv|setx|:= x (! (E …)))` — か、束ねずに直に書いた `(! (E …))` に対して、`E` が defeffect の `:absent` / `:failure` で宣言した型を値として分ける枝を当てる: `(match x (T …) …)` の腕(`(| (A) (B))` の選択肢も 1 つずつ)と `(isinstance x T)`(型の列 `#(A B)`・`[A B]`・`(| A B)`・`(tuple [A B])` も 1 つずつ・cond / if / when / and / not の中も)。`<-` と `!` は宣言した不在・失敗の型を束ねず Absent / Raise として呼び手のスコープへ逃がす(ADR-DOE-CORE-EFFECTS-003 R5)ので、その枝は決して通らない。型は import と module で module まで解いて比べる(DOEFF122 と同じ — 同じ名の型が別の module にあっても、宣言した方だけ)。当てない物: `:value` と宣言した型の枝・成功の型の枝・宣言の無い effect の枝・defhandler(節は effect を受ける側で、答えを束ねる側ではない — 定義ごと読まない)・別の effect が宣言した型・pattern の欄の中の型・束ね直した名と、引数・`for`・`with`・`let`・`except`・comprehension・match の pattern で隠れた名・`maybe` / `result` / `on-raise` / `absent-as` で包んだ答え(頭が effect でない)・defk を経由した答え・quote・註と `#_`。詳しくは 22 節。全体の実行と 1 file の実行(エディタ)の両方で判じる。既定の重大さ critical・**既知の一覧(registry)で下げない**(切り替えの門 — 当たりが 0 になるまでその版を着地させない・law declarations-switch-one-effect-at-a-time) | `<定義の名(mangle)>::<束ねた名>::<型の綴り>`(束ねずに `!` で直に分ける形は束ねた名の代わりに effect の綴り。例 `revise_input::body::Missing`) | match の腕の pattern・isinstance の型の記号 |
-| DOEFF166 | 登録簿の当たらない古い行 — `[tool.doeff-linter.registry]` の `dirs`・`files`・`config_files` の鍵のうち、鍵の区切り(`<path>::<law の名か規則の ID>[::<細目>]` の 2 つ目)が指す規則を**この実行で判じた**(判定が繋がっている・意味の規則でない・`reconciling` でない)のに、どの所見の鍵にも当たらない物。DOEFF166 が有効な全体の実行では、鍵が名指す規則を `enable` に無くても同じ実行で当てる — その当たりは 166 の判じにだけ使い、所見としては報告しない(`--enable DOEFF166` だけの実行でも当たらない行を見逃さない)。区切りから規則を引けない鍵(登録簿の dir を共用する他の検の鍵)と、意味の規則・`reconciling` の規則を名指す鍵は判じない。path を名指さない全体の実行だけ(名指しの file・保存前の 1 file では、当たる所見が範囲の外に在りうる)。登録簿を設定した repo でだけ繋がる。既定の重大さ critical(#1706 — 縮める向きの登録簿を消し忘れで緩めない) | 登録簿の鍵 | 載った登録簿の file(dir なら鍵の `*.txt`)の先頭 |
-| DOEFF144 | 公開面の型が素の写像・素の組 — `:typed-values {:files [..] :except [..]}`(glob は DOEFF150 と同じく根に錨を下ろす)に当たる Hy と Python の file の公開面(名が `_` で始まらない物 — `Class.欄` は最後の段で見る)の型の注記を読む: class の欄(Hy の defclass・defrecord・defwire の直下の `(#^ T 名)`・`#^ T 名`・`(setv #^ T 名 …)`/Python の class の直下の `名: T`)・関数と method の戻り値(`(defn #^ T 名 …)`・defk / deff の `:post [(: % T)]`/`-> T`。入れ子の関数は数えない)。赤 = 素の写像(dict・Dict・Mapping・MutableMapping・typing / collections.abc の同名・JsonValue・JSONValue・JsonObject・JSONObject)・素の組(tuple・Tuple)・値が object / Any の写像・長さの決まった組 `tuple[A, B]`・それらを中身に持つ入れ物と union の枝・文字列の型 `"A \| B"` の枝。赤でない = `dict[str, Row]`・`tuple[X, ...]`・FrozenMap。名に型の注記の在る defk / deff の `:post` は写像だけを赤にし、注記の無い `:post` は素の組も赤にする。Hy の defn / defk / deff が長さ 2 以上の組の literal `#(a b)` を答えにする形(最後の式か `(return #(a b))`)も赤。file 1 つで判じ、名指しの path の扱いは DOEFF150 と同じ。既定の重大さ critical | `field:<Class.欄>` / `return:<名か Class.method>` / `post:<名>` / `pair:<名>` | 型の注記(答えの組は組の literal) |
-| DOEFF145 | 型の宣言の `@dataclass` に kw_only=True が無い — `:record-stubs {:files [..] :except [..]}` に当たる .pyi のうち同じ dir に同じ名の .hy が在る物で、.hy の最上位の `(defrecord 名 …)` か飾りに `(dataclass … :kw-only True …)` を持つ `(defclass [飾り …] 名 …)`(名は Python の名へ mangle)を、.pyi の最上位の class が `@dataclass` / `@dataclasses.dataclass`(呼びの形も)で `kw_only=True` の literal 無しに宣言する。file 1 つで判じる。既定の重大さ critical(#1191) | class の名 | `@dataclass` の飾り |
-| DOEFF146 | 判定を1か所に閉じ込めた語彙 — `:single-point-vocabulary` の群ごとに、`:files`(repo の根に錨を下ろした glob)に当たり `:except`(判定の1点)に当たらない file を読み、`:patterns`(正規表現 `r"…"`・行に1件)のどれかが当たる行が1行でもあれば file ごとに1件出す(当たった行の数を message に書く)。既定の重大さ critical(#1371 — 元は agora-controllers の一時の検 check_screen_slice_single_point.hy) | 群の名 | file の最初に当たった行 |
-| DOEFF150 | 使わないと決めた綴り — `:retired-words` の群ごとに、`:files`(repo の根に錨を下ろした glob — `/` の無い型は根の直下の file だけ)に当たり `:except` に当たらない file を読む。`:in lines`(既定)は行ごとに、語として単独で在る `:words`(前後が英字・`_`・`-` でない所)と `:patterns`(正規表現 `r"…"`・行に 1 件)を数え、`:rule-lines` の綴りを含む行は数えない。数えるのは実際に使う code の中の綴りだけで、註・docstring・文書の中の綴りは数えない(#1762 の決定 Q2-3): `.md` の file は数えない(file ごと)・Hy は `;` の註(文字列の外の `;` から行末)と `def…` の形(defk・defn・deff・defclass・defhandler・deftest・defadr …)の docstring(名と引数の列・任意の `{…}` の meta の後の最初の文字列で、後にまだ form が在る物)を数えない・Python は `#` の註(文字列の外)と docstring(行の最初の非空白から始まる三重引用符の文字列)を数えない・shell・toml・ほかの file は引用符の外の `#` の註(行頭か空白の後の `#` から行末 — `$#`・`${#…}` は註でない)を数えない。どの種類でも 1 行目の shebang(`#!`)の行は数える。記号・欄名と docstring でない文字列は数える — command の文字列(`"cd x && PYTHONPATH=. hy"`)は実行される綴りなので数える。`:in names` は定義の名(Hy の `def…` の形と `setv`・`val`・`var` の左辺・Python の def と class の名)だけを見る。`:in paths` は file の名(最後の `.` より前 — dir の名と中身は見ない)だけを見て、退役した名の file を置き直さない。`:rule-lines` は `:in lines` の時だけ書ける。`:contract-files [<repo の根からの path> …]`(`:in lines` の時だけ書ける)は契約の JSON の file の列で、architecture.hy を読む時にどの深さのオブジェクトのキーの名と、キー `enum` の配列の文字列の要素・キー `const` の文字列の値(契約の綴り)を集める(註・例の値・ほかの配列の中身は集めない)。`:words` の語が契約の綴りに在れば、その語は次の 3 か所でだけ数えない — 文字列で中身がその語ちょうどの物(Hy の普通の文字列 `"mail"`・Python の `.py` / `.pyi` の接頭辞の無い 1 行の文字列 `"mail"`・`'mail'`)と、Hy の defwire の本体の欄の定義の名(`(#^ str mail)`・`(setv #^ T mail v)`)と、Hy の defsystem の job の行の `:reads` / `:writes` の集合の文字列(綴り `<置き場>:<名>`)の最初の `:` の後の名の部分がその語ちょうどの物(`#{"record:mail"}` の mail)。変数・引数・defrecord / defclass の欄・loop の変数・属性の読み(`x.mail`)・語を含む長い文字列と、契約に無い語は今どおり数え、`:patterns` には効かない。file が無い・JSON でない・契約の綴りが 1 つも無い・空の列・根の外の path は宣言の誤り(終了コード 2)。書かない群は今までどおり。file 1 つで判じるので、名指しの path が在ればその下の file だけを読む(repo 全体を読まない)。既定の重大さ critical | `:words` の当たりは語・`:patterns` の当たりは群の名 | 当たった綴り |
-| DOEFF151 | 使わないと決めた呼び — `:retired-calls` の群ごとに、`:files` に当たる Hy の file の `(呼び …)` の形(頭の記号が `:calls` の綴り)を数える。註・文字列・`#_` で読み捨てた form・値として名指すだけの所は数えない。Python の file は数えない。境目の部品(`:boundary-parts`)の module の中では、呼びの綴りが生の副作用の目録で分類でき、その触れる先(DOEFF106 と同じ写し方 — `time.time` は clock)を部品が `:touches` に宣言している呼びだけを数えない(#1894)。名指しの path の扱いと重大さは DOEFF150 と同じ(#1193) | 呼びの綴り | 呼びの頭の記号 |
-| DOEFF109 | service を持つ file(置き場の `*` に当たった物)の層が `services.guarded_layers` に在り、import の先が別の service の守る層の module なら破れ。先が共有の置き場・`open_layers` の層・例外の組なら許す | import の先の綴り | 最初の import の記号 |
-| DOEFF110 | Hy の `defn` / `defn/a` の定義(decorator つきも)。`do` の中も最上位として見る。`eval-and-compile` / `eval-when-compile` の中は外 | 定義の名 | 定義の名 |
-| DOEFF111 | `deff` の定義の行か直前の行の註(`;` の後)に `definitions.deff_reason_marker` が無い、または理由が空・「同上」とその変形 | 定義の名 | 定義の名 |
-| DOEFF119 | 業務の Hy の file の defclass を中身の証拠で分ける(12 節) | class の名 | class の名 |
-| DOEFF120 | architecture.hy の在る repo の Hy と Python の module が JsonValue・JSONValue・JsonObject・JSONObject を使い、許された module(汎用の解き手・`:wire-modules` に挙げた foundation の module)でない(13 節)。module ごとに 1 件 | なし | 最初の使用 |
-| DOEFF118 | `definitions.test_paths` に当たる file の、名が `test_` で始まる defn・defn/a・deff・defk・fn の束縛 | 定義の名 | 定義の名 |
-| DOEFF112 | `tags.require_on` の頭の定義の :tags(defeffect は辞書の :tags)に `tags.required` の鍵(空でない文字列)が無い。`module_default` なら module の頭のタグの鍵で補う | 定義の名 | 定義の名 |
-| DOEFF113 | service を持つ file のタグの :context が service の名と違う(`-` と `_` は同じに見る・共有の置き場は見ない)。info | 食い違う :context | タグの辞書 |
-| DOEFF108 | 業務の file の名(拡張子を外した名)と、Hy の最上位の handler(defhandler と `[effect k]` を受ける関数)・`assembly_files` の最上位の定義の名を `-`・`_`・`.` で切り、`words` に当たれば破れ。大文字だけの名(定数)は見ない | なし(file の名)/ mangle した定義の名 | 1 行目 / 定義の名 |
+| DOEFF101 | Resolves the import target to a module in the population (that module itself, or a `module.name` module), and if it is another layer outside `allow_imports`, it is a violation. Outside the population (doeff, the standard library) is not counted. Imports of the same target count as one | spelling of the import target | the first import symbol |
+| DOEFF102 | If the spelling of the import target is the same as one of `forbid_modules`, or a submodule / name under it, it is a violation (the first one hit when checked in name order). One per module hit | spelling of the module hit | the first import symbol |
+| DOEFF103 | One if a module in a `types_only` layer has a function definition (in Hy, a top-level expression whose head is in `function_definers`; in Python, a top-level def) | `definitions` | name of the first function |
+| DOEFF104 | There is a definition without tags and the module has no head tags either, or there is no definition at all and no head tags | none | name of the first definition without tags / line 1 |
+| DOEFF105 | For each effective tag, it is a violation if role or context is missing or empty, or the role is outside `roles.by_layer` (the same key may appear many times in one module) | role (`None` if absent) | the tag dict |
+| DOEFF106 | It is a violation if the per-definition direct evidence of hy-index version 3 (raw.direct) is in a Hy definition in a layer outside `allowed_layers`. In a repo that writes `:world-handlers` in architecture.hy, it is not allowed by layer but only in the files of the modules of definitions in the roster (`allowed_layers` cannot be written, and it applies even without a raw_side_effects section). Strong evidence is error, weak evidence is warning. Evidence that overlaps through nesting counts once, for the inner definition | `<definition>::<evidence name>` | the evidence symbol |
+| DOEFF107 | Emits evidence by way of (raw.via — whole-project runs only) as info, with the path. One per definition for the same path and evidence name. It does not enter definitions declared in architecture.hy's `:world-handlers` (the raw side effects beyond them are that definition's responsibility). If reached by another path that does not go through a declared definition, it hits | `<definition>::via::<path>::<evidence name>` | the definition's name |
+| DOEFF131 | Names, outside the roster's definitions (and nested definitions within them), a doeff real-I/O handler listed in `:wraps` of `:world-handlers`. Both references passed as values (the list of `with-handlers`) and calls count; import lines do not. The target of naming is the index reference's `target` (the same name resolution as calls). One per same handler in the same definition. Default severity critical (#1140) | `<definition>::world::<module:name>` | the symbol named |
+| DOEFF106, 131 (outside layers) | In a repo that writes `:world-handlers`, DOEFF106 and 131 are also applied to Hy files outside the layer locations (dirs outside the layers, and dirs outside `:root` listed in `:raw-io-roots` — only `:root` if not written). Test files (path segment in :exclude; name test_ / conftest), files with defadr, and hits inside deftest are excluded (edge tests are DOEFF133). The message says "outside the layer locations" | same as DOEFF106, 131 | same |
+| DOEFF132 | Each definition in `:world-handlers` — the module is not in a layer location (no such module, or outside the layers), is in a layer other than foundation, or a Hy module has no such definition. Whole-project runs only. Default severity critical (#1141) | `<module:name>` | the roster element in architecture.hy |
+| DOEFF133 | Derives the kind of test (local / edge) from what it reaches — builds, in the whole index, the edges between definitions (calls, references, nesting), and traces backward from the roster's definitions, definitions that name a `:wraps` handler, and definitions with strong raw I/O evidence. A deftest that is reached is an edge test and needs the `:edge-mark` marker (a deftest's `:marks` or the module's `pytestmark`), and a deftest that is not reached must not have the marker. Mismatches are emitted as critical, and the edge message writes the path by which it is reached. Python tests are not counted (R6). A Python function in the repo named by a Hy definition (`a/b.py` or `a/b/__init__.py` from the repo root) is traced with no depth limit through strong raw I/O evidence in it (names in the catalog reached by import, builtins at the head of a call — type annotations and except types are not counted) and callees decided by name (functions in the same module, imported functions, class construction and `self.m` / `cls.m`, calls back into Hy definitions). Attribute calls on values and runtime imports are not traced (the same range as the Hy graph). The symbol of an element of a deftest's `:interpreters` is resolved from the import to the definition of a name constant, and that definition, plus the assembly that the definition module's dict literal pairs `{name-constant assembly …}` (the table conftest uses to look up name -> assembly) assigns to that name, are added to what the deftest reaches — a contract test where only the real assembly reaches the outside world is an edge test. String elements (names looked up by conftest's Python table) are not traced. Modules with broken syntax or that cannot be read are named in the report's errors. It applies only when `:edge-mark` is written (#1142) | `<definition>::edge` / `<definition>::local` | the deftest's name |
+| DOEFF137 | An allowlisted handler with no edge test — for each handler in `:world-handlers`, one hit if no deftest that has a non-empty `:interpreters` (an element of `:interpreters` is a symbol of a constant outside the file, so it is not resolved, and only whether it is a non-empty list is looked at — reading a deftest's settings dict is the same as DOEFF133's `:marks`) reaches that handler's definition by following the same definition-edge graph as DOEFF133 (calls, references, nesting). A deftest without `:interpreters` that merely reaches it is not counted. A handler with a reasoned `:contract-test (none …)` is not judged; a reasonless `:contract-test none` is one hit even if an edge test exists (#1796). For each pair (stand-in, real) in the counterpart roster `:stand-ins`, one hit if no deftest (a contract test) has a non-empty `:interpreters` and reaches both the stand-in's definition and the real definition by the same graph (when the real one is in a package outside the index, it is traced from definitions that name the real one directly. A definition that holds the interpreter-name string `"module:name"` / `"module:name@<variant>"` is also counted as a definition that names that handler; `:contract-test` is the same as `:world-handlers`). Whole-project runs only; the conditions to enable it are the same as DOEFF133 (`:world-handlers` and `:edge-mark`). Default severity critical | `<module:name>`; for a stand-in pair, `<stand-in module:name>-><real module:name>` | the roster element in architecture.hy |
+| DOEFF135 | Tests are only deftest — selects files by the spelling types of `:test-forms {:tests [..] :check-scripts [..] :runners [..]}`, and emits one per file for: `def test_*` in Python files of :tests (python-test; the count goes in the message), per-module skips in files of :tests (`pytest.skip` at the unindented level, `allow_module_level`, `mark.skip` of `pytestmark` — a multi-line binding where the binding name and the marker are on different lines is also read until the parenthesis closes, pointing at the line of the binding name; #1426), files of :check-scripts (check-script), and files of :runners (runner). Whole-project runs only. Default severity critical (#1144) | `python-test` / `module-skip` / `check-script` / `runner` | the head of the file or the line of the first hit |
+| DOEFF136 | A service not run in a simulated environment — in a repo that writes `:verification-environment`, for each service that has an entry layer, trace callers backward (calls, references, nesting — the same graph as DOEFF133) from the definitions in that service's entry-layer dir (`<root>/<service's dir>/entry`), and if no deftest under the simulated environment's dir is reached, critical at the defservice position (key = the service's name). A service that declares an entry layer but has 0 definitions is not counted (there is no assembly to run). Tests inside a service are outside the simulated environment, so they are not counted. The index also reads `defsystem` (doeff-cluster's system declaration) as a definition, so the path deftest -> defsystem -> entry also reaches (R5, #1111). |
+| DOEFF163 | A service that does not declare invariants — for each service that has code (the same population as DOEFF136: it has entry in :layers and one or more Hy definitions under `<root>/<service's dir>/entry`. However, a service whose defservice writes `:entry-modules` enters the population by declaration, and one hit if there is no Hy file for that module), one hit if the defservice's `:invariants` (a list of business-invariant functions `"module.path:function"`) is absent or empty, one hit if the named function's definition is not in the repo's Hy index, and one hit if the definition's `:tags` `:role` is not `judgment` (location does not matter — `*_invariants.hy` in the simulated environment is fine). The position is the defservice's name. Default critical; a gap in the registry is a warning. Whole-project runs only | `<service>` / `<service>::<module:function>` / `<service>::entry::<module>` | the defservice's name |
+| DOEFF173 | A service that does not declare a system — for every defservice in architecture.hy (services without an entry layer are also counted): one hit if the defservice's `:system` (the system placed in the cluster, `"module.path:defsystem name"`; a list if there are several) is absent or empty; one hit if the reason of `:system {:exempt "reason"}` is empty (exempt may be written for a service left on the old path, or for a component service with no process — no main and no deploy, used only by being read by other services. The linter does not judge the content of the reason); and for each name pointed at (`:system {:part-of "module.path:defsystem name"}` = that service's code runs inside another service's system: it applies to the one system pointed at, and the location is relaxed to "an entry layer of some service" — a non-part-of declaration pointing at another service's system is red): one hit if there is no definition or it is not a defsystem (only defsystem gets the static description `__doeff_system__` — judged by the index kind), one hit if the module is outside that service's entry layer (outside that module for a service with `:entry-modules`), one hit if the argument count is not one, one hit if a type annotation on the foundation argument (`[#^ T foundation]`, doeff L983) is present and the head of that type is a bare `Callable`, a mapping, or a tuple with no element types (the annotation is counted as a name, and the job functions' types are not looked at); and if there is no annotation, for each job function that takes one argument (the foundation) as a positional argument, one hit if that argument's type (`(: argument type)` in `:pre`) is absent or its head is a bare `Callable`, a mapping, or a tuple with no element types (`dict`, `Mapping`, `FrozenMap`, `tuple`, `list`, `Any`, `JsonBody`, etc.), and one hit if no job takes the foundation. If a defsystem exists it is automatically included in the generic simulated cluster test, so a per-system test is not required (paired with DOEFF136). The position is the defservice's name. Default critical. Whole-project runs only | `<service>` / `<service>::exempt` / `<service>::<module:name>` / `<service>::<module:name>::params` / `<service>::<module:name>::unused` / `<service>::<module:name>::<job function>` | the defservice's name |
+| DOEFF142 | Client or mutable store as a handler argument — for each argument of a `defhandler` (including nested ones) in a Hy file matching :files of `:handler-arguments {:files [..] :exclude [..] :store-names [..] :store-suffixes [..] :keep-mark "…" :value-types [..]}`, classifies it as: `client` (type name ends in Client / Connection / Pool / Engine; name is client / conn / connection / ...-client / ...-conn), `container` (dict / list / set / bytearray / MutableMapping ... — including `(get dict …)`), `object` (a class that is not frozen in the index of the repo's Hy and Python classes, and a type not in the index — frozen dataclasses, frozen settings, Enum, NamedTuple, defrecord, and :value-types are values), or `named` (no type annotation and the name is in :store-names / :store-suffixes). A handler whose body (up to the next top-level form) has a comment with :keep-mark is not counted. The judgment is decided only by the file passed, and the class index is looked up through a per-file cache (even a one-file run does not re-read the repo). Default severity critical (#1366) | `<handler>::<argument>` | the argument's position |
+| DOEFF143 | A fake handler that answers a business effect — `:business-fakes {:simulation [..] :assembly [..] :tests [..] :skip [..] :production [..] :sets [..] :simulation-prefix "…" :production-prefix "…" :entry-string-modules [..] :entry-string-files [..] :business-modules [..] :lower-layer-modules [..] :external-effects "dir" :counterexamples "dir" :unserved "dir"}`. The definition-edge graph (the same as DOEFF133; edges inside a system's values also count as edges that run in production) is traced forward from the simulation roots (definitions in :simulation and :assembly, and definitions of :simulation-prefix in files of :sets) and from the production entries (definitions of :production-prefix of :sets among files of :production, defsystem, names inside `(when (= __name__ "__main__") …)`, and entry strings `"<module>:<name>"` — the body of :entry-string-files is also read). A defhandler clause reachable only from the simulation roots that answers an effect of :business-modules not as a tap (in the clause form below: with not a single ending that passes the received effect straight through), and is in neither the external-world table nor the counterexample table, is critical (key = `<handler>::<effect>`). A clause reachable only from the simulation roots that answers an effect of :lower-layer-modules not as a tap is also critical (a fake of a lower layer is only the lower layer's one canonical version; key = `lower:<handler>::<effect>`). Table rot is also emitted: a row of the external-world table that no fake answers, or that has no production answerer (an `isinstance(effect, X)` in Python of production code also counts as an answerer; those listed in :unserved are excluded). The clause form (the one judgment used in common by DOEFF143, 155, 156, 157, 158, 164, 167, 206): each clause ending is classed as either passing the received effect straight outward (re-performing — a name bound with `(<- name [type] effect)`, `(<- name (head …))` that lists the received arguments as they are, `(setv name (yield effect))`, or `(with_handlers [...] re-perform)`, or a name that was rebound from it with `(:= name bound-name)` and the like, whose `resume` / `transfer`; a clause's `(resume None)` that re-performed the same effect; `(reperform effect)`; `(pass)`; or a `:when` clause), or a value of its own (`resume` / `transfer` of any other value, `finish`, `reperform` of a different value, an answer re-performed under `with_handlers`), and `(resume (if condition A B))` is classed per branch. A clause with a passing ending is a tap (excluded from the fake judgments of DOEFF143, 155, 156, 157, 158 — including fault injection that re-performs in only one branch), and a clause with an own-value ending is a clause that needs a table row (hits of the counterexample table, DOEFF164, 167, 206). A clause can have both. `raise` is not counted as an ending. If a clause's fields contain the name `effect`, that name is not the received effect. Clauses of the same head of the same handler are combined field by field with OR. The names, ways of ending, and argument counts of the operations that make clause endings (`resume` and the others listed here) are not written in this rule's source; it reads the generated artifact `data/clause_ops.json`, written out from doeff-hy's clause-operation table `CLAUSE-OPS` (`packages/doeff-hy/src/doeff_hy/_clause_ops.hy`) (`src/project/clause_ops.rs`) — an operation that ends by resuming is judged by its value, one that passes through by whether it has arguments and by the re-performing expression, one that finishes by its own value, and an operation that exits by exception is not counted as an ending. If a row is added to the table, rewrite it with `uv run python scripts/export_clause_ops.py --write` and the judgment follows (forgetting to rewrite and writing directly into the file turn `tests/test_linter_clause_ops.py` red, and writing a name directly into the source turns the test in business_fakes.rs red). A table is a dir of one-key-one-file (the first line is the key, the reason from the second line). A nonexistent dir is read as an empty table (one line of notice) for :unserved (a shrinking-direction table that pins violations), but cannot be read (errors) for the external-world table and the counterexample table (declarations). Whole-project runs only. Default severity critical (#1189) | `<handler>::<effect>` / `lower:<handler>::<effect>` / `external-unused::…` / `external-unserved::…` | the clause's position, the table's dir |
+| DOEFF176 | Stale rows of the counterexample table that nothing hits — the declaration is the `:counterexamples` of `:business-fakes`, the same as DOEFF143. A row of the counterexample table matches no clause of any deliberately broken handler (clauses reached only from DOEFF157's tests are also checked — clauses that answer a business effect or an effect of :lower-layer-modules. What counts as a hit on the table is a clause that has an ending returning its own value, and clauses that re-perform in only one branch count too). The judgment is made in the same one place as DOEFF143, and it is split from DOEFF143 so that the count of fakes (DOEFF143) and the count of stale table rows can be counted separately by rule number. Default severity critical; how it is lowered by the registry is the same as DOEFF143 | `counterexample-unused::<row key>` | the table's dir |
+| DOEFF155 | Violations of assembly shape — `:assembly-shape {:translation-point "with-*-translation" :retired-function "…" :translations "…" :translation-layer "…" :intent-layer "…"}` (the assembly layer, the set files, the business modules, and the external-world table are read from `:business-fakes` — only when both are written). What it emits: the production file of :sets remains; a definition of :retired-function remains in the assembly layer; in the one point of the assembly layer's translation list (a defk whose name is of the type :translation-point), `(with-handlers [#* list …] body)` lists imported names that are not a translation list (a translation list = a :translations constant at the :translation-layer's location, or a list in an old module of a service outside the location whose elements are all from business answerers outside the location; a list of val in the same module is opened into); list ordering (no list that answers an :intent-layer effect of another service that this list re-performs comes before it); a :translations constant lists definitions of another service's :translation-layer; the one point of the translation list lists its own argument with `#*` (it does not receive the list from the caller); and the dir of `:verification-environment` and the files of :tests open and list translation lists with `#*` (the lists the one point may list, and the lists that the assembly layer's :translation-layer handlers or translation lists are bundled into) (simulation and tests call the same one point as production). Whole-project runs only. Default severity critical (#1189) | `set-file` / `retired` / `stray:<name>` / `parameter:<argument>` / `loose:<list>` / `order:<list>:<effect>` / `own:<definition>` | the definition's position, the set file, the definition where it was opened |
+| DOEFF156 | The translation target or the foundation answers a business effect — the declaration is the same as DOEFF155. A translation handler reached from a :translations constant names a business effect it does not itself answer (always for :intent-layer effects; otherwise those that handlers of the same list do not answer); every handler in the same list that answers the re-performed effect comes after it in the list (only when the constant is a literal list); and among the handlers reached by the set-function of a :sets file (:simulation-prefix / :production-prefix), those outside :translations in the same module answer a business effect not as a tap. A business effect = an effect of :business-modules that is not in the external-world table. Whole-project runs only. Default severity critical | `target:<handler>:<effect>` / `inner:<handler>:<effect>` / `foundation:<set function>:<handler>:<effect>` | the handler's or set function's position |
+| DOEFF157 | Test-only fakes — the declaration is the same `:business-fakes` as DOEFF143. A clause of a definition reached from the test roots (all definitions in files of :tests) and reached from neither a production entry nor a simulation root answers an effect of :business-modules or :lower-layer-modules not as a tap, and is in neither the external-world table nor the counterexample table: critical (copies of the business in the production code's location that only tests use are counted too). A deliberately broken counterexample handler is listed in the counterexample table with a reason. Whole-project runs only. Default severity critical (#1189) | `<handler>::<effect>` | the clause's position |
+| DOEFF158 | The answerer of an intent effect is not a single translation — the declaration is the same as DOEFF155 (both `:business-fakes` and `:assembly-shape`). Among clauses reached from production entries, it counts those where the effect's defining module is at a location in the :intent-layer layer and which answer not as a tap. Critical if the clause's file is outside the :translation-layer layer, and if two or more :translation-layer handlers answer the same effect, it emits all of them (ADR R9 — one and the same translation for production and simulation). Whole-project runs only. Default severity critical | `outside:<handler>::<effect>` / `shared:<handler>::<effect>` | the clause's position |
+| DOEFF164 | A service with no counterexample of a broken handler — the declaration is the same as DOEFF143's `:counterexamples` of `:business-fakes`, plus `:verification-environment`. A counterexample clause = a clause that matches a key in the counterexample table, is not reached from a production entry, and has an ending returning its own value (DOEFF143's clause form). The owner is the service dir that contains the file defining the clause's effect (a foundation effect if it is not under any service). For each service that has definitions in its entry layer, it is satisfied if even one deftest reaches (tracing the same graph as DOEFF136 backward) a counterexample clause owned by that service or by the foundation and also reaches a definition in that service's entry layer; if there is none, critical at the defservice position (lowered by registered_severity if it is in the registry). In addition, the table matching of DOEFF143 and 157 counts a clause as a hit for a clause of any effect, as long as the key of a clause that is not reached from production and has an own-value ending is in the table (a broken handler that answers a foundation effect can also be listed in the table). Whole-project runs only. Default severity critical (#1155) | the service's name | the defservice's position |
+| DOEFF165 | Missing coverage of intent effects — the declaration is the same as DOEFF158 (both `:business-fakes` and `:assembly-shape`). For each defeffect whose declaring file's location is in the :intent-layer layer, three columns are read from the same reachability graph as DOEFF143: whether it is emitted from a local test (among the definitions reached from the test files' definitions, those that name that effect, excluding answerers [effect clauses, defhandler] and declarations), a simulation answerer (a handler of an effect clause reached from the simulation roots), and a production answerer (a handler of an effect clause reached from the production entries). An effect with any column empty is one hit, and the three columns are shown in the body and in `--explain`. The owner service is the defservice whose dir contains the declaring file's location (longest prefix match). Effects declared by a Python class are not counted (outside the index graph). Whole-project runs only. Default severity critical (#1561 K3 turns the report-only table into a failure. Known gaps in the repo's registry are warnings) | `<service>::<effect>` (`-::<effect>` for an effect with no service) | the effect declaration's position |
+| DOEFF206 | The verification environment itself answers an intent effect — three declarations, `:business-fakes`, `:verification-environment`, and `:assembly-shape` (:intent-layer) (the conditions to enable it are `:business-fakes` and `:verification-environment`. Without :intent-layer there are 0 hits). There are two kinds of hits: (a) Rows of tables that let violations through — `:external-effects` (key = full name of the effect), `:lower-layer-passages`, and `:test-only-fakes` (key = `<path>::<handler>::<effect>`; what follows the last `::` is the effect) — that let through an effect whose defining module is in the :intent-layer layer. It is emitted at the row's file. A nonexistent dir for `:lower-layer-passages` or `:test-only-fakes` is read as empty (one line of notice). (b) A handler clause in the verification environment's dir (under `<root>/<:verification-environment>/` — read the same as the location exemptions DOEFF114 and 115, `Architecture::verification_environment_dir`) answers an effect of the intent layer. What is excluded is only a clause that has no ending returning its own value (DOEFF143's clause form — every ending passes the received effect straight through) and a clause with the key `<path>::<handler>::<effect>` in the counterexample table. A clause that changes the re-performed answer, builds another value, or passes its own value in only one branch needs a table row (the same judgment as DOEFF143, 164, 167). The intent-layer judgment is the same as DOEFF158 and 165 (the layer of the file of the module defining the effect) — effects of doeff's package do not hit. Whole-project runs only. Default severity critical. **Not lowered by the registry** (even if listed, it is error and not registered) | (a) `pass:<table key>`, (b) `verification:<handler>::<effect>` | (a) the table row's file, (b) the effect's clause |
+| DOEFF207 | A pair of an outside location that a production system's job reads has no writer — the declaration is architecture.hy's `:outside-writers {"<location>:<name>" "writer" …}` (a table of pairs written by writers that are not production-system jobs — tools in outside repos, human operations, tasks that are not jobs — and the names of the writers). It applies only to repos that write it. The population is the same production system as DOEFF173 (the systems pointed at by a defservice's `:system` and by `{:part-of …}`; the same system once) — the jobs of simulation and test defsystems that are not production systems count neither reads nor writers. There are two kinds of hits: (a) a production system job's row has no `:reads` or `:writes` (optional fields in doeff's defsystem; `#{}` if unused). (b) a job's `:reads` pair is in no production job's `:writes`, no `:writes` of the contract of a defk or deff reached from a production entry, and not in the `:outside-writers` table (a form that reads a record with no writer in production, and in the local simulation a stand-in makes that part and goes green). A writer that is not a job (such as a task's Program passed from a system job by a foundation value) declares itself with `:writes #{…}` in the definition's contract dict (doeff-hy's FUNCTION-CONTRACT-KEYS; only the shape is checked at expansion time). The production entries are the same as DOEFF143 (production code's defsystem in `:business-fakes`, the production set function, definitions named by the `__main__` clause, and entry strings), and only declarations of definitions reached forward from there are counted — declarations of simulation-only definitions or unused definitions are not counted. In a repo that does not write `:business-fakes`, only a job's `:writes`. The shape of the field values (a set of strings, with the spelling `<location>:<name>`) is checked by doeff-hy's defsystem expansion — here the spellings are only collected and matched. When the named system does not exist or is not a defsystem, DOEFF173 emits it. Whole-project runs only. Default severity critical. **Not lowered by the registry** (this kind of violation is found by doeff-linter) | `<system>::<job>::reads`, `<system>::<job>::writes` (missing field), `<system>::<job>::<pair>` (a read with no writer) | the job's row |
+| DOEFF208 | Production code wakes a job by waiting on a record change — the declaration is `:business-fakes` (applies only to repos that write it). The population is the Hy files of production code (files that match `:production` and do not match `:tests`, `:simulation`, or `:skip` — the same range of declaration as DOEFF143's production entries and DOEFF207's writers that are not jobs), excluding the inside of the doeff-records package (path segment `doeff_records`) — this rule looks at users (the owner of the effect and the source deletes the source itself when switching to the event foundation). There are two kinds of hits: (a) making a record change the source of events — a call to doeff-records' signal-source factories `read-signal-handler` and `records-signal-handler` (matched on the last segment of the head's spelling — `event-source.read-signal-handler` also hits). (b) waiting on a record change — emitting `WatchChanges` or `WatchEvents` with seconds (`:timeout`, or the third positional argument) that is not a literal 0 (`0`, `0.0`). Variables, expressions, and splats (`#*`, `#**`) cannot be called 0, so they hit. The form without seconds is the default 0 (read once without waiting) and does not hit. What does not hit: a read with seconds 0 (the form where the receiver reads the record to catch up at startup or reconnect), writes to records, re-performing inside a defhandler that answers a record effect (where the head of a clause right below is `WatchChanges` / `WatchEvents`), the spelling in a `match` pattern, comments, and forms discarded by `#_`. Python files are not looked at. Whole-project runs only. Default severity critical. **Not lowered by the registry** (the hits that exist now are not put in a table to pass — a design that writes records and waits on records is found and forbidden by the linter, separating records from startup) | `<enclosing top-level definition's name>::<head's spelling>` (e.g. `with-turn-events::read-signal-handler`, `waited-signal::WatchChanges`) | the call's head symbol |
+| DOEFF209 | A Program in production code repeatedly goes to fetch the same thing with a time wait in between — the declaration is `:business-fakes` (applies only to repos that write it). The population is the same Hy files of production code as DOEFF208 (files that match `:production` and do not match `:tests`, `:simulation`, or `:skip`), and unlike DOEFF208 it does not exclude the inside of the doeff-records package (this rule looks at the writers of the wait itself). What it looks at is the source of the time at which it wakes: (1) wait spellings — `(Delay seconds)`, `(WaitTicks _ seconds …)`, and module-qualified `sleep` (such as `time.sleep`) (a yield with seconds being the literal 0, and deadline waits containing `(- deadline now)`, are excluded), and the time of `ArmTimer` / `ArmedTimer` (second positional or `:at`) that contains `(+ now …)` or contains a name bound from `(+ now …)`. now = within the same definition, names bound from `GetTime`, `now-ms`, `clock-ms`, and from definitions with no arguments whose body calls them, and names bound by a conversion call that takes only such a name. For a wait inside a repetition, only a now bound inside the repetition is counted (a time computed from a now read once before the repetition is the same time every iteration). (2) Helpers — the repo is re-read until no change and collected (not held in a roster): helpers that pass a time (an argument flows to the time position by following rebindings), helpers that receive now (the time contains `(+ argument …)` or a name bound from it), helpers that return a wait (definitions that have a wait spelling outside the repetition), and effects answered by waiting (a `defhandler` clause that always waits without going through a branch — clauses of WatchChanges and WatchEvents excluded). The head of a call is resolved to a definition in the same file or by `(import module [name])`, and an unresolvable `a.b` is resolved when the name matches exactly one. (3) Repetition — inside the body of a `while`, `loop`, or a clause of `event-loop`, or a definition that calls itself (`for` iterates over a finite collection, so it is not counted). A definition applied once and exited is not hit; the call inside a repetition that calls that definition is hit. The inside of a call that starts another task (`Spawn`, wrappers with spawn in the name) is not looked at (a single wait of the Program passed). (4) The key argument `:poll-seconds` that passes a re-ask interval to a library (a value that is not a literal 0) hits regardless of repetition. What does not hit: deadlines derived from rows or schedules, the upper-limit seconds when waiting for a change (DOEFF208's side), request timeouts, `match` patterns, the head of a handler clause (`(Delay [seconds] …)`), inside quote and `#_`, ways of picking up completion outside doeff's scheduler (Python — outside the rule), and deadlines for timing out (where the tag of `ArmTimer` / `ArmedTimer` is a top-level `val` / `setv` name, at least one branch `(cond (= tag name) body …)` / `(if (= tag name) body …)` comparing against that tag exists in the population, and every body is one that exits the repetition with `(stop …)` — the upper-limit seconds for waiting for a stop signal. A tag for which even one body repeats the same read after arriving is not excluded). The classification is the last segment of the key detail: `periodic` (purely re-fetching by time) and `retry` (re-fetching after unreachable — the wait spelling, the tag of the deadline set, the expression binding the time, the type of the enclosing match clause, or the helper's name contains retry / unreachable / unavailable, or all waits in the helper are retry). Hits of the same head and same classification in the same definition are merged into the one at the first place, and the remaining lines are shown in the body. The reason to pass by writing it at the place: on the line of the hit, or on a comment-only line immediately before it, `; 時間で取り直す理由: <word>` (placed the same way as DOEFF111's `; defk にできない: <reason>`; the marker spelling `時間で取り直す理由` = "reason for re-fetching by time" is matched by the code, so it is kept in Japanese). The words are a closed set — `相手に変更の知らせが無い: <counterpart> — <how it was confirmed>` (= "the counterpart has no change notification"; both the counterpart's name and the basis of confirmation [a section of the counterpart's API document, a line of the counterpart's code, or the command tried and its result] are non-empty. Counterparts known to have change notifications [Kubernetes, the coordinator's GET /watch, the doeff-events foundation, and the record service's change signal — matched by whether the counterpart's name, lowercased with spaces removed and `_` made `-`, contains any of the aliases (kubernetes, k8s, kube-apiserver / coordinator, /watch / doeff-events / 記録のservice, 記録の変更の合図, agora-record, doeff-records)] are not passed, and the body says "this counterpart has change notifications"), `書くだけ: 生存の印` / `書くだけ: 報告` / `書くだけ: 期限の延長` (= "write only: liveness mark / report / deadline extension"), and `届かない間だけの繋ぎ直し` (= "reconnecting only while unreachable"; only for hits of classification retry — a form that tries, with a pause, whether it connects only while an unreachable mark or failure answer exists, does not go to fetch data, and clears the mark when it returns). A word outside the set or one that does not fit the classification is not passed, and the body adds the reason. Whole-project runs only. Default severity critical. **Not lowered by the registry** (repeated fetches are all to be fixed, limited to the last resort) | `<enclosing top-level definition's name>::<head's spelling>::<classification>` (e.g. `watch-custody::wait-own-deadline::periodic`, `making-loop::ticked::retry`) | the call's head symbol |
+| DOEFF210 | A Hy program sleeps on the wall clock — the population is the settings' `program_sleep` (program locations — applies only to repos that write it; section 4). A call inside the body of a defk or defp (including inside an fn, defn, or deff that is literally inside) whose head is `time.sleep` / `asyncio.sleep` is a violation. The head is resolved from imports in the file (including those inside functions): `t.sleep` for `(import time :as t)`, names bound by `(import asyncio [sleep])` and `(import time [sleep :as nap])`, and `sleep` for `(import time *)`. For `(Await (asyncio.sleep seconds))`, the inner call hits. What does not hit: a call whose seconds is the literal 0 (it only yields once), handler implementations (the body of a defhandler; a defk / deff / defn / fn whose argument list is `[effect k]`; a defk / defp whose contract dict's `:tags` `:role` is `foundation` — only when the definition writes it in its own dict, not exempted by the module's head tags), definitions that are not programs (top-level deff, defn, and methods of defclass), comments, `#_`, and quoted forms. A `sleep` that is not from a sleep module (your own function, another library) is not counted. It is decided by a single file (one-file runs judge it too). Default critical (doeff's ADR-DOE-TIME-001 R1 and R2 — Python's same convention is semgrep's doeff-no-sleep-in-programs) | `<program's name>::<time.sleep or asyncio.sleep>` | the sleep call's form |
+| DOEFF211 | A Hy test sleeps on the wall clock without declaring that real time is the subject — the population is the settings' `test_sleep` (test locations — applies only to repos that write it; section 4). A call whose head is `time.sleep` / `asyncio.sleep` (import aliases and bound names are read the same as DOEFF210, and the method spelling `(.sleep time seconds)` too) and the rephrased sleep `(.wait (threading.Event) seconds)` (waiting with seconds on an Event made on the spot) are violations. The kind of definition does not matter (deftest, defn, defk, deff, methods of a class, top-level expressions). What does not hit: a sleep whose seconds is the literal 0, comments, `#_`, quotes, the inside of strings, and places that declared realtime — the whole of a file with a module top-level `(val pytestmark pytest.mark.realtime)` (`var` too; the value is one marker or a list or tuple of markers), the inside of a deftest with `"realtime"` in `:marks` of the meta map (the first element after the argument list and the leading string), and the inside of a `defn` with `pytest.mark.realtime` in its decorator list (the `[…]` right after the head). A `setv` binding, a non-top-level binding, and a map of a non-deftest definition are not declarations (only the forms doeff-hy records as pytest markers are read). The detail of the key is `<enclosing top-level definition's name>::<sleep function>` (`<module>` outside a definition). Not lowered by the registry. The matching against the roster that lists the declared tests together with reasons is held by the repo's own test (in doeff, tests/semgrep/test_realtime_tests_registry.py). Definition = `src/project/test_sleep.rs`, test = `tests/test_sleep.rs` (doeff's ADR-DOE-TIME-001 R8) |
+| DOEFF174 | A business layer uses a lower layer's effect or handler directly — the declaration is the `:lower-layer-modules` of `:business-fakes` in architecture.hy (applies only to repos that write it; if not written, it shows as wired false in the list of rules). The population is the top-level definitions (`defk`, `deff`, `defn`, `defp`, `defhandler`) of the Hy files of the business layers (settings `translation_effects.domain_layers`; if not written, whichever of the default names core and intent are in the declaration). What hits: (a) a call executed in the body (`(<- …)`, `(! …)`) whose head is from a module of `:lower-layer-modules` (e.g. `ReadRow` of `doeff_records._effects`) — if the head is a repo defk, it is traced with the same reachability as DOEFF130 down to `max_depth` (including forms that reach through a shared defk). Executing a definition outside the repo, in another module of the same package (the module obtained by dropping the last segment of the `:lower-layer-modules` spelling — `doeff_records` for `doeff_records._effects`), such as a defk that wraps effects like `read-typed` of `doeff_records._typed`, also hits — definitions outside the repo are not in the inference table and cannot be traced beyond, so executing one is regarded as a raw operation at that point. (b) The name of a handler placed in an element of the `with_handlers` list or as the first argument of `with_handler` / `WithHandler` (the head if the element is a call, the symbol if a symbol, the inner symbols for a `#*` splat) that is from the same package (e.g. `read-signal-handler` of `doeff_records._event_source`, `http-records-handler` of `doeff_records._http_client`). What does not hit: imports and uses of value types (`Row`, `KeepFor`, `RowType`, `typed-row`, `ChangedRow`, `SignalTables` — those that appear neither in the head of an executed call nor in the handler list being applied. Imports are not forbidden at the module level — `event_source` puts types and handlers in the same module), domain effects (types of the intent layer), definitions of the translation layer, foundation layer, and assembly layer, and inside quotes. **Forms it cannot catch**: places that apply a handler received as an answer or an argument as a value (`(with_handlers (list opened.handlers) …)` — field reads, arguments, and expression handlers whose names are not statically determined are not counted. The translation handler on the side that builds the applied value fixes this by not passing raw handlers to the business layer). The first one place in body order per definition and per name. One-file runs (the editor) judge it too. Default severity critical, **not lowered by the known list (registry)** (raw reads and writes of records are a handler's job, not a job's. A form in which a handler translates business effects into record effects and a job emits record effects raw is forbidden by the linter. Scope: inside the cluster only handlers [protocol and foundation layers] use the record service's raw operations, and outside only the domain API) | `<definition name (mangled)>::<effect or handler name including its module (mangled)>` (e.g. `tail_reading::doeff_records._event_source.read_signal_handler`) | the executed call's head, or the symbol of the applied handler |
+| DOEFF167 | An invariant clause that has neither a counterexample nor a reason for exclusion — DOEFF164 (green if a service has one counterexample), made finer per clause. A clause's name is the value returned by an `:invariants` function and cannot be read statically, so it is declared in the defservice's `:clauses ["clause" …]`, and a clause with no counterexample gets its reason written in `:clause-exemptions {"clause" "reason" …}` (inside `:clauses`; the reason is non-empty). Which clause a counterexample clause breaks is declared in lines `breaks: <service>::<clause> …` from the second line on of the counterexample table (one key per file for `:counterexamples`). The population and the effective counterexample clauses are the same as DOEFF164 (services with definitions in the entry layer; clauses that match a table key and are not reached from a production entry). For each clause, it is satisfied if even one deftest reaches the declaring clause and reaches a definition in that service's entry layer, a clause excluded with a reason is not counted, and if neither exists, critical at the defservice position (key detail `<service>::<clause>`). A service that has code but does not write `:clauses` gets one under the service's name. A `breaks:` that names a service or clause not in the declaration, or a spelling mistake, is a settings error (errors). Whole-project runs only. Default severity critical | `<service>::<clause>` (for a missing declaration, the service's name) | the defservice's position |
+| DOEFF168 | A business layer branches on an environment-name value or a dry-run flag — in Hy files of the layers in `:layers` of `:environment-branches`, it counts the string literals of `:values` that appear in the arguments of comparison forms (`=`, `!=`, `is`, `is-not`, `in`, `not-in`; also elements of collection literals) and in the type of a `match` clause, and the symbols named in `:flags` inside branch forms (the condition of `if`, `when`, `unless`, each condition of `cond`, the subject of `match`; compared after mangling the last dot-separated segment). Comments, forms discarded by `#_`, quoted forms, and anything outside a branch condition are not counted. Locations whose layer is unknown are outside the layer rules, so they are not counted. The spellings and layers exist only in the repo's declaration. Default severity critical | `value:<spelling>` or `flag:<spelling>` | the literal or symbol hit |
+| DOEFF169 | A keyword field name in a match class pattern contains `-` — over all Hy files in layer locations (no settings needed), hits keyword arguments whose name contains `-` in a class pattern (a parenthesized form whose head is a symbol other than `\|` — nested ones inside the type and the arguments of class patterns are followed too) inside the type of a `match` clause (the `:if` guard is not counted as part of the type). Hy 1.3.1's `match` emits the class pattern's keyword as `case Class(a-b=…)` without mangling it into an attribute name, so that clause matches no value and silently falls through to the next clause (often the default `_`). A field written with `_` (`:a_b`), positional-argument patterns, keywords in a clause's body and guard, outside a match, comments, quotes, and `#_` do not hit. Inside a `(defk …)` form (arguments, contract, body) does not hit either — defk converts the field names of class patterns of matches inside it into attribute names with `hy.mangle` at expansion time (doeff-hy's `doeff_hy/_match_fields.py`), so `:a-b` matches there. The key detail is `<class>:<field name>`. Default severity critical | `<class>:<field name>` | the keyword's position |
+| DOEFF170 | A layer that passes values by type alone has a defwire — hits top-level `defwire` declarations in Hy files of layers declared with `:wire-free True` in architecture.hy's layers (TOML settings use `layers.wire_free`). Wire types (declarations with the field-name mapping `:names`) and parse / dump are placed in the translation layer, and this layer holds only types that have no field names. In a repo with no declared layer, the judgment is not wired. Default severity critical | `wire:<name>` | the defwire's name |
+| DOEFF171 | Contracts and fields in a layer that passes values by type alone contain mappings or tuples with no element types — among the `:pre [(: argument T)]` and `:post [(: % T)]` of defk, deff, and defn, the field types (`(#^ T name)`) of defclass, defrecord, and defwire in Hy files of `:wire-free True` layers, and the field annotations of classes in Python files of the same layers (dataclass, TypedDict, class `name: T` — added; before, only Hy files were counted, and a `Mapping[` field in core's .py was silently missed), it hits mappings (dict, Dict, Mapping, MutableMapping, JsonValue, JsonObject, JsonBody, OpaqueJson, FrozenMap — also `(of dict K V)` with element types), tuples and lists with no element types (tuple, list), fixed-length tuples, and tuples with open element types (union branches and the contents of containers are also looked at — using DOEFF144's reading of types). Homogeneous sequences (`(of tuple X ...)`, `(of list X)`) and typed records do not hit. The `:post` tuple of a sort-key function (named `…key-of` or `sort-key`) is excluded. A mapping that looks up data should be a key -> value function or an effect, and the spelling that builds a mapping is placed at one point in the translation layer. Default severity critical | `pre:<definition>:<argument>`, `post:<definition>`, `field:<Class>.<field>` | the type annotation |
+| DOEFF172 | Where mappings are placed (a smell; counts only) — in the bodies of top-level defk, deff, and defn in Hy files in layer locations (excluding the leading docstring and contract dict — in any order, #2265. A `{…}` in a match type position does not build a value, so it is not counted, #2310), one hit per definition for places that build a mapping (`{…}`, `(dfor …)`, `(dict …)` — `#{…}` sets are not counted); and one hit per field when the type of a field of defclass, defrecord, or defwire outside the layers that pass values by type alone (`:wire-free True`), or a class field annotation in a Python file (#2203), is a mapping (the same mapping vocabulary as DOEFF171). A point whose purpose is to spell or read an external shape is not counted if it declares `:spells` / `:reads` in the contract's `:tags` with the name of the external shape (a closed list of `"json"`, `"http"`, `"env"`, `"schema"`, `"records"` [the shape of doeff-records' API] — the same as doeff-hy's SPELLS. A value outside the list is not regarded as a declaration) (in a layer that passes values by type alone, it is counted even if declared). A field of the relay type `OpaqueJson`, whose contents are not read (including a union with None), is not counted as a mapping (a union with another mapping is counted, #2515). A field whose element type is `OpaqueJson` in a tuple / list (`(get tuple #(OpaqueJson ...))`, `(of tuple OpaqueJson ...)`, `tuple[OpaqueJson, ...]`, `list[OpaqueJson]` — including a union with None) also just carries zero or more relays, so it is not counted (a union of OpaqueJson and another mapping as the element type is counted, #2586). A field that is a union of `OpaqueJson` and non-mapping types (records and the like) (`(| OpaqueJson Record)`, `OpaqueJson | Record | None`) is also not counted as a relay (a union that includes a mapping branch is counted, #2629). A defwire with a field of a mapping of an external shape as per contract does not count the field if it declares `:spells` / `:reads` with the shape's name in the head dict's `:tags` (a defrecord is a value type, so the declaration has no effect, #2515). Inside a defhandler (the cache is held by the effect layer) and definitions whose `:post` is a mapping (the one point of spelling whose purpose is to build a mapping) are not counted. Fields in layers that pass values by type alone are looked at by DOEFF171. The hits' weight is warning; default severity major (agora's data is in the DB and read by effects, and in-memory mappings are only for caches and held by handlers) | `built:<definition>`, `field:<Class>.<field>` | the definition's name or the field's type annotation |
+| DOEFF175 | Stale branches on an effect whose declaration was switched — in top-level definitions (`defk`, `deff`, `defn`, `defn/a`, `defp`, `defpp`, `deftest`) of the population of the definition rules (Hy files in `paths` and `test_paths` of `definitions`), for a name x that binds the answer of effect `E` — `(<- x (E …))`, `(<- x T (E …))`, `(<- x (E …) :absent F)`, `(val\|var\|setv\|setx\|:= x (! (E …)))` — or a `(! (E …))` written directly without binding, it hits branches that split, as values, the types that `E` declared with `:absent` / `:failure` of defeffect: arms of `(match x (T …) …)` (each alternative of `(| (A) (B))` too) and `(isinstance x T)` (each type of a type list `#(A B)`, `[A B]`, `(| A B)`, `(tuple [A B])` too; also inside cond / if / when / and / not). `<-` and `!` do not bind the declared absent / failure types but let them escape to the caller's scope as Absent / Raise (ADR-DOE-CORE-EFFECTS-003 R5), so those branches are never taken. Types are compared after being resolved to the module by imports and modules (the same as DOEFF122 — even if a same-named type is in another module, only the declared one). What does not hit: branches on types declared `:value`, branches on success types, branches on effects with no declaration, defhandler (a clause is the side that receives the effect, not the side that binds the answer — not read per definition), types declared by another effect, types inside pattern fields, names rebound and names hidden by arguments, `for`, `with`, `let`, `except`, comprehensions, or match patterns, answers wrapped in `maybe` / `result` / `on-raise` / `absent-as` (the head is not an effect), answers that went through a defk, quotes, and comments and `#_`. Details are in section 22. Judged in both whole runs and one-file runs (the editor). Default severity critical, **not lowered by the known list (registry)** (a gate for the switch — that version is not landed until the hits reach 0; law declarations-switch-one-effect-at-a-time) | `<definition name (mangled)>::<bound name>::<type spelling>` (the form that splits directly with `!` without binding uses the effect's spelling instead of the bound name. e.g. `revise_input::body::Missing`) | the match arm's pattern, or the isinstance type's symbol |
+| DOEFF166 | Stale rows of the registry that nothing hits — among the keys of `dirs`, `files`, and `config_files` of `[tool.doeff-linter.registry]`, those for which the rule pointed to by the key's separator (the second part of `<path>::<law name or rule ID>[::<detail>]`) was **judged in this run** (the judgment is wired, it is not a semantic rule, and it is not `reconciling`), yet match the key of no finding. In a whole run where DOEFF166 is enabled, the rule the key names is applied in the same run even if it is not in `enable` — those hits are used only for 166's judgment and are not reported as findings (so even a run with only `--enable DOEFF166` does not miss rows that do not match). Keys from which the rule cannot be derived by the separator (keys of other checks that share the registry dir) and keys that name semantic rules or `reconciling` rules are not judged. Only whole runs that name no paths (with named files or a pre-save single file, the hit findings may lie outside the range). It is wired only in repos that configured a registry. Default severity critical (#1706 — do not loosen a shrinking-direction registry by forgetting to delete) | the registry's key | the head of the registry file it is listed in (the key's `*.txt` for a dir) |
+| DOEFF144 | Types of the public surface are bare mappings or bare tuples — reads the type annotations of the public surface (names not starting with `_`; `Class.field` is looked at by its last segment) of Hy and Python files matching `:typed-values {:files [..] :except [..]}` (globs are anchored at the root, as in DOEFF150): class fields (`(#^ T name)`, `#^ T name`, `(setv #^ T name …)` directly under Hy's defclass, defrecord, and defwire / `name: T` directly under a Python class) and return values of functions and methods (`(defn #^ T name …)`, `:post [(: % T)]` of defk / deff, `-> T`. Nested functions are not counted). Red = bare mappings (dict, Dict, Mapping, MutableMapping, the same names in typing / collections.abc, JsonValue, JSONValue, JsonObject, JSONObject), bare tuples (tuple, Tuple), mappings whose values are object / Any, fixed-length tuples `tuple[A, B]`, containers holding them as elements and union branches, and branches of a string type `"A \| B"`. Not red = `dict[str, Row]`, `tuple[X, ...]`, FrozenMap. For the `:post` of a defk / deff whose name has a type annotation, only mappings are red, and for a `:post` with no annotation, bare tuples are red too. The form in which a Hy defn / defk / deff answers with a tuple literal `#(a b)` of length 2 or more (the last expression, or `(return #(a b))`) is also red. Judged by a single file, and named paths are handled the same as DOEFF150. Default severity critical | `field:<Class.field>` / `return:<name or Class.method>` / `post:<name>` / `pair:<name>` | the type annotation (for a returned tuple, the tuple literal) |
+| DOEFF145 | A type declaration's `@dataclass` lacks kw_only=True — among .pyi files matching `:record-stubs {:files [..] :except [..]}` that have a same-named .hy in the same dir, for the .hy's top-level `(defrecord name …)` or `(defclass [decorators …] name …)` that has `(dataclass … :kw-only True …)` among its decorators (the name is mangled to a Python name), the .pyi's top-level class declares `@dataclass` / `@dataclasses.dataclass` (the call form too) without a literal `kw_only=True`. Judged by a single file. Default severity critical (#1191) | the class's name | the `@dataclass` decorator |
+| DOEFF146 | A vocabulary confined to one judgment point — for each group in `:single-point-vocabulary`, reads files that match `:files` (globs anchored at the repo root) and do not match `:except` (the one judgment point), and emits one per file if any line matches any of `:patterns` (regular expressions `r"…"`, one per line) (the number of matching lines goes in the message). Default severity critical (#1371 — originally a temporary test in agora-controllers, check_screen_slice_single_point.hy) | the group's name | the first matching line of the file |
+| DOEFF150 | Spellings decided not to be used — for each group in `:retired-words`, reads files that match `:files` (globs anchored at the repo root — a pattern without `/` is only files directly under the root) and do not match `:except`. `:in lines` (default) counts, per line, `:words` that stand alone as words (not adjacent to letters, `_`, or `-`) and `:patterns` (regular expressions `r"…"`, one per line), and does not count lines containing a `:rule-lines` spelling. Only spellings in code that is actually used are counted, not those in comments, docstrings, or documents (decision Q2-3 of #1762): `.md` files are not counted (per file); in Hy, `;` comments (from a `;` outside a string to the end of the line) and docstrings of `def…` forms (defk, defn, deff, defclass, defhandler, deftest, defadr, ...) (the first string after the name, argument list, and optional `{…}` meta, with a form still following it) are not counted; in Python, `#` comments (outside strings) and docstrings (triple-quoted strings starting at the first non-whitespace of a line) are not counted; in shell, toml, and other files, `#` comments outside quotes (from a `#` at line start or after whitespace to the end of the line — `$#` and `${#…}` are not comments) are not counted. In every kind, a shebang (`#!`) on line 1 is counted. Symbols, field names, and strings that are not docstrings are counted — a command string (`"cd x && PYTHONPATH=. hy"`) is a spelling that gets executed, so it is counted. `:in names` looks only at the names of definitions (Hy's `def…` forms and the left side of `setv`, `val`, `var`; Python's def and class names). `:in paths` looks only at file names (before the last `.` — dir names and contents are not looked at), and does not let files with retired names be placed again. `:rule-lines` can be written only with `:in lines`. `:contract-files [<path from the repo root> …]` (writable only with `:in lines`) is a list of contract JSON files; when architecture.hy is read, it collects the names of object keys at any depth, the string elements of arrays under the key `enum`, and the string values of the key `const` (the contract's spellings) (comments, example values, and the contents of other arrays are not collected). If a `:words` word is in the contract's spellings, that word is not counted only in these 3 places — strings whose contents are exactly that word (an ordinary Hy string `"mail"`; a single-line string without prefix `"mail"` or `'mail'` in `.py` / `.pyi` Python), field definition names in the body of a Hy defwire (`(#^ str mail)`, `(setv #^ T mail v)`), and strings in the `:reads` / `:writes` sets of a Hy defsystem job row (the spelling `<location>:<name>`) where the name part after the first `:` is exactly that word (the mail in `#{"record:mail"}`). Variables, arguments, fields of defrecord / defclass, loop variables, attribute reads (`x.mail`), long strings containing the word, and words not in the contract are counted as before, and this does not apply to `:patterns`. A missing file, a non-JSON file, no contract spelling at all, an empty list, or a path outside the root is a declaration error (exit code 2). A group that is not written works as before. Judged by a single file, so if paths are named, only files under them are read (the whole repo is not read). Default severity critical | for `:words` hits, the word; for `:patterns` hits, the group's name | the spelling hit |
+| DOEFF151 | Calls decided not to be used — for each group in `:retired-calls`, counts the `(call …)` forms (head symbol is a `:calls` spelling) in Hy files that match `:files`. Not counted: comments, strings, forms discarded with `#_`, and places that merely name it as a value. Python files are not counted. Inside a module of a boundary part (`:boundary-parts`), only calls whose spelling can be classified by the raw-side-effect catalog and whose target (mapped the same way as DOEFF106 — `time.time` is clock) is declared by the part in `:touches` are not counted (#1894). The treatment of named paths and the severity are the same as DOEFF150 (#1193) | the call's spelling | the call's head symbol |
+| DOEFF109 | A violation if the layer of a file that has a service (one that matched the `*` of the location) is in `services.guarded_layers`, and the import target is a module in a layer guarded by another service. Allowed if the target is a shared location, a layer in `open_layers`, or a pair in the exceptions | the import target's spelling | the first import symbol |
+| DOEFF110 | A Hy `defn` / `defn/a` definition (with decorators too). The inside of `do` is also seen as top level. The inside of `eval-and-compile` / `eval-when-compile` is outside | the definition's name | the definition's name |
+| DOEFF111 | A `deff` definition whose own line or the comment on the line just before it (after `;`) lacks `definitions.deff_reason_marker`, or whose reason is empty or "same as above" and its variants (the marker's default spelling is `defk にできない:` = "cannot be a defk:" and is matched by the code, so it stays in Japanese) | the definition's name | the definition's name |
+| DOEFF119 | Classifies a business Hy file's defclass by the evidence in its contents (section 12) | the class's name | the class's name |
+| DOEFF120 | A Hy or Python module in a repo that has architecture.hy uses JsonValue, JSONValue, JsonObject, or JSONObject and is not an allowed module (a generic resolver, or a foundation module listed in `:wire-modules`) (section 13). One per module | none | the first use |
+| DOEFF118 | In files matching `definitions.test_paths`, a binding of a defn, defn/a, deff, defk, or fn whose name starts with `test_` | the definition's name | the definition's name |
+| DOEFF112 | The :tags of a definition whose head is in `tags.require_on` (for defeffect, the dict's :tags) lack a key from `tags.required` (a non-empty string). With `module_default`, it is supplied from the key in the module's head tags | the definition's name | the definition's name |
+| DOEFF113 | The :context of the tags of a file that has a service differs from the service's name (`-` and `_` are seen as the same; shared locations are not looked at). info | the mismatching :context | the tag dict |
+| DOEFF108 | Splits the business file's name (the name without extension), the Hy top-level handlers (defhandler and functions that take `[effect k]`), and the names of top-level definitions in `assembly_files` by `-`, `_`, and `.`, and it is a violation if they hit `words`. All-uppercase names (constants) are not looked at | none (file name) / the mangled definition's name | line 1 / the definition's name |
 
-### タグの読み方(Hy)
+### How tags are read (Hy)
 
-- module の頭のタグ: 最上位の `(setv|val MODULE-TAGS {…})`(3 要素ちょうど)の最初の 1 つ。
-- 定義のタグ: `contract_definers` の頭の最上位の式で、名から 4 つ目までの要素を見て、文字列と `[…]` を飛ばした最初の辞書の
-  `:tags {…}`(辞書の中は鍵と値の組で読む)。`effect_definers`(既定 defeffect)の頭の式は `(defeffect 名 "doc"? {:fields […] :answer 型 :tags {…}})` の形で、名から 2 つ目までのうち docstring を飛ばした最初の辞書の `:tags`。鍵と値を並べただけの古い形はタグとして読まない。`plain_definers` の頭の式はタグ無しに数える。
-- 辞書は、文字列の値を持つ keyword の鍵が 1 つ以上ある時だけ「名乗った」とみなす(空の辞書は名乗っていない)。
-- 同じ名の定義が 2 つあれば、後の物のタグで前の物を上書きする。
-- 実効のタグ = 定義のタグ全部 + (タグの無い定義がある、または定義のタグが 1 つも無い時の)module の頭のタグ。
-- import の読み方: 最上位だけでなく関数の中・quote の中の `(import …)` も数える。`(import m [a b])` は `m.a`・`m.b`、
-  `[a :as b]` は `m.a` と `m.b` の両方、`(import m :as x)` は `m`。相対の綴りは module の綴りから解く。名は Hy の mangle で直す。
+- The module's head tags: the first of the top-level `(setv|val MODULE-TAGS {…})` (exactly 3 elements).
+- A definition's tags: in a top-level expression whose head is in `contract_definers`, looking at the elements up to the 4th from the name, the `:tags {…}` of the first dict
+  after skipping strings and `[…]` (the inside of the dict is read as pairs of keys and values). An expression whose head is in `effect_definers` (default defeffect) has the form `(defeffect name "doc"? {:fields […] :answer type :tags {…}})`, and the `:tags` of the first dict, after skipping the docstring, among up to the 2nd element from the name. The old form that merely lists keys and values is not read as tags. An expression whose head is in `plain_definers` is counted as having no tags.
+- A dict is regarded as "declared" only when it has one or more keyword keys with string values (an empty dict has not declared).
+- If there are two definitions of the same name, the later one's tags overwrite the earlier one's.
+- Effective tags = all the definitions' tags + the module's head tags (when some definition has no tags, or no definition has any tags).
+- How imports are read: `(import …)` is counted not only at the top level but also inside functions and quotes. `(import m [a b])` gives `m.a` and `m.b`,
+  `[a :as b]` gives both `m.a` and `m.b`, and `(import m :as x)` gives `m`. Relative spellings are resolved from the module's spelling. Names are fixed up with Hy's mangle.
 
-### タグの読み方(Python)
+### How tags are read (Python)
 
-最上位の `MODULE_TAGS = {…}`(鍵と値がどちらも定数の組)を module の頭のタグとする。定義ごとのタグは無い。import は関数・class・
-if・try などの中も数え、`from m import a` は `m.a`、`import a.b` は `a.b`。
+The top-level `MODULE_TAGS = {…}` (a dict whose keys and values are both constants) is taken as the module's head tags. There are no per-definition tags. Imports are counted inside functions, classes,
+if, try, and so on, and `from m import a` gives `m.a`, `import a.b` gives `a.b`.
 
-## 6. 性能
+## 6. Performance
 
-- 全体の実行は、DOEFF107 が有効なら repo の根の Hy の全部を hy-index で索引する(経由の証拠が file をまたぐため)。
-  無効なら判じる file だけを索引する。
-- `--stdin` の 1 file の実行は、層の dir の file の一覧(読まない)と、その 1 file の解析だけで判じる。経由の証拠は出さない。
-- `--stdin` の 1 file の実行が読む repo の範囲は、**書いた file が名指す module の file だけ**(混んだ Pod で repo の
-  Hy の file を全部読むと 2〜7 秒かかり、書いた後の助言の hook の期限 4 秒で切れた)。表は module まで含めた名で引かれ、引く名は書いた file の記号を
-  import の束縛と module で解いた名(`smells::Scope::qualify`)か、届いた file の事実が持つ名なので、書いた file が名指す module から始めて閉じるまで読めば、
-  repo 全体を読んだ時と答えが同じ。
-  - effect と型と defk の推論の表(DOEFF127・130・174 と見出しと束縛と置き換えと本体): `World::build_for_file` — 名指す module から始め、事実が名指す module(撃つ呼び・型・
-    effect の答えと失敗)を足して閉じるまで読む。推論は届く defk の先だけで決まるので cache には置かず毎回回す。
-  - defk の名と record の欄(DOEFF126): 名指す module の file だけから作る。
-  - 層の module の置き場の索引(import の先を引く DOEFF101・109・130 など): 引かれた module の file だけを判じる(`module_index.rs`)。置き場の外の
-    module の層をタグの role から推す時の中身の読みも、引かれた module だけ。
-  - module の綴りから file を探すのは tree を歩かず、path の段ごとに探る(`module_probe.rs` — 冷えた作業木の dir の読みを避ける)。
-  - 名指す file だけでは答えが変わる 3 つ(失敗の型 = 別の file の defeffect の `:failure` が宣言する・引数に渡された Program = 別の file の呼び手が渡す・class の frozen =
-    同じ名が repo のどこかに在るか)は、**引かれた時だけ**作る。引かれる形の判定を先に済ませ(腕が受けた値を返すだけの形・引数を素で呼ぶ定義・型で判じる handler の引数)、
-    大半の file は引かない(agora-controllers の 150 file の標本で、引数に渡された Program が 3 件・失敗の型が 3 件・class の frozen が 1 件)。
-    - class の frozen だけが、引かれた時に repo 全体から作る(`deferred.rs`)。
-    - 失敗の型と引数に渡された Program は、引く名が決まっている(match の腕の型・書いた file の関数)ので、**その名の綴りを字面に含む file だけ**を解析する
-      (`spelled_failures.rs`・`spelled_callers.rs`・綴りの探り方は `spelling.rs`)。宣言も呼び手も、解いた名の最後の段の綴りを字面に必ず含む(mangle は `-` を `_` に直すだけ・
-      名に識別子でない文字が入る名は綴りを決められないので絞らない)。渡された記号が defk かは、記号の module の file だけで決める(`defk_names_over` の名指し)。
-      答えは repo の全部から作った集合を引いた時と同じ(実 repo の全部の呼び先・型の名で確かめた)。
-    - 失敗の型の宣言を持つ file(`:failure` か `:absent` を含む file)の集まりは型の名に依らないので、最初の問いで repo から 1 回だけ集め(`OnceLock`)、名ごとにその集まりを
-      綴りで絞って読み解く。名ごとに repo の Hy の全部を読み直すと、match の腕の型が 20 個の file(4,866 行の `cli_host.hy`)で CPU が 4 秒かかった。
-    - 宣言の file の読み解き(その file が宣言する型)も、file の中身と読み方だけで決まり型の名に依らない。実行の中で file ごとに 1 度だけ読み解き(`parsed`)、事実の置き場にも
-      覚える(`facts_cache::per_file_content` — 全体の実行と同じ種類 `failure-types`・同じ鍵なので、全体の実行が置いた事実を読み、ここが置いた事実を全体の実行が読む。空の事実も置く)。
-      置くのは型の名を綴る宣言の file の分だけで、repo 全体の表は通らない。名を変えて引くたびに全部の宣言の file を読み解き直す形は、`|` のように全部を綴る名で 246 file・CPU 0.4 秒を名ごとに使っていた。
-    - repo の Hy の一覧を歩く待ちと、見つけた file を読む待ちは、全部を待ちの重なる仕事として回す(`hy_files::collect_reading`・`bulk_read::pipeline` — 最大 128 本)。
-      一覧の集合と順は `hy_index::collect_hy_files` と同じ。
-    - 待ちを重ねる thread は、**待ちが disk の待ちだと見えた時だけ**増やす(`bulk_read::Widen`)。page cache から読める間は仕事が速くならず thread の起動と待ち合わせの CPU
-      だけが増える(混んだ機体で repo の Hy 4,144 file を page cache から読むのに、128 本で CPU 7〜14 秒・1 本で 0.4〜0.8 秒)ので、4 本で始め、1 件が 500 マイクロ秒以上かかる回が
-      3 件続いたら(thread が止められた 1 回の遅れでは増やさない)呼び手が決めた本数まで 1 度だけ増やす。冷えた作業木では最初の数件で増えるので、重なる待ちの数は変わらない。
-    - 呼び手の事実を引くのは、実行の中で登録簿・effect の世界・名指しの module の表を作った後になる。書いた file が自分の引数を素で呼ぶ定義を持つなら、その呼び先の名での
-      repo の読みを実行の頭から別の thread で走らせ始める(`SpelledCallers::started` — 呼び先は defk の集まりが空の見積りで、実際に引く呼び先を全部含む。収まらなければ引く時に読み直す)。
-  - 大きい file の CPU は行数の二乗でなく行数に比例する: 書いた file の記号を解く名前の解決(`hy_index::qualify::link`)は、file ごとに 1 回だけ表(定義の名・import の別名・
-    import した名)を作り、呼びごとにその表を引くだけにした(以前は呼びごとに定義と import の全部を走査し、`mangle` を呼び数 × (定義数 + import 数)回呼んでいた)。
-    10,053 行の file の `index_source` は 4,306 ミリ秒 → 92 ミリ秒。`doeff-indexer` の `qualify_tests.rs` が、`mangle` の呼び数が file の大きさに比例する事と、解決の順(先に書いた import が勝つ・同じ file の定義が import に勝つ)を確かめる。
-  - 1 file の実行は事実の根ごとの表を読まず書かない(中身の hash で事実を引く — 全体の実行が置いた事実を読み、ここが置いた事実を全体の実行が読む)。
-  - 登録簿と判定の一覧(1 鍵 1 file の dir — agora-controllers の `scripts/doeff_lint/SMELL-BREACHES` は 447 file)は、全部の file を読む。作業木ごとに別の inode なので、
-    冷えた作業木では 1 file ごとに disk を待つ — 順に読むと待ちが足し算になる。読みの待ちは `bulk_read::fan_out`(最大 32 本の thread・結果は入力の順・答えは順に読んだ時と
-    同じで、読めない file の知らせも file の順)で重ねる。rayon の pool(1 file の実行は 4 本)は CPU の仕事向けなので使わない。
-    1 file の hook は何度も撃たれ、その度に全部を open すると、page cache が数分で追い出される Pod では毎回 disk を待つ(IO の圧迫 55〜66% の日、冷えた作業木の
-    1 回の open 596 件のうち 494 件がこの dir)。そこで dir の中の file の(path・大きさ・更新時刻・inode)の指紋が前の実行と同じなら、中身を読まずに前の読みの結果を使う
-    (`dir_stamp::remembered` — 結果は事実の置き場に、指紋を鍵に置く)。冷えた状態でも stat は 449 回で 0.02 秒。更新から 2 秒経たない file が 1 つでも在れば覚えない
-    (git の racy と同じ守り)。読めない file の知らせは file の絶対 path を持つので、知らせが在る読みは覚えない。指紋が同じで中身が違うのは、更新時刻を戻して大きさも
-    保つ書き方(`touch -r`・`cp -p`)をした時だけで、登録簿にその運用は無い。
-  - 検: `tests/single_file_reads.rs`(答えが全体の実行と同じ・名指さない module の事実を置かない・全体の表を通らない)と、`signatures.rs`・`call_view.rs`・`body_view.rs` の
-    検の 1 つ 1 つが「repo 全体の表」と「名指しの表」の同値を assert する。登録簿の読みの待ちが重なる事は `bulk_read::watch`(同時に進んだ仕事の最大数)で、変わっていない登録簿を 2 回目に読まない事・変えた/足した/消した/更新の直後は読み直して答え(`registered`)が付いてくる事は `tests/registry_remembered.rs` で確かめる。
-- 宣言(architecture.hy)の読みは、1 回の実行の固定の費用: agora-controllers の宣言(530KB)は、`:patterns` / `:pattern` の正規表現 195 個を読めるかの確かめだけのために `Regex::new` で組み(組んだ物は
-  捨て、使う規則が組み直す)、実行の頭と層の除外の問い(`population_of`)で 2 度読まれていた。確かめは構文だけにし(`architecture::check_regex` — 読めない時だけ `Regex::new` に聞き直し、断りの文は同じ)、
-  実行の頭で読んだ宣言は問いへ渡す(`population::remember_declaration` — 宣言の dir を repo の根として読んだ時だけ)。実行の頭(`prepare`)の CPU は中央値 0.050 → 0.020 秒、小さい file の 1 回の CPU は 0.164 → 0.062 秒(25 走行の中央値・load 30・LTO なし)。
-- 実測(agora-controllers の本線・2026-09-27): 全体 約 1.1 秒・1 file 10 ミリ秒未満。
-- 実測(agora-controllers の本線 Hy 2900 file・2026-10-12・Pod の load 70〜100・同じ負荷で旧新を交互に): 1 file の実行の open 12,077 → 約 600、opendir 2,837 → 5〜9、
-  stat 39,472 → 約 2,000。温まった実時間の中央値 0.40 → 0.18 秒(CPU 0.58 → 0.20 秒)・新しい作業木の最初の 1 回 CPU 5.1 → 0.1 秒。残る open の大半は登録簿の
-  1 鍵 1 file(約 450 file — `scripts/doeff_lint/SMELL-BREACHES`)。
-- 実測(同じ本線・2026-10-16・Pod の load 72〜83・page cache の冷えた作業木〔mincore で確かめた〕を旧新で別々に選び、共有 cache のまま 1 回ずつ撃つ): 冷えた作業木の登録簿の
-  読みは、直列で中央値 2.4 秒(最大 3.6〜10.8 秒 — 449 file の open+read。readdir は 0.006 秒・stat 全部は 0.021 秒)。並列度を替えた冷えた 8 作業木では 直列 6.4 秒 / 8 本 0.93 秒 /
-  16 本 0.62 秒 / 32 本 0.37 秒(中央値)。直した版の冷えた 1 回: 全体を読まない形の file 26 件が実時間 中央値 1.10 秒・最大 1.96 秒(直す前は 27 件で中央値 2.25 秒・最大 3.59 秒・
-  3 秒超が 6 件)、登録簿の段は中央値 1.44 → 0.33 秒。
-- 実測(同じ本線・2026-10-17・Pod の load 85〜130・page cache の冷えた作業木を旧〔fast profile で build した直す前の main〕新で別々に選び、共有 cache のまま 1 回ずつ撃つ・LTO なしの同じ設定で build):
-  引数に渡された Program を引く file(`requests_projection.hy`)の冷えた最初の 1 回の実時間は、中央値 33〜46 秒(直す前)→ 4.5 秒(最大 5.2 秒)。`triage.hy` は 56.9 秒(最大 73)→ 5.4 秒(最大 6.3)。
-  失敗の型を引く file(`conversation_input.hy`)は 37.3 秒 → 7.2 秒(`facts-cache.roots` の 3〜19 秒を含む回が 1 件)。直す途中の値(`requests_projection.hy`・中央値): 字面で絞って tree を順に歩く形 17〜25 秒(歩く待ちだけで 9〜15 秒)→
-  歩きを層ごとに並べた形 7.6 秒 → 歩きながら読む形 5.7 秒 → 読みを頭から走らせ始める形 4.5 秒。冷えた 2839 file の読みは 32 本 3.3 秒・128 本 1.8 秒・256 本 1.9 秒(中央値)。
-  出力は実 repo の 406 走行(DOEFF126 の当たり 42 走行・DOEFF122 の当たりを含む)で 1 byte も違わない。
-- 実測(同じ本線・2026-10-17・Pod の load 60〜76・IO の圧迫 30〜36%・冷えた作業木〔mincore で確かめた〕を旧新で別々に選び、共有 cache のまま 1 回ずつ撃つ・4 組): match の腕の型が 20 個の
-  `cli_host.hy`(4,866 行)の冷えた最初の 1 回の実時間は、中央値 5.3 秒(4.4〜6.0 秒)→ 3.2 秒(3.1〜5.3 秒 — 5.3 秒の 1 組は load 76 の回)。`failure-types` の段は 2.3 秒 → 1.5 秒
-  (名ごとに repo の Hy を読み直す形から、1 回だけ読む形)。温まった状態(page cache に在る)では旧新に差が無い(中央値 1.11 → 1.13 秒)。
-  大きい file の CPU(`qualify::link`・同じ日の続けた測定): `test_server.hy`(10,052 行)の温まった実時間は 9.5 → 1.5 秒・`react.hy`(3,715 行)は 10.6 → 1.2 秒。
-- 実測(同じ本線 Hy 4,144 file・2026-10-19・Pod の load 30〜70・LTO なしの同じ設定で build した旧〔origin/main 5d16a1729〕新を、同じ走行の並びで撃つ・事実の置き場は旧新で別・温めた後に測る):
-  hook の 1 回の CPU(hook の log に残った書いた file で撃つ)が旧の 1.67 秒だった理由は 3 つで、どれも page cache に在る repo を読む所だった — 宣言の読み(上)・128 本の thread での repo の Hy の全部の読み
-  (CPU の大半は sys)・名ごとの宣言の file の読み解き直し。
-  - 10-18 12:00 以降の log から走行の頻度のとおり選んだ 150 走行(121 file): 1 回の CPU 平均 0.80〜1.02 → 0.24 秒、p99 10.1 → 1.3 秒。
-  - 10-19 08:00〜16:00 の実際の 290 走行を同じ順で(2 回目): 平均 0.285 → 0.161 秒(repo を読まない 89% の走行は 0.214 → 0.123・失敗の型を引く 9% は 0.90 → 0.55)。
-  - 小さい file(`policy_types.hy`): CPU 0.19 → 0.06 秒。
-  - 冷えた作業木(mincore で確かめた・旧新で別の作業木・共有 cache): 失敗の型を引く file の最初の 1 回 実時間 中央値 4.9 → 3.0 秒・CPU 15 → 1.1 秒。引数に渡された Program を引く file は 3.06 → 3.05 秒・CPU 2.6 → 2.8 秒(変わらない)。
-  - 答え: 150 走行の出力は linter の版の欄を除いて 1 byte も違わない。破れを足した断片(平の defn・os.environ・素の sleep・タグの無い record・失敗の型の match・括弧の閉じない所)を 40 file × 7 の 280 走行に足した出力と、
-    失敗の型を別の file から引く DOEFF122 の 13 走行も同じ。hook が返す助言の文は、実際の 139 走行で同じ(確かめ方の行の binary の path を除く)。
-- 変わっていない file の中身を読まない: repo の file の全部を見る 3 つの所(引数に渡された Program の呼び手の綴り・失敗の型の宣言の綴り・class の frozen)と
-  登録簿は、git の index の行と作業木の stat(大きさ・更新時刻の ns・inode)が合う file の事実を、index の blob の id で引いて中身を読まない(`git_index.rs` — index の版 2・3 の
-  stage 0 の行。index の更新時刻と同じか後の行〔racy〕・index に無い file・stat の合わない file は中身を読む)。事実は blob の中身だけで決まるので、どの作業木の答えも中身を読んだ時と同じ。
-  - 事実は、index の並びを path の hash で区切った塊(約 64 行・上限 256 行)ごとに 1 つの表として置く(`blob_chunks.rs` — 置き場の名は塊の頭の path)。冷えた作業木でも置き場の
-    file を約 70 開くだけで、事実を 1 blob 1 file で置いた形の約 4,600 を開かない。file を変えても塊の名は変わらず、表に新しい blob の行が足されるだけ。表は塊の今の行の 3 倍まで
-    過去の版の行を持ち(古い commit の作業木も当たる)、表に無い blob は中身を読んで作り、読む間に file が変わらず中身が index の blob と同じ事を確かめてから、実行の終わりに表へ足す。
-  - 登録簿の dir の指紋は、index と合う file を blob の id で作る(`dir_stamp::by_blobs` — 同じ commit の別の作業木が読んだ結果を引き、登録簿を読まない)。index と外れた
-    少数の file は中身から blob の id を作る(多ければ前の stat の指紋に戻る)。
-  - 綴りの覚え(`blob_spell.rs` の Bloom filter)は語 1 つに 16 bit(2 の冪に切り上げ)・位置 8 個。名 1 つを「綴るかもしれない」と誤るのは約 0.05% 以下。前の 8 bit・3 個では
-    名 1 つで約 1〜3% 誤り、呼び先の名を 12 個探す `requests_projection.hy` は温まった作業木でも 4,620 file のうち約 500 を読み直していた(直した後は 19〜34)。
-  - 待ちを重ねる thread を増やすかは、その thread が disk の読みを頼んだか(`getrusage` の `RUSAGE_THREAD` の `ru_inblock`)で決める(`bulk_read::Widen` — 時間で見分けると、
-    混んだ機体で thread が止められただけの遅れでも増えた)。
-  - 事実の置き場を数える上限の片づけ(1 時間に 1 度・zeus で約 40 万の事実・3〜19 秒 — その番を引いた hook が期限で打ち切られた)は、最中の印を持ったまま linter 自身の
-    `sweep-facts-cache` の口へ渡して待たない(新しい session・標準の入出力なし・nice 10。渡せなければその実行で片づける)。根の dir だけを数える片づけと、根が消えた dir の片づけは
-    軽いのでその実行の中のまま。検は `DOEFF_LINTER_SWEEP_INLINE` で実行の中で片づけて結果を見る。
-- 実測(2026-10-23・agora-controllers の本線 Hy 4,620 file・LTO なしの release・事実の置き場は機体の共有の物):
-  - 答え: 旧(branch の基点 a16b2b97f)と新の editor-json は、実 repo の file × 書き換え 5 通り(そのまま・束縛を素の代入に・`:effects` を消す・撃たない effect を足す・
-    handler の引数に class の型を足す)の 1,240 走行(綴りの覚えを直した版)と、別の選び方の 1,195 走行(歩きを直した版)で、linter の版の欄を除いて 1 byte も違わない
-    (DOEFF122 の当たり 20・DOEFF126 77・DOEFF142 3 を含む)。
-  - page cache の冷えた古い作業木(mincore で確かめた・1 回ずつ撃つ): 塊の表の前の版(1 file 1 表)では load 122〜152 で 10 組中 4 組が 4 秒を越えた(2.6〜5.3 秒)。今の版では
-    load 30〜56 で 10 組とも 0.7〜2.8 秒。CPU は表に無かった blob の数に比例する(外れ 15 で 1.2 秒・1,327 で 29.7 秒)。
-  - 新しい作業木(origin/main から切り、file の中身を posix_fadvise で page cache から落として最初の 1 回・inode と dir の cache は落とせない): load 28〜35 で 10 組とも 0.4〜2.9 秒。
-    表から外れた blob は 0。
-  - 歩きの続きの仕事を thread の手元で済ませる前は、冷えた読みで thread が 128 本へ増えた後に小さな仕事(stat 1 回)を 1 つの lock で取り合い、新しい作業木の最初の 1 回の
-    CPU が sys だけで 10〜34 秒になる回があった(読んだ file 19・強制の context switch 2.5 万回)。直した後(`bulk_read::pipeline` — 遅い仕事の後だけ待つ thread へ渡す)は、
-    新しい作業木 10 組が 0.46〜2.9 秒・古い冷えた作業木 22 組が 0.05〜2.3 秒(load 29〜48)。冷えた回の CPU は表に無かった blob の数と機体の memory の詰まりで大きく揺れる
-    (外れ 500 前後で、同じ日の 10 分違いに 1.2〜11.8 秒)。
-  - 温まった作業木の 1 回の CPU は 0.35〜0.5 秒(user 0.23〜0.38 秒・sys 0.11〜0.14 秒 — 機体の memory が詰まった時は sys が 0.3〜1 秒)。そのうち repo の file の全部を歩いて
-    stat し表を引く段が 0.22〜0.30 秒。
-- 残り:
-  - 温まった実行の CPU の下限は、repo の file の全部の stat(index と合うかを確かめる)で決まる。1 回の CPU を 0.3 秒より下げるには、作業木ごとに歩きを覚えて変わりを
-    知らせで受ける常駐の process(git の fsmonitor の形)が要る。
-  - 冷えた回の CPU は、表に無かった blob ごとの中身の読みと、機体の memory の詰まりで決まる(1 回 1〜13 秒)。
+- A whole run indexes all Hy files under the repo root with hy-index if DOEFF107 is enabled (because the evidence by way of crosses files).
+  If disabled, it indexes only the files it judges.
+- A `--stdin` one-file run judges with only the list of files in the layer dirs (not read) and the analysis of that one file. It emits no evidence by way of.
+- The range of the repo that a `--stdin` one-file run reads is **only the files of the modules the written file names** (on a busy Pod, reading all of the repo's
+  Hy files took 2 to 7 seconds and was cut off by the 4-second limit of the advice hook after writing). Tables are looked up by names including the module, and the name looked up is either the name obtained by resolving the written file's symbols with
+  import bindings and modules (`smells::Scope::qualify`), or a name held by the facts of the files reached, so reading from the modules the written file names until it closes
+  gives the same answer as reading the whole repo.
+  - Tables of inference for effects, types, and defk (DOEFF127, 130, 174, plus headings, bindings, rewrites, and bodies): `World::build_for_file` — starting from the named modules, add the modules that the facts name (called shots, types,
+    effect answers and failures) and read until it closes. Inference is decided only by what lies beyond the reachable defks, so it is not placed in the cache and is run every time.
+  - Names of defk and fields of records (DOEFF126): built from only the files of the named modules.
+  - The index of locations of layer modules (DOEFF101, 109, 130, and others that look up the import target): judges only the files of the modules looked up (`module_index.rs`). The reading of contents when inferring the layer of a module outside the
+    locations from its tag role is also only for the modules looked up.
+  - Finding a file from a module's spelling does not walk the tree but probes segment by segment of the path (`module_probe.rs` — avoiding reading dirs in a cold working tree).
+  - Three things whose answers would change with only the named files (failure types = declared by `:failure` of a defeffect in another file; Programs passed as arguments = passed by callers in other files; class frozen-ness =
+    whether the same name exists anywhere in the repo) are built **only when looked up**. The judgment of the shapes that look them up is done first (an arm that merely returns the received value, a definition that calls its argument bare, a handler argument judged by type),
+    and most files do not look them up (in a sample of 150 files of agora-controllers, 3 for Programs passed as arguments, 3 for failure types, and 1 for class frozen-ness).
+    - Only class frozen-ness is built from the whole repo when looked up (`deferred.rs`).
+    - Failure types and Programs passed as arguments have their lookup names fixed (the type of a match arm, a function of the written file), so **only files that literally contain the spelling of that name** are analyzed
+      (`spelled_failures.rs`, `spelled_callers.rs`; the way to probe for spellings is in `spelling.rs`). Both declarations and callers necessarily contain the spelling of the last segment of the resolved name literally (mangle only turns `-` into `_`;
+      a name with a non-identifier character in it cannot have its spelling fixed, so it is not narrowed). Whether a passed symbol is a defk is decided only by the symbol's module file (the naming of `defk_names_over`).
+      The answer is the same as when looking up a set built from the whole repo (checked against all the callees and type names of real repos).
+    - The set of files that have failure-type declarations (files containing `:failure` or `:absent`) does not depend on the type name, so it is collected from the repo only once on the first query (`OnceLock`), and for each name that set
+      is narrowed by spelling and resolved. Re-reading all of the repo's Hy per name took 4 seconds of CPU on a file with 20 match-arm types (the 4,866-line `cli_host.hy`).
+    - Resolving a declaring file (the types that file declares) is also decided only by the file's contents and the way of reading, and does not depend on the type name. It is resolved only once per file within a run (`parsed`), and also remembered in the facts store
+      (`facts_cache::per_file_content` — the same kind `failure-types` and the same key as whole runs, so a whole run reads facts this one placed and this one reads facts a whole run placed. Empty facts are placed too).
+      Only the declaring files that spell the type name are placed, and the repo-wide table is not passed. The form of re-resolving all the declaring files every time a different name is looked up used 246 files and 0.4 seconds of CPU per name for a name that spells everything, like `|`.
+    - The waiting to walk the list of the repo's Hy and the waiting to read the files found are all run as overlapping waits (`hy_files::collect_reading`, `bulk_read::pipeline` — up to 128).
+      The set and order of the list are the same as `hy_index::collect_hy_files`.
+    - The threads that overlap waits are increased **only when the wait appears to be a disk wait** (`bulk_read::Widen`). While reading from the page cache the work does not get faster, and only the CPU of starting threads and synchronizing increases
+      (reading the repo's 4,144 Hy files from the page cache on a busy machine took 7 to 14 seconds of CPU with 128 threads and 0.4 to 0.8 seconds with 1), so it starts with 4, and once three rounds in a row take 500 microseconds or more per item
+      (a single delay from a thread being stopped does not count), it increases once up to the number the caller decided. On a cold working tree it grows within the first few items, so the number of overlapping waits does not change.
+    - Looking up the callers' facts happens after the registry, the effect world, and the table of named modules have been built in a run. If the written file has a definition that calls its own argument bare,
+      the reading of the repo by the callee's name is started on another thread from the head of the run (`SpelledCallers::started` — the callees are estimated with the set of defk being empty, and include all the callees actually looked up. If not contained, it is re-read when looked up).
+  - CPU for large files is proportional to the number of lines, not its square: the name resolution that resolves the written file's symbols (`hy_index::qualify::link`) builds the table (definition names, import aliases,
+    imported names) only once per file and now merely looks up that table per call (before, it scanned all definitions and imports per call and called `mangle` call count x (definition count + import count) times).
+    `index_source` for a 10,053-line file went from 4,306 ms to 92 ms. `qualify_tests.rs` in `doeff-indexer` checks that the number of `mangle` calls is proportional to the file size, and the order of resolution (an earlier-written import wins; a definition in the same file wins over an import).
+  - A one-file run neither reads nor writes the per-root tables of facts (it looks up facts by content hash — it reads facts a whole run placed, and a whole run reads facts this one placed).
+  - The registry and judgment lists (dirs of one-key-one-file — agora-controllers' `scripts/doeff_lint/SMELL-BREACHES` has 447 files) read all the files. Each working tree has different inodes, so
+    on a cold working tree it waits on the disk for each file — read in order, the waits add up. The read waits overlap with `bulk_read::fan_out` (up to 32 threads; results in input order; answers are the same as when read in order,
+    and notices of unreadable files are also in file order). The rayon pool (4 threads for a one-file run) is for CPU work, so it is not used.
+    A one-file hook is fired many times, and if everything is opened each time, on a Pod where the page cache is evicted within minutes it waits on the disk every time (on a day with 55-66% IO pressure, 494 of the 596 opens in one run of a cold working tree were
+    this dir). So if the fingerprint of the files in the dir (path, size, modification time, inode) is the same as in the previous run, the result of the previous read is used without reading the contents
+    (`dir_stamp::remembered` — the result is placed in the facts store, keyed by the fingerprint). Even when cold, stat takes 0.02 seconds for 449 calls. If even one file was updated less than 2 seconds ago, it is not remembered
+    (the same guard as git's racy). A notice of an unreadable file carries the file's absolute path, so a read with notices is not remembered. A same fingerprint with different contents happens only when someone writes in a way that resets the modification time and keeps the
+    size (`touch -r`, `cp -p`), and the registry has no such practice.
+  - Tests: `tests/single_file_reads.rs` (the answer is the same as a whole run, facts of modules not named are not placed, the whole table is not passed), and each of the tests in `signatures.rs`, `call_view.rs`, and `body_view.rs`
+    asserts the equivalence of the "whole-repo table" and the "named table". That the waits of reading the registry overlap is checked with `bulk_read::watch` (the maximum number of jobs in progress at the same time), and that an unchanged registry is not read the second time, and that after a change / addition / deletion / immediately after an update it is re-read and the answer (`registered`) follows, are checked with `tests/registry_remembered.rs`.
+- Reading the declaration (architecture.hy) is a fixed cost per run: agora-controllers' declaration (530KB) was built with `Regex::new` for the 195 regular expressions of `:patterns` / `:pattern` only to check that they were readable (the built ones were
+  discarded, and the rules that use them rebuilt them), and was read twice, at the head of the run and in the layer-exclusion query (`population_of`). The check is now syntax only (`architecture::check_regex` — it asks `Regex::new` again only when unreadable, and the error text is the same),
+  and the declaration read at the head of the run is passed to the queries (`population::remember_declaration` — only when it was read with the declaration's dir as the repo root). The CPU of the run head (`prepare`) went from a median of 0.050 to 0.020 seconds, and the CPU of one run on a small file from 0.164 to 0.062 seconds (median of 25 runs, load 30, no LTO).
+- Measured (agora-controllers main line, 2026-09-27): whole run about 1.1 seconds, one file under 10 milliseconds.
+- Measured (agora-controllers main line Hy 2900 files, 2026-10-12, Pod load 70-100, old and new alternated under the same load): opens in a one-file run 12,077 -> about 600, opendir 2,837 -> 5-9,
+  stat 39,472 -> about 2,000. The median warm wall time 0.40 -> 0.18 seconds (CPU 0.58 -> 0.20 seconds), and the CPU of the first run on a new working tree 5.1 -> 0.1 seconds. Most of the remaining opens are the registry's
+  one-key-one-file (about 450 files — `scripts/doeff_lint/SMELL-BREACHES`).
+- Measured (same main line, 2026-10-16, Pod load 72-83, working trees with a cold page cache [checked with mincore] chosen separately for old and new, fired once each with a shared cache): reading the registry in a cold working tree
+  took a median of 2.4 seconds serially (maximum 3.6-10.8 seconds — open+read of 449 files. readdir is 0.006 seconds, all stat 0.021 seconds). With 8 cold working trees at varied concurrency: serial 6.4 seconds / 8 threads 0.93 seconds /
+  16 threads 0.62 seconds / 32 threads 0.37 seconds (median). One cold run of the fixed version: 26 files in the form that does not read the whole took a median wall time of 1.10 seconds and a maximum of 1.96 seconds (before the fix, 27 files with a median of 2.25 seconds, a maximum of 3.59 seconds, and
+  6 over 3 seconds), and the registry stage went from a median of 1.44 to 0.33 seconds.
+- Measured (same main line, 2026-10-17, Pod load 85-130, working trees with a cold page cache chosen separately for old [main before the fix, built with the fast profile] and new, fired once each with a shared cache, built with the same no-LTO settings):
+  for the file that looks up Programs passed as arguments (`requests_projection.hy`), the wall time of the first cold run was a median of 33-46 seconds (before the fix) -> 4.5 seconds (maximum 5.2 seconds). `triage.hy` was 56.9 seconds (maximum 73) -> 5.4 seconds (maximum 6.3).
+  The file that looks up failure types (`conversation_input.hy`) was 37.3 seconds -> 7.2 seconds (one run included 3-19 seconds of `facts-cache.roots`). Intermediate values during the fix (`requests_projection.hy`, median): the form that narrows by spelling and walks the tree in order 17-25 seconds (9-15 seconds of the walking wait alone) ->
+  the form that lines up the walk per layer 7.6 seconds -> the form that reads while walking 5.7 seconds -> the form that starts the read from the head 4.5 seconds. Reading 2839 cold files was 3.3 seconds with 32 threads, 1.8 seconds with 128, and 1.9 seconds with 256 (median).
+  The output did not differ by even one byte across 406 runs on real repos (including 42 runs with DOEFF126 hits and runs with DOEFF122 hits).
+- Measured (same main line, 2026-10-17, Pod load 60-76, IO pressure 30-36%, cold working trees [checked with mincore] chosen separately for old and new, fired once each with a shared cache, 4 pairs): for `cli_host.hy` (4,866 lines) with 20 match-arm types,
+  the wall time of the first cold run was a median of 5.3 seconds (4.4-6.0 seconds) -> 3.2 seconds (3.1-5.3 seconds — the one pair at 5.3 seconds was a load-76 run). The `failure-types` stage went from 2.3 seconds to 1.5 seconds
+  (from the form that re-reads the repo's Hy for every name to the form that reads it once). In the warm state (in the page cache) there is no difference between old and new (median 1.11 -> 1.13 seconds).
+  CPU for large files (`qualify::link`, continued measurements on the same day): the warm wall time of `test_server.hy` (10,052 lines) was 9.5 -> 1.5 seconds, and `react.hy` (3,715 lines) 10.6 -> 1.2 seconds.
+- Measured (same main line Hy 4,144 files, 2026-10-19, Pod load 30-70, old [origin/main 5d16a1729] and new built with the same no-LTO settings, fired in the same sequence of runs, facts stores separate for old and new, measured after warming):
+  the CPU of one hook run (fired with the written files left in the hook's log) was 1.67 seconds in the old version for 3 reasons, all of which were places that read a repo sitting in the page cache — reading the declaration (above), reading all of the repo's Hy with 128 threads
+  (most of the CPU was sys), and re-resolving declaring files per name.
+  - 150 runs chosen according to the run frequency from the log after 10-18 12:00 (121 files): the average CPU per run 0.80-1.02 -> 0.24 seconds, p99 10.1 -> 1.3 seconds.
+  - The actual 290 runs from 10-19 08:00 to 16:00 in the same order (second pass): average 0.285 -> 0.161 seconds (the 89% of runs that do not read the repo 0.214 -> 0.123; the 9% that look up failure types 0.90 -> 0.55).
+  - A small file (`policy_types.hy`): CPU 0.19 -> 0.06 seconds.
+  - Cold working trees (checked with mincore, different working trees for old and new, shared cache): for the file that looks up failure types, the wall time of the first run was a median of 4.9 -> 3.0 seconds and CPU 15 -> 1.1 seconds. For the file that looks up Programs passed as arguments, 3.06 -> 3.05 seconds and CPU 2.6 -> 2.8 seconds (unchanged).
+  - Answers: the output of 150 runs did not differ by even one byte except the linter-version field. The output of 280 runs (40 files x 7) with fragments that add violations (a flat defn, os.environ, a bare sleep, a record with no tags, a match on failure types, an unclosed parenthesis) added, and
+    13 runs of DOEFF122 that looks up failure types from another file, are the same too. The hook's advice text is the same over the actual 139 runs (excluding the binary's path in the line on how to check).
+- Not reading the contents of unchanged files: the 3 places that look at all the repo's files (spellings of callers of Programs passed as arguments, spellings of failure-type declarations, class frozen-ness) and
+  the registry look up the facts of files whose git index row matches the working tree's stat (size, modification time in ns, inode) by the index's blob id, without reading the contents (`git_index.rs` — stage 0 rows of index versions 2 and 3.
+  Rows with the same or later time than the index's modification time [racy], files not in the index, and files whose stat does not match have their contents read). Facts are decided by the blob's contents alone, so the answer in any working tree is the same as when the contents are read.
+  - Facts are placed as one table per chunk (about 64 rows, at most 256 rows) of the index order divided by path hash (`blob_chunks.rs` — the store's name is the path at the head of the chunk). Even on a cold working tree it only opens about 70 store
+    files, not the about 4,600 of the form that placed facts one blob per file. Changing a file does not change chunk names, and only adds new blob rows to the table. A table keeps rows of past versions up to 3 times the chunk's current row count
+    (so working trees of old commits hit too), and a blob not in the table is built by reading its contents, and after confirming that the file did not change while reading and that the contents are the same as the index's blob, it is added to the table at the end of the run.
+  - The fingerprint of a registry dir builds the files matching the index by blob id (`dir_stamp::by_blobs` — it looks up the result read by another working tree of the same commit, and does not read the registry). For the few
+    files that diverge from the index, the blob id is built from the contents (if there are many, it falls back to the previous stat fingerprint).
+  - The spelling memory (the Bloom filter of `blob_spell.rs`) uses 16 bits per word (rounded up to a power of 2) and 8 positions. The false positive of wrongly saying a name "might be spelled" is about 0.05% or less. With the previous 8 bits and 3 positions,
+    one name was wrong about 1-3% of the time, and `requests_projection.hy`, which searches for 12 callee names, re-read about 500 of 4,620 files even on a warm working tree (19-34 after the fix).
+  - Whether to increase the threads that overlap waits is decided by whether that thread asked for a disk read (`ru_inblock` of `getrusage`'s `RUSAGE_THREAD`) (`bulk_read::Widen` — when distinguished by time,
+    it increased even for delays where a thread was merely stopped on a busy machine).
+  - The upper-limit cleanup that counts the facts store (once an hour; on zeus about 400,000 facts and 3-19 seconds — the hook that drew the turn was cut off by its limit) is handed, with an in-progress mark, to the linter's own
+    `sweep-facts-cache` entry and not waited for (new session, no standard I/O, nice 10. If it cannot be handed over, it is cleaned within that run). The cleanup that counts only root dirs and the cleanup of dirs whose root has disappeared
+    are light, so they remain within the run. Tests clean within the run with `DOEFF_LINTER_SWEEP_INLINE` and look at the result.
+- Measured (2026-10-23, agora-controllers main line Hy 4,620 files, release without LTO, the facts store is the machine's shared one):
+  - Answers: the editor-json of old (branch base a16b2b97f) and new did not differ by even one byte except the linter-version field, over 1,240 runs of real repo files x 5 rewrites (as is, a binding turned into a plain assignment, `:effects` removed, an effect that is not fired added,
+    a class type added to a handler argument) (the version with the spelling memory fixed) and 1,195 runs with a different selection (the version with the walk fixed)
+    (including 20 hits of DOEFF122, 77 of DOEFF126, and 3 of DOEFF142).
+  - Old working trees with a cold page cache (checked with mincore, fired once each): with the previous version of the chunk tables (one table per file), at load 122-152, 4 of 10 pairs exceeded 4 seconds (2.6-5.3 seconds). With the current version,
+    at load 30-56, all 10 pairs took 0.7-2.8 seconds. CPU is proportional to the number of blobs not in the table (15 misses 1.2 seconds, 1,327 misses 29.7 seconds).
+  - New working trees (cut from origin/main, the first run after dropping file contents from the page cache with posix_fadvise; the inode and dir caches cannot be dropped): at load 28-35, all 10 pairs took 0.4-2.9 seconds.
+    0 blobs fell outside the table.
+  - Before the follow-up work of the walk was finished in the thread's own hands, after threads grew to 128 on a cold read, they contended for a single lock over tiny jobs (one stat), and the CPU of the first run on a new working tree
+    came to 10-34 seconds in sys alone in some runs (19 files read, 25,000 forced context switches). After the fix (`bulk_read::pipeline` — handing off to a thread that waits only after a slow job), 10 pairs on
+    new working trees took 0.46-2.9 seconds and 22 pairs on old cold working trees took 0.05-2.3 seconds (load 29-48). The CPU of cold runs varies greatly with the number of blobs not in the table and with the machine's memory pressure
+    (around 500 misses, 1.2-11.8 seconds across 10 minutes on the same day).
+  - The CPU of one run on a warm working tree is 0.35-0.5 seconds (user 0.23-0.38 seconds, sys 0.11-0.14 seconds — when the machine's memory is tight, sys is 0.3-1 second). Of that, the stage that walks all the repo's files,
+    stats them, and looks up the table is 0.22-0.30 seconds.
+- Remaining:
+  - The lower bound of a warm run's CPU is decided by stat on all the repo's files (to check whether they match the index). To bring one run's CPU below 0.3 seconds, a resident process that remembers the walk per working tree and receives changes
+    by notification (in the form of git's fsmonitor) is needed.
+  - The CPU of a cold run is decided by reading the contents of each blob not in the table and by the machine's memory pressure (1-13 seconds per run).
 
-## 7. 既存の判定との照合
+## 7. Matching against existing judgments
 
-agora-controllers の `scripts/module_tags.hy` の `breaches-of` と、DOEFF101〜105 の鍵の集合(重複の数を含む)が一致することを、
-本線 46bbb24b(23 module・11 件)と c3d41111(18 module・15 件)で確かめた。DOEFF108 は `scripts/check_business_fakes.hy` の
-`assembly-breaches` の環境の語(到達の解析と、外の世界の effect の表を使う)を名前だけの検査に替えたので、handler が答える effect を
-見ない分だけ多く出る(本線で 15 件多く、少ない物は 0 件)。
+It was confirmed that the key sets (including the duplicate counts) of DOEFF101-105 match agora-controllers' `breaches-of` in `scripts/module_tags.hy`,
+on main-line 46bbb24b (23 modules, 11 hits) and c3d41111 (18 modules, 15 hits). DOEFF108 replaced the environment words of `assembly-breaches` in `scripts/check_business_fakes.hy`
+(which used reachability analysis and the external-world effect table) with a name-only check, so it emits more by the amount of not looking at
+which effects a handler answers (15 more on main, and 0 fewer).
 
-## 8. 読みの限界
+## 8. Limits of reading
 
-- DOEFF106・107 は Hy だけ(hy-index の事実が Hy だけのため)。module の最上位の式(定義の外)の副作用は数えない。
-- DOEFF108 は名前だけで判じ、handler が業務の effect に答えるかは見ない。
-- import の先は母集団の module にだけ解く。repo の中でも層の dir の外の module は数えない。
+- DOEFF106 and 107 are Hy only (because hy-index's facts are Hy only). Side effects in a module's top-level expressions (outside definitions) are not counted.
+- DOEFF108 judges by name only and does not look at whether a handler answers a business effect.
+- Import targets are resolved only to modules in the population. Even within the repo, modules outside the layer dirs are not counted.
 
-## 9. architecture.hy — service と層の唯一の宣言
+## 9. architecture.hy — the single declaration of services and layers
 
-repo の一番上の `architecture.hy`(または設定の `architecture = "<設定 file からの相対の path>"`)が、service と層を宣言する唯一の場所。
-宣言の file が根の外(設定の `root` で `src/` を根にした package の根の architecture.hy など)なら、鍵の path は `..` を含む根からの相対
-(`../architecture.hy::DOEFF163::…` — 機体ごとの絶対 path を鍵に入れない)。
-doeff-linter はこれを **実行せずに** doeff-indexer の Hy の読み取り器で読む。在れば層・role は ここから写し、TOML の
-`[tool.doeff-linter.layers]`・`roles`・`services` は置けない(二重の宣言は設定の誤り)。TOML には規則の入り切り・重さ・登録簿の置き場所・
-law の対応だけを残す。無ければ TOML の設定で今どおり動く。doeff-hy の実行時の macro(defarchitecture・defservice・layer)は未実装。
+The repo's top-level `architecture.hy` (or the settings' `architecture = "<path relative to the settings file>"`) is the only place that declares services and layers.
+If the declaration file is outside the root (such as the root architecture.hy of a package whose root is `src/` by the settings' `root`), the key's path is relative to the root and contains `..`
+(`../architecture.hy::DOEFF163::…` — absolute paths per machine are not put in keys).
+doeff-linter reads this **without executing it**, using doeff-indexer's Hy reader. If present, layers and roles are copied from here, and the TOML's
+`[tool.doeff-linter.layers]`, `roles`, and `services` cannot be placed (a double declaration is a settings error). Only rule on/off, severity, registry locations, and
+law correspondence are left to the TOML. If absent, it works from the TOML settings as before. doeff-hy's runtime macros (defarchitecture, defservice, layer) are not yet implemented.
 
-**規則の母集団から外す層。**層は `:modules [module の名 …]`(点で区切った module の名 — その下の module も入る)で
-module を名指し、`:exempt [(rule 規則 ID "理由") …]` で、名指しの module に限って Python の文ごとの規則(DOEFF001〜032)の母集団から外せる
-(例: Python の起動の時点で `.pth` から入る見張りは、Program の外で設定を Ask で受ける入口が無いので DOEFF004 を外す)。定義の書き方の
-規則のうち定義の file ごとに判じる DOEFF110・111・112・118・119 も同じ形で外せる(例: macro の展開の時点に
-Python の関数として呼ばれる module の defn は Program を返せないので DOEFF110 を外す)。DOEFF110 を外した module でも、package
-(宣言の file の dir — 検の dir を除く)のどの defmacro の form からも、最上位の関数の本体を辿って届かない defn は外さずに鳴らす
-(実行の時点の定義の見張り・#2913 の 2 便目 — 名は綴りだけで照らし、quasiquote の中の名 = 展開した code が呼ぶ部品も届いたと数える)。
-外す 1 点は定義の判定の直後で、全体の実行と
-1 file の実行(`--stdin`・commit の hook の子)が同じ答えになる。critical の DOEFF126(素の defk 呼び)と、file ごとに判じない層・service・
-Jev の規則は外せない。理由の空・外せない規則の ID・知らない ID・同じ規則の 2 度・`:modules` の無い `:exempt` は読みの誤り(実行が読む
-宣言なら終了コード 2・母集団を引く宣言なら下の DOEFF032 — 定義の書き方の規則は、読めない宣言では何も外さない)。Python の規則の母集団は、**file から
-上へ最も近い architecture.hy**(その package の持ち主の宣言 — repo の根の `.git` より上は見ない)から file ごとに決める。実行が読む宣言
-(設定の `architecture`・根の architecture.hy)とは別に引くので、package の宣言を名指さない根の実行(doeff の pre-commit・`make lint-doeff`)
-も同じ除外に従う。module の名は `__init__.py` の在る dir を上へたどって組む(設定の `root` にも宣言の `:root` にも依らない)。外した層の
-module が、その層の `:forbid-modules` の module を import すると DOEFF032(error)— 外した層に業務の code が入ると、外した規則がその code
-にも当たらなくなるため。file を持つ package の宣言を読めない時は外さず(どの規則もそのまま当たる)、読めないことを DOEFF032 が名指す。
+**Layers removed from the rule population.** A layer names modules with `:modules [module-name …]` (dot-separated module names — modules under them are included),
+and with `:exempt [(rule rule-ID "reason") …]` it can remove, for the named modules only, Python's per-statement rules (DOEFF001-032) from the population
+(example: a watcher that comes in from `.pth` at Python startup has no entry point outside a Program that receives settings through Ask, so DOEFF004 is removed). Among the definition-writing
+rules, DOEFF110, 111, 112, 118, and 119, which judge per definition file, can be removed in the same form (example: a defn in a module that is called as a Python function at macro-expansion time
+cannot return a Program, so DOEFF110 is removed). Even in a module with DOEFF110 removed, a defn that cannot be reached by following the bodies of top-level functions from any defmacro form in the package
+(the dir of the declaration file — excluding test dirs) is not removed and fires
+(a guard for runtime-time definitions, 2nd delivery of #2913 — names are matched by spelling only, and names inside quasiquote = the parts that expanded code calls also count as reached).
+The one point of removal is right after the definition's judgment, so a whole run and
+a one-file run (`--stdin`, the commit hook's child) give the same answer. DOEFF126 (calling a defk bare), which is critical, and rules that are not judged per file, layers, services, and
+Jev's rules cannot be removed. An empty reason, an ID of a rule that cannot be removed, an unknown ID, the same rule twice, and an `:exempt` without `:modules` are reading errors (exit code 2 if it is a declaration the run reads;
+DOEFF032 below if it is a declaration used to look up the population — definition-writing rules remove nothing under an unreadable declaration). The population of Python rules is decided per file from the **nearest architecture.hy going up from the file**
+(the declaration of that package's owner — it does not look above the repo root's `.git`). It is looked up separately from the declaration the run reads
+(the settings' `architecture`, the root's architecture.hy), so root runs that do not name a package's declaration (doeff's pre-commit, `make lint-doeff`)
+follow the same exclusion. A module's name is built by going up the dirs that have `__init__.py` (independent of the settings' `root` and of the declaration's `:root`). If a module of a removed layer
+imports a module of that layer's `:forbid-modules`, DOEFF032 (error) — because if business code gets into a removed layer, the removed rules would not hit that code either.
+When the declaration of the package that owns the file cannot be read, nothing is removed (every rule hits as is), and DOEFF032 names that it cannot be read.
 
 ```hy
 (defarchitecture agora-controllers
-  :root "controllers"                         ; service の dir を置く根
+  :root "controllers"                         ; the root where service dirs are placed
   :layers [(layer core :summary "…" :knows "…" :does-not-know "…" :question "…"
                        :roles [type judgment program] :imports [core intent] :forbid-modules ["httpx"])
            (layer intent … :types-only True)
            (layer protocol …) (layer foundation …)
-           (layer entry … :dependency-layers [intent protocol])]   ; 外の世界から遠い順。:dependency-layers = 依存先で読んでよい層(既定 :open-layers)
-  :shared "shared"                            ; root/shared/<層>/ — どの service からも読める
-  :verification-environment "agora_sim"      ; 模擬の環境(本番の組み立てのまま handler だけを差し替えて全 service を走らせる検証の環境)の置き場 1 つ — service ではない。DOEFF114・115 にしない(列は受けない)。DOEFF136 はこの下の deftest を「手元のテスト」と数える
-  :foundation foundation                      ; root/foundation/ — service の外の層(同じ名の layer が要る)
-  :open-layers [intent]                       ; 別の service から読んでよい層(既定 intent)
-  :placed-dependencies [core intent protocol] ; 置き場の決まった module にだけ依存してよい層(DOEFF140 — 書かなければ当てない)
+           (layer entry … :dependency-layers [intent protocol])]   ; farthest from the outside world first. :dependency-layers = layers that may be read as dependencies (default :open-layers)
+  :shared "shared"                            ; root/shared/<layer>/ — readable from any service
+  :verification-environment "agora_sim"      ; one location for the simulated environment (a verification environment that runs all services with production assembly but with only handlers replaced) — not a service. Not DOEFF114 or 115 (it does not accept a list). DOEFF136 counts the deftests under this as "local tests"
+  :foundation foundation                      ; root/foundation/ — a layer outside services (a layer of the same name is required)
+  :open-layers [intent]                       ; layers that may be read from another service (default intent)
+  :placed-dependencies [core intent protocol] ; layers that may depend only on modules of a fixed location (DOEFF140 — not applied if not written)
   :blind-definitions [(blind "controllers.screen.core.entrance:entrance-guarantee" :forbid-words ["view.policy" "message-class"]
-                        :no-imports True :allow-requires ["doeff-hy.macros"] :why "…")]  ; 決めた材料だけで判じる定義(DOEFF141)
+                        :no-imports True :allow-requires ["doeff-hy.macros"] :why "…")]  ; definitions judged only from fixed materials (DOEFF141)
   :allowed-heads [(allowed-heads "controllers.screen.entry.server:_confined" :heads ["defk" ":" "<-" "Try" "when" "return"]
-                    :why "…")]  ; 呼んでよい頭を決めた定義(DOEFF147)
+                    :why "…")]  ; definitions that fix the heads allowed to be called (DOEFF147)
   :call-sites [(call-site "Try" :files ["controllers/screen/**/*.hy"] :except ["controllers/screen/**/tests/**"]
-                 :sites [(site "controllers.screen.entry.server:_confined" :count 1)] :why "…")]  ; 頭を呼んでよい場所と回数(DOEFF159)
+                 :sites [(site "controllers.screen.entry.server:_confined" :count 1)] :why "…")]  ; places and counts where a head may be called (DOEFF159)
   :broad-catches [(broad-catch "screen" :files ["controllers/screen/**/*.hy" "controllers/screen/**/*.py"] :except ["controllers/screen/**/tests/**"]
-                   :carriers [(carrier "controllers.screen.core.deferred:carry-to-inbox" :event "Queued")] :why "…")]  ; 広い例外の捕捉は運搬の境界だけ(DOEFF160)
-  :roles {:judgment "業務の判断をする関数" …}   ; role の説明
-  :wire-modules ["controllers.foundation.records_client"]  ; JSON の送受信そのものを行う foundation の module(DOEFF120・13 節)
-  :edge-mark "real_world"                  ; 縁のテストの pytest の印の名(DOEFF133 — :world-handlers が要る)
-  :static-readers ["controllers.shared.core.foundation_closure:ClosureCase"]  ; 渡された値を実行せずに読むだけの定義 — この呼び出しの引数の中の参照は DOEFF133・136 の「届く」の辺にしない(module の印は行頭から始まる pytestmark の宣言だけを読む)
-  :systems {:carriers ["scripts.declare_system:SystemPart"] :runners ["doeff_cluster._sim.local:sim-cluster"]}  ; 系の値と系を回す入口 — defsystem の定義(本体と呼び出しの引数)と :carriers の呼び出しの引数の中から外の世界に届く検は、:runners のどれかにも届く時だけ縁(DOEFF133・書かなければ今までどおり)
-  :edge-touches [http db process clock cluster network thread]  ; 縁と数える触れる先(DOEFF133 — 書かなければ全部)
-  :test-forms {:tests ["test_*.hy" "test_*.py"] :check-scripts ["scripts/check_*.hy"] :runners ["*_deftest_runner.hy"]}  ; テストの形の決まり(DOEFF135)
-  :retired-words [(retired-words "vocabulary" :words ["mail"] :files ["controllers/**/*.hy" "scripts/**/*.sh"]   ; 使わないと決めた綴り(DOEFF150)
-                    :except ["controllers/kanban/forbidden-terms.json"] :rule-lines ["使わない"]
-                    :contract-files ["docs/contracts/record-service.json"] :instead "Message")   ; 契約の綴りの文字列と defwire の欄の定義は数えない
-                  (retired-words "names" :patterns [r"(?i)conversation"] :files ["controllers/chat/**/*.hy"] :in names :instead "chat・agent")]
-  :retired-calls [(retired-calls "clock" :calls ["Now" "time.time"] :files ["controllers/**/*.hy"] :except ["**/tests/**"]   ; 使わないと決めた呼び(DOEFF151)
-                    :instead "(GetMonotonic) か (GetTime)")]
-  :environment-branches {:values ["production" "emulated"] :flags ["dry-run"] :layers [core intent]}   ; 業務の層の環境の分岐(DOEFF168)
-  :semantic-lines [(line "線引き 1" :rules [DOEFF201] :text "protocol の定義がしてよいのは …"   ; Jev の問いに入れる線引き(DOEFF201・202・205・10 節)
-                     :fires [{:code #[code[(defk access-of-held …)]code] :why "期限を見て渡すか断るかをこの定義が決める。"}]
+                   :carriers [(carrier "controllers.screen.core.deferred:carry-to-inbox" :event "Queued")] :why "…")]  ; broad exception catches only at the carrying boundary (DOEFF160)
+  :roles {:judgment "a function that makes business judgments" …}   ; role descriptions
+  :wire-modules ["controllers.foundation.records_client"]  ; foundation modules that do the sending and receiving of JSON itself (DOEFF120, section 13)
+  :edge-mark "real_world"                  ; name of the pytest marker for edge tests (DOEFF133 — requires :world-handlers)
+  :static-readers ["controllers.shared.core.foundation_closure:ClosureCase"]  ; definitions that merely read a passed value without executing it — references inside this call's arguments are not made "reach" edges of DOEFF133 and 136 (a module's marker reads only a pytestmark declaration that starts at the beginning of a line)
+  :systems {:carriers ["scripts.declare_system:SystemPart"] :runners ["doeff_cluster._sim.local:sim-cluster"]}  ; system values and the entries that run systems — a test that reaches the outside world from the definition of a defsystem (body and call arguments) and from the arguments of calls of :carriers is an edge test only when it also reaches one of :runners (DOEFF133; as before if not written)
+  :edge-touches [http db process clock cluster network thread]  ; touch targets counted as edges (DOEFF133 — all if not written)
+  :test-forms {:tests ["test_*.hy" "test_*.py"] :check-scripts ["scripts/check_*.hy"] :runners ["*_deftest_runner.hy"]}  ; conventions on the shape of tests (DOEFF135)
+  :retired-words [(retired-words "vocabulary" :words ["mail"] :files ["controllers/**/*.hy" "scripts/**/*.sh"]   ; spellings decided not to be used (DOEFF150)
+                    :except ["controllers/kanban/forbidden-terms.json"] :rule-lines ["do not use"]
+                    :contract-files ["docs/contracts/record-service.json"] :instead "Message")   ; strings of contract spellings and defwire field definitions are not counted
+                  (retired-words "names" :patterns [r"(?i)conversation"] :files ["controllers/chat/**/*.hy"] :in names :instead "chat, agent")]
+  :retired-calls [(retired-calls "clock" :calls ["Now" "time.time"] :files ["controllers/**/*.hy"] :except ["**/tests/**"]   ; calls decided not to be used (DOEFF151)
+                    :instead "(GetMonotonic) or (GetTime)")]
+  :environment-branches {:values ["production" "emulated"] :flags ["dry-run"] :layers [core intent]}   ; environment branches in business layers (DOEFF168)
+  :semantic-lines [(line "line 1" :rules [DOEFF201] :text "what a protocol definition may do is …"   ; the drawn lines put into Jev's questions (DOEFF201, 202, 205; section 10)
+                     :fires [{:code #[code[(defk access-of-held …)]code] :why "This definition decides whether to hand over or refuse by looking at the deadline."}]
                      :silent [#[code[(defk send-task …)]code]])]
-  :handler-arguments {:files ["src/**/*.hy"] :exclude ["**/tests/**"] :store-names ["state" "store"] :store-suffixes ["-store"] :keep-mark "引数に残す理由:"}  ; handler の引数の決まり(DOEFF142)
-  :business-fakes {:simulation ["sim/**"] :assembly ["*/entry/**"] :tests ["**/tests/**"] :production ["src/**"] :sets ["**/handler_sets.hy"] :simulation-prefix "emulated" :production-prefix "production" :business-modules ["app.orders"] :external-effects "tables/EXTERNAL-EFFECTS" :lower-layer-passages "tables/LOWER-LAYER-PASSAGES" :test-only-fakes "tables/TEST-ONLY-FAKES"}  ; 偽の handler の決まり(DOEFF143・DOEFF206)
-  :assembly-shape {:translation-point "with-*-translation" :retired-function "handlers-of" :translations "TRANSLATION-HANDLERS" :translation-layer "protocol" :intent-layer "intent"}  ; 組み立ての形(DOEFF155・156)
-  :outside-writers {"ledger:land-item" "merge-queue と land.py" "records:pane-receipt" "ai pane-hand"}  ; 本番の系の job でない書き手が書く組(DOEFF207)
-  :typed-values {:files ["controllers/**/*.hy" "controllers/**/*.py"] :except ["**/tests/**" "**/adr/**"]}   ; 公開面の型の注記を読む file(DOEFF144)
-  :record-stubs {:files ["controllers/**/*.pyi"]}   ; 同じ名の .hy と突き合わせる型の宣言(DOEFF145)
-  :single-point-vocabulary [(vocabulary-scope "job-phase" :patterns [r"\bJOB-PHASE-[A-Z]+\b"]   ; 判定を1か所に閉じ込めた語彙(DOEFF146)
-                              :files ["controllers/screen/glue/**"] :except ["controllers/screen/glue/slice.hy"] :instead "slice.hy の答えを読む")]
-  :confined-spellings [(confined-spelling "screen-http" :patterns [r"\(HttpRequest\s"] :files ["controllers/screen/**"]   ; 書いてよい file を決めた綴り(DOEFF148)
+  :handler-arguments {:files ["src/**/*.hy"] :exclude ["**/tests/**"] :store-names ["state" "store"] :store-suffixes ["-store"] :keep-mark "reason to keep as argument:"}  ; conventions on handler arguments (DOEFF142)
+  :business-fakes {:simulation ["sim/**"] :assembly ["*/entry/**"] :tests ["**/tests/**"] :production ["src/**"] :sets ["**/handler_sets.hy"] :simulation-prefix "emulated" :production-prefix "production" :business-modules ["app.orders"] :external-effects "tables/EXTERNAL-EFFECTS" :lower-layer-passages "tables/LOWER-LAYER-PASSAGES" :test-only-fakes "tables/TEST-ONLY-FAKES"}  ; conventions on fake handlers (DOEFF143, DOEFF206)
+  :assembly-shape {:translation-point "with-*-translation" :retired-function "handlers-of" :translations "TRANSLATION-HANDLERS" :translation-layer "protocol" :intent-layer "intent"}  ; assembly shape (DOEFF155, 156)
+  :outside-writers {"ledger:land-item" "merge-queue and land.py" "records:pane-receipt" "ai pane-hand"}  ; pairs written by writers that are not production-system jobs (DOEFF207)
+  :typed-values {:files ["controllers/**/*.hy" "controllers/**/*.py"] :except ["**/tests/**" "**/adr/**"]}   ; files whose public-surface type annotations are read (DOEFF144)
+  :record-stubs {:files ["controllers/**/*.pyi"]}   ; type declarations matched against the same-named .hy (DOEFF145)
+  :single-point-vocabulary [(vocabulary-scope "job-phase" :patterns [r"\bJOB-PHASE-[A-Z]+\b"]   ; vocabulary confined to one judgment point (DOEFF146)
+                              :files ["controllers/screen/glue/**"] :except ["controllers/screen/glue/slice.hy"] :instead "read slice.hy's answer")]
+  :confined-spellings [(confined-spelling "screen-http" :patterns [r"\(HttpRequest\s"] :files ["controllers/screen/**"]   ; spellings with fixed files where they may be written (DOEFF148)
                          :except ["controllers/screen/tests/**" "controllers/screen/protocol/*.hy"] :why "…")
-                       (confined-spelling "web-push-private-key" :patterns [r"agora-web-push-vapid"]   ; 群の綴りに結んだ名も群の綴り(:names-bound-in)
+                       (confined-spelling "web-push-private-key" :patterns [r"agora-web-push-vapid"]   ; names bound to a group's spelling are also the group's spelling (:names-bound-in)
                          :names-bound-in ["controllers/screen/entry/system.hy" "controllers/screen/protocol/web_push.hy"]
                          :files ["controllers/**"] :except ["controllers/screen/entry/system.hy" "controllers/screen/protocol/web_push.hy"] :why "…")]
-  :counted-spellings [(counted-spelling "screen-post-seats" :pattern r"\x22POST\x22" :files ["controllers/screen/protocol/record_service.hy"]   ; 数を決めた綴り(DOEFF161)
+  :counted-spellings [(counted-spelling "screen-post-seats" :pattern r"\x22POST\x22" :files ["controllers/screen/protocol/record_service.hy"]   ; spellings with a fixed count (DOEFF161)
                         :within ["append-record-events"] :count 1 :why "…")]
-  :effect-census [(effect-census "screen" :files ["controllers/screen/effects.py" "controllers/screen/intent/socket.hy"]   ; effect の宣言の全体(DOEFF162)
+  :effect-census [(effect-census "screen" :files ["controllers/screen/effects.py" "controllers/screen/intent/socket.hy"]   ; the full set of effect declarations (DOEFF162)
                     :effects ["PostIntake" "Send" …] :why "…")]
-  :field-holders [(field-holders "record-cache" :type "RecordCache" :files ["controllers/screen/core/*_types.py"]   ; 型の欄を持つ class の顔ぶれ(DOEFF149)
+  :field-holders [(field-holders "record-cache" :type "RecordCache" :files ["controllers/screen/core/*_types.py"]   ; the lineup of classes that hold a type's field (DOEFF149)
                     :holders ["ConversationSent"] :why "…")]
-  :world-handlers [(world-handler "controllers.foundation.host:with-agora-process"   ; 外の世界に触れてよい定義の許可名簿(下の註)
+  :world-handlers [(world-handler "controllers.foundation.host:with-agora-process"   ; allowlist of definitions that may touch the outside world (note below)
                      :touches [http file clock env] :answers [HttpRequest ReadText]
                      :wraps ["doeff_core_effects._os_file:os-file-handler"])
                    (world-handler "controllers.foundation.clock:real-clock" :touches [clock]
-                     :contract-test (none :doeff-test "packages/doeff-time/tests/test_clock.hy::test-clock-contract"))]   ; 縁の検を求めない handler(DOEFF137 — 理由つきの none)
-  :stand-ins [(stand-in "controllers.agora_sim.peers.live_session_peer:with-live-session-peer"   ; 相手役の名簿(下の註・DOEFF137)
+                     :contract-test (none :doeff-test "packages/doeff-time/tests/test_clock.hy::test-clock-contract"))]   ; handlers that do not require an edge test (DOEFF137 — a none with a reason)
+  :stand-ins [(stand-in "controllers.agora_sim.peers.live_session_peer:with-live-session-peer"   ; roster of counterpart stand-ins (note below, DOEFF137)
                 :real "doeff_openai.live:with-live-session")]
-  :boundary-parts [(boundary-part "controllers.agora_sim.local_screen_socket_client"   ; 模擬の環境から本物の外の世界へ届く境目の部品(下の註)
+  :boundary-parts [(boundary-part "controllers.agora_sim.local_screen_socket_client"   ; boundary parts that reach the real outside world from the simulated environment (note below)
                      :touches [network clock thread] :reason "…")]
-  :exclude ["tests" "__pycache__" "conftest.py"]    ; 既定のまま
-  :extensions ["hy" "py"]                           ; 既定 hy・hyk・hyp・py
-  :shared "shared")  ; :legacy は廃止(書くと設定の誤り — 宣言の外の module は全部 DOEFF114・115、既存の分は登録簿)
-(defservice land-notice "着地の報せ" {:depends-on [messaging] :layers [core intent protocol entry]})
+  :exclude ["tests" "__pycache__" "conftest.py"]    ; as the default
+  :extensions ["hy" "py"]                           ; default hy, hyk, hyp, py
+  :shared "shared")  ; :legacy is abolished (writing it is a settings error — modules outside the declaration are all DOEFF114 and 115, and existing ones go in the registry)
+(defservice land-notice "notice of landing" {:depends-on [messaging] :layers [core intent protocol entry]})
 ```
 
-- 層の置き場は `root/*/<層>`(service と shared)と、foundation の層は `root/<foundation>`。
-- 宣言の外でも、root の下の段に層の名がある dir(層が先の dir — `controllers/core/…`)の module は、:role のタグから層を推して層の規則をかける
-  (role を許す層が 1 つならその層・2 つ以上なら path の段の層・推せなければ path の段の層に置いてタグの規則 DOEFF104・105 が理由を出す)。
-  module の `layer_reason` は「タグで決めた — …」。旧い機能の dir(層の名の段が無い)は層の規則の母集団に入らない。
-- `:legacy` は廃止(旧い物の逃げ道を置かず、当たりは全部出す)。
-- service の dir は名の `-` を `_` にした物(`land-notice` → `controllers/land_notice/`)。`{:dir "…"}` で変えられる。
-- `{:public-contract http}` の service は、公開の契約が HTTP の口だけ。他の service の `:depends-on` に載せると設定の誤り
-  (in-process で読む近道を止める — 置き場の状態を持つ service が 2 つ目の持ち主を作らせないため)。書かない = in-process。
-  値は `http` だけ(他は設定の誤り)。載せられないので、その service の module を import すると DOEFF116 が当たる。
-- `{:invariants ["module.path:関数" …]}` は、その service の業務の不変条件の関数(記録を受けて破りの列を返す純粋な判断・`:role "judgment"`)の列。
- 書かない = None。綴りが `module:名` でない・同じ名指しの 2 度書き・列でない値は設定の誤り。宣言の欠けと名指しの外れは DOEFF163。
-- `{:entry-modules ["pkg.module" …]}` は、その service の code の入口の module の列。層の dir(`<root>/<dir>/entry/`)を
-  持たない repo(merge-queue のように機能の dir で分けた repo)が、DOEFF163 の「code を持つ service」をこの宣言で判じさせる — 書いた service は
-  母集団に入り、module の Hy の file(`pkg/module.hy`)が repo に無ければ DOEFF163 の欠け(`entry::<module>`)。書かない = None(entry の層の dir で
-  今までどおり判じる)。DOEFF136・164・167 も同じ宣言で母集団と入口を決める(書いた service は、その module の file の
-  定義を entry の層の定義の代わりにし、模擬の環境の deftest・反例の節に届く deftest がそこへ届くかを見る)。空の列・`.` で区切った module の名でない
-  綴り・同じ module の 2 度書き・列でない値は設定の誤り。
-- `:world-handlers` は、外の世界に触れてよい定義の許可名簿(外の世界に触れてよいのは少数の handler だけ)。
-  要素 `(world-handler "module.path:名" :touches [..] :answers [..]? :wraps [..]? :contract-test (none …)?)` の欄は、`:touches` = 触れる先(必須・閉じた語
-  http・db・file・process・clock・env・cluster・network・thread)・`:answers` = 答える effect の名・`:wraps` = 中で動かす doeff の実 I/O の handler
-  (`"module:名"`・名簿の定義は書けない)・`:contract-test` = 縁の検を求めない handler の印(書き方の定義元は DOEFF137 の直し方の文 — 値は理由のテストの名つきの
-  `(none :doeff-test "file::名")` / `(none :repo-test "file::名")` で、型 `ContractTest::Waived(ContractTestWaiver::{DoeffContractTest, CoveredByRepoTest}(TestNodeId))`
-  に読む。理由の無い記号 `none` は読めるが DOEFF137 が鳴る。ほかの値・空や形違いのテストの名は設定の誤り・書かなければ DOEFF137 が縁の検を求める)。名簿を書くには `:foundation` が要る。名簿を書いた repo では `[tool.doeff-linter.raw_side_effects]
-  allowed_layers` は二重の宣言(設定の誤り)— 生の I/O を許す所は名簿だけで決める(規則は足す)。
-  読み違い(綴りが `module:名` でない・語の外・同じ定義や語の 2 度書き・`:touches` の無い要素)は設定の誤り。
-- `:stand-ins` は、模擬の中で本物の代わりに答える相手役の handler と、それが代わる本物の handler の組の名簿(DOEFF137 の拡張 — 手本は
-  verified fake と Pact: 相手役ごとに契約の検を持ち、同じ検を本物にも流す)。要素 `(stand-in "module.path:名" :real "module.path:名" :contract-test (none …)?)`
-  の欄は、頭 = 相手役の定義・`:real` = 本物の handler(必須・索引の外の package の定義でもよい)・`:contract-test` = `:world-handlers` と同じ書き方と読み方
-  (理由つきの none の組は判じない・理由の無い none は鳴る)。名簿を書くには `:edge-mark` が要る(DOEFF137 の有効にする条件と同じ)。読み違い
-  (綴りが `module:名` でない・`:real` の無い要素・`:real` が相手役そのもの・同じ組の 2 度書き・知らない鍵)は設定の誤り。
-- `:boundary-parts` は、模擬の環境から本物の外の世界へ届く境目の部品— 人が回す入口や縁の台のように、実 I/O
-  そのものが役目で effect に答える handler ではない module を名指す。要素 `(boundary-part "module.path" :touches [..] :reason "…")` の欄は、
-  `:touches` = 許す生の副作用の種類(必須・`:world-handlers` と同じ閉じた語)・`:reason` = なぜ実 I/O そのものが役目か(必須)。宣言した
-  module の中では、触れる先(生の I/O の分類を上と同じく写した物)が `:touches` に入る証拠を DOEFF106 で当てない(層の中の file と層の置き場の
-  外の file の両方)。種類の外の証拠と宣言の無い module は今どおり当たる。証拠は索引に残るので、部品に届く deftest は DOEFF133 が縁と数え
-  `:edge-mark` の印を求める。効くのは `:world-handlers` を書いた repo(許す所を名簿で決める repo)だけ。読み違い(綴りが module の dotted で
-  ない・語の外・同じ module や語の 2 度書き・`:touches` か `:reason` の無い要素)は設定の誤り。
-- 実 I/O の handler は doeff の目録 `data/world_handlers.json`(doeff-linter に同梱)から知る。目録の要素 = `{"handler": "module:名", "touches": [..], "why": "…"}`。`:wraps` は目録に在る物だけ(外は設定の誤り)。DOEFF131 は目録の handler のどれもを相手にし、DOEFF133 は目録の handler・名簿の定義・生の I/O の証拠のうち触れる先が `:edge-touches` に当たる物だけを縁に数える(生の I/O の分類は async・thread → thread、time・random → clock と写す。種つきの `random.Random` は生の I/O の証拠から外す — 後述「種つきの疑似乱数と外部 I/O」)。
-- `:semantic-lines` は、Jev に問う規則(DOEFF201・202・205)のどこからが違反かの線引き。要素
-  `(line "名" :rules [DOEFF201 …] :text "…" :fires [例 …]? :silent [例 …]?)` の欄は、`:rules` = 線引きを入れる問いの規則
-  (DOEFF201・202・205 のどれか・1 つ以上)・`:text` = 線引きの文(空にしない)・`:fires` = この線引きで違反になる例・`:silent` = 違反に
-  ならない例(どちらも省いてよい)。例 = code の文字列 `"<code>"` か、code となぜ鳴る / 鳴らないかの 1 文の組 `{:code "<code>" :why "…"}`
-  (`:why` は省いてよい。code は bracket の文字列 `#[code[…]code]` で書くと引用符を escape しなくてよい)。文と例は repo の宣言に
-  だけ在り、linter は持たない(定義元は architecture.hy の 1 か所)。問いへの入れ方は 10 節。知らない規則・Jev の問いでない規則・線引きを入れない
-  Jev の問い(DOEFF203・204)・空の文・`:rules` か `:text` の欠け・同じ名や同じ規則の 2 度書き・空の code・`:code` の無い組・空の `:why` の例は
-  設定の誤り。editor-json の
-  `architecture` には載せない(問いの材料で、editor は読まない)。
-- 読み違い(知らない鍵・重複した service や層・存在しない層や service の名・:foundation の層が無い)は `architecture.hy:行:列: 理由` の形で
-  設定の誤り(終了コード 2)。
-- editor-json の最上位に `architecture`(name・root・layers(name・summary・knows・does_not_know・question・roles)・shared・foundation・
-  open_layers・services(name・dir・description・depends_on・layers・public_contract — `in-process` か `http`・invariants — `{module, name}` の列か null・entry_modules — module の綴りの列か null))。無ければ null。
+- Layer locations are `root/*/<layer>` (services and shared), and the foundation layer is `root/<foundation>`.
+- Even outside the declaration, a module in a dir under root that has a layer name as a segment (a dir where the layer comes first — `controllers/core/…`) gets the layer rules by inferring the layer from the :role tag
+  (if one layer allows the role, that layer; if two or more, the layer of the path segment; if it cannot be inferred, it is placed in the path segment's layer and the tag rules DOEFF104 and 105 give the reason).
+  The module's `layer_reason` is "decided by the tag — …". Dirs of old features (with no layer-name segment) do not enter the population of the layer rules.
+- `:legacy` is abolished (no escape hatch for old things is provided; all hits are emitted).
+- A service's dir is its name with `-` changed to `_` (`land-notice` -> `controllers/land_notice/`). It can be changed with `{:dir "…"}`.
+- A service with `{:public-contract http}` has a public contract that is only an HTTP entry. Listing it in another service's `:depends-on` is a settings error
+  (it stops the shortcut of reading in-process — so that a service holding location state does not let a second owner be created). If not written = in-process.
+  The value is only `http` (others are settings errors). It cannot be listed, so importing that service's module hits DOEFF116.
+- `{:invariants ["module.path:function" …]}` is the list of a service's business-invariant functions (pure judgments that take records and return a list of breaches, `:role "judgment"`).
+ If not written = None. A spelling that is not `module:name`, writing the same named target twice, and a value that is not a list are settings errors. A missing declaration and a named target that misses are DOEFF163.
+- `{:entry-modules ["pkg.module" …]}` is the list of the entry modules of the service's code. A repo that has no layer dir (`<root>/<dir>/entry/`)
+  (such as merge-queue, a repo divided by feature dirs) lets DOEFF163 judge "a service that has code" by this declaration — a service that writes it enters the
+  population, and if the module's Hy file (`pkg/module.hy`) is not in the repo it is a DOEFF163 gap (`entry::<module>`). If not written = None (judged by the entry layer's dir
+  as before). DOEFF136, 164, and 167 also decide the population and entry by the same declaration (for a service that writes it, the definitions in that module's files
+  stand in for the entry layer's definitions, and it checks whether the deftests in the simulated environment and the deftests that reach counterexample clauses reach there). An empty list, a spelling that is not a `.`-separated module name,
+  writing the same module twice, and a value that is not a list are settings errors.
+- `:world-handlers` is the allowlist of definitions that may touch the outside world (only a few handlers may touch the outside world).
+  The fields of an element `(world-handler "module.path:name" :touches [..] :answers [..]? :wraps [..]? :contract-test (none …)?)` are: `:touches` = targets touched (required; the closed words
+  http, db, file, process, clock, env, cluster, network, thread), `:answers` = names of effects answered, `:wraps` = doeff real-I/O handlers run inside
+  (`"module:name"`; definitions in the roster cannot be written), and `:contract-test` = the marker of a handler that does not require an edge test (the definition of how to write it is DOEFF137's fix text; the value is
+  `(none :doeff-test "file::name")` / `(none :repo-test "file::name")` with the test name of the reason, read as the type `ContractTest::Waived(ContractTestWaiver::{DoeffContractTest, CoveredByRepoTest}(TestNodeId))`.
+  The symbol `none` without a reason is readable but DOEFF137 fires. Other values and empty or malformed test names are settings errors; if not written, DOEFF137 requires an edge test). Writing the roster requires `:foundation`. In a repo that writes the roster, `[tool.doeff-linter.raw_side_effects]
+  allowed_layers` is a double declaration (a settings error) — where raw I/O is allowed is decided only by the roster (the rules are added).
+  Misreadings (a spelling that is not `module:name`, a word outside the set, writing the same definition or word twice, an element without `:touches`) are settings errors.
+- `:stand-ins` is the roster of pairs of a counterpart handler that answers in place of the real one in the simulation and the real handler it stands in for (an extension of DOEFF137 — modeled on
+  verified fakes and Pact: each counterpart has a contract test, and the same test is run against the real one). The fields of an element `(stand-in "module.path:name" :real "module.path:name" :contract-test (none …)?)`
+  are: head = the counterpart's definition, `:real` = the real handler (required; a definition in a package outside the index is fine), and `:contract-test` = written and read the same as `:world-handlers`
+  (a pair with a reasoned none is not judged; a none without a reason fires). Writing the roster requires `:edge-mark` (the same as DOEFF137's condition to enable). Misreadings
+  (a spelling that is not `module:name`, an element without `:real`, `:real` being the counterpart itself, writing the same pair twice, an unknown key) are settings errors.
+- `:boundary-parts` names modules that are boundary parts reaching the real outside world from the simulated environment — like entry points that humans run or edge stands, modules whose role is the real I/O
+  itself and which are not handlers that answer effects. The fields of an element `(boundary-part "module.path" :touches [..] :reason "…")` are:
+  `:touches` = the kinds of raw side effects allowed (required; the same closed words as `:world-handlers`) and `:reason` = why the real I/O itself is the role (required). Inside a declared
+  module, evidence whose target (the raw-I/O classification mapped the same as above) is in `:touches` is not hit by DOEFF106 (both for files inside layers and files outside layer
+  locations). Evidence outside the kinds and modules with no declaration hit as before. The evidence remains in the index, so DOEFF133 counts a deftest that reaches a part as an edge test and
+  requires the `:edge-mark` marker. It takes effect only in repos that write `:world-handlers` (repos that decide what is allowed by the roster). Misreadings (a spelling that is not a dotted module,
+  a word outside the set, writing the same module or word twice, an element without `:touches` or `:reason`) are settings errors.
+- Real I/O handlers are known from doeff's catalog `data/world_handlers.json` (bundled with doeff-linter). A catalog element = `{"handler": "module:name", "touches": [..], "why": "…"}`. `:wraps` takes only those in the catalog (others are settings errors). DOEFF131 targets every handler in the catalog, and DOEFF133 counts as edges only those among the catalog's handlers, the roster's definitions, and raw-I/O evidence whose target matches `:edge-touches` (raw I/O is classified with async and thread mapped to thread, and time and random mapped to clock. A seeded `random.Random` is excluded from raw-I/O evidence — see "Seeded pseudo-randomness and external I/O" later).
+- `:semantic-lines` is the drawn line for where, in the rules asked to Jev (DOEFF201, 202, 205), a violation begins. The fields of an element
+  `(line "name" :rules [DOEFF201 …] :text "…" :fires [example …]? :silent [example …]?)` are: `:rules` = the rules of the questions the line is put into
+  (any of DOEFF201, 202, 205; one or more), `:text` = the sentence of the line (not empty), `:fires` = examples that are violations under this line, and `:silent` = examples that are not violations
+  (both may be omitted). An example = a code string `"<code>"`, or a pair of code and a one-sentence reason why it fires / does not fire `{:code "<code>" :why "…"}`
+  (`:why` may be omitted. Writing the code as a bracket string `#[code[…]code]` avoids escaping quotes). The sentences and examples exist only in the repo's declaration, and the linter holds none
+  (the source of truth is the one place in architecture.hy). How they are put into the questions is in section 10. Unknown rules, rules that are not Jev questions, Jev questions that take no drawn line
+  (DOEFF203, 204), empty sentences, a missing `:rules` or `:text`, writing the same name or rule twice, empty code, a pair without `:code`, and an example with an empty `:why` are
+  settings errors. It is not placed in editor-json's
+  `architecture` (it is material for the questions, and the editor does not read it).
+- Misreadings (unknown keys, duplicated services or layers, names of layers or services that do not exist, a missing :foundation layer) are settings errors in the form `architecture.hy:line:column: reason`
+  (exit code 2).
+- At the top level of editor-json is `architecture` (name, root, layers (name, summary, knows, does_not_know, question, roles), shared, foundation,
+  open_layers, services (name, dir, description, depends_on, layers, public_contract — `in-process` or `http`, invariants — a list of `{module, name}` or null, entry_modules — a list of module spellings or null)). null if absent.
 
-| 規則 | 判じ方 | 鍵の細目 | 位置 |
+| Rule | How it judges | Key detail | Position |
 |---|---|---|---|
-| DOEFF114 | root の下の module が、宣言した service の宣言した層・shared の層・foundation のどれにも入らない(root の直下・service の dir の直下・宣言に無い dir の中 — 層が先の dir も旧い機能の dir も例外なし)。file ごとに 1 件。hint に移し先の案(`<root>/<:context のタグ>/<path の段の層か :role のタグの層>/<名>`)。`__init__` は外 | なし | file の頭 |
-| DOEFF115 | root の直下の dir が宣言した service・shared・foundation でない / service の中の dir が宣言した層でない。dir ごとに 1 件(鍵の path は dir) | なし | dir の最初の file の頭 |
-| DOEFF116 | service A の module が service B の module を import した時、B が A の :depends-on に無い、または読む先が、A の module の層が依存先で読んでよい層(その層の `:dependency-layers`、無ければ `:open-layers`)でない。組み立ての層(agora は entry)だけ `:dependency-layers [intent protocol]` で依存先の翻訳の handler も読める。shared と foundation は service ではないので見ない。宣言の DOEFF109 はこれに置き換わる(architecture.hy の在る repo では DOEFF109 の設定を置けない) | import の先 | import の記号 |
-| DOEFF117 | 宣言した依存(A の :depends-on の B)を、A のどの module も読んでいない。info。全体の実行だけ | `A>B` | architecture.hy の defservice の名 |
-| DOEFF140 | `:placed-dependencies` の層の module(service と shared の置き場 — 層が先の旧い dir と foundation は外)が、root の下の層の置き場の外の module(service の dir の直下・宣言に無い dir の中)を import する。読む先は import の綴りの file(無ければ親の module の file)で決め、層の索引に在る物・package の印(`__init__`)・root の外は数えない。渡された file の import と置き場だけで判じる(repo 全体の索引は読まない)。同じ module は 1 件。既定 critical | 読む先の module | 最初の import |
-| DOEFF141 | 決めた材料だけで判じる定義 — `:blind-definitions` の定義ごとに、定義から呼び出しと名指し(値として渡す所)で推移的に届く repo の Hy の定義(入れ子を含む・索引が名前を解いた先で、repo に Hy の file が在る module だけ)の本体に、`:forbid-words` の綴りが部分一致で在る(註は除く)と、届いた定義と語ごとに 1 件。`:no-imports True` なら定義の module の import と require(`:allow-requires` の module の require は macro の読み込みなので除く)を module ごとに 1 件。宣言した定義が無ければ architecture.hy の位置で 1 件(母集団 0 を緑にしない)。読むのは宣言の module と届いた先の module の file だけ(repo 全体の索引は組まない)。全体の実行だけ。既定 critical | `<届いた定義>:<語>` / `import:<module>` / `missing` | 語の最初の出現・import・architecture.hy の宣言 |
-| DOEFF147 | 呼んでよい頭を決めた定義 — `:allowed-heads` の定義ごとに、定義の form(入れ子を含む)の `( … )` の頭の綴り(記号と keyword — 特殊形式と macro も含む)が `:heads` に無ければ、頭ごとに 1 件。文字列・註・`#_` で読み捨てた form・tuple と `[ … ]`・`{ … }` の要素は頭に数えない。宣言した定義(file の top level の、頭が `def` で始まる form)が無ければ architecture.hy の位置で 1 件(母集団 0 を緑にしない)。読むのは宣言の module の file だけ(索引も組まない)。全体の実行だけ。既定 critical(#1413) | `<頭>` / `missing` | 頭の最初の出現・architecture.hy の宣言 |
-| DOEFF148 | 書いてよい file を決めた綴り — `:confined-spellings` の群ごとに、`:files`(repo の根に錨を下ろした glob)に当たる Hy・Python(`.hy`・`.py`・`.pyi`)の file のうち `:except` に当たらない物を読み、註を落とした本文(文字列の中は数える — DOEFF146 と違う)に `:patterns` のどれかが当たれば file ごとに 1 件(当たりの数を message に書く)。`:except` が空なら `:files` のどこにも書かない綴り。`:files` に当たる file が無い群は architecture.hy の位置で 1 件(母集団 0 を緑にしない)。`:names-bound-in [<repo の根からの Hy の file> …]` を書いた群は、その file の中で群の綴りに当たる値に結んだ名も群の綴りにする — doeff-cluster の job の宣言の `:environ {"名" "値" …}` の組の名(どの深さでも・値は文字列)と、最上位の `(val 名 値)`・`(setv 名 値)` の名(Python へ mangle した名も・値は form の註を落とした綴りで当てる — 参照の名を並べた列や組み立てた名も)。関数の中の束縛は読まない。足した名に当たる値に結んだ名も増えなくなるまで足す。名の綴りは端が語の字なら `\b` を付けて当てる(`KEY_REF` は `KEY_REFS` に当たらない。Hy の `-` は語の字でないので `KEY-REF-ENV` は `MY-KEY-REF-ENV` にも当たる — 手で書いた写しと同じ広さ)。秘密の置き場の参照の名のように宣言に足していく名を、正規表現の写しで持たずに定義元から導く(写しだと新しい名を他の file で読んでも赤にならない — agora-controllers の群 web-push-private-key)。名を結ぶ file は `:except` に当たる Hy の file でなければならず(外の file の結びはそれ自身が当たり)、空の列・根の外・`:except` の外・読めない・括弧の閉じない file と、名を 1 つも導けない file は architecture.hy を読む時の宣言の誤り(`:contract-files` の file ごとの検めと同じ — 定数を関数の中へ移した file の名が黙って群から落ちない)。当たりの message は最初の当たりの綴りを、説明は導いた名を書く。歩くのは glob の頭の `*` を含まない dir だけ。全体の実行だけ。既定 critical(#1436 — 元は agora-controllers の一時の判定 intake_only_rules.hy) | `<群>` / `<群>:missing` | file の最初の当たり・architecture.hy の宣言 |
-| DOEFF161 | 数を決めた綴り — `:counted-spellings` の宣言ごとに、`:files` に当たる file(拡張子を問わない — Hy と Python は註を落とし文字列は数える・ほかはそのまま読む)で `:pattern` の当たりを数え、`:count N`(ちょうど)か `:at-least N`(以上)に合わなければ 1 件。`:within [..]` があれば、Hy の file の top level の定義(頭が `def` で始まる form)のうち名指した物ごとに、その form の中で数える。数える file や定義が無ければ architecture.hy の位置で 1 件(母集団 0 を緑にしない)。全体の実行だけ。既定 critical(#1437 — 元は agora-controllers の一時の判定 intake_only_rules.hy) | `<名>` / `<名>:<定義>` / `<名>:missing` / `<名>:<定義>:missing` | 最初の当たりか定義の頭・architecture.hy の宣言 |
-| DOEFF162 | effect の宣言の全体 — `:effect-census` の宣言ごとに、`:files` の Hy・Python の file(註を除く)で `:base`(既定 `EffectBase`)を継ぐ class の宣言(Python の `class X(… base …):`・Hy の `(defclass [飾り] X [… base …])`。`:base` が `EffectBase` なら Hy の `(defeffect X …)` も — defeffect は常に EffectBase を継ぐ・#1464)を集め、`:effects` の一覧と比べる。一覧に無い宣言・同じ名の 2 つ目の宣言は宣言の位置で、宣言の無い一覧の effect と `:files` に当たる file の無い宣言は architecture.hy の位置で 1 件ずつ。全体の実行だけ。既定 critical(#1438 — 元は agora-controllers の一時の判定 intake_only_rules.hy の 2) | `<名>:<effect>` / `<名>:<effect>:twice` / `<名>:<effect>:missing` / `<名>:missing` | 宣言の位置・architecture.hy の宣言 |
-| DOEFF149 | 型の欄を持つ class の顔ぶれ — `:field-holders` の宣言ごとに、`:files` に当たる Python の file(`.py`・`.pyi`)の module の直下の class のうち、本体の直下の欄(注記つきの代入 `名: 注記`)の注記に `:type` の綴りが語として在る class を持ち手と数え、`:holders` の一覧(空でよい = どの class も持たない)と比べる。一覧に無い持ち手は class の位置で、その欄を持たない(か無い)一覧の class は architecture.hy の位置で 1 件ずつ。`:classes` を書けば名指した class だけを数え、無い class も 1 件。`:files` に当たる Python の file が無い宣言も 1 件(母集団 0 を緑にしない)。構文木にならない file は読めない物として出す。全体の実行だけ。既定 critical(元は agora-controllers の一時の判定 record_body_rules.hy の ③) | `<名>:<class>` / `<名>:<class>:absent` / `<名>:<class>:missing` / `<名>:missing` | class の位置・architecture.hy の宣言 |
-| DOEFF159 | 頭を呼んでよい場所と回数 — `:call-sites` の宣言ごとに、`:files` の glob に当たる Hy の file(`:except` を除く)の `(頭 …)` の呼び(文字列・註・`#_` の中は除く)を集め、どの `:sites` の定義の中にも無い呼びは file ごとに 1 件。場所ごとに、`:count` を書けば呼びの数の食い違い、`:parent` を書けば直ぐ外の form の頭の食い違い、`:branch` を書けば条件の form にその記号が在る cond・when・if・unless の枝の外の呼びを 1 件。場所の定義が無い・`:files` に当たる file が 0 なら architecture.hy の位置で 1 件(母集団 0 を緑にしない)。歩くのは glob の字義どおりの頭の dir だけ。全体の実行だけ。既定 critical(#1414) | `<頭>:outside` / `<頭>:count:<名>` / `<頭>:parent:<名>` / `<頭>:branch:<名>` / `<頭>:missing:<名>` / `<頭>:empty` | 最初の呼び・場所の定義の名・architecture.hy の宣言 |
-| DOEFF160 | 広い例外の捕捉は運搬の境界だけ — `:broad-catches` の群ごとに、`:files` の glob に当たる Hy・Python の file(`:except` を除く)の広い捕捉を集める。広い捕捉 = Hy の `(except [] …)` と、捕まえる型の form に `Exception`・`BaseException`・`AssertionError`(`.` で区切った最後の段)が在る `(except [型] …)`・`(except [名 型] …)`(文字列・註・`#_` の中は除く)、Python の型の無い `except:` と、型がそれらの名・属性・その組の `except …:`。許すのは `:carriers` の定義(Hy の file の top level の form)の中で、捕捉が例外を名で束縛し、その捕捉の中の `(:event の出来事 …)` の呼びがその名を引数に直に渡す物だけ。境界の外の捕捉は file ごとに 1 件、名を束縛しない・出来事へ渡さない境界の中の捕捉は境界ごとに 1 件。境界の定義が無い・`:files` に当たる file が 0 なら architecture.hy の位置で 1 件(母集団 0 を緑にしない)。Python の file が構文として読めなければ実行の誤り。全体の実行だけ。既定 critical(元は agora-controllers の一時の判定 fault_boundary_rules.hy の (d)) | `<名>:outside` / `<名>:unbound:<定義の名>` / `<名>:missing:<定義の名>` / `<名>:empty` | 最初の捕捉・architecture.hy の宣言 |
-| DOEFF113 | 宣言した service の中の :context の食い違いは warning に上がる | | |
+| DOEFF114 | A module under root does not belong to any declared layer of a declared service, to a shared layer, or to foundation (directly under root, directly under a service's dir, or inside a dir not in the declaration — dirs where the layer comes first and dirs of old features alike, no exceptions). One per file. The hint gives a suggested move (`<root>/<:context tag>/<the path segment's layer or the :role tag's layer>/<name>`). `__init__` is excluded | none | the head of the file |
+| DOEFF115 | A dir directly under root is not a declared service, shared, or foundation / a dir inside a service is not a declared layer. One per dir (the key's path is the dir) | none | the head of the dir's first file |
+| DOEFF116 | When a module of service A imports a module of service B, B is not in A's :depends-on, or the target is not a layer that the layer of A's module may read as a dependency (that layer's `:dependency-layers`, or `:open-layers` if absent). Only the assembly layer (entry in agora) can also read the dependency's translation handlers with `:dependency-layers [intent protocol]`. Shared and foundation are not services, so they are not looked at. The declaration replaces DOEFF109 (in a repo that has architecture.hy, DOEFF109 settings cannot be placed) | the import target | the import symbol |
+| DOEFF117 | A declared dependency (B in A's :depends-on) is not read by any module of A. info. Whole-project runs only | `A>B` | the defservice's name in architecture.hy |
+| DOEFF140 | A module in a `:placed-dependencies` layer (service and shared locations — old layer-first dirs and foundation are excluded) imports a module outside the layer locations under root (directly under a service's dir, or inside a dir not in the declaration). The target is decided by the file of the import's spelling (the parent module's file if absent), and things in the layer index, package markers (`__init__`), and outside root are not counted. Judged only from the passed file's imports and locations (the whole-repo index is not read). One per same module. Default critical | the target module | the first import |
+| DOEFF141 | Definitions judged only from fixed materials — for each definition in `:blind-definitions`, if a spelling from `:forbid-words` appears (as a substring; comments excluded) in the bodies of the repo Hy definitions transitively reachable from the definition by calls and by naming (passing as values) (including nested ones; the targets the index resolved names to, only modules that have a Hy file in the repo), one hit per reached definition and word. With `:no-imports True`, one per module for the definition's module's imports and requires (requires of `:allow-requires` modules are macro loads, so excluded). If the declared definition does not exist, one at architecture.hy's position (so a population of 0 is not made green). Only the declared module and the module files reached are read (the whole-repo index is not built). Whole-project runs only. Default critical | `<reached definition>:<word>` / `import:<module>` / `missing` | the word's first occurrence, the import, or the architecture.hy declaration |
+| DOEFF147 | Definitions that fix the heads allowed to be called — for each definition in `:allowed-heads`, if the spelling of the head of a `( … )` in the definition's form (including nested ones) (symbols and keywords — special forms and macros included) is not in `:heads`, one per head. Strings, comments, forms discarded with `#_`, and elements of tuples, `[ … ]`, and `{ … }` are not counted as heads. If the declared definition (a form at the file's top level whose head starts with `def`) does not exist, one at architecture.hy's position (so a population of 0 is not made green). Only the declared module's file is read (no index is built either). Whole-project runs only. Default critical (#1413) | `<head>` / `missing` | the head's first occurrence, or the architecture.hy declaration |
+| DOEFF148 | Spellings with fixed files where they may be written — for each group in `:confined-spellings`, reads Hy and Python (`.hy`, `.py`, `.pyi`) files that match `:files` (globs anchored at the repo root) and do not match `:except`, and if any of `:patterns` matches the body with comments removed (the inside of strings is counted — unlike DOEFF146), one per file (the number of hits goes in the message). If `:except` is empty, it is a spelling written nowhere in `:files`. A group with no file matching `:files` gets one at architecture.hy's position (so a population of 0 is not made green). A group that writes `:names-bound-in [<Hy file from the repo root> …]` also makes the names bound, within those files, to values that match the group's spelling into the group's spelling — the names of the pairs of `:environ {"name" "value" …}` in doeff-cluster's job declarations (at any depth; the value is a string) and the names of the top-level `(val name value)` and `(setv name value)` (including the names mangled to Python; the value is matched by the spelling of the form with comments removed — a list that lines up reference names, or an assembled name, too). Bindings inside functions are not read. It adds until names bound to values that match the added names stop increasing. A name's spelling gets `\b` attached if its end is a word character (`KEY_REF` does not match `KEY_REFS`. Hy's `-` is not a word character, so `KEY-REF-ENV` also matches `MY-KEY-REF-ENV` — the same breadth as a hand-written copy). Names like the reference names of secret locations, which keep being added to the declaration, are derived from the source of truth rather than held as a regex copy (with a copy, reading a new name in another file does not turn red — agora-controllers' group web-push-private-key). A file that binds names must be a Hy file matching `:except` (a binding in an outside file itself hits), and an empty list, outside the root, outside `:except`, an unreadable file, a file with unclosed parentheses, and a file from which no name can be derived are declaration errors when architecture.hy is read (the same as the per-file check of `:contract-files` — so the name in a file whose constant was moved inside a function does not silently drop out of the group). The hit's message writes the first hit's spelling, and the explanation writes the derived names. It walks only dirs at the head of a glob that contain no `*`. Whole-project runs only. Default critical (#1436 — originally agora-controllers' temporary judgment intake_only_rules.hy) | `<group>` / `<group>:missing` | the file's first hit, or the architecture.hy declaration |
+| DOEFF161 | Spellings with a fixed count — for each declaration in `:counted-spellings`, counts the hits of `:pattern` in files that match `:files` (any extension — for Hy and Python comments are removed and strings counted; others are read as is), and one hit if it does not match `:count N` (exactly) or `:at-least N` (at least). If `:within [..]` is given, it counts inside the named top-level definitions (forms whose head starts with `def`) of Hy files, one definition at a time. If there is no file or definition to count, one at architecture.hy's position (so a population of 0 is not made green). Whole-project runs only. Default critical (#1437 — originally agora-controllers' temporary judgment intake_only_rules.hy) | `<name>` / `<name>:<definition>` / `<name>:missing` / `<name>:<definition>:missing` | the first hit or the head of the definition, or the architecture.hy declaration |
+| DOEFF162 | The full set of effect declarations — for each declaration in `:effect-census`, collects, in Hy and Python files of `:files` (comments excluded), class declarations that inherit `:base` (default `EffectBase`) (Python `class X(… base …):`, Hy `(defclass [decorators] X [… base …])`. If `:base` is `EffectBase`, Hy `(defeffect X …)` too — defeffect always inherits EffectBase, #1464) and compares them with the `:effects` list. A declaration not in the list and a second declaration of the same name are one each at the declaration's position, and a listed effect with no declaration and a declaration with no file matching `:files` are one each at architecture.hy's position. Whole-project runs only. Default critical (#1438 — originally agora-controllers' temporary judgment intake_only_rules.hy part 2) | `<name>:<effect>` / `<name>:<effect>:twice` / `<name>:<effect>:missing` / `<name>:missing` | the declaration's position, or the architecture.hy declaration |
+| DOEFF149 | The lineup of classes that hold a type's field — for each declaration in `:field-holders`, among module-level classes in Python files (`.py`, `.pyi`) matching `:files`, counts as holders the classes whose directly-under-body field (an annotated assignment `name: annotation`) annotation has the `:type` spelling as a word, and compares them with the `:holders` list (empty is allowed = no class holds it). A holder not in the list is one at the class's position, and a class in the list that does not hold (or does not exist) the field is one each at architecture.hy's position. If `:classes` is written, only the named classes are counted, and a missing class is also one. A declaration with no Python file matching `:files` is also one (so a population of 0 is not made green). A file that does not become a syntax tree is reported as unreadable. Whole-project runs only. Default critical (originally agora-controllers' temporary judgment record_body_rules.hy part 3) | `<name>:<class>` / `<name>:<class>:absent` / `<name>:<class>:missing` / `<name>:missing` | the class's position, or the architecture.hy declaration |
+| DOEFF159 | Places and counts where a head may be called — for each declaration in `:call-sites`, collects the `(head …)` calls (excluding inside strings, comments, and `#_`) in Hy files matching the `:files` glob (excluding `:except`), and a call not inside any `:sites` definition is one per file. For each place, if `:count` is written, a mismatch in the number of calls; if `:parent` is written, a mismatch in the head of the immediately enclosing form; if `:branch` is written, one for a call outside the branch of a cond, when, if, or unless whose condition form has that symbol. If the place's definition does not exist or 0 files match `:files`, one at architecture.hy's position (so a population of 0 is not made green). It walks only the dirs at the literal head of the glob. Whole-project runs only. Default critical (#1414) | `<head>:outside` / `<head>:count:<name>` / `<head>:parent:<name>` / `<head>:branch:<name>` / `<head>:missing:<name>` / `<head>:empty` | the first call, the place's definition name, or the architecture.hy declaration |
+| DOEFF160 | Broad exception catches only at the carrying boundary — for each group in `:broad-catches`, collects broad catches in Hy and Python files matching the `:files` glob (excluding `:except`). A broad catch = Hy `(except [] …)`, and `(except [type] …)` or `(except [name type] …)` where the type form has `Exception`, `BaseException`, or `AssertionError` (the last `.`-separated segment) (excluding inside strings, comments, and `#_`); in Python, an `except:` with no type, and an `except …:` whose type is those names, attributes, or tuples of them. What is allowed is only, inside a `:carriers` definition (a top-level form of a Hy file), a catch that binds the exception to a name and in which a call of `(:event's event …)` inside the catch passes that name directly as an argument. A catch outside a boundary is one per file, and a catch inside a boundary that does not bind a name or does not pass it to the event is one per boundary. If the boundary's definition does not exist or 0 files match `:files`, one at architecture.hy's position (so a population of 0 is not made green). If a Python file cannot be read as syntax, it is a run error. Whole-project runs only. Default critical (originally agora-controllers' temporary judgment fault_boundary_rules.hy (d)) | `<name>:outside` / `<name>:unbound:<definition name>` / `<name>:missing:<definition name>` / `<name>:empty` | the first catch, or the architecture.hy declaration |
+| DOEFF113 | A :context mismatch within a declared service is raised to warning | | |
 
-### 既存の道具との対応
+### Correspondence with existing tools
 
-| 考え方 | doeff-linter(architecture.hy) | Tach | import-linter | Nx | Deptrac / ArchUnit |
+| Idea | doeff-linter (architecture.hy) | Tach | import-linter | Nx | Deptrac / ArchUnit |
 |---|---|---|---|---|---|
-| 部品の宣言 | `defservice`(dir = service) | `tach.toml` の `modules` | 契約の `containers` | project | layer / slice の定義 |
-| 部品の間の依存 | `:depends-on`(DOEFF116) | `depends_on` | `independence`・`forbidden` の契約 | タグの `depConstraints` | ruleset / `slices().should().notDependOnEachOther()` |
-| 公開する口 | `:open-layers`(intent の層) | `interfaces` | — | 公開の entry point | — |
-| 部品の中の層 | `:layers` と layer の `:imports`(DOEFF101) | `layers` | `layers` の契約 | タグの `onlyDependOnLibsWithTags` | layer の ruleset / `layeredArchitecture()` |
-| 宣言に無い物 | DOEFF114・115 | —(module に入らない file は対象外) | — | — | Deptrac の未分類(uncovered)の報告 |
-| 使っていない依存 | DOEFF117 | `tach check --exact`(使っていない depends_on) | — | — | — |
-| 既知の破れの固定 | 登録簿(`registry`)と `registered_severity` | 除外の設定 | `ignore_imports` | — | baseline / `FreezingArchRule` |
+| Declaring components | `defservice` (dir = service) | `modules` of `tach.toml` | `containers` of a contract | project | definitions of layer / slice |
+| Dependencies between components | `:depends-on` (DOEFF116) | `depends_on` | `independence` and `forbidden` contracts | tag `depConstraints` | ruleset / `slices().should().notDependOnEachOther()` |
+| Public interface | `:open-layers` (the intent layer) | `interfaces` | — | public entry point | — |
+| Layers inside a component | `:layers` and a layer's `:imports` (DOEFF101) | `layers` | `layers` contract | tag `onlyDependOnLibsWithTags` | layer ruleset / `layeredArchitecture()` |
+| Things not in the declaration | DOEFF114, 115 | — (files that do not belong to a module are out of scope) | — | — | Deptrac's uncovered report |
+| Unused dependencies | DOEFF117 | `tach check --exact` (unused depends_on) | — | — | — |
+| Pinning known violations | registry (`registry`) and `registered_severity` | exclusion settings | `ignore_imports` | — | baseline / `FreezingArchRule` |
 
-intent の層は Tach の interfaces に当たる — 別の service が読んでよいのは、その service が外へ出す要求と答えの型(intent)だけ。
+The intent layer corresponds to Tach's interfaces — what another service may read is only the request and answer types (intent) that the service exposes outward.
 
-## 10. 意味の規則(DOEFF201・202 — Jev)
+## 10. Semantic rules (DOEFF201, 202 — Jev)
 
-決定的な規則では読めない「コードが何をしているか」を、Jev(TypeSafe の System One の model)に Noul(確率)の問いで問う。
+"What the code is doing", which deterministic rules cannot read, is asked of Jev (a TypeSafe System One model) as a Noul (probability) question.
 
-| 規則 | 問い(英語のまま・`src/project/semantic.rs` の 1 か所) | 当てる層(設定) | 既定の閾値 | 既定の重大さ(3 節) |
+| Rule | Question (kept in English — one place in `src/project/semantic.rs`) | Layers applied (settings) | Default threshold | Default severity (section 3) |
 |---|---|---|---|---|
-| DOEFF201 | 要求を相手の話し方へ言い換えるのを越えて、業務の判断(誰に許すか・業務の決まり・宛先・業務の結果)をしているか(jev-lint の J2) | `semantic.business_decision.layers` | warning p ≥ 0.8・info p ≥ 0.6 | critical |
-| DOEFF202 | 通信の手段(URL や query・HTTP の method や status・JSON の wire・SQL・宛先の address)か、外の data の型の無い形(dict・JSON の値を欄名で読む・組む — json.loads の有無に関わらず)を知っているか(jev-lint の J3・2 つを同じ重さで問う) | `semantic.transport_knowledge.layers` | warning p ≥ 0.6・info p ≥ 0.4 | critical |
-| DOEFF203 | deff の理由の註が受け入れる理由に当たるか(11 節) | `semantic.plain_callable` | warning_min 0.4・info_min 0.4 | 重さから |
-| DOEFF204 | 処理を持つ method のある class が value / external-world / stateful / other のどれか(12 節) | `semantic.class_role` | warning_min 0.7・info_min 0.5 | 重さから |
-| DOEFF205 | judgment / program の定義が形の検めと判断を混ぜているか(14 節) | `semantic.mixed_concerns` | warning_min 0.7・info_min 0.5 | critical |
+| DOEFF201 | Does it make business judgments (whom to permit, business rules, destinations, business outcomes) beyond rephrasing a request in the counterpart's way of speaking (jev-lint J2)? | `semantic.business_decision.layers` | warning p ≥ 0.8, info p ≥ 0.6 | critical |
+| DOEFF202 | Does it know the means of communication (URLs and queries, HTTP methods and statuses, JSON wire, SQL, destination addresses) or the untyped shape of external data (reading and building dicts and JSON values by field name — whether or not json.loads is present) (jev-lint J3; the two are asked with equal weight)? | `semantic.transport_knowledge.layers` | warning p ≥ 0.6, info p ≥ 0.4 | critical |
+| DOEFF203 | Does a deff's reason comment qualify as an accepted reason (section 11)? | `semantic.plain_callable` | warning_min 0.4, info_min 0.4 | from severity |
+| DOEFF204 | Is a class that has methods with processing a value / external-world / stateful / other (section 12)? | `semantic.class_role` | warning_min 0.7, info_min 0.5 | from severity |
+| DOEFF205 | Does a judgment / program definition mix shape checking with judgment (section 14)? | `semantic.mixed_concerns` | warning_min 0.7, info_min 0.5 | critical |
 
-- **全体の実行(text / json / editor-json の repo 全体)の既定は、cache を使い変わった定義だけを撃つ**(Jev を使う規則も毎回どこでも走らせ、既定で cache を使う): 対象 = path の引数の file、無ければ git で変わった file。そのうち手元の
-  cache に答えの無い定義だけを撃ち、残りの答えの無い定義は代理が設定されていれば代理に「覚えている時だけ」問う(下の「Jev の呼び出しを覚える代理」)。
-  問うはずだった定義に答えを得られなければ `semantic.unmeasured`(測れなかった)に数え、error の違反が無くても終了コード 3。
-- **1 file の `--stdin`(書いた直後の hook・エディタ)の既定は cache を読むだけ**(hook の全体 3 秒の上限の中で層の規則の知らせを失わないため・#1190 の
-  決定 A)。`--semantic-changed` を名指せば cache に答えの無い定義だけを撃つ。
-- `--semantic` = 対象の定義を cache に答えが在っても撃ち直す・`--semantic-all` = 設定した層の全定義を撃つ・`--semantic-cache-only` = 撃たない(cache を読むだけ・
-  測れなかったに数えない — 網の無い所の実行)。
-- **`--semantic` / `--semantic-changed` で名指した path が disk に無ければ、問わずに終了コード 2**(理由の 1 行に無い path を引用符つきで並べる —
-  zsh が引用符の無い `$FILES` を語に分けず、全部の path が空白で繋がった 1 つの無い path として届き、以前は問う数 0・較正 not-run・
-  終了コード 0 で黙って終わっていた)。名指しの Hy の file に問いになる定義が 1 つも無い(問いの層の外・最上位の定義なし・書きかけ)時は、その file を
-  `errors` の 1 行に名乗る(終了コードは変えない — 問う物が無いのは誤りではないが、なぜ 0 かを黙らない)。
-- **書きかけで読めない定義(閉じない括弧・対応しない閉じ括弧・閉じない文字列)は、どの実行でも問わない**(未判定に数える)。
-- 問う定義 = 設定した層の Hy の最上位の defn・defk・deff・defp・defpp・defhandler・defeffect・defclass・defrecord・defenum。
-- state = 定義の名・kind・file・申告の `:tags` を消した source(`semantic.source_limit` 字 = 既定 1,800 で切る)・置かれた層の説明(architecture.hy の layer の説明か、
-  `layers.describe`)。
-- **線引き**: architecture.hy の `:semantic-lines`(9 節)を書いた repo では、DOEFF201・202・205 の問いの `instructions` に、
-  その規則を `:rules` に持つ線引きを宣言の順に入れる — `"lines": [{"name", "text", "violating_examples": [例 …], "complying_examples": [例 …]} …]`
-  (例 = `{"code": …, "why": …}`・`:why` を書かない例は `{"code": …}` — #1995)と、線引きの読み方と答えの向き `"lines_note"`(英語・
-  `src/project/semantic.rs` の 1 か所 — 線引きが一般の説明と違えば線引きに従う・鳴る例に似た code は違反の側 = DOEFF201・202 は true・DOEFF205 は
-  mixed・例の `why` の理由で判じ、code の見た目の近さで判じない)。
-  **線引きを入れた問いの `instructions` は、1 つの鍵の object を宣言の順に並べた列で送る**(#1995): `[{"question": …}, 一般の例か注 …,
-  {"lines_note": …}, {"lines": […]}]` — DOEFF201 = question・business_decision_examples・not_business_decision_examples、DOEFF202 = question・note・
-  transport_knowledge_examples・not_transport_knowledge_examples(#2059 — 前は question だけで、`instructions` は文字列だった)、DOEFF205 = question・note
-  の後に lines_note・lines。鍵の object で送ると鍵の名の順に並び、DOEFF205 では一般の注が
-  線引きの後ろに来て「上の注と違えば線引きに従え」が逆さに読めた。TypeSafe の `instructions` は string・object・array のどれも受ける
-  (https://docs.typesafe.ai/api — 2026-10-01 に読んだ)。例の code は定義の source と同じく申告の `:tags` を消して渡す。線引きの文と why は
-  日本語のまま入れ、問いの文は英語のまま。線引きの当たらない問い・宣言の無い repo の問いは今のまま(鍵の object・cache のキーも変わらない)。
-  線引きを足す・変えると、その規則の問いのキーが変わり、定義は答えなしに戻る(問い直しは較正の実行でまとめて行う)。較正の見張りの例も同じ問い
-  (線引きを入れた物)で問う。
-- cache = repo の根の `.doeff-linter/semantic-cache/<鍵>.json`(git の外に置く — `.gitignore` に足すかは repo ごと)。鍵 = sha256(model・問いの JSON・層の説明・
-  タグを消した source)。申告の役は鍵に入れず、判定の後にコードで比べる。cache の答えが無い定義は違反にせず、最上位の `semantic.unjudged` に数える(合格に倒さない)。
-  cache の答えは確率と choice のほかに、答えに載った費用 `reported_cost_usd`(上流が載せた時だけ・載せない答えは null で 0 と区別する)と
-  `input_tokens`・`output_tokens`(usage に在る時だけ)を持つ。以前の欄 `cost_usd`(載らない時も 0 と書いていた)は読まない — 前の答えの費用は不明と
-  して読む。
-- 重さは warning か info だけ(当たり外れを測り終えるまで error にしない — 設定にも error の欄は無い)。外れは誤判定の一覧に載せる(下の「誤判定の一覧と正例の一覧」)。
-- 宛先・model・キーは doeff の `packages/doeff-jev/src/doeff_jev/_target.py` と同じ決め方(Rust に写した — 決め方は 1 つ):
-  環境変数 `JEV_BASE_URL` / `JEV_MODEL` / `JEV_WIRE` / `JEV_API_KEY` / `JEV_API_KEY_FILE` → 設定 file `~/.config/jev/client.json` → 既定 = TypeSafe 直
-  (`https://api.typesafe.ai/v1/systemone`・model `jev-latest`・キーは `TYPESAFE_API_KEY` → `~/.config/jev/api_key`)。gateway は名指した時だけ。
-  通信の形(direct と gateway の要求と答え)は同じ package の `wire.py` の写し。キーの値は設定・出力・log・cache の鍵に書かない。
-- 同時に `semantic.workers`(既定 8)本・時間切れ `semantic.timeout_seconds`(既定 30)・429 と 5xx は 3 回まで撃ち直す。撃てなかった定義は理由を `errors` に積み、未判定に数える。
-- **較正の見張り**: 撃つ実行ごとに、同梱の正例と反例(`data/semantic_calibration.json` — jev-lint の札の際どくない物、問いごとに 1 つずつ)を 1 回問い、正例 p ≥ 0.8・反例 p ≤ 0.2 の
-  幅から外れたら cache を捨てて `errors` に警告を出す(model の中身が変わった疑い)。答えた model の版つきの名は `semantic.served_model` に出す(direct の答えだけが返す)。
+- **The default for a whole run (the whole repo for text / json / editor-json) uses the cache and fires only changed definitions** (rules that use Jev also run every time, everywhere, and use the cache by default): targets = files in path arguments, or files changed in git if none. Of those, only definitions with no answer in the local
+  cache are fired, and for the remaining definitions with no answer, a proxy, if configured, is asked "only if it remembers" (see "Proxy that remembers Jev calls" below).
+  A definition that should have been asked but got no answer is counted in `semantic.unmeasured` (could not be measured), and the exit code is 3 even if there are no error violations.
+- **The default for a one-file `--stdin` (the hook right after writing, the editor) only reads the cache** (so that the layer-rule notice is not lost within the hook's overall 3-second limit; decision A of
+  #1190). Naming `--semantic-changed` fires only definitions with no answer in the cache.
+- `--semantic` = re-fire the target definitions even if the cache has an answer; `--semantic-all` = fire all definitions of the configured layers; `--semantic-cache-only` = fire nothing (only read the cache;
+  not counted as could-not-measure — for runs where there is no network).
+- **If a path named with `--semantic` / `--semantic-changed` does not exist on disk, it exits with code 2 without asking** (the one-line reason lists the nonexistent paths in quotes —
+  zsh does not split an unquoted `$FILES` into words, and all the paths arrive as one nonexistent path joined by spaces, and before this the run silently ended with 0 questions, calibration not-run, and
+  exit code 0). When a named Hy file has no definition that becomes a question (outside the question's layers, no top-level definition, half-written), that file is named on one line of
+  `errors` (the exit code is unchanged — having nothing to ask is not an error, but it does not stay silent about why it is 0).
+- **A definition that is half-written and unreadable (unclosed parenthesis, unmatched closing parenthesis, unclosed string) is not asked in any run** (counted as undetermined).
+- Definitions asked = top-level defn, defk, deff, defp, defpp, defhandler, defeffect, defclass, defrecord, and defenum in Hy of the configured layers.
+- state = the definition's name, kind, file, the source with the declared `:tags` removed (cut at `semantic.source_limit` characters = default 1,800), and the description of the layer it is placed in (architecture.hy's layer description, or
+  `layers.describe`).
+- **Drawn lines**: in a repo that writes architecture.hy's `:semantic-lines` (section 9), the `instructions` of the questions of DOEFF201, 202, and 205 include, in declaration order,
+  the lines that have that rule in `:rules` — `"lines": [{"name", "text", "violating_examples": [example …], "complying_examples": [example …]} …]`
+  (example = `{"code": …, "why": …}`; an example without `:why` is `{"code": …}` — #1995), plus the reading guide for the lines and the direction of the answer, `"lines_note"` (English,
+  one place in `src/project/semantic.rs` — if a line differs from the general explanation, follow the line; code similar to an example that fires is on the violating side = true for DOEFF201 and 202, mixed for DOEFF205;
+  judge by the reason in the example's `why`, not by how close the code looks).
+  **The `instructions` of a question that includes lines are sent as a list of one-key objects in declaration order** (#1995): `[{"question": …}, general examples or note …,
+  {"lines_note": …}, {"lines": […]}]` — DOEFF201 = question, business_decision_examples, not_business_decision_examples; DOEFF202 = question, note,
+  transport_knowledge_examples, not_transport_knowledge_examples (#2059 — before, it was only question and `instructions` was a string); DOEFF205 = question, note,
+  then lines_note and lines. When sent as a single-key object, it was ordered by key name, and in DOEFF205 the general note
+  came after the lines, so "if it differs from the note above, follow the lines" read backwards. TypeSafe's `instructions` accepts any of string, object, and array
+  (https://docs.typesafe.ai/api — read on 2026-10-01). The example code is passed with the declared `:tags` removed, the same as the definition's source. The text and why of the lines are
+  put in as written in the declaration, and the question text stays in English. Questions to which no lines apply and questions of repos with no declaration stay as they are (the single-key object and the cache key do not change either).
+  Adding or changing lines changes that rule's question key, and definitions go back to having no answer (re-asking is done together in a calibration run). The calibration watch's examples are also asked with the same question
+  (the one that includes the lines).
+- cache = the repo root's `.doeff-linter/semantic-cache/<key>.json` (placed outside git — whether to add it to `.gitignore` is per repo). key = sha256(model, question JSON, layer description,
+  source with tags removed). The declared role is not in the key and is compared in code after the judgment. A definition with no answer in the cache is not made a violation and is counted in the top-level `semantic.unjudged` (it is not defaulted to pass).
+  Besides the probability and choice, a cache answer holds the cost `reported_cost_usd` carried in the answer (only when upstream carried it; an answer that does not carry it is null, distinguished from 0) and
+  `input_tokens` and `output_tokens` (only when present in usage). The older field `cost_usd` (which wrote 0 even when not carried) is not read — the cost of a previous answer is read as
+  unknown.
+- The severity is only warning or info (not error until measuring hits and misses is finished — the settings have no error field either). Misses go in the list of misjudgments (see "List of misjudgments and list of positives" below).
+- The destination, model, and key are decided the same way as doeff's `packages/doeff-jev/src/doeff_jev/_target.py` (copied into Rust — the way of deciding is one):
+  environment variables `JEV_BASE_URL` / `JEV_MODEL` / `JEV_WIRE` / `JEV_API_KEY` / `JEV_API_KEY_FILE` -> settings file `~/.config/jev/client.json` -> default = direct to TypeSafe
+  (`https://api.typesafe.ai/v1/systemone`, model `jev-latest`, key `TYPESAFE_API_KEY` -> `~/.config/jev/api_key`). A gateway only when named.
+  The communication shape (direct and gateway requests and answers) is a copy of the same package's `wire.py`. The key's value is not written to settings, output, logs, or the cache key.
+- `semantic.workers` (default 8) concurrent calls, timeout `semantic.timeout_seconds` (default 30), and 429 and 5xx are retried up to 3 times. Definitions that could not be fired have their reason piled into `errors` and are counted as undetermined.
+- **Calibration watch**: in each run that fires, one non-borderline positive and one negative per question from the bundled set (`data/semantic_calibration.json` — non-borderline labels from jev-lint) are asked once, and if they fall outside the band of positive p ≥ 0.8 and negative p ≤ 0.2,
+  the cache is discarded and a warning is put in `errors` (suspected change in the model's contents). The model's versioned name that answered goes in `semantic.served_model` (only direct answers return it).
 
-設定:
+Settings:
 
 ```toml
 [tool.doeff-linter.semantic]
@@ -776,505 +776,505 @@ transport_knowledge = { layers = ["core"], warning = 0.6, info = 0.4 }
 workers = 8
 timeout_seconds = 30
 source_limit = 1800
-# Jev の呼び出しを覚える proxy(repo proboscis/jev-proxy)— 無ければ使わない
+# A proxy that remembers Jev calls (repo proboscis/jev-proxy) — not used if absent
 proxy_url = "http://jev-proxy.example:8878/v1/systemone"
-proxy_peek_timeout_ms = 5000                     # 既定(覚えている時だけの問いの束を全部合わせた上限)
+proxy_peek_timeout_ms = 5000                     # default (the upper limit for the whole set of bundles of "only if remembered" questions combined)
 ```
 
-**Jev の呼び出しを覚える代理**: 本文(state・問い・model)を正規化した sha256 で答えを覚え、初めての鍵だけを本物の Jev に渡す server
-(repo `proboscis/jev-proxy` — 2026-10-01 に doeff の `packages/doeff-jev-proxy` から移した・口は TypeSafe の
-`/v1/systemone` と同じ)。
+**A proxy that remembers Jev calls**: a server that remembers answers by the sha256 of the normalized body (state, question, model) and passes only first-time keys to the real Jev
+(repo `proboscis/jev-proxy` — moved from doeff's `packages/doeff-jev-proxy` on 2026-10-01; its entry is the same as TypeSafe's
+`/v1/systemone`).
 
-- 宛先は repo ごとの設定 `proxy_url` で向ける(機体全体の環境変数にはしない — 向けない repo は今までどおり)。環境変数 `JEV_BASE_URL` が在ればそちらが勝つ。
-- proxy へは見出し Authorization を送らない(TypeSafe のキーも送らない — proxy は呼び手の身元を問わない・2026-10-02 に proxy の token を外した)。
-- 全体の実行・hook は、手元の cache に無い読める定義を、代理の鍵の束で「覚えている時だけ」問う(`POST <proxy_url>/peek`・本文
-  `{"keys": [鍵 …]}`・1,000 個ずつの束を並べて撃つ — 定義 1 つずつ撃たず、本文も送らない。代理は覚えている答えだけを
-  `{"answers": {鍵: 答え}}` で返し、本物の Jev を呼ばない)。返った答えを手元の cache に書く。代理に届かない・時間切れの時は、残りの束を撃たず
-  手元の cache だけで動く。
-- 代理の鍵 = sha256(`jev-proxy-key-1` + 改行 + 本文を決まった綴りにした物 — object の鍵を符号位置の順に並べ・区切りの空白なし・文字は UTF-8 のまま)。
-  代理(`key.hy` の `normalize-request`)と linter(`semantic.rs` の `proxy_key`)が同じ鍵を作ることは、代理の見本を両方の repo の検が
-  読んで確かめる(小数は綴りが言語で違うので見本に入れない — linter の本文は小数を持たない)。見本の正本は proxy の repo の
-  `tests/key_contract.json`(server が鍵を決め、呼び手が合わせる)で、linter の `tests/proxy_key_contract.json` は移した時(2026-10-01)に
-  1 byte も違わない写し。鍵の決まりを変える時は、2 つの repo の見本と実装を同じ組の変更で直す。
-- 較正の見張りの問いは `Cache-Control: no-cache`(覚えを使わない — model の中身が変わったことを代理の覚えが隠さないため)。
+- The destination is pointed at by the per-repo setting `proxy_url` (not a machine-wide environment variable — repos that do not point at it work as before). If the environment variable `JEV_BASE_URL` exists, it wins.
+- No Authorization header is sent to the proxy (nor the TypeSafe key — the proxy does not ask the caller's identity; the proxy's token was removed on 2026-10-02).
+- Whole runs and hooks ask "only if remembered" about readable definitions not in the local cache, using bundles of proxy keys (`POST <proxy_url>/peek`, body
+  `{"keys": [key …]}`, bundles of 1,000 fired one after another — definitions are not fired one at a time and the body is not sent. The proxy returns only the answers it remembers as
+  `{"answers": {key: answer}}` and does not call the real Jev). The returned answers are written to the local cache. If the proxy is unreachable or times out, the remaining bundles are not fired and it works
+  on the local cache alone.
+- The proxy key = sha256(`jev-proxy-key-1` + newline + the body in a fixed spelling — object keys sorted by code point, no separator whitespace, characters left in UTF-8).
+  That the proxy (`normalize-request` in `key.hy`) and the linter (`proxy_key` in `semantic.rs`) build the same key is checked by tests in both repos
+  reading the proxy's sample (decimals are not in the sample because their spelling differs by language — the linter's body has no decimals). The source of truth for the sample is the proxy repo's
+  `tests/key_contract.json` (the server decides the key, and the caller conforms), and the linter's `tests/proxy_key_contract.json` is a byte-for-byte copy as of when it was moved (2026-10-01).
+  When changing the key rules, fix the samples and implementations of both repos in the same set of changes.
+- The calibration watch's questions carry `Cache-Control: no-cache` (they do not use the memory — so that the proxy's memory does not hide a change in the model's contents).
 
-editor-json: violation の `source`(`linter` = 決定的な規則・`jev` = 意味の判定)と `probability`(Jev の違反だけ)、最上位の `semantic`
-(`model`・`wire`・`judged`・`unjudged`・`unmeasured`(測れなかった数 — Jev に問えなかった定義と、proxy の覚えを読む束が待ち
-`proxy_peek_timeout_ms` の内に返らなかった定義。後者は `unjudged` に入れない)・`asked`・`peeked`(proxy が覚えていた答えを受け取った数)・`cost_usd`(上流が答えに費用を載せた回の和 —
-載せるのは Vercel の AI Gateway だけで、TypeSafe 直は載せない)・`cost_unreported`(上流を呼んだのに費用が載っていなかった回の数 — 0 でなければ
-`cost_usd` は下限)・`remembered`(proxy の覚え・相乗りで答えた回の数 — 見出し `x-jev-proxy` が `hit` / `coalesced`。上流を呼んでいないので
-費用と token を数えない)・`input_tokens`・`output_tokens`(上流を呼んだ回の usage の和)・
-`served_model`・`calibration` = not-run / ok / drifted / failed・`false_positives`・`labeled` — 下の節)。`wire` は宛先の形と決め方(例 `direct(default)`・`direct(env)`・`direct(repo)` = repo の代理)。
+editor-json: a violation's `source` (`linter` = deterministic rules, `jev` = semantic judgment) and `probability` (Jev violations only), and the top-level `semantic`
+(`model`, `wire`, `judged`, `unjudged`, `unmeasured` (the number that could not be measured — definitions that could not be asked of Jev, and definitions for which the bundle reading the proxy's memory did not return within the waiting
+`proxy_peek_timeout_ms`. The latter are not put in `unjudged`), `asked`, `peeked` (the number of answers the proxy remembered and returned), `cost_usd` (the sum over calls where upstream put the cost in the answer —
+only Vercel's AI Gateway puts it, and direct to TypeSafe does not), `cost_unreported` (the number of calls that called upstream but carried no cost — if not 0,
+`cost_usd` is a lower bound), `remembered` (the number of calls answered by the proxy's memory or by riding along — the header `x-jev-proxy` is `hit` / `coalesced`. Upstream was not called, so
+cost and tokens are not counted), `input_tokens`, `output_tokens` (the sum of usage over calls that called upstream),
+`served_model`, `calibration` = not-run / ok / drifted / failed, `false_positives`, `labeled` — see the sections below). `wire` is the shape and the way of deciding the destination (e.g. `direct(default)`, `direct(env)`, `direct(repo)` = the repo's proxy).
 
-### 誤判定の一覧と正例の一覧
+### List of misjudgments and list of positives
 
-Jev の判定は確率で、高い確率の外れと低い確率の当たりが混ざる。外れを登録簿に載せると「既知の破れ」として重大さ(level)が残り続けるので、
-人が外れと判定した当たりは登録簿とは別の置き場に置き、**違反として出さず、件数にも入れない**。
+Jev's judgments are probabilities, and high-probability misses and low-probability hits are mixed. If misses were put in the registry, they would remain as "known violations" with a severity (level),
+so hits that a person judged to be misses are placed in a store separate from the registry, and are **not emitted as violations and not counted**.
 
 ```toml
 [tool.doeff-linter.semantic]
-false_positives = ["scripts/doeff_lint/JEV-FALSE-POSITIVES"]   # 誤判定の一覧(反例)
-true_positives = ["scripts/doeff_lint/JEV-TRUE-POSITIVES"]     # 人が本当の違反と判定した当たり(正例)
+false_positives = ["scripts/doeff_lint/JEV-FALSE-POSITIVES"]   # list of misjudgments (counterexamples)
+true_positives = ["scripts/doeff_lint/JEV-TRUE-POSITIVES"]     # hits that a person judged to be real violations (positives)
 ```
 
-- どちらも repo の根からの dir の列。中の `*.txt` 1 つが判定 1 つで、1 行目が違反の鍵(5 節の綴り — editor-json の `key` をそのまま写す)、
-  2 行目から後が人の判定の理由(空でない行を空白でつないで読む)。**理由の無い file は判定として読まず**、`errors` に理由を出す
-  (理由の書けない判定を黙って効かせない)。読めない dir・file も `errors`。
-- 効くのは意味の規則(DOEFF201〜205)の当たりだけ。鍵が誤判定の一覧に載った当たりは `violations` に出さず、最上位の
-  `semantic.false_positives` に外した数を出す(text の出力は stderr の要約の行「意味の規則の誤判定 N 件」)。登録簿にも載っていても外す。
-- 正例の一覧は違反の出し方を変えない(載っていても閾値に届かなければ出ない)。当たり外れを測る材料として読むだけ。
-- 同じ鍵が両方の一覧に在れば食い違いとして `errors` に出し、どちらとしても読まない。
-- `semantic.labeled` = 人の判定と Jev の答えの突き合わせ:
-  `positives` / `negatives` = `{listed: 一覧に載った数, judged: そのうち Jev の答えのある数, flagged: そのうち今の閾値で当たりになる数}`、
-  `items` = 答えのある判定ごとの `{key, rule, expect(true = 正例), probability, flagged}`(鍵の順)。閾値に届かない答えも載る
-  (閾値を決め直す材料)。答えの無い判定(未判定の定義・もう無い定義)は `listed` にだけ数える。
-  `probability` は閾値と比べる確率で、較正の見張りと同じ読み方: yes / no の問いは答えの確率、選ぶ形の問いは**的の語の確率**
-  (DOEFF204 = `external-world`・DOEFF205 = `mixed`)。選んだ語の確率ではない — `judgment-only` 0.97・`mixed` 0.02 の答えは 0.02
-  (前は選んだ語の確率を載せていて、205 の閾値の表が読み違いの上で作られた — #1944)。
-- 較正の手順: 判定を付けた file を `--semantic <file>…`(か `--semantic-all`)で問い、`semantic.labeled` の正例の `flagged / judged`
-  (当たりを拾えた割合)と反例の `flagged / judged`(外れを出す割合)を読む。同梱の較正の見張り(model の中身が変わったかの検め)とは別の物で、
-  見張りの幅には入れない(人の判定は閾値の際の物が多く、幅から外れても model の変化とは限らないため)。
-- 読みの限界: 鍵は定義の名で作るので、定義の中身が変わっても判定は載ったまま効く(登録簿と同じ)。中身が大きく変わった定義の判定は人が見直す。
+- Both are lists of dirs from the repo root. Each `*.txt` in them is one judgment: line 1 is the violation's key (the spelling of section 5 — copy editor-json's `key` as is),
+  and line 2 onward is the person's reason for the judgment (non-empty lines read joined by spaces). **A file with no reason is not read as a judgment**, and the reason is put in `errors`
+  (a judgment for which no reason can be written is not silently made effective). Unreadable dirs and files also go in `errors`.
+- Only hits of the semantic rules (DOEFF201-205) take effect. A hit whose key is in the misjudgment list is not put in `violations`, and the number removed is put in the top-level
+  `semantic.false_positives` (the text output shows it in the stderr summary line "N semantic rule misjudgments"). It is removed even if it is also in the registry.
+- The list of positives does not change how violations are emitted (even if listed, it is not emitted if it does not reach the threshold). It is read only as material for measuring hits and misses.
+- If the same key is in both lists, it is put in `errors` as a contradiction and is not read as either.
+- `semantic.labeled` = matching a person's judgments against Jev's answers:
+  `positives` / `negatives` = `{listed: the number listed, judged: of those, the number with a Jev answer, flagged: of those, the number that become hits at the current threshold}`,
+  `items` = per judgment with an answer, `{key, rule, expect(true = positive), probability, flagged}` (in key order). Answers that do not reach the threshold are listed too
+  (material for re-deciding thresholds). Judgments with no answer (undetermined definitions, definitions that no longer exist) are counted only in `listed`.
+  `probability` is the probability compared with the threshold, read the same as the calibration watch: for yes / no questions, the answer's probability; for choice questions, **the probability of the target word**
+  (DOEFF204 = `external-world`, DOEFF205 = `mixed`). It is not the probability of the chosen word — an answer of `judgment-only` 0.97 and `mixed` 0.02 is 0.02
+  (before, it carried the chosen word's probability, and the threshold table for 205 was built on a misreading — #1944).
+- Calibration procedure: ask the files with judgments via `--semantic <file>…` (or `--semantic-all`), and read the positives' `flagged / judged`
+  (the share of hits caught) and the counterexamples' `flagged / judged` (the share of misses emitted) in `semantic.labeled`. This is separate from the bundled calibration watch (the check of whether the model's contents changed), and
+  is not included in the watch's band (many human judgments are near the threshold, so being outside the band does not necessarily mean the model changed).
+- Limits of reading: the key is built from the definition's name, so a judgment stays in effect even if the definition's contents change (the same as the registry). A person reviews judgments for definitions whose contents changed a lot.
 
 
-## 11. 素の関数(deff)の理由と検の書き方 — DOEFF110・111・118・203
+## 11. Reasons for plain functions (deff) and how to write tests — DOEFF110, 111, 118, 203
 
-設定を読むのは Ask などの effect の仕事で例外にしない — deftest でない検は禁じる — 理由の文の可否は Jev が判じる: 理由の種類の札は書かせない。受け入れるかは Jev が理由の文と source を見て決める。
+Reading settings is the job of effects such as Ask and is not made an exception — tests that are not deftest are forbidden — whether a reason sentence is acceptable is judged by Jev: no label for the kind of reason is required. Whether it is accepted is decided by Jev looking at the reason sentence and the source.
 
-architecture.hy の `defarchitecture` に、受け入れる理由と受け入れない理由の型を宣言する(名・説明・直し方は Rust に書かない):
+In `defarchitecture` of architecture.hy, declare the types of accepted reasons and rejected reasons (names, descriptions, and fixes are not written in Rust):
 
 ```hy
-:plain-callable-reasons [(reason library-callback "外の library が素の関数を決まった形で呼ぶ(sorted の key・dataclass の __post_init__ など)")
-                         (reason macro-time "マクロの展開の時に呼ぶ")]
-:rejected-plain-callable-reasons [(reason config-read "設定の file・環境変数・引数を読む" :fix "Ask などの effect で設定を受け取る defk にする")
-                                  (reason test-helper "検の本体・検の値を組む補助" :fix "deftest にし、補助は defk にして (<- …) で呼ぶ")
-                                  (reason handler-assembly "handler の並びを組み立てる" :fix "(defk handlers-of [foundation] …) にする")]
+:plain-callable-reasons [(reason library-callback "an outside library calls a plain function in a fixed form (sorted's key, dataclass's __post_init__, etc.)")
+                         (reason macro-time "called at macro-expansion time")]
+:rejected-plain-callable-reasons [(reason config-read "reads a settings file, environment variables, or arguments" :fix "make it a defk that receives settings through an effect such as Ask")
+                                  (reason test-helper "the body of a test, or a helper that builds a test's values" :fix "make it a deftest, and make the helper a defk called with (<- …)")
+                                  (reason handler-assembly "assembles a list of handlers" :fix "make it (defk handlers-of [foundation] …)")]
 ```
 
-- 註の形: `; defk にできない: <自由な理由>`(定義の行か、直前の註だけの行)。`; defk にできない(<種類>): <理由>` も受け付けるが要求しない。
-- **DOEFF111**(決定的): 註が無い・理由が空・「同上」とその変形(上と同じ・上に同じ・前と同じ・同前)だけを error。理由の中身は判じない。
-  reason に受け入れる理由の一覧を差し込む。
-- **DOEFF110**: defn の同じ行の註が一覧の種類を名乗れば hint =「deff にする(理由 X)」、そうでなければ「defk にする」。
-- **DOEFF203**(意味・Jev・Choice): 理由の文がある deff ごとに、定義の source(タグを消した物)と理由の文を state にして、受け入れる理由・受け入れない型・none
-  から選ばせる(問いの文は `src/project/semantic.rs` の `plain_callable_wire` に英語で 1 か所)。重さ:
-  受け入れない答え(型か none)を選び確率が `semantic.plain_callable.warning_min`(既定 0.4)以上 → warning、それ未満 → info。受け入れる理由を選んでも
-  受け入れない答えの確率の和が `info_min`(既定 0.4)以上 → info。error にはしない。reason と hint には、選ばれた受け入れない型の `:fix` を出す。
-  撃つのは `--semantic` / `--semantic-all` の時だけ。閾値は仮置き(当たり外れを測り終えるまで)。
-- **DOEFF118**(検は deftest だけ): `definitions.test_paths` の glob(`**` = 0 個以上の段・`*` = 段の中の任意の綴り・`/` の無い綴りは file の名に当てる)
-  に当たる Hy の file で、mangle した名が `test_` で始まる `defn`・`defn/a`・`deff`・`defk` と `(setv 名 (fn …))` / `(val 名 (fn …))` は error。鍵は
-  `<path>::DOEFF118::<名>`。登録簿に載れば `registered_severity`。
+- Comment form: `; defk にできない: <free-form reason>` (on the definition's line, or on a comment-only line just before it; the marker `defk にできない:` = "cannot be a defk:" is matched by the code, so it stays in Japanese). `; defk にできない(<kind>): <reason>` is also accepted but not required.
+- **DOEFF111** (deterministic): only a missing comment, an empty reason, and "ditto" and its variants (the Japanese words 同上, 上と同じ, 上に同じ, 前と同じ, 同前 = "ditto", "same as above", "same as above", "same as before", "ditto", matched by the code) are errors. The content of the reason is not judged.
+  The list of accepted reasons is inserted into the reason.
+- **DOEFF110**: if the same-line comment of a defn names a kind in the list, hint = "make it a deff (reason X)", otherwise "make it a defk".
+- **DOEFF203** (semantic, Jev, Choice): for each deff that has a reason sentence, the definition's source (tags removed) and the reason sentence are made the state, and Jev is made to choose from the accepted reasons, the rejected types, and none
+  (the question text is in English in one place, `plain_callable_wire` in `src/project/semantic.rs`). Severity:
+  If an answer that is not accepted (a type or none) is chosen and its probability is at least `semantic.plain_callable.warning_min` (default 0.4) -> warning, below that -> info. Even if an accepted reason is chosen,
+  if the sum of the probabilities of the non-accepted answers is at least `info_min` (default 0.4) -> info. It is never an error. The reason and hint show the chosen rejected type's `:fix`.
+  It fires only with `--semantic` / `--semantic-all`. The thresholds are provisional (until measuring hits and misses is finished).
+- **DOEFF118** (tests are only deftest): in Hy files matching a glob of `definitions.test_paths` (`**` = zero or more segments, `*` = any spelling within a segment, a spelling without `/` is matched against the file name),
+  a `defn`, `defn/a`, `deff`, or `defk` whose mangled name starts with `test_`, and `(setv name (fn …))` / `(val name (fn …))`, is an error. The key is
+  `<path>::DOEFF118::<name>`. If it is in the registry, `registered_severity`.
 
-## 12. class の中身 — DOEFF119・DOEFF204
+## 12. What is inside a class — DOEFF119, DOEFF204
 
-決まり(Point2D のような値は class でよいが、client や store は handler と effect にする。その区別は Jev に判じさせてよい)。名前では判じず、中身の証拠で分ける。母集団は `definitions` の業務の Hy の file。
+Convention (a value such as Point2D may be a class, but a client or store should be a handler and an effect. That distinction may be judged by Jev). It is not judged by name but separated by evidence in the contents. The population is the business Hy files of `definitions`.
 
-- **許す(出さない)**: 基底に例外・Enum・Protocol(名の終わりが Error・Exception・Warning・Enum・Flag・Protocol・NamedTuple・TypedDict)か、
-  repo の外の module の class(import の束縛の module の先頭の段が repo の根に無い・束縛の無い裸の名は組み込み)を持つ class。
-- **DOEFF119 error — 外の世界に触る**: class の中の定義(method・欄の初期値)か class の式そのものに、hy-index 版 3 の生の副作用の強い証拠
-  (raw.direct か raw.via — DOEFF106 と同じ目録)がある。`__init__` で欄に置く資源(`(setv self.http (httpx.Client))`)もここに入る。
-  直し方 = 土台の handler(資源は defhandler の直下の `(session val …)`、ListRows・PutRow などの effect に答える)。
-- **DOEFF119 warning — 変わる状態を持つ**: `__init__`・`__post_init__`・`__new__` の外の method が self の欄を書き換える(`setv`/`setx` の的が
-  `self.x`・`(get self.x k)`・`(. self x)`、`+=` など、`del`、`setattr self`、`(.append self.x …)` などの変える method)。直し方 =「値は defrecord(不変)、
-  振る舞いは新しい値を返す純粋な関数、状態は world などの handler の (session var …) 1 か所に置き、変化は effect で流す。速さのために書き換えが要る時も
-  書き換えは handler の中だけ」。
-- **DOEFF119 info — 欄だけ**: dunder 以外に処理を持つ method が無い(`__post_init__` の検めだけも)。直し方 = defrecord(:tags・:check)。
-- 経由の証拠(raw.via)は全体の実行だけが計算する。1 file の実行(エディタの保存)は直接の証拠だけで判じる。
-- **DOEFF204(Jev・Choice・warning か info だけ)**: DOEFF119 が何も出さず、dunder 以外に処理を持つ method のある class だけを問う。state = class の
-  source(タグを消して `source_limit` で切る)と欄の宣言(`名: 型`)。選択肢 = value / external-world / stateful / other(問いの文は
-  `src/project/semantic.rs` の `ClassRole` の 1 か所)。external-world か stateful を `semantic.class_role.warning_min`(既定 0.7)以上で warning、
-  `info_min`(既定 0.5)以上で info。較正の見張りは合成の 2 例(client を欄に持つ窓口・Point2D)の external-world の確率を比べる。
+- **Allowed (not emitted)**: a class whose base is an exception, Enum, or Protocol (name ends in Error, Exception, Warning, Enum, Flag, Protocol, NamedTuple, or TypedDict), or
+  a class from a module outside the repo (the leading segment of the import-bound module is not in the repo root; a bare name with no binding is a builtin).
+- **DOEFF119 error — touches the outside world**: there is strong hy-index version 3 evidence of raw side effects (raw.direct or raw.via — the same catalog as DOEFF106)
+  in a definition inside the class (a method, a field's initial value) or in the class expression itself. A resource placed in a field in `__init__` (`(setv self.http (httpx.Client))`) falls here too.
+  Fix = a foundation handler (the resource goes in `(session val …)` directly under a defhandler, which answers effects such as ListRows and PutRow).
+- **DOEFF119 warning — holds changing state**: a method other than `__init__`, `__post_init__`, and `__new__` rewrites a field of self (the target of `setv`/`setx` is
+  `self.x`, `(get self.x k)`, or `(. self x)`; `+=` and the like; `del`; `setattr self`; or mutating methods such as `(.append self.x …)`). Fix = "values are defrecord (immutable),
+  behavior is a pure function that returns a new value, state is placed in one place, a handler's (session var …) such as world, and changes flow through effects. Even when rewriting is needed for speed,
+  the rewriting is only inside the handler".
+- **DOEFF119 info — fields only**: there is no method with processing other than dunders (even if only a `__post_init__` check). Fix = defrecord (:tags, :check).
+- Evidence by way of (raw.via) is computed only in whole runs. A one-file run (saving in the editor) judges only by direct evidence.
+- **DOEFF204 (Jev, Choice, warning or info only)**: asks only about classes for which DOEFF119 emits nothing and which have methods with processing other than dunders. state = the class's
+  source (tags removed, cut at `source_limit`) and the field declarations (`name: type`). Choices = value / external-world / stateful / other (the question text is in one place,
+  `ClassRole` in `src/project/semantic.rs`). external-world or stateful gives a warning at `semantic.class_role.warning_min` (default 0.7) or above, and
+  info at `info_min` (default 0.5) or above. The calibration watch compares the external-world probability of 2 synthetic examples (a front desk that holds a client in a field, and Point2D).
 
-## 13. JsonValue の使い場所 — DOEFF120
+## 13. Where JsonValue is used — DOEFF120
 
-決まり: JsonValue を直に使わせず、pydantic のように解いて検めた型のある値を使う。JsonValue(素の `dict | list | str | int | float | bool | None` を名で包んだだけの型)に触ってよいのは、
-汎用の解き手と、送受信そのものを行う foundation の module だけ。ほかの module は型のある値だけを見る。例と設定は [rules/DOEFF120.md](rules/DOEFF120.md)。
+Convention: do not let JsonValue be used directly; use values with types resolved and checked, as pydantic does. Only generic resolvers and foundation modules that do the sending and receiving themselves may touch JsonValue (a type that merely wraps the plain `dict | list | str | int | float | bool | None` with a name).
+Other modules see only typed values. Examples and settings are in [rules/DOEFF120.md](rules/DOEFF120.md).
 
-- **有効になる条件**: architecture.hy が在る(`project_wired` は architecture の有無)。
-- **母集団**: repo の Hy(hy・hyk・hyp)と Python(py)の file の全部。`.` で始まる隠し dir と `node_modules`・`target`・`__pycache__`・`venv`・
-  `site-packages` は降りない。4 つの名のどれも本文に無い file は読まない。
-- **数える物**: Hy は読み取り器の記号で、最後の `.` の段が `JsonValue`・`JSONValue`・`JsonObject`・`JSONObject` の物(import・定義・注釈・契約・
-  tuple の中・quote の中)。文字列・註・docstring・`#_` の form は数えない。Python は字句の名(名前・属性の名・import の名)と、注釈(引数・
-  戻り値・`x: T`)と型の別名(`X: TypeAlias = …` の値・`type X = …`)の文字列の中の語(前後が識別子の文字でない物)。docstring・註・f 文字列は数えない。
-- **許す module**(`json_value_allowance` — 方針はこの関数 1 つだけにあり、差し替えられる):
-  1. module の綴り(repo の根からの path の拡張子を外し `/` を `.` にした物)が `doeff_hy._wire`・`doeff_records._wire` か、`.` + それで終わる。
-  2. architecture.hy の `:wire-modules` の pattern(`.` 区切り・`*` は段の中の任意の綴り・`**` は 0 個以上の段)に当たり、かつ層の置き場で
-     `:foundation` の層に入る。当たっても foundation の外なら許さない(説明に訳)。
-- **違反**: module ごとに 1 件・error。鍵 `<path>::DOEFF120`(細目なし)。位置は最初の使用の名。説明の主体に使った名・数・最初の行・ほかの行
-  (20 行まで・残りは数)。登録簿に載れば `registered_severity`。
-- **設定の誤り**: `:wire-modules` の要素が module の綴りでない(`/` を含む・空の段・段の中の `**`)・同じ綴りの 2 度書き・`:foundation` の無い宣言。
-- **戻し方**: 規則を外す(型に起こした値はそのままで害は無い)。
+- **Condition to be enabled**: architecture.hy exists (`project_wired` is whether architecture exists).
+- **Population**: all of the repo's Hy (hy, hyk, hyp) and Python (py) files. Hidden dirs starting with `.` and `node_modules`, `target`, `__pycache__`, `venv`, and
+  `site-packages` are not descended into. Files that contain none of the four names in the body are not read.
+- **What is counted**: in Hy, symbols of the reader whose last `.` segment is `JsonValue`, `JSONValue`, `JsonObject`, or `JSONObject` (imports, definitions, annotations, contracts,
+  inside tuples, inside quotes). Strings, comments, docstrings, and `#_` forms are not counted. In Python, lexical names (names, attribute names, import names), and words (not adjacent to identifier characters) inside annotations (arguments,
+  return values, `x: T`) and in strings of type aliases (the value of `X: TypeAlias = …` and `type X = …`). Docstrings, comments, and f-strings are not counted.
+- **Allowed modules** (`json_value_allowance` — the policy exists in this one function only and can be swapped):
+  1. The module's spelling (the path from the repo root with the extension removed and `/` replaced with `.`) is `doeff_hy._wire` or `doeff_records._wire`, or ends with `.` + that.
+  2. It matches a pattern of architecture.hy's `:wire-modules` (`.`-separated; `*` is any spelling within a segment, `**` is zero or more segments) and also falls in the `:foundation` layer by layer location.
+     Even if it matches, it is not allowed outside foundation (the reason goes in the explanation).
+- **Violation**: one per module, error. Key `<path>::DOEFF120` (no detail). The position is the name of the first use. The explanation's subject has the name used, the count, the first line, and the other lines
+  (up to 20 lines; the rest as a count). If it is in the registry, `registered_severity`.
+- **Settings errors**: an element of `:wire-modules` that is not a module spelling (contains `/`, an empty segment, `**` within a segment), the same spelling written twice, and a declaration with no `:foundation`.
+- **Reverting**: remove the rule (values already turned into types are fine as they are and cause no harm).
 
-## 14. 臭いの規則 — DOEFF121〜125・DOEFF205
+## 14. Smell rules — DOEFF121-125, DOEFF205
 
-臭いの規則を足す。題材は agora-controllers の controllers/kanban/core/tag_judgment.hy の decide-tag
-(決定の時点の linter はこの file に何も出していなかった)。記録は doeff の ADR-DOE-HY-007 R9〜R11。
+Adds smell rules. The subject matter is decide-tag in agora-controllers' controllers/kanban/core/tag_judgment.hy
+(at the time of the decision, the linter emitted nothing for this file). The record is doeff's ADR-DOE-HY-007 R9-R11.
 
-設定:
+Settings:
 
 ```toml
 [tool.doeff-linter.smells]
-shape_check_layers = ["core"]          # DOEFF121 を当てる層(判断の層)。無ければ DOEFF121 は配線されない
+shape_check_layers = ["core"]          # layers DOEFF121 applies to (judgment layers). If absent, DOEFF121 is not wired
 [tool.doeff-linter.rules.DOEFF124]
-severity = "info"                      # 臭いの規則の重さ(warning・info — 既定 warning・error は選べない)
+severity = "info"                      # severity of a smell rule (warning or info — default warning; error cannot be chosen)
 [tool.doeff-linter.semantic]
 mixed_concerns = { layer = "core", roles = ["judgment", "program"], warning_min = 0.7, info_min = 0.5 }   # DOEFF205
 ```
 
-| 規則 | 当たる形 | 鍵の細目 | 位置 |
+| Rule | Shape that hits | Key detail | Position |
 |---|---|---|---|
-| DOEFF121 | 判断の層の file の定義で、`(val|var|setv|setx|:=|<- n (.get x "欄"))` の n か `(.get x "欄")` そのものへの `(isinstance … T)` | `<定義>::<欄>` | `.get` の式 |
-| DOEFF122 | `(match 主 …)` の腕の pattern の頭の型が失敗の型で、腕の本体(`do` なら最後の式)が `(return E)` で、E が主・pattern で束ねた名・`:as` の名、または腕の中でそれらから作った名(`(<- n T X)` など)を参照する | `<定義>::<主の名>`(主が式なら型の名) | pattern |
-| DOEFF123 | 並んだ 2 つの子 `(<- x …)` `(return x)` で、定義の中の x(`x` と `x.欄`)の出現がちょうど 2 | `<定義>::<x>` | `<-` の式 |
-| DOEFF124 | 文字列の引数を含む `(+ …)` の、同じ値 v の欄 `v.a`・`(str v.b)`・`(repr v.c)` が 2 つ以上 / f 文字列の `{v.a}…{v.b}` | `<定義>::<v>` | 式 |
-| DOEFF125 | for / while の中(内包表記は数えない)の `(:=|setv|setx xs (+ xs #(…)))`・`(… xs (+ xs […]))` | `<定義>::<xs>` | 式 |
+| DOEFF121 | In a definition in a file of a judgment layer, an `(isinstance … T)` on the `n` of `(val\|var\|setv\|setx\|:=\|<- n (.get x "field"))` or on `(.get x "field")` itself | `<definition>::<field>` | the `.get` expression |
+| DOEFF122 | The type at the head of the pattern of a `(match subject …)` arm is a failure type, the arm's body (the last expression if it is a `do`) is `(return E)`, and E refers to the subject, a name bound by the pattern, an `:as` name, or a name made from them in the arm (such as `(<- n T X)`) | `<definition>::<subject's name>` (the type's name if the subject is an expression) | the pattern |
+| DOEFF123 | In two adjacent children `(<- x …)` `(return x)`, x (`x` and `x.field`) appears exactly 2 times in the definition | `<definition>::<x>` | the `<-` expression |
+| DOEFF124 | A `(+ …)` containing string arguments, with two or more fields `v.a`, `(str v.b)`, `(repr v.c)` of the same value v / an f-string `{v.a}…{v.b}` | `<definition>::<v>` | the expression |
+| DOEFF125 | Inside a for / while (comprehensions are not counted), `(:=\|setv\|setx xs (+ xs #(…)))` or `(… xs (+ xs […]))` | `<definition>::<xs>` | the expression |
 
-- 同じ定義の同じ細目は 1 件だけ出す。母集団は `definitions` の業務の Hy の file(検の置き場も含む — 母集団の設定で決める)。
-- **失敗の型**(DOEFF122): repo の Hy の file のうち `:failure` か `:absent` の綴りを含む物を読み、`(defrecord 名 "doc"? {… :failure True …} …)` の名と
-  `(defeffect 名 "doc"? {… :failure [A …] :absent [B …]})` の型を集める。名は file の import(`(import m [T])` → `m.T`・`(import m :as n)` の `n.T` →
-  `m.T`)と定義の場所(束縛の無い裸の名 → その file の module)で module まで解き、腕の型も同じく解いて比べる — 同じ名の型が別の module にあっても、
-  宣言した方だけが失敗の型。宣言が 1 つも無ければ DOEFF122 は何も出さない。
-- **重さ**: 既定は warning(ADR-DOE-HY-007 R9 — Absent / Raise の段 1・2 が本線に入ったので info から上げた)。登録簿に載った warning は info。
-- **DOEFF205**(Jev・Choice・warning か info だけ): 役(定義の :tags の role・無ければ module の頭のタグ)が `roles` の最上位の関数(defk・deff・
-  defn・defp)に、mixed / shape-only / judgment-only / neither から選ばせる。state = 定義の source(タグを消して `source_limit` で切る)と、
-  `layer` の層の説明(summary・knows・does_not_know)。mixed を `warning_min` 以上で warning、`info_min` 以上で info。較正の見張りは
-  decide-tag(正例)と card-tags-of(反例)の mixed の確率を比べる。問いの文は `src/project/semantic.rs` の `MixedConcerns` の 1 か所。
-  問いの一般の注(note)は、形の確認を「外から来た型の無い入力の確かめ」と言い、型の union の枝分け・外から来ていない型の無い dict(code の定数・
-  自分の集計の控え)・形の確認を任せた 1 つの関数の答え(問題の文)で断りの値を返すだけの枝を形の確認に数えない(前の注は
-  isinstance と dict の読みを例外なしに形の確認と言い、agora-controllers の線引き 4 と食い違った)。
-  architecture.hy の `:semantic-lines` に `:rules [DOEFF205]` の線引きがあれば、問いの `instructions` に線引きの文と鳴る例・鳴らない例を入れる
-  (10 節の「線引き」— 何を形の確認に数え、何を判断に数えるかは repo の宣言が決める)。
+- Only one is emitted for the same detail of the same definition. The population is the business Hy files of `definitions` (including test locations — decided by the population settings).
+- **Failure types** (DOEFF122): reads, among the repo's Hy files, those containing the spelling `:failure` or `:absent`, and collects the names of `(defrecord name "doc"? {… :failure True …} …)` and
+  the types of `(defeffect name "doc"? {… :failure [A …] :absent [B …]})`. Names are resolved to modules by the file's imports (`(import m [T])` -> `m.T`; `n.T` of `(import m :as n)` ->
+  `m.T`) and by where definitions are (a bare name with no binding -> that file's module), and the arm's type is resolved the same way before comparing — even if a same-named type is in another module,
+  only the declared one is a failure type. If there is no declaration at all, DOEFF122 emits nothing.
+- **Severity**: default warning (ADR-DOE-HY-007 R9 — raised from info because stages 1 and 2 of Absent / Raise entered the main line). A warning in the registry is info.
+- **DOEFF205** (Jev, Choice, warning or info only): for top-level functions (defk, deff, defn, defp) whose role (the role in the definition's :tags, or the module's head tags if absent) is in `roles`,
+  makes Jev choose from mixed / shape-only / judgment-only / neither. state = the definition's source (tags removed, cut at `source_limit`) and
+  the description of the `layer` layer (summary, knows, does_not_know). mixed gives a warning at `warning_min` or above and info at `info_min` or above. The calibration watch compares the mixed probability of
+  decide-tag (positive) and card-tags-of (counterexample). The question text is in one place, `MixedConcerns` in `src/project/semantic.rs`.
+  The question's general note calls shape checking "checking untyped input that came from outside", and does not count as shape checking a type-union branch, an untyped dict that did not come from outside (a code constant,
+  the record of its own tally), or a branch that merely returns a refusal value from the answer (the problem sentence) of the one function entrusted with shape checking (the previous note
+  called isinstance and dict reads shape checking without exception, which disagreed with agora-controllers' line 4).
+  If architecture.hy's `:semantic-lines` has a line with `:rules [DOEFF205]`, the line's text and the examples that fire and do not fire go in the question's `instructions`
+  (the "Drawn lines" of section 10 — what counts as shape checking and what counts as judgment is decided by the repo's declaration).
 
-## 15. defk の素の呼び — DOEFF126
+## 15. Bare calls of defk — DOEFF126
 
-決まり(戻せる)。事実: #798 の直しの便で `latest-by-ref` を defk に改めたのに、
-それを呼ぶ deff(`text-at`・`expected-inputs`)と検 4 file が素のまま呼んでいた — defk を素で呼ぶと答えではなく Program が返り、型の
-誤りで落ちずに静かに間違った値として流れる(検で見つかった)。記録は doeff の ADR-DOE-HY-007 R13。
+A convention (reversible). The facts: in the fix round of #798, `latest-by-ref` was changed to a defk, but
+the deff that calls it (`text-at`, `expected-inputs`) and 4 test files kept calling it bare — calling a defk bare returns a Program rather than the answer, and because of a type
+error it does not fall but flows on quietly as a wrong value (found by a test). The record is doeff's ADR-DOE-HY-007 R13.
 
-- **defk の集合**: repo の Hy の file(`(defk` の綴りを含む物)の最上位の `(defk 名 …)`(`do` と `eval-and-compile` の中も)を
-  `<module>.<名>` で集める。呼びの頭は file の import と定義の場所で module まで解いて比べる(`smells::Scope` と同じ)。追えない呼び
-  (引数で受けた関数・method)は拾わない。
-- **拾う所**(答えを値として使う所): 比べ・演算・真偽の組み合わせ(`=`・`+`・`in`・`not`・`and` …)と答えを読む組み込みの関数
-  (`len`・`str`・`get`・`sorted`・`isinstance` …)の引数、method の的と引数(`(.get (f …) "欄")`・`(.append out (f …))`)と属性(`(. (f …) 欄)`)、条件(`if`・`when`・
-  `unless`・`while` の頭・`cond` の条件)、繰り返しの元(`for` の束ねの元・内包表記の元)、record の欄(頭が大文字の型を作る呼びの引数 —
-  doeff の package の型と、effect として出す位置 `(<- (T …))`・`(! (T …))` の型は除く)。その位置の中の `if`・`when`・`cond`・`do`・`let`
-  の枝も同じ。
-- **Program を運ぶ欄は拾わない**: repo の Hy の `defrecord` の欄で、宣言の型の註が `Program` か `EffectBase` を
-  名指す欄(`(#^ (| Program EffectBase) prepare)`・`#^ Program later`・`doeff.Program` — 註の語の最後の段で比べる)は Program を運ぶ宣言
-  なので、型を作る呼びの `:欄 値` の値は答えとして使う所ではない。拾うまま: 型の註の無い欄・`object` / `Any` の欄・別名で隠れた欄
-  (別名は Program と綴られない)・位置で渡した値・repo の外(Python の dataclass など)で定義した型。事実: doeff-records の
-  `start-records-server` が `(RecordsServing … :prepare (_ready-handlers …))` — `serve-records` が用意の task として走らせる Program の欄。
-- **拾わない所**: `(<- …)` の右辺・`(! …)`・`(return …)`、Program を受ける呼びの引数(repo の関数へ渡す形も — Program を受けて走らせる
-  関数かもしれず追えない)、名への束ね、関数の答えとして返す形。初版は「Program として渡す所の外は全部」だったが、agora の本線で 239 件
-  (Program を受けて走らせる run-on・in-record・run-wired などへ渡す形が大半)になり、error の重さでは外れが重いので、答えとして使う所に
-  絞った(本線 1 件)。
-- **`defsystem` は定義**(doeff-hy — 関数に展開され、job の行 `(名 (job の関数 foundation …) :needs … :environ …)` の
-  式は「名 → Program」の Program の値そのもので、実行しない)。定義の中と同じ判定で下るので、job の行の式は拾わず、その中で答えとして
-  使う所(`:environ {"X" (str (f …))}` など)だけを拾う。鍵の `<定義>` は系の名。事実: agora の本線で module の最上位の defsystem の
-  job の行が 43 件 `<module>` として当たっていた。
-- **重さ**: error(静かな誤りなので)。登録簿に載れば `registered_severity`(既定 warning)。母集団は `definitions` の業務の file と検の置き場。
-- **鍵**: `<path>::DOEFF126::<定義>::<呼んだ defk>`(定義の外は `<module>`)。位置は呼びの式。
-- **引数で受けた関数の素の呼び**(2 つ目の形): repo の全部の呼び `(g … 引数 …)` のうち、引数が repo の defk の名か `(fnk …)` の物を
-  集め(位置の引数は何番目か・keyword の引数は名)、呼び先 g の最上位の定義(defk・deff・defn・defn/a)の引数の並びでその名を引く。g の
-  本体の中でその名を頭にした呼び `(名 …)` が Program として渡す所(`(<- …)` の右辺・`(! …)`・`(return …)`・`(yield …)`・Program を
-  受ける呼びの引数)の外に在れば、呼び先のその呼びを違反にする(名への束ね `(setv v (名 …))` も — 呼び手が defk を渡すので Program が
-  束なる)。鍵 `<path>::DOEFF126::<定義>::<引数>`、説明に渡した所と渡した物。事実: agora L1550 の `rows-by-text` の `field-of`。
-- **拾えない範囲**(ADR-DOE-HY-007 R14): 呼び手が defk を変数や欄に入れてから渡す形・partial などで包んで渡す形、呼び先がその引数を
-  さらに別の関数へ渡してそこで素で呼ぶ形(1 段だけ追う)、呼び先が method・入れ子の関数・名で引けない物、repo の外の呼び手。
+- **The set of defk**: collects the top-level `(defk name …)` (also inside `do` and `eval-and-compile`) of repo Hy files (those containing the spelling `(defk`) as
+  `<module>.<name>`. The head of a call is resolved to a module by the file's imports and where definitions are before comparing (the same as `smells::Scope`). Calls that cannot be followed
+  (a function received as an argument, a method) are not picked up.
+- **Where it picks up** (where the answer is used as a value): the arguments of comparisons, arithmetic, and boolean combinations (`=`, `+`, `in`, `not`, `and`, ...) and of builtin functions that read the answer
+  (`len`, `str`, `get`, `sorted`, `isinstance`, ...), the target and arguments of methods (`(.get (f …) "field")`, `(.append out (f …))`) and attributes (`(. (f …) field)`), conditions (the head of `if`, `when`,
+  `unless`, `while`, and the conditions of `cond`), the source of repetition (the source of a `for` binding, the source of a comprehension), and record fields (the arguments of a call that constructs a type with a capitalized head —
+  excluding types of doeff's package and types at the position emitted as an effect `(<- (T …))` and `(! (T …))`). The branches of `if`, `when`, `cond`, `do`, and `let` inside those positions
+  are the same.
+- **Fields that carry a Program are not picked up**: for a field of a repo Hy `defrecord` whose declared type annotation names `Program` or `EffectBase`
+  (`(#^ (| Program EffectBase) prepare)`, `#^ Program later`, `doeff.Program` — compared by the last segment of the annotation's words), it is a declaration that carries a Program,
+  so the value of `:field value` in a call that constructs the type is not a place where the answer is used. Still picked up: a field with no type annotation, an `object` / `Any` field, a field hidden by an alias
+  (an alias is not spelled Program), a value passed positionally, and a type defined outside the repo (such as a Python dataclass). The fact: doeff-records'
+  `start-records-server` has `(RecordsServing … :prepare (_ready-handlers …))` — a field for a Program that `serve-records` runs as a preparation task.
+- **Where it does not pick up**: the right side of `(<- …)`, `(! …)`, `(return …)`, arguments of a call that receives a Program (including passing to a repo function — it may be a function that
+  receives a Program and runs it, which cannot be followed), binding to a name, and the form returned as a function's answer. The first version was "everything except places where it is passed as a Program", but on agora's main line it came to 239 hits
+  (mostly passing to run-on, in-record, run-wired, and the like that receive and run a Program), and since a miss is costly at error severity, it was narrowed to
+  places where the answer is used (1 on the main line).
+- **`defsystem` is a definition** (doeff-hy — expanded into a function, and the expression of a job row `(name (job-function foundation …) :needs … :environ …)` is
+  the Program value itself of "name -> Program", not executed). It is descended into with the same judgment as inside a definition, so the job row's expression is not picked up, and only places inside it where the answer is
+  used (such as `:environ {"X" (str (f …))}`) are picked up. The key's `<definition>` is the system's name. The fact: on agora's main line, 43 job rows of a module-top-level defsystem
+  were hitting as `<module>`.
+- **Severity**: error (because it is a silent mistake). If in the registry, `registered_severity` (default warning). The population is the business files of `definitions` and test locations.
+- **Key**: `<path>::DOEFF126::<definition>::<defk called>` (`<module>` outside a definition). The position is the call expression.
+- **Bare calls of a function received as an argument** (the second form): among all calls `(g … argument …)` in the repo, collects those whose argument is the name of a repo defk or `(fnk …)`
+  (which position for a positional argument, the name for a keyword argument), and looks that name up in the argument list of the callee g's top-level definition (defk, deff, defn, defn/a). If a call `(name …)` with that name at its head in
+  g's body is outside the places that pass a Program (the right side of `(<- …)`, `(! …)`, `(return …)`, `(yield …)`, and arguments of a call that receives a Program),
+  that call in the callee is made a violation (also a binding to a name `(setv v (name …))` — the caller passes a defk, so a Program
+  gets bound). Key `<path>::DOEFF126::<definition>::<argument>`, and the explanation gives where it was passed and what was passed. The fact: `field-of` of `rows-by-text` at agora L1550.
+- **Ranges it cannot pick up** (ADR-DOE-HY-007 R14): the caller puts the defk in a variable or field before passing it, or wraps it with partial and the like before passing it; the callee passes that argument
+  on to another function and calls it bare there (only one level is followed); the callee is a method, a nested function, or something that cannot be looked up by name; and callers outside the repo.
 
-## 16. defk の見出しと束縛の型 — editor-json 版 2
+## 16. Headings and binding types of defk — editor-json version 2
 
-エディタ(doeff-runner)が defk の型・effect・tags を読むだけの表示で描くための材料。型の読み方はこの linter の
-`src/project/signatures.rs` の 1 か所に置き、エディタは写しを持たない(source は人が手で書き換えないので、
-書く向きの変換は持たない)。`--stdin --path <file>` の時だけ、その file の分を出す(全体の実行では空)。
+Material for the editor (doeff-runner) to draw the types, effects, and tags of defk in a read-only display. The way types are read is placed in one place in this linter's
+`src/project/signatures.rs`, and the editor keeps no copy (a source is not rewritten by hand,
+so there is no conversion in the writing direction). Only when `--stdin --path <file>` is used, that file's part is emitted (empty in a whole run).
 
 ```jsonc
 "signatures": [{
   "kind": "defk",                        // defk | deff
   "name": "fetch", "path": "/abs/core/flow.hy",
-  "range": {…},                          // 名の範囲
-  "full_range": {…},                     // 定義の form 全体
-  "contract_range": {…},                 // 契約の辞書 {:pre … :post … :effects … :tags …}(無ければ null)
-  "params": [{"name": "id", "type": TypeRef | null}],   // :pre の (: 名 型)。書いていなければ null
-  "answer": TypeRef | null,              // :post の (: % 型)(無ければ名の注記 #^ T)
-  "absent": true,                        // 答えが Maybe か(Absent が呼び手へ抜けうる)
-  "raises": [TypeRef],                   // 呼び手へ抜けうる Raise の型
-  "effects": {"declared": [EffectRef] | null,   // :effects(#800)。書いていなければ null
-              "inferred": [EffectRef],          // 推論(下)
-              "complete": true},                // 推論が追いきれたか — 追えない呼び(repo の外の関数・deff・method)を撃っていれば false で、
-                                                // inferred は見えた分だけ(エディタは空でも「effect なし」と描かない)
+  "range": {…},                          // range of the name
+  "full_range": {…},                     // the whole definition form
+  "contract_range": {…},                 // the contract dict {:pre … :post … :effects … :tags …} (null if absent)
+  "params": [{"name": "id", "type": TypeRef | null}],   // `(: name type)` of :pre. null if not written
+  "answer": TypeRef | null,              // `(: % type)` of :post (or the name's annotation #^ T if absent)
+  "absent": true,                        // whether the answer is Maybe (Absent can escape to the caller)
+  "raises": [TypeRef],                   // types of Raise that can escape to the caller
+  "effects": {"declared": [EffectRef] | null,   // :effects (#800). null if not written
+              "inferred": [EffectRef],          // inferred (below)
+              "complete": true},                // whether inference could trace everything — false if it fires an untraceable call (a function outside the repo, deff, method), and
+                                                // inferred is only what was seen (the editor does not draw "no effects" even if it is empty)
   "tags": {"context": "demo", "role": "program"}
 }],
 "bindings": [{
   "form": "<-",                          // <- | val | var | setv | :=
-  "modifier": "lazy" | null,             // (lazy val …)・(session var …) の前の語(form は val / var)
+  "modifier": "lazy" | null,             // the word before (lazy val …) / (session var …) (form is val / var)
   "name": "row", "path": "…",
-  "range": {…}, "form_range": {…}, "head_range": {…},   // 名・form 全体(括弧を含む)・頭の記号
-  "annotation_range": {…} | null,        // (<- x T e) の T
+  "range": {…}, "form_range": {…}, "head_range": {…},   // the name; the whole form (including parentheses); the head symbol
+  "annotation_range": {…} | null,        // the T of (<- x T e)
   "value_range": {…} | null,
-  "type": TypeRef | null,                // 分からなければ null(別の型で埋めない)
+  "type": TypeRef | null,                // null if unknown (not filled in with a different type)
   "origin": "effect",                    // annotation | effect | call | literal | constructor | var | unknown
   "absent": true, "raises": [TypeRef]
 }]
 // TypeRef = {"kind": "name", "name": "Row", "definition": {"path", "range"} | null}
 //         | {"kind": "union", "members": [TypeRef]} | {"kind": "apply", "head": TypeRef, "args": [TypeRef]}
-//         | {"kind": "unknown", "text": "書かれた綴り"}
+//         | {"kind": "unknown", "text": "the spelling as written"}
 // EffectRef = {"name", "definition": {"path", "range"} | null, "answer": TypeRef | null, "absent": [TypeRef], "failure": [TypeRef]}
 ```
 
-- **型の式**: 記号は名、`(| a b)` は和(入れ子は平らにする)、`(of H a …)` は当て、それ以外は読めない式(`unknown`)。名は file の
-  import と定義の場所で module まで解き(`smells::Scope`)、repo の Hy の定義(defrecord・defwire・defenum・defclass・defeffect・deftype・
-  頭が大文字の val)に当たれば `definition` に位置を入れる。組み込みの型と解けない名は null。
-- **推論した effect**: 本体で撃った呼び(`(<- …)` の右辺・`(! …)` の中身)の頭が defeffect ならその effect、defk ならその defk の
-  推論を足す。repo の Hy の file 全部から集めた表の上の不動点(保存前の file は stdin の中身で読む)。handler で受けた effect は引かない
-  (上から見積もった集合)。宣言との食い違いはそのまま出し、エディタが見せる。
-- **Absent と Raise**: `:absent` を宣言した effect(か `absent` の defk)を撃つと答えは Maybe。`(<- … :absent F)` は F の頭の型の
-  Raise に替わり、`absent-as` の中は Absent を受けている。Raise = 撃った effect の `:failure` と撃った defk の Raise(`on-raise` の
-  program の中は引く)。
-- **束縛の型**: `(<- x T e)` は注釈(Absent / Raise は e から)、`(<- x e)` は e の頭が effect なら値の答え(`:answer` の要素から
-  `:absent` と `:failure` を除いた物)、defk ならその答え。`val` / `var` / `setv` は字面(文字列・数・真偽・None・辞書・列)・型の名の呼び・
-  deff の答え・`(! e)`。`(var x None)` は後で別の値を入れる置き場なので分からない(null)。`(:= x v)` は同じ最上位の定義の中の
-  `(var x …)` の型。quote の中は読まない。
-- **時間**: 保存前の 1 file の実行で、repo の Hy の file を全部読んで表を作る(agora-controllers の約 950 file で 0.4〜1.2 秒)。
-- **エディタ側の知らない語**: 閉じた集合(規則の家族・見出しの種類・束縛の形と出どころ・型の式の種類)に linter が語を足しても、
-  エディタは出力を捨てず、その項目だけ既定の見た目にして「拡張が古い」を出す(#848)。
-- **assert の引数**: `(assert 条件 文)` の条件と文も答えとして使う所(defk を条件に置くと Program は常に真で検が常に通る)。
-- **名に束ねてから使う形**(1 つの定義の中だけ): `setv`・`val`・`var`・`:=`・`let` で defk の素の呼びを束ねた名が、答えとして使う所
-  (比べ・組み込みの関数・method の的と引数・`名.method` の呼び・属性・条件・繰り返しの元)に出れば、束ねた呼びを違反にする。
-  Program として渡す・返す形は拾わない。同じ名を `(<- 名 …)` でも束ねる定義はその名を追わない。束ねた名を別の定義へ渡す形・
-  入れ物に入れて取り出す形は拾えない(ADR-DOE-HY-007 R14)。
+- **Type expressions**: a symbol is a name, `(| a b)` is a union (nested ones are flattened), `(of H a …)` is an application, and anything else is an unreadable expression (`unknown`). A name is resolved to a module
+  by the file's imports and where definitions are (`smells::Scope`), and if it matches a definition in the repo's Hy (defrecord, defwire, defenum, defclass, defeffect, deftype, and
+  a val whose head is capitalized), the position goes into `definition`. Builtin types and names that cannot be resolved are null.
+- **Inferred effects**: if the head of a call fired in the body (the right side of `<-`, the content of `! …`) is a defeffect, that effect; if a defk, that defk's
+  inference is added. It is a fixed point over a table collected from all of the repo's Hy files (a pre-save file is read from the stdin content). Effects received by a handler are not subtracted
+  (the set is an estimate from above). Disagreements with the declaration are emitted as they are, and the editor shows them.
+- **Absent and Raise**: firing an effect that declares `:absent` (or a defk that is `absent`) makes the answer a Maybe. `(<- … :absent F)` turns into a Raise of F's head type,
+  and inside `absent-as` the Absent is received. Raise = the `:failure` of the fired effect plus the Raise of the fired defk (inside the program of `on-raise`
+  it is subtracted).
+- **Binding types**: `(<- x T e)` is the annotation (Absent / Raise from e), and `(<- x e)` is the value answer if e's head is an effect (the elements of `:answer` with
+  `:absent` and `:failure` removed) and that defk's answer if a defk. `val` / `var` / `setv` are literals (strings, numbers, booleans, None, dicts, lists), calls of type names,
+  answers of deff, and `(! e)`. `(var x None)` is a place where a different value is put later, so it is unknown (null). `(:= x v)` is the type of `(var x …)` in the same top-level definition.
+  Insides of quotes are not read.
+- **Time**: in a pre-save one-file run, all of the repo's Hy files are read to build the table (0.4 to 1.2 seconds on about 950 files of agora-controllers).
+- **Words the editor does not know**: when the linter adds a word to a closed set (rule families, kinds of headings, forms and origins of bindings, kinds of type expressions),
+  the editor does not discard the output, but shows only that item in the default look and shows "the extension is old" (#848).
+- **Arguments of assert**: the condition and message of `(assert condition message)` are also places where the answer is used (putting a defk in a condition makes the Program always true, so the test always passes).
+- **Using a name after binding it** (within one definition only): if a name that binds a bare defk call with `setv`, `val`, `var`, `:=`, or `let` appears in a place where the answer is used
+  (comparisons, builtin functions, the target and arguments of methods, `name.method` calls, attributes, conditions, the source of repetition), the bound call is made a violation.
+  Forms that pass or return it as a Program are not picked up. A definition that also binds the same name with `(<- name …)` does not follow that name. Passing the bound name to another definition, and
+  putting it in a container and taking it out, cannot be picked up (ADR-DOE-HY-007 R14).
 
-## 17. 呼びを `f(a, b)` の形で見せる表示の置き換え — editor-json の `rewrites`
+## 17. Display replacement that shows calls in the form `f(a, b)` — editor-json `rewrites`
 
-エディタが defk / deff の本体の呼びを Python に近い形で**見せるだけ**の材料(呼びを `(f a b)` でなく `f(a,b)` の形で見せる・式の途中の effect は `!` の印を残す案 A)。source の Hy は変えない。式の形を
-読むのは `src/project/call_view.rs` の 1 か所で、エディタは Hy を読み直さずに描く。版 2 への欄の追加(古いエディタは読み飛ばす)。
-`--stdin --path <file>` の時だけその file の分を出す(全体の実行では空)。
+Material for the editor to **merely show** calls in the bodies of defk / deff in a form close to Python (showing calls as `f(a,b)` rather than `(f a b)`, and leaving the `!` mark for effects in the middle of an expression — plan A). The Hy source is not changed. The reading of expression shapes is
+in one place, `src/project/call_view.rs`, and the editor draws without re-reading the Hy. A field added to version 2 (old editors skip it).
+Only when `--stdin --path <file>` is used, that file's part is emitted (empty in a whole run).
 
 ```jsonc
 "rewrites": [{
   "kind": "call",                 // call | method | infix | prefix | perform | bind | subscript | attribute
   "path": "/abs/core/flow.hy",
-  "range": {…},                   // 元の式全体(括弧を含む)
-  "original": "(f a :k v)",       // 元の lisp(一字一句)
-  "text": "f(a, k=v)",            // 中の置き換えも当てた表示(改行と字下げは元のまま)
-  "edits": [{"range": {…}, "text": "(", "effect": null}],   // 元の文字の範囲(空なら挿すだけ)を隠して text を見せる。effect = 装置の絵の effect の名
+  "range": {…},                   // the whole original expression (including parentheses)
+  "original": "(f a :k v)",       // the original lisp (character for character)
+  "text": "f(a, k=v)",            // the display with inner replacements applied too (newlines and indentation as in the original)
+  "edits": [{"range": {…}, "text": "(", "effect": null}],   // hides the original character range (empty means just insert) and shows text. effect = the name of the effect for the device's picture
   "parts": [{"range": {…}, "name": "f", "role": "defk",      // effect | defk | deff | type | function | builtin | local | method
              "definition": {"path", "range"} | null, "answer": TypeRef | null}],
-  "parent": 3 | null              // 外側の置き換えの番号(外を元の lisp で見せる時は中も元の lisp)
+  "parent": 3 | null              // number of the outer replacement (when the outside is shown as the original lisp, the inside is also the original lisp)
 }]
 ```
 
-| lisp | 表示 |
+| lisp | Display |
 |---|---|
-| `(f a b)`・`(f a :key v)`・`(f #* xs)` | `f(a, b)`・`f(a, key=v)`・`f(*xs)` |
-| `(.get row "k")`・`(get row "k")`・`(. row id)` | `row.get("k")`・`row["k"]`・`row.id` |
-| `(+ a b)`・`(= a b)`・`(is-not x None)`・`(not x)` | `a + b`・`a == b`・`x is not None`・`not x`(Python の優先順位で、変わる所だけ括弧) |
-| `(! (f a))` | `!f(a)`(撃つ呼びが effect なら `!` の edit に effect の名) |
-| `(<- (f a))`(名の無い `<-`) | `<- f(a)` |
-| `(Effect a)` | `Effect(a)`(`(` の edit に effect の名。`!` の中では `!` が持つ) |
+| `(f a b)`, `(f a :key v)`, `(f #* xs)` | `f(a, b)`, `f(a, key=v)`, `f(*xs)` |
+| `(.get row "k")`, `(get row "k")`, `(. row id)` | `row.get("k")`, `row["k"]`, `row.id` |
+| `(+ a b)`, `(= a b)`, `(is-not x None)`, `(not x)` | `a + b`, `a == b`, `x is not None`, `not x` (with Python precedence; parentheses only where it changes) |
+| `(! (f a))` | `!f(a)` (if the fired call is an effect, the effect's name goes in the `!` edit) |
+| `(<- (f a))` (a `<-` with no name) | `<- f(a)` |
+| `(Effect a)` | `Effect(a)` (the effect's name goes in the `(` edit. Inside `!`, the `!` holds it) |
 
-- **呼びと読む頭**: import した名・repo の定義(defk・deff・型・defeffect)・この file の最上位の定義・Python の組み込み・定義の中の
-  局所の名(引数と束縛)・`a.b` の形の名。`require` で入る macro と、制御の形(`when`・`if`・`match`・`for` …)・知らない頭は lisp のまま
-  (中の呼びだけ置き換える)。lisp の形の中の演算は括弧を残す(`(when (a and b) …)`)。
-- **字下げ**: 作り直さない。引数が次の行へ続く所は前の引数の後ろに `,` を挿すだけ。頭と最初の項が別の行の演算・method は lisp のまま。
-- 名の束縛(`(<- x T e)`・`val` …)は 16 節の `bindings` が描き、ここは値の式だけを置き換える。quote の中は読まない。
+- **Heads read as calls**: names imported, definitions in the repo (defk, deff, types, defeffect), top-level definitions in this file, Python builtins, local names inside a definition
+  (arguments and bindings), and names of the form `a.b`. Macros brought in by `require`, control forms (`when`, `if`, `match`, `for` …), and unknown heads stay as lisp
+  (only the calls inside are replaced). Operations inside a lisp form keep their parentheses (`(when (a and b) …)`).
+- **Indentation**: not rebuilt. Where arguments continue onto the next line, only a `,` is inserted after the previous argument. Operations and methods whose head and first term are on different lines stay as lisp.
+- Name bindings (`(<- x T e)`, `val` …) are drawn by `bindings` in section 16, and this replaces only the value expressions. Insides of quotes are not read.
 
-## 18. `:effects` の宣言と推論の食い違い — DOEFF127
+## 18. Disagreement between the `:effects` declaration and inference — DOEFF127
 
-決まり: linter の知らせは違反している所に、何に違反しているかを添えて出す。前は拡張(doeff-runner)が defk の見出しの中で宣言と推論を比べ、「宣言なし」「違反 2」の札にまとめて出していた。
-判じる所を linter に移し、違反している所に規則の違反として出す(拡張は描くだけ)。
+Convention: the linter's notices go at the place of violation, with what is violated attached. Before, the extension (doeff-runner) compared the declaration and the inference inside a defk's heading and showed them in labels such as "no declaration" and "2 violations".
+The judgment is moved to the linter and emitted as a rule violation at the place of violation (the extension only draws).
 
-- **対象**: `:effects` を書いた defk だけ。`:effects` は任意(#800)なので、書いていない defk は対象外(「宣言なし」は違反にしない)。
-  母集団は `definitions` の業務の file(検の置き場も含む — `paths` の下なら)。
-- **推論**: 16 節の見出しと同じ `signatures::World`(1 か所)。本体で撃つ呼び(`(<- …)` の右辺・`(! …)`)の頭を module まで解き、
-  effect ならそれ、repo の defk ならその推論を辿って集める。撃つ位置に分岐(`if`・`when`・`cond`・`match`・`do`・`let`)を置いた形は、
-  枝の呼びを 1 つずつ撃ったと数える。
-- **違反 2 種**:
-  - 宣言に無い effect を起こす — 位置 = その effect に至る最初の撃った呼びの頭(defk を経由するならその defk の名)。文に起こす effect と
-    経由した呼びを書く。
-  - 宣言した effect を起こさない — 位置 = `:effects` の中のその名。**追えない呼び**(repo の外の関数・deff・method・名で引けない物)を
-    1 つでも撃つ defk では、推論の集合が欠けうるので出さない。初版(この抑えなし)は agora の本線で 23 件のうち 19 件がこの形の外れ
-    (`read-typed` のような foundation の関数を経由する protocol の defk)だったので抑えた(本線 4 件 — 全部が宣言に無い effect)。
-- **重さ**: warning(戻せる決定・#849)。error にしない理由 = 推論は handler で受けた effect を引かない上からの見積もりで、本体の中で
-  受けている effect を「宣言に無い」と出しうる。info にしない理由 = 見出しの札をやめて違反の場所だけに出す以上、見落とされない重さが要る。
-  登録簿に載れば `registered_severity`。
-- **鍵**: `<path>::DOEFF127::<定義>::<effect>`(effect は module を外した綴り)。
-
-
-## 19. (退役)DOEFF129
-
-消した(judgment / program を effect の有無で分ける軸は責務の境界ではない)。番号は他の規則に使い回さない。
+- **Target**: only defk that write `:effects`. `:effects` is optional (#800), so a defk that does not write it is out of scope ("no declaration" is not made a violation).
+  The population is the business files of `definitions` (including test locations — if under `paths`).
+- **Inference**: the same `signatures::World` (one place) as the headings in section 16. The head of a call fired in the body (the right side of `(<- …)`, `(! …)`) is resolved to a module,
+  and if it is an effect, that; if it is a repo defk, its inference is followed and collected. A form that puts a branch (`if`, `when`, `cond`, `match`, `do`, `let`) in the firing position
+  counts each branch's call as fired one at a time.
+- **Two kinds of violation**:
+  - Raising an effect not in the declaration — position = the head of the first fired call that leads to that effect (the defk's name if it goes through a defk). The sentence writes the effect raised and
+    the call it went through.
+  - Not raising a declared effect — position = that name inside `:effects`. A defk that fires even one **untraceable call** (a function outside the repo, deff, method, or something that cannot be looked up by name) does not
+    emit this, because the inferred set may be incomplete. The first version (without this suppression) had 19 of 23 hits on agora's main line be misses of this form
+    (protocol defks that go through a foundation function such as `read-typed`), so it was suppressed (4 on the main line — all effects not in the declaration).
+- **Severity**: warning (a reversible decision, #849). The reason it is not an error = inference is an estimate from above that does not subtract effects received by a handler, and can report an effect received
+  inside the body as "not in the declaration". The reason it is not info = since the heading labels are dropped and it is emitted only at the place of violation, a severity that is not overlooked is needed.
+  If in the registry, `registered_severity`.
+- **Key**: `<path>::DOEFF127::<definition>::<effect>` (effect is the spelling without the module).
 
 
-## 21. 翻訳の handler が業務の intent を出す — DOEFF130
+## 19. (Retired) DOEFF129
 
-責務の境界の規則。翻訳の層(protocol)の handler は、受けた intent を doeff の汎用の effect
-(HttpRequest・doeff-records の読み書き・時計・file・process・Ask …)へ出し直すだけで、業務の intent(層 intent の型)を出さない。
-業務の intent を出すと、翻訳の handler が業務の判断と流れを抱え込む。
-
-- **対象**: 設定の `translation_effects.handler_layers` の層(既定 protocol)の Hy の module の、最上位の handler — `(defhandler 名 …)` と、
-  引数がちょうど `[effect k]` の `defk`・`deff`・`defn`。母集団は層の母集団(4 節)。handler でない defk は対象にしない(handler から
-  呼ばれれば、その先として辿られる)。
-- **業務の intent**: 実行する呼びの頭を module まで解いた名が、`translation_effects.intent_layers` の層(既定 intent)の module の、
-  頭が大文字の名(型)であること。`defeffect` でも `defclass` でもよい(層 intent は型だけを置く — 型を実行すれば intent を出している)。
-  module は層の母集団の索引で解く(package の `__init__` も)。数えるのは handler と**同じ service** の intent だけ — 他の service の intent
-  (公開の契約)を出すのは翻訳の仕事として許す(DOEFF156 の「他の service の公開の効果」と同じ読み)。
-  handler か intent のどちらかの service が決まらない(層が先の置き場)時は、今までどおり数える。
-- **推論**: handler の本体で実行する呼び(`(<- …)`・`(! …)` — 18 節と同じ `signatures::World` の読み)を順に見て、頭が業務の intent なら
-  当たり、頭が repo の defk ならその defk の実行する呼びへ進む(import した defk の先も)。進む defk の数の上限は
-  `translation_effects.max_depth`(既定 8・0 なら handler の本体で直に出す intent だけ)。同じ handler の中で同じ defk は 1 度だけ見る
-  (呼びの輪で止まる)。追えない呼び(repo の外の関数・deff・method)の先は数えない。
-  - 定義の本体の名だけで判じる検査(DOEFF201・agora の `check_business_fakes.hy`)は、handler が import した関数を経由して intent を
-    出す形をすり抜ける。この規則はその穴を塞ぐために defk の先まで辿る(#942 の独立レビュー)。
-- **場所**: handler の本体の、その intent に至る最初の呼びの頭。文に handler・層・経由した defk の道(`a → b`)・intent を書く。
-  handler ごと・intent ごとに 1 件。
-- **重さ**: error(決まった規則 — handler の本体と repo の定義だけで判じる)。重大さの宣言(`rules.DOEFF130.level`)は使う側の設定で書く
-  (agora は critical — #957)。
-- **鍵**: `<path>::<law か DOEFF130>::<handler>::<intent>`(handler は mangle した綴り、intent は module まで含めた名)。
-- **設定**: 節 `[tool.doeff-linter.translation_effects]` を書かなければ既定(protocol・intent・8)で、その名の層が両方とも在る時だけ当たる。
-  節を書いたのに層の名が無ければ設定の誤り(終了コード 2)。
-- **作らなかった側**: repo で定義した土台(foundation)の effect は判じない(土台は汎用の effect の置き場)。Python の handler は読まない。
+Removed (the axis of splitting judgment / program by the presence of effects is not a responsibility boundary). The number is not reused for another rule.
 
 
-## 16. 読めない Hy の file — DOEFF128
+## 21. A translation handler emits a business intent — DOEFF130
 
-- 読み取り器(doeff-indexer の hy_index::reader)が括弧か文字列の閉じない所を見つけた file は、規則の判定が読めた所までで違反が欠ける。
-  前は理由の文を全体の `errors` に積むだけで、エディタのその file の違反の欄は空、hook は何も言わなかった(2026-09-28 — agora の
-  controllers/durable/protocol/contract.hy を読み取り器の誤りで読めなかった)。
-- 規則が読む file(層の置き場・定義の規則の母集団・検の置き場・業務の名の母集団)のうち読めない物は、有効な規則の一覧に関わらず、
-  最初の読めない所に error の違反 DOEFF128(鍵 `<path>::DOEFF128`・登録簿の外)として出す。エディタ・hook・text の全部に出る。
-- 読み取り器は f 文字列の置き換えの欄 `{…}` の中を Hy の式として飛ばす(欄の中の文字列・入れ子の f 文字列・括弧で文字列を閉じない
-  — Hy の `hy.read_many` と同じ)。`{{` は字面の `{`。
+A responsibility-boundary rule. A handler in the translation layer (protocol) merely re-emits the intent it received as doeff's generic effects
+(HttpRequest, reads and writes of doeff-records, clock, file, process, Ask …) and does not emit business intents (types of the intent layer).
+If it emits a business intent, the translation handler takes on business judgment and flow.
 
-## 20. 定義の本体の文字 — editor-json の `bodies`
+- **Target**: top-level handlers in Hy modules of the layers in the settings' `translation_effects.handler_layers` (default protocol) — `(defhandler name …)`, and
+  `defk`, `deff`, and `defn` whose arguments are exactly `[effect k]`. The population is the layer population (section 4). A defk that is not a handler is not a target (if a handler
+  calls it, it is followed as a callee).
+- **Business intent**: the name obtained by resolving the head of an executed call to a module is a capitalized name (a type) in a module of a layer in `translation_effects.intent_layers` (default intent).
+  It may be a `defeffect` or a `defclass` (the intent layer holds only types — executing a type means emitting an intent).
+  The module is resolved by the layer population's index (package `__init__` too). Only intents of the **same service** as the handler are counted — emitting another service's intent
+  (a public contract) is allowed as translation's job (the same reading as DOEFF156's "other services' public effects").
+  When the service of either the handler or the intent is not determined (a layer-first location), it is counted as before.
+- **Inference**: looks in order at the calls executed in the handler's body (`(<- …)`, `(! …)` — read by the same `signatures::World` as section 18), and if the head is a business intent
+  it hits; if the head is a repo defk it proceeds to that defk's executed calls (also through an imported defk). The upper limit on the number of defks followed is
+  `translation_effects.max_depth` (default 8; 0 means only intents emitted directly in the handler's body). The same defk is looked at only once within the same handler
+  (it stops at a call cycle). What lies beyond untraceable calls (a function outside the repo, deff, method) is not counted.
+  - Checks that judge only by names in a definition's body (DOEFF201, agora's `check_business_fakes.hy`) slip past the form where a handler emits an intent by way of an imported function.
+    This rule follows through to the defk to close that hole (the independent review of #942).
+- **Place**: the head of the first call in the handler's body that leads to that intent. The sentence writes the handler, layer, path of defks passed through (`a -> b`), and intent.
+  One per handler and intent.
+- **Severity**: error (a settled rule — judged only by the handler's body and the repo's definitions). The severity declaration (`rules.DOEFF130.level`) is written in the user side's settings
+  (agora uses critical — #957).
+- **Key**: `<path>::<law or DOEFF130>::<handler>::<intent>` (handler is the mangled spelling, intent is the name including the module).
+- **Settings**: if the section `[tool.doeff-linter.translation_effects]` is not written, the default (protocol, intent, 8) applies and it hits only when layers of those names both exist.
+  If the section is written but a layer name does not exist, it is a settings error (exit code 2).
+- **The side it does not make**: effects of the foundation defined in the repo are not judged (foundation is the place for generic effects). Python handlers are not read.
 
-doeff-runner の読む面(webview)は定義などの実体を HTML のカードで見せ、**文字で出すのは本体だけ**。その本体の行の材料。本体の文字の
-形は operator が承認済みで、表の正本は `docs/design/hy-reading-plane/artifacts/v2/design.md`
-2.2 節と `v3/design.md` 2 節(意味の正本 ADR-DOE-HY-006)。Hy の form の読み方は `src/project/body_view.rs` の 1 か所に置き、面は行と
-字の範囲を描くだけにする(#849 の決定「読み方の写しを持たない」)。呼びの読み(何を呼びと読むか・括弧の要否)は 17 節の
-`call_view.rs` の読み手を式 1 つずつ呼んで使う。版 2 への欄の追加(古いエディタは読み飛ばす)。`--stdin --path <file>` の時だけその
-file の defk / deff の分を出す(全体の実行では空)。
+
+## 16. Unreadable Hy files — DOEFF128
+
+- A file for which the reader (doeff-indexer's hy_index::reader) finds an unclosed parenthesis or string has violations missing from rule judgments, as far as it could read.
+  Before, only the reason sentence was piled into the overall `errors`, the editor's violations pane for that file was empty, and the hook said nothing (2026-09-28 — agora's
+  controllers/durable/protocol/contract.hy could not be read because of a reader bug).
+- Files that rules read (layer locations, the population of the definition rules, test locations, and the population of business names) that cannot be read are emitted, regardless of the list of enabled rules, as
+  an error violation DOEFF128 (key `<path>::DOEFF128`, outside the registry) at the first unreadable place. It appears in all of the editor, hook, and text.
+- The reader skips the insides of an f-string's replacement field `{…}` as a Hy expression (strings in the field, nested f-strings, and a parenthesis not closing a string
+  — the same as Hy's `hy.read_many`). `{{` is a literal `{`.
+
+## 20. Body text of definitions — editor-json `bodies`
+
+The reading pane of doeff-runner (webview) shows the substance of definitions and so on as HTML cards, and **shows only the body as text**. This is the material for the lines of that body. The shape of the body text
+has been approved by the operator, and the source of truth for the table is section 2.2 of `docs/design/hy-reading-plane/artifacts/v2/design.md`
+and section 2 of `v3/design.md` (the source of truth for meaning is ADR-DOE-HY-006). The reading of Hy forms is placed in one place, `src/project/body_view.rs`, and the pane only draws lines and
+character ranges (the decision of #849 "keep no copy of the way of reading"). For reading calls (what counts as a call, whether parentheses are needed), the reader of `call_view.rs` in section 17 is called
+one expression at a time. A field added to version 2 (old editors skip it). Only when `--stdin --path <file>` is used, that
+file's defk / deff parts are emitted (empty in a whole run).
 
 ```jsonc
 "bodies": [{
-  "kind": "defk",                   // defk | deff(signatures と同じ定義)
+  "kind": "defk",                   // defk | deff (the same definitions as signatures)
   "name": "judged", "path": "/abs/core/conversation_input.hy",
-  "range": {…}, "full_range": {…},  // 名の範囲・定義の form 全体(signatures と同じ)
+  "range": {…}, "full_range": {…},  // the name's range, and the whole definition form (same as signatures)
   "lines": [{
-    "line": 49,                     // source の行(0 始まり — 面は 1 を足して見せる)。1 つの行に文が 2 つあれば同じ番号が続く
-    "depth": 0,                     // 字下げの段(本体の一番外 = 0・when / if / match / for の中身で 1 つ深い)
-    "pad": 0,                       // 段の後ろに足す空白(面は "  " × depth + " " × pad の後ろに字を並べる)
-    "segments": [                   // 行の字 = text をつないだ物
+    "line": 49,                     // the source line (0-based — the pane adds 1 to show it). If one line has two statements, the same number continues
+    "depth": 0,                     // indentation level (outermost of the body = 0; the contents of when / if / match / for are one deeper)
+    "pad": 0,                       // whitespace added after the level (the pane puts the text after "  " × depth + " " × pad)
+    "segments": [                   // the text of the line = the text of the segments joined
       {"text": "val", "role": "keyword", "range": {…}, "effect": null, "definition": null},
       {"text": " ", "role": "text", "range": null, "effect": null, "definition": null},
-      {"text": "str | None", "role": "type", "range": {…}, …},        // range = (<- x T e) の T(注釈が無ければ null)
+      {"text": "str | None", "role": "type", "range": {…}, …},        // range = the T of (<- x T e) (null if there is no annotation)
       {"text": "target", "role": "name", "range": {…}, …},
       {"text": "⇐", "role": "bind", "range": null, …},
       {"text": "target-of", "role": "call", "range": {…}, "definition": {"path", "range"} | null},
       {"text": "SettleIntake", "role": "effect", "range": {…}, "effect": "SettleIntake", …}
     ],
-    "binding": 3 | null,            // この行が描く束縛(同じ出力の bindings の番号)
-    "warning": {"kind": "setv", "message": "setv の代わりに (val x …)、…"} | null
+    "binding": 3 | null,            // the binding this line draws (the index into bindings of the same output)
+    "warning": {"kind": "setv", "message": "Use (val x …) instead of setv, …"} | null
   }]
 }]
 ```
 
-- **字の役**(閉じた集合): `keyword`(`val`・`var`・`lazy`・`session`・`setv`・`return`・`resume`・`when`・`while`・`if`・`else`・`match`・`cond`・`for`・`in`・`try`・`except`・`as`・`finally`・`raise`・`from`・`continue`・`break`)・`type`(束縛の型)・
-  `unknown-type`(型が分からない印 `?`)・`name`(束ねる名)・`bind`(`⇐`)・`assign`(`=` と `:=`)・`effect`(effect の値を作る呼びの頭 —
-  面が `effect` の名で絵を選ぶ)・`call`(それ以外の呼びの頭)・`text`(引数・演算子・字面・区切り)・`lisp`(表に無い form)・`comment`(本体の途中の行全体の註 `;; …` を `# …` にした行)。
-- **range**: source から来た字は source の範囲を持ち、区切り・`⇐`・`?` のように source に無い字は null。`keyword` と `type` は綴りが
-  変わりうる(`<-` → `val`・`(| A B)` → `A | B`)。それ以外の役は範囲の字と text が一字一句同じ。
-- **型**: 16 節の `bindings` の型と同じ物(`binding` の番号の束縛の `type` を `A | B`・`H[a, b]` と綴る)。分からなければ `?`(別の型で
-  埋めない)。
+- **Roles of text** (a closed set): `keyword` (`val`, `var`, `lazy`, `session`, `setv`, `return`, `resume`, `when`, `while`, `if`, `else`, `match`, `cond`, `for`, `in`, `try`, `except`, `as`, `finally`, `raise`, `from`, `continue`, `break`), `type` (the binding's type),
+  `unknown-type` (the mark `?` for an unknown type), `name` (the bound name), `bind` (`⇐`), `assign` (`=` and `:=`), `effect` (the head of a call that builds an effect value —
+  the pane chooses the picture by the `effect` name), `call` (the head of any other call), `text` (arguments, operators, literals, separators), `lisp` (a form not in the table), and `comment` (a line made from a whole-line comment `;; …` in the middle of the body turned into `# …`).
+- **range**: text that came from the source has the source's range, and text that is not in the source, such as separators, `⇐`, and `?`, is null. The spelling of `keyword` and `type` can
+  change (`<-` -> `val`, `(| A B)` -> `A | B`). For the other roles, the text and the text of the range are character-for-character the same.
+- **Type**: the same as the type of `bindings` in section 16 (the `type` of the binding at the `binding` index is spelled `A | B`, `H[a, b]`). `?` if unknown (not filled in with a different
+  type).
 
-| 元の form | 本体の文字 |
+| Original form | Body text |
 |---|---|
 | `(<- x T e)` / `(<- x e)` | `val T x ⇐ e` |
 | `(val x e)` / `(var x e)` | `val T x = e` / `var T x = e` |
-| `(val x ! e)` / `(val x (! e))` | `val T x ⇐ e`(撃つ値 — `(<- x e)` と同じ意味) |
+| `(val x ! e)` / `(val x (! e))` | `val T x ⇐ e` (a fired value — the same meaning as `(<- x e)`) |
 | `(lazy val x e)` / `(lazy var x e)` / `(session val x e)` / `(session var x e)` | `lazy val T x = e` … |
 | `(:= x v)` | `x := v` |
-| 本体の `(setv x e)` | `setv x = e` + `warning`(val / var へ) |
-| `(E a)` / `(! (E a))` / `(<- (E a))`(E が effect) | `E(a)`(E が `effect` の役・`!` は出さない) |
-| `(! (f a))` / `(<- (f a))`(effect でない) | `!f(a)` |
-| `(f a b)`・`(.m o a)`・`(get d k)`・`(. o a)`・`(f a :k v)`・演算 | 17 節の置き換えと同じ(`f(a, b)`・`o.m(a)`・`d[k]`・`o.a`・`f(a, k=v)`・`a + b`) |
+| `(setv x e)` in the body | `setv x = e` + `warning` (toward val / var) |
+| `(E a)` / `(! (E a))` / `(<- (E a))` (E is an effect) | `E(a)` (E has the `effect` role; `!` is not shown) |
+| `(! (f a))` / `(<- (f a))` (not an effect) | `!f(a)` |
+| `(f a b)`, `(.m o a)`, `(get d k)`, `(. o a)`, `(f a :k v)`, operations | the same as the replacements in section 17 (`f(a, b)`, `o.m(a)`, `d[k]`, `o.a`, `f(a, k=v)`, `a + b`) |
 | `(return v)` / `(resume v)` | `return v` / `resume v` |
-| `(<- x T e :absent F)` | `val T x ⇐ e` の後ろに `:absent F` を `lisp` のまま |
-| `(when c …)` | `when c` + 1 つ深い段の中身 |
-| `(if c a b)` / `(if c a)` | `if c` + a、`else` + b(else は if の列に揃え、行の番号は b の行) |
-| `(match v P x P :if g y …)` | `match v` + 腕ごとに `P → x` / `P if g → y`(`→` の前は腕の pattern の最大幅 + 空白 1 つで揃える)。pattern は `(C)` → `C`・`(C a :k p)` → `C(a, k=p)`・`(\| p q)` → `p \| q`・`[p q]` → `[p, q]`・名と字面はそのまま |
-| `(for [x xs] …)` / `(for [[a b] xs] …)` | `for x in xs` / `for a, b in xs` + 1 つ深い段の中身 |
-| `(lfor x xs :if c e)` / `gfor` / `sfor` | `[e for x in xs if c]` / `(e for …)` / `{e for …}`(節の重ねは `for … for …`) |
-| `(do a b …)` | `do` の字は出さず中身を並べる(文の場所なら今の段に。腕の `→` の後ろなら 1 つ目をその行に続け、残りをその列に揃える) |
-| `(cond c x … True z)` | `cond` + 腕ごとに `c → x`(条件の幅を揃える・最後の `True` は `else →`)。1 行に収まらない条件があれば cond 全体を lisp |
-| `(while c …)` | `while c` + 1 つ深い段の中身 |
-| `(try … (except [e T] …) (except [[A B]] …) (except [] …) (else …) (finally …))` | `try` / `except T as e` / `except (A, B)` / `except` / `else` / `finally`(節の語は try の列・中身は 1 つ深い段) |
+| `(<- x T e :absent F)` | `:absent F` after `val T x ⇐ e`, kept as `lisp` |
+| `(when c …)` | `when c` + the contents one level deeper |
+| `(if c a b)` / `(if c a)` | `if c` + a, `else` + b (else is aligned to the if's column, and the line number is b's line) |
+| `(match v P x P :if g y …)` | `match v` + per arm `P → x` / `P if g → y` (before `→`, align to the maximum arm pattern width plus one space). Patterns: `(C)` -> `C`, `(C a :k p)` -> `C(a, k=p)`, `(\| p q)` -> `p \| q`, `[p q]` -> `[p, q]`, names and literals as is |
+| `(for [x xs] …)` / `(for [[a b] xs] …)` | `for x in xs` / `for a, b in xs` + the contents one level deeper |
+| `(lfor x xs :if c e)` / `gfor` / `sfor` | `[e for x in xs if c]` / `(e for …)` / `{e for …}` (stacked clauses are `for … for …`) |
+| `(do a b …)` | the word `do` is not shown, and the contents are lined up (in a statement position, at the current level; after an arm's `→`, the first continues on that line and the rest are aligned to that column) |
+| `(cond c x … True z)` | `cond` + per arm `c → x` (conditions aligned in width; the last `True` is `else →`). If any condition does not fit on one line, the whole cond is lisp |
+| `(while c …)` | `while c` + the contents one level deeper |
+| `(try … (except [e T] …) (except [[A B]] …) (except [] …) (else …) (finally …))` | `try` / `except T as e` / `except (A, B)` / `except` / `else` / `finally` (clause words at the try's column, contents one level deeper) |
 | `(continue)` / `(break)` / `(raise)` / `(raise e)` / `(raise e :from c)` | `continue` / `break` / `raise` / `raise e` / `raise e from c` |
-| `(setv (get x k) v)` / `(setv (. o a) v)` / `(setv o.a v)` | `x[k] = v` / `o.a = v`(中身の書き換え — 束縛ではないので setv の警告を付けない・ADR-DOE-HY-006 の対象外) |
-| 塊の中の文と文の間の行全体の `;; …` | `# …` の行(`comment` の役・source の範囲つき) |
+| `(setv (get x k) v)` / `(setv (. o a) v)` / `(setv o.a v)` | `x[k] = v` / `o.a = v` (rewriting contents — not a binding, so no setv warning is attached; outside ADR-DOE-HY-006) |
+| a whole-line `;; …` between statements in a block | a `# …` line (role `comment`, with a source range) |
 | `(del x …)` / `(assert c m)` | `del x, …` / `assert c, m` |
-| 式の中の `(if c a b)` | `a if c else b`(演算の項・method の的では括弧で包む)。束縛・return の値と腕の `→` の後ろでは、100 字を超えれば縦の `if` / `else` に開く |
-| 式の中の `(fn [x] e)` / `(fn [a b] e)` / `(fn [] e)` | `x ⇒ e` / `(a, b) ⇒ e` / `() ⇒ e`(引数は名だけ・本体は式 1 つ。`#*`・既定値は lisp のまま) |
-| `(cut xs a b)` / `(cut xs b)` / `(cut xs)` / `(cut xs a b s)` | `xs[a:b]`(`None` の端は空)/ `xs[:b]` / `xs[:]` / `xs[a:b:s]` |
-| 式の中の内包(`lfor` / `gfor` / `sfor` / `dfor`) | `[e for …]` / `(e for …)` / `{e for …}` / `{k: v for …}`(`:setv` / `:do` の節は lisp のまま) |
-| 字面 `#(a b)` / `#(a)` / `[a b]` / `#{a b}` / `{k v}` | `(a, b)` / `(a,)` / `[a, b]` / `{a, b}` / `{k: v}`(鍵が keyword の辞書は元の字のまま) |
-| 束縛・return の値の場所の `cond` / `match` / `do` / `try` | 縦に開く(1 行目は束縛の行に続け、中身は塊の語の列に揃える) |
-| 表に無い form(知らない macro・`unless`・内包の `:setv` / `:do`・名が組でない `for`・腕の欠けた `match`・表に無い pattern・組への分解の setv・行の途中に註のある式) | 元の lisp のまま(`lisp` の役)。推測で描かない |
+| `(if c a b)` inside an expression | `a if c else b` (wrapped in parentheses as an operand or a method target). In binding / return values and after an arm's `→`, it opens into a vertical `if` / `else` if over 100 characters |
+| `(fn [x] e)` / `(fn [a b] e)` / `(fn [] e)` inside an expression | `x ⇒ e` / `(a, b) ⇒ e` / `() ⇒ e` (arguments are names only and the body is one expression. `#*` and default values stay as lisp) |
+| `(cut xs a b)` / `(cut xs b)` / `(cut xs)` / `(cut xs a b s)` | `xs[a:b]` (a `None` end is empty) / `xs[:b]` / `xs[:]` / `xs[a:b:s]` |
+| comprehensions inside an expression (`lfor` / `gfor` / `sfor` / `dfor`) | `[e for …]` / `(e for …)` / `{e for …}` / `{k: v for …}` (`:setv` / `:do` clauses stay as lisp) |
+| literals `#(a b)` / `#(a)` / `[a b]` / `#{a b}` / `{k v}` | `(a, b)` / `(a,)` / `[a, b]` / `{a, b}` / `{k: v}` (a dict whose keys are keywords keeps its original text) |
+| `cond` / `match` / `do` / `try` in a binding or return value position | opened vertically (the first line continues on the binding's line, and the contents align to the column of the block's words) |
+| Forms not in the table (unknown macros, `unless`, `:setv` / `:do` in comprehensions, a `for` whose name is not a pair, a `match` with a missing arm, patterns not in the table, a destructuring setv to a tuple, an expression with a comment in the middle of a line) | kept as the original lisp (the `lisp` role). Not drawn by guessing |
 
-- **平らにする**: 式の中の形(3 項・lambda・cut・内包・字面)と、cond の条件・match の pattern と `:if`・except の頭は、source で複数行
-  でも改行と字下げを空白 1 つにして 1 行に描く。行の途中に註(文字列の外の `;`)があれば平らにせず lisp のまま(註が後ろの字を飲むため)。
+- **Flattening**: forms inside expressions (ternary, lambda, cut, comprehensions, literals), a cond's conditions, a match's patterns and `:if`, and the head of an except are drawn on one line,
+  even if multi-line in the source, with newlines and indentation made a single space. If there is a comment in the middle of a line (a `;` outside a string), it is not flattened and stays as lisp (because the comment would swallow the characters after it).
 
-- **lisp の島**: 式の中で置き換えなかった括弧(知らない頭)は、その括弧だけ元の lisp のまま `lisp` の役で出す(中の呼びも置き換えない)。
-- **複数行**: 式や lisp が次の行へ続く所は新しい行(`line` = その source の行・`depth` は同じ)にし、source の字下げの文の頭からの差を
-  `pad` に足す。
-- **腕の中で始まる塊**: `A → match v` のように `→` の後ろで始まる when / if / match / for の中身は、腕の段 + 1 の段と、塊の語の列に揃える
-  `pad` で持つ(字の数え方は面と同じ — 段 1 つ = 空白 2 つ・字 1 つ = 1 列)。
-- **内包**: 部分(本体・名・元・条件)がそれぞれ 1 行に収まれば、source で複数行でも 1 行に並べる(行の番号は内包の頭の行。後ろの字の
-  range は後ろの source の行を指す)。収まらなければ lisp の島のまま。
-- **本体の頭の文字列**: 後ろに文がある時は説明として出さない(文字列 1 つだけの本体はその文字列が答えなので出す)。
-- 16 節の束縛の読みも同じ変更で直した: `(val x ! e)`(Hy の reader は `!(e)` も `!` と `(e)` の 2 つの要素に読む — ADR-DOE-HY-006 §3)
-  の 2 つ組を撃つ値に畳み、`(lazy val x e)`・`(session var x e)` を束縛として読んで `bindings` の欄 `modifier`(`lazy` | `session` | null)
-  に前の語を載せる(版 2 への欄の追加)。
+- **Islands of lisp**: parentheses inside an expression that were not replaced (unknown heads) are emitted, only those parentheses, as the original lisp with the `lisp` role (the calls inside are not replaced either).
+- **Multiple lines**: where an expression or lisp continues onto the next line, a new line is made (`line` = that source line, `depth` the same), and the difference of the source's indentation from the head of the statement is added to
+  `pad`.
+- **Blocks that start inside an arm**: the contents of a when / if / match / for that starts after `→`, as in `A → match v`, are held at the arm's level + 1 and with `pad` aligned to the column of the block's words
+  (characters are counted as in the pane — one level = two spaces, one character = one column).
+- **Comprehensions**: if the parts (body, name, source, condition) each fit on one line, they are put on one line even if multi-line in the source (the line number is the line of the comprehension's head. The range of the characters after it
+  points to the later source line). If they do not fit, it stays as an island of lisp.
+- **A string at the head of a body**: when statements follow, it is not shown as an explanation (a body of a single string alone is shown, since that string is the answer).
+- The reading of bindings in section 16 was fixed in the same change: the pair of elements `(val x ! e)` (Hy's reader reads `!(e)` also as the two elements `!` and `(e)` — ADR-DOE-HY-006 §3)
+  is folded into a fired value, and `(lazy val x e)` and `(session var x e)` are read as bindings, with the preceding word carried in the `bindings` field `modifier` (`lazy` | `session` | null)
+  (a field added to version 2).
 
-### 種つきの疑似乱数と外部 I/O（DOEFF133）
+### Seeded pseudo-randomness and external I/O (DOEFF133)
 
-生の I/O の索引は、種を明示した `random.Random(seed)`（Hy の `(random.Random seed)`・`:x seed`）を外部 I/O に数えない。数値定数だけでなく、変数の種も明示された引数として扱う。生成した instance の method、instance を別名へ代入してからの method、`random.Random` の型注釈、関数内の import も、それだけでは外部 I/O ではない。module の import と同じ綴りの method（`(.random rng)`・`(. rng (random))`）は module 自体の参照と区別する。
+The raw-I/O index does not count `random.Random(seed)` with an explicit seed (Hy's `(random.Random seed)` and `:x seed`) as external I/O. Not only numeric constants but also variable seeds are treated as explicit arguments. Methods of the generated instance, methods after assigning the instance to an alias, type annotations of `random.Random`, and imports inside functions are not by themselves external I/O either. A method with the same spelling as the module import (`(.random rng)`, `(. rng (random))`) is distinguished from a reference to the module itself.
 
-種を省略した `random.Random()`、明示的な `None`、展開引数だけで種が確認できない生成、module 大域の `random.random()` 等、`SystemRandom`、`uuid.uuid4`、`secrets` は外部 I/O のまま。種を作る式自体が時計などを読む場合も、その式の I/O は残す。変数の実行時の値が `None` かどうかまでは推論しない。
+A `random.Random()` with the seed omitted, an explicit `None`, a construction whose seed cannot be confirmed because it is only a splat argument, module-global `random.random()` and the like, `SystemRandom`, `uuid.uuid4`, and `secrets` remain external I/O. When the expression that builds the seed itself reads a clock or the like, that expression's I/O remains. Whether a variable's runtime value is `None` is not inferred.
 
-索引は呼び出しの引数の形と型専用の参照を内部の事実として持ち、file の cache にも運ぶ。公開 JSON の形は変えない。外部 I/O の抽出元を直すため、DOEFF133 のみの例外表は追加しない。
+The index holds the shape of call arguments and type-only references as internal facts, and also carries them into the per-file cache. The shape of the public JSON is not changed. Because the extraction source of external I/O was fixed, no exception table only for DOEFF133 is added.
 
-## 22. 宣言を切り替えた effect の古い分岐 — DOEFF175
+## 22. Stale branches on an effect whose declaration was switched — DOEFF175
 
-ADR-DOE-CORE-EFFECTS-003 R14 (4)(段階 4 の道具 — 段階 3 の宣言と段階 5 の呼び手を effect ごとに同じ版で切り替える手順の門)。law
-declarations-switch-one-effect-at-a-time の検がこの規則を通る。defeffect が `:absent` / `:failure` で宣言した型は、`<-` と `!` が答えの値として束ねない
-(不在は Absent、失敗は Raise として呼び手のスコープへ逃がす — R5)ので、その effect の答えを束ねた変数に対して宣言した型を値として分ける枝(match の腕・
-isinstance)は決して通らず、黙って次の枝(多くは成功の枝)に倒れる。effect を 1 つ切り替えた版の後に呼び手に残る古い分岐をこの規則が拾い、当たりが 0 になるまで
-その版を着地させない。
+ADR-DOE-CORE-EFFECTS-003 R14 (4) (the tool for stage 4 — the gate of the procedure that switches the stage-3 declaration and the stage-5 callers in the same version per effect). The test for the law
+declarations-switch-one-effect-at-a-time goes through this rule. The types that defeffect declares with `:absent` / `:failure` are not bound as an answer value by `<-` and `!`
+(absence escapes to the caller's scope as Absent and failure as Raise — R5), so a branch (a match arm, isinstance) that splits the declared types as values on a variable that binds that effect's answer
+is never taken and silently falls to the next branch (often the success branch). This rule picks up the old branches left in callers after a version that switched one effect, and does not land
+that version until the hits reach 0.
 
-- **宣言の読み**: DOEFF122 の失敗の型の読みと同じ作り(`smells::failure_types_in`)に、effect ごとの宣言を足した。repo の Hy の file のうち `:failure` か
-  `:absent` の綴りを含む物の `(defeffect 名 "doc"? {… :absent [A …] :failure [B …] :value [C …]})` から、effect の名(module まで含めた名)→ 不在の型の集合・失敗の型の
-  集合を集める。型は file の import と定義の場所で module まで解く。`:value` の列は読まない(値は答えとして束ねられる)。`:absent` も `:failure` も書かない defeffect は
-  宣言を持たない effect — 何も当てない。全体の実行は file ごとの cache(`failure-types`)から、1 file の実行(エディタ)は引く effect の名を綴る宣言の file だけから集める
-  (`SpelledFailures` — DOEFF122 と同じ作りで、答えは同じ)。
-- **束ねた名**: 定義の中を前から順に読み、名を覚える。
-  - `(<- x (E …))`・`(<- x T (E …))`・`(<- x (E …) :absent F)`: 右辺の頭が `E` の記号なら x は E の答え。effect は class なので、頭の名の最後の段が大文字で始まる物だけを effect と数える(`ReadRow`・`effects.ReadRow`。defk の呼び `read-typed`・method の呼びは数えない — 1 file の実行は宣言を引くたびに repo の宣言の file を読むので、引く数を減らす。小文字で始まる defeffect は読めない)。頭が effect でない呼び(defk・`maybe`・`on-raise` …)は x を別の値と覚える。
-  - `(val|var|setv|setx|:= x (! (E …)))`: x は E の答え。ほかの右辺は別の値。
-  - 別の値に束ね直した名・`fn` や `defk` の引数・`for` / `with` / `let` / `except` の名・match の pattern で束ねた名と `:as` の名・組み立ての束ねで束ねた名は、effect の答えでなくなる
-    (覚えを捨てる。`for` と `with` の名は後ろの文でも捨てる)。comprehension(`lfor`・`gfor`・`sfor`・`dfor`)の中は何も覚えない。誤って当てるより見逃す方に倒す。
-  - 分岐は束ねた順に読むだけ(flow は追わない)— `when` / `if` の中の束ねも、同じ定義の後ろの分岐に効く。
-- **当てる枝**: 主が覚えた名か直に書いた `(! (E …))` の時に、
-  - `(match 主 pattern 腕 …)` の腕 — pattern の頭の型(`(T …)`)と、`(| (A) (B))` の選択肢の頭。`:as` と `:if` の鍵は飛ばす。pattern の欄の中の型(`(Row :value (Missing))`)は答えの型でないので辿らない。
-  - `(isinstance 主 型の式)` — 型の式の記号 1 つ・`#(A B)`・`[A B]`・`(| A B)`・`(tuple [A B])` の記号 1 つずつ。`cond` / `if` / `when` / `and` / `not` の中の isinstance も、木を歩いて拾う。
-  型が E の `:absent` / `:failure` に在る時だけ当てる(成功の型・`:value` の型・別の effect だけが宣言した型・別の module の同じ名の型は当てない)。
-- **読まない所**: `defhandler`(節は effect を受ける側 — 定義ごと読まない)・`defhandler` 以外の最上位の form(`defrecord`・`defeffect`・`val` …)・quote の中・註と `#_`。
-  `(<- x (read-typed …))` のように defk を経由した答えは追わない — 経由する defk 自身の effect が切り替わる版で、その defk の戻りの型の枝として直す。
-- **母集団**: `definitions` の `paths` の下の Hy の file と `test_paths` の検の置き場(DOEFF126 と同じ — 検の呼び手も切り替えで古くなる)。`definitions` の節が無い repo では判じない
-  (`rules` の `wired` が偽)。宣言(defeffect)は repo の Hy の file 全部から集めるので、宣言する file が母集団の外でもよい。doeff 自身の母集団は `paths` の本体の 3 dir だけで、
-  ADR(`docs/adr/*.hy`)と doeff-core-effects の probe の検(`tests/test_outcome_binds.hy` ほか — 宣言つきの effect を見本に定義する)は母集団の外。
-- **鍵と位置**: `<path>::DOEFF175::<定義>::<束ねた名>::<型の綴り>`(`(! (E …))` を直に分ける形は束ねた名の代わりに E の綴り)。同じ定義の同じ名・型は 1 件。位置 = match の腕の pattern か isinstance の型の記号。
-- **重さ**: critical・**登録簿で下げない**(`lowered_by_registry` が偽)・`exemptible_by_layer` でない。門が空かないよう、既知の一覧にも `:exempt` にも載せない。
-- **指摘の文**: 「E は T を不在(失敗)と宣言した。<- は x に T を束ねないので、この枝(match の腕 / isinstance)は通らない — maybe / on-raise / :absent へ」。直し方(R14 (3)):
-  枝を消して成功の道だけにする。不在で何かしたい所は `(<- x (E …) :absent <失敗>)` か `absent-as`、失敗で何かしたい所は `on-raise`、不在や失敗を値として持ち回る所は `(maybe (E …))` / `(result (E …))` で包んで Nothing / Err を受ける。
-- **検**: 単体 `src/project/stale_outcome_branches.rs`(形・鳴らさない形・束ね直した名)、binary を走らせる `tests/stale_outcome_branch.rs` と検体 `tests/fixtures/stale_outcome_branch/`
-  (`branches.hy` の「; 鳴る」の行 17 行と当たりの行の集合が一致・鳴らさない定義 12 個・宣言を消すと 0 件・宣言の無い effect に足すと当たる・1 file の実行が全体の実行と同じ鍵・登録簿で下がらない・
-  母集団・doeff 自身の本番の code に 0 件)。
+- **Reading declarations**: built the same way as DOEFF122's reading of failure types (`smells::failure_types_in`), with per-effect declarations added. From `(defeffect name "doc"? {… :absent [A …] :failure [B …] :value [C …]})` in repo Hy files that contain the spelling `:failure` or
+  `:absent`, it collects, per effect name (the name including the module), the set of absent types and the set of failure types. Types are resolved to modules by the file's imports and where definitions are.
+  The `:value` list is not read (values are bound as answers). A defeffect that writes neither `:absent` nor `:failure` has
+  no declaration — it hits nothing. A whole run uses the per-file cache (`failure-types`), and a one-file run (the editor) collects only from the declaring files that spell the effect name being looked up
+  (`SpelledFailures` — the same build as DOEFF122, with the same answers).
+- **Bound names**: reads through the definition from the front and remembers names.
+  - `(<- x (E …))`, `(<- x T (E …))`, `(<- x (E …) :absent F)`: if the head of the right side is the symbol `E`, x is E's answer. Effects are classes, so only a name whose last head segment begins with an uppercase letter counts as an effect (`ReadRow`, `effects.ReadRow`; calls of a defk such as `read-typed` and calls of methods are not counted — a one-file run reads the repo's declaration files every time it looks up a declaration, so this reduces the number of lookups. A defeffect that begins with a lowercase letter cannot be read). A call whose head is not an effect (a defk, `maybe`, `on-raise` …) makes x remembered as another value.
+  - `(val\|var\|setv\|setx\|:= x (! (E …)))`: x is E's answer. Other right sides are other values.
+  - A name rebound to another value, arguments of `fn` and `defk`, names of `for` / `with` / `let` / `except`, names bound by a match pattern and `:as` names, and names bound by an assembled binding stop being the effect's answer
+    (the memory is dropped. Names of `for` and `with` are dropped in later statements too). Inside comprehensions (`lfor`, `gfor`, `sfor`, `dfor`) nothing is remembered. It leans toward missing rather than hitting wrongly.
+  - Branches are read only in the order of binding (flow is not followed) — a binding inside `when` / `if` also affects later branches of the same definition.
+- **Branches it hits**: when the subject is a remembered name or a directly written `(! (E …))`,
+  - the arms of `(match subject pattern arm …)` — the type at the head of the pattern (`(T …)`) and the heads of alternatives of `(| (A) (B))`. The keys `:as` and `:if` are skipped. Types inside a pattern's field (`(Row :value (Missing))`) are not the answer's type, so they are not followed.
+  - `(isinstance subject type-expression)` — each symbol of a type expression: one symbol, `#(A B)`, `[A B]`, `(| A B)`, `(tuple [A B])`. An isinstance inside `cond` / `if` / `when` / `and` / `not` is also picked up by walking the tree.
+  It hits only when the type is in E's `:absent` / `:failure` (success types, `:value` types, types declared only by another effect, and same-named types from another module do not hit).
+- **What it does not read**: `defhandler` (a clause is the side that receives the effect — not read per definition), top-level forms other than `defhandler` (`defrecord`, `defeffect`, `val` …), insides of quotes, and comments and `#_`.
+  An answer that went through a defk, as in `(<- x (read-typed …))`, is not followed — it is fixed as a branch on that defk's return type, in the version where the effect of the defk it goes through is switched.
+- **Population**: Hy files under `paths` of `definitions` and test locations in `test_paths` (the same as DOEFF126 — test callers also go stale on a switch). It is not judged in a repo with no `definitions` section
+  (`wired` in `rules` is false). Declarations (defeffect) are collected from all of the repo's Hy files, so the declaring file may be outside the population. doeff's own population is only the 3 body dirs of `paths`, and
+  ADRs (`docs/adr/*.hy`) and doeff-core-effects' probe tests (`tests/test_outcome_binds.hy` and others — they define effects with declarations as samples) are outside the population.
+- **Key and position**: `<path>::DOEFF175::<definition>::<bound name>::<type spelling>` (the form that splits directly with `(! (E …))` uses E's spelling instead of the bound name). One per same name and type in the same definition. Position = the match arm's pattern or the isinstance's type symbol.
+- **Severity**: critical, **not lowered by the registry** (`lowered_by_registry` is false), not `exemptible_by_layer`. So that the gate does not open, it is put in neither the known list nor `:exempt`.
+- **The message**: "E declared T as absent (failure). <- does not bind x to T, so this branch (match arm / isinstance) is never taken — use maybe / on-raise / :absent". The fix (R14 (3)):
+  delete the branch and leave only the success path. Where you want to do something on absence, use `(<- x (E …) :absent <failure>)` or `absent-as`; where you want to do something on failure, use `on-raise`; and where absence or failure is carried around as a value, wrap with `(maybe (E …))` / `(result (E …))` and receive Nothing / Err.
+- **Tests**: unit `src/project/stale_outcome_branches.rs` (shapes, shapes that do not hit, rebound names), and the binary-running `tests/stale_outcome_branch.rs` with the fixture `tests/fixtures/stale_outcome_branch/`
+  (the 17 lines marked "; fires" in `branches.hy` match the set of hit lines, 12 definitions that do not hit, removing the declaration gives 0, adding to an effect with no declaration makes it hit, a one-file run gives the same keys as a whole run, it is not lowered by the registry,
+  the population, and 0 hits in doeff's own production code).

@@ -1,52 +1,52 @@
-//! 設定の知らない鍵と規則の ID の知らせ(DOEFF100)。
+//! Notices for config keys and rule IDs the linter does not know (DOEFF100).
 //!
-//! 設定(pyproject の `[tool.doeff-linter]` の全部の段・architecture.hy)は linter より先に進むことがある — agora-controllers が
-//! 新しい鍵を書いた後、置き場の binary が組み直されるまでの間。その間に lint 全体を設定の誤り(終了コード 2)で止めると、
-//! エディタの違反の欄が空になり hook も黙る(2026-09-28 に 4 回)。だから知らない鍵と、この binary に無い規則の ID
-//! (`DOEFF` と 3 桁の形)は、その鍵だけを読まずに残りの規則を走らせ、黙って捨てずに設定の file のその行へ warning の違反
-//! DOEFF100 として出す。書き違いも同じ形で見える(形の崩れた ID・型の違う値・存在しない層の名は今までどおり誤り)。
+//! The config (every level of pyproject's `[tool.doeff-linter]`, architecture.hy) can get ahead of the linter -- after agora-controllers
+//! writes a new key, until the binary at its location is rebuilt. If during that time the whole lint stopped with a config error (exit code 2),
+//! the editor's violation pane would be empty and the hook would go silent (4 times on 2026-09-28). So unknown keys and rule IDs not in this binary
+//! (the form `DOEFF` plus 3 digits) are handled by skipping only that key, running the remaining rules, and reporting them as warning violations
+//! DOEFF100 at that line of the config file instead of silently dropping them. Typos are visible the same way (malformed IDs, values of the wrong type, and nonexistent layer names are errors as before).
 
 use std::path::{Path, PathBuf};
 
 use crate::position::{line_range, Range};
 
-/// 知らなかった物の種類。
+/// Kind of the thing that was not known.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum NoticeKind {
-    /// 設定の鍵(`semantic.proxy_url`・architecture.hy の `:dependency-layers` など)。
+    /// A config key (`semantic.proxy_url`, `:dependency-layers` of architecture.hy, etc.).
     Key,
-    /// 設定が参照する規則の ID(この binary に無い `DOEFF` と 3 桁の ID)。
+    /// A rule ID the config references (a `DOEFF` plus 3-digit ID not in this binary).
     RuleId(String),
 }
 
-/// 知らせ 1 件 — どの file のどの鍵を、どこで読まなかったか。
+/// One notice -- which key of which file was not read, and where.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ConfigNotice {
     pub file: PathBuf,
-    /// 鍵の path(`semantic.proxy_url`・`laws.<名>.rules`・`defarchitecture :layers[0] :dependency-layers`)。
+    /// Key path (`semantic.proxy_url`, `laws.<name>.rules`, `defarchitecture :layers[0] :dependency-layers`).
     pub key: String,
     pub kind: NoticeKind,
     pub range: Range,
 }
 
-/// 設定が参照したが、この binary に無い規則の ID(file と位置は設定の file を読む所で決める)。
+/// A rule ID referenced by the config but not in this binary (the file and position are decided where the config file is read).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct UnknownRuleRef {
-    /// 参照していた鍵の path(`laws.<名>.rules`・`registry.reconciling`・`rules.<ID>`)。
+    /// Path of the referencing key (`laws.<name>.rules`, `registry.reconciling`, `rules.<ID>`).
     pub key: String,
     pub id: String,
 }
 
-/// 規則の ID の形(`DOEFF` と 3 桁・大文字小文字は問わない)か — この形で知らない ID は「この binary より新しい規則」として
-/// 知らせに回し、形の崩れた ID(`DOEFF1O1` など)は書き違いとして今までどおり誤りにする。
+/// Whether this is the shape of a rule ID (`DOEFF` plus 3 digits, case-insensitive) -- an ID of this shape that is unknown is treated as "a rule newer than this binary" and
+/// goes to a notice, while a malformed ID (such as `DOEFF1O1`) is treated as a typo and an error as before.
 pub fn is_rule_id_shape(id: &str) -> bool {
     let upper = id.to_uppercase();
     upper.len() == 8 && upper.starts_with("DOEFF") && upper[5..].chars().all(|c| c.is_ascii_digit())
 }
 
-/// TOML の本文の中で鍵の path(`.` 区切り・配列の添字は数字の段)が書かれた行の頭の byte の位置。
-/// 節の見出し(`[tool.doeff-linter.<段>]`・`[[…]]`・節の中身だけの file の `[<段>]`)を長い順に探し、見出しの下の最初の鍵の行を
-/// 探す。見つからなければ `[tool.doeff-linter]` の見出しの行、それも無ければ 0。
+/// Byte offset of the start of the line in the TOML body where the key path (separated by `.`, array indices as numeric segments) is written.
+/// Searches section headings (`[tool.doeff-linter.<level>]`, `[[…]]`, and `[<level>]` in a file that holds only a section's content) from longest, and finds the first key line under the heading.
+/// If not found, the line of the `[tool.doeff-linter]` heading; if that is absent too, 0.
 pub fn locate_toml_key(text: &str, key: &str) -> usize {
     let segments: Vec<&str> = key.split('.').filter(|s| !s.is_empty() && !s.chars().all(|c| c.is_ascii_digit())).collect();
     let lines: Vec<(usize, &str)> = line_starts(text);
@@ -74,7 +74,7 @@ pub fn locate_toml_key(text: &str, key: &str) -> usize {
     }
 }
 
-/// 節の本文(次の見出しの手前まで)で `<鍵> =` の行を探す(鍵は裸か引用符つき)。
+/// Finds the `<key> =` line in a section body (up to just before the next heading) (the key is bare or quoted).
 fn key_line_in_section(lines: &[(usize, &str)], key: &str) -> Option<usize> {
     for (start, line) in lines {
         let trimmed = line.trim_start();
@@ -92,7 +92,7 @@ fn key_line_in_section(lines: &[(usize, &str)], key: &str) -> Option<usize> {
     None
 }
 
-/// 行の頭の byte の位置と行の本文の列。
+/// Byte offset of the line start and the line body's columns.
 fn line_starts(text: &str) -> Vec<(usize, &str)> {
     let mut out = Vec::new();
     let mut start = 0usize;
@@ -103,12 +103,12 @@ fn line_starts(text: &str) -> Vec<(usize, &str)> {
     out
 }
 
-/// TOML の設定の file の中の知らない鍵の知らせ(位置は本文から探す)。
+/// Notices for unknown keys inside a TOML config file (the position is found from the body).
 pub fn key_notice(file: &Path, text: &str, key: &str) -> ConfigNotice {
     ConfigNotice { file: file.to_path_buf(), key: key.to_string(), kind: NoticeKind::Key, range: line_range(text, locate_toml_key(text, key)) }
 }
 
-/// 設定の file の中の知らない規則の ID の知らせ(位置は ID の綴りが最初に出る行・無ければ鍵の行)。
+/// Notices for unknown rule IDs inside a config file (position is the line where the ID's spelling first appears; if none, the key's line).
 pub fn rule_notice(file: &Path, text: &str, unknown: &UnknownRuleRef) -> ConfigNotice {
     let at = text.find(unknown.id.as_str()).unwrap_or_else(|| locate_toml_key(text, &unknown.key));
     ConfigNotice { file: file.to_path_buf(), key: unknown.key.clone(), kind: NoticeKind::RuleId(unknown.id.clone()), range: line_range(text, at) }
@@ -120,7 +120,7 @@ mod tests {
 
     const PYPROJECT: &str = "[project]\nname = \"x\"\n\n[tool.doeff-linter]\nenable = [\"ALL\"]\nnew_top = 1\n\n[tool.doeff-linter.semantic]\nmodel = \"m\"\nproxy_url = \"http://x\"\n\n[tool.doeff-linter.smells]\nshape_check_layers = []\n";
 
-    /// 行の番号(0 始まり)を返す。
+    /// Returns the line number (0-based).
     fn line_of(text: &str, offset: usize) -> usize {
         text[..offset].matches('\n').count()
     }
@@ -130,7 +130,7 @@ mod tests {
         assert_eq!(line_of(PYPROJECT, locate_toml_key(PYPROJECT, "semantic.proxy_url")), 9);
         assert_eq!(line_of(PYPROJECT, locate_toml_key(PYPROJECT, "smells")), 11);
         assert_eq!(line_of(PYPROJECT, locate_toml_key(PYPROJECT, "new_top")), 5);
-        assert_eq!(line_of(PYPROJECT, locate_toml_key(PYPROJECT, "nowhere")), 3, "見つからない鍵は [tool.doeff-linter] の行");
+        assert_eq!(line_of(PYPROJECT, locate_toml_key(PYPROJECT, "nowhere")), 3, "a key not found maps to the [tool.doeff-linter] line");
     }
 
     #[test]

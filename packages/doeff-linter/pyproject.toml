@@ -23,7 +23,7 @@ classifiers = [
 
 [build-system]
 requires = ["maturin>=1.0,<2.0"]
-# maturin を包み、cargo の target を作業木の外の一時の dir に置く(tools/doeff_cargo_backend.py)
+# Wraps maturin and puts cargo's target in a temporary dir outside the working tree (tools/doeff_cargo_backend.py)
 build-backend = "doeff_cargo_backend"
 backend-path = ["."]
 
@@ -31,21 +31,21 @@ backend-path = ["."]
 # Build as a pure Rust binary, not a Python extension
 bindings = "bin"
 strip = true
-# sdist は path 依存の crate(doeff-indexer)を持つので crate を doeff-linter/ の下へ移す。build の口は pyproject と
-# 同じ根に要る(backend-path = ["."])ので、根に写す — 無いと sdist から組めない。
+# The sdist carries the path-dependency crate (doeff-indexer), so the crate is moved under doeff-linter/. The build entry point
+# must sit at the same root as pyproject (backend-path = ["."]), so it is copied to the root — without it the sdist cannot be built.
 include = [{ path = "doeff_cargo_backend.py", format = "sdist" }]
 
-# uv が「作り直すか」を決める入力(親 #1160)。
-# uv は path で入れた依存を、既定では pyproject.toml / setup.py / setup.cfg が変わった時にしか作り直さない。
-# この package の中身は Rust の binary なので、src の .rs を変えても使う側の venv は古い binary のまま残る
-# (実例: agora-controllers の venv の `doeff-linter --version` が履歴の書き換えの前の 7cfe942 を名乗り続けた)。
-# そこで binary の入力を全部並べる:
-#   - この crate の Cargo.toml・build.rs(版に埋める commit を決める)・src の .rs・include_str! で埋める data の .json
-#   - path で依存する ../doeff-indexer の Cargo.toml・Cargo.lock・src の .rs・data の .json
-#   (この crate の Cargo.lock は git に載っていないので鍵にしない — 載せたら足す)
-# doeff の commit ごとに作り直す形(`{ git = { commit = true } }`)は、Rust の build が約 2 分かかるので採らない。
-# そのため .rs も data も変えない commit(文書だけ等)では作り直さず、版の表示は前の commit のまま。
-# 戻し方 = この [tool.uv] の節を消す(uv の既定に戻る)。
+# Inputs that let uv decide whether to rebuild (parent #1160).
+# By default uv rebuilds a dependency installed by path only when pyproject.toml / setup.py / setup.cfg changes.
+# The contents of this package are a Rust binary, so even if a .rs under src changes, the consumer's venv keeps the old binary
+# (example: the `doeff-linter --version` in the agora-controllers venv kept reporting 7cfe942, from before the history rewrite).
+# So we list all inputs of the binary:
+#   - this crate's Cargo.toml, build.rs (decides the commit embedded in the version), .rs files under src, and .json data embedded via include_str!
+#   - the path-dependency ../doeff-indexer's Cargo.toml, Cargo.lock, .rs files under src, and .json data
+#   (this crate's Cargo.lock is not tracked in git, so it is not used as a key — add it if it gets tracked)
+# We do not use the per-doeff-commit rebuild form (`{ git = { commit = true } }`) because the Rust build takes about 2 minutes.
+# As a result, commits that change neither .rs nor data (docs only, etc.) do not trigger a rebuild, and the displayed version stays at the previous commit.
+# To revert = delete this [tool.uv] section (back to uv's default).
 [tool.uv]
 cache-keys = [
     { file = "pyproject.toml" },

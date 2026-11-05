@@ -1,8 +1,8 @@
-//! repo 全体の Hy の索引の file ごとの cache の検 — 一時の repo で binary を走らせ、出力の鍵を見る。
+//! Check of the per-file cache of the whole-repo Hy index — run the binary in a temporary repo and look at the keys in the output.
 //!
-//! 生の副作用の当たり(DOEFF106)は索引の生の副作用の証拠から出るので、索引がどの file の中身から組まれたかが鍵に現れる。
-//! cache の鍵(file の大きさと更新時刻)を保ったまま中身だけを替えると、cache の索引が使われていれば古い中身の当たりが残る —
-//! それで「変わった file だけ読み直す」を外から確かめる(実際の編集は更新時刻が進むので、この古さは起きない)。
+//! Raw side-effect hits (DOEFF106) come from the raw side-effect evidence in the index, so the keys show which file contents the index was built from.
+//! If only the contents change while the cache key (file size and modification time) is preserved, hits from the stale contents remain when the cached index is used —
+//! this verifies from the outside that only changed files are re-read (a real edit advances the modification time, so this staleness would not occur).
 
 use serde_json::Value;
 use std::path::Path;
@@ -26,7 +26,7 @@ allowed_layers = ["foundation"]
 "#;
 
 const CLOCK_RAW: &str = "(import time)\n(defn now [] (time.time))\n";
-// CLOCK_RAW と同じ長さで、生の副作用の無い中身(import していない名前を呼ぶ)。
+// Same length as CLOCK_RAW, with contents that have no raw side effect (calls a name that is not imported).
 const CLOCK_TAME: &str = "(import time)\n(defn now [] (tame.time))\n";
 const OTHER_PLAIN: &str = "(defn plan [x] x)\n";
 const OTHER_RAW: &str = "(import time)\n(defn plan [x] (time.time))\n";
@@ -41,7 +41,7 @@ fn repo() -> tempfile::TempDir {
     dir
 }
 
-/// binary を root で走らせ、DOEFF106 の鍵を並べる。cache = Some(dir) ならその置き場の cache を使い、None なら使わない。
+/// Run the binary at root and list the DOEFF106 keys. With cache = Some(dir) the cache at that location is used; with None no cache is used.
 fn raw_keys(root: &Path, cache: Option<&Path>) -> Vec<String> {
     let mut command = Command::new(env!("CARGO_BIN_EXE_doeff-linter"));
     command.args(["--output-format", "editor-json", "--no-log"]).current_dir(root).env_remove("DOEFF_LINTER_NO_CACHE");
@@ -51,7 +51,7 @@ fn raw_keys(root: &Path, cache: Option<&Path>) -> Vec<String> {
     };
     let output = command.output().unwrap();
     let stdout = String::from_utf8_lossy(&output.stdout);
-    let report: Value = serde_json::from_str(&stdout).unwrap_or_else(|e| panic!("JSON でない({}): {}", e, stdout));
+    let report: Value = serde_json::from_str(&stdout).unwrap_or_else(|e| panic!("not JSON ({}): {}", e, stdout));
     let mut keys: Vec<String> = report["violations"]
         .as_array()
         .unwrap()
@@ -63,14 +63,14 @@ fn raw_keys(root: &Path, cache: Option<&Path>) -> Vec<String> {
     keys
 }
 
-/// path の中身を書き換え、更新時刻を書き換える前の値に戻す(大きさも同じなら cache の鍵は変わらない)。
+/// Rewrite the contents of path and restore the modification time to its pre-rewrite value (if the size is also the same, the cache key does not change).
 fn rewrite_keeping_stamp(path: &Path, text: &str) {
     let before: SystemTime = std::fs::metadata(path).unwrap().modified().unwrap();
     std::fs::write(path, text).unwrap();
     std::fs::File::options().write(true).open(path).unwrap().set_modified(before).unwrap();
 }
 
-/// cache の置き場の file を、種類の dir の名と塊の名の組(`<種類>.<形>.d/<塊>`)で並べる(種類ごとに塊へ分けて置く)。
+/// List the files at the cache location as pairs of kind-dir name and chunk name (`<kind>.<shape>.d/<chunk>`) (chunks are stored separately per kind).
 fn cache_files(cache: &Path) -> Vec<String> {
     let mut names: Vec<String> = walkdir::WalkDir::new(cache)
         .into_iter()
@@ -92,22 +92,22 @@ fn only_the_changed_file_is_indexed_again_and_the_answer_matches_the_uncached_ru
     let clock = "app/core/clock.hy::DOEFF106::now::time.time".to_string();
     let other = "app/core/other.hy::DOEFF106::plan::time.time".to_string();
 
-    // 1 回目: cache を作る。答えは cache を使わない実行と同じ。
+    // First run: build the cache. The answer is the same as a run without the cache.
     let first = raw_keys(dir.path(), Some(cache.path()));
     assert_eq!(first, vec![clock.clone()]);
     assert_eq!(first, raw_keys(dir.path(), None));
     assert!(cache_files(cache.path()).iter().any(|f| f.starts_with("hy-index.bin.d/")), "{:?}", cache_files(cache.path()));
 
-    // 変わらない 2 回目も同じ答え。
+    // The unchanged second run gives the same answer.
     assert_eq!(raw_keys(dir.path(), Some(cache.path())), first);
 
-    // clock.hy の鍵(大きさ・更新時刻)を保って中身だけ替える — cache の索引が使われ、古い当たりが残る。
+    // Change only the contents while preserving clock.hy's key (size and modification time) — the cached index is used, and the stale hit remains.
     rewrite_keeping_stamp(&dir.path().join("app/core/clock.hy"), CLOCK_TAME);
-    // other.hy は普通に書き換える(更新時刻が進む)— この file だけが読み直され、新しい当たりが出る。
+    // other.hy is rewritten normally (the modification time advances) — only this file is re-read and the new hit appears.
     std::thread::sleep(std::time::Duration::from_millis(20));
     std::fs::write(dir.path().join("app/core/other.hy"), OTHER_RAW).unwrap();
     assert_eq!(raw_keys(dir.path(), Some(cache.path())), vec![clock.clone(), other.clone()]);
 
-    // cache を使わない実行は、今の中身どおり(clock.hy の当たりは消えている)。
+    // A run without the cache reflects the current contents (clock.hy's hit is gone).
     assert_eq!(raw_keys(dir.path(), None), vec![other]);
 }

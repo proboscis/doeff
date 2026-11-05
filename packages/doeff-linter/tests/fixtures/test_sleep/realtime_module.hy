@@ -1,6 +1,6 @@
-;;; DOEFF211 の検体 — module の段で realtime を名乗る file(本物の外の process を締め切りつきで待つ検の道具の形)。
-;;; 最上位の (val pytestmark …) が印の list に realtime を持つので、file の中の眠りはどれも鳴らない。
-;;; tests/semgrep/test_realtime_tests_registry.py は、この file を「module の段の名乗り 1 つ」と読む。この file は実行しない。
+;;; Fixture for DOEFF211 — a file that claims realtime at the module level (the shape of a test helper that waits, with a deadline, for a real external process).
+;;; The top-level (val pytestmark ...) has realtime in its marker list, so no sleep inside the file fires.
+;;; tests/semgrep/test_realtime_tests_registry.py reads this file as "one module-level claim". This file is not executed.
 (require doeff-hy.macros [deftest defk <- val])
 (import time)
 (import pytest)
@@ -10,7 +10,7 @@
 
 (defk wait-until-the-child-ends [child deadline]
   {:pre [(: deadline float)] :post [(: % bool)] :tags {:context "sample" :role "program"}}
-  "本物の子 process の終わりを締め切りつきで待つ。"
+  "Wait, with a deadline, for a real child process to end."
   (while (and (is (.poll child) None) (< (time.monotonic) deadline))
     (time.sleep 0.05))
   (is-not (.poll child) None))

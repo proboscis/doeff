@@ -1,5 +1,5 @@
-;;; DOEFF175 の検体の宣言 — defeffect が答えを 成功・不在・失敗・値 に分けて宣言した effect と、宣言の無い effect。
-;;; 検体 branches.hy が app.effects から import して使う。この file は実行しない(読むだけの検体)。
+;;; Fixture declarations for DOEFF175 — effects whose answers defeffect declares split into success / absent / failure / value, plus an effect with no declaration.
+;;; The fixture branches.hy imports and uses these from app.effects. This file is never run (read-only fixture).
 (require doeff-hy.macros [defeffect])
 (require doeff-hy.record [defrecord])
 
@@ -27,7 +27,7 @@
 
 
 (defeffect ReadRow
-  "行を読む(不在 = Missing・失敗 = Unreachable・値 = Conflict)。"
+  "Read a row (absent = Missing, failure = Unreachable, value = Conflict)."
   {:fields [(: key str)]
    :answer (| Row Missing Unreachable Conflict)
    :absent [Missing]
@@ -36,7 +36,7 @@
    :tags {:context "sample" :role "intent"}})
 
 (defeffect PostRow
-  "行を送る(不在 = Gone・失敗 = Refused)。Missing は宣言していない。"
+  "Send a row (absent = Gone, failure = Refused). Missing is not declared."
   {:fields [(: id str)]
    :answer (| Accepted Refused Gone)
    :absent [Gone]
@@ -44,7 +44,7 @@
    :tags {:context "sample" :role "intent"}})
 
 (defeffect PlainRead
-  "宣言の無い読み(答えの型は ReadRow と同じ union — <- は答えをそのまま束ねる)。"
+  "An undeclared read (answer type is the same union as ReadRow — <- binds the answer as is)."
   {:fields [(: key str)]
    :answer (| Row Missing Unreachable)
    :tags {:context "sample" :role "intent"}})

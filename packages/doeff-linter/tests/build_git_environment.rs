@@ -1,12 +1,12 @@
-//! 本物の build.rs を Cargo で動かし、呼び手の repo を版へ埋めないことを確かめる(#1480)。
-//! 依存の無い小さな crate なので、linter 全体を反例ごとに組み直さない。
+//! Runs the real build.rs through Cargo and checks that the caller's repo is not embedded in the version (#1480).
+//! It is a small crate with no dependencies, so the whole linter is not rebuilt for each counterexample.
 
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
 fn command(name: &str) -> Command {
     let mut command = Command::new(name);
-    // 検の準備自体は、検を起動した hook の repo や版の上書きを引き継がない。
+    // The test setup itself does not inherit the repo or version overrides of the hook that launched the test.
     for (key, _) in std::env::vars_os() {
         if key.to_str().is_some_and(|key| key.starts_with("GIT_")) {
             command.env_remove(key);
@@ -17,7 +17,7 @@ fn command(name: &str) -> Command {
 }
 
 fn output(command: &mut Command) -> String {
-    let output = command.output().expect("子processを起動できる");
+    let output = command.output().expect("can launch the child process");
     assert!(
         output.status.success(),
         "{command:?}\nstdout: {}\nstderr: {}",
@@ -63,7 +63,7 @@ impl Repo {
                 .arg(dir.path())
                 .args(["init", "--quiet"]),
         );
-        // 一時repoには、この検専用の空のhooks directoryを使う。
+        // Use an empty hooks directory dedicated to this test for the temporary repo.
         let hooks = dir.path().join(".git/fixture-hooks");
         std::fs::create_dir(&hooks).unwrap();
         output(
@@ -124,7 +124,7 @@ impl Repo {
             .unwrap()
             .map(|entry| entry.unwrap().path().join("output"))
             .find(|path| path.is_file())
-            .expect("Cargoがbuild.rsの出力を残す");
+            .expect("Cargo leaves the output of build.rs");
         (stamp, std::fs::read_to_string(directives).unwrap())
     }
 

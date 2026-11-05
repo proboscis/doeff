@@ -1,8 +1,8 @@
-//! 名指しの範囲の外の検 — 根を `src` にした一時の package で binary を走らせ、根の外の Hy の file(`tests/`)を
-//! 名指した時に「対象の外」と名指して緑と分けることを確かめる(仕様 1 節「名指しの範囲の外」)。
+//! Check for files outside the named scope — run the binary in a temporary package whose root is `src`, and confirm that naming a Hy file outside the root (`tests/`)
+//! reports it as "out of scope" and keeps it distinct from green (spec section 1, "outside the named scope").
 //!
-//! 失敗ケース: 根の外の検の file に違反(生の副作用)を書いて名指す — 以前は層の規則が file を判じず、終了コード 0 で何も出さなかった
-//! (doeff-cluster の tests/ の .hy が hook でも手元の確かめでも測られていなかった形)。今は 1 行で名指し、終了コード 3。
+//! Failure case: write a violation (a raw side effect) in a test file outside the root and name it — previously the layer rules did not judge the file and the exit code was 0 with no output
+//! (the shape in which the .hy files under doeff-cluster's tests/ were measured by neither the hook nor local checks). Now it is named in one line and the exit code is 3.
 
 use serde_json::Value;
 use std::path::Path;
@@ -28,7 +28,7 @@ allowed_layers = ["foundation"]
 const PLAIN: &str = "(defn plan [x] x)\n";
 const RAW: &str = "(import time)\n(defn now [] (time.time))\n";
 
-/// 根 = src の一時の package: 根の下に層 core の file 1 つ、根の外の tests/ に違反を書いた Hy の file と Python の file を 1 つずつ。
+/// Root = a temporary package with src: one layer-core file under the root, and one Hy file and one Python file that contain violations in tests/ outside the root.
 fn package() -> tempfile::TempDir {
     let dir = tempfile::TempDir::new().unwrap();
     std::fs::write(dir.path().join("pyproject.toml"), CONFIG).unwrap();
@@ -53,35 +53,35 @@ fn lint(dir: &Path, args: &[&str]) -> Output {
 
 fn editor_report(output: &Output) -> Value {
     let stdout = String::from_utf8_lossy(&output.stdout);
-    serde_json::from_str(&stdout).unwrap_or_else(|e| panic!("JSON でない({}): {}", e, stdout))
+    serde_json::from_str(&stdout).unwrap_or_else(|e| panic!("not JSON ({}): {}", e, stdout))
 }
 
-/// stderr に「対象の外」の行で rel(package の dir からの path)の file が名指されているか — 名指しの path は正規化した絶対の path で
-/// 出る(違反の path と同じ形)ので、`/<rel>(` の綴りで照らす。
+/// Whether stderr names the file rel (path from the package dir) in an "out of scope" line — the named path comes out as a normalized absolute path
+/// (the same shape as a violation's path), so compare using the spelling `/<rel>(`.
 fn named_outside(stderr: &str, rel: &str) -> bool {
-    stderr.lines().any(|line| line.contains("対象の外 — ") && line.contains(&format!("/{}(", rel)))
+    stderr.lines().any(|line| line.contains("out of scope — ") && line.contains(&format!("/{}(", rel)))
 }
 
 #[test]
 fn a_named_hy_file_outside_the_root_is_named_and_not_green() {
-    // 失敗ケース: 根の外の tests/ の Hy の file(生の副作用を書いた)を名指す — 層の規則は判じないので、黙らずに名指し、終了コード 3。
+    // Failure case: name a Hy file in tests/ outside the root (with a raw side effect written in it) — the layer rules do not judge it, so it is named rather than silent, with exit code 3.
     let dir = package();
     let output = lint(dir.path(), &["tests/test_clock.hy"]);
     let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(named_outside(&stderr, "tests/test_clock.hy"), "{}", stderr);
-    assert!(stderr.contains("1 個が対象の外"), "{}", stderr);
+    assert!(stderr.contains("1 of the named Hy files are out of scope"), "{}", stderr);
     assert_eq!(output.status.code(), Some(3), "{}", stderr);
 }
 
 #[test]
 fn a_named_hy_file_under_the_root_is_judged_as_before() {
-    // 通る例: 根の下の file を名指すと今までどおり — 対象の外の行は出ず、破れが無ければ終了コード 0。
+    // Passing case: naming a file under the root behaves as before — no out-of-scope line appears, and the exit code is 0 if there are no violations.
     let dir = package();
     let output = lint(dir.path(), &["src/app/core/plan.hy"]);
     let stderr = String::from_utf8_lossy(&output.stderr);
-    assert!(!stderr.contains("対象の外"), "{}", stderr);
+    assert!(!stderr.contains("out of scope"), "{}", stderr);
     assert_eq!(output.status.code(), Some(0), "{}", stderr);
-    // 同じ根の下の file に違反を書くと、層の規則が判じて終了コード 1(対象の外とは分かれる)。
+    // Writing a violation in a file under the same root makes the layer rules judge it and exit with code 1 (distinct from out of scope).
     std::fs::write(dir.path().join("src/app/core/plan.hy"), RAW).unwrap();
     let raw = lint(dir.path(), &["src/app/core/plan.hy"]);
     assert_eq!(raw.status.code(), Some(1), "{}", String::from_utf8_lossy(&raw.stderr));
@@ -89,14 +89,14 @@ fn a_named_hy_file_under_the_root_is_judged_as_before() {
 
 #[test]
 fn the_declaration_file_outside_the_root_is_not_out_of_scope() {
-    // 失敗ケース: package の根(src)の外に置いた service と層の宣言(architecture.hy)は宣言の規則が判じる — doeff-cluster の commit の
-    // hook(scripts/lint-doeff-cluster.sh)は path を渡す時に必ずこの file を足すので、ここを対象の外に数えると毎回終了コード 3 になる。
+    // Failure case: a service and a layer declaration (architecture.hy) placed outside the package root (src) are judged by the declaration rules — doeff-cluster's commit
+    // hook (scripts/lint-doeff-cluster.sh) always adds this file when it passes paths, so counting it as out of scope would give exit code 3 every time.
     let dir = tempfile::TempDir::new().unwrap();
     let files = [
         ("pyproject.toml", "[tool.doeff-linter]\nroot = \"src\"\narchitecture = \"architecture.hy\"\ndisable = [\"DOEFF114\", \"DOEFF115\"]\n"),
         (
             "architecture.hy",
-            "(defarchitecture pkg :root \"cluster\" :layers [(layer foundation :summary \"土台\")] :foundation foundation)\n",
+            "(defarchitecture pkg :root \"cluster\" :layers [(layer foundation :summary \"foundation\")] :foundation foundation)\n",
         ),
         ("src/cluster/coord.hy", "(defk run [] 1)\n"),
         ("tests/test_coord.hy", RAW),
@@ -108,9 +108,9 @@ fn the_declaration_file_outside_the_root_is_not_out_of_scope() {
     }
     let hook = lint(dir.path(), &["src/cluster/coord.hy", "architecture.hy"]);
     let stderr = String::from_utf8_lossy(&hook.stderr);
-    assert!(!stderr.contains("対象の外"), "{}", stderr);
+    assert!(!stderr.contains("out of scope"), "{}", stderr);
     assert_eq!(hook.status.code(), Some(0), "{}", stderr);
-    // 同じ package の根の外の検の file は、宣言と並べて名指しても対象の外。
+    // A test file outside the root of the same package is still out of scope even when named alongside the declaration.
     let tests = lint(dir.path(), &["tests/test_coord.hy", "architecture.hy"]);
     let stderr = String::from_utf8_lossy(&tests.stderr);
     assert!(named_outside(&stderr, "tests/test_coord.hy"), "{}", stderr);
@@ -120,7 +120,7 @@ fn the_declaration_file_outside_the_root_is_not_out_of_scope() {
 
 #[test]
 fn a_named_directory_opens_to_its_hy_files_and_skips_python() {
-    // dir を名指すと、その下の Hy の file に開いて名指す。Python の file は Python の規則が名指しの path から集めて測るので数えない。
+    // Naming a dir opens it and names the Hy files beneath it. Python files are not counted, because the Python rules collect and measure them from the named path.
     let dir = package();
     let output = lint(dir.path(), &["tests"]);
     let stderr = String::from_utf8_lossy(&output.stderr);
@@ -131,10 +131,10 @@ fn a_named_directory_opens_to_its_hy_files_and_skips_python() {
 
 #[test]
 fn the_editor_report_carries_the_out_of_scope_list() {
-    // editor-json(commit の hook の子)は一番上の欄 out_of_scope に載せ、終了コード 3。根の下だけなら空の列で 0・名指しが無ければ null。
+    // editor-json (a child of the commit hook) puts them in the top-level field out_of_scope with exit code 3. If only files under the root, it is an empty list with 0; if nothing is named, null.
     let dir = package();
     let outside = lint(dir.path(), &["--output-format", "editor-json", "tests/test_clock.hy"]);
-    // 違反の path と同じく正規化した絶対の path(1 つ)。
+    // Same as a violation's path, a normalized absolute path (one).
     let listed = editor_report(&outside)["out_of_scope"].clone();
     assert_eq!(listed.as_array().map(Vec::len), Some(1), "{}", listed);
     assert!(listed[0].as_str().is_some_and(|p| p.starts_with('/') && p.ends_with("/tests/test_clock.hy")), "{}", listed);
@@ -148,16 +148,16 @@ fn the_editor_report_carries_the_out_of_scope_list() {
 
 #[test]
 fn the_commit_hook_reads_the_out_of_scope_list() {
-    // commit の hook は子の報告の out_of_scope を読んで名指す(欄が無い・null なら空 — 以前の版の子でも落ちない)。
+    // The commit hook reads the child's out_of_scope report and names it (if the field is absent or null, it is empty — even a child of an earlier version does not fail).
     let report = serde_json::json!({"violations": [], "out_of_scope": ["tests/test_clock.hy"]});
     assert_eq!(doeff_linter::commit_hook::out_of_scope_of(&report), vec!["tests/test_clock.hy".to_string()]);
     assert!(doeff_linter::commit_hook::out_of_scope_of(&serde_json::json!({"violations": []})).is_empty());
     assert!(doeff_linter::commit_hook::out_of_scope_of(&serde_json::json!({"out_of_scope": null})).is_empty());
 }
 
-// ---- 歩く範囲に足す dir(設定の include) ----
+// ---- Dirs added to the walked scope (the setting `include`) ----
 
-/// 根 = src の package。`include` を書くと根の外の tests/ も歩き、定義の書き方の規則(ここでは critical の DOEFF126 だけ)が判じる。
+/// Root = a package with src. Writing `include` also walks tests/ outside the root, and the rules for how definitions are written (here only critical DOEFF126) judge it.
 fn walked_package(include: bool, test_source: &str) -> tempfile::TempDir {
     let dir = tempfile::TempDir::new().unwrap();
     let settings = format!(
@@ -169,7 +169,7 @@ fn walked_package(include: bool, test_source: &str) -> tempfile::TempDir {
         ("pyproject.toml", settings.as_str()),
         (
             "architecture.hy",
-            "(defarchitecture pkg :root \"cluster\" :layers [(layer foundation :summary \"土台\")] :foundation foundation)\n",
+            "(defarchitecture pkg :root \"cluster\" :layers [(layer foundation :summary \"foundation\")] :foundation foundation)\n",
         ),
         ("src/cluster/coord.hy", "(defk plan [x] {:tags {:context \"c\" :role \"program\"}} x)\n"),
         ("tests/test_coord.hy", test_source),
@@ -182,9 +182,9 @@ fn walked_package(include: bool, test_source: &str) -> tempfile::TempDir {
     dir
 }
 
-/// 検の file の中で src の defk を素で呼び、答えとして比べに使う(Program が値として流れる — DOEFF126 の critical)。
+/// In a test file, call src's defk bare and use it as the thing to compare (a Program flows as a value — DOEFF126 critical).
 const BARE_TEST: &str = "(import cluster.coord [plan])\n(deftest test-plan (assert (= (plan 1) 1)))\n";
-/// 同じ検を `!` で答えにして呼ぶ(直した形)。
+/// Call the same test, answering with `!` (the fixed form).
 const BOUND_TEST: &str = "(import cluster.coord [plan])\n(deftest test-plan (assert (= (! (plan 1)) 1)))\n";
 
 fn rule_keys(report: &Value, rule: &str) -> Vec<String> {
@@ -199,8 +199,8 @@ fn rule_keys(report: &Value, rule: &str) -> Vec<String> {
 
 #[test]
 fn an_included_directory_outside_the_root_is_judged_by_the_definition_rules() {
-    // 失敗ケース: 根の外の tests/ の検が src の defk を素で呼ぶ。include が在れば定義の規則が判じて DOEFF126 で赤(名乗りは `..` を含む
-    // 根からの相対)。include が無ければ判じられず、名指すと「対象の外」で終了コード 3(以前の形 — 測っていない)。
+    // Failure case: a test in tests/ outside the root calls src's defk bare. With include, the definition rules judge it and it is red with DOEFF126 (the claimed name contains `..`
+    // relative to the root). Without include it is not judged, and naming it gives "out of scope" with exit code 3 (the earlier shape — not measured).
     let walked = walked_package(true, BARE_TEST);
     let whole = lint(walked.path(), &["--output-format", "editor-json"]);
     let report = editor_report(&whole);
@@ -209,7 +209,7 @@ fn an_included_directory_outside_the_root_is_judged_by_the_definition_rules() {
     let named = lint(walked.path(), &["tests/test_coord.hy", "architecture.hy"]);
     let stderr = String::from_utf8_lossy(&named.stderr);
     let stdout = String::from_utf8_lossy(&named.stdout);
-    assert!(!stderr.contains("対象の外"), "{}", stderr);
+    assert!(!stderr.contains("out of scope"), "{}", stderr);
     assert!(stdout.contains("DOEFF126") || stderr.contains("DOEFF126"), "{}\n{}", stdout, stderr);
     assert_eq!(named.status.code(), Some(1), "{}\n{}", stdout, stderr);
 
@@ -224,7 +224,7 @@ fn an_included_directory_outside_the_root_is_judged_by_the_definition_rules() {
 
 #[test]
 fn a_fixed_test_in_the_included_directory_is_green() {
-    // 通る例: 同じ検を `!` で答えにして呼ぶと緑(include の dir の file も根の下の file と同じ判定)。
+    // Passing case: calling the same test answered with `!` is green (a file in the include dir gets the same judgment as a file under the root).
     let dir = walked_package(true, BOUND_TEST);
     let output = lint(dir.path(), &["tests/test_coord.hy", "architecture.hy"]);
     assert_eq!(output.status.code(), Some(0), "{}\n{}", String::from_utf8_lossy(&output.stdout), String::from_utf8_lossy(&output.stderr));
@@ -232,10 +232,10 @@ fn a_fixed_test_in_the_included_directory_is_green() {
 
 #[test]
 fn a_missing_included_directory_is_a_setting_error() {
-    // 無い dir を include に書くと、黙って何も歩かない形にせず設定の誤りとして名指す。
+    // Writing a nonexistent dir in include is named as a settings error instead of silently walking nothing.
     let dir = walked_package(true, BOUND_TEST);
     std::fs::remove_dir_all(dir.path().join("tests")).unwrap();
     let output = lint(dir.path(), &["--output-format", "editor-json"]);
     let stderr = String::from_utf8_lossy(&output.stderr);
-    assert!(stderr.contains("include の dir"), "{}", stderr);
+    assert!(stderr.contains("include dir"), "{}", stderr);
 }

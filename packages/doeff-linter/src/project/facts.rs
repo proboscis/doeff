@@ -1,10 +1,10 @@
-//! 層の module 1 つから、層の規則が読む事実(タグ・import の先・関数の定義)を取り出す。
+//! Extracts, from one layer module, the facts the layer rules read (tags, import targets, function definitions).
 //!
-//! Hy は doeff-indexer の読み取り器(`doeff_indexer::hy_index::reader`)で form の木にしてから読む — Hy の読み取り部は
-//! ここに写さない。Python は rustpython の構文木から読む。どちらも位置は byte の範囲で持ち、出力の時に UTF-16 へ直す。
+//! Hy is turned into a tree of forms with doeff-indexer's reader (`doeff_indexer::hy_index::reader`) and then read -- the reader part of Hy is
+//! not copied here. Python is read from rustpython's syntax tree. Both keep positions as byte ranges and convert them to UTF-16 at output time.
 //!
-//! 読み方は agora-controllers の `scripts/module_tags.hy`(`read-modules`・`hy-definitions`・`hy-imports`・`py-imports`)と
-//! 同じ結果になるように合わせてある(登録簿の鍵を揃えるため)。
+//! The reading is aligned with agora-controllers' `scripts/module_tags.hy` (`read-modules`, `hy-definitions`, `hy-imports`, `py-imports`) so that it gives
+//! the same result (so the registry keys line up).
 
 use doeff_indexer::hy_index::reader::{Delim, Form, Node, Reader, StrKind};
 use rustpython_ast::{Constant, Expr, Mod, Stmt};
@@ -13,121 +13,121 @@ use rustpython_parser::{parse, Mode};
 use super::names::{absolute_module, hy_mangle};
 use super::layers::TagReading;
 
-/// source の中の byte の範囲 `[start, end)`。
+/// A byte range `[start, end)` in the source.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub struct ByteSpan {
     pub start: usize,
     pub end: usize,
 }
 
-/// 名前とその位置。
+/// A name and its position.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct NamedSpan {
     pub name: String,
     pub span: ByteSpan,
 }
 
-/// 名乗ったタグ 1 組(辞書の中の文字列の値を持つ鍵が 1 つ以上ある時だけ作る)。
+/// One set of declared tags (made only when there is at least one key with a string value in the dict).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct TagSet {
     pub context: Option<String>,
     pub role: Option<String>,
-    /// 空でない文字列の値を持つ鍵の全部(必須の鍵の検査のため)。
+    /// All keys that have non-empty string values (for checking required keys).
     pub keys: std::collections::BTreeSet<String>,
-    /// 辞書の位置。
+    /// Position of the dict.
     pub span: ByteSpan,
 }
 
-/// import の先 1 つ(module ごとの import は module の綴り、名を並べた import は `module.名`)。
+/// One import target (a per-module import is the module's spelling; an import that lists names is `module.name`).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ImportTarget {
     pub target: String,
     pub span: ByteSpan,
 }
 
-/// module の言語。
+/// The language of a module.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Language {
     Hy,
     Python,
 }
 
-/// 定義 1 つのタグ(定義の名と、名乗ったタグ)。
+/// The tags of one definition (the definition's name and the declared tags).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct TaggedDefinition {
     pub name: NamedSpan,
     pub tags: TagSet,
 }
 
-/// 層の規則が読む module 1 つの事実。
+/// The facts of one module that the layer rules read.
 #[derive(Debug, Clone)]
 pub struct ModuleFacts {
     pub language: Language,
-    /// module の頭のタグ(Hy の `(val MODULE-TAGS {…})`・Python の `MODULE_TAGS = {…}`)。
+    /// The module's head tags (Hy's `(val MODULE-TAGS {…})`, Python's `MODULE_TAGS = {…}`).
     pub module_tags: Option<TagSet>,
-    /// 定義の :tags(同じ名の定義は後の物が前の物の値を上書きし、順は最初の物の位置 — Python の dict と同じ)。
+    /// The definitions' :tags (for definitions of the same name, a later one overwrites the value of an earlier one, and the order is the position of the first -- the same as a Python dict).
     pub tagged: Vec<TaggedDefinition>,
-    /// タグの無い定義(Python の module は常に空)。
+    /// Definitions without tags (always empty for a Python module).
     pub untagged: Vec<NamedSpan>,
     pub imports: Vec<ImportTarget>,
-    /// 最上位の関数と handler の定義(型だけの層の規則のため)。
+    /// Top-level function and handler definitions (for the type-only layer rules).
     pub functions: Vec<NamedSpan>,
-    /// 読めなかった理由(読めた分の事実は残す)。
+    /// The reason it could not be read (the facts that could be read are kept).
     pub errors: Vec<String>,
-    /// 定義の規則(defn の禁止・deff の理由・タグ必須)が読む定義(Hy だけ・`do` と compile の節の中も)。
+    /// Definitions read by the definition rules (prohibition of defn, reasons for deff, required tags) (Hy only; also inside `do` and compile sections).
     pub definitions: Vec<DefinitionFact>,
-    /// defclass の形(DOEFF119 のため・Hy だけ・`do` と compile の節の中も)。
+    /// Shapes of defclass (for DOEFF119; Hy only; also inside `do` and compile sections).
     pub classes: Vec<ClassFact>,
-    /// import で束ねた名 → module の綴り(絶対)。`(import m [A :as B])` は B → m、`(import m :as n)` は n → m、`(import m)` は m → m。
+    /// Names bound by import -> module spelling (absolute). `(import m [A :as B])` is B -> m, `(import m :as n)` is n -> m, `(import m)` is m -> m.
     pub bindings: std::collections::BTreeMap<String, String>,
 }
 
-/// defclass 1 つの形(基底が外の library か・処理を持つ method があるかを判じるため)。
+/// The shape of one defclass (to judge whether the base is an outside library and whether there is a method that does work).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ClassFact {
     pub name: NamedSpan,
-    /// 書かれたとおりの基底の綴り(keyword とその値は除く)。
+    /// The spelling of the bases as written (keywords and their values are excluded).
     pub bases: Vec<String>,
-    /// decorator の頭の綴り(`(dataclass :frozen True)` は `dataclass`)。
+    /// The spelling of the decorators' heads (`(dataclass :frozen True)` is `dataclass`).
     pub decorators: Vec<String>,
     pub methods: Vec<MethodFact>,
-    /// 欄の宣言(`#^ T x` は `x: T`・注釈の無い `(setv x …)` は `x`)。Jev に渡す材料。
+    /// Field declarations (`#^ T x` is `x: T`; `(setv x …)` without an annotation is `x`). Material passed to Jev.
     pub fields: Vec<String>,
-    /// defclass の form 全体の範囲(Jev に渡す source のため)。
+    /// The range of the whole defclass form (the source passed to Jev).
     pub span: ByteSpan,
-    /// `eval-and-compile` / `eval-when-compile` の中か。
+    /// Whether it is inside `eval-and-compile` / `eval-when-compile`.
     pub compile_time: bool,
 }
 
-/// class の body の method 1 つ(名と、本体に処理があるか)。
+/// One method of a class body (the name, and whether the body does any work).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct MethodFact {
     pub name: String,
-    /// docstring と `...`・`pass`・`None` を除いた本体の式が 1 つ以上あるか。
+    /// Whether the body has one or more expressions other than a docstring, `...`, `pass`, and `None`.
     pub has_body: bool,
-    /// method が書き換える self の欄の名(`(setv self.x …)`・`(+= self.x …)`・`(.append self.x …)` など)。
+    /// Names of the self fields the method rewrites (`(setv self.x …)`, `(+= self.x …)`, `(.append self.x …)`, and so on).
     pub mutates: Vec<String>,
 }
 
-/// 定義の規則が読む Hy の定義 1 つ。
+/// One Hy definition read by the definition rules.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DefinitionFact {
-    /// 定義の頭(defn・defk・deff …)。
+    /// The definition's head (defn, defk, deff, ...).
     pub head: String,
     pub name: NamedSpan,
-    /// 定義の form の始まり(理由の註を探す行のため)。
+    /// The start of the definition's form (for the line where the reason comment is looked for).
     pub start: usize,
-    /// 契約の辞書の :tags(defeffect は辞書の :tags)。
+    /// The :tags of the contract dict (for defeffect, the dict's :tags).
     pub tags: Option<TagSet>,
-    /// `eval-and-compile` / `eval-when-compile` の中(マクロの展開の時の関数)か。
+    /// Whether it is inside `eval-and-compile` / `eval-when-compile` (a function at macro expansion time).
     pub compile_time: bool,
 }
 
-/// 定義の規則が見る定義の頭。
+/// The definition heads the definition rules look at.
 const DEFINITION_HEADS: &[&str] = &["defn", "defn/a", "defk", "deff", "defp", "defpp", "defhandler", "defeffect", "defrecord", "defwire"];
 
 impl ModuleFacts {
-    /// module の実効のタグの全部(定義の :tags と、タグの無い定義に効く module の頭のタグ)。
+    /// All of the module's effective tags (the definitions' :tags, and the module's head tags that apply to definitions without tags).
     pub fn tag_sets(&self) -> Vec<&TagSet> {
         let mut sets: Vec<&TagSet> = self.tagged.iter().map(|t| &t.tags).collect();
         if let Some(module_tags) = &self.module_tags {
@@ -138,15 +138,15 @@ impl ModuleFacts {
         sets
     }
 
-    /// 地図に出す 1 組のタグ(module の頭のタグ、無ければ最初の定義のタグ)。
+    /// One set of tags shown on the map (the module's head tags, or if none, the first definition's tags).
     pub fn summary_tags(&self) -> Option<&TagSet> {
         self.module_tags.as_ref().or_else(|| self.tagged.first().map(|t| &t.tags))
     }
 }
 
-/// Hy の source の import の束縛(名 → module)だけを読む。
+/// Reads only the import bindings (name -> module) of Hy source.
 pub fn hy_bindings(source: &str, module: &str) -> std::collections::BTreeMap<String, String> {
-    // repo の全部の file の呼びの頭を解く時(DOEFF126 の引数の追い)に、タグや定義を読まずに import の束縛だけを安く取るため。
+    // So that, when resolving the call heads of all files in the repo (following the arguments of DOEFF126), only the import bindings are taken cheaply without reading tags or definitions.
     let mut reader = Reader::new(source, 0, source.len());
     let forms = reader.read_all();
     let hy = HySource { src: source };
@@ -157,7 +157,7 @@ pub fn hy_bindings(source: &str, module: &str) -> std::collections::BTreeMap<Str
     bindings
 }
 
-/// source を言語ごとの読み方で読む。module は相対 import を解く基準の綴り。
+/// Reads source with the reading appropriate to each language. module is the spelling that is the base for resolving relative imports.
 pub fn read_facts(language: Language, source: &str, module: &str, reading: &TagReading) -> ModuleFacts {
     match language {
         Language::Hy => hy_facts(source, module, reading),
@@ -165,29 +165,29 @@ pub fn read_facts(language: Language, source: &str, module: &str, reading: &TagR
     }
 }
 
-/// module が依る先 1 つの種類 — `Import` は実行時の import、`Require` は Hy のマクロ(展開の時)の依存。
+/// The kind of one thing a module depends on -- `Import` is a runtime import, `Require` is a dependency of a Hy macro (at expansion time).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, serde::Serialize, serde::Deserialize)]
 pub enum DependencyKind {
     Import,
     Require,
 }
 
-/// module が依る先 1 つ(import の先は `import` の読みと同じ綴り — 名を並べた import は `module.名`)。
+/// One thing a module depends on (the import target has the same spelling as the `import` reading -- an import that lists names is `module.name`).
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, serde::Serialize, serde::Deserialize)]
 pub struct Dependency {
     pub target: String,
     pub kind: DependencyKind,
 }
 
-/// module 1 つの依存の読み(import と Hy の require)。読めなかった理由が在っても、読めた分の依存は残す。
+/// The dependency reading of one module (imports and Hy requires). Even if there is a reason it could not be read, the dependencies that could be read are kept.
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct ModuleDependencies {
     pub dependencies: Vec<Dependency>,
     pub error: Option<String>,
 }
 
-/// source の import(層の規則と同じ読み — `collect_imports`・`python_imports`)と、Hy の `(require …)` の module だけを読む
-/// (逆依存の索引のため — タグや定義は読まない)。module は相対 import を解く基準の綴り。
+/// Reads only the source's imports (read the same as the layer rules -- `collect_imports`, `python_imports`) and the modules of Hy's `(require …)`
+/// (for the reverse-dependency index -- tags and definitions are not read). module is the spelling that is the base for resolving relative imports.
 pub fn module_dependencies(language: Language, source: &str, module: &str) -> ModuleDependencies {
     let as_dependencies = |targets: Vec<String>, kind: DependencyKind| targets.into_iter().map(move |target| Dependency { target, kind });
     match language {
@@ -205,7 +205,7 @@ pub fn module_dependencies(language: Language, source: &str, module: &str) -> Mo
                 dependencies: as_dependencies(imports.into_iter().map(|i| i.target).collect(), DependencyKind::Import)
                     .chain(as_dependencies(requires, DependencyKind::Require))
                     .collect(),
-                error: (!reader.issues.is_empty()).then(|| format!("括弧か文字列が閉じていない所が {} か所ある", reader.issues.len())),
+                error: (!reader.issues.is_empty()).then(|| format!("there are {} places where a parenthesis or string is not closed", reader.issues.len())),
             }
         }
         Language::Python => match parse(source, Mode::Module, "<module>") {
@@ -215,12 +215,12 @@ pub fn module_dependencies(language: Language, source: &str, module: &str) -> Mo
                 ModuleDependencies { dependencies: as_dependencies(imports.into_iter().map(|i| i.target).collect(), DependencyKind::Import).collect(), error: None }
             }
             Ok(_) => ModuleDependencies { dependencies: Vec::new(), error: None },
-            Err(error) => ModuleDependencies { dependencies: Vec::new(), error: Some(format!("Python の構文として読めない: {}", error)) },
+            Err(error) => ModuleDependencies { dependencies: Vec::new(), error: Some(format!("cannot be read as Python syntax: {}", error)) },
         },
     }
 }
 
-/// Hy の読んだ form から、import の束縛(名 → module の綴り)だけを取り出す(defk の見出しの型を定義へ結ぶため — 他の事実は読まない)。
+/// From the forms Hy read, extracts only the import bindings (name -> module spelling) (to tie the types in a defk heading to definitions -- other facts are not read).
 pub fn form_bindings(forms: &[Form], source: &str, module: &str) -> std::collections::BTreeMap<String, String> {
     let hy = HySource { src: source };
     let mut out = std::collections::BTreeMap::new();
@@ -232,7 +232,7 @@ pub fn form_bindings(forms: &[Form], source: &str, module: &str) -> std::collect
 
 // --- Hy ---------------------------------------------------------------------------------
 
-/// Hy の source を読んでタグ・import・関数の定義を取り出す。
+/// Reads Hy source and extracts tags, imports, and function definitions.
 fn hy_facts(source: &str, module: &str, reading: &TagReading) -> ModuleFacts {
     let mut reader = Reader::new(source, 0, source.len());
     let forms = reader.read_all();
@@ -247,7 +247,7 @@ fn hy_facts(source: &str, module: &str, reading: &TagReading) -> ModuleFacts {
         definitions: Vec::new(),
         classes: Vec::new(),
         bindings: std::collections::BTreeMap::new(),
-        errors: if reader.issues.is_empty() { Vec::new() } else { vec![format!("括弧か文字列が閉じていない所が {} か所ある", reader.issues.len())] },
+        errors: if reader.issues.is_empty() { Vec::new() } else { vec![format!("there are {} places where a parenthesis or string is not closed", reader.issues.len())] },
     };
     hy.definitions(&forms, reading, &mut facts);
     hy.definition_facts(&forms, false, reading, &mut facts.definitions);
@@ -261,33 +261,33 @@ fn hy_facts(source: &str, module: &str, reading: &TagReading) -> ModuleFacts {
     facts
 }
 
-/// Hy の source と、form の綴りを読む道具。
+/// The tools for reading Hy source and the spelling of forms.
 struct HySource<'a> {
     src: &'a str,
 }
 
-/// form の範囲を ByteSpan にする。
+/// Turns the range of a form into a ByteSpan.
 fn span_of(form: &Form) -> ByteSpan {
     ByteSpan { start: form.span.start, end: form.span.end }
 }
 
-/// 列の中身から読み捨て(`#_`)を除く — Hy の読み取りは読み捨てを列に残さない。
+/// Removes discards (`#_`) from the contents of a list -- Hy's reader does not leave discards in the list.
 fn live_items(items: &[Form]) -> Vec<&Form> {
     items.iter().filter(|item| !matches!(item.node, Node::Discarded)).collect()
 }
 
-/// `( … )` の中身(読み捨てを除く)。
+/// The contents of `( … )` (discards removed).
 fn paren(form: &Form) -> Option<Vec<&Form>> {
     form.paren_items().map(live_items)
 }
 
 impl<'a> HySource<'a> {
-    /// form の綴り。
+    /// The spelling of the form.
     fn text(&self, form: &Form) -> &'a str {
         self.src.get(form.span.start..form.span.end).unwrap_or("")
     }
 
-    /// 記号の綴り(記号でなければ None)。
+    /// The spelling of a symbol (None if not a symbol).
     fn symbol(&self, form: &Form) -> Option<&'a str> {
         match form.node {
             Node::Symbol => Some(self.text(form)),
@@ -295,7 +295,7 @@ impl<'a> HySource<'a> {
         }
     }
 
-    /// keyword の名(`:tags` → `tags`)。keyword でなければ None。
+    /// The name of a keyword (`:tags` -> `tags`). None if not a keyword.
     fn keyword(&self, form: &Form) -> Option<&'a str> {
         match form.node {
             Node::Keyword => Some(self.text(form).trim_start_matches(':')),
@@ -303,7 +303,7 @@ impl<'a> HySource<'a> {
         }
     }
 
-    /// Hy の String の値(f 文字列と bytes は String ではないので None)。
+    /// The value of a Hy String (None for f-strings and bytes, which are not String).
     fn string_value(&self, form: &Form) -> Option<String> {
         match &form.node {
             Node::Str { kind: StrKind::Plain | StrKind::Raw | StrKind::Bracket, body } => self.src.get(body.start..body.end).map(str::to_string),
@@ -311,7 +311,7 @@ impl<'a> HySource<'a> {
         }
     }
 
-    /// Hy の辞書 `{:context "…" :role "…"}` を読む(文字列の値の鍵が 1 つも無ければ None — 空の辞書は名乗っていない)。
+    /// Reads a Hy dict `{:context "…" :role "…"}` (None if there is no key with a string value -- an empty dict has not declared anything).
     fn tags_of_dict(&self, form: &Form) -> Option<TagSet> {
         let items = match &form.node {
             Node::Seq { delim: Delim::Brace, items } => live_items(items),
@@ -338,7 +338,7 @@ impl<'a> HySource<'a> {
         found.then(|| TagSet { context, role, keys, span: span_of(form) })
     }
 
-    /// module の最上位の `(setv|val MODULE-TAGS {…})` を読む(最初の 1 つ)。
+    /// Reads the module's top-level `(setv|val MODULE-TAGS {…})` (the first one).
     fn module_tags(&self, forms: &[Form], variable: &str) -> Option<TagSet> {
         forms.iter().find_map(|form| {
             let items = paren(form)?;
@@ -353,7 +353,7 @@ impl<'a> HySource<'a> {
         })?
     }
 
-    /// 定義の式の名の form(`#^ T 名` は名の方)。
+    /// The form of the name of a definition expression (for `#^ T name`, the name side).
     fn defined_name(&self, form: &Form) -> NamedSpan {
         let target = match &form.node {
             Node::Annotated { target: Some(target), .. } => target.as_ref(),
@@ -362,7 +362,7 @@ impl<'a> HySource<'a> {
         NamedSpan { name: hy_mangle(self.text(target)), span: span_of(target) }
     }
 
-    /// 定義の規則が読む定義を集める(`do` と `eval-and-compile` / `eval-when-compile` の中も最上位として見る)。
+    /// Collects the definitions the definition rules read (also treats the inside of `do` and `eval-and-compile` / `eval-when-compile` as top level).
     fn definition_facts(&self, forms: &[Form], compile_time: bool, reading: &TagReading, out: &mut Vec<DefinitionFact>) {
         for form in forms {
             let Some(items) = paren(form) else { continue };
@@ -371,7 +371,7 @@ impl<'a> HySource<'a> {
                 "do" => self.definition_facts_refs(&items[1..], compile_time, reading, out),
                 "eval-and-compile" | "eval-when-compile" => self.definition_facts_refs(&items[1..], true, reading, out),
                 _ if DEFINITION_HEADS.contains(&head) && items.len() >= 2 => {
-                    // `(defn [decorators] name …)` は decorator の list を飛ばして名を読む。
+                    // `(defn [decorators] name …)` skips the decorator list and reads the name.
                     let name_form = match items.get(1) {
                         Some(first) if first.bracket_items().is_some() && items.len() >= 3 => items[2],
                         Some(first) => *first,
@@ -392,7 +392,7 @@ impl<'a> HySource<'a> {
                         compile_time,
                     });
                 }
-                // `(setv 名 (fn …))` / `(val 名 (fn …))` は head = "fn" の定義として数える(検の関数の規則 DOEFF118 のため)。
+                // `(setv name (fn …))` / `(val name (fn …))` are counted as a definition with head = "fn" (for DOEFF118, the rule on test functions).
                 "setv" | "val" if items.len() == 3 => {
                     let is_fn = paren(items[2]).and_then(|inner| inner.first().and_then(|h| self.symbol(h))).is_some_and(|h| matches!(h, "fn" | "fn/a"));
                     if is_fn && self.symbol(items[1]).is_some() {
@@ -410,7 +410,7 @@ impl<'a> HySource<'a> {
         }
     }
 
-    /// defclass の形を集める(`do` と `eval-and-compile` / `eval-when-compile` の中も最上位として見る)。
+    /// Collects the shapes of defclass (also treats the inside of `do` and `eval-and-compile` / `eval-when-compile` as top level).
     fn class_facts(&self, forms: &[&Form], compile_time: bool, out: &mut Vec<ClassFact>) {
         for form in forms {
             let Some(items) = paren(form) else { continue };
@@ -427,7 +427,7 @@ impl<'a> HySource<'a> {
         }
     }
 
-    /// `(defclass [decorators]? Name [bases]? "doc"? body…)` の頭を除いた列を読む(名が無ければ None)。
+    /// Reads the sequence of `(defclass [decorators]? Name [bases]? "doc"? body…)` with the head removed (None if there is no name).
     fn class_fact(&self, rest: &[&Form], span: ByteSpan, compile_time: bool) -> Option<ClassFact> {
         let (decorators, rest) = match rest.first() {
             Some(first) if first.bracket_items().is_some() && rest.len() >= 2 => (self.decorator_heads(first), &rest[1..]),
@@ -439,7 +439,7 @@ impl<'a> HySource<'a> {
             None => (Vec::new(), rest.get(1..).unwrap_or_default()),
         };
         let methods = body.iter().filter_map(|member| self.method_fact(member)).collect();
-        // 欄の読み方は defrecord / defwire の正本(doeff-indexer の hy_index::fields — Hy 側は doeff_hy.declarations/field-targets)。
+        // How fields are read follows the source of truth of defrecord / defwire (doeff-indexer's hy_index::fields -- on the Hy side doeff_hy.declarations/field-targets).
         let fields = doeff_indexer::hy_index::fields::record_field_targets(self.src, body)
             .into_iter()
             .map(|target| {
@@ -453,7 +453,7 @@ impl<'a> HySource<'a> {
         Some(ClassFact { name, bases, decorators, methods, fields, span, compile_time })
     }
 
-    /// decorator の列の頭の綴り(記号はそのまま・`(f …)` は f)。
+    /// The spelling of the heads of the decorator list (symbols as they are; `(f …)` is f).
     fn decorator_heads(&self, list: &Form) -> Vec<String> {
         let items = list.bracket_items().map(live_items).unwrap_or_default();
         items
@@ -465,7 +465,7 @@ impl<'a> HySource<'a> {
             .collect()
     }
 
-    /// 基底の列の記号(keyword とその値は除く)。
+    /// The symbols in the list of bases (keywords and their values are excluded).
     fn base_names(&self, items: &[&Form]) -> Vec<String> {
         let mut names = Vec::new();
         let mut index = 0;
@@ -483,7 +483,7 @@ impl<'a> HySource<'a> {
         names
     }
 
-    /// class の body の 1 つが method(`(defn [decorators]? name [params] "doc"? body…)` など)なら、名と本体の有無を読む。
+    /// If one item of the class body is a method (such as `(defn [decorators]? name [params] "doc"? body…)`), reads the name and whether the body has content.
     fn method_fact(&self, member: &Form) -> Option<MethodFact> {
         let items = paren(member)?;
         let head = items.first().and_then(|h| self.symbol(h))?;
@@ -503,7 +503,7 @@ impl<'a> HySource<'a> {
             _ => body,
         };
         let has_body = body.iter().any(|form| {
-            // 契約の辞書({:pre …})と、何もしない式(`...`・pass・None)は処理に数えない。
+            // The contract dict ({:pre …}) and expressions that do nothing (`...`, pass, None) are not counted as work.
             !form.is_brace() && !matches!(self.symbol(form), Some("..." | "pass" | "None"))
         });
         let mut mutates = Vec::new();
@@ -513,9 +513,9 @@ impl<'a> HySource<'a> {
         Some(MethodFact { name, has_body, mutates })
     }
 
-    /// 式の中で self の欄を書き換える所を探し、欄の名を積む(状態を持つ class を見分けるため)。
+    /// Finds, in an expression, the places that rewrite a self field and pushes the field names (to tell stateful classes apart).
     fn self_mutations(&self, form: &Form, out: &mut Vec<String>) {
-        /// 呼ぶと中身を書き換える method の名(list・dict・set・deque)。
+        /// Names of methods that rewrite their contents when called (list, dict, set, deque).
         const MUTATORS: &[&str] = &["append", "extend", "insert", "pop", "popleft", "appendleft", "remove", "clear", "update", "add", "discard", "setdefault", "sort", "reverse"];
         let push = |out: &mut Vec<String>, field: &str| {
             let field = field.split('.').next().unwrap_or(field).to_string();
@@ -523,10 +523,10 @@ impl<'a> HySource<'a> {
                 out.push(field);
             }
         };
-        // `self.x`・`self.x.y` の欄の名(self 以外なら None)。
+        // The field name of `self.x` or `self.x.y` (None if not self).
         let self_field = |target: &Form| -> Option<String> {
             match paren(target) {
-                // `(get self.x k)`・`(. self x)` も self の欄への書き込み。
+                // `(get self.x k)` and `(. self x)` are also writes to a self field.
                 Some(inner) => match inner.first().and_then(|h| self.symbol(h)) {
                     Some("get") => inner.get(1).and_then(|t| self.symbol(t)).and_then(|t| t.strip_prefix("self.")).map(str::to_string),
                     Some(".") if inner.get(1).and_then(|t| self.symbol(t)) == Some("self") => inner.get(2).and_then(|t| self.symbol(t)).map(str::to_string),
@@ -574,7 +574,7 @@ impl<'a> HySource<'a> {
         }
     }
 
-    /// import の束縛(名 → module)を集める。`import_targets` と同じ形を読み、`:as` の別名も控える。
+    /// Collects import bindings (name -> module). Reads the same forms as `import_targets` and also records `:as` aliases.
     fn collect_bindings(&self, form: &Form, module: &str, out: &mut std::collections::BTreeMap<String, String>) {
         let Some(items) = paren(form) else { return };
         match items.first().and_then(|h| self.symbol(h)) {
@@ -627,14 +627,14 @@ impl<'a> HySource<'a> {
         }
     }
 
-    /// `definition_facts` の、form の参照の列を受ける形。
+    /// The shape of `definition_facts` that receives the list of references of forms.
     fn definition_facts_refs(&self, forms: &[&Form], compile_time: bool, reading: &TagReading, out: &mut Vec<DefinitionFact>) {
         for form in forms {
             self.definition_facts(std::slice::from_ref(*form), compile_time, reading, out);
         }
     }
 
-    /// 最上位の定義ごとのタグと、関数の定義を読む。
+    /// Reads the tags of each top-level definition and the function definitions.
     fn definitions(&self, forms: &[Form], reading: &TagReading, facts: &mut ModuleFacts) {
         for form in forms {
             let Some(items) = paren(form) else { continue };
@@ -663,7 +663,7 @@ impl<'a> HySource<'a> {
         }
     }
 
-    /// 辞書の form の :tags の値を、鍵と値の組で読む(同じ鍵が 2 度あれば後の物)。
+    /// Reads the :tags value of a dict form as pairs of key and value (if the same key appears twice, the later one).
     fn dict_tags(&self, dict: &Form) -> Option<TagSet> {
         let entries = match &dict.node {
             Node::Seq { delim: Delim::Brace, items } => live_items(items),
@@ -680,8 +680,8 @@ impl<'a> HySource<'a> {
         found
     }
 
-    /// 名の後の要素を順に見て、飛ばせる物(skippable)の後の最初の辞書の :tags を読む(limit = 名の後に見る数)。
-    /// 辞書より前に飛ばせない物が来たら、タグは無い。
+    /// Looks at the elements after the name in order, and reads the :tags of the first dict after the skippable items (limit = how many to look at after the name).
+    /// If something unskippable comes before the dict, there are no tags.
     fn first_dict_tags(&self, items: &[&Form], limit: usize, skippable: impl Fn(&Form) -> bool) -> Option<TagSet> {
         for part in items.iter().skip(2).take(limit) {
             if part.is_brace() {
@@ -694,24 +694,24 @@ impl<'a> HySource<'a> {
         None
     }
 
-    /// 契約の辞書の :tags を読む — 名の後の引数の list と docstring を飛ばした最初の辞書(名から 4 つ目まで)。
+    /// Reads the :tags of the contract dict -- the first dict after skipping the argument list and docstring after the name (up to the 4th from the name).
     fn contract_tags(&self, items: &[&Form]) -> Option<TagSet> {
         self.first_dict_tags(items, 4, |part| self.string_value(part).is_some() || part.bracket_items().is_some())
     }
 
-    /// 名の後の頭の辞書の :tags を読む(名から 2 つ目まで・docstring だけ飛ばす)— `(defeffect 名 "doc"? {:fields […] :answer 型 :tags {…}})`
-    /// と `(defrecord 名 "doc"? {:tags {…} :check […]} 欄 …)`(頭の辞書の無い defrecord は欄が来るのでタグ無し)。
+    /// Reads the :tags of the leading dict after the name (up to the 2nd from the name; skips only a docstring) -- `(defeffect name "doc"? {:fields […] :answer type :tags {…}})`
+    /// and `(defrecord name "doc"? {:tags {…} :check […]} fields …)` (a defrecord without a leading dict has fields coming next, so no tags).
     fn header_tags(&self, items: &[&Form]) -> Option<TagSet> {
         self.first_dict_tags(items, 2, |part| self.string_value(part).is_some())
     }
 
-    /// form の中の `(import …)` の式を全部読む(関数の中や入口の節の中の import も数える)。
+    /// Reads all `(import …)` expressions in a form (also counts imports inside functions and inside entry-point clauses).
     fn collect_imports(&self, form: &Form, module: &str, out: &mut Vec<ImportTarget>) {
         self.visit_headed(form, "import", &mut |args| self.import_targets(args, module, out));
     }
 
-    /// form の木の中の、頭が `head` の式を全部訪ねて引数の列を渡す(関数の中・入口の節の中・quote の中も — import の読みの範囲)。
-    /// 訪ねた式の中へは降りない。
+    /// Visits all expressions in a form tree whose head is `head` and passes the argument list (also inside functions, entry-point clauses, and quote -- the range of import reading).
+    /// Does not descend into a visited expression.
     fn visit_headed(&self, form: &Form, head: &str, visit: &mut dyn FnMut(&[&Form])) {
         match &form.node {
             Node::Seq { delim: Delim::Paren, items } => {
@@ -739,8 +739,8 @@ impl<'a> HySource<'a> {
         }
     }
 
-    /// `(require …)` の式の引数から module の綴りを読む: `mod [a b]`・`mod *`・`mod :as m`・`mod :macros [..] :readers [..]`。
-    /// 名の列・`*`・keyword とその値は module ではない。
+    /// Reads module spellings from the arguments of a `(require …)` expression: `mod [a b]`, `mod *`, `mod :as m`, `mod :macros [..] :readers [..]`.
+    /// Lists of names, `*`, and keywords with their values are not modules.
     fn require_targets(&self, items: &[&Form], module: &str, out: &mut Vec<String>) {
         let mut after_keyword = false;
         for item in items {
@@ -752,7 +752,7 @@ impl<'a> HySource<'a> {
         }
     }
 
-    /// import の式の引数を読む: `mod`・`mod :as m`・`mod [a b]`(名を並べた import は名ごと)。
+    /// Reads the arguments of an import expression: `mod`, `mod :as m`, `mod [a b]` (an import that lists names is per name).
     fn import_targets(&self, items: &[&Form], module: &str, out: &mut Vec<ImportTarget>) {
         let mut index = 0;
         while index < items.len() {
@@ -778,7 +778,7 @@ impl<'a> HySource<'a> {
     }
 }
 
-/// 定義のタグを積む(同じ名は位置を保って値を上書きする — Python の dict の代入と同じ)。
+/// Pushes the tags of a definition (the same name overwrites the value while keeping its position -- the same as assignment into a Python dict).
 fn record_tagged(tagged: &mut Vec<TaggedDefinition>, name: NamedSpan, tags: TagSet) {
     match tagged.iter_mut().find(|t| t.name.name == name.name) {
         Some(existing) => existing.tags = tags,
@@ -788,7 +788,7 @@ fn record_tagged(tagged: &mut Vec<TaggedDefinition>, name: NamedSpan, tags: TagS
 
 // --- Python -----------------------------------------------------------------------------
 
-/// Python の source を読んでタグ・import・関数の定義を取り出す(構文の誤りは errors に積んで空の事実を返す)。
+/// Reads Python source and extracts tags, imports, and function definitions (syntax errors are pushed into errors and empty facts are returned).
 fn python_facts(source: &str, module: &str, reading: &TagReading) -> ModuleFacts {
     let mut facts = ModuleFacts {
         language: Language::Python,
@@ -806,7 +806,7 @@ fn python_facts(source: &str, module: &str, reading: &TagReading) -> ModuleFacts
         Ok(Mod::Module(module)) => module.body,
         Ok(_) => Vec::new(),
         Err(error) => {
-            facts.errors.push(format!("Python の構文として読めない: {}", error));
+            facts.errors.push(format!("cannot be read as Python syntax: {}", error));
             return facts;
         }
     };
@@ -822,7 +822,7 @@ fn python_facts(source: &str, module: &str, reading: &TagReading) -> ModuleFacts
     facts
 }
 
-/// `MODULE_TAGS = {…}` の文ならタグを読む(鍵と値がどちらも定数の組だけ)。
+/// If the statement is `MODULE_TAGS = {…}`, reads the tags (only pairs whose keys and values are both constants).
 fn python_module_tags(stmt: &Stmt, variable: &str) -> Option<TagSet> {
     let Stmt::Assign(assign) = stmt else { return None };
     let [Expr::Name(target)] = assign.targets.as_slice() else { return None };
@@ -850,7 +850,7 @@ fn python_module_tags(stmt: &Stmt, variable: &str) -> Option<TagSet> {
     found.then(|| ByteSpan { start: usize::from(dict.range.start()), end: usize::from(dict.range.end()) }).map(|span| TagSet { context, role, keys, span })
 }
 
-/// 定数を Python の `str()` の綴りにする。
+/// Turns a constant into the spelling of Python's `str()`.
 fn python_str(value: &Constant) -> String {
     match value {
         Constant::Str(text) => text.clone(),
@@ -865,7 +865,7 @@ fn python_str(value: &Constant) -> String {
     }
 }
 
-/// `def 名` の名の位置を探す(見つからなければ文の頭)。
+/// Finds the position of the name in `def name` (the start of the statement if not found).
 fn python_def_name(source: &str, name: &str, stmt_start: usize) -> NamedSpan {
     let rest = source.get(stmt_start..).unwrap_or("");
     let at = rest
@@ -878,7 +878,7 @@ fn python_def_name(source: &str, name: &str, stmt_start: usize) -> NamedSpan {
     NamedSpan { name: name.to_string(), span: ByteSpan { start: at, end: at + name.len() } }
 }
 
-/// 文の列の中の import を全部読む(関数・class・if・try などの中も — `ast.walk` と同じ範囲)。
+/// Reads all imports in a list of statements (also inside functions, classes, if, try, and so on -- the same range as `ast.walk`).
 fn python_imports(body: &[Stmt], module: &str, out: &mut Vec<ImportTarget>) {
     for stmt in body {
         match stmt {
@@ -944,14 +944,14 @@ fn python_imports(body: &[Stmt], module: &str, out: &mut Vec<ImportTarget>) {
     }
 }
 
-// --- 名の使用(DOEFF120 — JsonValue の使い場所)---------------------------------------------
+// --- Use of names (DOEFF120 -- where JsonValue is used)---------------------------------------------
 
-/// source の中の、名 names の使用の位置を全部集める(位置の順)。
+/// Collects all positions of uses of the names `names` in the source (in position order).
 ///
-/// - Hy: 読み取り器の記号で、最後の `.` の段が名の物(import・`(setv 名 …)`・`#^ 名 x`・`(: x 名)`・`#(str 名)` …)。
-///   文字列・註・docstring・`#_` で読み捨てた form は数えない。位置は記号の最後の段。
-/// - Python: 字句の名(名前・属性の名・import の名)と、注釈(引数・戻り値・`x: T`)と型の別名(`X: TypeAlias = "…"`・`type X = …`)の
-///   文字列の中の語(前後が識別子の文字でない物)。docstring と註は数えない。
+/// - Hy: reader symbols whose last `.` segment is the name (import, `(setv name …)`, `#^ name x`, `(: x name)`, `#(str name)` ...).
+///   Strings, comments, docstrings, and forms discarded with `#_` are not counted. The position is the last segment of the symbol.
+/// - Python: lexical names (names, attribute names, import names), and words inside the strings of annotations (arguments, return values, `x: T`) and type aliases (`X: TypeAlias = "…"`, `type X = …`)
+///   (those not adjacent to identifier characters). Docstrings and comments are not counted.
 pub fn name_occurrences(language: Language, source: &str, names: &[&str]) -> Vec<ByteSpan> {
     let mut found = Vec::new();
     match language {
@@ -962,7 +962,7 @@ pub fn name_occurrences(language: Language, source: &str, names: &[&str]) -> Vec
             }
         }
         Language::Python => {
-            // 字句が読めなくなった所で止める(読めた所までの名は数える)。
+            // Stop where the lexing can no longer read (names up to the readable point are counted).
             found.extend(rustpython_parser::lexer::lex(source, Mode::Module).map_while(Result::ok).filter_map(|(token, range)| match token {
                 rustpython_parser::Tok::Name { name } if names.contains(&name.as_str()) => Some(text_span(range)),
                 _ => None,
@@ -976,7 +976,7 @@ pub fn name_occurrences(language: Language, source: &str, names: &[&str]) -> Vec
     found
 }
 
-/// Hy の form の木から、最後の段が名の記号を集める。
+/// From a Hy form tree, collects the symbols whose last segment is the name.
 fn hy_name_occurrences(source: &str, form: &Form, names: &[&str], out: &mut Vec<ByteSpan>) {
     match &form.node {
         Node::Symbol => {
@@ -1005,14 +1005,14 @@ fn hy_name_occurrences(source: &str, form: &Form, names: &[&str], out: &mut Vec<
     }
 }
 
-/// Python の文の列から、注釈と型の別名の式の中の文字列を探し、その中の名の語を集める(関数・class・if・try などの中も)。
+/// From a list of Python statements, finds the strings inside annotation and type-alias expressions and collects the words of names in them (also inside functions, classes, if, try, and so on).
 fn python_type_strings(source: &str, body: &[Stmt], names: &[&str], out: &mut Vec<ByteSpan>) {
     let in_expr = |expr: &Expr, out: &mut Vec<ByteSpan>| python_expr_strings(source, expr, names, out);
     for stmt in body {
         match stmt {
             Stmt::AnnAssign(node) => {
                 in_expr(&node.annotation, out);
-                // `X: TypeAlias = "…"` の値は型の式(文字列で前方参照を書く)。
+                // The value of `X: TypeAlias = "…"` is a type expression (a forward reference written as a string).
                 let alias = match node.annotation.as_ref() {
                     Expr::Name(name) => name.id.as_str() == "TypeAlias",
                     Expr::Attribute(attribute) => attribute.attr.as_str() == "TypeAlias",
@@ -1084,7 +1084,7 @@ fn python_type_strings(source: &str, body: &[Stmt], names: &[&str], out: &mut Ve
     }
 }
 
-/// 関数の引数の注釈の中の文字列の語を集める。
+/// Collects the words in the strings inside a function argument's annotation.
 fn python_arguments_strings(source: &str, args: &rustpython_ast::Arguments, names: &[&str], out: &mut Vec<ByteSpan>) {
     let with_default = args.posonlyargs.iter().chain(args.args.iter()).chain(args.kwonlyargs.iter()).map(|a| &a.def);
     let bare = args.vararg.iter().chain(args.kwarg.iter()).map(|a| a.as_ref());
@@ -1095,7 +1095,7 @@ fn python_arguments_strings(source: &str, args: &rustpython_ast::Arguments, name
     }
 }
 
-/// 型の式の中の文字列(`"JsonValue"`・`dict[str, "JsonValue"]`・`"A | B"`)を探し、その literal の中の名の語の位置を集める。
+/// Finds the strings inside a type expression (`"JsonValue"`, `dict[str, "JsonValue"]`, `"A | B"`) and collects the positions of the words of names inside that literal.
 fn python_expr_strings(source: &str, expr: &Expr, names: &[&str], out: &mut Vec<ByteSpan>) {
     let recurse = |inner: &Expr, out: &mut Vec<ByteSpan>| python_expr_strings(source, inner, names, out);
     match expr {
@@ -1124,7 +1124,7 @@ fn python_expr_strings(source: &str, expr: &Expr, names: &[&str], out: &mut Vec<
     }
 }
 
-/// text の中の、名 names の語(前後が識別子の文字でない物)の位置(text の中の byte の範囲)。
+/// The positions (byte ranges inside text) of the words of names `names` in text (those not adjacent to identifier characters).
 fn word_occurrences(text: &str, names: &[&str]) -> Vec<ByteSpan> {
     let identifier = |c: char| c == '_' || c.is_alphanumeric();
     let mut found = Vec::new();
@@ -1140,7 +1140,7 @@ fn word_occurrences(text: &str, names: &[&str]) -> Vec<ByteSpan> {
     found
 }
 
-/// rustpython の範囲を ByteSpan にする。
+/// Turns rustpython's range into a ByteSpan.
 fn text_span(range: rustpython_parser::text_size::TextRange) -> ByteSpan {
     ByteSpan { start: usize::from(range.start()), end: usize::from(range.end()) }
 }
@@ -1150,7 +1150,7 @@ mod tests {
     use super::*;
     use crate::project::layers::tag_reading;
 
-    /// 既定のタグの読み方(設定の節が空の時の値)。
+    /// The default tag reading (the value when the config section is empty).
     fn reading() -> TagReading {
         tag_reading(None, None)
     }
@@ -1158,12 +1158,12 @@ mod tests {
     #[test]
     fn hy_tags_from_contract_dict_module_tags_and_defeffect() {
         let src = r#"
-(defk plan [x] "計画" {:pre [] :tags {:context "billing" :role "program"}} x)
+(defk plan [x] "plan" {:pre [] :tags {:context "billing" :role "program"}} x)
 (defk #^ int typed [x] {:tags {}} x)
 (defhandler h #_ ignored {:tags {:context "billing" :role "protocol"}} (E [e k] (k 1)))
-(defeffect Charge "請求" {:fields [amount] :answer int :tags {:context "billing" :role "intent"}})
+(defeffect Charge "charge" {:fields [amount] :answer int :tags {:context "billing" :role "intent"}})
 (defeffect Old :fields [amount] :tags {:context "billing" :role "intent"})
-(defrecord Row "行" {:tags {:context "billing" :role "type"} :check [(> n 0)]} #^ int n)
+(defrecord Row "row" {:tags {:context "billing" :role "type"} :check [(> n 0)]} #^ int n)
 (defrecord Bare #^ str key)
 (defn helper [] 1)
 (val MODULE-TAGS {:context "billing" :role "judgment"})
@@ -1172,13 +1172,13 @@ mod tests {
         let facts = read_facts(Language::Hy, src, "app.core.m", &reading());
         let tagged: Vec<(&str, Option<&str>)> = facts.tagged.iter().map(|t| (t.name.name.as_str(), t.tags.role.as_deref())).collect();
         assert_eq!(tagged, vec![("plan", Some("program")), ("h", Some("protocol")), ("Charge", Some("intent")), ("Row", Some("type"))]);
-        // 空の :tags は名乗っていない。#^ の型注釈の後の名を読む。
+        // An empty :tags has not declared anything. Reads the name after the #^ type annotation.
         let untagged: Vec<&str> = facts.untagged.iter().map(|n| n.name.as_str()).collect();
-        // doeff-hy が受けない鍵と値の並びの形(Old)はタグとして読まない(module_tags.hy と同じ)。
-        // 頭の辞書の無い defrecord はタグを書いていない定義。
+        // A shape of key-and-value sequence that doeff-hy does not accept (Old) is not read as tags (same as module_tags.hy).
+        // A defrecord without a leading dict is a definition that wrote no tags.
         assert_eq!(untagged[..4], ["typed", "Old", "Bare", "helper"]);
         assert_eq!(facts.module_tags.as_ref().and_then(|t| t.role.as_deref()), Some("judgment"));
-        // module の頭のタグはタグの無い定義に効く。
+        // The module's head tags apply to definitions without tags.
         assert_eq!(facts.tag_sets().len(), 5);
         assert_eq!(facts.functions.len(), 5);
     }
@@ -1188,7 +1188,7 @@ mod tests {
         let src = "(import app.intent.charge [Charge :as C])\n(import .sibling)\n(defn f [] (import subprocess) '(import quoted))\n(import os.path :as p)\n";
         let facts = read_facts(Language::Hy, src, "app.core.m", &reading());
         let targets: Vec<&str> = facts.imports.iter().map(|i| i.target.as_str()).collect();
-        // `[a :as b]` の別名も綴りに数える(module_tags.hy の hy-imports と同じ)。
+        // The alias of `[a :as b]` is also counted in the spelling (same as hy-imports of module_tags.hy).
         assert_eq!(
             targets,
             vec!["app.intent.charge.Charge", "app.intent.charge.C", "app.core.sibling", "subprocess", "quoted", "os.path"]
@@ -1203,7 +1203,7 @@ mod tests {
         assert_eq!(targets, vec!["app.intent.charge", "httpx", "x.y"]);
         assert_eq!(facts.module_tags.as_ref().and_then(|t| t.role.as_deref()), Some("None"));
         assert_eq!(facts.functions[0].name, "f");
-        // 名前 f は `def` の中の文字ではなく、名の位置を指す。
+        // The name f points to the name's position, not a character inside `def`.
         assert_eq!(facts.functions[0].span.start, src.find("def f").unwrap() + 4);
         let broken = read_facts(Language::Python, "def (:\n", "m", &reading());
         assert_eq!(broken.errors.len(), 1);
@@ -1216,18 +1216,18 @@ mod tests {
     fn name_occurrences_count_symbols_and_type_strings_but_not_prose() {
         let names = ["JsonValue", "JsonObject"];
         let text = |source: &str, spans: Vec<ByteSpan>| spans.into_iter().map(|s| source[s.start..s.end].to_string()).collect::<Vec<_>>();
-        // Hy: import・注釈・点つきの名の最後の段・quote の中は数え、文字列・註・#_・別の名(JsonValues)は数えない。
+        // Hy: imports, annotations, the last segment of dotted names, and inside quote are counted; strings, comments, #_, and other names (JsonValues) are not.
         let hy = "(import m [JsonValue])\n; JsonValue\n(setv x #^ wire.JsonObject y)\n\"JsonValue\"\n#_ JsonValue\n(setv JsonValues 1 q '(JsonValue))\n";
         assert_eq!(text(hy, name_occurrences(Language::Hy, hy, &names)), vec!["JsonValue", "JsonObject", "JsonValue"]);
-        // Python: 名・属性・import の名と、注釈と型の別名の文字列の中の語。docstring・註・f 文字列・語の一部は数えない。
+        // Python: names, attributes, import names, and words inside the strings of annotations and type aliases. Docstrings, comments, f-strings, and parts of words are not counted.
         let py = "\"\"\"JsonValue\"\"\"\nfrom m import JsonValue\n# JsonValue\ndef f(a: \"MyJsonValue\", b: \"list[JsonObject]\") -> \"JsonValue\":\n    return f\"{a} JsonValue\"\nx = m.JsonObject\n";
         assert_eq!(text(py, name_occurrences(Language::Python, py, &names)), vec!["JsonValue", "JsonObject", "JsonValue", "JsonObject"]);
     }
 
     #[test]
     fn class_fields_for_doeff204_match_the_shared_case_table() {
-        // DOEFF204 に渡す class の欄の一覧は、defrecord / defwire と同じ読み手(doeff-indexer の hy_index::fields)で読む。
-        // 同じ表を Hy 側の正本(doeff_hy.declarations/field-targets)の検も読む。
+        // The list of a class's fields passed to DOEFF204 is read with the same reader as defrecord / defwire (doeff-indexer's hy_index::fields).
+        // The test of the Hy-side source of truth (doeff_hy.declarations/field-targets) also reads the same table.
         let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../doeff-hy/tests/data/record_field_cases.json");
         let table: serde_json::Value = serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
         for case in table["cases"].as_array().unwrap() {

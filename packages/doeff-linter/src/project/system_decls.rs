@@ -1,20 +1,20 @@
-//! DOEFF173 — architecture.hy の defservice ごとに、cluster に置く系(defsystem)を宣言し、その系が汎用の模擬 cluster のテストに
-//! 載る形か(DOEFF136 と対)。
+//! DOEFF173 — for each defservice in architecture.hy, declare the system placed in the cluster (defsystem), and check that the system is in a form that
+//! can go into the generic mock-cluster test (paired with DOEFF136).
 //!
-//! 母集団は architecture.hy の全 defservice(entry の層を持たない service も数える — operator の決め(全 service に defsystem か
-//! 理由つきの例外)を、entry の層の無い service が黙って抜けないように)。defservice の
-//! `:system "module:名"`(列も可)を読み、次のどれかを欠けとして返す:
-//! - `:system` を書いていない・空の列。
-//! - `:system {:exempt "理由"}` の理由が空(例外は旧い経路に残す service か、process を持たない部品の service — 理由の中身は判じない)。
-//! - 名指した module がその service の entry の層(`<root>/<dir>/entry/`)の外(`:entry-modules` の service はその module の中)。
-//!   `:system {:part-of "module:名"}`(その service の code が別の service の系の中で走る)だけは、どこかの service の entry の層に
-//!   在ればよい(引数の検めはその指した系に当てる)。part-of でない宣言が他の service の系を指すのは赤。
-//! - 名指した名の定義が無い・defsystem でない(静的な記述 `__doeff_system__` を付けるのは defsystem だけ — 索引の種類で判じる)。
-//! - defsystem の引数が 1 つでない。
-//! - 引数 1 つ(土台)を受ける job の関数の、その引数の型が書かれていない・素の Callable・写像・中身の型の無い組(汎用のテストが
-//!   型から模擬の土台を組めない)。
+//! The population is all defservices in architecture.hy (services without an entry layer are counted too — so that the operator's decision (every service has a defsystem or
+//! an exception with a reason) is not silently bypassed by services lacking an entry layer). Reads the defservice
+//! `:system "module:name"` (a list is also allowed) and returns any of the following as a gap:
+//! - `:system` not written, or an empty list.
+//! - The reason of `:system {:exempt "reason"}` is empty (an exception is for a service left on the old path or a part-service that has no process — the content of the reason is not judged).
+//! - The named module is outside the service's entry layer (`<root>/<dir>/entry/`) (for a service with `:entry-modules`, inside that module).
+//!   Only `:system {:part-of "module:name"}` (the service's code runs inside another service's system) may point to a system in any service's entry layer
+//!   (the argument check is applied to the system it points at). A non-part-of declaration pointing at another service's system is red.
+//! - The named definition does not exist or is not a defsystem (only a defsystem gets the static description `__doeff_system__` — judged by the index kind).
+//! - The defsystem does not take exactly one argument.
+//! - The argument type of the job function that receives the single argument (the foundation) is not written, or is a bare Callable, a mapping, or a tuple with no element types (the generic test
+//!   cannot build a mock foundation from the type).
 //!
-//! 層の名 entry は他の規則(DOEFF136・163)と同じく層の dir の名で読む。
+//! The layer name entry is read from the layer dir name, as in the other rules (DOEFF136, 163).
 
 use std::collections::HashMap;
 use std::path::Path;
@@ -26,33 +26,33 @@ use super::architecture::{ArchService, Architecture, DefinitionRef, SystemDecl};
 use super::invariants::module_path;
 use super::layers::normalize_dir;
 
-/// 土台の型として受けない型の頭(汎用のテストが型から土台を組めない物)。
+/// Type heads not accepted as a foundation type (the generic test cannot build a foundation from them).
 const UNTYPED_FOUNDATION_HEADS: &[&str] =
     &["Callable", "dict", "Dict", "Mapping", "FrozenMap", "tuple", "list", "Any", "object", "JsonBody", "JsonValue", "OpaqueJson"];
 
-/// service 1 つの欠け 1 つ(閉じた集合)。
+/// One gap of one service (a closed set).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum SystemGap {
-    /// `:system` を書いていない・空の列。
+    /// `:system` not written, or an empty list.
     Undeclared,
-    /// `{:exempt "理由"}` の理由が空。
+    /// The reason of `{:exempt "reason"}` is empty.
     EmptyExemption,
-    /// 名指した module が entry の層の外。
+    /// The named module is outside the entry layer.
     OutsideEntry(DefinitionRef),
-    /// 名指した定義が無い。
+    /// The named definition does not exist.
     Missing(DefinitionRef),
-    /// 名指した定義が defsystem でない。
+    /// The named definition is not a defsystem.
     NotSystem(DefinitionRef),
-    /// 引数が 1 つでない(引数の名の列)。
+    /// Not exactly one argument (the list of argument names).
     NotOneFoundation { system: DefinitionRef, params: Vec<String> },
-    /// 土台を受ける job の関数の、その引数の型が無い・土台の型でない(job の関数の名・型の綴り — 無ければ None)。
+    /// The job function that receives the foundation has no argument type or a non-foundation type (job function name, type spelling — None if absent).
     UntypedFoundation { system: DefinitionRef, job: String, type_text: Option<String> },
-    /// 土台を受ける job の関数が 1 つも見つからない(型を確かめられない)。
+    /// No job function that receives the foundation was found (the type cannot be checked).
     FoundationUnused { system: DefinitionRef },
 }
 
 impl SystemGap {
-    /// 鍵の service の名の後ろの細目(宣言の欠けは無し・系の欠けは名指しの綴り)。
+    /// The detail after the service name in the key (none for a missing declaration; the named spelling for a system gap).
     pub fn detail(&self) -> Option<String> {
         match self {
             SystemGap::Undeclared => None,
@@ -64,42 +64,42 @@ impl SystemGap {
         }
     }
 
-    /// 違反の文の中身(何が欠けているか)。
+    /// The body of the violation text (what is missing).
     pub fn describe(&self, service: &str) -> String {
         match self {
-            SystemGap::Undeclared => format!("service {} は :system(cluster に置く系の defsystem)を宣言していない", service),
-            SystemGap::EmptyExemption => format!("service {} の :system {{:exempt …}} の理由が空", service),
+            SystemGap::Undeclared => format!("service {} did not declare :system (a defsystem for the system placed in the cluster)", service),
+            SystemGap::EmptyExemption => format!("service {} has an empty reason in :system {{:exempt …}}", service),
             SystemGap::OutsideEntry(system) => {
-                format!("service {} の :system の {} — module がその service の entry の層に無い", service, system.spelling())
+                format!("service {} :system {} — the module is not in the entry layer of that service", service, system.spelling())
             }
             SystemGap::Missing(system) => {
-                format!("service {} の :system の {} — 定義が無い(module か名の誤り)", service, system.spelling())
+                format!("service {} :system {} — no definition found (wrong module or name)", service, system.spelling())
             }
-            SystemGap::NotSystem(system) => format!("service {} の :system の {} — defsystem でない", service, system.spelling()),
+            SystemGap::NotSystem(system) => format!("service {} :system {} — not a defsystem", service, system.spelling()),
             SystemGap::NotOneFoundation { system, params } => format!(
-                "service {} の :system の {} — 引数が土台 1 つでない([{}])",
+                "service {} :system {} — arguments are not exactly one foundation ([{}])",
                 service,
                 system.spelling(),
                 params.join(" ")
             ),
             SystemGap::UntypedFoundation { system, job, type_text } => format!(
-                "service {} の :system の {} — 土台を受ける job の関数 {} の引数の型が{}",
+                "service {} :system {} — the argument type of job function {} that receives the foundation is {}",
                 service,
                 system.spelling(),
                 job,
                 match type_text {
-                    Some(text) => format!(" {}(素の Callable・写像・組は土台の型にならない)", text),
-                    None => "書かれていない".to_string(),
+                    Some(text) => format!("{} (a bare Callable, mapping or tuple cannot be a foundation type)", text),
+                    None => "not written".to_string(),
                 }
             ),
             SystemGap::FoundationUnused { system } => {
-                format!("service {} の :system の {} — 土台を受ける job の関数が見つからない(型を確かめられない)", service, system.spelling())
+                format!("service {} :system {} — no job function that receives the foundation was found (the type cannot be checked)", service, system.spelling())
             }
         }
     }
 }
 
-/// 名指した定義(file の相対 path・定義)。
+/// The named definition (relative file path, definition).
 pub(super) fn find<'h>(definition: &DefinitionRef, hy: &'h HashMap<String, HyFileIndex>) -> Option<(&'h str, &'h HyFileIndex, usize)> {
     let target = definition.target();
     hy.iter().find_map(|(rel, index)| {
@@ -107,7 +107,7 @@ pub(super) fn find<'h>(definition: &DefinitionRef, hy: &'h HashMap<String, HyFil
     })
 }
 
-/// その service の entry の層の module か。
+/// Whether it is a module in that service's entry layer.
 fn in_entry(root: &str, service: &ArchService, rel: &str) -> bool {
     match service.entry_modules.as_deref() {
         Some(modules) => modules.iter().any(|m| module_path(m) == rel),
@@ -129,7 +129,7 @@ pub(super) fn items_of(form: &Form, want: Delim) -> Option<&[Form]> {
     }
 }
 
-/// 型の注記を剥がした form(`#^ T 名` の名)。
+/// The form with the type annotation stripped (the name of `#^ T name`).
 fn bare(form: &Form) -> &Form {
     match &form.node {
         Node::Annotated { target: Some(target), .. } => bare(target),
@@ -137,7 +137,7 @@ fn bare(form: &Form) -> &Form {
     }
 }
 
-/// 型の注記の綴り(`#^ T 名` の T)。注記が無ければ None。
+/// The spelling of the type annotation (the T of `#^ T name`). None if there is no annotation.
 fn annotation_text(source: &str, form: &Form) -> Option<String> {
     match &form.node {
         Node::Annotated { annotation: Some(annotation), .. } => {
@@ -147,9 +147,9 @@ fn annotation_text(source: &str, form: &Form) -> Option<String> {
     }
 }
 
-/// defsystem 1 つの形(索引は defsystem の引数を持たないので source から読む): 引数の名(`#^ T 名` は名)と、
-/// 引数 1 つ目(土台)の型の注記(doeff L983 の `[#^ T foundation]` — 無ければ None)と、
-/// その記号を受ける job の呼び出しの (関数の綴り, 位置)。
+/// The shape of one defsystem (the index holds no defsystem arguments, so it is read from the source): the argument names (for `#^ T name`, the name),
+/// the type annotation of the first argument (the foundation) (`[#^ T foundation]` of doeff L983 — None if absent),
+/// and the (function spelling, position) of the job calls that receive that symbol.
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct SystemShape {
     params: Vec<String>,
@@ -174,7 +174,7 @@ fn read_system(source: &str, system: &str) -> Option<SystemShape> {
     Some(SystemShape { params, foundation_type, foundation_calls })
 }
 
-/// defsystem の job の行から、土台の記号を受ける呼び出しの (関数の綴り, 位置) を集める。
+/// Collects the (function spelling, position) of calls that receive the foundation symbol from the job lines of a defsystem.
 fn foundation_calls(source: &str, body: &[Form], foundation: &str) -> Vec<(String, usize)> {
     body.iter()
         .skip(3)
@@ -182,7 +182,7 @@ fn foundation_calls(source: &str, body: &[Form], foundation: &str) -> Vec<(Strin
         .filter_map(|row| row.get(1).and_then(|program| items_of(program, Delim::Paren)))
         .filter_map(|program| {
             let head = symbol(source, program.first()?)?.to_string();
-            // 位置の引数だけを数える(`:鍵 値` の組は飛ばす)。
+            // Count positional arguments only (skip `:key value` pairs).
             let mut positional = Vec::new();
             let mut rest = program[1..].iter();
             while let Some(arg) = rest.next() {
@@ -197,7 +197,7 @@ fn foundation_calls(source: &str, body: &[Form], foundation: &str) -> Vec<(Strin
         .collect()
 }
 
-/// 呼び出しの頭の綴りを、defsystem の中の呼び出しの名前の解決(索引の target)で Hy の定義へ引く。
+/// Resolves the head spelling of a call to a Hy definition via the name resolution of calls inside the defsystem (the index target).
 fn callee<'h>(
     index: &HyFileIndex,
     caller: usize,
@@ -208,21 +208,21 @@ fn callee<'h>(
     hy.values().flat_map(|i| i.definitions.iter()).find(|d| d.qualified_name == target)
 }
 
-/// 型の綴りの頭(`(of Callable …)` → Callable・`(| A None)` → A)。
+/// The head of a type spelling (`(of Callable …)` -> Callable, `(| A None)` -> A).
 fn type_head(text: &str) -> &str {
     text.split(|c: char| c.is_whitespace() || c == '(' || c == ')' || c == '[' || c == ']')
         .find(|word| !word.is_empty() && !matches!(*word, "of" | "get" | "|"))
         .unwrap_or("")
 }
 
-/// 系の置き場の決め: 自分の系はその service 自身の entry の層、`{:part-of …}` はどこかの service の entry の層。
+/// Placement rule for systems: its own system lives in that service's own entry layer; `{:part-of …}` in any service's entry layer.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Placement {
     OwnEntry,
     AnyEntry,
 }
 
-/// 系 1 つの形の欠け。
+/// Shape gaps of one system.
 fn system_gaps(
     root_path: &Path,
     architecture: &Architecture,
@@ -252,7 +252,7 @@ fn system_gaps(
         out.push(SystemGap::NotOneFoundation { system: system.clone(), params: shape.params });
         return out;
     }
-    // 土台の型を defsystem の引数に書いた系(doeff L983 の `[#^ T foundation]`)は、その注記で判じる(job の関数の :pre より先)。
+    // A system whose foundation type is written in the defsystem argument (`[#^ T foundation]` of doeff L983) is judged by that annotation (before the :pre of the job function).
     if let Some(text) = shape.foundation_type {
         if UNTYPED_FOUNDATION_HEADS.contains(&type_head(&text)) {
             out.push(SystemGap::UntypedFoundation { system: system.clone(), job: definition.name.clone(), type_text: Some(text) });
@@ -279,7 +279,7 @@ fn system_gaps(
     out
 }
 
-/// service ごとの欠け(architecture.hy の宣言の順・service の中は :system の順)。
+/// Gaps per service (in the declaration order of architecture.hy; within a service, in :system order).
 pub fn gaps<'a>(root_path: &Path, architecture: &'a Architecture, hy: &HashMap<String, HyFileIndex>) -> Vec<(&'a ArchService, SystemGap)> {
     architecture
         .services
@@ -322,7 +322,7 @@ mod tests {
 
     #[test]
     fn read_system_reads_an_annotated_foundation_by_its_name() {
-        // doeff L983 の `[#^ T foundation]` — 注記の付いた引数を落とさず名で数え、注記を土台の型として持つ(#2215)。
+        // `[#^ T foundation]` of doeff L983 — count annotated arguments by name without dropping them, and keep the annotation as the foundation type (#2215).
         let source = "(defsystem typed [#^ AgoraHost foundation]\n  (a (job-a foundation)))\n\
                       (defsystem typed-two [#^ AgoraHost foundation programs]\n  (b (job-b foundation programs)))\n";
         assert_eq!(

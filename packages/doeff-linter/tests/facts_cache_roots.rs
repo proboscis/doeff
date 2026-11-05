@@ -1,7 +1,7 @@
-//! 事実の cache の根の dir の片づけの検 — 一時の置き場で binary を走らせ、置き場の dir を見る。
+//! Tests for cleanup of the facts cache's root dirs: run the binary against a temporary store and look at the store's dirs.
 //!
-//! 根の dir には根の path が記録され、前の走査から間隔(1 時間)が過ぎた次の実行で、記録した根が無くなった dir だけが消える。
-//! 間隔が過ぎた事は、置き場の走査の時刻の記録(`.swept`)を古い値に書き換えて表す。
+//! A root dir records the root's path, and on the next run after the interval (1 hour) has passed since the previous scan, only dirs whose recorded root no longer exists are deleted.
+//! That the interval has passed is represented by rewriting the record of the store's scan time (`.swept`) to an old value.
 
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -22,7 +22,7 @@ foundation = ["foundation"]
 allowed_layers = ["foundation"]
 "#;
 
-/// 事実の cache を書く最小の repo(repo 全体の Hy の索引を cache する DOEFF106 を有効にする)。
+/// The smallest repo that writes the facts cache (enables DOEFF106, which caches the whole repo's Hy index).
 fn repo() -> tempfile::TempDir {
     let dir = tempfile::TempDir::new().unwrap();
     std::fs::write(dir.path().join("pyproject.toml"), CONFIG).unwrap();
@@ -31,13 +31,13 @@ fn repo() -> tempfile::TempDir {
     dir
 }
 
-/// binary を root で、置き場 cache の cache を使って走らせる。
+/// Runs the binary with root as the root and the store cache as the facts cache.
 fn run(root: &Path, cache: &Path) {
     let output = Command::new(env!("CARGO_BIN_EXE_doeff-linter"))
         .args(["--output-format", "editor-json", "--no-log"])
         .current_dir(root)
         .env_remove("DOEFF_LINTER_NO_CACHE")
-        // 機体の検の枠の再入の印 — この検は置き場の片づけを見るので、機体の枠(混んだ機体では数分待つ)を取らずに走らせる。
+        // Marker for re-entry into the machine's test slot: these tests look at store cleanup, so run them without taking the machine's slot (on a busy machine it waits several minutes).
         .env("DOEFF_LINTER_CHECK_SLOT", "1")
         .env("DOEFF_LINTER_CACHE_DIR", cache).env("DOEFF_LINTER_SWEEP_INLINE", "1")
         .output()
@@ -45,7 +45,7 @@ fn run(root: &Path, cache: &Path) {
     assert!(output.status.code().is_some_and(|c| c <= 1), "{}", String::from_utf8_lossy(&output.stderr));
 }
 
-/// 記録した根の path が root の根の dir(無ければ None)。
+/// The root dir whose recorded root path is root (None if none).
 fn root_dir_of(cache: &Path, root: &Path) -> Option<PathBuf> {
     let wanted = std::fs::canonicalize(root).unwrap();
     std::fs::read_dir(cache)
@@ -55,7 +55,7 @@ fn root_dir_of(cache: &Path, root: &Path) -> Option<PathBuf> {
         .find(|dir| std::fs::read_to_string(dir.join("root.path")).is_ok_and(|text| Path::new(&text) == wanted))
 }
 
-/// 前の走査から間隔が過ぎた事にする。
+/// Pretends the interval has passed since the previous scan.
 fn interval_passes(cache: &Path) {
     std::fs::write(cache.join(".swept"), "0").unwrap();
 }
@@ -66,16 +66,16 @@ fn a_vanished_root_dir_is_cleared_on_the_next_run_after_the_interval() {
     let gone = repo();
     let live = repo();
     run(gone.path(), cache.path());
-    let gone_dir = root_dir_of(cache.path(), gone.path()).expect("走った根の dir に根の path が記録される");
-    assert!(gone_dir.join("hy-index.bin.d").is_dir(), "根の dir に事実が置かれる");
+    let gone_dir = root_dir_of(cache.path(), gone.path()).expect("the root path is recorded in the root dir of the root that ran");
+    assert!(gone_dir.join("hy-index.bin.d").is_dir(), "facts are placed in the root dir");
     let gone_path = gone.path().to_path_buf();
     drop(gone);
     assert!(!gone_path.exists());
     run(live.path(), cache.path());
-    assert!(gone_dir.is_dir(), "間隔の内(同じ 1 時間の中)の実行は走査しない");
+    assert!(gone_dir.is_dir(), "a run within the interval (within the same hour) does not scan");
     interval_passes(cache.path());
     run(live.path(), cache.path());
-    assert!(!gone_dir.exists(), "間隔が過ぎた次の実行で、根が無くなった dir が消える");
+    assert!(!gone_dir.exists(), "on the next run after the interval, the dir of a root that no longer exists is deleted");
 }
 
 #[test]
@@ -84,37 +84,37 @@ fn a_root_dir_in_use_stays() {
     let kept = repo();
     let other = repo();
     run(kept.path(), cache.path());
-    let kept_dir = root_dir_of(cache.path(), kept.path()).expect("根の dir");
+    let kept_dir = root_dir_of(cache.path(), kept.path()).expect("root dir");
     interval_passes(cache.path());
     run(other.path(), cache.path());
-    assert!(kept_dir.join("hy-index.bin.d").is_dir(), "根が在る dir は、走査の後も事実ごと残る");
+    assert!(kept_dir.join("hy-index.bin.d").is_dir(), "a dir whose root exists remains with its facts even after the scan");
 }
 
 #[test]
 fn a_dir_without_a_record_stays() {
     let cache = tempfile::TempDir::new().unwrap();
-    // この仕組みより前に作られた根の dir(根の path の記録が無い)
+    // A root dir made before this mechanism (no record of the root's path)
     let unrecorded = cache.path().join("00000000deadbeef");
     std::fs::create_dir_all(unrecorded.join("hy-index.bin.d")).unwrap();
     std::fs::write(unrecorded.join("hy-index.bin.d").join("00"), b"old").unwrap();
     let live = repo();
     interval_passes(cache.path());
     run(live.path(), cache.path());
-    assert!(root_dir_of(cache.path(), live.path()).is_some(), "走査は行われた(走った根の dir は記録される)");
-    assert!(unrecorded.join("hy-index.bin.d").join("00").is_file(), "記録の無い dir は中身ごと残る");
+    assert!(root_dir_of(cache.path(), live.path()).is_some(), "the scan ran (the root dir of the root that ran is recorded)");
+    assert!(unrecorded.join("hy-index.bin.d").join("00").is_file(), "a dir with no record remains with its contents");
 }
 
-// ── 置き場の全体の上限──────────────────────────────────────────
-// 根が在り続ける作業木の dir は、根が消えた dir の片づけでは消えず、根の数だけ増え続けた(zeus で 62G)。全体が上限を超えたら、最後に
-// 使われた時刻の古い dir から消して上限の内へ戻す。この実行の根と、間隔の内に使われた dir は消さない。
+// -- Overall cap of the store ---------------------------------------------
+// Working-tree dirs whose roots continue to exist were not deleted by the cleanup of dirs whose roots vanished, and kept growing by the number of roots (62G on zeus). When the total exceeds the cap, dirs are deleted from the one with the oldest last-used
+// time to bring it back within the cap. This run's root and dirs used within the interval are not deleted.
 
-/// binary を root で、置き場 cache と全体の上限 cap(byte)で走らせる。
+/// Runs the binary with root as the root, the store cache, and the overall cap (in bytes).
 fn run_with_cap(root: &Path, cache: &Path, cap: u64) {
     let output = Command::new(env!("CARGO_BIN_EXE_doeff-linter"))
         .args(["--output-format", "editor-json", "--no-log"])
         .current_dir(root)
         .env_remove("DOEFF_LINTER_NO_CACHE")
-        // 機体の検の枠の再入の印 — この検は置き場の片づけを見るので、機体の枠(混んだ機体では数分待つ)を取らずに走らせる。
+        // Marker for re-entry into the machine's test slot: these tests look at store cleanup, so run them without taking the machine's slot (on a busy machine it waits several minutes).
         .env("DOEFF_LINTER_CHECK_SLOT", "1")
         .env("DOEFF_LINTER_CACHE_DIR", cache).env("DOEFF_LINTER_SWEEP_INLINE", "1")
         .env("DOEFF_LINTER_CACHE_MAX_BYTES", cap.to_string())
@@ -123,7 +123,7 @@ fn run_with_cap(root: &Path, cache: &Path, cap: u64) {
     assert!(output.status.code().is_some_and(|c| c <= 1), "{}", String::from_utf8_lossy(&output.stderr));
 }
 
-/// 根の在る別の根の dir を作り、bytes の大きさの塊を置いて、最後に使われた時刻を ago 秒前にする(印 `used` の更新時刻)。
+/// Makes another root dir with an existing root, places a chunk of size bytes, and sets the last-used time to ago seconds before (the mtime of the `used` marker).
 fn stale_root_dir(cache: &Path, name: &str, root: &Path, bytes: usize, ago: u64) -> PathBuf {
     let dir = cache.join(name);
     std::fs::create_dir_all(dir.join("hy-index.bin.d")).unwrap();
@@ -141,17 +141,17 @@ fn over_the_cap_the_least_recently_used_dirs_go_first_until_within_the_cap() {
     let cache = tempfile::TempDir::new().unwrap();
     let kept_root = repo();
     let live = repo();
-    // 根が在り続ける 3 つの dir(どれも根が消えた片づけでは消えない)— 古い順に oldest・older・recent。
+    // Three dirs whose roots continue to exist (none is deleted by the cleanup of vanished roots), oldest, older, recent in oldest-first order.
     let oldest = stale_root_dir(cache.path(), "00000000000000a1", kept_root.path(), 4000, 30 * 86400);
     let older = stale_root_dir(cache.path(), "00000000000000a2", kept_root.path(), 4000, 20 * 86400);
     let recent = stale_root_dir(cache.path(), "00000000000000a3", kept_root.path(), 4000, 10 * 86400);
     interval_passes(cache.path());
-    // 上限 = 塊 2 つぶんより少し少ない(この実行の根の dir の分も入る)— 古い 2 つが消え、新しい 1 つが残る。
+    // Cap = a little less than two chunks (this run's root dir counts too): the old two are deleted and the new one remains.
     run_with_cap(live.path(), cache.path(), 6000);
-    assert!(!oldest.exists(), "上限を超えたら、最後に使われた時刻のいちばん古い dir から消える");
-    assert!(!older.exists(), "上限の内に戻るまで、次に古い dir も消える");
-    assert!(recent.join("hy-index.bin.d").join("00").is_file(), "上限の内に戻ったら、それより新しい dir は残る");
-    assert!(root_dir_of(cache.path(), live.path()).is_some(), "この実行の根の dir は残る");
+    assert!(!oldest.exists(), "when the cap is exceeded, deletion starts from the dir with the oldest last-used time");
+    assert!(!older.exists(), "the next oldest dir is also deleted until back within the cap");
+    assert!(recent.join("hy-index.bin.d").join("00").is_file(), "once back within the cap, newer dirs remain");
+    assert!(root_dir_of(cache.path(), live.path()).is_some(), "this run's root dir remains");
 }
 
 #[test]
@@ -159,12 +159,12 @@ fn a_dir_used_within_the_interval_stays_even_over_the_cap() {
     let cache = tempfile::TempDir::new().unwrap();
     let kept_root = repo();
     let live = repo();
-    // 並走する実行が使っている根(間隔の内に使われた)— 上限を超えても消さない。
+    // A root that a concurrent run is using (used within the interval) is not deleted even if the cap is exceeded.
     let busy = stale_root_dir(cache.path(), "00000000000000b1", kept_root.path(), 8000, 60);
     interval_passes(cache.path());
     run_with_cap(live.path(), cache.path(), 1000);
-    assert!(busy.join("hy-index.bin.d").join("00").is_file(), "間隔の内に使われた dir は上限を超えても残る");
-    assert!(root_dir_of(cache.path(), live.path()).is_some(), "この実行の根の dir は残る");
+    assert!(busy.join("hy-index.bin.d").join("00").is_file(), "a dir used within the interval remains even if the cap is exceeded");
+    assert!(root_dir_of(cache.path(), live.path()).is_some(), "this run's root dir remains");
 }
 
 #[test]
@@ -175,16 +175,16 @@ fn within_the_cap_nothing_is_cleared_and_each_run_marks_its_root_used() {
     let old = stale_root_dir(cache.path(), "00000000000000c1", kept_root.path(), 100, 30 * 86400);
     interval_passes(cache.path());
     run_with_cap(live.path(), cache.path(), 1_000_000);
-    assert!(old.join("hy-index.bin.d").join("00").is_file(), "上限の内なら、古いだけの dir は消えない(時間だけを理由に消さない)");
-    let live_dir = root_dir_of(cache.path(), live.path()).expect("根の dir");
-    assert!(live_dir.join("used").is_file(), "実行は根の dir に使った印を付ける");
+    assert!(old.join("hy-index.bin.d").join("00").is_file(), "within the cap, a dir that is merely old is not deleted (nothing is deleted for age alone)");
+    let live_dir = root_dir_of(cache.path(), live.path()).expect("root dir");
+    assert!(live_dir.join("used").is_file(), "a run puts a used marker in its root dir");
 }
 
-// ── 上限の片づけの番────────────────────────────────────
-// 上限の片づけは、根が消えた dir の片づけの記録 `.swept`(上限を持たない古い版の linter も書く)と番を分け合わない。終えた時刻
-// `.swept-cap` は片づけが終わってから書くので、打ち切られた実行は番だけ取って終わらない。
+// -- Turn for the cap cleanup ---------------------------------------
+// The cap cleanup does not share its turn with `.swept`, the record of the cleanup of dirs whose roots vanished (which old versions of the linter without a cap also write). The finish time
+// `.swept-cap` is written after the cleanup finishes, so a run that was cut off takes the turn but does not finish.
 
-/// 時刻 ago 秒前の file を path に置く(印の更新時刻を決める)。
+/// Places a file at path with a time ago seconds before (sets the marker's mtime).
 fn stamped(path: &Path, text: &str, ago: u64) {
     std::fs::write(path, text).unwrap();
     let at = std::time::SystemTime::now() - std::time::Duration::from_secs(ago);
@@ -201,12 +201,12 @@ fn an_old_linter_taking_the_vanished_root_turn_does_not_hold_back_the_cap_sweep(
     let kept_root = repo();
     let live = repo();
     let old = stale_root_dir(cache.path(), "00000000000000d1", kept_root.path(), 8000, 30 * 86400);
-    // 上限を持たない古い版が、たった今 根が消えた dir の片づけの番を取った
+    // An old version without a cap just took the turn for the cleanup of dirs whose roots vanished
     std::fs::write(cache.path().join(".swept"), unix_now().to_string()).unwrap();
     run_with_cap(live.path(), cache.path(), 1000);
-    assert!(!old.exists(), "古い版が `.swept` の番を取った直後でも、上限の片づけは自分の記録で番を数えて走る");
-    assert!(cache.path().join(".swept-cap").is_file(), "上限の片づけを終えた時刻が記録される");
-    assert!(!cache.path().join(".swept-cap.lock").exists(), "片づけの最中の印は終わりに外れる");
+    assert!(!old.exists(), "even right after an old version took the `.swept` turn, the cap cleanup counts its turn by its own record and runs");
+    assert!(cache.path().join(".swept-cap").is_file(), "the time the cap cleanup finished is recorded");
+    assert!(!cache.path().join(".swept-cap.lock").exists(), "the in-progress marker of the cleanup is removed at the end");
 }
 
 #[test]
@@ -216,10 +216,10 @@ fn a_cap_sweep_cut_off_midway_leaves_no_turn_so_the_next_run_redoes_it() {
     let live = repo();
     let old = stale_root_dir(cache.path(), "00000000000000e1", kept_root.path(), 8000, 30 * 86400);
     interval_passes(cache.path());
-    // 打ち切られた実行が最中の印だけを残した(終えた時刻の記録は無い)— 印が古ければ次の実行がやり直す
+    // A cut-off run left only the in-progress marker (no record of a finish time): if the marker is old, the next run redoes it
     stamped(&cache.path().join(".swept-cap.lock"), "", 3600);
     run_with_cap(live.path(), cache.path(), 1000);
-    assert!(!old.exists(), "打ち切られた実行の古い最中の印は、次の実行の片づけを止めない");
+    assert!(!old.exists(), "the old in-progress marker of a cut-off run does not stop the next run's cleanup");
 }
 
 #[test]
@@ -229,22 +229,22 @@ fn a_cap_sweep_in_progress_or_done_within_the_interval_is_not_repeated() {
     let live = repo();
     let old = stale_root_dir(cache.path(), "00000000000000f1", kept_root.path(), 8000, 30 * 86400);
     interval_passes(cache.path());
-    // 並走する実行が、たった今 片づけを始めた
+    // A concurrent run just started the cleanup
     stamped(&cache.path().join(".swept-cap.lock"), "", 0);
     run_with_cap(live.path(), cache.path(), 1000);
-    assert!(old.exists(), "片づけの最中の印が新しい間は、別の実行は同じ片づけを重ねない");
+    assert!(old.exists(), "while the cleanup's in-progress marker is new, another run does not overlap the same cleanup");
     std::fs::remove_file(cache.path().join(".swept-cap.lock")).unwrap();
-    // 上限の片づけを、たった今 終えた
+    // The cap cleanup just finished
     std::fs::write(cache.path().join(".swept-cap"), unix_now().to_string()).unwrap();
     run_with_cap(live.path(), cache.path(), 1000);
-    assert!(old.exists(), "間隔の内(同じ 1 時間の中)は、上限の片づけを繰り返さない");
+    assert!(old.exists(), "within the interval (within the same hour), the cap cleanup is not repeated");
 }
 
-// ── 増える時に上限を確かめる(agora の card — zeus の doeff-linter の置き場が 7.9G・2026-10-10 14:34 から zeus の disk が新しい版の
-// 準備の下限を割った)───────────────────────────────────────────────────────────────────────────────────
-// 置き場の全体が増えるのは、根の dir を新しく作る時(作業木 1 つで約 176MB)。上限の片づけを 1 時間に 1 度の番だけで確かめると、その間に
-// 作業木が増えて上限を越えたままになる。根の dir を新しく作った実行は、番の間隔に依らずその場で上限を確かめる(巡回の片づけは足さない —
-// 書く時の 1 点)。使っている根として守るのは、10 分の内に使われた dir だけ(1 時間だと作業の多い時に、ほぼ全部が守られて消せない)。
+// -- Check the cap when growing (agora card: zeus's doeff-linter store was 7.9G; from 2026-10-10 14:34 zeus's disk fell below the new version's
+// preparation lower bound) ----------------------------------------------------------------------------------
+// The store as a whole grows when a new root dir is made (about 176MB per working tree). If the cap cleanup is checked only on a once-per-hour turn, working trees increase in between
+// and it stays over the cap. A run that newly makes a root dir checks the cap on the spot regardless of the turn interval (no patrol cleanup is added;
+// one point at write time). Only dirs used within 10 minutes are protected as roots in use (with 1 hour, nearly everything is protected when there is a lot of work, and nothing can be deleted).
 
 #[test]
 fn a_new_root_over_the_cap_clears_old_dirs_even_right_after_a_cap_sweep() {
@@ -253,11 +253,11 @@ fn a_new_root_over_the_cap_clears_old_dirs_even_right_after_a_cap_sweep() {
     let live = repo();
     let old = stale_root_dir(cache.path(), "0000000000000101", kept_root.path(), 8000, 30 * 86400);
     interval_passes(cache.path());
-    // 上限の片づけを、たった今 終えた(番の間隔の内)— そこへ新しい根の dir が増える
+    // The cap cleanup just finished (within the turn interval), and a new root dir is added to it
     std::fs::write(cache.path().join(".swept-cap"), unix_now().to_string()).unwrap();
     run_with_cap(live.path(), cache.path(), 1000);
-    assert!(!old.exists(), "新しい根の dir を作った実行は、番の間隔の内でも上限を確かめて古い dir を消す");
-    assert!(root_dir_of(cache.path(), live.path()).is_some(), "この実行の根の dir は残る");
+    assert!(!old.exists(), "a run that makes a new root dir checks the cap and deletes the old dir even within the turn interval");
+    assert!(root_dir_of(cache.path(), live.path()).is_some(), "this run's root dir remains");
 }
 
 #[test]
@@ -265,20 +265,20 @@ fn a_dir_last_used_more_than_ten_minutes_ago_goes_over_the_cap() {
     let cache = tempfile::TempDir::new().unwrap();
     let kept_root = repo();
     let live = repo();
-    // 20 分前に使われた根 — 使っている根として守るのは 10 分の内だけ
+    // A root used 20 minutes ago: only roots used within 10 minutes are protected as in use
     let idle = stale_root_dir(cache.path(), "0000000000000201", kept_root.path(), 8000, 20 * 60);
     let busy = stale_root_dir(cache.path(), "0000000000000202", kept_root.path(), 8000, 60);
     interval_passes(cache.path());
     run_with_cap(live.path(), cache.path(), 9000);
-    assert!(!idle.exists(), "10 分より前に使われた dir は、上限を越えていれば消える");
-    assert!(busy.join("hy-index.bin.d").join("00").is_file(), "10 分の内に使われた dir は残る");
+    assert!(!idle.exists(), "a dir used more than 10 minutes ago is deleted if the cap is exceeded");
+    assert!(busy.join("hy-index.bin.d").join("00").is_file(), "a dir used within 10 minutes remains");
 }
 
-// ── 作業木をまたいで分け合う事実の置き場 `objects`──────────────────────────────
-// 事実は 1 つずつの file で、根の dir ごとには消えない。全体が上限を超えたら、根の dir を先に(最後に使われた時刻の古い順)、それでも
-// 超えていれば事実を、最後に使われた時刻(file の更新時刻)の古い順に消す。間隔の内に使われた事実と、置き場の使った印は消さない。
+// -- The fact store `objects`, shared across working trees --------------------------
+// Facts are one file each and are not deleted per root dir. When the total exceeds the cap, root dirs go first (oldest last-used time first), and if it is still
+// exceeded, facts are deleted oldest last-used time (file mtime) first. Facts used within the interval and the store's used marker are not deleted.
 
-/// 事実の置き場に、bytes の大きさの事実を 1 つ置き、最後に使われた時刻を ago 秒前にする。
+/// Places one fact of size bytes in the fact store and sets its last-used time to ago seconds before.
 fn stale_object(cache: &Path, name: &str, bytes: usize, ago: u64) -> PathBuf {
     let path = cache.join("objects").join("hy-index.bin").join("ab").join(name);
     std::fs::create_dir_all(path.parent().unwrap()).unwrap();
@@ -294,10 +294,10 @@ fn over_the_cap_the_least_recently_used_facts_go_first_until_within_the_cap() {
     let older = stale_object(cache.path(), "00000000000000000000000000a2", 10_000, 20 * 86400);
     let recent = stale_object(cache.path(), "00000000000000000000000000a3", 10_000, 10 * 86400);
     run_with_cap(live.path(), cache.path(), 15_000);
-    assert!(!oldest.exists(), "上限を超えたら、最後に使われた時刻のいちばん古い事実から消える");
-    assert!(!older.exists(), "上限の内に戻るまで、次に古い事実も消える");
-    assert!(recent.is_file(), "上限の内に戻ったら、それより新しい事実は残る");
-    assert!(cache.path().join("objects").join("used").is_file(), "置き場の使った印は消えない(古い版の linter が置き場ごと消さない印)");
+    assert!(!oldest.exists(), "when the cap is exceeded, deletion starts from the fact with the oldest last-used time");
+    assert!(!older.exists(), "the next oldest fact is also deleted until back within the cap");
+    assert!(recent.is_file(), "once back within the cap, newer facts remain");
+    assert!(cache.path().join("objects").join("used").is_file(), "the store's used marker is not deleted (a marker that keeps old versions of the linter from deleting the whole store)");
 }
 
 #[test]
@@ -305,12 +305,12 @@ fn a_root_dir_goes_before_any_fact() {
     let cache = tempfile::TempDir::new().unwrap();
     let kept_root = repo();
     let live = repo();
-    // 根の dir(前の形の事実を持つ)は古い順で先に消え、それで上限の内に戻れば事実は残る。
+    // Root dirs (holding facts of the previous form) are deleted first in oldest-first order, and if that brings it back within the cap, the facts remain.
     let old_root = stale_root_dir(cache.path(), "00000000000000a1", kept_root.path(), 20_000, 30 * 86400);
     let fact = stale_object(cache.path(), "00000000000000000000000000b1", 10_000, 25 * 86400);
     run_with_cap(live.path(), cache.path(), 15_000);
-    assert!(!old_root.exists(), "根の dir が先に消える");
-    assert!(fact.is_file(), "根の dir を消して上限の内に戻れば、事実は残る");
+    assert!(!old_root.exists(), "the root dir is deleted first");
+    assert!(fact.is_file(), "if deleting the root dir brings it back within the cap, the fact remains");
 }
 
 #[test]
@@ -320,8 +320,8 @@ fn a_fact_used_within_ten_minutes_stays_even_over_the_cap() {
     let busy = stale_object(cache.path(), "00000000000000000000000000c1", 10_000, 60);
     let idle = stale_object(cache.path(), "00000000000000000000000000c2", 10_000, 20 * 60);
     run_with_cap(live.path(), cache.path(), 1000);
-    assert!(busy.is_file(), "10 分の内に使われた事実は上限を超えても残る(並走する実行が読んでいる)");
-    assert!(!idle.exists(), "10 分より前に使われた事実は、上限を越えていれば消える");
+    assert!(busy.is_file(), "a fact used within 10 minutes remains even if the cap is exceeded (a concurrent run is reading it)");
+    assert!(!idle.exists(), "a fact used more than 10 minutes ago is deleted if the cap is exceeded");
 }
 
 #[test]
@@ -330,7 +330,7 @@ fn within_the_cap_no_fact_is_cleared() {
     let live = repo();
     let old = stale_object(cache.path(), "00000000000000000000000000d1", 100, 30 * 86400);
     run_with_cap(live.path(), cache.path(), 1_000_000);
-    assert!(old.is_file(), "上限の内なら、古いだけの事実は消えない(時間だけを理由に消さない)");
+    assert!(old.is_file(), "within the cap, a fact that is merely old is not deleted (nothing is deleted for age alone)");
 }
 
 #[test]
@@ -344,15 +344,15 @@ fn a_temporary_fact_left_by_a_cut_off_run_is_cleared_once_stale() {
     stamped(&stale, "half", 2 * 3600);
     stamped(&fresh, "half", 60);
     run_with_cap(live.path(), cache.path(), 1_000_000);
-    assert!(!stale.exists(), "1 時間より古い一時 file(打ち切られた実行の残り)は片づけで消える");
-    assert!(fresh.is_file(), "書いている最中かもしれない新しい一時 file は消さない");
+    assert!(!stale.exists(), "a temporary file older than 1 hour (left by a cut-off run) is deleted by cleanup");
+    assert!(fresh.is_file(), "a new temporary file that may be being written is not deleted");
 }
 
-// ── 事実の置き場を数える片づけは、実行の外の process で──────────────────────────────
-// 事実の置き場(zeus で約 40 万の事実)を数える片づけは 3〜19 秒かかり、書き込み直後の hook の期限(4 秒)を越えていた。既定では最中の印を
-// 持ったまま別の process へ渡し、実行は待たない。渡された process が片づけを終え、終えた時刻を記録して印を外す。
+// -- Cleanup that counts the fact store runs in a process outside the run ------------------------
+// Cleanup that counts the fact store (about 400,000 facts on zeus) took 3-19 seconds and exceeded the deadline (4 seconds) of the hook right after a write. By default it hands the cleanup, still holding the in-progress
+// marker, to another process, and the run does not wait. The process it was handed to finishes the cleanup, records the finish time, and removes the marker.
 
-/// binary を root で、置き場 cache と全体の上限 cap(byte)で、片づけを渡す既定のまま走らせる(計器の出力 stderr を返す)。
+/// Runs the binary with root as the root, the store cache, and the overall cap (in bytes), with the default of handing off the cleanup (returns the instrument's stderr output).
 fn run_handing_the_sweep(root: &Path, cache: &Path, cap: u64) -> String {
     let output = Command::new(env!("CARGO_BIN_EXE_doeff-linter"))
         .args(["--output-format", "editor-json", "--no-log"])
@@ -375,14 +375,14 @@ fn the_sweep_over_the_facts_is_handed_to_a_process_that_finishes_it_after_the_ru
     let live = repo();
     let idle = stale_object(cache.path(), "00000000000000000000000000f1", 10_000, 20 * 60);
     let stderr = run_handing_the_sweep(live.path(), cache.path(), 1000);
-    assert!(stderr.contains("facts-cache.sweep handed=1"), "実行は片づけを別の process へ渡す(自分では数えない): {stderr}");
-    // 渡された process は実行の外で走るので、終えた時刻の記録が出て最中の印が外れるまで待つ(上限 60 秒)。
+    assert!(stderr.contains("facts-cache.sweep handed=1"), "the run hands the cleanup to another process (it does not count by itself): {stderr}");
+    // The process it was handed to runs outside the run, so wait until the finish time is recorded and the in-progress marker is removed (up to 60 seconds).
     let done = |cache: &Path| cache.join(".swept-cap").is_file() && !cache.join(".swept-cap.lock").exists();
     let deadline = std::time::Instant::now() + std::time::Duration::from_secs(60);
     while !done(cache.path()) && std::time::Instant::now() < deadline {
         std::thread::sleep(std::time::Duration::from_millis(50));
     }
-    assert!(done(cache.path()), "渡された process が片づけを終えた時刻を記録し、最中の印を外す");
-    assert!(!idle.exists(), "渡された process が、上限を越えた古い事実を消す");
-    assert!(root_dir_of(cache.path(), live.path()).is_some(), "この実行の根の dir は残る");
+    assert!(done(cache.path()), "the process it was handed to records the time the cleanup finished and removes the in-progress marker");
+    assert!(!idle.exists(), "the process it was handed to deletes the old facts that exceed the cap");
+    assert!(root_dir_of(cache.path(), live.path()).is_some(), "this run's root dir remains");
 }

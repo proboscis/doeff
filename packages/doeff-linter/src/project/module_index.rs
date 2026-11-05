@@ -1,16 +1,16 @@
-//! import の先の module を層と service の置き場へ引く索引。
+//! An index that maps the module an import points to onto the layer and service location.
 //!
-//! 層の規則(import の向き・service の境界・置き場の依存・翻訳の層の intent)は、書いた file の import の先を `module の綴り → 置き場` で引く。全体の実行は
-//! 層の母集団の全 module を並べた表(`collect_layer_files` — 置き場の外の module は file の中身を読んで層を推すので、repo の Hy の file の全部を読んで
-//! 解析する)を作る。1 file の実行が引くのは、書いた file の import の先の module だけなので、その module の file だけを判じる索引にする —
-//! tree は歩かず(module の綴りから path を探る — `ModuleProbe`)、層を推すために中身を読むのも引かれた module の file だけ。
+//! The layer rules (import direction, service boundaries, location dependencies, the intent of the translation layer) look up the target of a written file's import by `module spelling -> location`. A whole run
+//! builds a table listing every module in the layer population (`collect_layer_files`; modules outside the locations get their layer inferred from file contents, so it reads and
+//! parses all the Hy files in the repo). A one-file run looks up only the modules that the written file's imports point to, so it uses an index that judges only the files of those modules:
+//! it does not walk the tree (it probes for the path from the module's spelling with `ModuleProbe`), and the only files whose contents are read to infer a layer are those of the looked-up modules.
 //!
-//! 答えは全体の表と同じ(`NamedIndex::site_of` は `collect_layer_files` と全体の表の作り方を 1 つの module に絞った物):
-//! - 置き場の宣言(places)の下の file は path で層を決め、宣言の外で infer_root の下の file はタグの role から推す。path で決まった file は推さない。
-//! - 同じ module に当たる file が複数なら、(層の順・path の順)で並べた最後が引かれる。
-//! - 書いた file は保存前の中身で判じた置き場が、自分の module について他の file を上書きする。
+//! The answer is the same as the whole table (`NamedIndex::site_of` is `collect_layer_files` and the construction of the whole table narrowed to one module):
+//! - A file under a declared location (places) gets its layer from its path, and a file outside the declarations but under infer_root has it inferred from the tag's role. A file whose layer was decided by path is not inferred.
+//! - If several files match the same module, the last one in (layer order, path order) is the one looked up.
+//! - For the written file's own module, the location judged from its pre-save contents overrides other files.
 //!
-//! 置き場の型 `S` と、file 1 つの置き場の決め方(`Resolver`)は呼び手が持つ — この file は module の綴りと file の探し方・並べ方だけを知る。
+//! The location type `S` and how to decide one file's location (`Resolver`) belong to the caller; this file knows only the module spelling and how to find and order files.
 
 use std::collections::HashMap;
 use std::path::Path;
@@ -19,34 +19,34 @@ use std::sync::Mutex;
 use super::layers::LayerId;
 use super::module_probe::ModuleProbe;
 
-/// file 1 つの置き場を決める(path で決める道に出会った file か、infer_root の下で中身から推す道に出会った file か — を受けて、置き場と層を返す)。
+/// Decides one file's location (given the route the file came by, either the path-decided route or the route inferred from contents under infer_root, returns the location and layer).
 pub(super) type Resolver<'a, S> = Box<dyn Fn(&str, &Path, Roads) -> Option<(LayerId, S)> + Send + Sync + 'a>;
 
-/// file が出会った道(全体の実行が歩く 2 つの所のどちらの下にあるか)。
+/// The route a file came by (which of the two places walked by a whole run it is under).
 #[derive(Debug, Clone, Copy)]
 pub(super) struct Roads {
-    /// 置き場の宣言の base の下 — path で層を決める。
+    /// Under the base of a place declaration: the layer is decided by path.
     pub(super) in_bases: bool,
-    /// infer_root の下 — タグの role から層を推す。
+    /// Under infer_root: the layer is inferred from the tag's role.
     pub(super) in_infer_root: bool,
 }
 
-/// 層の module の置き場の索引。
+/// Index of layer module locations.
 pub(super) enum ModuleIndex<'a, S> {
-    /// 全体の実行 — 層の母集団の全 module の表。
+    /// Whole run: a table of every module in the layer population.
     Whole(HashMap<String, S>),
-    /// 1 file の実行 — 引かれた module だけを判じる。
+    /// One-file run: judges only the modules that were looked up.
     Named(NamedIndex<'a, S>),
 }
 
 impl<'a, S: Clone> ModuleIndex<'a, S> {
-    /// 全部の module の表から(module の重なりは後ろが勝つ)。
+    /// From the table of all modules (when modules overlap, the later one wins).
     pub(super) fn whole(entries: impl IntoIterator<Item = (String, S)>) -> ModuleIndex<'a, S> {
         ModuleIndex::Whole(entries.into_iter().collect())
     }
 
-    /// 書いた file(`own` = その module と、保存前の中身で判じた置き場)から、引かれた module だけを引く索引。`bases` = 置き場の宣言の base の dir、
-    /// `infer_root` = 宣言の外の module の層をタグの role から推す root。
+    /// An index that looks up only the modules that were looked up, starting from the written file (`own` = its module and the location judged from its pre-save contents). `bases` = the base dirs of the place declarations,
+    /// `infer_root` = the root from which the layer of modules outside the declarations is inferred from the tag's role.
     pub(super) fn named(root: &Path, bases: Vec<String>, infer_root: Option<String>, own: (String, S), resolver: Resolver<'a, S>) -> ModuleIndex<'a, S> {
         ModuleIndex::Named(NamedIndex {
             own,
@@ -58,7 +58,7 @@ impl<'a, S: Clone> ModuleIndex<'a, S> {
         })
     }
 
-    /// module の置き場(層の母集団の外なら None)。
+    /// The module's location (None if outside the layer population).
     pub(super) fn get(&self, module: &str) -> Option<S> {
         match self {
             ModuleIndex::Whole(table) => table.get(module).cloned(),
@@ -69,16 +69,16 @@ impl<'a, S: Clone> ModuleIndex<'a, S> {
 
 pub(super) struct NamedIndex<'a, S> {
     own: (String, S),
-    /// module の綴りに当たる file を探る(層の母集団になりうる Hy と Python の file — tree は歩かない)。
+    /// Finds the files matching a module's spelling (Hy and Python files that can be in the layer population; the tree is not walked).
     probe: ModuleProbe,
     bases: Vec<String>,
     infer_root: Option<String>,
     resolver: Resolver<'a, S>,
-    /// 引いた module の答え(同じ module を 2 度判じない)。
+    /// Answers for modules already looked up (the same module is not judged twice).
     memo: Mutex<HashMap<String, Option<S>>>,
 }
 
-/// rel が dir(空 = 根そのもの)の下か。
+/// Whether rel is under dir (empty = the root itself).
 fn under(rel: &str, dir: &str) -> bool {
     dir.is_empty() || rel == dir || rel.strip_prefix(dir).is_some_and(|rest| rest.starts_with('/'))
 }
@@ -88,16 +88,16 @@ impl<S: Clone> NamedIndex<'_, S> {
         if module == self.own.0 {
             return Some(self.own.1.clone());
         }
-        if let Some(known) = self.memo.lock().expect("module の索引の memo").get(module) {
+        if let Some(known) = self.memo.lock().expect("module index memo").get(module) {
             return known.clone();
         }
         let site = self.site_of(module);
-        self.memo.lock().expect("module の索引の memo").insert(module.to_string(), site.clone());
+        self.memo.lock().expect("module index memo").insert(module.to_string(), site.clone());
         site
     }
 
-    /// 全体の表の作り方(置き場の宣言の下は path で決める → 宣言の外で infer_root の下は中身から推す → (層・path)の順に並べて最後が勝つ)を、
-    /// module 1 つに当たる file だけに当てる。
+    /// Applies the way the whole table is built (under a place declaration, decide by path -> outside the declarations but under infer_root, infer from contents -> sort by (layer, path) and the last wins)
+    /// only to the files matching one module.
     fn site_of(&self, module: &str) -> Option<S> {
         let mut sites: Vec<(LayerId, String, S)> = Vec::new();
         for (rel, path) in self.probe.files(module).iter() {
@@ -128,7 +128,7 @@ mod tests {
         dir
     }
 
-    /// 道に応じて置き場(層の番号の名)を返す決め方 — base の下は "by-path"、infer_root の下だけは "inferred"。
+    /// How to decide the location by route (returns the name of the layer number): under base it is "by-path", and only under infer_root it is "inferred".
     fn resolver<'a>() -> Resolver<'a, String> {
         Box::new(|rel, _path, roads| {
             if roads.in_bases {
@@ -147,7 +147,7 @@ mod tests {
         let index = ModuleIndex::named(dir.path(), vec!["app/core".to_string()], Some("app".to_string()), ("app.core.me".to_string(), "me".to_string()), resolver());
         assert_eq!(index.get("app.core.a").as_deref(), Some("by-path:app/core/a.hy"));
         assert_eq!(index.get("app.other.b").as_deref(), Some("inferred:app/other/b.hy"));
-        // 道の外の file と、無い module は母集団の外。書いた file の module は自分の置き場。
+        // A file outside the routes, and a missing module, are outside the population. The written file's module has its own location.
         assert_eq!(index.get("elsewhere.c"), None);
         assert_eq!(index.get("app.core.nothing"), None);
         assert_eq!(index.get("app.core.me").as_deref(), Some("me"));
@@ -157,7 +157,7 @@ mod tests {
     fn when_one_module_has_several_files_the_last_in_layer_then_path_order_wins() {
         let dir = tree(&["app/core/m.hy", "app/core/m.py"]);
         let index = ModuleIndex::named(dir.path(), vec!["app".to_string()], None, ("x".to_string(), "x".to_string()), resolver());
-        // 同じ層なら path の順で最後(m.py)が勝つ — 全体の表の `sort_by (層・path)` の後に HashMap へ入れる順と同じ。
+        // Within the same layer the last in path order (m.py) wins: the same as the order of insertion into the HashMap after the whole table's `sort_by (layer, path)`.
         assert_eq!(index.get("app.core.m").as_deref(), Some("by-path:app/core/m.py"));
     }
 

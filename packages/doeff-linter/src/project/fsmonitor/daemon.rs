@@ -1,13 +1,13 @@
-//! 常駐の process の本体(`doeff-linter fsmonitor-serve`)— 作業木ごとに、歩きと「index と同じでない file」を覚え、inotify の知らせで更新して、問いに答える。
+//! The body of the resident process (`doeff-linter fsmonitor-serve`) — per working tree, it remembers the walk and the "files that differ from the index", updates them on inotify notifications, and answers queries.
 //!
-//! 作業木 1 つの覚え(`Root`):
-//! - `dirs`: 見張っている dir(根からの path・降りる dir だけ — `hy_index::SKIPPED_DIRS` の名の dir は降りない)と、その watch。
-//! - `candidates`: 歩きが拾う拡張子(Hy・Python)の通常の file(symlink は拾わない — 歩きと同じ)。
-//! - `dirty`: index の通常の file の行のうち、今の file が行と同じ(`GitIndex::blob_of`)と言えない物。見張れない dir の下の行は常に dirty。
-//! - `index`: 読んだ index。`.git`(作業木なら gitdir)を見張り、`index` が置き替わったら読み直して `dirty` を全部やり直す。
+//! What is remembered for one working tree (`Root`):
+//! - `dirs`: the dirs being watched (paths from the root; only dirs that are descended into — dirs named in `hy_index::SKIPPED_DIRS` are not descended into) and their watches.
+//! - `candidates`: regular files with the extensions the walk picks up (Hy, Python) (symlinks are not picked up — same as the walk).
+//! - `dirty`: among the index's regular-file rows, those for which the current file cannot be said to be the same as the row (`GitIndex::blob_of`). Rows under dirs that cannot be watched are always dirty.
+//! - `index`: the index that was read. It watches `.git` (the gitdir for a worktree); when `index` is replaced, it re-reads it and redoes all of `dirty`.
 //!
-//! 知らせの扱い: file の知らせはその path だけを調べ直す。dir が増えた・減った時は、その dir の下だけ作り直す。知らせの列の溢れ・根が動いた・見張れない dir が在る時は、
-//! 作業木を作り直す(見張れない dir が在る間は、問いに「使えない」と答える — 呼び手は自分で歩く)。問いの答えの前には、知らせの列を空になるまで読む。
+//! Handling notifications: a file notification re-examines only that path. When a dir is added or removed, only the part under that dir is rebuilt. On queue overflow, the root moving, or a dir that cannot be watched,
+//! the working tree is rebuilt (while a dir that cannot be watched exists, queries are answered "unavailable" — the caller walks by itself). Before answering a query, the notification queue is read until it is empty.
 
 use std::collections::{BTreeSet, HashMap, HashSet};
 use std::ffi::CString;
@@ -25,7 +25,7 @@ use doeff_indexer::hy_index;
 use super::{lock_path, socket_path, state_dir, Answer, Request, PROTOCOL};
 use crate::project::git_index::{self, GitIndex};
 
-/// 作業木の dir の見張り。
+/// Watches of a working tree's dirs.
 const DIR_MASK: u32 = libc::IN_CREATE
     | libc::IN_DELETE
     | libc::IN_MODIFY
@@ -36,15 +36,15 @@ const DIR_MASK: u32 = libc::IN_CREATE
     | libc::IN_DELETE_SELF
     | libc::IN_MOVE_SELF
     | libc::IN_ONLYDIR;
-/// gitdir の見張り(`index` の置き替えだけを見る)。
+/// Watch of the gitdir (only watches for `index` being replaced).
 const GIT_MASK: u32 = libc::IN_CREATE | libc::IN_MOVED_TO | libc::IN_CLOSE_WRITE | libc::IN_DELETE | libc::IN_DELETE_SELF | libc::IN_MOVE_SELF | libc::IN_ONLYDIR;
-/// 問いが 1 度も来ない作業木を手放すまでの時間。
+/// Time until a working tree that never receives a query is released.
 const ROOT_IDLE: Duration = Duration::from_secs(20 * 60);
-/// 問いが 1 度も来ない常駐の process が終わるまでの時間。
+/// Time until a resident process that never receives a query exits.
 const DAEMON_IDLE: Duration = Duration::from_secs(60 * 60);
-/// 作れなかった作業木(見張れない・index が信じられない)を作り直すまでの間。
+/// Interval before rebuilding a working tree that could not be built (cannot be watched, or the index cannot be trusted).
 const REBUILD_AFTER: Duration = Duration::from_secs(5);
-/// inotify が効かない fs(NFS・SMB・CIFS・FUSE・9p)の `statfs` の種類。
+/// The `statfs` types of filesystems where inotify does not work (NFS, SMB, CIFS, FUSE, 9p).
 const UNWATCHABLE_FS: [i64; 5] = [0x6969, 0x517B, 0xFF53_4D42, 0x6573_5546, 0x0102_1997];
 
 #[derive(Clone, PartialEq, Eq)]
@@ -53,7 +53,7 @@ enum Owner {
     Git { root: PathBuf },
 }
 
-/// inotify の口と、watch ごとの持ち主(同じ dir を 2 つの作業木が見張ることも在る — 作業木の中に別の作業木が在る時)。
+/// The inotify handle and the owner of each watch (two working trees can watch the same dir — when one working tree is inside another).
 struct Watcher {
     fd: i32,
     owners: HashMap<i32, Vec<Owner>>,
@@ -61,14 +61,14 @@ struct Watcher {
 
 impl Watcher {
     fn new() -> Option<Watcher> {
-        // SAFETY: inotify_init1 は旗だけを取り、fd を返す。
+        // SAFETY: inotify_init1 takes only flags and returns an fd.
         let fd = unsafe { libc::inotify_init1(libc::IN_NONBLOCK | libc::IN_CLOEXEC) };
         (fd >= 0).then_some(Watcher { fd, owners: HashMap::new() })
     }
 
     fn add(&mut self, path: &Path, mask: u32, owner: Owner) -> Option<i32> {
         let c_path = CString::new(path.as_os_str().as_bytes()).ok()?;
-        // SAFETY: c_path は NUL で終わる有効な文字列で、呼びの間だけ使う。
+        // SAFETY: c_path is a valid NUL-terminated string, used only for the duration of the call.
         let wd = unsafe { libc::inotify_add_watch(self.fd, c_path.as_ptr(), mask) };
         if wd < 0 {
             return None;
@@ -80,18 +80,18 @@ impl Watcher {
         Some(wd)
     }
 
-    /// `owner` の持つ watch `wd` を手放す。持ち主が居なくなれば watch を外す。
+    /// Release the watch `wd` held by `owner`. If no owner remains, remove the watch.
     fn release(&mut self, wd: i32, owner: &Owner) {
         let Some(owners) = self.owners.get_mut(&wd) else { return };
         owners.retain(|o| o != owner);
         if owners.is_empty() {
             self.owners.remove(&wd);
-            // SAFETY: fd と wd は数だけを取る(外れている wd は EINVAL で戻るだけ)。
+            // SAFETY: fd and wd are taken as plain numbers (a detached wd just returns EINVAL).
             unsafe { libc::inotify_rm_watch(self.fd, wd) };
         }
     }
 
-    /// 作業木 `root` の持つ watch を全部手放す。
+    /// Release all watches held by working tree `root`.
     fn release_root(&mut self, root: &Path) {
         let mine = |owner: &Owner| match owner {
             Owner::Dir { root: r, .. } | Owner::Git { root: r } => r == root,
@@ -102,7 +102,7 @@ impl Watcher {
                 owners.retain(|o| !mine(o));
                 if owners.is_empty() {
                     self.owners.remove(&wd);
-                    // SAFETY: `release` と同じ。
+                    // SAFETY: same as `release`.
                     unsafe { libc::inotify_rm_watch(self.fd, wd) };
                 }
             }
@@ -110,7 +110,7 @@ impl Watcher {
     }
 }
 
-/// 作業木 1 つの覚え。
+/// What is remembered for one working tree.
 struct Root {
     path: PathBuf,
     index: GitIndex,
@@ -143,7 +143,7 @@ fn descends(name: &str) -> bool {
     !hy_index::SKIPPED_DIRS.contains(&name)
 }
 
-/// 根からの path `rel` の file を、歩きが拾い得るか(拡張子が Hy・Python で、途中の dir が全部降りる名)。
+/// Whether the walk could pick up the file at path `rel` from the root (the extension is Hy or Python, and all intermediate dirs are ones that are descended into).
 fn reachable(rel: &str) -> bool {
     let (dirs, name) = rel.rsplit_once('/').unwrap_or(("", rel));
     is_candidate_name(name) && dirs.split('/').filter(|d| !d.is_empty()).all(descends)
@@ -152,13 +152,13 @@ fn reachable(rel: &str) -> bool {
 fn fs_watchable(path: &Path) -> bool {
     let Ok(c_path) = CString::new(path.as_os_str().as_bytes()) else { return false };
     let mut stat = std::mem::MaybeUninit::<libc::statfs>::uninit();
-    // SAFETY: c_path は有効な C の文字列で、stat は statfs 1 つ分の書き込み先。成功した時だけ読む。
+    // SAFETY: c_path is a valid C string, and stat is a write destination of one statfs. It is read only on success.
     let done = unsafe { libc::statfs(c_path.as_ptr(), stat.as_mut_ptr()) } == 0;
-    // SAFETY: statfs が 0 を返した時、stat は埋まっている。
+    // SAFETY: when statfs returns 0, stat is filled in.
     !done || !UNWATCHABLE_FS.contains(&(unsafe { stat.assume_init() }.f_type as i64))
 }
 
-/// `rel` の file が index の通常の file の行と同じと言えるか(見張れる dir の中で、通常の file で、stat が行と同じ)。
+/// Whether the file `rel` can be said to be the same as the index's regular-file row (within a watchable dir, a regular file, and stat equals the row).
 fn is_clean(root: &Root, rel: &str) -> bool {
     root.dirs.contains_key(parent_of(rel))
         && std::fs::symlink_metadata(root.path.join(rel)).is_ok_and(|meta| meta.file_type().is_file() && root.index.blob_of(rel, &meta).is_some())
@@ -169,14 +169,14 @@ fn judge_all(root: &mut Root) {
     root.dirty = dirty;
 }
 
-/// dir `rel` の下を歩いて、dir を見張り、拾う file を覚える。
+/// Walk under dir `rel`, watch the dirs, and remember the files to pick up.
 fn scan_subtree(watcher: &mut Watcher, root: &mut Root, rel: &str) {
     let mut stack = vec![rel.to_string()];
     while let Some(rel) = stack.pop() {
         let dir = if rel.is_empty() { root.path.clone() } else { root.path.join(&rel) };
         let owner = Owner::Dir { root: root.path.clone(), rel: rel.clone() };
         let Some(wd) = watcher.add(&dir, DIR_MASK, owner) else {
-            // 歩く間に消えた dir は、消した知らせが整える。見張れない dir(権限・上限)が在れば、歩きの一覧を信じない。
+            // A dir that vanished during the walk is handled by the removal notification. If a dir that cannot be watched (permissions, limits) exists, the walk's listing is not trusted.
             root.degraded |= dir.is_dir();
             continue;
         };
@@ -203,12 +203,12 @@ fn scan_subtree(watcher: &mut Watcher, root: &mut Root, rel: &str) {
     }
 }
 
-/// 作業木 `path` の覚えを作る。作れなければ None(git の作業木でない・index が信じられない・inotify が効かない fs)。
+/// Build the memory for working tree `path`. None if it cannot be built (not a git working tree, the index cannot be trusted, or a filesystem where inotify does not work).
 fn build(watcher: &mut Watcher, path: &Path) -> Option<Root> {
     if !path.is_dir() || !fs_watchable(path) {
         return None;
     }
-    // gitdir を先に見張ってから index を読む(読む間の置き替えを知らせで拾う)。
+    // Watch the gitdir first and then read the index (a replacement during the read is picked up by a notification).
     let gitdir = git_index::index_path(path)?.parent()?.to_path_buf();
     let git_wd = watcher.add(&gitdir, GIT_MASK, Owner::Git { root: path.to_path_buf() })?;
     let Some(index) = GitIndex::read(path) else {
@@ -231,7 +231,7 @@ fn build(watcher: &mut Watcher, path: &Path) -> Option<Root> {
     Some(root)
 }
 
-/// 知らせから集めた、作業木 1 つの仕事。
+/// The work for one working tree, collected from notifications.
 #[derive(Default)]
 struct Pending {
     files: HashSet<String>,
@@ -241,7 +241,7 @@ struct Pending {
     rebuild: bool,
 }
 
-/// dir `rel` の下の覚えを手放す(見張り・拾った file・index の行の「同じ」)。
+/// Release the memory under dir `rel` (watches, picked-up files, and the index rows' "same").
 fn remove_subtree(watcher: &mut Watcher, root: &mut Root, rel: &str) {
     let prefix = format!("{rel}/");
     let doomed: Vec<String> = root.dirs.keys().filter(|dir| dir.as_str() == rel || dir.starts_with(&prefix)).cloned().collect();
@@ -258,7 +258,7 @@ fn remove_subtree(watcher: &mut Watcher, root: &mut Root, rel: &str) {
     root.dirty.extend(tracked);
 }
 
-/// 増えた dir `rel` の下を歩き直し、その下の index の行の「同じ」を調べ直す。
+/// Walk again under the added dir `rel` and re-examine the index rows' "same" under it.
 fn add_subtree(watcher: &mut Watcher, root: &mut Root, rel: &str) {
     let name = rel.rsplit_once('/').map_or(rel, |(_, name)| name);
     let present = std::fs::symlink_metadata(root.path.join(rel)).is_ok_and(|meta| meta.file_type().is_dir());
@@ -277,7 +277,7 @@ fn add_subtree(watcher: &mut Watcher, root: &mut Root, rel: &str) {
     }
 }
 
-/// file 1 つの知らせ — 拾う file の覚えと、index の行の「同じ」を調べ直す。
+/// A notification for one file — re-examine the memory of picked-up files and the index row's "same".
 fn touch(root: &mut Root, rel: &str) {
     let name = rel.rsplit_once('/').map_or(rel, |(_, name)| name);
     if !root.dirs.contains_key(parent_of(rel)) {
@@ -298,7 +298,7 @@ fn touch(root: &mut Root, rel: &str) {
     }
 }
 
-/// 知らせの仕事を覚えへ当てる。作り直しが要る(false)時は呼び手が作り直す。
+/// Apply the notification work to the memory. When a rebuild is needed (false), the caller rebuilds.
 fn apply(watcher: &mut Watcher, root: &mut Root, pending: Pending) -> bool {
     if pending.rebuild {
         return false;
@@ -323,19 +323,19 @@ fn apply(watcher: &mut Watcher, root: &mut Root, pending: Pending) -> bool {
 struct Daemon {
     watcher: Watcher,
     roots: HashMap<PathBuf, Root>,
-    /// 作れなかった作業木と、その刻(しばらく問いに「使えない」と答える)。
+    /// Working trees that could not be built, and the time (for a while, queries are answered "unavailable").
     refused: HashMap<PathBuf, Instant>,
     active: Instant,
 }
 
 impl Daemon {
-    /// kernel の知らせの列を空になるまで読み、作業木ごとの仕事に集めて当てる。
+    /// Read the kernel's notification queue until empty, collect it into per-working-tree work, and apply it.
     fn drain(&mut self) {
         let mut pending: HashMap<PathBuf, Pending> = HashMap::new();
         let mut overflow = false;
         let mut buf = vec![0u8; 64 * 1024];
         loop {
-            // SAFETY: buf は書き込める 64KiB の領域で、read はその大きさまでしか書かない。
+            // SAFETY: buf is a writable 64KiB region, and read writes only up to that size.
             let n = unsafe { libc::read(self.watcher.fd, buf.as_mut_ptr().cast(), buf.len()) };
             if n <= 0 {
                 break;
@@ -391,7 +391,7 @@ impl Daemon {
         }
     }
 
-    /// `root` の問いに答える(知らせを全部当ててから)。
+    /// Answer a query for `root` (after applying all notifications).
     fn answer(&mut self, root: &Path) -> Answer {
         self.active = Instant::now();
         self.drain();
@@ -434,7 +434,7 @@ impl Daemon {
         }
     }
 
-    /// 問いの来ない作業木を手放す。
+    /// Release working trees that receive no queries.
     fn forget_idle(&mut self) {
         let idle: Vec<PathBuf> = self.roots.iter().filter(|(_, root)| root.last_query.elapsed() >= ROOT_IDLE).map(|(path, _)| path.clone()).collect();
         for path in idle {
@@ -445,7 +445,7 @@ impl Daemon {
     }
 }
 
-/// 1 つの知らせを、作業木ごとの仕事へ書く。
+/// Write one notification into per-working-tree work.
 fn note(pending: &mut HashMap<PathBuf, Pending>, owner: &Owner, mask: u32, name: &[u8]) {
     match owner {
         Owner::Git { root } => {
@@ -459,7 +459,7 @@ fn note(pending: &mut HashMap<PathBuf, Pending>, owner: &Owner, mask: u32, name:
         Owner::Dir { root, rel } => {
             let work = pending.entry(root.clone()).or_default();
             if mask & (libc::IN_DELETE_SELF | libc::IN_MOVE_SELF) != 0 {
-                // 根の dir が消えた・動いた時だけ作り直す(下の dir は、親の dir の知らせが整える)。
+                // Rebuild only when the root dir vanished or moved (dirs below are handled by their parent dir's notification).
                 work.rebuild |= rel.is_empty();
                 return;
             }
@@ -481,27 +481,27 @@ fn note(pending: &mut HashMap<PathBuf, Pending>, owner: &Owner, mask: u32, name:
     }
 }
 
-/// 錠の file を誰かが持っているか(持っていれば常駐の process が居るか、起きる途中)。
+/// Whether someone holds the lock file (if held, a resident process exists or is starting up).
 pub fn lock_is_held(path: &Path) -> bool {
     let Ok(file) = std::fs::OpenOptions::new().create(true).truncate(false).write(true).open(path) else { return false };
-    // SAFETY: fd は開いた file の物で、flock は旗だけを取る。file を閉じれば錠も外れる。
+    // SAFETY: fd belongs to an open file, and flock takes only flags. Closing the file releases the lock.
     unsafe { libc::flock(file.as_raw_fd(), libc::LOCK_EX | libc::LOCK_NB) != 0 }
 }
 
-/// `fsmonitor-serve` の本体 — 置き場の錠を取り、socket で問いを受け続ける。錠が取れなければ(別の常駐の process が居る)すぐ終わる。
+/// The body of `fsmonitor-serve` — take the storage lock and keep receiving queries on the socket. If the lock cannot be taken (another resident process exists), exit immediately.
 pub fn serve() -> ExitCode {
     let stop = AtomicBool::new(false);
     run(&state_dir(), Duration::from_secs(1), &stop, DAEMON_IDLE)
 }
 
-/// `serve` の本体。`tick` ごとに `stop` と待ちの時間を見る(試験は短くする)。
+/// The body of `serve`. At each `tick`, check `stop` and the wait time (tests shorten it).
 pub fn run(dir: &Path, tick: Duration, stop: &AtomicBool, idle_exit: Duration) -> ExitCode {
     use std::os::unix::fs::DirBuilderExt;
     if std::fs::DirBuilder::new().mode(0o700).recursive(true).create(dir).is_err() {
         return ExitCode::from(2);
     }
     let Ok(lock) = std::fs::OpenOptions::new().create(true).truncate(false).write(true).open(lock_path(dir)) else { return ExitCode::from(2) };
-    // SAFETY: fd は開いた file の物。錠はこの process の間(lock を持つ間)持つ。
+    // SAFETY: fd belongs to an open file. The lock is held for the life of this process (while the lock is held).
     if unsafe { libc::flock(lock.as_raw_fd(), libc::LOCK_EX | libc::LOCK_NB) } != 0 {
         return ExitCode::SUCCESS;
     }
@@ -515,7 +515,7 @@ pub fn run(dir: &Path, tick: Duration, stop: &AtomicBool, idle_exit: Duration) -
     let mut daemon = Daemon { watcher, roots: HashMap::new(), refused: HashMap::new(), active: Instant::now() };
     let mut fds = [libc::pollfd { fd: listener.as_raw_fd(), events: libc::POLLIN, revents: 0 }, libc::pollfd { fd: daemon.watcher.fd, events: libc::POLLIN, revents: 0 }];
     while !stop.load(Ordering::Relaxed) {
-        // SAFETY: fds は 2 つの有効な pollfd の列で、poll はその長さまでしか書かない。
+        // SAFETY: fds is an array of two valid pollfds, and poll writes only up to that length.
         let ready = unsafe { libc::poll(fds.as_mut_ptr(), fds.len() as libc::nfds_t, tick.as_millis() as i32) };
         if ready > 0 && fds[1].revents != 0 {
             daemon.drain();

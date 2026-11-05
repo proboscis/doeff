@@ -1,13 +1,13 @@
-//! DOEFF122 の失敗の型の宣言 — 1 file の実行で、型の名を字面に含む宣言の file だけから集める。
+//! Declarations of DOEFF122 failure types — in a single-file run, collected only from declaration files whose text literally contains the type name.
 //!
-//! 1 file の検査が引くのは、match の腕の型 1 つ(書いた file の記号を `Scope::qualify` で解いた名)が失敗の型かだけ。それが要る file は稀(標本 150 file の
-//! 約 2%)だが、全体の実行と同じに repo の Hy の全部から宣言を集めると、冷えた作業木の最初の 1 回が 19〜27 秒かかる(hook の期限は 4 秒)。
-//! 宣言(`defrecord` の `:failure True` と `defeffect` の `:failure` / `:absent` の列)を持つ file は、型の名(解いた名の最後の段)の綴りを字面に必ず
-//! 含む(`spelling`)ので、`:failure` か `:absent` を綴り、型の名も綴る file だけを読み解く。答えは全体の実行(`failure_types_for`)が作る集合を引いた時と同じ。
+//! The check for one file only asks whether the type of one match arm (the name resolved from the written file's symbol with `Scope::qualify`) is a failure type. Files that need that are rare (about 2% of a
+//! sample of 150 files), but collecting declarations from all of the repo's Hy as the whole run does takes 19 to 27 seconds on the first run in a cold worktree (the hook's deadline is 4 seconds).
+//! A file that has declarations (`:failure True` of `defrecord`, and the `:failure` / `:absent` lists of `defeffect`) always literally contains the spelling of the type name (the last segment of the resolved name)
+//! (`spelling`), so only files that spell `:failure` or `:absent` and also spell the type name are parsed. The answer is the same as looking up the set built by the whole run (`failure_types_for`).
 //!
-//! 宣言の file を探す repo の歩きは、変わっていない file の中身を読まない(冷えた作業木で repo の Hy の全部を読む待ちが 3 秒):
-//! git の blob の id で綴りの覚え(`blob_spell` — 宣言の綴りを含むか・`(defeffect` を含むか・どの名を綴るかの Bloom filter)を引き、宣言の綴りを含む file
-//! でも、中身は名で引かれて覚えがその名を綴るかもしれないと言った時に初めて読む。
+//! The repo walk that looks for declaration files does not read the contents of unchanged files (the wait for reading all of the repo's Hy in a cold worktree is 3 seconds):
+//! it looks up the spelling memo by git blob id (`blob_spell` — whether it contains a declaration spelling, whether it contains `(defeffect`, and a Bloom filter of which names it spells), and even a file that contains a declaration spelling
+//! has its contents read only when it is looked up by name and the memo says it may spell that name.
 
 use std::collections::{BTreeSet, HashMap};
 use std::path::{Path, PathBuf};
@@ -20,23 +20,23 @@ use super::blob_spell::{self, BlobSpell, Seen};
 use super::spelling::Spelling;
 use super::{bulk_read, facts_cache};
 
-/// 引かれた時に型の名を字面に含む宣言の file から集める失敗の型(1 file の実行)。
+/// Failure types collected, when looked up, from the declaration files whose text literally contains the type name (single-file run).
 pub struct SpelledFailures<'a> {
     root: &'a Path,
     enabled: &'a BTreeSet<ProjectRule>,
     reading: &'a TagReading,
-    /// 型の名(最後の段)ごとの、その名を綴る宣言の file から集めた失敗の型(同じ名は 2 度集めない)。
+    /// For each type name (last segment), the failure types collected from the declaration files that spell that name (the same name is not collected twice).
     memo: Mutex<HashMap<String, Arc<FailureTypes>>>,
-    /// 宣言を持つ file(`:failure` か `:absent` を含む file)— 型の名に依らないので、最初の問いで 1 度だけ repo から集める。
-    /// 名ごとに repo の Hy の全部を読み直すと、match の腕の型が多い file(4,866 行の `cli_host.hy`)で CPU が 4 秒かかった。
+    /// Files that have declarations (files containing `:failure` or `:absent`) — independent of the type name, so collected from the repo only once, at the first query.
+    /// Re-reading all of the repo's Hy for each name cost 4 seconds of CPU on a file with many match-arm types (`cli_host.hy`, 4,866 lines).
     declarations: OnceLock<Vec<(String, Declaring)>>,
-    /// 覚えで済んで中身をまだ読んでいない宣言の file の、名で引かれて読んだ中身(根からの path → 中身・読めなければ None)。
+    /// Contents, read when looked up by name, of declaration files that the memo settled and whose contents were not yet read (path from the root → contents; None if unreadable).
     sources: Mutex<HashMap<String, Option<Arc<str>>>>,
-    /// 宣言の file ごとの失敗の型(根からの path → その file が宣言する型)。file の中身と読み方だけで決まり、引く型の名に依らないので、名が変わっても同じ file を読み解き直さない
-    /// (match の腕の型が違う名で何度も引かれると、`|` のように全部の宣言の file を綴る名では 246 file の読み解きが名の数だけ繰り返された)。
+    /// Failure types per declaration file (path from the root → the types that file declares). Decided only by the file's contents and how it is read, independent of the type name being looked up, so the same file is not parsed again when the name changes
+    /// (when match-arm types were looked up under different names many times, a name like `|` that spells every declaration file repeated the parsing of 246 files once per name).
     parsed: Mutex<HashMap<String, Arc<FailureTypes>>>,
-    /// repo の defeffect の宣言(effect ごとの不在・失敗の型)の全部 — DOEFF175 が effect の名で引く。effect の宣言を持つ file は `(defeffect` の綴りを含むので、
-    /// 宣言の file の中からそれを含む物だけを読み解いて 1 度だけ作る(effect の名ごとに宣言の file を探し直さない — 1 file に 40 の名があると 40 回の探し直しだった)。
+    /// All of the repo's defeffect declarations (the absent and failure types per effect) — DOEFF175 looks up by effect name. A file with effect declarations contains the spelling `(defeffect`, so
+    /// build it only once by parsing just the declaration files that contain it (do not search for declaration files again per effect name — with 40 names in one file that was 40 re-searches).
     effects: OnceLock<FailureTypes>,
 }
 
@@ -54,7 +54,7 @@ impl<'a> SpelledFailures<'a> {
         }
     }
 
-    /// 宣言を持つ file — 最初の問いで 1 度だけ repo を歩いて集める(覚えで済む file は中身を読まない — `blob_spell::scan`)。
+    /// Files that have declarations — collected by walking the repo only once, at the first query (files settled by the memo do not have their contents read — `blob_spell::scan`).
     fn declarations(&self) -> &Vec<(String, Declaring)> {
         self.declarations.get_or_init(|| {
             blob_spell::scan(self.root, "failure-types.collect", |_| false)
@@ -68,8 +68,8 @@ impl<'a> SpelledFailures<'a> {
         })
     }
 
-    /// 宣言の file のうち、覚え(中身を読んでいない file)か中身(読んだ file)が `keep` に当たる物の(根からの path・中身)。覚えで当たった file は
-    /// ここで中身を読み(待ちを重ねる・1 度読んだ中身は覚える)、`exact` で中身を確かめ直す(覚えは「当たるかもしれない」しか言わない)。
+    /// Among the declaration files, those whose memo (files whose contents were not read) or contents (files that were read) match `keep` (path from the root, contents). Files matched by the memo are
+    /// read here (stacking the wait; contents read once are remembered), and the contents are re-checked with `exact` (the memo only says "may match").
     fn sources_where(&self, keep: impl Fn(&BlobSpell) -> bool, exact: impl Fn(&str) -> bool) -> Vec<(String, Arc<str>)> {
         let declarations = self.declarations();
         let unread: Vec<(&String, &PathBuf)> = {
@@ -98,7 +98,7 @@ impl<'a> SpelledFailures<'a> {
             .collect()
     }
 
-    /// `name`(型の名の最後の段)を綴る宣言の file の失敗の型。
+    /// The failure types of the declaration files that spell `name` (the last segment of a type name).
     fn declared_with(&self, name: &str) -> FailureTypes {
         let spelling = Spelling::of(name);
         let kept = self.sources_where(|spell| spell.may_spell(&spelling), |source| spelling.in_source(source));
@@ -106,12 +106,12 @@ impl<'a> SpelledFailures<'a> {
         self.merged(&kept)
     }
 
-    /// 宣言の file(根からの path・中身)の列を読み解いて 1 つの集合に束ねる(file ごとの読み解きは覚える)。
+    /// Parses a list of declaration files (path from the root, contents) and bundles them into one set (the parsing of each file is remembered).
     fn merged(&self, kept: &[(&str, &str)]) -> FailureTypes {
-        let mut parsed = self.parsed.lock().expect("失敗の型の file ごとの memo");
+        let mut parsed = self.parsed.lock().expect("per-file memo of failure types");
         let fresh: Vec<(&str, &str)> = kept.iter().filter(|(rel, _)| !parsed.contains_key(*rel)).copied().collect();
         if !fresh.is_empty() {
-            // 読み解きは事実の置き場で覚える(全体の実行と同じ置き場・同じ鍵 — 変わっていない file は、次の実行でも読み解かない)。空の事実も覚えて、宣言でない file を読み解き直さない。
+            // The parsing is remembered in the facts store (the same store and same key as the whole run — an unchanged file is not parsed again on the next run). Empty facts are remembered too, so files that are not declarations are not re-parsed.
             let reading = self.reading;
             let done = crate::timing::timed("failure-types.parse", || facts_cache::per_file_content(self.root, FAILURE_TYPES_KIND, &failure_types_key(reading), &fresh, |rel, source| {
                 Some(failure_types_of_source(rel, source, reading))
@@ -127,7 +127,7 @@ impl<'a> SpelledFailures<'a> {
         all
     }
 
-    /// repo の defeffect の宣言の全部(最初の問いで 1 度だけ作る)。宣言の file のうち `(defeffect` を綴る物だけを読み解く。
+    /// All of the repo's defeffect declarations (built only once at the first query). Among the declaration files, only those that spell `(defeffect` are parsed.
     fn all_effects(&self) -> &FailureTypes {
         self.effects.get_or_init(|| {
             let kept = self.sources_where(|spell| spell.defeffect, |source| source.contains("(defeffect"));
@@ -137,20 +137,20 @@ impl<'a> SpelledFailures<'a> {
     }
 }
 
-/// 宣言を持つ file 1 つ — 歩く間に中身を読んだ物と、綴りの覚えで済んで中身をまだ読んでいない物。
+/// One declaration-bearing file — either one whose contents were read during the walk, or one settled by the spelling memo whose contents have not yet been read.
 enum Declaring {
     Read(Arc<str>),
     Spelled(PathBuf, BlobSpell),
 }
 
 impl SpelledFailures<'_> {
-    /// `qualified`(型か effect の名)の最後の段を綴る宣言の file から集めた宣言(同じ名は 2 度集めない)。
+    /// Declarations collected from the declaration files that spell the last segment of `qualified` (a type or effect name) (the same name is not collected twice).
     fn declared_for(&self, qualified: &str) -> Arc<FailureTypes> {
         let name = qualified.rsplit('.').next().unwrap_or(qualified);
-        let known = self.memo.lock().expect("失敗の型の memo").get(name).map(Arc::clone);
+        let known = self.memo.lock().expect("memo of failure types").get(name).map(Arc::clone);
         known.unwrap_or_else(|| {
             let collected = Arc::new(crate::timing::timed("failure-types", || self.declared_with(name)));
-            self.memo.lock().expect("失敗の型の memo").insert(name.to_string(), Arc::clone(&collected));
+            self.memo.lock().expect("memo of failure types").insert(name.to_string(), Arc::clone(&collected));
             collected
         })
     }
@@ -158,7 +158,7 @@ impl SpelledFailures<'_> {
 
 impl FailureLookup for SpelledFailures<'_> {
     fn is_failure(&self, qualified: &str) -> bool {
-        // 規則が無効なら宣言を集めない(全体の実行の `failure_types_for` と同じ)。
+        // If the rule is disabled, do not collect declarations (same as `failure_types_for` of the whole run).
         if !self.enabled.contains(&ProjectRule::FailureRethrow) {
             return false;
         }
@@ -166,7 +166,7 @@ impl FailureLookup for SpelledFailures<'_> {
     }
 
     fn effect_outcomes(&self, qualified_effect: &str) -> Option<EffectOutcomes> {
-        // DOEFF175 が無効なら effect ごとの宣言を集めない(全体の実行の `failure_types_for` と同じ)。
+        // If DOEFF175 is disabled, do not collect per-effect declarations (same as `failure_types_for` of the whole run).
         if !self.enabled.contains(&ProjectRule::StaleOutcomeBranch) {
             return None;
         }
@@ -185,7 +185,7 @@ mod tests {
     use super::super::smells::{failure_types_in, Scope};
     use super::*;
 
-    /// repo の Hy の全部から集める失敗の型 — 全体の実行(`failure_types_for`)と同じ作り方(歩く物は `hy_index::collect_hy_files` — 検の相手と歩き方を分ける)。
+    /// Failure types collected from all of the repo's Hy — built the same way as the whole run (`failure_types_for`) (what is walked is `hy_index::collect_hy_files` — separate from how the check's target is walked).
     fn failure_types_of_whole(root: &Path, enabled: &BTreeSet<ProjectRule>, reading: &TagReading) -> FailureTypes {
         let mut all = FailureTypes::default();
         if !enabled.contains(&ProjectRule::FailureRethrow) {
@@ -219,30 +219,30 @@ mod tests {
 
     fn sample() -> Vec<(&'static str, &'static str)> {
         vec![
-            ("app/errs.hy", "(defrecord Refusal \"断り\" {:failure True} #^ str reason)\n(defrecord Rejection #^ str reason)\n(defrecord Unreachable [reason])\n"),
+            ("app/errs.hy", "(defrecord Refusal \"refusal\" {:failure True} #^ str reason)\n(defrecord Rejection #^ str reason)\n(defrecord Unreachable [reason])\n"),
             (
                 "app/effs.hy",
-                "(import app.errs)\n(import app.store :as store)\n(defeffect ReadRow \"行を読む\" {:fields [key] :answer None :failure [app.errs.Unreachable store.Gone] :absent [Missing]})\n",
+                "(import app.errs)\n(import app.store :as store)\n(defeffect ReadRow \"reads a row\" {:fields [key] :answer None :failure [app.errs.Unreachable store.Gone] :absent [Missing]})\n",
             ),
             ("app/store.hy", "(defrecord Gone [x])\n"),
-            // 同じ名の型が別の module に在っても、宣言した方だけが失敗の型。
+            // Even if a same-named type exists in another module, only the declared one is a failure type.
             ("app/errs2.hy", "(defrecord Unreachable [r])\n"),
-            // `:failure` を綴るが、型の名は長い記号の途中にしか綴らない file。
+            // A file that spells `:failure`, but spells the type name only inside a longer symbol.
             ("app/long.hy", "(defeffect Z {:fields [] :answer None :failure [RefusalAll]})\n"),
-            // 型の名を綴るが、宣言ではない file。
-            ("app/use.hy", "(defk decide [x]\n  (match x\n    (Refusal) (return x)))\n; :failure はここでは宣言ではない\n"),
+            // A file that spells the type name but is not a declaration.
+            ("app/use.hy", "(defk decide [x]\n  (match x\n    (Refusal) (return x)))\n; :failure is not a declaration here\n"),
             ("app/plain.hy", "(defn f [] 1)\n"),
         ]
     }
 
-    /// 型の名を字面に含む宣言の file だけから集めた答えは、repo の全部から集めた失敗の型を引いた答えと同じ(宣言した型も、しない型も、別の module の同じ名も)。
+    /// The answer collected only from declaration files that literally contain the type name equals the answer from looking up the failure types collected from all of the repo (declared types, undeclared types, and a same-named type in another module).
     #[test]
     fn the_answer_for_a_type_equals_the_answer_from_the_whole_repo() {
         let dir = repo(&sample());
         let reading = tag_reading(None, None);
         let enabled = enabled();
         let whole = failure_types_of_whole(dir.path(), &enabled, &reading);
-        assert!(whole.contains("app.errs.Refusal") && whole.contains("app.errs.Unreachable") && whole.contains("app.store.Gone") && whole.contains("app.effs.Missing"), "検の材料が足りない");
+        assert!(whole.contains("app.errs.Refusal") && whole.contains("app.errs.Unreachable") && whole.contains("app.store.Gone") && whole.contains("app.effs.Missing"), "the test material is insufficient");
         let lookup = SpelledFailures::new(dir.path(), &enabled, &reading);
         for qualified in [
             "app.errs.Refusal",
@@ -260,7 +260,7 @@ mod tests {
         }
     }
 
-    /// effect ごとの宣言は、全体の実行が集める物と同じ(宣言した effect も、宣言の無い effect も、別の module の同じ名も)。
+    /// Per-effect declarations equal what the whole run collects (a declared effect, an effect with no declaration, and a same-named one in another module).
     #[test]
     fn the_effect_declarations_equal_the_whole_repo() {
         let dir = repo(&sample());
@@ -283,13 +283,13 @@ mod tests {
         for effect in ["app.effs.ReadRow", "app.long.Z", "app.use.ReadRow", "app.effs.Nothing", "ReadRow"] {
             assert_eq!(lookup.effect_outcomes(effect), whole.effect_outcomes(effect), "{effect}");
         }
-        let read_row = lookup.effect_outcomes("app.effs.ReadRow").expect("ReadRow は宣言つき");
+        let read_row = lookup.effect_outcomes("app.effs.ReadRow").expect("ReadRow has a declaration");
         assert!(read_row.absent.contains("app.effs.Missing") && read_row.failure.contains("app.errs.Unreachable") && read_row.failure.contains("app.store.Gone"), "{read_row:?}");
-        // 規則が無効なら、effect の宣言も集めない(全体の実行と同じ)。
+        // If the rule is disabled, per-effect declarations are not collected either (same as the whole run).
         assert_eq!(SpelledFailures::new(dir.path(), &BTreeSet::new(), &reading).effect_outcomes("app.effs.ReadRow"), None);
     }
 
-    /// 規則が無効なら、宣言があっても失敗の型は無い(全体の実行と同じ)。
+    /// If the rule is disabled, there are no failure types even when declarations exist (same as the whole run).
     #[test]
     fn nothing_is_a_failure_while_the_rule_is_off() {
         let dir = repo(&sample());
@@ -299,8 +299,8 @@ mod tests {
         assert!(failure_types_of_whole(dir.path(), &off, &reading).is_empty());
     }
 
-    /// 別の型の名を引いても repo の Hy を読み直さない — 宣言を持つ file(`:failure` か `:absent` を含む file)は名に依らないので 1 回だけ集める
-    /// (match の腕の型が 20 個の file で、名ごとに repo の Hy 約 2,900 file を読み直して CPU が 4 秒だった — 2026-10-17 の `cli_host.hy`)。
+    /// Looking up a different type name does not re-read the repo's Hy — the files that have declarations (files containing `:failure` or `:absent`) do not depend on the name, so they are collected only once
+    /// (a file with 20 match-arm types re-read about 2,900 of the repo's Hy files per name and cost 4 seconds of CPU — `cli_host.hy`, 2026-10-17).
     #[test]
     fn different_names_share_one_read_of_the_repo() {
         let dir = repo(&sample());
@@ -308,16 +308,16 @@ mod tests {
         let enabled = enabled();
         let lookup = SpelledFailures::new(dir.path(), &enabled, &reading);
         assert!(lookup.is_failure("app.errs.Refusal"));
-        // 宣言の file を消しても、別の名は 1 度目の読みで集めた宣言から答える。
+        // Even if a declaration file is deleted, a different name is answered from the declarations collected by the first read.
         std::fs::remove_file(dir.path().join("app/errs.hy")).unwrap();
         std::fs::remove_file(dir.path().join("app/effs.hy")).unwrap();
-        assert!(lookup.is_failure("app.errs.Unreachable"), "別の名を引くたびに repo を読み直している");
+        assert!(lookup.is_failure("app.errs.Unreachable"), "the repo is re-read every time a different name is looked up");
         assert!(lookup.is_failure("app.store.Gone"));
-        assert!(!lookup.is_failure("app.errs.Rejection"), "宣言しない型は、別の名でも失敗の型ではない");
+        assert!(!lookup.is_failure("app.errs.Rejection"), "an undeclared type is not a failure type even under a different name");
     }
 
-    /// 宣言の file の読み解きは、その file を綴る名が変わっても 1 度だけ(file の中身と読み方だけで決まり、引く名に依らない)。
-    /// 名ごとに読み解き直すと、全部の宣言の file を綴る名(`|` など)で、246 file の読み解きが名の数だけ繰り返された。
+    /// The parsing of a declaration file happens only once even if the name that spells that file changes (decided only by the file's contents and how it is read, independent of the name looked up).
+    /// When re-parsed per name, a name that spells every declaration file (such as `|`) repeated the parsing of 246 files once per name.
     #[test]
     fn a_declaration_file_is_read_through_once_for_every_name_that_spells_it() {
         let dir = repo(&sample());
@@ -326,13 +326,13 @@ mod tests {
         let lookup = SpelledFailures::new(dir.path(), &enabled, &reading);
         assert!(lookup.is_failure("app.errs.Refusal"));
         let first = Arc::clone(&lookup.parsed.lock().unwrap()["app/errs.hy"]);
-        // errs.hy は Unreachable も綴る: 別の名を引いても、集めた読み解きをそのまま使う。
+        // errs.hy also spells Unreachable: even when a different name is looked up, the already-collected parsing is used as is.
         assert!(lookup.is_failure("app.errs.Unreachable"));
         let again = Arc::clone(&lookup.parsed.lock().unwrap()["app/errs.hy"]);
-        assert!(Arc::ptr_eq(&first, &again), "別の名を引くたびに同じ宣言の file を読み解き直している");
+        assert!(Arc::ptr_eq(&first, &again), "the same declaration file is re-parsed every time a different name is looked up");
     }
 
-    /// 同じ名の問いは 2 度集めない(memo)— 1 度目で集めた集合から答える。
+    /// A query with the same name is not collected twice (memo) — answered from the set collected the first time.
     #[test]
     fn the_same_name_is_collected_once() {
         let dir = repo(&sample());
@@ -340,7 +340,7 @@ mod tests {
         let enabled = enabled();
         let lookup = SpelledFailures::new(dir.path(), &enabled, &reading);
         assert!(lookup.is_failure("app.errs.Refusal"));
-        // 宣言の file を消しても、集めた集合から答える。
+        // Even if a declaration file is deleted, answer from the collected set.
         std::fs::remove_file(dir.path().join("app/errs.hy")).unwrap();
         assert!(lookup.is_failure("app.errs.Refusal"));
         assert!(!SpelledFailures::new(dir.path(), &enabled, &reading).is_failure("app.errs.Refusal"));

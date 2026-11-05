@@ -1,14 +1,14 @@
-//! DOEFF145: 型の宣言(.pyi)が、同じ dir の同じ名の .hy の実行時の形を偽らない(agora-controllers の
-//! scripts/check_record_stubs.hy の判定の移し先。判定の意味は元と同じ)。
+//! DOEFF145: a type declaration (.pyi) must not misrepresent the runtime shape of the same-named .hy in the same dir (the destination of the judgment moved from
+//! scripts/check_record_stubs.hy in agora-controllers. The meaning of the judgment is the same as the original).
 //!
-//! 食い違いの形: .hy の class が kw-only の record(最上位の `(defrecord 名 …)` か、飾りに `(dataclass … :kw-only True …)` を持つ
-//! 最上位の `(defclass [飾り …] 名 …)`)なのに、同じ dir の同じ名の .pyi がその class を kw_only=True の無い `@dataclass` で宣言する。
-//! 型検査は .pyi を読むので位置の引数の呼びを通すが、実行時の `__init__` は欄を名でしか受けないので TypeError になる。
+//! Shape of the mismatch: a class in the .hy is a kw-only record (a top-level `(defrecord NAME …)`, or a top-level `(defclass [DECORATOR …] NAME …)` whose decorators include `(dataclass … :kw-only True …)`)
+//! but the same-named .pyi in the same dir declares that class with a `@dataclass` without kw_only=True.
+//! The type checker reads the .pyi, so it lets calls with positional arguments through, but the runtime `__init__` accepts fields only by name, so it raises TypeError.
 //!
-//! 読む .pyi は repo の architecture.hy の `:record-stubs {:files [..] :except [..]}` に当たり、同じ dir に同じ名の .hy が在る物。
-//! .pyi の側は最上位の class の飾り `@dataclass`・`@dataclasses.dataclass`(呼びの形も)だけを読み、`kw_only=True` の literal だけを
-//! kw-only と読む(無い・False・literal でない値は kw-only でない)。`@dataclass` の無い class は読まない(`__init__` を宣言しないので
-//! 型検査は位置の引数の呼びを通さない — 危ない向きではない)。名は Hy の名を Python の名へ mangle してから突き合わせる。
+//! The .pyi files that are read are those matching `:record-stubs {:files [..] :except [..]}` in the repo's architecture.hy and having a same-named .hy in the same dir.
+//! On the .pyi side, only the top-level class decorators `@dataclass` and `@dataclasses.dataclass` (including the call form) are read, and only a `kw_only=True` literal is
+//! read as kw-only (absent, False, or a non-literal value is not kw-only). A class without `@dataclass` is not read (it declares no `__init__`, so
+//! the type checker does not let calls with positional arguments through — not the dangerous direction). Hy names are mangled to Python names before being matched.
 
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
@@ -21,23 +21,23 @@ use super::architecture::FileSelection;
 use super::retired::{judge_files, selected};
 
 const DATACLASS_NAMES: &[&str] = &["dataclass", "dataclasses.dataclass"];
-/// .hy の側の書き方(知らせの文の語)。
+/// How it is written on the .hy side (a word in the notice text).
 pub const DEFRECORD_FORM: &str = "defrecord";
-pub const KW_ONLY_DEFCLASS_FORM: &str = "飾り (dataclass :kw-only True) の defclass";
+pub const KW_ONLY_DEFCLASS_FORM: &str = "defclass with a (dataclass :kw-only True) decorator";
 
-/// 食い違い 1 つ。
+/// One mismatch.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Mismatch {
-    /// .pyi の飾りの byte の範囲。
+    /// The byte range of the decorator in the .pyi.
     pub start: usize,
     pub end: usize,
-    /// class の名。
+    /// The name of the class.
     pub name: String,
-    /// .hy の側の書き方。
+    /// How it is written on the .hy side.
     pub form: &'static str,
 }
 
-/// 読んだ .pyi 1 つの食い違い。
+/// The mismatches of one .pyi that was read.
 pub struct FileMismatches {
     pub rel: String,
     pub path: PathBuf,
@@ -45,7 +45,7 @@ pub struct FileMismatches {
     pub mismatches: Vec<Mismatch>,
 }
 
-/// Hy の名を Python の名にする(hy.mangle と同じ — 頭の `_` は残し、2 字目から先の `-` を `_` に、識別子にならなければ `hyx_` の形)。
+/// Turns a Hy name into a Python name (same as hy.mangle — a leading `_` is kept, `-` from the 2nd character on becomes `_`, and if the result is not an identifier, the `hyx_` form).
 pub fn mangle(name: &str) -> String {
     if name.contains('.') && !name.trim_matches('.').is_empty() {
         return name.split('.').map(|part| if part.is_empty() { String::new() } else { mangle(part) }).collect::<Vec<_>>().join(".");
@@ -77,7 +77,7 @@ pub fn mangle(name: &str) -> String {
     format!("{}hyx_{}", leading, encoded)
 }
 
-/// hy.mangle が使う文字の名(unicodedata.name を小文字にし `-` を H・空白を _ に — 表に無い文字は U<16 進>)。
+/// The names of the characters hy.mangle uses (unicodedata.name lowercased, `-` becomes H and space becomes _ — characters not in the table become U<hex>).
 fn char_name(c: char) -> String {
     let name = match c {
         '!' => "exclamation mark",
@@ -104,12 +104,12 @@ fn char_name(c: char) -> String {
     name.replace('-', "H").replace(' ', "_")
 }
 
-/// .hy の最上位の form → 実行時に欄を名でしか受けない class の索引(Python の名 → 書き方)。
+/// Top-level forms of the .hy → an index of classes that accept fields only by name at runtime (Python name → how it is written).
 fn hy_kw_only_classes(source: &str) -> Result<BTreeMap<String, &'static str>, String> {
     let mut reader = Reader::new(source, 0, source.len());
     let forms = reader.read_all();
     if let Some(issue) = reader.issues.first() {
-        return Err(format!("Hy の読み取り器が読めない所が {} か所(最初 = {:?})", reader.issues.len(), issue));
+        return Err(format!("{} places the Hy reader cannot read (first = {:?})", reader.issues.len(), issue));
     }
     let text = |f: &Form| source.get(f.span.start..f.span.end).unwrap_or("").to_string();
     let kept = |items: &[Form]| -> Vec<usize> { items.iter().enumerate().filter(|(_, f)| !matches!(f.node, Node::Discarded)).map(|(i, _)| i).collect() };
@@ -152,10 +152,10 @@ fn dotted(node: &Expr) -> String {
     }
 }
 
-/// .hy の中身と同じ名の .pyi の中身 → 食い違い(.pyi の最上位の @dataclass の class のうち、.hy で kw-only なのに kw_only=True が無い物)。
+/// Contents of the .hy and the same-named .pyi → mismatches (among the top-level @dataclass classes of the .pyi, those that are kw-only in the .hy but lack kw_only=True).
 pub fn judge(hy_source: &str, stub_source: &str, stub_rel: &str) -> Result<Vec<Mismatch>, String> {
-    let classes = hy_kw_only_classes(hy_source).map_err(|reason| format!("同じ名の .hy を読めない: {}", reason))?;
-    let module = parse(stub_source, Mode::Module, stub_rel).map_err(|error| format!("構文木にならない: {}", error))?;
+    let classes = hy_kw_only_classes(hy_source).map_err(|reason| format!("cannot read the same-named .hy: {}", reason))?;
+    let module = parse(stub_source, Mode::Module, stub_rel).map_err(|error| format!("does not form a syntax tree: {}", error))?;
     let Mod::Module(module) = module else { return Ok(Vec::new()) };
     let mut out = Vec::new();
     for statement in &module.body {
@@ -182,25 +182,25 @@ pub fn judge(hy_source: &str, stub_source: &str, stub_rel: &str) -> Result<Vec<M
     Ok(out)
 }
 
-/// 同じ dir の同じ名の .hy の path。
+/// The path of the same-named .hy in the same dir.
 fn sibling_hy(path: &Path) -> PathBuf {
     path.with_extension("hy")
 }
 
-/// 判じる .pyi か(宣言の glob に当たり、同じ dir に同じ名の .hy が在る)。
+/// Whether this is a .pyi to judge (it matches the declaration's glob, and a same-named .hy exists in the same dir).
 pub fn wants(rel: &str, path: &Path, selection: &FileSelection) -> bool {
     rel.ends_with(".pyi") && selected(rel, &selection.files, &selection.except) && sibling_hy(path).is_file()
 }
 
-/// .pyi 1 つ(中身は渡した物)と、同じ名の .hy を disk から読んで判じる。
+/// Judges one .pyi (its contents as passed in) together with the same-named .hy read from disk.
 pub fn judge_file(rel: &str, path: &Path, stub_source: &str) -> Result<Vec<Mismatch>, String> {
     let hy = sibling_hy(path);
-    let hy_source = std::fs::read_to_string(&hy).map_err(|error| format!("同じ名の .hy を読めない: {}", error))?;
+    let hy_source = std::fs::read_to_string(&hy).map_err(|error| format!("cannot read the same-named .hy: {}", error))?;
     judge(&hy_source, stub_source, rel)
 }
 
-/// 宣言の .pyi を読んで判じる(focus が在ればその下の file だけ)。読めない file は理由を返す。
-/// 名指しの .hy の隣の、判じる同じ名の .pyi(根からの path と path)— .hy を直した時も、その実行時の形を偽る型の宣言を判じるため。
+/// Reads and judges the declared .pyi files (only files under the focus if there is one). Unreadable files return a reason.
+/// The same-named .pyi next to a named .hy, to be judged (path from the root, and path) — so that when a .hy is fixed, the type declaration that misrepresents its runtime shape is also judged.
 pub fn stub_of_hy(hy_rel: &str, hy_path: &Path, selection: &FileSelection) -> Option<(String, PathBuf)> {
     let stem = hy_rel.strip_suffix(".hy")?;
     let rel = format!("{}.pyi", stem);
@@ -208,8 +208,8 @@ pub fn stub_of_hy(hy_rel: &str, hy_path: &Path, selection: &FileSelection) -> Op
     (path.is_file() && wants(&rel, &path, selection)).then_some((rel, path))
 }
 
-/// 名指しの path の列に、名指しの .hy の隣の同じ名の .pyi を足す(重なりは除く)— .hy を直した時も、その実行時の形を偽る型の宣言を
-/// 読み(focus)、その当たりを出力に残す(出力の絞り)ため。命令の行の名指しを読む 1 か所(main の only_paths と --modified)で使う。
+/// Adds, to the list of named paths, the same-named .pyi next to each named .hy (duplicates removed) — so that when a .hy is fixed, the type declaration that misrepresents its runtime shape is also
+/// read (focus), and its hits are kept in the output (narrowing of the output). The one place that reads the names given on the command line (main's only_paths and --modified) uses it.
 pub fn with_sibling_stubs(paths: Vec<PathBuf>) -> Vec<PathBuf> {
     let stubs: Vec<PathBuf> =
         paths.iter().filter(|p| p.extension().is_some_and(|e| e == "hy") && p.is_file()).map(|p| p.with_extension("pyi")).filter(|p| p.is_file()).collect();
@@ -222,8 +222,8 @@ pub fn with_sibling_stubs(paths: Vec<PathBuf>) -> Vec<PathBuf> {
     out
 }
 
-/// 宣言の .pyi を読んで判じる(focus が在ればその下の file だけ — 名指しの .hy の隣の .pyi は with_sibling_stubs が focus に足す)。
-/// 読めない file は理由を返す。
+/// Reads and judges the declared .pyi files (only files under the focus if there is one — the .pyi next to a named .hy is added to the focus by with_sibling_stubs).
+/// Unreadable files return a reason.
 pub fn find(root: &Path, selection: &FileSelection, focus: Option<&[PathBuf]>) -> (Vec<FileMismatches>, Vec<String>) {
     judge_files(
         root,
@@ -231,7 +231,7 @@ pub fn find(root: &Path, selection: &FileSelection, focus: Option<&[PathBuf]>) -
         focus,
         |rel, path| wants(rel, path, selection),
         |rel, path, source| {
-            let mismatches = judge_file(&rel, &path, &source).map_err(|reason| format!("{}: DOEFF145 の判定が読めない({})", rel, reason))?;
+            let mismatches = judge_file(&rel, &path, &source).map_err(|reason| format!("{}: cannot read the DOEFF145 judgment ({})", rel, reason))?;
             Ok((!mismatches.is_empty()).then(|| FileMismatches { rel, path, source, mismatches }))
         },
     )
@@ -242,7 +242,7 @@ mod tests {
     use super::*;
 
     fn names(hy: &str, stub: &str) -> Vec<(String, &'static str)> {
-        judge(hy, stub, "a.pyi").expect("読める").into_iter().map(|m| (m.name, m.form)).collect()
+        judge(hy, stub, "a.pyi").expect("readable").into_iter().map(|m| (m.name, m.form)).collect()
     }
 
     #[test]
@@ -250,7 +250,7 @@ mod tests {
         assert_eq!(mangle("Foo-bar"), "Foo_bar");
         assert_eq!(mangle("_a-b"), "_a_b");
         assert_eq!(mangle("foo?"), "hyx_fooXquestion_markX");
-        assert_eq!(mangle("日本"), "日本");
+        assert_eq!(mangle("\u{65e5}\u{672c}"), "\u{65e5}\u{672c}");
     }
 
     #[test]

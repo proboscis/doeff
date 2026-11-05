@@ -1,7 +1,7 @@
-//! 名前の綴りの変換 — Hy の mangle(Hy 1.x の `hy.mangle` と同じ結果)・module の綴り・相対 import の解決。
-//! 登録簿の鍵は Python の検査(agora の scripts)が `hy.mangle` で作った綴りなので、鍵を揃えるために同じ規則で直す。
+//! Name spelling conversions — Hy mangle (same result as `hy.mangle` in Hy 1.x), module spelling, and relative import resolution.
+//! The registry keys are spellings made by the Python check (agora's scripts) with `hy.mangle`, so the same rules are applied here to align the keys.
 
-/// Hy の名前を Python の名前へ直す(`hy.mangle` と同じ — dotted は区切りごと、`-` は `_`、識別子にならない文字は `XnameX`)。
+/// Converts a Hy name to a Python name (same as `hy.mangle` — dotted names are handled per segment, `-` becomes `_`, characters that cannot be in an identifier become `XnameX`).
 pub fn hy_mangle(name: &str) -> String {
     if name.is_empty() {
         return String::new();
@@ -33,17 +33,17 @@ pub fn hy_mangle(name: &str) -> String {
     format!("{}hyx_{}", leading, escaped)
 }
 
-/// Python の識別子の先頭に置ける文字か(ASCII の外は英字・数字の類を識別子の文字とみなす)。
+/// Whether the character can start a Python identifier (outside ASCII, letter/digit categories are treated as identifier characters).
 fn is_identifier_start(c: char) -> bool {
     c == '_' || c.is_alphabetic()
 }
 
-/// Python の識別子の 2 文字目以降に置ける文字か。
+/// Whether the character can appear as the 2nd or later character of a Python identifier.
 fn is_identifier_continue(c: char) -> bool {
     c == '_' || c.is_alphanumeric()
 }
 
-/// 文字列が Python の識別子か。
+/// Whether the string is a Python identifier.
 pub(crate) fn is_identifier(text: &str) -> bool {
     let mut chars = text.chars();
     match chars.next() {
@@ -52,8 +52,8 @@ pub(crate) fn is_identifier(text: &str) -> bool {
     }
 }
 
-/// mangle の `XnameX` の name(Unicode の文字の名を小文字にし、`-` を `H`・空白を `_` にした物)。
-/// ASCII の記号は表で引き、表に無い文字は `U` と 16 進の code point にする。
+/// The name in mangle's `XnameX` (the Unicode character name lowercased, with `-` replaced by `H` and whitespace by `_`).
+/// ASCII symbols are looked up in a table; characters not in the table become `U` plus the hex code point.
 fn char_name(c: char) -> String {
     let name = match c {
         ' ' => "space",
@@ -94,7 +94,7 @@ fn char_name(c: char) -> String {
     name.to_lowercase().replace('-', "H").replace(' ', "_")
 }
 
-/// repo の根からの path(`a/b/c.hy`)を module の綴り(`a.b.c`)にする。最後の `.` から後(拡張子)を外す。
+/// Turns a path from the repo root (`a/b/c.hy`) into a module spelling (`a.b.c`). Drops everything after the last `.` (the extension).
 pub fn module_of(rel: &str) -> String {
     let stem = match rel.rfind('.') {
         Some(at) => &rel[..at],
@@ -103,7 +103,7 @@ pub fn module_of(rel: &str) -> String {
     stem.replace('/', ".")
 }
 
-/// 相対の module の綴り(先頭の点の数 = 上る段)を、base の module から絶対の綴りへ解く。
+/// Resolves a relative module spelling (number of leading dots = levels up) to an absolute spelling from the base module.
 pub fn absolute_module(base: &str, name: &str) -> String {
     let rest = name.trim_start_matches('.');
     let dots = name.len() - rest.len();
@@ -119,14 +119,14 @@ pub fn absolute_module(base: &str, name: &str) -> String {
     out.join(".")
 }
 
-/// 名を `-`・`_`・`.` で切った語のうち、words に在る物(小文字・並べた・重なりなし)。
+/// Words from splitting the name on `-`, `_`, `.` that are in `words` (lowercase, in order, non-overlapping).
 pub fn environment_words_of(name: &str, words: &std::collections::BTreeSet<String>) -> Vec<String> {
     let lowered = name.to_lowercase().replace(['-', '.'], "_");
     let found: std::collections::BTreeSet<String> = lowered.split('_').filter(|w| words.contains(*w)).map(str::to_string).collect();
     found.into_iter().collect()
 }
 
-/// 名が大文字だけか(Python の `str.isupper` — 大文字小文字のある文字が 1 つ以上で、全部が大文字)。定数の名を外すため。
+/// Whether the name is all uppercase (Python's `str.isupper` — at least one cased character, and all of them uppercase). To exclude constant names.
 pub fn is_upper_name(name: &str) -> bool {
     let cased: Vec<char> = name.chars().filter(|c| c.is_lowercase() || c.is_uppercase()).collect();
     !cased.is_empty() && cased.iter().all(|c| c.is_uppercase())
@@ -138,7 +138,7 @@ mod tests {
 
     #[test]
     fn mangle_matches_hy() {
-        // 期待値は Hy 1.3.0 の hy.mangle の実出力。
+        // Expected values are the actual output of Hy 1.3.0's hy.mangle.
         let cases = [
             ("stale?", "hyx_staleXquestion_markX"),
             ("-foo", "hyx_XhyphenHminusXfoo"),

@@ -1,15 +1,15 @@
-//! DOEFF207 — 本番の系(architecture.hy の defservice の `:system` が名指す defsystem)の job が読む外の置き場の組に、書き手が在るか
-//! (#3496 — 新しい入口の画面に会話の本文が出なかった件の作りの直し。本番に書き手の無い記録を画面が読み、
-//! 手元の模擬では代役がその分を作っていたので緑だった)。
+//! DOEFF207 — whether the set of external storage pairs read by a job of the production system (the defsystem named by `:system` of a defservice in architecture.hy) has a writer
+//! (#3496 — a structural fix for the case where the conversation body did not appear on the new entry screen. The screen read a record that nothing in production wrote,
+//! and it was green because a stand-in produced that part in the local mock).
 //!
-//! 当たるのは、architecture.hy に `:outside-writers {"<置き場>:<名>" "書き手" …}`(本番の系の job でない書き手 — 外の repo の道具・
-//! 人の操作・job でない task — が書く組の表)を書いた repo だけ。母集団は DOEFF173 と同じ本番の系(`:system` の名指しと
-//! `{:part-of …}` の指す系 — 同じ系は 1 度)。次のどれかを欠けとして返す:
-//! - 本番の系の job に `:reads` か `:writes` が無い(doeff の defsystem では任意の欄 — 本番の系の job にだけ、この規則が求める)。
-//! - job の `:reads` の組が、どの本番の job の `:writes` にも、`:outside-writers` の表にも無い(読む物に書き手が居ない)。
+//! It applies only to repos whose architecture.hy has `:outside-writers {"<storage>:<name>" "writer" …}` (a table of pairs written by writers that are not production-system jobs — tools in external repos,
+//! human operations, tasks that are not jobs). The population is the same production systems as DOEFF173 (the `:system` names and the systems
+//! pointed to by `{:part-of …}` — the same system once). Any of the following is returned as a gap:
+//! - A production-system job has no `:reads` or `:writes` (an optional field in doeff's defsystem — this rule requires it only of production-system jobs).
+//! - A pair in a job's `:reads` is in no production job's `:writes` and not in the `:outside-writers` table (what it reads has no writer).
 //!
-//! 欄の値の形(文字列の集合・綴り `<置き場>:<名>`)は doeff-hy の defsystem の展開が検める — ここは綴りを集めて照らすだけ。
-//! 名指した系が無い・defsystem でない時は DOEFF173 が出すので、ここは飛ばす。
+//! The shape of field values (a set of strings, spelled `<storage>:<name>`) is checked by the expansion of doeff-hy's defsystem — here we only collect spellings and compare them.
+//! When the named system is missing or is not a defsystem, DOEFF173 reports it, so it is skipped here.
 
 use std::collections::BTreeSet;
 use std::collections::HashMap;
@@ -21,16 +21,16 @@ use doeff_indexer::hy_index::{DefinitionKind, HyFileIndex};
 use super::architecture::{Architecture, DefinitionRef, SystemDecl};
 use super::system_decls::{find, items_of, symbol};
 
-/// 欠けの種類(閉じた集合)。
+/// Kind of gap (a closed set).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum AccessGap {
-    /// 本番の系の job に欄が無い(欄の鍵の綴り `:reads` / `:writes`)。
+    /// A production-system job lacks a field (the spelling of the field key, `:reads` / `:writes`).
     MissingField { key: &'static str },
-    /// 読む組に、本番の job の書き手も外の書き手の表の行も無い(組の綴り)。
+    /// A read pair has neither a production-job writer nor a row in the outside-writers table (the pair's spelling).
     ReadWithoutWriter { access: String },
 }
 
-/// 本番の系の job 1 つの欠け 1 つ(defsystem の file の相対 path・job の行の行番号(0 始まり)・系の名・job の名・欠け)。
+/// One gap of one production-system job (relative path of the defsystem file, line number of the job's row (0-based), system name, job name, gap).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct AccessFinding {
     pub rel: String,
@@ -41,7 +41,7 @@ pub struct AccessFinding {
 }
 
 impl AccessFinding {
-    /// 鍵の細目(系::job::欄の鍵 か 系::job::組)。
+    /// Detail of the key (system::job::field-key or system::job::pair).
     pub fn detail(&self) -> String {
         match &self.gap {
             AccessGap::MissingField { key } => format!("{}::{}::{}", self.system, self.job, key.trim_start_matches(':')),
@@ -49,22 +49,22 @@ impl AccessFinding {
         }
     }
 
-    /// 違反の文の中身(何が欠けているか)。
+    /// The body of the violation text (what is missing).
     pub fn describe(&self) -> String {
         match &self.gap {
             AccessGap::MissingField { key } => format!(
-                "本番の系 {} の job {} に {} が無い — 本番の系の job は、読む外の置き場の組と書く組を文字列の集合で書く(使わなければ #{{}})",
+                "production system {} job {} has no {} — a production-system job writes the pairs of external storage it reads and the pairs it writes as sets of strings (use #{{}} if unused)",
                 self.system, self.job, key
             ),
             AccessGap::ReadWithoutWriter { access } => format!(
-                "本番の系 {} の job {} が読む {} に書き手が無い — どの本番の job の :writes にも、本番の入口から届く関数の定義の :writes にも、architecture.hy の :outside-writers にも無い",
+                "production system {} job {} reads {} which has no writer — it is in no production job's :writes, in no :writes of a function definition reachable from a production entry point, and not in architecture.hy's :outside-writers",
                 self.system, self.job, access
             ),
         }
     }
 }
 
-/// job の行 1 つの読み書きの欄(欄が無ければ None)。
+/// The read/write fields of one job row (None if the fields are absent).
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct JobAccess {
     name: String,
@@ -73,7 +73,7 @@ struct JobAccess {
     writes: Option<BTreeSet<String>>,
 }
 
-/// 文字列の literal の集合 `#{"a" "b"}` の中身(集合でない値は空 — 形の検めは doeff-hy の展開が持つ)。
+/// The contents of a set of string literals `#{"a" "b"}` (a non-set value is empty — shape checking belongs to doeff-hy's expansion).
 fn strings_of(source: &str, form: &Form) -> BTreeSet<String> {
     items_of(form, Delim::Set)
         .map(|items| {
@@ -88,7 +88,7 @@ fn strings_of(source: &str, form: &Form) -> BTreeSet<String> {
         .unwrap_or_default()
 }
 
-/// defsystem `system` の job の行ごとの欄を読む(job の行 = 名の記号・Program の呼び・`:鍵 値` の組)。
+/// Read the per-job-row fields of defsystem `system` (a job row = a name symbol, a Program call, and `:key value` pairs).
 fn job_rows(source: &str, system: &str) -> Vec<JobAccess> {
     let mut reader = Reader::new(source, 0, source.len());
     let forms = reader.read_all();
@@ -119,8 +119,8 @@ fn job_rows(source: &str, system: &str) -> Vec<JobAccess> {
         .collect()
 }
 
-/// 関数の定義 `(defk 名 [引数…] "説明"? {… :writes #{…} …} 本体…)`(deff も同じ)の契約の辞書の `:writes` の組(job でない書き手 —
-/// 系の job から送られる task の Program など — の名乗り・doeff-hy の FUNCTION-CONTRACT-KEYS)。定義が無い・辞書に :writes が無ければ None。
+/// The `:writes` pairs in the contract dict of a function definition `(defk name [args…] "description"? {… :writes #{…} …} body…)` (deff is the same) (declared by writers that are not jobs —
+/// such as Programs of tasks sent from a system's job — FUNCTION-CONTRACT-KEYS in doeff-hy). None if there is no definition or the dict has no :writes.
 pub fn function_writes(source: &str, name: &str) -> Option<BTreeSet<String>> {
     let mut reader = Reader::new(source, 0, source.len());
     let forms = reader.read_all();
@@ -129,7 +129,7 @@ pub fn function_writes(source: &str, name: &str) -> Option<BTreeSet<String>> {
         (items.len() >= 3 && matches!(symbol(source, &items[0]), Some("defk" | "deff")) && symbol(source, &items[1]) == Some(name))
             .then_some(items)
     })?;
-    // 引数の並びの後ろ、説明の文字列を飛ばした最初の辞書が契約(doeff-hy の _find-contract と同じ読み)。
+    // The first dict after the argument list, skipping the description string, is the contract (same reading as doeff-hy's _find-contract).
     let contract = items
         .get(3..)?
         .iter()
@@ -141,7 +141,7 @@ pub fn function_writes(source: &str, name: &str) -> Option<BTreeSet<String>> {
     })
 }
 
-/// 本番の系の名指し(architecture.hy の宣言の順・同じ綴りは 1 度)。例外の宣言の service は系を持たない。
+/// Names of production systems (in the order of architecture.hy's declarations; the same spelling once). A service with an exception declaration has no system.
 fn production_systems(architecture: &Architecture) -> Vec<DefinitionRef> {
     let mut seen = BTreeSet::new();
     architecture
@@ -156,8 +156,8 @@ fn production_systems(architecture: &Architecture) -> Vec<DefinitionRef> {
         .collect()
 }
 
-/// 本番の系の job の欠け(系の順・job の行の順)。`:outside-writers` を書いていない repo には当てない(空)。`function_writers` = 本番の入口
-/// から届く関数の定義が契約の `:writes` で名乗った組(job でない書き手 — 図を持つ呼び手が集める・届かない定義の名乗りは入らない)。
+/// Gaps of production-system jobs (in system order, then job-row order). Not applied (empty) to repos that do not write `:outside-writers`. `function_writers` = the pairs declared in the contract `:writes` of function definitions
+/// reachable from a production entry point (writers that are not jobs — collected by a caller that has a diagram; declarations of unreachable definitions are not included).
 pub fn gaps(
     root_path: &Path,
     architecture: &Architecture,
@@ -220,7 +220,7 @@ mod tests {
 
     #[test]
     fn function_writes_read_the_contract_after_the_docstring() {
-        let source = "(defk run-task [assignment]\n  \"task の Program。\"\n  {:post [(: % int)] :writes #{\"record:turn\" \"records:turn-event\"}}\n  1)\n\
+        let source = "(defk run-task [assignment]\n  \"A task's Program.\"\n  {:post [(: % int)] :writes #{\"record:turn\" \"records:turn-event\"}}\n  1)\n\
                       (deff plain [x] {:post [(: % int)]} x)\n(defk bare [x] x)\n";
         assert_eq!(function_writes(source, "run-task"), Some(BTreeSet::from(["record:turn".to_string(), "records:turn-event".to_string()])));
         assert_eq!(function_writes(source, "plain"), None);

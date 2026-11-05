@@ -1,5 +1,5 @@
-//! 層の規則の結果の型(違反 1 件・立場・出どころ・module の要約・結果の全部)。読み手(editor.rs・notice.rs・unreadable.rs)は
-//! ここを直に読む — 組み立ての project/mod.rs を読み戻すと、mod.rs が宣言する子の module と依存の輪になる。
+//! Result types of the layer rules (a violation, its standing, its origin, a module summary, the whole result). Readers (editor.rs, notice.rs, unreadable.rs)
+//! read from here directly: reading back from the assembler project/mod.rs would form a dependency cycle with the child modules that mod.rs declares.
 
 use std::collections::BTreeSet;
 use std::path::PathBuf;
@@ -11,50 +11,50 @@ use super::explain::Explanation;
 use super::rule::ProjectRule;
 use super::{semantic, signatures};
 
-/// 違反 1 件(law と登録簿を当てた後)。
+/// One violation (after the law and the registry have been applied).
 #[derive(Debug, Clone)]
 pub struct Finding {
     pub rule: ProjectRule,
     pub law: Option<String>,
     pub adr: Option<String>,
     pub severity: Severity,
-    /// file の絶対の path。
+    /// Absolute path of the file.
     pub path: PathBuf,
-    /// repo の根からの path(区切り `/`)。
+    /// Path from the repo root (separator `/`).
     pub rel: String,
     pub range: Range,
     pub message: String,
     pub hint: String,
-    /// 登録簿の鍵 `<path>::<law か規則の ID>[::<細目>]`。
+    /// Registry key `<path>::<law or rule ID>[::<detail>]`.
     pub key: String,
-    /// 登録簿に鍵が載っているか(照合中の規則でも載っていれば真)。
+    /// Whether the key is listed in the registry (true even for a rule under reconciliation, if listed).
     pub registered: bool,
-    /// 登録簿と照合中を当てる前の、規則そのものの重さ(`severity` はこれを下げた後の重さ)。
+    /// The rule's own severity before the registry and reconciliation are applied (`severity` is the severity after lowering this).
     pub base_severity: Severity,
-    /// 新しい破れか・登録簿に載った既知の破れか・照合中で下げたか。
+    /// Whether it is a new violation, a known violation listed in the registry, or lowered because of reconciliation.
     pub standing: Standing,
-    /// これは何か・なぜ違反か・law の文(explain.rs が作る)。
+    /// What this is, why it is a violation, and the text of the law (built by explain.rs).
     pub explanation: Explanation,
-    /// 判定の出どころ(決定的な規則か Jev か)。
+    /// Origin of the judgment (deterministic rule or Jev).
     pub origin: FindingOrigin,
-    /// Jev の判定の確率(Jev の違反だけ)。
+    /// Probability of the Jev judgment (only for Jev violations).
     pub probability: Option<f64>,
 }
 
-/// 違反の立場 — 重さを下げた理由の閉じた集合(エディタが「手つかずの重い破れ」を数えるため)。
+/// Standing of a violation: a closed set of the reasons the severity was lowered (so the editor can count "untouched heavy violations").
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize)]
 #[serde(rename_all = "lowercase")]
 pub enum Standing {
-    /// 登録簿に無い新しい破れ(重さは規則そのもの)。
+    /// A new violation not in the registry (severity is the rule's own).
     New,
-    /// 登録簿に載った既知の破れ(重さは下げてある)。
+    /// A known violation listed in the registry (severity has been lowered).
     Registered,
-    /// 照合中の規則の破れ(`registry.reconciling` — 登録簿の有無によらず info に下げてある)。
+    /// A violation of a rule under reconciliation (`registry.reconciling`: lowered to info regardless of whether it is in the registry).
     Reconciling,
 }
 
 impl Standing {
-    /// 登録簿の有無と照合中かから立場を決める(照合中が先 — 重さを info に下げた理由はそちら)。
+    /// Decides the standing from whether it is in the registry and whether it is under reconciliation (reconciliation first, since that is the reason the severity was lowered to info).
     pub fn of(registered: bool, reconciling: bool) -> Standing {
         match (reconciling, registered) {
             (true, _) => Standing::Reconciling,
@@ -64,17 +64,17 @@ impl Standing {
     }
 }
 
-/// 違反の判定の出どころ。
+/// Origin of a violation's judgment.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize)]
 #[serde(rename_all = "lowercase")]
 pub enum FindingOrigin {
-    /// 決定的な規則。
+    /// A deterministic rule.
     Linter,
-    /// Jev の意味の判定。
+    /// A semantic judgment by Jev.
     Jev,
 }
 
-/// 地図の材料 — 層の規則が読んだ module 1 つ。
+/// Material for the map: one module that the layer rules read.
 #[derive(Debug, Clone)]
 pub struct ModuleSummary {
     pub path: PathBuf,
@@ -82,27 +82,27 @@ pub struct ModuleSummary {
     pub layer: Option<String>,
     pub context: Option<String>,
     pub role: Option<String>,
-    /// 層を何で決めたか(path の置き場所・タグ・両方の食い違い)。
+    /// What decided the layer (the path's location, a tag, or a mismatch between the two).
     pub layer_reason: Option<String>,
-    /// 置き場の `*` の段に当たった service の名(無ければ None)。
+    /// Name of the service that matched the `*` segment of the location (None if none).
     pub service: Option<String>,
 }
 
-/// 層の規則の結果の全部。
+/// The whole result of the layer rules.
 #[derive(Debug, Clone, Default)]
 pub struct ProjectReport {
     pub findings: Vec<Finding>,
     pub modules: Vec<ModuleSummary>,
-    /// 読めなかった file・登録簿・目録の理由。
+    /// Reasons for files, registries, and catalogs that could not be read.
     pub errors: Vec<String>,
-    /// 誤りではない知らせ(無い登録簿の dir を空として読んだ)。
+    /// Notices that are not errors (a missing registry dir was read as empty).
     pub notes: Vec<String>,
-    /// 意味の規則の要約(設定が無ければ None)。
+    /// Summary of the semantic rules (None if there is no configuration).
     pub semantic: Option<semantic::SemanticSummary>,
-    /// 1 file の実行で組んだ effect の推論の表(組んだ時だけ・書いた file の中身を overlay にした物)。
+    /// The effect-inference table built in a one-file run (only when built; the written file's contents used as an overlay).
     pub world: Option<signatures::World>,
-    /// この実行が判じた層の規則— 当たりを出し切った規則で、0 件の規則も含む。全体の実行は有効な規則の全部、
-    /// 1 file の実行は `ProjectRule::judged_on_one_file` の規則だけ。findings の規則はどれもこの集合に入る。editor-json の
-    /// `judged_rules` の材料(エディタは判じた規則の違反だけを 1 file の結果で差し替える)。
+    /// The layer rules this run judged: rules that finished emitting their findings, including rules with 0 findings. A whole run covers all enabled rules,
+    /// and a one-file run covers only the rules with `ProjectRule::judged_on_one_file`. Every rule in findings is in this set. Material for editor-json's
+    /// `judged_rules` (the editor replaces only the violations of judged rules with the one-file result).
     pub judged: BTreeSet<ProjectRule>,
 }

@@ -1,22 +1,22 @@
-//! defk / deff の見出し(signature)と、束縛の型 — editor-json の `signatures` と `bindings`(契約 版 2)。
+//! Headings (signatures) of defk / deff, and binding types — `signatures` and `bindings` of editor-json (contract version 2).
 //!
-//! エディタ(doeff-runner)は defk の型・effect・tags を見出しとして描き、束縛の名の前に型を描く。型の読み方はここ 1 か所に置き、
-//! エディタは写しを持たない(読むだけの表示 — source は人が手で書き換えないので、書く向きの変換は持たない)。
+//! The editor (doeff-runner) draws a defk's types, effects, and tags as a heading, and draws the type before a binding's name. How types are read is placed in this one place,
+//! and the editor holds no copy (display only — source is not rewritten by hand, so no write-direction conversion is held).
 //!
-//! 読む物:
-//! - 引数の型 = 契約の辞書の `:pre` の `(: 名 型)`、答えの型 = `:post` の `(: % 型)`、宣言した effect = `:effects [E …]`(#800)、
-//!   tags = `:tags` の文字列の値。
-//! - 推論した effect = 本体で撃った(`(<- …)` / `(! …)`)呼びの頭が defeffect ならその effect、defk ならその defk の推論を足す
-//!   (repo の Hy の file 全部から集めた表の上の不動点)。handler で受けた effect は引かない(上から見積もった集合)。
-//! - Absent の包み(答えが Maybe)= `:absent` を宣言した effect(か、答えが Maybe の defk)を、`:absent F` も `absent-as` も
-//!   付けずに撃った時。`:absent F` は F の型の Raise に替わる。Raise = 撃った effect の `:failure` と、撃った defk の Raise
-//!   (`on-raise` の program の中は引く)。
-//! - 束縛の型 = `(<- x T …)` の注釈 / 撃った effect の値の答え(`:answer` から `:absent` と `:failure` を除いた物)/ 撃った defk の
-//!   答え / 字面(文字列・数・真偽・None・辞書・列)/ 型の名の呼び(record を作る)/ deff の答え。`(:= x v)` は同じ定義の中の
-//!   `(var x …)` の型。**分からない物は型を null にし、別の型で埋めない**。
+//! What is read:
+//! - Argument types = the `(: name type)` in the contract dict's `:pre`, the answer type = the `(: % type)` in `:post`, declared effects = `:effects [E …]` (#800),
+//!   tags = the string values of `:tags`.
+//! - Inferred effects = for a call fired in the body (`(<- …)` / `(! …)`) whose head is a defeffect, that effect; if a defk, add that defk's inference
+//!   (a fixed point over the table collected from all of the repo's Hy files). Effects received by a handler are not subtracted (an estimate from above).
+//! - The Absent wrapper (the answer is Maybe) = when an effect that declares `:absent` (or a defk whose answer is Maybe) is fired
+//!   with neither `:absent F` nor `absent-as`. `:absent F` is replaced by a Raise of F's type. Raise = the fired effect's `:failure` and the fired defk's Raise
+//!   (inside the program of `on-raise` it is subtracted).
+//! - Binding types = the annotation of `(<- x T …)` / the value answer of the fired effect (`:answer` minus `:absent` and `:failure`) / the answer of the fired defk
+//!   / a literal (string, number, bool, None, dict, list) / a call of a type name (builds a record) / the answer of a deff. `(:= x v)` is the type of
+//!   `(var x …)` in the same definition. **Where it is unknown, the type is null; it is never filled with a different type**.
 //!
-//! 型の名は file の import と定義の場所で module まで解き(`smells::Scope`)、repo の定義(defrecord・defwire・defenum・defclass・
-//! defeffect・頭が大文字の val)に当たれば定義の位置を添える(エディタが押して定義へ飛ぶため)。
+//! Type names are resolved up to the module using the file's imports and the definition's location (`smells::Scope`), and if they match a definition in the repo (defrecord, defwire, defenum, defclass,
+//! defeffect, a val with a capitalized head) the definition's position is attached (so the editor can click through to the definition).
 
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::path::Path;
@@ -31,16 +31,16 @@ use super::facts::form_bindings;
 use super::names::module_of;
 use super::smells::{live, Hy, Scope};
 
-// --- 契約の形 ------------------------------------------------------------------------------
+// --- Shape of the contract ------------------------------------------------------------------------------
 
-/// 定義の位置(エディタが押して飛ぶ先)。
+/// The position of a definition (where the editor jumps to when clicked).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Location {
     pub path: String,
     pub range: Range,
 }
 
-/// 型の式(契約の閉じた集合)。`name` は書かれた綴り、`definition` は repo の中の定義(組み込みと解けない名は null)。
+/// A type expression (a closed set of the contract). `name` is the spelling as written, `definition` is the definition in the repo (null for built-ins and names that cannot be resolved).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 #[serde(tag = "kind", rename_all = "lowercase")]
 pub enum TypeRef {
@@ -55,34 +55,34 @@ pub enum TypeRef {
         head: Box<TypeRef>,
         args: Vec<TypeRef>,
     },
-    /// 型として読めない式(書かれた綴りそのまま)。
+    /// An expression that cannot be read as a type (the spelling as written).
     Unknown {
         text: String,
     },
 }
 
-/// effect 1 つ(宣言か推論)。
+/// One effect (declared or inferred).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct EffectRef {
     pub name: String,
     pub definition: Option<Location>,
-    /// defeffect の `:answer`(無ければ null)。
+    /// The `:answer` of the defeffect (null if none).
     pub answer: Option<TypeRef>,
     pub absent: Vec<TypeRef>,
     pub failure: Vec<TypeRef>,
 }
 
-/// 見出しの effect — 宣言(`:effects` が無ければ null)と推論。
+/// The effects of a heading — declared (null if there is no `:effects`) and inferred.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct SignatureEffects {
     pub declared: Option<Vec<EffectRef>>,
     pub inferred: Vec<EffectRef>,
-    /// 推論が追いきれたか — 追えない呼び(repo の外の関数・deff・method)を撃っていれば false で、`inferred` は見えた分だけ。
-    /// エディタが「effect なし」と「推論しきれない」を分けて描くため(版 2 への欄の追加)。
+    /// Whether the inference could trace everything — false if it fires a call that cannot be traced (a function outside the repo, a deff, a method), and then `inferred` is only what was seen.
+    /// So that the editor can draw "no effects" and "cannot fully infer" separately (a field added in version 2).
     pub complete: bool,
 }
 
-/// 引数 1 つ(`:pre` に型が無ければ type は null)。
+/// One argument (type is null if `:pre` has no type).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct SignatureParam {
     pub name: String,
@@ -90,7 +90,7 @@ pub struct SignatureParam {
     pub type_ref: Option<TypeRef>,
 }
 
-/// 見出しを持つ定義の種類。
+/// The kind of definition that has a heading.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum SignatureKind {
@@ -98,28 +98,28 @@ pub enum SignatureKind {
     Deff,
 }
 
-/// defk / deff 1 つの見出し。
+/// The heading of one defk / deff.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct Signature {
     pub kind: SignatureKind,
     pub name: String,
     pub path: String,
-    /// 名の範囲。
+    /// The range of the name.
     pub range: Range,
     pub full_range: Range,
-    /// 契約の辞書 `{:pre … :post … :effects … :tags …}` の範囲(無ければ null)。
+    /// The range of the contract dict `{:pre … :post … :effects … :tags …}` (null if none).
     pub contract_range: Option<Range>,
     pub params: Vec<SignatureParam>,
-    /// `:post` の型(無ければ null)。Absent の包みは `absent` で別に持つ。
+    /// The type of `:post` (null if none). The Absent wrapper is held separately in `absent`.
     pub answer: Option<TypeRef>,
-    /// 答えが Maybe か(Absent が呼び手へ抜けうる)。
+    /// Whether the answer is Maybe (Absent may escape to the caller).
     pub absent: bool,
     pub raises: Vec<TypeRef>,
     pub effects: SignatureEffects,
     pub tags: BTreeMap<String, String>,
 }
 
-/// 束縛の形。
+/// The shape of a binding.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 pub enum BindingForm {
     #[serde(rename = "<-")]
@@ -134,8 +134,8 @@ pub enum BindingForm {
     Assign,
 }
 
-/// `val` / `var` の前に付く語(ADR-DOE-HY-006: `(lazy val x e)` = 初めて使った時に評価・`(session val x e)` = defhandler の
-/// セッションで共有)。
+/// The word placed before `val` / `var` (ADR-DOE-HY-006: `(lazy val x e)` = evaluated on first use, `(session val x e)` = shared in a defhandler's
+/// session).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "lowercase")]
 pub enum BindingModifier {
@@ -144,7 +144,7 @@ pub enum BindingModifier {
 }
 
 impl BindingModifier {
-    /// 頭の語から読む(`lazy` / `session` でなければ None)。
+    /// Reads from the head word (None if it is neither `lazy` nor `session`).
     pub(super) fn of(word: &str) -> Option<BindingModifier> {
         [("lazy", BindingModifier::Lazy), ("session", BindingModifier::Session)]
             .into_iter()
@@ -153,43 +153,43 @@ impl BindingModifier {
     }
 }
 
-/// 束縛の型をどこから読んだか。
+/// Where the binding's type was read from.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "lowercase")]
 pub enum BindingOrigin {
-    /// `(<- x T …)` の注釈。
+    /// The annotation of `(<- x T …)`.
     Annotation,
-    /// 撃った effect の値の答え。
+    /// The value answer of the fired effect.
     Effect,
-    /// 撃った defk の答え・呼んだ deff の答え。
+    /// The answer of the fired defk, or the answer of the called deff.
     Call,
-    /// 字面(文字列・数・真偽・None・辞書・列)。
+    /// A literal (string, number, bool, None, dict, list).
     Literal,
-    /// 型の名の呼び(record を作る)。
+    /// A call of a type name (builds a record).
     Constructor,
-    /// `(:= x v)` の x を宣言した `(var x …)` の型。
+    /// The type of the `(var x …)` that declared the x of `(:= x v)`.
     Var,
-    /// 分からない(type は null)。
+    /// Unknown (type is null).
     Unknown,
 }
 
-/// 束縛 1 つ。
+/// One binding.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct Binding {
     pub form: BindingForm,
-    /// `(lazy val …)`・`(session var …)` の前の語(無ければ null。form は val / var)。
+    /// The word before `(lazy val …)` / `(session var …)` (null if none; the form is val / var).
     pub modifier: Option<BindingModifier>,
     pub name: String,
     pub path: String,
-    /// 名の範囲。
+    /// The range of the name.
     pub range: Range,
-    /// 束縛の form 全体(括弧を含む)。
+    /// The whole binding form (including parentheses).
     pub form_range: Range,
-    /// 頭の記号(`<-`・`val` …)の範囲。
+    /// The range of the head symbol (`<-`, `val` …).
     pub head_range: Range,
-    /// `(<- x T …)` の T の範囲(無ければ null)。
+    /// The range of T in `(<- x T …)` (null if none).
     pub annotation_range: Option<Range>,
-    /// 束ねる式の範囲(`(val x (! e))` は `(! e)` 全体)。
+    /// The range of the bound expression (for `(val x (! e))`, the whole `(! e)`).
     pub value_range: Option<Range>,
     #[serde(rename = "type")]
     pub type_ref: Option<TypeRef>,
@@ -198,16 +198,16 @@ pub struct Binding {
     pub raises: Vec<TypeRef>,
 }
 
-/// 1 file の見出しと束縛(置き換えと本体を足して 1 file の読みに組むのは `file_view.rs`)。
+/// The headings and bindings of one file (combining replacement and body into one file's reading is done in `file_view.rs`).
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize)]
 pub struct FileHeads {
     pub signatures: Vec<Signature>,
     pub bindings: Vec<Binding>,
 }
 
-// --- repo の表 ---------------------------------------------------------------------------
+// --- The repo's tables ---------------------------------------------------------------------------
 
-/// 型の式(解く前 — 書かれた綴りと module まで含めた名)。
+/// A type expression (before resolution — the spelling as written and the name including the module).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 enum TypeSyntax {
     Name { spelled: String, qualified: String },
@@ -217,7 +217,7 @@ enum TypeSyntax {
 }
 
 impl TypeSyntax {
-    /// 名の型なら module まで含めた名。
+    /// If it is a type name, the name including the module.
     fn qualified(&self) -> Option<&str> {
         match self {
             TypeSyntax::Name { qualified, .. } => Some(qualified),
@@ -225,7 +225,7 @@ impl TypeSyntax {
         }
     }
 
-    /// 和なら要素、それ以外は自分 1 つ。
+    /// For a union, the elements; otherwise just itself.
     fn members(&self) -> Vec<&TypeSyntax> {
         match self {
             TypeSyntax::Union(members) => members.iter().collect(),
@@ -234,7 +234,7 @@ impl TypeSyntax {
     }
 }
 
-/// defeffect 1 つ。
+/// One defeffect.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub(super) struct EffectFacts {
     pub(super) location: Location,
@@ -243,44 +243,44 @@ pub(super) struct EffectFacts {
     failure: Vec<TypeSyntax>,
 }
 
-/// 撃った呼び 1 つ。
+/// One fired call.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 struct Site {
-    /// 呼びの頭(module まで含めた名)。
+    /// The call's head (name including the module).
     callee: String,
-    /// `(<- … :absent F)` の F の型(Absent を Raise(F) に替える)。
+    /// The F type of `(<- … :absent F)` (replaces Absent with Raise(F)).
     absent_as_raise: Option<TypeSyntax>,
-    /// `absent-as` の中(Absent を受けている)。
+    /// Inside `absent-as` (Absent is received).
     absent_handled: bool,
-    /// `on-raise` の program の中(Raise を受けている)。
+    /// Inside the program of `on-raise` (Raise is received).
     raise_handled: bool,
-    /// 呼びの頭の記号の byte の範囲(DOEFF127 が違反の場所に使う — 表の比べには使わない)。
+    /// The byte range of the call's head symbol (used by DOEFF127 for the violation location — not used for table comparison).
     head: (usize, usize),
 }
 
-/// defk / deff 1 つ(推論の材料)。
+/// One defk / deff (material for inference).
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub(super) struct DefinitionFacts {
     pub(super) kind: SignatureKind,
-    /// 名の位置(表示の置き換えの部品が押して飛ぶ先)。
+    /// The position of the name (where the display replacement part jumps to when clicked).
     pub(super) location: Location,
     answer: Option<TypeSyntax>,
     sites: Vec<Site>,
 }
 
-/// defk の推論の結果。
+/// The result of defk inference.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 struct Summary {
     effects: BTreeSet<String>,
     absent: bool,
-    /// module まで含めた名 → 書かれた綴り。
+    /// Name including the module -> spelling as written.
     raises: BTreeMap<String, String>,
-    /// 追えない呼び(repo の外の関数・deff・method)を撃っている(推論の effect の集合が欠けうる — DOEFF127 が
-    /// 「宣言したのに起こしていない」を判じない)。
+    /// Fires a call that cannot be traced (a function outside the repo, a deff, a method) (the set of inferred effects may be missing — DOEFF127 does not judge
+    /// "declared but not raised").
     opaque: bool,
 }
 
-/// repo の Hy の file 全部から集めた、型・effect・defk の表と、defk の推論。
+/// A table of types, effects, and defks collected from all of the repo's Hy files, and the defk inference.
 #[derive(Debug, Clone, Default)]
 pub struct World {
     pub(super) types: HashMap<String, Location>,
@@ -289,7 +289,7 @@ pub struct World {
     summaries: HashMap<String, Summary>,
 }
 
-/// 1 file から集めた表の材料。
+/// The material of the table collected from one file.
 #[derive(Default, Clone, Serialize, Deserialize)]
 struct FileFacts {
     types: Vec<(String, Location)>,
@@ -298,8 +298,8 @@ struct FileFacts {
 }
 
 impl FileFacts {
-    /// 事実が持つ位置の path(`Location::path`)を全部 `path` にする。cache は作業木の絶対 path を持たない形で置き、読んだ後で今の根の
-    /// path を付ける(facts_cache の頭の註)。欄を全部名指して分解するので、path を持つ欄を足すとここが compile できなくなる。
+    /// Makes all the position paths (`Location::path`) held by the facts into `path`. The cache is put in a form that has no worktree absolute path, and after reading the current root's
+    /// path is attached (the header comment of facts_cache). It destructures by naming all fields, so adding a field that holds a path breaks the compile here.
     fn set_path(&mut self, path: &str) {
         let FileFacts { types, effects, definitions } = self;
         for (_, location) in types {
@@ -314,7 +314,7 @@ impl FileFacts {
     }
 }
 
-/// 1 file の事実と、その file の推論の材料の鍵(cache に一緒に置く)。
+/// One file's facts, and the key of that file's inference material (put together in the cache).
 #[derive(Clone, Serialize, Deserialize)]
 struct KeyedFacts {
     facts: FileFacts,
@@ -322,8 +322,8 @@ struct KeyedFacts {
 }
 
 impl KeyedFacts {
-    /// 推論の材料の鍵 = file の path と、推論が読む欄だけ(型の名・effect の名と Absent / Raise・定義の名と種類と撃った呼びの列)。
-    /// 位置(定義の場所・呼びの頭の範囲)は推論に効かないので入れない — 本文の書き換えで行がずれても鍵は変わらない。
+    /// The inference material's key = the file's path, and only the fields inference reads (type names, effect names with Absent / Raise, definition names with kinds and the list of fired calls).
+    /// Positions (the location of a definition, the range of a call's head) do not affect inference, so they are not included — even if lines shift from a body rewrite, the key does not change.
     fn of(rel: &str, facts: FileFacts) -> KeyedFacts {
         use std::hash::{Hash, Hasher};
         let mut h = std::collections::hash_map::DefaultHasher::new();
@@ -349,13 +349,13 @@ impl KeyedFacts {
     }
 }
 
-/// disk の file 1 つの事実(位置の path は空 — cache は作業木の絶対 path を置かず、読んだ後で今の根の path を付ける)。`(def` を持たない file は無い。
+/// The facts of one file on disk (the position path is empty — the cache holds no worktree absolute path, and the current root's path is attached after reading). No file lacks `(def`.
 fn disk_facts(rel: &str, path: &Path) -> Option<KeyedFacts> {
     let source = std::fs::read_to_string(path).ok()?;
     source_facts(rel, &source)
 }
 
-/// 中身 `source` から file 1 つの事実を作る(位置の path は空 — 読んだ後で今の根の path を付ける)。`(def` を綴らない file は事実が無い。
+/// Builds the facts of one file from the contents `source` (the position path is empty — the current root's path is attached after reading). A file that does not spell `(def` has no facts.
 fn source_facts(rel: &str, source: &str) -> Option<KeyedFacts> {
     source.contains("(def").then(|| {
         let mut keyed = KeyedFacts::of(rel, file_facts(Path::new(""), rel, source));
@@ -364,12 +364,12 @@ fn source_facts(rel: &str, source: &str) -> Option<KeyedFacts> {
     })
 }
 
-/// 塊の表の 1 行 = (事実を作った時の根からの path・事実)。事実は path でも決まる(module の名・推論の鍵)ので、同じ blob が別の path に在る時は行を使わない。
+/// One row of a chunk's table = (the path from the root when the fact was made, the fact). A fact is also decided by path (module name, inference key), so when the same blob is at a different path the row is not used.
 type BlobRow = (String, Option<KeyedFacts>);
 
-/// `files`(根からの path・場所)の事実を、変わっていない file は git の blob の id で引いて中身を読まずに返す(`ChunkedFacts`)。
-/// 1 file の実行は届く module の file を 1 つずつ開いて hash を取っていた(sim の test で数百 file・冷えた作業木で CPU 9 秒)。
-/// 引けない file(表に無い・index と外れた・path が違う)は中身を読んで作る。`memory` が None の時は中身の hash で引く置き場を使う。
+/// Returns the facts of `files` (path from the root, location), looking up unchanged files by git blob id without reading contents (`ChunkedFacts`).
+/// A single-file run used to open the reachable module files one by one and take hashes (hundreds of files in a sim test; 9 s of CPU on a cold worktree).
+/// A file that cannot be looked up (not in the table, out of step with the index, or a different path) is built by reading its contents. When `memory` is None, the store keyed by the contents' hash is used.
 fn named_facts(root: &Path, memory: Option<&ChunkedFacts<BlobRow>>, files: &[(String, std::path::PathBuf)]) -> Vec<KeyedFacts> {
     use rayon::prelude::*;
     let Some(memory) = memory else {
@@ -406,7 +406,7 @@ fn named_facts(root: &Path, memory: Option<&ChunkedFacts<BlobRow>>, files: &[(St
 }
 
 impl TypeSyntax {
-    /// 型の式の中の、module まで含めた名の全部(和・適用の中も)。
+    /// All the names including the module in a type expression (also inside unions and applications).
     fn collect_qualified<'a>(&'a self, out: &mut Vec<&'a str>) {
         match self {
             TypeSyntax::Name { qualified, .. } => out.push(qualified),
@@ -421,8 +421,8 @@ impl TypeSyntax {
 }
 
 impl FileFacts {
-    /// この file の事実が名指す名(撃った呼びの頭・答えの型・effect の答えと Absent と失敗の型)の module のうち、repo に在る物 — 表がこの file から先へ
-    /// 引く名の module(1 file の実行が、届く module を閉じるまで読むための材料)。欄を全部名指して分解するので、名を持つ欄を足すとここが compile できなくなる。
+    /// Among the modules of the names this file's facts name (heads of fired calls, answer types, effect answers with Absent and failure types), those that exist in the repo — material for the modules the table looks up from this file onward
+    /// (so that a single-file run reads until the reachable modules are closed). It destructures by naming all fields, so adding a field that holds a name breaks the compile here.
     fn referenced_modules(&self, known: &super::hy_files::ModuleFiles) -> BTreeSet<String> {
         let FileFacts { types: _, effects, definitions } = self;
         let mut names: Vec<&str> = Vec::new();
@@ -444,7 +444,7 @@ impl FileFacts {
     }
 }
 
-/// 型の名として定義を持つ頭。
+/// Heads that have a definition as a type name.
 const TYPE_HEADS: &[&str] = &[
     "defrecord",
     "defwire",
@@ -455,20 +455,20 @@ const TYPE_HEADS: &[&str] = &[
 ];
 
 impl World {
-    /// repo の Hy の file 全部から表を作る。`overlay` = (根からの path, 中身)— 保存前の中身をその file の代わりに読む。
+    /// Builds the table from all of the repo's Hy files. `overlay` = (path from the root, contents) — reads pre-save contents in place of that file.
     pub fn build(root: &Path, overlay: Option<(&str, &str)>) -> World {
         let files: Vec<(String, std::path::PathBuf)> =
             super::hy_files::collect(root)
                 .into_iter()
                 .filter_map(|path| super::paths::relative_path(root, &path).map(|rel| (rel, path)))
                 .collect();
-        // 書いた file(overlay)は disk でなく渡された中身から作るので、cache の母集団から外す。
+        // The file written (overlay) is built from the passed contents rather than disk, so it is excluded from the cache's population.
         let on_disk: Vec<(String, std::path::PathBuf)> =
             files.into_iter().filter(|(rel, _)| overlay.is_none_or(|(o, _)| o != rel)).collect();
-        // file ごとの事実はその file の中身と根からの path だけで決まる(root は位置の path の綴りにしか使わない)ので、変わった file だけ
-        // 作り直す。5MB 余りの事実を JSON で読むと 1 回に約 0.05 秒かかったので、欄の名前を持たない binary の形で置く。
-        // 位置の path は作業木の絶対 path なので、置く値は path を空にし、読んだ後で今の根の path を付ける — 作業木をまたいで同じ中身の
-        // file の事実を分け合うため。
+        // A file's facts are decided only by that file's contents and its path from the root (root is used only for the spelling of position paths), so only changed files are
+        // rebuilt. Reading over 5MB of facts as JSON took about 0.05 s each time, so they are put in a binary form that does not hold field names.
+        // The position path is the worktree's absolute path, so the value put has the path emptied, and the current root's path is attached after reading — so that
+        // facts of files with the same contents are shared across worktrees.
         let mut facts: Vec<KeyedFacts> = crate::timing::timed("effect-world.facts", || {
             super::facts_cache::per_file_compact_bound(root, "signature-facts", &on_disk, disk_facts, |keyed, rel, _path| {
                 keyed.facts.set_path(&root.join(rel).to_string_lossy())
@@ -477,7 +477,7 @@ impl World {
         if let Some((rel, source)) = overlay {
             facts.push(KeyedFacts::of(rel, file_facts(root, rel, source)));
         }
-        // 推論の材料の指紋 — file ごとの鍵の和(file の順に依らない)。
+        // Fingerprint of the inference material — the sum of per-file keys (independent of file order).
         let key = facts.iter().fold(0u64, |acc, file| acc.wrapping_add(file.inference_key));
         let mut world = World::default();
         for KeyedFacts { facts: file, .. } in facts {
@@ -485,8 +485,8 @@ impl World {
             world.effects.extend(file.effects);
             world.definitions.extend(file.definitions);
         }
-        // 推論の不動点は材料(位置を除いた事実)だけで決まるので、材料の指紋が前の実行と同じなら前の答えを使う。書き込み直後の 1 回でも、
-        // 書いた file の本文が推論の材料を変えない(行がずれただけ・呼びの列が同じ)なら回さない(#1033 の案)。
+        // The inference fixed point is decided only by the material (facts excluding positions), so if the material's fingerprint is the same as the previous run, the previous answer is used. Even for the single run right after a write,
+        // if the body of the written file does not change the inference material (lines only shifted, or the list of calls is the same) it is not run (the proposal of #1033).
         world.summaries = crate::timing::timed("effect-world.infer", || {
             super::facts_cache::keyed_value(root, "signature-summaries", key, || {
                 world.infer();
@@ -496,12 +496,12 @@ impl World {
         world
     }
 
-    /// 1 file の実行(書き込み直後の hook・エディタ)の表 — repo の全部でなく、書いた file(`source` = 保存前の中身)と、そこから届く module の file だけから作る。
+    /// The table for a single-file run (the hook right after a write, the editor) — built not from all of the repo but only from the written file (`source` = pre-save contents) and the module files reachable from it.
     ///
-    /// 表は module まで含めた名で引かれ(`types`・`effects`・`definitions`・`summaries` のどれも `get` と `contains_key` だけ — 走査は無い)、引く名は書いた file の
-    /// 中の記号を解いた名か、届いた file の事実が持つ名(撃った呼びの頭・型の名)。なので、書いた file が名指す module から始め、事実が名指す module を足して
-    /// 閉じるまで読めば、repo 全体から作った表と、書いた file から引ける範囲で同じ答えになる(推論も、呼びで届く defk の先だけで決まる)。
-    /// 届く module の事実は全体の実行と同じ置き場から中身の hash で引く(`per_file_compact_named_bound` — repo 全体の表は読まない)。
+    /// The table is looked up by name including the module (`types`, `effects`, `definitions`, `summaries` all use only `get` and `contains_key` — no scanning), and the names looked up are the written file's
+    /// symbols resolved, or the names the reached files' facts hold (heads of fired calls, type names). So, starting from the modules the written file names and adding the modules the facts name until
+    /// closed, the table gives the same answer as a table built from the whole repo within the range reachable from the written file (inference too is decided only by the defks reached by calls).
+    /// The facts of reachable modules are looked up from the same store as a whole run by the contents' hash (`per_file_compact_named_bound` — the table of the whole repo is not read).
     pub fn build_for_file(root: &Path, rel: &str, source: &str) -> World {
         let known = super::hy_files::by_module(root);
         let own = KeyedFacts::of(rel, file_facts(root, rel, source));
@@ -535,12 +535,12 @@ impl World {
             world.effects.extend(file.effects);
             world.definitions.extend(file.definitions);
         }
-        // 届く defk だけの小さな表なので、不動点は cache に置かず毎回回す(全体の実行の `signature-summaries` は repo 全体の指紋で引く物 — 1 file ごとに別の鍵になる)。
+        // A small table of only the reachable defks, so the fixed point is not put in the cache but run every time (the whole run's `signature-summaries` is looked up by the fingerprint of the whole repo — it would be a different key per file).
         crate::timing::timed("effect-world.infer", || world.infer());
         world
     }
 
-    /// defk の推論を不動点まで回す(呼びの輪は同じ集合に落ちる — 回数は defk の数で抑える)。
+    /// Runs the defk inference to a fixed point (a cycle of calls falls into the same set — the number of iterations is bounded by the number of defks).
     fn infer(&mut self) {
         let defks: Vec<String> = self
             .definitions
@@ -563,15 +563,15 @@ impl World {
         }
     }
 
-    /// 撃った呼びの頭が repo の外の effect と見なせるか(頭が大文字で、repo の型でも定義でもない — 撃つ大文字の呼びは effect を作る呼び)。
-    /// 宣言した `:effects [Delay]` を推論も拾えるようにするため(拾えないと「宣言だけ」の食い違いに見える)。
+    /// Whether the fired call's head can be regarded as an effect outside the repo (the head is capitalized and is neither a repo type nor a definition — a capitalized call that is fired builds an effect).
+    /// So that the inference can also pick up a declared `:effects [Delay]` (if it could not, it would look like a "declaration only" mismatch).
     pub(super) fn is_foreign_effect(&self, callee: &str) -> bool {
         last_segment(callee).starts_with(|c: char| c.is_ascii_uppercase())
             && !self.types.contains_key(callee)
             && !self.definitions.contains_key(callee)
     }
 
-    /// 撃った呼びの列から、effect・Absent・Raise を集める。
+    /// Collects effects, Absent, and Raise from the list of fired calls.
     fn summary_of_sites(&self, sites: &[Site]) -> Summary {
         let mut summary = Summary::default();
         for site in sites {
@@ -584,7 +584,7 @@ impl World {
         summary
     }
 
-    /// 撃った呼び 1 つの結末(呼びの頭が effect でも defk でもなければ空)。
+    /// The outcome of one fired call (empty if the call's head is neither an effect nor a defk).
     fn site_outcome(&self, site: &Site) -> Summary {
         let mut out = Summary::default();
         let (absent, raises) = if let Some(effect) = self.effects.get(&site.callee) {
@@ -600,11 +600,11 @@ impl World {
             out.opaque = summary.opaque;
             (summary.absent, summary.raises.clone())
         } else if self.is_foreign_effect(&site.callee) {
-            // repo の外の effect(doeff 本体の Delay・Ask など)— 撃っているので effect として数える。答えの分け方は分からない
+            // An effect outside the repo (doeff core's Delay, Ask, etc.) — it is fired, so it counts as an effect. How the answer is split is unknown
             out.effects.insert(site.callee.clone());
             (false, BTreeMap::new())
         } else {
-            // 追えない呼び(repo の外の関数・deff・method)を撃っている — その先の effect は分からない
+            // Fires a call that cannot be traced (a function outside the repo, a deff, a method) — the effects beyond it are unknown
             out.opaque = true;
             return out;
         };
@@ -625,12 +625,12 @@ impl World {
         out
     }
 
-    /// defk / deff の答えの型(`:post` の型か名の注記。書いていなければ None)。
+    /// The answer type of a defk / deff (the `:post` type or the name's annotation; None if not written).
     pub(super) fn answer_of(&self, qualified: &str) -> Option<TypeRef> {
         self.definitions.get(qualified)?.answer.as_ref().map(|a| self.resolve(a))
     }
 
-    /// 解く前の型を契約の型にする(repo の定義に当たれば位置を添える)。
+    /// Turns the unresolved type into the contract's type (attaches the position if it matches a repo definition).
     fn resolve(&self, syntax: &TypeSyntax) -> TypeRef {
         match syntax {
             TypeSyntax::Name { spelled, qualified } => TypeRef::Name {
@@ -648,7 +648,7 @@ impl World {
         }
     }
 
-    /// module まで含めた名の型(綴りは最後の区切り)。
+    /// The type of a name including the module (the spelling is the last segment).
     fn resolve_qualified(&self, qualified: &str, spelled: &str) -> TypeRef {
         TypeRef::Name {
             name: spelled.to_string(),
@@ -656,7 +656,7 @@ impl World {
         }
     }
 
-    /// effect の参照(表に無ければ位置も答えも null)。
+    /// A reference to an effect (position and answer are null if not in the table).
     fn effect_ref(&self, qualified: &str, spelled: &str) -> EffectRef {
         match self.effects.get(qualified) {
             Some(effect) => EffectRef {
@@ -676,7 +676,7 @@ impl World {
         }
     }
 
-    /// effect の値の答え(`:answer` の要素から `:absent` と `:failure` を除いた物 — 1 つなら名、複数なら和)。
+    /// The effect's value answer (the elements of `:answer` minus `:absent` and `:failure` — a name if one, a union if several).
     pub(super) fn effect_value(&self, effect: &EffectFacts) -> Option<TypeRef> {
         let answer = effect.answer.as_ref()?;
         let excluded: BTreeSet<&str> = effect
@@ -700,7 +700,7 @@ impl World {
     }
 }
 
-/// 型の綴り(名ならその綴り・それ以外は空)。
+/// The type's spelling (the spelling if a name; empty otherwise).
 fn spelled_of(syntax: &TypeSyntax) -> String {
     match syntax {
         TypeSyntax::Name { spelled, .. } => spelled.clone(),
@@ -708,14 +708,14 @@ fn spelled_of(syntax: &TypeSyntax) -> String {
     }
 }
 
-/// module まで含めた名の最後の区切り。
+/// The last segment of a name including the module.
 fn last_segment(qualified: &str) -> &str {
     qualified.rsplit('.').next().unwrap_or(qualified)
 }
 
-// --- 読み ---------------------------------------------------------------------------------
+// --- Reading ---------------------------------------------------------------------------------
 
-/// 1 file を読む道具(source・行の表・名の解き方)。
+/// The tool that reads one file (source, line table, how names are resolved).
 pub(super) struct FileReader<'a> {
     pub(super) hy: Hy<'a>,
     pub(super) lines: LineIndex<'a>,
@@ -735,7 +735,7 @@ impl<'a> FileReader<'a> {
         self.lines.range(form.span.start, form.span.end)
     }
 
-    /// 型の式を読む(`(| a b)` は和・`(of H a …)` は当て・記号は名・それ以外は読めない式)。
+    /// Reads a type expression (`(| a b)` is a union, `(of H a …)` is an application, a symbol is a name, anything else is an unreadable expression).
     fn type_syntax(&self, form: &Form) -> TypeSyntax {
         match &form.node {
             Node::Symbol => {
@@ -772,7 +772,7 @@ impl<'a> FileReader<'a> {
         }
     }
 
-    /// 辞書の key の値。
+    /// The value of a dict key.
     fn dict_value<'f>(&self, dict: &'f Form, key: &str) -> Option<&'f Form> {
         let Node::Seq {
             delim: Delim::Brace,
@@ -791,7 +791,7 @@ impl<'a> FileReader<'a> {
         })
     }
 
-    /// `[(: 名 型) …]` を 名 → 型の form の対にする(`(: …)` でない条件は飛ばす)。
+    /// Makes `[(: name type) …]` into pairs of name -> type form (conditions that are not `(: …)` are skipped).
     fn annotations<'f>(&self, list: Option<&'f Form>) -> Vec<(&'a str, &'f Form)> {
         let Some(items) = list.and_then(|l| l.bracket_items()) else {
             return Vec::new();
@@ -810,7 +810,7 @@ impl<'a> FileReader<'a> {
             .collect()
     }
 
-    /// 型の名の列 `[A B]` を読む。
+    /// Reads the list of type names `[A B]`.
     fn type_list(&self, form: Option<&Form>) -> Vec<TypeSyntax> {
         form.and_then(|f| f.bracket_items())
             .map(|items| {
@@ -824,7 +824,7 @@ impl<'a> FileReader<'a> {
     }
 }
 
-/// 最上位の定義(`do` と `eval-and-compile` の中も)の form。
+/// The forms of top-level definitions (also inside `do` and `eval-and-compile`).
 pub(super) fn top_definitions<'f>(hy: &Hy, forms: &'f [Form]) -> Vec<&'f Form> {
     let mut out = Vec::new();
     let mut pending: Vec<&Form> = forms.iter().rev().collect();
@@ -841,7 +841,7 @@ pub(super) fn top_definitions<'f>(hy: &Hy, forms: &'f [Form]) -> Vec<&'f Form> {
     out
 }
 
-/// 定義の名の form(`#^ T 名` の注記つきなら的)と、注記の型の form。
+/// The form of the definition's name (the target if it has a `#^ T name` annotation), and the form of the annotation's type.
 fn definition_name(form: &Form) -> (Option<&Form>, Option<&Form>) {
     match &form.node {
         Node::Annotated { annotation, target } => (target.as_deref(), annotation.as_deref()),
@@ -849,7 +849,7 @@ fn definition_name(form: &Form) -> (Option<&Form>, Option<&Form>) {
     }
 }
 
-/// defk / deff の形を読んだ物。
+/// The shape of a defk / deff as read.
 pub(super) struct DefinitionShape<'f> {
     pub(super) kind: SignatureKind,
     pub(super) name: &'f Form,
@@ -859,7 +859,7 @@ pub(super) struct DefinitionShape<'f> {
     pub(super) body: Vec<&'f Form>,
 }
 
-/// `(defk 名 [引数] {契約}? "doc"? 本体…)` を読む(契約は doc の前でも後でもよい)。
+/// Reads `(defk name [params] {contract}? "doc"? body…)` (the contract may be before or after the doc).
 pub(super) fn definition_shape<'f>(hy: &Hy, form: &'f Form) -> Option<DefinitionShape<'f>> {
     let items = live(form)?;
     let kind = match items.first().and_then(|h| hy.symbol(h))? {
@@ -896,7 +896,7 @@ pub(super) fn definition_shape<'f>(hy: &Hy, form: &'f Form) -> Option<Definition
     })
 }
 
-/// 1 file から表の材料を集める。
+/// Collects the material of the table from one file.
 fn file_facts(root: &Path, rel: &str, source: &str) -> FileFacts {
     let forms = Reader::new(source, 0, source.len()).read_all();
     let module = module_of(rel);
@@ -971,7 +971,7 @@ fn file_facts(root: &Path, rel: &str, source: &str) -> FileFacts {
     out
 }
 
-/// 答えの型(`:post` の `(: % T)`、無ければ名の注記 `#^ T`)。
+/// The answer type (the `(: % T)` of `:post`, or the name's annotation `#^ T` if none).
 fn answer_syntax(reader: &FileReader, shape: &DefinitionShape) -> Option<TypeSyntax> {
     let post = shape.contract.and_then(|c| reader.dict_value(c, ":post"));
     reader
@@ -982,14 +982,14 @@ fn answer_syntax(reader: &FileReader, shape: &DefinitionShape) -> Option<TypeSyn
         .or_else(|| shape.name_annotation.map(|a| reader.type_syntax(a)))
 }
 
-/// 撃った呼びの受け方(外側の `absent-as` と `on-raise`)。
+/// How a fired call is received (the outer `absent-as` and `on-raise`).
 #[derive(Debug, Clone, Copy, Default)]
 struct Flags {
     absent_handled: bool,
     raise_handled: bool,
 }
 
-/// `(<- …)` を読んだ物(名・注記・式・`:absent F`)。
+/// What a `(<- …)` read as (name, annotation, expression, `:absent F`).
 pub(super) struct BindShape<'f> {
     pub(super) name: Option<&'f Form>,
     pub(super) annotation: Option<&'f Form>,
@@ -997,16 +997,16 @@ pub(super) struct BindShape<'f> {
     pub(super) absent_as_raise: Option<&'f Form>,
 }
 
-/// 宣言の名と値の組 1 つ。`bang` は値の前の `!`(`(val x ! (f a))` — Hy の reader は `!(f a)` も 2 つの要素に読む)。
+/// One pair of a declaration's name and value. `bang` is the `!` before the value (`(val x ! (f a))` — Hy's reader reads `!(f a)` too as 2 elements).
 pub(super) struct BindingPair<'f> {
     pub(super) name: &'f Form,
     pub(super) bang: Option<&'f Form>,
-    /// 値(`(val x)` のように欠けていれば None)。
+    /// The value (None if missing, as in `(val x)`).
     pub(super) value: Option<&'f Form>,
 }
 
-/// 宣言(`val`・`var`・`lazy val` … と `:=`)の頭の後ろの並びを名と値の組に読む。値の前の `! 式` の 2 つ組は撃つ値として
-/// 1 つに畳む(ADR-DOE-HY-006 §3 — 宣言と `:=` の値の部分に限る。setv は畳まない)。
+/// Reads the sequence after the head of a declaration (`val`, `var`, `lazy val` … and `:=`) as pairs of name and value. The 2-element pair of `! expr` before a value is folded into
+/// one as a fired value (ADR-DOE-HY-006 §3 — limited to the value part of declarations and `:=`. setv is not folded).
 pub(super) fn binding_pairs<'f>(hy: &Hy, items: &[&'f Form]) -> Vec<BindingPair<'f>> {
     let mut pairs = Vec::new();
     let mut i = 0;
@@ -1026,7 +1026,7 @@ pub(super) fn binding_pairs<'f>(hy: &Hy, items: &[&'f Form]) -> Vec<BindingPair<
     pairs
 }
 
-/// `(<- x e)` / `(<- x T e)` / `(<- e)`、末尾に `:absent F` があってもよい。
+/// `(<- x e)` / `(<- x T e)` / `(<- e)`, with `:absent F` allowed at the end.
 pub(super) fn bind_shape<'f>(hy: &Hy, items: &[&'f Form]) -> Option<BindShape<'f>> {
     let mut args = &items[1..];
     let mut absent_as_raise = None;
@@ -1060,19 +1060,19 @@ pub(super) fn bind_shape<'f>(hy: &Hy, items: &[&'f Form]) -> Option<BindShape<'f
     }
 }
 
-/// 呼びの頭の記号の byte の範囲(記号でなければ式の頭の位置)。
+/// The byte range of a call's head symbol (the position of the expression's head if it is not a symbol).
 fn call_head_span(form: &Form) -> (usize, usize) {
     live(form)
         .and_then(|items| items.first().map(|h| (h.span.start, h.span.end)))
         .unwrap_or((form.span.start, form.span.start))
 }
 
-/// 呼びの頭の綴り(`(f …)` の f)。
+/// The spelling of a call's head (the f of `(f …)`).
 fn call_head<'a>(hy: &Hy<'a>, form: &Form) -> Option<&'a str> {
     live(form)?.first().and_then(|h| hy.symbol(h))
 }
 
-/// `:absent F` の F の型(`(Conflict "…")` の頭か、記号そのもの)。
+/// The type F of `:absent F` (the head of `(Conflict "…")`, or the symbol itself).
 fn raise_type(reader: &FileReader, form: &Form) -> TypeSyntax {
     match call_head(&reader.hy, form) {
         Some(head) => TypeSyntax::Name {
@@ -1083,7 +1083,7 @@ fn raise_type(reader: &FileReader, form: &Form) -> TypeSyntax {
     }
 }
 
-/// 撃った呼びを集める(quote の中は読まない)。
+/// Collects fired calls (quote is not read).
 fn collect_sites(reader: &FileReader, form: &Form, flags: Flags, out: &mut Vec<Site>) {
     let children: Vec<&Form> = match &form.node {
         Node::Seq { items, .. } => items
@@ -1173,7 +1173,7 @@ fn collect_sites(reader: &FileReader, form: &Form, flags: Flags, out: &mut Vec<S
     }
 }
 
-/// 撃った式の頭を呼びとして控える。
+/// Records the head of a fired expression as a call.
 fn push_site(
     reader: &FileReader,
     value: &Form,
@@ -1182,7 +1182,7 @@ fn push_site(
     out: &mut Vec<Site>,
 ) {
     match call_head(&reader.hy, value) {
-        // 撃つ位置に分岐を置いた形(`(<- x (if c (A …) (B …)))`)— 撃つのは枝の式なので、枝ごとに呼びとして控える
+        // A form that puts a branch at the firing position (`(<- x (if c (A …) (B …)))`) — what is fired is the branch's expression, so each branch is recorded as a call
         Some("if" | "when" | "unless" | "cond" | "do" | "match" | "let") => {
             let items = live(value).unwrap_or_default();
             let branches = match items.first().and_then(|h| reader.hy.symbol(h)) {
@@ -1207,14 +1207,14 @@ fn push_site(
     }
 }
 
-// --- DOEFF127: :effects の宣言と推論の食い違い ------------------------------------------------
+// --- DOEFF127: mismatch between the :effects declaration and inference ------------------------------------------------
 
-/// DOEFF127 の食い違い 1 つ(`:effects` を宣言した defk だけ — 宣言は任意(#800)なので、宣言の無い defk は対象外)。
-/// 推論は見出しと同じ `World` の読み(1 か所)を使う。範囲は byte。
+/// One DOEFF127 mismatch (only defks that declare `:effects` — the declaration is optional (#800), so defks without a declaration are out of scope).
+/// Inference uses the same `World` reading (one place) as the heading. Ranges are bytes.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum EffectMismatch {
-    /// 推論で起こしているのに `:effects` に無い effect。場所 = その effect に至る撃った呼びの頭(本体の最初の 1 つ)。
-    /// via = その呼びが defk を経由する時の、呼んだ定義の綴り(effect を直に撃っていれば None)。
+    /// An effect that inference says is raised but is not in `:effects`. Location = the head of the fired call that leads to that effect (the first one in the body).
+    /// via = the spelling of the called definition when that call goes through a defk (None if the effect is fired directly).
     Undeclared {
         definition: String,
         effect: String,
@@ -1222,7 +1222,7 @@ pub enum EffectMismatch {
         start: usize,
         end: usize,
     },
-    /// `:effects` に在るのに推論では起こしていない effect。場所 = `:effects` の中のその名。
+    /// An effect that is in `:effects` but that inference says is not raised. Location = that name inside `:effects`.
     Unused {
         definition: String,
         effect: String,
@@ -1232,7 +1232,7 @@ pub enum EffectMismatch {
 }
 
 impl EffectMismatch {
-    /// 違反の場所の byte の範囲。
+    /// The byte range of the violation's location.
     pub fn span(&self) -> (usize, usize) {
         match self {
             EffectMismatch::Undeclared { start, end, .. }
@@ -1240,7 +1240,7 @@ impl EffectMismatch {
         }
     }
 
-    /// 定義の綴り。
+    /// The definition's spelling.
     pub fn definition(&self) -> &str {
         match self {
             EffectMismatch::Undeclared { definition, .. }
@@ -1248,7 +1248,7 @@ impl EffectMismatch {
         }
     }
 
-    /// effect の綴り(module を外した最後の区切り)。
+    /// The effect's spelling (the last segment with the module stripped).
     pub fn effect(&self) -> &str {
         match self {
             EffectMismatch::Undeclared { effect, .. } | EffectMismatch::Unused { effect, .. } => {
@@ -1258,8 +1258,8 @@ impl EffectMismatch {
     }
 }
 
-/// 1 file の defk の `:effects` の宣言と推論の食い違いを判じる(表は `World::build` で作った物 — 1 file の実行では
-/// この file の同じ中身を overlay にした物)。
+/// Judges the mismatch between a defk's `:effects` declaration and inference for one file (the table is the one built by `World::build` — in a single-file run
+/// the one with this file's same contents as the overlay).
 pub fn effect_mismatches(world: &World, rel: &str, source: &str) -> Vec<EffectMismatch> {
     let forms = Reader::new(source, 0, source.len()).read_all();
     let module = module_of(rel);
@@ -1313,7 +1313,7 @@ pub fn effect_mismatches(world: &World, rel: &str, source: &str) -> Vec<EffectMi
                 end: site.head.1,
             });
         }
-        // 追えない呼びを撃っていれば推論の集合が欠けうるので、「宣言したのに起こしていない」は判じない
+        // If a call that cannot be traced is fired, the inferred set may be missing, so "declared but not raised" is not judged
         for (qualified, symbol) in declared.iter().filter(|_| !opaque) {
             if !inferred.iter().any(|(e, _)| e == qualified) {
                 out.push(EffectMismatch::Unused {
@@ -1328,8 +1328,8 @@ pub fn effect_mismatches(world: &World, rel: &str, source: &str) -> Vec<EffectMi
     out
 }
 
-/// defk 1 つの本体から推論した effect と、それぞれに至る最初の撃った呼び(本文の順)、追えない呼びを撃っているか。
-/// DOEFF127 が使う読み。
+/// The effects inferred from one defk's body, and the first fired call leading to each (in body order), and whether a call that cannot be traced is fired.
+/// The reading used by DOEFF127.
 fn inferred_sites(world: &World, reader: &FileReader, shape: &DefinitionShape) -> (Vec<(String, Site)>, bool) {
     let mut sites = Vec::new();
     for item in &shape.body {
@@ -1349,37 +1349,37 @@ fn inferred_sites(world: &World, reader: &FileReader, shape: &DefinitionShape) -
     (inferred, opaque)
 }
 
-// --- DOEFF130: 翻訳の handler は業務の intent を出さない ------------------------------------------
+// --- DOEFF130: a translation handler does not emit a business intent ------------------------------------------
 
-/// DOEFF130 の破れ 1 つ — 翻訳の層の handler が出す業務の intent 1 つと、それに至る最初の撃った呼び。範囲は byte。
+/// One DOEFF130 breach — one business intent emitted by a translation-layer handler, and the first fired call leading to it. Ranges are bytes.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct TranslationIntent {
-    /// handler の綴り(defhandler の名か、`[effect k]` を受ける関数の名)。
+    /// The handler's spelling (the name of a defhandler, or the name of a function that takes `[effect k]`).
     pub handler: String,
-    /// intent の module まで含めた名。
+    /// The name of the intent including the module.
     pub qualified: String,
-    /// 撃った呼びから intent までに経由した defk の綴り(呼んだ順 — intent を直に撃っていれば空)。
+    /// The spelling of the defks passed through from the fired call to the intent (in call order — empty if the intent is fired directly).
     pub chain: Vec<String>,
     pub start: usize,
     pub end: usize,
 }
 
 impl TranslationIntent {
-    /// intent の綴り(module を外した最後の区切り)。
+    /// The intent's spelling (the last segment with the module stripped).
     pub fn effect(&self) -> &str {
         last_segment(&self.qualified)
     }
 
-    /// 経由の道(`a → b`)— 直に撃っていれば None。
+    /// The path passed through (`a → b`) — None if fired directly.
     pub fn via(&self) -> Option<String> {
         (!self.chain.is_empty()).then(|| self.chain.join(" → "))
     }
 }
 
-/// 1 file の翻訳の handler — `(defhandler 名 …)` と、引数が `[effect k]` の最上位の関数 — が出す業務の intent を読む。
-/// `is_intent` は module まで含めた名が業務の intent(層 intent の型)かを答える。撃った呼びの頭が repo の defk なら、その defk の
-/// 撃った呼びへ `max_depth` 段まで辿る(import した defk の先も — 定義の本文だけでは、import した関数経由の intent がすり抜ける)。
-/// handler ごと・intent ごとに、本文の順で最初の撃った呼びを 1 つ出す。追えない呼び(repo の外の関数・deff・method)の先は数えない。
+/// Reads the business intents emitted by one file's translation handlers — `(defhandler name …)` and top-level functions whose parameters are `[effect k]`.
+/// `is_intent` answers whether a name including the module is a business intent (a type of the intent layer). If a fired call's head is a repo defk, follow that defk's
+/// fired calls down to `max_depth` levels (past imported defks too — reading only the definition's body would let intents through via imported functions).
+/// Per handler and per intent, emits the first fired call in body order. Beyond a call that cannot be traced (a function outside the repo, a deff, a method) is not counted.
 pub fn translation_intents(world: &World, rel: &str, source: &str, is_intent: &dyn Fn(&str) -> bool, max_depth: usize) -> Vec<TranslationIntent> {
     let forms = Reader::new(source, 0, source.len()).read_all();
     let module = module_of(rel);
@@ -1424,8 +1424,8 @@ pub fn translation_intents(world: &World, rel: &str, source: &str, is_intent: &d
     out
 }
 
-/// 最上位の form が翻訳の handler なら、その名の form と本体(撃った呼びを探す form の列)。
-/// `(defhandler 名 節…)`・引数が `[effect k]` の `defk` / `deff` / `defn`。
+/// If a top-level form is a translation handler, the form of its name and its body (the list of forms to search for fired calls).
+/// `(defhandler name clause…)`, and `defk` / `deff` / `defn` whose parameters are `[effect k]`.
 fn translation_handler<'f>(hy: &Hy, form: &'f Form) -> Option<(&'f Form, Vec<&'f Form>)> {
     let items = live(form)?;
     let head = items.first().and_then(|h| hy.symbol(h))?;
@@ -1446,8 +1446,8 @@ fn translation_handler<'f>(hy: &Hy, form: &'f Form) -> Option<(&'f Form, Vec<&'f
     }
 }
 
-/// 撃った呼びの頭 callee から届く業務の intent を集める(intent なら 1 つ・repo の defk ならその撃った呼びへ、残り depth 段まで)。
-/// `visited` は同じ handler の中で辿った defk(輪と二度の辿りを切る)、`chain` は今の道の defk の綴り。
+/// Collects the business intents reachable from the fired call's head callee (one if it is an intent; if a repo defk, into its fired calls, down to the remaining depth).
+/// `visited` is the defks followed within the same handler (cuts cycles and double traversal), `chain` is the spellings of the defks on the current path.
 fn reach_intents(
     world: &World,
     callee: &str,
@@ -1474,23 +1474,23 @@ fn reach_intents(
     chain.pop();
 }
 
-// --- DOEFF174: 業務の層は下の層の効果と handler を直に使わない ------------------------------------------
+// --- DOEFF174: business layers do not directly use lower layers' effects and handlers ------------------------------------------
 
-/// DOEFF174 の当たりの種類(閉じた集合)。
+/// The kinds of DOEFF174 hit (closed set).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum LowerLayerKind {
-    /// 下の層の効果を出す(実行する呼びから辿った defk の綴り — 直に実行していれば空)。
+    /// Emits a lower layer's effect (the spelling of the defks followed from the executing call — empty if executed directly).
     Effect { chain: Vec<String> },
-    /// 下の層の package の handler を with_handlers / WithHandler で被せる。
+    /// Applies a lower layer's package handler with with_handlers / WithHandler.
     Handler,
 }
 
-/// DOEFF174 の破れ 1 つ — 業務の層の定義が使う下の層の効果か handler 1 つと、その位置。範囲は byte。
+/// One DOEFF174 breach — a lower layer's effect or handler used by a definition in a business layer, and its position. Ranges are bytes.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct LowerLayerUse {
-    /// 定義の綴り。
+    /// The definition's spelling.
     pub definition: String,
-    /// 効果か handler の module まで含めた名(mangle 済み)。
+    /// The name including the module of the effect or handler (mangled).
     pub qualified: String,
     pub kind: LowerLayerKind,
     pub start: usize,
@@ -1498,12 +1498,12 @@ pub struct LowerLayerUse {
 }
 
 impl LowerLayerUse {
-    /// 効果か handler の綴り(module を外した最後の区切り)。
+    /// The spelling of the effect or handler (the last segment with the module stripped).
     pub fn name(&self) -> &str {
         last_segment(&self.qualified)
     }
 
-    /// 経由の道(`a → b`)— 直に実行する効果と handler は None。
+    /// The path passed through (`a → b`) — None for effects and handlers executed directly.
     pub fn via(&self) -> Option<String> {
         match &self.kind {
             LowerLayerKind::Effect { chain } if !chain.is_empty() => Some(chain.join(" → ")),
@@ -1512,18 +1512,17 @@ impl LowerLayerUse {
     }
 }
 
-/// 下の層の効果と handler を探す定義の頭。
+/// Definition heads that look for lower layers' effects and handlers.
 const LOWER_LAYER_DEFINITION_HEADS: &[&str] = &["defk", "deff", "defn", "defp", "defhandler"];
 
-/// handler を被せる呼びの頭(module を外した最後の区切り・mangle 済み)— 列を取る形と 1 つを取る形。
+/// The heads of calls that apply a handler (the last segment with the module stripped, mangled) — the form that takes a list and the form that takes one.
 const HANDLER_LIST_HEADS: &[&str] = &["with_handlers"];
 const HANDLER_ONE_HEADS: &[&str] = &["with_handler", "WithHandler"];
 
-/// 1 file の最上位の定義(defk・deff・defn・defp・defhandler)ごとに、下の層の効果を出す所と下の層の handler を被せる所を読む。
-/// `is_effect` は実行する呼びの頭(module まで含めた名)が下の層の効果か、`is_handler` は被せる handler の名が下の層の package の物かを
-/// 答える。効果は実行する呼びの頭が repo の defk なら `max_depth` の深さまで辿る(DOEFF130 と同じ到達)。handler は被せる列の要素の
-/// 呼びの頭か記号(`#*` で展開する記号も)の名で判じる — 値として受けた handler(`opened.handlers` の欄の読み・引数)は名が静的に
-/// 決まらないので数えない。定義ごと・名ごとに本文の順で最初の 1 つを出す。
+/// For each top-level definition of one file (defk, deff, defn, defp, defhandler), reads where a lower layer's effect is emitted and where a lower layer's handler is applied.
+/// `is_effect` answers whether the head of an executing call (name including the module) is a lower layer's effect, and `is_handler` whether the name of the applied handler is from a lower layer's package. For effects, if the executing call's head is a repo defk,
+/// follow down to the depth `max_depth` (the same reach as DOEFF130). Handlers are judged by the name of the call head or the symbol of an element of the applied list (also a symbol expanded with `#*`) — a handler received as a value (a read of the `opened.handlers` field, an argument) has no statically
+/// determined name, so it is not counted. Emits the first one in body order per definition and per name.
 pub fn lower_layer_uses(
     world: &World,
     rel: &str,
@@ -1592,8 +1591,8 @@ pub fn lower_layer_uses(
     out
 }
 
-/// form の木の中で、with_handlers の列と with_handler / WithHandler の 1 つ目に置いた handler の名(module まで含めた名)と位置を集める。
-/// 列の要素は呼びなら頭、記号ならその記号、`#*` の展開なら中の記号 — それ以外(欄の読み・式)は名が決まらないので集めない。
+/// Collects, within a form tree, the names (including the module) and positions of handlers placed in the with_handlers list and as the first argument of with_handler / WithHandler.
+/// An element of the list is its head if a call, the symbol itself if a symbol, or the symbol inside if a `#*` expansion — anything else (a field read, an expression) has no determined name, so it is not collected.
 fn installed_handlers(reader: &FileReader, form: &Form, out: &mut Vec<(String, (usize, usize))>) {
     if let Some(items) = live(form) {
         let head = items.first().and_then(|h| reader.hy.symbol(h)).map(|h| reader.scope.qualify(h));
@@ -1629,11 +1628,11 @@ fn installed_handlers(reader: &FileReader, form: &Form, out: &mut Vec<(String, (
     }
 }
 
-// --- 1 file の見出しと束縛 -----------------------------------------------------------------
+// --- Headings and bindings of one file -----------------------------------------------------------------
 
-/// 1 file の見出しと束縛を読み、読みの道具(reader・form の列)と組で `then` に渡す(表は `World::build` で、この file の同じ中身を
-/// overlay にして作った物)。reader は file の中身と束縛を借りるので、続きの読み(置き換え・本体 — `file_view.rs`)は `then` の中で読む。
-/// 見出しの読みは置き換えと本体の読みを知らない。
+/// Reads one file's headings and bindings and passes them with the reading tools (reader, list of forms) to `then` (the table is the one built by `World::build` with this file's same contents as the
+/// overlay). The reader borrows the file's contents and bindings, so the subsequent reading (replacement and body — `file_view.rs`) is done inside `then`.
+/// The heading reading knows nothing about the replacement and body reading.
 pub(super) fn read_file<T>(
     world: &World,
     root: &Path,
@@ -1674,7 +1673,7 @@ pub(super) fn read_file<T>(
     then(&reader, &forms, out)
 }
 
-/// defk / deff 1 つの見出し。
+/// The heading of one defk / deff.
 fn signature_of(
     world: &World,
     reader: &FileReader,
@@ -1747,7 +1746,7 @@ fn signature_of(
     }
 }
 
-/// 辞書の文字列の値の鍵(`:context "x"` → context = x)。
+/// The key of a dict's string value (`:context "x"` -> context = x).
 fn string_entries(reader: &FileReader, dict: &Form) -> BTreeMap<String, String> {
     let Node::Seq {
         delim: Delim::Brace,
@@ -1780,7 +1779,7 @@ fn string_entries(reader: &FileReader, dict: &Form) -> BTreeMap<String, String> 
         .collect()
 }
 
-/// 束縛の型を読んだ結果。
+/// The result of reading a binding's type.
 struct Typed {
     type_ref: Option<TypeRef>,
     origin: BindingOrigin,
@@ -1799,7 +1798,7 @@ impl Typed {
     }
 }
 
-/// 撃った式(`(<- …)` の右辺・`(! …)` の中身)の型と Absent / Raise。
+/// The type and Absent / Raise of a fired expression (the right side of `(<- …)`, the inside of `(! …)`).
 fn performed_type(
     world: &World,
     reader: &FileReader,
@@ -1857,7 +1856,7 @@ fn performed_type(
     }
 }
 
-/// 撃たない式の型(字面・型の名の呼び・deff の呼び・`(! …)`)。
+/// The type of a non-fired expression (a literal, a call of a type name, a call of a deff, `(! …)`).
 fn value_type(world: &World, reader: &FileReader, value: &Form, flags: Flags) -> Typed {
     let literal = |name: &str| Typed {
         type_ref: Some(TypeRef::Name {
@@ -1936,7 +1935,7 @@ fn value_type(world: &World, reader: &FileReader, value: &Form, flags: Flags) ->
     }
 }
 
-/// 束縛を集める(quote の中は読まない)。`vars` は同じ最上位の定義の中の `var` の型(`:=` のため)。
+/// Collects bindings (quote is not read). `vars` is the types of `var`s within the same top-level definition (for `:=`).
 fn collect_bindings(
     world: &World,
     reader: &FileReader,
@@ -2033,7 +2032,7 @@ fn collect_bindings(
             }
         }
         Some(word @ ("val" | "var" | "lazy" | "session")) => {
-            // `(lazy val x e)`・`(session var x e)` は前の語の次が val / var
+            // `(lazy val x e)`, `(session var x e)`: what follows the prior word is val / var
             let (modifier, word, start) = match BindingModifier::of(word) {
                 Some(modifier) => (Some(modifier), children.get(1).and_then(|w| reader.hy.symbol(w)).unwrap_or(""), 2),
                 None => (None, word, 1),
@@ -2053,7 +2052,7 @@ fn collect_bindings(
                         None => value_type(world, reader, value, flags),
                     };
                     let typed = match typed {
-                        // `(var x None)` は後で別の型の値を入れる置き場 — None を型と読まない(分からないにする)。
+                // `(var x None)` is a place to put a value of a different type later — None is not read as a type (it becomes unknown).
                         Typed {
                             type_ref: Some(TypeRef::Name { name, .. }),
                             origin: BindingOrigin::Literal,
@@ -2122,7 +2121,7 @@ fn collect_bindings(
     }
 }
 
-/// 束縛 1 つを契約の形にする。
+/// Makes one binding into the contract's shape.
 #[allow(clippy::too_many_arguments)]
 fn binding(
     reader: &FileReader,
@@ -2158,7 +2157,7 @@ fn binding(
 mod tests {
     use super::*;
 
-    /// 根に file を並べて表を作り、1 file の見出しと束縛を読む。
+    /// Lays files out under a root to build the table, and reads one file's headings and bindings.
     fn read(files: &[(&str, &str)], target: &str) -> FileHeads {
         let dir = tempfile::tempdir().unwrap();
         let root = dir.path().canonicalize().unwrap();
@@ -2170,11 +2169,11 @@ mod tests {
         let source = files.iter().find(|(rel, _)| *rel == target).unwrap().1;
         let world = World::build(&root, Some((target, source)));
         let heads = read_file(&world, &root, target, source, |_, _, heads| heads);
-        // 1 file の実行は、書いた file が名指す module の file だけから表を作る(`build_for_file`)。repo 全体から作った表と、書いた file の見出しと束縛が同じ
-        // (引く名は書いた file の記号を解いた名か、届いた file の事実が持つ名だけ — 推論の結果も同じ)。
+        // A single-file run builds the table only from the module files the written file names (`build_for_file`). The headings and bindings of the written file are the same as in a table built from the whole repo
+        // (the names looked up are the written file's symbols resolved, or only the names held by the reached files' facts — the inference result is the same too).
         let named = World::build_for_file(&root, target, source);
         let named_heads = read_file(&named, &root, target, source, |_, _, heads| heads);
-        assert_eq!(named_heads, heads, "build_for_file の表が build の表と違う({target})");
+        assert_eq!(named_heads, heads, "the table of build_for_file differs from the table of build ({target})");
         heads
     }
 
@@ -2194,27 +2193,27 @@ mod tests {
     }
 
     const INTENT: &str = r#"
-(defrecord Row "行" (#^ str id))
-(defrecord Missing "無い" (#^ str id))
-(defrecord Unreadable "読めない" (#^ str id))
+(defrecord Row "row" (#^ str id))
+(defrecord Missing "missing" (#^ str id))
+(defrecord Unreadable "unreadable" (#^ str id))
 (defeffect ReadRow
-  "行を読む"
+  "reads a row"
   {:fields [(: id str)]
    :answer (| Row Missing Unreadable)
    :absent [Missing] :failure [Unreadable]
    :tags {:context "demo" :role "intent"}})
 (defeffect PutRow
-  "行を書く"
+  "writes a row"
   {:fields [(: row Row)] :answer bool :tags {:context "demo" :role "intent"}})
 "#;
 
-    /// 推論は呼びで届く defk の先まで追う(a → b → c と撃ち、c が effect を撃つ)。1 file の実行の表(`build_for_file`)も、届く module を閉じるまで読むので、
-    /// 書いた file の見出しは repo 全体の表と同じ(`read` が両方を作って比べる)。届かない module(z)の定義は表に無い。
+    /// Inference follows down past the defks reached by calls (a -> b -> c is fired, and c fires an effect). The table of a single-file run (`build_for_file`) also reads until the reachable modules are closed, so
+    /// the written file's heading is the same as the whole repo's table (`read` builds both and compares). The definition of an unreachable module (z) is not in the table.
     #[test]
     fn inference_follows_calls_through_the_modules_a_file_reaches() {
         let fx = r#"
-(defrecord Row "行" (#^ str id))
-(defeffect Ping "叩く" {:fields [(: n int)] :answer Row :tags {:context "demo" :role "intent"}})
+(defrecord Row "row" (#^ str id))
+(defeffect Ping "pings" {:fields [(: n int)] :answer Row :tags {:context "demo" :role "intent"}})
 "#;
         let leaf = "(import intent.fx [Ping])\n(defk leaf [] {:tags {:context \"demo\" :role \"judgment\"}} (<- x (Ping 1)) x)\n";
         let mid = "(import core.leaf [leaf])\n(defk mid [] {:tags {:context \"demo\" :role \"judgment\"}} (<- r (leaf)) r)\n";
@@ -2223,9 +2222,9 @@ mod tests {
         let files = [("intent/fx.hy", fx), ("core/leaf.hy", leaf), ("core/mid.hy", mid), ("core/top.hy", top), ("core/stray.hy", stray)];
         let got = read(&files, "core/top.hy");
         let names: Vec<&str> = got.signatures[0].effects.inferred.iter().map(|e| e.name.as_str()).collect();
-        assert_eq!(names, vec!["Ping"], "top は mid を通って leaf の Ping を撃つ");
-        assert!(got.signatures[0].effects.inferred[0].definition.is_some(), "届いた effect は定義の位置まで解ける");
-        // 1 file の実行の表は、届かない module(core/stray)の定義を持たない。
+        assert_eq!(names, vec!["Ping"], "top fires leaf's Ping through mid");
+        assert!(got.signatures[0].effects.inferred[0].definition.is_some(), "a reached effect can be resolved down to the definition's position");
+        // The table of a single-file run does not hold the definitions of unreachable modules (core/stray).
         let dir = tempfile::tempdir().unwrap();
         let root = dir.path().canonicalize().unwrap();
         for (rel, text) in files {
@@ -2274,15 +2273,15 @@ mod tests {
         assert!(sig.effects.inferred.is_empty());
         assert_eq!(sig.tags.get("role").map(String::as_str), Some("judgment"));
         assert_eq!(sig.contract_range.unwrap().start.line, 2);
-        assert!(sig.effects.complete, "撃つ呼びが無い defk は推論が追いきれている");
+        assert!(sig.effects.complete, "a defk with no fired calls has complete inference");
     }
 
     #[test]
     fn docstring_before_contract_and_untrackable_calls_are_read() {
-        // agora-controllers の sim-part(controllers/agora_sim/full_system.hy)と run-emulated-with の形
+        // The form of agora-controllers' sim-part (controllers/agora_sim/full_system.hy) and run-emulated-with
         let core = r#"
 (defk sim-part [services handlers]
-  "部品の値。"
+  "A part value."
   {:pre [(: services list) (: handlers (| Callable None))]
    :post [(: % dict)]
    :tags {:context "turn" :role "judgment"}}
@@ -2295,13 +2294,13 @@ mod tests {
         let got = read(&[("core/sim.hy", core)], "core/sim.hy");
         let sim = &got.signatures[0];
         let contract = sim.contract_range.unwrap();
-        assert_eq!((contract.start.line, contract.end.line), (3, 5), "docstring が先でも契約の辞書を見つける");
+        assert_eq!((contract.start.line, contract.end.line), (3, 5), "the contract dict is found even when the docstring comes first");
         assert_eq!(sim.params[1].type_ref.as_ref().map(name_of).as_deref(), Some("Callable | None"));
         assert_eq!(sim.tags.get("role").map(String::as_str), Some("judgment"));
         assert!(sim.effects.complete);
         let run = &got.signatures[1];
         assert!(run.effects.inferred.is_empty());
-        assert!(!run.effects.complete, "追えない呼び with_handlers を撃つので、推論が空でも「effect なし」とは言えない");
+        assert!(!run.effects.complete, "it fires the untraceable call with_handlers, so even if the inference is empty it cannot be said to be \"no effects\"");
     }
 
     #[test]
@@ -2323,7 +2322,7 @@ mod tests {
             "core/flow.hy",
         );
         let fetch = &got.signatures[0];
-        assert!(fetch.absent, "ReadRow の :absent は呼び手へ抜ける");
+        assert!(fetch.absent, "ReadRow's :absent escapes to the caller");
         assert_eq!(
             fetch.raises.iter().map(name_of).collect::<Vec<_>>(),
             vec!["Unreadable"]
@@ -2347,7 +2346,7 @@ mod tests {
         assert_eq!(
             declared,
             vec!["PutRow"],
-            "宣言と推論の食い違いはそのまま出す(エディタが見せる)"
+            "the mismatch between declaration and inference is shown as is (the editor shows it)"
         );
         assert!(store.absent);
         let read_row = &fetch.effects.declared.as_ref().unwrap()[0];
@@ -2363,21 +2362,21 @@ mod tests {
         );
     }
 
-    /// 推論の材料の鍵: 位置だけが変わる書き換え(行が足されてずれる)では変わらず、推論の材料
-    /// (撃つ effect・定義の名・Absent の受け方)が変わると変わる。鍵が同じなら前の推論の答えを使うので、鍵が材料を漏らすと答えが古くなる。
+    /// The inference material's key: a rewrite that changes only positions (lines are added and shifted) does not change it, but a change in the inference material
+    /// (the effect fired, the definition's name, how Absent is received) does. If the key is the same the previous inference answer is used, so if the key leaks the material the answer becomes stale.
     #[test]
     fn inference_key_ignores_positions_and_follows_what_inference_reads() {
         let key = |source: &str| KeyedFacts::of("core/flow.hy", file_facts(Path::new("/r"), "core/flow.hy", source)).inference_key;
         let base = "(defk fetch [id]\n  {:pre [(: id str)] :post [(: % Row)]}\n  (<- row Row (ReadRow id))\n  row)\n";
-        let shifted = format!("; 註\n\n{base}");
-        assert_eq!(key(base), key(&shifted), "行がずれただけでは鍵は変わらない");
-        assert_ne!(key(base), key(&base.replace("(ReadRow id)", "(PutRow id)")), "撃つ effect が変われば鍵が変わる");
-        assert_ne!(key(base), key(&base.replace("defk fetch", "defk fetch-row")), "定義の名が変われば鍵が変わる");
-        assert_ne!(key(base), key(&base.replace("(<- row Row (ReadRow id))", "(absent-as None (<- row Row (ReadRow id)))")), "Absent の受け方が変われば鍵が変わる");
+        let shifted = format!("; note\n\n{base}");
+        assert_eq!(key(base), key(&shifted), "merely shifting lines does not change the key");
+        assert_ne!(key(base), key(&base.replace("(ReadRow id)", "(PutRow id)")), "the key changes if the fired effect changes");
+        assert_ne!(key(base), key(&base.replace("defk fetch", "defk fetch-row")), "the key changes if the definition's name changes");
+        assert_ne!(key(base), key(&base.replace("(<- row Row (ReadRow id))", "(absent-as None (<- row Row (ReadRow id)))")), "the key changes if how Absent is received changes");
         assert_ne!(
             KeyedFacts::of("core/a.hy", file_facts(Path::new("/r"), "core/a.hy", base)).inference_key,
             KeyedFacts::of("core/b.hy", file_facts(Path::new("/r"), "core/b.hy", base)).inference_key,
-            "file の path も鍵に入る(同じ中身の別の file を取り違えない)"
+            "the file's path is also part of the key (a different file with the same contents is not mistaken)"
         );
     }
 
@@ -2385,10 +2384,10 @@ mod tests {
     fn absent_suffix_and_absent_as_do_not_wrap_in_maybe() {
         let core = r#"
 (import intent.rows [ReadRow Row])
-(defrecord Conflict "競合" (#^ str why))
+(defrecord Conflict "conflict" (#^ str why))
 (defk strict [id]
   {:pre [(: id str)] :post [(: % Row)]}
-  (<- row (ReadRow id) :absent (Conflict "無い"))
+  (<- row (ReadRow id) :absent (Conflict "missing"))
   row)
 (defk lenient [id]
   {:pre [(: id str)] :post [(: % (| Row None))]}
@@ -2499,7 +2498,7 @@ mod tests {
         );
         assert!(got.bindings[0].annotation_range.is_some());
         let TypeRef::Name { definition, .. } = got.bindings[2].type_ref.as_ref().unwrap() else {
-            panic!("名の型")
+            panic!("type of the name")
         };
         assert!(
             definition
@@ -2507,7 +2506,7 @@ mod tests {
                 .unwrap()
                 .path
                 .ends_with("intent/rows.hy"),
-            "型の名は定義へ結ぶ"
+            "a type name is tied to its definition"
         );
     }
 
@@ -2523,7 +2522,7 @@ mod tests {
         assert!(got.bindings.iter().all(|b| b.name != "hidden"));
     }
 
-    /// 根に file を並べて表を作り、1 file の DOEFF127 の食い違いを読む。
+    /// Lays files out under a root to build the table, and reads one file's DOEFF127 mismatches.
     fn mismatches(files: &[(&str, &str)], target: &str) -> Vec<EffectMismatch> {
         let dir = tempfile::tempdir().unwrap();
         let root = dir.path().canonicalize().unwrap();
@@ -2535,7 +2534,7 @@ mod tests {
         let source = files.iter().find(|(rel, _)| *rel == target).unwrap().1;
         let world = World::build(&root, Some((target, source)));
         let mismatches = effect_mismatches(&world, target, source);
-        // 1 file の実行の表(書いた file が名指す module の file だけ)でも食い違いは同じ。
+        // A single-file run's table (only the module files the written file names) gives the same mismatch.
         let named = World::build_for_file(&root, target, source);
         assert_eq!(effect_mismatches(&named, target, source), mismatches, "{target}");
         mismatches
@@ -2577,8 +2576,8 @@ mod tests {
             "core/flow.hy",
         );
         let at = |m: &EffectMismatch| &core[m.span().0..m.span().1];
-        // 出ない: 宣言なしの undeclared-ok・一致の fetch と waits(外の effect Delay)・枝の両方を撃つ branches・
-        // 追えない呼び read-typed を撃つ through-helper(起こしていないと言えない)
+        // Not emitted: undeclared-ok with no declaration, fetch and waits that match (the outside effect Delay), branches that fire both branches,
+        // through-helper that fires the untraceable call read-typed (it cannot be said not to have raised)
         assert_eq!(got.len(), 2, "{:?}", got);
         match &got[0] {
             EffectMismatch::Undeclared {
@@ -2591,7 +2590,7 @@ mod tests {
                     (definition.as_str(), effect.as_str(), via.as_deref()),
                     ("store", "ReadRow", Some("fetch"))
                 );
-                assert_eq!(at(&got[0]), "fetch", "場所は defk を経由した呼びの頭");
+                assert_eq!(at(&got[0]), "fetch", "the location is the head of the call that went through a defk");
             }
             other => panic!("{:?}", other),
         }
@@ -2600,7 +2599,7 @@ mod tests {
                 definition, effect, ..
             } => {
                 assert_eq!((definition.as_str(), effect.as_str()), ("store", "Delay"));
-                assert_eq!(at(&got[1]), "Delay", "場所は :effects の中の名");
+                assert_eq!(at(&got[1]), "Delay", "the location is the name inside :effects");
             }
             other => panic!("{:?}", other),
         }
@@ -2631,7 +2630,7 @@ mod tests {
         assert_eq!(
             inferred,
             vec!["Delay"],
-            "repo の外の effect も推論に入る・repo の record を撃つ形は effect にしない"
+            "an effect outside the repo is also part of inference; a form that fires a repo record is not an effect"
         );
         assert!(sig.effects.inferred[0].definition.is_none());
         assert_eq!(sig.effects.declared.as_ref().unwrap()[0].name, "Delay");

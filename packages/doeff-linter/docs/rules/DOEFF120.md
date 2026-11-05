@@ -1,86 +1,86 @@
 # DOEFF120: JsonValue Outside Wire Modules
 
-`JsonValue`・`JSONValue`・`JsonObject`・`JSONObject` は、素の `dict | list | str | int | float | bool | None` を名で包んだだけの型です
-(`JsonObject` は `dict[str, JsonValue]` で、同じ逃げ道)。中の形を何も約束しないので、使う側が手で分解して読むと、形の食い違いが
-読む所ごとに違う形で漏れます。
+`JsonValue`, `JSONValue`, `JsonObject`, and `JSONObject` are types that merely give a name to a bare `dict | list | str | int | float | bool | None`
+(`JsonObject` is `dict[str, JsonValue]`, the same escape hatch). They promise nothing about the shape inside, so when the consuming side takes them apart by hand,
+shape mismatches leak out in a different form at each place that reads them.
 
-この規則は、`architecture.hy` の在る repo で、JsonValue を使ってよい module を次の 2 つだけにします。
+In a repo that has an `architecture.hy`, this rule limits the modules that may use JsonValue to the following two kinds.
 
-1. 汎用の解き手 — doeff-hy の `defwire` が使う `doeff_hy._wire` と、doeff-records の `doeff_records._wire`(module の綴りの末尾の段で照らす)。
-2. `architecture.hy` の `:wire-modules` に挙げ、かつ foundation の層(`:foundation` の層の置き場)に在る、JSON の送受信そのものを行う module。
+1. The generic decoders -- `doeff_hy._wire`, which doeff-hy's `defwire` uses, and `doeff_records._wire` of doeff-records (matched against the last segment of the module spelling).
+2. Modules that do the JSON sending and receiving itself, listed in `:wire-modules` of `architecture.hy` and located in the foundation layer (the location of the `:foundation` layer).
 
-ほかの module(protocol・intent・core …)は、解き手が pydantic と同じ仕組み(TypeAdapter)で一度に形を確かめた、型のある値
-(`defwire` の型・defrecord・frozen の dataclass)だけを見ます。
+Other modules (protocol, intent, core, ...) see only typed values (types from `defwire`, defrecord, frozen dataclasses)
+whose shape the decoder has checked in one pass with the same mechanism as pydantic (TypeAdapter).
 
-形を呼び手が決める任意の JSON(tool の呼び出しの引数と結果・耐久の走行の memo の値のように、書き手ごとに形が違い、運ぶ側が
-中を読まない値)は、JsonValue ではなく `doeff_hy._json_value.OpaqueJson` で運びます。中を分解する口を持たない名のある型で、
-`defwire` の欄に書けば解き手が包み・戻し、形を知る読み手は `(parse T opaque)` で型へ解きます。この規則は OpaqueJson を数えません。
+Arbitrary JSON whose shape the caller decides (such as tool-call arguments and results, or memo values of durable runs -- values whose shape differs per writer and whose carrier does not
+read the inside) is carried not as JsonValue but as `doeff_hy._json_value.OpaqueJson`. It is a named type with no way to take the inside apart;
+when written in a `defwire` field the decoder wraps and unwraps it, and a reader that knows the shape decodes it into a type with `(parse T opaque)`. This rule does not count OpaqueJson.
 
-決まり: JsonValue を直に使わせず、pydantic のように解いて検めた型のある値を使う。
+Rule: do not let JsonValue be used directly; use typed values that have been decoded and checked like pydantic does.
 
-## 何を数えるか
+## What is counted
 
-- **Hy**: 読み取り器の記号で、最後の `.` の段が 4 つの名のどれかの物 — `(import m [JsonValue])`・`(setv JsonValue …)`・`(val JsonValue …)`・
-  `#^ JsonValue x`・`(: x JsonValue)`・`(get dict #(str JsonValue))`・`wire.JsonValue` など。文字列・註・docstring・`#_` で読み捨てた form は数えない。
-- **Python**: 字句の名(名前・属性の名・import の名)と、注釈(引数・戻り値・`x: T`)と型の別名(`X: TypeAlias = "…"`・`type X = …`)の
-  文字列の中の語(前後が識別子の文字でない物)。docstring・註・f 文字列は数えない。
-- 母集団は repo の Hy と Python の file の全部(`.` で始まる隠し dir・`node_modules`・`target`・`__pycache__`・`venv`・`site-packages` は降りない)。
+- **Hy**: reader symbols whose last `.` segment is one of the 4 names -- `(import m [JsonValue])`, `(setv JsonValue …)`, `(val JsonValue …)`,
+  `#^ JsonValue x`, `(: x JsonValue)`, `(get dict #(str JsonValue))`, `wire.JsonValue`, and so on. Strings, comments, docstrings, and forms discarded with `#_` are not counted.
+- **Python**: lexical names (names, attribute names, import names), and words inside the strings of annotations (arguments, return values, `x: T`) and type aliases (`X: TypeAlias = "…"`, `type X = …`)
+  (those not adjacent to identifier characters). Docstrings, comments, and f-strings are not counted.
+- The population is all of the repo's Hy and Python files (hidden dirs starting with `.`, `node_modules`, `target`, `__pycache__`, `venv`, and `site-packages` are not descended into).
 
-## 違反の形
+## Shape of a violation
 
-- module ごとに 1 件。鍵は `<path>::DOEFF120`(細目なし)。位置は最初の使用。
-- 説明の主体に、使った名・数・最初の行・ほかの行を書く(例「module app.billing.core.decide — JsonValue を 2 か所で使う(最初 1 行目・ほかに 2 行目)」)。
-- `:wire-modules` に当たるが foundation の層の外の module は許さず、説明に訳(「foundation の層(app/foundation/)に無いので許さない」)を書く。
-- 重さは error。登録簿に載った既存の分は `[tool.doeff-linter.rules.DOEFF120] registered_severity`(既定 warning)。
+- One per module. The key is `<path>::DOEFF120` (no detail). The position is the first use.
+- The body of the description states the names used, the count, the first line, and the other lines (for example "module app.billing.core.decide -- uses JsonValue in 2 places (first at line 1, also at line 2)").
+- A module that matches `:wire-modules` but is outside the foundation layer is not allowed, and the description states the reason ("not allowed because it is not in the foundation layer (app/foundation/)").
+- Severity is error. Existing entries listed in the registry use `[tool.doeff-linter.rules.DOEFF120] registered_severity` (default warning).
 
-## 許す場所の決め方
+## How the allowed places are decided
 
-判定は `src/project/mod.rs` の `json_value_allowance` の 1 か所だけにあります。許す場所の決め方(例: defwire の macro が生む解き手の中だけを
-許す形)を変える時は、この関数の中身だけを替えます。母集団・名の数え方・鍵・説明の形は変わりません。
+The judgment lives in exactly one place, `json_value_allowance` in `src/project/mod.rs`. When changing how the allowed places are decided (for example, a form that
+allows only the inside of decoders generated by the defwire macro), change only the body of this function. The population, how names are counted, the key, and the shape of the description do not change.
 
-## 設定
+## Configuration
 
 ```hy
 (defarchitecture agora-controllers
   :root "controllers"
   :layers [… (layer foundation …) …]
   :foundation foundation
-  ;; JSON の送受信そのものを行う foundation の module(`.` 区切りの module の綴り・`*` は段の中の任意の綴り・`**` は 0 個以上の段)
+  ;; foundation modules that do the JSON sending and receiving itself (module spellings separated by `.`; `*` is any spelling within a segment, `**` is zero or more segments)
   :wire-modules ["controllers.foundation.records_client" "controllers.foundation.http.*"])
 ```
 
-- `:wire-modules` は path(`/`)ではなく module の綴りで書く。空の段・段の中に混ぜた `**`・同じ綴りの 2 度書きは設定の誤り。
-- `:wire-modules` を書くには `:foundation` が要る(foundation の無い宣言では何も許せないので設定の誤り)。
+- Write `:wire-modules` as module spellings, not paths (`/`). An empty segment, a `**` mixed into a segment, and writing the same spelling twice are config errors.
+- Writing `:wire-modules` requires `:foundation` (a declaration without a foundation can allow nothing, so it is a config error).
 
 ```toml
 [tool.doeff-linter]
 enable = [ …, "DOEFF120"]
 [tool.doeff-linter.registry]
-dirs = ["scripts/doeff_lint/JSON-VALUE-BREACHES"]     # 既存の分(1 鍵 1 file)
+dirs = ["scripts/doeff_lint/JSON-VALUE-BREACHES"]     # existing entries (one key per file)
 [tool.doeff-linter.rules.DOEFF120]
 registered_severity = "warning"
 ```
 
-## 例
+## Examples
 
 ```hy
-;; 悪い: app/billing/core/decide.hy — core が JSON を手で分解して読む
+;; Bad: app/billing/core/decide.hy -- core takes JSON apart by hand
 (import doeff_hy._wire [JsonValue])
 (defk decide [#^ JsonValue payload] {:pre [] :post []}
   (get payload "amount"))
 
-;; 良い: foundation の送受信の module が defwire の型へ parse し、core は型のある値だけを見る
+;; Good: a foundation send/receive module parses into a defwire type, and core sees only typed values
 (defk decide [#^ Charge charge] {:pre [] :post []}
   charge.amount)
 ```
 
 ```python
-# 悪い: app/billing/protocol/shape.py
+# Bad: app/billing/protocol/shape.py
 from typing import TypeAlias
 
 JsonValue: TypeAlias = "dict[str, JsonValue] | list[JsonValue] | str | int | float | bool | None"
 ```
 
-## 戻し方
+## Rollback
 
-規則を外す(`enable` から DOEFF120 を抜く)。型に起こした値はそのままで害は無い。
+Remove the rule (take DOEFF120 out of `enable`). Values already turned into types can stay as they are without harm.

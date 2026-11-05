@@ -1,45 +1,45 @@
-//! commit の hook の入口(`doeff-linter --commit-hook`)。
+//! Entry point of the commit hook (`doeff-linter --commit-hook`).
 //!
-//! 各 repo(agora-controllers・merge-queue ほか)が hook の論理を写して持たず、この 1 か所を呼ぶ。repo が書くのは設定の
-//! `[tool.doeff-linter.commit_hook]`(上限の秒)だけ。元の実装 = agora-controllers の
-//! `scripts/commit_hook.hy`(lint-staged・whole-repo-fresh)。
+//! Each repo (agora-controllers, merge-queue, and others) does not copy and keep the hook's logic; it calls this one place. All a repo writes is the config's
+//! `[tool.doeff-linter.commit_hook]` (the limit in seconds). The original implementation = agora-controllers'
+//! `scripts/commit_hook.hy` (lint-staged, whole-repo-fresh).
 //!
-//! 止める物は 3 種(どれも stage した path の中だけ — 子の linter は stage した path と、その HEAD の版だけを測る):
-//! - stage した source(.hy・.hyk・.hyp・.py)の、critical でない規則の登録簿の外の error(登録簿の既知は linter が warning に下げる)。
-//! - stage した source の critical のうち HEAD の版に無い物(`--baseline-report` の `new_critical`)。
-//! - stage した source の major の warning の数が、規則ごとに HEAD の版より増えた物(warning は終了コードを
-//!   変えないので、直している間に新しい warning が入っても減らなかった)。数は stage した file の組の合計で比べる(移した・消した
-//!   file の HEAD の版も数える)— file ごとに比べると、warning を増やさない移しや分割まで止まる。基点は HEAD の版そのものなので、
-//!   減らした commit の後は次の commit の基点が自ずと下がる(基点の file を持たない・下げ忘れが無い)。
+//! There are 3 kinds of things that stop a commit (all only within the staged paths -- the child linter measures only the staged paths and their HEAD version):
+//! - Among the staged sources (.hy, .hyk, .hyp, .py), errors of non-critical rules that are outside the registry (the linter lowers registry-known ones to warnings).
+//! - Among the staged sources' criticals, those not in the HEAD version (`new_critical` of `--baseline-report`).
+//! - Those for which the number of major warnings in the staged sources increased over the HEAD version, per rule (warnings do not change the exit code, so
+//!   new warnings crept in and the count did not go down while fixing). The count is compared as a total over the set of staged files (the HEAD version of moved or deleted
+//!   files is also counted) -- comparing per file would also stop moves and splits that do not increase warnings. The baseline is the HEAD version itself, so
+//!   after a commit that reduced them, the next commit's baseline naturally goes down (no baseline file to keep, nothing to forget to lower).
 //!
-//! 当てる規則は、有効な規則のうち file 1 つの中身と設定だけで決まる物(split_rules の quick)だけ。repo 全体が要ると規則が名乗る物
-//! (`ProjectRule::needs_whole_repo`)と、宣言の file を変えた commit の stage していない file の当たりは、hook では測らず、repo 全体の
-//! 検証(各 repo の日次 — agora-controllers は 4 時間ごと)が見る(cisco-c8 の決め 2026-10-11 11:1x)。以前は
-//! repo 全体の比べ(先端の木と HEAD の木を repo 全体で測る)も hook が持ち、agora-controllers で 1 回 45〜100 秒・1.5〜1.7 GB かかり、
-//! 日次の赤を直す 23 会話が同時に commit して zeus を埋めた(load 102/24 core・swap 全部)。repo 全体の規則は file 1 つに当てても
-//! repo 全体の推論の世界を組む(DOEFF132 は 1 file で 28 秒)ので、stage した path に当てる形でも軽くならない。
+//! The rules applied are, among the enabled rules, only those decided by the contents of a single file and the config (the quick of split_rules). Rules that declare they need the whole repo
+//! (`ProjectRule::needs_whole_repo`), and hits in unstaged files of a commit that changed a declaration file, are not measured by the hook but are looked at by the repo-wide
+//! verification (each repo's daily run -- every 4 hours for agora-controllers) (decision of cisco-c8, 2026-10-11 11:1x). Previously the hook also did
+//! the whole-repo comparison (measuring the tip tree and the HEAD tree across the whole repo), which took 45 to 100 seconds and 1.5 to 1.7 GB per run in agora-controllers, and
+//! 23 conversations fixing the daily red committing at the same time filled up zeus (load 102/24 cores, all of swap). Whole-repo rules build the whole-repo inference world even when applied to one file
+//! (DOEFF132 takes 28 seconds for 1 file), so applying them to the staged paths does not make them lighter either.
 //!
-//! 既知の一覧を持たない規則(DOEFF206〜209・211)の critical は、上の 2 つ目の列で、stage した path に在れば HEAD に同じ鍵が在っても
-//! 止める。その当たりは「HEAD に無い」でなく「変えた file の既存の当たり(main にも在る…)」と書き、直し方の
-//! 案内を 1 行足す(split_by_head — 止める判断は変えず文だけを分ける)。
+//! Criticals of rules with no known list (DOEFF206-209, 211) stop in the second item above if they are in a staged path even when the same key is in HEAD. Those hits are written as
+//! "existing hit in a changed file (also on main ...)" rather than "not on HEAD", with one line of guidance on how to fix added
+//! (split_by_head -- the decision to stop is unchanged; only the sentence is split).
 //!
-//! 子の linter は 1 回ごとに上限(既定 20 秒・0 は上限なし)を持ち、越えたら commit を止める(終了コード 1・
-//! 上限は子の CPU 秒で測る — 混んだ機体では wall の秒だけが伸び、上限なしなら 0 件の commit が毎回切れていた。
-//! CPU を使わずに終わらない子には wall の予備の上限〔上限 × WALL_BACKSTOP_FACTOR〕を残し、子の CPU 秒を読めない機体〔/proc の無い
-//! Mac〕では wall の秒で測る — 判断は cut_measure の 1 か所・
-//! 元の issue #2723)。以前は越えたら通していて、何を確かめずに通したかを 1 行で書くだけだった — 作業役は通った commit を
-//! 確かめ直さなかった。止める時は、どの比べの、どの木で、どの規則を、
-//! 何秒の上限で打ち切ったかを 1 行で書き、上限なしで同じ比べをやり直す命令(unbounded_command — そのまま貼って実行できる形)と、
-//! その結果が 0 件である事を確かめてから commit し直す(--no-verify は使わない)案内を続けて出す。
-//! HEAD の版を測る木は事実の cache の根の `commit-hook-tree/<repo を表す名>/tree` に repo ごとに 1 つ置き、HEAD が進んだら git の差分で変わった
-//! file だけを書き換える(head_tree — 根の path と変わらない file の更新時刻が保たれるので、HEAD の版を測る 1 回にも事実の cache が効く)。
-//! 純粋な部分(規則の分け・識別子の差・止める当たりの選び・測れなかった比べの文・上限なしの命令)は関数に分けて、単体のテストで確かめる。
+//! The child linter has a limit per run (default 20 seconds; 0 means no limit), and the commit is stopped if it is exceeded (exit code 1;
+//! the limit is measured in the child's CPU seconds -- on a busy machine only the wall seconds stretch, and with no limit 0-hit commits were cut off every time.
+//! For a child that does not finish without using CPU, a wall backstop limit [limit x WALL_BACKSTOP_FACTOR] is kept, and on machines where the child's CPU seconds cannot be read [Macs
+//! without /proc] it is measured in wall seconds -- the decision is in the one place cut_measure;
+//! original issue #2723). Previously it let the commit through when exceeded, merely writing in one line what had been passed without checking -- workers did not
+//! re-verify commits that passed. When stopping, it writes in one line which comparison, on which tree, which rules, and
+//! cut off at what limit in seconds, followed by a command that redoes the same comparison without a limit (unbounded_command -- in a form that can be pasted and run as is) and guidance to
+//! commit again after confirming the result is 0 hits (do not use --no-verify).
+//! The tree on which the HEAD version is measured is placed, one per repo, at `commit-hook-tree/<name representing the repo>/tree` under the fact cache's root, and when HEAD advances only the files changed by git's diff
+//! are rewritten (head_tree -- the root path and the mtimes of unchanged files are preserved, so the fact cache works even for the single run that measures the HEAD version).
+//! The pure parts (the split of rules, the difference of identifiers, the selection of hits that stop, the sentence for a comparison that could not be measured, and the command without a limit) are separated into functions and verified by unit tests.
 //!
-//! 報告の出口(引数 `--report-out <file>`): 2 回の測り(HEAD の版・stage した path)を、それぞれ測った path の列・
-//! 違反(editor-json の違反の形のまま — HEAD の版は先端の根の path へ付け替えた後)・判じた規則の ID で 1 つの JSON に書く(report_of)。
-//! 会話の commit の hook がこの報告を会話 id つきで記録へ送り、会話が増やした・減らした違反を commit ごとに読む材料にする
-//! (設計の記録 project-health-ide の指摘 2)。止める判定・終了コード・stderr の文は引数の無い時と同じで、書けない時も終了コードは
-//! 変えない(stderr に 1 行 — 診断の記録は commit を止めない)。
+//! Report output (argument `--report-out <file>`): the two measurements (the HEAD version and the staged paths) are written, each as the list of measured paths,
+//! the violations (still in editor-json's violation shape -- the HEAD version after re-pointing to the tip's root path), and the IDs of the rules judged, into one JSON (report_of).
+//! The conversation's commit hook sends this report to the record together with the conversation id, as material for reading, commit by commit, the violations the conversation added or removed
+//! (finding 2 of the design record project-health-ide). The blocking decision, exit code, and stderr sentences are the same as without the argument, and when it cannot be written the exit code does not
+//! change either (one line on stderr -- recording diagnostics does not stop a commit).
 
 use crate::config::{CommitHookSection, Config};
 use serde::Serialize;
@@ -50,27 +50,27 @@ use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
-/// 子の linter 1 回ごとの既定の上限(秒)。
+/// Default limit per child linter run (seconds).
 pub const DEFAULT_TIMEOUT_S: u64 = 20;
-/// 上限なしを表す秒の値(引数 --commit-hook-timeout-s・設定の timeout_s)。
+/// The seconds value that means no limit (argument --commit-hook-timeout-s, config timeout_s).
 pub const UNBOUNDED_TIMEOUT_S: u64 = 0;
-/// stage した path のうち linter が読む物の末尾。
+/// The extensions at the end of the staged paths that the linter reads.
 pub const LINTED_SUFFIXES: [&str; 4] = [".hy", ".hyk", ".hyp", ".py"];
-/// 出す行の頭。
+/// The head of the lines printed.
 const PREFIX: &str = "doeff-linter commit-hook: ";
 
-/// 有効な規則を、file 1 つで決まる規則(quick — commit の hook が stage した path に当てる)と、repo 全体が要る規則(whole — 門の口 `--split-rules` が
-/// repo 全体の比べに当てる・hook は当てない)に分けた物。
+/// The enabled rules split into rules decided by a single file (quick -- the commit hook applies them to the staged paths) and rules that need the whole repo (whole -- the gate's interface `--split-rules`
+/// applies them to the whole-repo comparison; the hook does not).
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct RuleSplit {
     pub quick: Vec<String>,
     pub whole: Vec<String>,
 }
 
-/// 純粋: 有効な規則から Jev に問う意味の規則(規則の名乗り config::is_semantic — commit では問わない・cache を読むだけでも遅い)を除き、規則が repo 全体が要ると名乗る物(config::needs_whole_repo)を whole、残りを
-/// quick に分ける(順は保つ)。以前は設定の手の一覧 whole_repo_rules で分けていて、一覧に足し忘れた規則(DOEFF149・161)の当たりが
-/// どちらの段にも掛からず main に入った。意味の規則も以前は ID の頭 DOEFF2 で除いていて、頭が同じ決定的な規則
-/// (DOEFF206〜209)がどちらにも入らなかった。
+/// Pure: from the enabled rules, removes the semantic rules that ask Jev (the rule's declaration config::is_semantic -- not asked at commit; even just reading the cache is slow), and splits the rest into whole (those the rule declares as needing the whole repo, config::needs_whole_repo) and
+/// quick (order preserved). It used to split by the hand-written list whole_repo_rules in the config, and hits of rules that were forgotten to be added to the list (DOEFF149, 161) got into main
+/// without being caught at either stage. Semantic rules were also excluded by the ID prefix DOEFF2, so deterministic rules with the same prefix
+/// (DOEFF206-209) fell into neither.
 pub fn split_rules(enabled: &[String]) -> RuleSplit {
     let (whole, quick): (Vec<String>, Vec<String>) = enabled
         .iter()
@@ -80,20 +80,20 @@ pub fn split_rules(enabled: &[String]) -> RuleSplit {
     RuleSplit { quick, whole }
 }
 
-/// 純粋: 退役した設定の鍵 whole_repo_rules が残っている時の知らせ(読まない — 規則の名乗りで分ける)。
+/// Pure: the notice for when the retired config key whole_repo_rules is left in place (not read -- rules are split by their own declaration).
 pub fn retired_whole_repo_rules_note(section: Option<&CommitHookSection>) -> Option<String> {
     section.filter(|s| !s.whole_repo_rules.is_empty()).map(|_| {
-        "設定の whole_repo_rules は退役した鍵で読まない — repo 全体の比べの規則は linter の規則が名乗る(`doeff-linter --list-rules`)。鍵を消す".to_string()
+        "settings: whole_repo_rules is a retired key and is not read — which rules need a whole-repo comparison is declared by the linter rules themselves (`doeff-linter --list-rules`). Remove the key".to_string()
     })
 }
 
-/// 純粋: stage した path のうち、作業木に在り(exists)linter が読む物。
+/// Pure: among the staged paths, those that exist in the working tree (exists) and that the linter reads.
 pub fn linted_paths(staged: &[String], exists: impl Fn(&str) -> bool) -> Vec<String> {
     staged.iter().filter(|p| LINTED_SUFFIXES.iter().any(|s| p.ends_with(s)) && exists(p)).cloned().collect()
 }
 
-/// 純粋: editor-json の出力のうち止める当たり — critical でない規則の登録簿の外の error(severity が error で level が critical
-/// でない)。critical は登録簿の有無でなく HEAD との比べだけで判じるので入れない。
+/// Pure: among the editor-json output, the hits that stop -- errors of non-critical rules that are outside the registry (severity is error and level is not critical).
+/// Criticals are judged only by the comparison with HEAD, not by the presence of the registry, so they are not included.
 pub fn blocking_violations(report: &Value) -> Vec<&Value> {
     violations(report).filter(|v| v["severity"] == "error" && v["level"] != "critical").collect()
 }
@@ -102,7 +102,7 @@ fn violations(report: &Value) -> impl Iterator<Item = &Value> {
     report["violations"].as_array().into_iter().flatten()
 }
 
-/// 違反の path を報告の根からの相対にする(根の外ならそのまま)。
+/// Makes a violation's path relative to the report's root (as is if outside the root).
 fn relative_to_root<'a>(report: &Value, path: &'a str) -> &'a str {
     match report["root"].as_str() {
         Some(root) => path.strip_prefix(root).map(|rest| rest.trim_start_matches('/')).unwrap_or(path),
@@ -110,8 +110,8 @@ fn relative_to_root<'a>(report: &Value, path: &'a str) -> &'a str {
     }
 }
 
-/// 純粋: 報告の major の warning(severity が warning・level が major — critical は new_critical、登録簿の外の error は
-/// blocking_violations が受け持つ)を規則ごとに数える。
+/// Pure: counts per rule the major warnings of the report (severity is warning and level is major -- criticals are handled by new_critical and errors outside the registry by
+/// blocking_violations).
 fn major_warning_counts(report: &Value) -> std::collections::BTreeMap<String, usize> {
     let mut counts = std::collections::BTreeMap::new();
     for v in violations(report).filter(|v| v["severity"] == "warning" && v["level"] == "major") {
@@ -120,8 +120,8 @@ fn major_warning_counts(report: &Value) -> std::collections::BTreeMap<String, us
     counts
 }
 
-/// 純粋: stage した file の組で、major の warning の数が HEAD の版(head)より先端(tip)で増えた規則を 1 行ずつ
-/// (`<規則> <HEAD の数> → <先端の数>`・規則の辞書順)。同じ数・減った規則は出さない。
+/// Pure: over the set of staged files, one line each for the rules whose number of major warnings increased at the tip over the HEAD version (head)
+/// (`<rule> <HEAD count> → <tip count>`, in the rules' dictionary order). Rules with the same or a decreased count are not listed.
 pub fn grown_major_warnings(head: &Value, tip: &Value) -> Vec<String> {
     let before = major_warning_counts(head);
     major_warning_counts(tip)
@@ -133,9 +133,9 @@ pub fn grown_major_warnings(head: &Value, tip: &Value) -> Vec<String> {
         .collect()
 }
 
-/// 止める当たりの識別子を、HEAD の版に同じ識別子が無い物(新しく増えた当たり)と在る物(既知の一覧を持たない規則の、変えた file の
-/// 既存の当たり)に分けた組(どちらも辞書順)。止める・止めないは変えず、出す文だけを分ける(cisco-c8 の頼み
-/// 2026-10-07 — 既存の当たりにも「HEAD に無い」と書いていて、作業役が hook の不具合と読んで hook を飛ばしかけた)。
+/// A pair that splits the identifiers of hits that stop into those with no same identifier in the HEAD version (newly increased hits) and those with one (for rules with no known list, existing hits in
+/// changed files) (both in dictionary order). Whether to stop is unchanged; only the sentences printed are split (request of cisco-c8,
+/// 2026-10-07 -- existing hits were also written as "not on HEAD", and a worker read that as a hook defect and nearly skipped the hook).
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct ByHead {
     pub not_on_head: Vec<String>,
@@ -148,15 +148,15 @@ impl ByHead {
     }
 }
 
-/// 純粋: 止める当たりの識別子(blocking — stage した path に当てる列の new_critical)を、HEAD の版の識別子の集合(head)に在るかで分ける。
+/// Pure: splits the identifiers of hits that stop (blocking -- new_critical of the run applied to the staged paths) by whether they are in the set of identifiers of the HEAD version (head).
 pub fn split_by_head(head: &BTreeSet<String>, blocking: impl IntoIterator<Item = String>) -> ByHead {
     let all: BTreeSet<String> = blocking.into_iter().collect();
     let (already_on_head, not_on_head) = all.into_iter().partition(|id| head.contains(id));
     ByHead { not_on_head, already_on_head }
 }
 
-/// 純粋: 報告の違反の path と根を、from の根から to の根へ付け替える — HEAD の木で走らせた出力を、先端の根で走らせた出力と
-/// 同じ path で比べる(鍵の無い違反の識別子は絶対 path を含む)。
+/// Pure: re-points the paths and root of a report's violations from the root `from` to the root `to` -- so that output run on the HEAD tree is compared with output run on the tip's root
+/// by the same path (the identifier of a violation with no key includes an absolute path).
 pub fn rebase_paths(report: &mut Value, from: &str, to: &str) {
     let rebase = |text: &str| -> Option<String> {
         let rest = text.strip_prefix(from)?;
@@ -174,7 +174,7 @@ pub fn rebase_paths(report: &mut Value, from: &str, to: &str) {
     }
 }
 
-/// 純粋: 止める当たりを 1 行に書く(`<相対 path>:<行>: <規則> <message の 1 行目>`)。
+/// Pure: writes a hit that stops in one line (`<relative path>:<line>: <rule> <first line of message>`).
 pub fn violation_line(report: &Value, violation: &Value) -> String {
     let path = relative_to_root(report, violation["path"].as_str().unwrap_or(""));
     let line = violation["range"]["start"]["line"].as_u64().unwrap_or(0) + 1;
@@ -182,7 +182,7 @@ pub fn violation_line(report: &Value, violation: &Value) -> String {
     format!("{}:{}: {} {}", path, line, violation["rule"].as_str().unwrap_or(""), message)
 }
 
-/// 純粋: 設定と引数から子の linter 1 回ごとの上限を選ぶ(引数が勝つ・無ければ設定・無ければ既定)。0 秒は上限なし(None)。
+/// Pure: chooses the limit per child linter run from the config and arguments (the argument wins; otherwise the config; otherwise the default). 0 seconds means no limit (None).
 pub fn resolve_timeout(section: Option<&CommitHookSection>, cli: Option<u64>) -> Option<Duration> {
     match cli.or_else(|| section.and_then(|s| s.timeout_s)).unwrap_or(DEFAULT_TIMEOUT_S) {
         UNBOUNDED_TIMEOUT_S => None,
@@ -190,30 +190,30 @@ pub fn resolve_timeout(section: Option<&CommitHookSection>, cli: Option<u64>) ->
     }
 }
 
-/// 純粋: 設定の enable・disable と引数を当てた有効な規則の列(ふだんの実行と同じ merge_config・None は全部の規則)。
+/// Pure: the list of enabled rules after applying the config's enable and disable and the arguments (the same merge_config as normal runs; None means all rules).
 pub fn effective_rules(config: Option<&Config>, cli_enable: &[String], cli_disable: &[String]) -> Vec<String> {
     crate::config::merge_config(config, cli_enable, cli_disable, &[]).0.unwrap_or_else(crate::config::get_all_rule_ids)
 }
 
-/// 宣言の file と dir(repo の根からの path)— 設定 file・architecture.hy・登録簿の表。ここを変えた commit は、file 1 つで判じる規則の
-/// 当たりも変更の外の file に付けうる(層に禁じた module を足すと、触っていない core の file が赤になる)。
+/// The declaration files and dirs (paths from the repo root) -- the config file, architecture.hy, and the registry tables. A commit that changes these can also attach the hits of rules decided by a single file
+/// to files outside the change (adding a module forbidden to a layer turns an untouched core file red).
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct Declarations {
     pub files: Vec<String>,
     pub dirs: Vec<String>,
-    /// 規則の入り切りと層を決める宣言(設定 file と architecture.hy)— 基点を今の宣言で測る 1 回限りの指定(Lint-Baseline)で基点の木へ
-    /// 写す物(登録簿は写さない — 登録簿の変化は今までどおり比べる)。
+    /// The declarations that decide which rules are on or off and the layers (the config file and architecture.hy) -- what is copied to the baseline tree by the one-time directive that measures the baseline with the current declarations (Lint-Baseline)
+    /// (the registry is not copied -- changes in the registry are compared as before).
     pub switches: Vec<String>,
 }
 
-/// 基点を今の宣言で測る 1 回限りの指定の commit 本文の行(trailer)— `Lint-Baseline: declarations <理由>`。規則を鳴らし始める commit
-/// (enable に足す・層の宣言を足す)は、既存の当たりが全部「基点に無い当たり」になり、その commit 自身が門と hook を通れない。この行の
-/// 在る変更だけ、基点の木を今の宣言(switches)で測り、既存の当たりを基点に在る物として新しい当たりだけを止める(既知の一覧に載せる
-/// 形ではない・cisco-c8 の決め 2026-10-01)。宣言だけで触っていない file に当たりを付ける変更(#2127)を見逃す
-/// 形なので、理由の無い行は効かない(誰が何のために使ったかを本文に残す)。
+/// The commit-body line (trailer) of the one-time directive that measures the baseline with the current declarations -- `Lint-Baseline: declarations <reason>`. For a commit that starts to fire a rule
+/// (adding to enable, adding a layer declaration), all the existing hits become "hits not in the baseline", and that commit itself cannot pass the gate and the hook. Only for a change with this line,
+/// the baseline tree is measured with the current declarations (switches), the existing hits are treated as present in the baseline, and only new hits stop (this is not a form of
+/// putting them on the known list -- decision of cisco-c8, 2026-10-01). It is a form that would miss a change that attaches hits to untouched files by declaration alone (#2127),
+/// so a line without a reason has no effect (leave in the body who used it and for what).
 pub const BASELINE_TRAILER: &str = "Lint-Baseline: declarations";
 
-/// 純粋: commit 本文に理由つきの Lint-Baseline の行が在れば、基点の木へ写す宣言の file の列(無ければ空)。
+/// Pure: if the commit body has a Lint-Baseline line with a reason, the list of declaration files to copy to the baseline tree (empty if none).
 pub fn baseline_overlay(message: &str, declarations: &Declarations) -> Vec<String> {
     let requested = message.lines().any(|line| {
         line.trim_start().strip_prefix(BASELINE_TRAILER).is_some_and(|reason| !reason.trim_matches(|c: char| c.is_whitespace() || c == '—' || c == '-' || c == ':').is_empty())
@@ -221,8 +221,8 @@ pub fn baseline_overlay(message: &str, declarations: &Declarations) -> Vec<Strin
     if requested { declarations.switches.clone() } else { Vec::new() }
 }
 
-/// 設定から宣言の file と dir を集める。architecture.hy の置き場は linter のふだんの実行と同じ決め方(設定の architecture か、根の
-/// architecture.hy)。登録簿の dir・file は根から、設定の登録簿の file は設定 file の dir から。
+/// Gathers the declaration files and dirs from the config. Where architecture.hy lives is decided the same way as in the linter's normal run (the config's architecture, or the root's
+/// architecture.hy). Registry dirs and files are from the root, and the config's registry files are from the config file's dir.
 pub fn declarations_of(root: &Path, config: Option<(&Config, &Path)>) -> Declarations {
     let rel = |path: &Path| crate::project::paths::declared_rel(root, path);
     let config_dir = config.and_then(|(_, path)| path.parent().map(Path::to_path_buf)).unwrap_or_else(|| root.to_path_buf());
@@ -243,15 +243,15 @@ pub fn declarations_of(root: &Path, config: Option<(&Config, &Path)>) -> Declara
     Declarations { files, dirs, switches }
 }
 
-/// 純粋: 変えた path(根から)に宣言の file か宣言の dir の下の file が在るか。
+/// Pure: whether the changed paths (from the root) include a declaration file or a file under a declaration dir.
 pub fn touches_declaration(changed: &[String], declarations: &Declarations) -> bool {
     changed.iter().any(|path| {
         declarations.files.iter().any(|f| f == path) || declarations.dirs.iter().any(|d| path.starts_with(&format!("{}/", d)))
     })
 }
 
-/// 純粋: 変更に当てる規則の分け — 門と commit の hook が共有する 1 か所。ふだんは規則の名乗り(split_rules)で
-/// 分け、宣言の file を変えた変更では file 1 つで判じる規則も repo 全体の比べに入れる(quick は空)。手の一覧は持たない。
+/// Pure: the split of rules to apply to a change -- the one place shared by the gate and the commit hook. Normally split by the rules' own declarations (split_rules), and for a change that changed
+/// a declaration file, rules decided by a single file are also put in the whole-repo comparison (quick is empty). There is no hand-written list.
 pub fn split_for_change(enabled: &[String], changed: &[String], declarations: &Declarations) -> RuleSplit {
     let split = split_rules(enabled);
     if !touches_declaration(changed, declarations) {
@@ -261,33 +261,33 @@ pub fn split_for_change(enabled: &[String], changed: &[String], declarations: &D
     RuleSplit { quick: Vec::new(), whole }
 }
 
-/// hook の 1 回の実行の前提。
+/// The premises of one hook run.
 #[derive(Debug, Clone)]
 pub struct CommitHookOptions {
-    /// git の作業木の根(子の linter の cwd・stage の path の基準)。
+    /// The git working tree root (the child linter's cwd and the base of staged paths).
     pub root: PathBuf,
-    /// 設定 file(絶対 path・無ければ子は設定を探す)。
+    /// The config file (absolute path; if none, the child looks for the config).
     pub config: Option<PathBuf>,
-    /// 有効な規則(分けは stage した path を見て split_for_change が決める)。
+    /// The enabled rules (the split is decided by split_for_change looking at the staged paths).
     pub enabled: Vec<String>,
     pub declarations: Declarations,
-    /// 基点(HEAD の木)へ写す今の宣言の file(commit 本文の Lint-Baseline の行が在る時だけ — 空なら写さない)。
+    /// The current declaration files to copy to the baseline (the HEAD tree) (only when the commit body has a Lint-Baseline line -- not copied if empty).
     pub overlay: Vec<String>,
-    /// commit 本文の file(引数 --commit-message — 上限なしの命令にも同じ file を渡す)。
+    /// The commit body file (argument --commit-message -- the same file is passed to the no-limit command too).
     pub message: Option<PathBuf>,
-    /// 引数の --enable・--disable(上限なしの命令に同じ物を渡す)。
+    /// The arguments --enable and --disable (passed as is to the no-limit command).
     pub cli_enable: Vec<String>,
     pub cli_disable: Vec<String>,
-    /// 子の linter 1 回ごとの上限(None = 上限なし)。
+    /// The limit per child linter run (None = no limit).
     pub timeout: Option<Duration>,
-    /// 子として撃つ linter(ふつうは今の binary)。
+    /// The linter fired as the child (normally the current binary).
     pub linter: PathBuf,
-    /// HEAD の木の結果の置き場の根(facts_cache の根 — None なら置き場を使わずに毎回 HEAD の木を測る)。
+    /// The root of the store for the HEAD tree's results (the root of facts_cache -- if None, the store is not used and the HEAD tree is measured every time).
     pub cache: Option<PathBuf>,
 }
 
 impl CommitHookOptions {
-    /// 設定と引数から前提を組む。
+    /// Builds the premises from the config and arguments.
     pub fn new(root: PathBuf, config: Option<(&Config, PathBuf)>, cli_enable: &[String], cli_disable: &[String], cli_timeout: Option<u64>, linter: PathBuf) -> Self {
         let section = config.as_ref().and_then(|(c, _)| c.commit_hook.as_ref());
         let enabled = effective_rules(config.as_ref().map(|(c, _)| *c), cli_enable, cli_disable);
@@ -310,13 +310,13 @@ impl CommitHookOptions {
     }
 }
 
-/// 子の linter を撃つ木。報告(report_of)の測った対象の綴りは `HEAD`・`stage`。
+/// The tree on which the child linter is fired. The spelling of the measured target in the report (report_of) is `HEAD` or `stage`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 pub enum Side {
-    /// HEAD の木(事実の cache の根の commit-hook-tree/<repo を表す名>/tree に置いた基点 — head_tree)。
+    /// The HEAD tree (the baseline placed at commit-hook-tree/<name representing the repo>/tree under the fact cache's root -- head_tree).
     #[serde(rename = "HEAD")]
     Head,
-    /// 先端の木(git の作業木そのもの — stage した path を測る)。
+    /// The tip tree (the git working tree itself -- measures the staged paths).
     #[serde(rename = "stage")]
     Tip,
 }
@@ -324,13 +324,13 @@ pub enum Side {
 impl Side {
     fn name(self) -> &'static str {
         match self {
-            Side::Head => "HEAD の木",
-            Side::Tip => "先端の木(作業木)",
+            Side::Head => "HEAD tree",
+            Side::Tip => "tip tree (working tree)",
         }
     }
 }
 
-/// 子の linter 1 回の頼み — どの木で、どの規則を当てるかと、子へ渡す引数。
+/// One request for a child linter -- which tree, which rules to apply, and the arguments passed to the child.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct LintRun {
     pub side: Side,
@@ -338,23 +338,23 @@ pub struct LintRun {
     pub args: Vec<String>,
 }
 
-/// 打ち切りを判じた物差し(上限は子の CPU 秒で測る)。
+/// The yardstick by which the cut-off was judged (the limit is measured in the child's CPU seconds).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Measure {
-    /// 子の CPU 秒(子とその待ち終えた子孫の utime・stime)が上限を越えた。
+    /// The child's CPU seconds (utime and stime of the child and its waited-for descendants) exceeded the limit.
     Cpu,
-    /// 子の CPU 秒を読めない機体(/proc の無い Mac)で、wall の秒が上限を越えた。
+    /// On a machine where the child's CPU seconds cannot be read (a Mac without /proc), the wall seconds exceeded the limit.
     Wall,
-    /// CPU 秒は上限の内だが、wall の秒が予備の上限(上限 × WALL_BACKSTOP_FACTOR)を越えた — CPU を使わずに終わらない子。
+    /// The CPU seconds are within the limit, but the wall seconds exceeded the backstop limit (limit x WALL_BACKSTOP_FACTOR) -- a child that does not finish without using CPU.
     WallBackstop,
 }
 
-/// CPU を使わずに終わらない子を打ち切る wall の予備の上限の倍率(CPU 秒の上限の何倍か)。混んだ機体で 1 core の取り分が 1/4 を
-/// 割るまで、CPU 秒の上限の内の子を wall で切らない(zeus は 36 core・load 73 で取り分 約 1/2)。
+/// The multiplier of the wall backstop limit that cuts off a child that does not finish without using CPU (how many times the CPU-seconds limit). A child within the CPU-seconds limit is not cut off by wall
+/// until a core's share on a busy machine falls below 1/4 (zeus has 36 cores and load 73, giving a share of about 1/2).
 pub const WALL_BACKSTOP_FACTOR: u32 = 4;
 
-/// 純粋: 子の linter 1 回を打ち切るかの判断— wall = 起こしてからの wall の秒・cpu = 子の CPU 秒(読めない機体は
-/// None)・limit = 上限。CPU 秒が読めれば CPU 秒で測り、wall は予備の上限(limit × WALL_BACKSTOP_FACTOR)だけを見る。読めなければ wall で測る。
+/// Pure: the decision whether to cut off one child linter run -- wall = wall seconds since it was started, cpu = the child's CPU seconds (None on machines where it cannot be read),
+/// limit = the limit. If CPU seconds can be read, measure by CPU seconds and look at wall only for the backstop limit (limit x WALL_BACKSTOP_FACTOR). If not, measure by wall.
 pub fn cut_measure(wall: Duration, cpu: Option<Duration>, limit: Duration) -> Option<Measure> {
     match cpu {
         Some(cpu) if cpu >= limit => Some(Measure::Cpu),
@@ -365,17 +365,17 @@ pub fn cut_measure(wall: Duration, cpu: Option<Duration>, limit: Duration) -> Op
     }
 }
 
-/// 純粋: /proc/<pid>/stat の本文から CPU 秒を読む — utime・stime・cutime・cstime(全体の 14〜17 番目の欄・単位は USER_HZ = 100 分の
-/// 1 秒 — kernel の ABI で機体に依らない)の和。名の欄(2 番目)は ')' を含みうるので、最後の ')' の後ろから数える。
+/// Pure: reads CPU seconds from the contents of /proc/<pid>/stat -- the sum of utime, stime, cutime, and cstime (fields 14 to 17 of the whole; the unit is USER_HZ = 1/100
+/// second -- the kernel's ABI, independent of the machine). The name field (the 2nd) can contain ')', so count from after the last ')'.
 pub fn cpu_of_stat(text: &str) -> Option<Duration> {
     let rest = &text[text.rfind(')')? + 1..];
     let fields: Vec<&str> = rest.split_whitespace().collect();
-    // ')' の後ろの 1 つ目が state(全体の 3 番目)— 全体の 14〜17 番目はここの 11〜14 番目(0 から数えて)。
+    // The first one after ')' is state (the 3rd of the whole) -- the 14th to 17th of the whole are the 11th to 14th here (counting from 0).
     let ticks = fields.get(11..15)?.iter().map(|field| field.parse::<u64>().ok()).sum::<Option<u64>>()?;
     Some(Duration::from_millis(ticks * 10))
 }
 
-/// 子の process の CPU 秒(/proc の在る Linux だけ — 他の機体と読めない時は None で、打ち切りは wall で測る)。
+/// The child process's CPU seconds (only on Linux with /proc -- on other machines and when unreadable it is None, and the cut-off is measured by wall).
 #[cfg(target_os = "linux")]
 fn child_cpu(pid: u32) -> Option<Duration> {
     std::fs::read_to_string(format!("/proc/{}/stat", pid)).ok().as_deref().and_then(cpu_of_stat)
@@ -386,7 +386,7 @@ fn child_cpu(_pid: u32) -> Option<Duration> {
     None
 }
 
-/// 上限で打ち切った子の linter 1 回 — どの木で、どの規則を、何秒の上限で、どの物差しで。
+/// One child linter run cut off by the limit -- on which tree, which rules, at what limit in seconds, and by which yardstick.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Cut {
     pub side: Side,
@@ -395,45 +395,45 @@ pub struct Cut {
     pub measure: Measure,
 }
 
-/// 測れなかった比べ — 比べの名(「HEAD の版」など)と、打ち切った 1 回。
+/// A comparison that could not be measured -- the name of the comparison (such as "the HEAD version") and the one run that was cut off.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Unmeasured {
     pub what: String,
     pub cut: Cut,
 }
 
-/// 純粋: 測れなかった比べを 1 行で書く(何を確かめずに commit を止めたか)。
+/// Pure: writes in one line a comparison that could not be measured (what was stopped without being checked).
 pub fn unmeasured_line(unmeasured: &Unmeasured) -> String {
     let Cut { side, rules, limit, measure } = &unmeasured.cut;
     let secs = limit.as_secs();
     let how = match measure {
-        Measure::Cpu => format!("CPU 秒の上限 {} 秒で打ち切った", secs),
-        Measure::Wall => format!("wall の上限 {} 秒で打ち切った(この機体では子の CPU 秒を読めない)", secs),
+        Measure::Cpu => format!("cut off at the CPU-seconds limit of {} s", secs),
+        Measure::Wall => format!("cut off at the wall limit of {} s (child CPU seconds cannot be read on this machine)", secs),
         Measure::WallBackstop => format!(
-            "wall の予備の上限 {} 秒で打ち切った(CPU 秒の上限 {} 秒の {} 倍 — CPU を使わずに終わらない子)",
+            "cut off at the wall backstop limit of {} s ({} times the CPU-seconds limit of {} s; a child that does not finish without using CPU)",
             secs * u64::from(WALL_BACKSTOP_FACTOR),
             secs,
             WALL_BACKSTOP_FACTOR
         ),
     };
     format!(
-        "{}を測れなかった — {}で当てた規則 {} 個({})の子の linter を{}。この規則の当たりを確かめていないので commit を止める(上限 = 設定の [tool.doeff-linter.commit_hook] timeout_s — 子の CPU 秒・0 は上限なし)",
+        "could not measure {} — the child linter for {} rule(s) ({}) applied on the {} was {}. The hits of these rules have not been checked, so the commit is stopped (limit = timeout_s in [tool.doeff-linter.commit_hook] of the settings: child CPU seconds; 0 means no limit)",
         unmeasured.what,
-        side.name(),
         rules.len(),
         rules.join(","),
+        side.name(),
         how
     )
 }
 
-/// 純粋: shell にそのまま貼れる形の 1 語(安全な字だけならそのまま・他は ' で囲む)。
+/// Pure: one word in a form that can be pasted into a shell as is (as is if only safe characters; otherwise enclosed in ').
 fn shell_word(word: &str) -> String {
     let plain = !word.is_empty() && word.bytes().all(|b| b.is_ascii_alphanumeric() || b"_@%+=:,./-".contains(&b));
     if plain { word.to_string() } else { format!("'{}'", word.replace('\'', "'\\''")) }
 }
 
-/// 純粋: 上限なしで同じ hook の判じをやり直す命令(作業役がそのまま貼って実行できる 1 行)— 同じ linter・同じ根・同じ設定・同じ
-/// --enable / --disable・同じ commit 本文の file に、上限なし(--commit-hook-timeout-s 0)を足す。stage は同じ index を読む。
+/// Pure: the command that redoes the same hook judgment without a limit (one line that a worker can paste and run as is) -- adds no limit (--commit-hook-timeout-s 0) to the same linter, root, config,
+/// --enable / --disable, and commit body file. The stage reads the same index.
 pub fn unbounded_command(options: &CommitHookOptions) -> String {
     let path = |p: &Path| p.to_string_lossy().into_owned();
     let mut words = vec![path(&options.linter), "--commit-hook".to_string(), "--root".to_string(), path(&options.root)];
@@ -454,30 +454,30 @@ pub fn unbounded_command(options: &CommitHookOptions) -> String {
     words.iter().map(|w| shell_word(w)).collect::<Vec<_>>().join(" ")
 }
 
-/// 純粋: 打ち切って commit を止めた時の行 — 測れなかった比べの 1 行・上限なしの命令・やり直しの案内。
+/// Pure: the lines for when the commit was stopped by a cut-off -- one line for the comparison that could not be measured, the no-limit command, and the guidance to redo.
 pub fn cut_lines(options: &CommitHookOptions, unmeasured: &Unmeasured) -> Vec<String> {
     vec![
         unmeasured_line(unmeasured),
-        format!("上限なしで同じ比べをやり直す命令: {}", unbounded_command(options)),
-        "この命令の終了コードが 0(止める当たりが 0 件)である事を確かめてから commit し直す。--no-verify は使わない".to_string(),
+        format!("Command to redo the same comparison without a limit: {}", unbounded_command(options)),
+        "Confirm that this command exits with code 0 (0 hits that stop the commit) before committing again. Do not use --no-verify".to_string(),
     ]
 }
 
-/// 子の linter 1 回の答え。
+/// The answer of one child linter run.
 #[derive(Debug)]
 pub enum Measured {
     Report(Value),
-    /// 上限を越えた(commit を止める — 打ち切った 1 回を書く)。
+    /// The limit was exceeded (stop the commit -- write the one run that was cut off).
     TimedOut(Cut),
-    /// 動かなかった・出力が JSON でない(理由)。
+    /// It did not run, or the output is not JSON (the reason).
     Failed(String),
 }
 
-/// 子の linter を editor-json で実行し、上限の中で終われば出力を読む(timeout が None なら終わるまで待つ・上限は子の CPU 秒で測る —
-/// cut_measure)。終了コード 0・1・3・4 は測れた(中身で判じる)とし、他は理由つきの失敗。
+/// Runs the child linter with editor-json, and if it finishes within the limit, reads the output (if timeout is None, waits until it finishes; the limit is measured in the child's CPU seconds --
+/// cut_measure). Exit codes 0, 1, 3, and 4 count as measured (judged by the contents), and anything else is a failure with a reason.
 pub fn run_linter(linter: &Path, cwd: &Path, run: &LintRun, timeout: Option<Duration>) -> Measured {
     let started = Instant::now();
-    // 子は hook の一部 — 機体の検の枠を取らない(editor-json は重い mode の形なので、印が無いと枠を待つ)。
+    // The child is part of the hook -- it does not take the machine's check slot (editor-json is the form of a heavy mode, so without the mark it would wait for the slot).
     let spawned = Command::new(linter)
         .args(["--output-format", "editor-json", "--no-log"])
         .args(&run.args)
@@ -489,9 +489,9 @@ pub fn run_linter(linter: &Path, cwd: &Path, run: &LintRun, timeout: Option<Dura
         .spawn();
     let mut child = match spawned {
         Ok(child) => child,
-        Err(error) => return Measured::Failed(format!("{} を起こせない: {}", linter.display(), error)),
+        Err(error) => return Measured::Failed(format!("cannot start {}: {}", linter.display(), error)),
     };
-    // 出力は大きい(repo 全体の JSON)ので、pipe が詰まらないよう待つ間も別の thread で読み切る。
+    // The output is large (the whole repo's JSON), so read it to the end in a separate thread even while waiting, so the pipe does not clog.
     let reader = |stream: Option<Box<dyn Read + Send>>| {
         std::thread::spawn(move || {
             let mut buf = Vec::new();
@@ -516,30 +516,30 @@ pub fn run_linter(linter: &Path, cwd: &Path, run: &LintRun, timeout: Option<Dura
                 }
                 std::thread::sleep(Duration::from_millis(20));
             }
-            Err(error) => return Measured::Failed(format!("子の linter を待てない: {}", error)),
+            Err(error) => return Measured::Failed(format!("cannot wait for the child linter: {}", error)),
         }
     };
     let out = stdout.join().unwrap_or_default();
     let err = stderr.join().unwrap_or_default();
-    // 子の stderr は全部の行を理由に運ぶ(設定の誤りは 1 行目が「設定の誤り:」の見出しだけで、名指しは次の行から — 1 行目だけでは
-    // どの宣言が誤りかが消える)。
+    // The child's stderr is carried into the reason in all its lines (for a config error, the first line is only the heading "config errors:" and the naming starts from the next line -- with the first line alone,
+    // which declaration is wrong would be lost).
     let err_line = String::from_utf8_lossy(&err).lines().map(str::trim).filter(|l| !l.is_empty()).collect::<Vec<_>>().join(" / ");
     match status.code() {
         Some(0 | 1 | 3 | 4) => match serde_json::from_slice::<Value>(&out) {
             Ok(value) => Measured::Report(value),
-            Err(error) => Measured::Failed(format!("出力が JSON でない({}){}", error, err_line)),
+            Err(error) => Measured::Failed(format!("output is not JSON ({}){}", error, err_line)),
         },
-        code => Measured::Failed(format!("終了コード {:?} — {}", code, err_line)),
+        code => Measured::Failed(format!("exit code {:?} — {}", code, err_line)),
     }
 }
 
-/// 一時の dir(この実行が作った物だけ — 終わりに消す)。
+/// A temporary dir (only one this run made -- removed at the end).
 struct Scratch {
     path: PathBuf,
 }
 
 impl Scratch {
-    /// std::env::temp_dir() の下に固有の名で作る(既に在る名は使わない)。
+    /// Made with a unique name under std::env::temp_dir() (an existing name is not used).
     fn create() -> Result<Scratch, String> {
         let path = unique_dir(&std::env::temp_dir(), &format!("doeff-linter-commit-hook-{}", std::process::id()))?;
         let path = path.canonicalize().unwrap_or(path);
@@ -553,7 +553,7 @@ impl Drop for Scratch {
     }
 }
 
-/// base の下に `<prefix>-<ns>-<n>` の固有の名の dir を作る(既に在る名は使わない)。
+/// Makes a dir with the unique name `<prefix>-<ns>-<n>` under base (an existing name is not used).
 fn unique_dir(base: &Path, prefix: &str) -> Result<PathBuf, String> {
     let nanos = SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_nanos()).unwrap_or(0);
     for attempt in 0..100u32 {
@@ -561,67 +561,67 @@ fn unique_dir(base: &Path, prefix: &str) -> Result<PathBuf, String> {
         match std::fs::create_dir(&path) {
             Ok(()) => return Ok(path),
             Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => continue,
-            Err(error) => return Err(format!("一時の dir {} を作れない: {}", path.display(), error)),
+            Err(error) => return Err(format!("cannot create temporary dir {}: {}", path.display(), error)),
         }
     }
-    Err("一時の dir の固有の名を作れない".to_string())
+    Err("cannot make a unique name for a temporary dir".to_string())
 }
 
-// HEAD の木を置く場所。doeff-linter の事実の cache(project::facts_cache)は根の path ごとの dir に、file ごとの
-// 大きさと更新時刻を鍵にして置かれる。木を一時 dir や sha ごとの dir に書き出すと、commit のたびに HEAD が進むふだんの使い方では毎回が
-// 新しい根 = cache 無しの 1 回目になる(agora-controllers で CPU 約 66 秒)。木は repo ごとに 1 つ決まった path に置き、HEAD が進んだ時は
-// git の差分で変わった file だけを書き換える — 変わらない file には触らないので更新時刻が保たれ、事実の cache が当たる。
-// 形は agora-controllers の main へのマージ前の検査(scripts/land_lint_gate.hy の repo-base-tree)と揃える:
-//   場所 = 事実の cache の根(facts_cache::cache_base — 既定 `$XDG_CACHE_HOME/doeff-linter`、無ければ `~/.cache/doeff-linter`)の
-//   `commit-hook-tree/<repo を表す名>/` の下に、木 `tree/`・木の今の sha と重ねた宣言の file の記録 `tree.sha`・lock の file `lock`・
-//   repo の git の共有 dir の絶対 path の記録 `repo.path`。
-//   木は根(--root)の dir の中身で、根が作業木の根の下の dir なら、名は共有 dir にその位置(`git rev-parse --show-prefix`)を繋いだ path の
-//   sha256 の 16 桁(位置の違う根が 1 つの木を取り合わない)。
-//   repo を表す名 = repo の git の共有 dir(`git rev-parse --git-common-dir`・正規化した絶対 path)の sha256 の 16 桁。同じ repo の別の
-//   作業木は同じ名で、1 つの木を分け合う — 作業木は数百ある(zeus の agora-controllers で 561)ので作業木ごとでは disk が足りず(木 1 つ
-//   約 35MB)、新しい作業木の最初の commit も、ほかの作業木が進めた木(本線の近く)から差分だけで進められる。
-//   書き換えた file の更新時刻は書いた時刻(tar の -m)にする — commit の時刻(秒の粒度)だと、同じ秒の 2 つの commit で同じ大きさの
-//   別の中身の file が同じ鍵になり、前の中身の事実を読む。
-//   書き換えの間は記録 `tree.sha` を消しておき、書き終えてから一時 file の rename で置く。記録が無い・読めない・記録の sha から差分を
-//   取れない木は、途中で落ちた木として全部を書き出し直す(全部を書くのはこの時と最初の 1 回だけ)。重ねた宣言の file(1 回限りの指定
-//   Lint-Baseline)は記録に載せ、次に進める時に木の sha の中身へ戻す。
-//   同時の 2 本: 木を使う間(書き換えから子の linter が測り終えるまで)は `lock` の排他の lock を持つ。LOCK_WAIT 待っても取れなければ、
-//   この実行の一時 dir に木を書き出して使う(置いた木には触らない — 事実の cache は効かないが、止まらない)。
-//   片づけ: 前の形の sha ごとの木(`<sha>`・`<sha>-<16 桁>`・書き出しの残り `.partial-…`)は見つけたら消す。記録 `repo.path` の
-//   共有 dir が無くなった repo の dir も消す(lock を取れた物だけ)。消すのはこの名の形の dir だけ(この場所に在るほかの物には触らない)。
-//   場所の dir そのものには facts_cache の使った印を付け、事実の cache の根の全体の上限の片づけ(sweep_over_cap)に入れる。
+// Where the HEAD tree is placed. doeff-linter's fact cache (project::facts_cache) is placed in a dir per root path, keyed by each file's
+// size and mtime. If the tree were written out to a temporary dir or a dir per sha, then in the usual usage where HEAD advances at every commit, every run would be
+// a new root = a first run with no cache (about 66 seconds of CPU in agora-controllers). The tree is placed at one fixed path per repo, and when HEAD advances only the files changed by
+// git's diff are rewritten -- unchanged files are not touched, so mtimes are preserved and the fact cache hits.
+// The shape is aligned with agora-controllers' pre-merge check for main (repo-base-tree in scripts/land_lint_gate.hy):
+//   Location = under the fact cache's root (facts_cache::cache_base -- by default `$XDG_CACHE_HOME/doeff-linter`, otherwise `~/.cache/doeff-linter`)
+//   `commit-hook-tree/<name representing the repo>/`: the tree `tree/`, the record `tree.sha` of the tree's current sha and the declaration files overlaid on it, the lock file `lock`, and
+//   the record `repo.path` of the absolute path of the repo's git common dir.
+//   The tree is the contents of the root (--root) dir, and if the root is a dir under the working tree's root, the name is the first 16 hex digits of the sha256 of the path made by joining that position (`git rev-parse --show-prefix`)
+//   to the common dir (roots at different positions do not fight over one tree).
+//   Name representing the repo = the first 16 hex digits of the sha256 of the absolute, normalized path of the repo's git common dir (`git rev-parse --git-common-dir`). Other
+//   working trees of the same repo have the same name and share one tree -- there are hundreds of working trees (561 for agora-controllers on zeus), so per-working-tree trees would run out of disk (one tree is
+//   about 35MB), and even the first commit in a new working tree can advance, by a diff only, from a tree advanced by other working trees (near the main line).
+//   The mtime of rewritten files is set to the time they were written (tar's -m) -- with the commit's time (second granularity), two commits in the same second would give
+//   files of the same size with different contents the same key, and the facts of the previous contents would be read.
+//   During a rewrite the record `tree.sha` is removed, and after finishing it is put in place by renaming a temporary file. A tree where the record is absent or unreadable, or the diff cannot
+//   be taken from the recorded sha, is treated as a tree that crashed midway and everything is written out again (everything is written only in this case and the very first time). The overlaid declaration files (the one-time directive
+//   Lint-Baseline) are put in the record, and restored to the contents of the tree's sha when next advancing.
+//   Two at the same time: while using the tree (from the rewrite until the child linter finishes measuring), hold the exclusive lock of `lock`. If it cannot be taken after waiting LOCK_WAIT,
+//   write the tree out into this run's temporary dir and use that (do not touch the placed tree -- the fact cache does not work, but it does not stop).
+//   Cleanup: delete trees per sha in the previous form (`<sha>`, `<sha>-<16 digits>`, and leftover write-outs `.partial-…`) when found. Also delete repo dirs whose recorded `repo.path` common dir
+//   no longer exists (only those whose lock could be taken). Only dirs of this name shape are deleted (other things in this location are not touched).
+//   The location dir itself is given the mark that facts_cache uses, and is included in the cleanup of the overall cap on the fact cache's root (sweep_over_cap).
 
-/// HEAD の木を置く場所の dir の名(事実の cache の根の直下)。
+/// The name of the dir where the HEAD tree is placed (directly under the fact cache's root).
 pub const TREE_HOME_DIR: &str = "commit-hook-tree";
-/// repo の dir の中の木の dir の名。
+/// The name of the tree's dir inside the repo's dir.
 pub const TREE_DIR: &str = "tree";
-/// repo の dir の中の、木の今の sha と重ねた宣言の file の記録。
+/// The record, inside the repo's dir, of the tree's current sha and the overlaid declaration files.
 pub const TREE_RECORD: &str = "tree.sha";
-/// repo の dir の中の lock の file。
+/// The lock file inside the repo's dir.
 pub const TREE_LOCK: &str = "lock";
-/// repo の dir の中の、repo の git の共有 dir の絶対 path の記録。
+/// The record, inside the repo's dir, of the absolute path of the repo's git common dir.
 pub const REPO_RECORD: &str = "repo.path";
-/// 同時の別の実行が木を使っている時に待つ上限。
+/// The upper limit of waiting when another run at the same time is using the tree.
 pub const LOCK_WAIT: Duration = Duration::from_secs(30);
-/// 書き換える path がこれより多ければ、差分で進めずに全部を書き出す(git の引数の長さの上限の手前)。
+/// If more paths than this need rewriting, write everything out instead of advancing by diff (just before git's argument length limit).
 const REWRITE_LIMIT: usize = 4000;
-/// git archive に 1 回で渡す path の数。
+/// The number of paths passed to git archive at once.
 const ARCHIVE_CHUNK: usize = 500;
 
-/// 木をどう用意したか。
+/// How the tree was prepared.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum TreeUpdate {
-    /// 全部を書き出した(最初の 1 回・記録が無い / 読めない・差分を取れなかった・変わった path が多すぎた)。
+    /// Wrote everything out (the first time, the record is absent or unreadable, the diff could not be taken, or too many paths changed).
     Rebuilt,
-    /// 記録の sha から差分で進めた — rewritten = 書いた file の数・removed = 消した path の数。
+    /// Advanced by diff from the recorded sha -- rewritten = the number of files written, removed = the number of paths removed.
     Advanced { rewritten: usize, removed: usize },
-    /// 記録の sha が HEAD と同じで、戻す・重ねる宣言の file も無い — 何も書いていない。
+    /// The recorded sha is the same as HEAD, and there are no declaration files to restore or overlay -- nothing was written.
     Unchanged,
-    /// 同時の別の実行が木を使っていた — この実行の一時 dir に書き出した木(置いた木には触らない)。
+    /// Another run at the same time was using the tree -- a tree written out into this run's temporary dir (the placed tree is not touched).
     Temporary,
 }
 
-/// 用意した HEAD の木 — path = 木の根。lock は木を使い終わる(この値を落とす)まで持つ。
+/// The prepared HEAD tree -- path = the tree's root. The lock is held until the tree is no longer used (this value is dropped).
 #[derive(Debug)]
 pub struct HeadTree {
     pub path: PathBuf,
@@ -629,38 +629,38 @@ pub struct HeadTree {
     _lock: Option<std::fs::File>,
 }
 
-/// 木の記録 — 木の今の sha と、その上に先端から重ねた宣言の file。
+/// The tree's record -- the tree's current sha and the declaration files overlaid on it from the tip.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct TreeRecord {
     pub sha: String,
     pub overlay: Vec<String>,
 }
 
-/// 純粋: 16 進の n 桁か。
+/// Pure: whether it is n hex digits.
 fn is_hex(text: &str, n: usize) -> bool {
     text.len() == n && text.bytes().all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
 }
 
-/// 純粋: 記録の file の中身を読む — 1 行目が sha(40 か 64 桁の 16 進)、続く行が重ねた宣言の file。形が違えば None(落ちた木)。
+/// Pure: reads the contents of the record file -- line 1 is the sha (40 or 64 hex digits), and the following lines are the overlaid declaration files. None if the shape differs (a crashed tree).
 pub fn parse_tree_record(text: &str) -> Option<TreeRecord> {
     let mut lines = text.lines();
     let sha = lines.next()?.trim();
     (is_hex(sha, 40) || is_hex(sha, 64)).then(|| TreeRecord { sha: sha.to_string(), overlay: lines.filter(|l| !l.is_empty()).map(str::to_string).collect() })
 }
 
-/// 純粋: 記録の file の中身。
+/// Pure: the contents of the record file.
 pub fn render_tree_record(record: &TreeRecord) -> String {
     std::iter::once(record.sha.as_str()).chain(record.overlay.iter().map(String::as_str)).map(|line| format!("{}\n", line)).collect()
 }
 
-/// 純粋: repo を表す名 — git の共有 dir の絶対 path の sha256 の 16 桁(上の註)。
+/// Pure: the name representing the repo -- the first 16 hex digits of the sha256 of the absolute path of the git common dir (the note above).
 pub fn repo_key(common_dir: &Path) -> String {
     use sha2::{Digest, Sha256};
     let digest = Sha256::digest(common_dir.as_os_str().as_encoded_bytes());
     digest.iter().take(8).map(|b| format!("{:02x}", b)).collect()
 }
 
-/// 純粋: 前の形の sha ごとの木の名か(`<40 桁>`・`<40 桁>-<16 桁>`・書き出しの残り `.partial-…`)。
+/// Pure: whether it is the name of a tree per sha in the previous form (`<40 digits>`, `<40 digits>-<16 digits>`, and leftover write-outs `.partial-…`).
 pub fn is_sha_tree_name(name: &str) -> bool {
     name.starts_with(".partial-")
         || match name.split_once('-') {
@@ -669,7 +669,7 @@ pub fn is_sha_tree_name(name: &str) -> bool {
         }
 }
 
-/// 場所 home の dir の一覧(symlink は除く)。
+/// The list of dirs of the location home (symlinks excluded).
 fn home_dirs(home: &Path) -> Vec<(String, PathBuf)> {
     let Ok(entries) = std::fs::read_dir(home) else { return Vec::new() };
     entries
@@ -679,13 +679,13 @@ fn home_dirs(home: &Path) -> Vec<(String, PathBuf)> {
         .collect()
 }
 
-/// 場所 home の前の形の sha ごとの木を消し、消した数を返す(上の註)。
+/// Deletes the trees per sha in the previous form in the location home and returns the number deleted (the note above).
 pub fn retire_sha_trees(home: &Path) -> usize {
     home_dirs(home).into_iter().filter(|(name, path)| is_sha_tree_name(name) && std::fs::remove_dir_all(path).is_ok()).count()
 }
 
-/// 場所 home の、記録した git の共有 dir が無くなった repo の dir を消し、消した数を返す(上の註)— keep(今の repo)と、記録の無い dir・
-/// lock を取れない dir には触らない。
+/// Deletes, in the location home, the repo dirs whose recorded git common dir no longer exists, and returns the number deleted (the note above) -- keep (the current repo), dirs with no record, and
+/// dirs whose lock cannot be taken are not touched.
 pub fn retire_vanished_repos(home: &Path, keep: &str) -> usize {
     home_dirs(home)
         .into_iter()
@@ -699,52 +699,52 @@ pub fn retire_vanished_repos(home: &Path, keep: &str) -> usize {
         .count()
 }
 
-/// lock の file を開き、排他の lock を wait まで待って取る。取れなければ None。
+/// Opens the lock file and takes the exclusive lock, waiting up to wait. None if it cannot be taken.
 fn acquire_lock(path: &Path, wait: Duration) -> Result<Option<std::fs::File>, String> {
     let file = std::fs::OpenOptions::new()
         .create(true)
         .truncate(false)
         .write(true)
         .open(path)
-        .map_err(|e| format!("{} を開けない: {}", path.display(), e))?;
+        .map_err(|e| format!("cannot open {}: {}", path.display(), e))?;
     let deadline = Instant::now() + wait;
     loop {
         match file.try_lock() {
             Ok(()) => return Ok(Some(file)),
             Err(std::fs::TryLockError::WouldBlock) if Instant::now() < deadline => std::thread::sleep(Duration::from_millis(50)),
             Err(std::fs::TryLockError::WouldBlock) => return Ok(None),
-            Err(std::fs::TryLockError::Error(error)) => return Err(format!("{} の lock を取れない: {}", path.display(), error)),
+            Err(std::fs::TryLockError::Error(error)) => return Err(format!("cannot take the lock on {}: {}", path.display(), error)),
         }
     }
 }
 
-/// HEAD の木を repo ごとに 1 つの決まった path(場所 home の `<repo を表す名>/tree`)に用意し、その根を返す(上の註)。木が在れば記録の
-/// sha から HEAD まで変わった file だけを書き換え、無い・落ちた木なら全部を書き出す。同時の別の実行が wait まで木を放さなければ、
-/// scratch の下に書き出した一時の木を返す。HEAD が無い(最初の commit)なら None。
+/// Prepares the HEAD tree at one fixed path per repo (`<name representing the repo>/tree` in the location home) and returns its root (the note above). If the tree exists, only the files that changed from the record's
+/// sha to HEAD are rewritten; if it is absent or crashed, everything is written out. If another run at the same time does not release the tree until wait,
+/// returns a temporary tree written out under scratch. None if there is no HEAD (the first commit).
 pub fn head_tree(root: &Path, overlay: &[String], home: &Path, scratch: &Path, wait: Duration) -> Result<Option<HeadTree>, String> {
     let Ok(head) = git(root, &["rev-parse", "--verify", "-q", "HEAD^{commit}"]) else { return Ok(None) };
     let head = String::from_utf8_lossy(&head).trim().to_string();
     let common = git(root, &["rev-parse", "--path-format=absolute", "--git-common-dir"])?;
     let common = PathBuf::from(String::from_utf8_lossy(&common).trim());
     let common = common.canonicalize().unwrap_or(common);
-    std::fs::create_dir_all(home).map_err(|e| format!("{} を作れない: {}", home.display(), e))?;
-    let home = home.canonicalize().map_err(|e| format!("{} を読めない: {}", home.display(), e))?;
+    std::fs::create_dir_all(home).map_err(|e| format!("cannot create {}: {}", home.display(), e))?;
+    let home = home.canonicalize().map_err(|e| format!("cannot read {}: {}", home.display(), e))?;
     retire_sha_trees(&home);
-    // 木は根の dir の中身なので、同じ repo でも根の位置が違えば別の木(位置を名に入れる — 作業木の根なら今までと同じ名)。
+    // The tree is the contents of the root's dir, so even for the same repo a different root position gives a different tree (the position goes into the name -- for a working tree root, the same name as before).
     let prefix = root_prefix(root)?;
     let key = if prefix.is_empty() { repo_key(&common) } else { repo_key(&common.join(prefix.trim_end_matches('/'))) };
     retire_vanished_repos(&home, &key);
     let repo_dir = home.join(&key);
-    std::fs::create_dir_all(&repo_dir).map_err(|e| format!("{} を作れない: {}", repo_dir.display(), e))?;
+    std::fs::create_dir_all(&repo_dir).map_err(|e| format!("cannot create {}: {}", repo_dir.display(), e))?;
     let Some(lock) = acquire_lock(&repo_dir.join(TREE_LOCK), wait)? else {
         let path = scratch.join("head-tree");
-        std::fs::create_dir_all(&path).map_err(|e| format!("{} を作れない: {}", path.display(), e))?;
+        std::fs::create_dir_all(&path).map_err(|e| format!("cannot create {}: {}", path.display(), e))?;
         write_whole_tree(root, &head, overlay, &path)?;
         return Ok(Some(HeadTree { path, update: TreeUpdate::Temporary, _lock: None }));
     };
     let recorded = common.to_string_lossy();
     if std::fs::read_to_string(repo_dir.join(REPO_RECORD)).ok().as_deref().map(str::trim) != Some(recorded.as_ref()) {
-        std::fs::write(repo_dir.join(REPO_RECORD), format!("{}\n", recorded)).map_err(|e| format!("{} を書けない: {}", REPO_RECORD, e))?;
+        std::fs::write(repo_dir.join(REPO_RECORD), format!("{}\n", recorded)).map_err(|e| format!("cannot write {}: {}", REPO_RECORD, e))?;
     }
     let tree = repo_dir.join(TREE_DIR);
     let record_path = repo_dir.join(TREE_RECORD);
@@ -752,7 +752,7 @@ pub fn head_tree(root: &Path, overlay: &[String], home: &Path, scratch: &Path, w
     let update = match record {
         Some(record) => match advance_tree(root, &record, &head, overlay, &tree, &record_path) {
             Ok(update) => update,
-            // 差分を取れない・書き換えの途中で失敗した木は、全部を書き出し直す(記録は消えている)。
+            // A tree whose diff cannot be taken or that failed midway through a rewrite is written out again in full (the record is gone).
             Err(_) => rebuild_tree(root, &head, overlay, &tree, &record_path)?,
         },
         None => rebuild_tree(root, &head, overlay, &tree, &record_path)?,
@@ -760,35 +760,35 @@ pub fn head_tree(root: &Path, overlay: &[String], home: &Path, scratch: &Path, w
     Ok(Some(HeadTree { path: tree, update, _lock: Some(lock) }))
 }
 
-/// 木を消して HEAD の全部を書き出し直し、記録を置く。
+/// Deletes the tree, writes out all of HEAD again, and places the record.
 fn rebuild_tree(root: &Path, head: &str, overlay: &[String], tree: &Path, record_path: &Path) -> Result<TreeUpdate, String> {
     remove_record(record_path)?;
     if std::fs::symlink_metadata(tree).is_ok() {
-        std::fs::remove_dir_all(tree).map_err(|e| format!("{} を消せない: {}", tree.display(), e))?;
+        std::fs::remove_dir_all(tree).map_err(|e| format!("cannot delete {}: {}", tree.display(), e))?;
     }
-    std::fs::create_dir_all(tree).map_err(|e| format!("{} を作れない: {}", tree.display(), e))?;
+    std::fs::create_dir_all(tree).map_err(|e| format!("cannot create {}: {}", tree.display(), e))?;
     write_whole_tree(root, head, overlay, tree)?;
     write_record(record_path, &TreeRecord { sha: head.to_string(), overlay: overlay.to_vec() })?;
     Ok(TreeUpdate::Rebuilt)
 }
 
-/// 在る dir tree へ HEAD の全部を書き出し、宣言の file を先端から重ねる。
+/// Writes all of HEAD into the existing dir tree, and overlays the declaration files from the tip.
 fn write_whole_tree(root: &Path, head: &str, overlay: &[String], tree: &Path) -> Result<(), String> {
     extract(root, head, &[], tree)?;
     lay_overlay(root, overlay, tree)
 }
 
-/// 記録の sha から HEAD まで変わった path と、前に重ねた・今重ねる宣言の file だけを、HEAD の中身へ書き換える(消えた path は消す)。
-/// 書き換えの間は記録を消しておく。変わった path が多すぎれば Err(呼び手が全部を書き出し直す)。
+/// Rewrites to HEAD's contents only the paths that changed from the record's sha to HEAD, plus the declaration files overlaid before and to be overlaid now (deleted paths are deleted).
+/// The record is removed during the rewrite. If too many paths changed, Err (the caller writes everything out again).
 fn advance_tree(root: &Path, record: &TreeRecord, head: &str, overlay: &[String], tree: &Path, record_path: &Path) -> Result<TreeUpdate, String> {
-    // 根からの相対で読む(木は根の dir の中身 — git archive は根の dir から撃つと、その dir の中身を根からの相対で書き出す)。
+    // Read relative to the root (the tree is the contents of the root's dir -- when git archive is fired from the root dir, it writes out that dir's contents relative to the root).
     let changed = git(root, &["diff-tree", "-r", "-z", "--no-renames", "--name-only", "--relative", &record.sha, head])?;
     let refresh: BTreeSet<String> = split_z(&changed).into_iter().chain(record.overlay.iter().cloned()).chain(overlay.iter().cloned()).collect();
     if refresh.is_empty() {
         return Ok(TreeUpdate::Unchanged);
     }
     if refresh.len() > REWRITE_LIMIT {
-        return Err(format!("変わった path が {} 個(上限 {})", refresh.len(), REWRITE_LIMIT));
+        return Err(format!("{} paths changed (limit {})", refresh.len(), REWRITE_LIMIT));
     }
     let refresh: Vec<String> = refresh.into_iter().collect();
     let present: Vec<String> = present_paths(root, head, &refresh)?.into_iter().collect::<BTreeSet<String>>().into_iter().collect();
@@ -804,12 +804,12 @@ fn advance_tree(root: &Path, record: &TreeRecord, head: &str, overlay: &[String]
     Ok(TreeUpdate::Advanced { rewritten: present.len(), removed: refresh.len().saturating_sub(present.len()) })
 }
 
-/// NUL 区切りの git の出力を path の列へ。
+/// Turns NUL-separated git output into a list of paths.
 fn split_z(out: &[u8]) -> Vec<String> {
     out.split(|b| *b == 0).filter(|n| !n.is_empty()).map(|n| String::from_utf8_lossy(n).into_owned()).collect()
 }
 
-/// paths のうち commit sha に在る物(git ls-tree)。
+/// Among paths, those that exist in commit sha (git ls-tree).
 fn present_paths(root: &Path, sha: &str, paths: &[String]) -> Result<Vec<String>, String> {
     let mut present = Vec::new();
     for chunk in paths.chunks(ARCHIVE_CHUNK) {
@@ -819,7 +819,7 @@ fn present_paths(root: &Path, sha: &str, paths: &[String]) -> Result<Vec<String>
     Ok(present)
 }
 
-/// 木の中の path を消し(dir なら丸ごと)、空になった親の dir を木の根の手前まで消す。
+/// Deletes a path in the tree (the whole thing if a dir), and deletes emptied parent dirs up to just before the tree's root.
 fn remove_path(tree: &Path, rel: &str) -> Result<(), String> {
     let path = tree.join(rel);
     let removed = match std::fs::symlink_metadata(&path) {
@@ -828,7 +828,7 @@ fn remove_path(tree: &Path, rel: &str) -> Result<(), String> {
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
         Err(error) => Err(error),
     };
-    removed.map_err(|e| format!("{} を消せない: {}", path.display(), e))?;
+    removed.map_err(|e| format!("cannot delete {}: {}", path.display(), e))?;
     let mut parent = path.parent();
     while let Some(dir) = parent.filter(|dir| *dir != tree && dir.starts_with(tree)) {
         if std::fs::remove_dir(dir).is_err() {
@@ -839,8 +839,8 @@ fn remove_path(tree: &Path, rel: &str) -> Result<(), String> {
     Ok(())
 }
 
-/// commit sha の paths(空なら全部)を在る dir dest へ書き出す(`git archive --format=tar <sha> -- <paths> | tar -x -m -C dest` —
-/// file の更新時刻は書いた時刻)。
+/// Writes the paths of commit sha (all if empty) into the existing dir dest (`git archive --format=tar <sha> -- <paths> | tar -x -m -C dest` --
+/// the files' mtime is the time of writing).
 fn extract(root: &Path, sha: &str, paths: &[String], dest: &Path) -> Result<(), String> {
     let whole: [Vec<String>; 1] = [Vec::new()];
     let chunks: Vec<&[String]> = if paths.is_empty() { whole.iter().map(Vec::as_slice).collect() } else { paths.chunks(ARCHIVE_CHUNK).collect() };
@@ -852,86 +852,86 @@ fn extract(root: &Path, sha: &str, paths: &[String], dest: &Path) -> Result<(), 
             .stdin(Stdio::null())
             .stdout(Stdio::piped())
             .spawn()
-            .map_err(|e| format!("git archive を起こせない: {}", e))?;
-        let pipe = archive.stdout.take().ok_or("git archive の出力を読めない")?;
+            .map_err(|e| format!("cannot start git archive: {}", e))?;
+        let pipe = archive.stdout.take().ok_or("cannot read the output of git archive")?;
         let extracted = Command::new("tar").arg("-x").arg("-m").arg("-C").arg(dest).stdin(pipe).status();
-        let archived = archive.wait().map_err(|e| format!("git archive を待てない: {}", e))?;
-        let extracted = extracted.map_err(|e| format!("tar を起こせない: {}", e))?;
+        let archived = archive.wait().map_err(|e| format!("cannot wait for git archive: {}", e))?;
+        let extracted = extracted.map_err(|e| format!("cannot start tar: {}", e))?;
         if !archived.success() || !extracted.success() {
-            return Err(format!("HEAD の木を書き出せない(git archive {}・tar {})", archived, extracted));
+            return Err(format!("cannot write out the HEAD tree (git archive {}, tar {})", archived, extracted));
         }
     }
     Ok(())
 }
 
-/// 宣言の file を先端から木へ写す(先端に無い file は写さない)。
+/// Copies the declaration files from the tip to the tree (files not on the tip are not copied).
 fn lay_overlay(root: &Path, overlay: &[String], tree: &Path) -> Result<(), String> {
     for rel in overlay {
         let from = root.join(rel);
         if from.is_file() {
             let to = tree.join(rel);
             if let Some(parent) = to.parent() {
-                std::fs::create_dir_all(parent).map_err(|e| format!("{} を作れない: {}", parent.display(), e))?;
+                std::fs::create_dir_all(parent).map_err(|e| format!("cannot create {}: {}", parent.display(), e))?;
             }
-            std::fs::copy(&from, &to).map_err(|e| format!("{} を HEAD の木へ写せない: {}", rel, e))?;
+            std::fs::copy(&from, &to).map_err(|e| format!("cannot copy {} to the HEAD tree: {}", rel, e))?;
         }
     }
     Ok(())
 }
 
-/// 記録を消す(無ければ何もしない)。
+/// Removes the record (does nothing if absent).
 fn remove_record(path: &Path) -> Result<(), String> {
     match std::fs::remove_file(path) {
-        Err(error) if error.kind() != std::io::ErrorKind::NotFound => Err(format!("{} を消せない: {}", path.display(), error)),
+        Err(error) if error.kind() != std::io::ErrorKind::NotFound => Err(format!("cannot delete {}: {}", path.display(), error)),
         _ => Ok(()),
     }
 }
 
-/// 記録を一時 file から rename で置く(書きかけの記録を読ませない)。
+/// Places the record from a temporary file by rename (so a half-written record is not read).
 fn write_record(path: &Path, record: &TreeRecord) -> Result<(), String> {
     let partial = path.with_extension(format!("partial-{}", std::process::id()));
-    std::fs::write(&partial, render_tree_record(record)).map_err(|e| format!("{} を書けない: {}", partial.display(), e))?;
-    std::fs::rename(&partial, path).map_err(|e| format!("{} を置けない: {}", path.display(), e))
+    std::fs::write(&partial, render_tree_record(record)).map_err(|e| format!("cannot write {}: {}", partial.display(), e))?;
+    std::fs::rename(&partial, path).map_err(|e| format!("cannot place {}: {}", path.display(), e))
 }
 
-/// root で git を撃ち、成功すれば stdout を返す。
+/// Fires git at root and returns stdout if it succeeds.
 fn git(root: &Path, args: &[&str]) -> Result<Vec<u8>, String> {
-    let output = Command::new("git").args(args).current_dir(root).stdin(Stdio::null()).output().map_err(|e| format!("git を起こせない: {}", e))?;
+    let output = Command::new("git").args(args).current_dir(root).stdin(Stdio::null()).output().map_err(|e| format!("cannot start git: {}", e))?;
     if output.status.success() {
         Ok(output.stdout)
     } else {
-        Err(format!("git {} が失敗した: {}", args.join(" "), String::from_utf8_lossy(&output.stderr).trim()))
+        Err(format!("git {} failed: {}", args.join(" "), String::from_utf8_lossy(&output.stderr).trim()))
     }
 }
 
-/// 今の dir の git の作業木の根。
+/// The root of the git working tree of the current dir.
 pub fn git_toplevel(cwd: &Path) -> Result<PathBuf, String> {
     let out = git(cwd, &["rev-parse", "--show-toplevel"])?;
     Ok(PathBuf::from(String::from_utf8_lossy(&out).trim()))
 }
 
-/// 根 root の、git の作業木の根からの位置(`git rev-parse --show-prefix` — 根が作業木の根なら空・下の dir なら `pkg/` の形)。
-/// 根が作業木の根の下の dir の時(dotfiles の agentcli/ に設定を置いた形)、git が答える path の根と木の置き場を
-/// 根に合わせるために読む 1 か所。
+/// The position of the root root from the git working tree's root (`git rev-parse --show-prefix` -- empty if the root is the working tree's root; in the form `pkg/` for a dir below).
+/// When the root is a dir under the working tree's root (the form where the config is placed in dotfiles' agentcli/), this is the one place read to align the root of the paths git answers with
+/// and the tree's location to the root.
 fn root_prefix(root: &Path) -> Result<String, String> {
     let out = git(root, &["rev-parse", "--show-prefix"])?;
     Ok(String::from_utf8_lossy(&out).trim().to_string())
 }
 
-/// stage した path(`git diff --cached --name-only --relative --diff-filter=ACMRD -z` — 根からの相対・根の外の path は入らない)。
+/// Staged paths (`git diff --cached --name-only --relative --diff-filter=ACMRD -z` -- relative to the root; paths outside the root are not included).
 fn staged_paths(root: &Path) -> Result<Vec<String>, String> {
     let out = git(root, &["diff", "--cached", "--name-only", "--relative", "--diff-filter=ACMRD", "-z"])?;
     Ok(out.split(|b| *b == 0).filter(|n| !n.is_empty()).map(|n| String::from_utf8_lossy(n).into_owned()).collect())
 }
 
-/// stage で消えた path(名前替えの旧い側を含む — `--no-renames` の D)。major の warning の数の HEAD の側に、移した・消した file の
-/// HEAD の版も数えるため(数えないと、warning を増やさない移しが増えに見える)。
+/// Paths deleted by the stage (including the old side of a rename -- the D of `--no-renames`). So that the HEAD side of the count of major warnings also counts the HEAD version of moved or deleted
+/// files (otherwise a move that does not increase warnings would look like an increase).
 fn removed_paths(root: &Path) -> Result<Vec<String>, String> {
     let out = git(root, &["diff", "--cached", "--name-only", "--relative", "--no-renames", "--diff-filter=D", "-z"])?;
     Ok(out.split(|b| *b == 0).filter(|n| !n.is_empty()).map(|n| String::from_utf8_lossy(n).into_owned()).collect())
 }
 
-/// 子へ渡す設定の引数(先端 = 設定 file そのもの・HEAD の木 = 木の中の同じ相対の file、無ければ先端の file)。
+/// The config argument passed to the child (tip = the config file itself; HEAD tree = the same relative file inside the tree, or the tip's file if absent).
 fn config_args(options: &CommitHookOptions, tree: Option<&Path>) -> Vec<String> {
     let Some(config) = &options.config else { return Vec::new() };
     let chosen = match (tree, config.strip_prefix(&options.root)) {
@@ -941,7 +941,7 @@ fn config_args(options: &CommitHookOptions, tree: Option<&Path>) -> Vec<String> 
     vec!["--config".to_string(), chosen.to_string_lossy().into_owned()]
 }
 
-/// 子を撃つ頼みを組む(設定・規則・続きの引数・path)。木(tree)が在れば HEAD の木、無ければ先端の木。
+/// Builds a request to fire the child (config, rules, remaining arguments, paths). If a tree is given it is the HEAD tree, otherwise the tip tree.
 fn lint_args(options: &CommitHookOptions, tree: Option<&Path>, rules: &[String], extra: &[String], paths: &[String]) -> LintRun {
     let args = config_args(options, tree)
         .into_iter()
@@ -953,23 +953,23 @@ fn lint_args(options: &CommitHookOptions, tree: Option<&Path>, rules: &[String],
     LintRun { side: if tree.is_some() { Side::Head } else { Side::Tip }, rules: rules.to_vec(), args }
 }
 
-/// 止める物の一覧(種類ごと)。
+/// The list of things that stop (by kind).
 #[derive(Debug, Default)]
 struct Blocking {
     staged: Vec<String>,
     fresh_critical: ByHead,
     grown_warnings: Vec<String>,
-    /// stage した Hy の file のうち linter が歩く範囲の外の物 — 測っていない事を名指すだけで止めない。
+    /// Among the staged Hy files, those outside the range the linter walks -- only names that they were not measured, and does not stop.
     out_of_scope: Vec<String>,
 }
 
-/// 純粋: 子の linter の報告(editor-json)の `out_of_scope` — 名指した Hy の file のうち linter が歩く範囲の外の物(仕様 1 節
-/// 「名指しの範囲の外」)。欄が無い・null なら空。
+/// Pure: the `out_of_scope` of the child linter's report (editor-json) -- among the named Hy files, those outside the range the linter walks (spec section 1
+/// "outside the named scope"). Empty if the field is absent or null.
 pub fn out_of_scope_of(report: &Value) -> Vec<String> {
     report["out_of_scope"].as_array().into_iter().flatten().filter_map(|v| v.as_str().map(str::to_string)).collect()
 }
 
-/// 途中で測れなかった理由(上限越えは終了コード 1・失敗は終了コード 2)。
+/// The reason it could not be measured midway (exceeding the limit is exit code 1; a failure is exit code 2).
 enum Stop {
     TimedOut(Unmeasured),
     Failed(String),
@@ -979,7 +979,7 @@ fn measured(result: Measured, what: &str) -> Result<Value, Stop> {
     match result {
         Measured::Report(value) => Ok(value),
         Measured::TimedOut(cut) => Err(Stop::TimedOut(Unmeasured { what: what.trim_end().to_string(), cut })),
-        Measured::Failed(reason) => Err(Stop::Failed(format!("{}を doeff-linter で測れなかった: {}", what, reason))),
+        Measured::Failed(reason) => Err(Stop::Failed(format!("could not measure {} with doeff-linter: {}", what, reason))),
     }
 }
 
@@ -987,21 +987,21 @@ fn empty_report() -> Value {
     serde_json::json!({ "violations": [] })
 }
 
-/// 子の linter 1 回の測り — 報告の出口(--report-out)に書く 1 件。
+/// One measurement by the child linter -- one entry written to the report output (--report-out).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct Measurement {
-    /// 測った対象(`HEAD` = HEAD の版・`stage` = stage した path)。
+    /// The measured target (`HEAD` = the HEAD version, `stage` = the staged paths).
     pub target: Side,
-    /// 子の linter に渡した path(根からの相対)。空なら子を撃っていない(HEAD の版に無い file だけ・最初の commit・stage が空)。
+    /// The paths passed to the child linter (relative to the root). Empty if the child was not fired (only files not in the HEAD version, the first commit, an empty stage).
     pub paths: Vec<String>,
-    /// 違反(子の linter の editor-json の違反の形のまま)。
+    /// The violations (still in the shape of the violations of the child linter's editor-json).
     pub violations: Vec<Value>,
-    /// 判じた規則の ID(子の linter の editor-json の judged_rules)。
+    /// The IDs of the rules judged (judged_rules of the child linter's editor-json).
     pub judged_rules: Vec<String>,
 }
 
 impl Measurement {
-    /// 純粋: 子の linter の報告(editor-json)から測りを作る(報告の違反は移す — 写さない)。
+    /// Pure: builds a measurement from the child linter's report (editor-json) (the report's violations are re-pointed -- not copied).
     pub fn of(target: Side, paths: Vec<String>, mut report: Value) -> Measurement {
         let violations = match report.get_mut("violations").map(Value::take) {
             Some(Value::Array(list)) => list,
@@ -1011,19 +1011,19 @@ impl Measurement {
         Measurement { target, paths, violations, judged_rules }
     }
 
-    /// 子を撃っていない測り(path・違反・判じた規則が空)。
+    /// A measurement where the child was not fired (paths, violations, and judged rules are empty).
     fn none(target: Side) -> Measurement {
         Measurement::of(target, Vec::new(), empty_report())
     }
 }
 
-/// 純粋: 報告の出口に書く JSON — 先端の根(違反の path の根)・hook の終了コード・測りの列。測りは判じ終えた時は HEAD・stage の 2 件、
-/// 上限で打ち切った時と測れなかった時は空(終了コード 1・2 — 判じていない)。
+/// Pure: the JSON written to the report output -- the tip's root (the root of the violations' paths), the hook's exit code, and the list of measurements. The measurements are the 2 entries HEAD and stage when judging finished,
+/// and empty when cut off by the limit or when it could not be measured (exit codes 1 and 2 -- not judged).
 pub fn report_of(root: &Path, assessment: &Assessment) -> Value {
     serde_json::json!({ "root": root.to_string_lossy(), "code": assessment.code, "measurements": assessment.measurements })
 }
 
-/// hook の 1 回の判じ — 終了コードと、出す行(行の頭の `doeff-linter commit-hook: ` を除く)と、測り(報告の出口に書く)。
+/// One judgment of the hook -- the exit code, the lines to print (excluding the line head `doeff-linter commit-hook: `), and the measurements (written to the report output).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Assessment {
     pub code: u8,
@@ -1031,21 +1031,21 @@ pub struct Assessment {
     pub measurements: Vec<Measurement>,
 }
 
-/// 判じ終えた 1 回 — 止める物と、HEAD の版・stage した path の 2 つの測り。
+/// One judgment that finished -- the things that stop, and the two measurements of the HEAD version and the staged paths.
 struct Judged {
     blocking: Blocking,
     measurements: Vec<Measurement>,
 }
 
 impl Judged {
-    /// 子を撃たずに判じ終えた 1 回(stage が空・当てる規則が無い・linter が読む path が無い)。
+    /// One judgment finished without firing the child (the stage is empty, there are no rules to apply, or there are no paths the linter reads).
     fn unmeasured() -> Judged {
         Judged { blocking: Blocking::default(), measurements: vec![Measurement::none(Side::Head), Measurement::none(Side::Tip)] }
     }
 }
 
-/// hook の判じ(印字しない)。終了コード 0 = 通す・1 = 止める(上限で打ち切って測れなかった時を含む — 上限なしの命令を添える)・
-/// 2 = git・linter が動かなかった。
+/// The hook's judgment (does not print). Exit code 0 = pass, 1 = stop (including when cut off by the limit and could not measure -- the no-limit command is attached),
+/// 2 = git or the linter did not run.
 pub fn assess(options: &CommitHookOptions) -> Assessment {
     match judge(options) {
         Ok(Judged { blocking, measurements }) => {
@@ -1057,11 +1057,11 @@ pub fn assess(options: &CommitHookOptions) -> Assessment {
             let lines = blocking
                 .staged
                 .iter()
-                .map(|line| format!("stage した file の破れ: {}", line))
-                .chain(blocking.fresh_critical.not_on_head.iter().map(|ident| format!("HEAD に無い critical: {}", ident)))
-                .chain(blocking.grown_warnings.iter().map(|line| format!("major の warning が HEAD の版より増えた(stage した file の組の数): {}", line)))
+                .map(|line| format!("violation in staged file: {}", line))
+                .chain(blocking.fresh_critical.not_on_head.iter().map(|ident| format!("not on HEAD critical: {}", ident)))
+                .chain(blocking.grown_warnings.iter().map(|line| format!("major warnings increased over the HEAD version (count over the set of staged files): {}", line)))
                 .chain(already_on_head_lines(&blocking))
-                .chain(blocking.out_of_scope.iter().map(|path| format!("対象の外(linter が歩く範囲の外 — 層の規則はこの file を測っていない): {}", path)))
+                .chain(blocking.out_of_scope.iter().map(|path| format!("out of scope (outside the range the linter walks -- the layer rules did not measure this file): {}", path)))
                 .collect();
             Assessment { code, lines, measurements }
         }
@@ -1070,8 +1070,8 @@ pub fn assess(options: &CommitHookOptions) -> Assessment {
     }
 }
 
-/// hook の本体 — 判じ(assess)の行を stderr に出し、報告の出口(report_out)が在れば報告(report_of)を書き、終了コードを返す。
-/// 報告を書けない時は stderr に 1 行足し、終了コードは変えない(診断の記録は commit を止めない)。
+/// The hook's body -- prints the lines of the judgment (assess) to stderr, writes the report (report_of) if there is a report output (report_out), and returns the exit code.
+/// If the report cannot be written, adds one line to stderr and does not change the exit code (recording diagnostics does not stop a commit).
 pub fn run(options: &CommitHookOptions, report_out: Option<&Path>) -> u8 {
     let assessment = assess(options);
     for line in &assessment.lines {
@@ -1080,22 +1080,22 @@ pub fn run(options: &CommitHookOptions, report_out: Option<&Path>) -> u8 {
     if let Some(path) = report_out {
         let root = options.root.canonicalize().unwrap_or_else(|_| options.root.clone());
         if let Err(error) = std::fs::write(path, report_of(&root, &assessment).to_string()) {
-            eprintln!("{}報告 {} を書けない(終了コードは変えない): {}", PREFIX, path.display(), error);
+            eprintln!("{}cannot write report {} (exit code unchanged): {}", PREFIX, path.display(), error);
         }
     }
     assessment.code
 }
 
-/// 純粋: HEAD の版にも同じ識別子が在るのに止める当たり(既知の一覧を持たない規則の、変えた file の既存の当たり)の行と、在れば直し方の
-/// 案内を 1 行。
+/// Pure: the lines for hits that stop although the same identifier exists in the HEAD version (existing hits in changed files, for rules with no known list), and if any, one line of guidance on how to
+/// fix.
 fn already_on_head_lines(blocking: &Blocking) -> Vec<String> {
     let hits: Vec<String> = blocking
         .fresh_critical
         .already_on_head
         .iter()
-        .map(|ident| format!("変えた file の既存の当たり(main にも在る・この規則は既知の一覧で下げない): {}", ident))
+        .map(|ident| format!("existing hit in a changed file (also on main; this rule is not lowered by the known list): {}", ident))
         .collect();
-    let guide = (!hits.is_empty()).then(|| "この file を変えるなら、その当たりも同じ変更で直す(hook を飛ばさない)".to_string());
+    let guide = (!hits.is_empty()).then(|| "If you change this file, fix that hit in the same change (do not skip the hook)".to_string());
     hits.into_iter().chain(guide).collect()
 }
 
@@ -1105,8 +1105,8 @@ fn judge(options: &CommitHookOptions) -> Result<Judged, Stop> {
     if staged.is_empty() {
         return Ok(Judged::unmeasured());
     }
-    // file 1 つで決まる規則だけを stage した path に当てる — repo 全体が要る規則と、宣言の file を変えた commit の stage していない
-    // file の当たりは repo 全体の検証が見る(頭の註)。
+    // Apply only rules decided by a single file to the staged paths -- rules that need the whole repo, and hits in unstaged files of a commit that changed a declaration file,
+    // are looked at by the whole-repo verification (the note at the top).
     let quick = split_rules(&options.enabled).quick;
     let paths = linted_paths(&staged, |p| root.join(p).exists());
     if quick.is_empty() || paths.is_empty() {
@@ -1114,10 +1114,10 @@ fn judge(options: &CommitHookOptions) -> Result<Judged, Stop> {
     }
     let mut blocking = Blocking::default();
     let scratch = Scratch::create().map_err(Stop::Failed)?;
-    // HEAD の木は事実の cache の根の commit-hook-tree/<repo を表す名>/tree に repo ごとに 1 つ置き、差分で進める(head_tree・#3858)。
-    // 木の lock はこの関数を抜けるまで(子の linter が木を測り終えるまで)持つ。cache を使わない実行(DOEFF_LINTER_NO_CACHE)は、
-    // この実行の一時 dir を場所にする(終わりに消える)。1 回限りの指定(Lint-Baseline)の木は、HEAD の木を今の宣言で測る — 既存の当たりは
-    // 基点に在る物になり、新しい当たりだけが止まる(重ねた宣言の file は次に進める時に HEAD の中身へ戻す)。
+    // The HEAD tree is placed one per repo at commit-hook-tree/<name representing the repo>/tree under the fact cache's root and advanced by diff (head_tree, #3858).
+    // The tree's lock is held until this function exits (until the child linter finishes measuring the tree). A run that does not use the cache (DOEFF_LINTER_NO_CACHE)
+    // uses this run's temporary dir as the location (deleted at the end). The tree for the one-time directive (Lint-Baseline) measures the HEAD tree with the current declarations -- existing hits
+    // become present in the baseline, and only new hits stop (the overlaid declaration files are restored to HEAD's contents when next advancing).
     let home = match &options.cache {
         Some(base) => {
             let home = base.join(TREE_HOME_DIR);
@@ -1129,12 +1129,12 @@ fn judge(options: &CommitHookOptions) -> Result<Judged, Stop> {
     let held = head_tree(root, &options.overlay, &home, &scratch.path, LOCK_WAIT).map_err(Stop::Failed)?;
     let tree = held.as_ref().map(|h| h.path.as_path());
     if tree.is_some() && !options.overlay.is_empty() {
-        eprintln!("{}{} — HEAD の木を今の宣言({})で測る(1 回限り)", PREFIX, BASELINE_TRAILER, options.overlay.join("・"));
+        eprintln!("{}{} — measuring the HEAD tree with the current declarations ({}) (one time only)", PREFIX, BASELINE_TRAILER, options.overlay.join(", "));
     }
     let tip_root = root.canonicalize().unwrap_or_else(|_| root.clone());
 
-    // HEAD の版(HEAD に在る path だけ)を同じ規則で撃ち、先端の根の path へ付け替えて基点にする。stage で消えた file(名前替えの
-    // 旧い側を含む)の HEAD の版も撃つ — major の warning の数を、移した・消した file の分も含めて比べるため。
+    // Fire the HEAD version (only paths that exist in HEAD) with the same rules, and re-point it to the tip's root paths to make the baseline. The HEAD version of files deleted by the stage (including the old
+    // side of a rename) is also fired -- so that the count of major warnings is compared including moved and deleted files.
     let removed = removed_paths(root).map_err(Stop::Failed)?;
     let head_paths: Vec<String> = tree
         .map(|t| {
@@ -1150,19 +1150,19 @@ fn judge(options: &CommitHookOptions) -> Result<Judged, Stop> {
         .unwrap_or_default();
     let base = match tree {
         Some(t) if !head_paths.is_empty() => {
-            let mut report = measured(run_linter(&options.linter, t, &lint_args(options, Some(t), &quick, &[], &head_paths), options.timeout), "HEAD の版")?;
+            let mut report = measured(run_linter(&options.linter, t, &lint_args(options, Some(t), &quick, &[], &head_paths), options.timeout), "the HEAD version")?;
             rebase_paths(&mut report, &t.to_string_lossy(), &tip_root.to_string_lossy());
             report
         }
         _ => empty_report(),
     };
     let baseline = scratch.path.join("baseline.json");
-    std::fs::write(&baseline, base.to_string()).map_err(|e| Stop::Failed(format!("{} を書けない: {}", baseline.display(), e)))?;
+    std::fs::write(&baseline, base.to_string()).map_err(|e| Stop::Failed(format!("cannot write {}: {}", baseline.display(), e)))?;
     let extra = vec!["--baseline-report".to_string(), baseline.to_string_lossy().into_owned()];
-    let tip = measured(run_linter(&options.linter, root, &lint_args(options, None, &quick, &extra, &paths), options.timeout), "stage した file ")?;
+    let tip = measured(run_linter(&options.linter, root, &lint_args(options, None, &quick, &extra, &paths), options.timeout), "the staged files")?;
     blocking.staged = blocking_violations(&tip).into_iter().map(|v| violation_line(&tip, v)).collect();
-    // 子の linter が基点の file を読むのと同じ綴り(baseline::baseline_identities)で HEAD の版の識別子を読み、止める当たりを分ける。
-    let head_criticals = crate::baseline::baseline_identities(&base).map_err(|reason| Stop::Failed(format!("HEAD の版の報告を読めない: {}", reason)))?;
+    // Read the identifiers of the HEAD version with the same spelling the child linter uses to read the baseline file (baseline::baseline_identities), and split the hits that stop.
+    let head_criticals = crate::baseline::baseline_identities(&base).map_err(|reason| Stop::Failed(format!("cannot read the report of the HEAD version: {}", reason)))?;
     blocking.fresh_critical =
         split_by_head(&head_criticals, tip["new_critical"].as_array().into_iter().flatten().filter_map(|v| v.as_str().map(str::to_string)));
     blocking.grown_warnings = grown_major_warnings(&base, &tip);
@@ -1184,15 +1184,15 @@ mod tests {
     fn commit_hook_split_rules_drops_semantic_and_separates_whole_repo_rules() {
         let enabled = ids(&["DOEFF016", "DOEFF163", "DOEFF201", "DOEFF110", "DOEFF149", "DOEFF205", "doeff166", "DOEFF999"]);
         let split = split_rules(&enabled);
-        // 知らない ID(DOEFF999)は file 1 つの側 — 有効な規則の一覧には載らず、DOEFF100 が知らせる。
+        // Unknown IDs (DOEFF999) are on the single-file side -- they are not in the list of enabled rules, and DOEFF100 reports them.
         assert_eq!(split.quick, ids(&["DOEFF016", "DOEFF110", "DOEFF999"]));
-        // repo 全体の比べは規則が名乗る列 — 手の一覧に無かった DOEFF149 も入る。列の DOEFF166 が行の名指す規則を
-        // 同じ実行で当てる(#2033)。
+        // The whole-repo comparison is the list the rules declare -- DOEFF149, which was not in the hand-written list, is also included. DOEFF166 in the list applies
+        // the rule that a line names in the same run (#2033).
         assert_eq!(split.whole, ids(&["DOEFF163", "DOEFF149", "doeff166"]));
     }
 
-    /// Jev の規則かどうかは規則の名乗り(ProjectRule::is_semantic)で決まり、ID の頭では決まらない — 頭が DOEFF2 の
-    /// 決定的な規則(DOEFF206〜209)は quick か whole に入り、Jev の規則(DOEFF201〜205)だけがどちらにも入らない。
+    /// Whether it is a Jev rule is decided by the rule's declaration (ProjectRule::is_semantic), not by the ID prefix -- deterministic rules whose prefix is DOEFF2
+    /// (DOEFF206-209) go into quick or whole, and only the Jev rules (DOEFF201-205) go into neither.
     #[test]
     fn commit_hook_split_rules_keeps_deterministic_rules_whose_id_starts_with_doeff2() {
         let enabled = ids(&["DOEFF201", "DOEFF202", "DOEFF203", "DOEFF204", "DOEFF205", "DOEFF206", "DOEFF207", "DOEFF208", "DOEFF209"]);
@@ -1209,26 +1209,26 @@ mod tests {
             switches: ids(&["pyproject.toml", "architecture.hy"]),
         };
         let enabled = ids(&["DOEFF016", "DOEFF102", "DOEFF201", "DOEFF149"]);
-        // 宣言に触れない変更は規則の名乗りの分けのまま。
+        // A change that does not touch declarations keeps the split by the rules' declarations.
         let plain = split_for_change(&enabled, &ids(&["app/core/x.hy"]), &declarations);
         assert_eq!(plain, RuleSplit { quick: ids(&["DOEFF016", "DOEFF102"]), whole: ids(&["DOEFF149"]) });
-        // 宣言の file・登録簿の dir の下の file を変えた変更は、file 1 つで判じる規則も whole へ(意味の規則は除いたまま・順は enable)。
+        // A change that changed a declaration file or a file under a registry dir also moves rules decided by a single file to whole (semantic rules stay excluded; the order is that of enable).
         for changed in [ids(&["architecture.hy"]), ids(&["pyproject.toml", "app/core/x.hy"]), ids(&["scripts/doeff_lint/REG/k.txt"])] {
             let moved = split_for_change(&enabled, &changed, &declarations);
             assert_eq!(moved, RuleSplit { quick: Vec::new(), whole: ids(&["DOEFF016", "DOEFF102", "DOEFF149"]) }, "{:?}", changed);
         }
-        // 名の前方一致だけでは触れない(dir の名を頭に持つ別の dir)。
+        // A name prefix match alone does not count as touching (a different dir that has a dir's name at its head).
         assert!(!touches_declaration(&ids(&["scripts/doeff_lint/REGISTRY-OTHER/k.txt", "architecture.hy.bak"]), &declarations));
     }
 
     #[test]
     fn commit_hook_baseline_overlay_needs_a_reasoned_trailer() {
         let declarations = Declarations { files: Vec::new(), dirs: Vec::new(), switches: ids(&["pyproject.toml", "architecture.hy"]) };
-        // 理由つきの行だけが効く(本文のどこに在ってもよい・行の頭の空白は読む)。
-        let reasoned = "規則を鳴らす\n\nLint-Baseline: declarations — DOEFF170〜172 を鳴らし始める(#2143)\nCo-Authored-By: x\n";
+        // Only lines with a reason take effect (anywhere in the body is fine; leading whitespace on the line is read).
+        let reasoned = "start firing a rule\n\nLint-Baseline: declarations — start firing DOEFF170-172 (#2143)\nCo-Authored-By: x\n";
         assert_eq!(baseline_overlay(reasoned, &declarations), ids(&["pyproject.toml", "architecture.hy"]));
-        // 反例: 理由の無い行・行の途中の言及・違う trailer は効かない(基点は HEAD の宣言のまま — #2127 の見逃しを作らない)。
-        for message in ["x\n\nLint-Baseline: declarations\n", "x\n\nLint-Baseline: declarations — \n", "本文で Lint-Baseline: declarations に触れる\n", "Registry-Grows: 1 理由\n"] {
+        // Failure cases: a line without a reason, a mention mid-line, and a different trailer do not take effect (the baseline stays at HEAD's declarations -- do not create the miss of #2127).
+        for message in ["x\n\nLint-Baseline: declarations\n", "x\n\nLint-Baseline: declarations — \n", "The body mentions Lint-Baseline: declarations\n", "Registry-Grows: 1 reason\n"] {
             assert!(baseline_overlay(message, &declarations).is_empty(), "{:?}", message);
         }
     }
@@ -1236,7 +1236,7 @@ mod tests {
     #[test]
     fn commit_hook_names_a_retired_hand_list() {
         let kept = CommitHookSection { whole_repo_rules: ids(&["DOEFF163"]), timeout_s: None };
-        assert!(retired_whole_repo_rules_note(Some(&kept)).is_some_and(|line| line.contains("退役")));
+        assert!(retired_whole_repo_rules_note(Some(&kept)).is_some_and(|line| line.contains("retired")));
         assert_eq!(retired_whole_repo_rules_note(Some(&CommitHookSection::default())), None);
         assert_eq!(retired_whole_repo_rules_note(None), None);
     }
@@ -1269,8 +1269,8 @@ mod tests {
         json!({ "rule": rule, "path": path, "severity": severity, "level": level, "message": "m" })
     }
 
-    /// major の warning は規則ごとの数で HEAD の版と比べる — 1 つ増えれば名指す・同じ数と減った数は出さない・
-    /// 別の file へ移っただけ(移し・分割)は数が同じなので出さない。critical・error・minor・info は数えない(別の段か対象の外)。
+    /// Major warnings are compared with the HEAD version by per-rule count -- one more is named; the same count and a decreased count are not listed;
+    /// just moving to another file (move or split) has the same count so is not listed. Critical, error, minor, and info are not counted (another stage or out of scope).
     #[test]
     fn commit_hook_grown_major_warnings_counts_per_rule() {
         let head = json!({ "violations": [
@@ -1278,7 +1278,7 @@ mod tests {
             w("DOEFF113", "/h/old.hy", "warning", "major"),
             w("DOEFF113", "/h/old.hy", "warning", "major"),
         ]});
-        // 増えた: DOEFF172 が 1 → 2(同じ file)。新しい規則 DOEFF105 が 0 → 1。DOEFF113 は old.hy から new.hy へ 2 つとも移った(同じ数)。
+        // Increased: DOEFF172 from 1 to 2 (same file). The new rule DOEFF105 from 0 to 1. DOEFF113 moved both from old.hy to new.hy (same count).
         let grown = json!({ "violations": [
             w("DOEFF172", "/r/a.hy", "warning", "major"),
             w("DOEFF172", "/r/a.hy", "warning", "major"),
@@ -1287,11 +1287,11 @@ mod tests {
             w("DOEFF113", "/r/new.hy", "warning", "major"),
         ]});
         assert_eq!(grown_major_warnings(&head, &grown), ids(&["DOEFF105 0 → 1", "DOEFF172 1 → 2"]));
-        // 同じ数・減った数は止めない(減った commit の次は、その HEAD が基点になる)。
+        // The same count and a decreased count do not stop (after a commit that decreased them, that HEAD becomes the baseline).
         assert!(grown_major_warnings(&head, &head).is_empty());
         let fewer = json!({ "violations": [w("DOEFF113", "/r/new.hy", "warning", "major")] });
         assert!(grown_major_warnings(&head, &fewer).is_empty());
-        // major の warning でない物は数えない: critical(new_critical の段)・error(blocking_violations の段)・minor・info。
+        // Things that are not major warnings are not counted: critical (the new_critical stage), error (the blocking_violations stage), minor, and info.
         let others = json!({ "violations": [
             w("DOEFF172", "/r/a.hy", "warning", "major"),
             w("DOEFF999", "/r/a.hy", "warning", "critical"),
@@ -1300,12 +1300,12 @@ mod tests {
             w("DOEFF996", "/r/a.hy", "info", "info"),
         ]});
         assert!(grown_major_warnings(&head, &others).is_empty());
-        // HEAD に版が無い(新しい file だけ)なら、基点は 0。
+        // If there is no HEAD version (only new files), the baseline is 0.
         assert_eq!(grown_major_warnings(&json!({ "violations": [] }), &fewer), ids(&["DOEFF113 0 → 1"]));
     }
 
-    /// 報告の測りは、子の linter の editor-json の違反を形のまま移し、判じた規則の ID と渡した path の列を添える。
-    /// 報告は根・終了コード・測りの列で、測った対象は `HEAD`・`stage` と綴る。子を撃っていない測り(欄の無い報告)は違反も規則も空。
+    /// The report's measurement carries over the child linter's editor-json violations as they are, with the IDs of the judged rules and the list of paths passed added.
+    /// The report is the root, exit code, and list of measurements, and the measured target is spelled `HEAD` or `stage`. A measurement where the child was not fired (a report with no field) has empty violations and rules.
     #[test]
     fn commit_hook_report_carries_each_measurement_in_the_editor_json_shape() {
         let hit = v("k-error", "error", "major");
@@ -1324,7 +1324,7 @@ mod tests {
                 { "target": "stage", "paths": ["a.hy"], "violations": [hit], "judged_rules": ["DOEFF016", "NOQA001"] },
             ]})
         );
-        // 打ち切った・測れなかった 1 回は測りが空(終了コードが判じていない事を名乗る)。
+        // A run that was cut off or could not be measured has empty measurements (declaring that the exit code did not judge).
         let cut = Assessment { code: 1, lines: Vec::new(), measurements: Vec::new() };
         assert_eq!(report_of(Path::new("/r"), &cut)["measurements"], json!([]));
     }
@@ -1344,20 +1344,20 @@ mod tests {
     #[test]
     fn commit_hook_unmeasured_line_names_the_comparison_tree_rules_and_limit() {
         let cut = Cut { side: Side::Head, rules: ids(&["DOEFF163", "DOEFF167"]), limit: Duration::from_secs(20), measure: Measure::Cpu };
-        let line = unmeasured_line(&Unmeasured { what: "HEAD の版".to_string(), cut });
-        for part in ["HEAD の版を測れなかった", "HEAD の木で当てた規則 2 個(DOEFF163,DOEFF167)", "CPU 秒の上限 20 秒で打ち切った", "確かめていないので commit を止める"] {
-            assert!(line.contains(part), "{:?} が無い: {}", part, line);
+        let line = unmeasured_line(&Unmeasured { what: "the HEAD version".to_string(), cut });
+        for part in ["could not measure the HEAD version", "2 rule(s) (DOEFF163,DOEFF167) applied on the HEAD tree", "cut off at the CPU-seconds limit of 20 s", "so the commit is stopped"] {
+            assert!(line.contains(part), "{:?} is missing: {}", part, line);
         }
         let tip = Cut { side: Side::Tip, rules: ids(&["DOEFF016"]), limit: Duration::from_secs(1), measure: Measure::Wall };
-        assert!(unmeasured_line(&Unmeasured { what: "stage した file ".to_string(), cut: tip })
-            .contains("先端の木(作業木)で当てた規則 1 個(DOEFF016)の子の linter をwall の上限 1 秒で打ち切った(この機体では子の CPU 秒を読めない)"));
+        assert!(unmeasured_line(&Unmeasured { what: "the staged files".to_string(), cut: tip })
+            .contains("1 rule(s) (DOEFF016) applied on the tip tree (working tree) was cut off at the wall limit of 1 s (child CPU seconds cannot be read on this machine)"));
         let idle = Cut { side: Side::Tip, rules: ids(&["DOEFF016"]), limit: Duration::from_secs(2), measure: Measure::WallBackstop };
-        assert!(unmeasured_line(&Unmeasured { what: "stage した file ".to_string(), cut: idle })
-            .contains("wall の予備の上限 8 秒で打ち切った(CPU 秒の上限 2 秒の 4 倍"));
+        assert!(unmeasured_line(&Unmeasured { what: "the staged files".to_string(), cut: idle })
+            .contains("cut off at the wall backstop limit of 8 s (4 times the CPU-seconds limit of 2 s"));
     }
 
-    /// CPU 秒が読めれば CPU 秒で測る — 混んで wall だけ伸びた子(wall 9 秒・CPU 3 秒・上限 4 秒)は切らず、CPU 秒が
-    /// 上限に届けば切る。wall は予備の上限(上限の 4 倍)だけを見る。読めない機体は今までどおり wall で測る。
+    /// If CPU seconds can be read, measure by CPU seconds -- a child that only stretched in wall time due to load (wall 9 seconds, CPU 3 seconds, limit 4 seconds) is not cut off, and it is cut off once CPU seconds
+    /// reach the limit. Wall looks only at the backstop limit (4 times the limit). Machines where it cannot be read measure by wall as before.
     #[test]
     fn commit_hook_cut_measure_reads_cpu_seconds_and_keeps_a_wall_backstop() {
         let s = Duration::from_secs;
@@ -1369,7 +1369,7 @@ mod tests {
         assert_eq!(cut_measure(s(4), None, s(4)), Some(Measure::Wall));
     }
 
-    /// /proc/<pid>/stat の utime・stime・cutime・cstime(14〜17 番目・100 分の 1 秒)の和を読む。名の欄の ')' と空白に惑わされない。
+    /// Reads the sum of utime, stime, cutime, and cstime of /proc/<pid>/stat (the 14th to 17th; 1/100 second). Not confused by ')' and spaces in the name field.
     #[test]
     fn commit_hook_cpu_of_stat_sums_own_and_waited_children_ticks() {
         let stat = "4242 (doeff (lin) ter) R 1 4242 4242 0 -1 4194304 100 0 0 0 250 30 15 5 20 0 8 0 12345 1000 200";
@@ -1384,13 +1384,13 @@ mod tests {
         assert_eq!(resolve_timeout(Some(&section), Some(3)), Some(Duration::from_secs(3)));
         assert_eq!(resolve_timeout(Some(&section), None), Some(Duration::from_secs(7)));
         assert_eq!(resolve_timeout(None, None), Some(Duration::from_secs(DEFAULT_TIMEOUT_S)));
-        // 0 秒は上限なし(引数でも設定でも)。
+        // 0 seconds means no limit (whether by argument or config).
         assert_eq!(resolve_timeout(Some(&section), Some(0)), None);
         assert_eq!(resolve_timeout(Some(&CommitHookSection { whole_repo_rules: Vec::new(), timeout_s: Some(0) }), None), None);
     }
 
-    /// 上限なしの命令は、同じ linter・根・設定・--enable / --disable・commit 本文の file に上限なしを足した 1 行で、
-    /// 空白や ' を含む path も shell にそのまま貼れる形で書く。設定が無ければ --no-config。
+    /// The no-limit command is one line made by adding no limit to the same linter, root, config, --enable / --disable, and commit body file,
+    /// written so that paths containing spaces or ' can be pasted into a shell as is. If there is no config, --no-config.
     #[test]
     fn commit_hook_unbounded_command_repeats_the_same_hook_without_a_limit() {
         let mut options = CommitHookOptions {

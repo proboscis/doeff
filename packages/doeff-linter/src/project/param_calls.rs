@@ -1,18 +1,18 @@
-//! DOEFF126 の 2 つ目の形: 引数で受けた関数を素で呼ぶ所 — ただし呼び手がその引数に defk か fnk を渡している時だけ拾う。
+//! The second shape of DOEFF126: a bare call of a function received as an argument — but picked up only when the caller passes a defk or fnk as that argument.
 //!
-//! 事実(agora の L1550 で直した): `rows-by-text` が引数 `field-of` を `(setv value (field-of row))` と素で
-//! 呼んでいたが、呼び手はそこに fnk(`payload-of` を呼ぶ)を渡していた。値は常に Program になり、`isinstance value str` が常に偽で
-//! 索引が常に空になる本物の欠陥だった。coordinator の依頼 2026-09-28。
+//! The fact (fixed in agora's L1550): `rows-by-text` called its argument `field-of` bare as `(setv value (field-of row))`,
+//! but the caller passed an fnk (which calls `payload-of`) there. The value is always a Program, so `isinstance value str` is always false and
+//! the index was always empty, a real defect. The coordinator's request of 2026-09-28.
 //!
-//! 流れの追い方(拾える範囲):
-//! 1. repo の全部の呼び `(g … 引数 …)` のうち、引数が repo の defk の名か `(fnk …)` の物を集める(g は import と定義の場所で module まで
-//!    解く・位置の引数は何番目か、keyword の引数は名で控える)。
-//! 2. 呼び先 g の最上位の定義(defk・deff・defn・defn/a)の引数の並びでその引数の名を引き、本体の中でその名を頭にした呼び `(名 …)` が
-//!    Program として渡す所(`(<- …)` の右辺・`(! …)`・`(return …)`・`(yield …)`・Program を受ける呼びの引数)の外に在れば、呼び先の
-//!    その呼びを違反にする(名への束ね `(setv v (名 …))` も違反 — 呼び手が defk を渡しているので、答えではなく Program が束なる)。
+//! How the flow is followed (the range that can be picked up):
+//! 1. Among all calls `(g … argument …)` in the repo, collect those where the argument is the name of a repo defk or an `(fnk …)` (g is resolved to its module through imports and definition locations;
+//!    for a positional argument, note which position it is, and for a keyword argument, note its name).
+//! 2. Look up the argument's name in the parameter list of the callee g's top-level definition (defk, deff, defn, defn/a); if a call `(name …)` headed by that name in the body
+//!    is outside the places that pass it on as a Program (the right side of `(<- …)`, `(! …)`, `(return …)`, `(yield …)`, an argument of a call that accepts a Program), make that call
+//!    in the callee a violation (a bind of the name `(setv v (name …))` is also a violation — the caller passes a defk, so what is bound is a Program, not the answer).
 //!
-//! 拾えない範囲(ADR-DOE-HY-007 R14 に書く): 呼び手が defk を変数や欄に入れてから渡す形・partial などで包んで渡す形、呼び先がその引数を
-//! さらに別の関数へ渡してそこで素で呼ぶ形(1 段だけ追う)、呼び先が method・入れ子の関数・名で引けない物、repo の外の呼び手。
+//! The range that cannot be picked up (written in ADR-DOE-HY-007 R14): a caller that puts a defk into a variable or field before passing it, or wraps it with partial or the like, a callee that
+//! passes that argument on to yet another function that calls it bare there (only one level is followed), a callee that is a method, a nested function, or something that cannot be looked up by name, and a caller outside the repo.
 
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -23,50 +23,50 @@ use super::facts::ByteSpan;
 use super::names::hy_mangle;
 use super::smells::{children, live, live_items, span_of, Hy, Scope};
 
-/// 引数の位置(位置の引数は何番目か・keyword の引数は mangle した名)。
+/// Argument position (for a positional argument, which position; for a keyword argument, the mangled name).
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, serde::Serialize, serde::Deserialize)]
 pub enum Slot {
     Position(usize),
     Keyword(String),
 }
 
-/// 呼び手が引数に Program を返す関数を渡した事実 1 つ。
+/// One fact that a caller passed a function returning a Program as an argument.
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct PassedProgram {
     pub slot: Slot,
-    /// 渡した物の綴り(defk の名か `fnk`)。
+    /// The spelling of what was passed (a defk name, or `fnk`).
     pub passed: String,
-    /// 渡した所(`<path>` の `<定義>`)。
+    /// Where it was passed (`<definition>` of `<path>`).
     pub caller: String,
 }
 
-/// 呼び先(module まで含めた名)ごとの、Program を返す関数を受ける引数。
+/// Per callee (the name including the module), the arguments that receive a function returning a Program.
 #[derive(Debug, Clone, Default, serde::Serialize, serde::Deserialize)]
 pub struct ProgramParams {
     by_callee: BTreeMap<String, Vec<PassedProgram>>,
 }
 
-/// 呼びの引数のうち、Program を渡しているかもしれない形 — 記号(綴りのまま)か `(fnk …)`。
+/// Among the arguments of a call, the forms that may be passing a Program — a symbol (as spelled) or `(fnk …)`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Argument<'a> {
     Symbol(&'a str),
     Fnk,
 }
 
-/// 1 つの source の呼びのうち、呼び先(module まで解いた名)が `wants` に合う物の、記号か `(fnk …)` の引数を全部 `visit` に渡す
-/// (呼び先・引数の位置・引数・渡した所の説明 — rel は説明のため)。呼びの順に、呼び 1 つの引数はその並びで、呼びの子孫の呼びはその後に渡す。
-/// 記号が defk かは問わない — 問うのは呼び手(repo 全体の集まりか、引かれた module だけか)。
+/// For the calls of one source whose callee (the name resolved to its module) matches `wants`, hands all the symbol or `(fnk …)` arguments to `visit`
+/// (callee, argument position, argument, description of where it was passed — rel is for the description). In call order, with one call's arguments in their order, and the calls descended from a call after it.
+/// It does not ask whether the symbol is a defk — that is asked of the caller (the collection across the whole repo, or only the looked-up modules).
 pub fn each_argument<'s>(source: &'s str, rel: &str, scope: Scope<'_>, wants: &dyn Fn(&str) -> bool, visit: &mut dyn FnMut(&str, Slot, Argument<'s>, &str)) {
     let mut reader = Reader::new(source, 0, source.len());
     let forms = reader.read_all();
     let hy = Hy { src: source };
     for (definition, form) in top_definitions(&hy, &forms) {
-        let caller = format!("{} の {}", rel, definition);
+        let caller = format!("{} in {}", rel, definition);
         arguments_in(&hy, form, scope, wants, &caller, visit);
     }
 }
 
-/// form とその子孫の呼びを見る。
+/// Looks at a form and the calls descended from it.
 fn arguments_in<'s>(
     hy: &Hy<'s>,
     form: &Form,
@@ -113,7 +113,7 @@ fn arguments_in<'s>(
 }
 
 impl ProgramParams {
-    /// 1 つの source の呼びから、引数に defk か fnk を渡している物を積む(rel は渡した所の説明のため)。
+    /// From the calls of one source, accumulates those passing a defk or fnk as an argument (rel is for the description of where it was passed).
     pub fn collect(&mut self, source: &str, rel: &str, scope: Scope<'_>, defks: &DefkNames) {
         each_argument(source, rel, scope, &|_| true, &mut |callee, slot, argument, caller| {
             let passed = match argument {
@@ -125,60 +125,60 @@ impl ProgramParams {
         });
     }
 
-    /// 別の file で集めた事実を足す(file ごとに並べて集めるため)。
+    /// Adds facts collected from another file (to collect them lined up per file).
     pub fn merge(&mut self, other: ProgramParams) {
         for (callee, facts) in other.by_callee {
             self.by_callee.entry(callee).or_default().extend(facts);
         }
     }
 
-    /// 呼び先の、Program を返す関数を受ける引数の事実。
+    /// The facts about a callee's arguments that receive a function returning a Program.
     pub fn of(&self, callee: &str) -> &[PassedProgram] {
         self.by_callee.get(callee).map(Vec::as_slice).unwrap_or(&[])
     }
 
-    /// 事実を持つ呼び先(検のため)。
+    /// The callees that have facts (for tests).
     #[cfg(test)]
     pub fn callees(&self) -> Vec<String> {
         self.by_callee.keys().cloned().collect()
     }
 
-    /// 事実の数(報告のため)。
+    /// The number of facts (for the report).
     pub fn len(&self) -> usize {
         self.by_callee.values().map(Vec::len).sum()
     }
 
-    /// 空か。
+    /// Whether it is empty.
     pub fn is_empty(&self) -> bool {
         self.by_callee.is_empty()
     }
 }
 
-/// 呼び手が引数に渡した記号 1 つ — 綴りのままと、module まで解いた名(defk の集まりを引く鍵)。
+/// One symbol the caller passed as an argument — as spelled, and the name resolved to its module (the key for looking up the collection of defks).
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct Spelled {
     text: String,
     qualified: String,
 }
 
-/// 呼び手が引数に渡した物の候補 1 つ — 記号が defk かの判定を待つ(判定は呼び手が持つ集まりで決まり、file の中身だけでは決まらない)。
+/// One candidate for what the caller passed as an argument — waiting for the decision of whether the symbol is a defk (the decision is made by the collection the caller holds, not by the file's contents alone).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Candidate {
-    /// 呼び先(module まで解いた名)。
+    /// The callee (the name resolved to its module).
     pub callee: String,
     slot: Slot,
-    /// 渡した記号。`(fnk …)` なら None。
+    /// The symbol passed. None for `(fnk …)`.
     symbol: Option<Spelled>,
     caller: String,
 }
 
 impl Candidate {
-    /// 渡した記号を module まで解いた名(defk かを引く鍵)。`(fnk …)` は None。
+    /// The name of the passed symbol resolved to its module (the key for looking up whether it is a defk). None for `(fnk …)`.
     pub fn qualified(&self) -> Option<&str> {
         self.symbol.as_ref().map(|symbol| symbol.qualified.as_str())
     }
 
-    /// 判定を済ませて事実にする。記号が defk でなければ None(`(fnk …)` は常に事実)。`ProgramParams::collect` が積む物と同じ。
+    /// Finishes the decision and makes it a fact. None if the symbol is not a defk (`(fnk …)` is always a fact). The same as what `ProgramParams::collect` accumulates.
     pub fn settle(self, is_defk: impl Fn(&str) -> bool) -> Option<PassedProgram> {
         let passed = match self.symbol {
             Some(symbol) if is_defk(&symbol.qualified) => symbol.text,
@@ -189,7 +189,7 @@ impl Candidate {
     }
 }
 
-/// 1 つの source の、呼び先が `wants` に合う呼びの候補を、`ProgramParams::collect` が積む順に全部(記号が defk かは問わない)。
+/// All candidates for calls in one source whose callee matches `wants`, in the order `ProgramParams::collect` accumulates them (without asking whether the symbol is a defk).
 pub fn candidates_in(source: &str, rel: &str, scope: Scope<'_>, wants: &dyn Fn(&str) -> bool) -> Vec<Candidate> {
     let mut found = Vec::new();
     each_argument(source, rel, scope, wants, &mut |callee, slot, argument, caller| {
@@ -202,10 +202,10 @@ pub fn candidates_in(source: &str, rel: &str, scope: Scope<'_>, wants: &dyn Fn(&
     found
 }
 
-/// 呼び先(module まで含めた名)の、呼び手が Program を渡している引数の事実を引ける物 — repo 全体から集めた物(`ProgramParams`)か、
-/// 引かれた時に呼び先の名を字面に含む file だけから集める物(`SpelledCallers`・1 file の実行 — 呼び手は書いた file が名指さない file にもいる)。
+/// Something that can look up, for a callee (the name including the module), the facts of the arguments for which the caller passes a Program — either one collected from the whole repo (`ProgramParams`), or
+/// one collected, when looked up, only from the files that contain the callee's name literally (`SpelledCallers` — a single-file run; callers are also in files that the written file does not name).
 pub trait ProgramParamsLookup {
-    /// `callees` それぞれの事実(同じ順 — 集める物は引く呼び先をまとめて知って、file を読むのを 1 度にする)。
+    /// The facts for each of `callees` (in the same order — the collector knows the callees to look up together, and reads the files once).
     fn passed_to_all(&self, callees: &[String]) -> Vec<Vec<PassedProgram>>;
 }
 
@@ -215,28 +215,28 @@ impl ProgramParamsLookup for ProgramParams {
     }
 }
 
-/// 引数で受けた関数の素の呼び 1 件。
+/// One bare call of a function received as an argument.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ParamCall {
-    /// 呼び先の定義の名(mangle 済み)と頭。
+    /// The name (mangled) and head of the callee's definition.
     pub definition: String,
     pub container: String,
-    /// 素で呼んだ引数の名(書かれたとおり)。
+    /// The name of the argument called bare (as written).
     pub param: String,
-    /// 呼び手が渡した物(defk の名か fnk)と、渡した所(最初の 1 つ)。
+    /// What the caller passed (a defk name or fnk), and where it was passed (the first one).
     pub passed: String,
     pub caller: String,
     pub span: ByteSpan,
 }
 
 impl ParamCall {
-    /// 登録簿の鍵の細目(`<定義>::<引数>`)。
+    /// Detail of the registry key (`<definition>::<argument>`).
     pub fn detail(&self) -> String {
         format!("{}::{}", self.definition, hy_mangle(&self.param))
     }
 }
 
-/// 最上位の関数の定義(`do` と `eval-and-compile` の中も)の名と form。
+/// The names and forms of top-level function definitions (including inside `do` and `eval-and-compile`).
 fn top_definitions<'f>(hy: &Hy<'_>, forms: &'f [Form]) -> Vec<(String, &'f Form)> {
     let mut out = Vec::new();
     let mut pending: Vec<&Form> = forms.iter().rev().collect();
@@ -250,7 +250,7 @@ fn top_definitions<'f>(hy: &Hy<'_>, forms: &'f [Form]) -> Vec<(String, &'f Form)
     out
 }
 
-/// 定義の form の名(`(defk [decorators]? 名 …)`・`#^ T 名`)。定義でなければ None。
+/// The name of a definition form (`(defk [decorators]? name …)`, `#^ T name`). None if it is not a definition.
 fn definition_name<'a>(hy: &Hy<'a>, form: &Form) -> Option<&'a str> {
     let items = live(form)?;
     let head = items.first().and_then(|h| hy.symbol(h))?;
@@ -267,7 +267,7 @@ fn definition_name<'a>(hy: &Hy<'a>, form: &Form) -> Option<&'a str> {
     })
 }
 
-/// 引数の並びの名(位置の引数の順・keyword だけの引数も名で引けるように全部)。`*` の後ろは位置では引かない。
+/// The names in the parameter list (in the order of positional arguments; also all keyword-only arguments, so they can be looked up by name). After `*` they are not looked up by position.
 fn parameters<'a>(hy: &Hy<'a>, list: &Form) -> (Vec<&'a str>, Vec<&'a str>) {
     let mut positional = Vec::new();
     let mut all = Vec::new();
@@ -297,12 +297,12 @@ fn parameters<'a>(hy: &Hy<'a>, list: &Form) -> (Vec<&'a str>, Vec<&'a str>) {
     (positional, all)
 }
 
-/// 中身を Program として渡す形・Program を受ける doeff-hy の形・Program の位置を枝へ受け継ぐ形。
+/// The forms that pass their contents as a Program, the doeff-hy forms that accept a Program, and the forms that carry a Program position into branches.
 const PROGRAM_POSITIONS: &[&str] = &["!", "yield", "yield-from", "return", "await"];
 const PROGRAM_TAKING_FORMS: &[&str] = &["with-handlers", "maybe", "result", "on-raise", "absent-as", "do!"];
 const BRANCHING_FORMS: &[&str] = &["if", "when", "unless", "cond", "do", "let", "match"];
 
-/// 自分の引数のどれかを Program の位置の外で素で呼んでいる定義 1 つ — 呼び手の事実を引く定義。
+/// One definition that calls some of its own arguments bare outside a Program position — a definition that looks up the caller's facts.
 struct Asking<'a, 'f> {
     definition: String,
     container: String,
@@ -312,7 +312,7 @@ struct Asking<'a, 'f> {
     all: Vec<&'a str>,
 }
 
-/// 自分の引数のどれかを Program の位置の外で素で呼んでいる定義 — 呼び手の事実を引く定義。
+/// Definitions that call some of their own arguments bare outside a Program position — definitions that look up the caller's facts.
 fn asking_definitions<'a, 'f>(hy: &Hy<'a>, forms: &'f [Form], scope: Scope<'_>, defks: &DefkNames) -> Vec<Asking<'a, 'f>> {
     let mut asking = Vec::new();
     for (definition, form) in top_definitions(hy, forms) {
@@ -324,8 +324,8 @@ fn asking_definitions<'a, 'f>(hy: &Hy<'a>, forms: &'f [Form], scope: Scope<'_>, 
         };
         let Some(list) = items.get(list_at).filter(|l| l.bracket_items().is_some()) else { continue };
         let (positional, all) = parameters(hy, list);
-        // 呼び手の事実(`params` — repo 全体の呼びから集めた物)を引くのは、この定義が自分の引数のどれかを Program の位置の外で素で呼んでいる時だけ。
-        // 呼んでいなければ、呼び手が何を渡していても当たりは無い(当たりは「渡された引数」と「素の呼び」の両方が要る)。
+        // The caller's facts (`params` — collected from calls across the whole repo) are looked up only when this definition calls some of its own arguments bare outside a Program position.
+        // If it does not, there is no hit whatever the caller passes (a hit needs both a "passed argument" and a "bare call").
         if !calls_a_parameter_bare(hy, scope, defks, &items[list_at + 1..], &all, &definition, &container) {
             continue;
         }
@@ -334,8 +334,8 @@ fn asking_definitions<'a, 'f>(hy: &Hy<'a>, forms: &'f [Form], scope: Scope<'_>, 
     asking
 }
 
-/// 1 つの source で、呼び手の事実を引く定義の呼び先(module まで含めた名)。`defks` が空の集まりなら、実際の集まりで引く定義を全部含む
-/// (defk の集まりが大きいほど「Program として渡す位置」が増えて、素の呼びは減る — 単調)。呼び手の事実を、defk の集まりが決まる前に集め始めるための見積り。
+/// In one source, the callees (the name including the module) of the definitions that look up the caller's facts. If `defks` is an empty collection, it includes all definitions that would be looked up with the actual collection
+/// (the larger the collection of defks, the more "positions where a Program is passed" there are, and the fewer bare calls — monotonic). An estimate for starting to collect the caller's facts before the collection of defks is decided.
 pub fn asked_callees(source: &str, scope: Scope<'_>, defks: &DefkNames) -> Vec<String> {
     let mut reader = Reader::new(source, 0, source.len());
     let forms = reader.read_all();
@@ -343,7 +343,7 @@ pub fn asked_callees(source: &str, scope: Scope<'_>, defks: &DefkNames) -> Vec<S
     asking_definitions(&hy, &forms, scope, defks).iter().map(|asked| format!("{}.{}", scope.module, asked.definition)).collect()
 }
 
-/// 1 つの source の、呼び手が Program を返す関数を渡している引数を、本体が素で呼んでいる所を全部拾う(同じ定義の同じ引数は 1 件)。
+/// In one source, picks up every place where the body calls bare an argument for which the caller passes a function returning a Program (one finding per argument of one definition).
 pub fn param_calls_in(source: &str, scope: Scope<'_>, defks: &DefkNames, params: &dyn ProgramParamsLookup) -> Vec<ParamCall> {
     let mut reader = Reader::new(source, 0, source.len());
     let forms = reader.read_all();
@@ -352,7 +352,7 @@ pub fn param_calls_in(source: &str, scope: Scope<'_>, defks: &DefkNames, params:
     if asking.is_empty() {
         return Vec::new();
     }
-    // 引く呼び先は定義の分をまとめて渡す(呼び手を探す側が、repo の file を読むのを 1 度で済ませるため)。
+    // The callees to look up are passed together for the definitions (so the side searching for callers reads the repo's files only once).
     let callees: Vec<String> = asking.iter().map(|asked| format!("{}.{}", scope.module, asked.definition)).collect();
     let passed_all = params.passed_to_all(&callees);
     let mut found: Vec<ParamCall> = Vec::new();
@@ -361,7 +361,7 @@ pub fn param_calls_in(source: &str, scope: Scope<'_>, defks: &DefkNames, params:
             continue;
         }
         let Asking { definition, container, items, list_at, positional, all } = asked;
-        // 引数の名 → 渡した物(最初の 1 つ)。
+        // Argument name -> what was passed (the first one).
         let mut targets: BTreeMap<String, &PassedProgram> = BTreeMap::new();
         for fact in passed {
             let name = match &fact.slot {
@@ -385,8 +385,8 @@ pub fn param_calls_in(source: &str, scope: Scope<'_>, defks: &DefkNames, params:
     found
 }
 
-/// 定義の本体(`bodies`)が、引数のどれか(`parameters` — 渡された物は問わない)を Program の位置の外で素で呼んでいるか。当たりの必要条件
-/// (当たりは、呼び手が渡した引数の名を、この判定と同じ歩き方で見つけた所)なので、偽なら呼び手の事実を引かずに済む。
+/// Whether the body of a definition (`bodies`) calls any of the arguments (`parameters` — what was passed does not matter) bare outside a Program position. A necessary condition for a hit
+/// (a hit is a place where the walker, in the same way as this decision, finds the name of an argument the caller passed), so if false there is no need to look up the caller's facts.
 fn calls_a_parameter_bare(
     hy: &Hy<'_>,
     scope: Scope<'_>,
@@ -396,7 +396,7 @@ fn calls_a_parameter_bare(
     definition: &str,
     container: &str,
 ) -> bool {
-    // 渡された物の値は、当たりの有無に効かない(Walker が見るのは名だけ)ので、どの引数も同じ印を付ける。
+    // What value was passed does not affect whether there is a hit (the Walker looks only at names), so every argument gets the same mark.
     let any = PassedProgram { slot: Slot::Position(0), passed: String::new(), caller: String::new() };
     let targets: BTreeMap<String, &PassedProgram> = parameters.iter().map(|name| (name.to_string(), &any)).collect();
     if targets.is_empty() {
@@ -410,7 +410,7 @@ fn calls_a_parameter_bare(
     !found.is_empty()
 }
 
-/// Program として渡す所の外で、引数の名を頭にした呼びを探す道具。
+/// A tool that searches, outside the places that pass on as a Program, for a call headed by an argument's name.
 struct Walker<'a, 'h> {
     hy: &'h Hy<'a>,
     scope: Scope<'a>,
@@ -421,7 +421,7 @@ struct Walker<'a, 'h> {
 }
 
 impl Walker<'_, '_> {
-    /// form を下る。`program` はこの form が Program として渡される位置か。
+    /// Descends a form. `program` is whether this form is in a position passed as a Program.
     fn walk(&self, form: &Form, program: bool, out: &mut Vec<ParamCall>) {
         match &form.node {
             Node::Seq { delim: Delim::Paren, .. } => self.call(form, program, out),
@@ -438,7 +438,7 @@ impl Walker<'_, '_> {
         }
     }
 
-    /// `( … )` 1 つ — 引数の名を頭にした呼びが Program の位置の外なら積み、子へ Program の位置を配る。
+    /// One `( … )` — if a call headed by an argument's name is outside a Program position, accumulates it, and distributes the Program position to its children.
     fn call(&self, form: &Form, program: bool, out: &mut Vec<ParamCall>) {
         let items = live(form).unwrap_or_default();
         let head = items.first().and_then(|h| self.hy.symbol(h));
@@ -477,7 +477,7 @@ impl Walker<'_, '_> {
 mod tests {
     use super::*;
 
-    /// 2 つの source(呼び先 m.callee と呼び手 m.caller)で、呼び先の素の呼びを (定義::引数 ← 渡した物) の列にする。
+    /// For two sources (callee m.callee and caller m.caller), turns the callee's bare calls into a list of (definition::argument <- what was passed).
     fn found(callee: &str, caller: &str) -> Vec<String> {
         let bindings = BTreeMap::new();
         let defks = DefkNames::of(&["m.payload_of", "m.rows_by_text"]);
@@ -502,14 +502,14 @@ mod tests {
   (! (rows-by-text tags (fnk [row] (<- p (payload-of row)) (.get p "subject")))))
 (defk other [xs] (pick xs :key-of payload-of))
 (defk calm [xs] (safe xs payload-of))"#;
-        // rows-by-text と pick は素で呼ぶ(束ね・内包表記)。safe は (<- …) と (! …) で受けるので拾わない。
+        // rows-by-text and pick call bare (a bind, a comprehension). safe takes it with (<- …) and (! …), so it is not picked up.
         assert_eq!(found(callee, caller), vec!["rows_by_text::field_of <- fnk", "pick::key_of <- payload-of"]);
     }
 
     #[test]
     fn plain_functions_passed_as_arguments_are_not_traced() {
         let callee = "(defk rows-by-text [rows field-of] (for [row rows] (setv value (field-of row))) rows)\n";
-        // 呼び手が素の関数(fn・deff の名)を渡すなら素で呼んでよい。defk を変数に入れてから渡す形は追えない(拾わない)。
+        // If the caller passes a plain function (the name of an fn or deff), calling it bare is fine. A defk put into a variable before being passed cannot be followed (not picked up).
         let caller = "(defk a [t] (! (rows-by-text t (fn [row] (.get row \"s\")))))\n(defk b [t] (setv f payload-of) (! (rows-by-text t f)))\n";
         assert!(found(callee, caller).is_empty());
     }
