@@ -98,7 +98,7 @@ CGROUP_REFUSED = b"2"
 
 def module_named(name: str) -> ModuleType:
     """名の module を読み込むため — 待ちの子の役目の口(入口と前もって読む module は、実行環境の宣言と頼みから名で届く)。動的な読み込みは
-    この 1 か所だけ(.agents/code-quality.d/doeff-cluster-warm-child.json の dynamic_imports)。"""
+    この 1 か所だけ(品質検査の module 契約の断片 doeff-cluster-warm-child.json(契約は repo の外の置き場) の dynamic_imports)。"""
     return importlib.import_module(name)
 
 

@@ -20,7 +20,6 @@
 (import doeff-adr.macros [fact interpretation counterexample])
 (require doeff-hy.macros [deftest defk <-])
 (import doeff [do run])
-(import json)
 (import re)
 (import pathlib [Path])
 
@@ -97,21 +96,13 @@
   (tuple found))
 
 
-(defn #^ tuple contract-modules [#^ Path repo-root]
-  "The module contract of the shared quality checks (the declaration of the surface where static checks always apply)."
-  (setv declaration (json.loads (.read-text (/ repo-root ".agents" "code-quality.json")
-                                            :encoding "utf-8")))
-  (tuple (get declaration "modules")))
-
-
 (defadr ADR-DOE-HY-005
   :title "The remaining 2 Hy fences: runtime type checking is a TypeCheck request switched by a handler (off by default; static is always on). Record-scaffold macros live in doeff-hy together with their projection rules; no repo grows its own macros (existing owners are in a frozen ledger)"
   :status "accepted"
   :scope ["docs/adr/defadr_doeff_hy_005_typecheck_and_record_fences.hy"
           "packages/doeff-hy/src/doeff_hy/_typecheck.hy"
           "packages/doeff-hy/src/doeff_hy/_typecheck_handlers.hy"
-          "packages/doeff-hy/src/doeff_hy/record.hy"
-          ".agents/code-quality.json"]
+          "packages/doeff-hy/src/doeff_hy/record.hy"]
   :problem
     [(fact
        "In agora-redesign decision 1.4, the remaining 4 of the 7 Hy fences are: the TypeCheck effect (static always on, runtime checking switched by a handler), record-scaffold macros, not placing read-side projections in operator, and placing new macros in doeff-hy together with their projection rules."
@@ -149,6 +140,9 @@
        :counterexamples
          [(counterexample "The default handler looks at values — statically known types are paid twice on the hot path, and red has two sources, static and runtime")
           (counterexample "The on handler does not look at values (passes the request through) — checks can claim 'the boundary was verified' while nothing was verified (an empty check)")])
+     ;; The module contract of the shared quality checks is kept outside this repository together with the other private
+     ;; tool settings (2026-11-05), so the probe of this law (the fence modules are in the contract exactly once with
+     ;; typed: true) runs beside the contract, not in this repository's tests.
      (law static-type-check-is-always-on
        :statement "for_all hy module m in doeff_hy fences: contract(m).typed = true — static checking has no switch"
        :counterexamples
@@ -179,19 +173,6 @@
        (assert (is-not verdict None))
        (assert (in "owner" verdict))
        (assert (in "int" verdict)))
-     (deftest test-adr-doe-hy-005-static-check-is-always-on
-       ;; Probe: the fence modules are in the module contract with typed: true.
-       (setv repo-root (. (Path __file__) parent parent parent))
-       (setv modules (contract-modules repo-root))
-       (setv fences ["packages/doeff-hy/src/doeff_hy/_typecheck.hy"
-                     "packages/doeff-hy/src/doeff_hy/record.hy"])
-       (for [fence fences]
-         (setv owners (lfor m modules :if (in fence (get m "paths")) m))
-         (assert (= (len owners) 1)
-                 (+ "A fence module is not in the contract exactly once (ADR-DOE-HY-005 R2): " fence))
-         (assert (get (get owners 0) "typed")
-                 (+ "A fence module is registered with typed: false"
-                    " (ADR-DOE-HY-005 R2 — no switch for static checking): " fence))))
      (deftest test-adr-doe-hy-005-macros-live-only-in-doeff-hy
        ;; Probe: measured = macro-owning-files, law = equality with MACRO-OWNER-ROSTER.
        (setv repo-root (. (Path __file__) parent parent parent))

@@ -1,9 +1,0 @@
-{
-  "module_extensions": {
-    "doeff-cluster-local": {
-      "allow": [
-        "doeff-cluster-cluster-control"
-      ]
-    }
-  }
-}

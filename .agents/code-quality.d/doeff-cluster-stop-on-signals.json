@@ -1,9 +1,0 @@
-{
-  "module_extensions": {
-    "doeff-cluster-main": {
-      "allow": [
-        "doeff-cluster-coordinator-inbox"
-      ]
-    }
-  }
-}

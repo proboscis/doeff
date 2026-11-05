@@ -1,9 +1,0 @@
-{
-  "module_extensions": {
-    "doeff-cluster-tests": {
-      "allow": [
-        "doeff-cluster-machine"
-      ]
-    }
-  }
-}
