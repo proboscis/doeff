@@ -159,7 +159,7 @@ fn the_message_names_the_effect_the_declaration_and_the_way_out() {
     let hit = violations(&report).into_iter().find(|v| v["key"].as_str().unwrap_or("").ends_with("::match_an_absent_arm::found::Missing")).expect("a hit");
     let message = hit["message"].as_str().expect("message");
     assert!(
-        message.contains("ReadRow declared Missing as absent") && message.contains("<- does not bind Missing to found, so this branch (match arm) is never taken") && message.contains("maybe / on-raise / :absent"),
+        message.contains("ReadRow declared Missing as absent") && message.contains("<- does not bind found to Missing, so this branch (match arm) is never taken") && message.contains("maybe / on-raise / :absent"),
         "{}",
         message
     );
