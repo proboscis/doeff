@@ -14,3 +14,6 @@
   value: { name: WORKER_CGROUP_LAYOUT, value: "worker:memory.min=256M,cpu.weight=1000 services:memory.min=1536M,cpu.weight=1000 jobs:memory.max=896M,cpu.weight=100 prepare:memory.max=640M,cpu.weight=100 exec:memory.max=256M,cpu.weight=1000" }
 - { op: add, path: /spec/template/spec/containers/0/env/-, value: { name: DOEFF_WORKER_PREPARE_CGROUP, value: prepare } }
 - { op: add, path: /spec/template/spec/containers/0/env/-, value: { name: WORKER_EVICTION_MARGIN, value: 128M } }
+# - DOEFF_WORKER_WARM_TABLE_CHILDREN off: task の来ない機体なので、温める表の行の root は組むだけにし、待ちの子(1 つ約 550 MB)を起こさない。
+#   起こすと分かれ元にならないまま組みと同じ jobs の層に残り、次の版の先の組みを no-memory-room で断らせた(2026-11-05 の k3s-3)。
+- { op: add, path: /spec/template/spec/containers/0/env/-, value: { name: DOEFF_WORKER_WARM_TABLE_CHILDREN, value: "off" } }

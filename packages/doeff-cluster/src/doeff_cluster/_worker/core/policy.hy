@@ -561,12 +561,13 @@
 (defk warm-child-actions [now desired world warm policy [records {}]]
   {:pre [(: now int) (: desired tuple) (: world WorldView) (: warm tuple) (: policy WorkerPolicy) (: records dict)] :post [(: % tuple)]
    :tags {:context "worker" :role "judgment"}}
-  "待ちの子(#3646)を起こす・止める・観測から外す action を求めるため: 要る root = 宣言に分かれる task が在るか温める表に在る root と、
-   service を分ける root(service-warm-keys)のうち READY の物。要る root と観測に在る待ちの子を root のキーの順に
-   1 つずつ判じる(warm-child-step)。records = job の記憶(task を分けるのを断った待ちの子を止める材料 — fork-refusals)。"
+  "待ちの子(#3646)を起こす・止める・観測から外す action を求めるため: 要る root = 宣言に分かれる task が在るか温める表に在る root
+   (温める表は policy.warm-table-children が真の時だけ)と、service を分ける root(service-warm-keys)のうち READY の物。要る root と
+   観測に在る待ちの子を root のキーの順に 1 つずつ判じる(warm-child-step)。records = job の記憶(task を分けるのを断った待ちの子を止める
+   材料 — fork-refusals)。"
   (val services (service-warm-keys desired policy))
   (val wanted (frozenset (+ (tuple (gfor spec desired :if (forks-from-warm-child spec) (warm-key-of spec)))
-                            (tuple (gfor w warm w.key))
+                            (if policy.warm-table-children (tuple (gfor w warm w.key)) #())
                             (tuple services))))
   (val keys (sorted (| wanted (frozenset (gfor view world.warm-children view.key)))))
   (<- refusals dict (fork-refusals records))
