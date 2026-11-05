@@ -1,13 +1,13 @@
-"""Traverse の handler が件ごとの結末を ItemOutcome で知らせる契約の検。
+"""Tests the contract that the Traverse handler reports each item's outcome with ItemOutcome.
 
-失敗する件のある pipeline に進捗の bar を足すと、bar が n < total のまま閉じなかった
-: 進捗の handler は f を包んで終わった件だけを数え、失敗した件・When で
-落ちた件・前の段から持ち越した件を数えられなかった — 件の結末を知るのは Traverse の handler だけだった。
+When a progress bar was added to a pipeline with failing items, the bar never closed, stuck at n < total
+: the progress handler counted only the items that finished wrapping f, and could not count failed items, items dropped by When,
+or items carried over from an earlier stage — only the Traverse handler knew an item's outcome.
 
-契約: sequential・parallel・parallel_fail_fast は、件の結末(ok・failed・skipped・carried)が決まるたびに
-ItemOutcome を出す。出す所は Traverse と handler の間の handler(件の Program に付け直す内側の handler)の下で、
-受け手が無ければ handler 自身が None で答える。内側の handler のどれも効果の引数の注記に ItemOutcome を名指さなければ
-出さない(出す費用は件を走らせる費用ほどあり、誰も数えない Traverse は払わない)。progress_bars はそれを数える。
+Contract: sequential, parallel, and parallel_fail_fast emit ItemOutcome each time an item's outcome (ok, failed, skipped, carried) is decided.
+It is emitted under the handler between Traverse and the handler (the inner handler reattached to the item Program),
+and if there is no receiver the handler itself answers None. It is not emitted unless one of the inner handlers names ItemOutcome in an effect argument annotation
+(emitting costs about as much as running an item, and a Traverse nobody counts does not pay it). progress_bars counts it.
 """
 
 import io
@@ -45,7 +45,7 @@ _STRATEGIES: dict[str, Callable[[], ProgramHandler]] = {
 
 @do
 def _first(x: int):
-    """1 段目の件: 3 は失敗、5 は When で落ちる(Skip)、他は 10 倍。"""
+    """Stage 1 items: 3 fails, 5 is dropped by When (Skip), the others are multiplied by 10."""
     if x == 3:
         raise ValueError("three")
     if x == 5:
@@ -55,7 +55,7 @@ def _first(x: int):
 
 @do
 def _second(v: int):
-    """2 段目の件: 1 段目の有効な件に 1 を足す(1 段目で失敗・skipped の件は持ち越す)。"""
+    """Stage 2 items: add 1 to the valid items of stage 1 (items that failed or were skipped in stage 1 are carried over)."""
     if False:
         yield
     return v + 1
@@ -70,20 +70,20 @@ def _pipeline(items: Iterable[int]):
 
 @do
 def _traversed(f: Callable[[int], Program], items: Iterable[int], label: str | None = None):
-    """Traverse 1 回だけの Program(段 1 つの検の本体)。"""
+    """A Program of just one Traverse (the body of a one-stage test)."""
     return (yield Traverse(f, items, label=label))
 
 
 class _Reports:
-    """ItemOutcome を名指す検の中の受け手 — 受けた順に持ち、外へ渡す(外の progress_bars にも届き、誰も受けなければ
-    Traverse の handler が None で答える)。"""
+    """A receiver inside a test that names ItemOutcome — keeps what it received in order and passes it outward (it reaches the outer progress_bars too, and if nobody receives it,
+    the Traverse handler answers None)."""
 
     def __init__(self) -> None:
         self._mut_seen: tuple[ItemOutcome, ...] = ()
 
     @property
     def seen(self) -> tuple[ItemOutcome, ...]:
-        """受けた知らせ(受けた順)。"""
+        """The notices received (in the order received)."""
         return self._mut_seen
 
     def handler(self) -> ProgramHandler:
@@ -96,7 +96,7 @@ class _Reports:
         return _program_handler(watch)
 
     def runs(self) -> list[tuple[ItemOutcome, ...]]:
-        """Traverse の 1 回ごとの知らせ(初めて知らせた順・中は件の番号の順)。"""
+        """The notices of each Traverse run (in the order first notified; within a run, in item index order)."""
         order: tuple[object, ...] = tuple(
             dict.fromkeys(report.traverse for report in self._mut_seen)
         )
@@ -111,7 +111,7 @@ class _Reports:
 
 
 class _RecordedBar(tqdm):
-    """本物の tqdm(出力は捨てる)に、progress_bars が close を呼んだかを残す。"""
+    """Records, on a real tqdm (output discarded), whether progress_bars called close."""
 
     def __init__(self, *, total: int, desc: str) -> None:
         super().__init__(total=total, desc=desc, file=io.StringIO())
@@ -119,7 +119,7 @@ class _RecordedBar(tqdm):
 
     @property
     def closed_by_handler(self) -> bool:
-        """progress_bars が close を呼んだか。"""
+        """Whether progress_bars called close."""
         return self._mut_closed_by_handler
 
     def close(self) -> None:
@@ -128,7 +128,7 @@ class _RecordedBar(tqdm):
 
 
 class _Bars:
-    """progress_bars の make_bar — 作った bar を作った順に持つ。"""
+    """make_bar of progress_bars — keeps the bars it made in the order made."""
 
     def __init__(self) -> None:
         self._mut_made: tuple[_RecordedBar, ...] = ()
@@ -143,7 +143,7 @@ class _Bars:
 
 
 def _run_under(strategy: ProgramHandler, inside: list[ProgramHandler], program: Program[_T]) -> _T:
-    """program を inside(内側が先)の下、Traverse の handler strategy の下で走らせる。"""
+    """Runs program under inside (inner first) and under the Traverse handler strategy."""
     body: Program[_T] = program
     for install in [*inside, fail_handler, try_handler]:
         body = install(body)
@@ -152,7 +152,7 @@ def _run_under(strategy: ProgramHandler, inside: list[ProgramHandler], program: 
 
 @pytest.mark.parametrize("name", sorted(_STRATEGIES))
 def test_progress_bars_close_at_total_when_items_fail(name: str) -> None:
-    """受入 c6eeb01ac: 失敗・skipped・持ち越しの件がある pipeline でも、tqdm の bar が n == total で閉じる。"""
+    """Acceptance c6eeb01ac: even in a pipeline with failed, skipped, and carried-over items, the tqdm bar closes at n == total."""
     bars = _Bars()
     _, second = _run_under(
         _STRATEGIES[name](), [progress_bars(bars.make)], _pipeline([1, 2, 3, 4, 5, 6])
@@ -172,7 +172,7 @@ def test_each_item_reports_the_outcome_the_traverse_answers(name: str) -> None:
     assert [r.outcome for r in second_run] == ["ok", "ok", "carried", "ok", "carried", "ok"]
     for run_, answered, label in [(first_run, first, "first"), (second_run, second, "second")]:
         assert {(r.label, r.total) for r in run_} == {(label, 6)}
-        # 知らせた件は、Traverse が答える Collection の件そのもの(値・失敗の印・履歴)
+        # The notified items are the very items of the Collection Traverse answers (value, failure mark, history)
         assert [(r.item.index, r.item.failed, r.item.value, r.item.history) for r in run_] == [
             (item.index, item.failed, item.value, item.history) for item in answered.all_items
         ]
@@ -180,7 +180,7 @@ def test_each_item_reports_the_outcome_the_traverse_answers(name: str) -> None:
 
 @pytest.mark.parametrize("name", sorted(_STRATEGIES))
 def test_items_carried_before_the_first_run_item_are_reported_too(name: str) -> None:
-    """2 段目の頭の件は 1 段目で失敗した持ち越し — 内側の handler を読む前の件も、読んだ後に知らせて bar は閉じる。"""
+    """The first item of stage 2 is a carry-over that failed in stage 1 — an item before the inner handlers are read is also notified after the read, and the bar closes."""
     reports = _Reports()
     bars = _Bars()
     _, second = _run_under(
@@ -194,7 +194,7 @@ def test_items_carried_before_the_first_run_item_are_reported_too(name: str) -> 
 
 @pytest.mark.parametrize("name", sorted(_STRATEGIES))
 def test_a_traverse_with_no_item_to_run_reports_nothing(name: str) -> None:
-    """件 0 の Traverse と持ち越しだけの Traverse は何も知らせず、bar も開かない(sequential は内側の handler を読まない — #2958)。"""
+    """A Traverse with 0 items and a Traverse of only carried-over items notify nothing and open no bar (sequential does not read the inner handlers — #2958)."""
     reports = _Reports()
     bars = _Bars()
     _, second = _run_under(
@@ -211,7 +211,7 @@ def test_a_traverse_with_no_item_to_run_reports_nothing(name: str) -> None:
 
 
 def test_parallel_fail_fast_reports_the_items_up_to_the_failure_and_the_rest_cancelled() -> None:
-    """件 3 で止まると、それまでの件と失敗した件に続き、止めた件 4 を cancelled と知らせる。"""
+    """When it stops at item 3, following the items so far and the failed item, the stopped item 4 is notified as cancelled."""
     reports = _Reports()
     with pytest.raises(ValueError, match="three"):
         _run_under(
@@ -254,7 +254,7 @@ def _nested(x: int):
     ids=["sequential", "parallel", "parallel_fail_fast"],
 )
 def test_a_nested_traverse_reports_as_its_own_run(strategy: Callable[[], ProgramHandler]) -> None:
-    """件の Program が出す Traverse も、付け直した内側の handler の下で知らせる — 1 回ごとに別の traverse。"""
+    """A Traverse emitted by an item Program is also notified under the reattached inner handler — a separate traverse each time."""
     reports = _Reports()
     bars = _Bars()
     answered = _run_under(
@@ -277,14 +277,14 @@ def test_a_nested_traverse_reports_as_its_own_run(strategy: Callable[[], Program
 
 
 class _Pulls:
-    """iterable から件を引いた所と、件を走らせた所を、起きた順に持つ。"""
+    """Keeps, in the order they happened, where items were pulled from the iterable and where items were run."""
 
     def __init__(self) -> None:
         self._mut_events: tuple[str, ...] = ()
 
     @property
     def events(self) -> tuple[str, ...]:
-        """引いた所と走らせた所(起きた順)。"""
+        """Where they were pulled and where they were run (in the order they happened)."""
         return self._mut_events
 
     def items(self, values: list[int]) -> Iterator[int]:
@@ -304,7 +304,7 @@ class _Pulls:
 
 
 def test_an_iterable_without_length_is_read_to_its_end_only_when_reported() -> None:
-    """sequential は長さの無い iterable を件ごとに引く。知らせる時だけ、total のために最初の件で残りを読み切る。"""
+    """sequential pulls items one at a time from an iterable with no length. Only when notifying, it reads the rest to the end at the first item, for total."""
     quiet = _Pulls()
     _run_under(sequential, [], _traversed(quiet.step, quiet.items([1, 2, 3])))
     assert quiet.events == ("pull 1", "run 1", "pull 2", "run 2", "pull 3", "run 3")
@@ -320,12 +320,12 @@ def test_an_iterable_without_length_is_read_to_its_end_only_when_reported() -> N
 
 @pytest.mark.parametrize("name", sorted(_STRATEGIES))
 def test_nothing_is_reported_unless_a_handler_inside_names_item_outcome(name: str) -> None:
-    """名指す受け手が内側に無ければ出さない: 外側の受け手には届かず、何でも受ける内側の handler にも ItemOutcome は来ない。"""
+    """Not emitted if no naming receiver is inside: it does not reach an outer receiver, and ItemOutcome does not come to an inner handler that accepts anything either."""
     outside = _Reports()
     seen_inside: tuple[type, ...] = ()
 
     @do
-    def any_effect(effect, k):  # 注記なし = どの効果も受ける
+    def any_effect(effect, k):  # no annotation = accepts every effect
         nonlocal seen_inside
         seen_inside = (*seen_inside, type(effect))
         yield Pass(effect, k)
@@ -341,7 +341,7 @@ def test_nothing_is_reported_unless_a_handler_inside_names_item_outcome(name: st
 
 @pytest.mark.parametrize("name", sorted(_STRATEGIES))
 def test_a_report_no_handler_takes_is_answered_by_the_traverse_handler(name: str) -> None:
-    """名指すが受けずに Pass する handler の下でも、Traverse の handler が答えて走り終わる。"""
+    """Even under a handler that names it but Passes without receiving, the Traverse handler answers and the run finishes."""
 
     @do
     def passes(effect: ItemOutcome, k):
@@ -354,15 +354,15 @@ def test_a_report_no_handler_takes_is_answered_by_the_traverse_handler(name: str
     assert second.valid_values == [11, 21, 41, 61]
 
 
-# 受け手の決まり: 受け手は知らせを見て外へ渡し、答えるのは Traverse の
-# handler だけ。A — 答えて止める受け手が 1 つ居ると、並び次第で別の受け手(2 本目の bar・失敗の記録)が黙って何も受けなかった。
-# B — 知らせに例外を投げ返す受け手(失敗の上限で Traverse を止める)が、Traverse の走り方の判断を受け手へ移したまま検を通った。
+# Receiver rules: a receiver looks at the notice and passes it outward, and only the Traverse
+# handler answers. A — if one receiver answers and stops, then depending on order another receiver (a second bar, the failure recorder) silently received nothing.
+# B — a receiver that throws an exception back at the notice (stopping Traverse at a failure limit) passed the test while moving the decision of how Traverse runs to the receiver.
 
 
 @pytest.mark.parametrize("name", sorted(_STRATEGIES))
 @pytest.mark.parametrize("order", ["bars-inside", "bars-outside"])
 def test_consumers_compose_in_any_order(name: str, order: str) -> None:
-    """progress_bars 2 本と記録係は、どの並びでも全部の知らせを受ける(どれも渡すので)。"""
+    """Two progress_bars and the recorder receive all notices in any order (because each passes it on)."""
     reports = _Reports()
     bars, more_bars = _Bars(), _Bars()
     consumers = [progress_bars(bars.make), reports.handler(), progress_bars(more_bars.make)]
@@ -379,7 +379,7 @@ def test_consumers_compose_in_any_order(name: str, order: str) -> None:
 
 @pytest.mark.parametrize("name", sorted(_STRATEGIES))
 def test_a_consumer_that_answers_the_report_fails_the_traverse(name: str) -> None:
-    """知らせに答えて止める受け手は、外の受け手から知らせを隠す — Traverse の handler が ItemOutcomeNotPassedError で断る。"""
+    """A receiver that answers the notice and stops hides the notice from outer receivers — the Traverse handler rejects it with ItemOutcomeNotPassedError."""
 
     @do
     def answers(effect: ItemOutcome, k):
@@ -391,7 +391,7 @@ def test_a_consumer_that_answers_the_report_fails_the_traverse(name: str) -> Non
 
 
 class _BudgetError(RuntimeError):
-    """受け手が投げ返す例外(Traverse を止めようとする受け手の形)。"""
+    """The exception a receiver throws back (the shape of a receiver trying to stop Traverse)."""
 
 
 @do
@@ -417,7 +417,7 @@ def _raises(effect: ItemOutcome, k):
 def test_a_consumer_that_throws_into_the_report_fails_the_traverse(
     strategy: Callable[[], ProgramHandler], consumer: Callable[..., object]
 ) -> None:
-    """知らせに投げ返す受け手は Traverse を止める判断を握る — Traverse の handler が ItemOutcomeNotPassedError で断り、投げた物を cause に持つ。"""
+    """A receiver that throws back at the notice holds the decision to stop Traverse — the Traverse handler rejects it with ItemOutcomeNotPassedError and keeps what was thrown as cause."""
     with pytest.raises(ItemOutcomeNotPassedError) as raised:
         _run_under(
             strategy(),
@@ -442,8 +442,8 @@ def _nested_failing(x: int):
 def test_a_broken_report_contract_in_a_nested_traverse_is_no_item_failure(
     strategy: Callable[[], ProgramHandler],
 ) -> None:
-    """入れ子の Traverse で受け手が投げ返しても、外の Traverse はそれを外の件の失敗として Collection に飲み込まない
-    (for/do の From を 2 つ重ねると、外の件ごとに内の Traverse が出る — 飲み込むと契約の誤りが黙る)。"""
+    """Even if a receiver throws back in a nested Traverse, the outer Traverse does not swallow it into the Collection as an outer item's failure
+    (stacking two From in for/do emits an inner Traverse per outer item — swallowing would silence a contract error)."""
     with pytest.raises(ItemOutcomeNotPassedError) as raised:
         _run_under(
             strategy(),

@@ -1,10 +1,10 @@
-"""event-loop の macro を、state の型を書いて使う係の型検査の失敗ケース(#3080)。
+"""Failure cases of type checking for a worker that uses the event-loop macro with a state type written (#3080).
 
-macro の展開は、節の値を「state の型か、抜ける印 LoopStop」の注記つきで束ねていた。使い手の pyright strict に、書き手に直せない赤
-(Expected type arguments for generic class "LoopStop"・展開の変数と state の型が Unknown)が出た(automation の係の手本を macro で
-書いた時に commit の hook が名指した)。型の引数を足しても、注記の型が Program の答えの型の推論へ逆に流れ込んで Unknown が残る。
-→ 展開は節の値を注記せずに束ね、実行時は assert で確かめる(静的には state の名へ書き戻す所で state の型として読まれる)。
-直しを外すと、ここの検(state の型を書いた係を strict で読む)が赤になる。
+The macro expansion used to bundle clause values with an annotation of "the state type or the exit marker LoopStop". The caller's pyright strict reported red the author cannot fix
+(Expected type arguments for generic class "LoopStop"; the expansion variable and the state type are Unknown) (named by the commit hook when the automation worker's model was
+written with the macro). Even adding the type arguments, the annotated type flows back into inference of the Program's answer type and Unknown remains.
+-> The expansion bundles clause values without annotation and checks them at runtime with assert (statically they are read as the state type where they are written back to the state name).
+If the fix is removed, the check here (reading a worker with a state type under strict) goes red.
 """
 
 import json
@@ -15,7 +15,7 @@ from pathlib import Path
 
 import pytest
 
-needs_pyright = pytest.mark.skipif(shutil.which("pyright") is None, reason="pyright が無い")
+needs_pyright = pytest.mark.skipif(shutil.which("pyright") is None, reason="pyright is not available")
 
 MODULE = """\
 (require doeff-hy.macros [defk])
@@ -24,7 +24,7 @@ MODULE = """\
 
 (defk counted []
   {:pre [] :post [(: % int)] :tags {:context "probe" :role "program"}}
-  "期限の出来事を数え、終わりの期限で抜ける係(state の型 int を書いた形)。"
+  "A worker that counts deadline events and exits on the final deadline (the form with state type int written)."
   (event-loop [count int 0]
     (:stop _reason)       count
     (TimerFired :tag tag) (if (= tag "end")
@@ -32,7 +32,7 @@ MODULE = """\
                               (+ count 1))))
 """
 
-# durable の keeper の形(c3-w48 が #3102 で当たった形): state が record・節の本体が (do (<- …) …)・止めの節の本体が do。
+# The shape of the durable keeper (the shape c3-w48 hit in #3102): state is a record, clause bodies are (do (<- ...) ...), the stop clause body is do.
 RECORD_MODULE = """\
 (require doeff-hy.macros [defk <-])
 (require doeff-hy.record [defrecord])
@@ -42,19 +42,19 @@ RECORD_MODULE = """\
 (import doeff_events [TimerFired])
 
 (defrecord Lap
-  "周回の state(回った数)。"
+  "Lap state (number of laps run)."
   (#^ int passes))
 
 (defk stepped [lap]
   {:pre [(: lap Lap)] :post [(: % Lap)] :tags {:context "probe" :role "program"}}
-  "1 周回して次の state を返す。"
+  "Run one lap and return the next state."
   (Lap :passes (+ lap.passes 1)))
 
 (defk keeper []
   {:pre [] :post [(: % Lap)] :tags {:context "probe" :role "program"}}
-  "期限ごとに 1 周回し、10 周か終わりの期限で抜ける係(record の state・do の本体・do の止めの節)。"
+  "A worker that runs one lap per deadline and exits after 10 laps or on the final deadline (record state, do bodies, do stop clause)."
   (event-loop [lap Lap (Lap :passes 0)]
-    (:stop reason)        (do (<- (slog "止め" :reason reason :passes lap.passes))
+    (:stop reason)        (do (<- (slog "stop" :reason reason :passes lap.passes))
                               lap)
     (TimerFired :tag tag) (if (= tag "end")
                               (stop lap)
@@ -64,7 +64,7 @@ RECORD_MODULE = """\
 
 
 def _errors(root: Path) -> list[tuple[str, int, str]]:
-    # 型検査の道具は hook と同じく `python -m doeff_hy._static_check` で撃つ。
+    # The type-checking tool is run with `python -m doeff_hy._static_check`, the same as the hook.
     done = subprocess.run(
         [
             sys.executable,

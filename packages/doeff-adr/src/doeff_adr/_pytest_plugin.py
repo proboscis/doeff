@@ -131,36 +131,36 @@ _COLLECTED_FILES_KEY = pytest.StashKey[frozenset[Path]]()
 # One measurement per session: the collection-finish report and an in-session
 # gate test read the same verdict instead of walking rootdir twice.
 _WIRING_VERDICT_KEY = pytest.StashKey[WiringVerdict]()
-# 収集の終わりの報告: 記録から収集した file と、import して収集した file とその理由。
+# End-of-collection report: files collected from the record, and files collected by import with the reason.
 _INDEXED_FILES_KEY = pytest.StashKey[list[Path]]()
 _IMPORTED_FILES_KEY = pytest.StashKey[list[tuple[Path, str]]]()
 _DEPENDENCY_CHECKS_KEY = pytest.StashKey[DependencyChecks]()
 _PENDING_ENTRIES_KEY = pytest.StashKey[tuple[PendingEntry, ...]]()
 _SESSION_PATHS_KEY = pytest.StashKey["SessionPaths"]()
-# ini の doeff_hy_test_skips を起動の時に読んだ物。
+# What was read from ini doeff_hy_test_skips at startup.
 _HY_TEST_SKIPS_KEY = pytest.StashKey["HyTestSkips"]()
 
 
 class DoeffAdrHookspecs:
-    """doeff-adr が他の plugin に見せる hook。"""
+    """Hooks doeff-adr exposes to other plugins."""
 
     @pytest.hookspec(firstresult=True)
     def pytest_doeff_import_hy_module(self, collector: pytest.Module) -> types.ModuleType | None:
-        """Hy の test file の module を読む — 収集で読む時(記録で説明できない file)と、item の setup で読む時
-        (記録から収集した file)の両方がここを通る。import の時間を測る plugin(doeff-hy-pytest の上限)は、この hook を
-        wrapper で包む。"""
+        """Load the module of a Hy test file. Both loading during collection (files the record cannot explain) and loading at item setup
+        (files collected from the record) go through here. A plugin that measures import time (the doeff-hy-pytest limit) wraps this hook
+        with a wrapper."""
         raise NotImplementedError
 
 
 def pytest_addhooks(pluginmanager: pytest.PytestPluginManager) -> None:
-    """doeff-adr の hook を pytest に登録する。"""
+    """Register the doeff-adr hooks with pytest."""
     pluginmanager.add_hookspecs(DoeffAdrHookspecs)
 
 
 @pytest.hookimpl
 def pytest_doeff_import_hy_module(collector: pytest.Module) -> types.ModuleType:
-    """Hy の test file の module を読む既定の実装。収集の中で読んだ file は、読んだ直後に記録を実物と突き合わせて
-    キャッシュに保存する(時間の上限の wrapper が後で落としても、読めた module の記録は残す — 判定と保存は別の事柄)。"""
+    """Default implementation that loads the module of a Hy test file. A file loaded during collection has its record checked against the real thing
+    right after loading and saved to the cache (even if a time-limit wrapper fails later, the record of a module that did load is kept — judging and saving are separate matters)."""
     module = _import_hy_file(collector.path, session_paths(collector.config).root_resolved)
     if isinstance(collector, DoeffAdrHyFile):
         collector.after_import(module)
@@ -168,13 +168,13 @@ def pytest_doeff_import_hy_module(collector: pytest.Module) -> types.ModuleType:
 
 
 class HySourceFinder(importlib.abc.MetaPathFinder):
-    """.hy の module を pytest の assert の書き換えに渡さないための import の探し手。
+    """.hy import finder that keeps .hy modules away from pytest assert rewriting.
 
-    pytest の書き換え(``AssertionRewritingHook``)は、命令の行で名指した file の module を ``SourceFileLoader`` の
-    spec で見つけると ``ast.parse`` で Python として読み直す。Hy の loader は ``SourceFileLoader`` の子なので、名指しの
-    .hy を別の test file が名前で import すると SyntaxError になる(記録から収集した file はまだ読まれていないので
-    当たりやすい)。書き換えより前に置き、.hy の spec はそのまま(Hy の loader)返す。
-    loader そのものには触れない(bytecode の見張り(#1292)が包む ``SourceFileLoader`` の口はそのまま効く)。
+    When the pytest rewriter (``AssertionRewritingHook``) finds a module of a file named on the command line with a ``SourceFileLoader``
+    spec, it re-reads it as Python with ``ast.parse``. The Hy loader is a subclass of ``SourceFileLoader``, so when another test file imports the named
+    .hy by name it raises SyntaxError (easy to hit for files collected from the record, since they have not been read yet).
+    Placed before the rewriter, it returns the .hy spec (the Hy loader) as is.
+    It does not touch the loader itself (the ``SourceFileLoader`` hook wrapped by the bytecode watcher (#1292) keeps working).
     """
 
     def find_spec(
@@ -193,18 +193,18 @@ _HY_SOURCE_FINDER = HySourceFinder()
 
 
 def pytest_configure(config: pytest.Config) -> None:
-    """.hy の探し手を import の探し手の先頭に置く — pytest は書き換えの探し手を plugin の configure より前に置くので、
-    ここで先頭に入れれば書き換えより先に .hy を引き受けられる。"""
+    """Put the .hy finder at the front of the import finders — pytest places the rewriting finder before the plugin configure,
+    so inserting at the front here lets it take .hy before the rewriter."""
     if _HY_SOURCE_FINDER not in sys.meta_path:
         sys.meta_path.insert(0, _HY_SOURCE_FINDER)
-    # deftest の :scans が付ける印— deftest を集めるこの plugin が登録し、どの repo でも知らない印にしない。
-    config.addinivalue_line("markers", "scans(*globs): このテストが走査して読む dir か glob(deftest の :scans — 選びの道具が当てる)")
-    # 外す一覧は起動の時に 1 度だけ読む — 理由の無い行はここで run を止める(収集の file ごとに読み直さない)。
+    # Marker set by deftest :scans — registered by this plugin that collects deftests, so it is not a marker unknown to any repo.
+    config.addinivalue_line("markers", "scans(*globs): dir or glob this test scans and reads (deftest :scans — used by selection tooling)")
+    # Read the skip list once at startup — a line without a reason stops the run here (not re-read per collected file).
     config.stash[_HY_TEST_SKIPS_KEY] = parse_hy_test_skips(config.getini("doeff_hy_test_skips"))
 
 
 def pytest_unconfigure(config: pytest.Config) -> None:
-    """configure で置いた .hy の探し手を外す(同じ process で pytest を何度も走らせる時に積み重ねないため)。"""
+    """Remove the .hy finder placed at configure (so it does not pile up when pytest runs many times in the same process)."""
     if _HY_SOURCE_FINDER in sys.meta_path:
         sys.meta_path.remove(_HY_SOURCE_FINDER)
 
@@ -256,17 +256,17 @@ def pytest_addoption(parser: pytest.Parser) -> None:
 
 
 def _posix(text: str) -> str:
-    """OS の区切りの path の文字列を posix の形へ(posix ではそのまま)。"""
+    """Convert an OS-separator path string to posix form (unchanged on posix)."""
     return text if os.sep == "/" else text.replace(os.sep, "/")
 
 
 @dataclass(frozen=True)
 class HyFileMatcher:
-    """executable ADR の pattern と rootdir を 1 度だけ用意した照合。
+    """A matcher with the executable ADR patterns and rootdir prepared once.
 
-    候補は fnmatch と同じ意味で、file の名・rootdir からの path・絶対 path の 3 つ(``_matches_file_patterns`` と同じ)。rootdir の下
-    の path は文字列の頭で分かるので、Path の分解と再生成(``relative_to`` — 収集で 1 file ごとに 3 度、走査でも 1 度)を
-    繰り返さない。文字の上で rootdir の下に無い path は、今までどおり解決(realpath)して相対にする。
+    Candidates have the same meaning as fnmatch: the file name, the path from rootdir, and the absolute path (same as ``_matches_file_patterns``). Whether a path is under rootdir
+    can be known from the string prefix, so it avoids repeated Path decomposition and reconstruction (``relative_to`` — 3 times per file in collection, once more in scanning).
+    A path that is not textually under rootdir is resolved (realpath) and made relative, as before.
     """
 
     root: Path
@@ -275,7 +275,7 @@ class HyFileMatcher:
 
     @classmethod
     def from_root(cls, root: Path, patterns: Sequence[str]) -> "HyFileMatcher":
-        """root と pattern に対する path 処理の公開境界を組み立てる。"""
+        """Build the public boundary for path handling against root and patterns."""
         return cls(root, str(root).rstrip(os.sep) + os.sep, _pattern_regex(tuple(patterns)))
 
     def relative_module_parts(self, path: Path) -> list[str] | None:
@@ -290,17 +290,17 @@ class HyFileMatcher:
     def discover(
         self, norecurse: Sequence[str] = (), max_dirs: int = DEFAULT_WIRING_MAX_DIRS
     ) -> set[Path]:
-        """同じ root と pattern で executable ADR を走査する。"""
+        """Scan executable ADRs with the same root and patterns."""
         return _discover_executable_adrs(self.root, (), norecurse, max_dirs, matcher=self)
 
     def relative_posix(self, text: str) -> str:
-        """rootdir からの path(照合と報告のため)。文字の上で rootdir の下なら切り出し、そうでなければ解決して相対にする。"""
+        """Path from rootdir (for matching and reporting). If textually under rootdir, slice it out; otherwise resolve it and make it relative."""
         if text.startswith(self.root_prefix):
             return _posix(text[len(self.root_prefix) :])
         return _relative_posix(Path(text), self.root)
 
     def matches_text(self, text: str, name: str) -> bool:
-        """``text``(絶対 path の文字列)の file が executable ADR の pattern に当たるか。"""
+        """Whether the file at ``text`` (an absolute path string) matches the executable ADR patterns."""
         candidates = (name, self.relative_posix(text), _posix(text))
         return any(self.regex.match(os.path.normcase(candidate)) for candidate in candidates)
 
@@ -310,14 +310,14 @@ class HyFileMatcher:
 
 @functools.cache
 def _matcher(root_text: str, patterns: tuple[str, ...]) -> HyFileMatcher:
-    """rootdir と pattern の組ごとに 1 度だけ照合を用意する。"""
+    """Prepare the matcher once per rootdir and pattern set."""
     root = Path(root_text)
     return HyFileMatcher.from_root(root, patterns)
 
 
 @dataclass(frozen=True)
 class SessionPaths:
-    """収集の 1 file ごとに要る path のうち、session で変わらない物(rootdir の解決は 1 度だけ・キャッシュの置き場・照合)。"""
+    """Paths needed per collected file that do not change in a session (rootdir resolved once, cache location, matcher)."""
 
     root: Path
     root_resolved: Path
@@ -326,7 +326,7 @@ class SessionPaths:
 
 
 def session_paths(config: pytest.Config) -> SessionPaths:
-    """session の path と照合(初めて要った時に用意し、stash に置く)。"""
+    """The session paths and matcher (prepared when first needed, kept in the stash)."""
     paths = config.stash.get(_SESSION_PATHS_KEY, None)
     if paths is None:
         root = Path(config.rootpath)
@@ -341,11 +341,11 @@ def session_paths(config: pytest.Config) -> SessionPaths:
 
 
 def pytest_collect_file(file_path: Path, parent: pytest.Collector) -> pytest.Collector | None:
-    """Hy の file の集め手の 1 点 — executable ADR の pattern と、ini の doeff_hy_test_files の pattern(検の file)。
+    """A collector for Hy files — executable ADR patterns and the ini doeff_hy_test_files patterns (test files).
 
-    検の file を package ごとの conftest.py の ``pytest_collect_file`` で集めていた時は、conftest の無い dir の
-    test_*.hy が 1 本も集められないまま、日次の母集団の検には数えられていた(packages/doeff-hy/tests の 6 本)。
-    集める条件は root の ini の 1 点に置き、日次の母集団の検も同じ ini を読む。
+    When test files were collected by ``pytest_collect_file`` in each package conftest.py, test_*.hy in a dir without a conftest
+    was never collected, yet was counted in the daily population check (6 files in packages/doeff-hy/tests).
+    The collection condition now lives in one place, the root ini, and the daily population check reads the same ini.
     """
     path = file_path
     if path.suffix != ".hy":
@@ -359,7 +359,7 @@ def pytest_collect_file(file_path: Path, parent: pytest.Collector) -> pytest.Col
 
 @pytest.hookimpl(wrapper=True)
 def pytest_runtest_setup(item: pytest.Item) -> Generator[None, None, None]:
-    """記録から収集した item は、fixture と skip の評価より先に実物の module と関数に替える(遅延 import)。"""
+    """Swap an item collected from the record for the real module and function before fixture and skip evaluation (lazy import)."""
     parent = item.parent
     if isinstance(item, pytest.Function) and isinstance(parent, DoeffAdrHyFile):
         try:
@@ -367,20 +367,20 @@ def pytest_runtest_setup(item: pytest.Item) -> Generator[None, None, None]:
         except RecordMismatch as exc:
             forget_cached(parent.path.resolve(), items_cache_dir(parent.config))
             pytest.fail(
-                f"doeff-adr: 記録と実物が食い違った — 記録を消したので、次の収集はこの file を import して作り直す\n{exc}",
+                f"doeff-adr: record and real thing disagree — the record was deleted, so the next collection will import this file and rebuild it\n{exc}",
                 pytrace=False,
             )
     return (yield)
 
 
 def pytest_report_collectionfinish(config: pytest.Config) -> list[str]:
-    """収集の終わりに、記録から収集した file の数と、import して収集した file とその理由を報告する。"""
+    """At the end of collection, report the number of files collected from the record and the files collected by import with the reason."""
     indexed = config.stash.get(_INDEXED_FILES_KEY, [])
     imported = config.stash.get(_IMPORTED_FILES_KEY, [])
     if not indexed and not imported:
         return []
     root = Path(config.rootpath)
-    lines = [f"doeff-adr: 記録から収集 {len(indexed)} file・収集で import {len(imported)} file"]
+    lines = [f"doeff-adr: collected from record: {len(indexed)} files; imported during collection: {len(imported)} files"]
     lines += [f"  import: {_relative_posix(path, root)} — {reason}" for path, reason in imported]
     checks = config.stash.get(_DEPENDENCY_CHECKS_KEY, None)
     if checks is not None:
@@ -398,7 +398,7 @@ def _resolved_item_files(items: Iterable[pytest.Item]) -> frozenset[Path]:
 
 
 def _write_pending(config: pytest.Config) -> None:
-    """収集で import して照合した記録を、収集の終わりにまとめて書く(どの file の import の区間の外)。"""
+    """Write the records checked during collection in one go at the end of collection (outside any file's import span)."""
     pending: tuple[PendingEntry, ...] = config.stash.get(_PENDING_ENTRIES_KEY, ())
     config.stash[_PENDING_ENTRIES_KEY] = ()
     checks = config.stash.setdefault(_DEPENDENCY_CHECKS_KEY, DependencyChecks())
@@ -459,20 +459,20 @@ def wiring_failure_message(
 
 
 class DoeffAdrHyFile(pytest.Module):
-    """Hy の file の検の収集。module の取り込みだけを Hy の loader に替え、項目の生成は pytest の Module に任せる。
+    """Collect Hy test files. Only module loading is swapped to the Hy loader; item generation is left to the pytest Module.
 
-    以前は ``pytest.Function.from_parent`` で関数を 1 つずつ直に作っていたので、deftest の ``:interpreters`` /
-    ``:params`` が付ける ``pytest.mark.parametrize`` が展開されず、parametrize の fixture は既定の値のまま 1 本だけ
-    走っていた(ADR-DOE-HY-002 R2「deftest の params を fixture へ忠実に受け渡す」の違反・2026-09-25 の
-    doeff-claude-code の検で発覚)。Module の収集は parametrize を callspec に展開する。
+    Formerly functions were created directly one by one with ``pytest.Function.from_parent``, so the ``pytest.mark.parametrize`` that deftest ``:interpreters`` /
+    ``:params`` attach was not expanded, and the parametrize fixtures ran only once with default values (a violation of ADR-DOE-HY-002 R2 "pass deftest params faithfully to fixtures";
+    found 2026-09-25 in a doeff-claude-code test).
+    Module collection expands parametrize into callspecs.
 
-    収集で import しない(#1223): item を作る macro が書いた記録で説明できる file は、記録から
-    作った仮の module を Module の収集に渡し、module の import は item の setup まで待つ(``lazy_collection``)。
-    記録で説明できない file だけ、今までどおり収集で import する。
+    No import during collection (#1223): for a file the record written by the item-producing macro can explain, a provisional module built from the record
+    is given to Module collection, and the module import waits until item setup (``lazy_collection``).
+    Only files the record cannot explain are imported during collection, as before.
     """
 
     _mut_real_module: types.ModuleType | None = None
-    # 収集の中で import する理由(キャッシュに無い file)— import の直後の保存がこれを見る。setup の import では None。
+    # Reason for importing during collection (file not in the cache) — the save right after import reads this. None for import at setup.
     _mut_import_reason: str | None = None
     _mut_indexed: Indexed | None = None
     _mut_functions: IndexedFunctions | None = None
@@ -487,7 +487,7 @@ class DoeffAdrHyFile(pytest.Module):
         plan = (
             plan_collection(source, paths.cache_dir, root, checks)
             if supports_indexed_collection(self)
-            else NeedsImport("未知の収集 hook — 通常の import と収集を使う")
+            else NeedsImport("unknown collection hook — use normal import and collection")
         )
         match plan:
             case Indexed(records, fixtures):
@@ -495,7 +495,7 @@ class DoeffAdrHyFile(pytest.Module):
                 self.config.stash.setdefault(_INDEXED_FILES_KEY, []).append(self.path)
                 return stub_module(records, fixtures, source, module_name)
             case NeedsImport(reason):
-                # import が途中で終わる file(module ごと skip する等)も報告に載せるため、import の前に積む。
+                # Add before the import so that files whose import ends midway (e.g. module-level skip) are also reported.
                 self.config.stash.setdefault(_IMPORTED_FILES_KEY, []).append((self.path, reason))
                 self._mut_import_reason = reason
                 module = self.config.hook.pytest_doeff_import_hy_module(collector=self)
@@ -503,15 +503,15 @@ class DoeffAdrHyFile(pytest.Module):
                 return module
 
     def collect(self) -> Iterable[pytest.Item | pytest.Collector]:
-        """外す一覧(ini の doeff_hy_test_skips)に載れば import せず理由つきの skip の item 1 つ・載らなければ関数ごとの item。
+        """If listed in the skip list (ini doeff_hy_test_skips), one skip item with a reason without importing; otherwise per-function items.
 
-        一覧を読むのはこの 1 か所で、ADR の集め手(doeff_adr_hy_files)と Hy の検の file の集め手(HyTestFile)の両方に効く —
-        以前は HyTestFile だけが読み、ADR の冊を一覧に載せても赤のまま集まった(2026-10-07)。
+        This is the only place that reads the list, and it applies to both the ADR collector (doeff_adr_hy_files) and the Hy test file collector (HyTestFile) —
+        formerly only HyTestFile read it, so even an ADR book on the list was still collected and stayed red (2026-10-07).
         """
         skipped = _skipped_file_items(self)
         if skipped is not None:
             return skipped
-        _ = self.obj  # _getobj が記録か通常の import かを決める。
+        _ = self.obj  # _getobj decides between the record and a normal import.
         indexed = self._mut_indexed
         if indexed is None:
             return super().collect()
@@ -530,13 +530,13 @@ class DoeffAdrHyFile(pytest.Module):
             yield from functions.generate(name, funcobj)
 
     def after_import(self, module: types.ModuleType) -> None:
-        """収集の中で import した直後に、記録が実物を全部説明するなら保存し、説明しないなら理由を報告に足す。"""
+        """Right after importing during collection, save if the record fully explains the real thing; otherwise add the reason to the report."""
         reason = self._mut_import_reason
         if reason is None:
             return
         self._mut_import_reason = None
         verified = verify_records(module, self._pytest_collects)
-        # 展開が使った macro の記録(照らしの鍵)は import の直後に引く。
+        # Fetch the record of macros used by expansion (the cross-check key) right after the import.
         expansion = expansion_of(module)
         problems = [
             *verified.problems,
@@ -544,9 +544,9 @@ class DoeffAdrHyFile(pytest.Module):
         ]
         if problems or isinstance(expansion, ExpansionUnknown):
             imported = self.config.stash[_IMPORTED_FILES_KEY]
-            imported[-1] = (self.path, f"{reason} — 保存しない: " + "・".join(problems))
+            imported[-1] = (self.path, f"{reason} — not saved: " + "; ".join(problems))
             return
-        # 書くのは収集の終わり(_write_pending)— 記録の書き込みと読込済みの source の読みを、この file の import の区間に乗せない。
+        # Writing happens at the end of collection (_write_pending) — keeps record writing and reading loaded sources out of this file's import span.
         self.config.stash[_PENDING_ENTRIES_KEY] = self.config.stash.get(_PENDING_ENTRIES_KEY, ()) + (
             pending_entry(
                 self.path.resolve(),
@@ -559,13 +559,13 @@ class DoeffAdrHyFile(pytest.Module):
         )
 
     def _pytest_collects(self, name: str) -> bool:
-        """pytest がこの名を test として集めるか(``python_functions`` / ``python_classes``)。"""
+        """Whether pytest collects this name as a test (``python_functions`` / ``python_classes``)."""
         return self.funcnamefilter(name) or self.classnamefilter(name)
 
     def realize(self, item: pytest.Function) -> None:
-        """item の setup の前に、この file の module を 1 度だけ import し、item を実物の関数に替える。
+        """Before item setup, import this file's module once and swap the item for the real function.
 
-        実物が記録と食い違えば ``RecordMismatch``(呼ぶ側が item を赤にし、記録を消す)。
+        If the real thing disagrees with the record, raise ``RecordMismatch`` (the caller turns the item red and deletes the record).
         """
         if self._mut_indexed is None:
             return
@@ -582,7 +582,7 @@ class DoeffAdrHyFile(pytest.Module):
 
 @dataclass(frozen=True)
 class HyTestSkip:
-    """ini の doeff_hy_test_skips の 1 行 — import せずに skip として報告する Hy の検の file と、その理由。"""
+    """One line of ini doeff_hy_test_skips — a Hy test file reported as skip without importing, and its reason."""
 
     path: str
     reason: str
@@ -590,32 +590,32 @@ class HyTestSkip:
 
 @dataclass(frozen=True)
 class HyTestSkips:
-    """外す一覧(ini の doeff_hy_test_skips)の全行 — 集め手と日次の母集団の検が同じこの読みを使う。"""
+    """All lines of the skip list (ini doeff_hy_test_skips) — the collector and the daily population check use this same read."""
 
     rows: tuple[HyTestSkip, ...]
 
     def reason_for(self, relative: str) -> str | None:
-        """rootdir からの path の file が一覧に載れば、その理由(載らなければ None)— 外すかを決めるため。"""
+        """If the file at the path from rootdir is on the list, its reason (None if not) — to decide whether to skip it."""
         return next((row.reason for row in self.rows if row.path == relative), None)
 
 
 def parse_hy_test_skips(lines: Sequence[str]) -> HyTestSkips:
-    """doeff_hy_test_skips の行(`<rootdir からの path> | <理由>`)を読む。理由の欠けた行は設定の誤りとして止める。"""
+    """Read the lines of doeff_hy_test_skips (`<path from rootdir> | <reason>`). A line missing its reason stops as a configuration error."""
     return HyTestSkips(tuple(_parse_hy_test_skip(line) for line in lines if line.strip()))
 
 
 def _parse_hy_test_skip(line: str) -> HyTestSkip:
-    """1 行を path と理由に分ける — 理由の無い除外を黙って受けないため。"""
+    """Split one line into path and reason — so an exclusion without a reason is not silently accepted."""
     path, separator, reason = line.partition("|")
     if not separator or not path.strip() or not reason.strip():
         raise pytest.UsageError(
-            f"doeff_hy_test_skips の行は '<rootdir からの path> | <理由>' の形: {line!r}"
+            f"doeff_hy_test_skips  line must be of the form '<path from rootdir> | <reason>': {line!r}"
         )
     return HyTestSkip(path.strip(), reason.strip())
 
 
 def _is_hy_test_file(path: Path, config: pytest.Config) -> bool:
-    """この .hy を Hy の検の file として集めるか(ini の doeff_hy_test_files — 空なら集めない・下流の repo の既定)。"""
+    """Whether to collect this .hy as a Hy test file (ini doeff_hy_test_files — not collected if empty; the default for downstream repos)."""
     patterns = tuple(config.getini("doeff_hy_test_files"))
     if not patterns:
         return False
@@ -623,14 +623,14 @@ def _is_hy_test_file(path: Path, config: pytest.Config) -> bool:
 
 
 def _hy_test_skip_reason(path: Path, config: pytest.Config) -> str | None:
-    """外す一覧(ini の doeff_hy_test_skips)に載る file なら、その理由を返す(載らなければ None)。"""
+    """If the file is on the skip list (ini doeff_hy_test_skips), return its reason (None if not)."""
     relative = session_paths(config).matcher.relative_posix(str(path))
     return config.stash[_HY_TEST_SKIPS_KEY].reason_for(relative)
 
 
 def _skipped_file_items(collector: DoeffAdrHyFile) -> list[pytest.Item] | None:
-    """外す一覧に載る file なら、import せずに理由つきの skip の item 1 つ(走らせた数の報告に毎回出す)。
-    載らなければ None。"""
+    """If the file is on the skip list, one skip item with a reason without importing (shown in the run-count report every time).
+    Otherwise None."""
     reason = _hy_test_skip_reason(collector.path, collector.config)
     if reason is None:
         return None
@@ -640,53 +640,53 @@ def _skipped_file_items(collector: DoeffAdrHyFile) -> list[pytest.Item] | None:
 
 
 class HyTestFile(DoeffAdrHyFile):
-    """ini の doeff_hy_test_files に当たる Hy の検の file。
+    """A Hy test file matching ini doeff_hy_test_files.
 
-    deftest(や test_ の関数)を持つ file は ``DoeffAdrHyFile`` と同じく関数ごとの item に、持たない「上から順に
-    実行する script」は file ごと 1 つの item(``HyScriptItem`` — 実行して例外が出なければ緑・出れば赤)にする。
-    どちらの形かは file を読んだ結果(集めた item が 0 本か)で決め、名や中身の字面では決めない — 字面で決めると、
-    deftest を包む別の macro で検を作る file を script と取り違え、検を 1 本も走らせずに緑にする。
+    A file with deftest (or test_ functions) becomes per-function items like ``DoeffAdrHyFile``; a "script run top to bottom" without them
+    becomes one item per file (``HyScriptItem`` — green if running raises no exception, red if it does).
+    Which form applies is decided by the result of reading the file (whether 0 items were collected), not by the look of names or contents — deciding by the look
+    would mistake a file that builds tests with another macro wrapping deftest for a script and turn it green without running a single test.
 
-    ini の doeff_hy_test_skips に載る file は import せず、理由つきの skip の item 1 つにする(読むのは親の
-    ``DoeffAdrHyFile.collect`` の 1 か所)。
+    A file on ini doeff_hy_test_skips is not imported and becomes one skip item with a reason (read in one place, the parent
+    ``DoeffAdrHyFile.collect``).
     """
 
     def collect(self) -> Iterable[pytest.Item | pytest.Collector]:
-        """外す一覧に載れば skip の item 1 つ(親)・test を定義すればその item・定義しなければ script の item 1 つ。"""
+        """One skip item if on the skip list (parent) · the items if it defines tests · one script item if it defines none."""
         collected = list(super().collect())
         return collected or [HyScriptItem.from_parent(self, name=HyScriptItem.NAME)]
 
 
 class HyScriptItem(pytest.Item):
-    """test を 1 本も定義しない Hy の検の file(上から順に実行する script)を 1 つの検として走らせる item。
+    """An item that runs a Hy test file defining no tests (a script run top to bottom) as one test.
 
-    file の実行は module の import そのもの。記録(キャッシュ)から収集した時は、この item の実行で初めて import する。
-    記録が無く収集の中で import した時は、そこで既に実行し終えている(例外ならその時点で file の収集が赤になる)。
+    Running the file is the module import itself. When collected from the record (cache), this item's run is the first import.
+    When imported during collection without a record, it has already run there (on an exception the file's collection is already red at that point).
     """
 
     NAME = "script"
 
     def runtest(self) -> None:
-        """file を上から順に実行する(= module を import する)— 例外が出れば、この検が赤になる。"""
+        """Run the file top to bottom (= import the module) — an exception turns this test red."""
         parent = self.parent
         if not isinstance(parent, HyTestFile):
             raise TypeError(
-                f"HyScriptItem の親は HyTestFile でなければならない: {type(parent).__name__}"
+                f"HyScriptItem parent must be a HyTestFile: {type(parent).__name__}"
             )
         if parent._mut_real_module is not None:
             return
         real = self.config.hook.pytest_doeff_import_hy_module(collector=parent)
-        # 記録が「test の無い file」と言ったのに、実物が test を定義していれば記録が古い — 黙って script として緑にしない。
+        # The record said "a file without tests" but the real thing defines tests, so the record is stale — do not silently turn it green as a script.
         check_no_unrecorded_items([], real, parent._pytest_collects, parent.nodeid)
         parent._mut_real_module = real
 
     def reportinfo(self) -> tuple[Path, int, str]:
-        """報告の行に file の名を出す(pytest の Item の契約 — skip の報告は行の番号を要るので file の頭の 0)。"""
+        """Show the file name in report lines (pytest Item contract — skip reports need a line number, so 0 at the file head)."""
         return self.path, 0, f"{self.path.name} (Hy script)"
 
 
 def items_cache_dir(config: pytest.Config) -> Path:
-    """item の記録のキャッシュの置き場 — 順と訳は item_cache.items_cache_dir_for(ini → 環境変数 → 利用者の cache の dir)。"""
+    """Location of the item record cache — order and rationale are in item_cache.items_cache_dir_for (ini → environment variable → user cache dir)."""
     return items_cache_dir_for(str(config.getini("doeff_adr_items_cache")), Path(config.rootpath))
 
 
@@ -700,16 +700,16 @@ def _file_patterns(config: pytest.Config) -> list[str]:
 
 @functools.cache
 def _pattern_regex(patterns: tuple[str, ...]) -> re.Pattern[str]:
-    """pattern の並びを 1 つの正規表現にする(並びごとに 1 度だけ)。
+    """Combine a sequence of patterns into one regex (once per sequence).
 
-    収集と wiring の走査は file ごとに照合するので、pattern ごと・候補の path ごとに fnmatch を呼ぶと 1 回の収集で
-    6 万回近くになっていた。意味は fnmatch.fnmatch と同じ(normcase をかけ、全体に当てる)。
+    Collection and the wiring scan match per file, so calling fnmatch per pattern per candidate path made nearly
+    60,000 calls in one collection. The meaning equals fnmatch.fnmatch (apply normcase, match the whole).
     """
     return re.compile("|".join(f"(?:{fnmatch.translate(os.path.normcase(p))})" for p in patterns))
 
 
 def _matches_file_patterns(path: Path, root: Path, patterns: Sequence[str]) -> bool:
-    """file の名・rootdir からの path・絶対 path のどれかが、executable ADR の pattern に当たるか。"""
+    """Whether any of the file name, path from rootdir, or absolute path matches the executable ADR patterns."""
     regex = _pattern_regex(tuple(patterns))
     candidates = (path.name, _relative_posix(path, root), path.as_posix())
     return any(regex.match(os.path.normcase(candidate)) for candidate in candidates)
@@ -808,7 +808,7 @@ def _norecurse_dir_patterns(config: pytest.Config) -> list[str]:
 
 
 def _is_directory(entry: os.DirEntry[str]) -> bool:
-    """os.walk と同じ区別: symlink を辿って dir なら dir(辿れない・読めない物は file の側)。"""
+    """Same distinction as os.walk: follow symlinks and treat as dir if dir (anything unfollowable or unreadable is on the file side)."""
     try:
         return entry.is_dir()
     except OSError:
@@ -823,12 +823,12 @@ def _discover_executable_adrs(
     matcher: HyFileMatcher | None = None,
     root_resolved: Path | None = None,
 ) -> set[Path]:
-    """rootdir の下の executable ADR の file(解決した path)を全部集める。
+    """Collect all executable ADR files (resolved paths) under rootdir.
 
-    os.walk と同じ辿り方(symlink の dir は降りない・読めない dir は飛ばす・dir の数の上限)を scandir で行い、``.hy`` で終わらない
-    名は Path を作る前に除く(1 回の走査で数万の file の Path を作っていた)。rootdir の下の file の
-    解決した path は、rootdir を 1 度だけ解決した物から組み立てる(降りた dir に symlink は無い)。file 自身が symlink なら
-    今までどおり解決する。
+    Walks like os.walk with scandir (do not descend into symlinked dirs · skip unreadable dirs · cap on dir count), and drops names not ending in ``.hy``
+    before building a Path (one scan used to build Paths for tens of thousands of files). The resolved path of a file under rootdir
+    is built from the once-resolved rootdir (descended dirs contain no symlinks). A file that is itself a symlink
+    is resolved as before.
     """
     matcher = _matcher(str(root), tuple(patterns)) if matcher is None else matcher
     prune = _pattern_regex(tuple(norecurse)) if norecurse else None
@@ -893,11 +893,11 @@ def _walk_budget_message(root: Path, dirs_walked: int, max_dirs: int, mode: Wiri
 
 
 def _relative_posix(path: Path, root: Path) -> str:
-    """rootdir からの path(照合と報告のため)。
+    """Path from rootdir (for matching and reporting).
 
-    収集と wiring の走査は rootdir の下の path を 1 file ずつ渡すので、文字の上で rootdir の下にあればそのまま
-    相対にする。symlink の解決(realpath)は外れた時だけ — 毎回解決すると、収集の 1 回で 1 万回近く呼ばれて
-    収集の時間の 1 割を占めていた。
+    Collection and the wiring scan pass paths under rootdir one file at a time, so if textually under rootdir it is made
+    relative as is. Symlink resolution (realpath) only happens when outside — resolving every time was called nearly 10,000 times in one
+    collection and took 10% of collection time.
     """
     path_text = path.as_posix()
     prefix = root.as_posix().rstrip("/") + "/"
@@ -938,11 +938,11 @@ def _ensure_macro_module_loaded() -> None:
 
 
 def _relative_module_parts(path: Path, root: Path) -> list[str] | None:
-    """拡張子を除いた path の rootdir からの部分(module の名の素)。rootdir の下でなければ None。
+    """The part of the path (without extension) relative to rootdir (the base of the module name). None if not under rootdir.
 
-    収集は file ごとに import の基の dir と module の名を決めるので、この部分を 2 度ずつ求める。文字の上で rootdir の
-    下にある時は文字列を切って分ける — ``with_suffix`` / ``relative_to`` は path を作り直すので、420 file の収集で
-    目立っていた。文字列の頭が合わない時は今までの部分の比べに回す。
+    Collection decides the import base dir and module name per file, so this part is computed twice. When textually under rootdir
+    it is split by slicing the string — ``with_suffix`` / ``relative_to`` rebuild the path and were
+    prominent in collecting 420 files. When the string prefix does not match, fall back to the previous part comparison.
     """
     text = path.as_posix()
     root_text = root.as_posix()

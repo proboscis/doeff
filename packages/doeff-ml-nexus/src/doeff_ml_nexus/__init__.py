@@ -1,4 +1,4 @@
-"""doeff-ml-nexus — 依存の転送・Docker の image の組み立て・Program の container での実行を effect と handler で表す。"""
+"""doeff-ml-nexus — expresses dependency transfer, Docker image assembly, and running a Program in a container as effects and handlers."""
 
 from importlib import import_module
 

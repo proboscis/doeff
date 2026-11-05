@@ -45,7 +45,7 @@ PROGRAMS_HY = """\
   None)
 
 (defk timed [body]
-  {:pre [(: body (| Program EffectBase))] :post [(: % "body の答え")]}
+  {:pre [(: body (| Program EffectBase))] :post [(: % "answer of body")]}
   (<- answer object body)
   (<- (Noted))
   answer)

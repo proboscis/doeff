@@ -1,5 +1,5 @@
-"""memory の購読者ごとの列(subscribed_event_handler)の検 — 不変条件は event_signal_invariants の関数を memory の
-組み立て方で呼ぶ。"""
+"""Check of memory's per-subscriber queues (subscribed_event_handler) — the invariants call the functions of event_signal_invariants with memory's
+assembly."""
 
 from collections.abc import Hashable
 from dataclasses import dataclass
@@ -30,22 +30,22 @@ from doeff.program import ProgramHandler
 
 
 def memory_world() -> SignalWorld:
-    """1 つの世界 = 新しい ``EventBus`` 1 つ。"""
+    """One world = one new ``EventBus``."""
     bus = EventBus()
 
     def subscribe(subscriber: str, event_types: tuple[type, ...] = (), /) -> Program[ProgramHandler]:
-        """呼んだ時に ``bus`` へ購読を始め、組み立てた handler をそのまま答える Program にする(memory の組み立ては effect を出さない)。"""
+        """Start the subscription on ``bus`` when called, and make a Program that answers the built handler as is (memory's assembly emits no effects)."""
         return Pure(subscribed_event_handler(bus, subscriber, event_types))
 
     return SignalWorld(subscribe=subscribe, run=run_scheduled)
 
 
 def legacy_world() -> SignalWorld:
-    """元の ``event_handler()`` を 1 つ作り、全購読者が同じものを使う(購読者の名と型は見ない)。"""
+    """Make one original ``event_handler()`` and have all subscribers use the same one (subscriber names and types are ignored)."""
     shared = event_handler()
 
     def subscribe(subscriber: str, event_types: tuple[type, ...] = (), /) -> Program[ProgramHandler]:
-        """購読者が誰でも同じ handler を返す — 元の handler に購読の概念が無いことをそのまま写す。"""
+        """Return the same handler for any subscriber — this mirrors as is that the original handler has no notion of subscription."""
         return Pure(shared)
 
     return SignalWorld(subscribe=subscribe, run=run_scheduled)
@@ -53,12 +53,12 @@ def legacy_world() -> SignalWorld:
 
 @pytest.mark.parametrize("invariant", INVARIANTS, ids=lambda invariant: invariant.__name__)
 def test_memory_subscribed_handler_keeps_invariant(invariant: Invariant) -> None:
-    """共有の不変条件を memory の組み立て方で 1 つずつ確かめる。"""
+    """Check the shared invariants one by one with memory's assembly."""
     invariant(memory_world())
 
 
 def test_legacy_event_handler_drops_signal_between_read_and_wait() -> None:
-    # 意味を変えていない証: 元の event_handler は待ち手の居ない間の合図を捨てるので、同じ筋書きで受け手が起こされない。
+    # Proof that the meaning is unchanged: the original event_handler discards signals while no waiter exists, so in the same scenario the receiver is not woken.
     with pytest.raises(SchedulerDeadlockError):
         run_read_process_wait(legacy_world())
 
@@ -73,7 +73,7 @@ def test_queue_wakes_waiters_in_arrival_order_and_keeps_order() -> None:
     assert queue.offer(Unrelated("x")) is None
     assert queue.offer(Changed(("b",))) is second
     assert queue.offer(Changed(("c",))) is None
-    # 待ち手の居ない間の同じ型の合図は 1 つにまとまり、所は来た順のまま。
+    # Signals of the same type while no waiter exists merge into one, and the places stay in arrival order.
     assert queue.offer(Changed(("d",))) is None
     assert queue.take((Changed,)) == Changed(("c", "d"))
     assert queue.take((Changed,)) is EMPTY
@@ -108,26 +108,26 @@ def test_wait_for_subtype_of_subscribed_type_is_inside() -> None:
     assert queue.outside((Unrelated, object)) == (Unrelated, object)
 
 
-# 待ち手の居ない間に溜まった同じ型の合図を 1 つにまとめる(設計 #3072 の 3 節 5)。
-# offer が常に末尾に積む形に戻すと、まとまる筋書き(1 本目と 3 本目)が赤になる。
+# Merge signals of the same type accumulated while no waiter exists into one (design #3072, section 3, item 5).
+# If offer is reverted to always appending at the tail, the merging scenarios (the 1st and 3rd) go red.
 
 
 @dataclass(frozen=True)
 class Moved:
-    """``Changed`` と別の型の、所 ``keys`` の合図。"""
+    """A signal with places ``keys`` of a type different from ``Changed``."""
 
     keys: tuple[Hashable, ...]
 
 
 @dataclass(frozen=True)
 class EndOfQueue:
-    """受け手が自分の列の終わりの印に発する合図(``keys`` を持たないのでまとまらない)。"""
+    """A signal the receiver emits as the end-of-queue marker of its own queue (it has no ``keys``, so it is not merged)."""
 
 
 def received_after_quiet_spell(published: tuple[object, ...], waited: tuple[type, ...]) -> tuple[object, ...]:
-    """受け手が待っていない間に書き手が ``published`` を発し終え、その後で受け手が列を空になるまで受けた合図の列。
+    """The list of signals the receiver received until its queue became empty, after the writer finished emitting ``published`` while the receiver was not waiting.
 
-    受け手は ``WaitForEvent`` を 1 回ずつ重ね、列の終わりの印(自分で末尾に発した ``EndOfQueue``)で止まる。
+    The receiver stacks one ``WaitForEvent`` at a time and stops at the end-of-queue marker (``EndOfQueue``, which it emits at the tail itself).
     """
     bus = EventBus()
     receiving = subscribed_event_handler(bus, "worker", (*waited, EndOfQueue))
@@ -135,13 +135,13 @@ def received_after_quiet_spell(published: tuple[object, ...], waited: tuple[type
 
     @do
     def publish_all() -> EffectGenerator[None]:
-        """書き手: ``published`` を順に発する(受け手はまだ待っていない)。"""
+        """Writer: emit ``published`` in order (the receiver is not waiting yet)."""
         for event in published:
             yield Publish(event)
 
     @do
     def drain(received: tuple[object, ...]) -> EffectGenerator[tuple[object, ...]]:
-        """受け手: 次の合図を 1 つ受け、列の終わりの印までの合図を来た順に返す。"""
+        """Receiver: receive the next signal, and return the signals up to the end-of-queue marker in arrival order."""
         event: object = yield WaitForEvent(*waited, EndOfQueue)
         if isinstance(event, EndOfQueue):
             return received
@@ -149,13 +149,13 @@ def received_after_quiet_spell(published: tuple[object, ...], waited: tuple[type
 
     @do
     def receive_all() -> EffectGenerator[tuple[object, ...]]:
-        """受け手: 列の終わりの印を自分の列の末尾に発してから、印まで受ける。"""
+        """Receiver: emit the end-of-queue marker at the tail of its own queue, then receive up to the marker."""
         yield Publish(EndOfQueue())
         return (yield drain(()))
 
     @do
     def main() -> EffectGenerator[tuple[object, ...]]:
-        """書き手が発し終えるのを待ってから、受け手を走らせる。"""
+        """Wait for the writer to finish emitting, then run the receiver."""
         yield Wait((yield Spawn(sending(publish_all()))))
         return (yield receiving(receive_all()))
 
@@ -168,12 +168,12 @@ def test_same_type_signals_while_no_one_waits_are_received_in_one_wait() -> None
     received = received_after_quiet_spell(
         (Changed(("a",)), Changed(("b", "a")), Changed(("c",))), (Changed,)
     )
-    # 3 つの合図が次の WaitForEvent の 1 回で受かり、所は来た順に重なりを除いて合わさる。
+    # The three signals are received in one WaitForEvent, and the places are combined in arrival order with duplicates removed.
     assert received == (Changed(("a", "b", "c")),), received
 
 
 def test_timer_fired_is_received_per_tag() -> None:
-    # keys を持たない TimerFired は tag ごとに意味が違うのでまとめない(同じ tag の 2 度目も別に受かる)。
+    # TimerFired, which has no keys, has a different meaning per tag, so it is not merged (a second one with the same tag is also received separately).
     received = received_after_quiet_spell(
         (TimerFired("x"), TimerFired("y"), TimerFired("x")), (TimerFired,)
     )
@@ -184,13 +184,13 @@ def test_signals_of_other_types_are_received_apart() -> None:
     received = received_after_quiet_spell(
         (Changed(("a",)), Moved(("a",)), Changed(("b",))), (Changed, Moved)
     )
-    # 別の型はまとまらず、同じ型は先に来た方の位置でまとまる。
+    # Different types are not merged, and the same type merges at the position of the earlier one.
     assert received == (Changed(("a", "b")), Moved(("a",))), received
 
 
 @dataclass(frozen=True)
 class BoardChanged:
-    """``keys`` の外にも欄を持つ合図。"""
+    """A signal that has fields other than ``keys``."""
 
     keys: tuple[Hashable, ...]
     board: str
@@ -198,7 +198,7 @@ class BoardChanged:
 
 @dataclass
 class MutableChanged:
-    """frozen でない、所 ``keys`` の合図。"""
+    """A signal with places ``keys`` that is not frozen."""
 
     keys: tuple[Hashable, ...]
 
@@ -214,7 +214,7 @@ def test_only_frozen_keyed_signals_with_equal_other_fields_merge() -> None:
     ):
         assert queue.offer(event) is None
 
-    # keys の外の欄が違えば、まとめると片方の欄が消えるのでまとめない。frozen でない dataclass はまとめない。
+    # If a field other than keys differs, merging would lose one side's field, so do not merge. A non-frozen dataclass is not merged.
     assert queue.take((BoardChanged,)) == BoardChanged(("a", "c"), "left")
     assert queue.take((BoardChanged,)) == BoardChanged(("b",), "right")
     assert queue.take((MutableChanged,)) == MutableChanged(("a",))

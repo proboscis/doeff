@@ -1,11 +1,11 @@
-"""Hy の test file を import せずに収集し、item の setup で初めて import する(親 #1211)。
+"""Collect Hy test files without importing them, and import only at item setup (parent #1211).
 
-別の process で pytest を走らせる(pytester の subprocess)。1 回目は記録が無いので収集で import し(その時に Hy の
-plugin が記録をキャッシュに書く)、2 回目はキャッシュから収集する。2 回の nodeid・選別・結果が同じで、
-2 回目の収集は test module を import しないことを確かめる。キャッシュと pyc の置き場は tmp の下(ini の doeff_adr_items_cache・
-PYTHONPYCACHEPREFIX)— checkout の中にも利用者のキャッシュにも書かない。
+Run pytest in a separate process (the pytester subprocess). The first run has no record, so it imports during collection (the Hy
+plugin writes the record to the cache at that point); the second run collects from the cache. The nodeids, selection and results
+of the two runs are the same, and the second collection is checked not to import the test modules. The cache and pyc locations are under tmp (ini doeff_adr_items_cache and
+PYTHONPYCACHEPREFIX) -- nothing is written into the checkout or the user cache.
 
-各 test module は import された時に、名を ``IMPORT_LOG`` の file に 1 行足す(import の回数を外から数えるため)。
+Each test module appends one line with its name to the ``IMPORT_LOG`` file when imported (to count imports from outside).
 """
 
 import hashlib
@@ -36,7 +36,7 @@ FILES = {
 (deftest test-skipped {:skip-if (= 1 1) :skip-reason "always"} (assert False))
 (deftest test-kept {:skip-if (= 1 2) :skip-reason "never"} (assert True))
 """,
-    # 親の package の中の別の module を名前で import する
+    # import another module in the parent package by name
     "pkg/tests/test_beta.hy": PRELUDE
     + """
 (import pkg.tests.test-alpha :as alpha)
@@ -47,23 +47,23 @@ FILES = {
 (val VALUES [1 2 3])
 (deftest test-dynamic [v] {:params {"v" VALUES}} (assert (in v VALUES)))
 """,
-    # 自前の macro の提供元(pkg.helpers)を使う — 提供元が変われば古い記録を読まない(#1291 の受入 4)
+    # use our own macro provider (pkg.helpers) -- if the provider changes, the old record is not read (acceptance 4 of #1291)
     "pkg/helpers.hy": "(defmacro answer [] 42)\n",
     "pkg/tests/test_gamma.hy": PRELUDE
     + """
 (require pkg.helpers [answer])
 (deftest test-answer (assert (= (answer) 42)))
 """,
-    # module の直下の skipif の pytestmark — 記録から収集し、条件は setup で実物の印から評価する
+    # module-level skipif pytestmark -- collected from the record; the condition is evaluated at setup from the real mark
     "pkg/tests/test_env_gated.hy": PRELUDE
     + """
-(val pytestmark (pytest.mark.skipif (not (os.getenv "I1211_NEVER_SET")) :reason "env が無い"))
+(val pytestmark (pytest.mark.skipif (not (os.getenv "I1211_NEVER_SET")) :reason "env is not set"))
 (deftest test-gated (assert False))
 """,
-    # module の最上位で module ごと飛ばす(import すれば item は 0 本)
+    # skip the whole module at its top level (importing it yields 0 items)
     "pkg/tests/test_skipped_module.hy": PRELUDE
     + """
-(pytest.skip "module ごと飛ばす" :allow-module-level True)
+(pytest.skip "skip the whole module" :allow-module-level True)
 (deftest test-never (assert False))
 """,
 }
@@ -71,7 +71,7 @@ FILES = {
 
 @pytest.fixture
 def project(pytester: pytest.Pytester, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> pytest.Pytester:
-    """3 つの test file を持つ project。pyc と記録は tmp の下の置き場へ書く。"""
+    """A project with three test files. The pyc and records are written to locations under tmp."""
     for name, text in FILES.items():
         path = pytester.path / name
         path.parent.mkdir(parents=True, exist_ok=True)
@@ -109,7 +109,7 @@ def project(pytester: pytest.Pytester, tmp_path: Path, monkeypatch: pytest.Monke
 
 
 def _imports(tmp_path: Path) -> list[str]:
-    """これまでに import された test module の名(import の回数だけ並ぶ)。読んだら空にする。"""
+    """Names of test modules imported so far (one entry per import). Cleared after reading."""
     log = tmp_path / "imports.log"
     names = log.read_text().split() if log.exists() else []
     log.write_text("")
@@ -118,21 +118,21 @@ def _imports(tmp_path: Path) -> list[str]:
 
 @dataclass(frozen=True)
 class Collected:
-    """--collect-only の結果: 集めた nodeid と、報告の全文。"""
+    """Result of --collect-only: the collected nodeids and the full text of the report."""
 
     nodeids: list[str]
     out: str
 
 
 def _collect(project: pytest.Pytester, *args: str) -> Collected:
-    """別の process で --collect-only を走らせる。"""
+    """Run --collect-only in a separate process."""
     result = project.runpytest_subprocess("--collect-only", "-q", "-p", "no:cacheprovider", *args)
     nodeids = [line for line in result.stdout.lines if "::" in line and not line.startswith(" ")]
     return Collected(nodeids, result.stdout.str())
 
 
 def test_warm_collection_matches_cold_and_imports_nothing(project: pytest.Pytester, tmp_path: Path) -> None:
-    """2回目は動的な値も記録から収集し、moduleごとskipするfileだけをimportする。"""
+    """On the second run, dynamic values are also collected from the record, and only files that skip per module are imported."""
     cold = _collect(project).nodeids
     assert sorted(_imports(tmp_path)) == sorted(
         [
@@ -147,15 +147,15 @@ def test_warm_collection_matches_cold_and_imports_nothing(project: pytest.Pytest
     warm = _collect(project)
     out = warm.out
     assert warm.nodeids == cold
-    assert "記録から収集 5 file・収集で import 1 file" in out
-    assert "import: pkg/tests/test_skipped_module.hy — 記録なし" in out
+    assert "collected from record: 5 files; imported during collection: 1 files" in out
+    assert "import: pkg/tests/test_skipped_module.hy — no record" in out
     assert _imports(tmp_path) == ["pkg.tests.test_skipped_module"]
 
 
 def test_selection_by_k_and_m_is_the_same_and_imports_only_the_chosen_file(
     project: pytest.Pytester, tmp_path: Path
 ) -> None:
-    """``-k`` / ``-m`` の選別は記録からの収集でも同じに効き、走らせた item の file だけが import される。"""
+    """``-k`` / ``-m`` selection works the same when collecting from the record, and only the files of the items that ran are imported."""
     _collect(project)
     _imports(tmp_path)
     result = project.runpytest_subprocess("-p", "no:cacheprovider", "-k", "test_slow")
@@ -171,20 +171,20 @@ def test_selection_by_k_and_m_is_the_same_and_imports_only_the_chosen_file(
 
 
 def test_params_and_skip_if_run_as_when_imported(project: pytest.Pytester) -> None:
-    """params の値は実物の値で走り(中身を問わない値も)、skip-if は実物の式で評価される。"""
+    """Param values run as real values (including values whose content is irrelevant), and skip-if is evaluated as the real expression."""
     cold = project.runpytest_subprocess("-p", "no:cacheprovider")
     cold.assert_outcomes(passed=18, skipped=3)
     warm = project.runpytest_subprocess("-p", "no:cacheprovider", "-rs")
     warm.assert_outcomes(passed=18, skipped=3)
-    warm.stdout.fnmatch_lines(["*always*", "*env が無い*"])
+    warm.stdout.fnmatch_lines(["*always*", "*env is not set*"])
 
 
 def test_a_named_hy_file_imported_by_another_named_file_is_read_by_hy(project: pytest.Pytester) -> None:
-    """命令の行で名指した .hy を、先に並んだ別の名指しの file が import しても、Hy の loader で読まれる。
+    """A .hy file named on the command line is read by the Hy loader even when another earlier-named file imports it.
 
-    pytest の assert の書き換えは、命令の行で名指した file を Python として読み直す(``ast.parse``)。.hy が
-    そこへ渡ると SyntaxError になる(test_emulated_delivery_unwritten が
-    test_emulated_delivery_to_turn を import する組)。記録が冷えていても温まっていても同じに通る。
+    pytest's assert rewriting re-reads files named on the command line as Python (``ast.parse``). If a .hy
+    is handed there it becomes a SyntaxError (the pair where test_emulated_delivery_unwritten imports
+    test_emulated_delivery_to_turn). It passes the same whether the record is cold or warm.
     """
     named = ("pkg/tests/test_beta.hy", "pkg/tests/test_alpha.hy")
     cold = project.runpytest_subprocess("-p", "no:cacheprovider", *named)
@@ -194,7 +194,7 @@ def test_a_named_hy_file_imported_by_another_named_file_is_read_by_hy(project: p
 
 
 def test_a_record_that_disagrees_fails_the_item_and_is_forgotten(project: pytest.Pytester, tmp_path: Path) -> None:
-    """記録を手で書き換えて実物と食い違わせると、その item は赤になり、記録が消え、次の収集は import し直す。"""
+    """If the record is hand-edited so it disagrees with the real thing, that item goes red, the record is deleted, and the next collection imports again."""
     _collect(project)
     entry = _cache_entry(project, tmp_path, "pkg/tests/test_alpha.hy")
     data = json.loads(entry.read_text())
@@ -207,9 +207,9 @@ def test_a_record_that_disagrees_fails_the_item_and_is_forgotten(project: pytest
     _imports(tmp_path)
     result = project.runpytest_subprocess("-p", "no:cacheprovider", "-k", "test_slow or test_fast")
     result.assert_outcomes(errors=1, deselected=19, skipped=1)
-    result.stdout.fnmatch_lines(["*記録と実物が食い違った*"])
+    result.stdout.fnmatch_lines(["*record and real thing disagree*"])
     out = _collect(project).out
-    assert "import: pkg/tests/test_alpha.hy — 記録なし" in out
+    assert "import: pkg/tests/test_alpha.hy — no record" in out
 
 
 MARKS_CONFTEST = """
@@ -227,8 +227,8 @@ def doeff_interpreter():
 
 
 def pytest_collection_modifyitems(config, items):
-    # 収集の hook が item と module の node に印を足す(前にも後ろにも・引数つき)。記録からの収集を断る
-    # 未知の makeitem の hook ではないので、2 回目は記録から収集される。
+    # The collection hook adds marks to the item and module nodes (both before and after, with arguments). It is not an
+    # unknown makeitem hook that would refuse collecting from the record, so the second run collects from the record.
     modules = []
     for item in items:
         item.add_marker(pytest.mark.plugin_first, append=False)
@@ -255,11 +255,11 @@ def pytest_runtest_setup(item):
 def test_marks_added_by_a_collection_hook_survive_the_swap_to_the_real_module(
     project: pytest.Pytester, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """収集の hook が足した印は、記録から収集した item の setup(実物への置き換え)の後も位置ごと残る。印の並び
-    (名・引数)と keywords は、import して収集した時と記録から収集した時とで同じ。
+    """Marks added by the collection hook remain in place even after setup (replacement with the real thing) of an item collected from the record. The sequence of marks
+    (names, arguments) and keywords are the same whether collected by importing or from the record.
 
-    直す前は、関数の印を実物の印で丸ごと置き直していたので hook の足した印が消え、module の印は実物の印が末尾へ
-    動いていた。
+    Before the fix, function marks were replaced wholesale with the real marks, so marks added by the hook vanished, and module marks had the real marks
+    moved to the end.
     """
     project.makeconftest(MARKS_CONFTEST)
     log = tmp_path / "marks.log"
@@ -274,7 +274,7 @@ def test_marks_added_by_a_collection_hook_survive_the_swap_to_the_real_module(
     cold = seen()
     warm_run = project.runpytest_subprocess("-p", "no:cacheprovider")
     warm_run.assert_outcomes(passed=18, skipped=3)
-    warm_run.stdout.fnmatch_lines(["*記録から収集 5 file・収集で import 1 file*"])
+    warm_run.stdout.fnmatch_lines(["*collected from record: 5 files; imported during collection: 1 files*"])
     assert seen() == cold
     slow = next(entry for entry in cold if entry[0].endswith("::test_slow"))
     assert [shown for shown, _ in slow[1]] == [
@@ -289,13 +289,13 @@ def test_marks_added_by_a_collection_hook_survive_the_swap_to_the_real_module(
 
 
 def _cache_entry(project: pytest.Pytester, tmp_path: Path, relative: str) -> Path:
-    """test file の今の内容の hash から、キャッシュの file の path を引く。"""
+    """From the current content hash of a test file, derive the path of the cache file."""
     digest = hashlib.sha256((project.path / relative).read_bytes()).hexdigest()
     return tmp_path / "items" / f"{digest}.json"
 
 
 def test_one_changed_character_reads_no_stale_record(project: pytest.Pytester, tmp_path: Path) -> None:
-    """source を 1 文字変えた file は古い記録を読まず、import し直して記録を書き直す(#1291 の受入 4)。"""
+    """A file with one source character changed does not read the old record; it imports again and rewrites the record (acceptance 4 of #1291)."""
     _collect(project)
     old_entry = _cache_entry(project, tmp_path, "pkg/tests/test_alpha.hy")
     assert old_entry.exists()
@@ -303,28 +303,28 @@ def test_one_changed_character_reads_no_stale_record(project: pytest.Pytester, t
     path.write_text(path.read_text().replace("test-plain (assert True)", "test-plain (assert (not False))"))
     _imports(tmp_path)
     out = _collect(project).out
-    assert "import: pkg/tests/test_alpha.hy — 記録なし" in out
+    assert "import: pkg/tests/test_alpha.hy — no record" in out
     assert "pkg.tests.test_alpha" in _imports(tmp_path)
     assert _cache_entry(project, tmp_path, "pkg/tests/test_alpha.hy").exists()
-    assert "記録から収集 5 file" in _collect(project).out
+    assert "collected from record: 5 files" in _collect(project).out
 
 
 def test_a_changed_macro_provider_reads_no_stale_record(project: pytest.Pytester, tmp_path: Path) -> None:
-    """展開が使った macro を変えると、それを使う file は古い記録を読まない(使わない file は記録のまま・#1291 の受入 4)。"""
+    """If a macro used by the expansion changes, files using it do not read the old record (files that do not use it stay on the record; acceptance 4 of #1291)."""
     _collect(project)
     helpers = project.path / "pkg/helpers.hy"
     helpers.write_text("(defmacro answer [] (+ 40 2))\n")
     _imports(tmp_path)
     out = _collect(project).out
-    assert "import: pkg/tests/test_gamma.hy — 展開が使った macro が変わった" in out
+    assert "import: pkg/tests/test_gamma.hy — the macros used by the expansion changed" in out
     assert "import: pkg/tests/test_alpha.hy" not in out
     assert "pkg.tests.test_gamma" in _imports(tmp_path)
 
 
 def test_a_macro_the_expansion_does_not_use_keeps_the_record(project: pytest.Pytester, tmp_path: Path) -> None:
-    """macro の提供元に、展開が使わない macro を足しても、記録から収集する(直す前は提供元の file の
-    sha256 で照らし、doeff_hy の macros.hy のどの行の変更でも doeff の日次の Hy の test file を全部 import で収集し直して、日次の
-    時間の上限を越えた・10-12 04:00 と 08:00 の回)。記録は展開が使った macro 単位(doeff_hy_bytecode_guard の記録)で照らす。"""
+    """Adding a macro that the expansion does not use to the macro provider still collects from the record (before the fix, the check compared the provider file's
+    sha256, so any line change in doeff_hy's macros.hy made doeff's daily run re-collect every Hy test file by import, and it exceeded the daily
+    time limit -- the 10-12 04:00 and 08:00 runs). The record is now checked per macro used by the expansion (the doeff_hy_bytecode_guard record)."""
     _collect(project)
     helpers = project.path / "pkg/helpers.hy"
     helpers.write_text("(defmacro answer [] 42)\n(defmacro unused [] 0)\n")
@@ -335,10 +335,10 @@ def test_a_macro_the_expansion_does_not_use_keeps_the_record(project: pytest.Pyt
 
 
 def test_a_fixture_bound_by_assignment_is_collected_from_records(project: pytest.Pytester, tmp_path: Path) -> None:
-    """代入で作った module の fixture((val 名 ((pytest.fixture …) 関数)))を持つ file も記録から集める — 仮の module に
-    同じ名・scope・引数の仮の fixture を置き、呼ばれた時は本物の module の fixture を呼ぶ。その実行の中で本物の module の
-    import は 1 回だけ(議論の席の条件 1)。L713 の前は記録だけで集めて fixture not found に
-    なっていた。"""
+    """A file with a module fixture built by assignment ((val name ((pytest.fixture ...) function))) is also collected from the record -- a stand-in module
+    gets a stand-in fixture with the same name, scope and arguments, and when it is called it calls the real module's fixture. During that run the real module is
+    imported only once (condition 1 of the discussion). Before L713, collecting from the record alone gave
+    fixture not found."""
     (project.path / "pkg/tests/test_fixture_by_val.hy").write_text(
         PRELUDE
         + """
@@ -373,7 +373,7 @@ def test_a_fixture_bound_by_assignment_is_collected_from_records(project: pytest
 def test_fixtures_that_shape_collection_keep_their_file_imported(
     project: pytest.Pytester, tmp_path: Path, fixture_form: str
 ) -> None:
-    """params / autouse つきの fixture は収集の結果を変えるので、その file は今までどおり収集で import する(条件 1)。"""
+    """A fixture with params / autouse changes the collection result, so that file is still imported during collection as before (condition 1)."""
     (project.path / "pkg/tests/test_shaping_fixture.hy").write_text(
         PRELUDE
         + f"""
@@ -384,5 +384,5 @@ def test_fixtures_that_shape_collection_keep_their_file_imported(
     )
     _collect(project)
     out = _collect(project).out
-    assert "import: pkg/tests/test_shaping_fixture.hy — 記録なし" in out
-    assert "fixture の answer が params / autouse を持つ" in out
+    assert "import: pkg/tests/test_shaping_fixture.hy — no record" in out
+    assert "fixture answer has params / autouse" in out

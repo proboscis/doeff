@@ -1,5 +1,5 @@
-"""収集と wiring の走査の path の照合— rootdir の下は文字列で切り、symlink・rootdir の外・名の頭が
-rootdir と同じ兄弟の dir は今までの部分の比べと実の path の解決へ回ることを確かめる。"""
+"""Path matching in the collection and wiring scans — below rootdir it is cut as a string, and symlinks, paths outside rootdir, and sibling dirs whose name starts the same as
+rootdir are sent to the previous partial comparison and real-path resolution; this checks that."""
 
 import os
 from pathlib import Path
@@ -36,7 +36,7 @@ def import_base_for_path(path: Path, root: Path) -> Path:
 
 
 def test_relative_posix_under_root_and_at_root(tmp_path: Path) -> None:
-    """rootdir の下は rootdir からの path、rootdir そのものは ``.``(``Path.relative_to`` と同じ)。"""
+    """Below rootdir it is the path from rootdir, and rootdir itself is ``.`` (the same as ``Path.relative_to``)."""
     root = tmp_path / "project"
     assert relative_posix(root / "docs" / "adr" / "defadr_x.hy", root) == "docs/adr/defadr_x.hy"
     assert relative_posix(root, root) == "."
@@ -44,14 +44,14 @@ def test_relative_posix_under_root_and_at_root(tmp_path: Path) -> None:
 
 
 def test_relative_posix_does_not_cut_a_sibling_that_shares_the_root_name(tmp_path: Path) -> None:
-    """``/x/project2/a.hy`` は ``/x/project`` の下ではない — 文字列の頭だけで切ると ``2/a.hy`` になる誤りの反例。"""
+    """``/x/project2/a.hy`` is not under ``/x/project`` — a counterexample for the mistake where cutting only by the string prefix gives ``2/a.hy``."""
     root = tmp_path / "project"
     sibling = tmp_path / "project2" / "a.hy"
     assert relative_posix(sibling, root) == sibling.as_posix()
 
 
 def test_relative_posix_resolves_a_symlinked_path_into_the_root(tmp_path: Path) -> None:
-    """rootdir を指す symlink の下の path は、文字列では外でも、実の path で rootdir の下と分かれば相対にする。"""
+    """A path under a symlink pointing to rootdir is made relative if the real path shows it is under rootdir, even if it is outside as a string."""
     root = tmp_path / "project"
     (root / "docs").mkdir(parents=True)
     (root / "docs" / "defadr_x.hy").write_text("")
@@ -61,7 +61,7 @@ def test_relative_posix_resolves_a_symlinked_path_into_the_root(tmp_path: Path) 
 
 
 def test_relative_posix_outside_the_root_is_the_absolute_path(tmp_path: Path) -> None:
-    """rootdir の外(実の path でも外)は絶対 path のまま。"""
+    """Outside rootdir (also outside by the real path) stays an absolute path."""
     root = tmp_path / "project"
     root.mkdir()
     outside = tmp_path / "elsewhere" / "defadr_x.hy"
@@ -69,7 +69,7 @@ def test_relative_posix_outside_the_root_is_the_absolute_path(tmp_path: Path) ->
 
 
 def test_file_patterns_match_name_relative_glob_and_absolute(tmp_path: Path) -> None:
-    """名だけの pattern・rootdir からの glob・絶対 path の pattern が、それぞれの候補に当たる。"""
+    """A name-only pattern, a glob from rootdir, and an absolute-path pattern each hit their candidates."""
     root = tmp_path / "project"
     assert matches_file_patterns(root / "any" / "defadr_x.hy", root, DEFAULT_FILE_PATTERNS)
     assert matches_file_patterns(root / "pkg" / "a" / "test_x.hy", root, ["pkg/*/test_*.hy"])
@@ -82,7 +82,7 @@ def test_file_patterns_match_name_relative_glob_and_absolute(tmp_path: Path) -> 
 def test_wiring_discovery_sees_only_hy_files_and_does_not_follow_symlinked_dirs(
     tmp_path: Path,
 ) -> None:
-    """走査は .hy の file だけを照合し、実の path で返す。symlink の dir は今までどおり辿らない(``os.walk``)。"""
+    """The scan matches only .hy files and returns real paths. Symlinked dirs are not followed, as before (``os.walk``)."""
     root = tmp_path / "project"
     adr = root / "docs" / "adr"
     adr.mkdir(parents=True)
@@ -100,11 +100,11 @@ def test_wiring_discovery_sees_only_hy_files_and_does_not_follow_symlinked_dirs(
 def test_strict_wiring_accepts_a_collected_defadr_reached_through_a_symlink(
     pytester: pytest.Pytester,
 ) -> None:
-    """symlink の file(実体は pattern に当たらない別の場所)を収集した時も、走査の実の path と収集の実の path が合い、
-    strict の wiring が通る(item の file の実の path の解決を file ごとにまとめても答えは同じ)。
+    """Even when a symlinked file (whose target is elsewhere and does not match the pattern) is collected, the real path of the scan and the real path of the collection agree,
+    and strict wiring passes (the answer is the same even if the resolution of the item files' real paths is done once per file).
 
-    実体が rootdir の外の .hy は、この変更の前から module の名が作れず収集できない(``_module_name_for_path``)ので、
-    実体は rootdir の中に置く。
+    A .hy whose target is outside rootdir could not have its module name built and could not be collected even before this change (``_module_name_for_path``),
+    so the target is placed inside rootdir.
     """
     source = pytester.path / "src"
     source.mkdir()
@@ -146,8 +146,8 @@ def test_strict_wiring_accepts_a_collected_defadr_reached_through_a_symlink(
 
 
 def test_module_name_parts_are_cut_from_the_string_under_the_root(tmp_path: Path) -> None:
-    """module の名は拡張子を除いた rootdir からの部分(``with_suffix("").relative_to`` と同じ答え)。rootdir の外は
-    今までどおり ValueError。"""
+    """The module name is the part from rootdir without the extension (the same answer as ``with_suffix("").relative_to``). Outside rootdir it is
+    ValueError, as before."""
     root = tmp_path / "project"
     assert relative_module_parts(root / "controllers" / "x" / "tests" / "test_y.hy", root) == [
         "controllers",
@@ -163,7 +163,7 @@ def test_module_name_parts_are_cut_from_the_string_under_the_root(tmp_path: Path
 
 
 def test_import_base_falls_back_to_the_first_non_package_ancestor(tmp_path: Path) -> None:
-    """名に使えない部分(``doeff-cluster``)を含む path は、``__init__`` を持たない最初の祖先を基にする(今までどおり)。"""
+    """A path containing a part that cannot be used in a name (``doeff-cluster``) is based on the first ancestor without ``__init__`` (as before)."""
     root = tmp_path / "project"
     tests = root / "packages" / "doeff-cluster" / "tests"
     tests.mkdir(parents=True)

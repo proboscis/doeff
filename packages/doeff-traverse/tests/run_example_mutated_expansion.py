@@ -1,26 +1,26 @@
-"""例 1 本を `hy <例>` と同じに走らせる前に、macro の展開を答えを変えない形に変える(test_examples_run.py の子)。
+"""Before running one example the same as `hy <example>`, changes the macro expansion into a form that does not change the answer (a child of test_examples_run.py).
 
-使い方: python run_example_mutated_expansion.py <例の path> <macro の名>…
+Usage: python run_example_mutated_expansion.py <example path> <macro name>…
 
-変異「何もしない handler の下で走らせる」: 展開が作る Program を、effect を全部外へ渡す handler の下で走らせる Program(WithHandler)に
-替える。run の後の答えは変わらず、展開が作る値の class 名・型・属性だけが変わる — 包んだ値は、元が Traverse の effect でも Program
-(Call)でも WithHandler になるので、macro の今の展開の形に依らず必ず変わる。例がその形を印字していれば、macro を 1 字も変えて
-いないのに出力が変わる — macro の持ち主が答えを変えずに展開を変えると例が赤になる事を、先に名指せる。macro ごとの包み方(_MUTATIONS):
-- traverse・for/do(展開が Traverse の effect か Program を作る式): その値を包む —
-  `(WithHandlerType (do (fn [effect k] (yield (Pass effect k)))) <元の展開>)`(評価の時期は元のまま)。
-- fnk(展開が kleisli の関数を作る式): 作った関数を、呼んだ値を包む関数に替える。
-- defk(展開が kleisli の関数を定義する文): 定義の後で、その名を、呼んだ値を包む関数に付け替える。
-包むのは一番外の値だけ: 件の関数の形や、内側の handler が受ける effect の中身は変えない。
+Mutation "run under a do-nothing handler": replaces the Program the expansion builds with a Program (WithHandler) that runs under a handler passing every effect outward.
+The answer after run is unchanged, and only the class name, type, and attributes of the value the expansion builds change — the wrapped value becomes a WithHandler whether the original is a Traverse effect or a Program
+(Call), so it always changes regardless of the macro's current expansion shape. If the example prints that shape, the output changes even though not one character of the macro changed
+— so we can name beforehand that the example turns red when a macro owner changes the expansion without changing the answer. Wrapping per macro (_MUTATIONS):
+- traverse, for/do (the expansion is an expression that builds a Traverse effect or Program): wrap that value —
+    `(WithHandlerType (do (fn [effect k] (yield (Pass effect k)))) <original expansion>)` (the evaluation timing stays as is).
+- fnk (the expansion is an expression that builds a kleisli function): replace the built function with a function that wraps the value it returns.
+- defk (the expansion is a statement that defines a kleisli function): after the definition, rebind that name to a function that wraps the value it returns.
+Only the outermost value is wrapped: the shape of the item function and the contents of the effects that inner handlers receive are not changed.
 
-変異は、例の module(`hy <例>` が走らせる module)を compile する時の展開だけに当てる。例が import する lib の `.hy` が同じ macro
-を使っていても、その展開は変えない — 変えた展開を compile した lib の bytecode が、機体で共有する保存先(DOEFF_HY_CODE_STORE)へ
-書かれ、変異を知らない走りが包まれた展開を読むのを、作りで防ぐ。包む関数は例の path を閉じ込めない(例は sys.argv[0] で見分ける) —
-doeff-hy の bytecode の guard は macro の関数の閉包から digest を作るので、例ごとに違う path を持つと、その macro を使う lib の
-記録が例ごとに増える。
+The mutation is applied only to the expansion when compiling the example's module (the module `hy <example>` runs). Even if a lib `.hy` that the example imports uses the same macro,
+its expansion is not changed — by construction this prevents the bytecode of a lib compiled with the changed expansion from being written to the store shared by the machine (DOEFF_HY_CODE_STORE)
+and a run unaware of the mutation from reading the wrapped expansion. The wrapping function does not capture the example's path (the example is identified by sys.argv[0]) —
+the doeff-hy bytecode guard builds a digest from the closure of the macro function, so if it held a different path per example, the records of libs using that macro
+would grow per example.
 
-macro の表は doeff-hy の macros の module の `_hy_macros`(Hy の名 → 展開の関数)で、例の `(require doeff-hy.macros …)` がそこから
-(`*`・`:macros`・別名の書き方でも)引くので、例を走らせる前にそこの名指した macro を差し替える。名指した macro が doeff-hy に
-無い・この入口が包み方を知らなければ、変異が黙って空振りしないよう 0 以外で終わる。
+The macro table is `_hy_macros` (Hy name -> expansion function) of doeff-hy's macros module, and the example's `(require doeff-hy.macros …)` pulls from there
+(also via `*`, `:macros`, or an alias), so the named macros there are swapped before the example runs. If a named macro is not in doeff-hy
+or this entry point does not know how to wrap it, it exits non-zero so the mutation does not silently miss.
 """
 
 import functools
@@ -32,16 +32,16 @@ import doeff_hy.macros as doeff_hy_macros
 import hy
 from doeff_hy_bytecode_guard._records import MACRO_TABLE
 
-# 展開を包む式の頭: doeff の公開の名を、名を束ねずに引く(例が import している名に依らない)。
+# Head of the expression that wraps the expansion: fetches doeff's public names without binding names (independent of the names the example imports).
 _WITH_HANDLER_TEXT = '(. (__import__ "doeff" :fromlist #("WithHandlerType")) WithHandlerType)'
-# 包む handler: 受けた effect を全部外の handler へ渡す。
+# The wrapping handler: passes every effect it receives to the outer handler.
 _PASS_EVERYTHING_TEXT = (
     '((. (__import__ "doeff" :fromlist #("do")) do)'
     ' (fn [effect k] (yield ((. (__import__ "doeff" :fromlist #("Pass")) Pass) effect k))))'
 )
 _WITH_HANDLER = hy.read(_WITH_HANDLER_TEXT)
 _PASS_EVERYTHING = hy.read(_PASS_EVERYTHING_TEXT)
-# kleisli の関数を、呼んだ値を何もしない handler の下で走らせる Program にする関数に替える関数(関数の名・説明の文などは写す)。
+# A function that replaces a kleisli function with one that makes a Program running the value it returns under a do-nothing handler (copies the function's name, docstring, etc.).
 _PROGRAMS_UNDER_HANDLER = hy.read(
     f"""(fn [kleisli]
   (setv pass-everything {_PASS_EVERYTHING_TEXT})
@@ -50,29 +50,29 @@ _PROGRAMS_UNDER_HANDLER = hy.read(
    kleisli))"""
 )
 
-# macro の形ごとの包み方: (macro に渡された form、元の展開) → 変異した展開。
+# Wrapping per macro form: (form passed to the macro, original expansion) -> mutated expansion.
 Mutation = Callable[[tuple[hy.models.Object, ...], hy.models.Object], hy.models.Object]
 
 
 def _value_under_handler(
     forms: tuple[hy.models.Object, ...], expansion: hy.models.Object
 ) -> hy.models.Object:
-    """展開が作る値(Traverse の effect か Program)を、何もしない handler の下で走らせる Program にした展開(元の展開は、前と同じ時に
-    評価される)。"""
+    """An expansion in which the value the expansion builds (a Traverse effect or Program) becomes a Program running under a do-nothing handler (the original expansion is
+    evaluated at the same time as before)."""
     return hy.models.Expression([_WITH_HANDLER, _PASS_EVERYTHING, expansion])
 
 
 def _function_returning_programs(
     forms: tuple[hy.models.Object, ...], expansion: hy.models.Object
 ) -> hy.models.Object:
-    """展開が作る kleisli の関数を、呼んだ値を何もしない handler の下で走らせる Program にする関数に替えた展開。"""
+    """An expansion in which the kleisli function the expansion builds is replaced with a function that makes the value it returns a Program running under a do-nothing handler."""
     return hy.models.Expression([_PROGRAMS_UNDER_HANDLER, expansion])
 
 
 def _definition_returning_programs(
     forms: tuple[hy.models.Object, ...], expansion: hy.models.Object
 ) -> hy.models.Object:
-    """展開が定義する kleisli の関数の名(macro の第 1 引数)を、定義の後で、呼んだ値を包む関数に付け替えた展開。"""
+    """An expansion in which, after the definition, the name of the kleisli function the expansion defines (the macro's first argument) is rebound to a function that wraps the value it returns."""
     name = forms[0]
     rebind = hy.models.Expression(
         [
@@ -84,7 +84,7 @@ def _definition_returning_programs(
     return hy.models.Expression([hy.models.Symbol("do"), expansion, rebind])
 
 
-# この入口が包み方を知る macro(Hy の名 → 包み方)。test_examples_run.py の MUTATED_MACROS は、この表の名から選ぶ。
+# The macros this entry point knows how to wrap (Hy name -> wrapping). MUTATED_MACROS in test_examples_run.py is chosen from the names in this table.
 _MUTATIONS: dict[str, Mutation] = {
     "traverse": _value_under_handler,
     "for/do": _value_under_handler,
@@ -94,18 +94,18 @@ _MUTATIONS: dict[str, Mutation] = {
 
 
 def _takes_compiler(macro: Callable[..., hy.models.Object]) -> bool:
-    """Hy は、第 1 引数が `_hy_compiler` の macro にだけ今の compiler を渡す(macro の口)。"""
+    """Hy passes the current compiler only to a macro whose first argument is `_hy_compiler` (the macro entry)."""
     return macro.__code__.co_varnames[:1] == ("_hy_compiler",)
 
 
 def _mutated(
     macro: Callable[..., hy.models.Object], mutation: Mutation
 ) -> Callable[..., hy.models.Object]:
-    """macro と同じ引数と答えの macro で、例の file を compile する時の展開だけを mutation で替えた物。
+    """A macro with the same arguments and answer as the macro, whose expansion alone, when compiling the example file, is changed by the mutation.
 
-    Hy は、第 1 引数が `_hy_compiler` の関数に compiler を渡す — 包む関数は常にそう書き、元の macro が compiler を受ける時だけ渡す。
-    compile している module が例かは、module の file と sys.argv[0](hy が走らせる例の path に詰め直す)で見分ける(`hy <例>` が
-    compile する module の名は file の stem)。compiler の無い展開(hy.macroexpand が compiler を渡さない時)は、元のまま。
+    Hy passes the compiler to a function whose first argument is `_hy_compiler` — the wrapping function is always written that way and passes it only when the original macro accepts a compiler.
+    Whether the module being compiled is the example is told by the module's file and sys.argv[0] (repacked to the example path that hy runs) (the module name that `hy <example>`
+    compiles is the file's stem). An expansion without a compiler (when hy.macroexpand passes no compiler) is left as is.
     """
 
     @functools.wraps(macro)
@@ -128,13 +128,13 @@ def main(example: str, macros: list[str]) -> None:
     missing = [name for name in macros if hy.mangle(name) not in table]
     if missing:
         raise SystemExit(
-            f"doeff-hy の macro に {' '.join(missing)} が無い — 変異で包む macro の表(test_examples_run.py の"
-            f" MUTATED_MACROS)を今の macro に合わせる"
+            f"doeff-hy has no macro {' '.join(missing)} — align the table of macros wrapped by the mutation (MUTATED_MACROS in test_examples_run.py)"
+            f" with the current macros"
         )
     unknown = [name for name in macros if name not in _MUTATIONS]
     if unknown:
         raise SystemExit(
-            f"この入口は {' '.join(unknown)} の包み方を知らない — _MUTATIONS に足すか、MUTATED_MACROS から外す"
+            f"this entry point does not know how to wrap {' '.join(unknown)} — add to _MUTATIONS or remove from MUTATED_MACROS"
         )
     for name in macros:
         key = hy.mangle(name)

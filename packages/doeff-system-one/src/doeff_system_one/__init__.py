@@ -1,4 +1,4 @@
-"""doeff-system-one — 較正された判定器(System One)への問いを effect で表す。"""
+"""doeff-system-one -- express questions to a calibrated judge (System One) as effects."""
 from importlib import import_module
 from typing import TYPE_CHECKING
 

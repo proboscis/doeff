@@ -1,16 +1,16 @@
-"""sequence() の契約の検。
+"""Tests the contract of sequence().
 
-sequence は Program の列を渡された順に 1 つずつ走らせ、答えを tuple で返す。handler は要らず、方針は「順・最初の失敗で止まる」に
-固定する(Traverse の handler が決める並び・失敗の扱いとは別の、名前のある道具)。確かめる事は 3 つ。
+sequence runs a list of Programs one at a time in the order given and returns the answers as a tuple. No handler is needed, and the policy is fixed to "in order, stop at the first failure"
+(a named tool, separate from the ordering and failure handling that the Traverse handler decides). Three things are checked.
 
-- 契約: 入力順・重複・None を保つ / 空は () / 最初の例外がそのまま上がり後ろの Program は始まらない / Program は走らせる直前に
-  作られる(generator を渡せる)/ 呼び手の handler の下で走る / 同じ Program を 2 度走らせても蓄積を共有しない。
-- 失敗を落とさない: Traverse の sequential は失敗した件を記録して残りを読み続けるが、sequence は止まる(起動の読み直しが
-  「読めない行があれば止まる」を保つために要る)。
-- 線形: 行の数が 10 倍になっても費用は約 10 倍(tuple の継ぎ足しは約 100 倍)。
+- Contract: keeps input order, duplicates, and None / empty gives () / the first exception is raised as is and later Programs do not start / each Program is
+  created just before it runs (a generator can be passed) / runs under the caller's handler / running the same Program twice does not share accumulation.
+- Does not swallow failures: Traverse's sequential records failed items and keeps reading the rest, but sequence stops (needed so that the startup re-read
+  keeps "stop if there is an unreadable line").
+- Linear: even when the number of lines grows 10x, the cost is about 10x (appending to a tuple would be about 100x).
 
-行の読みには 2 つの形がある。effect を出さない @do(本体に yield が無い — defk の判断)は束ねる所でその場で呼ばれ、effect を出す
-@do(本体に yield が在る)は VM が走らせる。契約の検は両方で通す(どちらの形でも同じ答え・同じ止まり方)。
+There are two forms of reading a line. An @do that emits no effect (no yield in the body — a defk decision) is called on the spot where it is bundled, and an effect-emitting
+@do (a yield in the body) is run by the VM. The contract tests pass through both (same answer and same stopping in either form).
 """
 
 import time
@@ -28,7 +28,7 @@ _Effects = Generator[object, object, int]
 def _settled_row(
     index: int, events: list[str], fails_at: int | None = None
 ) -> Program[int, object]:
-    """effect を出さない行の読み(束ねる所でその場で呼ばれる形)。"""
+    """Reading a line that emits no effect (the form called on the spot where it is bundled)."""
 
     @do
     def row() -> int:
@@ -43,7 +43,7 @@ def _settled_row(
 def _yielding_row(
     index: int, events: list[str], fails_at: int | None = None
 ) -> Program[int, object]:
-    """effect を出す行の読み(VM が走らせる形)。"""
+    """Reading a line that emits an effect (the form the VM runs)."""
 
     @do
     def row() -> _Effects:
@@ -105,7 +105,7 @@ def test_the_first_exception_goes_up_as_it_is_and_later_programs_never_start(
 
     with pytest.raises(ValueError, match="row failed"):
         run(sequence(programs()))
-    # 3 は作られも走らせられもしない
+    # 3 is neither created nor run
     assert events == ["make 1", "run 1", "make 2", "run 2"]
 
 
@@ -113,7 +113,7 @@ def test_the_first_exception_goes_up_as_it_is_and_later_programs_never_start(
 def test_a_failing_row_is_not_dropped_as_it_is_under_traverse_sequential(
     make_row: Callable[..., Program[int, object]],
 ) -> None:
-    """Traverse の sequential は失敗した件を記録して残りを読み続け、valid_values だけを読む呼び手には失敗が見えない。"""
+    """Traverse's sequential records failed items and keeps reading the rest, and a caller that reads only valid_values cannot see the failure."""
     events: list[str] = []
 
     @do
@@ -172,7 +172,7 @@ def test_a_long_chain_does_not_hit_the_recursion_limit() -> None:
 
 
 def _cpu_seconds(make_and_run: Callable[[int], object], rows: int) -> float:
-    """rows 行を 3 回走らせた CPU 時間の最小(負荷の揺れを小さくする)。"""
+    """The minimum CPU time over 3 runs of rows lines (reduces load jitter)."""
     return min(_cpu_seconds_once(make_and_run, rows) for _ in range(3))
 
 
@@ -186,16 +186,16 @@ def _cpu_seconds_once(make_and_run: Callable[[int], object], rows: int) -> float
 def test_the_cost_grows_in_proportion_to_the_rows(
     make_row: Callable[..., Program[int, object]],
 ) -> None:
-    """3 千行 → 3 万行(10 倍)で、費用は約 10 倍。tuple の継ぎ足しなら約 100 倍になる(測り: 3 千行 35 ms → 3 万行 3.5 秒)。
+    """3 thousand lines -> 30 thousand lines (10x): the cost is about 10x. Appending to a tuple would make it about 100x (measured: 3 thousand lines 35 ms -> 30 thousand lines 3.5 s).
 
-    測りは負荷で揺れるので、線形(約 10 倍)と 2 乗(約 100 倍)の間の 30 倍を境にする。
+    The measurement jitters with load, so the boundary is 30x, between linear (about 10x) and quadratic (about 100x).
     """
 
     def run_rows(rows: int) -> object:
         sink: list[str] = []
         return run(sequence(make_row(index, sink) for index in range(rows)))
 
-    run_rows(300)  # 最初の 1 回の準備(import・bytecode)を測りに入れない
+    run_rows(300)  # keep the first-time setup (import, bytecode) out of the measurement
     small = _cpu_seconds(run_rows, 3_000)
     large = _cpu_seconds(run_rows, 30_000)
     assert large < small * 30, (small, large)

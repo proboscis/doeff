@@ -1,13 +1,13 @@
-"""登録簿に ADR を載せる・空にする・検の id を並べる・検を引く操作は effect RegisterAdr・ClearRegistry・EnforcementIds・
-GetEnforcement で、GetAdr と同じ handler の工場 adr_registry が答える。
+"""The operations that register an ADR in the registry, empty it, list check ids and look up a check are the effects RegisterAdr, ClearRegistry, EnforcementIds and
+GetEnforcement, answered by adr_registry, the same handler factory as GetAdr.
 
-決め: doeff-adr を範囲に入れ、関数を GetAdr と同じ向きで直す
-(ADR-DOE-API-001 R32)。前の関数 register_adr・clear_registry・enforcement_ids・get_enforcement は
-外の repo に呼び手が無かったので、移し替えの層を残さずに消した。
+Decision: bring doeff-adr into scope and fix the functions in the same direction as GetAdr
+(ADR-DOE-API-001 R32). The former functions register_adr, clear_registry, enforcement_ids and get_enforcement had
+no callers in other repos, so they were removed without leaving a migration layer.
 
-adr_registry() は process の登録簿を読み書きし、adr_registry(specs=[…], enforcements={…}) は別の登録簿から答える(どちらかを
-渡せば別の登録簿で、渡さない方は空)。内側に据えた handler が先に答えるので、test は program の一部だけを別の登録簿で走らせられる
-— effect だけで読み書きする test は isolated_registry が要らない。
+adr_registry() reads and writes the process registry, and adr_registry(specs=[...], enforcements={...}) answers from a separate registry (if either is
+given it is a separate registry, and the one not given is empty). The innermost installed handler answers first, so a test can run only part of a program against a separate registry
+-- a test that reads and writes only through effects does not need isolated_registry.
 """
 
 import doeff_adr
@@ -35,14 +35,14 @@ pytest_plugins = ["pytester"]
 
 
 def _inline_rule(enforcement_id: str) -> RegisterSemgrep:
-    """その場の規則の形の Semgrep の検の載せ(semgrep は走らせない — 載せと引きだけを見る test のため)。"""
+    """Register an in-place-rule-form Semgrep check (semgrep is not run -- for a test that only looks at registration and lookup)."""
     return RegisterSemgrep(
         enforcement_id, pattern="forbidden-token", bad=["forbidden-token"], good=["ok"]
     )
 
 
 def test_register_adr_puts_the_adr_on_the_process_registry() -> None:
-    """RegisterAdr は載せた AdrSpec を答え、同じ値を GetAdr が引く(status の語は小文字に揃える)。"""
+    """RegisterAdr answers the registered AdrSpec, and GetAdr looks up the same value (the status word is lowercased)."""
     with isolated_registry():
         spec = run(
             adr_registry()(
@@ -54,11 +54,11 @@ def test_register_adr_puts_the_adr_on_the_process_registry() -> None:
 
 
 def test_register_adr_failures_are_raised_where_the_effect_was_performed() -> None:
-    """同じ id と決まった語でない status は ValueError で、effect を出した所で受けられる。"""
+    """The same id, or a status that is not one of the fixed words, is a ValueError, which can be caught at the site that raised the effect."""
 
     @do
     def refused(effect: RegisterAdr):
-        """載せが断られた時の文を答える(断られずに載れば "accepted")— 断りが effect を出した所へ返る事を見るため。"""
+        """Return the text when registration is rejected ("accepted" if it registers without rejection) -- to see that the rejection returns to the site that raised the effect."""
         try:
             yield effect
         except ValueError as failed:
@@ -80,7 +80,7 @@ def test_register_adr_failures_are_raised_where_the_effect_was_performed() -> No
 
 
 def test_enforcement_ids_and_get_enforcement_read_the_process_registry() -> None:
-    """RegisterSemgrep で載せた検を、EnforcementIds が並べ、GetEnforcement が引く。載っていない id は KeyError。"""
+    """Checks registered with RegisterSemgrep are listed by EnforcementIds and looked up by GetEnforcement. An id not registered is a KeyError."""
     with isolated_registry():
         rule = run(semgrep_enforcements()(_inline_rule("probe_rule")))
         assert run(adr_registry()(EnforcementIds())) == ["probe_rule"]
@@ -103,8 +103,8 @@ def test_clear_registry_empties_the_adrs_and_the_enforcements() -> None:
 
 
 def test_a_separate_registry_answers_every_effect_without_falling_through() -> None:
-    """別の登録簿を据えると、6 つの effect は外の登録簿を読み書きしない: 載せは別の表へ行き、無い id は外に在っても KeyError、
-    ClearRegistry は別の表だけを空にする。"""
+    """With a separate registry installed, the 6 effects do not read or write the outer registry: registration goes to the separate table, an id that is absent is a KeyError even if it exists outside,
+    and ClearRegistry empties only the separate table."""
     checks: dict[str, EnforcementRef | SemgrepSpec] = {}
 
     @do
@@ -136,8 +136,8 @@ def test_a_separate_registry_answers_every_effect_without_falling_through() -> N
 
 
 def test_one_dict_is_shared_with_semgrep_enforcements() -> None:
-    """semgrep_enforcements(table=d) と adr_registry(enforcements=d) に同じ辞書を渡すと、RegisterSemgrep の載せを GetEnforcement が
-    引き、RegisterAdr の :enforcement の id はその検の種類(defsemgrep)を読む。"""
+    """When the same dict is passed to semgrep_enforcements(table=d) and adr_registry(enforcements=d), GetEnforcement looks up the registration of RegisterSemgrep,
+    and the :enforcement id of RegisterAdr reads the kind of that check (defsemgrep)."""
     checks: dict[str, EnforcementRef | SemgrepSpec] = {}
 
     @do
@@ -162,7 +162,7 @@ def test_one_dict_is_shared_with_semgrep_enforcements() -> None:
 
 
 def test_a_separate_registry_lives_as_long_as_its_handler_value() -> None:
-    """別の登録簿は工場を呼んだ時に 1 つ作る: 同じ handler の値を使い回す間は載せが残り、工場を呼び直すと空から始まる。"""
+    """A separate registry is made once when the factory is called: registrations persist while the same handler value is reused, and calling the factory again starts from empty."""
     answer = adr_registry(specs=[])
     run(answer(RegisterAdr("ADR-PROBE-001", title="kept", status="proposed")))
     assert run(answer(AdrIds())) == ["ADR-PROBE-001"]
@@ -171,11 +171,11 @@ def test_a_separate_registry_lives_as_long_as_its_handler_value() -> None:
 
 def test_the_factory_refuses_an_enforcement_table_that_is_not_a_dict() -> None:
     with pytest.raises(TypeError, match="takes a dict from id to enforcement, got list"):
-        adr_registry(enforcements=[])  # type: ignore[arg-type] — 書き違いを断る事を見るため、辞書でない値を渡す
+        adr_registry(enforcements=[])  # type: ignore[arg-type] — to see that a typo is rejected, pass a non-dict value
 
 
 def test_the_registry_is_read_and_written_only_through_the_effects() -> None:
-    """4 つの effect は入口に在り、前の関数 register_adr・clear_registry・enforcement_ids・get_enforcement は入口にも registry にも無い。"""
+    """The 4 effects are at the entry point, and the former functions register_adr, clear_registry, enforcement_ids and get_enforcement are in neither the entry point nor the registry."""
     assert {"RegisterAdr", "ClearRegistry", "EnforcementIds", "GetEnforcement"} <= set(
         doeff_adr.__all__
     )
@@ -186,8 +186,8 @@ def test_the_registry_is_read_and_written_only_through_the_effects() -> None:
 
 
 def test_a_deftest_writes_to_a_swapped_registry_and_leaves_the_process_one(pytester) -> None:
-    """ADR の deftest が別の登録簿を据えて RegisterAdr と GetEnforcement を出すと、その表が答え、defadr が載せた process の登録簿は
-    変わらない(defadr の展開も RegisterAdr を adr_registry() の下で出す)。"""
+    """When an ADR's deftest installs a separate registry and raises RegisterAdr and GetEnforcement, that table answers, and the process registry that defadr registered
+    is unchanged (the defadr expansion also raises RegisterAdr under adr_registry())."""
     pytester.makeconftest(
         """\
         import pytest

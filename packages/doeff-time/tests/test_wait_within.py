@@ -132,21 +132,21 @@ def test_a_withdrawn_entry_is_skipped_by_the_queue() -> None:
     assert queue.empty()
 
 
-# --- park: 外の promise を、仮想の時計を止めずに待つ-----------------------------------------
-# 外の promise(handler の外の同期の書きや別の thread が埋める — doeff-records の memory の置き場の呼び鈴)の既定の待ちは、
-# 仮想の時計の駆動を止める(埋まる前に時間を進めない)。期限つきの待ちでは期限まで時計が進む必要があるので、park で待つ。
-# park は scheduler の Race の priority=TaskPriority.IDLE が読むので、両方の版で走らせる(rust の版が読まず、時計が止まった)。
+# --- park: wait for an external promise without stopping the virtual clock -----------------------------------------
+# The default wait on an external promise (filled by synchronous code outside the handler or another thread -- the doorbell of the memory store of doeff-records)
+# stops the driving of the virtual clock (time does not advance before it is filled). A wait with a deadline needs the clock to advance up to the deadline, so it waits with park.
+# park is read by the scheduler Race priority=TaskPriority.IDLE, so run on both versions (the rust version did not read it, and the clock stopped).
 
 
 @pytest.fixture(params=["python", "rust"])
 def scheduler_implementation(request: pytest.FixtureRequest, monkeypatch: pytest.MonkeyPatch) -> str:
-    """park の test を scheduler の両方の版で走らせるため(run_with_handlers は $DOEFF_SCHEDULER の版で走る)。"""
+    """To run the park tests on both scheduler versions (run_with_handlers runs on the version of $DOEFF_SCHEDULER)."""
     monkeypatch.setenv("DOEFF_SCHEDULER", request.param)
     return request.param
 
 
 def _complete_from_a_thread(promise: Any, value: str) -> None:
-    """外の promise を、実の時計で 0.2 秒後に別の thread から埋めるため(run の外からの完了)。"""
+    """To fill an external promise from another thread after 0.2 seconds of the real clock (completion from outside run)."""
     timer = threading.Timer(0.2, lambda: promise.complete(value))
     timer.daemon = True
     timer.start()
@@ -163,7 +163,7 @@ def _wait_external_within(park: bool):
 
 @pytest.mark.usefixtures("scheduler_implementation")
 def test_a_parked_wait_on_an_external_promise_reaches_its_deadline() -> None:
-    # park: 外の promise が埋まる前に、仮想の時計が期限(5 秒)へ進み None が返る。task は時計の駆動の 1 本だけ。
+    # park: before the external promise is filled, the virtual clock advances to the deadline (5 seconds) and None is returned. There is only 1 task, the one driving the clock.
     counted = _spawns_and_result(_wait_external_within(True))
     assert counted.result == (None, sim_time(5.0)), counted
     assert counted.spawns == 1, counted
@@ -179,14 +179,14 @@ def _wait_never_completed_external_within():
 
 @pytest.mark.usefixtures("scheduler_implementation")
 def test_a_parked_wait_on_an_external_promise_nobody_completes_answers_none_at_its_deadline() -> None:
-    # 誰も埋めない外の promise を park で待つと、仮想の時計が期限へ進んで None が返る(実の時計を待たない)。
+    # Waiting with park on an external promise nobody fills, the virtual clock advances to the deadline and None is returned (it does not wait for the real clock).
     assert _spawns_and_result(_wait_never_completed_external_within()).result == (None, sim_time(5.0))
 
 
 @pytest.mark.usefixtures("scheduler_implementation")
 def test_the_counterexample_unparked_wait_holds_the_clock_until_the_promise_completes() -> None:
-    # park しない既定の待ちは、外の promise が埋まるまで仮想の時計を止める — 期限の 5 秒は来ず、実の時計の 0.2 秒後の完了が
-    # 仮想の 0 秒で返る(期限つきの待ちが期限を持たない形 — park が要る理由)。
+    # The default wait without park stops the virtual clock until the external promise is filled -- the 5 second deadline never comes, and the completion after 0.2 seconds of the real clock
+    # returns at virtual 0 seconds (the form in which a wait with a deadline has no deadline -- the reason park is needed).
     assert _spawns_and_result(_wait_external_within(False)).result == ("rung", sim_time(0.0))
 
 
@@ -207,12 +207,12 @@ def _in_run_completion_within():
 
 @pytest.mark.usefixtures("scheduler_implementation")
 def test_a_parked_wait_answers_a_completion_made_by_in_run_code() -> None:
-    # run の中の task が仮想の 2 秒後に外の promise を埋めると、park した待ちはその刻に値で返る(期限の 5 秒を待たない)。
+    # When a task inside run fills the external promise at virtual 2 seconds, the parked wait returns with the value at that time (it does not wait for the 5 second deadline).
     assert _spawns_and_result(_in_run_completion_within()).result == ("rung", sim_time(2.0))
 
 
 def test_park_is_a_bool_and_race_takes_only_the_park_mode() -> None:
     with pytest.raises(TypeError):
-        WaitWithin(Promise(1).future, 1.0, park=1)  # type: ignore[arg-type]  # 型の外の値を断る事を確かめる
+        WaitWithin(Promise(1).future, 1.0, park=1)  # type: ignore[arg-type]  # checks that values outside the type are rejected
     with pytest.raises(ValueError, match="park mode"):
         Race(Promise(1).future, priority=TaskPriority.NORMAL)

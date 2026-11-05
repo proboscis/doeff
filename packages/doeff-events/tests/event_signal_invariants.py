@@ -1,20 +1,20 @@
-"""合図の handler が守る不変条件の検(設計 #3072)。
+"""Check of the invariants a signal handler keeps (design #3072).
 
-各関数は handler の組み立て方(``SignalWorld``)を引数に取り、筋書きを走らせて不変条件を確かめる。memory の
-``subscribed_event_handler`` も、その内側に記録の service の変化を合図として発する源を置いた組も、
-同じ関数を自分の組み立て方で呼ぶ。pytest が直に集めないよう ``test_`` で始めない名の file に置く。
+Each function takes how to assemble a handler (``SignalWorld``) as an argument, runs a scenario, and checks the invariant. Both memory's
+``subscribed_event_handler`` and an assembly that places inside it a source emitting record-service changes as signals
+call the same functions with their own assembly. Placed in a file whose name does not start with ``test_`` so pytest does not collect it directly.
 
-合図は「どこが変わったか」(記録のキー)だけを運び、受け手は記録を読み直して状態を作る。筋書きの記録は
-``RecordBook``(キー → 版の索引)で表す。時間で待たず、task どうしの順は約束(``CreatePromise``・``Wait``)で決める。
+A signal carries only "where it changed" (a record key), and the receiver re-reads the records to build state. The scenario's records are
+represented by ``RecordBook`` (an index of key -> version). Do not wait on time; the order between tasks is decided by promises (``CreatePromise``, ``Wait``).
 
-#3077 の組も呼べるように 3 点広げた(memory の組み立て方の意味は変えない):
+Widened in 3 points so that the #3077 assembly can also be called (the meaning of memory's assembly is unchanged):
 
-- 組み立ては Program(``subscribe`` の答え = handler を返す Program)— 記録の service の源は、購読の始まりの位置を記録から
-  読む(effect)ので、組み立てそのものが effect を出す。memory の組み立て方は ``Pure`` で包むだけ。
-- 合図 ``Changed`` の欄は ``keys``(変わった所の tuple)で、筋書きのキーをその world の「所」へ写すのは ``SignalWorld.row``
-  (memory は写さない — 既定)。記録の service の world では、所は記録の行(表の名前と鍵)になる。
-- (b) の 2 度目の合図は、受け手が 1 度目を受けた後に発する — 記録の service の源は 1 回の変更の束の中の同じ型の合図を
-  1 つにまとめるので、続けて発した 2 つは 1 つの合図になり得る(重複を受け手に 2 度渡す筋書きは、束をまたぐ形で書く)。
+- The assembly is a Program (the answer of ``subscribe`` = a Program that returns the handler) — the record-service source reads the start position of the subscription from the records
+  (an effect), so the assembly itself emits effects. Memory's assembly just wraps with ``Pure``.
+- The field of the signal ``Changed`` is ``keys`` (a tuple of changed places), and mapping the scenario's keys to that world's "places" is ``SignalWorld.row``
+  (memory does not map — the default). In the record-service world, a place is a record row (table name and key).
+- The second signal of (b) is emitted after the receiver has received the first — the record-service source merges signals of the same type within one change bundle,
+  so two emitted in succession can become one signal (write scenarios that deliver a duplicate to the receiver twice so that they span bundles).
 """
 
 from __future__ import annotations
@@ -34,7 +34,7 @@ if TYPE_CHECKING:
 
 
 class Subscribe(Protocol):
-    """購読者 ``subscriber`` の handler を組み立てる Program(組み立てた時に購読が始まる)。``event_types=()`` は発するだけ。"""
+    """A Program that builds the handler of subscriber ``subscriber`` (the subscription starts when it is built). ``event_types=()`` only emits."""
 
     def __call__(
         self, subscriber: str, event_types: tuple[type, ...] = (), /
@@ -42,17 +42,17 @@ class Subscribe(Protocol):
 
 
 def _same_key(key: str) -> Hashable:
-    """筋書きのキーを、そのまま合図の所にする(memory の world の既定)。"""
+    """Use the scenario's key as the signal's place as is (the default of memory's world)."""
     return key
 
 
 @dataclass(frozen=True)
 class SignalWorld:
-    """不変条件の検が受け取る、合図の handler の組み立て方と走らせ方。
+    """How to assemble and run signal handlers, received by the invariant checks.
 
-    ``subscribe`` = 購読者の handler を組み立てる Program。同じ world の handler どうしが合図を交わす。
-    ``run`` = その handler が要る土台(scheduler など)の下で Program を走らせ、値を返す。
-    ``row`` = 筋書きのキー → その world の合図が運ぶ所(``Changed.keys`` の要素・``RecordBook`` のキー)。
+    ``subscribe`` = a Program that builds a subscriber's handler. Handlers of the same world exchange signals with one another.
+    ``run`` = runs a Program under the foundation (scheduler, etc.) that the handler needs and returns the value.
+    ``row`` = scenario key -> the place that the world's signal carries (an element of ``Changed.keys`` and a key of ``RecordBook``).
     """
 
     subscribe: Subscribe
@@ -62,21 +62,21 @@ class SignalWorld:
 
 @dataclass(frozen=True)
 class Changed:
-    """所 ``keys`` が変わった、という合図(状態の差分は運ばない)。"""
+    """A signal saying places ``keys`` changed (it does not carry a state diff)."""
 
     keys: tuple[Hashable, ...]
 
 
 @dataclass(frozen=True)
 class Unrelated:
-    """購読の型の外の合図。"""
+    """A signal outside the subscription types."""
 
     key: str
 
 
 @final
 class RecordBook:
-    """筋書きの記録: 所 → 版の索引。受け手は合図の所でここを読み直して状態を作る。"""
+    """The scenario's records: place -> index of versions. The receiver re-reads here at the signal's place to build state."""
 
     __slots__ = ("_versions",)
 
@@ -84,17 +84,17 @@ class RecordBook:
         self._versions: Final[dict[Hashable, int]] = dict(versions)
 
     def read(self, key: Hashable) -> int:
-        """受け手が状態を作り直すために、所の今の版を読む。"""
+        """For the receiver to rebuild state, read the current version of a place."""
         return self._versions[key]
 
     def write(self, key: Hashable, version: int) -> None:
-        """書き手が記録を変える(合図はその後に別に発する)。"""
+        """The writer changes the records (the signal is emitted separately afterward)."""
         self._versions[key] = version
 
 
 @dataclass(frozen=True)
 class GapOutcome:
-    """読み → 処理 → 待ちの筋書きの結果。"""
+    """Result of the read -> process -> wait scenario."""
 
     version_before: int
     signal: Changed
@@ -105,39 +105,39 @@ class GapOutcome:
 def _run_as(
     world: SignalWorld, subscriber: str, event_types: tuple[type, ...], program: Program[object]
 ) -> EffectGenerator[object]:
-    """``subscriber`` の handler を組み立て、その下で ``program`` を走らせて答えを返す。"""
+    """Build the ``subscriber`` handler and run ``program`` under it and return the answer."""
     handler: ProgramHandler = yield world.subscribe(subscriber, event_types)
     return (yield handler(program))
 
 
 def check_signal_between_read_and_wait_is_kept(world: SignalWorld) -> None:
-    """(a) 状態を読む → 処理 → ``WaitForEvent`` の間に別の task が発した合図を落とさない。"""
+    """(a) Do not lose a signal another task emits between reading the state -> processing -> ``WaitForEvent``."""
     outcome = run_read_process_wait(world)
     job = world.row("job")
     assert outcome == GapOutcome(version_before=1, signal=Changed((job,)), version_after=2), outcome
 
 
 def run_read_process_wait(world: SignalWorld) -> GapOutcome:
-    """受け手が記録を読み、処理している間に書き手が記録を書いて合図を発し、その後で受け手が合図を待つ筋書き。
+    """A scenario where the receiver reads the records, and while it processes, the writer writes the records and emits a signal, and then the receiver waits for a signal.
 
-    合図を待ち手の居ない間に捨てる handler では、受け手は起こされず scheduler の行き止まりで終わる。
+    With a handler that discards signals while no waiter exists, the receiver is not woken and ends at a scheduler dead end.
     """
     job = world.row("job")
     book = RecordBook({job: 1})
 
     @do
     def worker(read_done: Promise[object], written: Promise[object]) -> EffectGenerator[GapOutcome]:
-        """受け手: 記録を読み、処理し、それから合図を待って記録を読み直す。"""
+        """Receiver: read the records, process, then wait for a signal and re-read the records."""
         version_before = book.read(job)
         yield CompletePromise(read_done, None)
-        # 処理の間に書き手が記録を書き、合図を発し終える。
+        # During processing the writer writes the records and finishes emitting the signal.
         yield Wait(written.future)
         signal = yield WaitForEvent(Changed)
         return GapOutcome(version_before, signal, book.read(signal.keys[0]))
 
     @do
     def writer(read_done: Promise[object], written: Promise[object]) -> EffectGenerator[None]:
-        """書き手: 受け手が読み終えた後(処理の間)に記録を書き、合図を発する。"""
+        """Writer: after the receiver has finished reading (during processing), write the records and emit a signal."""
         yield Wait(read_done.future)
         book.write(job, 2)
         yield Publish(Changed((job,)))
@@ -145,7 +145,7 @@ def run_read_process_wait(world: SignalWorld) -> GapOutcome:
 
     @do
     def main() -> EffectGenerator[GapOutcome]:
-        """受け手の購読を始めてから受け手と書き手を別の task で走らせ、受け手の結果を返す。"""
+        """Start the receiver's subscription, then run the receiver and writer in separate tasks and return the receiver's result."""
         read_done: Promise[object] = yield CreatePromise()
         written: Promise[object] = yield CreatePromise()
         receiving: ProgramHandler = yield world.subscribe("worker", (Changed,))
@@ -162,13 +162,13 @@ def run_read_process_wait(world: SignalWorld) -> GapOutcome:
 
 
 def check_duplicate_signal_gives_same_state(world: SignalWorld) -> None:
-    """(b) 同じ合図が 2 度来ても受け手の結果が同じ — 受け手は合図の所で記録を読み直して状態を作る(冪等)。"""
+    """(b) Even if the same signal arrives twice the receiver's result is the same — the receiver re-reads the records at the signal's place to build state (idempotent)."""
     job = world.row("job")
     book = RecordBook({job: 1})
 
     @do
     def worker(ready: Promise[object], first_seen: Promise[object]) -> EffectGenerator[tuple[int, ...]]:
-        """受け手: 合図を 2 度受け、そのたびに記録を読み直して作った状態を返す。"""
+        """Receiver: receive a signal twice, and return the state built by re-reading the records each time."""
         yield CompletePromise(ready, None)
         first: Changed = yield WaitForEvent(Changed)
         state_after_first = book.read(first.keys[0])
@@ -178,7 +178,7 @@ def check_duplicate_signal_gives_same_state(world: SignalWorld) -> None:
 
     @do
     def writer(ready: Promise[object], first_seen: Promise[object]) -> EffectGenerator[None]:
-        """書き手: 記録を 1 度だけ変え、同じ合図を 2 度発する(2 度目は受け手が 1 度目を受けた後)。"""
+        """Writer: change the records only once and emit the same signal twice (the second after the receiver has received the first)."""
         yield Wait(ready.future)
         book.write(job, 2)
         yield Publish(Changed((job,)))
@@ -187,7 +187,7 @@ def check_duplicate_signal_gives_same_state(world: SignalWorld) -> None:
 
     @do
     def main() -> EffectGenerator[tuple[int, ...]]:
-        """受け手と書き手を別の task で走らせ、受け手の状態の列を返す。"""
+        """Run the receiver and writer in separate tasks and return the list of the receiver's states."""
         ready: Promise[object] = yield CreatePromise()
         first_seen: Promise[object] = yield CreatePromise()
         worker_task = yield Spawn(_run_as(world, "worker", (Changed,), worker(ready, first_seen)))
@@ -201,11 +201,11 @@ def check_duplicate_signal_gives_same_state(world: SignalWorld) -> None:
 
 
 def check_wait_outside_subscription_is_rejected(world: SignalWorld) -> None:
-    """(c) 購読の型の外を待つと ``ValueError`` — 文に購読者の名と外れた型を名指す。発するだけの購読者の待ちも同じ。"""
+    """(c) Waiting for a type outside the subscription raises ``ValueError`` — the message names the subscriber and the offending type. A wait by an emit-only subscriber is the same."""
 
     @do
     def wait_unrelated() -> EffectGenerator[object]:
-        """購読の型の外の合図を待つ(配線の誤り)。"""
+        """Wait for a signal outside the subscription types (a wiring mistake)."""
         return (yield WaitForEvent(Unrelated))
 
     for subscriber, event_types in (("worker", (Changed,)), ("writer", ())):
@@ -216,22 +216,22 @@ def check_wait_outside_subscription_is_rejected(world: SignalWorld) -> None:
             assert subscriber in message, message
             assert "Unrelated" in message, message
         else:
-            raise AssertionError(f"{subscriber} が購読の型の外 Unrelated を待てた")
+            raise AssertionError(f"{subscriber} was able to wait for Unrelated, which is outside its subscription types")
 
 
 def check_signal_before_subscription_is_not_kept(world: SignalWorld) -> None:
-    """(d) 購読を始める前に発した合図は積まれない — 購読はその時より後の合図だけを積む。"""
+    """(d) A signal emitted before the subscription starts is not queued — the subscription queues only signals after that point."""
 
     @do
     def publish(key: str) -> EffectGenerator[None]:
-        """書き手: キー ``key`` の合図を 1 つ発する。"""
+        """Writer: emit one signal with key ``key``."""
         yield Publish(Changed((world.row(key),)))
 
     @do
     def main() -> EffectGenerator[Changed]:
-        """合図を 1 つ発し終えてから購読を始め、次の合図を発して、受け手が最初に受ける合図を返す。"""
+        """Finish emitting one signal, then start the subscription, emit the next signal, and return the first signal the receiver receives."""
         yield Wait((yield Spawn(_run_as(world, "writer", (), publish("early")))))
-        # 「early」を発し終えた後に購読を始める。
+        # Start the subscription after finishing emitting "early".
         receive: ProgramHandler = yield world.subscribe("worker", (Changed,))
         yield Wait((yield Spawn(_run_as(world, "writer", (), publish("late")))))
         signal: Changed = yield receive(_wait_changed())
@@ -242,18 +242,18 @@ def check_signal_before_subscription_is_not_kept(world: SignalWorld) -> None:
 
 
 def check_resubscribe_discards_previous_queue(world: SignalWorld) -> None:
-    """(d) 同じ名で組み立て直すと前の列を捨て、組み立て直した時より後の合図から新しく始める。"""
+    """(d) Rebuilding with the same name discards the previous queue and starts fresh from signals after the rebuild."""
 
     @do
     def publish(key: str) -> EffectGenerator[None]:
-        """書き手: キー ``key`` の合図を 1 つ発する。"""
+        """Writer: emit one signal with key ``key``."""
         yield Publish(Changed((world.row(key),)))
 
     @do
     def main() -> EffectGenerator[Changed]:
-        """前の列に合図を積んだまま同じ名で組み立て直し、組み立て直した受け手が最初に受ける合図を返す。"""
+        """Rebuild with the same name while signals remain in the previous queue, and return the first signal the rebuilt receiver receives."""
         yield world.subscribe("worker", (Changed,))
-        # 前の列に積まれたまま、受け手が読まずに落ちる。
+        # They remain in the previous queue, and the receiver crashes without reading them.
         yield Wait((yield Spawn(_run_as(world, "writer", (), publish("before-restart")))))
         restarted: ProgramHandler = yield world.subscribe("worker", (Changed,))
         yield Wait((yield Spawn(_run_as(world, "writer", (), publish("after-restart")))))
@@ -266,13 +266,13 @@ def check_resubscribe_discards_previous_queue(world: SignalWorld) -> None:
 
 @do
 def _wait_changed() -> EffectGenerator[Changed]:
-    """受け手: 次の Changed の合図を 1 つ受けて返す。"""
+    """Receiver: receive one Changed signal and return it."""
     signal: Changed = yield WaitForEvent(Changed)
     return signal
 
 
 Invariant = Callable[[SignalWorld], None]
-"""不変条件の検 1 つ: world を受け、破れていれば AssertionError を上げる。"""
+"""One invariant check: take a world and raise AssertionError if it is broken."""
 
 INVARIANTS: Final[tuple[Invariant, ...]] = (
     check_signal_between_read_and_wait_is_kept,

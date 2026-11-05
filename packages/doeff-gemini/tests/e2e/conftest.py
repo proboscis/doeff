@@ -1,7 +1,7 @@
-"""本物の Gemini API を呼ぶ live の検(印 ``real_gemini``)は、印を名指して選んだ時(``pytest -m real_gemini``)だけ走る。
+"""Live tests that call the real Gemini API (marker ``real_gemini``) run only when the marker is selected by name (``pytest -m real_gemini``).
 
-以前は環境変数 DOEFF_GEMINI_RUN_E2E で切り替えていた(検の module が環境変数を直に読む — DOEFF004)。
-費用の掛かる呼びを誤って撃たないため、選ばなければ skip する(ADC の資格が無い時の skip は検の中のまま)。
+Previously this was switched by the environment variable DOEFF_GEMINI_RUN_E2E (the test module read the environment variable directly — DOEFF004).
+To avoid firing costly calls by accident, they are skipped unless selected (the skip when ADC credentials are missing stays inside the test).
 """
 
 import pytest
@@ -12,7 +12,7 @@ REAL_GEMINI = "real_gemini"
 def pytest_configure(config: pytest.Config) -> None:
     config.addinivalue_line(
         "markers",
-        f"{REAL_GEMINI}: 本物の Gemini API を呼ぶ live の検(-m {REAL_GEMINI} で選んだ時だけ走る)",
+        f"{REAL_GEMINI}: live test that calls the real Gemini API (runs only when selected with -m {REAL_GEMINI})",
     )
 
 

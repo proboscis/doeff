@@ -1,10 +1,10 @@
-"""Hy の検の file の集め手の 1 点(ini の doeff_hy_test_files)。
+"""One point of the Hy test-file collector (ini option doeff_hy_test_files).
 
-conftest.py を 1 つも置かない project で、test を定義する .hy は関数ごとの item に、定義しない「上から順に実行する
-script」の .hy は file ごと 1 つの item に集まり、script の例外は赤になること。外す一覧(doeff_hy_test_skips)の
-file は import されずに理由つきの skip になること。ini を書かない repo(下流の既定)では何も集めないこと。
+In a project with no conftest.py, a .hy that defines tests is collected as one item per function, a .hy that defines none (a "script" run top to bottom)
+is collected as a single item per file, and a script exception turns red. Files in the skip list (doeff_hy_test_skips)
+are not imported and become a skip with a reason. In a repo with no ini (the downstream default), nothing is collected.
 
-別の process で pytest を走らせる(pytester の subprocess)。記録のキャッシュと pyc は tmp の下へ書く。
+pytest runs in a separate process (pytester subprocess). The record cache and pyc are written under tmp.
 """
 
 from dataclasses import dataclass
@@ -21,15 +21,15 @@ _LOG = """(import os)
 FILES = {
     "tests/test_functions.hy": "(defn test-one [] (assert True))\n(defn test-two [] (assert True))\n",
     "tests/test_script_ok.hy": _LOG + '(print "script ran")\n(assert (= (+ 1 1) 2))\n',
-    "tests/test_skipped.hy": '(raise (RuntimeError "外したので実行されないはず"))\n',
-    "tests/helper.hy": '(raise (RuntimeError "test_ で始まらない file は集めない"))\n',
+    "tests/test_skipped.hy": '(raise (RuntimeError "skipped, so this should not run"))\n',
+    "tests/helper.hy": '(raise (RuntimeError "files not starting with test_ are not collected"))\n',
 }
-SKIP_REASON = "持ち主へ回した — 理由の例"
+SKIP_REASON = "handed to the owner -- example reason"
 
 
 @dataclass(frozen=True)
 class Run:
-    """1 回の pytest の走行: 終了コード・出力(stdout と stderr)の全文・その走行で実行された script の module の名。"""
+    """One pytest run: exit code, the full output (stdout and stderr), and the names of script modules executed in that run."""
 
     ret: int
     out: str
@@ -39,7 +39,7 @@ class Run:
 def _project(
     pytester: pytest.Pytester, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, ini: str
 ) -> None:
-    """FILES の木と ini を置き、キャッシュ・pyc・実行の記録の置き場を tmp の下へ向ける。"""
+    """Place the tree of FILES and the ini, and point the cache, pyc and execution-record locations under tmp."""
     for name, text in FILES.items():
         path = pytester.path / name
         path.parent.mkdir(parents=True, exist_ok=True)
@@ -52,7 +52,7 @@ def _project(
 
 
 def _run(pytester: pytest.Pytester, tmp_path: Path, *args: str) -> Run:
-    """別の process で pytest を走らせ、その走行で実行された script の名を読んで記録を空にする。"""
+    """Run pytest in a separate process, read the names of scripts executed in that run, and empty the record."""
     result = pytester.runpytest_subprocess("-p", "no:cacheprovider", "-rs", *args, timeout=120)
     log = tmp_path / "run.log"
     ran = log.read_text(encoding="utf-8").split() if log.exists() else []
@@ -69,7 +69,7 @@ _DECLARED = (
 def test_one_collector_takes_test_modules_and_scripts_without_any_conftest(
     pytester: pytest.Pytester, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """test の関数は item ごと・script は file ごと 1 つ・外した file は import せず理由つきの skip。"""
+    """Test functions are per item, a script is one per file, and a skipped file is not imported but skipped with a reason."""
     _project(pytester, tmp_path, monkeypatch, _DECLARED)
 
     cold = _run(pytester, tmp_path, "-v")
@@ -77,15 +77,15 @@ def test_one_collector_takes_test_modules_and_scripts_without_any_conftest(
     assert "tests/test_functions.hy::test_two PASSED" in cold.out, cold.out
     assert "tests/test_script_ok.hy::script PASSED" in cold.out, cold.out
     assert SKIP_REASON in cold.out, cold.out
-    assert "外したので実行されないはず" not in cold.out, cold.out
+    assert "skipped, so this should not run" not in cold.out, cold.out
     assert "helper.hy" not in cold.out, cold.out
     assert cold.ret == 0, cold.out
     assert cold.ran == ["tests.test_script_ok"], cold.ran
 
-    # 2 回目は記録から収集する — 収集では script を実行せず、script の item の実行で 1 度だけ実行する。
+    # The 2nd run collects from the record -- collection does not run the script; it runs exactly once, in the script item's execution.
     collected = _run(pytester, tmp_path, "--collect-only", "-q")
     assert "tests/test_script_ok.hy::script" in collected.out, collected.out
-    assert collected.ran == [], f"記録から収集したのに収集で script を実行した: {collected.ran}"
+    assert collected.ran == [], f"collected from the record but the script ran during collection: {collected.ran}"
     warm = _run(pytester, tmp_path, "-v", "tests/test_script_ok.hy")
     assert "tests/test_script_ok.hy::script PASSED" in warm.out, warm.out
     assert warm.ran == ["tests.test_script_ok"], warm.ran
@@ -94,21 +94,21 @@ def test_one_collector_takes_test_modules_and_scripts_without_any_conftest(
 def test_a_script_that_raises_is_red(
     pytester: pytest.Pytester, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """script の例外は赤 — 記録の無い 1 回目は収集の中で実行するので、その file の収集の赤になる。"""
+    """A script exception is red -- the 1st run has no record so it runs during collection, making the file's collection red."""
     _project(pytester, tmp_path, monkeypatch, _DECLARED)
     (pytester.path / "tests" / "test_script_red.hy").write_text(
-        '(raise (RuntimeError "script の赤"))\n', encoding="utf-8"
+        '(raise (RuntimeError "script is red"))\n', encoding="utf-8"
     )
     red = _run(pytester, tmp_path, "tests/test_script_red.hy")
     assert red.ret != 0, red.out
     assert "ERROR collecting tests/test_script_red.hy" in red.out, red.out
-    assert "script の赤" in red.out, red.out
+    assert "script is red" in red.out, red.out
 
 
 def test_a_script_that_fails_after_the_first_run_is_red_on_the_item(
     pytester: pytest.Pytester, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """記録から収集した script も、実行で例外が出れば item が赤になる(緑の記録を持ち越さない)。"""
+    """A script collected from the record also turns its item red if execution raises (a green record is not carried over)."""
     _project(pytester, tmp_path, monkeypatch, _DECLARED)
     assert _run(pytester, tmp_path, "tests/test_script_ok.hy").ret == 0
     monkeypatch.setenv("RUN_LOG", str(tmp_path / "no-such-dir" / "run.log"))
@@ -120,7 +120,7 @@ def test_a_script_that_fails_after_the_first_run_is_red_on_the_item(
 def test_a_repo_without_the_ini_collects_no_hy_test_files(
     pytester: pytest.Pytester, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """doeff_hy_test_files を書かない repo(下流の既定)では test_*.hy を集めない — 自前の conftest と二重に集めない。"""
+    """A repo without doeff_hy_test_files (the downstream default) does not collect test_*.hy -- no double collection with its own conftest."""
     _project(pytester, tmp_path, monkeypatch, "")
     result = _run(pytester, tmp_path, "--collect-only", "-q")
     assert ".hy" not in result.out, result.out
@@ -129,7 +129,7 @@ def test_a_repo_without_the_ini_collects_no_hy_test_files(
 def test_a_skip_row_without_a_reason_stops_the_run(
     pytester: pytest.Pytester, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """理由の無い除外は設定の誤りとして止める(黙って外さない)。"""
+    """An exclusion without a reason is stopped as a configuration error (never skipped silently)."""
     _project(
         pytester,
         tmp_path,
@@ -144,8 +144,8 @@ def test_a_skip_row_without_a_reason_stops_the_run(
 def test_a_listed_adr_file_is_skipped_with_its_reason_and_an_unlisted_one_is_collected(
     pytester: pytest.Pytester, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """外す一覧は ADR の集め手(doeff_adr_hy_files に当たる file)にも効く — 1 つの一覧が全部の集めに効く(agora-redesign 2026-10-07:
-    agora-controllers の ADR の冊 2 つを一覧に載せても、ADR の集め手が一覧を読まず赤のまま日次に出ていた)。載らない冊は今までどおり集まる。"""
+    """The skip list also applies to the ADR collector (files matching doeff_adr_hy_files) -- one list applies to every collection (agora-redesign 2026-10-07:
+    even when two ADR volumes of agora-controllers were put in the list, the ADR collector did not read the list and stayed red in the daily run). Volumes not listed are still collected as before."""
     _project(
         pytester,
         tmp_path,
@@ -155,11 +155,11 @@ def test_a_listed_adr_file_is_skipped_with_its_reason_and_an_unlisted_one_is_col
     )
     adr = pytester.path / "adr"
     adr.mkdir()
-    (adr / "defadr_paused.hy").write_text('(raise (RuntimeError "外したので実行されないはず"))\n', encoding="utf-8")
+    (adr / "defadr_paused.hy").write_text('(raise (RuntimeError "skipped, so this should not run"))\n', encoding="utf-8")
     (adr / "defadr_live.hy").write_text("(defn test-live [] (assert True))\n", encoding="utf-8")
 
     run = _run(pytester, tmp_path, "-v")
     assert SKIP_REASON in run.out, run.out
-    assert "外したので実行されないはず" not in run.out, run.out
+    assert "skipped, so this should not run" not in run.out, run.out
     assert "adr/defadr_live.hy::test_live PASSED" in run.out, run.out
     assert run.ret == 0, run.out

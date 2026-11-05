@@ -1,8 +1,8 @@
-"""collection.py の公開面の型(型検査のための宣言)。
+"""Types for the public surface of collection.py (declarations for type checking).
 
-Collection は件ごとの結果の列で、有効な件の値の型 `_V` を運ぶ。Traverse の handler は f の答え(`Program[_V, …]` の
-`_V`)だけを有効な件の値に置くので、`valid_values` は `list[_V]`。失敗した件の value は例外か(When で落ちた件は)
-元の件なので、件の記録 ItemResult の value は object のまま。
+Collection is a sequence of per-item results and carries the valid-item value type `_V`. The Traverse handler puts only the answer of f (the `_V` of `Program[_V, …]`)
+into valid item values, so `valid_values` is `list[_V]`. The value of a failed item is an exception or (for an item dropped by When)
+the original item, so the value of the item record ItemResult stays object.
 """
 
 from collections.abc import Iterable, Iterator
@@ -12,7 +12,7 @@ _V = TypeVar("_V", covariant=True)
 _W = TypeVar("_W")
 
 class ItemResult:
-    """件 1 つの結果と、その件の履歴。"""
+    """The result of one item, and the history of that item."""
 
     index: int
     value: object
@@ -23,7 +23,7 @@ class ItemResult:
     ) -> None: ...
 
 class HistoryEntry:
-    """件の履歴の 1 行。"""
+    """One line of an item's history."""
 
     stage: str | None
     event: str
@@ -34,7 +34,7 @@ class HistoryEntry:
     ) -> None: ...
 
 class Collection(Generic[_V]):
-    """件の位置で並ぶ、中を直に読まない列(Traverse・Zip・SortBy・Take の答え)。"""
+    """A sequence ordered by item position whose contents are not read directly (the answer of Traverse, Zip, SortBy, Take)."""
 
     def __init__(self, items: list[ItemResult], source_keys: list[object] | None = None) -> None: ...
     @classmethod
@@ -52,7 +52,7 @@ class Collection(Generic[_V]):
     @property
     def all_items(self) -> list[ItemResult]: ...
     def flatten(self: Collection[Collection[_W]]) -> Collection[_W]:
-        """有効な値が Collection の Collection を、内側の件を並べた 1 つの Collection にする(for/do の重ねた From の展開)。"""
+        """Turns a Collection whose valid values are Collections into a single Collection of the inner items laid out in order (expansion of nested From in for/do)."""
         ...
     def __len__(self) -> int: ...
     def __iter__(self) -> Iterator[_V]: ...

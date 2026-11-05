@@ -1,12 +1,12 @@
-"""閉じの解析が、effect の届いた節だけを読み、同じ scope を辿り直さない事の検。
+"""Test that the closure analysis reads only the clauses an effect has reached, and does not re-walk the same scope.
 
-agora-controllers の閉じの検は、土台の handler を読むたびに全部の節の emits(節が中で出す effect)を読み、handled の scope と運ばれた
-Program を、そこへ届いた walk ごとに報告し直していた(deliver の組で作った節 452 のうち引かれたのは 118・報告 7,000〜17,500 回に
-別の本体 800〜1,900)。節の emits は effect が届いた時に読み、報告は reader に覚えて、答えを変えずに同じ物を作り直さない。
+agora-controllers' closure test, each time it read a base handler, read the emits (the effects a clause yields inside) of every clause, and re-reported the handled scope and the carried
+Program for every walk that reached it (of 452 clauses built from the deliver set only 118 were pulled; 7,000 to 17,500 reports covered
+only 800 to 1,900 distinct bodies). A clause's emits are now read when an effect reaches it, and reports are remembered by the reader so the same thing is not rebuilt without changing the answer.
 
-設計検証の盲検が見つけた 2 つの失敗例も、ここで拒む: 1 つの handler の節を
-2 つの thread が同時に引くと、節が共有する reader の読みかけの事実を辿って effect を落とした(A)。handler の読みを process で覚えると、
-解析の答えと読んだ source の数えが、同じ process で前に走った解析に依った(B — `:absent` の受け手が実際にそう覚えられていた)。
+The two failure cases found by the blind design review are also rejected here: when two threads pull the clauses of one handler
+at the same time, they walked the half-read facts of the reader the clauses share and dropped an effect (A). If handler reads are remembered per process,
+the analysis answer and the count of sources read depended on an analysis run earlier in the same process (B -- the receiver of `:absent` was in fact remembered that way).
 """
 
 import importlib
@@ -50,7 +50,7 @@ class Z(EffectBase):
     pass
 """
 
-# Ping の節だけが読む module(節の emits を読んだかを、読んだ source の記録で見るため)。
+# A module read only by the Ping clause (to see from the record of sources read whether the clause's emits were read).
 FAR_PY = """\
 from doeff import do
 
@@ -78,7 +78,7 @@ def two_clauses(effect, k):
     yield Pass(effect, k)
 
 
-# 2 つの節が同じ関数を呼ぶ(2 つの thread が別の節を引くと、同じ呼ばれ先の事実を読む)。
+# Two clauses call the same function (when two threads pull different clauses, they read the facts of the same callee).
 def shared_far(effect, k):
     if isinstance(effect, Ping):
         yield far_away()
@@ -89,7 +89,7 @@ def shared_far(effect, k):
     yield Pass(effect, k)
 """
 
-# 節の中で互いを入れる handler の組(盲検 B の入力): A の X の節は B を入れて Y を出し、B の Y の節は A を入れて Z を出す。
+# A pair of handlers that install each other inside their clauses (input for blind case B): A's X clause installs B and yields Y, and B's Y clause installs A and yields Z.
 MUTUAL_PY = """\
 from doeff import Pass, Transfer, do
 from doeff.program import with_handlers
@@ -138,7 +138,7 @@ def job():
     yield with_handlers([handler_b], asks_y())
 """
 
-# `(<- x e :absent F)` の形(doeff-hy の bind が書く open_bind)の Program 2 つ。
+# Two Programs of the form `(<- x e :absent F)` (the open_bind that doeff-hy's bind writes).
 ABSENT_PY = """\
 from doeff import do
 from doeff_core_effects._effects import Absent
@@ -227,21 +227,21 @@ def pkg(make_package) -> str:
 
 
 def _effect(pkg: str, name: str) -> type:
-    """検の package の effect の class(check_coverage に渡す effect の組を作るため)。"""
+    """The effect classes of the test package (to build the effect set passed to check_coverage)."""
     return getattr(importlib.import_module(f"{pkg}.effects"), name)
 
 
 def test_a_clause_is_read_when_an_effect_reaches_it_and_counted_where_it_is_read(pkg: str) -> None:
     handler = reading_sources(lambda: analyze_handler(f"{pkg}.handlers:two_clauses"))
     assert f"{pkg}.handlers" in handler.read
-    assert f"{pkg}.far" not in handler.read  # Ping の節の本体はまだ読んでいない
+    assert f"{pkg}.far" not in handler.read  # The body of the Ping clause has not been read yet
 
     pong = reading_sources(lambda: check_coverage([_effect(pkg, "Pong")], [handler.value]))
     assert pong.value.complete
-    assert f"{pkg}.far" not in pong.read  # Pong が届くのは Pong の節だけ
+    assert f"{pkg}.far" not in pong.read  # Pong reaches only the Pong clause
 
     ping = reading_sources(lambda: check_coverage([_effect(pkg, "Ping")], [handler.value]))
-    assert f"{pkg}.far" in ping.read  # 遅れて読んだ source は、引いた所の reading_sources が数える
+    assert f"{pkg}.far" in ping.read  # A source read later is counted by reading_sources at the point where it was pulled
     assert [gap.effect.__name__ for gap in ping.value.gaps] == ["Far"]
 
 
@@ -261,14 +261,14 @@ def test_a_scope_reached_again_under_the_same_lookups_is_the_report_walked_befor
     under_a, under_b = report.handled
     [shared_a] = under_a.program.handled
     [shared_b] = under_b.program.handled
-    assert shared_a.via != shared_b.via  # 別の道で届いた
-    assert shared_a.program is shared_b.program  # 同じ本体を辿り直さない
+    assert shared_a.via != shared_b.via  # reached by a different path
+    assert shared_a.program is shared_b.program  # does not re-walk the same body
     assert [use.effect.__name__ for use in shared_a.program.effects] == ["Tick"]
 
 
 def test_a_scope_reached_where_a_call_in_it_is_being_reported_is_walked_again(pkg: str) -> None:
-    # helper の scope は x を呼ぶ。top の handled の scope から届いた時は x を読み(Tick)、x を報告している途中で届いた時は
-    # x を読まない — 覚えた報告を、見た鍵の上の active が違う所で使い回さない。
+    # helper's scope calls x. When reached from top's handled scope it reads x (Tick), and when reached while x is being reported
+    # it does not read x -- a remembered report is not reused where the active set above the seen key differs.
     report = analyze_program(f"{pkg}.programs:top")
 
     in_scope, under_x = report.handled
@@ -279,13 +279,13 @@ def test_a_scope_reached_where_a_call_in_it_is_being_reported_is_walked_again(pk
 
 
 def _gap_names(coverage) -> list[str]:
-    """答えの gap の effect の名(検の比べのため)。"""
+    """Names of the effects in the answer's gap (for the test's comparison)."""
     return [gap.effect.__name__ for gap in coverage.gaps]
 
 
 def test_two_threads_asking_two_clauses_of_one_handler_both_read_what_they_emit(make_package) -> None:
-    # 盲検 A: 新しい package で handler を読み、2 つの thread が同時に別の節を引く。節は reader を共有するので、守りが無いと片方が
-    # もう片方の読みかけ(空)の far_away の事実を辿り、Far を落とした(直す前の main で 200 回中 173 回)。
+    # Blind case A: read a handler in a fresh package, and two threads pull different clauses at the same time. The clauses share a reader, so without a guard one of them
+    # walked the other's half-read (empty) facts of far_away and dropped Far (173 of 200 runs on main before the fix).
     rounds = 12
     wrong = []
     for _ in range(rounds):
@@ -305,7 +305,7 @@ def test_two_threads_asking_two_clauses_of_one_handler_both_read_what_they_emit(
 
 
 def test_two_analyses_each_count_the_absent_receiver_they_read(pkg: str) -> None:
-    # 盲検 A: `:absent` の受け手が process に 1 つ覚えられ、2 つ目の解析はその節を読み直さず、読んだ source にも数えなかった。
+    # Blind case A: the receiver of `:absent` was remembered once per process, so the second analysis did not re-read that clause and did not count it among the sources read.
     def closure(name: str):
         return _gap_names(check_coverage(analyze_program(f"{pkg}.absent:{name}"), []))
 
@@ -318,9 +318,9 @@ def test_two_analyses_each_count_the_absent_receiver_they_read(pkg: str) -> None
 
 
 def test_an_analysis_answers_and_reads_the_same_after_other_analyses_in_the_process(make_package) -> None:
-    # 盲検 B: handler の読みを process で覚えると、先に走った解析の文脈(読んでいる handler)で読んだ handler が後の解析に使われ、
-    # warm(A → B → A と入れ直す)と job の答えと読んだ source が、どちらを先に撃ったかで変わった。新しい package を 2 つ作り、
-    # 両方の順で撃って、先に撃った時の答えと後に撃った時の答えを比べる。
+    # Blind case B: if handler reads are remembered per process, a handler read in the context of an earlier analysis (the handler being read) was used by a later analysis,
+    # and the warm (swapping A -> B -> A) and job answers and the sources read changed depending on which was fired first. Create two fresh packages,
+    # fire them in both orders, and compare the answer from firing first with the answer from firing later.
     def closure(pkg: str, name: str):
         def compute():
             coverage = check_coverage(analyze_program(f"{pkg}.mutual:{name}"), [])

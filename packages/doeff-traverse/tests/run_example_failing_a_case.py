@@ -1,19 +1,19 @@
-"""例 1 本を `hy <例>` と同じに走らせ、Traverse の走りごとに最初の件を件の中で失敗させる(test_examples_run.py の子)。
+"""Runs one example the same as `hy <example>`, and fails the first item inside the item on each Traverse run (a child of test_examples_run.py).
 
-使い方: python run_example_failing_a_case.py <例の path>
+Usage: python run_example_failing_a_case.py <example path>
 
-件の中の失敗は、Traverse が件の関数で作る Program の中で例外を上げる事で起こす — 例の source の文字列(handler の式・mock の値)
-を書き換える変異は、出力を変えない例の中の書き換えでも検の file を直させた。
+An in-item failure is caused by raising an exception inside the Program that Traverse builds from the item function — a mutation that rewrites the example's source strings (handler expressions, mock values)
+made the test file get fixed even for rewrites inside the example that do not change the output.
 
-この入口が依る traverse-lib の約束は 3 つ: Traverse は `Traverse(f, items, label=None)` で作られ、handler は件ごとに f を呼び、
-件の Program の中の例外を件の失敗として記録して先へ進む。3 つ目が守られる間、子は 0 で終わり、出力の比べ方だけが失敗を
-捕まえる。どれかが変われば子は 0 以外で終わるか印が 0 になり、test_examples_run.py の検が走る例の全部で赤になる
-(黙って緑にならない)。その時は、この入口を新しい約束に合わせる。
+This entry point relies on three traverse-lib promises: Traverse is built as `Traverse(f, items, label=None)`, the handler calls f per item, and
+it records an exception inside the item Program as that item's failure and moves on. While the third holds, the child exits with 0 and only the output comparison catches the failure.
+If any of them changes, the child exits non-zero or the marker becomes 0, and the tests of test_examples_run.py turn red for every example that runs
+(it never silently stays green). Then, adapt this entry point to the new promise.
 
-終わる時に、実行の印 — 件の関数を呼んだ数と、doeff の run で Program を走らせた数 — を標準エラーへ COUNTS_LINE の形で書く。
-名ではなく走った数なので、import するだけ・呼ばない関数の中・quote の中・doeff の外の同じ名(asyncio.run・例の中の run)は数えない。
-run の数は、run の関数の code の実行の始まりを sys.monitoring(Python 3.12 から)で受けて数える — doeff の名前空間は
-書き換えない(例がどの名で import しても同じ code)。
+On exit it writes the run marker — the number of times the item function was called and the number of Programs run by doeff's run — to stderr in the form COUNTS_LINE.
+It counts run counts, not names, so it does not count a mere import, a call inside an uncalled function, a quote, or the same name outside doeff (asyncio.run, a run inside the example).
+The run count is taken by receiving the start of execution of the run function's code with sys.monitoring (Python 3.12+) — doeff's namespace is
+not rewritten (the same code regardless of what name the example imports it under).
 """
 
 import atexit
@@ -31,24 +31,24 @@ from doeff import Program, do
 Item = TypeVar("Item")
 Answer = TypeVar("Answer")
 
-# 実行の印を書く行(test_examples_run.py の _COUNTS が読む)。
+# The line that writes the run marker (read by _COUNTS in test_examples_run.py).
 COUNTS_LINE = "case-calls: {case} program-runs: {program}"
 
-# 実行の印(case = 件の関数を呼んだ数・program = doeff の run を呼んだ数)。
+# The run marker (case = number of item-function calls, program = number of doeff run calls).
 _calls: Counter[str] = Counter()
 
-# run の実行の始まりを受ける sys.monitoring の道具の番号。doeff-hy の bytecode の guard が同じ process で 3・4 を取るので、
-# 名指しの番号のうち、この子の役(実行を数える)に当たる profiler の番号を使う。
+# The tool id of sys.monitoring that receives the start of run's execution. The doeff-hy bytecode guard takes 3 and 4 in the same process, so
+# use the profiler id, among the named ids, that fits this child's role (counting executions).
 _TOOL = sys.monitoring.PROFILER_ID
 
 
 class InjectedCaseError(Exception):
-    """この入口が件の中で上げる失敗。"""
+    """The failure this entry point raises inside an item."""
 
 
 @do
 def _failing_case(value: object) -> Generator[object, object, Never]:
-    """件の中で失敗する Program(走り始めてすぐ上げる — yield は generator にするためだけに在る)。"""
+    """A Program that fails inside the item (raises right after it starts — the yield exists only to make it a generator)."""
     raise InjectedCaseError(f"injected into the case of {value!r}")
     yield
 
@@ -56,7 +56,7 @@ def _failing_case(value: object) -> Generator[object, object, Never]:
 def _first_case_fails(
     f: Callable[[Item], Program[Answer, Any]],
 ) -> Callable[[Item], Program[Answer, Any]]:
-    """f と同じ件の関数で、最初に呼ばれた件だけ件の中で失敗する Program を返す物。"""
+    """Returns something that, with the same item function as f, makes a Program that fails inside the item only for the first item called."""
     failed = False
 
     def case(value: Item) -> Program[Answer, Any]:
@@ -79,17 +79,17 @@ def _init(
     items: Iterable[Item],
     label: str | None = None,
 ) -> None:
-    """Traverse.__init__ と同じ形で、件の関数だけを包む。"""
+    """Same shape as Traverse.__init__, wrapping only the item function."""
     _traverse_init(self, _first_case_fails(f), items, label)
 
 
 def _program_started(code: CodeType, offset: int) -> None:
-    """sys.monitoring の知らせ — doeff の run の実行が始まった(例が Program を走らせた)事を数える。"""
+    """A sys.monitoring notice — counts that the execution of doeff's run started (the example ran a Program)."""
     _calls["program"] += 1
 
 
 def _count_program_runs() -> None:
-    """doeff の run の関数の code の実行の始まりだけを受ける。"""
+    """Receives only the start of execution of the code of doeff's run function."""
     monitoring = sys.monitoring
     monitoring.use_tool_id(_TOOL, "doeff-traverse-example-marks")
     monitoring.register_callback(_TOOL, monitoring.events.PY_START, _program_started)
@@ -97,7 +97,7 @@ def _count_program_runs() -> None:
 
 
 def _write_counts() -> None:
-    """実行の印を標準エラーへ書く(例の標準出力は比べる物なので混ぜない)。"""
+    """Writes the run marker to stderr (the example's stdout is what gets compared, so it is not mixed in)."""
     print(COUNTS_LINE.format(case=_calls["case"], program=_calls["program"]), file=sys.stderr)
 
 

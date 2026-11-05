@@ -1,10 +1,10 @@
-"""effects.py の公開面の型(型検査のための宣言)。
+"""Types for the public surface of effects.py (declarations for type checking).
 
-for/do は `(_doeff_traverse_Traverse (fn [x] ((_doeff_do (fn [] 本体)))) items)` に展開される。Traverse を件の型 `_Item`
-と答えの型 `_Answer` の総称にすると、pyright は items(`Iterable[_Item]`)から件の引数 x の型を推し、本体の答え
-(`Program[_Answer, …]`)から for/do の答え `Collection[_Answer]` を推す — `(<- got (for/do …))` の
-`got.valid_values` が `list[_Answer]` に読める。実行時の答えは effects.py の宣言どおり(handlers.py の handler が
-Resume に渡す Collection)で、ここは型の宣言だけ。
+for/do expands to `(_doeff_traverse_Traverse (fn [x] ((_doeff_do (fn [] body)))) items)`. Making Traverse generic over the item type `_Item`
+and the answer type `_Answer` lets pyright infer the type of the item argument x from items (`Iterable[_Item]`), and the for/do answer `Collection[_Answer]`
+from the body's answer (`Program[_Answer, …]`) — so `got.valid_values` of `(<- got (for/do …))`
+reads as `list[_Answer]`. The runtime answer is as declared in effects.py (the Collection the handler in handlers.py passes to
+Resume); this file only declares types.
 """
 
 from collections.abc import Callable, Iterable
@@ -23,21 +23,21 @@ _Right = TypeVar("_Right")
 _V = TypeVar("_V")
 
 class Fail(EffectBase[Any]):
-    """件の失敗の知らせ。答えは handler が選ぶ代わりの値(normalize_to_none は None)なので Any(effects.py と同じ)。"""
+    """Notice of an item failure. The answer is the replacement value the handler chooses (normalize_to_none gives None), so Any (same as effects.py)."""
 
     cause: object
     context: dict[str, object]
     def __init__(self, cause: object, **context: object) -> None: ...
 
 class Traverse(EffectBase[Collection[_Answer]], Generic[_Item, _Answer]):
-    """items の各件に f を当てる(順・並列は handler が決める)。答えは f の答えを有効な件の値に持つ Collection。
+    """Applies f to each item of items (order and parallelism are decided by the handler). The answer is a Collection holding the answers of f as valid item values.
 
-    f の Program は同じ handler へ Traverse をもう一度出しうる(重ねた From・本体で受けた for/do)。handler は件の Program を自分の
-    下で走らせ、Traverse をまたぐ資源を件の Program の間に持ち続けない。内側の答えを平らにするのは展開(Collection.flatten)で、
-    handler は内側の From かを推さない(effects.py の docstring)。
+    The Program of f may emit Traverse to the same handler again (nested From, for/do received in the body). The handler runs the item Program under itself and
+    does not hold resources spanning Traverse across item Programs. Flattening inner answers is done by expansion (Collection.flatten), and
+    the handler does not infer whether it is an inner From (docstring in effects.py).
     """
 
-    # f が作る Program を出した所の handler の下で走らせる宣言(閉じの検が f の本体を出した所で読む)。
+    # Declaration that the Program built by f runs under the handler at the place it was emitted (the closure check reads it where f's body was emitted).
     __doeff_runs_carried__: ClassVar[frozenset[str]]
     f: Callable[[_Item], Program[_Answer, Any]]
     items: Iterable[_Item]
@@ -50,9 +50,9 @@ class Traverse(EffectBase[Collection[_Answer]], Generic[_Item, _Answer]):
     ) -> None: ...
 
 class Reduce(EffectBase[_Acc], Generic[_Acc, _Item]):
-    """有効な件を f で畳む。答えは init の型。"""
+    """Folds valid items with f. The answer has the type of init."""
 
-    # Traverse と同じく、f が作る Program を出した所の handler の下で走らせる宣言。
+    # Same as Traverse, a declaration that the Program built by f runs under the handler at the place it was emitted.
     __doeff_runs_carried__: ClassVar[frozenset[str]]
     f: Callable[[_Acc, _Item], Program[_Acc, Any]]
     init: _Acc
@@ -62,10 +62,10 @@ class Reduce(EffectBase[_Acc], Generic[_Acc, _Item]):
     ) -> None: ...
 
 class Zip(EffectBase[Collection[tuple[_Left, _Right]]], Generic[_Left, _Right]):
-    """2 つの列を件の位置で組む(どちらかで失敗した件は失敗)。有効な件の値は組 (a の値, b の値)。
+    """Pairs two sequences by item position (an item that failed in either fails). The valid item value is the pair (value of a, value of b).
 
-    件の履歴は走った段を 1 度ずつ持つ: a の履歴の後に、b の履歴のうち a に無い段を足す(b が a から、
-    または両方が 1 つの列から作られて共に持つ段は繰り返さない)。
+    The item history keeps each step that ran once: after the history of a, add the steps of the history of b that a lacks (steps that b took from a,
+    or that both took from one sequence, are not repeated).
     """
 
     a: Iterable[_Left]
@@ -73,25 +73,25 @@ class Zip(EffectBase[Collection[tuple[_Left, _Right]]], Generic[_Left, _Right]):
     def __init__(self, a: Iterable[_Left], b: Iterable[_Right]) -> None: ...
 
 class Inspect(EffectBase[list[ItemResult]]):
-    """列の件ごとの結果と履歴を取り出す。"""
+    """Extracts the per-item results and history of a sequence."""
 
     collection: Iterable[object]
     def __init__(self, collection: Iterable[object]) -> None: ...
 
 class Skip(EffectBase[Never]):
-    """for/do の When が偽の件を落とす(handler は続きへ戻らない)。"""
+    """The When of for/do drops items whose condition is false (the handler does not return to the continuation)."""
 
     def __init__(self) -> None: ...
 
-# 件 1 つの結末: ok・failed・skipped はこの Traverse が件を走らせた結末、carried は前の段で失敗(か skipped)した件を走らせずに持ち越した物、
-# cancelled は Traverse が止まった(parallel_fail_fast の失敗・task の取り消し)ために結末を得なかった件(走っていて取り消された件・始まらなかった件)。
+# Outcome of one item: ok, failed, skipped are outcomes of items this Traverse ran; carried is an item that failed (or was skipped) in an earlier stage and was carried over without running;
+# cancelled is an item that got no outcome because Traverse stopped (parallel_fail_fast failure, task cancellation) (an item that was running and cancelled, or never started).
 ItemOutcomeKind: TypeAlias = Literal["ok", "failed", "skipped", "carried", "cancelled"]
 
 class ItemOutcome(EffectBase[None]):
-    """Traverse の handler が件 1 つの結末を知らせる(effects.py の docstring)。Traverse と handler の間の handler の下で出し、
-    最後に handler 自身が答える。受け手は見て外へ渡す(答えない・投げない — 破れば ItemOutcomeNotPassedError)。
-    間の handler のどれかが効果の引数の注記に ItemOutcome を名指す時だけ出す。件を 1 つ以上走らせる Traverse は、
-    終わっても・fail-fast で止まっても・取り消されても total ちょうど出す(止めた件は cancelled)。"""
+    """The Traverse handler reports the outcome of one item (docstring in effects.py). Emitted under a handler between Traverse and the handler,
+    and finally the handler itself answers. The receiver looks and passes it outward (does not answer or throw — breaking this raises ItemOutcomeNotPassedError).
+    Emitted only when one of the intermediate handlers names ItemOutcome in an effect argument annotation. A Traverse that runs one or more items
+    emits exactly total of them whether it finishes, stops by fail-fast, or is cancelled (stopped items are cancelled)."""
 
     traverse: object
     label: str | None
@@ -103,15 +103,15 @@ class ItemOutcome(EffectBase[None]):
     ) -> None: ...
 
 class ItemOutcomeNotPassedError(RuntimeError):
-    """ItemOutcome の受け手が知らせに答えたか投げ返した(渡さなかった)— Traverse の handler が知らせを出した所で上げる。
-    cause は受け手が投げた物、答えた時は None。"""
+    """The receiver of ItemOutcome answered or threw back the notice (did not pass it on) — raised where the Traverse handler emitted the notice.
+    cause is what the receiver threw, or None when it answered."""
 
     report: ItemOutcome
     cause: BaseException | None
     def __init__(self, report: ItemOutcome, cause: BaseException | None) -> None: ...
 
 class SortBy(EffectBase[Collection[_V]], Generic[_V]):
-    """有効な件を key の順に並べ替える。"""
+    """Sorts valid items in the order of key."""
 
     key: Callable[[_V], SupportsRichComparison]
     collection: Iterable[_V]
@@ -121,7 +121,7 @@ class SortBy(EffectBase[Collection[_V]], Generic[_V]):
     ) -> None: ...
 
 class Take(EffectBase[Collection[_V]], Generic[_V]):
-    """有効な件の先頭 n 件を取る(失敗した件はそのまま運ぶ)。"""
+    """Takes the first n valid items (failed items are carried through as is)."""
 
     n: int
     collection: Iterable[_V]

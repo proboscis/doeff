@@ -1,6 +1,6 @@
 [build-system]
 requires = ["maturin>=1.4,<2.0"]
-# maturin を包み、cargo の target を作業木の外の一時の dir に置く(tools/doeff_cargo_backend.py)
+# Wraps maturin and puts cargo's target in a temporary dir outside the working tree (tools/doeff_cargo_backend.py)
 build-backend = "doeff_cargo_backend"
 backend-path = ["."]
 

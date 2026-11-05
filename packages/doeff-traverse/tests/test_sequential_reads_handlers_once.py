@@ -1,10 +1,10 @@
-"""sequential が Traverse 1 回に内側の handler を読むのは、件を 1 つ目に走らせる時の 1 度だけである事の検。
+"""Tests that for one Traverse, sequential reads the inner handlers only once, when it runs the first item.
 
-Traverse の件は、Traverse を出した所と sequential の間に入っている handler(内側の handler)の下で走る。sequential は
-それを継続から読み(GetHandlers)、件ごとに入れ直す。前は件が 1 つも走らない Traverse(件 0・失敗した件だけの Collection)
-でも読み、読みは @do の関数 get_inner_handlers の呼び 1 段を経ていた(件 0 の Traverse 1 回の固定費 約 5.8 µs のうち
-約 1.1 µs — #2927)。「最後の 1 つ = 受けた handler 自身を外す」の規則は doeff.handler_utils.inner_of の 1 か所にあり、
-数えはその呼びで見る。
+Traverse items run under the handlers (inner handlers) that sit between where Traverse was emitted and sequential. sequential
+reads them from the continuation (GetHandlers) and reinstalls them per item. It used to read even for a Traverse where no item runs (0 items, a Collection of only failed items),
+and the read went through one level of calling the @do function get_inner_handlers (about 1.1 µs of the roughly 5.8 µs fixed cost of one Traverse with 0 items
+— #2927). The rule "the last one = remove the received handler itself" lives in one place, doeff.handler_utils.inner_of,
+and the count is observed at that call.
 """
 
 from collections.abc import Iterable
@@ -17,7 +17,7 @@ from doeff import handler as program_handler
 
 
 class Ask(EffectBase):
-    """件の中から内側の handler に問う effect。"""
+    """An effect that asks the inner handler from inside an item."""
 
 
 @do
@@ -33,7 +33,7 @@ def plus_ask(x: int):
 
 @pytest.fixture
 def reads(monkeypatch: pytest.MonkeyPatch) -> list[int]:
-    """inner_of の呼び(= 内側の handler の読み)ごとに、読んだ handler の数を積む。"""
+    """For each call of inner_of (= a read of the inner handlers), accumulates the number of handlers read."""
     seen: list[int] = []
     inner_of = handler_utils.inner_of
 
@@ -46,7 +46,7 @@ def reads(monkeypatch: pytest.MonkeyPatch) -> list[int]:
 
 
 def traverse_under_answer(items: Iterable[int]) -> Collection[int]:
-    """sequential → answer(内側の handler)→ Traverse の順に入れて走らせる。"""
+    """Installs in the order sequential -> answer (inner handler) -> Traverse and runs."""
 
     @do
     def body():
@@ -62,18 +62,18 @@ def test_inner_of_drops_the_catching_handler() -> None:
 
 def test_a_traverse_reads_the_inner_handlers_once_for_all_its_items(reads: list[int]) -> None:
     col = traverse_under_answer([1, 2, 3])
-    assert col.valid_values == [8, 9, 10], "件は内側の handler(answer)の下で走る"
-    assert len(reads) == 1, "件が 3 つでも読むのは 1 度"
+    assert col.valid_values == [8, 9, 10], "items run under the inner handler (answer)"
+    assert len(reads) == 1, "even with 3 items, it reads only once"
 
 
 def test_a_traverse_with_no_item_reads_no_handlers(reads: list[int]) -> None:
     col = traverse_under_answer([])
     assert len(col) == 0
-    assert reads == [], "走らせる件が無ければ内側の handler を読まない"
+    assert reads == [], "with no item to run, the inner handlers are not read"
 
 
 def test_a_traverse_of_failed_items_only_reads_no_handlers(reads: list[int]) -> None:
     failed: Collection[int] = Collection([ItemResult(index=0, value=ValueError("earlier"), failed=True)])
     col = traverse_under_answer(failed)
-    assert len(col.failed_items) == 1, "失敗した件はそのまま運ぶ"
-    assert reads == [], "失敗した件だけなら走らせる件が無いので読まない"
+    assert len(col.failed_items) == 1, "a failed item is carried through as is"
+    assert reads == [], "with only failed items there is no item to run, so no read"

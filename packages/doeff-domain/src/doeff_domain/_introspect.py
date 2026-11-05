@@ -35,10 +35,10 @@ from doeff_domain._registry import DomainCheckError, DomainDefinitionError
 
 HANDLES_ATTRIBUTE = "__doeff_handles__"
 BODY_ATTRIBUTE = "__doeff_body__"
-# defhandler の節のうち effect を処理しない、session の値の宣言の head
-# (doeff-hy handle.hy の _extract-lazy-clauses)。session = (session val|var 名 式)
-# (ADR-DOE-HY-006)、lazy / lazy-val / lazy-var = 旧い形(_is-lazy-clause)。
-# quoted body は書かれたままの Symbol を保持するが、mangle 済み表記も安全側で含める。
+# Heads of defhandler clauses that do not handle an effect but declare session values
+# (_extract-lazy-clauses in doeff-hy handle.hy). session = (session val|var name expr)
+# (ADR-DOE-HY-006); lazy / lazy-val / lazy-var = the older forms (_is-lazy-clause).
+# A quoted body keeps Symbols as written, but mangled spellings are included too, to be safe.
 _LAZY_CLAUSE_HEADS = frozenset({"session", "lazy", "lazy-val", "lazy-var", "lazy_val", "lazy_var"})
 
 

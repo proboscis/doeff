@@ -1,7 +1,7 @@
-"""時刻を epoch ミリ秒の整数へ換算する式の唯一の定義(GetTime の答えを、他の process や記録の刻と並べる物差しへ)。
+"""The single definition of the formula that converts a time to an integer of epoch milliseconds (to turn the answer of GetTime into a yardstick comparable with times of other processes and records).
 
-同じ刻を 2 か所が別の丸め方(四捨五入と床)で綴ると、329.6 ms に書いた刻が 329.9 ms に刻んだ後の刻より 1 ms 後に見える
-(#3855)。丸めはここの 1 つだけにし、刻を並べる所はすべてこれで綴る。
+If 2 places spell the same time with different rounding (round-half and floor), a time written as 329.6 ms can look 1 ms later than a time stamped as 329.9 ms
+(#3855). Rounding is done in this one place only, and every place that orders times spells them with this.
 """
 
 from datetime import datetime, timedelta, timezone
@@ -13,9 +13,9 @@ _ONE_MS = timedelta(milliseconds=1)
 
 
 def epoch_ms_of(at: datetime) -> int:
-    """timezone つきの時刻 → epoch ミリ秒(床へ丸める)。
+    """Timezone-aware time -> epoch milliseconds (rounded down to the floor).
 
-    timedelta の整数の割り算で求め、float を経ない(float の timestamp を 1000 倍すると 1 ms ずれることがある)。起点より前の
-    時刻も床へ丸める(1969-12-31T23:59:59.9995Z → -1)。時差の付き方が違う 2 つの時刻も同じ物差しに乗る。
+    Computed with integer division of timedelta, without going through float (multiplying a float timestamp by 1000 can be off by 1 ms). Times before the epoch
+    are also rounded to the floor (1969-12-31T23:59:59.9995Z -> -1). Two times with different UTC offsets land on the same yardstick.
     """
     return (ensure_aware_datetime(at, name="at") - _EPOCH) // _ONE_MS
