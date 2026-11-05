@@ -1,29 +1,29 @@
-"""doeff-hy-check の展開の cache。
+"""Expansion cache for doeff-hy-check.
 
-変えた file 3 つを検めるだけでも、それが import する根の下の .hy(agora の画面の core で 105 個)を全部展開するので
-36 秒かかった。依存の展開は、展開が依った物が変わらなければ同じ結果になるので、展開した Python・位置の対応表・所見を
-保存し、次の実行は変わった物だけを展開する。
+Even checking just three changed files expands every .hy under the roots they import (105 in the core of the agora screen), which
+took 36 seconds. Dependency expansion yields the same result as long as what it depended on is unchanged, so we
+save the expanded Python, the position mapping and the findings, and the next run expands only what changed.
 
-展開が依った物(テストの実行の側の bytecode の記録と同じ 1 つの作り方):
-- 展開する source の中身・その module 名・根からの相対 path(診断の path と import の解決に効く)。
-- 展開が使った macro の記録(``doeff_hy_bytecode_guard._loader_hooks.macro_recording``)— Hy の版、展開が実際に使った macro(提供元の
-  module 名・macro 名・macro の関数の code の閉包の digest — macro が呼ぶ補助・読む定数・本体の中の import を含む)、表を
-  引いて無かった名と表に macro を入れた提供元、file 単位で覆う module(macro の本体の中の import の先など)の file の sha256。
-  macro から辿れない型検査の展開の後処理は、doeff_hy._static_check の ``POST_PROCESSING``(``project``)の閉包の digest で入れる
-  (``also``)。使っていない macro・注釈・行番号だけの変更では作り直さない。
-以前は doeff_hy の package 全体の指紋と、source を Hy の reader で読んで集めた require の先の .hy だけをキーに入れていた。
-展開に関係ない doeff_hy の commit 1 つで全部の展開が作り直しになり(1 file の測りが 8 秒から 72 秒)、一方で macro が呼ぶ
-補助の .py を変えても古い展開が当たっていた。
+What an expansion depended on (built the same way as the bytecode record on the test-run side):
+- The content of the source being expanded, its module name, and its path relative to the root (these affect diagnostic paths and import resolution).
+- The record of macros used (``doeff_hy_bytecode_guard._loader_hooks.macro_recording``): the Hy version, the macros the expansion actually used (provider
+  module name, macro name, and a digest of the closure of the macro function's code, including helpers the macro calls, constants it reads and imports in its body), the names looked up
+  in the table that were not found and the providers that put macros into the table, and the sha256 of files for modules covered per file (such as targets of imports inside a macro body).
+  Post-processing of the type-check expansion that cannot be traced from macros is included via the closure digest of ``POST_PROCESSING`` (``project``) in doeff_hy._static_check
+  (``also``). Changes to unused macros, annotations or line numbers alone do not trigger a rebuild.
+Previously the key held only a fingerprint of the whole doeff_hy package plus the .hy files reached through requires collected by reading the source with the Hy reader.
+A single doeff_hy commit unrelated to expansion rebuilt every expansion (a one-file measurement went from 8 to 72 seconds), while changing a helper
+.py called by a macro still hit a stale expansion.
 
-使った macro は展開した後にしか分からないので、保存は 2 段にする(doeff-effect-analyzer の展開の保存 — agora-redesign
-#3598 — と同じ形): source の中身・module 名・相対 path・この file の版で決まる場所(<cache dir>/<頭 2 字>/<場所>/)の中に、
-記録ごとの entry(<記録の指紋>.json)を置き、記録が今の環境に合う entry だけを読む(``record_is_current_here`` — 使った
-macro を module 名から今の環境で引き直して digest を比べる)。
-doeff の版が違う作業木どうしは、互いの entry を上書きせずに並べて持つ。
+The macros used are only known after expansion, so storage has two levels (same shape as the doeff-effect-analyzer expansion store, agora-redesign
+#3598): under a location determined by the source content, module name, relative path and this file's version (<cache dir>/<first 2 chars>/<location>/),
+put one entry per record (<record fingerprint>.json), and read only an entry whose record matches the current environment (``record_is_current_here``: look up the used
+macros by module name in the current environment and compare digests).
+Work trees with different doeff versions keep their entries side by side without overwriting each other.
 
-保存の形は 1 entry 1 file の JSON。壊れた file は読めない物として飛ばし、展開し直す。
+The storage format is one JSON file per entry. A corrupt file is skipped as unreadable and expanded again.
 
-温まった実行の open を減らすため、検める file の組ごとに closure 全体を 1 file に束ねた写し(束 — 下の節)も持つ。束は写しで、正本は entry。
+To reduce opens in a warm run, we also keep a copy of the whole closure bundled into one file per set of checked files (the bundle; see the section below). The bundle is a copy; the entries are the source of truth.
 """
 
 import base64
@@ -49,16 +49,16 @@ from doeff_hy_bytecode_guard._loader_hooks import (
 if TYPE_CHECKING:
     from doeff_hy_bytecode_guard import MacroRecord
 
-# 保存の形の版(形を変えたら上げる — 場所の名に入るので、古い版の entry は読まれない)。
-# 2 = 展開が通った file の記録で照らす形。
-# 3 = 展開が使った macro 単位の記録で照らす形(記録の行 = 表の名・提供元の module 名・macro 名・digest)。
-# 4 = 位置の対応を、整数の list の list でなく、詰めた配列を縮めた文字列 1 つで持つ形(PackedSpans)。
+# Version of the storage format (raise it when the format changes; it is part of the location name, so entries of old versions are not read).
+# 2 = verify against the record of files whose expansion succeeded.
+# 3 = verify against a per-macro record of the macros the expansion used (record row = table name, provider module name, macro name, digest).
+# 4 = hold position mappings as one string of a packed array compressed down, rather than a list of lists of ints (PackedSpans).
 CACHE_VERSION = 4
 
 
 @dataclass(frozen=True)
 class Span:
-    """展開した Python の範囲(0 始まりの行・列、終わりは含まない)と、対応する Hy の位置(1 始まり)— static_check.Span と同じ型。"""
+    """A range of expanded Python (0-based line and column, end exclusive) with the corresponding Hy position (1-based); the same type as static_check.Span."""
 
     start: tuple[int, int]
     end: tuple[int, int]
@@ -66,21 +66,21 @@ class Span:
     hy_column: int
 
 
-#: 保存の形の呼び名(Span と同じ型 — repr の型名が運びの digest に入るので、型の名は Span のまま)。
+#: Name of the storage form (same type as Span; the repr type name enters the carry digest, so the type name stays Span).
 CachedSpan = Span
 
 
-#: 位置の対応 1 つが持つ整数の数(始まりの行・列・終わりの行・列・Hy の行・列)。
+#: Number of ints held by one position mapping (start line, start column, end line, end column, Hy line, Hy column).
 _SPAN_CELLS = 6
 
 
 class PackedSpans(Sequence[Span]):
-    """位置の対応の列を、1 file につき整数の配列 1 つで持つため。展開の親は検める全部の file(日次で 5,500 本・874 万個)の対応を
-    pyright の間も抱える。1 個を list や Span の object にすると 1 個あたり 200〜400 byte になり、free-threaded の CPython は捨てた
-    細かな object の memory を OS へ返さないので、一度作った山が pyright の間の RSS として残った(2026-11-01 — 親が 10GB)。
-    配列なら 1 個 24 byte で、Span は読む時に 1 つずつ作って捨てる(覚えない)。保存の形は配列の byte を zlib で縮めて base64 に
-    した文字列 1 つ(JSON の list の list にすると、読むだけで 1 個ごとの list ができる)。tuple と同じ中身・同じ repr・同じ等しさで読める
-    (repr は運びの digest — static_carry.own_digest — に入る)。"""
+    """Holds the sequence of position mappings as one int array per file. The expansion parent holds the mappings of all checked files (5,500 per day, 8.74 million entries)
+    through pyright. If each were a list or Span object it would cost 200 to 400 bytes apiece, and free-threaded CPython does not return the memory of
+    discarded small objects to the OS, so the pile once built stayed as RSS during pyright (2026-11-01: the parent reached 10GB).
+    With an array each costs 24 bytes, and a Span is made one at a time on read and discarded (not remembered). The storage form is one string: the array bytes compressed with zlib and
+    base64-encoded (a JSON list of lists would create one list per element just by reading). It reads as the same contents, same repr and same equality as a tuple
+    (the repr enters the carry digest, static_carry.own_digest)."""
 
     __slots__ = ("_cells", "_mut_text")
 
@@ -90,7 +90,7 @@ class PackedSpans(Sequence[Span]):
 
     @classmethod
     def of(cls, spans: Iterable[Span]) -> "PackedSpans":
-        """Span の列を詰めるため(展開した直後の子の process で — 親へ送る pickle も配列 1 つになる)。"""
+        """To pack a sequence of Spans (in the child process right after expansion, so the pickle sent to the parent is also one array)."""
         if isinstance(spans, PackedSpans):
             return spans
         cells = array("i")
@@ -100,22 +100,22 @@ class PackedSpans(Sequence[Span]):
 
     @classmethod
     def from_text(cls, text: str) -> "PackedSpans":
-        """保存の形(payload)から戻すため。読めない文字列は ValueError(呼び手が読めない entry として飛ばす — 使う時まで遅らせると、
-        壊れた entry が pyright の後で検査全体を落とす)。読んだ文字列は書き直しに使い回す(束は毎回書き直す)。"""
+        """To restore from the storage form (payload). An unreadable string raises ValueError (the caller skips it as an unreadable entry; deferring until use would have
+        a corrupt entry bring down the whole check after pyright). The string read is reused for rewriting (the bundle is rewritten every time)."""
         try:
             raw = zlib.decompress(base64.b64decode(text, validate=True))
         except zlib.error as error:
-            raise ValueError(f"位置の対応を解けない: {error}") from error
+            raise ValueError(f"cannot decode position mappings: {error}") from error
         cells = array("i")
         if len(raw) % (cells.itemsize * _SPAN_CELLS):
-            raise ValueError(f"位置の対応の byte の数 {len(raw)} が対応 1 つの大きさの倍数でない")
+            raise ValueError(f"byte count {len(raw)} of position mappings is not a multiple of one mapping's size")
         cells.frombytes(raw)
         if sys.byteorder != "little":
             cells.byteswap()
         return cls(cells, text)
 
     def payload(self) -> str:
-        """保存の形にするため(縮めた byte の base64・little endian の 4 byte の整数)。"""
+        """To produce the storage form (base64 of compressed bytes; little-endian 4-byte ints)."""
         if self._mut_text is None:
             cells = self._cells
             if sys.byteorder != "little":
@@ -125,7 +125,7 @@ class PackedSpans(Sequence[Span]):
         return self._mut_text
 
     def _span(self, number: int) -> Span:
-        """number 番目の対応を、読む時だけの Span にするため(覚えない — 覚えると配列で持つ意味が無くなる)。"""
+        """To make the number-th mapping into a Span only at read time (not remembered; remembering would defeat the point of holding an array)."""
         c = self._cells
         at = number * _SPAN_CELLS
         return Span((c[at], c[at + 1]), (c[at + 2], c[at + 3]), c[at + 4], c[at + 5])
@@ -140,13 +140,13 @@ class PackedSpans(Sequence[Span]):
     def __getitem__(self, index: slice) -> tuple[Span, ...]: ...
 
     def __getitem__(self, index: int | slice) -> Span | tuple[Span, ...]:
-        """number 番目の対応(切り出しは tuple)を読むため — tuple と同じ読み方。"""
+        """To read the number-th mapping (a slice yields a tuple); read the same way as a tuple."""
         if isinstance(index, slice):
             return tuple(self._span(number) for number in range(*index.indices(len(self))))
         size = len(self)
         number = index + size if index < 0 else index
         if not 0 <= number < size:
-            raise IndexError("位置の対応の番号が範囲の外")
+            raise IndexError("position mapping index out of range")
         return self._span(number)
 
     def __iter__(self) -> Iterator[Span]:
@@ -169,7 +169,7 @@ class PackedSpans(Sequence[Span]):
 
 @dataclass(frozen=True)
 class CachedFinding:
-    """保存した所見(static_check.Diagnostic と同じ欄)。"""
+    """A saved finding (same fields as static_check.Diagnostic)."""
 
     path: str
     line: int
@@ -181,26 +181,26 @@ class CachedFinding:
 
 @dataclass(frozen=True)
 class CachedProjection:
-    """1 つの .hy の展開の結果のうち、保存して読み戻す部分と、展開が使った macro の記録。"""
+    """The part of one .hy expansion result that is saved and read back, plus the record of macros the expansion used."""
 
     text: str
     spans: Sequence[Span]
     findings: tuple[CachedFinding, ...]
     used: "MacroRecord"
-    # 展開した Python が import する module の名(辿り先を決める — 引くたびに展開の text を ast で読み直さないため。
-    # 古い entry は持たない = None・引いた側が一度読んで書き足す)。
+    # Names of modules the expanded Python imports (decides where to traverse; so we need not re-read the expansion text with ast on every lookup.
+    # Old entries do not have it = None; the looking-up side reads it once and writes it back).
     imports: tuple[str, ...] | None = None
 
 
 @dataclass(frozen=True)
 class CacheMiss:
-    """保存した展開を使えない理由(無い・今の環境に合う記録の entry が無い)。呼び手は展開し直して保存する。"""
+    """Reason a saved expansion cannot be used (missing, or no entry with a record matching the current environment). The caller expands again and saves."""
 
     reason: str
 
 
 def place(text: str, module: str, relative: str) -> str:
-    """source の展開の場所の名(source の中身・module 名・相対 path・保存の形の版で決まる — 上の docstring)。"""
+    """Location name of a source's expansion (determined by source content, module name, relative path and storage format version; see the docstring above)."""
     digest = hashlib.sha256()
     for part in (str(CACHE_VERSION), module, relative, text):
         digest.update(part.encode())
@@ -213,22 +213,22 @@ def _place_dir(cache_dir: Path, name: str) -> Path:
 
 
 def load(cache_dir: Path, name: str) -> CachedProjection | CacheMiss:
-    """場所の中で、展開が使った macro の記録が今の環境に合う entry を読む。無ければ理由つきの CacheMiss(呼び手が展開し直す)。"""
+    """Within a location, read an entry whose record of macros used matches the current environment. If none, a CacheMiss with a reason (the caller expands again)."""
     directory = _place_dir(cache_dir, name)
     if not directory.is_dir():
-        return CacheMiss("無い")
+        return CacheMiss("missing")
     for entry in _newest_first(directory):
         match _read_entry(entry):
             case CachedProjection() as cached if record_is_current_here(cached.used):
                 return cached
             case _:
                 continue
-    return CacheMiss("今の環境に合う記録の entry が無い")
+    return CacheMiss("no entry with a record matching the current environment")
 
 
 def _newest_first(directory: Path) -> list[Path]:
-    """場所の中の entry を新しい順に並べる — 今の環境に合う entry は、普通は一番新しく書かれた物なので、古い版の entry を読まずに
-    済む(1 つしか無い場所は stat しない)。"""
+    """List the entries in a location newest first. The entry matching the current environment is usually the most recently written, so old-version entries need not be read
+    (a location with only one is not stat-ed)."""
     try:
         with os.scandir(directory) as scanned:
             found = [entry for entry in scanned if entry.name.endswith(".json")]
@@ -247,17 +247,17 @@ def _mtime_ns(entry: os.DirEntry[str]) -> int:
 
 
 def _read_entry(path: Path) -> CachedProjection | CacheMiss:
-    """entry 1 つを読む(読めない・形が違う時は CacheMiss)。保存の形の版は CACHE_VERSION と照らす(literal の版で照らすと、
-    CACHE_VERSION を上げた版は自分の書いた entry を読めない)。"""
+    """Read one entry (CacheMiss if unreadable or malformed). The storage format version is checked against CACHE_VERSION (checking against a literal version would
+    leave a version that raised CACHE_VERSION unable to read the entries it wrote itself)."""
     try:
         loaded: object = json.loads(path.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError) as error:
-        return CacheMiss(f"読めない: {error}")
+        return CacheMiss(f"unreadable: {error}")
     return _entry_from_json(loaded)
 
 
 def _entry_from_json(loaded: object) -> CachedProjection | CacheMiss:
-    """JSON から読んだ entry 1 つを組む(形が違う時は CacheMiss — entry の file も束の行も同じ形)。"""
+    """Build one entry from JSON (CacheMiss if malformed; the same shape for an entry file and a bundle row)."""
     match loaded:
         case {
             "version": int(version),
@@ -268,7 +268,7 @@ def _entry_from_json(loaded: object) -> CachedProjection | CacheMiss:
         } if version == CACHE_VERSION:
             record = record_from_json(used)
             if record is None:
-                return CacheMiss("記録の形が違う")
+                return CacheMiss("record shape is wrong")
             try:
                 return CachedProjection(
                     text,
@@ -278,13 +278,13 @@ def _entry_from_json(loaded: object) -> CachedProjection | CacheMiss:
                     _imports_of(loaded),
                 )
             except (TypeError, IndexError, ValueError) as error:
-                return CacheMiss(f"欄の形が違う: {error}")
+                return CacheMiss(f"field shape is wrong: {error}")
         case _:
-            return CacheMiss("版か形が違う")
+            return CacheMiss("version or shape is wrong")
 
 
 def _imports_of(loaded: object) -> tuple[str, ...] | None:
-    """entry の import の名(無い古い entry・形が違う時は None)。"""
+    """The entry's import names (None for an old entry without them or a malformed one)."""
     match loaded:
         case {"imports": list(names)}:
             return tuple(str(name) for name in names)
@@ -306,11 +306,11 @@ def _entry_payload(projection: CachedProjection) -> dict[str, object]:
 
 
 def store(cache_dir: Path, name: str, projection: CachedProjection) -> None:
-    """展開を、場所の中の記録の entry に保存する。書けなくても検めは続ける(cache は速さのためだけ)。"""
+    """Save an expansion to a record entry within a location. Checking continues even if writing fails (the cache is only for speed)."""
     path = _place_dir(cache_dir, name) / f"{record_fingerprint(projection.used)}.json"
     payload = _entry_payload(projection)
-    # 一時の file は書き手ごとの名(pid と時刻)— 保存先を共有する 2 台の worker が同じ entry を同時に書いても、互いの一時の file へ
-    # 書き込まずに済み、どちらかの中身がそのまま rename される。書けなければ一時の file を残さない。
+    # The temporary file has a per-writer name (pid and time): even when two workers sharing the store write the same entry at once, neither writes into the other's temporary file,
+    # and one of the contents is renamed into place as is. If writing fails, no temporary file is left behind.
     _write_atomically(path, payload)
 
 
@@ -325,8 +325,8 @@ def _write_atomically(path: Path, payload: object) -> None:
 
 
 def _write_chunks_atomically(path: Path, chunks: Iterable[str]) -> None:
-    """JSON の文字列を断片ごとに一時の file へ書いて rename するため(束は全部の行を 1 つの payload にすると、書くだけで closure 全体の
-    細かな object を一度に作る — 行ごとに作って書けば、捨てた行の memory を次の行が使い回す)。"""
+    """To write a JSON string fragment by fragment to a temporary file and rename it (if the bundle made all rows one payload, merely writing would create the small objects of the whole closure
+    at once; building and writing row by row lets the next row reuse the memory of discarded rows)."""
     temporary = path.with_name(f"{path.name}.{os.getpid()}.{time.monotonic_ns()}.tmp")
     try:
         path.parent.mkdir(parents=True, exist_ok=True)
@@ -338,28 +338,28 @@ def _write_chunks_atomically(path: Path, chunks: Iterable[str]) -> None:
         temporary.unlink(missing_ok=True)
 
 
-# --- closure 単位の束 -------------------------------------------------------------------------
+# --- Per-closure bundle -------------------------------------------------------------------------
 #
-# 1 .hy ごとの entry は、引くたびに source の読みと entry の読みの 2 回 open する(367 file の closure で 700 回超)。束は、
-# 検める file の組ごとに closure 全体の行(場所の名・展開・展開が使った macro の記録)を 1 file にして、温まった実行の open を
-# 束 1 回にする。束は速さのためだけの写しで、正本は entry のまま: 束に無い・合わない file は今までの引き方(source の中身で
-# 場所を決め、entry を引く)に落ち、その実行の終わりに束を書き直す。
+# A per-.hy entry opens twice on every lookup (reading the source and reading the entry; over 700 times for a 367-file closure). The bundle puts the rows of the whole closure
+# (location name, expansion, record of macros used) into one file per set of checked files, so a warm run opens
+# the bundle once. The bundle is a copy only for speed and the entries remain the source of truth: a file missing from or not matching the bundle falls back to the usual lookup (decide
+# the location from the source content and look up the entry), and the bundle is rewritten at the end of that run.
 #
-# 古い展開を使わない性質(entry の引きと同じ 2 つの照らし):
-# - source: 行は、束を書いた時の source の大きさと更新時刻を持つ。今の stat が同じなら中身が同じ物として信じ、違えば source の
-#   中身から場所の名を作り直して行の名と比べる(更新時刻だけ新しくなった file は、名が同じなら束の展開をそのまま使う)。
-#   大きさと更新時刻が同じまま中身が変わる書き換えを信じて逃さないため、束を書いた時に更新時刻が RACY_NS 以内に新しい file は
-#   stat を持たない行にして、毎回中身で照らす(git の index の racy 判定と同じ)。
-# - macro: 行ごとに ``record_is_current_here(used)`` で今の環境と照らす(entry と同じ)。
-# 版 2 = JSON Lines(頭の行 = 版・続く 1 行 = 1 file — 1 行ずつ読み書きする)。
+# Property of not using stale expansions (the same two checks as the entry lookup):
+# - source: a row holds the source size and mtime from when the bundle was written. If the current stat is the same, the content is trusted as the same; if different, rebuild
+#   the location name from the source content and compare with the row's name (a file whose only mtime got newer reuses the bundle's expansion if the name is the same).
+#   To avoid trusting and missing a rewrite that changes content while keeping size and mtime, a file whose mtime is newer than RACY_NS before the bundle write time
+#   becomes a row without a stat and is checked by content every time (same as git's index racy check).
+# - macro: each row is checked against the current environment with ``record_is_current_here(used)`` (same as an entry).
+# Version 2 = JSON Lines (first line = version, each following line = one file; read and written line by line).
 BUNDLE_VERSION = 2
-#: 束を書く時刻からこの幅以内に更新された file は、更新時刻と大きさで信じない(粗い時計の同じ刻みの中の書き換え)。
+#: A file updated within this span of the bundle write time is not trusted by mtime and size (a rewrite within the same tick of a coarse clock).
 RACY_NS = 2_000_000_000
 
 
 @dataclass(frozen=True)
 class FileStat:
-    """束の行と比べる source の stat(大きさ・更新時刻の ns)。"""
+    """The source stat compared against a bundle row (size, mtime in ns)."""
 
     size: int
     mtime_ns: int
@@ -367,7 +367,7 @@ class FileStat:
 
 @dataclass(frozen=True)
 class BundleRow:
-    """束の行 1 つ — 相対 path の file の module 名・場所の名・書いた時の stat(信じない時は None)・展開。"""
+    """One bundle row: module name of the file at a relative path, location name, stat when written (None if not trusted), and expansion."""
 
     module: str
     place: str
@@ -376,7 +376,7 @@ class BundleRow:
 
 
 def bundle_key(root: Path, targets: Sequence[str]) -> str:
-    """束の名(根・検める file の相対 path の組・保存の形の版で決まる)。"""
+    """Name of the bundle (determined by the root, the set of relative paths of checked files, and the storage format version)."""
     digest = hashlib.sha256()
     for part in (str(BUNDLE_VERSION), str(CACHE_VERSION), str(root), *sorted(set(targets))):
         digest.update(part.encode())
@@ -389,8 +389,8 @@ def _bundle_path(cache_dir: Path, key: str) -> Path:
 
 
 def load_bundle(cache_dir: Path, key: str) -> dict[str, BundleRow]:
-    """束を読む(無い・読めない・形が違う時は空 — 呼び手は今までの引き方で引く。壊れた行だけ飛ばす)。1 行ずつ読んで行にする
-    (全体を 1 度に JSON として読むと、closure 全体の細かな object を一度に作り、その山が pyright の間の RSS に残った)。"""
+    """Read the bundle (empty if missing, unreadable or malformed; the caller uses the usual lookup. Only corrupt rows are skipped). Read line by line into rows
+    (reading the whole as one JSON would create the small objects of the whole closure at once, and that pile stayed in RSS during pyright)."""
     found: dict[str, BundleRow] = {}
     try:
         with _bundle_path(cache_dir, key).open(encoding="utf-8") as stream:
@@ -416,7 +416,7 @@ def load_bundle(cache_dir: Path, key: str) -> dict[str, BundleRow]:
 
 
 def _bundle_row(row: object) -> tuple[str, BundleRow] | None:
-    """束の 1 行を (相対 path, 行) にするため(形が違う・entry が読めない行は None — 飛ばす)。"""
+    """To turn one bundle row into (relative path, row) (None for a malformed row or one whose entry is unreadable; skipped)."""
     match row:
         case {"relative": str(relative), "module": str(module), "place": str(place), "stat": stat, "entry": entry}:
             cached = _entry_from_json(entry)
@@ -434,8 +434,8 @@ def _bundle_row(row: object) -> tuple[str, BundleRow] | None:
 
 
 def bundle_signature(rows: dict[str, BundleRow]) -> dict[str, tuple[str, str, str, FileStat | None]]:
-    """束の行の、書き直すかを決める比べ物(module 名・場所の名・展開が使った macro の記録の指紋・信じる stat — 更新時刻が新しい行の
-    stat は書かないので None)。記録の指紋を入れないと、macro を変えて展開し直した行が束に反映されず、毎回 entry へ落ちる。"""
+    """The value compared to decide whether to rewrite a bundle row (module name, location name, fingerprint of the record of macros the expansion used, trusted stat; the stat of a row
+    with a newer mtime is not written, so None). Without the record fingerprint, a row re-expanded after a macro change would not be reflected in the bundle and would fall back to the entry every time."""
     horizon = time.time_ns() - RACY_NS
     return {
         relative: (
@@ -449,11 +449,11 @@ def bundle_signature(rows: dict[str, BundleRow]) -> dict[str, tuple[str, str, st
 
 
 def store_bundle(cache_dir: Path, key: str, rows: dict[str, BundleRow]) -> None:
-    """束を書く(書けなくても検めは続ける)。"""
+    """Write the bundle (checking continues even if writing fails)."""
     signature = bundle_signature(rows)
 
     def chunks() -> Iterator[str]:
-        """束の JSON Lines(頭の行 = 版・続く 1 行 = 1 file)を行ごとに作るため。"""
+        """To build the bundle's JSON Lines (first line = version, each following line = one file) line by line."""
         yield json.dumps({"version": BUNDLE_VERSION}) + "\n"
         for relative, row in rows.items():
             stat = signature[relative][3]
@@ -470,7 +470,7 @@ def store_bundle(cache_dir: Path, key: str, rows: dict[str, BundleRow]) -> None:
 
 
 def stat_of(path: Path) -> FileStat | None:
-    """束の行と比べる file の stat(大きさ・更新時刻の ns — 読めなければ None)。"""
+    """The stat of a file compared against a bundle row (size, mtime in ns; None if unreadable)."""
     try:
         status = path.stat()
     except OSError:
@@ -479,7 +479,7 @@ def stat_of(path: Path) -> FileStat | None:
 
 
 def row_is_current(row: BundleRow, module: str, stat: FileStat | None) -> bool:
-    """行を、source を読まずに信じてよいか(module 名と stat が書いた時と同じで、展開が使った macro が今の環境に合う)。"""
+    """Whether a row may be trusted without reading the source (module name and stat are the same as when written, and the macros the expansion used match the current environment)."""
     return (
         row.stat is not None
         and row.stat == stat
@@ -489,8 +489,8 @@ def row_is_current(row: BundleRow, module: str, stat: FileStat | None) -> bool:
 
 
 def default_cache_dir() -> Path:
-    """既定の置き場 — $DOEFF_HY_CHECK_CACHE が名指す dir(走りをまたいで残る dir へ向ける呼び手のため — agora-redesign
-    #3863)、無ければ XDG の cache の下(消費 repo の木を汚さない)。"""
+    """Default location: the dir named by $DOEFF_HY_CHECK_CACHE (for callers pointing it at a dir that persists across runs; agora-redesign
+    #3863); otherwise under the XDG cache (does not dirty the consumer repo's tree)."""
     from doeff_hy import _env_places as env_places
 
     configured = env_places.check_cache_setting()

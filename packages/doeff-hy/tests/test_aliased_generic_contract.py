@@ -1,13 +1,13 @@
-"""契約 `(: x T)` と型付き束縛 `(<- x T e)` の T が、型引数つきの総称型を値に持つ名(型の別名)でも、実行時に TypeError で落ちず
-外側の型で確かめること。
+"""The T of a contract `(: x T)` and of a typed binding `(<- x T e)` must be checked by the outer type, without failing with TypeError at runtime, even when
+T is a name whose value is a parameterized generic type (a type alias).
 
-契約と束縛は書いた型を `doeff_hy._type_forms.runtime_type_form` で isinstance に渡せる形へ写すが、写せるのは字面の総称型だけで、
-名は展開の時に値が分からないのでそのまま isinstance に渡る。名の値が `Callable[..., object]` や `FrozenMap[object] | tuple[object, ...]`
-だと、どの値でも `TypeError: isinstance() argument 2 cannot be a parameterized generic` になった(2026-10-11 に本番で 2 度 —
-agora-controllers の turn-host が別名 LiveLimitAnswer = (get Callable #(... object)) で 9 分止まり、受付が別名 FrozenJson で全部の
-郵便に 500 を返した。使い手は字面へ展開して避け、FrozenJson は doeff-hy の側で実行時の名を外側の型の和にした — 6ab735f37)。
-ここで守るのは名の値が何でも同じに扱う事: 実行時に確かめるのは外側の型だけ(#1790 の決め)で、外側の型が違う値は今までどおり
-名指しの AssertionError で断る。型でない値を名に置いた契約は、何が型でないかを名乗る TypeError で断る。
+Contracts and bindings map the written type with `doeff_hy._type_forms.runtime_type_form` into a form that can be passed to isinstance, but only a literal generic type can be mapped;
+a name has an unknown value at expansion time, so it is passed to isinstance as is. If the name's value is `Callable[..., object]` or `FrozenMap[object] | tuple[object, ...]`,
+every value produced `TypeError: isinstance() argument 2 cannot be a parameterized generic` (twice in production on 2026-10-11 —
+agora-controllers' turn-host stopped for 9 minutes on the alias LiveLimitAnswer = (get Callable #(... object)), and the intake returned 500 for all
+mail on the alias FrozenJson. Users avoided it by expanding to the literal, and for FrozenJson doeff-hy made the runtime name a union of outer types on its side — 6ab735f37).
+What is guarded here is that the name is treated the same whatever its value: only the outer type is checked at runtime (the decision of #1790), and a value of a different outer type is still refused
+with a named AssertionError. A contract that puts a non-type value in the name is refused with a TypeError that says what is not a type.
 """
 
 from __future__ import annotations
@@ -24,7 +24,7 @@ SOURCE = """\
 (import collections.abc [Callable])
 (import doeff_hy._frozen [FrozenMap])
 
-;; 型引数つきの総称型を値に持つ名(使い手の module が書く別名の形)。
+;; Names whose value is a parameterized generic type (the alias form a user module writes).
 (setv Answer (get Callable #(... object)))
 (setv Rows (| (get FrozenMap object) (get tuple #(object ...)) None))
 (setv NotAType 3)
@@ -37,7 +37,7 @@ SOURCE = """\
   {:pre [(: rows Rows)] :post [(: % bool)]}
   True)
 
-;; 束縛の確かめだけを切り出すため、字面の型で文字列も関数も通す 1 段を挟む。
+;; To isolate only the binding check, insert one step that lets both strings and functions through with a literal type.
 (defk echo [value]
   {:pre [(: value (| str (get Callable #(... object))))] :post [(: % (| str (get Callable #(... object))))]}
   value)
@@ -55,7 +55,7 @@ SOURCE = """\
 
 @pytest.fixture(scope="module")
 def mod(tmp_path_factory: pytest.TempPathFactory) -> ModuleType:
-    import doeff_hy  # noqa: F401 - Hy の import hook を登録する
+    import doeff_hy  # noqa: F401 - registers the Hy import hook
 
     root: Path = tmp_path_factory.mktemp("doeff_hy_aliased_generic_contract")
     (root / "aliased_generic_contract_probe.hy").write_text(SOURCE, encoding="utf-8")
@@ -70,14 +70,14 @@ def mod(tmp_path_factory: pytest.TempPathFactory) -> ModuleType:
 
 
 def _run(program: object) -> object:
-    """読み込んだ Hy の module の Program を走らせる(module の属性は型の上では object なので Program に絞る)。"""
+    """Run the Program of the loaded Hy module (a module attribute is object as far as types go, so narrow it to Program)."""
     from doeff import Program, run
 
     match program:
         case Program():
             return run(program)
         case _:
-            raise TypeError(f"Program でない値を走らせようとした: {program!r}")
+            raise TypeError(f"tried to run a value that is not a Program: {program!r}")
 
 
 def test_a_contract_naming_an_aliased_callable_accepts_a_function(mod: ModuleType) -> None:
@@ -96,7 +96,7 @@ def test_a_typed_bind_naming_an_aliased_callable_passes(mod: ModuleType) -> None
 
 
 def test_an_aliased_contract_still_refuses_a_value_of_another_outer_type(mod: ModuleType) -> None:
-    # 外側の型が違う値は契約の断り(TypeError でなく、名指しの AssertionError)。
+    # A value of a different outer type is refused by the contract (not TypeError, but a named AssertionError).
     with pytest.raises(AssertionError, match="expected Answer"):
         _run(mod.called(3))
     with pytest.raises(AssertionError, match="expected Rows"):
@@ -106,5 +106,5 @@ def test_an_aliased_contract_still_refuses_a_value_of_another_outer_type(mod: Mo
 
 
 def test_a_contract_naming_a_value_that_is_not_a_type_names_it(mod: ModuleType) -> None:
-    with pytest.raises(TypeError, match="型でない"):
+    with pytest.raises(TypeError, match="not a type"):
         _run(mod.misdeclared(1))

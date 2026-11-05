@@ -241,7 +241,7 @@ def test_d_a_broken_store_entry_is_named_and_rebuilt(filled: _Store, tmp_path: P
     _write_four(second, filled.salt)
     baked = _bake(second, filled.store, filled.rig)
     assert baked.compiled == sorted(_HY_SOURCES), baked.compiled
-    assert "bytecode の保存先の entry が壊れている" in baked.stderr, baked.stderr
+    assert "an entry in the bytecode store is broken" in baked.stderr, baked.stderr
     third = tmp_path / "third"
     _write_four(third, filled.salt)
     again = _bake(third, filled.store, filled.rig)

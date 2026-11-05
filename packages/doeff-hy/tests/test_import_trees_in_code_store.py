@@ -1,13 +1,13 @@
-"""import の compile が展開した木は、bytecode の置き場(code_store — 環境変数 DOEFF_HY_CODE_STORE)の下に残るの検。
+"""Test that the trees expanded by import compilation remain under the bytecode store (code_store -- environment variable DOEFF_HY_CODE_STORE).
 
-実例(2026-10-19・日次): 木は DOEFF_EFFECT_ANALYZER_CACHE が dir を指す process の compile だけが置いていた。bytecode の置き場は worker の
-上の job が全部 DOEFF_HY_CODE_STORE で共有するのに、analyzer の置き場の変数は worker が job の子へ渡す許可表に無い。変わった module を
-先にマージの列の検証の job が compile すると、bytecode の置き場は温まって木は残らず、日次は bytecode に当たって compile せず、閉じの検の
-analyzer が同じ source を展開し直した(日次の 2 つの閉じの検の和 557.5 秒・置き場を分けた再現は 151.9 秒)。
+Real case (2026-10-19, daily run): trees were placed only by the compile of a process whose DOEFF_EFFECT_ANALYZER_CACHE pointed at a dir. The bytecode store is shared by all jobs on a worker
+through DOEFF_HY_CODE_STORE, but the analyzer-store variable is not in the allow list the worker passes to a job's children. When the verification job in the merge queue compiled the changed modules
+first, the bytecode store was warm and no tree was left, so the daily run hit bytecode without compiling, and the closing check's
+analyzer re-expanded the same source (the sum of the daily run's two closing checks was 557.5 seconds; the reproduction with split stores was 151.9 seconds).
 
-木の置き場は bytecode の置き場の中の 1 つ — 木を置く process と引く analyzer は、同じ名指しの置き場だけを見る。名指しの無い既定の dir
-(利用者の cache)には置かない(普通の import の compile に木の書きを足さない)。木は bytecode の数倍の大きさなので、圧縮して置き、鍵 1 つの
-entry の数に上限を持つ(7 日使われない entry は worker の掃除が消す — 引いて当たるたびに時刻を今にする)。
+The tree store is one place inside the bytecode store -- the process that places trees and the analyzer that pulls them look only at the same explicitly named store. They do not write to the unnamed default dir
+(the user's cache) (tree writes are not added to an ordinary import compile). Trees are several times larger than bytecode, so they are stored compressed, and the number of entries per key
+is capped (entries unused for 7 days are removed by the worker's cleanup -- each hit on a pull sets the time to now).
 """
 
 from __future__ import annotations
@@ -28,19 +28,19 @@ TREE = ast.parse("answer = 42\n")
 
 
 def record(label: str = "") -> MacroRecord:
-    """展開が使った macro の記録の代役(macro 無し — ``label`` が違えば記録の指紋が違う = macro の環境の違う書き手)。"""
+    """Stand-in for the record of macros the expansion used (no macros -- a different ``label`` gives a different record fingerprint = a writer with a different macro environment)."""
     return MacroRecord(hy_version=f"probe{label}", macros=(), absent=(), providers=(), values=(), files=())
 
 
 @pytest.fixture(autouse=True)
 def records_are_current(monkeypatch: pytest.MonkeyPatch) -> None:
-    """照らしは今の環境の macro の file を読むので、ここでは記録を全部「今の環境に合う」とする(合わない時の検は別に持つ)。"""
+    """The check reads the macro files of the current environment, so here every record is treated as "matches the current environment" (the case where it does not match is tested separately)."""
     monkeypatch.setattr(expansion_trees, "record_is_current_here", lambda _macros: True)
 
 
 @pytest.fixture
 def store(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
-    """名指しの bytecode の置き場(analyzer の置き場の変数は無い — 検証の job の形)。"""
+    """A named bytecode store (no analyzer-store variable -- the shape of the verification job)."""
     directory = tmp_path / "code-store"
     monkeypatch.setenv("DOEFF_HY_CODE_STORE", str(directory))
     monkeypatch.delenv("DOEFF_EFFECT_ANALYZER_CACHE", raising=False)
@@ -48,12 +48,12 @@ def store(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
 
 
 def trees_under(root: Path) -> list[Path]:
-    """root の下の木の entry。"""
+    """The tree entries under root."""
     return sorted(root.rglob(f"*{code_store.TREE_SUFFIX}"))
 
 
 def test_a_tree_is_left_in_the_named_code_store_and_read_from_there(store: Path) -> None:
-    """analyzer の置き場の変数の無い process が置いた木を、同じ置き場を名指す process が引ける。"""
+    """A tree placed by a process without the analyzer-store variable can be pulled by a process naming the same store."""
     expansion_trees.add_import_tree("pkg.m", SOURCE, record(), TREE)
     assert len(trees_under(store)) == 1
     found = expansion_trees.read_import_tree("pkg.m", SOURCE)
@@ -64,7 +64,7 @@ def test_a_tree_is_left_in_the_named_code_store_and_read_from_there(store: Path)
 
 @pytest.mark.parametrize("name", ["module", "source"])
 def test_another_module_or_source_does_not_find_the_tree(store: Path, name: str) -> None:
-    """鍵は module の名と source の中身 — どちらが違っても当たらない。"""
+    """The key is the module name plus the source content -- a difference in either means no hit."""
     expansion_trees.add_import_tree("pkg.m", SOURCE, record(), TREE)
     other = ("pkg.n", SOURCE) if name == "module" else ("pkg.m", SOURCE + ";; changed\n")
     assert expansion_trees.read_import_tree(*other) is None
@@ -74,7 +74,7 @@ def test_another_module_or_source_does_not_find_the_tree(store: Path, name: str)
 def test_a_store_that_is_not_named_gets_no_tree(
     setting: str | None, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """名指しの無い(未設定・空・off)置き場には置かず、引かない — 既定の dir(利用者の cache)にも書かない。"""
+    """Nothing is placed in or pulled from an unnamed (unset, empty, off) store -- nothing is written to the default dir (the user's cache) either."""
     monkeypatch.setenv("XDG_CACHE_HOME", str(tmp_path / "xdg"))
     monkeypatch.setenv("HOME", str(tmp_path / "home"))
     monkeypatch.delenv("DOEFF_EFFECT_ANALYZER_CACHE", raising=False)
@@ -90,7 +90,7 @@ def test_a_store_that_is_not_named_gets_no_tree(
 def test_the_analyzers_variable_does_not_name_a_place_for_trees(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """木の置き場は 1 つ(bytecode の置き場の中)— analyzer の置き場の変数だけでは置かない(2 つ目の定義元を作らない)。"""
+    """There is one tree store (inside the bytecode store) -- the analyzer-store variable alone does not place anything (no second source of definition is created)."""
     monkeypatch.delenv("DOEFF_HY_CODE_STORE", raising=False)
     monkeypatch.setenv("XDG_CACHE_HOME", str(tmp_path / "xdg"))
     monkeypatch.setenv("DOEFF_EFFECT_ANALYZER_CACHE", str(tmp_path / "analyzer"))
@@ -99,13 +99,13 @@ def test_the_analyzers_variable_does_not_name_a_place_for_trees(
 
 
 def test_a_tree_that_is_not_a_module_is_not_kept(store: Path) -> None:
-    """展開の木が module でない物(型検査の展開の code など)は置かない。"""
+    """Expansion trees that are not modules (such as the type-check expansion's code) are not placed."""
     expansion_trees.add_import_tree("pkg.m", SOURCE, record(), object())
     assert trees_under(store) == []
 
 
 def test_a_tree_is_kept_compressed(store: Path) -> None:
-    """木は bytecode の数倍の大きさなので圧縮して置く — 置いた entry が、木の pickle そのままより小さい。"""
+    """Trees are several times larger than bytecode, so they are stored compressed -- the placed entry is smaller than the tree pickled as-is."""
     big = ast.parse("".join(f"value_{index} = [{index}, 'text_{index}', ({index}, {index + 1})]\n" for index in range(2000)))
     expansion_trees.add_import_tree("pkg.big", SOURCE, record(), big)
     [entry] = trees_under(store)
@@ -116,14 +116,14 @@ def test_a_tree_is_kept_compressed(store: Path) -> None:
 
 
 def test_a_tree_of_other_macros_is_not_read(store: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    """引くのは、展開が依った macro が今の環境の物の entry だけ — 古い macro の木は使わない。"""
+    """Only entries whose macros that the expansion relied on are the current environment's are pulled -- trees from old macros are not used."""
     expansion_trees.add_import_tree("pkg.m", SOURCE, record(), TREE)
     monkeypatch.setattr(expansion_trees, "record_is_current_here", lambda _macros: False)
     assert expansion_trees.read_import_tree("pkg.m", SOURCE) is None
 
 
 def test_the_entry_of_the_current_macros_is_the_one_read(store: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    """macro の環境の違う 2 つの書き手の木が並んでも、今の環境に合う方を引く。"""
+    """Even when trees from two writers with different macro environments sit side by side, the one matching the current environment is pulled."""
     old, new = ast.parse("answer = 1\n"), ast.parse("answer = 2\n")
     expansion_trees.add_import_tree("pkg.m", SOURCE, record("-old"), old)
     expansion_trees.add_import_tree("pkg.m", SOURCE, record("-new"), new)
@@ -134,7 +134,7 @@ def test_the_entry_of_the_current_macros_is_the_one_read(store: Path, monkeypatc
 
 
 def test_a_damaged_entry_is_skipped(store: Path) -> None:
-    """壊れた entry は使わず、読む側は落ちない(analyzer が自分で展開する)。"""
+    """A corrupted entry is not used, and the reading side does not crash (the analyzer expands by itself)."""
     expansion_trees.add_import_tree("pkg.m", SOURCE, record(), TREE)
     [entry] = trees_under(store)
     entry.write_bytes(entry.read_bytes()[:-5])
@@ -144,7 +144,7 @@ def test_a_damaged_entry_is_skipped(store: Path) -> None:
 
 
 def test_reading_a_tree_marks_it_used(store: Path) -> None:
-    """引いて当たるたびに entry の時刻を今にする — worker の掃除(7 日使われない entry を消す)が、使っている木を消さない。"""
+    """Each hit on a pull sets the entry's time to now -- the worker's cleanup (removing entries unused for 7 days) does not remove trees in use."""
     expansion_trees.add_import_tree("pkg.m", SOURCE, record(), TREE)
     [entry] = trees_under(store)
     week_ago = time.time() - 6 * 24 * 3600
@@ -154,7 +154,7 @@ def test_reading_a_tree_marks_it_used(store: Path) -> None:
 
 
 def test_a_key_keeps_at_most_the_limit_of_environments_and_the_used_ones_stay(store: Path) -> None:
-    """鍵 1 つの木の entry は上限まで — 越える環境の分は、足しただけで使われていない entry から除く(使い続ける環境の entry を押し出さない)。"""
+    """Tree entries per key are capped -- for environments beyond the cap, entries that were only added and never used are removed first (entries of environments that keep being used are not pushed out)."""
     limit = code_store.TREE_ENTRIES_PER_KEY
     for index in range(limit):
         expansion_trees.add_import_tree("pkg.m", SOURCE, record(f"-{index}"), TREE)
@@ -164,7 +164,7 @@ def test_a_key_keeps_at_most_the_limit_of_environments_and_the_used_ones_stay(st
     day_ago = time.time() - 3600
     for entry in entries:
         os.utime(entry, (day_ago, day_ago))
-    os.utime(used, None)  # 使い続けている環境の entry
+    os.utime(used, None)  # entry of an environment that keeps being used
     for index in range(limit, limit + 3):
         expansion_trees.add_import_tree("pkg.m", SOURCE, record(f"-{index}"), TREE)
     after = trees_under(store)

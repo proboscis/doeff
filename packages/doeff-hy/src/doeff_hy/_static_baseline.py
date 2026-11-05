@@ -1,20 +1,20 @@
-"""doeff-hy-check の基点との比べ(`--baseline <json>`・`--write-baseline <json>`)。
+"""Comparison of doeff-hy-check with a baseline (`--baseline <json>`, `--write-baseline <json>`).
 
-考えは doeff-linter の `--baseline-report`(packages/doeff-linter/src/baseline.rs)と同じ: 保存した既知の一覧に照らして
-「前から在る赤」と「新しい赤」を分け、新しい赤だけを止める。違いは 2 つ。
+The idea is the same as doeff-linter's `--baseline-report` (packages/doeff-linter/src/baseline.rs): check against a saved list of known errors,
+separate "errors that were already there" from "new errors", and stop only on the new ones. There are two differences.
 
-- 識別子 = `(path, 規則, 文言)` で、行番号を含めない。上に行を足しただけで同じ赤が新しい赤にならない。
-- 同じ識別子の赤は**個数で**比べる(多重集合)。型の赤は同じ文言で 1 file に何度も出るので、集合で比べると
-  2 つ目の同じ赤を見逃す。基点より多い分だけが新しい赤。
-- Hy が展開で振る名(`_hy_anon_<番号>`・`_hy_let_first_<番号>` など)は番号を 1 つの印に畳んでから比べる。番号は展開の順で振られるので、
-  定義を 1 つ足すだけで後ろの番号がずれ、同じ赤の文言が変わって新しい赤に見えるため。
-  畳んだ後も同じ文言の赤は個数で比べるので、匿名の名の赤が本当に増えた分は新しい赤のまま。
-- file の移動・改名: 規則と文言が同じで path だけ違い、基点のその識別子が今は減っている時、1 対 1 で同じ赤とみなす
-  (linter の new_criticals と同じ)。
+- Identifier = `(path, rule, message)`, with no line number. Just adding lines above does not turn the same error into a new error.
+- Errors with the same identifier are compared **by count** (a multiset). Type errors appear many times in one file with the same message, so comparing as a set
+  would miss the second identical error. Only the amount beyond the baseline is new errors.
+- Names Hy assigns during expansion (`_hy_anon_<number>`, `_hy_let_first_<number>`, etc.) are compared after folding the number into a single marker. The numbers are assigned in expansion order, so
+  adding just one definition shifts the later numbers, and the message of the same error changes so that it looks like a new error.
+  Errors with the same message after folding are still compared by count, so an increase in errors on anonymous names remains new errors.
+- File moves / renames: when the rule and message are the same, only the path differs, and the baseline's count for that identifier has now dropped, they are regarded as the same error one to one
+  (the same as new_criticals in the linter).
 
-基点の file の形(JSON・版 1):
+Shape of the baseline file (JSON, version 1):
     {"version": 1, "errors": [{"path": ..., "rule": ..., "message": ..., "line": ...}, ...]}
-`line` は読み手の参考で、比べには使わない。
+`line` is for the reader's reference and is not used in comparison.
 """
 
 import json
@@ -28,14 +28,14 @@ from doeff_hy_bytecode_guard._records import fold_anon_var_numbers
 
 BASELINE_VERSION = 1
 
-# doeff-hy の lazy が展開で振る名(`_lazy_sent_cached_1` など)の番号。Hy が振る名(`_hy_anon_44`・`_hy_let_first_28` など)の形と畳み方は
-# Hy の内部の名の定義元(doeff_hy_bytecode_guard._records.fold_anon_var_numbers)に在り、ここは持たない。
-# 比べの鍵では 1 つの印に畳む。行番号や型の名の数字は `_hy_` / `_lazy_` で始まらないので畳まない(vg-w39 の #2286 の形 + kn-w26 の lazy の名)。
+# The numbers of names doeff-hy's lazy assigns during expansion (`_lazy_sent_cached_1`, etc.). The shape and folding of names Hy assigns (`_hy_anon_44`, `_hy_let_first_28`, etc.) are
+# defined in the definition source of Hy's internal names (doeff_hy_bytecode_guard._records.fold_anon_var_numbers) and are not held here.
+# In the comparison key they are folded into one marker. Line numbers and digits in type names do not start with `_hy_` / `_lazy_`, so they are not folded (the shape of #2286 in vg-w39 + the lazy names of kn-w26).
 _LAZY_GENERATED_NUMBER = re.compile(r"\b(_lazy_[A-Za-z0-9_]*?[A-Za-z])_\d+\b")
 
 
 class Reported(Protocol):
-    """基点と比べる診断の形(static_check.Diagnostic が満たす)。"""
+    """The shape of a diagnostic compared with the baseline (satisfied by static_check.Diagnostic)."""
 
     @property
     def path(self) -> str: ...
@@ -54,7 +54,7 @@ _D = TypeVar("_D", bound=Reported)
 
 @dataclass(frozen=True)
 class Identity:
-    """行番号を含めない赤の識別子。"""
+    """An error identifier that does not include the line number."""
 
     path: str
     rule: str
@@ -67,40 +67,40 @@ class Identity:
 
 @dataclass(frozen=True)
 class Baseline:
-    """基点の赤の識別子の多重集合。"""
+    """A multiset of the baseline's error identifiers."""
 
     counts: Counter[Identity]
 
 
 @dataclass(frozen=True)
 class Split(Generic[_D]):
-    """この実行の赤を、基点に在る物と新しい物に分けた結果(どちらも元の順)。"""
+    """The result of splitting this run's errors into those present in the baseline and new ones (both in original order)."""
 
     known: tuple[_D, ...]
     new: tuple[_D, ...]
 
 
 class BaselineUnreadable(ValueError):
-    """基点の file が読めない・形が違う(呼び手は終了コード 2)。"""
+    """The baseline file cannot be read or has the wrong shape (the caller exits with code 2)."""
 
 
 def comparable_message(message: str) -> str:
-    """比べの鍵の文言 — Hy の匿名の名の番号を畳む(定義を足して番号がずれても、同じ赤を同じ鍵で数えるため)。"""
+    """The message of the comparison key -- folds the numbers of Hy's anonymous names (so that even if adding a definition shifts the numbers, the same error is counted under the same key)."""
     return _LAZY_GENERATED_NUMBER.sub(r"\1_#", fold_anon_var_numbers(message, "#"))
 
 
 def identity(diagnostic: Reported) -> Identity:
-    """基点と照らす鍵を作る(行番号を落とし、匿名の名の番号を畳み、行や番号のずれで同じ赤を新しい赤にしないため)。"""
+    """Build the key to compare with the baseline (drop the line number and fold anonymous-name numbers, so that line or number shifts do not turn the same error into a new error)."""
     return Identity(diagnostic.path, diagnostic.rule, comparable_message(diagnostic.message))
 
 
 def errors_of(diagnostics: list[_D]) -> list[_D]:
-    """止める対象 = error だけを取り出す(warning は基点の比べに入れない)。"""
+    """Extract only the targets to stop on = error (warnings are not part of the baseline comparison)."""
     return [d for d in diagnostics if d.severity == "error"]
 
 
 def baseline_json(diagnostics: list[Reported]) -> str:
-    """この実行の赤を基点の file の形にする(並びは path・行の順で固定)。"""
+    """Turn this run's errors into the baseline file's shape (order fixed by path, then line)."""
     rows = sorted(
         (
             {"path": d.path, "rule": d.rule, "message": d.message, "line": d.line}
@@ -112,34 +112,34 @@ def baseline_json(diagnostics: list[Reported]) -> str:
 
 
 def _identity_of_row(row: object) -> Identity:
-    """基点の file の 1 行を識別子へ読む(JSON の境界 — 欄が欠けた基点を黙って空と読まないため)。"""
+    """Read one line of the baseline file into an identifier (a JSON boundary -- so that a baseline with a missing field is not silently read as empty)."""
     match row:
         case {"path": str(path), "rule": str(rule), "message": str(message)}:
             return Identity(path, rule, comparable_message(message))
         case _:
-            raise BaselineUnreadable(f"基点の赤に欄 path・rule・message が揃っていない: {row!r}")
+            raise BaselineUnreadable(f"baseline error lacks the fields path, rule, and message: {row!r}")
 
 
 def read_baseline(path: Path) -> Baseline:
-    """`--baseline` の file を読む。読めない・版が違う時は BaselineUnreadable(新しい赤を黙って通さないため)。"""
+    """Read the `--baseline` file. When it cannot be read or the version differs, BaselineUnreadable (so that new errors are not silently let through)."""
     try:
         loaded: object = json.loads(path.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError) as error:
-        raise BaselineUnreadable(f"基点 {path} を読めない: {error}") from error
+        raise BaselineUnreadable(f"cannot read baseline {path}: {error}") from error
     match loaded:
         case {"version": 1, "errors": list(rows)}:
             return Baseline(Counter(_identity_of_row(row) for row in rows))
         case {"version": version}:
-            raise BaselineUnreadable(f"基点 {path} の版 {version!r} は読めない(読める版 = {BASELINE_VERSION})")
+            raise BaselineUnreadable(f"baseline {path} has unreadable version {version!r} (readable version = {BASELINE_VERSION})")
         case _:
-            raise BaselineUnreadable(f"基点 {path} の形が違う(version と errors の列が要る)")
+            raise BaselineUnreadable(f"baseline {path} has the wrong shape (needs version and a list of errors)")
 
 
 def split(baseline: Baseline, diagnostics: list[_D]) -> Split[_D]:
-    """この実行の赤を基点に照らして分ける。同じ識別子は基点の個数までが既存、超えた分が新しい。"""
+    """Compare this run's errors with the baseline and split them. For the same identifier, up to the baseline count is existing and the excess is new."""
     errors = errors_of(diagnostics)
     current = Counter(identity(d) for d in errors)
-    # file の移動・改名: 基点で減った識別子を、path を除いた鍵ごとに数えて使える枠にする。
+    # File moves / renames: count the identifiers that dropped in the baseline per key excluding path, and make them usable slots.
     vanished = Counter(
         ident.without_path
         for ident, count in (baseline.counts - current).items()

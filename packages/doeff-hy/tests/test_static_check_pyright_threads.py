@@ -1,13 +1,13 @@
-"""doeff-hy-check(doeff_hy._static_check)が pyright を 1 本の thread でしか撃てない失敗ケース。
+"""Failure case where doeff-hy-check (doeff_hy._static_check) could run pyright in only one thread.
 
-agora-controllers の日次の型の測り(hy-type-trend・範囲の .hy 2,551 本)は、展開の後の pyright 1 本が 1 core で約 2,250 秒かかり、
-処理ステージの上限 3,300 秒の 80%(2,640 秒)に展開の秒を足すと収まらない(10-12 12:00 JST の回の atlas の Pod の読み: pyright の
-process が 03:20:30〜03:57 UTC に CPU 1 core・後半は heap の上限 4,288 MiB に張りついて GC の thread が 1.6〜1.8 core)。pyright は
-`--threads <数>` で検める file を子の process に分けて並べられるが、run_pyright の命令にはその口が無かった。
+The daily type measurement of agora-controllers (hy-type-trend, 2,551 .hy files in range) takes about 2,250 seconds for one post-expansion pyright on 1 core, and
+adding the expansion seconds does not fit in 80% (2,640 seconds) of the processing stage limit of 3,300 seconds (reading of the atlas Pod in the 10-12 12:00 JST run: the pyright
+process used 1 CPU core from 03:20:30 to 03:57 UTC, and in the second half it stuck at the heap limit of 4,288 MiB with GC threads at 1.6-1.8 cores). pyright can
+split the files it checks across child processes with `--threads <n>`, but the run_pyright command had no way to pass it.
 
-- thread の数は環境変数 DOEFF_HY_CHECK_PYRIGHT_THREADS で受ける(入口の main だけが env_places から素の値を受けて判じる)。
-  枠の正本が 1 枠の中の並走の数を答える機体では、その数を越えない(thread は pyright が起こす子の process)。既定は 1 で、その時は今までと同じく `--threads` を渡さない。
-- 1 以上の整数でない値は黙って既定へ落とさず断る(書き手の誤りを見えるようにする)。
+- The number of threads is taken from the environment variable DOEFF_HY_CHECK_PYRIGHT_THREADS (only the entry main takes the raw value from env_places and judges it).
+    On a machine where the slot source of truth answers the parallelism within one slot, the number does not exceed it (a thread is a child process pyright spawns). The default is 1, and then `--threads` is not passed, as before.
+- A value that is not an integer of 1 or more is rejected rather than silently falling back to the default (so the writer's mistake is visible).
 """
 
 import contextlib
@@ -19,13 +19,13 @@ from pathlib import Path
 
 import pytest
 
-import doeff_hy  # noqa: F401  # Hy の import hook を有効にする
+import doeff_hy  # noqa: F401  # enable the Hy import hook
 from doeff_hy import _static_check as static_check
 from doeff_hy._check_slot import SlotHeld
 
 
 def _recording_pyright(tmp_path: Path, log: Path) -> Path:
-    """起こされた時の引数を log に 1 行で書き、診断の無い JSON を返す pyright の偽物(命令の形だけを見る)。"""
+    """A fake pyright that writes its arguments to the log on one line when started and returns JSON with no diagnostics (only the shape of the command is observed)."""
     pyright = tmp_path / "recording-pyright"
     pyright.write_text(
         f'#!/bin/sh\necho "$@" >> {shlex.quote(str(log))}\necho \'{{"generalDiagnostics": []}}\'\n',
@@ -36,7 +36,7 @@ def _recording_pyright(tmp_path: Path, log: Path) -> Path:
 
 
 def _checked_once(tmp_path: Path) -> list[str]:
-    """.hy 1 本の根に入口の main を 1 度当て、pyright の偽物が受けた引数の並びを返す。"""
+    """Run the entry main once on a root with one .hy file and return the argument list the fake pyright received."""
     root = tmp_path / "repo"
     root.mkdir()
     (root / "probe.hy").write_text("(setv answer 1)\n", encoding="utf-8")
@@ -47,14 +47,14 @@ def _checked_once(tmp_path: Path) -> list[str]:
             ["--root", str(root), "--json", "--no-cache", "--pyright", str(pyright), str(root / "probe.hy")]
         )
     assert rc == 0, out.getvalue()
-    assert isinstance(json.loads(out.getvalue()), list)  # 偽物の答え(診断なし)を読めた — probe の setv の警告は数えない
+    assert isinstance(json.loads(out.getvalue()), list)  # the fake's answer (no diagnostics) could be read - the probe's setv warning is not counted
     started = log.read_text(encoding="utf-8").splitlines()
     assert len(started) == 1, started
     return started[0].split()
 
 
 def test_the_pyright_threads_default_to_one_and_are_set_by_the_environment() -> None:
-    """thread の数は既定 1。環境変数 DOEFF_HY_CHECK_PYRIGHT_THREADS で替えられ、1 以上の整数でない値は黙って既定へ落とさず断る。"""
+    """The number of threads defaults to 1. It can be changed with the environment variable DOEFF_HY_CHECK_PYRIGHT_THREADS, and a value that is not an integer of 1 or more is rejected rather than silently falling back to the default."""
     assert static_check.pyright_threads(None) == 1
     assert static_check.pyright_threads("") == 1
     assert static_check.pyright_threads("2") == 2
@@ -64,8 +64,8 @@ def test_the_pyright_threads_default_to_one_and_are_set_by_the_environment() -> 
 
 
 def test_the_thread_count_never_exceeds_the_width_the_slot_canon_answered() -> None:
-    """thread は pyright が起こす子の process なので、枠の正本が答えた 1 枠の中の並走の数を越えない — 環境変数は数を下げる口で、
-    宣言を越えて上げる口にしない。宣言が届かない機体(None)は今までどおり。"""
+    """A thread is a child process pyright spawns, so it does not exceed the parallelism within one slot answered by the slot source of truth - the environment variable is a way to lower the number,
+    not a way to raise it past the declaration. On a machine where the declaration does not arrive (None), it is as before."""
     assert static_check.pyright_threads("8", 2) == 2
     assert static_check.pyright_threads("2", 2) == 2
     assert static_check.pyright_threads("1", 2) == 1
@@ -76,11 +76,11 @@ def test_the_thread_count_never_exceeds_the_width_the_slot_canon_answered() -> N
 
 
 def test_a_thread_count_clamped_by_the_width_is_named_not_dropped_silently() -> None:
-    """指定が宣言の数で頭打ちになる時は、環境変数の名・指定の数・宣言の数・実際の数を 1 行で名乗る。頭打ちでない時(宣言の内・
-    宣言が届かない・指定が無い)は何も言わない。"""
+    """When the request is capped at the declared number, state in one line the environment variable name, the requested number, the declared number, and the actual number. When not capped (within the declaration,
+    declaration not arriving, or no request), say nothing."""
     note = static_check.thread_clamp_note("4", 2)
     assert note is not None
-    for part in ("DOEFF_HY_CHECK_PYRIGHT_THREADS=4", "宣言の並走の数 2", "2 本で撃つ"):
+    for part in ("DOEFF_HY_CHECK_PYRIGHT_THREADS=4", "declared for the host check slot", "run with 2 threads"):
         assert part in note, note
     assert static_check.thread_clamp_note("2", 2) is None
     assert static_check.thread_clamp_note("1", 2) is None
@@ -91,14 +91,14 @@ def test_a_thread_count_clamped_by_the_width_is_named_not_dropped_silently() -> 
 def test_the_entry_says_so_on_stderr_when_the_environment_is_clamped(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    """日次の失敗の形: env を 4 にしても宣言が 2 なら pyright は 2 本で走る(値は変えない)。その事を stderr に名乗る
-    (直す前は何も言わず、4 を指定した回が 2 本で走った事は別の会話が探し当てるまで見えなかった)。"""
+    """Daily failure shape: even with env set to 4, if the declaration is 2, pyright runs with 2 (the value is not changed). That is stated on stderr
+    (before the fix nothing was said, and the fact that a run that asked for 4 ran with 2 stayed invisible until another conversation found it)."""
     monkeypatch.setattr(sys, "path", list(sys.path))
     monkeypatch.setattr(static_check, "take_slot", lambda *_: SlotHeld(None, 2))
     monkeypatch.setenv("DOEFF_HY_CHECK_PYRIGHT_THREADS", "4")
     argv = _checked_once(tmp_path)
     assert argv[argv.index("--threads") + 1] == "2", argv
-    assert "DOEFF_HY_CHECK_PYRIGHT_THREADS=4 は機体の検の枠の宣言の並走の数 2 を越える" in capsys.readouterr().err
+    assert "DOEFF_HY_CHECK_PYRIGHT_THREADS=4 exceeds the parallelism 2 declared for the host check slot" in capsys.readouterr().err
 
 
 def test_the_entry_is_silent_when_the_environment_is_within_the_width(
@@ -108,13 +108,13 @@ def test_the_entry_is_silent_when_the_environment_is_within_the_width(
     monkeypatch.setattr(static_check, "take_slot", lambda *_: SlotHeld(None, 2))
     monkeypatch.setenv("DOEFF_HY_CHECK_PYRIGHT_THREADS", "2")
     _checked_once(tmp_path)
-    assert "を越えるので" not in capsys.readouterr().err
+    assert "exceeds the parallelism" not in capsys.readouterr().err
 
 
 def test_the_entry_passes_the_thread_count_to_pyright(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    """環境変数が 2 以上の数を名指すと、入口の main は pyright を `--threads <数>` で撃つ(枠の正本が答えた数の内で)。"""
-    monkeypatch.setattr(sys, "path", list(sys.path))  # main は根を sys.path の頭に足す
-    monkeypatch.setattr(static_check, "take_slot", lambda *_: SlotHeld(None, 4))  # 機体の正本の宣言に依らない
+    """When the environment variable names a number of 2 or more, the entry main runs pyright with `--threads <n>` (within the number answered by the slot source of truth)."""
+    monkeypatch.setattr(sys, "path", list(sys.path))  # main adds the root to the head of sys.path
+    monkeypatch.setattr(static_check, "take_slot", lambda *_: SlotHeld(None, 4))  # independent of the machine's source-of-truth declaration
     monkeypatch.setenv("DOEFF_HY_CHECK_PYRIGHT_THREADS", "3")
     argv = _checked_once(tmp_path)
     assert "--threads" in argv, argv
@@ -124,7 +124,7 @@ def test_the_entry_passes_the_thread_count_to_pyright(tmp_path: Path, monkeypatc
 def test_the_entry_without_the_setting_runs_pyright_as_before(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """設定が無い(既定 1)時は、今までと同じく `--threads` を渡さない(1 本の pyright)。"""
+    """When there is no setting (default 1), `--threads` is not passed, as before (one pyright)."""
     monkeypatch.setattr(sys, "path", list(sys.path))
     monkeypatch.setattr(static_check, "take_slot", lambda *_: SlotHeld())
     monkeypatch.delenv("DOEFF_HY_CHECK_PYRIGHT_THREADS", raising=False)
@@ -135,7 +135,7 @@ def test_the_entry_without_the_setting_runs_pyright_as_before(
 def test_the_entry_refuses_a_wrong_thread_count(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    """1 以上の整数でない値は走れなかった(exit 2)— pyright を撃つ前に断り、変数の名を名指す。"""
+    """A value that is not an integer of 1 or more could not run (exit 2) - reject before running pyright and name the variable."""
     monkeypatch.setattr(sys, "path", list(sys.path))
     monkeypatch.setattr(static_check, "take_slot", lambda *_: SlotHeld())
     monkeypatch.setenv("DOEFF_HY_CHECK_PYRIGHT_THREADS", "0")

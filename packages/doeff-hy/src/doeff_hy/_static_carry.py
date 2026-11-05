@@ -1,53 +1,53 @@
-"""doeff-hy-check の運び(`--carry <file>`)— 前の回から入力の変わらない .hy は pyright に当てず、前の回の pyright の診断を運ぶ。
+"""The carry of doeff-hy-check (`--carry <file>`): a .hy whose inputs did not change since the previous run is not given to pyright; the previous run's pyright diagnostics are carried over instead.
 
-なぜ: agora-controllers の日次の型の測り(hy-type-trend)は範囲の .hy(約 3,000 本)を毎回全部 pyright に当て、秒が repo の大きさと
-機体の混みにつれて伸び、処理ステージの上限 7,200 秒で 2 回続けて切れた。pyright が 1 つの file に出す診断は、
-その file の展開と、その file が使う名の型を決める宣言(import で届く module の中)と、環境(pyright の版・設定・python の探し道)だけで
-決まる。それらが前の回と同じ file は、前の回の診断をそのまま使う。
+Why: the daily type measurement of agora-controllers (hy-type-trend) gave every .hy in scope (about 3,000) to pyright on each run; the seconds grew with the size of the repo and
+the load on the machine, and the run was cut off twice in a row by the 7,200-second limit of the processing stage. The diagnostics pyright emits for one file are
+determined only by the expansion of that file, the declarations that fix the types of the names it uses (inside the modules reached by import), and the environment (pyright version, configuration, python search path).
+A file for which all of these are the same as in the previous run reuses the previous run's diagnostics as they are.
 
-入力(file ごとの digest — InputGraph.inputs_of):
-- その file 自身: .hy の source・展開した Python・位置の対応表(診断の位置は展開と対応表で .hy の位置へ戻る)。
-- その file が使う名の宣言(module の名 1 つ — _Node)と、その宣言の表面が使う名の宣言(推移で全部)。表面 = pyright が呼び手の側で
-  その名の型を決めるのに読む部分:
-  - 型を全部宣言した関数(引数と答え)= decorator と署名。本体は空(`...`・`pass`・NotImplementedError の raise)ならそのまま、
-    docstring だけなら印、それ以外も 1 つの印に替える(Protocol の空の method は実装の無い method と数えられるので、空か否かは表面)。
-  - class = 全体(method は上の関数の決めで縮める。ただし self / cls の属性へ代入する method は本体ごと — pyright はそこから属性の型を
-    推す)。
-  - 型を宣言しない関数・global / nonlocal を持つ関数・変数・型の別名ほか = 文の全体(pyright は値と本体から型を推す)。module の段の
-    import の文は名ごとに分ける。
-  - docstring は落とし、行の番号は見ない(ast.dump の位置なし)— 説明の書き換えと行の移りは使い手へ伝えない。
-  - __all__: 名 1 つの宣言には、その名が __all__ に在るかだけを入れる(__all__ に別の名を足しても使い手へ伝えない)。__all__ を
-    pyright の読める形(文字列の並びの代入・+=・extend・append)でない文で書く module と、module の全部の名(star import)は __all__ の
-    文の全部。
-- その file が import する module の解き先(探し道の各 dir で、pyright が当たりうる候補の file のうち在る物の並び — Resolution)。
-  候補が増える・消える(新しい file が前の解き先を隠す・解けなかった import が解ける)と digest が変わる。名の宣言の digest も、その
-  module の解き先を含む。
-- 環境の指紋(Environment.fingerprint): 運びの形の版・pyright の版・pyright の設定・python の版と探し道・探し道のうち python の prefix の
-  下の dir(site-packages・標準ライブラリ)の中身の名(dist-info の名 = 配布物の版)と .pth の中身・診断を作る関数の source(semantics —
-  構文の木なので註と字下げは入らない)。中身を file ごとに見る探し道(根・extraPaths・typings・prefix の外の dir — editable で入れた
-  doeff の checkout)は指紋に入れない(editable の dist-info も版を落とした名だけ)— doeff の pin や版が上がっても、変わった宣言を使う
-  .hy だけを当て直す。
-- 置き場の印(Places): 日次の回は task ごとの作業 dir の下に根を置き、doeff の pin の checkout を根の隣に置く(回ごとに path が違う)。
-  digest の材料の中の根と根の親の綴りは印(@root・@parent)に替える — 同じ木を別の置き場で測っても同じ digest になる。
+Inputs (digest per file: InputGraph.inputs_of):
+- The file itself: the .hy source, the expanded Python, and the position map (a diagnostic position is mapped back to the .hy position through the expansion and the map).
+- The declaration of each name the file uses (one module name: _Node), and the declarations of the names its surface uses (all of them, transitively). Surface = the part pyright reads on the caller side
+  to decide the type of that name:
+  - A function whose types are all declared (arguments and result) = decorators and signature. If the body is empty (`...`, `pass`, or a raise of NotImplementedError) it is kept as is;
+    if it is only a docstring it becomes a mark, and any other body is replaced by a single mark (an empty method of a Protocol counts as a method with no implementation, so whether the body is empty is part of the surface).
+  - A class = the whole class (methods are reduced by the rule for functions above; but a method that assigns to an attribute of self / cls keeps its whole body, since pyright
+    infers the attribute type from there).
+  - A function without type declarations, a function with global / nonlocal, a variable, a type alias, etc. = the whole statement (pyright infers the type from the value and the body). At module level,
+    import statements are split per name.
+  - Docstrings are dropped and line numbers are not looked at (ast.dump without positions): rewriting a description or moving lines is not passed on to the users.
+  - __all__: for the declaration of a single name, only whether that name is in __all__ is included (adding another name to __all__ is not passed on to users). A module that writes __all__ in a
+    form pyright cannot read (anything other than assignment of a sequence of strings, +=, extend, append), and the whole set of names of a module (star import), use
+    the whole of the __all__ statements.
+- Where the modules the file imports resolve to (in each directory of the search path, the existing ones among the candidate files pyright may hit: Resolution).
+  The digest changes when candidates appear or disappear (a new file hides a previous resolution, or an import that failed to resolve now resolves). The digest of a name declaration also includes the
+  resolution of its module.
+- The environment fingerprint (Environment.fingerprint): the version of the carry format, the pyright version, the pyright configuration, the python version and search path, the names of the contents of the search-path
+  directories under the python prefix (site-packages, the standard library; dist-info names = distribution versions), the contents of .pth files, and the source of the functions that produce diagnostics (semantics:
+  it is a syntax tree, so comments and indentation are not included). Search paths whose contents are looked at per file (the root, extraPaths, typings, directories outside the prefix: the checkout of
+  doeff installed as editable) are not put into the fingerprint (for an editable dist-info, only the name without the version): even when the pin or version of doeff goes up, only the .hy files that use
+  a changed declaration are checked again.
+- Place marks (Places): a daily run puts the root under a per-task working directory and puts the checkout of the doeff pin next to the root (the path differs on every run).
+  The spelling of the root and the root's parent inside the digest material is replaced by marks (@root, @parent), so measuring the same tree in a different place gives the same digest.
 
-安全の側へ倒す所: 構文の誤りで読めない Python の module は回ごとに違う digest にする(使う file を毎回当てる)。module を値で使う参照・
-star import は、その module の全部の名に依る(_Node の name = None)。名が module に無い時は、star import の先・module の __getattr__・
-同じ名の下の module に依る。関数の本体の中の名と module の名を区別しない(同じ綴りなら依る — 余分に当てるだけ)。
+Falling to the safe side: a Python module that cannot be read because of a syntax error gets a different digest on every run (the files that use it are checked every time). A reference that uses a module as a value, and
+a star import, depend on all names of that module (_Node name = None). When a name is not in the module, it depends on the targets of star imports, the module's __getattr__, and
+the modules under the same name. Names inside function bodies are not distinguished from module names (the same spelling depends on it: this only causes extra checking).
 
-見直し(refresh_runs): 入力の変わらない file のうち、当てた回が一番古い ceil(本数 / refresh_runs) 本を毎回当て直し、運んだ診断と
-違った file を数えて名乗る(summary の refresh_mismatches)— この入力の決めが見落とす依存があれば、ここに出る(pyright の答えが
-検める順で揺れる file — もここに出る)。
+Refresh (refresh_runs): each run re-checks the ceil(count / refresh_runs) files with unchanged inputs whose last check is oldest, counts the files whose result differs
+from the carried diagnostics, and reports them (refresh_mismatches in the summary). If this definition of inputs misses a dependency, it shows up here (a file whose pyright answer
+varies with the order of checking also shows up here).
 
-運びの文書(JSON・版 CARRY_VERSION): {"version", "fingerprint", "run", "summary", "files": {相対 path: {"inputs", "checked",
-"rows": [[行, 列, severity, 規則, 文言], …]}}}。run = 回の番号(運びの無い回が 1)・checked = その file を pyright に当てた回の番号・
-rows = その回の pyright の診断(.hy の位置・pyright の答えの順 — 整える前の物。整え(static_check.settle)は毎回、運んだ物と当てた物を合わせてかける)。
-summary は使い手(agora-controllers の scripts/hy_type_trend.hy)が読む欄: run・checked・carried・reasons・refresh_mismatches・mismatched。
+Carry document (JSON, version CARRY_VERSION): {"version", "fingerprint", "run", "summary", "files": {relative path: {"inputs", "checked",
+"rows": [[line, column, severity, rule, message], …]}}}. run = the run number (1 for a run without a carry); checked = the run number in which the file was given to pyright;
+rows = the pyright diagnostics of that run (.hy positions, in pyright's order, before tidying; the tidying (static_check.settle) is applied every time to the carried and the freshly checked ones together).
+summary is the field read by the user (scripts/hy_type_trend.hy of agora-controllers): run, checked, carried, reasons, refresh_mismatches, mismatched.
 
-組ごとの書き直し(--carry-group): 当てる file を組に分けて pyright に当て、組を当て終えるたびに
-途中の文書(next_record の done = 当て終えた file)を書く。途中の文書は、当て終えた file の今回の診断・運んだ file・まだ当てていない
-見直しの file の前の回の記録だけを持ち、まだ当てていない新しい・変わった file を持たない(次の回は new として当てる)。使い手が時間で
-道具を切っても、当て終えた組の診断は次の回へ残る — 以前は切られた回が文書を書かず、全部を当てる回(環境の指紋が替わった回)が上限を
-越えると、次の回も同じ全部を当て直して二度と測れなかった(2026-10-27〜29 の日次 13 回)。
+Per-group rewriting (--carry-group): the files to check are split into groups and given to pyright, and each time a group is finished,
+an interim document is written (next_record's done = the files already checked). The interim document holds only the current diagnostics of the checked files, the carried files, and the previous run's records of the
+refresh files not yet checked; it does not hold new or changed files not yet checked (the next run treats them as new). Even if the user cuts the
+tool off by time, the diagnostics of the finished groups remain for the next run. Previously a cut-off run wrote no document, and when the run that checks everything (the run where the environment fingerprint changed) exceeded the limit,
+the next run checked everything again and could never finish measuring (13 daily runs, 2026-10-27 to 29).
 """
 
 import ast
@@ -69,25 +69,25 @@ from operator import itemgetter
 from pathlib import Path
 from typing import TypeVar
 
-#: 運びの文書の版と、入力の決め方の版(決め方を替えたら上げる — 指紋に入るので、前の回の運びは全部当て直しになる)。
+#: Version of the carry document and of how inputs are decided (raise it when the decision changes: it enters the fingerprint, so everything carried from the previous run is checked again).
 CARRY_VERSION = 1
-#: 見直しの周期(回)の既定 — 入力の変わらない file も、この回数のうちに 1 度は当て直す(agora-controllers の日次 6 回 / 日で 2 日)。
+#: Default refresh period (runs): even a file with unchanged inputs is checked again once within this number of runs (agora-controllers: 6 daily runs / day over 2 days).
 DEFAULT_REFRESH_RUNS = 12
-#: 当てる訳の語(summary の reasons の鍵): absent = 運びの file が無い(初回)・unreadable = 運びの file を読めない・
-#: environment = 環境の指紋が違う・new = 前の回に無い file・changed = 入力が変わった・refresh = 見直し。
+#: Words for the reason a file is checked (keys of the summary's reasons): absent = no carry file (first run); unreadable = the carry file cannot be read;
+#: environment = the environment fingerprint differs; new = a file not in the previous run; changed = the inputs changed; refresh = refresh.
 REASONS = ("absent", "unreadable", "environment", "new", "changed", "refresh")
-#: summary に名を並べる、見直しで答えが違った file の数の上限。
+#: Upper limit on the number of files, listed by name in the summary, whose answer differed on refresh.
 MISMATCH_SHOWN = 20
-#: 表面の文字列の定数を、注記の式として読みに行く長さの上限(長い文言は式でない)。
+#: Upper limit on the length of a string constant in the surface that is read as an annotation expression (a long message is not an expression).
 _ANNOTATION_TEXT_LIMIT = 400
-#: 注記として読みに行く文字列の字(名・属性・添字・union・Literal の中の文字列と数)— 他の字を含む文言は式として読まない。
+#: Characters of a string that is read as an annotation (names, attributes, subscripts, unions, strings and numbers inside Literal); a message containing other characters is not read as an expression.
 _ANNOTATION_TEXT = re.compile(r"[\w.\[\](),|'\"\s*=-]+")
-#: 縮めた本体の代わりに置く印(空でない本体)と、docstring だけの本体の印。
-_BODY_MARK = "<本体>"
+#: The mark put in place of a reduced body (non-empty body), and the mark for a docstring-only body.
+_BODY_MARK = "<body>"
 _DOCSTRING_MARK = "<docstring>"
-#: pyright の版の綴り(包みの道具が新しい版の知らせを足しても、指紋は版だけで決める)。
+#: The spelling of the pyright version (even if the wrapper tool adds a notice about a newer version, the fingerprint is decided by the version alone).
 _PYRIGHT_VERSION = re.compile(r"pyright \d+\.\d+\.\d+")
-#: python の探し道を読む命令(pyright も同じ python に探し道を問う)。
+#: The command that reads the python search path (pyright also asks the same python for the search path).
 _PATH_PROBE = (
     "import json, sys; print(json.dumps({'path': sys.path, 'prefix': sys.prefix, "
     "'base': sys.base_prefix, 'version': sys.version}))"
@@ -96,7 +96,7 @@ _PATH_PROBE = (
 
 @dataclass(frozen=True, order=True)
 class CarriedRow:
-    """pyright の診断 1 つ(.hy の位置)— 運びの文書の行(path は持ち主の CarriedFile が持つ)。"""
+    """One pyright diagnostic (a .hy position): a row of the carry document (the path is held by the owning CarriedFile)."""
 
     line: int
     column: int
@@ -107,21 +107,21 @@ class CarriedRow:
 
 @dataclass(frozen=True)
 class Candidate:
-    """module の解き先の候補 1 つ — path と種類(pyi・py・hy・hy-failed・hy-unstaged・package・init・native・typed:<中身の digest>)。"""
+    """One candidate for where a module resolves: path and kind (pyi, py, hy, hy-failed, hy-unstaged, package, init, native, typed:<digest of contents>)."""
 
     path: str
     kind: str
 
 
-#: module の解き先 — 探し道の順に、在る候補の並び。空 = 根と editable の探し道に無い(site-packages・標準ライブラリ — 指紋が覆う —
-#: か、解けない)。
+#: Where a module resolves: in search-path order, the sequence of existing candidates. Empty = not on the root or the editable search paths (site-packages, the standard library: covered by the fingerprint,
+#: or unresolvable).
 Resolution = tuple[Candidate, ...]
 
 _V = TypeVar("_V")
 
 
 def _grouped(pairs: Iterable[tuple[str, _V]]) -> dict[str, tuple[_V, ...]]:
-    """(鍵, 値) の並びを鍵ごとの値の tuple にする(値は来た順のまま)— 名から宣言を引く索引を作るため。"""
+    """Turn a sequence of (key, value) into a tuple of values per key (values in arrival order), to build an index from a name to its declarations."""
     ordered = sorted(
         ((key, order, value) for order, (key, value) in enumerate(pairs)), key=itemgetter(0, 1)
     )
@@ -132,18 +132,18 @@ def _grouped(pairs: Iterable[tuple[str, _V]]) -> dict[str, tuple[_V, ...]]:
 
 
 def _resolution_json(resolution: Resolution) -> str:
-    """解き先を digest の材料の文字列にするため。"""
+    """To turn a resolution into a string for the digest material."""
     return json.dumps(
         [[candidate.path, candidate.kind] for candidate in resolution], ensure_ascii=False
     )
 
 
-# --- 運びの文書 ------------------------------------------------------------------------------------------------------------
+# --- carry document ------------------------------------------------------------------------------------------------------
 
 
 @dataclass(frozen=True)
 class FileInputs:
-    """file 1 つのこの回の入力 — path = 根からの相対 path・inputs = 入力の digest(InputGraph.inputs_of)。"""
+    """The input of one file in this run: path = path relative to the root; inputs = the input digest (InputGraph.inputs_of)."""
 
     path: str
     inputs: str
@@ -151,7 +151,7 @@ class FileInputs:
 
 @dataclass(frozen=True)
 class FileRows:
-    """file 1 つのこの回の pyright の診断(pyright の答えの順)。"""
+    """The pyright diagnostics of one file in this run (in pyright's order)."""
 
     path: str
     rows: tuple[CarriedRow, ...]
@@ -159,8 +159,8 @@ class FileRows:
 
 @dataclass(frozen=True)
 class CarriedFile:
-    """運びの文書の file 1 つ — inputs = 当てた時の入力の digest・checked = 当てた回の番号・rows = その回の pyright の診断(pyright の
-    答えの順 — 運んだ回の出力の並びを、全部当てた回と同じにする)。"""
+    """One file of the carry document: inputs = the input digest when it was checked; checked = the run number when it was checked; rows = the pyright diagnostics of that run (
+    in pyright's order, so the output order of a carried run is the same as that of a run that checked everything)."""
 
     path: str
     inputs: str
@@ -170,7 +170,7 @@ class CarriedFile:
 
 @dataclass(frozen=True)
 class CarryRecord:
-    """運びの文書 1 つ — fingerprint = 環境の指紋・run = 回の番号・files = file ごとの記録(path の順)。"""
+    """One carry document: fingerprint = the environment fingerprint; run = the run number; files = the record per file (in path order)."""
 
     fingerprint: str
     run: int
@@ -178,26 +178,26 @@ class CarryRecord:
 
 
 class CarryUnreadableError(ValueError):
-    """運びの file が在るのに読めない・形か版が違う(呼び手は全部を当てる — 運びは測りの近道で、測りを止める訳にしない)。"""
+    """The carry file exists but cannot be read, or its shape or version differs (the caller checks everything: the carry is a shortcut for the measurement and must not be a reason to stop the measurement)."""
 
 
 def read_carry(path: Path) -> CarryRecord | None:
-    """前の回の運びの file を読むため(None = file が無い — 初回)。読めない・形か版が違えば CarryUnreadableError。"""
+    """Read the previous run's carry file (None = no file: first run). If it cannot be read or its shape or version differs, CarryUnreadableError."""
     try:
         text = path.read_text(encoding="utf-8")
     except FileNotFoundError:
         return None
     except (OSError, UnicodeDecodeError) as error:
-        raise CarryUnreadableError(f"運びの file {path} を読めない: {error}") from error
+        raise CarryUnreadableError(f"cannot read carry file {path}: {error}") from error
     try:
         loaded: object = json.loads(text)
     except json.JSONDecodeError as error:
-        raise CarryUnreadableError(f"運びの file {path} が JSON でない: {error}") from error
+        raise CarryUnreadableError(f"carry file {path} is not JSON: {error}") from error
     return _record_of(loaded, path)
 
 
 def _record_of(loaded: object, path: Path) -> CarryRecord:
-    """運びの文書の JSON を読むため(JSON の境界 — 欠けた欄を既定で埋めない)。"""
+    """Read the JSON of a carry document (a JSON boundary: missing fields are not filled with defaults)."""
     match loaded:
         case {"version": 1, "fingerprint": str(fingerprint), "run": int(run), "files": dict(files)}:
             return CarryRecord(
@@ -207,39 +207,39 @@ def _record_of(loaded: object, path: Path) -> CarryRecord:
             )
         case {"version": version} if version != CARRY_VERSION:
             raise CarryUnreadableError(
-                f"運びの file {path} の版 {version!r} は読めない(読める版 = {CARRY_VERSION})"
+                f"cannot read version {version!r} of carry file {path} (readable version = {CARRY_VERSION})"
             )
         case _:
             raise CarryUnreadableError(
-                f"運びの file {path} の形が違う(version・fingerprint・run・files が要る)"
+                f"the shape of carry file {path} differs (version, fingerprint, run, and files are required)"
             )
 
 
 def _file_of(key: str, value: object, path: Path) -> CarriedFile:
-    """運びの文書の file 1 つを読むため。"""
+    """Read one file of the carry document."""
     match value:
         case {"inputs": str(inputs), "checked": int(checked), "rows": list(rows)}:
             return CarriedFile(key, inputs, checked, tuple(_row_of(row, path) for row in rows))
         case _:
             raise CarryUnreadableError(
-                f"運びの file {path} の {key} に inputs・checked・rows が揃っていない: {value!r}"[
+                f"{key} in carry file {path} lacks inputs, checked, or rows: {value!r}"[
                     :400
                 ]
             )
 
 
 def _row_of(row: object, path: Path) -> CarriedRow:
-    """運びの文書の診断 1 つを読むため。"""
+    """Read one diagnostic of the carry document."""
     match row:
         case [int(line), int(column), str(severity), str(rule), str(message)]:
             return CarriedRow(line, column, severity, rule, message)
         case _:
-            raise CarryUnreadableError(f"運びの file {path} の診断の形が違う: {row!r}"[:400])
+            raise CarryUnreadableError(f"the shape of a diagnostic in carry file {path} differs: {row!r}"[:400])
 
 
 @dataclass(frozen=True)
 class ReasonCount:
-    """当てた訳 1 つ(REASONS の語)と、その訳で当てた file の数。"""
+    """One reason for checking (a REASONS word) and the number of files checked for that reason."""
 
     reason: str
     count: int
@@ -247,8 +247,8 @@ class ReasonCount:
 
 @dataclass(frozen=True)
 class Summary:
-    """1 回の運びの数 — checked = pyright に当てた file・carried = 前の回の診断を運んだ file・reasons = 当てた訳ごとの数(REASONS の
-    順)・mismatched = 見直しで当て直して、運んでいた診断と答えが違った file。"""
+    """The numbers of one carry run: checked = files given to pyright; carried = files whose previous diagnostics were carried; reasons = counts per reason for checking (in the order of REASONS);
+    mismatched = files re-checked on refresh whose answer differed from the carried diagnostics."""
 
     run: int
     checked: int
@@ -257,7 +257,7 @@ class Summary:
     mismatched: tuple[str, ...]
 
     def as_json(self) -> dict[str, object]:
-        """使い手が読む運びの文書の欄 summary の形にするため(JSON の境界 — 名は MISMATCH_SHOWN まで・数は全部)。"""
+        """Shape the summary field of the carry document read by users (a JSON boundary: names up to MISMATCH_SHOWN, counts for all)."""
         return {
             "run": self.run,
             "checked": self.checked,
@@ -268,21 +268,21 @@ class Summary:
         }
 
     def line(self) -> str:
-        """この回にどれだけ当て、どれだけ運んだかを人に見せる 1 行にするため(標準エラーへ出す)。"""
+        """Make a one-line description for people of how many were checked and how many carried in this run (printed to standard error)."""
         reasons = (
-            "・".join(f"{count.reason} {count.count}" for count in self.reasons if count.count)
-            or "なし"
+            ", ".join(f"{count.reason} {count.count}" for count in self.reasons if count.count)
+            or "none"
         )
-        shown = "・".join(self.mismatched[:MISMATCH_SHOWN])
+        shown = ", ".join(self.mismatched[:MISMATCH_SHOWN])
         mismatch = f": {shown}" if self.mismatched else ""
         return (
-            f"運び(回 {self.run}): pyright に当てた .hy {self.checked} 本・前の回の診断を運んだ .hy {self.carried} 本"
-            f"(当てた訳: {reasons})— 見直しで答えが違った {len(self.mismatched)} 本{mismatch}"
+            f"carry (run {self.run}): checked with pyright: {self.checked} .hy files, carried from previous run: {self.carried} .hy files"
+            f" (reasons for checking: {reasons}); answer differed on refresh: {len(self.mismatched)} files{mismatch}"
         )
 
 
 def carry_text(record: CarryRecord, summary: Summary) -> str:
-    """運びの文書を JSON の文字列にするため(JSON の境界 — file は path の順・同じ中身なら同じ文字列)。"""
+    """Turn the carry document into a JSON string (a JSON boundary: files in path order; the same content gives the same string)."""
     files = {
         carried.path: {
             "inputs": carried.inputs,
@@ -304,19 +304,19 @@ def carry_text(record: CarryRecord, summary: Summary) -> str:
 
 
 def write_carry(path: Path, text: str) -> None:
-    """この回の運びの文書を次の回のために残すため(同じ dir の別名に書いてから置き換える — 途中で切られても前の回の物が残る)。"""
+    """Keep this run's carry document for the next run (write under another name in the same directory and then replace, so if cut off midway the previous run's one remains)."""
     temporary = path.with_name(f".{path.name}.{os.getpid()}.tmp")
     temporary.write_text(text, encoding="utf-8")
     temporary.replace(path)
 
 
-# --- 当てる file の決め ----------------------------------------------------------------------------------------------------
+# --- deciding which files to check ----------------------------------------------------------------------------------------
 
 
 @dataclass(frozen=True)
 class Checking:
-    """この回に pyright に当てる file 1 つ — reason = 訳(REASONS の語)・before = 見直しで当てる時の前の回の記録(当て直した答えと
-    比べる。見直しでなければ None)。"""
+    """One file to give to pyright in this run: reason = the reason (a REASONS word); before = the previous run's record when checking for a refresh (compared with the re-checked answer;
+    None if not a refresh)."""
 
     path: str
     reason: str
@@ -325,7 +325,7 @@ class Checking:
 
 @dataclass(frozen=True)
 class Plan:
-    """この回の運びの計画 — checking = pyright に当てる file・carried = 前の回の診断を運ぶ file・run = この回の番号。"""
+    """The carry plan of this run: checking = files to give to pyright; carried = files whose previous diagnostics are carried; run = the number of this run."""
 
     checking: tuple[Checking, ...]
     carried: tuple[CarriedFile, ...]
@@ -333,7 +333,7 @@ class Plan:
 
     @property
     def checked_paths(self) -> frozenset[str]:
-        """pyright に当てる file の相対 path の集合(当てる file を選ぶため)。"""
+        """The set of relative paths of the files to give to pyright (to select the files to check)."""
         return frozenset(checking.path for checking in self.checking)
 
 
@@ -343,7 +343,7 @@ def plan_carry(
     inputs: Sequence[FileInputs],
     refresh_runs: int,
 ) -> Plan:
-    """純粋: 前の回の運び(None = 無い・CarryUnreadableError = 読めない)と今の入力から、この回に当てる file と運ぶ file を決めるため。"""
+    """Pure: decide the files to check and the files to carry in this run, from the previous run's carry (None = none; CarryUnreadableError = unreadable) and the current inputs."""
     if (
         previous is None
         or isinstance(previous, CarryUnreadableError)
@@ -360,7 +360,7 @@ def plan_carry(
         return Plan(tuple(Checking(file.path, reason) for file in inputs), (), run)
     known = {
         carried.path: carried for carried in previous.files
-    }  # path から前の回の記録を引く索引(この関数の中だけ)
+    }  # index from path to the previous run's record (local to this function)
     moved = tuple(
         Checking(file.path, "new" if before is None else "changed")
         for file in inputs
@@ -378,28 +378,28 @@ def plan_carry(
     )
 
 
-def next_record(  # noqa: DOEFF006 — 内部の小さな組の戻り
+def next_record(  # noqa: DOEFF006 — a small internal grouped return
     plan: Plan,
     fingerprint: str,
     inputs: Sequence[FileInputs],
     fresh: Sequence[FileRows],
     done: frozenset[str] | None = None,
 ) -> tuple[CarryRecord, Summary]:
-    """純粋: この回の運びの文書と数を作るため(当てた file は今回の診断 fresh と今回の番号、運んだ file は前の回の記録のまま)。done =
-    組ごとの途中の文書で当て終えた file(None = 全部を当て終えた)— まだ当てていない見直しの file は前の回の記録のまま持ち、まだ
-    当てていない新しい・変わった file は持たない(頭の註「組ごとの書き直し」)。数も当て終えた file だけを数える。"""
+    """Pure: build this run's carry document and counts (checked files get the current diagnostics `fresh` and the current number; carried files keep the previous run's record). done =
+    the files finished in the interim document of a group run (None = everything finished); the previous run's records of refresh files not yet checked are kept as they are, and
+    new or changed files not yet checked are not kept (header comment "per-group rewriting"). The counts also count only the finished files."""
     answered = {
         rows.path: rows.rows for rows in fresh
-    }  # path からこの回の診断を引く索引(この関数の中だけ)
+    }  # index from path to this run's diagnostics (local to this function)
     carried = {
         kept.path: kept for kept in plan.carried
-    }  # path から運ぶ記録を引く索引(この関数の中だけ)
+    }  # index from path to the record to carry (local to this function)
     checked = plan.checked_paths if done is None else plan.checked_paths & done
     waiting = {
         checking.path: checking.before
         for checking in plan.checking
         if checking.path not in checked and checking.before is not None
-    }  # まだ当てていない見直しの file の前の回の記録(この関数の中だけ)
+    }  # previous run's records of refresh files not yet checked (local to this function)
     files = tuple(
         CarriedFile(file.path, file.inputs, plan.run, answered.get(file.path, ()))
         if file.path in checked
@@ -426,12 +426,12 @@ def next_record(  # noqa: DOEFF006 — 内部の小さな組の戻り
     return CarryRecord(fingerprint, plan.run, files), summary
 
 
-# --- 環境の指紋 ------------------------------------------------------------------------------------------------------------
+# --- environment fingerprint ---------------------------------------------------------------------------------------------
 
 
 @dataclass(frozen=True)
 class Place:
-    """回ごとに違う置き場 1 つ — path = この回の綴り・mark = 回をまたいで同じ印。"""
+    """One place that differs per run: path = the spelling in this run; mark = the mark that is the same across runs."""
 
     path: str
     mark: str
@@ -439,22 +439,22 @@ class Place:
 
 @dataclass(frozen=True)
 class Places:
-    """digest の材料の中の、回ごとに違う置き場の綴りを印に替えるため(頭の註「置き場の印」)。places = 長い綴りから・pattern = その
-    どれかに当たり、後ろが path の続き(/)か区切りの所だけを拾う式(当たった group の番号が places の番号 + 1)。"""
+    """Replace the spelling of per-run places inside digest material with marks (header comment "place marks"). places = from the longest spelling; pattern = a regex that matches any of
+    them and picks it up only where it is followed by a path continuation (/) or a delimiter (the matched group number is the index in places + 1)."""
 
     places: tuple[Place, ...]
     pattern: re.Pattern[str] | None
 
     def spell(self, text: str) -> str:
-        """text の中の置き場の綴りを印に替えるため。"""
+        """Replace the spelling of places inside text with marks."""
         if self.pattern is None:
             return text
         return self.pattern.sub(lambda hit: self.places[(hit.lastindex or 1) - 1].mark, text)
 
 
 def places_of(root: Path) -> Places:
-    """根を @root・根の親(doeff の pin の checkout を置く隣の並び)を @parent に替える置き場の組を作るため(綴りは absolute と
-    resolve の両方 — symlink を通った綴りも同じ印にする)。"""
+    """Build the set of places that replace the root with @root and the root's parent (the sibling where the doeff pin checkout is put) with @parent (both the absolute and
+    the resolved spelling, so a spelling through a symlink gets the same mark)."""
     absolute = Path(os.path.normpath(root.absolute()))
     pairs = [(absolute, "@root"), (absolute.resolve(), "@root")]
     if absolute.parent != absolute:
@@ -473,8 +473,8 @@ def places_of(root: Path) -> Places:
 
 @dataclass(frozen=True)
 class Environment:
-    """環境の指紋と、中身を file ごとに見る python の探し道(prefix の外の dir — editable で入れた checkout の dir)と、digest の材料の
-    中の置き場の印(places)。"""
+    """The environment fingerprint, the python search paths whose contents are looked at per file (directories outside the prefix: directories of editable checkouts), and the
+    place marks (places) inside the digest material."""
 
     fingerprint: str
     searched: tuple[Path, ...]
@@ -482,10 +482,10 @@ class Environment:
 
 
 def semantics_digest(functions: Iterable[Callable[..., object]]) -> str:
-    """pyright の診断を作って .hy の位置へ戻す関数の source と、この module の source の digest を作るため(どちらかが替われば、
-    前の回の診断を運ばない)。この module の source も関数と同じく inspect で読む(置き場の path から file を読まない — 検
-    tests/test_static_cache.py の test_doeff_hy_sources_do_not_read_their_place)。材料は構文の木(_syntax_of)で、註・字下げ・
-    空行だけの書き換えは指紋を替えない(2026-10-17 に `# noqa` の註 4 行の追加で全部の .hy を当て直した)。"""
+    """Build the digest of the source of the functions that produce pyright diagnostics and map them back to .hy positions, and of this module's source (if either changes,
+    the previous run's diagnostics are not carried). This module's source is also read by inspect like the functions (the file is not read from a place path; tested by
+    test_doeff_hy_sources_do_not_read_their_place in tests/test_static_cache.py). The material is the syntax tree (_syntax_of), and a rewrite of comments, indentation, or
+    blank lines alone does not change the fingerprint (on 2026-10-17 adding four `# noqa` comment lines made every .hy be checked again)."""
     return _digest(
         (
             *(_syntax_of(inspect.getsource(function)) for function in functions),
@@ -495,20 +495,20 @@ def semantics_digest(functions: Iterable[Callable[..., object]]) -> str:
 
 
 def _syntax_of(source: str) -> str:
-    """純粋: source の構文の木の綴り(ast.dump — 註・字下げ・空行を落とす)— 意味の変わらない書き換えで指紋を替えないため。"""
+    """Pure: the spelling of the syntax tree of the source (ast.dump, dropping comments, indentation, and blank lines), so a rewrite that does not change meaning does not change the fingerprint."""
     return ast.dump(ast.parse(textwrap.dedent(source)))
 
 
 def probe_environment(
     settings: Mapping[str, object], python: str, pyright: str, semantics: str, places: Places
 ) -> Environment:
-    """環境の指紋を作るため(pyright の版と python の探し道を子の process で読む — 読めなければ RuntimeError)。設定と探し道と .pth の
-    中の置き場の綴りは印に替える(places)。"""
+    """Build the environment fingerprint (read the pyright version and the python search path in a child process; RuntimeError if they cannot be read). The spelling of places inside the configuration, search path, and .pth
+    contents is replaced by marks (places)."""
     version = subprocess.run([pyright, "--version"], capture_output=True, text=True, check=False)
     named = _PYRIGHT_VERSION.search(version.stdout + version.stderr)
     if version.returncode != 0 or named is None:
         raise RuntimeError(
-            f"pyright の版を読めない(exit {version.returncode}): {(version.stdout + version.stderr)[:400]}"
+            f"cannot read the pyright version (exit {version.returncode}): {(version.stdout + version.stderr)[:400]}"
         )
     probed = subprocess.run(
         [python, "-B", "-I", "-c", _PATH_PROBE], capture_output=True, text=True, check=False
@@ -517,7 +517,7 @@ def probe_environment(
         answer: object = json.loads(probed.stdout)
     except json.JSONDecodeError as error:
         raise RuntimeError(
-            f"python の探し道を読めない(exit {probed.returncode}): {probed.stderr[:400]}"
+            f"cannot read the python search path (exit {probed.returncode}): {probed.stderr[:400]}"
         ) from error
     match answer:
         case {
@@ -528,7 +528,7 @@ def probe_environment(
         }:
             entries = tuple(str(e) for e in listed if isinstance(e, str) and e and Path(e).is_dir())
         case _:
-            raise RuntimeError(f"python の探し道の形が違う: {probed.stdout[:400]}")
+            raise RuntimeError(f"the shape of the python search path differs: {probed.stdout[:400]}")
     fixed = tuple(Path(p).resolve() for p in (prefix, base))
     under_prefix = {
         entry: any(Path(entry).resolve().is_relative_to(f) for f in fixed) for entry in entries
@@ -556,9 +556,9 @@ def probe_environment(
 
 
 def _listing(place: Path) -> list[str]:
-    """prefix の下の探し道 1 つの型を覆う指紋の材料にするため — 中身の名(dist-info の名 = 配布物の版)と .pth の中身。editable で
-    入れた配布物の dist-info は版を落とした名にする(中身は探し道の file ごとの digest が覆う — 2026-10-17 に doeff の版の上げ
-    0.5.0 → 0.6.0 → 0.7.0 だけで 2 回、全部の .hy を当て直した)。"""
+    """Make the fingerprint material that covers the type of one search path under the prefix: the names of its contents (dist-info names = distribution versions) and the contents of .pth files. For the dist-info of
+    a distribution installed as editable, use the name without the version (the contents are covered by the per-file digests of the search path; on 2026-10-17 merely raising the doeff version
+    0.5.0 -> 0.6.0 -> 0.7.0 made every .hy be checked again twice)."""
     return [
         piece
         for name in sorted(os.listdir(place))
@@ -568,7 +568,7 @@ def _listing(place: Path) -> list[str]:
 
 
 def _listed(place: Path, name: str) -> tuple[str, ...]:
-    """探し道の中身 1 つの指紋の材料(.pth は名と中身・editable の dist-info は版の無い名・ほかは名)。"""
+    """Fingerprint material for one item of a search path (.pth: name and contents; editable dist-info: the name without the version; others: the name)."""
     if name.endswith(".pth"):
         return (name, _text_of(place / name))
     if name.endswith(".dist-info") and _editable(place / name):
@@ -577,7 +577,7 @@ def _listed(place: Path, name: str) -> tuple[str, ...]:
 
 
 def _editable(dist_info: Path) -> bool:
-    """dist-info が editable の install か(direct_url.json の dir_info.editable — PEP 610。読めなければ editable でない側)。"""
+    """Whether a dist-info is an editable install (dir_info.editable in direct_url.json, PEP 610; if unreadable, treated as not editable)."""
     try:
         answer: object = json.loads((dist_info / "direct_url.json").read_text(encoding="utf-8"))
     except (OSError, ValueError):
@@ -590,15 +590,15 @@ def _editable(dist_info: Path) -> bool:
 
 
 def _text_of(path: Path) -> str:
-    """小さい file の中身(読めなければその訳)— 指紋の材料。"""
+    """The contents of a small file (the reason if unreadable): fingerprint material."""
     try:
         return path.read_text(encoding="utf-8", errors="replace")
     except OSError as error:
-        return f"読めない: {error}"
+        return f"unreadable: {error}"
 
 
 def _digest(parts: Iterable[str]) -> str:
-    """文字列の並びを 1 つの sha256 にするため(長さを前に置いて繋ぐ — 区切りの取り違えで別の並びを同じ digest にしない)。"""
+    """Turn a sequence of strings into one sha256 (lengths are put first when joining, so a mix-up of delimiters never gives the same digest to different sequences)."""
     hasher = hashlib.sha256()
     for part in parts:
         encoded = part.encode("utf-8")
@@ -607,13 +607,13 @@ def _digest(parts: Iterable[str]) -> str:
     return hasher.hexdigest()
 
 
-# --- module の中身の読み ---------------------------------------------------------------------------------------------------
+# --- reading the contents of a module -------------------------------------------------------------------------------------
 
 
 @dataclass(frozen=True)
 class Imported:
-    """import の行き先 1 つ — module = import した module の綴り・level = 相対の深さ・name = from の名(None = module そのもの)・
-    whole = `import a.b.c`(as 無し)が束ねた根の名の時の、import した module の全部の綴り(a.b.c)。"""
+    """One destination of an import: module = the spelling of the imported module; level = relative depth; name = the from-name (None = the module itself);
+    whole = the full spelling of the imported module (a.b.c) when `import a.b.c` (without as) bound the root name."""
 
     module: str
     level: int
@@ -622,15 +622,15 @@ class Imported:
 
     @property
     def imported_module(self) -> "Imported":
-        """import した module そのもの(from の名を外し、`import a.b.c` は a.b.c)— 解けるか・どこに解けるかを引くため。"""
+        """The imported module itself (dropping the from-name; `import a.b.c` gives a.b.c), to look up whether and where it resolves."""
         return Imported(self.whole if self.whole is not None else self.module, self.level)
 
 
 @dataclass(frozen=True)
 class Statement:
-    """module の段の文 1 つの表面 — surface = 縮めた文の ast.dump(位置なし)・chains = 表面が読む名と属性の連なり・imports = 表面の中の
-    import が束ねる名 → 行き先(本体を残した関数の中の import も — 名から行き先を引く索引)・binds = この文が module の段で import で
-    束ねる名 → 行き先(同じく索引)。"""
+    """The surface of one module-level statement: surface = ast.dump of the reduced statement (without positions); chains = the chains of names and attributes the surface reads; imports = name -> destination bound by imports inside the surface
+    (including imports inside a function that kept its body: an index to look up the destination from a name); binds = name -> destination bound by this statement through import at module level
+    (also an index)."""
 
     surface: str
     chains: tuple[tuple[str, ...], ...]
@@ -640,10 +640,10 @@ class Statement:
 
 @dataclass(frozen=True)
 class Facts:
-    """module の file 1 つの読み — statements = module の段の文の表面・bound = 名 → それを束ねる文の番号(名から宣言を引く索引)・
-    defined = import でない文が束ねる名・stars = star import の先・header = __all__ を読み書きする文の ast.dump・exported = __all__ の名
-    (__all__ が無い・pyright の読める形でない文が在る時は None — 名ごとの節にも header を入れる)・module_imports = module の段の import が
-    束ねる名 → 行き先(索引)・volatile = 構文の誤りで読めない(回ごとに違う digest にする)。"""
+    """The reading of one module file: statements = surfaces of the module-level statements; bound = name -> index of the statement that binds it (an index to look up a declaration from a name);
+    defined = names bound by non-import statements; stars = targets of star imports; header = ast.dump of the statements that read or write __all__; exported = names of __all__
+    (None when there is no __all__ or a statement not in a form pyright can read exists: the header is then put in each per-name section too); module_imports = name -> destination bound by
+    module-level imports (an index); volatile = unreadable because of a syntax error (gets a different digest on every run)."""
 
     statements: tuple[Statement, ...]
     bound: Mapping[str, tuple[int, ...]]
@@ -660,7 +660,7 @@ _VOLATILE = Facts((), {}, frozenset(), (), "", None, {}, volatile=True)
 
 @dataclass(frozen=True)
 class _AllStep:
-    """__all__ を書く文 1 つ — resets = 代入(前の名を捨てる)か、足す(+=・extend・append)か・names = その文の名。"""
+    """One statement that writes __all__: resets = whether it assigns (discarding earlier names) or adds (+=, extend, append); names = the names in that statement."""
 
     resets: bool
     names: frozenset[str]
@@ -668,8 +668,8 @@ class _AllStep:
 
 @dataclass(frozen=True)
 class _Read:
-    """module の段の文 1 つ(import の文は名 1 つ分)の読み — 表面と、束ねる名(names = import も・defined = import でない文の物)と、
-    star import の先と、__all__ の文なら header に入れる ast.dump。"""
+    """The reading of one module-level statement (an import statement counts as one name): the surface, the bound names (names = including imports; defined = those of non-import statements),
+    the targets of star imports, and for an __all__ statement the ast.dump put into the header."""
 
     statement: Statement
     names: frozenset[str]
@@ -680,8 +680,8 @@ class _Read:
 
 @dataclass(frozen=True)
 class _Scan:
-    """木を 1 度歩いた読み — chains = 読まれる名と属性の連なり(文字列の注記の中も)・imports = 木の中の import が束ねる名 → 行き先
-    (索引)・stars = star import の先・walrus = `:=` が束ねる名・mentions_all = __all__ を読み書きするか。"""
+    """The reading from walking the tree once: chains = chains of names and attributes that are read (including inside string annotations); imports = name -> destination bound by imports inside the tree
+    (an index); stars = targets of star imports; walrus = names bound by `:=`; mentions_all = whether it reads or writes __all__."""
 
     chains: tuple[tuple[str, ...], ...]
     imports: Mapping[str, tuple[Imported, ...]]
@@ -691,7 +691,7 @@ class _Scan:
 
 
 def module_facts(text: str) -> Facts:
-    """純粋: module の Python の source を、名ごとの宣言の表面を引ける形に読むため(読めなければ volatile)。"""
+    """Pure: read the Python source of a module into a form from which the surface of each name's declaration can be looked up (volatile if unreadable)."""
     try:
         tree = ast.parse(text)
     except (SyntaxError, ValueError):
@@ -722,9 +722,9 @@ def module_facts(text: str) -> Facts:
 
 
 def _reads_of(statement: ast.stmt) -> Iterator[_Read]:
-    """module の段の文 1 つを読むため。module の段の import の文は名ごとの文に分ける(1 つの文に並んだ名の 1 つを足しても、他の名の
-    宣言の digest を変えない)。それ以外の文は、文の段だけを巡って束ねる名を集め(式には入らない — 関数の本体の式を歩かない)、表面へ
-    縮めた木を 1 度だけ歩いて、読む名と import と `:=` を集める。"""
+    """Read one module-level statement. A module-level import statement is split into per-name statements (adding one name to a statement that lists several does not change the digest of the
+    other names' declarations). For other statements, collect the bound names by walking only statement levels (not entering expressions, so expressions in function bodies are not walked), then
+    walk the tree reduced to the surface exactly once and collect the names read, imports, and `:=`."""
     if isinstance(statement, (ast.Import, ast.ImportFrom)) and all(
         a.name != "*" for a in statement.names
     ):
@@ -760,7 +760,7 @@ def _reads_of(statement: ast.stmt) -> Iterator[_Read]:
         name for inner in scope for name in _statement_targets(inner, imports=False)
     )
     declared = frozenset(_global_names(scope)) | frozenset(_except_names(scope))
-    reduced = _reduce(statement, method=False)  # 木はこの読みだけの物 — その場で縮める
+    reduced = _reduce(statement, method=False)  # the tree is used only by this reading, so reduce it in place
     scan = _scan(reduced)
     surface = ast.dump(reduced)
     yield _Read(
@@ -773,8 +773,8 @@ def _reads_of(statement: ast.stmt) -> Iterator[_Read]:
 
 
 def _exported(statements: Sequence[ast.stmt]) -> frozenset[str] | None:
-    """module の段の __all__ を読み書きする文(順のまま)から __all__ の名を読むため — 名ごとの節には、その名が __all__ に在るかだけを
-    入れる(__all__ に別の名を 1 つ足しても、他の名の使い手を当て直さない)。__all__ が無い・どれかが pyright の読める形でなければ None。"""
+    """Read the names of __all__ from the module-level statements that read or write __all__ (in order); each per-name section gets only whether that name is in __all__
+    (adding another name to __all__ does not make users of other names be checked again). None if there is no __all__ or any statement is not in a form pyright can read."""
     steps = tuple(_all_step(statement) for statement in statements)
     if not steps or any(step is None for step in steps):
         return None
@@ -786,7 +786,7 @@ def _exported(statements: Sequence[ast.stmt]) -> frozenset[str] | None:
 
 
 def _all_step(statement: ast.stmt) -> _AllStep | None:
-    """__all__ を書く文 1 つの読み(pyright の読める形 — 文字列の並びの代入・注記つきの代入・+=・extend・append — でなければ None)。"""
+    """The reading of one statement that writes __all__ (None unless it is in a form pyright can read: assignment of a sequence of strings, annotated assignment, +=, extend, append)."""
     match statement:
         case ast.Assign(
             targets=[ast.Name(id="__all__")],
@@ -828,7 +828,7 @@ def _all_step(statement: ast.stmt) -> _AllStep | None:
 
 
 def _is_docstring(statement: ast.stmt) -> bool:
-    """文が docstring(文字列の定数だけの式の文)か — 表面から説明の文を落とすため。"""
+    """Whether the statement is a docstring (an expression statement of only a string constant), to drop descriptions from the surface."""
     return (
         isinstance(statement, ast.Expr)
         and isinstance(statement.value, ast.Constant)
@@ -837,12 +837,12 @@ def _is_docstring(statement: ast.stmt) -> bool:
 
 
 def _trivial(body: Sequence[ast.stmt]) -> bool:
-    """本体が空(`...`・`pass`・NotImplementedError の raise だけ)かを判じるため(docstring を落とした後の本体で)。"""
+    """Decide whether a body is empty (only `...`, `pass`, or a raise of NotImplementedError), on the body after dropping the docstring."""
     return all(_trivial_statement(statement) for statement in body)
 
 
 def _trivial_statement(statement: ast.stmt) -> bool:
-    """空の本体の文 1 つか(`...`・`pass`・NotImplementedError の raise)。"""
+    """Whether it is one statement of an empty body (`...`, `pass`, or a raise of NotImplementedError)."""
     match statement:
         case ast.Pass():
             return True
@@ -858,7 +858,7 @@ def _trivial_statement(statement: ast.stmt) -> bool:
 
 
 def _fully_annotated(function: ast.FunctionDef | ast.AsyncFunctionDef, method: bool) -> bool:
-    """関数の引数(method の self / cls を除く)と答えに型の宣言が全部在るか — 本体を表面から落としてよいかを判じるため。"""
+    """Whether the arguments of a function (except a method's self / cls) and the result all have type declarations, to decide whether the body may be dropped from the surface."""
     arguments = function.args
     positional = [*arguments.posonlyargs, *arguments.args]
     if method and positional and not _decorated_with(function, "staticmethod"):
@@ -871,7 +871,7 @@ def _fully_annotated(function: ast.FunctionDef | ast.AsyncFunctionDef, method: b
 
 
 def _decorated_with(function: ast.FunctionDef | ast.AsyncFunctionDef, name: str) -> bool:
-    """関数が名 name(か属性の連なりの末尾が name)の decorator を持つか — staticmethod の最初の引数を self と見ないため。"""
+    """Whether the function has a decorator named name (or whose attribute chain ends in name), so the first argument of a staticmethod is not taken as self."""
     return any(
         (isinstance(d, ast.Name) and d.id == name)
         or (isinstance(d, ast.Attribute) and d.attr == name)
@@ -880,7 +880,7 @@ def _decorated_with(function: ast.FunctionDef | ast.AsyncFunctionDef, name: str)
 
 
 def _child_statements(statement: ast.stmt, into_scopes: bool) -> Iterator[ast.stmt]:
-    """文の中にじかに入れ子になった文(if・try・for・while・with・match の本体 — into_scopes なら関数・class の本体も)。式には入らない。"""
+    """Statements nested directly inside a statement (bodies of if, try, for, while, with, match; with into_scopes also bodies of functions and classes). Does not enter expressions."""
     if not into_scopes and isinstance(
         statement, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)
     ):
@@ -889,7 +889,7 @@ def _child_statements(statement: ast.stmt, into_scopes: bool) -> Iterator[ast.st
         inner = getattr(statement, field, None)
         if isinstance(inner, list):
             yield from (s for s in inner if isinstance(s, ast.stmt))
-    handlers = getattr(statement, "handlers", None)  # Try・TryStar
+    handlers = getattr(statement, "handlers", None)  # Try, TryStar
     if isinstance(handlers, list):
         yield from (s for h in handlers if isinstance(h, ast.ExceptHandler) for s in h.body)
     if isinstance(statement, ast.Match):
@@ -897,21 +897,21 @@ def _child_statements(statement: ast.stmt, into_scopes: bool) -> Iterator[ast.st
 
 
 def _statements_within(body: Sequence[ast.stmt]) -> Iterator[ast.stmt]:
-    """本体の中の文の全部(入れ子の関数・class の本体も)— global と self の属性への代入を、式を歩かずに探すため。"""
+    """All statements inside a body (including bodies of nested functions and classes), to find global and assignments to attributes of self without walking expressions."""
     for statement in body:
         yield statement
         yield from _statements_within(tuple(_child_statements(statement, into_scopes=True)))
 
 
 def _module_scope_statements(statement: ast.stmt) -> Iterator[ast.stmt]:
-    """module の段の文と、その中の module の段のままの文の全部(関数・class の本体には入らない)— module の名を束ねる文を探すため。"""
+    """Module-level statements and all statements inside them that remain at module level (not entering function or class bodies), to find the statements that bind module names."""
     yield statement
     for inner in _child_statements(statement, into_scopes=False):
         yield from _module_scope_statements(inner)
 
 
 def _global_names(scope: Iterable[ast.stmt]) -> Iterator[str]:
-    """module の段の関数・class の中(入れ子も)の global が module の段に束ねる名。"""
+    """Names that a global inside module-level functions and classes (including nested ones) binds at module level."""
     for inner in scope:
         if isinstance(inner, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
             yield from (
@@ -923,7 +923,7 @@ def _global_names(scope: Iterable[ast.stmt]) -> Iterator[str]:
 
 
 def _except_names(scope: Iterable[ast.stmt]) -> Iterator[str]:
-    """module の段の try の `except … as 名` が束ねる名。"""
+    """Names bound by `except ... as name` of a module-level try."""
     for inner in scope:
         handlers = getattr(inner, "handlers", None)
         if isinstance(handlers, list):
@@ -931,8 +931,8 @@ def _except_names(scope: Iterable[ast.stmt]) -> Iterator[str]:
 
 
 def _assigns_attribute_of(function: ast.FunctionDef | ast.AsyncFunctionDef) -> bool:
-    """method が最初の引数(self / cls)の属性へ代入・削除するか(pyright はそこから属性の型を推すので、本体は表面)。代入の文の的だけを
-    見る(`:=` の的は名だけ・内包表記の的に self の属性を書く形は数えない)。"""
+    """Whether the method assigns to or deletes an attribute of its first argument (self / cls) (pyright infers the attribute type from there, so the body is part of the surface). Only the targets of assignment statements
+    are looked at (the target of `:=` is only a name; a form with a self attribute as the target of a comprehension is not counted)."""
     positional = [*function.args.posonlyargs, *function.args.args]
     if not positional:
         return False
@@ -948,7 +948,7 @@ def _assigns_attribute_of(function: ast.FunctionDef | ast.AsyncFunctionDef) -> b
 
 
 def _assignment_targets(statement: ast.stmt) -> Iterator[ast.expr]:
-    """文 1 つの代入・削除の的。"""
+    """The targets of the assignments and deletions of one statement."""
     match statement:
         case ast.Assign(targets=targets) | ast.Delete(targets=targets):
             yield from targets
@@ -966,8 +966,8 @@ def _assignment_targets(statement: ast.stmt) -> Iterator[ast.expr]:
 
 
 def _reduce(statement: ast.stmt, method: bool) -> ast.stmt:
-    """module の段の文を、呼び手の型に効く表面へ縮めるため(頭の註「表面」)— 文の段だけを巡り、関数を縮め、class は全体を残して method を
-    縮める。木はこの読みだけの物なので、その場で替える。method = class の本体の中の文か。"""
+    """Reduce a module-level statement to the surface that affects the caller's types (header comment "surface"): walk only statement levels, reduce functions, and for a class keep the whole and reduce
+    its methods. The tree is used only by this reading, so it is replaced in place. method = whether it is a statement in a class body."""
     match statement:
         case ast.FunctionDef() | ast.AsyncFunctionDef():
             return _reduce_function(statement, method)
@@ -989,8 +989,8 @@ def _reduce(statement: ast.stmt, method: bool) -> ast.stmt:
 
 
 def _reduce_function(function: ast.FunctionDef | ast.AsyncFunctionDef, method: bool) -> ast.stmt:
-    """型を全部宣言し、global を持たず、(method なら)self / cls の属性へ代入しない関数は、本体を空の本体か印に替える。それ以外は本体を
-    残し、頭の docstring だけを落とす。"""
+    """A function that declares all types, has no global, and (if a method) does not assign to attributes of self / cls gets its body replaced by an empty body or a mark. Otherwise keep the body
+    and drop only the leading docstring."""
     keeps_body = (
         not _fully_annotated(function, method)
         or any(isinstance(s, ast.Global) for s in _statements_within(function.body))
@@ -1010,18 +1010,18 @@ def _reduce_function(function: ast.FunctionDef | ast.AsyncFunctionDef, method: b
 
 
 def _without_docstring(body: list[ast.stmt]) -> list[ast.stmt]:
-    """本体の頭の docstring を落とすため(空になれば pass — 本体は空にできない)。"""
+    """Drop the docstring at the head of a body (if it becomes empty, use pass: a body cannot be empty)."""
     if body and _is_docstring(body[0]):
         return body[1:] or [ast.Pass()]
     return body
 
 
 def _scan(node: ast.AST) -> _Scan:
-    """木を 1 度だけ歩き、読まれる名と属性の連なり・import・star import・`:=` の名・__all__ の有無を集めるため。"""
+    """Walk the tree exactly once and collect the names and attribute chains that are read, imports, star imports, the names of `:=`, and whether __all__ appears."""
     nodes = tuple(ast.walk(node))
     inner = {
         id(n.value) for n in nodes if isinstance(n, ast.Attribute)
-    }  # 連なりの途中(a.b.c の a.b と a)は外の連なりが読む
+    }  # intermediate parts of a chain (a.b and a in a.b.c) are read by the outer chain
     return _Scan(
         tuple(dict.fromkeys(chain for n in nodes if id(n) not in inner for chain in _chains_at(n))),
         _grouped(
@@ -1043,8 +1043,8 @@ def _scan(node: ast.AST) -> _Scan:
 
 
 def _chains_at(node: ast.AST) -> Iterator[tuple[str, ...]]:
-    """node 1 つが読む名か属性の連なり(連なりでない属性は無し)。文字列の定数は注記の式として読めれば、その中の名も(pyright は文字列の
-    注記を式として解く)。"""
+    """The name or attribute chain that a node reads (an attribute that is not a chain gives nothing). If a string constant can be read as an annotation expression, the names inside it too (pyright resolves a string
+    annotation as an expression)."""
     match node:
         case ast.Attribute():
             chain = _chain(node)
@@ -1061,7 +1061,7 @@ def _chains_at(node: ast.AST) -> Iterator[tuple[str, ...]]:
 
 
 def _text_chains(text: str) -> Iterator[tuple[str, ...]]:
-    """文字列の注記の中の名と属性の連なり。名か名の連なりだけの文字列(ほとんどの文字列)は式として読まずに綴りを分ける。"""
+    """Names and attribute chains inside a string annotation. A string of only a name or a chain of names (most strings) is split by its spelling without being read as an expression."""
     parts = text.strip().split(".")
     if all(part.isidentifier() and not keyword.iskeyword(part) for part in parts):
         yield tuple(parts)
@@ -1072,12 +1072,12 @@ def _text_chains(text: str) -> Iterator[tuple[str, ...]]:
 
 
 def chains_of(node: ast.AST) -> Iterator[tuple[str, ...]]:
-    """木の中で読まれる名と属性の連なりを集めるため(`a.b.c` は 1 つの連なり ('a', 'b', 'c'))。"""
+    """Collect the names and attribute chains read in a tree (`a.b.c` is one chain ('a', 'b', 'c'))."""
     yield from _scan(node).chains
 
 
 def _expression(text: str) -> ast.AST | None:
-    """文字列を式として読む(読めなければ None)— 文字列の注記の中の名を拾うため。"""
+    """Read a string as an expression (None if unreadable), to pick up names inside a string annotation."""
     try:
         return ast.parse(text.strip(), mode="eval")
     except (SyntaxError, ValueError):
@@ -1085,7 +1085,7 @@ def _expression(text: str) -> ast.AST | None:
 
 
 def _chain(node: ast.expr) -> tuple[str, ...] | None:
-    """名から始まる属性の連なりの綴り(それ以外の式は None)— import した module の名を辿るため。"""
+    """The spelling of an attribute chain starting from a name (None for other expressions), to follow the names of imported modules."""
     match node:
         case ast.Name(id=name):
             return (name,)
@@ -1097,7 +1097,7 @@ def _chain(node: ast.expr) -> tuple[str, ...] | None:
 
 
 def _import_targets(statement: ast.Import | ast.ImportFrom) -> Iterator[tuple[str, Imported]]:
-    """import の文 1 つが束ねる名と行き先(star は返さない)— 名から宣言の在りかを引くため。"""
+    """The names and destinations bound by one import statement (star is not returned), to look up where a declaration is from a name."""
     match statement:
         case ast.Import(names=names):
             for alias in names:
@@ -1113,7 +1113,7 @@ def _import_targets(statement: ast.Import | ast.ImportFrom) -> Iterator[tuple[st
 
 
 def _target_names(target: ast.AST) -> Iterator[str]:
-    """代入の的が束ねる名(tuple・list・star の中も。属性と添字は名を束ねない)。"""
+    """The names bound by an assignment target (including inside tuple, list, and star; attributes and subscripts bind no names)."""
     match target:
         case ast.Name(id=name):
             yield name
@@ -1127,7 +1127,7 @@ def _target_names(target: ast.AST) -> Iterator[str]:
 
 
 def _statement_targets(inner: ast.stmt, imports: bool) -> Iterator[str]:
-    """文 1 つの的(定義の名・import の名・代入の的・for と with の的・match の型・型の別名)が束ねる名 — imports = import の名も数えるか。"""
+    """The names bound by the targets of one statement (names of definitions and imports, assignment targets, targets of for and with, match types, type aliases); imports = whether import names are counted too."""
     match inner:
         case ast.FunctionDef(name=name) | ast.AsyncFunctionDef(name=name) | ast.ClassDef(name=name):
             yield name
@@ -1155,15 +1155,15 @@ def _statement_targets(inner: ast.stmt, imports: bool) -> Iterator[str]:
                 n for case in cases for node in ast.walk(case.pattern) for n in _pattern_names(node)
             )
         case _:
-            type_alias = getattr(ast, "TypeAlias", None)  # 3.12 から
+            type_alias = getattr(ast, "TypeAlias", None)  # since 3.12
             if type_alias is not None and isinstance(inner, type_alias):
-                named = vars(inner).get("name")  # 型の別名の文の名(3.12 の ast.TypeAlias)
+                named = vars(inner).get("name")  # the name of a type alias statement (ast.TypeAlias of 3.12)
                 if isinstance(named, ast.AST):
                     yield from _target_names(named)
 
 
 def _pattern_names(node: ast.AST) -> Iterator[str]:
-    """match の型の部品 1 つが束ねる名。"""
+    """The names bound by one part of a match pattern."""
     match node:
         case ast.MatchAs(name=str(name)) | ast.MatchStar(name=str(name)):
             yield name
@@ -1173,12 +1173,12 @@ def _pattern_names(node: ast.AST) -> Iterator[str]:
             pass
 
 
-# --- 入力の digest ---------------------------------------------------------------------------------------------------------
+# --- digest of the inputs ---------------------------------------------------------------------------------------------------
 
 
 @dataclass(frozen=True)
 class _Node:
-    """依存の節 — 解き先の module の名 1 つの宣言(name = None なら module の全部の名 — module を値で使う参照・star import)。"""
+    """A dependency node: the declaration of one name of the module it resolves to (name = None means all names of the module: a reference that uses the module as a value, or a star import)."""
 
     resolution: Resolution
     name: str | None
@@ -1186,34 +1186,34 @@ class _Node:
 
 @dataclass(frozen=True)
 class _Expanded:
-    """節 1 つの中身の digest(local)と、表面が使う節(successors)。"""
+    """The digest of the contents of one node (local) and the nodes its surface uses (successors)."""
 
     local: str
     successors: tuple[_Node, ...]
 
 
-#: 節の中身の読みの 1 片 — 中身の digest の材料(str)か、表面が使う節。
+#: One piece of the reading of a node's contents: either digest material (str) or a node the surface uses.
 _Piece = str | _Node
 
-#: module の file と package の __init__ の接尾辞と、その候補の種類(探す順 — pyright は .pyi を先に読む)。
+#: Suffixes of module files and package __init__, and the kind of each candidate (in search order: pyright reads .pyi first).
 _SOURCE_SUFFIXES = ((".pyi", "pyi"), (".py", "py"), (".hy", "hy"))
 _INIT_FILES = (("__init__.pyi", "pyi"), ("__init__.py", "py"), ("__init__.hy", "hy"))
 
 
 def _under(path: str, base: str) -> bool:
-    """path が dir base か、その下か(文字列で判じる — pathlib の演算は 1 回の実行で数十万回呼ぶと重い)。"""
+    """Whether path is the directory base or under it (decided on strings: pathlib operations are slow when called hundreds of thousands of times in one run)."""
     return path == base or path.startswith(base.rstrip("/") + "/")
 
 
 def _join(base: str, *parts: str) -> str:
-    """dir base の下の path の綴り。"""
+    """The spelling of a path under the directory base."""
     return "/".join((base.rstrip("/"), *parts)) if parts else base
 
 
 class InputGraph:
-    """file ごとの入力の digest を作るため(頭の註「入力」)。root = repo の根・roots = import の根(根と extraPaths)・stub_dir = pyright の
-    stubPath・environment = 環境の指紋と探し道・staged = 根の下の .hy → 展開した Python(pyright が `<名>.py` として読む物)・failed =
-    展開に失敗した .hy(pyright には見えない)。1 回の実行の中で、dir の中身・読み・解き先・節の digest を覚える(path は中では文字列)。"""
+    """Build the input digest per file (header comment "inputs"). root = the repo root; roots = import roots (the root and extraPaths); stub_dir = pyright's
+    stubPath; environment = the environment fingerprint and search paths; staged = .hy under the root -> expanded Python (what pyright reads as `<name>.py`); failed =
+    .hy whose expansion failed (invisible to pyright). Within one run, remember directory contents, readings, resolutions, and node digests (paths are strings internally)."""
 
     def __init__(
         self,
@@ -1241,10 +1241,10 @@ class InputGraph:
         self._mut_deep: dict[_Node, str] = {}
         self._mut_markers: dict[str, str] = {}
 
-    # 解き先 ------------------------------------------------------------------------------------------------------------------
+    # resolution ------------------------------------------------------------------------------------------------------------
 
     def _entries(self, directory: str) -> dict[str, bool]:
-        """dir の中身の名 → dir か(dir でなければ空)を、1 回の実行の中で dir ごとに 1 度だけ読むため。"""
+        """Read the names of a directory's contents -> whether each is a directory (empty if not a directory), once per directory within one run."""
         known = self._mut_entries.get(directory)
         if known is not None:
             return known
@@ -1257,7 +1257,7 @@ class InputGraph:
         return listed
 
     def _natives(self, directory: str) -> dict[str, tuple[str, ...]]:
-        """dir の中の native の module の file(`<名>.….so`・`.pyd`)を、名の頭ごとに引く索引(1 回の実行の中で dir ごとに 1 度だけ作る)。"""
+        """An index to look up native module files (`<name>.....so`, `.pyd`) in a directory by the head of the name (built once per directory within one run)."""
         known = self._mut_natives.get(directory)
         if known is None:
             entries = self._entries(directory)
@@ -1270,19 +1270,19 @@ class InputGraph:
         return known
 
     def _marker(self, path: str) -> str:
-        """py.typed の中身の digest(partial の印を見る — package の型の読まれ方を変える)。"""
+        """The digest of the contents of py.typed (look at the partial mark: it changes how a package's types are read)."""
         if path not in self._mut_markers:
             self._mut_markers[path] = _digest((_text_of(Path(path)),))
         return self._mut_markers[path]
 
     def _hy_kind(self, path: str) -> str:
-        """根の下の .hy の種類(展開できた = hy・展開に失敗した = hy-failed・展開の範囲の外 = hy-unstaged)。"""
+        """The kind of a .hy under the root (expanded = hy; expansion failed = hy-failed; outside the expansion scope = hy-unstaged)."""
         if path in self._staged:
             return "hy"
         return "hy-failed" if path in self._failed else "hy-unstaged"
 
     def _sources_at(self, base: str, leaf: str, stub_package: bool) -> Iterator[Candidate]:
-        """dir base の中の module の file(leaf.pyi・.py・根の下だけ .hy)と、同じ名の native の module。"""
+        """Module files in the directory base (leaf.pyi, .py, and .hy only under the root) and a native module of the same name."""
         entries = self._entries(base)
         in_root = _under(base, self._root)
         for suffix, kind in _SOURCE_SUFFIXES:
@@ -1300,7 +1300,7 @@ class InputGraph:
             )
 
     def _package_files(self, here: str, stub_package: bool) -> Iterator[Candidate]:
-        """package の dir here と、その __init__ の file(根の下だけ .hy も)。"""
+        """The package directory here and its __init__ file (.hy too, only under the root)."""
         yield Candidate(here, "package")
         entries = self._entries(here)
         in_root = _under(here, self._root)
@@ -1314,7 +1314,7 @@ class InputGraph:
                 yield Candidate(path, self._hy_kind(path) if kind == "hy" else kind)
 
     def _candidates(self, base: str, parts: Sequence[str], stubs: bool) -> Iterator[Candidate]:
-        """dir base の下で module(parts)に pyright が当たりうる候補のうち、在る物(stub の package・py.typed・親の package の印も)。"""
+        """Among the candidates pyright may hit for module (parts) under the directory base, the existing ones (including stub packages, py.typed, and parent package marks)."""
         entries = self._entries(base)
         for top in (f"{parts[0]}-stubs", parts[0]) if stubs else (parts[0],):
             if not (
@@ -1322,7 +1322,7 @@ class InputGraph:
                 or any(entries.get(top + suffix) is False for suffix, _ in _SOURCE_SUFFIXES)
                 or top in self._natives(base)
             ):
-                continue  # dir base に名の頭が無い(ほとんどの探し道はここで終わる)
+                continue  # the directory base has no name with this head (most search paths end here)
             stub_package = top != parts[0]
             top_dir = _join(base, top)
             if self._entries(top_dir).get("py.typed") is False:
@@ -1341,7 +1341,7 @@ class InputGraph:
                 yield from self._package_files(here, stub_package)
 
     def _in_dir(self, base: str, dotted: str, stubs: bool) -> Resolution:
-        """dir base の下の module(dotted)の候補を、1 回の実行の中で 1 度だけ探すため。"""
+        """Search the candidates of module (dotted) under the directory base, once within one run."""
         key = (base, dotted, stubs)
         known = self._mut_in_dir.get(key)
         if known is None:
@@ -1350,8 +1350,8 @@ class InputGraph:
         return known
 
     def _local_dirs(self, directory: str) -> tuple[str, ...]:
-        """import する file の dir から探し道の根までの親(pyright は探し道で解けない絶対の import をここでも探す — static_check の
-        search_dirs と同じ考え。根の外の file は、その file を含む一番深い探し道の dir まで)。dir ごとに 1 度だけ作る。"""
+        """The parents from the directory of the importing file up to the search-path root (pyright also looks here for absolute imports that cannot be resolved on the search path: same idea as static_check's
+        search_dirs. For a file outside the roots, up to the deepest search-path directory containing that file). Built once per directory."""
         known = self._mut_local_dirs.get(directory)
         if known is None:
             containing = [d for d in self._global_dirs if _under(directory, d)]
@@ -1365,8 +1365,8 @@ class InputGraph:
         return known
 
     def resolve(self, importer: str, target: Imported) -> Resolution:
-        """import の行き先 1 つの module の解き先を引くため(相対の import は import する file の dir から)。解き先は import する file の
-        dir と module の綴りと深さだけで決まるので、1 回の実行の中でその組ごとに 1 度だけ探す。"""
+        """Look up the resolution of the module of one import destination (a relative import starts from the importing file's directory). The resolution is decided only by the importing file's
+        directory, the module spelling, and the depth, so search once per such combination within one run."""
         directory = os.path.dirname(importer)
         key = (directory, target.module, target.level)
         known = self._mut_resolved.get(key)
@@ -1376,7 +1376,7 @@ class InputGraph:
         return known
 
     def _resolved(self, directory: str, target: Imported) -> Resolution:
-        """resolve の中身 — 探し道の dir と import する file の dir からの親で、module の候補を探す。"""
+        """The contents of resolve: search for the module's candidates in the search-path directories and in the parents from the importing file's directory."""
         if target.level > 0:
             base = directory
             for _ in range(target.level - 1):
@@ -1394,7 +1394,7 @@ class InputGraph:
         )
 
     def _submodule(self, resolution: Resolution, name: str) -> Resolution:
-        """解き先の package の下の module(name)の解き先(package の dir と __init__ の在る dir の下)— 名が module に無い時に探す先。"""
+        """The resolution of a module (name) under a resolved package (under the package directory and the directory with __init__): where to look when a name is not in the module."""
         packages = dict.fromkeys(
             c.path if c.kind == "package" else os.path.dirname(c.path)
             for c in resolution
@@ -1404,13 +1404,13 @@ class InputGraph:
         return tuple(dict.fromkeys(c for p in packages for c in self._in_dir(p, name, stubs=False)))
 
     def _spelled(self, resolution: Resolution) -> str:
-        """解き先を digest の材料の文字列にするため(回ごとに違う置き場の綴りは印に替える — Places)。"""
+        """Turn a resolution into a string for the digest material (the spelling of per-run places is replaced by marks: Places)."""
         return self._environment.places.spell(_resolution_json(resolution))
 
-    # 読み --------------------------------------------------------------------------------------------------------------------
+    # reading -----------------------------------------------------------------------------------------------------------------
 
     def _facts(self, path: str, kind: str) -> Facts:
-        """候補の file 1 つを、1 回の実行の中で 1 度だけ読むため(展開した .hy は展開した Python を、.py / .pyi は file を読む)。"""
+        """Read one candidate file, once within one run (an expanded .hy reads the expanded Python; .py / .pyi read the file)."""
         known = self._mut_facts.get(path)
         if known is not None:
             return known
@@ -1427,17 +1427,17 @@ class InputGraph:
         return facts
 
     def _contents(self, resolution: Resolution) -> Iterator[tuple[str, Facts]]:
-        """解き先の候補のうち中身を読む file(.pyi・.py・展開した .hy)とその読み。"""
+        """Among the resolution candidates, the files whose contents are read (.pyi, .py, expanded .hy) and their readings."""
         for candidate in resolution:
             if candidate.kind in ("pyi", "py", "hy"):
                 yield candidate.path, self._facts(candidate.path, candidate.kind)
 
-    # 節 ----------------------------------------------------------------------------------------------------------------------
+    # nodes -------------------------------------------------------------------------------------------------------------------
 
     def _imported_nodes(
         self, importer: str, targets: Sequence[Imported], chain: tuple[str, ...]
     ) -> Iterator[_Node]:
-        """import が束ねた名 chain[0] を頭にした連なりが使う節(targets = その名を束ねた import の行き先の全部)。"""
+        """The nodes used by a chain headed by the name chain[0] bound by an import (targets = all the destinations of the imports that bound that name)."""
         prefixes = {
             ".".join(parts[:i])
             for target in targets
@@ -1450,7 +1450,7 @@ class InputGraph:
                 yield _Node(
                     self.resolve(importer, Imported(target.module, target.level)), target.name
                 )
-            elif target.whole is not None:  # import a.b.c(根の名 a を束ねる)
+            elif target.whole is not None:  # import a.b.c (binds the root name a)
                 yield from self._walked_chain(importer, chain, prefixes)
             else:  # import a.b as x
                 yield _Node(self.resolve(importer, target), chain[1] if len(chain) > 1 else None)
@@ -1458,8 +1458,8 @@ class InputGraph:
     def _walked_chain(
         self, importer: str, chain: tuple[str, ...], prefixes: set[str]
     ) -> Iterator[_Node]:
-        """`import a.b.c` で束ねた a からの連なり a.b.c.x を、import した module の綴りの所まで辿った節(途中の package の同じ名の宣言も
-        — package の __init__ の名は下の module を隠す)。"""
+        """The nodes obtained by following a chain a.b.c.x from a bound by `import a.b.c` up to the spelling of the imported module (also same-name declarations of intermediate packages
+        — a name in a package's __init__ hides the module below)."""
         depth = next(
             (i for i in range(1, len(chain)) if ".".join(chain[: i + 1]) not in prefixes),
             len(chain),
@@ -1477,8 +1477,8 @@ class InputGraph:
         statement: Statement,
         name: str | None,
     ) -> Iterator[_Node]:
-        """module の段の文 1 つの表面が使う節(表面の中の連なりを、文の中の import・module の段の import・module の段の名・star の先で
-        解く)と、その文が import で束ねる名(name — None なら全部)の行き先。"""
+        """The nodes used by the surface of one module-level statement (the chains in the surface are resolved by imports inside the statement, module-level imports, module-level names, and star targets)
+        and the destinations of the names that statement binds through import (name; None means all)."""
         for chain in statement.chains:
             head = chain[0]
             hits = (*statement.imports.get(head, ()), *facts.module_imports.get(head, ()))
@@ -1492,7 +1492,7 @@ class InputGraph:
                 yield from self._imported_nodes(path, targets, (bound,))
 
     def _pieces(self, node: _Node) -> Iterator[_Piece]:
-        """節 1 つの中身の digest の材料と、表面が使う節。"""
+        """The digest material of one node's contents and the nodes its surface uses."""
         yield json.dumps([node.name, self._spelled(node.resolution)], ensure_ascii=False)
         contents = tuple(self._contents(node.resolution))
         for path, facts in contents:
@@ -1502,7 +1502,7 @@ class InputGraph:
             if node.name is None or facts.exported is None:
                 yield facts.header
             else:
-                yield f"__all__ に在る:{node.name in facts.exported}"
+                yield f"in __all__: {node.name in facts.exported}"
             indexes = (
                 range(len(facts.statements))
                 if node.name is None
@@ -1515,7 +1515,7 @@ class InputGraph:
             if node.name is None:
                 yield from (_Node(self.resolve(path, star), None) for star in facts.stars)
             elif not indexes:
-                yield "名が無い"
+                yield "no such name"
                 yield from (_Node(self.resolve(path, star), node.name) for star in facts.stars)
                 if "__getattr__" in facts.bound:
                     yield _Node(node.resolution, "__getattr__")
@@ -1526,7 +1526,7 @@ class InputGraph:
                 yield _Node(below, None)
 
     def _expand(self, node: _Node) -> _Expanded:
-        """節 1 つの中身の digest と表面が使う節を、1 回の実行の中で 1 度だけ作るため。"""
+        """Build the digest of one node's contents and the nodes its surface uses, once within one run."""
         known = self._mut_expanded.get(node)
         if known is not None:
             return known
@@ -1539,8 +1539,8 @@ class InputGraph:
         return expanded
 
     def _deep(self, root: _Node) -> str:
-        """節の推移の digest(節と、そこから届く節の全部の中身)を作るため。輪は強連結成分ごとにまとめる — Tarjan の算法を、深い依存で
-        再帰の上限に当たらないよう手で回す。"""
+        """Build the transitive digest of a node (the contents of the node and of all nodes reachable from it). Cycles are grouped per strongly connected component: Tarjan's algorithm, driven by hand so deep dependencies do not hit
+        the recursion limit."""
         known = self._mut_deep.get(root)
         if known is not None:
             return known
@@ -1579,23 +1579,23 @@ class InputGraph:
         low: dict[_Node, int],
         on_stack: set[_Node],
     ) -> _Node | None:
-        """節の後続を、まだ訪ねていない物に当たるまで進める(訪ねた・閉じた後続は飛ばし、stack に在る後続で low を下げる)— Tarjan の
-        算法の 1 歩。後続の iterator は節ごとに 1 つで、戻ってきた時は続きから読む(辺の数に比例する)。"""
+        """Advance a node's successors until reaching one not yet visited (skip visited or closed successors, and lower low by successors on the stack): one step of Tarjan's
+        algorithm. There is one successor iterator per node, and on return it continues from where it left off (proportional to the number of edges)."""
         for successor in successors:
             if successor in self._mut_deep:
                 continue
             if successor not in index:
                 return successor
             if successor in on_stack:
-                low[node] = min(low[node], index[successor])  # noqa: DOEFF007 - Tarjan の探索が自分の作業表を更新する
+                low[node] = min(low[node], index[successor])  # noqa: DOEFF007 - the Tarjan search updates its own work table
         return None
 
     def _close(self, head: _Node, stack: list[_Node], on_stack: set[_Node]) -> None:
-        """強連結成分 1 つ(stack の head から上)を閉じ、成分の全部の節に同じ推移の digest を付けるため。"""
+        """Close one strongly connected component (from the stack head up) and give the same transitive digest to all nodes of the component."""
         start = len(stack) - 1 - stack[::-1].index(head)
         members = tuple(stack[start:])
-        del stack[start:]  # noqa: DOEFF007 - Tarjan の探索が自分の作業表を更新する
-        on_stack.difference_update(members)  # noqa: DOEFF007 - Tarjan の探索が自分の作業表を更新する
+        del stack[start:]  # noqa: DOEFF007 - the Tarjan search updates its own work table
+        on_stack.difference_update(members)  # noqa: DOEFF007 - the Tarjan search updates its own work table
         inside = set(members)
         locals_ = sorted(self._expand(m).local for m in members)
         outside = sorted(
@@ -1610,8 +1610,8 @@ class InputGraph:
         self._mut_deep.update(dict.fromkeys(members, digest))
 
     def inputs_of(self, source: Path, own: str) -> str:
-        """根の下の .hy 1 つの入力の digest を作るため(own = その file 自身の digest — own_digest)。展開を読めなければ回ごとに違う
-        digest(毎回当てる)。木は 1 度だけ歩く。"""
+        """Build the input digest of one .hy under the root (own = the digest of the file itself: own_digest). If the expansion cannot be read, use a different digest on every run
+        (checked every time). Walk the tree only once."""
         path = str(source)
         text = self._staged.get(path)
         if text is None:
@@ -1628,14 +1628,14 @@ class InputGraph:
             if chain[0] in scan.imports
             for node in self._imported_nodes(path, scan.imports[chain[0]], chain)
         )
-        # from-import の名の全部(使わない名も — 名が module に在るかは、その file の診断に出る)と star の先。
+        # All from-import names (including unused ones: whether a name exists in the module appears in that file's diagnostics) and star targets.
         named = (
             _Node(self.resolve(path, target.imported_module), target.name)
             for target in imported
             if target.name is not None
         )
         stars = (_Node(self.resolve(path, star), None) for star in scan.stars)
-        # import する module の全部の解き先(解けるか・どこに解けるかは、その file の診断に出る)。
+        # All resolutions of the modules to import (whether and where they resolve appears in that file's diagnostics).
         resolutions = sorted(
             {
                 self._spelled(self.resolve(path, target.imported_module))
@@ -1647,7 +1647,7 @@ class InputGraph:
 
 
 def _ancestors(directory: str, stop: str) -> Iterator[str]:
-    """dir から stop(含む)までの親の dir(dir 自身から — stop の外へは出ない)。"""
+    """The parent directories from dir up to stop (inclusive), starting from dir itself (never going outside stop)."""
     current = directory
     while _under(current, stop):
         yield current
@@ -1658,5 +1658,5 @@ def _ancestors(directory: str, stop: str) -> Iterator[str]:
 
 
 def own_digest(source_text: str, projection_text: str, spans: object) -> str:
-    """.hy 1 つ自身の digest を作るため — source・展開した Python・位置の対応表(診断の位置は展開と対応表で .hy の位置へ戻る)。"""
+    """Build the digest of one .hy itself: the source, the expanded Python, and the position map (a diagnostic position is mapped back to the .hy position through the expansion and the map)."""
     return _digest(("own", source_text, projection_text, repr(spans)))

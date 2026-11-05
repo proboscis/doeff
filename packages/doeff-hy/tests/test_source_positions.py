@@ -1,9 +1,9 @@
-"""doeff-hy の macro の中で落ちた時、traceback が落ちた行を指すこと。
+"""When a crash happens inside a doeff-hy macro, the traceback points at the line that crashed.
 
-macro が作り直した式は位置を持たず、Hy が macro 呼び出し(`defk` の頭)の位置で埋めていた。
-`doeff_hy._positions.locate-synthesized` が合成した式に、包んでいる利用者の式の範囲を付ける。
-Hy の source を一時 file に書いて import し、落ちた行を traceback の枠の行番号で確かめる
-(`hy.eval` では filename と行が source に対応しないため)。
+Expressions a macro rebuilt had no position, and Hy filled them with the position of the macro call (the head of `defk`).
+`doeff_hy._positions.locate-synthesized` attaches the range of the enclosing user expression to the synthesized expression.
+Write the Hy source to a temporary file and import it, and check the crashed line by the line number of the traceback frame
+(because with `hy.eval` the filename and lines do not correspond to the source).
 """
 
 from __future__ import annotations
@@ -55,7 +55,7 @@ SOURCE = """\
   b))
 """
 
-# 1 始まりの行番号(SOURCE の中の位置)。
+# 1-based line number (position within SOURCE).
 LINE_DIVIDE = 17  # (setv c (// x 0))
 LINE_WRITER_BAD = 25  # (<- again bool (Write ...))
 LINE_HANDLER_RAISE = 11  # (raise (RuntimeError ...))
@@ -65,7 +65,7 @@ LINE_DO_BAD = 35  # (<- b (Write "bad"))
 
 @pytest.fixture(scope="module")
 def mod(tmp_path_factory: pytest.TempPathFactory) -> ModuleType:
-    import doeff_hy  # noqa: F401 - Hy の import hook を登録する
+    import doeff_hy  # noqa: F401 - register the Hy import hook
 
     root: Path = tmp_path_factory.mktemp("doeff_hy_positions")
     (root / "positions_probe.hy").write_text(SOURCE, encoding="utf-8")
@@ -123,11 +123,11 @@ def test_do_block_bind_points_at_the_failing_bind(mod: ModuleType) -> None:
 
 
 
-# 行番号がずれる最小の Hy。defk の本体の束ねはどれも outcomes の module を同じ名で
-# 引く。その名を 1 つの Symbol として展開のあいだで使い回すと、locate-synthesized が最初の展開で付けた位置が
-# その Symbol に残り、後の展開の (! …) の式(失敗が投げ込まれる yield を含む)の始まりがその行へ引き寄せられる。
-# 残る位置は「その process で最初に展開された束ね」の行なので、traceback で見ると検の順で赤にも緑にもなる。
-# だから展開の結果を直に見る: 2 回の展開が model を共有せず、yield が書いた (! …) の行を持つこと。
+# The smallest Hy where line numbers drift. Every binding in a defk body looks up the outcomes module by the same name.
+# If that name is reused as a single Symbol across expansions, the position locate-synthesized attached in the first expansion stays on
+# that Symbol, and the start of the (! …) expression in later expansions (including the yield into which failures are thrown) is pulled to that line.
+# The remaining position is the line of "the binding expanded first in that process", so in a traceback the check turns red or green depending on order.
+# So look at the result of the expansion directly: two expansions do not share a model, and the yield has the line of the (! …) it wrote.
 FIRST_BANG = "(defk first-bang [] {:pre [] :post [(: % int)]} (! (Pure 1)))"
 SECOND_BANG = """\
 (defk second-bang []
@@ -140,7 +140,7 @@ LINE_SECOND_BANG_IN_SOURCE = 3  # (! (Pure 2))
 def _expand_defk(source: str) -> object:
     import hy
 
-    import doeff_hy  # noqa: F401 - Hy の import hook を登録する
+    import doeff_hy  # noqa: F401 - register the Hy import hook
 
     module = ModuleType("doeff_hy_bang_expansion_probe")
     hy.eval(hy.read("(require doeff-hy.macros [defk])"), module=module)

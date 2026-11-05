@@ -4,8 +4,8 @@
 ;;;   (require doeff-hy.macros [do! defk deff fnk <- ! <-> set! defp defpp deftest
 ;;;                             defpipeline traverse for/do
 ;;;                             defhandler handle with-handler defmcp-tool
-;;;                             on-raise absent-as   ; 不在と失敗の境目(ADR-DOE-CORE-EFFECTS-003)
-;;;                             validate check])   ; validate / check は doeff-validation を入れて使う
+;;;                             on-raise absent-as   ; boundary between absence and failure (ADR-DOE-CORE-EFFECTS-003)
+;;;                             validate check])   ; validate / check require doeff-validation to be installed
 ;;;   (import doeff [do :as _doeff-do])
 ;;;
 ;;; Effects of the reference implementation are imported from doeff_core_effects:
@@ -18,8 +18,8 @@
 ;;;   - fnk:         no contracts (anonymous)
 ;;;   - do!:         :pre/:post optional, supports (: name Type) shorthand
 ;;;   - (: name Type) in :pre/:post expands to (isinstance name Type)
-;;;   - 要素の型つきの総称型も書ける: (: % (get tuple #(X ...))) / (: % (of dict K V))(和の中も可)— 実行時に確かめるのは
-;;;     外側の型(tuple / dict)だけで、要素の型は静的な型検査が見る(runtime-type-form・#1790)
+;;;   - Generic types with element types can also be written: (: % (get tuple #(X ...))) / (: % (of dict K V)) (also inside a union) — at runtime only
+;;;     the outer type (tuple / dict) is checked; element types are left to the static type checker (runtime-type-form, #1790)
 ;;;   - Arbitrary expressions can be mixed with (: ...) in the same list
 
 ;; ---------------------------------------------------------------------------
@@ -30,11 +30,11 @@
 (import dataclasses [dataclass])
 (import importlib)
 (import inspect)
-;; 実行時の guard(_guard-performed・_guard-statement-value)が defk の呼びごと・文ごとに引く型(#844)
+;; The types that the runtime guards (_guard-performed, _guard-statement-value) look up on every defk call and every statement (#844)
 (import doeff [DoExpr EffectBase])
 (import doeff.mcp [mcp-param-annotation mcp-json-type-names])
-;; 展開の部品は `_` の名で束ねる — この module は Hy の require が path で読む macro の境界で、見せる名は macro だけ
-;; (ADR-DOE-API-001 R14)。素の名で束ねると、目録が doeff_hy.macros の公開の名と数える。
+;; Expansion helpers are bundled under `_` names — this module is the boundary of macros that Hy's require reads by path, and the only names it exposes are macros
+;; (ADR-DOE-API-001 R14). If they were bundled under plain names, the inventory would count them as public names of doeff_hy.macros.
 (import doeff-hy._declarations [CONTRACT-KEYS :as _CONTRACT-KEYS
                                FUNCTION-CONTRACT-KEYS :as _FUNCTION-CONTRACT-KEYS
                                refuse-unknown-keys :as _refuse-unknown-keys
@@ -45,10 +45,10 @@
                                record-names :as _record-names])
 (import doeff-hy._positions [locate-synthesized :as _locate-synthesized])
 (import doeff-hy._expansion-names [alias-symbol :as _alias-symbol])
-;; 定義の macro が関数の本体の中に書かれたかを、展開の時の Hy の compiler の scope から読む(_scoped-definition)
+;; Read from the Hy compiler's scope at expansion time whether a definition macro was written inside a function body (_scoped-definition)
 (import hy.scoping [nearest-python-scope is-function-scope ScopeFn])
-;; macro の引数の型 — 展開の時に macro が受けるのは、Hy の compiler(`_hy-compiler`)と、書かれた form(`hy.models.Object`)。
-;; defmacro は compile の時に関数を作り、3.13 までは引数の注釈をその場で評価するので、compile の時の名前空間にも置く。
+;; Argument types of a macro — at expansion time a macro receives the Hy compiler (`_hy-compiler`) and the written form (`hy.models.Object`).
+;; defmacro creates a function at compile time, and up to 3.13 it evaluates argument annotations on the spot, so these are also placed in the compile-time namespace.
 (eval-and-compile
   (import hy.compiler [HyASTCompiler])
   (import hy.models [Object]))
@@ -126,7 +126,7 @@
         (setv pre-checks (list v)))
       (when (= (str k) ":post")
         (setv post-checks (list v)))
-      ;; :writes は形だけを検め、展開に何も残さない(linter が source の綴りを読む — doeff_hy/_declarations.hy の FUNCTION-CONTRACT-KEYS)。
+      ;; :writes only has its shape checked and leaves nothing in the expansion (the linter reads the source spelling — FUNCTION-CONTRACT-KEYS in doeff_hy/_declarations.hy).
       (when (= (str k) ":writes")
         (_record-names v where ":writes"))))
   #(pre-checks post-checks real-body))
@@ -301,16 +301,16 @@ defk {name}: :post must include a return type check (: % Type).
     {{:post [(: % pd.DataFrame) (> (len %) 0)]}}
 " :name fn-name)))))
 
-;; 型の式を isinstance の第 2 引数に置ける形へ写す 1 点は doeff_hy/_type_forms.py の runtime-type-form(契約の `(: x T)` と
-;; `(<- x T e)` が呼ぶ・外の道具〔品質検査の Hy の投影〕も同じ関数を呼ぶ — #3366 の根 2 で純 Python の公開の関数へ移した)。
+;; The single point that maps a type expression into a form usable as the second argument of isinstance is runtime-type-form in doeff_hy/_type_forms.py (called by the contract `(: x T)` and
+;; the binding `(<- x T e)`; an external tool [the Hy projection of the quality check] calls the same function — moved to a public pure-Python function in root 2 of #3366).
 (import doeff-hy._type-forms [runtime-type-form :as _runtime-type-form])
 
 (defn _runtime-type-check [target rt message]
-  "契約の `(: x T)` と束縛 `(<- x T e)` が実行時に型を確かめる form の 1 点。rt = runtime-type-form で写した型の式。
-   正しい型の時の通り道は素の isinstance のまま(try の入りは Python 3.11 から費用が無い)。isinstance が TypeError を上げた時 —
-   型の式が名(型の別名)で、その値が型引数つきの総称型かそれを含む和の時(展開の時には名の値が分からない)— だけ、
-   doeff_hy._type_forms.runtime-class で値を外側の型へ写して確かめ直す(実行時は外側の型だけ — #1790 の決め)。型でない値の名は
-   runtime-class が名乗る TypeError で断る。"
+  "The single point of the form that checks types at runtime for the contract `(: x T)` and the binding `(<- x T e)`. rt = the type expression mapped by runtime-type-form.
+   The path for a correct type stays a plain isinstance (entering a try has no cost since Python 3.11). Only when isinstance raises TypeError —
+   when the type expression is a name (a type alias) whose value is a generic type with type arguments or a union containing one (the value of the name is unknown at expansion time) —
+   the value is mapped to its outer type with doeff_hy._type_forms.runtime-class and checked again (at runtime only the outer type — the decision of #1790). A name whose value is not a type
+   is rejected with the TypeError that runtime-class raises."
   `(try
      (assert (isinstance ~target ~rt) ~message)
      (except [TypeError]
@@ -318,24 +318,24 @@ defk {name}: :post must include a return type check (: % Type).
        (assert (isinstance ~target (_doeff-runtime-class ~rt)) ~message))))
 
 ;; ---------------------------------------------------------------------------
-;; 型の注記 — 契約の `(: x T)` を関数の注記にも書く(静的な検査が読む)
+;; Type annotations — also write the contract's `(: x T)` into the function's annotations (read by the static checker)
 ;; ---------------------------------------------------------------------------
 ;;
-;; 契約の型は実行時の isinstance の検査で使ってきたが、関数の注記には出していなかった
-;; ので、pyright は defk / deff の引数と戻り値の型を知らなかった(2026-09-23 実測:
-;; わざとの間違い 7 種を Hy 版は静的に 1 つも捕まえなかった)。同じ型を注記に写す。
-;; 注記は文字列で書く(Python 3.13 以前でも定義の時に評価しない — 後で定義する名前の型を
-;; 契約に書いても定義が落ちない)。文字列の型 `(: x "説明")` は注記にしない。
+;; Contract types have been used for runtime isinstance checks but were not emitted into function annotations,
+;; so pyright did not know the argument and return types of defk / deff (measured 2026-09-23:
+;; the Hy version statically caught none of 7 deliberate mistakes). Map the same types into annotations.
+;; Annotations are written as strings (not evaluated at definition time even up to Python 3.13 — a contract
+;; that names a type defined later does not make the definition fail). A string type `(: x "description")` does not become an annotation.
 
 (import doeff-hy._static-view [static-view-enabled :as _static-view-enabled])
 
 (defn _static-view? []
-  "doeff-hy-check が型検査のための展開をしている間だけ真(doeff_hy/_static_view.py)。"
+  "True only while doeff-hy-check is expanding for type checking (doeff_hy/_static_view.py)."
   (_static-view-enabled))
 
 (defn _type-source [tp]
-  "契約の型の式を Python の source の文字列にする。文字列の型(説明だけ)は None。
-   組 `#(int None)` は isinstance の書き方なので、注記では `int | None` へ写す。"
+  "Turn a contract type expression into a Python source string. A string type (description only) gives None.
+   The tuple `#(int None)` is isinstance notation, so the annotation maps it to `int | None`."
   (import ast)
   (import hy.compiler [hy-compile])
   (cond
@@ -344,26 +344,26 @@ defk {name}: :post must include a return type check (: % Type).
     (isinstance tp hy.models.Tuple)
       (let [parts (lfor item tp (_type-source item))]
         (if (in None parts) None (.join " | " parts)))
-    ;; `(type None)`(None を isinstance に渡すための書き方)は注記では `None`。
+    ;; `(type None)` (the way to pass None to isinstance) becomes `None` in an annotation.
     (and (isinstance tp hy.models.Expression) (= (len tp) 2)
          (= (str (get tp 0)) "type") (= (str (get tp 1)) "None"))
       "None"
-    ;; root=ast.Expression は Hy が ast.Expression に type_ignores を渡して Python 3.14 で
-    ;; DeprecationWarning になるので、module として compile して最後の式を取る。
-    ;; 呼び出しの形(`(type x)` など)は型の注記として書けないので注記にしない。
+    ;; root=ast.Expression makes Hy pass type_ignores to ast.Expression, which gives a
+    ;; DeprecationWarning on Python 3.14, so compile as a module and take the last expression.
+    ;; A call form (such as `(type x)`) cannot be written as a type annotation, so it does not become an annotation.
     True
       (let [node (. (get (. (hy-compile (_of-as-get tp) "__main__" :import-stdlib False) body) -1) value)]
         (if (or (isinstance node ast.Call) (_has-call? node)) None (ast.unparse node)))))
 
 (defn _has-call? [node]
-  "注記の式の中に呼び出しが残るか(`int | of(...)` のような注記として嘘の文字列を作らないため)。"
+  "Whether a call remains inside the annotation expression (so as not to build a false annotation string such as `int | of(...)`)."
   (import ast)
   (any (gfor sub (ast.walk node) (isinstance sub ast.Call))))
 
 (defn _of-as-get [tp]
-  "型の式の中の `(of base arg …)` を、同じ意味の `(get base arg)` / `(get base #(arg …))` へ写す(入れ子と `|` の中も)。
-   `of` は macro なので、macro を持たない hy-compile に直に渡すと呼び出し `of(tuple, X, ...)` になり、`(of tuple X ...)` と
-   書いた契約の引数が注記を失っていた(`|` の中では `of(...) | None` という嘘の注記になっていた)。"
+  "Map `(of base arg …)` inside a type expression to the equivalent `(get base arg)` / `(get base #(arg …))` (also inside nesting and `|`).
+   `of` is a macro, so passing it directly to hy-compile, which has no macros, gives the call `of(tuple, X, ...)`, and an argument of a contract written
+   as `(of tuple X ...)` lost its annotation (inside `|` it became the false annotation `of(...) | None`)."
   (cond
     (not (isinstance tp hy.models.Expression)) tp
     (and (> (len tp) 1) (isinstance (get tp 0) hy.models.Symbol) (= (str (get tp 0)) "of"))
@@ -375,7 +375,7 @@ defk {name}: :post must include a return type check (: % Type).
     True (hy.models.Expression (lfor part tp (_of-as-get part)))))
 
 (defn _contract-types [checks]
-  "契約の `(: name T)` から {name: T の source} を作る(説明だけの型は除く)。"
+  "Build {name: source of T} from the contract's `(: name T)` (types that are only descriptions are excluded)."
   (setv types {})
   (for [check (or checks [])]
     (when (_is-type-check check)
@@ -385,22 +385,22 @@ defk {name}: :post must include a return type check (: % Type).
   types)
 
 (defn _type-params [body where]
-  "契約の辞書の `:tp [T …]` を記号の list で返す(無ければ空)。答えが引数の型で決まる関数(本体の答えをそのまま返す包みなど)の型を、
-   実行時に確かめられない総称のまま型検査と .pyi へ渡すため。名の並びでない値・重なる名は SyntaxError。"
+  "Return the contract dict's `:tp [T …]` as a list of symbols (empty if absent). This is so that the type of a function whose answer is decided by the argument types (such as a wrapper returning the body's answer as is) can be passed to the type check and the .pyi as a generic that cannot be checked at runtime.
+   A value that is not a sequence of names, or overlapping names, is a SyntaxError."
   (setv contract (get (_find-contract body) 0))
-  ;; 形の検めは defeffect の :tp と分け合う(declarations.hy の type-param-symbols)。
+  ;; The shape check is shared with defeffect's :tp (type-param-symbols in declarations.hy).
   (_type-param-symbols (when (is-not contract None) (_declared-value contract ":tp")) where))
 
 (defn _object-for [names form]
-  "型の式 form の中の names(型の引数の名)を object に写す(入れ子の式・組・和の中も)— 実行時の isinstance に型の引数を渡さないため。"
+  "Map names (type-argument names) inside a type-expression form to object (also inside nested expressions, tuples and unions) — so that type arguments are not passed to the runtime isinstance."
   (match form
     (hy.models.Symbol) (if (in (str form) names) (hy.models.Symbol "object") form)
     (| (hy.models.Expression) (hy.models.List) (hy.models.Tuple)) ((type form) (lfor item form (_object-for names item)))
     _ form))
 
 (defn _annotate-params [params types]
-  "引数の並びの各引数に、契約の型の注記を付ける。書き手が既に `#^ T x` と書いた引数・
-   `*`・`/`・`#* args` には触らない。"
+  "Attach the contract's type annotation to each argument in the argument list. Leave alone arguments the writer already wrote as `#^ T x`,
+   and `*`, `/` and `#* args`."
   (hy.models.List
     (lfor p params
       (cond
@@ -412,11 +412,11 @@ defk {name}: :post must include a return type check (: % Type).
         True p))))
 
 (defn _static-pre-type-check? [target phase]
-  "型検査のための展開(`_static-view?`)で、引数の型の契約 `(: x T)`(:pre の x が名)の isinstance を出さない所か。
-   引数の型は契約から書く注記(_annotate-params・defeffect の欄の注記)が運ぶので、型検査には isinstance が要らない。出すと、要素の型
-   つきの総称型を含む型の別名(例 `JsonBody = Mapping[str, JsonBody] | tuple[JsonBody, ...] | …` を型検査の時だけ書く形 —
-   doeff_hy/_json_value.py と同じ)が『isinstance の第 2 引数は型でない』の赤になり、別名に要素の型を書けなかった。実行の時の展開は
-   変えない(今までどおり isinstance で断る)。:post の `(: % T)` は本体の答えを絞る形に頼る書き手が在るので出したままにする。"
+  "Whether this is a place in the expansion for type checking (`_static-view?`) where the isinstance for an argument-type contract `(: x T)` (x in :pre is a name) is not emitted.
+   The argument types are carried by annotations written from the contract (_annotate-params, and the field annotations of defeffect), so the type check does not need the isinstance. If emitted, a type alias containing a generic type with
+   element types (for example `JsonBody = Mapping[str, JsonBody] | tuple[JsonBody, ...] | …`, a form written only for the type check —
+   the same as doeff_hy/_json_value.py) turned red with 'the second argument of isinstance is not a type', and the alias could not carry element types. The runtime expansion is
+   unchanged (it still rejects with isinstance). `(: % T)` in :post is still emitted, because some writers rely on the form that narrows the body's answer."
   (and (_static-view?)
        (in phase #("pre-condition" ":pre"))
        (isinstance target hy.models.Symbol)
@@ -427,9 +427,9 @@ defk {name}: :post must include a return type check (: % Type).
    (: x T) → isinstance assert with clear type error message.
    (: x \"desc\") → no-op (documentation-only annotation).
    Other  → generic condition assert.
-   type-params(契約の :tp)は isinstance に渡す型の中だけ object に消す — `(of Program T)` は今までどおり外側の型 Program へ
-   (runtime-type-form)・素の `(: % T)` は常に真。実行時は外側の型だけを確かめる今までの決め(#1790)と同じ向きで、失敗の文と注記
-   (_contract-types)は書いた型のまま。"
+   type-params (the contract's :tp) are erased to object only inside the type passed to isinstance — `(of Program T)` goes to the outer type Program as before
+   (runtime-type-form), and a plain `(: % T)` is always true. This is the same direction as the existing decision (#1790) that only the outer type is checked at runtime; the failure message and the annotations
+   (_contract-types) keep the type as written."
   (if (_is-type-check check)
       (let [target (get check 1)
             tp (get check 2)]
@@ -454,35 +454,35 @@ defk {name}: :post type annotation cannot be an empty string.
                   rt (_runtime-type-form (_object-for (sfor p type-params (str p)) tp))
                   message `(+ ~(+ (str fn-name) ": " phase " type error: `" target-label "` expected " (str tp) ", got ")
                               (. (type ~target) __name__))]
-              ;; 型検査のための展開は素の isinstance(絞りの形 — 注記と同じ読み)・実行時は名の値が総称型でも落ちない 1 点。
+              ;; The expansion for type checking is a plain isinstance (a narrowing form — the same reading as the annotation); at runtime, the one point that does not fail even if the name's value is a generic type.
               (if (_static-view?)
                   `(assert (isinstance ~target ~rt) ~message)
                   (_runtime-type-check target rt message)))))
       `(assert ~check ~(+ (str fn-name) ": " phase " failed: " (str check)))))
 
 (defn _is-validation-check [form]
-  "契約の 1 条件が doeff-validation の (check …) の形か。"
+  "Whether one condition of a contract is a doeff-validation (check …) form."
   (and (isinstance form hy.models.Expression)
        (> (len form) 0)
        (isinstance (get form 0) hy.models.Symbol)
        (= (str (get form 0)) "check")))
 
 (defn _contract-code [checks fn-name phase kleisli? [type-params #()]]
-  "契約(:pre / :post)の条件の列を、関数の中に置く文の列にする。
+  "Turn the list of conditions of a contract (:pre / :post) into a list of statements placed inside the function.
 
-   - 型の (: x T) と真偽の式: 今までどおり 1 つずつ assert(最初の失敗で止まる — 既存の契約の意味を
-     変えない)。
-   - (check 演算子 引数 … :reason 理由): doeff-validation の意味で評価する — 全部を評価して失敗を
-     集め、1 つでもあれば ValidationException(関数名と事前 / 事後・各失敗の式と値と理由)を投げる。
-     引数の (! …) はその場で実行する。defk / do!(生成器)だけが受ける。
-   assert の後に check を置く: 型が合っていることを check の式が前提にできる。"
+   - Type (: x T) and boolean expressions: one assert each as before (stops at the first failure — does not
+     change the meaning of existing contracts).
+   - (check operator arg … :reason reason): evaluated with doeff-validation semantics — evaluate all of them, collect
+     the failures, and if there is even one, raise ValidationException (function name, pre / post, and each failure's expression, value and reason).
+     A (! …) in an argument is executed on the spot. Only defk / do! (generators) accept this.
+   Place check after assert: the check expressions can assume the types match."
   (setv checks (or checks []))
   (setv code (lfor c checks :if (not (_is-validation-check c)) (_expand-check c fn-name phase type-params)))
   (setv validation-checks (lfor c checks :if (_is-validation-check c) c))
   (when validation-checks
     (when (not kleisli?)
-      (raise (SyntaxError (+ (str fn-name) ": " phase " の (check …) は defk / do! の契約にだけ書けます"
-                             "(効果を使う検査を評価するので、生成器の本体が要る)— defk で定義してください"))))
+      (raise (SyntaxError (+ (str fn-name) ": " phase " (check …) can only be written in the contract of defk / do!"
+                             " (it evaluates checks that use effects, so a generator body is required) — define it with defk"))))
     (.extend code (_validation-contract-block validation-checks fn-name phase)))
   code)
 
@@ -518,12 +518,12 @@ defk {name}: :post type annotation cannot be an empty string.
 
 ;; ADR-DOE-HY-001: statement-position bind guard --------------------------------
 ;;
-;; defk/do!/defp/deftest の本体で、束縛されず statement 位置に置かれた式が
-;; Program(DoExpr)/EffectBase に評価された場合、それは「作られたが決して走らない」
-;; 計算であり、ほぼ確実にバグである(silent-passthrough)。マクロは statement 位置の
-;; 式形フォームを _guard-statement-value でラップし、初回実行で決定的に fail させる。
-;; auto-bind は採用しない(ADR-DOE-HY-001 R2)。エラーメッセージは書き手エージェント
-;; 向けの修正プロンプトである(R3)。
+;; When, in the body of defk/do!/defp/deftest, an expression placed at statement position without being bound
+;; evaluates to a Program (DoExpr) / EffectBase, it is a computation that was "created but never runs"
+;; and is almost certainly a bug (silent-passthrough). The macro wraps expression-form forms at statement position
+;; in _guard-statement-value and makes them fail deterministically on first execution.
+;; Auto-bind is not adopted (ADR-DOE-HY-001 R2). The error message is a fix prompt
+;; aimed at the writer agent (R3).
 
 (setv _STATEMENT-FORM-HEADS
   #{"setv" "setx" "import" "require" "assert" "del" "raise" "return" "global"
@@ -533,9 +533,9 @@ defk {name}: :post type annotation cannot be an empty string.
     "lazy-var" "set!"})
 
 (defn _guard-statement-value [value owner line source]
-  "ADR-DOE-HY-001 R1 の実行時 guard。statement 位置で評価された値が
-   Program(DoExpr)/EffectBase なら RuntimeError を送出する。それ以外の値は
-   そのまま返す(R4: 非 Program 文は無傷)。defk の本体の文ごとに走るので、名前は module の import から引く。"
+  "Runtime guard of ADR-DOE-HY-001 R1. If the value evaluated at statement position is a
+   Program (DoExpr) / EffectBase, raise RuntimeError. Any other value is
+   returned as is (R4: non-Program statements are untouched). It runs for every statement of a defk body, so the name is looked up from the module's import."
   (when (isinstance value #(DoExpr EffectBase))
     (raise (RuntimeError
              (+ owner " (line " (str line) "): statement-position expression evaluated to an "
@@ -554,11 +554,11 @@ defk {name}: :post type annotation cannot be an empty string.
     (raise (TypeError message)))
   False)
 
-;; defk の本体の束ね(<- と !)が open_bind と Pure を引く、module の globals の名 — `__import__` を束ねごとに撃たないため
-;; (1 回 約 0.2µs)。値は _install-guard-globals が defk の module の globals に置く。
-;; model ではなく名の文字列で持つ — Symbol は open-form が差し込むたびに作る。1 つの Symbol を展開のあいだで
-;; 使い回すと、locate-synthesized が最初の展開でそれに付けた位置が残り、後のすべての束ねの式の行がその行へ
-;; ずれる。
+;; Names in the module's globals through which the binding in a defk body (<- and !) looks up open_bind and Pure — so that `__import__` is not fired on every binding
+;; (about 0.2µs each). The values are put into the defk module's globals by _install-guard-globals.
+;; Held as name strings, not models — a Symbol is created each time open-form inserts it. If one Symbol were
+;; reused across expansions, the position that locate-synthesized attached to it in the first expansion would stay, and the line of every later
+;; binding expression would shift to that line.
 (setv _HELPERS-NAME "_doeff_outcomes")
 
 (defn _install-guard-globals [wrapped [runtime-globals None]]
@@ -579,16 +579,16 @@ defk {name}: :post type annotation cannot be an empty string.
   (.setdefault globals-dict "_doeff_effect_base" EffectBase)
   (.setdefault globals-dict "_guard_statement_value" _guard-statement-value)
   (.setdefault globals-dict "_doeff_check_program_return" _doeff-check-program-return)
-  ;; defk の本体の束ねが名で引く outcomes の module(_HELPERS-NAME — _expand-bangs の helpers・#844 の案 a)。
+  ;; The outcomes module that the bindings in a defk body look up by name (_HELPERS-NAME — helpers of _expand-bangs, plan a of #844).
   (.setdefault globals-dict _HELPERS-NAME (importlib.import-module "doeff_core_effects._outcomes"))
   (for [#(name value) (.items (or runtime-globals {}))]
     (.setdefault globals-dict name value))
   wrapped)
 
 (defn _wrap-statement-guard [form owner]
-  "statement 位置の式形フォーム(関数呼び出し・シンボル)を _guard-statement-value で
-   ラップして返す。文形式(setv/for/with 等、_STATEMENT-FORM-HEADS)と非式フォームは
-   そのまま返す。owner はエラーメッセージ用の defk/do!/defp/deftest 名。"
+  "Wrap an expression-form form at statement position (function call or symbol) in _guard-statement-value
+   and return it. Statement forms (setv/for/with etc., _STATEMENT-FORM-HEADS) and non-expression forms are
+   returned as is. owner is the defk/do!/defp/deftest name for the error message."
   (setv head (if (and (isinstance form hy.models.Expression) (> (len form) 0))
                  (str (get form 0))
                  None))
@@ -601,9 +601,9 @@ defk {name}: :post type annotation cannot be an empty string.
         (setv source
           (try (.lstrip (hy.repr form) "'")
                (except [Exception] (str form))))
-        ;; 型検査のための展開: 値の型を `reveal_type` でも出す。pyright は型の分からない
-        ;; (Unknown)値でも deprecated の overload(macros.pyi)を選ぶので、doeff-hy-check は
-        ;; 同じ位置の型が Unknown / Any なら赤を落とす(走らない Program と決めつけない)。
+        ;; Expansion for type checking: also emit the value's type with `reveal_type`. pyright picks the deprecated overload (macros.pyi)
+        ;; even for a value of unknown type (Unknown), so doeff-hy-check
+        ;; drops the red if the type at the same position is Unknown / Any (it does not conclude it is a Program that never runs).
         (if (_static-view?)
             `(_guard-statement-value (reveal_type ~form) ~(str owner) ~line ~source)
             `(_guard-statement-value ~form ~(str owner) ~line ~source)))
@@ -611,38 +611,38 @@ defk {name}: :post type annotation cannot be an empty string.
 
 
 (defclass [(dataclass :frozen True)] _RuntimeDo []
-  "実行時の展開が引く `do` の置き場(`_runtime-do`)— module と、その module の中の名(どちらも Python の綴り)。
+  "The location of the `do` that the runtime expansion looks up (`_runtime-do`) — a module and a name inside that module (both in Python spelling).
 
-   Hy の記号で持たないのは、Hy が点を含む記号 `doeff.do` を式 `(. doeff do)` に読むから — `__import__` に渡す文字を
-   記号から作ると、式の repr を module の名にしていた。"
+   The reason it is not held as a Hy symbol: Hy reads a symbol containing a dot, `doeff.do`, as the expression `(. doeff do)` — if the string passed to `__import__` is built from a
+   symbol, the repr of the expression ended up as the module name."
   #^ str module
   #^ str name)
 
 (defn _runtime-do []
-  "実行時の展開が引く doeff の `do` の置き場 — 補助の表(`_helper-imports`)の `do` の行の唯一の定義元。
+  "The location of doeff's `do` that the runtime expansion looks up — the single source of definition for the `do` row of the helper table (`_helper-imports`).
 
-   `do` を引く展開は、どれもここから綴りを作る: 補助の表の `_doeff_do`(defk・defp・deftest・defmcp-tool)・handle.hy の
-   defhandler と handle の `_doeff_do`(`_do-import`)・fnk の名を束ねない引き(`_do-reference`)・validate と契約の check の
-   `_doeff_validation_do`(`_validation-imports`)。別名と引き方は書いた場所の scope の都合で違うが、置き場は 1 つ —
-   置き場を macro ごとに綴っていた頃は、表を替えても写しを持つ macro だけが古い `do` で包み続けた(
-   tests/test_helper_imports_table.py)。型検査のための展開の `do` は static_view.py の STATIC_HELPER_IMPORTS が持つ。"
+   Every expansion that looks up `do` builds its spelling from here: `_doeff_do` of the helper table (defk, defp, deftest, defmcp-tool), `_doeff_do` of defhandler and handle in handle.hy
+   (`_do-import`), the unbound lookup of fnk's name (`_do-reference`), and `_doeff_validation_do` of validate and contract check
+   (`_validation-imports`). The alias and the way of looking up differ according to the scope where it is written, but the location is one —
+   back when each macro spelled the location, changing the table left only the macros holding a copy wrapping with the old `do` (
+   tests/test_helper_imports_table.py). The `do` of the expansion for type checking is held by STATIC_HELPER_IMPORTS in static_view.py."
   (_RuntimeDo "doeff.do" "do"))
 
 (defn _runtime-do-import [alias]
-  "`_runtime-do` の `do` を alias に束ねる実行時の import。"
+  "The runtime import that binds the `do` of `_runtime-do` to an alias."
   (setv source (_runtime-do))
   `(import ~(hy.read (. source module)) [~(hy.models.Symbol (. source name)) :as ~alias]))
 
 (defn _helper-imports []
-  "macro の展開が参照する `do` と実行時の補助の import(1 点)。
+  "The imports of the `do` and runtime helpers that a macro's expansion refers to (one point).
 
-   実行時: doeff の `do`(`_doeff_do` — 置き場は `_runtime-do`)・`_install-guard-globals` と、本体が名前で呼ぶ補助(`_guard-performed` など)。
-   補助は `_install-guard-globals` が関数の globals へも入れる(class の本体で展開した
-   defk の method からも見えるように)ので、import は pyright のための宣言を兼ねる
-   (型は macros.pyi)。
-   型検査のための展開(`_static-view?`)では何も出さない — 型付きの `do`・`_doeff_perform` と補助は、doeff-hy-check が
-   module の頭に 1 度だけ import する(doeff_hy/_static_view.py の STATIC_HELPER_IMPORTS)。defk ごとに出すと 1 つの名に
-   宣言が積み上がり、64 を超えた module で pyright が `_doeff_do` を Unknown にする。"
+   Runtime: doeff's `do` (`_doeff_do` — the location is `_runtime-do`), `_install-guard-globals`, and helpers that the body calls by name (`_guard-performed` etc.).
+   The helpers are also put into the function's globals by `_install-guard-globals` (so that they are visible from a method of a
+   defk expanded in a class body), so the import doubles as a declaration for pyright
+   (types in macros.pyi).
+   The expansion for type checking (`_static-view?`) emits nothing — the typed `do`, `_doeff_perform` and the helpers are imported by doeff-hy-check
+   once at the top of the module (STATIC_HELPER_IMPORTS in doeff_hy/_static_view.py). If emitted per defk, declarations pile up on one name,
+   and in a module exceeding 64, pyright turns `_doeff_do` into Unknown."
   (if (_static-view?)
       '(do)
       `(do
@@ -652,29 +652,29 @@ defk {name}: :post type annotation cannot be an empty string.
                                   _guard-statement-value _doeff-check-program-return]))))
 
 (defn _with-scoped-helpers [form]
-  "式 `form` の前に補助を import する、関数の本体の中にも書かれる式の macro(do!)の展開。
+  "The expansion of an expression macro (do!) that may also be written inside a function body, importing the helpers before the expression `form`.
 
-   実行時の展開は、補助の import と `form` を、すぐ呼ぶ引数なしの関数の中に入れる。関数の中で import した名は
-   関数全体の局所の名になるので、defk の本体でそのまま import すると、同じ本体で先に読む traverse / for/do の
-   `_doeff_do`・文の guard の `_guard_statement_value`・最後の値の guard の `_doeff_effect_base` が
-   UnboundLocalError で落ちた(tests/test_fnk_do_bang_scope.py)。すぐ呼ぶ関数の中なら名はその
-   関数に留まり、外は module の段の名を読み続ける。型検査のための展開は import を出さないので包まない。
+   The runtime expansion puts the helper imports and `form` inside an immediately-called function with no arguments. A name imported inside a function becomes
+   a local name of the whole function, so importing it directly in a defk body made `_doeff_do` of traverse / for/do read earlier in the same body,
+   `_guard_statement_value` of the statement guard, and `_doeff_effect_base` of the last-value guard
+   fail with UnboundLocalError (tests/test_fnk_do_bang_scope.py). Inside an immediately-called function the names stay in that
+   function, and the outside keeps reading the module-level names. The expansion for type checking emits no import, so it is not wrapped.
 
-   前提: `form` のうち評価の時にすぐ走る部分に、利用者の式を置かない(利用者の式は `form` の中の関数の本体にだけ置く)。
-   すぐ呼ぶ関数の中で評価される式は class の本体の名を読めず、外の do の文脈の yield はその関数を生成器にしてしまう。
-   引数の既定値をすぐ評価する fnk はこの前提を満たさないので使わない(`_do-reference`)。"
+   Precondition: do not put user expressions in the part of `form` that runs immediately at evaluation time (put user expressions only in function bodies inside `form`).
+   An expression evaluated inside an immediately-called function cannot read names of a class body, and a yield of the outer do context makes that function a generator.
+   fnk, which evaluates argument defaults immediately, does not satisfy this precondition, so it is not used (`_do-reference`)."
   (if (_static-view?)
       `(do ~(_helper-imports) ~form)
       `((fn [] ~(_helper-imports) ~form))))
 
 (defn _do-reference []
-  "fnk の lambda が呼ばれた時に doeff の `do` を引く式 — 書いた場所の scope に名を束ねない。
+  "The expression that looks up doeff's `do` when fnk's lambda is called — it binds no name in the scope where it is written.
 
-   fnk の lambda は書いた場所で作る(引数の既定値をその scope で評価する — class の本体の名も読める)ので、`do` を名で
-   読むと、その名を書いた場所の scope に置く事になり、defk の本体では先の traverse / for/do の `_doeff_do` の読みを
-   未束縛にする(`_with-scoped-helpers` の註)。実行時は束ね(outcome_forms.hy の open-form)と同じく `__import__` で
-   引く(1 回 約 0.3µs — 呼ぶたびの `@do` の組み立ての約 7µs の内)。置き場は `_runtime-do`。型検査のための展開は
-   module の頭の `_doeff_do`。"
+   fnk's lambda is created where it is written (argument defaults are evaluated in that scope — names of a class body can also be read), so if `do` were
+   read by name, that name would be placed in the scope where it is written, and in a defk body it would leave the earlier reads of `_doeff_do` of traverse / for/do
+   unbound (see the note of `_with-scoped-helpers`). At runtime it is looked up with `__import__`, the same as the binding (open-form of outcome_forms.hy)
+   (about 0.3µs each — within the about 7µs of assembling `@do` on every call). The location is `_runtime-do`. The expansion for type checking uses
+   `_doeff_do` at the top of the module."
   (if (_static-view?)
       '_doeff_do
       (let [source (_runtime-do)]
@@ -682,38 +682,38 @@ defk {name}: :post type annotation cannot be an empty string.
             ~(hy.models.Symbol (. source name))))))
 
 (defn _scoped-definition [compiler name forms [module-forms #()] [nested-reads False]]
-  "名 `name` を定義する macro(defk・deff・defp・deftest・defeffect・defmcp-tool・handle.hy の defhandler・record.hy の defrecord と defwire・持ち主の package の定義の macro — doeff-conductor の defworkflow(doeff_conductor/macros.hy)と doeff-cluster の defsystem(doeff_cluster/_shared/entry/macros.hy))の展開の文の並び `forms`(補助の import を含む)を、書かれた所に合わせて組む。
-   `module-forms` は module の読み込みで 1 度だけ走る前提の、定義を module に知らせる文(deftest の pytest の item の記録)。
-   module と class の本体では `forms` の後に置き、関数の本体の中では実行時の展開でも型検査のための展開でも出さない —
-   関数の中の定義は module の段の定義ではなく、外の関数を呼ぶたびに積み増す。
-   どこで 1 度だけ走るかの判断はここだけが持ち、呼び手は文を渡すだけにする。
+  "Assemble, to fit the place where it is written, the sequence of statements `forms` (including helper imports) of the expansion of a macro that defines the name `name` (defk, deff, defp, deftest, defeffect, defmcp-tool, defhandler of handle.hy, defrecord and defwire of record.hy, and definition macros of the owning package — defworkflow of doeff-conductor (doeff_conductor/macros.hy) and defsystem of doeff-cluster (doeff_cluster/_shared/entry/macros.hy)).
+   `module-forms` are statements, assumed to run only once at module load, that tell the module about the definition (the recording of deftest's pytest item).
+   In module and class bodies they are placed after `forms`, and inside a function body they are emitted in neither the runtime expansion nor the expansion for type checking —
+   a definition inside a function is not a module-level definition, and would pile up on every call of the outer function.
+   Only this function holds the decision of where it runs once; callers just pass the statements.
 
-   module と class の本体では今までどおり文を並べる — import した名は module の globals か class の属性になり、先の
-   読みを壊さない。関数の本体の中(入れ子の定義)では、文の並びをすぐ呼ぶ引数なしの関数に入れ、定義した値だけを
-   `name` に束ねる。関数の中で import した名は関数全体の局所の名になるので、並べたままだと外の関数で先に読む
-   traverse / for/do の `_doeff_do`・文の guard の `_guard_statement_value`・最後の値の guard の `_doeff_effect_base` が
-   UnboundLocalError で落ちた(tests/test_nested_definition_scope.py)。module と class の本体を
-   包まないのは、包むと定義の `__qualname__` が変わり(pickle が名で引けない)、class の本体の method の引数なしの
-   `super()` が `__class__` を失うから。型検査のための展開は補助を import しないので包まない。
+   In module and class bodies the statements are lined up as before — imported names become module globals or class attributes and do not break
+   earlier reads. Inside a function body (nested definition), the sequence of statements is put into an immediately-called function with no arguments, and only the defined value is
+   bound to `name`. A name imported inside a function becomes a local name of the whole function, so leaving them lined up made `_doeff_do` of traverse / for/do read earlier in the outer function,
+   `_guard_statement_value` of the statement guard, and `_doeff_effect_base` of the last-value guard
+   fail with UnboundLocalError (tests/test_nested_definition_scope.py). Module and class bodies are
+   not wrapped because wrapping would change the definition's `__qualname__` (pickle could not look it up by name) and the argument-less
+   `super()` of a method in a class body would lose `__class__`. The expansion for type checking imports no helpers, so it is not wrapped.
 
-   呼び手(定義の macro)が `forms` に負う事 — 包むかどうかはここが決めるので、どの場所でも成り立つ形にする:
-   - 関数の中では `forms` は外の関数を呼ぶたびに評価される。`forms` は定義して `name` に束ねるだけにし、どの module の
-     状態(定義を書いた module の globals も、doeff の module の索引や登録簿も)も変える文を置かない(呼ぶたびに積み増す —
-     tests/test_nested_definition_scope.py の test_definition_sample_leaves_module_state_unchanged・盲検 B)。module に
-     1 度だけ知らせる文は `module-forms` に渡す。
-   - class の本体では `forms` の import は class の属性になり、`forms` の中で定義した関数と入れ子の class の本体からは
-     見えない(名の引きは class の段を飛ばす)。定義が関数の中で名を読む補助は、`_install-guard-globals` で関数の globals へ入れる
-     (定義の関数そのものが補助を読む defk・deftest・defmcp-tool — 同 test_class_body_definition_runs_without_module_definitions)か、
-     関数を組む関数の中で import して閉包から読ませる(defhandler — `_in-class-body?`・tests/test_handle_scope.py の
-     test_class_body_handle_clauses_read_their_operations)。class を建てる定義(defrecord・defwire・defeffect)は、その class の本体の
-     decorator・注記と method が展開の import の名(`doeff_hy`・`_doeff_ClassVar` ほか)を読むので、閉包では届かない — `nested-reads` を
-     真にして呼ぶ。class の本体では `forms` の import が束ねた名を、定義より前に module の globals にも置く(`_publish-imports`)ので、
-     module の段に他の定義が無くても届く(tests/test_nested_definition_scope.py の
-     test_class_body_type_definition_runs_without_module_doeff_hy)。defhandler は module の globals を変えない決めなので、
-     `nested-reads` を真にしない(test_class_body_handle_leaves_module_globals_alone)。
-   - 型検査のための展開では補助を import しない(`_helper-imports` の空の展開を使う)。ここは包まないので、import は外の
-     関数・class の本体の局所の名になる — 型検査の展開の後処理が module の段へ移す(doeff_hy/_static_check.py の
-     with_module_level_imports — doeff_hy の module・`_doeff_` の別名の import・defeffect の答えの分け方の module の import)。"
+   What the caller (the definition macro) owes to `forms` — since this function decides whether to wrap, make it a form that holds in any place:
+   - Inside a function `forms` are evaluated on every call of the outer function. Make `forms` only define and bind `name`, and place no statement that changes any module
+     state (neither the globals of the module where the definition is written, nor doeff's module index or registry) (it would pile up on every call —
+     test_definition_sample_leaves_module_state_unchanged of tests/test_nested_definition_scope.py, blind B). Pass statements that tell the module
+     once to `module-forms`.
+   - In a class body, the imports of `forms` become class attributes and are not visible from functions defined in `forms` or from nested class bodies
+     (name lookup skips the class level). Helpers that the definition reads inside a function are put into the function's globals with `_install-guard-globals`
+     (defk, deftest and defmcp-tool, whose definition function itself reads the helpers — the same test_class_body_definition_runs_without_module_definitions),
+     or imported inside the function that builds the function and read from the closure
+     (defhandler — `_in-class-body?`, test_class_body_handle_clauses_read_their_operations of tests/test_handle_scope.py). Definitions that build a class (defrecord, defwire, defeffect) have
+     decorators, annotations and methods in that class body that read the names of the expansion's imports (`doeff_hy`, `_doeff_ClassVar` and others), which a closure cannot reach — call with `nested-reads`
+     true. In a class body, the names bound by the imports of `forms` are also placed in the module's globals before the definition (`_publish-imports`), so they
+     are reached even if the module has no other definition at module level (test_class_body_type_definition_runs_without_module_doeff_hy of
+     tests/test_nested_definition_scope.py). defhandler is decided not to change the module's globals, so it does not make
+     `nested-reads` true (test_class_body_handle_leaves_module_globals_alone).
+   - The expansion for type checking imports no helpers (use the empty expansion of `_helper-imports`). It does not wrap here, so the imports
+     become local names of the outer function or class body — the post-processing of the type-check expansion moves them to module level (with_module_level_imports of
+     doeff_hy/_static_check.py — the doeff_hy module, imports of `_doeff_` aliases, and the import of the module that splits defeffect's answer)."
   (cond
     (_in-function-body? compiler) `(setv ~name ((fn [] ~@forms ~name)))
     (_function-scope? compiler) `(do ~@forms)
@@ -721,8 +721,8 @@ defk {name}: :post type annotation cannot be an empty string.
     True `(do ~@forms ~@module-forms)))
 
 (defn _imports-of [forms]
-  "展開の文の並び `forms` の中の `(import …)` の form(`(do …)` の中も読む — 関数・class・条件の本体の中の import は、
-   その本体の物で、置いた所の scope を変えないので読まない)。読み手は `_publish-imports`。"
+  "The `(import …)` forms in the sequence of statements `forms` of an expansion (also reads inside `(do …)` — imports inside function, class and conditional bodies
+   belong to that body and do not change the scope where they are placed, so they are not read). The reader is `_publish-imports`."
   (sum (lfor form forms
              (cond
                (not (and (isinstance form hy.models.Expression) form (isinstance (get form 0) hy.models.Symbol))) []
@@ -732,23 +732,23 @@ defk {name}: :post type annotation cannot be an empty string.
        []))
 
 (defn _publish-names [module-globals bound]
-  "class の本体の展開が import した名(bound — 名 → 値の辞書)を module の globals に置く。書き手が module の段に同じ名を
-   置いていれば、それを保つ(`setdefault`)。実行時に呼ぶのは `_publish-imports` が出す文だけ。"
+  "Put the names imported by the expansion of a class body (bound — a dict of name to value) into the module's globals. If the writer has
+   put the same name at module level, keep it (`setdefault`). What runs at runtime is only the statement that `_publish-imports` emits."
   (for [#(name value) (.items bound)]
     (.setdefault module-globals name value)))
 
 (defn _publish-imports [forms]
-  "class の本体の展開で、`forms` の import が束ねる名を module の globals にも置く文の並び(import が無ければ空)。
+  "In the expansion of a class body, the sequence of statements that also places the names bound by the imports of `forms` into the module's globals (empty if there is no import).
 
-   class の本体で import した名は class の属性になり、入れ子の class の本体と method は、名を引く時に外の class の段を飛ばす
-   (関数の中の名の引きと同じ) — 定義した型の本体の decorator・注記と method が読む `doeff_hy` や `_doeff_ClassVar` が
-   NameError で落ちた(module の段に `doeff_hy` が在る module では、他の定義の import が隠していた)。module の段に定義を
-   置いた時と同じに、module の globals から読めるようにする。class の本体の import は今までどおり残す — class の本体で
-   評価される式(decorator・基底・既定値)は、書き手の module の段の同じ名より先に自分の import を読む。
+   A name imported in a class body becomes a class attribute, and bodies of nested classes and methods skip the outer class level when looking up names
+   (the same as name lookup inside a function) — `doeff_hy` and `_doeff_ClassVar`, read by the decorators, annotations and methods of the body of the defined type,
+   failed with NameError (in a module with `doeff_hy` at module level, the imports of other definitions hid it). Make them readable from the module's globals, the same as
+   when a definition is placed at module level. The imports of the class body stay as before — expressions
+   evaluated in a class body (decorators, bases, defaults) read their own imports before the same names at the writer's module level.
 
-   名の綴りは読まない: import を引数なしの関数の中で走らせ(呼んだ後は class の属性に残さず消す)、その局所の名(import が
-   束ねた名だけ)を `_publish-names` で置く。補助の引きは `__import__` — 名で引くと、その名の import が局所の名に混ざる。置く文は定義より前に出す
-   (入れ子の型の本体は、定義の時に名を読む)。"
+   The spelling of names is not read: run the import inside a function with no arguments (and delete it after the call without leaving it as a class attribute), and place its local names (only the names
+   bound by the import) with `_publish-names`. The helper is looked up with `__import__` — looking up by name would mix that name's import into the local names. The statement is emitted before the definition
+   (the body of a nested type reads names at definition time)."
   (setv imports (_imports-of forms))
   (if imports
       (let [publish (hy.gensym "publish")]
@@ -760,77 +760,77 @@ defk {name}: :post type annotation cannot be an empty string.
       []))
 
 (defn _function-scope? [compiler]
-  "macro が関数の本体の中に書かれたか(実行時の展開でも型検査のための展開でも同じ答え)。
+  "Whether a macro was written inside a function body (the same answer for the runtime expansion and the expansion for type checking).
 
-   展開の時の Hy の compiler の scope のうち、let と内包を飛ばした最も近い Python の scope(`hy.scoping` の
-   nearest-python-scope)が関数なら真。module と class の本体は偽。読み手は `_in-function-body?` と、関数の中では
-   `module-forms` を出さない `_scoped-definition`。"
+   True if the nearest Python scope of the Hy compiler's scope at expansion time, skipping let and comprehensions (nearest-python-scope of `hy.scoping`),
+   is a function. False for module and class bodies. Readers are `_in-function-body?` and `_scoped-definition`, which emits no
+   `module-forms` inside a function."
   (is-function-scope (nearest-python-scope (. compiler scope))))
 
 (defn _in-function-body? [compiler]
-  "実行時の展開で、macro が関数の本体の中に書かれたか — 書いた場所で補助を import すると外の関数の局所の名を作る所か。
+  "In the runtime expansion, whether a macro was written inside a function body — a place where importing helpers where it is written creates local names of the outer function.
 
-   `_function-scope?` が真で、型検査のための展開でない時に真。module と class の本体は偽(import した名は module の
-   globals か class の属性になり、先の読みを壊さない)。型検査のための展開は偽(包まない — `_scoped-definition` の註)。
-   読み手は `_scoped-definition` と handle.hy の handle。"
+   True when `_function-scope?` is true and this is not the expansion for type checking. False for module and class bodies (imported names become the module's
+   globals or class attributes and do not break earlier reads). False for the expansion for type checking (not wrapped — see the note of `_scoped-definition`).
+   Readers are `_scoped-definition` and handle of handle.hy."
   (and (not (_static-view?))
        (_function-scope? compiler)))
 
 (defn _in-class-body? [compiler]
-  "実行時の展開で、macro が class の本体に直に書かれたか — 書いた場所で import した名が class の属性になり、展開の中で
-   作る関数から見えない所か(関数の中の名の引きは class の段を飛ばす)。
+  "In the runtime expansion, whether a macro was written directly in a class body — a place where names imported where it is written become class attributes and are not
+   visible from the functions created in the expansion (name lookup inside a function skips the class level).
 
-   展開の時の Hy の compiler の scope のうち、let と内包を飛ばした最も近い Python の scope が class(defclass が作る、
-   関数でない ScopeFn)なら真。型検査のための展開は偽(展開を変えない — `_in-function-body?` と同じ)。読み手は handle.hy
-   の handle と defhandler。"
+   True if the nearest Python scope of the Hy compiler's scope at expansion time, skipping let and comprehensions, is a class (a ScopeFn
+   that is not a function, created by defclass). False for the expansion for type checking (the expansion does not change — the same as `_in-function-body?`). Readers are handle of handle.hy
+   and defhandler."
   (setv scope (nearest-python-scope (. compiler scope)))
   (and (not (_static-view?))
        (isinstance scope ScopeFn)
        (not (is-function-scope scope))))
 
 (defn _quoted-forms [forms]
-  "`__doeff_body__` に置く本体の式: 本体を `hy.repr` した 1 本の文字列を持つ `QuotedForms`(読まれた時に model へ戻す)。
-   本体を quote で埋め込むと、Hy は import のたびに model の木を組み立てる code へ compile し、.pyc の無い compile の時間の
-   半分がそこに消えた(2026-09-28 の実測 — doeff_hy/_quoted_forms.py の頭の註)。"
+  "The body expression placed in `__doeff_body__`: a `QuotedForms` holding the body as a single string of `hy.repr` (turned back into models when read).
+   If the body were embedded with quote, Hy would compile it into code that builds the model tree on every import, and half of the compile time without a .pyc
+   went there (measured 2026-09-28 — the note at the top of doeff_hy/_quoted_forms.py)."
   `(do
      (import doeff-hy._quoted-forms [QuotedForms :as _doeff-QuotedForms])
      (_doeff-QuotedForms ~(hy.models.String (hy.repr (hy.models.List forms))))))
 
 (defn _result-symbol [origin]
-  "本体の結果を指す `_contract_result`。位置は最後の式から取る(`return` と戻り値の型の
-   赤が、defk の頭ではなく最後の式を指すように)。"
+  "`_contract_result`, which points at the result of the body. The position is taken from the last expression (so that the red of `return` and of the return type
+   points at the last expression, not at the head of the defk)."
   (.replace (hy.models.Symbol "_contract_result") origin))
 
 (defn _result-binding [last-form return-source]
-  "`(setv _contract_result 最後の式)`。契約に戻り値の型が在れば変数に注記する(出口が最後の式 1 つの do! と defp)。"
+  "`(setv _contract_result last-expression)`. If the contract has a return type, annotate the variable (for do! and defp, whose exit is a single last expression)."
   (if (is return-source None)
       `(setv ~(_result-symbol last-form) ~last-form)
       `(setv (annotate ~(_result-symbol last-form) ~(hy.models.String return-source))
              ~last-form)))
 
 (defn _result-declaration [last-form return-source]
-  "`_contract_result: T` を値なしで宣言する文の列(T が無ければ空)。:post を持つ defk / deff の関数の頭(:pre の確かめの直後・本体の前)に
-   置き、途中の出口(`_route-returns`)と最後の式の代入は注記なしにする(`_exit-binding`)— どの出口の値も宣言の T と突き合わされ、
-   型の穴を持つ値(`tuple[Unknown, ...]` など)を代入しても、穴の赤は代入の 1 つ(書き手の return の行)だけで、以後の guard・`%`・
-   return へ伝わらない。注記を最後の式の代入にだけ付けると、本体の最後が `while True` の形では注記が到達しない所に置かれ、途中の
-   出口の値の型の穴が guard の引数・`_hy_let_%`・return へのコピーへ伝わって return ごとに赤が 3 つ増えた(
-   親 #3167)。値の型がまるごと Unknown の時は、pyright が宣言の在る変数をその Unknown に絞るので伝わる(最後の式の出口と同じ)。
-   位置は最後の式から取る(T の誤りの赤は前と同じ行を指す)。局所変数の注記は実行時に評価されない。"
+  "The sequence of statements that declares `_contract_result: T` without a value (empty if there is no T). Placed at the head of a defk / deff function with :post (right after the :pre checks, before the body),
+   and the intermediate exits (`_route-returns`) and the assignment of the last expression carry no annotation (`_exit-binding`) — the value of every exit is matched against the declared T,
+   and even if a value with a hole in its type (such as `tuple[Unknown, ...]`) is assigned, the red of the hole is only at the one assignment (the writer's return line) and does not propagate to the later guard, `%` and
+   return. If the annotation were attached only to the assignment of the last expression, then with a body ending in the form `while True` the annotation would be placed where it is unreachable, and the type hole of the value of an intermediate
+   exit propagated to the guard's argument, `_hy_let_%` and the copy into return, adding 3 reds per return (
+   parent #3167). When the value's type is entirely Unknown, pyright narrows the variable that has a declaration to that Unknown, so it propagates (the same as the exit of the last expression).
+   The position is taken from the last expression (the red of an error in T points at the same line as before). Annotations of local variables are not evaluated at runtime."
   (if (is return-source None)
       []
       [`(annotate ~(_result-symbol last-form) ~(hy.models.String return-source))]))
 
 (defn _exit-binding [value origin]
-  "出口(途中の `(return x)` と最後の式)の値を `_contract_result` に入れる文 `(setv #(_contract_result) #(値))`。注記は付けない
-   (型は関数の頭の宣言 `_result-declaration`)。要素 1 つのタプルの代入で書くのは、Hy の `(setv 名 値)` が値の一時の名(match・if・
-   cond を値に使った時の `_hy_anon_N`)を代入先の名へ移し替えるため — match は case の前に `一時の名 = None` を置くので、移し替えると
-   `_contract_result = None` が宣言の T と突き合わされ、網羅した match でも書き手に直せない赤になる(
-   測定)。タプルの代入先には移し替えが起きず、一時の名は match の網羅で絞られた型のまま入る。CPython は要素 1 つのタプルを作って
-   すぐ展開する代入を素の代入と同じ bytecode にするので、実行時の手間は増えない。位置は origin から取る。"
+  "The statement `(setv #(_contract_result) #(value))` that puts the value of an exit (an intermediate `(return x)` and the last expression) into `_contract_result`. No annotation is attached
+   (the type is the declaration at the head of the function, `_result-declaration`). It is written as an assignment of a one-element tuple because Hy's `(setv name value)` moves the temporary name of the value (`_hy_anon_N` when match, if or
+   cond is used as a value) to the assignment target — match puts `temporary = None` before the cases, so moving it would match
+   `_contract_result = None` against the declared T, giving a red the writer cannot fix even for an exhaustive match (
+   measured). No move happens for a tuple assignment target, and the temporary name goes in with the type narrowed by match exhaustiveness. CPython compiles an assignment that builds a one-element tuple and
+   immediately unpacks it to the same bytecode as a plain assignment, so no runtime cost is added. The position is taken from origin."
   `(setv #(~(_result-symbol origin)) #(~value)))
 
 (defn _writes-yield? [form]
-  "form の中のどこかに yield / yield-from の式が在るか(入れ子の fn の中も数える — 注記を外す側に倒す判定)。"
+  "Whether a yield / yield-from expression exists anywhere in form (nested fn is also counted — a judgment that errs on the side of removing the annotation)."
   (match form
     (hy.models.Expression)
       (or (and (> (len form) 0) (isinstance (get form 0) hy.models.Symbol)
@@ -841,29 +841,29 @@ defk {name}: :post type annotation cannot be an empty string.
     _ False))
 
 (defn _annotates-return? [kleisli? return-source body]
-  "関数の頭(返り値の注記)に契約の `(: % T)` の T を書くか。
+  "Whether to write T of the contract's `(: % T)` in the function head (the return annotation).
 
-   - deff(普通の関数): 契約に型が在れば書く(実行時も型検査の時も・今までどおり)。
-   - defk: 型検査のための展開(`_static-view?`)の時だけ書く。その展開では `<-` と `(! …)` が `_doeff_perform` に
-     なり本体に yield が無いので、関数は答え T を返す普通の関数で、`do` の型(static_types.pyi)が
-     `Expand[T, Never]` にする。注記が無いと、自分を呼び直す defk では pyright が答えの型を推せず(推論の途中の
-     自分の呼びは Unknown)、呼び直しの答えを束ねた名と返り値が Unknown の strict の赤になった。
-     書き手が本体に yield を直に書いた defk は生成器なので書かない(T は生成器の返り値の注記にならない)。
-     実行時の展開は今までどおり書かない — 実行時の defk は生成器で、T の注記は食い違う。"
+   - deff (ordinary function): write it if the contract has a type (at runtime and in the type check, as before).
+   - defk: write it only in the expansion for type checking (`_static-view?`). In that expansion `<-` and `(! …)` become `_doeff_perform`
+     and the body has no yield, so the function is an ordinary function returning the answer T, and the type of `do` (static_types.pyi) makes it
+     `Expand[T, Never]`. Without the annotation, for a defk that calls itself pyright cannot infer the answer type (the self call during inference
+     is Unknown), and the name bound to the answer of the recursive call and the return value turned into strict reds for Unknown.
+     A defk whose writer wrote yield directly in the body is a generator, so it does not write it (T does not become the return annotation of a generator).
+     The runtime expansion does not write it, as before — a runtime defk is a generator, and an annotation of T would disagree."
   (cond
     (is return-source None) False
     (not kleisli?) True
     True (and (_static-view?) (not (any (gfor form body (_writes-yield? form)))))))
 
-;; 本体の中で別の関数・class の出口を作る形と、評価しない形(その中の return は外側の定義の出口ではない)。
+;; Forms that make an exit of another function or class inside the body, and forms that are not evaluated (a return inside them is not an exit of the outer definition).
 (setv _NESTED-EXIT-HEADS
   #{"fn" "fn/a" "fnk" "defn" "defn/a" "defk" "deff" "defp" "defpp" "defclass" "defmacro" "defhandler" "deftest"
     "quote" "quasiquote"})
 
 (defn _route-returns [form exit-forms]
-  "本体の form の中の `(return x)` を、最後の式と同じ出口 — `_contract_result` に入れ、guard と :post の確かめを通してから
-   返す — に書き換える(途中の return は確かめの前に関数を抜けていた)。`exit-forms` は結果を
-   `_contract_result` に入れた後に置く文の列。別の関数・class の定義と quote の中は書き換えない(その return は外側の出口ではない)。"
+  "Rewrite `(return x)` inside the body forms to the same exit as the last expression — put into `_contract_result`, passed through the guard and the :post checks,
+   and then returned (an intermediate return used to leave the function before the checks). `exit-forms` is the sequence of statements placed after the result is put into
+   `_contract_result`. Definitions of other functions and classes and the inside of quote are not rewritten (their return is not an exit of the outer definition)."
   (cond
     (and (isinstance form hy.models.Expression) (> (len form) 0)
          (isinstance (get form 0) hy.models.Symbol) (= (str (get form 0)) "return"))
@@ -886,8 +886,8 @@ defk {name}: :post type annotation cannot be an empty string.
    A leading docstring is emitted BEFORE the pre-condition asserts so it stays
    the first statement and becomes the function's __doc__ (a lone string body
    is left in place — it is the return value, not a docstring).
-   type-params = 契約の :tp の型の引数(_type-params)— 型検査の展開では PEP 695 の `def f[T]` の型の引数に置き、注記は T を
-   そのまま読む。実行時の確かめ(isinstance)では object に消す(_expand-check)。"
+   type-params = the type arguments of the contract's :tp (_type-params) — in the type-check expansion they are placed in the type parameters of PEP 695 `def f[T]`, and annotations read T
+   as is. In runtime checks (isinstance) they are erased to object (_expand-check)."
   (setv docstring-forms [])
   (when (and (> (len real-body) 1)
              (isinstance (get real-body 0) hy.models.String))
@@ -895,15 +895,15 @@ defk {name}: :post type annotation cannot be an empty string.
     (setv real-body (cut real-body 1 None)))
   (setv kleisli? (any (gfor d decorators (= (str d) "_doeff_do"))))
   (setv pre-code (_contract-code pre-checks name "pre-condition" kleisli? type-params))
-  ;; 型の引数は型検査の展開だけに置く — 実行時の展開に PEP 695 の綴りを出さない(requires-python 3.10 の環境でも定義が読める)。
+  ;; Type arguments go only in the type-check expansion — the runtime expansion emits no PEP 695 spelling (so the definition can be read even in a requires-python 3.10 environment).
   (setv type-param-head (if (and type-params (_static-view?))
                             [(hy.models.Keyword "tp") (hy.models.List type-params)]
                             []))
-  ;; 契約の型を注記へ(引数・deff の戻り値)。defk は生成器なので戻り値そのものには
-  ;; 注記せず、結果を入れる局所変数 `_contract_result` を関数の頭で T と宣言する(`_result-declaration`)
-  ;; — 生成器かどうか(本体に yield が在るか)を macro が判定せずに、途中の出口と最後の式の型を T と
-  ;; 突き合わせられる。局所変数の注記は実行時に評価されない。
-  ;; 型検査のための展開の defk は生成器でないので、戻り値にも T を注記する(`_annotates-return?`)。
+  ;; Contract types go into annotations (arguments, and the return value of deff). defk is a generator, so the return value itself
+  ;; is not annotated; instead, the local variable `_contract_result` that holds the result is declared as T at the head of the function (`_result-declaration`)
+  ;; — without the macro judging whether it is a generator (whether the body has yield), the types of intermediate exits and the last expression can be
+  ;; matched against T. Annotations of local variables are not evaluated at runtime.
+  ;; A defk in the type-check expansion is not a generator, so T is also annotated on the return value (`_annotates-return?`).
   (setv params (_annotate-params params (_contract-types pre-checks))
         return-source (.get (_contract-types post-checks) "%"))
   (setv head (if (_annotates-return? kleisli? return-source real-body)
@@ -915,10 +915,10 @@ defk {name}: :post type annotation cannot be an empty string.
         `(do)))
   (if post-checks
       (let [post-asserts (_contract-code post-checks name "post-condition" kleisli? type-params)
-            ;; 途中の return も最後の式と同じ出口(guard → :post の確かめ)を通す。
+            ;; An intermediate return also goes through the same exit as the last expression (guard → :post checks).
             exit-forms [guard-stmt `(let [% _contract_result] ~@post-asserts)]
             routed (lfor f real-body (_route-returns f exit-forms))
-            ;; ADR-DOE-HY-001: kleisli 本体の statement 位置を guard(最終式=返り値は対象外)
+            ;; ADR-DOE-HY-001: guard statement positions of the kleisli body (the final expression = return value is excluded)
             init-forms (if kleisli?
                            (lfor f (cut routed 0 -1) (_wrap-statement-guard f name))
                            (list (cut routed 0 -1)))
@@ -940,29 +940,29 @@ defk {name}: :post type annotation cannot be an empty string.
 
 
 ;; ---------------------------------------------------------------------------
-;; val / var / lazy val / lazy var / session val / session var と := (ADR-DOE-HY-006)
+;; val / var / lazy val / lazy var / session val / session var and := (ADR-DOE-HY-006)
 ;; ---------------------------------------------------------------------------
 ;;
-;; 本体の書き換えの定義点は doeff_hy/_binding_forms.py の rewrite-body 1 つ。defk・deftest・defhandler の
-;; 節(handle.hy)がここを通す。展開を止める誤りは SyntaxError、止めない所見(setv の使用・束縛し直し・
-;; 旧い lazy)は doeff-hy-check が集める(static_view.report-findings)。
+;; The single definition point of body rewriting is rewrite-body in doeff_hy/_binding_forms.py. The clauses of defk, deftest and defhandler
+;; (handle.hy) go through it. Errors that stop the expansion are SyntaxError; findings that do not stop it (use of setv, rebinding,
+;; old lazy) are collected by doeff-hy-check (static_view.report-findings).
 
 (import doeff-hy._binding-forms [rewrite-body :as _rewrite-body
                                 BodyKind :as _BodyKind
                                 ModuleBindings :as _ModuleBindings
                                 ModuleNames :as _ModuleNames
                                 module-declaration :as _module-declaration])
-;; match の class pattern の欄の名を Python の属性の名へ直す(Hy 1.3.1 の欠陥の回避・defk が使う)
+;; Fix the names of the fields of a match class pattern to Python attribute names (a workaround for a defect in Hy 1.3.1; used by defk)
 (import doeff-hy._match-fields [mangle-match-fields :as _mangle-match-fields])
 (import doeff-hy._static-view [report-findings :as _report-findings])
-;; pytest の item の記録の口(記録の形の定義元は pytest_items.py)
+;; The entry point for recording pytest items (the definition source of the record shape is pytest_items.py)
 (import doeff-hy._pytest-items [record-function :as _record-test-function
                                record-module-binding :as _record-module-binding])
 (import hy.scoping [ScopeGlobal])
 
 (defn _module-bindings [compiler]
-  "この file の compile の間だけ生きる、module の直下の val / var / lazy val の名簿(Hy の compiler に付ける)。
-   compiler が無い展開(hy.macroexpand など)では、その場かぎりの空の名簿。"
+  "The list of names of module-level val / var / lazy val, alive only while this file compiles (attached to the Hy compiler).
+   For an expansion with no compiler (hy.macroexpand etc.), an empty list for that occasion only."
   (if (is compiler None)
       (_ModuleBindings)
       (do
@@ -973,12 +973,12 @@ defk {name}: :post type annotation cannot be an empty string.
         found)))
 
 (defn _module-names [compiler]
-  "defk・deftest・defhandler の本体へ渡す、同じ file で前に宣言した module の lazy val / var の名前。"
+  "The names of lazy val / var of the module declared earlier in the same file, passed to the bodies of defk, deftest and defhandler."
   (if (is compiler None) (_ModuleNames) (.names (_module-bindings compiler))))
 
 (defn _rewrite-bindings [forms owner kind params [sessions #()] [module None]]
-  "本体の宣言・:=・lazy の参照を書き換え、所見を doeff-hy-check へ渡して、書き換えた本体を返す。
-   展開の時に呼ぶ helper なので defn(defk にできない)。"
+  "Rewrite declarations, := and lazy references in the body, pass the findings to doeff-hy-check, and return the rewritten body.
+   A helper called at expansion time, so it is a defn (it cannot be a defk)."
   (setv rewritten (_rewrite-body forms
                                 :owner owner
                                 :kind kind
@@ -991,38 +991,38 @@ defk {name}: :post type annotation cannot be an empty string.
   (list (. rewritten forms)))
 
 (defn _module-level [compiler head args]
-  "module の直下の (val …) / (var …) / (lazy val …) を展開する(lazy var / session は案内つきの誤り)。defk・deftest・defhandler の
-   本体の中の宣言は本体の macro が先に書き換えるので、ここへ来るのは module の直下か、書き換えの届かない
-   defn / fn / class の中(誤り)。"
+  "Expand module-level (val …) / (var …) / (lazy val …) (lazy var / session are errors with guidance). Declarations inside the bodies of defk, deftest and defhandler
+   are rewritten first by the body's macro, so what arrives here is the module level, or the inside of
+   defn / fn / class where rewriting does not reach (an error)."
   (setv form (if (is compiler None)
                  (hy.models.Expression [(hy.models.Symbol head) #* args])
                  (. compiler this)))
   (when (and (is-not compiler None) (not (isinstance (. compiler scope) ScopeGlobal)))
     (raise (SyntaxError (+ "\n(" head " …) (line " (str (getattr form "start_line" "?")) "): "
-                           "defk・deftest・defhandler の節の本体か、module の直下にだけ書けます"
-                           "(defn・fn・class・let の中には書けません — 関数は defk で書きます)。"
+                           "can only be written in the clause body of defk, deftest or defhandler, or at module level"
+                           " (not inside defn, fn, class or let — write functions with defk)."
                            " [ADR-DOE-HY-006]\n"))))
   (setv declaration (_module-declaration (_module-bindings compiler) form (_static-view?)))
-  ;; module の直下の pytestmark を pytest の item の記録に載せる(#1291 — 記録の式を展開に足す)
+  ;; Put a module-level pytestmark in the record of pytest items (#1291 — add the record expression to the expansion)
   (setv item-record (when (is-not compiler None) (_record-module-binding head args)))
   (if (is item-record None)
       declaration
       `(do ~declaration ~item-record)))
 
 (defmacro val [#^ HyASTCompiler _hy-compiler #^ Object #* args]
-  "module の直下の一度だけの束縛 (val 名前 式)。defk・deftest・defhandler の節の本体の中では本体の macro が扱う。"
+  "A module-level one-time binding (val name expr). Inside the bodies of defk, deftest and defhandler clauses, the body's macro handles it."
   (_module-level _hy-compiler "val" args))
 
 (defmacro var [#^ HyASTCompiler _hy-compiler #^ Object #* args]
-  "module の直下の書き換えられる束縛 (var 名前 式)。module の直下の書き換えは setv(Hy では := が macro を通らない)。"
+  "A module-level rebindable binding (var name expr). A module-level rebinding is setv (in Hy, := does not go through the macro)."
   (_module-level _hy-compiler "var" args))
 
 (defmacro lazy [#^ HyASTCompiler _hy-compiler #^ Object #* args]
-  "module の直下の (lazy val 名前 式) — 効果を使わない式だけ。初めて使った時に 1 回だけ評価して覚える。"
+  "A module-level (lazy val name expr) — only for expressions that use no effects. Evaluated once on first use and remembered."
   (_module-level _hy-compiler "lazy" args))
 
 (defmacro session [#^ HyASTCompiler _hy-compiler #^ Object #* args]
-  "(session val …) / (session var …) は defhandler の直下にだけ書ける(ここへ来たら誤りの案内)。"
+  "(session val …) / (session var …) can be written only directly under defhandler (if it arrives here, it is an error with guidance)."
   (_module-level _hy-compiler "session" args))
 
 
@@ -1065,26 +1065,26 @@ defk {name}: :post type annotation cannot be an empty string.
    :answer (| T SqlFailed SqlUnreachable) are generic in T; the runtime expansion writes no type parameter and reads T from
    the module (`(val T (TypeVar \"T\"))`).
 
-   関数の本体の中に書くと、補助の import(_doeff-dataclass・_doeff-effect-base など)と class をすぐ呼ぶ関数に入れて
-   <name> だけを束ねる(_scoped-definition)。"
+   When written inside a function body, put the helper imports (_doeff-dataclass, _doeff-effect-base, etc.) and the class into an immediately-called function and
+   bind only <name> (_scoped-definition)."
   (setv docstring None contract None forms (list rest))
   (when (and forms (isinstance (get forms 0) hy.models.String))
     (setv docstring (get forms 0) forms (cut forms 1 None)))
   (when (and forms (isinstance (get forms 0) hy.models.Dict))
     (setv contract (get forms 0) forms (cut forms 1 None)))
   (when (or (is contract None) forms)
-    (raise (SyntaxError (.format "defeffect {}: 名前・(docstring)・頭の辞書 {{:fields [...] :answer 型 :tags {{...}}}} の形で書く" (str name)))))
+    (raise (SyntaxError (.format "defeffect {}: write it in the form name, (docstring), leading dict {{:fields [...] :answer type :tags {{...}}}}" (str name)))))
   (setv where (+ "defeffect " (str name))
         pre (_declared-value contract ":pre"))
   (when (and (is-not pre None) (not (isinstance pre hy.models.List)))
-    (raise (SyntaxError (.format "{}: :pre は条件の list: {}" where (hy.repr pre)))))
-  ;; 型の (: 名 型) が指せるのは欄だけ(戻り値の % は effect に無い)。
+    (raise (SyntaxError (.format "{}: :pre must be a list of conditions: {}" where (hy.repr pre)))))
+  ;; The (: name type) of a type can point only at fields (the return value % does not exist for an effect).
   (setv field-names (lfor item (or (_declared-value contract ":fields") [])
                           :if (and (isinstance item hy.models.Expression) (> (len item) 1))
                           (str (get item 1))))
   (for [check (or pre [])]
     (when (and (_is-type-check check) (not-in (str (get check 1)) field-names))
-      (raise (SyntaxError (.format "{}: :pre の {} は欄ではない(欄 = {})" where (hy.repr check) (.join " " field-names))))))
+      (raise (SyntaxError (.format "{}: {} in :pre is not a field (fields = {})" where (hy.repr check) (.join " " field-names))))))
   (_locate-synthesized (_scoped-definition _hy-compiler name
     [(_defeffect-form name docstring contract where (_contract-code pre (str name) ":pre" False))]
     :nested-reads True)))
@@ -1106,7 +1106,7 @@ defk {name}: :post type annotation cannot be an empty string.
    (: name Type) is shorthand for (isinstance name Type).
    Arbitrary validation expressions are also allowed in the same list.
 
-   関数の本体の中に書くと、宣言の import(doeff_hy)と定義をすぐ呼ぶ関数に入れて name だけを束ねる
+   When written inside a function body, put the declaration import (doeff_hy) and the definition into an immediately-called function and bind only name
    (_scoped-definition)。"
   (_warn-defk-in-hyp _hy-compiler "deff" name)
   (setv #(pre-checks post-checks real-body) (_extract-contracts body _FUNCTION-CONTRACT-KEYS (+ "deff " (str name))))
@@ -1172,17 +1172,17 @@ deff {name}: {{:post [...]}} is required.
       :post [(: % int)]}
      (k1 (! (k2 x)) (! (k3 y))))
 
-   match の class pattern の欄の名は Hy の綴りのまま `-` で書ける — defk が属性の名へ直す
-   (Hy 1.3.1 の match は直さないので、defk の外の (Rec :ended-reason None) は決して当たらない — doeff_hy/_match_fields.py):
+   Field names in a match class pattern can be written with `-` as in the Hy spelling — defk fixes them to attribute names
+   (Hy 1.3.1's match does not fix them, so (Rec :ended-reason None) outside defk never matches — doeff_hy/_match_fields.py):
    (match write (RecordWrite :ended-reason None :usage None) \"open\" _ \"other\")"
   ;; Warn if defk is used in .hyp file
   (_warn-defk-in-hyp _hy-compiler "defk" name)
   ;; Reject handler-like signatures early — these should use defhandler
   (_reject-handler-signature name params)
-  ;; 本体・契約・引数の match の class pattern の keyword の欄の名を hy.mangle で属性の名へ直す — Hy 1.3.1 の match は
-  ;; 欄の名を mangle せずに case へ出すので、(Rec :ended-reason None) の節は決して当たらず黙って次の節へ倒れる
-  ;; (Hy は直さない = ADR-DOE-HY-008)。defk の外の match は doeff-linter の DOEFF169 が止める
-  ;; (規則は defk の form の中を当てない)。__doeff_body__ には書いたままの本体を残す(written-forms)。
+  ;; Fix the keyword field names of match class patterns in the body, contracts and arguments to attribute names with hy.mangle — Hy 1.3.1's match
+  ;; emits field names to case without mangling, so the clause (Rec :ended-reason None) never matches and silently falls through to the next clause
+  ;; (Hy does not fix this = ADR-DOE-HY-008). A match outside defk is stopped by DOEFF169 of doeff-linter
+  ;; (the rule does not apply inside a defk form). The body is kept as written in __doeff_body__ (written-forms).
   (setv written-forms body
         body (lfor form body (_mangle-match-fields form))
         params (_mangle-match-fields params))
@@ -1221,8 +1221,8 @@ defk {name}: {{:post [...]}} is required.
   ;; Validate type coverage: every param needs (: param Type), post needs (: % Type)
   (_validate-pre-type-checks name params pre-checks)
   (_validate-post-type-check name post-checks)
-  ;; val / var / lazy val / lazy var / := の書き換えと、旧い lazy / lazy-val / lazy-var / set! の拒否
-  ;; (ADR-DOE-HY-006)。__doeff_body__ には書いたままの本体を残す。
+  ;; Rewriting of val / var / lazy val / lazy var / :=, and rejection of old lazy / lazy-val / lazy-var / set!
+  ;; (ADR-DOE-HY-006). The body is kept as written in __doeff_body__.
   (setv written-body (get (_find-contract written-forms) 1))
   (setv real-body (_rewrite-bindings real-body (+ "defk " (str name)) _BodyKind.DEFK
                                      (_extract-param-names params)
@@ -1262,8 +1262,8 @@ defk {name}: {{:post [...]}} is required.
    (fnk [x y] (+ (! (k1 x)) (! (k2 y))))"
   ;; Expand bangs in the body — in-place (yield ...) rewrite [ADR-DOE-HY-003]
   (setv expanded-forms (lfor form body (_expand-bangs form "fnk")))
-  ;; lambda は書いた場所で作り(既定値はその scope で評価する)、`do` は名を束ねずに引く(`_do-reference`)。
-  ;; 型検査のための展開は前と同じ形(`_helper-imports` は何も出さない)。
+  ;; The lambda is created where it is written (defaults are evaluated in that scope), and `do` is looked up without binding a name (`_do-reference`).
+  ;; The expansion for type checking has the same form as before (`_helper-imports` emits nothing).
   (setv kleisli `(fn [~@params] ((~(_do-reference) (fn [] (do ~@expanded-forms))))))
   (_locate-synthesized
     (if (_static-view?)
@@ -1306,7 +1306,7 @@ defk {name}: {{:post [...]}} is required.
   (setv pre-code (_contract-code pre-checks "do!" "pre-condition" True)
         expanded (lfor bind bindings
                    (if (and (isinstance bind tuple) (= (get bind 0) "__plain__"))
-                       ;; Plain statement — ADR-DOE-HY-001 guard(式形のみラップ)
+                       ;; Plain statement — ADR-DOE-HY-001 guard (wrap expression forms only)
                        (_wrap-statement-guard (get bind 1) "do!")
                        ;; Effect binding — yield (typed bind keeps its isinstance)
                        (_bind-form bind))))
@@ -1347,35 +1347,35 @@ defk {name}: {{:post [...]}} is required.
 
 
 ;; ---------------------------------------------------------------------------
-;; on-raise / absent-as — 失敗と不在を値へ畳む境目(ADR-DOE-CORE-EFFECTS-003 R7・R8)
+;; on-raise / absent-as — the boundary that folds failure and absence into values (ADR-DOE-CORE-EFFECTS-003 R7, R8)
 ;; ---------------------------------------------------------------------------
 ;;
-;; maybe / result は設定の無い handler の値(doeff_core_effects._outcomes・ADR-DOE-API-002 R1)— (maybe body) と書く。
-;; パターンも字面も要らないので macro にしない。
+;; maybe / result are values of a handler with no settings (doeff_core_effects._outcomes, ADR-DOE-API-002 R1) — write (maybe body).
+;; They need neither a pattern nor a literal form, so they are not macros.
 
 (defmacro on-raise [#^ Object program #^ Object #* clauses]
-  "(on-raise 本文 パターン [:if 番] 写し先 …) — 本文の中の Raise のうち、パターン(失敗の型の形)に合う物だけを写し先の
-   業務の答えにしてスコープを終える。合わない Raise は外へ渡し、成功はそのまま返す。
+  "(on-raise body pattern [:if guard] target …) — of the Raise in the body, only those matching the pattern (the shape of the failure type) are turned into the target's
+   business answer and end the scope. A Raise that does not match is passed outward, and success is returned as is.
 
-   (<- answer (on-raise (do! (<- body (read-typed …) :absent (Conflict \"行が無い\"))
+   (<- answer (on-raise (do! (<- body (read-typed …) :absent (Conflict \"row is missing\"))
                              (<- (revise …))
                              (WriteLanded))
                 (Conflict d)        (WriteConflict :detail d)
                 (Unreachable d)     (WriteUnreachable :detail d)))
 
-   パターンは (型 欄 …) か (| (A …) (B …)) だけ — 何でも受ける形(_・名前 1 つ・object・Exception)は展開の時に断る。
-   Python の例外は受けない(Raise だけを見る)。番と写し先は値の式。 [ADR-DOE-CORE-EFFECTS-003 R7]"
+   The pattern is only (Type field …) or (| (A …) (B …)) — catch-all forms (_, a single name, object, Exception) are rejected at expansion time.
+   Python exceptions are not caught (only Raise is seen). The guard and target are value expressions. [ADR-DOE-CORE-EFFECTS-003 R7]"
   (import doeff-hy._outcome-forms [on-raise-form])
   (_locate-synthesized (on-raise-form program clauses)))
 
 (defmacro absent-as [#^ Object default #^ Object program]
-  "(absent-as 既定値 本文) — 本文の中の Absent を既定値に畳む。
+  "(absent-as default body) — fold an Absent in the body into the default.
 
-   本文が (do! …) なら、その字面の中に直に書いた <- / ! が値の代わりに出した不在は既定値で**再開**する(その束ねが既定値を
-   受けて続く)。呼んだ defk の奥の不在と、直に書いた (<- (Absent …)) は再開せず、既定値で absent-as のスコープを終える
-   (奥の行に別の型の値を渡さない・不在を前提にしない続きを走らせない)。 [ADR-DOE-CORE-EFFECTS-003 R8]
+   If the body is (do! …), an absence emitted in place of a value by a <- / ! written directly in its text is **resumed** with the default (that binding receives the default
+   and continues). An absence deep inside a called defk, and a directly written (<- (Absent …)), do not resume; they end the absent-as scope with the default
+   (do not hand a value of another type to the line deep inside, and do not run a continuation that does not assume absence). [ADR-DOE-CORE-EFFECTS-003 R8]
 
-   (<- n (absent-as 0 (do! (<- row (ReadCount \"k\")) (+ row 1))))   ; 不在なら row = 0 で続き、n = 1"
+   (<- n (absent-as 0 (do! (<- row (ReadCount \"k\")) (+ row 1))))   ; if absent, continue with row = 0, n = 1"
   (import doeff-hy._outcome-forms [absent-as-form])
   (_locate-synthesized (absent-as-form default program)))
 
@@ -1407,7 +1407,7 @@ defk {name}: {{:post [...]}} is required.
   (get expr 1))
 
 (defn _bind-parts [form]
-  "Extract (name, Type, expr) from a (<- ...) form (a trailing `:absent 失敗` is set aside — see `_split-absent`).
+  "Extract (name, Type, expr) from a (<- ...) form (a trailing `:absent failure` is set aside — see `_split-absent`).
      (<- expr)           → (None, None, expr)
      (<- name expr)      → (name, None, expr)
      (<- name Type expr) → (name, Type, expr)"
@@ -1425,33 +1425,33 @@ defk {name}: {{:post [...]}} is required.
    4-element bind is honored at runtime wherever it is written — the shared
    quality checker (dotfiles agent/quality/hy_dsl.py effect_bind) projects the
    same isinstance and relies on this guarantee existing.
-   B = 束ね 1 つの式(outcome-forms の open-form): open-bind の答えが Pure ならその値、それ以外は yield した答え
+   B = the expression of one binding (open-form of outcome-forms): if the answer of open-bind is Pure, its value; otherwise the answer yielded
      (<- expr)           → B = (if (is (. (:= b (open-bind expr)) __class__) Pure) b.value (yield b))
      (<- name expr)      → (setv name B)
      (<- name Type expr) → (do (setv name B)
                                (assert (isinstance name Type) \"expected Type, got <actual>\"))
-     (<- … :absent F)    → open-bind の受け手が、その束ねの中で出た Absent を Raise(F) に変える
-   open-bind(doeff_core_effects._outcomes)は宣言を持つ effect の不在・失敗の答えを Absent / Raise に変えて呼び手の
-   スコープで出し、Result / Maybe の値を開く。宣言の無い effect と Program は受け取った物をそのまま返す
-   (ADR-DOE-CORE-EFFECTS-003 R5・R6)。
-   束ねた後は b を del する(`(del b)` を setv の次に置く・名の無い (<- expr) は答えを一時の名 a で受けて a も外す):
-   b は yield した Program(Call — 関数と引数)を持つので、残すと同じ行が次に走るまで引数を生かす(長い loop の
-   generator で前の周の表を持ち続けた)。del は文なので、式の中の `!` は open-form が式の中で名を None に戻す。"
+     (<- … :absent F)    → the receiver of open-bind turns an Absent that occurs in that binding into Raise(F)
+   open-bind (doeff_core_effects._outcomes) turns the absent and failure answers of an effect with a declaration into Absent / Raise and emits them in the caller's
+   scope, and opens the values of Result / Maybe. An effect with no declaration, and a Program, return what they received as is
+   (ADR-DOE-CORE-EFFECTS-003 R5, R6).
+   After binding, b is deleted (`(del b)` is placed after the setv; an unnamed (<- expr) receives the answer in a temporary name a and removes a too):
+   b holds the yielded Program (Call — function and arguments), so if kept, it keeps the arguments alive until the same line runs next (a long-loop
+   generator kept the table of the previous iteration). del is a statement, so for `!` inside an expression, open-form resets the name to None inside the expression."
   (import doeff-hy._outcome-forms [open-form])
   (setv bound (hy.gensym "bound"))
   (setv performed (open-form expr absent helpers bound))
   (cond
-    ;; 型検査のための展開(doeff_hy/_static_view.py): x の型 = expr の答えの型。
-    ;; Python の `@effectful` の `x = perform(e)`(docs/24-effectful-perform.md)と同じ形で、
-    ;; `_doeff_perform` の宣言は static_types.pyi。`(<- x T e)` は x に T を注記するので、
-    ;; e の答えの型が T に入らなければ pyright が赤にする。e は 1 回だけ現れる。
-    ;; yield は出さない(型は yield に頼らない — 2026-09-23 に agora-controllers の
-    ;; controllers/worker で yield を残した形と赤が同じ 57 件であることを確かめた)。
-    ;; 実行時の展開はこの枝を通らない(実行時の `(yield e)` は @effectful の書き換えの結果と同じ)。
+    ;; Expansion for type checking (doeff_hy/_static_view.py): type of x = type of the answer of expr.
+    ;; The same form as `x = perform(e)` of Python's `@effectful` (docs/24-effectful-perform.md),
+    ;; and the declaration of `_doeff_perform` is in static_types.pyi. `(<- x T e)` annotates x with T, so
+    ;; pyright reports red if the type of e's answer does not fit in T. e appears only once.
+    ;; No yield is emitted (types do not depend on yield — on 2026-09-23 it was confirmed that the reds are the same 57 as the form that kept yield in
+    ;; controllers/worker of agora-controllers).
+    ;; The runtime expansion does not go through this branch (the runtime `(yield e)` is the same as the result of @effectful's rewriting).
     (_static-view?)
-      ;; `_doeff_perform` は doeff-hy-check が module の頭に 1 度だけ import する(STATIC_HELPER_IMPORTS)ので、
-      ;; defhandler の節・利用者の defn など `_helper-imports` を出さない所の `<-` でも名前が解ける。形の中に import を
-      ;; 持つと、`<-` を 65 個持つ関数で pyright が `_doeff_perform` を Unknown にする。
+      ;; `_doeff_perform` is imported by doeff-hy-check once at the top of the module (STATIC_HELPER_IMPORTS), so the name resolves even for a `<-`
+      ;; in places that emit no `_helper-imports`, such as defhandler clauses and a user's defn. If the form held an import,
+      ;; pyright would turn `_doeff_perform` into Unknown in a function with 65 `<-`."
       (let [bound `(_doeff-perform ~expr)
             source (when (is-not tp None) (_type-source tp))]
         (cond
@@ -1562,22 +1562,22 @@ defk {name}: {{:post [...]}} is required.
                     `(do ~(_bind-form bind) ~inner))))))))
 
 (defn _binds-from? [bindings]
-  "bindings に From / Iterate の束縛が在るか — 在れば、その前の From の件の関数は内側の From の Collection を答える。"
+  "Whether bindings contain a From / Iterate binding — if so, the per-item function of the preceding From returns the Collection of the inner From."
   (any (gfor bind bindings
              (and (_is-bind bind) (_is-iterate (get (_bind-parts bind) 2))))))
 
 (defn _place-traverse [traverse inner-from? in-step]
-  "From 1 つの Traverse を、置かれた所に合わせた形にする。
+  "Turn a Traverse of a single From into the form that fits the place where it is put.
 
-   重ねた From は内包(list の <-・SQL の CROSS JOIN)と同じく、組ごとの本体の値を 1 件として平らに並べる。そのため:
-   - 外の From の件の関数の中(in-step)の From は、その関数の中で Traverse を実行し、答えの Collection を件の値にする。
-     前は実行せずに Traverse の effect を件の値として返し、valid_values に内側の Traverse が入っていた。
-   - 後ろに From が残る From(inner-from?)の Traverse は、件の値が内側の Collection の Collection を答えるので、
-     Collection.flatten で 1 段平らにする。for/do の一番外(in-step でない)は、書き手の `<-` が実行する Program にする
-     — Traverse の effect は展開の時に作り(items を読む時は From 1 つの時と同じ)、Program はそれを実行して平らにする。
-   From が 1 つの for/do(一番外で、後ろに From が無い)は今までどおり Traverse の effect そのまま。
-   型検査のための展開では yield を出さず `_doeff_perform` で包み(_skip-form と同じ訳)、一番外の Program は引数を持たない
-   関数にする(lambda の引数は注記を持てず strict の赤になる)。"
+   Nested Froms flatten the body value of each tuple into one item, as with a comprehension (list <- and SQL CROSS JOIN). Therefore:
+   - A From inside the per-item function of an outer From (in-step) executes the Traverse inside that function and makes the answer Collection the item's value.
+     Before, it did not execute and returned the Traverse effect as the item's value, so the inner Traverse got into valid_values.
+   - The Traverse of a From followed by another From (inner-from?) is flattened by one level with Collection.flatten, since the item's value answers the Collection of the inner Collection.
+     The outermost of for/do (not in-step) becomes a Program that the writer's `<-` executes
+     — the Traverse effect is built at expansion time (when reading items, the same as for a single From), and the Program executes it and flattens.
+   A for/do with a single From (outermost, with no From after it) is the Traverse effect as is, as before.
+   The expansion for type checking emits no yield and wraps with `_doeff_perform` (for the same reason as _skip-form), and the outermost Program becomes a function
+   with no arguments (a lambda's arguments cannot carry annotations, which gives strict reds)."
   (setv perform (if (_static-view?)
                     (fn [expr] `(_doeff_perform ~expr))
                     (fn [expr] `(yield ~expr))))
@@ -1590,24 +1590,24 @@ defk {name}: {{:post [...]}} is required.
            `((_doeff_do (fn [~made] (.flatten ~(perform made)))) ~traverse))))
 
 (defn _skip-form []
-  "When が偽の件を落とす Skip を出すため。実行時は `(yield (_doeff_traverse_Skip))`。型検査のための展開では `<-` と同じく
-   yield を出さず `_doeff_perform` で包む — yield を残すと件ごとの関数が生成器になり、送り返しの型が分からない
-   `Generator[Skip, Unknown, T]` の答えが strict の赤になる(Skip の答えは Never なので、続く文は偽の枝では届かない)。"
+  "To emit Skip, which drops an item whose When is false. At runtime it is `(yield (_doeff_traverse_Skip))`. In the expansion for type checking, as with `<-`,
+   no yield is emitted and it is wrapped with `_doeff_perform` — if yield were kept, the per-item function would become a generator, and its answer
+   `Generator[Skip, Unknown, T]`, whose send type is unknown, would be a strict red (the answer of Skip is Never, so the following statements are unreachable in the false branch)."
   (if (_static-view?)
       '(_doeff_perform (_doeff_traverse_Skip))
       '(yield (_doeff_traverse_Skip))))
 
 (defn _traverse-form [param items label inner-body]
-  "From / Iterate の 1 つを Traverse の effect にする: 件ごとの関数(param を受け、残りの束縛と本体を do で包む)と items。
+  "Make one From / Iterate a Traverse effect: the per-item function (receives param, wraps the remaining bindings and body with do) and items.
 
-   実行時の展開: `(_doeff_traverse_Traverse (_doeff_do (fn [param] (do 本体))) items)`。件ごとの関数は Traverse 1 つに 1 度だけ
-   `@do` で包む — 件ごとに `(fn [param] ((_doeff_do (fn [] …))))` で包み直すと、件 1 つあたり約 7 µs の `@do` の組み立て
-   (DoFunction・functools.wraps)がかかっていた。件の Program は同じ(件を引数に受ける 1 つの呼び)。
-   型検査のための展開(`_static-view?`)では、件の引数を `#^ object` の別名で受け、本体の前で
-   `(setv param (_doeff_traverse_item items の写し 件))` と件の型へ読み直す — Hy の fn は本体が文を持つと def になり、
-   引数に注記が無いと pyright strict が「引数の型が分からない」と赤にする(書き手は件の型を書く口を持たない)。
-   static_types.pyi の traverse_item は items の要素の型を答えるので、件の引数は items の要素の型に読める。
-  items は 1 度だけ名へ置き、関数の中からはその名を引く(展開の写しは走らない)。"
+   Runtime expansion: `(_doeff_traverse_Traverse (_doeff_do (fn [param] (do body))) items)`. The per-item function is wrapped with `@do` just once per Traverse
+   — wrapping again per item as `(fn [param] ((_doeff_do (fn [] …))))` cost about 7 µs per item to assemble `@do`
+   (DoFunction, functools.wraps). The Program of an item is the same (one call that receives the item as its argument).
+   In the expansion for type checking (`_static-view?`), the item's argument is received under an alias `#^ object`, and before the body it is
+   re-read as the item's type with `(setv param (_doeff_traverse_item copy-of-items item))` — a Hy fn becomes a def when its body has statements, and
+   without an annotation on the argument pyright strict reports red that \"the argument type is unknown\" (the writer has no place to write the item's type).
+   traverse_item in static_types.pyi answers the element type of items, so the item's argument can be read as the element type of items.
+  items is placed under a name just once, and the function looks that name up (the copy in the expansion does not run)."
   (if (_static-view?)
       (let [item (hy.gensym "item")
             items-ref (hy.gensym "items")
@@ -1700,8 +1700,8 @@ defk {name}: {{:post [...]}} is required.
   #{"for/do" "traverse" "fnk" "do!" "defhandler"
     "defk" "deff" "defp" "defpp" "deftest" "defmcp-tool"
     "defmacro" "quote" "quasiquote"
-    ;; doeff-validation の validate: 各 check を別々の小さな Program に包み、check の引数の (! …) を
-    ;; その項目の中で実行する(外側の本体で先に実行すると、項目の独立と失敗の収集が崩れる)。
+    ;; validate of doeff-validation: wrap each check in a separate small Program, and run the (! …) in the arguments of check
+    ;; inside that item (running them first in the outer body would break the independence of items and the collection of failures).
     "validate"})
 
 ;; Python compiles comprehensions to a separate scope where yield is illegal
@@ -1807,11 +1807,11 @@ the effect in the enclosing do-context.
                      (if (= kind "comprehension")
                          (_bang-comprehension-msg owner head node)
                          (_bang-nested-fn-msg owner head node)))))
-          ;; 実行時は <- と同じ open-bind を通す(宣言を持つ effect の不在・失敗を Absent / Raise に変え、
-          ;; Result / Maybe の値を開く — ADR-DOE-CORE-EFFECTS-003 R6)。型検査のための展開は `<-` と同じ
-          ;; `_doeff_perform`(式の答えの型 — _bind-yield の静的な枝)。前は `(yield e)` で、注記の無い generator の
-          ;; yield の値は Unknown なので、(! …) を使う所ごとに書き手に直せない Unknown の赤が出ていた。
-          ;; 束ねの名は bound を渡さないので、open-form が式の中で None に戻す(文の del を置けない)。
+          ;; At runtime it goes through the same open-bind as <- (turns the absence and failure of an effect with a declaration into Absent / Raise,
+          ;; and opens the values of Result / Maybe — ADR-DOE-CORE-EFFECTS-003 R6). The expansion for type checking is the same `_doeff_perform` as `<-`
+          ;; (the type of the expression's answer — the static branch of _bind-yield). Before, it was `(yield e)`, and the yield value of a generator
+          ;; with no annotation is Unknown, so an Unknown red that the writer could not fix appeared at every place that used (! …).
+          ;; The binding's name passes no bound, so open-form resets it to None inside the expression (a statement del cannot be placed).
           (if (_static-view?)
               `(_doeff-perform ~(walk (get node 1) ctx))
               (do (import doeff-hy._outcome-forms [open-form])
@@ -1842,8 +1842,8 @@ the effect in the enclosing do-context.
                       #("fn" head)
                     True ctx))
                 (setv walked (hy.models.Expression (lfor child node (walk child new-ctx))))
-                ;; defk の本体の (<- …) は、ここで helpers の名で引く形に展開する(入れ子の関数の中は
-                ;; その関数の束ねなので触らない — <- の macro が今までの形に展開する)。
+                ;; A (<- …) in a defk body is expanded here into the form that looks it up by the helpers name (inside a nested function
+                ;; it is that function's own binding, so it is left alone — the <- macro expands it into the form as before).
                 (if (and (= head "<-") (is-not helpers None) (is ctx None) (not (_static-view?)))
                     (do (import doeff-hy._outcome-forms [bind-form])
                         (bind-form walked helpers))
@@ -1983,7 +1983,7 @@ the effect in the enclosing do-context.
   (setv #(bindings body-expr) (_parse-do-body expanded-forms macro-name))
   (setv expanded (lfor bind bindings
                    (if (and (isinstance bind tuple) (= (get bind 0) "__plain__"))
-                       ;; Plain statement — ADR-DOE-HY-001 guard(式形のみラップ)
+                       ;; Plain statement — ADR-DOE-HY-001 guard (wrap expression forms only)
                        (_wrap-statement-guard (get bind 1) (str name))
                        ;; Effect binding — yield (typed bind keeps its isinstance)
                        (_bind-form bind))))
@@ -2032,12 +2032,12 @@ the effect in the enclosing do-context.
 ;; ---------------------------------------------------------------------------
 
 (defn _test-scans [value]
-  "deftest の :scans の値(そのテストが走査して読む dir か glob)を検めて glob の list にする。
-   文字列の tuple(空でない・空の文字列を含まない)以外は断る — 黙って捨てると、宣言したつもりのテストが選びの道具に選ばれない。
-   展開の時に呼ぶ helper なので defn(defk にできない)。"
+  "Check the value of deftest's :scans (the dir or glob that the test scans and reads) and make it a list of globs.
+   Reject anything other than a tuple of strings (non-empty, containing no empty string) — if silently dropped, a test that was meant to be declared would not be selected by the selection tool.
+   A helper called at expansion time, so it is a defn (it cannot be a defk)."
   (when (or (not (isinstance value hy.models.Tuple)) (= (len value) 0)
             (not (all (gfor g value (and (isinstance g hy.models.String) (> (len g) 0))))))
-    (raise (SyntaxError (.format "deftest の :scans は、走査して読む dir か glob の文字列の tuple(例 #(\"scripts/x/*.txt\"))— 受けた形: {}"
+    (raise (SyntaxError (.format "deftest :scans must be a tuple of strings of dirs or globs to scan and read (e.g. #(\"scripts/x/*.txt\")) — received: {}"
                                  (hy.repr value)))))
   (list value))
 
@@ -2063,11 +2063,11 @@ the effect in the enclosing do-context.
     ;; Skip string literals (docstrings) at the start
     (when (not (isinstance form hy.models.String))
       (break)))
-  ;; meta の map のすぐ後にもう 1 つ map が並ぶ形は断る: 以前は 2 つ目を黙って本文の式にし、その鍵
-  ;; (例 :skip-if)が捨てられた — agora の検で印の map を既存の meta の前に足し、skip が消えて日次で KeyError になった(#2704)。
-  ;; 本文の先頭に map の式を置く意味は無いので、meta は 1 つの map にまとめる。
+  ;; Reject a form where another map follows right after the meta map: previously the second one silently became a body expression, and its keys
+  ;; (e.g. :skip-if) were dropped — a marker map was added before the existing meta in an agora test, skip disappeared, and a KeyError occurred in the daily run (#2704).
+  ;; A map expression at the head of the body has no meaning, so combine the meta into a single map.
   (when (and (is-not meta-idx None) (< (+ meta-idx 1) (len body)) (isinstance (get body (+ meta-idx 1)) hy.models.Dict))
-    (raise (SyntaxError (.format "deftest の meta の map が 2 つ並んでいる — 2 つ目の鍵 {} は本文の式として捨てられる。meta は 1 つの map にまとめる"
+    (raise (SyntaxError (.format "deftest has two meta maps in a row — the keys of the second one, {}, would be dropped as a body expression. Combine the meta into a single map"
                                  (lfor k (cut (get body (+ meta-idx 1)) None None 2) (str k))))))
   (when (is-not meta-idx None)
     (setv meta-dict (get body meta-idx)
@@ -2092,17 +2092,17 @@ the effect in the enclosing do-context.
 (import doeff-hy._static-view [deftest-fixture-annotation :as _deftest-fixture-annotation])
 
 (defn _deftest-param [param]
-  "deftest の引数 1 つを #(名 書き手の注記か None) にする。Hy の reader は `#^ T 名` を `(annotate 名 T)` に読む。
-   展開の時に呼ぶ helper なので defn(defk にできない)。"
+  "Turn one argument of deftest into #(name writer's-annotation-or-None). Hy's reader reads `#^ T name` as `(annotate name T)`.
+   A helper called at expansion time, so it is a defn (it cannot be a defk)."
   (match param
     [head param-name written] :if (and (isinstance param hy.models.Expression) (= head 'annotate))
       #(param-name written)
     _ #(param None)))
 
 (defn _deftest-annotation [param-name written]
-  "型検査のための展開で deftest の引数に付ける注記。書き手の `#^ T 名` があればそれを、
-   無ければ fixture の名の表(doeff_hy/_static_view.py の DEFTEST_FIXTURE_TYPES)の型を、表に無い名(利用者の
-   fixture・:params の引数)は `object` を付ける — Unknown のまま strict の赤にせず、型も逃がさない。"
+  "The annotation attached to deftest's arguments in the expansion for type checking. If the writer wrote `#^ T name`, that; otherwise
+   the type from the table of fixture names (DEFTEST_FIXTURE_TYPES in doeff_hy/_static_view.py); for a name not in the table (a user's
+   fixture, an argument of :params), `object` is attached — so it neither becomes a strict red as Unknown nor lets the type escape."
   (if (is-not written None)
       written
       (hy.models.Symbol (_deftest-fixture-annotation (hy.mangle (str param-name))))))
@@ -2168,7 +2168,7 @@ the effect in the enclosing do-context.
   (when (and (> (len args) 0) (isinstance (get args 0) hy.models.List))
     (setv fixture-params (list (get args 0))
           body (cut args 1 None)))
-  ;; 書き手の注記 `#^ T 名` は型検査のための展開でだけ使い、名の並びは実行時の展開・記録・束縛の書き換えが読む
+  ;; The writer's annotation `#^ T name` is used only in the type-check expansion; the list of names is read by the runtime expansion, the record and the rewriting of bindings
   (setv fixture-annotations (lfor p fixture-params (_deftest-param p))
         fixture-params (lfor #(param-name _) fixture-annotations param-name))
 
@@ -2176,7 +2176,7 @@ the effect in the enclosing do-context.
   (setv #(interpreters params-dict env-dict marks skip-if-expr skip-reason scans real-body)
     (_extract-test-meta body))
 
-  ;; val / var / lazy val / lazy var / := の書き換え(ADR-DOE-HY-006)
+  ;; Rewriting of val / var / lazy val / lazy var / := (ADR-DOE-HY-006)
   (setv real-body (_rewrite-bindings real-body (+ "deftest " (str name)) _BodyKind.DEFTEST
                                      (sfor p fixture-params (str p))
                                      :module (_module-names _hy-compiler)))
@@ -2193,7 +2193,7 @@ the effect in the enclosing do-context.
       ;; (<- name Type expr) → same + isinstance assert (see _bind-yield)
       (and (_is-bind form) (is-not (_bind-parts form) None))
       (.append gen-body (_bind-form form))
-      ;; Everything else — ADR-DOE-HY-001 guard(式形のみラップ、文はそのまま)
+      ;; Everything else — ADR-DOE-HY-001 guard (wrap expression forms only, statements as is)
       True
       (.append gen-body (_wrap-statement-guard form (str name)))))
 
@@ -2209,9 +2209,9 @@ the effect in the enclosing do-context.
       `(doeff_interpreter
          ((_doeff_do (fn [] ~@gen-body))))))
 
-  ;; 型検査のための展開: 引数に fixture の型の注記を付け、返り値は None(検の関数は値を
-  ;; 返さない — interpreter の答えは文として捨てる)。実行時の展開は今までどおり注記なしで答えを返す
-  ;; (Python 3.13 以前は注記を定義の時に評価するので、型検査だけの名を実行時に置かない)。
+  ;; Expansion for type checking: attach fixture type annotations to the arguments, and the return value is None (a test function does not
+  ;; return a value — the interpreter's answer is discarded as a statement). The runtime expansion returns the answer without annotations, as before
+  ;; (up to Python 3.13 annotations are evaluated at definition time, so names used only for type checking are not placed at runtime).
   (setv #(fn-name fn-signature fn-body)
     (if (_static-view?)
       #(`(annotate ~name None)
@@ -2243,13 +2243,13 @@ the effect in the enclosing do-context.
   (when (is-not skip-if-expr None)
     (.append item-decorators #("skipif" None None)))
 
-  ;; :scans → @pytest.mark.scans("glob", ...)(走査して読む dir か glob の宣言 — 選びの道具は source を読み、走らせた時は印で読める)
+  ;; :scans → @pytest.mark.scans("glob", ...) (a declaration of the dir or glob to scan and read — the selection tool reads the source, and it can be read from the marker when run)
   (when (is-not scans None)
     (setv item-decorators (+ item-decorators [#("scans" None (hy.models.List scans))])))
 
-  ;; 型検査のための展開では、decorator の pytest を doeff-hy-check が module の頭に 1 度だけ置く別名
-  ;; `_doeff_pytest`(doeff_hy/_static_view.py の STATIC_HELPER_IMPORTS)で引く — deftest ごとの `import pytest` が
-  ;; 書き手の import と重なって strict の reportDuplicateImport になっていた。
+  ;; In the expansion for type checking, the decorator's pytest is looked up through the alias
+  ;; `_doeff_pytest` that doeff-hy-check places once at the top of the module (STATIC_HELPER_IMPORTS in doeff_hy/_static_view.py) — an `import pytest` per deftest
+  ;; overlapped with the writer's import and caused strict reportDuplicateImport.
   (setv #(pytest-name pytest-import)
     (if (_static-view?) #('_doeff_pytest '(do)) #('pytest '(import pytest))))
   (setv decorators
@@ -2262,9 +2262,9 @@ the effect in the enclosing do-context.
                     :reason ~(if (is-not skip-reason None) skip-reason
                                  (hy.models.String "skip condition met"))))))
 
-  ;; pytest の item の記録 — 収集が test module を import せずに読む(#1291 — 記録の式を展開に足す)。
-  ;; module の段で 1 度だけ走る文なので _scoped-definition の module-forms に渡す(関数の本体の中の deftest は記録しない —
-  ;; pytest が集めるのは module の段の関数だけ)。
+  ;; Recording of pytest items — collection reads it without importing the test module (#1291 — add the record expression to the expansion).
+  ;; It is a statement that runs just once at module level, so pass it to module-forms of _scoped-definition (a deftest inside a function body is not recorded —
+  ;; pytest collects only module-level functions).
   (setv item-record (_record-test-function name fn-params item-decorators))
 
   ;; Assemble the function definition with decorators
@@ -2431,14 +2431,14 @@ defpipeline {pipeline}: no stages defined.
 ;; ---------------------------------------------------------------------------
 
 (defn _mcp-param-field [p key]
-  "schema の Hy の dict `p`(`{:name \"x\" :type \"string\" :description \"…\" …}`)の欄 `key`(\":name\" など)の form —
-   書かれていなければ None(書き手の `None` は記号の form なので、書かれていない事と分かれる)。"
+  "The form of the field `key` (such as \":name\") of the Hy dict `p` of the schema (`{:name \"x\" :type \"string\" :description \"…\" …}`) —
+   None if not written (the writer's `None` is a symbol form, so it is distinguished from not being written)."
   (next (gfor #(k v) (zip (cut p None None 2) (cut p 1 None 2)) :if (= (str k) key) v) None))
 
 (defn _mcp-param-schema [schema p]
-  "MCP の引数 1 つ(schema の Hy の dict `p`)の McpParamSchema の組み立ての式 — 書かれた欄だけを keyword で 1 度渡す
-   (:enum は tuple にする)。欄ごとに式を組み直していた頃は、:default を :required か :enum と一緒に書くと keyword が
-   崩れて定義の時に落ちた。schema = 展開が McpParamSchema を引く名。"
+  "The expression that builds the McpParamSchema of one MCP argument (the schema's Hy dict `p`) — passes only the written fields once as keywords
+   (:enum becomes a tuple). Back when the expression was rebuilt per field, writing :default together with :required or :enum broke the keywords
+   and the definition failed at definition time. schema = the name by which the expansion looks up McpParamSchema."
   (setv enum (_mcp-param-field p ":enum")
         required (_mcp-param-field p ":required")
         default (_mcp-param-field p ":default"))
@@ -2451,16 +2451,16 @@ defpipeline {pipeline}: no stages defined.
      ~@(if (is default None) [] [(hy.models.Keyword "default") default])))
 
 (defn _mcp-handler-param [tool p]
-  "MCP の引数 1 つ(schema の Hy の dict `p`)を受ける handler の引数 — 名に schema の型の注記を付ける(文字の注記 —
-   defk の契約の注記と同じく実行の時は評価しない)。
+  "The handler argument that receives one MCP argument (the schema's Hy dict `p`) — attach the schema's type annotation to the name (a string annotation —
+   not evaluated at runtime, the same as defk's contract annotations).
 
-   注記は doeff.mcp の表 MCP_JSON_TYPES の行から引く(`mcp-param-annotation`)。server(doeff_agents の mcp_server_loop)は
-   同じ表で受けた値を検め、合わない値・省いた必須の引数を handler を呼ぶ前に断るので、注記は実行の時にも真になる
-   (検めずに渡していた頃は `int` の引数に `\"100\"` が届いた)。
-   必須でない引数は `| None`(送られず既定値も無い引数に server が None を渡す)。:required を書かない引数は必須
-   (McpParamSchema の既定)で、True の字面でない :required と、既定値が `None` の引数は必須と決めない。
-   注記が無かった頃は、strict の型検査で引数 1 つにつき書き手の直せない赤が 2 件(注記が無い・型が Unknown)と、
-   本体でその引数を渡す所ごとに 1 件出た。知らない :type は展開の時に誤りにする。"
+   The annotation is taken from the row of the table MCP_JSON_TYPES of doeff.mcp (`mcp-param-annotation`). The server (mcp_server_loop of doeff_agents) checks
+   received values with the same table and rejects a mismatched value or an omitted required argument before calling the handler, so the annotation is also true at runtime
+   (back when values were passed without checking, `\"100\"` reached an `int` argument).
+   A non-required argument is `| None` (the server passes None for an argument that was not sent and has no default). An argument that does not write :required is required
+   (the default of McpParamSchema), and a :required that is not literally True, and an argument whose default is `None`, are not decided to be required.
+   Back when there were no annotations, strict type checking gave 2 reds per argument that the writer could not fix (no annotation, type Unknown), and 1 more
+   at every place in the body that passes that argument. An unknown :type is made an error at expansion time."
   (setv pname (str (_mcp-param-field p ":name"))
         ptype (_mcp-param-field p ":type")
         required (_mcp-param-field p ":required")
@@ -2470,9 +2470,9 @@ defpipeline {pipeline}: no stages defined.
                                               (!= default 'None))))
   (when (is annotation None)
     (raise (SyntaxError
-             (.format "defmcp-tool {}: 引数 {} の :type {} は知らない型です — {} のどれかを書いてください(handler の引数の型の注記にも写す)"
+             (.format "defmcp-tool {}: the :type {} of argument {} is an unknown type — write one of {} (it is also mapped to the type annotation of the handler's argument)"
                       tool pname (hy.repr ptype)
-                      (.join "・" (gfor type-name (mcp-json-type-names) (+ "\"" type-name "\"")))))))
+                      (.join ", " (gfor type-name (mcp-json-type-names) (+ "\"" type-name "\"")))))))
   `(annotate ~(hy.models.Symbol (.replace pname "-" "_")) ~(hy.models.String annotation)))
 
 (defn _parse-mcp-params [param-list schema tool]
@@ -2490,13 +2490,13 @@ defpipeline {pipeline}: no stages defined.
     (lfor p param-list (_mcp-handler-param tool p))))
 
 (defn _mcp-self-calls [name body]
-  "defmcp-tool の本体 `body`(form の列)のうち、tool 自身の名 `name` を頭に置く呼びの式の列(書かれた順)。
+  "Of the body `body` (a sequence of forms) of defmcp-tool, the sequence of call expressions (in written order) whose head is the tool's own name `name`.
 
-   展開は `name` を McpToolDef に束ねるので、本体の `(name …)` は同じ名の defk が先に在っても tool を指し、run の時に
-   TypeError: 'McpToolDef' object is not callable で落ちる(docs 12 章 MCP の道具の例)。名は
-   mangle して比べる(`submit-order` と `submit_order` は同じ名)。引用(quote・quasiquote)の中は data なので見ない。
-   tool の値を読むだけの参照(`(. name 欄)`・引数に渡す `name`)は呼びでないので数えない。綴りだけを見るので、本体の
-   中で同じ名を束ね直して呼ぶ形も断る — tool の名を変えれば済む。"
+   The expansion binds `name` to McpToolDef, so a `(name …)` in the body points at the tool even if a defk of the same name exists earlier, and it fails at run time with
+   TypeError: 'McpToolDef' object is not callable (the MCP tool example in docs chapter 12). Names are
+   compared after mangling (`submit-order` and `submit_order` are the same name). The inside of quotes (quote, quasiquote) is data, so it is not looked at.
+   A reference that only reads the tool's value (`(. name field)` and `name` passed as an argument) is not a call, so it is not counted. Only the spelling is looked at, so a form that
+   rebinds the same name in the body and calls it is also rejected — renaming the tool is enough."
   (setv own (hy.mangle (str name)))
   (defn #^ bool head-is? [#^ hy.models.Expression node #^ (get tuple #(str ...)) names]
     (and (> (len node) 0)
@@ -2534,22 +2534,22 @@ defpipeline {pipeline}: no stages defined.
       the schema's :type as a Python type (`_mcp-handler-param`)
    2. An McpToolDef instance <name> with the schema + handler
 
-   <name> は McpToolDef に束ねるので、tool には本体が呼ぶ defk と別の名を付ける。本体が <name> を呼ぶ形は展開の時に
-   断る(`_mcp-self-calls`)— 断らなかった頃は、同じ名の defk が先に在っても本体の呼びが tool を指し、run の時に
-   TypeError: 'McpToolDef' object is not callable で落ちた(docs 12 章 MCP の道具の例)。
+   <name> is bound to McpToolDef, so give the tool a name different from the defk the body calls. A form where the body calls <name> is rejected at expansion time
+   (`_mcp-self-calls`) — before it was rejected, even if a defk of the same name existed earlier, the call in the body pointed at the tool, and it failed at run time with
+   TypeError: 'McpToolDef' object is not callable (the MCP tool example in docs chapter 12).
 
-   関数の本体の中に書くと、import と handler をすぐ呼ぶ関数に入れて <name> だけを束ねる(_scoped-definition —
-   外の関数で先に読む for/do・traverse の `_doeff_do` を未束縛にしない。handler は <name> の :handler で引く)。
+   When written inside a function body, put the import and the handler into an immediately-called function and bind only <name> (_scoped-definition —
+   so as not to leave `_doeff_do` of for/do and traverse, read earlier in the outer function, unbound. The handler is looked up by <name>'s :handler).
 
-   handler の decorator の `_doeff_do` は、defk と同じく `_helper-imports` から取る。型検査のための展開では import を出さず、
-   doeff-hy-check が module の頭に置く `_doeff_do` を読む — tool ごとに `doeff.do` を import していた頃は、tool を 65 個持つ
-   module で `_doeff_do` の宣言が 64 を超え、pyright が Unknown にして、同じ module の defk の呼びを Program ではなく
-   :post の型に見ていた。
+   The handler decorator's `_doeff_do` is taken from `_helper-imports`, the same as defk. The expansion for type checking emits no import and
+   reads the `_doeff_do` that doeff-hy-check places at the top of the module — back when `doeff.do` was imported per tool, in a module with 65 tools
+   the declarations of `_doeff_do` exceeded 64, pyright turned it into Unknown, and calls of defk in the same module were seen
+   as the type of :post instead of Program.
 
-   型検査のための展開は import を 1 つも出さない。tool の値の McpToolDef / McpParamSchema も、doeff-hy-check が module の
-   頭に 1 度だけ置く `_doeff_McpToolDef` / `_doeff_McpParamSchema`(doeff_hy/_static_view.py の MCP_STATIC_IMPORTS)で引く —
-   tool ごとに `doeff.mcp` を import すると、tool を 65 個持つ module か class で McpToolDef の宣言が 64 を超え、tool の値が
-   Unknown になった。実行時の展開は今までどおり tool ごとに doeff.mcp を import する。"
+   The expansion for type checking emits no import at all. The tool's values McpToolDef / McpParamSchema are also looked up through `_doeff_McpToolDef` / `_doeff_McpParamSchema`,
+   which doeff-hy-check places once at the top of the module (MCP_STATIC_IMPORTS in doeff_hy/_static_view.py) —
+   importing `doeff.mcp` per tool made the declarations of McpToolDef exceed 64 in a module or class with 65 tools, and the tool's value became
+   Unknown. The runtime expansion imports doeff.mcp per tool, as before."
   (when (not (isinstance description hy.models.String))
     (raise (SyntaxError (.format "
 defmcp-tool {name}: second argument must be a description string.
@@ -2571,11 +2571,11 @@ defmcp-tool {name}: third argument must be a parameter list [...].
   (setv self-calls (_mcp-self-calls name body))
   (when self-calls
     (raise (SyntaxError
-             (.format "defmcp-tool {name}: 本体が tool 自身の名 {name} を呼んでいます({call})— 展開はこの名を McpToolDef に束ねるので、同じ名の defk が先に在っても本体の呼びは tool を指し、run の時に TypeError: 'McpToolDef' object is not callable で落ちます。tool に呼ぶ defk と別の名(例 {name}-tool)を付けてください"
+             (.format "defmcp-tool {name}: the body calls the tool's own name {name} ({call}) — the expansion binds this name to McpToolDef, so even if a defk of the same name exists earlier the call in the body points at the tool, and it fails at run time with TypeError: 'McpToolDef' object is not callable. Give the tool a name different from the defk it calls (e.g. {name}-tool)"
                       :name name
                       :call (cut (hy.repr (get self-calls 0)) 1 None)))))
-  ;; tool の値を作る名: 型検査のための展開では module の頭の `_doeff_<名>`(static_view.py の MCP_STATIC_IMPORTS)、
-  ;; 実行時は tool ごとの doeff.mcp の import
+  ;; The name that builds the tool's value: in the expansion for type checking, `_doeff_<name>` at the top of the module (MCP_STATIC_IMPORTS of static_view.py),
+  ;; at runtime, the import of doeff.mcp per tool
   (setv #(tool-def param-schema mcp-import)
     (if (_static-view?)
         #('_doeff_McpToolDef '_doeff_McpParamSchema '(do))
@@ -2617,14 +2617,14 @@ defmcp-tool {name}: third argument must be a parameter list [...].
    Using set! on a lazy-val raises a compile-time SyntaxError in defhandler/defk."
   (import warnings)
   (warnings.warn
-    (+ "(set! " (str name) " …) は (:= " (str name) " 新しい値) へ移してください(意味は同じ)"
+    (+ "(set! " (str name) " …) has been replaced by (:= " (str name) " new-value) — please move to it (the meaning is the same)"
        " [ADR-DOE-HY-006]")
     DeprecationWarning
     :stacklevel 2)
   (setv key-var (hy.models.Symbol (+ "_lazy_" (str name) "_key")))
-  ;; どちらの展開も `_doeff_` の頭の別名で引く(書き手の KV の Put などの effect を隠さない — doeff_hy/_expansion_names.py)。
-  ;; 別名の束ねは、型検査のための展開では doeff-hy-check が module の頭で読む時だけ置く(doeff_hy/_static_view.py の
-  ;; SESSION_STATIC_IMPORTS)、実行時は defhandler が出す import。
+  ;; Both expansions look it up through aliases with a `_doeff_` prefix (so as not to hide the writer's effects such as KV's Put — doeff_hy/_expansion_names.py).
+  ;; The alias bindings are placed in the expansion for type checking only when doeff-hy-check reads them at the top of the module (SESSION_STATIC_IMPORTS of doeff_hy/_static_view.py),
+  ;; and at runtime they are the imports that defhandler emits.
   (setv put (_alias-symbol "Put")
         some (_alias-symbol "Some"))
   `(do
@@ -2633,12 +2633,12 @@ defmcp-tool {name}: third argument must be a parameter list [...].
 
 
 ;; ---------------------------------------------------------------------------
-;; validate / check — 独立した検査を全部走らせて失敗を集める(doeff-validation の Hy の面)
+;; validate / check — run all independent checks and collect the failures (the Hy face of doeff-validation)
 ;; ---------------------------------------------------------------------------
 ;;
-;; 実行時の部分(Check・validate・ValidationException)は doeff-validation が持ち、ここは
-;; 展開だけを持つ(ADR-DOE-HY-005 R5 — macro は doeff-hy にだけ置く)。展開した code は
-;; doeff_validation を import するので、使う側は doeff-validation を入れる。
+;; The runtime part (Check, validate, ValidationException) belongs to doeff-validation, and this holds
+;; only the expansion (ADR-DOE-HY-005 R5 — macros are placed only in doeff-hy). The expanded code
+;; imports doeff_validation, so the user side installs doeff-validation.
 ;;
 ;;   (require doeff-hy.macros [defk validate check])
 ;;
@@ -2649,68 +2649,68 @@ defmcp-tool {name}: third argument must be a parameter list [...].
 ;;          (check is-not (! (LookupConversation request.conversation)) None
 ;;                 :reason PlacementMismatch.CONVERSATION))))
 ;;
-;; - validate: 直下に並べるのは独立した項目 — check と Program(defk の呼び出し)の 2 種類。
-;;   項目を全部走らせ(逐次・並行・fail-fast は doeff-traverse の handler で選ぶ)、落ちた項目の失敗を
-;;   全部集めて、1 つでもあれば ValidationException を投げる Program になる。defk の本体では
-;;   (! (validate …)) か (<- _ (validate …)) で実行する。直下の裸の (<- …) / (! …) は展開の時点で誤り。
-;; - check: validate の直下と、defk / do! の :pre / :post の中にだけ書ける。
-;;   (check 演算子 引数 … :reason 理由) か (check 式 :reason 理由)。各引数は左から評価し、(! …) の
-;;   印の付いた引数だけを効果として実行して、結果の値で比べる。式の字面と評価した値を記録する
-;;   (and / or などの短絡・制御の形は分解しない)。それ以外の所の check は展開の時点で誤り。
-;; - この節の関数は defn: マクロの展開の時(compile の時)に呼ばれ、Program を実行する場が無いので
-;;   defk にできない。
+;; - validate: what is lined up directly under it are independent items — two kinds, check and Program (a call of defk).
+;;   Run all the items (sequential, concurrent or fail-fast is chosen by the handler of doeff-traverse), collect all the failures of the failed items,
+;;   and it becomes a Program that raises ValidationException if there is even one. In a defk body,
+;;   run it with (! (validate …)) or (<- _ (validate …)). A bare (<- …) / (! …) directly under it is an error at expansion time.
+;; - check: can be written only directly under validate and inside :pre / :post of defk / do!.
+;;   (check operator arg … :reason reason) or (check expr :reason reason). Each argument is evaluated from the left, and only arguments marked
+;;   with (! …) are run as effects, and the comparison uses the resulting values. The expression's text and the evaluated values are recorded
+;;   (short-circuit and control forms such as and / or are not decomposed). A check anywhere else is an error at expansion time.
+;; - The functions in this section are defn: they are called at macro expansion time (compile time), and there is no place to run a Program,
+;;   so they cannot be defk.
 ;;
-;; 設計の記録: docs/design/doeff-validation/design.md。
+;; Design record: docs/design/doeff-validation/design.md.
 
-;; 引数を先に評価すると意味が変わる形(短絡・制御・束縛)。括弧の形なら分解せず式と真偽だけを
-;; 記録し、平たい形の演算子に置いたら展開の時点で誤りにする。
+;; Forms whose meaning changes if arguments are evaluated first (short-circuit, control, binding). In the parenthesized form they are not decomposed, and only the expression and truth value are
+;; recorded; if placed on a flat-form operator, it is an error at expansion time.
 (setv _VALIDATION-NOT-DECOMPOSABLE
   #{"and" "or" "if" "when" "unless" "cond" "let" "do" "fn" "lfor" "sfor" "dfor" "gfor"
     "->" "->>" "doto" "match" "setv" "quote" "quasiquote" "!"})
 
 
 (defn _validation-head-name [form]
-  "形の先頭の名前を返す(validate の直下の形・契約の check を見分けるため)。"
+  "Return the name at the head of a form (to distinguish forms directly under validate and a contract's check)."
   (when (and (isinstance form hy.models.Expression) (> (len form) 0) (isinstance (get form 0) hy.models.Symbol))
     (str (get form 0))))
 
 
 (defn _validation-is-check-form [form]
-  "form が (check …) か — doeff-hy の defk / do! が契約の中の check を見分けるために使う。"
+  "Whether form is a (check …) — used by doeff-hy's defk / do! to recognize a check inside a contract."
   (= (_validation-head-name form) "check"))
 
 
 (defn _validation-source [form]
-  "失敗の記録に残す、書いたままの字面。"
+  "The text as written, to be left in the failure record."
   (setv text (hy.repr form))
   (if (.startswith text "'") (cut text 1 None) text))
 
 
 (defn _validation-split-reason [args]
-  "check の引数から :reason 理由 を取り出す。"
+  "Extract :reason reason from the arguments of check."
   (setv positional [] reason 'None i 0)
   (while (< i (len args))
     (setv arg (get args i))
     (cond
       (and (isinstance arg hy.models.Keyword) (= (str arg) ":reason"))
         (do (when (>= (+ i 1) (len args))
-              (raise (SyntaxError "check: :reason の後に理由を書いてください")))
+              (raise (SyntaxError "check: write a reason after :reason")))
             (setv reason (get args (+ i 1)))
             (+= i 2))
       (isinstance arg hy.models.Keyword)
-        (raise (SyntaxError (+ "check: 知らない keyword " (str arg) " — 使えるのは :reason だけです")))
+        (raise (SyntaxError (+ "check: unknown keyword " (str arg) " — only :reason is allowed")))
       True (do (.append positional arg) (+= i 1))))
   #(positional reason))
 
 
 (defn _validation-parse-check [args]
-  "check の引数を #(式の字面 演算子か-None 引数の列 理由) に解く(validate と契約の共通の解析)。
+  "Resolve the arguments of check into #(expression-text operator-or-None argument-list reason) (the analysis shared by validate and contracts).
 
-   演算子が None の時は、引数の列の 1 つの式そのものの真偽で判定する(分解しない形)。"
+   When the operator is None, judge by the truth value of the single expression in the argument list itself (a form that is not decomposed)."
   (setv #(positional reason) (_validation-split-reason args))
   (cond
     (= (len positional) 0)
-      (raise (SyntaxError "check: (check 演算子 引数 …) か (check 式) の形で書いてください"))
+      (raise (SyntaxError "check: write it in the form (check operator arg …) or (check expr)"))
     (= (len positional) 1)
       (let [expr (get positional 0)
             head (_validation-head-name expr)]
@@ -2721,13 +2721,13 @@ defmcp-tool {name}: third argument must be a parameter list [...].
       (let [op (get positional 0)
             operands (list (cut positional 1 None))]
         (when (and (isinstance op hy.models.Symbol) (in (str op) _VALIDATION-NOT-DECOMPOSABLE))
-          (raise (SyntaxError (+ "check: " (str op) " は引数を先に評価すると意味が変わります — "
-                                 "(check (" (str op) " …)) の括弧の形で書いてください"))))
+          (raise (SyntaxError (+ "check: " (str op) " changes meaning if its arguments are evaluated first — "
+                                 "write it in the parenthesized form (check (" (str op) " …))"))))
         #((_validation-source (hy.models.Expression [op #* operands])) op operands reason))))
 
 
 (defn _validation-contains-bang [form]
-  "引数の式の中に (! …) の印があるか(印のある引数だけを効果として実行する)。"
+  "Whether the argument expression has a (! …) mark (only marked arguments are run as effects)."
   (cond
     (= (_validation-head-name form) "!") True
     (in (_validation-head-name form) #{"quote" "quasiquote"}) False
@@ -2736,10 +2736,10 @@ defmcp-tool {name}: third argument must be a parameter list [...].
 
 
 (defn _validation-imports []
-  "展開した code が参照する doeff-validation と doeff の do の import(pyright が型を追えるように)。
-   実行時の do の置き場は補助の表の `_runtime-do`。"
-  ;; 別名は validate / check の展開だけが使う名前にする: defk の本体の中で import すると関数の局所名に
-  ;; なるので、defk が使う _doeff_do などと同じ名前を import すると、それより前の参照が未束縛になる。
+  "The imports of doeff-validation and doeff's do that the expanded code refers to (so that pyright can follow the types).
+   The runtime location of do is `_runtime-do` of the helper table."
+  ;; Make the aliases names used only by the expansion of validate / check: importing inside a defk body makes them local names of the function, so
+  ;; if the same name as the `_doeff_do` etc. used by defk is imported, earlier references become unbound.
   (if (_static-view?)
       `(do (import doeff-hy._static-types [do :as _doeff_validation_do])
            (import doeff-validation :as _doeff_validation)
@@ -2752,21 +2752,21 @@ defmcp-tool {name}: third argument must be a parameter list [...].
 
 
 (defn _validation-predicate [op params]
-  "判定の関数の式: 演算子があれば (fn [a b] (op a b))、無ければ 1 つの値そのもの。"
+  "The judgment function's expression: if there is an operator, (fn [a b] (op a b)); otherwise the single value itself."
   (if (is op None)
       `(fn [~@params] ~(get params 0))
       `(fn [~@params] (~op ~@params))))
 
 
 ;; ---------------------------------------------------------------------------
-;; validate の直下の check — 項目(型 Check の値)にする
+;; A check directly under validate — make it an item (a value of type Check)
 ;; ---------------------------------------------------------------------------
 
 (defn _validation-argument [form]
-  "引数 1 つを、字面と、項目の中で評価する thunk の組にする(評価の失敗をその項目の失敗にするため)。
+  "Turn one argument into a pair of the text and a thunk evaluated inside the item (so that an evaluation failure becomes that item's failure).
 
-   (! …) の印がある引数は、印を doeff-hy の規則(ADR-DOE-HY-003)で yield に書き換えた小さな Program を
-   thunk が作り、項目の中で実行する。印の無い引数は普通の値として評価する(Program の値もそのまま比べる)。"
+   For an argument with a (! …) mark, the thunk builds a small Program in which the mark is rewritten to yield by doeff-hy's rule (ADR-DOE-HY-003),
+   and it is run inside the item. An argument without a mark is evaluated as an ordinary value (a Program value is also compared as is)."
   (if (_validation-contains-bang form)
       `(_doeff_validation_failures.CheckArgument
          ~(_validation-source form)
@@ -2776,7 +2776,7 @@ defmcp-tool {name}: third argument must be a parameter list [...].
 
 
 (defn _validation-check-spec [args]
-  "validate の直下の check を型 Check の構築の式にする(各引数は CheckArgument で渡し、Check はそのまま使う)。"
+  "Turn a check directly under validate into an expression that constructs the type Check (each argument is passed as CheckArgument, and Check is used as is)."
   (setv #(expression op operands reason) (_validation-parse-check args))
   (setv params (lfor _ operands (hy.gensym "arg")))
   `(_doeff_validation.Check
@@ -2787,29 +2787,29 @@ defmcp-tool {name}: third argument must be a parameter list [...].
 
 
 (defn _validation-item [form]
-  "validate の直下の形を項目にする — check は検査の指定に、それ以外は Program としてそのまま。"
+  "Turn a form directly under validate into an item — check becomes a check specification, anything else is a Program as is."
   (setv head (_validation-head-name form))
   (cond
     (in head #{"<-" "!"})
-      (raise (SyntaxError (+ "validate: 直下に (" head " …) は書けません — " (_validation-source form) "\n\n"
-                             "  validate の直下に並べるのは独立した項目(check か Program)です。\n"
-                             "  Program の項目は (! …) を付けずにそのまま置きます(validate が実行する)。\n"
-                             "  前の値に依る処理は validate の前で済ませるか、helper の defk の中に\n"
-                             "  自分の validate を持たせてください。")))
+      (raise (SyntaxError (+ "validate: (" head " …) cannot be written directly under it — " (_validation-source form) "\n\n"
+                             "  What is lined up directly under validate are independent items (check or Program).\n"
+                             "  Place a Program item as is, without (! …) (validate runs it).\n"
+                             "  Do the processing that depends on a previous value before validate, or have a helper defk\n"
+                             "  hold its own validate.")))
     (= head "check") (_validation-check-spec (list (cut form 1 None)))
     True form))
 
 
 ;; ---------------------------------------------------------------------------
-;; defk / do! の契約の中の check — その場で評価する文の列にする
+;; A check inside the contract of defk / do! — make it a sequence of statements evaluated on the spot
 ;; ---------------------------------------------------------------------------
 
 (defn _validation-contract-block [checks fn-name phase]
-  "契約(:pre / :post)の check の列を、全部を評価して失敗を集め、1 つでもあれば ValidationException
-   を投げる文の列にする。doeff-hy の defk / do! が契約の組み立てで呼ぶ。
+  "Turn the sequence of checks of a contract (:pre / :post) into a sequence of statements that evaluates all of them, collects the failures, and raises ValidationException
+   if there is even one. Called by defk / do! of doeff-hy when assembling the contract.
 
-   各 check の引数は左から評価し、(! …) の印の付いた引数はその場で実行する(defk / do! の本体は
-   生成器なので yield が書ける)。引数か判定の評価が例外なら CheckError として集める。"
+   Each check's arguments are evaluated from the left, and arguments marked with (! …) are run on the spot (the body of defk / do! is
+   a generator, so yield can be written). If the evaluation of an argument or of the judgment is an exception, it is collected as CheckError."
   (setv failures (hy.gensym "failures"))
   (setv owner (+ (str fn-name) " " phase))
   (setv per-check
@@ -2840,13 +2840,13 @@ defmcp-tool {name}: third argument must be a parameter list [...].
 
 
 ;; ---------------------------------------------------------------------------
-;; マクロ
+;; Macros
 ;; ---------------------------------------------------------------------------
 
 (defmacro validate [#^ Object #* forms]
-  "独立した項目(check と Program)を全部走らせ、落ちた項目の失敗を全部集める Program を作る。
+  "Build a Program that runs all independent items (check and Program) and collects the failures of all the failed items.
 
-   defk の本体では (! (validate …)) か (<- _ (validate …)) で実行する。
+   In a defk body, run it with (! (validate …)) or (<- _ (validate …)).
 
    (! (validate
         (check = (! (CountSeats node)) 0 :reason Reason.SEATS-LEFT)
@@ -2856,12 +2856,12 @@ defmcp-tool {name}: third argument must be a parameter list [...].
 
 
 (defmacro check [#^ Object #* args]
-  "check は validate の直下と defk / do! の :pre / :post にだけ書ける。それ以外の所で展開されたら誤り。"
-  (raise (SyntaxError (+ "check: validate の直下と、defk / do! の :pre / :post にだけ書けます"
-                         "(defk の本体・fn・内包表記の中は不可)\n\n"
+  "check can be written only directly under validate and in :pre / :post of defk / do!. If it is expanded anywhere else, it is an error."
+  (raise (SyntaxError (+ "check: it can be written only directly under validate and in :pre / :post of defk / do!"
+                         " (not allowed in a defk body, fn or a comprehension)\n\n"
                          "    (! (validate\n"
                          "         (check = job.phase Phase.PENDING :reason PlacementMismatch.PHASE)\n"
                          "         (check is-not (! (LookupConversation request.conversation)) None\n"
                          "                :reason PlacementMismatch.CONVERSATION)))\n\n"
-                         "  検査のまとまりを使い回すなら、helper の defk の中に自分の validate を持たせて、\n"
-                         "  その defk の呼び出しを外の validate に並べてください。"))))
+                         "  To reuse a group of checks, have a helper defk hold its own validate,\n"
+                         "  and line up the calls of that defk in the outer validate."))))

@@ -1,66 +1,66 @@
-"""defrecord と defeffect の実行の展開が読み込みの時に読む部品。
+"""Parts that the expansions of defrecord and defeffect read at load time.
 
-defrecord は関数(__init__・__repr__・__eq__・__hash__・凍結の __setattr__ / __delattr__)を展開の時に書き、dataclass には欄の表だけを
-作らせる(doeff_hy/record.hy の頭注)。展開が書いた class の本体と、class を作った直後の文がここを読む。
+defrecord writes the functions (__init__, __repr__, __eq__, __hash__, and the frozen __setattr__ / __delattr__) at expansion time and lets dataclass build only
+the table of fields (see the header note of doeff_hy/record.hy). The class body the expansion wrote and the statements right after the class is built read this module.
 
-この module は標準の library だけを import する葉の module。doeff_hy の中の module(outcome_forms ほか)も defrecord を使い、
-doeff_hy.record を読み込む途中で読み込まれるので、展開が class を作る時に読む物を doeff_hy.record に置くと循環の import になる。
+This module is a leaf module that imports only the standard library. Modules inside doeff_hy (outcome_forms and others) also use defrecord and
+are loaded while doeff_hy.record is being loaded, so putting what the expansion reads when it builds a class into doeff_hy.record would make a circular import.
 """
 
 import dataclasses
 import reprlib
 import types
 
-#: 展開が書く凍結の __setattr__ / __delattr__ が出す error(dataclass と同じ型 — 呼び手の except FrozenInstanceError が今までどおり効く)。
+#: The errors raised by the frozen __setattr__ / __delattr__ the expansion writes (same type as dataclass, so callers' except FrozenInstanceError keeps working as before).
 FrozenInstanceError = dataclasses.FrozenInstanceError
 
 
 class _FactoryDefault:
-    """既定の工場を持つ欄の引数を省いた印(展開が書く __init__ の既定値 — 署名の文は dataclass と同じ ``<factory>``)。"""
+    """Marker for an omitted argument of a field with a default factory (the default of the __init__ the expansion writes; the signature text is ``<factory>``, same as dataclass)."""
 
     def __repr__(self) -> str:
         return "<factory>"
 
 
-#: 展開が書く __init__ の、default-factory の欄の引数の既定値(省いた時だけ工場を呼ぶ)。
+#: Default value of the argument for a default-factory field in the __init__ the expansion writes (the factory is called only when it is omitted).
 FACTORY_DEFAULT = _FactoryDefault()
 
 
 @dataclasses.dataclass(frozen=True, kw_only=True)
 class _ReferenceRecord:
-    """今までの展開(dataclass frozen・kw_only)と同じ __dataclass_params__ を持つ見本(値を写すためだけに作る)。"""
+    """A sample with the same __dataclass_params__ as the previous expansion (dataclass frozen, kw_only); built only to copy its value."""
 
 
-#: 展開が関数を書いた record の __dataclass_params__ — dataclass に関数を作らせない呼び方の値を、今までの展開
-#: (frozen・eq・init・repr が真・kw_only)と同じ値に戻す。
+#: __dataclass_params__ of a record whose functions the expansion wrote: restores the value of the call that keeps dataclass from building functions to the same value as the previous expansion
+#: (frozen, eq, init, repr true; kw_only).
 RECORD_PARAMS: object = getattr(_ReferenceRecord, "__dataclass_params__")
 
 @dataclasses.dataclass(frozen=True)
 class _ReferenceEffect:
-    """defeffect の今までの展開(dataclass frozen・位置の引数)と同じ __dataclass_params__ を持つ見本。"""
+    """A sample with the same __dataclass_params__ as the previous expansion of defeffect (dataclass frozen, positional arguments)."""
 
 
-#: 展開が関数を書いた effect 型の __dataclass_params__ — 今までの展開(frozen・eq・init・repr が真・kw_only が偽)と同じ値に戻す。
+#: __dataclass_params__ of an effect type whose functions the expansion wrote: restores the value to the same as the previous expansion (frozen, eq, init, repr true; kw_only false).
 EFFECT_PARAMS: object = getattr(_ReferenceEffect, "__dataclass_params__")
 
-#: 展開が書く __repr__ の再帰の守り(dataclass の __repr__ と同じ — 自分を含む値は ``...``)。
+#: Recursion guard for the __repr__ the expansion writes (same as dataclass's __repr__: a value that contains itself prints as ``...``).
 recursive_repr = reprlib.recursive_repr
 
 
-# --- 型どうしで共有する method----------------------------------------------------------------------
-# __repr__ と凍結の __setattr__ / __delattr__ は、型ごとに関数を書かず、ここの 1 組を defrecord の全部の型が class の本体で指す。
-# 型ごとに違うのは欄の名の並びだけで、展開が class の本体に字面の tuple で置く: __doeff_fields__(全部の欄 — 凍結の守り)・
-# __doeff_repr_fields__。型ごとに関数(code の object・注記の __annotate__ ほか)を持つと、型 約 1,760 の job で 10 MB を越えた。
-#__eq__ と __hash__ は辞書の鍵や集合に入れるたびに呼ばれるので型ごとのまま(record.hy の注)。
-# 振る舞いは標準の dataclass(frozen・kw_only)と同じ。型の名は名でなく self の型から読む(class の本体に書いた型も同じに動く)。
+# --- Methods shared between types ----------------------------------------------------------------------
+# __repr__ and the frozen __setattr__ / __delattr__ are not written per type: all defrecord types point at this one set from the class body.
+# Only the sequence of field names differs per type, and the expansion puts it in the class body as a literal tuple: __doeff_fields__ (all fields — the freeze guard) and
+# __doeff_repr_fields__. When each type carried its own functions (code objects, the __annotate__ of annotations, and so on), a job with about 1,760 types exceeded 10 MB.
+# __eq__ and __hash__ are called every time a value goes into a dict key or a set, so they stay per type (see the note in record.hy).
+# Behavior is the same as standard dataclass (frozen, kw_only). The type name is read from the type of self, not from a name (so a type written in a class body works the same).
 
 
 class _RecordDoc:
-    """defrecord の型の __doc__ を、読んだ時に ``Name(*, a, b)``(欄の名)で組むため — docstring を実行の展開に置かない型の説明。
+    """Builds the __doc__ of a defrecord type as ``Name(*, a, b)`` (field names) when read — describes types that do not put a docstring in the runtime expansion.
 
-    型の辞書の __doc__ に置いた記述子は、型の __doc__ を読むと __get__ が呼ばれる。文を型に持たせないので、型ごとの文字列が
-    memory に残らない。dataclass は docstring の無い型に読み込みの時に署名の文を計算する(inspect.signature)が、この記述子は
-    真の文を返すので計算しない。書いた docstring は source と型検査の投影に残る。"""
+    A descriptor placed in the type dict's __doc__ has __get__ called when the type's __doc__ is read. Since the type holds no string, a per-type string
+    does not stay in memory. For a type without a docstring, dataclass computes the signature text at load time (inspect.signature), but this descriptor
+    returns the real text, so it does not compute it. The docstring that was written remains in the source and the type-check projection."""
 
     def __get__(self, instance: object, owner: type | None = None) -> str:
         cls = owner if owner is not None else type(instance)
@@ -68,33 +68,33 @@ class _RecordDoc:
         return f"{cls.__qualname__}(*, {', '.join(names)})" if names else f"{cls.__qualname__}()"
 
 
-#: defrecord の展開が class の本体の __doc__ に置く共有の記述子。
+#: Shared descriptor that the defrecord expansion puts in the class body's __doc__.
 RECORD_DOC = _RecordDoc()
 
 
 def _names(cls: type, attr: str) -> tuple[str, ...]:
-    """展開が class の本体に置いた欄の名の tuple(attr = __doeff_fields__ ほか)。"""
+    """The tuple of field names the expansion put in the class body (attr = __doeff_fields__ and others)."""
     names: tuple[str, ...] = getattr(cls, attr)
     return names
 
 
 def _frozen_owner(cls: type) -> type:
-    """凍結の守りを持つ型(MRO の中で __doeff_fields__ を自分の辞書に持つ最初の型)— 守りを持たない子の型の値を書く時の super の起点。"""
+    """The type with the freeze guard (the first type in the MRO that has __doeff_fields__ in its own dict) — the starting point of super when writing a value of a child type that has no guard."""
     for klass in cls.__mro__:
         if "__doeff_fields__" in vars(klass):
             return klass
-    raise TypeError(f"{cls.__qualname__} は defrecord / defeffect の型ではない(__doeff_fields__ が無い)")
+    raise TypeError(f"{cls.__qualname__} is not a defrecord / defeffect type (it has no __doeff_fields__)")
 
 
 @reprlib.recursive_repr()
 def record_repr(self: object) -> str:
-    """``Name(a=1, b='x')`` — dataclass の __repr__ と同じ文(型の __qualname__・repr に載る欄を書いた順に)。"""
+    """``Name(a=1, b='x')`` — the same text as dataclass's __repr__ (the type's __qualname__, and the fields shown in repr in the order written)."""
     cls = self.__class__
     return f"{cls.__qualname__}(" + ", ".join([f"{name}={getattr(self, name)!r}" for name in _names(cls, "__doeff_repr_fields__")]) + ")"
 
 
 def record_setattr(self: object, name: str, value: object) -> None:
-    """凍結: 型そのものの値は全部の名を、守りを持たない子の型の値は欄の名だけを断る(dataclass の frozen と同じ)。"""
+    """Frozen: a value of the type itself refuses every name; a value of a child type without a guard refuses only field names (same as dataclass frozen)."""
     cls = type(self)
     if "__doeff_fields__" in vars(cls) or name in _names(cls, "__doeff_fields__"):
         raise FrozenInstanceError(f"cannot assign to field {name!r}")
@@ -102,7 +102,7 @@ def record_setattr(self: object, name: str, value: object) -> None:
 
 
 def record_delattr(self: object, name: str) -> None:
-    """凍結の __delattr__(record_setattr と同じ守り)。"""
+    """Frozen __delattr__ (same guard as record_setattr)."""
     cls = type(self)
     if "__doeff_fields__" in vars(cls) or name in _names(cls, "__doeff_fields__"):
         raise FrozenInstanceError(f"cannot delete field {name!r}")
@@ -110,9 +110,9 @@ def record_delattr(self: object, name: str) -> None:
 
 
 def record_setstate(self: object, state: object) -> None:
-    """pickle・copy が値を戻すため(凍結の __setattr__ を通らずに置く — dataclass の frozen と slots の __setstate__ と同じ役)。
-    state は object.__getstate__ の形: slots だけの型は ``(None, {欄: 値})``・__dict__ を持つ子の型は ``(辞書, {欄: 値})``。
-    slots にする前に pickle した値の state(``{欄: 値}`` の辞書)も受ける。"""
+    """For pickle and copy to restore a value (sets without going through the frozen __setattr__ — the same role as __setstate__ of dataclass frozen with slots).
+    state has the shape of object.__getstate__: a slots-only type is ``(None, {field: value})``; a child type with __dict__ is ``(dict, {field: value})``.
+    It also accepts the state of a value pickled before slots were used (a ``{field: value}`` dict)."""
     parts = state if isinstance(state, tuple) else (state, None)
     for part in parts:
         if part:
@@ -121,42 +121,42 @@ def record_setstate(self: object, state: object) -> None:
 
 
 def seal_record(cls: type, plain: tuple[str, ...], calls_post_init: bool) -> None:
-    """展開が関数を書いた record を仕上げるため: __dataclass_params__ を今までの展開と同じ値に戻し、展開が字面の値と読んだ欄 plain の
-    既定値が field の印(工場・init・repr・compare・hash を持つ Field)でない事を確かめる(名を介した field は展開が読めず、関数が
-    違う形になる — 欄に ``(field …)`` を直に書く)。型が __post_init__ を持つのに展開の __init__ がそれを呼ばない(calls_post_init が
-    偽)時は断る — 展開が本体の自前の __post_init__ を見落とすと、入力の検査が黙って効かなくなる(doeff 424a87f58 の後退)。"""
+    """Finish a record whose functions the expansion wrote: restore __dataclass_params__ to the same value as the previous expansion, and check that the defaults of the plain fields the expansion read as literal values
+    are not field markers (a Field with a factory, init, repr, compare, or hash) (the expansion cannot read a field passed through a name and the functions
+    would take a different shape — write ``(field …)`` directly in the field). Refuse when the type has __post_init__ but the expansion's __init__ does not call it (calls_post_init is
+    false) — if the expansion overlooks the body's own __post_init__, input checks silently stop working (regression of doeff 424a87f58)."""
     if "__post_init__" in vars(cls) and not calls_post_init:
-        raise TypeError(f"{cls.__name__} の __post_init__ を展開の __init__ が呼ばない — defrecord の展開が本体の自前の関数を見落とした")
+        raise TypeError(f"The expansion's __init__ does not call __post_init__ of {cls.__name__} — the defrecord expansion overlooked the body's own function")
     fields: dict[str, dataclasses.Field[object]] = getattr(cls, "__dataclass_fields__")
     for name in plain:
         f = fields[name]
         if f.default_factory is not dataclasses.MISSING or not f.init or not f.repr or not f.compare or f.hash is not None:
-            raise TypeError(f"{cls.__name__} の欄 {name} の既定値は field の印 — defrecord の欄には (field …) を直に書く")
+            raise TypeError(f"The default of field {name} of {cls.__name__} is a field marker — write (field …) directly in a defrecord field")
     setattr(cls, "__dataclass_params__", RECORD_PARAMS)
 
 
 def seal_effect(cls: type, names: tuple[str, ...], calls_post_init: bool) -> None:
-    """展開が関数を書いた defeffect の effect 型を仕上げるため: __dataclass_params__ を今までの展開(frozen の dataclass・位置の
-    引数)と同じ値に戻す。展開は欄の型と既定値を字面で読むので、dataclass の欄の表が展開の読んだ形と
-    違う時は読み込みで断る(424a87f58 の後退と同じ穴 — 展開の関数が黙って違う値を置かない):
-    型が __post_init__ を持つのに展開の __init__ が呼ばない・欄の名の並び names が違う(ClassVar・InitVar・KW_ONLY の型)・
-    既定値が名を介した field の印(工場・init・repr・compare・hash を持つか、展開の __init__ の既定値が欄の既定値と違う)。"""
+    """Finish a defeffect effect type whose functions the expansion wrote: restore __dataclass_params__ to the same value as the previous expansion (frozen dataclass, positional
+    arguments). The expansion reads field types and defaults literally, so refuse at load time when the dataclass field table differs from
+    the shape the expansion read (the same hole as the 424a87f58 regression — the expansion's functions must not silently set different values):
+    the type has __post_init__ but the expansion's __init__ does not call it; the sequence of field names (names) differs (a ClassVar, InitVar, or KW_ONLY type);
+    a default is a field marker passed through a name (it has a factory, init, repr, compare, or hash, or the default of the expansion's __init__ differs from the field default)."""
     if "__post_init__" in vars(cls) and not calls_post_init:
-        raise TypeError(f"{cls.__name__} の __post_init__ を展開の __init__ が呼ばない — defeffect の展開が :pre を見落とした")
+        raise TypeError(f"The expansion's __init__ does not call __post_init__ of {cls.__name__} — the defeffect expansion overlooked :pre")
     fields = dataclasses.fields(cls)
     if tuple(f.name for f in fields) != names:
         raise TypeError(
-            f"{cls.__name__} の欄 {tuple(f.name for f in fields)} が展開の読んだ欄 {names} と違う — "
-            ":fields の型に ClassVar・InitVar・KW_ONLY は書かない"
+            f"Fields {tuple(f.name for f in fields)} of {cls.__name__} differ from the fields the expansion read {names} — "
+            "do not write ClassVar, InitVar, or KW_ONLY types in the :fields types"
         )
     init = vars(cls)["__init__"]
     if not isinstance(init, types.FunctionType):
-        raise TypeError(f"{cls.__name__} の __init__ が展開の書いた関数ではない: {init!r}")
+        raise TypeError(f"__init__ of {cls.__name__} is not a function the expansion wrote: {init!r}")
     for f in fields:
         if f.default_factory is not dataclasses.MISSING or not f.init or not f.repr or not f.compare or f.hash is not None or f.kw_only:
-            raise TypeError(f"{cls.__name__} の欄 {f.name} の既定値は field の印 — defeffect の欄には (field …) を直に書く")
+            raise TypeError(f"The default of field {f.name} of {cls.__name__} is a field marker — write (field …) directly in a defeffect field")
     declared = tuple(f.default for f in fields if f.default is not dataclasses.MISSING)
     written = init.__defaults__ or ()
     if len(declared) != len(written) or any(d is not w for d, w in zip(declared, written)):
-        raise TypeError(f"{cls.__name__} の欄の既定値に名を介した field の印がある — defeffect の欄には (field …) を直に書く")
+        raise TypeError(f"A field default of {cls.__name__} contains a field marker passed through a name — write (field …) directly in a defeffect field")
     setattr(cls, "__dataclass_params__", EFFECT_PARAMS)

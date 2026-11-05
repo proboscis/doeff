@@ -1,30 +1,30 @@
-"""defwire の自前の解き手(wire_codec.py)を pydantic の解き手と照らす道具 — test の中だけで読む。
+"""A tool that checks the in-house decoder of defwire (wire_codec.py) against the pydantic decoder — read only inside tests.
 
-決め: defwire の解き手は doeff の中に自前で持ち、pydantic は
-test で照らす相手としてだけ残す。この module はその「照らす相手」の唯一の置き場で、pydantic を読む。job の道(入口・foundation・本体)は
-この module を import しない(doeff_hy._wire・wire_codec は読まない — import の閉包の test が確かめる)。pydantic は doeff-hy の本体の
-依存に無く、照らしの test を持つ project が test の依存の群に置く extra doeff-hy[parity] から入る。job の道の
-module が pydantic を import したら .semgrep.yaml の doeff-job-path-imports-no-pydantic が断り、この module はその範囲の外に置く。
+Decision: the defwire decoder is kept in-house inside doeff, and pydantic is kept only as the
+counterpart to compare against in tests. This module is the only home of that counterpart, and it reads pydantic. The job path (entry, foundation, body) does not
+import this module (it does not read doeff_hy._wire or wire_codec — a test of the import closure checks this). pydantic is not a dependency of the doeff-hy body;
+it comes from the extra doeff-hy[parity], which a project with parity tests puts in its test dependency group. If a module on the job path
+imports pydantic, doeff-job-path-imports-no-pydantic in .semgrep.yaml refuses it; this module is placed outside that scope.
 
-契約は設計の記録 ``docs/design/defwire-decoder/design.md`` の節 7「照らしの test が比べる物」:
+The contract is section 7 of the design record ``docs/design/defwire-decoder/design.md``, "What the parity test compares":
 
-- 型ごとに型の木から正しい入力を作り、欄ごとに崩した入力(JSON の種類の違う値・null・欄の欠け・知らない欄・Python の欄の名・定義の外の
-  綴り・配列の長さの ±1・入れ子の 2 階層まで)と、文字列そのものの崩し(JSON でない文字列・最上位の種類の違い)を作る。
-- 同じ入力を自前の解き手と pydantic の解き手に通し、受ける・断るが等しい事・受けた値が値と欄の値の型まで等しい事・断りの (場所, 種類)
-  の列が等しい事を確かめる。msg は種類 missing・enum・value_error・assertion_error の綴りだけを比べる(他の種類の msg は種類が決める)。
-- 受けた値を両方の書き手で書き、dump が値と値の型まで・dump-json が bytes まで等しい事を確かめる。
-- JSON Schema が鍵の順まで等しい事を確かめる。違うのは節 3b の表の既定値(入れ子の defwire・OpaqueJson)だけで、その欄は差として数える。
-- 何でも受ける腕(OpaqueJson・object)と None 以外の腕が混ざった union の欄を持つ型は、受けた値の比べから外して数える(節 3 の規則 4 —
-  pydantic と違う答えを正とする所)。受ける・断るの比べには残す。
+- For each type, build a valid input from the type tree, then inputs broken per field (a value of a different JSON kind, null, a missing field, an unknown field, the Python field name, a spelling outside
+  the definition, array length +/-1, nesting up to 2 levels) and breakages of the string itself (a string that is not JSON, a different top-level kind).
+- Pass the same input through the in-house decoder and the pydantic decoder, and check that accept/reject agree, that accepted values are equal down to the value and field value types, and that the sequences of (location, kind)
+  of rejections are equal. For msg, only the spellings of the kinds missing, enum, value_error, and assertion_error are compared (the msg of other kinds is determined by the kind).
+- Dump the accepted value with both writers, and check that dump is equal down to the value and its types, and dump-json is equal down to the bytes.
+- Check that the JSON Schema is equal down to key order. The only differences are the defaults in the table of section 3b (nested defwire, OpaqueJson), and those fields are counted as differences.
+- Types with a union field that mixes an accept-anything arm (OpaqueJson, object) with a non-None arm are left out of the comparison of accepted values and counted (rule 4 of section 3 —
+  where the answer that differs from pydantic is taken as correct). They stay in the accept/reject comparison.
 
-使い方(agora-controllers の型にも使えるよう、型の一覧を引数に取る):
+Usage (takes a list of types as an argument so it can be used for agora-controllers types too):
 
-    types, failures = wire_types_in(["doeff_cluster"])   # package の下の module を全部読み、defwire の型を集める
-    report = compare_types(types)                         # 型ごとの照らし
-    assert report.mismatches == []                        # 不一致の 1 件ずつ(型・入力・何が違うか)
+    types, failures = wire_types_in(["doeff_cluster"])   # read every module under the package and collect defwire types
+    report = compare_types(types)                         # per-type comparison
+    assert report.mismatches == []                        # each mismatch (type, input, what differs)
 
-pydantic の解き手は、今の defwire の型の ``__pydantic_config__``(:names の wire の名だけを受けて書く・:unknown・strict)で組む。型が
-持たなければ、この module が同じ設定を置く(wire の形 ``__doeff_wire__`` の names と unknown から)。
+The pydantic decoder is built from the ``__pydantic_config__`` of the current defwire type (accepts and writes only the wire names of :names; :unknown; strict). If the type
+does not have one, this module sets the same config (from the names and unknown of the wire shape ``__doeff_wire__``).
 """
 
 import dataclasses
@@ -65,14 +65,14 @@ from doeff_hy._wire_codec import (
 )
 from doeff_hy._wire_malformed import Malformed, MalformedField
 
-# --- pydantic の解き手(今の wire.hy の parse-json・dump・dump-json・json-schema と同じ設定と呼び)----------------------------------
+# --- The pydantic decoder (same config and calls as parse-json, dump, dump-json, and json-schema of the current wire.hy) ----------------------------------
 
-#: 知らない欄の扱いの綴り(defwire の :unknown の値)→ pydantic の extra。
+#: Spelling of how unknown fields are handled (the value of defwire's :unknown) -> pydantic's extra.
 _EXTRA: Final = {"reject": "forbid", "ignore": "ignore"}
 
 
 def pydantic_config(names: Mapping[str, str], unknown: str) -> ConfigDict:
-    """defwire の型の pydantic の設定: 欄の名は names の写しだけを受けて書き、知らない欄は unknown に従い、型の検めは厳しい。"""
+    """pydantic config of a defwire type: field names accept and write only the copy in names, unknown fields follow unknown, and type checks are strict."""
     return ConfigDict(
         alias_generator=names.__getitem__,
         validate_by_alias=True,
@@ -85,7 +85,7 @@ def pydantic_config(names: Mapping[str, str], unknown: str) -> ConfigDict:
 
 
 def _configured(wire_type: type) -> None:
-    """型(と入れ子の defwire の型)が pydantic の設定を持たなければ、wire の形から置く。"""
+    """If the type (and nested defwire types) has no pydantic config, set it from the wire shape."""
     if "__pydantic_config__" in wire_type.__dict__:
         return
     shape = wire_type.__dict__["__doeff_wire__"]
@@ -96,7 +96,7 @@ _ADAPTERS: Final[dict[type, TypeAdapter[Any]]] = {}
 
 
 def adapter_of(wire_type: type) -> TypeAdapter[Any]:
-    """defwire の型の pydantic の解き手(型ごとに 1 度組んで覚える)。"""
+    """The pydantic decoder of a defwire type (built once per type and remembered)."""
     known = _ADAPTERS.get(wire_type)
     if known is None:
         for nested in _wire_types_under(codec_of(wire_type).node):
@@ -107,7 +107,7 @@ def adapter_of(wire_type: type) -> TypeAdapter[Any]:
 
 
 def _malformed_of(wire_type: type, error: ValidationError) -> Malformed:
-    """pydantic の検めの誤りを Malformed へ写す(欄の場所は wire の名・配列の位置を . でつなぐ — 今の wire.hy の malformed-of)。"""
+    """Map a pydantic validation error to Malformed (the field location joins wire names and array positions with . — malformed-of of the current wire.hy)."""
     return Malformed(
         wire_type=wire_type.__name__,
         fields=tuple(
@@ -121,7 +121,7 @@ def _malformed_of(wire_type: type, error: ValidationError) -> Malformed:
 
 
 def pydantic_parse_json(wire_type: type, text: str | bytes) -> object:
-    """今の wire.hy の parse-json と同じ答え(型の値か Malformed)。"""
+    """Same answer as parse-json of the current wire.hy (a value of the type or Malformed)."""
     try:
         return adapter_of(wire_type).validate_json(text)
     except ValidationError as error:
@@ -129,7 +129,7 @@ def pydantic_parse_json(wire_type: type, text: str | bytes) -> object:
 
 
 def pydantic_parse(wire_type: type, raw: object) -> object:
-    """今の wire.hy の parse と同じ答え(JSON の値を文字列へ書き直して parse-json へ)。"""
+    """Same answer as parse of the current wire.hy (rewrite the JSON value to a string and pass it to parse-json)."""
     text = (
         raw.text if isinstance(raw, OpaqueJson) else json.dumps(thaw_json(raw), ensure_ascii=False)
     )
@@ -137,14 +137,14 @@ def pydantic_parse(wire_type: type, raw: object) -> object:
 
 
 def pydantic_dump(value: object) -> object:
-    """今の wire.hy の dump と同じ答え。"""
+    """Same answer as dump of the current wire.hy."""
     return adapter_of(type(value)).dump_python(
         value, mode="json", by_alias=True, exclude_defaults=True
     )
 
 
 def pydantic_dump_json(value: object) -> str:
-    """今の wire.hy の dump-json と同じ答え(OpaqueJson の欄は持っている文字列をそのまま埋める — _Splice)。"""
+    """Same answer as dump-json of the current wire.hy (an OpaqueJson field embeds the string it holds as is — _Splice)."""
     splice = _Splice()
     written = adapter_of(type(value)).dump_json(
         value, by_alias=True, exclude_defaults=True, context=splice
@@ -153,20 +153,20 @@ def pydantic_dump_json(value: object) -> str:
 
 
 def pydantic_json_schema(wire_type: type) -> object:
-    """今の wire.hy の json-schema と同じ答え。"""
+    """Same answer as json-schema of the current wire.hy."""
     return adapter_of(wire_type).json_schema(by_alias=True)
 
 
-# 埋め込みの印(今の json_value.py の OpaqueSplice と同じ仕掛け — pydantic_core に書き済みの JSON の文字列を出力へ入れる口が無いので、
-# OpaqueJson の書き手が印を返し、出力の bytes ができた後で印を元の文字列に替える)。OpaqueJson の pydantic 向けの書き手
-# (json_value.py の _opaque_value)は、context が admit を持つ時に印を返す。
+# Embedding marker (the same mechanism as OpaqueSplice in the current json_value.py — pydantic_core has no hook to put an already-written JSON string into the output, so
+# the OpaqueJson writer returns a marker, and after the output bytes are produced the marker is replaced by the original string). The pydantic-side writer of OpaqueJson
+# (_opaque_value in json_value.py) returns the marker when the context has admit.
 _SPLICE_PREFIX: Final = secrets.token_hex(8)
 _SPLICE_MARK: Final = re.compile(b'"' + _SPLICE_PREFIX.encode("ascii") + rb"([0-9]+)\"")
 _NOT_STRICT_JSON: Final = ("NaN", "Infinity")
 
 
 class _Splice:
-    """pydantic_dump_json 1 回の間だけ生きる、OpaqueJson の文字列を出力へそのまま埋める控え。"""
+    """A record, alive only during one pydantic_dump_json, that embeds the OpaqueJson string into the output as is."""
 
     __slots__ = ("_by_number",)
 
@@ -187,7 +187,7 @@ class _Splice:
         return _SPLICE_MARK.sub(lambda mark: by_number[int(mark[1])], written).decode("utf-8")
 
 
-# --- 型を集める -----------------------------------------------------------------------------------------------------------------
+# --- Collecting types -----------------------------------------------------------------------------------------------------------------
 
 
 def _is_wire_type(candidate: object) -> bool:
@@ -199,8 +199,8 @@ def _is_wire_type(candidate: object) -> bool:
 
 
 def _module_names(package_name: str) -> list[str]:
-    """package の下の module の名を、file の置き場から全部並べる(__init__ の無い名の空間の dir と Hy の module も — pkgutil は
-    どちらも辿らない)。"""
+    """List every module name under the package from the file layout (including namespace-package dirs without __init__ and Hy modules — pkgutil follows
+    neither)."""
     package = importlib.import_module(package_name)
     roots = [Path(entry) for entry in getattr(package, "__path__", [])]
     return [package_name] + sorted(
@@ -217,20 +217,20 @@ def _module_names(package_name: str) -> list[str]:
 
 
 def _imported(name: str) -> object:
-    """module を読む(読めなければ訳の文 — 任意の依存の無い module も在るので、訳を返して呼び手が決める)。"""
+    """Import a module (returns a reason string if it cannot be imported — some modules lack optional dependencies, so return the reason and let the caller decide)."""
     try:
         return importlib.import_module(name)
     except Exception as error:
         return f"{type(error).__name__}: {error}"
-    except SystemExit as error:  # 読んだ時に終わる script の module
+    except SystemExit as error:  # a script module that exits when imported
         return f"SystemExit: {error}"
 
 
 def wire_types_in(
     packages: Iterable[str], *, skip: Callable[[str], bool] = lambda _name: False
 ) -> tuple[list[type], dict[str, str]]:
-    """package の下の module を全部読み(skip が真の module の名は読まない)、そこで定義した defwire の型を集める。
-    答え = (型の列 — module の名と定義の順・読めなかった module の名 → 訳)。"""
+    """Import every module under the package (module names for which skip is true are not imported) and collect the defwire types defined there.
+    Answer = (list of types — in module-name and definition order, module names that could not be imported -> reason)."""
     names = sorted(
         {
             name
@@ -251,9 +251,9 @@ def wire_types_in(
     return list(dict.fromkeys(found)), failures
 
 
-# --- 入力を作る -----------------------------------------------------------------------------------------------------------------
+# --- Building inputs -----------------------------------------------------------------------------------------------------------------
 
-#: どの欄にも入れる、JSON の種類の違う値(欄の型の外の値は両方が同じ訳で断る事を見る)。
+#: Values of a different JSON kind to put into any field (checks that both reject a value outside the field type for the same reason).
 _WRONG_KINDS: Final[tuple[object, ...]] = (
     "x",
     7,
@@ -270,12 +270,12 @@ _WRONG_KINDS: Final[tuple[object, ...]] = (
     1e400,
 )
 _UNKNOWN_KEY: Final = "zzUnknownField"
-#: 入れ子に入って崩す深さ(最上位を 0 と数えて、入れ子の object を 2 階層まで)。
+#: Depth to descend into nesting when breaking (top level counted as 0; nested objects up to 2 levels).
 _DEPTH: Final = 2
 
 
 def _nodes(node: _Node, seen: set[int] | None = None) -> Iterator[_Node]:
-    """型の木の判じ手を 1 つずつ(自分を含む・同じ判じ手は 1 度 — 入れ子の型は親ごとに組み直さず同じ判じ手を指す)。"""
+    """One discriminator for each node of the type tree (including itself; the same discriminator once — a nested type points at the same discriminator rather than being rebuilt per parent)."""
     seen = set() if seen is None else seen
     if id(node) in seen:
         return
@@ -286,12 +286,12 @@ def _nodes(node: _Node, seen: set[int] | None = None) -> Iterator[_Node]:
 
 
 def _wire_types_under(node: _Node) -> list[type]:
-    """型の木の下の defwire の型(自分を含む・重なり無し)— pydantic の設定を置く型を並べるため。"""
+    """The defwire types under the type tree (including itself, without duplicates) — to list the types that get a pydantic config."""
     return [current.wire_type for current in _nodes(node) if isinstance(current, _WireNode)]
 
 
 def _children(node: _Node) -> tuple[_Node, ...]:
-    """判じ手の子(欄・要素・腕の判じ手)— 型の木を辿るため。"""
+    """Children of a discriminator (field, element, and arm discriminators) — to walk the type tree."""
     match node:
         case _WireNode():
             return tuple(field.node for field in node.fields)
@@ -306,7 +306,7 @@ def _children(node: _Node) -> tuple[_Node, ...]:
 
 
 def mixed_catch_all_unions(node: _Node) -> int:
-    """何でも受ける腕と None 以外の腕が混ざった union の数(型の木の下 — 規則 4 で pydantic と違う答えを正とする所を数えるため)。"""
+    """Count of unions that mix an accept-anything arm with a non-None arm (under the type tree — to count where rule 4 takes the answer that differs from pydantic as correct)."""
     return sum(
         1
         for current in _nodes(node)
@@ -316,7 +316,7 @@ def mixed_catch_all_unions(node: _Node) -> int:
     )
 
 
-#: 子を持たない判じ手の見本(判じ手の型 → 受ける JSON の値の候補 — 先の物ほど使う)。
+#: Samples for discriminators with no children (discriminator type -> candidate JSON values to accept; earlier ones are used first).
 _LEAF_SAMPLES: Final[dict[type, list[object]]] = {
     _Str: ["s", "id-000000000001", "a"],
     _Float: [1.5, 2],
@@ -330,12 +330,12 @@ _LEAF_SAMPLES: Final[dict[type, list[object]]] = {
 
 
 def _union_samples(node: _Union, depth: int, full: bool) -> list[object]:
-    """union の見本 — 腕ごとに 1 つと、None の腕が在れば null。"""
+    """Union sample — one per arm, plus null if there is a None arm."""
     arms = [sample for arm in node._arms for sample in _samples(arm, depth, full)[:1]]
     return arms + ([None] if node._nullable else [])
 
 
-#: 子を持つ判じ手の見本の作り手(判じ手の型 → (判じ手・深さ・既定値の在る欄も書くか) → 候補)。
+#: Builders of samples for discriminators with children (discriminator type -> (discriminator, depth, whether to also write fields with defaults) -> candidates).
 _SAMPLERS: Final[dict[type, Callable[[Any, int, bool], list[object]]]] = {
     _Enum: lambda node, _depth, _full: list(node._members)[:2],
     _Literal: lambda node, _depth, _full: list(node._order[:2]),
@@ -353,7 +353,7 @@ _SAMPLERS: Final[dict[type, Callable[[Any, int, bool], list[object]]]] = {
 
 
 def _samples(node: _Node, depth: int, full: bool) -> list[object]:
-    """型の受ける JSON の値の候補(先の物ほど使う)— 正しい入力と崩す値を作るため。full = 既定値の在る欄も書く。"""
+    """Candidate JSON values the type accepts (earlier ones are used first) — to build valid inputs and broken values. full = also write fields that have defaults."""
     leaf = _LEAF_SAMPLES.get(type(node))
     if leaf is not None:
         return leaf
@@ -361,8 +361,8 @@ def _samples(node: _Node, depth: int, full: bool) -> list[object]:
 
 
 def _object_sample(node: _WireNode, depth: int, full: bool) -> dict[str, object]:
-    """defwire の型の正しい object の見本(full = 既定値の在る欄も書く)。"""
-    # 入れ子が深い所(輪は木が断るが、深い入れ子は在る)は既定値の無い欄だけ書く。
+    """A sample of a valid object of a defwire type (full = also write fields that have defaults)."""
+    # In deep nesting (cycles are refused by the tree, but deep nesting exists), write only fields without defaults.
     write_all = full and depth < 4
     return {
         field.wire: _samples(field.node, depth + 1, write_all)[0]
@@ -372,8 +372,8 @@ def _object_sample(node: _WireNode, depth: int, full: bool) -> dict[str, object]
 
 
 def _accepted_base(codec: Codec[Any], wire_type: type) -> dict[str, object]:
-    """崩す元の正しい入力 — 欄を全部書いた物と既定値の無い欄だけの物のうち、pydantic が受けた方(どちらも断れば全部書いた方)。
-    受けなければ、欄ごとに見本の候補を替えて受ける形を探す(:check が値を選ぶ型のため)。"""
+    """The valid input to break — of the one with all fields written and the one with only the fields without defaults, the one pydantic accepted (the all-fields one if it rejects both).
+    If it accepts neither, look for an accepted shape by varying the sample candidates per field (for types whose :check picks the value)."""
     node = cast(_WireNode, codec.node)
     candidates = [_object_sample(node, 0, True), _object_sample(node, 0, False)]
     for candidate in candidates:
@@ -391,7 +391,7 @@ def _accepted_base(codec: Codec[Any], wire_type: type) -> dict[str, object]:
 
 
 def _mutations(node: _Node, value: object, depth: int) -> Iterator[tuple[str, object]]:
-    """正しい値 value(型 node の JSON)を 1 か所ずつ崩した値の列(名・値)。"""
+    """The sequence (name, value) of values made by breaking the valid value `value` (the JSON of type node) in one place at a time."""
     if isinstance(node, _WireNode) and isinstance(value, dict):
         source = cast(dict[str, object], value)
         yield "unknown-field", {**source, _UNKNOWN_KEY: 1}
@@ -414,14 +414,14 @@ def _mutations(node: _Node, value: object, depth: int) -> Iterator[tuple[str, ob
 
 
 def _spelling_mutations(node: Any, value: object, depth: int) -> Iterator[tuple[str, object]]:
-    """defenum と Literal の崩し: 定義の外の綴りと、defenum の member の名(値の綴りでない)。"""
+    """Breakages for defenum and Literal: a spelling outside the definition, and the member name of the defenum (not the value spelling)."""
     yield "outside", "no-such-spelling"
     names = [member.name for member in node.enum_type] if isinstance(node, _Enum) else []
     yield from (("member-name", name) for name in names[:1])
 
 
 def _array_mutations(node: Any, value: object, depth: int) -> Iterator[tuple[str, object]]:
-    """長さの決まらない配列の崩し: 長くする・空にする・要素の種類の違い・最初の要素の中。"""
+    """Breakages for arrays of unbounded length: make longer, make empty, a different element kind, and inside the first element."""
     if not isinstance(value, list):
         return
     sample = _samples(node._item, depth + 1, False)[0]
@@ -436,7 +436,7 @@ def _array_mutations(node: Any, value: object, depth: int) -> Iterator[tuple[str
 
 
 def _fixed_tuple_mutations(node: Any, value: object, depth: int) -> Iterator[tuple[str, object]]:
-    """長さちょうどの配列の崩し: 長さの ±1・位置ごとの種類の違い・位置ごとの中。"""
+    """Breakages for fixed-length arrays: length +/-1, a different kind per position, and inside each position."""
     if not isinstance(value, list):
         return
     yield "shorter", value[:-1]
@@ -454,7 +454,7 @@ def _fixed_tuple_mutations(node: Any, value: object, depth: int) -> Iterator[tup
 
 
 def _dict_mutations(node: Any, value: object, depth: int) -> Iterator[tuple[str, object]]:
-    """key が文字列の dict の崩し: 値の種類の違い・最初の値の中。"""
+    """Breakages for dicts with string keys: a different value kind, and inside the first value."""
     if not isinstance(value, dict):
         return
     yield from ((f"value={json.dumps(wrong)}", {**value, "w": wrong}) for wrong in ("x", None, [1]))
@@ -467,13 +467,13 @@ def _dict_mutations(node: Any, value: object, depth: int) -> Iterator[tuple[str,
 
 
 def _nested_mutations(node: Any, value: object, depth: int) -> Iterator[tuple[str, object]]:
-    """入れ子の defwire の崩し(2 階層まで)。"""
+    """Breakages for nested defwire (up to 2 levels)."""
     if depth < _DEPTH:
         yield from _mutations(node, value, depth + 1)
 
 
 def _union_mutations(node: Any, value: object, depth: int) -> Iterator[tuple[str, object]]:
-    """union の崩し: 腕ごとの値と、入れ子の defwire の腕の中。"""
+    """Breakages for unions: a value per arm, and inside the nested defwire arm."""
     for arm in node._arms:
         yield from (
             (f"arm[{arm.label}]{index}", sample)
@@ -486,7 +486,7 @@ def _union_mutations(node: Any, value: object, depth: int) -> Iterator[tuple[str
             )
 
 
-#: 欄の型ごとの崩しの作り手(判じ手の型 → 崩し)。ここに無い型(素の型・何でも受ける型)は欄の種類の違い(_WRONG_KINDS)だけで崩す。
+#: Builders of breakages per field type (discriminator type -> breakage). Types not listed here (plain types, accept-anything types) are broken only by a different field kind (_WRONG_KINDS).
 _FIELD_MUTATIONS: Final[dict[type, Callable[[Any, object, int], Iterator[tuple[str, object]]]]] = {
     _Enum: _spelling_mutations,
     _Literal: _spelling_mutations,
@@ -499,13 +499,13 @@ _FIELD_MUTATIONS: Final[dict[type, Callable[[Any, object, int], Iterator[tuple[s
 
 
 def _field_mutations(node: _Node, value: object, depth: int) -> Iterator[tuple[str, object]]:
-    """欄の型ごとの崩し(定義の外の綴り・配列の長さの ±1・union の腕ごとの値・入れ子の 2 階層まで)。"""
+    """Breakages per field type (a spelling outside the definition, array length +/-1, a value per union arm, nesting up to 2 levels)."""
     mutate = _FIELD_MUTATIONS.get(type(node))
     if mutate is not None:
         yield from mutate(node, value, depth)
 
 
-#: 文字列そのものの崩し(JSON でない文字列・最上位の種類の違い・文字列の読みの差 — 設計の記録の節 3「JSON の読み」)。
+#: Breakages of the string itself (a string that is not JSON, a different top-level kind, differences in how strings are read — design record section 3, "Reading JSON").
 _TEXT_CASES: Final[tuple[tuple[str, str | bytes], ...]] = (
     ("not-json", "{"),
     ("trailing", '{"a":1} x'),
@@ -522,22 +522,22 @@ _TEXT_CASES: Final[tuple[tuple[str, str | bytes], ...]] = (
 
 
 def inputs_for(wire_type: type) -> list[tuple[str, str | bytes]]:
-    """型 1 つの照らしの入力(名・JSON の文字列 — 同じ文字列は 1 度)。"""
+    """Parity inputs for one type (name, JSON string — the same string once)."""
     codec = codec_of(wire_type)
     base = _accepted_base(codec, wire_type)
     full = _object_sample(cast(_WireNode, codec.node), 0, True)
     named = [("base", base), ("full", full), *_mutations(codec.node, base, 0)]
     by_text = {
         json.dumps(value): name for name, value in reversed(named)
-    }  # 同じ文字列は先の名で 1 度
+    }  # the same string once, under the earlier name
     return [(name, text) for text, name in reversed(by_text.items())] + list(_TEXT_CASES)
 
 
-# --- 比べる ---------------------------------------------------------------------------------------------------------------------
+# --- Comparing ---------------------------------------------------------------------------------------------------------------------
 
 
 def typed(value: object) -> object:
-    """値を (型, 中身) の木へ — == では見分けない 1 と 1.0・tuple と list・str と StrEnum を見分けて比べる。"""
+    """Turn a value into a (type, content) tree — to compare while telling apart what == does not: 1 and 1.0, tuple and list, str and StrEnum."""
     if dataclasses.is_dataclass(value) and not isinstance(value, type):
         return (
             type(value),
@@ -552,19 +552,19 @@ def typed(value: object) -> object:
         return (type(value), tuple((key, typed(item)) for key, item in value.items()))
     if isinstance(value, frozenset):
         return (type(value), tuple(sorted(value, key=repr)))
-    if isinstance(value, float) and math.isnan(value):  # NaN は自分と等しくない
+    if isinstance(value, float) and math.isnan(value):  # NaN is not equal to itself
         return (float, "nan")
     return (type(value), value)
 
 
-#: msg まで比べる種類(他の種類の msg は種類が決める綴り)。JSON として読めない入力の msg は Python と pydantic で違う(節 3)。
+#: Kinds whose msg is also compared (the msg of other kinds is a spelling determined by the kind). The msg of input that cannot be read as JSON differs between Python and pydantic (section 3).
 _MSG_KINDS: Final = frozenset(
     {"missing", "enum", "value_error", "assertion_error", "literal_error", "too_long"}
 )
 
 
 def _problems(answer: Malformed) -> list[tuple[str, str]]:
-    """断りの (場所, 種類) の列(_MSG_KINDS の種類は reason の全体)— 両方の解き手の断りを比べるため。"""
+    """Sequence of rejection (location, kind) (for kinds in _MSG_KINDS, the whole reason) — to compare the rejections of both decoders."""
     return [
         (field.field, field.reason if kind in _MSG_KINDS else kind)
         for field in answer.fields
@@ -574,7 +574,7 @@ def _problems(answer: Malformed) -> list[tuple[str, str]]:
 
 @dataclasses.dataclass(frozen=True)
 class Mismatch:
-    """不一致 1 件: 型の名・入力の名・入力・何が違うか(weaker = 自前が受けて pydantic が断った — 型の check を弱める側)。"""
+    """One mismatch: type name, input name, input, what differs (weaker = the in-house decoder accepted and pydantic rejected — the side that weakens the type's check)."""
 
     wire_type: str
     case: str
@@ -587,7 +587,7 @@ class Mismatch:
 
 @dataclasses.dataclass(frozen=True)
 class InputVerdict:
-    """入力 1 つの照らしの結末: 両方が受けたか・不一致の列。"""
+    """Outcome of the comparison of one input: whether both accepted, and the list of mismatches."""
 
     accepted: bool
     mismatches: tuple[Mismatch, ...]
@@ -595,8 +595,8 @@ class InputVerdict:
 
 @dataclasses.dataclass(frozen=True)
 class Report:
-    """照らしの結果: 型の数・入力の数・両方が受けた入力の数(= 比べた書き出しの数)・不一致・数えた差(節 3b の既定値・規則 4 の型)・
-    組めなかった型(型の名 → 訳)。"""
+    """Result of the comparison: number of types, number of inputs, number of inputs both accepted (= number of writes compared), mismatches, counted differences (defaults of section 3b, types of rule 4),
+    and types that could not be built (type name -> reason)."""
 
     types: int = 0
     inputs: int = 0
@@ -608,20 +608,20 @@ class Report:
 
 
 def _call(function: Callable[[], object]) -> tuple[bool, object]:
-    """呼びの答えか例外の文 — どちらの解き手の例外も答えとして比べるため。"""
+    """The answer of a call or the text of the exception — to compare the exceptions of both decoders as answers."""
     try:
         return True, function()
-    except Exception as error:  # 照らしの道具 — どちらの解き手の例外も答えとして比べる
+    except Exception as error:  # a comparison tool — compare the exceptions of both decoders as answers
         return False, f"{type(error).__name__}: {error}"
 
 
 def _text(value: object) -> str:
-    """不一致の記録に書く綴り。"""
+    """Spelling to write in the mismatch record."""
     return value if isinstance(value, str) else repr(value)
 
 
 def compare_input(wire_type: type, case: str, text: str | bytes, *, values: bool) -> InputVerdict:
-    """入力 1 つを両方の解き手に通して比べ、両方が受けた値を両方の書き手で書いて比べる(values = 受けた値まで比べる)。"""
+    """Pass one input through both decoders and compare, then write the values both accepted with both writers and compare (values = also compare the accepted values)."""
     codec = codec_of(wire_type)
     shown = text if isinstance(text, str) else repr(text)
     shown = shown if len(shown) <= 400 else shown[:400] + "…"
@@ -662,12 +662,12 @@ def compare_input(wire_type: type, case: str, text: str | bytes, *, values: bool
 
 
 def _write_mismatches(value: object, name: str, case: str, shown: str) -> Iterator[Mismatch]:
-    """受けた値 1 つを両方の書き手で書いた答えの違い(dump は値と値の型まで・dump-json は bytes まで)。"""
+    """Differences in the answers from writing one accepted value with both writers (dump down to the value and its types, dump-json down to the bytes)."""
     codec = codec_of(type(value))
     with warnings.catch_warnings():
         warnings.simplefilter(
             "ignore"
-        )  # 欄の型に合わない値の pydantic の書き出しの警告は読み捨てる
+        )  # discard pydantic's serialization warnings for values that do not match the field type
         dumped = (_call(lambda: codec.encode(value)), _call(lambda: pydantic_dump(value)))
         texts = (_call(lambda: codec.encode_json(value)), _call(lambda: pydantic_dump_json(value)))
     for what, ((ok_ours, ours), (ok_theirs, theirs)) in (("dump", dumped), ("dump-json", texts)):
@@ -679,7 +679,7 @@ def _write_mismatches(value: object, name: str, case: str, shown: str) -> Iterat
 
 
 def _schema_differences(ours: object, theirs: object, where: str) -> tuple[bool, tuple[str, ...]]:
-    """JSON Schema を鍵の順まで比べる。答え = (default の外が等しいか, default の値だけが違う所 — 節 3b の差として数える)。"""
+    """Compare JSON Schema down to key order. Answer = (whether they are equal apart from default, places where only the default value differs — counted as differences of section 3b)."""
     match ours, theirs:
         case dict(), dict():
             if list(ours) != list(theirs):
@@ -713,7 +713,7 @@ def _schema_differences(ours: object, theirs: object, where: str) -> tuple[bool,
 
 @dataclasses.dataclass(frozen=True)
 class _TypeVerdict:
-    """型 1 つの照らしの結末。"""
+    """Outcome of the comparison of one type."""
 
     inputs: int
     accepted: int
@@ -723,7 +723,7 @@ class _TypeVerdict:
 
 
 def _compare_type(wire_type: type, codec: Codec[Any]) -> _TypeVerdict:
-    """型 1 つの入力を両方の解き手に通し、書き出しと JSON Schema も比べる。"""
+    """Pass the inputs of one type through both decoders, and also compare the written output and the JSON Schema."""
     catch_all = mixed_catch_all_unions(codec.node) > 0
     verdicts = [
         compare_input(wire_type, case, text, values=not catch_all)
@@ -761,7 +761,7 @@ def _compare_type(wire_type: type, codec: Codec[Any]) -> _TypeVerdict:
 
 
 def _codec_or_refusal(wire_type: type) -> Codec[Any] | str:
-    """型の木を組む(語彙の外の型は TypeError の文)— 組めない型を数えるため。"""
+    """Build the type tree (a type outside the vocabulary gives a TypeError text) — to count types that cannot be built."""
     try:
         return codec_of(wire_type)
     except TypeError as error:
@@ -769,7 +769,7 @@ def _codec_or_refusal(wire_type: type) -> Codec[Any] | str:
 
 
 def compare_types(wire_types: Iterable[type]) -> Report:
-    """型ごとに入力を作って両方の解き手に通し、書き出しと JSON Schema も比べる。"""
+    """Build inputs per type, pass them through both decoders, and also compare the written output and the JSON Schema."""
     built = [(wire_type, _codec_or_refusal(wire_type)) for wire_type in wire_types]
     unbuildable = {
         f"{wire_type.__module__}.{wire_type.__qualname__}": codec
@@ -799,7 +799,7 @@ def compare_types(wire_types: Iterable[type]) -> Report:
 
 
 def summary(report: Report) -> str:
-    """結果の要約(test の失敗の文と測りの記録に使う)。"""
+    """Summary of the result (used for test failure text and measurement records)."""
     head = (
         f"types={report.types} inputs={report.inputs} accepted={report.accepted} "
         f"mismatches={len(report.mismatches)} weaker={sum(1 for item in report.mismatches if item.weaker)} "
@@ -818,7 +818,7 @@ def summary(report: Report) -> str:
 
 
 def main(argv: list[str]) -> int:
-    """package の名を引数に、全 defwire の型を照らして要約を出す(test の外で全体を眺める時)。"""
+    """Take package names as arguments, compare every defwire type, and print a summary (for viewing the whole outside tests)."""
     types, failures = wire_types_in(argv)
     report = compare_types(types)
     print(summary(report))

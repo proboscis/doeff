@@ -338,8 +338,8 @@
   (assert (= (repr down) "Err(Unreachable(detail='網が落ちた'))") "失敗はそのまま(:absent は不在だけを写す)")
   (<- from-nothing (result (nothing-or-conflict)))
   (assert (= (repr from-nothing) "Err(Conflict(detail='nothing の行が無い'))") from-nothing)
-  (assert (in "値の式" (! (expansion-refusal "(require doeff-hy.macros [<-]) (<- x (f) :absent (! (g)))"))))
-  (assert (in "知らない鍵" (! (expansion-refusal "(require doeff-hy.macros [<-]) (<- x (f) :absnt 1)")))))
+  (assert (in "value expression" (! (expansion-refusal "(require doeff-hy.macros [<-]) (<- x (f) :absent (! (g)))"))))
+  (assert (in "unknown key" (! (expansion-refusal "(require doeff-hy.macros [<-]) (<- x (f) :absnt 1)")))))
 
 
 (deftest test-bind-refuses-a-plain-value-in-the-value-position
@@ -347,13 +347,13 @@
   ;; 素の None を yield し、VM が TypeError(yield got None)で落とした。値の位置(式そのもの・if の枝・cond の値の枝・
   ;; when / unless の外れ)に字面の値を持つ束ねは、<- でも ! でも展開の時に断る。
   (val head "(require doeff-hy.macros [<- do!]) (fn [c] ")
-  (val bad #(#("(<- x (if c None (f))) x)" "字面の値 None")
-             #("(<- x None) x)" "字面の値 None")
-             #("(<- x (if c (f) (if c (g) []))) x)" "字面の値 []")
-             #("(<- x (cond c (f) True False)) x)" "字面の値 False")
-             #("(<- (when c (f))))" "字面の値 (when c (f))")
+  (val bad #(#("(<- x (if c None (f))) x)" "literal value None")
+             #("(<- x None) x)" "literal value None")
+             #("(<- x (if c (f) (if c (g) []))) x)" "literal value []")
+             #("(<- x (cond c (f) True False)) x)" "literal value False")
+             #("(<- (when c (f))))" "literal value (when c (f))")
              #("(<- x {\"a\" 1}) x)" "Pure {\"a\" 1}")
-             #("(do! (+ 1 (! (if c 0 (g))))))" "束ねる式の値の位置に字面の値 0")))
+             #("(do! (+ 1 (! (if c 0 (g))))))" "a literal value 0")))
   (for [#(body said) bad]
     (val refused (! (expansion-refusal (+ head body))))
     (assert (in said refused) #(body refused)))

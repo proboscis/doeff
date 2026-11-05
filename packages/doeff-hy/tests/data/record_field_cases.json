@@ -1,5 +1,5 @@
 {
-  "about": "defrecord / defwire の欄の読み方の共通の検の表。Hy 側の正本 doeff_hy._declarations/field-targets(defrecord・defwire)と Rust 側の正本 doeff-indexer の hy_index::fields::record_field_targets(hy-index の record_def・doeff-linter の DOEFF204)の両方がこの表を読み、同じ答えを出すことを確かめる。forms は record の body の form の列、names は欄の名を書いた順(書かれた綴り)。",
+  "about": "Shared check table for how defrecord / defwire fields are read. Both the Hy-side source of truth doeff_hy._declarations/field-targets (defrecord, defwire) and the Rust-side source of truth doeff-indexer's hy_index::fields::record_field_targets (hy-index's record_def, doeff-linter's DOEFF204) read this table, which confirms they give the same answer. forms is the list of forms in the record body; names is the field names in written order (as spelled).",
   "cases": [
     {"forms": "#^ str a #^ int b", "names": ["a", "b"]},
     {"forms": "(#^ str a) (#^ int b)", "names": ["a", "b"]},

@@ -1,8 +1,8 @@
-"""`<-` が束ねた後、束ねの一時の名(`_hy_gensym_bound_N`)を frame から外す。
+"""After `<-` binds, the temporary binding name (`_hy_gensym_bound_N`) is removed from the frame.
 
-一時の名は yield した Program(Call — 関数と引数)を持つ。残すと同じ行が次に走るまで引数を生かし、長い loop の
-generator(agora-controllers の dispatch-turns)が前の周の表を持ち続けた。ここは束ねた後の frame の locals に
-Call も束ねの一時の名も残らない事と、答え(値・型の照らし・Pure の近道)が変わらない事を見る。
+The temporary name holds the yielded Program (Call -- function and arguments). Leaving it keeps the arguments alive until the same line runs next, and a generator in a long loop
+(dispatch-turns in agora-controllers) kept holding the table of the previous iteration. Here we check that neither the Call nor the temporary binding name remains in the frame locals after
+binding, and that the answers (value, type check, the Pure shortcut) do not change.
 """
 
 from __future__ import annotations
@@ -12,7 +12,7 @@ from types import ModuleType
 import hy
 import pytest
 
-import doeff_hy  # noqa: F401 - Hy の import hook を登録する
+import doeff_hy  # noqa: F401 - registers the Hy import hook
 from doeff import run
 from doeff_core_effects import reader
 
@@ -55,7 +55,7 @@ def _module() -> ModuleType:
 def test_bind_leaves_no_program_in_the_frame() -> None:
     out = run(reader(env={"k": "v"})(_module().parent()))
     kept = {name: type(value).__name__ for name, value in out["locals"].items()}
-    # 束ねの名(bound)は del で消え、名の無い (<- e) の答えの名(answer)は None に戻っている
+    # The binding name (bound) is removed by del, and the answer name (answer) of the nameless (<- e) is back to None
     assert not [name for name in kept if "bound" in name], kept
     assert {kept[name] for name in kept if "answer" in name} <= {"NoneType"}, kept
     assert "Call" not in kept.values(), kept

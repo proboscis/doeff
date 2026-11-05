@@ -1,8 +1,8 @@
-;;; defrecord の頭の辞書 {:tags … :check […]}(doeff_hy/record.hy)の検。
+;;; Tests for the defrecord header dict {:tags … :check […]} (doeff_hy/record.hy).
 ;;;
-;;; 確かめること: 検めが通る・落ちる・落ちた時の文言(型・欄・検め・値)・:tags が読める・
-;;; 頭の辞書の無い前からの形がそのまま動く・展開の時に断る形・Program を返す検めを止める。
-;;; 公開は test_defrecord_check.py(包み直さずそのまま公開する — ADR-DOE-HY-002)。
+;;; What is checked: checks pass and fail, the failure message (type, field, check, value), :tags can be read,
+;;; the older form with no header dict still works as is, forms refused at expansion time, and checks that return a Program are rejected.
+;;; It is exposed by test_defrecord_check.py (exposed as is without re-wrapping -- ADR-DOE-HY-002).
 
 (require doeff-hy.macros [deftest defk <- val])
 (require doeff-hy.record [defrecord])
@@ -18,7 +18,7 @@
 (setv KINDS (frozenset #("chat" "agent")))
 
 (defrecord ChatId
-  "chat の id"
+  "chat id"
   {:tags  {:context "chat" :role "type"}
    :check [(CHAT-ID-PATTERN.fullmatch value)]}
   (#^ str value))
@@ -43,14 +43,14 @@
   #^ (| int None) size)
 
 (defrecord Grouped
-  "1 つの setv に既定値つきの欄を並べた形(agora の ProfileFact で見つかった欠陥 — 前は最初の組だけを欄に数え、:check の参照が落ちた)"
+  "A form with fields that have defaults listed in one setv (a defect found in agora's ProfileFact -- previously only the first pair was counted as a field, and the :check reference failed)"
   {:check [(>= used 0) (<= used limit)]}
   #^ str name
   (setv #^ int used 0
         #^ int limit 10))
 
 (defrecord Refused
-  "検めの断り — 失敗の値の印つき"
+  "Refusal of a check -- marked with the failing value"
   {:failure True}
   #^ str reason)
 
@@ -63,8 +63,8 @@
   #^ str value)
 
 
-(defn refused [#^ str source]  ; defk にできない: 検の中で展開の誤りを文字列で受けるだけの手元の関数
-  "source を展開して、断った時の文言を返す(断らなければ None)。"
+(defn refused [#^ str source]  ; cannot be a defk: a local helper that only receives the expansion error as a string inside the test
+  "Expand source and return the message when it was refused (None if not refused)."
   (try
     (hy.eval (hy.read-many (+ "(require doeff-hy.record [defrecord])\n" source)) :module (hy.I.types.ModuleType "probe"))
     None
@@ -85,15 +85,15 @@
   (with [caught (pytest.raises ValueError)]
     (ChatId :value "chat-1"))
   (assert (= (str caught.value)
-             "ChatId の欄 value が検め (CHAT-ID-PATTERN.fullmatch value) で落ちた: value='chat-1'"))
+             "ChatId: field value failed check (CHAT-ID-PATTERN.fullmatch value): value='chat-1'"))
   (with [caught (pytest.raises ValueError)]
     (Span :start 3 :end 1))
-  (assert (= (str caught.value) "Span の欄 start・end が検め (<= start end) で落ちた: start=3 end=1")))
+  (assert (= (str caught.value) "Span: fields start, end failed check (<= start end): start=3 end=1")))
 
 
 (deftest test-checks-run-in-written-order
   (<- _ (Pure None))
-  ;; 両方とも偽の値 — 先に書いた (>= start 0) で落ちる。
+  ;; Both are false values -- it fails at the (>= start 0) written first.
   (with [caught (pytest.raises ValueError)]
     (Span :start -2 :end -5))
   (assert (in "(>= start 0)" (str caught.value))))
@@ -103,11 +103,11 @@
   (<- _ (Pure None))
   (assert (= ChatId.__doeff_tags__ (DefinitionTags :context "chat" :role "type")))
   (assert (= ChatId.__doeff_checks__ #("(CHAT-ID-PATTERN.fullmatch value)")))
-  ;; docstring は source と型検査の投影にだけ残る — 実行時の __doc__ は欄の名から組む。
+  ;; The docstring remains only in the source and the type-checking projection -- the runtime __doc__ is built from the field names.
   (assert (= ChatId.__doc__ "ChatId(*, value)"))
   (assert (is Span.__doeff_tags__ None))
   (assert (= Span.__doeff_checks__ #("(>= start 0)" "(<= start end)")))
-  ;; :tags だけの形は検めを持たず、既定値の欄も欄として読む。
+  ;; A form with only :tags has no checks, and fields with defaults are also read as fields.
   (assert (= Named.__doeff_checks__ #()))
   (assert (= (. (Named :kind "chat") note) "")))
 
@@ -118,7 +118,7 @@
   (assert (= (. (Participant :chat chat :kind "agent") kind) "agent"))
   (with [caught (pytest.raises ValueError)]
     (Participant :chat chat :kind "robot"))
-  (assert (in "Participant の欄 kind が検め (in kind KINDS)" (str caught.value))))
+  (assert (in "Participant: field kind failed check (in kind KINDS)" (str caught.value))))
 
 
 (deftest test-record-without-a-header-keeps-the-old-shape
@@ -127,9 +127,9 @@
   (assert (= row.key "k"))
   (assert (not (hasattr Plain "__doeff_tags__")))
   (assert (not (hasattr Plain "__post_init__")))
-  ;; 型検査の投影の展開は前の形のまま(pyright が dataclass として読む)。実行の展開は欄の表だけを dataclass に作らせ、関数は展開が
-  ;; 書く(振る舞いが同じ事は defrecord_shape_deftests.hy が確かめる)。関数の本体の外では
-  ;; _scoped-definition が文の並びを do に並べるだけ(Python の形は同じ)。
+  ;; The type-checking projection expansion stays as before (pyright reads it as a dataclass). The runtime expansion makes the dataclass build only the field table, and the function is written
+  ;; by the expansion (that the behaviour is the same is checked by defrecord_shape_deftests.hy). Outside a function body
+  ;; _scoped-definition only lines the statement sequence up into a do (the Python shape is the same).
   (with [_ (static-view)]
     (assert (= (hy.repr (hy.macroexpand '(defrecord Plain #^ str key)))
                "'(do (defclass [(dataclass :frozen True :kw-only True)] Plain [] (annotate key str)))")))
@@ -140,16 +140,16 @@
   (<- _ (Pure None))
   (with [caught (pytest.raises TypeError)]
     (Misused :value "x"))
-  (assert (in "Program を返した" (str caught.value))))
+  (assert (in "returned a Program" (str caught.value))))
 
 
 (deftest test-a-check-answering-true-skips-the-failure-path
   (<- _ (Pure None))
-  ;; 数の検: 答えが True そのものの検めは require-check を呼ばない — record を作るたびの費用
-  ;; (require-check の :pre の isinstance 5 つと値の辞書・DoExpr の metaclass を通る isinstance)を払わない。
-  ;; 直しを外すと(検めごとに require-check を呼ぶ形)、通る Span 1 つで 2 回・通る ChatId で 1 回と数えて赤。
-  ;; 断る物は変わらない: 偽の検めは require-check が ValueError にし、True でない真の答え(Match)は通る。
-  (import doeff_hy._record_check :as record-module)   ; 展開が引く require-check の置き場
+  ;; Counting test: a check whose answer is exactly True does not call require-check -- it avoids the per-record cost
+  ;; (5 isinstance calls in require-check's :pre, the value dict, and an isinstance going through the DoExpr metaclass).
+  ;; Without the fix (calling require-check for each check) it counts 2 calls for one passing Span and 1 for a passing ChatId, so it is red.
+  ;; What is refused does not change: a false check is made a ValueError by require-check, and a truthy answer that is not True (Match) passes.
+  (import doeff_hy._record_check :as record-module)   ; where the expansion looks up require-check
   (val original record-module.require-check)
   (val calls [0])
   (setattr record-module "require_check"
@@ -163,7 +163,7 @@
     (with [caught (pytest.raises ValueError)]
       (Span :start 3 :end 1))
     (assert (= (get calls 0) 1) (get calls 0))
-    (assert (= (str caught.value) "Span の欄 start・end が検め (<= start end) で落ちた: start=3 end=1"))
+    (assert (= (str caught.value) "Span: fields start, end failed check (<= start end): start=3 end=1"))
     (with [(pytest.raises ValueError)]
       (ChatId :value "chat-1"))
     (assert (= (get calls 0) 2) (get calls 0))
@@ -173,18 +173,18 @@
 
 (deftest test-malformed-headers-are-refused-at-expansion
   (<- _ (Pure None))
-  (assert (in "受けない" (refused "(defrecord A {:doc \"x\"} #^ str a)")))
-  (assert (in ":check は検めの式の list" (refused "(defrecord A {:check (> a 0)} #^ int a)")))
-  (assert (in "欄を 1 つも参照しない" (refused "(defrecord A {:check [(> b 0)]} #^ int a)")))
-  (assert (in "欄の注記" (refused "(defrecord A {:check [(: a int)]} #^ int a)")))
+  (assert (in "is not accepted" (refused "(defrecord A {:doc \"x\"} #^ str a)")))
+  (assert (in ":check must be a list of check expressions" (refused "(defrecord A {:check (> a 0)} #^ int a)")))
+  (assert (in "references no field" (refused "(defrecord A {:check [(> b 0)]} #^ int a)")))
+  (assert (in "field annotation" (refused "(defrecord A {:check [(: a int)]} #^ int a)")))
   (assert (in ":role" (refused "(defrecord A {:tags {:context \"c\" :role \"nope\"}} #^ int a)")))
-  (assert (in ":context と :role ちょうど" (refused "(defrecord A {:tags {:context \"c\"}} #^ int a)")))
-  (assert (in ":failure は字面の True か False" (refused "(defrecord A {:failure 1} #^ int a)"))))
+  (assert (in "exactly :context and :role" (refused "(defrecord A {:tags {:context \"c\"}} #^ int a)")))
+  (assert (in ":failure must be a literal True or False" (refused "(defrecord A {:failure 1} #^ int a)"))))
 
 
 (deftest test-failure-mark-is-readable-on-the-class
   (<- _ (Pure None))
-  ;; :failure True は失敗の型の印 — 属性に残り、値の作り方は変わらない。印の無い頭の辞書は False、頭の辞書の無い形は属性を持たない。
+  ;; :failure True is a marker of a failure type -- it stays as an attribute and does not change how values are made. A header dict without the marker is False, and a form with no header dict has no attribute.
   (assert (is Refused.__doeff_failure__ True))
   (assert (= (. (Refused :reason "r") reason) "r"))
   (assert (is ChatId.__doeff_failure__ False))
@@ -193,21 +193,21 @@
 
 (deftest test-grouped-setv-fields-are-all-checked
   (<- _ (Pure None))
-  ;; 2 つ目の組の欄 limit も :check の欄として数える(前は「欄を 1 つも参照しない」か、limit を束ねずに落ちた)。
+  ;; The field limit of the second pair is also counted as a :check field (previously it was "references no field" or failed without binding limit).
   (assert (= (. (Grouped :name "a" :used 3 :limit 5) limit) 5))
   (assert (= (. (Grouped :name "a") limit) 10))
   (with [caught (pytest.raises ValueError)]
     (Grouped :name "a" :used 7 :limit 5))
-  (assert (in "Grouped の欄 used・limit が検め (<= used limit) で落ちた" (str caught.value)))
-  ;; 2 つ目の組の欄だけを参照する :check も展開できる。
-  ;; (検の外の module で展開するので、dataclass の名が無い誤りは出てもよい — 欄の読みの誤りが無いことだけを見る)。
-  (assert (not-in "欄を 1 つも参照しない" (or (refused "(defrecord Only {:check [(> b 0)]} (setv #^ int a 1 #^ int b 2))") ""))))
+  (assert (in "Grouped: fields used, limit failed check (<= used limit)" (str caught.value)))
+  ;; A :check that references only the field of the second pair can also be expanded.
+  ;; (It expands in a module outside the test, so an error about a missing dataclass name is fine -- we only check there is no error in reading the fields.)
+  (assert (not-in "references no field" (or (refused "(defrecord Only {:check [(> b 0)]} (setv #^ int a 1 #^ int b 2))") ""))))
 
 
 
 (deftest test-field-reading-matches-the-shared-case-table
   (<- _ (Pure None))
-  ;; 欄の読み方の Hy 側の正本 field-targets が、Rust 側の正本(doeff-indexer の hy_index::fields)と同じ表で同じ答えを出す。
+  ;; The Hy-side source of truth for how fields are read, field-targets, gives the same answers as the Rust-side source of truth (hy_index::fields in doeff-indexer) from the same table.
   (import json pathlib [Path])
   (import doeff_hy._declarations [field-targets])
   (setv table (json.loads (.read-text (/ (. (Path __file__) parent) "data" "record_field_cases.json") :encoding "utf-8")))

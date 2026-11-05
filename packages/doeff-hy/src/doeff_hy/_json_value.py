@@ -1,21 +1,21 @@
-"""JSON の値の型の唯一の定義。
+"""The sole definition of the JSON value type.
 
-``JsonValue`` は JSON を解いたままの値(``dict`` / ``list`` / 文字列 / 数 / 真偽 / ``None``)の型で、名前を変えた素の
-dict にすぎない。構造を持つ値は、型を宣言した値(doeff-hy の ``defwire`` / ``defrecord``)へ解いて確かめてから運ぶ
-(素の dict を直に使わせず、pydantic のように解いて確かめる)。この型に触ってよいのは、汎用の解き手(``doeff_hy._wire`` の parse / dump)と、送受信
-そのものを行う foundation の module だけ — それ以外で使うと doeff-linter の DOEFF120 が誤りにする。
+``JsonValue`` is the type of a value as decoded from JSON (``dict`` / ``list`` / string / number / bool / ``None``), and is merely a plain
+dict under another name. A value with structure is carried only after being decoded and checked into a type-declared value (doeff-hy's ``defwire`` / ``defrecord``)
+(do not let plain dicts be used directly; decode and check as pydantic does). The only things allowed to touch this type are the generic decoder (parse / dump of ``doeff_hy._wire``) and the foundation modules that do the sending and receiving
+themselves -- using it elsewhere makes doeff-linter's DOEFF120 an error.
 
-置き場: doeff-hy(解き手の置き場)の Python の module。doeff-hy は doeff-records を import できない(依存の向きが逆)
-ので、以前の正本 ``doeff_records._wire`` はここを import する。Python の module にしたのは、型検査器(pyright)が Hy の
-module を読めないため — Python の読み手(agora-controllers の model の ``.py``)もこの 1 か所から同じ型を得る。
+Location: a Python module of doeff-hy (where the decoder lives). doeff-hy cannot import doeff-records (the dependency direction is reversed),
+so the former source ``doeff_records._wire`` imports this. It is a Python module because the type checker (pyright) cannot read Hy
+modules -- Python readers (the model ``.py`` of agora-controllers) also get the same type from this one place.
 
-形を呼び手が決める任意の JSON(tool の引数と結果・耐久の走行の memo の値)を中を読まずに運ぶ時は、JsonValue ではなく
-``OpaqueJson``(下)を使う — 中を分解する口を持たない名のある型で、DOEFF120 は数えない。
+When carrying arbitrary JSON whose shape the caller decides (tool arguments and results, memo values of durable runs) without reading inside it, use ``OpaqueJson`` (below) rather than JsonValue
+-- a named type with no interface for taking it apart, which DOEFF120 does not count.
 
-2 つの見え方(同じ名前・同じ定義点):
-- 型検査の時(``TYPE_CHECKING``)は再帰の型の別名 — ``isinstance(v, dict)`` で ``dict[str, JsonValue]`` に絞れる。
-- 実行の時は ``isinstance`` に渡せる union — defk の契約 ``(: x JsonValue)`` は実行の時に ``isinstance`` で確かめるので、
-  文字列の型の別名(前方参照)は渡せない。``JsonObject`` は実行の時は ``dict``。
+Two views (same name, same definition point):
+- At type-check time (``TYPE_CHECKING``) it is a recursive type alias -- ``isinstance(v, dict)`` narrows to ``dict[str, JsonValue]``.
+- At run time it is a union that can be passed to ``isinstance`` -- the defk contract ``(: x JsonValue)`` is checked with ``isinstance`` at run time,
+  so a type alias as a string (forward reference) cannot be passed. ``JsonObject`` is ``dict`` at run time.
 """
 
 import json
@@ -37,23 +37,23 @@ else:
 @final
 @dataclass(frozen=True)
 class OpaqueJson:
-    """形を呼び手が決める任意の JSON の値を、中を読まずに運ぶための名のある型。
+    """A named type for carrying an arbitrary JSON value whose shape the caller decides, without reading inside it.
 
-    使う所: 運ぶ側が形を知らず、知ってはいけない値 — tool の呼び出しの引数と結果・耐久の走行の memo の値や spec のように、
-    書き手ごとに形が違う JSON。形の決まった値は ``defwire`` の型にする(この型へ逃がさない)。
+    Where to use: values whose shape the carrying side does not know and must not know -- JSON whose shape differs per author, such as tool call arguments and results, memo values of durable runs, and specs.
+    A value of fixed shape should be a ``defwire`` type (do not escape into this type).
 
-    ``JsonValue`` と違い、この型は中を分解する口を持たない。持つのは JSON の文字列 ``text``(最小の直列化 — 区切りの空白なし・
-    UTF-8 のまま・object の欄の順は保つ)だけで、等しさはその文字列の等しさ。中を読むのは次の 2 つだけ:
+    Unlike ``JsonValue``, this type has no interface for taking it apart. All it holds is the JSON string ``text`` (minimal serialization -- no separator whitespace,
+    UTF-8 kept as is, object field order preserved), and equality is equality of that string. Only the following two read inside:
 
-    - 形を知る読み手が ``doeff_hy._wire`` の ``parse`` で ``defwire`` の型へ解く(``(parse T opaque)``)。
-    - 送受信そのものを行う foundation の module(doeff-linter DOEFF120 の ``:wire-modules``)が ``json.loads(opaque.text)`` で読む。
+    - A reader that knows the shape decodes it into a ``defwire`` type with ``parse`` of ``doeff_hy._wire`` (``(parse T opaque)``).
+    - A foundation module that does the sending and receiving itself (``:wire-modules`` of doeff-linter DOEFF120) reads it with ``json.loads(opaque.text)``.
 
-    作るのは ``OpaqueJson.of(value)``(JSON の値から)か ``OpaqueJson.from_text(text)``(JSON の文字列から — 読めなければ ValueError)。
-    ``defwire`` の型の欄に書けば、解き手は任意の JSON をこの型へ包み、書く時は元の JSON の値へ戻す(``doeff_hy._wire`` の ``dump`` は
-    JSON の値として。``dump-json`` は持っている文字列を解き直さずそのまま出力へ埋める — ``doeff_hy._wire_codec`` の書き手)。
+    Build one with ``OpaqueJson.of(value)`` (from a JSON value) or ``OpaqueJson.from_text(text)`` (from a JSON string -- ValueError if unreadable).
+    If written in a field of a ``defwire`` type, the decoder wraps arbitrary JSON into this type, and when writing returns it to the original JSON value (``dump`` of ``doeff_hy._wire`` treats it as
+    a JSON value. ``dump-json`` embeds the string it holds into the output as is without decoding again -- the writer of ``doeff_hy._wire_codec``).
 
-    ``__get_pydantic_core_schema__`` は pydantic がこの型を解く・書く時の口で、pydantic を読むのは pydantic が呼んだ時だけ(この module は
-    import しない)。使い手は照らしの道具 ``doeff_hy._wire_parity`` と、pydantic で直に解く読み手(wire の API へ移す)。
+    ``__get_pydantic_core_schema__`` is the hook for when pydantic decodes or writes this type, and pydantic is imported only when pydantic calls it (this module does not
+    import it). Users are the comparison tool ``doeff_hy._wire_parity`` and readers that decode directly with pydantic (to be moved to the wire API).
     """
 
     text: str
@@ -63,13 +63,13 @@ class OpaqueJson:
 
     @classmethod
     def of(cls, value: "JsonValue") -> "OpaqueJson":
-        """JSON の値(dict / list / 文字列 / 数 / 真偽 / None・凍らせた JSON の FrozenMap / tuple も)を包む。
+        """Wrap a JSON value (dict / list / string / number / bool / None, and the frozen JSON FrozenMap / tuple too).
 
-        文字列は ``json.dumps`` が今書いた物なので ``json.loads`` で必ず読める(書けない値は ``json.dumps`` が
-        TypeError / ValueError で断る — 受ける値・断る値・綴りは ``cls(text)`` を通した時と同じ)。その文字列を
-        ``__post_init__`` でもう一度解くのは同じ答えを 2 度出すだけなので、ここでは解かずに包む(
-        預かり所の契約の例 124 で 4.2k 回・``of`` の費用の 4 割が、書いた直後の文字列を解き直す ``json.loads`` だった)。
-        外から渡る文字列(``cls(text)`` を直に呼ぶ所)は今までどおり ``__post_init__`` が解いて確かめる。
+        The string is what ``json.dumps`` just wrote, so ``json.loads`` can always read it (values that cannot be written are refused by ``json.dumps`` with
+        TypeError / ValueError -- the values accepted, the values refused, and the spelling are the same as through ``cls(text)``). Decoding that string
+        again in ``__post_init__`` would only produce the same answer twice, so it is wrapped here without decoding (
+        in example 124 of the custodian's contract, 4.2k calls -- 40% of the cost of ``of`` -- were ``json.loads`` re-decoding the string just written).
+        A string coming from outside (where ``cls(text)`` is called directly) is decoded and checked by ``__post_init__`` as before.
         """
         text = json.dumps(value, ensure_ascii=False, separators=(",", ":"), default=_thawed)
         opaque = object.__new__(cls)
@@ -78,12 +78,12 @@ class OpaqueJson:
 
     @classmethod
     def from_text(cls, text: str | bytes) -> "OpaqueJson":
-        """JSON の文字列を包む(最小の直列化へ整える)。JSON として読めなければ ValueError。"""
+        """Wrap a JSON string (normalized to minimal serialization). ValueError if it cannot be read as JSON."""
         return cls.of(json.loads(text))
 
     @property
     def encoded_size(self) -> int:
-        """最小の直列化の UTF-8 の byte の数(大きさの上限の検め — 中を読まずに測る)。"""
+        """Number of UTF-8 bytes of the minimal serialization (the check of a size limit -- measured without reading inside)."""
         return len(self.text.encode("utf-8"))
 
     @classmethod
@@ -98,21 +98,21 @@ class OpaqueJson:
 
 
 def _thawed(value: object) -> object:
-    # 凍らせた JSON(doeff_hy._frozen の FrozenMap)を json.dumps が書ける形へ。tuple は json.dumps がそのまま配列にする。
+    # Turn frozen JSON (FrozenMap of doeff_hy._frozen) into a form json.dumps can write. json.dumps turns a tuple into an array as is.
     items = getattr(value, "items", None)
     if callable(items):
         return dict(cast("Any", items)())
-    raise TypeError(f"JSON の値でない: {type(value).__name__}")
+    raise TypeError(f"not a JSON value: {type(value).__name__}")
 
 
 def _opaque_of(value: object) -> OpaqueJson:
-    return value if isinstance(value, OpaqueJson) else OpaqueJson.of(value)  # type: ignore[arg-type]  # 解き手が JSON から読んだ値だけが来る
+    return value if isinstance(value, OpaqueJson) else OpaqueJson.of(value)  # type: ignore[arg-type]  # only values the decoder read from JSON come here
 
 
 def _opaque_value(value: OpaqueJson, info: "SerializationInfo") -> "JsonValue | str":
-    # pydantic の書き手が OpaqueJson を書くため。照らしの道具(doeff_hy._wire_parity の pydantic_dump_json)が埋め込みの控え(admit を持つ
-    # 物)を context に渡した時は、持っている文字列の代わりに控えの印を返し、出力ができた後で控えが文字列を埋める。控えが無い書き出しは
-    # 値を返す。OpaqueJson でない値が来ると ``value.text`` の AttributeError で落ちる — 和の型の腕として試された時の「この腕ではない」もこれ。
+    # So that the pydantic writer can write OpaqueJson. When the comparison tool (pydantic_dump_json of doeff_hy._wire_parity) passes a record of embedding (one that has admit) in the
+    # context, it returns the record's marker instead of the string it holds, and after the output is made the record embeds the string. A write without a record
+    # returns the value. If a value that is not OpaqueJson comes, it fails with AttributeError at ``value.text`` -- this is also the "not this arm" when tried as an arm of a union.
     admit = getattr(info.context, "admit", None)
     if callable(admit):
         marker = admit(value.text)

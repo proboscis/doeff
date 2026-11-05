@@ -1,13 +1,13 @@
-"""doeff-hy-check の展開の保存(doeff_hy/_static_cache.py)の失敗ケース — 引くか、展開し直すか。
+"""Failure cases for the saved expansions of doeff-hy-check (doeff_hy/_static_cache.py) -- whether to reuse or re-expand.
 
-保存した展開は、展開が依った物が今の環境と同じ時だけ引く。依った物 = source の中身・module 名・
-根からの相対 path・Hy の版と、展開が通った file(require した macro の module・macro が呼ぶ補助の module・推移的な require・
-型検査の展開の後処理の module)。展開が通らない doeff_hy の file を変えても、保存は引ける(以前は doeff_hy の package 全体の
-指紋がキーに入り、関係ない commit 1 つで全部の展開が作り直しになっていた)。
+A saved expansion is reused only when what the expansion depended on is the same as in the current environment. What it depended on = the source contents, module name,
+path relative to the root, Hy version, and the files the expansion passed through (modules of required macros, helper modules the macros call, transitive requires,
+modules of the post-processing of the type-checking expansion). Changing a doeff_hy file the expansion does not pass through still lets the saved expansion be reused (previously the fingerprint of the
+whole doeff_hy package was part of the key, so one unrelated commit forced every expansion to be rebuilt).
 
-macro の module を読み直すのは次の実行(別の process)と同じにするため、検は macro の module を sys.modules から外してから
-2 度目を引く。doeff_hy 自身の file を変える検は、doeff_hy を一時の dir に写して別の process で走らせる(読み込み済みの
-doeff_hy を変えないため)。
+To make reloading macro modules the same as in the next run (a separate process), the checks remove the macro modules from sys.modules before
+pulling the second time. Checks that change doeff_hy's own files copy doeff_hy to a temporary dir and run it in a separate process (so as not to change the
+already loaded doeff_hy).
 """
 
 import json
@@ -26,9 +26,9 @@ from doeff_hy._static_check import Projection, project_cached
 
 PACKAGE = "probe_cache"
 
-#: macro の module。said = 補助の module の関数の答え・said-late = macro の本体の中でだけ import する補助の答え・
-#: said-deep = この module が require する別の macro の module の macro を、この module の compile の時に展開した答え。
-#: unused = user.hy が使わない macro。
+#: Macro modules. said = the answer of a function in the helper module; said-late = the answer of a helper imported only inside the macro body;
+#: said-deep = the answer of a macro from another macro module that this module requires, expanded at this module's compile time.
+#: unused = a macro that user.hy does not use.
 MACROS = f"""\
 (import {PACKAGE}.words [word])
 (require {PACKAGE}.deeper [deep])
@@ -46,7 +46,7 @@ USER = f"""\
 
 @dataclass(frozen=True)
 class Tree:
-    """根の下の macro の package(probe_cache)と、それを require する user.hy。"""
+    """A macro package under the root (probe_cache) and the user.hy that requires it."""
 
     root: Path
     cache: Path
@@ -75,14 +75,14 @@ def _write_tree(root: Path, words: str = "old") -> Tree:
 
 
 def _forget(package: str) -> None:
-    """読み込み済みの package の module を外す(次の実行と同じく、次の展開で macro の module を読み直させる)。"""
+    """Remove the loaded package's modules (as in the next run, so that the next expansion reloads the macro modules)."""
     for name in [n for n in sys.modules if n == package or n.startswith(f"{package}.")]:
         del sys.modules[name]
 
 
 @pytest.fixture
 def expansions(monkeypatch: pytest.MonkeyPatch) -> list[Path]:
-    """展開した source の列(保存から引いた時は増えない)。"""
+    """The list of expanded sources (does not grow when pulled from the cache)."""
     seen: list[Path] = []
     real = static_check.project
 
@@ -112,7 +112,7 @@ def _project(tree: Tree) -> Projection:
 
 
 def _rewrite(path: Path, text: str) -> None:
-    """中身を替える(大きさも替える — file の sha256 の覚えは path・更新時刻・大きさで引くため)。"""
+    """Change the contents (also change the size -- because the memo of a file's sha256 is keyed by path, mtime, and size)."""
     assert len(text) != len(path.read_text(encoding="utf-8"))
     path.write_text(text, encoding="utf-8")
 
@@ -121,35 +121,35 @@ def test_an_unchanged_tree_reads_the_stored_expansion(tree: Tree, expansions: li
     first = _project(tree)
     assert all(word in first.text for word in ("'old'", "'late'", "'deep'")), first.text
     assert _project(tree).text == first.text
-    assert expansions == [tree.user], "何も変えていないのに展開し直した"
+    assert expansions == [tree.user], "re-expanded although nothing changed"
 
 
 def test_an_entry_of_the_current_store_version_is_read_back(
     tree: Tree, expansions: list[Path], monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    # 直す前は赤: entry の読みは保存の形の版を literal の 3 で
-    # 照らしていた。CACHE_VERSION を上げた版は、自分が書いた entry を 1 つも読めず、毎回全部を展開し直す。
+    # Red before the fix: reading an entry compared the cache-format version against the literal 3.
+    # A version with CACHE_VERSION raised could not read a single entry it had written itself, and re-expanded everything every time.
     monkeypatch.setattr(static_cache, "CACHE_VERSION", static_cache.CACHE_VERSION + 1)
     first = _project(tree)
     assert _project(tree).text == first.text
-    assert expansions == [tree.user], "今の版で書いた entry を読めず、展開し直した"
+    assert expansions == [tree.user], "could not read the entry written by the current version and re-expanded"
 
 
-#: 型検査の展開の後処理(static_check の with_canonical_gensyms)が使う gensym の名の振り直しの規則の source の sha256 → その規則で
-#: 書いた保存の形の版(CACHE_VERSION)。規則は doeff_hy_bytecode_guard(閉包の歩みが名だけ入れる package)に在り、記録の digest が
-#: 覆わない(規則を替えても保存した展開が古い名のまま引かれた)。規則を替えたら
-#: CACHE_VERSION を上げ、この表に新しい行を足す(版は行ごとに違う — 同じ版のまま hash だけを足すと下の検が断る)。
-#: 版 3 の行の hash は、gensym_renaming の中の import を _records へ移した source の物(規則は同じなので版は
-#: 上げず、前の hash 5b4612a4… を置き換えた)。その後に docstring だけを書き換えた(移した module の名・tracker の id を
-#: 外した)ので、規則は同じまま hash 75e5ff36… を置き換えた。版 4 は位置の対応の保存の形を替えた版で、規則は版 3 と同じなので
-#: 同じ hash の行の版を 4 にした(表は今の規則の行の版を CACHE_VERSION と照らす)。
+#: sha256 of the source of the rules for renaming gensym names used by the post-processing of the type-checking expansion (with_canonical_gensyms in static_check) -> the version
+#: of the cache format (CACHE_VERSION) written with that rule. The rules live in doeff_hy_bytecode_guard (a package where the closure walk only includes names), and the record's digest does not
+#: cover them (changing the rules still pulled saved expansions with the old names). When the rules change,
+#: raise CACHE_VERSION and add a new row to this table (the version differs per row -- adding only a hash under the same version is rejected by the check below).
+#: The hash of the version-3 row is that of the source with the import inside gensym_renaming moved to _records (the rules are the same so the version was
+#: not raised; the previous hash 5b4612a4... was replaced). After that only the docstring was rewritten (the moved module's name and the tracker id were
+#: removed), so the hash 75e5ff36... was replaced with the rules unchanged. Version 4 changed the cache format of the position mapping, and the rules are the same as version 3, so
+#: the row of the same hash was set to version 4 (the table compares the version of the row of the current rules with CACHE_VERSION).
 GENSYM_RULE_VERSIONS = {
     "7981e4ad3c2b2d0f589750610b29f6d53a2dcbac75e1180c84876ed63736f0b5": 4,
 }
 
 
 def _gensym_rule_sha256() -> str:
-    """振り直しの規則の source(入口 gensym_renaming・対応を作る gensym_renames・名の一致・替え方・名の形の 2 つの正規表現)の sha256。"""
+    """sha256 of the source of the renaming rules (the entry point gensym_renaming, gensym_renames that builds the mapping, name matching, the replacement, and the two regexes for the name form)."""
     import hashlib
     import inspect
 
@@ -167,25 +167,25 @@ def _gensym_rule_sha256() -> str:
 
 
 def test_a_changed_gensym_renaming_rule_comes_with_a_new_store_version() -> None:
-    # 守り: 振り直しの規則の source が表に無ければ、規則を替えたのに保存の形の版を
-    # 上げていない(保存した展開が古い規則の名のまま引かれる)。表の版は行ごとに違い、今の規則の行の版が CACHE_VERSION。
-    assert len(set(GENSYM_RULE_VERSIONS.values())) == len(GENSYM_RULE_VERSIONS), "同じ版に 2 つの規則の行がある"
+    # Guard: if the source of the renaming rules is not in the table, the rules were changed without raising the cache-format
+    # version (saved expansions would be pulled with names from the old rules). The table's version differs per row, and the version of the row of the current rules is CACHE_VERSION.
+    assert len(set(GENSYM_RULE_VERSIONS.values())) == len(GENSYM_RULE_VERSIONS), "two rule rows share the same version"
     rule = _gensym_rule_sha256()
     assert GENSYM_RULE_VERSIONS.get(rule) == static_cache.CACHE_VERSION, (
-        f"gensym の名の振り直しの規則({rule})を替えたら static_cache.CACHE_VERSION を上げ、GENSYM_RULE_VERSIONS に"
-        " 新しい規則の行を足す"
+        f"When the gensym renaming rules ({rule}) change, raise static_cache.CACHE_VERSION and add"
+        " a new rule row to GENSYM_RULE_VERSIONS"
     )
 
 
-#: doeff_hy の source のうち、module の置き場(__file__・__cached__)に触れてよい行(file の名・行の中身)— 作った module に書くだけの
-#: static_check の project の 1 行。
+#: Lines in doeff_hy sources that may touch the module location (__file__, __cached__) (file name, line content) -- just one line of static_check's project
+#: that only writes it into the module it creates.
 PLACE_LINES = {("static_check.py", "    module.__file__ = str(source)")}
 
 
 def test_doeff_hy_sources_do_not_read_their_place() -> None:
-    # 守り: doeff_hy の macro と型検査の後処理は、自分の置き場から隣の file を読まない。
-    # 置き場から作った素の文字列の大域(HERE = os.path.dirname(__file__))を関数が読む形は、閉包の歩みが値(path)を入れるだけで path の
-    # 先の file の中身を覆わず、隣の file を替えても古い展開を引く(code か束縛の文が置き場を直に読む形は、歩みが照らせない印にする)。
+    # Guard: doeff_hy's macros and the type-check post-processing do not read neighboring files from their own location.
+    # A function reading a plain-string global built from the location (HERE = os.path.dirname(__file__)) has only the value (path) included by the closure walk, which does not cover the contents of the file
+    # at that path, so changing a neighboring file still pulls an old expansion (code or binding statements that read the location directly are marked as something the walk cannot compare).
     package = Path(doeff_hy.__file__).parent
     touching = sorted(
         (path.relative_to(package).as_posix(), line)
@@ -195,12 +195,12 @@ def test_doeff_hy_sources_do_not_read_their_place() -> None:
         if ("__file__" in line or "__cached__" in line) and not line.lstrip().startswith(("#", ";"))
     )
     assert [row for row in touching if row not in PLACE_LINES] == [], (
-        "doeff_hy の source が module の置き場を読む(隣の file の中身は保存した展開の記録に入らない)"
+        "a doeff_hy source reads the module location (the contents of a neighboring file are not in the record of the saved expansion)"
     )
 
 
 def test_a_changed_macro_module_expands_again(tree: Tree, expansions: list[Path]) -> None:
-    # 失敗ケース 2: require した macro の module の source を変えたら作り直す。
+    # Failure case 2: rebuild when the source of a required macro module changes.
     _project(tree)
     _rewrite(
         tree.package / "macros.hy",
@@ -211,8 +211,8 @@ def test_a_changed_macro_module_expands_again(tree: Tree, expansions: list[Path]
 
 
 def test_a_changed_helper_a_macro_calls_expands_again(tree: Tree, expansions: list[Path]) -> None:
-    # 失敗ケース 3: macro が展開の中で呼ぶ補助の Python の module(macro でない code)を変えたら作り直す。
-    # 以前のキーは require の先の .hy だけを入れたので、words.py を変えても古い展開が当たった。
+    # Failure case 3: rebuild when a helper Python module (non-macro code) that a macro calls during expansion changes.
+    # The old key included only the .hy at the end of the require, so changing words.py still hit the old expansion.
     _project(tree)
     _rewrite(tree.package / "words.py", 'def word() -> str:\n    return "newer"\n')
     assert "'newer'" in _project(tree).text
@@ -222,7 +222,7 @@ def test_a_changed_helper_a_macro_calls_expands_again(tree: Tree, expansions: li
 def test_a_changed_helper_imported_in_a_macro_body_expands_again(
     tree: Tree, expansions: list[Path]
 ) -> None:
-    # 失敗ケース 4: macro の本体の中でだけ import する補助の module を変えたら作り直す。
+    # Failure case 4: rebuild when a helper module imported only inside a macro body changes.
     _project(tree)
     _rewrite(tree.package / "late.py", 'def word() -> str:\n    return "later"\n')
     assert "'later'" in _project(tree).text
@@ -232,7 +232,7 @@ def test_a_changed_helper_imported_in_a_macro_body_expands_again(
 def test_a_changed_macro_of_a_transitive_require_expands_again(
     tree: Tree, expansions: list[Path]
 ) -> None:
-    # 失敗ケース 8: macro の module が require する先の macro を変えたら作り直す。
+    # Failure case 8: rebuild when a macro that a macro module requires changes.
     _project(tree)
     _rewrite(tree.package / "deeper.hy", '(defmacro deep [] "deeper")\n')
     assert "'deeper'" in _project(tree).text
@@ -242,7 +242,7 @@ def test_a_changed_macro_of_a_transitive_require_expands_again(
 def test_a_relative_require_follows_the_macro_module_of_its_package(
     tree: Tree, expansions: list[Path]
 ) -> None:
-    # 失敗ケース 2 の相対の require(`.macros`)の形。
+    # The relative require form (`.macros`) of failure case 2.
     tree.user.write_text("(require .deeper [deep])\n(setv c (deep))\n", encoding="utf-8")
     _project(tree)
     _rewrite(tree.package / "deeper.hy", '(defmacro deep [] "deeper")\n')
@@ -253,7 +253,7 @@ def test_a_relative_require_follows_the_macro_module_of_its_package(
 def test_the_hy_version_is_part_of_what_the_expansion_used(
     tree: Tree, expansions: list[Path], monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    # 失敗ケース 7: Hy の版が変わったら作り直す。
+    # Failure case 7: rebuild when the Hy version changes.
     import hy
 
     _project(tree)
@@ -265,8 +265,8 @@ def test_the_hy_version_is_part_of_what_the_expansion_used(
 def test_another_worktree_checks_its_own_macro_files(
     tmp_path: Path, expansions: list[Path], monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    # 失敗ケース 9: 別の作業木で作った保存は、出所の file を今の環境の module 名から引き直して照らす。同じ中身の source・
-    # 同じ module 名・同じ相対 path でも、今の木の補助が違えば作り直す(保存の先は 2 つの木で同じ)。
+    # Failure case 9: a cache made in a different worktree is compared by re-resolving the origin files from the current environment's module names. Even with the same source contents,
+    # the same module name, and the same relative path, rebuild if the helpers in the current tree differ (the cache location is the same for both trees).
     monkeypatch.setattr(sys, "dont_write_bytecode", True)
     monkeypatch.setenv("DOEFF_HY_CODE_STORE", "off")
     cache = tmp_path / ".cache"
@@ -288,8 +288,8 @@ OUTSIDE_PACKAGE = "probe_outside_macros"
 
 @pytest.fixture
 def outside_macros(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Iterator[Path]:
-    """根(proj)の外に置いた別の package の macro の module(outside/probe_outside_macros/macros.hy — sys.path から引ける)と、
-    根の下でそれを require する proj/probe.hy。"""
+    """A macro module of another package placed outside the root (proj) (outside/probe_outside_macros/macros.hy -- resolvable from sys.path), and
+    proj/probe.hy under the root that requires it."""
     outside = tmp_path / "outside"
     monkeypatch.syspath_prepend(str(outside))
     monkeypatch.setattr(sys, "dont_write_bytecode", True)
@@ -311,7 +311,7 @@ def outside_macros(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Iterator[
 def test_a_changed_macro_of_another_package_outside_the_roots_expands_again(
     tmp_path: Path, outside_macros: Path, expansions: list[Path]
 ) -> None:
-    # 失敗ケース 5: 根の外の別の package の macro(例 doeff-adr.macros)を変えたら作り直す。
+    # Failure case 5: rebuild when a macro of another package outside the root (e.g. doeff-adr.macros) changes.
     project = tmp_path / "proj"
     cache = tmp_path / ".cache"
     first = project_cached(project, [project], project / "probe.hy", cache)
@@ -325,11 +325,11 @@ def test_a_changed_macro_of_another_package_outside_the_roots_expands_again(
     assert len(expansions) == 2
 
 
-# ---- 展開が使った macro 単位の記録 -----------------------------------------------------------------------------
+# ---- Records per macro used by the expansion -----------------------------------------------------------------------------
 
 
 def test_a_changed_body_of_a_used_macro_expands_again(tree: Tree, expansions: list[Path]) -> None:
-    # 冷えるべき時: user.hy が使う macro(said-deep)の本体を替えたら作り直す。
+    # When it should go cold: rebuild when the body of a macro user.hy uses (said-deep) changes.
     _project(tree)
     _rewrite(
         tree.package / "macros.hy",
@@ -340,19 +340,19 @@ def test_a_changed_body_of_a_used_macro_expands_again(tree: Tree, expansions: li
 
 
 def test_a_changed_unused_macro_keeps_the_stored_expansion(tree: Tree, expansions: list[Path]) -> None:
-    # 冷えなくてよい時(直す前は赤): user.hy が使わない macro の本体を替えても、保存から引く。
+    # When it need not go cold (red before the fix): pull from the cache even if the body of a macro user.hy does not use changes.
     _project(tree)
     _rewrite(
         tree.package / "macros.hy",
         MACROS.replace('(defmacro unused [] "unused")', '(defmacro unused [] "unused-now")'),
     )
     _project(tree)
-    assert expansions == [tree.user], "使わない macro を替えただけで展開し直した"
+    assert expansions == [tree.user], "re-expanded just because an unused macro changed"
 
 
-# ---- doeff_hy 自身の file を変える検(doeff_hy を写して別の process で走らせる)---------------------------------
+# ---- Checks that change doeff_hy's own files (copy doeff_hy and run in a separate process) ---------------------------------
 
-#: 写した doeff_hy で project_cached を 1 度走らせ、展開した数と読んだ doeff_hy の在りかを JSON で出す。
+#: Run project_cached once with the copied doeff_hy and output the number of expansions and the location of the doeff_hy that was read as JSON.
 CHILD = """\
 import json, sys
 from pathlib import Path
@@ -380,8 +380,8 @@ PROBE = """\
 
 @dataclass(frozen=True)
 class CopiedDoeffHy:
-    """一時の dir に写した doeff_hy(lib/doeff_hy)と、それを使う子の process の根・保存先。子の process は fixture が
-    PYTHONPATH(写しを先に読ませる)と PYTHONPYCACHEPREFIX(bytecode を一時の dir へ)を与えた環境を継ぐ。"""
+    """doeff_hy copied to a temporary dir (lib/doeff_hy), and the root and cache location of a child process that uses it. The child process inherits the environment in which the fixture gave
+    PYTHONPATH (so the copy is read first) and PYTHONPYCACHEPREFIX (bytecode into a temporary dir)."""
 
     lib: Path
     root: Path
@@ -392,7 +392,7 @@ class CopiedDoeffHy:
         return self.lib / "doeff_hy"
 
     def expanded(self) -> int:
-        """子の process で 1 度走らせ、展開した数を返す(保存から引けば 0)。"""
+        """Run once in a child process and return the number of expansions (0 if pulled from the cache)."""
         done = subprocess.run(
             [sys.executable, "-c", CHILD, str(self.root), str(self.cache)],
             capture_output=True,
@@ -405,7 +405,7 @@ class CopiedDoeffHy:
         assert answer["projected"], done.stderr
         assert Path(answer["doeff_hy"]).is_relative_to(self.package), (
             answer
-        )  # 写した doeff_hy を読んだ
+        )  # the copied doeff_hy was read
         return int(answer["expanded"])
 
 
@@ -426,23 +426,23 @@ def copied_doeff_hy(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> CopiedDo
 
 
 def _append_comment(path: Path) -> None:
-    comment = "\n;; 変えた\n" if path.suffix == ".hy" else "\n# 変えた\n"
+    comment = "\n;; changed\n" if path.suffix == ".hy" else "\n# changed\n"
     path.write_text(path.read_text(encoding="utf-8") + comment, encoding="utf-8")
 
 
 def test_a_doeff_hy_file_the_expansion_does_not_go_through_keeps_the_stored_expansion(
     copied_doeff_hy: CopiedDoeffHy,
 ) -> None:
-    # 失敗ケース 1: 展開が通らない doeff_hy の file(HTTP の部品 http.hy)を変えても、保存から引く。以前は doeff_hy の
-    # package 全体の指紋がキーに入り、関係ない commit 1 つで全部の展開が作り直しになっていた(直す前は赤)。
+    # Failure case 1: changing a doeff_hy file the expansion does not pass through (the HTTP part http.hy) still pulls from the cache. Previously the fingerprint of the whole doeff_hy
+    # package was part of the key, so one unrelated commit forced every expansion to be rebuilt (red before the fix).
     assert copied_doeff_hy.expanded() == 1
     _append_comment(copied_doeff_hy.package / "http.hy")
     assert copied_doeff_hy.expanded() == 0
 
 
 def test_a_changed_type_check_post_processing_expands_again(copied_doeff_hy: CopiedDoeffHy) -> None:
-    # 失敗ケース 6: 型検査の展開の後処理(static_check の記帳の外し・補助の import の足し)は macro から辿れない。
-    # それを変えたら作り直す(記録は static_check で定義された関数と class の閉包の digest — 関数を 1 つ足す)。
+    # Failure case 6: the post-processing of the type-checking expansion (static_check's removal of bookkeeping and addition of helper imports) cannot be reached from macros.
+    # Rebuild when it changes (the record is the digest of the closure of functions and classes defined in static_check -- add one function).
     assert copied_doeff_hy.expanded() == 1
     static_check_file = copied_doeff_hy.package / "static_check.py"
     static_check_file.write_text(
@@ -453,8 +453,8 @@ def test_a_changed_type_check_post_processing_expands_again(copied_doeff_hy: Cop
 
 
 def test_a_changed_doeff_hy_macro_expands_again(copied_doeff_hy: CopiedDoeffHy) -> None:
-    # 失敗ケース 2 の doeff_hy の形: 展開が使った doeff_hy の macro(macros.hy の defk)を変えたら作り直す。記録は使った macro
-    # 単位なので、macros.hy に注釈を足すだけでは作り直さない(下の検)— defk の code の定数(docstring)を替える。
+    # The doeff_hy form of failure case 2: rebuild when a doeff_hy macro the expansion used (defk in macros.hy) changes. The record is per used macro,
+    # so merely adding a comment to macros.hy does not rebuild (the check below) -- change a constant (docstring) in defk's code.
     assert copied_doeff_hy.expanded() == 1
     macros = copied_doeff_hy.package / "macros.hy"
     old = '"Define a kleisli function (@do decorator)'
@@ -465,7 +465,7 @@ def test_a_changed_doeff_hy_macro_expands_again(copied_doeff_hy: CopiedDoeffHy) 
 
 
 def test_a_comment_in_doeff_hy_macros_keeps_the_stored_expansion(copied_doeff_hy: CopiedDoeffHy) -> None:
-    # 冷えなくてよい時(直す前は赤): macros.hy に注釈を足しても(使った macro の code は変わらない)保存から引く。
+    # When it need not go cold (red before the fix): pull from the cache even if a comment is added to macros.hy (the code of the used macro does not change).
     assert copied_doeff_hy.expanded() == 1
     _append_comment(copied_doeff_hy.package / "macros.hy")
     assert copied_doeff_hy.expanded() == 0
@@ -474,10 +474,10 @@ def test_a_comment_in_doeff_hy_macros_keeps_the_stored_expansion(copied_doeff_hy
 def test_the_same_doeff_hy_in_another_place_keeps_the_stored_expansion(
     copied_doeff_hy: CopiedDoeffHy, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    # 冷えなくてよい時(直す前は赤): 同じ中身の doeff_hy を別の dir に置いても保存から引く。
-    # 日次の全体検証は回ごとに別の dir(task の作業 dir の下の作業木)に doeff を置く。後処理(POST_PROCESSING)の閉包の digest に
-    # static_check の __file__ の値(置き場の path — project の `module.__file__ = …` が code の名の表に __file__ を出す)が入り、
-    # 保存した展開が回ごとに全部外れた(agora-controllers の hy-type-trend が毎回 .hy 約 2,450 本を冷えて展開した)。
+    # When it need not go cold (red before the fix): pull from the cache even if doeff_hy with the same contents is placed in a different dir.
+    # The daily full verification places doeff in a different dir each run (a worktree under the task's working dir). The closure digest of the post-processing (POST_PROCESSING) included
+    # the value of static_check's __file__ (the location path -- the project's `module.__file__ = …` puts __file__ in the code's name table),
+    # and the saved expansions all missed every run (agora-controllers' hy-type-trend expanded about 2,450 .hy files cold each time).
     assert copied_doeff_hy.expanded() == 1
     elsewhere = tmp_path / "elsewhere"
     shutil.copytree(
@@ -485,16 +485,16 @@ def test_the_same_doeff_hy_in_another_place_keeps_the_stored_expansion(
     )
     monkeypatch.setenv("PYTHONPATH", str(elsewhere))
     moved = CopiedDoeffHy(elsewhere, copied_doeff_hy.root, copied_doeff_hy.cache)
-    assert moved.expanded() == 0, "同じ中身の doeff_hy を別の dir に置いただけで展開し直した"
+    assert moved.expanded() == 0, "re-expanded just because doeff_hy with the same contents was placed in a different dir"
 
 
 def test_a_changed_file_the_post_processing_reads_beside_its_module_expands_again(
     copied_doeff_hy: CopiedDoeffHy,
 ) -> None:
-    # 直す前は赤: 後処理が自分の module の置き場
-    # (__file__)から隣の file を読んで展開の結果を変えると、歩みはその file の中身を覆わない。置き場の path を digest から
-    # 外した後は、別の dir の木どうしでも、同じ木でも、file を替えた後に古い展開を引いた。置き場を値として読む code の
-    # digest は照らせない印になり、使い手は毎回展開し直す。
+    # Red before the fix: if the post-processing reads a neighboring file from its own module location
+    # (__file__) and changes the expansion result, the walk does not cover that file's contents. After removing the location path from the digest,
+    # trees in different dirs, and even the same tree, pulled an old expansion after the file was changed. The digest of code that reads the location as a value
+    # becomes a mark meaning it cannot be compared, and the user re-expands every time.
     static_check_file = copied_doeff_hy.package / "static_check.py"
     text = static_check_file.read_text(encoding="utf-8")
     assert text.count("    rendered = ast.unparse(tree)\n") == 1
@@ -510,22 +510,22 @@ def test_a_changed_file_the_post_processing_reads_beside_its_module_expands_agai
     note.write_text("one", encoding="utf-8")
     assert copied_doeff_hy.expanded() == 1
     note.write_text("two-two", encoding="utf-8")
-    assert copied_doeff_hy.expanded() == 1, "後処理が読む隣の file を替えたのに、保存した古い展開を引いた"
+    assert copied_doeff_hy.expanded() == 1, "pulled the old saved expansion although the neighboring file read by the post-processing was changed"
 
 
-# ---- 保存先--------------------------------------------------------------------------
+# ---- Cache location --------------------------------------------------------------------------
 
 
 def test_doeff_hy_check_cache_names_the_place_of_the_stored_expansions(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    # 失敗ケース(#3863): 日次の検証の task は HOME を走りごとの空の dir に替えるので、XDG の cache の下の保存先は毎回空で、
-    # 全部の .hy を展開し直していた。DOEFF_HY_CHECK_CACHE が名指す dir を保存先にし、走りをまたいで残る dir へ向けられる
-    # ようにする(テストの実行の側の DOEFF_HY_CODE_STORE・doeff-effect-analyzer の DOEFF_EFFECT_ANALYZER_CACHE と同じ形)。
+    # Failure case (#3863): the daily verification task replaces HOME with an empty dir per run, so the cache location under the XDG cache was empty every time and
+    # all .hy were re-expanded. Make the dir named by DOEFF_HY_CHECK_CACHE the cache location so that it can be pointed to a dir that persists across runs
+    # (the same form as DOEFF_HY_CODE_STORE on the test-run side and DOEFF_EFFECT_ANALYZER_CACHE of doeff-effect-analyzer).
     from doeff_hy._static_cache import default_cache_dir
 
-    # 名指しの無い形を確かめるので、走らせる側(日次の task・worker)が渡す名指しを外す(日次 10-11 08:05 JST の赤 — 名指しが
-    # 在ると XDG の段に届かない)。
+    # This checks the form with no explicit naming, so remove the naming that the running side (the daily task / worker) passes (the red of daily 10-11 08:05 JST -- with the naming
+    # present, the XDG tier is not reached).
     monkeypatch.delenv("DOEFF_HY_CHECK_CACHE", raising=False)
     monkeypatch.setenv("XDG_CACHE_HOME", str(tmp_path / "xdg"))
     assert default_cache_dir() == tmp_path / "xdg" / "doeff-hy-check"
@@ -533,9 +533,9 @@ def test_doeff_hy_check_cache_names_the_place_of_the_stored_expansions(
     assert default_cache_dir() == tmp_path / "kept"
 
 
-# ---- 2 つの書き手(2 台の worker が保存先を共有する)--------------------------------------------
+# ---- Two writers (two workers share the cache location) --------------------------------------------
 
-#: 子の process が同じ entry へ何度も書く(大きい中身で、書きの途中に別の書き手の書きが重なるようにする)。
+#: Child processes write to the same entry many times (with large contents, so that another writer's write overlaps in the middle of a write).
 WRITER = """\
 import sys
 from pathlib import Path
@@ -549,9 +549,9 @@ for _ in range(rounds):
 
 
 def test_two_writers_of_one_entry_do_not_mix(tmp_path: Path) -> None:
-    # 失敗ケース(#3863 の (b)): 保存の書きの一時の file の名が <entry>.tmp で固定だったので、2 つの process(共有の保存先を使う
-    # 2 台の worker)が同じ entry を同時に書くと、同じ一時の file へ互いに書き込み、混ざった中身が rename されうる。書き手ごとの
-    # 一時の file に書いてから rename する。最後の entry は、どちらかの書き手の中身そのまま(読める JSON)で、一時の file は残らない。
+    # Failure case ((b) of #3863): the temporary file name of a cache write was fixed as <entry>.tmp, so when two processes (two workers sharing the
+    # cache location) wrote the same entry at the same time, they wrote into the same temporary file and mixed contents could be renamed. Write to a per-writer
+    # temporary file and then rename. The final entry is exactly one writer's contents (readable JSON), and no temporary file remains.
     import json
     import subprocess
 
@@ -565,13 +565,13 @@ def test_two_writers_of_one_entry_do_not_mix(tmp_path: Path) -> None:
     entries = list(cache.rglob("*.json"))
     assert len(entries) == 1, entries
     text = json.loads(entries[0].read_text(encoding="utf-8"))["text"]
-    assert text in {"x" * 400_000, "y" * 400_000}, "2 つの書き手の中身が混ざった"
-    assert not [p for p in cache.rglob("*") if p.is_file() and p.suffix != ".json"], "一時の file が残った"
+    assert text in {"x" * 400_000, "y" * 400_000}, "the two writers' contents were mixed"
+    assert not [p for p in cache.rglob("*") if p.is_file() and p.suffix != ".json"], "a temporary file remained"
     assert static_cache.CACHE_VERSION == 4
 
 
 def test_each_writer_uses_its_own_temporary_file(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    # 失敗ケース(#3863 の (b)): 2 度の書きが同じ一時の file を使わない(直す前は <entry>.tmp で同じ — 赤)。
+    # Failure case ((b) of #3863): two writes do not use the same temporary file (before the fix both used <entry>.tmp -- red).
     from doeff_hy import _static_cache as static_cache
     from doeff_hy_bytecode_guard._records import MacroRecord
 
@@ -590,11 +590,11 @@ def test_each_writer_uses_its_own_temporary_file(tmp_path: Path, monkeypatch: py
     assert written[0] != written[1], written
 
 
-# ---- 引く速さ(10 file の検めで stat 10 万回・CPU 10 秒)-----------------------------------------------
+# ---- Lookup speed (checking 10 files cost 100,000 stats and 10 seconds of CPU) -----------------------------------------------
 
 
 def test_entry_keeps_imports_and_old_entry_reads_as_unknown(tmp_path: Path) -> None:
-    # import の名を entry が持つ(引くたびに展開の text を ast で読み直さない)。名を持たない古い entry は None で読める。
+    # The entry holds the import names (the expansion text is not re-read with ast on every lookup). An old entry without names reads as None.
     from doeff_hy import _static_cache as static_cache
     from doeff_hy_bytecode_guard._records import MacroRecord
 
@@ -610,7 +610,7 @@ def test_entry_keeps_imports_and_old_entry_reads_as_unknown(tmp_path: Path) -> N
 
 
 def test_candidates_are_looked_up_once_per_directory(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    # 候補の有無は dir ごとに 1 度だけ引く(候補ごとに stat しない)。dir が無くても空で、file でない名(dir)は数えない。
+    # Candidate existence is looked up once per dir (no stat per candidate). A missing dir is empty, and names that are not files (dirs) are not counted.
     from doeff_hy import _static_check as static_check
 
     (tmp_path / "pkg").mkdir()
@@ -619,7 +619,7 @@ def test_candidates_are_looked_up_once_per_directory(tmp_path: Path, monkeypatch
     listing = static_check._listing(tmp_path / "pkg")
     assert listing.files == {"a.hy"} and listing.dirs == {"sub.hy"}
     assert static_check._listing(tmp_path / "missing") == static_check._Listing(frozenset(), frozenset())
-    # 無い dir から先は引かない・package の下の <名>.hy と <名>/__init__.hy を見つける
+    # Do not look beyond a missing dir; find <name>.hy and <name>/__init__.hy under a package
     (tmp_path / "pkg" / "inner").mkdir()
     (tmp_path / "pkg" / "inner" / "__init__.hy").write_text("", encoding="utf-8")
     asked: list[Path] = []
@@ -636,7 +636,7 @@ def test_candidates_are_looked_up_once_per_directory(tmp_path: Path, monkeypatch
 
 
 def test_shared_scope_stats_each_file_once_across_checks(tmp_path: Path) -> None:
-    # 照らしごとに覚えを捨てず、SharedScope の間は同じ file の状態を 1 度だけ読む。閉じた後は覚えが残らない。
+    # Do not discard the memo per comparison; while in SharedScope, a file's state is read only once. After it closes, no memo remains.
     from doeff_hy_bytecode_guard._import_scope import SharedScope
     from doeff_hy_bytecode_guard._import_scope import current_scope
     from doeff_hy_bytecode_guard import _macro_use as macro_use
@@ -647,15 +647,15 @@ def test_shared_scope_stats_each_file_once_across_checks(tmp_path: Path) -> None
     with SharedScope() as scope:
         assert current_scope() is scope
         first = macro_use._state_now(str(probe))
-        probe.write_text("22", encoding="utf-8")  # 実行の間は変わらない物として扱う
+        probe.write_text("22", encoding="utf-8")  # treated as unchanged during the run
         assert macro_use._state_now(str(probe)) == first
-        with SharedScope() as inner:  # 入れ子は外の覚えをそのまま使う
+        with SharedScope() as inner:  # a nested scope uses the outer memo as is
             assert inner is scope
     assert current_scope() is None
     assert macro_use._state_now(str(probe)) != first
 
 
-# --- closure 単位の束-------------------------------------------------------------------------
+# --- Per-closure bundle-------------------------------------------------------------------------
 
 
 def _closure(tree: Tree) -> static_check.Closure:
@@ -665,7 +665,7 @@ def _closure(tree: Tree) -> static_check.Closure:
 
 
 def _opened_during(tree: Tree, monkeypatch: pytest.MonkeyPatch) -> list[str]:
-    """closure を引く間に open した、根と cache の下の file の path(source の読みと entry の読みを数える)。"""
+    """Paths of files under the root and cache opened while looking up a closure (counts source reads and entry reads)."""
     import builtins
     import io
 
@@ -688,7 +688,7 @@ def _opened_during(tree: Tree, monkeypatch: pytest.MonkeyPatch) -> list[str]:
 
 
 def _age(tree: Tree) -> None:
-    """全部の source の更新時刻を十分に古くする(束は書いた直後に更新された file を、中身を読んで照らす)。"""
+    """Make every source's mtime sufficiently old (the bundle compares by reading the contents of files updated right after it was written)."""
     for path in tree.root.rglob("*"):
         if path.is_file():
             os.utime(path, ns=(1_000_000_000_000_000_000, 1_000_000_000_000_000_000))
@@ -699,13 +699,13 @@ def test_a_warm_closure_opens_one_bundle_not_every_entry(
 ) -> None:
     _age(tree)
     first = _closure(tree)
-    second = _closure(tree)  # 2 回目で束を書く(1 回目の書きは更新直後の file を信じない)
+    second = _closure(tree)  # the bundle is written on the second run (the first write does not trust just-updated files)
     opened = _opened_during(tree, monkeypatch)
     sources = [p for p in opened if p.endswith(".hy")]
     entries = [p for p in opened if p.endswith(".json")]
     bundles = [p for p in opened if p.endswith(".jsonl")]
-    assert sources == [], f"温まった closure が source を読み直した: {sources}"
-    assert (entries, len(bundles)) == ([], 1), f"温まった closure が束 1 つでなく entry を読んだ: {opened}"
+    assert sources == [], f"a warm closure re-read the sources: {sources}"
+    assert (entries, len(bundles)) == ([], 1), f"a warm closure read entries instead of one bundle: {opened}"
     assert {p: q.text for p, q in second.projections.items()} == {p: q.text for p, q in first.projections.items()}
 
 
@@ -732,7 +732,7 @@ def test_a_changed_source_is_not_served_from_the_bundle(tree: Tree, expansions: 
     before = len(expansions)
     _rewrite(tree.user, USER + "(setv d 1)\n")
     changed = _closure(tree)
-    assert tree.user in expansions[before:], "変えた source を束から引いた"
+    assert tree.user in expansions[before:], "pulled the changed source from the bundle"
     assert "d = 1" in changed.projections[tree.user].text
 
 
@@ -741,9 +741,9 @@ def test_a_touched_but_unchanged_source_keeps_the_bundle(tree: Tree, expansions:
     _closure(tree)
     _closure(tree)
     before = len(expansions)
-    os.utime(tree.user, None)  # 更新時刻だけ新しくする
+    os.utime(tree.user, None)  # only refresh the mtime
     _closure(tree)
-    assert expansions[before:] == [], "中身が同じなのに展開し直した"
+    assert expansions[before:] == [], "re-expanded although the contents are the same"
 
 
 def test_a_changed_macro_expands_again_even_from_a_bundle(tree: Tree, expansions: list[Path]) -> None:
@@ -753,44 +753,44 @@ def test_a_changed_macro_expands_again_even_from_a_bundle(tree: Tree, expansions
     before = len(expansions)
     _rewrite(tree.package / "words.py", 'def word() -> str:\n    return "newer"\n')
     changed = _closure(tree)
-    assert tree.user in expansions[before:], "macro が呼ぶ補助を変えたのに束の展開を引いた"
+    assert tree.user in expansions[before:], "pulled the bundle's expansion although the helper the macro calls was changed"
     assert "'newer'" in changed.projections[tree.user].text
 
 
 def test_a_source_changed_right_after_the_bundle_was_written_is_read_again(
     tree: Tree, expansions: list[Path]
 ) -> None:
-    # 束を書いた直後(更新時刻が新しい)の file は、大きさと更新時刻を信じず中身で照らす(同じ刻みの中の書き換えを逃さない)。
+    # A file right after the bundle was written (new mtime) is compared by contents, not trusting size and mtime (so as not to miss a rewrite within the same tick).
     _closure(tree)
     _closure(tree)
     before = len(expansions)
     stat = tree.user.stat()
-    tree.user.write_text(USER.replace(" b ", " z "), encoding="utf-8")  # 同じ大きさ
+    tree.user.write_text(USER.replace(" b ", " z "), encoding="utf-8")  # same size
     os.utime(tree.user, ns=(stat.st_atime_ns, stat.st_mtime_ns))
     changed = _closure(tree)
     assert "z =" in changed.projections[tree.user].text
 
 
 def test_a_bundle_follows_a_changed_macro_to_the_next_run(tree: Tree, monkeypatch: pytest.MonkeyPatch) -> None:
-    # macro を変えて展開し直した行は束にも書き直す(束の行の記録が古いままだと、毎回 entry へ落ちて open が減らない)。
+    # A row re-expanded after changing a macro is also rewritten into the bundle (if the bundle's row record stays stale, it falls through to entries every time and opens do not decrease).
     _age(tree)
     _closure(tree)
     _closure(tree)
     _rewrite(tree.package / "words.py", 'def word() -> str:\n    return "newer"\n')
     os.utime(tree.package / "words.py", ns=(1_000_000_000_000_000_000, 1_000_000_000_000_000_000))
-    _closure(tree)  # 展開し直して束を書き直す
+    _closure(tree)  # re-expand and rewrite the bundle
     opened = _opened_during(tree, monkeypatch)
     assert [p for p in opened if p.endswith(".hy")] == []
     assert [p for p in opened if p.endswith(".json")] == [], opened
     assert len([p for p in opened if p.endswith(".jsonl")]) == 1, opened
 
 
-# ---- 位置の対応を詰めて持つ(親が pyright の間に抱える memory)--------------------------------------------
+# ---- Hold the position mapping compactly (memory the parent holds while pyright runs)--------------------------------------------
 
 
 def test_packed_spans_read_like_the_tuple_they_pack() -> None:
-    # 位置の対応は 1 file につき整数の配列 1 つで持つ(1 個ずつ list や Span にすると、日次の 874 万個で親の RSS が 10GB に残った)。
-    # 読みは tuple と同じ — repr は運びの digest に入るので、詰める前と同じ綴りでなければ運んだ診断が全部当て直しになる。
+    # The position mapping is held as one integer array per file (as individual lists or Spans, the parent's RSS stayed at 10GB with the daily 8.74 million of them).
+    # Reads are the same as a tuple -- repr goes into the carried digest, so unless the spelling is the same as before packing, all carried diagnostics would be re-matched.
     import pickle
 
     from doeff_hy._static_cache import PackedSpans, Span
@@ -806,7 +806,7 @@ def test_packed_spans_read_like_the_tuple_they_pack() -> None:
 
 
 def test_an_entry_with_unreadable_spans_is_a_miss(tmp_path: Path) -> None:
-    # 壊れた位置の対応は読む時に読めない entry として飛ばす(使う時まで遅らせると、pyright の後で検査全体が落ちる)。
+    # A broken position mapping is skipped as an unreadable entry at read time (delaying it until use would make the whole check fail after pyright).
     from doeff_hy._static_cache import CacheMiss, _entry_from_json
     from doeff_hy_bytecode_guard._loader_hooks import record_to_json
     from doeff_hy_bytecode_guard._records import MacroRecord

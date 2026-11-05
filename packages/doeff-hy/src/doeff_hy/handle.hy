@@ -43,8 +43,8 @@
 ;;;   - defhandler stores __doeff_body__ for introspection (like defk)
 
 (import hy.models [Expression Symbol List Keyword Sequence String])
-;; 展開の部品は `_` の名で束ねる — この module は Hy の require が path で読む macro の境界で、見せる名は macro だけ
-;; (ADR-DOE-API-001 R14)。素の名で束ねると、目録が doeff_hy.handle の公開の名と数える。
+;; Bundle expansion helpers under `_` names — this module is the boundary of macros that Hy's require reads by path, and the only names it exposes are macros
+;; (ADR-DOE-API-001 R14). If bundled under plain names, the inventory would count them as public names of doeff_hy.handle.
 (import doeff-hy._positions [locate-synthesized :as _locate-synthesized])
 (import doeff-hy._declarations [DECLARATION-KEYS :as _DECLARATION-KEYS
                                refuse-unknown-keys :as _refuse-unknown-keys
@@ -66,13 +66,13 @@
                                 legacy-session-message :as _legacy-session-message])
 
 (defn _do-import []
-  "handler の本体を包む `_doeff-do` の import。型検査のための展開(doeff_hy/_static_view.py)
-   では型付きの doeff_hy._static_types.do を取る — 同じ module の defk と同じ名前に 2 つの
-   型が付くと、pyright から見た `_doeff_do` が両者の union になり誤検出を出すため
-   (macros.hy の `_helper-imports` と同じ決め)。実行時の do の置き場は補助の表の `_runtime-do`。"
+  "Import of `_doeff-do`, which wraps the handler body. The expansion for type checking (doeff_hy/_static_view.py)
+   takes the typed doeff_hy._static_types.do — if two different types were attached to the same name as the defk in the
+   same module, `_doeff_do` as seen by pyright would become a union of the two and cause false positives
+   (same decision as `_helper-imports` in macros.hy). The runtime `do` lives in `_runtime-do` of the helper table."
   (if (_static-view-enabled)
-      ;; 型付きの do は doeff-hy-check が module の頭に 1 度だけ import する(static_view.py の STATIC_HELPER_IMPORTS —
-      ;; 節ごとに出すと 1 つの名の宣言が 64 を超えた module で pyright が Unknown にする)。
+      ;; doeff-hy-check imports the typed do only once at the head of the module (STATIC_HELPER_IMPORTS in static_view.py —
+      ;; emitting it per clause makes pyright treat a name as Unknown in a module where the declarations of one name exceed 64).
       '(do)
       (do
         (import doeff-hy.macros [_runtime-do-import])
@@ -80,30 +80,30 @@
 
 
 (defn _clause-endings-import [name alias]
-  "節の終わり方の検め(clause_endings.hy の name)を alias で引く import。型検査のための展開では、型付きの
-   doeff_hy._static_types の同じ名を doeff-hy-check が module の頭に 1 度だけ import する(static_view.py の
-   HANDLER_STATIC_NAMES — clause_endings は .hy なので pyright から型が見えない)。"
+  "Import that fetches the clause-ending check (name in clause_endings.hy) via an alias. In the expansion for type checking,
+   doeff-hy-check imports the same name from the typed doeff_hy._static_types only once at the head of the module (HANDLER_STATIC_NAMES
+   in static_view.py — clause_endings is a .hy file, so pyright cannot see its types)."
   (if (_static-view-enabled)
       '(do)
       `(import doeff-hy._clause-endings [~name :as ~alias])))
 
 
 (defn _vm-imports []
-  "handler の展開が使う doeff の node の import — 節の操作の node(clause_ops.hy の表の nodes / static-nodes)と、handler 自身が
-   使う Pass(番の外れた effect とどの節にも当たらない effect を外へ渡す)と WithHandlerType(doeff の根の名 — doeff_vm は import しない)。型検査のための展開の resume / transfer は
-   typed-resume / typed-transfer になり Resume / Transfer を使わないので、表の static-nodes に載せない(使わない import は strict の
-   赤)。
+  "Import of the doeff nodes used by the handler expansion — the clause-operation nodes (nodes / static-nodes in the clause_ops.hy table), plus what the handler itself
+   uses: Pass (hands an effect outside the guard, and an effect matching no clause, to the outside) and WithHandlerType (name of the doeff root — doeff_vm is not imported). The resume / transfer of the expansion for type checking become
+   typed-resume / typed-transfer and do not use Resume / Transfer, so they are not listed in the table's static-nodes (an unused import is a strict
+   error).
 
-   名は `_doeff_<名>` の別名で束ねる(doeff_hy/_expansion_names.py)。素の名で束ねると、書き手が自分の effect を同じ名にした時
-   (振込の Transfer)、節の頭の isinstance が VM の node を指して effect が外の handler へ黙って抜け、module の段では書き手の
-   名が上書きされた。展開がこれらの node を読む綴りも、alias-symbol で同じ別名を引く。"
+   Names are bundled under `_doeff_<name>` aliases (doeff_hy/_expansion_names.py). If bundled under plain names, when a writer named their own effect the same (a
+   Transfer in a bank transfer), the isinstance at the head of a clause would point at the VM node and the effect would silently slip through to the outer handler, and at module level the writer's
+   name was overwritten. The spelling by which the expansion reads these nodes also fetches the same alias via alias-symbol."
   (_import-form (+ (_node-names (_static-view-enabled)) ["Pass" "WithHandlerType"])))
 
 
 (defn _handler-fn-form [endings-check]
-  "handler を本文に被せる関数 __doeff-handler-fn__ の定義。型検査のための展開では、本文を
-   `HandlerBody[HandledAnswer]`、答えを `HandledScope[HandledAnswer]`(本文の答えの型をそのまま運ぶ)と注記する
-   (doeff_hy/_static_types.pyi)。実行時の展開は注記を付けない。"
+  "Definition of the function __doeff-handler-fn__ that wraps the body with the handler. In the expansion for type checking, the body is annotated as
+   `HandlerBody[HandledAnswer]` and the answer as `HandledScope[HandledAnswer]` (carrying the body's answer type as is)
+   (doeff_hy/_static_types.pyi). The runtime expansion adds no annotations."
   (if (_static-view-enabled)
       `(defn #^ (get _doeff_HandledScope _doeff_HandledAnswer) __doeff-handler-fn__
              [#^ (get _doeff_HandlerBody _doeff_HandledAnswer) __doeff-body__]
@@ -137,8 +137,8 @@
 (defn _extract-lazy-clauses [clauses [handler-name None]]
   "Split clauses into (lazy-defs, effect-clauses).
    lazy-defs: list of #(name-sym body-forms mutability legacy?) — session val / session var
-   (ADR-DOE-HY-006)と旧い lazy / lazy-val / lazy-var の両方。旧い形は動きを変えず、
-   DeprecationWarning と doeff-hy-check の所見で session val / session var への移行を案内する。
+   (ADR-DOE-HY-006) and both of the old lazy / lazy-val / lazy-var. The old forms keep their behavior, and
+   DeprecationWarning and the findings of doeff-hy-check guide migration to session val / session var.
    effect-clauses: remaining clauses."
   (setv lazys []
         effects [])
@@ -151,9 +151,9 @@
                          False))
       (is-not decl None)
         (raise (SyntaxError (+ "\ndefhandler " (str handler-name) ": (" (. decl spelled) " "
-                               (. decl name) " …) は節の本体の中に書きます(その節の 1 回の実行の間の値)。\n"
-                               "  handler の直下(節と並べる所)に置くのは、セッションの間で共有する "
-                               "(session val " (. decl name) " 式) / (session var " (. decl name) " 式) です。"
+                               (. decl name) " ...) goes inside the clause body (a value for the duration of that one run of the clause).\n"
+                               "  What goes directly under the handler (alongside the clauses) is a value shared across the session: "
+                               "(session val " (. decl name) " expr) / (session var " (. decl name) " expr)."
                                " [ADR-DOE-HY-006]\n")))
       (_is-lazy-clause c)
         (do
@@ -167,7 +167,7 @@
   #(lazys effects))
 
 (defn _session-names [lazy-defs]
-  "節の本体の書き換え(binding_forms)へ渡す、セッションに持つ名前の一覧。"
+  "List of names held per session, passed to the clause-body rewriting (binding_forms)."
   (lfor #(lname _ mut legacy?) lazy-defs
     (_SessionName (str lname) (if (= mut :var) _Mutability.VAR _Mutability.VAL) legacy?)))
 
@@ -196,9 +196,9 @@
     (walk f)))
 
 (defn _fresh-lazy-tmp [lazy-name suffix]
-  "lazy の初期化の一時の名を作るため。Hy の gensym で作る — 名の番号は compile の口の正準化
-   (doeff_hy_bytecode_guard._records.canonical_gensyms)が module の中の順へ振り直すので、compile の順に依らない
-   (自前の数えを持つと、その番号が compile の順で変わっていた)。"
+  "To make temporary names for lazy initialization. Made with Hy's gensym — the numbers in the names are reassigned to the order within the module by the canonicalization at the compile entrance
+   (doeff_hy_bytecode_guard._records.canonical_gensyms), so they do not depend on compile order
+   (with a counter of our own, the numbers used to change with compile order)."
   (hy.gensym (+ "lazy_" (str lazy-name) "_" suffix)))
 
 (defn _references-symbol [form sym-name]
@@ -223,13 +223,13 @@
     True False))
 
 (defn _clause-aliases [clause lazy-defs]
-  "書き手が節の本体・番に書いた `effect`・`k`(expansion_names.py の WRITER-VISIBLE の行)のうち、この節が束ねる物の行の list。
+  "Of the `effect` and `k` the writer wrote in a clause body / guard (the WRITER-VISIBLE row of expansion_names.py), the list of rows this clause bundles.
 
-   展開は節を回す関数の引数と節の操作を `_doeff_effect`・`_doeff_k` で束ねて読むので、素の `effect`・`k` は書き手の名前空間のまま。
-   書き手が `(reperform effect)`・`:when (isinstance effect X)` のように書いた節だけが、その名を節の effect・続きとして読める
-   (`_alias-forms` の束ね・型検査のための展開の effect は `_narrowed-alias-bindings` の束ねと `_clause-test` の絞り)。節の欄・session の名が同じ名なら束ねない —
-   書き手が欄・session で決めた名が優先する。点つきの記号(`effect.amount`)も名を使うと数える。名が本体の中の局所の束ね
-   (`(lfor k …)`)にだけ現れても数える — 余分な束ねは害が無い(型検査のための展開は束ねた名を読む)。"
+   The expansion reads the clause-iterating function's arguments and the clause operations through bundles `_doeff_effect` and `_doeff_k`, so plain `effect` and `k` stay in the writer's namespace.
+   Only a clause where the writer wrote something like `(reperform effect)` or `:when (isinstance effect X)` can read that name as the clause's effect and continuation
+   (the bundling is in `_alias-forms`; the effect in the expansion for type checking is bundled in `_narrowed-alias-bindings` and narrowed in `_clause-test`). If the clause's fields or a session name use the same name, it is not bundled —
+   the name the writer chose in the fields / session takes priority. A dotted symbol (`effect.amount`) also counts as using the name. It counts even if the name appears only in a local binding inside the body
+   (`(lfor k ...)`) — an extra bundle does no harm (the expansion for type checking reads the bundled name)."
   (import doeff-hy._clause-endings [parse-clause-options])
   (setv options (parse-clause-options (list (cut clause 2 None)) "handle clause"))
   (setv taken (+ (lfor f (get clause 1) (str f))
@@ -241,10 +241,10 @@
         row))
 
 (defn _alias-forms [row]
-  "節の本体の頭に置く、書き手の名 row.written の束ね。実行時の展開は `(setv effect _doeff_effect)`。型検査のための展開は、
-   名に型を宣言し(`k: _doeff_Continuation`)、束ねた名を読む(`_ = k` — 書き手が使わない名は reportUnusedVariable の赤になる。
-   欄の束ねの `_ = field` と同じ)。節の `isinstance` が絞る effect は、ここでは束ねない: 節を回す関数の頭で絞る前の値に束ね
-   (`_narrowed-alias-bindings`)、節の判定が絞って読む(`_clause-test`)。"
+  "Bundle of the writer's name row.written, placed at the head of the clause body. The runtime expansion is `(setv effect _doeff_effect)`. The expansion for type checking
+   declares a type for the name (`k: _doeff_Continuation`) and reads the bundled name (`_ = k` — a name the writer does not use becomes a reportUnusedVariable error.
+   Same as `_ = field` in the field bundle). The effect that the clause's `isinstance` narrows is not bundled here: it is bundled to the pre-narrowing value at the head of the clause-iterating function
+   (`_narrowed-alias-bindings`), and the clause test narrows and reads it (`_clause-test`)."
   (setv written (Symbol row.written))
   (cond
     (not (_static-view-enabled)) [`(setv ~written ~(Symbol row.internal))]
@@ -253,35 +253,35 @@
           `(setv _ ~written)]))
 
 (defn _narrowed-alias-bindings [clauses lazy-defs]
-  "型検査のための展開で、節を回す関数の頭(節の判定の連なりより前)に置く、書き手の名の束ねの list(`effect = _doeff_effect`)。
-   絞る名(row.narrowed)を書いた節が 1 つでも在る handler にだけ置く。実行時の展開は、書いた節の本体が束ねる(`_alias-forms`)。
+  "In the expansion for type checking, the list of bundles of the writer's names (`effect = _doeff_effect`) placed at the head of the clause-iterating function (before the chain of clause tests).
+   Placed only in a handler that has at least one clause where the writer wrote a narrowed name (row.narrowed). The runtime expansion is bundled by the body of the clause the writer wrote (`_alias-forms`).
 
-   節の `isinstance` が絞る effect は、絞った後に代入すると、絞った総称型(`EffectBase[Unknown]`)を代入先の変数が受けて
-   reportUnknownVariableType の赤になる(代入先に型を宣言しても同じ)。絞る前の値に束ねておき、書いた節の判定が書き手の名も絞る
-   (`_clause-test`)。判定の中で束ねる形(`isinstance((effect := _doeff_effect), T) and isinstance(_doeff_effect, T)`)は採らない:
-   walrus の右辺を絞るかは pyright の版で変わり(1.1.411 は左辺だけ・1.1.414 は右辺も)、右辺も絞る版では 2 つ目が「いつも真」
-   (reportUnnecessaryIsInstance)になる — 書いた節ごとに 1 件で、書き手は直せない。"
+   If the effect that a clause's `isinstance` narrows is assigned after narrowing, the assignment target variable receives the narrowed generic type (`EffectBase[Unknown]`) and
+   it becomes a reportUnknownVariableType error (the same even if a type is declared on the target). Bundle it to the pre-narrowing value, and the test of the clause the writer wrote also narrows the writer's name
+   (`_clause-test`). We do not adopt the form that bundles inside the test (`isinstance((effect := _doeff_effect), T) and isinstance(_doeff_effect, T)`):
+   whether the right side of a walrus is narrowed varies by pyright version (1.1.411 only the left, 1.1.414 also the right), and in a version that narrows the right too, the second becomes 'always true'
+   (reportUnnecessaryIsInstance) — one per clause the writer wrote, which the writer cannot fix.'
   (lfor row _WRITER-VISIBLE
         :if (and row.narrowed
                  (any (gfor clause clauses (in row (_clause-aliases clause lazy-defs)))))
         `(setv ~(Symbol row.written) ~(Symbol row.internal))))
 
 (defn _effect-form-binding [etype fields rewritten]
-  "型検査のための展開で、節の `isinstance` が絞った `_doeff_effect` を、effect の型の型引数をすべて Any で解いた型に束ね直す形の list
-   (実行時の展開と、束ね直す要らない節は空)。
+  "In the expansion for type checking, the list of forms that rebind the `_doeff_effect` narrowed by a clause's `isinstance` to a type where all type arguments of the effect's type are resolved to Any
+   (empty for the runtime expansion and for clauses that need no rebinding).
 
-   pyright は総称 class の絞りの型引数を Unknown にする(`isinstance(object の値, Race)` は `Race[Unknown]`)。節の欄の束ね
-   (`tasks = _doeff_effect.tasks`)も typed_resume / typed_transfer の effect の引数も一部 Unknown の赤になり、書き手は直せない
-   (`(Race [tasks] …)`・`(Spawn [program] …)` — 欄の名は effect の定義で決まり、赤は展開が作る名と呼びの物)。絞る元の型を
-   `EffectBase[Any]` にすると基底から解ける型引数だけが埋まり、`Spawn` の `_E` のように基底に無い型引数は Unknown のままで、
-   型変数の既定値は isinstance の絞りでは使われない。型引数の数は展開の時に知れない(macro は import した名の class を引けない)ので、
-   構成子の呼び `_doeff_any_specialized(Race, *_doeff_any_args, **_doeff_any_kwargs)` で型を作る(doeff_hy/_static_types.pyi)。構成子の
-   引数がすべて Any なので、型引数がすべて Any で解かれ、欄の型は effect の定義の型のまま(`tuple[Task[Any] | Future[Any], ...]`)、
-   総称でない class は絞りと同じ型になる。型検査のための展開は走らせず pyright が読むだけなので、呼びの値は要らない。
+   pyright makes the type arguments of a generic class narrowing Unknown (`isinstance(object value, Race)` gives `Race[Unknown]`). Both the clause's field bundle
+   (`tasks = _doeff_effect.tasks`) and the effect argument of typed_resume / typed_transfer become partly-Unknown errors, which the writer cannot fix
+   (`(Race [tasks] ...)`, `(Spawn [program] ...)` — field names are decided by the effect definition, and the error comes from the name the expansion makes and from the call). If the narrowing source type is
+   `EffectBase[Any]`, only the type arguments resolvable from the base class are filled in, and a type argument not in the base, like `_E` of `Spawn`, stays Unknown;
+   the default of a type variable is not used by isinstance narrowing. The number of type arguments cannot be known at expansion time (a macro cannot look up the class of an imported name), so
+   the type is built with the constructor call `_doeff_any_specialized(Race, *_doeff_any_args, **_doeff_any_kwargs)` (doeff_hy/_static_types.pyi). Since all the constructor's
+   arguments are Any, all type arguments are resolved to Any, and the field types stay the types in the effect definition (`tuple[Task[Any] | Future[Any], ...]`);
+   a non-generic class gets the same type as the narrowing. The expansion for type checking is not run and only pyright reads it, so the value of the call is not needed.
 
-   束ね直すのは節が effect を読む時だけ: 欄を束ねるか、書き換えた本体が `_doeff_effect` を読む(typed_resume / typed_transfer・
-   `(pass)`)。何も読まない節(`(Spawn [] (reperform effect))`)には何も足さない。head が名でない節(`#(A B)`・`(| A B)`)は構成子として
-   呼べないので束ね直さない。"
+   Rebinding is done only when the clause reads the effect: it bundles fields, or the rewritten body reads `_doeff_effect` (typed_resume / typed_transfer,
+   `(pass)`). Nothing is added to a clause that reads nothing (`(Spawn [] (reperform effect))`). A clause whose head is not a name (`#(A B)`, `(| A B)`) cannot be
+   called as a constructor, so it is not rebound."
   (if (and (_static-view-enabled)
            (isinstance etype Symbol)
            (or (> (len fields) 0)
@@ -290,10 +290,10 @@
       []))
 
 (defn _clause-test [etype aliases]
-  "節の判定 — 受けた effect が節の effect の型か。型検査のための展開で、絞る名(row.narrowed)を書き手が使う節は、書き手の名も
-   同じ型へ絞る(`isinstance(_doeff_effect, T) and isinstance(effect, T)`)。書き手の名は節を回す関数の頭で絞る前の値に束ねてある
-   (`_narrowed-alias-bindings`)ので、判定は別の名を 1 度ずつ絞る — 絞るのは代入でないので絞った型が一部 Unknown でも赤が出ず、
-   どの名も 2 度は絞らないので「いつも真」の isinstance にならない。`_doeff_effect` は続く `typed_resume` と欄の束ねが読む。"
+  "Clause test — whether the received effect is the clause's effect type. In the expansion for type checking, for a clause where the writer uses the narrowed name (row.narrowed), the writer's name is also narrowed
+   to the same type (`isinstance(_doeff_effect, T) and isinstance(effect, T)`). The writer's name was bundled to the pre-narrowing value at the head of the clause-iterating function
+   (`_narrowed-alias-bindings`), so the test narrows a separate name once each — narrowing is not an assignment, so no error appears even if the narrowed type is partly Unknown, and
+   no name is narrowed twice, so it never becomes an 'always true' isinstance. `_doeff_effect` is read by the following `typed_resume` and the field bundle."
   (setv narrowed (lfor row aliases :if row.narrowed row))
   (if (and (_static-view-enabled) narrowed)
       `(and (isinstance ~(_effect-symbol) ~etype)
@@ -328,8 +328,8 @@
   (setv val-var (_fresh-lazy-tmp lazy-name "val"))
 
   ;; Build state key: __name__ + "/handler-name/lazy-name"
-  ;; 旧い lazy は今までの式のまま。session val / session var は公開の session-key 1 点でキーを作る
-  ;; (同じ文字列 — 外の handler と検査も doeff_hy._session.session_key で同じキーを引く)。
+  ;; The old lazy keeps its existing expression. session val / session var make the key through the single public session-key
+  ;; (the same string — the outer handler and the check also fetch the same key via doeff_hy._session.session_key).
   (setv key-suffix (+ "/" (str handler-name) "/" (str lazy-name)))
   (setv key-expr
     (if legacy?
@@ -347,10 +347,10 @@
         `(setv ~(Symbol (str lazy-name)) ~val-var)]))
 
   ;; Build full lazy init sequence
-  ;; 型検査のための展開(doeff_hy/_static_view.py — 走らせず pyright が読むだけ): 名は初期化の式の値に
-  ;; 束ねる。実行時は Get の答え(Some の中身)か初期化の値のどちらかだが、状態に置くのは同じ初期化の値なので型は同じ —
-  ;; Get の答えは型を持たないので、そのまま写すと名とそれを使う式が全部 Unknown になり、書き手に直せない赤が出ていた。
-  ;; キーの名は := の Put が引くので残す。
+  ;; Expansion for type checking (doeff_hy/_static_view.py — not run, only pyright reads it): the name is bound to the value of the initialization expression.
+  ;; At runtime it is either the answer of Get (the content of Some) or the initialization value, but what is placed in the state is the same initialization value, so the type is the same —
+  ;; the answer of Get has no type, so copying it as is made the name and every expression using it Unknown, producing errors the writer could not fix.
+  ;; The key name is kept because the Put of := fetches it.
   (if (_static-view-enabled)
       (+ [`(setv ~key-var ~key-expr)]
          init-forms
@@ -555,9 +555,9 @@
         (cond
           (or (is op None) (is op.rewrite None) (!= (len args) op.arity))
             (Expression (lfor f form (_rewrite-ops f)))
-          ;; 続きが終わると節へ戻る操作(表の returns — resume)は、戻った後で「再開した」と記す(値の式や続きで出た例外を節が
-          ;; 握りつぶして抜けた道は印が付かず、実行の時に誤りになる・ADR-DOE-CORE-EFFECTS-003 R15)。印の名は _build-clause の
-          ;; 実行の時の検めとこの関数だけが知る — 表の行の書き換えは VM へ渡す form だけを作る。
+          ;; An operation that returns to the clause after the continuation finishes (the table's returns — resume) records "resumed" after returning (a path where the clause
+          ;; swallowed an exception raised in the value expression or the continuation and exited gets no mark, and becomes an error at run time · ADR-DOE-CORE-EFFECTS-003 R15). The mark's name is known only to the run-time
+          ;; check of _build-clause and to this function — the table row's rewriting only builds the form handed to the VM.
           op.returns
             `(do (setv _doeff_resumed_value ~(op.rewrite args _rewrite-ops))
                  (setv _doeff_clause_resumed True)
@@ -581,7 +581,7 @@
 
 (defn _expand-handler-binds [forms [owner "handler clause"]]
   "Expand <- and ! in handler clause body.
-   (<- name expr) → (setv name <open-bind の束ね>)  — delegate to outer handler(outcome-forms の open-form)
+   (<- name expr) → (setv name <open-bind binding>)  — delegate to outer handler(open-form of outcome-forms)
    (<- name Type expr) → same + isinstance assert (macros.hy _bind-yield —
    the single definition point shared with <- / do! / defp / deftest / for/do)
    (! expr) → (yield expr) in place [ADR-DOE-HY-003]"
@@ -640,9 +640,9 @@
   ;; the original (resume ...) forms, not the rewritten (yield (Resume ...)).
   (setv cbody (_tco-seq cbody))
 
-  ;; val / var / lazy val / lazy var / := の書き換え(ADR-DOE-HY-006)。節の欄・effect・k と
-  ;; handler の直下のセッションの名前は、本体の前から束縛されている名前(effect・k は書き手が本体・番に書いた時だけ
-  ;; 展開が束ねる予約された名 — _clause-aliases)。
+  ;; Rewriting of val / var / lazy val / lazy var / := (ADR-DOE-HY-006). The clause's fields, effect, k, and
+  ;; the session names directly under the handler are names bound from before the body (effect and k are reserved names the expansion binds
+  ;; only when the writer wrote them in the body / guard — _clause-aliases).
   (import doeff-hy.macros [_rewrite-bindings])
   (setv cbody
     (_rewrite-bindings cbody
@@ -668,10 +668,10 @@
 
   ;; Inject lazy init for referenced lazy names (after bind expansion,
   ;; before rewrite-ops — lazy init forms are already in yield IR)
-  ;; session の値(session val / var・旧い lazy-val / lazy-var)の取り出しは、その名前を使う所の前に置く:
-  ;; :when の番が読む名前は番の前(guard-prefix)、本体だけが読む名前は番が通った後(lazy-prefix)。
-  ;; 番も「使う所」なので、番で初めて使えばそこで作る(lazy の意味のまま)。番の前に置かないと番の中の名前は
-  ;; 未定義(節の関数の局所変数 = UnboundLocalError)だった。番が読まない名前は今までどおり番が外れた効果では作らない。
+  ;; Fetching a session value (session val / var, old lazy-val / lazy-var) is placed before the place that uses that name:
+  ;; a name read by the :when guard goes before the guard (guard-prefix), a name read only by the body goes after the guard passes (lazy-prefix).
+  ;; The guard is also a "place of use", so if it is first used in the guard, it is made there (keeping the meaning of lazy). Without placing it before the guard, a name inside the guard was
+  ;; undefined (a local variable of the clause function = UnboundLocalError). A name the guard does not read is, as before, not made for an effect the guard rejected.
   (setv guard-prefix [])
   (setv lazy-prefix [])
   (when (and lazy-defs handler-name)
@@ -686,13 +686,13 @@
             (_build-lazy-init-forms handler-name lname lbody legacy?)))))
 
   ;; Field bindings: (setv field (. _doeff_effect field))
-  ;; 型検査のための展開(doeff_hy/_static_view.py — 走らせず pyright が読むだけ)では、束ねの直後に
-  ;; `_ = field` を置いて名を「読んだ」ことにする。欄の名で束ねるので、本体が使わない欄(例 `[stored mark]` の mark)は
-  ;; reportUnusedVariable の赤になり、書き手は名を変えられない(`_` で始めると欄に当たらない)。本体が名を参照するかを
-  ;; 記号の走査で決めると `stored.version` のような点つきの記号や macro が作る参照を取り逃がすので、全部の欄に置く。
-  ;; 欄の名の綴りの誤りは `(. _doeff_effect field)` の属性の読みで今までどおり赤になる。実行時の展開は変えない。
-  ;; 欄は節の effect を `_doeff_effect` から読む: 欄の名が `effect`・`k` でも、受けた effect と続きを上書きしない。
-  ;;書き手が本体・番に書いた `effect`・`k` の束ねは、欄の束ねより前に置く(欄が同じ名なら束ねず、欄が優先)。
+  ;; In the expansion for type checking (doeff_hy/_static_view.py — not run, only pyright reads it), right after the bundle
+  ;; place `_ = field` to mark the name as "read". The bundle uses the field name, so a field the body does not use (e.g. mark in `[stored mark]`) becomes a
+  ;; reportUnusedVariable error, and the writer cannot change the name (starting with `_` would no longer match the field). Deciding whether the body references the name by
+  ;; scanning symbols would miss dotted symbols like `stored.version` and references made by macros, so it is placed for every field.
+  ;; A misspelled field name is still an error, as before, via the attribute read `(. _doeff_effect field)`. The runtime expansion is unchanged.
+  ;; Fields read the clause's effect from `_doeff_effect`: even if a field name is `effect` or `k`, it does not overwrite the received effect and continuation.
+  ;; The bundle of `effect` and `k` that the writer wrote in the body / guard is placed before the field bundle (if a field has the same name, it is not bundled and the field takes priority).
   (setv bindings
     (+ (lfor row (_clause-aliases clause lazy-defs)
              form (_alias-forms row)
@@ -708,7 +708,7 @@
   ;; but _rewrite-ops only touches the clause operations — safe to pass through)
   (setv rewritten (+ lazy-prefix (lfor form cbody (_rewrite-ops form))))
 
-  ;; 総称の effect の節: 絞った `_doeff_effect` の型引数が Unknown にならないよう、欄の束ねより前に束ね直す(型検査のための展開だけ)。
+  ;; Clause for a generic effect: rebind before the field bundle so the type arguments of the narrowed `_doeff_effect` do not become Unknown (expansion for type checking only).
   (setv bindings (+ (_effect-form-binding etype fields rewritten) bindings))
 
   ;; A clause that leaves without resume / finish (transfer / reperform / raise never return) is an
@@ -757,10 +757,10 @@
   (.append cond-forms 'True)
   (.append cond-forms `(yield (~(_alias-symbol "Pass") ~(_effect-symbol) ~(_continuation-symbol))))
 
-  ;; 型検査のための展開: effect は object(節の isinstance が節ごとの型へ絞る — 節の型の和で
-  ;; 注記すると最後の節の isinstance が「いつも真」の赤になる)、k は続き、答えは ClauseRun(doeff_hy/_static_types.pyi)。
-  ;; 書き手が `effect` を書いた節の在る handler は、節の判定より前に `effect` を絞る前の値に束ねる(_narrowed-alias-bindings)。
-  ;; 実行時の展開は VM の型の絞り込みのために effect を節の型で注記する(_effect-parameter)。
+  ;; Expansion for type checking: effect is object (the clause's isinstance narrows it to each clause's type — annotating it with the union of the clause types
+  ;; would make the last clause's isinstance an "always true" error), k is the continuation, and the answer is ClauseRun (doeff_hy/_static_types.pyi).
+  ;; In a handler that has a clause where the writer wrote `effect`, `effect` is bundled to the pre-narrowing value before the clause test (_narrowed-alias-bindings).
+  ;; The runtime expansion annotates effect with the clause's type for the VM's type narrowing (_effect-parameter).
   (setv dispatcher
     (if (_static-view-enabled)
         `(_doeff-do (fn #^ _doeff_ClauseRun [(annotate ~(_effect-symbol) object)
@@ -808,7 +808,7 @@
 
 (defn _effect-parameter [etypes]
   "The handler's effect parameter, annotated with the clauses' effect types — the VM reads the annotation
-   once at install (doeff_vm._effect_types・SPEC-WITHHANDLER-TYPE-FILTER) and skips this handler for any
+   once at install (doeff_vm._effect_types / SPEC-WITHHANDLER-TYPE-FILTER) and skips this handler for any
    other effect without calling into Python, the same as the handler passing it on first thing
    (the handler list walk was 28〜39% of an invariant test's CPU). The clauses
    already answer only their own types (every other effect falls to (Pass effect k)), so the
@@ -825,14 +825,14 @@
 
 
 (defn _refuse-session-clauses [clauses]
-  "handle の節に session val / session var / 旧い lazy の宣言が在れば SyntaxError。defhandler の節として読ませると、
-   宣言の形が欄の並びの検めに当たり「handle clause fields must be [field1 ...]」の AssertionError になって、何を直すかが読めなかった。"
+  "SyntaxError if a handle clause contains a session val / session var / old lazy declaration. If it were read as a defhandler clause,
+   the declaration's form would hit the field-list check and raise an AssertionError 'handle clause fields must be [field1 ...]', leaving what to fix unreadable."
   (for [c clauses]
     (setv decl (_parse-declaration c))
     (when (or (and (is-not decl None) (= (. decl timing) _Timing.SESSION)) (_is-lazy-clause c))
-      (raise (SyntaxError (+ "\nhandle: " (cut (hy.repr c) 1 None) " — handle は session val / session var を持たない。"
-                             "セッションの値は handler の名でキーを作るので、節を defhandler へ移して名を付け、"
-                             "(with-handler [名] body) で当てる。\n"))))))
+      (raise (SyntaxError (+ "\nhandle: " (cut (hy.repr c) 1 None) " — handle does not support session val / session var. "
+                             "Session values make their key from the handler's name, so move the clause to a defhandler, give it a name, "
+                             "and apply it with (with-handler [name] body).\n"))))))
 
 
 ;; ---------------------------------------------------------------------------
@@ -853,24 +853,24 @@
    Compile-time error if any clause branch lacks resume/transfer/finish/reperform; each clause's
    ending is checked against its effect's declared resumption when the handle form is evaluated.
 
-   関数の本体の中(defk の本体など)と class の本体では、import・節の終わり方の検め・handler の組み立てを、すぐ呼ぶ
-   引数なしの関数に入れ、その関数が返す「本文に handler を被せる関数」を本文 body に当てる。関数の中で import した名は
-   関数全体の局所の名になるので、並べたままだと同じ本体で先に読む traverse / for/do の `_doeff_do` が UnboundLocalError
-   で落ちた(tests/test_handle_scope.py)。class の本体で import した名は class の属性になり、節の
-   関数は名を引く時に class の段を飛ばすので、節の Transfer・Resume・Pass が NameError で落ちた。
-   すぐ呼ぶ関数の中で import すれば、節の関数はその関数の閉包から名を読み、書いた場所の module の globals にも書き手の
-   同じ名にも依らない。本文は外の do の文脈に属する(`!` の yield は外の生成器の物)ので、すぐ呼ぶ関数の中に入れず、
-   書いた場所で評価する。module の段は今までどおり並べる(import は module の globals に置く)。
+   Inside a function body (such as the body of a defk) or a class body, put the import, the clause-ending check, and the handler assembly into an immediately
+   called zero-argument function, and apply the 'function that wraps the body with the handler' that it returns to the body `body`. A name imported inside a function
+   becomes a local name of the whole function, so if left side by side, the `_doeff_do` of the traverse / for/do read earlier in the same body
+   failed with UnboundLocalError (tests/test_handle_scope.py). A name imported in a class body becomes a class attribute, and the clause
+   function skips the class level when looking up names, so the clause's Transfer, Resume, and Pass failed with NameError.
+   If imported inside the immediately called function, the clause function reads names from that function's closure, and depends neither on the globals of the module where it is written nor on
+   the writer's same-named names. The body belongs to the outer do's context (the yield of `!` belongs to the outer generator), so it is not put inside the immediately called function, and
+   is evaluated where it is written. At module level, they are placed side by side as before (imports go in the module's globals).
 
-   被せる関数は、本文より前の文で一意の名(gensym)に束ねてから本文に当てる。Hy は本文の文の部分(`(do (f) prog)` の
-   `(f)`・let の束ね・`!` の yield)を、それを含む式より前の文へ出す。すぐ呼ぶ関数を本文と同じ式の中で呼ぶと、本文の
-   文の部分が検めより先に走り、検めが落ちる handler でも本文の effect が先に出ていた(
-   の盲検 A)。外の関数に残る名はこの一意の名だけで、先に読む所が無いので未束縛にならない。
+   The wrapping function is bound to a unique name (gensym) in a statement before the body, and then applied to the body. Hy hoists the statement parts of the body (the
+   `(f)` of `(do (f) prog)`, let bindings, the yield of `!`) into statements before the expression containing them. If the immediately called function is called in the same expression as the body, the body's
+   statement parts would run before the check, and even for a handler whose check fails, the body's effects came out first (
+   blind A). The only name left in the outer function is this unique name, and there is no place that reads it earlier, so it never becomes unbound.
 
-   節の文法は defhandler と同じ 1 つ(_build-handler-expr)で、出来る program は `((defhandler 名 節…) body)` と同じ答えを返す
-   (一度きりは handle・再利用は defhandler — 節を defhandler へ移して名を付けるだけ)。handler の直下の
-   session val / session var(と旧い lazy)は受けない: セッションの値は handler の名でキーを作る(doeff_hy._session.session_key)ので、
-   名を持つ defhandler に置く。"
+   The clause grammar is the same one as defhandler (_build-handler-expr), and the resulting program returns the same answer as `((defhandler name clause...) body)`
+   (handle for one-off use, defhandler for reuse — just move the clauses to a defhandler and name it). It does not accept session val / session var
+   (and old lazy) directly under the handler: session values make their key from the handler's name (doeff_hy._session.session_key), so
+   put them in a named defhandler."
   (import doeff-hy.macros [_module-names _in-function-body? _in-class-body?])
   (_refuse-session-clauses clauses)
   (setv specs [])
@@ -880,7 +880,7 @@
                  (_clause-endings-import 'check-clause-endings '_doeff-check-clause-endings)
                  `(_doeff-check-clause-endings "handle" [~@specs])])
   (_locate-synthesized (if (or (_in-function-body? _hy-compiler) (_in-class-body? _hy-compiler))
-      ;; gensym はこの枝だけで引く — module の段の展開の一意の名の番号を前と同じに保つ
+      ;; gensym is fetched only in this branch — to keep the unique-name numbering of the module-level expansion the same as before
       (let [install (hy.gensym "handle_install")]
         `(do
            (setv ~install ((fn []
@@ -939,15 +939,15 @@
        :when (matches-cost recompute-cost cost)
        (resume (compute field))))
 
-   ;; セッションの間で共有する値(状態の効果 Get / Put を通す — ADR-DOE-HY-006)
+   ;; Values shared across the session (through the state effects Get / Put — ADR-DOE-HY-006)
    (defhandler my-handler
      (session val client (Client :password (! (Ask \"api_key\"))))
      (session var calls 0)
      (Effect [field]
        (:= calls (+ calls 1))
        (resume (.fetch client field))))
-   ;; 旧い (lazy …) / (lazy-val …) / (lazy-var …) / (set! …) は動きを変えずに受け、
-   ;; DeprecationWarning で session val / session var / := への移行を案内する。
+   ;; The old (lazy ...) / (lazy-val ...) / (lazy-var ...) / (set! ...) are accepted with unchanged behavior, and
+   ;; DeprecationWarning guides migration to session val / session var / :=.
 
    ;; Terminal operations:
    ;;   (resume value)      — resume k, handler stays installed
@@ -1001,8 +1001,8 @@
                              :module-names module-names
                              :specs specs)
         (_build-handler-expr effect-clauses :handler-name name :module-names module-names :specs specs)))
-  ;; 節の終わり方と effect の再開の宣言の照合は、handler を初めて本文に被せた時に 1 回(定義より後に書いた effect の型も
-  ;; 引けるように — ADR-DOE-CORE-EFFECTS-003 R15)。
+  ;; The check that matches clause endings against effect-resume declarations runs once, the first time the handler wraps a body (so that the types of effects written after the
+  ;; definition can also be looked up — ADR-DOE-CORE-EFFECTS-003 R15).
   (setv endings-check
     `(_doeff-check-clause-endings-once __doeff-handler-data__ ~(str name) __doeff-clause-endings__))
 
@@ -1012,11 +1012,11 @@
   (setv quoted-body (_quoted-forms clauses))
 
   ;; Extra imports needed when lazy is used
-  ;; 型検査のための展開では Get を使わない(名は初期化の値に束ねる — _build-lazy-init-forms)。Put・Some・キーの session-key は
-  ;; `_doeff_<名>` で引き、doeff-hy-check が module の頭で読む時だけ import する(static_view.py の SESSION_STATIC_IMPORTS)。
-  ;; ここで handler ごとに出すと、:= も set! も無い handler の module で Put / Some が「import が使われていない」の赤になっていた
-  ;; (再輸出の綴り X :as X は Hy が同じ名の別名を落とすので pyright に届かない)。
-  ;; Get・Put・Some は `_doeff_<名>` の別名で束ねる(書き手の KV の Put・Get などの effect を隠さない — expansion_names.py)。
+  ;; The expansion for type checking does not use Get (the name is bound to the initialization value — _build-lazy-init-forms). Put, Some, and the key's session-key are
+  ;; fetched as `_doeff_<name>`, and imported only when doeff-hy-check reads the head of the module (SESSION_STATIC_IMPORTS in static_view.py).
+  ;; Emitting them per handler here made Put / Some an "import is unused" error in a module whose handlers have neither := nor set!
+  ;; (the re-export spelling X :as X does not reach pyright because Hy drops an alias with the same name).
+  ;; Get, Put, and Some are bundled under `_doeff_<name>` aliases (so as not to hide the writer's own KV effects such as Put and Get — expansion_names.py).
   (setv lazy-imports
     (cond
       (or (not lazy-defs) (_static-view-enabled)) `(do)
@@ -1027,22 +1027,22 @@
   ;; defhandler produces a Program -> Program function instead of exposing a
   ;; raw handler dispatcher. The inner dispatcher is stored for introspection
   ;; and installed with the Rust VM WithHandler node.
-  ;; 関数の本体の中に書いた defhandler は、import と定義をすぐ呼ぶ関数に入れて name だけを束ねる(_scoped-definition —
-  ;; 外の関数で先に読む traverse / for/do の `_doeff_do` を未束縛にしない)。
-  ;; class の本体では、import を handler を組む関数(引数の無い handler はすぐ呼ぶ関数・引数の在る handler は name の
-  ;; 関数そのもの)の中へ移す。class の本体の import は class の属性になり、組む関数・節の関数・本文に被せる関数は名を
-  ;; 引く時に class の段を飛ばすので、_doeff_do・Transfer などが NameError で落ちた。中で
-  ;; import すれば、それらの関数は組む関数の局所と閉包から名を読む。name の定義は class の段に残す(`__qualname__`)。
+  ;; A defhandler written inside a function body puts the import and the definition into an immediately called function and binds only name (_scoped-definition —
+  ;; so the `_doeff_do` of the traverse / for/do read earlier in the outer function does not become unbound).
+  ;; In a class body, the import is moved into the function that assembles the handler (an immediately called function for a handler without arguments, the name
+  ;; function itself for a handler with arguments). An import in a class body becomes a class attribute, and the assembling function, the clause function, and the wrapping function skip the class level
+  ;; when looking up names, so _doeff_do, Transfer, etc. failed with NameError. If imported inside,
+  ;; those functions read names from the assembling function's locals and closure. The definition of name stays at class level (`__qualname__`).
   (setv imports [(_do-import)
                  (_vm-imports)
                  (_clause-endings-import 'check-clause-endings-once '_doeff-check-clause-endings-once)
                  lazy-imports]
         #(outer-imports inner-imports) (if (_in-class-body? _hy-compiler) #([] imports) #(imports [])))
-  ;; 引数の在る defhandler は handler の工場(呼ぶと handler を返す関数)。実行時の展開は工場の戻りの型を doeff の ProgramHandler と
-  ;; 注記する — 公開 API の目録(tools/public_api_inventory.py)と inspect.signature が、工場を handler を返す関数と読めるように(注記が
-  ;; 無いと「戻りの型が無い関数」で未分類になった)。class の本体では注記しない(import が組む関数の中へ移り、
-  ;; 定義の段から名が見えない)。型検査のための展開も注記しない(pyright は本文に被せる関数の型を推し、型の宣言の生成 static_stub.py は
-  ;; 工場の答えを Handler と書く)。
+  ;; A defhandler with arguments is a handler factory (a function that returns a handler when called). The runtime expansion annotates the factory's return type as doeff's ProgramHandler
+  ;; — so that the public API inventory (tools/public_api_inventory.py) and inspect.signature can read the factory as a function that returns a handler (without the annotation it
+  ;; was unclassified as a "function with no return type"). It is not annotated in a class body (the import moves into the assembling function, and
+  ;; the name is not visible from the definition level). The expansion for type checking is not annotated either (pyright infers the type of the wrapping function, and the type-declaration generator static_stub.py
+  ;; writes the factory's answer as Handler).
   (setv factory-annotated (and (is-not params None) (not (_static-view-enabled)) (not (_in-class-body? _hy-compiler)))
         factory-head (if factory-annotated `(annotate ~name ~(_alias-symbol "ProgramHandler")) name)
         factory-imports (if factory-annotated [(_import-form ["ProgramHandler"])] []))

@@ -1,9 +1,9 @@
-"""dataclass が型ごとに作る関数の source(``__create_fn__``)の compile を、source の中身で引く保存先(code_store)に覚え、次の process で
-compile し直さないの検。
+"""Test that the compile of the source of the functions dataclass builds per type (``__create_fn__``) is remembered in a store (code_store) keyed by the source content, and that the next process does not
+compile again.
 
-測り(2026-10-11・agora-controllers の test_emulated_screen.hy の読み込み): dataclass の作成 3798 型の費用のほぼ全部が、関数の
-source の exec(compile)だった。違う source は 769 通りで、前の process の code を使うと読み込みの CPU が中央値 3.71 → 3.02 秒。
-compile は source の文・Python の版・最適化の段だけで決まるので、覚えた code は今 compile した物と同じ。
+Measurement (2026-10-11, loading agora-controllers' test_emulated_screen.hy): almost all of the cost of creating 3798 dataclass types was the exec (compile) of function
+source. There were 769 distinct sources, and using the previous process's code cut the load CPU median from 3.71 to 3.02 s.
+Compile is determined only by the source text, the Python version, and the optimization level, so the remembered code is the same as freshly compiled code.
 """
 
 from __future__ import annotations
@@ -14,8 +14,8 @@ from pathlib import Path
 
 import pytest
 
-#: 子の process — 包みを入れ、関数の source の compile の回数(文のまま exec した回数と compile した回数の和)を数え、型の振る舞いを
-#: 出す。dataclasses は文を exec に渡して中で compile するので、exec と compile の両方を数える。
+#: Child process — install the wrapper, count the function-source compiles (the sum of execs of source as text and of compiles), and print the type's behavior.
+#: dataclasses passes text to exec and compiles inside, so both exec and compile are counted.
 _CHILD = """\
 import builtins
 import collections
@@ -54,12 +54,12 @@ print(compiled["source"], repr(one), one == same, hash(one) == hash(same), one <
 
 
 def _run_child(tmp_path: Path, store: str, monkeypatch: pytest.MonkeyPatch) -> list[str]:
-    """子の process を 1 つ走らせ、出力の欄(compile の回数・repr・等価・hash・順序・frozen)を返す。子は検の process の環境を
-    受け継ぎ、下の 2 つだけを置き換える(検の後に monkeypatch が戻す)。"""
+    """Run one child process and return the output fields (compile count, repr, equality, hash, ordering, frozen). The child inherits the test process's environment
+    and only the two below are replaced (monkeypatch restores them after the test)."""
     script = tmp_path / "child.py"
     script.write_text(_CHILD)
-    # 子も checkout の下に .pyc を書かない(root の conftest の検査 — 書くと包みの module の .pyc が editable の checkout に残る)。
-    # 保存先は名指しなので、.pyc を書かない設定でも足す(code_store の作法)。
+    # The child also does not write .pyc under the checkout (the root conftest check — if it did, the wrapper module's .pyc would remain in the editable checkout).
+    # The store is named explicitly, so add it even with the setting that writes no .pyc (the code_store convention).
     monkeypatch.setenv("DOEFF_HY_CODE_STORE", store)
     monkeypatch.setenv("PYTHONDONTWRITEBYTECODE", "1")
     completed = subprocess.run(
@@ -74,19 +74,19 @@ def _run_child(tmp_path: Path, store: str, monkeypatch: pytest.MonkeyPatch) -> l
 def test_a_second_process_reuses_the_dataclass_functions_without_compiling(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """1 つ目の process が compile した関数の code を保存先に足し、2 つ目の process は compile せずに使う。振る舞い(repr・等価・
-    hash・順序・frozen)は compile した物と同じ。"""
+    """Add the function code the first process compiled to the store, and the second process uses it without compiling. Behavior (repr, equality,
+    hash, ordering, frozen) is the same as compiled code."""
     store = tmp_path / "store"
     first = _run_child(tmp_path, str(store), monkeypatch)
-    assert int(first[0]) >= 1, f"1 つ目の process が関数の source を compile しない: {first}"
-    assert list(store.rglob("*.code")), "1 つ目の process が保存先に足さない"
+    assert int(first[0]) >= 1, f"the first process did not compile the function source: {first}"
+    assert list(store.rglob("*.code")), "the first process did not add to the store"
     second = _run_child(tmp_path, str(store), monkeypatch)
-    assert second[0] == "0", f"2 つ目の process が関数の source を {second[0]} 回 compile し直した"
+    assert second[0] == "0", f"the second process recompiled the function source {second[0]} times"
     assert second[1:] == first[1:] == ["Pair(left=1, right='a')", "True", "True", "True", "True"]
 
 
 def test_an_off_store_compiles_in_every_process(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    """保存先を使わない設定(``off``)では覚えず、どの process も compile する(振る舞いは同じ)。"""
+    """With the setting that does not use the store (``off``), nothing is remembered and every process compiles (behavior is the same)."""
     first = _run_child(tmp_path, "off", monkeypatch)
     second = _run_child(tmp_path, "off", monkeypatch)
     assert int(first[0]) >= 1 and int(second[0]) >= 1

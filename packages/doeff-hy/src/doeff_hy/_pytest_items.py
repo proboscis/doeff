@@ -1,20 +1,20 @@
-"""pytest の item の記録 — item を作る macro が展開の時に書き、pytest の plugin が test module を import せずに読む。
+"""Record of pytest items -- written by the macros that make items at expansion time, and read by the pytest plugin without importing the test module.
 
-pytest の収集を 1 秒以内に保つ形: 収集で test module を import すると module の最上位の実行が
-走り、1 file で 10 秒かかる。そこで item を作る macro(deftest・defadr・defsemgrep と、module の直下の
-``(val pytestmark …)``)が、展開の時に「この module が pytest に見せる関数と印」を記録する。記録は展開の式として
-module に入り(``record-at-import`` が module の ``__doeff_pytest_items__`` に JSON の文字列を積む — pyc に焼き込まれる)、
-pytest の plugin(doeff-adr)は 1 度 import した時にそれを取り出して、source の内容の hash を鍵に自分のキャッシュへ保存する。
-Hy の importer には手を入れない(#1291)。
+The shape that keeps pytest collection under 1 second: importing a test module during collection runs the module's top level
+and takes 10 seconds for one file. So the macros that make items (deftest, defadr, defsemgrep, and the module-level
+``(val pytestmark …)``) record "the functions and marks this module shows to pytest" at expansion time. The record goes into the
+module as an expansion expression (``record-at-import`` pushes a JSON string onto the module's ``__doeff_pytest_items__`` -- baked into the pyc),
+and the pytest plugin (doeff-adr) takes it out once when it imports, and stores it in its own cache keyed by a hash of the source contents.
+The Hy importer is left untouched (#1291).
 
-この module が記録の形の**唯一の定義元**: 書く関数(macro が呼ぶ)と読む関数(plugin が呼ぶ)を両方持つ。
-deftest の鍵(``:marks``・``:params`` …)の意味は macro の側で読み、ここへは pytest の言葉(関数の名・引数の名・
-parametrize・mark・skipif)に直した形で渡る。plugin は deftest の鍵を知らない。
+This module is the **sole source of definition** of the record shape: it holds both the writing function (called by macros) and the reading function (called by the plugin).
+The meaning of deftest keys (``:marks``, ``:params`` …) is read on the macro side, and what arrives here is the form rewritten in pytest terms (function name, argument names,
+parametrize, mark, skipif). The plugin does not know deftest keys.
 
-params の値の扱い: 展開の時に見えるのは式の形だけなので、値が literal(文字列・整数・小数・真偽・None)なら値を
-そのまま、literal の入れ物(list・tuple・dict・set・keyword)なら「中身を問わない値」(pytest の id は
-``<引数の名><番号>`` になり値に依らない)として記録する。それ以外(式・名の参照)は本数が実行するまで決まらない
-ので「動的」と記録する。pluginは初回のimport後に実値と明示idを補い、保存できれば次の収集から記録を使う。
+Handling of params values: at expansion time only the shape of the expression is visible, so if the value is a literal (string, integer, float, bool, None) the value is
+recorded as is, and if it is a literal container (list, tuple, dict, set, keyword) it is recorded as a "value whose content does not matter" (the pytest id becomes
+``<argument name><number>`` and does not depend on the value). Anything else (an expression, a name reference) is not decided until the test count runs,
+so it is recorded as "dynamic". After the first import, the plugin fills in the real values and explicit ids, and if it can save them, uses the record from the next collection.
 """
 
 import json
@@ -24,27 +24,27 @@ from dataclasses import dataclass
 
 import hy
 
-# 展開の式が記録を積む module の名(import した module から plugin が取り出す)。
+# Name of the module attribute where the expansion expression pushes the record (the plugin takes it from the imported module).
 ITEMS_ATTR = "__doeff_pytest_items__"
 
 JsonValue = str | int | float | bool | None
 
 
 # ---------------------------------------------------------------------------
-# 記録の型(読む側に返す形)
+# Types of the record (the shape returned to the reader)
 # ---------------------------------------------------------------------------
 
 
 @dataclass(frozen=True)
 class LiteralValue:
-    """params の値のうち、展開の時に値が分かる物(pytest の id が値から決まる)。"""
+    """Among the values of params, those whose value is known at expansion time (the pytest id is determined from the value)."""
 
     value: JsonValue
 
 
 @dataclass(frozen=True)
 class OpaqueValue:
-    """params の値のうち、literal の入れ物(pytest の id は引数の名と番号 — 値に依らない)。"""
+    """Among the values of params, a literal container (the pytest id is the argument name and a number -- independent of the value)."""
 
 
 ParamValue = LiteralValue | OpaqueValue
@@ -64,7 +64,7 @@ class Mark:
 
 @dataclass(frozen=True)
 class SkipIf:
-    """条件は実行の時の式なので記録しない。評価は item の setup で実物の関数の印から行う。"""
+    """The condition is an expression evaluated at run time, so it is not recorded. It is evaluated at item setup from the marks of the real function."""
 
 
 Decorator = Parametrize | Mark | SkipIf
@@ -72,7 +72,7 @@ Decorator = Parametrize | Mark | SkipIf
 
 @dataclass(frozen=True)
 class FunctionItem:
-    """pytest に見せる test 関数 1 つ。``decorators`` は source の順(上から)— 実物と同じく下から当てる。"""
+    """One test function shown to pytest. ``decorators`` are in source order (top first) -- applied from the bottom, as with the real thing."""
 
     name: str
     argnames: tuple[str, ...]
@@ -81,14 +81,14 @@ class FunctionItem:
 
 @dataclass(frozen=True)
 class ModuleMarks:
-    """module の直下の ``pytestmark``。"""
+    """The module-level ``pytestmark``."""
 
     names: tuple[str, ...]
 
 
 @dataclass(frozen=True)
 class Dynamic:
-    """展開の時に item の形が決まらない物(本数が式の値に依る等)。"""
+    """Something whose item shape is not decided at expansion time (the count depends on the value of an expression, etc.)."""
 
     where: str
     reason: str
@@ -98,16 +98,16 @@ Record = FunctionItem | ModuleMarks | Dynamic
 
 
 # ---------------------------------------------------------------------------
-# JSON の境界(記録の形と型の相互の変換はここだけ)
+# JSON boundary (conversion between record shape and types happens only here)
 # ---------------------------------------------------------------------------
 
 
 class MalformedRecord(ValueError):
-    """記録がこの module の書く形でない(版の違う doeff-hy が書いた等)。"""
+    """The record is not in the shape this module writes (written by a different version of doeff-hy, etc.)."""
 
 
 def _encode_value(value: ParamValue) -> dict[str, object]:
-    """params の値 1 つを記録の JSON へ(書く側の境界)。"""
+    """One params value into record JSON (the writing-side boundary)."""
     match value:
         case LiteralValue(v):
             return {"literal": v}
@@ -116,7 +116,7 @@ def _encode_value(value: ParamValue) -> dict[str, object]:
 
 
 def _encode_decorator(decorator: Decorator) -> dict[str, object]:
-    """decorator 1 つを記録の JSON へ(書く側の境界)。"""
+    """One decorator into record JSON (the writing-side boundary)."""
     match decorator:
         case Parametrize(argnames, values, ids):
             return {"parametrize": argnames, "values": [_encode_value(v) for v in values], "ids": ids}
@@ -127,7 +127,7 @@ def _encode_decorator(decorator: Decorator) -> dict[str, object]:
 
 
 def _encode(record: Record) -> dict[str, object]:
-    """記録 1 つを JSON へ — 展開の式が module に積み、doeff-adr がキャッシュに保存する形。"""
+    """One record into JSON -- the shape the expansion expression pushes onto the module and doeff-adr saves in the cache."""
     match record:
         case FunctionItem(name, argnames, decorators):
             return {
@@ -142,29 +142,29 @@ def _encode(record: Record) -> dict[str, object]:
 
 
 def _text(raw: object) -> str:
-    """型が違う値を文字列へ変換せず、記録を拒む。"""
+    """Reject the record instead of converting a value of the wrong type to a string."""
     if not isinstance(raw, str):
-        raise MalformedRecord(f"文字列でない: {raw!r}")
+        raise MalformedRecord(f"not a string: {raw!r}")
     return raw
 
 
 def _array(raw: object) -> list[object]:
-    """JSONの配列だけを受け取る。文字列を文字の並びとして読まない。"""
+    """Accept only a JSON array. Do not read a string as a sequence of characters."""
     if not isinstance(raw, list):
-        raise MalformedRecord(f"配列でない: {raw!r}")
+        raise MalformedRecord(f"not an array: {raw!r}")
     return raw
 
 
 def _decode_value(raw: object) -> ParamValue:
-    """paramsのliteralは許されたscalarか検証してから値にする。"""
+    """Verify that a params literal is an allowed scalar before turning it into a value."""
     match raw:
         case {"literal": value}:
             if value is not None and not isinstance(value, (str, int, float, bool)):
-                raise MalformedRecord(f"literalの値がscalarでない: {value!r}")
+                raise MalformedRecord(f"literal value is not a scalar: {value!r}")
             return LiteralValue(value)
         case {"opaque": True}:
             return OpaqueValue()
-    raise MalformedRecord(f"params の値 {raw!r}")
+    raise MalformedRecord(f"params value {raw!r}")
 
 
 def _decode_ids(raw: object, count: int) -> list[str | None] | None:
@@ -172,12 +172,12 @@ def _decode_ids(raw: object, count: int) -> list[str | None] | None:
         return None
     ids: list[str | None] = [None if value is None else _text(value) for value in _array(raw)]
     if len(ids) != count:
-        raise MalformedRecord("parametrizeのidsとvaluesの長さが違う")
+        raise MalformedRecord("parametrize ids and values have different lengths")
     return ids
 
 
 def _decode_decorator(raw: object) -> Decorator:
-    """記録のJSONからdecoratorを読む。各欄の実際の型を確かめる。"""
+    """Read a decorator from record JSON. Check the actual type of each field."""
     match raw:
         case {"parametrize": argnames} as parameters:
             decoded: tuple[ParamValue, ...] = tuple(_decode_value(value) for value in _array(parameters.get("values")))
@@ -191,7 +191,7 @@ def _decode_decorator(raw: object) -> Decorator:
 
 
 def _decode(raw: object) -> Record:
-    """記録のJSONを型へ。未知の形や不正な欄はMalformedRecordで止める。"""
+    """Record JSON into types. Stop with MalformedRecord on an unknown shape or invalid field."""
     match raw:
         case {"function": name} as function:
             return FunctionItem(
@@ -203,16 +203,16 @@ def _decode(raw: object) -> Record:
             return ModuleMarks(tuple(_text(name) for name in _array(names)))
         case {"dynamic": where, "reason": reason}:
             return Dynamic(_text(where), _text(reason))
-    raise MalformedRecord(f"記録 {raw!r}")
+    raise MalformedRecord(f"record {raw!r}")
 
 
 # ---------------------------------------------------------------------------
-# 書く側(macro が展開の時に呼ぶ)
+# Writing side (called by macros at expansion time)
 # ---------------------------------------------------------------------------
 
 
 class _NotStatic(Exception):
-    """form が展開の時に値の決まらない物だった(記録は Dynamic になる)。"""
+    """The form was something whose value is not decided at expansion time (the record becomes Dynamic)."""
 
 
 _CONTAINERS = (hy.models.List, hy.models.Tuple, hy.models.Dict, hy.models.Set, hy.models.Keyword)
@@ -220,7 +220,7 @@ _CONSTANTS: dict[str, JsonValue] = {"True": True, "False": False, "None": None}
 
 
 def _param_value(form: object) -> ParamValue:
-    """params の値の form 1 つを、pytest の id が同じになる記録の値へ直す。"""
+    """Turn one form of a params value into a record value for which the pytest id is the same."""
     match form:
         case hy.models.FString():
             raise _NotStatic("f-string")
@@ -239,7 +239,7 @@ def _param_value(form: object) -> ParamValue:
 
 
 def _values(form: object) -> list[ParamValue]:
-    """parametrize の値の list の form を読む — list / tuple の literal でなければ本数が決まらない。"""
+    """Read the list form of parametrize values -- the count is not decided unless it is a list / tuple literal."""
     match form:
         case hy.models.List() | hy.models.Tuple():
             return [_param_value(value) for value in form]
@@ -247,13 +247,13 @@ def _values(form: object) -> list[ParamValue]:
             raise _NotStatic(f"values {hy.repr(form)}")
 
 
-# 記録の式の固定の部分(点を含む名は hy.models.Symbol で直に作れないので reader で読む)。
+# The fixed part of the record expression (a name containing a dot cannot be built directly with hy.models.Symbol, so read it with the reader).
 _RECORD_IMPORT = hy.read("(import doeff-hy._pytest-items)")
 _RECORD_AT_IMPORT = hy.read("doeff-hy._pytest-items.record-at-import")
 
 
 def _record_form(record: Record) -> hy.models.Expression:
-    """記録 1 つを、展開に足す式にする — import の時に module の ``__doeff_pytest_items__`` へ JSON の文字列を積む。"""
+    """Turn one record into an expression added to the expansion -- at import time push a JSON string onto the module's ``__doeff_pytest_items__``."""
     text = json.dumps(_encode(record), ensure_ascii=False, sort_keys=True)
     return hy.models.Expression(
         [
@@ -271,10 +271,10 @@ def _record_form(record: Record) -> hy.models.Expression:
 
 
 def record_at_import(module_globals: MutableMapping[str, object], text: str) -> None:
-    """展開の式が import の時に呼ぶ口 — module に記録(JSON の文字列)を 1 つ積む。"""
+    """The entry the expansion expression calls at import time -- push one record (a JSON string) onto the module."""
     items = module_globals.setdefault(ITEMS_ATTR, [])
     if not isinstance(items, list):
-        raise MalformedRecord(f"{ITEMS_ATTR} が list でない: {type(items).__name__}")
+        raise MalformedRecord(f"{ITEMS_ATTR} is not a list: {type(items).__name__}")
     items.append(text)
 
 
@@ -283,13 +283,13 @@ def record_function(
     argnames: Sequence[object],
     decorators: Sequence[tuple[str, object, object]],
 ) -> hy.models.Expression:
-    """test 関数を作る macro が、その関数の pytest の形の記録を展開に足すための口(足す式を返す)。
+    """The entry through which a macro that makes test functions adds to the expansion the record of that function's pytest shape (returns the expression to add).
 
-    ``decorators`` は source の順に次の 4 つの形の組:
-    ``("parametrize", <引数の名の文字列>, <値の list の form>)`` /
-    ``("mark", <印の名の form>, None)`` / ``("skipif", None, None)`` /
-    ``("scans", None, <glob の文字列の list の form>)``(deftest の ``:scans`` — 印 ``scans``。記録には印の名だけを残す:
-    収集の ``-m`` が読むのは名で、glob は選びの道具が source から読む)。
+    ``decorators`` is a sequence of tuples in source order, in the following four shapes:
+    ``("parametrize", <string of argument names>, <form of the values list>)`` /
+    ``("mark", <form of the mark name>, None)`` / ``("skipif", None, None)`` /
+    ``("scans", None, <form of a list of glob strings>)`` (deftest's ``:scans`` -- mark ``scans``. Only the mark name is kept in the record:
+    the ``-m`` of collection reads the name, and the glob is read from the source by the selection tool).
     """
     fname = hy.mangle(str(name))
     try:
@@ -305,24 +305,24 @@ def record_function(
                 case "scans":
                     specs.append(Mark("scans"))
                 case _:
-                    raise ValueError(f"pytest_items: 知らない decorator の種類 {kind!r}")
+                    raise ValueError(f"pytest_items: unknown decorator kind {kind!r}")
     except _NotStatic as exc:
         return _record_form(Dynamic(fname, str(exc)))
     return _record_form(FunctionItem(fname, tuple(hy.mangle(str(a)) for a in argnames), tuple(specs)))
 
 
-# module の印のうち、収集の結果(item の本数・fixture の閉包)を変える物 — 呼び出しの形なら値が要るので記録しない。
+# Among module marks, those that change the collection result (item count, fixture closure) -- a call form needs values, so it is not recorded.
 _COLLECTION_SHAPING_MARKS = frozenset({"parametrize", "usefixtures"})
 
 
 def _mark_name(form: object) -> str:
-    """module の直下の印の form から、収集で ``-m`` が読む印の名を読む(他の形は値が決まらない)。
+    """From the form of a module-level mark, read the mark names that ``-m`` reads at collection (other shapes do not have a decided value).
 
-    ``pytest.mark.<名>`` と、その呼び出し ``(pytest.mark.<名> …)`` を読む。呼び出しの引数(skipif の条件など)は
-    記録しない — plugin が item の setup で実物の module の印に替えてから評価する。ただし収集の結果を変える印
-    (parametrize・usefixtures)の呼び出しは値が要るので、決まらない物として扱う。
+    Reads ``pytest.mark.<name>`` and its call ``(pytest.mark.<name> …)``. The call's arguments (such as the skipif condition) are
+    not recorded -- the plugin evaluates them after replacing them with the marks of the real module at item setup. However, calls of marks that change the collection result
+    (parametrize, usefixtures) need values, so they are treated as undecided.
     """
-    # Hy の reader は ``pytest.mark.real-world`` を ``(. pytest mark real-world)`` の式に読む。
+    # The Hy reader reads ``pytest.mark.real-world`` as the expression ``(. pytest mark real-world)``.
     match form:
         case hy.models.Expression() if len(form) == 4 and all(
             isinstance(part, hy.models.Symbol) for part in form
@@ -338,8 +338,8 @@ def _mark_name(form: object) -> str:
 
 
 def record_module_binding(head: str, args: Sequence[object]) -> hy.models.Expression | None:
-    """module の直下の ``(val pytestmark …)`` / ``(var pytestmark …)`` の印の記録を展開に足すための口(足す式を返す)。
-    他の束縛は記録しない(None)。"""
+    """The entry to add to the expansion the record of the module-level ``(val pytestmark …)`` / ``(var pytestmark …)`` marks (returns the expression to add).
+    Other bindings are not recorded (None)."""
     if head not in ("val", "var") or len(args) < 2:
         return None
     if not isinstance(args[0], hy.models.Symbol) or hy.mangle(str(args[0])) != "pytestmark":
@@ -358,19 +358,19 @@ def record_module_binding(head: str, args: Sequence[object]) -> hy.models.Expres
 
 
 # ---------------------------------------------------------------------------
-# 読む側(plugin が収集で呼ぶ)
+# Reading side (called by the plugin at collection)
 # ---------------------------------------------------------------------------
 
 
 def encode_records(records: Iterable[Record]) -> list[str]:
-    """import後に補った実値も、macroと同じ記録の形式で保存する。"""
+    """Save also the real values filled in after import in the same record format as the macro."""
     return [json.dumps(_encode(record), ensure_ascii=False, sort_keys=True) for record in records]
 
 
 def decode_records(texts: Iterable[object]) -> list[Record]:
-    """記録の JSON の文字列の並び(module に積まれた物か、plugin のキャッシュに保存した物)を型へ読む。
+    """Read a sequence of record JSON strings (pushed onto the module, or saved in the plugin's cache) into types.
 
-    形が違えば ``MalformedRecord``(呼ぶ側はその file を import して収集する)。
+    If the shape differs, ``MalformedRecord`` (the caller imports that file and collects).
     """
     try:
         return [_decode(json.loads(_text(text))) for text in texts]
@@ -379,8 +379,8 @@ def decode_records(texts: Iterable[object]) -> list[Record]:
 
 
 def module_record_texts(module: types.ModuleType) -> list[str]:
-    """import した module に展開の式が積んだ記録(JSON の文字列)。記録を作る macro を 1 つも使わない module は空。"""
+    """The records (JSON strings) that the expansion expressions pushed onto the imported module. Empty for a module that uses none of the record-making macros."""
     items = vars(module).get(ITEMS_ATTR, [])
     if not isinstance(items, list) or not all(isinstance(t, str) for t in items):
-        raise MalformedRecord(f"{module.__name__}.{ITEMS_ATTR} が文字列の list でない")
+        raise MalformedRecord(f"{module.__name__}.{ITEMS_ATTR} is not a list of strings")
     return list(items)

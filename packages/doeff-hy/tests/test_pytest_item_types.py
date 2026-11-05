@@ -1,4 +1,4 @@
-"""収集記録のJSON境界が実値の型を確かめる反例(#1468)。"""
+"""Counterexamples where the JSON boundary of the collection record checks the types of actual values (#1468)."""
 
 import pytest
 from doeff_hy import MalformedRecord

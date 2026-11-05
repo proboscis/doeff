@@ -1,29 +1,29 @@
-"""doeff-hy の macro を使う Hy の module の誤り 2 つに、書き足す 1 行を警告で言う(取り組み doeff-publish)。
+"""For two mistakes in a Hy module that uses doeff-hy macros, warn with the one line to add (initiative doeff-publish).
 
-- **require し忘れ**: README の Hy の例から ``(require doeff-hy.macros [do! <-])`` を抜くと、Hy は ``do!`` を関数の呼び出しとして
-  compile し、実行の時に ``NameError: name 'hyx_doXexclamation_markX' is not defined`` になる(Hy の仕様 — 未知の記号は関数の呼び出し)。
-- **import で入れた**: ``(import doeff-hy.handle [defhandler])`` は macro を属性として探して ``ImportError: cannot import name
-  'defhandler' …`` になる(macro は module の属性でなく macro の表に在る)。
+- **Forgotten require**: if ``(require doeff-hy.macros [do! <-])`` is removed from a README Hy example, Hy compiles ``do!`` as a function call
+  and at run time it fails with ``NameError: name 'hyx_doXexclamation_markX' is not defined`` (Hy semantics: an unknown symbol is a function call).
+- **Imported instead of required**: ``(import doeff-hy.handle [defhandler])`` looks the macro up as an attribute and fails with ``ImportError: cannot import name
+  'defhandler' …`` (a macro lives in the module's macro table, not as a module attribute).
 
-どちらも文は Python が出し、通る frame に doeff の code が無い(``hy file.hy`` の落ちた時の表示は Hy が差す excepthook が出す)ので、
-実行の前に言う: Hy の module を読む口(:mod:`doeff_hy_bytecode_guard._loader_hooks` の ``get_code`` — ``hy file.hy``・``hy -m``・
-import・pytest の全部が通る)が返す code と記録を、:func:`warn_about_macro_use` が見る。
+Python raises both, and no doeff code is in the frames it passes through (the display for a failed ``hy file.hy`` comes from the excepthook Hy installs), so
+the warning comes before execution: :func:`warn_about_macro_use` inspects the code and record returned by the entry point that loads Hy modules (``get_code`` in :mod:`doeff_hy_bytecode_guard._loader_hooks` — ``hy file.hy``, ``hy -m``,
+import, and pytest all pass through it).
 
-見分け方(誤警告を出さない事が先):
+How to tell them apart (avoiding false warnings comes first):
 
-- require し忘れ = 記録の ``absent``(展開の時に module の macro の表を引いて無かった名 — 関数の呼び出しも入る)に doeff-hy の
-  macro の名が在り、かつ module の code がその名を **束縛せずに読む**(LOAD_NAME・LOAD_GLOBAL が在り、STORE_NAME・STORE_GLOBAL が
-  無い)。自分で ``(defn check …)`` と定義した・別の module から import した同名の関数は束縛が在るので警告しない。``import *``
-  (IMPORT_STAR)が在る module は何が入るか分からないので警告しない。
-- import で入れた = module の先頭の code が、提供元の module(``doeff_hy.macros`` など)から、macro の名を ``IMPORT_FROM`` で取る。
-  提供元の module そのものの import・macro でない名の import は正しい(表の名が提供元の属性と重ならない事は検が守る)。
+- Forgotten require = the record's ``absent`` (names looked up in the module's macro table at expansion time and not found — function calls are included) contains a doeff-hy
+  macro name, and the module's code **reads that name without binding it** (LOAD_NAME or LOAD_GLOBAL is present, and no STORE_NAME or STORE_GLOBAL
+  is). A function of the same name that the module defines itself with ``(defn check …)`` or imports from another module has a binding, so no warning. A module with ``import *``
+  (IMPORT_STAR) gets no warning because it is unknown what that brings in.
+- Imported instead of required = the module's top-level code takes a macro name with ``IMPORT_FROM`` from a provider module (such as ``doeff_hy.macros``).
+  Importing the provider module itself, or importing a name that is not a macro, is fine (a test guarantees that table names do not overlap the provider's attributes).
 
-macro の名は ``MACRO_HOMES`` の 1 か所(提供元の module の名 → ``(require 提供元 *)`` が入れる名)で、実物の macro の表との一致は
-packages/doeff-hy/tests/test_macro_hints.py が測る。doeff-hy の外の package の macro(doeff-conductor・doeff-cluster など — 持ち主の package が出す)は入れない。
+Macro names live in one place, ``MACRO_HOMES`` (provider module name -> names that ``(require provider *)`` brings in); agreement with the real macro tables is measured by
+packages/doeff-hy/tests/test_macro_hints.py. Macros of packages outside doeff-hy (doeff-conductor, doeff-cluster, etc. — published by their owning packages) are not included.
 
-venv の全ての Python の起動時に読まれる :mod:`doeff_hy_bytecode_guard` の一部だが、この module は Hy の module を初めて読む時に
-読む(起動時に読まない — ``hy`` は名の表を作る時だけ読む)。正しい module では記録の名と co_names の照合だけで終わり、
-bytecode を歩かない(macro と同じ綴りを局所の名にだけ使う module も)。
+This is part of :mod:`doeff_hy_bytecode_guard`, which is loaded at startup of every Python in the venv, but this module is loaded
+the first time a Hy module is loaded (not at startup — ``hy`` loads it only when building the name table). For a correct module it finishes with just a comparison of the record's names against co_names and
+does not walk the bytecode (even for a module that uses the same spelling as a macro only as a local name).
 """
 
 import dis
@@ -38,11 +38,11 @@ from doeff_hy_bytecode_guard._records import MacroRecord
 
 
 class HyMacroUseWarning(UserWarning):
-    """doeff-hy の macro を require し損ねた(または import で入れた)Hy の module — 書き足す 1 行を言う。"""
+    """A Hy module that failed to require a doeff-hy macro (or imported it) — says the one line to add."""
 
 
-#: macro の提供元の Hy の module の名 → ``(require 提供元 *)`` が入れる macro の名(Hy の綴り)。提供元の並びが、書き足す行の
-#: 提供元の選び(名を入れる最初の提供元)を決める: ``defhandler`` は doeff-hy.macros も入れるので、そちらの 1 行にまとまる。
+#: Hy module name of each macro provider -> macro names (Hy spelling) that ``(require provider *)`` brings in. The order of providers decides which line to add:
+#: the first provider that brings in a name wins. ``defhandler`` is also brought in by doeff-hy.macros, so it is folded into that one line.
 MACRO_HOMES: Mapping[str, tuple[str, ...]] = {
     "doeff-hy.macros": (
         "<-",
@@ -76,14 +76,14 @@ MACRO_HOMES: Mapping[str, tuple[str, ...]] = {
     "doeff-hy.record": ("defenum", "deff", "defrecord", "defwire"),
 }
 
-#: 名を読む命令(束縛を引かない)・束縛する命令。局所の名(LOAD_FAST など)は module の名前空間の名でないので数えない。
+#: Instructions that read a name (without looking up a binding) and instructions that bind one. Local names (LOAD_FAST etc.) are not module-namespace names, so they are not counted.
 _READS = frozenset({"LOAD_NAME", "LOAD_GLOBAL"})
 _BINDS = frozenset({"STORE_NAME", "STORE_GLOBAL", "DELETE_NAME", "DELETE_GLOBAL"})
 
 
 @dataclass(frozen=True)
 class MacroName:
-    """表の macro 1 つ: Hy の綴り・Python の名(Hy が mangle した形 — 記録と code に現れる)・書き足す require の提供元。"""
+    """One macro in the table: Hy spelling, Python name (the form Hy mangles to — it appears in the record and code), and the provider to add a require for."""
 
     spelling: str
     mangled: str
@@ -92,7 +92,7 @@ class MacroName:
 
 @dataclass(frozen=True)
 class MacroTable:
-    """表を Hy の mangle で引き直した 2 つの見方: 提供元の Hy の名 → (Python の名 → macro)と、Python の名 → 書き足す提供元の macro。"""
+    """Two views of the table re-keyed by Hy mangling: provider Hy name -> (Python name -> macro), and Python name -> macro of the provider to add."""
 
     by_home: Mapping[str, Mapping[str, MacroName]]
     first_home: Mapping[str, MacroName]
@@ -100,17 +100,17 @@ class MacroTable:
 
 @dataclass(frozen=True)
 class Hint:
-    """module の誤り 1 つ分の警告 — 使った行と、書き足す 1 行を含む文。"""
+    """A warning for one module mistake — the line where it was used, and a message containing the one line to add."""
 
     line: int
     message: str
 
 
 def macro_table() -> MacroTable | None:
-    """:data:`MACRO_HOMES` を Hy の mangle で引き直した表を引くため(Hy の module を読む時にだけ作る)。
+    """Return the table of :data:`MACRO_HOMES` re-keyed by Hy mangling (built only when a Hy module is loaded).
 
-    ``import hy`` の最中は表を作れず None を返す: Hy は自分の core の .hy の module をその最中に読み込み、その読みもこの口を
-    通るが、Hy の core に doeff-hy の macro は無く、``hy.mangle`` はまだ無い。
+    During ``import hy`` the table cannot be built, so None is returned: Hy loads its own core .hy modules during that time and those loads also go through this
+    entry point, but Hy's core has no doeff-hy macros, and ``hy.mangle`` does not exist yet.
     """
     hy = sys.modules.get("hy")
     if hy is None or not hasattr(hy, "mangle"):
@@ -120,14 +120,14 @@ def macro_table() -> MacroTable | None:
 
 @cache
 def _mangled_table(mangle: Callable[[str], str]) -> MacroTable:
-    """mangle 関数で :data:`MACRO_HOMES` を引き直した表を、process に 1 度だけ作るため。"""
+    """Build, once per process, the table of :data:`MACRO_HOMES` re-keyed with the mangle function."""
     by_home = {
         home: {
             mangle(spelling): MacroName(spelling, mangle(spelling), home) for spelling in spellings
         }
         for home, spellings in MACRO_HOMES.items()
     }
-    # 同じ名を入れる提供元が複数なら、前の提供元が勝つ(後ろから重ねる)。
+    # If several providers bring in the same name, the earlier provider wins (later ones are layered first).
     first_home = {
         mangled: macro
         for macros in reversed(tuple(by_home.values()))
@@ -137,25 +137,25 @@ def _mangled_table(mangle: Callable[[str], str]) -> MacroTable:
 
 
 def warn_about_macro_use(code: CodeType, record: MacroRecord, path: str, fullname: str) -> None:
-    """読みの口が返した Hy の module の code に誤りがあれば、書き足す 1 行を言う警告を出すため(誤りの無い module では何もしない)。
+    """Warn with the one line to add if the code of a Hy module returned by the loader entry point has a mistake (do nothing for a module without mistakes).
 
-    ``record`` は code に載った記録(展開が表を引いて無かった名を持つ)— 候補の絞りは記録の名の照合だけで、正しい module では
-    bytecode を歩かない。警告は module を読む度に出る(.pyc から読んだ時も — 直すまで毎回言う)。
+    ``record`` is the record attached to the code (it holds the names that the expansion looked up and did not find) — narrowing the candidates is only a comparison of the record's names, and for a correct module
+    the bytecode is not walked. The warning is issued every time the module is loaded (also when loaded from .pyc — it keeps saying so until fixed).
     """
     for hint in _hints(code, record):
         warnings.warn_explicit(hint.message, HyMacroUseWarning, path, hint.line, module=fullname)
 
 
 def _hints(code: CodeType, record: MacroRecord) -> Iterator[Hint]:
-    """code の誤りごとの警告(require し忘れ・import で入れた)を出すため。候補が無ければ bytecode を歩かない。"""
+    """Yield a warning for each mistake in the code (forgotten require, imported instead). Do not walk the bytecode if there are no candidates."""
     table = macro_table()
     if table is None:
         return
     candidates = frozenset(name for name in record.absent if name in table.first_home)
     if candidates:
         yield from _forgotten_requires(code, candidates, table)
-    # 提供元の module の名と、その macro の名の 1 つが、先頭の code の名に在る module だけ命令を歩く(全部の命令を歩くのは
-    # 大きな module で十数 ms — 名の照合は µs)。
+    # Walk instructions only for a module whose top-level code has the provider module's name and one of its macro names in its names (walking all instructions takes
+    # ten-odd ms for a large module — comparing names takes µs).
     names = frozenset(code.co_names)
     importable = {
         _python_module(home): macros
@@ -167,18 +167,18 @@ def _hints(code: CodeType, record: MacroRecord) -> Iterator[Hint]:
 
 
 def _python_module(home: str) -> str:
-    """提供元の Hy の module の名(``doeff-hy.macros``)に対応する Python の module の名(``doeff_hy.macros``)を引くため。"""
+    """Return the Python module name (``doeff_hy.macros``) corresponding to the provider's Hy module name (``doeff-hy.macros``)."""
     return home.replace("-", "_")
 
 
 def _listed(spellings: Iterable[str]) -> str:
-    """macro の綴りの並びを、警告の文の中の英語の並び(`a`・`a` and `b`・`a`, `b` and `c`)にするため。"""
+    """Turn a list of macro spellings into an English list inside the warning message (`a`; `a` and `b`; `a`, `b` and `c`)."""
     quoted = [f"`{spelling}`" for spelling in spellings]
     return quoted[0] if len(quoted) == 1 else f"{', '.join(quoted[:-1])} and {quoted[-1]}"
 
 
 def _units(code: CodeType) -> Iterator[CodeType]:
-    """module の code と、その中の関数・class の code を全部(入れ子も)歩くため。"""
+    """Walk the module's code and all the function and class code inside it (including nested ones)."""
     yield code
     for const in code.co_consts:
         if isinstance(const, CodeType):
@@ -186,7 +186,7 @@ def _units(code: CodeType) -> Iterator[CodeType]:
 
 
 def _line(instruction: dis.Instruction) -> int:
-    """instruction の行を引くため(位置の無い instruction は 1 行目)。"""
+    """Return the instruction's line (line 1 for an instruction without a position)."""
     positions = instruction.positions
     line = None if positions is None else positions.lineno
     return 1 if line is None else line
@@ -195,16 +195,16 @@ def _line(instruction: dis.Instruction) -> int:
 def _forgotten_requires(
     code: CodeType, candidates: frozenset[str], table: MacroTable
 ) -> Iterator[Hint]:
-    """候補の名のうち、module の code が束縛せずに読む物を、require の 1 行(提供元ごと)つきの警告にするため。"""
+    """Turn the candidate names that the module's code reads without binding into warnings, each with a require line (per provider)."""
     units = tuple(_units(code))
-    # 読み(LOAD_NAME・LOAD_GLOBAL)の名も束縛(STORE_NAME・STORE_GLOBAL など)の名も co_names から引くので、候補が co_names の
-    # 和に無ければ警告は出ない — 局所の名として同じ綴りを使う module(``(check row)`` は LOAD_FAST)では命令を歩かない
-    # (大きな module で 1 本 1 秒前後 — free-threaded の dis は遅い)。
+    # Both read names (LOAD_NAME, LOAD_GLOBAL) and bound names (STORE_NAME, STORE_GLOBAL, etc.) come from co_names, so if the candidates are not in the
+    # union of co_names there is no warning — a module that uses the same spelling as a local name (``(check row)`` is LOAD_FAST) does not walk the instructions
+    # (about 1 second each for a large module — dis is slow on free-threaded builds).
     if candidates.isdisjoint(name for unit in units for name in unit.co_names):
         return
     instructions = tuple(ins for unit in units for ins in dis.get_instructions(unit))
     if any(ins.opname == "IMPORT_STAR" for ins in instructions):
-        return  # 何が入るか分からない module は、束縛が無いと言い切れない
+        return  # for a module where it is unknown what gets brought in, we cannot say there is no binding
     bound = frozenset(ins.argval for ins in instructions if ins.opname in _BINDS)
     reads = [
         (_line(ins), ins.argval)
@@ -231,7 +231,7 @@ def _forgotten_requires(
 
 @dataclass(frozen=True)
 class _ImportedMacro:
-    """``from 提供元 import macro`` の 1 つ: 提供元の Python の名・使った行・macro。"""
+    """One ``from provider import macro``: the provider's Python name, the line where it was used, and the macro."""
 
     source: str
     line: int
@@ -241,7 +241,7 @@ class _ImportedMacro:
 def _macro_imports(
     code: CodeType, importable: Mapping[str, Mapping[str, MacroName]]
 ) -> Iterator[_ImportedMacro]:
-    """module の先頭の code の ``from 提供元 import 名`` のうち、名が提供元の macro の物を出すため。"""
+    """Yield those names in the module's top-level ``from provider import name`` that are macros of the provider."""
     source = ""
     for instruction in dis.get_instructions(code):
         if instruction.opname == "IMPORT_NAME":
@@ -255,7 +255,7 @@ def _macro_imports(
 def _imported_macros(
     code: CodeType, importable: Mapping[str, Mapping[str, MacroName]]
 ) -> Iterator[Hint]:
-    """macro を import で入れた誤りを、提供元ごとに require の 1 行つきの警告にするため。"""
+    """Turn the mistake of importing a macro into a warning with a require line, per provider."""
     imports = tuple(_macro_imports(code, importable))
     for source in dict.fromkeys(item.source for item in imports):
         mine = [item for item in imports if item.source == source]

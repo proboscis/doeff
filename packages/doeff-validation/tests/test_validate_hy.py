@@ -101,7 +101,7 @@ def test_parenthesized_and_is_not_decomposed() -> None:
 
 
 def test_check_in_defk_body_is_an_expansion_error() -> None:
-    with pytest.raises(hy.errors.HyMacroExpansionError, match="validate の直下と"):
+    with pytest.raises(hy.errors.HyMacroExpansionError, match="directly under validate and"):
         _expand(
             "(defk helper [x] {:pre [(: x int)] :post [(: % NoneType)]}\n"
             "  (check = x 0))"
@@ -109,22 +109,22 @@ def test_check_in_defk_body_is_an_expansion_error() -> None:
 
 
 def test_check_at_top_level_is_an_expansion_error() -> None:
-    with pytest.raises(hy.errors.HyMacroExpansionError, match="validate の直下と"):
+    with pytest.raises(hy.errors.HyMacroExpansionError, match="directly under validate and"):
         _expand("(check = 1 0)")
 
 
 def test_bare_bind_directly_under_validate_is_an_expansion_error() -> None:
-    with pytest.raises(hy.errors.HyMacroExpansionError, match=r"直下に \(<- …\) は書けません"):
+    with pytest.raises(hy.errors.HyMacroExpansionError, match=r"\(<- …\) cannot be written directly under it"):
         _expand("(validate (<- x (f)) (check = x 0))")
 
 
 def test_flat_short_circuit_operator_is_an_expansion_error() -> None:
-    with pytest.raises(hy.errors.HyMacroExpansionError, match="括弧の形で書いてください"):
+    with pytest.raises(hy.errors.HyMacroExpansionError, match="parenthesized form"):
         _expand("(validate (check and a b))")
 
 
 def test_unknown_keyword_is_an_expansion_error() -> None:
-    with pytest.raises(hy.errors.HyMacroExpansionError, match="知らない keyword"):
+    with pytest.raises(hy.errors.HyMacroExpansionError, match="unknown keyword"):
         _expand("(validate (check = a b :because R))")
 
 
@@ -159,7 +159,7 @@ def test_legacy_boolean_contract_is_unchanged() -> None:
 
 
 def test_check_in_deff_contract_is_an_expansion_error() -> None:
-    with pytest.raises(hy.errors.HyMacroExpansionError, match="defk / do! の契約にだけ"):
+    with pytest.raises(hy.errors.HyMacroExpansionError, match="contract of defk / do!"):
         hy.eval(
             hy.read_many(
                 "(require doeff-hy.macros [deff])\n"

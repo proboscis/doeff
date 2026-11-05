@@ -1,11 +1,11 @@
-"""doeff-hy-check の依存の展開を子の process で並べる形の失敗ケース。
+"""Failure cases for expanding the dependencies of doeff-hy-check in parallel in child processes.
 
-- 並べた結果(展開の文・位置の対応・所見・失敗の一覧)が直列と同じ — 展開の文の Hy の gensym の名まで同じ。
-- 1 つの file の展開に失敗しても、同じ段の他の file の結果は揃う。
-- 子の process が答えを返さずに落ちたら、答えの無い file を名指して道具の失敗にする(黙って抜かない)。
-- 全部保存から引ける実行では pool を起こさない(保存が効く時の秒を増やさない)。
-- `python -m doeff_hy._static_check` で撃った入口(この file は親で __main__・展開の子で __mp_main__ の名で読まれる)も、展開の子が
-  書いた保存を次の実行の親が引く。
+- The parallel result (expansion text, position mapping, findings, list of failures) is the same as serial -- even the Hy gensym names in the expansion text.
+- Even if one file fails to expand, the results of the other files in the same stage are complete.
+- If a child process dies without returning an answer, the file with no answer is named and made a tool failure (not silently dropped).
+- A run where everything can be taken from the store does not start a pool (does not add seconds when the store works).
+- The entry launched with `python -m doeff_hy._static_check` (this file is read as __main__ in the parent and __mp_main__ in expansion children) also: the next run's parent takes the store that the expansion children
+  wrote.
 """
 
 import json
@@ -20,7 +20,7 @@ from doeff_hy import _static_check as static_check
 from doeff_hy._check_slot import SlotHeld
 from doeff_hy._static_check import Closure, project_closure
 
-#: 根の file が import する 3 つの module。どれも file の中の macro が gensym を使い、一番外の setv の所見を持つ。
+#: Three modules the root file imports. In each, a macro in the file uses gensym, and each has a finding for an outermost setv.
 LEAF = """\
 (defmacro kept-twice [x]
   (setv g (hy.gensym "kept"))
@@ -35,8 +35,8 @@ ROOT = """\
 
 
 def _tree(root: Path, broken: str | None = None, crashing: str | None = None) -> Path:
-    """根の file(main.hy)と、それが import する alpha・beta・gamma を置く。broken は展開に失敗する module、crashing は
-    展開の途中で子の process を落とす module。"""
+    """Place the root file (main.hy) and the alpha, beta and gamma it imports. broken is a module that fails to expand, and crashing is a module that kills the child process
+    partway through expansion."""
     for number, name in enumerate(("alpha", "beta", "gamma"), 1):
         text = LEAF.format(name=name, value=number)
         if name == broken:
@@ -51,7 +51,7 @@ def _tree(root: Path, broken: str | None = None, crashing: str | None = None) ->
 
 @dataclass(frozen=True)
 class Shape:
-    """比べる形: file ごとの展開の文・位置の対応・所見と、失敗した file の名(順に依らない)。"""
+    """The shape to compare: per-file expansion text, position mapping, findings, and the names of failed files (independent of order)."""
 
     projections: dict[str, tuple[object, ...]]
     failures: list[str]
@@ -89,7 +89,7 @@ def test_a_lost_child_names_the_files_without_an_answer(tmp_path: Path) -> None:
         project_closure(tmp_path, [tmp_path], [main], None, limit=3)
     assert issubclass(
         ExpansionWorkerLostError, RuntimeError
-    )  # main は RuntimeError を道具の失敗(exit 2)にする
+    )  # main makes a RuntimeError a tool failure (exit 2)
 
 
 def test_a_run_that_reads_everything_from_the_store_starts_no_pool(
@@ -107,12 +107,12 @@ def test_a_run_that_reads_everything_from_the_store_starts_no_pool(
 
     monkeypatch.setattr(static_check, "_start_pool", counting)
     second = project_closure(tmp_path, [tmp_path], [main], cache, limit=3)
-    assert started == [], "全部引ける実行で pool を起こした"
+    assert started == [], "a run where everything can be taken from the store started a pool"
     assert _shape(second) == _shape(first)
 
 
-#: 日次の命令と同じく doeff_hy._static_check を __main__ の名で撃つ子の process(`python -m` と同じ — 展開の子は __mp_main__ の名で
-#: 読む)。保存を引けた数(hit)と外れた数(miss)を最後の行に JSON で出す。pyright は診断の無い答えを返す偽物(引数で名指す)。
+#: A child process that launches doeff_hy._static_check under the name __main__, like the daily command (same as `python -m` -- expansion children read it under the name __mp_main__
+#: ). It prints the number of store hits (hit) and misses (miss) as JSON on the last line. pyright is a fake that returns an answer with no diagnostics (named by an argument).
 MAIN_CHILD = """\
 import json, runpy, sys
 import doeff_hy._static_cache as cache
@@ -123,9 +123,9 @@ def load(cache_dir, name):
     seen["hit" if isinstance(answer, cache.CachedProjection) else "miss"] += 1
     return answer
 cache.load = load
-# 温まった実行は closure の束の行で引き、entry の load を呼ばない — 束の行で引いた数も数える。行は stat が書いた時と同じなら
-# row_is_current で、書いた直後で stat を信じない行は中身の場所の名と記録の照らし(入口が直に呼ぶ record_is_current_here)で
-# 引く。どちらも macro の記録を今の環境と照らす(入口の名と展開の子の名が食い違うと引けない)。
+# A warmed-up run takes from the closure bundle row and does not call the entry load -- the number taken by the bundle row is also counted. A row is, when the same as when stat wrote it,
+# taken by row_is_current, and a row just written whose stat is not trusted is taken by the name of the content location and checking the record (record_is_current_here, which the entry calls directly).
+# Both check the macro record against the current environment (it cannot be taken if the entry's name and the expansion child's name disagree).
 import doeff_hy_bytecode_guard._loader_hooks as guard
 real_row = cache.row_is_current
 def row_is_current(row, module, stat):
@@ -152,10 +152,10 @@ print(json.dumps(seen))
 def test_the_entry_run_as_main_reads_the_store_its_expansion_children_wrote(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    # 直す前は赤: 記録は後処理 POST_PROCESSING を __name__ の module で名指していた。
-    # `python -m` の入口では、展開の子が __mp_main__ の project を辿った digest を書き、次の実行の親は __main__ の project を
-    # 辿って照らす(関数の持ち主の名と __name__ の値が違う)ので、同じ木・同じ置き場でも保存を 1 つも引けなかった
-    # (agora-controllers の日次の hy-type-trend は同じ dir でも 593 本中 592 本を展開し直す形だった)。
+    # Red before the fix: the record named the post-processing POST_PROCESSING under the module of __name__.
+    # In the `python -m` entry, the expansion child wrote a digest that walked the project of __mp_main__, and the next run's parent walked and checked
+    # the project of __main__ (the function owner's name and the value of __name__ differ), so even with the same tree and same location not one store entry could be taken
+    # (agora-controllers' daily hy-type-trend was re-expanding 592 of 593 even in the same dir).
     project = tmp_path / "proj"
     project.mkdir()
     _tree(project)
@@ -176,24 +176,24 @@ def test_the_entry_run_as_main_reads_the_store_its_expansion_children_wrote(
         return json.loads(done.stdout.strip().splitlines()[-1])
 
     assert run() == {"hit": 0, "miss": 4}
-    assert run() == {"hit": 4, "miss": 0}, "展開の子が書いた保存を、次の実行の親が引けなかった"
+    assert run() == {"hit": 4, "miss": 0}, "the next run's parent could not take the store written by the expansion children"
 
 
 def test_the_expander_limit_is_the_slot_width_and_defaults_to_four_when_none_reaches() -> None:
-    """展開の子の数は、機体の検の枠の正本が答えた 1 枠の中の並走の数(SlotHeld.width)。届かない機体(正本の無い宿・古い正本)
-    では既定 4(core の数ではない — 36 core の機体で検査 2 本が 30 本超の子を起こした・2026-10-11)。環境変数で替える口は無い
-    (口が在ると、値を替えた会話の検だけが別の数で数え、枠の数え方が割れる)。"""
+    """The number of expansion children is the parallel count within the one slot answered by the authoritative source of the machine's check slot (SlotHeld.width). On a machine it cannot reach (a host with no authoritative source, an old source)
+    the default is 4 (not the number of cores -- on a 36-core machine two checks started more than 30 children, 2026-10-11). There is no hook to change it with an environment variable
+    (with a hook, only the check of the conversation that changed the value would count with a different number, and the way slots are counted would split)."""
     assert static_check.expander_limit(None) == static_check.EXPANDER_LIMIT == 4
     assert static_check.expander_limit(2) == 2
     assert static_check.expander_limit(1) == 1
-    assert static_check.expander_limit(8) == 8, "宣言が上がれば従う(値の持ち主は宣言)"
+    assert static_check.expander_limit(8) == 8, "if the declaration goes up, follow it (the declaration owns the value)"
 
 
 def test_the_entry_hands_the_slot_width_to_the_expanders(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """入口の main は、枠の取り手が答えた幅を project_closure の上限へ渡す(宣言の無い機体の既定 4 でも環境変数でもない)。"""
-    monkeypatch.setattr(sys, "path", list(sys.path))  # main は根を sys.path の頭に足す
+    """The entry's main passes the width answered by the slot taker to the upper limit of project_closure (neither the default 4 of a machine with no declaration nor an environment variable)."""
+    monkeypatch.setattr(sys, "path", list(sys.path))  # main adds the root to the head of sys.path
     seen: list[int] = []
 
     def fake_closure(*args: object, **_: object) -> static_check.Closure:

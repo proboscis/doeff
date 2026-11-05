@@ -1,33 +1,32 @@
-"""defwire の自前の解き手の型の木 — 読む側・書く側・JSON Schema。
+"""Own decoder type tree for defwire: reader, writer, and JSON Schema.
 
-JSON を defwire の型の値へ、pydantic を読まずに strict に解いて確かめ、同じ木で値を JSON へ書き、JSON Schema を出す。契約は設計の記録
-``docs/design/defwire-decoder/design.md``(節 2 の型ごとの判じ方と書き出し・節 3 の共通の規則・節 3b の書き出しと JSON Schema・付録 B の
-腕の名)で、今の pydantic の strict と同じ物を受け、同じ物を断る(文字列を数にしない・真偽を数にしない・整数は float の欄に入る・配列は
-tuple の欄・defenum は値の綴り・:names の wire の名だけを受ける・:unknown の reject / ignore・:check の落ちは Malformed)。違うのは 1 つだけ:
-union の何でも受ける腕(OpaqueJson・object)は、他のどの腕も受けない時だけ受ける(節 3 の規則 4)。書き出しは今の pydantic の dump・
-dump-json と同じ JSON を出す(違いは節 3b の表の 3 つ — どれも pydantic が欄の Python の名や OpaqueJson の中の欄を書いていた所)。
+Decodes JSON into defwire typed values strictly and checks them without reading pydantic, writes values back to JSON with the same tree, and emits JSON Schema. The contract is the design record
+``docs/design/defwire-decoder/design.md`` (section 2: per-type decoding and writing; section 3: shared rules; section 3b: writing and JSON Schema; appendix B:
+arm names). It accepts what the current pydantic strict mode accepts and rejects what it rejects (no string-to-number, no bool-to-number, an integer is accepted in a float field, an array
+in a tuple field, defenum by value spelling, only the wire names of :names, :unknown reject / ignore, a failing :check is Malformed). There is exactly one difference:
+the catch-all union arms (OpaqueJson, object) are taken only when no other arm accepts (section 3, rule 4). Writing produces the same JSON as the current pydantic dump and
+dump-json (the differences are the three rows of the section 3b table, all places where pydantic wrote the Python field name or the fields inside OpaqueJson).
 
-使い方:
+Usage:
 
-    codec = codec_of(LandingRow)          # 最初の使いで型の木を 1 度組み、型に覚える(2 回目からは組まない)
-    codec.decode_json(text)               # JSON の文字列(bytes も)から — 答え = LandingRow の値か Malformed
-    codec.decode(raw)                     # JSON の値(凍らせた FrozenMap・tuple・OpaqueJson も)から
-    codec.encode(row)                     # JSON の値へ(欄は wire の名・既定値と同じ欄は書かない — 今の dump)
-    codec.encode_json(row)                # JSON の文字列へ(OpaqueJson の欄は持っている文字列をそのまま埋める — 今の dump-json)
-    codec.schema()                        # JSON Schema(今の json-schema)
+    codec = codec_of(LandingRow)          # builds the type tree once on first use and remembers it on the type (not rebuilt afterwards)
+    codec.decode_json(text)               # from a JSON string (bytes too); result = a LandingRow value or Malformed
+    codec.decode(raw)                     # from a JSON value (frozen FrozenMap, tuple, and OpaqueJson also accepted)
+    codec.encode(row)                     # to a JSON value (fields use wire names; fields equal to their default are omitted, as in the current dump)
+    codec.encode_json(row)                # to a JSON string (OpaqueJson fields splice in the string they hold, as in the current dump-json)
+    codec.schema()                        # JSON Schema (as in the current json-schema)
 
-- 型の木は欄の型ごとの判じ手(``_Node``)の木。defwire の型は 1 つの ``_WireNode`` を型に覚え、入れ子の欄は子の判じ手を参照する
-  (親ごとに組み直さない)。語彙の外の型・解けない前方参照・型の輪は、組む時に TypeError で断る(黙って通さない)。
-- wire.hy(parse・parse-json・dump・dump-json・json-schema)はこの木を呼ぶ(pydantic の TypeAdapter から替えた —
-  照らしの test(doeff_hy/_wire_parity.py・tests/test_wire_parity.py)が doeff と agora-controllers の全 defwire の型で pydantic との
-  不一致 0 を示した後)。
-- 表の行の型(素の defrecord)は ``row_codec_of`` が同じ判じ手で組む(欄は Python の名・知らない欄は読み捨て・書きは全部の欄 —
-  doeff-records の typed.hy が使う・設計の記録の節 6)。
-- decode と encode_json は先に速い道で読み書きする(入力を写し直さない・欄を並べ切った読み手と書き手を型ごとに 1 度組む・defrecord の
-  型は構築子を通さずに作る)。答えは今までの道と同じで、受けない所は今までの道へ戻る(節「判じ手」の註・
-  tests/test_wire_codec_fast.py)。
-- この module は pydantic を import しない(標準の module と doeff_hy._json_value・doeff_hy._wire_malformed・doeff_hy._record_runtime だけを読む —
-  ``tests/test_wire_codec.py`` と ``tests/test_wire_codec_write.py`` が import の閉包を確かめる)。
+- The type tree is a tree of per-field-type checkers (``_Node``). A defwire type remembers a single ``_WireNode`` on the type, and nested fields reference the child checkers
+  (they are not rebuilt per parent). Types outside the vocabulary, unresolvable forward references, and type cycles are rejected with TypeError at build time (never passed silently).
+- wire.hy (parse, parse-json, dump, dump-json, json-schema) calls this tree (replacing pydantic's TypeAdapter after
+  the parity test (doeff_hy/_wire_parity.py, tests/test_wire_parity.py) showed 0 mismatches against pydantic over all defwire types in doeff and agora-controllers).
+- Table row types (plain defrecord) are built by ``row_codec_of`` with the same checkers (fields use Python names, unknown fields are discarded, writing emits all fields;
+  used by typed.hy in doeff-records; section 6 of the design record).
+- decode and encode_json read and write through a fast path first (the input is not copied again; a reader and writer with the fields fully unrolled are built once per type; defrecord
+  types are created without going through the constructor). The answer is the same as the existing path, and anything the fast path does not accept falls back to the existing path (see the note in the section "checkers" and
+  tests/test_wire_codec_fast.py).
+- This module does not import pydantic (it reads only the standard modules plus doeff_hy._json_value, doeff_hy._wire_malformed, and doeff_hy._record_runtime;
+  ``tests/test_wire_codec.py`` and ``tests/test_wire_codec_write.py`` check the import closure).
 """
 
 import dataclasses
@@ -46,7 +45,7 @@ from collections import Counter
 from collections.abc import Callable, Collection, Mapping
 from typing import Any, Final, ForwardRef, Generic, TypeAlias, TypeGuard, TypeVar, cast, final
 
-# 名を _ で始めて読む: この module の公開の名は Codec と codec_of と row_codec_of だけ(Malformed は wire_malformed・OpaqueJson は json_value が出す)。
+# Imported with a leading underscore: the only public names of this module are Codec, codec_of, and row_codec_of (Malformed comes from wire_malformed, OpaqueJson from json_value).
 from doeff_hy._json_value import OpaqueJson as _OpaqueJson
 from doeff_hy._record_runtime import RECORD_PARAMS as _RECORD_PARAMS
 from doeff_hy._wire_malformed import Malformed as _Malformed
@@ -54,20 +53,20 @@ from doeff_hy._wire_malformed import MalformedField as _MalformedField
 
 _T = TypeVar("_T")
 
-#: 誤り 1 つ: (場所の列・種類・msg)。場所は wire の名・配列の位置・dict の key・union の腕の名の列(値の全体は空の列)。
+#: One error: (path of keys, kind, msg). The path is wire names, array indexes, dict keys, and union arm names (empty for the whole value).
 _Problem = tuple[tuple[str | int, ...], str, str]
 
-#: 書き出した JSON の値と JSON Schema の値(判じ手の encode・schema の答え)。_Raw は文字列へ書く途中の OpaqueJson の文字列・
-#: _RefMark は組み終える前の $ref の行き先で、どちらも Codec の答えには残らない。
+#: A written JSON value and a JSON Schema value (the answers of a checker's encode and schema). _Raw is an OpaqueJson string while being written to a string;
+#: _RefMark is a $ref target before building finishes. Neither remains in a Codec answer.
 _Json: TypeAlias = (
     "dict[str, _Json] | list[_Json] | str | int | float | bool | None | _Raw | _RefMark"
 )
-#: JSON Schema の形 1 つ(object)。
+#: One JSON Schema shape (object).
 _Schema: TypeAlias = "dict[str, _Json]"
 
 
 class _RefusedError(Exception):
-    """判じ手が値を断った(誤りの列を運ぶ — 木の外へは出さず、Codec が Malformed へ写す)。"""
+    """A checker rejected the value (carries the list of errors; it never leaves the tree, and Codec maps it to Malformed)."""
 
     __slots__ = ("problems",)
 
@@ -77,63 +76,63 @@ class _RefusedError(Exception):
 
 
 class _SlowPathError(Exception):
-    """速い道(_Node.fast)が、素の値として読めない所(凍らせていない派生の型・孤立した surrogate・深すぎる入れ子)に会った —
-    Codec は今までの道(_plain で写し直してから decode)で読み直す。"""
+    """The fast path (_Node.fast) hit something it cannot read as a plain value (a non-frozen derived type, a lone surrogate, nesting that is too deep) --
+    Codec re-reads with the existing path (copy with _plain, then decode)."""
 
     __slots__ = ()
 
 
 def _refuse(kind: str, msg: str) -> _RefusedError:
-    """判じ手が値を断る時の 1 つの誤り(場所は判じ手の所 — 呼び手が鍵を足す)。"""
+    """One error when a checker rejects a value (the path is relative to the checker; the caller prepends the key)."""
     return _RefusedError([((), kind, msg)])
 
 
 def _under(key: str | int, problems: list[_Problem]) -> list[_Problem]:
-    """子の誤りに、親が見た鍵(欄の wire の名・位置・key・腕の名)を場所の頭として足す。"""
+    """Prepend the key the parent saw (field wire name, index, key, arm name) to the child error paths."""
     return [((key, *loc), kind, msg) for loc, kind, msg in problems]
 
 
 def _expected(values: tuple[str, ...]) -> str:
-    # pydantic の綴り: 値を repr で包み、最後の 2 つを " or "・前を ", " でつなぐ('a', 'b' or 'c')。
-    """defenum と Literal の断りの msg の、受ける値の並べ方(pydantic の綴りに揃える)。"""
+    # pydantic spelling: wrap each value in repr, join the last two with " or " and the earlier ones with ", " ('a', 'b' or 'c').
+    """How to list the accepted values in the rejection msg of defenum and Literal (matches the pydantic spelling)."""
     quoted = [repr(value) for value in values]
     if len(quoted) == 1:
         return quoted[0]
     return f"{', '.join(quoted[:-1])} or {quoted[-1]}"
 
 
-# --- 判じ手 -------------------------------------------------------------------------------------------------------------------
-# どの判じ手も、JSON を json.loads で読んだ素の値(dict・list・str・int・float・bool・None)を受ける。凍らせた値と OpaqueJson は
-# Codec.decode が先に素の値へ戻す(_plain)。decode は値を返すか _RefusedError を投げる。
+# --- Checkers -------------------------------------------------------------------------------------------------------------------
+# Every checker accepts the plain values produced by reading JSON with json.loads (dict, list, str, int, float, bool, None). Frozen values and OpaqueJson are
+# first turned back into plain values by Codec.decode (_plain). decode returns a value or raises _RefusedError.
 #
-# 速い道(fast): Codec は先に fast で読み、入力を _plain で写し直さない。fast は json.loads の素の値と、凍らせた
-# FrozenMap(写像)・tuple を、そのまま読む。それ以外の所(str や int の派生・OpaqueJson・set など)は、その所だけを _plain で写して
-# decode に渡す(_Node.fast — 今までの道と同じ判じ方)。孤立した surrogate・深すぎる入れ子は _SlowPathError で、Codec が今までの道で
-# 読み直す。fast が値を返すのは、入力の全部を読んで、どの所も今までの道と同じに判じた時だけ。断った時(_RefusedError)も Codec は
-# 今までの道で読み直して、誤りの列を今までどおり全部集める(fast は最初の誤りで止まる)。room = まだ入れる入れ子の階層の数(_plain と同じ)。
+# Fast path (fast): Codec reads with fast first and does not copy the input with _plain. fast reads json.loads plain values and frozen
+# FrozenMap (mapping) and tuple as they are. Anywhere else (str or int subclasses, OpaqueJson, set, ...) only that spot is copied with _plain and
+# passed to decode (_Node.fast -- same judgment as the existing path). A lone surrogate or too-deep nesting raises _SlowPathError and Codec
+# re-reads with the existing path. fast returns a value only when it read the whole input and judged every spot the same as the existing path. When it refuses (_RefusedError), Codec also
+# re-reads with the existing path and collects the full error list as before (fast stops at the first error). room = how many more nesting levels are allowed (same as _plain).
 
 
 class _Node:
-    """欄の型 1 つの判じ手。label = union の誤りの場所に挟む腕の名(設計の記録の付録 B — pydantic の綴り)。"""
+    """Checker for one field type. label = the arm name inserted in a union error path (appendix B of the design record -- pydantic spelling)."""
 
     __slots__ = ("label",)
-    #: union の腕として受ける JSON の種類(str・int・float・bool・array・object)。
+    #: The JSON kinds this accepts as a union arm (str, int, float, bool, array, object).
     kinds: frozenset[str] = frozenset()
-    #: 何でも受ける腕(OpaqueJson・object)— union では他のどの腕も受けない時だけ選ぶ(節 3 の規則 4)。
+    #: A catch-all arm (OpaqueJson, object) -- in a union it is chosen only when no other arm accepts (section 3, rule 4).
     catch_all: bool = False
-    #: union で同じ種類の腕が並んだ時の順(小さい方が先 — pydantic の「ちょうど合う腕」が「直して合う腕」より先)。
+    #: Order when union arms of the same kind are listed (smaller first -- pydantic's "exact match" arm comes before the "match after coercion" arm).
     rank: int = 0
 
     def __init__(self, label: str) -> None:
         self.label = label
 
     def decode(self, value: object) -> object:
-        """JSON の素の値を、この型の値へ解いて確かめる(受けない値は _RefusedError — 誤りの場所はこの判じ手の所から)。"""
+        """Decode a plain JSON value into a value of this type and check it (a value it does not accept raises _RefusedError -- error paths are relative to this checker)."""
         raise NotImplementedError
 
     def fast(self, value: object, room: int) -> object:
-        """速い道で読む(上の註)。ここは判じ手ごとの速い形に当たらない所 — その所だけを _plain で写して decode に渡す。写せない
-        所(孤立した surrogate・深すぎる入れ子)は _SlowPathError(union の腕が断ったと読まないため)。"""
+        """Read on the fast path (see the note above). This is for spots not covered by a per-checker fast form -- only that spot is copied with _plain and passed to decode. A spot
+        that cannot be copied (lone surrogate, too-deep nesting) raises _SlowPathError (so it is not mistaken for a union arm having rejected it)."""
         try:
             plain = _plain(value, room)
         except _RefusedError:
@@ -141,26 +140,26 @@ class _Node:
         return self.decode(plain)
 
     def encode(self, value: object, raw: bool) -> _Json:
-        """この型の値を JSON の素の値へ書く(raw = 文字列へ書く途中 — OpaqueJson の文字列を _Raw のまま残す)。型の合わない値は、
-        今の pydantic と同じく値の型から書く(_inferred)。"""
+        """Write a value of this type as a plain JSON value (raw = while writing to a string -- an OpaqueJson string stays as _Raw). A value of the wrong type is
+        written from its own type, as the current pydantic does (_inferred)."""
         return _inferred(value, raw)
 
     def text(self, value: object) -> str:
-        """この型の値を JSON の文字列へ直に書く(書き出しの速い道): 答えは _json_text(encode(value, True)) と
-        同じ文字列で、書き出しの JSON の値の木を作らない。ここは判じ手ごとの速い形に当たらない所 — その所だけ木を作って綴る。
-        孤立した surrogate は確かめない(Codec.encode_json が書き終えた文字列で 1 度に確かめ、在れば今までの道で断る)。"""
+        """Write a value of this type straight to a JSON string (the fast path of writing): the answer is the same string as _json_text(encode(value, True)),
+        but no tree of JSON values is built. This is for spots not covered by a per-checker fast form -- only that spot builds a tree and spells it out.
+        A lone surrogate is not checked here (Codec.encode_json checks the finished string once, and rejects through the existing path if one exists)."""
         return _json_text(self.encode(value, True))
 
     def fits(self, value: object, strict: bool) -> bool:
-        """union の腕として、値がこの型の値か(書く時に腕を選ぶ — strict は型ちょうど・lax は書き直せる型も)。"""
+        """As a union arm, is the value a value of this type (the arm is chosen when writing -- strict is the exact type, lax also types that can be rewritten)."""
         raise NotImplementedError
 
     def schema(self, defs: "_Definitions") -> _Schema:
-        """この型の JSON Schema(defwire の型と defenum は defs に置いて $ref で指す)。"""
+        """JSON Schema of this type (defwire types and defenum are put in defs and pointed to with $ref)."""
         raise NotImplementedError
 
     def titled(self) -> bool:
-        """この型の欄の JSON Schema に、欄の名からの title を付けるか(型の側が title を持つ defwire・defenum は付けない — pydantic と同じ)。"""
+        """Whether the field JSON Schema of this type gets a title derived from the field name (defwire and defenum, whose own type side carries a title, do not -- same as pydantic)."""
         return True
 
 
@@ -208,7 +207,7 @@ class _Int(_Node):
     def encode(self, value: object, raw: bool) -> _Json:
         if type(value) is int:
             return value
-        if isinstance(value, int):  # 真偽と IntEnum も整数で書く(今の pydantic と同じ)
+        if isinstance(value, int):  # bool and IntEnum are also written as integers (same as the current pydantic)
             return int(value)
         return _inferred(value, raw)
 
@@ -226,7 +225,7 @@ class _Int(_Node):
 class _Float(_Node):
     __slots__ = ()
     kinds = frozenset({"int", "float"})
-    rank = 1  # 整数は int の腕が先に受ける((| float int) でも 1 は int のまま)
+    rank = 1  # an integer is accepted first by the int arm (even in (| float int), 1 stays an int)
 
     def decode(self, value: object) -> object:
         kind = type(value)
@@ -235,7 +234,7 @@ class _Float(_Node):
         if kind is int:
             try:
                 return float(cast(int, value))
-            except OverflowError:  # 桁あふれの整数は今の pydantic と同じく inf
+            except OverflowError:  # an overflowing integer becomes inf, same as the current pydantic
                 return math.inf if cast(int, value) > 0 else -math.inf
         raise _refuse("float_type", "Input should be a valid number")
 
@@ -243,7 +242,7 @@ class _Float(_Node):
         return value if type(value) is float else _Node.fast(self, value, room)
 
     def encode(self, value: object, raw: bool) -> _Json:
-        # 型のある float の欄は NaN・inf も float のまま(dump)— 文字列へ書く時に null になる。整数と真偽は float に直す(今と同じ)。
+        # A typed float field keeps NaN and inf as float (dump) -- they become null when written to a string. Integers and bools are converted to float (same as now).
         if type(value) is float:
             return value
         if isinstance(value, float | int):
@@ -251,7 +250,7 @@ class _Float(_Node):
                 return float(value)
             except (
                 OverflowError
-            ):  # float にできない桁の整数は、今の pydantic の dump と同じく整数のまま書く
+            ):  # an integer with too many digits for a float is written as an integer, same as the current pydantic dump
                 return _inferred(value, raw)
         return _inferred(value, raw)
 
@@ -317,11 +316,11 @@ class _NoneOnly(_Node):
 
 @final
 class _Enum(_Node):
-    """defenum(StrEnum)— member の値の綴りの文字列だけを受ける(member の名では受けない)。"""
+    """defenum (StrEnum) -- accepts only the string spelling of a member value (not the member name)."""
 
     __slots__ = ("_fast_members", "_members", "_msg", "_spellings", "enum_type", "quoted")
     kinds = frozenset({"str"})
-    rank = 2  # str と Literal の腕が先(pydantic は文字列に str の腕を選ぶ)
+    rank = 2  # the str and Literal arms come first (pydantic picks the str arm for a string)
 
     def __init__(self, enum_type: type[enum.Enum]) -> None:
         super().__init__(f"str-enum[{enum_type.__name__}]")
@@ -332,12 +331,12 @@ class _Enum(_Node):
         self._spellings: dict[enum.Enum, str] = {
             member: spelling for spelling, member in self._members.items()
         }
-        #: member ごとの JSON の文字列の綴り(text と _WireNode の書き手が使う)。
+        #: The JSON string spelling of each member (used by text and by the _WireNode writer).
         self.quoted: dict[enum.Enum, str] = {
             member: _ENCODE_STRING(spelling) for member, spelling in self._spellings.items()
         }
         self._msg = f"Input should be {_expected(tuple(self._members))}"
-        # 速い道で読む綴り(孤立した surrogate を含む綴りは今までの道 — _plain が json_invalid で断る)。
+        # Spellings read on the fast path (a spelling containing a lone surrogate takes the existing path -- _plain rejects it with json_invalid).
         self._fast_members = {
             spelling: member
             for spelling, member in self._members.items()
@@ -378,8 +377,8 @@ class _Enum(_Node):
         return False
 
     def definition(self, defs: "_Definitions") -> _Schema:
-        """$defs に置く形(値の綴りの並び・型の名・型の doc を description に — 今の pydantic と同じく inspect.cleandoc で整え、
-        Enum の既定の doc は出さない。照らしの test が見つけた差)。"""
+        """Shape put in $defs (list of value spellings, the type name, and the type doc as description -- tidied with inspect.cleandoc as the current pydantic does,
+        and the default doc of Enum is not emitted. A difference the parity test found)."""
         doc = self.enum_type.__doc__
         description = inspect.cleandoc(doc) if doc else None
         shape: _Schema = {
@@ -394,7 +393,7 @@ class _Enum(_Node):
 
 @final
 class _Literal(_Node):
-    """文字列の Literal — 並べた文字列のどれか。"""
+    """Literal of strings -- any one of the listed strings."""
 
     __slots__ = ("_fast_values", "_msg", "_order", "_values")
     kinds = frozenset({"str"})
@@ -431,31 +430,31 @@ class _Literal(_Node):
         return {"enum": [*self._order], "type": "string"}
 
 
-#: 判じ手 1 回の結末: (True, 値) か (False, 誤りの列)。誤りを全部集める所(欄・要素・腕)が、例外を内包表記の中で受けるために使う。
+#: Outcome of one checker call: (True, value) or (False, list of errors). Used by the places that collect all errors (fields, elements, arms) to catch exceptions inside a comprehension.
 _Outcome = tuple[typing.Literal[True], object] | tuple[typing.Literal[False], list[_Problem]]
 
 
 def _attempt(node: _Node, value: object) -> _Outcome:
-    """判じ手 1 回を結末の値にする(誤りを全部集める所が、例外を内包表記の中で受けるため)。"""
+    """Turn one checker call into an outcome value (so the places that collect all errors can catch exceptions inside a comprehension)."""
     try:
         return (True, node.decode(value))
     except _RefusedError as invalid:
         return (False, invalid.problems)
 
 
-#: 在るべき所(既定値の無い欄・長さちょうどの配列の位置)に値が無かった結末。
+#: Outcome when a value is missing where it should exist (a field without a default, a position of an exact-length array).
 _MISSING: Final[_Outcome] = (False, [((), "missing", "Field required")])
 
 
 def _problems_of(key: str | int, outcome: _Outcome) -> list[_Problem]:
-    """結末 1 つの誤りに場所の鍵を足す(受けた結末は誤り無し)— 誤りを集める所が、鍵の順のまま 1 列にするため。"""
+    """Prepend a path key to the errors of one outcome (an accepted outcome has no errors) -- so the collecting place gathers them into one list in key order."""
     if outcome[0] is True:
         return []
     return _under(key, outcome[1])
 
 
 def _settled(keyed: list[tuple[str | int, _Outcome]]) -> list[object]:
-    """鍵(位置・key)ごとの結末から値の列を返す。1 つでも断っていれば、誤りに鍵を場所として足して全部まとめて断る。"""
+    """From the outcomes per key (index, key), return the list of values. If even one was rejected, prepend the key to the errors as the path and reject them all together."""
     problems = [problem for key, outcome in keyed for problem in _problems_of(key, outcome)]
     if problems:
         raise _RefusedError(problems)
@@ -463,13 +462,13 @@ def _settled(keyed: list[tuple[str | int, _Outcome]]) -> list[object]:
 
 
 def _items(node: _Node, values: list[object]) -> list[object]:
-    """配列の要素を同じ判じ手で読む(誤りは位置を場所に足して全部集める)。"""
+    """Read array elements with the same checker (errors prepend the index to the path and all are collected)."""
     return _settled([(index, _attempt(node, item)) for index, item in enumerate(values)])
 
 
 @final
 class _Array(_Node):
-    """長さの決まらない配列: (get tuple #(T ...))・(get list T)・(get frozenset T)。"""
+    """Arrays of undetermined length: (get tuple #(T ...)), (get list T), (get frozenset T)."""
 
     __slots__ = ("_item", "_kind", "_make", "_own")
     kinds = frozenset({"array"})
@@ -487,7 +486,7 @@ class _Array(_Node):
         self._kind = kind
         self._make = make
         self._own = (
-            own  # 書く時に strict で受ける入れ物(宣言の入れ物ちょうど — frozenset の欄は set も)
+            own  # container accepted by strict when writing (exactly the declared container -- a frozenset field also accepts set)
         )
 
     def decode(self, value: object) -> object:
@@ -497,12 +496,12 @@ class _Array(_Node):
 
     @property
     def item(self) -> _Node:
-        """要素の判じ手(_WireNode の欄を並べ切った読み手と書き手が、要素の読み方と綴り方を開くため)。"""
+        """The element checker (so the unrolled reader and writer of _WireNode can open up how to read and spell the elements)."""
         return self._item
 
     @property
     def make(self) -> Callable[[list[object]], object]:
-        """読んだ要素の list から欄の入れ物(tuple・list・frozenset)を作る関数。"""
+        """Function that builds the field container (tuple, list, frozenset) from the list of read elements."""
         return self._make
 
     def fast(self, value: object, room: int) -> object:
@@ -510,7 +509,7 @@ class _Array(_Node):
         if (kind is list or kind is tuple) and room:
             item = self._item.fast
             inner = room - 1
-            if self._item is _STR:  # ASCII の str ちょうどの要素は判じ手を呼ばずに受ける(_Str.fast と同じ答え)
+            if self._item is _STR:  # an element that is exactly an ASCII str is accepted without calling the checker (same answer as _Str.fast)
                 items = [
                     element
                     if type(element) is str and _is_ascii(element)
@@ -529,8 +528,8 @@ class _Array(_Node):
         return _inferred(value, raw)
 
     def text(self, value: object) -> str:
-        # str ちょうどの要素は判じ手を呼ばずに綴る(どの判じ手も同じ文字列に書く — _WireNode.text の註)。
-        # 全部の欄を書く入れ子の型ちょうどの要素は、その型の書き手を直に呼ぶ(_WireNode.text と同じ答え)。
+        # An element that is exactly a str is spelled without calling the checker (every checker writes the same string -- see the note on _WireNode.text).
+        # An element that is exactly a nested type that writes all fields calls that type's writer directly (same answer as _WireNode.text).
         if _is_array(value):
             node = self._item
             item = node.text
@@ -548,7 +547,7 @@ class _Array(_Node):
         return _Node.text(self, value)
 
     def fits(self, value: object, strict: bool) -> bool:
-        # strict は宣言の入れ物ちょうど・lax はどの配列の入れ物も。要素も同じ strict で確かめる。
+        # strict is exactly the declared container; lax is any array container. Elements are checked with the same strict.
         item = self._item
         return (
             _is_array(value)
@@ -563,7 +562,7 @@ class _Array(_Node):
 
 @final
 class _FixedTuple(_Node):
-    """長さちょうどの配列: (get tuple #(T1 T2 …))。"""
+    """Array of exact length: (get tuple #(T1 T2 ...))."""
 
     __slots__ = ("_items",)
     kinds = frozenset({"array"})
@@ -577,12 +576,12 @@ class _FixedTuple(_Node):
             raise _refuse("tuple_type", "Input should be a valid array")
         values = cast(list[object], value)
         expected = len(self._items)
-        if len(values) > expected:  # 長い時は要素を判じない(今の pydantic と同じ)
+        if len(values) > expected:  # when too long, the elements are not judged (same as the current pydantic)
             raise _refuse(
                 "too_long",
                 f"Tuple should have at most {expected} items after validation, not {len(values)}",
             )
-        # 短い時は、足りない位置ごとに missing(在る位置の誤りと位置の順に並べる)。
+        # When too short, a missing is reported for each absent position (ordered with the errors of present positions, by position).
         return tuple(
             _settled(
                 [
@@ -634,7 +633,7 @@ class _FixedTuple(_Node):
 
 @final
 class _Dict(_Node):
-    """(get dict #(str T))— object の値を T で読む(key は JSON の object の key なので文字列)。"""
+    """(get dict #(str T)) -- read the values of an object with T (the key is a JSON object key, so it is a string)."""
 
     __slots__ = ("_item",)
     kinds = frozenset({"object"})
@@ -656,7 +655,7 @@ class _Dict(_Node):
         )
 
     def fast(self, value: object, room: int) -> object:
-        # 鍵は str ちょうどだけ(派生の鍵と数の鍵は今までの道 — _plain_key が綴りを直す)。
+        # A key must be exactly a str (derived keys and numeric keys take the existing path -- _plain_key fixes the spelling).
         if room and _is_mapping(value) and all(type(key) is str for key in value):
             item = self._item.fast
             inner = room - 1
@@ -670,8 +669,8 @@ class _Dict(_Node):
         return _inferred(value, raw)
 
     def text(self, value: object) -> str:
-        # 鍵は encode と同じ綴り(_json_key)。同じ綴りになる 2 つの鍵(1 と "1" など)は、encode の dict が後の値の 1 つにまとめる
-        # ので、その時は木を作る道で書く。
+        # The key has the same spelling as encode (_json_key). Two keys with the same spelling (such as 1 and "1") are merged by the encode dict into one of the later values,
+        # so in that case write via the path that builds a tree.
         if _is_mapping(value):
             item = self._item.text
             keys = [_json_key(key) for key in value]
@@ -695,14 +694,14 @@ class _Dict(_Node):
         )
 
     def schema(self, defs: "_Definitions") -> _Schema:
-        # 値の形が何でもよい時(object・OpaqueJson の値)は true(今の pydantic と同じ — 照らしの test が見つけた差)。
+        # True when the value shape does not matter (values of object and OpaqueJson) -- same as the current pydantic; a difference the parity test found.
         item = self._item.schema(defs)
         return {"additionalProperties": item if item else True, "type": "object"}
 
 
 @final
 class _BareDict(_Node):
-    """素の dict — object である事だけを確かめ、値は読まずに json.loads の値のまま(census の特例 — 新しく書く欄は型にする)。"""
+    """Plain dict -- only checks that it is an object and keeps the value as the json.loads value without reading it (a census special case -- new fields should be typed)."""
 
     __slots__ = ()
     kinds = frozenset({"object"})
@@ -721,7 +720,7 @@ class _BareDict(_Node):
 
 @final
 class _Anything(_Node):
-    """object — どの JSON も json.loads の値のまま受ける(型の check は無い — 今と同じ)。"""
+    """object -- accepts any JSON as the json.loads value (no type check -- same as now)."""
 
     __slots__ = ()
     catch_all = True
@@ -738,7 +737,7 @@ class _Anything(_Node):
 
 @final
 class _Opaque(_Node):
-    """OpaqueJson — どの JSON も中を読まず、最小の直列化の文字列で包む。"""
+    """OpaqueJson -- does not read inside any JSON and wraps it in the minimal serialized string."""
 
     __slots__ = ()
     catch_all = True
@@ -760,7 +759,7 @@ class _Opaque(_Node):
 
 @final
 class _WireField:
-    """defwire の型の欄 1 つ: Python の名・wire の名・判じ手・既定値(無ければ dataclasses.MISSING — 既定値の作り手 factory も)。"""
+    """One field of a defwire type: Python name, wire name, checker, default (dataclasses.MISSING if none -- plus the default factory)."""
 
     __slots__ = ("default", "factory", "node", "python", "required", "wire")
 
@@ -780,7 +779,7 @@ class _WireField:
         self.required = default is dataclasses.MISSING and factory is None
 
     def omits(self, value: object) -> bool:
-        """書く時にこの欄を省くか — 値が既定値(作り手の作る値)と == で等しい欄は書かない(今の pydantic の exclude_defaults)。"""
+        """Whether to omit this field when writing -- a field whose value == the default (the value the factory makes) is not written (the current pydantic exclude_defaults)."""
         if self.default is not dataclasses.MISSING:
             return bool(value == self.default)
         if self.factory is not None:
@@ -790,10 +789,10 @@ class _WireField:
 
 @final
 class _WireNode(_Node):
-    """入れ子の defwire の型 — object を、その型の :names・:unknown・:check で判じる(表の行の素の defrecord も — _row_node)。
+    """Nested defwire type -- judges an object with the :names, :unknown, and :check of that type (also a plain defrecord of a table row -- _row_node).
 
-    欄は宣言の順に判じて誤りを全部集め、その後に知らない欄を入力の順に並べる(:unknown :reject の時)。:check は欄が全部通った時だけ
-    走る(型の構築子が __post_init__ を呼ぶ)— ValueError と AssertionError だけを Malformed へ写し、他の例外は投げたまま。
+    Fields are judged in declaration order and all errors are collected, then unknown fields are listed in input order (for :unknown :reject). :check runs only when all fields passed
+    (the type constructor calls __post_init__) -- only ValueError and AssertionError are mapped to Malformed; other exceptions are raised as they are.
     """
 
     __slots__ = (
@@ -821,7 +820,7 @@ class _WireNode(_Node):
         self._reject = False
         self._bare = False
         self._post_init = None
-        #: 欄ごとの (wire の名・Python の名・判じ手の fast・既定値が無いか・素の型・None を受けるか・既定値・既定値の工場)。
+        #: Per field: (wire name, Python name, checker fast, whether it has no default, bare type, whether it accepts None, default, default factory).
         self._reads: tuple[
             tuple[
                 str,
@@ -836,22 +835,22 @@ class _WireNode(_Node):
             ...,
         ] = ()
         self._writes: tuple[tuple[str, Callable[[object, bool], _Json]], ...] = ()
-        #: 欄ごとの (書き出しの欄の頭 `"wire":`・判じ手の text)。
+        #: Per field: (head of the written field `"wire":`, checker text).
         self._texts: tuple[tuple[str, Callable[[object], str]], ...] = ()
         self._values_of: Callable[[object], tuple[object, ...]] | None = None
-        #: 欄を並べ切った読み手と書き手(最初の使いで組む — _compile_reader・_compile_writer)。
+        #: Reader and writer with the fields fully unrolled (built on first use -- _compile_reader, _compile_writer).
         self._reader: Callable[[Mapping[str, object], int], dict[str, object]] | None = None
         self._writer: Callable[[object], str] | None = None
-        # whole = 書く時に既定値と等しい欄も省かない(表の行の像 — 行の書きは欄ごとの差分なので、省いた欄は前の値が残る)。
+        # whole = do not omit fields equal to their default when writing (the table-row image -- a row write is a per-field diff, so an omitted field would leave the previous value).
         self._whole = whole
 
     def fill(self, fields: tuple[_WireField, ...], reject: bool) -> None:
-        """欄の判じ手を、組み終えてから入れる(組む途中の型の輪は _BUILDING が見張る)。"""
+        """Install the field checkers after building finishes (a type cycle during building is watched by _BUILDING)."""
         self.fields = fields
         self._wires = frozenset(field.wire for field in fields)
         self._reject = reject
-        # 速い道と書き出しが欄ごとに引く物を 1 度に並べておく(1 行に欄の数だけ属性を引かないため)。
-        # (| T None) の欄は、None を欄の loop が受け、他の値は T の判じ手を直に呼ぶ(union の判じ手の 1 段を飛ばす — 答えは同じ)。
+        # Line up, once, what the fast path and the writer fetch per field (so a row does not do one attribute lookup per field).
+        # For a (| T None) field, the field loop accepts None and other values call the T checker directly (skipping one level of the union checker -- same answer).
         bodies = [_nullable_body(field.node) for field in fields]
         self._reads = tuple(
             (
@@ -866,8 +865,8 @@ class _WireNode(_Node):
             )
             for field, body in zip(fields, bodies, strict=True)
         )
-        # 速い道が構築子を通さずに作ってよい型か: defrecord の展開が構築子を書いた型(seal_record の印 RECORD_PARAMS)で、全部の欄が
-        # 構築子の引数の型 — その構築子は欄を宣言の順に置き(無い欄は既定値か工場の値)、:check の __post_init__ を呼ぶだけ。
+        # Whether the fast path may create the type without going through the constructor: a type whose constructor was written by the defrecord expansion (the seal_record mark RECORD_PARAMS) and all fields are
+        # constructor arguments -- that constructor places the fields in declaration order (absent fields get the default or the factory value) and only calls the :check __post_init__.
         owned = vars(self.wire_type)
         self._bare = (
             owned.get("__dataclass_params__") is _RECORD_PARAMS
@@ -888,11 +887,11 @@ class _WireNode(_Node):
         return self.decode_counted(value)[0]
 
     def decode_counted(self, value: object) -> tuple[object, int]:
-        """値と、入力から埋めた欄の数(union で object を受ける腕が 2 つ以上受けた時に、多い方を選ぶ — pydantic の smart の union)。"""
+        """The value, and the number of fields filled from the input (when two or more object-accepting arms of a union accept, the one with more is chosen -- pydantic smart union)."""
         if type(value) is not dict:
             raise _refuse("dataclass_type", "Input should be an object")
         source = cast(dict[str, object], value)
-        # 欄が無い時は、既定値の在る欄なら引数に渡さず(構築子が既定値で埋める)・無い欄なら missing。
+        # When a field is absent: if it has a default, do not pass it as an argument (the constructor fills the default); if not, it is missing.
         outcomes = [
             (field, _attempt(field.node, source[field.wire]) if field.wire in source else _MISSING)
             for field in self.fields
@@ -916,7 +915,7 @@ class _WireNode(_Node):
         return self._built(arguments), len(arguments)
 
     def _built(self, arguments: dict[str, object]) -> object:
-        """欄の値から型の値を作る(:check の落ちの ValueError と AssertionError だけを断りへ写す — 他の例外は投げたまま)。"""
+        """Build the typed value from the field values (only ValueError and AssertionError from a failing :check are mapped to a rejection -- other exceptions are raised as they are)."""
         try:
             return self.wire_type(**arguments)
         except ValueError as error:
@@ -925,18 +924,18 @@ class _WireNode(_Node):
             raise _refuse("assertion_error", f"Assertion failed, {error}") from None
 
     def fast(self, value: object, room: int) -> object:
-        # 多い形(json.loads の dict に全部の欄が在る)は fast_counted を経ずに読む(答えは fast_counted と同じ)。
+        # The common shape (a json.loads dict that has all fields) is read without going through fast_counted (same answer as fast_counted).
         if room and type(value) is dict and len(value) == len(self._reads) and self._wires.issuperset(value):
             arguments = (self._reader or self._compile_reader())(value, room - 1)
             return self._bare_built(arguments) if self._bare else self._built(arguments)
         return self.fast_counted(value, room)[0]
 
     def fast_counted(self, value: object, room: int) -> tuple[object, int]:
-        """速い道の decode_counted。写像の鍵が全部この型の欄の wire の名で、既定値の無い欄が全部在る時だけ、写し直さずに読む
-        (知らない欄・欠けた欄・数の鍵は今までの道 — 誤りと読み捨ての判じ方はその 1 か所)。"""
+        """decode_counted for the fast path. Only when all mapping keys are field wire names of this type and every field without a default is present, read without copying
+        (unknown fields, missing fields, and numeric keys take the existing path -- how errors and discarding are judged lives in that one place)."""
         if room and _is_mapping(value) and self._wires.issuperset(value):
             inner = room - 1
-            if len(value) == len(self._reads):  # 全部の欄が在る(表の行は全部の欄を書く)— 欄を並べ切った読み手で読む
+            if len(value) == len(self._reads):  # all fields are present (a table row writes all fields) -- read with the fully unrolled reader
                 reader = self._reader or self._compile_reader()
                 arguments = reader(value, inner)
                 made = self._bare_built(arguments) if self._bare else self._built(arguments)
@@ -944,8 +943,8 @@ class _WireNode(_Node):
             arguments = {}
             bare = self._bare
             defaulted = 0
-            # 素の型ちょうどの欄の値(exact — ASCII の文字列・int・float・真偽)と None を受ける欄の None は、判じ手を呼ばずに受ける
-            # (判じ手の fast と同じ答え — 1 行に欄の数だけ関数を呼ばないため)。
+            # A field value of exactly the bare type (exact -- ASCII string, int, float, bool) and the None of a field that accepts None are accepted without calling the checker
+            # (same answer as the checker's fast -- so a row does not call one function per field).
             for wire, python, fast, required, exact, nullable, default, factory in self._reads:
                 if wire in value:
                     item = value[wire]
@@ -958,7 +957,7 @@ class _WireNode(_Node):
                         arguments[python] = fast(item, inner)
                 elif required:
                     return self._fast_fallback(value, room)
-                elif bare:  # 構築子を通さずに作る型は、構築子と同じく既定値を宣言の順に置く
+                elif bare:  # a type created without the constructor places defaults in declaration order, like the constructor
                     arguments[python] = default if factory is None else factory()
                     defaulted += 1
             if bare:
@@ -967,10 +966,10 @@ class _WireNode(_Node):
         return self._fast_fallback(value, room)
 
     def _compile_reader(self) -> Callable[[Mapping[str, object], int], dict[str, object]]:
-        """全部の欄が在る写像を読む関数を、この型の欄を並べ切った 1 本の関数として組んで覚える(最初の使いで 1 度 — 2 つの thread が
-        同時に組んでも同じ関数)。答えは下の欄の loop と同じ(欄ごとに: 素の型ちょうどの値と None を受ける欄の None はそのまま・他は
-        判じ手の fast)。この Python(3.14t)では欄の loop の 1 欄 約 0.7 µs が 1 行の費用の半分を占めたので、dataclass が __init__ を
-        組むのと同じく source を組んで exec する(欄の名は repr で字面にし、判じ手と型は名の空間で渡す)。"""
+        """Build and remember, as one fully unrolled function of this type's fields, the function that reads a mapping with all fields present (once on first use -- two threads
+        building at the same time yield the same function). The answer is the same as the field loop below (per field: a value of exactly the bare type, and None for a field that accepts None, pass as they are; others go to the
+        checker's fast). On this Python (3.14t), about 0.7 µs per field of the field loop took half the cost of one row, so, like dataclass building __init__, the source is built and exec'd
+        (field names are made literal with repr, and checkers and types are passed in the namespace)."""
         reads = self._reads
         bodies = [_nullable_body(field.node) or field.node for field in self.fields]
         arrays = {index: node for index, node in enumerate(bodies) if isinstance(node, _Array)}
@@ -998,16 +997,16 @@ class _WireNode(_Node):
 
     @property
     def whole(self) -> bool:
-        """全部の欄を書く型か(表の行の型 — 既定値と等しい欄も書く)。"""
+        """Whether this type writes all fields (a table-row type -- fields equal to their default are also written)."""
         return self._whole
 
     def writer(self) -> Callable[[object], str]:
-        """この型ちょうどの値を JSON の文字列へ書く、欄を並べ切った関数(全部の欄を書く型だけ — 最初の使いで組む)。"""
+        """Fully unrolled function that writes a value of exactly this type to a JSON string (only for types that write all fields -- built on first use)."""
         return self._writer or self._compile_writer()
 
     def _compile_writer(self) -> Callable[[object], str]:
-        """全部の欄を書く型(_whole)の値を JSON の文字列へ書く関数を、欄を並べ切った 1 本の関数として組んで覚える(_compile_reader と
-        同じ訳と作り方)。答えは text の欄の loop と同じ(str ちょうどの値と None はそのまま綴り・他は判じ手の text)。"""
+        """Build and remember, as one fully unrolled function, the function that writes a value of a type that writes all fields (_whole) to a JSON string (same reason and construction as _compile_reader).
+        The answer is the same as the field loop of text (a value of exactly str and None are spelled as they are; others use the checker's text)."""
         texts = self._texts
         count = len(texts)
         names = [f"v{index}" for index in range(count)]
@@ -1046,9 +1045,9 @@ class _WireNode(_Node):
         return writer
 
     def _bare_built(self, arguments: dict[str, object]) -> object:
-        """defrecord の展開が書いた構築子を持つ型(_bare)の値を、構築子を通さずに作る — 構築子と同じ値(欄を宣言の順に置き、
-        :check の __post_init__ を呼ぶ)を、欄ごとの object.__setattr__ を払わずに作る(pydantic が dataclass に作っていた形と
-        同じ — TurnRow 1 つで 18 µs → 6 µs)。arguments は宣言の順の全部の欄。"""
+        """Create a value of a type that has the constructor written by the defrecord expansion (_bare) without going through the constructor -- the same value as the constructor (fields placed in declaration order,
+        the :check __post_init__ called) without paying for object.__setattr__ per field (the same form pydantic built for a dataclass
+        -- 18 µs → 6 µs for one TurnRow). arguments are all fields in declaration order."""
         made = object.__new__(self.wire_type)
         object.__setattr__(made, "__dict__", arguments)
         post_init = self._post_init
@@ -1062,7 +1061,7 @@ class _WireNode(_Node):
         return made
 
     def _fast_fallback(self, value: object, room: int) -> tuple[object, int]:
-        """速い道の形に当たらない object を、その所だけ _plain で写して decode_counted で読む(_Node.fast と同じ)。"""
+        """Read an object that does not fit the fast-path forms by copying only that spot with _plain and reading it with decode_counted (same as _Node.fast)."""
         try:
             plain = _plain(value, room)
         except _RefusedError:
@@ -1070,12 +1069,12 @@ class _WireNode(_Node):
         return self.decode_counted(plain)
 
     def encode(self, value: object, raw: bool) -> _Json:
-        # 欄は宣言の順に wire の名で書き、既定値と等しい欄は書かない(入れ子の型の欄も、その型の書き出しが同じく省く)。
-        # 既定値の無い欄は None でも書く(null)。
+        # Fields are written in declaration order with wire names, and fields equal to their default are not written (a nested type's fields are likewise omitted by that type's writer).
+        # A field without a default is written even when None (null).
         if not isinstance(value, self.wire_type):
             return _inferred(value, raw)
         values_of = self._values_of
-        if values_of is None:  # 欄が 0 か 1 つ(attrgetter は 1 つの名に tuple でなく値を返す)
+        if values_of is None:  # zero or one field (attrgetter returns a value, not a tuple, for a single name)
             items: tuple[object, ...] = tuple(
                 getattr(value, field.python) for field in self.fields
             )
@@ -1093,9 +1092,9 @@ class _WireNode(_Node):
         }
 
     def text(self, value: object) -> str:
-        # encode と同じ欄を同じ順に、欄の頭(`"wire":`)と判じ手の text で綴る。str ちょうどの値と None は判じ手を呼ばずに綴る —
-        # どの判じ手も str ちょうどの値はその文字列(型の合わない値も _inferred が文字列のまま書く)・None は null に書くので、
-        # 答えは判じ手の text と同じ(1 行に欄の数だけ関数を呼ばないため)。
+        # Spell the same fields as encode in the same order, with the field head (`"wire":`) and the checker's text. A value of exactly str and None are spelled without calling the checker --
+        # every checker writes a value of exactly str as that string (a wrong-typed value is also written by _inferred as the string as it is) and writes None as null, so
+        # the answer equals the checker's text (so a row does not call one function per field).
         if not isinstance(value, self.wire_type):
             return _Node.text(self, value)
         if self._whole:
@@ -1145,8 +1144,8 @@ class _WireNode(_Node):
         return False
 
     def definition(self, defs: "_Definitions") -> _Schema:
-        """この型の object の形(欄は wire の名・required は既定値の無い欄・:unknown :reject は additionalProperties false・title は
-        型の名)— 今の pydantic の json_schema と同じ形(節 3b)。"""
+        """Object shape of this type (fields use wire names, required are fields without a default, :unknown :reject gives additionalProperties false, title is
+        the type name) -- the same shape as the current pydantic json_schema (section 3b)."""
         properties: _Schema = {field.wire: _field_schema(field, defs) for field in self.fields}
         required: list[_Json] = [field.wire for field in self.fields if field.required]
         shape: _Schema = {
@@ -1163,17 +1162,17 @@ class _WireNode(_Node):
 
 @final
 class _Union(_Node):
-    """(| T1 T2 …)— 腕の選び方は設計の記録の節 3「union の腕の選び方」。
+    """(| T1 T2 ...) -- how arms are chosen is section 3 of the design record, "how union arms are chosen".
 
-    1. null は None の腕が受ける。
-    2. 文字列・数・真偽は、JSON の種類が合う腕だけが受ける(同じ種類の腕は rank の順 — 整数は int の腕が float の腕より先・文字列は
-       str と Literal の腕が defenum の腕より先)。配列は受ける腕のうち宣言の先の腕。
-    3. object を受ける腕は宣言の順に試し、dict の腕が受ければそれ。入れ子の defwire の腕が 2 つ以上受ければ入力から埋めた欄の多い腕・
-       同じ数なら宣言の先の腕。
-    4. 何でも受ける腕(OpaqueJson・object)は、他のどの腕も受けない時だけ受ける。
+    1. null is accepted by the None arm.
+    2. A string, number, or bool is accepted only by an arm whose JSON kind matches (arms of the same kind go in rank order -- an integer goes to the int arm before the float arm; a string goes to the
+          str and Literal arms before the defenum arm). An array goes to the earliest declared arm among those that accept.
+    3. Arms that accept an object are tried in declaration order; if a dict arm accepts, that is it. If two or more nested defwire arms accept, the arm with more fields filled from the input wins;
+          on a tie, the earlier declared arm.
+    4. A catch-all arm (OpaqueJson, object) accepts only when no other arm accepts.
 
-    None でない腕が 1 つなら、その腕の誤りを場所に腕の名を付けずに返す((| T None) — 今と同じ)。2 つ以上で、どの腕も受けない時は、
-    腕ごとに場所 <腕の名> で誤りを宣言の順に並べる。
+    If there is exactly one non-None arm, return that arm's errors without adding the arm name to the path ((| T None) -- same as now). With two or more and no arm accepting,
+    list the errors in declaration order per arm with the path <arm name>.
     """
 
     __slots__ = ("_arms", "_by_kind", "_fallback", "_nullable")
@@ -1212,11 +1211,11 @@ class _Union(_Node):
         )
 
     def nullable_single(self) -> _Node | None:
-        """(| T None) の T(None でない腕が 1 つの nullable の union — 欄の速い読みが T の素の型を見るため)。他の union は None。"""
+        """The T of (| T None) (a nullable union with exactly one non-None arm -- so the field fast read can see the bare type of T). None for other unions."""
         return self._arms[0] if self._nullable and len(self._arms) == 1 else None
 
     def _choose(self, value: object) -> object:
-        """規則 1〜3 で腕を選んで解く(どの腕も受けなければ _NO_ARM — 呼び手が規則 4 と誤りの列を受け持つ)。"""
+        """Choose an arm by rules 1-3 and decode (if no arm accepts, _NO_ARM -- the caller handles rule 4 and the error list)."""
         kind = _KIND_OF.get(type(value))
         if kind is None:
             return _NO_ARM
@@ -1241,8 +1240,8 @@ class _Union(_Node):
         return _NO_ARM if best is None else best[0]
 
     def fast(self, value: object, room: int) -> object:
-        # 腕の選び方は decode と同じ(規則 1〜4)。腕が断れば次の腕へ(断りの中身は読まない — 全部が断れば Codec が今までの道で
-        # 誤りを集め直す)。腕の速い道が _SlowPathError なら、そのまま上へ(写し直した値では別の腕が受けるかもしれないので)。
+        # Arm choice is the same as decode (rules 1-4). If an arm rejects, go to the next arm (the content of the rejection is not read -- if all reject, Codec collects the
+        # errors again through the existing path). If an arm's fast path raises _SlowPathError, pass it up as it is (since another arm might accept the copied value).
         if value is None and self._nullable:
             return None
         arms = self._arms
@@ -1259,7 +1258,7 @@ class _Union(_Node):
         raise _refuse("union", "no arm accepted the value")
 
     def _fast_scalar(self, kind: str, value: object, room: int) -> object:
-        """速い道の規則 2(文字列・数・真偽・配列は、JSON の種類が合う腕を順に — どれも受けなければ _NO_ARM)。"""
+        """Rule 2 of the fast path (string, number, bool, array: try arms whose JSON kind matches in order -- if none accepts, _NO_ARM)."""
         for arm in self._by_kind[kind]:
             try:
                 return arm.fast(value, room)
@@ -1268,8 +1267,8 @@ class _Union(_Node):
         return _NO_ARM
 
     def _fast_object(self, value: object, room: int) -> object:
-        """速い道の規則 3(object を受ける腕を宣言の順に — dict の腕はそれ・defwire の腕は入力から埋めた欄の多い腕。どれも受けなければ
-        _NO_ARM)。"""
+        """Rule 3 of the fast path (arms that accept an object in declaration order -- a dict arm wins; for defwire arms, the one with more fields filled from the input. If none accepts,
+        _NO_ARM).""" 
         best: tuple[object, int] | None = None
         for arm in self._by_kind["object"]:
             try:
@@ -1283,8 +1282,8 @@ class _Union(_Node):
         return _NO_ARM if best is None else best[0]
 
     def encode(self, value: object, raw: bool) -> _Json:
-        # 書く腕の選び方は今の pydantic と同じ: 宣言の順に型ちょうどの腕(strict)、無ければ宣言の順に書き直せる腕(lax — float の腕は
-        # 整数と真偽も)、どれも合わなければ値の型から書く。
+        # Choosing the arm to write is the same as the current pydantic: the exact-type arm in declaration order (strict); if none, the arm that can be rewritten in declaration order (lax -- a float arm also takes
+        # integers and bools); if none fit, write from the value's type.
         if value is None and self._nullable:
             return None
         arms = self._arms
@@ -1297,7 +1296,7 @@ class _Union(_Node):
         return _inferred(value, raw)
 
     def text(self, value: object) -> str:
-        # 腕の選び方は encode と同じ。
+        # Arm choice is the same as encode.
         if value is None and self._nullable:
             return "null"
         arms = self._arms
@@ -1319,16 +1318,16 @@ class _Union(_Node):
         return _any_of((*(arm.schema(defs) for arm in self._arms), *nulls))
 
     def titled(self) -> bool:
-        # (| T None) は T に従う(pydantic は nullable の中を見る)。腕が 2 つ以上の union は title を付ける。
+        # (| T None) follows T (pydantic looks inside a nullable). A union with two or more arms gets a title.
         return not (self._nullable and len(self._arms) == 1 and not self._arms[0].titled())
 
 
 def _reader_lines(
     index: int, wire: str, node: _Node, exact: type | None, nullable: bool
 ) -> tuple[str, ...]:
-    """_WireNode._compile_reader が組む関数の、欄 1 つ(判じ手 node — (| T None) は T)を読む行(値を引く・そのまま受けるかを見る・
-    受けなければ判じ手 f<index>)。そのまま受ける値は欄の loop と同じ: 素の型 t<index> ちょうど(str は ASCII の時だけ)と、None を
-    受ける欄の None。list の配列の欄は _Array.fast の要素の読み方をここに開く(要素の判じ手 i<index>・入れ物を作る m<index>)。"""
+    """The line (one field -- checker node; for (| T None), T) of the function that _WireNode._compile_reader builds (fetch the value, check whether it is accepted as it is, and if not,
+    call the checker f<index>). Values accepted as they are match the field loop: exactly the bare type t<index> (str only when ASCII), and the None of a field that
+    accepts None. For a list array field, the element reading of _Array.fast is opened up here (element checker i<index>, container builder m<index>)."""
     item = f"v{index}"
     exact_test = (
         "False"
@@ -1354,16 +1353,16 @@ def _reader_lines(
 def _compiled(
     source: str, namespace: dict[str, object], name: str, owner: type
 ) -> Callable[..., object]:
-    """組んだ source を exec して、関数 name を返す(_WireNode の欄を並べ切った読み手と書き手 — 名の空間は判じ手と型だけを持つ)。"""
+    """exec the built source and return the function name (the fully unrolled reader and writer of _WireNode -- the namespace holds only checkers and types)."""
     code = compile(source, f"<wire_codec {owner.__module__}.{owner.__qualname__}.{name}>", "exec")
     exec(code, namespace)
     return cast(Callable[..., object], namespace[name])
 
 
 def _writer_part(index: int, node: _Node) -> tuple[str, dict[str, object]]:
-    """_WireNode._compile_writer が組む関数の、欄 1 つ(値 v<index>・判じ手 node — (| T None) は T)を綴る式と、式が読む名。どの式も
-    判じ手の text(w<index>)と同じ答え: str ちょうどの値はその文字列・None は null(どの判じ手も同じに書く — _WireNode.text の註)・
-    int の欄の int ちょうど・defenum の欄の member・全部の欄を書く入れ子の型の欄のその型ちょうどの値は、判じ手を呼ばずに綴る。"""
+    """The expression that spells one field (value v<index>, checker node -- for (| T None), T) of the function that _WireNode._compile_writer builds, and the names the expression reads. Every expression
+    gives the same answer as the checker's text (w<index>): a value of exactly str is that string, None is null (every checker writes it the same -- see the note on _WireNode.text),
+    an exact int in an int field, a member in a defenum field, and a value of exactly the nested type in a field of a nested type that writes all fields are spelled without calling the checker."""
     item = f"v{index}"
     rest = (
         f"encode_string({item}) if type({item}) is str else 'null' if {item} is None"
@@ -1381,7 +1380,7 @@ def _writer_part(index: int, node: _Node) -> tuple[str, dict[str, object]]:
             f"(n{index}({item}) if type({item}) is c{index} else {rest})",
             {f"n{index}": node.writer(), f"c{index}": node.wire_type},
         )
-    if isinstance(node, _Array):  # tuple と list の欄は _Array.text の要素の綴り方をここに開く
+    if isinstance(node, _Array):  # tuple and list fields open up the element spelling of _Array.text here
         element = node.item
         array = f"type({item}) is tuple or type({item}) is list"
         if isinstance(element, _WireNode) and element.whole:
@@ -1402,8 +1401,8 @@ def _writer_part(index: int, node: _Node) -> tuple[str, dict[str, object]]:
 
 
 def _nullable_body(node: _Node) -> _Node | None:
-    """(| T None) の欄の T の判じ手(他の判じ手は None)— _WireNode の速い道と書き出しが、None を欄ごとに受けて、他の値は T の
-    判じ手を直に呼ぶため(union の判じ手は None の後に T の判じ手を呼ぶだけなので、答えは同じ)。"""
+    """The T checker of a (| T None) field (None for other checkers) -- so the fast path and writer of _WireNode accept None per field and call the T
+    checker directly for other values (the union checker just calls the T checker after None, so the answer is the same)."""
     return node.nullable_single() if isinstance(node, _Union) else None
 
 
@@ -1416,11 +1415,11 @@ _KIND_OF: Final[dict[type, str]] = {
     list: "array",
     dict: "object",
 }
-#: 速い道の union が読む JSON の種類(凍らせた配列 tuple も配列 — 凍らせた写像などの他の型は _plain で写して decode)。
+#: JSON kinds the fast-path union reads (a frozen array tuple is also an array -- other types such as a frozen mapping are copied with _plain and decoded).
 _FAST_KIND_OF: Final[dict[type, str]] = {**_KIND_OF, tuple: "array"}
 
 
-# --- 型の木を組む --------------------------------------------------------------------------------------------------------------
+# --- Build the type tree --------------------------------------------------------------------------------------------------------
 
 _STR: Final = _Str("str")
 _INT: Final = _Int("int")
@@ -1430,10 +1429,10 @@ _NONE: Final = _NoneOnly("none")
 _BARE_DICT: Final = _BareDict("dict[any,any]")
 _ANYTHING: Final = _Anything("any")
 _OPAQUE: Final = _Opaque("opaque-json")
-#: 型が str ちょうどと確かめた値の isascii(速い道の欄の loop が、欄ごとに typing.cast の関数を呼ばずに読むため — cast は実行時も
-#: 関数の呼びで、1 行に str の欄の数だけ払っていた)。呼ぶ所は type(item) is str を先に見る(_WireNode.fast_counted)。
+#: isascii of a value confirmed to be exactly a str (so the field loop of the fast path reads it without calling the typing.cast function per field -- cast is a function call even at runtime,
+#: and a row paid it once per str field). The caller checks type(item) is str first (_WireNode.fast_counted).
 _is_ascii: Final = cast(Callable[[object], bool], str.isascii)
-#: 速い道で、値の型がちょうどこの型なら判じ手を呼ばずに受ける素の判じ手(_plain_accepts — str は ASCII の時だけ)。
+#: The bare checker that the fast path accepts without calling the checker when the value's type is exactly this type (_plain_accepts -- str only when ASCII).
 _EXACT_OF: Final[dict[_Node, type]] = {_STR: str, _INT: int, _FLOAT: float, _BOOL: bool}
 _SCALARS: Final[dict[object, _Node]] = {
     str: _STR,
@@ -1447,18 +1446,18 @@ _SCALARS: Final[dict[object, _Node]] = {
     _OpaqueJson: _OPAQUE,
 }
 
-#: 組む・覚えるを 1 度にする lock(free-threading の Python — 同じ型を 2 つの thread が同時に組まない)。入れ子の型を組む時に
-#: 同じ thread が入り直すので RLock。
+#: Lock that makes build-and-remember one step (free-threading Python -- two threads must not build the same type at the same time). The same thread
+#: re-enters when building a nested type, hence RLock.
 _LOCK: Final = threading.RLock()
-#: 組んでいる途中の defwire の型(輪を見つける — A → B → A の間接の輪も自分を参照する型も断る)。lock の中だけで触る。
+#: defwire types being built (to find cycles -- rejects an indirect cycle A -> B -> A and a type that references itself). Touched only inside the lock.
 _BUILDING: Final[set[type]] = set()
 _CODEC_ATTRIBUTE: Final = "__doeff_codec__"
-#: 表の行の型(素の defrecord)に覚える行の解き手(row_codec_of — defwire の解き手と別の名に置く)。
+#: Row decoder remembered on a table-row type (plain defrecord) (row_codec_of -- kept under a different name from the defwire decoder).
 _ROW_CODEC_ATTRIBUTE: Final = "__doeff_row_codec__"
 
 
 def _is_wire_type(annotation: object) -> bool:
-    """defwire で建てた型か(dataclass で、型が __doeff_wire__ に wire の形を持つ)。"""
+    """Whether this is a type built with defwire (a dataclass whose type holds the wire shape in __doeff_wire__)."""
     return (
         isinstance(annotation, type)
         and dataclasses.is_dataclass(annotation)
@@ -1467,7 +1466,7 @@ def _is_wire_type(annotation: object) -> bool:
 
 
 def _resolved(annotation: object, namespace: dict[str, Any], where: str) -> object:
-    """文字列と前方参照で残った注記を、型の module の名の空間で解く(解けなければ型と欄を示して断る)。"""
+    """Resolve strings and annotations left as forward references in the type module's namespace (if unresolvable, reject showing the type and field)."""
     text = (
         annotation
         if isinstance(annotation, str)
@@ -1480,16 +1479,16 @@ def _resolved(annotation: object, namespace: dict[str, Any], where: str) -> obje
     try:
         return eval(
             text, namespace
-        )  # 型の注記の綴り — dataclass と typing.get_type_hints が同じく読む
+        )  # spelling of the type annotation -- read the same way by dataclass and typing.get_type_hints
     except Exception as error:
         raise TypeError(
-            f"{where}: 型の注記 {text!r} を解けない({type(error).__name__}: {error})"
+            f"{where}: cannot resolve type annotation {text!r} ({type(error).__name__}: {error})"
         ) from error
 
 
 def _build(annotation: object, namespace: dict[str, Any], where: str, rows: bool = False) -> _Node:
-    """注記 1 つの判じ手を組む(型の木を組む唯一の入口)。語彙の外の型は TypeError(どの型のどの欄のどの綴りかを示す)。
-    rows = 表の行の型の木を組む(素の defrecord を行の読み方で組む — _row_node。defwire の型の中は rows に依らず wire の読み方)。"""
+    """Build the checker for one annotation (the only entry point for building the type tree). A type outside the vocabulary raises TypeError (showing which field of which type and which spelling).
+    rows = build the type tree of a table row (build a plain defrecord with the row reading -- _row_node. Inside a defwire type, the wire reading applies regardless of rows)."""
     annotation = _resolved(annotation, namespace, where)
     named = _named_node(annotation, where)
     if named is not None:
@@ -1501,23 +1500,23 @@ def _build(annotation: object, namespace: dict[str, Any], where: str, rows: bool
         if rows:
             return _row_node(annotation)
         raise TypeError(
-            f"{where}: 素の defrecord(defwire でない dataclass){annotation.__name__} は語彙の外 — defwire にする"
+            f"{where}: plain defrecord (a dataclass that is not defwire) {annotation.__name__} is outside the vocabulary -- make it a defwire"
         )
-    raise TypeError(f"{where}: 語彙の外の型 {annotation!r}")
+    raise TypeError(f"{where}: type outside the vocabulary {annotation!r}")
 
 
 def _named_node(annotation: object, where: str) -> _Node | None:
-    """名で書く型(str・int などの素の型・defenum・defwire の型)の判じ手。総称の型の形なら None(_GENERIC_BUILDERS が組む)。"""
+    """Checker for a type written by name (a bare type such as str or int, a defenum, a defwire type). None if it is a generic type form (built by _GENERIC_BUILDERS)."""
     try:
         scalar = _SCALARS.get(annotation)
-    except TypeError:  # hash できない注記は素の型でない
+    except TypeError:  # an unhashable annotation is not a bare type
         scalar = None
     if scalar is not None:
         return scalar
     if isinstance(annotation, type) and issubclass(annotation, enum.Enum):
         if not all(isinstance(member.value, str) for member in annotation):
             raise TypeError(
-                f"{where}: 値が文字列でない Enum {annotation.__name__} は語彙の外(defenum を使う)"
+                f"{where}: Enum {annotation.__name__} whose values are not strings is outside the vocabulary (use defenum)"
             )
         return _Enum(annotation)
     if _is_wire_type(annotation):
@@ -1528,7 +1527,7 @@ def _named_node(annotation: object, where: str) -> _Node | None:
 def _union(
     annotation: object, args: tuple[object, ...], namespace: dict[str, Any], where: str, rows: bool
 ) -> _Node:
-    """(| T1 T2 … None)— None の腕は印(nullable)にし、残りの腕を組む。"""
+    """(| T1 T2 ... None) -- mark the None arm as nullable and build the remaining arms."""
     nullable = any(arg is type(None) or arg is None for arg in args)
     arms = tuple(
         _build(arg, namespace, f"{where}|{index}", rows)
@@ -1543,16 +1542,16 @@ def _union(
 def _literal(
     annotation: object, args: tuple[object, ...], namespace: dict[str, Any], where: str, rows: bool
 ) -> _Node:
-    """文字列の Literal だけを語彙に入れる(今の defwire の Literal は全部文字列)。"""
+    """Only a Literal of strings enters the vocabulary (every Literal of the current defwire is a string)."""
     if not args or not all(type(arg) is str for arg in args):
-        raise TypeError(f"{where}: 文字列でない Literal {annotation!r} は語彙の外")
+        raise TypeError(f"{where}: Literal {annotation!r} that is not a string is outside the vocabulary")
     return _Literal(cast(tuple[str, ...], args))
 
 
 def _tuple(
     annotation: object, args: tuple[object, ...], namespace: dict[str, Any], where: str, rows: bool
 ) -> _Node:
-    """(get tuple #(T ...))は長さの決まらない配列・(get tuple #(T1 T2 …))は長さちょうどの配列。"""
+    """(get tuple #(T ...)) is an array of undetermined length; (get tuple #(T1 T2 ...)) is an array of exact length."""
     if len(args) == 2 and args[1] is Ellipsis:
         item = _build(args[0], namespace, f"{where}[]", rows)
         return _Array(f"tuple[{item.label}, ...]", item, "tuple_type", tuple, (tuple,))
@@ -1563,9 +1562,9 @@ def _tuple(
 def _list(
     annotation: object, args: tuple[object, ...], namespace: dict[str, Any], where: str, rows: bool
 ) -> _Node:
-    """(get list T)— 配列を list にする。"""
+    """(get list T) -- make an array into a list."""
     if len(args) != 1:
-        raise TypeError(f"{where}: 要素の型の無い list {annotation!r} は語彙の外")
+        raise TypeError(f"{where}: list without an element type {annotation!r} is outside the vocabulary")
     item = _build(args[0], namespace, f"{where}[]", rows)
     return _Array(f"list[{item.label}]", item, "list_type", list, (list,))
 
@@ -1573,24 +1572,24 @@ def _list(
 def _frozenset(
     annotation: object, args: tuple[object, ...], namespace: dict[str, Any], where: str, rows: bool
 ) -> _Node:
-    """(get frozenset T)— 配列の重なりを 1 つにまとめる(要素は hash できる str か int だけ)。"""
+    """(get frozenset T) -- collapse an array into a set of distinct values (elements are only hashable str or int)."""
     item = _build(args[0], namespace, f"{where}[]", rows) if len(args) == 1 else None
     if item is None or (item is not _STR and item is not _INT):
-        raise TypeError(f"{where}: frozenset の要素は str か int だけ: {annotation!r}")
+        raise TypeError(f"{where}: frozenset elements must be only str or int: {annotation!r}")
     return _Array(f"frozenset[{item.label}]", item, "frozen_set_type", frozenset, (frozenset, set))
 
 
 def _dict(
     annotation: object, args: tuple[object, ...], namespace: dict[str, Any], where: str, rows: bool
 ) -> _Node:
-    """(get dict #(str T))— JSON の object の key は文字列なので、key が str の dict だけを語彙に入れる。"""
+    """(get dict #(str T)) -- JSON object keys are strings, so only dicts with str keys enter the vocabulary."""
     if len(args) != 2 or _resolved(args[0], namespace, where) is not str:
-        raise TypeError(f"{where}: key が文字列でない dict {annotation!r} は語彙の外")
+        raise TypeError(f"{where}: dict whose key is not a string {annotation!r} is outside the vocabulary")
     item = _build(args[1], namespace, f"{where}[]", rows)
     return _Dict(f"dict[str,{item.label}]", item)
 
 
-#: 総称の型の形(typing.get_origin の答え)→ 判じ手を組む関数。ここに無い形(Annotated・datetime など)は語彙の外。
+#: Generic type form (the answer of typing.get_origin) -> function that builds the checker. Forms not here (Annotated, datetime, etc.) are outside the vocabulary.
 _GENERIC_BUILDERS: Final[
     dict[object, Callable[[object, tuple[object, ...], dict[str, Any], str, bool], _Node]]
 ] = {
@@ -1605,7 +1604,7 @@ _GENERIC_BUILDERS: Final[
 
 
 def _wire_node(wire_type: type) -> _WireNode:
-    """defwire の型の判じ手(型に覚えた物か、無ければ lock の中で 1 度だけ組む)。"""
+    """Checker of a defwire type (the one remembered on the type, or, if none, built exactly once inside the lock)."""
     known = wire_type.__dict__.get(_CODEC_ATTRIBUTE)
     if known is not None:
         return cast(_WireNode, cast(Codec[Any], known).node)
@@ -1614,7 +1613,7 @@ def _wire_node(wire_type: type) -> _WireNode:
         if known is not None:
             return cast(_WireNode, cast(Codec[Any], known).node)
         if wire_type in _BUILDING:
-            raise TypeError(f"defwire {wire_type.__qualname__}: 型の輪(自分を参照する欄)は語彙の外")
+            raise TypeError(f"defwire {wire_type.__qualname__}: type cycle (a field that references itself) is outside the vocabulary")
         _BUILDING.add(wire_type)
         try:
             node = _WireNode(wire_type)
@@ -1627,7 +1626,7 @@ def _wire_node(wire_type: type) -> _WireNode:
                     field.name,
                     names[field.name],
                     _build(
-                        field.type, namespace, f"defwire {wire_type.__qualname__} の欄 {field.name}"
+                        field.type, namespace, f"defwire {wire_type.__qualname__}  field {field.name}"
                     ),
                     field.default,
                     None if field.default_factory is dataclasses.MISSING else field.default_factory,
@@ -1643,8 +1642,8 @@ def _wire_node(wire_type: type) -> _WireNode:
 
 
 def _row_node(row_type: type) -> _WireNode:
-    """表の行の素の defrecord(defwire でない dataclass)の判じ手 — 欄の名は Python の欄の名・知らない欄は読み捨てる・書く時は
-    既定値と等しい欄も書く(設計の記録の節 6)。欄ごとの判じ方は defwire と同じ strict。型に覚えた物か、無ければ lock の中で 1 度だけ組む。"""
+    """Checker for the plain defrecord of a table row (a dataclass that is not defwire) -- field names are Python field names, unknown fields are discarded, and when writing
+    fields equal to their default are also written (section 6 of the design record). Per-field judgment is the same strict as defwire. The one remembered on the type, or, if none, built exactly once inside the lock."""
     known = row_type.__dict__.get(_ROW_CODEC_ATTRIBUTE)
     if known is not None:
         return cast(_WireNode, cast(Codec[Any], known).node)
@@ -1653,7 +1652,7 @@ def _row_node(row_type: type) -> _WireNode:
         if known is not None:
             return cast(_WireNode, cast(Codec[Any], known).node)
         if row_type in _BUILDING:
-            raise TypeError(f"行の型 {row_type.__qualname__}: 型の輪(自分を参照する欄)は語彙の外")
+            raise TypeError(f"row type {row_type.__qualname__}: type cycle (a field that references itself) is outside the vocabulary")
         _BUILDING.add(row_type)
         try:
             node = _WireNode(row_type, whole=True)
@@ -1663,7 +1662,7 @@ def _row_node(row_type: type) -> _WireNode:
                 _WireField(
                     field.name,
                     field.name,
-                    _build(field.type, namespace, f"行の型 {row_type.__qualname__} の欄 {field.name}", rows=True),
+                    _build(field.type, namespace, f"row type {row_type.__qualname__} field {field.name}", rows=True),
                     field.default,
                     None if field.default_factory is dataclasses.MISSING else field.default_factory,
                 )
@@ -1677,20 +1676,20 @@ def _row_node(row_type: type) -> _WireNode:
         return node
 
 
-# --- JSON の読み ---------------------------------------------------------------------------------------------------------------
+# --- Reading JSON ---------------------------------------------------------------------------------------------------------------
 
-#: 孤立しうる surrogate の escape(\ud800〜\udfff)。在る時だけ読んだ値を歩いて、組にならなかった surrogate を探す。
+#: Escape of a possibly lone surrogate (\ud800-\udfff). Only when present, walk the read value to look for surrogates that did not form a pair.
 _SURROGATE_ESCAPE: Final = re.compile(r"\\u[dD][89a-fA-F][0-9a-fA-F]{2}")
 _SURROGATE: Final = re.compile("[\ud800-\udfff]")
 
 
 def _json_invalid(error: object) -> _RefusedError:
-    """JSON として読めない入力の誤り(場所は値の全体)。"""
+    """Error for input that cannot be read as JSON (the path is the whole value)."""
     return _refuse("json_invalid", f"Invalid JSON: {error}")
 
 
 def _has_lone_surrogate(value: object) -> bool:
-    """読んだ値に組にならなかった surrogate が在るか(今の pydantic が断る文字列を、同じく断るため)。"""
+    """Whether the read value has a surrogate that did not form a pair (to reject strings the current pydantic rejects, in the same way)."""
     if type(value) is str:
         return _SURROGATE.search(cast(str, value)) is not None
     if type(value) is list:
@@ -1703,14 +1702,14 @@ def _has_lone_surrogate(value: object) -> bool:
     return False
 
 
-#: 配列と object の入れ子の深さの上限 — 今の pydantic(jiter)は 200 階層まで読み、201 階層目を json_invalid(recursion limit
-#: exceeded)で断る(照らしの test が見つけた差 — json.loads は 1000 階層ほどまで読むので、上限を置かないと受ける物が広がる)。
+#: Upper limit of nesting depth of arrays and objects -- the current pydantic (jiter) reads up to 200 levels and rejects level 201 with json_invalid (recursion limit
+#: exceeded) (a difference the parity test found -- json.loads reads about 1000 levels, so without a limit what is accepted would widen).
 _DEPTH_LIMIT: Final = 200
 _TOO_DEEP: Final = f"recursion limit exceeded (nesting deeper than {_DEPTH_LIMIT})"
 
 
 def _deeper_than(value: object, room: int) -> bool:
-    """読んだ値の配列と object の入れ子が、あと room 階層に収まらないか(room = 0 の所に入れ物が在れば越える)。"""
+    """Whether the nesting of arrays and objects in the read value does not fit in room more levels (exceeds if a container exists where room = 0)."""
     match value:
         case list():
             return room == 0 or any(
@@ -1725,9 +1724,9 @@ def _deeper_than(value: object, room: int) -> bool:
 
 
 def _read_json(text: str | bytes) -> object:
-    """JSON の文字列を素の値へ読む。今の pydantic と同じ物だけを受ける(設計の記録の節 3「JSON の読み」): bytes は UTF-8 だけ・
-    孤立した surrogate は断る・json.loads の ValueError(4300 桁を越える整数も)と RecursionError と、配列と object の入れ子が
-    _DEPTH_LIMIT を越える物は json_invalid。"""
+    """Read a JSON string into a plain value. Accepts only what the current pydantic accepts (section 3 of the design record, "reading JSON"): bytes only as UTF-8,
+    a lone surrogate is rejected, a ValueError from json.loads (including an integer over 4300 digits), RecursionError, and arrays and objects nested beyond
+    _DEPTH_LIMIT are json_invalid."""
     if isinstance(text, bytes | bytearray | memoryview):
         try:
             text = bytes(text).decode("utf-8")
@@ -1750,23 +1749,23 @@ def _read_json(text: str | bytes) -> object:
 
 
 def _plain_key(key: object) -> str:
-    # json.dumps と同じく、文字列でない key を文字列にする(真偽・None・数)。
-    """json.dumps と同じく、文字列でない object の key を文字列にする(真偽・None・数)。"""
+    # As json.dumps does, turn a key that is not a string into a string (bool, None, number).
+    """As json.dumps does, turn an object key that is not a string into a string (bool, None, number)."""
     if type(key) is str:
         return cast(str, key)
     if isinstance(key, str):
         return str.__str__(key)
     if key is True or key is False or key is None or isinstance(key, int | float):
         return json.dumps(key)
-    raise TypeError(f"JSON の object の key でない: {type(key).__name__}")
+    raise TypeError(f"not a JSON object key: {type(key).__name__}")
 
 
 def _plain(value: object, room: int = _DEPTH_LIMIT) -> object:
-    """JSON の値(凍らせた FrozenMap・tuple・OpaqueJson・str や int の派生も)を、json.loads が返す素の値へ戻す。
+    """Turn a JSON value (frozen FrozenMap, tuple, OpaqueJson, and str or int subclasses too) back into the plain value json.loads returns.
 
-    答えは「json.dumps で書いて json.loads で読んだ値」と同じ(文字列を経ずに作る)。JSON の値でない物(set・任意の object)は
-    TypeError(今の parse の json.dumps と同じ)。配列と object の入れ子が _DEPTH_LIMIT を越える物は、文字列から読んだ時と同じく
-    json_invalid(room = まだ入れる入れ子の階層の数)。
+    The answer equals "the value written with json.dumps and read with json.loads" (made without going through a string). Something that is not a JSON value (set, arbitrary object) is
+    TypeError (same as json.dumps in the current parse). Arrays and objects nested beyond _DEPTH_LIMIT are
+    json_invalid, as when read from a string (room = how many more nesting levels are allowed).
     """
     kind = type(value)
     if kind is str:
@@ -1791,7 +1790,7 @@ def _plain(value: object, room: int = _DEPTH_LIMIT) -> object:
 
 
 def _plain_derived(value: object, room: int) -> object:
-    """素の JSON の型でない値(OpaqueJson と str・int・float の派生 — StrEnum・IntEnum など)を、json.dumps が書く値へ戻す。"""
+    """Turn a value that is not a plain JSON type (OpaqueJson and subclasses of str, int, float -- StrEnum, IntEnum, etc.) back into the value json.dumps writes."""
     if isinstance(value, _OpaqueJson):
         loaded = json.loads(value.text)
         if _deeper_than(loaded, room):
@@ -1799,19 +1798,19 @@ def _plain_derived(value: object, room: int) -> object:
         return loaded
     if isinstance(value, str):
         return _plain(str.__str__(value))
-    if isinstance(value, int | float):  # bool は _plain で済んでいる
+    if isinstance(value, int | float):  # bool is already handled by _plain
         return (int if isinstance(value, int) else float)(value)
-    raise TypeError(f"JSON の値でない: {type(value).__name__}")
+    raise TypeError(f"not a JSON value: {type(value).__name__}")
 
 
-# --- 書き出し ------------------------------------------------------------------------------------------------------------------
-# 判じ手の encode は値を JSON の素の値(dict・list・str・int・float・bool・None)へ書く。文字列へ書く時(raw)は OpaqueJson の文字列を
-# _Raw のまま残し、_json_text が出力へそのまま埋める(今の OpaqueSplice と同じ意味 — 中を読み直さない)。
+# --- Writing --------------------------------------------------------------------------------------------------------------------
+# A checker's encode writes a value as a plain JSON value (dict, list, str, int, float, bool, None). When writing to a string (raw), the OpaqueJson string is kept as
+# _Raw and _json_text splices it into the output as it is (same meaning as the current OpaqueSplice -- the inside is not re-read).
 
 
 @final
 class _Raw:
-    """文字列へ書く途中の、OpaqueJson が持っている JSON の文字列(読み直さずに出力へ埋める)。"""
+    """The JSON string an OpaqueJson holds while being written to a string (spliced into the output without re-reading)."""
 
     __slots__ = ("text",)
 
@@ -1819,26 +1818,26 @@ class _Raw:
         self.text = text
 
 
-#: そのまま埋めると JSON でなくなる綴り(Python の json.dumps が NaN・inf をそう書く)。含む文字列は読み直して書く(NaN は null — 今と同じ)。
+#: Spellings that would no longer be JSON if spliced as they are (Python json.dumps writes NaN and inf this way). A string containing them is re-read and written (NaN becomes null -- same as now).
 _NOT_STRICT_JSON: Final = ("NaN", "Infinity")
 _ENCODE_STRING: Final = json.encoder.encode_basestring
-#: 配列に書く入れ物(値の型から書く時と、union の腕を lax で当てる時)。
+#: Containers written as an array (when writing from the value's type, and when matching a union arm in lax mode).
 _ARRAYS: Final = (list, tuple, set, frozenset)
 
 
 def _is_array(value: object) -> TypeGuard[Collection[object]]:
-    """配列に書く入れ物か(list・tuple・set・frozenset — 文字列と dict は入れない)。要素は読むだけなので object として絞る。"""
+    """Whether this is a container written as an array (list, tuple, set, frozenset -- not str or dict). Elements are only read, so it is narrowed as object."""
     return isinstance(value, _ARRAYS)
 
 
 def _is_mapping(value: object) -> TypeGuard[Mapping[object, object]]:
-    """object に書く写像か(dict と凍らせた FrozenMap)。key と値は読むだけなので object として絞る。"""
+    """Whether this is a mapping written as an object (dict and frozen FrozenMap). Keys and values are only read, so it is narrowed as object."""
     return isinstance(value, Mapping)
 
 
 def _opaque_out(value: _OpaqueJson, raw: bool) -> _Json:
-    """OpaqueJson の書き出し: 文字列へ書く時は持っている文字列をそのまま埋め、JSON の値へ書く時と NaN・Infinity を含む時は読み直して
-    値の型から書く(今の pydantic の dump・dump-json と同じ)。"""
+    """Writing OpaqueJson: when writing to a string, splice in the string it holds as it is; when writing to a JSON value, or when it contains NaN or Infinity, re-read it and
+    write from the value's type (same as the current pydantic dump and dump-json)."""
     text = value.text
     if raw and not any(spelling in text for spelling in _NOT_STRICT_JSON):
         return _Raw(text)
@@ -1846,23 +1845,23 @@ def _opaque_out(value: _OpaqueJson, raw: bool) -> _Json:
 
 
 def _json_key(key: object) -> str:
-    """値の型から書く object の key の綴り(今の pydantic と同じ: 文字列の派生と defenum は値の綴り・真偽は true / false・None は None・
-    数は数の綴り)。他の key は TypeError。"""
+    """Spelling of an object key written from the value's type (same as the current pydantic: subclasses of str and defenum use the value spelling, bool is true / false, None is None,
+    numbers use the number spelling). Other keys are TypeError."""
     if isinstance(key, enum.Enum):
         return _json_key(key.value)
     if isinstance(key, str):
         return str.__str__(key)
     if key is None:
         return "None"
-    if isinstance(key, int | float):  # 真偽は true / false・数は書き出しと同じ綴り
+    if isinstance(key, int | float):  # bool is true / false; numbers use the same spelling as writing
         return _json_text(_inferred(key, False))
-    raise TypeError(f"JSON の object の key に書けない: {type(key).__name__}")
+    raise TypeError(f"cannot be written as a JSON object key: {type(key).__name__}")
 
 
 def _inferred(value: object, raw: bool) -> _Json:
-    """型の木の外の値(object・素の dict の欄の中身と、欄の型に合わない値)を、値の型から JSON の素の値へ書く。今の pydantic の値の型
-    からの書き出しと同じ: NaN・inf は null・tuple と set は配列・defenum は値の綴り。defwire の値と OpaqueJson はその型の書き出し
-    (pydantic は欄の Python の名・OpaqueJson の欄 text を書いていた — 節 3b)。JSON に書けない値は TypeError。"""
+    """Write a value outside the type tree (the contents of object and plain dict fields, and values that do not fit the field type) as a plain JSON value from the value's type. Same as the current pydantic's writing from the value's type
+    such as: NaN and inf are null, tuple and set are arrays, defenum is the value spelling. A defwire value and OpaqueJson use that type's writing
+    (pydantic wrote the Python field name and the OpaqueJson field text -- section 3b). A value that cannot be written as JSON is TypeError."""
     if value is None or type(value) is str or type(value) is int or type(value) is bool:
         return value
     if type(value) is float:
@@ -1875,7 +1874,7 @@ def _inferred(value: object, raw: bool) -> _Json:
 
 
 def _inferred_named(value: object, raw: bool) -> _Json:
-    """_inferred の続き — 素の JSON の型でない値(OpaqueJson・defwire の値・defenum・str や数の派生)を書く。"""
+    """Continuation of _inferred -- write a value that is not a plain JSON type (OpaqueJson, a defwire value, defenum, subclasses of str or numbers)."""
     if isinstance(value, _OpaqueJson):
         return _opaque_out(value, raw)
     if _is_wire_type(type(value)):
@@ -1884,16 +1883,16 @@ def _inferred_named(value: object, raw: bool) -> _Json:
         return _inferred(value.value, raw)
     if isinstance(value, str):
         return str.__str__(value)
-    if isinstance(value, int):  # 真偽は _inferred で済んでいる
+    if isinstance(value, int):  # bool is already handled by _inferred
         return int(value)
     if isinstance(value, float):
         return _inferred(float(value), raw)
-    raise TypeError(f"JSON の値でない: {type(value).__name__}")
+    raise TypeError(f"not a JSON value: {type(value).__name__}")
 
 
 def _float_text(number: float) -> str:
-    """float の JSON の綴り。今の pydantic(serde_json と ryu)と同じ: 最短で戻る桁(Python の repr と同じ桁)・指数の頭の 0 を書かない
-    (`1e-7`)・10 の -5 乗の桁は小数で書く(`0.00001`)・NaN と inf は null(設計の記録の節 2「float の綴り」)。"""
+    """JSON spelling of a float. Same as the current pydantic (serde_json and ryu): the shortest digits that round-trip (the same digits as Python repr), no leading 0 in the exponent
+    (`1e-7`), digits up to 10 to the -5 are written as a decimal (`0.00001`), and NaN and inf are null (section 2 of the design record, "float spelling")."""
     if not math.isfinite(number):
         return "null"
     text = float.__repr__(number)
@@ -1908,16 +1907,16 @@ def _float_text(number: float) -> str:
 
 
 def _string_text(text: str) -> str:
-    """文字列 1 つの JSON の綴り(今の pydantic と同じ: `"` と `\\` と制御文字だけを escape し、非 ASCII・U+2028・DEL はそのまま)。
-    孤立した surrogate は UTF-8 にできないので ValueError(今の pydantic の dump-json も書かずに断る)。"""
+    """JSON spelling of one string (same as the current pydantic: only `"` and `\\` and control characters are escaped; non-ASCII, U+2028, and DEL are left as they are).
+    A lone surrogate cannot be UTF-8, so ValueError (the current pydantic dump-json also rejects without writing)."""
     if not text.isascii() and _SURROGATE.search(text) is not None:
-        raise ValueError("孤立した surrogate を含む文字列は JSON の文字列(UTF-8)に書けない")
+        raise ValueError("a string containing a lone surrogate cannot be written as a JSON string (UTF-8)")
     return _ENCODE_STRING(text)
 
 
 def _json_text(value: _Json) -> str:
-    """書き出した JSON の素の値を JSON の文字列にする(区切りの空白無し・ensure_ascii 無し — 今の dump-json と同じ bytes)。"""
-    # 多い順に型を見る(文字列・object・配列)。join には内包表記の list を渡す(generator より速い — 1 回の書き出しで数十回呼ぶ所)。
+    """Turn the written plain JSON value into a JSON string (no separator whitespace, no ensure_ascii -- the same bytes as the current dump-json)."""
+    # Check types in order of frequency (string, object, array). Pass a list comprehension to join (faster than a generator -- this is called dozens of times per write).
     if isinstance(value, str):
         return _string_text(value)
     if isinstance(value, dict):
@@ -1932,8 +1931,8 @@ def _json_text(value: _Json) -> str:
 
 
 def _has_surrogate(text: str) -> bool:
-    """文字列に surrogate が在るか(孤立した surrogate を、JSON の文字列に書けない・JSON の値として受けない物として見つけるため)。
-    UTF-8 にできないのは surrogate だけなので、正規表現で探すより速い符号化の失敗で見る(非 ASCII の 1 KB で 12 µs → 3 µs)。"""
+    """Whether the string has a surrogate (to find a lone surrogate as something that cannot be written as a JSON string and is not accepted as a JSON value).
+    Only surrogates cannot be UTF-8, so detect via an encoding failure, which is faster than searching with a regular expression (12 µs → 3 µs for 1 KB of non-ASCII)."""
     try:
         text.encode("utf-8")
     except UnicodeEncodeError:
@@ -1942,7 +1941,7 @@ def _has_surrogate(text: str) -> bool:
 
 
 def _scalar_text(value: _Json) -> str:
-    """入れ物でない書き出しの値の綴り(数・真偽・null と、OpaqueJson の文字列 — 真偽は int より先に見る)。"""
+    """Spelling of a written value that is not a container (number, bool, null, and the OpaqueJson string -- check bool before int)."""
     if isinstance(value, bool):
         return "true" if value else "false"
     if isinstance(value, int):
@@ -1953,7 +1952,7 @@ def _scalar_text(value: _Json) -> str:
         return value.text
     if value is None:
         return "null"
-    raise TypeError(f"書き出しの値でない: {type(value).__name__}")
+    raise TypeError(f"not a written value: {type(value).__name__}")
 
 
 # --- JSON Schema ---------------------------------------------------------------------------------------------------------------
@@ -1961,7 +1960,7 @@ def _scalar_text(value: _Json) -> str:
 
 @final
 class _RefMark:
-    """$ref の行き先の印(型 1 つに 1 つ)。組み終えてから $defs の名に替える — 同じ名の違う型が在れば名に module を付けるため。"""
+    """Mark of a $ref target (one per type). Replaced by a $defs name after building finishes -- so that if different types share a name, the module is added to the name."""
 
     __slots__ = ("target",)
 
@@ -1971,7 +1970,7 @@ class _RefMark:
 
 @final
 class _Definitions:
-    """JSON Schema 1 つを組む間の $defs。defwire の型と defenum を 1 度ずつ組んで置き、欄からは $ref で指す。"""
+    """The $defs while building one JSON Schema. Builds and places each defwire type and defenum once, and fields point to them with $ref."""
 
     __slots__ = ("marks", "shapes")
 
@@ -1980,7 +1979,7 @@ class _Definitions:
         self.shapes: dict[type, _Schema] = {}
 
     def ref(self, target: type, build: Callable[["_Definitions"], _Schema]) -> _Schema:
-        """型を $defs に(まだ無ければ組んで)置き、それを指す $ref を返す。"""
+        """Place the type in $defs (building it if not yet there) and return a $ref pointing to it."""
         mark = self.marks.get(target)
         if mark is None:
             mark = _RefMark(target)
@@ -1989,7 +1988,7 @@ class _Definitions:
         return {"$ref": mark}
 
     def names(self) -> dict[type, str]:
-        """$defs の名: 型の名。同じ名の違う型が在れば、それらは module と qualname の綴り(今の pydantic と同じ — `.` は `__`)。"""
+        """Name in $defs: the type name. If different types share a name, they use the module and qualname spelling (same as the current pydantic -- `.` becomes `__`)."""
         counts = Counter(target.__name__ for target in self.shapes)
         return {
             target: target.__name__
@@ -2002,16 +2001,16 @@ class _Definitions:
 
 
 def _schema_default(value: object) -> _Json:
-    """JSON Schema の欄の default — 既定値を値の型から書く(型のある float の NaN・inf は float のまま — 今の pydantic と同じ)。
-    入れ子の defwire と OpaqueJson の既定値は書き手の書く形(pydantic は欄の Python の名と OpaqueJson の欄 text を書いていた — 節 3b)。"""
+    """default of a JSON Schema field -- write the default from the value's type (NaN and inf of a typed float stay float -- same as the current pydantic).
+    The defaults of a nested defwire and of OpaqueJson take the shape the writer writes (pydantic wrote the Python field name and the OpaqueJson field text -- section 3b)."""
     if type(value) is float:
         return value
     return _inferred(value, False)
 
 
 def _field_schema(field: _WireField, defs: _Definitions) -> _Schema:
-    """欄 1 つの JSON Schema: 型の形に、既定値(作り手の欄は書かない)と title(wire の名から — 型の側が title を持つ defwire・defenum と
-    その (| T None) には付けない)を足す(今の pydantic と同じ)。"""
+    """JSON Schema of one field: add to the type shape the default (not written for a factory field) and the title (from the wire name -- not added to defwire and defenum, whose type side carries a title, and
+    to their (| T None)) (same as the current pydantic)."""
     default: _Schema = (
         {"default": _schema_default(field.default)}
         if field.default is not dataclasses.MISSING
@@ -2024,7 +2023,7 @@ def _field_schema(field: _WireField, defs: _Definitions) -> _Schema:
 
 
 def _json_hashable(value: _Json) -> object:
-    """JSON Schema の値を、同じ形の腕を 1 つにするための hash できる形へ(pydantic の _make_json_hashable と同じ)。"""
+    """Turn a JSON Schema value into a hashable form so arms of the same shape can be collapsed into one (same as pydantic's _make_json_hashable)."""
     if isinstance(value, dict):
         return tuple(sorted((key, _json_hashable(item)) for key, item in value.items()))
     if isinstance(value, list):
@@ -2033,7 +2032,7 @@ def _json_hashable(value: _Json) -> object:
 
 
 def _arms_of(schema: _Schema) -> list[_Schema]:
-    """union の腕 1 つの形を、anyOf だけの形なら開いて並べる(pydantic の get_flattened_anyof と同じ)。"""
+    """Open up and list the shape of one union arm if it is an anyOf-only shape (same as pydantic's get_flattened_anyof)."""
     arms = schema.get("anyOf")
     if len(schema) == 1 and isinstance(arms, list):
         return [arm for arm in arms if isinstance(arm, dict)]
@@ -2041,7 +2040,7 @@ def _arms_of(schema: _Schema) -> list[_Schema]:
 
 
 def _any_of(members: tuple[_Schema, ...]) -> _Schema:
-    """union の JSON Schema(今の pydantic と同じ: anyOf だけの腕は開き・同じ形の腕は 1 つにし・腕が 1 つなら anyOf で包まない)。"""
+    """JSON Schema of a union (same as the current pydantic: anyOf-only arms are opened up, arms of the same shape are collapsed into one, and with one arm there is no anyOf wrapper)."""
     unique = list(
         {_json_hashable(arm): arm for member in members for arm in _arms_of(member)}.values()
     )
@@ -2052,9 +2051,9 @@ def _any_of(members: tuple[_Schema, ...]) -> _Schema:
 
 
 def _sorted_schema(value: _Json, parent: str | None, names: dict[type, str]) -> _Json:
-    """組んだ JSON Schema の鍵を今の pydantic と同じ順に並べ($defs の名も鍵の順)、$ref の印を名に替える。並べ方は pydantic の sort と
-    同じ: properties と default の直下は宣言の順のまま・他は鍵の文字の順・list の要素は親の鍵を引き継ぐ(契約の file を bytes で照らす
-    書き手が在るので順も揃える)。"""
+    """Order the keys of the built JSON Schema the same as the current pydantic (the $defs names too are in key order) and replace $ref marks with names. The ordering is the same as pydantic's sort:
+    directly under properties and default keep declaration order, others are in key character order, and list elements inherit the parent key (some writers compare contract files by bytes,
+    so the order is matched too)."""
     if isinstance(value, dict):
         keys = list(value) if parent in ("properties", "default") else sorted(value)
         return {key: _sorted_schema(value[key], key, names) for key in keys}
@@ -2066,7 +2065,7 @@ def _sorted_schema(value: _Json, parent: str | None, names: dict[type, str]) -> 
 
 
 def _schema_of(node: _Node) -> _Schema:
-    """型の木の根の JSON Schema。最上位の defwire の型と defenum は $ref でなく形をそのまま置き、入れ子の型は $defs に置く。"""
+    """JSON Schema of the root of the type tree. The top-level defwire type and defenum put the shape as it is instead of a $ref, and nested types go in $defs."""
     defs = _Definitions()
     top = node.definition(defs) if isinstance(node, _WireNode | _Enum) else node.schema(defs)
     names = defs.names()
@@ -2074,17 +2073,17 @@ def _schema_of(node: _Node) -> _Schema:
     whole = _sorted_schema({**top, "$defs": nested} if nested else top, None, names)
     if not isinstance(whole, dict):
         raise TypeError(
-            "JSON Schema の根が object でない"
-        )  # 根は object の形を並べ替えた物 — 起きない
+            "the JSON Schema root is not an object"
+        )  # the root is a reordered object shape -- cannot happen
     return whole
 
 
-# --- 公開の口 ------------------------------------------------------------------------------------------------------------------
+# --- Public entry ---------------------------------------------------------------------------------------------------------------
 
 
 @final
 class Codec(Generic[_T]):
-    """語彙の型 1 つの解き手(型の木の根と、Malformed に書く型の名)。``codec_of`` だけが作る。"""
+    """Decoder of one vocabulary type (the root of the type tree and the type name written to Malformed). Created only by ``codec_of``."""
 
     __slots__ = ("name", "node")
 
@@ -2093,15 +2092,15 @@ class Codec(Generic[_T]):
         self.name = name
 
     def decode_json(self, text: str | bytes) -> _T | _Malformed:
-        """JSON の文字列(bytes も)を解いて確かめる。答え = 型の値か Malformed(JSON として読めない文字列も — 場所は空の文字列)。"""
+        """Decode a JSON string (bytes too) and check it. Result = a value of the type or Malformed (including a string that cannot be read as JSON -- the path is the empty string)."""
         try:
             return cast(_T, self._decoded(_read_json(text)))
         except _RefusedError as invalid:
             return self._malformed(invalid.problems)
 
     def decode(self, value: object) -> _T | _Malformed:
-        """JSON の値(凍らせた FrozenMap・tuple と、中を読まずに運んだ OpaqueJson も)を解いて確かめる。答えは同じ値を JSON の
-        文字列にして decode_json に渡した時と同じ。JSON の値でない物は TypeError。"""
+        """Decode a JSON value (frozen FrozenMap, tuple, and OpaqueJson carried without reading inside) and check it. The answer is the same as turning the same value into a JSON
+        string and passing it to decode_json. Something that is not a JSON value is TypeError."""
         try:
             if isinstance(value, _OpaqueJson):
                 return cast(_T, self._decoded(_read_json(value.text)))
@@ -2110,37 +2109,37 @@ class Codec(Generic[_T]):
             return self._malformed(invalid.problems)
 
     def _decoded(self, value: object) -> object:
-        """値を先に速い道(_Node.fast — 写し直さない)で読み、受けなかった時だけ今までの道(_plain で写し直して decode)で読み直す。
-        速い道が受けない時(断った・素の値として読めない所が在った・型の構築子が例外を投げた)は、どれも今までの道が答えを決める —
-        誤りの列を全部集める・例外を投げるのはその 1 か所(速い道は最初の誤りで止まり、例外の順も今までの道と違いうるので)。"""
+        """Read the value first on the fast path (_Node.fast -- no copying), and only if it is not accepted re-read with the existing path (copy with _plain and decode).
+        When the fast path does not accept (it rejected, there was a spot unreadable as a plain value, or a type constructor raised), the existing path decides the answer in every case --
+        collecting all errors and raising exceptions happen in that one place (the fast path stops at the first error, and its exception order may differ from the existing path)."""
         try:
             return self.node.fast(value, _DEPTH_LIMIT)
         except Exception:
             return self.node.decode(_plain(value))
 
     def encode(self, value: _T) -> object:
-        """値を JSON の値へ書く(今の dump と同じ: 欄は wire の名・tuple と frozenset は配列・defenum は値の綴り・既定値と同じ欄は書かない
-        — 入れ子も・既定値の無い欄は None でも null・型のある float の欄の NaN と inf は float のまま)。JSON に書けない値は TypeError。"""
+        """Write a value as a JSON value (same as the current dump: fields use wire names, tuple and frozenset are arrays, defenum is the value spelling, fields equal to their default are not written
+        -- nested too; a field without a default is null even when None; NaN and inf in a typed float field stay float). A value that cannot be written as JSON is TypeError."""
         return self.node.encode(value, False)
 
     def encode_json(self, value: _T) -> str:
-        """値を JSON の文字列へ書く(今の dump-json と同じ bytes: encode と同じ形・区切りの空白無し・NaN と inf は null・OpaqueJson の欄は
-        持っている文字列を読み直さずに埋める)。孤立した surrogate を含む文字列は ValueError・JSON に書けない値は TypeError。"""
+        """Write a value as a JSON string (the same bytes as the current dump-json: the same shape as encode, no separator whitespace, NaN and inf are null, and OpaqueJson fields splice in
+        the string they hold without re-reading). A string containing a lone surrogate is ValueError; a value that cannot be written as JSON is TypeError."""
         try:
             text = self.node.text(value)
         except Exception:
             return _json_text(self.node.encode(value, True))
         if not text.isascii() and _has_surrogate(text):
-            return _json_text(self.node.encode(value, True))  # 孤立した surrogate — 今までの道が ValueError で断る
+            return _json_text(self.node.encode(value, True))  # lone surrogate -- the existing path rejects with ValueError
         return text
 
     def schema(self) -> Mapping[str, object]:
-        """この型の JSON Schema(今の json-schema と同じ形・鍵の順 — 違いは設計の記録の節 3b)。呼ぶたびに組む(契約の file と照らす
-        所だけが使う — 型には覚えない)。"""
+        """JSON Schema of this type (same shape and key order as the current json-schema -- differences are in section 3b of the design record). Built on every call (only the place that compares with a contract file
+        uses it -- not remembered on the type)."""
         return _schema_of(self.node)
 
     def _malformed(self, problems: list[_Problem]) -> _Malformed:
-        """集めた誤りの列を Malformed へ写す(場所は . でつなぐ・reason は `<msg> [<種類>]`)。"""
+        """Map the collected list of errors to Malformed (paths are joined with ., reason is `<msg> [<kind>]`)."""
         return _Malformed(
             wire_type=self.name,
             fields=tuple(
@@ -2150,7 +2149,7 @@ class Codec(Generic[_T]):
         )
 
 
-#: defwire でない語彙の型(最上位の (get dict #(str OpaqueJson)) など)の Codec。defwire の型の Codec は型の属性に覚える。
+#: Codec for a vocabulary type that is not defwire (such as the top-level (get dict #(str OpaqueJson))). The Codec of a defwire type is remembered as an attribute of the type.
 _ALIAS_CODECS: Final[dict[object, Codec[Any]]] = {}
 
 
@@ -2159,9 +2158,9 @@ def codec_of(wire_type: type[_T]) -> Codec[_T]: ...
 @typing.overload
 def codec_of(wire_type: object) -> Codec[Any]: ...
 def codec_of(wire_type: object) -> Codec[Any]:
-    """語彙の型 1 つの解き手。defwire の型は最初の使いで型の木を 1 度組んで型に覚え(``__doeff_codec__``)、2 回目からは組まない。
-    defwire でない語彙の型(``str``・``(get dict #(str OpaqueJson))`` など — 最上位として解く)も同じ規則で組んで覚える。
-    語彙の外の型・解けない前方参照・型の輪は TypeError。"""
+    """Decoder of one vocabulary type. A defwire type builds the type tree once on first use and remembers it on the type (``__doeff_codec__``); it is not rebuilt afterwards.
+    A vocabulary type that is not defwire (``str``, ``(get dict #(str OpaqueJson))``, etc. -- decoded as the top level) is also built and remembered by the same rule.
+    A type outside the vocabulary, an unresolvable forward reference, or a type cycle is TypeError."""
     if _is_wire_type(wire_type):
         known = cast(type, wire_type).__dict__.get(_CODEC_ATTRIBUTE)
         if known is None:
@@ -2174,20 +2173,20 @@ def codec_of(wire_type: object) -> Codec[Any]:
     with _LOCK:
         known_alias = _ALIAS_CODECS.get(wire_type)
         if known_alias is None:
-            node = _build(wire_type, {}, f"型 {wire_type!r}")
+            node = _build(wire_type, {}, f"type {wire_type!r}")
             known_alias = Codec(node, node.label)
             _ALIAS_CODECS[wire_type] = known_alias
         return known_alias
 
 
 def row_codec_of(row_type: type[_T]) -> Codec[_T]:
-    """表の行の型 1 つの解き手(doeff-records の typed.hy が使う — 設計の記録の節 6)。行の型は素の defrecord(defwire でない
-    dataclass)で、欄の名は Python の欄の名・知らない欄は読み捨てる(欄を足した新しい書き手の行を古い読み手が断らない)・書く時は
-    既定値と等しい欄も書く(行の書きは欄ごとの差分なので、全部の欄を載せた像にする)。入れ子の素の defrecord も同じ読み方・入れ子の
-    defwire の型はその型の読み方。欄ごとの判じ方は defwire と同じ strict(節 2)。最初の使いで組んで型に覚える(``__doeff_row_codec__``)。
-    defwire の型・dataclass でない型・語彙の外の欄は TypeError。"""
+    """Decoder of one table-row type (used by typed.hy in doeff-records -- section 6 of the design record). A row type is a plain defrecord (a
+    dataclass that is not defwire); field names are Python field names, unknown fields are discarded (an old reader does not reject a row from a new writer that added a field), and when writing,
+    fields equal to their default are also written (a row write is a per-field diff, so it is an image carrying all fields). A nested plain defrecord is read the same way, and a nested
+    defwire type uses that type's reading. Per-field judgment is the same strict as defwire (section 2). Built on first use and remembered on the type (``__doeff_row_codec__``).
+    A defwire type, a type that is not a dataclass, or a field outside the vocabulary is TypeError."""
     if not (isinstance(row_type, type) and dataclasses.is_dataclass(row_type)) or _is_wire_type(row_type):
-        raise TypeError(f"行の型は素の defrecord(defwire でない dataclass): {row_type!r}")
+        raise TypeError(f"row type must be a plain defrecord (a dataclass that is not defwire): {row_type!r}")
     known = row_type.__dict__.get(_ROW_CODEC_ATTRIBUTE)
     if known is None:
         _row_node(row_type)

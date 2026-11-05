@@ -58,7 +58,7 @@
 
 (defn _bind-var [form]
   "Get the variable name from a bind form. None for (<- expr).
-   A trailing `:absent 失敗` is not part of it (ADR-DOE-CORE-EFFECTS-003 R6)."
+   A trailing `:absent failure` is not part of it (ADR-DOE-CORE-EFFECTS-003 R6)."
   (import doeff-hy._outcome-forms [split-absent])
   (setv core (. (split-absent form) core))
   (cond
@@ -83,7 +83,7 @@
 
 (defn _bind-expr [form]
   "Get the expression part of a bind form.
-   (<- name expr) → expr.  (<- expr) → expr.  A trailing `:absent 失敗` is set aside."
+   (<- name expr) → expr.  (<- expr) → expr.  A trailing `:absent failure` is set aside."
   (import doeff-hy._outcome-forms [split-absent])
   (setv core (. (split-absent form) core))
   (cond

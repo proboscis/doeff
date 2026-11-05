@@ -1,31 +1,31 @@
-;;; 書き換えない表 — 文字列の鍵 → 値の、作った後に決して変わらない表(Table)と、その書き(TableWrite)。
+;;; Immutable table: a table from string keys to values that never changes after it is built (Table), and its write (TableWrite).
 ;;;
-;;; 何のためか: 1 拍ごとに表(鍵 → 値)を組み直す読み手(agora の画面の投影の作業場)は、
-;;;   (1) 書きの後も、古い表を持つ読み手(別の thread で答え続ける処理のループ)には古い行を見せたい — 表をその場で書き換えられない。
-;;;   (2) それでも 1 拍に変わる行は数十なので、拍ごとに表を丸ごと写したくない(14 万行の写しで 1 拍 約 2 ms)。
-;;;   (3) 読み手の層は写像(dict・Mapping)を受け渡さず、鍵 → 値を引く関数で引く(agora の線引き 2 の (b))。
-;;; Table は 3 つを満たす: 内側は「基 + 差分」の 2 層で、基は作った後に決して書き換えない。with-writes は差分だけを写して新しい
-;;; Table を返す(写すのは差分だけ)。差分が基の 1/COMPACT-RATIO を超えたら、基と差分を合わせた新しい基を作る(その書きだけ O(n)・
-;;; 均すと小さい)。読みは差分 → 基の 2 回引き。Table は Mapping ではない(写像として受け渡さない)— 引くのは row・keys・rows・items・
-;;; size だけ。
-;;; 基が MIN-DELTA 行未満の小さな表は差分の層を持たず、書くたびに基を写す — 写しは小さく、差分の層の費用(1 回の書きごとに差分の dict を
-;;; 丸ごと写す・集合の演算)の方が重い(dict の 1 鍵の写し 0.3〜0.7 µs に対し差分の層の書き 約 4.7 µs)。
+;;; Why: a reader that rebuilds a table (key -> value) every tick (the projection workspace of agora's screen) has these needs:
+;;;   (1) After a write, a reader still holding the old table (a processing loop that keeps answering on another thread) must keep seeing the old rows, so the table cannot be updated in place.
+;;;   (2) Only a few dozen rows change per tick, so we do not want to copy the whole table every tick (copying 140,000 rows costs about 2 ms per tick).
+;;;   (3) The reader layer does not pass mappings (dict, Mapping) around; it looks up key -> value through functions (agora's boundary 2 (b)).
+;;; Table satisfies all three: inside it has two layers, "base + delta", and the base is never modified after it is built. with-writes copies only the delta and returns a new
+;;; Table (only the delta is copied). When the delta exceeds 1/COMPACT-RATIO of the base, a new base is built from the base and delta combined (only that write is O(n);
+;;; amortized it is small). A read looks up the delta first, then the base. Table is not a Mapping (it is not passed around as a mapping); the only accessors are row, keys, rows, items, and
+;;; size.
+;;; A small table whose base has fewer than MIN-DELTA rows has no delta layer and copies the base on every write. The copy is small, and the cost of a delta layer (copying the whole delta dict on every write
+;;; plus set operations) is higher (copying one dict key takes 0.3-0.7 us, whereas a write through the delta layer takes about 4.7 us).
 ;;;
-;;; 1 拍の中で書いた行を読み直す書き手は、下書き(TableDraft — 下の節)で書きを貯め、拍の終わりに 1 回だけ with-writes を当てる。
+;;; A writer that rereads rows it wrote within one tick accumulates its writes in a draft (TableDraft, in the section below) and applies with-writes just once at the end of the tick.
 ;;;
-;;; FrozenMap(frozen.hy)との違い: FrozenMap は「鍵の集合が開いた値」を凍らせる写像で、書くたびに丸ごと写す。Table は拍ごとに
-;;; 少しずつ変わる大きな表のための物で、写像ではない。
+;;; Difference from FrozenMap (frozen.hy): FrozenMap freezes a mapping over an open set of keys and copies the whole thing on every write. Table is for a large table that
+;;; changes a little at a time every tick, and it is not a mapping.
 ;;;
-;;; 系譜(_Line)— 前に読み手へ渡した表と今の表の違う鍵(changed-keys)と等しさ(__eq__)を、2 つの表の間の書きの数に比例して答えるため。
-;;;基を分け合う 2 つの表の比べは差分の層の全部を読むので、差分が基の 1/COMPACT-RATIO まで育つ間、
-;;; 拍ごとの比べの費用が表の行の数に比例して伸びた(agora の画面の会話 5,554 の表で 1 回 0.1〜0.8 ms・基の作り直しの拍は全部の行 11 ms)。
-;;; with-writes(と下書きの freeze)で作った子の表は、親がまだ子を持たなければ親と同じ系譜に載り、系譜の記録へ書いた鍵の列を 1 つ足す。
-;;; 同じ系譜の 2 つの表は一方が他方の子孫なので、違い得る鍵は 2 つの位置の間に記録した鍵だけ。2 人目の子・記録が子の行の数(と MIN-DELTA の大きい方)を越えた子・
-;;; table-of と写しで作った表は新しい系譜を始める(比べは前の道 — 基を分け合えば差分、ほかは全部の鍵)。記録は鍵だけを持つ(行を持たない)。
+;;; Lineage (_Line): so that changed-keys (the keys that differ between the table previously handed to a reader and the current one) and equality (__eq__) can be answered in time proportional to the number of writes between the two tables.
+;;; Comparing two tables that share a base reads the entire delta layer, so while the delta grew up to 1/COMPACT-RATIO of the base,
+;;; the per-tick comparison cost grew in proportion to the number of rows (for the table of agora's screen conversation 5,554, 0.1-0.8 ms per comparison, and 11 ms over all rows on a tick that rebuilds the base).
+;;; A child table made by with-writes (and by the draft's freeze) joins its parent's lineage if the parent has no child yet, and appends one list of written keys to the lineage record.
+;;; Two tables in the same lineage are in an ancestor/descendant relation, so the only keys that can differ are the keys recorded between the two positions. A second child, a child whose record exceeds the larger of its row count and MIN-DELTA,
+;;; and tables made by table-of or by copying start a new lineage (comparison then takes the older path: the delta if they share a base, otherwise all keys). The record holds only keys (no rows).
 ;;;
-;;; 小さな表の持ち物 — agora の画面は行ごとの小さな表(返事の列・card の関係と tag)を 45 万個持ち、表 1 つごとの空の差分の dict・空の
-;;; frozenset・系譜(dict と Lock を持つ)が約 0.9 GB を占めた。空の差分と消した鍵は module に 1 つの空の値
-;;; (_NO-DELTA・_NO-REMOVED)を分け合い、系譜は初めて子を作る時に作る(子を作らない表は系譜を持たない — _line は None)。
+;;; What small tables hold: agora's screen holds 450,000 small per-row tables (reply lists, card relations and tags), and each table's empty delta dict, empty
+;;; frozenset, and lineage (holding a dict and a Lock) took about 0.9 GB. The empty delta and the removed keys share one empty value per module
+;;; (_NO-DELTA, _NO-REMOVED), and the lineage is created when the first child is made (a table that never makes a child has no lineage: _line is None).
 (import dataclasses [dataclass])
 (import collections.abc [Mapping])
 (import threading [Lock])
@@ -33,33 +33,33 @@
 
 (setv V (TypeVar "V"))
 
-;; 差分が基の 1/COMPACT-RATIO を超えたら基を作り直す。
+;; Rebuild the base when the delta exceeds 1/COMPACT-RATIO of the base.
 (setv COMPACT-RATIO 8)
-;; 基が小さい間は差分の上限を下げすぎない(小さい表で毎回作り直さない)。
+;; While the base is small, do not lower the delta limit too far (do not rebuild every time on a small table).
 (setv MIN-DELTA 64)
-;; 真偽と長さの読みを断る時の文(Table と TableDraft で同じ文 — 直し方を名指す)。
-(setv TABLE-TRUTH-REFUSAL "Table / TableDraft は真偽で読まない — 空かどうかは (= (.size t) 0) か (> (.size t) 0) で読む")
-(setv TABLE-LEN-REFUSAL "Table / TableDraft は len で数えない — 行の数は (.size t) で読む")
+;; Messages for refusing truthiness and length reads (the same text for Table and TableDraft; they name the fix).
+(setv TABLE-TRUTH-REFUSAL "Table / TableDraft is not read as a boolean; check emptiness with (= (.size t) 0) or (> (.size t) 0)")
+(setv TABLE-LEN-REFUSAL "Table / TableDraft is not counted with len; read the row count with (.size t)")
 
-;; 空の差分と空の消した鍵(頭の註「小さな表の持ち物」)— 全部の表が分け合う。差分は書き換えない(書きは写して新しい dict を作る)ので、
-;; 分け合う空の dict にも誰も書かない。
+;; The empty delta and empty removed keys (see "What small tables hold" in the header comment), shared by all tables. A delta is never modified (a write copies it into a new dict),
+;; so nobody writes to the shared empty dict either.
 (setv _NO-DELTA {})
 (setv _NO-REMOVED (frozenset))
-;; 系譜をまだ持たない表に系譜を作る判断を 1 つにする錠(2 つの thread が同じ親から初めての子を作っても、親の系譜は 1 本)。
+;; A lock that makes the decision to create a lineage for a table without one a single decision (even if two threads make the first child of the same parent, the parent has one lineage).
 (setv _LINE-BIRTH (Lock))
 
-(setv TABLE-MAPPING-EQ-REFUSAL "Table を dict / Mapping と == で比べない — 偽に化ける。比べるなら (dict (zip (.keys t) (.rows t))) などの dict へ直して比べる(card E0)")
+(setv TABLE-MAPPING-EQ-REFUSAL "Do not compare a Table with a dict / Mapping using ==; it silently turns into false. To compare, convert to a dict such as (dict (zip (.keys t) (.rows t))) first (card E0)")
 
 
 (defclass [(dataclass :frozen True)] TableWrite [(get Generic V)]
-  "表への書き 1 つ: key の行を value にする(value = None は行を消す)。"
+  "One write to a table: set the row at key to value (value = None deletes the row)."
   (#^ str key)
   (#^ (| V None) value))
 
 
 (defclass _Line []
-  "1 本の系譜(頭の註): log = 位置 → 書きの鍵の列(位置 i の項は、位置 i の表から位置 i + 1 の子を作った書きの鍵 — 項は足すだけ)・keys = 記録した
-   鍵の数・lock = 子を載せる判断と記録の足しを 1 つにする錠(free-threaded の Python で 2 つの thread が同じ親から子を作っても、載るのは 1 人)。"
+  "One lineage (see the header comment): log = position -> sequence of written keys (the entry at position i holds the keys of the write that made the child at position i + 1 from the table at position i; entries are only appended), keys = the number of
+   keys recorded, lock = a lock that makes the decision to attach a child and the appending of the record a single step (even if two threads make a child of the same parent on free-threaded Python, only one is attached)."
   (setv __slots__ #("log" "keys" "lock"))
 
   (defn #^ None __init__ [self]
@@ -69,34 +69,34 @@
 
 
 (defclass Table [(get Generic V)]
-  "書き換えない表(頭の註)。作るのは table-of。引くのは row・keys・rows・items・size、書きは with-writes(新しい Table を返す)。"
+  "An immutable table (see the header comment). Built by table-of. Read with row, keys, rows, items, size; written with with-writes (returns a new Table)."
   (setv __slots__ #("_base" "_delta" "_removed" "_size" "_flat" "_line" "_at"))
   (#^ (get dict #(str V)) _base)
   (#^ (get dict #(str V)) _delta)
   (#^ (get frozenset str) _removed)
   (#^ int _size)
-  ;; 全行の写し(基と差分を合わせた dict)— 初めて全行を読む時に 1 度だけ作る(下の _flat-rows)。基だけの表は基そのもの。
+  ;; A copy of all rows (a dict combining the base and delta), built only once, the first time all rows are read (_flat-rows below). For a base-only table it is the base itself.
   (#^ (| (get dict #(str V)) None) _flat)
-  ;; 系譜と、その記録の中の位置(頭の註)— 作った表は系譜を持たず(None)位置 0。初めて子を作る時に系譜を作り(位置 0)、
-  ;; 子を親の系譜へ載せるのは _on-line。
+  ;; The lineage and the position within its record (see the header comment). A newly built table has no lineage (None) and position 0. The lineage is created (at position 0) when the first child is made,
+  ;; and _on-line attaches a child to its parent's lineage.
   (#^ (| _Line None) _line)
   (#^ int _at)
 
   (defn #^ None __init__ [self #^ (get dict #(str V)) base #^ (get dict #(str V)) delta #^ (get frozenset str) removed]
     (object.__setattr__ self "_base" base)
-    ;; 空の差分と消した鍵は分け合う空の値へ替える(頭の註「小さな表の持ち物」— 呼び手の空の値を表に持たせない)。
+    ;; Replace the empty delta and removed keys with the shared empty values (see "What small tables hold" in the header comment; the table does not keep the caller's empty values).
     (object.__setattr__ self "_delta" (if delta delta _NO-DELTA))
     (object.__setattr__ self "_removed" (if removed removed _NO-REMOVED))
     (object.__setattr__ self "_flat" None)
     (object.__setattr__ self "_line" None)
     (object.__setattr__ self "_at" 0)
-    ;; 行の数 = 基の行 − 消した基の行 + 基に無い差分の行。差分と消した鍵の数に比例して数える(基の全鍵を回らない — `&` は小さい方を回る。
-    ;; 基の全鍵を回る `(- (.keys delta) (.keys base))` は 1 行の書きの費用の 65〜96% だった・card E0)。
+    ;; Row count = base rows - removed base rows + delta rows not in the base. Counted in proportion to the delta and removed keys (does not iterate all base keys; `&` iterates the smaller side.
+    ;; `(- (.keys delta) (.keys base))`, which iterates all base keys, was 65-96% of the cost of a one-row write; card E0).
     (object.__setattr__ self "_size" (+ (- (len base) (len (& removed (.keys base))))
                                         (- (len delta) (len (& (.keys delta) (.keys base)))))))
 
   (defn #^ (get dict #(str V)) _flat-rows [self]
-    "基と差分を合わせた全行の dict(消した鍵を除く・Table ごとに 1 度だけ作る)— keys・rows・items の元。読むだけで書き換えない。"
+    "A dict of all rows (base and delta combined, excluding removed keys), built only once per Table; the source for keys, rows, and items. Read only, never modified."
     (when (is-not self._flat None)
       (return self._flat))
     (setv flat (if (or self._delta self._removed)
@@ -110,33 +110,33 @@
     flat)
 
   (defn #^ (| V None) row [self #^ str key]
-    "鍵 key の行(無ければ None)。"
+    "The row at key (None if absent)."
     (cond (in key self._delta) (get self._delta key)
           (in key self._removed) None
           True (.get self._base key)))
 
   (defn #^ (get tuple #(str ...)) keys [self]
-    "鍵の列(並びは keys・rows・items で同じ)。"
+    "The keys (the order is the same for keys, rows, and items)."
     (tuple (._flat-rows self)))
 
   (defn #^ (get tuple #(V ...)) rows [self]
-    "行の値の列(鍵の列 keys と同じ並び)。全行を読む読み手(数え・一覧)のため。"
+    "The row values (in the same order as keys). For readers that read all rows (counting, listing)."
     (tuple (.values (._flat-rows self))))
 
   (defn #^ (get tuple #((get tuple #(str V)) ...)) items [self]
-    "鍵と行の組の列(keys・rows と同じ並び)— 鍵が値から導けない表の全行を、鍵ごと読む読み手(保存の綴り)のため。"
+    "The (key, row) pairs (in the same order as keys and rows). For readers that read all rows of a table whose keys cannot be derived from the values, keys included (the persistence spelling)."
     (tuple (.items (._flat-rows self))))
 
   (defn #^ int size [self]
-    "行の数。"
+    "The number of rows."
     self._size)
 
   (defn #^ "Table[V]" with-writes [self #^ (get tuple #((get TableWrite V) ...)) writes]
-    "書きの列を当てた新しい Table(この Table は変わらない)。同じ鍵の書きが列に 2 度あれば後の方が残る。"
-    ;; 書きが空か、全部が今の行そのもの(同一性)なら、この表のまま返す(新しい表を作らない)。
+    "A new Table with the sequence of writes applied (this Table is unchanged). If the same key is written twice in the sequence, the later one wins."
+    ;; If the writes are empty, or every write is identical (by identity) to the current row, return this table as is (do not build a new table).
     (when (all (gfor write writes (is (.row self write.key) write.value)))
       (return self))
-    ;; 小さな表は書きの列を写しへ直に当てる(鍵 → 行の中間の dict を組まない — _with-pending の小さな表の道と同じ答え)。
+    ;; For a small table, apply the writes directly to the copy (do not build an intermediate key -> row dict; same result as the small-table path of _with-pending).
     (when (and (< (len self._base) MIN-DELTA) (not self._delta) (not self._removed))
       (setv written (dict self._base))
       (for [write writes]
@@ -149,33 +149,33 @@
   (defn #^ str __repr__ [self]
     (.format "Table(size={})" self._size))
 
-  ;; 真偽と長さの読みを断る(#2708 の I0b)— この 2 つが無いと Python は表を常に真と読み、`(not table)` は
-  ;; 空の表でも偽になる(空かどうかの早い戻りが黙って効かない)。断って、見落としを例外で見つける。読むのは size。
+  ;; Refuse truthiness and length reads (I0b of #2708). Without these two, Python always reads a table as true, and `(not table)` is
+  ;; false even for an empty table (an early return on emptiness silently has no effect). Refusing finds such oversights as exceptions. Read size instead.
   (defn #^ bool __bool__ [self]
-    "真偽で読ませない(上の註)。空かどうかは (= (.size t) 0) / (> (.size t) 0) で読む。"
+    "Refuse to be read as a boolean (see the comment above). Check emptiness with (= (.size t) 0) / (> (.size t) 0)."
     (raise (TypeError TABLE-TRUTH-REFUSAL)))
 
   (defn #^ int __len__ [self]
-    "len で数えさせない(上の註)。行の数は (.size t) で読む。"
+    "Refuse to be counted with len (see the comment above). Read the row count with (.size t)."
     (raise (TypeError TABLE-LEN-REFUSAL)))
 
   (defn #^ bool __eq__ [self #^ object other]
-    "行の中身で比べる(鍵の集合が同じで、鍵ごとの行が等しい)— 表は値なので、写しと元の表は中身が同じなら等しい(基と差分の分け方は
-     問わない)。表を欄に持つ凍った記録の等しさ(畳みの前後の cache の比べ)のため。"
-    ;; 同じ表は中身を読まずに等しい(書きの無い拍で前後の欄が同じ object のまま — 比べを O(1) に)。
+    "Compare by row contents (the same set of keys, and equal rows per key). A table is a value, so a copy and the original are equal if their contents are the same (how the content is split
+     between base and delta does not matter). For the equality of frozen records that hold a table in a field (comparing the cache before and after a fold)."
+    ;; The same table is equal without reading its contents (on a tick with no writes the fields before and after stay the same object, making the comparison O(1)).
     (when (is self other)
       (return True))
-    ;; 写像との比べは黙って偽にせず断る(Table は写像ではない — 行の中身を比べたいなら dict(zip(keys, rows)) などへ直して比べる・card E0)。
+    ;; Refuse a comparison with a mapping instead of silently returning false (a Table is not a mapping; to compare row contents, convert with something like dict(zip(keys, rows)); card E0).
     (when (isinstance other Mapping)
       (raise (TypeError TABLE-MAPPING-EQ-REFUSAL)))
     (when (not (isinstance other (type self)))
       (return False))
-    ;; 基を分け合う 2 つの表(with-writes は差分だけを写すので、差分が基の 1/COMPACT-RATIO を越えて基を作り直すまで同じ基を指す)は、基の行が
-    ;; どちらも同じ物 — 鍵の集合も行も違い得るのは、どちらかの差分か消した鍵に在る鍵だけ。その鍵だけ比べて足りる(行の数に比例せず、書きの数に
-    ;; 比例する — 1 拍に数件書く表の拍ごとの比べ。agora の画面の盤の写しの比べが card 2,088 枚の全行を読んでいた)。
-    ;; 行は同一性を先に見て、違う object だけ値で比べる(changed-keys と同じ — 片方の差分を写して書き足した表は、写した行が同じ object)。
-    ;; 値だけで比べると、鍵の集合を回る順(文字列の hash の乱数で process ごとに変わる)で読む行の数が変わった。
-    ;; 同じ系譜の表(一方が他方の子孫 — 頭の註)は、2 つの間に書いた鍵だけを比べて足りる(書きの数に比例する)。
+    ;; Two tables that share a base (with-writes copies only the delta, so they point at the same base until the delta exceeds 1/COMPACT-RATIO of the base and the base is rebuilt) have
+    ;; identical base rows. The keys whose presence or rows can differ are only those in either delta or removed keys. Comparing only those keys is enough (cost is proportional to the number of writes, not rows;
+    ;; this is the per-tick comparison of a table that gets a few writes per tick. Comparing copies of the board in agora's screen used to read all rows of 2,088 cards).
+    ;; Rows are checked by identity first, and only different objects are compared by value (same as changed-keys; for a table made by copying one side's delta and adding writes, the copied rows are the same object).
+    ;; Comparing by value alone made the number of rows read vary with the order of iterating the key set (which changes per process because of string hash randomization).
+    ;; Tables in the same lineage (one is a descendant of the other; see the header comment) only need the keys written between the two to be compared (proportional to the number of writes).
     (setv span (_line-span self other))
     (when (is-not span None)
       (return (and (= self._size other._size)
@@ -192,13 +192,13 @@
          (all (gfor #(key value) (zip (.keys self) (.rows self)) (= (.row other key) value)))))
 
   (defn #^ (get tuple #(str ...)) changed-keys [self #^ "Table[V]" other]
-    "行が違う鍵(片方の表にだけ在る鍵を含む・鍵の昇順)— 前に読み手へ渡した表と今の表の間で変わった行の鍵だけを読み手へ名乗るため(agora の
-     画面が盤の変わった card の鍵を合図に載せる)。読む道は __eq__ と同じ: 同じ表は行を読まず、基を分け合う 2 つの表は
-     差分と消した鍵の行だけを比べ(行の数に比例せず、書きの数に比例する)、ほかは両方の全部の鍵を比べる。行は同一性を先に見て、違う object
-     だけ値で比べる(値の同じ行を書き直した鍵は名乗らない — __eq__ が等しいと読む表どうしは空)。"
+    "The keys whose rows differ (including keys present in only one table; in ascending key order). This reports to the reader only the keys of rows that changed between the table previously handed to it and the current one (agora's
+     screen puts the keys of changed board cards into its signal). The read path is the same as __eq__: the same table reads no rows, two tables sharing a base compare only the rows of
+     the delta and removed keys (proportional to the number of writes, not rows), and otherwise all keys of both are compared. Rows are checked by identity first, and only different objects
+     are compared by value (a key whose row was rewritten with an equal value is not reported; for tables that __eq__ reads as equal, the result is empty)."
     (when (is self other)
       (return #()))
-    ;; 同じ系譜の表は 2 つの間に書いた鍵だけ(頭の註 — 差分の層の全部を読まない)。
+    ;; For tables in the same lineage, only the keys written between the two (see the header comment; does not read the whole delta layer).
     (setv span (_line-span self other))
     (setv candidates (cond (is-not span None) span
                            (is self._base other._base)
@@ -210,19 +210,19 @@
                          :if (not (or (is mine theirs) (= mine theirs)))
                          key))))
 
-  ;; 中身で比べる表は辞書の鍵にしない(書き換えない表でも、比べに全行を読む)— __eq__ だけを持つ class の __hash__ は Python が None にする。
+  ;; A table compared by contents is not made a dictionary key (even though it is immutable, comparing reads all rows). Python sets __hash__ to None for a class that defines only __eq__.
 
   (defn #^ (get tuple #((get type "Table[V]") (get tuple #((get dict #(str V)) (get dict #(str V)) (get frozenset str))))) __reduce__ [self]
-    "写し(copy.copy・copy.deepcopy)と pickle のため — 欄の書きを断る表を、作る口(__init__)を通して作り直す。"
+    "For copying (copy.copy, copy.deepcopy) and pickle: rebuild a table that refuses field writes through the constructor (__init__)."
     #(Table #(self._base self._delta self._removed)))
 
   (defn #^ None __setattr__ [self #^ str name #^ object value]
-    (raise (AttributeError (.format "Table は変えられない(欄 {!r} を書こうとした)" name)))))
+    (raise (AttributeError (.format "Table cannot be modified (tried to write field {!r})" name)))))
 
 
 (defn #^ (get Table V) _base-only-table [#^ (get dict #(str V)) base]
-  "差分の層を持たない表(基だけ)を、行の数を集合の演算で数え直さずに作るため — 小さな表の書きの道(行の数 = 基の行の数)。
-   base はこの module の中で作った写しだけを受ける(作った後に書き換えない)。"
+  "Builds a table without a delta layer (base only) without recounting rows via set operations. This is the write path for small tables (row count = number of base rows).
+   base accepts only a copy made inside this module (it is never modified after being built)."
   (setv table (object.__new__ Table))
   (object.__setattr__ table "_base" base)
   (object.__setattr__ table "_delta" _NO-DELTA)
@@ -235,10 +235,10 @@
 
 
 (defn #^ (get Table V) _on-line [#^ (get Table V) parent #^ (get Table V) child #^ (get tuple #(str ...)) keys]
-  "書いて作ったばかりの子の表 child を、親 parent の系譜へ載せるため(頭の註)— 親がまだ子を持たず(親の位置が記録の末尾)、記録が
-   子の行の数と MIN-DELTA の大きい方を越えない時だけ(系譜の記録は表 1 つ分を越えて育たない)、書いた鍵 keys を記録へ足して載せる。載せない子は作った時の新しい系譜のまま。
-   child はこの module の中で作ったばかりの表だけを受ける(まだ誰にも渡していない)。答えは child。
-   系譜を持たない親(初めての子)には、ここで系譜を作る(親は位置 0 のまま — 作った時の新しい系譜と同じ)。"
+  "Attaches the child table just made by a write to the parent's lineage (see the header comment). Only when the parent has no child yet (the parent's position is the end of the record) and the record
+   does not exceed the larger of the child's row count and MIN-DELTA (a lineage record never grows beyond one table's worth), the written keys are appended to the record and the child is attached. A child that is not attached keeps the new lineage it was created with.
+   child accepts only a table just made inside this module (not yet handed to anyone). Returns child.
+   For a parent without a lineage (its first child), the lineage is created here (the parent stays at position 0, the same as a new lineage at creation)."
   (setv line parent._line)
   (when (is line None)
     (with [_LINE-BIRTH]
@@ -257,8 +257,8 @@
 
 
 (defn #^ (| (get frozenset str) None) _line-span [#^ (get Table V) left #^ (get Table V) right]
-  "同じ系譜の 2 つの表の間で書いた鍵の集合(違い得る鍵の全部 — 頭の註)を答えるため。系譜が違えば None(呼び手は前の道で比べる)。
-   記録は足すだけなので、2 つの位置の間の項は 2 つの表を作った時から変わらない。系譜を持たない表(子を作っていない — 系譜の誰の子でもない)も None。"
+  "Answers the set of keys written between two tables in the same lineage (all keys that can differ; see the header comment). None if the lineages differ (the caller compares by the older path).
+   The record is only appended to, so the entries between the two positions have not changed since the two tables were made. None also for a table without a lineage (it has made no child and is nobody's child in a lineage)."
   (when (or (is left._line None) (is-not left._line right._line))
     (return None))
   (setv low (min left._at right._at)
@@ -268,15 +268,15 @@
 
 
 (defn #^ (get Table V) _with-pending [#^ (get Table V) table #^ (get dict #(str (| V None))) pending]
-  "鍵 → 行(None は行を消す)の書きを 1 度に当てた新しい Table(table も pending も変わらない)— Table.with-writes と TableDraft.freeze が
-   通る 1 点(この module の中だけ — 写像を受け渡す口を公開しない)。書き 1 件ごとに TableWrite を組んで Hy の繰り返しで当てると、
-   下書きの freeze(数万件の書き)が dict の写しの約 4 倍重かったので、書きを dict の一括の操作(内包・集合の
-   差と和・| の合わせ)で当てる。"
-  ;; 全部が今の行そのもの(同一性・消す書きは行が無い鍵)なら、表のまま返す。
+  "A new Table with writes of key -> row (None deletes the row) applied all at once (neither table nor pending changes). This is the single point
+   that Table.with-writes and TableDraft.freeze pass through (internal to this module; it does not expose an entry point that passes mappings around). Building a TableWrite per write and applying it in a Hy loop
+   made the draft's freeze (tens of thousands of writes) about 4 times heavier than copying a dict, so writes are applied with bulk dict operations (comprehensions, set
+   difference and union, and | merging)."
+  ;; If every write is identical to the current row (by identity; a delete write is for a key with no row), return the table as is.
   (when (all (gfor #(key value) (.items pending) (is (.row table key) value)))
     (return table))
-  ;; 小さな表(差分の層を持たない・基が MIN-DELTA 行未満)は基を写して書く — 差分の層の費用の方が写しより重い(頭の註)。
-  ;; 書きは少ない(1 拍に数件)ので、内包と集合の演算を組まずに写しへ 1 件ずつ当てる。
+  ;; A small table (no delta layer, base under MIN-DELTA rows) copies the base and writes to it; the cost of a delta layer is higher than the copy (see the header comment).
+  ;; There are few writes (a few per tick), so apply them to the copy one at a time without building comprehensions and set operations.
   (when (and (< (len table._base) MIN-DELTA) (not table._delta) (not table._removed))
     (setv written (dict table._base))
     (for [#(key value) (.items pending)]
@@ -288,7 +288,7 @@
         drops (frozenset (gfor #(key value) (.items pending) :if (is value None) key))
         delta (| (dfor #(key value) (.items table._delta) :if (not-in key drops) key value) puts)
         removed (| (- table._removed (.keys puts)) (& drops (.keys table._base))))
-  ;; 子は親の系譜へ載る(基を作り直した子も — 系譜は基を問わず、2 つの表の間の書きの鍵だけを持つ)。
+  ;; The child joins the parent's lineage (including a child that rebuilt the base; a lineage holds only the keys written between two tables, regardless of the base).
   (_on-line table
             (if (> (+ (len delta) (len removed)) (max MIN-DELTA (// (len table._base) COMPACT-RATIO)))
                 (Table (| (dfor #(key value) (.items table._base) :if (not-in key removed) key value) delta) _NO-DELTA _NO-REMOVED)
@@ -297,20 +297,20 @@
 
 
 (defn #^ (get Table V) table-of [#^ (get tuple #((get TableWrite V) ...)) rows]
-  "行の列から Table を作る(value = None の行は入れない)。"
+  "Builds a Table from a sequence of rows (rows with value = None are not included)."
   (Table (dfor write rows :if (is-not write.value None) write.key write.value) _NO-DELTA _NO-REMOVED))
 
 
-;;; 下書き(TableDraft)— 1 拍の中で書いた行を同じ拍の中で読み直す書き手のための物。
+;;; Draft (TableDraft): for a writer that rereads, within the same tick, rows it wrote in that tick.
 ;;;
-;;; 何のためか: 畳み(agora の画面の投影の作業場)は行を 1 つ書くたびに、同じ拍の中でその行を読み直す。
-;;;   with-writes を 1 件ずつ当てると、1 件ごとに差分(最大で基の 1/COMPACT-RATIO)を写すので、一覧の拍(数万件の書き)で
-;;;   写しが数億回になる。下書きは書きを手元に貯め(1 件 O(1))、読みは下書き → 元の表の 2 回引き、拍の終わりに freeze が
-;;;   with-writes を 1 回だけ当てて新しい Table を返す。
-;;; 下書きは書き換える物なので、作った書き手の外へ出さない(外へ渡すのは freeze の答えの Table)。元の表は下書きの書きで変わらない。
+;;; Why: the fold (the projection workspace of agora's screen) rereads each row within the same tick every time it writes one.
+;;;   Applying with-writes one write at a time copies the delta (up to 1/COMPACT-RATIO of the base) for every write, so on a listing tick (tens of thousands of writes)
+;;;   that comes to hundreds of millions of copies. A draft accumulates writes locally (O(1) per write), reads look up the draft first and then the original table, and at the end of the tick freeze applies
+;;;   with-writes just once and returns a new Table.
+;;; A draft is mutable, so it is not passed outside the writer that made it (what is handed out is the Table that freeze returns). The original table is not changed by the draft's writes.
 
 (defclass TableDraft [(get Generic V)]
-  "Table への書きの下書き(上の註)。作るのは draft-of。引くのは row・keys・rows、書きは put・remove、拍の終わりに freeze。"
+  "A draft of writes to a Table (see the comment above). Built by draft-of. Read with row, keys, rows; written with put, remove; freeze at the end of the tick."
   (setv __slots__ #("_table" "_writes"))
   (#^ (get Table V) _table)
   (#^ (get dict #(str (| V None))) _writes)
@@ -320,45 +320,45 @@
           self._writes {}))
 
   (defn #^ (| V None) row [self #^ str key]
-    "鍵 key の行(この下書きの書きが先・無ければ None)。"
+    "The row at key (this draft's writes take precedence; None if absent)."
     (if (in key self._writes)
         (get self._writes key)
         (.row self._table key)))
 
   (defn #^ (get tuple #(str ...)) keys [self]
-    "鍵の列(この下書きの書きを当てた後・並びは決めない)。"
+    "The keys (after applying this draft's writes; the order is unspecified)."
     (+ (tuple (gfor key (.keys self._table) :if (not-in key self._writes) key))
        (tuple (gfor #(key value) (.items self._writes) :if (is-not value None) key))))
 
   (defn #^ (get tuple #(V ...)) rows [self]
-    "行の値の列(この下書きの書きを当てた後・並びは決めない — 鍵の列 keys と同じ並び)。"
+    "The row values (after applying this draft's writes; the order is unspecified, but it is the same as keys)."
     (+ (tuple (gfor #(key value) (zip (.keys self._table) (.rows self._table)) :if (not-in key self._writes) value))
        (tuple (gfor value (.values self._writes) :if (is-not value None) value))))
 
   (defn #^ None put [self #^ str key #^ V value]
-    "鍵 key の行を value にする。"
+    "Set the row at key to value."
     (setv (get self._writes key) value))
 
   (defn #^ None remove [self #^ str key]
-    "鍵 key の行を消す(無い鍵でもよい)。"
+    "Delete the row at key (the key may be absent)."
     (setv (get self._writes key) None))
 
   (defn #^ (get Table V) freeze [self]
-    "書きを当てた新しい Table(書きが無ければ元の表そのもの)。何度呼んでもよい — 下書きも元の表も変わらない。"
+    "A new Table with the writes applied (the original table itself if there are no writes). May be called any number of times; neither the draft nor the original table changes."
     (if self._writes
         (_with-pending self._table self._writes)
         self._table))
 
   (defn #^ int size [self]
-    "行の数(この下書きの書きを当てた後)— 下書きの空かどうかを真偽でなく数で読むため。"
+    "The number of rows (after applying this draft's writes), so that the emptiness of a draft is read by count rather than truthiness."
     (len (.keys self)))
 
   (defn #^ bool __bool__ [self]
-    "真偽で読ませない(Table と同じ — 空かどうかは (= (.size d) 0))。"
+    "Refuse to be read as a boolean (same as Table; check emptiness with (= (.size d) 0))."
     (raise (TypeError TABLE-TRUTH-REFUSAL)))
 
   (defn #^ int __len__ [self]
-    "len で数えさせない(Table と同じ — 行の数は (.size d))。"
+    "Refuse to be counted with len (same as Table; the row count is (.size d))."
     (raise (TypeError TABLE-LEN-REFUSAL)))
 
   (defn #^ str __repr__ [self]
@@ -366,5 +366,5 @@
 
 
 (defn #^ (get TableDraft V) draft-of [#^ (get Table V) table]
-  "表 table への書きの下書きを作る(元の表は変わらない)。"
+  "Makes a draft of writes to the table (the original table is unchanged)."
   (TableDraft table))

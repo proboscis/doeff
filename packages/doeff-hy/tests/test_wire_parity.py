@@ -1,14 +1,14 @@
-"""defwire の全型を自前の解き手と pydantic の解き手で照らす検(設計の記録の節 7)。
+"""A test that compares every defwire type with the home-grown decoder and the pydantic decoder (section 7 of the design record).
 
-確かめること:
+What it checks:
 
-1. doeff の package(doeff-hy・doeff-cluster・doeff-core-effects・doeff-codex)で定義した defwire の型を全部組み、型ごとに作った
-   入力(正しい形・欄の種類の違い・欄の欠け・知らない欄・Python の欄の名・定義の外の綴り・配列の長さの ±1・入れ子の 2 階層まで・文字列
-   そのものの崩し)を両方の解き手に通して、受ける・断る・出来た値・書いた JSON・JSON Schema が一致する事(不一致 0 — 弱める側も 0)。
-2. 検の型(wire_codec_types.hy — 語彙の型を 1 つずつ持つ型・語彙の外の型)でも同じく一致し、組めないのは語彙の外の型だけである事。
-3. 照らしが見つけた差の直し: 配列と object の入れ子の深さの上限(pydantic と同じ 200 階層)を、文字列からも値からも守る事。
+1. Build every defwire type defined in doeff packages (doeff-hy, doeff-cluster, doeff-core-effects, doeff-codex), pass inputs made per type
+   (a correct shape, a different field kind, a missing field, an unknown field, a Python field name, a spelling outside the definition, array length ±1, nesting down to 2 levels, corrupted string
+   text itself) through both decoders, and check that accept / refuse, the produced value, the written JSON, and the JSON Schema match (0 mismatches — 0 on the weakening side too).
+2. The test types (wire_codec_types.hy — types with one vocabulary type each, and types outside the vocabulary) also match, and only the types outside the vocabulary cannot be built.
+3. Fixes for differences the comparison found: the nesting depth limit for arrays and objects (200 levels, same as pydantic) is enforced from both strings and values.
 
-agora-controllers の型は agora-controllers の検が同じ道具(doeff_hy._wire_parity)で照らす。
+The agora-controllers types are compared by agora-controllers' tests with the same tool (doeff_hy._wire_parity).
 """
 
 import importlib
@@ -16,7 +16,7 @@ import json
 import sys
 from pathlib import Path
 
-import doeff_hy  # noqa: F401  # Hy の import hook を有効にする
+import doeff_hy  # noqa: F401  # enable the Hy import hook
 from doeff_hy import _wire_parity as wire_parity
 from doeff_hy._json_value import OpaqueJson
 from doeff_hy._wire_codec import codec_of
@@ -26,10 +26,10 @@ TESTS_DIR = Path(__file__).resolve().parent
 if str(TESTS_DIR) not in sys.path:
     sys.path.insert(0, str(TESTS_DIR))
 
-#: defwire の型を定義している doeff の package(packages/*/src の grep で数えた所 — 増えたらここに足す)。
+#: The doeff packages that define defwire types (counted by grep over packages/*/src — add here when they grow).
 DOEFF_PACKAGES = ("doeff_hy", "doeff_cluster", "doeff_core_effects", "doeff_codex")
 
-#: 検の型のうち、語彙の外として木を組む時に断る型(設計の記録の節 2「語彙の外」)。
+#: Among the test types, those refused when the tree is built because they are outside the vocabulary (section 2 "outside the vocabulary" of the design record).
 OUT_OF_VOCABULARY = {
     "wire_codec_types.HasAnnotated",
     "wire_codec_types.HasBareList",
@@ -47,7 +47,7 @@ OUT_OF_VOCABULARY = {
 def test_every_doeff_defwire_type_reads_and_writes_as_pydantic_does() -> None:
     types, failures = wire_parity.wire_types_in(DOEFF_PACKAGES)
     assert failures == {}, failures
-    assert len(types) >= 100, len(types)  # 2026-10-27 に 101 型 — 集めが空振りしていない事
+    assert len(types) >= 100, len(types)  # 101 types on 2026-10-27 — the collection is not coming up empty
     report = wire_parity.compare_types(types)
     assert report.mismatches == (), wire_parity.summary(report)
     assert report.unbuildable == {}, report.unbuildable
@@ -63,9 +63,9 @@ def test_the_vocabulary_types_read_and_write_as_pydantic_does() -> None:
     report = wire_parity.compare_types(types)
     assert report.mismatches == (), wire_parity.summary(report)
     assert set(report.unbuildable) == OUT_OF_VOCABULARY, report.unbuildable
-    # 何でも受ける腕の混ざった union を持つ型は受けた値の比べから外す(規則 4 は test_wire_codec.py の単体の検が確かめる)。
+    # A type holding a union with an accept-anything arm is excluded from the accepted-value comparison (rule 4 is checked by the unit tests in test_wire_codec.py).
     assert report.catch_all_types == ("wire_codec_types.Mixed",), report.catch_all_types
-    # JSON Schema で違うのは節 3b の表の既定値(入れ子の defwire・OpaqueJson)だけ。
+    # The only difference in JSON Schema is the default values of the table in section 3b (nested defwire, OpaqueJson).
     assert all(
         line.split(":")[0].rsplit("/", 1)[1] in {"opaque", "note", "oa", "leaf", "leaves", "spec"}
         for line in report.schema_default_differences
@@ -73,7 +73,7 @@ def test_the_vocabulary_types_read_and_write_as_pydantic_does() -> None:
 
 
 def test_a_refusal_that_differs_is_reported_with_its_side() -> None:
-    # 道具そのものの検: pydantic が受けて自前が断る形(または逆)を不一致として返し、弱める側かを印す。
+    # Test of the tool itself: return a form that pydantic accepts and the home-grown decoder refuses (or vice versa) as a mismatch, and mark whether it is on the weakening side.
     types = importlib.import_module("wire_codec_types")
     verdict = wire_parity.compare_input(types.Note, "same", '{"noteText":"a"}', values=True)
     assert verdict.accepted, verdict
@@ -88,8 +88,8 @@ def _nested(depth: int) -> str:
 
 
 def test_nesting_deeper_than_pydantic_reads_is_invalid_json_from_text_and_from_values() -> None:
-    # pydantic(jiter)は配列と object を 200 階層まで読み、201 階層目を json_invalid で断る。json.loads は 1000 階層ほどまで読むので、
-    # 上限を置かないと自前の解き手が受ける物が広がる(照らしの test が見つけた差)。
+    # pydantic (jiter) reads arrays and objects down to 200 levels and refuses the 201st level with json_invalid. json.loads reads down to about 1000 levels,
+    # so without a limit, what the home-grown decoder accepts would widen (a difference the comparison test found).
     anything = codec_of(object)
     assert not isinstance(anything.decode_json(_nested(200)), Malformed)
     for text in (_nested(201), "[" * 3000 + "]" * 3000, '{"a":' * 201 + "1" + "}" * 201):
@@ -99,7 +99,7 @@ def test_nesting_deeper_than_pydantic_reads_is_invalid_json_from_text_and_from_v
     assert not isinstance(anything.decode(json.loads(_nested(200))), Malformed)
     refused_value = anything.decode(json.loads(_nested(201)))
     assert isinstance(refused_value, Malformed), refused_value
-    # OpaqueJson の中も同じ数え方(値の中の OpaqueJson は外の入れ子の深さを引き継ぐ)。
+    # OpaqueJson is counted the same way (an OpaqueJson inside a value inherits the nesting depth of the outside).
     inner = OpaqueJson.from_text(_nested(200))
     assert isinstance(anything.decode([inner]), Malformed)
     assert not isinstance(anything.decode([OpaqueJson.from_text(_nested(199))]), Malformed)

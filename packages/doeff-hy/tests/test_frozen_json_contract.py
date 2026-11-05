@@ -1,10 +1,10 @@
-"""契約 `(: x FrozenJson)` と型付き束縛 `(<- x FrozenJson e)` が実行時に通ること。
+"""The contract `(: x FrozenJson)` and the typed binding `(<- x FrozenJson e)` pass at runtime.
 
-契約と束縛は書いた型を `doeff_hy._type_forms.runtime_type_form` で isinstance に渡せる形へ写すが、写すのは字面の総称型
-(`(get …)`・`(| …)`)だけで、名(型の別名)はそのまま isinstance に渡る。doeff_hy._frozen の実行時の名 FrozenJson が
-`FrozenMap[object] | tuple[object, ...] | …`(総称型を含む和)だと、どの値でも
-`TypeError: isinstance() argument 2 cannot be a parameterized generic` になった(2026-10-11 agora の受付が 500 を返した —
-使い手は字面に展開して避けていた)。実行時の名は外側の型の和にする(実行時に確かめるのは外側の型だけ — #1790 の決め)。
+The contract and binding map the written type with `doeff_hy._type_forms.runtime_type_form` to a form that can be passed to isinstance, but only literal generic types
+(`(get ...)`, `(| ...)`) are mapped; a name (a type alias) is passed to isinstance as is. If the runtime name FrozenJson of doeff_hy._frozen is
+a union that contains generic types such as `FrozenMap[object] | tuple[object, ...] | ...`, every value gave
+`TypeError: isinstance() argument 2 cannot be a parameterized generic` (2026-10-11: the agora reception returned 500 --
+users avoided it by expanding to the literal form). The runtime name is made a union of outer types (only the outer type is checked at runtime -- the decision of #1790).
 """
 
 from __future__ import annotations
@@ -37,7 +37,7 @@ SOURCE = """\
 
 @pytest.fixture(scope="module")
 def mod(tmp_path_factory: pytest.TempPathFactory) -> ModuleType:
-    import doeff_hy  # noqa: F401 - Hy の import hook を登録する
+    import doeff_hy  # noqa: F401 - register the Hy import hook
 
     root: Path = tmp_path_factory.mktemp("doeff_hy_frozen_json_contract")
     (root / "frozen_json_contract_probe.hy").write_text(SOURCE, encoding="utf-8")
@@ -52,14 +52,14 @@ def mod(tmp_path_factory: pytest.TempPathFactory) -> ModuleType:
 
 
 def _run(program: object) -> object:
-    """読み込んだ Hy の module の Program を走らせる(module の属性は型の上では object なので Program に絞る)。"""
+    """Run the Program of a loaded Hy module (a module attribute is object in the types, so narrow it to Program)."""
     from doeff import Program, run
 
     match program:
         case Program():
             return run(program)
         case _:
-            raise TypeError(f"Program でない値を走らせようとした: {program!r}")
+            raise TypeError(f"tried to run a value that is not a Program: {program!r}")
 
 
 def test_a_contract_naming_frozen_json_accepts_every_json_value(mod: ModuleType) -> None:
@@ -79,14 +79,14 @@ def test_a_typed_bind_and_a_mapping_contract_of_frozen_json_pass(mod: ModuleType
 
 
 def test_a_contract_naming_frozen_json_still_refuses_values_outside_frozen_json(mod: ModuleType) -> None:
-    # 凍らせていない写像と列は契約の断り(TypeError でなく、名指しの AssertionError)。
+    # Mappings and sequences that are not frozen are rejected by the contract (an AssertionError that names them, not a TypeError).
     for value in ({"a": 1}, [1], object()):
         with pytest.raises(AssertionError, match="expected FrozenJson"):
             _run(mod.accepted(value))
 
 
 def test_the_runtime_name_still_parameterizes_a_frozen_map_field() -> None:
-    # 実行時の名は欄の注記 `(get FrozenMap FrozenJson)` のための名(#4257)— 外側の型の和でも型引数に置ける。
+    # The runtime name is a name for the field annotation `(get FrozenMap FrozenJson)` (#4257) -- a union of outer types can still be placed as a type argument.
     from doeff_hy._frozen import FrozenJson, FrozenMap
 
     assert FrozenMap[FrozenJson].__origin__ is FrozenMap

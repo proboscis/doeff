@@ -1,15 +1,14 @@
-"""declarations.hy の公開面の型(型検査のための宣言 — 実行時は declarations.hy を読む・#2324 の子)。
+"""Types for the public surface of declarations.hy (declarations for type checking — at runtime declarations.hy is read; a child of #2324).
 
-declarations.hy は Hy の module なので、pyright は中を読めず、defk / deff / defp / defhandler の :tags・:effects の展開が名指す
-`doeff_hy._declarations.DefinitionTags`・`doeff_hy._declarations.effect_types` が Unknown になる。module の直下の定義では
-型検査の展開が記帳(`setattr(名, '__doeff_…__', …)`)を外すので見えないが、class の中の deff(method)の記帳は class の
-本体に置かれて残り、使う側の method ごとに書き手に直せない reportUnknownMemberType が 1 組(`declarations`・`DefinitionTags`)
-出ていた。ここで型を宣言する。
+declarations.hy is a Hy module, so pyright cannot read inside it, and `doeff_hy._declarations.DefinitionTags` and `doeff_hy._declarations.effect_types`, which the expansion of :tags and :effects of defk / deff / defp / defhandler names, become Unknown. For definitions directly at module level
+this is invisible because the type-checking expansion removes the bookkeeping (`setattr(name, '__doeff_...__', ...)`), but the bookkeeping of a deff (method) inside a class is placed in the class
+body and stays, so a reportUnknownMemberType that the writer could not fix appeared as a pair (`declarations`, `DefinitionTags`) for each method on the user side.
+This declares the types.
 
-- DefinitionTags は frozen の dataclass(context・role・spells)。
-- effect_refusal・effect_types は展開した定義の頭が module の読み込みの時に呼ぶ普通の関数。effect_types は受けた tuple を
-  検めてそのまま返す。
-- 残りの関数は macro の展開の時に呼ぶ(Hy の form を受けて Hy の form を返す)。
+- DefinitionTags is a frozen dataclass (context, role, spells).
+- effect_refusal and effect_types are ordinary functions that the head of the expanded definition calls at module load time. effect_types checks the tuple it receives and
+  returns it as is.
+- The remaining functions are called at macro expansion time (they receive a Hy form and return a Hy form).
 """
 
 from collections.abc import Iterable
@@ -32,7 +31,7 @@ OUTCOME_KEYS: tuple[str, ...]
 
 @dataclass(frozen=True)
 class DefinitionTags:
-    """定義の文脈と役(context = 文脈の名・role = ROLES の 1 つ・spells = 綴る外の形か None・reads = 型へ読む外の形か None)。"""
+    """The context and role of a definition (context = the context name, role = one of ROLES, spells = the outer form to spell out or None, reads = the outer form to read into a type or None)."""
 
     context: str
     role: str

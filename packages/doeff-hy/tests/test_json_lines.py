@@ -1,23 +1,23 @@
-"""JSON Lines を行に割る 1 か所(doeff_hy/_json_lines.hy)の test。
+"""Tests for the single place that splits JSON Lines into lines (doeff_hy/_json_lines.hy).
 
-確かめること:
-- 割るのは改行だけ: JSON の文字列の中の生の U+2028・U+2029・U+0085(str.splitlines が割る字)で行を割らない。空白だけの行は落とす。
-- 読み終えた所は改行で閉じた行の終わり(多 byte の字の途中を切らない)。
+What is checked:
+- Only newlines split: a raw U+2028, U+2029 or U+0085 (characters str.splitlines splits on) inside a JSON string does not split the line. Whitespace-only lines are dropped.
+- The consumed position is the end of a newline-terminated line (it does not cut in the middle of a multi-byte character).
 """
 
 import json
 
-import hy  # noqa: F401  — Hy の module を import する仕掛けを入れる
+import hy  # noqa: F401  — installs the machinery that imports Hy modules
 from doeff_hy._json_lines import jsonl_lines, whole_lines_end
 
 from doeff import run
 
-# JSON の文字列の中に生のまま書かれうる、str.splitlines が割る字(U+2028・U+2029・U+0085)。
+# Characters that can be written raw inside a JSON string and that str.splitlines splits on (U+2028, U+2029, U+0085).
 SEPARATORS = chr(0x2028) + chr(0x2029) + chr(0x85)
 
 
 def test_a_line_separator_inside_a_json_string_does_not_split_the_line() -> None:
-    # 失敗ケース: str.splitlines は JSON の文字列の中の U+2028 などでも割り、正しい JSON の行を JSON でない片にする。
+    # Failure case: str.splitlines also splits at U+2028 etc. inside a JSON string, turning a valid JSON line into non-JSON pieces.
     text = (
         json.dumps({"type": "assistant", "text": "web の本文" + SEPARATORS + "終わり"}, ensure_ascii=False)
         + "\n\n  \n"

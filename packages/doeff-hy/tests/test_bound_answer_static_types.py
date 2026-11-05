@@ -1,15 +1,15 @@
-"""宣言を持つ effect の `<-` の束ねた名の型と、宣言を開かない中継 `Perform` の型。
+"""The type of the name bound by `<-` for an effect with a declaration, and the type of a relay `Perform` that does not open the declaration.
 
-ADR-DOE-CORE-EFFECTS-003: 実行時の `<-` は :absent の答えを Absent に・:failure の答えを Raise に変えて呼び手のスコープで出すので、
-束ねた名には成功と :value の答えだけが来る。型検査の展開(`_doeff_perform`)も同じ型を返す:
+ADR-DOE-CORE-EFFECTS-003: at runtime `<-` turns an :absent answer into Absent and a :failure answer into Raise and emits them in the caller's scope,
+so the bound name receives only success and :value answers. The type-checking expansion (`_doeff_perform`) returns the same type:
 
-- `(<- x (| Hit Empty) (Read …))` — Read の :answer が `Hit | Empty | Missing | Broken` で :absent [Missing]・:failure [Broken] なら、
-  x の型は `Hit | Empty`(注記が答えの全部だった頃は、Missing と Broken が注記に入らず赤になった)。
-- 注記が束ねた名の型より狭ければ赤のまま(検は緩めていない)。
-- 中継 `(<- a (Perform ask))` は宣言を開かないので、答えは宣言の全部(effect の union も受ける)。
-- `on-raise` の展開が import する `_doeff_on_raise` は型が全部分かる(DoExpr の総称の node の型引数が Unknown だと、呼び手の strict が
-  「部分的に不明」の赤になった)。
-- effect の基底の答えは宣言の全部のまま — handler の `typed_resume` は 3 つとも値で答える。
+- `(<- x (| Hit Empty) (Read ...))` — if Read's :answer is `Hit | Empty | Missing | Broken` with :absent [Missing] and :failure [Broken],
+  the type of x is `Hit | Empty` (when the annotation was the whole answer, Missing and Broken did not fit the annotation and were red).
+- If the annotation is narrower than the bound name's type it stays red (the check is not loosened).
+- A relay `(<- a (Perform ask))` does not open the declaration, so its answer is the whole declaration (a union of effects is also accepted).
+- `_doeff_on_raise`, which the `on-raise` expansion imports, has fully known types (when the type argument of the DoExpr generic node was Unknown, the caller's strict reported
+  a "partially unknown" red).
+- The base answer of the effect stays the whole declaration — handler `typed_resume` answers all three with values.
 """
 
 import json
@@ -29,7 +29,7 @@ EFFECTS = """\
 (defclass [(dataclass :frozen True)] Broken [] (#^ str detail))
 
 (defeffect Read
-  "失敗と不在を宣言した読み。"
+  "A read that declares failure and absence."
   {:fields [(: key str)]
    :answer (| Hit Empty Missing Broken)
    :absent [Missing]
@@ -38,13 +38,13 @@ EFFECTS = """\
    :tags {:context "probe" :role "foundation"}})
 
 (defeffect Plain
-  "宣言の無い読み。"
+  "A read with no declaration."
   {:fields [(: key str)]
    :answer (| Hit Broken)
    :tags {:context "probe" :role "foundation"}})
 
 (defeffect Only
-  "失敗しか宣言しない読み(成功の型は Hit)。"
+  "A read that declares only failure (the success type is Hit)."
   {:fields [(: key str)]
    :answer (| Hit Broken)
    :failure [Broken]
@@ -82,7 +82,7 @@ USER = """\
   (if (isinstance got Hit) got.n 0))
 
 (defhandler relay-through
-  "宣言を開かずに出し直す中継の節 — 答えは宣言の全部で、typed_resume に入る。"
+  "A relay clause that re-emits without opening the declaration — the answer is the whole declaration, and it goes into typed_resume."
   {:tags {:context "probe" :role "foundation"}}
   (Read [key]
     (<- answer (Perform effect))
@@ -92,7 +92,7 @@ USER = """\
     (resume answer)))
 
 (defk closes-the-failure [body]
-  {:pre [(: body Program)] :post [(: % "本文の答え")] :tags {:context "probe" :role "program"}}
+  {:pre [(: body Program)] :post [(: % "the body's answer")] :tags {:context "probe" :role "program"}}
   (<- got (on-raise body (Broken d) (len d)))
   got)
 
@@ -118,11 +118,11 @@ def _write(tmp_path: Path) -> Path:
 
 def test_the_stub_of_a_declared_effect_carries_the_bound_answer(tmp_path: Path) -> None:
     lines = stub_of(tmp_path, [tmp_path], _write(tmp_path)).text.splitlines()
-    # 基底の答えは宣言の全部のまま(handler の typed_resume は 3 つとも値で答える)。束ねた名の型は method が持つ。
+    # The base answer stays the whole declaration (handler typed_resume answers all three with values). The type of the bound name is held by the method.
     assert "class Read(_doeff_effect_base[Hit | Empty | Missing | Broken]):" in lines
     assert "    def __iter__(self) -> _doeff_BoundRun[Hit | Empty]:" in lines
     assert "    def __iter__(self) -> _doeff_BoundRun[Hit]:" in lines
-    # 答えの分け方を宣言しない effect は束ねた名の型を変えない(`__iter__` は宣言した 2 つの effect だけ)。
+    # An effect that does not declare how to split answers does not change the bound name's type (`__iter__` exists only on the two declaring effects).
     assert len([line for line in lines if "def __iter__" in line]) == 2
 
 
@@ -137,5 +137,5 @@ def test_a_bind_reads_the_bound_answer_and_a_relay_reads_the_declared_one(tmp_pa
     errors = [(d["line"], d["rule"]) for d in found if d["severity"] == "error"]
     lines = USER.splitlines()
     narrower = [n for n, line in enumerate(lines, start=1) if "(<- got Hit (Read key))" in line or "(<- got (| Hit Empty) (Perform (Read key)))" in line]
-    # 赤は「注記が狭すぎる」2 か所だけ — 束ねた名の型を満たす注記・宣言を持たない effect・中継(effect の union も)は赤にならない。
+    # The reds are only the 2 places where "the annotation is too narrow" — annotations that satisfy the bound name's type, effects without a declaration, and relays (including a union of effects) are not red.
     assert errors == [(n, "reportAssignmentType") for n in narrower], (errors, found)

@@ -1,8 +1,8 @@
-"""deftest の meta の ``:scans`` — そのテストが走査して読む dir か glob の宣言(親 #3873)。
+"""The deftest meta ``:scans`` -- a declaration of the dirs or globs that the test scans and reads (parent #3873).
 
-選びの道具(agora-controllers の land_focus_gate)は file を Hy の reader で読んで ``:scans`` を引き、変えた path が glob に
-当たればそのテストを選ぶ。展開は宣言を pytest の印 ``scans`` として関数に付け、item の記録(#1211)にも印の名を残す。
-形は展開の時に検める: 文字列の tuple 以外は断る(黙って捨てると、宣言したつもりのテストが選ばれない)。
+The selection tool (land_focus_gate in agora-controllers) reads the file with the Hy reader, takes ``:scans``, and selects the test if a changed path matches a glob.
+Expansion attaches the declaration to the function as the pytest marker ``scans`` and leaves the marker name in the item record (#1211) too.
+The shape is checked at expansion time: anything other than a tuple of strings is refused (silently dropping it would leave a test that was meant to be declared unselected).
 """
 
 import importlib
@@ -17,7 +17,7 @@ from doeff_hy._pytest_items import FunctionItem, Mark, decode_records, module_re
 
 @pytest.fixture
 def hy_dir(tmp_path: Path) -> Iterator[Path]:
-    """test module を置いて import できる dir(終わったら import の路と sys.modules から外す)。"""
+    """A dir where a test module can be placed and imported (afterwards removed from the import path and sys.modules)."""
     sys.path.insert(0, str(tmp_path))
     yield tmp_path
     sys.path.remove(str(tmp_path))
@@ -27,14 +27,14 @@ def hy_dir(tmp_path: Path) -> Iterator[Path]:
 
 
 def _imported(root: Path, name: str, source: str) -> object:
-    """source を ``<name>.hy`` に置いて import する。"""
+    """Place source at ``<name>.hy`` and import it."""
     (root / f"{name}.hy").write_text(source)
     importlib.invalidate_caches()
     return importlib.import_module(name)
 
 
 def _marks(function: object, name: str) -> list[pytest.Mark]:
-    """関数に付いた pytest の印のうち、名が name の物。"""
+    """Of the pytest markers attached to the function, those whose name is name."""
     return [mark for mark in getattr(function, "pytestmark", []) if mark.name == name]
 
 
@@ -46,7 +46,7 @@ DECLARED = """
 
 
 def test_the_scans_are_a_pytest_mark_with_the_globs_and_are_recorded_by_name(hy_dir: Path) -> None:
-    """``:scans`` の glob は印 ``scans`` の引数に同じ順で載り、item の記録には印の名が残る。"""
+    """The globs of ``:scans`` are carried in the same order as arguments of the ``scans`` marker, and the marker name remains in the item record."""
     module = _imported(hy_dir, "test_scans_declared", DECLARED)
     (scans,) = _marks(module.test_scanning, "scans")
     assert scans.args == ("a/*.txt", "b/**/*.hy")
@@ -55,7 +55,7 @@ def test_the_scans_are_a_pytest_mark_with_the_globs_and_are_recorded_by_name(hy_
 
 
 def test_a_test_without_scans_has_no_scans_mark(hy_dir: Path) -> None:
-    """``:scans`` の無い deftest は今までどおり(印を持たない)。"""
+    """A deftest without ``:scans`` is as before (has no marker)."""
     module = _imported(hy_dir, "test_scans_plain", DECLARED)
     assert _marks(module.test_plain, "scans") == []
 
@@ -66,12 +66,12 @@ def test_a_test_without_scans_has_no_scans_mark(hy_dir: Path) -> None:
     ids=["one-string", "list", "not-a-string", "empty", "empty-string"],
 )
 def test_scans_that_are_not_a_tuple_of_globs_are_refused_at_expansion(hy_dir: Path, written: str) -> None:
-    """文字列 1 つ・list・文字列でない要素・空の tuple・空の文字列は、展開の時に鍵の名と受ける形を名指して断る。"""
+    """A single string, a list, a non-string element, an empty tuple and an empty string are refused at expansion time, naming the key and the accepted shape."""
     source = f"(require doeff-hy.macros [deftest])\n(deftest test-bad {{:scans {written}}} (assert True))\n"
-    with pytest.raises(hy.errors.HyMacroExpansionError, match=r":scans.*文字列の tuple"):
+    with pytest.raises(hy.errors.HyMacroExpansionError, match=r":scans.*tuple of strings"):
         _imported(hy_dir, f"test_scans_bad_{abs(hash(written))}", source)
 
 
 def test_the_scans_mark_is_registered_by_the_deftest_plugin(pytestconfig: pytest.Config) -> None:
-    """印 ``scans`` は deftest を集める plugin(doeff-adr)が登録する — どの repo でも知らない印の警告を出さない。"""
+    """The ``scans`` marker is registered by the plugin that collects deftests (doeff-adr) -- no unknown-marker warning in any repo."""
     assert any(line.startswith("scans(") for line in pytestconfig.getini("markers"))
