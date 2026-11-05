@@ -53,7 +53,13 @@
 # atlas と eos は Longhorn の disk の欄を持たない — 根の disk の Longhorn の disk(/var/lib/longhorn)は写しを受けず(allowScheduling
 # false)、atlas の Longhorn の Node は根の外の disk(/mnt/nvme・/mnt/bulk)も持つ。この宣言から Node を書くと、Flux の server-side apply
 # が根の外の disk の欄を引き取って消しうるので、Node は導かない。
-overProvisioningPercent: 200
+# 300 の訳(2026-11-05 の zeus の測り): zeus の札 workspace の disk(232 GB)は、名目の線(200% で 464 GB)が実の空きの線より先に
+# 尽き(名目 462 GB を置いた時に実の空きは 96 GB)、外れた 2 GiB の volume を使い終わりから中央 0.44 時間で冷やし、次のターンで backup から
+# 戻していた(戻す書き 1 日 約 264 GB — 中身の大きさは外れた volume の実の使用の中央 250 MB)。300% にすると、温かく置く本数は
+# 実の空きの線(storage-minimal-available-percentage 25%)で止まるまで増える。導く機体の予約は上限を前と同じに保つ。導かない disk
+# (atlas の bulk-longhorn・nvme-longhorn、helios、zeus の default と hot-ssd-sata)は上限が 1.5 倍になる — 予約で戻すかは
+# workspace-volumes/README.md の節「置き場の数え」。
+overProvisioningPercent: 300
 
 # 機体の形(shapes — 機体の行が `<<:` で受ける雛形。derive.py は nodes だけを読む)。
 # k3s の VPS の根の disk(vda 100 GiB・ext4)。値の出所は 2026-10-21 の実測(node-exporter と du):

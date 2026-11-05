@@ -3,7 +3,7 @@
   "namePrefix": "ws-",
   "nameMaxLength": 40,
   "sizeBytes": 2147483648,
-  "warmHours": 2,
+  "warmHours": 4,
   "spareBytes": 17179869184,
   "keepDays": 7,
   "growBelowPercent": 50,
