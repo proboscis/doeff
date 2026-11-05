@@ -1,30 +1,30 @@
-;;; 計器の断面(MeterSnapshot)を Prometheus の text(exposition format 0.0.4)に描く純関数(#2709)。I/O なし・label なし。
+;;; Pure function that renders a meter snapshot (MeterSnapshot) as Prometheus text (exposition format 0.0.4) (#2709). No I/O, no labels.
 ;;;
-;;; 何のためか: 計器の effect(meter_effects.hy)で数えた断面を、待ち受けの GET /metrics の本文にするため。描き手を使い手ごとに
-;;; 持たないよう、計器の effect の隣に 1 つだけ置く。名の綴り(Prometheus の名)は呼び手が決める(この module は語彙を持たない)。
+;;; Purpose: to turn the snapshot counted by the meter effect (meter_effects.hy) into the body of the listener's GET /metrics. To avoid each user
+;;; keeping its own renderer, exactly one is placed next to the meter effect. The spelling of names (Prometheus names) is decided by the caller (this module has no vocabulary).
 ;;;
-;;; 形(使い手の画面の計器の描き手と同じ — 画面が乗り換えられるように):
-;;;   - 名の昇順で、counter → gauge → 秒の観測 の順。末尾に改行 1 つ(空の断面は改行 1 つだけ)
-;;;   - counter   # TYPE <名>_total counter / <名>_total <値>
-;;;   - gauge     # TYPE <名> gauge / <名> <値>
-;;;   - 秒の観測  # TYPE <名>_seconds summary / <名>_seconds_sum <合計> / <名>_seconds_count <回数>
-;;;   - helps(名 → 説明)に在る名だけ、# TYPE の前に # HELP <描く名> <説明> を置く(説明の \ と改行は escape する)。helps が空なら
-;;;     画面の描き手と 1 byte も違わない
-;;; 値は Python の数の綴りのまま(counter と gauge は float — 1 は 1.0)。
+;;; Shape (the same as the user screen's meter renderer -- so the screen can be switched over):
+;;;   - In ascending name order, counter -> gauge -> seconds observation. One trailing newline (an empty snapshot is just one newline)
+;;;   - counter   # TYPE <name>_total counter / <name>_total <value>
+;;;   - gauge     # TYPE <name> gauge / <name> <value>
+;;;   - seconds observation  # TYPE <name>_seconds summary / <name>_seconds_sum <total> / <name>_seconds_count <count>
+;;;   - Only names present in helps (name -> description) get a # HELP <rendered name> <description> before # TYPE (\ and newlines in the description are escaped). If helps is empty,
+;;;     the output differs from the screen's renderer by not even 1 byte
+;;; Values keep Python's number spelling (counter and gauge are float -- 1 is 1.0).
 (require doeff-hy.macros [defk val])
 (import doeff_hy._frozen [FrozenMap])
 (import doeff_core_effects._meter_effects [MeterSnapshot])
 
-;; GET /metrics の答えの Content-Type(Prometheus の text の版 0.0.4)。
+;; Content-Type of the GET /metrics answer (Prometheus text version 0.0.4).
 (val CONTENT-TYPE "text/plain; version=0.0.4; charset=utf-8")
 
-;; # HELP の説明の escape(\ と改行)。
+;; Escaping of the # HELP description (\ and newline).
 (val _HELP-ESCAPES (str.maketrans {"\\" "\\\\" "\n" "\\n"}))
 
 
 (defk render-prometheus [snapshot helps]
   {:pre [(: snapshot MeterSnapshot) (: helps (get FrozenMap str))] :post [(: % str)] :tags {:context "meter" :role "judgment"}}
-  "計器の断面を GET /metrics の本文(Prometheus の text)にするため(形は頭の註 — 同じ断面と helps は同じ文字列)。"
+  "To turn a meter snapshot into the GET /metrics body (Prometheus text) (shape: see the header comment -- the same snapshot and helps give the same string)."
   (val counters (tuple (gfor name (sorted snapshot.counters)
                              line (+ (if (in name helps)
                                          #((.format "# HELP {}_total {}" name (.translate (get helps name) _HELP-ESCAPES)))

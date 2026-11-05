@@ -1,13 +1,13 @@
-;;; 止めの合図の契約テスト — 同じ効果 StopRequested に答える本物(os-signal-stop-handler)と fake(scripted-stop-handler)が、
-;;; 同じ deftest を通る。解釈器の組み立ては stop_contract_handlers.hy。
+;;; Contract test for stop signals - the real one (os-signal-stop-handler) and the fake (scripted-stop-handler), which answer the same effect StopRequested,
+;;; pass the same deftests. Interpreter assembly is in stop_contract_handlers.hy.
 ;;;
-;;; 合図を起こす手段(SendStop — 本物は process へ本当の signal、fake は RaiseStop)だけが解釈器ごとに違い、読む側の性質を共通の
-;;; deftest で見る:
-;;;   * 合図の無い間 StopRequested は None
-;;;   * 合図の後は理由の文字列(本物の箱と同じ "signal <番号>")
-;;;   * 最初の理由を保つ(2 度目の合図で変わらない)
-;;;   * 外側に state の handler が要る(無ければ session の値の置き場が無く、大きな音で落ちる)
-;;; 本物だけの性質(RaiseStop に答えない)は test_stop_signal.hy。
+;;; Only the means of raising the signal (SendStop - the real one sends a real signal to the process, the fake uses RaiseStop) differs per interpreter, and the reader-side properties are checked by shared
+;;; deftests:
+;;;   * StopRequested is None while there is no signal
+;;;   * after a signal, a reason string (same as the real box: "signal <number>")
+;;;   * the first reason is kept (a second signal does not change it)
+;;;   * a state handler is needed outside (without it there is no place for the session value, and it fails loudly)
+;;; Properties of only the real one (does not answer RaiseStop) are in test_stop_signal.hy.
 (require doeff-hy.macros [defk deftest <-])
 (import signal)
 (import pytest)
@@ -20,7 +20,7 @@
 
 (defk ask-twice []
   {:pre [] :post [(: % tuple)] :tags {:context "stop-signal-test" :role "program"}}
-  "StopRequested を 2 度読む(外側に state の handler が無い反例で走らせる Program)。"
+  "Read StopRequested twice (a Program run against the counterexample with no state handler outside)."
   (<- first (| str None) (StopRequested))
   (<- second (| str None) (StopRequested))
   #(first second))
@@ -30,8 +30,8 @@
   {:interpreters ["os-signal" "scripted"]}
   (<- before (| str None) (StopRequested))
   (<- again (| str None) (StopRequested))
-  (assert (is before None) (.format "合図の前の StopRequested が {!r}" before))
-  (assert (is again None) (.format "合図の前に 2 度読んだ StopRequested が {!r}" again)))
+  (assert (is before None) (.format "StopRequested before the signal was {!r}" before))
+  (assert (is again None) (.format "StopRequested read twice before the signal was {!r}" again)))
 
 
 (deftest test-a-signal-is-read-as-its-reason
@@ -40,8 +40,8 @@
   (<- (SendStop signal.SIGTERM))
   (<- after (| str None) (StopRequested))
   (<- wanted str (signal-reason signal.SIGTERM))
-  (assert (is before None) (.format "合図の前の StopRequested が {!r}" before))
-  (assert (= after wanted) (.format "SIGTERM の後の StopRequested が {!r}(期待 {!r})" after wanted)))
+  (assert (is before None) (.format "StopRequested before the signal was {!r}" before))
+  (assert (= after wanted) (.format "StopRequested after SIGTERM was {!r} (expected {!r})" after wanted)))
 
 
 (deftest test-the-first-reason-is-kept
@@ -52,8 +52,8 @@
   (<- after (| str None) (StopRequested))
   (<- later (| str None) (StopRequested))
   (<- wanted str (signal-reason signal.SIGINT))
-  (assert (= after wanted) (.format "SIGINT・SIGTERM の順の後の StopRequested が {!r}(最初の {!r} を保つ)" after wanted))
-  (assert (= later wanted) (.format "もう一度読んだ StopRequested が {!r}" later)))
+  (assert (= after wanted) (.format "StopRequested after SIGINT then SIGTERM was {!r} (keeps the first, {!r})" after wanted))
+  (assert (= later wanted) (.format "StopRequested read once more was {!r}" later)))
 
 
 (deftest test-a-state-handler-must-be-outside
@@ -63,49 +63,49 @@
     (run (with_handlers [handler] (ask-twice)))))
 
 
-;; --- AwaitStop(止めまで待つ口)-------------------------------------------------------------------
-;; 静かな間に眠る loop が、自分の待ち(表の変化・期限)と AwaitStop を Race して、数秒ごとに起きて StopRequested を問わずに止めに気づく。
-;; 本物と fake が同じ性質を持つ: 既に来た止めにはすぐ答える・待っている間に来た止めで起きる・打ち切った待ちは後の止めを妨げない。
+;; --- AwaitStop (the entry that waits until a stop) -------------------------------------------------------------------
+;; A loop that sleeps during quiet periods races its own wait (table change, deadline) against AwaitStop, and notices a stop every few seconds without asking StopRequested.
+;; The real one and the fake have the same properties: answers immediately to a stop that already came, wakes on a stop that comes while waiting, and a cancelled wait does not hinder later stops.
 
 (defk await-stop-once []
   {:pre [] :post [(: % str)] :tags {:context "stop-signal-test" :role "program"}}
-  "AwaitStop を 1 度待つ(Spawn して Race に渡す task の中身)。"
+  "Wait for AwaitStop once (the body of a task that is Spawned and handed to Race)."
   (<- reason str (AwaitStop))
   reason)
 
 
 (defk quiet-then [value]
   {:pre [(: value str)] :post [(: % str)] :tags {:context "stop-signal-test" :role "program"}}
-  "止めより先に済む別の待ち(静かな loop の自分の待ちの代わり)。"
+  "Another wait that finishes before the stop (stands in for the quiet loop's own wait)."
   value)
 
 
 (deftest test-await-stop-answers-a-stop-already-requested
   {:interpreters ["os-signal" "scripted"]}
-  ;; 本物は止めの合図の口が最初に呼ばれた時に受け手を据えるので、合図を送る前に 1 度問う(上の検と同じ)。
+  ;; The real one installs its receiver when the stop-signal entry is first called, so ask once before sending the signal (same as the test above).
   (<- (StopRequested))
   (<- (SendStop signal.SIGTERM))
   (<- reason str (AwaitStop))
   (<- wanted str (signal-reason signal.SIGTERM))
-  (assert (= reason wanted) (.format "止めの後の AwaitStop が {!r}(期待 {!r})" reason wanted)))
+  (assert (= reason wanted) (.format "AwaitStop after the stop was {!r} (expected {!r})" reason wanted)))
 
 
 (deftest test-await-stop-wakes-when-the-stop-comes
   {:interpreters ["os-signal" "scripted"]}
   (<- (StopRequested))
   (<- waiter (Spawn (await-stop-once)))
-  ;; 別の task を 1 つ待って scheduler を回し、waiter を AwaitStop で寝かせてから合図を送る(起きることを見るため)。
+  ;; Wait for one other task and run the scheduler, put the waiter to sleep in AwaitStop, then send the signal (to see that it wakes).
   (<- step (Spawn (quiet-then "parked")))
   (<- (Wait step))
   (<- (SendStop signal.SIGINT))
   (<- reason str (Wait waiter))
   (<- wanted str (signal-reason signal.SIGINT))
-  (assert (= reason wanted) (.format "待っている間の止めで起きた AwaitStop が {!r}(期待 {!r})" reason wanted)))
+  (assert (= reason wanted) (.format "AwaitStop woken by a stop during the wait was {!r} (expected {!r})" reason wanted)))
 
 
 (deftest test-a-cancelled-wait-does-not-keep-a-later-stop-away
   {:interpreters ["os-signal" "scripted"]}
-  ;; 静かな loop の 1 回: 自分の待ちが先に済み、止めの待ちを打ち切る。後の止めは次の待ちと StopRequested に届く。
+  ;; One iteration of the quiet loop: its own wait finishes first and cancels the stop wait. A later stop reaches the next wait and StopRequested.
   (<- (StopRequested))
   (<- waiter (Spawn (await-stop-once)))
   (<- other (Spawn (quiet-then "changed")))
@@ -116,14 +116,14 @@
   (<- asked (| str None) (StopRequested))
   (<- later str (AwaitStop))
   (<- wanted str (signal-reason signal.SIGTERM))
-  (assert (= asked wanted) (.format "打ち切りの後の StopRequested が {!r}" asked))
-  (assert (= later wanted) (.format "打ち切りの後の AwaitStop が {!r}" later)))
+  (assert (= asked wanted) (.format "StopRequested after the cancel was {!r}" asked))
+  (assert (= later wanted) (.format "AwaitStop after the cancel was {!r}" later)))
 
 
 (deftest test-the-stop-bell-is-one-future-a-lost-race-leaves-ringable
   {:interpreters ["os-signal" "scripted"]}
-  ;; 静かな loop の何周か: 毎周 同じ呼び鈴を自分の待ちと競わせ、自分の待ちが先に済む(呼び鈴は task でないので、取り消す物が無い)。
-  ;; 後の止めは、その同じ呼び鈴を鳴らす。
+  ;; Several iterations of the quiet loop: each iteration races the same bell against its own wait, and its own wait finishes first (the bell is not a task, so there is nothing to cancel).
+  ;; A later stop rings that same bell.
   (<- (StopRequested))
   (<- bell (StopBell))
   (<- other (Spawn (quiet-then "changed")))
@@ -132,12 +132,12 @@
   (<- second-other (Spawn (quiet-then "changed again")))
   (<- second (Race again second-other))
   (assert (= #(first second) #("changed" "changed again")) #(first second))
-  (assert (= again.promise-id bell.promise-id) (.format "同じ session の StopBell が別の Future: {!r} {!r}" bell again))
+  (assert (= again.promise-id bell.promise-id) (.format "StopBell of the same session is a different Future: {!r} {!r}" bell again))
   (<- (SendStop signal.SIGTERM))
   (<- (Wait bell))
   (<- asked (| str None) (StopRequested))
   (<- wanted str (signal-reason signal.SIGTERM))
-  (assert (= asked wanted) (.format "呼び鈴が鳴った後の StopRequested が {!r}" asked)))
+  (assert (= asked wanted) (.format "StopRequested after the bell rang was {!r}" asked)))
 
 
 (deftest test-the-stop-bell-after-a-stop-has-rung
@@ -147,6 +147,6 @@
   (<- bell (StopBell))
   (<- other (Spawn (quiet-then "changed")))
   (<- first (Race bell other))
-  (assert (!= first "changed") (.format "止めの後の StopBell が満ちていない(競わせの答え {!r})" first))
+  (assert (!= first "changed") (.format "StopBell after the stop is not full (race answer {!r})" first))
   (<- (Wait other))
   None)

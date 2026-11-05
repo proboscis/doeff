@@ -678,7 +678,7 @@ _LAZY_EXPORTS = {
     "CacheLifecycle": "doeff_core_effects._cache_policy",
     "CachePolicy": "doeff_core_effects._cache_policy",
     "CacheStorage": "doeff_core_effects._cache_policy",
-    # 外の repo が使う program の helper(ADR-DOE-API-001 R18・R25)
+    # program helpers used by external repos (ADR-DOE-API-001 R18, R25)
     "file_done": "doeff_core_effects._file_effects",
     "computed": "doeff_core_effects._inline_compute",
     "render_prometheus": "doeff_core_effects._meter_prometheus",

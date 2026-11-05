@@ -1,16 +1,16 @@
-;;; HTTP の待ち受けの契約テストの解釈器(composition root)— 同じ契約の Program を、待ち受けの handler だけ替えて走らせる。
+;;; Interpreters for the HTTP listener contract tests (composition root) -- run the same contract Program with only the listener handler swapped.
 ;;;
-;;;   aiohttp-http-server   本物: aiohttp-http-server(127.0.0.1 の空いた port で本当に聞く)。相手(PeerSend の要求を送る端末)は
-;;;                         別の thread の aiohttp の client で、その thread だけの event loop で要求を 1 つずつ送り、答えを読んでから次へ進む
-;;;   scripted-http-server  fake: scripted-http-server(I/O なし — 台本)。相手の要求は同じ PeerRequest から台本の出来事(AppendHttpScript)に
-;;;                         し、相手が受け取る答えは台本の記録(ReadHttpServed)から読む
+;;;   aiohttp-http-server   real: aiohttp-http-server (really listens on a free 127.0.0.1 port). The peer (the terminal that sends PeerSend requests) is
+;;;                         an aiohttp client in a separate thread, which sends requests one at a time on an event loop used only by that thread, reading each answer before moving on
+;;;   scripted-http-server  fake: scripted-http-server (no I/O -- a script). The peer's requests are turned from the same PeerRequest into script events (AppendHttpScript),
+;;;                         and what the peer receives is read from the script's record (ReadHttpServed)
 ;;;
-;;; 契約の世界は解釈器ごとに同じ形で用意する(ContractWorld の答え — World):
-;;;   * site     file の範囲の本文を読む file(中身 SITE-CONTENT): 本物 = 一時 dir の実の file・fake = memory の file
-;;;   * upstream 中継先(どの path にも UPSTREAM-STATUS で答える): 本物 = 127.0.0.1 の wsgiref の聞き手・fake = 台本の ScriptedUpstream
-;;;   * dead     届かない中継先: 本物 = 誰も聞いていない port・fake = 台本に無い宛先
-;;; 相手の要求の形は PeerRequest 1 つで、本物の端末の送り方(visit)と台本の出来事(scripted-arrivals)の両方がそこから作る。
-;;; 使い手は conftest.py の doeff_interpreter(deftest の :interpreters の名 → INTERPRETERS・REQUIRES)。
+;;; The contract world is prepared in the same shape for each interpreter (the answer to ContractWorld -- World):
+;;;   * site     a file whose body is read by range (contents SITE-CONTENT): real = a real file in a temporary dir; fake = a memory file
+;;;   * upstream the relay target (answers every path with UPSTREAM-STATUS): real = a wsgiref listener on 127.0.0.1; fake = the script's ScriptedUpstream
+;;;   * dead     an unreachable relay target: real = a port nobody listens on; fake = a destination not in the script
+;;; The shape of a peer request is the single PeerRequest, and both the real terminal's way of sending (visit) and the script's events (scripted-arrivals) are built from it.
+;;; Used from conftest.py's doeff_interpreter (the deftest :interpreters names -> INTERPRETERS and REQUIRES).
 (require doeff-hy.macros [defk deff defhandler <- val var])
 (require doeff-hy.record [defrecord])
 (import asyncio)
@@ -31,7 +31,7 @@
 
 (val AIOHTTP "aiohttp-http-server")
 (val SCRIPTED "scripted-http-server")
-;; 解釈器が要る外の module(無い環境では conftest.py がその解釈器の検を skip する)。
+;; External modules the interpreters need (in environments without them, conftest.py skips the tests of that interpreter).
 (val REQUIRES {AIOHTTP "aiohttp"})
 
 (val SITE-CONTENT b"console.log(1)")
@@ -40,13 +40,13 @@
 (val UPSTREAM-BODY b"upstream")
 (val SCRIPTED-UPSTREAM "http://upstream.test")
 (val SCRIPTED-DEAD "http://dead.test")
-;; 相手が 1 つの答え・1 通を待つ上限(秒)。
+;; The upper bound (seconds) for the peer to wait for one answer or one message.
 (val PEER-SECONDS 10)
 (val WS-OPEN-STATUS 101)
 
 
 (defrecord World
-  "契約の世界: site = file の範囲の本文を読む file の path・upstream = 答える中継先の base・dead = 届かない中継先の base。"
+  "The contract world: site = the path of the file whose body is read by range; upstream = the base of the relay target that answers; dead = the base of an unreachable relay target."
   {:tags {:context "http-server-test" :role "type"}}
   (#^ str site)
   (#^ str upstream)
@@ -54,11 +54,11 @@
 
 
 (defrecord PeerRequest
-  "相手が送る要求 1 つ: method・target(path と query)・頭・本文(None = 送らない)・chunked(本文を長さの宣言なしで送る)・
-   declared(本文を送らず Content-Length だけ宣言する)・raw(本物は client を通さず素の socket で頭だけ送り、接続が閉じるまでの byte を
-   そのまま読む — declared も素の socket で送る)・ws(ws で繋ぐ)・sends(ws で送る 1 通の列 —
-   str は文字・bytes は byte)・replies と leave(leave が在れば replies 通を受けてから相手が状態符と理由で閉じる。無ければ待ち受けが
-   閉じるまで受ける)。"
+  "One request the peer sends: method, target (path and query), headers, body (None = not sent), chunked (send the body without declaring a length),
+   declared (do not send the body, only declare Content-Length), raw (the real one does not go through the client but sends only the headers on a bare socket and reads the bytes until the connection closes
+   as they are -- declared is also sent on a bare socket), ws (connect over ws), sends (the sequence of messages to send over ws --
+   a str is text and bytes is bytes), and replies and leave (if leave is given, after receiving replies messages the peer closes with a status code and reason. If not, it receives until the listener
+   closes)."
   {:tags {:context "http-server-test" :role "type"}}
   (#^ str method)
   (#^ str target)
@@ -74,7 +74,7 @@
 
 
 (defrecord PeerAnswer
-  "相手が受け取った物: status・頭・本文(ws は b\"\")・ws で受けた文字の 1 通の列・待ち受けから受けた close(#(状態符 理由) — 受けなければ None)。"
+  "What the peer received: status, headers, body (b\"\" for ws), the sequence of text messages received over ws, and the close received from the listener (#(status-code reason) -- None if none was received)."
   {:tags {:context "http-server-test" :role "type"}}
   (#^ int status)
   (#^ (get tuple #(HttpHeader ...)) headers)
@@ -84,37 +84,37 @@
 
 
 (defclass [(dataclass :frozen True)] ContractWorld [EffectBase]
-  "契約の世界(World)を求める効果。")
+  "An effect that asks for the contract world (World).")
 
 
 (defclass [(dataclass :frozen True)] PeerSend [EffectBase]
-  "相手に requests(PeerRequest の列)を address へ順に送らせる効果(撃つだけで待たない)。答え = None。"
+  "An effect that makes the peer send requests (a sequence of PeerRequest) to address in order (fire only, no waiting). Answer = None."
   (#^ HttpAddress address)
   (#^ tuple requests))
 
 
 (defclass [(dataclass :frozen True)] PeerAnswers [EffectBase]
-  "相手が送り終えるのを待ち、要求ごとに受け取った物(PeerAnswer の列 — 送った順)を求める効果。")
+  "An effect that waits for the peer to finish sending and asks for what was received for each request (a sequence of PeerAnswer -- in sending order).")
 
 
 (defhandler contract-world [world]
-  ;; 引数に残す理由: 世界は解釈器ごとに組み立ての側で決まる値(本物は走るたびに作る一時 dir と port)。
+  ;; Reason it stays an argument: the world is a value decided on the assembly side per interpreter (the real one is a temporary dir and port made on every run).
   (ContractWorld []
     (resume world)))
 
 
-;; --- 両方が使う: 相手の要求の形 ---------------------------------------------------------------------------------------------------
+;; --- Used by both: the shape of the peer request ---------------------------------------------------------------------------------------------------
 
 (defk path-of [target]
   {:pre [(: target str)] :post [(: % str)] :tags {:context "http-server-test" :role "judgment"}}
-  "target の path(query を除く)。"
+  "The path of target (without the query)."
   (get (.partition target "?") 0))
 
 
 (defk sent-headers [request]
   {:pre [(: request PeerRequest)] :post [(: % tuple)] :tags {:context "http-server-test" :role "judgment"}}
-  "相手が送る頭のうち契約が見る物: 書いた頭と、本文の長さの宣言(本文を送るなら Content-Length・chunked なら Transfer-Encoding・
-   declared なら宣言だけ)。"
+  "Of the headers the peer sends, those the contract looks at: the headers written, plus the declaration of the body length (Content-Length if a body is sent; Transfer-Encoding if chunked;
+   only the declaration if declared)."
   (val length (cond
                 (is-not request.declared None) #((HttpHeader :name "Content-Length" :value (str request.declared)))
                 request.chunked #((HttpHeader :name "Transfer-Encoding" :value "chunked"))
@@ -123,12 +123,12 @@
   (+ request.headers length))
 
 
-;; --- 本物の相手(別の thread の aiohttp の client)------------------------------------------------------------------------------------
+;; --- The real peer (an aiohttp client in a separate thread) ------------------------------------------------------------------------------------
 
 (defk visit-http [loop session base request]
   {:pre [(: loop asyncio.AbstractEventLoop) (: session "aiohttp.ClientSession") (: base str) (: request PeerRequest)]
    :post [(: % PeerAnswer)] :tags {:context "http-server-test" :role "foundation"}}
-  "HTTP の要求を 1 つ送り、答えを読み切る。"
+  "Send one HTTP request and read the answer to the end."
   (val response (.run-until-complete loop (.request session request.method (+ base request.target) :data request.body
                                                     :chunked (if request.chunked True None)
                                                     :headers (dfor h request.headers h.name h.value))))
@@ -140,7 +140,7 @@
 
 (defk read-to-end [raw]
   {:pre [(: raw socket.socket)] :post [(: % bytes)] :tags {:context "http-server-test" :role "foundation"}}
-  "socket を相手が閉じるまで読む。"
+  "Read the socket until the peer closes it."
   (var received b"")
   (var chunk (.recv raw 65536))
   (while chunk
@@ -151,9 +151,9 @@
 
 (defk visit-raw [address request]
   {:pre [(: address HttpAddress) (: request PeerRequest)] :post [(: % PeerAnswer)] :tags {:context "http-server-test" :role "foundation"}}
-  "頭だけ(declared が在れば Content-Length の宣言も — 本文は送らない)を素の socket で送り、答えを接続が閉じるまで読む。答えの本文 =
-   頭の後に届いた byte の全部(本文を運ばない答えの後に byte が来れば、それも本文として見える)。宣言が上限を超える要求は、読まずに断る
-   答え手でなければ答えが来ない。"
+  "Send only the headers (plus the Content-Length declaration if declared is given -- the body is not sent) on a bare socket, and read the answer until the connection closes. The answer body =
+   all the bytes that arrived after the headers (if bytes come after an answer that carries no body, they also show up as the body). A request whose declaration exceeds the limit gets no answer unless the responder
+   refuses it without reading."
   (var received b"")
   (val length (if (is request.declared None) "" (.format "Content-Length: {}\r\n" request.declared)))
   (with [raw (socket.create-connection #(address.host address.port) :timeout PEER-SECONDS)]
@@ -173,7 +173,7 @@
 (defk talk-ws [loop ws request]
   {:pre [(: loop asyncio.AbstractEventLoop) (: ws "aiohttp.ClientWebSocketResponse") (: request PeerRequest)]
    :post [(: % PeerAnswer)] :tags {:context "http-server-test" :role "foundation"}}
-  "繋いだ ws へ sends を順に送り、受ける。leave が在れば replies 通を受けた所で状態符と理由で閉じ、無ければ待ち受けが閉じるまで受ける。"
+  "Send sends in order over the connected ws and receive. If leave is given, close with a status code and reason after receiving replies messages; if not, receive until the listener closes."
   (import aiohttp [WSMsgType])
   (for [item request.sends]
     (.run-until-complete loop (if (isinstance item bytes) (.send-bytes ws item) (.send-str ws item))))
@@ -198,7 +198,7 @@
 (defk visit-ws [loop session base request]
   {:pre [(: loop asyncio.AbstractEventLoop) (: session "aiohttp.ClientSession") (: base str) (: request PeerRequest)]
    :post [(: % PeerAnswer)] :tags {:context "http-server-test" :role "foundation"}}
-  "ws で繋いで話す。handshake を断られたら断りの status だけを答えにする。"
+  "Connect and talk over ws. If the handshake is refused, the answer is only the status of the refusal."
   (import aiohttp)
   (var ws None)
   (var refused None)
@@ -214,11 +214,11 @@
 
 (defk visit [address requests]
   {:pre [(: address HttpAddress) (: requests tuple)] :post [(: % tuple)] :tags {:context "http-server-test" :role "foundation"}}
-  "本物の相手: requests を 1 つずつ送り、答えを読んでから次へ進む(この thread だけの event loop と aiohttp の client)。"
+  "The real peer: send requests one at a time, reading each answer before moving on (an event loop used only by this thread, and an aiohttp client)."
   (import aiohttp)
   (val base (.format "http://{}:{}" address.host address.port))
   (val loop (asyncio.new-event-loop))
-  ;; 要求ごとに新しい接続で送る(上限で断った答えの後に待ち受けが閉じた接続を、次の要求が使い回さないように)。
+  ;; Send each request on a new connection (so the next request does not reuse a connection the listener closed after answering a refusal at the limit).
   (val session (aiohttp.ClientSession :loop loop :connector (aiohttp.TCPConnector :loop loop :force-close True)))
   (var answers #())
   (try
@@ -234,10 +234,10 @@
   answers)
 
 
-(deff visit-in-thread [address requests outbox]  ; defk にできない: threading.Thread が別の thread で呼ぶ callback
+(deff visit-in-thread [address requests outbox]  ; cannot be a defk: a callback that threading.Thread calls in a separate thread
   {:pre [(: address HttpAddress) (: requests tuple) (: outbox queue.Queue)] :post [(: % None)]
    :tags {:context "http-server-test" :role "foundation"}}
-  "本物の相手を走らせ、答えの列(失敗なら例外)を outbox へ置く。"
+  "Run the real peer and put the sequence of answers (or the exception on failure) in outbox."
   (try
     (.put outbox (run (visit address requests)))
     (except [error Exception]
@@ -246,7 +246,7 @@
 
 
 (defhandler live-peer
-  ;; 本物の相手(頭の註)。outbox = 走っている相手が答えの列を置く箱(session の値 — PeerSend で作る)。
+  ;; The real peer (header comment). outbox = the box where the running peer puts the sequence of answers (a session value -- made by PeerSend).
   (session var outbox None)
   (PeerSend [address requests]
     (val box (queue.Queue))
@@ -255,17 +255,17 @@
     (resume None))
   (PeerAnswers []
     (match outbox
-      None (raise (RuntimeError "PeerSend の前に PeerAnswers を撃った"))
+      None (raise (RuntimeError "PeerAnswers was fired before PeerSend"))
       box (do (val got (.get box :timeout (* 3 PEER-SECONDS)))
               (if (isinstance got Exception)
                   (raise got)
                   (resume got))))))
 
 
-(deff upstream-app [environ start-response]  ; defk にできない: wsgiref が要求ごとに呼ぶ WSGI の callback
+(deff upstream-app [environ start-response]  ; cannot be a defk: a WSGI callback that wsgiref calls per request
   {:pre [(: environ dict) (: start-response Callable)] :post [(: % list)]
    :tags {:context "http-server-test" :role "foundation"}}
-  "本物の中継先: どの要求にも UPSTREAM-STATUS と UPSTREAM-BODY で答える。"
+  "The real relay target: answers every request with UPSTREAM-STATUS and UPSTREAM-BODY."
   (start-response (.format "{} Upstream" UPSTREAM-STATUS) [#("Content-Type" "text/plain")
                                                           #("Content-Length" (str (len UPSTREAM-BODY)))])
   [UPSTREAM-BODY])
@@ -273,7 +273,7 @@
 
 (defk vacant-port []
   {:pre [] :post [(: % int)] :tags {:context "http-server-test" :role "foundation"}}
-  "誰も聞いていない 127.0.0.1 の port(結んで直ぐに閉じる)。"
+  "A 127.0.0.1 port nobody listens on (bind it and close it right away)."
   (with [probe (socket.socket)]
     (.bind probe #("127.0.0.1" 0))
     (val port (get (.getsockname probe) 1)))
@@ -281,9 +281,9 @@
 
 
 (defk under-aiohttp [program]
-  {:pre [(: program Program)] :post [(: % "契約の Program の答え(型は Program ごと)")]
+  {:pre [(: program Program)] :post [(: % "the answer of the contract Program (the type differs per Program)")]
    :tags {:context "http-server-test" :role "foundation"}}
-  "本物の aiohttp-http-server の下で program を走らせる。site は一時 dir の実の file、upstream は走る間だけ聞く wsgiref の聞き手。"
+  "Run program under the real aiohttp-http-server. site is a real file in a temporary dir; upstream is a wsgiref listener that listens only while running."
   (import doeff_core_effects [aiohttp-http-server])
   (var answer None)
   (with [directory (tempfile.TemporaryDirectory)]
@@ -303,11 +303,11 @@
   answer)
 
 
-;; --- fake の相手(台本)---------------------------------------------------------------------------------------------------------
+;; --- The fake peer (script) ---------------------------------------------------------------------------------------------------------
 
 (defk scripted-arrivals [requests first]
   {:pre [(: requests tuple) (: first int)] :post [(: % tuple)] :tags {:context "http-server-test" :role "judgment"}}
-  "相手の要求の列を台本の出来事と本文にする(札は first から順に振る — 本物の待ち受けが届いた順に振るのと同じ)。答え = #(出来事 本文)。"
+  "Turn the sequence of peer requests into script events and bodies (tickets are assigned in order from first -- the same as the real listener assigning them in arrival order). Answer = #(events bodies)."
   (var arrivals #())
   (var bodies #())
   (for [[index request] (enumerate requests)]
@@ -332,10 +332,10 @@
 (defk scripted-answer [served ticket request]
   {:pre [(: served tuple) (: ticket str) (: request PeerRequest)] :post [(: % PeerAnswer)]
    :tags {:context "http-server-test" :role "judgment"}}
-  "台本の記録から、札の要求の相手が受け取った物を読む(台本の HttpServed が「端末が受け取る答え」)。"
+  "From the script's record, read what the peer of the request with the ticket received (the script's HttpServed is \"the answer the terminal receives\")."
   (val told (lfor s served :if (and (isinstance s HttpServed) (= s.ticket ticket)) s))
   (when (!= (len told) 1)
-    (raise (AssertionError (.format "札 {} への命令はちょうど 1 つのはず: {!r}" ticket told))))
+    (raise (AssertionError (.format "there should be exactly 1 command for ticket {}: {!r}" ticket told))))
   (val answer (get told 0))
   (cond
     (and request.ws (= answer.status WS-OPEN-STATUS))
@@ -349,7 +349,7 @@
 
 
 (defhandler scripted-peer
-  ;; fake の相手(頭の註)。asked = これまでに送らせた要求の列(札 = 位置 + 1)。
+  ;; The fake peer (header comment). asked = the sequence of requests sent so far (ticket = position + 1).
   (session var asked #())
   (PeerSend [address requests]
     (<- plan tuple (scripted-arrivals requests (+ (len asked) 1)))
@@ -369,10 +369,10 @@
 
 
 (defk under-scripted [program]
-  {:pre [(: program Program)] :post [(: % "契約の Program の答え(型は Program ごと)")]
+  {:pre [(: program Program)] :post [(: % "the answer of the contract Program (the type differs per Program)")]
    :tags {:context "http-server-test" :role "foundation"}}
-  "fake の scripted-http-server の下で program を走らせる。外から順に: state・memory の file(site)・世界・台本(出来事は空 — 相手が
-   PeerSend で足す・中継先は SCRIPTED-UPSTREAM だけ)・相手。"
+  "Run program under the fake scripted-http-server. From the outside in: state, memory file (site), world, script (events empty -- the peer
+   adds them with PeerSend; the relay target is only SCRIPTED-UPSTREAM), peer."
   (val files (MemoryFiles :files #((MemoryFile :path MEMORY-SITE :content SITE-CONTENT)) :dirs #((os.path.dirname MEMORY-SITE))))
   (val script (HttpScript :arrivals #()
                           :upstreams #((ScriptedUpstream :base SCRIPTED-UPSTREAM :http-status UPSTREAM-STATUS :accepts-ws False))))

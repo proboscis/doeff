@@ -86,7 +86,7 @@
   (#^ HttpFailureKind kind))
 
 
-;; 答えの型(ADR-DOE-API-001 R2)は和 HttpResponse | HttpFailed — HttpFailed は failures-as-values の時だけ答える(それ以外は例外)。
+;; The answer type (ADR-DOE-API-001 R2) is the sum HttpResponse | HttpFailed -- HttpFailed is answered only under failures-as-values (otherwise an exception).
 (defclass HttpRequest [(get EffectBase (| HttpResponse HttpFailed))]
   "HTTP request effect: dispatch a generic HTTP call.
 
@@ -165,7 +165,7 @@
   (#^ str detail))
 
 
-;; 答えの型(ADR-DOE-API-001 R2)は和 HostResolved | HostNotResolved — 引けなかった事は例外にせず値で答える。
+;; The answer type (ADR-DOE-API-001 R2) is the sum HostResolved | HostNotResolved -- a failed lookup is answered as a value, not an exception.
 (defclass [(dataclass :frozen True)] ResolveHost [(get EffectBase (| HostResolved HostNotResolved))]
   "Name lookup effect: resolve host to its addresses without making a connection.
 

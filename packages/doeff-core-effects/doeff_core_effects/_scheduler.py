@@ -185,36 +185,36 @@ class _ClaimMark:
         self.mut_in_ready = in_ready
 
 
-# 測りの口(#3855)。sink を据えると、scheduler(Python の版も Rust の版も)が出来事ごとに dict を
-# 1 つ渡す。sink が None の間は、呼び所の頭で 1 度だけ見て抜ける — 出来事の dict も時計の読みも作らない(Rust の版は
-# doeff_vm の旗を 1 度読む)。
+# Measurement hook (#3855). When a sink is installed, the scheduler (both the Python and Rust versions) passes one dict per event to it.
+# While the sink is None, the call site checks once at the top and returns -- no event dict or clock reading is built (the Rust version
+# reads a doeff_vm flag once).
 TraceSink = Callable[[dict[str, object]], None]
 _trace_sink: TraceSink | None = None
 _trace_runs = itertools.count()
-# sink を据え直すたびに進む番号。歩の始まりの境目はこの番号と組で覚え、据え直す前の境目からは歩を測らない
-# (外していた間の時間を 1 歩に数えない)。
+# A number that advances each time the sink is reinstalled. A step-start boundary is remembered together with this number, and steps are not measured from a boundary taken before the reinstall
+# (time spent while the sink was detached is not counted as one step).
 _trace_generation = 0
 
 
 def set_scheduler_trace(sink: TraceSink | None) -> None:
-    """process 全体で 1 つの測りの sink を据える(None で外す)。
+    """Install a single measurement sink for the whole process (None detaches it).
 
-    出来事は Python の版も Rust の版(既定)も出す — 同じ種類・同じ欄の出来事を同じ順で(時計の値と doeff-vm の
-    歩数は版ごとに違う。tests/test_scheduler_trace.py が両方の版の並びを照らす)。run の途中で据えても外しても、
-    次の出来事から従う。出来事の ``event`` は
-    start・enqueued・resumed・spawned・task-enter・task-leave・external-complete・external-drained・
-    external-ignored で、どれも ``run``・``thread``・``ns``(perf_counter_ns)・``cpu_ns``
-    (thread_time_ns)を持つ。task ごとの CPU は、task-leave の直前の区間(同じ task の
-    task-enter か task-leave から)を足して数える — task-leave はその区間を ``step_ns``・
-    ``step_cpu_ns``・``step_vm_steps``・``step_handler_calls``(doeff-vm の数 — process 全体の累計の差)
-    として添える(区間の始まりがこの sink の下に無ければ None)。spawned は ``tid``(子)・``parent``
-    (Spawn を出した task・根は None)・``site`` を持つ(#4188 — task の木を出来事から組み直すため)。
-    task-leave は scheduler の prompt を通る効果ごとに出る — scheduler が渡すだけの効果(外の handler が答える物)にも。
+    Both the Python and Rust (default) versions emit events -- the same kinds, the same fields, in the same order (clock values and doeff-vm
+    step counts differ per version; tests/test_scheduler_trace.py checks the sequences of both versions). Installing or detaching in the middle of a run
+    takes effect from the next event. The event's ``event`` is one of
+    start, enqueued, resumed, spawned, task-enter, task-leave, external-complete, external-drained,
+    external-ignored, and each carries ``run``, ``thread``, ``ns`` (perf_counter_ns) and ``cpu_ns``
+    (thread_time_ns). Per-task CPU is counted by summing the interval just before task-leave (from the same task's
+    task-enter or task-leave) -- task-leave attaches that interval as ``step_ns``,
+    ``step_cpu_ns``, ``step_vm_steps`` and ``step_handler_calls`` (doeff-vm counts -- the difference of process-wide totals)
+    (None if the start of the interval was not under this sink). spawned carries ``tid`` (the child), ``parent``
+    (the task that issued Spawn; None for the root) and ``site`` (#4188 -- to rebuild the task tree from events).
+    task-leave is emitted for every effect that passes through the scheduler's prompt -- including effects the scheduler merely passes on (answered by an outer handler).
 
-    sink が例外を上げた時: Python の版では出来事を出した所から上がる。Rust の版の中で出す出来事(start と
-    external-complete の外 — この 2 つは両方の版で Python の側が出す)では、状態の書き換えの途中で止めないため、
-    Exception は sys.unraisablehook へ渡して run を続け、KeyboardInterrupt などの BaseException は次に再開する
-    task の yield へ投げ込む。
+    When the sink raises: in the Python version the exception propagates from where the event was emitted. For events emitted inside the Rust version (other than start and
+    external-complete -- these two are emitted by the Python side in both versions), so as not to stop midway through a state update,
+    an Exception is handed to sys.unraisablehook and the run continues, while a BaseException such as KeyboardInterrupt is thrown into the yield of the next
+    task to resume.
     """
     global _trace_sink, _trace_generation
     switch = _rust_scheduler_trace_switch()
@@ -224,10 +224,10 @@ def set_scheduler_trace(sink: TraceSink | None) -> None:
 
 
 def _rust_scheduler_trace_switch() -> Callable[[bool], None]:
-    """Rust の版の scheduler が読む旗(sink が据えてあるか)の切り替え — Python の sink と揃えるため。
+    """Toggle the flag read by the Rust version of the scheduler (whether a sink is installed) -- to keep it in sync with the Python sink.
 
-    Rust の拡張が古くて旗を持たない時は ImportError で断る(Python の版の測りも doeff_vm の数を読むので、
-    同じ拡張を build し直す)。sink の状態は変えない。
+    If the Rust extension is old and has no flag, this refuses with ImportError (the Python version's measurement also reads doeff_vm counts, so
+    rebuild the same extension). The sink state is left unchanged.
     """
     try:
         return native._set_scheduler_trace_installed
@@ -240,12 +240,12 @@ def _rust_scheduler_trace_switch() -> Callable[[bool], None]:
 
 
 def scheduler_trace_sink() -> TraceSink | None:
-    """今据えてある測りの sink(無ければ None)。"""
+    """The currently installed measurement sink (None if none)."""
     return _trace_sink
 
 
 def _trace_at(sink: TraceSink, event: str, run: int | None, ns: int, cpu_ns: int, fields: dict[str, object]) -> None:
-    """読み済みの時計の値で出来事を 1 つ sink へ渡すため(歩の境目は時計を 1 度だけ読み、その値を出来事と歩の始まりの両方に使う)。"""
+    """Pass one event to the sink using an already-read clock value (a step boundary reads the clock once and uses that value for both the event and the step start)."""
     sink({
         "event": event,
         "run": run,
@@ -257,7 +257,7 @@ def _trace_at(sink: TraceSink, event: str, run: int | None, ns: int, cpu_ns: int
 
 
 def _trace(event: str, run: int | None, **fields: object) -> None:
-    """sink がある時だけ時計を読んで出来事を 1 つ渡すため。"""
+    """Read the clock and pass one event only when a sink is present."""
     sink = _trace_sink
     if sink is None:
         return
@@ -266,7 +266,7 @@ def _trace(event: str, run: int | None, **fields: object) -> None:
 
 @dataclass(frozen=True, slots=True)
 class _StepStart:
-    """歩の始まりの境目 1 つ: 据えた sink の番号(generation)・壁の ns・CPU の ns・doeff-vm の歩数と handler の呼びの累計。"""
+    """One step-start boundary: the installed sink's number (generation), wall ns, CPU ns, and the cumulative doeff-vm step count and handler calls."""
 
     generation: int
     ns: int
@@ -278,12 +278,12 @@ class _StepStart:
 def _trace_step_boundary(
     previous: _StepStart | None, event: str, run: int, tid: int | None, fields: dict[str, object]
 ) -> _StepStart | None:
-    """測りの口(#3855): task の歩の境目(task-enter・task-leave)を出し、次の歩の始まりを返すため(両方の版が使う)。
+    """Measurement hook (#3855): emit a task step boundary (task-enter, task-leave) and return the start of the next step (used by both versions).
 
-    時計と doeff-vm の数は 1 度だけ読み、出来事と次の歩の始まりの両方に使う。task-leave には、直前の境目
-    ``previous`` からこの歩の壁と CPU の ns(step_ns・step_cpu_ns)と doeff-vm の歩数と handler の呼び
-    (step_vm_steps・step_handler_calls — #4188。機体の混みで揺れない)を添える — 直前の境目が今の sink の下に
-    無ければ(据えた直後・据え直した後)None。sink が無ければ何も出さず ``previous`` を返す。"""
+    The clock and the doeff-vm counts are read only once and used for both the event and the next step start. task-leave attaches, from the previous boundary
+    ``previous``, this step's wall and CPU ns (step_ns, step_cpu_ns), the doeff-vm step count and the handler calls
+    (step_vm_steps, step_handler_calls -- #4188; these do not fluctuate with machine load) -- None if the previous boundary was not under the current sink
+    (right after installing or after reinstalling). With no sink, emits nothing and returns ``previous``."""
     sink = _trace_sink
     if sink is None:
         return previous
@@ -1194,7 +1194,7 @@ def _semaphore_handle(sem_id: int) -> Semaphore:
 
 
 class _ExternalCompletionQueue(Protocol):
-    """ExternalPromise が完了を入れる列の形(Python の scheduler の SimpleQueue か Rust の SchedulerExternalQueue)。"""
+    """The shape of the queue into which ExternalPromise puts completions (the Python scheduler's SimpleQueue or the Rust SchedulerExternalQueue)."""
 
     def put(self, item: tuple[str, int, object], /) -> None: ...
 
@@ -1209,8 +1209,8 @@ class ExternalPromise(Generic[_T]):
     happen on the scheduler thread: handle registration (#502) and the
     promise state are scheduler-thread-confined.
 
-    ``complete``/``fail`` は scheduler の thread に割り込む signal の受け手からも呼んでよい
-    (python の実装の外からの完了の列は put が reentrant な ``queue.SimpleQueue``)。
+    ``complete``/``fail`` may be called from a signal receiver that interrupts the scheduler's thread
+    (the external-completion queue on the Python implementation is ``queue.SimpleQueue``, whose put is reentrant).
     """
     def __init__(
         self,
@@ -1263,13 +1263,13 @@ class ExternalPromise(Generic[_T]):
         return future
 
     def complete(self, value: _T) -> None:
-        """値で完了する。thread をまたいでも signal の受け手からも呼んでよく、外からの完了の列で scheduler を起こす。"""
+        """Complete with a value. May be called across threads and from a signal receiver; wakes the scheduler through the external-completion queue."""
         if _trace_sink is not None:
             _trace("external-complete", self._run, pid=self.promise_id)
         self._queue.put(("complete", self.promise_id, value))
 
     def fail(self, error: BaseException) -> None:
-        """error で失敗にする。thread をまたいでも signal の受け手からも呼んでよく、外からの完了の列で scheduler を起こす。"""
+        """Fail with an error. May be called across threads and from a signal receiver; wakes the scheduler through the external-completion queue."""
         if _trace_sink is not None:
             _trace("external-complete", self._run, pid=self.promise_id, failed=True)
         self._queue.put(("fail", self.promise_id, error))
@@ -1452,10 +1452,10 @@ def _rust_spec() -> dict[str, object]:
         "external_wake_of": _external_wake_of,
         "external_wait_is_stall": _external_wait_is_stall,
         "stall_waiters_digest": _stall_waiters_digest,
-        # 測りの口: 出来事の dict と時計は Python の版と同じ helper で作る(sink が据えてある時だけ呼ばれる)。
+        # Measurement hook: the event dict and clock are built with the same helper as the Python version (called only when a sink is installed).
         "trace": _trace,
         "trace_step_boundary": _trace_step_boundary,
-        # 歩数の上限(#3143): 旗が立っている間だけ、起こすたびに Python の版と同じ確かめを呼ぶ。
+        # Step-count limit (#3143): only while the flag is set, call the same check as the Python version on every wake.
         "check_step_budget": _check_armed_step_budget,
         "PRIORITY_IDLE": TaskPriority.IDLE,
         "PRIORITY_EXTERNAL_WAIT": PRIORITY_EXTERNAL_WAIT,
@@ -1481,7 +1481,7 @@ def _scheduled_rust(body_program: "Program[_T, Any]") -> "Program[_T, Any]":
             f"(${IMPLEMENTATION_ENV_VAR}=python, or implementation='python')"
         ) from error
 
-    # 測りの口(#3861): この run の番号は Python の版と同じ通し番号から取り、start も同じ所で出す。
+    # Measurement hook (#3861): this run's number is taken from the same running counter as the Python version, and start is emitted at the same place.
     run_id = next(_trace_runs)
     if _trace_sink is not None:
         _trace("start", run_id, gil=sys._is_gil_enabled() if sys.version_info >= (3, 13) else True)
@@ -1732,40 +1732,40 @@ def _scheduled_python(body_program: "Program[_T, Any]") -> "Program[_T, Any]":  
     semaphores = {}      # sid → {permits, max_permits, waiters: deque of (owner_tid, k)}
     waiters = {}         # waitable_key → [(type, owner_tid, k/state, ...)]
     ready = []           # heapq of _ReadyItem: (-priority, seq, entry)
-    # 待ち手の表と走れる列の索引。走っている手番ごとに待つ task が居るので、Cancel が待ち手の表を、
-    # 外の待ちの印が走れる列を毎回なめると、1 回の WaitWithin の仕事が待つ task の数で増えた。索引は waiters・ready を
-    # 書き換える入口(park_waiter・unpark_*・keep_waiters・ready_push・ready_pop・ready_remove_at・drop_claimed_marks)だけが保つ。
-    parked_keys_of = {}  # owner_tid → {waitable_key: その task の entry の数}(waiters の逆の索引)
-    waiter_key_stamp = {}  # waitable_key → waiters に入った順の番号(task の鍵を waiters の順で返すため)
+    # Table of waiters and index of the ready queue. There is a waiting task for every running turn, so when Cancel scanned the waiter table and
+    # the external-wait mark scanned the ready queue every time, the work of one WaitWithin grew with the number of waiting tasks. Only the entry points that rewrite waiters and ready (park_waiter, unpark_*, keep_waiters, ready_push, ready_pop, ready_remove_at, drop_claimed_marks)
+    # maintain the index.
+    parked_keys_of = {}  # owner_tid -> {waitable_key: number of that task's entries} (reverse index of waiters)
+    waiter_key_stamp = {}  # waitable_key -> sequence number in order of entering waiters (to return a task's keys in waiters order)
     next_waiter_key_stamp = itertools.count()
-    # 外の待ちの印の下(優先度 PRIORITY_EXTERNAL_WAIT 以下)に並ぶ生きた entry(new・resume・raise・sem_resume で、持ち主が
-    # cancelled でない物)の数: 持ち主 → 数。持ち主が cancelled になった時(finish_cancelled)にその分を外す — cancelled は
-    # 終わりの状態で、その後に並べた entry は数えないので、持ち主の entry は全部 数えてあるか、全部 数えていないかのどちらか。
+    # Number of live entries (new, resume, raise, sem_resume whose owner is not cancelled) queued below the external-wait mark (priority PRIORITY_EXTERNAL_WAIT or lower):
+    # owner -> count. When an owner becomes cancelled (finish_cancelled), its share is removed -- cancelled is
+    # a terminal state and entries queued afterwards are not counted, so either all of an owner's entries are counted or none are.
     live_ready_of = {}
-    live_ready_count = [0, 0]  # [生きた entry の数, そのうち daemon でない物の数]
-    # 走れる列の entry の数を -priority → {起こされ方: 数} で(測りの口の ahead を、列をなめずに出すため)。測りの口が
-    # 開いている間だけ保つ。数え始めた時の口の番号(_trace_generation)が今の番号と違えば(据え直した・外していた間に
-    # 列が動いたかもしれない)、次に要る時に列から数え直す。
+    live_ready_count = [0, 0]  # [number of live entries, of which number of non-daemon ones]
+    # Number of ready-queue entries as -priority -> {wake kind: count} (to produce the measurement hook's ahead without scanning the queue). Kept only while the measurement hook is
+    # open. If the hook number at the time counting started (_trace_generation) differs from the current number (it was reinstalled, or the
+    # queue may have moved while detached), recount from the queue the next time it is needed.
     ready_wake_count = {}
     ready_wake_count_generation = [None]
-    # 走れる列に残っている claimed の外の待ちの印の数(pick_next は pop して捨てるだけの死んだ entry)。NORMAL の仕事が
-    # 並び続ける間は pop されないので、多くなったら claim が列から外す。
+    # Number of claimed external-wait marks remaining in the ready queue (dead entries that pick_next merely pops and discards). They are not popped while NORMAL work
+    # keeps being queued, so when they grow numerous claim removes them from the queue.
     claimed_marks_in_ready = [0]
-    # 索引と数えを毎歩 数え直しと照らすか(テストの切り替え _INDEX_SELF_CHECK を run の始まりに 1 度読む)。
+    # Whether to check the index and counts against a recount at every step (the test switch _INDEX_SELF_CHECK, read once at the start of the run).
     self_check = _INDEX_SELF_CHECK
-    # 外からの完了の列。SimpleQueue の put は reentrant(Python の文書 — signal の受け手・__del__ から呼んでよい)。
-    # 止めの合図の受け手(stop_signal_handlers の StopBox.receive)は主 thread の上で bytecode の区切りに割り込み、
-    # ExternalPromise.complete からこの列へ put する。主 thread がこの列の empty / get の中に居ても put は止まらない
-    # (queue.Queue は入れ子で取れない lock を持ち、その lock の中に合図が当たると put が同じ thread を待って止まった)。
+    # Queue of external completions. SimpleQueue's put is reentrant (Python docs -- may be called from a signal receiver or __del__).
+    # The receiver of the stop signal (StopBox.receive in stop_signal_handlers) interrupts at a bytecode boundary on the main thread and
+    # puts into this queue from ExternalPromise.complete. Even if the main thread is inside this queue's empty / get, put does not block
+    # (queue.Queue has a non-reentrant lock, and when the signal hit inside that lock, put waited on the same thread and hung).
     external_queue = queue_mod.SimpleQueue()  # thread-safe, blocking get()
-    # 測りの口(#3861): この run の番号と、ready の entry の通し番号ごとの起こされ方
-    # (external の時は起こした外の約束の id)。sink が無い時は何も積まない。
+    # Measurement hook (#3861): this run's number, and the wake kind per ready-entry sequence number
+    # (for external, the id of the external promise that woke it). Nothing is accumulated when there is no sink.
     run_id = next(_trace_runs)
     wake_context: list[tuple[str, int | None]] = [("internal", None)]
     wake_of_seq: dict[int, tuple[str, int | None]] = {}
-    # 今の歩の始まりの境目(_StepStart)。sink がある時だけ書く。
+    # Boundary at the start of the current step (_StepStart). Written only when a sink is present.
     step_start: list[_StepStart | None] = [None]
-    # sys._is_gil_enabled は Python 3.13 から。それより前は GIL が常に有る。
+    # sys._is_gil_enabled exists from Python 3.13. Before that the GIL is always enabled.
     if _trace_sink is not None:
         _trace("start", run_id, gil=sys._is_gil_enabled() if sys.version_info >= (3, 13) else True)
     handle_refs = {}     # waitable_key → [weakref.ref(Task/Promise/Future/…)]
@@ -1902,7 +1902,7 @@ def _scheduled_python(body_program: "Program[_T, Any]") -> "Program[_T, Any]":  
             row["retrieved"] = True
             row.pop("unretrieved", None)
 
-    def unretrieved_exceptions() -> tuple[list[str], int]:  # noqa: DOEFF006 — 内部の小さな組の戻り
+    def unretrieved_exceptions() -> tuple[list[str], int]:  # noqa: DOEFF006 -- return of a small internal tuple
         """``(named, total)`` for the run-end warning: the swept tasks' exceptions,
         then the rows still holding one, in task order."""
         remaining = [row["unretrieved"] for row in tasks.values() if "unretrieved" in row]
@@ -1916,7 +1916,7 @@ def _scheduled_python(body_program: "Program[_T, Any]") -> "Program[_T, Any]":  
             sweep_terminal_unobserved_entries()
         return i
 
-    def waitable_key(effect: EffectBase, obj: object) -> tuple[str, int]:  # noqa: DOEFF006 — 内部の小さな組の戻り
+    def waitable_key(effect: EffectBase, obj: object) -> tuple[str, int]:  # noqa: DOEFF006 -- return of a small internal tuple
         """Convert a Task or Future of ``effect`` (Wait / Gather / Race) to a dict key.
 
         The dispatch checks every waitable first (_misused_waitable) and throws the TypeError
@@ -1955,7 +1955,7 @@ def _scheduled_python(body_program: "Program[_T, Any]") -> "Program[_T, Any]":  
         if _trace_sink is None:
             ready_push(_ReadyItem(-priority, seq, entry))
             return
-        # 起こされ方は並べる前に覚える(ready_push がその起こされ方で数える)。
+        # The wake kind is remembered before queueing (ready_push counts by that wake kind).
         wake_of_seq[seq] = (
             ("placeholder", None) if entry[0] == "wait_external"
             else wake if wake is not None
@@ -1965,9 +1965,9 @@ def _scheduled_python(body_program: "Program[_T, Any]") -> "Program[_T, Any]":  
         trace_enqueued(entry, priority, seq)
 
     def trace_enqueued(entry: tuple[object, ...], priority: int, seq: int) -> None:
-        """測りの口(#3861): 並べた entry の起こされ方を出す。前に並ぶ entry の数と起こされ方は、
-        外から起きた entry の時だけ数える。前に並ぶ = 優先度が同じか高い entry(同じ優先度では今 並べた物が一番後ろ)で、
-        ready をなめずに (-priority, 起こされ方) ごとの数から足す(なめは ready の長さで増えた)。"""
+        """Measurement hook (#3861): emit the wake kind of the queued entry. The number of entries ahead and their wake kinds
+        are counted only for entries woken from outside. Ahead = entries with the same or higher priority (at the same priority, the one just queued is last),
+        summed from counts per (-priority, wake kind) without scanning ready (scanning grew with the length of ready)."""
         kind, pid = wake_of_seq[seq]
         if kind != "external":
             _trace("enqueued", run_id, tid=entry[1], wake=kind, pid=pid, priority=priority)
@@ -1984,7 +1984,7 @@ def _scheduled_python(body_program: "Program[_T, Any]") -> "Program[_T, Any]":  
         at_or_above = sum(
             (counts for neg, counts in ready_wake_count.items() if neg <= -priority), Counter()
         )
-        ahead_by_wake = dict(at_or_above - Counter(external=1))  # 今 並べた物を外す
+        ahead_by_wake = dict(at_or_above - Counter(external=1))  # remove the entry just queued
         _trace(
             "enqueued", run_id, tid=entry[1], wake=kind, pid=pid, priority=priority,
             ready=len(ready), ahead=sum(ahead_by_wake.values()), ahead_by_wake=ahead_by_wake,
@@ -2733,7 +2733,7 @@ def _scheduled_python(body_program: "Program[_T, Any]") -> "Program[_T, Any]":  
         return False
 
     def trace_entered(heap_item: tuple[int, int, tuple[object, ...]], tid: int | None) -> None:
-        """測りの口(#3861): 選んだ entry の起こされ方を resumed で、task へ入る時を task-enter で出す。"""
+        """Measurement hook (#3861): emit the chosen entry's wake kind as resumed, and the entry into the task as task-enter."""
         if _trace_sink is None:
             return
         kind, pid = wake_of_seq.pop(heap_item[1], ("untracked", None))
@@ -2742,8 +2742,8 @@ def _scheduled_python(body_program: "Program[_T, Any]") -> "Program[_T, Any]":  
         trace_step_boundary("task-enter", tid, site=site, ready=len(ready))
 
     def trace_step_boundary(event: str, tid: int | None, **fields: object) -> None:
-        """測りの口(#3855): task の歩の境目(task-enter・task-leave)を出し、この run の歩の始まりを進めるため
-        (出来事の形は _trace_step_boundary — Rust の版と同じ物)。"""
+        """Measurement hook (#3855): emit a task step boundary (task-enter, task-leave) and advance this run's step start
+        (the event shape is that of _trace_step_boundary -- the same as the Rust version)."""
         step_start[0] = _trace_step_boundary(step_start[0], event, run_id, tid, fields)
 
     def pick_next() -> "Program[object, object]":
@@ -3034,9 +3034,9 @@ def _scheduled_python(body_program: "Program[_T, Any]") -> "Program[_T, Any]":  
                 withdrawn,
             )
 
-    # 複数の鍵にまたがる待ち手の登録の種類 → その登録を全部の鍵から外す関数(Cancel・Discard が呼ぶ)。登録の種類を足す effect
-    # はここに 1 行足す — park_waiter が宣言の無い種類を断り、detach_from_waiters は種類の名を持たない(
-    # 設計検証・盲検 A: cancel が "gather"・"race" の名を持ち、新しい種類の Cancel が state の dict を継続として投げ込んだ)。
+    # Registration kind spanning multiple keys of a waiter -> function that removes that registration from all keys (called by Cancel and Discard). An effect that adds a registration kind
+    # adds one line here -- park_waiter rejects kinds with no declaration, and detach_from_waiters does not hold kind names (
+    # design verification, blind A: cancel held the names "gather" and "race", and Cancel of a new kind threw a state dict in as a continuation).
     withdraw_group_of = {"gather": remove_gather_waiters, "race": remove_race_waiters}
 
     def wake_race_waiter(race_state, completed_key):
@@ -3208,7 +3208,7 @@ def _scheduled_python(body_program: "Program[_T, Any]") -> "Program[_T, Any]":  
                              daemon=effect.daemon)
             tasks[tid]["spawn_site"] = spawn_site
             if _trace_sink is not None:
-                # 測りの口(#4188): task の木を出来事から組み直せるように、親(Spawn を出した task — 根は None)と子を名指す
+                # Measurement hook (#4188): name the parent (the task that issued Spawn -- None for the root) and the child so the task tree can be rebuilt from events
                 _trace("spawned", run_id, tid=tid, parent=current_tid, site=spawn_site)
             enqueue(("new", tid), effect.priority, wake=("new", None))
             # Spawner resumes at its OWN task priority (#504): a hard-coded

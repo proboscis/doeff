@@ -1,12 +1,12 @@
 (require doeff-hy.macros [deftest defk <- with-handler])
 
-;;; ResolveHost(名前引きだけ — 繋がない)の答え手 http-production-handler の検:
-;;;   * 引けた名は、resolver の答えの番地を順のまま重ねずに HostResolved で答える
-;;;   * 引けなかった名は値で答える(例外にしない): resolver の誤り(socket.gaierror)は NOT-RESOLVED・上限の秒の内に答えが無ければ TIMED-OUT
-;;;   * 反例: 文に timed out を含む resolver の誤りは時間切れと読まない(kind は例外の class だけから決まる)
-;;;   * 既定の resolver は走っている loop の getaddrinfo(HTTP の client の接続と同じ resolver)— localhost を引ける
-;;;   * host の無い要求と上限の秒の無い要求は作る時に断る
-;;; resolver は検ごとの代役(host → getaddrinfo の行の列を答える awaitable)で、本物の名前引きの外に出ない(localhost の 1 本を除く)。
+;;; Tests of http-production-handler, the answerer of ResolveHost (name lookup only -- no connection):
+;;;   * A name that resolves is answered with HostResolved, with the resolver's addresses in the same order, without duplicates
+;;;   * A name that does not resolve is answered as a value (not an exception): a resolver error (socket.gaierror) is NOT-RESOLVED; no answer within the limit seconds is TIMED-OUT
+;;;   * Counterexample: a resolver error whose text contains "timed out" is not read as a timeout (kind is decided from the exception class only)
+;;;   * The default resolver is getaddrinfo of the running loop (same resolver as the connection of the HTTP client) -- it can resolve localhost
+;;;   * A request without a host and a request without a limit in seconds are refused at construction time
+;;; The resolver is a per-test stand-in (an awaitable that answers a list of getaddrinfo rows for host), and never leaves for the real name lookup (except the one for localhost).
 
 (import asyncio)
 (import socket)
@@ -16,7 +16,7 @@
 
 
 (defn :async rows-of-two [host]
-  "同じ番地を 2 度含む getaddrinfo の行(IPv4 2 つと IPv6 1 つ)を答える resolver の代役。"
+  "A resolver stand-in that answers getaddrinfo rows containing the same address twice (two IPv4 and one IPv6)."
   [#(socket.AF-INET socket.SOCK-STREAM 6 "" #("192.0.2.7" 0))
    #(socket.AF-INET socket.SOCK-STREAM 6 "" #("192.0.2.8" 0))
    #(socket.AF-INET socket.SOCK-STREAM 6 "" #("192.0.2.7" 0))
@@ -24,24 +24,24 @@
 
 
 (defn :async no-such-name [host]
-  "resolver が名を知らないと答える代役(glibc の EAI_NONAME と同じ誤りの class)。"
+  "A resolver stand-in that answers that it does not know the name (same error class as glibc EAI_NONAME)."
   (raise (socket.gaierror socket.EAI-NONAME "Name or service not known")))
 
 
 (defn :async failure-saying-timed-out [host]
-  "文に timed out を含むが、resolver が答えた誤りの代役(時間切れの class ではない — 文を読むと取り違える反例)。"
+  "A stand-in for a resolver error whose text contains timed out (not the timeout class -- a counterexample that gets mixed up if one reads the text)."
   (raise (socket.gaierror socket.EAI-AGAIN "lookup timed out at the server")))
 
 
 (defn :async never-answers [host]
-  "答えを返さない resolver の代役(誰も満たさない future を待つ — 上限の秒で打ち切られるまで)。"
+  "A resolver stand-in that returns no answer (waits on a future nobody fulfills -- until cut off by the limit in seconds)."
   (await (.create-future (asyncio.get-running-loop)))
   [])
 
 
 (defk lookup-with [resolver host timeout-seconds]
-  {:pre [(: resolver "host を引く resolver の代役(host → getaddrinfo の行の列の awaitable)") (: host str) (: timeout-seconds float)] :post [(: % (| HostResolved HostNotResolved))] :tags {:context "http" :role "foundation"}}
-  "resolver の代役を渡した本番の答え手の下で host を 1 度引き、答えを読むため。"
+  {:pre [(: resolver "stand-in resolver that resolves host (an awaitable from host to a list of getaddrinfo rows)") (: host str) (: timeout-seconds float)] :post [(: % (| HostResolved HostNotResolved))] :tags {:context "http" :role "foundation"}}
+  "To resolve host once under the production answerer given the resolver stand-in, and read the answer."
   (<- answer (| HostResolved HostNotResolved)
       (with-handler [await-handler (http-production-handler :resolver resolver)]
         (ResolveHost :host host :timeout-seconds timeout-seconds)))
@@ -60,7 +60,7 @@
 
 
 (deftest test-the-kind-comes-from-the-error-class-not-its-text
-  ;; 反例: resolver の誤りの文が timed out と言っても、class は resolver の誤り(gaierror)なので NOT-RESOLVED。
+  ;; Counterexample: even if the resolver error text says timed out, the class is the resolver error (gaierror), so NOT-RESOLVED.
   (<- said (| HostResolved HostNotResolved) (lookup-with failure-saying-timed-out "notes.test" 5.0))
   (assert (= said.kind ResolveFailureKind.NOT-RESOLVED) said))
 
@@ -72,7 +72,7 @@
 
 
 (deftest test-the-default-resolver-is-the-loops-getaddrinfo
-  ;; 既定の resolver(引数を渡さない答え手)は走っている loop の getaddrinfo — /etc/hosts の localhost を引ける。
+  ;; The default resolver (an answerer given no argument) is getaddrinfo of the running loop -- it can resolve localhost in /etc/hosts.
   (<- local (| HostResolved HostNotResolved)
       (with-handler [await-handler (http-production-handler)]
         (ResolveHost :host "localhost" :timeout-seconds 5.0)))

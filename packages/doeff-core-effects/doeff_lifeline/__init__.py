@@ -1,16 +1,16 @@
-"""起こした process が終わったら、その子も終わる — StartProcess の約束の本体の置き場。標準ライブラリだけで書く。
+"""When the process it started ends, its children end too -- the home of the body of the StartProcess promise. Written with the standard library only.
 
-この package は公開の名を持たない(ADR-DOE-API-001 R1・R5 — 名は effect でも handler でもないので内側に置く)。
-本体は内側の module _watch に在り、読むのは doeff の中の 2 つだけ: StartProcess の答え手(doeff_core_effects の os_process.hy — Lifeline)と
-doeff-cluster の worker の shim(watched_until_eof と止める相手の型)。
+This package has no public names (ADR-DOE-API-001 R1 and R5 -- the names are neither effects nor handlers, so they are kept inside).
+The body is in the inner module _watch, and only 2 things inside doeff read it: the StartProcess responder (os_process.hy of doeff_core_effects -- Lifeline) and
+the shim of doeff-cluster's worker (watched_until_eof and the type of the party to stop).
 
-置き場は doeff-core-effects の配布の中の、doeff_core_effects と別の top-level の package: doeff_core_effects の package を読むと起動に約 100 ms
-乗る(2026-10-07 の実測)ので、job ごとに起こす shim がこの本体だけを読めるように分けた。
+It sits in the doeff-core-effects distribution, as a top-level package separate from doeff_core_effects: importing the doeff_core_effects package adds about 100 ms to startup
+(measured 2026-10-07), so it is separated so that the shim started per job can read only this body.
 """
 
 if __name__ == "__main__":
-    # 前の版の Lifeline は見張りをこの file(`python -I -S -B <この file>`)で起こす。版をまたいで動く process の見張りも起きるように、
-    # 本体へ渡す(-I では package を import できないので file として走らせる)。
+    # The Lifeline of the previous version starts the watcher with this file (`python -I -S -B <this file>`). So that watchers of processes running across versions also start,
+    # pass it to the body (with -I a package cannot be imported, so run it as a file).
     import pathlib
     import runpy
 

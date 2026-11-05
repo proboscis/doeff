@@ -1,20 +1,20 @@
-;;; heap の凍結の effect — 起動の読み込みを終えた拍に 1 度、いま生きている object を以後の GC の走査から外す(
-;;; ADR-DOE-CORE-EFFECTS-004)。業務の語を持たない土台の語彙。
+;;; The heap-freeze effect -- once, on the beat when startup loading is done, take the objects alive right now out of later GC scans (
+;;; ADR-DOE-CORE-EFFECTS-004). A foundation vocabulary with no business terms.
 ;;;
-;;;   CollectAndFreeze  回収してから凍らせる。答え = 凍らせた object の数(int)。
+;;;   CollectAndFreeze  Collect, then freeze. Answer = the number of frozen objects (int).
 ;;;
-;;; 何のためか: 起動の後ほとんど動かない大きな cache(数万行の object)を持つ process では、世代 2 の回収が allocation の数で起き、そのたびに
-;;; 全部を走査して処理ループの 1 回を伸ばす(agora の画面の実測: 回収なし 5 ms / あり 32 ms)。program は GC を知らず、境目で凍結を求めるだけ。
+;;; Why: a process holding a large cache that barely changes after startup (tens of thousands of rows of objects) runs generation-2 collections on allocation counts, and each time
+;;; it scans everything and lengthens one pass of the processing loop (measured on agora's screen: 5 ms without collection / 32 ms with). The program knows nothing about GC and only asks for the freeze at a boundary.
 ;;;
-;;; 計器(meter_effects.hy)と module を分けた理由: 計器は観測を積んで読むだけで process の振る舞いを変えない。凍結は process の GC の状態を
-;;; 変える操作で、計器を持たない program も使う。一緒に置くと、計器を差し替える模擬が GC の操作まで一緒に差し替える形になる。
+;;; Why this is a separate module from the meter (meter_effects.hy): the meter only accumulates and reads observations and does not change process behavior. Freezing is an operation that changes the process's GC state,
+;;; and programs without a meter use it too. Putting them together would mean a mock that swaps out the meter also swaps out GC operations.
 ;;;
-;;; 答え手: gc-freeze-handler(gc_freeze.hy — 本物)と scripted-freeze-handler(scripted_freeze.hy — GC に触れず決めた数を答える)。
+;;; Answerers: gc-freeze-handler (gc_freeze.hy -- real) and scripted-freeze-handler (scripted_freeze.hy -- does not touch GC, answers a decided number).
 (require doeff-hy.macros [defeffect])
 
 
 (defeffect CollectAndFreeze
-  "回収してから凍らせる(頭の註)。答え = 凍らせた object の数。"
+  "Collect, then freeze (see the header comment). Answer = the number of frozen objects."
   {:fields []
    :answer int
    :tags {:context "heap" :role "foundation"}})

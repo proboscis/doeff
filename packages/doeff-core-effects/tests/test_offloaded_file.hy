@@ -1,6 +1,6 @@
-;;; offloaded-file-handler(os_file.hy)の検— tick が触る同期の file の効果(WriteText・ReadText・StatPath・
-;;; ListDirectory・MakeDirectory・RenamePath・ReadDiskFree)を thread で待つ答え手が、os-file-handler と同じ答えを返す事と、書きが
-;;; thread で待つ間も同じ scheduler の別の task が回る事。本物の file(tmp の下)を使う。test_offloaded_tree.hy と同じ作り。
+;;; Tests for offloaded-file-handler (os_file.hy) -- that the handler which waits in a thread for the synchronous file effects touched by tick (WriteText, ReadText, StatPath,
+;;; ListDirectory, MakeDirectory, RenamePath, ReadDiskFree) returns the same answers as os-file-handler, and that other tasks of the same scheduler keep running
+;;; while a write waits in a thread. Uses real files (under tmp). Same structure as test_offloaded_tree.hy.
 (require doeff-hy.macros [defk deftest <- val])
 (import threading)
 (import pathlib [Path])
@@ -15,7 +15,7 @@
 
 (defk touched [root]
   {:pre [(: root str)] :post [(: % tuple)] :tags {:context "file-test" :role "program"}}
-  "dir を作り・書き・読み・様子を読み・改名し・一覧し・空きを読んだ答えを並べて返すため。"
+  "To return, side by side, the answers of making a dir, writing, reading, reading its status, renaming, listing, and reading free space."
   (<- made (MakeDirectory (+ root "/d/e") None))
   (<- wrote (WriteText (+ root "/d/e/a") "hello" None True False))
   (<- text (ReadText (+ root "/d/e/a")))
@@ -29,7 +29,7 @@
 
 (defk copied [root]
   {:pre [(: root str)] :post [(: % tuple)] :tags {:context "file-test" :role "program"}}
-  "bytes を書き・読み・追記し・写し・張り・木を写して歩き・総量と空きを読んだ答えを並べて返すため(広げた効果)。"
+  "To return, side by side, the answers of writing bytes, reading, appending, copying, linking, copying and walking a tree, and reading total and free space (the extended effects)."
   (<- (MakeDirectory (+ root "/t/u") None))
   (<- wrote (WriteBytes (+ root "/t/u/a") b"hello" None True False))
   (<- whole (ReadBytes (+ root "/t/u/a")))
@@ -49,8 +49,8 @@
 
 (defk write-while-another-runs [path gate]
   {:pre [(: path str) (: gate threading.Event)] :post [(: % None)] :tags {:context "file-test" :role "program"}}
-  "合図まで止まる書きを別の task で始め、外の合図を待ってから合図を出し、書きの終わりを待つため。書きが scheduler の thread で待つと、
-   この task は外の合図の後に戻れず、合図を出せない。"
+  "To start, in another task, a write that stays stopped until a signal, wait for the outside signal, then send the signal and wait for the write to finish. If the write waits on the scheduler's thread,
+   this task cannot come back after the outside signal and cannot send the signal."
   (<- writing Task (Spawn (WriteText path "x" None True False)))
   (<- promise (CreateExternalPromise))
   (.start (threading.Timer 0.2 (fn [] (.complete promise None))))
@@ -61,13 +61,13 @@
 
 
 (defk in-thread [program handlers]
-  {:pre [(: program Program) (: handlers list)] :post [(: % "program の答え")] :tags {:context "file-test" :role "program"}}
-  "program を scheduled と handlers の下で、検の thread とは別の thread の新しい VM で 1 回回し、SCENARIO-LIMIT 秒まで答えを待つため。"
+  {:pre [(: program Program) (: handlers list)] :post [(: % "answer of program")] :tags {:context "file-test" :role "program"}}
+  "To run program once, under scheduled and handlers, in a new VM on a thread separate from the test's thread, waiting for the answer for up to SCENARIO-LIMIT seconds."
   (val running (.submit (ThreadPerCall) run-detached (scheduled (with_handlers handlers program))))
   (try
     (.result running :timeout SCENARIO-LIMIT)
     (except [TimeoutError]
-      (raise (AssertionError (.format "{} 秒で答えが無い(scheduler の thread が塞がった)" SCENARIO-LIMIT))))))
+      (raise (AssertionError (.format "No answer in {} seconds (the scheduler's thread is blocked)" SCENARIO-LIMIT))))))
 
 
 (deftest test-the-offloaded-file-answers-like-the-os-file-handler [tmp-path]
@@ -82,7 +82,7 @@
 
 
 (deftest test-another-task-runs-while-a-file-is-written [tmp-path monkeypatch]
-  ;; 書きは合図まで write-content の頭(tempfile を作る所)で止まる。合図を出すのは同じ scheduler の別の task — 書きが thread で待つ間に回れば終わる。
+  ;; The write stops at the head of write-content (where the tempfile is made) until the signal. The signal is sent by another task of the same scheduler -- it finishes if that task runs while the write waits in a thread.
   (import tempfile)
   (val gate (threading.Event))
   (val original tempfile.NamedTemporaryFile)
@@ -108,8 +108,8 @@
 
 (defk read-while-another-runs [path gate]
   {:pre [(: path str) (: gate threading.Event)] :post [(: % bytes)] :tags {:context "file-test" :role "program"}}
-  "合図まで止まる bytes の読みを別の task で始め、外の合図を待ってから合図を出し、読みの答えを返すため(書きの筋書きと同じ作り — 読みが
-   scheduler の thread で待つと、この task は戻れず合図を出せない)。"
+  "To start, in another task, a bytes read that stays stopped until a signal, wait for the outside signal, then send the signal and return the read's answer (same structure as the write scenario -- if the read waits on
+   the scheduler's thread, this task cannot come back and cannot send the signal)."
   (<- reading Task (Spawn (ReadBytes path)))
   (<- promise (CreateExternalPromise))
   (.start (threading.Timer 0.2 (fn [] (.complete promise None))))
@@ -120,7 +120,7 @@
 
 
 (deftest test-another-task-runs-while-bytes-are-read [tmp-path monkeypatch]
-  ;; 読みは合図まで Path.read_bytes の頭で止まる(turn-host が会話の記録を読む間も他の手番が回る事)。
+  ;; The read stops at the head of Path.read_bytes until the signal (so that other turns keep running while turn-host reads the conversation record).
   (val target (/ tmp-path "f"))
   (.write-bytes target b"payload")
   (val gate (threading.Event))

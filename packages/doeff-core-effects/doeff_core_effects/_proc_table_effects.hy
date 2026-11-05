@@ -1,32 +1,32 @@
-;;; 機体の process の表の効果 — 走っている process の親子と memory を 1 度に読み、1 つの process へ signal を送る。
-;;; 業務の語を持たない土台の語彙。
+;;; Effects for the machine's process table -- read the parent-child relations and memory of running processes at once, and send a signal to one process.
+;;; A foundation vocabulary with no business terms.
 ;;;
-;;;   ReadProcTable  機体の process の表を 1 度読む。答え = ProcRow の列(pid の昇順)。読む間に終わった process は列に入れない。
-;;;   SignalPid      pid の process が start-ticks の時のままで終わっていない時だけ、その process 1 つへ signal を 1 度送り、待たずに返す。
-;;;                  答え = 送ったか(bool — 居ない・終わっている・pid が使い回された時は送らずに False。他人の process には送らない)。
-;;;                  group へは送らない(group へ送るのは SignalProcess・SignalWarmChild)。
+;;;   ReadProcTable  Read the machine's process table once. Answer = a sequence of ProcRow (ascending pid). Processes that ended while reading are not included.
+;;;   SignalPid      Only when the process with pid is still as it was at start-ticks and has not ended, send a signal to that one process once, and return without waiting.
+;;;                  Answer = whether it was sent (bool -- if absent, ended, or the pid was reused, it is not sent and the answer is False. Never sends to another user's process).
+;;;                  Does not send to a group (sending to a group is SignalProcess and SignalWarmChild).
 ;;;
-;;; 何のためか: 機体の memory が尽きかけた時に、どの job の木がどれだけ使っているかを数え、いちばん大きい木を先に止める見張り
-;;; (doeff-cluster の worker の memory_watch)が、/proc を直に読まずに表を求めるため。模擬では台本の表に替える。
+;;; Purpose: when the machine's memory is nearly exhausted, the watcher that counts how much each job's tree uses and stops the largest tree first
+;;; (the memory_watch of doeff-cluster's worker) asks for the table without reading /proc directly. In mocks it is replaced by a scripted table.
 ;;;
-;;; 答え手: os-proc-table-handler(os_proc_table.hy — 本物・Linux の /proc)と scripted-proc-table-handler(scripted_proc_table.hy — 台本の表)。
-;;; 本物との契約は tests/test_proc_table_contract.hy。
+;;; Responders: os-proc-table-handler (os_proc_table.hy -- real, Linux /proc) and scripted-proc-table-handler (scripted_proc_table.hy -- scripted table).
+;;; The contract with the real one is tests/test_proc_table_contract.hy.
 (require doeff-hy.macros [defeffect defk val])
 (require doeff-hy.record [defrecord])
-(import dataclasses [dataclass])  ; defrecord の展開が名指す
+(import dataclasses [dataclass])  ; named by the defrecord expansion
 (import doeff_core_effects._process_effects [ProcessSignal])
 (import doeff_core_effects._process_stat [ENDED-STATES])
 
-;; /proc/<pid>/stat の欄の位置(最後の ')' の後ろを空白で割った列の番号 — 3 番目の欄 state が 0)。ppid = 4 番目・starttime = 22 番目・
-;; rss = 24 番目(page の数)。
+;; Positions of the fields of /proc/<pid>/stat (the column number of the list obtained by splitting what follows the last ')' on whitespace -- the 3rd field, state, is 0). ppid = 4th, starttime = 22nd,
+;; rss = 24th (a number of pages).
 (val STAT-PPID 1)
 (val STAT-START-TICKS 19)
 (val STAT-RSS-PAGES 21)
 
 
 (defrecord ProcRow
-  "機体の process 1 つ: pid・ppid = 親の pid・start-ticks = 起動の刻(pid の使い回しを見分ける — Linux は /proc/<pid>/stat の starttime の
-   clock tick)・rss-bytes = 今の resident set の byte・comm = 命令の名(/proc/<pid>/stat の 2 番目の欄 — 括弧の中・最長 15 字)。"
+  "One process of the machine: pid, ppid = the parent's pid, start-ticks = start time (tells apart pid reuse -- on Linux the clock tick of starttime in /proc/<pid>/stat),
+   rss-bytes = bytes of the current resident set, comm = command name (the 2nd field of /proc/<pid>/stat -- inside the parentheses, at most 15 characters)."
   {:check [(> pid 0) (>= ppid 0) (>= start-ticks 0) (>= rss-bytes 0)]}
   (#^ int pid)
   (#^ int ppid)
@@ -38,15 +38,15 @@
 (defk proc-row-of-stat [pid text page-bytes]
   {:pre [(: pid int) (> pid 0) (: text str) (: page-bytes int) (> page-bytes 0)] :post [(: % (| ProcRow None))]
    :tags {:context "process" :role "judgment"}}
-  "/proc/<pid>/stat の中身 text を表の 1 行にするため(本物の答え手が使う)。comm(2 番目の欄)は空白や括弧を含みうるので、最後の ')' の
-   後ろを空白で割る。終わって刈られる前・刈られている最中の process(state Z・X — process_stat.hy の ENDED-STATES)は None(表に
-   入れない)。欄の足りない中身は機体の形を知らない読みなので ValueError で名指す(黙って捨てない)。"
+  "To turn the content text of /proc/<pid>/stat into one row of the table (used by the real responder). comm (the 2nd field) may contain spaces or parentheses, so split on whitespace
+   what follows the last ')'. A process that has ended and is about to be reaped, or is being reaped (state Z or X -- ENDED-STATES in process_stat.hy), is None (not put in the
+   table). Content with too few fields is a reading that does not know the machine's shape, so name it with ValueError (do not silently discard)."
   (val parts (.rsplit text ")" 1))
   (val head (get parts 0))
   (val comm (cut head (+ (.find head "(") 1) None))
   (val fields (if (= (len parts) 2) (.split (get parts 1)) []))
   (when (<= (len fields) STAT-RSS-PAGES)
-    (raise (ValueError (.format "/proc/{}/stat の欄が足りない: {!r}" pid text))))
+    (raise (ValueError (.format "too few fields in /proc/{}/stat: {!r}" pid text))))
   (if (in (get fields 0) ENDED-STATES)
       None
       (ProcRow :pid pid :ppid (int (get fields STAT-PPID)) :start-ticks (int (get fields STAT-START-TICKS))
@@ -54,14 +54,14 @@
 
 
 (defeffect ReadProcTable
-  "機体の process の表を 1 度読む(頭の註)。答え = ProcRow の列(pid の昇順)。"
+  "Read the machine's process table once (see the header comment). Answer = a sequence of ProcRow (ascending pid)."
   {:fields []
    :answer (get tuple #(ProcRow ...))
    :tags {:context "process" :role "foundation"}})
 
 
 (defeffect SignalPid
-  "pid の process(start-ticks の時のままの物)1 つへ signal を 1 度送る(頭の註)。答え = 送ったか。"
+  "Send a signal once to one process with pid (one still as it was at start-ticks) (see the header comment). Answer = whether it was sent."
   {:fields [(: pid int) (: start-ticks int) (: signal ProcessSignal)]
    :answer bool
    :tags {:context "process" :role "foundation"}})

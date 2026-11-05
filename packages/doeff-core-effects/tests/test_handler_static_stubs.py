@@ -1,13 +1,13 @@
-"""計器・最新の値・file system の答え手と計器の effect の型の宣言(memory_meter.pyi・memory_latest.pyi・os_file.pyi・
-meter_effects.pyi)の失敗ケース。
+"""Failure cases of the type declarations (memory_meter.pyi, memory_latest.pyi, os_file.pyi,
+meter_effects.pyi) of the handlers for meters, latest values, and the file system, and of the meter effects.
 
-4 つの module は Hy なので、型の宣言が無いと pyright は import した答え手と計器の effect・設定を全部 Unknown として読み、
-答え手を並べる使い手の strict に、書き手に直せない reportUnknown* が連なる。
+The four modules are Hy, so without type declarations pyright reads the imported handlers and the meter effects and settings all as Unknown,
+and a user that lines up the handlers gets a string of reportUnknown* errors in strict mode that the writer cannot fix.
 
-- 失敗ケース: 同じ小さな .hy を、4 つの宣言を外した写しと置いた写しの 2 通りで doeff-hy-check --strict にかける。
-  外すと import した名・答え手を被せた Program の答え・計器の断面が Unknown の赤になり、置くと消える。置いた側では
-  型の取り違え(int の答えに文字列を足す)が赤になる(宣言が答え手の答えの型を本文から運んでいる)。
-- 宣言と実装の名・引数の一致は test_hy_module_stubs.py が検める。
+- Failure case: run the same small .hy through doeff-hy-check --strict in two ways, a copy with the four declarations removed and a copy with them in place.
+  With them removed, the imported names, the answer of a Program wrapped with a handler, and the cross-section of the meter show red as Unknown; with them in place it disappears. On the side with them in place,
+  a type mix-up (adding a string to an int answer) shows red (the declaration carries the answer type of the handler from its body).
+- That the names and arguments of the declarations match the implementation is checked by test_hy_module_stubs.py.
 """
 
 import contextlib
@@ -21,12 +21,12 @@ import pytest
 
 PACKAGE = Path(__file__).resolve().parent.parent / "doeff_core_effects"
 
-needs_pyright = pytest.mark.skipif(shutil.which("pyright") is None, reason="pyright が無い")
+needs_pyright = pytest.mark.skipif(shutil.which("pyright") is None, reason="pyright is not available")
 
-#: この検が見る宣言(外した写しでは無い)。
+#: The declarations this test looks at (not the copy with them removed).
 STUBS: tuple[str, ...] = ("memory_meter.pyi", "memory_latest.pyi", "os_file.pyi", "meter_effects.pyi")
 
-#: 写しの package の名(入れた doeff_core_effects と別の名 — _copy_renamed)。
+#: The name of the copied package (a different name from the installed doeff_core_effects -- _copy_renamed).
 COPY_NAME = "copied_core_effects"
 
 MODULE = """\
@@ -54,7 +54,7 @@ MODULE = """\
   (+ counted "x"))
 """
 
-#: 宣言を外すと Unknown になる名(import の行の名・答えを受けた変数)。
+#: Names that become Unknown when the declarations are removed (names on import lines, variables receiving an answer).
 UNKNOWN_NAMES: tuple[str, ...] = (
     '"MeterSettings"',
     '"ReadMeter"',
@@ -68,7 +68,7 @@ UNKNOWN_NAMES: tuple[str, ...] = (
 
 @dataclass(frozen=True)
 class Run:
-    """doeff-hy-check を 1 回走らせた結果(JSON の診断)。"""
+    """The result of running doeff-hy-check once (diagnostics as JSON)."""
 
     diagnostics: tuple[dict[str, object], ...]
 
@@ -84,15 +84,15 @@ class Run:
 
 
 def _line_of(marker: str) -> int:
-    """検体の中で marker を含む行の番号(1 から)。"""
+    """The line number (from 1) of the line containing marker in the specimen."""
     return next(n for n, line in enumerate(MODULE.splitlines(), start=1) if marker in line)
 
 
 def _copy_renamed(target: Path, *, with_stubs: bool) -> None:
-    """doeff_core_effects を別の名(COPY_NAME)の package として target へ写す(with_stubs でなければ STUBS を外す)。
+    """Copy doeff_core_effects to target as a package under another name (COPY_NAME) (remove STUBS unless with_stubs).
 
-    同じ名のまま写すと、入れた doeff_core_effects も __init__.py を持つ普通の package なので、pyright は写しで解けない
-    module(宣言を外した .hy)を入れた側の宣言で解き、外したはずの宣言を読む。別の名にすると写しの中だけで解ける。
+    If copied under the same name, the installed doeff_core_effects is also an ordinary package with __init__.py, so pyright resolves a module it cannot resolve in the copy
+    (the .hy with the declarations removed) with the declarations on the installed side, and reads the declarations that should have been removed. Under another name it resolves within the copy alone.
     """
     shutil.copytree(PACKAGE, target, ignore=shutil.ignore_patterns("__pycache__"))
     if not with_stubs:
@@ -105,7 +105,7 @@ def _copy_renamed(target: Path, *, with_stubs: bool) -> None:
 
 
 def _check(tmp_path: Path, *, with_stubs: bool) -> Run:
-    """写し(_copy_renamed)を import の根に置き、検体を doeff-hy-check --strict にかける。"""
+    """Place the copy (_copy_renamed) at the import root and run doeff-hy-check --strict on the specimen."""
     from doeff_hy._static_check import main
 
     copy = tmp_path / ("stubbed" if with_stubs else "bare") / COPY_NAME
@@ -131,9 +131,9 @@ def test_without_the_stubs_the_handlers_are_unknown(tmp_path: Path) -> None:
 @needs_pyright
 def test_with_the_stubs_nothing_is_unknown_and_a_wrong_type_is_red(tmp_path: Path) -> None:
     run = _check(tmp_path, with_stubs=True)
-    # 正しい使い(検体の頭から wrong-count の前まで)には赤が 1 つも無い — Unknown も型の取り違えも。
+    # The correct usage (from the head of the specimen to just before wrong-count) has no red at all -- neither Unknown nor a type mix-up.
     right = range(1, _line_of("(defk wrong-count"))
     assert [e for e in run.errors() if e[1] in right] == [], run.errors()
-    # int の答えに文字列を足すと赤(宣言が答え手を被せた Program の答えの型 int を本文から運ぶ)。
+    # Adding a string to an int answer is red (the declaration carries the type int of the answer of a Program wrapped with a handler from its body).
     wrong = _line_of('(+ counted "x")')
     assert [e for e in run.errors() if e[1] == wrong and e[0] == "reportOperatorIssue"], run.errors()

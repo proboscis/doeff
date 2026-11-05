@@ -1,9 +1,9 @@
-;;; 本物の最新の値の答え手 process-latest-handler だけの性質。契約の性質は test_latest_contract.hy。
+;;; Properties of only the real latest-value responder process-latest-handler. Contract properties are in test_latest_contract.hy.
 ;;;
-;;;   * 同じ名前で入れた答え手どうしは、別の run でも別の thread でも 1 つの置き場を読み書きする(処理ループの run が置き、probe の別の run が読む)
-;;;   * 名前が違えば置き場も別
-;;;   * 別の thread の run が置いた値で、この run の変わるまでの待ち(AwaitLatest)が起きる・取り消された待ちは呼び鈴を残さない
-;;; 置き場は検の process の間ずっと残るので、検ごとに別の名前を使う。
+;;;   * Responders installed under the same name share one store whether in another run or another thread (the processing loop's run puts, and the probe's other run reads)
+;;;   * A different name means a different store
+;;;   * A value put by a run in another thread wakes this run's wait until it changes (AwaitLatest); a cancelled wait leaves no bell behind
+;;; The store remains for the whole test process, so each test uses a different name.
 (require doeff-hy.macros [defk deftest <- val])
 (require doeff-hy.record [defrecord])
 (import dataclasses [dataclass])
@@ -17,63 +17,63 @@
 
 
 (defrecord Progress
-  "検の値: 同期の進み。"
+  "A test value: synchronization progress."
   (#^ str waiting))
 
 
 (defk publish [value]
   {:pre [(: value Progress)] :post [(: % None)] :tags {:context "latest-test" :role "program"}}
-  "value を置く(別の run で走らせる Program)。"
+  "Put value (a Program run in another run)."
   (<- (PublishLatest value))
   None)
 
 
 (defk read-progress []
   {:pre [] :post [(: % (| Progress None))] :tags {:context "latest-test" :role "program"}}
-  "Progress の最新の値を読む(別の run・別の thread で走らせる Program)。"
+  "Read the latest Progress value (a Program run in another run or another thread)."
   (<- value (ReadLatest Progress))
   value)
 
 
 (deftest test-two-runs-with-the-same-name-share-one-board
-  (run (with_handlers [(state) (process-latest-handler "process-latest-shared")] (publish (Progress :waiting "畳んだ"))))
+  (run (with_handlers [(state) (process-latest-handler "process-latest-shared")] (publish (Progress :waiting "folded"))))
   (val value (run (with_handlers [(state) (process-latest-handler "process-latest-shared")] (read-progress))))
-  (assert (= value (Progress :waiting "畳んだ")) (.format "別の run が置いた値の読みが {!r}" value)))
+  (assert (= value (Progress :waiting "folded")) (.format "the read of the value put by another run is {!r}" value)))
 
 
 (deftest test-a-run-in-another-thread-reads-the-same-board
-  (run (with_handlers [(state) (process-latest-handler "process-latest-thread")] (publish (Progress :waiting "畳んだ"))))
+  (run (with_handlers [(state) (process-latest-handler "process-latest-thread")] (publish (Progress :waiting "folded"))))
   (val seen [])
   (val reader (threading.Thread
                  :target (fn [] (.append seen (run (with_handlers [(state) (process-latest-handler "process-latest-thread")] (read-progress)))))))
   (.start reader)
   (.join reader 10.0)
-  (assert (= seen [(Progress :waiting "畳んだ")]) (.format "別の thread の読みが {!r}" seen)))
+  (assert (= seen [(Progress :waiting "folded")]) (.format "the read in another thread is {!r}" seen)))
 
 
 (deftest test-different-names-do-not-share
-  (run (with_handlers [(state) (process-latest-handler "process-latest-left")] (publish (Progress :waiting "畳んだ"))))
+  (run (with_handlers [(state) (process-latest-handler "process-latest-left")] (publish (Progress :waiting "folded"))))
   (val value (run (with_handlers [(state) (process-latest-handler "process-latest-right")] (read-progress))))
-  (assert (is value None) (.format "別の名前の置き場の読みが {!r}" value)))
+  (assert (is value None) (.format "the read of the store under a different name is {!r}" value)))
 
 
-;; --- 変わるまでの待ち(AwaitLatest)の本物だけの性質 -----------------------------------------------------
-;;   * 別の thread の run が置いた値で、この run の待ちが起きる(処理ループの run が置いた断面で、probe の別の run の待ちが起きる形)
-;;   * 取り消された待ちは呼び鈴を残さない(process に 1 つの呼び鈴の保存先が空に戻る)
+;; --- Properties of only the real wait until change (AwaitLatest) -----------------------------------------------------
+;;   * A value put by a run in another thread wakes this run's wait (the shape where a snapshot put by the processing loop's run wakes the wait of the probe's other run)
+;;   * A cancelled wait leaves no bell behind (the per-process store of bells returns to empty)
 
 (defk awaited [seen]
   {:pre [(: seen (| Progress None))] :post [(: % (| Progress None))] :tags {:context "latest-test" :role "program"}}
-  "Progress の最新の値が seen と別の物になるまで待ち、その値を答える。"
+  "Wait until the latest Progress value becomes something other than seen, and answer that value."
   (<- value (AwaitLatest Progress seen))
   value)
 
 
 (deftest test-a-publish-from-another-thread-wakes-the-await
-  ;; 失敗ケース = 置く側が呼び鈴を鳴らさない(または外からの完了が scheduler を起こさない)形では、待ちが起きず join の上限で止まる。
+  ;; Failure case = in a shape where the putter does not ring the bell (or an external completion does not wake the scheduler), the wait does not wake and stops at the join limit.
   (val name "process-latest-await-thread")
-  (val first (Progress :waiting "一覧"))
+  (val first (Progress :waiting "list"))
   (run (with_handlers [(state) (process-latest-handler name)] (publish first)))
-  (val timer (threading.Timer 0.05 (fn [] (run (with_handlers [(state) (process-latest-handler name)] (publish (Progress :waiting "まとめた")))))))
+  (val timer (threading.Timer 0.05 (fn [] (run (with_handlers [(state) (process-latest-handler name)] (publish (Progress :waiting "summarized")))))))
   (setv timer.daemon True)
   (.start timer)
   (val seen [])
@@ -82,12 +82,12 @@
                  :daemon True))
   (.start waiter)
   (.join waiter 10.0)
-  (assert (= seen [(Progress :waiting "まとめた")]) (.format "別の thread が置いた後の待ちの答えが {!r}" seen)))
+  (assert (= seen [(Progress :waiting "summarized")]) (.format "the answer of the wait after another thread put is {!r}" seen)))
 
 
 (defk let-others-run []
   {:pre [] :post [(: % None)] :tags {:context "latest-test" :role "program"}}
-  "先に spawn した task(待ちに入る・取り消しで巻き戻る)を回すため(後に spawn した task が終わるのを待つ — 時計を使わない)。"
+  "To run the task spawned first (it enters the wait and unwinds on cancellation) (waiting for the later-spawned task to finish - no clock is used)."
   (<- promise (CreatePromise))
   (<- helper (Spawn (CompletePromise promise None)))
   (<- (Wait helper))
@@ -96,20 +96,20 @@
 
 (defk cancelled-then-published [name first]
   {:pre [(: name str) (: first Progress)] :post [(: % None)] :tags {:context "latest-test" :role "program"}}
-  "待ちを spawn して呼び鈴の待ちに入れてから取り消し、その後に値を置くため(取り消しの callback が呼び鈴を外したかは呼び手が確かめる)。"
+  "To spawn a wait, let it enter the bell wait, then cancel it, and put a value after that (the caller checks whether the cancellation callback removed the bell)."
   (<- waiter (Spawn (awaited first)))
   (<- (let-others-run))
-  (assert (= (len (.get (get BELLS name) Progress #())) 1) (.format "待ちに入った後の呼び鈴が {!r}" (get BELLS name)))
+  (assert (= (len (.get (get BELLS name) Progress #())) 1) (.format "the bell after entering the wait is {!r}" (get BELLS name)))
   (<- (Cancel waiter))
-  ;; 取り消した task が巻き戻り終えるまで回す(root が先に返ると、巻き戻しが走りかけのまま残る)。
+  ;; Keep running until the cancelled task finishes unwinding (if the root returns first, the unwinding is left half-run).
   (<- (let-others-run))
   None)
 
 
 (deftest test-a-cancelled-await-leaves-no-bell
-  ;; 失敗ケース = 取り消しの callback が無い形では、取り消した待ちの呼び鈴が保存先に残り、置くたびに待つ側の居ない約束を鳴らし続ける。
+  ;; Failure case = in a shape with no cancellation callback, the bell of the cancelled wait stays in the store, and every put keeps ringing a promise with no waiter.
   (val name "process-latest-await-cancel")
-  (val first (Progress :waiting "一覧"))
+  (val first (Progress :waiting "list"))
   (run (with_handlers [(state) (process-latest-handler name)] (publish first)))
   (run (scheduled (with_handlers [(state) (process-latest-handler name)] (cancelled-then-published name first))))
-  (assert (= (.get (get BELLS name) Progress #()) #()) (.format "取り消した後の呼び鈴が {!r}" (get BELLS name))))
+  (assert (= (.get (get BELLS name) Progress #()) #()) (.format "the bell after cancellation is {!r}" (get BELLS name))))

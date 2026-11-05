@@ -1,18 +1,18 @@
-;;; HTTP の client が使われない接続を持つ秒と、相手の server が閉じる秒の組(記録の service への書きが前の
-;;; 書きから 5 秒を越えて空くと、書きのたびに TCP を張り直して名前を引き直していた)。本物の socket で、検の中の最小の待ち受け(標準の
-;;; http.server — 受けた接続の数と要求の本文を数える)へ当てる。
-;;;   (1) 既定の client は、旧い既定(httpx の keepalive_expiry 5 秒)を越える実時間の間(6 秒)を空けても張り直さない。本番の書きの間
-;;;       (30 秒)を待つと遅いので、30 秒の側は、公開の作り方で作った client が実際に持つ接続の期限(Limits の値そのもの)と、doeff の
-;;;       待ち受けが使われない接続を閉じる秒がそれより長いことの断言で補う
-;;;   (2) server が先に閉じた接続へ書く形でも誤りにならず、1 度だけ張り直して書く(書きの重複 0)— httpcore が送る前に閉じた接続を捨てる。
-;;;       送った後に閉じられた要求は httpx も httpcore も送り直さない(送り直すかは HttpRequest の max-retries だけが決める)
-;;; 新しい公開の名(http-client-factory・CLIENT-KEEPALIVE-SECONDS・IDLE-CONNECTION-SECONDS)は module の欄として読む — 直す前の版では
-;;; 欄が無い検だけが落ち、(1) の実時間の検は振る舞いで落ちる。
+;;; The pair of the seconds an HTTP client keeps unused connections and the seconds the peer server closes them (when writes to the record service were spaced more than 5 seconds
+;;; after the previous write, every write re-established TCP and re-resolved the name). Uses real sockets against the smallest listener inside the test (the standard
+;;; http.server -- it counts accepted connections and request bodies).
+;;;   (1) The default client does not reconnect even after a real-time gap (6 seconds) longer than the old default (httpx keepalive_expiry of 5 seconds). Waiting for the production
+;;;       write interval (30 seconds) would be slow, so the 30-second side is covered by assertions that the connection expiry a client built the public way actually holds (the Limits value itself) and that the seconds after which doeff's
+;;;       listener closes unused connections are longer than that
+;;;   (2) Even when writing to a connection the server closed first, it is not an error, and it reconnects exactly once and writes (0 duplicate writes) -- httpcore drops a connection closed before sending.
+;;;       A request closed after being sent is not re-sent by httpx or httpcore (whether to re-send is decided only by HttpRequest's max-retries)
+;;; The new public names (http-client-factory, CLIENT-KEEPALIVE-SECONDS, IDLE-CONNECTION-SECONDS) are read as module attributes -- in the pre-fix version
+;;; only the tests with no such attribute fail, and the real-time test of (1) fails by behavior.
 (require doeff-hy.macros [deftest defk <- val with-handler])
 (require doeff-hy.record [defrecord])
 (import asyncio)
 (import collections.abc [Callable])
-(import dataclasses [dataclass])  ; defrecord の展開が使う
+(import dataclasses [dataclass])  ; used by the defrecord expansion
 (import http.server)
 (import socket)
 (import ssl)
@@ -28,55 +28,55 @@
 (import doeff_core_effects [HttpAddress]
         doeff_core_effects._http_server_effects [WS-CLOSE-NORMAL])
 
-;; この file の待ちは実時間が対象(何が対象かは名簿 tests/realtime_tests.toml のこの file の行)— realtime を名乗る file の中の眠りを、
-;; 検の眠りの規則(doeff-linter の DOEFF211)は当てない。
+;; The waits in this file are about real time (what they are about is in this file's row of the roster tests/realtime_tests.toml) -- the sleep rule for tests
+;; (DOEFF211 of doeff-linter) is not applied to sleeps in a file that declares itself realtime.
 (val pytestmark pytest.mark.realtime)
 
-;; 旧い既定の期限(httpx の keepalive_expiry 5 秒)を越える実時間の間(秒)。
+;; Real-time gap (seconds) longer than the old default expiry (httpx keepalive_expiry of 5 seconds).
 (val OLD-EXPIRY-GAP-SECONDS 6.0)
-;; 本番の書きの間(画面の job が記録の service へ書く間の実測 26〜30 秒)。
+;; The production write interval (26 to 30 seconds measured between the UI job's writes to the record service).
 (val CALL-GAP-SECONDS 30.0)
-;; server が先に閉じる形: 待ち受けが次の要求を待つ上限(秒)と、client がそれより長く空ける間(秒 — 相手の FIN が届いてから書く)。
+;; The form where the server closes first: the limit (seconds) the listener waits for the next request, and the gap (seconds) the client leaves that is longer than it (it writes after the peer's FIN arrives).
 (val SERVER-FIRST-IDLE-SECONDS 0.3)
 (val AFTER-SERVER-CLOSED-GAP-SECONDS 1.0)
-;; 待ち受けが読んでから答えずに閉じる本文(送った後に閉じられる形)。
+;; The body the listener reads and then closes on without answering (the form closed after being sent).
 (val CUT b"cut")
-;; doeff の待ち受けを開く・接続を受けるまでを待つ上限(秒)。
+;; Upper limit (seconds) to wait for opening doeff's listener and for it to accept a connection.
 (val EDGE-SECONDS 10.0)
 
 
 (defclass Tally []
-  "待ち受けが受けた接続の数と、要求の本文の列(接続ごとの thread が lock の内で足す)。"
+  "The number of connections the listener accepted and the sequence of request bodies (each per-connection thread adds them inside the lock)."
   (defn #^ None __init__ [self]
-    "数えを 0 と空で始めるため。"
+    "To start the counts at 0 and empty."
     (setv self.lock (threading.Lock))
     (setv self.connections 0)
     (setv #^ (get tuple #(bytes ...)) self.arrivals #())
     None)
   (defn #^ None connected [self]
-    "接続を 1 本受けた事を数えるため。"
+    "To count one accepted connection."
     (with [self.lock]
       (setv self.connections (+ self.connections 1)))
     None)
   (defn #^ None arrived [self #^ bytes body]
-    "要求の本文を 1 つ控えるため(受けた順)。"
+    "To record one request body (in the order received)."
     (with [self.lock]
       (setv self.arrivals (+ self.arrivals #(body))))
     None))
 
 
 (defclass CountingHandler [http.server.BaseHTTPRequestHandler]
-  "接続ごとの受け手(HTTP/1.1 — 接続を使い回す): 接続を数え、POST の本文を控えて 200 で答える。本文 CUT は読んでから答えずに閉じる。
-   待ち受けの idle-seconds が在れば、次の要求をその秒だけ待って来なければ閉じる(server が先に閉じる形 — 標準の socket の上限)。"
+  "Per-connection handler (HTTP/1.1 -- reuses connections): counts the connection, records the POST body, and answers 200. The body CUT is read and then closed on without answering.
+   If the listener has idle-seconds, it waits that many seconds for the next request and closes if none comes (the form where the server closes first -- the standard socket's limit)."
   (setv protocol-version "HTTP/1.1")
   (defn #^ None setup [self]
-    "次の要求を待つ上限を待ち受けから受けてから接続を開き、接続を数えるため。"
+    "To accept the limit for waiting for the next request from the listener, then open the connection and count it."
     (setv self.timeout self.server.idle-seconds)
     (.setup (super))
     (.connected self.server.tally)
     None)
   (defn #^ None do-POST [self]
-    "本文を控え、CUT なら答えずに閉じ、他は 200 で答えるため。"
+    "To record the body, close without answering for CUT, and answer 200 otherwise."
     (setv body (.read self.rfile (int (.get self.headers "Content-Length" "0"))))
     (.arrived self.server.tally body)
     (if (= body CUT)
@@ -87,15 +87,15 @@
             (.write self.wfile b"ok")))
     None)
   (defn #^ None log-message [self #^ str format #^ (| str int) #* args]
-    "要求ごとの行を書かないため。"
+    "To write no line per request."
     None))
 
 
 (defclass CountingServer [http.server.ThreadingHTTPServer]
-  "受けた接続と要求を数える待ち受け(127.0.0.1 の空きの port)。idle-seconds = 接続ごとに次の要求を待つ上限(None = 待ち続ける)。"
+  "A listener that counts accepted connections and requests (a free port on 127.0.0.1). idle-seconds = the limit per connection for waiting for the next request (None = keep waiting)."
   (setv daemon-threads True)
   (defn #^ None __init__ [self #^ (| float None) idle-seconds]
-    "空きの port で開き、数えを空で始めるため。"
+    "To open on a free port and start the counts empty."
     (.__init__ (super) #("127.0.0.1" 0) CountingHandler)
     (setv self.idle-seconds idle-seconds)
     (setv self.tally (Tally))
@@ -103,7 +103,7 @@
 
 
 (defrecord Observed
-  "client の Program の答えと、待ち受けが受けた接続の数と要求の本文の列。"
+  "The answers of the client Program, and the number of connections the listener accepted and the sequence of request bodies."
   (#^ tuple answers)
   (#^ int connections)
   (#^ tuple arrivals))
@@ -112,8 +112,8 @@
 (defk observed-through [handler idle-seconds program-of]
   {:pre [(: handler Callable) (: idle-seconds (| float None)) (: program-of Callable)] :post [(: % Observed)]
    :tags {:context "http" :role "foundation"}}
-  "数える待ち受けを立て、その URL への client の Program(program-of の答え)を HTTP の答え手 handler と await-handler の下で走らせ、
-   待ち受けを止めてから数えを読むため(client は範囲の終わりで閉じる — 答え手が範囲ごとに作って閉じる)。"
+  "To start a counting listener and run the client Program for its URL (the answer of program-of) under the HTTP responder handler and await-handler,
+   then stop the listener and read the counts (the client is closed at the end of the scope -- the responder creates and closes it per scope)."
   (val server (CountingServer idle-seconds))
   (.start (threading.Thread :target server.serve-forever :daemon True))
   (val url (.format "http://127.0.0.1:{}/write" (get server.server-address 1)))
@@ -127,8 +127,8 @@
 
 (defk write-twice [gap url]
   {:pre [(: gap float) (: url str)] :post [(: % tuple)] :tags {:context "http" :role "program"}}
-  "本文 1 と 2 の POST を、gap 秒の実時間を空けて 1 回ずつ出すため。撃ち直しは 0 回で、届かない失敗は値で受ける — 答え手の送り直しで
-   張り直しや送った後の失敗を隠さない。答え = 2 つの答え。"
+  "To issue a POST with body 1 and one with body 2, once each, leaving a real-time gap of gap seconds. Re-fires are 0 and an unreachable failure is received as a value -- the responder's re-sending must not
+   hide a reconnect or a failure after sending. The answer = two answers."
   (<- first (| HttpResponse HttpFailed) (HttpRequest "POST" url :body b"1" :max-retries 0 :failures-as-values True))
   (<- (Await (asyncio.sleep gap)))
   (<- second (| HttpResponse HttpFailed) (HttpRequest "POST" url :body b"2" :max-retries 0 :failures-as-values True))
@@ -137,20 +137,20 @@
 
 (defk write-cut [url]
   {:pre [(: url str)] :post [(: % tuple)] :tags {:context "http" :role "program"}}
-  "本文 CUT の POST を 1 回出すため(撃ち直し 0 回・届かない失敗は値で受ける)。答え = 1 つの答え。"
+  "To issue one POST with body CUT (0 re-fires; an unreachable failure is received as a value). The answer = one answer."
   (<- answer (| HttpResponse HttpFailed) (HttpRequest "POST" url :body CUT :max-retries 0 :failures-as-values True))
   #(answer))
 
 
 (defk all-written [observed]
   {:pre [(: observed Observed)] :post [(: % bool)] :tags {:context "http" :role "program"}}
-  "client の答えが全部 200 の返事かを判じるため(届かない失敗が混ざれば偽)。"
+  "To judge whether all the client's answers are 200 responses (false if an unreachable failure is mixed in)."
   (all (gfor answer observed.answers (and (isinstance answer HttpResponse) (= answer.status 200)))))
 
 
 (deftest test-the-default-client-keeps-its-connection-across-a-gap-longer-than-the-old-expiry
-  ;; 失敗ケース (1): 既定の client(client-factory を渡さない http-production-handler)で、旧い既定の期限 5 秒を越える 6 秒の実時間を
-  ;; 空けて 2 回書く。直す前は 2 回目の前に期限の切れた接続を閉じて張り直した(接続 2)。直した後は同じ接続で書く(接続 1)。
+  ;; Failure case (1): with the default client (http-production-handler with no client-factory passed), write twice leaving a real-time gap of 6 seconds, longer than the old default expiry of 5 seconds.
+  ;; Before the fix, the expired connection was closed and re-established before the second write (2 connections). After the fix it writes on the same connection (1 connection).
   (<- seen Observed (observed-through (http-production-handler) None (fn [url] (write-twice OLD-EXPIRY-GAP-SECONDS url))))
   (assert (! (all-written seen)) seen)
   (assert (= seen.arrivals #(b"1" b"2")) seen)
@@ -158,8 +158,8 @@
 
 
 (defrecord MadeClient
-  "client が実際に持つ接続の持ち方: 接続の数の上限・使われない接続を持つ数の上限・使われない接続を持つ秒・proxy の env を読むか・
-   相手の証明書を検める SSLContext。"
+  "How the client actually holds connections: the connection count limit, the limit on the number of unused connections kept, the seconds unused connections are kept, whether it reads the proxy env, and
+   the SSLContext that verifies the peer's certificate."
   (#^ int max-connections)
   (#^ int max-keepalive)
   (#^ float keepalive-seconds)
@@ -169,8 +169,8 @@
 
 (defk made-client [factory]
   {:pre [(: factory Callable)] :post [(: % MadeClient)] :tags {:context "http" :role "foundation"}}
-  "factory で client を 1 つ作り、実際に持つ接続の持ち方を読んで閉じるため。httpx は Limits を client に残さず httpcore の pool にだけ
-   渡すので、pool の欄を読む(版は uv.lock の httpx 0.28.1・httpcore 1.0.9)。"
+  "To create one client with factory, read how it actually holds connections, and close it. httpx does not keep Limits on the client and passes them only to httpcore's pool,
+   so the pool's attributes are read (versions: httpx 0.28.1 and httpcore 1.0.9 in uv.lock)."
   (val client (factory))
   (val pool client._transport._pool)
   (val made (MadeClient :max-connections pool._max-connections :max-keepalive pool._max-keepalive-connections
@@ -180,10 +180,10 @@
 
 
 (deftest test-the-public-client-factory-keeps-idle-connections-past-the-call-gap
-  ;; 失敗ケース (1) の 30 秒の側: 公開の作り方で作った client(既定の形と、agora の foundation の 3 か所の引数の形)が実際に持つ使われない
-  ;; 接続の期限は、名前つきの 1 か所の CLIENT-KEEPALIVE-SECONDS で、本番の書きの間 30 秒より長い。接続の数の 2 つの上限は httpx の既定の
-  ;; まま(素の httpx.AsyncClient と同じ)で、trust-env と verify は渡したとおり。直す前は公開の作り方が無く、既定の client の期限は
-  ;; httpx の既定 5 秒だった(30 秒空いた書きは毎回張り直した)。
+  ;; The 30-second side of failure case (1): the expiry of unused connections that a client built the public way (the default form and the form with the three arguments of agora's foundation) actually
+  ;; holds is the one named CLIENT-KEEPALIVE-SECONDS, and is longer than the production write interval of 30 seconds. The two connection-count limits remain httpx's defaults
+  ;; (the same as a bare httpx.AsyncClient), and trust-env and verify are as passed. Before the fix there was no public way to build, and the default client's expiry was
+  ;; httpx's default of 5 seconds (writes spaced 30 seconds apart reconnected every time).
   (val make http-handlers.http-client-factory)
   (val context (ssl.create-default-context))
   (<- plain MadeClient (with-handler [await-handler] (made-client httpx.AsyncClient)))
@@ -199,9 +199,9 @@
 
 
 (deftest test-a-connection-the-server-closed-first-is-replaced-before-the-write-is-sent
-  ;; 失敗ケース (2): 相手の server が先に閉じた接続(使われない接続を SERVER-FIRST-IDLE-SECONDS で閉じる待ち受け)へ、公開の作り方の
-  ;; client(agora の形 trust-env False)で次を書く。httpcore は送る前に、使われていない接続の socket が読める(相手の FIN が届いた)のを
-  ;; 見てその接続を捨て、新しい接続で送る: 誤りにならず(撃ち直し 0 回でも 200)、書きは 1 回ずつ(重複 0)、張り直しは 1 回(接続 2)。
+  ;; Failure case (2): to a connection the peer server closed first (a listener that closes unused connections after SERVER-FIRST-IDLE-SECONDS), write next with a client built the public way
+  ;; (agora's form, trust-env False). Before sending, httpcore sees that the unused connection's socket is readable (the peer's FIN arrived),
+  ;; drops that connection, and sends on a new one: it is not an error (200 even with 0 re-fires), each write happens once (0 duplicates), and the reconnect is once (2 connections).
   (val handler (http-production-handler :client-factory (fn [] (http-handlers.http-client-factory :trust-env False))))
   (<- seen Observed (observed-through handler SERVER-FIRST-IDLE-SECONDS
                                       (fn [url] (write-twice AFTER-SERVER-CLOSED-GAP-SECONDS url))))
@@ -211,9 +211,9 @@
 
 
 (deftest test-a-write-the-server-closed-after-reading-is-not-sent-again
-  ;; (2) の境: 相手が要求を読んでから答えずに閉じた(送った後に閉じられた)要求を、httpx も httpcore も送り直さない — 届かない失敗
-  ;; (OTHER・RemoteProtocolError)で答え、相手が受けた書きは 1 回。送り直すかは HttpRequest の max-retries だけが決める(冪等でない書きは
-  ;; 0 回で出す)。
+  ;; The boundary of (2): a request the peer read and then closed on without answering (closed after being sent) is not re-sent by httpx or httpcore -- it is answered
+  ;; with an unreachable failure (OTHER, RemoteProtocolError), and the peer received the write once. Whether to re-send is decided only by HttpRequest's max-retries (a non-idempotent write is issued
+  ;; with 0).
   (val handler (http-production-handler :client-factory (fn [] (http-handlers.http-client-factory :trust-env False))))
   (<- seen Observed (observed-through handler None write-cut))
   (val failed (get seen.answers 0))
@@ -224,16 +224,16 @@
 
 
 (defrecord ServerIdle
-  "doeff の待ち受けが使われない接続を閉じるまでの秒: 受けた接続の aiohttp の受け手が持つ値と、名前つきの宣言の値。"
+  "The seconds after which doeff's listener closes an unused connection: the value held by the aiohttp handler of the accepted connection, and the value of the named declaration."
   (#^ float live)
   (#^ float declared))
 
 
 (defk doeff-server-idle []
   {:pre [] :post [(: % ServerIdle)] :tags {:context "http" :role "foundation"}}
-  "doeff の待ち受け(aiohttp-http-server の WebEdge)を空きの port で開いて接続を 1 本張り、待ち受けがその接続を受けるのを待って、
-   使われない接続を閉じるまでの秒を aiohttp の受け手から読み、宣言の値と並べて閉じるため(aiohttp の無い venv では skip)。"
-  (pytest.importorskip "aiohttp" :reason "aiohttp は extra http-server の依存")
+  "To open doeff's listener (the WebEdge of aiohttp-http-server) on a free port, make one connection, wait for the listener to accept it, read
+   the seconds before an unused connection is closed from the aiohttp handler, and close, placing it beside the declared value (skipped in a venv without aiohttp)."
+  (pytest.importorskip "aiohttp" :reason "aiohttp is a dependency of the extra http-server")
   (import doeff_core_effects._aiohttp_http_server :as edge-module)
   (val edge (edge-module.WebEdge))
   (val loop (.edge-loop edge))
@@ -248,13 +248,13 @@
                 :declared edge-module.IDLE-CONNECTION-SECONDS)
     (finally
       (.close peer)
-      (.result (asyncio.run-coroutine-threadsafe (.shutdown edge "検が閉じた" 0.2 WS-CLOSE-NORMAL) loop) EDGE-SECONDS))))
+      (.result (asyncio.run-coroutine-threadsafe (.shutdown edge "closed by the test" 0.2 WS-CLOSE-NORMAL) loop) EDGE-SECONDS))))
 
 
 (deftest test-the-doeff-server-keeps-an-idle-connection-longer-than-the-client
-  ;; 組の他方: doeff の待ち受け(記録の表の service 8875 と会話の記録の service 8874 の待ち受け)が使われない接続を閉じるまでの秒は、
-  ;; 名前つきの IDLE-CONNECTION-SECONDS(aiohttp の既定に頼らない)で、client が使われない接続を持つ秒 CLIENT-KEEPALIVE-SECONDS より
-  ;; 長い — server が先に閉じた接続へ client が書く形(失敗ケース (2))は、server の再起動などの時だけ起きる。
+  ;; The other half of the pair: the seconds after which doeff's listener (the listeners of the table-record service 8875 and the conversation-record service 8874) closes an unused connection is
+  ;; the named IDLE-CONNECTION-SECONDS (not relying on aiohttp's default), and is longer than CLIENT-KEEPALIVE-SECONDS, the seconds the client keeps unused connections
+  ;; -- the form where the client writes to a connection the server closed first (failure case (2)) happens only when the server restarts and the like.
   (<- idle ServerIdle (doeff-server-idle))
   (assert (= idle.live idle.declared) idle)
   (assert (> idle.declared http-handlers.CLIENT-KEEPALIVE-SECONDS) idle))
@@ -262,8 +262,8 @@
 
 (defk traced-twice [url]
   {:pre [(: url str)] :post [(: % tuple)] :tags {:context "http" :role "program"}}
-  "区間を割る旗 trace-phases つきの POST を 2 回(間を空けずに)と、旗の無い POST を 1 回出すため(撃ち直し 0 回・届かない失敗は値で受ける)。
-   答え = 3 つの答え。"
+  "To issue a POST with the flag trace-phases that splits into phases twice (with no gap), and a POST without the flag once (0 re-fires; an unreachable failure is received as a value).
+   The answer = three answers."
   (<- first (| HttpResponse HttpFailed) (HttpRequest "POST" url :body b"1" :max-retries 0 :failures-as-values True :trace-phases True))
   (<- second (| HttpResponse HttpFailed) (HttpRequest "POST" url :body b"2" :max-retries 0 :failures-as-values True :trace-phases True))
   (<- plain (| HttpResponse HttpFailed) (HttpRequest "POST" url :body b"3" :max-retries 0 :failures-as-values True))
@@ -271,10 +271,10 @@
 
 
 (deftest test-a-traced-request-names-whether-it-made-a-connection-and-where-its-seconds-went
-  ;; 区間の割り(記録の service への変更の読み 1 本の往復のどこで時間が過ぎるかを、呼び手の側で名指す):
-  ;; trace-phases の要求の答えは区間 HttpPhases を持つ。1 本目は接続を張り(new-connection・connect-seconds > 0)、間を空けない 2 本目は
-  ;; 同じ接続を使い回す(connect-seconds 0)。区間の和は答え手の測る elapsed を越えない(同じ要求の中の区間)。旗の無い要求は区間を
-  ;; 持たない(既定の呼び手は trace の費用を払わない)。直す前の答えは欄 phases を持たない。
+  ;; Splitting into phases (naming, on the caller's side, where time goes in one round trip of a change read to the record service):
+  ;; the answer to a trace-phases request has HttpPhases. The first makes a connection (new-connection, connect-seconds > 0), and the second, with no gap,
+  ;; reuses the same connection (connect-seconds 0). The sum of the phases does not exceed the elapsed the responder measures (phases within the same request). A request without the flag has
+  ;; no phases (the default caller does not pay the cost of trace). The pre-fix answer has no attribute phases.
   (<- seen Observed (observed-through (http-production-handler) None traced-twice))
   (assert (! (all-written seen)) seen)
   (assert (= seen.connections 1) seen)

@@ -1,7 +1,7 @@
-;;; 汎用の列の effect(channel_effects.hy)の検。
-;;;   - 届いた順に取れる・空の列を取る task は、別の task が積むまで待つ(他の task は回る)。
-;;;   - 待ち手が Cancel されても、積んだ値は消えずに次の待ち手が取る。
-;;;   - 消費者の形: Spawn した計算(Compute)の答えを、処理ループが 1 本の列で届いた順に読む。
+;;; Tests for the generic channel effects (channel_effects.hy).
+;;;   - Values can be taken in arrival order; a task taking from an empty channel waits until another task puts (other tasks keep running).
+;;;   - Even if a waiter is Cancelled, the values put are not lost and the next waiter takes them.
+;;;   - The consumer shape: the answers of Spawned computations (Compute) are read by the processing loop from one channel in arrival order.
 (require doeff-hy.macros [defk <- val])
 (import concurrent.futures [ThreadPoolExecutor])
 (import doeff [run with_handlers])
@@ -14,22 +14,22 @@
 
 
 (defn on [handlers program]
-  "handler の列の下で program を scheduler つきで 1 回回すため。"
+  "To run program once with the scheduler under the channel handler."
   (run (scheduled (with_handlers handlers program))))
 
 
 (defk puts [channel items]
   {:pre [(: channel Channel) (: items tuple)] :post [(: % str)]}
-  "列に items を順に積む生産者の task。"
+  "A producer task that puts items on the channel in order."
   (when items
     (<- (PutChannel channel (get items 0)))
     (<- (puts channel (cut items 1 None))))
-  "積んだ")
+  "put")
 
 
 (defk takes [channel n]
   {:pre [(: channel Channel) (: n int)] :post [(: % tuple)]}
-  "列から n 個を取る消費者の task。"
+  "A consumer task that takes n items from the channel."
   (if (= n 0)
       #()
       (do
@@ -40,41 +40,41 @@
 
 (defk fifo []
   {:pre [] :post [(: % list)]}
-  "先に消費者が空の列を待ち、後から生産者が積む筋書き。"
+  "A scenario where the consumer first waits on an empty channel and the producer puts later."
   (<- channel (CreateChannel))
   (<- reader (Spawn (takes channel 3)))
-  (<- writer (Spawn (puts channel #("一" "二" "三"))))
+  (<- writer (Spawn (puts channel #("one" "two" "three"))))
   (<- read (Wait reader))
   (<- wrote (Wait writer))
   [read wrote])
 
 
 (defn test-take-waits-for-put-and-keeps-the-order []
-  (assert (= (list (on [scheduler-channel-handler] (fifo))) [#("一" "二" "三") "積んだ"])))
+  (assert (= (list (on [scheduler-channel-handler] (fifo))) [#("one" "two" "three") "put"])))
 
 
 (defk cancelled-waiter []
   {:pre [] :post [(: % str)]}
-  "待ち手の 1 人が Cancel された後に積んだ値を、生きている待ち手が取る筋書き。"
+  "A scenario where a value put after one of the waiters was Cancelled is taken by a living waiter."
   (<- channel (CreateChannel))
   (<- gone (Spawn (TakeChannel channel)))
   (<- alive (Spawn (TakeChannel channel)))
   (<- tick (Spawn (puts channel #())))
-  (<- (Wait tick))  ; 先に並んだ 2 人が待ちに入るまで回す
+  (<- (Wait tick))  ; run until the first 2 waiters are waiting
   (assert (= (len channel.waiters) 2) channel.waiters)
   (<- (Cancel gone))
-  (<- (PutChannel channel "残る値"))
+  (<- (PutChannel channel "remaining value"))
   (<- got (Wait alive))
   got)
 
 
 (defn test-a-cancelled-waiter-does-not-lose-the-item []
-  (assert (= (on [scheduler-channel-handler] (cancelled-waiter)) "残る値")))
+  (assert (= (on [scheduler-channel-handler] (cancelled-waiter)) "remaining value")))
 
 
 (defk answers-to-loop [n]
   {:pre [(: n int)] :post [(: % Computed)]}
-  "計算の答えを列へ積む task(処理ループの外の仕事の形)。"
+  "A task that puts a computation's answer onto the channel (the shape of work outside the processing loop)."
   (<- channel (CreateChannel))
   (<- worker (Spawn (answer-into channel n)))
   (<- got (TakeChannel channel))
@@ -84,13 +84,13 @@
 
 (defk squared [n]
   {:pre [(: n int)] :post [(: % int)]}
-  "純粋な計算の筋書き。"
+  "A scenario of a pure computation."
   (* n n))
 
 
 (defk answer-into [channel n]
   {:pre [(: channel Channel) (: n int)] :post [(: % None)]}
-  "計算を回して、答えを受け口の列へ積むため。"
+  "To run a computation and put its answer on the receiving channel."
   (<- outcome (Compute (squared n)))
   (<- (PutChannel channel outcome))
   None)

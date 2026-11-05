@@ -1,12 +1,12 @@
-;;; macOS(Darwin)で process の終わりで読める fd を開く — 子 process の終わりの待ち(process_exit.hy の process-exit-handler)の
-;;; macOS の開き方(Linux の pidfd_exit.hy の pidfd-of と同じ形: pid → fd | None・閉じるのは呼び手)。
+;;; Open an fd that becomes readable when a process exits on macOS (Darwin) -- the macOS way of waiting for a child process to exit
+;;; (process-exit-handler in process_exit.hy); same shape as pidfd-of in Linux's pidfd_exit.hy: pid -> fd | None, the caller closes it.
 ;;;
-;;; 開き方: kqueue を 1 つ作り、pid に EVFILT_PROC / NOTE_EXIT を登録する。process が終わると kqueue に出来事が 1 つ溜まり、kqueue の
-;;; fd は読める fd になる — pidfd と同じく asyncio の loop の add_reader に掛けられる。EVFILT_PROC は子でない process にも登録できる
-;;; (同じ利用者の process)ので、待ちの子から分けた子も同じ形で待てる。終わった(zombie を含む)・居ない pid の登録は ESRCH
-;;; (ProcessLookupError)で、None を答える(待つ物が無い)。
-;;; fd の持ち主: select.kqueue の object は自分の fd を GC で閉じるので、登録の済んだ kqueue の fd を os.dup で写して object を閉じ、
-;;; 写した fd だけを返す(kqueue と登録は、それを指す fd が 1 つでも在る間は残る)。呼び手は Linux の pidfd と同じく os.close で閉じる。
+;;; How it opens: create one kqueue and register EVFILT_PROC / NOTE_EXIT for the pid. When the process exits, one event accumulates in the kqueue and the kqueue's
+;;; fd becomes a readable fd -- like a pidfd, it can be hooked to asyncio's loop with add_reader. EVFILT_PROC can also be registered for non-child processes
+;;; (processes of the same user), so a child split off from the waiting child can be awaited the same way. Registering an exited (including zombie) or nonexistent pid gives ESRCH
+;;; (ProcessLookupError), and we answer None (there is nothing to wait for).
+;;; fd ownership: a select.kqueue object closes its own fd on GC, so we duplicate the registered kqueue's fd with os.dup, close the object, and
+;;; return only the duplicated fd (the kqueue and its registration remain as long as at least one fd refers to it). The caller closes it with os.close, as with Linux's pidfd.
 (require doeff-hy.macros [defk val])
 (val MODULE-TAGS {:context "process" :role "foundation"})
 (import os)
@@ -15,7 +15,7 @@
 
 (defk kqueue-fd-of [pid]
   {:pre [(: pid int)] :post [(: % (| int None))] :tags {:context "process" :role "foundation"}}
-  "pid の process が終わると読める fd(EVFILT_PROC / NOTE_EXIT を登録した kqueue)を開くため(頭の註)。居ない pid は None。"
+  "To open an fd (a kqueue with EVFILT_PROC / NOTE_EXIT registered) that becomes readable when the process of pid exits (see the header comment). None for a nonexistent pid."
   (val queue (select.kqueue))
   (try
     (.control queue [(select.kevent pid :filter select.KQ-FILTER-PROC :flags (| select.KQ-EV-ADD select.KQ-EV-ONESHOT)

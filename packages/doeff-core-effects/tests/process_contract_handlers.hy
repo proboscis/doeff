@@ -1,18 +1,18 @@
-;;; 子 process の契約テストの解釈器(composition root)— 同じ契約の Program を、子 process の handler だけ替えて走らせる。
+;;; Interpreters (composition root) for the child-process contract tests - they run the Program of the same contract, swapping only the child-process handler.
 ;;;
-;;;   subprocess             本物: subprocess-handler(本当の子 process と os.environ)+ os-file-handler(一時 dir)
-;;;   offloaded-subprocess   本物を thread で回す: offloaded-subprocess-handler+ os-file-handler(一時 dir)
-;;;   scripted-process       fake: scripted-process-handler(I/O なし — 台本)+ memory-file-handler + state
+;;;   subprocess             real: subprocess-handler (a real child process and os.environ) + os-file-handler (temporary dir)
+;;;   offloaded-subprocess   the real one run on a thread: offloaded-subprocess-handler + os-file-handler (temporary dir)
+;;;   scripted-process       fake: scripted-process-handler (no I/O - a script) + memory-file-handler + state
 ;;;
-;;; 契約の世界は解釈器ごとに同じ形で用意する:
-;;;   * 置き場の根(ContractRoot の答え): 本物 = 走るたびに新しい一時 dir(実の path)・fake = memory の置き場の MEMORY-ROOT
-;;;   * 呼び手の環境(INHERITED): 本物 = 走る間だけ os.environ に置き、走った後に前の値へ戻す・fake = ProcessScript の env
-;;;   * import が解く module(ResolveModule): 本物 = 走る間だけ根に file の module(PROBE-MODULE.py)と __init__ の無い
-;;;     package の dir(NAMESPACE-MODULE)を置いて sys.path の頭に根を足し、走った後に外す・fake = ProcessScript の modules に同じ置き場を書く
-;;;   * interpreter(ReadInterpreter): 本物 = この検の process・fake = ProcessScript の interpreter(prefix = 根・pid 1 = 生きている pid)
-;;;   * 命令: 本物 = /bin/sh と sleep。fake = 台本の sh と sleep で、契約が使う `sh -c <文>` の文ごとに「本物の sh ならこう答える」を
-;;;     SHELL-ANSWERS に書く(本物が要求のどの欄 — env・cwd・stdin — から答えを作るかを、台本も同じ欄から作る)
-;;; 使い手は conftest.py の doeff_interpreter(deftest の :interpreters の名 → INTERPRETERS)。
+;;; The contract's world is prepared in the same shape for each interpreter:
+;;;   * the root of the store (the answer of ContractRoot): real = a fresh temporary dir on every run (a real path) / fake = MEMORY-ROOT of the memory store
+;;;   * the caller's environment (INHERITED): real = placed in os.environ only while running, and restored to the previous values afterwards / fake = the env of ProcessScript
+;;;   * the modules that import resolves (ResolveModule): real = only while running, place a file module (PROBE-MODULE.py) and a package dir without __init__
+;;;     (NAMESPACE-MODULE) in the root, add the root to the head of sys.path, and remove it afterwards / fake = write the same layout into the modules of ProcessScript
+;;;   * the interpreter (ReadInterpreter): real = the process of this test / fake = the interpreter of ProcessScript (prefix = root, pid 1 = a live pid)
+;;;   * commands: real = /bin/sh and sleep. fake = scripted sh and sleep; for each `sh -c <statement>` statement the contract uses, write "how a real sh would answer" in
+;;;     SHELL-ANSWERS (the script builds the answer from the same fields of the request - env, cwd, stdin - that the real one builds its answer from)
+;;; The user is doeff_interpreter in conftest.py (the names of deftest's :interpreters -> INTERPRETERS).
 (require doeff-hy.macros [defk defhandler <- val var])
 (import collections.abc [Callable])
 (import dataclasses [dataclass])
@@ -34,36 +34,35 @@
 (val SCRIPTED-PROCESS "scripted-process")
 (val MEMORY-ROOT "/contract-root")
 
-;; 契約の世界の import が解く module の名(ResolveModule — 頭の註)。どの名も他の検の名と重ならない。
+;; The names of the modules that import resolves in the contract's world (ResolveModule - header note). No name overlaps with names in other tests.
 (val PROBE-MODULE "doeff_contract_probe_module")
 (val NAMESPACE-MODULE "doeff_contract_probe_namespace")
 (val MISSING-MODULE "doeff_contract_probe_missing")
-;; 契約の世界の呼び手の環境(子が継ぐ・ReadEnvironment が読む)。
-(val INHERITED #((EnvEntry :name "DOEFF_INHERITED" :value "継いだ") (EnvEntry :name "DOEFF_SHADOWED" :value "親")))
+;; The caller's environment in the contract's world (inherited by the child, read by ReadEnvironment).
+(val INHERITED #((EnvEntry :name "DOEFF_INHERITED" :value "inherited") (EnvEntry :name "DOEFF_SHADOWED" :value "parent")))
 
-;; 契約が `/bin/sh -c <文>` で走らせる文。
+;; The statements the contract runs with `/bin/sh -c <statement>`.
 (val OUT-ERR-EXIT "echo out; echo err >&2; exit 3")
 (val OUT-ERR "echo out; echo err >&2")
 (val KILLED "kill -9 $$")
 (val CAT "cat")
 (val PWD "pwd")
 (val ENV-PROBE "printf '%s|%s|%s' \"$DOEFF_INHERITED\" \"$DOEFF_SHADOWED\" \"$DOEFF_ADDED\"")
-;; utf-8 でない bytes(0xff)を挟んだ出力 — 子の bytes が可逆の文字列で返る契約を見る。
+;; Output with bytes that are not utf-8 (0xff) mixed in - checks the contract that the child's bytes come back as a reversible string.
 (val NOT-UTF-8 "printf 'ok\\377\\n'")
 (val NOT-UTF-8-BYTES b"ok\xff\n")
 (val PROBED-NAMES #("DOEFF_INHERITED" "DOEFF_SHADOWED" "DOEFF_ADDED"))
-;; process group と流しの出力と pid の生死の文。背景の孫は出力を /dev/null へ向ける(出力を抱えた孫は EOF を
-;; 遅らせ、子の終わりを期限まで待たせる — 待ち方の契約は communicate と同じ)。
+;; Statements for the process group, the output of the streams, and whether a pid is alive. A background grandchild points its output to /dev/null (a grandchild holding the output
+;; would delay EOF and make the end of the child wait until the deadline - the way of waiting follows the contract of communicate).
 (val OWN-PID "echo $$")
 (val LEFT-BEHIND "sleep 30 >/dev/null 2>&1 & echo $!")
 (val LEFT-BEHIND-THEN-WAIT "sleep 30 >/dev/null 2>&1 & echo $!; sleep 30")
 (val TWO-LINES "echo one; echo two")
 (val FIRST-THEN-WAIT "echo first; sleep 30")
-;; pipe の容量(約 64 KB)を大きく超える出力(2,000,000 byte = "a\n" の 100 万回)— 立てたらすぐ返す子の出力が file へ流れ、子が止まらない
-;; ことを見る。
+;; Output that greatly exceeds the pipe capacity (about 64 KB) (2,000,000 bytes = "a\n" one million times) - checks that the output of a child that returns right after being started flows to a file, and the child does not stall.
 (val BIG-OUTPUT "yes a | head -c 2000000")
 (val BIG-OUTPUT-TEXT (* "a\n" 1000000))
-;; 台本の世界の pid(台本の sh が答える — 生きている表 ALIVE に無いので死んでいる)と、生きている pid の表(1 = init — 本物でも生きている)。
+;; The pids of the script's world (answered by the scripted sh - not in the live table ALIVE, so they are dead) and the table of live pids (1 = init - alive in the real world too).
 (val SCRIPTED-OWN-PID 4242)
 (val SCRIPTED-LEFT-BEHIND 4343)
 (val SCRIPTED-WAITED-BEHIND 4444)
@@ -71,18 +70,18 @@
 
 
 (defclass [(dataclass :frozen True)] ContractRoot [EffectBase]
-  "契約の置き場の根(在る dir の絶対 path)を求める効果。")
+  "An effect that asks for the root of the contract's store (the absolute path of an existing dir).")
 
 
 (defhandler contract-root [root]
-  ;; 引数に残す理由: 根は解釈器ごとに組み立ての側で決まる値(本物は走るたびに作る一時 dir)。
+  ;; Why it stays an argument: the root is a value decided by the assembling side for each interpreter (the real one is a temporary dir created on every run).
   (ContractRoot []
     (resume root)))
 
 
 (defk child-env [request]
   {:pre [(: request RunProcess)] :post [(: % dict)] :tags {:context "process-test" :role "judgment"}}
-  "台本が受けた要求の子の環境(env が None なら呼び手の環境 INHERITED を継ぐ — 本物の子が os.environ を継ぐのと同じ)。"
+  "The child's environment for a request the script received (if env is None it inherits the caller's environment INHERITED - the same as a real child inheriting os.environ)."
   (val entries (match request.env
                   None INHERITED
                   given given))
@@ -91,98 +90,98 @@
 
 (defk exit-3-with-output [request]
   {:pre [(: request RunProcess)] :post [(: % ProcessOutcome)] :tags {:context "process-test" :role "judgment"}}
-  "本物の sh の OUT-ERR-EXIT の答え。"
+  "The answer of a real sh for OUT-ERR-EXIT."
   (ProcessOutcome :exit-code 3 :stdout "out\n" :stderr "err\n"))
 
 
 (defk exit-0-with-output [request]
   {:pre [(: request RunProcess)] :post [(: % ProcessOutcome)] :tags {:context "process-test" :role "judgment"}}
-  "本物の sh の OUT-ERR の答え。"
+  "The answer of a real sh for OUT-ERR."
   (ProcessOutcome :exit-code 0 :stdout "out\n" :stderr "err\n"))
 
 
 (defk killed-by-signal-9 [request]
   {:pre [(: request RunProcess)] :post [(: % ProcessOutcome)] :tags {:context "process-test" :role "judgment"}}
-  "本物の sh の KILLED の答え(signal で終わった子の returncode は負のまま)。"
+  "The answer of a real sh for KILLED (the returncode of a child ended by a signal stays negative)."
   (ProcessOutcome :exit-code -9 :stdout "" :stderr ""))
 
 
 (defk echo-stdin [request]
   {:pre [(: request RunProcess)] :post [(: % ProcessOutcome)] :tags {:context "process-test" :role "judgment"}}
-  "本物の sh の CAT の答え(子の stdin をそのまま出す)。"
+  "The answer of a real sh for CAT (outputs the child's stdin as is)."
   (ProcessOutcome :exit-code 0 :stdout (or request.stdin "") :stderr ""))
 
 
 (defk print-cwd [request]
   {:pre [(: request RunProcess)] :post [(: % ProcessOutcome)] :tags {:context "process-test" :role "judgment"}}
-  "本物の sh の PWD の答え(子の作業 dir)。"
+  "The answer of a real sh for PWD (the child's working dir)."
   (match request.cwd
-    None (raise (ValueError "契約の PWD は cwd を渡して走らせる"))
+    None (raise (ValueError "the contract's PWD is run with cwd passed"))
     cwd (ProcessOutcome :exit-code 0 :stdout (+ cwd "\n") :stderr "")))
 
 
 (defk print-probed-env [request]
   {:pre [(: request RunProcess)] :post [(: % ProcessOutcome)] :tags {:context "process-test" :role "judgment"}}
-  "本物の sh の ENV-PROBE の答え(子の環境の PROBED-NAMES を | で繋ぐ — 無い名は空)。"
+  "The answer of a real sh for ENV-PROBE (joins PROBED-NAMES of the child's environment with | - a name that is absent is empty)."
   (<- env dict (child-env request))
   (ProcessOutcome :exit-code 0 :stdout (.join "|" (gfor name PROBED-NAMES (.get env name ""))) :stderr ""))
 
 
 (defk print-not-utf-8 [request]
   {:pre [(: request RunProcess)] :post [(: % ProcessOutcome)] :tags {:context "process-test" :role "judgment"}}
-  "本物の sh の NOT-UTF-8 の答え(子の bytes NOT-UTF-8-BYTES を utf-8 と surrogateescape で読んだ文字列)— 台本も本物と同じ可逆の文字列で
-   答えることを契約で確かめるため。"
+  "The answer of a real sh for NOT-UTF-8 (the child's bytes NOT-UTF-8-BYTES read as a string with utf-8 and surrogateescape) - so that the contract confirms the script also
+   answers with the same reversible string as the real one."
   (ProcessOutcome :exit-code 0 :stdout (.decode NOT-UTF-8-BYTES "utf-8" "surrogateescape") :stderr ""))
 
 
 (defk print-own-pid [request]
   {:pre [(: request RunProcess)] :post [(: % ProcessOutcome)] :tags {:context "process-test" :role "judgment"}}
-  "本物の sh の OWN-PID の答え(終わった sh の pid — 台本の世界では生きていない pid)。"
+  "The answer of a real sh for OWN-PID (the pid of the finished sh - a pid that is not alive in the script's world)."
   (ProcessOutcome :exit-code 0 :stdout (.format "{}\n" SCRIPTED-OWN-PID) :stderr ""))
 
 
 (defk print-left-behind [request]
   {:pre [(: request RunProcess)] :post [(: % ProcessOutcome)] :tags {:context "process-test" :role "judgment"}}
-  "本物の sh の LEFT-BEHIND の答え(背景に回した孫の pid — process-group なら終わった後に止まっている)。"
+  "The answer of a real sh for LEFT-BEHIND (the pid of the grandchild sent to the background - with a process-group it is stopped after the end)."
   (ProcessOutcome :exit-code 0 :stdout (.format "{}\n" SCRIPTED-LEFT-BEHIND) :stderr ""))
 
 
 (defk outlive-the-limit [stdout request]
   {:pre [(: stdout str) (: request RunProcess)] :post [(: % ProcessOutcome)] :tags {:context "process-test" :role "judgment"}}
-  "30 秒眠る文の答え — 契約は必ず短い timeout で走らせるので、本物と同じく stdout を持つ時間切れの答え(timed-out-outcome)にする。"
+  "The answer of a statement that sleeps 30 seconds - the contract always runs it with a short timeout, so, like the real one, it becomes a timeout answer carrying stdout (timed-out-outcome)."
   (match request.timeout
     limit :if (and (is-not limit None) (< limit 30)) (do (<- timed-out ProcessOutcome (timed-out-outcome stdout ""))
                                                        timed-out)
-    _ (raise (ValueError "契約は 30 秒眠る文を短い timeout で走らせる"))))
+    _ (raise (ValueError "the contract runs a statement that sleeps 30 seconds with a short timeout"))))
 
 
 (defk print-and-outlive [request]
   {:pre [(: request RunProcess)] :post [(: % ProcessOutcome)] :tags {:context "process-test" :role "judgment"}}
-  "本物の sh の LEFT-BEHIND-THEN-WAIT の答え(孫の pid を出してから眠り続け、時間切れで止まる)。"
+  "The answer of a real sh for LEFT-BEHIND-THEN-WAIT (outputs the grandchild's pid, then keeps sleeping, and is stopped by the timeout)."
   (<- answer ProcessOutcome (outlive-the-limit (.format "{}\n" SCRIPTED-WAITED-BEHIND) request))
   answer)
 
 
 (defk print-two-lines [request]
   {:pre [(: request RunProcess)] :post [(: % ProcessOutcome)] :tags {:context "process-test" :role "judgment"}}
-  "本物の sh の TWO-LINES の答え。"
+  "The answer of a real sh for TWO-LINES."
   (ProcessOutcome :exit-code 0 :stdout "one\ntwo\n" :stderr ""))
 
 
 (defk print-first-and-outlive [request]
   {:pre [(: request RunProcess)] :post [(: % ProcessOutcome)] :tags {:context "process-test" :role "judgment"}}
-  "本物の sh の FIRST-THEN-WAIT の答え(1 行出してから眠り続け、時間切れで止まる)。"
+  "The answer of a real sh for FIRST-THEN-WAIT (outputs one line, then keeps sleeping, and is stopped by the timeout)."
   (<- answer ProcessOutcome (outlive-the-limit "first\n" request))
   answer)
 
 
 (defk print-big-output [request]
   {:pre [(: request RunProcess)] :post [(: % ProcessOutcome)] :tags {:context "process-test" :role "judgment"}}
-  "本物の sh の BIG-OUTPUT の答え(2,000,000 byte の出力)。"
+  "The answer of a real sh for BIG-OUTPUT (2,000,000 bytes of output)."
   (ProcessOutcome :exit-code 0 :stdout BIG-OUTPUT-TEXT :stderr ""))
 
 
-;; 台本の sh が `-c <文>` の文ごとに答える物(本物の sh ならこう答える)。
+;; What the scripted sh answers for each `-c <statement>` statement (how a real sh would answer).
 (val SHELL-ANSWERS {OUT-ERR-EXIT exit-3-with-output
                     OUT-ERR exit-0-with-output
                     KILLED killed-by-signal-9
@@ -200,16 +199,16 @@
 
 (defk shell-script [commands request]
   {:pre [(: commands tuple) (: request RunProcess)] :post [(: % ProcessOutcome)] :tags {:context "process-test" :role "judgment"}}
-  "台本の命令 sh: `sh -c <文>` を SHELL-ANSWERS の文の答えで答える(契約の世界に無い文は検の誤り)。"
+  "The scripted command sh: answers `sh -c <statement>` with the statement's answer in SHELL-ANSWERS (a statement not in the contract's world is a mistake of the test)."
   (match (tuple (cut request.argv 1 None))
     #("-c" script) :if (in script SHELL-ANSWERS) (do (<- answer ProcessOutcome ((get SHELL-ANSWERS script) request))
                                                      answer)
-    other (raise (ValueError (.format "契約の世界に無い sh の引数: {!r}" other)))))
+    other (raise (ValueError (.format "sh arguments not in the contract's world: {!r}" other)))))
 
 
 (defk sleep-script [commands request]
   {:pre [(: commands tuple) (: request RunProcess)] :post [(: % ProcessOutcome)] :tags {:context "process-test" :role "judgment"}}
-  "台本の命令 sleep: 秒数が timeout を超えれば本物と同じ時間切れの答え(timed-out-outcome)、超えなければ 0 で終わる。"
+  "The scripted command sleep: if the seconds exceed the timeout, a timeout answer like the real one (timed-out-outcome); otherwise it ends with 0."
   (val seconds (float (get request.argv 1)))
   (match request.timeout
     limit :if (and (is-not limit None) (< limit seconds)) (do (<- timed-out ProcessOutcome (timed-out-outcome "" ""))
@@ -229,7 +228,7 @@
 
 (defk restore-environment [saved]
   {:pre [(: saved dict)] :post [(: % None)] :tags {:context "process-test" :role "foundation"}}
-  "os.environ の名を saved の値(None = 無かった)へ戻す。"
+  "Restore the names in os.environ to the values in saved (None = was absent)."
   (for [#(name value) (.items saved)]
     (match value
       None (.pop os.environ name None)
@@ -238,10 +237,10 @@
 
 
 (defk under-real-process [process-handler program]
-  {:pre [(: process-handler Callable) (: program Program)] :post [(: % "契約の Program の答え(型は Program ごと)")]
+  {:pre [(: process-handler Callable) (: program Program)] :post [(: % "the answer of the contract's Program (the type varies per Program)")]
    :tags {:context "process-test" :role "foundation"}}
-  "本物の子 process の答え手 process-handler の下で program を走らせる。根は新しい一時 dir(実の path)、呼び手の環境 INHERITED は走る間
-   だけ os.environ に置き、走った後に前の値へ戻す。import が解く module は走る間だけ根に置き、根を sys.path の頭に足す(頭の註)。"
+  "Run the program under process-handler, the responder for real child processes. The root is a fresh temporary dir (a real path); the caller's environment INHERITED is placed in os.environ only
+   while running, and restored to the previous values afterwards. The modules that import resolves are placed in the root only while running, and the root is added to the head of sys.path (header note)."
   (var answer None)
   (with [directory (tempfile.TemporaryDirectory)]
     (val root (os.path.realpath directory))
@@ -261,25 +260,25 @@
 
 
 (defk under-subprocess [program]
-  {:pre [(: program Program)] :post [(: % "契約の Program の答え(型は Program ごと)")]
+  {:pre [(: program Program)] :post [(: % "the answer of the contract's Program (the type varies per Program)")]
    :tags {:context "process-test" :role "foundation"}}
-  "本物の subprocess-handler の下で program を走らせる(under-real-process)。"
+  "Run the program under the real subprocess-handler (under-real-process)."
   (<- answer (under-real-process subprocess-handler program))
   answer)
 
 
 (defk under-offloaded-subprocess [program]
-  {:pre [(: program Program)] :post [(: % "契約の Program の答え(型は Program ごと)")]
+  {:pre [(: program Program)] :post [(: % "the answer of the contract's Program (the type varies per Program)")]
    :tags {:context "process-test" :role "foundation"}}
-  "本物を thread で回す offloaded-subprocess-handler の下で program を走らせる(under-real-process — scheduled は conftest が積む)。"
+  "Run the program under offloaded-subprocess-handler, which runs the real one on a thread (under-real-process - conftest stacks the scheduled)."
   (<- answer (under-real-process offloaded-subprocess-handler program))
   answer)
 
 
 (defk under-scripted-process [program]
-  {:pre [(: program Program)] :post [(: % "契約の Program の答え(型は Program ごと)")]
+  {:pre [(: program Program)] :post [(: % "the answer of the contract's Program (the type varies per Program)")]
    :tags {:context "process-test" :role "foundation"}}
-  "fake の scripted-process-handler の下で program を走らせる。外から順に: state・根の答え手・memory の置き場(根だけが在る)・台本。"
+  "Run the program under the fake scripted-process-handler. From the outside in: state, the root's responder, the memory store (only the root exists), the script."
   (<- answer (with_handlers [(state) (contract-root MEMORY-ROOT) (memory-file-handler (MemoryFiles :dirs #(MEMORY-ROOT)))
                              (scripted-process-handler SCRIPT)]
                program))

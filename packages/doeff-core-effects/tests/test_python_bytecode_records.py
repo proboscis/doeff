@@ -1,12 +1,12 @@
-"""前もって焼いた Hy の .pyc を、import の時に doeff-hy の古さの検めが compile し直さない。
+"""A precompiled Hy .pyc is not recompiled at import time by doeff-hy's staleness check.
 
-doeff-cluster の実行環境の準備は、木の source を ``compile-python-sources``(この package の python_bytecode.hy)で前もって焼く。
-import の外で compile すると、Hy は仮の module を作って compile の直後に消すので、doeff-hy の compile の口の包みが macro の記録を
-付けられなかった。記録の無い .pyc は import の時に古いかもしれない物として compile し直されるので、焼いた分が無駄になり、
-預かり所の job の起動が macro の展開を全部やり直していた(CPU 約 46 秒のうち約 43 秒)。
+The preparation of doeff-cluster's execution environment precompiles the tree's sources with ``compile-python-sources`` (python_bytecode.hy in this package).
+When compiling outside an import, Hy creates a temporary module and deletes it right after compiling, so doeff-hy's wrapper around the compile entry could not attach
+the macro record. A .pyc without the record is recompiled at import time as possibly stale, so the precompiled work was wasted,
+and the startup of jobs at the warehouse redid all the macro expansion (about 43 of about 46 CPU seconds).
 
-焼く process と読む process は、本番と同じく別の Python(この venv の interpreter — 包みは .pth で起動時に入る)。
-macro は展開のたびに木の expansions.log へ 1 行書く(展開をやり直したかを数える)。
+The baking process and the reading process are separate Pythons as in production (this venv's interpreter -- the wrapper is loaded at startup via .pth).
+Each macro expansion writes one line to the tree's expansions.log (to count whether expansion was redone).
 """
 
 from __future__ import annotations
@@ -18,12 +18,12 @@ from pathlib import Path
 
 from doeff_hy_bytecode_guard import _records as records
 
-#: 子の process へ渡さない環境変数(.pyc の置き場を木の外へ移すと、読む側が焼いた .pyc を見ない)。子は bytecode を書かない
-#: (PYTHONDONTWRITEBYTECODE=1 — checkout の中の package の .pyc を書かない。焼く側は .pyc を自分で書き、読む側が compile し直したかは
-#: 展開の回数で数える)。
+#: Environment variables not passed to the child process (if the .pyc location is moved outside the tree, the reader does not see the baked .pyc). The child does not write bytecode
+#: (PYTHONDONTWRITEBYTECODE=1 -- do not write .pyc of packages inside the checkout. The baking side writes .pyc itself, and whether the reader recompiled is
+#: counted by the number of expansions).
 _ENV_NOT_PASSED = ("PYTHONPYCACHEPREFIX",)
 
-#: 焼く側 — 実行環境の準備の道具(doeff-cluster の code_prepare.hy)と同じく、import の路に木の根を足してから焼く。
+#: The baking side -- like the execution-environment preparation tool (doeff-cluster's code_prepare.hy), add the tree root to the import path before baking.
 _PREPARE = """\
 import sys
 import hy
@@ -37,7 +37,7 @@ failures = compile_python_sources(tree, items, 1, (".",))
 assert not failures, failures
 """
 
-#: 読む側 — 子の job と同じく、焼いた木を import する。
+#: The reading side -- like a child job, import the baked tree.
 _IMPORT = """\
 import sys
 sys.path.insert(0, sys.argv[1])
@@ -48,7 +48,7 @@ print(pkg.user.value)
 
 
 def _write_counting_package(root: Path) -> Path:
-    """macro の提供元(macros)・macro が展開の時に呼ぶ補助(helpers)・使う側(user)。macro は展開のたびに log へ 1 行書く。"""
+    """The macro provider (macros), the helper the macro calls at expansion time (helpers), and the user (user). The macro writes one line to the log at each expansion."""
     package = root / "pkg"
     package.mkdir()
     log = root / "expansions.log"
@@ -63,7 +63,7 @@ def _write_counting_package(root: Path) -> Path:
 
 
 def _python(script: str, root: Path) -> str:
-    # 子はこの process の環境を継ぐ — _ENV_NOT_PASSED の名だけ外し(`env -u`)、2 つの名を足す。
+    # The child inherits this process's environment -- remove only the names in _ENV_NOT_PASSED (`env -u`), and add 2 names.
     unset = [flag for name in _ENV_NOT_PASSED for flag in ("-u", name)]
     completed = subprocess.run(
         [
@@ -91,8 +91,8 @@ def _expansions(log: Path) -> int:
 
 
 def test_a_hy_pyc_compiled_ahead_is_used_at_import_without_expanding_again(tmp_path: Path) -> None:
-    """焼いた .pyc は展開が依った macro の記録を持ち、import は記録を今の macro と照らして .pyc をそのまま使う(展開 1 回 =
-    焼いた時だけ)。記録の無い .pyc だと、import が compile し直して展開が 2 回になる。"""
+    """A baked .pyc has the record of the macros the expansion depended on, and import compares the record with the current macros and uses the .pyc as is (1 expansion =
+    only at bake time). With a .pyc without the record, import recompiles and the expansion happens twice."""
     log = _write_counting_package(tmp_path)
     _python(_PREPARE, tmp_path)
     assert _expansions(log) == 1

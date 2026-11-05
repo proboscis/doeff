@@ -1,13 +1,13 @@
-;;; 文 1 つの SQL の effect(SqlQuery・SqlInsertRows・SqlEnsureTables)を答える offloaded-statement(postgres_sql.hy — postgres-sql-handler と
-;;; pooled-postgres-sql-handler が共に使う)の取り消しの検。実 PostgreSQL を使わず、接続の貸し出しを偽物に替える:
-;;; 許可は本物と同じ database ごとの thread の間の錠で数え、接続の代わりに札を貸す。実 PG の検は DSN が無いと skip されるので、この検は
-;;; それに頼らない。
-;;;   - 場面(record の DB が 30 秒止まった形 — 時刻は順序だけで写す): 許可 4 本・読み 12 件。最初の 4 件の文は DB の止まりで返らず、残り
-;;;     8 件は許可を待つ。要求の上限(10 秒)で 12 件とも取り消し、その後で止まりが解けて許可が戻る。数える物 = 許可を待っている間に
-;;;     取り消された要求が、許可を取った後に流した文の数。直す前は 8(許可が取れると取り消しを見ずに文を流した)・直した後は 0。走り出して
-;;;     いた 4 件の文は止めない(直しの外)。
-;;;   - 借りと文の仕事が始まる前に取り消された要求は、仕事が外れて接続を借りない(返す物も無い)。
-;;;   - 文 1 つは借りと文と返却を pool の仕事 1 つで答える(以前は借りと文の 2 つ)。
+;;; Tests of cancellation for offloaded-statement (postgres_sql.hy - used by both postgres-sql-handler and
+;;; pooled-postgres-sql-handler), which answers the single-statement SQL effects (SqlQuery, SqlInsertRows, SqlEnsureTables). It uses no real PostgreSQL and replaces the connection lease with a fake:
+;;; permits are counted with the same per-database inter-thread lock as the real one, and a token is lent instead of a connection. Tests against real PG are skipped without a DSN, so these tests
+;;; do not depend on that.
+;;;   - Scenario (the shape where the record's DB stalled for 30 seconds - time is mapped only for ordering): 4 permits, 12 reads. The statements of the first 4 do not return because of the DB stall, and the remaining
+;;;     8 wait for a permit. At the request limit (10 seconds) all 12 are cancelled, and afterwards the stall clears and the permits return. What is counted = the number of statements that a request cancelled while waiting for a permit
+;;;     ran after it got a permit. Before the fix it was 8 (once a permit was obtained, the statement was run without looking at the cancellation), after the fix 0. The 4 statements that had started
+;;;     running are not stopped (outside the fix).
+;;;   - A request cancelled before the work of lease-and-statement starts has its work dropped and does not lease a connection (so there is nothing to return either).
+;;;   - One statement answers lease, statement, and return in one pool job (before, it was two: lease and statement).
 (require doeff-hy.macros [deftest defk deff <- val])
 (require doeff-hy.record [defrecord])
 (import dataclasses [dataclass])
@@ -21,31 +21,31 @@
 (import doeff_core_effects [CreateExternalPromise Wait Spawn Cancel TaskCancelledError])
 
 (val DB "store")
-;; database ごとの許可の数(record の要求用の名と同じ 4 本)と、同時に来る読みの数。
+;; The number of permits per database (the same 4 as the name for the record's requests) and the number of reads that arrive at the same time.
 (val PERMITS 4)
 (val READS 12)
-;; 検の殻の待ちの上限(秒)。筋書きが崩れた時に、pytest の上限(60 秒)まで固まらずに名指しで落とす。
+;; Upper bound (seconds) of waiting in the test shell. When the scenario falls apart, fail by name instead of hanging until pytest's limit (60 seconds).
 (val SETTLE-SECONDS 20.0)
 
 
 (defrecord FakeLease
-  "偽の貸し出しが接続の代わりに貸す札。granted-after-cancel = 許可が取れた時に、取り消しの印が既に立っていたか。"
+  "The token that the fake lease lends instead of a connection. granted-after-cancel = whether the cancellation mark was already set when the permit was obtained."
   (#^ bool granted-after-cancel))
 
 
 (defclass Countdown []
-  "thread の間で起きた事を数え、total 件目で done を 1 度だけ呼ぶ係(検の殻 — 資源なので値の型ではない)。"
+  "A counter that counts things happening across threads and calls done exactly once at the total-th one (the test shell - a resource, so not a value type)."
 
-  (deff __init__ [self total done]  ; defk にできない: 検の殻の資源の初期化
-    {:pre [(: self Countdown) (: total int) (: done "() → None の callable")] :post [(: % None)]}
-    "数える件数と、揃った時の呼びを受けるため。"
+  (deff __init__ [self total done]  ; cannot be a defk: initialization of a test-shell resource
+    {:pre [(: self Countdown) (: total int) (: done "callable () -> None")] :post [(: % None)]}
+    "To receive the count to reach and the call to make when it is reached."
     (setv self.lock (threading.Lock)
           self.left total
           self.done done))
 
-  (deff tick [self]  ; defk にできない: driver の thread から呼ぶ口(VM の外)
+  (deff tick [self]  ; cannot be a defk: entry called from the driver's thread (outside the VM)
     {:pre [(: self Countdown)] :post [(: % None)]}
-    "1 件を数え、total 件目なら done を呼ぶため。"
+    "To count one and call done if it is the total-th."
     (with [_ self.lock]
       (setv self.left (- self.left 1))
       (when (= self.left 0)
@@ -53,46 +53,46 @@
 
 
 (defclass StalledConnections [PostgresConnections]
-  "接続の貸し出しの偽物(頭の註)。許可は本物の acquire と同じ database ごとの thread の間の錠(PERMITS 本)で数え、接続の代わりに
-   FakeLease を貸す。arrivals = 借りに来た件を数える係・cancelled = 取り消しの印・returned = 返った件を数える係。"
+  "The fake connection lease (see the header comment). Permits are counted with the same per-database inter-thread lock (PERMITS of them) as the real acquire, and
+   FakeLease is lent instead of a connection. arrivals = the counter of arrivals to lease, cancelled = the cancellation mark, returned = the counter of returns."
 
-  (deff __init__ [self arrivals cancelled returned]  ; defk にできない: 検の殻の資源の初期化
+  (deff __init__ [self arrivals cancelled returned]  ; cannot be a defk: initialization of a test-shell resource
     {:pre [(: self StalledConnections) (: arrivals Countdown) (: cancelled threading.Event) (: returned Countdown)] :post [(: % None)]}
-    "数える係と取り消しの印を受け、database 1 つ・許可 PERMITS 本の貸し出しにするため。"
+    "To receive the counters and the cancellation mark and make a lease of one database with PERMITS permits."
     (PostgresConnections.__init__ self #((PostgresDatabase :name DB :dsn "")) :size PERMITS)
     (setv self.arrivals arrivals
           self.cancelled cancelled
           self.returned returned))
 
-  (deff acquire [self name]  ; defk にできない: 本物の acquire と同じ口(driver の thread で blocking に待つ)
+  (deff acquire [self name]  ; cannot be a defk: same entry as the real acquire (waits blockingly on the driver's thread)
     {:pre [(: self StalledConnections) (: name str)] :post [(: % FakeLease)]}
-    "借りに来た事を数えてから許可を待ち、取れた時に取り消しの印が立っていたかを札に書いて貸すため。"
+    "To count the arrival, wait for a permit, and when obtained write into the token whether the cancellation mark was set and lend it."
     (.tick self.arrivals)
     (.acquire (get self.permits name))
     (FakeLease :granted-after-cancel (.is-set self.cancelled)))
 
-  (deff release [self name connection]  ; defk にできない: 本物の release と同じ口(driver の thread で呼ぶ)
+  (deff release [self name connection]  ; cannot be a defk: same entry as the real release (called on the driver's thread)
     {:pre [(: self StalledConnections) (: name str) (: connection FakeLease)] :post [(: % None)]}
-    "許可を返し、返った事を数えるため。"
+    "To return the permit and count the return."
     (.release (get self.permits name))
     (.tick self.returned)))
 
 
 (defclass HoldingFirstCall [ReusedThreads]
-  "渡された仕事を ReusedThreads と同じく thread で回し、1 つ目の仕事(文 1 つの借りと文と返却の仕事)だけは始めずに持つ Executor(検の殻 —
-   資源なので値の型ではない)。持った時に、持った Future で holding を完了させる。持った仕事は走らない。"
+  "An Executor that runs the given work on threads the same as ReusedThreads, but only holds the first work (the work of lease, statement, and return of one statement) without starting it (test shell -
+   a resource, so not a value type). When it holds it, it completes holding with the held Future. The held work does not run."
 
-  (deff __init__ [self holding]  ; defk にできない: 検の殻の資源の初期化
-    {:pre [(: self HoldingFirstCall) (: holding "scheduler の ExternalPromise")] :post [(: % None)]}
-    "持った事を知らせる promise を受け、他の仕事を回す ReusedThreads の欄も置くため。"
+  (deff __init__ [self holding]  ; cannot be a defk: initialization of a test-shell resource
+    {:pre [(: self HoldingFirstCall) (: holding "scheduler ExternalPromise")] :post [(: % None)]}
+    "To receive the promise that announces it held, and also place the ReusedThreads field that runs other work."
     (ReusedThreads.__init__ self)
     (setv self.holding holding
           self.lock (threading.Lock)
           self.calls 0))
 
-  (deff submit [self call #* args]  ; defk にできない: Executor の口(concurrent.futures の約束 — VM の外)
-    {:pre [(: self HoldingFirstCall) (: call "(引数) → 値 の callable") (: args tuple)] :post [(: % Future)]}
-    "1 つ目の仕事だけを始めない Future にして持ち、他は ReusedThreads と同じく回すため。"
+  (deff submit [self call #* args]  ; cannot be a defk: Executor's entry (a concurrent.futures promise - outside the VM)
+    {:pre [(: self HoldingFirstCall) (: call "callable (args) -> value") (: args tuple)] :post [(: % Future)]}
+    "To hold only the first work as a Future that does not start, and run the others the same as ReusedThreads."
     (with [_ self.lock]
       (setv self.calls (+ self.calls 1)
             nth self.calls))
@@ -104,18 +104,18 @@
 
 
 (defclass CountingPool [ReusedThreads]
-  "渡された仕事を ReusedThreads と同じく thread で回し、渡された仕事の数を数える Executor(検の殻 — 資源なので値の型ではない)。"
+  "An Executor that runs the given work on threads the same as ReusedThreads and counts the number of works given (test shell - a resource, so not a value type)."
 
-  (deff __init__ [self]  ; defk にできない: 検の殻の資源の初期化
+  (deff __init__ [self]  ; cannot be a defk: initialization of a test-shell resource
     {:pre [(: self CountingPool)] :post [(: % None)]}
-    "数える欄と、他の仕事を回す ReusedThreads の欄を置くため。"
+    "To place the counting field and the ReusedThreads field that runs other work."
     (ReusedThreads.__init__ self)
     (setv self.lock (threading.Lock)
           self.calls 0))
 
-  (deff submit [self call #* args]  ; defk にできない: Executor の口(concurrent.futures の約束 — VM の外)
-    {:pre [(: self CountingPool) (: call "(引数) → 値 の callable") (: args tuple)] :post [(: % Future)]}
-    "渡された仕事を数えてから ReusedThreads と同じく回すため。"
+  (deff submit [self call #* args]  ; cannot be a defk: Executor's entry (a concurrent.futures promise - outside the VM)
+    {:pre [(: self CountingPool) (: call "callable (args) -> value") (: args tuple)] :post [(: % Future)]}
+    "To count the given work and then run it the same as ReusedThreads."
     (with [_ self.lock]
       (setv self.calls (+ self.calls 1)))
     (ReusedThreads.submit self call #* args)))
@@ -124,8 +124,8 @@
 (defk read-on [lease stalls stall ran]
   {:pre [(: lease FakeLease) (: stalls Countdown) (: stall threading.Event) (: ran Queue)] :post [(: % SqlRows)]
    :tags {:context "sql" :role "program"}}
-  "偽の接続で読みを 1 つ流すため(driver の thread の上で走る)。流した札を ran へ書く。取り消しの印より前に借りた読みは、止まった事を
-   数え、DB の止まり(stall)が解けるまで返らない。"
+  "To run one read on a fake connection (runs on the driver's thread). Writes the token it ran into ran. A read leased before the cancellation mark counts that it stalled, and
+   does not return until the DB stall clears."
   (.put ran lease)
   (when (not lease.granted-after-cancel)
     (.tick stalls)
@@ -134,10 +134,10 @@
 
 
 (defk spawned-reads [connections pool work count]
-  {:pre [(: connections PostgresConnections) (: pool ReusedThreads) (: work "(札) → Program の callable") (: count int)]
+  {:pre [(: connections PostgresConnections) (: pool ReusedThreads) (: work "callable (token) -> Program") (: count int)]
    :post [(: % tuple)]
    :tags {:context "sql" :role "program"}}
-  "読みの要求を count 件、それぞれ別の task で offloaded-statement に渡すため(答え = task の並び)。"
+  "To pass count read requests, each in a separate task, to offloaded-statement (answer = the sequence of tasks)."
   (match count
     0 #()
     _ (do (<- task (Spawn (offloaded-statement connections pool DB work)))
@@ -146,9 +146,9 @@
 
 
 (defk ended-by-cancel [task]
-  {:pre [(: task "scheduler の Task")] :post [(: % bool)]
+  {:pre [(: task "scheduler Task")] :post [(: % bool)]
    :tags {:context "sql" :role "program"}}
-  "取り消した task を待ち、取り消しで終わったかを答えるため。"
+  "To wait for the cancelled task and answer whether it ended by cancellation."
   (try
     (<- (Wait task))
     False
@@ -156,10 +156,10 @@
 
 
 (defk within [promise what]
-  {:pre [(: promise "scheduler の ExternalPromise") (: what str)] :post [(: % "promise の答え")]
+  {:pre [(: promise "scheduler ExternalPromise") (: what str)] :post [(: % "answer of promise")]
    :tags {:context "sql" :role "program"}}
-  "外から完了させる promise を SETTLE-SECONDS まで待つため(過ぎたら what を名指して落とす)。"
-  (val watchdog (threading.Timer SETTLE-SECONDS (fn [] (.fail promise (AssertionError (.format "{} が {} 秒で揃わない" what SETTLE-SECONDS))))))
+  "To wait for a promise completed from outside up to SETTLE-SECONDS (fail naming what if it passes)."
+  (val watchdog (threading.Timer SETTLE-SECONDS (fn [] (.fail promise (AssertionError (.format "{} did not complete in {} seconds" what SETTLE-SECONDS))))))
   (.start watchdog)
   (try
     (<- answer (Wait promise.future))
@@ -168,38 +168,38 @@
 
 
 (deftest test-reads-cancelled-while-waiting-for-a-permit-send-no-statement
-  ;; 場面(頭の註): 許可 4 本・読み 12 件・最初の 4 件の文が止まる・10 秒で 12 件とも取り消す・止まりが解けて許可が戻る。
+  ;; Scenario (header comment): 4 permits, 12 reads, the first 4 statements stall, all 12 are cancelled at 10 seconds, the stall clears and the permits return.
   (<- ready (CreateExternalPromise))
   (<- settled (CreateExternalPromise))
   (val cancelled (threading.Event))
   (val stall (threading.Event))
   (val ran (Queue))
-  ;; 揃う = 12 件が借りに来て、最初の 4 件の文が止まった(残り 8 件は許可を待っている)。
+  ;; Complete = the 12 arrived to lease, and the statements of the first 4 stalled (the remaining 8 wait for a permit).
   (val arrivals (Countdown (+ READS PERMITS) (fn [] (.complete ready None))))
   (val connections (StalledConnections arrivals cancelled (Countdown READS (fn [] (.complete settled None)))))
   (<- tasks (spawned-reads connections (ReusedThreads) (fn [lease] (read-on lease arrivals stall ran)) READS))
-  (<- (within ready "12 件の借りと 4 件の止まった文"))
-  ;; t=10: 要求の上限で 12 件とも取り消す。
+  (<- (within ready "12 leases and 4 stalled statements"))
+  ;; t=10: at the request limit, cancel all 12.
   (.set cancelled)
   (for [task tasks]
     (<- (Cancel task)))
   (for [task tasks]
     (<- ended (ended-by-cancel task))
     (assert ended task))
-  ;; t=30: DB の止まりが解け、走っていた 4 件の文が終わって許可が戻る。12 件の借りが全部返るまで待つ。
+  ;; t=30: the DB stall clears, the 4 running statements finish and the permits return. Wait until all 12 leases are returned.
   (.set stall)
-  (<- (within settled "12 件の返却"))
+  (<- (within settled "12 returns"))
   (val statements (tuple ran.queue))
   (val before-cancel (len (lfor lease statements :if (not lease.granted-after-cancel) lease)))
   (val after-cancel (len (lfor lease statements :if lease.granted-after-cancel lease)))
-  ;; 走り出していた 4 件の文は止めない(直しの外)。
+  ;; The 4 statements that had started running are not stopped (outside the fix).
   (assert (= before-cancel PERMITS) statements)
-  ;; 許可を待っている間に取り消された 8 件は、許可が取れても文を流さない(直す前は 8)。
-  (assert (= after-cancel 0) (.format "許可を待っている間に取り消された要求が流した文 {} 件" after-cancel)))
+  ;; The 8 cancelled while waiting for a permit do not run a statement even when a permit is obtained (before the fix, 8).
+  (assert (= after-cancel 0) (.format "{} statements run by requests cancelled while waiting for a permit" after-cancel)))
 
 
 (deftest test-a-read-cancelled-before-its-work-starts-leases-nothing
-  ;; 借りと文の仕事が始まる前に取り消された要求: 仕事は外れ、接続を借りず、文も流れない(借りが無いので返す物も無い)。
+  ;; A request cancelled before the work of lease and statement starts: the work is dropped, no connection is leased, and no statement is run (no lease, so nothing to return).
   (<- holding (CreateExternalPromise))
   (val cancelled (threading.Event))
   (val stall (threading.Event))
@@ -209,20 +209,20 @@
   (val returned (Countdown 1 (fn [] None)))
   (val connections (StalledConnections arrivals cancelled returned))
   (<- tasks (spawned-reads connections (HoldingFirstCall holding) (fn [lease] (read-on lease (Countdown 1 (fn [] None)) stall ran)) 1))
-  (<- held (within holding "借りと文の仕事"))
+  (<- held (within holding "the work of lease and statement"))
   (.set cancelled)
   (<- (Cancel (get tasks 0)))
   (<- ended (ended-by-cancel (get tasks 0)))
   (assert ended tasks)
   (assert (.cancelled held) held)
-  (assert (= arrivals.left 1) "始まる前に取り消された仕事が接続を借りた")
-  (assert (= returned.left 1) "借りていない接続を返した")
+  (assert (= arrivals.left 1) "the work cancelled before starting leased a connection")
+  (assert (= returned.left 1) "returned a connection that was not leased")
   (assert (= (tuple ran.queue) #()) (tuple ran.queue)))
 
 
 (deftest test-a-statement-is-one-pool-job
-  ;; 文 1 つの effect は、借りと文と返却を pool の仕事 1 つで答える(scheduler の thread が外から完了させる promise の往復を文ごとに
-  ;; 1 度だけ払う)。借りた接続は答えの後に返っている。
+  ;; The effect of one statement answers lease, statement, and return in one pool job (the round trip of the promise that the scheduler's thread completes from outside is paid
+  ;; only once per statement). The leased connection has been returned after the answer.
   (<- settled (CreateExternalPromise))
   (val stall (threading.Event))
   (.set stall)
@@ -231,14 +231,14 @@
   (val pool (CountingPool))
   (<- answer (offloaded-statement connections pool DB (fn [lease] (read-on lease (Countdown 1 (fn [] None)) stall ran))))
   (assert (= answer (SqlRows :rows #() :rowcount 0)) answer)
-  (<- (within settled "借りた接続の返却"))
-  (assert (= pool.calls 1) (.format "文 1 つの pool の仕事が {} 個" pool.calls))
+  (<- (within settled "return of the leased connection"))
+  (assert (= pool.calls 1) (.format "the pool jobs of one statement were {}" pool.calls))
   (assert (= (len (tuple ran.queue)) 1) (tuple ran.queue)))
 
 
 (deftest test-statements-in-a-row-reuse-one-thread
-  ;; 続けて流す文は、前の文の仕事を回した thread を使い回し、文ごとに thread を起こさない(起こす待ちが
-  ;; 預かり所の普段の CPU の 2 割だった)。postgres-sql-handler の Executor もこの形。
+  ;; Statements run in succession reuse the thread that ran the previous statement's work and do not start a thread per statement (the wait to start one
+  ;; was 20% of the custody's ordinary CPU). The Executor of postgres-sql-handler has this shape too.
   (val statements 20)
   (val stall (threading.Event))
   (.set stall)
@@ -248,5 +248,5 @@
   (for [_ (range statements)]
     (<- (offloaded-statement connections pool DB (fn [lease] (read-on lease (Countdown 1 (fn [] None)) stall ran)))))
   (assert (= (len (tuple ran.queue)) statements) (tuple ran.queue))
-  (assert (= pool.started 1) (.format "文 {} 個に thread を {} 本起こした" statements pool.started))
+  (assert (= pool.started 1) (.format "{} threads started for {} statements" pool.started statements))
   (assert (isinstance DRIVER-THREADS ReusedThreads) DRIVER-THREADS))

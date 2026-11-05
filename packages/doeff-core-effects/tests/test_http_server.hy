@@ -1,20 +1,20 @@
-;;; 汎用の HTTP の待ち受けの effect(http_server_effects.hy)の、答え手の片方だけが持つ性質の検。両方に共通の性質(答えの届き方・HEAD と
-;;; 本文の無い答え・中継の status と 502・ws の往復と閉じ・断り・送りの上限の切り・閉じた後・本文の読み)は test_http_server_contract.hy
-;;; の契約テストが両方の答え手で回す。
-;;;   - 台本の答え手(scripted-http-server): 中継先の最長の一致と ws を受けない先の 502・読めない file の範囲の理由・読まない相手の箱が
-;;;     溜まって切られる勘定・走っている台本への後足し・読みの途中で相手が切った本文。
-;;;   - 本物の答え手(aiohttp-http-server): HTTP の中継の本文と X-Forwarded-Proto・ws の中継(frame の往復と close の状態符)・相手が先に
-;;;     切った要求への答えの 1 行の名乗りと数え(traceback を出さない — #2757)・port 0 で
-;;;     結んだ port・出来事の received-at・本体の流れ(共有の event loop か scheduler)を塞いでも probe の口が答える(#2776)・
-;;;     答え(HttpRespond)・宣言の小さい本文の読み(HttpReadBody)・列に既に在る到着(HttpNextRequest)が共有の event loop へ入らない
-;;;     (#3688 の子 (3) の 3b・3c と案 1)・ws の文字の 1 通の送り(WsSendText)も共有の event loop へ入らず、撃った順に届く
-;;;    ・ws の中継が中継先へ繋ぐ時の 2 つの上限(繋ぐまで・handshake の答え)
-;;;     (aiohttp の無い venv では skip)。
+;;; Tests of properties that only one of the two answerers has, for the general-purpose HTTP listening effects (http_server_effects.hy). Properties common to both (how answers arrive, HEAD and
+;;; answers without a body, relay status and 502, ws round trips and closes, refusals, cutting at the send limit, after close, body reads) are run on both answerers by the contract tests of test_http_server_contract.hy
+;;; .
+;;;   - Scripted answerer (scripted-http-server): longest match of the relay target and 502 for a target that does not accept ws, the reason for a file range that cannot be read, the count of a peer's box that does not read
+;;;     piling up and being cut, appending to a running script, a body the peer cut midway through a read.
+;;;   - Real answerer (aiohttp-http-server): the body of an HTTP relay and X-Forwarded-Proto, the ws relay (frame round trips and the close status code), the one-line announcement and count of the answer to a request the peer cut first
+;;;     (no traceback -- #2757), the port bound with port 0,
+;;;     received-at of events, the probe port answers even when the main flow (the shared event loop or the scheduler) is blocked (#2776),
+;;;     answers (HttpRespond), reads of small declared bodies (HttpReadBody), and arrivals already in the queue (HttpNextRequest) do not enter the shared event loop
+;;;     (children (3) 3b and 3c of #3688, and plan 1), sending one ws text message (WsSendText) also does not enter the shared event loop and arrives in the order fired,
+;;;     and the two limits when the ws relay connects to the target (up to connecting, and the handshake answer)
+;;;     (skipped in a venv without aiohttp).
 (require doeff-hy.macros [deftest defk deff defhandler <- val var with-handler])
 (require doeff-hy.record [defrecord])
 (import asyncio)
 (import collections.abc [Callable])
-(import dataclasses [dataclass])  ; defrecord の展開が使う
+(import dataclasses [dataclass])  ; used by the defrecord expansion
 (import http.client)
 (import pathlib [Path])
 (import queue)
@@ -34,15 +34,15 @@
         doeff_core_effects._http_server_effects [WS-CUT-REASON])
 (import doeff_core_effects [scripted-http-server])
 
-;; この file の待ちは実時間が対象(何が対象かは名簿 tests/realtime_tests.toml のこの file の行)— realtime を名乗る file の中の眠りを、
-;; 検の眠りの規則(doeff-linter の DOEFF211)は当てない。
+;; The waits in this file are real time (what they are about is in this file's row of the roster tests/realtime_tests.toml) -- the sleeps inside a file that declares itself realtime
+;; are not subject to the test sleep rule (DOEFF211 of doeff-linter).
 (val pytestmark pytest.mark.realtime)
 
 
 (defk serve-until-closed [site upstream]
   {:pre [(: site str) (: upstream str)] :post [(: % int)]}
-  "検の Program: 待ち受けを開き、閉じるまで path ごとに 1 つの命令を撃つ(答え = 受けた要求の数)。/file は site の file の 2〜6 byte・
-   /head は HEAD の答え・/relay は upstream へ HTTP・/ws は upstream へ ws・他は本文 1 行。"
+  "Test Program: open the listener and, until it is closed, fire one command per path (answer = number of requests received). /file is 2 to 6 bytes of a file on the site,
+   /head is a HEAD answer, /relay is HTTP to upstream, /ws is ws to upstream, anything else is a one-line body."
   (<- (HttpListen :address (HttpAddress :host "127.0.0.1" :port 0)))
   (var count 0)
   (while True
@@ -62,19 +62,19 @@
                             :body (HttpBodyBytes :data (.encode (+ "hello " event.method) "utf-8")))))))
 
 
-;; --- 台本の答え手 --------------------------------------------------------------------------------------------------------------
+;; --- Scripted answerer --------------------------------------------------------------------------------------------------------------
 
 (defn #^ HttpRequestArrived arrival [#^ (| int str) n #^ str path * #^ str [method "GET"] #^ (| str None) [target None]
                                      #^ (get tuple #(HttpHeader ...)) [headers #()] #^ bool [upgrade False]
                                      #^ (| str None) [remote None]]
-  "台本の要求 1 つを作るため(ticket = n の文字・target を書かなければ path と同じ)。"
+  "To build one scripted request (ticket = the string of n; if target is not given, it equals the path)."
   (HttpRequestArrived :ticket (str n) :method method :path path :target (if (is target None) path target)
                       :headers headers :upgrade upgrade :remote remote))
 
 
 (defk served-after [site upstream]
   {:pre [(: site str) (: upstream str)] :post [(: % tuple)]}
-  "Program を閉じるまで回し、台本の記録を読むため。"
+  "To run the Program until it closes and read the record of the script."
   (<- _count int (serve-until-closed site upstream))
   (<- served tuple (ReadHttpServed))
   served)
@@ -87,7 +87,7 @@
                                        (ScriptedUpstream :base "http://up/api" :http-status 202 :accepts-ws True))))
   (<- served tuple (with-handler [(state) (memory-file-handler (MemoryFiles)) (scripted-http-server script)]
                      (served-after "/site/app.js" "http://up")))
-  ;; 中継の url は台本の中継先の頭の最長の一致が答える。
+  ;; The relay url is answered by the longest match of the head of the script's relay targets.
   (assert (= (. (get served 0) command) (HttpForward :ticket "1" :url "http://up/api/x?q=1")) served)
   (assert (= (lfor s served s.status) [202 201 502]) served))
 
@@ -96,13 +96,13 @@
   (val script (HttpScript :arrivals #((arrival 1 "/file"))))
   (<- served tuple (with-handler [(state) (memory-file-handler (MemoryFiles)) (scripted-http-server script)]
                      (served-after "/gone.js" "http://up")))
-  (assert (.startswith (. (get served 0) body) "file を読めない") served))
+  (assert (.startswith (. (get served 0) body) "cannot read file") served))
 
 
 (defk ws-echo [limit publish]
   {:pre [(: limit int) (: publish Callable)] :post [(: % tuple)]}
-  "検の Program: ws に上げて 1 通ごとに答え、閉じるまで回すため(答え = 受けた出来事の列と、最後の送りの勘定)。text \"stop\" = 待ち受けを
-   閉じる・他は echo。publish = 結んだ宛先を検へ渡す口。"
+  "Test Program: upgrade to ws, answer each message, and run until closed (answer = the sequence of events received and the count of the last send). text \"stop\" = close the
+   listener, anything else is echo. publish = the port that hands the bound destination to the test."
   (<- bound HttpAddress (HttpListen :address (HttpAddress :host "127.0.0.1" :port 0) :ws-send-max-bytes limit))
   (publish bound)
   (var seen #(bound))
@@ -113,16 +113,16 @@
       (HttpServerClosed) (do (<- report WsSendReport (TakeWsSendReport))
                              (return (+ seen #(report))))
       (HttpRequestArrived :ticket t) (<- (WsAccept :ticket t))
-      (WsTextArrived :ticket t :text "stop") (<- (HttpShutdown :reason "検が閉じた" :drain-seconds 2.0))
+      (WsTextArrived :ticket t :text "stop") (<- (HttpShutdown :reason "the test closed it" :drain-seconds 2.0))
       (WsTextArrived :ticket t :text text) (<- (WsSendText :ticket t :text (+ "echo:" text)))
       _ None)))
 
 
 (defk named-echo [name address publish]
   {:pre [(: name str) (: address HttpAddress) (: publish Callable)] :post [(: % int)]}
-  "検の Program(port の共有と待ち受けだけの閉じ — 入れ替えで新旧の待ち受けを重ねる形): port を共有して待ち受け、ws に上げて 1 通ごとに
-   名 name を付けて答える。text \"leave\" = 待ち受けだけを閉じて(開いた接続は残す)\"left\" と答える・\"stop\" = 待ち受けを閉じる・他は
-   名つきの echo。publish = 結んだ宛先を検へ渡す口。答え = ws に上げた接続の数。"
+  "Test Program (sharing the port and closing only the listener -- the form where old and new listeners overlap in a swap): share the port and listen, upgrade to ws, and answer each message
+   with the name name attached. text \"leave\" = close only the listener (leave the open connections) and answer \"left\"; \"stop\" = close the listener; anything else is
+   a named echo. publish = the port that hands the bound destination to the test. Answer = the number of connections upgraded to ws."
   (<- bound HttpAddress (HttpListen :address address :share-port True))
   (publish bound)
   (var accepted 0)
@@ -134,23 +134,23 @@
                                          (<- (WsAccept :ticket t)))
       (WsTextArrived :ticket t :text "leave") (do (<- (HttpStopListening))
                                                   (<- (WsSendText :ticket t :text "left")))
-      (WsTextArrived :text "stop") (<- (HttpShutdown :reason "検が閉じた" :drain-seconds 1.0))
-      (WsTextArrived :text "go-away") (<- (HttpShutdown :reason "退く" :drain-seconds 1.0 :close-code 1001))
+      (WsTextArrived :text "stop") (<- (HttpShutdown :reason "the test closed it" :drain-seconds 1.0))
+      (WsTextArrived :text "go-away") (<- (HttpShutdown :reason "stepping aside" :drain-seconds 1.0 :close-code 1001))
       (WsTextArrived :ticket t :text text) (<- (WsSendText :ticket t :text (+ name ":" text)))
       _ None)))
 
 
 (defk echo-served [name]
   {:pre [(: name str)] :post [(: % tuple)]}
-  "named-echo を台本の待ち受けで閉じるまで回し、答え(上げた接続の数)と台本の記録を組にするため。"
+  "To run named-echo until it closes on a scripted listener, and pair the answer (the number of connections upgraded) with the record of the script."
   (<- accepted int (named-echo name (HttpAddress :host "127.0.0.1" :port 0) (fn [bound] None)))
   (<- served tuple (ReadHttpServed))
   #(accepted served))
 
 
 (deftest test-the-scripted-server-closes-open-sockets-with-the-code-the-shutdown-names
-  ;; 失敗ケース(入れ替えで退く側の閉じ): HttpShutdown が名指した状態符(1001 going away)で開いた札を閉じる。直す前は
-  ;; 状態符の欄が無く 1000 で閉じる(赤)。
+  ;; Failure case (close on the side that steps aside in a swap): the open ticket is closed with the status code HttpShutdown names (1001 going away). Before the fix
+  ;; there was no status code field and it closed with 1000 (red).
   (val script (HttpScript :arrivals #((arrival 1 "/" :upgrade True) (WsTextArrived :ticket "1" :text "go-away"))))
   (<- answer tuple (with-handler [(state) (scripted-http-server script)] (echo-served "A")))
   (val served (get answer 1))
@@ -158,7 +158,7 @@
 
 
 (deftest test-the-scripted-server-hands-no-new-request-after-it-stops-listening
-  ;; 失敗ケース(待ち受けだけの閉じ): 待ち受けだけを閉じた後に届く新しい要求は本体へ渡らず、開いた接続の 1 通は渡る。
+  ;; Failure case (closing only the listener): after closing only the listener, a new request that arrives is not handed to the main body, while one message on an open connection is.
   (val script (HttpScript :arrivals #((arrival 1 "/" :upgrade True) (WsTextArrived :ticket "1" :text "leave")
                                       (arrival 2 "/" :upgrade True) (WsTextArrived :ticket "1" :text "still"))))
   (<- answer tuple (with-handler [(state) (scripted-http-server script)] (echo-served "A")))
@@ -170,14 +170,14 @@
 
 (defk do-served [program]
   {:pre [(: program Program)] :post [(: % tuple)]}
-  "Program を回してから台本の記録を読むため。"
+  "To read the record of the script after running the Program."
   (<- answer tuple program)
   (<- served tuple (ReadHttpServed))
   #(answer served))
 
 
 (deftest test-a-stalled-peer-fills-its-box-until-the-limit-cuts-it
-  ;; 読まない相手(b)の箱には 1 通 7 byte が溜まり、次の 1 通で上限 10 byte を超えるので切られる。溜まりは捨てた勘定へ。
+  ;; The box of peer b, which does not read, accumulates one 7-byte message, and the next message exceeds the 10-byte limit, so it is cut. The accumulation goes to the discarded count.
   (val script (HttpScript :arrivals #((arrival "b" "/ws" :upgrade True) (WsTextArrived :ticket "b" :text "hi")
                                       (WsTextArrived :ticket "b" :text "hi") (WsTextArrived :ticket "b" :text "never")
                                       (arrival "d" "/ws" :upgrade True) (WsTextArrived :ticket "d" :text "stop"))
@@ -186,7 +186,7 @@
   (val events (cut (get answer 0) 1 -1))
   (val report (get (get answer 0) -1))
   (val served (get answer 1))
-  ;; 台本は port を結ばない — 渡した宛先のまま。
+  ;; The script does not bind a port -- the destination stays as given.
   (assert (= (get (get answer 0) 0) (HttpAddress :host "127.0.0.1" :port 0)))
   (assert (= (lfor e events (. (type e) __name__))
              ["HttpRequestArrived" "WsOpened" "WsTextArrived" "WsTextArrived" "WsClosed" "WsTextArrived"
@@ -194,13 +194,13 @@
           events)
   (assert (= (lfor e events :if (isinstance e WsClosed) #(e.ticket e.code e.reason)) [#("b" 1006 WS-CUT-REASON)]) events)
   (assert (= [report.queued-frames report.queued-bytes report.flushed-bytes report.dropped-bytes report.cuts] [1 7 0 7 1]) report)
-  ;; 閉じた後の b への送りは捨てられ、待ち受けを閉じると開いている d へ close 1000。
+  ;; Sends to b after it is closed are discarded, and closing the listener sends close 1000 to the still-open d.
   (assert (= (lfor s served :if (isinstance s WsCloseSent) #(s.ticket s.code)) [#("d" 1000)]) served))
 
 
 (defk append-then-drain []
   {:pre [] :post [(: % tuple)]}
-  "走っている台本へ出来事を足すと、尽きた後でも続きが届くことを見るため(答え = 受けた出来事の型の名)。"
+  "To see that appending an event to a running script delivers the continuation even after it was exhausted (answer = the names of the types of events received)."
   (<- first HttpEvent (HttpNextRequest))
   (<- (AppendHttpScript :arrivals #((arrival "z" "/late"))))
   (<- second HttpRequestArrived (HttpNextRequest))
@@ -215,7 +215,7 @@
 
 (defk read-broken-body []
   {:pre [] :post [(: % HttpBodyOutcome)] :tags {:context "http-server" :role "program"}}
-  "台本で読みの途中に相手が切った本文を読むため。"
+  "To read, on a script, a body that the peer cut midway through a read."
   (<- event HttpRequestArrived (HttpNextRequest))
   (<- outcome HttpBodyOutcome (HttpReadBody :ticket event.ticket :max-bytes 8))
   outcome)
@@ -223,14 +223,14 @@
 
 (deftest test-the-scripted-server-names-a-body-the-peer-cut-off
   (val script (HttpScript :arrivals #((arrival 1 "/broken" :method "POST"))
-                          :bodies #((ScriptedBody :ticket "1" :data b"12" :failed "相手が途中で切った"))))
+                          :bodies #((ScriptedBody :ticket "1" :data b"12" :failed "the peer cut it midway"))))
   (<- outcome HttpBodyOutcome (with-handler [(state) (scripted-http-server script)] (read-broken-body)))
-  (assert (= outcome (HttpBodyFailed :reason "相手が途中で切った")) outcome))
+  (assert (= outcome (HttpBodyFailed :reason "the peer cut it midway")) outcome))
 
 
 (defk two-arrivals []
   {:pre [] :post [(: % tuple)] :tags {:context "http-server" :role "program"}}
-  "台本の要求を 2 つ受けるため(答え = 受けた 2 つの出来事)。"
+  "To receive two scripted requests (answer = the two events received)."
   (<- first HttpRequestArrived (HttpNextRequest))
   (<- second HttpRequestArrived (HttpNextRequest))
   #(first second))
@@ -238,52 +238,52 @@
 
 (defk take-queued-then-next []
   {:pre [] :post [(: % tuple)] :tags {:context "http-server-test" :role "program"}}
-  "台本の 1 つ目を HttpNextRequest で受け、残りを HttpTakeQueued でまとめて取り、もう 1 度の HttpTakeQueued・後から足した出来事の
-   HttpTakeQueued・尽きた後の HttpNextRequest・閉じた後の HttpTakeQueued を見るため(答え = 札・型の名の組)。"
+  "To receive the first scripted one with HttpNextRequest, take the rest together with HttpTakeQueued, then see a second HttpTakeQueued, an HttpTakeQueued for an event added later,
+   an HttpNextRequest after exhaustion, and an HttpTakeQueued after close (answer = the tuple of tickets and type names)."
   (<- first HttpRequestArrived (HttpNextRequest))
   (<- rest tuple (HttpTakeQueued))
   (<- again tuple (HttpTakeQueued))
   (<- (AppendHttpScript :arrivals #((arrival "z" "/late"))))
   (<- late tuple (HttpTakeQueued))
   (<- dry HttpEvent (HttpNextRequest))
-  (<- (HttpShutdown :reason "検が閉じた" :drain-seconds 0.0))
+  (<- (HttpShutdown :reason "the test closed it" :drain-seconds 0.0))
   (<- shut tuple (HttpTakeQueued))
   #(first.ticket (tuple (gfor e rest e.ticket)) again (tuple (gfor e late e.ticket)) (. (type dry) __name__)
     (tuple (gfor e shut #((. (type e) __name__) e.reason)))))
 
 
 (deftest test-the-scripted-server-hands-every-queued-arrival-at-once
-  ;; HttpTakeQueued は台本の列に今ある出来事を受けた順に全部渡し、渡した物は HttpNextRequest でもう渡らない。列が空なら空の tuple(閉じを
-  ;; 名乗らない)・後から足した出来事も取れる・閉じた後は閉じの理由 1 つ。
+  ;; HttpTakeQueued hands over all events currently in the script's queue in the order received, and what was handed over is not handed over again by HttpNextRequest. If the queue is empty, an empty tuple (does not
+  ;; announce the close), events added later can also be taken, and after close it is the one close reason.
   (val script (HttpScript :arrivals #((arrival 1 "/a") (arrival 2 "/b") (arrival 3 "/c"))))
   (<- got tuple (with-handler [(state) (scripted-http-server script)] (take-queued-then-next)))
-  (assert (= got #("1" #("2" "3") #() #("z") "HttpServerClosed" #(#("HttpServerClosed" "検が閉じた")))) got))
+  (assert (= got #("1" #("2" "3") #() #("z") "HttpServerClosed" #(#("HttpServerClosed" "the test closed it")))) got))
 
 
 (deftest test-the-scripted-server-hands-over-the-remote-the-script-names
-  ;; 送り元の address は台本の書き手が載せた値のまま届き、載せなければ None(名乗れない)。
+  ;; The sender address arrives as the value the script writer put in, and if none was put in, None (cannot be named).
   (val script (HttpScript :arrivals #((arrival 1 "/a" :remote "203.0.113.7") (arrival 2 "/b"))))
   (<- events tuple (with-handler [(state) (scripted-http-server script)] (two-arrivals)))
   (assert (= (lfor e events e.remote) ["203.0.113.7" None]) events))
 
 
-;; --- 本物の答え手 --------------------------------------------------------------------------------------------------------------
+;; --- Real answerer --------------------------------------------------------------------------------------------------------------
 
 (defn #^ int free-port []
-  "空いている port を 1 つ OS に選ばせて、その番号を返すため。"
+  "To have the OS choose one free port and return its number."
   (with [s (socket.socket)]
     (.bind s #("127.0.0.1" 0))
     (get (.getsockname s) 1)))
 
 
 (defn #^ None test-the-aiohttp-server-relays-http-bodies-and-ws-frames [#^ Path tmp-path]
-  (setv aiohttp (pytest.importorskip "aiohttp" :reason "aiohttp は extra http-server の依存"))
+  (setv aiohttp (pytest.importorskip "aiohttp" :reason "aiohttp is a dependency of the extra http-server"))
   (import aiohttp [web WSMsgType])
   (import doeff_core_effects [aiohttp-http-server])
   (setv port (free-port) seen [])
   (defk serve-on-port [upstream]
     {:pre [(: upstream str)] :post [(: % int)]}
-    "検の Program を決まった port で開くため(HttpListen の port を差し替える)。"
+    "To open the test Program on a fixed port (swap the port of HttpListen)."
     (<- (HttpListen :address (HttpAddress :host "127.0.0.1" :port port)))
     (while True
       (<- event HttpRequestArrived (HttpNextRequest))
@@ -293,13 +293,13 @@
         (= event.path "/ws") (<- (WsForward :ticket t :url (+ upstream "/ws")))
         True (<- (HttpRespond :ticket t :status 200 :headers #() :body (HttpNoBody))))))
   (defn :async #^ (get tuple #(web.AppRunner int)) upstream-app []
-    "中継先の相手役(HTTP の echo と ws の echo)を空いた port で開き、runner と port を返すため。"
+    "To open the relay-target counterpart (an HTTP echo and a ws echo) on a free port, and return the runner and the port."
     (defn :async #^ web.Response echo [#^ web.Request request]
-      "受けた本文を 201 で返し、中継が付けた X-Forwarded-Proto を控えるため。"
+      "To return the received body with 201 and note the X-Forwarded-Proto that the relay added."
       (.append seen (.get request.headers "X-Forwarded-Proto"))
       (web.Response :status 201 :body (await (.read request))))
     (defn :async #^ web.WebSocketResponse ws-echo [#^ web.Request request]
-      "ws の text を echo し、bye で状態符 4002 の close を送るため。"
+      "To echo the ws text, and on bye send a close with status code 4002."
       (setv ws (web.WebSocketResponse))
       (await (.prepare ws request))
       (for [:async message ws]
@@ -316,7 +316,7 @@
     (await (.start (web.TCPSite runner "127.0.0.1" up)))
     #(runner up))
   (defn :async #^ None scenario []
-    "相手役を開き、本物の答え手を別の thread で回して、HTTP の中継と ws の中継を確かめるため。"
+    "To open the counterpart, run the real answerer on another thread, and check the HTTP relay and the ws relay."
     (setv #(runner up) (await (upstream-app)))
     (.start (threading.Thread :target (fn [] (try (run (scheduled (with_handlers [await-handler (state) aiohttp-http-server]
                                                                                  (serve-on-port (.format "http://127.0.0.1:{}" up)))))
@@ -341,7 +341,7 @@
 
 
 (defn #^ None test-the-aiohttp-server-binds-a-free-port-and-stamps-events []
-  (setv aiohttp (pytest.importorskip "aiohttp" :reason "aiohttp は extra http-server の依存"))
+  (setv aiohttp (pytest.importorskip "aiohttp" :reason "aiohttp is a dependency of the extra http-server"))
   (import aiohttp [WSMessage])
   (import queue)
   (import doeff_core_effects [aiohttp-http-server])
@@ -350,36 +350,36 @@
                                                                                        (ws-echo 64 bound.put))))))
                             :daemon True))
   (defn :async #^ WSMessage scenario [#^ str base]
-    "ws に上げて 1 往復し、stop で待ち受けを閉じさせて、最後に受けた frame を返すため。"
+    "To upgrade to ws, do one round trip, have stop close the listener, and return the last frame received."
     (with [:async session (aiohttp.ClientSession)]
       (with [:async ws (.ws-connect session (+ base "/ws"))]
         (await (.send-str ws "hi"))
         (assert (= (. (await (.receive ws :timeout 5)) data) "echo:hi"))
         (await (.send-str ws "stop"))
         (await (.receive ws :timeout 5)))))
-  ;; port 0 で開き、結んだ port を HttpListen の答えで知る。
+  ;; Open on port 0 and learn the bound port from the HttpListen answer.
   (setv port (. (.get bound :timeout 30) port))
   (assert (> port 0))
   (asyncio.run (scenario (.format "http://127.0.0.1:{}" port)))
   (setv [_bound #* events report] (.get result :timeout 30))
-  ;; 出来事は受けた拍の単調時計を持つ(台本の答え手は書き手が載せた値のまま)。
+  ;; Events carry the monotonic clock of the beat they were received at (the scripted answerer keeps the value the script writer put in).
   (assert (all (gfor e events :if (not (isinstance e HttpServerClosed)) (isinstance e.received-at float))) events)
-  ;; 要求は送り元の address(接続の相手 = 127.0.0.1)を持つ。
+  ;; A request carries the sender address (the connection's peer = 127.0.0.1).
   (assert (= (lfor e events :if (isinstance e HttpRequestArrived) e.remote) ["127.0.0.1"]) events)
-  (assert (= (. (get events -1) reason) "検が閉じた"))
+  (assert (= (. (get events -1) reason) "the test closed it"))
   (assert (>= report.flushed-bytes (len "echo:hi"))))
 
 
 (defn #^ None test-a-shared-port-hands-new-connections-to-the-listener-that-stays []
-  ;; 失敗ケース(入れ替えで新旧の待ち受けを重ねる): 待ち受け A に繋いだ後、同じ port を共有して待ち受け B を開き、
-  ;; A が待ち受けだけを閉じる。A に開いた接続は往復を続け、新しい接続は全部 B に当たる(A が待ち受けを閉じる前は kernel が振り分ける)。
-  ;; 直す前は HttpListen に port の共有の欄が無く、A が開けない(赤)。
-  (setv aiohttp (pytest.importorskip "aiohttp" :reason "aiohttp は extra http-server の依存"))
+  ;; Failure case (old and new listeners overlap in a swap): after connecting to listener A, open listener B sharing the same port,
+  ;; and A closes only its listener. Connections opened on A keep round-tripping, and every new connection hits B (before A closes its listener the kernel distributes them).
+  ;; Before the fix HttpListen had no port-sharing field and A could not open (red).
+  (setv aiohttp (pytest.importorskip "aiohttp" :reason "aiohttp is a dependency of the extra http-server"))
   (import doeff_core_effects [aiohttp-http-server])
   (setv port (free-port) address (HttpAddress :host "127.0.0.1" :port port)
         bound-a (queue.Queue) bound-b (queue.Queue) result-a (queue.Queue) result-b (queue.Queue))
   (defn #^ None open-listener [#^ str name #^ queue.Queue bound #^ queue.Queue result]
-    "待ち受けの Program を別の thread で回すため(答えの数を result へ)。"
+    "To run the listener Program on another thread (the answer count goes to result)."
     (.start (threading.Thread :target (fn [] (.put result (run (scheduled (with_handlers [await-handler (state) aiohttp-http-server]
                                                                                          (named-echo name address bound.put))))))
                               :daemon True)))
@@ -387,24 +387,24 @@
   (.get bound-a :timeout 10)
   (setv base (.format "http://127.0.0.1:{}/" port))
   (defn :async #^ str round-trip [#^ aiohttp.ClientWebSocketResponse ws #^ str text]
-    "1 通送って答えを 1 通読むため。"
+    "To send one message and read one answer."
     (await (.send-str ws text))
     (. (await (.receive ws :timeout 5)) data))
   (defn :async #^ str ask-new [#^ aiohttp.ClientSession session #^ str text]
-    "新しい接続を開いて 1 往復し、答えを返して閉じるため。"
+    "To open a new connection, do one round trip, return the answer, and close."
     (with [:async ws (.ws-connect session base)]
       (await (round-trip ws text))))
   (defn :async #^ None scenario []
-    "A に繋ぎ、B を重ねて開き、A が待ち受けだけを閉じた後の新しい接続の行き先を数えるため。"
+    "To connect to A, open B overlapping, and count where new connections go after A closes only its listener."
     (with [:async session (aiohttp.ClientSession)]
       (with [:async first (.ws-connect session base)]
         (assert (= (await (round-trip first "hi")) "A:hi"))
         (open-listener "B" bound-b result-b)
         (await (asyncio.to-thread bound-b.get :timeout 10))
         (assert (= (await (round-trip first "leave")) "left"))
-        ;; 待ち受けだけを閉じた A に開いた接続は往復を続ける。
+        ;; Connections opened on A, which closed only its listener, keep round-tripping.
         (assert (= (await (round-trip first "still")) "A:still"))
-        ;; 新しい接続は全部 B に当たる。
+        ;; Every new connection hits B.
         (setv names (lfor _ (range 6) (await (ask-new session "who"))))
         (assert (= names (* ["B:who"] 6)) names)
         (await (.send-str first "stop")))
@@ -416,17 +416,17 @@
 
 
 (defn #^ None test-a-shutdown-stops-listening-before-it-closes-with-the-code-it-names []
-  ;; 失敗ケース(入れ替えで退く側の閉じ): 待ち受け A と B が port を共有する時、A が閉じの状態符 1001(going away)を
-  ;; 名指して閉じる。A の客は 1001 を受け、受けた直後に張り直した新しい接続は全部 B に当たる(A は客を閉じる前に待ち受けを閉じる)。
-  ;; 直す前は HttpShutdown に状態符の欄が無く(客は 1000 を受ける)、待ち受けを閉じるのは送りの箱を流し切った後なので、直後の張り直しが
-  ;; A に当たりうる(赤)。
-  (setv aiohttp (pytest.importorskip "aiohttp" :reason "aiohttp は extra http-server の依存"))
+  ;; Failure case (close on the side that steps aside in a swap): when listeners A and B share a port, A closes naming the close status code 1001 (going away).
+  ;; A's clients receive 1001, and every new connection they re-establish right after receiving it hits B (A closes its listener before closing its clients).
+  ;; Before the fix HttpShutdown had no status code field (clients received 1000), and the listener was closed after the send box was fully drained, so a re-establishment right after
+  ;; could hit A (red).
+  (setv aiohttp (pytest.importorskip "aiohttp" :reason "aiohttp is a dependency of the extra http-server"))
   (import aiohttp [WSMsgType])
   (import doeff_core_effects [aiohttp-http-server])
   (setv port (free-port) address (HttpAddress :host "127.0.0.1" :port port)
         bound-a (queue.Queue) bound-b (queue.Queue) result-a (queue.Queue) result-b (queue.Queue))
   (defn #^ None open-listener [#^ str name #^ queue.Queue bound #^ queue.Queue result]
-    "待ち受けの Program を別の thread で回すため(答えの数を result へ)。"
+    "To run the listener Program on another thread (the answer count goes to result)."
     (.start (threading.Thread :target (fn [] (.put result (run (scheduled (with_handlers [await-handler (state) aiohttp-http-server]
                                                                                          (named-echo name address bound.put))))))
                               :daemon True)))
@@ -434,12 +434,12 @@
   (.get bound-a :timeout 10)
   (setv base (.format "http://127.0.0.1:{}/" port))
   (defn :async #^ str ask-new [#^ aiohttp.ClientSession session #^ str text]
-    "新しい接続を開いて 1 往復し、答えを返して閉じるため。"
+    "To open a new connection, do one round trip, return the answer, and close."
     (with [:async ws (.ws-connect session base)]
       (await (.send-str ws text))
       (. (await (.receive ws :timeout 5)) data)))
   (defn :async #^ None scenario []
-    "A に繋ぎ、B を重ねて開き、A を 1001 で閉じさせた直後の張り直しの行き先を数えるため。"
+    "To connect to A, open B overlapping, and count where the re-establishments right after A is made to close with 1001 go."
     (with [:async session (aiohttp.ClientSession)]
       (with [:async first (.ws-connect session base)]
         (await (.send-str first "hi"))
@@ -449,7 +449,7 @@
         (await (.send-str first "go-away"))
         (setv closing (await (.receive first :timeout 5)))
         (assert (= [closing.type closing.data] [WSMsgType.CLOSE 1001]) closing))
-      ;; 閉じを受けた直後の張り直しは全部 B に当たる。
+      ;; Every re-establishment right after receiving the close hits B.
       (setv names (lfor _ (range 6) (await (ask-new session "who"))))
       (assert (= names (* ["B:who"] 6)) names)
       (with [:async last (.ws-connect session base)]
@@ -461,9 +461,9 @@
 
 (defn #^ None test-the-aiohttp-server-names-an-answer-the-peer-left-in-one-line-and-counts-it [#^ (get pytest.CaptureFixture str) capfd
                                                                                                #^ pytest.LogCaptureFixture caplog]
-  ;; 相手が先に切った要求への答え: aiohttp の traceback(Error handling request)を出さず、1 行の名乗りと
-  ;; 待ち受けの数え(閉じる時の合計)を残す。次の要求には今までどおり答える。
-  (pytest.importorskip "aiohttp" :reason "aiohttp は extra http-server の依存")
+  ;; Answer to a request the peer cut first: do not emit aiohttp's traceback (Error handling request); leave a one-line announcement and
+  ;; the listener's count (the total at close). The next request is answered as before.
+  (pytest.importorskip "aiohttp" :reason "aiohttp is a dependency of the extra http-server")
   (import queue)
   (import struct)
   (import time)
@@ -471,7 +471,7 @@
   (setv bound (queue.Queue) left (threading.Event) result (queue.Queue))
   (defk answer-after-the-peer-left []
     {:pre [] :post [(: % int)]}
-    "検の Program: 結んだ宛先を渡し、1 つ目の要求には相手が去った後に答え、2 つ目には普通に答えて閉じる(答え = 答えた数)。"
+    "Test Program: hand over the bound destination, answer the first request after the peer has left, answer the second normally and close (answer = the number answered)."
     (<- address HttpAddress (HttpListen :address (HttpAddress :host "127.0.0.1" :port 0)))
     (.put bound address)
     (<- late HttpRequestArrived (HttpNextRequest))
@@ -479,20 +479,20 @@
     (<- (HttpRespond :ticket late.ticket :status 200 :headers #() :body (HttpBodyBytes :data b"too late")))
     (<- on-time HttpRequestArrived (HttpNextRequest))
     (<- (HttpRespond :ticket on-time.ticket :status 200 :headers #() :body (HttpBodyBytes :data b"on time")))
-    (<- (HttpShutdown :reason "検が閉じた" :drain-seconds 1.0))
+    (<- (HttpShutdown :reason "the test closed it" :drain-seconds 1.0))
     (<- (HttpNextRequest))
     2)
   (.start (threading.Thread :target (fn [] (.put result (run (scheduled (with_handlers [await-handler (state) aiohttp-http-server]
                                                                                        (answer-after-the-peer-left))))))
                             :daemon True))
   (setv port (. (.get bound :timeout 30) port))
-  ;; 1 つ目: 送ってすぐ RST で切る(答えが遅れ、相手の上限が先に来た形 — 本番の curl -m 2)。aiohttp が切りを受け取ってから答えさせる。
+  ;; First: send and cut at once with RST (the answer is late and the peer's limit comes first -- the production curl -m 2). Let aiohttp receive the cut before answering.
   (with [peer (socket.create-connection #("127.0.0.1" port))]
     (.sendall peer b"GET /late HTTP/1.1\r\nHost: test\r\n\r\n")
     (.setsockopt peer socket.SOL-SOCKET socket.SO-LINGER (struct.pack "ii" 1 0)))
   (time.sleep 0.3)
   (.set left)
-  ;; 2 つ目: 普通に答える。
+  ;; Second: answer normally.
   (setv reply b"")
   (with [peer (socket.create-connection #("127.0.0.1" port) :timeout 10)]
     (.sendall peer b"GET /on-time HTTP/1.1\r\nHost: test\r\nConnection: close\r\n\r\n")
@@ -503,23 +503,23 @@
   (assert (= (.get result :timeout 30) 2))
   (assert (.endswith reply b"on time") reply)
   (setv err (. (.readouterr capfd) err))
-  ;; aiohttp の traceback は logger aiohttp.server の記録に出る(pytest の logging の捕まえ口が受ける)。
+  ;; aiohttp's traceback appears in the records of logger aiohttp.server (caught by pytest's logging capture).
   (assert (= (lfor record caplog.records :if (.startswith record.name "aiohttp") (.getMessage record)) []) caplog.text)
   (assert (not-in "Error handling request" err) err)
   (assert (not-in "Traceback" err) err)
-  (assert (= (.count err "相手が先に切ったので届かなかった") 1) err)
-  (assert (in "GET /late への答え(status 200)" err) err)
-  (assert (in "この待ち受けで 1 件目" err) err)
-  (assert (in "届かなかった答えは合わせて 1 件" err) err))
+  (assert (= (.count err "was not delivered because the peer closed first") 1) err)
+  (assert (in "answer to GET /late (status 200)" err) err)
+  (assert (in "number 1 on this listener" err) err)
+  (assert (in "undelivered answers in total: 1" err) err))
 
 
-;; --- probe の口は本体の流れの止まりに巻き込まれない-------------------------------------------------------------
-;; 2026-10-02 の record の job: 待ち受け・timer・Await の全部が process に 1 つの共有の event loop に乗り、loop が 30 秒止まった間 /healthz も
-;; 答えなかった(#2734)。probe の口は待ち受けの loop の上で、answer を別の thread の自分の run で答えるので、本体の流れ(共有の loop か
-;; scheduler)を塞いでも /healthz は答え、/readyz は answer の判じ(拍の古さ)に従う。本体へ届く要求は塞がれている間は答えない(対照)。
+;; --- The probe port is not caught up in a stall of the main flow-------------------------------------------------------------
+;; The record job of 2026-10-02: the listener, timers, and Await all rode one event loop shared by the process, and while the loop was stopped for 30 seconds /healthz did not
+;; answer either (#2734). The probe port answers on the listener's loop, with the answer on its own run on another thread, so even if the main flow (the shared loop or the
+;; scheduler) is blocked /healthz answers and /readyz follows the answer's judgment (age of the beat). A request that reaches the main body does not answer while blocked (control).
 
-;; probe の答えを待つ上限・/readyz が 503 と名乗る拍の古さ・相手が古さを越えるまで待つ秒・本体へ届く要求を待つ上限・塞ぐ上限(相手が放す
-;; までの保険)— どれも秒。
+;; The limit for waiting for a probe answer, the beat age at which /readyz says 503, the seconds to wait until the peer exceeds that age, the limit for waiting for a request that reaches the main body, and the blocking limit (insurance until the peer releases)
+;; -- all in seconds.
 (val PROBE-SECONDS 0.5)
 (val READY-STALE-SECONDS 0.1)
 (val STALE-WAIT-SECONDS 0.15)
@@ -528,20 +528,20 @@
 
 
 (defrecord Beat
-  "本体の流れの最後の拍(単調時計の秒)— 最新の値の置き場に置き、/readyz の answer が別の run で読む。"
+  "The last beat of the main flow (monotonic clock seconds) -- put in the latest-value store, and read by the /readyz answer in another run."
   {:tags {:context "http-server-test" :role "type"}}
   (#^ float at))
 
 
 (defrecord Fetched
-  "相手の要求 1 つの答え: status(時間の内に答えが無ければ None)と本文。"
+  "The answer to one peer request: the status (None if there is no answer in time) and the body."
   {:tags {:context "http-server-test" :role "type"}}
   (#^ (| int None) status)
   (#^ str body))
 
 
 (defrecord HeldAnswers
-  "本体の流れを塞いだ間に相手が受け取った物: health・ready = probe の口の答え・work = 本体へ届く要求の答え。"
+  "What the peer received while the main flow was blocked: health and ready = answers of the probe port, work = the answer to the request that reaches the main body."
   {:tags {:context "http-server-test" :role "type"}}
   (#^ Fetched health)
   (#^ Fetched ready)
@@ -550,23 +550,23 @@
 
 (defk alive []
   {:pre [] :post [(: % HttpProbeAnswer)] :tags {:context "http-server-test" :role "program"}}
-  "/healthz の answer: process が居れば 200(本体の流れを見ない)。"
+  "The /healthz answer: 200 if the process is there (does not look at the main flow)."
   (HttpProbeAnswer :status 200 :headers #() :body b"alive"))
 
 
 (defk readiness [stale-seconds]
   {:pre [(: stale-seconds float)] :post [(: % HttpProbeAnswer)] :tags {:context "http-server-test" :role "program"}}
-  "/readyz の answer: 置き場の最後の拍が stale-seconds より古い(まだ無い)なら 503 と名乗り、新しければ 200。"
+  "The /readyz answer: if the last beat in the store is older than stale-seconds (or absent yet) it says 503, and if newer, 200."
   (<- beat (| Beat None) (ReadLatest Beat))
   (val stalled (if (is beat None) None (- (time.monotonic) beat.at)))
   (if (and (is-not stalled None) (<= stalled stale-seconds))
       (HttpProbeAnswer :status 200 :headers #() :body b"ready")
-      (HttpProbeAnswer :status 503 :headers #() :body (.encode (.format "本体の流れが {} 秒 拍を刻んでいない" stalled) "utf-8"))))
+      (HttpProbeAnswer :status 503 :headers #() :body (.encode (.format "the main flow has not ticked for {} seconds" stalled) "utf-8"))))
 
 
 (defk fetch [address path seconds]
   {:pre [(: address HttpAddress) (: path str) (: seconds float)] :post [(: % Fetched)] :tags {:context "http-server-test" :role "foundation"}}
-  "相手の要求 1 つ: GET を送り、seconds 秒の内の答えを読む(来なければ status None)。"
+  "One peer request: send a GET and read the answer within seconds seconds (status None if it does not come)."
   (val connection (http.client.HTTPConnection address.host address.port :timeout seconds))
   (try
     (.request connection "GET" path)
@@ -578,10 +578,10 @@
       (.close connection))))
 
 
-(deff ask-while-held [address held release box]  ; defk にできない: threading.Thread が別の thread で呼ぶ callback
+(deff ask-while-held [address held release box]  ; cannot be a defk: a callback that threading.Thread calls on another thread
   {:pre [(: address HttpAddress) (: held threading.Event) (: release threading.Event) (: box queue.Queue)] :post [(: % None)]
    :tags {:context "http-server-test" :role "foundation"}}
-  "本体の流れが塞がれてから拍が古くなるまで待ち、probe の口 2 つと本体へ届く要求 1 つを送って答えを box へ置き、流れを放す(失敗なら例外を置く)。"
+  "After the main flow is blocked, wait until the beat is old, send two probe-port requests and one request that reaches the main body, put the answers in box, and release the flow (put the exception on failure)."
   (try
     (.wait held HOLD-SECONDS)
     (time.sleep STALE-WAIT-SECONDS)
@@ -596,14 +596,14 @@
 
 (defk hold-the-loop [held release]
   {:pre [(: held threading.Event) (: release threading.Event)] :post [(: % None)] :tags {:context "http-server-test" :role "program"}}
-  "本体の流れを塞ぐ形 1: await-handler の共有の event loop の thread を、相手が放すまで止める(loop の上で同期に待つ coroutine)。"
+  "Form 1 of blocking the main flow: stop the thread of await-handler's shared event loop until the peer releases (a coroutine that waits synchronously on the loop)."
   (<- (Await ((fn :async [] (.set held) (.wait release HOLD-SECONDS)))))
   None)
 
 
 (defk hold-the-scheduler [held release]
   {:pre [(: held threading.Event) (: release threading.Event)] :post [(: % None)] :tags {:context "http-server-test" :role "program"}}
-  "本体の流れを塞ぐ形 2: 協調型の scheduler の thread(本体の run)を、相手が放すまで止める。"
+  "Form 2 of blocking the main flow: stop the thread of the cooperative scheduler (the main body's run) until the peer releases."
   (.set held)
   (.wait release HOLD-SECONDS)
   None)
@@ -611,8 +611,8 @@
 
 (defk probe-while-held [hold]
   {:pre [(: hold Callable)] :post [(: % HeldAnswers)] :tags {:context "http-server-test" :role "program"}}
-  "probe の口つきで待ち受けを開き、拍を 1 つ置いてから hold で本体の流れを塞ぎ、その間に相手が受け取った物を返す。/readyz の answer は
-   置き場と state を自分の中に被せた閉じた Program。"
+  "Open the listener with a probe port, put one beat, block the main flow with hold, and return what the peer received in the meantime. The /readyz answer is
+   a closed Program with the store and state wrapped inside."
   (val board (.format "test-http-probe-{}" (time.monotonic-ns)))
   (val held (threading.Event))
   (val release (threading.Event))
@@ -623,14 +623,14 @@
   (<- (with_handlers [(state) (process-latest-handler board)] (PublishLatest (Beat :at (time.monotonic)))))
   (.start (threading.Thread :target ask-while-held :args #(bound held release box) :daemon True))
   (<- (hold held release))
-  ;; 塞いでいた間に本体へ届いた要求(相手はもう去った)に /work まで答えてから閉じる — 答えの無い要求が残ると aiohttp は閉じる時に待つ。
-  ;; probe の口が列を通る形(直す前)では /healthz・/readyz もここへ届く。
+  ;; Answer up to /work the request that reached the main body while blocked (the peer has already left) before closing -- if a request with no answer is left, aiohttp waits at close.
+  ;; In the form where the probe port goes through the queue (before the fix), /healthz and /readyz also arrive here.
   (var answering True)
   (while answering
     (<- arrived HttpRequestArrived (HttpNextRequest))
     (<- (HttpRespond :ticket arrived.ticket :status 200 :headers #() :body (HttpBodyBytes :data b"late")))
     (:= answering (!= arrived.path "/work")))
-  (<- (HttpShutdown :reason "検が閉じた" :drain-seconds 0.2))
+  (<- (HttpShutdown :reason "the test closed it" :drain-seconds 0.2))
   (val got (.get box :timeout HOLD-SECONDS))
   (when (isinstance got Exception)
     (raise got))
@@ -639,39 +639,39 @@
 
 (defk held-answers [hold]
   {:pre [(: hold Callable)] :post [(: % HeldAnswers)] :tags {:context "http-server-test" :role "program"}}
-  "本物の答え手の下で probe-while-held を走らせるため(aiohttp の無い venv では skip)。"
-  (pytest.importorskip "aiohttp" :reason "aiohttp は extra http-server の依存")
+  "To run probe-while-held under the real answerer (skipped in a venv without aiohttp)."
+  (pytest.importorskip "aiohttp" :reason "aiohttp is a dependency of the extra http-server")
   (import doeff_core_effects [aiohttp-http-server])
   (<- got HeldAnswers (with-handler [await-handler (state) aiohttp-http-server] (probe-while-held hold)))
   got)
 
 
 (deftest test-a-probe-answers-while-the-shared-loop-is-held
-  ;; 共有の event loop の thread を止めても、/healthz は 200・/readyz は拍の古さで 503 と名乗る。本体へ届く要求は答えない(対照)。
+  ;; Even if the thread of the shared event loop is stopped, /healthz is 200 and /readyz says 503 by the beat age. A request that reaches the main body does not answer (control).
   (<- got HeldAnswers (held-answers hold-the-loop))
   (assert (= got.health (Fetched :status 200 :body "alive")) got)
   (assert (= got.ready.status 503) got)
-  (assert (in "拍を刻んでいない" got.ready.body) got)
+  (assert (in "has not ticked" got.ready.body) got)
   (assert (is got.work.status None) got))
 
 
 (deftest test-a-probe-answers-while-the-scheduler-is-held
-  ;; 協調型の scheduler の thread(本体の run)を止めても同じ。
+  ;; The same when the thread of the cooperative scheduler (the main body's run) is stopped.
   (<- got HeldAnswers (held-answers hold-the-scheduler))
   (assert (= got.health (Fetched :status 200 :body "alive")) got)
   (assert (= got.ready.status 503) got)
-  (assert (in "拍を刻んでいない" got.ready.body) got)
+  (assert (in "has not ticked" got.ready.body) got)
   (assert (is got.work.status None) got))
 
 
-;; --- 答えは待ち受けの loop へ積むだけ-----------------------------------------------------
+;; --- Answers are only queued onto the listener's loop-----------------------------------------------------
 
 (defclass [(dataclass :frozen True)] ReadAwaits [EffectBase]
-  "awaits-counted が数えた、答え手の節が共有の event loop へ入った回数を読む(答え = int)。")
+  "Read the number of times the answerer's clause entered the shared event loop, as counted by awaits-counted (answer = int).")
 
 
 (defhandler awaits-counted
-  ;; 本物の答え手と await-handler の間に挟み、答え手の節が共有の event loop へ入る回数(Await)を数えてから、そのまま渡すため。
+  ;; To sandwich between the real answerer and await-handler, count the times (Await) the answerer's clause enters the shared event loop, then pass through unchanged.
   (session var entered 0)
   (Await [coroutine]
     (:= entered (+ entered 1))
@@ -682,21 +682,21 @@
 
 (defk respond-awaits [box]
   {:pre [(: box queue.Queue)] :post [(: % int)] :tags {:context "http-server-test" :role "program"}}
-  "port 0 で開いて結んだ宛先を box へ置き、要求 1 つに答え、その答え(HttpRespond 1 回)の間に共有の event loop へ入った回数を返すため。"
+  "To open on port 0 and put the bound destination in box, answer one request, and return the number of times the shared event loop was entered during that answer (one HttpRespond)."
   (<- bound HttpAddress (HttpListen :address (HttpAddress :host "127.0.0.1" :port 0)))
   (.put box bound)
   (<- arrived HttpRequestArrived (HttpNextRequest))
   (<- before int (ReadAwaits))
   (<- (HttpRespond :ticket arrived.ticket :status 200 :headers #() :body (HttpBodyBytes :data b"sent")))
   (<- after int (ReadAwaits))
-  (<- (HttpShutdown :reason "検が閉じた" :drain-seconds 0.5))
+  (<- (HttpShutdown :reason "the test closed it" :drain-seconds 0.5))
   (- after before))
 
 
-(deff ask-once [box answers]  ; defk にできない: threading.Thread が別の thread で呼ぶ callback
+(deff ask-once [box answers]  ; cannot be a defk: a callback that threading.Thread calls on another thread
   {:pre [(: box queue.Queue) (: answers queue.Queue)] :post [(: % None)]
    :tags {:context "http-server-test" :role "foundation"}}
-  "待ち受けが開いたら GET を 1 つ送り、答えを answers へ置くため(失敗なら例外を置く)。"
+  "To send one GET once the listener is open and put the answer in answers (put the exception on failure)."
   (try
     (.put answers (run (fetch (.get box :timeout HOLD-SECONDS) "/one" WORK-SECONDS)))
     (except [error Exception]
@@ -706,8 +706,8 @@
 
 (defk responded-awaits []
   {:pre [] :post [(: % tuple)] :tags {:context "http-server-test" :role "program"}}
-  "本物の答え手の下で respond-awaits を走らせ、#(共有の loop へ入った回数 相手が受けた答え) を返すため(aiohttp の無い venv では skip)。"
-  (pytest.importorskip "aiohttp" :reason "aiohttp は extra http-server の依存")
+  "To run respond-awaits under the real answerer and return #(number of entries into the shared loop, the answer the peer received) (skipped in a venv without aiohttp)."
+  (pytest.importorskip "aiohttp" :reason "aiohttp is a dependency of the extra http-server")
   (import doeff_core_effects [aiohttp-http-server])
   (val box (queue.Queue))
   (val answers (queue.Queue))
@@ -720,42 +720,42 @@
 
 
 (deftest test-the-aiohttp-server-hands-an-answer-to-the-edge-without-a-round-trip
-  ;; 答え(HttpRespond)は待ち受けの loop へ積むだけで、共有の event loop へ入らない(直す前は Await 1 回 — 共有の loop → 待ち受けの loop →
-  ;; 戻りの往復)。相手は送った答えをそのまま受ける。
+  ;; The answer (HttpRespond) is only queued onto the listener's loop and does not enter the shared event loop (before the fix, one Await -- a round trip shared loop -> listener loop ->
+  ;; back). The peer receives the answer it was sent unchanged.
   (<- got tuple (responded-awaits))
   (assert (= got #(0 (Fetched :status 200 :body "sent"))) got))
 
 
 (defk listen-answer-a-gone-ticket-and-close []
   {:pre [] :post [(: % str)] :tags {:context "http-server-test" :role "program"}}
-  "待ち受けを開き、待ち受けに無い札へ答えを撃ってから閉じるため(答えは積むだけで戻るので、撃った側へは何も上がらない)。"
+  "To open the listener, fire an answer at a ticket the listener does not have, and then close (the answer only queues and returns, so nothing is raised on the firing side)."
   (<- (HttpListen :address (HttpAddress :host "127.0.0.1" :port 0)))
   (<- (HttpRespond :ticket "no-such" :status 200 :headers #() :body (HttpNoBody)))
-  (<- (HttpShutdown :reason "検が閉じた" :drain-seconds 0.2))
+  (<- (HttpShutdown :reason "the test closed it" :drain-seconds 0.2))
   "returned")
 
 
 (defk answer-a-ticket-the-edge-does-not-hold []
   {:pre [] :post [(: % str)] :tags {:context "http-server-test" :role "program"}}
-  "本物の答え手の下で listen-answer-a-gone-ticket-and-close を走らせるため(aiohttp の無い venv では skip)。"
-  (pytest.importorskip "aiohttp" :reason "aiohttp は extra http-server の依存")
+  "To run listen-answer-a-gone-ticket-and-close under the real answerer (skipped in a venv without aiohttp)."
+  (pytest.importorskip "aiohttp" :reason "aiohttp is a dependency of the extra http-server")
   (import doeff_core_effects [aiohttp-http-server])
   (<- done str (with-handler [await-handler (state) aiohttp-http-server] (listen-answer-a-gone-ticket-and-close)))
   done)
 
 
 (deftest test-an-answer-to-a-ticket-the-edge-does-not-hold-is-named-in-one-line [capfd]
-  ;; 積んだ答えの札が待ち受けに無ければ(2 度目・知らない札)、撃った側へは上げず、待ち受けの loop が traceback 無しの 1 行で名乗る。
+  ;; If the ticket of the queued answer is not in the listener (second time, unknown ticket), nothing is raised on the firing side, and the listener's loop announces it in one line without a traceback.
   (<- done str (answer-a-ticket-the-edge-does-not-hold))
   (val err (. (.readouterr capfd) err))
   (assert (= done "returned"))
-  (assert (in "札 no-such への命令 HttpRespond" err) err)
+  (assert (in "command HttpRespond for ticket no-such" err) err)
   (assert (not-in "Traceback" err) err))
 
 
-;; --- ws の送りは待ち受けの loop へ積むだけ------------------------------------------------------------------
-;; 直す前は WsSendText 1 回ごとに Await 1 回(共有の loop → 待ち受けの loop → 戻りの往復)を待ち、同じ通を接続の数だけ送る呼び手の
-;; 1 周期が送りの数に比例して伸びた(画面の job・本番と同じ組で送り 1 回 1.32 ms → 0.45 ms)。
+;; --- ws sends are only queued onto the listener's loop------------------------------------------------------------------
+;; Before the fix each WsSendText waited for one Await (a round trip shared loop -> listener loop -> back), and the one cycle of a caller that sends the same message to as many connections as there are
+;; stretched in proportion to the number of sends (a screen job, in the same setup as production, 1.32 ms -> 0.45 ms per send).
 
 (val SENT-TEXTS 5)
 (val SENT-CLOSE-CODE 4001)
@@ -763,8 +763,8 @@
 
 (defk send-awaits [box]
   {:pre [(: box queue.Queue)] :post [(: % int)] :tags {:context "http-server-test" :role "program"}}
-  "port 0 で開いて結んだ宛先を box へ置き、ws の要求 1 つを上げ、文字の 1 通を SENT-TEXTS 回送る間に共有の event loop へ入った回数を
-   返すため(送りの直後に閉じを撃つ — 積んだ送りが閉じより先に渡ることを相手の側で確かめる)。"
+  "To open on port 0 and put the bound destination in box, upgrade one ws request, and return the number of times the shared event loop was entered while sending one text message SENT-TEXTS times
+   (fire a close right after the sends -- check on the peer's side that the queued sends are delivered before the close)."
   (<- bound HttpAddress (HttpListen :address (HttpAddress :host "127.0.0.1" :port 0)))
   (.put box bound)
   (<- arrived HttpRequestArrived (HttpNextRequest))
@@ -773,19 +773,19 @@
   (for [index (range SENT-TEXTS)]
     (<- (WsSendText :ticket arrived.ticket :text (+ "t-" (str index)))))
   (<- after int (ReadAwaits))
-  (<- (WsClose :ticket arrived.ticket :code SENT-CLOSE-CODE :reason "送り終えた"))
-  (<- (HttpShutdown :reason "検が閉じた" :drain-seconds 2.0))
+  (<- (WsClose :ticket arrived.ticket :code SENT-CLOSE-CODE :reason "finished sending"))
+  (<- (HttpShutdown :reason "the test closed it" :drain-seconds 2.0))
   (- after before))
 
 
-(deff hear-until-closed [box answers]  ; defk にできない: threading.Thread が別の thread で呼ぶ callback
+(deff hear-until-closed [box answers]  ; cannot be a defk: a callback that threading.Thread calls on another thread
   {:pre [(: box queue.Queue) (: answers queue.Queue)] :post [(: % None)]
    :tags {:context "http-server-test" :role "foundation"}}
-  "待ち受けが開いたら ws で繋ぎ、閉じの frame まで受けた文字の 1 通の列と閉じの状態符を answers へ置くため(失敗なら例外を置く)。"
+  "To connect by ws once the listener is open, and put the sequence of text messages received up to the close frame and the close status code in answers (put the exception on failure)."
   (import aiohttp)
   (defn :async #^ tuple heard [#^ HttpAddress bound]
-    "ws で繋ぎ、送りの数 + 閉じの 1 つの frame を受けて、文字の 1 通の列(受けた順)と、文字でない最初の frame の中身(閉じの状態符)を
-     答えるため(閉じが送りを追い越せば、文字の列が欠けて状態符が先に来る)。"
+    "To connect by ws, receive the number of sends + one close frame, and answer the sequence of text messages (in the order received) and the contents of the first non-text frame (the close status code)
+     (if the close overtakes the sends, the text sequence is short and the status code comes first)."
     (with [:async session (aiohttp.ClientSession)]
       (with [:async ws (.ws-connect session (.format "http://127.0.0.1:{}/ws" bound.port))]
         (setv frames (lfor _ (range (+ SENT-TEXTS 1)) (await (.receive ws :timeout HOLD-SECONDS))))
@@ -800,9 +800,9 @@
 
 (defk sent-awaits []
   {:pre [] :post [(: % tuple)] :tags {:context "http-server-test" :role "program"}}
-  "本物の答え手の下で send-awaits を走らせ、#(共有の loop へ入った回数 相手が受けた文字の 1 通の列 閉じの状態符) を返すため(aiohttp の
-   無い venv では skip)。"
-  (pytest.importorskip "aiohttp" :reason "aiohttp は extra http-server の依存")
+  "To run send-awaits under the real answerer and return #(number of entries into the shared loop, the sequence of text messages the peer received, the close status code) (skipped in a venv
+   without aiohttp)."
+  (pytest.importorskip "aiohttp" :reason "aiohttp is a dependency of the extra http-server")
   (import doeff_core_effects [aiohttp-http-server])
   (val box (queue.Queue))
   (val answers (queue.Queue))
@@ -815,23 +815,23 @@
 
 
 (deftest test-the-aiohttp-server-queues-ws-texts-on-the-edge-without-a-round-trip
-  ;; 文字の 1 通の送り(WsSendText)は待ち受けの loop へ積むだけで、共有の event loop へ入らない(直す前は送り 1 回ごとに Await 1 回 = 5 回)。
-  ;; 相手は撃った順に全部を受け、その後に撃った閉じ(WsClose — across で渡る)は送りの後に届く(積んだ送りを追い越さない)。
+  ;; Sending one text message (WsSendText) is only queued onto the listener's loop and does not enter the shared event loop (before the fix one Await per send = 5).
+  ;; The peer receives all of them in the order fired, and the close fired after that (WsClose -- passed through across) arrives after the sends (it does not overtake the queued sends).
   (<- got tuple (sent-awaits))
   (assert (= got #(0 (tuple (gfor index (range SENT-TEXTS) (+ "t-" (str index)))) SENT-CLOSE-CODE)) got))
 
 
-;; --- 宣言の小さい本文は待ち受けの loop が先に読む-----------------------------------------
+;; --- A small declared body is read first by the listener's loop-----------------------------------------
 
-;; 相手が送る本文(宣言の長さつき)と、読みの上限。
+;; The body the peer sends (with a declared length) and the read limit.
 (val SMALL-BODY b"small body")
 (val READ-LIMIT 64)
 
 
 (defk read-awaits [box]
   {:pre [(: box queue.Queue)] :post [(: % tuple)] :tags {:context "http-server-test" :role "program"}}
-  "port 0 で開いて結んだ宛先を box へ置き、要求 1 つの本文を読み(HttpReadBody 1 回)、読めた本文で答えるため。答え = #(読みの間に
-   共有の event loop へ入った回数 読みの答え)。"
+  "To open on port 0 and put the bound destination in box, read the body of one request (one HttpReadBody), and answer with the body read. Answer = #(number of entries into
+   the shared event loop during the read, the read's answer)."
   (<- bound HttpAddress (HttpListen :address (HttpAddress :host "127.0.0.1" :port 0)))
   (.put box bound)
   (<- arrived HttpRequestArrived (HttpNextRequest))
@@ -842,14 +842,14 @@
               (HttpBodyRead :data read) read
               _ b"unread"))
   (<- (HttpRespond :ticket arrived.ticket :status 200 :headers #() :body (HttpBodyBytes :data data)))
-  (<- (HttpShutdown :reason "検が閉じた" :drain-seconds 0.5))
+  (<- (HttpShutdown :reason "the test closed it" :drain-seconds 0.5))
   #((- after before) outcome))
 
 
 (defk post-body [address path body seconds]
   {:pre [(: address HttpAddress) (: path str) (: body bytes) (: seconds float)] :post [(: % Fetched)]
    :tags {:context "http-server-test" :role "foundation"}}
-  "相手の要求 1 つ: 宣言の長さ(Content-Length)つきの本文で POST を送り、seconds 秒の内の答えを読む(来なければ status None)。"
+  "One peer request: send a POST with a body that has a declared length (Content-Length), and read the answer within seconds seconds (status None if it does not come)."
   (val connection (http.client.HTTPConnection address.host address.port :timeout seconds))
   (try
     (.request connection "POST" path :body body)
@@ -861,10 +861,10 @@
       (.close connection))))
 
 
-(deff send-once [box answers]  ; defk にできない: threading.Thread が別の thread で呼ぶ callback
+(deff send-once [box answers]  ; cannot be a defk: a callback that threading.Thread calls on another thread
   {:pre [(: box queue.Queue) (: answers queue.Queue)] :post [(: % None)]
    :tags {:context "http-server-test" :role "foundation"}}
-  "待ち受けが開いたら本文つきの POST を 1 つ送り、答えを answers へ置くため(失敗なら例外を置く)。"
+  "To send one POST with a body once the listener is open and put the answer in answers (put the exception on failure)."
   (try
     (.put answers (run (post-body (.get box :timeout HOLD-SECONDS) "/one" SMALL-BODY WORK-SECONDS)))
     (except [error Exception]
@@ -874,9 +874,9 @@
 
 (defk read-body-awaits []
   {:pre [] :post [(: % tuple)] :tags {:context "http-server-test" :role "program"}}
-  "本物の答え手の下で read-awaits を走らせ、#(共有の loop へ入った回数 読みの答え 相手が受けた答え) を返すため(aiohttp の無い venv では
-   skip)。"
-  (pytest.importorskip "aiohttp" :reason "aiohttp は extra http-server の依存")
+  "To run read-awaits under the real answerer and return #(number of entries into the shared loop, the read's answer, the answer the peer received) (in a venv without aiohttp:
+   skipped)."
+  (pytest.importorskip "aiohttp" :reason "aiohttp is a dependency of the extra http-server")
   (import doeff_core_effects [aiohttp-http-server])
   (val box (queue.Queue))
   (val answers (queue.Queue))
@@ -889,17 +889,17 @@
 
 
 (deftest test-the-aiohttp-server-reads-a-small-declared-body-without-a-round-trip
-  ;; 宣言の長さが小さい本文は、待ち受けの loop が到着を並べる前に読み切り、HttpReadBody は共有の event loop へ入らずに答える(直す前は
-  ;; Await 1 回 — 共有の loop → 待ち受けの loop → 戻りの往復)。読めた本文はそのまま相手へ戻る。
+  ;; A body whose declared length is small is read to the end before the listener's loop lines up the arrival, and HttpReadBody answers without entering the shared event loop (before the fix
+  ;; one Await -- a round trip shared loop -> listener loop -> back). The body read goes back to the peer unchanged.
   (<- got tuple (read-body-awaits))
   (assert (= got #(0 (HttpBodyRead :data SMALL-BODY) (Fetched :status 200 :body "small body"))) got))
 
 
-;; --- 列に既に在る到着は往復せずに取る----------------------------------------------------------------
-;; 書き 1 回で保留の待ちが一斉に起きると、続く要求が待ち受けの列に溜まる。受けの loop が 1 つ取るたびに共有の loop → 待ち受けの loop →
-;; 戻りの往復をしていたので、波が 1 本ずつに並んだ(手元の測り: 待ち 20 本で読みの queue 68.5 ms)。
+;; --- Arrivals already in the queue are taken without a round trip----------------------------------------------------------------
+;; When one write wakes pending waits all at once, the following requests pile up in the listener's queue. Each time the receiving loop took one it made a round trip shared loop -> listener loop ->
+;; back, so the wave was lined up one at a time (measured locally: with 20 waiters the read queue was 68.5 ms).
 
-;; 一度に送る要求の数・相手が送り終えてから待ち受けが列へ並べ終えるまで待つ秒・相手の答えを待つ上限の秒。
+;; The number of requests sent at once, the seconds to wait from the peer finishing sending until the listener finishes lining up in the queue, and the limit in seconds for waiting for the peer's answers.
 (val WAVE-SIZE 8)
 (val SETTLE-SECONDS 0.5)
 (val WAVE-SECONDS 10.0)
@@ -907,7 +907,7 @@
 
 (defk take-arrivals [n]
   {:pre [(: n int)] :post [(: % tuple)] :tags {:context "http-server-test" :role "program"}}
-  "受け口の列から n 個の到着を順に取るため(答え = 取った順の tuple)。"
+  "To take n arrivals in order from the receiving queue (answer = the tuple in the order taken)."
   (if (= n 0)
       #()
       (do (<- head HttpRequestArrived (HttpNextRequest))
@@ -917,7 +917,7 @@
 
 (defk answer-each [arrivals]
   {:pre [(: arrivals tuple)] :post [(: % None)] :tags {:context "http-server-test" :role "program"}}
-  "到着のそれぞれに、その要求の path を本文にして答えるため。"
+  "To answer each arrival with the path of its request as the body."
   (for [arrival arrivals]
     (<- (HttpRespond :ticket arrival.ticket :status 200 :headers #() :body (HttpBodyBytes :data (.encode arrival.path "utf-8")))))
   None)
@@ -925,8 +925,8 @@
 
 (defk take-a-wave [box sent]
   {:pre [(: box queue.Queue) (: sent queue.Queue)] :post [(: % tuple)] :tags {:context "http-server-test" :role "program"}}
-  "port 0 で開いて結んだ宛先を box へ置き、1 つ目の到着を受けてから、相手が残りを全部送り終えて列に並ぶのを待ち、残りを取って全部に
-   答えるため。答え = #(残りを取る間に共有の event loop へ入った回数 取った順の到着)。"
+  "To open on port 0 and put the bound destination in box, receive the first arrival, wait until the peer has sent all the rest and they line up in the queue, take the rest, and answer all of them.
+   Answer = #(number of entries into the shared event loop while taking the rest, the arrivals in the order taken)."
   (<- bound HttpAddress (HttpListen :address (HttpAddress :host "127.0.0.1" :port 0)))
   (.put box bound)
   (<- first HttpRequestArrived (HttpNextRequest))
@@ -938,14 +938,14 @@
   (<- after int (ReadAwaits))
   (val taken (+ #(first) rest))
   (<- (answer-each taken))
-  (<- (HttpShutdown :reason "検が閉じた" :drain-seconds 0.5))
+  (<- (HttpShutdown :reason "the test closed it" :drain-seconds 0.5))
   #((- after before) taken))
 
 
 (defk take-a-wave-at-once [box sent]
   {:pre [(: box queue.Queue) (: sent queue.Queue)] :post [(: % tuple)] :tags {:context "http-server-test" :role "program"}}
-  "take-a-wave と同じ波で、1 つ目の到着の後の残りを HttpTakeQueued 1 回でまとめて取り、全部に答えるため。
-   答え = #(残りを取る間に共有の event loop へ入った回数 取った順の到着)。閉じた後の HttpTakeQueued が閉じの理由を名乗る事も見る。"
+  "In the same wave as take-a-wave, to take the rest after the first arrival all at once with one HttpTakeQueued and answer all of them.
+   Answer = #(number of entries into the shared event loop while taking the rest, the arrivals in the order taken). Also check that an HttpTakeQueued after close names the close reason."
   (<- bound HttpAddress (HttpListen :address (HttpAddress :host "127.0.0.1" :port 0)))
   (.put box bound)
   (<- first HttpRequestArrived (HttpNextRequest))
@@ -957,16 +957,16 @@
   (<- after int (ReadAwaits))
   (val taken (+ #(first) rest))
   (<- (answer-each taken))
-  (<- (HttpShutdown :reason "検が閉じた" :drain-seconds 0.5))
+  (<- (HttpShutdown :reason "the test closed it" :drain-seconds 0.5))
   (<- shut tuple (HttpTakeQueued))
   (assert (= (lfor e shut (. (type e) __name__)) ["HttpServerClosed"]) shut)
   #((- after before) taken))
 
 
-(deff ask-in-wave [address path sent answers]  ; defk にできない: threading.Thread が別の thread で呼ぶ callback
+(deff ask-in-wave [address path sent answers]  ; cannot be a defk: a callback that threading.Thread calls on another thread
   {:pre [(: address HttpAddress) (: path str) (: sent queue.Queue) (: answers queue.Queue)] :post [(: % None)]
    :tags {:context "http-server-test" :role "foundation"}}
-  "GET を 1 つ送り終えたら sent へ印を置き、答えの #(path 本文) を answers へ置くため(失敗なら例外を置く)。"
+  "After finishing sending one GET, put a mark in sent and put the answer #(path body) in answers (put the exception on failure)."
   (setv connection (http.client.HTTPConnection address.host address.port :timeout WAVE-SECONDS))
   (try
     (.request connection "GET" path)
@@ -981,10 +981,10 @@
   None)
 
 
-(deff fire-wave [box sent answers]  ; defk にできない: threading.Thread が別の thread で呼ぶ callback
+(deff fire-wave [box sent answers]  ; cannot be a defk: a callback that threading.Thread calls on another thread
   {:pre [(: box queue.Queue) (: sent queue.Queue) (: answers queue.Queue)] :post [(: % None)]
    :tags {:context "http-server-test" :role "foundation"}}
-  "待ち受けが開いたら WAVE-SIZE 本の GET を別々の接続から一度に送るため(/w0 〜)。"
+  "To send WAVE-SIZE GETs at once from separate connections once the listener is open (/w0 ...)."
   (setv address (.get box :timeout WAVE-SECONDS))
   (for [n (range WAVE-SIZE)]
     (.start (threading.Thread :target ask-in-wave :args #(address (.format "/w{}" n) sent answers) :daemon True)))
@@ -993,9 +993,9 @@
 
 (defk wave-awaits [take]
   {:pre [(: take Callable)] :post [(: % tuple)] :tags {:context "http-server-test" :role "program"}}
-  "本物の答え手の下で波を取る program take(take-a-wave か take-a-wave-at-once)を走らせ、#(共有の loop へ入った回数 取った順の到着
-   相手が受けた答えの集合) を返すため(aiohttp の無い venv では skip)。"
-  (pytest.importorskip "aiohttp" :reason "aiohttp は extra http-server の依存")
+  "To run the wave-taking program take (take-a-wave or take-a-wave-at-once) under the real answerer and return #(number of entries into the shared loop, the arrivals in the order taken
+   the set of answers the peer received) (skipped in a venv without aiohttp)."
+  (pytest.importorskip "aiohttp" :reason "aiohttp is a dependency of the extra http-server")
   (import doeff_core_effects [aiohttp-http-server])
   (val box (queue.Queue))
   (val sent (queue.Queue))
@@ -1007,8 +1007,8 @@
 
 
 (deftest test-the-aiohttp-server-hands-every-queued-arrival-at-once
-  ;; HttpTakeQueued は列に既に在る到着を、共有の event loop へ入らずに 1 回で全部取る。取りこぼしも順の入れ替わりも
-  ;; 無い: 1 つ目の後の残り WAVE-SIZE - 1 個を札の順に取り、相手は全員が自分の path の答えを受ける。閉じた後は閉じの理由。
+  ;; HttpTakeQueued takes all the arrivals already in the queue at once without entering the shared event loop. Neither missed ones nor reordering
+  ;; occur: the remaining WAVE-SIZE - 1 after the first are taken in ticket order, and every peer receives the answer for its own path. After close, the close reason.
   (<- got tuple (wave-awaits take-a-wave-at-once))
   (val entered (get got 0))
   (val taken (get got 1))
@@ -1022,8 +1022,8 @@
 
 
 (deftest test-the-aiohttp-server-takes-queued-arrivals-without-a-round-trip
-  ;; 列に既に在る到着は、HttpNextRequest が共有の event loop へ入らずに取る(直す前は 1 つ取るたびに Await 1 回 — 共有の loop →
-  ;; 待ち受けの loop → 戻りの往復)。取りこぼしも順の入れ替わりも無い: 取った順は札の順のまま、相手は全員が自分の path の答えを受ける。
+  ;; The arrivals already in the queue are taken by HttpNextRequest without entering the shared event loop (before the fix one Await per taken arrival -- shared loop ->
+  ;; listener loop -> back). Neither missed ones nor reordering occur: the order taken stays the ticket order, and every peer receives the answer for its own path.
   (<- got tuple (wave-awaits take-a-wave))
   (val entered (get got 0))
   (val taken (get got 1))
@@ -1035,38 +1035,38 @@
   (assert (= replies (frozenset (gfor p paths #(p p)))) replies))
 
 
-;; --- ws の中継が中継先へ繋ぐ時の 2 つの上限(繋ぐまで・handshake の答え)-------------------------------------------------------------
-;; 中継先が入れ替わる間は、中継先への繋ぎの SYN が黙って落ちる(答えも断りも返らない)。直す前の ws の中継は HTTP の中継と共用の接続の
-;; 上限(CONNECT-SECONDS 10 秒)まで待ってから 502 を返し、相手の繋ぎの上限と同じ長さだったので、相手の撃ち直しが遅れた。ws の中継は
-;; 中継先へ繋ぐ時に 2 つの上限を別々に持つ: 繋ぐまで(名前の引き + TCP の接続 — WS-UPSTREAM-CONNECT-SECONDS)と、繋がった後の handshake
-;; の答え(WS-UPSTREAM-HANDSHAKE-SECONDS)。検は見る側の上限だけを縮めて秒を詰める。
-;;   * SYN に答えの返らない中継先は「繋ぐまで」で見切って 502(直す前は 10 秒 待つ)
-;;   * 閉じた port の中継先は上限を待たずに 502
-;;   * 繋がった中継先が「繋ぐまで」の上限より後に handshake に答えても、502 にせず繋いで frame を通す(繋ぎ全体を 1 つの上限で切ると、
-;;     答えの遅い中継先へ相手が撃ち直し続ける)
-;;   * 繋がったのに handshake に答えない中継先は「handshake の答え」で見切って 502(直す前は 300 秒 待つ)
-;;   * 繋いだ後は「handshake の答え」の上限より長く黙っても切らない(frame の読みに上限は無い)
+;; --- The two limits when the ws relay connects to the target (up to connecting, and the handshake answer)-------------------------------------------------------------
+;; While the relay target is being swapped, the connecting SYN to the target is silently dropped (neither an answer nor a refusal comes back). Before the fix the ws relay waited up to the connection limit shared with the HTTP relay
+;; (CONNECT-SECONDS, 10 seconds) before returning 502, and since that was the same length as the peer's connect limit, the peer's retry was delayed. The ws relay
+;; holds two separate limits when connecting to the target: up to connecting (name lookup + TCP connection -- WS-UPSTREAM-CONNECT-SECONDS) and the handshake
+;; answer after connecting (WS-UPSTREAM-HANDSHAKE-SECONDS). The test shortens only the limit it looks at, to save seconds.
+;;   * A target whose SYN gets no answer is given up on at "up to connecting" and gets 502 (before the fix it waited 10 seconds)
+;;   * A target on a closed port gets 502 without waiting for the limit
+;;   * Even if a connected target answers the handshake later than the "up to connecting" limit, it is connected and frames pass instead of 502 (if the whole connect were cut by one limit,
+;;     the peer would keep retrying against a target slow to answer)
+;;   * A target that connected but does not answer the handshake is given up on at "the handshake answer" and gets 502 (before the fix it waited 300 seconds)
+;;   * After connecting, it does not cut even if silent for longer than the "handshake answer" limit (there is no limit on frame reads)
 
-;; 縮めた上限(見る側)・中継先が handshake の答えを遅らせる秒(縮めた上限より後)・繋いだ後に相手が黙る秒(縮めた上限より長い)・中継の
-;; 答え(502)が相手に届くまでの上限(縮めた上限 + 余白 — 縮めない側の上限 3 秒・15 秒より短い)・相手が 1 つの答えを待つ上限・中継先の
-;; 相手役が聞き続ける上限(相手が来なかった時の保険)— どれも秒。
+;; The shortened limit (the side looked at), the seconds the target delays the handshake answer (later than the shortened limit), the seconds the peer is silent after connecting (longer than the shortened limit), the limit until the relay's
+;; answer (502) reaches the peer (shortened limit + margin -- shorter than the 3-second and 15-second limits of the sides not shortened), the limit for the peer to wait for one answer, and the limit for the target's
+;; counterpart to keep listening (insurance for when the peer does not come) -- all in seconds.
 (val CUT-SECONDS 0.3)
 (val LATE-ANSWER-SECONDS 0.6)
 (val QUIET-SECONDS 0.9)
 (val ANSWER-WITHIN-SECONDS 2.0)
 (val DIAL-SECONDS 20.0)
 (val UPSTREAM-LIFE-SECONDS 30.0)
-;; SYN を落とす port を作る時の、待ちの列を埋める接続の数の上限と、列が埋まったと見なす秒(繋ぎが返らない)。
+;; The upper limit on the number of connections that fill the wait queue when building a port that drops SYN, and the seconds after which the queue is deemed full (the connect does not return).
 (val STALL-FILL-LIMIT 8)
 (val STALL-PROBE-SECONDS 0.2)
-;; 本物の答え手の module の、縮める上限の定数の名(Python の綴り)。
+;; The names (Python spelling) of the constants for the shortened limits in the real answerer's module.
 (val CONNECT-LIMIT "WS_UPSTREAM_CONNECT_SECONDS")
 (val HANDSHAKE-LIMIT "WS_UPSTREAM_HANDSHAKE_SECONDS")
 
 
 (defrecord Dialed
-  "相手が待ち受けへ ws で繋いだ結果: status = 上がれば 101・断られればその status・時間の内に答えが無ければ None。seconds = 繋ぎの答え
-   までの秒。echoes = 上げた後に受けた 1 通の列(送った順 — 文字でない 1 通は型の名と中身)。"
+  "The result of the peer connecting to the listener by ws: status = 101 if upgraded, the refusal status if refused, None if there was no answer in time. seconds = seconds until the connect answer.
+   echoes = the sequence of one-message answers received after upgrading (in the order sent -- a non-text message is the type name and its contents)."
   {:tags {:context "http-server-test" :role "type"}}
   (#^ (| int None) status)
   (#^ float seconds)
@@ -1074,7 +1074,7 @@
 
 
 (defrecord Stalled
-  "繋ぎの SYN に答えの返らない port: port と、その状態を保つために開いたままにする socket の列(全部を閉じれば解ける)。"
+  "A port whose connecting SYN gets no answer: the port, and the sequence of sockets kept open to hold that state (closing them all releases it)."
   {:tags {:context "http-server-test" :role "type"}}
   (#^ int port)
   (#^ (get tuple #(socket.socket ...)) held))
@@ -1082,9 +1082,9 @@
 
 (defk stalled-port []
   {:pre [] :post [(: % Stalled)] :tags {:context "http-server-test" :role "foundation"}}
-  "繋ぎの SYN に答えの返らない 127.0.0.1 の port を作るため(中継先が入れ替わる間の形): 誰も受け取らない聞き手の待ちの列(backlog 0)を
-   接続で埋めると、kernel は以後の SYN を黙って落とす。埋まった事は、次の繋ぎが STALL-PROBE-SECONDS の内に返らない事で確かめる。待ちの
-   列が埋まっても SYN を落とさない OS では skip。"
+  "To build a 127.0.0.1 port whose connecting SYN gets no answer (the form while a relay target is being swapped): if a listener that nobody accepts from (backlog 0) has its wait queue
+   filled with connections, the kernel silently drops later SYNs. That it is filled is confirmed by the next connect not returning within STALL-PROBE-SECONDS. Skipped on an OS that does not drop SYN even when the wait
+   queue is full."
   (val listener (socket.socket))
   (.bind listener #("127.0.0.1" 0))
   (.listen listener 0)
@@ -1103,24 +1103,24 @@
   (when (not stalled)
     (for [opened held]
       (.close opened))
-    (pytest.skip "待ちの列が埋まった聞き手への SYN を、この OS は落とさない"))
+    (pytest.skip "this OS does not drop SYN to a listener whose wait queue is full"))
   (Stalled :port port :held held))
 
 
 (defk silent-listener []
   {:pre [] :post [(: % socket.socket)] :tags {:context "http-server-test" :role "foundation"}}
-  "TCP の接続は繋がる(kernel が待ちの列に積む)が、誰も受け取らず何も答えない 127.0.0.1 の聞き手を作るため(繋がったのに handshake に
-   答えない中継先の形)。"
+  "To build a 127.0.0.1 listener whose TCP connection succeeds (the kernel queues it in the wait queue) but that nobody accepts from and that answers nothing (the form of a target that connected but does not answer
+   the handshake)."
   (val listener (socket.socket))
   (.bind listener #("127.0.0.1" 0))
   (.listen listener)
   listener)
 
 
-(deff answer-ws-late [delay box]  ; defk にできない: threading.Thread が別の thread で呼ぶ callback
+(deff answer-ws-late [delay box]  ; cannot be a defk: a callback that threading.Thread calls on another thread
   {:pre [(: delay float) (: box queue.Queue)] :post [(: % None)] :tags {:context "http-server-test" :role "foundation"}}
-  "中継先の相手役: TCP の接続は直ぐ受け、ws の handshake の答え(101)を delay 秒 遅らせ、上げた後は文字の 1 通に echo: を付けて返すため。
-   この thread の event loop で聞き、結んだ port を box へ置き、ws の 1 本が終わるまで(長くても UPSTREAM-LIFE-SECONDS)聞く。"
+  "The target's counterpart: accept the TCP connection at once, delay the ws handshake answer (101) by delay seconds, and after upgrading return each text message with echo: attached.
+   It listens on this thread's event loop, puts the bound port in box, and listens until one ws connection ends (at most UPSTREAM-LIFE-SECONDS)."
   (import aiohttp [web])
   (setv loop (asyncio.new-event-loop)
         served (asyncio.Event)
@@ -1151,7 +1151,7 @@
 
 (defk late-ws-upstream [delay]
   {:pre [(: delay float)] :post [(: % str)] :tags {:context "http-server-test" :role "foundation"}}
-  "handshake の答えを delay 秒 遅らせる ws の相手役(answer-ws-late)を別の thread で開き、その url を返すため。"
+  "To open, on another thread, a ws counterpart (answer-ws-late) that delays the handshake answer by delay seconds, and return its url."
   (val box (queue.Queue))
   (.start (threading.Thread :target answer-ws-late :args #(delay box) :daemon True))
   (.format "http://127.0.0.1:{}/ws" (.get box :timeout DIAL-SECONDS)))
@@ -1160,8 +1160,8 @@
 (defk dial [address texts quiet]
   {:pre [(: address HttpAddress) (: texts tuple) (: quiet float)] :post [(: % Dialed)]
    :tags {:context "http-server-test" :role "foundation"}}
-  "相手の ws の繋ぎ 1 つ(この thread だけの event loop と aiohttp の client): 待ち受けの /ws へ繋いで答え(101 か断り)までの秒を測り、
-   上がれば quiet 秒 黙ってから texts を 1 通ずつ送り、返りの 1 通を受けて閉じる。"
+  "One peer ws connect (an event loop only for this thread and an aiohttp client): connect to the listener's /ws and measure the seconds until the answer (101 or a refusal),
+   and if upgraded, stay quiet for quiet seconds, send texts one message at a time, receive one message back, and close."
   (import aiohttp [ClientSession ClientWebSocketResponse WSMsgType WSServerHandshakeError])
   (val loop (asyncio.new-event-loop))
   (val session (ClientSession :loop loop))
@@ -1191,10 +1191,10 @@
       (.close loop))))
 
 
-(deff dial-once [box answers texts quiet]  ; defk にできない: threading.Thread が別の thread で呼ぶ callback
+(deff dial-once [box answers texts quiet]  ; cannot be a defk: a callback that threading.Thread calls on another thread
   {:pre [(: box queue.Queue) (: answers queue.Queue) (: texts tuple) (: quiet float)] :post [(: % None)]
    :tags {:context "http-server-test" :role "foundation"}}
-  "待ち受けが開いたら ws で 1 度 繋いで結果を answers へ置き(失敗なら例外を置く)、/done を送って待ち受けを閉じさせるため。"
+  "Once the listener is open, connect by ws once and put the result in answers (put the exception on failure), and send /done to make the listener close."
   (setv address (.get box :timeout DIAL-SECONDS))
   (try
     (.put answers (run (dial address texts quiet)))
@@ -1208,9 +1208,9 @@
 (defk relay-until-done [upstream box release]
   {:pre [(: upstream str) (: box queue.Queue) (: release Callable)] :post [(: % int)]
    :tags {:context "http-server-test" :role "program"}}
-  "port 0 で開いて結んだ宛先を box へ置き、/done 以外の要求を upstream へ ws で中継し(WsForward)、/done が届いたら release で中継先の
-   相手役を畳んでから閉じるため(答え = 中継した数)。先に相手役を畳むのは、中継がまだ中継先を待っている時(上限が効かない形)に、待ち受けの
-   閉じがその待ちに付き合わないようにするため。"
+  "To open on port 0 and put the bound destination in box, relay requests other than /done to upstream by ws (WsForward), and when /done arrives fold up the target's
+   counterpart with release and then close (answer = the number relayed). The counterpart is folded up first so that, when the relay is still waiting on the target (the form where the limit does not take effect), the listener's
+   close does not keep company with that wait."
   (<- bound HttpAddress (HttpListen :address (HttpAddress :host "127.0.0.1" :port 0)))
   (.put box bound)
   (var relayed 0)
@@ -1223,15 +1223,15 @@
       _ (do (<- (WsForward :ticket arrived.ticket :url upstream))
             (:= relayed (+ relayed 1)))))
   (release)
-  (<- (HttpShutdown :reason "検が閉じた" :drain-seconds 0.5))
+  (<- (HttpShutdown :reason "the test closed it" :drain-seconds 0.5))
   relayed)
 
 
 (defk dialed-through [upstream texts quiet release]
   {:pre [(: upstream str) (: texts tuple) (: quiet float) (: release Callable)] :post [(: % Dialed)]
    :tags {:context "http-server-test" :role "program"}}
-  "本物の答え手の下で relay-until-done を走らせ、相手が ws で 1 度 繋いだ結果を返すため(aiohttp の無い venv では skip)。"
-  (pytest.importorskip "aiohttp" :reason "aiohttp は extra http-server の依存")
+  "To run relay-until-done under the real answerer and return the result of the peer connecting by ws once (skipped in a venv without aiohttp)."
+  (pytest.importorskip "aiohttp" :reason "aiohttp is a dependency of the extra http-server")
   (import doeff_core_effects [aiohttp-http-server])
   (val box (queue.Queue))
   (val answers (queue.Queue))
@@ -1245,16 +1245,16 @@
 
 (defk shrink [monkeypatch limit]
   {:pre [(: monkeypatch pytest.MonkeyPatch) (: limit str)] :post [(: % None)] :tags {:context "http-server-test" :role "foundation"}}
-  "本物の答え手の上限の定数 limit を、この検の間だけ CUT-SECONDS に縮めるため(待ち受けは開く時に定数を読む・aiohttp の無い venv では
-   skip)。"
-  (pytest.importorskip "aiohttp" :reason "aiohttp は extra http-server の依存")
+  "To shorten the real answerer's limit constant limit to CUT-SECONDS only for this test (the listener reads the constant when it opens; in a venv without aiohttp:
+   skipped)."
+  (pytest.importorskip "aiohttp" :reason "aiohttp is a dependency of the extra http-server")
   (import doeff_core_effects._aiohttp_http_server :as edge-module)
   (.setattr monkeypatch edge-module limit CUT-SECONDS)
   None)
 
 
 (deftest test-a-ws-forward-gives-up-an-upstream-that-drops-the-connect [monkeypatch]
-  ;; SYN に答えの返らない中継先は「繋ぐまで」の上限で見切り、ws に上げずに 502。答えは上限より前には来ない(断りではなく見切り)。
+  ;; A target whose SYN gets no answer is given up on at the "up to connecting" limit, and gets 502 without upgrading to ws. The answer does not come before the limit (it is giving up, not a refusal).
   (<- (shrink monkeypatch CONNECT-LIMIT))
   (<- stalled Stalled (stalled-port))
   (<- got Dialed (dialed-through (.format "http://127.0.0.1:{}/ws" stalled.port) #() 0.0
@@ -1264,14 +1264,14 @@
 
 
 (deftest test-a-ws-forward-to-a-closed-port-answers-502-at-once
-  ;; 閉じた port の中継先(断りが直ぐ返る)は、上限を待たずに 502。上限は縮めない(繋ぐまで 3 秒)— 答えはそれより早い。
+  ;; A target on a closed port (the refusal returns at once) gets 502 without waiting for the limit. The limit is not shortened (3 seconds up to connecting) -- the answer is earlier than that.
   (<- got Dialed (dialed-through (.format "http://127.0.0.1:{}/ws" (free-port)) #() 0.0 (fn [] None)))
   (assert (= got.status 502) got)
   (assert (< got.seconds ANSWER-WITHIN-SECONDS) got))
 
 
 (deftest test-a-ws-forward-keeps-an-upstream-that-answers-the-handshake-late [monkeypatch]
-  ;; 繋がった中継先が「繋ぐまで」の上限より後に handshake に答えても、502 にせず繋ぎ、frame が往復する。
+  ;; Even if a connected target answers the handshake later than the "up to connecting" limit, it connects instead of 502, and frames round-trip.
   (<- (shrink monkeypatch CONNECT-LIMIT))
   (<- upstream str (late-ws-upstream LATE-ANSWER-SECONDS))
   (<- got Dialed (dialed-through upstream #("hi") 0.0 (fn [] None)))
@@ -1280,7 +1280,7 @@
 
 
 (deftest test-a-ws-forward-gives-up-an-upstream-that-never-answers-the-handshake [monkeypatch]
-  ;; 繋がったのに handshake に答えない中継先は「handshake の答え」の上限で見切り、ws に上げずに 502。
+  ;; A target that connected but does not answer the handshake is given up on at the "handshake answer" limit, and gets 502 without upgrading to ws.
   (<- (shrink monkeypatch HANDSHAKE-LIMIT))
   (<- listener socket.socket (silent-listener))
   (<- got Dialed (dialed-through (.format "http://127.0.0.1:{}/ws" (get (.getsockname listener) 1)) #() 0.0 listener.close))
@@ -1289,7 +1289,7 @@
 
 
 (deftest test-a-relayed-ws-stays-open-through-a-silence-longer-than-the-handshake-limit [monkeypatch]
-  ;; 繋いだ後は、「handshake の答え」の上限より長く黙っても切らない — 黙った後の 1 通が往復する。
+  ;; After connecting, it does not cut even if silent for longer than the "handshake answer" limit -- the one message after the silence round-trips.
   (<- (shrink monkeypatch HANDSHAKE-LIMIT))
   (<- upstream str (late-ws-upstream 0.0))
   (<- got Dialed (dialed-through upstream #("hi") QUIET-SECONDS (fn [] None)))

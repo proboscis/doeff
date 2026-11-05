@@ -1,12 +1,12 @@
-;;; HttpRequest の契約テストの解釈器(composition root)— 同じ契約の Program を、HttpRequest の handler だけ替えて走らせる。
+;;; Interpreters (composition root) for the HttpRequest contract tests -- run the same contract Program, swapping only the HttpRequest handler.
 ;;;
-;;;   http-production      本物: http-production-handler。client は httpx の MockTransport で、外へ出ずに契約の世界(WORLD)が答える
-;;;   http-fixture-replay  fake: http-fixture-handler の replay。先に同じ Program を record で 1 度走らせて同じ世界の答えを
-;;;                        fixture へ記録し、次に transport の無い replay の handler の下でもう 1 度走らせる(答えはこちらを返す)
+;;;   http-production      Real: http-production-handler. The client is an httpx MockTransport, and the contract world (WORLD) answers without going outside
+;;;   http-fixture-replay  Fake: replay of http-fixture-handler. First run the same Program once in record mode and record the same world's answers
+;;;                        into the fixture, then run it once more under the replay handler with no transport (the answer returned is this one)
 ;;;
-;;; 契約の世界(world-answer)は URL の path ごとに決まった答えを返す httpx の相手役。/flaky だけは世界の中で数えた試行の
-;;; 回数で答えが変わる(5xx の再試行を見るため)— 世界は解釈器の 1 回の実行ごとに新しく作る。
-;;; 再試行の間の待ちは 0 秒(no-wait)にする。使い手は conftest.py の doeff_interpreter(deftest の :interpreters の名 → INTERPRETERS)。
+;;; The contract world (world-answer) is an httpx counterpart that returns an answer fixed per URL path. Only /flaky changes its answer by the count of attempts
+;;; made in the world (to exercise 5xx retries) -- the world is built fresh for each single run of an interpreter.
+;;; The wait between retries is 0 seconds (no-wait). Used by doeff_interpreter in conftest.py (names in :interpreters of deftest -> INTERPRETERS).
 (require doeff-hy.macros [defk deff <- val])
 (import asyncio)
 (import collections [Counter])
@@ -22,23 +22,23 @@
 (val PRODUCTION "http-production")
 (val FIXTURE-REPLAY "http-fixture-replay")
 (val WORLD "https://world.test")
-;; /flaky が 5xx を返す試行の回数(3 回目から 200)。
+;; Number of attempts for which /flaky returns 5xx (200 from the 3rd).
 (val FLAKY-FAILURES 2)
 (val REFUSED "[Errno 111] Connection refused")
 (val NO-TIME (timedelta 0))
 
 
-(deff world-answer [attempts request]  ; defk にできない: httpx の MockTransport が要求ごとに同期で呼ぶ callback
+(deff world-answer [attempts request]  ; cannot be a defk: a callback that httpx MockTransport calls synchronously per request
   {:pre [(: attempts Counter) (: request httpx.Request)] :post [(: % httpx.Response)]
    :tags {:context "http-test" :role "foundation"}}
-  "httpx の MockTransport が要求ごとに呼ぶ契約の世界。attempts は path ごとの試行の回数(世界の 1 回の実行の中だけ)。
-   /echo      200・本文 = method・要求の header x-mode・要求の本文(header と本文が答えを変える)
-   /moved     302・location = /landing      /landing  200「landed」
-   /flaky     FLAKY-FAILURES 回目までは 503、その後は 200「recovered」
-   /missing   404「no such thing」           /down     接続できない(httpx.ConnectError)"
+  "The contract world that httpx MockTransport calls per request. attempts is the attempt count per path (only within one run of the world).
+   /echo      200, body = method, request header x-mode, request body (header and body change the answer)
+   /moved     302, location = /landing      /landing  200 \"landed\"
+   /flaky     503 up to attempt FLAKY-FAILURES, then 200 \"recovered\"
+   /missing   404 \"no such thing\"           /down     cannot connect (httpx.ConnectError)"
   (.update attempts [request.url.path])
-  ;; 経過の秒を 0 に置く理由: MockTransport が返す本文を持った Response は client が読み直さず閉じもしないので、httpx は
-  ;; elapsed を付けない(本物の transport では付く)。本物の handler はそれを読むので、世界の側で付けておく。
+  ;; Why elapsed is set to 0: a Response holding a body returned by MockTransport is neither re-read nor closed by the client, so httpx
+  ;; does not attach elapsed (with a real transport it does). The real handler reads it, so attach it on the world side.
   (let [response (match request.url.path
     "/echo" (httpx.Response 200 :headers {"x-world" "echo"}
                             :content (.encode (.join " " [request.method (.get request.headers "x-mode" "-") (.decode request.content "utf-8")])
@@ -50,36 +50,36 @@
                  (httpx.Response 200 :content b"recovered"))
     "/missing" (httpx.Response 404 :content b"no such thing")
     "/down" (raise (httpx.ConnectError REFUSED :request request))
-    other (raise (ValueError (+ "契約の世界に無い path: " other))))]
+    other (raise (ValueError (+ "path not in the contract world: " other))))]
     (setattr response "elapsed" NO-TIME)
     response))
 
 
-(deff world-client []  ; defk にできない: http-production-handler の client-factory として同期で呼ばれる callback
+(deff world-client []  ; cannot be a defk: a callback called synchronously as the client-factory of http-production-handler
   {:pre [] :post [(: % httpx.AsyncClient)] :tags {:context "http-test" :role "foundation"}}
-  "新しい契約の世界に繋がる httpx の client(http-production-handler の client-factory — 外の library の口なので deff)。"
+  "An httpx client connected to a fresh contract world (client-factory of http-production-handler -- the mouth to an outside library, hence deff)."
   (httpx.AsyncClient :transport (httpx.MockTransport (partial world-answer (Counter)))))
 
 
-(deff no-wait [delay]  ; defk にできない: http-production-handler の sleep として呼ばれ Await に渡す awaitable を返す callback
-  {:pre [(: delay float)] :post [(: % "待たずに終わる awaitable")] :tags {:context "http-test" :role "foundation"}}
-  "再試行の間の待ち(http-production-handler の sleep — Await に渡す awaitable を返す callback なので deff)。"
+(deff no-wait [delay]  ; cannot be a defk: a callback called as the sleep of http-production-handler that returns an awaitable handed to Await
+  {:pre [(: delay float)] :post [(: % "awaitable that finishes without waiting")] :tags {:context "http-test" :role "foundation"}}
+  "The wait between retries (the sleep of http-production-handler -- a callback returning an awaitable handed to Await, hence deff)."
   (asyncio.sleep 0))
 
 
 (defk under-production [program]
-  {:pre [(: program Program)] :post [(: % "契約の Program の答え(型は Program ごと)")]
+  {:pre [(: program Program)] :post [(: % "answer of the contract Program (type depends on the Program)")]
    :tags {:context "http-test" :role "foundation"}}
-  "本物の http-production-handler の下で program を走らせる(client は契約の世界に繋がる MockTransport)。"
+  "Run program under the real http-production-handler (the client is a MockTransport connected to the contract world)."
   (<- answer (with_handlers [await-handler (http-production-handler :client-factory world-client :sleep no-wait)] program))
   answer)
 
 
 (defk under-fixture-replay [program]
-  {:pre [(: program Program)] :post [(: % "契約の Program の答え(型は Program ごと)")]
+  {:pre [(: program Program)] :post [(: % "answer of the contract Program (type depends on the Program)")]
    :tags {:context "http-test" :role "foundation"}}
-  "program を record で 1 度走らせて契約の世界の答えを fixture へ記録し、transport の無い replay の handler の下でもう 1 度走らせる。
-   replay の handler は作る時に fixture を読むので、record の実行の後に作る。"
+  "Run program once in record mode to record the contract world's answers into the fixture, then run it once more under the replay handler with no transport.
+   The replay handler reads the fixture when built, so build it after the record run."
   (with [directory (tempfile.TemporaryDirectory)]
     (val path (/ (Path directory) "contract.pickle"))
     (<- (with_handlers [await-handler (http-fixture-handler path :mode "record" :client-factory world-client :sleep no-wait)]

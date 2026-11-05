@@ -1,8 +1,8 @@
-;;; 空きの読み(ReadDiskFree・ReadDiskUsage — os_file.hy)の機体ごとの読み手の選びと床の検。
+;;; Tests for the per-machine choice of reader and the floor for free-space reads (ReadDiskFree, ReadDiskUsage -- os_file.hy).
 ;;;
-;;;   - 読み直し手の選び: macOS(Darwin)= darwin-volume-free(CoreFoundation の Opportunistic の空き)・Linux = None(statvfs の空きのまま)。
-;;;   - 床: 読み直しの答えが無い時と statvfs の空きより小さい答えは statvfs の空きのまま — 読み直しで今より小さく測らない。
-;;;   - 本物の CoreFoundation を呼ぶ検は macOS の上でだけ走る(Linux の検は選びと床を確かめる)。
+;;;   - Choice of re-reader: macOS (Darwin) = darwin-volume-free (CoreFoundation's Opportunistic free space), Linux = None (statvfs free space as is).
+;;;   - Floor: when the re-read has no answer, or its answer is smaller than the statvfs free space, the statvfs free space stays -- a re-read never measures smaller than now.
+;;;   - Tests that call the real CoreFoundation run only on macOS (the Linux tests check the choice and the floor).
 (require doeff-hy.macros [defk deftest <- val])
 (import platform)
 (import shutil)
@@ -15,24 +15,24 @@
 
 (defk answers-nine [probe]
   {:pre [(: probe str)] :post [(: % int)] :tags {:context "file-test" :role "program"}}
-  "読み直し手の代わりに、statvfs の空き(床)より大きい空き 9 を答えるため(macOS が空ける領域を数えた答え)。"
+  "To answer, in place of the re-reader, a free space 9 larger than the statvfs free space (the floor) (the answer that counts the space macOS can free)."
   9)
 
 
 (defk answers-two [probe]
   {:pre [(: probe str)] :post [(: % int)] :tags {:context "file-test" :role "program"}}
-  "読み直し手の代わりに、床より小さい空き 2 を答えるため。"
+  "To answer, in place of the re-reader, a free space 2 smaller than the floor."
   2)
 
 
 (defk answers-nothing [probe]
   {:pre [(: probe str)] :post [(: % None)] :tags {:context "file-test" :role "program"}}
-  "読み直し手の代わりに、答えが無い(key に答えない volume・CoreFoundation の断り)を返すため。"
+  "To return, in place of the re-reader, no answer (a volume that does not answer the key, or a CoreFoundation refusal)."
   None)
 
 
 (deftest test-the-free-reader-follows-the-machine
-  ;; macOS は CoreFoundation の空きで読み直し、Linux と知らない機体は読み直さない(statvfs の空きのまま)。
+  ;; macOS re-reads with CoreFoundation's free space; Linux and unknown machines do not re-read (statvfs free space as is).
   (<- mac (free-reader-for "Darwin"))
   (<- linux (free-reader-for "Linux"))
   (<- other (free-reader-for "Windows"))
@@ -42,7 +42,7 @@
 
 
 (deftest test-the-reread-keeps-the-statvfs-floor
-  ;; 床 5(statvfs の空き): 読み直し手が無い = 5・大きい答え 9 = 9・小さい答え 2 = 5・答えが無い = 5。
+  ;; Floor 5 (statvfs free space): no re-reader = 5, large answer 9 = 9, small answer 2 = 5, no answer = 5.
   (<- unread int (reread-free "/v" 5 None))
   (<- larger int (reread-free "/v" 5 answers-nine))
   (<- smaller int (reread-free "/v" 5 answers-two))
@@ -51,8 +51,8 @@
 
 
 (deftest test-linux-reads-the-statvfs-free-as-before [tmp-path]
-  {:skip-if (!= (platform.system) "Linux") :skip-reason "statvfs のままの読みは Linux の機体の検"}
-  ;; Linux の本物の答え: 無い path は在る親で測り、空きは statvfs の空きと同じ file system の値(総量は statvfs の総量そのもの)。
+  {:skip-if (!= (platform.system) "Linux") :skip-reason "the statvfs-as-is read is a test for Linux machines"}
+  ;; Linux real answer: a nonexistent path is measured at its existing parent, and the free space is the same file-system value as the statvfs free space (the total is the statvfs total itself).
   (<- usage DiskUsage (with_handlers [os-file-handler] (ReadDiskUsage (str (tmp-path.joinpath "missing" "deeper")))))
   (val statvfs (shutil.disk-usage tmp-path))
   (assert (= usage.total statvfs.total) #(usage statvfs))
@@ -60,8 +60,8 @@
 
 
 (deftest test-the-mac-reads-the-opportunistic-free [tmp-path]
-  {:skip-if (!= (platform.system) "Darwin") :skip-reason "CoreFoundation の空きの key は macOS の上でだけ読める"}
-  ;; macOS の本物の答え: CoreFoundation が Opportunistic の空きを総量より小さい正の数で答え、ReadDiskFree・ReadDiskUsage の空きも総量の内。
+  {:skip-if (!= (platform.system) "Darwin") :skip-reason "the CoreFoundation free-space key can be read only on macOS"}
+  ;; macOS real answer: CoreFoundation answers the Opportunistic free space as a positive number smaller than the total, and the free space of ReadDiskFree and ReadDiskUsage is also within the total.
   (val statvfs (shutil.disk-usage tmp-path))
   (<- answered (darwin-volume-free (str tmp-path)))
   (<- free int (with_handlers [os-file-handler] (ReadDiskFree (str tmp-path))))

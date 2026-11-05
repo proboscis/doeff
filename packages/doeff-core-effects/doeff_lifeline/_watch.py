@@ -1,20 +1,20 @@
-"""起こした process が終わったら、その子も終わる — StartProcess の約束の本体。標準ライブラリだけで書く。
+"""When the process it started ends, its children end too - the core of the StartProcess promise. Written with the standard library only.
 
-本体は 1 つ: 起こした側だけが書き口を持つ pipe を行ごとに読み、EOF(起こした側の終わり — SIGKILL を含む)で、持っている相手へ TERM を
-送る(watched_until_eof)。置き方は 2 つで、どちらもこの本体を呼ぶ。
-  * 起こす側の process ごとの見張り(この file を入口として起こす・StartProcess の本物の答え手 os_process.hy が最初の StartProcess の時に
-    1 つだけ起こす): 起こす側は子を立てるたびに「group <番号>」か「pid <番号>」の行で知らせ、回収した子は「forget <番号>」で外す。
-    EOF で知らされた相手へ TERM を送り、猶予(GRACE_SECONDS)の内に先頭の process が居なくなるのを待って、残る group と process へ KILL を
-    送ってから終わる。2 つ目からの StartProcess は 1 行書くだけで、起動の時間は乗らない。
-  * doeff-cluster の worker の shim(job ごと・job の祖先): 自分の標準入力の EOF で自分の group へ TERM を送る。pipe は fork の前から
-    在るので隙間が無い。猶予と子孫の引き取りの片づけは、job の祖先である shim の main thread が受け持つ(見張りは子の祖先でないので
-    引き取りを使えない)。
-起こす側の見張りに残る隙間: fork から「group <番号>」を書くまでの間(1 ms 未満)に起こした側が SIGKILL されると、その子は知らされずに残る
-(閉じ方は #3866 の記録 — 今回は閉じない)。
+There is one core: read, line by line, a pipe whose write end only the starter holds; on EOF (the starter ended - including SIGKILL), send TERM
+to the targets it holds (watched_until_eof). There are two ways to deploy it, and both call this core.
+  * A per-starter-process watcher (started with this file as the entry point; the real StartProcess handler os_process.hy starts exactly one
+    on the first StartProcess): each time the starter spawns a child it reports it with a "group <number>" or "pid <number>" line, and removes a reaped child with "forget <number>".
+    On EOF it sends TERM to the reported targets, waits within the grace period (GRACE_SECONDS) for the leading processes to disappear, then sends KILL to the remaining
+    groups and processes and exits. StartProcess calls from the second one on only write one line, so no startup time is added.
+  * The doeff-cluster worker shim (one per job, the job's ancestor): on EOF of its own stdin it sends TERM to its own group. The pipe exists
+    before the fork, so there is no gap. The grace period and the cleanup that adopts descendants are handled by the shim's main thread, which is the job's ancestor (the watcher is not an ancestor of the children, so it
+    cannot use adoption).
+Remaining gap in the starter-side watcher: if the starter is SIGKILLed between the fork and writing "group <number>" (under 1 ms), that child is left unreported
+(how to close it is recorded in #3866 - not closed this time).
 
-置き場は doeff-core-effects の配布の中の、doeff_core_effects と別の top-level の package doeff_lifeline の内側(package の頭の註)。
-名は effect でも handler でもないので公開しない(ADR-DOE-API-001 R1・R5)。見張りは `python -I -S -B <この file>` で
-起こす(標準ライブラリだけ — 起動は最小の python と同じ)。
+It lives inside doeff_lifeline, a top-level package separate from doeff_core_effects within the doeff-core-effects distribution (see the package header comment).
+The names are neither effects nor handlers, so they are not made public (ADR-DOE-API-001 R1, R5). The watcher is started with `python -I -S -B <this file>`
+(standard library only - startup is the same as a minimal python).
 """
 
 import contextlib
@@ -31,20 +31,20 @@ from io import BufferedReader
 
 MODULE_TAGS = {"context": "process", "role": "foundation"}
 
-# EOF の後、TERM を送った相手が居なくなるのを待つ秒(StopProcess の既定の stop-grace と同じ)。過ぎて残る相手には KILL を送る。
+# Seconds to wait, after EOF, for the targets that received TERM to disappear (same as the default stop-grace of StopProcess). Targets still remaining after that get KILL.
 GRACE_SECONDS = 10.0
 
 
 @dataclass(frozen=True)
 class Group:
-    """止める相手の 1 つ: process group(番号 = 先頭の pid)。TERM と KILL は group 全体へ送る。"""
+    """One target to stop: a process group (number = leading pid). TERM and KILL go to the whole group."""
 
     pgid: int
 
 
 @dataclass(frozen=True)
 class Single:
-    """止める相手の 1 つ: 起こす側の group に入ったままの子 process 1 つ。TERM と KILL はその process だけへ送る。"""
+    """One target to stop: a single child process left in the starter's group. TERM and KILL go to that process only."""
 
     pid: int
 
@@ -53,7 +53,7 @@ Target = Group | Single
 
 
 def signalled(target: Target, signum: int) -> None:
-    """相手へ signal を送るため。もう居ない相手と、送れない相手(別の uid)は黙って飛ばす — 止める物が無い。"""
+    """Send a signal to a target. Targets that are already gone and targets we cannot signal (another uid) are skipped silently - there is nothing to stop."""
     with contextlib.suppress(ProcessLookupError, PermissionError):
         match target:
             case Group(pgid=pgid):
@@ -65,8 +65,8 @@ def signalled(target: Target, signum: int) -> None:
 def watched_until_eof(
     stream: BufferedReader, on_line: Callable[[bytes], None], ended: Callable[[], Iterable[Target]]
 ) -> None:
-    """本体(頭の註): 起こした側の pipe を行ごとに読んで on_line へ渡し、EOF で ended を 1 度呼んで、答えた相手の全部へ TERM を送る。
-    行を読むだけで時間を置いて見に行かない — 起こした側の終わりが EOF としてそのまま届く。"""
+    """The core (see the header comment): read the starter's pipe line by line and pass each line to on_line; on EOF call ended once and send TERM to every target that answered.
+    It only reads lines and never polls on a timer - the starter's end arrives as EOF as is."""
     for line in iter(stream.readline, b""):
         on_line(line)
     for target in tuple(ended()):
@@ -74,14 +74,14 @@ def watched_until_eof(
 
 
 class Registry:
-    """見張りが知らされた相手の表(番号 → 相手)。見張りの process の中だけで、読む thread は 1 本なので錠は要らない。"""
+    """Table of targets the watcher was told about (number -> target). Lives only inside the watcher process and has a single reading thread, so no lock is needed."""
 
     def __init__(self) -> None:
-        """空の表で始めるため。"""
+        """Start with an empty table."""
         self._mut_targets: dict[int, Target] = {}
 
     def took(self, line: bytes) -> None:
-        """起こす側の 1 行を表へ写すため(group / pid = 足す・forget = 外す)。知らない形の行は名を挙げて落ちる(黙って捨てない)。"""
+        """Mirror one line from the starter into the table (group / pid = add, forget = remove). A line of an unknown form fails by name (it is not silently dropped)."""
         match line.decode("ascii").split():
             case ["group", number]:
                 self._mut_targets[int(number)] = Group(int(number))
@@ -90,15 +90,15 @@ class Registry:
             case ["forget", number]:
                 self._mut_targets.pop(int(number), None)
             case _:
-                raise SystemExit(f"lifeline: 知らない行 {line!r}")
+                raise SystemExit(f"lifeline: unknown line {line!r}")
 
     def targets(self) -> tuple[Target, ...]:
-        """今の相手の全部を返すため。"""
+        """Return all current targets."""
         return tuple(self._mut_targets.values())
 
 
 def leader_of(target: Target) -> int:
-    """相手の先頭の pid(group の番号は先頭の pid と同じ)。"""
+    """Leading pid of the target (a group's number equals its leading pid)."""
     match target:
         case Group(pgid=pgid):
             return pgid
@@ -107,7 +107,7 @@ def leader_of(target: Target) -> int:
 
 
 def pidfd_of(target: Target) -> int | None:
-    """相手の先頭の pidfd(終わると読める fd)。もう居ない相手は None(待つ物が無い)。"""
+    """Leading pidfd of the target (an fd that becomes readable when it ends). None for a target already gone (there is nothing to wait for)."""
     try:
         return os.pidfd_open(leader_of(target))
     except ProcessLookupError:
@@ -115,8 +115,8 @@ def pidfd_of(target: Target) -> int | None:
 
 
 def ended_within(targets: tuple[Target, ...], grace: float) -> None:
-    """TERM を送った相手の先頭が、猶予の内に居なくなるのを待つため。Linux は pidfd を select で待つので、全部が終われば猶予を待たずに
-    返る。pidfd の無い OS(macOS)は猶予の分だけ待つ(待つ間に見に行かない)。"""
+    """Wait for the leaders of the targets that received TERM to disappear within the grace period. Linux waits on pidfds with select, so when all have ended it returns without waiting out the grace period.
+    On an OS without pidfd (macOS) it waits the full grace period (without polling in between)."""
     if not hasattr(os, "pidfd_open"):
         time.sleep(grace)
         return
@@ -134,7 +134,7 @@ def ended_within(targets: tuple[Target, ...], grace: float) -> None:
 
 
 def guard(stream: BufferedReader, grace: float) -> None:
-    """起こす側の process ごとの見張りの本体(頭の註): EOF まで相手を表に写し、EOF で TERM → 猶予 → 残る相手へ KILL。"""
+    """Core of the per-starter-process watcher (see the header comment): mirror targets into the table until EOF; on EOF, TERM -> grace period -> KILL the remaining targets."""
     registry = Registry()
     watched_until_eof(stream, registry.took, registry.targets)
     targets = registry.targets()
@@ -144,22 +144,22 @@ def guard(stream: BufferedReader, grace: float) -> None:
 
 
 class Lifeline:
-    """起こす側の口(process に 1 つ — os_process.hy の STARTED-CHILDREN と並ぶ): 最初に子を知らせる時に見張りを 1 つ起こし、その標準入力の
-    書き口だけを持つ。書き口は他の子へ継がせない(os.pipe の口は継がない設定 — Popen の close_fds も閉じる)。書きは子を立てる thread と
-    回収する thread が並んで行うので 1 つの錠の下。資源の係なので値の型ではない。"""
+    """The starter-side handle (one per process - sits alongside STARTED-CHILDREN in os_process.hy): on the first report of a child it starts one watcher and holds only
+    the write end of its stdin. The write end is not inherited by other children (an os.pipe end is non-inheritable - Popen's close_fds closes it too). Writes come from the thread that spawns children and
+    the thread that reaps them, so they happen under a single lock. It is a resource handle, not a value type."""
 
     def __init__(self) -> None:
-        """見張りを起こしていない状態で始めるため。"""
+        """Start in the state where no watcher has been started."""
         self._mut_lock = threading.Lock()
         self._mut_guard: subprocess.Popen[bytes] | None = None
 
     def _written(self, line: str) -> None:
-        """見張りへ 1 行書くため(錠の下で呼ぶ)。最初の 1 行の前に見張りを起こす — 自分の session(起こす側の group へ送られた signal で
-        見張りが一緒に止まらない)・標準入力 = 書き口を起こす側だけが持つ pipe。"""
+        """Write one line to the watcher (call under the lock). Start the watcher before the first line - in its own session (signals sent to the starter's group
+        do not stop the watcher along with it); stdin = a pipe whose write end only the starter holds."""
         if self._mut_guard is None:
-            # 見張りの interpreter は、いま動いている interpreter の本体(sys._base_executable)。sys.executable は起動口が書き換える
-            # (Hy の入口は hy の起動口にする — doeff-cluster の worker は `exec hy -m …` で起き、見張りが `hy -I -S -B <file>` として
-            # 起きて即座に終わっていた)。見張りは標準ライブラリだけなので、venv の外の本体で足りる。
+            # The watcher's interpreter is the underlying interpreter currently running (sys._base_executable). sys.executable is rewritten by the launcher
+            # (a Hy entry point becomes the hy launcher - a doeff-cluster worker starts with `exec hy -m ...`, and the watcher started as `hy -I -S -B <file>`
+            # and exited immediately). The watcher uses only the standard library, so the underlying interpreter outside the venv is enough.
             self._mut_guard = subprocess.Popen(
                 [sys._base_executable, "-I", "-S", "-B", __file__],
                 stdin=subprocess.PIPE,
@@ -168,17 +168,17 @@ class Lifeline:
             )
         guard_stdin = self._mut_guard.stdin
         if guard_stdin is None:
-            raise RuntimeError("lifeline: 見張りの標準入力の pipe が無い")
+            raise RuntimeError("lifeline: the watcher's stdin pipe is missing")
         guard_stdin.write(line.encode("ascii"))
         guard_stdin.flush()
 
     def watch(self, pid: int, process_group: bool) -> None:
-        """立てた子を見張りへ知らせるため(自分の group の子は group ごと、起こす側の group に入った子はその process だけ)。"""
+        """Report a spawned child to the watcher (a child in our own group goes as a whole group; a child that stayed in the starter's group goes as that process only)."""
         with self._mut_lock:
             self._written(f"{'group' if process_group else 'pid'} {pid}\n")
 
     def forget(self, pid: int) -> None:
-        """回収した子を見張りの表から外すため(回収した pid は使い回されうるので、EOF の時に止めない)。見張りを起こしていなければ何もしない。"""
+        """Remove a reaped child from the watcher's table (a reaped pid can be reused, so it must not be stopped at EOF). Do nothing if no watcher was started."""
         with self._mut_lock:
             if self._mut_guard is not None:
                 self._written(f"forget {pid}\n")

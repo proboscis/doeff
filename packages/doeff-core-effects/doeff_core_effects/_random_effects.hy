@@ -1,16 +1,16 @@
-;;; 乱数の effect — 決まった長さの乱数の byte を求める。業務の語を持たない土台の語彙。
+;;; Random effect -- asks for a fixed number of random bytes. A foundation vocabulary with no business terms.
 ;;;
-;;;   RandomBytes  count 個の乱数の byte を求める。答え = 長さ count の bytes。
+;;;   RandomBytes  asks for count random bytes. Answer = bytes of length count.
 ;;;
-;;; 何のためか: 起動ごとの名乗り(札の頭・requestId の衝突よけ)を os.urandom で直に作ると、模擬で決まった値に替えられず、検が実の乱数に
-;;; 届く。program は乱数の出どころを知らず、この effect で求めるだけ。16 進などの綴りへの変換は求める側がする。
+;;; Why: if per-startup identifiers (token prefixes, requestId collision avoidance) are made directly with os.urandom, simulations cannot replace them with fixed values, and tests
+;;; reach real randomness. The program does not know where randomness comes from and just asks through this effect. Converting to hex or other spellings is up to the asker.
 ;;;
-;;; 答え手: os-random-handler(os_random.hy — 本物・os.urandom)と seeded-random-handler(seeded_random.hy — 種と呼びの順で決まった値)。
+;;; Handlers: os-random-handler (os_random.hy -- real, os.urandom) and seeded-random-handler (seeded_random.hy -- values determined by seed and call order).
 (require doeff-hy.macros [defeffect])
 
 
 (defeffect RandomBytes
-  "count 個の乱数の byte を求める(頭の註)。答え = 長さ count の bytes。"
+  "Ask for count random bytes (see header note). Answer = bytes of length count."
   {:fields [(: count int)]
    :answer bytes
    :tags {:context "random" :role "foundation"}})

@@ -1,69 +1,69 @@
-;;; 汎用の SQL の問い合わせの effect(消費者 = #783 便 2 の記録の service の翻訳)。業務の語を持たない土台の語彙で、
-;;; HttpRequest(http_effects.hy)・RunProcess(process_effects.hy)と同じ段。答え手は仕組みごとに差し替える:
-;;;   postgres-sql-handler         本物の PostgreSQL(psycopg 3・postgres_sql.hy)。psycopg はその module の中でだけ読む。driver の I/O は
-;;;                                呼び 1 つに thread 1 本で回し、遅い問い合わせの間も scheduler の他の task が回る(#1215)
-;;;   pooled-postgres-sql-handler  同じ本物の PostgreSQL を、接続の許可を scheduler の semaphore で待ち driver の I/O だけを呼び手の pool の
-;;;                                thread で回して答える版(pooled_postgres_sql.hy)。thread の数を呼び手が抑える
-;;;   clickhouse-http-sql-handler  本物の ClickHouse(http.client の HTTP 1 本 = 問い合わせ 1 つ・clickhouse_http_sql.hy)。transaction を持たない。
-;;;                                HTTP の往復は呼び 1 つに thread 1 本で回し、scheduler を塞がない。要求ごとに server 側の期限を送り、答えまで離れない
-;;;   sqlite-sql-handler           I/O なし — stdlib の sqlite3 の memory の DB(sqlite_sql.hy)。仮想の時計の模擬で使う
-;;; 答え手は自分が宣言した database の名にだけ答え、他の名の effect は外側へ回す(PostgreSQL と ClickHouse の答え手を重ねて置ける)。
-;;; 接続の宣言(DSN・URL・資格)は答え手の引数で、組み立ての側(composition root)が渡す。業務が見るのは database の名だけ。
+;;; Generic SQL query effects (consumer = the translation of the record service in #783 batch 2). A foundation vocabulary with no business terms,
+;;; at the same level as HttpRequest (http_effects.hy) and RunProcess (process_effects.hy). The responder is swapped per backend:
+;;;   postgres-sql-handler         Real PostgreSQL (psycopg 3, postgres_sql.hy). psycopg is imported only inside that module. Driver I/O runs
+;;;                                on one thread per call, so other scheduler tasks keep running during a slow query (#1215)
+;;;   pooled-postgres-sql-handler  The same real PostgreSQL, but waits for connection permits on a scheduler semaphore and runs only the driver I/O on
+;;;                                the caller's pool threads (pooled_postgres_sql.hy). The caller limits the number of threads
+;;;   clickhouse-http-sql-handler  Real ClickHouse (one HTTP request over http.client = one query, clickhouse_http_sql.hy). Has no transactions.
+;;;                                The HTTP round trip runs on one thread per call and does not block the scheduler. Sends a server-side deadline with each request and does not leave before the answer
+;;;   sqlite-sql-handler           No I/O - stdlib sqlite3 in-memory DB (sqlite_sql.hy). Used for virtual-clock simulation
+;;; A responder answers only the database names it declared; effects for other names are passed to the outer handler (PostgreSQL and ClickHouse responders can be stacked).
+;;; Connection declarations (DSN, URL, credentials) are responder arguments, supplied by the composition root. Business code sees only the database name.
 ;;;
-;;; 失敗は値で答える(例外にしない — 成否と類の解釈は呼び手):
-;;;   SqlFailed(sqlstate, reason)  engine が答えた失敗(SQLSTATE の 5 文字。driver が SQLSTATE を持たない時は類の code — 22000・23000 …
-;;;                                ClickHouse は SQLSTATE を持たないので None)
-;;;   SqlUnreachable(reason)       engine に届かない(接続できない・切れた・HTTP が届かない)
-;;; 呼び手の誤り(引数の名の食い違い・閉じた集合の外の値・transaction の中の禁じた effect)は例外(ValueError・TypeError・SqlTransactionMisuse)。
+;;; Failures are answered as values (not exceptions - interpreting success/failure and the class is up to the caller):
+;;;   SqlFailed(sqlstate, reason)  A failure the engine answered (5-character SQLSTATE. If the driver has no SQLSTATE, the class code - 22000, 23000 ...;
+;;;                                None for ClickHouse, which has no SQLSTATE)
+;;;   SqlUnreachable(reason)       The engine cannot be reached (cannot connect, disconnected, HTTP did not arrive)
+;;; Caller errors (mismatched parameter names, values outside the closed set, forbidden effects inside a transaction) are exceptions (ValueError, TypeError, SqlTransactionMisuse).
 ;;;
-;;; 文の書き方(3 方言で共通の約束):
-;;;   - 引数は中立の記法 `:name` 1 つ(文字列の literal・引用した名・注釈の中は引数でない・`::` は型の変換で引数でない)。答え手が方言へ
-;;;     書き換える: PostgreSQL = `%(name)s`(文の `%` は `%%` へ)・sqlite = `?`・ClickHouse = `{name:Type}`(型は値の Python の型から
-;;;     閉じた表 CLICKHOUSE-TYPES で決める)。params の名と文の名は過不足なく一致させる(食い違いは ValueError)。
-;;;   - 文の中で時計を読まない(now()・current_timestamp・today() を書かない)。刻は呼び手が GetTime 等の effect で読んで引数で渡す —
-;;;     答え手を差し替えた模擬で、仮想の時計と DB の時計が食い違わないため。
-;;;   - 引数と行の値は閉じた集合 SqlValue = int | float | str | bytes | bool | None。答え手が driver の値をこの集合へ正規化する
-;;;     (Decimal → 整数なら int・他は float / 日時 → ISO 8601 の str / UUID → str / json → text)。集合の外の値は TypeError。
+;;; How to write statements (a convention shared by the 3 dialects):
+;;;   - A parameter uses the neutral notation `:name` (inside string literals, quoted names, and comments it is not a parameter; `::` is a type cast, not a parameter). The responder
+;;;     rewrites it for the dialect: PostgreSQL = `%(name)s` (`%` in the statement becomes `%%`), sqlite = `?`, ClickHouse = `{name:Type}` (the type is decided from the value's Python type
+;;;     by the closed table CLICKHOUSE-TYPES). The names in params and in the statement must match exactly, with nothing missing or extra (a mismatch is a ValueError).
+;;;   - Do not read the clock inside a statement (do not write now(), current_timestamp, today()). The caller reads the time with an effect such as GetTime and passes it as a parameter -
+;;;     so that in a simulation with swapped responders the virtual clock and the DB clock do not diverge.
+;;;   - Parameter and row values are the closed set SqlValue = int | float | str | bytes | bool | None. The responder normalizes driver values into this set
+;;;     (Decimal -> int if integral, otherwise float / datetime -> ISO 8601 str / UUID -> str / json -> text). A value outside the set is a TypeError.
 ;;;
-;;;   SqlQuery         文 1 つ。答え = SqlRows | SqlFailed | SqlUnreachable。binary(bool・既定 False)= 答えの行を driver の binary の形で
-;;;                    受ける印(PostgreSQL = 結果を binary の形で受け、bytea を 16 進の text〔本文の 2 倍の長さ〕にしない — 大きな本文の読み)。
-;;;                    答えの値の決まりは同じ。欄は bytea・text・数・真偽・日時に限る(他の型は binary の形の写しが text の形と違いうる —
-;;;                    json は object に読まれて写しの TypeError で断る)。形の区別の無い答え手(sqlite・ClickHouse)は読まない
-;;;   SqlInsertRows    表へ行をまとめて入れる(PostgreSQL / sqlite = executemany・ClickHouse = JSONCompactEachRow の本文 1 つ)。答えは同じ
-;;;   SqlTransaction   program を 1 つの transaction の中で走らせる。答え = program の答え | SqlFailed | SqlUnreachable。約束:
-;;;                      (1) 中の SqlQuery / SqlInsertRows(/ SqlBatch)が最初に失敗したら rollback し、program を再開せずにその失敗を答えにする
-;;;                      (2) 中で出せるのは同じ database への SqlQuery と SqlInsertRows(batched なら SqlBatch も)と純粋な計算だけ。他の effect
-;;;                          (入れ子の SqlTransaction・別の database・scheduler・状態)は答え手が被せる handler が断り、rollback して
-;;;                          SqlTransactionMisuse を投げる
-;;;                      (3) program が例外を投げたら rollback して例外を通す
-;;;                    lock-key(str | None)= 同じ鍵の transaction を直列にする(PostgreSQL = pg_advisory_xact_lock(hashtext(鍵))・
-;;;                    sqlite = 1 接続で transaction が割り込まれないので要らない)。ClickHouse の答え手は SqlFailed(0A000)で断る。
-;;;                    locks(SqlLock の tuple・既定 空)= lock-key の後に並びの順に取る錠(shared = 共有の錠 — 共有どうしは並んで持て、
-;;;                    同じ鍵の排他の錠とだけ互いを待つ。PostgreSQL = pg_advisory_xact_lock_shared(hashtext(鍵)))。置き場全体の錠を共有で、
-;;;                    置き場の部分の錠を排他で持つ書きが、部分ごとに並んで走り、置き場全体の錠を排他で持つ手入れとは互いを待つ形に使う。
-;;;                    錠の順は呼び手が決める(同じ鍵の組を取る transaction は同じ順に並べる — 逆の順は deadlock になる)。答え手の扱いは
-;;;                    lock-key と同じ(sqlite は要らない・ClickHouse は断る)。
-;;;                    batched(bool・既定 False)= 文の流し方の宣言(手順は sql_transaction.hy の頭の註):
-;;;                      False  文 1 つを 1 回ずつ流す — BEGIN → 錠 → 文を出た順に → SqlNotify もその場で → COMMIT / ROLLBACK(SQL を出さない
-;;;                             program でも BEGIN・錠・COMMIT を流す)
-;;;                      True   往復をまとめる— BEGIN と錠は最初の文と同じ往復・SqlNotify は覚えて COMMIT と同じ往復・
-;;;                             commit の束(SqlBatch の commit = True)は COMMIT と同じ往復・SQL を 1 つも出さない program は往復 0
-;;;   SqlBatch         batched = True の SqlTransaction の program の中で、文の並び queries を 1 回の往復でまとめて流す(PostgreSQL = 1 つの
-;;;                    pipeline・sqlite = 順に流す)。答え = queries と同じ順の SqlRows の tuple(どれかが落ちれば約束 (1) — program は再開
-;;;                    されない)。commit = True なら、同じ往復の最後に COMMIT を流して transaction を終える(その後に SQL の effect を出すと
-;;;                    約束 (2) の断り)。batched でない transaction の中・transaction の外で出せば SqlTransactionMisuse で名指して断る。
-;;;                    ClickHouse の答え手は答えない。
-;;;   SqlEnsureTables  表・欄・索引の宣言(SqlTable)を方言の DDL に描いて流す(在れば何もしない)。答え = SqlSchemaApplied | SqlFailed |
-;;;                    SqlUnreachable。PostgreSQL の DO $$・CONCURRENTLY、ClickHouse の engine の細目は宣言に載せない(共通の文にできない)
+;;;   SqlQuery         One statement. Answer = SqlRows | SqlFailed | SqlUnreachable. binary (bool, default False) = a flag to receive the answer rows in the driver's binary form
+;;;                    (PostgreSQL = receive the result in binary form so that bytea does not become hex text [twice the length of the body] - for reading large bodies).
+;;;                    The rules for answer values are the same. Columns are limited to bytea, text, numbers, booleans, and datetimes (for other types the binary-form copy may differ from the text form -
+;;;                    json is read as an object and is rejected with the copy's TypeError). Responders with no distinction of form (sqlite, ClickHouse) ignore it
+;;;   SqlInsertRows    Insert rows into a table in bulk (PostgreSQL / sqlite = executemany, ClickHouse = one JSONCompactEachRow body). The answer is the same
+;;;   SqlTransaction   Run a program inside one transaction. Answer = the program's answer | SqlFailed | SqlUnreachable. Guarantees:
+;;;                      (1) If the first SqlQuery / SqlInsertRows (/ SqlBatch) inside fails, roll back and make that failure the answer without resuming the program
+;;;                      (2) Inside, only SqlQuery and SqlInsertRows to the same database (SqlBatch too if batched) and pure computation can be issued. Other effects
+;;;                          (nested SqlTransaction, another database, scheduler, state) are rejected by the handler the responder wraps around, which rolls back and
+;;;                          raises SqlTransactionMisuse
+;;;                      (3) If the program raises an exception, roll back and propagate the exception
+;;;                    lock-key (str | None) = serializes transactions with the same key (PostgreSQL = pg_advisory_xact_lock(hashtext(key)),
+;;;                    sqlite = not needed since one connection means transactions are never interrupted). The ClickHouse responder rejects it with SqlFailed(0A000).
+;;;                    locks (tuple of SqlLock, default empty) = locks taken in order after lock-key (shared = a shared lock - shared holders can coexist,
+;;;                    waiting only on exclusive locks with the same key. PostgreSQL = pg_advisory_xact_lock_shared(hashtext(key))). Used so that writes holding the whole-store lock shared and
+;;;                    a part-of-store lock exclusive run side by side per part, while waiting on maintenance that holds the whole-store lock exclusive.
+;;;                    The caller decides the lock order (transactions taking the same set of keys must order them the same way - the reverse order deadlocks). The responder treats them
+;;;                    like lock-key (not needed for sqlite, rejected by ClickHouse).
+;;;                    batched (bool, default False) = a declaration of how statements are sent (steps are in the header comment of sql_transaction.hy):
+;;;                      False  Send one statement per round trip - BEGIN -> locks -> statements in the order issued -> SqlNotify on the spot -> COMMIT / ROLLBACK (even a program
+;;;                             that issues no SQL sends BEGIN, locks, and COMMIT)
+;;;                      True   Combine round trips - BEGIN and locks share the round trip of the first statement, SqlNotify is remembered and shares the round trip of COMMIT,
+;;;                             a commit bundle (SqlBatch with commit = True) shares the round trip of COMMIT, and a program issuing no SQL at all takes 0 round trips
+;;;   SqlBatch         Inside the program of a SqlTransaction with batched = True, sends the statement sequence queries in a single round trip (PostgreSQL = one
+;;;                    pipeline, sqlite = in order). Answer = a tuple of SqlRows in the same order as queries (if any fails, guarantee (1) applies - the program is not
+;;;                    resumed). If commit = True, COMMIT is sent at the end of the same round trip to end the transaction (issuing a SQL effect after that is
+;;;                    rejected under guarantee (2)). Issuing it inside a non-batched transaction or outside a transaction is rejected by name with SqlTransactionMisuse.
+;;;                    The ClickHouse responder does not answer it.
+;;;   SqlEnsureTables  Renders the declarations of tables, columns, and indexes (SqlTable) as the dialect's DDL and sends them (does nothing if they exist). Answer = SqlSchemaApplied | SqlFailed |
+;;;                    SqlUnreachable. PostgreSQL's DO $$ and CONCURRENTLY and ClickHouse's engine details are not part of the declaration (they cannot be a common statement)
 ;;;
-;;;   SqlNotify        通知の channel へ、関わる名(topics — None = 名の分からない合図 = 全部に関わる)の合図を出す(transaction の中なら
-;;;                    commit した時だけ届く)— PostgreSQL の pg_notify。SqlTransaction の中で出せる(約束 (2) の例外 — batched なら覚えて
-;;;                    COMMIT と同じ往復で流す)。答え手は接続を返した後に、同じ process の名の重なる呼び鈴をその場で鳴らす
-;;;   SqlHangNotice    通知の channel に、待つ名(topics — None = 全部の合図)の呼び鈴(外の promise)を掛ける — PostgreSQL の LISTEN。
-;;;                    答え = 呼び鈴 | SqlUnreachable。SqlDropNotice = 鳴らなかった呼び鈴を外す。3 つとも答えるのは PostgreSQL の答え手 2 つだけ
+;;;   SqlNotify        Emits a signal on the notification channel for the relevant names (topics - None = a signal whose names are unknown = relevant to all) (inside a transaction it
+;;;                    is delivered only on commit) - PostgreSQL's pg_notify. Can be issued inside a SqlTransaction (the exception to guarantee (2) - if batched it is remembered and
+;;;                    sent in the same round trip as COMMIT). After returning the connection, the responder rings in place the bells of the same process whose names overlap
+;;;   SqlHangNotice    Hangs a bell (an external promise) on the notification channel for the names to wait for (topics - None = all signals) - PostgreSQL's LISTEN.
+;;;                    Answer = bell | SqlUnreachable. SqlDropNotice = removes a bell that did not ring. Only the 2 PostgreSQL responders answer all three
 ;;;
-;;; I/O なしの置き場の語彙(本物には無い): SetSqlOutage = その database を不達にする / 戻す(sqlite-sql-handler だけが答える — 模擬の筋書きが
-;;; 不達の枝を起こす口)。
+;;; Vocabulary for the I/O-free store (not in real backends): SetSqlOutage = make that database unreachable / restore it (only sqlite-sql-handler answers - the hook by which a simulation scenario
+;;; triggers the unreachable branch).
 (require doeff-hy.macros [defk deff defeffect <- val var])
 (require doeff-hy.record [defrecord defenum])
 (import re)
@@ -80,98 +80,98 @@
 
 (val MODULE-TAGS {:context "sql" :role "foundation"})
 
-;; SqlTransaction の答えの program の答えの型(program ごとに違う)。実行時の欄と答えの型が読む TypeVar で、型検査の展開は
-;; SqlTransaction の :tp [T] が class の型の引数 T を立てる(#2939)。
+;; The type of a SqlTransaction answer, i.e. the program's answer (differs per program). A TypeVar read by the runtime field and the answer type; for type checking, the expansion of
+;; SqlTransaction's :tp [T] sets the class's type parameter T (#2939).
 (val T (TypeVar "T"))
 
-;; 型の注記 `#^ 型 名前` を書く定数(#2939): 式から型が決まらない値(空の dict・正規表現の compile の結果・型の組)。注記が無いと、型の宣言
-;; (.pyi)の定数が Incomplete になり、使う側の式の型が「一部が分からない」になる。実行時の値は注記に関わらず式の値。
-;; 引数と行の値の閉じた集合(bool は int の下位の型なので先に並べる)。型の組の注記は `tuple[type, ...]` — 実行時の isinstance に渡す組で、
-;; 静的には中身を決めない(中身を決めると、閉じた集合の値への isinstance の検めが「いつも真」の赤になる)。
+;; Constants that carry a type annotation `#^ type name` (#2939): values whose type is not determined by the expression (empty dict, result of compiling a regex, tuple of types). Without the annotation, the constants in the type declaration
+;; (.pyi) become Incomplete, and the types of expressions on the using side become "partly unknown". The runtime value is the value of the expression regardless of the annotation.
+;; The closed set of parameter and row values (bool is a subtype of int, so it is listed first). The annotation of the tuple of types is `tuple[type, ...]` - a tuple passed to isinstance at runtime,
+;; and its contents are not fixed statically (fixing them would make the isinstance check against values of the closed set "always true" and red).
 (val #^ (get tuple #(type ...)) SQL-VALUE-TYPES #(bool int float str bytes (type None)))
-;; 値の型そのもの(subclass を含まない)が閉じた集合の型である印 — normalized-rows が呼びを省く判定に使う(enum の値のような subclass は
-;; normalized-value の match へ回す)。
+;; A marker for types that are exactly a type of the closed set (excluding subclasses) - used by normalized-rows to decide to skip the call (subclasses such as enum values go to
+;; the match in normalized-value).
 (val #^ (get frozenset type) PLAIN-VALUE-TYPES (frozenset SQL-VALUE-TYPES))
 
-;; 同じ閉じた集合の型の別名(呼び手が注記に使う名 — 型の宣言 sql_effects.pyi の SqlValue と同じ物)。
+;; An alias of the same closed-set type (the name callers use in annotations - the same as SqlValue in the type declaration sql_effects.pyi).
 (val SqlValue (| int float str bytes bool None))
-;; driver が答える値のうち、閉じた集合 SqlValue へ写す決まりの在る型(normalized-value が受ける型 — 型の宣言 sql_effects.pyi の
-;; DriverValue と同じ物)。datetime.datetime は datetime.date の下位の型。この外の型の値は normalized-rows が TypeError で断る。
+;; Among values the driver answers, the types with a rule for mapping into the closed set SqlValue (the types normalized-value accepts - the same as DriverValue in the type declaration sql_effects.pyi).
+;; datetime.datetime is a subtype of datetime.date. Values of types outside this are rejected by normalized-rows with a TypeError.
 (val DriverValue (| int float str bytes bool None memoryview bytearray Decimal datetime.date datetime.time UUID))
 
-;; 中立の記法の字句: 文字列の literal・引用した名・注釈・$$ の本文・`::` はそのまま文、`:name` は引数、他は 1 字ずつ文。
+;; Tokens of the neutral notation: string literals, quoted names, comments, $$ bodies, and `::` are statement text as is; `:name` is a parameter; anything else is statement text one character at a time.
 (val #^ (get re.Pattern str) TOKEN
   (re.compile r"(?P<text>'(?:[^']|'')*'|\"(?:[^\"]|\"\")*\"|--[^\n]*|/\*.*?\*/|\$\$.*?\$\$|::)|:(?P<name>[A-Za-z_][A-Za-z0-9_]*)|(?P<plain>[^'\"\-/:$]+|.)"
               re.DOTALL))
 
-;; 表・欄・索引の名(DDL に描く名は引用しないので、この形だけを受ける)。
+;; Names of tables, columns, and indexes (names rendered in DDL are not quoted, so only this form is accepted).
 (val #^ (get re.Pattern str) IDENTIFIER (re.compile r"[A-Za-z_][A-Za-z0-9_]*"))
 
 
-;; --- 値 ---------------------------------------------------------------------------------------------------------------------
+;; --- Values ---------------------------------------------------------------------------------------------------------------------
 
 (defrecord SqlLock
-  "SqlTransaction の錠 1 つ(頭の註の locks): key = 錠の鍵・shared = 共有の錠か(既定 False = 排他)。"
+  "One lock of a SqlTransaction (locks in the header comment): key = the lock key, shared = whether it is a shared lock (default False = exclusive)."
   (#^ str key)
   (setv #^ bool shared False))
 
 
 (defrecord SqlParam
-  "文の引数 1 つ(name = 文の `:name` の名・value = SqlValue の閉じた集合の値)。"
+  "One statement parameter (name = the `:name` name in the statement, value = a value of the closed set SqlValue)."
   (#^ str name)
   (#^ SqlValue value))
 
 
 (defrecord SqlRows
-  "問い合わせの答え。rows = 行の tuple(行 = 欄の値の tuple・値は SqlValue へ正規化済み)・rowcount = engine が数えた行の数
-   (行を返す文は返した行の数・書く文は変えた行の数。ClickHouse の HTTP の問い合わせは数えないので None)。"
+  "A query answer. rows = tuple of rows (a row = tuple of column values, already normalized to SqlValue), rowcount = number of rows the engine counted
+   (for row-returning statements the number of rows returned, for writing statements the number of rows changed. ClickHouse HTTP queries do not count, so None)."
   (#^ (get tuple #((get tuple #(SqlValue ...)) ...)) rows)
   (#^ (| int None) rowcount))
 
 
 (defrecord SqlFailed
-  "engine が答えた失敗。sqlstate = SQLSTATE(5 文字 — driver が SQLSTATE を持たなければ類の code・ClickHouse は None)・reason = engine の文。"
+  "A failure the engine answered. sqlstate = SQLSTATE (5 characters - the class code if the driver has no SQLSTATE, None for ClickHouse), reason = the engine's message."
   (#^ (| str None) sqlstate)
   (#^ str reason))
 
 
 (defrecord SqlUnreachable
-  "engine に届かない(接続できない・切れた・HTTP が届かない)。reason = driver の文。"
+  "The engine cannot be reached (cannot connect, disconnected, HTTP did not arrive). reason = the driver's message."
   (#^ str reason))
 
 
 (defrecord SqlSchemaApplied
-  "SqlEnsureTables の答え。statements = 流した DDL の文(方言で描いた後・流した順)。"
+  "The answer of SqlEnsureTables. statements = the DDL statements sent (after rendering in the dialect, in the order sent)."
   (#^ (get tuple #(str ...)) statements))
 
 
 (defclass SqlTransactionMisuse [TypeError]
-  "SqlTransaction の中で禁じた effect を出した(約束 (2) — 頭の註)。transaction は rollback 済み。")
+  "A forbidden effect was issued inside a SqlTransaction (guarantee (2) - header comment). The transaction has been rolled back.")
 
 
-;; --- DDL の宣言 ------------------------------------------------------------------------------------------------------------
+;; --- DDL declarations ------------------------------------------------------------------------------------------------------------
 
 (defenum SqlColumnType INTEGER FLOAT TEXT BYTES BOOLEAN JSON)
-(setv SqlColumnType.__doc__ "欄の閉じた型(SqlColumn.type): INTEGER = 64 bit の整数・FLOAT = 浮動小数・TEXT = 文字列・BYTES = バイト列・
-   BOOLEAN = 真偽・JSON = text で出し入れする JSON。答え手が方言の型へ描く。")
+(setv SqlColumnType.__doc__ "Closed column types (SqlColumn.type): INTEGER = 64-bit integer, FLOAT = floating point, TEXT = string, BYTES = byte string,
+   BOOLEAN = boolean, JSON = JSON stored and retrieved as text. The responder renders them as the dialect's types.")
 
 
 (defrecord SqlColumn
-  "欄 1 つ(type = 閉じた型 — INTEGER は 64 bit・JSON は text で出し入れ・nullable = NULL を受けるか)。"
+  "One column (type = a closed type - INTEGER is 64-bit, JSON is stored and retrieved as text; nullable = whether NULL is accepted)."
   (#^ str name)
   (#^ SqlColumnType type)
   (setv #^ bool nullable False))
 
 
 (defrecord SqlIndex
-  "索引 1 つ(columns = 欄の名の並び・unique = 一意)。"
+  "One index (columns = sequence of column names, unique = whether unique)."
   (#^ str name)
   (#^ (get tuple #(str ...)) columns)
   (setv #^ bool unique False))
 
 
 (defrecord SqlTable
-  "表 1 つ(primary-key = 主鍵の欄の名の並び — ClickHouse では並びの鍵 ORDER BY・空なら主鍵なし)。"
+  "One table (primary-key = sequence of primary key column names - in ClickHouse the sort key ORDER BY, no primary key if empty)."
   (#^ str name)
   (#^ (get tuple #(SqlColumn ...)) columns)
   (setv #^ (get tuple #(str ...)) primary-key #())
@@ -181,7 +181,7 @@
 ;; --- effect ----------------------------------------------------------------------------------------------------------------
 
 (defeffect SqlQuery
-  "文 1 つを流す(頭の註)。文の中で時計を読まない — 刻は引数で渡す。"
+  "Send one statement (header comment). Do not read the clock inside the statement - pass the time as a parameter."
   {:fields [(: database str) (: statement str) (: params (get tuple #(SqlParam ...)) #()) (: binary bool False)]
    :pre [(: database str) (: statement str) (: params tuple) (all (gfor p params (isinstance p SqlParam))) (: binary bool)]
    :answer (| SqlRows SqlFailed SqlUnreachable)
@@ -189,7 +189,7 @@
 
 
 (defeffect SqlInsertRows
-  "表 table の欄 columns へ行 rows をまとめて入れる(頭の註)。rows の各行は columns と同じ長さの SqlValue の tuple(答え手が検める)。"
+  "Insert rows rows in bulk into columns columns of table table (header comment). Each row of rows is a tuple of SqlValue of the same length as columns (the responder checks)."
   {:fields [(: database str) (: table str) (: columns (get tuple #(str ...)))
             (: rows (get tuple #((get tuple #(SqlValue ...)) ...)))]
    :pre [(: database str) (: table str) (: columns tuple) (: rows tuple) (all (gfor row rows (isinstance row tuple)))]
@@ -198,9 +198,9 @@
 
 
 (defeffect SqlTransaction
-  "program を 1 つの transaction の中で走らせる(頭の註の約束 3 つ)。答え = program の答え(commit した後)| SqlFailed | SqlUnreachable。
-   batched = 文の流し方の宣言(既定 False = 文 1 つを 1 回ずつ・True = 往復をまとめる — 頭の註)。locks = lock-key の後に並びの順に取る錠
-   (共有か排他 — 頭の註)。"
+  "Run program inside one transaction (the 3 guarantees in the header comment). Answer = the program's answer (after commit) | SqlFailed | SqlUnreachable.
+   batched = a declaration of how statements are sent (default False = one statement per round trip, True = combine round trips - header comment). locks = locks taken in order after lock-key
+   (shared or exclusive - header comment)."
   {:tp [T]
    :fields [(: database str) (: program (get Program #(T object))) (: lock-key (| str None) None) (: batched bool False)
             (: locks (get tuple #(SqlLock ...)) #())]
@@ -212,8 +212,8 @@
 
 
 (defeffect SqlBatch
-  "batched = True の SqlTransaction の program の中で、同じ database への文の並び queries を 1 回の往復でまとめて流す(頭の註)。答え = queries と
-   同じ順の SqlRows の tuple。commit = True なら同じ往復の最後に COMMIT を流す(その後に SQL の effect を出すと SqlTransactionMisuse)。"
+  "Inside the program of a SqlTransaction with batched = True, send the statement sequence queries to the same database in a single round trip (header comment). Answer = a tuple of SqlRows in the same order as
+   queries. If commit = True, COMMIT is sent at the end of the same round trip (issuing a SQL effect after that is a SqlTransactionMisuse)."
   {:fields [(: database str) (: queries (get tuple #(SqlQuery ...))) (: commit bool False)]
    :pre [(: database str) (: queries tuple) (: commit bool) (all (gfor q queries (and (isinstance q SqlQuery) (= q.database database))))]
    :answer (get tuple #(SqlRows ...))
@@ -221,7 +221,7 @@
 
 
 (defeffect SqlEnsureTables
-  "表の宣言 tables を方言の DDL に描いて流す(在れば何もしない・頭の註)。"
+  "Render the table declarations tables as the dialect's DDL and send them (does nothing if they exist - header comment)."
   {:fields [(: database str) (: tables (get tuple #(SqlTable ...)))]
    :pre [(: database str) (: tables tuple) (all (gfor t tables (isinstance t SqlTable)))]
    :answer (| SqlSchemaApplied SqlFailed SqlUnreachable)
@@ -229,12 +229,12 @@
 
 
 (defeffect SqlNotify
-  "database の通知の channel へ合図を出す(PostgreSQL の pg_notify — 中身の行を運ばない)。topics = 合図が関わる名(呼び手の決めた語 — 記録の
-   置き場なら書きが触った表と列の名)の並び。名の重なる呼び鈴(SqlHangNotice)だけが鳴る。None = 名の分からない合図 = 全部の呼び鈴に
-   関わる合図(絞れない合図で待ち手を起こし損ねない — 名の写しを間違えると永久に起きない待ち手ができる)。SqlTransaction の中で出せば
-   commit した時だけ届き、rollback した transaction の合図は届かない。答え手は接続を返した後に同じ process の呼び鈴をその場で鳴らし、他の
-   process へは NOTIFY が届く(自分の NOTIFY では同じ process の呼び鈴を鳴らし直さない)。答え = None | SqlFailed | SqlUnreachable(答える
-   のは PostgreSQL の答え手 2 つだけ)。"
+  "Emit a signal on the database's notification channel (PostgreSQL's pg_notify - carries no row contents). topics = sequence of names the signal is relevant to (words chosen by the caller - for a record
+   store, the names of the tables and columns a write touched). Only bells (SqlHangNotice) with overlapping names ring. None = a signal whose names are unknown = a signal relevant to all bells
+   (so a waiter is never left asleep by a signal that cannot be narrowed - getting a name mapping wrong would create a waiter that never wakes). If issued inside a SqlTransaction it is
+   delivered only on commit, and signals of rolled-back transactions are never delivered. After returning the connection the responder rings the bells of the same process in place, and
+   NOTIFY reaches other processes (one's own NOTIFY does not ring the bells of the same process again). Answer = None | SqlFailed | SqlUnreachable (only the 2 PostgreSQL
+   responders answer)."
   {:fields [(: database str) (: channel str) (: topics (| (get tuple #(str ...)) None))]
    :pre [(: database str) (: channel str) (: topics (| tuple None))]
    :answer (| None SqlFailed SqlUnreachable)
@@ -242,12 +242,12 @@
 
 
 (defeffect SqlHangNotice
-  "database の通知の channel に、名 topics を待つ呼び鈴を掛ける(PostgreSQL の LISTEN / NOTIFY — 答えるのは postgres-sql-handler と
-   pooled-postgres-sql-handler だけ)。答えの外の promise は、掛けた後に channel へ topics と名の重なる合図(か名の分からない合図)が届くか、
-   待ち受けの接続が繋ぎ直したら(その間の通知は届かないので)True で完了する(doeff-time の WaitWithin の時間切れ None と見分けられる)。
-   topics = None は全部の合図で鳴る。答えが返った時には LISTEN は張られている — 呼び手は掛けてから読み、静かなら呼び鈴を待てば、読みと
-   掛けの間の書きを取りこぼさない。合図は「変わったかもしれない」だけで中身を運ばない(受けた側が読み直す)。鳴らずに待ちを終える時は
-   SqlDropNotice で外す。"
+  "Hang a bell on the database's notification channel waiting for names topics (PostgreSQL's LISTEN / NOTIFY - only postgres-sql-handler and
+   pooled-postgres-sql-handler answer). The external promise in the answer completes with True when, after it is hung, a signal whose names overlap topics (or a signal with unknown names) arrives on the channel,
+   or when the listening connection reconnects (notifications in between are not delivered) (distinguishable from the timeout None of doeff-time's WaitWithin).
+   topics = None rings on all signals. By the time the answer returns, LISTEN is in place - the caller hangs first and then reads, and if quiet waits on the bell, so a write between the read and
+   the hang is not missed. A signal only means \"it may have changed\" and carries no contents (the receiver rereads). To end a wait without a ring,
+   remove it with SqlDropNotice."
   {:fields [(: database str) (: channel str) (: topics (| (get tuple #(str ...)) None))]
    :pre [(: database str) (: channel str) (: topics (| tuple None))]
    :answer (| (get ExternalPromise bool) SqlUnreachable)
@@ -255,7 +255,7 @@
 
 
 (defeffect SqlDropNotice
-  "SqlHangNotice で掛けて鳴らなかった呼び鈴 bell を外す(鳴った後でも何もせずに答える)。"
+  "Remove the bell bell hung with SqlHangNotice that did not ring (answers without doing anything even if it has already rung)."
   {:fields [(: database str) (: channel str) (: bell (get ExternalPromise bool))]
    :pre [(: database str) (: channel str) (: bell ExternalPromise)]
    :answer None
@@ -263,51 +263,51 @@
 
 
 (defeffect SetSqlOutage
-  "I/O なしの置き場の口(sqlite-sql-handler だけが答える): down = True の間、database への effect は全部 SqlUnreachable で答える。"
+  "The hook of the I/O-free store (only sqlite-sql-handler answers): while down = True, every effect to the database is answered with SqlUnreachable."
   {:fields [(: database str) (: down bool)]
    :answer None
    :tags {:context "sql" :role "foundation"}})
 
 
-;; --- 中立の記法 -------------------------------------------------------------------------------------------------------------
+;; --- Neutral notation -------------------------------------------------------------------------------------------------------------
 
 (defrecord SqlText
-  "文の中の引数でない部分(方言の書き換えでそのまま写す)。"
+  "The non-parameter part of a statement (copied as is in dialect rewriting)."
   (#^ str text))
 
 
 (defrecord SqlPlaceholder
-  "文の中の引数 `:name` 1 つ。"
+  "One parameter `:name` in a statement."
   (#^ str name))
 
 
-;; 文の割りの覚え(文 → 割った並び)。割りは文だけで決まる純粋な計算で、答えは凍った record の tuple なので同じ物を何度返しても
-;; 呼び手は書き換えられない。dict の get / 代入は 1 つずつ不可分なので、thread が重なっても同じ文を 2 度割るだけで食い違わない
-;; (SqlQuery 1 つ約 100 µs のうち割りが約 2 割)。
-;; 覚えの大きさは部品(SqlText・SqlPlaceholder)の数で限る。code の literal の文は部品が数十まで(18 欄の INSERT で約 40)だが、
-;; 値の数だけ引数を並べる文(`IN (:k0, :k1, …)`・行の数だけ VALUES を並べる INSERT)は値の数ごとに別の文になり、1 つで数百の部品を持つ。
-;; 文の数だけで限った時は 4096 文 × 平均約 120 部品 ≈ 50 万個の record を抱え、GC の 1 回を重くした。
-;; そこで部品が SPLIT-MEMO-STATEMENT-PARTS を越える文は覚えず(値の数で変わる文 — 同じ文が繰り返す見込みが薄い)、覚えた部品の総数が
-;; SPLIT-MEMO-PART-LIMIT に着いたら覚えるのを止める(止めた後は毎回割る)。thread が重なると総数の足しが前後し、上限を文 1 つ分×thread の
-;; 数まで越えうる(越えは SPLIT-MEMO-STATEMENT-PARTS × thread の数で止まる)。
+;; Memo of statement splitting (statement -> split sequence). Splitting is a pure computation determined by the statement alone, and the answer is a tuple of frozen records, so even if the same object is returned many times
+;; callers cannot rewrite it. dict get / assignment are atomic one at a time, so even with overlapping threads the same statement is merely split twice and nothing diverges
+;; (splitting is about 20% of the roughly 100 us of one SqlQuery).
+;; The memo size is bounded by the number of parts (SqlText, SqlPlaceholder). Statements that are code literals have up to a few dozen parts (about 40 for an 18-column INSERT), but
+;; statements that line up as many parameters as values (`IN (:k0, :k1, ...)`, an INSERT lining up VALUES per row) become a different statement per number of values and have hundreds of parts each.
+;; Bounding only by the number of statements held about 4096 statements x an average of about 120 parts = about 500,000 records and made one GC heavy.
+;; So statements whose parts exceed SPLIT-MEMO-STATEMENT-PARTS are not remembered (statements that vary with the number of values - unlikely to repeat), and once the total number of remembered parts
+;; reaches SPLIT-MEMO-PART-LIMIT remembering stops (after that every call splits). With overlapping threads the additions to the total can interleave, so the limit can be exceeded by up to one statement per thread
+;; (the excess stops at SPLIT-MEMO-STATEMENT-PARTS x the number of threads).
 (val SPLIT-MEMO-LIMIT 4096)
 (val SPLIT-MEMO-STATEMENT-PARTS 64)
 (val SPLIT-MEMO-PART-LIMIT 32768)
 (val #^ (get dict #(str (get tuple #((| SqlText SqlPlaceholder) ...)))) SPLIT-MEMO {})
-;; 覚えた部品の総数(1 つの枡 — split-statement だけが足す)。
+;; Total number of remembered parts (one cell - only split-statement adds to it).
 (val #^ (get list int) SPLIT-MEMO-PARTS [0])
 
 
 (defk split-statement [statement]
   {:pre [(: statement str)] :post [(: % (get tuple #((| SqlText SqlPlaceholder) ...)))]
    :tags {:context "sql" :role "foundation"}}
-  "中立の記法の文を、文の部分(SqlText)と引数(SqlPlaceholder)の並びに割るため(文字列の literal・引用した名・注釈・`::` は文の部分)。
-   同じ文の 2 度目からは覚えた並びを返す(SPLIT-MEMO の註)。"
+  "Split a statement in neutral notation into a sequence of statement parts (SqlText) and parameters (SqlPlaceholder) (string literals, quoted names, comments, and `::` are statement parts).
+   From the second time for the same statement, returns the remembered sequence (see the note on SPLIT-MEMO)."
   (val remembered (.get SPLIT-MEMO statement))
   (when (is-not remembered None)
     (return remembered))
-  ;; 字句(引数の名 | None・綴り)を、続く文の字句の組ごとに SqlText 1 つ・引数の字句ごとに SqlPlaceholder 1 つにする。覚えない文
-  ;; (部品が数百)は呼ぶたびに割るので、tuple を足し算で伸ばさず(部品の数の 2 乗)1 度だけ組む。字句は空にならない(TOKEN のどの枝も 1 字以上)。
+  ;; Turn the tokens (parameter name | None, spelling) into one SqlText per group of consecutive statement tokens and one SqlPlaceholder per parameter token. Statements that are not remembered
+  ;; (hundreds of parts) are split on every call, so build the tuple once instead of growing it by addition (quadratic in the number of parts). Tokens are never empty (every branch of TOKEN matches at least 1 character).
   (val tokens (lfor found (.finditer TOKEN statement) #((.group found "name") (.group found 0))))
   (val #^ (get tuple #((| SqlText SqlPlaceholder) ...)) parts
     (tuple (gfor #(is-text run) (groupby tokens (fn [token] (is (get token 0) None)))
@@ -326,39 +326,39 @@
 (defk checked-params [parts params]
   {:pre [(: parts (get tuple #((| SqlText SqlPlaceholder) ...))) (: params (get tuple #(SqlParam ...)))] :post [(: % None)]
    :tags {:context "sql" :role "foundation"}}
-  "文の引数の名と params の名が過不足なく一致し、値が閉じた集合に入ることを確かめるため(食い違いは呼び手の誤り — ValueError / TypeError)。"
+  "Check that the parameter names in the statement and the names in params match exactly with nothing missing or extra, and that values fall in the closed set (a mismatch is a caller error - ValueError / TypeError)."
   (val given (lfor p params p.name))
   (when (!= (len given) (len (set given)))
-    (raise (ValueError (.format "params の名が重なっている: {}" given))))
+    (raise (ValueError (.format "duplicate names in params: {}" given))))
   (val used (sfor part parts :if (isinstance part SqlPlaceholder) part.name))
   (when (!= used (set given))
-    (raise (ValueError (.format "文の引数と params の名が食い違う: 文 = {} / params = {}" (sorted used) (sorted given)))))
+    (raise (ValueError (.format "statement parameters and params names differ: statement = {} / params = {}" (sorted used) (sorted given)))))
   (for [p params]
     (when (not (isinstance p.value SQL-VALUE-TYPES))
-      (raise (TypeError (.format "引数 {} の値の型 {} は SqlValue の閉じた集合の外" p.name (. (type p.value) __name__))))))
+      (raise (TypeError (.format "type {} of the value for parameter {} is outside the closed set SqlValue" (. (type p.value) __name__) p.name)))))
   None)
 
 
 (defk param-value [params name]
   {:pre [(: params (get tuple #(SqlParam ...))) (: name str)] :post [(: % SqlValue)]
    :tags {:context "sql" :role "foundation"}}
-  "params から名 name の値を引くため(checked-params の後に呼ぶ)。"
+  "Look up the value for name name in params (call after checked-params)."
   (next (gfor p params :if (= p.name name) p.value)))
 
 
 (defk checked-identifier [name]
   {:pre [(: name str)] :post [(: % str)]
    :tags {:context "sql" :role "foundation"}}
-  "DDL と投入の文に描く名が引用なしで安全な形であることを確かめるため(外れは ValueError)。"
+  "Check that a name rendered into DDL and insert statements is in a form that is safe unquoted (a violation is a ValueError)."
   (when (not (.fullmatch IDENTIFIER name))
-    (raise (ValueError (.format "名 {!r} は [A-Za-z_][A-Za-z0-9_]* の形でない" name))))
+    (raise (ValueError (.format "name {!r} is not of the form [A-Za-z_][A-Za-z0-9_]*" name))))
   name)
 
 
 (defk checked-identifiers [names]
   {:pre [(: names (get tuple #(str ...)))] :post [(: % (get tuple #(str ...)))]
    :tags {:context "sql" :role "foundation"}}
-  "名の並び(欄・主鍵・索引の欄)の全部を checked-identifier で確かめ、書いた順の tuple で返すため(最初の外れで ValueError)。"
+  "Check every name in a sequence of names (columns, primary key, index columns) with checked-identifier and return them as a tuple in the written order (ValueError at the first violation)."
   (var #^ (get list str) checked [])
   (for [name names]
     (.append checked (! (checked-identifier name))))
@@ -368,25 +368,25 @@
 (defk checked-rows [columns rows]
   {:pre [(: columns (get tuple #(str ...))) (: rows (get tuple #((get tuple #(SqlValue ...)) ...)))] :post [(: % None)]
    :tags {:context "sql" :role "foundation"}}
-  "SqlInsertRows の行が欄の数と同じ長さで、値が閉じた集合に入ることを確かめるため。"
+  "Check that each row of SqlInsertRows has the same length as the number of columns and that values fall in the closed set."
   (for [row rows]
     (when (!= (len row) (len columns))
-      (raise (ValueError (.format "行の長さ {} が欄の数 {} と違う: {!r}" (len row) (len columns) row))))
+      (raise (ValueError (.format "row length {} differs from column count {}: {!r}" (len row) (len columns) row))))
     (for [value row]
       (when (not (isinstance value SQL-VALUE-TYPES))
-        (raise (TypeError (.format "行の値の型 {} は SqlValue の閉じた集合の外" (. (type value) __name__)))))))
+        (raise (TypeError (.format "type {} of a row value is outside the closed set SqlValue" (. (type value) __name__)))))))
   None)
 
 
-;; --- 行の値の正規化 --------------------------------------------------------------------------------------------------------
+;; --- Normalizing row values --------------------------------------------------------------------------------------------------------
 
 (defk normalized-value [value]
   {:pre [(: value DriverValue)] :post [(: % SqlValue)]
    :effects []
    :tags {:context "sql" :role "foundation"}}
-  "写す決まりの在る driver の値(DriverValue)を閉じた集合 SqlValue へ写すため。写しは effect を出さない(:effects [] — 型の宣言の
-   答えの Program は effect の位置が Never)。写し方の決まっていない型を黙って str にしない —
-   その型の値は driver の行を受ける normalized-rows が TypeError で断る(driver の値の型を検める 1 点)。"
+  "Map a driver value that has a mapping rule (DriverValue) into the closed set SqlValue. The mapping issues no effect (:effects [] - in the type declaration the answer Program
+   has Never in the effect position). Types without a mapping rule are never silently turned into str -
+   a value of such a type is rejected with a TypeError by normalized-rows, which receives driver rows (the one place that checks driver value types)."
   (match value
     (| (bool) (int) (float) (str) (bytes) None) value
     (| (memoryview) (bytearray)) (bytes value)
@@ -395,22 +395,22 @@
     (UUID) (str value)))
 
 
-;; --- 実行時の検めと静的な型の境目 ----------------------------------------------------------------------------------------------
-;; driver の値は driver ごとに型が違い、型検査には object に見える。値の型を実行時に検めた結果を、検めた値の静的な型として伝える述語を
-;; ここに 2 つ置く(型の逃げの cast を使わず、検めと型の対応を 1 点ずつに閉じる・#2939)。
+;; --- Boundary between runtime checks and static types ----------------------------------------------------------------
+;; Driver values have different types per driver and look like object to the type checker. Two predicates are placed here that convey the result of checking a value's type at runtime
+;; as the static type of the checked value (no escape-hatch cast; the check and the type correspond at exactly one point each - #2939).
 
-;; defk にできない: 型の絞り込み(TypeGuard)を与える述語 — Program を返すと、真偽にも型の絞りにもならない
+;; Cannot be a defk: a predicate that provides type narrowing (TypeGuard) - returning a Program would be neither a boolean nor a type narrowing.
 (defn #^ (get TypeGuard DriverValue) is-driver-value [#^ object value]
-  "driver の値が、閉じた集合へ写す決まりの在る型(DriverValue)かを検めるため。真なら値は DriverValue と型検査に伝わる
-   (isinstance の絞りは総称の memoryview を型の分からない型にして、写す関数へ渡す所が赤になる)。"
+  "Check whether a driver value is of a type with a rule for mapping into the closed set (DriverValue). If true, the type checker is told the value is a DriverValue
+   (isinstance narrowing would turn the generic memoryview into an unknown type, making the place that passes it to the mapping function red)."
   (isinstance value DriverValue))
 
 
-;; defk にできない: 型の絞り込み(TypeGuard)を与える述語 — Program を返すと、真偽にも型の絞りにもならない
+;; Cannot be a defk: a predicate that provides type narrowing (TypeGuard) - returning a Program would be neither a boolean nor a type narrowing.
 (defn #^ (get TypeGuard (get Sequence (get Sequence SqlValue))) is-plain-rows
   [#^ (| (get list (get tuple #(object ...))) (get tuple #((get tuple #(object ...)) ...))) rows]
-  "driver の行の列の全部の値の型が、閉じた集合の型そのもの(PLAIN-VALUE-TYPES)かを検めるため。真なら行の列は SqlValue の列の列と
-   型検査に伝わる — 実行時の検めと静的な型の境目はこの 1 点だけ(値の型を 1 つずつ検めた結果が型の証明になる・#2939)。"
+  "Check whether the types of all values in the columns of a driver row are exactly types of the closed set (PLAIN-VALUE-TYPES). If true, the row's columns are conveyed to the type checker as a sequence of sequences of SqlValue
+   - the boundary between runtime checks and static types is this one point only (the result of checking value types one by one becomes the type proof - #2939)."
   (all (gfor row rows (all (gfor value row (in (type value) PLAIN-VALUE-TYPES))))))
 
 
@@ -418,9 +418,9 @@
   {:pre [(: rows (| (get list (get tuple #(object ...))) (get tuple #((get tuple #(object ...)) ...))))]
    :post [(: % (get tuple #((get tuple #(SqlValue ...)) ...)))]
    :tags {:context "sql" :role "foundation"}}
-  "driver の行の列を SqlRows の rows(値を正規化した tuple の tuple)へ写すため。全部の値の型が閉じた集合の型そのもの
-   (PLAIN-VALUE-TYPES — normalized-value でも同じ値のまま)なら、値 1 つごとに呼ばずに写す(sqlite の答えはいつもこの形)。
-   値の型は driver ごとに違う — 写す決まりの無い型(DriverValue の外)はここで TypeError(driver の値の型を検める 1 点)。"
+  "Map the columns of driver rows into the rows of SqlRows (a tuple of tuples of normalized values). If the types of all values are exactly types of the closed set
+   (PLAIN-VALUE-TYPES - the same value even through normalized-value), map without calling per value (sqlite answers always take this form).
+   Value types differ per driver - types with no mapping rule (outside DriverValue) are rejected here with a TypeError (the one place that checks driver value types)."
   (when (is-plain-rows rows)
     (return (tuple (gfor row rows (tuple row)))))
   (var #^ (get list (get tuple #(SqlValue ...))) normalized [])
@@ -428,7 +428,7 @@
     (var #^ (get list SqlValue) values [])
     (for [value row]
       (when (not (is-driver-value value))
-        (raise (TypeError (.format "driver の値の型 {} を SqlValue へ写す決まりが無い" (. (type value) __name__)))))
+        (raise (TypeError (.format "no rule for mapping driver value type {} into SqlValue" (. (type value) __name__)))))
       (.append values (! (normalized-value value))))
     (.append normalized (tuple values)))
   (tuple normalized))

@@ -1,58 +1,58 @@
-;;; 計器の memory の答え手 memory-meter-handler(ADR-DOE-CORE-EFFECTS-004)— CountMetric・ObserveSeconds・
-;;; ObserveSecondsBatch・SetGauge・ReadMeter に、1 つの run の中の状態(session の値)で答える。
+;;; Memory handler for the meter, memory-meter-handler (ADR-DOE-CORE-EFFECTS-004): answers CountMetric, ObserveSeconds,
+;;; ObserveSecondsBatch, SetGauge and ReadMeter with state within one run (a session value).
 ;;;
-;;; 何のためか: 模擬と検では、本物(process_meter.hy)と同じ契約で計器を確かめたいが、時計・gc・thread に触れたくない。計算は本物と同じ
-;;; 純関数(meter_effects.hy の metered・gauged)で、違うのは置き場だけ(process に 1 つ → この run の中)。GC の停止は見ない(設定の
-;;; gc-pause-name は読まない)。別の run とは共有しない。外側に state の handler が要る。
+;;; Why: in mocks and tests we want to check the meter under the same contract as the real one (process_meter.hy) without touching clocks, gc or threads. The computation is the same
+;;; pure functions as the real one (metered and gauged in meter_effects.hy); only the store differs (one per process -> within this run). GC pauses are not observed (the setting
+;;; gc-pause-name is not read). It is not shared with other runs. An outer state handler is required.
 ;;;
-;;; 書きの溜め: 数えと秒の観測の書きは、置き場の溜まり(MeterHold の pending — 撃った順)に足すだけで答え、
-;;; 読み(ReadMeter)の時か溜まりが METERED-WRITES 本に届いた時に、metered で 1 度に断面へ畳む。読みは必ず畳んでから答えるので、読み手が
-;;; 見る断面は 1 つずつ積んだ断面と同じ(丸めまで — metered の註)。書きのたびに断面の写像を丸ごと写さない(要求ごとに秒の観測と数えを
-;;; 積む記録の service で、断面の写しが scheduler の thread の CPU の 1 割ほどを占めていた)。gauge の置き換えは溜めずに断面へ書く(数えと
-;;; 秒の観測が触る写像と重ならない)。
+;;; Write buffering: count and seconds-observation writes are answered by just appending to the store's buffer (pending of MeterHold, in the order fired), and
+;;; at a read (ReadMeter), or when the buffer reaches METERED-WRITES entries, they are folded into the snapshot all at once with metered. A read always folds before answering, so the snapshot the reader
+;;; sees is the same as one built up one write at a time (down to rounding -- see the note on metered). We do not copy the whole snapshot mapping on every write (in a record service
+;;; that piles up seconds observations and counts on every request, copying the snapshot took about 10% of the scheduler thread's CPU). Gauge replacement is written to the snapshot without buffering (it does not
+;;; overlap the mappings that counts and seconds observations touch).
 (require doeff-hy.macros [defhandler defk <- val var])
 (require doeff-hy.record [defrecord])
 (val MODULE-TAGS {:context "meter" :role "foundation"})
-(import dataclasses [dataclass])  ; defrecord の展開が名指す
+(import dataclasses [dataclass])  ; named by the defrecord expansion
 (import doeff_core_effects._meter_effects [CountMetric EMPTY-METER MeterSettings MeterSnapshot ObserveSeconds ObserveSecondsBatch ReadMeter
                                          SetGauge gauged metered])
 
-;; 溜まりを断面へ畳む書きの本数(読みが来なくても、溜まりの長さとその写しを抑える)。
+;; The number of writes at which the buffer is folded into the snapshot (keeps the buffer length and its copying bounded even if no read comes).
 (val METERED-WRITES 256)
 
 
 (defrecord MeterHold
-  "memory の答え手の置き場の値(頭の註の書きの溜め): snapshot = 畳み終えた断面・pending = まだ畳んでいない数えと秒の観測の書きの列
-   (撃った順の CountMetric・ObserveSeconds・ObserveSecondsBatch)。"
+  "Value of the memory handler's store (the write buffering in the header comment): snapshot = the already folded snapshot, pending = the sequence of count and seconds-observation writes not yet folded
+   (CountMetric, ObserveSeconds, ObserveSecondsBatch in the order fired)."
   {:tags {:context "meter" :role "foundation"}}
   (#^ MeterSnapshot snapshot)
   (#^ tuple pending))
 
 
-;; 何も積んでいない置き場。
+;; A store with nothing accumulated.
 (val EMPTY-HOLD (MeterHold :snapshot EMPTY-METER :pending #()))
 
 
 (defk held-write [hold write]
   {:pre [(: hold MeterHold) (: write (| CountMetric ObserveSeconds ObserveSecondsBatch))]
    :post [(: % MeterHold)] :tags {:context "meter" :role "judgment"}}
-  "数えか秒の観測の書き write を置き場の溜まりの末尾に足すため(畳むのは答え手の節 — 頭の註の書きの溜め。ここは effect を出さず、書き
-   1 つごとに Program を回さない)。"
+  "To append the count or seconds-observation write to the end of the store's buffer (folding is done in the handler clause -- the write buffering in the header comment. This emits no effect and does not
+   run a Program for each write)."
   (MeterHold :snapshot hold.snapshot :pending (+ hold.pending #(write))))
 
 
 (defk folded [hold settings]
   {:pre [(: hold MeterHold) (: settings MeterSettings)] :post [(: % MeterHold)] :tags {:context "meter" :role "judgment"}}
-  "置き場の溜まりを断面へ畳み、溜まりの無い置き場にするため(読みの前 — 読み手は 1 つずつ積んだのと同じ断面を見る)。"
+  "To fold the store's buffer into the snapshot and leave a store with an empty buffer (before a read -- the reader sees the same snapshot as one built up one write at a time)."
   (if hold.pending
       (MeterHold :snapshot (! (metered hold.snapshot settings hold.pending)) :pending #())
       hold))
 
 
 (defhandler memory-meter-handler [#^ MeterSettings settings]
-  "CountMetric・ObserveSeconds・ObserveSecondsBatch・SetGauge・ReadMeter に、この run の中の断面で答える(頭の註)。"
-  ;; 引数に残す理由: settings は本物と同じ桁の表 — 入れる所ごとに決まる値で、Ask では区別できない。
-  ;; 数えと秒の観測は溜まりに足し、溜まりが METERED-WRITES 本に届いた書きだけが断面へ畳む(頭の註の書きの溜め)。
+  "Answers CountMetric, ObserveSeconds, ObserveSecondsBatch, SetGauge and ReadMeter with the snapshot within this run (see the header comment)."
+  ;; Why it stays an argument: settings is a table of the same magnitude as the real one -- a value decided per place of installation, which Ask cannot distinguish.
+  ;; Counts and seconds observations are appended to the buffer, and only the write that brings the buffer to METERED-WRITES entries folds it into the snapshot (the write buffering in the header comment).
   (session var hold EMPTY-HOLD)
   (CountMetric [name amount]
     (val written (! (held-write hold effect)))
