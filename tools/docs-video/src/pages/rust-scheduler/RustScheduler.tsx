@@ -14,6 +14,7 @@ import {CodeBlock, glow, Headlines, lineMid, Lines, Pill, startsOf} from '../../
 import {ACCENT, f, FAIL, LOOK, MONO, MUTED, PANEL, PROD, SANS, TEST, TEXT} from '../../kit/theme';
 import {useSceneFrame} from '../../kit/warp';
 import DURATIONS from './durations.json';
+import NARRATION from './narration.json';
 
 // Rust is drawn in the production colour (it is the default), Python in the handler colour.
 const RUST = PROD;
@@ -479,7 +480,7 @@ const Outro: React.FC = () => {
 };
 
 // The scenes in order; Root.tsx registers RUST_SCHEDULER.length frames of RUST_SCHEDULER.Video.
-export const RUST_SCHEDULER = narrate('rust-scheduler', DURATIONS, [
+export const RUST_SCHEDULER = narrate('rust-scheduler', DURATIONS, NARRATION, [
   {length: INTRO, starts: startsOf(INTRO_LINES), ids: ['a1', 'a2', 'a3'], node: <IntroScene />},
   {length: CHOOSE, starts: startsOf(CHOOSE_LINES), ids: ['b1', 'b2'], node: <ChooseScene />},
   {length: SAME, starts: startsOf(SAME_LINES), ids: ['c1', 'c2', 'c3', 'c4', 'c5'], node: <SameScene />},

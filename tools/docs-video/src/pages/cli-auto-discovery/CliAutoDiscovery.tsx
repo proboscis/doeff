@@ -18,6 +18,7 @@ import {CodeBlock, glow, Headlines, lineMid, Lines, PAD, Pill, startsOf} from '.
 import {ACCENT, f, FAIL, LOOK, MONO, MUTED, PANEL, SANS, TEST, TEXT} from '../../kit/theme';
 import {useSceneFrame} from '../../kit/warp';
 import DURATIONS from './durations.json';
+import NARRATION from './narration.json';
 
 // Seen between two seconds of a scene: fades in at the first and out at the second.
 const between = (frame: number, from: number, to: number, length = 0.3) => fadeAt(frame, from, length) * (1 - fadeAt(frame, to, length));
@@ -624,7 +625,7 @@ const OutroScene: React.FC = () => {
 };
 
 // The scenes in order; Root.tsx registers CLI_AUTO_DISCOVERY.length frames of CLI_AUTO_DISCOVERY.Video.
-export const CLI_AUTO_DISCOVERY = narrate('cli-auto-discovery', DURATIONS, [
+export const CLI_AUTO_DISCOVERY = narrate('cli-auto-discovery', DURATIONS, NARRATION, [
   {length: TITLE, starts: startsOf(TITLE_LINES), ids: ['t1', 't2', 't3'], node: <TitleScene />},
   {length: MARKERS, starts: startsOf(MARKER_LINES), ids: ['m1', 'm2', 'm3'], node: <MarkerScene />},
   {length: INTERP, starts: startsOf(INTERP_LINES), ids: ['i1', 'i2', 'i3', 'i4'], node: <InterpreterScene />},

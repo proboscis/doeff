@@ -19,6 +19,7 @@ import {CodeBlock, glow, Headlines, lineMid, Lines, PAD, Pill, startsOf} from '.
 import {ACCENT, f, FAIL, LOOK, MONO, MUTED, PANEL, SANS, TEST, TEXT} from '../../kit/theme';
 import {useSceneFrame} from '../../kit/warp';
 import DURATIONS from './durations.json';
+import NARRATION from './narration.json';
 
 // Seen between two seconds of a scene: fades in at the first and out at the second.
 const between = (frame: number, from: number, to: number, length = 0.3) => fadeAt(frame, from, length) * (1 - fadeAt(frame, to, length));
@@ -601,7 +602,7 @@ const OutroScene: React.FC = () => {
 };
 
 // The scenes in order; Root.tsx registers CLI_SCRIPT_EXECUTION.length frames of CLI_SCRIPT_EXECUTION.Video.
-export const CLI_SCRIPT_EXECUTION = narrate('cli-script-execution', DURATIONS, [
+export const CLI_SCRIPT_EXECUTION = narrate('cli-script-execution', DURATIONS, NARRATION, [
   {length: TITLE, starts: startsOf(TITLE_LINES), ids: ['t1', 't2', 't3'], node: <TitleScene />},
   {length: DISCOVER, starts: startsOf(DISCOVER_LINES), ids: ['d1', 'd2', 'd3'], node: <DiscoverScene />},
   {length: RUN, starts: startsOf(RUN_LINES), ids: ['r1', 'r2', 'r3'], node: <RunScene />},

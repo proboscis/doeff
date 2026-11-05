@@ -18,6 +18,7 @@ import {CodeBlock, glow, Headlines, lineMid, Lines, Pill, startsOf} from '../../
 import {ACCENT, f, FAIL, LOOK, MONO, MUTED, PANEL, PROD, SANS, TEST, TEXT} from '../../kit/theme';
 import {useSceneFrame} from '../../kit/warp';
 import DURATIONS from './durations.json';
+import NARRATION from './narration.json';
 
 type Point = {x: number; y: number};
 type Box = {x: number; y: number; w: number; h: number};
@@ -713,7 +714,7 @@ const Outro: React.FC = () => {
 };
 
 // The scenes in order; Root.tsx registers EFFECT_BOUNDARIES.length frames of EFFECT_BOUNDARIES.Video.
-export const EFFECT_BOUNDARIES = narrate('effect-boundaries', DURATIONS, [
+export const EFFECT_BOUNDARIES = narrate('effect-boundaries', DURATIONS, NARRATION, [
   {length: TITLE, starts: startsOf(TITLE_LINES), ids: ['t1', 't2', 't3'], node: <TitleScene />},
   {length: INSIDE, starts: startsOf(IN_LINES), ids: ['i1', 'i2', 'i3'], node: <InsideScene />},
   {length: ESCAPE, starts: startsOf(ES_LINES), ids: ['e1', 'e2', 'e3', 'e4'], node: <EscapeScene />},

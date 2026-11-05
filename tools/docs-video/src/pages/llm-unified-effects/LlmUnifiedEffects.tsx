@@ -17,6 +17,7 @@ import {CodeBlock, glow, Headlines, lineMid, Lines, Pill, startsOf} from '../../
 import {ACCENT, f, LOOK, MONO, MUTED, PANEL, PROD, SANS, TEST, TEXT} from '../../kit/theme';
 import {useSceneFrame} from '../../kit/warp';
 import DURATIONS from './durations.json';
+import NARRATION from './narration.json';
 
 // Seen between two seconds of a scene: fades in at the first and out at the second.
 const between = (frame: number, from: number, to: number, length = 0.3) => fadeAt(frame, from, length) * (1 - fadeAt(frame, to, length));
@@ -528,7 +529,7 @@ const OutroScene: React.FC = () => {
 };
 
 // The scenes in order; Root.tsx registers LLM_UNIFIED_EFFECTS.length frames of LLM_UNIFIED_EFFECTS.Video.
-export const LLM_UNIFIED_EFFECTS = narrate('llm-unified-effects', DURATIONS, [
+export const LLM_UNIFIED_EFFECTS = narrate('llm-unified-effects', DURATIONS, NARRATION, [
   {length: TITLE, starts: startsOf(TITLE_LINES), ids: ['t1', 't2', 't3'], node: <TitleScene />},
   {length: SHARED, starts: startsOf(SHARED_LINES), ids: ['s1', 's2', 's3', 's4'], node: <SharedScene />},
   {length: STACK, starts: startsOf(STACK_LINES), ids: ['k1', 'k2', 'k3', 'k4'], node: <StackScene />},

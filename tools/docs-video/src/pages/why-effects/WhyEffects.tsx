@@ -21,6 +21,7 @@ import {CodeBlock, glow, Headlines, lineMid, Lines, PAD, Pill, startsOf} from '.
 import {ACCENT, f, FAIL, LOOK, MONO, MUTED, PANEL, PROD, SANS, TEST, TEXT} from '../../kit/theme';
 import {useSceneFrame} from '../../kit/warp';
 import DURATIONS from './durations.json';
+import NARRATION from './narration.json';
 
 // The running example, as on the page.
 const SUMMARY = [
@@ -850,7 +851,7 @@ const OutroScene: React.FC = () => {
 };
 
 // The scenes in order; Root.tsx registers WHY_EFFECTS.length frames of WHY_EFFECTS.Video.
-export const WHY_EFFECTS = narrate('why-effects', DURATIONS, [
+export const WHY_EFFECTS = narrate('why-effects', DURATIONS, NARRATION, [
   {length: IDEA, starts: startsOf(IDEA_LINES), ids: ['t1', 't2'], node: <IdeaScene />},
   {length: EXAMPLE, starts: startsOf(EXAMPLE_LINES), ids: ['e1', 'e2', 'e3'], node: <ExampleScene />},
   {length: DROP, starts: startsOf(DROP_LINES), ids: ['d1', 'd2', 'd3', 'd4'], node: <DropScene />},

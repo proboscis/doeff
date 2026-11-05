@@ -10,6 +10,7 @@
    GitHub strips markdown video elements, so on the repo screen the one-frame image becomes a link to the mp4. On the site, that link is
    replaced with a video element whose poster is the one-frame image (videos are made with tools/docs-video). For pages whose image is the head GIF of the video
    (`assets/videos/<name>.gif` -- animates on the GitHub repo screen), the poster is the one-frame image of the same name (<name>.jpg).
+   A video with a subtitle file (`assets/videos/<name>.vtt` -- the narration's words, which the video also shows) gets it as its English captions track.
 4. Make click-through figures animate. A page writes a figure as a single line `[![<description>](assets/figures/<name>.gif)](<link target>)` -- on GitHub and Zenn
    the GIF of the same content animates and the link target can be followed. On the site, that line is replaced with the figure body (`docs/assets/figures/<name>.html` -- the figure's style and motion are held by
    step-figure.css and step-figure.js in the same dir). The GIF is left for screens where script does not run. The GIF is made by tools/docs-video/figure-gif.mjs from
@@ -111,19 +112,26 @@ def on_page_markdown(markdown: str, page: Page, config: MkDocsConfig, files: Fil
     )
 
 
-def videos_to_players(content: str) -> str:
-    """Replace a one-frame image or GIF made into a link to an mp4 with a video element that plays with the one-frame image as poster (3 at the head of the module)."""
+def videos_to_players(content: str, docs_dir: Path | None = None) -> str:
+    """Replace a one-frame image or GIF made into a link to an mp4 with a video element that plays with the one-frame image as poster (3 at the head of the module).
+
+    With docs_dir given, a video whose subtitle file docs/assets/videos/<name>.vtt exists gets it as its captions track.
+    """
 
     def player(match: re.Match[str]) -> str:
         """Replace one link with a video. The description (alt) becomes the name for screen readers."""
+        src = match.group(1)
         attrs = dict(IMG_ATTR.findall(match.group(2)))
         poster = attrs.get("src", "")
         if poster.endswith(".gif"):
             poster = poster.removesuffix(".gif") + ".jpg"
+        vtt = src.removesuffix(".mp4") + ".vtt"
+        captioned = docs_dir is not None and (docs_dir / "assets" / "videos" / Path(vtt).name).is_file()
+        track = f'<track kind="captions" srclang="en" label="English" src="{vtt}" default>' if captioned else ""
         return (
-            f'<video class="docs-video" controls preload="metadata" playsinline src="{match.group(1)}" '
+            f'<video class="docs-video" controls preload="metadata" playsinline src="{src}" '
             f'poster="{poster}" aria-label="{attrs.get("alt", "")}" '
-            f'style="width: 100%; height: auto;">{html.escape(html.unescape(attrs.get("alt", "")))}</video>'
+            f'style="width: 100%; height: auto;">{track}{html.escape(html.unescape(attrs.get("alt", "")))}</video>'
         )
 
     return VIDEO_LINK.sub(player, content)
@@ -169,4 +177,5 @@ def on_page_content(content: str, page: Page, config: MkDocsConfig, files: Files
 
     Called after mkdocs has rewritten relative paths of links and images to site paths, so paths can be used as they are.
     """
-    return youtube_to_iframes(videos_to_players(figures_to_steps(content, Path(config.docs_dir).resolve())))
+    docs_dir = Path(config.docs_dir).resolve()
+    return youtube_to_iframes(videos_to_players(figures_to_steps(content, docs_dir), docs_dir))

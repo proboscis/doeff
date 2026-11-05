@@ -13,6 +13,7 @@ import {ACCENT, f, FAIL, LOOK, MONO, MUTED, PANEL, SANS, TEST, TEXT} from '../..
 import {useSceneFrame} from '../../kit/warp';
 import {Geometry, K, Moving, Ring, Tower} from '../article-opening/ArticleOpening';
 import DURATIONS from './durations.json';
+import NARRATION from './narration.json';
 
 // The output of measure/hundred.py.
 const RANDOM_WINS = 'WWWWW.WWW.WWWWWWW.WWW.WW.W.W.WWWWWWWW.WW.WWW.WW.WW.WW.WW..W.WWWWWW.WWWWWWWW.WWW.WW.W.WWW..W...W.WWWW';
@@ -396,7 +397,7 @@ const Outside: React.FC = () => {
   );
 };
 
-export const ARTICLE_HUNDRED_FIGHTS = narrate('article-hundred-fights', DURATIONS, [
+export const ARTICLE_HUNDRED_FIGHTS = narrate('article-hundred-fights', DURATIONS, NARRATION, [
   {length: f(SPAWN_SECONDS), starts: startsOf(SPAWN_LINES), ids: ['s1', 's2'], node: <Spawning />},
   {length: f(TURN_SECONDS), starts: startsOf(TURN_LINES), ids: ['s3'], node: <Turns />},
   {length: f(GATHER_SECONDS), starts: startsOf(GATHER_LINES), ids: ['s4', 's5'], node: <Gathering />},

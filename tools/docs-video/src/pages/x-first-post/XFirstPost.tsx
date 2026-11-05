@@ -10,6 +10,7 @@ import {CodeBlock, Headlines, Lines, startsOf} from '../../kit/parts';
 import {ACCENT, f, LOOK, MONO, MUTED, PANEL, PROD, SANS, TEST, TEXT} from '../../kit/theme';
 import {useSceneFrame} from '../../kit/warp';
 import DURATIONS from './durations.json';
+import NARRATION from './narration.json';
 
 type Row = {at: number; text: string; color?: string; big?: boolean; bar?: number};
 
@@ -157,7 +158,7 @@ const Outro: React.FC = () => {
   );
 };
 
-export const X_FIRST_POST = narrate('x-first-post', DURATIONS, [
+export const X_FIRST_POST = narrate('x-first-post', DURATIONS, NARRATION, [
   {length: INTRO, starts: startsOf(INTRO_LINES), ids: ['i1', 'i2', 'i3'], node: <Stage lines={INTRO_LINES} code={INTRO_CODE} bands={[[4.4, 3], [5.6, 4], [6.8, 5], [7.4, 6]]} label="the program: battle" rows={INTRO_ROWS} />},
   {length: SCRIPT, starts: startsOf(SCRIPT_LINES), ids: ['p1', 'p2', 'p3'], node: <Stage lines={SCRIPT_LINES} code={SCRIPT_CODE} bands={[[0.5, 1]]} label="layer 1: a scripted player and a screen" rows={SCRIPT_ROWS} />},
   {length: TAPE, starts: startsOf(TAPE_LINES), ids: ['r1', 'r2', 'r3'], node: <Stage lines={TAPE_LINES} code={TAPE_CODE} bands={[[0.5, 0], [3.7, 1], [8.2, 2]]} label="layers 2 and 3: a random bot, record and replay" rows={TAPE_ROWS} />},

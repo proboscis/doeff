@@ -13,6 +13,7 @@ import {ACCENT, f, LOOK, MONO, MUTED, PANEL, SANS, TEST, TEXT} from '../../kit/t
 import {useSceneFrame} from '../../kit/warp';
 import {Geometry, K, Moving, Ring, Tower} from '../article-opening/ArticleOpening';
 import DURATIONS from './durations.json';
+import NARRATION from './narration.json';
 
 // The 2nd Choose of run(quiet_stats(silent(dice(3)(monte_carlo(3)(battle()))))) (measure/monte.py: "Choose 2").
 const HAND: [string, string][] = [['Bash', 'cost 2 · 8'], ['Strike', 'cost 1 · 6'], ['Strike', 'cost 1 · 6'], ['Defend', 'cost 1 · 5 block']];
@@ -320,7 +321,7 @@ const Cost: React.FC = () => {
   );
 };
 
-export const ARTICLE_MONTE_CARLO = narrate('article-monte-carlo', DURATIONS, [
+export const ARTICLE_MONTE_CARLO = narrate('article-monte-carlo', DURATIONS, NARRATION, [
   {length: PAUSE, starts: startsOf(PAUSE_LINES), ids: ['m1', 'm2'], node: <Pause />},
   {length: RUNS, starts: startsOf(RUN_LINES), ids: ['m3', 'm4'], node: <Runs />},
   {length: WINS, starts: startsOf(WIN_LINES), ids: ['m5', 'm6'], node: <Wins />},

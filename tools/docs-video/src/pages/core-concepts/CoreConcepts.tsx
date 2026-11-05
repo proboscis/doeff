@@ -16,6 +16,7 @@ import {CodeBlock, glow, Headlines, highlightYield, lineMid, Lines, PAD, Pill, s
 import {ACCENT, f, LOOK, MONO, MUTED, PANEL, PROD, SANS, TEST, TEXT} from '../../kit/theme';
 import {useSceneFrame} from '../../kit/warp';
 import DURATIONS from './durations.json';
+import NARRATION from './narration.json';
 
 // Seen between two seconds of a scene: fades in at the first and out at the second.
 const between = (frame: number, from: number, to: number, length = 0.3) => fadeAt(frame, from, length) * (1 - fadeAt(frame, to, length));
@@ -639,7 +640,7 @@ const OutroScene: React.FC = () => {
 };
 
 // The scenes in order; Root.tsx registers CORE_CONCEPTS.length frames of CORE_CONCEPTS.Video.
-export const CORE_CONCEPTS = narrate('core-concepts', DURATIONS, [
+export const CORE_CONCEPTS = narrate('core-concepts', DURATIONS, NARRATION, [
   {length: TITLE, starts: startsOf(TITLE_LINES), ids: ['t1', 't2', 't3'], node: <TitleScene />},
   {length: DISPATCH, starts: startsOf(DISPATCH_LINES), ids: ['d1', 'd2', 'd3', 'd4'], node: <DispatchScene />},
   {length: STAYS, starts: startsOf(STAYS_LINES), ids: ['a1', 'a2', 'a3'], node: <StaysScene />},

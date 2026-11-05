@@ -18,6 +18,7 @@ import {Clock, CodeBlock, glow, Headlines, lineMid, Lines, Pill, startsOf} from 
 import {ACCENT, f, FAIL, FPS, LOOK, MONO, MUTED, PANEL, PROD, SANS, TEST, TEXT} from '../../kit/theme';
 import {useSceneFrame} from '../../kit/warp';
 import DURATIONS from './durations.json';
+import NARRATION from './narration.json';
 
 type Point = {x: number; y: number};
 
@@ -530,7 +531,7 @@ const Outro: React.FC = () => {
 };
 
 // The scenes in order; Root.tsx registers ADVANCED_EFFECTS.length frames of ADVANCED_EFFECTS.Video.
-export const ADVANCED_EFFECTS = narrate('advanced-effects', DURATIONS, [
+export const ADVANCED_EFFECTS = narrate('advanced-effects', DURATIONS, NARRATION, [
   {length: INTRO, starts: startsOf(INTRO_LINES), ids: ['i1', 'i2'], node: <IntroScene />},
   {length: SS, starts: startsOf(SS_LINES), ids: ['s1', 's2', 's3', 's4'], node: <SharedStateScene />},
   {length: OB, starts: startsOf(OB_LINES), ids: ['w1', 'w2', 'w3'], node: <ObserveScene />},
