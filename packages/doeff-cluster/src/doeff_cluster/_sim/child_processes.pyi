@@ -106,10 +106,10 @@ class ChildArgv:
 def detached_argv(argv: tuple[str, ...]) -> _Program[ChildArgv, object]:
     ...
 
-def hyx_descendant_reapedXquestion_markX(descendant: SimDescendant, ended_roots: frozenset, generation: tuple | None, adoption: bool) -> _Program[bool, object]:
+def hyx_descendant_reapedXquestion_markX(descendant: SimDescendant, ended_roots: frozenset, generation: tuple | None, adoption: bool, spared: frozenset=...) -> _Program[bool, object]:
     ...
 
-def descendants_reaped(descendants: dict, tasks: dict, ended_roots: frozenset, generation: tuple | None, adoption: bool, now: int) -> _Program[ReapedDescendants, object]:
+def descendants_reaped(descendants: dict, tasks: dict, ended_roots: frozenset, generation: tuple | None, adoption: bool, now: int, spared: frozenset=...) -> _Program[ReapedDescendants, object]:
     ...
 
 def descendant_ended(descendants: dict, tasks: dict, pid: int, code: int, now: int) -> _Program[ReapedDescendants, object]:

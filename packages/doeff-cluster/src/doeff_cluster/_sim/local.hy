@@ -98,6 +98,11 @@
 ;;;                             (coordinator.entry.main の with-running-commit)で走っている doeff の版を読む(#3772)。初めは空。
 ;;;   KillWorker 名             worker が node ごと死ぬ: 子 process は全部 exit -9 で止まり(中で Spawn した task も)、heartbeat が止まる。
 ;;;                             答え = 止めた process の数。
+;;;   LoseWorker 名             worker の process だけが同じ Pod の中で消える(Pod と機体は残る — 次の世代は StartWorker で起こす):
+;;;                             本番の入れ物 shim の --orphan-seconds の写しで、outlives-worker の job(退きの寿命を宣言した handoff の
+;;;                             service)の process は止めずに退く知らせ(Retired)を立て、自分で終わるのを寿命の上限 retired-ms まで待つ
+;;;                             (越えたら取り消す — exit -15)。その子孫は世代の終わりで片づけず、その process の終わりで片づける。他の
+;;;                             process は KillWorker と同じく exit -9。heartbeat は止まる。答え = 止めた process の数(残した物は数えない)。
 ;;;   StopWorker 名             worker を優雅に止める(本番の SIGTERM — 全 job を止めの手順で回収して抜ける)。抜けるまで待つ。
 ;;;   StartWorker 名            死んだ・止めた worker を新しい世代(boot)で起こす(答え = 起こしたか — 動いている worker には偽)。
 ;;;   CutWorker 名 秒           worker の網を秒の間切る: その worker と子 process の要求は coordinator に届かない(接続の失敗)。子は
@@ -205,6 +210,7 @@
                          ReadDetachedTiming DetachedTimingAnswer DetachedUnknown ReadDetachedQueue DetachedQueueAnswer
                          AwaitDetachedOutbox AckDetachedOutbox DetachedOutbox DetachedOutboxAnswer DetachedAckAnswer])
 (import doeff_cluster._worker.core.drain_client [DRAIN-DEADLINE-SECONDS DRAIN-TTL-MARGIN-SECONDS])
+(import doeff_cluster._worker.core.launch [outlives-worker orphan-seconds-of])
 (import doeff_cluster._worker.protocol.drain_requests [drain-request])
 (import doeff_cluster._worker.core.memory_rules [JobRoot MIB])
 (import doeff_cluster._worker.protocol.memory_watch [MemoryWatchSettings MemoryCell memory-watch-step])
@@ -706,6 +712,13 @@
   "検の effect: worker name の退いた世代 boot を優雅に止める(旧い Pod への SIGTERM・AL-D2)。抜けるまで待つ。退いた世代でなければ何もしない。"
   {:fields [(: name str) (: boot str)]
    :answer None
+   :tags {:context "doeff-cluster" :role "intent"}})
+
+(defeffect LoseWorker
+  "検の effect: worker name の今の世代の process だけが同じ Pod の中で消える(頭の註 — 入れ物 shim の --orphan-seconds の写し)。
+   outlives-worker の job の process は残して退く知らせを立て、他は exit -9 で止める。答え = 止めた process の数。"
+  {:fields [(: name str)]
+   :answer int
    :tags {:context "doeff-cluster" :role "intent"}})
 
 (defeffect PreparationsOf
@@ -3252,6 +3265,26 @@
           (if ahead (min ahead) None))))
 
 
+(val ORPHAN-EXPIRED "orphan-expired")  ; orphan-expiry の時計の task の答え(残した process の終わりと見分ける)
+
+
+(defk orphan-clock [seconds]
+  {:pre [(: seconds float)] :post [(: % str)] :tags {:context "doeff-cluster" :role "program"}}
+  "寿命の上限 seconds 秒を待って ORPHAN-EXPIRED を答えるため(orphan-expiry が残した process の終わりと競わせる)。"
+  (<- (Delay seconds))
+  ORPHAN-EXPIRED)
+
+
+(defk orphan-expiry [handle seconds]
+  {:pre [(: handle Task) (: seconds float)] :post [(: % None)] :tags {:context "doeff-cluster" :role "program"}}
+  "worker の消失(LoseWorker)の後に残した process handle が seconds 秒の内に自分で終わらなければ取り消すため(本番の入れ物 shim の
+   --orphan-seconds の timer — 越えたら止めの合図)。先に終われば時計を取り消す。"
+  (<- clock Task (Spawn (orphan-clock seconds)))
+  (<- first (| str None) (Race clock handle))
+  (<- (Cancel (if (= first ORPHAN-EXPIRED) handle clock)))
+  None)
+
+
 ;; --- 世界 -----------------------------------------------------------------------------------------------
 
 ;; 退いた世代(RollWorker の後も動く旧い世代 — AL-D2)の宿の真実の鍵: 世界の hosts に「名@世代」で置く(今の世代は名のまま)。
@@ -3298,6 +3331,9 @@
   (session var descendant-tasks {})
   (session var finished (frozenset))
   (session var kills {})
+  ;; worker の消失(LoseWorker)の後も入れ物 shim が残した job の process の番号(自分で終わるか寿命の上限で取り消されるまで — 世代の
+  ;; 終わりでその子孫を片づけない)。
+  (session var orphans (frozenset))
   (session var next-pid 0)
   (session var log #())
   (session var preparations #())
@@ -3468,7 +3504,7 @@
     (<- reaped ReapedDescendants (descendants-reaped
                                    {pid (SimDescendant :pid pid :origin origin :parent parent :argv argv :escaped escaped :started-ms now)}
                                    {pid task} (frozenset (gfor p finished :if (= p origin.root) p)) generation
-                                   (or (is plan.children None) plan.children.adoption) now))
+                                   (or (is plan.children None) plan.children.adoption) now orphans))
     (:= descendants (| descendants reaped.descendants))
     (:= descendant-tasks (| descendant-tasks reaped.tasks))
     (for [discarded reaped.discarded]
@@ -3540,6 +3576,7 @@
       (:= children ends.children)
       (:= finished ends.finished)
       (:= end-waiters ends.end-waiters)
+      (:= orphans (- orphans (frozenset [pid])))
       ;; 本番の shim は job の終わりで引き取った子孫を全部 SIGKILL する(#2940 の条 C4b)— その process を根とする子孫を -9 で片づける。
       (<- reaped ReapedDescendants (descendants-reaped descendants descendant-tasks (frozenset [pid]) None
                                                        (or (is plan.children None) plan.children.adoption) now))
@@ -3605,9 +3642,10 @@
       (= truth.boot boot) (:= hosts (| hosts {name (replace truth :down True :stopping False)})))
     (:= stop-waiters (dfor #(k v) (.items stop-waiters) :if (!= k key) k v))
     ;; 世代の終わり(Pod の終わり)で、その世代の子孫は引き取りに依らず全部 -9 で終わる(#2940 の条 C4b — 切り離した孫も残らない)。
+    ;; ただし worker の消失(LoseWorker)で残した process を根とする子孫は、その process の終わりで片づける。
     (<- now int (now-epoch-ms))
     (<- reaped ReapedDescendants (descendants-reaped descendants descendant-tasks (frozenset) #(name boot)
-                                                     (or (is plan.children None) plan.children.adoption) now))
+                                                     (or (is plan.children None) plan.children.adoption) now orphans))
     (:= descendants reaped.descendants)
     (:= descendant-tasks reaped.tasks)
     (for [discarded reaped.discarded]
@@ -3730,6 +3768,8 @@
     (val killed (SimExit :code KILLED-CODE :result None :detail "worker が死んだ(node ごと止まった)"))
     (val mains (tuple (gfor r victims :if (in r.pid handles) (get handles r.pid))))
     (:= kills (| kills (dfor r victims r.pid killed)))
+    ;; node ごと死ねば、前の消失で残した process も一緒に止まる(残した印を外す)。
+    (:= orphans (- orphans (frozenset (gfor r victims r.pid))))
     ;; 周の間を待つ宿を起こす(死んだ世代の run-worker は次の世界への問いで WorkerDied になって終わる)。
     (val resting truth.wake-bell)
     (:= hosts (| hosts {name (replace truth :down True :wake-bell None)}))
@@ -3753,6 +3793,59 @@
     (for [task (+ mains reaped.discarded)]
       (<- (Discard task)))
     (<- (settle-process-ends ends True))
+    (when (is-not resting None)
+      (<- (CompletePromise resting None)))
+    (resume (len victims)))
+  (LoseWorker [name]
+    ;; 同じ Pod の中で worker の process だけが消える(頭の註): 入れ物 shim は outlives-worker の job を止めずに退く知らせを中継し、他の job を
+    ;; 止める。残した process(前の消失で残した物も)は今の世代の job ではないので、この消失では数えない。
+    (<- now int (now-epoch-ms))
+    (val truth (get hosts name))
+    (val views (dfor v truth.processes v.pid v))
+    (val running (if truth.down #() (tuple (gfor r log :if (and (= r.worker name) (is r.ended-ms None) (not-in r.pid orphans)) r))))
+    (val kept (tuple (gfor r running :if (and (in r.pid views) (in r.pid handles) (outlives-worker (. (get views r.pid) spec))) r)))
+    (val kept-pids (frozenset (gfor r kept r.pid)))
+    (val victims (tuple (gfor r running :if (not-in r.pid kept-pids) r)))
+    (val killed (SimExit :code KILLED-CODE :result None :detail "worker が消えた(同じ Pod の中で worker の process だけが止まった)"))
+    (val mains (tuple (gfor r victims :if (in r.pid handles) (get handles r.pid))))
+    (:= kills (| kills (dfor r victims r.pid killed)))
+    (:= orphans (| orphans kept-pids))
+    (val resting truth.wake-bell)
+    (:= hosts (| hosts {name (replace truth :down True :wake-bell None)}))
+    (<- ends ProcessEnds (end-processes (ProcessEnds :hosts hosts :log log :handles handles :children children :finished finished
+                                                     :end-waiters end-waiters :stopped #() :due #() :bells #())
+                                        victims killed now))
+    (:= hosts ends.hosts)
+    (:= log ends.log)
+    (:= handles ends.handles)
+    (:= children ends.children)
+    (:= finished ends.finished)
+    (:= end-waiters ends.end-waiters)
+    ;; 止めた process を根とする子孫と、この世代で起きた子孫を片づける — 残した process を根とする子孫は除く(その process の終わりで片づける)。
+    (<- reaped ReapedDescendants (descendants-reaped descendants descendant-tasks (frozenset (gfor r victims r.pid)) #(name truth.boot)
+                                                     (or (is plan.children None) plan.children.adoption) now orphans))
+    (:= descendants reaped.descendants)
+    (:= descendant-tasks reaped.tasks)
+    ;; 残した process へ退く知らせを立てる(本番の shim が job へ中継する retired の行 — ProcessNoticeRaised と同じ書き)。書きを済ませてから
+    ;; 待ちを起こす。
+    (var waking #())
+    (for [pid kept-pids]
+      (val box (.get notice-boxes pid (SimNoticeBox)))
+      (:= waking (+ waking (tuple (gfor w box.waiters :if (!= w.after (Retired)) w.promise))))
+      (:= notice-boxes (| notice-boxes {pid (replace box :notice (Retired)
+                                                         :waiters (tuple (gfor w box.waiters :if (= w.after (Retired)) w)))})))
+    (var expiring #())
+    (for [r kept]
+      (<- seconds (| float None) (orphan-seconds-of (. (get views r.pid) spec)))
+      (:= expiring (+ expiring #(#((get handles r.pid) seconds)))))
+    (for [task (+ mains reaped.discarded)]
+      (<- (Discard task)))
+    (<- (settle-process-ends ends True))
+    (for [promise waking]
+      (<- (CompletePromise promise (Retired))))
+    ;; 寿命の上限の見張り(本番の shim の timer の代役)— 世界の外側の scheduler と時計だけで回る。
+    (for [#(handle seconds) expiring]
+      (<- (Spawn (orphan-expiry handle seconds))))
     (when (is-not resting None)
       (<- (CompletePromise resting None)))
     (resume (len victims)))
