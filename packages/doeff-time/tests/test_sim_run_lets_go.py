@@ -55,6 +55,7 @@ def _live() -> tuple[int, int, int]:
 
 def _run_world() -> RunTrace:
     """Run a small sim world whose root returns while daemon tasks are parked on the clock and a promise."""
+
     @do
     def ticker():
         while True:
@@ -89,7 +90,9 @@ def test_a_finished_sim_run_leaves_nothing_alive_and_the_next_run_takes_the_same
     second = _run_world()
     gc.collect()
 
-    assert live_after_first == live_before, "the first run left VM segments/continuations/streams alive"
+    assert live_after_first == live_before, (
+        "the first run left VM segments/continuations/streams alive"
+    )
     assert _live() == live_before, "the second run left VM segments/continuations/streams alive"
     assert [ref() for ref in (*first.held, *second.held)] == [None] * 4, (
         "a parked task's promise or frame value outlived its run"
