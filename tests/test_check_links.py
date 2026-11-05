@@ -299,6 +299,23 @@ def test_example_hosts_are_not_asked() -> None:
     assert not links.is_example_host("https://pypi.org/project/doeff/")
 
 
+def test_github_attachments_are_not_asked(monkeypatch: pytest.MonkeyPatch) -> None:
+    """添付の URL は sign in なしで 404 を返すが、GitHub の画面では再生できるので、切れた link と数えない。"""
+    asked: list[str] = []
+
+    def ask(url: str) -> links.Answer:
+        asked.append(url)
+        return links.Answer(links.Verdict.BROKEN, "404")
+
+    monkeypatch.setattr(links, "ask", ask)
+    attached = links.extract_links(
+        "README.md", "https://github.com/user-attachments/assets/90a881f5-631e-4a4d-b9b7-6b78a0e285a5\n"
+    )
+    assert len(attached) == 1
+    assert links.check_external(attached) == ([], [], 0)
+    assert asked == []
+
+
 # --- 今の木 ---------------------------------------------------------------------------------------
 
 

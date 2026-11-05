@@ -9,6 +9,8 @@ mp4 への link になり、docs の site では hook(tools/docs_site/hooks.py)�
 2. hook が link を、その画像を poster にした video の要素に替える。
 3. ナレーションの声は OpenAI の text-to-speech の API で作り、ローカルの音声合成の model を使わない。戻す時はこの検と tools/docs-video/tts.py を
    同じ変更で直す。
+4. 記事の動画 3 本の節の頭に、動画の service の thumbnail の link と click で進む図の 1 行が続けて在り、hook が link を player に替える。
+   README には GitHub の添付の動画が素の 1 行で在り(GitHub の画面が再生の形に替える)、記事への link が在る。
 """
 
 from __future__ import annotations
@@ -20,6 +22,8 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 DOCS = ROOT / "docs"
+ARTICLE = DOCS / "articles" / "algebraic-effects-in-python.md"
+README = ROOT / "README.md"
 TTS = ROOT / "tools" / "docs-video" / "tts.py"
 VIDEO_LINK = re.compile(r"\[!\[[^\]]*\]\(([^)\s]+\.(?:jpg|gif))\)\]\(([^)\s]+\.mp4)\)")
 MAX_VIDEO_BYTES = 6_000_000
@@ -112,6 +116,47 @@ def test_the_hook_puts_the_still_as_the_poster_of_a_gif_link() -> None:
 def test_the_hook_leaves_other_links_alone() -> None:
     content = '<p><a href="01-getting-started/"><img alt="x" src="a.png" /></a></p>'
     assert _hooks().videos_to_players(content) == content
+
+
+def test_the_hook_turns_a_youtube_link_into_a_player() -> None:
+    content = (
+        '<p><a href="https://youtu.be/Ao6Gc1uvmtw"><img alt="A &quot;narrated&quot; video" '
+        'src="https://img.youtube.com/vi/Ao6Gc1uvmtw/maxresdefault.jpg" /></a></p>'
+    )
+    out = _hooks().youtube_to_iframes(content)
+    assert out.startswith("<p><iframe "), out
+    assert 'src="https://www.youtube.com/embed/Ao6Gc1uvmtw"' in out
+    assert 'title="A &quot;narrated&quot; video"' in out
+    assert 'referrerpolicy="strict-origin-when-cross-origin"' in out
+    assert "<a href" not in out
+
+
+def test_the_hook_leaves_a_youtube_link_inside_a_sentence_alone() -> None:
+    content = '<p>See <a href="https://youtu.be/Ao6Gc1uvmtw">the video</a>.</p>'
+    assert _hooks().youtube_to_iframes(content) == content
+
+
+def test_the_three_article_videos_sit_above_their_figures() -> None:
+    article = ARTICLE.read_text(encoding="utf-8")
+    for video_id, figure in (
+        ("CiRgrFVRg2w", "article-opening"),
+        ("Ao6Gc1uvmtw", "monte-carlo"),
+        ("hcJ2jz6p4iI", "hundred-fights"),
+    ):
+        pair = re.compile(
+            rf"^\[!\[[^\]]+\]\(https://img\.youtube\.com/vi/{video_id}/maxresdefault\.jpg\)\]\(https://youtu\.be/{video_id}\)\n\n"
+            rf"\[!\[[^\]]+\]\(\.\./assets/figures/{figure}\.gif\)\]",
+            re.MULTILINE,
+        )
+        assert pair.search(article), f"記事の {figure} の図の上に動画 {video_id} の行が無い"
+
+
+def test_the_readme_has_the_attached_video_and_the_article_link() -> None:
+    readme = README.read_text(encoding="utf-8")
+    assert re.search(r"^https://github\.com/user-attachments/assets/[0-9a-f-]+$", readme, re.MULTILINE), (
+        "README に GitHub の添付の動画の素の 1 行が無い"
+    )
+    assert "docs/articles/algebraic-effects-in-python.md" in readme
 
 
 def _script_dependencies(source: str) -> list[str]:
