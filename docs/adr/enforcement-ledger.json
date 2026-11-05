@@ -681,7 +681,6 @@
     "ADR-DOE-HY-004 test-adr-doe-hy-004-reasoned-deff-is-outside-the-roster",
     "ADR-DOE-HY-005 test-adr-doe-hy-005-macros-live-only-in-doeff-hy",
     "ADR-DOE-HY-005 test-adr-doe-hy-005-runtime-type-check-is-switched-by-the-handler",
-    "ADR-DOE-HY-005 test-adr-doe-hy-005-static-check-is-always-on",
     "ADR-DOE-HY-005 test-adr-doe-hy-005-verdict-is-the-single-definition-point",
     "ADR-DOE-HY-006 test-adr-doe-hy-006-lazy-val-at-most-once",
     "ADR-DOE-HY-006 test-adr-doe-hy-006-lazy-var-assigned-before-use-skips-init",

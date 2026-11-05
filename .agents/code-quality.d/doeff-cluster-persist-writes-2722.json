@@ -1,9 +1,0 @@
-{
-  "module_extensions": {
-    "doeff-cluster-wal-store": {
-      "allow": [
-        "doeff-hy-table"
-      ]
-    }
-  }
-}

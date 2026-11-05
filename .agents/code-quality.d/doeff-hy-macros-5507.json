@@ -1,7 +1,0 @@
-{
-  "include": [
-    "packages/doeff-hy/src/doeff_hy/macros.hy",
-    "packages/doeff-hy/src/doeff_hy/macros.pyi",
-    "tests/test_nested_definition_scope.py"
-  ]
-}
