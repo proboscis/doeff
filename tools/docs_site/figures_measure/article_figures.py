@@ -478,9 +478,9 @@ HUNDRED_STEPS = [
         values={"tres": "('win', 4)"},
         tokens={
             "k": end("n2"),
-            "roll": {"from": "t-room", **end("t-stack")},
-            "choose": {"from": "t-room", **end("t-stack"), "delay": 0.2},
-            "show": {"from": "t-room", **end("t-stack"), "delay": 0.4},
+            "roll": {"from": "t-room", "at": "t-stack", "merge": True},
+            "choose": {"from": "t-room", "at": "t-stack", "delay": 0.3, "merge": True},
+            "show": {"from": "t-room", "at": "t-stack", "delay": 0.6, "merge": True},
         },
     ),
     step(
