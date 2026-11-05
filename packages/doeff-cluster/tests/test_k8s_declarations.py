@@ -1593,7 +1593,7 @@ def test_other_workers_keep_tmp_in_the_container(rendered: list[Manifest], name:
 # zeus の worker の /scratch は kubelet の disk の外の、Pod ごとの Longhorn の volume(機体の dir の scratch-on-longhorn.yaml の頭の註)。
 # emptyDir は kubelet の disk を埋めて node を DiskPressure にし、sizeLimit は越えると Pod ごと追い出される(2026-11-05)。
 SCRATCH_CLASS = "longhorn-scratch"
-ZEUS_SCRATCH_SIZE = "64Gi"
+ZEUS_SCRATCH_SIZE = "32Gi"
 
 
 def _storage_class(rendered: list[Manifest], name: str) -> dict[str, object]:
