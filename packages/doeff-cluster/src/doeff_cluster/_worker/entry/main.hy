@@ -106,6 +106,9 @@
 ;; 実行環境の service も、その root の待ちの子から分けて起こすか(WorkerPolicy.warm-services)。値は on か off
 ;; (無ければ枠の file の自分の行の warmServices・それも無ければ off)。それ以外の綴りは起動を断る(黙って off に倒れない)。
 (val WARM-SERVICES-VAR "DOEFF_WORKER_WARM_SERVICES")
+;; 温める表の行の root にも待ちの子を起こすか(WorkerPolicy.warm-table-children)。値は on か off(無ければ on — 今までどおり)。
+;; task の来ない機体の配備が off にする。それ以外の綴りは起動を断る(黙って倒れない)。
+(val WARM-TABLE-CHILDREN-VAR "DOEFF_WORKER_WARM_TABLE_CHILDREN")
 ;; この worker の Pod の metadata.uid(worker の雛形が downward API で置く)。在り、node の名(--node)も在る時だけ、
 ;; 置かれた常駐の job を自分の Pod の label に写す(worker/protocol/pod_labels)。Pod の外の worker には無い。
 (val POD-UID-VAR "POD_UID")
@@ -172,6 +175,15 @@
     (= value "on") True
     (= value "off") False
     True (.format "{} は on か off で書く: {!r}" WARM-SERVICES-VAR value)))
+
+
+(defn #^ (| bool str) warm-table-children-of [#^ (| str None) value]  ; defk にできない: 起動の setv の連なり(Program の外)で値を読む
+  "WARM-TABLE-CHILDREN-VAR の値を方策の真偽に読むため。無い = 真・on = 真・off = 偽。それ以外は起動を断る訳の文を返す。"
+  (cond
+    (is value None) True
+    (= value "on") True
+    (= value "off") False
+    True (.format "{} は on か off で書く: {!r}" WARM-TABLE-CHILDREN-VAR value)))
 
 
 (defk boot-warm-services [room-file name value]
@@ -474,15 +486,19 @@
         machine-env (run (with-handlers [subprocess-handler]
                            (machine-environment (+ (run (pass-env-names args.pass-env))
                                                    #(BOOT-FILE-VAR BOOT-STARTED-VAR BOOT-EXEC-VAR JOB-CGROUP-VAR SERVICE-CGROUP-VAR CGROUP-DIR-VAR
-                                                     CGROUP-HOST-VAR CGROUP-LAYOUT-VAR WARM-SERVICES-VAR POD-UID-VAR PREPARE-CGROUP-VAR
+                                                     CGROUP-HOST-VAR CGROUP-LAYOUT-VAR WARM-SERVICES-VAR WARM-TABLE-CHILDREN-VAR POD-UID-VAR PREPARE-CGROUP-VAR
                                                      PREPARE-ROOM-FILE-VAR EVICTION-MARGIN-VAR commit-var)
                                                    WORKER-LOG-ENV-NAMES))))
         ;; service も待ちの子から分けるか(機体の配備が WARM-SERVICES-VAR か枠の file の自分の行の warmServices で
         ;; 入れる・無ければ今までどおり)。
         warm-services (run (with-handlers [os-file-handler]
                              (boot-warm-services args.room-file args.name (.get machine-env WARM-SERVICES-VAR))))
+        ;; 温める表の行の root にも待ちの子を起こすか(task の来ない機体の配備が WARM-TABLE-CHILDREN-VAR で切る)。
+        warm-table-children (warm-table-children-of (.get machine-env WARM-TABLE-CHILDREN-VAR))
         policy (WorkerPolicy :stop-grace-ms (int (* args.stop-grace 1000))
-                             :warm-services (if (isinstance warm-services bool) warm-services (.error parser warm-services)))
+                             :warm-services (if (isinstance warm-services bool) warm-services (.error parser warm-services))
+                             :warm-table-children (if (isinstance warm-table-children bool) warm-table-children
+                                                      (.error parser warm-table-children)))
         ;; 子と検めの shim の時間(猶予と掃除の余裕 — 方針から導く 1 か所・#2940)。破る組は下の timing-checked が断る。
         shim (run (shim-spans policy))
         ;; 起動の内訳の刻(Pod の起動・boot.sh の始まり・exec・import の終わり — 最初の heartbeat の答えの後に口が 1 行で出す・#3676)。

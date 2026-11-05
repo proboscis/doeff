@@ -294,6 +294,7 @@ class WorkerPolicy:
     warm_refusal_limit: int = 3
     warm_services: bool = False
     warm_services_min: int = 3
+    warm_table_children: bool = True
     memory_kill_limit: int = 5
     memory_kill_reset_ms: int = 600000
 

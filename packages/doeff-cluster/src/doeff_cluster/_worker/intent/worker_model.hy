@@ -379,6 +379,11 @@
   ;; 読み込んだ頁を持つ(zeus の測りで RSS 約 500 MB)ので、service が 1〜2 本の root では分けても本体の合計が減らない。task か温める表の
   ;; ために待ちの子を起こす root の service は、本数によらず分ける(待ちの子は既に居る — warm_rules の service-warm-keys)。
   (setv #^ int warm-services-min 3)
+  ;; 温める表の行の root にも、分かれる task が来る前から待ちの子を起こすか。偽 = 温める表の行は root を組むだけで、待ちの子は分かれる
+  ;; task か service の分けが要る root にだけ起こす。task の来ない機体では温める表の待ちの子は分かれ元にならず、組みと同じ cgroup の層に
+  ;; 1 つ約 550 MB 残り(行の期限 1 時間の間)、次の版の先の組みを no-memory-room で断らせた(2026-11-05 の k3s-3: 層の上限 1.5 GiB に
+  ;; 誰も使わない待ちの子 2 つで working set 1.07〜1.34 GB・18 時間に task 0 本)。機体の配備が環境変数 DOEFF_WORKER_WARM_TABLE_CHILDREN で切る。
+  (setv #^ bool warm-table-children True)
   ;; 常駐の job が機体の memory の見張りに続けて止められた時に、起こし直しを止めて失敗(phase memory-killed)として報告する回数(正の整数)。
   ;; 起動のたびに同じ memory の山を作る job は、起こし直しても同じ所で止められ、要求を 1 件も回さずに起き直し続けた(2026-10-19 の本番の
   ;; worker で 1 つの job が起動から約 1 分で止められ、3 時間 13 分に 125 回・43 分に 37 回。失敗の数は約 1 分の走りで 1 に戻り、表に

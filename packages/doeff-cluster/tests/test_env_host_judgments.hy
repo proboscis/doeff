@@ -835,6 +835,16 @@
   (assert (= run.launches 1) run.launches))
 
 
+;; 失敗ケース(2026-11-05 の eos): 層 1.5 GiB の working set 48 MB(組みの名残だけ)に、待ちの子と別の組みを含んで測った見積もり 1.59 GB が
+;; project の最新の実測として残った。見積もりを層の上限でしか切らないと 48 MB + 1.59 GB > 1.61 GB で全部の先の組みを断り、宣言の後の準備に
+;; 待ちが残る。上限の 4 分の 3(1.125 GiB)で切れば通す。
+(deftest test-a-nearly-idle-layer-admits-a-build-whose-stale-estimate-nearly-fills-the-layer [tmp-path]
+  (<- run WarmRun (layer-room tmp-path (layer-files (* 48 MIB) (+ GIB (* 512 MIB)) 0) 1593688064))
+  (<- kind (| str None) (refused-kind run.seen))
+  (assert (is kind None) run.seen)
+  (assert (= run.launches 1) run.launches))
+
+
 (deftest test-a-warm-build-is-refused-when-the-watch-lowered-the-layer-below-its-use [tmp-path]
   ;; 機体の memory の見張りが追い出しの線の手前で層の上限を使いの下まで下げた(working set 500 MiB > 上限 400 MiB): 機体が苦しいので断る。
   (<- run WarmRun (layer-room tmp-path (layer-files (* 500 MIB) (* 400 MIB) 0) (* 100 MIB)))

@@ -353,10 +353,14 @@
    始めてよければ None。順は disk の空き → roots の上限 → memory:
      no-disk-room    空き < 空きの最低 + root 1 つの見積もり
      over-roots-cap  roots の合計 + root 1 つの見積もり − 掃除で空けられる分 > 上限(まだ数えていなければ判じない)
-     no-memory-room  組みの置かれる層が読める時: 層の working set + 組みの山の見積もり(層の上限を上限に) > 層の memory.max。層の上限は組みの
-                     子だけを抑えるので(常駐の job と worker は別の層で守る)、層の外の使いでは断らない — 準備が同じ層で組むのに断ると宣言の後に
-                     待ちが移るだけになる。見積もりを層の上限で切るので、空いた層はいつも通す(見積もりは container の山で測った値で層の上限を
-                     越えうる・組みは層の上限の内で走る)。機体の見張りが層の上限を使いの下まで下げた時は断る。
+     no-memory-room  組みの置かれる層が読める時: 層の working set + 組みの山の見積もり(層の上限 × MEMORY-ROOM-RATIO を上限に)
+                     > 層の memory.max。層の上限は組みの子だけを抑えるので(常駐の job と worker は別の層で守る)、層の外の使いでは断らない —
+                     準備が同じ層で組むのに断ると宣言の後に待ちが移るだけになる。見積もりを層の上限の 4 分の 3 で切るので、使いが上限の 4 分の 1 の
+                     内の層(組みの名残の page cache と小さな process だけ)はいつも通す(組みは層の上限の内で走る)。切る訳: 見積もりは準備の間の
+                     層の memory.peak の上がりで、同じ間に層で起きた待ちの子や別の組みを含む。memory.peak は層の始まりからの最大で戻らないので、
+                     それを越えない組みは印を残さず(None)、含みの大きい値が project の最新の実測として残り続ける(2026-11-05 の eos: 層 1.5 GiB に
+                     見積もり 1.59 GB が残り、層の working set 48 MB でも全部の先の組みを断った)。機体の見張りが層の上限を使いの下まで下げた時と、
+                     ほかの組みや待ちの子が層の 4 分の 1 を越えて使う時は断る。
                      層が無い時: memory.current + 組みの山の見積もり > memory.max × MEMORY-ROOM-RATIO。memory を測れなければ判じない(呼び手が
                      測っていない印を立てる)"
   (val need-free (+ room.min-free room.root-bytes))
@@ -370,10 +374,11 @@
       (EnvFailure :kind EnvFailureKind.OVER-ROOTS-CAP :retryable False
                   :detail (.format "先の組みを断った: roots の合計 {} byte + root 1 つの見積もり {} byte − 掃除で空けられる {} byte > 上限 {} byte"
                                    total extra freed cap))
-    (WarmRoom :memory (LayerMemoryUse :working working :limit limit) :peak peak) :if (> (+ working (min peak limit)) limit)
+    (WarmRoom :memory (LayerMemoryUse :working working :limit limit) :peak peak)
+      :if (> (+ working (min peak (int (* limit MEMORY-ROOM-RATIO)))) limit)
       (EnvFailure :kind EnvFailureKind.NO-MEMORY-ROOM :retryable False
                   :detail (.format "先の組みを断った: 層の working set {} byte + 組みの山の見積もり {} byte > 層の memory.max {} byte"
-                                   working (min peak limit) limit))
+                                   working (min peak (int (* limit MEMORY-ROOM-RATIO))) limit))
     (WarmRoom :memory (MemoryUse :current current :limit limit) :peak peak) :if (> (+ current peak) (* limit MEMORY-ROOM-RATIO))
       (EnvFailure :kind EnvFailureKind.NO-MEMORY-ROOM :retryable False
                   :detail (.format "先の組みを断った: memory.current {} byte + 組みの山の見積もり {} byte > memory.max {} byte × {}"
