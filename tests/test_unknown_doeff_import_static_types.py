@@ -1,16 +1,16 @@
-"""doeff に無い名の import は、型の check で import の行が error になる(取り組み doeff-publish の調べの抜け 3)。
+"""Importing a name doeff does not have makes the import line an error in type checks (gap 3 found by the initiative doeff-publish investigation).
 
-実測(pyright 1.1.414 の standard と strict・mypy 2.4.0 の既定と --strict): ``doeff/__init__.py`` の
-module の ``def __getattr__(name: str) -> object`` が型の道具に見え、``from doeff import state``(handler は
-doeff_core_effects の下にある)も綴りの誤り ``from doeff import reeder`` も、import の行で error にならなかった。
-名は ``object`` に解け、使う行で「呼べない」とだけ出た。
+Measured (pyright 1.1.414 standard and strict, mypy 2.4.0 default and --strict): the module-level ``def __getattr__(name: str) -> object`` in ``doeff/__init__.py``
+looked to type tools like a real attribute, so neither ``from doeff import state`` (the handler lives under
+doeff_core_effects) nor the misspelling ``from doeff import reeder`` produced an error on the import line.
+The name resolved to ``object``, and only the use site reported "not callable".
 
-``__getattr__`` を ``if not TYPE_CHECKING:`` の下へ置いて型の道具から隠すと、doeff が静的に持たない名の import は
-``"state" is unknown import symbol`` になる。実行時の案内(``ImportError: ... it is in
-doeff_core_effects._handlers: ...``)は ``tests/test_import_handler_from_doeff.py`` が見ていて、変わらない。
+Hiding ``__getattr__`` from type tools by placing it under ``if not TYPE_CHECKING:`` makes importing a name doeff does not statically have
+report ``"state" is unknown import symbol``. The runtime guidance (``ImportError: ... it is in
+doeff_core_effects._handlers: ...``) is checked by ``tests/test_import_handler_from_doeff.py`` and does not change.
 
-``DoeffRunContext`` は同じ ``__getattr__`` で遅く読むが、型の側は ``if TYPE_CHECKING:`` の import で見えるので、
-隠しても型は失わない — ここで ``reveal_type`` で確かめる。
+``DoeffRunContext`` is loaded lazily by the same ``__getattr__``, but on the type side it is visible through the ``if TYPE_CHECKING:`` import,
+so hiding does not lose the type -- verified here with ``reveal_type``.
 """
 
 from pathlib import Path

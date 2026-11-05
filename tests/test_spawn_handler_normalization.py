@@ -1,4 +1,4 @@
-"""再利用する handler の形式判定を Spawn のたびに繰り返さない (#1384)。"""
+"""Do not repeat the form check of a reused handler on every Spawn (#1384)."""
 
 from collections.abc import Callable, Generator
 
@@ -47,8 +47,8 @@ def test_spawn_does_not_renormalize_captured_handlers(monkeypatch: pytest.Monkey
     program = scheduler.scheduled(handler(answer_number)(read_in_children()), implementation="python")
 
     assert run(program) == [7, 7, 7, 7]
-    # GetBoundaries が返す値は VM が受理済みの dispatcher。利用者向けの
-    # installer / dispatcher の形式判定を、子タスクごとにやり直さない。
+    # The value GetBoundaries returns is a dispatcher the VM has already accepted. Do not
+    # redo the form check of the user-facing installer / dispatcher for each child task.
     assert answer_number not in normalized
 
 
@@ -60,9 +60,9 @@ def test_invalid_handler_is_rejected_at_public_entry(invalid) -> None:
 
 @pytest.mark.parametrize("invalid", [None, 7, object()])
 def test_reinstall_still_rejects_an_unvalidated_non_callable(invalid) -> None:
-    # 内部の再設定へ不正な値を直接渡しても、WithBoundaries の VM 検証が
-    # 拒否する(WithHandler と同じ callable の検め — #3149 で 1 命令に)。
-    # 形式判定の省略で callable の検証を迂回できない。
+    # Even if an invalid value is passed directly to the internal reinstall, the VM check of WithBoundaries
+    # rejects it (the same callable check as WithHandler — folded into one instruction in #3149).
+    # Skipping the form check does not bypass the callable validation.
     with pytest.raises(TypeError, match=r"WithBoundaries: boundary\[0\] handler must be callable"):
         scheduler._reinstall_boundaries(Pure(None), [("handler", invalid)])
 
@@ -72,9 +72,9 @@ def test_wrong_handler_arity_is_rejected_at_entry_and_by_vm_on_reinstall() -> No
     def wrong_arity(effect: object) -> Pure[object]:
         return Pure(effect)
 
-    # @do 関数でも dispatcher の引数 (effect, k) を受け取れなければ、元の入口は
-    # 組む時に名指しで断る。引き継ぎ先は形式判定を省くが、
-    # VM 実行時の TypeError を保つ — 省略で引数の数の誤りを迂回できない。
+    # Even for an @do function, if it cannot accept the dispatcher arguments (effect, k), the original entry
+    # rejects it by name at build time. The handoff target skips the form check but
+    # keeps the VM runtime TypeError — skipping does not bypass the argument count error.
     with pytest.raises(TypeError, match=r"without the handler marker: .*wrong_arity"):
         handler(wrong_arity)
     reinstalled = scheduler._reinstall_boundaries(read_number(), [("handler", wrong_arity)])

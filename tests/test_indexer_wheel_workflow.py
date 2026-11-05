@@ -1,16 +1,16 @@
-"""doeff-indexer の wheel を組む CI(build-indexer.yml)が、配置の間違った wheel を upload しない事の検(取り組み doeff-publish で
-見つかった不具合)。
+"""Test that the CI that builds doeff-indexer wheels (build-indexer.yml) does not upload a wheel with a wrong layout (a defect found in the doeff-publish effort).
 
-PyPI の 0.1.3 の wheel は、命令の binary を命令の入口が探す `doeff_indexer/bin/` でなく `python/doeff_indexer/bin/` に持った。
-maturin 1.12 は pyproject.toml の `include` の file を project の根からの path のまま入れ、1.13 から python-source の下の path にする。
-0.1.3 は maturin-action が当日の最新 1.12 を引いた CI で組まれたが、build-indexer.yml は版を固定していなかった
-(経緯と道具は tests/test_indexer_wheel_layout.py・tools/verify_indexer_wheel.py)。
 
-この検は workflow の側の守り 2 つを読む:
+The PyPI 0.1.3 wheel held the command binary at `python/doeff_indexer/bin/`, not at `doeff_indexer/bin/` where the command entrypoint looks.
+maturin 1.12 puts the `include` files of pyproject.toml in at their path from the project root, and from 1.13 puts them under python-source.
+0.1.3 was built in a CI where maturin-action pulled that day's latest 1.12, but build-indexer.yml did not pin the version
+(for the history and tools, see tests/test_indexer_wheel_layout.py and tools/verify_indexer_wheel.py).
 
-1. maturin-action の step は全部 maturin-version を 1.13 以上に固定する(その日の「最新」で配置が変わらない)。
-2. 全部の wheel の build の後に、tools/verify_indexer_wheel.py で配置を見て Linux x86_64 の wheel を入れて命令を撃つ job が走り、
-   upload の job はその job を待つ(間違った wheel は upload の前に止まる)。
+This test reads two workflow-side defenses:
+
+1. Every maturin-action step pins maturin-version to 1.13 or later (the layout does not change with that day's "latest").
+2. After all wheel builds, a job runs that checks the layout with tools/verify_indexer_wheel.py, installs the Linux x86_64 wheel, and fires the command,
+   and the upload job waits for that job (a wrong wheel stops before upload).
 """
 
 from __future__ import annotations
@@ -44,20 +44,20 @@ def test_every_maturin_action_step_pins_maturin_from_the_layout_fix() -> None:
     build_steps = [
         (name, step) for name, job in _jobs().items() for step in _steps_using(job, MATURIN_ACTION)
     ]
-    assert build_steps, "build-indexer.yml に maturin-action の step が無い"
+    assert build_steps, "build-indexer.yml has no maturin-action step"
     unpinned = [name for name, step in build_steps if "maturin-version" not in step.get("with", {})]
-    assert unpinned == [], f"maturin-version の固定が無い job: {unpinned}"
+    assert unpinned == [], f"jobs with no maturin-version pin: {unpinned}"
     too_old = [
         name
         for name, step in build_steps
         if _versions(step["with"]["maturin-version"]) < MATURIN_FLOOR
     ]
-    assert too_old == [], f"maturin 1.13 より古い版を固定した job: {too_old}"
+    assert too_old == [], f"jobs pinning a version older than maturin 1.13: {too_old}"
 
 
 def test_wheels_are_checked_and_run_before_the_upload() -> None:
     jobs = _jobs()
-    # wheel を組む job(sdist の job は同じ action で tar.gz を組む — 配置を見る相手でない)。
+    # Jobs that build wheels (the sdist job builds a tar.gz with the same action -- not one to check the layout of).
     builders = {
         name
         for name, job in jobs.items()
@@ -71,22 +71,22 @@ def test_wheels_are_checked_and_run_before_the_upload() -> None:
         for name, job in jobs.items()
         if any(TOOL_PATH in step.get("run", "") for step in job.get("steps", []))
     }
-    assert len(verify_jobs) == 1, f"配置を見る job が 1 つでない: {sorted(verify_jobs)}"
+    assert len(verify_jobs) == 1, f"the number of jobs checking the layout is not 1: {sorted(verify_jobs)}"
     (verify,) = verify_jobs
-    assert builders <= _needs(jobs[verify]), "全部の build の後に走らない"
+    assert builders <= _needs(jobs[verify]), "does not run after all builds"
     command = next(
         step["run"] for step in jobs[verify]["steps"] if TOOL_PATH in step.get("run", "")
     )
-    # 入れて撃つのは、この job の runner(ubuntu-latest・x86_64)で動く Linux x86_64 の wheel。
+    # The wheel that is installed and fired is the Linux x86_64 wheel that works on this job's runner (ubuntu-latest, x86_64).
     assert "--smoke" in command
     assert "manylinux" in command
     assert "x86_64" in command
-    assert verify in _needs(jobs["publish"]), "upload が配置の検を待たない"
+    assert verify in _needs(jobs["publish"]), "upload does not wait for the layout check"
 
 
 def test_the_upload_waits_for_a_check_that_all_fifteen_wheels_exist() -> None:
-    # 0.2.0 の最初の手動実行は 10 個しか組まれなかったが、全部の job と配置の検が通った。組む wheel の一覧(--expect-all)を
-    # 公開の前の job が持たないと、同じ足りなさが次の公開でも黙って通る。
+    # The first manual run of 0.2.0 built only 10 wheels, yet every job and the layout check passed. Unless the job before publishing holds the list of wheels to build (--expect-all),
+    # the same shortfall silently passes in the next publication too.
     jobs = _jobs()
     command = next(
         step["run"]
@@ -98,16 +98,16 @@ def test_the_upload_waits_for_a_check_that_all_fifteen_wheels_exist() -> None:
 
 
 def test_a_job_that_names_python_3_13t_pins_a_maturin_that_accepts_it() -> None:
-    # maturin 1.14 以降は `-i python3.13t` を「free-threaded は 3.14 から」と拒否する(1.13.0・1.13.1 は受け付ける)。
-    # 拒否する版を固定した job は、3.13 向けの wheel を組めずに落ちるか、黙って足りなくなる。
+    # maturin 1.14 and later reject `-i python3.13t` with "free-threaded is from 3.14" (1.13.0 and 1.13.1 accept it).
+    # A job pinning a rejecting version fails because it cannot build the wheel for 3.13, or silently comes up short.
     names_313t = [
         (name, step)
         for name, job in _jobs().items()
         for step in _steps_using(job, MATURIN_ACTION)
         if "python3.13t" in str(step.get("with", {}).get("args", ""))
     ]
-    assert names_313t, "python3.13t を名指す job が無い(3.13 向けの wheel が組まれない)"
+    assert names_313t, "no job names python3.13t (the wheel for 3.13 is not built)"
     too_new = [
         name for name, step in names_313t if _versions(step["with"]["maturin-version"]) >= (1, 14, 0)
     ]
-    assert too_new == [], f"maturin 1.14 以降を固定した job が python3.13t を名指している: {too_new}"
+    assert too_new == [], f"jobs pinning maturin 1.14 or later name python3.13t: {too_new}"

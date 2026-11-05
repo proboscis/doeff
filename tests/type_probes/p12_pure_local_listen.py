@@ -1,4 +1,4 @@
-# Pure・Local・Listen・Tell の型
+# Types of Pure, Local, Listen, and Tell
 from collections.abc import Generator
 from typing import Any, assert_type
 

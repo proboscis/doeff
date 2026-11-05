@@ -1,5 +1,5 @@
-"""state の答え手は VM の中の Rust の handler(doeff_vm.StateHandler)で、Get / Put に Python の handler なしで答える。
-答え・外へ渡す effect・例外の出る所・handler の一覧の見え方が、Python の `@do` の handler だった時と同じ事を確かめる。
+"""The state responder is a Rust handler inside the VM (doeff_vm.StateHandler) and answers Get / Put without a Python handler.
+Check that the answers, the effects passed outward, where exceptions surface, and how the handler list looks are the same as when it was a Python `@do` handler.
 """
 
 from __future__ import annotations
@@ -16,13 +16,13 @@ from doeff.handler_utils import reinstaller
 
 
 def _raw(installed: object) -> object:
-    """state() の installer が包む、VM が呼ぶ handler の値(doeff.program が置く欄)。"""
-    return installed.__doeff_handler_data__  # type: ignore[attr-defined] — installer の印の欄(型の無い欄)
+    """The handler value the VM calls, wrapped by the installer of state() (the field doeff.program sets)."""
+    return installed.__doeff_handler_data__  # type: ignore[attr-defined] — installer's marker field (an untyped field)
 
 
 @do
 def _put_then_get():
-    """Put の答えと、書いたキー・無いキーの Get の答えを返す。"""
+    """Return the answer to Put and the answers to Get for a written key and a missing key."""
     put = yield Put("a", 1)
     return put, (yield Get("a")), (yield Get("missing"))
 
@@ -78,7 +78,7 @@ def test_other_effects_pass_to_the_outer_handler() -> None:
 
 
 def test_a_handler_inside_state_answers_the_get_of_a_key_first() -> None:
-    """ADR-DOE-HY-006: session の値は state の効果を通るので、内の handler が同じキーの Get に答えて値を差し替え、Put を観測できる。"""
+    """ADR-DOE-HY-006: session values go through the state effect, so an inner handler can answer Get on the same key to substitute the value and can observe Put."""
     seen: list[object] = []
 
     @handler
@@ -108,7 +108,7 @@ def test_an_unhashable_key_raises_at_the_yield_of_the_effect() -> None:
             return f"caught: {error}"
         return "no error"
 
-    # CPython の文は版で違う(3.14 から "cannot use 'list' as a dict key (unhashable type: 'list')")— 両方に在る部分で見る。
+    # The CPython message differs by version (from 3.14: "cannot use 'list' as a dict key (unhashable type: 'list')") — check the part present in both.
     caught = run(state()(body()))
     assert caught.startswith("caught: ") and "unhashable type: 'list'" in caught, caught
 
@@ -148,7 +148,7 @@ def test_get_handlers_answers_the_handler_object_state_made() -> None:
 
 
 def test_a_reinstalled_state_handler_keeps_its_store() -> None:
-    """try_handler は内の handler を GetHandlers で捕まえて Try の program の周りに据え直す — 据え直した state は同じ store を持つ。"""
+    """try_handler captures the inner handlers with GetHandlers and reinstalls them around the Try program — the reinstalled state shares the same store."""
 
     @do
     def inner():

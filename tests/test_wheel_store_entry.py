@@ -1,9 +1,9 @@
-"""Rust の部品を組む・引く入口(tools/doeff_cargo_backend.py の stored_wheel・wheel_from_store・editable_from_store)の失敗ケース
+"""Failure cases of the entry point that builds and fetches Rust components (stored_wheel, wheel_from_store, editable_from_store in tools/doeff_cargo_backend.py)
 (ADR-DOE-BUILD-001)。
 
-入口は組む前に必ず「source の中身の hash を鍵にした保存先」を引く。ここでは cargo と maturin を撃たず、組み方(Compile)を
-呼ばれた度数を数える偽の組み方に差し替え、wheel の hook と editable の hook が同じ保存先から答えるか・Rust の source を 1 つ
-替えると 1 度だけ組むか・壊れた wheel を黙って使わないかを確かめる。本物の maturin と cargo で組む形は
+Before building, the entry point always consults "the store keyed by the hash of the source contents". Here cargo and maturin are not fired; Compile is replaced with
+a fake that counts how many times it was called, and we check that the wheel hook and the editable hook answer from the same store, that changing one Rust source
+builds exactly once, and that a broken wheel is not silently used. The form built with a real maturin and cargo is in
 tests/test_rust_build_target_outside_package.py。
 """
 
@@ -28,11 +28,11 @@ NATIVE = "probe/_native.cpython-314-x86_64-linux-gnu.so"
 
 
 def _backend() -> ModuleType:
-    """build の口を module として読む(tools は package でないので path から)。"""
+    """Load the build entry point as a module (tools is not a package, so by path)."""
     spec = importlib.util.spec_from_file_location("doeff_cargo_backend_entry_under_test", BACKEND)
     assert spec is not None and spec.loader is not None
     module = importlib.util.module_from_spec(spec)
-    # dataclass は定義の module を sys.modules から引く(口の StoredWheel・WheelEntry)ので、読む前に名で登録する。
+    # A dataclass looks up its defining module from sys.modules (StoredWheel, WheelEntry of the entry point), so register it by name before loading.
     sys.modules[spec.name] = module
     spec.loader.exec_module(module)
     return module
@@ -44,8 +44,8 @@ def _digest(data: bytes) -> str:
 
 @dataclass(frozen=True)
 class FakeCompile:
-    """偽の組み方: 呼ばれるたびに渡された target を記録し(度数 = 記録の数)、source の lib.rs の中身を native の file に入れ、maturin と
-    同じく組んだ時の作業木の python-source の package の .py を入れた wheel を出す(組んだ中身を後で読めるように)。"""
+    """Fake compile: records the target it was given on every call (call count = number of records), puts the contents of the source's lib.rs into the native file, and, like maturin,
+    emits a wheel containing the .py files of the python-source package of the working tree at build time (so the built contents can be read later)."""
 
     package: Path
     _mut_targets: list[Path] = field(default_factory=list)
@@ -84,7 +84,7 @@ class FakeCompile:
 
 @pytest.fixture
 def backend(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> ModuleType:
-    """道具の版を固定し、保存先と一時の dir を tmp に向け、機体の外の置き場を引かない口(置き場の検は tests/test_wheel_remote_store.py)。"""
+    """Pin the tool versions, point the store and the temporary dir at tmp, and make the entry point not consult the store outside the machine (the store test is tests/test_wheel_remote_store.py)."""
     module = _backend()
     monkeypatch.setattr(module, "_tool_versions", lambda: "maturin=fixed")
     monkeypatch.setenv("DOEFF_WHEEL_CACHE", str(tmp_path / "store"))
@@ -95,7 +95,7 @@ def backend(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> ModuleType:
 
 
 def _checkout(root: Path, rust: str = "pub fn probe() {}\n") -> Path:
-    """python-source を持つ(maturin の混ぜた並びの)package の作業木 1 つ。"""
+    """One working tree of a package that has python-source (maturin's mixed layout)."""
     (root / "src").mkdir(parents=True)
     (root / "python" / "probe").mkdir(parents=True)
     (root / "pyproject.toml").write_text(
@@ -108,7 +108,7 @@ def _checkout(root: Path, rust: str = "pub fn probe() {}\n") -> Path:
 
 
 def _call(backend: ModuleType, hook: str, package: Path, out: Path, compile_wheel: FakeCompile) -> Path:
-    """package の dir で入口の hook を呼び、出した wheel の path を返す。"""
+    """Call the entry point's hook in the package dir and return the path of the wheel it produced."""
     out.mkdir(parents=True, exist_ok=True)
     here = Path.cwd()
     os.chdir(package)
@@ -120,8 +120,8 @@ def _call(backend: ModuleType, hook: str, package: Path, out: Path, compile_whee
 
 
 def test_a_second_preparation_of_the_same_source_builds_nothing(backend: ModuleType, tmp_path: Path) -> None:
-    # 失敗ケース 1(#3860): 同じ Rust の source の 2 度目の準備(新しい作業木・editable)は、組み方を 1 度も呼ばない。直す前の editable は
-    # 保存先を引かずに毎回 maturin を撃った(日次の検証で doeff-vm を 1 日 約 100 度)。
+    # Failure case 1 (#3860): the second preparation of the same Rust source (new working tree, editable) never calls Compile. Before the fix, editable did not consult
+    # the store and fired maturin every time (about 100 times a day for doeff-vm in the daily verification).
     first = _checkout(tmp_path / "wt-1")
     compile_first = FakeCompile(first)
     _call(backend, "editable_from_store", first, tmp_path / "out-1", compile_first)
@@ -132,7 +132,7 @@ def test_a_second_preparation_of_the_same_source_builds_nothing(backend: ModuleT
 
 
 def test_the_wheel_hook_and_the_editable_hook_read_one_store(backend: ModuleType, tmp_path: Path) -> None:
-    # 入口は 1 つ: wheel の hook が置いた wheel を、別の作業木の editable の hook が組まずに使う(逆も同じ)。
+    # There is one entrance: a wheel placed by the wheel hook is used, without building, by the editable hook of another working tree (and vice versa).
     first = _checkout(tmp_path / "wt-1")
     _call(backend, "wheel_from_store", first, tmp_path / "out-1", FakeCompile(first))
     second = _checkout(tmp_path / "wt-2")
@@ -144,11 +144,11 @@ def test_the_wheel_hook_and_the_editable_hook_read_one_store(backend: ModuleType
 def test_the_wheel_hook_takes_the_python_source_from_the_tree_and_only_the_build_products_from_the_store(
     backend: ModuleType, tmp_path: Path
 ) -> None:
-    # 失敗ケース: 鍵は Rust の入力だけ(python-source の .py は鍵に無い — doeff-effect-analyzer は cache-keys を
-    # 宣言せず既定の glob)なので、Python だけを替えた版の wheel の hook は前の版の wheel を保存先から引く。直す前の hook はそれを
-    # そのまま写し、git の依存で入れた doeff-effect-analyzer が 38bd248df を名乗りながら bba41285 の Python を持った(merge-queue の閉じの
-    # 検 6 本が赤)。hook は保存先から組み立ての成果物と dist-info だけを取り、python-source の file は作業木から入れる(R2b)— 書き換えた
-    # module は作業木の中身・足した module は入り・消した module は残らず・作業木の __pycache__ と前の形が残した native は入らない。
+    # Failure case: the key is only the Rust inputs (the .py of python-source is not in the key -- doeff-effect-analyzer does not
+    # declare cache-keys and uses the default glob), so the wheel hook for a version with only Python changed pulls the earlier version's wheel from the store. Before the fix, the hook
+    # copied it as is, and doeff-effect-analyzer installed through a git dependency claimed 38bd248df while carrying the Python of bba41285 (6 closing
+    # tests of the merge queue went red). The hook takes only the build artifacts and dist-info from the store and installs the python-source files from the working tree (R2b) -- a rewritten
+    # module has the working tree's contents, an added module is included, a removed module does not remain, and neither the working tree's __pycache__ nor the native left by the earlier layout is included.
     first = _checkout(tmp_path / "wt-1")
     (first / "python" / "probe" / "gone.py").write_text("GONE = 1\n")
     _call(backend, "wheel_from_store", first, tmp_path / "out-1", FakeCompile(first))
@@ -160,7 +160,7 @@ def test_the_wheel_hook_takes_the_python_source_from_the_tree_and_only_the_build
     (second / "python" / NATIVE).write_bytes(b"left by an old layout\n")
     compile_second = FakeCompile(second)
     wheel = _call(backend, "wheel_from_store", second, tmp_path / "out-2", compile_second)
-    assert compile_second.calls == 0, "Python だけの変更で Rust を組み直した"
+    assert compile_second.calls == 0, "Rust was rebuilt for a Python-only change"
     with zipfile.ZipFile(wheel) as archive:
         assert sorted(archive.namelist()) == sorted([
             "probe/__init__.py", "probe/added.py", NATIVE,
@@ -169,15 +169,15 @@ def test_the_wheel_hook_takes_the_python_source_from_the_tree_and_only_the_build
         assert archive.read("probe/__init__.py") == b"VERSION = 2\n"
         assert archive.read("probe/added.py") == b"ADDED = 1\n"
         assert archive.read(NATIVE) == b"pub fn probe() {}\n"
-        assert (archive.getinfo(NATIVE).external_attr >> 16) & 0o111, "native の拡張 module の実行の bit が落ちた"
+        assert (archive.getinfo(NATIVE).external_attr >> 16) & 0o111, "the execute bit of the native extension module was lost"
     assert backend._wheel_problem(wheel) is None
 
 
 def test_the_wheel_hook_hands_over_the_stored_wheel_of_a_package_without_python_source(
     backend: ModuleType, tmp_path: Path
 ) -> None:
-    # python-source を持たない package(bin の binary・Python の source を持たない拡張)は、作業木から入れる物が無いので保存先の
-    # wheel そのものを渡す(editable と同じ — R2)。
+    # A package without python-source (a bin binary, or an extension without Python source) has nothing to install from the working tree, so the store's
+    # wheel itself is handed over (same as editable -- R2).
     package = _checkout(tmp_path / "wt")
     (package / "pyproject.toml").write_text('[project]\nname = "probe"\nversion = "0.1.0"\n')
     wheel = _call(backend, "wheel_from_store", package, tmp_path / "out", FakeCompile(package))
@@ -187,29 +187,29 @@ def test_the_wheel_hook_hands_over_the_stored_wheel_of_a_package_without_python_
 
 @dataclass(frozen=True)
 class EditableNative:
-    """editable の wheel が venv の成果物の dir に入れる native の拡張 module: data = 中身・mode = 許可の bit。"""
+    """The native extension module that the editable wheel puts in the venv's artifact dir: data = contents, mode = permission bits."""
 
     data: bytes
     mode: int
 
 
 def _editable_native(wheel: Path) -> EditableNative:
-    """editable の wheel の中の native の拡張 module を読む。"""
+    """Read the native extension module inside the editable wheel."""
     with zipfile.ZipFile(wheel) as archive:
         info = archive.getinfo(f"__editable__.probe.native/{NATIVE}")
         return EditableNative(data=archive.read(info), mode=(info.external_attr >> 16) & 0o777)
 
 
 def test_editable_puts_the_native_module_in_the_venv_and_finds_the_source_through_a_finder(backend: ModuleType, tmp_path: Path) -> None:
-    # editable の wheel は、native の拡張 module を source の木に置かず、wheel の中身として venv の __editable__.probe.native/ に入れる
-    # (uv の RECORD が持つ — 木の名簿に無い file を消す写しでも消えない・2026-10-07 04:00 の日次)。.pth は python-source を路に足し、
-    # finder を起こす。finder は probe の探し先を 成果物の dir → 作業木の dir の順にする。RECORD は書いた file の hash と合う。
+    # The editable wheel does not put the native extension module in the source tree; it puts it in the venv's __editable__.probe.native/ as wheel contents
+    # (held by uv's RECORD -- it is not removed even by a copy that removes files not in the tree's list; the 2026-10-07 04:00 daily). The .pth adds python-source to the path and
+    # starts the finder. The finder searches for probe in the order artifact dir -> working tree dir. RECORD matches the hashes of the files written.
     package = _checkout(tmp_path / "wt")
     wheel = _call(backend, "editable_from_store", package, tmp_path / "out", FakeCompile(package))
-    assert not (package / "python" / NATIVE).exists(), "native の拡張 module を source の木に置いた"
+    assert not (package / "python" / NATIVE).exists(), "the native extension module was placed in the source tree"
     native = _editable_native(wheel)
     assert native.data == b"pub fn probe() {}\n"
-    assert native.mode & 0o111, "native の拡張 module の実行の bit が落ちた"
+    assert native.mode & 0o111, "the execute bit of the native extension module was lost"
     with zipfile.ZipFile(wheel) as archive:
         names = sorted(archive.namelist())
         assert names == sorted([
@@ -219,12 +219,12 @@ def test_editable_puts_the_native_module_in_the_venv_and_finds_the_source_throug
         assert archive.read("probe.pth").decode().splitlines() == [str((package / "python").resolve()), "import __editable___probe_finder"]
         finder = archive.read("__editable___probe_finder.py").decode()
         assert "PACKAGES = ('probe',)" in finder
-        assert str(package) not in finder, "finder が作業木の path を持つ(source の根の定義元は .pth の 1 行目だけ)"
+        assert str(package) not in finder, "the finder holds the working tree's path (the source root is defined only on line 1 of the .pth)"
     assert backend._wheel_problem(wheel) is None
 
 
 def test_one_changed_rust_file_builds_exactly_once(backend: ModuleType, tmp_path: Path) -> None:
-    # 失敗ケース 2: .rs を 1 つ替えると鍵が替わり 1 度だけ組む(.rs の変化を拾う)。同じ変更の 2 度目の準備は組まない。
+    # Failure case 2: changing one .rs changes the key and builds exactly once (picks up the change in .rs). The second preparation of the same change does not build.
     _call(backend, "editable_from_store", (base := _checkout(tmp_path / "wt-base")), tmp_path / "out-base", FakeCompile(base))
     counts = []
     for name in ("wt-changed-1", "wt-changed-2"):
@@ -237,8 +237,8 @@ def test_one_changed_rust_file_builds_exactly_once(backend: ModuleType, tmp_path
 
 
 def test_a_broken_stored_wheel_is_named_and_built_again(backend: ModuleType, tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
-    # 失敗ケース 3: 鍵は合うが中身の欠けた wheel(zip の member を 1 つ壊した)が保存先に在る時は、名指しの 1 行を出して組み直す
-    # (黙って壊れた物を使わない)。
+    # Failure case 3: when the store holds a wheel whose key matches but whose contents are missing (one zip member broken), print one naming line and rebuild
+    # (do not silently use the broken one).
     first = _checkout(tmp_path / "wt-1")
     stored = backend.stored_wheel(first, None, FakeCompile(first)).path
     with zipfile.ZipFile(stored) as archive:
@@ -257,8 +257,8 @@ def test_a_broken_stored_wheel_is_named_and_built_again(backend: ModuleType, tmp
 
 
 def test_the_store_is_one_flat_dir_per_package_and_key_with_a_used_mark(backend: ModuleType, tmp_path: Path) -> None:
-    # 保存先の並びは worker の wheel の置き場と同じ <package>-<鍵>/<wheel> と使った印 .used(使うたびに dir の時刻が進む — worker の
-    # 掃除が 7 日使われない dir だけを消す)。
+    # The store layout is the same as the worker's wheel store, <package>-<key>/<wheel>, with a used marker .used (each use advances the dir's timestamp -- the worker's
+    # cleanup removes only dirs unused for 7 days).
     package = _checkout(tmp_path / "wt")
     stored = backend.stored_wheel(package, None, FakeCompile(package)).path
     slot = stored.parent
@@ -271,7 +271,7 @@ def test_the_store_is_one_flat_dir_per_package_and_key_with_a_used_mark(backend:
 
 
 def test_a_miss_builds_in_a_temporary_target_and_removes_it(backend: ModuleType, tmp_path: Path) -> None:
-    # 組む時の cargo の target は 1 回の build ごとの一時の dir(作業木の外)で、組み終えたら消える — 保存先に target を残さない。
+    # The cargo target at build time is a per-build temporary dir (outside the working tree) and is removed after the build -- no target is left in the store.
     package = _checkout(tmp_path / "wt")
     compile_wheel = FakeCompile(package)
     backend.stored_wheel(package, None, compile_wheel)
@@ -281,9 +281,9 @@ def test_a_miss_builds_in_a_temporary_target_and_removes_it(backend: ModuleType,
 
 
 def test_the_entry_reports_the_stored_wheel_to_the_caller(backend: ModuleType, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    # 失敗ケース(#3860 — doeff-cluster の worker と起動の script が `uv build --wheel` で入口を通るだけにする前提): env DOEFF_WHEEL_REPORT が
-    # 在れば、入口は呼ぶたびに保存先の中の wheel と組んだかを 1 行の JSON で足す(1 度目は組んだ・2 度目は使った — 同じ保存先の wheel)。
-    # 書かないと、呼び手は自前の鍵で保存先を引き直すしかない。
+    # Failure case (#3860 -- premise: the doeff-cluster worker and startup script only go through the entry point via `uv build --wheel`): if env DOEFF_WHEEL_REPORT
+    # is set, each time it is called the entry point appends, as one line of JSON, the wheel in the store and whether it built (first time built, second time used -- the same store wheel).
+    # Without writing it, the caller has no choice but to look up the store again with its own key.
     import json
 
     report = tmp_path / "report.jsonl"
@@ -299,10 +299,10 @@ def test_the_entry_reports_the_stored_wheel_to_the_caller(backend: ModuleType, t
 
 
 def test_the_store_answers_without_rustc_on_the_path_and_without_a_child_process(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    # 失敗ケース(ADR-DOE-BUILD-001 R4 の追補・2026-10-07 — zeus の追随の腕の slot の同期が rc=1 で止まった): 入口は
-    # 保存先を引く前に鍵を作る。鍵の材料に `rustc -V` の出力を入れていると、PATH に rustc の無い環境(zeus の常駐の PATH)では保存先に
-    # 同じ source の wheel が在っても鍵を作る所で落ちる。鍵は子 process を起こさずに作り、保存先の wheel をそのまま返す。道具の版を
-    # 固定の文字に差し替えない(鍵を作る本物の道筋を通す)。
+    # Failure case (addendum to ADR-DOE-BUILD-001 R4, 2026-10-07 -- the sync of the slot of zeus's follower arm stopped with rc=1): the entry point
+    # makes the key before consulting the store. If the output of `rustc -V` is in the key material, then in an environment without rustc on PATH (zeus's resident PATH), it fails at key creation even if the store
+    # has a wheel of the same source. The key is made without spawning a child process, and the store's wheel is returned as is. Do not replace the tool version with
+    # a fixed string (go through the real path that makes the key).
     module = _backend()
     monkeypatch.setenv("DOEFF_WHEEL_CACHE", str(tmp_path / "store"))
     monkeypatch.setenv("DOEFF_WHEEL_REMOTE", "")
@@ -313,7 +313,7 @@ def test_the_store_answers_without_rustc_on_the_path_and_without_a_child_process
     monkeypatch.setenv("PATH", str(no_tools))
 
     def no_child(*args: object, **kwargs: object) -> object:
-        raise AssertionError(f"入口が子 process を起こした: {args!r}")
+        raise AssertionError(f"the entry point spawned a child process: {args!r}")
 
     monkeypatch.setattr(subprocess, "run", no_child)
     package = _checkout(tmp_path / "wt")

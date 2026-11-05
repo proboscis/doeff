@@ -1,13 +1,13 @@
-"""``@do`` の 1 回の飾りの費用(``program_factory``)と、その答えが変わらないこと。
+"""Cost of a single ``@do`` decoration (``program_factory``) and the guarantee that its answer is unchanged.
 
-``@do`` は handler の閉包にも呼びごとに当たる(例ごとに作る handler — #2421 の測りで 1 検 1811 回)。飾るたびに
-``inspect.isgeneratorfunction`` で partialmethod・method・partial を剥がし、関数の中で ``doeff_vm`` を import していた。
-素の関数は code の旗を直に読み、import は module の頭へ移した。ここでは:
+``@do`` is applied to handler closures on every call (handlers built per example -- 1811 times per test in the #2421 measurement). Each decoration
+used ``inspect.isgeneratorfunction`` to strip partialmethod / method / partial and imported ``doeff_vm`` inside the function.
+Plain functions now read the code flag directly, and the import was moved to the top of the module. This test checks:
 
-- 答えが ``inspect.isgeneratorfunction`` と同じこと(剥がす物のある形も含めて)。
-- 飾った関数の振る舞い(生成器なら本体を走らせる・生成器でなければ値)が変わらないこと。
-- 素の関数を飾る時に ``inspect.isgeneratorfunction`` を呼ばず、``program_factory`` が import しないこと
-  (直しを外すと赤になる数の検)。
+- The answer equals ``inspect.isgeneratorfunction`` (including shapes that have something to strip).
+- The decorated function's behavior is unchanged (a generator runs its body; a non-generator yields its value).
+- Decorating a plain function neither calls ``inspect.isgeneratorfunction`` nor imports in ``program_factory``
+  (count-based tests that turn red if the fix is removed).
 """
 
 from __future__ import annotations
@@ -58,7 +58,7 @@ class _Holder:
 
 
 def _function_marked_as_partialmethod() -> Callable[..., object]:
-    """partialmethod の印 ``__partialmethod__`` を持つ素の関数 — inspect は印の先の関数の旗を読む。"""
+    """Plain function carrying the partialmethod marker ``__partialmethod__`` -- inspect reads the flag of the function the marker points to."""
 
     def shim(x: int) -> int:
         return x
@@ -97,10 +97,10 @@ def test_decorated_functions_keep_their_behavior() -> None:
 def test_decorating_a_plain_function_does_not_unwrap_through_inspect(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """失敗ケースの対(数の検): 素の関数の飾りは ``inspect.isgeneratorfunction`` を通らない。
+    """Failing-case pair (count-based): decorating a plain function does not go through ``inspect.isgeneratorfunction``.
 
-    直しを外すと(``program_factory`` が ``inspect.isgeneratorfunction`` を呼ぶ形)、閉包を 3 つ飾って 3 回数える。
-    剥がす物のある形(partial)は今までどおり inspect に任せる。
+    If the fix is removed (``program_factory`` calls ``inspect.isgeneratorfunction``), decorating 3 closures counts 3 calls.
+    Shapes that have something to strip (partial) are still left to inspect, as before.
     """
     calls = [0]
     original = inspect.isgeneratorfunction
@@ -121,9 +121,9 @@ def test_decorating_a_plain_function_does_not_unwrap_through_inspect(
 def test_calling_a_decorated_function_builds_its_call_without_the_call_constructor(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """失敗ケースの対(数の検): ``@do`` の関数の 1 回の呼びは ``Call`` の型を呼ばない — 定義の ``make_call``
-    (vectorcall の method)が同じ ``Call`` を作る。型を呼ぶと、引数の tuple・``tp_new`` の振り分け・pyo3 の
-    constructor の引数の読みが呼びごとに掛かった。直しを外すと 1 回数える。
+    """Failing-case pair (count-based): a single call of a ``@do`` function does not call the ``Call`` type -- the definition's ``make_call``
+    (a vectorcall method) builds the same ``Call``. Calling the type incurred the args tuple, the ``tp_new`` dispatch, and the pyo3
+    constructor's argument parsing on every call. If the fix is removed, it counts 1 call.
     """
     do_module = importlib.import_module("doeff.do")
     constructed = itertools.count()
@@ -134,8 +134,8 @@ def test_calling_a_decorated_function_builds_its_call_without_the_call_construct
         next(constructed)
         return Call(function, args, kwargs)
 
-    # wrapper が呼びごとに module の名 Call を引いて型を呼ぶ形なら、ここで差し込んだ物が数える
-    # (直した後の do.py は Call を import しない)
+    # If the wrapper looked up the module-level name Call on every call and called the type, the object injected here would count it
+    # (do.py after the fix does not import Call)
     monkeypatch.setattr(do_module, "Call", counting, raising=False)
     decorated = do(_generator)
     program = decorated(1)
@@ -150,6 +150,6 @@ def test_calling_a_decorated_function_builds_its_call_without_the_call_construct
 
 
 def test_program_factory_does_not_import_per_decoration() -> None:
-    """飾るたびに import の機構(``_handle_fromlist``)を通らない — 名は module の頭で 1 度だけ引く。"""
+    """Decorating does not go through the import machinery (``_handle_fromlist``) -- the name is looked up only once, at the top of the module."""
     opnames = {instruction.opname for instruction in dis.get_instructions(program_factory)}
     assert "IMPORT_NAME" not in opnames

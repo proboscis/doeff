@@ -19,7 +19,7 @@ from tests._run_helpers import run_with_defaults
 
 
 def _lazy_storage(calls: list) -> Program[InMemoryStorage]:
-    """記憶の置き場を作る Program(作られるたびに calls に 1 つ印を足す — 何回作られたかを検が数える)。"""
+    """A Program that builds the memo storage (each build appends one mark to calls -- the test counts how many times it was built)."""
     storage = InMemoryStorage()
 
     @do

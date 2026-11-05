@@ -1,15 +1,15 @@
-"""README.md の例が今の doeff でそのまま走り、書いてある通りに印字する事の検(取り組み doeff-publish)。
+"""Test that the examples in README.md run as-is on current doeff and print as documented (doeff-publish initiative).
 
-README の例は、初めての利用者が写して走らせる code で、どの検も走らせていなかったので、handler の使い方が変わっても
-誰も気づかなかった: 並行の例は writer が state の handler を要るようになった後も state を入れず UnhandledEffect(Get) で
-落ち、Hy の例は defhandler と do! の require が無く NameError で落ちていた(下の STALE_EXAMPLES が当時の写し)。
+The README examples are code that first-time users copy and run, and no test ran them, so when the way to use handlers changed,
+nobody noticed: the concurrency example, even after writer came to need a state handler, did not install state and failed with UnhandledEffect(Get),
+and the Hy example lacked the require of defhandler and do! and failed with NameError (STALE_EXAMPLES below are copies from that time).
 
-README の囲みの読み方・走らせ方・注記との比べ方は tools/readme_examples.py の 1 点に在り、出す前と出した後の確かめの道具
-tools/verify_release_install.py(核の 5 個を入れた新しい venv で 5 個の README を走らせる)と共に使う。
-この検は根の README.md の例を開発の環境で走らせ(囲みは全部入る — 新しい例も書いただけで入る)、核の 5 個の README の
-囲みが約束(言葉・`file=`・`excerpt`・`run`・注記)に合う事を、走らせずに読む。核の 4 個の README の例を走らせるのは
-道具の方 — 例は利用者が新しく入れた環境の様子を言い、この開発の環境には他の部品と pytest の plugin(doeff-adr の Hy の検の
-集め手など)も入っているため。
+How to read README fences, run them, and compare them with annotations is defined at a single point, tools/readme_examples.py, which is used together with the pre- and post-release verification tool
+tools/verify_release_install.py (runs the 5 READMEs in a fresh venv with the 5 core components installed).
+This test runs the examples of the root README.md in the development environment (all fences are included — a new example is included just by writing it), and reads without running
+that the fences of the 5 core READMEs conform to the convention (language, `file=`, `excerpt`, `run`, annotations). Running the examples of the 4 other core READMEs is done by
+the tool — the examples describe a user's freshly installed environment, and this development environment also has other components and pytest plugins (such as the Hy test
+collector of doeff-adr).
 """
 
 from __future__ import annotations
@@ -27,7 +27,7 @@ from tests.cli.cli_child import with_settings
 
 ROOT = Path(__file__).resolve().parents[1]
 README = ROOT / "README.md"
-# 核の 5 個の README(tools/verify_release_install.py の CORE と同じ並び)。
+# READMEs of the 5 core components (same order as CORE in tools/verify_release_install.py).
 CORE_READMES = {
     "doeff": README,
     "doeff-vm": ROOT / "packages" / "doeff-vm" / "README.md",
@@ -35,8 +35,8 @@ CORE_READMES = {
     "doeff-hy": ROOT / "packages" / "doeff-hy" / "README.md",
     "doeff-hy-pytest": ROOT / "packages" / "doeff-hy-pytest" / "README.md",
 }
-# README が保つ入口の例の節(頭の 2 つ・他の書き方との比べの Before / After・並行・最初の例を IO でない effect にし、
-# IO の差し替えを使い方の 1 つの節へ移した節)。節を消す・名を変える時は、ここも直す。
+# Entry example sections kept by the README (the first two, the Before / After comparison with other styles, concurrency, and the section that made the first example a non-IO effect
+# and moved IO substitution into one usage section). When deleting or renaming a section, fix this too.
 KEPT_SECTIONS = (
     "A 30-second example",
     "Swap a handler: fakes in tests, real I/O in production",
@@ -44,14 +44,14 @@ KEPT_SECTIONS = (
     "Before and after: fakes in a test",
     "Scheduler and Concurrency",
 )
-# 子 1 つの制限時間の、負荷で伸ばす前の値(秒)。1 本は 約 1〜2 秒(多くは doeff と hy の import)。
+# Time limit (seconds) for one child, before stretching under load. One takes about 1 to 2 seconds (mostly importing doeff and hy).
 CHILD_DEADLINE_SECONDS = 50
 
 
 def _load(name: str) -> ModuleType:
-    """tools/ の module を読む(tools/ は package ではなく、道具は workspace の外の interpreter で script として走る)。
+    """Load a module from tools/ (tools/ is not a package; the tools run as scripts in an interpreter outside the workspace).
 
-    sys.modules に名で置く — tools/verify_release_install.py は隣の readme_examples を名で import するので、先に読んで置く。
+    Register it in sys.modules by name — tools/verify_release_install.py imports the neighboring readme_examples by name, so load and register it first.
     """
     spec = importlib.util.spec_from_file_location(name, ROOT / "tools" / f"{name}.py")
     assert spec is not None
@@ -68,24 +68,24 @@ Example = examples.Example
 
 
 def _readme_fences() -> list[Example]:
-    """根の README の囲み(検の名の README は repo の根からの path)。"""
+    """Fences of the root README (a README given as this test's name is a path from the repo root)."""
     return examples.fences(README.read_text(encoding="utf-8"), "README.md")
 
 
 def _runnable() -> list[Example]:
-    """根の README の、走らせて注記と比べる囲み。"""
+    """Fences of the root README that are run and compared with annotations."""
     return [example for example in _readme_fences() if example.runs()]
 
 
 def _example_id(example: Example) -> str:
-    """parametrize の id — 節と言葉で、落ちた検がどの例かを読めるようにする。"""
+    """parametrize id — by section and language, so that a failed test shows which example it was."""
     return f"{re.sub(r'[^a-z0-9]+', '-', example.section.lower()).strip('-')}-{example.language}"
 
 
 def _run(
     example: Example, directory: Path, deadline_scale_factor: float
 ) -> subprocess.CompletedProcess[str]:
-    """例を directory の file に書き、開発の環境の新しい interpreter で走らせる(cwd も directory)。"""
+    """Write the example to a file in a directory and run it in a fresh interpreter of the development environment (cwd is also the directory)."""
     return examples.run(
         example,
         directory,
@@ -100,7 +100,7 @@ def test_readme_example_runs_and_prints_what_it_states(
     example: Example, tmp_path: Path, deadline_scale_factor: float
 ) -> None:
     assert example.problems() == []
-    # 前の囲みが書く file(`file=` の module など)を、読み手と同じく先に置く。
+    # Place the files written by earlier fences (`file=` modules etc.) first, as a reader would.
     for earlier in _readme_fences():
         if earlier.line < example.line and earlier.written_as() is not None:
             examples.write(earlier, tmp_path)
@@ -118,9 +118,9 @@ def test_core_readme_fences_keep_the_rules(package: str) -> None:
 
 @pytest.mark.parametrize("package", sorted(CORE_READMES))
 def test_core_readme_has_an_example_that_runs(package: str) -> None:
-    # 全部を excerpt にした README は、確かめの道具で何も走らず、確かめた事が無い(道具も赤にする)。
+    # A README where everything is an excerpt runs nothing in the verification tool and verifies nothing (the tool also goes red).
     fences = examples.fences(CORE_READMES[package].read_text(encoding="utf-8"), package)
-    assert any(example.runs() for example in fences), f"{package} の README に、走らせる例が無い"
+    assert any(example.runs() for example in fences), f"the README of {package} has no example to run"
 
 
 def test_core_readmes_are_the_release_core() -> None:
@@ -130,11 +130,11 @@ def test_core_readmes_are_the_release_core() -> None:
 def test_readme_keeps_the_entry_examples() -> None:
     sections = {example.section for example in _runnable() if example.language == "python"}
     assert set(KEPT_SECTIONS) - sections == set(), (
-        f"README の入口の例の節({KEPT_SECTIONS})に、走らせる Python の例が無い"
+        f"the README entry example sections ({KEPT_SECTIONS}) have no Python example to run"
     )
 
 
-# 並行の節を足す前の README の 2 つの例の写し(この検が名指す事を確かめる失敗ケース)。
+# Copies of two README examples from before the concurrency section was added (failure cases that confirm this test names them).
 STALE_EXAMPLES = {
     "UnhandledEffect": Example(
         "README.md",
@@ -269,7 +269,7 @@ def test_rules_name_a_fence_that_breaks_them(info: str, code: str, named: str) -
 
 
 def test_a_continuing_fence_is_the_fence_above_it_with_its_own_lines_added() -> None:
-    # 読み手は続きの囲みを、上の例の file に書き足して走らせる — 間の bash の囲みと、別の言葉の囲みは飛ばす。
+    # A reader appends the continuation fence to the file of the example above and runs it — bash fences in between and fences of other languages are skipped.
     text = """## First
 
 ```python
@@ -304,7 +304,7 @@ print(x + 2)  # 22
 
 @pytest.mark.parametrize("above", ["python excerpt", "python file=helper.py"])
 def test_a_fence_does_not_continue_an_excerpt_or_a_module(above: str) -> None:
-    # excerpt は走らない断片で、file= は後の囲みが import する module — どちらも書き足して走らせる script ではない。
+    # An excerpt is a fragment that is not run, and file= is a module imported by a later fence — neither is a script to be appended and run.
     text = f"## Rules\n\n```{above}\nx = 1\n```\n\n```python continues\nprint(x)  # 1\n```\n"
     continuing = examples.fences(text, "README.md")[1]
     assert continuing.continues_from is None
@@ -341,7 +341,7 @@ print(x + 1)  # {stated}
 def test_written_files_are_imported_by_the_fences_after_them(
     stated: str, failed: list[str], tmp_path: Path, deadline_scale_factor: float
 ) -> None:
-    # 43 と書けば、走らせた 2 つ(main.py と bash)だけが落ちる — 走らせずに通す囲みが無い事の確かめ。
+    # Writing 43 makes only the 2 that were run (main.py and bash) fail — confirming that no fence passes without being run.
     text = f"""## Files
 
 ```python file=helper.py
@@ -392,7 +392,7 @@ def test_shell_check_names_stated_text_missing_from_the_output(
 
 
 def test_release_check_installs_only_third_party_dependencies_from_pypi() -> None:
-    # 核の 5 個は手元の wheel から入れるので、PyPI から入れる依存の列に核の名(綴りの揺れも)と extra の依存を出さない。
+    # The 5 core components are installed from local wheels, so the dependency list installed from PyPI must not contain core names (including spelling variants) or extra dependencies.
     assert release.dependency_requirements(
         [
             "doeff-vm>=0.2.0",

@@ -1,12 +1,12 @@
-"""VM が型の注釈で handler を飛ばす答えを effect の型ごとに覚える時の失敗ケース。
+"""Failure cases for when the VM remembers, per effect type, the verdict to skip a handler based on its type annotation.
 
-VM は、注釈の型が `type` そのものの作った class だけの handler について、「この effect の型を受けるか」を型ごとに覚え、
-次の同じ型の effect では isinstance を呼ばない。覚えた答えが古くなる・instance ごとに違う答えを型の答えにしてしまう形を、
-ここで 1 つずつ確かめる:
+For handlers whose annotated type is a class made by `type` itself, the VM remembers per type whether "this handler accepts this effect type",
+and does not call isinstance for the next effect of the same type. The shapes where the remembered verdict goes stale or where a per-instance answer is turned into a per-type answer are
+checked one by one here:
 
-- effect の型の継承(`__bases__`)を後から変える → 覚えた答えを使わず、新しい継承で判じる(型の版の印が変わる)
-- 注釈の型が ABC で、後から register する → ABC の isinstance は型だけで決まらないので覚えない
-- effect の型が `__class__` を持ち、instance ごとに違う型を名乗る → 型だけで決まらないので覚えない
+- Change the effect type's inheritance (`__bases__`) later -> do not use the remembered verdict; judge by the new inheritance (the type's version tag changes)
+- The annotated type is an ABC and something is registered later -> ABC isinstance is not decided by the type alone, so do not remember
+- The effect type has `__class__` and each instance claims a different type -> not decided by the type alone, so do not remember
 """
 
 from abc import ABC

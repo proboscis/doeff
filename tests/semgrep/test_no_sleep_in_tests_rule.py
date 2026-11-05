@@ -1,14 +1,14 @@
-"""doeff-no-sleep-in-tests の極性の検。
+"""Polarity test for doeff-no-sleep-in-tests.
 
-検体(tests/semgrep/fixtures/python/tests/)で `# 鳴る` を付けた行だけが当たることを、規則の当たりの行で突き合わせる。
-鳴るべき形 = 宣言の無い検・宣言の無い検の入れ子の helper・別の marker だけの検・module の段の helper の sleep・
-誰も立てない合図を待つ言い換え threading.Event().wait(秒)。
-鳴らないべき形 = 関数の @pytest.mark.realtime(async・入れ子の helper・ほかの marker と重ねた形・class の method を含む)・
-module の pytestmark = pytest.mark.realtime より後・sleep(0)・誰かが立てる合図の wait。どちらの検体にも鳴る行を置き、
-規則が file に届いていることも見る。
+Checks that only the lines marked `# fires` in the fixtures (tests/semgrep/fixtures/python/tests/) are hit, by matching them against the lines the rule hits.
+Shapes that must fire = a test with no declaration, a nested helper of a test with no declaration, a test with only another marker, a sleep in a module-level helper,
+and the rephrasing that waits for a signal nobody sets, threading.Event().wait(seconds).
+Shapes that must not fire = a function's @pytest.mark.realtime (including async, nested helpers, stacking with other markers, and class methods),
+anything after a module-level pytestmark = pytest.mark.realtime, sleep(0), and a wait on a signal someone sets. Both fixtures contain firing lines,
+so we also check that the rule reaches the file.
 
-範囲の検= 名が tests の dir の外でも検の名の file(test_*.py・*_test.py・conftest.py)には届き、
-検の名でない file と、規則の paths.exclude の dir(名簿の [suites])には届かない。
+Scope test: the rule reaches files with test names (test_*.py, *_test.py, conftest.py) even outside a tests dir,
+but not files without test names, nor dirs in the rule's paths.exclude (the roster's [suites]).
 """
 
 from __future__ import annotations
@@ -24,7 +24,7 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 CONFIG = REPO_ROOT / ".semgrep.yaml"
 RULE = "doeff-no-sleep-in-tests"
 FIXTURES = REPO_ROOT / "tests" / "semgrep" / "fixtures" / "python" / "tests"
-FIRES = "# 鳴る"
+FIRES = "# fires"
 SAMPLES = ("sleep_function_marks.py", "sleep_module_mark.py")
 
 
@@ -37,7 +37,7 @@ def _expected_lines(fixture: Path) -> list[int]:
 
 
 def test_only_the_marked_lines_fire() -> None:
-    # semgrep は起動の費用が大きいので、検体の dir に 1 回だけ当てて file ごとに突き合わせる
+    # semgrep is expensive to start, so run it once on the fixture dir and match per file
     findings = _semgrep_results(CONFIG, str(FIXTURES.relative_to(REPO_ROOT)), cwd=REPO_ROOT)
     hits = sorted(
         (Path(finding["path"]).name, finding["start"]["line"])
@@ -45,7 +45,7 @@ def test_only_the_marked_lines_fire() -> None:
         if finding["check_id"].endswith(RULE)
     )
     expected = sorted((name, line) for name in SAMPLES for line in _expected_lines(FIXTURES / name))
-    # どちらの検体にも鳴る行が在る(規則が file に届いていることも見る)
+    # Both fixtures have firing lines (also checks that the rule reaches the file)
     assert {name for name, _ in expected} == set(SAMPLES)
     assert hits == expected
 

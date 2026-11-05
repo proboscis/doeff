@@ -1,4 +1,4 @@
-# Spawn した子の effect が呼び手の宣言に要る(docs/23)
+# The Spawn child's effects must be in the caller's declaration (docs/23)
 from collections.abc import Generator
 from dataclasses import dataclass
 from typing import Any, assert_type
@@ -19,7 +19,7 @@ def child() -> Generator[ReadClock, Any, int]:
 
 @do
 def parent_missing() -> Generator[Spawn[Any, Any], Any, None]:
-    yield from Spawn(child())  # expect-error (子の ReadClock が宣言に無い)
+    yield from Spawn(child())  # expect-error (the child's ReadClock is not in the declaration)
 
 
 @do

@@ -1,10 +1,10 @@
-"""生成器の ``@do`` の定義を呼ぶ 1 回(``Call``)の往復の形と答え。
+"""The shape and answer of one round trip of calling a generator ``@do`` definition (``Call``).
 
-VM は yield された ``Call`` を、生成器の定義ならその場で関数を呼んで stream にし(``Expand(Pure(stream))`` —
-``@do`` の handler と同じ形)、生成器は C API の ``PyIter_Send`` で回す(StopIteration の例外を作らない)。
-答え(値・None・例外の捕まる所)は前と同じ。往復の VM の歩は 5 つ(``Expand(Apply(Pure(thunk)))``)から 3 つになり、
-#2816 からは、親の stream が yield された ``Call`` をその場で回すので、effect を出さずに返る呼びは VM の歩を使わない
-(tests/test_call_driven_in_place.py)。速さは負荷で揺れるので検で固定せず、歩の数で見る。
+When the VM sees a yielded ``Call``, if it is a generator definition it calls the function on the spot and makes it a stream (``Expand(Pure(stream))`` --
+the same shape as the ``@do`` handler), and the generator is driven with the C API ``PyIter_Send`` (no StopIteration exception is created).
+The answers (values, None, where exceptions are caught) are as before. The VM steps of a round trip went from 5 (``Expand(Apply(Pure(thunk)))``) to 3,
+and since #2816, the parent stream drives a yielded ``Call`` on the spot, so a call that returns without emitting an effect uses no VM steps
+(tests/test_call_driven_in_place.py). Speed fluctuates with load, so it is not pinned in a test; look at the number of steps.
 """
 
 from collections.abc import Callable, Generator
@@ -89,7 +89,7 @@ def test_an_exception_of_the_called_definition_is_caught_where_the_caller_yields
 
 
 def _call_with_any_arity(definition: Callable[..., object], *args: object) -> object:
-    """引数の数を問わずに ``Call`` を作る — 引数の数の誤りは VM が関数を呼ぶ時に上がる。"""
+    """Make a ``Call`` regardless of the number of arguments -- a wrong number of arguments is raised when the VM calls the function."""
     return definition(*args)
 
 

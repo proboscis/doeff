@@ -31,7 +31,7 @@ def _result_is_err(result: Any) -> bool:
 
 
 async def _until_set(reached: threading.Event) -> None:
-    """ほかの task が名指しの点に届く(reached が立つ)まで loop に譲り続ける。実時間は待たない — 待つ物は出来事(#2957)。"""
+    """Keep yielding to the loop until another task reaches the named point (reached is set). Real time is not waited on — what is awaited is an event (#2957)."""
     while not reached.is_set():
         await asyncio.sleep(0)
 
@@ -167,7 +167,7 @@ def test_gather_collects_try_wrapped_children_without_fail_fast_cancellation() -
     @do
     def ok():
         events.append("ok:start")
-        # fail が例外を投げた後まで ok は終わらない — 兄弟の失敗が ok の pending の間に起きる順を名指す
+        # ok does not finish until after fail raises — pin the order where the sibling's failure happens while ok is pending
         _ = yield Await(_until_set(failed))
         events.append("ok:done")
         return "ok"
@@ -200,7 +200,7 @@ def test_race_with_transfer() -> None:
 
     @do
     def slow():
-        # fast が返った後まで slow は終わらない — race の勝ちが fast に決まる順を名指す
+        # slow does not finish until after fast returns — pin the order where the race is won by fast
         _ = yield Await(_until_set(fast_returned))
         return "slow"
 

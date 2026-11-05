@@ -1,4 +1,4 @@
-# 自作の handler: typed_resume の値の型・handler() で付けた後の結果の型
+# Custom handler: value type of typed_resume, and result type after attaching with handler()
 from collections.abc import Generator
 from dataclasses import dataclass
 from typing import Any, assert_type
@@ -18,15 +18,15 @@ def clock(effect: ReadClock, k: K) -> Generator[Any, Any, Any]:
 
 @do
 def bad_clock(effect: ReadClock, k: K) -> Generator[Any, Any, Any]:
-    return (yield typed_resume(effect, k, "now"))  # expect-error (int の effect に str で答える)
+    return (yield typed_resume(effect, k, "now"))  # expect-error (answering an int effect with str)
 
 
 @do
 def untyped_resume(effect: ReadClock, k: K) -> Generator[Any, Any, Any]:
-    return (yield Resume(k, "now"))  # Resume は値の型を見ない — docs/23 の決まり(型を見るのは typed_resume)
+    return (yield Resume(k, "now"))  # Resume does not check the value type — rule of docs/23 (typed_resume checks types)
 
 
-@handler  # expect-error (effect に当たらない注記 — 抜け 7 — 直った・@handler を付けた所で断る)
+@handler  # expect-error (annotation that does not match the effect — gap 7 — fixed; rejected where @handler is applied)
 def wrong_filter(effect: str, k: K) -> Generator[Any, Any, Any]:
     return (yield Resume(k, 1))
 

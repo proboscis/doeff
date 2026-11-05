@@ -1,13 +1,13 @@
-"""doeff-vm の数と切り替えは doeff の effect で読み書きし、doeff-vm の関数としては見えない事。
+"""The doeff-vm counts and switches are read and written through doeff effects and are not visible as doeff-vm functions.
 
-決まり: doeff の subpackage が利用者に見せる公開 API は effect と handler だけ。doeff-vm の数を測る・設定する関数 9 個
-(doeff_vm の根の vm_live_counts・invariant_checks_enabled と、拡張 doeff_vm.doeff_vm の 7 個)は、effect
+Rule: the public API that a doeff subpackage shows users is only effects and handlers. The 9 functions that measure or set doeff-vm counts
+(vm_live_counts and invariant_checks_enabled at the root of doeff_vm, and the 7 in the extension doeff_vm.doeff_vm) are made into effects
 (ReadVmLiveCounts・ReadVmWorkCounts・ReadVmScanCounts・ReadInvariantChecks・SetInvariantChecks・SetSchedulerStepBudgetArmed・
-SetSchedulerTraceInstalled)にして doeff の根から出し、doeff_core_effects._handlers.vm_probe_handler が VM に問うて答える。
-拡張の関数は _ で始まる名で拡張の __all__ の外に置く(src/lib.rs の bind_internal)。
+SetSchedulerTraceInstalled) exposed from the doeff root, and doeff_core_effects._handlers.vm_probe_handler asks the VM and answers.
+The extension's functions are placed outside the extension's __all__ under names starting with _ (bind_internal in src/lib.rs).
 
-失敗ケース: 古い名が doeff_vm か拡張の公開の名に戻る・_ の名が拡張の __all__ に載る・effect が拡張の関数と違う値を答える・
-handler が別の関数を呼ぶと赤。
+Failure cases: red if an old name returns to the public names of doeff_vm or the extension, if a _ name is listed in the extension's __all__, if an effect answers a value different from the extension's function, or
+if the handler calls a different function.
 """
 
 from __future__ import annotations
@@ -32,7 +32,7 @@ from doeff import (
     run,
 )
 
-#: 拡張の関数の今の名(_ で始まる)と、前の公開の名。
+#: The extension functions' current names (starting with _) and the earlier public names.
 INTERNAL_FUNCTIONS = (
     "_vm_live_counts",
     "_vm_work_counts",
@@ -55,7 +55,7 @@ EFFECTS = (
 
 
 def _asked(effect: EffectBase) -> object:
-    """effect を vm_probe_handler の下で 1 回走らせた答え。"""
+    """The answer from running an effect once under vm_probe_handler."""
     return run(vm_probe_handler(effect))
 
 
@@ -91,12 +91,12 @@ def test_the_effects_come_from_the_doeff_root() -> None:
 def test_each_effect_is_answered_by_its_vm_function(
     monkeypatch: pytest.MonkeyPatch, effect: EffectBase, function: str, arguments: tuple[object, ...]
 ) -> None:
-    """handler は effect ごとに拡張の 1 つの関数を引数ごと呼び、その答えを返す(関数は偽物 — VM の状態は変えない)。"""
+    """For each effect the handler calls one extension function with the arguments and returns its answer (the function is a fake -- it does not change the VM's state)."""
     calls: tuple[tuple[object, ...], ...] = ()
     answer = object()
 
     def recorded(*given: object) -> object:
-        """拡張の関数の代わりに、呼ばれた引数を残して決まった答えを返すため。"""
+        """In place of the extension function, to leave the arguments it was called with and return a fixed answer."""
         nonlocal calls
         calls = (*calls, given)
         return answer
@@ -107,7 +107,7 @@ def test_each_effect_is_answered_by_its_vm_function(
 
 
 def test_the_reads_answer_the_values_the_vm_holds() -> None:
-    """effect の読みは、読む run の前後に拡張の関数で直に読んだ値の間に在る(数は積み上げ — 読む run の分だけ増える)。"""
+    """The effect's reading lies between the values read directly with the extension function before and after the reading run (counts accumulate -- they grow by the amount of the reading run)."""
     work_before = vm_ext._vm_work_counts()
     work = _asked(ReadVmWorkCounts())
     work_after = vm_ext._vm_work_counts()
@@ -116,7 +116,7 @@ def test_the_reads_answer_the_values_the_vm_holds() -> None:
 
     live_outside = vm_ext._vm_live_counts()
     live = _asked(ReadVmLiveCounts())
-    # 読む run の中の数は、その run の物だけ外より多く、run が終われば外の数へ戻る。
+    # The counts inside the reading run are larger than outside by that run's alone, and return to the outer counts once the run ends.
     assert all(inside >= outside for inside, outside in zip(live, live_outside, strict=True))
     assert vm_ext._vm_live_counts() == live_outside
 

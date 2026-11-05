@@ -1,14 +1,14 @@
-"""EffectBase(別名 doeff.Effect)が、どこにも残らない引数を TypeError で断る事の検(取り組み doeff-publish)。
+"""Check that EffectBase (alias doeff.Effect) rejects, with TypeError, arguments that would be kept nowhere (initiative doeff-publish).
 
-失敗ケース(docs の例を 0.5.0 で run まで走らせた報告 2026-10-17-doeff-docs-137-run.html の MARKERS L37・L245):
-docs/MARKERS.md の例 `yield Effect("fetch", url="...")` は、0.5.0 で何も言わずに走る。EffectBase の `__new__` は
-`__init__` を持つ部分の class(dataclass の effect)のために引数を全部受けて捨て、EffectBase 自身は `__init__` も
-`__dict__` も持たないので、名も url も消える。handler には中身の無い EffectBase が届き、fetch・process・save の 3 つを
-区別できない。
+Failure case (the docs example run through to the end in 0.5.0, report 2026-10-17-doeff-docs-137-run.html, MARKERS L37 and L245):
+the example `yield Effect("fetch", url="...")` in docs/MARKERS.md runs silently in 0.5.0. EffectBase's `__new__` accepts and discards
+all arguments for subclasses that have an `__init__` (dataclass effects), and EffectBase itself has neither `__init__` nor
+`__dict__`, so both the name and the url vanish. The handler receives an empty EffectBase and cannot tell
+fetch, process, and save apart.
 
-断る条件は CPython の object と同じ「引数を受ける `__init__` が無い」: EffectBase を直に呼んだ時と、`__init__` を
-持たない部分の class を引数つきで呼んだ時。`__init__` を持つ部分の class(dataclass・自前の `__init__`)と、
-引数の無い呼び(`Skip()`・pickle の戻し)は今まで通り通す。
+The rejection condition is the same as CPython's object: "there is no `__init__` that accepts arguments": calling EffectBase directly, and calling
+a subclass without `__init__` with arguments. Subclasses that have `__init__` (dataclass, hand-written `__init__`) and
+calls without arguments (`Skip()`, pickle restore) pass as before.
 """
 
 from __future__ import annotations
@@ -28,11 +28,11 @@ class Fetch(EffectBase):
 
 
 class Marker(EffectBase):
-    """欄も `__init__` も無い effect(doeff-traverse の Skip と同じ形)。"""
+    """An effect with neither fields nor `__init__` (same shape as Skip in doeff-traverse)."""
 
 
 class Payload(EffectBase):
-    """自前の `__init__` で欄を持つ effect(13 章の API の一覧の形)。"""
+    """An effect that has fields through its own `__init__` (the shape in the chapter 13 API list)."""
 
     def __init__(self, payload: object) -> None:
         super().__init__()
@@ -40,7 +40,7 @@ class Payload(EffectBase):
 
 
 class Routed(EffectBase):
-    """自前の `__new__` で作る class を選び、`__init__` で欄を持つ effect(doeff-events の PublishEffect の形)。"""
+    """An effect that chooses the class to build in its own `__new__` and has fields through `__init__` (the shape of PublishEffect in doeff-events)."""
 
     def __new__(cls, event: object) -> Routed:
         return EffectBase.__new__(cls)
@@ -51,7 +51,7 @@ class Routed(EffectBase):
 
 
 def test_effect_with_a_name_and_arguments_is_refused() -> None:
-    # MARKERS の旧い例の形そのもの。
+    # Exactly the shape of the old MARKERS example.
     with pytest.raises(TypeError, match=r"EffectBase\(\) takes no arguments"):
         Effect("fetch", url="api.example.com")
 
@@ -72,7 +72,7 @@ def test_the_refusal_says_where_the_arguments_belong() -> None:
     with pytest.raises(TypeError) as raised:
         Effect("fetch", url="api.example.com")
     message = str(raised.value)
-    # 読み手が次に書く物 = 欄を持つ effect の class と、その作り方。
+    # What the reader writes next = an effect class with fields, and how to build it.
     assert "@dataclass(frozen=True)" in message, message
     assert "(EffectBase)" in message, message
 
@@ -97,14 +97,14 @@ def test_subclasses_with_an_init_keep_their_arguments() -> None:
 
 
 def test_pickle_round_trip_still_rebuilds_effects() -> None:
-    # EffectBase の __reduce_ex__ は copyreg.__newobj__(cls) で引数無しに作り直す。
+    # EffectBase.__reduce_ex__ rebuilds via copyreg.__newobj__(cls) with no arguments.
     assert pickle.loads(pickle.dumps(Fetch(url="api.example.com"))) == Fetch(url="api.example.com")
     assert pickle.loads(pickle.dumps(Payload("x"))).payload == "x"
     assert isinstance(pickle.loads(pickle.dumps(Marker())), Marker)
 
 
 def test_handler_reads_the_fields_of_an_effect_class() -> None:
-    # 直した MARKERS の例の形: 引数は effect の class の欄に残り、handler が読める。
+    # The shape of the fixed MARKERS example: the arguments stay in the effect class fields and the handler can read them.
     @do
     def fetch_data():
         return (yield Fetch(url="api.example.com"))

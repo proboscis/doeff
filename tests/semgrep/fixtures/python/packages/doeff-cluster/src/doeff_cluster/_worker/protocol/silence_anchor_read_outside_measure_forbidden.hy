@@ -1,6 +1,6 @@
-;;; 検体(違反をわざと書いた file): worker の沈黙の起点(last-ok の対・送りの始めの対)を、沈黙の計り silent-ms の外で読む・片方だけ書く。
-;;; doeff-cluster-worker-silence-anchors-are-read-by-the-one-measure が 9・13・17・20・23・26・29・32・35・38・41 行目で発火し、44〜55 行目では
-;;; 発火しない。
+;;; Specimen (a file with deliberate violations): reads the worker's silence anchors (the last-ok pair, the start-of-send pair) outside the silence measure silent-ms, or writes only one of them.
+;;; The rule doeff-cluster-worker-silence-anchors-are-read-by-the-one-measure fires on lines 9, 13, 17, 20, 23, 26, 29, 32, 35, 38, 41 and does not fire on lines 44-55.
+;;;
 (import doeff_cluster._worker.core.heartbeat_rules [silent-ms])
 (import doeff_cluster._worker.core.worker_due [fence-due])
 
@@ -9,7 +9,7 @@
   (- now-ms state.last-ok-ms))
 
 (defn carried-out-under-another-name [state now-ms]
-  ;; 名に写して持ち出すと、その先の引き算は規則から見えない。
+  ;; Carrying it out under another name hides the subtraction after that from the rule.
   (setv last state.last-ok-ms)
   (- now-ms last))
 
@@ -42,12 +42,12 @@
 
 
 (defn measured-in-the-one-place [state beating now-ms now-mono-ms]
-  ;; 発火しない: 起点の対を silent-ms の 3・4 番目に渡す(単調な時計の読みは式でもよい)。
+  ;; Does not fire: pass the anchor pair as the 3rd and 4th arguments of silent-ms (a monotonic clock reading may be an expression).
   #((silent-ms now-ms now-mono-ms state.last-ok-ms state.last-ok-mono-ms)
     (silent-ms now-ms (monotonic-ms-of now-mono-ms) beating.started-at beating.started-mono-ms)))
 
 (defn written-as-a-pair [state beating truth now-ms mono]
-  ;; 発火しない: 対を 1 つの setv の隣り合う 2 組で書く・record は鍵の対で作る・在るかどうかの問い。
+  ;; Does not fire: write the pair as two adjacent groups of one setv, build a record with a key pair, a question about existence.
   (setv state.last-ok-ms now-ms state.last-ok-mono-ms (monotonic-ms-of mono))
   (setv beating.started-at now-ms
         beating.started-mono-ms (monotonic-ms-of mono))

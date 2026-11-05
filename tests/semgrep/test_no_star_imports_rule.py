@@ -1,8 +1,8 @@
-"""doeff-no-star-imports の極性の検。
+"""Polarity test of doeff-no-star-imports.
 
-鳴らないべき形 = 移し替えの module(module の子と package の子の 2 つの形 — ``if TYPE_CHECKING:``
-の star import の後に ``sys.modules[__name__] = import_module(…)`` で自分を移した module に差し替える)。この test の ``_shim_text`` が書く形を当てる。
-鳴るべき形 = module の段の star import と、移し替えでない module の ``if TYPE_CHECKING:`` の中の star import。
+Forms that should not fire = a shim module (two forms: a module's child and a package's child -- after a star import under ``if TYPE_CHECKING:``,
+it replaces itself with the module moved to by ``sys.modules[__name__] = import_module(...)``). This test's ``_shim_text`` writes the form to match.
+Forms that should fire = a module-level star import, and a star import inside ``if TYPE_CHECKING:`` in a module that is not a shim.
 """
 
 from __future__ import annotations
@@ -21,7 +21,7 @@ ROOT_NAME = "fixture_root"
 
 
 def _shim_text(old: str, new: str) -> str:
-    """移し替えの module の形(削除した the former move tool の道具が置いた text と同じ形)。"""
+    """The shape of a shim module (the same shape as the text placed by the removed former move tool)."""
     return (
         f"# moved-submodule-shim: {old} -> {new}\n"
         "import sys\n"
@@ -42,7 +42,7 @@ def _shim_text(old: str, new: str) -> str:
 
 def test_the_moved_submodule_shims_do_not_fire_and_other_star_imports_do(tmp_path: Path) -> None:
     root_dir = tmp_path / "src" / ROOT_NAME
-    (root_dir / "_handlers").mkdir(parents=True)  # package の子(移した後の dir)
+    (root_dir / "_handlers").mkdir(parents=True)  # a package's child (the dir after the move)
     for name in ("effects", "handlers"):
         (root_dir / f"{name}.py").write_text(
             _shim_text(f"{ROOT_NAME}.{name}", f"{ROOT_NAME}._{name}"), encoding="utf-8"

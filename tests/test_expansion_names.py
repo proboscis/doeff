@@ -1,7 +1,7 @@
-"""handle・defhandler の展開が読む doeff の名の綴りの表(doeff_hy/_expansion_names.py)の検。
+"""Test of the table of spellings of doeff names that the expansion of handle / defhandler reads (doeff_hy/_expansion_names.py).
 
-表は展開が読む名の別名(`_doeff_<名>`)と import の唯一の定義元。展開の名が書き手の同じ名の effect を隠さない事そのものは
-tests/test_handle_writer_names.py が、表を介さずに素の名を書く読み手が戻らない事はここが確かめる。
+The table is the single source of truth for the aliases of the names the expansion reads (`_doeff_<name>`) and for imports. That an expansion's names do not shadow an author's effect of the same name is checked by
+tests/test_handle_writer_names.py; that no reader returns to writing bare names without going through the table is checked here.
 """
 
 import ast
@@ -19,7 +19,7 @@ from hy.models import Expression, Sequence, Symbol
 
 import doeff
 
-# 展開が読む名。書き手が自分の effect の名にしうる(振込の Transfer・KV の Put / Get など)ので、素の綴りで読むと隠す。
+# Names the expansion reads. The author may use them as their own effect names (Transfer for a bank transfer, Put / Get for KV, etc.), so reading them with the bare spelling would shadow them.
 _NAMES = (
     "Resume",
     "Transfer",
@@ -39,25 +39,25 @@ def test_alias_is_the_doeff_prefixed_name() -> None:
 
 
 def test_alias_symbol_makes_a_new_symbol_each_call() -> None:
-    """位置を付ける macro(locate-synthesized)が Symbol を使い回さないよう、呼ぶたびに別の Symbol を作る。"""
+    """Make a different Symbol on every call so that the position-attaching macro (locate-synthesized) does not reuse a Symbol."""
     assert expansion_names.alias_symbol("Put") is not expansion_names.alias_symbol("Put")
 
 
-# 型を建てる定義(defeffect・defwire・defrecord の :check)が型の本体で読む typing の名。書き手の名と分け合う心配は無いが、
-# class の本体に書いた型の本体と method は名を module の段から引くので、型検査の投影が module の段へ移す import を
-# 表から見分ける(static_check._synthesized_import)。
+# typing names that type-building definitions (the :check of defeffect, defwire, defrecord) read in the type body. There is no worry of sharing them with the author's names, but
+# the type body and methods written in a class body look up names from the module level, so distinguish from the table the imports that the type-check projection moves to the module level
+# (static_check._synthesized_import).
 _TYPING_NAMES = ("ClassVar", "cast")
 
 
 @pytest.mark.parametrize("name", (*_NAMES, *_TYPING_NAMES))
 def test_every_expansion_name_is_importable_from_its_home(name: str) -> None:
-    """表の置き場から、表の名を import できる(表の誤りは、その名を読む展開が実行の時に ImportError で落ちる)。"""
+    """From the table's location, the table's names can be imported (a mistake in the table makes the expansion that reads the name fail at run time with ImportError)."""
     assert hasattr(importlib.import_module(expansion_names.home(name)), name)
 
 
 def test_home_refuses_a_name_outside_the_table() -> None:
-    """表は閉じている — 表に無い名の置き場を doeff と決めない(知らない名を別名の import と答えない・展開が表に無い名を
-    読み始めたら、展開の時に落ちて表へ足す事を求める)。"""
+    """The table is closed -- it does not decide that an unlisted name's location is doeff (an unknown name is not answered as an alias import; if an expansion
+    starts reading a name not in the table, it fails at expansion time and requires adding it to the table)."""
     with pytest.raises(KeyError):
         expansion_names.home("do")
 
@@ -69,7 +69,7 @@ def test_home_refuses_a_name_outside_the_table() -> None:
         ("doeff", "WithHandlerType", "_doeff_WithHandlerType", True),
         ("typing", "ClassVar", "_doeff_ClassVar", True),
         ("typing", "cast", "_doeff_cast", True),
-        # for/do の docstring が書き手に書かせる別名(表に無い名)は、書き手の import
+        # The alias (a name not in the table) that the for/do docstring has the author write is the author's import
         ("doeff", "do", "_doeff_do", False),
         ("doeff_traverse", "Traverse", "_doeff_traverse_Traverse", False),
         ("doeff_vm", "Pass", "_doeff_Pass", False),
@@ -82,7 +82,7 @@ def test_home_refuses_a_name_outside_the_table() -> None:
 def test_is_alias_import_answers_only_the_table(
     module: str, name: str, asname: str | None, expected: bool
 ) -> None:
-    """`is_alias_import` は、表の名を表の置き場から表の別名で束ねる import だけを、展開の合成と答える。"""
+    """`is_alias_import` answers as expansion synthesis only an import that binds a table name, from the table's location, with the table's alias."""
     assert expansion_names.is_alias_import(module, name, asname) is expected
 
 
@@ -98,7 +98,7 @@ def test_import_source_aliases_the_names_grouped_by_home() -> None:
 
 
 def test_import_form_aliases_the_names_grouped_by_home() -> None:
-    """Hy の import の形も、Python の import と同じ別名を同じ置き場から束ねる。"""
+    """A Hy import form also binds the same alias from the same location as a Python import."""
     mod = types.ModuleType("expansion_names_probe")
     sys.modules[mod.__name__] = mod
     hy.eval(expansion_names.import_form(["Pass", "Put", "WithHandlerType"]), mod.__dict__, module=mod)
@@ -115,15 +115,15 @@ def test_import_form_without_names_is_empty() -> None:
 
 
 # ---------------------------------------------------------------------------
-# 展開を作る source は、表を介さずに素の名を書かない
+# The sources that build the expansion do not write bare names without going through the table
 # ---------------------------------------------------------------------------
 
 _PACKAGE = Path(doeff_hy.__file__).parent
 
 
 def _bare_symbols_in_hy(path: Path) -> frozenset[str]:
-    """Hy の source に Symbol として書かれた展開の名(`typed-resume` のハイフンの綴りも mangle して数える。import の形の中は、
-    名を別名で束ねる綴りなので数えない)。"""
+    """Expansion names written as a Symbol in Hy source (the hyphenated spelling like `typed-resume` is also mangled and counted. Inside an import form,
+    names are bound by alias, so they are not counted)."""
     found: set[str] = set()
 
     def walk(form: object) -> None:
@@ -142,7 +142,7 @@ def _bare_symbols_in_hy(path: Path) -> frozenset[str]:
 
 
 def _bare_symbols_in_python(path: Path) -> frozenset[str]:
-    """Python の source の `Symbol("名")` に書かれた展開の名。"""
+    """Expansion names written as `Symbol("name")` in Python source."""
     return frozenset(
         node.args[0].value
         for node in ast.walk(ast.parse(path.read_text(encoding="utf-8")))
@@ -156,8 +156,8 @@ def _bare_symbols_in_python(path: Path) -> frozenset[str]:
 
 
 def test_no_source_spells_an_expansion_name_bare() -> None:
-    """doeff_hy のどの source も、展開が読む名を素の Symbol で書かない(表の `alias-symbol` を引く) — 素の綴りは書き手の同じ名の
-    effect と 1 つの名を分け合う。"""
+    """No source in doeff_hy writes a name that the expansion reads as a bare Symbol (it looks up the table's `alias-symbol`) -- a bare spelling shares one name with the author's
+    effect of the same name."""
     spelled = {
         path.name: names
         for path in sorted([*_PACKAGE.glob("*.hy"), *_PACKAGE.glob("*.py")])
@@ -172,12 +172,12 @@ def test_no_source_spells_an_expansion_name_bare() -> None:
 
 
 # ---------------------------------------------------------------------------
-# 位置 — 展開が作る model は、利用者の式の位置を引き寄せない
+# Position -- the model the expansion builds does not pull in the position of the user's expression
 # ---------------------------------------------------------------------------
 
 
 def _positioned_models(form: object) -> list[object]:
-    """form の中の、位置(reader が付ける `_start_line`)を持つ model。"""
+    """Models within a form that carry a position (the `_start_line` that the reader attaches)."""
     found: list[object] = [form] if hasattr(form, "_start_line") else []
     if isinstance(form, Sequence):
         for child in form:
@@ -191,8 +191,8 @@ def _positioned_models(form: object) -> list[object]:
     ids=["doeff", "doeff-node", "dotted-module", "all-homes"],
 )
 def test_import_form_builds_no_positioned_model(names: list[str]) -> None:
-    """`import_form` が返す model は位置を持たない。reader が作る model(`hy.read("doeff.do")` など)は 1 行目 1 列目の位置を
-    持ち、位置を付ける macro(locate-synthesized)が利用者の式の位置と取り違えて、囲む式の範囲を 1 行目へ引く — 型検査の
-    診断(未使用の import・未定義の名)の行が、handler の行でなく 1:1 になった(設計検証の盲検 A の
-    実測で見つけた、展開の名を別名にした直しの退行)。"""
+    """The model that `import_form` returns carries no position. A model the reader makes (such as `hy.read("doeff.do")`) carries a position of line 1 column 1,
+    and the position-attaching macro (locate-synthesized) mistook it for the position of the user's expression and pulled the enclosing expression's range to line 1 -- the line of the type-check
+    diagnostics (unused import, undefined name) became 1:1 instead of the handler's line (a regression of the fix that aliased the expansion's names,
+    found by measurement in blind A of the design verification)."""
     assert _positioned_models(expansion_names.import_form(names)) == []

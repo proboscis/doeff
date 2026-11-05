@@ -1,4 +1,4 @@
-# scheduler の effect の答えの型(docs/23 の表)
+# Types of scheduler effect answers (table in docs/23)
 from collections.abc import Generator
 from typing import Any, assert_type
 
@@ -38,7 +38,7 @@ def main() -> Generator[Any, Any, list[int]]:
     both = yield from Gather(t1, t2)
     assert_type(both, list[int])
     ts = yield from Spawn(namer(3))
-    mixed = yield from Gather(t1, ts)  # 結果の型の違う task(抜け 4 — 直った)
+    mixed = yield from Gather(t1, ts)  # tasks with differing result types (gap 4 — fixed)
     assert_type(mixed, list[int | str])
     first = yield from Race(t1, t2)
     assert_type(first, int)
@@ -46,9 +46,9 @@ def main() -> Generator[Any, Any, list[int]]:
     assert_type(either, int | str)
     p = yield from CreatePromise[int]()
     assert_type(p, Promise[int])
-    yield from CompletePromise(p, "x")  # expect-error (Promise[int] に str)
-    s: str = yield from Wait(t1)  # expect-error (int を str へ)
-    yield from Wait(42)  # expect-error (task でない物)
+    yield from CompletePromise(p, "x")  # expect-error (str for Promise[int])
+    s: str = yield from Wait(t1)  # expect-error (int to str)
+    yield from Wait(42)  # expect-error (not a task)
     return both
 
 

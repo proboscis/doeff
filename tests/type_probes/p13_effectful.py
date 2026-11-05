@@ -1,4 +1,4 @@
-# @effectful と perform(docs/24)
+# @effectful and perform (docs/24)
 from dataclasses import dataclass
 from typing import assert_type
 
@@ -19,8 +19,8 @@ class Delete(EffectBase[None]):
 def elapsed(perform: Effects[ReadClock], since: int) -> int:
     now = perform(ReadClock())
     assert_type(now, int)
-    bad: str = perform(ReadClock())  # expect-error (int を str へ)
-    perform(Delete("row"))  # expect-error (宣言に無い effect)
+    bad: str = perform(ReadClock())  # expect-error (int to str)
+    perform(Delete("row"))  # expect-error (effect not in the declaration)
     return now - since
 
 

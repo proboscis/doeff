@@ -64,9 +64,9 @@ def _eval(code: str):
 # Expansion shape — one definition point, every expander
 # ---------------------------------------------------------------------------
 
-# 束ねが yield するのは (open-bind 効果) — 宣言を持つ effect の答えを開く 1 点(ADR-DOE-CORE-EFFECTS-003 R6)。
-# 宣言の無い effect には effect そのものを返す(実行時に同じ物を yield する — docs/adr の冊 003 の検が確かめる)。
-# open-bind の答えが Pure(効果を出さない @do の呼びをその場で呼んだ答え)ならその値、それ以外は yield(#844・6a45b5e1)。
+# What the bind yields is (open-bind effect) -- the single point that opens the answer of an effect that has a declaration (ADR-DOE-CORE-EFFECTS-003 R6).
+# For an effect with no declaration it returns the effect itself (the same object is yielded at runtime -- checked by the volume 003 test in docs/adr).
+# If open-bind's answer is Pure (the answer from calling an effect-free @do call in place), its value; otherwise yield (#844, 6a45b5e1).
 _OPENED_EFF = (
     r'\(if \(is \(\. \(setx (?P<b>_hy_gensym_bound_\d+) \(\. \(setx (?P<m>_hy_gensym_outcomes_\d+) '
     r'\(__import__ "doeff_core_effects\._outcomes" :fromlist #\("open_bind"\)\)\) \(open_bind \(Eff\)\)\)\) __class__\) '
@@ -100,7 +100,7 @@ def test_four_element_bind_emits_isinstance_everywhere(code):
 def test_two_and_three_element_binds_stay_unchecked(code):
     expanded = _expand(code)
     assert re.search(_OPENED_EFF, expanded), expanded
-    # :post の (: % str) は isinstance を出すので、束縛名 x の検査だけを見る
+    # (: % str) in :post emits isinstance, so look only at the check on the bound name x
     assert "(isinstance x" not in expanded, expanded
 
 

@@ -1,13 +1,13 @@
-"""fnk・do! の展開が、書いた場所の scope に名を作らず、その scope の名を前と同じに読む事の検。
+"""Test that the expansion of fnk / do! creates no names in the scope where it is written, and reads that scope's names as before.
 
-fnk・do! の実行時の展開は、前は `_doeff_do`・`_guard_statement_value`・`_doeff_effect_base` などの補助を書いた場所で
-import していた。defk の本体(関数)の中でそれを import すると、名が関数全体の局所の名になり、同じ関数で先に読む
-traverse / for/do の `_doeff_do`、本体の文の guard の `_guard_statement_value`、最後の値の guard の `_doeff_effect_base` が
-UnboundLocalError で落ちていた。fold の素直な置き換え `(Reduce (fnk [acc v] …) init coll)` がちょうどこの位置に来る。
+The runtime expansion of fnk / do! used to import helpers such as `_doeff_do`, `_guard_statement_value`, and `_doeff_effect_base` at the place where it was
+written. Importing them inside a defk body (a function) made the names local to the whole function, so the traverse / for/do `_doeff_do`
+read earlier in the same function, the body-statement guard `_guard_statement_value`, and the final-value guard `_doeff_effect_base` failed with
+UnboundLocalError. The plain replacement of fold, `(Reduce (fnk [acc v] ...) init coll)`, lands exactly in that position.
 
-fnk は lambda を書いた場所で作り(引数の既定値はその scope で評価する — class の本体の名も読める)、`do` を呼ぶたびに
-`__import__` で引く。do! は補助の import と Program の組み立てを、すぐ呼ぶ関数の中に置く。どちらも、書いた場所の module に
-defk も `_doeff_do` の import も無くても動く(defk が module の globals に置く名に頼らない)。
+fnk builds the lambda where it is written (default argument values are evaluated in that scope -- names in a class body are also readable) and looks up `do` each time it is called
+via `__import__`. do! puts the helper import and the Program construction inside the function that is called immediately. Both work even if the module where they are written
+has neither defk nor an import of `_doeff_do` (they do not rely on names defk puts in the module's globals).
 """
 
 import sys
@@ -25,9 +25,9 @@ from doeff import run
 
 
 def _helper_names() -> frozenset[str]:
-    """展開が名で読む補助の名: `_helper-imports` の import が束ねる名と、defk が globals に置く outcomes の名。
+    """Helper names the expansion reads by name: the names bound by the imports of `_helper-imports`, and the outcomes names defk puts in globals.
 
-    表を写さず `_helper-imports` から読む — 補助を足した時に、この検が新しい名も見るように。
+    Read them from `_helper-imports` rather than copying the table -- so this test also sees new names when a helper is added.
     """
     names: set[str] = {hy.mangle(macros._HELPERS_NAME)}
     for statement in macros._helper_imports()[1:]:
@@ -49,7 +49,7 @@ _DEFK_HEADER = """
 (import doeff_traverse._effects [Reduce])
 """
 
-# defk を持たず、`_doeff_do` も import しない module の頭 — fnk・do! が自分で要る物を持つ事を見る。
+# Head of a module with no defk and no import of `_doeff_do` -- checks that fnk / do! carry what they need themselves.
 _BARE_HEADER = """
 (require doeff-hy.macros [fnk do! <-])
 """
@@ -68,7 +68,7 @@ def _run(program: object) -> object:
 
 
 def test_helper_names_follow_helper_imports() -> None:
-    """表は `_helper-imports` の別名(`:as` の後の名)を拾い、元の名を拾わない。"""
+    """The table picks up the alias names of `_helper-imports` (the name after `:as`) and not the original names."""
     assert {
         "_doeff_do",
         "_doeff_effect_base",
@@ -80,7 +80,7 @@ def test_helper_names_follow_helper_imports() -> None:
 
 
 _CASES = {
-    # 依頼の形: traverse の `_doeff_do` の読みの後に fnk が来る
+    # Shape of the request: fnk comes after traverse's read of `_doeff_do`
     "fnk-after-traverse": (
         """
         (defk subject [items]
@@ -104,7 +104,7 @@ _CASES = {
         [1, 2, 3],
         20,
     ),
-    # 本体の文の guard(_guard_statement_value)の読みの後に fnk が来る
+    # fnk comes after the read of the body-statement guard (_guard_statement_value)
     "fnk-after-statement-guard": (
         """
         (defk subject [x]
@@ -117,7 +117,7 @@ _CASES = {
         5,
         6,
     ),
-    # 走らない枝の fnk / do! の後に、最後の値の guard(_doeff_effect_base)を読む
+    # After an fnk / do! on a branch that does not run, read the final-value guard (_doeff_effect_base)
     "fnk-in-untaken-branch": (
         """
         (defk subject [x]
@@ -138,7 +138,7 @@ _CASES = {
         5,
         5,
     ),
-    # do! の中の文の guard の後に、内側の do! が来る
+    # An inner do! comes after the guard of a statement inside do!
     "do-bang-inside-do-bang": (
         """
         (defk subject [x]
@@ -160,7 +160,7 @@ def test_fnk_and_do_bang_inside_defk_run(source: str, arg: object, expected: obj
 
 @pytest.mark.parametrize(("source", "arg", "expected"), _CASES.values(), ids=_CASES.keys())
 def test_defk_body_binds_no_helper_name(source: str, arg: object, expected: object) -> None:
-    """補助の名は、defk の本体の関数の局所(と閉包の cell)に現れない — 現れると先の読みが未束縛になる。"""
+    """Helper names do not appear in the local names (or closure cells) of the defk body function -- if they did, the earlier read would be unbound."""
     mod = _eval_module(source)
     code = mod.subject.__doeff_generator_function__.__code__
     assert _HELPER_NAMES.isdisjoint(code.co_varnames + code.co_cellvars)
@@ -175,8 +175,8 @@ _HOSTS = {
 
 @pytest.mark.parametrize("source", _HOSTS.values(), ids=_HOSTS.keys())
 def test_host_function_gets_no_local_name(source: str) -> None:
-    """fnk・do! だけを書いた関数は、Hy が作る一意の名(`_hy_` の頭 — 展開の中の関数の名)の外に、局所の名も閉包の
-    cell も持たない(補助の一覧に依らない R2 の検)。"""
+    """A function written with only fnk / do! has neither local names nor closure cells outside the unique names Hy generates
+    (prefix `_hy_` -- names of functions inside the expansion) (an R2 test independent of the helper list)."""
     mod = _eval_module(source, _BARE_HEADER)
     code = mod.host.__code__
     assert [
@@ -185,7 +185,7 @@ def test_host_function_gets_no_local_name(source: str) -> None:
 
 
 _BARE_CASES = {
-    # defk の無い module の fnk: 本体の <- と ! が module の globals の名に頼らない
+    # fnk in a module without defk: <- and ! in the body do not rely on names in the module's globals
     "module-fnk-bind-and-bang": (
         """
         (setv weight (fnk [x] (* x 10)))
@@ -215,7 +215,7 @@ _BARE_CASES = {
         """,
         5,
     ),
-    # class の本体の fnk: 既定値は class の本体で評価する(module に同じ名が在っても class の値を読む)
+    # fnk in a class body: default values are evaluated in the class body (the class's value is read even if the module has the same name)
     "class-fnk-default-reads-class-name": (
         """
         (setv RATE 1)
@@ -248,6 +248,6 @@ _BARE_CASES = {
 
 @pytest.mark.parametrize(("source", "expected"), _BARE_CASES.values(), ids=_BARE_CASES.keys())
 def test_fnk_and_do_bang_outside_defk_run(source: str, expected: object) -> None:
-    """module の段・class の本体・普通の defn の fnk / do! は、defk も `_doeff_do` も無い module で、書いた場所の名を読む。"""
+    """fnk / do! at module level, in a class body, and in a plain defn read the names where they are written, in a module with neither defk nor `_doeff_do`."""
     mod = _eval_module(source, _BARE_HEADER)
     assert run(mod.program) == expected

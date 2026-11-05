@@ -1,4 +1,4 @@
-# run と handler を付けた後の結果の型・handler に program でない物を渡した時(抜け 2 — 直った)
+# Result type after applying run and handlers; passing a non-program to a handler (gap 2 — fixed)
 from collections.abc import Generator
 from typing import Any, assert_type
 
@@ -17,8 +17,8 @@ assert_type(run(prog()), int)
 assert_type(run(scheduled(prog())), int)
 assert_type(reader(env={"k": 1})(prog()), Program[int, Any])
 assert_type(run(reader(env={"k": 1})(prog())), int)
-x: str = run(reader(env={"k": 1})(prog()))  # expect-error (int を str へ)
-writer(prog)  # expect-error (program を作らずに関数を渡した — 実行時 TypeError)
-state()(42)  # expect-error (program でない値)
-run(prog)  # expect-error (呼び忘れ)
+x: str = run(reader(env={"k": 1})(prog()))  # expect-error (int to str)
+writer(prog)  # expect-error (passed the function without creating a program — runtime TypeError)
+state()(42)  # expect-error (value that is not a program)
+run(prog)  # expect-error (forgot to call)
 run(42)  # expect-error

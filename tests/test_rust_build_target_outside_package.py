@@ -1,8 +1,8 @@
-"""doeff の Rust の package の build の口(tools/doeff_cargo_backend.py)を確かめる。
+"""Verify the build entry point of doeff's Rust packages (tools/doeff_cargo_backend.py).
 
-口は cargo の target を package の dir の外の、1 回の build ごとの一時の dir に置き、wheel を作ったら消す。
-作業木ごとに target が残って disk を埋めたのを止め、しかも中身の違う作業木どうしで
-build を取り違えない事を、小さな bin の crate を 2 か所に置いて本物の maturin と cargo で組んで確かめる。
+The entry point puts cargo's target in a per-build temporary dir outside the package dir and removes it once the wheel is built.
+It stops the disk from filling up with a target left in every working tree, and it ensures working trees with different contents
+do not mix up builds; this is verified by placing a small bin crate in two places and building with a real maturin and cargo.
 """
 
 from __future__ import annotations
@@ -24,7 +24,7 @@ BACKEND = REPO / "tools" / "doeff_cargo_backend.py"
 BUILD_TIMEOUT_SECONDS = 300
 TEMP_PREFIX = "doeff-cargo-target-"
 
-# PEP 517 の frontend と同じく、package の dir で build の口の hook(argv[1])を呼び、出来た file の名を最後の行に出す。
+# Like a PEP 517 frontend, call the build entry point's hook (argv[1]) in the package dir and print the name of the produced file on the last line.
 _CALL_HOOK = (
     "import sys; sys.path.insert(0, '.'); import doeff_cargo_backend as b; "
     "hooks = {'build_wheel': b.build_wheel, 'build_editable': b.build_editable, 'build_sdist': b.build_sdist}; "
@@ -34,7 +34,7 @@ _CALL_HOOK = (
 
 @dataclass(frozen=True)
 class Checkouts:
-    """先に切った作業木(source が古い)と、後に切った作業木。"""
+    """A working tree cut earlier (its source is older) and one cut later."""
 
     newer: Path
     older: Path
@@ -42,16 +42,16 @@ class Checkouts:
 
 @dataclass(frozen=True)
 class BuiltWheel:
-    """build_wheel が出した wheel の path と、口の stderr(使った / 組んだの 1 行)。"""
+    """The wheel path that build_wheel produced, and the entry point's stderr (the one line saying used / built)."""
 
     wheel: Path
     log: str
 
 
 def _write_checkout(root: Path, greeting: str, *, body: str | None = None) -> Path:
-    """作業木の 1 つに見立てた package の dir を作る(crate の名は同じで、出す文字だけが違う)。
+    """Create a package dir standing in for one working tree (same crate name; only the printed text differs).
 
-    body を渡すと main.rs の中身をそれにする(組めない crate を作るため)。
+    If body is given, it becomes the contents of main.rs (to make a crate that cannot be built).
     """
     (root / "src").mkdir(parents=True)
     (root / "Cargo.toml").write_text(
@@ -73,14 +73,14 @@ def _write_checkout(root: Path, greeting: str, *, body: str | None = None) -> Pa
 
 
 def _age(root: Path, seconds: int) -> None:
-    """source の file の時刻を過去へずらす — 先に切って、後で組む作業木に見立てるため。"""
+    """Shift the timestamps of the source files into the past -- to stand in for a working tree cut earlier and built later."""
     for path in root.rglob("*"):
         stat = path.stat()
         os.utime(path, (stat.st_atime - seconds, stat.st_mtime - seconds), follow_symlinks=False)
 
 
 def _two_checkouts(tmp_path: Path) -> Checkouts:
-    """B を先に切り(source が古い)、A を後に切った 2 つの作業木を作る。"""
+    """Create two working trees: B cut first (older source) and A cut afterwards."""
     older = _write_checkout(tmp_path / "wt-b", "from-B")
     _age(older, 3600)
     newer = _write_checkout(tmp_path / "wt-a", "from-A")
@@ -88,10 +88,10 @@ def _two_checkouts(tmp_path: Path) -> Checkouts:
 
 
 def _build_env(temp_root: Path, target_dir: Path | None) -> list[str]:
-    """build の process の命令の頭に付ける `env`: 子はこの process の環境を継ぎ、CARGO_TARGET_DIR を外して(`env -u`)渡す時だけ置き、
-    一時の dir の置き場を temp_root に向ける。"""
-    # wheel の置き場も検ごとの dir に(利用者の ~/.cache に書かず、検どうしで同じ source の wheel を引き合わない)。
-    # 機体の外の置き場は引かない(この検は手元で組む道を見る — 置き場の検は tests/test_wheel_remote_store.py)。
+    """The `env` prefix for the build process command: the child inherits this process's environment, and it is placed only when passing CARGO_TARGET_DIR removed (`env -u`),
+    pointing the temporary dir location at temp_root."""
+    # The wheel store is also a per-test dir (do not write to the user's ~/.cache, and tests must not pull each other's wheel of the same source).
+    # The store outside the machine is not consulted (this test looks at the local build path -- the store test is tests/test_wheel_remote_store.py).
     settings = [f"TMPDIR={temp_root}", f"DOEFF_WHEEL_CACHE={temp_root / 'wheel-cache'}", "DOEFF_WHEEL_REMOTE="]
     match target_dir:
         case None:
@@ -104,7 +104,7 @@ def _build_env(temp_root: Path, target_dir: Path | None) -> list[str]:
 def _start_build(
     package: Path, wheel_dir: Path, env: list[str], hook: str = "build_wheel"
 ) -> subprocess.Popen[str]:
-    """frontend と同じく別の process で build の hook を呼び始める(同時の build を試すため、待たずに返す)。"""
+    """Start calling the build hook in a separate process as a frontend does (to try concurrent builds, it returns without waiting)."""
     wheel_dir.mkdir(parents=True, exist_ok=True)
     return subprocess.Popen(
         [*env, sys.executable, "-c", _CALL_HOOK, hook, str(wheel_dir)],
@@ -116,19 +116,19 @@ def _start_build(
 
 
 def _finish_build(process: subprocess.Popen[str], wheel_dir: Path) -> Path:
-    """build の終わりを待ち、出来た wheel の path を返す。"""
+    """Wait for the build to end and return the path of the produced wheel."""
     out, err = process.communicate(timeout=BUILD_TIMEOUT_SECONDS)
     assert process.returncode == 0, err
     return wheel_dir / out.strip().splitlines()[-1]
 
 
 def _build(package: Path, wheel_dir: Path, env: list[str], hook: str = "build_wheel") -> Path:
-    """1 つの package を hook で組んで、出来た file の path を返す。"""
+    """Build one package with the hook and return the path of the produced file."""
     return _finish_build(_start_build(package, wheel_dir, env, hook), wheel_dir)
 
 
 def _greeting(wheel: Path, scratch: Path) -> str:
-    """wheel に入った probe の binary を取り出して走らせ、どの作業木の中身で組まれたかを読む。"""
+    """Extract the probe binary contained in the wheel and run it to read which working tree's contents it was built from."""
     with zipfile.ZipFile(wheel) as archive:
         (member,) = [name for name in archive.namelist() if name.endswith("/scripts/probe")]
         archive.extract(member, scratch)
@@ -138,15 +138,15 @@ def _greeting(wheel: Path, scratch: Path) -> str:
 
 
 def _leftovers(temp_root: Path) -> list[str]:
-    """一時の dir の置き場に残った build の target の名。"""
+    """Names of the build targets left in the temporary dir location."""
     return sorted(path.name for path in temp_root.iterdir() if path.name.startswith(TEMP_PREFIX))
 
 
 def test_a_shared_target_hands_the_older_checkout_the_other_checkouts_build(tmp_path: Path) -> None:
-    """反例: 2 つの作業木が 1 つの target を共有すると、先に切った作業木 B は A の build を黙って受け取る。
+    """Counterexample: if two working trees share one target, working tree B, cut earlier, silently receives A's build.
 
-    cargo は source の時刻で新旧を判定し、成果物を workspace の中の相対 path で名付けるため。口が共有の
-    target を使わず、1 回の build ごとの一時の dir を使う理由。
+    This is because cargo judges old versus new by the source's timestamp and names artifacts by the relative path within the workspace. This is why the entry point does not use a shared
+    target and uses a per-build temporary dir.
     """
     checkouts = _two_checkouts(tmp_path)
     newer, older = checkouts.newer, checkouts.older
@@ -166,9 +166,9 @@ def test_a_shared_target_hands_the_older_checkout_the_other_checkouts_build(tmp_
 
 @pytest.mark.parametrize("hook", ["build_wheel", "build_editable"])
 def test_each_checkout_builds_its_own_wheel_and_leaves_no_target(tmp_path: Path, hook: str) -> None:
-    """口に任せると、2 つの作業木はそれぞれ自分の中身の wheel を得て、package の中にも一時の置き場にも target が残らない。
+    """If left to the entry point, the two working trees each get a wheel of their own contents, and no target is left in the package or in the temporary location.
 
-    uv sync は workspace の一員を build_editable で入れるので、両方の hook で確かめる。
+    uv sync installs a workspace member with build_editable, so check with both hooks.
     """
     checkouts = _two_checkouts(tmp_path)
     newer, older = checkouts.newer, checkouts.older
@@ -190,7 +190,7 @@ def test_each_checkout_builds_its_own_wheel_and_leaves_no_target(tmp_path: Path,
 
 
 def test_two_builds_at_once_each_get_their_own_wheel(tmp_path: Path) -> None:
-    """2 つの作業木の build を同時に走らせても、両方とも成功し、それぞれ自分の中身の wheel を得る。"""
+    """Even running the builds of two working trees at the same time, both succeed and each gets a wheel of its own contents."""
     checkouts = _two_checkouts(tmp_path)
     newer, older = checkouts.newer, checkouts.older
     temp_root = tmp_path / "tmp"
@@ -213,7 +213,7 @@ def test_two_builds_at_once_each_get_their_own_wheel(tmp_path: Path) -> None:
 
 
 def test_a_given_target_dir_is_used_and_kept(tmp_path: Path) -> None:
-    """利用者が CARGO_TARGET_DIR を渡すと、口はそこに組み、消さない(差分の build を使う逃げ道)。"""
+    """If the user passes CARGO_TARGET_DIR, the entry point builds there and does not remove it (an escape hatch for using incremental builds)."""
     newer = _two_checkouts(tmp_path).newer
     temp_root = tmp_path / "tmp"
     temp_root.mkdir()
@@ -227,8 +227,8 @@ def test_a_given_target_dir_is_used_and_kept(tmp_path: Path) -> None:
 
 
 def test_a_temporary_target_keeps_the_intermediates_out_of_the_given_build_dir(tmp_path: Path) -> None:
-    """環境が CARGO_BUILD_BUILD_DIR を向けていても(zeus の worker)、一時の target の build は中間物を一時の dir に置いて消す。失敗ケース: 向けた先に
-    build ごとの中間物が残ると、memory の置き場を uv sync の度に食う。"""
+    """Even if the environment points CARGO_BUILD_BUILD_DIR somewhere (zeus's worker), the temporary-target build puts intermediates in the temporary dir and removes them. Failure case: if per-build
+    intermediates remain at the pointed place, they eat the memory location at every uv sync."""
     newer = _two_checkouts(tmp_path).newer
     temp_root = tmp_path / "tmp"
     temp_root.mkdir()
@@ -241,7 +241,7 @@ def test_a_temporary_target_keeps_the_intermediates_out_of_the_given_build_dir(t
 
 
 def test_every_maturin_package_builds_through_the_backend() -> None:
-    """maturin で組む doeff の package は、どれも口を通る(新しい Rust の package が作業木に target を作り直さない)。"""
+    """Every doeff package built with maturin goes through the entry point (a new Rust package does not recreate a target in the working tree)."""
     maturin_packages = sorted(
         pyproject.parent
         for pyproject in REPO.glob("packages/*/pyproject.toml")
@@ -284,13 +284,13 @@ def test_every_maturin_package_builds_through_the_backend() -> None:
         if isinstance(node, ast.ImportFrom) and node.module == "doeff_cargo_backend"
         for alias in node.names
     }
-    # doeff-indexer の口も保存先の入口(wheel_from_store・editable_from_store)を通る — 自前で maturin を撃つ 2 つ目の入口を作らない
+    # doeff-indexer's entry point also goes through the store entrances (wheel_from_store, editable_from_store) -- do not create a second entrance that fires maturin on its own
     # (ADR-DOE-BUILD-001)。
     assert {"cargo_target_dir", "wheel_from_store", "editable_from_store"} <= imported
 
 
 def test_a_failed_build_leaves_no_target(tmp_path: Path) -> None:
-    """compile に落ちた build も、一時の target を消して抜ける(失敗のたびに disk が減らない)。"""
+    """A build that fails to compile also removes its temporary target on the way out (the disk does not shrink with every failure)."""
     broken = _write_checkout(tmp_path / "wt-broken", "", body="fn main() { this is not rust }\n")
     temp_root = tmp_path / "tmp"
     temp_root.mkdir()
@@ -304,7 +304,7 @@ def test_a_failed_build_leaves_no_target(tmp_path: Path) -> None:
 
 
 def test_a_build_sweeps_targets_left_by_killed_builds_but_not_live_ones(tmp_path: Path) -> None:
-    """SIGTERM・SIGKILL で止められた build は後始末をしない。次の build が、持ち主の process が居ない dir だけを消す。"""
+    """A build stopped by SIGTERM or SIGKILL does no cleanup. The next build removes only dirs whose owner process no longer exists."""
     temp_root = tmp_path / "tmp"
     temp_root.mkdir()
     finished = subprocess.run(
@@ -326,10 +326,10 @@ def test_a_build_sweeps_targets_left_by_killed_builds_but_not_live_ones(tmp_path
 
 
 def test_every_maturin_package_sdist_carries_the_backend_at_its_root(tmp_path: Path) -> None:
-    """PyPI の sdist から組む人のために、口の file は sdist の根(pyproject と同じ所)に普通の file として入る。
+    """For people who build from the PyPI sdist, the entry point's file goes into the sdist root (the same place as pyproject) as an ordinary file.
 
-    path 依存の crate を持つ package(doeff-linter・doeff-vm)は、maturin が crate を <名>/ の下へ移すので、
-    pyproject の include で根に写す。sdist を組んでも package の中に target が出来ない事もあわせて見る。
+    For packages with path-dependent crates (doeff-linter, doeff-vm), maturin moves the crate under <name>/,
+    so it is copied to the root with the pyproject include. It also checks that building the sdist creates no target in the package.
     """
     temp_root = tmp_path / "tmp"
     temp_root.mkdir()
@@ -353,7 +353,7 @@ def test_every_maturin_package_sdist_carries_the_backend_at_its_root(tmp_path: P
             capture_output=True,
             text=True,
             timeout=BUILD_TIMEOUT_SECONDS,
-            check=False,  # 落ちた時に stderr を assert の説明に出すため
+            check=False,  # so stderr can be shown in the assert message on failure
         )
         assert built.returncode == 0, built.stderr
         with tarfile.open(out / built.stdout.strip().splitlines()[-1]) as sdist:
@@ -374,7 +374,7 @@ def test_every_maturin_package_sdist_carries_the_backend_at_its_root(tmp_path: P
 
 
 def _build_logged(package: Path, wheel_dir: Path, env: list[str]) -> BuiltWheel:
-    """build_wheel を呼び、出来た wheel の path と口の stderr(使った / 組んだの 1 行)を返す。"""
+    """Call build_wheel and return the produced wheel path and the entry point's stderr (the one line saying used / built)."""
     process = _start_build(package, wheel_dir, env)
     out, err = process.communicate(timeout=BUILD_TIMEOUT_SECONDS)
     assert process.returncode == 0, err
@@ -382,8 +382,8 @@ def _build_logged(package: Path, wheel_dir: Path, env: list[str]) -> BuiltWheel:
 
 
 def test_the_same_source_in_a_fresh_checkout_reuses_the_wheel(tmp_path: Path) -> None:
-    """失敗ケース: pin を上げて作り直した作業木は、中身が同じでも file の時刻と path が違う — 口は中身の hash で
-    前の wheel を引き、cargo を撃たない(2 回目に「組んだ」が出ない・一時の target を作らない)。"""
+    """Failure case: a working tree recreated with the pin raised has the same contents but different file timestamps and paths -- the entry point looks up
+    the earlier wheel by content hash and does not fire cargo (the second time shows no "built" and creates no temporary target)."""
     temp_root = tmp_path / "tmp"
     temp_root.mkdir()
     env = _build_env(temp_root, None)
@@ -401,7 +401,7 @@ def test_the_same_source_in_a_fresh_checkout_reuses_the_wheel(tmp_path: Path) ->
 
 
 def test_a_changed_source_builds_again(tmp_path: Path) -> None:
-    """source の中身が変われば hash が変わり、組み直して新しい中身の wheel を返す(前の wheel を黙って使わない)。"""
+    """If the source contents change, the hash changes, the build is redone, and a wheel of the new contents is returned (the earlier wheel is not silently used)."""
     temp_root = tmp_path / "tmp"
     temp_root.mkdir()
     env = _build_env(temp_root, None)
@@ -412,8 +412,8 @@ def test_a_changed_source_builds_again(tmp_path: Path) -> None:
 
 
 def test_an_editable_in_a_fresh_checkout_reuses_the_stored_wheel(tmp_path: Path) -> None:
-    """失敗ケース: editable の hook も保存先を引く — 同じ中身の作業木を作り直して editable で入れ直しても、
-    2 回目は cargo を撃たない。直す前の editable は毎回一時の target で組み直した(日次の検証で doeff-vm を 1 日 約 100 度)。"""
+    """Failure case: the editable hook also consults the store -- even if a working tree of the same contents is recreated and reinstalled as editable,
+    the second time does not fire cargo. Before the fix, editable rebuilt in a temporary target every time (about 100 times a day for doeff-vm in the daily verification)."""
     temp_root = tmp_path / "tmp"
     temp_root.mkdir()
     env = _build_env(temp_root, None)
@@ -435,7 +435,7 @@ def test_an_editable_in_a_fresh_checkout_reuses_the_stored_wheel(tmp_path: Path)
 
 
 def test_the_wheel_hook_fills_the_store_the_editable_hook_reads(tmp_path: Path) -> None:
-    """入口は 1 つ: build_wheel が組んで置いた wheel を、別の作業木の build_editable が組まずに使う。"""
+    """There is one entrance: a wheel that build_wheel built and stored is used, without building, by build_editable of another working tree."""
     temp_root = tmp_path / "tmp"
     temp_root.mkdir()
     env = _build_env(temp_root, None)

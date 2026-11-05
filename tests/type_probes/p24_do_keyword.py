@@ -1,4 +1,4 @@
-# @do(non_tail=True) の形と、yield の無い関数
+# The @do(non_tail=True) form, and functions without yield
 from collections.abc import Generator
 from typing import Any, Never, assert_type
 

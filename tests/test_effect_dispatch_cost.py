@@ -1,8 +1,8 @@
-"""effect 1 回の費用と import の床を下げた変更の回帰テスト(2026-09-23)。
+"""Regression test for the change that lowered the per-effect cost and the import floor (2026-09-23).
 
-- ``@do`` の handler は、VM が元の生成器関数を直接呼んで handler の stream にする(wrapper が
-  effect ごとに作っていた Expand / Apply / Pure / Callable を作らない)。結果は従来の評価と同じ。
-- ``import doeff`` は Hy・httpx・CLI を読み込まない(使う時に読む)。
+- A ``@do`` handler: the VM calls the original generator function directly to make the handler stream (without creating the
+  Expand / Apply / Pure / Callable that the wrapper used to create per effect). The result is the same as the previous evaluation.
+- ``import doeff`` does not load Hy, httpx, or the CLI (they are loaded on use).
 """
 
 import subprocess

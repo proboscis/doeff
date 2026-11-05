@@ -1,12 +1,12 @@
-"""設計の記録の dir は doeff-linter の対象の外 — 定義の 2 か所(record-dirs と linter の exclude)が食い違わないこと。
+"""Design-record dirs are outside doeff-linter's scope -- the two definitions (record-dirs and the linter's exclude) must not diverge.
 
-設計の記録は、その時点の証拠: 測りの script・盲検の A・B が書いた物の写しを置く。書き直すと記録が
-変わるので、業務の code と検に当てる規則(DOEFF002・004・006・007 ほか)の対象にしない。記録の dir の定義は root の pyproject.toml の
-`[tool.doeff] record-dirs` の 1 点で、linter の `[tool.doeff-linter] exclude` は path の部品 1 つ(dir の名)と一致する時だけ外すので、
-record-dirs の末尾の名を exclude に写してある。
+Design records are evidence from a point in time: they hold measurement scripts and copies of what blind A/B reviewers wrote. Rewriting them would
+change the record, so they are not subject to the rules applied to production code and tests (DOEFF002, 004, 006, 007, etc.). The record dirs are defined in one place, root pyproject.toml's
+`[tool.doeff] record-dirs`, and the linter's `[tool.doeff-linter] exclude` excludes only when it matches a single path component (a dir name),
+so the trailing names of record-dirs are mirrored into exclude.
 
-- 記録の dir を足したのに exclude に末尾の名を足さないと、その dir に置いた script の所見が日次の lint(基点の比べ)を赤にする。
-- 逆に、exclude に足した名が記録の dir の外の dir にも在ると、そこの code が黙って規則の外になる。
+- If a record dir is added without adding its trailing name to exclude, findings for scripts placed in that dir turn the daily lint (baseline comparison) red.
+- Conversely, if a name added to exclude also exists as a dir outside the record dirs, the code there silently falls outside the rules.
 """
 
 from __future__ import annotations
@@ -19,17 +19,17 @@ import tomllib
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 
-#: exclude の中で、記録の dir の名ではない行(道具の検が読む見本の入力の dir — pyproject.toml の註)。
+#: Lines in exclude that are not record-dir names (input dirs of sample fixtures read by tool tests -- see the note in pyproject.toml).
 FIXTURES = "fixtures"
 
 
 def _pyproject() -> dict[str, Any]:
-    """tomllib が返す写像のまま(TOML の境界の値 — 使う 2 つの欄はこの検が形を確かめる)。"""
+    """The mapping exactly as tomllib returns it (a TOML boundary value -- this test checks the shape of the two fields it uses)."""
     return tomllib.loads((REPO_ROOT / "pyproject.toml").read_text(encoding="utf-8"))
 
 
 def _record_dirs() -> list[str]:
-    """設計の記録の dir(`/` で終わる repo の根からの path)。"""
+    """Design-record dirs (paths from the repo root, ending in `/`)."""
     return list(_pyproject()["tool"]["doeff"]["record-dirs"])
 
 
@@ -45,17 +45,17 @@ def _tracked_python() -> list[str]:
 
 
 def test_every_record_dir_is_out_of_the_linters_scope() -> None:
-    """記録の dir の末尾の名は、linter の exclude に在る。"""
+    """The trailing name of each record dir is present in the linter's exclude."""
     names = {PurePosixPath(record).name for record in _record_dirs()}
     missing = sorted(names - _excluded_names())
     assert missing == [], (
-        f"設計の記録の dir {missing} が linter の対象に入っている — pyproject.toml の [tool.doeff-linter] exclude へ"
-        "その末尾の名を足す(記録は書き直せないので、規則の対象にしない)"
+        f"Design-record dirs {missing} are included in the linter's scope -- add"
+        " their trailing names to [tool.doeff-linter] exclude in pyproject.toml (records cannot be rewritten, so they are not subject to the rules)"
     )
 
 
 def test_no_excluded_name_hides_a_directory_outside_the_record_dirs() -> None:
-    """記録の dir の名を exclude に足したことで、記録の dir の外の code が規則の外にならない。"""
+    """Adding record-dir names to exclude must not put code outside the record dirs outside the rules."""
     record_names = {PurePosixPath(record).name for record in _record_dirs()}
     hidden = sorted(
         path
@@ -64,6 +64,6 @@ def test_no_excluded_name_hides_a_directory_outside_the_record_dirs() -> None:
         and not any(path.startswith(record) for record in _record_dirs())
     )
     assert hidden == [], (
-        f"記録の dir の名と同じ名の dir に在る code が linter の対象の外になっている: {hidden[:5]} — 記録の dir の外には"
-        "その名の dir を置かない(置くなら exclude の仕組みを path の接頭辞に広げる)"
+        f"Code in dirs sharing a name with a record dir is outside the linter's scope: {hidden[:5]} -- do not place"
+        " dirs with that name outside the record dirs (if you must, widen the exclude mechanism to path prefixes)"
     )

@@ -1,4 +1,4 @@
-"""Semgrep dev dependency が既定の free-threaded Python で同期できることを守る。"""
+"""Guard that the Semgrep dev dependency can be synced on the default free-threaded Python."""
 
 from pathlib import Path
 from typing import cast

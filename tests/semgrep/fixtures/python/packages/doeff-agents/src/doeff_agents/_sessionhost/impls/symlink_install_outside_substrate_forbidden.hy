@@ -1,8 +1,8 @@
-;; 陽性対照(発火する 3 行)— 据え付けの物理を 1 点の外で組み直す綴り。
+;; Positive control (3 lines fire) -- spellings that reassemble the physics of installation outside the single point.
 (os.symlink target link)
 (.symlink_to (Path link) target)
 (subprocess.run f"ln -sfn {target} {link}" :shell True)
-;; 弁別(発火しない)— 1 点へ委ねる形・読みだけの syscall・張り替えの動詞そのもの。
+;; Discrimination (does not fire) -- shapes that delegate to the single point, read-only syscalls, and the symlink-swap verb itself.
 (fs-ensure-symlink link target)
 (os.readlink link)
 (ensure-symlink-outcome link target)

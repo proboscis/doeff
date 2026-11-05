@@ -1,12 +1,12 @@
 """CacheDeleteEffect handling: delete-then-get must recompute.
 
 Issue doeff-core-effects-delete-effects-drift:
-CacheDeleteEffect は語彙として定義済みだが cache_handler が処理していなかった。
+CacheDeleteEffect was defined as vocabulary, but cache_handler did not handle it.
 
-cache_handler は単層意味論: cache effect を必ず自分で処理し re-perform しない
-(cache_handlers.py の handler 本体)ため、Get と Delete は常に同一 storage に
-到達する — 単層削除で「削除後の Get は必ず再計算」が成立する。
-再計算は呼び出し回数カウンタで、実削除は InMemoryStorage.keys() で直接観測する。
+cache_handler has single-layer semantics: it always handles cache effects itself and does not re-perform
+(the handler body in cache_handlers.py), so Get and Delete always reach the same storage --
+with single-layer deletion, "a Get after delete always recomputes" holds.
+Recomputation is observed with a call counter, and the actual deletion directly with InMemoryStorage.keys().
 """
 
 from doeff_core_effects import CacheDelete, CacheExists, CacheGet, CachePut
@@ -55,10 +55,10 @@ def test_cache_put_delete_get_raises_keyerror():
 
     result = run_with_defaults(cache_handler(storage)(body()))
 
-    # Delete 後の Get は miss — cache_handler の miss は KeyError で確定
+    # A Get after Delete is a miss -- cache_handler's miss is determined by KeyError
     assert result.is_err(), f"expected Err(KeyError) after delete, got {result!r}"
     assert isinstance(result.error, KeyError), f"expected KeyError, got {result.error!r}"
-    # 実削除の直接観測: storage から鍵が消えている
+    # Direct observation of actual deletion: the key is gone from storage
     assert "k1" not in list(storage.keys())
 
 
@@ -79,7 +79,7 @@ def test_cache_delete_then_exists_false():
 
 
 def test_cache_put_delete_get_recompute_probe():
-    # 再計算 probe: Delete 後の 2 回目は cache hit せず再計算される。
+    # Recompute probe: the 2nd Get after Delete does not hit the cache and recomputes.
     calls = {"count": 0}
     storage = InMemoryStorage()
     rewriter = make_memo_rewriter(_ProbeEffect, key_fn=lambda _e: "probe-key")
@@ -103,8 +103,8 @@ def test_cache_put_delete_get_recompute_probe():
 
 
 def test_cache_delete_missing_key_is_noop_and_returns_none():
-    # 冪等性: 存在しない鍵の Delete は no-op で成功する。
-    # 返り値は既存 Put との対称性で None。
+    # Idempotence: Delete of a nonexistent key succeeds as a no-op.
+    # The return value is None, symmetric with the existing Put.
     storage = InMemoryStorage()
 
     @do
@@ -118,7 +118,7 @@ def test_cache_delete_missing_key_is_noop_and_returns_none():
 
 
 def test_cache_delete_returns_none_like_put():
-    # 返り値規約の固定: Put が None を resume するのと対称に Delete も None。
+    # Pin the return-value convention: Delete also resumes None, symmetric with Put resuming None.
     storage = InMemoryStorage()
 
     @do

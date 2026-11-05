@@ -1,13 +1,13 @@
-"""README の頭の GIF と、GIF に映る例の file の検(取り組み doeff-publish)。
+"""Tests for the GIF at the top of the README and the example files shown in it (initiative doeff-publish).
 
-GIF(images/readme-demo.gif)は tools/readme_demo/record.py が、隣の digest.py(program)と handlers.py(4 つの handler)を
-本物の bash と Python で走らせて録る。GIF は録り直すまで変わらないので、doeff の API が変わって 2 つの file が走らなくなっても
-GIF は古いまま「動く」ように見える。この検は 2 つの file を今の doeff で走らせ、GIF に映る 4 つの答え — canned の
-'14 chars'・trace が見る 2 つの effect・budget(1) が k を捨てた 'over budget at Summarize'・本物の取り寄せの道(live_world)— が
-今も通る事と、GIF の 4 行が `python -m doeff demo` の 4 行と同じ答えを返す事を確かめる。落ちたら file を
-直して GIF を録り直す(record.py の docstring の命令)。
+The GIF (images/readme-demo.gif) is recorded by tools/readme_demo/record.py, which runs the adjacent digest.py (program) and handlers.py (4 handlers)
+with a real bash and Python. The GIF does not change until it is re-recorded, so even if doeff's API changes and the 2 files stop running,
+the GIF would still look like it "works". This test runs the 2 files on the current doeff and checks the 4 answers shown in the GIF -- canned
+'14 chars', the 2 effects the trace sees, 'over budget at Summarize' where budget(1) discards k, and the real fetch path (live_world) --
+still pass, and that the GIF's 4 lines return the same answers as the 4 lines of `python -m doeff demo`. If it fails, fix the files
+and re-record the GIF (command in record.py's docstring).
 
-live_world は file:// の URL で走らせる — urlopen は HTTP と同じ道で file を読むので、検は network に出ない。
+live_world runs with a file:// URL -- urlopen reads files through the same path as HTTP, so the test does not go out to the network.
 """
 
 from __future__ import annotations
@@ -31,9 +31,9 @@ GIF_URL = "https://raw.githubusercontent.com/proboscis/doeff/main/images/readme-
 
 
 def _load(path: Path) -> ModuleType:
-    """tools/readme_demo/ の file を module として読む(tools/ は package ではない)。
+    """Load the files in tools/readme_demo/ as modules (tools/ is not a package).
 
-    sys.modules に名で置く — record.py の dataclass は、型の注記を module の名から引く。
+    Register it in sys.modules by name -- record.py's dataclass resolves type annotations from the module name.
     """
     name = f"readme_demo_{path.stem}"
     spec = importlib.util.spec_from_file_location(name, path)
@@ -47,7 +47,7 @@ def _load(path: Path) -> ModuleType:
 
 @pytest.fixture
 def handlers(monkeypatch: pytest.MonkeyPatch) -> ModuleType:
-    """GIF に映る handlers.py — `python -i handlers.py` と同じく、隣の digest.py を `from digest import` で読む。"""
+    """The handlers.py shown in the GIF -- like `python -i handlers.py`, it reads the adjacent digest.py with `from digest import`."""
     monkeypatch.syspath_prepend(str(DEMO_DIR))
     monkeypatch.delitem(sys.modules, "digest", raising=False)
     return _load(DEMO_DIR / "handlers.py")
@@ -83,7 +83,7 @@ def test_live_world_reads_the_page_at_the_url(handlers: ModuleType, tmp_path: Pa
 def test_the_gif_runs_the_lines_of_the_demo_command_and_gets_its_answers(
     handlers: ModuleType, tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    # GIF の REPL で打つ 4 行は `python -m doeff demo` が走らせる 4 行と同じで、同じ名の物で評価すると同じ答えと印字を返す。
+    # The 4 lines typed in the GIF's REPL are the same 4 lines `python -m doeff demo` runs; evaluating with the same-named objects returns the same answers and printed output.
     record = _load(DEMO_DIR / "record.py")
     typed = [step.text for step in record.SCRIPT if isinstance(step, record.Type)]
     runs = [text for text in typed if text.startswith("run(")]
@@ -120,6 +120,6 @@ def test_readme_opening_shows_the_gif_the_recorder_writes() -> None:
 
 
 def test_gif_is_committed_within_the_size_budget() -> None:
-    # 目安(1 MB ほど)の定義元は録る道具 — 道具も同じ値で越えた事を知らせる。
+    # The source of the guideline value (about 1 MB) is the recording tool -- notify when the tool also exceeds it with the same value.
     assert GIF.read_bytes()[:6] == b"GIF89a"
     assert GIF.stat().st_size <= _load(DEMO_DIR / "record.py").SIZE_BUDGET_BYTES

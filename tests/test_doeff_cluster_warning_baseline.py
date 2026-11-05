@@ -1,8 +1,8 @@
-"""packages/doeff-cluster の warning の基点の比べ(scripts/doeff_cluster_warning_baseline.py)の検。
+"""Tests for the packages/doeff-cluster warning-baseline comparison (scripts/doeff_cluster_warning_baseline.py).
 
-失敗ケース: 新しい warning が 1 つ増えると赤・直したのに基点を下げないと赤・lower は下げるだけで上げない。
-#2906: commit の hook の道(scripts/lint-doeff-cluster.sh に file を渡す時)は HEAD の組み立ての入力の鍵の binary で測り、探し道の
-linter は呼ばない・置き場に無ければ「測れない」と名指して通す・比べの script は渡された --linter を使う。
+Failure cases: one more new warning is red; fixing without lowering the baseline is red; lower only lowers and never raises.
+#2906: the commit hook path (when files are passed to scripts/lint-doeff-cluster.sh) measures with the binary for HEAD's build-input key and does not call the search-path
+linter; when absent from the location, it names "cannot measure" and passes; the comparison script uses the --linter it is given.
 """
 
 from __future__ import annotations
@@ -19,18 +19,18 @@ from types import ModuleType
 
 ROOT: Path = Path(__file__).resolve().parents[1]
 SCRIPT: Path = ROOT / "scripts" / "doeff_cluster_warning_baseline.py"
-# 子は自前の環境で起きるので、根の conftest の固定(PYTHONDONTWRITEBYTECODE=1)を継がない — 各々の環境に明示で渡し、checkout
-# (script の隣・.venv の site-packages)へ .pyc を書かない(書くと session の終わりの検 conftest.py が赤 — 新しい .venv で走る
-# 日次の実弾 2026-10-10)。
-# 子は script の中で doeff と Hy を import する。子は .pyc を書かず、名指しの無い Hy の展開の置き場(利用者の cache)にも足さないので、
-# 呼び手が置き場を DOEFF_HY_CODE_STORE で名指していれば(日次の task・worker)その名を子へ継ぐ — 継がないと子は毎回冷えた Hy の展開
-# (atlas で約 14 秒)を払い、5 回起こす検が pytest-timeout の 60 秒を越えた(日次の実弾 2026-10-11 00:05 JST)。
+# The child starts with its own environment, so it does not inherit the root conftest's pin (PYTHONDONTWRITEBYTECODE=1) -- pass it explicitly in each environment so no .pyc is written into the checkout
+# (next to the script / .venv site-packages) (if written, the session-end check conftest.py goes red -- the real daily run on a fresh .venv,
+# 2026-10-10).
+# The child imports doeff and Hy inside the script. The child writes no .pyc and does not add to the unnamed Hy-expansion location (the user's cache), so
+# if the caller names the location with DOEFF_HY_CODE_STORE (daily task, worker), pass that name on to the child -- otherwise the child pays a cold Hy expansion every time
+# (about 14 s in atlas) and the check that starts it 5 times exceeded pytest-timeout's 60 s (real daily run, 2026-10-11 00:05 JST).
 HY_CODE_STORE_ENV: str = "DOEFF_HY_CODE_STORE"
 
 
 def _environment_value(name: str) -> str | None:
-    """環境変数 1 つの素の値(無ければ None)— foundation の答え手 env_var_ask の下で Ask を問う(doeff_hy._env_places の読みと同じ形)。
-    os.environ を直に読むと doeff-linter の DOEFF004 に当たる(日次の lint の段の赤 2026-10-11 08:05 JST)。"""
+    """The raw value of one environment variable (None if absent) -- ask Ask under the foundation handler env_var_ask (the same shape as doeff_hy._env_places reads).
+    Reading os.environ directly hits doeff-linter's DOEFF004 (red in the daily lint stage, 2026-10-11 08:05 JST)."""
     from doeff import run, with_handlers
     from doeff_core_effects import Ask
     from doeff_core_effects import env_var_ask, reader
@@ -40,14 +40,14 @@ def _environment_value(name: str) -> str | None:
 
 
 def _child_environment(**names: str) -> dict[str, str]:
-    """自前の環境で起こす子の process の環境: 与えた名の値・.pyc を書かない旗・呼び手の Hy の展開の置き場の名指し(在れば)。"""
+    """Environment of a child process started with its own environment: the values of the names given, a flag not to write .pyc, and (if present) the caller's Hy-expansion location."""
     store: str | None = _environment_value(HY_CODE_STORE_ENV)
     named_store: dict[str, str] = {HY_CODE_STORE_ENV: store} if store is not None else {}
     return {**names, "PYTHONDONTWRITEBYTECODE": "1", **named_store}
 
 
 def _module() -> ModuleType:
-    """script を module として読み、純粋な比べの関数を直に試すため。"""
+    """Load the script as a module to try the pure comparison functions directly."""
     spec = importlib.util.spec_from_file_location("doeff_cluster_warning_baseline", SCRIPT)
     assert spec is not None and spec.loader is not None
     module: ModuleType = importlib.util.module_from_spec(spec)
@@ -79,7 +79,7 @@ def test_a_fix_without_lowering_the_baseline_is_red() -> None:
 
 
 def test_only_the_measured_files_are_compared() -> None:
-    # commit の hook は変えた file だけを測る — 測っていない b.hy が 0 に見えても下げ忘れにしない。
+    # The commit hook measures only changed files -- even if an unmeasured b.hy looks like 0, it is not treated as a forgotten lowering.
     comparison = BASELINE.compare(BASE, {"DOEFF172": {"src/a.hy": 2}}, frozenset({"src/a.hy", "architecture.hy"}))
     assert comparison.grown == () and comparison.stale == ()
 
@@ -99,7 +99,7 @@ def test_warning_counts_reads_only_warnings() -> None:
 
 
 def test_the_check_entry_is_red_on_a_new_warning(tmp_path: Path) -> None:
-    # 端から端: 偽の doeff-linter が基点より 1 つ多い warning を出すと、check の入口が rc 1 で増えた組を名指す。
+    # End to end: when the fake doeff-linter emits one more warning than the baseline, the check entrypoint names the increased set with rc 1.
     repo: Path = tmp_path / "repo"
     package: Path = repo / "packages" / "doeff-cluster"
     package.mkdir(parents=True)
@@ -117,7 +117,7 @@ def test_the_check_entry_is_red_on_a_new_warning(tmp_path: Path) -> None:
                             capture_output=True, text=True, check=False)
     assert result.returncode == 1, result.stderr
     assert "DOEFF172 src/a.hy: 基点 2 → 今 3" in result.stderr
-    # 基点どおりなら緑。
+    # Green when it matches the baseline.
     report_ok = [{"rule": "DOEFF172", "severity": "warning",
                   "violations": [{"file": "src/a.hy"}, {"file": "src/a.hy"}, {"file": "src/b.hy"}]}]
     linter.write_text(f"#!/bin/sh\ncat <<'EOF'\n{json.dumps(report_ok)}\nEOF\n", encoding="utf-8")
@@ -127,8 +127,8 @@ def test_the_check_entry_is_red_on_a_new_warning(tmp_path: Path) -> None:
 
 
 def _fake_repo(root: Path, report: list[dict[str, object]], baseline: dict[str, dict[str, int]]) -> dict[str, str]:
-    """置き場を任意の dir(root)にした検体の木(偽の linter つき)を作るため — 基点の鍵が置き場に依らないことを、別々の場所の木で試す。
-    答えは、偽の linter を先に引く子の process の環境。"""
+    """Build a sample tree (with a fake linter) whose location is an arbitrary dir (root) -- to try, with trees in different places, that the baseline key does not depend on the location.
+    The answer is the child process's environment, which resolves the fake linter first."""
     package: Path = root / "packages" / "doeff-cluster"
     package.mkdir(parents=True)
     (package / "lint-warning-baseline.json").write_text(json.dumps(baseline), encoding="utf-8")
@@ -141,14 +141,14 @@ def _fake_repo(root: Path, report: list[dict[str, object]], baseline: dict[str, 
 
 
 def _absolute_report(root: Path, files: list[str]) -> list[dict[str, object]]:
-    """本物の linter と同じく、その木の絶対 path で warning を報せる報告を作るため。"""
+    """Build a report that emits warnings with the tree's absolute path, like the real linter."""
     package: Path = root / "packages" / "doeff-cluster"
     return [{"rule": "DOEFF172", "severity": "warning", "violations": [{"file": str(package / f)} for f in files]}]
 
 
 def test_absolute_paths_from_another_tree_are_keyed_from_the_package(tmp_path: Path) -> None:
-    # 反例(ddc164310・cc1-w38 の実測): 基点は package の dir からの鍵。別の場所の木で linter が絶対 path を報せても、
-    # 基点どおりなら check は緑・path を渡す check も比べる(1 つ増やせば赤)・lower は基点を空にしない。
+    # Counterexample (measured in ddc164310 / cc1-w38): the baseline keys are relative to the package dir. Even if the linter reports absolute paths in a tree in a different place,
+    # check is green when it matches the baseline, a check that is passed paths also compares (red if you add one), and lower does not empty the baseline.
     for place in ("tree-a", "elsewhere/tree-b"):
         root: Path = tmp_path / place
         environment = _fake_repo(root, _absolute_report(root, ["src/a.hy", "src/a.hy", "src/b.hy"]), BASE)
@@ -169,11 +169,11 @@ def test_absolute_paths_from_another_tree_are_keyed_from_the_package(tmp_path: P
 
 
 def test_the_linter_given_by_the_hook_is_used_instead_of_the_path_one(tmp_path: Path) -> None:
-    # #2906: commit の hook は HEAD の組み立ての入力の鍵の binary を --linter で渡す — 探し道の linter(別の版)は呼ばない。
+    # #2906: the commit hook passes the binary for HEAD's build-input key via --linter -- it does not call the search-path linter (a different version).
     root: Path = tmp_path / "tree"
     report: list[dict[str, object]] = _absolute_report(root, ["src/a.hy"] * 3 + ["src/b.hy"])
     environment: dict[str, str] = _fake_repo(root, report, BASE)
-    (root / "bin" / "doeff-linter").write_text("#!/bin/sh\necho 探し道の linter が呼ばれた >&2\nexit 9\n", encoding="utf-8")
+    (root / "bin" / "doeff-linter").write_text("#!/bin/sh\necho the search-path linter was called >&2\nexit 9\n", encoding="utf-8")
     given: Path = tmp_path / "given-linter"
     given.write_text(f"#!/bin/sh\ncat <<'EOF'\n{json.dumps(report)}\nEOF\n", encoding="utf-8")
     given.chmod(0o755)
@@ -181,10 +181,10 @@ def test_the_linter_given_by_the_hook_is_used_instead_of_the_path_one(tmp_path: 
                             env=environment, capture_output=True, text=True, check=False)
     assert result.returncode == 1, result.stderr
     assert "DOEFF172 src/a.hy: 基点 2 → 今 3" in result.stderr
-    assert "探し道の linter" not in result.stderr
+    assert "the search-path linter" not in result.stderr
 
 
-# --- scripts/lint-doeff-cluster.sh の commit の hook の道(#2906)— HEAD の鍵の binary を HOME の下の置き場から探す ----------------
+# --- the commit hook path of scripts/lint-doeff-cluster.sh (#2906) -- look up HEAD's key binary from the location under HOME ----------------
 
 FAKE_DEV_LINTER = """\
 import json, sys
@@ -198,13 +198,13 @@ if "--output-format" in sys.argv:
 
 
 def _uv_dir(uv: str, kind: str) -> str:
-    """本物の uv の置き場(`uv cache dir` / `uv python dir`)— HOME を替えた子にも同じ置き場を渡すため。"""
+    """Locations of the real uv (`uv cache dir` / `uv python dir`) -- so a child with a changed HOME gets the same locations."""
     return subprocess.run([uv, kind, "dir"], capture_output=True, text=True, check=True).stdout.strip()
 
 
 @dataclass(frozen=True)
 class ClusterRig:
-    """一時の repo・HOME を一時の dir に向けた子の環境・HOME の下の偽の land-arm の開発版の置き場。"""
+    """A temp repo, a child environment with HOME pointed at a temp dir, and the location of the fake land-arm dev build under HOME."""
 
     repo: Path
     environment: dict[str, str]
@@ -212,13 +212,13 @@ class ClusterRig:
 
 
 def _cluster_repo(tmp_path: Path) -> ClusterRig:
-    """script 3 つ・偽の linter の crate・package の基点を commit した一時の repo と、HOME を一時の dir に向けた子の環境、
-    HOME の下の偽の land-arm の開発版の置き場を作るため(探し道の linter は呼ばれたら印を残して落ちる)。"""
+    """Build a temp repo with 3 scripts, a fake linter crate, and the package baseline committed, a child environment with HOME pointed at a temp dir, and
+    the location of the fake land-arm dev build under HOME (the search-path linter leaves a marker and fails when called)."""
     repo: Path = tmp_path / "repo"
     package: Path = repo / "packages" / "doeff-cluster"
     (package / "src").mkdir(parents=True)
     (package / "lint-warning-baseline.json").write_text(json.dumps(BASE), encoding="utf-8")
-    (package / "architecture.hy").write_text(";; 宣言\n", encoding="utf-8")
+    (package / "architecture.hy").write_text(";; declaration\n", encoding="utf-8")
     (package / "src" / "a.hy").write_text(";; a\n", encoding="utf-8")
     (repo / "scripts").mkdir()
     for script in ("lint-doeff-cluster.sh", "doeff_cluster_warning_baseline.py", "doeff_linter_locked.py"):
@@ -229,20 +229,20 @@ def _cluster_repo(tmp_path: Path) -> ClusterRig:
     (crate / "src" / "main.rs").write_text("fn main() {}\n", encoding="utf-8")
     subprocess.run(["git", "init", "-q", str(repo)], check=True)
     subprocess.run(["git", "add", "-A"], cwd=repo, check=True)
-    subprocess.run(["git", "-c", "user.name=t", "-c", "user.email=t@example.invalid", "commit", "-qm", "はじめ"],
+    subprocess.run(["git", "-c", "user.name=t", "-c", "user.email=t@example.invalid", "commit", "-qm", "initial"],
                    cwd=repo, check=True)
-    # 本物の repo と同じく根に .venv を置く: hook は script を `uv run --no-project python` で起こし、uv は今の dir の .venv を使う。
-    # 基点の script は doeff の効果で環境を読む(05a2a3f94)ので、doeff の入った venv が要る — この検を走らせている venv を結ぶ
-    # (#1201 — 結ばない rig では script が doeff を import できず、hook の性質でなく rig の欠けで赤だった)。
+    # Put .venv at the root as in the real repo: the hook starts the script with `uv run --no-project python`, and uv uses the current dir's .venv.
+    # The baseline script reads the environment through doeff effects (05a2a3f94), so a venv with doeff installed is needed -- link the venv running this test
+    # (#1201 -- in a rig that did not link it, the script could not import doeff, and the test was red from a rig defect, not from the hook's behavior).
     venv: Path = Path(sys.prefix)
-    assert (venv / "pyvenv.cfg").is_file(), f"検は venv の中で走らせる(rig の .venv に結ぶ): {venv}"
+    assert (venv / "pyvenv.cfg").is_file(), f"the test must run inside a venv (link it to the rig's .venv): {venv}"
     (repo / ".venv").symlink_to(venv, target_is_directory=True)
     tools: Path = tmp_path / "bin"
     tools.mkdir()
     (tools / "doeff-linter").write_text(f"#!/bin/sh\ntouch {tmp_path / 'path-linter-called'}\nexit 9\n", encoding="utf-8")
     (tools / "doeff-linter").chmod(0o755)
     real_uv: str | None = shutil.which("uv")
-    assert real_uv is not None, "uv が要る(script の Python を走らせる)"
+    assert real_uv is not None, "uv is required (to run the script's Python)"
     environment: dict[str, str] = _child_environment(
         PATH=f"{tools}:{Path(real_uv).parent}:/usr/bin:/bin", HOME=str(tmp_path / "home"),
         UV_CACHE_DIR=_uv_dir(real_uv, "cache"), UV_PYTHON_INSTALL_DIR=_uv_dir(real_uv, "python"),
@@ -251,7 +251,7 @@ def _cluster_repo(tmp_path: Path) -> ClusterRig:
 
 
 def _install_dev(dev: Path, repo: Path) -> None:
-    """偽の land-arm の開発版を、repo の HEAD から組んだ物として置くため。"""
+    """Place the fake land-arm dev build as if built from the repo's HEAD."""
     dev.mkdir(parents=True)
     linter: Path = dev / "doeff-linter"
     linter.write_text(f"#!{sys.executable}\n{FAKE_DEV_LINTER}", encoding="utf-8")
@@ -267,8 +267,8 @@ def test_the_cluster_hook_measures_with_the_binary_of_head_and_never_the_path_on
                             env=rig.environment, capture_output=True, text=True, check=False)
     assert result.returncode == 0, result.stderr
     calls: list[str] = (rig.dev / "calls").read_text(encoding="utf-8").splitlines()
-    assert any("--output-format" in call for call in calls)  # warning の基点の比べ
-    assert any(call.endswith("src/a.hy architecture.hy") for call in calls)  # error の判定
+    assert any("--output-format" in call for call in calls)  # comparison with the warning baseline
+    assert any(call.endswith("src/a.hy architecture.hy") for call in calls)  # error judgement
     assert not (tmp_path / "path-linter-called").exists()
 
 

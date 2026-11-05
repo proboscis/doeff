@@ -1,8 +1,8 @@
-"""doeff-core-effects の handler の effect の引数の型の註の検。
+"""Check of the effect-argument type annotations of the doeff-core-effects handlers.
 
-VM は handler の effect の引数の型の註を install の時に読み(doeff_vm._effect_types・SPEC-WITHHANDLER-TYPE-FILTER)、型の外の effect では
-その handler を Python に入らずに外へ渡す。core-effects の handler は、どれも扱う型の外の effect を最初に `Pass` で外へ渡すだけなので、
-註を足しても答えと順は変わらず、handler の本体に入る回数だけが減る。
+The VM reads the handler's effect-argument type annotation at install time (doeff_vm._effect_types, SPEC-WITHHANDLER-TYPE-FILTER), and for an effect outside the type
+passes it outward without entering Python for that handler. Every core-effects handler only passes an effect outside the types it handles outward with `Pass` first, so
+adding the annotation changes neither the answer nor the order; only the number of times the handler body is entered decreases.
 """
 
 from __future__ import annotations
@@ -47,8 +47,8 @@ from doeff import run as doeff_run
 
 
 def _raw(installed: object) -> Callable[..., object]:
-    """Program -> Program の handler の値が包む、VM が呼ぶ handler の関数(doeff.program.handler が置く欄)。"""
-    return installed.__doeff_handler_data__  # type: ignore[attr-defined] — doeff.program.handler が置く欄(型の無い欄)
+    """The handler function the VM calls, wrapped by the value of a Program -> Program handler (the field doeff.program.handler places)."""
+    return installed.__doeff_handler_data__  # type: ignore[attr-defined] -- the field doeff.program.handler places (an untyped field)
 
 
 @pytest.mark.parametrize(
@@ -82,14 +82,14 @@ def test_each_handler_declares_the_types_it_answers(installed: object, types: tu
 
 @dataclass(frozen=True)
 class _Entries:
-    """run の間に code の関数が始まった回数(entered)と、run の答え(result)。"""
+    """The number of times the code function started during the run (entered) and the answer of the run (result)."""
 
     entered: int
     result: object
 
 
 def _entries(code: CodeType, run: Callable[[], object]) -> _Entries:
-    """run の間に code の関数が始まった回数と、run の答え。本体は generator なので再開ごとにも call の事象が出る — frame の同一性で数える。"""
+    """The number of times the code function started during the run, and the answer of the run. The body is a generator, so a call event also fires on each resumption -- count by frame identity."""
     frames: dict[int, FrameType] = {}
 
     def profile(frame: FrameType, event: str, _arg: object) -> None:
@@ -114,17 +114,17 @@ def _asks_then_state():
 
 
 def test_an_effect_outside_the_types_does_not_enter_the_handler() -> None:
-    # 列の最後が一番内側: Ask は state を飛ばして外の reader に届く。state は VM の中の Rust の handler で
-    # Python の本体を持たないので、VM が handler を呼んだ回数で数える。
+    # The last in the list is the innermost: Ask skips state and reaches the outer reader. state is a Rust handler inside the VM
+    # with no Python body, so count by the number of times the VM called a handler.
     stack = [reader({"a": 1, "b": 2, "c": 3}), state()]
     result, calls = _handler_calls_of(with_handlers(stack, _asks_then_state()))
-    _, reading = _handler_calls_of(Pure(None))  # 後の読みの effect が vm_probe_handler を呼ぶ分
+    _, reading = _handler_calls_of(Pure(None))  # the part where the later reading effect calls vm_probe_handler
     assert result == 6
-    assert calls - reading == 5, "handler を呼ぶのは reader の Ask 3 回と state の Put・Get の 2 回だけ(Ask は state を飛ばす)"
+    assert calls - reading == 5, "handlers are called only for the reader's 3 Asks and state's Put and Get (2 times) (Ask skips state)"
 
 
 def _handler_calls_of(program: object) -> tuple[object, int]:
-    """program の答えと、走らせた間に VM が handler を呼んだ回数(前後の ReadVmWorkCounts の差 — 後の読みの 1 回を含む)。"""
+    """The answer of the program, and the number of times the VM called a handler while it ran (the difference of ReadVmWorkCounts before and after -- including the 1 call of the later reading)."""
 
     @do
     def counted():
@@ -137,15 +137,15 @@ def _handler_calls_of(program: object) -> tuple[object, int]:
 
 
 def test_the_answers_and_the_types_it_answers_are_unchanged() -> None:
-    # 扱う型は今までどおり届く・註の無い素の handler は全部の effect を受ける。
+    # The handled types are delivered as before; a plain handler with no type annotation receives every effect.
     @do
-    def passes_everything(effect, k):  # 型の註の無い素の handler
+    def passes_everything(effect, k):  # a plain handler with no type annotation
         from doeff import Pass
 
         yield Pass(effect, k)
 
     stack = [reader({"a": 1, "b": 2, "c": 3}), state(), handler(passes_everything)]
-    code = passes_everything.__wrapped__.__code__  # type: ignore[attr-defined] — @do の functools.wraps が置く欄
+    code = passes_everything.__wrapped__.__code__  # type: ignore[attr-defined] -- the field @do's functools.wraps places
     seen = _entries(code, lambda: doeff_run(with_handlers(stack, _asks_then_state())))
     assert seen.result == 6
-    assert seen.entered == 5, "型の註の無い handler は Ask 3・Put・Get の 5 回とも受ける"
+    assert seen.entered == 5, "a handler with no type annotation receives all 5: Ask 3, Put, Get"

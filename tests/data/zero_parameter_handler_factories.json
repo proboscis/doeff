@@ -1,35 +1,35 @@
 {
-  "_comment": "引数の無い handler の factory の既知の表(ADR-DOE-API-002 R4)。tools/handler_factory_census.py の一覧と、ADR の deftest が突き合わせる。表に無い factory は赤・一覧に無い行も赤(表は code と一緒に減るだけ)。verdict は 呼びごとの状態(factory のままでよい — 呼ぶたびに新しい状態を作る)・直す(設定も呼びごとの状態も無い — 素の handler にする card を why に書く)・factory でない(読みが factory と取った物)のどれか。",
+  "_comment": "Known table of handler factories that take no arguments (ADR-DOE-API-002 R4). The ADR deftest cross-checks it against the list from tools/handler_factory_census.py. A factory missing from the table is red, and a row missing from the list is also red (the table only shrinks along with the code). verdict is one of: 呼びごとの状態 (per-call state; may stay a factory -- each call builds new state), 直す (no config and no per-call state -- write in why the card that turns it into a plain handler), factory でない (something the reader took for a factory but is not).",
   "rows": [
     {
       "key": "packages/doeff-core-effects/doeff_core_effects/_cache_handlers.py::in_memory_cache_handler",
       "verdict": "呼びごとの状態",
-      "why": "呼ぶたびに新しい InMemoryStorage を作る(呼びごとに別の cache)"
+      "why": "Each call builds a new InMemoryStorage (a separate cache per call)"
     },
     {
       "key": "packages/doeff-core-effects/doeff_core_effects/_memo_handlers.py::in_memory_memo_handler",
       "verdict": "呼びごとの状態",
-      "why": "呼ぶたびに新しい InMemoryStorage を作る(呼びごとに別の memo)"
+      "why": "Each call builds a new InMemoryStorage (a separate memo per call)"
     },
     {
       "key": "packages/doeff-events/src/doeff_events/_handlers/memory.py::event_handler",
       "verdict": "呼びごとの状態",
-      "why": "呼ぶたびに新しい listeners の表を作る(呼びごとに別の pub/sub)"
+      "why": "Each call builds a new listeners table (a separate pub/sub per call)"
     },
     {
       "key": "packages/doeff-events/src/doeff_events/_handlers/os_files.py::os_file_watch_handler",
       "verdict": "呼びごとの状態",
-      "why": "呼ぶたびに新しい watches の表を作る(呼びごとに別の監視の組)"
+      "why": "Each call builds a new watches table (a separate set of watches per call)"
     },
     {
       "key": "packages/doeff-events/src/doeff_events/_handlers/timer.py::timer_handler",
       "verdict": "呼びごとの状態",
-      "why": "呼ぶたびに新しい armed の表と発火の task を作る(呼びごとに別の timer の列)"
+      "why": "Each call builds a new armed table and firing task (a separate timer list per call)"
     },
     {
       "key": "packages/doeff-traverse/examples/ex08_tqdm_progress.hy::tqdm-progress",
       "verdict": "呼びごとの状態",
-      "why": "progress_bars(tqdm) を呼び、呼ぶたびに新しい open_bars の表を作る(呼びごとに別の進みの棒)"
+      "why": "Calls progress_bars(tqdm) and each call builds a new open_bars table (a separate progress bar per call)"
     }
   ]
 }

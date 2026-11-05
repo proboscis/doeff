@@ -1,15 +1,15 @@
-"""docs と README が名指す LLM の effect が、今の doeff-llm に在る事の検(取り組み doeff-publish で見つかった不具合)。
+"""Test that the LLM effects named by docs and READMEs exist in today's doeff-llm (a bug found in initiative doeff-publish).
 
-`LLMStructuredOutput` は `LLMStructuredQuery` に改名され(docs/llm_unified_effects.md が記す)、旧い名は今の doeff-llm に無い。
-改名の後も docs/20-why-effects-over-di.md の `LLMChat, LLMStructuredOutput` を import する行と、3 つの provider の
-README(doeff-openai・doeff-openrouter・doeff-gemini)の対応する effect の一覧が旧い名のまま残り、写して動かすと ImportError になった。
+`LLMStructuredOutput` was renamed to `LLMStructuredQuery` (stated in docs/llm_unified_effects.md), and the old name does not exist in today's doeff-llm.
+Even after the rename, the line in docs/20-why-effects-over-di.md that imports `LLMChat, LLMStructuredOutput`, and the lists of corresponding effects in the READMEs of the 3 providers
+(doeff-openai, doeff-openrouter, doeff-gemini), kept the old name, and copying and running them gave ImportError.
 
-この検は docs/*.md と README(根と各 package の)に出る `LLMChat`・`LLMStreaming*`・`LLMStructured*`・`LLMEmbed*` の名を全部集め、
-`doeff_llm._effects` の `__all__` に在る事を確かめる。改名を言う行(「renamed」を含む行)と
-CHANGELOG は、旧い名を書くのが役目なので読まない(CHANGELOG は docs/ にも README にも無いので読まない)。
-doeff-llm は核の外の部品なので、入っていない環境(核の 5 個だけを入れる CI の Python Compatibility の venv)では、doeff-llm を読む
-page ごとの検を skip にする(top で import すると集めの段で ModuleNotFoundError になり、main の CI が ERROR で赤になった —
-2026-10-17)。名の拾い方の検は doeff-llm を読まないので、どの環境でも走る。
+This test collects every name of `LLMChat`, `LLMStreaming*`, `LLMStructured*`, `LLMEmbed*` that appears in docs/*.md and READMEs (root and each package's),
+and checks that it is in `__all__` of `doeff_llm._effects`. Lines that state a rename (lines containing "renamed") and
+the CHANGELOG are not read, because their job is to write the old name (the CHANGELOG is in neither docs/ nor a README, so it is not read).
+doeff-llm is a component outside the core, so in an environment where it is not installed (the Python Compatibility venv of CI, which installs only the 5 core packages), the per-page tests that read doeff-llm
+are skipped (importing at the top gave ModuleNotFoundError at collection and turned main's CI red with ERROR --
+2026-10-17). The test of how names are picked does not read doeff-llm, so it runs in any environment.
 """
 
 from __future__ import annotations
@@ -20,7 +20,7 @@ from pathlib import Path
 import pytest
 
 REPO = Path(__file__).resolve().parents[1]
-# doeff-llm の effect の名の形(`LLMService` のような DI の見本の class は含まない)。
+# The shape of doeff-llm effect names (does not include DI sample classes such as `LLMService`).
 EFFECT_NAME = re.compile(r"\bLLM(?:Chat|Streaming\w*|Structured\w*|Embed\w*)\b")
 RENAME_LINE = re.compile(r"renamed", re.IGNORECASE)
 
@@ -32,7 +32,7 @@ def _pages() -> list[Path]:
 
 
 def unknown_effect_names(text: str, known: frozenset[str]) -> dict[str, list[int]]:
-    """text が名指す、known に無い LLM の effect の名と、その行の番号(改名を言う行は読まない)。"""
+    """Names of LLM effects that text mentions and that are not in known, with their line numbers (lines stating a rename are not read)."""
     found: dict[str, list[int]] = {}
     for number, line in enumerate(text.splitlines(), start=1):
         if RENAME_LINE.search(line):
@@ -43,14 +43,14 @@ def unknown_effect_names(text: str, known: frozenset[str]) -> dict[str, list[int
     return found
 
 
-# 名の拾い方の検が使う、doeff-llm の今の名の見本(doeff-llm を読まないので、どの環境でも走る)。
+# A sample of today's doeff-llm names used by the test of how names are picked (it does not read doeff-llm, so it runs in any environment).
 SAMPLE_KNOWN = frozenset({"LLMChat", "LLMStreamingChat", "LLMStructuredQuery", "LLMEmbedding"})
 
 
 @pytest.fixture(scope="module")
 def known() -> frozenset[str]:
     effects = pytest.importorskip(
-        "doeff_llm._effects", reason="核の外の部品 doeff-llm がこの環境に入っていない"
+        "doeff_llm._effects", reason="doeff-llm, a component outside the core, is not installed in this environment"
     )
     return frozenset(effects.__all__)
 
@@ -72,5 +72,5 @@ def test_the_check_skips_the_line_that_says_the_name_was_renamed() -> None:
 def test_page_names_only_effects_that_doeff_llm_defines(page: Path, known: frozenset[str]) -> None:
     unknown = unknown_effect_names(page.read_text(encoding="utf-8"), known)
     assert unknown == {}, (
-        f"{page.relative_to(REPO)} が名指す、doeff-llm に無い effect(名 → 行): {unknown}"
+        f"effects named by {page.relative_to(REPO)} that are not in doeff-llm (name -> lines): {unknown}"
     )

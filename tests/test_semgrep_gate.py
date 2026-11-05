@@ -1,16 +1,16 @@
-"""ADR-DOE-ENFORCE-001 R3: .semgrep.yaml の全ルールを既定 pytest ゲートで実行する。
+"""ADR-DOE-ENFORCE-001 R3: run all .semgrep.yaml rules in the default pytest gate.
 
-`make lint-semgrep` と同一の走査(--config .semgrep.yaml doeff/ packages/)を pytest から
-起動する集約ゲート。Makefile 版との違い:
-1. fail-closed — semgrep バイナリ不在は skip ではなく hard fail(偽緑の禁止 — ACP で
-   「初回実行時に 16 検査が即 red(バイナリ不在)」が起きた失敗様式の再発防止)。
-2. baseline 等値 ratchet — 違反数が baseline より「増えたら fail(新規違反)・減ったら
-   fail(baseline を下げる記帳を強制)」。2026-07-14 に既存違反を解消し、現在の
-   docs/adr/semgrep-baseline.json は 0 を維持する。
+An aggregate gate that launches from pytest the same scan as `make lint-semgrep` (--config .semgrep.yaml doeff/ packages/).
+Differences from the Makefile version:
+1. fail-closed -- a missing semgrep binary is a hard fail, not a skip (no false green -- prevents the failure mode in ACP where
+   "16 checks went red immediately on the first run (binary missing)").
+2. baseline equality ratchet -- if the violation count "increases over the baseline it fails (new violations); if it decreases it
+   fails (forcing the bookkeeping that lowers the baseline)". Existing violations were resolved on 2026-07-14, and the current
+   docs/adr/semgrep-baseline.json stays at 0.
 
-個別ルールの hit/clean fixture 化(defsemgrep installed-rule 形式)と既存違反の解消
-バッチは T-B2 の残作業(codex 委譲)— 本ゲートはその間も 229 ルールが実際に走り、
-後退しないことを保証する。
+Turning individual rules into hit/clean fixtures (defsemgrep installed-rule form) and the batch resolving existing violations
+are the remaining work of T-B2 (delegated to codex) -- in the meantime this gate guarantees that the 229 rules actually run and
+do not regress.
 """
 
 import json
@@ -52,24 +52,24 @@ def test_missing_semgrep_points_to_make_sync(monkeypatch: pytest.MonkeyPatch) ->
         test_semgrep_findings_match_baseline_ratchet(None)
 
 
-# 全部の規則で doeff/・packages/ の約 2,400 file を 1 回で走査する、根の test で最も重い 1 本 — ini の既定の枠(60 秒)を
-# 前提にできない(2026-10-16: 混みの倍率 x2.3 の全体の走りで 75 秒・x3.4 の全体の走りで 204 秒の枠を越えて赤)。枠はこの重さで
-# 宣言し、混みの倍率は根の conftest が掛ける(ADR-DOE-ENFORCE-001 R6)。子の semgrep も同じ枠で止める。
+# Scans about 2,400 files under doeff/ and packages/ once with all rules, the heaviest single test at the root -- the ini default budget (60 seconds) cannot be
+# assumed (2026-10-16: it went red exceeding the budget at 75 seconds in a full run with congestion factor x2.3 and 204 seconds in a full run with x3.4). The budget is
+# declared at this weight, and the root conftest applies the congestion factor (ADR-DOE-ENFORCE-001 R6). The child semgrep is also stopped by the same budget.
 @pytest.mark.semgrep
 @pytest.mark.slow
 @pytest.mark.timeout(180)
 def test_semgrep_findings_match_baseline_ratchet(per_test_deadline: float | None) -> None:
     binary = shutil.which("semgrep")
     assert binary is not None, (
-        "semgrep バイナリが見つからない — ADR-DOE-ENFORCE-001 R3 は skip を禁止する。"
-        "semgrep は dev 依存に含まれるため、`make sync` を実行すること。"
+        "semgrep binary not found -- ADR-DOE-ENFORCE-001 R3 forbids skipping. "
+        "semgrep is included in the dev dependencies, so run `make sync`."
     )
     proc = subprocess.run(
-        # --metrics=off --disable-version-check: 検査の実行に network(送信・新版照会)を
-        # 混ぜない — 到達性・応答時間という機体の事情が検査に入るのを断つ。
-        # --project-root=ROOT: root を git metadata からの推論に任せない — .git の無い
-        # 検査 tree では root が走査対象 dir に落ち、上位セグメントを参照する
-        # paths.include を持つ rule が gate から無音で脱落する(zeus 実測 2026-08-17)。
+        # --metrics=off --disable-version-check: do not mix network access (sending, version lookup) into
+        # the check run -- cut off machine circumstances such as reachability and response time from entering the check.
+        # --project-root=ROOT: do not leave the root to inference from git metadata -- in a
+        # check tree without .git the root falls to the scanned dir, and rules whose
+        # paths.include refers to upper segments silently drop out of the gate (measured on zeus 2026-08-17).
         [
             binary,
             "--metrics=off",
@@ -88,11 +88,11 @@ def test_semgrep_findings_match_baseline_ratchet(per_test_deadline: float | None
         capture_output=True,
         text=True,
         timeout=per_test_deadline,
-        check=False,  # 違反有無は returncode でなく results 数で判定する(baseline ratchet)
+        check=False,  # violations are judged by the number of results, not returncode (baseline ratchet)
     )
-    # exit code は判定に使わない分、JSON の実在が「scan が走った」の唯一の証拠になる。
-    # 起動時 crash(exit 1・stdout 空)を裸の JSONDecodeError にしない(zeus 実測
-    # 2026-08-17: interpreter 不整合の crash が判読不能な赤で報告された)。
+    # Since the exit code is not used for judging, the existence of the JSON is the only evidence that "the scan ran".
+    # Do not turn a startup crash (exit 1, empty stdout) into a bare JSONDecodeError (measured on zeus
+    # 2026-08-17: a crash from an interpreter mismatch was reported as an unreadable red).
     try:
         results = json.loads(proc.stdout)["results"]
     except ValueError as exc:
@@ -105,10 +105,10 @@ def test_semgrep_findings_match_baseline_ratchet(per_test_deadline: float | None
     if actual > baseline:
         newest = [f"{r['check_id']} {r['path']}:{r['start']['line']}" for r in results][-10:]
         raise AssertionError(
-            f"semgrep 違反が baseline を超過: {actual} > {baseline} — 新規違反を修正すること"
-            f"(ADR-DOE-ENFORCE-001 R3)。直近の検出例:\n" + "\n".join(newest)
+            f"semgrep violations exceed the baseline: {actual} > {baseline} -- fix the new violations "
+            f"(ADR-DOE-ENFORCE-001 R3). Recent examples:\n" + "\n".join(newest)
         )
     assert actual == baseline, (
-        f"semgrep 違反数 {actual} < baseline {baseline} — 改善を記帳すること: "
-        f"{BASELINE} の findings を {actual} に下げる(黙った基準緩みの防止)。"
+        f"semgrep violation count {actual} < baseline {baseline} -- record the improvement: "
+        f"lower findings in {BASELINE} to {actual} (prevents silently loosening the standard)."
     )

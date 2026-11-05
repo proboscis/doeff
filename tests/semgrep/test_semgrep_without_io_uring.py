@@ -1,10 +1,10 @@
-"""検の中の semgrep は、io_uring の予算が尽きた機体でも答える(根の conftest.py が EIO_BACKEND=posix を置く)。
+"""semgrep inside the checks still answers on a machine whose io_uring budget is exhausted (the root conftest.py sets EIO_BACKEND=posix).
 
-semgrep-core(OCaml 5 + Eio)は Linux で domain ごとに io_uring の ring を開き、kernel は ring の記憶を uid ごとの
-RLIMIT_MEMLOCK で数える — 同じ uid の process の全部で 1 つの予算(agent の Pod では 8 MiB)。同じ機体で同じ uid の semgrep が
-重なると次の ring が `io_uring_queue_init` の ENOMEM で作れず、semgrep は「semgrep-core rule validation failed」で所見なしに
-落ちる(2026-10-16 の根の全体の走りで tests/semgrep/test_public_api_subpackage_imports_rule.py が赤・再走で緑)。
-予算が尽きた形を、子の RLIMIT_MEMLOCK を 16 KiB に下げて作る(機体の残りに依らず毎回尽きる)。
+On Linux, semgrep-core (OCaml 5 + Eio) opens an io_uring ring per domain, and the kernel counts ring memory against the per-uid
+RLIMIT_MEMLOCK -- one budget shared by all processes of the same uid (8 MiB in an agent Pod). When semgrep runs of the same uid on the same machine
+overlap, the next ring cannot be created because `io_uring_queue_init` fails with ENOMEM, and semgrep dies with "semgrep-core rule validation failed" with no findings
+(in the 2026-10-16 full run at the root, tests/semgrep/test_public_api_subpackage_imports_rule.py was red and green on rerun).
+The exhausted state is reproduced by lowering the child's RLIMIT_MEMLOCK to 16 KiB (it is exhausted every time regardless of what the machine has left).
 """
 
 from __future__ import annotations
@@ -23,11 +23,11 @@ rules:
   - id: wall-clock-sleep
     languages: [python]
     severity: ERROR
-    message: 壁の時計で眠る
+    message: sleeps on the wall clock
     pattern: time.sleep(...)
 """
 TARGET = "import time\n\ntime.sleep(1)\n"
-# 子の sh で locked memory の上限を下げてから semgrep に替わる(ulimit は sh の組み込み — 下げるのに権限は要らない)
+# Lower the locked-memory limit in a child sh, then exec semgrep (ulimit is a sh builtin -- lowering it needs no privilege)
 SPENT_BUDGET = 'ulimit -l 16 && exec "$@"'
 
 
@@ -35,7 +35,7 @@ def test_semgrep_answers_when_the_locked_memory_budget_is_spent(
     tmp_path: Path, per_test_deadline: float | None
 ) -> None:
     semgrep = shutil.which("semgrep")
-    assert semgrep is not None, "semgrep は dev 依存に在る — `make sync` を実行すること"
+    assert semgrep is not None, "semgrep is a dev dependency -- run `make sync`"
     rule = tmp_path / "rule.yaml"
     rule.write_text(RULE, encoding="utf-8")
     target = tmp_path / "target.py"
@@ -61,9 +61,9 @@ def test_semgrep_answers_when_the_locked_memory_budget_is_spent(
         timeout=per_test_deadline,
         check=False,
     )
-    # io_uring を使う backend では、ここで exit 2・stdout は JSON でない(「semgrep-core rule validation failed」)
+    # With a backend that uses io_uring, it exits 2 here and stdout is not JSON ("semgrep-core rule validation failed")
     assert completed.returncode in {0, 1}, (
-        f"semgrep が io_uring の予算の尽きで落ちた(exit {completed.returncode}):\n"
+        f"semgrep died because the io_uring budget was exhausted (exit {completed.returncode}):\n"
         f"stdout:\n{completed.stdout}\nstderr:\n{completed.stderr}"
     )
     payload = json.loads(completed.stdout)

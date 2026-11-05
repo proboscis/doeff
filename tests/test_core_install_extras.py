@@ -1,20 +1,20 @@
-"""`pip install doeff` は核の 4 個だけを入れ、Hy と HTTP は extra で足す事の失敗ケース(取り組み doeff-publish の区切り 8)。
+"""Failure cases for `pip install doeff` installing only the 4 core components, with Hy and HTTP added by extras (milestone 8 of the doeff-publish initiative).
 
-核の 4 個 = doeff・doeff-vm・doeff-core-effects・frozendict。`import doeff` と README の Python の例は、この 4 個だけで動く
-(依存の報告 2026-10-16-doeff-core-dependency-tree.html の ★ 案 D)。Hy の言語(doeff-hy・hy・pydantic …)と httpx は extra で足す:
+The 4 core components = doeff, doeff-vm, doeff-core-effects, frozendict. `import doeff` and the README Python examples work with these 4 alone
+(option D marked with a star in the dependency report 2026-10-16-doeff-core-dependency-tree.html). The Hy language (doeff-hy, hy, pydantic ...) and httpx are added by extras:
 
-- hy   = doeff-hy(Hy で書いた effect と handler・cache・CLI の doeff run が要る)
-- http = doeff-hy と httpx(HTTP の client の handler は Hy で書いてあり、httpx で送る)
-- all  = hy と http(0.5 までの既定と同じ組)
+- hy   = doeff-hy (needed by effects and handlers written in Hy, the cache, and the CLI's doeff run)
+- http = doeff-hy and httpx (the HTTP client handler is written in Hy and sends with httpx)
+- all  = hy and http (the same set as the default up to 0.5)
 
-doeff の extra は doeff-core-effects の同じ名の extra を引く。doeff-core-effects の他の extra(http-server・postgres)も、答え手を
-Hy で書いてあるので doeff-hy を引く。
+doeff's extras pull the extras of the same name in doeff-core-effects. The other extras of doeff-core-effects (http-server, postgres) also pull doeff-hy, because their responders
+are written in Hy.
 
-workspace の部品が Hy で書いた doeff_core_effects の module(と、それを import の時に読む module)か doeff_hy・hy・httpx を import
-するなら、その部品の既定の依存がそれを入れる — 入れないと、PyPI から入れた利用者の手元で `No module named 'doeff_hy'` で落ちる
-(手元の開発は dev の group が両方を入れるので落ちない)。
+If a workspace component imports a doeff_core_effects module written in Hy (or a module that loads it at import time), or doeff_hy, hy, or httpx,
+the component's default dependencies must install it — otherwise it fails on a user's machine with `No module named 'doeff_hy'` after installing from PyPI
+(local development does not fail because the dev group installs both).
 
-依存は pyproject.toml の宣言から読む(本物の install で確かめるのは、区切り 8 の card 3 の CI の検)。
+Dependencies are read from the declarations in pyproject.toml (verification with a real install is the CI test of card 3 of milestone 8).
 """
 
 from __future__ import annotations
@@ -39,37 +39,37 @@ DOEFF_HY = canonicalize_name("doeff-hy")
 HY = canonicalize_name("hy")
 HTTPX = canonicalize_name("httpx")
 NOTHING: frozenset[NormalizedName] = frozenset()
-# import の頭の名 → それを入れる配布物。
+# Leading import name -> the distribution that installs it.
 EXTERNAL = {"doeff_hy": DOEFF_HY, "hy": HY, "httpx": HTTPX}
-# 部品の dir のうち、配る source でない物(検・例・測り)。
+# Dirs of a component that are not distributed source (tests, examples, benchmarks).
 NOT_SHIPPED = frozenset({"tests", "test", "examples", "benchmarks"})
-# この検が走査しない部品と訳。
+# Components this test does not scan, with reasons.
 NOT_SCANNED = {
-    # Hy の module の持ち主。自分の module の要る物は、下の _core_effects_needs が読む。
-    canonicalize_name("doeff-core-effects"): "Hy の module の持ち主",
-    # CLI の doeff run は Hy 無しで動き、--hy と .hy の program の時だけ遅い import で Hy を読む。Hy が無ければ、足す extra の名を
-    # 言う文で落ちる(tests/cli/test_cli_without_hy.py・doeff_core_effects/_extra_hints.py)。
-    canonicalize_name("doeff"): "CLI の --hy と .hy の program だけが Hy を読む",
-    # doeff-hy の依存としてだけ入る pytest の plugin(doeff-hy が doeff-hy-pytest を引く — 逆に引くと輪になる)。
-    canonicalize_name("doeff-hy-pytest"): "doeff-hy が引く plugin",
+    # The owner of the Hy modules. What its own modules need is read by _core_effects_needs below.
+    canonicalize_name("doeff-core-effects"): "owner of the Hy modules",
+    # The CLI's doeff run works without Hy and loads Hy by a lazy import only for --hy and .hy programs. If Hy is absent, it fails with a message naming
+    # the extra to add (tests/cli/test_cli_without_hy.py, doeff_core_effects/_extra_hints.py).
+    canonicalize_name("doeff"): "only the CLI's --hy and .hy programs load Hy",
+    # A pytest plugin installed only as a dependency of doeff-hy (doeff-hy pulls doeff-hy-pytest — pulling the other way would form a cycle).
+    canonicalize_name("doeff-hy-pytest"): "plugin pulled by doeff-hy",
 }
-# 部品 → import の読みを満たす extra(既定の依存に足して読む)。
+# Component -> extras that satisfy its import reads (read on top of the default dependencies).
 USED_WITH_EXTRA = {
-    # doeff-core-effects を読むのは dogfood の宣言の module だけで、extra dogfood の時に限る(ADR-DOE-DOMAIN-001 D1)。
+    # Only the dogfood declaration module reads doeff-core-effects, and only under the dogfood extra (ADR-DOE-DOMAIN-001 D1).
     canonicalize_name("doeff-domain"): "dogfood",
 }
 _OPEN = frozenset("([{")
 _CLOSE = frozenset(")]}")
-# Hy の source の文字列と註(左から先に始まる方が勝つ — 文字列の中の ; と、註の中の " を取り違えない)。
+# Strings and comments in Hy source (the one that starts first from the left wins — do not confuse a ; inside a string with a " inside a comment).
 _HY_STRING_OR_COMMENT = re.compile(r'"(?:\\.|[^"\\])*"|;[^\n]*')
 _HY_TOKEN = re.compile(r"[\[\](){}]|[^\s\[\](){}]+")
-# 部品の source が下の検の読む物に触れるかの目印(触れない file は解かない)。
+# A marker for whether a component's source touches what the checks below read (files that do not are not parsed).
 _MENTIONS = re.compile(r"doeff[_-]core[_-]effects|doeff[_-]hy|httpx|\bhy\b")
 
 
 @cache
 def _projects() -> dict[NormalizedName, tuple[Path, dict[str, object]]]:
-    """workspace の部品(根の doeff も)の名 → (部品の dir, pyproject.toml の表 project)。"""
+    """Names of workspace components (including the root doeff) -> (component dir, the project table of pyproject.toml)."""
     tables = (
         (pyproject.parent, tomllib.loads(pyproject.read_text(encoding="utf-8"))["project"])
         for pyproject in [REPO / "pyproject.toml", *REPO.glob("packages/*/pyproject.toml")]
@@ -78,7 +78,7 @@ def _projects() -> dict[NormalizedName, tuple[Path, dict[str, object]]]:
 
 
 def _lines(project: dict[str, object], extra: str | None) -> tuple[str, ...]:
-    """部品の既定の依存(extra が None)か、extra 1 つの依存の PEP 508 の文。"""
+    """PEP 508 strings of a component's default dependencies (extra is None) or of one extra's dependencies."""
     match extra, project:
         case None, {"dependencies": list() as lines}:
             return tuple(map(str, lines))
@@ -87,11 +87,11 @@ def _lines(project: dict[str, object], extra: str | None) -> tuple[str, ...]:
         case str(), {"optional-dependencies": dict() as extras} if extra in extras:
             return tuple(map(str, extras[extra]))
         case _:
-            raise AssertionError(f"{project['name']} に extra {extra!r} が無い(pip は黙って飛ばす)")
+            raise AssertionError(f"{project['name']} has no extra {extra!r} (pip silently skips it)")
 
 
 def _keys(requirements: Iterable[Requirement]) -> frozenset[tuple[NormalizedName, str | None]]:
-    """依存の文 → (配布物の名, 辿る extra か既定の None) の組。"""
+    """Dependency string -> a pair (distribution name, the extra to follow or the default None)."""
     return frozenset(
         (canonicalize_name(requirement.name), extra)
         for requirement in requirements
@@ -100,7 +100,7 @@ def _keys(requirements: Iterable[Requirement]) -> frozenset[tuple[NormalizedName
 
 
 def _installs(requirements: Iterable[Requirement]) -> frozenset[NormalizedName]:
-    """requirements を入れると入る物の名 — workspace の部品は既定の依存と頼んだ extra を辿り、外の物は辿らない。"""
+    """Names of what gets installed when requirements are installed — workspace components follow their default dependencies and the requested extras; external ones are not followed."""
     projects = _projects()
     keys = _keys(requirements)
     while (
@@ -117,23 +117,23 @@ def _installs(requirements: Iterable[Requirement]) -> frozenset[NormalizedName]:
 
 
 def _hy_code_only(text: str) -> str:
-    """Hy の source の文字列と註を空白に替える(行は残す)— 中の括弧と import の語を拾わないため。"""
+    """Replace strings and comments in Hy source with spaces (keeping lines) — so the parentheses and import words inside are not picked up."""
     return _HY_STRING_OR_COMMENT.sub(lambda found: re.sub(r"[^\n]", " ", found.group()), text)
 
 
 def _hy_form(code: str, start: int) -> list[str]:
-    """start で開く括弧の form 1 つの語の列(開きと閉じの括弧を含む)。"""
-    # 語は form の閉じまでだけ読む(file の終わりまで切り出さない — import の form ごとに file を読み直すと遅い)。
+    """The token sequence of one parenthesized form opened at start (including the opening and closing parentheses)."""
+    # Read tokens only up to the close of the form (do not slice to the end of the file — re-reading the file for each import form is slow).
     tokens, counted = tee(found.group() for found in _HY_TOKEN.finditer(code, start))
     depths = accumulate(1 if token in _OPEN else -1 if token in _CLOSE else 0 for token in counted)
-    # 深さが 0 に戻る語(閉じの括弧)の手前まで — 開きの語の深さは 1。
+    # Up to just before the token where the depth returns to 0 (the closing parenthesis) — the depth at the opening token is 1.
     return [
         token for token, _ in takewhile(lambda pair: pair[1] > 0, zip(tokens, depths, strict=True))
     ]
 
 
 def _hy_import_names(tokens: list[str]) -> Iterator[str]:
-    """`(import a.b [c d :as e] f :as g)` の語の列 → a.b・a.b.c・a.b.d・f(:as の後の別名と keyword は名でない)。"""
+    """Token sequence of `(import a.b [c d :as e] f :as g)` -> a.b, a.b.c, a.b.d, f (aliases after :as and keywords are not names)."""
     words = [
         token
         for index, token in enumerate(tokens)
@@ -154,7 +154,7 @@ def _hy_import_names(tokens: list[str]) -> Iterator[str]:
 
 
 def _hy_imports(text: str, top_level_only: bool) -> Iterator[str]:
-    """Hy の source の `(import …)`・`(require …)` が読む module と、`[…]` で取り出す名の module.名。"""
+    """Modules read by `(import …)` and `(require …)` in Hy source, and module.name for names taken out with `[…]`."""
     code = _hy_code_only(text)
     head = r"(?m)^\((?:import|require)\s" if top_level_only else r"\((?:import|require)\s"
     for found in re.finditer(head, code):
@@ -170,7 +170,7 @@ def _is_type_checking(node: ast.AST) -> bool:
 
 
 def _inner_statements(node: ast.AST) -> list[ast.stmt]:
-    """節の直の下の文の列(関数・class・if・for・while・with・try・match の中)。"""
+    """The sequence of statements directly under a clause (inside function, class, if, for, while, with, try, match)."""
     return [
         statement
         for _, value in ast.iter_fields(node)
@@ -187,10 +187,10 @@ def _inner_statements(node: ast.AST) -> list[ast.stmt]:
 
 
 def _statements(body: list[ast.stmt], nested: bool) -> Iterator[ast.stmt]:
-    """文の列とその中の文 — import は文にだけ現れるので、式は辿らない。`if TYPE_CHECKING:` の中は除く。
+    """The sequence of statements and the statements inside them — imports appear only in statements, so expressions are not traversed. The inside of `if TYPE_CHECKING:` is excluded.
 
-    nested でなければ import の時に走る文だけを辿る — 上の段の with・try・if・class の中は辿り、関数の中は辿らない(例 http_handlers.py
-    は Hy と httpx の import を `with extra_needed(...)` の中に置く)。
+    Unless nested, only statements that run at import time are traversed — the insides of top-level with, try, if, and class are traversed, but not function bodies (e.g. http_handlers.py
+    puts its Hy and httpx imports inside `with extra_needed(...)`).
     """
     for statement in body:
         if not _is_type_checking(statement):
@@ -200,10 +200,10 @@ def _statements(body: list[ast.stmt], nested: bool) -> Iterator[ast.stmt]:
 
 
 def _python_imports(text: str, package: str, top_level_only: bool) -> Iterator[str]:
-    """Python の source の import が読む module と、`from m import n` の m.n(n が submodule か lazy な名の時のため)。
+    """Modules read by imports in Python source, and m.n of `from m import n` (for when n is a submodule or a lazy name).
 
-    `if TYPE_CHECKING:` の中は実行の時に読まないので除く。top_level_only なら import の時に走る文(上の段と、その with・try・if の
-    中)だけを読む。
+    The inside of `if TYPE_CHECKING:` is not read at runtime and is excluded. With top_level_only, only statements that run at import time (the top level and the insides of its with, try, and if)
+    are read.
     """
     parts = package.split(".") if package else []
     body = ast.parse(text).body
@@ -221,7 +221,7 @@ def _python_imports(text: str, package: str, top_level_only: bool) -> Iterator[s
 def _imports(path: Path, package: str, top_level_only: bool) -> Iterator[str]:
     text = path.read_text(encoding="utf-8")
     if not top_level_only and not _MENTIONS.search(text):
-        # 部品の source の多くは Hy にも HTTP にも触れない — 解かずに飛ばす(相対の import は自分の部品の中なので拾わなくてよい)。
+        # Most component sources touch neither Hy nor HTTP — skip them without parsing (relative imports are inside the component itself, so they need not be picked up).
         return iter(())
     if path.suffix == ".hy":
         return _hy_imports(text, top_level_only)
@@ -235,10 +235,10 @@ def _external(imported: str) -> frozenset[NormalizedName]:
 
 @cache
 def _core_effects_needs() -> dict[str, frozenset[NormalizedName]]:
-    """doeff_core_effects の module(と lazy な名)→ import すると要る配布物(doeff-hy・hy・httpx の部分集合)。
+    """doeff_core_effects modules (and lazy names) -> the distributions needed when imported (a subset of doeff-hy, hy, httpx).
 
-    .hy の module は doeff-hy(Hy の import の hook を置く — _hy_submodules.py)を要る。.py の module は、上の段の import が読む
-    物を要る(関数の中の遅い import は、`import doeff` を Hy 無しで通すための物なので数えない)。
+    .hy modules need doeff-hy (which installs the Hy import hook — _hy_submodules.py). A .py module needs what its top-level imports read
+    (lazy imports inside functions exist so that `import doeff` passes without Hy, so they are not counted).
     """
     files = [
         (path, path.relative_to(CORE_EFFECTS_DIR).with_suffix("").parts)
@@ -273,9 +273,9 @@ def _core_effects_needs() -> dict[str, frozenset[NormalizedName]]:
         }
     ) != needs:
         needs = grown
-    # `from doeff_core_effects import ReadText` などの遅い名(__init__.py の _LAZY_EXPORTS)は、名を出す module を初めて
-    # 使う時に読む。その module が上の段で結ばず自分の __getattr__ で遅れて出す名(_effects の HttpRequest — Hy で書いた
-    # HTTP の effect)は、Hy も要る。上の段で結ぶ .py の module の名(memo・cache の effect と handler)は、module の要る物だけ。
+    # Lazy names such as `from doeff_core_effects import ReadText` (_LAZY_EXPORTS in __init__.py) load the module that provides the name on first
+    # use. A name that the module does not bind at the top level but provides lazily through its own __getattr__ (HttpRequest in _effects — an HTTP
+    # effect written in Hy) also needs Hy. Names of .py modules bound at the top level (memo and cache effects and handlers) need only what the module needs.
     lazy = next(
         ast.literal_eval(node.value)
         for node in ast.parse(modules["doeff_core_effects"].read_text(encoding="utf-8")).body
@@ -292,9 +292,9 @@ def _core_effects_needs() -> dict[str, frozenset[NormalizedName]]:
 
 
 def _bound_names(path: Path) -> frozenset[str]:
-    """.py の module の上の段が結ぶ名(def・class・代入・import)。module の __getattr__ が遅れて出す名は入らない。
+    """Names bound at the top level of a .py module (def, class, assignment, import). Names provided lazily by the module's __getattr__ are not included.
 
-    .hy の module は空(.hy の module は、それだけで Hy を要る — 上の needs が持つ)。
+    Empty for a .hy module (a .hy module needs Hy by itself — held by needs above).
     """
     if path.suffix != ".py":
         return frozenset()
@@ -315,7 +315,7 @@ def _bound_names(path: Path) -> frozenset[str]:
 
 
 def _shipped_sources(directory: Path) -> Iterator[tuple[Path, str]]:
-    """部品の配る source の file と、その file の在る package の名(src の下か、部品の dir の直下の package)。"""
+    """Source files distributed by a component, and the name of the package containing each file (under src, or a package directly under the component dir)."""
     src = directory / "src"
     root = src if src.is_dir() else directory
     for path in sorted(root.rglob("*")):
@@ -330,7 +330,7 @@ def _shipped_sources(directory: Path) -> Iterator[tuple[Path, str]]:
 
 
 def _package_needs(directory: Path) -> frozenset[NormalizedName]:
-    """部品の配る source が import の時に要る配布物(doeff-hy・hy・httpx の部分集合)。"""
+    """The distributions that a component's distributed source needs at import time (a subset of doeff-hy, hy, httpx)."""
     needs = _core_effects_needs()
     return NOTHING.union(
         *(
@@ -346,18 +346,18 @@ def _package_needs(directory: Path) -> frozenset[NormalizedName]:
 
 
 def _as_used(name: NormalizedName) -> Requirement:
-    """部品を使う時の入れ方(USED_WITH_EXTRA に在れば、その extra を足す)。"""
+    """How to install a component when using it (if it is in USED_WITH_EXTRA, add that extra)."""
     return Requirement(f"{name}[{USED_WITH_EXTRA[name]}]" if name in USED_WITH_EXTRA else name)
 
 
 def test_pip_install_doeff_brings_only_the_core_four() -> None:
     assert _installs([Requirement("doeff")]) == CORE_FOUR, (
-        "pip install doeff で入る物が核の 4 個でない — Hy と HTTP の物は extra(hy・http・all)に置く"
+        "what pip install doeff installs is not the 4 core components — put Hy and HTTP items in extras (hy, http, all)"
     )
 
 
 def test_the_extras_bring_hy_and_httpx_for_the_handlers_behind_them() -> None:
-    # 値 = (doeff-hy が入るか, httpx が入るか)。http-server(aiohttp)と postgres(psycopg)の答え手も Hy で書いてある。
+    # Value = (whether doeff-hy is installed, whether httpx is installed). The responders of http-server (aiohttp) and postgres (psycopg) are also written in Hy.
     expected = {
         "doeff[hy]": (True, False),
         "doeff[http]": (True, True),
@@ -380,13 +380,13 @@ def test_each_workspace_package_brings_the_hy_and_httpx_it_imports() -> None:
         and (missing := sorted(_package_needs(directory) - _installs([_as_used(name)])))
     }
     assert not lacking, (
-        "既定の依存が、import する物を入れない部品 → 足りない配布物(Hy の module は doeff[hy] か doeff-hy・"
-        f"HTTP の client の handler は doeff-core-effects[http] を宣言する): {lacking}"
+        "components whose default dependencies do not install what they import -> missing distributions (declare doeff[hy] or doeff-hy for Hy modules, "
+        f"and doeff-core-effects[http] for the HTTP client handler): {lacking}"
     )
 
 
 def test_the_import_reader_finds_the_hy_and_http_modules_of_core_effects() -> None:
-    # 読みが Hy の module を 1 つも拾わないと、上の検は黙って緑になる(例 .hy の import の形を読み違えた時)。
+    # If the reading picks up no Hy module at all, the test above would silently go green (e.g. when the form of .hy imports is misread).
     needs = _core_effects_needs()
     expected = {
         "doeff_core_effects": NOTHING,

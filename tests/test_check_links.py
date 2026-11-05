@@ -1,10 +1,10 @@
-"""tools/check_links.py が README・docs・PyPI の頁に出る README の切れた link を名指す事と、今の木に切れた link が無い事。
+"""That tools/check_links.py names broken links in the README, docs, and the README shown on the PyPI page, and that the current tree has no broken links.
 
-道具は標準ライブラリだけで、workspace の外の interpreter でも走る。ここでは道具の部品を読んで、link の拾い方・GitHub の
-見出しの anchor の付け方・先の解き方・切れ目の名指し方と、外の link の答えの分け方(手元の HTTP の server に聞く)を
-確かめ、最後に repo の木そのものを道具で読んで切れた link が 0 である事を確かめる。最後の検は main の CI(Python
-Compatibility の job が root の tests を走らせる)で push ごとに走り、登記の前の make test-changed でも、docs と README を
-変えた便で選ばれる(pyproject.toml の contract の表)。
+The tool uses only the standard library and runs even with an interpreter outside the workspace. Here we read the tool's parts and check how links are picked up, how GitHub
+heading anchors are made, how targets are resolved, how breaks are named, and how answers for external links are classified (by asking a local HTTP server),
+and finally read the repo's tree itself with the tool and check that there are 0 broken links. The last test runs on every push in main's CI (the Python
+Compatibility job runs the root tests), and is also selected by make test-changed before registration in changes that touch docs and the README
+(the contract table in pyproject.toml).
 """
 
 from __future__ import annotations
@@ -23,7 +23,7 @@ ROOT = Path(__file__).resolve().parents[1]
 
 
 def _load(name: str) -> ModuleType:
-    """tools/ の module を読む(tools/ は package ではない)。道具は隣の module を名で import するので、sys.modules に置く。"""
+    """Load the tools/ module (tools/ is not a package). The tool imports neighboring modules by name, so put it in sys.modules."""
     spec = importlib.util.spec_from_file_location(name, ROOT / "tools" / f"{name}.py")
     assert spec is not None
     assert spec.loader is not None
@@ -42,7 +42,7 @@ def _targets(text: str) -> list[str]:
     return [link.target for link in links.extract_links("docs/page.md", text)]
 
 
-# --- link を拾う --------------------------------------------------------------------------------
+# --- Picking up links --------------------------------------------------------------------------------
 
 
 def test_extract_reads_every_kind_of_link_in_prose() -> None:
@@ -92,7 +92,7 @@ def test_extract_keeps_line_numbers_and_unescapes_entities() -> None:
     assert [(link.line, link.target) for link in found] == [(3, "https://a.example/?a=1&b=2")]
 
 
-# --- 見出しの anchor ------------------------------------------------------------------------------
+# --- Heading anchors ------------------------------------------------------------------------------
 
 
 @pytest.mark.parametrize(
@@ -137,7 +137,7 @@ def test_anchors_number_duplicates_and_read_setext_and_html_ids() -> None:
     }
 
 
-# --- 先を解く ------------------------------------------------------------------------------------
+# --- Resolving targets ------------------------------------------------------------------------------------
 
 
 def test_resolve_reads_own_github_links_from_the_tree() -> None:
@@ -181,11 +181,11 @@ def test_resolve_relative_links_like_github() -> None:
     assert links.resolve("docs/b.md", "mailto:someone@example.org").kind is links.Kind.OTHER
 
 
-# --- repo の中の切れ目 -----------------------------------------------------------------------------
+# --- Breaks inside the repo -----------------------------------------------------------------------------
 
 
 def _problems(tmp_path: Path, files: dict[str, str]) -> list[str]:
-    """files を tmp_path に置き、木を files の名で作って、全部の file の切れ目を `<path>:<行>: <先>` で返す。"""
+    """Place files in tmp_path, build the tree with the names of files, and return the breaks of all files as `<path>:<line>: <target>`."""
     for name, text in files.items():
         (tmp_path / name).parent.mkdir(parents=True, exist_ok=True)
         (tmp_path / name).write_text(text, encoding="utf-8")
@@ -243,11 +243,11 @@ def test_default_files_cover_entry_docs_and_skip_record_dirs() -> None:
     assert not links.is_default_file("docs/architecture.hy", ("docs/design/",))
 
 
-# --- 外の link の答え --------------------------------------------------------------------------------
+# --- Answers for external links --------------------------------------------------------------------------------
 
 
 class _Site(BaseHTTPRequestHandler):
-    """path ごとに決まった答えを返す手元の site。/head-refused は HEAD を 405 で断り GET には 200 を返す。"""
+    """A local site whose answer is fixed per path. /head-refused refuses HEAD with 405 and returns 200 for GET."""
 
     def do_HEAD(self) -> None:
         self._answer(head=True)
@@ -256,7 +256,7 @@ class _Site(BaseHTTPRequestHandler):
         self._answer(head=False)
 
     def _answer(self, *, head: bool) -> None:
-        """path の決まった番号で答える(本文は空)— 道具が番号ごとに答えを分ける事を確かめるため。"""
+        """Answer with the path's fixed status code (empty body) -- to check that the tool classifies answers by status code."""
         codes = {"/ok": 200, "/gone": 404, "/removed": 410, "/busy": 503, "/forbidden": 403}
         code = 405 if head and self.path == "/head-refused" else codes.get(self.path, 200)
         self.send_response(code)
@@ -300,7 +300,7 @@ def test_example_hosts_are_not_asked() -> None:
 
 
 def test_github_attachments_are_not_asked(monkeypatch: pytest.MonkeyPatch) -> None:
-    """添付の URL は sign in なしで 404 を返すが、GitHub の画面では再生できるので、切れた link と数えない。"""
+    """An attached URL returns 404 without sign-in but plays on GitHub's screen, so it is not counted as a broken link."""
     asked: list[str] = []
 
     def ask(url: str) -> links.Answer:
@@ -316,9 +316,9 @@ def test_github_attachments_are_not_asked(monkeypatch: pytest.MonkeyPatch) -> No
     assert asked == []
 
 
-# --- 今の木 ---------------------------------------------------------------------------------------
+# --- The current tree ---------------------------------------------------------------------------------------
 
 
 def test_repo_links_resolve_in_the_tree(capsys: pytest.CaptureFixture[str]) -> None:
-    """README・docs・packages/*/README.md の repo の中の link が、今の木で全部解ける(CI の repo の中の job と同じ確かめ)。"""
+    """Links inside the repo in README, docs, and packages/*/README.md all resolve in the current tree (the same check as the CI's in-repo job)."""
     assert links.main(["--root", str(ROOT)]) == 0, capsys.readouterr().out

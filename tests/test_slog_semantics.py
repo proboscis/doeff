@@ -1,9 +1,9 @@
 """ADR-DOE-CORE-EFFECTS-001: slog observability semantics.
 
-slog は SlogEffect(Writer の Tell とは別ワイヤ型)。slog_handler は stderr への
-terminal sink(「入れたらログは見える」が契約)。slog の収集は Listen(prog, types=(SlogEffect,)) の値フロー、
-Tell の蓄積は writer(State 収集)で、yield ReadWriterLog() で読む。handler install への
-.log 属性 side-channel は削除済み API(main 0acce3a9 と本 ADR の統合形)。
+slog is a SlogEffect (a different wire type from the Writer's Tell). slog_handler is a terminal sink to stderr
+(the contract is "if installed, the log is visible"). Collecting slog is the value flow of Listen(prog, types=(SlogEffect,)),
+while accumulating Tell is done by the writer (State collection) and read with yield ReadWriterLog().
+The .log attribute side-channel on handler install is a removed API (the integrated form of main 0acce3a9 and this ADR).
 
 plan: docs/doeff-2026-07-13-slog-semantics-architecture-plan.md
 """
@@ -18,7 +18,7 @@ from doeff import run as doeff_run
 
 class TestSlogVisibleByDefault:
     def test_slog_reaches_stderr_via_default_interpreter(self, capsys):
-        """R2/R4: default_interpreter 経由の slog は stderr に見える(stdout は汚さない)。"""
+        """R2/R4: slog via default_interpreter is visible on stderr (stdout is not polluted)."""
         from doeff.cli.run_services import default_interpreter
 
         @do
@@ -34,7 +34,7 @@ class TestSlogVisibleByDefault:
         assert "visible-message" not in captured.out
 
     def test_slog_handler_formats_level(self, capsys):
-        """R2: level kwarg は大文字で表示され、なければ INFO。"""
+        """R2: the level kwarg is shown in uppercase, and INFO if absent."""
         @do
         def body():
             yield slog("warned", level="warning")
@@ -50,7 +50,7 @@ class TestSlogVisibleByDefault:
 
 class TestSlogTellTypesDisjoint:
     def test_listen_default_does_not_capture_slog(self, capsys):
-        """R1: Listen の既定(WriterTellEffect)に slog は混ざらない。"""
+        """R1: slog is not mixed into Listen's default (WriterTellEffect)."""
         @do
         def inner():
             yield slog("slog-entry", level="info")
@@ -67,7 +67,7 @@ class TestSlogTellTypesDisjoint:
         assert [e.msg for e in collected] == ["tell-entry"]
 
     def test_slog_handler_passes_tell_through(self):
-        """R1: slog_handler は Tell を consume しない(Writer の領分)。"""
+        """R1: slog_handler does not consume Tell (that is the Writer's domain)."""
         @do
         def body():
             yield Tell("data")
@@ -79,7 +79,7 @@ class TestSlogTellTypesDisjoint:
 
 class TestCaptureFlowsAsValues:
     def test_listen_captures_slog_while_stderr_emits(self, capsys):
-        """R3: 収集は Listen(types=(SlogEffect,)) の値フロー。sink の表示と併走する。"""
+        """R3: collection is the value flow of Listen(types=(SlogEffect,)). It runs alongside the sink's display."""
         from doeff_core_effects import SlogEffect
 
         @do
@@ -99,14 +99,14 @@ class TestCaptureFlowsAsValues:
         assert "captured" in capsys.readouterr().err
 
     def test_handler_installs_expose_no_log_side_channel(self):
-        """R3: handler install に .log 属性(削除済み API)が無い。"""
+        """R3: handler install has no .log attribute (removed API)."""
         assert not hasattr(slog_handler, "log")
         assert not hasattr(writer, "log")
 
 
 class TestUnhandledSlogIsLoud:
     def test_unhandled_slog_raises(self):
-        """R4: handler 不在の slog は UnhandledEffect(VM に lastResort 特例なし)。"""
+        """R4: slog with no handler is UnhandledEffect (no lastResort special case in the VM)."""
         @do
         def body():
             yield slog("nobody-listens")
@@ -118,7 +118,7 @@ class TestUnhandledSlogIsLoud:
 
 class TestExplicitSilence:
     def test_slog_discard_handler_is_silent(self, capsys):
-        """R5: 静音は slog_discard_handler の明示 opt-in。"""
+        """R5: silence is an explicit opt-in via slog_discard_handler."""
         from doeff_core_effects import slog_discard_handler
 
         @do

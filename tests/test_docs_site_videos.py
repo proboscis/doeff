@@ -1,16 +1,16 @@
-"""docs の章の動画の検(取り組み doeff-publish の区切り 23)。
+"""Tests for the chapter videos of the docs (section 23 of initiative doeff-publish).
 
-章の page は動画を `[![<説明>](assets/videos/<名>.jpg)](assets/videos/<名>.mp4)` と書く。GitHub の repo の画面では 1 こまの画像が
-mp4 への link になり、docs の site では hook(tools/docs_site/hooks.py)が video の要素に替える。動画は tools/docs-video で作る。
+A chapter page writes a video as `[![<description>](assets/videos/<name>.jpg)](assets/videos/<name>.mp4)`. On the GitHub repo screen the single-frame image becomes a
+link to the mp4, and on the docs site a hook (tools/docs_site/hooks.py) replaces it with a video element. Videos are made with tools/docs-video.
 
-1. page が指す mp4 と 1 こまの画像が在り、mp4 が上限の大きさの内である — repo に入れる動画が clone を重くしすぎないため。
-   画像を動画の頭の GIF(`assets/videos/<名>.gif`)にした page では、同じ名の 1 こまの画像(site の poster)も在り、GIF が
-   上限の大きさの内である。GitHub は repo の mp4 を再生しないが GIF は画像として動かす。
-2. hook が link を、その画像を poster にした video の要素に替える。
-3. ナレーションの声は OpenAI の text-to-speech の API で作り、ローカルの音声合成の model を使わない。戻す時はこの検と tools/docs-video/tts.py を
-   同じ変更で直す。
-4. 記事の動画 3 本の節の頭に、動画の service の thumbnail の link と click で進む図の 1 行が続けて在り、hook が link を player に替える。
-   README には GitHub の添付の動画が素の 1 行で在り(GitHub の画面が再生の形に替える)、記事への link が在る。
+1. The mp4 and the single-frame image that the page points to exist, and the mp4 is within the size limit — so the videos in the repo do not make clones too heavy.
+   For a page that turns the video's opening into a GIF (`assets/videos/<name>.gif`), the single-frame image of the same name (the site's poster) also exists, and the GIF is
+   within the size limit. GitHub does not play the repo's mp4 but animates a GIF as an image.
+2. The hook replaces the link with a video element that uses that image as the poster.
+3. Narration voice is made with the OpenAI text-to-speech API, not a local speech-synthesis model. If this is reverted, fix this test and tools/docs-video/tts.py
+   in the same change.
+4. At the head of the sections for the 3 article videos, a video service thumbnail link and a one-line click-through figure follow, and the hook replaces the link with a player.
+   The README has the GitHub-attached video as a bare single line (the GitHub screen turns it into a player), and has a link to the article.
 """
 
 from __future__ import annotations
@@ -28,7 +28,7 @@ TTS = ROOT / "tools" / "docs-video" / "tts.py"
 VIDEO_LINK = re.compile(r"\[!\[[^\]]*\]\(([^)\s]+\.(?:jpg|gif))\)\]\(([^)\s]+\.mp4)\)")
 MAX_VIDEO_BYTES = 6_000_000
 MAX_GIF_BYTES = 3_000_000
-# ローカルで声を作る package(model を手元で走らせる物)。tts.py はこれらを import も依存もしない。
+# Packages that make voice locally (run a model on the local machine). tts.py neither imports nor depends on them.
 LOCAL_TTS_PACKAGES = (
     "kokoro",
     "kokoro_onnx",
@@ -46,7 +46,7 @@ LOCAL_TTS_PACKAGES = (
 
 
 def _video_links() -> list[tuple[Path, Path, Path]]:
-    """docs の page が書く動画の link の (page, 画像, mp4) の一覧 — 在るかと大きさを確かめるため。"""
+    """List of (page, image, mp4) for the video links written in docs pages — to check existence and size."""
     return [
         (page, (page.parent / poster).resolve(), (page.parent / video).resolve())
         for page in sorted(DOCS.rglob("*.md"))
@@ -56,29 +56,29 @@ def _video_links() -> list[tuple[Path, Path, Path]]:
 
 def test_the_home_page_has_its_video() -> None:
     pages = {page.relative_to(DOCS).as_posix() for page, _, _ in _video_links()}
-    assert "index.md" in pages, "docs/index.md の頭に動画の link が無い"
+    assert "index.md" in pages, "docs/index.md has no video link at the top"
 
 
 def test_every_video_link_points_at_files_within_the_size_limit() -> None:
     for page, poster, video in _video_links():
         where = page.relative_to(ROOT)
         if poster.suffix == ".gif":
-            assert poster.is_file(), f"{where}: GIF {poster.relative_to(ROOT)} が無い"
+            assert poster.is_file(), f"{where}: GIF {poster.relative_to(ROOT)} is missing"
             gif_size = poster.stat().st_size
             assert gif_size <= MAX_GIF_BYTES, (
-                f"{where}: {poster.name} が {gif_size} byte — 上限 {MAX_GIF_BYTES}。tools/docs-video/gif.mjs で短く・狭く作り直す"
+                f"{where}: {poster.name} is {gif_size} bytes — limit {MAX_GIF_BYTES}. Remake it shorter and narrower with tools/docs-video/gif.mjs"
             )
             poster = poster.with_suffix(".jpg")
-        assert poster.is_file(), f"{where}: 1 こまの画像 {poster.relative_to(ROOT)} が無い"
-        assert video.is_file(), f"{where}: 動画 {video.relative_to(ROOT)} が無い"
+        assert poster.is_file(), f"{where}: single-frame image {poster.relative_to(ROOT)} is missing"
+        assert video.is_file(), f"{where}: video {video.relative_to(ROOT)} is missing"
         size = video.stat().st_size
         assert size <= MAX_VIDEO_BYTES, (
-            f"{where}: {video.name} が {size} byte — 上限 {MAX_VIDEO_BYTES}。tools/docs-video/render.mjs の crf を上げて作り直す"
+            f"{where}: {video.name} is {size} bytes — limit {MAX_VIDEO_BYTES}. Raise crf in tools/docs-video/render.mjs and remake it"
         )
 
 
 def _hooks():
-    """mkdocs を入れずに hook の module を読むため(mkdocs の型は型の確かめの時だけ import する)。"""
+    """To load the hook module without installing mkdocs (mkdocs types are imported only for type checking)."""
     spec = importlib.util.spec_from_file_location(
         "docs_site_hooks", ROOT / "tools" / "docs_site" / "hooks.py"
     )
@@ -148,33 +148,33 @@ def test_the_three_article_videos_sit_above_their_figures() -> None:
             rf"\[!\[[^\]]+\]\(\.\./assets/figures/{figure}\.gif\)\]",
             re.MULTILINE,
         )
-        assert pair.search(article), f"記事の {figure} の図の上に動画 {video_id} の行が無い"
+        assert pair.search(article), f"the article has no line for video {video_id} above figure {figure}"
 
 
 def test_the_readme_has_the_attached_video_and_the_article_link() -> None:
     readme = README.read_text(encoding="utf-8")
     assert re.search(r"^https://github\.com/user-attachments/assets/[0-9a-f-]+$", readme, re.MULTILINE), (
-        "README に GitHub の添付の動画の素の 1 行が無い"
+        "README has no bare single line for the GitHub-attached video"
     )
     assert "docs/articles/algebraic-effects-in-python.md" in readme
 
 
 def _script_dependencies(source: str) -> list[str]:
-    """tts.py の頭の script の宣言(PEP 723)の dependencies — uv run が入れる package。"""
+    """The dependencies of the script declaration (PEP 723) at the head of tts.py — packages that uv run installs."""
     block = re.search(r"^# /// script\n((?:#.*\n)*?)# ///$", source, re.MULTILINE)
-    assert block is not None, "tts.py の頭に script の宣言(# /// script)が無い"
+    assert block is not None, "tts.py has no script declaration (# /// script) at its head"
     body = "\n".join(line.removeprefix("#").strip() for line in block.group(1).splitlines())
     match = re.search(r"dependencies\s*=\s*(\[[^\]]*\])", body)
-    assert match is not None, "script の宣言に dependencies が無い"
+    assert match is not None, "the script declaration has no dependencies"
     return ast.literal_eval(match.group(1))
 
 
 def test_narration_uses_the_openai_speech_api_and_no_local_model() -> None:
     source = TTS.read_text(encoding="utf-8")
     assert "https://api.openai.com/v1/audio/speech" in source, (
-        "tts.py が OpenAI の text-to-speech の API を呼んでいない"
+        "tts.py does not call the OpenAI text-to-speech API"
     )
-    assert "OPENAI_API_KEY" in source, "tts.py が OpenAI の API key を環境変数から読んでいない"
+    assert "OPENAI_API_KEY" in source, "tts.py does not read the OpenAI API key from an environment variable"
     dependencies = _script_dependencies(source)
     local = [
         d
@@ -182,7 +182,7 @@ def test_narration_uses_the_openai_speech_api_and_no_local_model() -> None:
         if re.split(r"[\s=<>!~\[]", d, maxsplit=1)[0].lower()
         in {p.lower() for p in LOCAL_TTS_PACKAGES}
     ]
-    assert not local, f"tts.py がローカルの音声合成の package に依存している: {local}"
+    assert not local, f"tts.py depends on local speech-synthesis packages: {local}"
     nodes = list(ast.walk(ast.parse(source)))
     imported = {
         alias.name.split(".")[0]
@@ -195,5 +195,5 @@ def test_narration_uses_the_openai_speech_api_and_no_local_model() -> None:
         if isinstance(node, ast.ImportFrom) and node.module
     }
     assert not imported & set(LOCAL_TTS_PACKAGES), (
-        f"tts.py がローカルの音声合成の package を import している: {imported & set(LOCAL_TTS_PACKAGES)}"
+        f"tts.py imports local speech-synthesis packages: {imported & set(LOCAL_TTS_PACKAGES)}"
     )

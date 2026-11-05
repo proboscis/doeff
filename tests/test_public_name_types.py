@@ -1,24 +1,24 @@
-"""公開の名の型が型の道具に分かる事の検(型の報告の抜け 6)。
+"""Check that the types of public names are known to the type tools (gap 6 of the type report).
 
-pyright の verifytypes は、package の公開の名ごとに、引数と戻りと属性の型がすべて分かるかを数える。核の 4 個だけの環境で
-測ると、doeff は 81.9%・doeff_core_effects は 87.5% だった(2026-10-17・main 9fe8c330b・pyright 1.1.414)。分からない名を
-使う人の strict の型の check は Unknown の error を出す。訳は 3 つだった:
+pyright's verifytypes counts, for each public name of a package, whether the types of all arguments, returns, and attributes are known. Measured in an environment with only the 4 core
+packages, doeff was 81.9% and doeff_core_effects was 87.5% (2026-10-17, main 9fe8c330b, pyright 1.1.414). The strict type check of a user
+who uses an unknown name raises an Unknown error. There were 3 causes:
 
-- scheduler の内の名(``Task``・``Future``・``Promise``・``Semaphore`` の id、``ExternalPromise.fail``、
-  ``SchedulerDeadlockError`` の欄)と effect の ``__repr__`` に注記が無く、class ごと「一部分からない」になっていた。
-  ``Tell`` と ``slog`` は戻りの class(``WriterTellEffect``・``SlogEffect``)を通して分からなかった。
-- 頭の handler(``writer`` など)が注記の無い変数で、道具によって推す型が違いうる(ambiguous)。
-- 廃止した名の置き物(``KleisliProgram`` など 17 個)が、型の無い ``_Removed`` の値として見えていた。置き物は型の道具から
-  隠した: 使えば必ず落ちる名を型の check が通すより、import の行で error にする方が早く知らせる(doeff に無い名と同じ —
-  tests/test_unknown_doeff_import_static_types.py)。実行時の import と案内の文は変わらない。
+- Names inside the scheduler (the ids of ``Task``, ``Future``, ``Promise``, ``Semaphore``, ``ExternalPromise.fail``, the fields of
+  ``SchedulerDeadlockError``) and the ``__repr__`` of effects had no annotation, so the whole class was "partially unknown".
+  ``Tell`` and ``slog`` were unknown through their return classes (``WriterTellEffect``, ``SlogEffect``).
+- Top-level handlers (such as ``writer``) were variables without annotations, so the inferred type could differ by tool (ambiguous).
+- Placeholders for removed names (17 of them, such as ``KleisliProgram``) were visible as values of the untyped ``_Removed``. The placeholders were
+  hidden from type tools: flagging an error on the import line tells the user sooner than a type check letting through a name that always fails when used (the same as names doeff does not have --
+  tests/test_unknown_doeff_import_static_types.py). The runtime import and the guidance text do not change.
 
-直した後は doeff 99.5%・doeff_core_effects 92.3%(同じ環境と道具)。
+After the fix, doeff 99.5% and doeff_core_effects 92.3% (same environment and tool).
 
-ここでは開発の環境で verifytypes を走らせ、型の分からない公開の名が、下の表に訳を書いた物だけである事を確かめる。表の名に
-型が付いた時も赤にする — 表から外して、守る範囲を広げる(doeff.result の Some・Maybe・Nothing は抜け 5 の card が型を付け、
-この表から外れた)。
+Here verifytypes is run in the development environment, and it is verified that the public names whose types are unknown are only those whose reason is written in the table below. It also goes red when a name in the table
+gets a type -- remove it from the table to widen the protected range (Some, Maybe, and Nothing of doeff.result got types from the card for gap 5 and
+left this table).
 
-失敗ケース: 公開の module に注記の無い関数・属性・変数を足す・``Task`` の id の注記を外す・置き物を型の道具に見せる、で赤。
+Failure cases: red when adding an unannotated function, attribute, or variable to a public module; removing the annotation of the id of ``Task``; or exposing the placeholders to type tools.
 """
 
 import ast
@@ -32,11 +32,11 @@ from pathlib import Path
 import pytest
 from doeff_hy._static_check import python_without_bytecode
 
-#: ``python -m doeff demo``(doeff/cli/demo.py)は自分の source を README の例と同じ書き方(注記を書かない例)のまま
-#: 印字して走らせる。注記を足すと、印字する program と handler が README の例とずれる。
-_DEMO_PRINTS_THE_README_EXAMPLE = "demo が印字する README の書き方の例(注記なし)"
+#: ``python -m doeff demo`` (doeff/cli/demo.py) prints its own source and runs it in the same style as the README examples (examples without annotations).
+#: Adding annotations would make the printed program and handlers diverge from the README examples.
+_DEMO_PRINTS_THE_README_EXAMPLE = "an example in the README style (no annotations) that demo prints"
 
-#: doeff の公開の名のうち、型が分からないままの物と訳。
+#: Public names of doeff whose types remain unknown, and the reason.
 _DOEFF_GAPS: dict[str, str] = {
     "doeff.cli.demo.digest": _DEMO_PRINTS_THE_README_EXAMPLE,
     "doeff.cli.demo.canned": _DEMO_PRINTS_THE_README_EXAMPLE,
@@ -45,22 +45,22 @@ _DOEFF_GAPS: dict[str, str] = {
     "doeff.cli.demo.live_world": _DEMO_PRINTS_THE_README_EXAMPLE,
 }
 
-#: aiohttp の型そのものが verifytypes に「一部分からない」(``ClientSession`` の引数の yarl の ``URL``・``BasicAuth``、
-#: ``web.Request``・``web.StreamResponse`` の欄)。名の注記は全部書いてあり(外の package の型の報告を外す
-#: ``--ignoreexternal`` では型が分かる)、doeff の側では直せない。strict の型の check は外の class の欄を数えないので、
-#: 使う人に Unknown の error は出ない。
-_AIOHTTP_TYPES_ARE_PARTIALLY_UNKNOWN = "aiohttp の型が verifytypes に一部分からない(注記は全部ある・外の package)"
+#: The aiohttp types themselves are "partially unknown" to verifytypes (the yarl ``URL`` and ``BasicAuth`` in the arguments of ``ClientSession``,
+#: the fields of ``web.Request`` and ``web.StreamResponse``). All name annotations are written (the types are known with
+#: ``--ignoreexternal``, which drops the type report of external packages), and it cannot be fixed on the doeff side. The strict type check does not count the fields of external classes,
+#: so users get no Unknown error.
+_AIOHTTP_TYPES_ARE_PARTIALLY_UNKNOWN = "aiohttp types are partially unknown to verifytypes (all annotations are present; external package)"
 
-#: doeff_core_effects の頭の名のうち、型が分からないままの物と訳(足す時は訳と一緒に書く)。
+#: Top-level names of doeff_core_effects whose types remain unknown, and the reason (when adding, write the reason with it).
 _CORE_HEAD_GAPS: dict[str, str] = {
     "doeff_core_effects.WebEdge": _AIOHTTP_TYPES_ARE_PARTIALLY_UNKNOWN,
     "doeff_core_effects.aiohttp_ws_link_handler": _AIOHTTP_TYPES_ARE_PARTIALLY_UNKNOWN,
 }
-#: doeff_core_effects の module のうち、公開の名の全部に型が分かる物(この検が守る範囲)。今は全部を下の隠した module で数える。
+#: The doeff_core_effects modules all of whose public names have known types (the range this test protects). For now all are counted through the hidden modules below.
 _CORE_TYPED_MODULES: tuple[str, ...] = ()
-#: 守る範囲のうち、名に _ を付けて隠した module(ADR-DOE-API-001 R5)。
-#: verifytypes は _ の module の名を数えないので、入口がこれらの module から出す名(``doeff_core_effects.Task`` など)で
-#: 数える。入口の class の欄は別の行に出ず、class の行の型の分かり(isTypeKnown)に畳まれる。
+#: Of the protected range, the modules hidden with a _ prefix on the name (ADR-DOE-API-001 R5).
+#: verifytypes does not count names of _ modules, so they are counted by the names the entry point exports from these modules (such as ``doeff_core_effects.Task``).
+#: The entry point's class fields do not appear as separate rows and are folded into the type-known status (isTypeKnown) of the class row.
 _CORE_TYPED_HIDDEN_MODULES = (
     "doeff_core_effects._effects",
     "doeff_core_effects._scheduler",
@@ -75,7 +75,7 @@ _CORE_ENTRY = (
     Path(__file__).resolve().parents[1]
     / "packages/doeff-core-effects/doeff_core_effects/__init__.py"
 )
-#: 廃止した名の置き物(実行時だけに在り、使うと替わりの名を言う)。
+#: Placeholders for removed names (they exist only at runtime and name the replacement when used).
 _REMOVED = {
     "Delegate": "use 'yield effect' to re-perform in handler body",
     "KleisliProgram": "use @do instead",
@@ -85,11 +85,11 @@ _REMOVED = {
 
 
 def _verifytypes(directory: Path, package: str) -> list[dict]:
-    """``pyright --verifytypes <package>`` の公開の名の行。repo の pyrightconfig.json(extraPaths で package を手元の
-    source として解く — verifytypes は入れた package を見つけられない)の外の dir から、開発の環境の python を指して走らせる。
+    """The public-name rows of ``pyright --verifytypes <package>``. Run from a dir outside the repo's pyrightconfig.json (which resolves the package as local
+    source via extraPaths -- verifytypes cannot find an installed package), pointing at the development environment's python.
 
-    verifytypes は検索 path を問う python を ``--pythonpath`` でなく PATH の ``python`` から `-I` で起こす(1.1.411 で実測 —
-    包みを ``--pythonpath`` にだけ渡すと、site の起動の .pyc を checkout へ書いた)。だから `-B` の包みを PATH の頭にも置く。"""
+    verifytypes launches the python that is asked for the search path not with ``--pythonpath`` but with `-I` from ``python`` on PATH (measured on 1.1.411 --
+    passing the wrapper only via ``--pythonpath`` wrote the site startup .pyc into the checkout). So the `-B` wrapper is also placed at the head of PATH."""
     (directory / "pyrightconfig.json").write_text("{}", encoding="utf-8")
     bin_dir = directory / "bin"
     bin_dir.mkdir()
@@ -105,7 +105,7 @@ def _verifytypes(directory: Path, package: str) -> list[dict]:
         )
     report = json.loads(result.stdout)
     completeness = report["typeCompleteness"]
-    assert completeness["packageRootDirectory"], f"verifytypes が {package} を見つけていない: {report}"
+    assert completeness["packageRootDirectory"], f"verifytypes did not find {package}: {report}"
     return [symbol for symbol in completeness["symbols"] if symbol["isExported"]]
 
 
@@ -125,12 +125,12 @@ def core_symbols(tmp_path_factory: pytest.TempPathFactory) -> list[dict]:
 
 def test_every_public_name_of_doeff_has_a_known_type_but_the_listed_gaps(doeff_symbols: list[dict]) -> None:
     unlisted = sorted(_unknown(doeff_symbols) - set(_DOEFF_GAPS))
-    assert unlisted == [], f"型の分からない公開の名 — 注記を付ける: {unlisted}"
+    assert unlisted == [], f"public names with unknown types -- add annotations: {unlisted}"
 
 
 def test_each_listed_gap_of_doeff_is_still_a_gap(doeff_symbols: list[dict]) -> None:
     closed = sorted(set(_DOEFF_GAPS) - _unknown(doeff_symbols))
-    assert closed == [], f"型が付いた — 表から外して守る範囲に入れる: {closed}"
+    assert closed == [], f"types are now known -- remove from the table and bring into the protected range: {closed}"
 
 
 def test_the_scheduler_handles_and_tell_and_slog_have_known_types(core_symbols: list[dict]) -> None:
@@ -148,9 +148,9 @@ def _in_module(name: str, modules: tuple[str, ...]) -> bool:
 
 
 def _entry_names_by_hidden_module() -> dict[str, set[str]]:
-    """隠した module ごとに、入口が ``from <その module> import X as X`` で出す名。
+    """For each hidden module, the names the entry point exports with ``from <that module> import X as X``.
 
-    即座に結ぶ名と ``if TYPE_CHECKING:`` の名の両方。
+    Both names bound immediately and names under ``if TYPE_CHECKING:``.
     """
     tree = ast.parse(_CORE_ENTRY.read_text(encoding="utf-8"))
     imports = [node for node in ast.walk(tree) if isinstance(node, ast.ImportFrom)]
@@ -166,16 +166,16 @@ def _entry_names_by_hidden_module() -> dict[str, set[str]]:
 
 
 def test_every_public_name_of_the_typed_core_modules_has_a_known_type(core_symbols: list[dict]) -> None:
-    """守る範囲は数の下限でなく、名の組で確かめる。前の下限(100 より多い)は、公開の module の class の欄が 1 行ずつ
-    数えられた頃の物だった。module を _ で隠した後は入口の名だけが行になり(欄は class の行に畳まれる)、名を内側へ
-    移すたびに減った(96 → 91: TraceSink・VmWork・Resumption・PRIORITY_* を入口から外した)。だから、表の module の
-    どれもが入口に名を出し、入口の名の全部を verifytypes が報告し、その全部に型が分かる事を確かめる。"""
+    """The protected range is verified by a set of names, not a lower bound on the count. The previous lower bound (more than 100) dates from when the class fields of public modules were
+    counted one row at a time. After modules were hidden with _, only the entry point's names became rows (fields are folded into the class row), and the count dropped each time
+    names moved inward (96 -> 91: TraceSink, VmWork, Resumption, and PRIORITY_* removed from the entry point). So verify that every module in the table
+    exports names at the entry point, that verifytypes reports all of the entry point's names, and that all of them have known types."""
     by_module = _entry_names_by_hidden_module()
     silent = sorted(module for module, names in by_module.items() if not names)
-    assert silent == [], f"入口が名を出していない隠した module — 表と入口を見直す: {silent}"
+    assert silent == [], f"hidden modules whose entry point exports no names -- review the table and the entry point: {silent}"
     entry_names = {f"doeff_core_effects.{name}" for names in by_module.values() for name in names}
     reported = {symbol["name"] for symbol in core_symbols}
-    assert sorted(entry_names - reported) == [], "verifytypes が報告しない入口の名 — 守る範囲から漏れている"
+    assert sorted(entry_names - reported) == [], "entry-point names that verifytypes does not report -- they leak out of the protected range"
     covered = [
         symbol for symbol in core_symbols
         if _in_module(symbol["name"], (*_CORE_TYPED_MODULES, *entry_names))
@@ -188,8 +188,8 @@ def test_every_head_name_of_doeff_core_effects_has_a_known_type_but_the_listed_g
 ) -> None:
     head = [symbol for symbol in core_symbols if symbol["name"].count(".") == 1]
     unknown = _unknown(head)
-    assert sorted(unknown - set(_CORE_HEAD_GAPS)) == [], "型の分からない頭の名 — 注記を付ける"
-    assert sorted(set(_CORE_HEAD_GAPS) - unknown) == [], "型が付いた — 表から外して守る範囲に入れる"
+    assert sorted(unknown - set(_CORE_HEAD_GAPS)) == [], "top-level names with unknown types -- add annotations"
+    assert sorted(set(_CORE_HEAD_GAPS) - unknown) == [], "types are now known -- remove from the table and bring into the protected range"
 
 
 def test_type_checkers_do_not_see_the_removed_names(doeff_symbols: list[dict]) -> None:

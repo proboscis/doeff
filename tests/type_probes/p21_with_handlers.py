@@ -1,4 +1,4 @@
-# with_handlers と stacked_handlers は結果の型を保つ
+# with_handlers and stacked_handlers preserve the result type
 from collections.abc import Generator
 from typing import Any, assert_type
 

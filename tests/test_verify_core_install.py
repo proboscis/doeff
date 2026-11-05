@@ -1,8 +1,8 @@
-"""核だけの入れ方の検の道具 tools/verify_core_install.py が、壊れた入れ方を名指す事の失敗ケース。
+"""Failure cases: the core-only install check tool tools/verify_core_install.py names a broken install.
 
-道具は Python の版ごとに、本物の install(核の 4 個だけの新しい venv)で確かめる。道具の判じ方が黙って緑を返すと、核だけの
-入れ方が壊れても道具は落ちない。ここでは判じ方を、入れた物と子の process の結末の写しで確かめる(本物の install は doeff-vm
-を組むので 1 版 約 1 分かかり、開発の環境の検には入れない)。
+For each Python version the tool checks with a real install (a fresh venv containing only the 4 core packages). If the tool judged wrongly and silently returned green, a broken core-only
+install would not make the tool fail. Here the judgment is checked against copies of what was installed and the outcome of the child process (a real install builds doeff-vm,
+so it takes about 1 minute per version and is not included in checks of the development environment).
 """
 
 from __future__ import annotations
@@ -30,7 +30,7 @@ PYPI_WORKFLOW = ROOT / ".github" / "workflows" / "core-install-from-pypi.yml"
 
 
 def _load(name: str) -> ModuleType:
-    """tools/ の module を読む(tools/ は package ではない)。道具は隣の module を名で import するので、sys.modules に名で置く。"""
+    """Load a module from tools/ (tools/ is not a package). The tool imports neighboring modules by name, so register it in sys.modules by name."""
     if name in sys.modules:
         return sys.modules[name]
     spec = importlib.util.spec_from_file_location(name, ROOT / "tools" / f"{name}.py")
@@ -48,18 +48,18 @@ tool = _load("verify_core_install")
 
 
 def _from_checkout(name: str, *, editable: bool = False) -> object:
-    """この checkout の dir から入った配布物の写し。"""
+    """Copy of a distribution installed from this checkout directory."""
     directory = next(package.directory for package in tool.FROM_CHECKOUT if package.name == name)
     return tool.Distribution(name, "0.6.0", (ROOT / directory).resolve().as_uri(), editable)
 
 
 def _from_index(name: str, version: str = "0.6.0") -> object:
-    """index(PyPI)から入った配布物の写し。"""
+    """Copy of a distribution installed from the index (PyPI)."""
     return tool.Distribution(name, version, "", False)
 
 
 def _installed(*distributions: object) -> object:
-    """入った物の判じ方だけを試すための、venv の様子の写し(README は読まない)。"""
+    """Copy of the venv state, for trying only how the installed contents are judged (does not read the README)."""
     return tool.Installed(Path("venv/bin/python"), "3.12.14", False, distributions, ("", ""))
 
 
@@ -82,7 +82,7 @@ def test_the_core_four_built_from_the_checkout_pass() -> None:
 
 
 def test_an_install_that_brings_more_than_the_core_four_is_named() -> None:
-    # 0.5 までの既定(doeff-hy と httpx を既定の依存に持つ)の入れ方の一部。
+    # Part of an install of the defaults up to 0.5 (doeff-hy and httpx as default dependencies).
     problems = tool.install_problems(
         _installed(
             *CORE_FROM_WHEELS,
@@ -96,7 +96,7 @@ def test_an_install_that_brings_more_than_the_core_four_is_named() -> None:
 
 
 def test_an_editable_or_index_install_of_a_checkout_package_is_named() -> None:
-    # editable は checkout を直に読み(wheel の中身を確かめない)、index の物は checkout の物でない。
+    # An editable install reads the checkout directly (does not check the wheel contents), and one from the index is not from the checkout.
     problems = tool.install_problems(
         _installed(
             _from_checkout("doeff", editable=True),
@@ -117,7 +117,7 @@ def test_the_core_four_from_pypi_pass(version: str | None) -> None:
 
 
 def test_a_checkout_or_editable_package_is_not_the_pypi_one() -> None:
-    # PyPI の確かめに、手元の checkout から入った物が混ざると、利用者の入れる物を確かめた事にならない。
+    # If something installed from the local checkout is mixed into the check of PyPI, it does not verify what users would install.
     problems = tool.install_problems(
         _installed(
             _from_checkout("doeff"),
@@ -146,7 +146,7 @@ def test_a_pypi_package_of_another_version_than_the_named_one_is_named() -> None
 
 
 def test_pypi_installs_take_only_a_wheel_of_the_rust_vm() -> None:
-    # GitHub の runner には Rust の道具が在るので、wheel が無い機体でも source から組んで通ってしまう。
+    # GitHub runners have Rust tooling, so even a machine without a wheel builds from source and passes.
     arguments = tool.install_arguments(tool.PyPI(None))
     assert arguments[arguments.index("--only-binary") + 1] == "doeff-vm"
     assert arguments[-1] == "doeff"
@@ -190,7 +190,7 @@ def test_the_extra_uses_cover_every_extra_of_the_hint_table() -> None:
     assert {use.extra for use in tool.EXTRA_USES} == set(get_args(extra_hints.Extra))
 
 
-# --- 試しの命令 python -m doeff demo が核だけの venv で動く --------------------------
+# --- the trial command python -m doeff demo runs in a core-only venv --------------------------
 DEMO_LIVE = repr(f"{len(tool.DEMO_PAGE)} chars")
 DEMO_OUTPUT = (
     f">>> run(handler(canned)(digest(url)))\n{tool.DEMO_CANNED_ANSWER}\n\n"
@@ -237,7 +237,7 @@ def test_the_demo_passes_only_when_it_prints_the_four_answers_in_order(
 def test_the_demo_check_expects_the_answers_of_the_demos_handlers(
     capsys: pytest.CaptureFixture[str],
 ) -> None:
-    # 道具は標準ライブラリだけで走るので doeff を import できず、答えを写して持つ — 写しが demo の答えとずれない事。
+    # The tool runs with only the standard library, so it cannot import doeff and keeps a copy of the answers -- the copy must not drift from the demo answers.
     assert repr(run(handler(canned)(digest(tool.DEMO_PAGE)))) == tool.DEMO_CANNED_ANSWER
     assert repr(run(handler(canned)(budget(1)(digest(tool.DEMO_PAGE))))) == tool.DEMO_BUDGET_ANSWER
     run(handler(canned)(handler(trace)(digest(tool.DEMO_PAGE))))
@@ -250,7 +250,7 @@ def test_the_demo_check_runs_the_command_the_readme_points_to() -> None:
     assert f"`{command}`" in (ROOT / "README.md").read_text(encoding="utf-8")
 
 
-# --- LLM の agent の例と、その pytest の検の例が核の 4 個(と pytest)だけで通る -------------
+# --- the LLM agent example and its pytest example pass with only the 4 core packages (and pytest) -------------
 @pytest.mark.parametrize(
     ("returncode", "stdout", "passes"),
     [
@@ -288,7 +288,7 @@ def test_the_llm_example_tests_pass_only_when_pytest_ends_with_a_passed_summary(
 
 
 def test_the_llm_example_check_expects_the_line_the_example_prints() -> None:
-    # 道具は doeff を import できず、例の答えの行を写して持つ — 写しが、開発の環境で例の印字と比べる行とずれない事。
+    # The tool cannot import doeff and keeps a copy of the answer line of the example -- the copy must not drift from the line compared with the example output in the development environment.
     from tests.test_examples_run import EXPECTED_LINES
 
     assert tool.LLM_EXAMPLE_ANSWER in EXPECTED_LINES[tool.LLM_EXAMPLE_SCRIPT]
@@ -302,7 +302,7 @@ def test_the_llm_example_check_copies_the_example_and_its_tests() -> None:
     assert all((ROOT / name).is_file() for name in tool.LLM_EXAMPLE_FILES)
 
 
-# --- 紹介の記事の例が核の 4 個(と pytest)だけで、記事の見せる行を印字して通る ---------------------------
+# --- the example in the introduction article prints the lines the article shows and passes with only the 4 core packages (and pytest) ---------
 PRODUCTION = tool.ArticleScript("production.py", ("SMTP -> x", "Welcome, Grace!"))
 FANOUT = tool.ArticleScript("fanout.py", ("['a']", "['A']"), timed=True)
 
@@ -366,13 +366,13 @@ def test_the_article_tests_pass_only_when_every_test_passes_cleanly(
     assert (tool.article_tests_failure(result) is None) is passes
 
 
-# 記事の例の dir の、他の file が import するだけで何も印字しない module。
+# A module in the article example dir that other files only import and that prints nothing.
 ARTICLE_MODULES = ("infra.py", "plain_app.py", "welcome.py")
 
 
 def test_the_article_check_runs_every_script_of_the_article() -> None:
-    # 記事の例の印字を比べるのは道具の ARTICLE_SCRIPTS だけ— 表が dir の script の全部を名指し、記事の
-    # 書く切り替え DOEFF_SCHEDULER=rust でも fanout.py を走らせる事。例の dir に script を足して表に書き忘れると赤になる。
+    # Only the tool ARTICLE_SCRIPTS compares the output of the article example -- the table must name every script in the dir, and the article
+    # must also run fanout.py with the switch DOEFF_SCHEDULER=rust it describes. Adding a script to the example dir without listing it in the table turns this red.
     directory = ROOT / tool.ARTICLE_EXAMPLE_DIRECTORY
     scripts = sorted(
         path.name
@@ -413,8 +413,8 @@ def test_a_tour_script_passes_only_when_it_runs_through_the_production_stack(
 
 
 def test_the_tour_check_runs_the_files_whose_production_stack_the_article_shows() -> None:
-    # monitor.py の __main__ が本番の stack(real)を走らせ、道具が見る最後の 2 行が、その印字と同じである事。記事の Layer 5 の
-    # `real` の定義が monitor.py と一致する事は tests/test_docs_article_algebraic_effects.py が見る。
+    # __main__ of monitor.py runs the production stack (real), and the last 2 lines the tool looks at must equal that output. That the definition of `real` in Layer 5 of the article
+    # matches monitor.py is checked by tests/test_docs_article_algebraic_effects.py.
     tour = ROOT / tool.TOUR_DIRECTORY
     assert set(tool.TOUR_SCRIPTS) <= {path.name for path in tour.glob("*.py")}
     main = (tour / "monitor.py").read_text(encoding="utf-8").split('if __name__ == "__main__":')[1]
@@ -424,11 +424,11 @@ def test_the_tour_check_runs_the_files_whose_production_stack_the_article_shows(
 
 @pytest.mark.parametrize("page", ["README.md", "docs/index.md"])
 def test_the_pages_that_say_the_llm_example_needs_only_doeff_link_to_it(page: str) -> None:
-    # 道具が確かめる約束(pip install doeff だけで走る)を言う page が、確かめる例そのものを指している事。
+    # The page that states the promise the tool checks (it runs with just pip install doeff) must point to the very example being checked.
     assert "examples/llm_agent.py" in (ROOT / page).read_text(encoding="utf-8")
 
 
-# 根の README の「Hy の module を Python から読む」節の形(足した時に、核の 4 個だけの venv で落ちた)。
+# The shape of the section "Reading a Hy module from Python" in the root README (it failed in a core-only venv when it was added).
 HY_MODULE_README = """\
 ## Quick Start
 
@@ -457,13 +457,13 @@ print(greet)  # <function>
 
 
 def _set_aside(readme: str) -> list[str]:
-    """README の囲みのうち、extra hy の例として走らせない物の言葉と始まりの行。"""
+    """Words and opening lines of the README fences that are not run as extra hy examples."""
     examples = readme_examples.fences(readme, "README")
     return [f"{example.language}:{example.line}" for example in tool.hy_extra_examples(examples)]
 
 
 def test_a_python_example_that_imports_hy_is_set_aside_with_the_hy_ones() -> None:
-    # 14 行目の Python が `import hy` と Hy の module(greet)を読む物。Quick Start の Python は走らせる。
+    # The Python on line 14 reads `import hy` and a Hy module (greet). The Python in Quick Start is run.
     assert _set_aside(HY_MODULE_README) == ["hy:10", "python:14", "hy:21"]
 
 
@@ -510,7 +510,7 @@ def test_a_python_example_is_set_aside_only_when_it_reads_a_hy_module(
 
 
 def test_a_python_example_reading_a_module_no_hy_file_writes_is_run() -> None:
-    # greet.hy を書く Hy の囲みが無ければ、`greet` は Hy の module と言えない(`from greet import greet` は他の file が書く)。
+    # Without a Hy fence that writes greet.hy, `greet` cannot be called a Hy module (`from greet import greet` is written by another file).
     readme = "```python file=greet.py\ndef greet(): ...\nprint(1)  # 1\n```\n\n```python\nimport greet\n```\n"
     assert _set_aside(readme) == []
 
@@ -526,7 +526,7 @@ def test_examples_that_do_not_read_hy_are_left_to_run_in_the_core_only_venv() ->
 def test_every_python_example_that_imports_hy_in_a_checked_readme_is_set_aside(
     package: str,
 ) -> None:
-    # 道具が走らせる README(根と doeff-vm)の今の本文で、`import hy` を書く Python の囲みが核だけの venv の側に残らない事。
+    # In the current text of the READMEs the tool runs (root and doeff-vm), no Python fence writing `import hy` remains on the core-only venv side.
     path = ROOT / ("README.md" if package == "doeff" else f"packages/{package}/README.md")
     examples = readme_examples.fences(path.read_text(encoding="utf-8"), package)
     set_aside = tool.hy_extra_examples(examples)
@@ -540,11 +540,11 @@ def test_every_python_example_that_imports_hy_in_a_checked_readme_is_set_aside(
     assert remaining_importing_hy == []
 
 
-# --- GitHub の README を入った版で走らせる ----------------------------------------------------------
-# --pypi は、入った wheel の README(入った版と同じ時に書いた物)の他に、checkout(CI では GitHub の main)の README を入った版の
-# venv で走らせる。wheel の README だけでは、GitHub の README が出した版より先へ進んでも緑のまま食い違いを見ない。
+# --- run the GitHub README on the installed version ----------------------------------------------------------
+# --pypi runs, in the venv of the installed version, the checkout README (GitHub main in CI) in addition to the README of the installed wheel (written at the same time as the installed version).
+# With the wheel README alone, even if the GitHub README advances past the released version, it stays green and misses the mismatch.
 
-# 入った版と同じ時に書いた README — 例は入った版で通る。
+# README written at the same time as the installed version -- its example passes on the installed version.
 _OLD_README = """# doeff
 
 ## Quick Start
@@ -553,7 +553,7 @@ _OLD_README = """# doeff
 print(1)  # 1
 ```
 """
-# 出した版より先へ進んだ README — 2 つ目の例は、入った版に無い使い方で落ちる。
+# README that advanced past the released version -- the second example fails with usage not in the installed version.
 _NEW_README = """# doeff
 
 ## Quick Start
@@ -572,14 +572,14 @@ raise RuntimeError("handler must return DoExpr, got: <class 'generator'>")
 
 
 def _checkout_with_readmes(repo: Path, text: str) -> None:
-    """CHECKED_READMES の配布物の README を、checkout の写しの repo に置く。"""
+    """Place the README of each distribution in CHECKED_READMES in the repo copy of the checkout."""
     for readme in tool.checkout_readmes(ROOT).readmes:
         (repo / readme.source).parent.mkdir(parents=True, exist_ok=True)
         (repo / readme.source).write_text(text, encoding="utf-8")
 
 
 def _venv_with_readmes(text: str) -> object:
-    """README の例を走らせる interpreter(検の interpreter — 例は doeff を使わない)と、wheel の README の写し。"""
+    """The interpreter that runs the README examples (the check interpreter -- the examples do not use doeff) and a copy of the wheel README."""
     readmes = tuple(text for _ in tool.CHECKED_READMES)
     return tool.Installed(Path(sys.executable), "3.12.14", False, (), readmes)
 
@@ -592,7 +592,7 @@ def test_the_checkout_readmes_are_the_files_the_packages_put_in_their_wheels() -
         project = tomllib.loads(
             (ROOT / directories[readme.package] / "pyproject.toml").read_text(encoding="utf-8")
         )["project"]
-        # wheel の metadata の本文に入る file と、GitHub の README として読む file が同じ。
+        # The file included in the wheel metadata body and the file read as the GitHub README are the same.
         assert project["readme"] == tool.README_FILE
         assert readme.source == (directories[readme.package] / tool.README_FILE).as_posix()
         assert readme.text == (ROOT / readme.source).read_text(encoding="utf-8")
@@ -604,7 +604,7 @@ def test_the_wheel_and_the_github_readmes_are_counted_apart(tmp_path: Path) -> N
     installed = _venv_with_readmes(_OLD_README)
     wheel = tool.check_readmes(tool.wheel_readmes(installed), installed, tmp_path / "wheel", 60)
     github = tool.check_readmes(tool.checkout_readmes(repo), installed, tmp_path / "github", 60)
-    # wheel の README は入った版に合うので通り、GitHub の README の先へ進んだ例だけが落ちる。
+    # The wheel README matches the installed version so it passes; only the example that advanced past the GitHub README fails.
     assert (wheel.title, wheel.ran, wheel.failed, wheel.failures) == (
         tool.WHEEL_READMES,
         2,
@@ -648,12 +648,12 @@ def test_the_count_says_how_many_github_examples_pass_on_the_installed_version()
     ("failure", "line"),
     [
         (
-            "README.md:13(Writing a handler の python)が終了コード 1 で落ちた — 例を今の使い方に直す\n2\n"
+            "README.md:13 (python of Writing a handler) failed with exit code 1 -- fix the example to current usage\n2\n"
             'Traceback (most recent call last):\n  File "x.py", line 2\nRuntimeError: boom\n',
             "RuntimeError: boom",
         ),
-        ("README.md:5(Quick Start の python)の印字が print の行の注記と違う", None),
-        ("README.md:5(Quick Start の python)が 60 秒で終わらなかった", None),
+        ("README.md:5 (python of Quick Start) printed output differing from the note on the print line", None),
+        ("README.md:5 (python of Quick Start) did not finish in 60 seconds", None),
     ],
     ids=["exception", "stated-output", "timeout"],
 )
@@ -675,7 +675,7 @@ _STAGES = (
 def _check_python_titles(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path, source: object
 ) -> list[str]:
-    """check_python が例を走らせた README の組の名を、install と他の段を写しに替えて読む。"""
+    """Read the names of the README sets for which check_python ran examples, replacing install and other stages with copies."""
     installed = _venv_with_readmes(_OLD_README)
     titles: list[str] = []
 
@@ -693,7 +693,7 @@ def _check_python_titles(
 
 
 def _stages_run(monkeypatch: pytest.MonkeyPatch, tmp_path: Path, source: object) -> list[str]:
-    """check_python が呼んだ段の名を、その順に読む — 各段の写しは自分の名を落ちた訳として返す(訳の列は呼んだ順に並ぶ)。"""
+    """Read the names of the stages check_python called, in order -- the copy of each stage returns its own name as the failure reason (the reasons line up in call order)."""
     installed = _venv_with_readmes(_OLD_README)
     monkeypatch.setattr(tool, "install", lambda *_: installed)
     monkeypatch.setattr(tool, "install_problems", lambda *_: [])
@@ -708,8 +708,8 @@ def _stages_run(monkeypatch: pytest.MonkeyPatch, tmp_path: Path, source: object)
 def test_only_the_pypi_check_runs_the_article_examples(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
-    # 記事の例は PyPI の版に留めて書く(ADR-DOE-API-002 R3)ので、checkout の版では走らせない。
-    # --pypi は venv に pytest を足すので最後に走らせる。
+    # The article example is written to stay on the PyPI version (ADR-DOE-API-002 R3), so it is not run on the checkout version.
+    # --pypi adds pytest to the venv, so it runs last.
     checkout_stages = _stages_run(monkeypatch, tmp_path / "checkout", tool.Checkout())
     pypi_stages = _stages_run(monkeypatch, tmp_path / "pypi", tool.PyPI(None))
     assert "check_article_examples" not in checkout_stages
@@ -726,7 +726,7 @@ def test_the_pypi_check_runs_the_github_readmes_besides_the_wheel_ones(
 def test_the_checkout_check_runs_the_readmes_once(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
-    # checkout から組んだ wheel の README は checkout の README と同じ物。
+    # The wheel README built from the checkout is the same as the checkout README.
     assert _check_python_titles(monkeypatch, tmp_path, tool.Checkout()) == [tool.WHEEL_READMES]
 
 
@@ -735,12 +735,12 @@ def test_a_push_that_changes_a_github_readme_runs_the_daily_pypi_check() -> None
     assert {readme.source for readme in tool.checkout_readmes(ROOT).readmes} <= set(paths)
 
 
-# --- 型の check が「公開していない名」を名指す ---------------------------------------------------
-# 核だけの venv で README の例を pyright と mypy --strict にかける段の、判じ方。本物の pyright・mypy の出力の写しで確かめる。
+# --- the type check names "names that are not public" ---------------------------------------------------
+# How the stage that runs pyright and mypy --strict on the README examples in a core-only venv judges. Checked with copies of the real pyright and mypy output.
 
 
 def _doeff_readme_installed() -> object:
-    """根の README(doeff の配布物の README)と doeff-vm の README を持つ、入れた物の写し。"""
+    """Copy of what was installed, holding the root README (README of the doeff distribution) and the doeff-vm README."""
     readmes = tuple(
         (ROOT / ("README.md" if package == "doeff" else f"packages/{package}/README.md")).read_text(
             encoding="utf-8"
@@ -754,16 +754,16 @@ def test_the_type_checked_examples_are_the_python_ones_the_core_only_venv_runs()
     examples = tool.type_checked_examples(_doeff_readme_installed(), "doeff")
     assert examples
     assert {example.language for example in examples} == {"python"}
-    # README の Quick Start が package の頭から名を取る例が、型の check の対象に入っている(card の抜け 1 の形)。
+    # The example in which the README Quick Start takes names from the package head is included in the type check (the card gap 1 shape).
     assert any(re.search(r"from doeff_core_effects import ", example.code) for example in examples)
-    # Hy の module を読む例(extra hy)は入らない。
+    # Examples that read a Hy module (extra hy) are not included.
     assert not any(
         re.search(r"^\s*(import hy\b|from hy\b)", e.code, re.MULTILINE) for e in examples
     )
 
 
 def _pyright_report(*diagnostics: tuple[str, str], analyzed: int = 4) -> dict[str, object]:
-    """pyright --outputjson の写し(規則と文の組から)。"""
+    """Copy of pyright --outputjson (from pairs of rule and statement)."""
     return {
         "version": "1.1.414",
         "generalDiagnostics": [
@@ -805,7 +805,7 @@ def test_pyright_complaints_about_the_example_itself_are_not_this_checks_busines
 
 
 def test_pyright_not_finding_the_package_is_a_failure() -> None:
-    # venv の python を見つけられないと、import が全部「見つからない」になる。何も言わない緑ではなく、赤にする。
+    # If the venv python cannot be found, every import becomes "not found". Make it red rather than a silent green.
     missing = ("reportMissingImports", 'Import "doeff_core_effects" could not be resolved')
     assert len(tool.pyright_failures(_pyright_report(missing), checked=4)) == 1
 
@@ -873,7 +873,7 @@ def test_ci_runs_the_tool_on_every_python_of_the_compatibility_matrix() -> None:
 
 
 def _promised_pythons() -> list[str]:
-    """doeff-vm の classifiers が約束する Python の版(PyPI の頁が見せる物 — その版ごとに wheel が要る)。"""
+    """The Python versions promised by the doeff-vm classifiers (what the PyPI page shows -- a wheel is needed for each version)."""
     project = tomllib.loads(
         (ROOT / "packages" / "doeff-vm" / "pyproject.toml").read_text(encoding="utf-8")
     )["project"]
@@ -887,7 +887,7 @@ def _promised_pythons() -> list[str]:
 
 def test_the_daily_pypi_check_installs_every_promised_python_on_three_systems() -> None:
     workflow = yaml.safe_load(PYPI_WORKFLOW.read_text(encoding="utf-8"))
-    # PyYAML は鍵の on を真偽の True と読む(YAML 1.1)。
+    # PyYAML reads the key on as the boolean True (YAML 1.1).
     triggers = workflow[True]
     assert {"schedule", "workflow_dispatch"} <= triggers.keys()
     (job,) = workflow["jobs"].values()
@@ -895,7 +895,7 @@ def test_the_daily_pypi_check_installs_every_promised_python_on_three_systems() 
     assert matrix["os"] == ["ubuntu-latest", "macos-latest", "windows-latest"]
     assert matrix["python"] == _promised_pythons()
     uses = [step.get("uses", "") for step in job["steps"]]
-    # Rust の道具が在ると、wheel の無い機体でも doeff-vm を source から組んで通ってしまう。
+    # If Rust tooling is present, even a machine without a wheel builds doeff-vm from source and passes.
     assert not any("rust" in use for use in uses), uses
     runs = [step.get("run", "") for step in job["steps"]]
     assert any(

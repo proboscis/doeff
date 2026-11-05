@@ -5,7 +5,7 @@ not the legacy `--set` / `--env` / `--interpreter` flags, and only the CLI gives
 the error raised to Python names no CLI flag
 (tests/effects/test_missing_env_key_message.py). The message keeps its newlines.
 
-Card: doeff-publish 8 の誤りの表の 7 (e08_reader_missing_key).
+Card: row 7 of the error table of doeff-publish 8 (e08_reader_missing_key).
 """
 
 from __future__ import annotations

@@ -1,7 +1,7 @@
-"""doeff-no-sleep-in-tests の極性の検体 — module の宣言 pytestmark = pytest.mark.realtime。
+"""Polarity fixture for doeff-no-sleep-in-tests -- the module declaration pytestmark = pytest.mark.realtime.
 
-宣言より後の sleep は鳴らない。宣言より前の 1 行は鳴る(規則がこの file に届いていることの印)。
-名が test_ で始まらないので pytest は集めない。
+A sleep after the declaration does not fire. The one line before the declaration fires (a sign that the rule reaches this file).
+Since the name does not start with test_, pytest does not collect it.
 """
 
 import asyncio
@@ -11,7 +11,7 @@ import pytest
 
 
 def _before_declaration():
-    time.sleep(0.1)  # 鳴る
+    time.sleep(0.1)  # fires
 
 
 pytestmark = pytest.mark.realtime

@@ -1,12 +1,12 @@
-"""Hy や httpx が無い環境で Hy の module・HTTP の handler を読むと、足す extra の名を言う文が出る事の失敗ケース(取り組み
-doeff-publish の区切り 8)。
+"""Failure case: when a Hy module or HTTP handler is loaded in an environment without Hy or httpx, a sentence naming the extra to add is shown (section 8 of
+initiative doeff-publish).
 
-`pip install doeff` は核の 4 個だけを入れ、Hy の言語(doeff-hy)は extra hy、HTTP の client の handler(Hy で書いてあり、httpx で
-送る)は extra http で足す(tests/test_core_install_extras.py)。足していない利用者が `No module named 'doeff_hy'` だけを見て
-止まらないよう、文の最後に `pip install "doeff[hy]"` などの入れ方の行を出す。文は doeff_core_effects/_extra_hints.py の表 1 つが持つ。
+`pip install doeff` installs only the 4 core packages; the Hy language (doeff-hy) is added with extra hy, and the HTTP client handler (written in Hy, sending with httpx)
+is added with extra http (tests/test_core_install_extras.py). So that a user who has not added them does not stop at only `No module named 'doeff_hy'`,
+the sentence ends with a line saying how to install, such as `pip install "doeff[hy]"`. The sentences are held by a single table in doeff_core_effects/_extra_hints.py.
 
-子の process に、塞ぐ名の import に ModuleNotFoundError を返す finder を最前に置いてから import を走らせる。CLI の doeff run の
-場面は tests/cli/test_cli_without_hy.py。
+In a child process, a finder that returns ModuleNotFoundError for the blocked names' imports is placed first before the import is run. The CLI's doeff run
+scenario is tests/cli/test_cli_without_hy.py.
 """
 
 from __future__ import annotations
@@ -23,8 +23,8 @@ CHILD_DEADLINE_SECONDS = 60
 NO_HY = ("hy", "hyrule", "doeff_hy", "doeff_hy_pytest")
 NO_HTTPX = ("httpx",)
 
-# 塞ぐ名(argv[1] の , 区切り)の import に ModuleNotFoundError を返す finder を最前に置き、argv[2] の文を実行して、出た
-# ModuleNotFoundError の名と文を JSON で出す。塞ぐ前に読まれていると塞いだことにならないので 99、何も出なければ 98 で終える。
+# Place first a finder that returns ModuleNotFoundError for imports of the names to block (comma-separated in argv[1]), run the statement in argv[2], and output the
+# ModuleNotFoundError's name and sentence as JSON. If the name was already loaded before blocking it is not really blocked, so exit with 99; if nothing came out, exit with 98.
 BLOCK_THEN_IMPORT = """
 import json
 import sys
@@ -86,14 +86,14 @@ def test_a_missing_extra_names_the_extra_to_install(
 
     assert completed.returncode == 0, (completed.returncode, completed.stderr)
     error = json.loads(completed.stdout)
-    # 名は塞いだ物のまま(`except ModuleNotFoundError as e: if e.name == "httpx"` と読む呼び手を壊さない)。
+    # The name stays that of the blocked module (do not break callers that read `except ModuleNotFoundError as e: if e.name == "httpx"`).
     assert error["name"].split(".")[0] in blocked
     assert f"No module named {error['name']!r}" in error["message"]
     assert error["message"].endswith(f'pip install "doeff[{extra}]"'), error["message"]
 
 
 def test_import_doeff_still_needs_neither_hy_nor_httpx(deadline_scale_factor: float) -> None:
-    # 入れ方の行を出す仕掛けが、核の import で Hy か httpx を読み始めていない事。
+    # The mechanism that prints the install line must not start loading Hy or httpx in the core import.
     completed = subprocess.run(
         [
             sys.executable,

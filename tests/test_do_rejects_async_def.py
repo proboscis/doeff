@@ -113,7 +113,7 @@ def test_the_error_is_raised_where_the_decorator_is_applied() -> None:
 
 
 def test_the_advised_rewrite_runs() -> None:
-    """失敗ケースの対: the message's rewrite — a plain def yielding Await, run under
+    """Counterpart of the failure case: the message's rewrite — a plain def yielding Await, run under
     await_handler inside scheduled() — gives the value the async def meant."""
 
     @do
@@ -125,7 +125,7 @@ def test_the_advised_rewrite_runs() -> None:
 
 
 def test_plain_and_generator_functions_are_still_accepted() -> None:
-    """失敗ケースの対: the refusal reads only the async flags of the code."""
+    """Counterpart of the failure case: the refusal reads only the async flags of the code."""
 
     @do
     def generator_program():

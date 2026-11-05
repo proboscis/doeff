@@ -1,17 +1,17 @@
-"""handle・defhandler の展開が読む名は、書き手の同じ名の effect を隠さない事の検(設計検証の盲検 A)。
+"""Check that the names read by the expansion of handle / defhandler do not shadow the writer's effect of the same name (blind A of design verification).
 
-展開は節の操作と handler のために `Resume`・`Transfer`・`Pass`・`WithHandler`(session があれば `Get`・`Put`・`Some`)を
-読む。素の名で import すると、書き手が自分の effect を同じ名にした時(振込の `Transfer`・KV の `Put`)、節の頭の
-`isinstance` と注記が展開の名を指し、effect が外の handler へ黙って抜けた。module の段では展開の import が書き手の
-`Transfer` を VM の `Transfer` で上書きし、`(Transfer 5)` が TypeError になった。
+The expansion reads `Resume`, `Transfer`, `Pass`, `WithHandler` (and `Get`, `Put`, `Some` if there is a session) for clause operations and the handler.
+When imported under bare names, if the writer named their own effect the same (`Transfer` of a transfer, `Put` of KV), the clause-head
+`isinstance` and annotation pointed at the expansion's name, and the effect silently slipped through to the outer handler. At module level the expansion's import overwrote the writer's
+`Transfer` with the VM's `Transfer`, and `(Transfer 5)` raised TypeError.
 
-- 書き手が 7 つの名のどれかを自分の effect にした module で、module の段・defk の本体・素の defn の本体・class の本体の
-  handle・defhandler の節が、その effect を受けて答える(節の操作 resume・transfer・reperform・:when の外れ・
-  session var の := を通す)。
-- module の段の handle・defhandler の後も、書き手の module の名は書き手の物のまま。書き手が書いていない名を、展開が
-  module の globals に置かない。
-- 展開(実行時と型検査のため)は、7 つの名(と型検査のための `typed_resume`・`typed_transfer`)を、素の名で読みも束ねもしない
-  — どの置き場でも。
+- In a module where the writer made any of the 7 names their own effect, the clauses of handle at module level, in a defk body, in a plain defn body, in a class body, and of
+  defhandler receive and answer that effect (passing clause operations resume, transfer, reperform, a `:when` that does not match, and
+  the := of a session var).
+- After handle / defhandler at module level, the module's names remain the writer's. The expansion does not put names the writer did not write
+  into the module globals.
+- The expansion (for runtime and for type checking) neither reads nor binds the 7 names (and `typed_resume` and `typed_transfer` for type checking) under bare names
+  -- in any location.
 """
 
 import ast
@@ -31,11 +31,11 @@ from doeff_hy._static_view import static_view
 
 from doeff import run
 
-# 展開が読む doeff の名(handle.hy・clause_ops.hy・binding_forms.py・macros.hy の `set!`)。書き手が自分の effect の名に
-# しうる名 — 振込の Transfer・KV の Put / Get・値の Some・再開の Resume・外へ渡す Pass・handler を被せる WithHandler。
+# The doeff names the expansion reads (handle.hy, clause_ops.hy, binding_forms.py, `set!` in macros.hy). Names the writer may use for their own effect
+# -- Transfer of a transfer, Put / Get of KV, Some of a value, Resume of resumption, Pass to forward outward, WithHandler to wrap a handler.
 _NAMES = ("Resume", "Transfer", "Pass", "WithHandler", "Get", "Put", "Some")
 
-# 型検査のための展開だけが読む名(typed_resume / typed_transfer — 節の resume / transfer の型付きの呼び)
+# Names read only by the expansion for type checking (typed_resume / typed_transfer -- typed calls of a clause's resume / transfer)
 _STATIC_ONLY_NAMES = ("typed_resume", "typed_transfer")
 
 _HEADER = """
@@ -47,12 +47,12 @@ _HEADER = """
 
 
 def _writer_effect(name: str) -> str:
-    """書き手が、展開と同じ名の effect を定義する source。"""
+    """A source in which the writer defines an effect with the same name as the expansion's."""
     return f"(defclass [(dataclass :frozen True)] {name} [EffectBase] #^ int n)\n"
 
 
 def _eval_module(*sources: str) -> types.ModuleType:
-    """Hy の source を順に新しい module に読み込む — 検ごとに module の globals を分けるため。"""
+    """Load Hy sources into fresh modules in order -- to keep module globals separate per test."""
     mod = types.ModuleType("handle_writer_names")
     sys.modules["handle_writer_names"] = mod
     for source in sources:
@@ -62,14 +62,14 @@ def _eval_module(*sources: str) -> types.ModuleType:
 
 
 def _run_with_state(program: object) -> object:
-    """session var の Get・Put を state の handler が受ける。"""
+    """The state handler receives Get and Put of the session var."""
     return run(scheduled(state(initial={})(program)))
 
 
-# 書き手の effect {N} を受ける式。どれも答えは 101。
-# - tail: 末尾の resume(Transfer になる)
-# - pass: 受けない effect(Other)は節の無い所で Pass、:when の外れた節も Pass、外の handler の try の中の resume は
-#   Resume のまま
+# Expressions that receive the writer's effect {N}. All of them answer 101.
+# - tail: a resume at the tail (becomes a Transfer)
+# - pass: an effect not received (Other) is Passed where there is no clause, a clause whose :when does not match is also Passed, and a resume inside the outer handler's try stays
+#   a Resume
 _EXPRESSIONS = {
     "tail": "(handle ({N} 1) ({N} [n] (resume (+ n 100))))",
     "pass": """
@@ -81,7 +81,7 @@ _EXPRESSIONS = {
         """,
 }
 
-# 書き手の effect {N} を受ける defhandler(session var の := は Get・Put・Some を通す)。答えは 101。
+# defhandler that receives the writer's effect {N} (the := of the session var passes Get, Put, and Some). Answers 101.
 _DEFHANDLER = """
 (defhandler h (session var calls 99)
   ({N} [n] (:= calls (+ calls 1)) (resume (+ n calls))))
@@ -92,14 +92,14 @@ _HOSTS = ("module", "defk", "defn", "class")
 
 
 class _HostedModule(NamedTuple):
-    """host に書いた Hy の source と、それを読み込んだ module から答えを出す Program を取る関数。"""
+    """The Hy source written to the host, and a function that obtains a Program producing the answer from the module that loaded it."""
 
     source: str
     program: Callable[[types.ModuleType], object]
 
 
 def _expression_module(host: str, expression: str) -> _HostedModule:
-    """handle の式 `expression` を host に書いた source と、答えを出す Program の取り方。"""
+    """The source with the handle expression `expression` written to the host, and how to obtain the Program that produces the answer."""
     match host:
         case "module":
             return _HostedModule(f"(setv program {expression})", lambda mod: mod.program)
@@ -117,7 +117,7 @@ def _expression_module(host: str, expression: str) -> _HostedModule:
 
 
 def _defhandler_module(host: str, name: str) -> _HostedModule:
-    """defhandler を host に書いた source と、答えを出す Program の取り方。"""
+    """The source with the defhandler written to the host, and how to obtain the Program that produces the answer."""
     definition = _DEFHANDLER.replace("{N}", name)
     program = _DEFHANDLER_PROGRAM.replace("{N}", name)
     match host:
@@ -137,7 +137,7 @@ def _defhandler_module(host: str, name: str) -> _HostedModule:
 
 
 def _scenarios() -> dict[str, tuple[str, str, Callable[[types.ModuleType], object]]]:
-    """名 × 置き場 × 書き方ごとの (書き手の effect の名, source, Program の取り方)。"""
+    """For each name x place x way of writing, (the writer's effect name, source, how to obtain the Program)."""
     found: dict[str, tuple[str, str, Callable[[types.ModuleType], object]]] = {}
     for name in _NAMES:
         for host in _HOSTS:
@@ -156,16 +156,16 @@ _SCENARIOS = _scenarios()
 def test_clause_answers_the_writers_effect_named_like_an_expansion_name(
     name: str, source: str, program: Callable[[types.ModuleType], object]
 ) -> None:
-    """書き手の module の効果 `{名}` を、handle・defhandler の節が受けて答える — 展開の `{名}` に隠されると節の頭の
-    isinstance が VM の node を指し、effect が節を素通りして UnhandledEffect になる(module の段では書き手の名が
-    上書きされて `({名} 1)` が TypeError)。"""
+    """The writer's module effect `{name}` is received and answered by the clauses of handle / defhandler -- if hidden by the expansion's `{name}`, the clause-head
+    isinstance points at the VM node and the effect passes straight through the clause to become UnhandledEffect (at module level the writer's name is
+    overwritten and `({name} 1)` raises TypeError)."""
     mod = _eval_module(_HEADER, _writer_effect(name), source)
     assert _run_with_state(program(mod)) == 101
 
 
 @pytest.mark.parametrize("name", _NAMES)
 def test_module_level_handle_and_defhandler_leave_the_writers_names_alone(name: str) -> None:
-    """module の段の handle・defhandler は、書き手の module の名(`Transfer`・`Pass`・`Put` など)を別の物に束ね直さない。"""
+    """handle / defhandler at module level do not rebind the writer's module names (such as `Transfer`, `Pass`, `Put`) to something else."""
     mod = _eval_module(_HEADER, _writer_effect(name))
     written = mod.__dict__[name]
     source, _ = _expression_module("module", _EXPRESSIONS["pass"].replace("{N}", name))
@@ -175,8 +175,8 @@ def test_module_level_handle_and_defhandler_leave_the_writers_names_alone(name: 
 
 
 def test_module_level_handle_and_defhandler_do_not_put_the_bare_names_in_the_globals() -> None:
-    """書き手が書いていない `Resume`・`Transfer`・`Pass`・`WithHandler`・`Get`・`Put`・`Some` を、展開が module の globals に
-    置かない(置くと書き手の名と 1 つの名を分け合う)。"""
+    """The expansion does not put `Resume`, `Transfer`, `Pass`, `WithHandler`, `Get`, `Put`, `Some`, which the writer did not write, into the module globals
+    (doing so would share one name with the writer's name)."""
     mod = _eval_module(
         _HEADER,
         _expression_module("module", _EXPRESSIONS["pass"].replace("{N}", "Other"))[0],
@@ -186,7 +186,7 @@ def test_module_level_handle_and_defhandler_do_not_put_the_bare_names_in_the_glo
 
 
 # ---------------------------------------------------------------------------
-# 展開の構造 — 実行時の展開と型検査のための展開が、素の名を読みも束ねもしない
+# Expansion structure -- the runtime expansion and the expansion for type checking neither read nor bind bare names
 # ---------------------------------------------------------------------------
 
 _EXPANSION_HEADER = _HEADER + "(defclass [(dataclass :frozen True)] Bump [EffectBase] #^ int n)\n"
@@ -211,7 +211,7 @@ _EXPANSION_SOURCES = {
 
 
 def _expand(source: str, *, static: bool) -> ast.Module:
-    """Hy の source を展開して Python の AST にする(評価しない)。static なら型検査のための展開。"""
+    """Expand the Hy source into a Python AST (without evaluating). For static, the expansion for type checking."""
     mod = types.ModuleType("handle_writer_names_expand")
     sys.modules["handle_writer_names_expand"] = mod
     with static_view() if static else contextlib.nullcontext():
@@ -223,8 +223,8 @@ def _expand(source: str, *, static: bool) -> ast.Module:
 @pytest.mark.parametrize("static", [False, True], ids=["runtime", "static"])
 @pytest.mark.parametrize("source", _EXPANSION_SOURCES.values(), ids=_EXPANSION_SOURCES.keys())
 def test_expansion_neither_reads_nor_binds_a_bare_expansion_name(source: str, static: bool) -> None:
-    """展開は、書き手の名前空間と分け合う素の名を読みも束ねもしない — 読むのは `_doeff_` の頭の別名だけ。書き手が書いた
-    source に 7 つの名は無いので、展開の木に素の名が在れば、それは展開の綴りが書き手の名と衝突する名。"""
+    """The expansion neither reads nor binds bare names shared with the writer's namespace -- it reads only aliases with the `_doeff_` prefix. The source the writer wrote
+    has none of the 7 names, so a bare name in the expansion tree is a name where the expansion's spelling collides with the writer's name."""
     tree = _expand(source, static=static)
     watched = {*_NAMES, *_STATIC_ONLY_NAMES}
     read = {
@@ -242,16 +242,16 @@ def test_expansion_neither_reads_nor_binds_a_bare_expansion_name(source: str, st
 
 
 # ---------------------------------------------------------------------------
-# 位置 — 型検査のための展開の import の行は、利用者の handler の行(1 行目へ引き寄せない)
+# Position -- the import lines of the expansion for type checking are on the user's handler line (not pulled to line 1)
 # ---------------------------------------------------------------------------
 
 _PADDING = "\n" * 24
 
 
 def test_static_expansion_imports_keep_the_handlers_line() -> None:
-    """型検査のための展開が handler ごとに出す `_doeff_` の別名の import は、利用者の handler の行に置かれる。reader が作る model を
-    import に混ぜると、位置を付ける macro が囲む式の範囲を 1 行目へ引き、診断(未使用の import・未定義の名)が 1:1 になる
-    (基準版 dc3385b9a は handler の行 — 設計検証の盲検 A の実測)。"""
+    """The import of the `_doeff_` aliases that the expansion for type checking emits per handler is placed on the user's handler line. If the model the reader builds is mixed into the
+    import, the macro that attaches positions stretches the enclosing expression's range to line 1, and diagnostics (unused import, undefined name) land at 1:1
+    (the baseline version dc3385b9a is the handler line -- measured in blind A of design verification)."""
     mod = types.ModuleType("handle_writer_names_position")
     sys.modules[mod.__name__] = mod
     source = _PADDING + _EXPANSION_HEADER + _EXPANSION_SOURCES["module-defhandler"]
@@ -265,29 +265,29 @@ def test_static_expansion_imports_keep_the_handlers_line() -> None:
         for alias in node.names
         if alias.asname is not None and alias.asname.startswith("_doeff_")
     }
-    assert aliased, "展開が別名の import を出していない"
+    assert aliased, "the expansion does not emit the alias import"
     assert {name: line for name, line in aliased.items() if line < first_user_line} == {}
 
 
 # ---------------------------------------------------------------------------
-# 展開の構造(一般の形)— 名の一覧に依らない。展開が読む・束ねる名は、書き手の物か展開の物(`_doeff_` の頭)のどちらか
+# Expansion structure (general form) -- independent of the name list. A name the expansion reads or binds is either the writer's or the expansion's (the `_doeff_` prefix)
 # ---------------------------------------------------------------------------
 
-# 展開が module に置く名のうち `_doeff` / `_hy` の頭でない物: Hy の compiler が module ごとに置く `hy` と、定義の宣言の記帳
-# (declarations.hy)が import する doeff_hy の module、defk の本体の展開が束ねる補助(macros.hy の `_helper-imports` —
-# handle・defhandler の物ではない)。書き手が同じ名を使う事は無いとして、名指しで許す(ここに無い素の名は赤)。
+# Names the expansion puts in the module that do not have the `_doeff` / `_hy` prefix: `hy` that the Hy compiler puts in every module, the doeff_hy modules imported by the declaration bookkeeping
+# (declarations.hy), and helpers bound by the expansion of a defk body (`_helper-imports` in macros.hy --
+# not those of handle / defhandler). Assuming the writer never uses the same names, they are allowed by name (a bare name not here is red).
 _EXPANSION_OWNED_PLAIN = frozenset(
     {"hy", "doeff_hy", "_install_guard_globals", "_guard_performed", "_guard_statement_value"}
 )
 
 
 def _expansion_owned(name: str) -> bool:
-    """展開が自分の物として置く名か(`_doeff` の頭・Hy の gensym の `_hy` の頭・dunder・許した 2 つ)。"""
+    """Whether it is a name the expansion places as its own (the `_doeff` prefix, the `_hy` prefix of Hy gensyms, dunders, the 2 allowed names)."""
     return name.startswith(("_doeff", "_hy", "__")) or name in _EXPANSION_OWNED_PLAIN
 
 
 def _bound_names(tree: ast.AST) -> frozenset[str]:
-    """木の中で束縛される名(代入・引数・def / class・import・except の as・global の宣言)。"""
+    """Names bound inside the tree (assignment, arguments, def / class, import, `as` of except, global declarations)."""
     bound: set[str] = set()
     for node in ast.walk(tree):
         match node:
@@ -311,7 +311,7 @@ def _bound_names(tree: ast.AST) -> frozenset[str]:
 
 
 def _import_bound_names(tree: ast.AST) -> frozenset[str]:
-    """木の中の import が束ねる名。"""
+    """Names bound by imports inside the tree."""
     return frozenset(
         alias.asname or alias.name.split(".")[0]
         for node in ast.walk(tree)
@@ -321,7 +321,7 @@ def _import_bound_names(tree: ast.AST) -> frozenset[str]:
 
 
 def _written_symbols(source: str) -> frozenset[str]:
-    """source に書き手が書いた Symbol(Python の綴り)。dotted な綴りは頭の名も入れる。"""
+    """Symbols (in Python spelling) the writer wrote in the source. For a dotted spelling, the head name is included too."""
     names: set[str] = set()
 
     def walk(form: object) -> None:
@@ -337,8 +337,8 @@ def _written_symbols(source: str) -> frozenset[str]:
 
 
 def _unowned_reads(tree: ast.Module, source: str) -> frozenset[str]:
-    """展開の木が読む名のうち、木の中で束縛されず・組み込みでなく・書き手が書いてもおらず・展開の物でもない名。書き手の名前空間と
-    1 つの名を分け合う綴り(素の名)はここに出る。"""
+    """Among names the expansion tree reads, those not bound in the tree, not builtins, not written by the writer, and not the expansion's own. A spelling that shares
+    one name with the writer's namespace (a bare name) shows up here."""
     reads = {
         node.id
         for node in ast.walk(tree)
@@ -352,7 +352,7 @@ def _unowned_reads(tree: ast.Module, source: str) -> frozenset[str]:
 
 
 def _unowned_imports(tree: ast.Module, header_tree: ast.Module) -> frozenset[str]:
-    """展開の木の import が束ねる名のうち、書き手の header の import でなく・展開の物でもない名。"""
+    """Among names bound by imports in the expansion tree, those that are neither imports of the writer's header nor the expansion's own."""
     return frozenset(
         name
         for name in _import_bound_names(tree) - _import_bound_names(header_tree)
@@ -365,9 +365,9 @@ def _unowned_imports(tree: ast.Module, header_tree: ast.Module) -> frozenset[str
 def test_expansion_reads_and_binds_only_written_or_expansion_owned_names(
     source: str, static: bool
 ) -> None:
-    """名の一覧に依らない形: 展開が読む名は書き手の物か展開の物(`_doeff_` の頭)、束ねる名は展開の物だけ。展開が新しい名(表の行が足す
-    node など)を素の綴りで読めば、監視する名の一覧に載っていなくても赤になる(設計検証の盲検 A・B が
-    指した、手で写した名の一覧の穴)。"""
+    """A form independent of the name list: names the expansion reads are the writer's or the expansion's (the `_doeff_` prefix), and names it binds are only the expansion's. If the expansion reads a new name (such as a node added by a table row)
+    under a bare spelling, it goes red even if the name is not in the watched list (the hole in the hand-copied name list that blinds A and B of design verification
+    pointed out)."""
     tree = _expand(source, static=static)
     header_tree = _expand("", static=static)
     assert _unowned_reads(tree, _EXPANSION_HEADER + source) == frozenset()
@@ -377,14 +377,14 @@ def test_expansion_reads_and_binds_only_written_or_expansion_owned_names(
 def test_general_check_catches_a_new_node_read_bare_where_the_name_list_does_not(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """表の行の書き換えが新しい node を素の Symbol で読む変異(`ResumeBare`)— 9 つの名の一覧は拾えず(一覧に無い名)、一般の形が拾う。"""
+    """A mutation where a table-row rewrite reads a new node under a bare Symbol (`ResumeBare`) -- the list of 9 names cannot catch it (a name not in the list), but the general form does."""
     from doeff_hy import _clause_ops as clause_ops
     from doeff_hy import _expansion_names as expansion_names
 
     def bare_rewrite(
         args: list[hy.models.Object], recur: Callable[[hy.models.Object], hy.models.Object]
     ) -> hy.models.Object:
-        # 続きは節の続き `_doeff_k`(素の `k` を読むと、この変異でない読みも拾われる)
+        # The continuation is the clause's continuation `_doeff_k` (reading a bare `k` would also catch reads other than this mutation)
         return hy.models.Expression(
             [
                 hy.models.Symbol("yield"),
@@ -401,7 +401,7 @@ def test_general_check_catches_a_new_node_read_bare_where_the_name_list_does_not
     resume = clause_ops.named_op("resume")
     assert resume is not None
     mutant = dataclasses.replace(resume, nodes=("ResumeBare",), rewrite=bare_rewrite)
-    # 展開の名の表は閉じている(表に無い名は home が断る) — 変異の node の置き場も表に足す
+    # The table of expansion names is closed (a name not in the table is rejected by home) -- add the mutated node's place to the table too
     monkeypatch.setitem(expansion_names._HOMES, "ResumeBare", "doeff")
     monkeypatch.setattr(
         clause_ops,
@@ -421,8 +421,8 @@ def test_general_check_catches_a_new_node_read_bare_where_the_name_list_does_not
 
 
 def test_names_the_module_level_expansion_adds_are_written_or_expansion_owned() -> None:
-    """module の段の handle・defhandler(session var を含む)が module の globals に足す名は、書き手が書いた名か展開の物だけ
-    (R2 の一般の形 — 素の 7 つの名だけを見る検の外の名も)。"""
+    """Names that handle / defhandler at module level (including session var) add to the module globals are only names the writer wrote or the expansion's own
+    (the general form of R2 -- including names outside the test that looks only at the bare 7 names)."""
     source = _expression_module("module", _EXPRESSIONS["pass"].replace("{N}", "Other"))[
         0
     ] + _DEFHANDLER.replace("{N}", "Other")

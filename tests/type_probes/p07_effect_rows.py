@@ -1,4 +1,4 @@
-# 宣言した effect の外を出すと誤りになる・呼んだ program の effect が呼び手の宣言に要る
+# Yielding an effect outside the declared ones is an error; the effects of a called program must be in the caller's declaration
 from collections.abc import Generator
 from dataclasses import dataclass
 from typing import Any, assert_type
@@ -24,13 +24,13 @@ def elapsed(since: int) -> Generator[ReadClock, Any, int]:
 
 @do
 def only_clock() -> Generator[ReadClock, Any, int]:
-    yield from Delete("row")  # expect-error (宣言に無い effect)
+    yield from Delete("row")  # expect-error (effect not in the declaration)
     return 0
 
 
 @do
 def caller_without_clock() -> Generator[Delete, Any, int]:
-    spent = yield from elapsed(1)  # expect-error (呼んだ program の effect が宣言に無い)
+    spent = yield from elapsed(1)  # expect-error (the called program's effect is not in the declaration)
     return spent
 
 
@@ -38,5 +38,5 @@ def caller_without_clock() -> Generator[Delete, Any, int]:
 def caller_ok() -> Generator[ReadClock | Delete, Any, int]:
     spent = yield from elapsed(1)
     assert_type(spent, int)
-    label: str = yield from elapsed(1)  # expect-error (結果の型違い)
+    label: str = yield from elapsed(1)  # expect-error (wrong result type)
     return spent

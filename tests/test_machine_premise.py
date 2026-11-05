@@ -404,7 +404,7 @@ def test_real_codex_worker_test_names_a_codex_that_does_not_start(
     assert said in reason or (reason.endswith("…") and "exits 127: " in reason), reason
 
 
-# --- A premise other than a tool: a git checkout holding a pinned commit (依頼書 K) ----------
+# --- A premise other than a tool: a git checkout holding a pinned commit (request K) ----------
 
 CHECKOUT_NODEID = "test_premise.py::test_reads_the_pinned_contract"
 

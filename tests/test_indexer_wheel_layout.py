@@ -1,19 +1,19 @@
-"""doeff-indexer の wheel が、入れた後に `doeff-indexer` の命令として動く形で組まれる事の検(取り組み doeff-publish で
-見つかった不具合)。
+"""Test that the doeff-indexer wheel is built so that after installation it works as the `doeff-indexer` command (a defect found in the doeff-publish effort).
 
-PyPI の 0.1.3 の Linux x86_64 の wheel は、命令の binary を `python/doeff_indexer/bin/doeff-indexer` に持ち、命令の入口
-(packages/doeff-indexer/python/doeff_indexer/_cli.py)が探す `doeff_indexer/bin/` には無かった。`pip install doeff-indexer` の
-後の `doeff-indexer --help` は "binary not found" で落ちた。訳は maturin の版: binary は .gitignore で python の source から外れ、
-pyproject.toml の `include` が wheel に足す。maturin 1.12 は足す file を project の根からの path のまま入れ、1.13 は
-python-source の下の path にする。0.1.3 は maturin-action が 1.12 を引いた日の CI で組まれた。
 
-守りは 2 つ(CI の側は tests/test_indexer_wheel_workflow.py):
+The PyPI 0.1.3 Linux x86_64 wheel holds the command binary at `python/doeff_indexer/bin/doeff-indexer`, not in `doeff_indexer/bin/` where the command entrypoint
+(packages/doeff-indexer/python/doeff_indexer/_cli.py) looks. After `pip install doeff-indexer`,
+`doeff-indexer --help` failed with "binary not found". The cause is the maturin version: the binary is excluded from the python source by .gitignore and
+pyproject.toml's `include` adds it to the wheel. maturin 1.12 puts the added file in at its path from the project root, while 1.13 puts it
+under python-source. 0.1.3 was built in the CI of the day maturin-action pulled 1.12.
 
-1. 道具 tools/verify_indexer_wheel.py の配置の検が、0.1.3 の配置・実行の印の無い binary・根の python/ を名指す。
-2. build の口(packages/doeff-indexer/pyproject.toml)の maturin の下限が 1.13。
+There are two defenses (the CI side is tests/test_indexer_wheel_workflow.py):
 
-本物の wheel を新しい venv に入れて命令を撃つ検(道具の `--smoke`)は、Rust を組むので pytest に入れない(冷たい build は
-1 本 120 秒の上限を越える) — 組んだ wheel に当てる手元の確かめと、CI の job が持つ。
+1. The layout check of the tool tools/verify_indexer_wheel.py names 0.1.3's layout, a binary without an executable mark, and python/ at the root.
+2. The maturin lower bound of the build entry (packages/doeff-indexer/pyproject.toml) is 1.13.
+
+The check that installs a real wheel into a fresh venv and fires the command (the tool's `--smoke`) builds Rust, so it is not in pytest (a cold build exceeds the
+120-second limit of one test) -- it is held by local checks against a built wheel and by the CI job.
 """
 
 from __future__ import annotations
@@ -30,10 +30,10 @@ import tomllib
 REPO = Path(__file__).resolve().parents[1]
 TOOL = REPO / "tools" / "verify_indexer_wheel.py"
 PACKAGE = REPO / "packages" / "doeff-indexer"
-# python-source の下に include の file を置くようになった maturin の版。
+# The maturin version that began placing include files under python-source.
 MATURIN_FLOOR = (1, 13, 0)
 
-# PyPI の 0.1.3 の Linux x86_64 の wheel の、bin の dir の物(maturin 1.12 の配置)。
+# The bin dir entries of the PyPI 0.1.3 Linux x86_64 wheel (the layout of maturin 1.12).
 PYPI_0_1_3 = (
     "doeff_indexer/bin/.gitignore",
     "doeff_indexer/bin/.gitkeep",
@@ -57,7 +57,7 @@ def _tool() -> ModuleType:
 
 
 def _wheel(tmp_path: Path, name: str, entries: dict[str, int]) -> Path:
-    """entries(wheel の中の path → 権限を ZipInfo の欄に置いた値)を持つ wheel を作る。"""
+    """Build a wheel with entries (path inside the wheel -> permissions placed in the ZipInfo field)."""
     wheel = tmp_path / name
     with zipfile.ZipFile(wheel, "w") as archive:
         for entry, attributes in entries.items():
@@ -68,7 +68,7 @@ def _wheel(tmp_path: Path, name: str, entries: dict[str, int]) -> Path:
 
 
 def _versions(requirement: str) -> tuple[int, ...]:
-    """`v1.15.0`・`maturin>=1.13` の数の並び(桁数を MATURIN_FLOOR に揃えて比べられるように 0 で埋める)。"""
+    """A number sequence of `v1.15.0` or `maturin>=1.13` (padded with 0 so the digit count matches MATURIN_FLOOR and they can be compared)."""
     numbers = tuple(int(part) for part in re.findall(r"\d+", requirement))
     return numbers + (0,) * (len(MATURIN_FLOOR) - len(numbers))
 
@@ -89,7 +89,7 @@ def test_a_wheel_with_the_binary_in_the_package_bin_dir_passes(tmp_path: Path) -
 def test_a_windows_wheel_needs_the_exe_and_no_executable_bit(tmp_path: Path) -> None:
     good = _wheel(tmp_path, WINDOWS_WHEEL, {"doeff_indexer/bin/doeff-indexer.exe": PLAIN})
     assert _tool().layout_problems(good) == []
-    # Windows の wheel に拡張子の無い binary が在っても、命令の入口は .exe を探す。
+    # Even if a Windows wheel has a binary without an extension, the command entrypoint looks for .exe.
     bare = tmp_path / "bare"
     bare.mkdir()
     wrong = _wheel(bare, WINDOWS_WHEEL, {"doeff_indexer/bin/doeff-indexer": PLAIN})
@@ -104,7 +104,7 @@ def test_the_pypi_0_1_3_layout_is_named_for_both_faults(tmp_path: Path) -> None:
 
 
 def test_a_stray_python_dir_is_named_even_when_the_binary_is_in_place(tmp_path: Path) -> None:
-    # .gitignore が効かない作業木(git の外)で maturin 1.12 が組むと、binary が両方の path に入る。
+    # When maturin 1.12 builds in a work tree where .gitignore has no effect (outside git), the binary goes into both paths.
     wheel = _wheel(
         tmp_path,
         LINUX_WHEEL,
@@ -139,7 +139,7 @@ def test_the_build_entry_asks_for_maturin_from_the_layout_fix() -> None:
     assert _versions(maturin.split(",")[0]) >= MATURIN_FLOOR, maturin
 
 
-# 公開する wheel の一覧: 3 つの種類 × 5 つの OS(PyPI の 0.1.3 は 15 個)。
+# The list of wheels to publish: 3 kinds x 5 OSes (PyPI 0.1.3 has 15).
 FULL_SET = [
     f"doeff_indexer-0.2.0-{python}-{abi}-{platform}.whl"
     for python, abi in (("cp310", "abi3"), ("cp313", "cp313t"), ("cp314", "cp314t"))
@@ -159,7 +159,7 @@ def test_the_full_set_of_fifteen_wheels_has_nothing_missing() -> None:
 
 
 def test_five_free_threaded_3_13_wheels_missing_are_each_named() -> None:
-    # 0.2.0 の最初の手動実行: free-threaded の 3.13 向けが 1 個も組まれず、10 個になった(それでも配置の検は通った)。
+    # The first manual run of 0.2.0: no wheel for free-threaded 3.13 was built at all, leaving 10 (the layout check still passed).
     ten = [name for name in FULL_SET if "cp313t" not in name]
     problems = _tool().missing_wheels([Path(name) for name in ten])
     assert len(problems) == 5
@@ -169,8 +169,8 @@ def test_five_free_threaded_3_13_wheels_missing_are_each_named() -> None:
 
 
 def test_a_wheel_built_twice_does_not_stand_for_another_kind() -> None:
-    # macOS と Windows の free-threaded の job が通常の job と同じ abi3 の wheel を組んだ時、名の同じ wheel が 2 個ではなく
-    # 種類の足りない状態として数えられる(一覧は種類 × OS で数え、file の数では数えない)。
+    # When the macOS and Windows free-threaded jobs build the same abi3 wheel as the normal jobs, wheels with the same name are counted not as 2 wheels but as
+    # a missing kind (the list is counted by kind x OS, not by the number of files).
     same_as_abi3 = [name for name in FULL_SET if "cp314t" not in name] + [
         name for name in FULL_SET if "abi3" in name and "macosx" in name
     ]
@@ -197,5 +197,5 @@ def test_main_with_expect_all_exits_nonzero_for_a_short_set(
     ]
     assert _tool().main(["--expect-all", *map(str, wheels)]) == 1
     assert capsys.readouterr().err.count("cp313-cp313t") == 5
-    # 一覧を見ない呼び(配置だけ)は、同じ wheel で通る。
+    # A call that does not look at the list (layout only) passes with the same wheel.
     assert _tool().main([*map(str, wheels)]) == 0

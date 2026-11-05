@@ -1,9 +1,9 @@
-"""doeff-vm-imported-only-by-doeff の検。
+"""Test of doeff-vm-imported-only-by-doeff.
 
-doeff だけが doeff_vm を import する。packages/ の subpackage・examples・
-docs/adr の Hy は VM の型を doeff の根から、VM の内側の物を doeff._vm から読む。検体
-(tests/semgrep/fixtures/python/packages/doeff-vm-boundary-sample/)で `fires` を付けた行だけが当たることを、規則の当たりの行で
-突き合わせる。
+Only doeff imports doeff_vm. Hy in subpackages of packages/, examples, and
+docs/adr read VM types from the doeff root and the VM's internals from doeff._vm. Check against the rule's hit lines that, in the sample
+(tests/semgrep/fixtures/python/packages/doeff-vm-boundary-sample/), only the lines marked `fires` are hit, by comparing against the rule's hit lines.
+
 """
 
 from __future__ import annotations
@@ -23,7 +23,7 @@ SAMPLE = Path("packages") / "doeff-vm-boundary-sample"
 
 
 def _marked_lines(path: Path) -> set[int]:
-    """検体で、当たるべき行(`fires` の印の在る行)の番号 — 規則が何を止めるかを検体の側に書いておくため。"""
+    """The numbers of lines in the sample that should be hit (lines with the `fires` mark) -- so that what the rule stops is written on the sample side."""
     return {
         number
         for number, line in enumerate(path.read_text(encoding="utf-8").splitlines(), start=1)
@@ -33,7 +33,7 @@ def _marked_lines(path: Path) -> set[int]:
 
 @pytest.mark.parametrize("name", ["vm_import_sample.py", "vm_import_sample.hy"])
 def test_only_the_marked_imports_fire(name: str) -> None:
-    """doeff_vm の import(素の import・下の module・Hy の import)だけが鳴り、doeff の根と doeff._vm の import は鳴らない。"""
+    """Only imports of doeff_vm (plain import, submodule, Hy import) fire; imports of the doeff root and doeff._vm do not."""
     target = SAMPLE / name
     results = _semgrep_results(CONFIG, str(target), cwd=FIXTURE_ROOT)
     expected = _marked_lines(FIXTURE_ROOT / target)

@@ -1,4 +1,4 @@
-# EffectGenerator[T](effect を書かない短い形)
+# EffectGenerator[T] (short form that does not write the effects)
 from typing import Any, assert_type
 
 from doeff import Ask, EffectGenerator, Expand, do
@@ -14,7 +14,7 @@ def name() -> EffectGenerator[str]:
 def caller() -> EffectGenerator[int]:
     n = yield from name()
     assert_type(n, str)
-    bad: int = yield from name()  # expect-error (str を int へ)
+    bad: int = yield from name()  # expect-error (str to int)
     return len(n)
 
 

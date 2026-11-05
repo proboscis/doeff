@@ -1,4 +1,4 @@
-"""handlerの公開型と、既存installerを再適用する契約を検証する。"""
+"""Verify the public type of handler and the contract for reapplying an existing installer."""
 
 from __future__ import annotations
 
@@ -29,7 +29,7 @@ def _forward(effect: EffectBase, k: K) -> Generator[Program, object, None]:
 def test_public_installers_accept_one_program_and_preserve_identity() -> None:
     install = handler(_forward)
     assert handler(install) is install
-    # 型の ProgramHandler は関数の名を宣言しないので、installer が関数である事を確かめてから名を読む
+    # The type ProgramHandler does not declare a function name, so confirm the installer is a function before reading the name
     assert isinstance(install, types.FunctionType)
     assert install.__name__ == _forward.__name__
     assert run(install(Pure(42))) == 42
@@ -46,7 +46,7 @@ class _ExistingInstaller:
     _doeff_is_handler_fn: Literal[True] = True
 
     def __call__(self, body: Program[_T]) -> Program[_T]:
-        # 合成済みhandlerはWithHandler以外のProgramも返せる。
+        # A composed handler can return a Program other than WithHandler.
         return _relay(body)
 
 
@@ -57,7 +57,7 @@ def test_existing_installer_can_return_a_different_program_node() -> None:
 
 
 def _pyright_errors(tmp_path: Path, source: str) -> list[dict[str, Any]]:
-    """source を repo の pyright の設定で型検査し、error の診断を返すため(型の契約の検)。"""
+    """Type-check source with the repo's pyright config and return error diagnostics (a test of the type contract)."""
     root = Path(__file__).resolve().parents[1]
     original = json.loads((root / "pyrightconfig.json").read_text())
     config = tmp_path / "pyrightconfig.json"
@@ -90,18 +90,18 @@ slog_discard_handler()  # missing body
 await_handler(Pure(42), Pure(0))  # extra argument
 handler(42)  # non-callable
 """)
-    # handler は installer と素の handler の 2 つの overload を持つので、どちらにも合わない 42 は
-    # 「合う overload が無い」と最後の overload の引数の誤りの 2 つで赤になる
+    # handler has two overloads, installer and plain handler, so 42, which fits neither, goes red
+    # on two counts: "no matching overload" and an argument error for the last overload
     assert [(item["range"]["start"]["line"], item["rule"]) for item in errors] == [
         (7, "reportCallIssue"), (8, "reportCallIssue"),
         (9, "reportCallIssue"), (9, "reportArgumentType"),
     ], errors
 
 
-# 失敗ケース(pyright 1.1.414・mypy 2.4.0 の実測・取り組み doeff-publish の調べの抜け 2):
-# ProgramHandler が Callable[[object], Program[Any]] だった時、`reader(env)(prog())`・`state()(p)`・`writer(p)`・
-# `handler(h)(p)`・`stacked_handlers(...)(p)` は全部 Program[Any, Any] で `run(...)` は Any — 結果の型の食い違いを
-# 黙って通した。`writer(prog)`(呼び忘れ)と `state()(42)` も通った(実行時は TypeError)。
+# Failure case (measured with pyright 1.1.414 and mypy 2.4.0; gap 2 found in the doeff-publish initiative's investigation):
+# When ProgramHandler was Callable[[object], Program[Any]], `reader(env)(prog())`, `state()(p)`, `writer(p)`,
+# `handler(h)(p)`, and `stacked_handlers(...)(p)` were all Program[Any, Any] and `run(...)` was Any -- a mismatch in the result type
+# passed silently. `writer(prog)` (forgetting to call) and `state()(42)` also passed (at run time, TypeError).
 _RESULT_TYPE_SAMPLE = """\
 from collections.abc import Callable, Generator
 from typing import Any, assert_type
@@ -128,7 +128,7 @@ assert_type(run(state()(writer(prog()))), int)
 assert_type(run(with_handlers([state(), writer], prog())), int)
 
 
-# defhandler の handler の型と、本文を object で受ける工場の綴り(doeff-records の Callable[[object], Program])も installer
+# The type of defhandler's handler and the spelling of the factory that takes the body as object (Callable[[object], Program] in doeff-records) are also installer
 def adopted(hy_handler: Handler, spelled: Callable[[object], Program]) -> list[ProgramHandler]:
     return [hy_handler, spelled]
 
@@ -167,10 +167,10 @@ _MYPY_ERROR = re.compile(r"^[^:]+:(?P<line>\d+): error: (?P<message>.*)  \[(?P<c
 
 
 def _mypy_errors(tmp_path: Path, source: str) -> list[dict[str, str]]:
-    """source を mypy の既定の設定で型検査し、error の所見(line・message・code)を返すため(型の契約の検)。"""
-    # mypy は dev の group の道具(make sync で入る — 日次と手元)。Python Compatibility の CI の venv は dev の group から
-    # maturin と pyright だけを入れるので、そこでは訳を出して飛ばす(2026-10-17 — 入れずに走らせて全部の版で failing になった)
-    pytest.importorskip("mypy", reason="mypy が無い venv(Python Compatibility の CI は dev の group の maturin と pyright だけを入れる)")
+    """Type-check source with mypy's default config and return error findings (line, message, code) (a test of the type contract)."""
+    # mypy is a tool of the dev group (installed by make sync -- daily and local). The CI venv for Python Compatibility installs only
+    # maturin and pyright from the dev group, so there we give a reason and skip (2026-10-17 -- it ran without installing and failed on every version)
+    pytest.importorskip("mypy", reason="venv without mypy (the Python Compatibility CI installs only maturin and pyright from the dev group)")
     sample = tmp_path / "installer_contract.py"
     sample.write_text(source)
     result = subprocess.run(
@@ -180,8 +180,8 @@ def _mypy_errors(tmp_path: Path, source: str) -> list[dict[str, str]]:
         cwd=tmp_path, capture_output=True, text=True, timeout=120, check=False,
     )
     errors = [found.groupdict() for found in map(_MYPY_ERROR.match, result.stdout.splitlines()) if found]
-    # mypy は所見を stdout に書く。起動できない時(venv に mypy が無い — 2026-10-17 の Python Compatibility の CI)も
-    # 終了コードは 1 なので、stderr が空である事で「mypy が走って赤を出した」と「走れなかった」を分ける
+    # mypy writes findings to stdout. When it cannot start (no mypy in the venv -- the Python Compatibility CI of 2026-10-17), the
+    # exit code is also 1, so an empty stderr distinguishes "mypy ran and reported red" from "could not run"
     assert result.stderr == "", result.stderr
     assert result.returncode == 1, result.stdout
     assert len(errors) == len(result.stdout.splitlines()), result.stdout
@@ -189,7 +189,7 @@ def _mypy_errors(tmp_path: Path, source: str) -> list[dict[str, str]]:
 
 
 def test_installers_keep_the_result_type_and_refuse_a_non_program_under_mypy(tmp_path: Path) -> None:
-    # 使う人は pyright でも mypy でも check する — 同じ見本が mypy の既定の設定でも同じ所だけ赤になる
+    # Users check with either pyright or mypy -- the same sample goes red at the same places under mypy's default config
     errors = _mypy_errors(tmp_path, _RESULT_TYPE_SAMPLE)
     flagged = [(_RESULT_TYPE_LINES[int(error["line"]) - 1], error["code"]) for error in errors]
     assert flagged == [
@@ -198,10 +198,10 @@ def test_installers_keep_the_result_type_and_refuse_a_non_program_under_mypy(tmp
     ], errors
 
 
-# 失敗ケース(pyright 1.1.414・mypy 2.4.0 の実測・取り組み doeff-publish の調べの抜け 7):
-# handler() の引数が Callable[..., object] だった時、effect の注記に effect が当たらない関数(`effect: str`)も、
-# (effect, k) を受けない関数も型の check を通った — 実行すると handler() の所で TypeError(check_handler_annotation)。
-# 受ける関数を「EffectBase の effect と K を受ける関数」に絞る。effect の注記の無い関数・Any・object は全部の effect を受ける。
+# Failure case (measured with pyright 1.1.414 and mypy 2.4.0; gap 7 found in the doeff-publish initiative's investigation):
+# When the argument of handler() was Callable[..., object], a function whose effect annotation is not matched by the effect (`effect: str`), and
+# a function that does not accept (effect, k), both passed the type check -- running it gives TypeError at handler() (check_handler_annotation).
+# Narrow the accepted functions to "functions that take an EffectBase effect and K". A function with no effect annotation, Any, or object accepts all effects.
 _RAW_HANDLER_SAMPLE = """\
 from collections.abc import Generator
 from dataclasses import dataclass

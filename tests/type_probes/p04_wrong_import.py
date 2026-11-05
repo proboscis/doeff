@@ -1,5 +1,5 @@
-# 実行すると ImportError になる取り方(handler は doeff に無い)— 型の check も import の行で誤りにする(抜け 3 — 直った)
+# A way of importing that raises ImportError at runtime (handlers are not in doeff) -- type checks also flag the import line as an error (gap 3 -- fixed)
 from doeff import state  # expect-error
 from doeff import no_such_name  # expect-error
 
-__all__ = ["no_such_name", "state"]  # noqa: DOEFF021 — 型の見本の file が __all__ の誤りを意図して持つ
+__all__ = ["no_such_name", "state"]  # noqa: DOEFF021 -- the type-sample file intentionally has a wrong __all__

@@ -63,7 +63,7 @@
   (setv client (FakeAsyncClient
                  [(make-response 200 {"X-Test" "yes"} b"ok" "ok"
                                  "https://example.test/final" 0.2)]))
-  ;; ADR-DOE-CORE-EFFECTS-001 R3: slog の収集は Listen(types=(SlogEffect,)) の値フロー。
+  ;; ADR-DOE-CORE-EFFECTS-001 R3: slog collection is the value flow of Listen(types=(SlogEffect,)).
   (<- pair
       (slog-handler
         (listen-handler
@@ -106,7 +106,7 @@
 
 
 (deftest test-http-production-handler-logs-no-line-per-request-by-default
-  ;; 要求ごとの slog は opt-in(log-each-request)— 毎分撃つ呼び手の log を要求ごとに増やさない。
+  ;; Per-request slog is opt-in (log-each-request) -- do not multiply the log of callers that fire every minute per request.
   (val client (FakeAsyncClient
                 [(make-response 200 {} b"ok" "ok" "https://example.test/start" 0.2)]))
   (<- pair

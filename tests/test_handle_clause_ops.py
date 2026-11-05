@@ -1,17 +1,17 @@
-"""handler の節の操作(resume・transfer・finish・reperform・pass・raise)の名と性質が、表 1 つ(doeff_hy/_clause_ops.hy の
-CLAUSE-OPS)だけに在る事の検(設計検証の盲検 A)。
+"""Test that the names and properties of handler clause operations (resume, transfer, finish, reperform, pass, raise) live in exactly one table (CLAUSE-OPS in doeff_hy/_clause_ops.hy)
+(blind A of the design review).
 
-前は名の一覧が handle.hy の `_terminates` と clause_endings.hy の `ENDING-OPS`・`RESUMING-OPS` に写しで在った。新しい操作
-(例 `(throw 例外)` → TransferThrow)を `_terminates` と書き換えにだけ足すと、`(Raise [reason] (throw …))` を展開・handle の
-評価・実行のどの検めも止めず、Raise の続きが走って答え 42 が返った。型検査のための展開でも TransferThrow は import されずに
-読まれた。
+Previously the list of names existed as copies in `_terminates` in handle.hy and `ENDING-OPS` / `RESUMING-OPS` in clause_endings.hy. Adding a new operation
+(e.g. `(throw exception)` -> TransferThrow) only to `_terminates` and the rewrite let `(Raise [reason] (throw ...))` pass every check -- expansion, handle
+evaluation, and execution -- so the Raise continuation ran and the answer 42 was returned. Even in the expansion for type checking, TransferThrow was read without being
+imported.
 
-- 表に行を足すと、節を終えるかの検め・書き換え・node の import(実行時と型検査のための展開)・Raise / Absent の節の再開の
-  検め(展開の時と handle の評価の時)が、どれも足した操作に追従する。resume と同じ扱いの操作(続きの後に節へ戻る・末尾では
-  別の操作に替える)も、表の行(returns・tail)だけで足せる。表から行を消すと、どの読み手からも操作でなくなる。
-- 表のどの行も、行の終わり方(Ending)どおりに Raise / Absent / 普通の effect の節で照らされる。
-- handle.hy と clause_endings.hy に書いた名のうち表に無い名は、どの読み手も節の操作として扱わない。doeff_hy のどの module も
-  表の外に操作の名を書かない — 表を介さずに読み手へ名を足すと赤(設計検証の盲検 A・B)。
+- Adding a row to the table makes the check for whether a clause terminates, the rewrite, the node import (in the expansion for runtime and for type checking), and the check for
+  resuming Raise / Absent clauses (at expansion time and at handle evaluation time) all follow the added operation. An operation treated like resume (returns to the clause after the
+  continuation; replaced by another operation in tail position) can also be added with just table rows (returns, tail). Removing a row stops every reader from treating it as an operation.
+- Every row of the table is checked in Raise / Absent / plain effect clauses according to how the row ends (Ending).
+- Of the names written in handle.hy and clause_endings.hy, those not in the table are not treated as clause operations by any reader. No module of doeff_hy
+  writes an operation name outside the table -- adding a name to a reader without going through the table is red (blind A and B of the design review).
 """
 
 import ast
@@ -22,7 +22,7 @@ import types
 from collections.abc import Callable
 from pathlib import Path
 
-import doeff_hy  # 拡張を登録する(_READERS は置き場の __file__ を読む)
+import doeff_hy  # registers the extension (_READERS reads the location's __file__)
 import hy
 import pytest
 from doeff_hy import _clause_endings as clause_endings
@@ -56,7 +56,7 @@ def _module(name: str) -> types.ModuleType:
 
 
 def _eval_module(code: str) -> types.ModuleType:
-    """Hy の source を新しい module に読み込む — 検ごとに module の globals を分けるため。"""
+    """Load Hy source into a new module -- to keep each test's module globals separate."""
     mod = _module("handle_clause_ops")
     for form in hy.read_many(_HEADER + code):
         hy.eval(form, mod.__dict__, module=mod)
@@ -64,7 +64,7 @@ def _eval_module(code: str) -> types.ModuleType:
 
 
 def _expand(code: str, *, static: bool = False) -> ast.Module:
-    """Hy の source を展開して Python の AST にする(評価しない)。static なら型検査のための展開。"""
+    """Expand Hy source into a Python AST (without evaluating). If static, the expansion for type checking."""
     mod = _module("handle_clause_ops_expand")
     view = static_view() if static else contextlib.nullcontext()
     with view:
@@ -72,7 +72,7 @@ def _expand(code: str, *, static: bool = False) -> ast.Module:
 
 
 def _expansion_refusal(code: str) -> str:
-    """展開した時の誤りの文(通れば空の文字列)。"""
+    """The error message from expansion (an empty string if it passes)."""
     try:
         _expand(code)
     except hy.errors.HyMacroExpansionError as error:
@@ -81,7 +81,7 @@ def _expansion_refusal(code: str) -> str:
 
 
 def _doeff_imports(tree: ast.Module) -> frozenset[str]:
-    """展開が doeff から import する名。"""
+    """The names the expansion imports from doeff."""
     return frozenset(
         alias.name
         for node in ast.walk(tree)
@@ -91,7 +91,7 @@ def _doeff_imports(tree: ast.Module) -> frozenset[str]:
 
 
 def _read_names(tree: ast.Module) -> frozenset[str]:
-    """展開が読む名。"""
+    """The names the expansion reads."""
     return frozenset(
         node.id
         for node in ast.walk(tree)
@@ -100,12 +100,12 @@ def _read_names(tree: ast.Module) -> frozenset[str]:
 
 
 # ---------------------------------------------------------------------------
-# 表に行を足すと、どの読み手も追従する
+# Adding a row to the table makes every reader follow
 # ---------------------------------------------------------------------------
 
 
 def _rewrite_throw(args: list[Object], recur: Callable[[Object], Object]) -> Object:
-    """(throw 例外) → 続きへ例外を投げて handler を外す(末尾)— 盲検 A が足した操作と同じ形。"""
+    """(throw exception) -> throw the exception into the continuation and detach the handler (tail position) -- the same shape as the operation blind A added."""
     return Expression(
         [
             Symbol("yield"),
@@ -128,15 +128,15 @@ _THROW = ClauseOp(
 
 @pytest.fixture
 def throw_op(monkeypatch: pytest.MonkeyPatch) -> ClauseOp:
-    """表に行 throw を足す(表の行だけを足し、読み手は直さない)。"""
+    """Add the row throw to the table (add only the table row; do not fix the readers)."""
     monkeypatch.setattr(clause_ops, "CLAUSE_OPS", (*clause_ops.CLAUSE_OPS, _THROW))
-    # 展開の名の表は閉じている(表に無い名は home が断る) — 足した行の node の置き場も表に足す
+    # The table of expansion names is closed (names not in the table are refused by home) -- also add the added row's node location to the table
     monkeypatch.setitem(expansion_names._HOMES, "TransferThrow", "doeff")
     return _THROW
 
 
 def test_added_operation_ends_a_clause_and_runs(throw_op: ClauseOp) -> None:
-    """節を終えるかの検め・書き換え・実行時の node の import が、表に足した操作に追従する(続きの try が例外を受ける)。"""
+    """The check for whether a clause terminates, the rewrite, and the runtime node import follow the operation added to the table (the try around the continuation receives the exception)."""
     mod = _eval_module(
         """
         (defk subject [] {:pre [] :post [(: % int)]}
@@ -150,7 +150,7 @@ def test_added_operation_ends_a_clause_and_runs(throw_op: ClauseOp) -> None:
 def test_added_resuming_operation_is_refused_in_a_raise_clause_at_expansion(
     throw_op: ClauseOp,
 ) -> None:
-    """盲検 A の形: Raise の節の throw は展開の時に断られる(前は検めが黙って抜け、Raise の続きが走って 42 が返った)。"""
+    """Shape of blind A: a throw in a Raise clause is refused at expansion time (previously the check was silently skipped, the Raise continuation ran, and 42 was returned)."""
     refusal = _expansion_refusal(
         """
         (defk subject [] {:pre [] :post [(: % int)]}
@@ -167,7 +167,7 @@ def test_added_resuming_operation_is_refused_in_a_raise_clause_at_expansion(
 def test_added_resuming_operation_is_refused_for_an_aliased_raise_when_handle_is_evaluated(
     throw_op: ClauseOp,
 ) -> None:
-    """名前では Raise と分からない別名の節の throw は、handle を評価した時に effect の型の宣言(NEVER)で断られる。"""
+    """A throw in a clause aliased so that it is not recognizable as Raise by name is refused by the effect type declaration (NEVER) when the handle is evaluated."""
     with pytest.raises(clause_endings.ClauseEndingError, match=r"Resumption\.NEVER.*throw"):
         _eval_module(
             """
@@ -178,8 +178,8 @@ def test_added_resuming_operation_is_refused_for_an_aliased_raise_when_handle_is
 
 
 def test_added_operation_node_is_imported_in_both_expansions(throw_op: ClauseOp) -> None:
-    """型検査のための展開も、表の static-nodes の node を import してから読む(前は TransferThrow を import せずに読んだ)。
-    読む名は `_doeff_` の別名で、書き手の同じ名を隠さない。"""
+    """The expansion for type checking also reads after importing the node from the table's static-nodes (previously it read TransferThrow without importing it).
+    The names it reads are `_doeff_` aliases and do not shadow the same names written by the author."""
     source = """
     (defk subject [] {:pre [] :post [(: % int)]}
       (<- r (handle (guarded 1) (Bump [n] (throw (ValueError "boom")))))
@@ -193,7 +193,7 @@ def test_added_operation_node_is_imported_in_both_expansions(throw_op: ClauseOp)
 
 
 def _rewrite_resume_throw(args: list[Object], recur: Callable[[Object], Object]) -> Object:
-    """(throw 例外) → 続きへ例外を投げ、続きが終わると節へ戻る(handler は残る)— resume と同じ扱い(盲検 A の要求)。"""
+    """(throw exception) -> throw the exception into the continuation and, when the continuation ends, return to the clause (the handler remains) -- treated like resume (requirement of blind A)."""
     return Expression(
         [
             Symbol("yield"),
@@ -202,7 +202,7 @@ def _rewrite_resume_throw(args: list[Object], recur: Callable[[Object], Object])
     )
 
 
-# resume と transfer の対と同じ形の対: 非末尾の throw は節へ戻り(returns)、末尾の throw は transfer-throw に替える(tail)
+# A pair shaped like the resume and transfer pair: a non-tail throw returns to the clause (returns), and a tail throw is replaced by transfer-throw (tail)
 _RESUME_THROW = ClauseOp(
     name="throw",
     ending=Ending.RESUMES,
@@ -227,18 +227,18 @@ _TRANSFER_THROW = ClauseOp(
 
 @pytest.fixture
 def resume_throw_ops(monkeypatch: pytest.MonkeyPatch) -> None:
-    """表に行 throw(節へ戻る・末尾では transfer-throw)と transfer-throw を足す(読み手は直さない)。"""
+    """Add the row throw (returns to the clause; in tail position replaced by transfer-throw) and transfer-throw to the table (do not fix the readers)."""
     monkeypatch.setattr(
         clause_ops, "CLAUSE_OPS", (*clause_ops.CLAUSE_OPS, _RESUME_THROW, _TRANSFER_THROW)
     )
-    # 展開の名の表は閉じている(表に無い名は home が断る) — 足した行の node の置き場も表に足す
+    # The table of expansion names is closed (names not in the table are refused by home) -- also add the added row's node location to the table
     monkeypatch.setitem(expansion_names._HOMES, "ResumeThrow", "doeff")
     monkeypatch.setitem(expansion_names._HOMES, "TransferThrow", "doeff")
 
 
 def test_added_returning_operation_marks_the_clause_resumed(resume_throw_ops: None) -> None:
-    """節へ戻る操作の後の「再開した」の印は、行の returns を読む handle.hy が立てる — 行の書き換えは印を知らなくてよい
-    (前は印を立てる約束が resume の書き換えの中に在り、それを写さない行は、続きを再開したのに実行の時に誤りで止まった)。"""
+    """The "resumed" mark after an operation that returns to the clause is set by handle.hy, which reads the row's returns -- a row's rewrite need not know about the mark
+    (previously the promise to set the mark lived inside resume's rewrite, and a row that did not copy it resumed the continuation but stopped with an error at run time)."""
     mod = _eval_module(
         """
         (defk subject [] {:pre [] :post [(: % int)]}
@@ -250,8 +250,8 @@ def test_added_returning_operation_marks_the_clause_resumed(resume_throw_ops: No
 
 
 def test_added_operation_with_a_tail_is_replaced_at_the_tail(resume_throw_ops: None) -> None:
-    """末尾の throw は行の tail(transfer-throw)に替わり handler の frame を残さず、非末尾の throw は ResumeThrow のまま
-    (前は末尾の替えが handle.hy に resume の名で直に在り、表に足した操作の末尾は替わらなかった)。"""
+    """A tail throw is replaced by the row's tail (transfer-throw) and leaves no handler frame, while a non-tail throw stays ResumeThrow
+    (previously the tail replacement lived directly in handle.hy under resume's name, so the tail of an operation added to the table was not replaced)."""
     tail = """
     (defk subject [] {:pre [] :post [(: % int)]}
       (<- r (handle (guarded 1) (Bump [n] (throw (ValueError "boom")))))
@@ -278,7 +278,7 @@ def test_added_operation_with_a_tail_is_replaced_at_the_tail(resume_throw_ops: N
 def test_a_removed_operation_is_no_longer_an_operation_anywhere(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """表から行を消すと(pass の退役)、節を終えるかの検め・節が使う操作の集まり・書き換えのどれもその名を操作と扱わない。"""
+    """Removing a row from the table (retiring pass) makes none of the clause-termination check, the set of operations the clause uses, or the rewrite treat that name as an operation."""
     monkeypatch.setattr(
         clause_ops, "CLAUSE_OPS", tuple(op for op in clause_ops.CLAUSE_OPS if op.name != "pass")
     )
@@ -290,12 +290,12 @@ def test_a_removed_operation_is_no_longer_an_operation_anywhere(
 
 
 # ---------------------------------------------------------------------------
-# 表のどの行も、行の終わり方どおりに照らされる
+# Every row of the table is checked according to how the row ends
 # ---------------------------------------------------------------------------
 
 
 def _written(op: ClauseOp) -> str:
-    """表の行の操作を節に書いた形(書き換えの無い raise は例外 1 つ)。"""
+    """The table row's operation written in a clause (a raise with no rewrite is a single exception)."""
     if op.arity is None:
         return f'({op.name} (ValueError "x"))'
     return "(" + " ".join([op.name, *["0"] * op.arity]) + ")"
@@ -330,7 +330,7 @@ def test_table_names_are_unique() -> None:
 
 @pytest.mark.parametrize("op", _OPS.values(), ids=_OPS.keys())
 def test_table_rows_are_consistent(op: ClauseOp) -> None:
-    """末尾で替える先は、同じ引数の数の、節へ戻らない行。書き換えの無い行は節へ戻らず、末尾でも替えない。"""
+    """The tail replacement target is a row with the same number of arguments that does not return to the clause. A row with no rewrite does not return to the clause and is not replaced in tail position either."""
     if op.tail is not None:
         target = clause_ops.named_op(op.tail)
         assert target is not None
@@ -342,7 +342,7 @@ def test_table_rows_are_consistent(op: ClauseOp) -> None:
 
 
 # ---------------------------------------------------------------------------
-# 読み手に書いた名のうち表に無い名は、節の操作として扱われない
+# Names written in readers that are not in the table are not treated as clause operations
 # ---------------------------------------------------------------------------
 
 _PACKAGE = Path(doeff_hy.__file__).parent
@@ -351,7 +351,7 @@ _NAME = re.compile(r"[a-z][a-z0-9_!?-]*")
 
 
 def _written_names(path: Path) -> frozenset[str]:
-    """source に文字列か quote した記号で書いた、頭の名になりうる綴り — 表を介さずに操作の名を持つ所の候補。"""
+    """Spellings that can be a head name, written in source as a string or quoted symbol -- candidates for places that hold an operation name without going through the table."""
     if path.suffix == ".py":
         return frozenset(
             node.value
@@ -381,14 +381,14 @@ def _written_names(path: Path) -> frozenset[str]:
 
 _CANDIDATES = sorted(frozenset().union(*(_written_names(path) for path in _READERS)))
 
-# 表の名と同じ綴りだが、節の操作と関係の無い所(module の名・綴り):
-# - macros.hy の "raise": Python の文の頭の一覧(式の位置に置けない形の見分け — handler の節と関係が無い)
+# Spellings the same as table names but unrelated to clause operations (module names, spellings):
+# - "raise" in macros.hy: a list of Python statement heads (distinguishing forms that cannot be placed in expression position -- unrelated to handler clauses)
 _UNRELATED_SPELLINGS = frozenset({("macros.hy", "raise")})
 
 
 def test_no_module_writes_an_operation_name_outside_the_table() -> None:
-    """doeff_hy のどの module も、表(clause_ops.hy)の外に操作の名を文字列か quote した記号で書かない。名の集まりを写した読み手
-    (盲検 B の「続きを 2 度使う」検め・盲検 A の末尾の替えを名で直に書く形)は、表への追加・退役に追従しないまま他の検を通った。"""
+    """No module of doeff_hy writes an operation name outside the table (clause_ops.hy) as a string or quoted symbol. Readers that copied the set of names
+    (the "use the continuation twice" check of blind B and the form of blind A that writes the tail replacement by name) passed other checks without following additions to or retirements from the table."""
     names = {op.name for op in clause_ops.CLAUSE_OPS}
     written = {
         (path.name, name)
@@ -397,13 +397,13 @@ def test_no_module_writes_an_operation_name_outside_the_table() -> None:
         for name in _written_names(path) & names
     }
     assert written - _UNRELATED_SPELLINGS == set()
-    assert written >= _UNRELATED_SPELLINGS, "理由つきで外した綴りが、もう書かれていない — 行を消す"
+    assert written >= _UNRELATED_SPELLINGS, "a spelling excluded with a reason is no longer written -- remove the row"
 
 
 def test_readers_name_operations_only_through_the_table() -> None:
-    """handle.hy と clause_endings.hy に書いた綴りのうち、表に無い名はどの読み手も節の操作として扱わず、表の名は表の行どおりに
-    扱う(盲検 A の差分のように `_terminates`・`_rewrite-ops` へ "throw" を直に書くと、ここで赤になる)。"""
-    assert {"if", "cond", "quote"} <= set(_CANDIDATES), "綴りの拾い方が読み手の綴りを拾っていない"
+    """Of the spellings written in handle.hy and clause_endings.hy, names not in the table are not treated as clause operations by any reader, and table names are
+    treated according to the table row (writing "throw" directly into `_terminates` / `_rewrite-ops` as in the blind A diff goes red here)."""
+    assert {"if", "cond", "quote"} <= set(_CANDIDATES), "the way spellings are picked up does not pick up the readers' spellings"
     for name in _CANDIDATES:
         op = clause_ops.named_op(name)
         for count in (0, 1, 2):

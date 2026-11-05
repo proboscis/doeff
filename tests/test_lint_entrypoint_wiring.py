@@ -1,4 +1,4 @@
-"""既存lint入口の欠測拒否と、Python/Hy差分のpre-commit選択を実行して検証する。"""
+"""Verify, by running them, that the existing lint entrypoint rejects missing measurements and that pre-commit selects the right hooks for Python/Hy diffs."""
 
 from __future__ import annotations
 
@@ -21,12 +21,12 @@ ROOT: Path = Path(__file__).resolve().parents[1]
 
 
 def _linter_locked() -> ModuleType:
-    """hook の doeff-linter の項が鍵を計算する module を読み、偽の crate の鍵を同じ計算で出すため。"""
+    """Load the module with which the hook's doeff-linter entry computes its key, so a fake crate's key is produced by the same computation."""
     spec = importlib.util.spec_from_file_location("doeff_linter_locked", ROOT / "scripts" / "doeff_linter_locked.py")
     assert spec is not None
     assert spec.loader is not None
     module: ModuleType = importlib.util.module_from_spec(spec)
-    sys.modules[spec.name] = module  # dataclass は module を sys.modules から引く
+    sys.modules[spec.name] = module  # dataclass looks the module up in sys.modules
     spec.loader.exec_module(module)
     return module
 
@@ -34,17 +34,17 @@ def _linter_locked() -> ModuleType:
 LINTER_LOCKED: ModuleType = _linter_locked()
 
 
-# hook の python の宣言(.pre-commit-config.yaml の `uv run --python` の版)。
+# The hook's Python declaration (the `uv run --python` version in .pre-commit-config.yaml).
 HOOK_PYTHON: str = "3.12"
 FAKE_VERSIONS: dict[str, str] = {"semgrep": "0.0.0-fake", "doeff-linter": "doeff-linter 0.0.0 (fake)"}
-# 偽の lock の行の source — 道具の版の読み手(scripts/semgrep_locked.py)は index から入れる版の行だけを読む。
+# Source of the fake lock line -- the tool-version reader (scripts/semgrep_locked.py) reads only lines for versions installed from an index.
 FAKE_SOURCE: str = 'source = { registry = "https://pypi.org/simple" }\n'
-# 基点と比べる道(scripts/hook_finding_baseline.py)が読む JSON の答え — 所見の無い報告。
+# The JSON answer read by the baseline-comparison path (scripts/hook_finding_baseline.py) -- a report with no findings.
 FAKE_REPORTS: dict[str, str] = {"semgrep": '{"results": [], "errors": []}', "doeff-linter": "[]"}
 
 
 def _tool(directory: Path, name: str, exit_code: int, *, report: str | None = None) -> None:
-    """呼ばれた引数を記録し、--version には偽の版を、JSON を求める呼びには偽の報告(report か所見の無い報告)を答える偽の道具。"""
+    """A fake tool that records its arguments, answers --version with a fake version, and answers calls asking for JSON with a fake report (a report, or a report with no findings)."""
     answer: str = report if report is not None else FAKE_REPORTS.get(name, "")
     path: Path = directory / name
     path.write_text(
@@ -63,9 +63,9 @@ def _tool(directory: Path, name: str, exit_code: int, *, report: str | None = No
     path.chmod(0o755)
 
 
-# hook の semgrep の 3 項は uv.lock の版を `uv tool run --python <版> --from semgrep==<版> semgrep` で呼ぶ(#2906)。偽の uv はその
-# 呼びを記録して同じ dir の偽の semgrep へ回し、ほかの呼び(`uv run --no-project --python … python …`)は本物の uv へ渡す。
-# 素の hook(scripts/git-hooks/pre-commit)は pre-commit も同じ形で呼ぶ — 偽の uv は記録して検の環境の pre-commit へ回す。
+# The hook's 3 semgrep entries call the uv.lock version via `uv tool run --python <version> --from semgrep==<version> semgrep` (#2906). The fake uv
+# records that call and routes it to the fake semgrep in the same dir; other calls (`uv run --no-project --python ... python ...`) are passed to the real uv.
+# The plain hook (scripts/git-hooks/pre-commit) calls pre-commit in the same form too -- the fake uv records it and routes it to the test environment's pre-commit.
 FAKE_UV: str = (
     "import json, os, sys\n"
     "args = sys.argv[1:]\n"
@@ -81,15 +81,15 @@ FAKE_UV: str = (
 
 
 def _uv_dir(uv: str, kind: str) -> str:
-    """本物の uv の置き場(`uv cache dir` / `uv python dir`)— HOME を替えた子にも同じ置き場を渡すため。"""
+    """Locations of the real uv (`uv cache dir` / `uv python dir`) -- so a child with a changed HOME gets the same locations."""
     return subprocess.run([uv, kind, "dir"], capture_output=True, text=True, check=True).stdout.strip()
 
 
 def _environment(directory: Path, path: str | None = None) -> tuple[EnvEntry, ...]:
-    """子の環境へ今の環境の上に重ねる分(path = 子の PATH・既定は偽の道具の dir と /usr/bin・/bin)。今の環境の受け継ぎと
-    外す名(SKIP など)は、子を起こす doeff の答え手が行う(_run_child)。"""
+    """The part layered over the current environment for the child (path = the child's PATH; default is the fake tools' dir plus /usr/bin and /bin). Inheriting the current environment and
+    dropping names (SKIP etc.) is done by the doeff handler that starts the child (_run_child)."""
     real_uv: str | None = shutil.which("uv")
-    assert real_uv is not None, "uv が要る(hook の script を走らせる)"
+    assert real_uv is not None, "uv is required (to run the hook script)"
     fake_uv: Path = directory / "uv"
     fake_uv.write_text(f"#!{sys.executable}\n{FAKE_UV}", encoding="utf-8")
     fake_uv.chmod(0o755)
@@ -99,9 +99,9 @@ def _environment(directory: Path, path: str | None = None) -> tuple[EnvEntry, ..
         EnvEntry(name="LINT_CALLS", value=str(directory / "calls.jsonl")),
         EnvEntry(name="PRE_COMMIT_HOME", value=str(directory / "pre-commit-cache")),
         EnvEntry(name="PRE_COMMIT_ALLOW_NO_CONFIG", value="0"),
-        # hook の doeff-linter の項は、基点の鍵の binary を HOME の下の land-arm の開発版 → 断面の置き場から探す(#2906)—
-        # HOME を一時の dir に向け(開発版は _repository が置く・断面の置き場は空 = 機体の物を読まない)、uv の cache と Python の
-        # 置き場は本物を指したままにする(HOME を替えても uv が取り直さない)。
+        # The hook's doeff-linter entry looks for the baseline key's binary in the land-arm dev build under HOME, then in the snapshot location (#2906) --
+        # point HOME at a temp dir (the dev build is placed by _repository; the snapshot location is empty = the machine's files are not read), and leave the uv cache and Python
+        # locations pointing at the real ones (so uv does not refetch even though HOME changed).
         EnvEntry(name="HOME", value=str(directory)),
         EnvEntry(name="UV_CACHE_DIR", value=_uv_dir(real_uv, "cache")),
         EnvEntry(name="UV_PYTHON_INSTALL_DIR", value=_uv_dir(real_uv, "python")),
@@ -111,8 +111,8 @@ def _environment(directory: Path, path: str | None = None) -> tuple[EnvEntry, ..
 def _run_child(
     argv: tuple[str, ...], cwd: Path, overlay: tuple[EnvEntry, ...], drop: tuple[str, ...] = ("SKIP",),
 ) -> ProcessOutcome:
-    """子を doeff の子 process の答え手(subprocess_handler)で起こすため — 子の環境は今の環境から drop の名を外し、overlay を
-    重ねた物(受け継ぎは答え手の中で行う)。"""
+    """Start the child via doeff's child-process handler (subprocess_handler) -- the child's environment is the current one minus the dropped names, with the overlay
+    layered on (inheritance is done inside the handler)."""
     return run(with_handlers(
         [subprocess_handler],
         RunProcess(argv=argv, cwd=str(cwd), env=overlay, env_mode=EnvMode.EXTEND, env_drop=drop),
@@ -125,12 +125,12 @@ def test_make_lint_doeff_propagates_missing_and_tool_failure(
 ) -> None:
     if tool_status is not None:
         _tool(tmp_path, "doeff-linter", tool_status)
-    # packages/doeff-cluster の段(#2031・#2683)は warning を基点と比べるので、偽の linter(何も報せない)に合わせて空の基点を
-    # 渡し、比べの script を走らせる uv を探し道に足す(本物の doeff-linter は探し道に入れない)。
+    # The packages/doeff-cluster stage (#2031, #2683) compares warnings with a baseline, so give it an empty baseline matching the fake linter (which reports nothing),
+    # and add to the search path the uv that runs the comparison script (the real doeff-linter is not put on the search path).
     baseline: Path = tmp_path / "empty-baseline.json"
     baseline.write_text("{}", encoding="utf-8")
     uv: str | None = shutil.which("uv")
-    assert uv is not None, "uv が要る(比べの script を走らせる)"
+    assert uv is not None, "uv is required (to run the comparison script)"
     environment: tuple[EnvEntry, ...] = (
         *_environment(tmp_path, f"{tmp_path}:{Path(uv).parent}:/usr/bin:/bin"),
         EnvEntry(name="DOEFF_CLUSTER_WARNING_BASELINE", value=str(baseline)),
@@ -145,14 +145,14 @@ def test_make_lint_doeff_propagates_missing_and_tool_failure(
     else:
         calls: list[list[str]] = [json.loads(line) for line in (tmp_path / "calls.jsonl").read_text().splitlines()]
         assert calls[0] == ["doeff-linter", "--no-log", "doeff/", "packages/"]
-        assert calls[1] == ["doeff-linter", "--no-log"]  # packages/doeff-cluster の dir で package を丸ごと
+        assert calls[1] == ["doeff-linter", "--no-log"]  # the whole package, in the packages/doeff-cluster dir
         if tool_status == 0:
-            assert calls[2] == ["doeff-linter", "--no-log", "--output-format", "json"]  # warning の基点との比べ
+            assert calls[2] == ["doeff-linter", "--no-log", "--output-format", "json"]  # comparison with the warning baseline
 
 
 def _commit_fake_crate(repository: Path, directory: Path) -> str:
-    """偽の linter の crate を commit し、HOME(= directory)の下の偽の land-arm の開発版をその commit から組んだ物として置き
-    (探し道に置いた偽の linter の写しと記録 installed.json)、組み立ての入力の鍵を返す。"""
+    """Commit a fake linter crate and, under HOME (= directory), place a fake land-arm dev build as if built from that commit
+    (a copy of the fake linter on the search path plus the installed.json record), and return the build-input key."""
     crate: Path = repository / "packages" / "doeff-linter"
     (crate / "src").mkdir(parents=True)
     (crate / "Cargo.toml").write_text('[package]\nname = "doeff-linter"\n', encoding="utf-8")
@@ -177,18 +177,18 @@ def _repository(directory: Path, changed: str, source: str) -> Path:
     repository.mkdir()
     subprocess.run(["/usr/bin/git", "init", "-q", str(repository)], check=True)
     shutil.copyfile(ROOT / ".pre-commit-config.yaml", repository / ".pre-commit-config.yaml")
-    # 木の python の宣言(3.14t)も写す — hook の python は設定の宣言で決まり、木の既定に依らない。
+    # Copy the tree's Python declaration (3.14t) too -- the hook's Python is decided by the config declaration, not the tree default.
     shutil.copyfile(ROOT / ".python-version", repository / ".python-version")
-    # Python の semgrep と doeff-linter の項は、基点と比べる script を通る(#2848)— script と、偽の道具の版に合わせた空の基点を置く。
+    # The Python semgrep and doeff-linter entries go through the baseline-comparison script (#2848) -- place the script and an empty baseline matching the fake tools' versions.
     (repository / "scripts" / "hook_finding_baseline").mkdir(parents=True)
-    # 持ち主の chat の言葉の引用の項(no-chat-quotes)は、どの text の file にも当たる — その script も置く。
+    # The entry that quotes the owner's chat words (no-chat-quotes) applies to any text file -- place that script too.
     for script in ("hook_finding_baseline.py", "semgrep_locked.py", "doeff_linter_locked.py", "check_no_operator_quotes.py"):
         shutil.copyfile(ROOT / "scripts" / script, repository / "scripts" / script)
-    # semgrep の版は uv.lock が決める(#2906)— 偽の道具の版に合わせる(行は index から入れる版 — 読み手は index の外の行で止まる)。
+    # The semgrep version is decided by uv.lock (#2906) -- match the fake tools' version (the line is a version installed from an index; the reader stops at lines outside an index).
     (repository / "uv.lock").write_text(
         f'version = 1\n\n[[package]]\nname = "semgrep"\nversion = "{FAKE_VERSIONS["semgrep"]}"\n{FAKE_SOURCE}', encoding="utf-8",
     )
-    # doeff-linter の版は組み立ての入力の鍵(#2906)— 偽の crate を commit し、その鍵を基点に書き、偽の開発版の記録をその commit に。
+    # The doeff-linter version is the build-input key (#2906) -- commit a fake crate, write its key into the baseline, and record the fake dev build at that commit.
     linter_key: str = _commit_fake_crate(repository, directory)
     for tool, version in (("semgrep", FAKE_VERSIONS["semgrep"]), ("doeff-linter", linter_key)):
         (repository / "scripts" / "hook_finding_baseline" / f"{tool}.json").write_text(
@@ -203,7 +203,7 @@ def _repository(directory: Path, changed: str, source: str) -> Path:
 
 @dataclass(frozen=True)
 class _HookRun:
-    """pre-commit を 1 回走らせた結果(result)と、偽の道具が受けた呼びの列(calls — 1 つの呼びは引数の列)。"""
+    """The result of one pre-commit run (result) and the sequence of calls the fake tools received (calls -- one call is a list of arguments)."""
 
     result: ProcessOutcome
     calls: list[list[str]]
@@ -212,15 +212,15 @@ class _HookRun:
 def _pre_commit(
     directory: Path, changed: str, *, semgrep_status: int | None = 0, linter_report: str | None = None,
 ) -> _HookRun:
-    """偽の道具を道の先頭に置いた検体の repo で、changed だけを pre-commit に渡して走らせるため。"""
+    """Run pre-commit with only the changed file in a sample repo with the fake tools at the head of the path."""
     _tool(directory, "doeff-linter", 0, report=linter_report)
     if semgrep_status is not None:
         _tool(directory, "semgrep", semgrep_status)
     repository: Path = _repository(directory, changed, "value = 1\n")
     uv: str | None = shutil.which("uv")
-    assert uv is not None, "uv が要る(基点と比べる script を走らせる)"
-    # 外側の `uv run pytest` の venv(VIRTUAL_ENV)を子へ継がせない — 継ぐと hook の `uv run` がその venv の bin を探し道の先頭に
-    # 置き、本物の semgrep が偽の道具を隠す。
+    assert uv is not None, "uv is required (to run the baseline-comparison script)"
+    # Do not let the child inherit the outer `uv run pytest` venv (VIRTUAL_ENV) -- if inherited, the hook's `uv run` puts that venv's bin at the head of the search path,
+    # and the real semgrep hides the fake tools.
     result: ProcessOutcome = _run_child(
         (sys.executable, "-m", "pre_commit", "run", "--files", changed),
         repository,
@@ -245,13 +245,13 @@ def test_pre_commit_runs_matching_linter_on_only_the_changed_file(
     assert hook.result.exit_code == 0, hook.result.stdout + hook.result.stderr
     semgrep_calls: list[list[str]] = [call for call in hook.calls if call[0] == "semgrep" and "--version" not in call]
     assert len(semgrep_calls) == 1, hook.result.stdout + hook.result.stderr
-    # どの項も uv.lock の版を uv の道具の置き場から、設定が宣言した python で呼ぶ(探し道の semgrep を直に呼ばない — 木の
-    # .python-version の 3.14t では ruamel-yaml-clib が組めない)。
+    # Every entry calls the uv.lock version from uv's tool location with the python the config declares (never calling the search-path semgrep directly --
+    # ruamel-yaml-clib cannot be built under the tree's .python-version 3.14t).
     assert [call for call in hook.calls if call[0] == "uv"] == [
         ["uv", "tool", "run", "--python", HOOK_PYTHON, "--from", "semgrep==0.0.0-fake", "semgrep"],
     ]
     assert semgrep_calls[0][-1] == changed
-    # Python は基点と比べる script が JSON で数える(#2848)・Hy は semgrep が所見 1 つで止める(--error)。
+    # Python is counted as JSON by the baseline-comparison script (#2848); Hy stops at one semgrep finding (--error).
     assert ("--json" if changed.endswith(".py") else "--error") in semgrep_calls[0]
     assert "doeff/" not in semgrep_calls[0]
     assert "packages/" not in semgrep_calls[0]
@@ -260,7 +260,7 @@ def test_pre_commit_runs_matching_linter_on_only_the_changed_file(
 
 
 def test_python_change_with_a_linter_error_not_in_the_baseline_is_stopped(tmp_path: Path) -> None:
-    # 基点(空)に無い error が変えた file に 1 つ在る → 止まる(#2848 の失敗ケース — 前からの所見だけなら通る、は script の検)。
+    # One error absent from the (empty) baseline is in the changed file -> stops (the failure case of #2848 -- passing when there are only pre-existing findings is checked in the script's test).
     report: str = json.dumps([{"rule": "DOEFF016", "severity": "error", "violations": [{"file": "doeff/example.py"}]}])
     result = _pre_commit(tmp_path, "doeff/example.py", linter_report=report).result
     assert result.exit_code != 0, result.stdout + result.stderr
@@ -287,7 +287,7 @@ def test_hy_only_hook_runs_real_semgrep_handler_boundary_rule(
     tmp_path: Path, nested: bool,
 ) -> None:
     executable: str | None = shutil.which("semgrep")
-    assert executable is not None, "実検体の検査には dev 依存の semgrep が必要です"
+    assert executable is not None, "the real-sample check needs the dev-dependency semgrep"
     (tmp_path / "semgrep").symlink_to(executable)
     changed: str = "packages/example/src/handlers/example.hy"
     source: str = (
@@ -309,24 +309,24 @@ def test_hy_only_hook_runs_real_semgrep_handler_boundary_rule(
         assert rule_id in result.stdout + result.stderr
 
 
-# 素の commit の hook(scripts/git-hooks/pre-commit)— make hooks-install と agora の担当の Pod の準備(agora の
-# deploy/agent-worker/worker-prepare.sh)が入れる物。pre-commit の枠組みを据え付けない機体でも、commit は semgrep の規則を通る
-# (10-11 の日次の 5 回の赤は、Pod の commit が枠組みの semgrep の項を通らずに入れた業務の語)。
+# The plain commit hook (scripts/git-hooks/pre-commit) -- installed by make hooks-install and the agora worker Pod's preparation (agora's
+# deploy/agent-worker/worker-prepare.sh). Even on a machine without the pre-commit framework installed, a commit passes through the semgrep rules
+# (the 5 red daily runs of 10-11 were application vocabulary that a Pod's commit introduced without passing the framework's semgrep entry).
 PLAIN_HOOK: Path = ROOT / "scripts" / "git-hooks" / "pre-commit"
-# 素の hook が撃つ pre-commit の項の別名 — .pre-commit-config.yaml の semgrep の項はどれもこの別名を持つ。
+# Alias of the pre-commit entries the plain hook fires -- every semgrep entry in .pre-commit-config.yaml carries this alias.
 PLAIN_HOOK_ALIAS: str = "semgrep-rules"
 VOCABULARY_RULE: str = "doeff-packages-have-no-application-vocabulary"
-# 素の hook の検の repo の uv.lock — 道具の版は木の uv.lock が決める(#2906)。偽の uv は版を見ずに回す。
+# uv.lock of the plain hook's sample repo -- tool versions are decided by the tree's uv.lock (#2906). The fake uv routes without looking at versions.
 FAKE_LOCKED: dict[str, str] = {"semgrep": FAKE_VERSIONS["semgrep"], "pre-commit": "0.0.0-fake"}
 
 
 def _plain_hook_repository(
     directory: Path, changed: str, source: str, rule_packages: tuple[str, ...] = (), *, fake_linter: bool = False,
 ) -> Path:
-    """素の hook が読む物(scripts/ の追跡している file・hook の設定・木の python の宣言)と、業務の語の規則だけの .semgrep.yaml を
-    写して commit した repo に、changed だけを stage するため(台帳の突合は docs/adr と .semgrep.yaml に触れた commit だけが撃つ)。
-    rule_packages = 検の repo の規則の paths.include にだけ足す package(項は写したまま — 規則に package を足す便の形)。
-    fake_linter = 偽の linter の crate を commit し、その鍵を基点(空)に書く(_tool で置いた偽の linter が開発版として見つかる)。"""
+    """Copy what the plain hook reads (tracked files under scripts/, the hook config, the tree's Python declaration) and a .semgrep.yaml with only the application-vocabulary rule
+    into a committed repo, and stage only `changed` (the ledger cross-check fires only for commits touching docs/adr and .semgrep.yaml).
+    rule_packages = packages added only to the sample repo rule's paths.include (entries stay as copied -- the shape of a change that adds a package to the rule).
+    fake_linter = commit a fake linter crate and write its key into the (empty) baseline (the fake linter placed by _tool is found as the dev build)."""
     repository: Path = directory / "repository"
     repository.mkdir()
     subprocess.run(["/usr/bin/git", "init", "-q", str(repository)], check=True)
@@ -347,7 +347,7 @@ def _plain_hook_repository(
         ),
         encoding="utf-8",
     )
-    # Python の semgrep の項は基点と比べる(#2848)— 偽の版の空の基点にする(本線の基点の所見を検に持ち込まない)。
+    # The Python semgrep entry compares with a baseline (#2848) -- use an empty baseline for the fake version (do not carry mainline baseline findings into the sample).
     (repository / "scripts" / "hook_finding_baseline" / "semgrep.json").write_text(
         json.dumps({"version": FAKE_VERSIONS["semgrep"], "counts": {}}), encoding="utf-8",
     )
@@ -366,15 +366,15 @@ def _plain_hook_repository(
 
 
 def _plain_hook_with_a_linter(directory: Path, changed: str, report: str) -> _HookRun:
-    """素の hook を、偽の doeff-linter(report を答える)と、その鍵を名乗る空の基点のある検の repo で走らせ、偽の道具が受けた
-    呼びの列も返すため(linter の所見が基点を越えるかを、素の hook が commit の時に比べるかを見る)。"""
+    """Run the plain hook in a sample repo with a fake doeff-linter (answering a report) and an empty baseline naming its key, and also return the calls the fake tools received
+    (checks whether the plain hook compares linter findings against the baseline at commit time)."""
     _tool(directory, "doeff-linter", 0, report=report)
     executable: str | None = shutil.which("semgrep")
-    assert executable is not None, "実検体の検査には dev 依存の semgrep が必要です"
+    assert executable is not None, "the real-sample check needs the dev-dependency semgrep"
     (directory / "semgrep").symlink_to(executable)
     repository: Path = _plain_hook_repository(directory, changed, "value = 1\n", fake_linter=True)
     uv: str | None = shutil.which("uv")
-    assert uv is not None, "uv が要る(hook の script を走らせる)"
+    assert uv is not None, "uv is required (to run the hook script)"
     result: ProcessOutcome = _run_child(
         ("/bin/sh", str(PLAIN_HOOK)), repository,
         _environment(directory, f"{directory}:{Path(uv).parent}:/usr/bin:/bin"), ("SKIP", "VIRTUAL_ENV"),
@@ -387,50 +387,50 @@ def _plain_hook_with_a_linter(directory: Path, changed: str, report: str) -> _Ho
 
 
 def _plain_hook(directory: Path, changed: str, source: str, rule_packages: tuple[str, ...] = ()) -> ProcessOutcome:
-    """本物の semgrep を偽の uv の隣に置いた検の repo で、素の hook を git が撃つのと同じく repo の根で走らせるため。"""
+    """Run the plain hook at the repo root, as git fires it, in a sample repo with the real semgrep placed next to the fake uv."""
     executable: str | None = shutil.which("semgrep")
-    assert executable is not None, "実検体の検査には dev 依存の semgrep が必要です"
+    assert executable is not None, "the real-sample check needs the dev-dependency semgrep"
     (directory / "semgrep").symlink_to(executable)
     repository: Path = _plain_hook_repository(directory, changed, source, rule_packages)
     uv: str | None = shutil.which("uv")
-    assert uv is not None, "uv が要る(hook の script を走らせる)"
+    assert uv is not None, "uv is required (to run the hook script)"
     return _run_child(
         ("/bin/sh", str(PLAIN_HOOK)), repository,
         _environment(directory, f"{directory}:{Path(uv).parent}:/usr/bin:/bin"), ("SKIP", "VIRTUAL_ENV"),
     )
 
 
-# 10-11 の日次の赤の形 — 汎用の package の Hy の註(5431b983e・f3f569e9d・7438f793f)・Python の docstring(abae18074・
-# 0e39b2cbd)と、枠組みが Python と Hy の外から渡す文書の 3 つ。名が ASCII の外の文書も同じく止める(git は既定でその名を
-# 引用符つきで出す — stage の名を自分で読んで選ぶ hook は、そこで黙って通す)。
+# The shape of the 10-11 daily red -- a generic package's Hy comment (5431b983e, f3f569e9d, 7438f793f), a Python docstring (abae18074,
+# 0e39b2cbd), and a document the framework passes from outside Python and Hy -- 3 cases. A document whose name is outside ASCII is stopped too (git by default prints such a name
+# quoted -- a hook that reads and selects staged names itself would silently pass it there).
 @pytest.mark.parametrize(("changed", "source"), [
     pytest.param("packages/doeff-cluster/src/doeff_cluster/example.hy",
-                 ";; 起き直しの lease(agora-controllers の card ki-0)\n(setv value 1)\n", id="hy-comment"),
+                 ";; restart lease (card ki-0 of agora-controllers)\n(setv value 1)\n", id="hy-comment"),
     pytest.param("packages/doeff-codex/tests/test_example.py",
-                 '"""使い手の repo(agora-controllers)の日次の赤。"""\n\nvalue = 1\n', id="python-docstring"),
-    pytest.param("packages/doeff-records/README.md", "宣言の欄(agora の kanban の行)\n", id="document"),
-    pytest.param("packages/doeff-records/説明.md", "宣言の欄(agora の kanban の行)\n", id="document-non-ascii-name"),
+                 '"""Daily red of the consumer repo (agora-controllers)."""\n\nvalue = 1\n', id="python-docstring"),
+    pytest.param("packages/doeff-records/README.md", "declaration field (kanban row of agora)\n", id="document"),
+    pytest.param("packages/doeff-records/résumé.md", "declaration field (kanban row of agora)\n", id="document-non-ascii-name"),
 ])
 def test_plain_hook_stops_staged_application_vocabulary(tmp_path: Path, changed: str, source: str) -> None:
     result: ProcessOutcome = _plain_hook(tmp_path, changed, source)
     output: str = result.stdout + result.stderr
-    assert result.exit_code != 0, f"素の hook が業務の語を足した stage を通した:\n{output}"
+    assert result.exit_code != 0, f"the plain hook let through a stage that adds application vocabulary:\n{output}"
     assert VOCABULARY_RULE in output, output
 
 
 @pytest.mark.parametrize(("changed", "source"), [
     pytest.param("packages/doeff-cluster/src/doeff_cluster/example.hy",
-                 ";; 起き直しの lease(card ki-0)\n(setv value 1)\n", id="hy-comment"),
-    pytest.param("packages/doeff-records/README.md", "宣言の欄(#2830)\n", id="document"),
+                 ";; restart lease (card ki-0)\n(setv value 1)\n", id="hy-comment"),
+    pytest.param("packages/doeff-records/README.md", "declaration field (#2830)\n", id="document"),
 ])
 def test_plain_hook_passes_staged_file_without_findings(tmp_path: Path, changed: str, source: str) -> None:
     result: ProcessOutcome = _plain_hook(tmp_path, changed, source)
     assert result.exit_code == 0, result.stdout + result.stderr
 
 
-# どの package に業務の語の規則を当てるかは、規則の paths.include の 1 か所が決める — 項は package の名を持たない。持っていた
-# 時は、規則に package を足した便(10-10 の doeff-codex は規則と項を別の commit で足した)が項を直し忘れると、素の hook がその
-# package の文書を黙って通した(設計検証の盲検 A)。
+# Which packages the application-vocabulary rule applies to is decided in one place, the rule's paths.include -- the entry holds no package names. When it did,
+# a change that added a package to the rule (10-10's doeff-codex added the rule and the entry in separate commits) and forgot to fix the entry made the plain hook
+# silently pass that package's documents (blind A of the design review).
 PACKAGE_ADDED_TO_THE_RULE: str = "doeff-example-generic"
 
 
@@ -442,7 +442,7 @@ def test_plain_hook_follows_the_rule_paths_for_documents(
     tmp_path: Path, rule_packages: tuple[str, ...], stops: bool,
 ) -> None:
     result: ProcessOutcome = _plain_hook(
-        tmp_path, f"packages/{PACKAGE_ADDED_TO_THE_RULE}/README.md", "宣言の欄(agora の kanban の行)\n", rule_packages,
+        tmp_path, f"packages/{PACKAGE_ADDED_TO_THE_RULE}/README.md", "declaration field (kanban row of agora)\n", rule_packages,
     )
     output: str = result.stdout + result.stderr
     assert (result.exit_code != 0) == stops, output
@@ -450,12 +450,12 @@ def test_plain_hook_follows_the_rule_paths_for_documents(
 
 
 def test_plain_hook_leaves_file_selection_to_the_config(tmp_path: Path) -> None:
-    # 素の hook は stage した file を自分で選ばず、どの項にも当たらない stage でも pre-commit を起こす — file を選ぶのは項の
-    # files / types の 1 か所(設計検証の盲検 B: 「当たる file が無ければ起こさない」近道を hook に
-    # 足すと、名が ASCII の外の文書や、項に足した file 種を黙って通した)。
+    # The plain hook does not choose staged files itself and starts pre-commit even for a stage that matches no entry -- file selection is in one place, the entry's
+    # files / types (blind B of the design review: adding a "do not start when no file matches" shortcut to the hook
+    # silently passed documents with non-ASCII names and file kinds added to an entry).
     hooks = yaml.safe_load((ROOT / ".pre-commit-config.yaml").read_text())["repos"][0]["hooks"]
     names: list[str] = [hook["name"] for hook in hooks if hook.get("alias") == PLAIN_HOOK_ALIAS]
-    result: ProcessOutcome = _plain_hook(tmp_path, "notes/plain.txt", "宣言の欄\n")
+    result: ProcessOutcome = _plain_hook(tmp_path, "notes/plain.txt", "declaration field\n")
     output: str = result.stdout + result.stderr
     assert names
     assert result.exit_code == 0, output
@@ -463,8 +463,8 @@ def test_plain_hook_leaves_file_selection_to_the_config(tmp_path: Path) -> None:
 
 
 def test_plain_hook_runs_every_semgrep_hook_of_the_config() -> None:
-    # 素の hook は semgrep の項を名で並べず別名で撃つ — semgrep の項を足した便が別名を書き忘れると、素の hook だけの機体
-    # (agora の担当の Pod)でその項が黙って抜ける。
+    # The plain hook fires semgrep entries by alias, not by listing names -- if a change that adds a semgrep entry forgets the alias, that entry is silently dropped
+    # on machines with only the plain hook (agora worker Pods).
     hooks = yaml.safe_load((ROOT / ".pre-commit-config.yaml").read_text())["repos"][0]["hooks"]
     semgrep_hooks: list[str] = sorted(hook["id"] for hook in hooks if "semgrep" in hook["entry"])
     aliased: list[str] = sorted(hook["id"] for hook in hooks if hook.get("alias") == PLAIN_HOOK_ALIAS)
@@ -473,15 +473,15 @@ def test_plain_hook_runs_every_semgrep_hook_of_the_config() -> None:
     assert f"run {PLAIN_HOOK_ALIAS}" in PLAIN_HOOK.read_text(encoding="utf-8")
 
 
-# 素の hook は doeff-linter の基点の比べの項も撃つ— 10-18 の 3 commit は Pod(素の hook だけ)から入り、
-# 検の file 2 つに DOEFF004 の所見を 9 件足したのに、素の hook が linter の項を撃たず、日次(10-19 04:05 JST)で初めて見つかった。
-# 着地の門は衝突の印だけを見る(決まり land-gate-runs-no-tests)ので、基点を越える所見を止められる最初の点は commit の時。
+# The plain hook also fires the doeff-linter baseline-comparison entry -- the 3 commits of 10-18 came in from a Pod (plain hook only) and
+# added 9 DOEFF004 findings to 2 sample files, but the plain hook did not fire the linter entry, and it was first found in the daily run (10-19 04:05 JST).
+# The landing gate sees only conflict markers (law land-gate-runs-no-tests), so the first point that can stop findings above the baseline is commit time.
 PLAIN_HOOK_LINTER_ID: str = "doeff-linter"
 
 
 def test_plain_hook_runs_the_doeff_linter_baseline_hook_of_the_config() -> None:
-    # 基点の比べ(hook_finding_baseline.py check doeff-linter)を持つ項は 1 つで、素の hook はその項を id で撃つ。項の id を
-    # 替えた便が素の hook の呼びを直し忘れると、素の hook だけの機体(agora の担当の Pod)で linter の項が黙って抜ける。
+    # Exactly one entry has the baseline comparison (hook_finding_baseline.py check doeff-linter), and the plain hook fires it by id. If a change that renames the entry's id
+    # forgets to fix the plain hook's call, the linter entry is silently dropped on machines with only the plain hook (agora worker Pods).
     hooks = yaml.safe_load((ROOT / ".pre-commit-config.yaml").read_text())["repos"][0]["hooks"]
     linter_hooks: list[str] = [hook["id"] for hook in hooks if "hook_finding_baseline.py check doeff-linter" in hook["entry"]]
     assert linter_hooks == [PLAIN_HOOK_LINTER_ID]
@@ -489,11 +489,11 @@ def test_plain_hook_runs_the_doeff_linter_baseline_hook_of_the_config() -> None:
 
 
 def test_plain_hook_stops_a_staged_python_file_with_a_linter_finding_not_in_the_baseline(tmp_path: Path) -> None:
-    # 基点(空)に無い error が stage した file に 1 つ在る → 素の hook が止める(失敗ケース — 素の hook が linter の項を撃たない時は通る)。
+    # One error absent from the (empty) baseline is in the staged file -> the plain hook stops (failure case -- it passes if the plain hook does not fire the linter entry).
     report: str = json.dumps([{"rule": "DOEFF016", "severity": "error", "violations": [{"file": "doeff/example.py"}]}])
     result: ProcessOutcome = _plain_hook_with_a_linter(tmp_path, "doeff/example.py", report).result
     output: str = result.stdout + result.stderr
-    assert result.exit_code != 0, f"素の hook が基点を越える linter の所見を通した:\n{output}"
+    assert result.exit_code != 0, f"the plain hook let through linter findings above the baseline:\n{output}"
     assert "DOEFF016 doeff/example.py: 基点 0 → 今 1" in output, output
 
 
@@ -507,8 +507,8 @@ def test_plain_hook_runs_the_linter_once_on_only_the_staged_python_file(tmp_path
 
 
 def test_every_uv_hook_declares_the_hook_python() -> None:
-    # uv で走る項は、どれも hook の python を宣言する — 宣言が無いと uv は木の .python-version(3.14t)を選び、semgrep の依存の
-    # ruamel-yaml-clib が組めずに落ちる(Pod 2026-10-10)。
+    # Every entry that runs through uv declares the hook's python -- without the declaration uv picks the tree's .python-version (3.14t) and semgrep's dependency
+    # ruamel-yaml-clib cannot be built and it fails (Pod 2026-10-10).
     hooks = yaml.safe_load((ROOT / ".pre-commit-config.yaml").read_text())["repos"][0]["hooks"]
     uv_entries: list[str] = [hook["entry"] for hook in hooks if hook["entry"].startswith("uv ")]
     assert uv_entries

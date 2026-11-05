@@ -18,7 +18,7 @@
 
 (defk herdr-external-agent-pane-id-io [socket-path name]
   (try
-    ;; registry-existence-probe: 外部命名席の実在確認だけに許す(同一性・帰属・kill は label)
+    ;; registry-existence-probe: allowed only for confirming the existence of externally named seats (identity, attribution, and kill go by label)
     (setv result (herdr-call socket-path "agent.get" {"target" name}))
     (except [e HerdrApiError]
       (when (= e.code "agent_not_found")
@@ -34,8 +34,8 @@
   (setv result (herdr-call socket-path "agent.get" {"target" session-name}))
   (herdr-call socket-path "pane.close" {"pane_id" (get (get result "agent") "pane_id")}))
 ;;;
-;;; ⚠ 語彙（deff / defk）はこの検体の争点ではない — rule の pattern は agent.get
-;;; の regex で、定義の綴りには依存しない。実 code には deff のまま残る関数も在るが、
-;;; この検体は ADR-DOE-HY-004 の台帳（コメント・文字列の中の字面も数える）に載るので
-;;; defk で書く。行番号は test_vm_failfast_semgrep_rules.py が pin しているので、
-;;; 註は必ず file の末尾に置く（deff と defk は同じ 4 文字なので行はずれない）。
+;;; Warning: the vocabulary (deff / defk) is not the point of this fixture -- the rule's pattern is the agent.get
+;;; regex and does not depend on the spelling of the definition. Real code still has functions left as deff, but
+;;; this fixture is listed in the ledger of ADR-DOE-HY-004 (which also counts the literal text inside comments and strings), so
+;;; it is written with defk. Line numbers are pinned by test_vm_failfast_semgrep_rules.py, so
+;;; the note must always be placed at the end of the file (deff and defk are the same 4 characters, so lines do not shift).

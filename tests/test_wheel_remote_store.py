@@ -1,9 +1,9 @@
-"""build の口(tools/doeff_cargo_backend.py の stored_wheel)が、手元の保存先に無い wheel を機体の外の置き場から取る失敗ケース
-(ADR-DOE-BUILD-001 R5 の追補・設計 docs/design/rust-wheel-distribution)。
+"""Failing cases for the build entry point (stored_wheel in tools/doeff_cargo_backend.py) fetching a wheel absent from the local store from a remote store off the machine
+(addendum to ADR-DOE-BUILD-001 R5; design docs/design/rust-wheel-distribution).
 
-置き場は doeff の GitHub の release `rust-wheels` の asset `<package>-<鍵>.whl`。口は手元の保存先 → 置き場 → 組む、の順に引く。ここでは
-置き場を手元の HTTP の口(127.0.0.1)に向け、網の外へ出ない。空の機体の検は本物の maturin の
-組み方を通し、PATH の先頭に置いた偽の cargo・rustc が呼ばれた数を数える。
+The remote store is the asset `<package>-<key>.whl` of doeff's GitHub release `rust-wheels`. The entry point looks in this order: local store -> remote store -> build. Here
+the remote store is pointed at a local HTTP endpoint (127.0.0.1) so nothing goes out to the network. The empty-machine tests go through the real maturin
+build path and count how many times the fake cargo / rustc placed first on PATH were called.
 """
 
 from __future__ import annotations
@@ -37,11 +37,11 @@ WHEEL_NAME = "probe-0.1.0-cp314-cp314-linux_x86_64.whl"
 
 
 def _backend() -> ModuleType:
-    """build の口を module として読む(tools は package でないので path から)。"""
+    """Load the build entry point as a module (tools is not a package, so load it from the path)."""
     spec = importlib.util.spec_from_file_location("doeff_cargo_backend_remote_under_test", BACKEND)
     assert spec is not None and spec.loader is not None
     module = importlib.util.module_from_spec(spec)
-    # dataclass は定義の module を sys.modules から引く(口の StoredWheel・WheelEntry)ので、読む前に名で登録する。
+    # The dataclass looks up its defining module in sys.modules (the entry point's StoredWheel / WheelEntry), so register it by name before loading.
     sys.modules[spec.name] = module
     spec.loader.exec_module(module)
     return module
@@ -52,7 +52,7 @@ def _digest(data: bytes) -> str:
 
 
 def _wheel_bytes(native: bytes, broken: bool = False) -> bytes:
-    """probe の wheel 1 つの中身(RECORD つき)。broken = native の hash を RECORD と違えた物。"""
+    """Contents of one probe wheel (with RECORD). broken = one whose native hash differs from RECORD."""
     files = (
         ("probe/__init__.py", b"from probe._native import *\n"),
         (NATIVE, native),
@@ -73,13 +73,13 @@ def _wheel_bytes(native: bytes, broken: bool = False) -> bytes:
 
 
 def _lines(log: Path) -> list[str]:
-    """呼ばれた記録の file(1 回 1 行)の行(無ければ空)。"""
+    """Lines of the call-record file (one line per call) (empty if absent)."""
     return log.read_text(encoding="utf-8").splitlines() if log.exists() else []
 
 
 @dataclass(frozen=True)
 class FakeCompile:
-    """偽の組み方: 呼ばれるたびに log へ 1 行書き(度数 = 行の数)、手元で組んだ印の中身の wheel を出す。"""
+    """Fake build: each time it is called, write one line to the log (count = number of lines) and emit a wheel whose contents carry the locally-built marker."""
 
     log: Path
 
@@ -96,7 +96,7 @@ class FakeCompile:
 
 @dataclass(frozen=True)
 class RemoteStore:
-    """手元の HTTP の口の置き場: url = 頭・root = 配る dir・log = 来た path を 1 行ずつ書く file。"""
+    """Remote store as a local HTTP endpoint: url = head, root = dir to serve, log = file that gets one line per path requested."""
 
     url: str
     root: Path
@@ -112,7 +112,7 @@ class RemoteStore:
 
 @pytest.fixture
 def remote(tmp_path: Path) -> Iterator[RemoteStore]:
-    """127.0.0.1 の空いた port で dir を配る HTTP の口(来た path を数える)。"""
+    """HTTP endpoint serving a dir on a free port of 127.0.0.1 (counts the paths requested)."""
     root = tmp_path / "remote"
     root.mkdir()
     log = tmp_path / "remote-requests.log"
@@ -138,7 +138,7 @@ def remote(tmp_path: Path) -> Iterator[RemoteStore]:
 
 @pytest.fixture
 def backend(monkeypatch: pytest.MonkeyPatch, tmp_path: Path, remote: RemoteStore) -> ModuleType:
-    """道具の版を固定し、保存先を空の tmp・置き場を手元の HTTP の口に向けた口(空の機体)。"""
+    """Entry point with the tool version pinned, the store pointed at an empty tmp, and the remote store pointed at the local HTTP endpoint (an empty machine)."""
     module = _backend()
     monkeypatch.setattr(module, "_tool_versions", lambda: "maturin=fixed")
     monkeypatch.setenv("DOEFF_WHEEL_CACHE", str(tmp_path / "store"))
@@ -150,7 +150,7 @@ def backend(monkeypatch: pytest.MonkeyPatch, tmp_path: Path, remote: RemoteStore
 
 
 def _checkout(root: Path) -> Path:
-    """python-source を持つ(maturin の混ぜた並びの)package の作業木 1 つ。"""
+    """One working tree of a package with python-source (maturin's mixed layout)."""
     (root / "src").mkdir(parents=True)
     (root / "python" / "probe").mkdir(parents=True)
     (root / "pyproject.toml").write_text(
@@ -164,7 +164,7 @@ def _checkout(root: Path) -> Path:
 
 
 def _fake_rust_tools(bin_dir: Path, log: Path) -> None:
-    """呼ばれたら名と引数を log に 1 行足して落ちる cargo・rustc を bin_dir に置く。"""
+    """Place in bin_dir a cargo / rustc that, when called, append the name and args to the log and fail."""
     bin_dir.mkdir()
     for name in ("cargo", "rustc"):
         tool = bin_dir / name
@@ -175,9 +175,9 @@ def _fake_rust_tools(bin_dir: Path, log: Path) -> None:
 def test_an_empty_machine_takes_the_wheel_from_the_remote_store_without_calling_cargo(
     backend: ModuleType, remote: RemoteStore, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    # 失敗ケース: 手元の保存先が空の機体で、置き場に同じ鍵の wheel が在れば、
-    # 口は本物の組み方(maturin)を通しても cargo を 1 度も呼ばずに置き場の wheel を使う。直す前は置き場を引かずに maturin が cargo を
-    # 撃った(空の機体の同期で doeff-linter を一から組んで +435 秒 — agora 3466059e5)。
+    # Failing case: on a machine whose local store is empty, if the remote store has a wheel with the same key,
+    # the entry point uses the remote store's wheel without calling cargo even once, even through the real build path (maturin). Before the fix, maturin fired cargo
+    # without consulting the remote store (an empty-machine sync built doeff-linter from scratch, +435 seconds -- agora 3466059e5).
     log = tmp_path / "rust-tools.log"
     _fake_rust_tools(tmp_path / "fake-bin", log)
     monkeypatch.setenv("PATH", str(tmp_path / "fake-bin"), prepend=os.pathsep)
@@ -186,10 +186,10 @@ def test_an_empty_machine_takes_the_wheel_from_the_remote_store_without_calling_
     package = _checkout(tmp_path / "wt")
     slot = backend._wheel_slot(package, None)
     remote.put(slot, _wheel_bytes(b"from the remote store\n"))
-    # maturin は cwd の package を組む(build の hook は package の dir で呼ばれる)。
+    # maturin builds the package in the cwd (the build hook is called in the package dir).
     monkeypatch.chdir(package)
     stored = backend.stored_wheel(package, None, backend._maturin_wheel)
-    assert _lines(log) == [], f"偽の cargo・rustc が呼ばれた: {_lines(log)}"
+    assert _lines(log) == [], f"the fake cargo / rustc was called: {_lines(log)}"
     assert (stored.source, stored.path.name, stored.path.parent) == ("remote", WHEEL_NAME, slot), stored
     assert backend._wheel_problem(stored.path) is None
     with zipfile.ZipFile(stored.path) as archive:
@@ -197,7 +197,7 @@ def test_an_empty_machine_takes_the_wheel_from_the_remote_store_without_calling_
 
 
 def test_a_local_hit_does_not_ask_the_remote(backend: ModuleType, remote: RemoteStore, tmp_path: Path) -> None:
-    # 手元の保存先に在る鍵は、置き場を引かない(網を使うのは手元に無い時だけ)。
+    # A key present in the local store does not consult the remote store (the network is used only when it is not local).
     package = _checkout(tmp_path / "wt")
     first = backend.stored_wheel(package, None, FakeCompile(tmp_path / "compile.log"))
     asked = list(remote.requests)
@@ -209,7 +209,7 @@ def test_a_local_hit_does_not_ask_the_remote(backend: ModuleType, remote: Remote
 def test_a_missing_remote_wheel_is_named_and_built(
     backend: ModuleType, remote: RemoteStore, tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    # 置き場に無い鍵(404 — main に入る前の作業木・CI が上げる前の数分)は、名指しの 1 行を出して今どおり組む。
+    # A key absent from the remote store (404 -- a working tree before it lands on main, the few minutes before CI uploads) prints one named line and builds as before.
     package = _checkout(tmp_path / "wt")
     compile_wheel = FakeCompile(tmp_path / "compile.log")
     stored = backend.stored_wheel(package, None, compile_wheel)
@@ -223,7 +223,7 @@ def test_a_missing_remote_wheel_is_named_and_built(
 def test_a_remote_wheel_that_fails_its_record_is_named_and_not_stored(
     backend: ModuleType, remote: RemoteStore, tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    # 置き場の wheel の RECORD の hash が中身と合わない時は、名指しの 1 行を出して使わず(手元の保存先にも置かず)組む。
+    # If the remote wheel's RECORD hash does not match its contents, print one named line and build without using it (and without placing it in the local store).
     package = _checkout(tmp_path / "wt")
     slot = backend._wheel_slot(package, None)
     remote.put(slot, _wheel_bytes(b"tampered\n", broken=True))
@@ -240,7 +240,7 @@ def test_a_remote_wheel_that_fails_its_record_is_named_and_not_stored(
 def test_an_unreachable_remote_is_named_and_built(
     backend: ModuleType, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    # 置き場に繋がらない(網が無い・口が居ない)時も、名指しの 1 行を出して組む — 準備を止めない。
+    # When the remote store is unreachable (no network, no endpoint), also print one named line and build -- do not block preparation.
     with socket.socket() as probe:
         probe.bind(("127.0.0.1", 0))
         closed = probe.getsockname()[1]
@@ -256,7 +256,7 @@ def test_an_unreachable_remote_is_named_and_built(
 def test_an_empty_remote_setting_does_not_ask_the_network(
     backend: ModuleType, remote: RemoteStore, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    # env DOEFF_WHEEL_REMOTE を空にすると置き場を引かない(置き場へ上げる CI の手前の組み・網の無い場所)。
+    # Setting env DOEFF_WHEEL_REMOTE to empty skips the remote store (builds before the CI that uploads to the remote store, places without network).
     monkeypatch.setenv("DOEFF_WHEEL_REMOTE", "")
     package = _checkout(tmp_path / "wt")
     remote.put(backend._wheel_slot(package, None), _wheel_bytes(b"from the remote store\n"))
@@ -268,8 +268,8 @@ def test_an_empty_remote_setting_does_not_ask_the_network(
 def test_the_default_remote_is_the_doeff_release(
     backend: ModuleType, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    # env が無ければ置き場は doeff の公開の release rust-wheels(鍵なしの download の URL — API の 1 時間 60 回の上限に掛からない)。
-    # 網へは出ない: urlopen を、渡された URL を 404 の訳に書いて断る物に替え、名指しの 1 行に出た URL を読む。
+    # Without the env, the remote store is doeff's public release rust-wheels (a keyless download URL -- not subject to the API's 60-per-hour limit).
+    # Does not go out to the network: replace urlopen with one that refuses by writing the given URL as the reason of a 404, and read the URL that appears in the named line.
     monkeypatch.delenv("DOEFF_WHEEL_REMOTE")
 
     def not_found(request: urllib.request.Request | str, timeout: float | None = None) -> object:
@@ -286,7 +286,7 @@ def test_the_default_remote_is_the_doeff_release(
 def test_the_report_names_where_the_wheel_came_from(
     backend: ModuleType, remote: RemoteStore, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    # 報告の 1 行は wheel の出どころ(remote・local・built)を書く。built の欄は読み手(doeff-cluster の native_wheel.reported_built)のために残す。
+    # The report line states where the wheel came from (remote / local / built). The built field is kept for the reader (doeff-cluster's native_wheel.reported_built).
     report = tmp_path / "report.jsonl"
     monkeypatch.setenv("DOEFF_WHEEL_REPORT", str(report))
     package = _checkout(tmp_path / "wt")

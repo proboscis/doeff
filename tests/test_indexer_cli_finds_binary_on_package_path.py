@@ -1,7 +1,7 @@
-"""doeff-indexer の CLI の入口(packages/doeff-indexer/python/doeff_indexer/_cli.py)が、同梱の binary を package の探し先の順に
-探す事の検。build の口の editable の入れは、組み立ての成果物(この binary)を venv の
-`__editable__.doeff_indexer.native/` に入れ、package の探し先を 成果物の dir → 作業木の dir にする。前は `Path(__file__).parent` だけを見た
-ので、editable の入れでは作業木の dir しか見ず、binary を見つけられない。
+"""Test that the entry of the doeff-indexer CLI (packages/doeff-indexer/python/doeff_indexer/_cli.py) searches for the bundled binary in the order of the package search path.
+The editable install of the build entry puts the build artifact (this binary) in the venv's
+`__editable__.doeff_indexer.native/` and makes the package search path artifact dir -> working tree dir. Before, it looked only at `Path(__file__).parent`,
+so with an editable install it saw only the working tree dir and could not find the binary.
 """
 
 from __future__ import annotations
@@ -17,7 +17,7 @@ CLI = Path(__file__).resolve().parents[1] / "packages" / "doeff-indexer" / "pyth
 
 
 def _cli(monkeypatch: pytest.MonkeyPatch, places: list[Path]) -> types.ModuleType:
-    """探し先が places の package doeff_indexer の下の _cli を読む。"""
+    """Load _cli under a package doeff_indexer whose search path is places."""
     package = types.ModuleType("doeff_indexer")
     package.__path__ = [str(place) for place in places]
     monkeypatch.setitem(sys.modules, "doeff_indexer", package)
