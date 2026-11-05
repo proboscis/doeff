@@ -58,6 +58,7 @@ if TYPE_CHECKING:
     from doeff_cluster._sim.local import KeepHandle as KeepHandle
     from doeff_cluster._sim.local import KubeCalls as KubeCalls
     from doeff_cluster._sim.local import KubeReads as KubeReads
+    from doeff_cluster._sim.local import LoseWorker as LoseWorker
     from doeff_cluster._sim.local import NextPid as NextPid
     from doeff_cluster._sim.local import NextWorldDue as NextWorldDue
     from doeff_cluster._sim.local import NodeReads as NodeReads
@@ -881,6 +882,7 @@ _LAZY_EXPORTS: dict[str, str] = {
     "KillWorker": "doeff_cluster._shared.intent.cluster_control",
     "KubeCalls": "doeff_cluster._sim.local",
     "KubeReads": "doeff_cluster._sim.local",
+    "LoseWorker": "doeff_cluster._sim.local",
     "LeaseOp": "doeff_cluster._shared.intent.semaphore_model",
     "LocalMachine": "doeff_cluster._sim.machine",
     "MachineCannotAnswer": "doeff_cluster._sim.machine",

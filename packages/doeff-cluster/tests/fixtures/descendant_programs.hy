@@ -86,3 +86,16 @@
 (defsystem descendant-hosts-off [#^ Callable foundation]
   "descendant-hosts の取り下げ(:replicas 0 — worker が job を止める)"
   (parent (parent-program foundation) :replicas 0 :peak-mib 200 :settle-mib 100 :needs #{"cluster-net"} :environ {"STEP" "1"}))
+
+
+;; worker の消失(LoseWorker)の後に、退きの寿命を宣言した handoff の service を入れ物が待つ秒(子 spawner の仕事より長く、孫の眠りより短い —
+;; descendant-hosts-outliving の keeper の :readiness の retiredSeconds と同じ値。宣言は数の literal しか書けない)。
+(val OUTLIVE-SECONDS 60)
+
+
+(defsystem descendant-hosts-outliving [#^ Callable foundation]
+  "見本の系: 退きの寿命を宣言した handoff の service keeper(worker の消失の後も寿命の上限まで回る — outlives-worker)と、宣言しない service
+   parent(消失ですぐ止まる)。どちらも parent-body(子 spawner と別の session の孫を起こし、止めの合図を待つ)"
+  (keeper (parent-program foundation) :replicas 1 :peak-mib 200 :settle-mib 100 :needs #{"cluster-net"} :update "handoff"
+          :readiness {"windowSeconds" 30 "retiredSeconds" 60} :environ {"STEP" "1"})
+  (parent (parent-program foundation) :replicas 1 :peak-mib 200 :settle-mib 100 :needs #{"cluster-net"} :environ {"STEP" "1"}))

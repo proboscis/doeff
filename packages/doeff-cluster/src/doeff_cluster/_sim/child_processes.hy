@@ -14,6 +14,9 @@
 ;;;                             どれも同じ)。引き取りを外した変種(SimChildren の adoption 偽 — tests/fixtures/shim_without_adoption の
 ;;;                             代役)は、job の process group の中の子孫だけを終わらせ、切り離した子孫(とその子孫)は残す。
 ;;;   worker の世代の終わり      その世代で起きた子孫の全部(StopElder・StopWorker・死んだ worker — Pod ごと消える。引き取りに依らない)。
+;;;                             ただし同じ Pod の中で worker だけが消えた時(LoseWorker)に入れ物 shim が残した job の process(本番の
+;;;                             --orphan-seconds — 退きの寿命を宣言した handoff の service)を根とする子孫は除く(spared — その process の
+;;;                             終わりで片づける)。
 ;;; 切り離した印: argv が setsid で始まる(続く - の旗は捨て、残りを子の argv として引く — 本番の setsid -f が返す pid は setsid の
 ;;; process だが、模擬は切り離した子そのものの pid を答える)か、StartProcess の lifetime が OUTLIVES-STARTER。
 ;;;
@@ -139,25 +142,28 @@
       (ChildArgv :argv argv :detached False)))
 
 
-(defk descendant-reaped? [descendant ended-roots generation adoption]
-  {:pre [(: descendant SimDescendant) (: ended-roots frozenset) (: generation (| tuple None)) (: adoption bool)] :post [(: % bool)]
-   :tags {:context "doeff-cluster" :role "judgment"}}
+(defk descendant-reaped? [descendant ended-roots generation adoption [spared (frozenset)]]
+  {:pre [(: descendant SimDescendant) (: ended-roots frozenset) (: generation (| tuple None)) (: adoption bool) (: spared frozenset)]
+   :post [(: % bool)] :tags {:context "doeff-cluster" :role "judgment"}}
   "走っている子孫が片づけに当たるかを決めるため: 根の job の process が ended-roots に在り、引き取る(adoption)か job の process group の
-   中(escaped でない)・または子孫の世代が終わった世代 generation(#(worker の名 世代) か None)。"
+   中(escaped でない)・または子孫の世代が終わった世代 generation(#(worker の名 世代) か None)で、根が worker の消失の後も残った job の
+   process(spared — 頭の註の LoseWorker)でない。"
   (and (is descendant.ended-ms None)
        (or (and (in descendant.origin.root ended-roots) (or adoption (not descendant.escaped)))
            (and (is-not generation None)
-                (= #(descendant.origin.worker descendant.origin.boot) generation)))))
+                (= #(descendant.origin.worker descendant.origin.boot) generation)
+                (not-in descendant.origin.root spared)))))
 
 
-(defk descendants-reaped [descendants tasks ended-roots generation adoption now]
-  {:pre [(: descendants dict) (: tasks dict) (: ended-roots frozenset) (: generation (| tuple None)) (: adoption bool) (: now int)]
+(defk descendants-reaped [descendants tasks ended-roots generation adoption now [spared (frozenset)]]
+  {:pre [(: descendants dict) (: tasks dict) (: ended-roots frozenset) (: generation (| tuple None)) (: adoption bool) (: now int)
+         (: spared frozenset)]
    :post [(: % ReapedDescendants)] :tags {:context "doeff-cluster" :role "judgment"}}
-  "片づけに当たる子孫(descendant-reaped?)を刻 now に -9 で終わった形にし、その task を捨てる物に分けるため(job の process の終わり・
-   世代の終わり・覚えた時の片づけが同じ判断を使う)。"
+  "片づけに当たる子孫(descendant-reaped? — spared は世代の終わりで残す根)を刻 now に -9 で終わった形にし、その task を捨てる物に分ける
+   ため(job の process の終わり・世代の終わり・覚えた時の片づけが同じ判断を使う)。"
   (var reaped #())
   (for [d (.values descendants)]
-    (<- hit bool (descendant-reaped? d ended-roots generation adoption))
+    (<- hit bool (descendant-reaped? d ended-roots generation adoption spared))
     (when hit (:= reaped (+ reaped #(d.pid)))))
   (ReapedDescendants
     :descendants (dfor #(pid d) (.items descendants)
