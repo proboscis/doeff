@@ -1,7 +1,7 @@
-"""table.hy の公開面の型 — 書き換えない表 Table・その書き TableWrite・下書き TableDraft と、作る口 table_of・draft_of。
+"""Types for the public surface of table.hy — the non-mutating table Table, its write TableWrite, its draft TableDraft, and the constructors table_of and draft_of.
 
-table.hy は Hy の module で、型の宣言が無いと pyright は使い手の Table を Unknown として読み、表を欄や引数に持つ所の型が全部
-Unknown に引きずられる(書き手に直せない赤)。口の形は table.hy と同じ — 片方だけ変えない(検 tests/test_table_static_types.py)。
+table.hy is a Hy module, and without type declarations pyright reads the caller's Table as Unknown, so every type of a field or argument that holds a table
+is dragged to Unknown (a red the author cannot fix). The shape of the constructors is the same as table.hy — change only one side never (checked by tests/test_table_static_types.py).
 """
 
 from dataclasses import dataclass
@@ -28,12 +28,12 @@ class Table(Generic[V]):
     def items(self) -> tuple[tuple[str, V], ...]: ...
     def size(self) -> int: ...
     def with_writes(self, writes: tuple[TableWrite[V], ...]) -> Table[V]: ...
-    # 真偽と長さの読みは断る(TypeError — 読むのは size)。
+    # Reading truthiness and length is refused (TypeError — read size instead).
     def __bool__(self) -> NoReturn: ...
     def __len__(self) -> NoReturn: ...
-    # dict / Mapping との == は TypeError(黙って偽にしない・card E0)。
+    # == against dict / Mapping is a TypeError (never silently False; card E0).
     def __eq__(self, other: object) -> bool: ...
-    # 行が違う鍵(片方にだけ在る鍵を含む・鍵の昇順 — 基を分け合う表は書いた鍵だけを読む)。
+    # Keys whose rows differ (including keys present on only one side, in ascending key order — tables sharing a base read only the keys they wrote).
     def changed_keys(self, other: Table[V]) -> tuple[str, ...]: ...
     def __reduce__(self) -> tuple[type[Table[V]], tuple[dict[str, V], dict[str, V], frozenset[str]]]: ...
 

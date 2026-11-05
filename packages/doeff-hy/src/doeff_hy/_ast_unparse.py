@@ -1,34 +1,34 @@
-"""Hy が差し替えた `ast.unparse` を、AST の定数の値を複製しない同じ変換へ置き換える。
+"""Replace the `ast.unparse` that Hy swapped in with an equivalent transform that does not copy AST constant values.
 
-起きていたこと(2026-09-23 実測・Python 3.14.3・hy 1.3.0 / 上流 master も同じ):
-`from __future__ import annotations` の無い conftest.py に `Callable[[Program], object]`
-のような注記の fixture があると、pytest が止まらずメモリを 10 GB まで食った。
+What was happening (measured 2026-09-23, Python 3.14.3, hy 1.3.0 / upstream master behaves the same):
+When a conftest.py without `from __future__ import annotations` has a fixture with an annotation such as
+`Callable[[Program], object]`, pytest did not stop and ate memory up to 10 GB.
 
-仕組み:
-- Hy の `hy/compat.py` は import された時に `ast.unparse` を process 全体で
-  `rewriting_unparse` へ差し替える(Python の予約語の名前を別の文字へ写す「keyword
-  mincing」のため)。`rewriting_unparse` は受け取った AST を `copy.deepcopy` してから写す。
-- pytest 9 は 3.14 で `inspect.signature(fixture, annotation_format=Format.STRING)` を呼ぶ。
-  `annotationlib` は STRING 形式で注記を評価する時、名前を `_Stringifier` にし、添字の中の
-  list などを `ast.Constant(value=[<_Stringifier>])` へそのまま入れる(Constant の値に
-  任意の object が入る)。
-- `deepcopy` がその `_Stringifier` に `__deepcopy__` を問い合わせると、`_Stringifier` は
-  どの属性にも新しい `_Stringifier`(AST を 1 段足した物)を返し、呼ぶと memo の dict まで
-  抱えた AST になる。それを文字列にするとまた `ast.unparse` = `rewriting_unparse` が呼ばれ、
-  もっと大きな木を deepcopy する — 再帰と木の成長が止まらない。
-- `from __future__ import annotations` があると注記は最初から文字列で、`_Stringifier` を
-  通らないので起きない。
+Mechanism:
+- Hy's `hy/compat.py` replaces `ast.unparse` process-wide with `rewriting_unparse` when it is imported
+  (to map Python reserved-word names to other characters, "keyword
+  mincing"). `rewriting_unparse` runs `copy.deepcopy` on the AST it receives before mapping it.
+- On 3.14, pytest 9 calls `inspect.signature(fixture, annotation_format=Format.STRING)`.
+  When `annotationlib` evaluates annotations in STRING format, it turns names into `_Stringifier` and puts the list etc. inside a subscript
+  straight into `ast.Constant(value=[<_Stringifier>])` (an arbitrary
+  object ends up as the Constant value).
+- When `deepcopy` asks that `_Stringifier` for `__deepcopy__`, the `_Stringifier` returns
+  a new `_Stringifier` (an AST one level deeper) for any attribute, and when called it becomes an AST holding even the memo dict.
+  Turning that into a string calls `ast.unparse` = `rewriting_unparse` again, which
+  deep-copies an even larger tree: the recursion and the tree growth never stop.
+- With `from __future__ import annotations` the annotation is a string from the start and does not pass through
+  `_Stringifier`, so this does not happen.
 
-直し方: 写す対象は AST の node の欄(名前の文字列)だけで、`ast.Constant` の値には触らない
-(Hy 自身も「文字列の定数は写さない」)。だから複製するのは node だけでよい。
-`copy.deepcopy` の memo に Constant の値を自分自身として先に入れ、値を複製しないで node だけ
-複製する。変換(keyword mincing)と最後に呼ぶ本来の `ast.unparse` は Hy と同じ。
+The fix: the only things to map are the AST node fields (name strings); `ast.Constant` values are left alone
+(Hy itself also "does not map string constants"). So only the nodes need to be copied.
+Put the Constant value into the `copy.deepcopy` memo as itself beforehand, so the node is copied
+without copying the value. The transform (keyword mincing) and the final call to the real `ast.unparse` are the same as in Hy.
 
-⚠ これは Hy 本体の欠陥への doeff-hy 側の当て物である。根は Hy が `ast.unparse` を process
-全体で差し替えること(`annotationlib` のような他の利用者も巻き込む)と、差し替えた関数が
-任意の値を deepcopy すること。上流の報告の文面 = `packages/doeff-hy/docs/hy-upstream-rewriting-unparse.md`。
-上流で直った版の Hy では、`hy.compat.rewriting_unparse` が無いか `ast.unparse` が別物に
-なっているので、ここは何もしない(`install` の条件)。
+Warning: this is a doeff-hy-side patch over a defect in Hy itself. The root causes are that Hy replaces `ast.unparse` process-wide
+(which also drags in other users such as `annotationlib`) and that the replacement function
+deep-copies arbitrary values. Text of the upstream report = `packages/doeff-hy/docs/hy-upstream-rewriting-unparse.md`.
+On a Hy version where this is fixed upstream, `hy.compat.rewriting_unparse` is missing or `ast.unparse` is something else,
+so this does nothing (the condition in `install`).
 """
 
 import ast
@@ -39,7 +39,7 @@ from collections.abc import Callable
 _KEEP = ("True", "False", "None")
 
 
-_MINCED_A = 0x1D41A  # MATHEMATICAL BOLD SMALL A(Hy と同じ写し先)
+_MINCED_A = 0x1D41A  # MATHEMATICAL BOLD SMALL A (same mapping target as Hy)
 
 
 def _mince(name: str) -> str:
@@ -49,7 +49,7 @@ def _mince(name: str) -> str:
 def unparse_without_copying_constants(
     true_unparse: Callable[[ast.AST], str],
 ) -> Callable[[ast.AST], str]:
-    """Hy の `rewriting_unparse` と同じ変換で、Constant の値を複製しない関数を作る。"""
+    """Build a function with the same transform as Hy's `rewriting_unparse` that does not copy Constant values."""
 
     def minced_unparse(ast_obj: ast.AST) -> str:
         constants: dict[int, object] = {
@@ -72,7 +72,7 @@ def unparse_without_copying_constants(
 
 
 def install() -> bool:
-    """Hy の差し替えが入っていれば置き換える。置き換えたら True。何度呼んでもよい。"""
+    """Replace it if Hy's replacement is installed. Returns True if replaced. Safe to call repeatedly."""
     import hy.compat
 
     rewriting = hy.compat.__dict__.get("rewriting_unparse")

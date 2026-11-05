@@ -1,13 +1,13 @@
-"""defeffect の :answer の型が型検査の展開に残ることの失敗ケース。
+"""Failure cases showing that the :answer type of defeffect survives in the type-checking expansion.
 
-defeffect は答えの型を `__doeff_answer__` に置く。型検査の展開(doeff-hy-check)は記帳の setattr(`__doeff_…__`)を外すので、
-答えの型を setattr で置くと :answer の式が型検査から消え、答えの型のためだけに import した名が reportUnusedImport の赤になっていた
-(消すと実行時に壊れるので書き手は直せない)。展開は class の本体の `__doeff_answer__: ClassVar[object]` に置く:
+defeffect places the answer type in `__doeff_answer__`. The type-checking expansion (doeff-hy-check) removes the bookkeeping setattr (`__doeff_...__`), so
+when the answer type was placed with setattr, the :answer expression vanished from type checking, and names imported only for the answer type became a reportUnusedImport red
+(removing them breaks things at runtime, so the writer could not fix it). The expansion now places it in the class body as `__doeff_answer__: ClassVar[object]`:
 
-- :answer にだけ現れる import の名は使われた import と読まれる(赤が無い)。:answer に現れない import は赤のまま(検は緩めていない)。
-- 素の総称(`dict`)・`Callable | None` を :answer に書いても、値の位置で型として評価された赤(reportMissingTypeArgument・
-  reportOperatorIssue)を足さない。
-- 実行時の `__doeff_answer__` は :answer の式そのもので、ClassVar の注記は dataclass の欄にならない。
+- Imported names that appear only in :answer are treated as used imports (no red). Imports that do not appear in :answer stay red (the check is not loosened).
+- Writing a bare generic (`dict`) or `Callable | None` in :answer adds no reds from evaluating them as types in a value position (reportMissingTypeArgument,
+  reportOperatorIssue).
+- At runtime `__doeff_answer__` is the :answer expression itself, and the ClassVar annotation does not become a dataclass field.
 """
 
 import ast
@@ -24,15 +24,15 @@ from decimal import Decimal
 from fractions import Fraction
 from pathlib import Path
 
-import doeff_hy  # noqa: F401  # Hy の import hook を有効にする
+import doeff_hy  # noqa: F401  # enables the Hy import hook
 import hy
 import pytest
 
 from doeff import EffectBase
 
-needs_pyright = pytest.mark.skipif(shutil.which("pyright") is None, reason="pyright が無い")
+needs_pyright = pytest.mark.skipif(shutil.which("pyright") is None, reason="pyright is not available")
 
-# 答えの型 Decimal・Fraction・Callable は :answer にだけ現れる。PurePath は :answer に現れない(本当に使われない import)。
+# The answer types Decimal, Fraction, and Callable appear only in :answer. PurePath does not appear in :answer (an import that is truly unused).
 MODULE = """\
 (require doeff-hy.macros [defeffect])
 (import collections.abc [Callable])
@@ -41,13 +41,13 @@ MODULE = """\
 (import pathlib [PurePath])
 
 (defeffect ReadAmount
-  "検体の読み(答えの型は import した名の union)。"
+  "Sample read (the answer type is a union of imported names)."
   {:fields [(: key str)]
    :answer (| Decimal Fraction None)
    :tags {:context "probe" :role "intent"}})
 
 (defeffect ReadTable
-  "検体の読み(素の総称と Callable | None の答え)。"
+  "Sample read (answers with a bare generic and Callable | None)."
   {:fields []
    :answer (| dict Callable None)
    :tags {:context "probe" :role "intent"}})
@@ -56,7 +56,7 @@ MODULE = """\
 
 @dataclass(frozen=True)
 class Run:
-    """doeff-hy-check を 1 回走らせた結果(JSON の診断)。"""
+    """The result of running doeff-hy-check once (JSON diagnostics)."""
 
     diagnostics: tuple[dict[str, object], ...]
 
@@ -85,7 +85,7 @@ def probe(tmp_path: Path) -> Path:
 
 
 def _line_of(marker: str) -> int:
-    """検体の中で marker を含む行の番号(1 から)。"""
+    """The line number (from 1) of the line containing the marker in the sample."""
     return next(n for n, line in enumerate(MODULE.splitlines(), start=1) if marker in line)
 
 
@@ -93,25 +93,25 @@ def _line_of(marker: str) -> int:
 def test_answer_only_imports_are_used_and_unused_ones_stay_red(probe: Path) -> None:
     errors = _check(probe).errors()
     unused = [e for e in errors if e[0] == "reportUnusedImport"]
-    # :answer にだけ現れる名は使われた import(直しを外すと Decimal・Fraction・Callable の 3 件が赤に戻る)。
+    # Names that appear only in :answer are used imports (removing the fix brings back 3 reds: Decimal, Fraction, Callable).
     assert not [
         e for e in unused if any(f'"{n}"' in e[2] for n in ("Decimal", "Fraction", "Callable"))
     ], unused
-    # :answer に現れない import は赤のまま(展開が import を一律に使った扱いにしていない)。
+    # An import that does not appear in :answer stays red (the expansion does not treat all imports as used).
     assert [e for e in unused if e[1] == _line_of("[PurePath]") and '"PurePath"' in e[2]], unused
 
 
 @needs_pyright
 def test_answer_does_not_add_type_form_errors(probe: Path) -> None:
-    # 素の dict・Callable | None の :answer は、値の位置で型として評価された赤を出さない。defeffect の行には赤が無い。
+    # A bare dict or Callable | None in :answer produces no red from being evaluated as a type in a value position. The defeffect line has no reds.
     errors = _check(probe).errors()
     lines = range(_line_of("(defeffect ReadAmount"), len(MODULE.splitlines()) + 1)
     assert not [e for e in errors if e[1] in lines], errors
 
 
 def test_projection_keeps_the_answer_in_the_class_body() -> None:
-    # 型検査の展開の中で __doeff_answer__ は class の本体の ClassVar[object] の注記つきの代入で、:answer の名を読む。
-    # 記帳の setattr(型検査が外す)には置かない。
+    # In the type-checking expansion, __doeff_answer__ is an annotated assignment with ClassVar[object] in the class body, and it reads the names in :answer.
+    # It is not placed in the bookkeeping setattr (which type checking removes).
     from doeff_hy._static_view import static_view
 
     with static_view():

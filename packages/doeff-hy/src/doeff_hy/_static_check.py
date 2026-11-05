@@ -1,41 +1,41 @@
-"""doeff-hy-check — Hy の source を本物の macro で展開し、pyright で型を検め、赤を .hy の行で返す。
+"""doeff-hy-check — expand Hy source with the real macros, check types with pyright, and report red diagnostics at .hy lines.
 
     doeff-hy-check [PATH ...] [--root DIR] [--import-root DIR ...] [--pyright CMD] [--python EXE] [--json]
                    [--strict] [--baseline JSON | --write-baseline JSON] [--cache-dir DIR | --no-cache]
                    [--carry JSON [--carry-refresh-runs N]]
 
-- PATH: 検める .hy の file か dir(既定 = --root)。dir は下の .hy を全部。
-- --root: repo の根(既定 = 今の dir)。import の根で、macro の `require` もここから解く。
-- --import-root: 根の下の別の import の根(例 `clients/hy`)。根の pyright の設定の
-  `extraPaths` も import の根として読む。
-- --strict: pyright の typeCheckingMode を strict にする。
-- --write-baseline / --baseline: 今の赤を基点として書く / 基点に無い赤だけを止める(doeff_hy/_static_baseline.py)。
-  --json の診断には、基点に在る赤かを欄 `known` で付ける。
-- --cache-dir / --no-cache: 依存の .hy の展開を、source と展開が通った file の記録ごとに保存して引く(doeff_hy/_static_cache.py・
-  既定の置き場 = $XDG_CACHE_HOME/doeff-hy-check か ~/.cache/doeff-hy-check)。
-- --carry: 運びの file(doeff_hy/_static_carry.py)。前の回から入力(その file の展開・使う名の宣言の表面・import の解き先・環境)の
-  変わらない .hy は pyright に当てず、file の前の回の診断を運び、この回の運びで file を置き換える(無い file = 全部を当てる初回)。
-  --carry-refresh-runs: 入力の変わらない file も、この回数のうちに 1 度は当て直す(見直し — 既定 12)。
-- 新しい赤(基点が無ければ全部の赤)があれば exit 1、無ければ 0、道具として走れなければ 2。
+- PATH: the .hy file or dir to check (default = --root). A dir means every .hy under it.
+- --root: the repo root (default = the current dir). It is the import root, and macro `require` is resolved from it too.
+- --import-root: another import root under the root (e.g. `clients/hy`). The root's pyright config
+  `extraPaths` are also read as import roots.
+- --strict: set pyright's typeCheckingMode to strict.
+- --write-baseline / --baseline: write the current reds as a baseline / stop only on reds absent from the baseline (doeff_hy/_static_baseline.py).
+  Each --json diagnostic carries the field `known`, saying whether the red is in the baseline.
+- --cache-dir / --no-cache: store the expansion of dependency .hy files, together with the record of the source and of the files the expansion passed through, and read it back (doeff_hy/_static_cache.py,
+  default location = $XDG_CACHE_HOME/doeff-hy-check or ~/.cache/doeff-hy-check).
+- --carry: the carry file (doeff_hy/_static_carry.py). A .hy whose inputs (its expansion, the declaration surface of the names it uses, where its imports resolve, the environment) are
+  unchanged since the previous run is not given to pyright; the previous run's diagnostics for that file are carried over, and the file is replaced by this run's carry (no file = the first run, which checks everything).
+  --carry-refresh-runs: even a file with unchanged inputs is re-checked once within this many runs (a review — default 12).
+- Exit 1 if there is any new red (every red when there is no baseline), 0 if none, 2 if the tool could not run.
 
-仕組み:
-0. 展開と pyright の間は、同じ機体で走る検と共有する機体の検の枠を 1 つ持つ(埋まっていれば待ち、待ちの上限を越えたら走らずに
-   exit 2 — doeff_hy/_check_slot.py。枠の正本の無い機体では取らない)。
-1. 各 .hy を Hy の compiler で展開する(doeff-hy の macro は「型検査のための展開」=
-   doeff_hy/_static_view.py の切替の下で走る)。source の import は実行しない
-   (macro の `require` だけは Hy の compile の常として macro の module を import する)。
-2. 検める file が import する、根の下の別の .hy も同じく展開する(型を解くため・赤は出さない)。探すのは import の根と、
-   import する file の dir から根までの親(pyright の探し方と同じ — search_dirs)。
-3. 根の中身を symlink で映した一時の木に、展開した Python を `<名>.py` として置き、
-   根の pyright の設定を写して pyright を撃つ。消費 repo の file は変えない。
-4. pyright の診断を、展開した Python の位置 → Hy の式の位置(macro は合成した式にも
-   包んでいる利用者の式の位置を付ける — doeff_hy/_positions.hy)へ戻す。
+How it works:
+0. Between expansion and pyright, hold one slot of the host check slot, shared with the other checks running on the same host (if it is full, wait; if the wait limit is exceeded, exit 2
+   without running — doeff_hy/_check_slot.py. The slot is not taken on a host without the authoritative slot source).
+1. Expand each .hy with Hy's compiler (doeff-hy macros run under the "expansion for type checking" switch in
+   doeff_hy/_static_view.py). Imports in the source are not executed
+   (only the macro `require`, as always with Hy's compile, imports the macro module).
+2. Expand in the same way the other .hy files under the root that the checked file imports (to resolve types; no reds are reported for them). The places searched are the import roots and
+   the parents from the importing file's dir up to the root (the same search as pyright — search_dirs).
+3. In a temporary tree that mirrors the root's contents with symlinks, place the expanded Python as `<name>.py`,
+   copy the root's pyright config, and run pyright. The consuming repo's files are not changed.
+4. Map each pyright diagnostic from the expanded Python position back to the Hy expression position (macros also give
+   synthesized expressions the position of the user expression that wraps them — doeff_hy/_positions.hy).
 
-設定: 根の `pyrightconfig.json`(無ければ `pyproject.toml` の `[tool.pyright]`)を土台にし、
-`reportDeprecated` だけを error に上げる(文の位置に置いた Program / effect を
-doeff_hy/macros.pyi の deprecated の overload で捕まえるため)。
+Settings: use the root's `pyrightconfig.json` (or `[tool.pyright]` in `pyproject.toml` if absent) as the base, and
+raise only `reportDeprecated` to error (to catch a Program / effect placed in statement position with
+the deprecated overload in doeff_hy/macros.pyi).
 
-捕まえるもの・捕まえないもの(2026-09-23 に agora-controllers の検体で測った一覧は
+What is caught and what is not (the list measured on agora-controllers samples on 2026-09-23 is in
 packages/doeff-hy/docs/static-check.md)。
 """
 
@@ -153,8 +153,8 @@ class Diagnostic:
         return f"{self.path}:{self.line}:{self.column} - {self.severity}: {self.message}{rule}"
 
 
-#: 展開した Python の範囲(0 始まりの行・列、終わりは含まない)と、対応する Hy の位置(1 始まり)。保存の形と同じ 1 つの型 —
-#: 引いた保存から Projection へ戻す時に、十数万の位置を作り直さない。
+#: Ranges of the expanded Python (0-based lines and columns, end exclusive) paired with the corresponding Hy positions (1-based). The same single type as the stored form —
+#: so that when a stored expansion is read back into a Projection, hundreds of thousands of positions are not rebuilt.
 Span = CachedSpan
 
 
@@ -164,9 +164,9 @@ class Projection:
     module: str
     text: str
     spans: Sequence[Span]
-    # macro が展開の時に出した所見(val / var の検査 — ADR-DOE-HY-006)を Hy の位置の診断にした物。
+    # Findings that macros emitted during expansion (val / var checks — ADR-DOE-HY-006), turned into diagnostics at Hy positions.
     findings: tuple[Diagnostic, ...] = ()
-    # 展開が通った file の記録(Hy の版・macro と補助と型検査の後処理の file と sha256 — 保存を照らす)。
+    # The record of a successful expansion (Hy version; the macro, helper and type-check post-processing files with their sha256 — used to validate the stored entry).
     used: "MacroRecord" = dataclasses.field(kw_only=True)
 
 
@@ -178,7 +178,7 @@ class CompileFailure:
 
 @dataclass(frozen=True)
 class Closure:
-    """検める file と、それが import する根の下の .hy の展開。"""
+    """The expansion of the checked files and of the .hy files under the root that they import."""
 
     projections: dict[Path, Projection]
     failures: list[CompileFailure]
@@ -192,21 +192,21 @@ class HyPosition:
 
 @dataclass(frozen=True)
 class Checked:
-    """診断と、赤にしない注記。"""
+    """Diagnostics, and notes that are not reds."""
 
     diagnostics: list[Diagnostic]
     notes: list[str]
 
 
 def _absolute(path: Path) -> Path:
-    """絶対 path に正規化する。symlink は辿らない(根を symlink で映した木でも根の中に留まる)。"""
+    """Normalize to an absolute path. Symlinks are not followed (so even a tree that mirrors the root with symlinks stays inside the root)."""
     return Path(os.path.normpath(path.absolute()))
 
 
 def in_root(root: Path, path: Path) -> Path | None:
-    """名指した path を根の綴り(_absolute — symlink を辿らない絶対 path)の下へ写す。綴りが根の下ならそのまま、symlink を辿ると
-    根の下なら根の綴りへ写し直し(相対 path を繋ぐ Path.cwd() は辿った先の綴りを返す)、どちらでもなければ
-    None(根の外)。"""
+    """Map a named path under the root's spelling (_absolute — an absolute path without following symlinks). If the spelling is under the root, keep it as is; if following symlinks
+    lands under the root, map it back to the root's spelling (Path.cwd(), which joins relative paths, returns the followed spelling); otherwise
+    None (outside the root)."""
     absolute = _absolute(path)
     if absolute.is_relative_to(root):
         return absolute
@@ -227,7 +227,7 @@ def hy_files(paths: list[Path]) -> list[Path]:
 
 
 def module_name(roots: list[Path], source: Path) -> str:
-    """一番深い import の根からの相対 path を module 名にする。"""
+    """Make a module name from the path relative to the deepest import root."""
     base = max((r for r in roots if source.is_relative_to(r)), key=lambda r: len(r.parts))
     parts = list(source.relative_to(base).with_suffix("").parts)
     if parts[-1] == "__init__":
@@ -236,7 +236,7 @@ def module_name(roots: list[Path], source: Path) -> str:
 
 
 def _child_pairs(generated: ast.AST, original: ast.AST) -> Iterator[tuple[ast.AST, ast.AST]]:
-    """展開した木と、それを文字列にして読み直した木を同じ順に歩く。形が食い違えばそこで降りない。"""
+    """Walk the expanded tree and the tree re-read from its string form in the same order. If the shapes diverge, do not descend there."""
     yield generated, original
     left = list(ast.iter_child_nodes(generated))
     right = list(ast.iter_child_nodes(original))
@@ -253,7 +253,7 @@ def _position(node: ast.AST, name: str) -> int | None:
 
 
 def _span(generated: ast.AST, original: ast.AST) -> Span | None:
-    """読み直した木の node の範囲と、元の(Hy が位置を付けた)node の Hy の位置を組にする。"""
+    """Pair the range of each node in the re-read tree with the Hy position of the corresponding original node (the one Hy gave a position)."""
     g_line, g_col = _position(generated, "lineno"), _position(generated, "col_offset")
     g_end_line = _position(generated, "end_lineno")
     g_end_col = _position(generated, "end_col_offset")
@@ -262,24 +262,24 @@ def _span(generated: ast.AST, original: ast.AST) -> Span | None:
         return None
     if h_line is None or h_col is None:
         return None
-    # Hy は col_offset に 1 始まりの列を入れる(hy.compiler の位置の写し)。
+    # Hy puts a 1-based column into col_offset (it mirrors the positions in hy.compiler).
     return Span((g_line - 1, g_col), (g_end_line - 1, g_end_col), h_line, max(h_col, 1))
 
 
-#: 定義の記帳(実行時の内観のための属性 — 型の意味を持たない)だけが使う module。展開の後に使い手が残らなければ
-#: import を外す(pyright strict で doeff_hy._quoted_forms の stub 無し・doeff_hy._declarations の重複の import に
-#: なっていた — agora の画面の core の 3 file で 241 件)。doeff_hy._pytest_items は pytest の
-#: item の記録(deftest・defadr・defsemgrep・pytestmark が足す — 収集のための記帳)だけが使う(stub 無しの赤 — #2214)。
+#: Modules used only by definition bookkeeping (attributes for runtime introspection — they carry no type meaning). If no user remains after expansion,
+#: the import is removed (under pyright strict, doeff_hy._quoted_forms had no stub and doeff_hy._declarations was a duplicate import —
+#: 241 reds across 3 core files of the agora screen). doeff_hy._pytest_items is used only for
+#: the pytest item records (added by deftest, defadr, defsemgrep and pytestmark — bookkeeping for collection) (a red for a missing stub — #2214).
 BOOKKEEPING_MODULES: frozenset[str] = frozenset(
     {"doeff_hy._declarations", "doeff_hy._quoted_forms", "doeff_hy.record", "doeff_hy._pytest_items"}
 )
 
 
 def _bookkeeping_statement(statement: ast.stmt) -> bool:
-    """型検査に見せない module の直下の文か: 定義の記帳 `setattr(名, '__doeff_…__', …)`、pytest の item の記録
-    `doeff_hy._pytest_items.record_at_import(globals(), …)`(doeff_hy/_pytest_items.py の `_record_form` が足す — 収集の
-    ための記帳)と、Hy が `(require …)` を compile した残り `hy.macros.require(…)`
-    (macro の取り込みは展開の時に済んでいる)。"""
+    """Is this a module-level statement to hide from type checking: the definition bookkeeping `setattr(name, '__doeff_…__', …)`, the pytest item record
+    `doeff_hy._pytest_items.record_at_import(globals(), …)` (added by `_record_form` in doeff_hy/_pytest_items.py — bookkeeping for
+    collection), and what is left after Hy compiles `(require …)`, `hy.macros.require(…)`
+    (macros were already imported at expansion time)."""
     match statement:
         case ast.Expr(
             value=ast.Call(func=ast.Name(id="setattr"), args=[_, ast.Constant(value=str(attribute)), *_])
@@ -307,12 +307,12 @@ def _bookkeeping_statement(statement: ast.stmt) -> bool:
 
 
 def _effects_reads(statement: ast.stmt) -> ast.stmt | None:
-    """定義の記帳 `setattr(名, '__doeff_effects__', doeff_hy._declarations.effect_types(場所, tuple([A, B])))` を、
-    doeff_hy._declarations を呼ばない形 `setattr(名, '__doeff_effects__', (A, B))` に縮めた文にするため(それ以外は None)。
-    宣言 :effects にだけ出る効果の名(handler の節が下請けの関数を通して出す効果)を、型検査の中で読まれた名に残す —
-    記帳ごと外すと、その名の import が strict の reportUnusedImport の赤になり、書き手は直せない(import を消すと実行の時に
-    :effects の宣言が名を解けない)。空の宣言 `:effects []`(effect を出さない)も `()` で残す:
-    道具 static_stub が .pyi の答えの Program の effect の位置を Never にする(読まれる名は無い)。"""
+    """Shrink the definition bookkeeping `setattr(name, '__doeff_effects__', doeff_hy._declarations.effect_types(place, tuple([A, B])))` into the statement
+    `setattr(name, '__doeff_effects__', (A, B))`, which does not call doeff_hy._declarations (None for anything else).
+    This keeps the names of effects that appear only in the declaration :effects (effects a handler clause emits through a helper function) among the names read in type checking —
+    dropping the whole bookkeeping would make the import of such a name a strict reportUnusedImport red, which the author cannot fix (deleting the import would leave
+    the :effects declaration unable to resolve the name at run time). An empty declaration `:effects []` (emits no effect) is also kept, as `()`:
+    the tool static_stub makes the effect position of a Program in a .pyi answer Never (there is no name to be read)."""
     match statement:
         case ast.Expr(
             value=ast.Call(
@@ -337,7 +337,7 @@ def _effects_reads(statement: ast.stmt) -> ast.stmt | None:
 
 
 def _referenced_roots(statements: list[ast.stmt]) -> frozenset[str]:
-    """文の中で読まれている名(属性の連なりは根の名)— 外してよい import を決めるため。"""
+    """Names read in a statement (for an attribute chain, the root name) — to decide which imports may be removed."""
     return frozenset(
         node.id
         for statement in statements
@@ -347,12 +347,12 @@ def _referenced_roots(statements: list[ast.stmt]) -> frozenset[str]:
 
 
 def _bound_name(alias: ast.alias) -> str:
-    """import が束縛する名(`import a.b` は `a`・`as` があればその名)。"""
+    """Names bound by an import (`import a.b` binds `a`; with `as`, that name)."""
     return alias.asname or alias.name.split(".")[0]
 
 
 def _dotted(node: ast.expr) -> str | None:
-    """名か名から始まる属性の連なりの綴り(`a.b.c`)— それ以外の式は None。"""
+    """The spelling of a name or an attribute chain starting from a name (`a.b.c`) — None for any other expression."""
     match node:
         case ast.Name(id=name):
             return name
@@ -364,9 +364,9 @@ def _dotted(node: ast.expr) -> str | None:
 
 
 def _referenced_paths(statements: list[ast.stmt]) -> frozenset[str]:
-    """文の中で読まれている名と属性の連なり(`a.b.c` を読めば `a`・`a.b`・`a.b.c` の全部)— `import a.b` が読まれているかを
-    module の綴りで決めるため。`import doeff_hy._declarations` と `import doeff_hy.record` は同じ根の名 `doeff_hy` を束縛するので、
-    根の名だけでは片方しか読まれていない時に両方を残してしまう(defrecord の :check の展開)。"""
+    """Names and attribute chains read in a statement (reading `a.b.c` gives all of `a`, `a.b`, `a.b.c`) — to decide by
+    module spelling whether `import a.b` is read. `import doeff_hy._declarations` and `import doeff_hy.record` bind the same root name `doeff_hy`,
+    so with the root name alone, when only one of them is read, both would be kept (the expansion of defrecord :check)."""
     return frozenset(
         path
         for statement in statements
@@ -377,15 +377,15 @@ def _referenced_paths(statements: list[ast.stmt]) -> frozenset[str]:
 
 
 def _alias_read(alias: ast.alias, used: frozenset[str]) -> bool:
-    """import の 1 つの名が読まれているか(`as` があればその名・無ければ書いた綴り — `import a.b` は連なり `a.b`・
-    `from m import x` は `x`)。"""
+    """Is one name of an import read (with `as`, that name; otherwise the spelling as written — `import a.b` is the chain `a.b`,
+    `from m import x` is `x`)."""
     return (alias.asname or alias.name) in used
 
 
 def _without_unused_bookkeeping(statement: ast.stmt, used: frozenset[str]) -> ast.stmt | None:
-    """記帳だけが使う module(BOOKKEEPING_MODULES)の import から、もう読まれていない名を 1 つずつ外す。名が 1 つも残らなければ
-    文ごと外す(None)。1 つの文が読まれる名と読まれない名を並べる形(`import doeff_hy._declarations, doeff_hy.record` — defrecord の
-    展開)で、読まれない側だけが strict の reportUnusedImport になっていた。"""
+    """From the imports of bookkeeping-only modules (BOOKKEEPING_MODULES), remove the names no longer read, one at a time. If no name is left, remove
+    the whole statement (None). This was for statements that list names that are read and names that are not (`import doeff_hy._declarations, doeff_hy.record` — the
+    expansion of defrecord), where only the unread side became a strict reportUnusedImport."""
     match statement:
         case ast.Import(names=names):
             kept = [a for a in names if a.name not in BOOKKEEPING_MODULES or _alias_read(a, used)]
@@ -405,21 +405,20 @@ def _without_unused_bookkeeping(statement: ast.stmt, used: frozenset[str]) -> as
 
 
 def _doeff_hy_module(module: str) -> bool:
-    """doeff-hy 自身の module か(macro が定義ごとに import を合成する先)。"""
+    """Is this a doeff-hy module itself (the target of the imports that macros synthesize for each definition)."""
     return module.split(".")[0] == "doeff_hy"
 
 
 def _synthesized_import(statement: ast.stmt) -> bool:
-    """macro が定義ごとに合成する import の文か(利用者の重複の import は赤のまま残すため、重ねを 1 つにするのはこれだけ):
-    doeff-hy 自身の module の import と、module を展開の名の頭 `_doeff_`(expansion_names.PREFIX)の別名で束ねる
-    `import <module> as _doeff_<名>`(持ち主の package の定義の macro が出す形 — doeff-cluster の defsystem が系ごとに出す系の型と
-    構成子の module の import。doeff-hy は持ち主の module の綴りを持たない)と、defeffect が
-    答えの分け方を置く時の `import doeff_core_effects._outcomes`(static_view.DEFEFFECT_OUTCOMES_MODULE)と、handle・defhandler が
-    node を `_doeff_<名>` の別名で束ねる `from doeff import Pass as _doeff_Pass` と、型を建てる定義が型の本体で読む
-    `from typing import ClassVar as _doeff_ClassVar` など(expansion_names.is_alias_import — 閉じた表の綴りだけ。関数・class の
-    本体の中に残すと、class の本体では節の関数と入れ子の型の本体が名を module の段から引いて pyright が未定義と読んだ)。
-    書き手が `_doeff_` の別名を書くのは for/do の `(import doeff [do :as _doeff-do])`(`from … import` の形)だけなので、
-    `import <module> as _doeff_<名>` の形は書き手の import と取り違えない。"""
+    """Is this an import statement that a macro synthesizes for each definition (a user's duplicate import must stay red, so only these are collapsed to one):
+    imports of doeff-hy's own modules, and
+    `import <module> as _doeff_<name>`, which binds a module under an alias with the expansion-name prefix `_doeff_` (expansion_names.PREFIX) (the form emitted by definition macros of the owning package — the imports of the system type and
+    constructor modules that doeff-cluster's defsystem emits per system. doeff-hy does not hold the owning module's spelling), and the `import doeff_core_effects._outcomes` (static_view.DEFEFFECT_OUTCOMES_MODULE) that defeffect
+    emits when it places the way answers are divided, and `from doeff import Pass as _doeff_Pass`, where handle and defhandler bind a
+    node under an alias `_doeff_<name>`, and `from typing import ClassVar as _doeff_ClassVar`, which a type-building definition reads in the type body, and the like (expansion_names.is_alias_import — only spellings in a closed table. If left
+    inside a function or class body, then in a class body the clause functions and the bodies of nested types looked names up from the module level, and pyright read them as undefined).
+    The only `_doeff_` alias an author writes is the for/do `(import doeff [do :as _doeff-do])` (the `from … import` form), so
+    the form `import <module> as _doeff_<name>` is never confused with an author's import."""
     match statement:
         case ast.Import(names=names):
             return all(
@@ -440,8 +439,8 @@ _SCOPES = (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)
 
 
 def _nested_imports(node: ast.AST, inside: bool) -> Iterator[ast.stmt]:
-    """node の中(入れ子の文を含む)の、関数・class の本体の中に在る macro 合成の import の文(`_synthesized_import`)を
-    書いた順に返す。inside = node がすでに関数・class の本体の中か。"""
+    """Return, in source order, the macro-synthesized import statements (`_synthesized_import`) that sit inside function or class bodies within node (including nested statements).
+    inside = whether node is already inside a function or class body."""
     here = inside or isinstance(node, _SCOPES)
     for child in ast.iter_child_nodes(node):
         if isinstance(child, ast.stmt) and here and _synthesized_import(child):
@@ -450,7 +449,7 @@ def _nested_imports(node: ast.AST, inside: bool) -> Iterator[ast.stmt]:
             yield from _nested_imports(child, here)
 
 
-#: 文の本体(`body`)を持つ node — import を外して空になった本体に `pass` を置くため(空の本体は Python の文として書けない)。
+#: Nodes that have a statement body (`body`) — so that a body emptied by removing imports gets a `pass` (an empty body cannot be written as a Python statement).
 _BODIED = (
     *_SCOPES,
     ast.If,
@@ -467,14 +466,14 @@ _BODIED = (
 
 
 class _WithoutNestedImports(ast.NodeTransformer):
-    """関数・class の本体の中の macro 合成の import の文(`_nested_imports` が返す物)を外すため。文の 1 つだけを持っていた
-    本体は `pass` にする。"""
+    """To remove the macro-synthesized import statements inside function and class bodies (what `_nested_imports` returns). A body that
+    held only that one statement becomes `pass`."""
 
     def __init__(self) -> None:
         self._mut_depth = 0
 
     def _scope(self, node: ast.AST) -> ast.AST:
-        """関数・class の本体の中を読む間だけ深さを 1 つ増やす(その中の import が外す対象 — module の段の物は外さない)。"""
+        """Raise the depth by one only while reading inside a function or class body (imports inside are the removal targets — module-level ones are not removed)."""
         self._mut_depth += 1
         try:
             return self.generic_visit(node)
@@ -482,27 +481,27 @@ class _WithoutNestedImports(ast.NodeTransformer):
             self._mut_depth -= 1
 
     def visit_FunctionDef(self, node: ast.FunctionDef) -> ast.AST:
-        """関数の本体の中を読む(`_scope`)。"""
+        """Read inside a function body (`_scope`)."""
         return self._scope(node)
 
     def visit_AsyncFunctionDef(self, node: ast.AsyncFunctionDef) -> ast.AST:
-        """async 関数の本体の中を読む(`_scope`)。"""
+        """Read inside an async function body (`_scope`)."""
         return self._scope(node)
 
     def visit_ClassDef(self, node: ast.ClassDef) -> ast.AST:
-        """class の本体の中を読む(`_scope`)。"""
+        """Read inside a class body (`_scope`)."""
         return self._scope(node)
 
     def visit_Import(self, node: ast.Import) -> ast.Import | None:
-        """関数・class の本体の中の macro 合成の `import` は外す(`_nested_imports` が module の段へ集めた物)。"""
+        """Remove macro-synthesized `import` inside function and class bodies (what `_nested_imports` gathered to the module level)."""
         return None if self._mut_depth and _synthesized_import(node) else node
 
     def visit_ImportFrom(self, node: ast.ImportFrom) -> ast.ImportFrom | None:
-        """関数・class の本体の中の macro 合成の `from … import` は外す(`visit_Import` と同じ)。"""
+        """Remove macro-synthesized `from … import` inside function and class bodies (the same as `visit_Import`)."""
         return None if self._mut_depth and _synthesized_import(node) else node
 
     def generic_visit(self, node: ast.AST) -> ast.AST:
-        """子を読み、import を外して本体が空になった node には `pass` を置く。"""
+        """Read the children, and put `pass` in a node whose body became empty after imports were removed."""
         visited = super().generic_visit(node)
         if isinstance(node, _BODIED) and not node.body:
             node.body = [ast.Pass()]
@@ -510,15 +509,15 @@ class _WithoutNestedImports(ast.NodeTransformer):
 
 
 def with_module_level_imports(tree: ast.Module) -> ast.Module:
-    """関数・class の本体の中に macro が置いた import(`_synthesized_import` — doeff-hy の module・`_doeff_` の別名で束ねる module・defeffect の
-    答えの分け方の module)を、囲む module の直下の文の前へ移す(macros.hy の `_scoped-definition` の型検査のための展開の側)。
+    """Move the imports that macros placed inside function and class bodies (`_synthesized_import` — doeff-hy modules, modules bound under a `_doeff_` alias, and the module for defeffect's
+    way of dividing answers) to before the statement directly under the enclosing module (the type-checking-expansion side of `_scoped-definition` in macros.hy).
 
-    定義の macro は展開の import を書いた所に置く。関数の中の `import doeff_hy.record` は `doeff_hy` を外の関数全体の局所の名にし、
-    外の関数が先に module の段の `doeff_hy` を読むと、pyright は未束縛と読む。class の本体の import は class の属性で、入れ子の型の
-    本体と method は名を module の段から引く(Python と同じ)ので、定義が読む `doeff_hy.record` を解けない。実行時の展開は関数の中を
-    包んで局所の名を閉じ込める(`_scoped-definition`)が、型検査のための展開は型の宣言(class・def)を外の関数に残す形なので包めない —
-    import を module の段へ集め、以後の掃除(`without_bookkeeping` の重ねの畳みと、読まれない記帳の import の除去)に任せる。
-    module の段の文・module の段の `if` の中の import は動かさない(もう module の段の名)。木はこの展開だけの物なので、その場で替える。"""
+    Definition macros put the expansion's imports where they wrote them. An `import doeff_hy.record` inside a function makes `doeff_hy` a local name of the whole outer function,
+    and if the outer function first reads the module-level `doeff_hy`, pyright reads it as unbound. An import in a class body is a class attribute, and the bodies of nested types
+    and methods look names up from the module level (as in Python), so the `doeff_hy.record` that the definition reads cannot be resolved. The runtime expansion
+    wraps the inside of the function to confine local names (`_scoped-definition`), but the type-checking expansion leaves the type declarations (class, def) in the outer function, so it cannot wrap —
+    gather the imports at module level and leave the rest to the later cleanup (folding duplicates in `without_bookkeeping`, and removing imports of unread bookkeeping).
+    Statements at module level and imports inside a module-level `if` are not moved (they are already module-level names). The tree belongs to this expansion alone, so it is replaced in place."""
     moved = [tuple(_nested_imports(statement, inside=False)) for statement in tree.body]
     _WithoutNestedImports().visit(tree)
     tree.body = [
@@ -530,12 +529,12 @@ def with_module_level_imports(tree: ast.Module) -> ast.Module:
 
 
 def with_canonical_gensyms(tree: ast.Module) -> ast.Module:
-    """展開の木の Hy の gensym の名(識別子と文字列の定数)を、file の中の数えの順に 1 から振り直す。
+    """Renumber the Hy gensym names in the expansion tree (identifiers and string constants) from 1, in order of count within the file.
 
-    gensym の数えは process に 1 つなので、同じ source でも、同じ process で先に何を展開したか・並べた時にどの process で
-    展開したかで名が変わり、保存の中身が実行の仕方に依っていた。振り直しの規則は、テストの実行の側の code の正準化と同じ
-    1 つ(doeff_hy_bytecode_guard.gensym_renaming)。替え方は 1 対 1 なので、名の一意性は保たれる。木はこの展開だけの物
-    なので、その場で替える。"""
+    The gensym counter is one per process, so even for the same source the names changed depending on what was expanded first in the same process, or on which process
+    expanded it when run in parallel, and the stored content depended on how the run was done. The renumbering rule is the same single one as the canonicalization of code on the test-run side
+    (doeff_hy_bytecode_guard.gensym_renaming). The replacement is one to one, so name uniqueness is preserved. The tree belongs to this expansion alone,
+    so it is replaced in place."""
     nodes = tuple(ast.walk(tree))
     rename = gensym_renaming(
         text for node in nodes for _, value in ast.iter_fields(node) for text in _field_texts(value)
@@ -553,7 +552,7 @@ def with_canonical_gensyms(tree: ast.Module) -> ast.Module:
 
 
 def _field_texts(value: object) -> tuple[str, ...]:
-    """AST の欄 1 つの文字列(識別子・文字列の定数・global / nonlocal の名の列)。"""
+    """One string in an AST field (an identifier, a string constant, or the list of names of global / nonlocal)."""
     match value:
         case str():
             return (value,)
@@ -564,15 +563,14 @@ def _field_texts(value: object) -> tuple[str, ...]:
 
 
 def without_bookkeeping(tree: ast.Module) -> ast.Module:
-    """型検査のための展開から、型の意味を持たない記帳を外す(pyright strict の誤検出の元を展開の側で絶つ)。
+    """From the type-checking expansion, remove the bookkeeping that carries no type meaning (cutting off at the expansion side the source of pyright strict's false positives).
 
-    - 定義の記帳と `hy.macros.require` の残り(_bookkeeping_statement)を外す。ただし宣言 :effects の記帳は、名を読む形に
-      縮めて残す(_effects_reads — 宣言にだけ出る効果の名の import を、読まれない import にしない)。
-    - module の直下で macro が定義ごとに出す import の文(doeff-hy の module と `_doeff_` の別名で束ねる module —
-      _synthesized_import)が繰り返されたら最初の 1 つだけを残す。
-    - 記帳だけが使う module(BOOKKEEPING_MODULES)の import の名(1 つの文に並んだ名も 1 つずつ)と Hy の `import hy` で、
-      もう読まれない物を外す。
-    消費 repo の利用者が書いた式は外さない(外すのは macro が合成した文の形だけ)。"""
+    - Remove the definition bookkeeping and what is left of `hy.macros.require` (_bookkeeping_statement). However, the :effects declaration bookkeeping is shrunk into a form that reads the names
+      and kept (_effects_reads — so that an import of an effect name appearing only in the declaration does not become an unread import).
+    - If the import statements that macros emit per definition directly under a module (doeff-hy modules, and modules bound under a `_doeff_` alias —
+      _synthesized_import) repeat, keep only the first.
+    - Remove names no longer read from imports of bookkeeping-only modules (BOOKKEEPING_MODULES) (names listed in one statement are handled one by one) and from Hy's `import hy`.
+    Expressions the consuming repo's user wrote are not removed (only the statement shapes a macro synthesized are)."""
     kept = [
         reads if (reads := _effects_reads(statement)) is not None else statement
         for statement in tree.body
@@ -596,8 +594,8 @@ def without_bookkeeping(tree: ast.Module) -> ast.Module:
 
 
 def _unused_hy_import(statement: ast.stmt, used: frozenset[str]) -> bool:
-    """Hy の compiler が module ごとに置く `import hy` で、記帳を外した後に読まれなくなった物か
-    (`hy.macros.require` の残りだけが読んでいた — strict の reportUnusedImport の元)。"""
+    """Is this the `import hy` that Hy's compiler places in each module, which is no longer read after the bookkeeping is removed
+    (only what was left of `hy.macros.require` read it — the source of a strict reportUnusedImport)."""
     match statement:
         case ast.Import(names=[ast.alias(name="hy", asname=None)]):
             return "hy" not in used
@@ -606,13 +604,13 @@ def _unused_hy_import(statement: ast.stmt, used: frozenset[str]) -> bool:
 
 
 def with_static_helpers(tree: ast.Module) -> ast.Module:
-    """静的な展開の macro が参照する補助の名の import を、module の頭(`from __future__` の後)に 1 度だけ置く。
+    """Place the imports of the helper names that statically-expanded macros refer to once at the head of the module (after `from __future__`).
 
-    macro は静的な展開では defk / defhandler / `<-` ごとの import を出さない(static_view.STATIC_HELPER_IMPORTS の註 —
-    1 つの名の宣言が 64 を超えると pyright が型の推論をやめる)。置く文は Hy の source に無いので位置を持たせない
-    (_span が組にしない — 補助の import に赤は出ない)。module が読む補助の名だけを置く(strict の
-    reportUnusedImport を出さないため)。`hy.models`(Hy の keyword の literal が compile される先)を読む module には
-    `import hy.models` を足す(`import hy` だけでは pyright が属性 models を知らない)。"""
+    In static expansion, macros do not emit an import per defk / defhandler / `<-` (see the note on static_view.STATIC_HELPER_IMPORTS —
+    when the declarations of one name exceed 64, pyright stops type inference). The statements placed are not in the Hy source, so they get no position
+    (_span does not pair them — no red appears on a helper import). Only the helper names the module reads are placed (so as not to produce strict
+    reportUnusedImport). For a module that reads `hy.models` (where Hy keyword literals are compiled to), add
+    `import hy.models` (with `import hy` alone, pyright does not know the attribute models)."""
     used = _referenced_roots(tree.body)
     reads_models = any(
         isinstance(node, ast.Attribute)
@@ -644,9 +642,9 @@ def with_static_helpers(tree: ast.Module) -> ast.Module:
 
 
 def _only_used(statement: ast.stmt, used: frozenset[str]) -> ast.stmt | None:
-    """補助の import の文から、module が読む名だけを残す(1 つも読まなければ文ごと要らない = None)。
-    `import pytest as _doeff_pytest`(deftest の decorator が引く)も読む時だけ置く。`import hy.models` は `hy` を
-    束縛し、読む時だけ置く呼び手が足すので、この判じでも残る。"""
+    """From the helper import statements, keep only the names the module reads (if none is read, the whole statement is unneeded = None).
+    `import pytest as _doeff_pytest` (which the deftest decorator draws on) is also placed only when read. `import hy.models` binds `hy`, and
+    since the caller adds it only when read, it is kept by this test as well."""
     match statement:
         case ast.ImportFrom(module=module, names=names, level=level):
             kept = [alias for alias in names if _bound_name(alias) in used]
@@ -659,7 +657,7 @@ def _only_used(statement: ast.stmt, used: frozenset[str]) -> ast.stmt | None:
 
 
 def _parses(statement: ast.stmt) -> bool:
-    """文 1 つを字面に戻して、Python の文法で読み直せるか。"""
+    """Turn one statement back into text: can it be re-read with Python's grammar?"""
     try:
         ast.parse(ast.unparse(statement))
     except SyntaxError:
@@ -668,9 +666,9 @@ def _parses(statement: ast.stmt) -> bool:
 
 
 def _nested_statements(node: ast.AST) -> list[ast.stmt]:
-    """node の直下の文(本体・else・finally・except と case の節の本体 — 入れ子の文の中へは入らない)。"""
+    """The statements directly under node (body, else, finally, except and case clause bodies — nested statements are not entered)."""
     def own(child: ast.AST) -> list[ast.stmt]:
-        """子 1 つが node の直下に持ち込む文(節は中の本体へ降りる・式は文を持たない)。"""
+        """The statements that one child brings directly under node (a clause descends into its body; an expression holds no statement)."""
         match child:
             case ast.stmt():
                 return [child]
@@ -683,7 +681,7 @@ def _nested_statements(node: ast.AST) -> list[ast.stmt]:
 
 
 def _unparsable_statement(statements: list[ast.stmt]) -> ast.stmt | None:
-    """字面に戻すと読み直せない一番奥の文(statements のどれも読み直せれば None)。"""
+    """The innermost statement that cannot be re-read when turned back into text (None if all of statements can be re-read)."""
     for statement in statements:
         if not _parses(statement):
             return _unparsable_statement(_nested_statements(statement)) or statement
@@ -691,7 +689,7 @@ def _unparsable_statement(statements: list[ast.stmt]) -> ast.stmt | None:
 
 
 def _unparsable_position(statements: list[ast.stmt]) -> HyPosition:
-    """展開が文法に合わない時に、診断が指す Hy の位置: 読み直せない一番奥の文の位置(見つからなければ file の頭)。"""
+    """The Hy position a diagnostic points at when the expansion does not fit the grammar: the position of the innermost statement that cannot be re-read (the head of the file if none is found)."""
     culprit = _unparsable_statement(statements)
     if culprit is None:
         return HyPosition(1, 1)
@@ -699,16 +697,16 @@ def _unparsable_position(statements: list[ast.stmt]) -> HyPosition:
 
 
 def project(root: Path, roots: list[Path], source: Path) -> Projection | CompileFailure:
-    """1 つの .hy を型検査のための展開で Python にし、位置の対応表を作る。"""
+    """Turn one .hy into Python by the type-checking expansion, and build the position correspondence table."""
     text = source.read_text(encoding="utf-8")
     name = module_name(roots, source)
     module = ModuleType(name)
     module.__file__ = str(source)
     relative = str(source.relative_to(root))
-    # source は Hy の reader で 1 度だけ読む。compile は前の form を処理してから次の form を読む(file の中で
-    # 定義した reader macro を後ろの form に効かせるため)ので、先に全部を読まず、compile が form を 1 つ読むたびに同じ form を
-    # 一番外の setv の所見(ModuleScope)に見せる(form を最後まで抱えない)。以前は所見のために新しい reader で読み直し、展開の
-    # 約 2 割を払い、file の中の reader macro を知らずに落ちていた。
+    # Read the source with the Hy reader exactly once. compile processes the previous form before reading the next (so a reader macro
+    # defined in the file takes effect on later forms), so we do not read everything first; each time compile reads one form we show the same form to the
+    # findings of the outermost setv (ModuleScope), so no form is held to the end. Previously the findings re-read with a fresh reader, paying
+    # about 20% of the expansion, and failed without knowing the reader macros in the file.
     forms = hy.read_many(text, filename=str(source))
     scope = ModuleScope()
     lazy = hy.models.Lazy(_shown_to(scope, forms))
@@ -716,9 +714,9 @@ def project(root: Path, roots: list[Path], source: Path) -> Projection | Compile
     try:
         with static_view(), collect_findings() as found, macro_recording(module) as recording:
             compiled = hy_compile(lazy, module, filename=str(source), source=text)
-        # hy_compile は get_expr=True の時だけ (Module, Expression) の組を返す。
+        # hy_compile returns a (Module, Expression) pair only when get_expr=True.
         if not isinstance(compiled, ast.Module):
-            raise TypeError(f"hy_compile が module を返さなかった: {type(compiled).__name__}")
+            raise TypeError(f"hy_compile did not return a module: {type(compiled).__name__}")
         tree = with_canonical_gensyms(
             with_static_helpers(without_bookkeeping(with_module_level_imports(compiled)))
         )
@@ -729,27 +727,27 @@ def project(root: Path, roots: list[Path], source: Path) -> Projection | Compile
         return CompileFailure(
             source, Diagnostic(relative, line, column, "error", "hy-compile", message)
         )
-    except Exception as error:  # macro の外の後処理の失敗も 1 本の file の失敗にする — 子の process から抜けて検査全体を落とさない
+    except Exception as error:  # a failure in post-processing outside macros also counts as the failure of one file — get out of the child process without taking down the whole check
         return CompileFailure(
             source,
-            Diagnostic(relative, 1, 1, "error", "hy-expansion", f"展開に失敗した: {type(error).__name__}: {error}"),
+            Diagnostic(relative, 1, 1, "error", "hy-expansion", f"expansion failed: {type(error).__name__}: {error}"),
         )
     rendered = ast.unparse(tree)
     try:
         reparsed = ast.parse(rendered)
     except SyntaxError as error:
-        # Hy が Python の文法に無い木を出した(match の型の pattern の欄の名を Hy が mangle しない `case A(b-c=x)` など)。
-        # 以前は SyntaxError が子の process から抜けて repo 全体の検査を落とした。
+        # Hy emitted a tree that Python's grammar does not allow (e.g. `case A(b-c=x)`, where Hy does not mangle the name of a match type pattern field). 
+        # Previously the SyntaxError escaped from the child process and took down the check of the whole repo.
         at = _unparsable_position(tree.body)
         return CompileFailure(
             source,
             Diagnostic(
-                relative, at.line, at.column, "error", "hy-expansion", f"展開した Python が文法に合わない: {error.msg}"
+                relative, at.line, at.column, "error", "hy-expansion", f"the expanded Python is not valid syntax: {error.msg}"
             ),
         )
-    # 位置の対応は詰めた配列で持つ(展開の子から親へ送る pickle も、親が pyright の間に抱えるのも配列 1 つ — PackedSpans)。
+    # Position correspondences are held in packed arrays (the pickle sent from the expansion child to the parent, and what the parent holds during pyright, are each one array — PackedSpans).
     spans = PackedSpans.of(span for pair in _child_pairs(reparsed, tree) if (span := _span(*pair)) is not None)
-    # module の直下の setv は macro の外なので、source の一番外の並びを別に見る(ADR-DOE-HY-006)— compile と並んで見た所見。
+    # A setv directly under a module is outside macros, so look at the outermost sequence of the source separately (ADR-DOE-HY-006) — findings seen alongside compile.
     top_level = scope.findings
     return Projection(
         source,
@@ -763,28 +761,28 @@ def project(root: Path, roots: list[Path], source: Path) -> Projection | Compile
     )
 
 
-#: 展開の結果を変える macro の外の処理(関数・class の本体の import の module の段への移し・記帳の外し・補助の import の足し・gensym の名の振り直し・位置の対応・所見)の入口 —
-#: 型検査の展開の保存(static_cache)の記録は、この値の閉包の digest で後処理の変更を見る(``project`` が呼ぶ関数を名で辿る)。
-#: module の属性の ``project`` ではなく、定義した時の関数を持つ(検が ``project`` を差し替えても、記録は変わらない)。
+#: The entry point of the processing outside macros that changes the expansion result (moving imports in function and class bodies to module level, removing bookkeeping, adding helper imports, renumbering gensym names, position correspondence, findings) —
+#: the record in the type-check expansion store (static_cache) sees changes in post-processing through the digest of this value's closure (following the functions that ``project`` calls, by name).
+#: It holds the function as defined, not the module attribute ``project`` (so even if a check swaps ``project``, the record does not change).
 POST_PROCESSING = (project,)
 
-#: 記録が POST_PROCESSING を名指す module の名 — import で引ける名(``__spec__.name``)。``python -m doeff_hy._static_check`` で撃つと
-#: この file は親で ``__main__``・展開の子で ``__mp_main__`` の名で読まれ、``__name__`` で名指すと、子の記録(``__mp_main__`` の
-#: ``project`` を辿った digest)と次の実行の親の照らし(``__main__`` の ``project`` を辿った digest)が持ち主の名の違う関数を辿って
-#: 合わず、保存した展開を 1 つも引けなかった。引ける名なら、親も子もその名で import した
-#: 同じ file を辿る。
+#: The module name by which the record names POST_PROCESSING — a name that can be resolved by import (``__spec__.name``). When launched with ``python -m doeff_hy._static_check``,
+#: this file is read as ``__main__`` in the parent and as ``__mp_main__`` in the expansion child; naming it by ``__name__`` made the child's record (the digest following
+#: ``project`` in ``__mp_main__``) and the parent's check in the next run (the digest following ``project`` in ``__main__``) follow functions under different owner names and
+#: not match, so not one stored expansion could be read back. With a name that can be resolved by import, parent and child follow
+#: the same file under that name.
 _POST_PROCESSING_MODULE = __spec__.name if __spec__ is not None else __name__
 
 
 def _shown_to(scope: ModuleScope, forms: Iterable[Object]) -> Iterator[Object]:
-    """forms を 1 つずつ渡しながら、渡す前に同じ form を scope に見せる(compile と所見が 1 度の読みを分け合うため)。"""
+    """Hand over forms one at a time, showing each form to the scope before handing it over (so compile and the findings share a single read)."""
     for form in forms:
         scope.visit(form)
         yield form
 
 
 def _finding_diagnostic(relative: str, finding: Finding) -> Diagnostic:
-    """macro の所見(binding_forms.Finding)を、この道具の診断の形にする(赤か警告か・規則の名・文言)。"""
+    """Turn a macro finding (binding_forms.Finding) into this tool's diagnostic (red or warning, rule name, wording)."""
     return Diagnostic(
         relative,
         max(finding.line, 1),
@@ -797,7 +795,7 @@ def _finding_diagnostic(relative: str, finding: Finding) -> Diagnostic:
 
 @dataclass(frozen=True)
 class _Listing:
-    """dir の直下の file の名と dir の名(dir が無い・読めない時は両方空 — Path.is_file と同じく、無い物は file でない)。"""
+    """The names of the files directly under dir and the names of the dirs (both empty if the dir is missing or unreadable — as with Path.is_file, what is missing is not a file)."""
 
     files: frozenset[str]
     dirs: frozenset[str]
@@ -818,8 +816,8 @@ def _listing(directory: Path) -> _Listing:
 def _present_candidates(
     dirs: tuple[Path, ...], name: str, listing: Callable[[Path], _Listing]
 ) -> tuple[Path, ...]:
-    """import の名 name の候補(<名>.hy と <名>/__init__.hy)のうち、実在する file の絶対 path。dir を 1 つずつ下りて、無い dir から
-    先は引かない(候補ごとに stat しない・同じ dir の一覧は呼び手の覚えが 1 度だけ引く)。"""
+    """The absolute path of the candidate files that actually exist among the candidates for import name `name` (<name>.hy and <name>/__init__.hy). Descend one dir at a time, and do not
+    look past a dir that does not exist (no stat per candidate; the listing of the same dir is fetched once by the caller's memo)."""
     *packages, leaf = name.split(".")
     present: list[Path] = []
     for directory in dirs:
@@ -838,24 +836,24 @@ def _present_candidates(
 
 
 def search_dirs(root: Path, roots: list[Path], source: Path) -> list[Path]:
-    """source が書く絶対の import の .hy を探す dir を、探す順に並べる(依存の展開の探し道の 1 か所)。
+    """The dirs in which to look for the .hy of an absolute import that the source writes, in search order (the one place for the search path of dependency expansion).
 
-    import の根(import_roots — repo の根と extraPaths)の後に、source の dir から根まで親を辿った dir を置く。pyright は
-    絶対の import を根・extraPaths・標準ライブラリ・環境で解けない時、import する file の dir から根へ向けて親の dir を順に
-    探す(`hy scripts/x.hy` で撃つ script の隣の module `(import e2e_wire …)` がこれで解ける)。前は import の根だけを探したので、
-    1 file だけを検めると隣の .hy が展開されず、pyright が import を解けなかった(reportMissingImports と、そこから来る
-    Unknown の赤)。dir ごと検めると隣の .hy も検める file として展開されるので解けていた — 同じ file の答えが検め方で
-    分かれた。
+    After the import roots (import_roots — the repo root and extraPaths), place the dirs reached by walking up from the source's dir to the root. When pyright cannot resolve an
+    absolute import via the root, extraPaths, the standard library, or the environment, it searches the parent dirs in order from the importing file's dir toward the root
+    (`(import e2e_wire …)` of a module next to a script run as `hy scripts/x.hy` is resolved this way). Previously only the import roots were searched, so
+    when checking a single file the neighboring .hy was not expanded, and pyright could not resolve the import (reportMissingImports, and the
+    Unknown reds that follow). When a whole dir was checked, the neighboring .hy was expanded as a file to be checked, so it resolved — the answer for the same file
+    differed depending on how it was checked.
 
-    展開は在る候補を全部集める(先の dir で当たっても後の dir を探す)。pyright が読まない展開(標準ライブラリと同じ名の
-    隣の .hy など — pyright は標準ライブラリを先に解く)は余分な展開になるだけで、検める file の赤を変えない
-    (dir ごと検める時もその .hy は展開されて木に在る)。"""
+    Expansion collects every candidate that exists (it keeps searching later dirs even after a hit in an earlier one). An expansion pyright does not read (a neighboring .hy with the same name as a standard
+    library module, for example — pyright resolves the standard library first) is merely an extra expansion and does not change the reds of the checked file
+    (when a whole dir is checked, that .hy is expanded and in the tree as well)."""
     local = [d for d in (source.parent, *source.parent.parents) if d.is_relative_to(root)]
     return list(dict.fromkeys([*roots, *local]))
 
 
 def import_roots(root: Path, settings: dict[str, object]) -> list[Path]:
-    """import の根 = repo の根 + pyright の設定の extraPaths のうち根の下の物。"""
+    """Import roots = the repo root + those of pyright's extraPaths that are under the root."""
     roots = [root]
     extra = settings.get("extraPaths")
     for entry in extra if isinstance(extra, list) else []:
@@ -891,7 +889,7 @@ def imported_modules(projection: Projection) -> set[str]:
 
 
 def _from_cache(source: Path, module: str, cached: CachedProjection) -> Projection:
-    """保存した展開を、この実行の Projection に戻す(展開し直さずに済ませるため)。"""
+    """Turn a stored expansion back into this run's Projection (to avoid expanding again)."""
     return Projection(
         source,
         module,
@@ -906,7 +904,7 @@ def _from_cache(source: Path, module: str, cached: CachedProjection) -> Projecti
 
 
 def _to_cache(projection: Projection) -> CachedProjection:
-    """展開の結果を保存の形にする(次の実行で依存を展開し直さないため)。"""
+    """Turn the expansion result into the stored form (so the next run does not expand the dependency again)."""
     return CachedProjection(
         projection.text,
         projection.spans,
@@ -919,26 +917,26 @@ def _to_cache(projection: Projection) -> CachedProjection:
     )
 
 
-#: 保存から引けない依存の展開を並べる子の process の数 — 機体の検の枠の宣言が持つ(正本の公開の口 process_width が答え、
-#: SlotHeld.width で届く)。この定数は宣言が届かない機体(正本の無い宿・古い正本・宣言を読めない時)の既定で、値の持ち主ではない。
-#: 実際の数は min(この数, この process が使える CPU の数, その段の引けない file の数)。
-#: 4(2026-10-11): 36 core の機体で同じ作業木の検査 2 本と別の検 4 本が重なり load 163 になった(展開の子と forkserver で 30 本超)。
-#: 環境変数で替える口は持たない — 口が在ると、値を替えた会話の検だけが別の数で数え、枠の数え方が割れる(正本の頭の註)。
+#: The number of child processes that run the expansion of dependencies not found in the store — held by the declaration of the host check slot (the authoritative public entry process_width answers it,
+#: and it arrives through SlotHeld.width). This constant is the default for hosts where the declaration does not arrive (a host with no authoritative source, an old source, a declaration that cannot be read), not the owner of the value.
+#: The actual number is min(this number, the number of CPUs this process can use, the number of unfound files in that stage).
+#: 4 (2026-10-11): on a 36-core host, 2 checks on the same working tree and 4 other checks overlapped and the load reached 163 (over 30 expansion children and forkservers).
+#: There is no environment variable to change it — with one, only the check of a conversation that changed the value would count with a different number, and the way of counting slots would split (see the note at the head of the authoritative source).
 EXPANDER_LIMIT = 4
 
 
 def expander_limit(declared: int | None) -> int:
-    """展開の子の数の上限を決める(declared = 枠の正本が答えた 1 枠の中の並走の数・届かなければ None で EXPANDER_LIMIT)。"""
+    """Decide the upper bound on the number of expansion children (declared = the number of parallel runs within one slot that the slot's authoritative source answered; if it did not arrive, None gives EXPANDER_LIMIT)."""
     return EXPANDER_LIMIT if declared is None else declared
 
 
 class ExpansionWorkerLostError(RuntimeError):
-    """依存の展開を受け持った子の process が、答えを返さずに落ちた(答えの無い file を名指す — main は道具の失敗 exit 2 にする)。"""
+    """The child process in charge of dependency expansion crashed without returning an answer (names the files with no answer — main turns this into a tool failure, exit 2)."""
 
 
 @dataclass(frozen=True)
 class _Hit:
-    """保存から引けた展開と、それが import する module の名と、束に書く行。"""
+    """An expansion found in the store, the names of the modules it imports, and the line to write into the bundle."""
 
     projection: Projection
     imports: frozenset[str]
@@ -948,7 +946,7 @@ class _Hit:
 
 @dataclass(frozen=True)
 class _Miss:
-    """保存から引けなかった source と、展開した後に保存する鍵(保存しない実行では None)・束の行に要る物。"""
+    """A source not found in the store, the key under which to store it after expansion (None in a run that does not store), and what the bundle line needs."""
 
     source: Path
     key: str | None
@@ -964,13 +962,13 @@ def _looked_up(
     cache_dir: Path | None,
     bundle: dict[str, BundleRow] | None = None,
 ) -> _Hit | _Miss:
-    """保存から引く(引けなければ、展開した後に保存する鍵を持った _Miss)。束に載る行は、source の stat が書いた時と同じなら
-    source も entry も open せずに引く。"""
+    """Look it up in the store (if not found, a _Miss holding the key under which to store after expansion). A line in the bundle is looked up without opening
+    the source or the entry if the source's stat is the same as when it was written."""
     if cache_dir is None:
         return _Miss(source, None)
     module = module_name(roots, source)
     relative = str(source.relative_to(root))
-    stat = stat_of(source)  # 読む前に取る(読む間に変わっても、次の実行は食い違いとして読み直す)
+    stat = stat_of(source)  # taken before reading (even if it changes while reading, the next run reads it again as a mismatch)
     row = (bundle or {}).get(relative)
     if row is not None and row_is_current(row, module, stat):
         return _hit(source, relative, module, row.cached, row.place, stat)
@@ -980,7 +978,7 @@ def _looked_up(
     match load(cache_dir, key):
         case CachedProjection() as cached:
             if cached.imports is None:
-                # import の名を持たない古い entry — 一度読んで書き足し、次の実行から展開の text を読み直さない。
+                # An old entry that holds no import names — read it once and write them in, so later runs do not re-read the expansion text.
                 cached = _to_cache(_from_cache(source, module, cached))
                 store(cache_dir, key, cached)
             return _hit(source, relative, module, cached, key, stat)
@@ -1000,8 +998,8 @@ def _hit(
 
 
 def _kept(cache_dir: Path | None, miss: _Miss, result: Projection | CompileFailure) -> BundleRow | None:
-    """展開した結果を保存する(保存の書きはこの 1 か所 — 子の process は書かない)。展開に失敗した source は保存しない
-    (直した時に作り直す・失敗の文言は展開の度に出す)。保存した展開の束の行を返す。"""
+    """Store the expansion result (this is the single place that writes to the store — child processes do not write). A source whose expansion failed is not stored
+    (it is rebuilt once fixed; the failure message is shown on every expansion). Return the bundle line for the stored expansion."""
     if cache_dir is not None and miss.key is not None and isinstance(result, Projection):
         cached = _to_cache(result)
         store(cache_dir, miss.key, cached)
@@ -1012,7 +1010,7 @@ def _kept(cache_dir: Path | None, miss: _Miss, result: Projection | CompileFailu
 def project_cached(
     root: Path, roots: list[Path], source: Path, cache_dir: Path | None
 ) -> Projection | CompileFailure:
-    """展開の cache(static_cache)を引き、無ければ展開して保存する。cache_dir が None なら毎回展開する。"""
+    """Look in the expansion cache (static_cache), and if it is missing, expand and store. If cache_dir is None, expand every time."""
     match _looked_up(root, roots, source, cache_dir):
         case _Hit(projection=projection):
             return projection
@@ -1023,21 +1021,21 @@ def project_cached(
 
 
 def _project_in_child(root: Path, roots: list[Path], source: Path) -> Projection | CompileFailure:
-    """子の process で 1 つの source を展開する(pool に渡す関数 — module の直下に置き、子が import で引けるようにする)。"""
+    """Expand one source in a child process (a function handed to the pool — placed directly under the module so that the child can find it by import)."""
     return project(root, roots, source)
 
 
 def _start_pool(workers: int) -> ProcessPoolExecutor:
-    """依存の展開を並べる子の process の pool を起こす(forkserver — 親の thread を写さない)。"""
+    """Start the pool of child processes that run dependency expansion (forkserver — does not copy the parent's threads)."""
     return ProcessPoolExecutor(max_workers=workers, mp_context=multiprocessing.get_context("forkserver"))
 
 
 class _Expanders:
-    """保存から引けない依存の展開を受け持つ。引けない file が 2 つ以上の段だけ子の process の pool に並べ、pool は初めて要る時に
-    起こして、1 回の実行の中で段をまたいで使い回す(全部引ける実行では起こさない — 保存が効く時の秒を増やさない)。"""
+    """Take charge of expanding dependencies not found in the store. Only in a stage with two or more unfound files are they run in parallel in the child process pool, and the pool is
+    started the first time it is needed and reused across stages within one run (not started in a run where everything is found — so as not to add seconds when the store is effective)."""
 
     def __init__(self, limit: int) -> None:
-        # os.process_cpu_count(この process が使える CPU の数)は Python 3.13 から。3.12 までは機体の CPU の数で代える。
+        # os.process_cpu_count (the number of CPUs this process can use) exists from Python 3.13. Up to 3.12, substitute the host's CPU count.
         cpus = os.process_cpu_count() if sys.version_info >= (3, 13) else os.cpu_count()
         self._workers = max(1, min(limit, cpus or 1))
         self._mut_pool: ProcessPoolExecutor | None = None
@@ -1052,7 +1050,7 @@ class _Expanders:
     def expanded(
         self, root: Path, roots: list[Path], sources: list[Path]
     ) -> dict[Path, Projection | CompileFailure]:
-        """sources を展開する(1 つか、並べる子が 1 つなら親で順に)。子が落ちたら答えの無い file を名指して止める。"""
+        """Expand sources (one, or if there is only one child to run in parallel, in order in the parent). If a child crashes, name the files with no answer and stop."""
         if len(sources) < 2 or self._workers < 2:
             return {source: project(root, roots, source) for source in sources}
         if self._mut_pool is None:
@@ -1064,7 +1062,7 @@ class _Expanders:
         except BrokenProcessPool as error:
             unanswered = sorted(str(s) for s, f in futures.items() if not f.done() or f.exception() is not None)
             raise ExpansionWorkerLostError(
-                "依存の展開を受け持った子の process が答えを返さずに落ちた: " + ", ".join(unanswered)
+                "A child process in charge of dependency expansion crashed without returning an answer: " + ", ".join(unanswered)
             ) from error
 
 
@@ -1075,24 +1073,24 @@ def project_closure(
     cache_dir: Path | None,
     limit: int,
 ) -> Closure:
-    """検める file と、それが import する根の下の .hy を全部展開する(cache_dir があれば変わらない物は引く)。
+    """Expand the checked files and all the .hy under the root that they import (if cache_dir is set, unchanged ones are read from it).
 
-    import を段ごとに辿る: 段の中の file は互いの展開を使わないので、保存から引ける file は親で引き、
-    引けない file はまとめて _Expanders に渡す(limit = 並べる子の process の数の上限・1 なら親で順に・既定は無い —
-    呼び手が expander_limit(枠の正本が答えた数)で決める)。"""
+    Follow imports stage by stage: files within a stage do not use each other's expansion, so those found in the store are read in the parent, and
+    those not found are handed together to _Expanders (limit = the upper bound on the number of parallel child processes; 1 means in order in the parent; there is no default —
+    the caller decides it with expander_limit (the number the slot's authoritative source answered))."""
     projections: dict[Path, Projection] = {}
     failures: list[CompileFailure] = []
-    # 候補の path の有無は、実行の間に変わらない物として dir ごとに 1 度だけ引く(候補ごとに stat すると、10 file の検めで 10 万回になった)。
+    # Whether a candidate path exists is looked up once per dir, as something that does not change during a run (stat-ing per candidate came to 100,000 times when checking 10 files).
     listing = functools.cache(_listing)
     resolved = functools.cache(_present_candidates)
     seen: set[Path] = set(targets)
     wave = list(dict.fromkeys(targets))
-    # closure 全体を 1 file に束ねた保存(温まった実行は束 1 つだけ読む)。束の行で引けない file は今までの引き方で引く。
+    # A store that bundles the whole closure into one file (a warm run reads just one bundle). Files that cannot be found via a bundle line are looked up the usual way.
     bundle_name = bundle_key(root, [str(t.relative_to(root)) for t in wave]) if cache_dir is not None else ""
     bundle = load_bundle(cache_dir, bundle_name) if cache_dir is not None else {}
     rows: dict[str, BundleRow] = {}
-    # 展開の cache の「今の環境に合うか」の照らしは、file の状態を実行の間 1 度だけ stat する(照らしごとに覚えを捨てると、
-    # 10 file の検めで stat が 10 万回・CPU 10 秒になった)。
+    # The expansion cache's check of "does it match the current environment" stats the state of files once per run (discarding the memo on every check
+    # came to 100,000 stats and 10 seconds of CPU when checking 10 files).
     with SharedScope(), _Expanders(limit) as expanders:
         while wave:
             looked = {source: _looked_up(root, roots, source, cache_dir, bundle) for source in wave}
@@ -1111,7 +1109,7 @@ def project_closure(
                     failures.append(result)
                     continue
                 projections[source] = result
-                # import の .hy は import の根と、import する file の dir から根までの親で探す(pyright の探し方 — search_dirs)。
+                # The import's .hy is searched for in the import roots and in the parents from the importing file's dir to the root (pyright's search — search_dirs).
                 dirs = tuple(search_dirs(root, roots, source))
                 for name in imports if imports is not None else imported_modules(result):
                     for absolute in resolved(dirs, name, listing):
@@ -1132,7 +1130,7 @@ def _link_children(source: Path, target: Path) -> None:
 
 
 def _real_dir(root: Path, stage: Path, relative: Path) -> Path:
-    """stage の中で relative の親 dir までを symlink でない実 dir にする(中身は symlink で映す)。"""
+    """Within stage, make the dirs up to relative's parent real dirs, not symlinks (their contents are mirrored with symlinks)."""
     current, original = stage, root
     for part in relative.parts[:-1]:
         current, original = current / part, original / part
@@ -1150,7 +1148,7 @@ def pyright_settings(root: Path) -> dict[str, object]:
         if isinstance(loaded, dict):
             settings = {str(k): v for k, v in loaded.items()}
     elif (root / "pyproject.toml").is_file() and sys.version_info >= (3, 11):
-        import tomllib  # Python 3.11 から。3.10 では pyproject の [tool.pyright] を読まない
+        import tomllib  # Python 3.11 and later. On 3.10, [tool.pyright] in pyproject is not read
 
         table = tomllib.loads((root / "pyproject.toml").read_text(encoding="utf-8"))
         tool = table.get("tool")
@@ -1173,9 +1171,9 @@ def _utf16_to_index(line: str, units: int) -> int:
 
 @dataclass(frozen=True)
 class SpanIndex:
-    """1 つの展開の位置の索引 — 診断ごとに全文を行へ割り直し、全部の範囲を頭から調べ直さないため(
-    赤が 1,402 件の file で locate が 26 秒)。lines = 展開した Python の行・covering = 行の番号 → その行に掛かる範囲の
-    番号(projection.spans の元の順)。範囲は始まりの行から終わりの行まで(終わりの行も含む)の全部の行に載る。"""
+    """The position index of one expansion — so as not to re-split the whole text into lines per diagnostic and re-scan all ranges from the top (
+    locate took 26 seconds on a file with 1,402 reds). lines = the lines of the expanded Python; covering = line number -> the numbers of the ranges that cover that line
+    (in projection.spans' original order). A range is listed on every line from its starting line to its ending line (the ending line included)."""
 
     spans: Sequence[Span]
     lines: tuple[str, ...]
@@ -1183,9 +1181,9 @@ class SpanIndex:
 
 
 def span_index(projection: Projection) -> SpanIndex:
-    """展開 1 つの位置の索引を 1 度だけ作る(locate を同じ展開の診断の数だけ呼ぶため)。"""
+    """Build the position index of one expansion exactly once (so that locate is called as many times as that expansion has diagnostics)."""
     rows = max((span.end[0] for span in projection.spans), default=-1) + 1
-    # (行, 範囲の番号) の組を行・番号の順に並べ、行ごとにまとめる(番号の順 = projection.spans の元の順)。
+    # Sort the (line, range number) pairs by line and number, and group by line (number order = projection.spans' original order).
     pairs = sorted(
         (row, number)
         for number, span in enumerate(projection.spans)
@@ -1203,10 +1201,10 @@ def span_index(projection: Projection) -> SpanIndex:
 
 
 def locate(index: SpanIndex, line: int, character: int) -> HyPosition:
-    """展開した Python の位置(0 始まり)を、それを含む一番内側の node の Hy の位置へ。
+    """Map a position (0-based) in the expanded Python to the Hy position of the innermost node containing it.
 
-    点を含む範囲はどれも点の行に掛かるので、その行に掛かる範囲だけを元の順で調べる(含まない範囲は元から選ばれないので、
-    答えは全部の範囲を調べた時と同じ)。"""
+    Every range that contains the point covers the point's line, so examine only the ranges covering that line in the original order (ranges that do not contain it are never chosen anyway, so
+    the answer is the same as examining all ranges)."""
     lines = index.lines
     column = _utf16_to_index(lines[line], character) if line < len(lines) else character
     point = (line, column)
@@ -1223,47 +1221,47 @@ def locate(index: SpanIndex, line: int, character: int) -> HyPosition:
 
 
 def python_without_bytecode(directory: Path, python: str) -> Path:
-    """pyright が検索 path を問うために起こす python が .pyc を書かないようにするため: python を `-B`(PYTHON* の環境変数を読まない
-    起こし方の下でも効く)で起こす包みを directory に置く。pyright は呼び手の PYTHONDONTWRITEBYTECODE を効かせない形で起こすので、
-    包まないと site の起動で .pth が読む module の .pyc を checkout へ書く(日次 2026-10-11 16:00 の doeff)。"""
+    """So that the python pyright launches to ask for the search path does not write .pyc: place in the directory a wrapper that launches python with `-B` (effective even under
+    a launch that does not read the PYTHON* environment variables). pyright launches it in a way that ignores the caller's PYTHONDONTWRITEBYTECODE, so
+    without the wrapper, the site startup writes the .pyc of modules the .pth reads into the checkout (the daily 2026-10-11 16:00 run of doeff)."""
     wrapper = directory / "python-without-bytecode"
     wrapper.write_text(f'#!/bin/sh\nexec {shlex.quote(python)} -B "$@"\n', encoding="utf-8")
     wrapper.chmod(0o755)
     return wrapper
 
 
-#: pyright の thread の数(pyright の --threads — 検める file を子の process に分けて並べる)の既定。1 = --threads を渡さない
-#: (1 本の pyright)。日次の型の測り(agora-controllers の hy-type-trend・.hy 2,551 本)は 1 本で約 2,250 秒かかり、処理ステージの
-#: 上限に収まらなかった(10-12 12:00 JST の回)。子 1 本ごとに検める file の import 先を別に読むので、CPU の
-#: 合計と memory は本数につれて増える(controllers/screen の 231 本で 2 本 = 秒 0.7 倍・CPU 1.2 倍、4 本 = 秒 0.5 倍・CPU 1.6 倍)。
-#: だから既定は 1 のまま、呼び手が環境変数 PYRIGHT_THREADS_ENV(env_places が読み、入口の main だけが受ける)で機体に合わせて上げる。
+#: Default number of pyright threads (pyright's --threads — splits the files to check across child processes and runs them in parallel). 1 = do not pass --threads
+#: (one pyright). The daily type measurement (agora-controllers' hy-type-trend, 2,551 .hy files) took about 2,250 seconds with one, and did not fit within the processing stage's
+#: limit (the 10-12 12:00 JST run). Each child reads the imports of its files to check separately, so total CPU and memory
+#: grow with the count (on controllers/screen's 231 files, 2 = 0.7x seconds and 1.2x CPU; 4 = 0.5x seconds and 1.6x CPU).
+#: So the default stays 1, and the caller raises it to fit the host through the environment variable PYRIGHT_THREADS_ENV (read by env_places; only the entry main accepts it).
 PYRIGHT_THREADS = 1
 
 
 def pyright_threads(configured: str | None, declared: int | None = None) -> int:
-    """pyright の thread の数を決める(configured = 環境変数 PYRIGHT_THREADS_ENV の値・無ければ PYRIGHT_THREADS)。1 以上の整数で
-    ない値は黙って既定へ落とさず断る(書き手の誤りを見えるようにする)。thread は pyright が起こす子の process なので、枠の正本が
-    答えた 1 枠の中の並走の数(declared・届かなければ None)を越えない — 環境変数は数を下げる口で、宣言を越えて上げる口にしない。"""
+    """Decide the number of pyright threads (configured = the value of the environment variable PYRIGHT_THREADS_ENV; if absent, PYRIGHT_THREADS). A value that is not an integer of 1 or more
+    is refused rather than silently dropped to the default (so the author's mistake is visible). A thread is a child process that pyright starts, so it does not exceed the number of parallel runs
+    within one slot that the slot's authoritative source answered (declared; None if it did not arrive) — the environment variable is a way to lower the number, not to raise it beyond the declaration."""
     wanted = PYRIGHT_THREADS
     if configured is not None and configured.strip():
         text = configured.strip()
         if not text.isdigit() or int(text) < 1:
-            raise ValueError(f"{PYRIGHT_THREADS_ENV} は 1 以上の整数: {configured!r}")
+            raise ValueError(f"{PYRIGHT_THREADS_ENV} must be an integer of 1 or more: {configured!r}")
         wanted = int(text)
     return wanted if declared is None else min(wanted, declared)
 
 
 def thread_clamp_note(configured: str | None, declared: int | None) -> str | None:
-    """環境変数の指定が宣言の並走の数で頭打ちになる時の名乗りの 1 行(純粋・頭打ちでなければ None)。頭打ちは指定を無言で捨てる
-    形だった — 日次の hy-type-trend が env を 4 にしても 4 回とも 2 本で走り、別の会話が原因を探し当てるまで見えなかった
-    (agora-controllers 93c94c6f9)。値の決め方は pyright_threads のまま、見えるようにするだけ。"""
+    """A one-line announcement for when the environment variable's setting is capped by the declared parallelism (pure; None if not capped). Capping used to discard the setting
+    silently — even when the daily hy-type-trend set the env to 4, it ran with 2 every one of four times, and this stayed invisible until another conversation tracked down the cause
+    (agora-controllers 93c94c6f9). The way the value is decided stays as in pyright_threads; this only makes it visible."""
     asked = pyright_threads(configured)
     used = pyright_threads(configured, declared)
     if used == asked:
         return None
     return (
-        f"{PYRIGHT_THREADS_ENV}={asked} は機体の検の枠の宣言の並走の数 {declared} を越えるので pyright を {used} 本で撃つ"
-        "(thread は pyright が起こす子の process — 宣言を越えて上げる口は無い)"
+        f"{PYRIGHT_THREADS_ENV}={asked} exceeds the parallelism {declared} declared for the host check slot, so pyright is run with {used} threads"
+        " (a thread is a child process that pyright starts — there is no way to raise it beyond the declaration)"
     )
 
 
@@ -1284,7 +1282,7 @@ def run_pyright(
         for source, projection in projections.items():
             relative = source.relative_to(root).with_suffix(".py")
             if (root / relative).exists():
-                notes.append(f"{relative}: 同じ名前の .py が在るので {source.name} を検められない")
+                notes.append(f"{relative}: a .py with the same name exists, so {source.name} cannot be checked")
                 continue
             destination = _real_dir(root, stage, relative)
             destination.write_text(projection.text, encoding="utf-8")
@@ -1309,7 +1307,7 @@ def run_pyright(
             output: object = json.loads(completed.stdout)
         except json.JSONDecodeError as error:
             raise RuntimeError(
-                f"pyright の出力を読めない(exit {completed.returncode}): "
+                f"cannot read pyright output (exit {completed.returncode}): "
                 f"{completed.stdout[:400]}{completed.stderr[:400]}"
             ) from error
     diagnostics: list[Diagnostic] = []
@@ -1317,7 +1315,7 @@ def run_pyright(
     items = [
         item for item in (general if isinstance(general, list) else []) if isinstance(item, dict)
     ]
-    # 位置の索引は、診断の在る展開ごとに 1 度だけ作る。
+    # The position index is built exactly once per expansion that has diagnostics.
     named = {Path(str(item.get("file", ""))).resolve() for item in items}
     indexes = {
         destination: span_index(projection)
@@ -1346,8 +1344,8 @@ def run_pyright(
     return Checked(diagnostics, notes)
 
 
-#: pyright の診断を作って .hy の位置へ戻す関数(運びの指紋の材料 — どれかの source が替われば、前の回の診断を運ばない・
-#: doeff_hy/_static_carry.py の semantics_digest)。整え(settle)は運んだ診断にも毎回かけるので入れない。
+#: The functions that build pyright diagnostics and map them back to .hy positions (material for the carry fingerprint — if any of these sources changes, the previous run's diagnostics are not carried;
+#: semantics_digest in doeff_hy/_static_carry.py). Settling (settle) is applied to carried diagnostics every time too, so it is not included.
 CARRY_SEMANTICS = (
     Diagnostic,
     run_pyright,
@@ -1361,7 +1359,7 @@ CARRY_SEMANTICS = (
 
 
 def _rows_by_path(diagnostics: Iterable[Diagnostic]) -> tuple[FileRows, ...]:
-    """pyright の診断を file ごとの運びの行にするため(file の中は pyright の答えの順のまま)。"""
+    """To turn pyright's diagnostics into per-file carry lines (within a file, kept in pyright's answer order)."""
     ordered = sorted(enumerate(diagnostics), key=lambda pair: (pair[1].path, pair[0]))
     return tuple(
         FileRows(path, tuple(CarriedRow(d.line, d.column, d.severity, d.rule, d.message) for _, d in group))
@@ -1370,18 +1368,18 @@ def _rows_by_path(diagnostics: Iterable[Diagnostic]) -> tuple[FileRows, ...]:
 
 
 def carry_groups(sources: list[Path], group_size: int) -> list[list[Path]]:
-    """純粋: pyright に当てる file を group_size 本ずつの組にするため(0 以下 = 1 組・当てる file が無くても 1 組 — 同じ名の .py の註を出す)。"""
+    """Pure: to split the files to give pyright into groups of group_size (0 or less = one group; one group even when there is no file to check — so the note about a .py of the same name is emitted)."""
     if group_size <= 0 or len(sources) <= group_size:
         return [sources]
     return [sources[start : start + group_size] for start in range(0, len(sources), group_size)]
 
 
 def _keep_carry(carry: Path, text: str) -> None:
-    """運びの文書を書くため(書けなければ名乗って続ける — 次の回は前の運びと比べる)。"""
+    """To write the carry document (if it cannot be written, announce it and continue — the next run compares against the previous carry)."""
     try:
         write_carry(carry, text)
     except OSError as error:
-        print(f"doeff-hy-check: 運びの file {carry} を書けない({error})— 次の回は前の運びと比べる", file=sys.stderr)
+        print(f"doeff-hy-check: cannot write carry file {carry} ({error}) — the next run compares against the previous carry", file=sys.stderr)
 
 
 def run_carried(
@@ -1397,14 +1395,14 @@ def run_carried(
     refresh_runs: int,
     group_size: int = 0,
 ) -> Checked:
-    """運び(doeff_hy/_static_carry.py)の下で pyright を撃つため: 前の回から入力の変わらない .hy は当てず、運びの file の前の回の診断を
-    運ぶ。この回の運びで file を置き換え(書けなければ名乗って続ける — 次の回は前の運びと比べる)、当てた数と運んだ数を標準エラーに
-    1 行出す。運びの file が読めない時は名乗って全部を当てる(運びは測りの近道で、測りを止める訳にしない)。group_size = 当てる file を
-    この本数の組に分けて pyright に当て、組ごとに途中の文書を書く(0 = 分けない — _static_carry の頭の註「組ごとの書き直し」)。"""
+    """To run pyright under the carry (doeff_hy/_static_carry.py): a .hy whose inputs are unchanged since the previous run is not checked, and the previous run's diagnostics for that file are
+    carried over. Replace the file with this run's carry (if it cannot be written, announce it and continue — the next run compares against the previous carry), and print the number checked and the number carried to stderr
+    in one line. If the carry file cannot be read, announce it and check everything (the carry is a shortcut for measurement, and must not stop the measurement). group_size = split the files to check into
+    groups of this size and give them to pyright, writing an intermediate document per group (0 = do not split — see the head note "per-group rewriting" in _static_carry)."""
     try:
         previous: CarryRecord | CarryUnreadableError | None = read_carry(carry)
     except CarryUnreadableError as error:
-        print(f"doeff-hy-check: {error} — 全部を当てる", file=sys.stderr)
+        print(f"doeff-hy-check: {error} — checking everything", file=sys.stderr)
         previous = error
     environment = probe_environment(settings, python, pyright, semantics_digest(CARRY_SEMANTICS), places_of(root))
     stub_dir = _absolute(root / str(settings.get("stubPath", "typings")))
@@ -1436,10 +1434,10 @@ def run_carried(
     for index, group in enumerate(groups):
         part = run_pyright(root, settings, closure.projections, group, pyright, python, threads)
         diagnostics.extend(part.diagnostics)
-        notes.extend(note for note in part.notes if note not in notes)  # 同じ名の .py の註は組ごとに同じ物が出る
+        notes.extend(note for note in part.notes if note not in notes)  # the note about a .py of the same name comes out identical for every group
         done.update(str(source.relative_to(root)) for source in group)
         if index < len(groups) - 1:
-            # 組ごとの途中の文書(_static_carry の頭の註「組ごとの書き直し」)— 使い手が時間で切っても、当て終えた組は次の回へ残る。
+            # The intermediate per-group document (head note "per-group rewriting" in _static_carry) — even if the user cuts it off by time, the groups already checked remain for the next run.
             partial, partial_summary = next_record(
                 plan, environment.fingerprint, inputs, _rows_by_path(diagnostics), frozenset(done)
             )
@@ -1465,7 +1463,7 @@ def _checked(
     args: argparse.Namespace,
     threads: int,
 ) -> Checked:
-    """入口の引数のとおりに pyright を撃つため — --carry が在れば運びの下で(run_carried)、無ければ名指した .hy の全部に(run_pyright)。"""
+    """To run pyright according to the entry arguments — under the carry if --carry is given (run_carried), otherwise over every named .hy (run_pyright)."""
     carry: Path | None = args.carry
     if carry is None:
         return run_pyright(root, settings, closure.projections, report, args.pyright, args.python, threads)
@@ -1485,7 +1483,7 @@ def _checked(
 
 
 def _hy_backed(module: str) -> bool:
-    """module の実体が .hy か(pyright は .hy を source と見ないので、stub だけが見える)。"""
+    """Is the module's real body a .hy (pyright does not see a .hy as source, so only the stub is visible)."""
     relative = Path(*module.split("."))
     for entry in sys.path:
         base = Path(entry or ".") / relative
@@ -1495,11 +1493,11 @@ def _hy_backed(module: str) -> bool:
 
 
 _GUARD_MESSAGE = (
-    "文の位置に置いた Program / effect は走らない — (<- _ ...) で束縛するか、本体の最後の式にする"
+    "A Program / effect placed in statement position does not run — bind it with (<- _ ...) or make it the last expression of the body"
     " [ADR-DOE-HY-001]"
 )
 _UNKNOWN_TYPES = frozenset({"Unknown", "Any"})
-#: 型検査のための展開が module の頭に置く補助の名(static_view.STATIC_HELPER_IMPORTS から読む — 名の並びを 2 か所に持たない)。
+#: The helper names that the type-checking expansion places at the head of a module (read from static_view.STATIC_HELPER_IMPORTS — so the sequence of names is not held in two places).
 _STATIC_HELPER_NAMES: frozenset[str] = frozenset(
     _bound_name(alias)
     for statement in ast.parse(STATIC_HELPER_IMPORTS).body
@@ -1509,7 +1507,7 @@ _STATIC_HELPER_NAMES: frozenset[str] = frozenset(
 
 
 def _revealed(diagnostic: Diagnostic) -> str | None:
-    """`reveal_type` の情報(`Type of "x" is "T"`)なら T。"""
+    """If it is the `reveal_type` information (`Type of "x" is "T"`), T."""
     if diagnostic.severity != "information" or not diagnostic.message.startswith("Type of "):
         return None
     quoted = diagnostic.message.rsplit('"', 2)
@@ -1517,15 +1515,15 @@ def _revealed(diagnostic: Diagnostic) -> str | None:
 
 
 def settle(diagnostics: list[Diagnostic]) -> Checked:
-    """展開の都合で出る物を整える。返すのは (診断, 注記)。
+    """Tidy up what comes out of the expansion's circumstances. Returns (diagnostics, notes).
 
-    - 同じ診断を 1 つにする: macro が同じ利用者の式を 2 か所へ写すと、その式の中の赤が
-      同じ Hy の位置で 2 回出る。
-    - .hy が実体の module: pyright は .hy を source と見ないので「source が見つからない」
-      警告は落とし、「解決できない」赤は注記にする(その module の型は見えない)。
-    - 文の位置の Program / effect(macros.pyi の deprecated の overload): 同じ位置の
-      `reveal_type` が Unknown / Any なら落とす(型の分からない値を決めつけない)。
-      残した物は文言を置き換える。`reveal_type` の情報そのものは出さない。
+    - Collapse the same diagnostic into one: when a macro copies the same user expression to two places, the red inside that expression
+      comes out twice at the same Hy position.
+    - A module whose real body is a .hy: pyright does not see a .hy as source, so drop the "source not found"
+      warning, and turn the "cannot be resolved" red into a note (the types of that module are not visible).
+    - A Program / effect in statement position (the deprecated overload in macros.pyi): drop it if the `reveal_type` at the same position
+      is Unknown / Any (do not assert on a value whose type is unknown).
+      Replace the wording of what is kept. The `reveal_type` information itself is not emitted.
     """
     revealed: dict[tuple[str, int, int], str] = {}
     for diagnostic in diagnostics:
@@ -1543,12 +1541,12 @@ def settle(diagnostics: list[Diagnostic]) -> Checked:
         module = quoted[1] if len(quoted) >= 2 else ""
         if diagnostic.rule == "reportMissingModuleSource" and _hy_backed(module):
             continue
-        # 補助の名(_doeff_do・_doeff_perform ほか)は doeff-hy が展開に置く名で、利用者は書かない — strict の
-        # 「private な名を module の外で使った」は展開の都合なので出さない。
+        # Helper names (_doeff_do, _doeff_perform and others) are names doeff-hy places in the expansion, and users do not write them — strict's
+        # "private name used outside its module" is an artifact of the expansion, so do not emit it.
         if diagnostic.rule == "reportPrivateUsage" and module in _STATIC_HELPER_NAMES:
             continue
         if diagnostic.rule == "reportMissingImports" and _hy_backed(module):
-            notes.append(f"{diagnostic.path}:{diagnostic.line}: {module} は .hy なので型が見えない")
+            notes.append(f"{diagnostic.path}:{diagnostic.line}: {module} is a .hy, so its types are not visible")
             continue
         if diagnostic.rule == "reportDeprecated" and "_guard_statement_value" in diagnostic.message:
             key = (diagnostic.path, diagnostic.line, diagnostic.column)
@@ -1561,7 +1559,7 @@ def settle(diagnostics: list[Diagnostic]) -> Checked:
                     diagnostic.column,
                     diagnostic.severity,
                     "doeff-hy-unperformed",
-                    f"{_GUARD_MESSAGE}(値の型: {revealed[key]})",
+                    f"{_GUARD_MESSAGE} (type of the value: {revealed[key]})",
                 )
             )
             continue
@@ -1571,7 +1569,7 @@ def settle(diagnostics: list[Diagnostic]) -> Checked:
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
-        prog="doeff-hy-check", description="Hy の source を展開して pyright で型を検める"
+        prog="doeff-hy-check", description="Expand Hy source and check types with pyright"
     )
     parser.add_argument("paths", nargs="*", type=Path)
     parser.add_argument("--root", type=Path, default=Path.cwd())
@@ -1582,55 +1580,55 @@ def main(argv: list[str] | None = None) -> int:
         "--import-root",
         action="append",
         default=[],
-        help="根の下の import の根を足す(繰り返せる・pyright の extraPaths にも足す)",
+        help="add an import root under the root (repeatable; also added to pyright's extraPaths)",
     )
     parser.add_argument(
         "--baseline",
         type=Path,
-        help="基点の赤の file(--write-baseline で書いた物)。基点に無い赤だけを exit 1 にする",
+        help="baseline red file (what --write-baseline wrote). Only reds absent from the baseline make the exit code 1",
     )
     parser.add_argument(
         "--write-baseline",
         type=Path,
-        help="この実行の赤を基点の file として書き出す(書いた時は exit 0)",
+        help="write this run's reds out as a baseline file (exit 0 when written)",
     )
     parser.add_argument(
         "--cache-dir",
         type=Path,
         default=None,
-        help="展開の cache の置き場(既定 = $XDG_CACHE_HOME/doeff-hy-check か ~/.cache/doeff-hy-check)",
+        help="location of the expansion cache (default = $XDG_CACHE_HOME/doeff-hy-check or ~/.cache/doeff-hy-check)",
     )
     parser.add_argument(
-        "--no-cache", action="store_true", help="展開の cache を使わず毎回全部展開する"
+        "--no-cache", action="store_true", help="do not use the expansion cache; expand everything every time"
     )
     parser.add_argument(
         "--strict",
         action="store_true",
-        help="pyright の typeCheckingMode を strict にする(根の設定より優先)",
+        help="set pyright's typeCheckingMode to strict (takes precedence over the root's config)",
     )
     parser.add_argument(
         "--carry",
         type=Path,
         default=None,
-        help="運びの file(前の回の診断と入力の digest)。入力の変わらない .hy は当てずに前の回の診断を運び、この回の物で置き換える",
+        help="carry file (the previous run's diagnostics and the digest of inputs). A .hy with unchanged inputs is not checked and the previous run's diagnostics are carried over, and the file is replaced with this run's",
     )
     parser.add_argument(
         "--carry-refresh-runs",
         type=int,
         default=DEFAULT_REFRESH_RUNS,
-        help="入力の変わらない .hy も、この回数のうちに 1 度は当て直す(0 = 当て直さない)",
+        help="re-check even a .hy with unchanged inputs once within this many runs (0 = never re-check)",
     )
     parser.add_argument(
         "--carry-group",
         type=int,
         default=0,
-        help="当てる .hy をこの本数の組に分けて pyright に当て、組ごとに運びの file を書き直す(切られても当て終えた組が残る・0 = 分けない)",
+        help="split the .hy files to check into groups of this size, give them to pyright, and rewrite the carry file per group (the groups already checked remain even if cut off; 0 = do not split)",
     )
     args = parser.parse_args(argv)
     try:
         baseline = read_baseline(args.baseline) if args.baseline else None
     except BaselineUnreadable as error:
-        print(f"doeff-hy-check: 走れなかった: {error}", file=sys.stderr)
+        print(f"doeff-hy-check: could not run: {error}", file=sys.stderr)
         return 2
     root: Path = _absolute(args.root)
     settings = pyright_settings(root)
@@ -1644,32 +1642,32 @@ def main(argv: list[str] | None = None) -> int:
     for entry in reversed(roots):
         if str(entry) not in sys.path:
             sys.path.insert(0, str(entry))
-    # 名指した path は根の綴りへ写す。根の外の path は黙って捨てず断る — 捨てると赤の在る file で 0 件と答える。
+    # Map the named paths to the root's spelling. A path outside the root is refused, not silently dropped — dropping it would answer 0 reds for a file that has reds.
     named = [(p, in_root(root, p if p.is_absolute() else Path.cwd() / p)) for p in (args.paths or [root])]
     outside = [str(p) for p, placed in named if placed is None]
     if outside:
-        print(f"doeff-hy-check: 走れなかった: 名指した path が根の外(根 = {root}): {'・'.join(outside)}", file=sys.stderr)
+        print(f"doeff-hy-check: could not run: a named path is outside the root (root = {root}): {', '.join(outside)}", file=sys.stderr)
         return 2
     report = hy_files([placed for _, placed in named if placed is not None])
-    # 展開と pyright の間は機体の検の枠を 1 つ持つ — 撃つ道(会話の直・gate の子・日次・pytest の中)を問わずここで取る(doeff_hy._check_slot)。
+    # Hold one slot of the host check slot between expansion and pyright — taken here regardless of the route that launches it (a conversation directly, a gate child, daily, inside pytest) (doeff_hy._check_slot).
     slot = take_slot(Path.home(), slot_label(root, conversation_setting()), sys.stderr)
     if isinstance(slot, SlotExpired):
-        print(f"doeff-hy-check: 走れなかった: {slot.line}", file=sys.stderr)
+        print(f"doeff-hy-check: could not run: {slot.line}", file=sys.stderr)
         return 2
     try:
         cache_dir = None if args.no_cache else (args.cache_dir or default_cache_dir())
-        threads = pyright_threads(pyright_threads_setting(), slot.width)  # 展開の前に判じる(誤った値で展開の秒を払わない)
+        threads = pyright_threads(pyright_threads_setting(), slot.width)  # decide before expansion (so as not to spend expansion seconds on a wrong value)
         if (clamped := thread_clamp_note(pyright_threads_setting(), slot.width)) is not None:
             print(f"doeff-hy-check: {clamped}", file=sys.stderr)
         closure = project_closure(root, roots, report, cache_dir, expander_limit(slot.width))
         checked = _checked(root, roots, settings, closure, report, args, threads)
     except (OSError, RuntimeError, ValueError) as error:
-        print(f"doeff-hy-check: 走れなかった: {error}", file=sys.stderr)
+        print(f"doeff-hy-check: could not run: {error}", file=sys.stderr)
         return 2
     finally:
         slot.release()
     compile_errors = [f.diagnostic for f in closure.failures if f.source in report]
-    # val / var の検査の所見(setv の使用 = 警告・束縛し直し = 赤・旧い lazy = 警告 — ADR-DOE-HY-006)。
+    # Findings of the val / var checks (use of setv = warning, rebinding = red, old lazy = warning — ADR-DOE-HY-006).
     binding_findings = [
         d for p in closure.projections.values() if p.source in report for d in p.findings
     ]
@@ -1684,7 +1682,7 @@ def main(argv: list[str] | None = None) -> int:
     if args.write_baseline:
         args.write_baseline.write_text(baseline_json(list(diagnostics)), encoding="utf-8")
         print(
-            f"doeff-hy-check: 基点を {args.write_baseline} に書いた(error {len(errors_of(diagnostics))} 件)",
+            f"doeff-hy-check: wrote the baseline to {args.write_baseline} ({len(errors_of(diagnostics))} errors)",
             file=sys.stderr,
         )
         return 0
@@ -1704,8 +1702,8 @@ def main(argv: list[str] | None = None) -> int:
             print(f"note: {note}", file=sys.stderr)
         warnings = sum(1 for d in diagnostics if d.severity == "warning")
         print(
-            f"{len(report)} 個の .hy を検めた: 新しい error {len(verdict.new)} 件・"
-            f"基点に在る error {len(verdict.known)} 件・warning {warnings} 件",
+            f"Checked {len(report)} .hy files: {len(verdict.new)} new errors, "
+            f"{len(verdict.known)} errors in the baseline, {warnings} warnings",
             file=sys.stderr,
         )
     return 1 if verdict.new else 0

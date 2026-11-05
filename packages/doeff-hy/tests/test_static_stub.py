@@ -1,11 +1,11 @@
-"""Hy の module の型の宣言(.pyi)を型検査のための展開から作る道具(doeff_hy._static_stub)の失敗ケース。
+"""Failure cases for the tool (doeff_hy._static_stub) that builds a Hy module's type declarations (.pyi) from the type-checking expansion.
 
-手で書いた .pyi は実装と食い違い、doeff の定義を defn → defk に変えるたびに使い手(agora)の型の門が Unknown の赤で止まった
-(2026-10-02 に 4 回)。道具は展開の木から宣言を作り、一致の検は「作り直した物 == commit された物」。
+Hand-written .pyi files drift from the implementation, and every time a doeff definition was changed from defn to defk, the consumer's (agora) type gate stopped on Unknown errors
+(4 times on 2026-10-02). The tool builds declarations from the expansion tree, and the consistency check is "regenerated output == committed output".
 
-- 定義の形ごと(defk・deff・defhandler・defrecord・defenum・定数・型の別名・import)に、使い手が読める宣言が出る。
-- 型を出せない所は Incomplete にして名を返す(黙って Unknown にしない)。
-- 実装を変えると、commit された .pyi が古いと名指される(一致の検の失敗ケース)。手で書いた .pyi は照らさない。
+- For each definition form (defk, deff, defhandler, defrecord, defenum, constants, type aliases, imports), a declaration the consumer can read is emitted.
+- Where a type cannot be produced it becomes Incomplete and the name is returned (it is not silently left Unknown).
+- When the implementation changes, a stale committed .pyi is named (the failure case of the consistency check). A hand-written .pyi is not compared.
 """
 
 import json
@@ -41,12 +41,12 @@ MODULE = """\
 (val PRIMARY Color.RED)
 
 (defrecord Point
-  "平面の点。"
+  "A point in the plane."
   (#^ int x)
   (#^ int y))
 
 (defclass [(dataclass :frozen True)] Ping [(get EffectBase int)]
-  "答えは int。"
+  "The answer is int."
   (#^ str target)
   (setv #^ int tries 3))
 
@@ -54,19 +54,19 @@ MODULE = """\
 
 (deff double [n]
   {:pre [(: n int)] :post [(: % int)] :tags {:context "probe" :role "judgment"}}
-  "2 倍にするため。"
+  "To double it."
   (* n 2))
 
 (defk ping-twice [target]
   {:pre [(: target str)] :post [(: % int)] :tags {:context "probe" :role "program"}}
-  "2 回 ping して答えを足すため。"
+  "To ping twice and add the answers."
   (<- first int (Ping target))
   (<- second int (Ping target))
   (+ first second))
 
 (defk passed-through [body]
-  {:pre [(: body Program)] :post [(: % "本文の答え")] :tags {:context "probe" :role "program"}}
-  "本文の答えをそのまま返すため(答えの型は本文による)。"
+  {:pre [(: body Program)] :post [(: % "body answer")] :tags {:context "probe" :role "program"}}
+  "To return the body's answer as is (the answer type depends on the body)."
   (<- answer body)
   answer)
 
@@ -84,7 +84,7 @@ MODULE = """\
 
 
 def _module(tmp_path: Path, text: str = MODULE) -> Path:
-    """検の module を tmp の根の下の package に置く(根 = tmp_path)。"""
+    """Place the test module in a package under the tmp root (root = tmp_path)."""
     source = tmp_path / "probe_pkg" / "probe_mod.hy"
     source.parent.mkdir(parents=True, exist_ok=True)
     (source.parent / "__init__.py").write_text("", encoding="utf-8")
@@ -107,8 +107,8 @@ def _lines(tmp_path: Path) -> list[str]:
         "Answer: TypeAlias = int | str",
         "LIMIT_OF: dict[str, int]",
         "PRIMARY: Color",
-        # class の名の並び(sim の柵が通す effect の型の表 — doeff-cluster の SIM-PASSABLE の形)。読めないと Incomplete になり、
-        # 手書きの .pyi を道具の出力へ置き換えた時に tuple[type, ...] の型が落ちた。
+        # A sequence of class names (the effect type table the sim fence lets through -- the shape of SIM-PASSABLE in doeff-cluster). If it cannot be read it becomes Incomplete,
+        # and the tuple[type, ...] type was lost when a hand-written .pyi was replaced by the tool's output.
         "EFFECT_TYPES: tuple[type, ...]",
         "class Point:",
         "class Ping(EffectBase[int]):",
@@ -137,16 +137,16 @@ def test_the_stub_starts_with_the_mark_and_has_no_bodies(tmp_path: Path) -> None
 
 
 def test_the_macro_helpers_the_expansion_imports_are_not_reexported(tmp_path: Path) -> None:
-    # defk の展開は doeff_hy.macros の補助(_install_guard_globals・_guard_performed など)を import する。型の面ではないので
-    # 公開し直さない — 公開し直すと、.pyi が macro の module に依存する形になり、品質検査の依存の契約にも当たった(#2842)。
+    # The defk expansion imports helpers of doeff_hy.macros (_install_guard_globals, _guard_performed, etc.). They are not part of the type surface, so
+    # they are not re-exported -- re-exporting would make the .pyi depend on the macro module, which also hit the quality check's dependency contract (#2842).
     assert not [line for line in _lines(tmp_path) if line.startswith("from doeff_hy.macros import _")]
 
 
 def test_what_cannot_be_typed_is_named_not_left_unknown(tmp_path: Path) -> None:
-    # 説明の文字列の :post と、sorted の答えは型を出せない — Incomplete にして名を返す。
+    # The :post of a description string and the answer of sorted cannot be typed -- they become Incomplete and the name is returned.
     source = _module(tmp_path)
     made = stub_of(tmp_path, [tmp_path], source)
-    assert made.incomplete == ("UNKNOWABLE", "passed_through の答え")
+    assert made.incomplete == ("UNKNOWABLE", "passed_through answer")
     assert "UNKNOWABLE: Incomplete" in made.text.splitlines()
     assert "from _typeshed import Incomplete" in made.text.splitlines()
 
@@ -158,15 +158,15 @@ def test_a_current_stub_is_not_stale(tmp_path: Path) -> None:
 
 
 def test_a_changed_field_makes_the_committed_stub_stale(tmp_path: Path) -> None:
-    # 失敗ケース: 実装の欄を足すと、commit された .pyi が古いと名指される。
+    # Failure case: adding an implementation field names the committed .pyi as stale.
     source = _module(tmp_path)
     source.with_suffix(".pyi").write_text(stub_of(tmp_path, [tmp_path], source).text, encoding="utf-8")
     source.write_text(MODULE.replace("  (#^ int y))", "  (#^ int y)\n  (#^ int z))"), encoding="utf-8")
-    assert [(s.source.name, s.reason) for s in stale_in(tmp_path)] == [("probe_mod.hy", "作り直した物と違う")]
+    assert [(s.source.name, s.reason) for s in stale_in(tmp_path)] == [("probe_mod.hy", "differs from the regenerated output")]
 
 
 def test_a_hand_written_stub_is_not_checked(tmp_path: Path) -> None:
-    # 手で書いた .pyi(印が無い)は道具の物と見なさない — 一致の検にも --write にも入らない。
+    # A hand-written .pyi (no mark) is not treated as the tool's -- it is in neither the consistency check nor --write.
     source = _module(tmp_path)
     source.with_suffix(".pyi").write_text("GREETING: str\n", encoding="utf-8")
     assert not generated(source.with_suffix(".pyi"))
@@ -177,19 +177,19 @@ EFFECTS = """\
 (require doeff-hy.macros [defeffect val])
 
 (defeffect Pong
-  "答えは int。"
+  "The answer is int."
   {:fields [(: target str)]
    :answer int
    :tags {:context "probe" :role "foundation"}})
 
 (defeffect MaybePong
-  "答えは int か None。"
+  "The answer is int or None."
   {:fields [(: target str)]
    :answer (| int None)
    :tags {:context "probe" :role "foundation"}})
 
 (defeffect NoneTypePong
-  "答えの式が型の形でない(実行時の値)— 基底は答えを載せない素の形のまま。"
+  "The answer expression is not in type form (a runtime value) -- the base stays in the bare form that carries no answer."
   {:fields [(: target str)]
    :answer (type None)
    :tags {:context "probe" :role "foundation"}})
@@ -199,7 +199,7 @@ EFFECTS = """\
 (val T (TypeVar "T"))
 
 (defeffect Wrapped
-  "答えは包んだ program の答え(型の引数 T)か None。"
+  "The answer is the wrapped program's answer (type argument T) or None."
   {:fields [(: program (get Program #(T object)))]
    :answer (| T None)
    :tags {:context "probe" :role "foundation"}})
@@ -211,7 +211,7 @@ USER = """\
 
 (defk use-pong [target]
   {:pre [(: target str)] :post [(: % int)] :tags {:context "probe" :role "program"}}
-  "Pong の答えを使うため。"
+  "To use the answer of Pong."
   (<- n (Pong target))
   n)
 """
@@ -226,22 +226,22 @@ USER = """\
         "class Pong(_doeff_effect_base[int]):",
         "class MaybePong(_doeff_effect_base[int | None]):",
         "class NoneTypePong(_doeff_effect_base):",
-        # 答えに module の TypeVar を含む effect(sql_effects の SqlTransaction の形 — #2925)。
+        # An effect whose answer contains the module's TypeVar (the shape of SqlTransaction in sql_effects -- #2925).
         "class Wrapped(_doeff_effect_base[T | None]):",
         "    program: Program[T, object]",
     ],
 )
 def test_a_defeffect_keeps_its_base_with_the_answer_and_its_dataclass(tmp_path: Path, line: str) -> None:
-    # 失敗ケース(#2886): 道具は macro の補助の import(_doeff_ で始まる名)を外すのに、defeffect の基底と飾りはその名を
-    # 読むので、.pyi に定義の無い基底(使い手には Unknown)が残り、dataclass の飾りは消えていた。基底は答えの型も持たなかった。
+    # Failure case (#2886): the tool removes the macro helper imports (names starting with _doeff_), but the base and decoration of defeffect read those names,
+    # so a base with no definition in the .pyi (Unknown to consumers) remained and the dataclass decoration was lost. The base also did not carry the answer type.
     source = _module(tmp_path, EFFECTS)
     assert line in stub_of(tmp_path, [tmp_path], source).text.splitlines()
 
 
 def test_a_defeffect_stub_carries_no_macro_bookkeeping_field(tmp_path: Path) -> None:
-    # 失敗ケース(#2886): `__doeff_answer__: _doeff_ClassVar[object]` を写すと、手の .pyi の欄の照らし
-    # (doeff-core-effects の test_hy_module_stubs — dataclass の欄の並び)が別名の ClassVar を見抜けずに欄と数え、
-    # 置き換えた effect の module が 4 つ赤になった。答えの型は基底が持つので、記帳の名は .pyi に要らない。
+    # Failure case (#2886): copying `__doeff_answer__: _doeff_ClassVar[object]` made the field comparison of the hand-written .pyi
+    # (test_hy_module_stubs in doeff-core-effects -- the order of dataclass fields) fail to see through the aliased ClassVar and count it as a field,
+    # turning 4 replaced effect modules red. The base carries the answer type, so the bookkeeping name is not needed in the .pyi.
     source = _module(tmp_path, EFFECTS)
     text = stub_of(tmp_path, [tmp_path], source).text
     assert "__doeff_answer__" not in text
@@ -249,15 +249,15 @@ def test_a_defeffect_stub_carries_no_macro_bookkeeping_field(tmp_path: Path) -> 
 
 
 def test_a_dotted_module_import_no_declaration_reads_is_not_copied(tmp_path: Path) -> None:
-    # 失敗ケース(#2886): defrecord の展開が引く `import doeff_hy.record` を .pyi に写すと、宣言はどれも読まないのに
-    # .pyi が doeff_hy.record に依存する形になり、品質検査の module の依存の契約(dependency-not-allowed)に当たった
-    # (meter_effects の手の .pyi を道具の出力に置き換えた時)。点つきの import は使い手に名を公開しないので写さない。
-    # 頭の辞書つきの defrecord の展開は `(import doeff_hy._declarations doeff_hy.record)` を出す。
+    # Failure case (#2886): copying the `import doeff_hy.record` that the defrecord expansion pulls into the .pyi made the .pyi depend on
+    # doeff_hy.record even though no declaration reads it, and it hit the quality check's module dependency contract (dependency-not-allowed)
+    # (when meter_effects' hand-written .pyi was replaced by the tool's output). A dotted import does not expose a name to consumers, so it is not copied.
+    # The expansion of a defrecord with a header dict emits `(import doeff_hy._declarations doeff_hy.record)`.
     checked = """\
 (require doeff-hy.record [defrecord])
 
 (defrecord Amount
-  "負でない量。"
+  "A non-negative quantity."
   {:tags {:context "probe" :role "type"}
    :check [(>= value 0)]}
   (#^ int value))
@@ -268,22 +268,22 @@ def test_a_dotted_module_import_no_declaration_reads_is_not_copied(tmp_path: Pat
 
 
 def test_a_module_import_no_declaration_reads_is_not_copied(tmp_path: Path) -> None:
-    # 失敗ケース(#2925): `(import os)` を `import os as os` と写すと、宣言はどれも os を読まないのに .pyi が os に依存する形になり、
-    # 品質検査の「純粋な層から IO の API へ依存」(pure-io-import)に当たった(process_effects の手の .pyi を置き換えた時)。
-    # module の import は使い手に名を公開する意味が無い(使い手は `from m import os` と書かない)ので、宣言が読まなければ写さない。
+    # Failure case (#2925): copying `(import os)` as `import os as os` made the .pyi depend on os even though no declaration reads os, and
+    # it hit the quality check's "pure layer depends on IO API" (pure-io-import) (when process_effects' hand-written .pyi was replaced).
+    # A module import has no meaning of exposing a name to consumers (consumers do not write `from m import os`), so it is not copied unless a declaration reads it.
     assert [line for line in _lines(tmp_path) if line.startswith("import os")] == []
 
 
 def test_a_field_annotated_then_given_its_default_keeps_the_default(tmp_path: Path) -> None:
-    # 失敗ケース(#2974): 欄を「#^ float timeout」と「(setv timeout 30.0)」の 2 文で書くと、道具は .pyi にも 2 文のまま写し
-    # (`timeout: float` と `timeout = 30.0`)、pyright は dataclass の作り手を注記の文の値から組むので既定値の無い欄と読んだ —
-    # 欄を省いた呼びが「timeout が無い」の赤(agora の 17 本目・ClickHouseDatabase)。実行時は既定値 30.0 の欄。
-    # L1377 で手の process_effects.pyi(`timeout: float | None = None`)を置き換えた時に RunProcess など 23 の欄が同じ形に後退した。
+    # Failure case (#2974): when a field is written as two statements, "#^ float timeout" and "(setv timeout 30.0)", the tool copied them to the .pyi as two statements too
+    # (`timeout: float` and `timeout = 30.0`), and pyright builds the dataclass constructor from the value of the annotation statement, so it read a field with no default --
+    # calls that omit the field got a "timeout is missing" error (agora's 17th, ClickHouseDatabase). At runtime it is a field with default 30.0.
+    # When the hand-written process_effects.pyi (`timeout: float | None = None`) was replaced at L1377, 23 fields such as RunProcess regressed to the same shape.
     split = """\
 (import dataclasses [dataclass])
 
 (defclass [(dataclass :frozen True :kw-only True)] Database []
-  "置き場の宛先。"
+  "The destination of the store."
   #^ str host
   #^ float timeout
   (setv timeout 30.0)
@@ -298,8 +298,8 @@ def test_a_field_annotated_then_given_its_default_keeps_the_default(tmp_path: Pa
 
 
 def test_a_user_reads_the_answer_of_a_generated_effect(tmp_path: Path) -> None:
-    # 失敗ケース(#2886): 使い手の `(<- n (Pong target))` の n は、生成された .pyi の基底が Unknown だったので Unknown に読まれ、
-    # strict の型検査が「型が分からない」の赤を 7 件出した。答えの型 int が基底に載れば、n は int に読める。
+    # Failure case (#2886): `n` in the consumer's `(<- n (Pong target))` was read as Unknown because the generated .pyi base was Unknown, and
+    # strict type checking produced 7 "type is unknown" errors. Once the answer type int is carried on the base, n can be read as int.
     source = _module(tmp_path, EFFECTS)
     source.with_suffix(".pyi").write_text(stub_of(tmp_path, [tmp_path], source).text, encoding="utf-8")
     user = source.with_name("user_mod.hy")
@@ -311,7 +311,7 @@ def test_a_user_reads_the_answer_of_a_generated_effect(tmp_path: Path) -> None:
 
 
 def test_the_users_probe_binds_each_name_on_its_own_line() -> None:
-    # 名を 1 つの tuple に束ねると、全く分からない名が「型の一部が分からない」に紛れる — 名ごとに別の名へ束ねる。
+    # Bundling names into a single tuple would bury the fully unknown names in "part of the type is unknown" -- bundle each name into a separate name.
     used = (UsedModule("a.b", ("Thing", "make-thing")), UsedModule("c", ("LIMIT",)))
     assert users_probe("pkg", used).splitlines() == [
         "(import pkg.a.b [Thing make-thing])",
@@ -327,13 +327,13 @@ STORE = """\
 (import pathlib [Path])
 
 (defclass Store []
-  "置き場(__init__ で欄を置く class — #2972 の WalStore の形)。"
+  "A store (a class that places fields in __init__ -- the shape of WalStore in #2972)."
   (defn #^ None __init__ [self #^ int start #^ str label]
     (setv #^ Path self.where (Path label) self.start start #^ int self.seq start
           self.loose (dict) self._hidden 0))
 
   (defn #^ int next-seq [self]
-    "次の番号(欄を読む method)。"
+    "The next number (a method that reads a field)."
     (+ self.seq 1)))
 """
 
@@ -344,18 +344,18 @@ LOG_USER = """\
 (import probe_pkg.probe_mod [Store])
 
 (defclass Log [Protocol]
-  "置き場の形(欄だけ — #2972 の ByteLog の形)。"
+  "The shape of a store (fields only -- the shape of ByteLog in #2972)."
   (#^ int seq)
   (#^ Path where))
 
 (defk seq-of [log]
   {:pre [(: log Log)] :post [(: % int)] :tags {:context "probe" :role "judgment"}}
-  "置き場の形の欄を読むため。"
+  "To read the fields of the store shape."
   log.seq)
 
 (defk seq-of-store [store]
   {:pre [(: store Store)] :post [(: % int)] :tags {:context "probe" :role "judgment"}}
-  "Store を置き場の形として渡すため(欄が宣言に無いと形を満たさない)。"
+  "To pass Store as the store shape (without the fields in the declaration it does not satisfy the shape)."
   (<- n (seq-of store))
   n)
 """
@@ -364,18 +364,18 @@ LOG_USER = """\
 @pytest.mark.parametrize(
     "line",
     [
-        # 注記つきの置き方は注記を写す。
+        # A placement with an annotation copies the annotation.
         "    where: Path",
         "    seq: int",
-        # 引数をそのまま置く置き方は、その引数の注記を写す。
+        # A placement that takes an argument as is copies that argument's annotation.
         "    start: int",
-        # 型を読めない置き方は Incomplete(名を返す)。
+        # A placement whose type cannot be read is Incomplete (the name is returned).
         "    loose: Incomplete",
     ],
 )
 def test_the_fields_an_init_places_get_declarations(tmp_path: Path, line: str) -> None:
-    # 失敗ケース(#2972): 道具は __init__ の `(setv self.x …)` を読まず、method だけを宣言した。WalStore の .pyi に欄 seq・
-    # snapshot・log・max_log_bytes が無く、それらを求める ByteLog を満たさないので、使い手の正しい渡し方に型の赤が出た。
+    # Failure case (#2972): the tool did not read `(setv self.x …)` in __init__ and declared only methods. The WalStore .pyi lacked the fields seq,
+    # snapshot, log, max_log_bytes and so did not satisfy ByteLog that requires them, so the consumer's correct way of passing it got a type error.
     assert line in stub_of(tmp_path, [tmp_path], _module(tmp_path, STORE)).text.splitlines()
 
 
@@ -386,7 +386,7 @@ def test_an_untyped_init_field_is_named_and_a_private_one_is_not_declared(tmp_pa
 
 
 def test_a_class_whose_init_places_the_fields_satisfies_a_protocol_of_fields(tmp_path: Path) -> None:
-    # 失敗ケース(#2972): 欄の宣言が無いと `(seq-of store)` が「Store は Log の欄 seq・where を持たない」の赤になる。
+    # Failure case (#2972): without the field declarations, `(seq-of store)` becomes the error "Store has no fields seq, where of Log".
     source = _module(tmp_path, STORE)
     source.with_suffix(".pyi").write_text(stub_of(tmp_path, [tmp_path], source).text, encoding="utf-8")
     user = source.with_name("log_user.hy")
@@ -402,21 +402,21 @@ EFFECT_FREE = """\
 
 (defk copied [x]
   {:pre [(: x int)] :post [(: % int)] :effects [] :tags {:context "probe" :role "judgment"}}
-  "何も出さない写しのため。"
+  "For a copy that emits nothing."
   (+ x 1))
 
 (defk asking [x]
   {:pre [(: x int)] :post [(: % int)] :tags {:context "probe" :role "judgment"}}
-  "effect の宣言が無い定義のため。"
+  "For a definition with no effect declaration."
   (+ x 1))
 """
 
 
 def test_a_defk_declared_to_perform_no_effect_has_a_never_effect_position(tmp_path: Path) -> None:
-    # 失敗ケース(#2939): 手の .pyi は normalized_value を `Program[SqlValue, Never]` と書いていた(写しは effect を出さない)。道具は宣言
-    # `:effects []` を投影が残さず、effect の位置をいつも object にしていたので、手の主張が道具の出力から消えた。
+    # Failure case (#2939): the hand-written .pyi wrote normalized_value as `Program[SqlValue, Never]` (the copy emits no effect). The tool's projection did not keep the declaration
+    # `:effects []` and always made the effect position object, so the hand-written claim vanished from the tool's output.
     lines = stub_of(tmp_path, [tmp_path], _module(tmp_path, EFFECT_FREE)).text.splitlines()
     assert "def copied(x: int) -> _Program[int, _Never]:" in lines
     assert "from typing import Never as _Never" in lines
-    # 宣言の無い定義は今までどおり object(effect を出さないとは言わない)。
+    # A definition with no declaration is object as before (it does not claim that no effect is emitted).
     assert "def asking(x: int) -> _Program[int, object]:" in lines

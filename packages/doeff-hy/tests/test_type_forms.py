@@ -1,7 +1,7 @@
-"""runtime_type_form — 型の式を実行時の isinstance の第 2 引数へ写す公開の 1 点(#3366 の根 2)。
+"""runtime_type_form -- the single public point that maps a type expression to the second argument of runtime isinstance (root 2 of #3366).
 
-macros.hy の契約と `<-` の束縛、外の道具(品質検査の Hy の投影)が同じ関数を呼ぶ。写した form を実際に eval して
-isinstance に渡せる事と、写さない form が同じ object のまま返る事を確かめる。
+The contract and `<-` binding in macros.hy and the external tool (the Hy projection of the quality check) call the same function. This checks that the mapped form can actually be eval'd and
+passed to isinstance, and that forms that are not mapped are returned as the same object.
 """
 
 import hy
@@ -12,8 +12,8 @@ from doeff_hy._type_forms import runtime_type_form
 
 
 def mapped(source: str) -> Object:
-    """型の式の source を写した form(Hy の model は中身で比べられる — hy.repr は `(. None __class__)` を綴りの上で崩すので
-    綴りでは比べない)。"""
+    """The form obtained by mapping the source of a type expression (Hy models are compared by content -- hy.repr collapses `(. None __class__)` in spelling, so
+    they are not compared by spelling)."""
     return runtime_type_form(hy.read(source))
 
 
@@ -47,8 +47,8 @@ def test_a_type_form_is_mapped_to_what_isinstance_accepts(source: str, expected:
     ],
 )
 def test_the_mapped_form_is_accepted_by_isinstance(source: str, value: object, holds: bool) -> None:
-    # 写す前の (get tuple #(int int)) は isinstance が断る(parameterized generic)— 写した form は受ける。展開と同じく
-    # isinstance の呼びごと Hy で評価する。
+    # The unmapped (get tuple #(int int)) is rejected by isinstance (parameterized generic) -- the mapped form is accepted. As in the expansion,
+    # it is evaluated in Hy on each isinstance call.
     check: Expression = Expression([Symbol("isinstance"), Symbol("value"), runtime_type_form(hy.read(source))])
     assert bool(hy.eval(check, {"value": value})) is holds
 

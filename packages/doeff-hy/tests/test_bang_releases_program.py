@@ -1,8 +1,8 @@
-"""`(! e)` が束ねた後、束ねの一時の名(`_hy_gensym_bound_N`)に Program を残さない。
+"""After `(! e)` binds, no Program is left in the temporary binding name (`_hy_gensym_bound_N`).
 
-`(! e)` は式の中に書くので、`<-` のように文の del を置けない(test_bind_releases_program.py)。展開は式の中で
-名を None に戻してから値を読むか yield する。ここは束ねた後の frame の locals に Call も Pure も残らない事と、
-答え(値・Pure の近道)と yield の数が変わらない事を見る。
+`(! e)` is written inside an expression, so it cannot place a statement-level del the way `<-` does (test_bind_releases_program.py). The expansion, inside the expression,
+resets the name to None before reading the value or yielding. This test checks that after binding, neither a Call nor a Pure remains in the frame's locals, and
+that the answer (the value, the Pure shortcut) and the number of yields are unchanged.
 """
 
 from __future__ import annotations
@@ -10,7 +10,7 @@ from __future__ import annotations
 import ast
 from types import ModuleType
 
-import doeff_hy  # noqa: F401 - Hy の import hook を登録する
+import doeff_hy  # noqa: F401 - registers the Hy import hook
 import hy
 import pytest
 from doeff_core_effects.handlers import reader
@@ -60,7 +60,7 @@ def _kept(skip: bool) -> dict[str, str]:
 @pytest.mark.parametrize("skip", [False, True])
 def test_bang_leaves_no_program_in_the_frame(skip: bool) -> None:
     kept = _kept(skip)
-    # 束ねの名は残っても None — yield した Call も、その場で答えた Pure も持たない
+    # the binding name may remain, but as None — it holds neither the yielded Call nor the Pure answered on the spot
     assert {kept[name] for name in kept if "bound" in name} <= {"NoneType"}, kept
     assert not {"Call", "Pure"} & set(kept.values()), kept
 

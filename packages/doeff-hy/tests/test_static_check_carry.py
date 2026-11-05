@@ -1,16 +1,16 @@
-"""doeff-hy-check の運び(`--carry` — doeff_hy/_static_carry.py)の失敗ケース。
+"""Failure cases for the doeff-hy-check carry (`--carry` -- doeff_hy/_static_carry.py).
 
-agora-controllers の日次の型の測り(hy-type-trend)は範囲の .hy 約 3,000 本を毎回全部 pyright に当て、上限 7,200 秒で 2 回続けて切れた。
-運びは、前の回から入力の変わらない .hy を pyright に当てず、前の回の診断を運ぶ。運んだ答えが全部当てた答えと
-違えば、型の赤を取りこぼす(直した赤が残る・新しい赤が出ない)ので、ここで留める:
+The daily type measurement of agora-controllers (hy-type-trend) ran pyright over all ~3,000 .hy files in scope every time, and timed out twice in a row at the 7,200 second limit.
+The carry skips pyright for .hy files whose input is unchanged since the previous run and carries over the previous run's diagnostics. If the carried answer
+differs from the full-run answer, type errors get missed (fixed errors linger, new errors do not appear), so it is pinned here:
 
-- 表面: 型を全部宣言した関数の本体と docstring は、使い手の入力に入らない。署名・型を宣言しない関数の本体・self の属性へ代入する
-  method の本体は入る。
-- 依存: 使う名の宣言だけに依る(同じ module の別の名の変更は伝えない)。推移で届く宣言・新しい file が import を解く変更・py.typed・
-  star import・読めない module(毎回当てる)は伝える。
-- 運び: 2 回目は入力の変わった file だけを pyright に渡し、運んだ診断が出力に入る。運びの file が読めなければ全部を当てる。
-- 本物の pyright で、運んだ回の答えが、同じ木を全部当てた回の答えと同じ(本体だけの変更・使う名の署名の変更・推移の型の変更・
-  解けなかった import が解ける変更)。
+- Surface: the body and docstring of a fully type-declared function do not enter the consumer's input. Signatures, bodies of functions without type declarations, and bodies of methods
+    that assign to self attributes do enter it.
+- Dependencies: depends only on the declarations of the names used (changes to other names in the same module are not propagated). Declarations reached transitively, changes where a new file resolves an import, py.typed,
+    star imports, and unreadable modules (always re-checked) are propagated.
+- Carry: on the second run only files whose input changed are passed to pyright, and the carried diagnostics go into the output. If the carry file is unreadable, everything is checked.
+- With real pyright, the carried run's answer equals the answer of a run that checks the same tree in full (body-only change, signature change of a used name, transitive type change,
+    a change that makes a previously unresolved import resolve).
 """
 
 import contextlib
@@ -23,7 +23,7 @@ import sys
 from collections.abc import Callable, Iterator
 from pathlib import Path
 
-import doeff_hy  # noqa: F401  # Hy の import hook を有効にする
+import doeff_hy  # noqa: F401  # enable the Hy import hook
 import pytest
 from doeff_hy import CarryUnreadableError
 from doeff_hy import _static_carry as static_carry
@@ -44,14 +44,14 @@ from doeff_hy._static_carry import (
     read_carry,
 )
 
-needs_pyright = pytest.mark.skipif(shutil.which("pyright") is None, reason="pyright が無い")
+needs_pyright = pytest.mark.skipif(shutil.which("pyright") is None, reason="pyright not found")
 
 
-# --- 表面 ------------------------------------------------------------------------------------------------------------------
+# --- Surface ------------------------------------------------------------------------------------------------------------------
 
 
 def _surfaces(text: str) -> dict[str, tuple[str, ...]]:
-    """module の名ごとの表面(その名を束ねる文の ast.dump の並び)。"""
+    """Per-name surfaces of a module (the sequence of ast.dump of the statements binding each name)."""
     facts = module_facts(text)
     return {
         name: tuple(facts.statements[i].surface for i in indexes)
@@ -60,14 +60,14 @@ def _surfaces(text: str) -> dict[str, tuple[str, ...]]:
 
 
 def test_the_body_and_docstring_of_a_fully_annotated_function_are_not_its_surface() -> None:
-    """型を全部宣言した関数は、本体と docstring を替えても表面が同じ — 使い手を当て直さない。"""
-    before = _surfaces('def f(x: int) -> str:\n    "説明"\n    return str(x)\n')
-    after = _surfaces('def f(x: int) -> str:\n    "別の説明"\n    y = x + 1\n    return str(y)\n')
+    """A fully type-declared function has the same surface even when its body and docstring change -- consumers are not re-checked."""
+    before = _surfaces('def f(x: int) -> str:\n    "description"\n    return str(x)\n')
+    after = _surfaces('def f(x: int) -> str:\n    "another description"\n    y = x + 1\n    return str(y)\n')
     assert before["f"] == after["f"]
 
 
 def test_the_signature_of_a_function_is_its_surface() -> None:
-    """引数か答えの型を替えれば表面が変わる。"""
+    """Changing the argument or return type changes the surface."""
     assert (
         _surfaces("def f(x: int) -> str:\n    return ''\n")["f"]
         != _surfaces("def f(x: int) -> int:\n    return 0\n")["f"]
@@ -79,7 +79,7 @@ def test_the_signature_of_a_function_is_its_surface() -> None:
 
 
 def test_the_body_of_a_function_without_its_return_type_is_its_surface() -> None:
-    """答えの型を宣言しない関数は、pyright が本体から答えの型を推すので、本体も表面。"""
+    """A function without a declared return type has its body as part of the surface too, because pyright infers the return type from the body."""
     assert (
         _surfaces("def f(x: int):\n    return 1\n")["f"]
         != _surfaces("def f(x: int):\n    return 'a'\n")["f"]
@@ -87,7 +87,7 @@ def test_the_body_of_a_function_without_its_return_type_is_its_surface() -> None
 
 
 def test_an_empty_body_and_a_full_body_have_different_surfaces() -> None:
-    """空の本体(Protocol の実装の無い method と数えられる)と中身の在る本体は、表面で分かれる。"""
+    """An empty body (counted as a Protocol method with no implementation) and a body with content are distinguished by the surface."""
     assert (
         _surfaces("def f(x: int) -> int:\n    ...\n")["f"]
         != _surfaces("def f(x: int) -> int:\n    return x\n")["f"]
@@ -95,7 +95,7 @@ def test_an_empty_body_and_a_full_body_have_different_surfaces() -> None:
 
 
 def test_a_method_that_assigns_to_self_keeps_its_body_in_the_class_surface() -> None:
-    """self の属性へ代入する method の本体は class の表面(pyright はそこから属性の型を推す)。代入しない method の本体は表面でない。"""
+    """The body of a method that assigns to a self attribute is part of the class surface (pyright infers the attribute type from it). The body of a method that does not assign is not."""
     assigning = "class C:\n    def __init__(self, x: int) -> None:\n        self.x = {}\n"
     assert _surfaces(assigning.format("x"))["C"] != _surfaces(assigning.format("str(x)"))["C"]
     reading = "class C:\n    def size(self, x: int) -> int:\n        return {}\n"
@@ -103,25 +103,25 @@ def test_a_method_that_assigns_to_self_keeps_its_body_in_the_class_surface() -> 
 
 
 def test_each_name_of_a_module_import_statement_is_its_own_surface() -> None:
-    """1 つの import の文に名を足しても、他の名の表面は変わらない(doeff/__init__ の長い import の文)。"""
+    """Adding a name to one import statement does not change the surfaces of the other names (the long import statement in doeff/__init__)."""
     before = _surfaces("from m import a, b\n")
     after = _surfaces("from m import a, b, c\n")
     assert before["a"] == after["a"]
     assert before["b"] == after["b"]
 
 
-# --- 計画と運びの文書 ------------------------------------------------------------------------------------------------------
+# --- Plan and carry document ------------------------------------------------------------------------------------------------------
 
 
 def _carried(path: str, inputs: str, checked: int, *messages: str) -> CarriedFile:
-    """運びの文書の file 1 つ(診断は文言だけを替えた行)。"""
+    """One file of the carry document (the diagnostic is a row with only the message text changed)."""
     return CarriedFile(
         path, inputs, checked, tuple(CarriedRow(1, 1, "error", "rule", m) for m in messages)
     )
 
 
 def test_without_a_previous_carry_every_file_is_checked() -> None:
-    """運びが無い・読めない・環境が違う回は全部を当てる。"""
+    """A run with no carry, an unreadable carry, or a different environment checks everything."""
     inputs = (FileInputs("a.hy", "1"), FileInputs("b.hy", "2"))
     assert {c.reason for c in plan_carry(None, "f", inputs, 12).checking} == {"absent"}
     assert {c.reason for c in plan_carry(CarryUnreadableError("x"), "f", inputs, 12).checking} == {
@@ -134,7 +134,7 @@ def test_without_a_previous_carry_every_file_is_checked() -> None:
 
 
 def test_only_changed_and_new_files_are_checked_and_the_oldest_are_refreshed() -> None:
-    """入力の変わった file と前の回に無い file を当て、変わらない file のうち当てた回の一番古い ceil(本数 / 周期) 本を見直す。"""
+    """Check files whose input changed and files absent from the previous run, and of the unchanged files re-review the ceil(count / period) files whose checked run is oldest."""
     previous = CarryRecord(
         "f",
         9,
@@ -163,11 +163,11 @@ def test_only_changed_and_new_files_are_checked_and_the_oldest_are_refreshed() -
     assert {c.path for c in plan_carry(previous, "f", inputs, 0).checking} == {
         "c.hy",
         "e.hy",
-    }  # 0 = 見直さない
+    }  # 0 = no re-review
 
 
 def test_the_next_record_keeps_carried_rows_and_names_refresh_mismatches() -> None:
-    """当てた file は今回の診断と番号、運んだ file は前の回の記録のまま。見直しで答えが違えば名乗る。"""
+    """Checked files carry this run's diagnostics and run number; carried files keep the previous run's record. A differing answer on re-review is reported."""
     previous = CarryRecord(
         "f",
         2,
@@ -190,7 +190,7 @@ def test_the_next_record_keeps_carried_rows_and_names_refresh_mismatches() -> No
     by_path = {f.path: f for f in record.files}
     assert by_path["a.hy"] == previous.files[0]
     assert by_path["b.hy"].checked == 3
-    assert [r.message for r in by_path["c.hy"].rows] == ["c2", "c3"]  # pyright の答えの順のまま
+    assert [r.message for r in by_path["c.hy"].rows] == ["c2", "c3"]  # in pyright's answer order
     assert summary.mismatched == ("b.hy",)
     assert (summary.checked, summary.carried) == (2, 1)
     text = static_carry.carry_text(record, summary)
@@ -198,8 +198,8 @@ def test_the_next_record_keeps_carried_rows_and_names_refresh_mismatches() -> No
 
 
 def test_a_partial_record_keeps_only_finished_and_still_valid_files() -> None:
-    """組ごとの途中の文書は、当て終えた file の今回の診断・運んだ file・まだ当てていない見直しの file の前の記録を持ち、まだ当てていない
-    変わった・新しい file を持たない(次の回は new として当てる)。数は当て終えた file だけ。"""
+    """The intermediate document for each group holds this run's diagnostics for files already checked, carried files, and the previous record for re-review files not yet checked, and
+        holds no changed or new files not yet checked (the next run checks them as new). The count covers only files already checked."""
     previous = CarryRecord(
         "f",
         2,
@@ -215,7 +215,7 @@ def test_a_partial_record_keeps_only_finished_and_still_valid_files() -> None:
         FileInputs("c.hy", "9"),
         FileInputs("d.hy", "4"),
     )
-    plan = plan_carry(previous, "f", inputs, 4)  # 見直しは ceil(4 / 4) = 1 本 — 当てた回の一番古い b
+    plan = plan_carry(previous, "f", inputs, 4)  # re-review is ceil(4 / 4) = 1 file -- b, whose checked run is oldest
     assert {c.path: c.reason for c in plan.checking} == {
         "c.hy": "changed",
         "d.hy": "new",
@@ -226,16 +226,16 @@ def test_a_partial_record_keeps_only_finished_and_still_valid_files() -> None:
     by_path = {f.path: f for f in record.files}
     assert sorted(by_path) == ["a.hy", "b.hy", "c.hy"]
     assert by_path["a.hy"] == previous.files[0]
-    assert by_path["b.hy"] == previous.files[1]  # まだ見直していない — 前の記録のまま
+    assert by_path["b.hy"] == previous.files[1]  # not yet re-reviewed -- previous record kept
     assert ([r.message for r in by_path["c.hy"].rows], by_path["c.hy"].checked) == (["c2"], 3)
     assert (summary.checked, summary.carried, summary.mismatched) == (1, 1, ())
-    # 次の回は、まだ当てていなかった d を new として当て、当て終えた c は運ぶ。
+    # The next run checks d, which had not been checked, as new, and carries c, which was already checked.
     after = plan_carry(record, "f", inputs, 0)
     assert {c.path: c.reason for c in after.checking} == {"d.hy": "new"}
 
 
 def test_the_carry_file_round_trips_and_a_broken_one_is_unreadable(tmp_path: Path) -> None:
-    """書いた運びの file は同じ記録に読める。壊れた file・版の違う file は CarryUnreadableError(黙って空と読まない)。"""
+    """A written carry file reads back as the same record. A broken file or a file of a different version raises CarryUnreadableError (not silently read as empty)."""
     record = CarryRecord("f", 5, (_carried("a.hy", "1", 5, "m"),))
     plan = plan_carry(None, "f", (FileInputs("a.hy", "1"),), 12)
     _, summary = next_record(plan, "f", (FileInputs("a.hy", "1"),), ())
@@ -253,11 +253,11 @@ def test_the_carry_file_round_trips_and_a_broken_one_is_unreadable(tmp_path: Pat
             read_carry(path)
 
 
-# --- 環境の指紋 ------------------------------------------------------------------------------------------------------------
+# --- Environment fingerprint ------------------------------------------------------------------------------------------------------------
 
 
 def _function_from(place: Path, source: str) -> Callable[..., object]:
-    """source を module の file に書いて読み、その中の関数 f を返す(inspect が source を読める関数)。"""
+    """Write source to a module file, read it, and return the function f in it (a function whose source inspect can read)."""
     place.mkdir(parents=True)
     path = place / "semantics_case.py"
     path.write_text(source, encoding="utf-8")
@@ -270,10 +270,10 @@ def _function_from(place: Path, source: str) -> Callable[..., object]:
 
 
 def test_a_comment_only_change_keeps_the_semantics_digest(tmp_path: Path) -> None:
-    """診断を作る関数の註・空行だけの書き換えは指紋を替えず(全部の .hy を当て直さない)、code の変更は替える。"""
+    """Rewriting only comments or blank lines of the function that produces diagnostics does not change the fingerprint (does not re-check all .hy), while a code change does."""
     plain = _function_from(tmp_path / "a", "def f(x: int) -> int:\n    return x + 1\n")
     commented = _function_from(
-        tmp_path / "b", "def f(x: int) -> int:  # noqa: DOEFF007 - 註\n\n    return x + 1  # 註\n"
+        tmp_path / "b", "def f(x: int) -> int:  # noqa: DOEFF007 - note\n\n    return x + 1  # note\n"
     )
     changed = _function_from(tmp_path / "c", "def f(x: int) -> int:\n    return x + 2\n")
     assert static_carry.semantics_digest([plain]) == static_carry.semantics_digest([commented])
@@ -281,7 +281,7 @@ def test_a_comment_only_change_keeps_the_semantics_digest(tmp_path: Path) -> Non
 
 
 def test_an_editable_distribution_version_is_not_in_the_listing(tmp_path: Path) -> None:
-    """editable で入れた配布物(doeff の checkout)の版の上げは探し道の指紋の材料を替えず、editable でない配布物の版の上げは替える。"""
+    """Bumping the version of an editable-installed distribution (the doeff checkout) does not change the material of the search-path fingerprint, while bumping the version of a non-editable distribution does."""
 
     def listing(editable_version: str, other_version: str) -> list[str]:
         place = tmp_path / f"{editable_version}-{other_version}"
@@ -297,24 +297,24 @@ def test_an_editable_distribution_version_is_not_in_the_listing(tmp_path: Path) 
     assert listing("0.5.0", "0.28.1") != listing("0.5.0", "0.29.0")
 
 
-# --- 依存の digest ---------------------------------------------------------------------------------------------------------
+# --- Dependency digest ---------------------------------------------------------------------------------------------------------
 
 
 class _Tree:
-    """入力の digest を測る小さな木 — 根の下の target.hy(展開の代わりの Python を staged に渡す)と、根の下の .py の module。"""
+    """A small tree for measuring the input digest -- target.hy under the root (with Python standing in for expansion passed as staged) and .py modules under the root."""
 
     def __init__(self, root: Path, target: str) -> None:
         self.root = root
         self.target = target
 
     def write(self, relative: str, text: str) -> None:
-        """根の下に file を書く(dir も作る)。"""
+        """Write a file under the root (creating dirs too)."""
         path = self.root / relative
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(text, encoding="utf-8")
 
     def digest(self, searched: tuple[Path, ...] = ()) -> str:
-        """target.hy の入力の digest(毎回新しい graph — 1 回の実行と同じ)。searched = 中身を file ごとに見る python の探し道。"""
+        """The input digest of target.hy (a fresh graph each time -- same as one run). searched = a python search path that looks at contents file by file."""
         source = self.root / "target.hy"
         environment = Environment("fingerprint", searched, places_of(self.root))
         graph = InputGraph(
@@ -331,7 +331,7 @@ def tree(tmp_path: Path) -> Iterator[_Tree]:
 
 
 def test_only_the_declarations_a_file_uses_are_its_inputs(tree: _Tree) -> None:
-    """使う名の署名を替えれば入力が変わり、使う名の本体・同じ module の使わない名の署名を替えても変わらない。"""
+    """Changing the signature of a used name changes the input; changing the body of a used name or the signature of an unused name in the same module does not."""
     tree.write("pkg/__init__.py", "")
     tree.write(
         "pkg/impl.py",
@@ -351,7 +351,7 @@ def test_only_the_declarations_a_file_uses_are_its_inputs(tree: _Tree) -> None:
 
 
 def test_a_declaration_reached_through_a_signature_is_an_input(tree: _Tree) -> None:
-    """使う名の署名が読む型(別の module の class)を替えれば入力が変わる — 推移で届く宣言。"""
+    """Changing a type read by the signature of a used name (a class in another module) changes the input -- a declaration reached transitively."""
     tree.write("pkg/__init__.py", "")
     tree.write("pkg/kinds.py", "class Size:\n    n: int\n")
     tree.write(
@@ -364,8 +364,8 @@ def test_a_declaration_reached_through_a_signature_is_an_input(tree: _Tree) -> N
 
 
 def test_a_cycle_of_declarations_still_carries_a_change_across_it(tree: _Tree) -> None:
-    """宣言が輪になっても(a.used の署名が b.Size を読み、b.Size の method が a.used を呼ぶ)、輪の中の宣言の変更は使い手へ伝わり、輪の中の
-    関数の本体だけの変更は伝わらない。"""
+    """Even if declarations form a cycle (the signature of a.used reads b.Size and a method of b.Size calls a.used), changes to declarations in the cycle propagate to consumers, and
+        a body-only change of a function in the cycle does not."""
     tree.write("pkg/__init__.py", "")
     tree.write(
         "pkg/impl.py", "from pkg.kinds import Size\n\ndef used(x: 'Size') -> int:\n    return 1\n"
@@ -387,7 +387,7 @@ def test_a_cycle_of_declarations_still_carries_a_change_across_it(tree: _Tree) -
 
 
 def test_a_re_export_through_a_package_init_reaches_the_declaration(tree: _Tree) -> None:
-    """package の __init__ が名を写す形(from .impl import used)でも、写した先の宣言に依る。__init__ の別の名は伝えない。"""
+    """Even when a package __init__ re-exports a name (from .impl import used), it depends on the declaration at the re-exported target. Other names in __init__ are not propagated."""
     tree.target = "from pkg import used\n\ndef go() -> int:\n    return used(1)\n"
     tree.write("pkg/__init__.py", "from .impl import used\nfrom .impl import other\n")
     tree.write(
@@ -408,7 +408,7 @@ def test_a_re_export_through_a_package_init_reaches_the_declaration(tree: _Tree)
 
 
 def test_a_new_file_that_resolves_an_import_changes_the_inputs(tree: _Tree) -> None:
-    """解けなかった import を解く file を足せば入力が変わる(前の回の「解けない」の赤を運ばない)。"""
+    """Adding a file that resolves a previously unresolved import changes the input (the previous run's "unresolved" error is not carried)."""
     tree.write("pkg/__init__.py", "")
     first = tree.digest()
     tree.write("pkg/impl.py", "def used(x: int) -> int:\n    return x\n")
@@ -416,7 +416,7 @@ def test_a_new_file_that_resolves_an_import_changes_the_inputs(tree: _Tree) -> N
 
 
 def test_a_py_typed_marker_changes_the_inputs(tree: _Tree) -> None:
-    """package の py.typed(pyright の読み方を変える)を足せば入力が変わる。"""
+    """Adding py.typed to a package (which changes how pyright reads it) changes the input."""
     tree.write("pkg/__init__.py", "")
     tree.write("pkg/impl.py", "def used(x: int) -> int:\n    return x\n")
     first = tree.digest()
@@ -425,7 +425,7 @@ def test_a_py_typed_marker_changes_the_inputs(tree: _Tree) -> None:
 
 
 def test_a_star_import_depends_on_the_whole_module(tree: _Tree) -> None:
-    """star import は star の module の全部の名に依る。"""
+    """A star import depends on all names of the star module."""
     tree.target = "from pkg.impl import *\n"
     tree.write("pkg/__init__.py", "")
     tree.write("pkg/impl.py", "def used(x: int) -> int:\n    return x\n")
@@ -438,7 +438,7 @@ def test_a_star_import_depends_on_the_whole_module(tree: _Tree) -> None:
 
 
 def test_a_module_used_as_an_attribute_chain_depends_on_the_attribute_only(tree: _Tree) -> None:
-    """`import pkg.impl as m` の m.used は used の宣言だけに依る。"""
+    """m.used from `import pkg.impl as m` depends only on the declaration of used."""
     tree.target = "import pkg.impl as m\n\ndef go() -> int:\n    return m.used(1)\n"
     tree.write("pkg/__init__.py", "")
     tree.write(
@@ -459,7 +459,7 @@ def test_a_module_used_as_an_attribute_chain_depends_on_the_attribute_only(tree:
 
 
 def test_another_name_in_all_does_not_change_the_inputs_but_the_used_name_does(tree: _Tree) -> None:
-    """__all__ に別の名を足しても使う名の入力は変わらず、使う名を __all__ から外せば変わる(名ごとに在否だけを見る)。"""
+    """Adding another name to __all__ does not change the input of a used name, while removing the used name from __all__ does (only presence is checked per name)."""
     body = "\n\ndef used(x: int) -> int:\n    return x\n\ndef more() -> int:\n    return 1\n"
     tree.write("pkg/__init__.py", "")
     tree.write("pkg/impl.py", "__all__ = ['used']" + body)
@@ -471,7 +471,7 @@ def test_another_name_in_all_does_not_change_the_inputs_but_the_used_name_does(t
 
 
 def test_an_all_pyright_cannot_read_changes_the_inputs_of_every_name(tree: _Tree) -> None:
-    """__all__ を pyright の読めない形(式で作る)で書く module は、__all__ の文の変更を全部の名の使い手へ伝える。"""
+    """A module that writes __all__ in a form pyright cannot read (built by an expression) propagates changes to the __all__ statement to consumers of all names."""
     body = "\n\ndef used(x: int) -> int:\n    return x\n\ndef more() -> int:\n    return 1\n"
     tree.write("pkg/__init__.py", "")
     tree.write("pkg/impl.py", "__all__ = ['used'] + []" + body)
@@ -481,8 +481,8 @@ def test_an_all_pyright_cannot_read_changes_the_inputs_of_every_name(tree: _Tree
 
 
 def test_the_same_tree_in_another_place_has_the_same_inputs(tmp_path: Path) -> None:
-    """日次の回は task ごとの作業 dir の下に根を置き、doeff の pin の checkout を根の隣に置く(回ごとに path が違う)— 同じ木と隣を別の
-    置き場で測っても入力は同じ(違えば毎回全部を当てる)。"""
+    """The daily run places the root under a per-task work dir and places the doeff pin checkout next to the root (the path differs every run) -- measuring the same tree and neighbor at different
+        locations gives the same input (if it differed, everything would be checked every time)."""
     digests = []
     for run in ("task_t1", "task_t2"):
         parent = tmp_path / run / "worktrees"
@@ -501,7 +501,7 @@ def test_the_same_tree_in_another_place_has_the_same_inputs(tmp_path: Path) -> N
 
 
 def test_places_spell_the_root_and_its_parent_but_not_a_longer_name(tmp_path: Path) -> None:
-    """置き場の印は、綴りの後ろが path の続きか区切りの所だけに当てる(根の名を頭に持つ別の dir は根の親の下の dir)。"""
+    """The location marker applies only where the spelling is followed by a path continuation or separator (another dir whose name starts with the root name is a dir under the root's parent)."""
     root = tmp_path / "worktrees" / "repo-a"
     text = json.dumps(
         [
@@ -522,17 +522,17 @@ def test_places_spell_the_root_and_its_parent_but_not_a_longer_name(tmp_path: Pa
 
 
 def test_an_unreadable_module_makes_every_user_checked_every_run(tree: _Tree) -> None:
-    """構文の誤りで読めない module を使う file は、回ごとに違う digest(毎回当てる — 使う名を割れないので)。"""
+    """A file that uses a module unreadable due to a syntax error gets a different digest every run (checked every time -- the used names cannot be split out)."""
     tree.write("pkg/__init__.py", "")
     tree.write("pkg/impl.py", "def used(x: int) -> int\n")
     assert tree.digest() != tree.digest()
 
 
-# --- 入口(fake の pyright)-------------------------------------------------------------------------------------------------
+# --- Entry point (fake pyright)-------------------------------------------------------------------------------------------------
 
 
 def _fake_pyright(tmp_path: Path, log: Path) -> Path:
-    """`--version` に版を答え、検める file ごとに「seen <名>」の赤を 1 つ返す pyright の偽物(受けた file の名を log に書く)。"""
+    """A fake pyright that answers the version for `--version` and returns one "seen <name>" error per checked file (writing the names of received files to a log)."""
     script = tmp_path / "fake-pyright.py"
     script.write_text(
         "import json, sys\n"
@@ -557,12 +557,12 @@ def _fake_pyright(tmp_path: Path, log: Path) -> Path:
 
 
 def _module(body: str) -> str:
-    """defk の .hy の module(defk と <- を require する)。"""
+    """A defk .hy module (requires defk and <-)."""
     return f"(require doeff-hy.macros [defk <-])\n{body}\n"
 
 
-def _run(root: Path, *extra: str) -> tuple[int, list[dict[str, object]], str]:  # noqa: DOEFF006 — 検の補助の戻り
-    """入口の main を 1 度当て、終わりの code・JSON の診断・標準エラーを返す。"""
+def _run(root: Path, *extra: str) -> tuple[int, list[dict[str, object]], str]:  # noqa: DOEFF006 — return of a check helper
+    """Run the entry point main once and return the exit code, the JSON diagnostics, and stderr."""
     out, err = io.StringIO(), io.StringIO()
     with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
         code = static_check.main(
@@ -574,15 +574,15 @@ def _run(root: Path, *extra: str) -> tuple[int, list[dict[str, object]], str]:  
 
 @pytest.fixture
 def entry(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
-    """機体の検の枠を取らない入口の根(pkg の下に .hy 3 本 — user が base の width を使う・alone は誰も使わない)。"""
-    monkeypatch.setattr(sys, "path", list(sys.path))  # main は根を sys.path の頭に足す
+    """An entry root that does not take the machine check slot (3 .hy files under pkg -- user uses the width of base, alone is used by nobody)."""
+    monkeypatch.setattr(sys, "path", list(sys.path))  # main prepends the root to sys.path
     monkeypatch.setattr(static_check, "take_slot", lambda *_: SlotHeld())
     root = tmp_path / "repo"
     (root / "pkg").mkdir(parents=True)
     (root / "pkg" / "__init__.hy").write_text("", encoding="utf-8")
     (root / "pkg" / "base.hy").write_text(
         _module(
-            '(defk width [text]\n  {:pre [(: text str)] :post [(: % int)]}\n  "幅"\n  (len text))'
+            '(defk width [text]\n  {:pre [(: text str)] :post [(: % int)]}\n  "width"\n  (len text))'
         ),
         encoding="utf-8",
     )
@@ -600,14 +600,14 @@ def entry(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
 
 
 def _pyright_errors(diagnostics: list[dict[str, object]]) -> list[tuple[str, str]]:
-    """偽物の赤(規則 fake)だけを (path, 文言) で。"""
+    """Only the fake errors (rule fake), as (path, message)."""
     return sorted((str(d["path"]), str(d["message"])) for d in diagnostics if d["rule"] == "fake")
 
 
 def test_the_second_run_checks_only_changed_files_and_carries_the_rest(
     entry: Path, tmp_path: Path
 ) -> None:
-    """2 回目は入力の変わった file だけを pyright に渡し、運んだ file の診断は前の回のまま出力に入る(全部を当てた答えと同じ形)。"""
+    """The second run passes only files whose input changed to pyright, and the diagnostics of carried files enter the output as in the previous run (the same shape as the full-run answer)."""
     log = tmp_path / "pyright.log"
     pyright = _fake_pyright(tmp_path, log)
     carry = tmp_path / "carry.json"
@@ -615,8 +615,8 @@ def test_the_second_run_checks_only_changed_files_and_carries_the_rest(
     code, first, err = _run(entry, *common)
     assert code == 1, err
     assert log.read_text(encoding="utf-8").splitlines() == ["__init__.py alone.py base.py user.py"]
-    assert "pyright に当てた .hy 4 本・前の回の診断を運んだ .hy 0 本" in err
-    # 本体だけを替える(width の型は同じ)— base だけを当て、user と alone は運ぶ。
+    assert "checked with pyright: 4 .hy files, carried from previous run: 0 .hy files" in err
+    # Change only the body (the type of width is the same) -- check only base, carry user and alone.
     base = entry / "pkg" / "base.hy"
     base.write_text(
         base.read_text(encoding="utf-8").replace("(len text))", "(len (.strip text)))"),
@@ -624,9 +624,9 @@ def test_the_second_run_checks_only_changed_files_and_carries_the_rest(
     )
     code, second, err = _run(entry, *common)
     assert log.read_text(encoding="utf-8").splitlines()[-1] == "base.py", err
-    assert "pyright に当てた .hy 1 本・前の回の診断を運んだ .hy 3 本" in err
+    assert "checked with pyright: 1 .hy files, carried from previous run: 3 .hy files" in err
     assert _pyright_errors(second) == _pyright_errors(first)
-    # 使う名の署名を替える — base と user を当てる。
+    # Change the signature of a used name -- check base and user.
     base.write_text(
         base.read_text(encoding="utf-8").replace(":post [(: % int)]", ":post [(: % str)]"),
         encoding="utf-8",
@@ -640,8 +640,8 @@ def test_the_second_run_checks_only_changed_files_and_carries_the_rest(
 def test_groups_check_the_same_files_and_a_cut_run_keeps_the_finished_groups(
     entry: Path, tmp_path: Path
 ) -> None:
-    """--carry-group は当てる file を組に分けて pyright に当て、答えは分けない時と同じ。2 つ目の組で pyright が倒れても、運びの file は
-    1 つ目の組の診断を持ち、次の回はまだ当てていない file だけを当てる。"""
+    """--carry-group splits the files to check into groups for pyright, and the answer is the same as without splitting. Even if pyright dies on the second group, the carry file
+        holds the first group's diagnostics, and the next run checks only files not yet checked."""
     log = tmp_path / "pyright.log"
     pyright = _fake_pyright(tmp_path, log)
     carry = tmp_path / "carry.json"
@@ -652,8 +652,8 @@ def test_groups_check_the_same_files_and_a_cut_run_keeps_the_finished_groups(
     assert code == 1, err
     assert log.read_text(encoding="utf-8").splitlines()[-2:] == ["__init__.py alone.py", "base.py user.py"]
     assert _pyright_errors(grouped) == _pyright_errors(whole)
-    assert "pyright に当てた .hy 4 本" in err
-    # 2 つ目の組で倒れる pyright — 1 つ目の組の 2 本だけが運びの file に残る。
+    assert "checked with pyright: 4 .hy files" in err
+    # pyright dies on the second group -- only the 2 files of the first group remain in the carry file.
     carry.unlink()
     broken = tmp_path / "broken-pyright"
     broken.write_text(
@@ -668,7 +668,7 @@ def test_groups_check_the_same_files_and_a_cut_run_keeps_the_finished_groups(
         entry, "--pyright", str(broken), "--carry", str(carry), "--carry-refresh-runs", "0", "--carry-group", "2"
     )
     assert code == 2
-    assert "pyright の出力を読めない" in err
+    assert "cannot read pyright output" in err
     kept = read_carry(carry)
     assert kept is not None
     assert sorted(f.path for f in kept.files) == ["pkg/__init__.hy", "pkg/alone.hy"]
@@ -679,31 +679,31 @@ def test_groups_check_the_same_files_and_a_cut_run_keeps_the_finished_groups(
 def test_an_unreadable_carry_file_checks_everything_and_is_replaced(
     entry: Path, tmp_path: Path
 ) -> None:
-    """運びの file が読めなければ名乗って全部を当て(測りを止めない)、この回の運びで置き換える。"""
+    """If the carry file is unreadable, report it and check everything (do not stop the measurement), replacing it with this run's carry."""
     log = tmp_path / "pyright.log"
     pyright = _fake_pyright(tmp_path, log)
     carry = tmp_path / "carry.json"
-    carry.write_text("{ 壊れた", encoding="utf-8")
+    carry.write_text("{ broken", encoding="utf-8")
     code, diagnostics, err = _run(entry, "--pyright", str(pyright), "--carry", str(carry))
     assert code == 1
-    assert "JSON でない" in err
+    assert "is not JSON" in err
     assert len(_pyright_errors(diagnostics)) == 4
     assert read_carry(carry) is not None
 
 
-# --- 本物の pyright --------------------------------------------------------------------------------------------------------
+# --- Real pyright --------------------------------------------------------------------------------------------------------
 
 
 def _real(root: Path, *extra: str) -> list[dict[str, object]]:
-    """本物の pyright で strict に当てた JSON の診断(位置・規則・文言)。"""
+    """JSON diagnostics (position, rule, message) from running real pyright in strict mode."""
     code, diagnostics, err = _run(root, "--strict", *extra)
     assert code in (0, 1), err
     return diagnostics
 
 
-def _same_as_full(root: Path, carry: Path) -> tuple[int, int]:  # noqa: DOEFF006 — 検の補助の戻り
-    """運びの下の答えが、同じ木を全部当てた答えと同じことを確かめ、その回に pyright に当てた数と運んだ数を返す(運ばずに全部を当てても
-    答えは同じなので、数で運んだことを確かめる)。"""
+def _same_as_full(root: Path, carry: Path) -> tuple[int, int]:  # noqa: DOEFF006 — return of a check helper
+    """Verify that the answer under the carry equals the answer of a full run over the same tree, and return the number checked by pyright and the number carried in that run (checking everything without carrying
+        gives the same answer, so the counts confirm that carrying happened)."""
     carried = _real(root, "--carry", str(carry), "--carry-refresh-runs", "0")
     assert carried == _real(root)
     summary = json.loads(carry.read_text(encoding="utf-8"))["summary"]
@@ -712,17 +712,17 @@ def _same_as_full(root: Path, carry: Path) -> tuple[int, int]:  # noqa: DOEFF006
 
 @needs_pyright
 def test_carried_answers_match_a_full_check_across_changes(entry: Path, tmp_path: Path) -> None:
-    """本物の pyright で: 変えない・使う名の本体だけを替える・使う名の答えの型を替えて使い手に赤が出る・その赤を消す — どの回も、運んだ答えが
-    同じ木を全部当てた答えと同じ。"""
+    """With real pyright: no change, changing only the body of a used name, changing the return type of a used name so an error appears in the consumer, and removing that error -- in every run, the carried answer
+        equals the answer of a full run over the same tree."""
     carry = tmp_path / "carry.json"
-    assert _same_as_full(entry, carry) == (4, 0)  # 初回(全部を当てる — __init__・alone・base・user)
-    assert _same_as_full(entry, carry) == (0, 4)  # 変えない(全部を運ぶ)
+    assert _same_as_full(entry, carry) == (4, 0)  # first run (checks everything -- __init__, alone, base, user)
+    assert _same_as_full(entry, carry) == (0, 4)  # no change (carries everything)
     base = entry / "pkg" / "base.hy"
     base.write_text(
         base.read_text(encoding="utf-8").replace("(len text))", "(len (.strip text)))"),
         encoding="utf-8",
     )
-    assert _same_as_full(entry, carry) == (1, 3)  # base だけ
+    assert _same_as_full(entry, carry) == (1, 3)  # base only
     base.write_text(
         base.read_text(encoding="utf-8")
         .replace(":post [(: % int)]", ":post [(: % str)]")
@@ -732,8 +732,8 @@ def test_carried_answers_match_a_full_check_across_changes(entry: Path, tmp_path
     user_errors = [
         d for d in _real(entry) if d["path"] == "pkg/user.hy" and d["severity"] == "error"
     ]
-    assert user_errors, "答えの型を str にすると user の shout(int を返す)に赤が出る筈"
-    assert _same_as_full(entry, carry) == (2, 2)  # base と、width を使う user
+    assert user_errors, "changing the return type to str should produce an error in user's shout (which returns int)"
+    assert _same_as_full(entry, carry) == (2, 2)  # base, and user which uses width
     base.write_text(
         base.read_text(encoding="utf-8")
         .replace(":post [(: % str)]", ":post [(: % int)]")
@@ -747,10 +747,10 @@ def test_carried_answers_match_a_full_check_across_changes(entry: Path, tmp_path
 def test_carried_answers_match_a_full_check_for_a_type_reached_through_a_signature(
     entry: Path, tmp_path: Path
 ) -> None:
-    """本物の pyright で: 使う名の署名が読む別の module の型(record の欄)を替えると、使い手を当て直し、運んだ答えが全部当てた答えと同じ。"""
+    """With real pyright: changing a type read by the signature of a used name (a field of a record) in another module re-checks consumers, and the carried answer equals the full-run answer."""
     pkg = entry / "pkg"
     (pkg / "kinds.hy").write_text(
-        '(require doeff-hy.record [defrecord])\n(import dataclasses [dataclass])\n(defrecord Size "大きさ" (#^ int n))\n',
+        '(require doeff-hy.record [defrecord])\n(import dataclasses [dataclass])\n(defrecord Size "size" (#^ int n))\n',
         encoding="utf-8",
     )
     (pkg / "base.hy").write_text(
@@ -772,19 +772,19 @@ def test_carried_answers_match_a_full_check_for_a_type_reached_through_a_signatu
         encoding="utf-8",
     )
     assert [d for d in _real(entry) if d["path"] == "pkg/user.hy" and d["severity"] == "error"], (
-        "欄 n を str にすると total に赤が出る筈"
+        "changing field n to str should produce an error in total"
     )
     assert _same_as_full(entry, carry) == (
         3,
         2,
-    )  # kinds と、Size を署名で読む base と、measure を使う user(__init__・alone は運ぶ)
+    )  # kinds, base which reads Size in its signature, and user which uses measure (__init__ and alone are carried)
 
 
 @needs_pyright
 def test_carried_answers_match_a_full_check_when_a_missing_module_appears(
     entry: Path, tmp_path: Path
 ) -> None:
-    """本物の pyright で: 解けなかった import を解く file を足すと、解けない赤を運ばず当て直す。"""
+    """With real pyright: adding a file that resolves a previously unresolved import re-checks without carrying the unresolved error."""
     pkg = entry / "pkg"
     (pkg / "user.hy").write_text(
         _module(
@@ -801,4 +801,4 @@ def test_carried_answers_match_a_full_check_when_a_missing_module_appears(
     assert _same_as_full(entry, carry) == (
         2,
         3,
-    )  # 足した later と、解けるようになった user(__init__・alone・base は運ぶ)
+    )  # the added later, and user which now resolves (__init__, alone, and base are carried)

@@ -1,8 +1,8 @@
-"""引数の在る defhandler(handler の工場)の戻りの型の検。
+"""Check on the return type of a defhandler with arguments (a handler factory).
 
-引数の在る defhandler は呼ぶと handler を返す関数を作る。前は工場に戻りの型が無く、公開 API の目録
-(tools/public_api_inventory.py)と inspect.signature が工場を「戻りの型が無い関数」と読み、handler を返す名 53 個が未分類になった。
-実行時の展開は工場の戻りの型を doeff の ProgramHandler と注記する。class の本体の工場と型検査のための展開は注記しない(handle.hy の註)。
+A defhandler with arguments builds a function that returns a handler when called. Previously the factory had no return type, so the public API inventory
+(tools/public_api_inventory.py) and inspect.signature read the factory as a "function with no return type", and 53 names returning handlers were left unclassified.
+The runtime expansion annotates the factory's return type as doeff's ProgramHandler. The factory in a class body and the expansion for type checking are not annotated (see the note in handle.hy).
 """
 
 from __future__ import annotations
@@ -25,7 +25,7 @@ PROBE = """
 
 
 def _eval(source: str) -> dict[str, object]:
-    importlib.import_module("doeff_hy")  # Hy の importer と macro を用意する(副作用のための import)
+    importlib.import_module("doeff_hy")  # prepare the Hy importer and macros (import for side effects)
     namespace: dict[str, object] = {"__name__": "probe"}
     hy.eval(hy.read_many(source), namespace)
     return namespace
@@ -44,7 +44,7 @@ def _return_type(value: object) -> object:
 def test_a_factory_on_the_module_level_returns_a_program_handler() -> None:
     namespace = _eval(PROBE)
     assert _return_type(namespace["factory"]) is ProgramHandler
-    # 工場が返す値は今までどおり handler の印を持つ installer。
+    # The value the factory returns is, as before, an installer carrying the handler mark.
     assert getattr(_call(namespace["factory"], 1), "_doeff_is_handler_fn", None) is True
 
 

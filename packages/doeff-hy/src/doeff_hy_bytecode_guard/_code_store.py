@@ -1,57 +1,57 @@
-"""source の中身で引く bytecode の保存先 — 引く・足す・使った印・壊れた entry の扱いの入口はこの module 1 つ(
-#2799・#3858)。
+"""Storage for bytecode looked up by source content — this one module is the entry point for lookup, adding, the used mark, and handling of broken entries (
+#2799, #3858).
 
-使い手は 6 つで、どれもここだけを通る(保存先の並びと鍵の綴りの複製を作らない):
-  - dataclass が型ごとに作る関数の source の compile(:mod:`doeff_hy_bytecode_guard._dataclass_code`): 文の中身で code を引き、
-    compile したら足す。
-  - import の読みの口(:mod:`doeff_hy_bytecode_guard._loader_hooks`): 作業木の .pyc が使えない Hy の module の code を、鍵に並ぶ entry の
-    記録を照らして引き(:func:`current_code`)、compile したら今の環境の entry として足す(:func:`add_code`)。
-  - .pyc の記録の照らしの source の読み(:mod:`doeff_hy_bytecode_guard._bound_source`): macro の閉包の digest の歩みが、辿れない大域を
-    覆う source の文の読み(中身と名で決まる純な読み)を引き、無ければ解いて足す(新しい
-    process の照らしが、同じ中身の source を毎回解き直していた)。
-  - .pyc の記録の照らしの code の読み(:mod:`doeff_hy_bytecode_guard._macro_use`): macro の閉包の digest の歩みが読む関数の code の
-    読み(名の表・文字列の定数・import・digest の形 — code の中身で決まる純な読み)を、歩み 1 つの entry に並べて引き、読み直した
-    時は足す。
-  - import の compile が展開した木(:mod:`doeff_hy_bytecode_guard._expansion_trees`): 変わった Hy の module を compile した process が、展開した
-    木と展開が依った macro の記録を、その code の隣に足す(:func:`add_tree`)。doeff-effect-analyzer が同じ source を展開し直す前に、今の
-    環境の macro で照らして引く(:func:`tree_entries`)。bytecode の保存先は worker の上の job が全部で共有するので、どの job が compile
-    しても、後から読む analyzer(日次の閉じの検)が同じ保存先から引ける。
-  - doeff-cluster の worker の bytecode の道具(worker/entry/code_prepare.hy と _foundation/bytecode_pool.hy): 版をまたいで、中身の同じ
-    source の code(:func:`current_code`・:func:`add_code`)と import の名を引き、無い物だけを compile して足す。道具は準備する root の venv の python で走るので、root の版の
-    doeff-hy でなく worker の版のこの file を path で読む — だから標準 library だけを import する(この package の他の module も読まない)。
+There are 6 users, and all of them go only through here (no duplicate copies of the storage layout or the key spelling):
+  - Compiling the source of the per-type functions that dataclass generates (:mod:`doeff_hy_bytecode_guard._dataclass_code`): look up code by the statement contents,
+    and add it after compiling.
+  - The import loader hook (:mod:`doeff_hy_bytecode_guard._loader_hooks`): for a Hy module whose worktree .pyc cannot be used, look up the code by checking the record of the entries lined up under the key
+    (:func:`current_code`), and after compiling add it as an entry for the current environment (:func:`add_code`).
+  - Reading the source for the .pyc record check (:mod:`doeff_hy_bytecode_guard._bound_source`): the walk computing the macro closure digest looks up the reading of the source statements
+    that cover globals it cannot trace (a pure reading determined by content and name), and resolves and adds it if absent (a new
+    process had been re-resolving the same source content every time).
+  - Reading the code for the .pyc record check (:mod:`doeff_hy_bytecode_guard._macro_use`): the readings of the function code that the macro closure digest walk reads
+    (name tables, string constants, imports, the digest shape — pure readings determined by the code content), lined up in one entry per walk step and looked up; when re-read,
+    they are added.
+  - Trees expanded by import-time compilation (:mod:`doeff_hy_bytecode_guard._expansion_trees`): the process that compiled a changed Hy module adds the expanded
+    tree and the record of the macros the expansion depended on next to its code (:func:`add_tree`). Before doeff-effect-analyzer expands the same source again, it checks against the current
+    environment's macros and looks them up (:func:`tree_entries`). The bytecode store is shared by all jobs on a worker, so whichever job compiled,
+    the analyzer that reads later (the daily closing check) can look it up from the same store.
+  - The bytecode tools of the doeff-cluster worker (worker/entry/code_prepare.hy and _foundation/bytecode_pool.hy): across versions, look up the code of sources with the same content
+    (:func:`current_code`, :func:`add_code`) and import names, compile only what is missing, and add it. The tools run under the python of the root venv being prepared, so they read
+    this file of the worker's version by path, not the root's doeff-hy — hence only the standard library is imported (no other module of this package is read either).
 
-保存先の dir = 環境変数 DOEFF_HY_CODE_STORE(``off`` = 使わない・無ければ ``$XDG_CACHE_HOME/doeff-hy/code-store``)。worker の起動の
-script は既定を ``$WORK_DIR/state/doeff-hy-code-store`` に置く(日次の全体検証の task と同じ dir)。
+Store directory = environment variable DOEFF_HY_CODE_STORE (``off`` = do not use; if unset, ``$XDG_CACHE_HOME/doeff-hy/code-store``). The worker's startup
+script puts the default at ``$WORK_DIR/state/doeff-hy-code-store`` (the same directory as the daily full-verification task).
 
-並び: ``<dir>/<鍵の頭 2 字>/<鍵の残り><種類の末尾>``。種類 = ``.code``(marshal した code object — dataclass の関数の code)と
-``.imports``(worker の道具の閉包の歩みが読む import の名 — 形は道具が持つ)と ``.binding`` ・ ``.facts``(.pyc の記録の照らしの source の
-読みと code の読み — 形は bound_source・macro_use が持つ)と ``.tree``(import の compile が展開した木と macro の記録 — 形は expansion_trees が持つ)。
-鍵は source の中身の sha256 と、中身の読みを変える物(:func:`code_key` の欄)
-だけで決まり、path と版(commit)に依らない。``.pyc``(worker の道具が木へ置く .pyc の中身そのもの)だけは鍵が中身の sha256 で、木の
-.pyc はこの file への hardlink(:func:`link_pyc`)。
+Layout: ``<dir>/<first 2 chars of key>/<rest of key><kind suffix>``. Kinds = ``.code`` (marshaled code object — the code of dataclass functions) and
+``.imports`` (import names read by the closure walk of the worker tools — the shape is owned by the tools), ``.binding`` and ``.facts`` (the source reading and the code reading for the
+.pyc record check — shapes owned by bound_source and macro_use), and ``.tree`` (the tree expanded by import-time compilation and the macro record — shape owned by expansion_trees).
+The key is determined only by the sha256 of the source content and the things that change how the content is read (the fields of :func:`code_key`),
+and does not depend on path or version (commit). Only ``.pyc`` (the exact contents of the .pyc the worker tools place in a tree) is keyed by the sha256 of the content, and the tree's
+.pyc is a hardlink to this file (:func:`link_pyc`).
 
-source の code(:func:`code_key` の鍵 — import の口と worker の道具)は、鍵 1 つの dir に macro の環境ごとの entry を幾つか持つ:
-``<dir>/<鍵の頭 2 字>/<鍵の残り>/<記録の指紋>.code``。Hy の source は展開が依った macro の記録を code に持ち、
-引いた側が今の環境の macro で照らす(照らしは呼び手 — :func:`current_code`)。記録の指紋(:func:`code_fingerprint`)は使えるかを決める
-物の全部なので、記録の同じ code は 1 つの entry を書き直し、記録の違う code(doeff の版の違う作業木の import と実行環境の準備)は並ぶ。
-鍵 1 つに entry 1 つの並び(鍵の印 2)では、版の違う書き手が同じ鍵の entry を互いに古いと見て compile し直し、上書きし合った(2026-10-12
-zeus — 実行環境の準備は同じ版の source でも 1 回に 100〜600 本を焼き直した)。鍵 1 つの entry は :data:`CODE_ENTRIES_PER_KEY` 個までで、
-越えたら時刻の古い物から除く。足したばかりの entry は、鍵の他の entry より古い時刻に置く(:func:`add_code`)— 誰かが照らして使うまで
-並びの後ろに居て、上限を越えた時に先に除かれる。だから一度きりの環境(macro を直している作業木の検)の entry は互いを除き合い、使い
-続けている書き手の entry を押し出さない。上限を越える数の環境が同じ鍵を順に使っても、外れるのは上限を越えた分だけ(全部が外れる崖に
-ならない)。
+For source code (the key of :func:`code_key` — the import hook and the worker tools), the single-key directory holds several entries, one per macro environment:
+``<dir>/<first 2 chars of key>/<rest of key>/<record fingerprint>.code``. A Hy source carries in its code the record of the macros its expansion depended on, and
+the reader checks it against the current environment's macros (the check is the caller's job — :func:`current_code`). The record fingerprint (:func:`code_fingerprint`) covers everything that decides
+whether it can be used, so code with the same record rewrites one entry, while code with different records (imports from worktrees of different doeff versions, and runtime-environment preparation) sit side by side.
+With one entry per key (key tag 2), writers of different versions saw each other's entry under the same key as stale, recompiled, and overwrote each other (2026-10-12
+zeus — runtime-environment preparation rebuilt 100 to 600 files at a time even for sources of the same version). A key holds at most :data:`CODE_ENTRIES_PER_KEY` entries, and
+past that the oldest by timestamp are removed. A just-added entry is placed at a timestamp older than the key's other entries (:func:`add_code`) — until someone checks and uses it, it stays
+at the back of the order and is removed first when the cap is exceeded. So entries of one-off environments (checks in a worktree where macros are being fixed) evict each other and
+do not push out the entries of writers that keep using them. Even when more environments than the cap use the same key in turn, only the excess falls out (it is not a cliff where everything falls
+out).
 
-木(``.tree``)も同じ並び — 鍵 1 つの dir に macro の環境ごとの entry(名 = 記録の指紋)を持ち、足した entry を後ろに置き、上限は
-:data:`TREE_ENTRIES_PER_KEY` 個。木は同じ source の code の数倍の大きさ(2026-10-21 の実測、screen の job の import で compile した module:
-展開の木 634 本の pickle は平均 約 196 KB・code 1,306 本は平均 約 30 KB)なので、置く側(expansion_trees)が圧縮して足す。鍵は木の側の印と module の名・source の中身で決まり、code の鍵とは
-別の dir に並ぶ(同じ dir を分け合わない)。
+Trees (``.tree``) follow the same layout — a single-key directory holds an entry per macro environment (name = record fingerprint), an added entry goes to the back, and the cap is
+:data:`TREE_ENTRIES_PER_KEY`. A tree is several times the size of the code for the same source (measured 2026-10-21, modules compiled during imports of the screen job:
+634 expansion-tree pickles averaged about 196 KB, 1,306 code objects averaged about 30 KB), so the writer (expansion_trees) adds them compressed. The key is determined by the tree-side tag, the module name, and the source content, and lines up in a
+different directory from the code keys (the two do not share a directory).
 
-使った印: 引いて当たるたびに entry の時刻を今にする(source の code は、照らして使う entry だけ)。worker の掃除(env_store の
-sweep-leftovers)は 7 日使われない entry と、中が全部 7 日動いていない dir を消す — native の wheel の保存先(.used の印で dir の時刻を
-進める)と同じ 7 日の作法。書きは同じ dir の一時の file に書いてから置き換える(同時に書く別の process と混ざらず、書きかけを読ませない)。
+Used mark: every hit refreshes the entry's timestamp to now (for source code, only the entry that is checked and used). The worker's sweep (env_store's
+sweep-leftovers) removes entries unused for 7 days and directories whose contents have all been idle for 7 days — the same 7-day convention as the native wheel store (a .used mark
+advances the directory's timestamp). Writes go to a temporary file in the same directory and are then swapped in (so they do not mix with another process writing at the same time, and a half-written file is never read).
 
-壊れた entry(code として読めない・import の名の形が違う)は使わない: 名指しの 1 行を stderr に出して entry を除き、呼び手は作り直して
-足し直す(黙って壊れた物を使わない・黙って捨てない)。
+A broken entry (unreadable as code, or import names in the wrong shape) is not used: one line naming it goes to stderr and the entry is removed, and the caller rebuilds and
+adds it again (a broken entry is neither used silently nor discarded silently).
 """
 
 import os
@@ -60,59 +60,59 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from types import CodeType
 
-#: 保存先の dir を指す環境変数(値 = dir の path・``off`` = 使わない)。
+#: Environment variable pointing at the store directory (value = directory path; ``off`` = do not use).
 STORE_ENV = "DOEFF_HY_CODE_STORE"
 
-#: code の entry の鍵の印(形を変えたら末尾の番号を上げる — 古い鍵の entry は当たらなくなる)。2 = 鍵を compile した bytes そのものから
-#: 作る版。1 の版の保存先には、compile の後に file を読み直した鍵の下に古い中身の code が入った entry が在り得る
-#: ので、新しい版からは引かない。3 = 鍵 1 つの dir に macro の環境ごとの entry を並べる版。2 の entry(鍵 1 つに
-#: 1 つの file)は前の版の書き手だけが使い、新しい版からは引かない — 前の版の書き手と取り合わず、7 日使われなければ掃除が消す。
+#: Tag for the code entry key (bump the trailing number when the format changes — entries under old keys stop hitting). 2 = a version that builds the key from the compiled bytes
+#: themselves. The store of version 1 may hold entries where code with old contents sits under a key made by re-reading the file after compilation,
+#: so the newer versions do not look them up. 3 = a version that lines up one entry per macro environment in the single-key directory. Version 2 entries (one
+#: file per key) are used only by writers of the previous version and the new version does not look them up — so they do not compete with previous-version writers, and the sweep removes them after 7 unused days.
 CODE_TAG = "doeff-hy/code-store/3"
 
-#: source の code の鍵 1 つに持つ entry の数の上限(足して越えたら、時刻の古い物から除く)。上限は「照らして使い続けている entry」を
-#: 何個まで同時に守るかの数 — 足しただけでまだ使われていない entry は後ろに並ぶ(:func:`add_code`)ので、一度きりの環境の数には依らない。
-#: 使い続ける環境が上限を越えると、越えた分の環境が毎回外れる(全部は外れない)。多すぎると、どの entry にも合わない新しい環境の読みが、
-#: compile の前に全部を照らす手間が増える。
+#: Cap on the number of entries held per source-code key (when adding goes over it, the oldest by timestamp are removed). The cap is the number of "entries that are checked and kept in use"
+#: that are protected at once — an added but not yet used entry lines up at the back (:func:`add_code`), so it does not depend on the number of one-off environments.
+#: If the environments in continued use exceed the cap, the excess environments fall out every time (not all of them). Too many, and a new environment that matches no entry
+#: costs more effort checking all of them before compiling.
 CODE_ENTRIES_PER_KEY = 16
 
-#: 足したばかりの entry の時刻を、鍵の他の entry より前に置く時の下限(今からこれより前には置かない)。掃除の 7 日よりずっと短く — 足した
-#: entry が、照らして使われないまま掃除の閾を越えた時刻に置かれて、すぐ消されないため。
+#: Lower bound for placing a just-added entry's timestamp ahead of the key's other entries (never place it further back than this from now). Much shorter than the sweep's 7 days — so that an added
+#: entry that was never checked and used is not placed at a timestamp past the sweep threshold and deleted immediately.
 NEW_ENTRY_FLOOR_SECONDS = 24 * 3600
 
-#: import の compile が展開した木の鍵 1 つに持つ entry の数の上限(足して越えたら、時刻の古い物から除く — 除き方は code の entry と同じ)。
-#: 木は同じ source の code の数倍の大きさ(圧縮して置いても code と同じほど)で、使い手は同じ source を展開し直さないための引き 1 回なので、
-#: 照らして使い続ける macro の環境は少ない(検証の job と日次と手元)— code の上限より小さくする。
+#: Cap on the number of entries held per key for trees expanded by import-time compilation (when adding goes over it, the oldest by timestamp are removed — removed the same way as code entries).
+#: A tree is several times the size of the code for the same source (about as large as the code even when stored compressed), and its user does one lookup to avoid re-expanding the same source, so
+#: few macro environments stay in continued use (the verification jobs, the daily run, and a local checkout) — make it smaller than the code cap.
 TREE_ENTRIES_PER_KEY = 4
 
-#: entry の種類の末尾。
+#: Suffix for the entry kind.
 CODE_SUFFIX = ".code"
-#: import の compile が展開した木と、その展開が依った macro の記録(doeff_hy_bytecode_guard._expansion_trees — 中身の形はそこが持つ)。
+#: The tree expanded by import-time compilation and the record of the macros that expansion depended on (doeff_hy_bytecode_guard._expansion_trees — it owns the content shape).
 TREE_SUFFIX = ".tree"
 IMPORTS_SUFFIX = ".imports"
-#: macro の閉包の digest の歩みが、辿れない大域を覆う source の文の読み(doeff_hy_bytecode_guard._bound_source — 中身と名で決まる
-#: 純な読み。形は bound_source が持つ)。
+#: Reading of the source statements covering globals the macro closure digest walk cannot trace (doeff_hy_bytecode_guard._bound_source — a pure reading determined by
+#: content and name. Its shape is owned by bound_source).
 BINDING_SUFFIX = ".binding"
-#: macro の閉包の digest の歩みが読む code object の読み(doeff_hy_bytecode_guard._macro_use — code の中身で決まる純な読み。形は
-#: macro_use が持つ)。
+#: Reading of the code object that the macro closure digest walk reads (doeff_hy_bytecode_guard._macro_use — a pure reading determined by the code content. Its shape is
+#: owned by macro_use).
 FACTS_SUFFIX = ".facts"
-#: worker の道具が木へ置く .pyc の中身そのもの(頭と marshal した code — 名は中身の sha256・:func:`link_pyc`)。
+#: The exact contents of the .pyc that the worker tools place in a tree (header plus marshaled code — named by the content's sha256; :func:`link_pyc`).
 PYC_SUFFIX = ".pyc"
 
-#: Hy の source の拡張子(doeff-hy は .hyk・.hyp も Hy として読ませる)— code の鍵に module 名と Hy の版を入れるかを分ける。
+#: Extension of Hy sources (doeff-hy also has .hyk and .hyp read as Hy) — decides whether the module name and Hy version go into the code key.
 HY_SOURCE_SUFFIXES: tuple[str, ...] = (".hy", ".hyk", ".hyp")
 
 
 @dataclass(frozen=True)
 class StoredCode:
-    """引いた source の code の entry: code = 読んだ code object・data = entry の中身の bytes(marshal した code — 読み直さずに .pyc の頭の
-    後ろへ並べるため・:func:`current_entry`)。"""
+    """Entry of the source code that was looked up: code = the code object read, data = the bytes of the entry content (marshaled code — so it can be placed after the .pyc header without re-reading;
+    :func:`current_entry`)."""
 
     code: CodeType
     data: bytes
 
 
 def store_dir() -> str | None:
-    """保存先の dir(使わない設定なら None)— 環境変数 STORE_ENV、無ければ利用者の cache の dir の下。"""
+    """Store directory (None if configured not to use it) — the environment variable STORE_ENV, or else under the user's cache directory."""
     configured = os.environ.get(STORE_ENV, "").strip()
     if configured == "off":
         return None
@@ -123,17 +123,17 @@ def store_dir() -> str | None:
 
 
 def store_is_named() -> bool:
-    """保存先の dir を環境変数 STORE_ENV で名指しているか(``off`` と空は名指しでない)— 名指しの保存先は、木へ .pyc を書かない
-    設定でも足す(書かない設定は木への書きの決めで、木の外の保存先の決めではない)。名指しの無い既定の dir
-    (利用者の cache)には、書かない設定では足さない。"""
+    """Whether the store directory is named by the environment variable STORE_ENV (``off`` and empty are not named) — a named store is added to even
+    when configured not to write .pyc into the tree (the no-write setting is a decision about writing to the tree, not about a store outside the tree). An unnamed default directory
+    (the user's cache) is not added to under the no-write setting."""
     configured = os.environ.get(STORE_ENV, "").strip()
     return configured not in ("", "off")
 
 
 def content_key(parts: tuple[str, ...], source: bytes) -> str:
-    """entry の鍵 — 中身の読みを変える物の列 parts(先頭は種類と形の版の印)と source の中身の sha256(16 進)。parts は 1 つずつ
-    NUL で区切る(隣り合う欄の境目が動いても同じ鍵にならない)。"""
-    import hashlib  # 保存先を使う時だけ読む
+    """Entry key — the list parts of things that change how the content is read (the first is the tag of kind and shape version) and the sha256 (hex) of the source content. Each of parts is
+    separated by NUL (so shifting the boundary between adjacent fields never yields the same key)."""
+    import hashlib  # loaded only when the store is used
 
     digest = hashlib.sha256()
     for part in parts:
@@ -144,23 +144,23 @@ def content_key(parts: tuple[str, ...], source: bytes) -> str:
 
 
 def code_key(path: str, source: bytes, module_name: str, hy_version: str, cache_tag: str, optimize: int) -> str:
-    """source 1 つの code の鍵。Hy の source は module 名(相対の require を解く)と Hy の版(展開)も入れる。Python の source の
-    compile はそのどちらにも依らないので、中身・Python の版の印(cache_tag)・最適化の段だけ。macro の依存は鍵に入れず、当たった
-    entry の記録で確かめる(compile の前には依存が分からない)。"""
+    """Code key for one source. A Hy source also includes the module name (to resolve relative requires) and the Hy version (expansion). Compiling a Python source
+    depends on neither, so it uses only the content, the Python version tag (cache_tag), and the optimization level. Macro dependencies are not in the key; they are checked against the record of the entry that
+    hit (dependencies are unknown before compiling)."""
     hy = path.endswith(HY_SOURCE_SUFFIXES)
     parts = (CODE_TAG, module_name if hy else "", hy_version if hy else "", cache_tag, str(optimize))
     return content_key(parts, source)
 
 
 def entry_path(store: str, key: str, suffix: str) -> str:
-    """鍵の entry の path(鍵の頭 2 字を dir に分ける)。"""
+    """Path of the key's entry (the first 2 chars of the key split the directories)."""
     return os.path.join(store, key[:2], key[2:] + suffix)
 
 
 def _plain(value: object) -> bool:
-    """value が記録の形の値か — 文字列・bytes・整数・浮動小数・None と、それらの組の入れ子(repr が process と木に依らない値 —
-    frozenset のように並びが hash に依る値は入れない)。記録の欄が後の版でこの形を外れると、記録の違う code が 1 つの決まった名に
-    潰れて上書きし合うので、記録に足す欄はこの形で書く。"""
+    """Whether value is a value of the record shape — strings, bytes, integers, floats, None, and nested tuples of those (values whose repr does not depend on the process or the tree —
+    values whose order depends on hashing, like frozenset, are excluded). If a record field later leaves this shape in a newer version, code with different records collapses into one fixed name and
+    they overwrite each other, so fields added to the record must be written in this shape."""
     match value:
         case str() | bytes() | int() | float() | None:
             return True
@@ -171,12 +171,12 @@ def _plain(value: object) -> bool:
 
 
 def code_fingerprint(code: CodeType) -> str:
-    """source の code の entry の名 — code の定数の末尾(doeff-hy が macro の記録を置く所 — :mod:`doeff_hy_bytecode_guard._records`)の
-    sha256 の頭 32 字。記録は entry を使えるかを決める物の全部(Hy の版・使った macro と digest・…)なので、記録の同じ code は同じ名
-    (compile した木の path は記録に入らない)、記録の違う code は違う名になる。記録の欄の意味は読まない(:func:`_plain` の形なら同じ
-    作り方)— worker の道具は root の版の記録を、worker の版のこの file で名にするので、記録の印(RECORD_TAG)の違う版の
-    記録にも同じ名の作り方が効く。末尾の定数がその形でない code(記録の無い code — Python の source)は 1 つの決まった名。"""
-    import hashlib  # 保存先へ足す時だけ読む
+    """Name of a source-code entry — the first 32 chars of the sha256 of the tail of the code's constants (where doeff-hy puts the macro record — :mod:`doeff_hy_bytecode_guard._records`).
+    The record covers everything that decides whether the entry can be used (Hy version, macros used and digests, ...), so code with the same record gets the same name
+    (the path of the compiled tree is not in the record) and code with a different record gets a different name. The meaning of the record fields is not read (any value of the :func:`_plain` shape is built the same way) —
+    the worker tools name the root-version record with this file of the worker version, so the same naming works for records of versions with a different record tag (RECORD_TAG).
+    Code whose tail constant is not of that shape (code with no record — Python sources) gets one fixed name."""
+    import hashlib  # loaded only when adding to the store
 
     last = code.co_consts[-1] if code.co_consts else None
     text = repr(last) if isinstance(last, tuple) and _plain(last) else ""
@@ -184,12 +184,12 @@ def code_fingerprint(code: CodeType) -> str:
 
 
 def _code_dir(store: str, key: str) -> str:
-    """source の code の鍵 1 つの entry を並べる dir(鍵の頭 2 字を dir に分ける — 他の種類と同じ)。"""
+    """Directory holding the entries of one source-code key (the first 2 chars of the key split the directories — the same as the other kinds)."""
     return os.path.join(store, key[:2], key[2:])
 
 
 def _used_at(item: os.DirEntry[str]) -> int | None:
-    """entry の使った時刻(ns)— 一覧の後で別の process が除いた entry は None(もう無い物)。"""
+    """Used time (ns) of an entry — None for an entry that another process removed after the listing (it no longer exists)."""
     try:
         return item.stat(follow_symlinks=False).st_mtime_ns
     except FileNotFoundError:
@@ -197,8 +197,8 @@ def _used_at(item: os.DirEntry[str]) -> int | None:
 
 
 def _stamped_entries(store: str, key: str, suffix: str = CODE_SUFFIX) -> tuple[tuple[int, str], ...]:
-    """鍵 key の entry(種類 suffix — code か木)の #(時刻 ns path) の列 — 時刻の新しい順(同じ時刻は名の順)。鍵の dir が無ければ空。
-    書きかけの一時の file(末尾が suffix でない)は数えない。読めない dir は名指しの 1 行を出して空(呼び手は作り直す)。"""
+    """List of (time ns, path) for the entries of key (kind suffix — code or tree) — newest time first (ties in name order). Empty if the key's directory does not exist.
+    Half-written temporary files (names not ending in suffix) are not counted. For an unreadable directory, one line naming it is printed and the result is empty (the caller rebuilds)."""
     directory = _code_dir(store, key)
     try:
         with os.scandir(directory) as listing:
@@ -206,35 +206,35 @@ def _stamped_entries(store: str, key: str, suffix: str = CODE_SUFFIX) -> tuple[t
     except FileNotFoundError:
         return ()
     except OSError as error:
-        print(f"doeff-hy: bytecode の保存先の鍵の dir を読めない({error})— {directory} を使わずに作り直す", file=sys.stderr, flush=True)
+        print(f"doeff-hy: cannot read the bytecode store's key directory ({error}) — not using {directory}; rebuilding", file=sys.stderr, flush=True)
         return ()
     return tuple(sorted(((at, path) for at, path in stamped if at is not None), key=lambda pair: (-pair[0], pair[1])))
 
 
 def code_entries(store: str, key: str) -> tuple[str, ...]:
-    """source の code の鍵 key の entry の path の列 — 時刻の新しい順(照らして使った entry が前・足しただけの entry は後ろ — 読み手は
-    この順に照らす)。鍵の dir が無ければ空。"""
+    """List of entry paths for the source-code key key — newest time first (entries checked and used come first, merely added entries come last — readers
+    check in this order). Empty if the key's directory does not exist."""
     return tuple(path for _, path in _stamped_entries(store, key))
 
 
 def tree_entries(store: str, key: str) -> tuple[str, ...]:
-    """import の compile が展開した木の鍵 key の entry の path の列 — :func:`code_entries` と同じ並び(使った entry が前・足しただけの entry は
-    後ろ)。木の鍵と中身の形は doeff_hy_bytecode_guard._expansion_trees が持ち、読み手はこの順に macro の記録を照らして使う。"""
+    """List of entry paths for the key key of a tree expanded by import-time compilation — the same order as :func:`code_entries` (used entries first, merely added entries
+    last). The tree key and the content shape are owned by doeff_hy_bytecode_guard._expansion_trees, and readers check the macro record in this order and use it."""
     return tuple(path for _, path in _stamped_entries(store, key, TREE_SUFFIX))
 
 
 def current_code(store: str, key: str, is_current: Callable[[CodeType], bool]) -> CodeType | None:
-    """source の code の鍵 key の entry のうち、is_current(記録を今の環境の macro で照らす — 呼び手が持つ)が真の最初の 1 つ(使った
-    時刻の新しい順に照らす・無ければ None)。使った印は使う entry にだけ付ける — 照らして合わなかった entry の時刻は進めない(数の上限で
-    除く順と掃除の 7 日を、その entry を使う書き手の使いだけで決める)。壊れた entry は :func:`stored_code` が名指して除き、次を照らす。"""
+    """The first of the source-code entries of key key for which is_current (checking the record against the current environment's macros — owned by the caller) is true (checked
+    in newest-used-time order; None if there is none). The used mark goes only on the entry that is used — the time of an entry that was checked and did not match is not advanced (so the order of removal at the count cap and the
+    sweep's 7 days are decided only by uses of writers that use that entry). A broken entry is named and removed by :func:`stored_code`, and the next one is checked."""
     found = current_entry(store, key, is_current)
     return None if found is None else found.code
 
 
 def current_entry(store: str, key: str, is_current: Callable[[CodeType], bool]) -> StoredCode | None:
-    """:func:`current_code` と同じ照らしで選んだ entry の code と中身の bytes(marshal した code)— worker の道具が .pyc の頭の後ろに中身を
-    そのまま並べ、同じ entry から置く .pyc を root をまたいで同じ bytes にするため(marshal し直すと、process の中の参照の数で bytes が
-    変わり得て、:func:`link_pyc` が分け合えない)。"""
+    """The code and content bytes (marshaled code) of the entry chosen by the same check as :func:`current_code` — so the worker tools can place the content as-is after the .pyc header, and the .pyc placed from the same entry across roots has identical bytes
+    (re-marshaling can change the bytes depending on in-process reference counts,
+    and :func:`link_pyc` could not share them)."""
     for path in code_entries(store, key):
         found = _stored_entry(path, touch=False)
         if found is not None and is_current(found.code):
@@ -244,13 +244,13 @@ def current_entry(store: str, key: str, is_current: Callable[[CodeType], bool]) 
 
 
 def add_code(store: str, key: str, code: CodeType, data: bytes | None = None) -> str | None:
-    """code を source の code の鍵 key の entry に足す(名 = :func:`code_fingerprint` — 記録の同じ entry は書き直す)。足した entry の時刻は
-    鍵の他の entry のどれよりも前に置き(今から :data:`NEW_ENTRY_FLOOR_SECONDS` より前にはしない)、照らして使われた時に初めて前へ出す。
-    足した後に鍵の entry が :data:`CODE_ENTRIES_PER_KEY` 個を越えたら、今足した entry を残して、時刻の古い物から除く — 除かれるのは、
-    足しただけで使われていない entry と、使われなくなって久しい entry。data = code を marshal した bytes(呼び手が既に持つ時 — 焼いた
-    .pyc の頭の後ろの bytes をそのまま entry にし、次に entry から置く .pyc を今置いた .pyc と同じ bytes にする・:func:`link_pyc`。無ければ
-    marshal する)。答え = 書けなかった理由(:func:`write_entry` と同じ — 書けたら None)。"""
-    import marshal  # 保存先へ足す時だけ読む
+    """Add code to the entry of source-code key key (name = :func:`code_fingerprint` — an entry with the same record is rewritten). The added entry's time is
+    placed before every other entry of the key (but never further back than :data:`NEW_ENTRY_FLOOR_SECONDS` from now) and moved forward only when it is checked and used.
+    If after adding, the key's entries exceed :data:`CODE_ENTRIES_PER_KEY`, the oldest by time are removed, keeping the entry just added — what gets removed is
+    entries that were only added and never used, and entries that have not been used for a long time. data = the marshaled bytes of code (when the caller already has them — the bytes after the header of a baked
+    .pyc are made the entry as-is, so the .pyc next placed from the entry has the same bytes as the .pyc just placed; :func:`link_pyc`. If absent,
+    marshal it). Returns the reason it could not be written (same as :func:`write_entry` — None if it was written)."""
+    import marshal  # loaded only when adding to the store
 
     return _add_entry(
         store, key, code_fingerprint(code), CODE_SUFFIX, CODE_ENTRIES_PER_KEY, marshal.dumps(code) if data is None else data
@@ -258,14 +258,14 @@ def add_code(store: str, key: str, code: CodeType, data: bytes | None = None) ->
 
 
 def add_tree(store: str, key: str, name: str, data: bytes) -> str | None:
-    """import の compile が展開した木の entry を鍵 key に足す(名 = name — 展開が依った macro の記録の指紋・同じ名の entry は書き直す)。
-    足した entry の時刻の置き方と、鍵の entry の数の上限(:data:`TREE_ENTRIES_PER_KEY`)の守り方は :func:`add_code` と同じ。答え = 書けなかった
-    理由(:func:`write_entry` と同じ — 書けたら None)。"""
+    """Add a tree entry expanded by import-time compilation to key key (name = name — the fingerprint of the macro record the expansion depended on; an entry with the same name is rewritten).
+    How the added entry's time is placed and how the cap on the key's entry count (:data:`TREE_ENTRIES_PER_KEY`) is kept are the same as :func:`add_code`. Returns the reason it could not be
+    written (same as :func:`write_entry` — None if it was written)."""
     return _add_entry(store, key, name, TREE_SUFFIX, TREE_ENTRIES_PER_KEY, data)
 
 
 def _add_entry(store: str, key: str, name: str, suffix: str, limit: int, data: bytes) -> str | None:
-    """鍵 key の entry(種類 suffix)を name で足す — 足した entry を並びの後ろに置き、種類ごとの上限 limit を越えた分を除く(:func:`add_code`)。"""
+    """Add an entry of key key (kind suffix) under name — place the added entry at the back of the order and remove whatever exceeds the per-kind cap limit (:func:`add_code`)."""
     path = os.path.join(_code_dir(store, key), name + suffix)
     problem = write_entry(path, data)
     if problem is not None:
@@ -276,14 +276,14 @@ def _add_entry(store: str, key: str, name: str, suffix: str, limit: int, data: b
         try:
             os.unlink(stale)
         except FileNotFoundError:
-            pass  # 同時に別の process が除いていれば、消す物は無い
+            pass  # if another process removed it concurrently, there is nothing to delete
     return None
 
 
 def _place_after(path: str, others: tuple[tuple[int, str], ...]) -> None:
-    """足した entry の時刻を、鍵の他の entry(others — 時刻の新しい順)のどれよりも 1 秒前に置く(今から NEW_ENTRY_FLOOR_SECONDS より前には
-    しない)。置けない時は名指しの 1 行(entry は使える — 並びの頭に居るだけ)。"""
-    import time  # 保存先へ足す時だけ読む
+    """Place the added entry's time 1 second before every other entry of the key (others — newest time first) (but never further back than NEW_ENTRY_FLOOR_SECONDS from now).
+    If it cannot be placed, one line naming it is printed (the entry is still usable — it is just at the head of the order)."""
+    import time  # loaded only when adding to the store
 
     now = time.time_ns()
     oldest = others[-1][0] if others else now
@@ -291,28 +291,28 @@ def _place_after(path: str, others: tuple[tuple[int, str], ...]) -> None:
     try:
         os.utime(path, ns=(at, at))
     except OSError as error:
-        print(f"doeff-hy: bytecode の保存先の足した entry の時刻を置けない({error})— {path}", file=sys.stderr, flush=True)
+        print(f"doeff-hy: cannot set the time of an entry added to the bytecode store ({error}) — {path}", file=sys.stderr, flush=True)
 
 
 def touch_entry(path: str) -> None:
-    """entry の時刻を今にする(使った印 — 掃除が使っている entry を消さない)。進められない時は名指しの 1 行(中身は使える)。"""
+    """Set the entry's time to now (the used mark — so the sweep does not remove an entry in use). If it cannot be advanced, one line naming it is printed (the content is still usable)."""
     try:
         os.utime(path)
     except OSError as error:
-        # 読んだ中身は使える。時刻を進められないと、掃除がこの entry を 7 日で消す(次に要る時に作り直すだけ)。
-        print(f"doeff-hy: bytecode の保存先の entry の時刻を進められない({error})— {path}", file=sys.stderr, flush=True)
+        # The content read is usable. If the time cannot be advanced, the sweep will delete this entry after 7 days (it will just be rebuilt when next needed).
+        print(f"doeff-hy: cannot advance the time of an entry in the bytecode store ({error}) — {path}", file=sys.stderr, flush=True)
 
 
 def read_entry(path: str, *, touch: bool = True) -> bytes | None:
-    """entry の中身を読む(無ければ None)。無い以外の理由で読めない entry は名指しの 1 行を出して None(呼び手は作り直す)。当たれば
-    entry の時刻を今にする(touch が偽なら進めない — 照らしてから使う呼び手が :func:`touch_entry` で進める)。"""
+    """Read an entry's content (None if absent). For an entry unreadable for a reason other than absence, one line naming it is printed and None is returned (the caller rebuilds). On a hit,
+    the entry's time is set to now (not advanced if touch is false — a caller that checks before using advances it with :func:`touch_entry`)."""
     try:
         with open(path, "rb") as entry:
             data = entry.read()
     except FileNotFoundError:
         return None
     except OSError as error:
-        print(f"doeff-hy: bytecode の保存先の entry を読めない({error})— {path} を使わずに作り直す", file=sys.stderr, flush=True)
+        print(f"doeff-hy: cannot read an entry in the bytecode store ({error}) — not using {path}; rebuilding", file=sys.stderr, flush=True)
         return None
     if touch:
         touch_entry(path)
@@ -320,16 +320,16 @@ def read_entry(path: str, *, touch: bool = True) -> bytes | None:
 
 
 def write_entry(path: str, data: bytes) -> str | None:
-    """entry を書く(同じ dir の一時の file に書いてから置き換える)。答え = 書けなかった理由(書けたら None)— 保存先は速さのため
-    だけなので呼び手の結果は変わらないが、呼び手は理由を名指して出す(書けない保存先を黙って使い続けない)。"""
-    import tempfile  # 保存先へ書く時だけ読む
+    """Write an entry (to a temporary file in the same directory, then swap it in). Returns the reason it could not be written (None if written) — the store exists only for speed,
+    so the caller's result does not change, but the caller prints the reason naming it (a store that cannot be written is not silently kept in use)."""
+    import tempfile  # loaded only when writing to the store
 
     directory = os.path.dirname(path)
     try:
         os.makedirs(directory, exist_ok=True)
         handle, temporary = tempfile.mkstemp(dir=directory, suffix=".tmp")
     except OSError as error:
-        return f"{directory} に書けない: {error}"
+        return f"cannot write to {directory}: {error}"
     try:
         with os.fdopen(handle, "wb") as out:
             out.write(data)
@@ -338,55 +338,55 @@ def write_entry(path: str, data: bytes) -> str | None:
         try:
             os.unlink(temporary)
         except FileNotFoundError:
-            pass  # 置き換えの前に消えていれば、消す物は無い
-        return f"{path} を置けない: {error}"
+            pass  # if it vanished before the swap, there is nothing to delete
+        return f"cannot place {path}: {error}"
     return None
 
 
 def discard_entry(path: str, problem: str) -> None:
-    """壊れた entry を名指しの 1 行で除く(呼び手は作り直して足し直す)。"""
-    print(f"doeff-hy: bytecode の保存先の entry が壊れている({problem})— {path} を除いて作り直す", file=sys.stderr, flush=True)
+    """Remove a broken entry with one line naming it (the caller rebuilds and adds it again)."""
+    print(f"doeff-hy: an entry in the bytecode store is broken ({problem}) — removing {path} and rebuilding", file=sys.stderr, flush=True)
     try:
         os.unlink(path)
     except FileNotFoundError:
-        pass  # 同時に別の process が除いていれば、消す物は無い
+        pass  # if another process removed it concurrently, there is nothing to delete
 
 
 def stored_code(path: str, *, touch: bool = True) -> CodeType | None:
-    """code の entry を引く(無ければ None)。code として読めない entry は discard_entry で除いて None。macro の記録の照らしは呼び手
-    (Hy の source だけ — 今の環境の macro の file と照らす)。touch の意味は :func:`read_entry` と同じ。"""
+    """Look up a code entry (None if absent). An entry unreadable as code is removed with discard_entry and gives None. Checking the macro record is the caller's job
+    (only for Hy sources — checked against the current environment's macro files). touch has the same meaning as in :func:`read_entry`."""
     found = _stored_entry(path, touch=touch)
     return None if found is None else found.code
 
 
 def _stored_entry(path: str, *, touch: bool) -> StoredCode | None:
-    """code の entry の code と中身の bytes を引くため(:func:`stored_code` と :func:`current_entry` の読み — 壊れた entry の扱いは同じ)。"""
+    """Look up the code and content bytes of a code entry (the read behind :func:`stored_code` and :func:`current_entry` — broken entries are handled the same way)."""
     data = read_entry(path, touch=touch)
     if data is None:
         return None
-    import marshal  # 当たった時だけ読む
+    import marshal  # loaded only on a hit
 
     try:
         code = marshal.loads(data)
     except (EOFError, ValueError, TypeError) as error:
-        discard_entry(path, f"marshal で読めない: {error}")
+        discard_entry(path, f"cannot be read by marshal: {error}")
         return None
     if not isinstance(code, CodeType):
-        discard_entry(path, f"code object でない: {type(code).__name__}")
+        discard_entry(path, f"not a code object: {type(code).__name__}")
         return None
     return StoredCode(code, data)
 
 
 def link_pyc(store: str, pyc: bytes, target: str) -> str | None:
-    """木の .pyc(target)を、保存先の中身の同じ file(種類 :data:`PYC_SUFFIX`・名は中身の sha256)への hardlink で置くため — 無ければ
-    保存先へ書いてから。root ごとに同じ中身の .pyc を新しく書くと、root を消した後も macOS の local snapshot がその中身を 24 時間持ち、
-    作業 disk の空きが root の作り直しの数だけ減った。答え = 置けなかった理由(呼び手は今どおり target へ中身を
-    書く — 別の file system・link の数の上限など)。置けたら None。
+    """Place a tree's .pyc (target) as a hardlink to the file in the store with the same content (kind :data:`PYC_SUFFIX`, named by the content's sha256) — writing it
+    to the store first if absent. Writing a fresh .pyc with the same content for every root made macOS local snapshots keep that content for 24 hours even after the root was deleted,
+    and the free space on the work disk shrank by the number of root rebuilds. Returns the reason it could not be placed (the caller writes the content to target
+    as before — a different file system, a link-count limit, etc.). None if placed.
 
-    hardlink の先を書き換えない: 保存先の file は一時の file から置き換えて作り、読み取り専用にする。木の .pyc を書き直す手(worker の
-    焼く道具・import の口・Python の import)は、どれも一時の file に書いてから置き換える(その場で開いて書かない)ので、他の木の .pyc と
-    保存先の中身は変わらない。使った印は .code と同じ(使うたびに時刻を今に — 掃除が 7 日使われない物を消す。木の名は残る)。"""
-    import errno  # 保存先へ置く時だけ読む
+    The hardlink target is never overwritten in place: the store's file is made by swapping in from a temporary file and is read-only. The hands that rewrite a tree's .pyc (the worker's
+    baking tool, the import hook, and Python's import) all write to a temporary file and then swap it in (they never open and write in place), so other trees' .pyc and the
+    store's content do not change. The used mark is the same as for .code (the time is set to now on every use — the sweep removes what is unused for 7 days. The tree's name remains)."""
+    import errno  # loaded only when placing from the store
     import hashlib
 
     path = entry_path(store, hashlib.sha256(pyc).hexdigest(), PYC_SUFFIX)
@@ -395,7 +395,7 @@ def link_pyc(store: str, pyc: bytes, target: str) -> str | None:
     except FileNotFoundError:
         seen = None
     except OSError as error:
-        return f"保存先の .pyc を読めない: {errno.errorcode.get(error.errno, error.errno)} {error.strerror}"
+        return f"cannot read the .pyc in the store: {errno.errorcode.get(error.errno, error.errno)} {error.strerror}"
     if seen is not None and seen.st_size == len(pyc):
         touch_entry(path)
     else:
@@ -403,40 +403,40 @@ def link_pyc(store: str, pyc: bytes, target: str) -> str | None:
         if problem is not None:
             return problem
         seen = None
-    if seen is None or seen.st_mode & 0o222:  # 読み取り専用にする前に落ちた書き手の file も、使う時に揃える(書く手を断る)
+    if seen is None or seen.st_mode & 0o222:  # also align, at use time, a file from a writer that died before making it read-only (refuse writing hands)
         try:
             os.chmod(path, 0o444)
         except OSError as error:
-            return f"保存先の .pyc を読み取り専用にできない: {errno.errorcode.get(error.errno, error.errno)} {error.strerror}"
+            return f"cannot make the .pyc in the store read-only: {errno.errorcode.get(error.errno, error.errno)} {error.strerror}"
     try:
-        # 木の .pyc が既にこの file の名なら置き直さない(同じ実体への rename は何もせず、一時の link が残る)。
+        # If the tree's .pyc already has this file's name, do not place it again (a rename onto the same inode does nothing and leaves the temporary link behind).
         if os.path.samestat(os.lstat(target), os.stat(path)):
             return None
     except (FileNotFoundError, NotADirectoryError):
-        pass  # 木にまだ .pyc が無い — 下で置く(置けない時の理由は下の link が答える)
+        pass  # the tree has no .pyc yet — place it below (the link below answers with the reason if it cannot be placed)
     except OSError as error:
-        return f"木の .pyc を読めない: {errno.errorcode.get(error.errno, error.errno)} {error.strerror}"
+        return f"cannot read the tree's .pyc: {errno.errorcode.get(error.errno, error.errno)} {error.strerror}"
     temporary = f"{target}.{os.getpid()}.link"
     try:
         os.makedirs(os.path.dirname(target), exist_ok=True)
         os.link(path, temporary)
         os.replace(temporary, target)
     except OSError as error:
-        if os.path.lexists(temporary):  # link を作った後に置き換えを断られた時だけ、作った link が残る
+        if os.path.lexists(temporary):  # the created link remains only when the swap was refused after the link was made
             os.unlink(temporary)
-        return f"保存先の .pyc を木へ hardlink で置けない: {errno.errorcode.get(error.errno, error.errno)} {error.strerror}"
+        return f"cannot place the store's .pyc into the tree as a hardlink: {errno.errorcode.get(error.errno, error.errno)} {error.strerror}"
     return None
 
 
 def entry_pyc(head: bytes, entry: StoredCode) -> bytes:
-    """引いた entry から木へ置く .pyc の bytes を組むため — 頭(呼び手の方式の 16 byte — checked hash か timestamp)の後ろに entry の中身を
-    そのまま並べる(marshal し直さない)。同じ entry と同じ頭からは root をまたいで同じ bytes になり、:func:`link_pyc` が保存先の 1 つの
-    file を分け合う。組み方を知るのはここだけ — 焼く道具も、.pyc を寄せる他の書き手も、この関数と :func:`link_pyc` を呼ぶ(
-    組み方が焼く道具にだけ在ると、2 つ目の書き手が marshal し直して分け合えなかった)。"""
+    """Build the .pyc bytes to place in a tree from a looked-up entry — the entry content is placed as-is after the header (16 bytes in the caller's style — checked hash or timestamp)
+    (no re-marshaling). The same entry and the same header give the same bytes across roots, and :func:`link_pyc` shares one file in the store. Only this function knows how to build it — the baking tool and
+    any other writer that brings a .pyc over call this function and :func:`link_pyc` (
+    when the build lived only in the baking tool, a second writer re-marshaled and could not share)."""
     return head + entry.data
 
 
 def link_entry_pyc(store: str, head: bytes, entry: StoredCode, target: str) -> str | None:
-    """引いた entry の .pyc(:func:`entry_pyc`)を、保存先の中身の同じ file への hardlink で target に置くため。答えは :func:`link_pyc` と同じ
-    (置けなかった理由 — 呼び手は :func:`entry_pyc` の bytes を書く)。"""
+    """Place the .pyc of a looked-up entry (:func:`entry_pyc`) at target as a hardlink to the file in the store with the same content. The answer is the same as :func:`link_pyc`'s
+    (the reason it could not be placed — the caller writes the bytes of :func:`entry_pyc`)."""
     return link_pyc(store, entry_pyc(head, entry), target)

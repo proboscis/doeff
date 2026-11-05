@@ -1,7 +1,6 @@
-"""defk / defhandler / defp の本体(__doeff_body__)は hy.repr の文字列で運び、compile した code に本体の model の組み立てを入れない。
+"""The bodies of defk / defhandler / defp (__doeff_body__) are carried as hy.repr strings, and the compiled code does not contain model construction for the body.
 
-出自 = 2026-09-28 の実測(agora-controllers の検の速さ): 本体を quote で埋め込むと、Hy はその quote を「import のたびに model の木を
-1 節ずつ組み立てる Python code」へ compile し、.pyc の無い compile(手番の模擬の import の木で 44 秒)の半分がそこに消えていた。
+Origin = measurement on 2026-09-28 (check speed of agora-controllers): when the body is embedded with quote, Hy compiles that quote into "Python code that builds the model tree one node at a time on every import", and half of a compile without .pyc (44 seconds on the simulated-turn import tree) was spent there.
 """
 
 
@@ -43,7 +42,7 @@ def test_the_body_is_carried_as_quoted_forms_equal_to_the_written_models() -> No
     assert isinstance(body, QuotedForms)
     written = hy.read_many(SOURCE)
     defk_form = next(form for form in written if isinstance(form, hy.models.Expression) and str(form[0]) == "defk")
-    # 本体 = 名前・引数・契約の後ろの式(書いたまま)。
+    # Body = the expressions after the name, arguments and contract (as written).
     assert list(body) == list(defk_form[4:])
     assert len(body) == 3
     assert body_of(namespace["long_body"]) == hy.models.List(defk_form[4:])
@@ -53,8 +52,8 @@ def test_the_body_is_carried_as_quoted_forms_equal_to_the_written_models() -> No
 
 
 def test_the_args_are_carried_as_quoted_forms_equal_to_the_written_params() -> None:
-    # 引数(__doeff_args__)も本体と同じく文字列で運び、読んだ値は書いたままの引数の列と等しい。
-    # 本体は source の file を読み直さないので、file の無い eval(ここ)でも本体と引数が読める。
+    # The arguments (__doeff_args__) are also carried as a string like the body, and the value read back equals the argument list as written.
+    # The body does not re-read the source file, so body and arguments can be read even in an eval with no file (here).
     namespace = _module_namespace()
     written = hy.read_many(SOURCE)
     defk_form = next(form for form in written if isinstance(form, hy.models.Expression) and str(form[0]) == "defk")
@@ -65,8 +64,8 @@ def test_the_args_are_carried_as_quoted_forms_equal_to_the_written_params() -> N
 def test_the_compiled_module_does_not_rebuild_the_body_models() -> None:
     module = types.ModuleType("quoted_forms_probe")
     compiled = hy.compiler.hy_compile(hy.read_many(SOURCE), module)
-    # model を組み立てる呼び出し(hy.models.Expression(...) など)が 1 つも無い — 契約の失敗の文に model の字面が文字列の定数として
-    # 入るのは構わない(呼び出しではない)。
+    # There is no call that builds a model (such as hy.models.Expression(...)) -- the model text appearing as a string constant in the contract-failure message
+    # is fine (it is not a call).
     model_calls = [
         ast.unparse(node.func)
         for node in ast.walk(compiled)

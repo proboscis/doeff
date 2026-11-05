@@ -1,22 +1,22 @@
-"""val・var・lazy val・lazy var・session val・session var と `:=` の展開(ADR-DOE-HY-006)。
+"""Expansion of val, var, lazy val, lazy var, session val, session var and `:=` (ADR-DOE-HY-006).
 
-defk・deftest・defhandler の節の本体を、macro の展開の時に 1 度だけ歩き、次をする。
+Walk the body of a defk / deftest / defhandler clause exactly once at macro-expansion time and do the following.
 
-- 宣言の形を読む: `(val x 式)`・`(var x 式)`・`(lazy val x 式)`・`(lazy var x 式)`・
-  `(session val x 式)`・`(session var x 式)`。式は `!(f)` と書いてよい(Hy の reader は
-  `!(f)` を `!` と `(f)` の 2 つに読むので、宣言の中の `! 式` の 2 つ組を `(! 式)` に畳む)。
-  値の型が式から決まらない時(空の dict など)は、val と var だけが `(val #^ 型 x 式)` の型の注記を受ける
-  (`名前: 型 = 式` の代入に書き換える)。
-- 書き換えの形 `(:= x 新しい値)` を、宣言の種類に合わせて展開する。
-- lazy val / lazy var の参照(裸の名前)を「初回なら評価して覚える」式に書き換える。
-- 束縛の誤り(新しい構文の名前の束縛し直し・lazy の名前の影・yield できない所での lazy の参照・
-  旧い lazy の形を defk / deftest で使うこと)を SyntaxError にする。
-- 旧い書き方の所見(setv の使用・同じ名前の束縛し直し・defhandler の旧い lazy-val / set!)を
-  Finding として返す。doeff-hy-check が警告 / 赤として出す(展開は失敗させない)。
+- Read the declaration forms: `(val x expr)`, `(var x expr)`, `(lazy val x expr)`, `(lazy var x expr)`,
+  `(session val x expr)`, `(session var x expr)`. The expression may be written as `!(f)` (the Hy reader
+  reads `!(f)` as two forms, `!` and `(f)`, so a `! expr` pair inside a declaration is folded into `(! expr)`).
+  When the value type cannot be determined from the expression (for example an empty dict), only val and var accept a `(val #^ type x expr)` type annotation
+  (rewritten to a `name: type = expr` assignment).
+- Expand the rewrite form `(:= x new-value)` according to the kind of declaration.
+- Rewrite references to a lazy val / lazy var (bare names) into an expression that "evaluates and remembers on first use".
+- Turn binding errors (rebinding a name of the new syntax, shadowing a lazy name, referencing a lazy where yield is impossible,
+  using the old lazy forms in defk / deftest) into SyntaxError.
+- Return findings for old-style code (use of setv, rebinding the same name, the old lazy-val / set! in defhandler)
+  as Finding. doeff-hy-check reports them as warnings / errors (expansion does not fail).
 
-設計の記録 = docs/design/defk-val-var-lazy/design.md。この module は macro の展開の時
-(compile の時)にだけ呼ばれ、Program を実行する場が無いので、関数は Python の def で書く
-(macros.hy の展開の helper の defn と同じ扱い)。
+Design record = docs/design/defk-val-var-lazy/design.md. This module is called only at macro-expansion
+time (compile time) and there is no place to run a Program, so the functions are written as plain Python defs
+(the same treatment as the defn expansion helpers in macros.hy).
 """
 
 from collections.abc import Callable, Iterable, Mapping
@@ -42,41 +42,41 @@ from hy.models import (
 from doeff_hy._expansion_names import alias_symbol
 
 # ---------------------------------------------------------------------------
-# 型
+# Types
 # ---------------------------------------------------------------------------
 
 
 class Timing(Enum):
-    """いつ評価するか。"""
+    """When the value is evaluated."""
 
-    EAGER = "eager"  # val / var — 書いた所で評価する
-    LAZY = "lazy"  # lazy val / lazy var — その呼び出しの中で初めて使った時
-    SESSION = "session"  # session val / session var — doeff のセッションの間で 1 回(defhandler だけ)
+    EAGER = "eager"  # val / var — evaluated where written
+    LAZY = "lazy"  # lazy val / lazy var — on first use within that call
+    SESSION = "session"  # session val / session var — once per doeff session (defhandler only)
 
 
 class Mutability(Enum):
-    """一度だけ束縛する(val)か、:= で書き換えられる(var)か。"""
+    """Whether it is bound once (val) or can be rewritten with := (var)."""
     VAL = "val"
     VAR = "var"
 
 
 class BodyKind(Enum):
-    """本体の持ち主の種類(誤りの文と、使える宣言が違う)。"""
+    """Kind of the owner of the body (the error text and the usable declarations differ)."""
 
     DEFK = "defk"
     DEFTEST = "deftest"
-    CLAUSE = "defhandler の節"
+    CLAUSE = "defhandler clause"
 
 
 class Severity(Enum):
-    """所見を doeff-hy-check で赤にするか警告にするか。"""
+    """Whether a finding is red or a warning in doeff-hy-check."""
     ERROR = "error"
     WARNING = "warning"
 
 
 @dataclass(frozen=True)
 class Declaration:
-    """1 つの宣言。name は Hy の綴り(mangle 前)。"""
+    """One declaration. name is the Hy spelling (before mangling)."""
 
     name: str
     symbol: Symbol
@@ -84,12 +84,12 @@ class Declaration:
     mutability: Mutability
     init: Object
     form: Expression
-    #: `(val #^ 型 名前 式)` の型(`(annotate 名前 型)` の型の式)。無ければ None — 値の型は式から決まる。
+    #: The type of `(val #^ type name expr)` (the type expression of `(annotate name type)`). None if absent — the value type is determined from the expression.
     annotation: Object | None = None
 
     @property
     def target(self) -> Object:
-        """setv の左辺: 名前 1 つ、型の注記があれば `(annotate 名前 型)`(Hy の `(setv #^ 型 名前 式)` と同じ — 位置は書いた名前の位置)。"""
+        """LHS of setv: just the name, or `(annotate name type)` when there is a type annotation (same as Hy's `(setv #^ type name expr)` — the position is that of the written name)."""
         if self.annotation is None:
             return self.symbol
         annotated = Expression([Symbol("annotate"), self.symbol, self.annotation])
@@ -98,7 +98,7 @@ class Declaration:
 
     @property
     def spelled(self) -> str:
-        """誤りの文に出す、書いたままの宣言の綴り(例 `lazy val`)。"""
+        """The declaration spelling as written, shown in error text (e.g. `lazy val`)."""
         return {
             (Timing.EAGER, Mutability.VAL): "val",
             (Timing.EAGER, Mutability.VAR): "var",
@@ -111,7 +111,7 @@ class Declaration:
 
 @dataclass(frozen=True)
 class Finding:
-    """展開を止めない所見(doeff-hy-check が出す)。位置は Hy の source の 1 始まり。"""
+    """A finding that does not stop expansion (reported by doeff-hy-check). Positions are 1-based in the Hy source."""
 
     rule: str
     severity: Severity
@@ -122,7 +122,7 @@ class Finding:
 
 @dataclass(frozen=True)
 class Rewritten:
-    """書き換えた本体と所見。"""
+    """The rewritten body and the findings."""
 
     forms: tuple[Object, ...]
     findings: tuple[Finding, ...]
@@ -130,9 +130,9 @@ class Rewritten:
 
 @dataclass(frozen=True)
 class SessionName:
-    """defhandler の節から見える、セッションに持つ名前(宣言した handler の直下の物)。
+    """Session-held names visible from a defhandler clause (those directly under the declared handler).
 
-    legacy = 旧い lazy / lazy-val / lazy-var で宣言した物(書き換えは set! と := の両方を受ける)。"""
+    legacy = declared with the old lazy / lazy-val / lazy-var (rewriting accepts both set! and :=)."""
 
     name: str
     mutability: Mutability
@@ -141,19 +141,19 @@ class SessionName:
 
 @dataclass(frozen=True)
 class ModuleNames:
-    """本体から見える、同じ module の直下の宣言(lazy val の参照の書き換えと、:= の案内に使う)。"""
+    """Declarations directly under the same module visible from the body (used to rewrite lazy val references and to guide toward :=)."""
 
     lazies: frozenset[str] = frozenset()
     vars: frozenset[str] = frozenset()
 
 
-# 所見の規則の名(doeff-hy-check の出力の括弧の中)。
+# Names of the finding rules (inside the parentheses of the doeff-hy-check output).
 RULE_SETV = "doeff-hy-setv"
 RULE_REBIND = "doeff-hy-rebind"
 RULE_LEGACY_LAZY = "doeff-hy-legacy-lazy"
 
 # ---------------------------------------------------------------------------
-# 宣言の形を読む
+# Reading declaration forms
 # ---------------------------------------------------------------------------
 
 _KINDS: Mapping[str, Mutability] = {"val": Mutability.VAL, "var": Mutability.VAR}
@@ -162,39 +162,39 @@ LEGACY_LAZY_HEADS: frozenset[str] = frozenset({"lazy", "lazy-val", "lazy-var"})
 
 
 def _head(form: Object) -> str | None:
-    """形の頭の名前(宣言・束縛・入れ子の文脈を見分けるため)。頭が名前でなければ None。"""
+    """Head name of a form (to tell declarations, bindings and nested contexts apart). None if the head is not a name."""
     if isinstance(form, Expression) and len(form) > 0 and isinstance(form[0], Symbol):
         return str(form[0])
     return None
 
 
 def _line(form: Object) -> int:
-    """誤りの文と所見に出す、Hy の source の行(合成した式で位置が無ければ 0)。"""
+    """Source line in Hy shown in error text and findings (0 if the synthesized expression has no position)."""
     return int(getattr(form, "start_line", 0) or 0)
 
 
 def _column(form: Object) -> int:
-    """所見に出す、Hy の source の列(位置が無ければ 0)。"""
+    """Source column in Hy shown in findings (0 if there is no position)."""
     return int(getattr(form, "start_column", 0) or 0)
 
 
 def _model_text(model: Object, field: str) -> str | None:
-    """hy の FString.brackets / FComponent.conversion を読む(hy はこの欄の型を宣言していないので、
-    境界のこの 1 か所で「文字列か None」を検めてから使う)。"""
+    """Read hy's FString.brackets / FComponent.conversion (hy does not declare the type of this field,
+    so check "str or None" at this one boundary before using it)."""
     value: object = model.__dict__.get(field)
     if value is None or isinstance(value, str):
         return value
-    raise TypeError(f"hy の {type(model).__name__}.{field} が文字列でない: {type(value).__name__}")
+    raise TypeError(f"hy {type(model).__name__}.{field} is not a string: {type(value).__name__}")
 
 
 def _source(form: Object) -> str:
-    """誤りの文に引用する、書いたままの字面。"""
+    """The literal text as written, quoted in error text."""
     text = hy.repr(form)
     return text[1:] if text.startswith("'") else text
 
 
 def _join_bang(parts: list[Object], origin: Object, what: str) -> Object:
-    """宣言や := の値の部分を 1 つの式にする。`! 式` の 2 つ組は `(! 式)` に畳む。"""
+    """Make the value part of a declaration or := into one expression. A `! expr` pair is folded into `(! expr)`."""
     match parts:
         case [value]:
             return value
@@ -204,14 +204,14 @@ def _join_bang(parts: list[Object], origin: Object, what: str) -> Object:
             return joined
         case _:
             raise SyntaxError(
-                f"{what} (line {_line(origin)}): 値は式を 1 つだけ書きます — {_source(origin)}\n\n"
-                "  (val x 式) / (val x !(効果の式))\n"
-                "  いくつかの手順が要るなら (do …) で包むか、前に val で名前を付けてください。"
+                f"{what} (line {_line(origin)}): write exactly one expression as the value — {_source(origin)}\n\n"
+                "  (val x expr) / (val x !(effect-expr))\n"
+                "  If several steps are needed, wrap them in (do …) or give them a name with val beforehand."
             )
 
 
 def is_new_lazy_form(form: Object) -> bool:
-    """`(lazy val x …)` / `(lazy var x …)` の形か(旧い `(lazy 名前 本体…)` と見分ける)。"""
+    """Whether this is the form `(lazy val x …)` / `(lazy var x …)` (to tell it from the old `(lazy name body…)`)."""
     return (
         isinstance(form, Expression)
         and len(form) >= 4
@@ -223,7 +223,7 @@ def is_new_lazy_form(form: Object) -> bool:
 
 
 def parse_declaration(form: Object) -> Declaration | None:
-    """宣言の形なら Declaration、そうでなければ None。形が崩れた宣言は SyntaxError。"""
+    """A Declaration if this is a declaration form, otherwise None. A malformed declaration is a SyntaxError."""
     head = _head(form)
     if not isinstance(form, Expression) or head is None:
         return None
@@ -234,7 +234,7 @@ def parse_declaration(form: Object) -> Declaration | None:
         spelled = head
     elif head in _TIMINGS and len(form) >= 2 and isinstance(form[1], Symbol) and str(form[1]) in _KINDS:
         if head == "lazy" and not is_new_lazy_form(form):
-            return None  # 旧い `(lazy val 本体…)`(名前が val の旧い lazy)— 旧い形として扱う
+            return None  # old `(lazy val body…)` (an old lazy whose name is val) — treated as the old form
         timing = _TIMINGS[head]
         mutability = _KINDS[str(form[1])]
         rest = list(form[2:])
@@ -245,14 +245,14 @@ def parse_declaration(form: Object) -> Declaration | None:
     name_symbol = annotated.name if annotated is not None else (rest[0] if rest else None)
     if len(rest) < 2 or not isinstance(name_symbol, Symbol) or str(name_symbol) in {"!", "val", "var"}:
         raise SyntaxError(
-            f"({spelled} …) (line {_line(form)}): 名前と式が要ります — {_source(form)}\n\n"
-            f"  ({spelled} 名前 式)\n"
-            f"  ({spelled} 名前 !(効果の式))"
+            f"({spelled} …) (line {_line(form)}): a name and an expression are required — {_source(form)}\n\n"
+            f"  ({spelled} name expr)\n"
+            f"  ({spelled} name !(effect-expr))"
         )
     if annotated is not None and timing is not Timing.EAGER:
         raise SyntaxError(
-            f"({spelled} …) (line {_line(form)}): 型の注記 `#^ 型 名前` は (val …) と (var …) だけが受けます"
-            f"(lazy・session の値の型は式から決まります) — {_source(form)}"
+            f"({spelled} …) (line {_line(form)}): the type annotation `#^ type name` is accepted only by (val …) and (var …)"
+            f" (the type of a lazy or session value is determined from the expression) — {_source(form)}"
         )
     init = _join_bang(rest[1:], form, f"({spelled} {name_symbol} …)")
     return Declaration(
@@ -261,15 +261,15 @@ def parse_declaration(form: Object) -> Declaration | None:
 
 
 class _AnnotatedName(NamedTuple):
-    """宣言の名前の位置の `#^ 型 名前` の読み: 名前と、書き手が書いた型。"""
+    """Reading of `#^ type name` in the name position of a declaration: the name and the type the writer wrote."""
 
     name: Symbol
     annotation: Object
 
 
 def _annotated_name(target: Object) -> _AnnotatedName | None:
-    """宣言の名前の位置の `#^ 型 名前`(= `(annotate 名前 型)`)の名前と型。注記つきの名前でなければ None
-    (module の値の型を式から決められない時 — 空の dict など — に、書き手が型を書く口)。"""
+    """Name and type of `#^ type name` (= `(annotate name type)`) in the name position of a declaration. None if the name is not annotated
+    (the hook for the writer to give a type when the type of a module value cannot be determined from the expression — e.g. an empty dict)."""
     if isinstance(target, Expression) and len(target) == 3 and _head(target) == "annotate" and isinstance(target[1], Symbol):
         return _AnnotatedName(name=target[1], annotation=target[2])
     return None
@@ -277,21 +277,21 @@ def _annotated_name(target: Object) -> _AnnotatedName | None:
 
 @dataclass(frozen=True)
 class Assignment:
-    """`(:= x 値)` の書き換える名前と新しい値。"""
+    """The name that `(:= x value)` rewrites and the new value."""
 
     target: Symbol
     value: Object
 
 
 def parse_assignment(form: Object) -> Assignment | None:
-    """`(:= x 値)` なら (x, 値)。`:=` の形でなければ None。崩れた形は SyntaxError。"""
+    """(x, value) if this is `(:= x value)`. None if it is not a `:=` form. A malformed form is a SyntaxError."""
     if not (isinstance(form, Expression) and len(form) > 0 and isinstance(form[0], Keyword)):
         return None
     if str(form[0]) != ":=":
         return None
     if len(form) < 3 or not isinstance(form[1], Symbol):
         raise SyntaxError(
-            f"(:= …) (line {_line(form)}): 書き換える名前と新しい値が要ります — {_source(form)}\n\n"
+            f"(:= …) (line {_line(form)}): the name to rewrite and a new value are required — {_source(form)}\n\n"
             "  (var count 0)\n  (:= count (+ count 1))"
         )
     target = form[1]
@@ -300,22 +300,22 @@ def parse_assignment(form: Object) -> Assignment | None:
 
 
 # ---------------------------------------------------------------------------
-# 歩く場所の種類
+# Kinds of places being walked
 # ---------------------------------------------------------------------------
 
 
 class Scope(Enum):
-    """歩いている所の種類 — lazy の参照を yield の式にできるか・宣言を書けるかを決める。"""
-    BODY = "body"  # 本体の関数の scope(if / when / for / try / let / do の中も同じ)
-    DO_CONTEXT = "do-context"  # 入れ子の do の文脈(fnk / do! / for/do / traverse / handle の節)— yield できる
-    FN = "fn"  # 入れ子の関数・class・validate — yield できない
-    COMPREHENSION = "comprehension"  # lfor / gfor / dfor / sfor — yield できない
-    DEFINITION = "definition"  # 入れ子の defk / deftest / defhandler … — 自分の macro が本体を持つ
+    """Kind of place being walked — decides whether a lazy reference can be a yield expression and whether declarations can be written."""
+    BODY = "body"  # scope of the body function (same inside if / when / for / try / let / do)
+    DO_CONTEXT = "do-context"  # nested do context (fnk / do! / for/do / traverse / handle clauses) — yield is possible
+    FN = "fn"  # nested function, class, validate — yield is impossible
+    COMPREHENSION = "comprehension"  # lfor / gfor / dfor / sfor — yield is impossible
+    DEFINITION = "definition"  # nested defk / deftest / defhandler … — their own macro owns the body
 
 
 @dataclass(frozen=True)
 class _Where:
-    """歩いている所(種類と、誤りの文に出す囲みの形の頭)。"""
+    """The place being walked (the kind, and the head of the enclosing form shown in error text)."""
     scope: Scope
     head: str
 
@@ -337,7 +337,7 @@ _LOOP_HEADS: frozenset[str] = frozenset({"for", "while"})
 
 
 def _target_names(target: Object) -> list[Symbol]:
-    """setv / for の左辺が束縛する名前(属性・添字への代入は名前の束縛ではない)。"""
+    """Names bound by the LHS of setv / for (assignment to an attribute or subscript does not bind a name)."""
     match target:
         case Symbol():
             return [] if str(target) in {"_", "*"} else [target]
@@ -352,28 +352,28 @@ def _target_names(target: Object) -> list[Symbol]:
 
 
 # ---------------------------------------------------------------------------
-# 歩き手
+# Walker
 # ---------------------------------------------------------------------------
 
 ExpandBangs = Callable[[Object, str], Object]
 
 
 class _Walked(NamedTuple):
-    """1 つの形を歩いた結果: 書き換えた形と、歩いた後の束縛の状態(この経路で束縛済みの名前)。"""
+    """Result of walking one form: the rewritten form and the binding state after walking (names bound on this path)."""
 
     node: Object
     state: frozenset[str]
 
 
 class _WalkedMany(NamedTuple):
-    """形の並びを歩いた結果: 書き換えた並びと、歩いた後の束縛の状態。"""
+    """Result of walking a sequence of forms: the rewritten sequence and the binding state after walking."""
 
     nodes: list[Object]
     state: frozenset[str]
 
 
 class _Walker:
-    """1 つの本体を歩く。状態(宣言の名簿と所見)は歩き手の中だけに持ち、結果は Rewritten で返す。"""
+    """Walk one body. The state (declaration roster and findings) is held only inside the walker; the result is returned as Rewritten."""
 
     def __init__(
         self,
@@ -386,7 +386,7 @@ class _Walker:
         lazy_names: frozenset[str],
         module: ModuleNames,
     ) -> None:
-        """1 つの本体を歩く準備(引数・セッションの名前は本体の前から束縛済みとして数える)。"""
+        """Prepare to walk one body (arguments and session names count as bound from before the body)."""
         self.owner = owner
         self.kind = kind
         self.static = static
@@ -394,33 +394,33 @@ class _Walker:
         self.findings: list[Finding] = []
         self.declared: dict[str, Declaration] = {}
         self.sessions: dict[str, SessionName] = {s.name: s for s in sessions}
-        # 本体の scope で一度でも束縛された名前(新しい構文の宣言と衝突を見る — 経路によらない)。
+        # Names bound at least once in the body scope (checked for collisions with declarations of the new syntax — regardless of path).
         self.ever_bound: set[str] = set(params) | set(self.sessions)
-        self.lazy_names = lazy_names  # 本体の一番外の並びで lazy に宣言される名前(前もって読む)
+        self.lazy_names = lazy_names  # Names declared lazy in the outermost sequence of the body (read in advance)
         self.module = module
 
-    # -- 誤りの文 ------------------------------------------------------------
+    # -- error text ------------------------------------------------------------
 
     def _error(self, form: Object, message: str) -> SyntaxError:
-        """展開を止める誤りを、持ち主と行の付いた修正の案内として作る。"""
+        """Make an error that stops expansion, as a fix guide carrying the owner and line."""
         return SyntaxError(f"\n{self.owner} (line {_line(form)}): {message}\n")
 
-    # -- 所見 ----------------------------------------------------------------
+    # -- findings --------------------------------------------------------------
 
     def _note(self, rule: str, severity: Severity, form: Object, message: str) -> None:
-        """展開を止めない所見を 1 つ記録する(doeff-hy-check が出す)。"""
+        """Record one finding that does not stop expansion (reported by doeff-hy-check)."""
         self.findings.append(Finding(rule, severity, _line(form), _column(form), message))
 
-    # -- 名前の束縛 ------------------------------------------------------------
+    # -- name binding ------------------------------------------------------------
 
     def _bind(self, symbol: Symbol, where: _Where, state: frozenset[str], counted: bool) -> frozenset[str]:
-        """名前 1 つの束縛を検める。counted = 旧い束縛し直しの数に入れるか(for の変数は入れない)。"""
+        """Check the binding of one name. counted = whether it counts toward the number of old-style rebindings (for-loop variables do not)."""
         name = str(symbol)
         if name in self.lazy_names or name in self.module.lazies:
             raise self._error(
                 symbol,
-                f"lazy の名前 `{name}` を別の束縛で覆っています(影)。lazy の名前は本体の中で 1 つの意味だけを持ちます。\n"
-                f"  別の名前を使ってください。",
+                f"The lazy name `{name}` is covered by another binding (shadow). A lazy name has exactly one meaning inside the body.\n"
+                f"  Use a different name.",
             )
         if where.scope is not Scope.BODY:
             return state
@@ -434,28 +434,28 @@ class _Walker:
                 assert new_session is not None
                 spelled, mutability = f"session {new_session.mutability.value}", new_session.mutability
             if mutability is Mutability.VAR:
-                hint = f"書き換えは (:= {name} 新しい値) で書きます。"
+                hint = f"Rewrite it with (:= {name} new-value)."
             else:
-                hint = f"書き換えるなら ({spelled.replace('val', 'var')} {name} …) で宣言し、(:= {name} 新しい値) で書き換えます。"
+                hint = f"To rewrite it, declare it with ({spelled.replace('val', 'var')} {name} …) and rewrite it with (:= {name} new-value)."
             raise self._error(
                 symbol,
-                f"({spelled} {name} …) で宣言した名前を束縛し直しています。{hint}",
+                f"({spelled} {name} …) declared this name, but it is rebound here. {hint}",
             )
         if counted and name in state:
             self._note(
                 RULE_REBIND,
                 Severity.ERROR,
                 symbol,
-                f"`{name}` を束縛し直しています — 一度だけなら (val {name} …)、書き換えるなら "
-                f"(var {name} …) と (:= {name} 新しい値) を使う [ADR-DOE-HY-006]",
+                f"`{name}` is rebound — for a one-time binding use (val {name} …), to rewrite use "
+                f"(var {name} …) and (:= {name} new-value) [ADR-DOE-HY-006]",
             )
         self.ever_bound.add(name)
         return state | {name}
 
-    # -- 本体の並び ------------------------------------------------------------
+    # -- sequence of the body ------------------------------------------------------
 
     def body(self, forms: Iterable[Object], state: frozenset[str]) -> _WalkedMany:
-        """本体の一番外の並びを歩く(lazy の宣言はここにだけ書ける)。"""
+        """Walk the outermost sequence of the body (lazy declarations can be written only here)."""
         out: list[Object] = []
         for form in forms:
             declaration = parse_declaration(form)
@@ -470,53 +470,53 @@ class _Walker:
     def _sequence(
         self, forms: Iterable[Object], where: _Where, state: frozenset[str]
     ) -> _WalkedMany:
-        """形の並びを左から順に歩き、束縛の状態を引き継ぐ。"""
+        """Walk a sequence of forms from the left, carrying over the binding state."""
         out: list[Object] = []
         for form in forms:
             rewritten, state = self.walk(form, where, state)
             out.append(rewritten)
         return _WalkedMany(out, state)
 
-    # -- 宣言 ------------------------------------------------------------------
+    # -- declarations ------------------------------------------------------------------
 
     def _declare(
         self, declaration: Declaration, where: _Where, state: frozenset[str], top: bool
     ) -> _Walked:
-        """宣言 1 つを検めて、setv か lazy の入れ物の作成に書き換える。"""
+        """Check one declaration and rewrite it into a setv or the creation of a lazy container."""
         form = declaration.form
         name = declaration.name
         if where.scope is not Scope.BODY:
             raise self._error(
                 form,
-                f"({declaration.spelled} {name} …) は defk・deftest・defhandler の節の本体にだけ書けます"
-                f"(({where.head} …) の中には書けません)。",
+                f"({declaration.spelled} {name} …) can be written only in the body of a defk, deftest or defhandler clause"
+                f"(not inside ({where.head} …)).",
             )
         if declaration.timing is Timing.SESSION:
             if self.kind is BodyKind.CLAUSE:
                 raise self._error(
                     form,
-                    f"(session {declaration.mutability.value} {name} …) は defhandler の直下(節と並べる所)に書きます。"
-                    f"節の中の、その 1 回の実行の間だけの値は (val …) / (lazy val …) です。",
+                    f"(session {declaration.mutability.value} {name} …) is written directly under defhandler (alongside the clauses). "
+                    f"A value inside a clause that lives only for that single run is (val …) / (lazy val …).",
                 )
             raise self._error(
                 form,
-                f"(session {declaration.mutability.value} {name} …) は defhandler にだけ書けます。"
-                f"{self.kind.value} に隠れたセッションの状態を持ち込まないためです。\n"
-                f"  この呼び出しの中で初めて使った時に 1 回だけ評価する値は (lazy val {name} 式) です。\n"
-                f"  セッションで共有する値は defhandler の (session val {name} 式) に置き、効果として求めてください。",
+                f"(session {declaration.mutability.value} {name} …) can be written only in defhandler. "
+                f"This keeps hidden session state out of {self.kind.value}.\n"
+                f"  A value evaluated once, on first use within this call, is (lazy val {name} expr).\n"
+                f"  Put a value shared across the session in defhandler's (session val {name} expr) and obtain it as an effect.",
             )
         if declaration.timing is Timing.LAZY and not top:
             raise self._error(
-                form, f"({declaration.spelled} {name} …) は本体の一番外の並びにだけ書けます(if・when などの中には書けません)。"
+                form, f"({declaration.spelled} {name} …) can be written only in the outermost sequence of the body (not inside if, when, etc.)."
             )
         if name in self.declared or name in self.sessions:
             first = self.declared.get(name)
             spelled = first.spelled if first is not None else "session " + self.sessions[name].mutability.value
             raise self._error(
                 form,
-                f"`{name}` は ({spelled} {name} …) で宣言済みです。同じ名前をもう一度束縛できません。"
+                f"`{name}` is already declared with ({spelled} {name} …). The same name cannot be bound again."
                 + (
-                    f" 書き換えは (:= {name} 新しい値) で書きます。"
+                    f" Rewrite it with (:= {name} new-value)."
                     if (first is not None and first.mutability is Mutability.VAR)
                     else ""
                 ),
@@ -524,8 +524,8 @@ class _Walker:
         if name in self.ever_bound:
             raise self._error(
                 form,
-                f"`{name}` は前で束縛されています({declaration.spelled} で束縛し直せません)。"
-                f"別の名前を使うか、前の束縛を ({declaration.spelled} {name} …) の 1 つにまとめてください。",
+                f"`{name}` is bound earlier (it cannot be rebound with {declaration.spelled}). "
+                f"Use a different name, or merge the earlier binding into a single ({declaration.spelled} {name} …).",
             )
         if declaration.timing is Timing.LAZY:
             init, _ = self.walk(declaration.init, _Where(Scope.DO_CONTEXT, f"lazy {name}"), state)
@@ -538,18 +538,18 @@ class _Walker:
         return _Walked(self._located(Expression([Symbol("setv"), declaration.target, init]), form), state | {name})
 
     def _cell(self, name: str) -> Symbol:
-        """lazy の名前の入れ物(LazyCell)を持つ局所変数の名前。"""
+        """Name of the local variable holding the container (LazyCell) of a lazy name."""
         return Symbol(f"_doeff_lazy_{name}")
 
     def _lazy_declaration(self, declaration: Declaration, init: Object) -> Object:
-        """lazy の宣言を、初期値の式を包んだ LazyCell の作成に書き換える(型検査のための展開では書いた所で評価)。"""
+        """Rewrite a lazy declaration into the creation of a LazyCell wrapping the initial-value expression (in the type-checking expansion it is evaluated where written)."""
         form = declaration.form
         if self.static:
-            # 型検査のための展開: 型は書いた所で評価した値と同じ(参照は裸の名前のまま)。
+            # Expansion for type checking: the type is the same as the value evaluated where written (references stay bare names).
             return self._located(Expression([Symbol("setv"), declaration.symbol, init]), form)
         thunk_body = self.expand_bangs(init, f"{self.owner} ({declaration.spelled} {declaration.name})")
-        # 初期値の関数は常に生成器にする(`(when False (yield None))` — 効果を使わない式でも doeff の do の
-        # 型「生成器を返す関数」に合う)。
+        # The initial-value function is always a generator (`(when False (yield None))` — so that even an expression that uses no effects matches the doeff do
+        # type "function returning a generator").
         thunk = Expression(
             [
                 Symbol("fn"),
@@ -582,19 +582,19 @@ class _Walker:
         )
 
     def _lazy_reference(self, symbol: Symbol, where: _Where) -> Object:
-        """lazy の名前の参照を「用意ができていれば覚えた値・まだなら force を実行」の式にする。yield できない所では誤り。"""
+        """Turn a reference to a lazy name into an expression "remembered value if ready, otherwise run force". An error where yield is impossible."""
         name = str(symbol)
         if name not in self.declared:
             raise self._error(
                 symbol,
-                f"lazy の `{name}` を宣言より前(か自分の式の中)で参照しています。(lazy … {name} …) の後で使ってください。",
+                f"The lazy `{name}` is referenced before its declaration (or inside its own expression). Use it after (lazy … {name} …).",
             )
         if where.scope in {Scope.FN, Scope.COMPREHENSION, Scope.DEFINITION}:
             raise self._error(
                 symbol,
-                f"lazy の `{name}` を ({where.head} …) の中で参照しています。ここでは効果を実行できない"
-                f"(yield できない)ので、初回の評価ができません。\n"
-                f"  先に本体で取り出してから使ってください:\n\n"
+                f"The lazy `{name}` is referenced inside ({where.head} …). Effects cannot be run here "
+                f"(yield is impossible), so the first evaluation cannot happen.\n"
+                f"  Fetch it in the body first, then use it:\n\n"
                 f"    (val {name}-value {name})\n"
                 f"    ({where.head} … {name}-value …)",
             )
@@ -618,12 +618,12 @@ class _Walker:
     def _assign(
         self, form: Expression, target: Symbol, value: Object, where: _Where, state: frozenset[str]
     ) -> _Walked:
-        """(:= x 値) を宣言の種類(var・lazy var・session var)に合わせた書き換えにする。"""
+        """Turn (:= x value) into a rewrite matching the kind of declaration (var, lazy var, session var)."""
         name = str(target)
         if where.scope is not Scope.BODY:
             raise self._error(
                 form,
-                f"(:= {name} …) は defk・deftest・defhandler の節の本体にだけ書けます(({where.head} …) の中には書けません)。",
+                f"(:= {name} …) can be written only in the body of a defk, deftest or defhandler clause (not inside ({where.head} …)).",
             )
         value, state = self.walk(value, where, state)
         declared = self.declared.get(name)
@@ -632,8 +632,8 @@ class _Walker:
             if declared.mutability is Mutability.VAL:
                 raise self._error(
                     form,
-                    f"({declared.spelled} {name} …) は書き換えられません。書き換えるなら "
-                    f"({declared.spelled.replace('val', 'var')} {name} …) で宣言してください。",
+                    f"({declared.spelled} {name} …) cannot be rewritten. To rewrite it, declare it with "
+                    f"({declared.spelled.replace('val', 'var')} {name} …).",
                 )
             if declared.timing is Timing.LAZY and not self.static:
                 assign = Expression([Symbol("."), self._cell(name), Symbol("assign")])
@@ -643,12 +643,12 @@ class _Walker:
             if session.mutability is Mutability.VAL:
                 raise self._error(
                     form,
-                    f"(session val {name} …) は書き換えられません。書き換えるなら (session var {name} …) で宣言してください。",
+                    f"(session val {name} …) cannot be rewritten. To rewrite it, declare it with (session var {name} …).",
                 )
             key = Symbol(f"_lazy_{name}_key")
-            # どちらの展開も `_doeff_` の頭の別名で引く(書き手の KV の Put などの effect を隠さない — expansion_names.py)。
-            # 別名の束ねは、型検査のための展開では doeff-hy-check が module の頭で読む時だけ置く
-            # (static_view.SESSION_STATIC_IMPORTS)、実行時は defhandler が出す import。
+            # Both expansions look names up through aliases with the `_doeff_` prefix (so they do not hide the writer's own effects such as KV Put — expansion_names.py).
+            # The alias bundle is placed, in the type-checking expansion, only when doeff-hy-check reads the module head
+            # (static_view.SESSION_STATIC_IMPORTS); at run time it is the import that defhandler emits.
             put = alias_symbol("Put")
             some = alias_symbol("Some")
             return _Walked(
@@ -672,20 +672,20 @@ class _Walker:
         if name in self.module.vars:
             raise self._error(
                 form,
-                f"`{name}` は module の var です。関数の中からは書き換えません(隠れた状態になる)。"
-                f"書き換える状態は効果の状態(Get / Put)か defhandler の (session var {name} …) に持ちます。",
+                f"`{name}` is a module var. It is not rewritten from inside a function (that would be hidden state). "
+                f"Keep state to be rewritten as effect state (Get / Put) or in defhandler's (session var {name} …).",
             )
         if name in self.ever_bound:
             raise self._error(
                 form,
-                f"`{name}` は var で宣言していないので (:= …) で書き換えられません。(var {name} 式) で宣言してください。",
+                f"`{name}` is not declared with var, so it cannot be rewritten with (:= …). Declare it with (var {name} expr).",
             )
-        raise self._error(form, f"`{name}` は宣言されていません。(var {name} 式) で宣言してから (:= {name} …) で書き換えます。")
+        raise self._error(form, f"`{name}` is not declared. Declare it with (var {name} expr) and then rewrite it with (:= {name} …).")
 
-    # -- 1 つの形 --------------------------------------------------------------
+    # -- one form --------------------------------------------------------------
 
     def walk(self, node: Object, where: _Where, state: frozenset[str]) -> _Walked:
-        """1 つの形を歩いて書き換え、束縛の状態(この経路で束縛済みの名前)を返す。"""
+        """Walk and rewrite one form, and return the binding state (names bound on this path)."""
         match node:
             case Symbol():
                 if str(node) in self.lazy_names:
@@ -709,19 +709,19 @@ class _Walker:
                 return _Walked(node, state)
 
     def _located(self, built: Object, origin: Object) -> Object:
-        """合成した形に元の形の位置を付ける(traceback と所見が書いた行を指すように)。"""
+        """Attach the position of the original form to a synthesized form (so the traceback and findings point to the written line)."""
         if hasattr(origin, "_start_line"):
             built.replace(origin, recursive=False)
         return built
 
     def _rebuild(self, node: Expression, parts: list[Object]) -> Expression:
-        """子を書き換えた式を、元の式の位置のまま作り直す。"""
+        """Rebuild an expression with rewritten children, at the position of the original expression."""
         rebuilt = Expression(parts)
         rebuilt.replace(node, recursive=False)
         return rebuilt
 
     def _expression(self, node: Expression, where: _Where, state: frozenset[str]) -> _Walked:
-        """式 1 つを頭で見分けて、宣言・:=・束縛・入れ子の文脈・分岐のそれぞれの歩き方へ渡す。"""
+        """Tell one expression apart by its head and hand it to the walker for declarations, :=, bindings, nested contexts or branches."""
         if len(node) == 0:
             return _Walked(node, state)
         assignment = parse_assignment(node)
@@ -746,12 +746,12 @@ class _Walker:
             parts, _ = self._sequence(node[1:], inner, state)
             return _Walked(self._rebuild(node, [node[0], *parts]), state)
         if head in {"handle", "on-raise"} and len(node) >= 2:
-            # 包む program は外の文脈。節は handle の macro が自分の本体として書き換える(val / var も
-            # そこで効く)ので、外の lazy の名前は節の中では参照できない(先に val で取り出す)。
-            # on-raise のパターンと写し先は、Raise を受けた時に handler の中で評価する値の式(同じ扱い)。
+            # The wrapped program is the outer context. The clauses are rewritten by the handle macro as its own body (val / var also
+            # take effect there), so an outer lazy name cannot be referenced inside a clause (fetch it with val first).
+            # The on-raise pattern and its target are value expressions evaluated inside the handler when a Raise is received (same treatment).
             program, state = self.walk(node[1], where, state)
             for clause in node[2:]:
-                self._forbid_lazy_inside(clause, _Where(Scope.DEFINITION, f"{head} の節"))
+                self._forbid_lazy_inside(clause, _Where(Scope.DEFINITION, f"{head} clause"))
             return _Walked(self._rebuild(node, [node[0], program, *node[2:]]), state)
         if head in _FN_HEADS:
             inner = _Where(Scope.FN, head)
@@ -778,8 +778,8 @@ class _Walker:
                         RULE_REBIND,
                         Severity.ERROR,
                         symbol,
-                        f"`{symbol}` を ({head} …) で書き換えています — (var {symbol} …) で宣言し "
-                        f"(:= {symbol} (… {symbol} …)) で書き換える [ADR-DOE-HY-006]",
+                        f"`{symbol}` is rewritten with ({head} …) — declare it with (var {symbol} …) and use "
+                        f"(:= {symbol} (… {symbol} …)) to rewrite it [ADR-DOE-HY-006]",
                     )
                 state = state | {str(symbol)}
             return _Walked(self._rebuild(node, [node[0], node[1], *value_parts]), state)
@@ -794,43 +794,43 @@ class _Walker:
         parts, state = self._sequence(node, where, state)
         return _Walked(self._rebuild(node, parts), state)
 
-    # -- 個別の形 --------------------------------------------------------------
+    # -- individual forms --------------------------------------------------------------
 
     def _legacy(self, node: Expression, head: str, where: _Where, state: frozenset[str]) -> _Walked:
-        """旧い lazy / lazy-val / lazy-var / set! を扱う: defk・deftest では誤り、defhandler の節の set! は所見だけ。"""
+        """Handle the old lazy / lazy-val / lazy-var / set!: an error in defk and deftest; for set! in a defhandler clause, only a finding."""
         if self.kind is BodyKind.CLAUSE:
             if head == "set!" and len(node) == 3 and isinstance(node[1], Symbol):
                 self._note(
                     RULE_LEGACY_LAZY,
                     Severity.WARNING,
                     node,
-                    f"(set! {node[1]} …) は (:= {node[1]} 新しい値) へ移す(意味は同じ) [ADR-DOE-HY-006]",
+                    f"(set! {node[1]} …) should be moved to (:= {node[1]} new-value) (same meaning) [ADR-DOE-HY-006]",
                 )
                 value, state = self.walk(node[2], where, state)
                 return _Walked(self._rebuild(node, [node[0], node[1], value]), state)
             parts, state = self._sequence(node, where, state)
             return _Walked(self._rebuild(node, parts), state)
-        if head == "lazy" and is_new_lazy_form(node):  # parse_declaration が先に拾うので来ない
-            raise self._error(node, "内部の誤り: lazy の新しい形が宣言として読まれなかった")
+        if head == "lazy" and is_new_lazy_form(node):  # never reached because parse_declaration picks it up first
+            raise self._error(node, "internal error: the new lazy form was not read as a declaration")
         name = str(node[1]) if len(node) >= 2 else "x"
         if head == "set!":
-            guide = f"(var {name} 式) で宣言し、(:= {name} 新しい値) で書き換えてください。"
+            guide = f"Declare it with (var {name} expr) and rewrite it with (:= {name} new-value)."
         else:
             guide = (
-                f"その呼び出しの中で初めて使った時に 1 回だけ評価する値は (lazy val {name} 式)、"
-                f"書き換える値は (lazy var {name} 式) と (:= {name} 新しい値) です。"
+                f"A value evaluated once, on first use within that call, is (lazy val {name} expr); "
+                f"a value to be rewritten is (lazy var {name} expr) with (:= {name} new-value)."
             )
         raise self._error(
             node,
-            f"({head} {name} …) は {self.kind.value} では使えません(旧い形。defk の旧い lazy はセッションをまたぐ"
-            f"隠れた状態で、新しい (lazy val …) の意味と衝突します)。\n"
+            f"({head} {name} …) cannot be used in {self.kind.value} (old form. The old lazy of defk is session-spanning "
+            f"hidden state and conflicts with the meaning of the new (lazy val …)).\n"
             f"  {guide}\n"
-            f"  セッションで共有する値は defhandler の (session val {name} 式) に置き、効果として求めてください。"
+            f"  Put a value shared across the session in defhandler's (session val {name} expr) and obtain it as an effect."
             f" [ADR-DOE-HY-006]",
         )
 
     def _forbid_lazy_inside(self, node: Object, where: _Where) -> None:
-        """自分の macro が本体を持つ入れ子の形の中に lazy の名前が在れば誤りにする(書き換えが届かないので)。"""
+        """If a lazy name appears inside a nested form whose own macro owns the body, make it an error (the rewrite cannot reach it)."""
         match node:
             case Symbol() if str(node) in self.lazy_names:
                 self._lazy_reference(node, where)
@@ -843,7 +843,7 @@ class _Walker:
                 return
 
     def _bind_definition_name(self, node: Expression, head: str, where: _Where, state: frozenset[str]) -> None:
-        """入れ子の defn / defclass の名前が lazy の名前を覆っていないかを、本体を歩く前に検める。"""
+        """Before walking the body, check that the name of a nested defn / defclass does not shadow a lazy name."""
         if head in {"defn", "defn/a", "defclass"}:
             name = node[1] if len(node) >= 2 else None
             if isinstance(name, List) and len(node) >= 3:
@@ -852,7 +852,7 @@ class _Walker:
                 self._bind(name, where, state, counted=False)
 
     def _after_definition(self, node: Expression, head: str, where: _Where, state: frozenset[str]) -> frozenset[str]:
-        """入れ子の defn / defclass の名前を本体の scope の束縛として数える。"""
+        """Count the name of a nested defn / defclass as a binding in the body scope."""
         if head in {"defn", "defn/a", "defclass"}:
             name = node[1] if len(node) >= 2 else None
             if isinstance(name, List) and len(node) >= 3:
@@ -862,7 +862,7 @@ class _Walker:
         return state
 
     def _attribute(self, node: Expression, where: _Where, state: frozenset[str]) -> _Walked:
-        """(. obj 属性 …) の obj だけを参照として歩く(属性の名は変数の参照ではない)。"""
+        """Walk only the obj of (. obj attr …) as a reference (the attribute name is not a variable reference)."""
         if len(node) < 2:
             return _Walked(node, state)
         target, state = self.walk(node[1], where, state)
@@ -880,7 +880,7 @@ class _Walker:
         return _Walked(self._rebuild(node, [node[0], target, *rest]), state)
 
     def _setv(self, node: Expression, where: _Where, state: frozenset[str]) -> _Walked:
-        """setv / setx の束縛を検め、本体の setv には val / var を勧める所見を付ける。"""
+        """Check the bindings of setv / setx, and attach a finding recommending val / var for a setv in the body."""
         pairs = list(node[1:])
         out: list[Object] = [node[0]]
         binds_name = False
@@ -904,14 +904,14 @@ class _Walker:
                 RULE_SETV,
                 Severity.WARNING,
                 node,
-                f"setv の代わりに (val {shown} …)、書き換えるなら (var {shown} …) と (:= {shown} …) を使う "
+                f"use (val {shown} …) instead of setv, or (var {shown} …) with (:= {shown} …) to rewrite "
                 "[ADR-DOE-HY-006]",
             )
         return _Walked(self._rebuild(node, out), state)
 
     def _effect_bind(self, node: Expression, where: _Where, state: frozenset[str]) -> _Walked:
-        """(<- x 効果) を val と同じ一度だけの束縛として数える。末尾の `:absent 失敗`(ADR-DOE-CORE-EFFECTS-003 R6)は
-        束縛の名ではないので分ける。失敗は不在の時にだけ関数の中で評価する値の式なので、関数の中として歩く。"""
+        """Count (<- x effect) as a one-time binding just like val. The trailing `:absent failure` (ADR-DOE-CORE-EFFECTS-003 R6) is
+        not a binding name, so separate it. The failure is a value expression evaluated inside the function only when absent, so walk it as inside a function."""
         parts = list(node[1:])
         suffix: list[Object] = []
         if len(parts) >= 3 and isinstance(parts[-2], Keyword) and str(parts[-2]) == ":absent":
@@ -924,12 +924,12 @@ class _Walker:
             rest, state = self._sequence(parts, where, state)
             head = [node[0], *rest]
         if suffix:
-            failure, _ = self.walk(suffix[1], _Where(Scope.FN, "<- の :absent"), state)
+            failure, _ = self.walk(suffix[1], _Where(Scope.FN, "<- :absent"), state)
             suffix = [suffix[0], failure]
         return _Walked(self._rebuild(node, [*head, *suffix]), state)
 
     def _branch(self, node: Expression, head: str, where: _Where, state: frozenset[str]) -> _Walked:
-        """分岐: 枝どうしは互いに排他なので、各枝は分岐の前の状態から歩き、後は和を取る。"""
+        """Branch: the arms are mutually exclusive, so walk each arm from the state before the branch, and take the union afterwards."""
         items = list(node[1:])
         out: list[Object] = [node[0]]
         match head:
@@ -984,7 +984,7 @@ class _Walker:
                 merged = state
                 for index, item in enumerate(items[1:]):
                     if index % 2 == 0:
-                        out.append(item)  # pattern(束縛の形はここでは数えない)
+                        out.append(item)  # pattern (binding forms are not counted here)
                     else:
                         walked, after = self.walk(item, where, state)
                         out.append(walked)
@@ -992,7 +992,7 @@ class _Walker:
                 return _Walked(self._rebuild(node, out), merged)
 
     def _except(self, node: Expression, where: _Where, state: frozenset[str]) -> _Walked:
-        """except の節を歩く(例外の変数は束縛し直しに数えない)。"""
+        """Walk an except clause (the exception variable does not count as a rebinding)."""
         items = list(node[1:])
         out: list[Object] = [node[0]]
         if items and isinstance(items[0], List):
@@ -1011,11 +1011,11 @@ class _Walker:
         return _Walked(self._rebuild(node, out + body), state)
 
     def _bind_uncounted(self, symbol: Symbol, where: _Where, state: frozenset[str]) -> None:
-        """for / with / except の変数: 束縛し直しの数には入れないが、新しい構文の名前との衝突と影は見る。"""
+        """Variable of for / with / except: not counted as a rebinding, but collisions with names of the new syntax and shadowing are checked."""
         self._bind(symbol, where, state, counted=False)
 
     def _loop(self, node: Expression, head: str, where: _Where, state: frozenset[str]) -> _Walked:
-        """for / while を歩く(for の変数は束縛し直しに数えない・本体の束縛は 1 回の繰り返しの分として数える)。"""
+        """Walk for / while (the for variable does not count as a rebinding; bindings in the body count as one iteration)."""
         items = list(node[1:])
         out: list[Object] = [node[0]]
         if head == "for" and items and isinstance(items[0], List):
@@ -1051,7 +1051,7 @@ class _Walker:
         return _Walked(self._rebuild(node, out), state | after)
 
     def _let(self, node: Expression, where: _Where, state: frozenset[str]) -> _Walked:
-        """let を歩く(let の名前は別の名前に写されるので数えないが、lazy の名前の影は誤り)。"""
+        """Walk let (let names are mapped to other names so they are not counted, but shadowing a lazy name is an error)."""
         spec = list(node[1])
         walked_spec: list[Object] = []
         for index in range(0, len(spec) - 1, 2):
@@ -1064,7 +1064,7 @@ class _Walker:
         return _Walked(self._rebuild(node, [node[0], self._located(List(walked_spec), node[1]), *body]), state)
 
     def _with(self, node: Expression, where: _Where, state: frozenset[str]) -> _Walked:
-        """with を歩く(with の変数は束縛し直しに数えない)。"""
+        """Walk with (the with variable does not count as a rebinding)."""
         spec = list(node[1])
         walked_spec: list[Object] = []
         index = 0
@@ -1084,12 +1084,12 @@ class _Walker:
 
 
 # ---------------------------------------------------------------------------
-# 公開の口
+# Public entry points
 # ---------------------------------------------------------------------------
 
 
 def _lazy_names(forms: Iterable[Object]) -> frozenset[str]:
-    """本体の一番外の並びで lazy に宣言される名前(宣言より前の参照を見分けるため、歩く前に読む)。"""
+    """Names declared lazy in the outermost sequence of the body (read before walking, to tell references that precede the declaration)."""
     names: set[str] = set()
     for form in forms:
         declaration = parse_declaration(form)
@@ -1109,14 +1109,14 @@ def rewrite_body(
     static: bool,
     expand_bangs: ExpandBangs,
 ) -> Rewritten:
-    """本体の並びを書き換える(宣言・:=・lazy の参照)。誤りは SyntaxError、旧い書き方は所見で返す。
+    """Rewrite the sequence of the body (declarations, :=, lazy references). Errors are SyntaxError; old-style code is returned as findings.
 
-    - owner: 誤りの文の頭(例 `defk load-price`)
-    - params: 本体の前から束縛されている名前(引数・節の欄・effect / k)
-    - sessions: defhandler の節から見えるセッションの名前
-    - module: 同じ module の直下で前に宣言した lazy val(参照を書き換える)と var の名前
-    - static: doeff-hy-check の型検査のための展開か(lazy を書いた所で評価する形にする)
-    - expand_bangs: lazy の初期化の式の `(! …)` をその場の yield にする展開(macros.hy の `_expand-bangs`)
+    - owner: head of the error text (e.g. `defk load-price`)
+    - params: names bound from before the body (arguments, clause fields, effect / k)
+    - sessions: session names visible from a defhandler clause
+    - module: names of lazy vals (references are rewritten) and vars declared earlier directly under the same module
+    - static: whether this is the type-checking expansion of doeff-hy-check (lazy is evaluated where written)
+    - expand_bangs: expansion that turns the `(! …)` in a lazy initializer into an in-place yield (`_expand-bangs` in macros.hy)
     """
     listed = list(forms)
     walker = _Walker(owner, kind, params, sessions, static, expand_bangs, _lazy_names(listed), module)
@@ -1125,7 +1125,7 @@ def rewrite_body(
 
 
 def legacy_session_finding(form: Object, handler: str) -> Finding:
-    """defhandler の旧い lazy / lazy-val / lazy-var の所見(展開は今までどおり)。"""
+    """Findings for the old lazy / lazy-val / lazy-var of defhandler (expansion works as before)."""
     head = _head(form) or "lazy"
     name = str(form[1]) if isinstance(form, Expression) and len(form) >= 2 else "x"
     new = "session var" if head == "lazy-var" else "session val"
@@ -1134,46 +1134,46 @@ def legacy_session_finding(form: Object, handler: str) -> Finding:
         Severity.WARNING,
         _line(form),
         _column(form),
-        f"defhandler {handler}: ({head} {name} …) は ({new} {name} …) へ移す"
-        "(意味と保存先のキーは同じ・書き換えは set! の代わりに :=) [ADR-DOE-HY-006]",
+        f"defhandler {handler}: ({head} {name} …) should be moved to ({new} {name} …)"
+        " (same meaning and storage key; rewrite with := instead of set!) [ADR-DOE-HY-006]",
     )
 
 
 def legacy_session_message(form: Object, handler: str) -> str:
-    """DeprecationWarning の文(legacy_session_finding と同じ案内)。"""
+    """Text of the DeprecationWarning (the same guidance as legacy_session_finding)."""
     return legacy_session_finding(form, handler).message
 
 
 # ---------------------------------------------------------------------------
-# module の直下の val / var
+# val / var directly under a module
 # ---------------------------------------------------------------------------
 #
-# module の直下(defk などの外)の `(val NAME 式)` / `(var NAME 式)` / `(lazy val NAME 式)` は
-# doeff_hy.macros の val / var / lazy の macro が展開する。同じ file の compile の間だけ生きる名簿
-# (ModuleBindings — Hy の compiler に付ける)で同じ名前の 2 回目を誤りにし、後に続く defk・deftest・
-# defhandler の本体へ lazy val と var の名前を渡す(lazy val の参照を書き換えるため)。
+# `(val NAME expr)` / `(var NAME expr)` / `(lazy val NAME expr)` directly under a module (outside defk etc.) are
+# expanded by the val / var / lazy macros of doeff_hy.macros. A roster that lives only during the compile of the same file
+# (ModuleBindings — attached to the Hy compiler) makes a second declaration of the same name an error, and passes the lazy val and var names to the
+# bodies of the following defk, deftest and defhandler (to rewrite lazy val references).
 #
-# main 席の決めた項目(ADR-DOE-HY-006 R8〜R10):
-# - module の直下の lazy val は効果を使わない式だけ(初めて使った時に 1 回だけ評価して覚える —
-#   import の時に重い計算をしない)。効果を使う式は誤り: module には handler が無く、最初に使った呼び出しの
-#   handler の下で作った値が、以後の別のセッション・別の handler の組でも使い回されるため。
-#   (一度は作らないと決めて外し、後で戻した — 設計の記録 §6)
-# - module の直下の lazy var は作らない(誤り — var か defhandler の session var を案内する)。
-# - val / var の式も効果を使えない(実行する handler が無い)。
-# - Hy の reader は `(:= …)` を keyword の呼び出しとして読み、macro を通らないので、module の直下では
-#   `:=` が効かない。module の var は module の直下の setv で書き換える(var の名前の setv は警告しない)。
+# Items decided by the main seat (ADR-DOE-HY-006 R8-R10):
+# - A module-level lazy val is only an expression that uses no effects (evaluated and remembered once on first use —
+#   so no heavy computation happens at import time). An expression that uses effects is an error: a module has no handler, and the value built under the
+#   handler of the first call that used it would be reused by later sessions and other handler sets.
+#   (It was once decided not to provide it and removed, then restored later — design record section 6)
+# - A module-level lazy var is not provided (an error — it points to var or defhandler's session var).
+# - The expressions of val / var also cannot use effects (there is no handler to run them).
+# - The Hy reader reads `(:= …)` as a keyword call and it does not go through a macro, so directly under a module
+#   `:=` has no effect. A module var is rewritten with a setv directly under the module (setv of a var name is not warned).
 
 MODULE_ONLY_HEADS: frozenset[str] = frozenset({"val", "var", "lazy", "session"})
 
 
 class ModuleBindings:
-    """1 つの file の compile の間の、module の直下の宣言の名簿(同じ名前の 2 回目を誤りにする)。"""
+    """Roster of declarations directly under a module during the compile of one file (a second declaration of the same name is an error)."""
 
     def __init__(self) -> None:
         self.declared: dict[str, Declaration] = {}
 
     def names(self) -> ModuleNames:
-        """後に続く本体へ渡す、module の lazy val(参照を書き換える)と var(:= を案内する)の名前。"""
+        """Names of the module lazy vals (references are rewritten) and vars (guide toward :=) to hand to the following bodies."""
         return ModuleNames(
             frozenset(n for n, d in self.declared.items() if d.timing is Timing.LAZY),
             frozenset(n for n, d in self.declared.items() if d.mutability is Mutability.VAR),
@@ -1181,7 +1181,7 @@ class ModuleBindings:
 
 
 def _contains_effect(form: Object) -> bool:
-    """式が効果を使うか(`!` の印か `<-` を含むか — quote の中は数えない)。"""
+    """Whether an expression uses effects (contains a `!` mark or `<-` — inside a quote is not counted)."""
     match form:
         case Symbol() if str(form) == "!":
             return True
@@ -1196,42 +1196,42 @@ def _contains_effect(form: Object) -> bool:
 
 
 def module_declaration(bindings: ModuleBindings, form: Expression, static: bool) -> Object:
-    """module の直下の宣言 1 つを検めて、setv か lazy val の登録に書き換える(session・lazy var・効果を使う式・
-    2 回目は誤り)。static = 型検査のための展開(lazy val も書いた所で評価する形にする — 型は同じ)。"""
+    """Check one declaration directly under a module and rewrite it into a setv or the registration of a lazy val (session, lazy var, an expression using effects, and
+    a second declaration are errors). static = type-checking expansion (a lazy val is also evaluated where written — the type is the same)."""
     declaration = parse_declaration(form)
     head = _head(form)
     if declaration is None:
         raise SyntaxError(
-            f"\n({head} …) (line {_line(form)}): module の直下で使える形は (val 名前 式)・(var 名前 式)・"
-            f"(lazy val 名前 式) です — {_source(form)}\n"
+            f"\n({head} …) (line {_line(form)}): the forms usable directly under a module are (val name expr), (var name expr) and"
+            f"(lazy val name expr) — {_source(form)}\n"
         )
     name = declaration.name
-    where = f"\nmodule の直下 (line {_line(form)}): "
+    where = f"\ndirectly under a module (line {_line(form)}): "
     if declaration.timing is Timing.SESSION:
         raise SyntaxError(
-            where + f"(session {declaration.mutability.value} {name} …) は defhandler の直下(節と並べる所)にだけ書けます。\n"
+            where + f"(session {declaration.mutability.value} {name} …) can be written only directly under defhandler (alongside the clauses).\n"
         )
     if declaration.timing is Timing.LAZY and declaration.mutability is Mutability.VAR:
         raise SyntaxError(
-            where + f"module の直下に (lazy var {name} …) は置けません。書き換える値は (var {name} 式)、"
-            f"セッションの間で書き換える状態は defhandler の (session var {name} 式) に置きます。 [ADR-DOE-HY-006]\n"
+            where + f"(lazy var {name} …) cannot be placed directly under a module. A value to be rewritten is (var {name} expr), "
+            f"and state rewritten during a session goes in defhandler's (session var {name} expr). [ADR-DOE-HY-006]\n"
         )
     if declaration.timing is Timing.LAZY and _contains_effect(declaration.init):
         raise SyntaxError(
-            where + f"module の直下の (lazy val {name} …) の式は効果を使えません(`!` / `<-` を含む)。\n"
-            f"  module には handler が無く、最初に使った呼び出しの handler の下で作った値が、以後の別のセッション・\n"
-            f"  別の handler の組でも使い回されるからです。効果を使う資源は defhandler の (session val {name} 式) に置き、\n"
-            f"  効果として求めてください。 [ADR-DOE-HY-006]\n"
+            where + f"The expression of a module-level (lazy val {name} …) cannot use effects (it contains `!` / `<-`).\n"
+            f"  A module has no handler, so a value built under the handler of the first call that used it would be reused by later other sessions and\n"
+            f"  other handler sets. Put a resource that uses effects in defhandler's (session val {name} expr) and\n"
+            f"  obtain it as an effect. [ADR-DOE-HY-006]\n"
         )
     if _contains_effect(declaration.init):
         raise SyntaxError(
-            where + f"module の直下の ({declaration.spelled} {name} …) の式は効果を使えません(実行する handler が無い)。\n"
-            f"  効果で作る資源は defhandler の (session val {name} 式) に置き、効果として求めてください。 [ADR-DOE-HY-006]\n"
+            where + f"The expression of a module-level ({declaration.spelled} {name} …) cannot use effects (there is no handler to run it).\n"
+            f"  Put a resource built with effects in defhandler's (session val {name} expr) and obtain it as an effect. [ADR-DOE-HY-006]\n"
         )
     if name in bindings.declared:
         first = bindings.declared[name]
         raise SyntaxError(
-            where + f"`{name}` は ({first.spelled} {name} …) で宣言済みです。同じ名前をもう一度束縛できません。\n"
+            where + f"`{name}` is already declared with ({first.spelled} {name} …). The same name cannot be bound again.\n"
         )
     bindings.declared[name] = declaration
     setv = Expression([Symbol("setv"), declaration.target, declaration.init])
@@ -1257,7 +1257,7 @@ def module_declaration(bindings: ModuleBindings, form: Expression, static: bool)
                     ),
                 ]
             ),
-            # module の lazy val の表に 1 つ足した新しい表を、module の直下で表の名に束縛する。
+            # Bind a new table, the module lazy val table plus one entry, to the table name directly under the module.
             Expression(
                 [
                     Symbol("setv"),
@@ -1272,7 +1272,7 @@ def module_declaration(bindings: ModuleBindings, form: Expression, static: bool)
                     ),
                 ]
             ),
-            # 他の module からの参照の口(PEP 562)。書き手が __getattr__ を持つ module では置かない。
+            # Entry point for references from other modules (PEP 562). Not placed in a module where the writer defines __getattr__.
             Expression(
                 [
                     Symbol("when"),
@@ -1293,7 +1293,7 @@ def module_declaration(bindings: ModuleBindings, form: Expression, static: bool)
 
 
 def module_lazy_reference(symbol: Symbol) -> Object:
-    """本体の中の module の lazy val の参照を、値の取り出しの式にする(効果を使わないのでどこでも書ける)。"""
+    """Turn a reference to a module lazy val inside a body into a value-fetching expression (it uses no effects, so it can be written anywhere)."""
     # ((. (get (get (globals) "__doeff_module_lazies__") "NAME") get)) — doeff_hy._lazy.ModuleLazy.get
     table = Expression([Symbol("get"), Expression([Symbol("globals")]), hy.models.String("__doeff_module_lazies__")])
     entry = Expression([Symbol("get"), table, hy.models.String(hy.mangle(str(symbol)))])
@@ -1306,12 +1306,12 @@ _MODULE_SCOPE_HEADS: frozenset[str] = frozenset({"do", "when", "if", "cond", "tr
 
 
 class ModuleScope:
-    """module の直下の形を 1 つずつ見て、直下の setv の所見を集める(val / var を勧める警告・val の名前の束縛し直しの赤・
-    効かない := の赤)。
+    """Look at the forms directly under a module one by one and collect findings for setv directly under it (a warning recommending val / var, an error for rebinding a val name,
+    and an error for an ineffective :=).
 
-    doeff-hy-check が 1 file の source の一番外の並びに当てる(module の直下は macro の外なので、setv は展開の時には
-    見えない)。Hy の compile が form を 1 つ読むたびに同じ form を渡せるよう、1 つずつ受け取る形にしてある — 所見のために
-    source を読み直さず、読んだ form を最後まで抱えもしない。"""
+    doeff-hy-check applies this to the outermost sequence of one file's source (directly under a module is outside macros, so setv is not visible at expansion time).
+    It receives forms one at a time so that the same form can be passed each time the Hy compile reads one — it does not re-read
+    the source for findings, nor hold the forms it has read until the end."""
 
     def __init__(self) -> None:
         self._findings: list[Finding] = []
@@ -1319,11 +1319,11 @@ class ModuleScope:
 
     @property
     def findings(self) -> tuple[Finding, ...]:
-        """ここまでに見た形の所見。"""
+        """Findings for the forms seen so far."""
         return tuple(self._findings)
 
     def visit(self, form: Object) -> None:
-        """module の scope の中の 1 つの形を見る(defn などの入れ子の scope には入らない)。"""
+        """Look at one form in the module scope (does not enter nested scopes such as defn)."""
         declaration = parse_declaration(form) if _head(form) in MODULE_ONLY_HEADS else None
         if declaration is not None:
             self._declared.setdefault(declaration.name, declaration)
@@ -1331,8 +1331,8 @@ class ModuleScope:
         if isinstance(form, Expression) and len(form) > 0 and isinstance(form[0], Keyword) and str(form[0]) == ":=":
             self._findings.append(
                 Finding(RULE_REBIND, Severity.ERROR, _line(form), _column(form),
-                        "module の直下の (:= …) は Hy では keyword の呼び出しとして読まれ、何も書き換えない — "
-                        "module の var は module の直下の setv で書き換える [ADR-DOE-HY-006]")
+                        "A (:= …) directly under a module is read by Hy as a keyword call and rewrites nothing — "
+                        "rewrite a module var with a setv directly under the module [ADR-DOE-HY-006]")
             )
             return
         head = _head(form)
@@ -1343,15 +1343,15 @@ class ModuleScope:
                 if first is not None and first.mutability is Mutability.VAL:
                     self._findings.append(
                         Finding(RULE_REBIND, Severity.ERROR, _line(symbol), _column(symbol),
-                                f"({first.spelled} {symbol} …) で宣言した名前を setv で束縛し直している — "
-                                f"書き換えるなら (var {symbol} …) で宣言する [ADR-DOE-HY-006]")
+                                f"({first.spelled} {symbol} …) declared this name, but it is rebound with setv — "
+                                f"to rewrite it, declare it with (var {symbol} …) [ADR-DOE-HY-006]")
                     )
             unwarned = [n for n in names if str(n) not in self._declared]
             if unwarned:
                 shown = unwarned[0]
                 self._findings.append(
                     Finding(RULE_SETV, Severity.WARNING, _line(form), _column(form),
-                            f"module の直下の setv の代わりに (val {shown} …)、書き換えるなら (var {shown} …) を使う "
+                            f"use (val {shown} …) instead of a setv directly under a module, or (var {shown} …) to rewrite "
                             "[ADR-DOE-HY-006]")
                 )
             return
@@ -1362,7 +1362,7 @@ class ModuleScope:
 
 
 def module_findings(forms: Iterable[Object]) -> list[Finding]:
-    """module の直下の setv の所見(ModuleScope に一番外の並びを順に見せた結果)。"""
+    """Findings for setv directly under a module (the result of showing the outermost sequence to ModuleScope in order)."""
     scope = ModuleScope()
     for form in forms:
         scope.visit(form)

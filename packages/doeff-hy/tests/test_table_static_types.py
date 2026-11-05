@@ -1,11 +1,11 @@
-"""書き換えない表 Table の型の宣言(table.pyi)の失敗ケース。
+"""Failure cases for the type declaration (table.pyi) of the immutable Table.
 
-table.hy は Hy の module で、型の宣言(table.pyi)が無いと pyright は使い手の Table・TableDraft・table_of・draft_of を Unknown
-として読み、表を欄や引数に持つ所の型が全部 Unknown に引きずられる(agora の画面の cache.hy で 300 → 434 件の赤 — 書き手に直せない)。
-宣言が在れば:
-- 表を作る・下書きに書く・凍らせる・引く行に「型が分からない」の赤が出ない。
-- 表の答えの型の取り違え(int の size に str を足す)は赤になる。
-失敗ケース: 同じ table.hy を宣言の無い局所の module として写して読むと、同じ行が Unknown の赤になる。
+table.hy is a Hy module, and without a type declaration (table.pyi) pyright reads the user's Table, TableDraft, table_of and draft_of as Unknown,
+so every type that holds a table in a field or argument is dragged to Unknown (300 -> 434 reds in agora's screen cache.hy — the author cannot fix them).
+With the declaration:
+- Lines that build a table, write to a draft, freeze it, or look up a row produce no "type unknown" red.
+- A type mismatch in a table answer (adding a str to an int size) is a red.
+Failure case: copying the same table.hy as a local module without a declaration and reading it turns the same lines into Unknown reds.
 """
 
 import contextlib
@@ -17,14 +17,14 @@ from pathlib import Path
 
 import pytest
 
-needs_pyright = pytest.mark.skipif(shutil.which("pyright") is None, reason="pyright が無い")
+needs_pyright = pytest.mark.skipif(shutil.which("pyright") is None, reason="pyright is not installed")
 
 MODULE = """\
 (require doeff-hy.macros [defk val])
 (import {source} [Table TableDraft TableWrite table-of draft-of])
 (defk counted [table]
   {{:pre [(: table (get Table int))] :post [(: % int)]}}
-  "見本: 表の行数。"
+  "Example: the number of rows in a table."
   (.size table))
 (val base (table-of #((TableWrite "a" 1) (TableWrite "b" 2))))
 (val draft (draft-of base))
@@ -35,13 +35,13 @@ MODULE = """\
 (val wrong (+ (.size frozen) "x"))
 """
 
-#: 型が見えないと Unknown になる名(作る口・表・下書き・その答え)。
+#: Names that become Unknown when the type is not visible (the constructors, the table, the draft, and their answers).
 WATCHED = ('"table_of"', '"draft_of"', '"base"', '"draft"', '"frozen"', '"first_row"', '"all_rows"', '"put"', '"freeze"')
 
 
 @dataclass(frozen=True)
 class Run:
-    """doeff-hy-check を 1 回走らせた結果(JSON の診断)。"""
+    """Result of running doeff-hy-check once (JSON diagnostics)."""
 
     diagnostics: tuple[dict[str, object], ...]
 
@@ -76,13 +76,13 @@ def _unknown_on_watched(run: Run) -> list[tuple[str, int, str]]:
 def test_using_a_table_has_no_unknown(tmp_path: Path) -> None:
     run = _check(_probe(tmp_path, "doeff_hy._table"))
     assert not _unknown_on_watched(run), run.errors()
-    # 表を作る・下書きに書く・凍らせる・引く行(7〜12 行目)には赤が 1 つも無い。
+    # Lines that build a table, write to a draft, freeze it, or look up a row (lines 7-12) have no reds at all.
     assert not [e for e in run.errors() if 7 <= e[1] <= 12], run.errors()
 
 
 @needs_pyright
 def test_a_table_answer_used_as_the_wrong_type_is_red(tmp_path: Path) -> None:
-    # size の答えが int と読めるので、str を足す(13 行目)と型の取り違えで赤。
+    # The size answer reads as int, so adding a str (line 13) is a red for a type mismatch.
     errors = _check(_probe(tmp_path, "doeff_hy._table")).errors()
     assert [e for e in errors if e[1] == 13 and e[0] == "reportOperatorIssue"], errors
 
@@ -91,8 +91,8 @@ def test_a_table_answer_used_as_the_wrong_type_is_red(tmp_path: Path) -> None:
 def test_the_counterexample_a_table_without_the_declaration_reads_as_unknown(tmp_path: Path) -> None:
     import doeff_hy._table as table
 
-    # 同じ table.hy を、宣言(.pyi)の無い module として検査の根の外に置いて読む(根の中の .hy は検査がその場で投影するので外に置く)
-    # — 同じ行が Unknown の赤になる。
+    # Place the same table.hy outside the check root as a module without a declaration (.pyi) and read it (a .hy inside the root is projected on the spot by the check, so put it outside)
+    # — the same lines become Unknown reds.
     outside = tmp_path / "outside"
     outside.mkdir()
     shutil.copy(Path(str(table.__file__)), outside / "local_table.hy")

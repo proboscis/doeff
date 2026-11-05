@@ -1,7 +1,7 @@
-"""defk の本体の match の class pattern の欄の名の回避の deftest を公開する。
+"""Expose the deftests that avoid field names in class patterns of match inside a defk body.
 
-``match_field_names_deftests.hy`` の deftest を包み直さずそのまま公開する(ADR-DOE-HY-002 —
-包むと pytestmark が落ちる)。実行時の ``doeff_interpreter`` はこの module の fixture が供給する。
+Expose the deftests in ``match_field_names_deftests.hy`` as they are, without re-wrapping (ADR-DOE-HY-002 —
+wrapping drops pytestmark). The runtime ``doeff_interpreter`` is supplied by this module's fixture.
 """
 
 import importlib
@@ -9,7 +9,7 @@ import sys
 from collections.abc import Callable
 from pathlib import Path
 
-import doeff_hy  # noqa: F401  # Hy の import hook を有効にする
+import doeff_hy  # noqa: F401  # enable the Hy import hook
 import pytest
 
 TESTS_DIR = Path(__file__).resolve().parent
@@ -21,12 +21,12 @@ _deftests = importlib.import_module("match_field_names_deftests")
 
 @pytest.fixture
 def doeff_interpreter() -> Callable[..., object]:
-    """deftest の Program を走らせる(env の差し替えは使わない — 渡されたら誤り)。"""
+    """Run the deftest Program (env override is not used; passing one is an error)."""
     from doeff import run
 
     def run_program(program: object, *, env: object = None) -> object:
         if env:
-            raise NotImplementedError("match の欄の名の検は :env を使わない")
+            raise NotImplementedError("the match field-name check does not use :env")
         return run(program)
 
     return run_program

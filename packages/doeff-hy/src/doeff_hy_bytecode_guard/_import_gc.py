@@ -1,41 +1,41 @@
-"""一番外の読み込み(module の本体の実行 — 中の import を含む)の間だけ、GC の閾値を上げる持ち主。
+"""The owner that raises the GC threshold only during the outermost load (running a module body -- including imports inside it).
 
-CPython 3.14 free-threaded の GC は、前の GC から正味の object が閾値(既定 2000)を越えて増え、生き残りの 1/4 以上で、RSS が
-10% 超増えると heap 全体を掃く。読み込みは長く生きる object(module・関数・型)で heap を育てるので、ごみが 1% 前後でも RSS が
-10% 増えるたびに掃く — agora-controllers の test_emulated_screen.hy の読み込み 1 つ(約 2 秒)で 7 回・0.28〜0.38 秒だった。
+The CPython 3.14 free-threaded GC sweeps the whole heap when the net number of objects since the previous GC grows past the threshold (default 2000), at least 1/4 of them survive, and RSS
+grows more than 10%. Loading grows the heap with long-lived objects (modules, functions, types), so even with about 1% garbage it sweeps every time RSS
+grows 10% -- one load of agora-controllers' test_emulated_screen.hy (about 2 seconds) did 7 sweeps, 0.28 to 0.38 seconds.
 
-読みの口の包み(:mod:`doeff_hy_bytecode_guard._loader_hooks`)が一番外の module の本体の実行の間 :func:`hold` で閾値を
-:data:`IMPORT_GC_THRESHOLD` へ上げ、終わりに :func:`release` で戻す。止めず(gc.disable)有限の値にするのは、閾値が「前の GC から
-溜まりうるごみの object の数」の上限でもあるため — 読み込みの間でも GC は起き、溜まるごみはこの数で頭打ちになる(止めると
-test_emulated_screen.hy で最大 RSS が 11 MB 増え、溜めた分の GC がテスト本体へ移った)。
+The wrapper of the reader entry (:mod:`doeff_hy_bytecode_guard._loader_hooks`) raises the threshold with :func:`hold` to
+:data:`IMPORT_GC_THRESHOLD` during the outermost module body run and restores it with :func:`release` at the end. It uses a finite value rather than stopping (gc.disable) because the threshold is also an upper bound on "the number of
+garbage objects that can pile up since the previous GC" -- GC still happens during loading, and the garbage that piles up is capped at this number (stopping it
+raised max RSS by 11 MB in test_emulated_screen.hy, and the GC for the piled-up amount moved into the test body).
 
-閾値は process に 1 つなので、どの thread の読み込みが続いている間も上げたままにし、最後の読み込みが終わった時に戻す。読み込みの
-途中で読まれた module が自分で閾値を決めたら(上げた値と違えば)その値を残す。閾値 0(自動の GC を切ってある)は動かさない。
-別の thread の読み込みの途中で fork した子は、その thread を持たず読み込みが子の中で終わらないので、fork した thread の分だけを残す。
+The threshold is one per process, so it stays raised while any thread's load continues, and is restored when the last load ends. If a module read in the middle of a load
+sets the threshold itself (differs from the raised value), that value is kept. Threshold 0 (automatic GC turned off) is left alone.
+A child forked in the middle of another thread's load does not have that thread and the load does not end in the child, so only the forking thread's share is kept.
 
-起動時に読まれる包みから import されるので、標準 library の軽い module しか import しない(threading も読まない)。
+It is imported from the wrapper read at startup, so it imports only light standard-library modules (it does not even read threading).
 """
 
 import gc
 import os
 from _thread import allocate_lock, get_ident
 
-#: 一番外の読み込みの間の閾値(前の GC から正味で増えてよい object の数)。test_emulated_screen.hy の読み込みで 150,000 / 200,000 /
-#: 250,000 / 400,000 を比べ、読み込みの中の GC が 7 回 → 2 回になり、テスト本体の中へ GC を移さず、最大 RSS が揺れの中だった値。
+#: The threshold during the outermost load (the number of objects that may grow net since the previous GC). Comparing 150,000 / 200,000 /
+#: 250,000 / 400,000 on loading test_emulated_screen.hy, this was the value where GC during loading went from 7 to 2, GC was not moved into the test body, and max RSS was within noise.
 IMPORT_GC_THRESHOLD = 250_000
 
 
 class _ImportHold:
-    """閾値を上げている間の覚え(process に 1 つ — 持ち主はこの module だけ)。"""
+    """Memo while the threshold is raised (one per process -- this module is the only owner)."""
 
     __slots__ = ("before", "holders", "lock")
 
     def __init__(self) -> None:
         self.lock = allocate_lock()
-        #: 読み込み中の thread の id → その thread の一番外の読み込みの数(同じ thread でも context が違えば一番外が重なりうる)。
-        #: fork した子が、fork した thread の分だけを残すために thread ごとに持つ。
+        #: Thread id of a loading thread -> the number of outermost loads of that thread (even on the same thread, outermost loads can overlap if the context differs).
+        #: Held per thread so a forked child can keep only the forking thread's share.
         self.holders: dict[int, int] = {}
-        #: 上げる前の閾値(上げていなければ None)。
+        #: The threshold before raising (None if not raised).
         self.before: int | None = None
 
 
@@ -43,7 +43,7 @@ _HOLD = _ImportHold()
 
 
 def hold() -> None:
-    """一番外の読み込みの始まり — 読み込みの間の GC を減らすため、読み込み中の thread が他に無ければ閾値を上げる。"""
+    """Start of an outermost load -- to reduce GC during the load, raise the threshold if no other thread is loading."""
     with _HOLD.lock:
         ident = get_ident()
         first = not _HOLD.holders
@@ -53,7 +53,7 @@ def hold() -> None:
 
 
 def release() -> None:
-    """一番外の読み込みの終わり(例外でも)— 読み込みの外の GC を既定に戻すため、読み込み中の thread が無くなれば閾値を戻す。"""
+    """End of an outermost load (even on an exception) -- to return GC outside loading to the default, restore the threshold when no thread is loading."""
     with _HOLD.lock:
         ident = get_ident()
         left = _HOLD.holders.get(ident, 0) - 1
@@ -66,7 +66,7 @@ def release() -> None:
 
 
 def _raise_threshold() -> None:
-    """閾値を読み込みの間の値へ上げ、前の値を覚える(切ってある GC・既に高い閾値は、利用者の決めとして触らない)。"""
+    """Raise the threshold to the value for loading and remember the previous value (GC that is turned off or an already high threshold is left alone as the user's decision)."""
     current = gc.get_threshold()
     if current[0] == 0 or current[0] >= IMPORT_GC_THRESHOLD:
         _HOLD.before = None
@@ -76,7 +76,7 @@ def _raise_threshold() -> None:
 
 
 def _restore_threshold() -> None:
-    """覚えた前の閾値へ戻す — 読み込まれた module が閾値を自分で決めていれば(上げた値と違えば)その決めを残す。"""
+    """Restore the remembered previous threshold -- if a loaded module set the threshold itself (differs from the raised value), keep that decision."""
     before, _HOLD.before = _HOLD.before, None
     current = gc.get_threshold()
     if before is not None and current[0] == IMPORT_GC_THRESHOLD:
@@ -84,8 +84,8 @@ def _restore_threshold() -> None:
 
 
 def _after_fork_in_child() -> None:
-    """fork した子で、子に無い thread の読み込みの分を外す — その読み込みは子の中で終わらず、閾値が上がったまま残るため。
-    fork した thread 自身の読み込みは子の中で終わるので残す。lock は fork の時に他の thread が持っていたかもしれないので作り直す。"""
+    """In a forked child, drop the loads of threads that do not exist in the child -- those loads never end in the child, so the threshold would stay raised.
+    The forking thread's own load ends in the child, so it is kept. The lock is recreated because another thread may have held it at fork time."""
     _HOLD.lock = allocate_lock()
     ident = get_ident()
     mine = _HOLD.holders.get(ident, 0)

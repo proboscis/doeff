@@ -1,14 +1,14 @@
-"""定義の宣言 :effects にだけ出る効果の名を、型検査が「使われていない import」と数えないの失敗ケース。
+"""Failure case: the type check must not count an effect name that appears only in the definition declaration :effects as an "unused import".
 
-handler の節が効果を下請けの関数(別の module の defk)を通して出す時、その効果の型の名は handler の頭の :effects の宣言にだけ
-現れる。型検査のための展開(static_check.without_bookkeeping)は定義の記帳 `setattr(名, '__doeff_effects__', …)` を丸ごと外して
-いたので、宣言にだけ出る名は読まれない import になり、strict の reportUnusedImport の赤が出た(agora の
-controllers/messaging/protocol/intake_router.hy・intake.hy の AppendEvent — 2026-10-07 08:00 の日次)。import を消すと実行の時に
-:effects の宣言が名を解けずに落ちるので、書き手は直せない。
+When a handler clause emits an effect through a subcontracted function (a defk in another module), the effect's type name appears only in the handler head's :effects declaration.
+The expansion for type checking (static_check.without_bookkeeping) dropped the definition bookkeeping `setattr(name, '__doeff_effects__', …)` wholesale,
+so a name appearing only in the declaration became an unread import and strict reported a reportUnusedImport red (agora's
+controllers/messaging/protocol/intake_router.hy and intake.hy AppendEvent — the daily run of 2026-10-07 08:00). Removing the import makes the
+:effects declaration fail to resolve the name at runtime, so the author cannot fix it.
 
-- 宣言にだけ出る名を import した handler の検体に、reportUnusedImport の赤が無い。
-- 記帳の :effects の文は、doeff_hy._declarations を呼ばない形 `setattr(名, '__doeff_effects__', (A, B))` に縮めて残す(ほかの記帳と
-  doeff_hy._declarations の import は今までどおり外す)。
+- A handler sample that imports a name appearing only in the declaration has no reportUnusedImport red.
+- The :effects statement of the bookkeeping is kept shrunk to the form `setattr(name, '__doeff_effects__', (A, B))` that does not call doeff_hy._declarations (other bookkeeping and
+  the import of doeff_hy._declarations are dropped as before).
 """
 
 import ast
@@ -21,7 +21,7 @@ from pathlib import Path
 import pytest
 from doeff_hy._static_check import without_bookkeeping
 
-needs_pyright = pytest.mark.skipif(shutil.which("pyright") is None, reason="pyright が無い")
+needs_pyright = pytest.mark.skipif(shutil.which("pyright") is None, reason="pyright is missing")
 
 EFFECTS = """\
 (import dataclasses [dataclass])
@@ -41,7 +41,7 @@ HELPERS = """\
 
 (defk paired [step]
   {:pre [(: step int)] :post [(: % int)] :tags {:context "probe" :role "protocol"}}
-  "Pair を出して答えを返すため(handler の節が呼ぶ下請け)。"
+  "To emit Pair and return an answer (a subcontract called by the handler clause)."
   (<- n int (Pair step step))
   n)
 """
@@ -52,7 +52,7 @@ PROBE = """\
 (import probe_helpers [paired])
 
 (defhandler via-helper {:effects [Pair] :tags {:context "probe" :role "protocol"}}
-  ;; Pair は下請け paired が出す — この module では宣言 :effects にだけ現れる。
+  ;; Pair is emitted by the subcontract paired — in this module it appears only in the declaration :effects.
   (Tick [step]
     (<- n int (paired step))
     (resume n)))
@@ -92,6 +92,6 @@ def test_the_effects_bookkeeping_keeps_its_names_without_the_declarations_module
 
 
 def test_an_undeclared_effects_bookkeeping_is_dropped() -> None:
-    # :effects を書かない定義の記帳(None)は今までどおり外す。
+    # The bookkeeping of a definition without :effects (None) is dropped as before.
     tree = ast.parse("setattr(h, '__doeff_effects__', None)\n")
     assert ast.unparse(without_bookkeeping(tree)) == ""

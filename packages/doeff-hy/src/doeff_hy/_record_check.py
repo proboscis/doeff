@@ -1,18 +1,19 @@
-"""defrecord の :check の展開が __post_init__ から呼ぶ検め(実行時と型検査の両方の展開が読む)。
+"""The check that the expansion of defrecord's :check calls from __post_init__ (read by both the runtime and the type-check expansions).
 
-前は doeff_hy.record の deff だったが、doeff_hy.record は Hy の require が path で読む macro の境界で、見せる名は macro だけ
-なので、内側のこの module に置く(ADR-DOE-API-001 R14)。Python の module なので、型検査のための展開の
-呼びを pyright が stub 無しで読む。標準の library も import しない葉の module — doeff_hy の中の module も defrecord を使うので、
-展開が読む物に doeff_hy の import を持たせない(doeff_hy._record_runtime と同じ訳)。
+It used to be a deff in doeff_hy.record, but doeff_hy.record is the boundary of the macros that Hy's require reads by path, and the only names it exposes are macros,
+so it lives in this inner module (ADR-DOE-API-001 R14). Because this is a Python module, pyright reads the call in the type-check expansion
+without a stub. It is a leaf module that imports no library either — modules inside doeff_hy also use defrecord, so
+what the expansion reads must not carry an import of doeff_hy (same reason as doeff_hy._record_runtime).
 """
 
 
 def require_check(
     record: str, fields: tuple[str, ...], check: str, passed: bool, values: dict[str, object]
 ) -> None:
-    """defrecord の :check の 1 式の結果を検める。偽なら ValueError で「どの型のどの欄がどの検めで落ちたか」と欄の値を名指す
-    (Program を返した式は展開の中で先に TypeError にしてある)。dataclass の __post_init__ から呼ぶので、Program を返す defk には
-    しない。"""
+    """Check the result of one :check expression of a defrecord. If false, raise ValueError naming which field of which type failed which check, with the field values
+    (an expression that returned a Program has already been turned into a TypeError inside the expansion). It is called from the dataclass __post_init__, so it is not
+    a defk that returns a Program."""
     if not passed:
         shown = " ".join(f"{k}={v!r}" for k, v in values.items())
-        raise ValueError(f"{record} の欄 {'・'.join(fields)} が検め {check} で落ちた: {shown}")
+        noun = "field" if len(fields) == 1 else "fields"
+        raise ValueError(f"{record}: {noun} {', '.join(fields)} failed check {check}: {shown}")

@@ -1,7 +1,7 @@
-"""doeff_hy._session の型(defhandler の session val / session var の展開が呼ぶ)。
+"""Types for doeff_hy._session (called by the expansion of defhandler's session val / session var).
 
-本体の session.py は注記つきだが、pyright は stub の無い package の module を strict で「stub が無い」と赤にするので、
-ほかの公開の module(wire.pyi・record.pyi など)と同じく stub で型を宣言する。
+The implementation session.py is annotated, but pyright in strict mode flags a module of a package without a stub as "stub missing",
+so, like the other public modules (wire.pyi, record.pyi, etc.), the types are declared in a stub.
 """
 
 def session_key(module: str, handler: str, name: str) -> str: ...

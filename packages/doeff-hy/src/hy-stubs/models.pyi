@@ -1,11 +1,11 @@
-"""hy.models の型(型検査のための宣言 — 実行時は hy/models.py を読む・doeff-hy が配る部分の stub)。
+"""Types of hy.models (declarations for type checking — at runtime hy/models.py is read; the stub for the part doeff-hy distributes).
 
-Hy の展開は keyword の literal と quote した form を `hy.models.Keyword("x")`・`hy.models.Expression([...])` に compile し、
-doeff-hy-check はそれを読む module に `import hy.models` を置く。hy は型の宣言を持たないので、その import に strict の
-reportMissingTypeStubs が出ていた。ここで model の型を宣言する。
+Hy expansion compiles keyword literals and quoted forms into `hy.models.Keyword("x")` and `hy.models.Expression([...])`, and
+doeff-hy-check puts `import hy.models` in modules that read them. hy ships no type declarations, so strict
+reportMissingTypeStubs was raised on that import. The model types are declared here.
 
-Sequence の要素は object とする — reader と quote が作る列の要素は model だが、macro が組む列には model でない値(str・None)も
-入り(as_model が後で包む)、構築子は何の値も受ける。要素を model として使う所は isinstance で絞る。
+Sequence elements are object — the elements of sequences made by the reader and quote are models, but sequences built by macros also contain non-model values (str, None)
+(as_model wraps them later), and the constructor accepts any value. Places that use an element as a model narrow it with isinstance.
 """
 
 from collections.abc import Iterable, Iterator, Mapping
@@ -20,7 +20,7 @@ PRETTY: bool
 def pretty(pretty: bool = True) -> AbstractContextManager[None]: ...
 
 class Object:
-    """Hy の model(form)の抽象の基底。位置は 1 始まり・両端を含む(無ければ 1)。"""
+    """Abstract base of Hy models (forms). Positions are 1-based and inclusive of both ends (1 if absent)."""
 
     properties: ClassVar[list[str]]
     start_line: int
@@ -87,11 +87,11 @@ class Complex(Object, complex):
     def __new__(cls, real: complex | str, imag: float = 0) -> Self: ...
 
 class Sequence(Object, tuple[object, ...]):
-    """列の形の model の抽象の基底(tuple のように添字・反復・+ ができ、要素は書き換えられない)。"""
+    """Abstract base of sequence-shaped models (indexable, iterable and supports + like a tuple; elements cannot be rewritten)."""
 
     def __new__(cls, iterable: Iterable[object] = ...) -> Self: ...
     def replace(self, other: Object, recursive: bool = True) -> Self: ...
-    # + は左の型の列を返す(list の右も受ける — hy/models.py の Sequence.__add__)。
+    # + returns a sequence of the left type (also accepts a list on the right — Sequence.__add__ in hy/models.py).
     def __add__(self, other: tuple[object, ...] | list[object]) -> Self: ...
     @overload
     def __getitem__(self, item: SupportsIndex) -> object: ...
@@ -127,7 +127,7 @@ class Set(Sequence): ...
 class Tuple(Sequence): ...
 
 class Lazy(Object):
-    """hy.read-many の答え — form を 1 つずつ読む反復子。"""
+    """The answer of hy.read-many — an iterator that reads forms one at a time."""
 
     def __init__(self, gen: Iterator[Object]) -> None: ...
     def __iter__(self) -> Iterator[Object]: ...

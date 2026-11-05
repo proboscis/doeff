@@ -1,12 +1,12 @@
-"""defk / defhandler / defp が残す本体(``__doeff_body__``)を、文字列で運んで読まれた時に初めて Hy の model へ戻す列。
+"""A sequence that carries the body left by defk / defhandler / defp (``__doeff_body__``) as a string and restores it to Hy models only when first read.
 
-なぜ: 本体を ``'~body`` の quote で埋め込むと、Hy はその quote を「import のたびに model の木を 1 節ずつ組み立てる
-Python code」へ compile する。2026-09-28 の実測では、agora-controllers の手番の模擬の import の木(.pyc が無い状態で 44 秒)の
-compile のちょうど半分(22 秒)がこの quote の展開だった。本体を ``hy.repr`` した 1 本の文字列にすれば、compile は文字列の
-定数 1 つで済み、本体を読む道具(doeff_hy._sexpr・doeff_domain._introspect)が触った時だけ ``hy.read`` で読み戻す。
+Why: embedding the body with a ``'~body`` quote makes Hy compile that quote into "Python code that builds a tree of models one clause at a time
+on every import". In a measurement on 2026-09-28, exactly half (22 seconds) of the compile of the import tree of the agora-controllers turn simulation (44 seconds without .pyc)
+was the expansion of this quote. If the body is made one ``hy.repr`` string, compile needs only one string
+constant, and it is read back with ``hy.read`` only when a tool that reads bodies (doeff_hy._sexpr, doeff_domain._introspect) touches it.
 
-往復の忠実さ: ``hy.read(hy.repr(forms))`` は ``(quote forms)`` を返し、その中身は元の model と等しい(同日の実測 —
-agora-controllers と doeff の defk / defhandler / defp の本体 6,090 個で不一致 0)。位置(行と桁)は運ばない。
+Round-trip fidelity: ``hy.read(hy.repr(forms))`` returns ``(quote forms)``, whose contents equal the original models (measured the same day —
+0 mismatches over 6,090 bodies of defk / defhandler / defp in agora-controllers and doeff). Positions (line and column) are not carried.
 """
 
 
@@ -17,17 +17,17 @@ import hy.models
 
 
 class QuotedForms(Sequence):
-    """``hy.repr`` した本体の文字列を持ち、最初に読まれた時に model の列へ戻して覚える、読み取り専用の列。"""
+    """A read-only sequence that holds the ``hy.repr`` string of the body and, when first read, restores it to a sequence of models and remembers it."""
 
     __slots__ = ("_mut_forms", "text")
 
     def __init__(self, text: str) -> None:
-        """text = ``hy.repr`` した本体(``hy.models.List``)の文字列(macro の展開の時に作る)。"""
+        """text = the string of the ``hy.repr`` body (``hy.models.List``) (made at macro expansion time)."""
         self.text = text
         self._mut_forms: hy.models.Sequence | None = None
 
     def forms(self) -> hy.models.Sequence:
-        """本体の model の列(読むのは最初の 1 回だけ — 本体を読む道具が model として歩くため)。"""
+        """The sequence of body models (read only the first time — because tools that read bodies walk it as models)."""
         if self._mut_forms is None:
             read = hy.read(self.text)
             quoted = (
@@ -39,27 +39,27 @@ class QuotedForms(Sequence):
         return self._mut_forms
 
     def __getitem__(self, index: int | slice) -> object:
-        """添字で節を引くため(Sequence の約束 — int は節 1 つ・slice は model の列)。"""
+        """To look up a clause by index (the Sequence contract — an int gives one clause, a slice gives a sequence of models)."""
         return self.forms()[index]
 
     def __len__(self) -> int:
-        """節の数を答えるため(Sequence の約束)。"""
+        """To answer the number of clauses (the Sequence contract)."""
         return len(self.forms())
 
     def __iter__(self) -> Iterator[object]:
-        """節を順に歩くため(Sequence の約束)。"""
+        """To walk the clauses in order (the Sequence contract)."""
         return iter(self.forms())
 
     def __eq__(self, other: object) -> bool:
-        """同じ本体か(model の列とも比べられる)を答えるため。"""
+        """To tell whether it is the same body (it can also be compared with a sequence of models)."""
         if isinstance(other, QuotedForms):
             return self.text == other.text
         return self.forms() == other
 
     def __hash__(self) -> int:
-        """文字列で同じ本体を同じ鍵にするため。"""
+        """To make the same body under the same key as a string."""
         return hash(self.text)
 
     def __repr__(self) -> str:
-        """読み手に本体の字面を見せるため。"""
+        """To show readers the literal text of the body."""
         return f"QuotedForms({self.text!r})"

@@ -1,14 +1,14 @@
-"""record.hy の公開面の型(型検査のための宣言 — 実行時は record.hy を読む)。
+"""Types for the public surface of record.hy (declarations for type checking — at runtime record.hy is read).
 
-record.hy は Hy の module なので、pyright は中を読めず、defrecord の :check の展開が名指す
-`doeff_hy.record.DoExpr`・`doeff_hy.record.EffectBase` が Unknown になる
-(使う側の defrecord の行に書き手に直せない reportUnknownMemberType が出る)。ここで型を宣言する。
+record.hy is a Hy module, so pyright cannot read inside it, and `doeff_hy.record.DoExpr` and
+`doeff_hy.record.EffectBase`, named by the :check expansion of defrecord, become Unknown
+(the using side's defrecord line gets a reportUnknownMemberType the author cannot fix). The types are declared here.
 
-- DoExpr・EffectBase は record.hy が doeff から import した名の再公開(:check の式が Program / effect を返した形を
-  isinstance で止めるのに使う)。
-- 偽の答えを断る require_check は内側の doeff_hy._record_check(Python の module — pyright が直に読む)に在る。
-  doeff_hy.record は macro だけを見せる境界なので、名を置かない(ADR-DOE-API-001 R14)。
-- defrecord・defwire・defenum は macro で、Python の名ではないのでここには無い(require で取り込む)。
+- DoExpr and EffectBase are re-exports of names record.hy imports from doeff (used by the :check expression to stop, via
+  isinstance, a form that returned a Program / effect).
+- require_check, which rejects a false answer, lives in the inner doeff_hy._record_check (a Python module — pyright reads it directly).
+  doeff_hy.record is a boundary that exposes only macros, so no name is placed there (ADR-DOE-API-001 R14).
+- defrecord, defwire and defenum are macros, not Python names, so they are absent here (they are brought in with require).
 """
 
 from doeff import DoExpr as DoExpr

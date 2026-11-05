@@ -1,7 +1,7 @@
-"""defk / deff / defp の展開は、変換中の file の拡張子を Hy の compiler の filename から読み、inspect.stack() を回さない。
+"""The expansion of defk / deff / defp reads the extension of the file being converted from the filename of Hy's compiler, and does not walk inspect.stack().
 
-出自: 展開のたびに inspect.stack() が全段の source を読み、大きな .hy file の最初の変換が数分かかっていた
-(agora-controllers の controllers/screen/tests/test_server.hy の収集が cache なしで 343 秒 → 271 秒)。
+Origin: at every expansion inspect.stack() read the source of every level, and the first conversion of a large .hy file took minutes
+(collecting controllers/screen/tests/test_server.hy in agora-controllers took 343 seconds without cache -> 271 seconds).
 """
 
 from __future__ import annotations
@@ -22,7 +22,7 @@ SOURCE = """
 
 
 def test_expanding_defk_deff_defp_does_not_walk_the_stack(monkeypatch: pytest.MonkeyPatch) -> None:
-    # Hy 本体(hy.eval の呼び手の module の解決・require)も inspect.stack() を呼ぶので、数えるのは doeff-hy の code からの呼びだけ。
+    # Hy itself (resolving the calling module of hy.eval, require) also calls inspect.stack(), so only calls from doeff-hy code are counted.
     original = inspect.stack
     callers: list[str] = []
 

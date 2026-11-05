@@ -1,5 +1,5 @@
-"""macro の閉包の code の shape(``macro_use._code_facts``)は、意味に効かない 2 つ — 関数の型注釈と Hy の一時変数の名の番号 — で
-変わらない。注釈を値として読む閉包は注釈ごと digest に入る。"""
+"""The code shape of a macro closure (``macro_use._code_facts``) does not change with two things that do not affect meaning -- function type annotations and the numbering of Hy temporary variable names.
+A closure that reads annotations as values includes the annotations in the digest."""
 
 import sys
 import types
@@ -49,7 +49,7 @@ def test_the_strict_shape_includes_the_annotation() -> None:
 def test_an_annotation_of_a_method_does_not_change_the_shape() -> None:
     plain = "class C:\n    def m(self, q):\n        return q\n"
     annotated = "class C:\n    def m(self, q: 'C') -> None:\n        return q\n"
-    # class の本体が ``__classdict__`` の cell を持つ分は変わりうる(古い展開を合うと判じる向きではない)。method の本体は同じ。
+    # The part where a class body has a ``__classdict__`` cell may change (it does not lead to judging an old expansion as matching). A method body is the same.
     assert _code_facts(_inner(_module_code(plain), "C"), False).names == _code_facts(
         _inner(_module_code(annotated), "C"), False
     ).names
@@ -105,8 +105,8 @@ def _inner(module: CodeType, name: str) -> CodeType:
 
 
 def _digest(source: str) -> str:
-    """source の module の ``read`` を使う macro の閉包の digest(``read`` が注釈を読む module と読まない module で比べる)。"""
-    name = "_shape_test_module"  # module の名は digest に入るので、比べる 2 つで同じにする
+    """Digest of a macro closure that uses ``read`` of the source module (compared between a module where ``read`` reads annotations and one where it does not)."""
+    name = "_shape_test_module"  # the module name goes into the digest, so make it the same in the two being compared
     module = types.ModuleType(name)
     sys.modules[name] = module
     try:
@@ -148,13 +148,13 @@ def test_a_closure_that_reads_annotations_digests_them() -> None:
 
 
 def test_a_changed_docstring_changes_the_shape() -> None:
-    """説明の文は命令に指されず定数の表の先頭にだけ在る — 定数の並びを捨てると入れ替えが見えなくなる(盲検)。"""
+    """A docstring is not referenced by any instruction and sits only at the head of the constants table -- if the constants order is discarded, a swap becomes invisible (blind test)."""
     source = 'def helper():\n    "{doc}"\n    return ["A", "B"]\n'
     assert _shape(source.format(doc="A")) != _shape(source.format(doc="B"))
 
 
 def test_a_string_constant_that_looks_like_a_temporary_name_is_a_value() -> None:
-    """文字列の定数は名でない — 番号を振り直さない(盲検)。"""
+    """String constants are not names -- do not renumber them (blind test)."""
     source = 'def f():\n    return ("{a}", "{b}")\n'
     assert _shape(source.format(a="_hy_anon_1", b="_hy_anon_2")) != _shape(
         source.format(a="_hy_anon_2", b="_hy_anon_1")
@@ -175,7 +175,7 @@ def macro(form):
 
 
 def test_a_closure_that_registers_by_annotation_digests_it() -> None:
-    """標準 library の ``register`` は注釈から型を読む — 中を歩かないので名で出会った時に注釈ごとの digest にする(盲検)。"""
+    """The standard library's ``register`` reads types from annotations -- it is not walked into, so when met by name it gets a digest that includes the annotations (blind test)."""
     assert _digest(DISPATCH.format(annotation=": int")) != _digest(DISPATCH.format(annotation=": str"))
 
 

@@ -1,11 +1,11 @@
-"""doeff-hy-check(doeff_hy/_static_check.py)が Hy のわざとの間違いを静的に捕まえること。
+"""doeff-hy-check (doeff_hy/_static_check.py) statically catches deliberate mistakes in Hy.
 
-2026-09-23 の実測(agora-controllers の実験 branch)では、Python の doeff に型を付けた版が
-pyright で 10 種を捕まえたのに、Hy 版は静的に 1 つも捕まえなかった。ここでは同じ種類の
-間違いを自己完結の小さな検体で書き、捕まえる種類と誤検出の無いことを固定する。
-effect の答えの型と handler の答えの型は、effect が `(get EffectBase T)` で答えの型を宣言して
-いる時だけ捕まる(doeff core の EffectBase[T])。捕まえない種類(env の組・effect の集合)は
-packages/doeff-hy/docs/static-check.md の表にある。
+A measurement on 2026-09-23 (an experiment branch of agora-controllers) showed that the typed Python version of doeff
+caught 10 kinds with pyright, while the Hy version caught none statically. Here the same kinds of
+mistakes are written as small self-contained samples to pin down which kinds are caught and that there are no false positives.
+The effect answer type and the handler answer type are caught only when the effect declares its answer type with `(get EffectBase T)`
+(EffectBase[T] of doeff core). The kinds not caught (env sets, effect sets) are listed in the table of
+packages/doeff-hy/docs/static-check.md.
 """
 
 import json
@@ -16,7 +16,7 @@ from pathlib import Path
 import hy
 import pytest
 
-needs_pyright = pytest.mark.skipif(shutil.which("pyright") is None, reason="pyright が無い")
+needs_pyright = pytest.mark.skipif(shutil.which("pyright") is None, reason="pyright is not available")
 
 EFFECTS = """\
 (require doeff-hy.macros [defk <-])
@@ -68,22 +68,22 @@ BASE = {
     "ANSWER": "True",
 }
 
-# 名前 → (差し替え, 期待する規則, 期待する行)。行は JOB の中の 1 始まり。
-# 最後の 2 種は effect が答えの型を宣言している(`(get EffectBase dict)`)から捕まる。
+# name -> (replacement, expected rule, expected line). Lines are 1-based within JOB.
+# The last 2 kinds are caught because the effect declares its answer type (`(get EffectBase dict)`).
 CAUGHT = {
-    "task の引数の型違い": ({"TASK": "(summarize 1 [])"}, "reportArgumentType", 14),
-    "task の引数の不足": ({"TASK": "(summarize conv)"}, "reportCallIssue", 14),
-    "戻り値の型違い": ({"RET": "int"}, "reportAssignmentType", 18),
-    "<- の書き忘れ(値を使う)": (
+    "wrong task argument type": ({"TASK": "(summarize 1 [])"}, "reportArgumentType", 14),
+    "missing task argument": ({"TASK": "(summarize conv)"}, "reportCallIssue", 14),
+    "wrong return type": ({"RET": "int"}, "reportAssignmentType", 18),
+    "forgotten <- (value is used)": (
         {"READ": '(setv rows (ReadShared "turn/"))'},
         "reportArgumentType",
         17,
     ),
-    "<- の書き忘れ(文だけ)": ({"SLEEP": "(SleepSeconds 1.0)"}, "doeff-hy-unperformed", 12),
-    "effect の引数の型違い": ({"SLEEP": '(<- (SleepSeconds "1"))'}, "reportArgumentType", 12),
-    "束縛した defk の戻り値の型違い": ({"AGAIN": "int"}, "reportAssignmentType", 15),
-    "effect の答えの型違い": ({"GOT": "int"}, "reportAssignmentType", 16),
-    "handler の答えの型違い": ({"ANSWER": '"yes"'}, "reportArgumentType", 7),
+    "forgotten <- (statement only)": ({"SLEEP": "(SleepSeconds 1.0)"}, "doeff-hy-unperformed", 12),
+    "wrong effect argument type": ({"SLEEP": '(<- (SleepSeconds "1"))'}, "reportArgumentType", 12),
+    "wrong return type of a bound defk": ({"AGAIN": "int"}, "reportAssignmentType", 15),
+    "wrong effect answer type": ({"GOT": "int"}, "reportAssignmentType", 16),
+    "wrong handler answer type": ({"ANSWER": '"yes"'}, "reportArgumentType", 7),
 }
 
 
@@ -100,8 +100,8 @@ def results(tmp_path_factory: pytest.TempPathFactory) -> dict[str, list[dict[str
 
     root: Path = tmp_path_factory.mktemp("static_check")
     (root / "probe_effects.hy").write_text(EFFECTS, encoding="utf-8")
-    files = {"基準": root / "job_base.hy"}
-    files["基準"].write_text(_render({}), encoding="utf-8")
+    files = {"baseline": root / "job_base.hy"}
+    files["baseline"].write_text(_render({}), encoding="utf-8")
     for index, (name, (change, _, _)) in enumerate(CAUGHT.items()):
         files[name] = root / f"job_{index}.hy"
         files[name].write_text(_render(change), encoding="utf-8")
@@ -120,8 +120,8 @@ def results(tmp_path_factory: pytest.TempPathFactory) -> dict[str, list[dict[str
 
 @needs_pyright
 def test_the_clean_module_has_no_error(results: dict[str, list[dict[str, object]]]) -> None:
-    # `(untyped conv)` = 型の分からない値を文の位置に置く。走らない Program と決めつけない。
-    assert results["基準"] == []
+    # `(untyped conv)` = place a value of unknown type in statement position. Do not presume it is an unrun Program.
+    assert results["baseline"] == []
 
 
 @needs_pyright
@@ -153,12 +153,12 @@ def test_static_view_does_not_leak_into_the_runtime_expansion() -> None:
         static = expand()
     assert "_doeff_perform" not in runtime
     assert "static_types" not in runtime
-    # 束ねは open-bind を通して yield する(ADR-DOE-CORE-EFFECTS-003 R6 — 宣言の無い effect には effect そのものを返す)
-    # 引きは文を持たない式(代入の的の中の ! でも compile できる形 — outcome_forms.open-form)。
-    # open-bind の答えが Pure(効果を出さない @do の呼びをその場で呼んだ答え)ならその値、それ以外は yield(#844)。
-    # 組み込みの type を名で引かない(呼び手の引数の名 type で壊れた — L562 の後始末)
-    # defk の本体の束ねは、defk が module の globals に置く名 _doeff_outcomes で引く(束ねごとの __import__ を
-    # 撃たない — #844 の案 a)。
+    # The bind yields through open-bind (ADR-DOE-CORE-EFFECTS-003 R6 - for an effect without a declaration, return the effect itself)
+    # The lookup is an expression without statements (a form that compiles even inside ! in an assignment target - outcome_forms.open-form).
+    # If the open-bind answer is Pure (the answer of calling an effect-free @do on the spot), use that value; otherwise yield (#844).
+    # Do not look up the builtin type by name (it broke on a caller's parameter named type - cleanup after L562)
+    # The bind in a defk body looks up the name _doeff_outcomes that defk places in the module's globals (no __import__
+    # per bind - #844 option a).
     assert re.search(
         r"y = (?P<b>_hy_gensym_bound_\d+)\.value if \((?P=b) := "
         r"_doeff_outcomes\.open_bind\(g\(x\)\)\)\.__class__ is _doeff_outcomes\.Pure "
@@ -166,7 +166,7 @@ def test_static_view_does_not_leak_into_the_runtime_expansion() -> None:
         runtime,
     ), runtime
     assert "__import__" not in runtime
-    # defk の外の <- (名が globals に在ると言えない所)は、今までどおり __import__ で引く。
+    # A <- outside a defk (where the name cannot be assumed to be in globals) still looks it up with __import__ as before.
     outside = ast.unparse(
         hy.compiler.hy_compile(
             hy.read_many("(require doeff-hy.macros [<-])\n(defn h [x] (<- y (g x)) y)"), "__main__"
@@ -177,20 +177,20 @@ def test_static_view_does_not_leak_into_the_runtime_expansion() -> None:
         r"fromlist=\('open_bind',\)\)\)\.open_bind\(g\(x\)\)\)\.__class__ is (?P=m)\.Pure",
         outside,
     ), outside
-    # 型検査のための展開は Python の @effectful と同じ `x = perform(e)` の形(yield を出さない)
+    # The type-checking expansion has the same `x = perform(e)` shape as Python's @effectful (emits no yield)
     assert "y: 'int' = _doeff_perform(g(x))" in static
     assert "yield" not in static
-    # 静的な展開は補助の import を出さない — doeff-hy-check が module の頭に 1 度だけ置く(#1686)
+    # The static expansion emits no helper imports - doeff-hy-check places them once at the top of the module (#1686)
     assert "static_types" not in static
-    # 実行時にも型の注記は付く(文字列 = 定義の時に評価しない)。結果の変数は関数の頭で値なしで宣言し、出口の代入は注記なしの
-    # 要素 1 つのタプルの代入(途中の return の出口も同じ宣言で型を読む・macros.hy の _exit-binding)。
+    # Type annotations are attached at runtime too (as strings = not evaluated at definition time). The result variable is declared without a value at the top of the function, and the exit assignment is a
+    # one-element tuple assignment without annotation (early-return exits read the type from the same declaration - _exit-binding in macros.hy).
     assert "def f(x: 'int')" in runtime
     assert re.search(r"^\s*_contract_result: 'int'$", runtime, re.MULTILINE), runtime
     assert "_contract_result, = (y,)" in runtime
 
 
 def _many_definitions(count: int, mistake: bool) -> str:
-    """defk を count 個と、`<-` を count 個持つ defk を 1 つ持つ検体。最後の defk は defk の呼びを Spawn に渡す。"""
+    """A sample with `count` defks and one defk with `count` `<-`. The last defk passes a defk call to Spawn."""
     lines = ["(require doeff-hy.macros [defk <-])", "(import doeff [Spawn Task])", ""]
     for index in range(count):
         lines += [
@@ -216,10 +216,10 @@ def _many_definitions(count: int, mistake: bool) -> str:
 @needs_pyright
 @pytest.mark.parametrize("mistake", [False, True])
 def test_defk_calls_stay_programs_past_sixty_four_definitions(tmp_path: Path, mistake: bool) -> None:
-    """反例: 静的な展開が defk / `<-` ごとに補助の import を出していた頃は、1 つの名(`_doeff_do`・
-    `_doeff_perform`)の宣言が 64 を超えた module / 関数で pyright が型の推論をやめて Unknown にし、defk の呼びが Program では
-    なく :post の型に見えた — `(Spawn (defk の呼び))` が reportArgumentType、束ねの型の食い違いは黙って通った。補助の import は
-    module の頭に 1 度だけ(static_check.with_static_helpers)。"""
+    """Counterexample: back when the static expansion emitted helper imports per defk / `<-`, once the declarations of one name (`_doeff_do`,
+    `_doeff_perform`) exceeded 64 in a module / function, pyright stopped inferring types and made it Unknown, and a defk call looked like the :post type
+    rather than a Program - `(Spawn (defk call))` was reportArgumentType, and a bind type mismatch passed silently. Helper imports are
+    placed once at the top of the module (static_check.with_static_helpers)."""
     import contextlib
     import io
 
@@ -237,7 +237,7 @@ def test_defk_calls_stay_programs_past_sixty_four_definitions(tmp_path: Path, mi
 
 
 def _many_mcp_tools(count: int, mistake: bool) -> str:
-    """defmcp-tool を count 個と、その後ろに defk を 2 つ持つ検体。最後の defk は defk の呼びを Spawn に渡し、束ねる。"""
+    """A sample with `count` defmcp-tools followed by 2 defks. The last defk passes a defk call to Spawn and binds it."""
     lines = [
         "(require doeff-hy.macros [defk defmcp-tool <-])",
         "(import doeff [Pure Spawn Task])",
@@ -265,18 +265,18 @@ def _many_mcp_tools(count: int, mistake: bool) -> str:
         "  (<- task Task (Spawn (step x)))",
         "  x)",
         "",
-        # tool の値の型: McpToolDef の name は str。mistake なら int と注記する(型の食い違い)
+        # type of the tool value: McpToolDef's name is str. mistake annotates it as int (a type mismatch)
         f"(defn #^ {'int' if mistake else 'str'} last-tool-name [] (. tool-{count - 1} name))",
     ]
     return "\n".join(lines) + "\n"
 
 
 def test_defmcp_tool_imports_nothing_of_its_own_in_the_static_view(tmp_path: Path) -> None:
-    """型検査のための展開の defmcp-tool は import を 1 つも出さない — handler の decorator の `_doeff_do`(macros.hy の
-    `_helper-imports` — defk と同じ表)も、tool の値の McpToolDef / McpParamSchema(`_doeff_<名>`)も、doeff-hy-check が
-    module の頭に 1 度だけ置く補助の import(static_view.STATIC_HELPER_IMPORTS)から読む。module の直下に 2 つ・class の
-    本体・関数の本体のどこに書いても、展開の import の文は module の直下だけに在り、どの名も 1 度だけ宣言する(tool ごとに
-    import すると、tool を 65 個持つ module か class で宣言が 64 を超え、pyright がその名を Unknown にする)。"""
+    """The type-checking expansion of defmcp-tool emits no imports at all - the handler decorator `_doeff_do` (`_helper-imports` in macros.hy -
+    the same table as defk) and the tool value's McpToolDef / McpParamSchema (`_doeff_<name>`) are read from the helper imports that doeff-hy-check
+    places once at the top of the module (static_view.STATIC_HELPER_IMPORTS). Wherever two are written directly in the module, in a class
+    body, or in a function body, the expansion's import statements exist only directly in the module and each name is declared once (importing
+    per tool would push declarations past 64 in a module or class with 65 tools, and pyright would make the name Unknown)."""
     import ast
 
     from doeff_hy._static_check import Projection, project
@@ -314,11 +314,11 @@ def test_defmcp_tool_imports_nothing_of_its_own_in_the_static_view(tmp_path: Pat
 @needs_pyright
 @pytest.mark.parametrize("mistake", [False, True])
 def test_defk_calls_stay_programs_past_sixty_four_mcp_tools(tmp_path: Path, mistake: bool) -> None:
-    """反例: 型検査のための展開の defmcp-tool が tool ごとに `doeff.do` の `do` を `_doeff_do` へ import していた頃は、tool を
-    65 個持つ module で `_doeff_do` の宣言が 64 を超え、pyright が Unknown にして、後ろの defk の呼びが Program ではなく :post の
-    型に見えた — `(Spawn (defk の呼び))` が reportArgumentType(#1686 の defk の反例と同じ訳)。tool ごとに doeff.mcp の
-    McpToolDef を import していた頃は、同じ訳で tool の値が Unknown になり、tool の name の型の食い違い(reportReturnType)を
-    黙って通した。"""
+    """Counterexample: back when the type-checking expansion of defmcp-tool imported `do` from `doeff.do` into `_doeff_do` per tool, in a module with
+    65 tools the declarations of `_doeff_do` exceeded 64, pyright made it Unknown, and a later defk call looked like the :post
+    type rather than a Program - `(Spawn (defk call))` was reportArgumentType (same reason as the defk counterexample of #1686). Back when McpToolDef of doeff.mcp was imported
+    per tool, the tool value became Unknown for the same reason, and a mismatch of the tool's name type (reportReturnType) passed
+    silently."""
     import contextlib
     import io
 
@@ -340,8 +340,8 @@ def test_defk_calls_stay_programs_past_sixty_four_mcp_tools(tmp_path: Path, mist
 
 
 def _typed_mcp_tool(mistake: bool) -> str:
-    """schema の型 6 つと必須でない引数を持つ tool 1 つの検体。本体は引数を、同じ型を受ける defk へそのまま渡す。
-    mistake なら必須でない引数(`str | None`)を `str` の引数へ渡す(型の食い違い)。"""
+    """A sample with one tool having 6 schema types and a non-required argument. The body passes the arguments as they are to a defk that accepts the same types.
+    mistake passes the non-required argument (`str | None`) to a `str` parameter (a type mismatch)."""
     first = "maybe" if mistake else "s"
     return (
         "(require doeff-hy.macros [defk defmcp-tool <-])\n\n"
@@ -367,10 +367,10 @@ def _typed_mcp_tool(mistake: bool) -> str:
 @needs_pyright
 @pytest.mark.parametrize("mistake", [False, True])
 def test_defmcp_tool_handler_params_carry_the_schema_types(tmp_path: Path, mistake: bool) -> None:
-    """型検査のための展開の defmcp-tool は、handler の引数に schema の :type を写した型を注記する(必須でない引数は
-    `| None` — server は送られなかった引数に None を渡す)。注記が無かった頃は、strict で引数 1 つにつき書き手の直せない赤が
-    2 件(reportMissingParameterType・reportUnknownParameterType)と、本体で引数を渡す所ごとに reportUnknownArgumentType が
-    出て、引数の型の食い違いは黙って通った。"""
+    """The type-checking expansion of defmcp-tool annotates the handler parameters with types mirroring the schema :type (non-required parameters are
+    `| None` - the server passes None for arguments not sent). Without the annotations, in strict mode each parameter produced 2 errors the writer could not fix
+    (reportMissingParameterType, reportUnknownParameterType), plus reportUnknownArgumentType at every place the body passes a parameter,
+    and parameter type mismatches passed silently."""
     import contextlib
     import io
 
@@ -390,8 +390,8 @@ def test_defmcp_tool_handler_params_carry_the_schema_types(tmp_path: Path, mista
 
 
 def _union_bind_first(mistake: bool) -> str:
-    """union の型の束ね(`(<- m (| int None) …)`)を module の中で最初に持ち、その後ろに int を答える defk の束ねを持つ検体。
-    mistake なら後ろの束ねの型を str と書く(型の食い違い)。"""
+    """A sample that first has a union-typed bind (`(<- m (| int None) …)`) in a module, followed by a defk bind that answers int.
+    mistake writes the type of the later bind as str (a type mismatch)."""
     later = "str" if mistake else "int"
     return (
         "(require doeff-hy.macros [defk <-])\n\n"
@@ -406,9 +406,9 @@ def _union_bind_first(mistake: bool) -> str:
 @needs_pyright
 @pytest.mark.parametrize("mistake", [False, True])
 def test_a_bind_after_a_union_bind_keeps_its_answer_type(tmp_path: Path, mistake: bool) -> None:
-    """反例: `_doeff_perform` が `object -> Any` の受け皿の overload を持っていた頃、module の中で最初の
-    評価が union の期待型の下(`(<- m (| int None) …)`)だと、pyright が以後の `_doeff_perform` を全部受け皿へ落とし、答えが
-    Any になった — 後ろの束ねの型の食い違い(int を str と書く)が黙って通り、event-loop の節の値が Unknown になった。"""
+    """Counterexample: back when `_doeff_perform` had a catch-all `object -> Any` overload, if the first
+    evaluation in a module was under a union expected type (`(<- m (| int None) …)`), pyright dropped every later `_doeff_perform` to the catch-all, and the answer became
+    Any - a later bind type mismatch (writing int as str) passed silently, and the value of an event-loop clause became Unknown."""
     import contextlib
     import io
 
@@ -438,7 +438,7 @@ BINDINGS = """(require doeff-hy.macros [defk <-])
 
 @needs_pyright
 def test_binding_findings_are_reported_on_their_lines(tmp_path: Path) -> None:
-    """setv の使用は警告・束縛し直しは赤として、書いた行に出る(ADR-DOE-HY-006)。"""
+    """Use of setv is a warning and rebinding is an error, reported at the line written (ADR-DOE-HY-006)."""
     import contextlib
     import io
 
@@ -456,7 +456,7 @@ def test_binding_findings_are_reported_on_their_lines(tmp_path: Path) -> None:
     assert code == 1
 
 
-#: 一番外の setv の所見(val を勧める警告)と、file の中で定義した reader macro を後ろの form が使う source。
+#: A source with a finding for the outermost setv (a warning recommending val), and a reader macro defined in the file that a later form uses.
 READ_ONCE_MODULE = """\
 (require doeff-hy.macros [defk])
 (defreader twice (setv form (.parse-one-form &reader)) `(* 2 ~form))
@@ -468,9 +468,9 @@ READ_ONCE_MODULE = """\
 
 
 def test_one_source_is_read_by_the_hy_reader_once(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    # 失敗ケース: project は source を Hy の reader で 2 度読んでいた(compile と、一番外の setv の
-    # 所見)。2 度目の読みが展開の約 2 割(依存 76 file で 2.6 秒)。1 度だけ読み、compile が読んだ form を所見にも使う。
-    # file の中で定義した reader macro(#twice)は compile が前の form を処理してから次を読む作りで効くので、それも崩さない。
+    # Failure case: project read the source twice with Hy's reader (compile, and the finding for the outermost
+    # setv). The second read was about 20% of expansion (2.6 s over 76 dependency files). Read once and reuse the forms compile read for the findings too.
+    # A reader macro defined in the file (#twice) works because compile processes earlier forms before reading the next, so do not break that either.
     from doeff_hy._static_check import Projection, project
 
     source = tmp_path / "probe.hy"
@@ -485,12 +485,12 @@ def test_one_source_is_read_by_the_hy_reader_once(tmp_path: Path, monkeypatch: p
     monkeypatch.setattr(hy, "read_many", counting)
     result = project(tmp_path, [tmp_path], source)
     assert isinstance(result, Projection), result
-    assert len(reads) == 1, f"Hy の reader で {len(reads)} 度読んだ"
-    assert "2 * x" in result.text, result.text  # reader macro が後ろの form に効いた
-    assert [f.rule for f in result.findings].count("doeff-hy-setv") == 1, result.findings  # 一番外の setv の所見は残る
+    assert len(reads) == 1, f"read {len(reads)} times with the Hy reader"
+    assert "2 * x" in result.text, result.text  # the reader macro took effect on the later form
+    assert [f.rule for f in result.findings].count("doeff-hy-setv") == 1, result.findings  # the finding for the outermost setv remains
 
 
-#: 展開の文に Hy の gensym の名が出る source(file の中の macro が gensym を使う)。
+#: A source where Hy gensym names appear in the expansion text (a macro in the file uses gensym).
 GENSYM_MODULE = """\
 (defmacro kept-twice [x]
   (setv g (hy.gensym "kept"))
@@ -500,9 +500,9 @@ GENSYM_MODULE = """\
 
 
 def test_the_expansion_text_does_not_depend_on_what_was_expanded_before(tmp_path: Path) -> None:
-    # 失敗ケースの前提: Hy の gensym の番号は process に 1 つの数えなので、同じ source でも、同じ
-    # process で先に別の file を展開したかで展開の文が変わっていた。保存の中身が実行の順(と、並べた時の process の割り振り)で
-    # 変わらないよう、展開の文の gensym の名は file の中で出てくる順に振り直す。
+    # Premise of the failure case: Hy's gensym numbers are a single per-process counter, so even for the same source, the expansion text changed depending on
+    # whether another file was expanded first in the same process. So that the stored content does not change with execution order (or the process assignment when run in parallel),
+    # gensym names in the expansion text are renumbered in order of appearance within the file.
     from doeff_hy._static_check import Projection, project
 
     first = tmp_path / "first.hy"

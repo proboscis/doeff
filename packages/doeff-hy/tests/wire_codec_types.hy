@@ -1,5 +1,5 @@
-;;; 自前の解き手(doeff_hy/_wire_codec.py)の検に使う defwire の型。
-;;; 検は test_wire_codec.py — 同じ型を今の pydantic の解き手(doeff_hy._wire の parse-json)にも通して答えを比べる。
+;;; Types of defwire used to check the hand-written decoder (doeff_hy/_wire_codec.py).
+;;; The checks are in test_wire_codec.py - the same types are also passed through the current pydantic decoder (parse-json in doeff_hy._wire) and the answers compared.
 
 (require doeff-hy.record [defwire defrecord defenum])
 (require doeff-hy.macros [val])
@@ -16,7 +16,7 @@
 
 (defwire Note {:names :camel} (#^ str note-text))
 
-;; 試作の測り(artifact 2026-10-27-defwire-base-measurements.html の表 3)の型の形: lease の答えと持ち手の列。
+;; Type shapes from the prototype measurement (table 3 of artifact 2026-10-27-defwire-base-measurements.html): a lease answer and a list of handles.
 (defwire Holder {:names :camel :unknown :reject} (#^ str holder-id) (#^ float expires-at))
 (defwire LeaseAnswer
   {:names :camel :unknown :reject}
@@ -24,7 +24,7 @@
   (#^ LeaseState state)
   (setv #^ (get tuple #(Holder ...)) holders #()))
 
-;; 語彙の型を 1 つずつ欄に持つ型(欄は全部既定値を持つ — 検は 1 欄ずつ入れる)。
+;; A type with one vocabulary type per field (every field has a default - the check feeds in one field at a time).
 (defwire Vocab
   {:names :camel :unknown :reject}
   (setv #^ str s ""
@@ -57,26 +57,26 @@
 (defwire HoldsChecked {:names :camel} (#^ Checked k))
 (defwire Asserting {:names :camel} (#^ int n)
   (defn __post-init__ [self]
-    (assert (< self.n 10) "n は 10 より小さい")))
+    (assert (< self.n 10) "n must be less than 10")))
 
-;; union の腕の選び方(節 3 の規則 3)— :ignore の 2 型・B は既定値の欄 y を持つ。
+;; How a union arm is chosen (rule 3 of section 3) - two :ignore types; B has field y with a default.
 (defwire ArmA {:names :camel :unknown :ignore} (#^ int x))
 (defwire ArmB {:names :camel :unknown :ignore} (#^ int x) (setv #^ int y 0))
 (defwire Arms {:names :camel}
   (setv #^ (| ArmA ArmB None) ab None
         #^ (| (get dict #(str int)) ArmA None) da None))
 
-;; 何でも受ける腕と他の腕が混ざった union(節 3 の規則 4 — pydantic と違う答えを正とするので単体の検だけで確かめる)。
+;; A union mixing an accept-anything arm with other arms (rule 4 of section 3 - the answer that differs from pydantic is taken as correct, so it is checked by unit tests alone).
 (defwire Mixed {:names :camel}
   (setv #^ (| str OpaqueJson None) so None
         #^ (| OpaqueJson ArmA) oa (OpaqueJson.of None)
         #^ (| int object) io 0))
 
-;; union の別名(val の形 — 木を組む時に中身の型として読む)。
+;; Alias of a union (the shape of val - read as the content type when the tree is built).
 (val Scalar (| str int float bool None))
 (defwire WithAlias {:names :camel} (#^ Scalar v))
 
-;; 語彙の外 — 木を組む時に断る型。
+;; Outside the vocabulary - types rejected when the tree is built.
 (defrecord PlainRecord (#^ int n))
 (defwire HasDatetime {:names :camel} (#^ datetime at))
 (defwire HasAnnotated {:names :camel} (#^ (get Annotated #(int "meta")) n))
@@ -90,8 +90,8 @@
 (defwire Unresolved {:names :camel} (#^ "NoSuchType" x))
 
 
-;; 書き手と JSON Schema の検(test_wire_codec_write.py)に使う型。
-;; 既定値の形ごとの欄(入れ子の defwire・defenum・frozenset・NaN・OpaqueJson・object・作り手)と、(| T None) の title の付け方。
+;; Types used for the writer and the JSON Schema check (test_wire_codec_write.py).
+;; Fields per default-value shape (nested defwire, defenum, frozenset, NaN, OpaqueJson, object, maker) and how the title of (| T None) is attached.
 (defwire Leaf {:names :camel} (#^ str leaf-name) (setv #^ int n 0))
 (defwire Defaults
   {:names :camel :unknown :reject}
@@ -115,14 +115,14 @@
         #^ dict table (field :default-factory (fn [] {"a" 1}))
         #^ (get Optional (get tuple #(int str))) maybe-pair None))
 
-;; 同じ名の違う型(wire_codec_types_other の Note)を欄に持つ型 — $defs の名に module を付ける。
+;; A type with fields of different types of the same name (Note in wire_codec_types_other) - the module is attached to the $defs name.
 (import wire_codec_types_other)
 (defwire BothNotes {:names :camel} (#^ Note mine) (#^ wire_codec_types_other.Note theirs))
 
-;; 照らしの test(test_wire_parity.py)が見つけた差の型: doc を持つ StrEnum(JSON Schema の description)・
-;; 値の型が何でもよい dict(additionalProperties true)。
+;; Types for the differences the parity test (test_wire_parity.py) found: a StrEnum with a doc (the JSON Schema description) and
+;; a dict whose value type can be anything (additionalProperties true).
 (defclass Shade [StrEnum]
-  "明るさ(照らしの test の見本 — JSON Schema の $defs に description として出る)。"
+  "Brightness (a sample for the parity test - appears as a description in the JSON Schema $defs)."
   (setv LIGHT "light"
         DARK "dark"))
 (defwire Documented

@@ -42,7 +42,7 @@
 
 
 ;; === Mock handlers ===
-;; 節の外の effect は defhandler が外の handler へ渡す
+;; An effect outside the clause is passed by defhandler to the outer handler
 (defhandler mock-ohlc
   (FetchOhlc [ticker] (resume [100 101 102])))
 

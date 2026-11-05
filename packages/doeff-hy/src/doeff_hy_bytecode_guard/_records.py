@@ -1,25 +1,25 @@
-"""macro の依存の記録の形と照合の判断(純関数 — file も ``sys.modules`` も引数で受け取る)。
+"""Shape of the macro-dependency record and the checking logic (pure functions -- files and ``sys.modules`` are received as arguments).
 
-記録は Hy の module の code object の定数の末尾に 1 つ置く組:
+The record is a tuple placed at the end of the constants of a Hy module's code object:
 
-    ("doeff-hy/macro-dependencies/7", <Hy の版>,
-     ((<表の名>, <提供元の module 名>, <macro 名>, <digest か None か印>, <覆った code の印>), ...),   # 展開が使った macro
-     (<引いて無かった名>, ...),                                                  # 表に無かった名(後から同じ名の macro が足されたら古い)
-     (<表に macro を入れた提供元の module 名>, ...),
-     ((<module 名>, <属性の名>, <digest か None か印>), ...),                    # macro の外で展開の結果を変える値
-     ((<module 名>, <file の sha256>), ...))                                     # 閉包が依った module の file
+    ("doeff-hy/macro-dependencies/7", <Hy version>,
+     ((<table name>, <provider module name>, <macro name>, <digest, None, or marker>, <marker of covered code>), ...),   # macros the expansion used
+     (<names looked up but not found>, ...),                                     # names absent from the table (stale if a macro of the same name is added later)
+     (<provider module names that put macros into the table>, ...),
+     ((<module name>, <attribute name>, <digest, None, or marker>), ...),        # values outside macros that change the expansion result
+     ((<module name>, <file sha256>), ...))                                      # module files the closure depended on
 
-digest は macro の関数の code の閉包の digest(作り方と照らし方は :mod:`doeff_hy_bytecode_guard._macro_use`)。閉包の歩みが
-import の途中の module か import できない module に当たった時は None(その時の材料は import の進み具合に依る)— その行は
-digest で比べず、閉包が依った module の file で比べる。閉包の歩みが環境変数の読みに当たった時は印 :data:`ENVIRONMENT_READ`
-(照らせない — 照らしはいつも古いと判じる)。file の path は持たない — 照らす時に module 名から今の環境で引き直す。
-使った macro の digest は、閉包の関数のうち中身(code)を覆った関数を、覆った code の印(閉包の歩みが関数に出会った順の番号の
-bit の 16 進 — その module の展開で実行された関数と、絞らない関数)で名指す。照らしは同じ印で今の閉包の digest を作り直して比べる。
+The digest is the digest of the closure of the macro function's code (how it is built and checked is in :mod:`doeff_hy_bytecode_guard._macro_use`). When the closure walk
+hits a module that is mid-import or cannot be imported, the digest is None (the material then depends on how far the import got) -- that row is
+not compared by digest but by the file of the module the closure depended on. When the closure walk hits a read of an environment variable, the marker :data:`ENVIRONMENT_READ`
+is used (it cannot be checked -- the check always judges it stale). No file path is kept -- at check time it is looked up again from the module name in the current environment.
+The digest of a used macro names, among the functions of the closure, the functions whose contents (code) it covered, by a covered-code marker (the hex of the bit set
+of numbers in the order the closure walk met the functions -- the functions run by that module's expansion, plus the functions that are not narrowed). The check rebuilds the digest of the current closure with the same marker and compares.
 
-code object の定数なので marshal でそのまま .pyc に入り、.pyc は標準の形のまま(PEP 552 の頭 + marshal の body)。
-image の組み立ての bytecode の道具(agora-controllers の deploy/bytecode.py)が body を綴り直しても値は変わらない。
+Because it is a code object constant, it goes into the .pyc as is through marshal, and the .pyc keeps its standard shape (PEP 552 header + marshal body).
+The value does not change even if the image-build bytecode tool (agora-controllers' deploy/bytecode.py) rewrites the body.
 
-compile した code の Hy の gensym の名は :func:`canonical_gensyms` で module の中の順の通し番号へ振り直す。
+The Hy gensym names in compiled code are renumbered to sequential numbers within the module by :func:`canonical_gensyms`.
 """
 
 import hashlib
@@ -31,80 +31,79 @@ from dataclasses import dataclass
 from types import CodeType
 from typing import TypeVar
 
-#: 記録の印(形を変えたら末尾の番号を上げる — 古い形の記録は「記録なし」と同じに扱われ、compile し直される)。
-#: 2 = gensym の名を正準化した code の記録。1 の記録の code は gensym の番号が compile の順で決まって
-#: いるので、1 度 compile し直させる。保存先の code の鍵の印(code_store.CODE_TAG)は上げない: 1 の記録の entry は引いた時に記録なしと
-#: 判じられて使われず(loader_hooks._from_shared_store)、compile し直した code が同じ鍵の entry を上書きするので、古い世代の
-#: file が保存先に残らない(鍵の印を上げると、古い世代の file は誰にも上書きされずに残る)。引いて捨てる手間は module 1 つに 1 回。
-#: 3 = 展開が依った file 単位から、展開で実際に使った macro 単位の記録へ(macro の関数の code の閉包の digest)。2 の記録は
-#: 形が違うので記録なしと同じに扱われ、1 度 compile し直される(鍵の印を上げない理由は 2 と同じ)。
-#: 4 = 閉包の中の辿れない値を file の全体でなく狭く覆う digest(大域の表は名を束縛し書き換える source の文・拡張の class は名と
-#: 公開の形・ContextVar は名と既定値)。3 の記録の digest は今の作り方で引き直すと必ず合わないので、上げなくても
-#: 1 度は古いと判じられるが、形の世代を記録の印で分ける(鍵の印を上げない理由は 2 と同じ)。
-#: 5 = import の途中の状態で作った digest を記録に入れない(None)・file の行を、import できなかった module から閉包が依った
-#: module の全部へ広げ、digest で比べられない行がある時だけ比べる(循環する import の途中の
-#: digest が process の import の順で変わり、順の違う process が置き場の entry を互いに書き直した)。4 の記録の file の行は
-#: 意味が違うので、記録なしと同じに扱う(鍵の印を上げない理由は 2 と同じ)。
-#: 6 = 使った macro の行に、digest が中身(code)を覆った閉包の関数の印を足し、digest が覆う関数の code を、その module の展開で
-#: 実行された関数と絞らない関数(束縛の文の先・関数の中身を値として読む code の閉包)に絞った形(
-#: defk の展開で呼ばれない binding_forms._Walker._assign の変更で、defk の使い手 1,197 本が作り直された)。5 の記録は行の形が
-#: 違うので、記録なしと同じに扱う(鍵の印を上げない理由は 2 と同じ)。
-#: 7 = 関数の中の require で入れた macro(compiler の局所の表から引かれた macro)も使った macro に入れる記録。
-#: 行の形は 6 と同じだが、6 の記録は局所の macro を覆わない — 照らしは記録に在る行しか照らさない
-#: ので、6 の記録の .pyc と置き場の entry は、局所の macro を変えても今に合うと判じられ続けた(設計検証の盲検 A)。覆う範囲の違う
-#: 世代を記録の印で分け、6 の記録は記録なしと同じに扱う(鍵の印を上げない理由は 2 と同じ)。
-#: 保存先の鍵の印 3 からは、記録の違う code は同じ鍵の dir に別の entry として並ぶ(上書きしない — 記録の指紋が
-#: entry の名)。だから記録の印を上げた後の古い世代の entry は上書きされずに残り、使われなければ鍵の entry の数の上限か掃除の 7 日で消える
-#: (鍵の印を上げない理由は、鍵の印を上げると記録に依らない entry まで全部当たらなくなる事に変わる)。
+#: Tag of the record (raise the trailing number when the shape changes -- a record of the old shape is treated the same as "no record" and recompiled).
+#: 2 = a record of code whose gensym names are canonicalized. The code of a record 1 has gensym numbers decided by compile order,
+#: so it is made to recompile once. The tag of the code key in the store (code_store.CODE_TAG) is not raised: an entry of record 1 is judged to have no record when looked up and is not used (loader_hooks._from_shared_store), and the recompiled code overwrites the entry under the same key, so old-generation
+#: files do not remain in the store (raising the key tag would leave old-generation files that nobody overwrites). The cost of looking up and discarding is once per module.
+#: 3 = from a record per file the expansion depended on to a record per macro the expansion actually used (the digest of the closure of the macro function's code). A record 2 has a
+#: different shape, so it is treated as "no record" and recompiled once (the reason for not raising the key tag is the same as 2).
+#: 4 = a digest that covers untraceable values in the closure narrowly instead of the whole file (a global table covers the source statements that bind and rewrite the name; an extension class covers its name and
+#: public shape; a ContextVar covers its name and default). A record 3 digest never matches when rebuilt with the current method, so it would be judged stale once even without raising,
+#: but the generations of shape are separated by the record tag (the reason for not raising the key tag is the same as 2).
+#: 5 = a digest built from mid-import state is not put into the record (None); the file rows are widened from the module that could not be imported to all
+#: modules the closure depended on, and compared only when some row cannot be compared by digest (the digest in the middle of a circular import
+#: changed with the import order of the process, and processes with different orders kept overwriting each other's store entries). The file rows of a record 4 have a
+#: different meaning, so they are treated as "no record" (the reason for not raising the key tag is the same as 2).
+#: 6 = the used-macro rows gain the marker of the closure functions whose contents (code) the digest covers, and the code the digest covers is narrowed to the functions
+#: run by that module's expansion plus the functions that are not narrowed (the head of a binding statement, and the closure of code that reads a function's contents as a value) (
+#: a change to binding_forms._Walker._assign, which is not called by the defk expansion, had rebuilt 1,197 users of defk). A record 5 has a different row
+#: shape, so it is treated as "no record" (the reason for not raising the key tag is the same as 2).
+#: 7 = a record that also includes in the used macros the macros brought in by a require inside a function (macros looked up from the compiler's local table).
+#: The row shape is the same as 6, but a record 6 does not cover local macros -- the check only checks rows that exist in the record,
+#: so the .pyc and store entries of a record 6 kept being judged up to date even when a local macro changed (blind review A of the design verification). Generations with different
+#: coverage are separated by the record tag, and a record 6 is treated as "no record" (the reason for not raising the key tag is the same as 2).
+#: From key tag 3 of the store, code with a different record sits as a separate entry in the same key dir (it is not overwritten -- the record's fingerprint is
+#: the entry's name). So after the record tag is raised, old-generation entries remain un-overwritten, and if unused they disappear at the per-key entry count limit or in the 7-day cleanup
+#: (the reason for not raising the key tag becomes: raising the key tag would make even entries that do not depend on the record all miss).
 RECORD_TAG = "doeff-hy/macro-dependencies/7"
 
-#: Hy が module の名前空間に置く辞書の名(普通の macro の表・reader macro の表・Hy の export が書く公開の macro の名の表)と、
-#: Hy が振る名の先頭。Hy の内部の名の定義元はこの module の 1 か所で、使い手(macro_use・doeff_effect_analyzer._result_cache・
-#: doeff_hy._static_baseline・doeff_hy._static_stub)は名の字を持たず、この下の定数と関数(:func:`macro_tables`・
-#: :func:`exported_macro_names`・:func:`fold_anon_var_numbers`)で引く— Hy が名を替えた時に直す所を 1 つにし、
-#: 名の字を他の file へ写す変更は packages/doeff-hy/tests/test_hy_internal_names_have_one_home.py の走査が赤にする。
-#: 名と、Hy の展開が表を ``名 in 表`` と ``表[名]`` で引く事(macro_use.RecordingTable が引いた名と表に無かった名を覚える前提)は
-#: Hy の内部の形で、uv.lock の版の Hy で測る検が測る — 包みを動かす検(packages/doeff-hy/tests/test_bytecode_guard.py の macro・
-#: reader macro の変更の検と、使う側の呼ぶ名の macro が足された時の検)と、この下の関数を実物の Hy の module に当てる検
-#: (同じ file の test_records_reads_…・test_the_temporaries_hy_names_…)で、どちらも uv.lock の変更で選ばれる。
-#: 名が替わるか表を ``.get`` で引くと、包みは使った macro を記録し損ねて古い展開を黙って使う。
+#: The names of the dicts Hy puts in a module's namespace (the table of ordinary macros, the table of reader macros, and the table of public macro names that Hy's export writes), and
+#: the prefix of names Hy assigns. The single home of Hy's internal names is this module; users (macro_use, doeff_effect_analyzer._result_cache,
+#: doeff_hy._static_baseline, doeff_hy._static_stub) do not hold the name strings and look them up through the constants and functions below (:func:`macro_tables`,
+#: :func:`exported_macro_names`, :func:`fold_anon_var_numbers`) -- so there is one place to fix when Hy renames, and a change that copies a name string into another file turns the scan in
+#: packages/doeff-hy/tests/test_hy_internal_names_have_one_home.py red.
+#: The names, and the fact that Hy's expansion looks up the table with ``name in table`` and ``table[name]`` (the premise on which macro_use.RecordingTable remembers looked-up names and names absent from the table), are
+#: Hy's internal shape, measured by a check against the Hy version in uv.lock -- the checks that exercise the wrapper (the macro and
+#: reader macro change checks in packages/doeff-hy/tests/test_bytecode_guard.py, and the check for when a macro is added under a name the user side calls), and the checks that apply the functions below to a real Hy module
+#: (test_records_reads_... and test_the_temporaries_hy_names_... in the same file) -- both selected by a change to uv.lock.
+#: If the names change or the table is looked up with ``.get``, the wrapper fails to record the macros it used and silently keeps using a stale expansion.
 MACRO_TABLE = "_hy_macros"
 READER_TABLE = "_hy_reader_macros"
 EXPORT_NAMES = "_hy_export_macros"
 GENERATED_NAME_PREFIX = "_hy_"
 
-#: Hy の compiler が関数の本体などで開く局所の状態(``HyASTCompiler.new_local_state`` が ``local_state_stack`` に積む dict)の中の
-#: macro の表の鍵。関数の中の require と defmacro はこの表へ macro を入れ、Hy の展開は module の表より先にこの表を引くので、
-#: ここから引かれた macro は module の表を通らない(macro_use.RecordingTable.local_tables が覚える)。口の名と鍵は Hy の内部の形で、
-#: 包みの検(test_bytecode_guard.py の関数の中の require の macro の変更の検 — uv.lock の変更で選ばれる)が uv.lock の版の Hy で
-#: 測る。Hy が局所の状態をこの口を通さずに開くようになると、包みは関数の中の require の macro を記録し損ねて古い展開を黙って
-#: 使う(鍵が替わる時は黙らず、包んだ口の KeyError で compile が落ちる)。
+#: The key for the macro table in the local state Hy's compiler opens for function bodies and the like (the dict that ``HyASTCompiler.new_local_state`` pushes onto ``local_state_stack``).
+#: A require or defmacro inside a function puts macros into this table, and Hy's expansion looks it up before the module's table, so
+#: a macro looked up from here does not pass through the module's table (macro_use.RecordingTable.local_tables remembers it). The entry name and key are Hy's internal shape,
+#: measured against the Hy version in uv.lock by the wrapper's check (the check for a macro changed by a require inside a function in test_bytecode_guard.py -- selected by a change to uv.lock).
+#: If Hy starts opening local state without going through this entry, the wrapper fails to record macros from a require inside a function and silently
+#: uses a stale expansion (when the key changes it is not silent: compile fails with a KeyError from the wrapped entry).
 LOCAL_MACRO_TABLE = "macros"
 
-#: PEP 552 の .pyc の頭(magic 4 byte・flags 4 byte・mtime と size か source の hash の 8 byte)。
+#: The header of a PEP 552 .pyc (4 bytes of magic, 4 bytes of flags, 8 bytes of mtime and size or source hash).
 PYC_HEADER_BYTES = 16
 FLAG_HASH_BASED = 0b01
 FLAG_CHECK_SOURCE = 0b10
 
-#: digest の代わり(閉包の歩みが環境変数の読みか、module の置き場を値として読む code に当たった — digest は環境変数の値も、
-#: 置き場から辿る file の中身も写さないので照らせない)。16 進の sha256 とも
-#: None(import の途中)とも違う印で、照らしはこの行をいつも古いと判じる(使い手は process ごとに展開し直す)。
-#: 記録の印(RECORD_TAG)は上げない: 前の版の照らしはこの印を今の digest と
-#: 比べて古いと判じ、前の版の記録は今の歩みが印になるので古いと判じる(どちらも展開し直すだけ — 上げると全部の Hy の module が
-#: 1 度 compile し直される)。
+#: The substitute for a digest (the closure walk hit a read of an environment variable, or code that reads a module's location as a value -- the digest copies neither the value of the environment variable nor
+#: the contents of files reached from the location, so it cannot be checked). A marker different from both a hex sha256 and
+#: None (mid-import); the check always judges this row stale (the user re-expands in every process).
+#: The record tag (RECORD_TAG) is not raised: the previous version's check compares this marker against the current digest and
+#: judges it stale, and the previous version's record becomes a marker with the current walk, so it is judged stale (both just re-expand -- raising it would make every Hy module
+#: recompile once).
 ENVIRONMENT_READ = "environment-read"
 
-#: 使った macro の digest が中身(code)を覆った閉包の関数の印の形 — 閉包の歩みが関数に初めて出会った順の番号を bit にした数の
-#: 16 進(番号 i の関数を覆えば bit i が 1。作り方と読み方は macro_use)。digest を持たない行(None・ENVIRONMENT_READ)は "0"。
+#: The shape of the marker of the closure functions whose contents (code) a used macro's digest covers -- the hex of a number whose bits are the numbers in the order the closure walk first met the functions
+#: (covering the function numbered i sets bit i to 1. How it is built and read is in macro_use). Rows with no digest (None, ENVIRONMENT_READ) get "0".
 COVERED = re.compile(r"[0-9a-f]+")
 
 
 @dataclass(frozen=True)
 class UsedMacro:
-    """展開が使った macro 1 つ — 引いた表の名(``_hy_macros`` / ``_hy_reader_macros``)・macro を定義した module の名・その
-    module の表の中の名・macro の関数の code の閉包の digest(記録を作った時に閉包の歩みが import の途中の module か import
-    できない module に当たった時は None — 記録の file の行で比べる・環境変数の読みに当たった時は :data:`ENVIRONMENT_READ`)・
-    digest が中身を覆った閉包の関数の印(:data:`COVERED`)。"""
+    """One macro the expansion used -- the name of the table looked up (``_hy_macros`` / ``_hy_reader_macros``), the name of the module that defined the macro, its
+    name in that module's table, the digest of the closure of the macro function's code (None when, at record time, the closure walk hit a module that was mid-import or
+    could not be imported -- compared by the record's file rows; :data:`ENVIRONMENT_READ` when it hit a read of an environment variable), and
+    the marker of the closure functions whose contents the digest covers (:data:`COVERED`)."""
 
     table: str
     module: str
@@ -115,8 +114,8 @@ class UsedMacro:
 
 @dataclass(frozen=True)
 class ValueReference:
-    """macro の外で展開の結果を変える値の在処(module の名と属性の名)— 型検査の展開の後処理(doeff_hy._static_check の
-    ``POST_PROCESSING``)。module の属性で引くので、検が module の別の関数を差し替えても、この値の digest は変わらない。"""
+    """Where a value outside macros that changes the expansion result lives (module name and attribute name) -- the post-processing of the type-check expansion (``POST_PROCESSING`` of doeff_hy._static_check).
+    It is looked up by module attribute, so even if a check swaps another function of the module, this value's digest does not change."""
 
     module: str
     name: str
@@ -124,8 +123,8 @@ class ValueReference:
 
 @dataclass(frozen=True)
 class UsedValue:
-    """macro の外で展開の結果を変える値 1 つ — 在処(module の名・属性の名)と、値の閉包の digest(None の意味は
-    :class:`UsedMacro` と同じ)。"""
+    """One value outside macros that changes the expansion result -- its location (module name, attribute name) and the digest of the value's closure (None means the same as in
+    :class:`UsedMacro`)."""
 
     module: str
     name: str
@@ -134,9 +133,9 @@ class UsedValue:
 
 @dataclass(frozen=True)
 class UsedFile:
-    """閉包が依った module 1 つ(歩みが辿った物の持ち主・import できなかった macro の本体の中の import の先)— module の名と、
-    記録を作った時の file の sha256。digest で比べられない行(記録か今の歩みが import の途中の module に当たった)がある時だけ
-    比べる。照らす時は module を import せず、module 名から今の環境の file を引いて比べる。"""
+    """One module the closure depended on (the owner of something the walk traced, or the import target inside the body of a macro that could not be imported) -- the module name and the
+    sha256 of its file at record time. Compared only when some row cannot be compared by digest (the record or the current walk hit a module mid-import).
+    At check time the module is not imported; the current environment's file is looked up from the module name and compared."""
 
     module: str
     sha256: str
@@ -144,9 +143,9 @@ class UsedFile:
 
 @dataclass(frozen=True)
 class WholeRequire:
-    """使い手が提供元の macro を全部 require した形(``(require m *)`` か ``(require m :as p)``)1 つ — 提供元(macro を定義した
-    module)の名と、使い手の表の名の前置き(前置きの無い全部は空)。名を選んだ require は記録しない: 使い手の表には選んだ名しか
-    入らないので、提供元に後から何が足されても展開は変わらない。"""
+    """One form in which the user required all of a provider's macros (``(require m *)`` or ``(require m :as p)``) -- the name of the provider (the
+    module that defined the macros) and the prefix of names in the user's table (empty for an all-require with no prefix). A require that selects names is not recorded: the user's table
+    holds only the selected names, so whatever is later added to the provider does not change the expansion."""
 
     module: str
     prefix: str
@@ -154,16 +153,16 @@ class WholeRequire:
 
 @dataclass(frozen=True)
 class MacroRecord:
-    """Hy の module 1 つの展開が依った物。
+    """What the expansion of one Hy module depended on.
 
-    - ``hy_version``: Hy の版(Hy 自身の macro と関数は版で覆う)。
-    - ``macros``: 展開が使った macro。
-    - ``absent``: 展開する module の表を引いて無かった名(関数の呼び出し・Hy の core の macro)。``providers`` の誰かが後から同じ
-      名の macro を持つと、その呼び出しは macro の展開に変わる。
-    - ``providers``: 使い手が macro を全部 require した提供元(名を選んだ require は入らない)。
-    - ``values``: macro の外で展開の結果を変える値。
-    - ``files``: ``macros`` と ``values`` の閉包が依った module の file(digest で比べられない行がある時だけ比べる — 照らす時に
-      import しない)。
+    - ``hy_version``: the Hy version (Hy's own macros and functions are covered by the version).
+    - ``macros``: the macros the expansion used.
+    - ``absent``: names looked up in the expanding module's table and not found (function calls, Hy core macros). If any of the ``providers`` later gains a macro of the same
+      name, that call turns into a macro expansion.
+    - ``providers``: providers whose macros the user required in full (a require that selects names is not included).
+    - ``values``: values outside macros that change the expansion result.
+    - ``files``: the files of the modules the closure of ``macros`` and ``values`` depended on (compared only when some row cannot be compared by digest -- not
+      imported at check time).
     """
 
     hy_version: str
@@ -175,7 +174,7 @@ class MacroRecord:
 
 
 def record_of(code: CodeType) -> MacroRecord | None:
-    """code に載った記録を読む(無い・形が違う時は None — 呼び手は compile し直す)。"""
+    """Read the record carried on code (None when absent or of a different shape -- the caller recompiles)."""
     if not code.co_consts:
         return None
     match code.co_consts[-1]:
@@ -191,8 +190,8 @@ def record_of(code: CodeType) -> MacroRecord | None:
 
 @dataclass(frozen=True)
 class RecordParts:
-    """記録を境界(code の定数・保存の file の JSON)に書く時の欄 — 欄の中は文字列と、文字列の並びの並びだけ。読み戻す時は
-    欄の中の形をまだ確かめていないので ``object``(:func:`record_from_parts` が確かめる)。"""
+    """The fields for writing a record at a boundary (code constants, the JSON of a store file) -- inside the fields are only strings and sequences of sequences of strings. When reading back,
+    the shape inside the fields has not been checked yet, so they are ``object`` (:func:`record_from_parts` checks)."""
 
     hy_version: str
     macros: object
@@ -203,7 +202,7 @@ class RecordParts:
 
 
 def record_parts(record: MacroRecord) -> RecordParts:
-    """記録を、code の定数と保存の file に書ける欄にする — :func:`record_from_parts` の逆。"""
+    """Turn a record into fields that can be written to code constants and store files -- the inverse of :func:`record_from_parts`."""
     return RecordParts(
         record.hy_version,
         tuple((row.table, row.module, row.name, row.digest, row.covered) for row in record.macros),
@@ -215,7 +214,7 @@ def record_parts(record: MacroRecord) -> RecordParts:
 
 
 def record_from_parts(parts: RecordParts) -> MacroRecord | None:
-    """境界から読んだ欄を記録に組む(欄の形が違えば None — 呼び手は記録なしと同じに扱う)。"""
+    """Assemble a record from fields read at a boundary (None if a field has a different shape -- the caller treats it the same as no record)."""
     macros = _each(parts.macros, _used_macro)
     absent = _each(parts.absent, _name)
     providers = _each(parts.providers, _whole_require)
@@ -227,13 +226,13 @@ def record_from_parts(parts: RecordParts) -> MacroRecord | None:
 
 
 def record_to_json(record: MacroRecord) -> list[object]:
-    """記録を JSON に書ける値にする(保存の file の境界 — 型検査の展開の保存)。:func:`record_from_json` の逆。"""
+    """Turn a record into a value writable as JSON (the boundary of the store file -- the store of the type-check expansion). The inverse of :func:`record_from_json`."""
     parts = record_parts(record)
     return [parts.hy_version, parts.macros, parts.absent, parts.providers, parts.values, parts.files]
 
 
 def record_from_json(value: object) -> MacroRecord | None:
-    """JSON から読んだ値を記録に組む(形が違えば None — 呼び手は保存を使わない)。"""
+    """Assemble a record from a value read from JSON (None if the shape differs -- the caller does not use the store)."""
     match value:
         case [str(hy_version), macros, absent, providers, values, files]:
             return record_from_parts(
@@ -244,9 +243,9 @@ def record_from_json(value: object) -> MacroRecord | None:
 
 
 def record_fingerprint(record: MacroRecord) -> str:
-    """記録の中身の指紋(保存の entry の名 — 解析器の展開した木と型検査の展開の保存が同じ 1 つを使う)。file の path を持たない
-    記録なので、同じ macro を使った別の作業木の展開は同じ指紋になる。"""
-    import json  # 保存の entry の名を作る時だけ読む
+    """Fingerprint of a record's contents (the name of a store entry -- the analyzer's expanded tree and the type-check expansion store share this one). Because the record
+    carries no file path, expansions in different work trees that used the same macros get the same fingerprint."""
+    import json  # imported only when building the name of a store entry
 
     text = json.dumps(record_to_json(record), ensure_ascii=False)
     return hashlib.sha256(text.encode("utf-8", "surrogatepass")).hexdigest()
@@ -256,7 +255,7 @@ _Row = TypeVar("_Row")
 
 
 def _each(rows: object, read: Callable[[object], "_Row | None"]) -> tuple[_Row, ...] | None:
-    """並び(組か list)の各行を read で読む(並びでない・読めない行が 1 つでもあれば None)。"""
+    """Read each row of a sequence (tuple or list) with read (None if it is not a sequence or any row cannot be read)."""
     if not isinstance(rows, (tuple, list)):
         return None
     read_rows = tuple(read(row) for row in rows)
@@ -265,12 +264,12 @@ def _each(rows: object, read: Callable[[object], "_Row | None"]) -> tuple[_Row, 
 
 
 def _name(value: object) -> str | None:
-    """記録の名の欄 1 つ(文字列でなければ None)。"""
+    """One name field of a record (None if not a string)."""
     return value if isinstance(value, str) else None
 
 
 def _whole_require(row: object) -> WholeRequire | None:
-    """記録の全部の require の行 1 つ(形が違えば None)。"""
+    """One all-require row of a record (None if the shape differs)."""
     match row:
         case [str(module), str(prefix)]:
             return WholeRequire(module, prefix)
@@ -279,7 +278,7 @@ def _whole_require(row: object) -> WholeRequire | None:
 
 
 def _used_macro(row: object) -> UsedMacro | None:
-    """記録の使った macro の行 1 つ(形が違えば None)。"""
+    """One used-macro row of a record (None if the shape differs)."""
     match row:
         case [str(table), str(module), str(name), digest, str(covered)] if (
             digest is None or isinstance(digest, str)
@@ -290,7 +289,7 @@ def _used_macro(row: object) -> UsedMacro | None:
 
 
 def _used_value(row: object) -> UsedValue | None:
-    """記録の macro の外の値の行 1 つ(形が違えば None)。"""
+    """One row of a record for a value outside macros (None if the shape differs)."""
     match row:
         case [str(module), str(name), digest] if digest is None or isinstance(digest, str):
             return UsedValue(module, name, digest)
@@ -299,7 +298,7 @@ def _used_value(row: object) -> UsedValue | None:
 
 
 def _used_file(row: object) -> UsedFile | None:
-    """記録の file 単位で覆う module の行 1 つ(形が違えば None)。"""
+    """One row of a record for a module covered per file (None if the shape differs)."""
     match row:
         case [str(module), str(sha256)]:
             return UsedFile(module, sha256)
@@ -308,9 +307,9 @@ def _used_file(row: object) -> UsedFile | None:
 
 
 def with_record(code: CodeType, record: MacroRecord) -> CodeType:
-    """code の定数の末尾に記録を足した code を返す(既に記録があれば置き換える)。
+    """Return code with the record added at the end of its constants (replacing it if a record is already there).
 
-    末尾に足すだけなので、既存の定数の番号(``LOAD_CONST`` の引数)は動かず、実行の意味は変わらない。
+    Because it is only appended at the end, the existing constant indexes (the ``LOAD_CONST`` arguments) do not move and the meaning of execution does not change.
     """
     constants = code.co_consts[:-1] if record_of(code) is not None else code.co_consts
     parts = record_parts(record)
@@ -331,9 +330,9 @@ def with_record(code: CodeType, record: MacroRecord) -> CodeType:
 
 
 def macro_tables(namespace: Mapping[str, object]) -> tuple[dict[str, object], ...]:
-    """module の名前空間に Hy が置いた macro の表 — 普通の macro の表(:data:`MACRO_TABLE`)・reader macro の表(:data:`READER_TABLE`)の
-    順に、名前空間に在って dict の物だけ(Hy の module でなければ空の組)。名前空間は ``vars(module)``: 表は属性でなく名前空間の
-    名で読む(module の代わりに ``sys.modules`` に置かれた object が属性を計算しても、その code を走らせない)。"""
+    """The macro tables Hy put in a module's namespace -- the table of ordinary macros (:data:`MACRO_TABLE`) and the table of reader macros (:data:`READER_TABLE`), in
+    that order, only those present in the namespace and being a dict (an empty tuple if it is not a Hy module). The namespace is ``vars(module)``: tables are read by
+    name from the namespace, not as attributes (even if an object placed in ``sys.modules`` in place of a module computes attributes, that code is not run)."""
     return tuple(
         table
         for name in (MACRO_TABLE, READER_TABLE)
@@ -342,9 +341,9 @@ def macro_tables(namespace: Mapping[str, object]) -> tuple[dict[str, object], ..
 
 
 def exported_macro_names(namespace: Mapping[str, object]) -> frozenset[str]:
-    """提供元の名前空間が、Hy の ``(require 提供元 *)`` で使い手の表へ入れる macro の名 — macro の表(:data:`MACRO_TABLE`)の名のうち、
-    Hy の export が書いた名の表(:data:`EXPORT_NAMES`)が在ればその表に在る名、無ければ ``_`` で始まらない名(Hy 1.3.1 の
-    ``hy.macros.require`` の ``source_exports`` と同じ読み。export に表の無い名が在っても、Hy は表に在る名だけを入れる)。"""
+    """The names of macros that a provider's namespace puts into the user's table with Hy's ``(require provider *)`` -- of the names in the macro table (:data:`MACRO_TABLE`),
+    the names in the table of names written by Hy's export (:data:`EXPORT_NAMES`) if it exists, otherwise the names not starting with ``_`` (the same reading as ``source_exports`` of
+    ``hy.macros.require`` in Hy 1.3.1. Even if the export has a name absent from the table, Hy puts in only the names present in the table)."""
     entries = namespace.get(MACRO_TABLE)
     names = frozenset(entries) if isinstance(entries, dict) else frozenset[str]()
     exports = namespace.get(EXPORT_NAMES)
@@ -353,36 +352,36 @@ def exported_macro_names(namespace: Mapping[str, object]) -> frozenset[str]:
     return frozenset(name for name in names if not name.startswith("_"))
 
 
-#: Hy の gensym の名の形(Hy 1.3.1 の ``hy.core.util.gensym`` = ``_hy_gensym_<mangle した base>_<数え>``)。数えは process に 1 つで、
-#: gensym を呼ぶたびに進む — 同じ source でも、先に何を compile したか(別の module・require 先の .pyc の有無・別の thread)で
-#: 番号が変わる。名の最後の数字が数え。
+#: The shape of a Hy gensym name (``hy.core.util.gensym`` in Hy 1.3.1 = ``_hy_gensym_<mangled base>_<counter>``). The counter is one per process and
+#: advances on every gensym call -- even for the same source, the number changes depending on what was compiled first (another module, whether a require target's .pyc exists, another thread).
+#: The trailing digits of the name are the counter.
 GENSYM_NAME = re.compile(r"(_hy_gensym_.*_)([0-9]+)")
 
-#: Hy が束縛を改めた名(``HyASTCompiler.get_anon_var`` の ``_hy_<種>_<元の名>_<数>`` — let と except の束縛)。元の名が gensym の
-#: 名なら、その数えが名の中に埋まる(absent-as の let = ``_hy_let__hy_gensym_absent_token_<数え>_<数>``)。最後の <数> は compile
-#: 1 回ごとの数え(module の中で決まる)なので替えない。
-#: 2 つの形は Hy の内部の形で、uv.lock の版の PyPI の Hy で compile の口を動かす検(packages/doeff-hy/tests/test_bytecode_guard.py の
-#: gensym の数えの検 — uv.lock の変更で選ばれる)が測る。
+#: A name for which Hy rewrote a binding (``_hy_<kind>_<original name>_<number>`` of ``HyASTCompiler.get_anon_var`` -- bindings of let and except). If the original name is a gensym
+#: name, its counter is embedded in the name (the let of absent-as = ``_hy_let__hy_gensym_absent_token_<counter>_<number>``). The last <number> is the per-compile
+#: counter (decided within the module), so it is not renamed.
+#: The two shapes are Hy's internal shape, measured by a check that drives the compile entry with the PyPI Hy of the uv.lock version (the
+#: gensym counter check in packages/doeff-hy/tests/test_bytecode_guard.py -- selected by a change to uv.lock).
 RENAMED_BINDING = re.compile(r"(_hy_[a-z]+_)(_hy_.*)(_[0-9]+)")
 
-#: Hy が一時の名と let・except の束縛の名に振る形(``HyASTCompiler.get_anon_var`` = ``_hy_<種>[_<元の名>]_<数え>`` — match や if を値に
-#: 使った時の ``_hy_anon_<数え>``・let の ``_hy_let_<元の名>_<数え>``)。最後の <数え> は compile 1 回の中の通し番号で、定義を 1 つ
-#: 足すだけで後ろの名の番号がずれる。第 1 の組が番号を除いた名(元の名が ``x1``・``x_1`` のように数字で終わる名も、最後の
-#: ``_<数え>`` だけを番号とする — 非貪欲な先頭と末尾の ``\b``)。元の名に gensym の名が入った束縛(:data:`RENAMED_BINDING`)は
-#: 末尾の数えだけを畳み、埋まった gensym の数えは gensym の名の振り直し(:func:`renamed`)の持ち場。形は uv.lock の版の Hy の module を
-#: compile して名を集める検(test_bytecode_guard.py の test_the_temporaries_hy_names_…)が測る。
+#: The shape Hy assigns to temporary names and let / except binding names (``HyASTCompiler.get_anon_var`` = ``_hy_<kind>[_<original name>]_<counter>`` -- ``_hy_anon_<counter>`` when match or if is used as a
+#: value, ``_hy_let_<original name>_<counter>`` for let). The last <counter> is a sequence number within one compile, and adding a single definition
+#: shifts the numbers of the names after it. The first group is the name without the number (even when the original name ends in digits like ``x1`` or ``x_1``, only the last
+#: ``_<counter>`` is the number -- a non-greedy head and a trailing ``\b``). For a binding that has a gensym name inside the original name (:data:`RENAMED_BINDING`), only
+#: the trailing counter is folded; the embedded gensym counter is the job of the gensym renumbering (:func:`renamed`). The shape is measured by a check that compiles a Hy module of the uv.lock version
+#: and collects the names (test_the_temporaries_hy_names_... in test_bytecode_guard.py).
 ANON_VAR_NAME = re.compile(r"\b(" + re.escape(GENERATED_NAME_PREFIX) + r"[A-Za-z0-9_]*?)_[0-9]+\b")
 
 
 def canonical_gensyms(code: CodeType) -> CodeType:
-    """Hy の module の code の木の gensym の名を、module の中の数えの順に 1 から振り直した名へ替えた code を返す — 同じ source の
-    code を、compile の順・process・thread に依らず同じにするため(詰めた Program の指紋・.pyc・共有の
-    保存先の中身が、どの process が先に何を compile したかで変わっていた)。
+    """Return code in which the gensym names in the code tree of a Hy module are renamed, renumbered from 1 in order of counter within the module -- so that the code of
+    the same source is the same regardless of compile order, process, and thread (the fingerprint of a packed Program, the .pyc, and the contents of the shared
+    store used to change depending on which process compiled what first).
 
-    名の表(局所・cell・free・大域と属性の名・関数の名と qualname)と文字列の定数(呼び出しの keyword の名・注記の鍵)に現れる
-    gensym の名を集め、数えの小さい順に ``_hy_gensym_<base>_1`` から振り直し、全部の場所で同時に替える。替え方は 1 対 1 なので、
-    module の中の名の一意性はそのまま保たれる。module の中の gensym の呼びの順は compile の順に依らないので、振り直した名も
-    依らない。Hy の数えそのものには触らない(並行する compile と食い合わない)。"""
+    It collects the gensym names that appear in the name tables (locals, cells, frees, global and attribute names, function names and qualname) and in string constants (keyword names of calls,
+    annotation keys), renumbers them from ``_hy_gensym_<base>_1`` in ascending counter order, and replaces them everywhere at once. The replacement is one-to-one, so
+    the uniqueness of names within the module is preserved. The order of gensym calls within a module does not depend on compile order, so the renumbered names do not
+    depend on it either. Hy's counter itself is not touched (so it does not collide with concurrent compiles)."""
     names = gensym_renames(_texts(code))
     if all(old == new for old, new in names.items()):
         return code
@@ -390,10 +389,10 @@ def canonical_gensyms(code: CodeType) -> CodeType:
 
 
 def gensym_renames(texts: Iterable[str]) -> dict[str, str]:
-    """名と文字列の並びに現れる gensym の名から、数えの小さい順に ``_hy_gensym_<base>_1`` から振り直した名への対応を作る —
-    code の木(:func:`canonical_gensyms`)と、型検査の展開の木(doeff_hy._static_check)が同じ 1 つの
-    振り直しを使うため。対応は gensym の名そのもの(Hy が改めた束縛の名に埋まった物も含む)を鍵にし、替えるのは
-    :func:`renamed` が行う。"""
+    """From the gensym names that appear in a sequence of names and strings, build the mapping to names renumbered from ``_hy_gensym_<base>_1`` in ascending counter order --
+    so that the code tree (:func:`canonical_gensyms`) and the tree of the type-check expansion (doeff_hy._static_check) use the same one
+    renumbering. The mapping is keyed by the gensym name itself (including those embedded in binding names Hy rewrote), and the replacement is done by
+    :func:`renamed`."""
     found: dict[str, re.Match[str]] = {}
     for text in texts:
         match = _gensym_match(text)
@@ -404,8 +403,8 @@ def gensym_renames(texts: Iterable[str]) -> dict[str, str]:
 
 
 def unread_gensym_texts(code: CodeType) -> tuple[str, ...]:
-    """code の木の名と文字列の定数のうち、gensym の名を含むのに :func:`canonical_gensyms` が読めない物(文の中に埋まった名など)—
-    正準化の外に残り、番号が compile の順で変わる。検がこれを空と確かめ、読めない埋まり方が macro に現れたら名指して落とすため。"""
+    """Names and string constants in the code tree that contain a gensym name but that :func:`canonical_gensyms` cannot read (such as names embedded in a statement) --
+    they remain outside canonicalization and their numbers change with compile order. So that a check confirms this is empty and, if an unreadable embedding appears in a macro, fails naming it."""
     return tuple(
         sorted(
             {text for text in _texts(code) if "_hy_gensym_" in text and _gensym_match(text) is None}
@@ -414,7 +413,7 @@ def unread_gensym_texts(code: CodeType) -> tuple[str, ...]:
 
 
 def _gensym_match(text: str) -> "re.Match[str] | None":
-    """名 1 つに入った gensym の名の一致(名そのものか、Hy が改めた束縛の名に埋まった物 — 無ければ None)。"""
+    """The match of a gensym name inside one name (the name itself, or one embedded in a binding name Hy rewrote -- None if none)."""
     whole = GENSYM_NAME.fullmatch(text)
     if whole is not None:
         return whole
@@ -423,7 +422,7 @@ def _gensym_match(text: str) -> "re.Match[str] | None":
 
 
 def _texts(code: CodeType) -> Iterator[str]:
-    """code とその入れ子の code の名の表と文字列の定数を挙げる(gensym の名が現れうる場所の全部)。"""
+    """List the name tables and string constants of code and its nested code (every place a gensym name can appear)."""
     yield from (*code.co_varnames, *code.co_cellvars, *code.co_freevars, *code.co_names)
     yield code.co_name
     yield from code.co_qualname.split(".")
@@ -432,7 +431,7 @@ def _texts(code: CodeType) -> Iterator[str]:
 
 
 def _constant_texts(value: object) -> Iterator[str]:
-    """定数 1 つの中の文字列(組・集合の中も)と、入れ子の code の名を挙げる。"""
+    """List the strings inside one constant (inside tuples and sets too) and the names of nested code."""
     match value:
         case CodeType():
             yield from _texts(value)
@@ -446,7 +445,7 @@ def _constant_texts(value: object) -> Iterator[str]:
 
 
 def renamed(text: str, names: Mapping[str, str]) -> str:
-    """名 1 つの gensym の名を振り直した名(Hy が改めた束縛の名なら、埋まった gensym の名だけを替える)。"""
+    """The renumbered name for one name's gensym name (for a binding name Hy rewrote, only the embedded gensym name is replaced)."""
     replaced = names.get(text)
     if replaced is not None:
         return replaced
@@ -457,13 +456,13 @@ def renamed(text: str, names: Mapping[str, str]) -> str:
 
 
 def fold_anon_var_numbers(text: str, mark: str) -> str:
-    """text の中の Hy が振った一時の名(:data:`ANON_VAR_NAME`)の番号を mark に替える(``_hy_anon_44`` → ``_hy_anon_#``)— 番号は
-    compile の順で決まるので、同じ名の文言を番号の違いで別の物と数えないため(doeff_hy._static_baseline)。"""
+    """Replace the numbers of temporary names Hy assigned (:data:`ANON_VAR_NAME`) in text with mark (``_hy_anon_44`` -> ``_hy_anon_#``) -- numbers are decided by
+    compile order, so that the wording of the same name is not counted as different things because of differing numbers (doeff_hy._static_baseline)."""
     return ANON_VAR_NAME.sub(lambda found: f"{found.group(1)}_{mark}", text)
 
 
 def _rewritten(code: CodeType, names: Mapping[str, str]) -> CodeType:
-    """code とその入れ子の code の名の表と文字列の定数の gensym の名を、names の名へ替えた写しを作る(元の code は替えない)。"""
+    """Make a copy of code with the gensym names in the name tables and string constants of code and its nested code replaced by the names in names (the original code is not changed)."""
     return code.replace(
         co_varnames=tuple(renamed(name, names) for name in code.co_varnames),
         co_cellvars=tuple(renamed(name, names) for name in code.co_cellvars),
@@ -476,7 +475,7 @@ def _rewritten(code: CodeType, names: Mapping[str, str]) -> CodeType:
 
 
 def _rewritten_constant(value: object, names: Mapping[str, str]) -> object:
-    """定数 1 つの gensym の名を替えた値(文字列・組・集合の中・入れ子の code — それ以外はそのまま)。"""
+    """The value of one constant with gensym names replaced (strings, inside tuples and sets, nested code -- anything else as is)."""
     match value:
         case CodeType():
             return _rewritten(value, names)
@@ -491,8 +490,8 @@ def _rewritten_constant(value: object, names: Mapping[str, str]) -> object:
 
 
 def timestamp_header_matches(header: bytes, *, mtime: int, size: int) -> bool:
-    """timestamp の方式の .pyc の頭が source の更新時刻と大きさに合うか(Python の判定と同じ下位 32 bit)— hash の方式は
-    偽(Python 自身に判定を任せる)。保存先を引くのは、作業木の .pyc が使えない時だけにするため。"""
+    """Whether a timestamp-style .pyc header matches the source's modification time and size (the lower 32 bits, the same as Python's check) -- a hash-style one is
+    false (leave the check to Python itself). So that the store is looked up only when the work tree's .pyc cannot be used."""
     if len(header) < PYC_HEADER_BYTES:
         return False
     flags = int.from_bytes(header[4:8], "little")
@@ -504,7 +503,7 @@ def timestamp_header_matches(header: bytes, *, mtime: int, size: int) -> bool:
 
 
 def python_checks_source(header: bytes, check_hash_based_pycs: str) -> bool:
-    """Python がこの頭の .pyc を使う前に source と突き合わせるか(timestamp 方式と checked-hash は真)。"""
+    """Whether Python checks a .pyc with this header against the source before using it (true for the timestamp style and for checked-hash)."""
     if len(header) < PYC_HEADER_BYTES:
         return True
     flags = int.from_bytes(header[4:8], "little")
@@ -520,7 +519,7 @@ def python_checks_source(header: bytes, check_hash_based_pycs: str) -> bool:
 def pyc_bytes(
     code: CodeType, *, source: bytes, mtime: int, size: int, previous_header: bytes | None
 ) -> bytes:
-    """compile し直した code の .pyc — 読んだ .pyc と同じ方式(timestamp か hash)の標準の形で組む。"""
+    """The .pyc of recompiled code -- built in the standard shape of the same style (timestamp or hash) as the .pyc that was read."""
     magic = importlib.util.MAGIC_NUMBER
     flags = (
         int.from_bytes(previous_header[4:8], "little")

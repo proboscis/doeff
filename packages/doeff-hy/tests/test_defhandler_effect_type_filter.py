@@ -1,8 +1,8 @@
-"""defhandler の節の effect の型を、VM の型の選り分けに渡す事の検。
+"""A test that the effect types of defhandler clauses are passed to the VM's type filter.
 
-defhandler は節の effect の型を、生成する `(fn [effect k] ...)` の effect の引数の型の註にする。VM はそれを install の時に 1 度読み
-(doeff_vm._effect_types・SPEC-WITHHANDLER-TYPE-FILTER)、型の外の effect ではこの handler を Python に入らずに飛ばす — 節の外の
-effect は今までも `(Pass effect k)` で外へ渡していたので、答えと順は変わらず、handler の本体に入る回数だけが減る。
+defhandler turns the clause's effect type into the type annotation of the effect argument of the `(fn [effect k] ...)` it generates. The VM reads it once at install time
+(doeff_vm._effect_types, SPEC-WITHHANDLER-TYPE-FILTER) and, for an effect outside the type, skips this handler without entering Python — effects outside the clauses
+were already passed outward with `(Pass effect k)`, so the answers and order do not change; only the number of times the handler body is entered decreases.
 """
 
 from __future__ import annotations
@@ -36,14 +36,14 @@ def _eval(code: str) -> dict[str, object]:
 
 
 def _body_code(handler_fn: object) -> CodeType:
-    """defhandler の値から、VM が呼ぶ handler の本体(`(fn [effect k] ...)`)の code。"""
-    data = handler_fn.__doeff_handler_data__  # type: ignore[attr-defined] — defhandler の値が持つ欄(handle.hy)
+    """The code of the handler body the VM calls (`(fn [effect k] ...)`), from a defhandler value."""
+    data = handler_fn.__doeff_handler_data__  # type: ignore[attr-defined] — a field a defhandler value has (handle.hy)
     return data.__wrapped__.__code__
 
 
 def _entries(codes: tuple[CodeType, ...], run: Callable[[], object]) -> tuple[tuple[int, ...], object]:
-    """run の間に codes の各関数が始まった回数(codes の順)と、run の答え。本体は generator なので、再開ごとにも call の
-    事象が出る — frame の同一性で数える(frame を持ち続けて id の使い回しを防ぐ)。"""
+    """The number of times each function in codes started during run (in the order of codes), and the answer of run. The body is a generator, so a call
+    event also occurs at each resume — count by frame identity (keep the frames alive to prevent id reuse)."""
     frames: dict[int, FrameType] = {}
 
     def profile(frame: FrameType, event: str, _arg: object) -> None:
@@ -72,11 +72,11 @@ def test_an_effect_outside_the_clauses_types_does_not_enter_the_handler() -> Non
 """)
     (entered,), result = _entries((_body_code(ns["pings"]),), lambda: ns["doeff_run"](ns["program"]))
     assert result == "a:pongb:pongc:pongd:ping"
-    assert entered == 1, "Pong は pings の本体に入らずに外の pongs へ届く(Ping の 1 回だけ入る)"
+    assert entered == 1, "Pong reaches the outer pongs without entering the body of pings (only Ping enters once)"
 
 
 def test_a_handler_without_declared_types_still_sees_every_effect() -> None:
-    # 型の註の無い handler(Python の素の関数・節が EffectBase の defhandler)は今までどおり全部の effect を受ける。
+    # A handler without a type annotation (a plain Python function, or a defhandler whose clause is EffectBase) receives all effects as before.
     ns = _eval("""
 (defhandler everything
   (EffectBase [] (reperform effect)))
@@ -90,22 +90,22 @@ def test_a_handler_without_declared_types_still_sees_every_effect() -> None:
     from doeff import Pass, do, handler, with_handlers
 
     @do
-    def plain(effect, k):  # 型の註の無い素の handler
+    def plain(effect, k):  # a plain handler without a type annotation
         yield Pass(effect, k)
 
-    # 列の最後が一番内側: plain → everything → pings → pongs の順に effect が届く
-    # with_handlers は handler だけを取る(ADR-DOE-CORE-003): defhandler の値と、@do 関数を handler に通した物
+    # The last in the list is the innermost: effects arrive in the order plain → everything → pings → pongs
+    # with_handlers takes only handlers (ADR-DOE-CORE-003): a defhandler value, and an @do function passed through as a handler
     stack = [ns[name] for name in ("pongs", "pings", "everything")] + [handler(plain)]
     codes = (_body_code(ns["everything"]), plain.__wrapped__.__code__)
     (everything, bare), result = _entries(codes, lambda: ns["doeff_run"](with_handlers(stack, ns["body"])))
     assert result == "a:pongb:ping"
-    assert everything == 2, "節が EffectBase の defhandler は全部の effect を受ける"
-    assert bare == 2, "型の註の無い素の handler は全部の effect を受ける"
+    assert everything == 2, "a defhandler whose clause is EffectBase receives all effects"
+    assert bare == 2, "a plain handler without a type annotation receives all effects"
 
 
 def test_answers_and_order_are_the_same_as_passing_through() -> None:
-    # :when の番で外れた Ping は外へ渡る — 番の外れと型の外の飛ばしが混ざっても、答えた handler と答えの順は変わらない
-    # (答えの値に答えた handler の名が載る)。
+    # A Ping rejected at the :when turn is passed outward — even when turn rejection and type-based skipping mix, the answering handler and the order of answers do not change
+    # (the answering handler's name is carried in the answer value).
     ns = _eval("""
 (defhandler outer
   (Ping [value] (resume (+ value ":outer")))
@@ -121,13 +121,13 @@ def test_answers_and_order_are_the_same_as_passing_through() -> None:
 """)
     (inner, outer), result = _entries((_body_code(ns["inner"]), _body_code(ns["outer"])), lambda: ns["doeff_run"](ns["program"]))
     assert result == ("mine:inner", "x:outer", "other:outer")
-    assert inner == 2, "inner の本体に入るのは Ping の 2 回だけ(Pong は飛ばす・番で外れた Ping は入ってから外へ渡す)"
-    assert outer == 2, "outer は inner が渡した Pong と Ping に答える"
+    assert inner == 2, "inner's body is entered only for 2 Pings (Pong is skipped; a Ping rejected at its turn is entered and then passed outward)"
+    assert outer == 2, "outer answers the Pong and Ping that inner passed on"
 
 
-@pytest.mark.skipif(sys.version_info >= (3, 14), reason="3.14 からは型の註が遅れて評価されるので、実の註を書く")
+@pytest.mark.skipif(sys.version_info >= (3, 14), reason="from 3.14 type annotations are evaluated lazily, so write the real annotation")
 def test_before_3_14_the_types_are_written_as_text() -> None:
     ns = _eval("(defhandler pings (Ping [value] (resume value)))")
-    # 註の付く引数は handler の関数の effect の引数 `_doeff_effect`(書き手の名 effect と分けた名 — handle.hy の effect-symbol)。
+    # The annotated argument is the handler function's effect argument `_doeff_effect` (a name kept apart from the author's name effect — effect-symbol in handle.hy).
     annotation = ns["pings"].__doeff_handler_data__.__wrapped__.__annotations__["_doeff_effect"]  # type: ignore[attr-defined]
     assert annotation == "Ping"

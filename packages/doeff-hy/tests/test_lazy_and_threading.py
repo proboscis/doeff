@@ -183,8 +183,8 @@ class TestLazyHandlerHyIntegration:
   (lazy greeting "hello")
   (Ping [] (resume greeting)))
 """
-        # 新しい module の大域で評価する — 関数の局所を名前空間にすると、展開が module の頭に置く import(`_doeff_do`)が
-        # 局所に入り、入れ子の関数から引けない(前の検が test の module の大域に置いた時だけ通っていた)。
+        # Evaluate in a new module's globals -- if function locals were the namespace, the import the expansion puts at the head of the module (`_doeff_do`) would
+        # land in the locals and be unreachable from nested functions (the earlier check passed only when it was placed in the test module's globals).
         mod = _hy_eval_in_module(code, "_test_defhandler_lazy_compiles")
         assert callable(mod.ping_handler)
 
@@ -302,12 +302,12 @@ class TestLazyHandlerHyIntegration:
 # ═══════════════════════════════════════════════════════════════════
 
 class TestLazyDefk:
-    """defk の中の旧い lazy は廃止(ADR-DOE-HY-006): 旧い形はセッションをまたぐ隠れた状態で、
-    新しい (lazy val …)(その呼び出しの中で初めて使った時に 1 回)と意味が衝突するので展開の時点で誤り。
-    新しい形の動きの検は tests/test_val_var_lazy.py。"""
+    """The old lazy inside defk is abolished (ADR-DOE-HY-006): the old form is hidden state that crosses sessions,
+    and its meaning collides with the new (lazy val …) (once, on first use within that call), so it is an error at expansion time.
+    Behaviour checks for the new form are in tests/test_val_var_lazy.py."""
 
     def test_defk_lazy_basic(self):
-        """(defk … (lazy name …) …) は展開の誤りになり、新しい形を案内する。"""
+        """(defk … (lazy name …) …) is an expansion error and points to the new form."""
         import types
 
         import doeff_hy  # noqa: F401 - registers Hy macros/import hooks for inline eval
@@ -328,8 +328,8 @@ class TestLazyDefk:
         mod = types.ModuleType("_test_lazy_defk")
         with pytest.raises(HyMacroExpansionError) as caught:
             hy.eval(hy.read_many(code), module=mod)
-        assert "(lazy val pfx 式)" in str(caught.value)
-        assert "(session val pfx 式)" in str(caught.value)
+        assert "(lazy val pfx expr)" in str(caught.value)
+        assert "(session val pfx expr)" in str(caught.value)
 
 
 # ═══════════════════════════════════════════════════════════════════
@@ -619,7 +619,7 @@ class TestLazyValVar:
             hy.eval(hy.read_many(code))
 
     def test_lazy_var_in_defk(self):
-        """defk の lazy-var + set! は展開の誤り(ADR-DOE-HY-006)— (lazy var …) と (:= …) を案内する。"""
+        """lazy-var + set! in defk is an expansion error (ADR-DOE-HY-006) -- it points to (lazy var …) and (:= …)."""
         import doeff_hy  # noqa: F401 - registers Hy macros/import hooks for inline eval
         import hy
         from hy.errors import HyMacroExpansionError
@@ -635,7 +635,7 @@ class TestLazyValVar:
 """
         with pytest.raises(HyMacroExpansionError) as caught:
             hy.eval(hy.read_many(code))
-        assert "(lazy var items 式)" in str(caught.value)
+        assert "(lazy var items expr)" in str(caught.value)
 
     def test_lazy_val_referenced_inside_tuple(self):
         """Lazy init must fire when the name only appears inside a tuple

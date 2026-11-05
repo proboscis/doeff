@@ -1,23 +1,23 @@
-;;; 形の違う JSON の答え Malformed の置き場。
+;;; Home of Malformed, the answer for JSON of the wrong shape.
 ;;;
-;;; wire.hy(pydantic の解き手)と wire_codec.py(自前の解き手・pydantic を読まない)の両方が同じ型を返すので、pydantic を読まない
-;;; この module に置く。wire.hy は ここから import して今までどおり名を出す(`(import doeff_hy._wire [Malformed])` の読み手は変わらない)。
-;;; 設計の記録 = docs/design/defwire-decoder/design.md(節 3「Malformed の欄の場所」と「reason の綴り」)。
+;;; Both wire.hy (the pydantic decoder) and wire_codec.py (the hand-written decoder, which does not import pydantic) return the same type, so it lives
+;;; in this module, which does not import pydantic. wire.hy imports it from here and exposes the name as before (readers of `(import doeff_hy._wire [Malformed])` are unaffected).
+;;; Design record: docs/design/defwire-decoder/design.md (section 3, "Where Malformed's fields live" and "The spelling of reason").
 (require doeff-hy.record [defrecord])
 (import dataclasses [dataclass])
 
 
 (defrecord MalformedField
-  "形の合わない所 1 つ: field = 欄の場所(wire の名・入れ子と配列の位置は . でつなぐ・値の全体は空の文字列)/ reason = なぜ
-   (`<msg> [<種類>]` — 種類は pydantic の誤りの種類の綴り)。"
+  "One place where the shape does not match: field = the location of the field (the wire name; nested fields and array positions are joined with `.`; the whole value is the empty string) / reason = why
+   (`<msg> [<kind>]`; the kind is the spelling of the pydantic error kind)."
   {:tags {:context "wire" :role "type"}}
   (#^ str field)
   (#^ str reason))
 
 
 (defrecord Malformed
-  "外から来た JSON が型の約束の形でない — 5 つ目の失敗の種類(ADR-DOE-CORE-EFFECTS-003 R17): wire-type = 解こうとした型の名 /
-   fields = 合わない所(1 つ以上・解き手が見つけた順)。"
+  "JSON from outside does not have the shape the type promises: the fifth kind of failure (ADR-DOE-CORE-EFFECTS-003 R17): wire-type = the name of the type being decoded /
+   fields = the places that do not match (one or more, in the order the decoder found them)."
   {:tags {:context "wire" :role "type"}
    :check [(> (len fields) 0)]}
   (#^ str wire-type)

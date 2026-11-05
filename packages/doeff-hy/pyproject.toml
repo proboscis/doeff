@@ -1,5 +1,5 @@
 [build-system]
-# license の SPDX の式と license-files(PEP 639)を既定で core metadata に書くのは hatchling 1.27 から(既定の版 2.4)。
+# From hatchling 1.27 (default version 2.4), the SPDX license expression and license-files (PEP 639) are written to core metadata by default.
 requires = ["hatchling>=1.27"]
 build-backend = "hatchling.build"
 
@@ -25,27 +25,27 @@ classifiers = [
     "Topic :: Software Development :: Code Generators",
     "Topic :: Software Development :: Libraries :: Python Modules",
 ]
-# 核の 5 個は 1 つの番号で出し、互いの依存はその 2 桁の系に限る(tests/test_core_packages_version.py)。
+# The five core packages are released under one version number, and their mutual dependencies are limited to that two-digit series (tests/test_core_packages_version.py).
 dependencies = [
     "doeff>=0.8.0,<0.9",
     "doeff-core-effects>=0.8.0,<0.9",
-    # 上限は doeff の uv.lock の hy の版ちょうど — doeff の検が確かめた版より新しい Hy を、doeff-hy を使う他の repo の lock に通さない。
-    # Hy を上げる便は、この上限と uv.lock を同じ commit で上げる(ADR-DOE-HY-008 R6)。
-    # 下限は doeff-hy の検を走らせて緑だった最も古い版 1.3.0(merge-queue・code-quality の lock の版)— 1.2.0 では hy.eval に渡した
-    # 名前空間の中の require が落ち、doeff-hy の検 10 本が赤だった。
-    # doeff-hy を引かずに Hy を宣言する配布物(doeff-domain)は、この行と同じ版の指定を置く(R6 の検が突き合わせる)。
+    # The upper bound is exactly the hy version in doeff's uv.lock -- a Hy newer than what doeff's checks verified is not let into the lock of other repos that use doeff-hy.
+    # When raising Hy, raise this upper bound and uv.lock in the same commit (ADR-DOE-HY-008 R6).
+    # The lower bound is 1.3.0, the oldest version for which the doeff-hy checks ran green (the version in the merge-queue and code-quality locks) -- on 1.2.0 a require inside the
+    # namespace passed to hy.eval failed, and 10 doeff-hy checks were red.
+    # A distribution that declares Hy without pulling in doeff-hy (doeff-domain) carries the same version specifier as this line (the R6 check cross-checks it).
     "hy>=1.3.0,<=1.3.1",
-    # pytest の plugin(Python 3.14 の Hy の ast.unparse の当て物を起動の時点で当てる)は別の配布物に置く —
-    # pytest は pytest11 の entry point を持つ配布物の全 module に assert の書き換えの印を付け、ここに置くと
-    # wheel で入れた repo で doeff_hy の .hy を Python として書き換えて import が落ちる(packages/doeff-hy-pytest)。
+    # The pytest plugin (applies the Python 3.14 Hy ast.unparse patch at startup) lives in a separate distribution --
+    # pytest marks every module of a distribution that has a pytest11 entry point for assert rewriting, so putting it here would
+    # make imports fail in repos installed from the wheel, by rewriting doeff_hy's .hy as Python (packages/doeff-hy-pytest).
     "doeff-hy-pytest>=0.8.0,<0.9",
 ]
 
 [project.optional-dependencies]
-# pydantic は本体の依存に置かない。defwire の解き手は
-# 自前の doeff_hy/_wire_codec.py で、job の道(入口・foundation・本体)は pydantic を読まない(.semgrep.yaml の doeff-job-path-imports-no-pydantic)。
-# pydantic を読むのは、自前の解き手を pydantic の解き手と照らす道具 doeff_hy._wire_parity だけ — 照らしの test を持つ project が
-# test の依存の群に doeff-hy[parity] を置く(validate_by_alias は 2.11 から)。
+# pydantic is not a dependency of the main package. The defwire decoder is
+# the in-house doeff_hy/_wire_codec.py, and the job path (entry, foundation, main) does not import pydantic (doeff-job-path-imports-no-pydantic in .semgrep.yaml).
+# Only doeff_hy._wire_parity, a tool that compares the in-house decoder with the pydantic decoder, imports pydantic -- a project that has a comparison test
+# puts doeff-hy[parity] in its test dependency group (validate_by_alias is from 2.11).
 parity = ["pydantic>=2.11"]
 
 [project.urls]
@@ -59,15 +59,15 @@ Changelog = "https://github.com/proboscis/doeff/blob/main/CHANGELOG.md"
 doeff-hy-check = "doeff_hy._static_check:main"
 
 [tool.hatch.build.targets.wheel]
-# doeff_hy_bytecode_guard: macro が変わった Hy の module の古い bytecode を使わない包み。
-# venv の全ての Python の起動時に .pth から入れる(pytest・本番の入口・索引のどれが最初に Hy の module を読んでも効く)。
-# doeff_hy の中に置かないのは、起動時に doeff_hy/__init__.py(Hy の import)を読まないため。
-# hy-stubs: hy の部分の stub(PEP 561 の stub だけの package・py.typed は partial)。Hy の展開が必ず出す `import hy`・
-# `import hy.models` を pyright strict が型の宣言なしと赤にしないため、doeff-hy-check を使う repo へ doeff-hy と一緒に配る。
+# doeff_hy_bytecode_guard: a wrapper that does not use stale bytecode of a Hy module whose macros changed.
+# Installed from a .pth at startup of every Python in the venv (effective whichever of pytest, the production entry, or the indexer first loads a Hy module).
+# It is not placed inside doeff_hy so that startup does not load doeff_hy/__init__.py (the Hy import).
+# hy-stubs: a stub for part of hy (a PEP 561 stub-only package; py.typed is partial). Handed out together with doeff-hy to repos that use doeff-hy-check so that pyright strict does not
+# flag the `import hy` and `import hy.models` that Hy expansions always emit as having no type declarations.
 packages = ["src/doeff_hy", "src/doeff_hy_bytecode_guard", "src/hy-stubs"]
 
 [tool.hatch.build.targets.wheel.force-include]
-# .pth は中身が 1 行の固定文なので、editable の install でも写しが古くならない(hatchling は editable でも force-include を入れる)。
+# The .pth has fixed one-line content, so the copy does not go stale even in an editable install (hatchling includes force-include even for editable).
 "src/doeff_hy_bytecode_guard.pth" = "doeff_hy_bytecode_guard.pth"
 
 [tool.uv.sources]

@@ -1,15 +1,15 @@
-;;; TypeCheck を果たす 2 つの家(柵 3)。既定は off・検で on。
+;;; The two homes that fulfil TypeCheck (fence 3). Default is off; in checks, on.
 ;;;
-;;; 出自 = agora-redesign 段 7 lane 7c(決定 1.4 の柵「TypeCheck の effect」)。
-;;; 要求の語彙と赤の文言は `doeff_hy._typecheck` の 1 点が持ち、ここは
-;;; 「果たすか果たさないか」だけを持つ(handler に判断を置かない)。
+;;; Origin = agora-redesign stage 7 lane 7c (decision 1.4 fence "the TypeCheck effect").
+;;; The request vocabulary and the wording of the error are held in one place, `doeff_hy._typecheck`, and this module holds
+;;; only "fulfil or not" (no judgment is placed in the handler).
 ;;;
-;;; ⚠ この module は共通の品質検査の静的投影に届かない(`defhandler` の投影が
-;;; 未対応 — 2026-09-12 時点)。だから判断は 1 行も持たせず、要求の語彙と
-;;; verdict の側(`typecheck.hy`)を投影可能に保つ。
+;;; Warning: this module is out of reach of the static projection of the common quality checks (the projection of `defhandler` is
+;;; not supported yet -- as of 2026-09-12). So no judgment is placed here at all, and the request vocabulary and the
+;;; verdict side (`typecheck.hy`) are kept projectable.
 
 (require doeff-hy.handle [defhandler])
-;; module の頭のタグ(doeff-linter の DOEFF112)— val は doeff-hy.macros の require が要るので、この module では setv で書く。
+;; Tag at the head of the module (DOEFF112 of doeff-linter) -- val needs the require of doeff-hy.macros, so this module writes it with setv.
 (setv MODULE-TAGS {:context "typecheck" :role "foundation"})
 
 (import doeff [run])
@@ -17,16 +17,16 @@
 
 
 (defhandler type-checks-off
-  "既定の家: 要求を受けても値を見ない(実行時の検査は off)。
+  "Default home: receives requests but does not look at values (run-time checks are off).
 
-   静的の検査は常時効いているので、本番はこの家で走る。"
+   Static checks are always in effect, so production runs in this home."
 
   (TypeCheck [owner target expected value]
     (resume value)))
 
 
 (defhandler type-checks-on
-  "検の家: 要求のとおり値を見て、破れていれば TypeCheckError を送る。"
+  "Check home: looks at values as requested and sends a TypeCheckError if violated."
 
   (TypeCheck [owner target expected value]
     (setv verdict (type-check-verdict owner target expected value))
@@ -36,10 +36,10 @@
 
 
 (defn #^ object run-with-type-checks [#^ object program]
-  "検の composition root: 実行時の型検査を on にして program を回す。"
+  "Check composition root: runs the program with run-time type checks on."
   (run (type-checks-on program)))
 
 
 (defn #^ object run-without-type-checks [#^ object program]
-  "本番の composition root: 実行時の型検査を off にして program を回す(既定)。"
+  "Production composition root: runs the program with run-time type checks off (default)."
   (run (type-checks-off program)))
