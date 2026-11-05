@@ -1,13 +1,16 @@
 """根の disk を worker と Longhorn と container の image が分け合う機体の分け前(shares.yaml)から、worker の env と Longhorn の disk の
 予約と kubelet の image GC の線を導く。
 
-分け前の意味・値の出所・守りの外は shares.yaml の頭の註。導く物は 4 つ:
+分け前の意味・値の出所・守りの外は shares.yaml の頭の註。導く物は 5 つ:
   ../nodes/<機体>/disk-share.yaml        worker の Deployment の env WORKER_ENV_MIN_FREE_GIB・WORKER_ENV_ROOTS_GIB(boot.sh が GiB の整数で読む)
   ../nodes/<機体>/<機体直の worker>.env  同じ根の disk の機体直の worker(k8s の外 — nativeWorker を宣言した機体だけ)の同じ 2 つの env。
                                          機体直の worker の起動 script が `名=値` の行を読み、boot.sh へ渡す
   ../nodes/<機体>/kubelet-image-gc.conf  kubelet の drop-in(imageGCHighThresholdPercent・imageGCLowThresholdPercent — 機体の
                                          /etc/rancher/k3s/kubelet.conf.d/ に置く。Flux は当てない)
   longhorn-nodes.yaml                    Longhorn の Node の disk の予約 storageReserved(Longhorn の disk を宣言した機体だけ)
+  ../workspace-volumes/workspace-volume.json の freeFloorBytes
+                                         Longhorn の disk が分け合う disk の上の image に在る機体(imageDisks)の、image の中に残す
+                                         実の空きの床(worker が冷やす回と作る手の数えで守る — 欄のほかは手で書いた値のまま)
 
 使い方(repo の根で):
   uv run python packages/doeff-cluster/deploy/k8s/disk-share/derive.py           導いた file を書く(宣言が釣り合わなければ書かずに 1)
@@ -44,7 +47,24 @@ IMAGE_GC_HIGH_MAX_PERCENT = 85
 GIB = 1 << 30
 GB = 10**9
 LONGHORN_NAMESPACE = "longhorn-system"
-TOP_KEYS = frozenset({"overProvisioningPercent", "shapes", "nodes"})
+TOP_KEYS = frozenset({"overProvisioningPercent", "shapes", "nodes", "imageDisks"})
+# Longhorn の disk が分け合う disk の上の image の中に在る機体の欄(imageDisks の 1 行 — shares.yaml の頭の註の後ろの節)。
+IMAGE_DISK_KEYS = frozenset(
+    {
+        "node",
+        "diskBytes",
+        "filesystemReservedBytes",
+        "minFreeBytes",
+        "imagesBytes",
+        "residentsBytes",
+        "longhornDisk",
+        "longhornImageBytes",
+        "longhornStorageBytes",
+    }
+)
+# image の中に残す実の空きの床を書く先 — worker が読む値の ConfigMap workspace-volume の file と、その欄。
+WORKSPACE_SETTINGS = K8S / "workspace-volumes" / "workspace-volume.json"
+FLOOR_KEY = "freeFloorBytes"
 # Longhorn の disk の 3 つの欄は、揃って在るか揃って無い(無い機体 = 根の disk の Longhorn の disk を宣言しない機体 — Node を導かない)。
 LONGHORN_KEYS = frozenset({"longhornDisk", "longhornScheduling", "longhornDiskTags"})
 NODE_KEYS = frozenset(
@@ -110,9 +130,28 @@ class NodeShare:
 
 
 @dataclass(frozen=True)
+class ImageDiskShare:
+    """Longhorn の disk が、分け合う disk の上の sparse な image の中に在る機体の分け前(byte)。images = Longhorn の外の image の名と
+    見かけの大きさ・residents = ほかの物の今の使用・longhorn_image = Longhorn の image の見かけの大きさ・longhorn_storage = その中の
+    file system の大きさ(Longhorn の storageMaximum)。残り(image_longhorn_bytes)が Longhorn の image の分。"""
+
+    name: str
+    node: str
+    disk_bytes: int
+    filesystem_reserved_bytes: int
+    min_free_bytes: int
+    images: tuple[tuple[str, int], ...]
+    residents_bytes: int
+    longhorn_disk: str
+    longhorn_image_bytes: int
+    longhorn_storage_bytes: int
+
+
+@dataclass(frozen=True)
 class Declaration:
     over_provisioning_percent: int
     nodes: tuple[NodeShare, ...]
+    image_disks: tuple[ImageDiskShare, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -172,10 +211,82 @@ def parse(text: str) -> Declaration:
     nodes_value = top["nodes"]
     if not isinstance(nodes_value, Mapping) or not nodes_value:
         raise ValueError("nodes は機体の名から分け前への mapping(1 つ以上)")
+    images_value = top.get("imageDisks", {})
+    if not isinstance(images_value, Mapping):
+        raise ValueError("imageDisks は宣言の名から分け前への mapping")
     return Declaration(
         over_provisioning_percent=percent,
         nodes=tuple(_node_share(str(name), raw) for name, raw in nodes_value.items()),
+        image_disks=tuple(_image_disk(str(name), raw) for name, raw in images_value.items()),
     )
+
+
+def _image_disk(name: str, raw: object) -> ImageDiskShare:
+    """imageDisks の 1 行を分け前にする(parse の一部 — 鍵と量を確かめる)。"""
+    where = f"imageDisks.{name}"
+    entry = _keys(raw, IMAGE_DISK_KEYS, where)
+    images = entry["imagesBytes"]
+    if not isinstance(images, Mapping):
+        raise ValueError(f"{where}.imagesBytes は image の名から見かけの大きさへの mapping: {images!r}")
+    for key in ("node", "longhornDisk"):
+        if not isinstance(entry[key], str) or not entry[key]:
+            raise ValueError(f"{where}.{key} は空でない名: {entry[key]!r}")
+    return ImageDiskShare(
+        name=name,
+        node=entry["node"],
+        disk_bytes=_count(entry["diskBytes"], f"{where}.diskBytes"),
+        filesystem_reserved_bytes=_count(
+            entry["filesystemReservedBytes"], f"{where}.filesystemReservedBytes"
+        ),
+        min_free_bytes=_count(entry["minFreeBytes"], f"{where}.minFreeBytes"),
+        images=tuple(
+            (str(image), _count(size, f"{where}.imagesBytes.{image}"))
+            for image, size in images.items()
+        ),
+        residents_bytes=_count(entry["residentsBytes"], f"{where}.residentsBytes"),
+        longhorn_disk=entry["longhornDisk"],
+        longhorn_image_bytes=_count(entry["longhornImageBytes"], f"{where}.longhornImageBytes"),
+        longhorn_storage_bytes=_count(
+            entry["longhornStorageBytes"], f"{where}.longhornStorageBytes"
+        ),
+    )
+
+
+def image_longhorn_bytes(share: ImageDiskShare) -> int:
+    """Longhorn の image が分け合う disk の上で持ってよい量 = disk − file system の予約 − 空きの最低 − ほかの image − ほかの物
+    (負なら disk に収まらない宣言)。"""
+    return (
+        share.disk_bytes
+        - share.filesystem_reserved_bytes
+        - share.min_free_bytes
+        - sum(size for _, size in share.images)
+        - share.residents_bytes
+    )
+
+
+def free_floor_bytes(share: ImageDiskShare) -> int:
+    """image の中に残す実の空きの床 = image の見かけ − Longhorn の分(0 の下は 0)。image の割り当ては、中の使用(storageMaximum −
+    storageAvailable)と file system の metadata(見かけ − storageMaximum)の和を越えないので、中の空きが床を割らなければ、割り当ては
+    Longhorn の分を越えない(trim で消えた block を image から返している間)。"""
+    return max(0, share.longhorn_image_bytes - image_longhorn_bytes(share))
+
+
+def _image_disk_faults(share: ImageDiskShare) -> tuple[str, ...]:
+    """image の機体の釣り合わない所: Longhorn の分が無い・床が image の中の file system の大きさに届く(何も置けない)。"""
+    room = image_longhorn_bytes(share)
+    if room <= 0:
+        return (
+            f"{share.name}: 分け前の合計が disk を越える — Longhorn の分 {room / GB:.2f} GB(disk {share.disk_bytes / GB:.2f}・"
+            f"file system の予約 {share.filesystem_reserved_bytes / GB:.2f}・空きの最低 {share.min_free_bytes / GB:.2f}・"
+            f"image {sum(size for _, size in share.images) / GB:.2f}・ほかの物 {share.residents_bytes / GB:.2f} GB)",
+        )
+    floor = free_floor_bytes(share)
+    if floor >= share.longhorn_storage_bytes:
+        return (
+            f"{share.name}: 床 {floor / GB:.2f} GB が image の中の file system {share.longhorn_storage_bytes / GB:.2f} GB に届き、"
+            f"Longhorn は何も置けない(Longhorn の分 {room / GB:.2f} GB)",
+        )
+    return ()
 
 
 def _node_share(name: str, raw: object) -> NodeShare:
@@ -308,7 +419,7 @@ def faults(declaration: Declaration, margins: Margins) -> tuple[str, ...]:
         fault
         for share in declaration.nodes
         for fault in _node_faults(share, margins, declaration.over_provisioning_percent)
-    )
+    ) + tuple(fault for share in declaration.image_disks for fault in _image_disk_faults(share))
 
 
 def _node_faults(share: NodeShare, margins: Margins, percent: int) -> tuple[str, ...]:
@@ -504,7 +615,17 @@ def render(declaration: Declaration, margins: Margins) -> tuple[Derived, ...]:
             if share.native is not None
         ),
         Derived(LONGHORN_NODES, nodes_text),
+        Derived(WORKSPACE_SETTINGS, _workspace_settings(declaration)),
     )
+
+
+def _workspace_settings(declaration: Declaration) -> str:
+    """worker の値の file(workspace-volume.json)の、床の欄だけを宣言から書き替えた字(ほかの欄は手で書いた値のまま)。"""
+    settings = json.loads(WORKSPACE_SETTINGS.read_text(encoding="utf-8"))
+    settings[FLOOR_KEY] = {
+        share.longhorn_disk: free_floor_bytes(share) for share in declaration.image_disks
+    }
+    return json.dumps(settings, indent=2, ensure_ascii=False) + "\n"
 
 
 def stale(files: tuple[Derived, ...]) -> tuple[str, ...]:
@@ -551,6 +672,39 @@ def differ_live(declaration: Declaration, margins: Margins) -> tuple[str, ...]:
     return tuple(found)
 
 
+def differ_live_images(declaration: Declaration) -> tuple[str, ...]:
+    """image の中の Longhorn の disk の大きさ(storageMaximum)と予約が、宣言と違う機体(image を広げた・縮めた後に導き直していない —
+    床は image の大きさから導くので、広げると Longhorn の分を越えて育てる)。予約は 0 の宣言(床が実の使用を縛る — shares.yaml の註)。"""
+    read = tuple((share, live_longhorn_disk(share)) for share in declaration.image_disks)
+    return tuple(
+        f"{share.name}: Longhorn の disk {share.longhorn_disk} は storageMaximum {maximum}・storageReserved {reserved}、"
+        f"宣言は {share.longhorn_storage_bytes}・0(image の大きさを読み直して shares.yaml を直し、導き直す)"
+        for share, (maximum, reserved) in read
+        if (maximum, reserved) != (share.longhorn_storage_bytes, 0)
+    )
+
+
+def live_longhorn_disk(share: ImageDiskShare) -> tuple[int, int]:
+    """image の中の Longhorn の disk の今の storageMaximum と storageReserved — kubectl で Longhorn の Node を読む(読めなければ止まる)。"""
+    kubectl = shutil.which("kubectl")
+    if kubectl is None:
+        raise RuntimeError("kubectl が無い — Longhorn の Node を読めない")
+    done = subprocess.run(
+        [kubectl, "-n", LONGHORN_NAMESPACE, "get", "nodes.longhorn.io", share.node, "-o", "json"],
+        capture_output=True,
+        text=True,
+        timeout=30,
+        check=False,
+    )
+    if done.returncode != 0:
+        raise RuntimeError(f"{share.node} の Longhorn の Node を読めない: {done.stderr.strip()}")
+    node = json.loads(done.stdout)
+    return (
+        int(node["status"]["diskStatus"][share.longhorn_disk]["storageMaximum"]),
+        int(node["spec"]["disks"][share.longhorn_disk]["storageReserved"]),
+    )
+
+
 def main(argv: list[str] | None = None) -> int:
     """入口 — 宣言を読み、釣り合えば導いた file を書く(--check は書かずに違いを数える)。"""
     parser = argparse.ArgumentParser(
@@ -574,7 +728,7 @@ def main(argv: list[str] | None = None) -> int:
         print("derive: 宣言が釣り合わない — 導かない:\n  " + "\n  ".join(found), file=sys.stderr)
         return 1
     if args.live:
-        live = differ_live(declaration, margins)
+        live = differ_live(declaration, margins) + differ_live_images(declaration)
         if live:
             print(
                 "derive: kubelet の image GC の線が宣言と違う機体:\n  " + "\n  ".join(live),

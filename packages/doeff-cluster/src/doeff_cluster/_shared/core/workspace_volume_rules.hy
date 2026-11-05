@@ -18,12 +18,13 @@
 ;;;   newest-backup         backup の組 → 戻す元(完了した物のうち作られたのが一番新しい物 — 無ければ None)
 ;;;   backup-volume-name    volume の名と backup の先の名 → その束 BackupVolume の名(Longhorn v1.13 と同じ <名>-<hash> — 手で作る束が
 ;;;                         Longhorn の作る束と同じ名に重なり、2 本にならない)
-;;;   room-bytes            札の disk の組と過剰割り当ての % と最小の空きの % → 線ごとの残りの byte(Longhorn の置く線 2 つ — 名目の
-;;;                         予約の線と実の空きの線)
+;;;   room-bytes            札の disk の組と過剰割り当ての % と最小の空きの % と disk ごとの空きの床 → 線ごとの残りの byte(Longhorn の置く
+;;;                         線 2 つ — 名目の予約の線と実の空きの線。床は実の空きの線を disk ごとに上げる)
 ;;;   room-covers?          線ごとの残りの byte と需要の byte → 両方の線が需要を覆うか
 ;;;   cooling-order         外れている volume の組・今・温かく置く秒・線ごとの残り・需要の byte → 冷やす volume の名(使い終わりの古い
 ;;;                         順)と、冷やした後に両方の線が需要を覆うか
-;;;   restore-node          札の disk の組と過剰割り当ての % と最小の空きの % と需要の byte → backup から戻す volume を付ける node(需要を覆う
+;;;   restore-node          札の disk の組と過剰割り当ての % と最小の空きの % と disk ごとの空きの床と需要の byte → backup から戻す volume を
+;;;                         付ける node(需要を覆う
 ;;;                         disk のうち名目の残りが一番大きい物の node — 無ければ空)
 ;;;
 ;;; device の見分け方: mount の係は attach した volume を host の /dev/longhorn/<名> の device で付ける(係の /host/dev/longhorn/<名>)。
@@ -103,12 +104,14 @@
 
 (defrecord DiskRoom
   "札の disk 1 つの置き場の数(byte): maximum = storageMaximum・reserved = storageReserved・scheduled = storageScheduled(置いた volume の
-   名目の大きさの和)・available = storageAvailable(file system の実の空き)・node = disk の在る node の名。"
+   名目の大きさの和)・available = storageAvailable(file system の実の空き)・node = disk の在る node の名・disk = Longhorn の Node の
+   disk の名(空きの床を引く鍵)。"
   (#^ int maximum)
   (#^ int reserved)
   (#^ int scheduled)
   (#^ int available)
-  (setv #^ str node ""))
+  (setv #^ str node "")
+  (setv #^ str disk ""))
 
 
 (defrecord RoomBytes
@@ -271,16 +274,30 @@
   (+ name "-" (cut (.hexdigest (hashlib.sha256 (.encode (.strip (.format "{}-{}" name target)) "utf-8"))) 0 BUNDLE-HASH-LENGTH)))
 
 
-(defk room-bytes [rooms percentage minimal]
-  {:pre [(: rooms (get tuple #(DiskRoom ...))) (: percentage int) (>= percentage 0) (: minimal int) (<= 0 minimal 100)]
+(defk floor-bytes [room minimal floors]
+  {:pre [(: room DiskRoom) (: minimal int) (<= 0 minimal 100) (: floors (get dict #(str int)))] :post [(: % int) (>= % 0)]}
+  "札の disk 1 枚 room に残す実の空き(byte)を得るため: 最小の空きの %(Longhorn の設定)の量と、その disk の空きの床 floors(値の
+   ConfigMap の freeFloorBytes — disk の名 → byte)の大きい方。床は disk-share/shares.yaml が、disk の image を置く SSD の分け前から導く
+   (image の中で Longhorn が使ってよい量を、SSD の分け前に収める — Longhorn の予約 storageReserved は名目の線にだけ効き、実の使用を
+   縛らない)。床の無い disk は % の量だけ。"
+  (max (// (* room.maximum minimal) 100) (.get floors room.disk 0)))
+
+
+(defk room-bytes [rooms percentage minimal floors]
+  {:pre [(: rooms (get tuple #(DiskRoom ...))) (: percentage int) (>= percentage 0) (: minimal int) (<= 0 minimal 100)
+         (: floors (get dict #(str int)))]
    :post [(: % RoomBytes)]}
   "札の disk の組 rooms の置き場の残りを、Longhorn が replica を置く線 2 つごとに byte で得るため(disk ごとの残りを、負も含めて足す —
    級の volume を置く disk が 1 枚の時に正確。複数の disk では、1 本が 1 枚に収まるかを見ない近い数え):
    - 名目の予約の線(設定 storage-over-provisioning-percentage = percentage): (maximum − reserved) × percentage% − scheduled。
-   - 実の空きの線(設定 storage-minimal-available-percentage = minimal): available − maximum × minimal%。Longhorn は空きがこの線を越える
-     disk にだけ置く。"
+   - 実の空きの線(設定 storage-minimal-available-percentage = minimal と disk ごとの空きの床 floors — floor-bytes): available − 残す空き。
+     Longhorn は空きが % の線を越える disk にだけ置き、床は worker が冷やす回と作る手の数えで守る。"
+  (var actual 0)
+  (for [room rooms]
+    (<- kept int (floor-bytes room minimal floors))
+    (:= actual (+ actual (- room.available kept))))
   (RoomBytes :nominal (sum (gfor room rooms (- (// (* (- room.maximum room.reserved) percentage) 100) room.scheduled)))
-             :actual (sum (gfor room rooms (- room.available (// (* room.maximum minimal) 100))))))
+             :actual actual))
 
 
 (defk room-covers? [room demand]
@@ -313,8 +330,9 @@
   (CoolingPlan :names (+ (tuple (gfor volume stale volume.name)) (if covered taken #())) :covered covered))
 
 
-(defk restore-node [rooms percentage minimal demand]
-  {:pre [(: rooms (get tuple #(DiskRoom ...))) (: percentage int) (>= percentage 0) (: minimal int) (<= 0 minimal 100) (: demand int) (>= demand 0)]
+(defk restore-node [rooms percentage minimal floors demand]
+  {:pre [(: rooms (get tuple #(DiskRoom ...))) (: percentage int) (>= percentage 0) (: minimal int) (<= 0 minimal 100)
+         (: floors (get dict #(str int))) (: demand int) (>= demand 0)]
    :post [(: % str)]}
   "札の disk の組 rooms から、backup から戻す volume の engine を置く node を決めるため(replica と同じ node に付け、engine が網越しに replica の
    状態を読まない — README の節「戻しの失敗」): 需要 demand を両方の線で覆う disk のうち、名目の予約の線の残りが一番大きい disk の node(同じなら
@@ -322,7 +340,7 @@
   (var chosen "")
   (var most -1)
   (for [room (sorted rooms :key (fn [room] room.node))]
-    (<- lines RoomBytes (room-bytes #(room) percentage minimal))
+    (<- lines RoomBytes (room-bytes #(room) percentage minimal floors))
     (<- fits bool (room-covers? lines demand))
     (when (and fits (> lines.nominal most))
       (:= chosen room.node)

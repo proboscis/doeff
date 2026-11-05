@@ -270,6 +270,11 @@ Longhorn は replica を disk に置く時、線を 2 つ照らす(v1.13 の rep
 - 実の空きの線が先に効く時: 札 workspace の disk は zeus の SSD(sdb — 2026-11-05 に 1.71 TB の 93% を使用・空き 133 GB)の上の image で、
   温かく置く volume の実の使用はその SSD の空きを使う。冷やす回は実の空きの線の残りも spareBytes で読むので、温かく置く本数は実の空きの線
   (storageMaximum の 25%)の上で止まる。
+- 空きの床(`workspace-volume.json` の freeFloorBytes — disk の名 → byte): 実の空きの線は、% の量と床の大きい方を残す。床は
+  `../disk-share/shares.yaml` の imageDisks が、image を置く SSD の分け前から導く(`derive.py` が書く — 手で直さない)。zeus の
+  zeus-usb-workspace の床は 93.67 GB(image の見かけ 236.22 GB − Longhorn の SSD の分 142.56 GB)で、温かく置く volume の実の使用は
+  image の中の使用が 138.25 GB を越えない所で止まる。床は名目の予約の線を変えない(予約は 0 のまま — 名目で縛ると温かく置く本数が減り、
+  戻す書きが増える)。image の SSD の上の割り当ては、中の file system を trim して消えた block を返している間だけ、中の使用に沿って減る。
 
 ## 広げる
 
