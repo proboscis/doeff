@@ -29,7 +29,7 @@
 (import doeff_cluster [detached-cluster]
         doeff_cluster._shared.protocol.detached [service-facts-of-json detached-timing-of-state unknown-timing-confirmed])
 (import tests.transport_http [transport-http route-cell detached-sender TEST-ROUTE])
-(import doeff_cluster [sim-cluster SimWorker KillWorker DrainWorker StopWorker StartWorker StopCoordinator ProcessesOf ReadCoordinator])
+(import doeff_cluster [sim-cluster SimWorker SimMachine KillWorker DrainWorker StopWorker StartWorker StopCoordinator ProcessesOf ReadCoordinator])
 (import doeff_cluster [system-of])
 (import doeff_cluster [submit-detached-task])
 (import doeff_cluster._coordinator.core.coordinator_invariants [StoppedGeneration TaskPlacementSeen stopped-generation-gets-no-new-task])
@@ -562,6 +562,33 @@
   ;; 担い手 a は node zeus に置かれ、b は node を名乗らない(k8s の外)。名簿の読みは spec.node を写し、空を別の名で埋めない。
   (<- ok bool (sim-cluster :notice-broker (MemoryBroker) NO-JOBS (nodes-named)
                            :workers #((replace (get SIM-RUNNERS 0) :node "zeus") (get SIM-RUNNERS 1))
+                           :timing TIMING))
+  (assert ok))
+
+
+;; --- 担い手の機体の CPU の使い(RunnerFact.cpu-busy)------------------------------------------------------------------------
+;; task-room は nice の分を空きに数えるので、優先度を下げた仕事で埋まった機体も task-room では空いて見える。名簿は機体の全体の CPU の使い
+;; (measured.cpuBusy — nice の分を含む)も写し、使い手が自分の nice の仕事の置き先を CPU の埋まりで決められるようにする。
+
+;; nice の仕事で CPU 8 のうち 7.6 を使う機体(CPU の使い 0.95・PSI の待ちは無い)。
+(val NICE-FULL (SimMachine :cpus 8 :memory-mib 32768 :nice-cores 7.6))
+
+(defk cpu-busy-named []
+  {:pre [] :post [(: % bool)]}
+  ;; 初めの heartbeat が届くまで待ってから読む。測りを名乗る担い手 a は機体の CPU の使いを、測りを名乗らない b は None を名簿に載せる。
+  (<- (Delay 3.0))
+  (<- roster tuple (ReadRunners))
+  (val facts (! (by-name roster)))
+  (val a (get facts "a"))
+  (assert (and (is-not a.cpu-busy None) (< (abs (- a.cpu-busy 0.95)) 1e-9)) roster)
+  ;; nice の分は task-room の空きに数える(空き 0 にしない)— 名簿の task-room だけでは埋まりが見えない事も確かめる。
+  (assert (> a.task-room 0) roster)
+  (assert (is (. (get facts "b") cpu-busy) None) roster)
+  True)
+
+(deftest test-the-roster-carries-the-machine-cpu-busy-including-the-lowered-priority-share
+  (<- ok bool (sim-cluster :notice-broker (MemoryBroker) NO-JOBS (cpu-busy-named)
+                           :workers #((replace (get SIM-RUNNERS 0) :machine NICE-FULL) (replace (get SIM-RUNNERS 1) :machine None))
                            :timing TIMING))
   (assert ok))
 
