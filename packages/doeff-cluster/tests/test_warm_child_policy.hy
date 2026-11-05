@@ -144,6 +144,22 @@
   (assert (= got #((StartWarmChild KEY-A (WarmLaunch :root ROOT-A :project (+ ROOT-A "/app") :preload #("app.warm")))))))
 
 
+;; 失敗ケース(2026-11-05 の k3s-3): task の来ない機体でも温める表の行ごとに待ちの子を起こし、誰も分かれない待ちの子 2 つ(約 1.1 GB)が
+;; 組みの層 1.5 GiB に残って、次の版の先の組みを no-memory-room で断らせた。warm-table-children が偽の機体は温める表の root に待ちの子を
+;; 起こさず(残っていれば止める)、分かれる task が来た root には今までどおり起こす。
+(deftest test-a-worker-without-warm-table-children-starts-warm-children-only-for-its-tasks
+  (<- ta JobSpec (task-on "ta" KEY-A :entries #("app.warm")))
+  (val warm #((WarmEnv KEY-A ta.runtime-env)))
+  (val off (replace POLICY :warm-table-children False))
+  (<- idle tuple (warm-child-actions NOW #() (! (world)) warm off))
+  (assert (= idle #()) idle)
+  (<- running tuple (warm-child-actions NOW #() (! (world :children #((! (child KEY-A))))) warm off))
+  (assert (= running #((StopWarmChild KEY-A StopStage.TERM "root の待ちの子が要らなくなった"))) running)
+  (<- with-task tuple (warm-child-actions NOW #(ta) (! (world)) warm off))
+  (assert (= with-task #((StartWarmChild KEY-A (WarmLaunch :root ROOT-A :project (+ ROOT-A "/app") :preload #("app.warm")))))
+          with-task))
+
+
 (deftest test-a-task-waiting-for-its-warm-child-is-preparing-with-the-reason
   (<- ta JobSpec (task-on "ta" KEY-A))
   (<- fresh tuple (statuses NOW #(ta) (! (world)) {} POLICY))
