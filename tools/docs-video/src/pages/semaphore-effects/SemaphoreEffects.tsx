@@ -17,6 +17,7 @@ import {Clock, CodeBlock, glow, Headlines, lineMid, Lines, Pill, startsOf} from 
 import {ACCENT, BG, f, FAIL, LOOK, MONO, MUTED, PANEL, SANS, TEST, TEXT} from '../../kit/theme';
 import {useSceneFrame} from '../../kit/warp';
 import DURATIONS from './durations.json';
+import NARRATION from './narration.json';
 
 type Point = {x: number; y: number};
 
@@ -621,7 +622,7 @@ const Outro: React.FC = () => {
 };
 
 // The scenes in order; Root.tsx registers SEMAPHORE_EFFECTS.length frames of SEMAPHORE_EFFECTS.Video.
-export const SEMAPHORE_EFFECTS = narrate('semaphore-effects', DURATIONS, [
+export const SEMAPHORE_EFFECTS = narrate('semaphore-effects', DURATIONS, NARRATION, [
   {length: INTRO, starts: startsOf(INTRO_LINES), ids: ['i1', 'i2', 'i3'], node: <IntroScene />},
   {length: PL, starts: startsOf(PL_LINES), ids: ['p1', 'p2', 'p3'], node: <PoolScene />},
   {length: FF, starts: startsOf(FF_LINES), ids: ['f1', 'f2', 'f3'], node: <FifoScene />},

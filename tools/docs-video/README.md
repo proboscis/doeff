@@ -60,11 +60,12 @@ The narration never uses a local text-to-speech model, and
 | `src/kit/motion.ts` | `fadeAt`, `ramp`, `mix`: timing in seconds of a scene's design time. |
 | `src/kit/parts.tsx` | `Headlines`, `CodeBlock`, `Pill` (an effect or answer on the move), `glow`, `Clock`, `highlightYield`. |
 | `src/kit/warp.ts` | Narration time: a headline's slot stretches to fit its spoken line; scenes read `useSceneFrame()`. |
-| `src/kit/narrated.tsx` | `narrate(page, durations, scenes)`: plays the scenes in order with their narration. |
+| `src/kit/narrated.tsx` | `narrate(page, durations, narration, scenes)`: plays the scenes in order with their narration, and shows each line's words as subtitles while it is heard. |
+| `src/kit/subtitles.tsx` | The subtitles: each narration line as `narration.json` writes it, cut at its sentences into parts of at most two rows, at the frames its sound plays. |
 | `src/pages/<name>/` | One page's video: its scenes, `narration.json`, `durations.json`, and `measure/` (the runs behind its numbers). |
 | `src/Root.tsx` | One `<Composition>` per page, with the id `<name>`: it finds every `narrate(...)` export under `src/pages/` itself, so a new page does not edit it. |
 | `tts.py` | Says `narration.json` through OpenAI's speech endpoint into `public/<name>/`, writes `durations.json`. |
-| `render.mjs` | Renders `docs/assets/videos/<name>.mp4` and `<name>.jpg`. |
+| `render.mjs` | Renders `docs/assets/videos/<name>.mp4` and `<name>.jpg`, and writes the same subtitles as `<name>.vtt` and `<name>.srt` (`captions.mjs`). |
 | `gif.mjs` | Makes `<name>.gif` from the first scenes of `docs/assets/videos/<name>.mp4` plus an end card, the moving trailer for GitHub. |
 | `src/kit/EndCard.tsx` | The end card (the `gif-end-card` composition `gif.mjs` renders as a still). |
 | `stills.mjs` | Renders single frames as PNG, to check a layout without rendering the whole video. |
@@ -99,6 +100,7 @@ The narration never uses a local text-to-speech model, and
 | Show the mechanism moving: effects travel out to handlers, answers come back, `k` waits and resumes. | The point is to see what the text can only describe. |
 | doeff is algebraic effects for Python. Do not present it as only a way to swap I/O. | Swapping I/O is one use of handlers, not what doeff is (`docs/positioning/what-doeff-is.md`). |
 | Each headline stays long enough to read, and its narration fits its slot (`warp.ts` stretches the slot). | The voice never runs into the next headline. |
+| The narration is burned in as subtitles at the bottom, on a dark band, and the scenes are drawn smaller against the top so the band covers nothing (`narrated.tsx`). The subtitles are the words of `narration.json`, never a summary; `tts.py`'s respellings are for the voice only. | A video played without sound still explains itself, and a GitHub attachment cannot carry a subtitle track. The `.vtt` is the site player's captions track (`tools/docs_site/hooks.py`); the `.srt` is for a video service. |
 | Numbers on screen come from a run in `measure/`. | The video must hold true for anyone who runs the same code. |
 | English on screen and in the narration; no people drawn. | The docs are in English; the videos show code and its runs. |
 | Up to about 3 minutes, and at most 6 MB (`render.mjs` encodes at CRF 29; a video over 6 MB is rendered again with a higher CRF as the third argument). | The mp4 lives in the repository. |

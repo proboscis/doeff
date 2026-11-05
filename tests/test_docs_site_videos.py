@@ -17,8 +17,11 @@ from __future__ import annotations
 
 import ast
 import importlib.util
+import json
 import re
 from pathlib import Path
+
+import pytest
 
 ROOT = Path(__file__).resolve().parents[1]
 DOCS = ROOT / "docs"
@@ -197,3 +200,77 @@ def test_narration_uses_the_openai_speech_api_and_no_local_model() -> None:
     assert not imported & set(LOCAL_TTS_PACKAGES), (
         f"tts.py imports local speech-synthesis packages: {imported & set(LOCAL_TTS_PACKAGES)}"
     )
+
+
+# The videos whose narration is burned in as subtitles and written next to them as <name>.vtt and <name>.srt
+# (tools/docs-video/render.mjs, from the cues of src/kit/subtitles.tsx).
+CAPTIONED = ("article-opening", "article-monte-carlo", "article-hundred-fights")
+VIDEOS = DOCS / "assets" / "videos"
+PAGES = ROOT / "tools" / "docs-video" / "src" / "pages"
+VTT_CUE = re.compile(
+    r"^(?P<id>[a-z]+\d+(?:\.\d+)?)\n(?P<start>\d\d:\d\d:\d\d\.\d{3}) --> (?P<end>\d\d:\d\d:\d\d\.\d{3})\n(?P<text>.+)$",
+    re.MULTILINE,
+)
+
+
+def _seconds(stamp: str) -> float:
+    hours, minutes, seconds = stamp.replace(",", ".").split(":")
+    return int(hours) * 3600 + int(minutes) * 60 + float(seconds)
+
+
+def _mp4_seconds(path: Path) -> float:
+    """The length of an mp4 from its movie header (mvhd inside moov), read without ffprobe."""
+    data = path.read_bytes()
+
+    def boxes(start: int, end: int):
+        while start + 8 <= end:
+            size = int.from_bytes(data[start : start + 4], "big")
+            kind = data[start + 4 : start + 8].decode("latin-1")
+            head = 8
+            if size == 1:
+                size, head = int.from_bytes(data[start + 8 : start + 16], "big"), 16
+            yield kind, start + head, start + size
+            start += size
+
+    moov = next((begin, end) for kind, begin, end in boxes(0, len(data)) if kind == "moov")
+    begin = next(begin for kind, begin, _ in boxes(*moov) if kind == "mvhd")
+    if data[begin] == 1:
+        timescale = int.from_bytes(data[begin + 20 : begin + 24], "big")
+        duration = int.from_bytes(data[begin + 24 : begin + 32], "big")
+    else:
+        timescale = int.from_bytes(data[begin + 12 : begin + 16], "big")
+        duration = int.from_bytes(data[begin + 16 : begin + 20], "big")
+    return duration / timescale
+
+
+@pytest.mark.parametrize("name", CAPTIONED)
+def test_the_subtitles_say_every_narration_line_once_in_order_within_the_video(name: str) -> None:
+    vtt = (VIDEOS / f"{name}.vtt").read_text(encoding="utf-8")
+    assert vtt.startswith("WEBVTT\n"), f"{name}.vtt is not a WebVTT file"
+    cues = [match.groupdict() for match in VTT_CUE.finditer(vtt)]
+    lines = json.loads((PAGES / name / "narration.json").read_text(encoding="utf-8"))
+    # A line shown in parts has the cues <id>.1, <id>.2, ...: their texts, joined, are the line as written.
+    said: dict[str, list[str]] = {}
+    for cue in cues:
+        said.setdefault(cue["id"].split(".")[0], []).append(cue["text"])
+    assert list(said) == [line["id"] for line in lines], f"{name}.vtt does not have every narration line once, in order"
+    for line in lines:
+        assert " ".join(said[line["id"]]) == line["text"], f"{name}.vtt: line {line['id']} is not the narration's words"
+    times = [(_seconds(cue["start"]), _seconds(cue["end"])) for cue in cues]
+    assert all(start < end for start, end in times), f"{name}.vtt has a cue that ends before it starts"
+    assert all(end <= next_start for (_, end), (next_start, _) in zip(times, times[1:])), f"{name}.vtt has cues that overlap"
+    assert times[0][0] >= 0
+    assert times[-1][1] <= _mp4_seconds(VIDEOS / f"{name}.mp4"), f"{name}.vtt runs past the end of the video"
+    srt = (VIDEOS / f"{name}.srt").read_text(encoding="utf-8")
+    assert [cue["text"] for cue in cues] == re.findall(r"^\d+\n[\d:,]+ --> [\d:,]+\n(.+)$", srt, re.MULTILINE), (
+        f"{name}.srt does not hold the same cues as {name}.vtt"
+    )
+
+
+def test_the_hook_gives_a_captioned_video_its_track(tmp_path: Path) -> None:
+    (tmp_path / "assets" / "videos").mkdir(parents=True)
+    (tmp_path / "assets" / "videos" / "home.vtt").write_text("WEBVTT\n", encoding="utf-8")
+    content = '<p><a href="../assets/videos/home.mp4"><img alt="A video" src="../assets/videos/home.jpg" /></a></p>'
+    out = _hooks().videos_to_players(content, tmp_path)
+    assert '<track kind="captions" srclang="en" label="English" src="../assets/videos/home.vtt" default>' in out
+    assert "<track" not in _hooks().videos_to_players(content, tmp_path / "elsewhere")

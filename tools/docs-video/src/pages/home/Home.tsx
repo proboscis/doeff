@@ -14,6 +14,7 @@ import {Clock, CodeBlock, glow, Headlines, lineMid, Lines, PAD, Pill, startsOf} 
 import {ACCENT, f, FPS, LOOK, MONO, MUTED, PANEL, SANS, TEST, TEXT} from '../../kit/theme';
 import {realOf, Slot, useSceneFrame} from '../../kit/warp';
 import DURATIONS from './durations.json';
+import NARRATION from './narration.json';
 import {CODE, Outro, OUTRO, PROD_WAIT, RUN_HEADLINE_STARTS, Runs, RUNS, SpeedupContext} from './Runs';
 
 // Opening — what doeff is: code that says what it wants, and stacked handlers that decide how.
@@ -493,7 +494,7 @@ const shownSpeedup = (slots: Slot[]) => {
 };
 
 // The scenes in order; Root.tsx registers HOME.length frames of HOME.Video.
-export const HOME = narrate('home', DURATIONS, [
+export const HOME = narrate('home', DURATIONS, NARRATION, [
   {length: INTRO, starts: startsOf(INTRO_LINES), ids: ['i1', 'i2'], node: <IntroScene />},
   {length: YIELD, starts: startsOf(YIELD_LINES), ids: ['y1', 'y2', 'y3'], node: <YieldScene />},
   {length: WANT, starts: startsOf(WANT_LINES), ids: ['w1', 'w2'], node: <WantScene />},

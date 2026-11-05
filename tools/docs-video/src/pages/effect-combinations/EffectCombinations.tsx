@@ -15,6 +15,7 @@ import {CodeBlock, glow, Headlines, lineMid, Lines, PAD, Pill, startsOf} from '.
 import {ACCENT, f, FAIL, LOOK, MONO, MUTED, PANEL, PROD, SANS, TEST, TEXT} from '../../kit/theme';
 import {useSceneFrame} from '../../kit/warp';
 import DURATIONS from './durations.json';
+import NARRATION from './narration.json';
 
 // A label in the page's sans font, placed at (x, y).
 const Label: React.FC<{x: number; y: number; color?: string; size?: number; bold?: boolean; opacity?: number; children: React.ReactNode}> = ({
@@ -734,7 +735,7 @@ const Outro: React.FC = () => {
 };
 
 // The scenes in order; Root.tsx registers EFFECT_COMBINATIONS.length frames of EFFECT_COMBINATIONS.Video.
-export const EFFECT_COMBINATIONS = narrate('effect-combinations', DURATIONS, [
+export const EFFECT_COMBINATIONS = narrate('effect-combinations', DURATIONS, NARRATION, [
   {length: MATRIX, starts: startsOf(MATRIX_LINES), ids: ['a1', 'a2', 'a3'], node: <MatrixScene />},
   {length: NEST, starts: startsOf(NEST_LINES), ids: ['b1', 'b2', 'b3', 'b4'], node: <NestScene />},
   {length: SCOPE, starts: startsOf(SCOPE_LINES), ids: ['c1', 'c2', 'c3', 'c4'], node: <ScopeScene />},

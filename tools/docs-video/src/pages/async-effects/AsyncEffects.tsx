@@ -16,6 +16,7 @@ import {Clock, CodeBlock, glow, Headlines, lineMid, Lines, Pill, startsOf} from 
 import {ACCENT, f, FAIL, LOOK, MONO, MUTED, PANEL, PROD, SANS, TEST, TEXT} from '../../kit/theme';
 import {useSceneFrame} from '../../kit/warp';
 import DURATIONS from './durations.json';
+import NARRATION from './narration.json';
 
 type Point = {x: number; y: number};
 
@@ -575,7 +576,7 @@ const Outro: React.FC = () => {
 };
 
 // The scenes in order; Root.tsx registers ASYNC_EFFECTS.length frames of ASYNC_EFFECTS.Video.
-export const ASYNC_EFFECTS = narrate('async-effects', DURATIONS, [
+export const ASYNC_EFFECTS = narrate('async-effects', DURATIONS, NARRATION, [
   {length: INTRO, starts: startsOf(INTRO_LINES), ids: ['a1', 'a2', 'a3'], node: <IntroScene />},
   {length: SG, starts: startsOf(SG_LINES), ids: ['g1', 'g2', 'g3'], node: <SpawnGatherScene />},
   {length: TL, starts: startsOf(TL_LINES), ids: ['t1', 't2', 't3'], node: <TimelineScene />},

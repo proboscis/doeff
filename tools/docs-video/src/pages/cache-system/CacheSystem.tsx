@@ -16,6 +16,7 @@ import {CodeBlock, glow, Headlines, lineMid, Lines, Pill, startsOf} from '../../
 import {ACCENT, f, FAIL, LOOK, MONO, MUTED, PANEL, PROD, SANS, TEST, TEXT} from '../../kit/theme';
 import {useSceneFrame} from '../../kit/warp';
 import DURATIONS from './durations.json';
+import NARRATION from './narration.json';
 
 // Seen between two seconds of a scene: fades in at the first and out at the second.
 const between = (frame: number, from: number, to: number, length = 0.3) => fadeAt(frame, from, length) * (1 - fadeAt(frame, to, length));
@@ -617,7 +618,7 @@ const Outro: React.FC = () => {
 };
 
 // The scenes in order; Root.tsx registers CACHE_SYSTEM.length frames of CACHE_SYSTEM.Video.
-export const CACHE_SYSTEM = narrate('cache-system', DURATIONS, [
+export const CACHE_SYSTEM = narrate('cache-system', DURATIONS, NARRATION, [
   {length: INTRO, starts: startsOf(INTRO_LINES), ids: ['a1', 'a2', 'a3'], node: <IntroScene />},
   {length: MISS, starts: startsOf(MISS_LINES), ids: ['b1', 'b2', 'b3', 'b4', 'b5'], node: <MissScene />},
   {length: POLICY, starts: startsOf(POLICY_LINES), ids: ['c1', 'c2', 'c3', 'c4'], node: <PolicyScene />},

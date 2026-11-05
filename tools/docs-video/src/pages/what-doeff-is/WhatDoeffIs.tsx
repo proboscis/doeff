@@ -18,6 +18,7 @@ import {CodeBlock, glow, Headlines, highlightYield, lineMid, Lines, PAD, Pill, s
 import {ACCENT, f, FAIL, LOOK, MONO, MUTED, PANEL, PROD, SANS, TEST, TEXT} from '../../kit/theme';
 import {useSceneFrame} from '../../kit/warp';
 import DURATIONS from './durations.json';
+import NARRATION from './narration.json';
 
 // Seen between two seconds of a scene: fades in at the first and out at the second.
 const between = (frame: number, from: number, to: number, length = 0.3) => fadeAt(frame, from, length) * (1 - fadeAt(frame, to, length));
@@ -779,7 +780,7 @@ const OutroScene: React.FC = () => {
 };
 
 // The scenes in order; Root.tsx registers WHAT_DOEFF_IS.length frames of WHAT_DOEFF_IS.Video.
-export const WHAT_DOEFF_IS = narrate('what-doeff-is', DURATIONS, [
+export const WHAT_DOEFF_IS = narrate('what-doeff-is', DURATIONS, NARRATION, [
   {length: TITLE, starts: startsOf(TITLE_LINES), ids: ['t1', 't2', 't3'], node: <TitleScene />},
   {length: MECH, starts: startsOf(MECH_LINES), ids: ['m1', 'm2', 'm3', 'm4', 'm5'], node: <MechScene />},
   {length: STACK, starts: startsOf(STACK_LINES), ids: ['s1'], node: <StackScene />},
