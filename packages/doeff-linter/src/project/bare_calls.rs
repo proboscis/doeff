@@ -429,10 +429,23 @@ impl Walker<'_> {
                         _ => self.hy.text(f),
                     })
                     .unwrap_or("");
-                let context =
-                    Context { definition: hy_mangle(name), container: h.to_string(), bound: self.bare_bindings(form), module_level: false };
+                let context = Context {
+                    definition: hy_mangle(name),
+                    container: h.to_string(),
+                    bound: self.bare_bindings(form),
+                    shadowed: self.local_names(form),
+                    module_level: false,
+                };
                 for child in items.into_iter().skip(1) {
-                    self.walk(child, false, &context, out);
+                    match live(child) {
+                        // defsystem の job の行 `(名 Program の式 :欄 値 …)` の頭は job の名で、呼びではない(同じ名の defk が在っても)— 中だけを下る。
+                        Some(row) if h == "defsystem" && row.first().is_some_and(|head| matches!(head.node, Node::Symbol)) => {
+                            for part in row.into_iter().skip(1) {
+                                self.walk(part, false, &context, out);
+                            }
+                        }
+                        _ => self.walk(child, false, &context, out),
+                    }
                 }
             }
             _ => self.walk(
@@ -442,6 +455,7 @@ impl Walker<'_> {
                     definition: format!("<{}>", self.scope.module),
                     container: "module".to_string(),
                     bound: BTreeMap::new(),
+                    shadowed: BTreeSet::new(),
                     module_level: true,
                 },
                 out,
@@ -486,7 +500,7 @@ impl Walker<'_> {
         let items = live(form).unwrap_or_default();
         let head = items.first().and_then(|h| self.hy.head_text(h));
         let qualified = head.filter(|h| !h.starts_with(':')).map(|h| self.scope.qualify(h));
-        let is_defk = qualified.as_deref().is_some_and(|q| self.defks.contains(q));
+        let is_defk = qualified.as_deref().is_some_and(|q| self.defks.contains(q)) && !head.is_some_and(|h| context.shadowed.contains(h));
         // `(all.get k)` — 束ねた名の method を呼ぶのも、その名を答えとして使う所。
         if let Some((callee, span)) = head.and_then(|h| h.split_once('.')).and_then(|(name, _)| context.bound.get(name)) {
             out.push(BareCall { definition: context.definition.clone(), container: context.container.clone(), callee: callee.clone(), span: *span });
@@ -569,6 +583,9 @@ struct Context {
     definition: String,
     container: String,
     bound: BTreeMap<String, (String, ByteSpan)>,
+    /// 定義の中で局所に束ねた名(綴りのまま — 入れ子の deff・defn・defk の名・引数・束ねの的)。同じ綴りの呼びは局所の物を呼ぶので defk の呼びと読まない
+    /// (agora-controllers の検の中の `(deff mail-of …)` が、同じ file の最上位の defk mail-of を隠す)。
+    shadowed: BTreeSet<String>,
     /// 定義の外(module の最上位の式)を下っているか。定義の外には Program を走らせる所が無いので、`run` などの Program を受ける形
     /// (`MODULE_LEVEL_PROGRAM_HEADS`・doeff の package の呼び)と関数の本体(`MODULE_LEVEL_BODY_HEADS`)と quote の外にある defk の呼びは、
     /// 位置を問わず答えとして使う所(表の行・`+` の引数・repo の関数の引数・名への束ね)。
@@ -578,7 +595,13 @@ struct Context {
 impl Context {
     /// 定義の外の判定を外した写し(Program を受ける形・関数の本体・quote の中を、定義の中と同じ判定で下るため)。
     fn inside_definition(&self) -> Context {
-        Context { definition: self.definition.clone(), container: self.container.clone(), bound: self.bound.clone(), module_level: false }
+        Context {
+            definition: self.definition.clone(),
+            container: self.container.clone(),
+            bound: self.bound.clone(),
+            shadowed: self.shadowed.clone(),
+            module_level: false,
+        }
     }
 }
 
@@ -609,6 +632,69 @@ impl Walker<'_> {
             index += 1;
         }
         slots
+    }
+
+    /// 定義の中で局所に束ねた名(引数・入れ子の定義の名と引数・束ねの的)— 同じ綴りの呼びは defk の呼びと読まない。
+    fn local_names(&self, definition: &Form) -> BTreeSet<String> {
+        let mut names = BTreeSet::new();
+        let items = live(definition).unwrap_or_default();
+        // 定義の自分の名は隠さない(自分を呼び直す defk は defk の呼び)— 引数と本体の中の束ねだけを集める。
+        let mut body_at = if items.get(1).is_some_and(|first| first.bracket_items().is_some()) { 3 } else { 2 };
+        // 引数の並びの無い定義(`(deftest 名 本体 …)`)もある — 本体の最初の form を引数と読まない。
+        if let Some(params) = items.get(body_at).filter(|p| p.bracket_items().is_some()) {
+            self.param_names(params, &mut names);
+            body_at += 1;
+        }
+        let mut pending: Vec<&Form> = items.iter().skip(body_at).copied().collect();
+        while let Some(form) = pending.pop() {
+            pending.extend(children(form));
+            let Some(parts) = live(form) else { continue };
+            match parts.first().and_then(|h| self.hy.head_text(h)) {
+                Some("deff" | "defn" | "defn/a" | "defk" | "defmacro") => {
+                    if let Some(name) = parts.get(1).and_then(|f| self.bound_symbol(f)) {
+                        names.insert(name.to_string());
+                    }
+                    if let Some(params) = parts.get(2) {
+                        self.param_names(params, &mut names);
+                    }
+                }
+                Some("fn" | "fnk" | "fn/a") => {
+                    if let Some(params) = parts.get(1) {
+                        self.param_names(params, &mut names);
+                    }
+                }
+                Some(h) if PLAIN_BINDING_HEADS.contains(&h) => {
+                    names.extend(parts[1..].iter().step_by(2).filter_map(|t| self.bound_symbol(t)).map(str::to_string));
+                }
+                Some("<-") if parts.len() >= 3 => names.extend(parts.get(1).and_then(|t| self.hy.symbol(t)).map(str::to_string)),
+                Some("let" | "for") => {
+                    let pairs = parts.get(1).and_then(|b| b.bracket_items()).map(super::smells::live_items).unwrap_or_default();
+                    names.extend(pairs.iter().step_by(2).filter_map(|t| self.bound_symbol(t)).map(str::to_string));
+                }
+                _ => {}
+            }
+        }
+        names
+    }
+
+    /// 引数の並び `[a #^ T b [c 1] #* rest]` の名(綴りのまま)。
+    fn param_names(&self, params: &Form, names: &mut BTreeSet<String>) {
+        for param in params.bracket_items().map(super::smells::live_items).unwrap_or_default() {
+            let name = match &param.node {
+                Node::Seq { delim: Delim::Bracket, .. } => param.bracket_items().and_then(|i| i.first()).and_then(|f| self.bound_symbol(f)),
+                Node::Prefixed { inner: Some(inner), .. } => self.bound_symbol(inner),
+                _ => self.bound_symbol(param),
+            };
+            names.extend(name.map(str::to_string));
+        }
+    }
+
+    /// 束ねの的の名(記号か `#^ T 名` の名)。
+    fn bound_symbol(&self, form: &Form) -> Option<&str> {
+        match &form.node {
+            Node::Annotated { target: Some(target), .. } => self.hy.symbol(target),
+            _ => self.hy.symbol(form),
+        }
     }
 
     /// 定義の中で、defk の素の呼びを `setv`・`val`・`var`・`:=`・`let` で名に束ねた所を集める。同じ名を `(<- 名 …)` でも束ねる定義では
@@ -788,7 +874,7 @@ mod tests {
     }
 
     /// 受ける引数が Program を受けるかもしれない時は拾わない: 型の註の無い引数・Program・object・知らない別名・型の引数のある union の枝、
-    /// `#*` の後の位置、`<-` か `!` で値にしてから渡す形。
+    /// `#*` の後の位置、`<-` か `!` で値にしてから渡す形、局所の `deff` が同じ綴りの defk を隠す呼び、defsystem の job の行の頭(job の名)。
     #[test]
     fn bare_defk_calls_passed_where_the_receiving_defk_may_take_programs_are_not_found() {
         let source = r#"(defrecord Row "行" (#^ str word))
@@ -810,7 +896,13 @@ mod tests {
   (<- rows (rows-of n))
   (<- g (count-of rows))
   (<- h (count-of (! (rows-of n))))
-  #(a b c d e f g h))"#;
+  #(a b c d e f g h))
+(deftest test-local-function-hides-the-defk
+  (deff rows-of [n] {:pre [(: n int)] :post [(: % tuple)]} #())
+  (<- counted (count-of (rows-of 1)))
+  counted)
+(defsystem jobs [foundation]
+  (rows-of (rows-of foundation) :replicas 1))"#;
         assert!(found_in_repo(source).is_empty(), "{:?}", found_in_repo(source));
     }
 
