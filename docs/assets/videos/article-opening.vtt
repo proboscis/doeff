@@ -1,0 +1,45 @@
+WEBVTT
+
+o1.1
+00:00:00.250 --> 00:00:03.400
+This is one function: a small card fight.
+
+o1.2
+00:00:03.400 --> 00:00:09.250
+It asks for dice, a player, a screen and a count. It never says who answers.
+
+o2.1
+00:00:09.800 --> 00:00:11.600
+Each question is an effect.
+
+o2.2
+00:00:11.600 --> 00:00:17.600
+It travels out to a handler, and the handler also gets the rest of the function, called k.
+
+o3
+00:00:19.600 --> 00:00:25.600
+Stack handlers around it. A scripted player and a screen give the same fight on every run.
+
+o4
+00:00:27.100 --> 00:00:32.350
+Swap in a random bot and take the screen away. The function does not change.
+
+o5
+00:00:34.600 --> 00:00:40.700
+Add a recorder, and thirty-two answers replay the whole fight, with no dice and no player.
+
+o6
+00:00:45.600 --> 00:00:52.250
+A Monte Carlo bot answers a question by running the fight itself, while the fight that asked waits as k.
+
+o7.1
+00:00:56.600 --> 00:01:00.133
+Run a hundred fights at once, each with its own dice.
+
+o7.2
+00:01:00.133 --> 00:01:05.200
+The random bot wins seventy-three. The Monte Carlo bot wins all one hundred.
+
+o8
+00:01:13.250 --> 00:01:20.300
+One function, unchanged, in every stack. That is algebraic effects in Python, with doeff.

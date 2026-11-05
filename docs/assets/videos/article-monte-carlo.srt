@@ -1,0 +1,35 @@
+1
+00:00:00,250 --> 00:00:06,050
+The fight pauses at a Choose. The handler holds the rest of the fight as k.
+
+2
+00:00:06,600 --> 00:00:13,100
+To answer, it runs battle itself: the same function a person plays. It needs no model of the game.
+
+3
+00:00:13,650 --> 00:00:16,567
+For each card it can play, and for ending the turn,
+
+4
+00:00:16,567 --> 00:00:20,950
+it plays that card on the state, then runs the rest of the fight three times.
+
+5
+00:00:22,250 --> 00:00:27,900
+Each run has a stack of its own, so it does not use up the dice of the paused fight.
+
+6
+00:00:29,650 --> 00:00:36,300
+The handler counts the wins. Here every move wins all three. The paused fight has not moved.
+
+7
+00:00:36,850 --> 00:00:43,750
+With a tie it keeps the first move, Bash. It resumes k with it, and the fight goes on.
+
+8
+00:00:44,300 --> 00:00:51,117
+On seed 3, the bot answers eleven Chooses with a hundred and sixty-five playouts,
+
+9
+00:00:51,117 --> 00:00:53,550
+in about a fifth of a second.
