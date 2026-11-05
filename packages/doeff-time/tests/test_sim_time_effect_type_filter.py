@@ -1,8 +1,8 @@
-"""模擬の時計の handler の effect の引数の型の註の検。
+"""Test of the effect argument type annotations of the simulated clock handler.
 
-VM は handler の effect の引数の型の註を install の時に読み(doeff_vm._effect_types・SPEC-WITHHANDLER-TYPE-FILTER)、型の外の effect では
-その handler を Python に入らずに外へ渡す。模擬の時計の `handle` は、扱う型の外の effect を最後の `Pass` で外へ渡すだけなので、註を足しても
-答えと順は変わらず、本体に入る回数だけが減る。
+The VM reads the effect argument type annotations of a handler at install time (doeff_vm._effect_types, SPEC-WITHHANDLER-TYPE-FILTER), and for effects outside the types
+passes them outward without entering Python for that handler. The simulated clock `handle` only passes effects outside its handled types outward with the final `Pass`, so adding annotations
+does not change answers or order; only the number of times the body is entered decreases.
 """
 
 import sys
@@ -31,20 +31,20 @@ from doeff import do, handler_effect_types
 
 
 def _raw(installed: object) -> Callable[..., object]:
-    """Program -> Program の handler の値が包む、VM が呼ぶ handler の関数(doeff.program.handler が置く欄)。"""
-    return installed.__doeff_handler_data__  # type: ignore[attr-defined] — doeff.program.handler が置く欄(型の無い欄)
+    """The handler function the VM calls, wrapped by the value of a Program -> Program handler (the field doeff.program.handler places)."""
+    return installed.__doeff_handler_data__  # type: ignore[attr-defined] — field placed by doeff.program.handler (an untyped field)
 
 
 @dataclass(frozen=True)
 class Entered:
-    """run の間に code の関数が始まった回数(entered)と、run の答え(result)。"""
+    """Number of times a code function started during run (entered), and the answer of run (result)."""
 
     entered: int
     result: object
 
 
 def _entries(code: CodeType, run: Callable[[], object]) -> Entered:
-    """run の間に code の関数が始まった回数と、run の答え。本体は generator なので再開ごとにも call の事象が出る — frame の同一性で数える。"""
+    """Number of times a code function started during run, and the answer of run. The body is a generator, so a call event also occurs at each resumption -- count by frame identity."""
     frames: dict[int, FrameType] = {}
 
     def profile(frame: FrameType, event: str, _arg: object) -> None:
@@ -68,7 +68,7 @@ def _asks_then_time():
     return a + b + c, now
 
 
-_HANDLE = SimTimeRuntime.handle.__wrapped__.__code__  # type: ignore[attr-defined] — @do の functools.wraps が置く欄
+_HANDLE = SimTimeRuntime.handle.__wrapped__.__code__  # type: ignore[attr-defined] — field placed by functools.wraps of @do
 
 
 def test_the_clock_declares_the_effects_it_answers() -> None:
@@ -87,7 +87,7 @@ def test_the_clock_declares_the_effects_it_answers() -> None:
 
 
 def test_an_effect_outside_the_types_does_not_enter_the_clock() -> None:
-    # 時計は一番内側: Ask は時計を飛ばして外の reader に届く
+    # The clock is innermost: Ask skips the clock and reaches the outer reader
     seen = _entries(
         _HANDLE,
         lambda: run_with_handlers(
@@ -95,4 +95,4 @@ def test_an_effect_outside_the_types_does_not_enter_the_clock() -> None:
         ),
     )
     assert seen.result == (6, sim_time(7.0))
-    assert seen.entered == 1, "時計の本体に入るのは GetTime の 1 回だけ(Ask 3 回は飛ばす)"
+    assert seen.entered == 1, "the clock body is entered only once, for GetTime (the 3 Ask calls are skipped)"

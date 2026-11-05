@@ -3,7 +3,7 @@
 (require doeff-hy.macros [deftest])
 
 (import hy)
-;; pytest の item の記録の口(記録の形の定義元は doeff_hy/_pytest_items.py)
+;; Entry point for pytest item records (the record shape is defined in doeff_hy/_pytest_items.py)
 (import doeff-hy._pytest-items [record-function :as _record-test-function])
 
 (defn _kw-text [x]
@@ -44,7 +44,7 @@
       (do
         (.append emitted item)
         (setv test-name (_inline-enforcement-name item))
-        ;; deftest の検は import の時に effect RegisterDeftest として adr_registry の下で載せる。
+        ;; The deftest check is registered at import time under adr_registry as the effect RegisterDeftest.
         (.append emitted
           `(_doeff-adr-run
              ((_doeff-adr.adr-registry)
@@ -67,9 +67,9 @@
 
 (defmacro defsemgrep [name #* forms]
   "Define a Semgrep enforcement with bad/good fixtures and a pytest check."
-  ;; 展開は、載せを import の時に、検を生まれる test の中で、effect RegisterSemgrep と AssertSemgrep として handler
-  ;; semgrep_enforcements の下で走らせる— project の doeff_interpreter fixture に頼らないので、外の repo の
-  ;; defsemgrep は doeff の版を上げるだけで動く。名は使い手の module の名と重ならない _doeff-adr-run と _doeff-adr. で読む。
+  ;; The expansion runs registration at import time, and the check inside the generated test, as the effects RegisterSemgrep and AssertSemgrep under the handler
+  ;; semgrep_enforcements — it does not depend on the project's doeff_interpreter fixture, so a defsemgrep in an outside repo
+  ;; works just by bumping the doeff version. Names are read as _doeff-adr-run and _doeff-adr., which do not collide with names in the user's module.
   (setv semgrep-imports
     ['(import doeff [run :as _doeff-adr-run])
      '(import doeff-adr :as _doeff-adr)])
@@ -162,10 +162,9 @@
   (setv plans (.get data "plans" `[]))
   (setv test-name (_test-symbol "test_" (+ (_symbol-text name) "_adr_contract")))
   (setv item-record (_record-test-function test-name [] []))
-  ;; deftest の検の載せと ADR の形の確かめは、effect RegisterDeftest・AssertAdrContract として handler adr_registry の下で
-  ;; 走らせる— defsemgrep と同じく project の doeff_interpreter fixture に頼らず、名は使い手の module の
-  ;; 名と重ならない _doeff-adr-run と _doeff-adr. で読む。ADR の載せも import の時に effect RegisterAdr として同じ handler の
-  ;; 下で走らせる。
+  ;; Registration of deftest checks and verification of the ADR shape run as the effects RegisterDeftest and AssertAdrContract under the handler adr_registry
+  ;; — like defsemgrep, they do not depend on the project's doeff_interpreter fixture, and names are read as _doeff-adr-run and _doeff-adr.,
+  ;; which do not collide with names in the user's module. ADR registration also runs at import time as the effect RegisterAdr under the same handler.
   `(do
      (import doeff_adr._registry [enforcement-ref])
      (import doeff [run :as _doeff-adr-run])
@@ -189,12 +188,12 @@
      ~item-record))
 
 (defn #^ (get dict #(str object)) fact [#^ str text #^ object #** extra]
-  "ADR の事実の項を登録簿の形で作るため(defadr の :facts に並べる)。"
+  "Build an ADR fact item in the registry shape (list it in defadr :facts)."
   (import doeff_adr._registry [make-fact])
   (make-fact text #** extra))
 
 (defn #^ (get dict #(str object)) interpretation [#^ str text #^ object #** extra]
-  "ADR の解釈の項を登録簿の形で作るため(defadr の :interpretations に並べる)。"
+  "Build an ADR interpretation item in the registry shape (list it in defadr :interpretations)."
   (import doeff_adr._registry [make-interpretation])
   (make-interpretation text #** extra))
 
@@ -204,7 +203,7 @@
      (make-rule ~(hy.models.String (str rule-id)) ~text ~@forms)))
 
 (defn #^ (get dict #(str object)) counterexample [#^ str text #^ object #** extra]
-  "ADR の反例の項を登録簿の形で作るため(law の :counterexamples に並べる)。"
+  "Build an ADR counterexample item in the registry shape (list it in a law's :counterexamples)."
   (import doeff_adr._registry [make-counterexample])
   (make-counterexample text #** extra))
 

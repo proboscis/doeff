@@ -401,11 +401,11 @@ def test_hy_file_under_a_workspace_package_dir_imports_from_its_package_base(
 def test_a_collected_module_is_importable_by_dotted_name_from_a_later_test(
     pytester: pytest.Pytester,
 ) -> None:
-    """dir ごとの glob(``app/proto/*.hy``)で集めた module を、後で集める test が dotted name で
-    ``(import app.proto.policy :as policy)`` と読んでも落ちない。集める時に module を ``sys.modules`` へ置くだけで、
-    親の package(``app.proto``)を import せず親の属性にも結ばないと、``import a.b.c :as x`` は親の属性を引いて
-    ImportError になる(agora-controllers の classifier の protocol の glob で出た)。
-    親を持つ dir と、``__init__`` の無い namespace の dir の両方で確かめる。"""
+    """Modules collected by a per-dir glob (``app/proto/*.hy``) must not fail when a test collected later reads them by dotted name as
+    ``(import app.proto.policy :as policy)``. If collection only places the module in ``sys.modules``,
+    without importing the parent package (``app.proto``) or binding it as an attribute of the parent, ``import a.b.c :as x`` looks up the attribute of the parent and
+    raises ImportError (seen in the protocol glob of the classifier in agora-controllers).
+    Check both a dir that has a parent and a namespace dir without ``__init__``."""
     pytester.makepyprojecttoml(
         """\
         [tool.pytest.ini_options]
@@ -437,9 +437,9 @@ def test_a_collected_module_is_importable_by_dotted_name_from_a_later_test(
 def test_parametrize_marks_on_hy_tests_expand_into_items(
     pytester: pytest.Pytester,
 ) -> None:
-    """deftest の ``:interpreters`` / ``:params`` は ``pytest.mark.parametrize`` を付ける。Hy の file の収集がそれを
-    展開せずに関数を 1 つだけ作ると、parametrize の fixture は既定の値のまま 1 本だけ走る(ADR-DOE-HY-002 R2 の違反・
-    2026-09-25)。展開されれば値ごとに 1 本ずつ走り、値は関数の引数に届く。"""
+    """``:interpreters`` / ``:params`` of deftest attach ``pytest.mark.parametrize``. If collection of a Hy file does not
+    expand it and creates only one function, the parametrize fixture runs just once with its default value (a violation of ADR-DOE-HY-002 R2,
+    2026-09-25). When expanded, it runs once per value and the value reaches the function argument."""
     pytester.makepyprojecttoml(
         """\
         [tool.pytest.ini_options]

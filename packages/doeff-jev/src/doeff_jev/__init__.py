@@ -1,4 +1,4 @@
-"""doeff-jev — TypeSafe Jev(と同じ契約の宛先)で doeff-system-one の Judge を判定する handler。"""
+"""doeff-jev: a handler that judges doeff-system-one's Judge with TypeSafe Jev (or a destination with the same contract)."""
 
 from doeff_jev._handlers import (
     jev_handler as jev_handler,

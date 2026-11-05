@@ -1,4 +1,4 @@
-"""収集 session の状態と、pytest 内部の所有境界を確認する (#1551)。"""
+"""Check the state of the collection session and the ownership boundary of pytest internals (#1551)."""
 
 import json
 import subprocess
@@ -79,7 +79,7 @@ def test_collection_internals_have_one_owner_with_repo_fixtures(tmp_path: Path) 
         check=False,
     )
     assert result.returncode == 0, result.stdout + result.stderr
-    # 所有 module は例外ではなく、唯一の検査対象外の所有者として宣言されている。
+    # The owning module is declared not as an exception but as the only owner outside the check target.
     assert rule["paths"]["exclude"] == ["**/doeff_adr/_indexed_pytest.py"]
     found = subprocess.run(
         [

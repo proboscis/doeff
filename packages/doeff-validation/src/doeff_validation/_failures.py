@@ -1,10 +1,10 @@
-"""doeff-validation の値の型 — 検査の指定(``Check``)と実行の印(``Perform``)と失敗の記録と
-``ValidationException``。
+"""Value types of doeff-validation — the check specification (``Check``), the execution mark (``Perform``), the failure records, and
+``ValidationException``.
 
-``Check`` は ``validate`` に渡す値で、単独では Program にならない(``yield`` できない)。
-これが「check は validate の直下にだけ書ける」を Python の型で表したもの。
+``Check`` is a value passed to ``validate`` and is not a Program on its own (it cannot be ``yield``ed).
+This expresses "check can be written only directly under validate" as a Python type.
 
-設計の記録: ``docs/design/doeff-validation/design.md``。
+Design record: ``docs/design/doeff-validation/design.md``.
 """
 
 from collections.abc import Callable
@@ -15,16 +15,16 @@ from doeff import DoExpr, EffectBase
 
 
 def _is_program(value: object) -> bool:
-    """値が Program か効果か(Perform の引数・validate の項目の確かめと、判定の値の取り違えの検出に使う)。"""
+    """Whether the value is a Program or an effect (used to validate Perform arguments and validate items, and to detect a mix-up of verdict values)."""
     return isinstance(value, (DoExpr, EffectBase))
 
 
 @dataclass(frozen=True)
 class CheckArgument:
-    """検査に渡す引数 1 つ — 書いた字面と、項目の中で評価する thunk と、効果の印。
+    """One argument passed to a check — the source text as written, a thunk evaluated inside the item, and the effect mark.
 
-    ``perform`` が真(Hy の ``(! …)`` / Python の ``Perform(…)``)なら thunk の値は Program か効果で、
-    項目の中で実行した結果の値を比べる。偽なら thunk の値をそのまま比べる(Program の値でも実行しない)。
+    ``perform`` true (Hy ``(! …)`` / Python ``Perform(…)``) means the thunk value is a Program or an effect, and
+    the value from executing it inside the item is compared. If false, the thunk value is compared as-is (a Program value is not executed either).
     """
 
     source: str
@@ -34,10 +34,10 @@ class CheckArgument:
 
 @dataclass(frozen=True)
 class Perform:
-    """Python の Check で、引数を効果として項目の中で実行する印(Hy の ``(! …)`` に当たる)。
+    """Mark in a Python Check that executes the argument as an effect inside the item (corresponds to Hy ``(! …)``).
 
-    ``Check(operator.eq, Perform(CountSeats(node)), 0)`` — 印の無い引数は、Program の値でも実行せず
-    そのまま比べる。
+    ``Check(operator.eq, Perform(CountSeats(node)), 0)`` — an argument without the mark is compared as-is,
+    without being executed, even if it is a Program value.
     """
 
     program: object
@@ -45,22 +45,22 @@ class Perform:
     def __post_init__(self) -> None:
         if not _is_program(self.program):
             raise TypeError(
-                f"Perform: Program か効果を渡してください — {type(self.program).__name__}"
+                f"Perform: pass a Program or an effect — {type(self.program).__name__}"
             )
 
 
 def _callable_name(fn: Callable[..., object]) -> str:
-    """Check の式の字面に使う、述語の名前。"""
+    """Name of the predicate, used in the source text of a Check expression."""
     if isinstance(fn, (FunctionType, BuiltinFunctionType, MethodType)):
         return fn.__name__
     return repr(fn)
 
 
 def _check_argument(value: object) -> CheckArgument:
-    """Check の引数を CheckArgument にする(``Perform`` の印があれば効果として実行する)。
+    """Turn a Check argument into a CheckArgument (execute it as an effect if it has the ``Perform`` mark).
 
-    CheckArgument はそのまま使う — Hy の check の展開は、評価を項目の中へ遅らせる thunk と書いたままの
-    字面を CheckArgument で渡す。
+    A CheckArgument is used as-is — the Hy check expansion passes a thunk that defers evaluation into the item, together with the
+    source text as written, as a CheckArgument.
     """
     match value:
         case CheckArgument():
@@ -73,12 +73,12 @@ def _check_argument(value: object) -> CheckArgument:
 
 @dataclass(frozen=True, init=False)
 class Check:
-    """検査 1 件の指定。``validate`` の直下の項目としてだけ意味を持つ(単独では Program にならない)。
+    """Specification of one check. It is meaningful only as an item directly under ``validate`` (not a Program on its own).
 
-    ``Check(operator.eq, job.phase, Phase.PENDING, reason=R)`` — 各引数は普通の値か、
-    ``Perform(program)`` の印を付けた効果。印の付いた引数は項目の中で実行し、結果の値を
-    ``predicate`` に渡して、その値の真偽で判定する。``expression`` を渡さなければ、述語の名前と各引数の
-    字面から式の字面を作る。
+    ``Check(operator.eq, job.phase, Phase.PENDING, reason=R)`` — each argument is a plain value or
+    an effect marked with ``Perform(program)``. A marked argument is executed inside the item and its result value is
+    passed to ``predicate``, and the truthiness of that value is the verdict. If ``expression`` is not given, the expression text is built from the predicate name and
+    the source text of each argument.
     """
 
     expression: str
@@ -95,7 +95,7 @@ class Check:
     ) -> None:
         if not callable(predicate):
             raise TypeError(
-                "Check: 第 1 引数には述語(callable)を渡してください — Check(operator.eq, a, b)"
+                "Check: pass a predicate (callable) as the first argument — Check(operator.eq, a, b)"
             )
         arguments = tuple(_check_argument(a) for a in args)
         object.__setattr__(
@@ -110,7 +110,7 @@ class Check:
 
 @dataclass(frozen=True)
 class EvaluatedArgument:
-    """落ちた検査の引数 1 つ — 書いた字面と、評価した後の値(効果の印があれば実行した結果)。"""
+    """One argument of a failed check — the source text as written, and the value after evaluation (the result of executing it if it had the effect mark)."""
 
     source: str
     value: object
@@ -118,14 +118,14 @@ class EvaluatedArgument:
 
 @dataclass(frozen=True)
 class CheckFailure:
-    """判定が偽だった検査 1 件の記録(式の字面・評価した後の各引数の値・理由)。"""
+    """Record of one check whose verdict was false (expression text, evaluated argument values, reason)."""
 
     expression: str
     arguments: tuple[EvaluatedArgument, ...]
     reason: object | None
 
     def describe(self) -> str:
-        """例外のメッセージの 1 行 — pytest の assert のように、式と各引数の値を並べる。"""
+        """One line of the exception message — like pytest assert, lists the expression and the values of each argument."""
         values = "  ".join(f"{arg.source} = {arg.value!r}" for arg in self.arguments)
         reason = f"  [{self.reason}]" if self.reason is not None else ""
         return f"{self.expression}{'  ' + values if values else ''}{reason}"
@@ -133,9 +133,9 @@ class CheckFailure:
 
 @dataclass(frozen=True)
 class CheckError:
-    """引数か判定の評価が例外で落ちた検査 1 件の記録(その項目の失敗として集める)。
+    """Record of one check that failed because evaluating an argument or the verdict raised an exception (collected as that item's failure).
 
-    ``evaluated`` は落ちる前に評価できた引数。
+    ``evaluated`` holds the arguments that could be evaluated before the failure.
     """
 
     expression: str
@@ -144,20 +144,20 @@ class CheckError:
     reason: object | None
 
     def describe(self) -> str:
-        """例外のメッセージの 1 行 — 式と、評価の途中で投げられた例外を並べる。"""
+        """One line of the exception message — lists the expression and the exception raised midway through evaluation."""
         values = "  ".join(f"{arg.source} = {arg.value!r}" for arg in self.evaluated)
         reason = f"  [{self.reason}]" if self.reason is not None else ""
         return (
             f"{self.expression}{'  ' + values if values else ''}"
-            f"  評価が失敗: {type(self.error).__name__}: {self.error}{reason}"
+            f"  evaluation failed: {type(self.error).__name__}: {self.error}{reason}"
         )
 
 
-class ValidationException(Exception):  # noqa: N818 - operator が名指した名前
-    """``validate`` の項目のどれかが落ちた。落ちた項目の失敗を項目の順に全部持つ。
+class ValidationException(Exception):  # noqa: N818 - name specified by the operator
+    """One of the ``validate`` items failed. Holds the failures of the failed items, all of them, in item order.
 
-    ``failures`` の要素は ``CheckFailure``(判定が偽)・``CheckError``(評価が例外)・入れ子の
-    ``ValidationException``(Program の項目の中の ``validate`` が落ちた — 1 件として数える)。空にならない。
+    The elements of ``failures`` are ``CheckFailure`` (verdict false), ``CheckError`` (evaluation raised), and nested
+    ``ValidationException`` (a ``validate`` inside a Program item failed — counted as one failure). Never empty.
     """
 
     def __init__(
@@ -165,7 +165,7 @@ class ValidationException(Exception):  # noqa: N818 - operator が名指した�
         failures: "tuple[CheckFailure | CheckError | ValidationException, ...]",
         context: str | None = None,
     ) -> None:
-        """``context`` はどこの検査か(契約なら ``"<関数名> pre-condition"`` など)。"""
+        """``context`` is where the check is (for a contract, e.g. ``"<function name> pre-condition"``)."""
         if not failures:
             raise ValueError("ValidationException requires at least one failure")
         self.failures = failures
@@ -174,25 +174,25 @@ class ValidationException(Exception):  # noqa: N818 - operator が名指した�
 
     @property
     def reasons(self) -> list[object | None]:
-        """直下の失敗の理由の列。入れ子の失敗はその ``ValidationException`` そのもの。"""
+        """Reasons of the direct failures. A nested failure is that ``ValidationException`` itself."""
         return [f if isinstance(f, ValidationException) else f.reason for f in self.failures]
 
     def _message(self) -> str:
-        """全部の失敗を 1 行ずつ並べたメッセージ(入れ子は字下げして中の失敗を並べる)。"""
+        """Message listing all failures one per line (nested ones are indented to list the failures inside)."""
         where = f"{self.context}: " if self.context else ""
-        lines = [f"{where}{len(self.failures)} 件の検査が落ちました:"]
+        lines = [f"{where}{len(self.failures)} checks failed:"]
         for failure in self.failures:
             match failure:
                 case ValidationException():
                     nested = str(failure).replace("\n", "\n    ")
-                    lines.append(f"  入れ子の validate: {nested}")
+                    lines.append(f"  nested validate: {nested}")
                 case CheckFailure() | CheckError():
                     lines.append(f"  {failure.describe()}")
         return "\n".join(lines)
 
 
 class ItemFailedError(Exception):
-    """check の項目が落ちた合図(項目だけを止める)。``validate`` の中だけで使う内部の例外。"""
+    """Signal that a check item failed (stops only that item). An internal exception used only inside ``validate``."""
 
     def __init__(self, failure: CheckFailure | CheckError) -> None:
         super().__init__(failure.describe())

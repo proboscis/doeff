@@ -21,7 +21,7 @@ classifiers = [
 ]
 
 dependencies = [
-    # extra hy — env_places が Hy で書いた process の effect(doeff_core_effects._os_process)を読む。
+    # extra hy — reads the process effect that env_places wrote in Hy (doeff_core_effects._os_process).
     "doeff[hy]>=0.1.9",
     "doeff-time",
     "click>=8.0.0",

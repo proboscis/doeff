@@ -1,44 +1,44 @@
-"""doeff-traverse の examples/ の例が script として最後まで走り、期待どおりの結果を印字する事の検。
+"""Tests that the examples in doeff-traverse's examples/ run to the end as scripts and print the expected results.
 
-例は `hy examples/<名>.hy` で走らせる読み物で、どの検も走らせていなかったので、doeff-hy の macro が変わっても
-誰も気づかなかった: 2026-04-07 の fa37eaaf1 が fold macro を消し、defk の :pre/:post を必須にした後、
-ex09_for_do_when.hy は使ってもいない fold の require で落ちていた。
+An example is reading material run with `hy examples/<name>.hy`, and no test ran them, so nobody noticed when a doeff-hy macro changed:
+after fa37eaaf1 on 2026-04-07 removed the fold macro and made defk's :pre/:post mandatory,
+ex09_for_do_when.hy was failing on a require of fold that it did not even use.
 
-examples/ の `.hy` は全部この検に入る(新しい例も書いただけで入る)。今の macro で走らない例は BROKEN の表に
-理由つきで置き、表の例は今も落ちる事を確かめる — 直した例が表に残ると赤になり、行を外せと名指す。
+Every `.hy` in examples/ is covered by this test (a new example is covered just by being written). An example that does not run with the current macros is put in the BROKEN table
+with a reason, and we check that the examples in the table still fail — a fixed example left in the table turns red and names the row to remove.
 
-終了コードだけでは足りない: Traverse の handler は件の中の例外を件の失敗として記録して先へ進むので、macro の
-展開が件の中で壊れても例は 0 で終わる(When の展開が引く名を
-変えると、ex09 は件を skipped ではなく failed と印字して 0 で終わった)。走る例は標準出力を expected/<stem>.txt と
-比べる。走るたびに変わる所(実時間・lib の traceback)は、期待の出力の側で印に置き換える — どこが変わるかは例の
-持ち分で、検は印の意味だけを知る。印は種類ごとに呑める物が決まっていて(行だけの ANY は traceback の frame の行・行の
-中の印は MARKS の形の文字列)、件の結果の行を呑む印は赤になる。書いた木の上では毎回同じに出て、
-別の木・別の機体や答えを変えない変更で外れる物(checkout や機体の path・Hy の付ける名・frame の行)は、期待の出力に
-置かない(UNPLACEABLE)。機体の時間帯は子の側で決めた値にする(CHILD_TIME_ZONE)ので、地方時の印字は機体に依らない。
+The exit code alone is not enough: the Traverse handler records an exception inside an item as that item's failure and moves on, so
+an example exits 0 even if a macro's expansion is broken inside an item (when the name the When expansion pulls was
+changed, ex09 printed the item as failed rather than skipped and exited 0). For examples that run, stdout is compared with expected/<stem>.txt.
+Parts that change on every run (wall-clock time, lib tracebacks) are replaced by marks on the expected-output side — which parts change is the
+example's responsibility, and the test knows only the meaning of the marks. Each kind of mark has a fixed set of things it may swallow (a line-only ANY swallows traceback frame lines; a mark
+inside a line is a string of a MARKS form), and a mark that swallows an item-result line turns red. Things that come out the same every time on the tree where they were written but
+come loose on another tree, another machine, or a change that does not alter the answer (checkout or machine paths, names Hy assigns, frame lines) are not
+placed in the expected output (UNPLACEABLE). The machine time zone is fixed to a value chosen on the child side (CHILD_TIME_ZONE), so printing local time does not depend on the machine.
 
-件の中の失敗が比べる出力に出る事は、例ごとに、Traverse の走りごとに最初の件を件の中で失敗させる子
-(run_example_failing_a_case.py)で確かめる — その子の出力は期待の出力に合わない。失敗は例の
-source を書き換えずに起こすので、出力を変えない例の中の書き換えで検の file を直す事は無い。同じ子が実行の印 — 件の関数を
-呼んだ数と doeff の run で Program を走らせた数 — を数える: 件を走らせず、macro の展開や関数の番地など doeff-hy・Hy の
-中身だけを印字する debug 用の file は例ではなく、examples/ に置かない(ex04_debug2 を
-外した)。例は Program を走らせ、件を 1 つも走らせない例は NO_CASES に理由つきで置く。走った数で確かめるので、名だけ
-在って走らない run(呼ばない関数の中・quote の中)は数えない(名で数える検を、実行の印に替えた)。
+That a failure inside an item shows up in the compared output is checked, per example, by a child that fails the first item inside the item on each Traverse run
+(run_example_failing_a_case.py) — that child's output does not match the expected output. The failure is caused without rewriting the example's
+source, so there is no case of fixing the test file through a rewrite inside the example that does not change the output. The same child counts a run marker — the number of
+times the item function was called and the number of Programs run by doeff's run: a debug file that runs no item and prints only the internals of doeff-hy and Hy,
+such as macro expansions and function addresses, is not an example and is not placed in examples/ (ex04_debug2 was
+removed). An example runs a Program, and an example that runs no item is put in NO_CASES with a reason. Because it checks by the number that ran, a run that merely exists by name
+but does not run (inside an uncalled function, inside a quote) is not counted (the test that counted by name was replaced by the run marker).
 
-macro の持ち主は doeff-hy で、例は doeff-hy の macro だけを使う: 消えた macro を例の中で定義し直すと、例は利用者が
-使えない書き方を教え、doeff-hy の変更も届かない(同じ設計検証の盲検 B — fold を例の中の defmacro で戻した ex04 は
-走った)。例の中の macro の定義と、doeff-hy の外からの require を断る。展開の形も doeff-hy の隠す中身で、例が
-印字すると答えを変えない macro の変更で例が赤になるので、展開の引き出し(hy.macroexpand)も断る。引き出さずに展開を
-文字列で写して印字する例は、macro が変わっても赤にならずに古い展開を教える — 写しは展開の形の印(Hy・doeff-hy の隠す名と、
-展開が module を引く __import__)を持つので、期待の出力に置かせない。例が使う doeff-hy の macro の展開がどれもその印を持つ
-事も、使い所を 1 つずつ文脈の外で展開して確かめる — 印の無い展開の macro(val など)は UNMARKED_EXPANSIONS に理由つきで
-置き、文脈の外で展開を断る入れ子の使い所は、引き出して写せる形が無いので数えない。
+The macro owner is doeff-hy, and examples use only doeff-hy macros: redefining a removed macro inside an example teaches users a form
+they cannot use, and changes in doeff-hy do not reach it either (blind B of the same design review — ex04, which restored fold with a defmacro inside the example,
+ran). Macro definitions inside an example and requires from outside doeff-hy are rejected. The shape of an expansion is also an internal detail doeff-hy hides, and if an example
+prints it, a macro change that does not alter the answer turns the example red, so pulling out an expansion (hy.macroexpand) is rejected too. An example that copies an expansion as a string and prints it
+without pulling it out would not turn red when the macro changes and would teach a stale expansion — a copy carries marks of the expansion shape (names that Hy and doeff-hy hide, and
+the __import__ with which an expansion pulls a module), so it is not allowed in the expected output. That every expansion of a doeff-hy macro an example uses carries that mark
+is also checked by expanding each use site outside its context — a macro whose expansion has no mark (such as val) is put in UNMARKED_EXPANSIONS with a reason,
+and a nested use site whose expansion is refused outside its context is not counted, since there is no form that can be pulled out and copied.
 
-展開を写さずに、展開が作った値を実行時に覗いて印字する例(値の class 名・型・属性)は、文字列の印を持たないので上の検が
-見分けない — 答えを変えない macro の変更で、その例だけが赤になる。そこで例を、答えを変えない展開の変異
-の下でも走らせ(run_example_mutated_expansion.py — 値を作る macro の展開を、何もしない handler の下で走らせる Program で包む。defk・fnk は
-定義した・作った関数を呼んだ値を包む)、出力が期待の出力のままである事を求める。変わる例は、macro を変えなくても名指して赤になる。
-包む macro は MUTATED_MACROS・包まない macro は訳つきで UNMUTATED_MACROS に置き、例が初めて使う macro はどちらかへ置かせる。変異は例の file の展開だけに当てるので、examples/ の下には
-例と期待の出力だけを置かせる。
+An example that, without copying the expansion, peeks at the value the expansion built at runtime and prints it (the value's class name, type, attributes) has no string mark, so the checks above
+cannot tell — only that example turns red on a macro change that does not alter the answer. So the examples are also run under a mutation of the expansion that does not alter the answer
+(run_example_mutated_expansion.py — wraps the expansion of a macro that builds a value in a Program run under a do-nothing handler. For defk and fnk,
+it wraps the value returned by the defined or built function), and the output is required to remain the expected output. An example that changes turns red by name even without changing a macro.
+Macros that are wrapped are in MUTATED_MACROS, and macros that are not wrapped are in UNMUTATED_MACROS with a reason; a macro an example uses for the first time must be placed in one of them. The mutation applies only to the expansion in the example's file, so only
+examples and expected outputs are allowed under examples/.
 """
 
 import difflib
@@ -59,99 +59,99 @@ from doeff_hy._static_stub import hidden_name
 from hy.errors import HyMacroExpansionError
 
 EXAMPLES = Path(__file__).resolve().parents[1] / "examples"
-# 走る例の標準出力の期待(<例の stem>.txt)。例の印字を変えたら、例と一緒に書き直す。
+# Expected stdout of an example that runs (<example stem>.txt). When you change an example's printing, rewrite it together with the example.
 EXPECTED = EXAMPLES / "expected"
-# 子 1 つの制限時間の、負荷で伸ばす前の値(秒)。1 本は 約 1 秒(置き場が冷えていても 約 20 秒)。
+# The time limit of one child, before being stretched by load (seconds). One takes about 1 second (about 20 seconds even when the storage is cold).
 CHILD_DEADLINE_SECONDS = 50
-# 子の時間帯(POSIX の TZ の綴り — 時間帯の data base が無い機体でも読める)。例が地方時を印字しても、期待の出力が機体の
-# 時間帯に依らない(datetime.fromtimestamp の印字は TZ=JST-9 の機体で外れた)。
+# The child's time zone (POSIX TZ spelling — readable even on a machine with no time zone database). Even if an example prints local time, the expected output does not depend on the machine's
+# time zone (the datetime.fromtimestamp print failed on a machine with TZ=JST-9).
 CHILD_TIME_ZONE = "UTC0"
-# 子(例・件の中で失敗させる例)を同時に走らせる数。子 1 本は 約 1 秒で、多くは hy と doeff の import(例の中身は 0.2〜0.3 秒・ex05 は
-# sleep 2.5 秒)。1 本ずつ順に走らせると子 12 本の秒が足し算になり、この file 1 本が負荷の下で 25〜42 秒かかって、変えた所の検
-# (make test-changed)の 60 秒の上限で後ろの検を打ち切った。全部を一度に起こさないのは、機体の検の枠
-# 1 つ(root の conftest の _hold_check_slot)の目安 — 検 1 本 0.5〜2.5 core — を大きく越えないため。
+# Number of children (examples, examples that fail inside an item) run at the same time. One child takes about 1 second, mostly importing hy and doeff (the example's own work is 0.2-0.3 seconds; ex05 does a
+# sleep of 2.5 seconds). Running them one at a time adds up the seconds of 12 children, making this one file take 25-42 seconds under load, and the 60-second limit of the changed-tests run
+# (make test-changed) cut off later tests. They are not all started at once so as not to greatly exceed the guideline for one test slot on the machine
+# (_hold_check_slot in the root conftest) — 0.5-2.5 cores per test.
 PARALLEL_CHILDREN = 4
 
 
 @dataclass(frozen=True)
 class Entrance:
-    """例を `hy <例>` の代わりに走らせる子の入口 — script に、例の path と arguments を渡す。"""
+    """Entry point of the child that runs an example in place of `hy <example>` — passes the example's path and arguments to the script."""
 
     script: Path
     arguments: tuple[str, ...] = ()
 
 
-# 例を件の中で失敗させて走らせる子の入口(Traverse の走りごとに最初の件を失敗させ、実行の印を標準エラーに書く)。
+# Entry point of the child that runs an example with a failure inside an item (fails the first item on each Traverse run and writes a run marker to stderr).
 FAILING_A_CASE = Entrance(Path(__file__).with_name("run_example_failing_a_case.py"))
-# 例の展開を答えを変えない形に変えて走らせる子の入口: MUTATED_MACROS の macro の展開を、何もしない handler の下で走らせる Program で
-# 包む(包んだ値の class は、元が Traverse の effect でも Program でも WithHandler になる。defk・fnk は、定義した・作った関数を呼んだ
-# 値を包む)。どの macro の展開が実行時の値を作るかは doeff-hy の持ち分で、検は表で名指す。包み方は入口の _MUTATIONS が知る。
+# Entry point of the child that runs an example with its expansion changed into a form that does not alter the answer: wraps the expansion of the MUTATED_MACROS macros in a Program that runs under a do-nothing handler
+# (the class of the wrapped value becomes WithHandler whether the original is a Traverse effect or a Program. For defk and fnk, the value returned by the defined or built
+# function is wrapped). Which macro expansion builds a runtime value is doeff-hy's responsibility, and the test names them in a table. How to wrap is known by the entry point's _MUTATIONS.
 MUTATED_MACROS: tuple[str, ...] = ("defk", "fnk", "traverse", "for/do")
 MUTATED_EXPANSION = Entrance(
     Path(__file__).with_name("run_example_mutated_expansion.py"), MUTATED_MACROS
 )
-# 変異を言う文(断りの文に出す)。
-MUTATION = f"{'・'.join(MUTATED_MACROS)} が作る値(defk・fnk は呼んだ値)を、何もしない handler の下で走らせる Program で包む"
-# 件の中で失敗させる子が標準エラーに書く、実行の印の行(子の COUNTS_LINE)。
+# The sentence that describes the mutation (used in the failure message).
+MUTATION = f"wraps the value built by {', '.join(MUTATED_MACROS)} (for defk and fnk, the value they return) in a Program that runs under a do-nothing handler"
+# The run-marker line (COUNTS_LINE of the child) that the child failing inside an item writes to stderr.
 _COUNTS = re.compile(r"^case-calls: (\d+) program-runs: (\d+)$", re.MULTILINE)
 
-# 今の macro で走らない例(file の名 → 理由)。直したら行を外す。
+# Examples that do not run with the current macros (file name -> reason). Remove the row once fixed.
 BROKEN: dict[str, str] = {}
 
-# Traverse の件を 1 つも走らせない例(file の名 → 理由)。件の中の失敗を起こせないので、出力の比べ方だけで確かめる。
+# Examples that run no Traverse item at all (file name -> reason). A failure inside an item cannot be caused, so they are checked only by how the output is compared.
 NO_CASES: dict[str, str] = {
-    "ex01_basic_fail.hy": "Fail の効果を Traverse の外で見せる例 — 失敗は 3 つの戦略の結果として出力に出る",
+        "ex01_basic_fail.hy": "An example that shows the Fail effect outside Traverse — the failure appears in the output as the result of 3 strategies",
 }
 
-# 例が使う doeff-hy の macro のうち、展開に展開の形の印を持たない物(macro の名 → 理由)。その macro の展開を写した印字は期待の
-# 出力の検が見分けないので、例が初めて使う時に理由つきで置く(例: val — 1 段の展開は利用者の書く setv と同じ形で、隠す中身を
-# 持たない)。印を持つようになった・例が使わなくなった macro の行は外す。
+# Among the doeff-hy macros an example uses, those whose expansion carries no expansion-shape mark (macro name -> reason). The expected-output test does not detect a print that copies such a macro's expansion,
+# so put it here with a reason when an example uses it for the first time (e.g. val — its one-step expansion has the same shape as a setv the user writes, and has no hidden
+# internals). Remove the rows of macros that came to carry a mark or that examples no longer use.
 UNMARKED_EXPANSIONS: dict[str, str] = {}
 
-# 例が使う doeff-hy の macro のうち、展開の変異(MUTATED_MACROS)で包まない物(macro の名 → 訳)。包めるのは実行時の値を作る式・
-# kleisli の関数を定義する(作る)式で、名の束縛の文や、Program でも kleisli の関数でもない物を定義する文は包めない。例が初めて
-# 使う macro は、MUTATED_MACROS に足す(入口が包み方を知る物だけ)か、ここに訳つきで置く。使わなくなった・MUTATED_MACROS に移した
-# macro の行は外す。
+# Among the doeff-hy macros an example uses, those not wrapped by the expansion mutation (MUTATED_MACROS) (macro name -> reason). What can be wrapped is an expression that builds a runtime value, or an expression that defines
+# (builds) a kleisli function; a statement that binds a name, or a statement that defines something that is neither a Program nor a kleisli function, cannot be wrapped. For a macro an example uses
+# for the first time, either add it to MUTATED_MACROS (only if the entry point knows how to wrap it) or put it here with a reason. Remove the rows of macros that are no longer used or
+# that were moved to MUTATED_MACROS.
 UNMUTATED_MACROS: dict[str, str] = {
-    "defhandler": "handler を定義する文 — handler は Program を受けて Program を返す別の形で、包み方が無い。定義した handler の型・署名・受けた effect の中身を印字する例は変異で見分けない(残る限界)",
-    "<-": "束縛の文 — 束縛する式(traverse・for/do・defk を呼んだ値)は、それぞれの変異が包む",
+        "defhandler": "A statement that defines a handler — a handler is a different form that takes a Program and returns a Program, and there is no way to wrap it. An example that prints the type, signature, or received effect contents of a defined handler is not detected by the mutation (a remaining limitation)",
+        "<-": "A binding statement — the binding expressions (the value returned by calling traverse, for/do, or defk) are each wrapped by their own mutation",
 }
 
-# 期待の出力の印の字。印の種類は置く所で決まり、種類ごとに呑める物が決まっている:
-#   - 行が ANY だけの行は、traceback の frame の行を 1 行以上呑む(_frame_violations) — 件の結果の行は呑めない。
-#   - 行の中の印は MARKS のどれかの形で置き、その形の文字列だけを呑む(行を越えない)。
-# どの文字列にも合う印は、件の結果を載せる行まで伏せられ、その行を変える変異が無いと気づけなかった。
+# The characters of the marks in the expected output. The kind of a mark is decided by where it is placed, and each kind has a fixed set of things it may swallow:
+#   - A line that is only ANY swallows one or more traceback frame lines (_frame_violations) — it cannot swallow an item-result line.
+#   - A mark inside a line is placed in one of the MARKS forms and swallows only a string of that form (it does not cross lines).
+# A mark that matches any string would hide even the lines that carry item results, and a mutation that changed those lines would go unnoticed.
 ANY = "…"
-# 行の中の印(綴り → 呑む文字列)。走るたびに変わる物の種類を増やす時は、ここに行を足す。
+# Marks inside a line (spelling -> the string it swallows). When adding a kind of thing that changes on every run, add a row here.
 MARKS: dict[str, str] = {
-    # 実時間の秒(ex05 の「550 in …s」)
+        # Wall-clock seconds ("550 in …s" in ex05)
     f"{ANY}s": r"\d+(?:\.\d+)?s",
 }
 _MARK = re.compile(
     "(" + "|".join(re.escape(mark) for mark in sorted(MARKS, key=len, reverse=True)) + ")"
 )
 
-# traceback の frame の頭の行と、frame の中の印の行(位置の印 ^~・Python 3.13 からの略した source の行・繰り返しの略)。
+# The head line of a traceback frame, and the mark lines inside a frame (position marks ^~, the abbreviated source lines from Python 3.13, the repetition abbreviation).
 _FRAME_HEAD = re.compile(r'\s*File "(?P<path>[^"]+)", line \d+, in \S+')
 _FRAME_MARKER = re.compile(
     r"\s*(?:[\^~]+|\.\.\.<\d+ lines>\.\.\.|\[Previous line repeated \d+ more times?\])"
 )
 
-# 機体と利用者で変わる置き場(venv・Python・home)。
+# Locations that vary by machine and user (venv, Python, home).
 _MACHINE_PATHS = sorted(
     {path.rstrip("/") for path in (sys.prefix, sys.base_prefix, str(Path.home()))} - {""}
 )
 
-# 文の中の、_ で始まる語(Hy の綴りの - も語に含める — 名は mangle して比べる)。
+# Words in a statement that start with _ (the - of Hy spelling is also counted as part of a word — names are compared after mangling).
 _UNDERSCORED_WORD = re.compile(r"(?<![\w-])_[\w-]*")
-# 展開が名を束ねずに module を引く呼び出し(doeff-hy の macros.hy の _do-reference・outcome_forms.hy の open-form — fnk の
-# 展開は隠す名を持たず、これだけを持つ)。
+# Calls where an expansion pulls a module without binding names (_do-reference in doeff-hy's macros.hy, open-form in outcome_forms.hy — the expansion of fnk
+# carries no hidden names and has only this).
 _EXPANSION_IMPORT = "__import__"
 
 
 def _shows_expansion(text: str) -> bool:
-    """文が展開の形の印を持つか: Hy・doeff-hy の隠す名(持ち主は doeff-hy の hidden_name — Hy の gensym・macro の補助と記帳)
-    か、展開が module を引く __import__。"""
+    """Whether a statement carries an expansion-shape mark: names that Hy and doeff-hy hide (owned by doeff-hy's hidden_name — Hy's gensym, macro helpers, and bookkeeping)
+    or an __import__ with which the expansion pulls a module."""
     return any(
         word == _EXPANSION_IMPORT or hidden_name(hy.mangle(word))
         for word in _UNDERSCORED_WORD.findall(text)
@@ -159,53 +159,53 @@ def _shows_expansion(text: str) -> bool:
 
 
 def _searches(pattern: str, flags: int = 0) -> Callable[[str], bool]:
-    """正規表現が文のどこかに合うか、を問う関数。"""
+    """A function that asks whether the regular expression matches somewhere in the statement."""
     compiled = re.compile(pattern, flags)
     return lambda text: compiled.search(text) is not None
 
 
-# 期待の出力に置かない物(名 → 文がそれを持つか)。どれも書いた木の上では毎回同じに出るので緑のまま置けてしまい、別の木・
-# 別の機体や、答えを変えない macro・lib の変更で外れる — 置いた木で気づくように断る。印字に出るなら、その所を印にする。
+# Things not placed in the expected output (name -> whether the statement carries it). Each comes out the same every time on the tree where it was written, so it could stay green, but it comes loose on another tree,
+# another machine, or a macro or lib change that does not alter the answer — reject it so it is noticed on the tree where it was placed. If it appears in the print, turn that part into a mark.
 UNPLACEABLE: dict[str, Callable[[str], bool]] = {
-    # 日次の作業木など、別の checkout では必ず外れる
-    "checkout の path": _searches(re.escape(str(EXAMPLES.parents[2]))),
-    "機体の置き場(venv・Python・home)": _searches(
+        # Always comes loose in another checkout, such as a daily work tree
+        "checkout path": _searches(re.escape(str(EXAMPLES.parents[2]))),
+        "machine locations (venv, Python, home)": _searches(
         "|".join(re.escape(f"{path}/") for path in _MACHINE_PATHS)
     ),
-    # Hy の付ける名の番号は macro の展開と compile の順で決まり、例の結果ではない。
-    # 展開を文字列で写した印字は、答えを変えない macro の変更でも外れず、古い展開を教える
-    "展開の形の印(Hy・doeff-hy の隠す名・展開の __import__)": _shows_expansion,
-    # path と、lib・例の行番号が入る — frame は行だけの ANY にする
-    "traceback の frame の行": _searches(r'^\s*File "[^"]*", line \d+', re.MULTILINE),
+        # The number in a name Hy assigns is decided by the macro expansion and compile order, not by the example's result.
+        # A print that copies an expansion as a string does not come loose on a macro change that does not alter the answer, and teaches a stale expansion
+        "expansion-shape marks (names hidden by Hy and doeff-hy, __import__ in an expansion)": _shows_expansion,
+        # Includes paths and the line numbers of libs and examples — make the frame a line-only ANY
+        "traceback frame lines": _searches(r'^\s*File "[^"]*", line \d+', re.MULTILINE),
 }
 
 
 def _unplaceable_in(text: str) -> list[str]:
-    """文が持つ、期待の出力に置かない物の名。"""
+    """The names of the things a statement carries that are not placed in the expected output."""
     return [name for name, finds in UNPLACEABLE.items() if finds(text)]
 
 
-# 例の中で使わない form(macro を定義する)と、例が require してよい package(macro の持ち主)。
+# Forms not used inside an example (defining a macro), and the packages an example may require (the macro owner).
 _MACRO_DEFINERS = frozenset({"defmacro", "defmacro!", "defreader"})
 _MACRO_OWNER = "doeff_hy"
-# 例の中で呼ばない、macro の展開を引き出す関数。展開の形は doeff-hy の隠す中身で、例が印字すると、答えを変えない
-# macro の変更で例が赤になる(Program を走らせる例に展開の印字を
-# 足すと検を通った)。
+# Functions not called inside an example that pull out a macro expansion. The shape of an expansion is doeff-hy's hidden internals, and if an example prints it, a macro change
+# that does not alter the answer turns the example red (adding a print of an expansion to an example
+# that runs a Program passed the test).
 _MACRO_EXPANDERS = frozenset({"macroexpand", "macroexpand_1", "macroexpand_all"})
 
 
 @dataclass(frozen=True)
 class RunMarks:
-    """件の中で失敗させる子が数えた実行の印。"""
+    """The run marker counted by the child that fails inside an item."""
 
-    # Traverse の件の関数を呼んだ数
+    # Number of calls of the Traverse item function
     case_calls: int
-    # doeff の run で Program を走らせた数
+    # Number of Programs run by doeff's run
     program_runs: int
 
 
 def _run_marks(result: subprocess.CompletedProcess[str]) -> RunMarks | None:
-    """子の標準エラーの実行の印(書かずに終わったら None)。"""
+    """The run marker on the child's stderr (None if it finished without writing it)."""
     found = _COUNTS.search(result.stderr)
     return None if found is None else RunMarks(int(found[1]), int(found[2]))
 
@@ -220,23 +220,23 @@ def _runnable() -> list[str]:
 
 @dataclass(frozen=True)
 class Child:
-    """検が待つ子 1 本 — 例 1 本を、そのままか入口(件の中で失敗させる・展開を変異させる)を通して走らせる。"""
+    """One child the test waits for — runs one example directly or through an entry point (failing inside an item, mutating the expansion)."""
 
-    # 例の file の名
+    # The example's file name
     name: str
-    # 例を走らせる入口(None なら `hy <例>`)
+    # The entry point that runs the example (None means `hy <example>`)
     entrance: Entrance | None = None
 
 
 def _in_child_time_zone(command: list[str]) -> list[str]:
-    """子の命令 — 親の環境のまま、時間帯だけを決めた値にして走らせる(期待の出力が機体の時間帯に依らないため)。"""
+    """The child's command — runs with the parent's environment as is, with only the time zone set to a fixed value (so the expected output does not depend on the machine's time zone)."""
     return ["env", f"TZ={CHILD_TIME_ZONE}", *command]
 
 
 def _run_example(
     example: Path, entrance: Entrance | None, deadline_scale_factor: float
 ) -> subprocess.CompletedProcess[str]:
-    """例を `hy <例>` で走らせる(entrance が在れば、その入口から)。"""
+    """Runs an example with `hy <example>` (through the entry point if there is one)."""
     command = (
         [sys.executable, "-m", "hy", str(example)]
         if entrance is None
@@ -256,8 +256,8 @@ def _run_child(child: Child, deadline_scale_factor: float) -> subprocess.Complet
 
 
 def _child_of(item: pytest.Item) -> Child | None:
-    """検 1 本が待つ子。子を待たない検は None(BROKEN が空の時に pytest が置く空の parametrize の item も、name に例の名を
-    持たないので None)。"""
+    """The child one test waits for. None for a test that waits for no child (the empty parametrize item pytest places when BROKEN is empty also has no example name in its name,
+    so it gets None)."""
     callspec = getattr(item, "callspec", None)
     name = callspec.params.get("name") if callspec is not None else None
     if not isinstance(name, str):
@@ -273,15 +273,15 @@ def _child_of(item: pytest.Item) -> Child | None:
 
 
 class Children:
-    """選ばれた検が待つ子を、最初の検の時に全部起こして PARALLEL_CHILDREN 本ずつ並べて走らせ、検はそれぞれ自分の子の
-    結末を待つ。起こすのは、この session で選ばれた検の子だけ(-k で 1 本を選べば、子も 1 本)。"""
+    """At the first test, starts all the children for the selected tests and runs them PARALLEL_CHILDREN at a time, and each test waits for the
+    outcome of its own child. Only the children of the tests selected in this session are started (select one test with -k and only one child)."""
 
     def __init__(self) -> None:
         self._pool = ThreadPoolExecutor(max_workers=PARALLEL_CHILDREN)
         self._mut_runs: dict[Child, Future[subprocess.CompletedProcess[str]]] | None = None
 
     def start(self, items: list[pytest.Item], deadline_scale_factor: float) -> None:
-        """file の無い例(消えた BROKEN の例)の子は起こさない — その検は子を待つ前に名指す。"""
+        """Does not start a child for an example without a file (a removed BROKEN example) — that test names it before waiting for a child."""
         if self._mut_runs is not None:
             return
         children = (_child_of(item) for item in items)
@@ -295,7 +295,7 @@ class Children:
         self, name: str, entrance: Entrance | None = None
     ) -> subprocess.CompletedProcess[str]:
         assert self._mut_runs is not None, (
-            "子を起こす前に結末を待った — 検は children の fixture から受け取る"
+            "waited for an outcome before starting the children — a test receives it from the children fixture"
         )
         return self._mut_runs[Child(name, entrance)].result()
 
@@ -314,7 +314,7 @@ def _children() -> Iterator[Children]:
 def children(
     _children: Children, request: pytest.FixtureRequest, deadline_scale_factor: float
 ) -> Children:
-    """子の池(負荷の倍率は関数の scope の fixture なので、module の scope の池へ最初の検が渡す)。"""
+    """The pool of children (the load multiplier is a function-scope fixture, so the first test passes it to the module-scope pool)."""
     _children.start(request.session.items, deadline_scale_factor)
     return _children
 
@@ -324,8 +324,8 @@ def _expected(name: str) -> Path:
 
 
 def _line_pattern(line: str) -> str | None:
-    """期待の出力の 1 行(行だけの ANY でない行)の正規表現。MARKS の形でない ANY が在れば None。"""
-    # 印で割ると、偶数番目は字のままの所・奇数番目は印。
+    """The regular expression for one line of the expected output (a line that is not a line-only ANY). None if there is an ANY that is not of a MARKS form."""
+    # Splitting by marks: even-numbered parts are literal text, odd-numbered parts are marks.
     pieces = _MARK.split(line)
     if any(ANY in literal for literal in pieces[::2]):
         return None
@@ -335,7 +335,7 @@ def _line_pattern(line: str) -> str | None:
 
 
 def _mark_violations(expected: str) -> list[str]:
-    """期待の出力の、印の形でない ANY を持つ行(行番号つき)。"""
+    """The lines of the expected output (with line numbers) that have an ANY not of a mark form."""
     return [
         f"{number}: {line}"
         for number, line in enumerate(expected.split("\n"), start=1)
@@ -344,8 +344,8 @@ def _mark_violations(expected: str) -> list[str]:
 
 
 def _expected_line_pattern(index: int, line: str) -> str:
-    """期待の出力の index 行目の正規表現。行だけの ANY は 1 行以上を名のある組(frames<行>)で呑む。印の形でない ANY は
-    字のまま比べる(どこが悪いかは _mark_violations が名指す)。"""
+    """The regular expression for line index of the expected output. A line-only ANY swallows one or more lines as a named group (frames<line>). An ANY not of a mark form is
+    compared literally (_mark_violations names where it is wrong)."""
     if line == ANY:
         return rf"(?P<frames{index}>[^\n]*(?:\n[^\n]*)*?)"
     pattern = _line_pattern(line)
@@ -362,7 +362,7 @@ def _pattern(expected: str) -> re.Pattern[str]:
 
 @functools.cache
 def _source_lines(path: str) -> frozenset[str]:
-    """file の空でない行(前後の空白を除く)。読めない file(<frozen …> など)は空。"""
+    """The non-empty lines of a file (surrounding whitespace removed). Empty for an unreadable file (such as <frozen …>)."""
     file = Path(path)
     if not file.is_file():
         return frozenset()
@@ -371,10 +371,10 @@ def _source_lines(path: str) -> frozenset[str]:
 
 
 def _frame_violations(lines: list[str]) -> list[str]:
-    """traceback の frame の行でない行。frame の並びは File の行で始まり、続く行は File の行・直前の File の行の file の
-    source の行・frame の中の印の行。"""
+    """Lines that are not traceback frame lines. A frame sequence starts with a File line, and the following lines are the File line, the source line of the file of the preceding File line, and
+    the mark lines inside the frame."""
     heads = [_FRAME_HEAD.fullmatch(line) for line in lines]
-    # 行ごとの、直前の File の行の file の source の行(その行より前に File の行が無ければ空)。
+    # For each line, the source line of the file of the preceding File line (empty if there is no File line before it).
     sources = itertools.accumulate(
         heads,
         lambda source, head: source if head is None else _source_lines(head["path"]),
@@ -389,8 +389,8 @@ def _frame_violations(lines: list[str]) -> list[str]:
 
 
 def _compare(expected: str, actual: str) -> list[str] | None:
-    """actual を expected と比べる: 合わなければ None、合えば行だけの ANY が呑んだ行のうち frame の行でない物(無ければ
-    空)。"""
+    """Compares actual with expected: None if they do not match; if they match, the lines swallowed by a line-only ANY that are not frame lines (empty if
+    none)."""
     match = _pattern(expected).fullmatch(actual)
     if match is None:
         return None
@@ -402,14 +402,14 @@ def _compare(expected: str, actual: str) -> list[str] | None:
 
 
 def _matches(expected: str, actual: str) -> bool:
-    """actual が expected に合い、行だけの ANY が frame の行だけを呑んだか。"""
+    """Whether actual matches expected and the line-only ANY swallowed only frame lines."""
     return _compare(expected, actual) == []
 
 
 def _output_diff(label: str, expected: str, actual: str) -> str:
     return "\n".join(
         difflib.unified_diff(
-            expected.splitlines(), actual.splitlines(), label, "標準出力", lineterm=""
+            expected.splitlines(), actual.splitlines(), label, "stdout", lineterm=""
         )
     )
 
@@ -422,7 +422,7 @@ def _subforms(form: object) -> Iterator[object]:
 
 
 def _module_package(arg: object) -> str | None:
-    """require の module の語の頭の package(module の語でなければ None)。Hy 1.x の reader は `a.b` を `(. a b)` と読む。"""
+    """The head package of the word of a require module (None if it is not a module word). The Hy 1.x reader reads `a.b` as `(. a b)`."""
     if isinstance(arg, hy.models.Symbol):
         return hy.mangle(str(arg))
     if isinstance(arg, hy.models.Expression) and len(arg) > 1 and arg[0] == hy.models.Symbol("."):
@@ -431,7 +431,7 @@ def _module_package(arg: object) -> str | None:
 
 
 def _required_packages(form: hy.models.Expression) -> list[str]:
-    """`(require <module> [名 …] <module> :as <別名> …)` の module の頭の package(keyword の次の語は別名)。"""
+    """The head package of the module in `(require <module> [name …] <module> :as <alias> …)` (the word after a keyword is an alias)."""
     packages: list[str] = []
     after_keyword = False
     for arg in list(form)[1:]:
@@ -443,13 +443,13 @@ def _required_packages(form: hy.models.Expression) -> list[str]:
 
 
 def _forms(source: str, filename: str) -> Iterator[object]:
-    """source の form を全部(入れ子の form も)。"""
+    """All forms of the source (including nested forms)."""
     for top in hy.read_many(source, filename=filename):
         yield from _subforms(top)
 
 
 def _callee(head: object) -> str | None:
-    """呼び出しの頭の関数の名(`a.b` は reader が `(. a b)` と読む — その最後の名)。"""
+    """The name of the function at the head of a call (`a.b` is read by the reader as `(. a b)` — its last name)."""
     if isinstance(head, hy.models.Symbol):
         return hy.mangle(str(head))
     if (
@@ -468,11 +468,11 @@ def _macro_violations(source: str, filename: str) -> list[str]:
 
 
 def _form_macro_violations(form: object) -> list[str]:
-    """form 1 つの違反: macro の展開の引き出し・macro の定義・doeff-hy の外からの require。"""
+    """Violations of one form: pulling out a macro expansion, defining a macro, a require from outside doeff-hy."""
     if not (isinstance(form, hy.models.Expression) and form):
         return []
     callee = _callee(form[0])
-    expanded = [f"{callee} の呼び出し"] if callee in _MACRO_EXPANDERS else []
+    expanded = [f"call to {callee}"] if callee in _MACRO_EXPANDERS else []
     head = str(form[0]) if isinstance(form[0], hy.models.Symbol) else ""
     if head in _MACRO_DEFINERS:
         return [*expanded, f"{head} {form[1] if len(form) > 1 else ''}".strip()]
@@ -489,7 +489,7 @@ def _form_macro_violations(form: object) -> list[str]:
 
 
 def _doeff_hy_macro_names(form: hy.models.Expression) -> frozenset[str]:
-    """`(require doeff-hy.macros [defk <- …] …)` が doeff-hy の module から引く macro の名(mangle した名)。"""
+    """The names (mangled) of the macros that `(require doeff-hy.macros [defk <- …] …)` pulls from the doeff-hy module."""
     return frozenset(
         hy.mangle(str(name))
         for module, names in itertools.pairwise(list(form)[1:])
@@ -501,15 +501,15 @@ def _doeff_hy_macro_names(form: hy.models.Expression) -> frozenset[str]:
 
 @dataclass(frozen=True)
 class MacroUse:
-    """source の中の doeff-hy の macro の使い所 1 つと、その文脈の外での 1 段の展開。"""
+    """One use site of a doeff-hy macro in the source, and its one-step expansion outside that context."""
 
-    # 使い所の行
+    # The line of the use site
     line: int
-    # macro の名(書いた綴り)
+    # The macro's name (as spelled)
     macro: str
-    # 別の doeff-hy の macro の使い所の中に在るか(在れば、外の macro が文脈の中で展開する)
+    # Whether it sits inside a use site of another doeff-hy macro (if so, the outer macro expands it within the context)
     nested: bool
-    # 展開の hy.repr か、文脈の外で展開できなかった誤り
+    # The hy.repr of the expansion, or the error when it could not be expanded outside the context
     expansion: str | HyMacroExpansionError
 
     @property
@@ -520,7 +520,7 @@ class MacroUse:
 def _uses_in(
     form: object, macros: frozenset[str], nested: bool
 ) -> Iterator[tuple[hy.models.Expression, bool]]:
-    """form の中の、macros の名を頭に持つ式と、それが別の使い所の中に在るか。"""
+    """The expressions in form that have a macro name at the head, and whether each sits inside another use site."""
     is_use = (
         isinstance(form, hy.models.Expression)
         and bool(form)
@@ -537,7 +537,7 @@ def _uses_in(
 def _expand_once(
     form: hy.models.Expression, module: types.ModuleType
 ) -> str | HyMacroExpansionError:
-    """form の 1 段の展開の hy.repr(macro が文脈の外での展開を断れば、その誤り)。"""
+    """The hy.repr of the one-step expansion of form (the error, if the macro refuses to expand outside the context)."""
     try:
         return hy.repr(hy.macroexpand_1(form, module=module))
     except HyMacroExpansionError as refused:
@@ -545,8 +545,8 @@ def _expand_once(
 
 
 def _doeff_hy_macro_uses(source: str, filename: str) -> list[MacroUse]:
-    """source の doeff-hy の macro の使い所と 1 段の展開。展開は、source の doeff-hy の require だけを評価した module の中で、
-    使い所を 1 つずつ文脈から切り離してする — 例を走らせず、利用者が `hy.macroexpand` で引き出して写せる形を見る。"""
+    """The use sites of doeff-hy macros in the source and their one-step expansions. The expansion is done inside a module in which only the source's doeff-hy requires were evaluated,
+    detaching each use site from its context one at a time — without running the example, to see the form a user could pull out with `hy.macroexpand` and copy."""
     requires = [
         form
         for form in _forms(source, filename)
@@ -567,8 +567,8 @@ def _doeff_hy_macro_uses(source: str, filename: str) -> list[MacroUse]:
 
 
 def _unexpanded(uses: list[MacroUse]) -> list[str]:
-    """いちばん外の使い所のうち、文脈の外で展開できない物。入れ子の使い所は外の macro が文脈の中で展開するので、文脈の
-    外で断られても数えない — 引き出して写せる形が無い。"""
+    """Among the outermost use sites, those that cannot be expanded outside the context. A nested use site is expanded by the outer macro inside the context, so
+    it is not counted even if refused outside the context — there is no form that can be pulled out and copied."""
     return [
         use.name
         for use in uses
@@ -577,7 +577,7 @@ def _unexpanded(uses: list[MacroUse]) -> list[str]:
 
 
 def _unmarked(uses: list[MacroUse]) -> list[MacroUse]:
-    """展開できた使い所のうち、展開に展開の形の印が無い物。"""
+    """Among the use sites that could be expanded, those whose expansion has no expansion-shape mark."""
     return [
         use
         for use in uses
@@ -597,89 +597,89 @@ def test_example_runs(name: str, children: Children) -> None:
     assert result.returncode == 0, result.stdout + result.stderr
     expected = _expected(name)
     assert expected.is_file(), (
-        f"{name} の期待の出力 {expected.relative_to(EXAMPLES)} が無い — 例を走らせた標準出力を置き、"
-        f"走るたびに変わる所を印にする"
+        f"{name}'s expected output {expected.relative_to(EXAMPLES)} is missing — put the stdout of running the example there, "
+        f"and turn the parts that change on every run into marks"
     )
     swallowed = _compare(expected.read_text(encoding="utf-8"), result.stdout)
     assert swallowed is not None, _output_diff(
         str(expected.relative_to(EXAMPLES)), expected.read_text(encoding="utf-8"), result.stdout
     )
     assert swallowed == [], (
-        f"{expected.relative_to(EXAMPLES)} の行だけの {ANY} が traceback の frame でない行を呑んだ — 行だけの {ANY} は"
-        f" frame だけを伏せる。呑んだ行を期待の出力に書く: {swallowed}"
+        f"the line-only {ANY} in {expected.relative_to(EXAMPLES)} swallowed a line that is not a traceback frame — a line-only {ANY}"
+        f" hides only frames. Write the swallowed lines in the expected output: {swallowed}"
     )
 
 
 @pytest.mark.parametrize("name", _runnable())
 def test_case_failure_shows_in_compared_output(name: str, children: Children) -> None:
-    """件の中の失敗が、比べる出力に出る事: Traverse の走りごとに最初の件を件の中で失敗させた子は 0 で終わり、その出力は
-    期待の出力に合わない。件を 1 つも走らせない例は NO_CASES に理由つきで置く。"""
+    """That a failure inside an item shows up in the compared output: the child that failed the first item inside the item on each Traverse run exits 0, and its output
+    does not match the expected output. An example that runs no item at all is put in NO_CASES with a reason."""
     result = children.result(name, FAILING_A_CASE)
     marks = _run_marks(result)
     assert marks is not None, (
-        f"件の中で失敗させる子が、実行の印を書かずに終わった\n{result.stdout}{result.stderr}"
+        f"the child that fails inside an item finished without writing a run marker\n{result.stdout}{result.stderr}"
     )
     if name in NO_CASES:
         assert marks.case_calls == 0, (
-            f"{name} は件を走らせるようになった — NO_CASES の行(理由: {NO_CASES[name]})を外す"
+            f"{name} now runs items — remove the NO_CASES row (reason: {NO_CASES[name]})"
         )
         return
     assert marks.case_calls > 0, (
-        f"{name} が Traverse の件を 1 つも走らせない — 件を走らせず doeff-hy・Hy の中身だけを印字する debug 用の file は"
-        f"例ではない(examples/ に置かない)。件の無い例なら NO_CASES に理由つきで足す"
+        f"{name} runs no Traverse item at all — a debug file that runs no items and prints only the internals of doeff-hy and Hy is"
+        f" not an example (do not place it in examples/). If it is an example with no items, add it to NO_CASES with a reason"
     )
-    # 子が 0 以外で終わるのは、起こした失敗が件の失敗として記録されず例の外へ出た時 — 出力の比べ方を確かめられないので、
-    # 失敗が見えたとは数えない(traverse-lib の件の失敗の方針が変わったか、子の入口が壊れた)
+    # The child exiting non-zero means the caused failure was not recorded as an item failure and escaped the example — the way outputs are compared cannot be checked,
+    # so it is not counted as the failure having been seen (the traverse-lib item-failure policy changed, or the child's entry point is broken)
     assert result.returncode == 0, (
-        f"件の中で失敗させた子が 0 以外で終わった — 起こした失敗が件の失敗として記録されず、例の外へ出た。子の入口"
-        f"(件の失敗の起こし方の持ち主)を traverse-lib の今の件の失敗の方針に合わせる\n{result.stdout}{result.stderr}"
+        f"the child that failed inside an item exited non-zero — the caused failure was not recorded as an item failure and escaped the example. Align the child's entry point"
+        f" (the owner of how an item failure is caused) with traverse-lib's current item-failure policy\n{result.stdout}{result.stderr}"
     )
     expected = _expected(name)
-    assert expected.is_file(), f"{name} の期待の出力が無い(test_example_runs が名指す)"
+    assert expected.is_file(), f"{name}'s expected output is missing (test_example_runs names it)"
     assert not _matches(expected.read_text(encoding="utf-8"), result.stdout), (
-        f"件の中で失敗した子の出力が {expected.relative_to(EXAMPLES)} に合う — 例が件の結果を印字しないか、"
-        f"印が件の結果まで伏せている\n{result.stdout}"
+        f"the output of the child that failed inside an item matches {expected.relative_to(EXAMPLES)} — the example does not print item results, or"
+        f" a mark hides even the item results\n{result.stdout}"
     )
 
 
 @pytest.mark.parametrize("name", _runnable())
 def test_example_runs_a_program(name: str, children: Children) -> None:
-    """例が doeff の run で Program を走らせる事を、名ではなく走った数で確かめる(件の中で失敗させる子が数える — 呼ばない
-    関数の中の run や quote の中の run は数えない)。"""
+    """That an example runs a Program with doeff's run, checked by the number that ran rather than by name (counted by the child that fails inside an item — a run inside an uncalled
+    function or inside a quote is not counted)."""
     marks = _run_marks(children.result(name, FAILING_A_CASE))
-    assert marks is not None, "件の中で失敗させる子が、実行の印を書かずに終わった"
+    assert marks is not None, "the child that fails inside an item finished without writing a run marker"
     assert marks.program_runs > 0, (
-        f"{name} は doeff の run で Program を走らせない — examples/ は Program を走らせて結果を印字する読み物の置き場で、"
-        "macro の展開や関数の repr を印字するだけの debug 用の file は置かない"
+        f"{name} does not run a Program with doeff's run — examples/ is the place for reading material that runs a Program and prints the result, "
+        "and does not hold debug files that only print macro expansions or function reprs"
     )
 
 
 def _expansion_mutation_change(
     example: Path, expected: str, result: subprocess.CompletedProcess[str]
 ) -> str | None:
-    """答えを変えない展開の変異の下で走らせた例が、期待の出力のままか: 変わっていれば、その例を名指す断りの文(変わらなければ
-    None)。"""
+    """Whether an example run under the answer-preserving expansion mutation keeps the expected output: if it changed, a failure message naming that example (None if unchanged
+    )."""
     if result.returncode != 0:
         return (
-            f"{example.name} は、答えを変えない展開の変異({MUTATION})の下で落ちた — 例が展開の作った値の形(型・属性)に頼っている。"
-            f"例は run の後の答えだけを使う(落ちた所が変異の入口 {MUTATED_EXPANSION.script.name} の中なら、入口が今の macro の"
-            f"呼び口を包めない — 入口を合わせる)\n{result.stdout}{result.stderr}"
+            f"{example.name} failed under the answer-preserving expansion mutation ({MUTATION}) — the example relies on the shape of the value the expansion built (type, attributes). "
+            f"An example uses only the answer after run (if the failure is inside the mutation entry point {MUTATED_EXPANSION.script.name}, the entry point cannot wrap the current macro's"
+            f" call site — align the entry point)\n{result.stdout}{result.stderr}"
         )
     if _matches(expected, result.stdout):
         return None
     return (
-        f"{example.name} の出力は、答えを変えない展開の変異({MUTATION})の下で変わる — 例が展開の作った値の形(class 名・型・属性)を"
-        f"印字している。macro が答えを変えずに展開を変えると、macro を直した人の手で例が赤になる。例は run の後の答えだけを印字する\n"
-        f"{_output_diff(f'{example.name} の期待の出力', expected, result.stdout)}"
+        f"the output of {example.name} changes under the answer-preserving expansion mutation ({MUTATION}) — the example prints the shape (class name, type, attributes) of the value the expansion built."
+        f" If a macro changes its expansion without changing the answer, the example turns red at the hands of the person who fixed the macro. An example prints only the answer after run\n"
+        f"{_output_diff(f'expected output of {example.name}', expected, result.stdout)}"
     )
 
 
 @pytest.mark.parametrize("name", _runnable())
 def test_example_output_survives_expansion_mutation(name: str, children: Children) -> None:
-    """答えを変えない展開の変異の下でも、例の出力は期待の出力のまま — 展開が作った値の class 名・型・属性を印字する例は、
-    展開の文字列の写しではないので印の検が見分けず、macro が答えを変えずに展開を変えるとその例だけが赤になる。"""
+    """Even under the answer-preserving expansion mutation, an example's output stays the expected output — an example that prints the class name, type, or attributes of the value the expansion built
+    is not a copy of an expansion string, so the mark test cannot tell, and when a macro changes its expansion without changing the answer only that example turns red."""
     expected = _expected(name)
-    assert expected.is_file(), f"{name} の期待の出力が無い(test_example_runs が名指す)"
+    assert expected.is_file(), f"{name}'s expected output is missing (test_example_runs names it)"
     change = _expansion_mutation_change(
         EXAMPLES / name,
         expected.read_text(encoding="utf-8"),
@@ -689,9 +689,9 @@ def test_example_output_survives_expansion_mutation(name: str, children: Childre
 
 
 def test_marks_count_only_what_ran(tmp_path: Path, deadline_scale_factor: float) -> None:
-    """今の例はどれも Program を走らせるので、名だけ在って走らない run を数えない事は、それを含む source で確かめる:
-    import するだけ・呼ばない関数の中・quote の中・doeff の外の同じ名(例の中で定義した run)は数えず、走らせた 1 回だけを
-    数える(名で数えた検は、呼ばない関数の中の呼び出しを口に数えた)。"""
+    """Every current example runs a Program, so that a run that exists only by name and does not run is not counted is checked with a source that contains one:
+    a mere import, inside an uncalled function, inside a quote, and the same name outside doeff (a run defined inside the example) are not counted, and only the single run that ran is
+    counted (the test that counted by name counted even a call inside an uncalled function)."""
     script = tmp_path / "names_without_runs.hy"
     script.write_text(
         """
@@ -716,7 +716,7 @@ def test_marks_count_only_what_ran(tmp_path: Path, deadline_scale_factor: float)
 
 
 def test_children_run_in_a_fixed_time_zone(monkeypatch: pytest.MonkeyPatch) -> None:
-    """子は親の時間帯に依らず CHILD_TIME_ZONE で走る(親を UTC から 9 時間ずらしても、時刻 0 の地方時は 00:00)。"""
+    """The child runs in CHILD_TIME_ZONE regardless of the parent's time zone (even if the parent is shifted 9 hours from UTC, local time at timestamp 0 is 00:00)."""
     monkeypatch.setenv("TZ", "JST-9")
     result = subprocess.run(
         _in_child_time_zone(
@@ -731,10 +731,10 @@ def test_children_run_in_a_fixed_time_zone(monkeypatch: pytest.MonkeyPatch) -> N
 
 @pytest.mark.parametrize("name", sorted(BROKEN))
 def test_broken_example_is_still_broken(name: str, children: Children) -> None:
-    assert (EXAMPLES / name).is_file(), f"BROKEN の行 {name} の例が examples/ に無い — 行を外す"
+    assert (EXAMPLES / name).is_file(), f"the example for BROKEN row {name} is not in examples/ — remove the row"
     result = children.result(name)
     assert result.returncode != 0, (
-        f"{name} は走るようになった — BROKEN の行(理由: {BROKEN[name]})を外す"
+        f"{name} now runs — remove the BROKEN row (reason: {BROKEN[name]})"
     )
 
 
@@ -743,14 +743,14 @@ def test_example_uses_only_doeff_hy_macros(name: str) -> None:
     path = EXAMPLES / name
     violations = _macro_violations(path.read_text(encoding="utf-8"), str(path))
     assert violations == [], (
-        f"{name} が macro を定義するか、doeff-hy の外から require するか、展開を引き出している({violations}) — "
-        "macro は doeff-hy に置き、展開の形は doeff-hy の隠す中身なので例に印字しない"
+        f"{name} defines a macro, requires from outside doeff-hy, or pulls out an expansion ({violations}) — "
+        "macros belong in doeff-hy, and the shape of an expansion is doeff-hy's hidden internals, so an example does not print it"
     )
 
 
 def test_macro_check_sees_nested_forms() -> None:
-    """今の例には違反が無いので、確かめが form の中へ降りる事は違反を含む source で確かめる
-    (降りない確かめは、例の中の defmacro を見逃して緑のまま)。"""
+    """The current examples have no violations, so that the check descends into forms is verified with a source that contains violations
+    (a check that does not descend would overlook a defmacro inside an example and stay green)."""
     source = """
 (require doeff-hy.macros [defk] support.fold-shim [fold] bare [x] doeff_hy.handle :as h)
 (when True
@@ -762,31 +762,31 @@ def test_macro_check_sees_nested_forms() -> None:
         "require support",
         "require bare",
         "defmacro fold",
-        "macroexpand の呼び出し",
-        "macroexpand_1 の呼び出し",
+        "call to macroexpand",
+        "call to macroexpand_1",
     ]
 
 
 def test_tables_name_examples_as_they_are() -> None:
-    """期待の出力は走る例ちょうどに在り、件の無い例の表は今の例を名指す(消した・名を変えた例の行を残さない)。"""
+    """Expected outputs exist for exactly the examples that run, and the table of item-less examples names current examples (rows of removed or renamed examples are not left)."""
     compared = _runnable()
     present = {path.name for path in EXPECTED.glob("*.txt")}
     assert present - {_expected(name).name for name in compared} == set(), (
-        "比べる例の無い期待の出力が在る — 消すか、例を BROKEN から外す"
+        "there is an expected output with no example to compare — remove it, or remove the example from BROKEN"
     )
-    assert set(NO_CASES) - set(compared) == set(), "NO_CASES の行が、走る例を名指さない — 行を外す"
+    assert set(NO_CASES) - set(compared) == set(), "a NO_CASES row names no example that runs — remove the row"
 
 
 def test_expected_output_places_only_known_marks() -> None:
-    """期待の出力の ANY は、行だけの ANY か MARKS の形でだけ置く(どの文字列にも合う印は件の結果まで伏せられる)。"""
+    """ANY in the expected output is placed only as a line-only ANY or in a MARKS form (a mark that matches any string would hide even item results)."""
     violations = {
         path.name: found
         for path in sorted(EXPECTED.glob("*.txt"))
         if (found := _mark_violations(path.read_text(encoding="utf-8")))
     }
     assert violations == {}, (
-        f"期待の出力に印の形でない {ANY} が在る — 行の中の印は MARKS の形(呑める物の決まった印)で置き、traceback の"
-        f" frame は行だけの {ANY} にする。走るたびに変わる物の種類が新しければ MARKS に行を足す: {violations}"
+        f"the expected output has an {ANY} that is not of a mark form — place a mark inside a line in a MARKS form (a mark with a fixed set of things it may swallow), and make a traceback"
+        f" frame a line-only {ANY}. If the kind of thing that changes on every run is new, add a row to MARKS: {violations}"
     )
 
 
@@ -797,43 +797,43 @@ def test_expected_output_places_nothing_unplaceable() -> None:
         if (names := _unplaceable_in(path.read_text(encoding="utf-8")))
     }
     assert found == {}, (
-        f"期待の出力に置かない物が在る — その所を印にする(展開の形の印なら、例は展開を印字しない): {found}"
+        f"the expected output contains something that must not be placed — turn that part into a mark (for an expansion-shape mark, the example does not print the expansion): {found}"
     )
 
 
 @pytest.mark.parametrize("name", _examples())
 def test_example_expansions_show_their_marks(name: str) -> None:
-    """例が使う doeff-hy の macro の展開には、どれも展開の形の印が在る — 展開を写して印字すると、期待の出力の検が名指す。
-    印の無い展開を作る macro の写しは見分けられないので、その macro の展開に隠す名を持たせるか、印の種類を足すか、
-    UNMARKED_EXPANSIONS に理由つきで置く。いちばん外の使い所は文脈の外でも展開できる(できなければ確かめが空になる)。"""
+    """Every expansion of a doeff-hy macro an example uses carries an expansion-shape mark — if a copy of an expansion is printed, the expected-output test names it.
+    A copy of the expansion of a macro that produces an unmarked expansion cannot be told, so give that macro's expansion a hidden name, add a kind of mark, or
+    put it in UNMARKED_EXPANSIONS with a reason. The outermost use site can be expanded even outside the context (if it cannot, the check becomes empty)."""
     uses = _example_macro_uses(name)
     assert _unexpanded(uses) == [], (
-        f"{name} のいちばん外の doeff-hy の macro の使い所が、文脈の外で展開できない — 展開の形の印を確かめられない:"
+        f"the outermost doeff-hy macro use site in {name} cannot be expanded outside the context — the expansion-shape mark cannot be checked:"
         f" {_unexpanded(uses)}"
     )
     unmarked = [use.name for use in _unmarked(uses) if use.macro not in UNMARKED_EXPANSIONS]
     assert unmarked == [], (
-        f"{name} の doeff-hy の macro の展開に、展開の形の印({_EXPANSION_IMPORT} も隠す名も)が無い — 写して印字されても"
-        f"期待の出力の検が見分けない。展開に隠す名を持たせるか、印の種類を足すか、UNMARKED_EXPANSIONS に理由つきで"
-        f"置く: {unmarked}"
+        f"the expansion of the doeff-hy macro in {name} has no expansion-shape mark (neither {_EXPANSION_IMPORT} nor a hidden name) — even if it is copied and printed,"
+        f" the expected-output test cannot tell. Give the expansion a hidden name, add a kind of mark, or put it in UNMARKED_EXPANSIONS"
+        f" with a reason: {unmarked}"
     )
 
 
 def test_unmarked_table_names_unmarked_macros() -> None:
-    """UNMARKED_EXPANSIONS の行は、今の例が使い、展開に印の無い macro を名指す(印を持つようになった・使わなくなった
-    macro の行を残さない)。"""
+    """A row of UNMARKED_EXPANSIONS names a macro that current examples use and whose expansion has no mark (rows of macros that came to carry a mark or are no longer used
+    are not left)."""
     unmarked = {use.macro for name in _examples() for use in _unmarked(_example_macro_uses(name))}
     assert set(UNMARKED_EXPANSIONS) - unmarked == set(), (
-        "UNMARKED_EXPANSIONS の行が、今の例の印の無い展開を名指さない — 行を外す"
+        "a UNMARKED_EXPANSIONS row does not name an unmarked expansion in the current examples — remove the row"
     )
 
 
 def test_expansion_check_reads_uses_out_of_context() -> None:
-    """今の例の使い所はどれも印を持ち、文脈の外でも展開できるので、印の無い展開(val)・文脈の外で展開できない使い所を
-    拾い分ける事は、それを含む source で確かめる: いちばん外の展開できない使い所は名指し、入れ子の展開できない使い所は
-    数えない(外の macro が文脈の中で展開する — 盲検 A が挙げた、文脈の外の (<- …) を断る doeff-hy の変更の形)。展開を断る
-    使い所は、今の doeff-hy が断る書き損じの (<-) で作る(fnk は本体を開かずに包むので、外の fnk は展開できる)。どの
-    使い所が文脈の外で断られるかは doeff-hy の決める事なので、書き損じの 2 つの他は数を決めない(設計検証の確かめ c4)。"""
+    """All use sites in the current examples carry a mark and can be expanded outside the context, so that unmarked expansions (val) and use sites that cannot be expanded outside the context
+    are told apart is verified with a source that contains them: the outermost use site that cannot be expanded is named, and a nested one that cannot be expanded is
+    not counted (the outer macro expands it inside the context — the shape of a doeff-hy change refusing a (<- …) outside the context, raised by blind A). A use site
+    that refuses expansion is built with the malformed (<-) that the current doeff-hy refuses (fnk wraps without opening the body, so an outer fnk can be expanded). Which
+    use sites are refused outside the context is doeff-hy's decision, so apart from the 2 malformed ones, no count is fixed (design-review check c4)."""
     source = """
 (require doeff-hy.macros [defk <- val traverse fnk])
 (val inputs [1 2 3])
@@ -862,9 +862,8 @@ def test_expansion_check_reads_uses_out_of_context() -> None:
 
 
 def test_printed_expansion_copy_is_named(tmp_path: Path, deadline_scale_factor: float) -> None:
-    """Program を走らせる例に、展開を引き出さずに文字列で写した展開の印字を足すと、期待の出力の検が名指す(例の検の他の
-    検 — 走る・Program を走らせる・macro の持ち主 — は通る形)。写しは
-    今の展開そのもの(古い写しの形は test_unplaceable_table_catches_its_samples)。"""
+    """If a print of an expansion copied as a string, without pulling it out, is added to an example that runs a Program, the expected-output test names it (the other tests of the example test — runs, runs a Program, macro owner — pass in this form). The copy is
+    the current expansion itself (the form of an old copy is in test_unplaceable_table_catches_its_samples)."""
     example = EXAMPLES / "ex04_simple.hy"
     source = example.read_text(encoding="utf-8")
     copied = next(
@@ -886,30 +885,30 @@ def test_printed_expansion_copy_is_named(tmp_path: Path, deadline_scale_factor: 
     assert result.stdout == f"{_expected(example.name).read_text(encoding='utf-8')}{copied}\n"
     assert _unplaceable_in(_expected(example.name).read_text(encoding="utf-8")) == []
     assert _unplaceable_in(result.stdout) == [
-        "展開の形の印(Hy・doeff-hy の隠す名・展開の __import__)"
+        "expansion-shape marks (names hidden by Hy and doeff-hy, __import__ in an expansion)"
     ]
 
 
 def test_example_macros_are_mutated_or_named() -> None:
-    """例が使う doeff-hy の macro は、展開の変異で包む(MUTATED_MACROS)か、包まない訳を置く(UNMUTATED_MACROS) — 新しい macro を
-    初めて使う例が、変異の外のまま緑になって、その値の形の印字を見逃させない。包まない macro の行は、今の例が使う macro だけを
-    名指す。使い所は `(require doeff-hy.macros [名 …])` の名で読む(`*`・`:macros`・別名の書き方は読めない — 残る限界)。"""
+    """A doeff-hy macro an example uses is either wrapped by the expansion mutation (MUTATED_MACROS) or has a stated reason for not being wrapped (UNMUTATED_MACROS) — so that an example that uses a new macro
+    for the first time does not stay green outside the mutation and miss a print of the value's shape. The rows of unwrapped macros name only macros that current examples use. Use sites are read by the names in `(require doeff-hy.macros [name …])`
+    (the `*`, `:macros`, and alias spellings cannot be read — a remaining limitation)."""
     used = {use.macro for name in _examples() for use in _example_macro_uses(name)}
     assert used - set(MUTATED_MACROS) - set(UNMUTATED_MACROS) == set(), (
-        "例が使う doeff-hy の macro が、展開の変異の表に無い — 実行時の値(Traverse の effect・Program)を作る式なら"
-        "MUTATED_MACROS に足し、変異の入口が包めるか確かめる。名の束縛・定義の文なら UNMUTATED_MACROS に訳つきで置く"
+        "a doeff-hy macro an example uses is not in the expansion-mutation tables — if it is an expression that builds a runtime value (a Traverse effect, a Program), "
+        "add it to MUTATED_MACROS and check that the mutation entry point can wrap it. If it is a name-binding or defining statement, put it in UNMUTATED_MACROS with a reason"
     )
     assert set(UNMUTATED_MACROS) - used == set(), (
-        "UNMUTATED_MACROS の行が、今の例の macro を名指さない — 行を外す"
+        "a UNMUTATED_MACROS row does not name a macro of the current examples — remove the row"
     )
     assert set(UNMUTATED_MACROS) & set(MUTATED_MACROS) == set(), (
-        "UNMUTATED_MACROS の行が MUTATED_MACROS にも在る — 包むなら行を外す"
+        "a UNMUTATED_MACROS row is also in MUTATED_MACROS — if it is wrapped, remove the row"
     )
 
 
 def test_examples_dir_holds_only_examples_and_their_expected_outputs() -> None:
-    """examples/ の下の file は、直下の例(.hy)と expected/ の期待の出力(.txt)だけ — 下の dir に lib を置くと、その lib が作った値の形を
-    例が印字しても、検は lib を例と数えず(変異は例の module の展開だけに当たる)、見分けない。"""
+    """The files under examples/ are only the examples (.hy) directly under it and the expected outputs (.txt) in expected/ — if a lib is placed in a subdirectory, then even if an
+    example prints the shape of a value that lib built, the test does not count the lib as an example (the mutation applies only to the example module's expansion) and cannot tell."""
     stray = sorted(
         str(path.relative_to(EXAMPLES))
         for path in EXAMPLES.rglob("*")
@@ -919,24 +918,24 @@ def test_examples_dir_holds_only_examples_and_their_expected_outputs() -> None:
         and not (path.parent == EXPECTED and path.suffix == ".txt")
     )
     assert stray == [], (
-        f"examples/ の下に、例でも期待の出力でもない file が在る — 例の補助の lib を置くと、その lib が macro で作った値の形は例の検の"
-        f"変異に当たらない。lib は例の中に書くか、利用者が使う package に置く: {stray}"
+        f"under examples/ there is a file that is neither an example nor an expected output — if a helper lib for an example is placed there, the shape of the value that lib built with a macro is not hit by the example test's"
+        f" mutation. Write the lib inside the example, or put it in a package users use: {stray}"
     )
 
 
 @dataclass(frozen=True)
 class BuiltValue:
-    """変異が包む macro の使い所 1 つ: 展開が作る値(defk・fnk は呼んだ値)を `built` に置く式と、走らせた答え。"""
+    """One use site of a macro that the mutation wraps: the expression that puts the value the expansion builds (for defk and fnk, the value they return) in `built`, and the answer it produced when run."""
 
-    # 式の前に置く定義(defk の定義など)
+    # The definition placed before the expression (such as a defk definition)
     setup: str
-    # `built` に置く式
+    # The expression put in `built`
     expression: str
-    # 走らせた答え(run の後の値の印字)
+    # The answer it produced when run (the print of the value after run)
     answer: str
 
 
-# 変異が包む macro ごとの使い所: 変異の下でも走らせると同じ答えを出す式。
+# Use sites per macro that the mutation wraps: an expression that gives the same answer even when run under the mutation.
 BUILT_VALUES: dict[str, BuiltValue] = {
     "traverse": BuiltValue("", "(traverse (<- x (Iterate [1 2 3])) (* x 2))", "[2, 4, 6]"),
     "for/do": BuiltValue("", "(for/do (<- x (From [1 2 3])) (* x 2))", "[2, 4, 6]"),
@@ -946,7 +945,7 @@ BUILT_VALUES: dict[str, BuiltValue] = {
     ),
 }
 
-# 展開が作った値を `built` に置いて、その形(class 名・属性)と run の後の答えを印字する、変異の確かめの例。
+# An example for checking the mutation: puts the value the expansion built in `built`, and prints its shape (class name, attributes) and the answer after run.
 _REQUIRE_BUILDERS = "(require doeff-hy.macros [<- defk fnk traverse for/do])"
 _BUILT_VALUE_PREAMBLE = f"""
 {_REQUIRE_BUILDERS}
@@ -964,7 +963,7 @@ _BUILT_VALUE_PREAMBLE = f"""
 
 
 def _built_value_example(uses: list[BuiltValue]) -> str:
-    """uses の式が作る値の class 名と、run の後の答えを、式ごとに印字する例の source。"""
+    """The source of an example that prints, per expression, the class name of the value the expression built and the answer after run."""
     return _BUILT_VALUE_PREAMBLE + "".join(
         f"""
 {use.setup}
@@ -983,14 +982,13 @@ def _lines(result: subprocess.CompletedProcess[str], kind: str) -> list[str]:
 def test_expansion_mutation_changes_the_built_value_not_the_answer(
     tmp_path: Path, deadline_scale_factor: float
 ) -> None:
-    """今の例は展開が作った値の形を印字しないので、変異が空振りしない事(包む macro ごとに、作る値が WithHandler になる)・答えを
-    変えない事(run の後の答えは同じ)・値の形を印字する例を名指す事(ex10 の形と、defk が
-    定義した関数を呼んだ値の形)は、値の形を印字する
-    source で確かめる。例の他の検 — 走る・Program を走らせる・macro の持ち主・期待の出力に置かない物 — は通る形(展開の文字列の
-    写しではないので、印の検が見分けない)。変異の後の姿だけを決め、macro が今どんな値を作るか(Traverse か Program か)は決めない
-    — 答えを変えない macro の変更でこの検は変わらない。"""
+    """The current examples do not print the shape of the value the expansion built, so that the mutation does not miss (the value built becomes a WithHandler for each wrapped macro), that it does not
+    change the answer (the answer after run is the same), and that it names an example that prints the shape of the value (the shape of ex10, and the shape of the value
+    returned by calling a function defined by defk) are verified with a source that prints the shape of the value. The other tests of the example — runs, runs a Program, macro owner, things not placed in the expected output — pass in this form (it is not a copy of an expansion string,
+    so the mark test cannot tell). It decides only the shape after the mutation, and not what value the macro currently builds (a Traverse or a Program)
+    — this test does not change on a macro change that does not alter the answer."""
     assert set(BUILT_VALUES) == set(MUTATED_MACROS), (
-        "MUTATED_MACROS の macro ごとに、変異で値の形が変わる使い所を BUILT_VALUES に足す"
+        "for each MUTATED_MACROS macro, add a use site whose value shape changes under the mutation to BUILT_VALUES"
     )
     script = tmp_path / "prints_built_values.hy"
     script.write_text(_built_value_example(list(BUILT_VALUES.values())), encoding="utf-8")
@@ -999,7 +997,7 @@ def test_expansion_mutation_changes_the_built_value_not_the_answer(
     mutated = _run_example(script, MUTATED_EXPANSION, deadline_scale_factor)
     assert plain.returncode == 0, plain.stdout + plain.stderr
     assert mutated.returncode == 0, mutated.stdout + mutated.stderr
-    # 書き手が置く期待の出力 = 走らせた出力。置かない物は含まない
+    # The expected output the writer places = the output from running. Things not to be placed are not included
     assert _unplaceable_in(plain.stdout) == []
     assert _lines(mutated, "built") == ["built: WithHandler"] * len(BUILT_VALUES)
     answers = [f"answer: {use.answer}" for use in BUILT_VALUES.values()]
@@ -1013,7 +1011,7 @@ def test_expansion_mutation_changes_the_built_value_not_the_answer(
 def test_expansion_mutation_names_an_example_that_breaks_on_the_built_value(
     tmp_path: Path, deadline_scale_factor: float
 ) -> None:
-    """展開が作った値の属性を読む例は、変異の下で落ちる — 検は出力の違いでなく、落ちた事とその例を名指す。"""
+    """An example that reads an attribute of the value the expansion built fails under the mutation — the test names the failure and that example, not an output difference."""
     script = tmp_path / "reads_built_value.hy"
     script.write_text(
         _BUILT_VALUE_PREAMBLE
@@ -1024,15 +1022,15 @@ def test_expansion_mutation_names_an_example_that_breaks_on_the_built_value(
     change = _expansion_mutation_change(script, "", mutated)
     assert change is not None
     assert script.name in change
-    assert "落ちた" in change
+    assert "failed" in change
     assert "no attribute 'items'" in change
 
 
 def test_expansion_mutation_spares_the_modules_an_example_imports(
     tmp_path: Path, deadline_scale_factor: float
 ) -> None:
-    """変異は例の module の展開だけに当たる — 例が import する lib の `.hy` が同じ macro を使っても、その展開は変えない(変えた展開を
-    compile した lib の bytecode が、機体で共有する保存先へ書かれて、変異を知らない走りが包まれた展開を読むのを防ぐ)。"""
+    """The mutation applies only to the expansion of the example's module — even if a lib `.hy` the example imports uses the same macro, its expansion is not changed (this prevents the bytecode of a lib compiled
+    with the changed expansion from being written to the store shared by the machine and a run unaware of the mutation from reading the wrapped expansion)."""
     (tmp_path / "built_by_a_library.hy").write_text(
         _BUILT_VALUE_PREAMBLE
         + "".join(
@@ -1058,7 +1056,7 @@ def test_expansion_mutation_spares_the_modules_an_example_imports(
     assert plain.returncode == 0, plain.stdout + plain.stderr
     assert mutated.returncode == 0, mutated.stdout + mutated.stderr
     assert _lines(mutated, "own") == ["own: WithHandler"]
-    # lib が作った値は包まれない(変異の下でも、通常の走りと同じ値)
+    # The value the lib built is not wrapped (even under the mutation, the same value as a normal run)
     assert _lines(mutated, "library") == _lines(plain, "library")
     assert len(_lines(plain, "library")) == len(BUILT_VALUES)
 
@@ -1066,8 +1064,8 @@ def test_expansion_mutation_spares_the_modules_an_example_imports(
 def test_expansion_mutation_follows_the_macro_not_how_the_example_requires_it(
     tmp_path: Path, deadline_scale_factor: float
 ) -> None:
-    """変異は macro の表に当たるので、例が macro を別名で require しても包まれる(require の書き方を読む確かめは、別名を別の macro の
-    名と読む — test_example_macros_are_mutated_or_named の残る限界)。"""
+    """The mutation hits the macro table, so an example is wrapped even if it requires a macro under an alias (the check that reads the require spelling reads an alias as the name of a different macro —
+    a remaining limitation of test_example_macros_are_mutated_or_named)."""
     script = tmp_path / "requires_by_alias.hy"
     script.write_text(
         _BUILT_VALUE_PREAMBLE.replace(
@@ -1083,18 +1081,18 @@ def test_expansion_mutation_follows_the_macro_not_how_the_example_requires_it(
 
 
 def test_mark_check_sees_unknown_marks() -> None:
-    """今の期待の出力の印は全部決まった形なので、形でない印を拾う事・印が決まった物しか呑まない事は、それを含む文で
-    確かめる。"""
+    """All the marks in the current expected outputs have fixed forms, so that a mark not of that form is caught and that a mark swallows only what is fixed is verified with a statement that
+    contains them."""
     expected = f"Success: {ANY}\nasync: {ANY} in {ANY}s\nsync: 550 in {ANY}s\n{ANY}\n"
     assert _mark_violations(expected) == [f"1: Success: {ANY}", f"2: async: {ANY} in {ANY}s"]
     assert _matches(f"sync: 550 in {ANY}s\n", "sync: 550 in 1.02s\n")
-    # 秒の印は秒の数しか呑まず、行を越えない
+    # A seconds mark swallows only a number of seconds and does not cross lines
     assert not _matches(f"sync: {ANY}s\n", "sync: 550 in 1.02s\n")
     assert not _matches(f"sync: 550 in {ANY}s\n", "sync: 550 in 1.02\n  [2] OK: 3s\n")
 
 
 def test_frame_mark_swallows_only_frames() -> None:
-    """今の例の行だけの ANY は frame だけを伏せているので、件の結果の行を呑む事を拾うのは、それを含む出力で確かめる。"""
+    """The line-only ANY in the current examples hides only frames, so that swallowing an item-result line is caught is verified with an output that contains it."""
     frame = (
         f'        File "{Path(__file__)}", line 1, in <module>\n    import difflib\n    ^^^^^^\n'
     )
@@ -1107,29 +1105,29 @@ def test_frame_mark_swallows_only_frames() -> None:
         )
         == []
     )
-    # 呑みすぎ: 例外の行と件 [2] の行まで伏せた期待の出力
+    # Swallowing too much: an expected output that hides even the exception line and the item [2] line
     swallowing = (
         f"  [1] FAILED: boom\n      Traceback (most recent call last):\n{ANY}\n  [3] OK: 3\n"
     )
     assert _compare(swallowing, actual) == ["      KeyError: 'boom'", "  [2] OK: 2"]
     assert not _matches(swallowing, actual)
-    # frame の並びは File の行で始まる
+    # A frame sequence starts with a File line
     assert _frame_violations(["  [0] OK: 1", *frame.rstrip("\n").split("\n")]) == ["  [0] OK: 1"]
 
 
 def test_unplaceable_table_catches_its_samples() -> None:
-    """今の期待の出力には置かない物が無いので、表の行ごとに、その物を含む文を拾い、印にした文は拾わない事を確かめる。"""
-    expansion_marks = "展開の形の印(Hy・doeff-hy の隠す名・展開の __import__)"
+    """The current expected outputs have nothing not to be placed, so for each table row, a statement containing that thing is caught and a statement turned into a mark is not caught, verified here."""
+    expansion_marks = "expansion-shape marks (names hidden by Hy and doeff-hy, __import__ in an expansion)"
     samples = {
-        "checkout の path": f"{EXAMPLES / 'ex07_proboscis_ema_rewrite.hy'}:129",
-        "機体の置き場(venv・Python・home)": f"{Path(sys.base_prefix) / 'lib' / 'traceback.py'}",
+        "checkout path": f"{EXAMPLES / 'ex07_proboscis_ema_rewrite.hy'}:129",
+        "machine locations (venv, Python, home)": f"{Path(sys.base_prefix) / 'lib' / 'traceback.py'}",
         expansion_marks: "raised in: _hy_anon_17:129 -> fetch_price:95",
-        "traceback の frame の行": '        File "/x/doeff_core_effects/_handlers.py", line 154, in attempt',
+        "traceback frame lines": '        File "/x/doeff_core_effects/_handlers.py", line 154, in attempt',
     }
-    assert set(samples) == set(UNPLACEABLE), "UNPLACEABLE の行ごとに、拾う文をここに足す"
+    assert set(samples) == set(UNPLACEABLE), "for each UNPLACEABLE row, add the statement to catch here"
     assert [name for name, sample in samples.items() if not UNPLACEABLE[name](sample)] == []
-    # 展開の写し: gensym・doeff-hy の補助の名(Hy の綴りのままでも)・記帳の属性・fnk の展開の __import__。古い展開の写し
-    # (外した ex04_debug2 が「macro が作る形」として印字した形)も拾う
+    # Copies of an expansion: gensyms, doeff-hy helper names (even in Hy spelling), bookkeeping attributes, the __import__ in fnk's expansion. Copies of old expansions
+    # (the form that the removed ex04_debug2 printed as "the shape a macro builds") are caught too
     assert [
         copy
         for copy in [
@@ -1142,7 +1140,7 @@ def test_unplaceable_table_catches_its_samples() -> None:
         ]
         if not UNPLACEABLE[expansion_marks](copy)
     ] == []
-    # 例の結果の名(_ を中に持つ名・dunder)は拾わない
+    # Names of an example's results (names with _ inside, dunders) are not caught
     assert not UNPLACEABLE[expansion_marks](
         "fetch_price: _private_total=3 my_doeff_do __init__ __class__ _"
     )

@@ -1,7 +1,7 @@
-"""handlers.py の公開面の型(型検査のための宣言)。
+"""Types for the public surface of handlers.py (declarations for type checking).
 
-py.typed の package の注記の無い関数は、pyright が答えの型を推さず Unknown にするので、ここで宣言する。
-どれも doeff.program.handler が包んだ Program → Program の handler。
+For functions in a py.typed package without annotations, pyright does not infer the answer type and yields Unknown, so they are declared here.
+Every one is a Program -> Program handler wrapped by doeff.program.handler.
 """
 
 from typing import Protocol, TypeAlias
@@ -28,13 +28,13 @@ fail_handler: ProgramHandler
 normalize_to_none: ProgramHandler
 
 class ProgressBar(Protocol):
-    """progress_bars が make_bar の作る bar に使う物(tqdm.tqdm は両方を持つ)。"""
+    """What progress_bars uses for the bar that make_bar creates (tqdm.tqdm has both)."""
 
     def update(self, n: int = 1) -> object: ...
     def close(self) -> object: ...
 
 class BarFactory(Protocol):
-    """progress_bars の make_bar: Traverse の件の数と label(無ければ "traverse")から bar を作る(tqdm.tqdm が合う)。"""
+    """make_bar of progress_bars: builds a bar from the number of Traverse items and a label ("traverse" if none) (tqdm.tqdm fits)."""
 
     def __call__(self, *, total: int, desc: str) -> ProgressBar: ...
 

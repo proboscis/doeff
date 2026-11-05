@@ -1,13 +1,13 @@
-"""installed の defsemgrep の答え(例の組 1 つに当たった規則の id)を引く鍵と、答えを process の外に残す置き場。
+"""The key for looking up the answer of an installed defsemgrep (the ids of the rules that hit one example set), and the place that keeps answers outside the process.
 
-同じ設定の規則の例は 1 回の semgrep にまとめて確かめる(registry._installed_verdict)が、残る費用は semgrep の
-1 回の起動そのもの(約 8 秒)で、agora の日次は pytest の session と設定ごとに、設定も例も変わらない日にも毎回払っていた。呼び手が
-環境変数 SEMGREP_VERDICTS_ENV で置き場の dir を名指せば、答えを ``<dir>/<鍵>.json`` に残し、次の process はそこから読む。名指しが
-無ければ残さない(process の中だけで覚える)— doeff-adr は日次の名も置き場の根も知らない。
+The examples of rules with the same configuration are checked together in one semgrep run (registry._installed_verdict), but the remaining cost is one semgrep
+startup itself (about 8 seconds), which the agora daily run paid every time, per pytest session and per configuration, even on days when neither configuration nor examples changed. If the caller
+names the place's dir with the environment variable SEMGREP_VERDICTS_ENV, answers are kept in ``<dir>/<key>.json`` and the next process reads from there. Without a name
+nothing is kept (remembered only inside the process) — doeff-adr knows neither the daily run's name nor the root of the place.
 
-鍵は semgrep の版・設定の中身・例の中身(と置き場の形の版)で、semgrep と設定の path は入れない。日次は回ごとに HOME を空の dir に替え、
-semgrep(``uv tool install``)も設定(clone)も毎回違う path に在るので、path を入れると毎回外れる。中身で引くので、規則か例を 1 つ
-変えた回は別の鍵になり semgrep が回り直す — 古い答えは読まれない。
+The key is the semgrep version, the contents of the configuration, the contents of the examples (and the format version of the place); the paths of semgrep and the configuration are not included. The daily run replaces HOME with an empty dir on each run,
+and semgrep (``uv tool install``) and the configuration (clone) are at different paths every time, so including a path would miss every time. Lookup is by contents, so a run in which one rule or example
+changed gets a different key and semgrep runs again — old answers are not read.
 """
 
 import hashlib
@@ -20,29 +20,29 @@ from pathlib import Path
 
 from doeff_adr._env_places import SEMGREP_VERDICTS_ENV, environment_value
 
-# 鍵の材料か置き場の file の形を変えたら上げる(古い版の答えは別の鍵になり読まれない)。
+# Bump this when the key material or the file format of the place changes (answers of the old version get a different key and are not read).
 VERDICT_FORMAT = 1
 
 
 class MalformedVerdictError(ValueError):
-    """置き場の答えの file の形が違う(規則の id の文字列の list でない)。"""
+    """The shape of an answer file in the place is wrong (not a list of rule id strings)."""
 
 
 def verdict_store() -> Path | None:
-    """答えを残す置き場の dir(環境変数 SEMGREP_VERDICTS_ENV の値)— 名指しが無い・空なら None(process の外に残さない)。"""
+    """The dir that keeps answers (the value of the environment variable SEMGREP_VERDICTS_ENV) — None if not named or empty (nothing is kept outside the process)."""
     named = (environment_value(SEMGREP_VERDICTS_ENV) or "").strip()
     return Path(named).expanduser() if named else None
 
 
 @cache
 def semgrep_identity(semgrep: str) -> str:
-    """semgrep の素性 — 版が同じなら path が違っても同じ答えを出すので、鍵には path でなく版を入れる。
+    """The identity of semgrep — the same version gives the same answer even at a different path, so the key holds the version, not the path.
 
-    版は、実行の file(symlink を解いた先)が在る venv の dist-info から読む(``uv tool install`` も project の venv も
-    ``<venv>/bin/semgrep`` と ``<venv>/lib/python*/site-packages/semgrep-*.dist-info`` の形)。``semgrep --version`` は網へ
-    新しい版を問いに行き 37 秒かかった(2026-10-11 手元)ので使わない。venv の形でない入れ方(dist-info が 1 つに決まらない)では、
-    解いた path を素性にする — 版ごとに path の変わる入れ方(Homebrew の Cellar ほか)なら版の違いを見分け、同じ path で入れ替える
-    入れ方でも、その path の答えを別の path の答えと混ぜない。
+    The version is read from the dist-info of the venv that holds the executable (after resolving symlinks) (both ``uv tool install`` and a project venv have the shape
+    ``<venv>/bin/semgrep`` and ``<venv>/lib/python*/site-packages/semgrep-*.dist-info``). ``semgrep --version`` goes to the network to ask
+    for a newer version and took 37 seconds (2026-10-11, local), so it is not used. For an install that is not shaped like a venv (the dist-info is not unique),
+    the resolved path is the identity — an install whose path changes per version (Homebrew's Cellar and others) tells versions apart, and even an install that replaces the same path
+    does not mix the answer of that path with the answer of another path.
     """
     executable = Path(semgrep).resolve()
     dist_infos = sorted(
@@ -54,20 +54,20 @@ def semgrep_identity(semgrep: str) -> str:
 
 
 def fixture_set_key(identity: str, config_digest: str, fixtures: tuple[dict[str, str], ...]) -> str:
-    """答えを引く鍵 — semgrep の版・設定の中身・例の中身のどれかが変われば別の鍵になり、古い答えを使い回さないため。"""
+    """The key for looking up an answer — a change in any of the semgrep version, the configuration contents or the example contents gives a different key, so old answers are not reused."""
     material = json.dumps([VERDICT_FORMAT, identity, config_digest, list(fixtures)], sort_keys=True)
     return hashlib.sha256(material.encode("utf-8")).hexdigest()
 
 
 def read_verdict(store: Path, key: str) -> frozenset[str] | None:
-    """前の process が置き場に残した鍵の答え — 在れば semgrep を起こさずに済ませるため(無ければ None)。"""
+    """The answer for a key that a previous process left in the place — so semgrep need not be started if it exists (None if not)."""
     path = store / f"{key}.json"
     return _decode(path) if path.is_file() else None
 
 
 def write_verdicts(store: Path, verdicts: dict[str, frozenset[str]]) -> None:
-    """答えを鍵ごとの file に書く — 隣の session が同じ鍵を同時に書いても読み手が書きかけを読まないよう、同じ dir の一時の file に
-    書いてから置き換える。"""
+    """Write an answer to a per-key file — written to a temporary file in the same dir and then swapped in, so that a reader never sees a half-written file
+    even if a neighbouring session writes the same key at the same time."""
     store.mkdir(parents=True, exist_ok=True)
     for key, rule_ids in verdicts.items():
         with tempfile.NamedTemporaryFile(
@@ -78,10 +78,10 @@ def write_verdicts(store: Path, verdicts: dict[str, frozenset[str]]) -> None:
 
 
 def _decode(path: Path) -> frozenset[str]:
-    """答えの file を規則の id の組にする — 形の違う file を黙って「何も当たらない」と読まず、path を名指して止めるため。"""
+    """Turn an answer file into a set of rule ids — a file of the wrong shape is not silently read as "nothing hit" but is stopped with its path named."""
     value = json.loads(path.read_text(encoding="utf-8"))
     if not isinstance(value, list) or not all(isinstance(rule_id, str) for rule_id in value):
         raise MalformedVerdictError(
-            f"semgrep の答えの file の形が違う(規則の id の文字列の list でない): {path}"
+            f"the shape of the semgrep answer file is wrong (not a list of rule id strings): {path}"
         )
     return frozenset(value)

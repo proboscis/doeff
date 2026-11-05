@@ -37,37 +37,37 @@ FOUNDATIONS_HY = """\
   None)
 
 (defk passing [body]
-  {:pre [(: body Program)] :post [(: % "body の答え")]}
+  {:pre [(: body Program)] :post [(: % "answer of body")]}
   (<- answer body)
   answer)
 
 (defk innermost [body]
-  {:pre [(: body Program)] :post [(: % "body の答え")]}
+  {:pre [(: body Program)] :post [(: % "answer of body")]}
   (<- answer (passing body))
   answer)
 
 (defk split [inner body]
-  {:pre [(: inner Callable) (: body Program)] :post [(: % "body の答え")]}
+  {:pre [(: inner Callable) (: body Program)] :post [(: % "answer of body")]}
   (<- answer (inner (passing body)))
   answer)
 
 (defk layer-1 [body]
-  {:pre [(: body Program)] :post [(: % "body の答え")]}
+  {:pre [(: body Program)] :post [(: % "answer of body")]}
   (<- answer (split innermost (passing body)))
   answer)
 
 (defk layer-2 [body]
-  {:pre [(: body Program)] :post [(: % "body の答え")]}
+  {:pre [(: body Program)] :post [(: % "answer of body")]}
   (<- answer (layer-1 (passing body)))
   answer)
 
 (defk layer-3 [body]
-  {:pre [(: body Program)] :post [(: % "body の答え")]}
+  {:pre [(: body Program)] :post [(: % "answer of body")]}
   (<- answer (layer-2 (passing body)))
   answer)
 
 (defk layer-4 [body]
-  {:pre [(: body Program)] :post [(: % "body の答え")]}
+  {:pre [(: body Program)] :post [(: % "answer of body")]}
   (<- answer (layer-3 (passing body)))
   answer)
 
@@ -77,7 +77,7 @@ FOUNDATIONS_HY = """\
   answer)
 
 (defk again [body]
-  {:pre [(: body Program)] :post [(: % "body の答え")]}
+  {:pre [(: body Program)] :post [(: % "answer of body")]}
   (<- (passing body))
   (<- answer (again (passing body)))
   answer)

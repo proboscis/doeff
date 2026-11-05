@@ -1,13 +1,13 @@
-;;; doeff-time の契約テストの解釈器(composition root)— 同じ契約の Program を、時計の handler だけ替えて走らせる。
+;;; Interpreters (composition root) for the doeff-time contract tests -- run the same contract Program, swapping only the clock handler.
 ;;;
-;;;   async  本物の時計: async-time-handler(asyncio の sleep・壁時計・time.monotonic)
-;;;   sync   本物の時計: sync-time-handler(time.sleep・threading.Timer)
-;;;   sim    仮想の時計: sim-time-handler(SIM-START から始まり、待ちの分だけちょうど進む)
+;;;   async  real clock: async-time-handler (asyncio sleep, wall clock, time.monotonic)
+;;;   sync   real clock: sync-time-handler (time.sleep, threading.Timer)
+;;;   sim    virtual clock: sim-time-handler (starts at SIM-START and advances exactly by the amount waited)
 ;;;
-;;; 契約の Program は ClockUnderTest の effect で自分の時計の性質(ClockTraits — 時間の幅をどこまで緩く見るか)を読む。
-;;; OuterProbe は時計の handler の外側に置いた handler だけが答える effect(ScheduleAt の Program から外側の handler が
-;;; 見えることと、走った順を確かめる — 答えは到着の通し番号)。
-;;; 使い手は conftest.py の doeff_interpreter(deftest の :interpreters の名 → under-clock)。
+;;; The contract Program reads its own clock traits (ClockTraits -- how loosely time spans are judged) via the ClockUnderTest effect.
+;;; OuterProbe is an effect answered only by a handler placed outside the clock handler (checks that the outer handler is visible from a ScheduleAt Program, and the order of execution -- the answer is the arrival sequence number).
+;;;
+;;; Used by the doeff_interpreter in conftest.py (deftest :interpreters name -> under-clock).
 (require doeff-hy.macros [defk defhandler <- val])
 (import dataclasses [dataclass])
 (import functools [partial])
@@ -19,15 +19,15 @@
 (val SYNC "sync")
 (val SIM "sim")
 (val SIM-START (datetime 2024 1 1 :tzinfo timezone.utc))
-;; 解釈器の名 → 時計の handler を作る関数(実行ごとに新しい handler — 仮想の時計を検どうしで共有しない)。
+;; Interpreter name -> function that makes the clock handler (a new handler per run -- the virtual clock is not shared between tests).
 (val CLOCKS {ASYNC async-time-handler
              SYNC sync-time-handler
              SIM (partial sim-time-handler :start-time SIM-START)})
 
 
 (defclass [(dataclass :frozen True)] ClockTraits []
-  "時計の性質: exact = 待ちの分だけちょうど進む(仮想の時計)。本物の時計は early 秒だけ早く・late 秒だけ遅く起きても合格にする
-   (early = asyncio の起床の時計の分解能と、壁時計と monotonic の食い違いの幅・late = 込んだ機体の scheduler の遅れの幅)。"
+  "Clock traits: exact = advances exactly by the amount waited (virtual clock). A real clock passes even if it wakes up early by up to early seconds or late by up to late seconds
+   (early = resolution of the asyncio wake-up clock plus the gap between wall clock and monotonic; late = scheduler delay on a busy machine)."
   (#^ str name)
   (#^ bool exact)
   (#^ float early)
@@ -47,7 +47,7 @@
 
 
 (defhandler clock-under-test [traits]
-  ;; 引数に残す理由: 性質は解釈器の名ごとに組み立ての側で決まる値で、契約の Program の側から Ask で区別する名が無い。
+  ;; Reason to keep it as an argument: the traits are values decided by the assembly side per interpreter name, and the contract Program side has no name to distinguish them via Ask.
   (ClockUnderTest []
     (resume traits)))
 
@@ -61,8 +61,8 @@
 
 (defk under-clock [name program]
   {:pre [(: name str) (in name CLOCKS) (: program Program)]
-   :post [(: % "契約の Program の答え(型は Program ごと)")]
+   :post [(: % "answer of the contract Program (type varies per Program)")]
    :tags {:context "doeff-time-test" :role "foundation"}}
-  "name の時計の handler の下で program を走らせる。外から順に: 時計の性質の答え手・外側の handler(OuterProbe)・時計の handler。"
+  "Run program under the clock handler for name. From the outside in: answerer of the clock traits, outer handler (OuterProbe), clock handler."
   (<- answer (with_handlers [(clock-under-test (get TRAITS name)) outer-probe ((get CLOCKS name))] program))
   answer)

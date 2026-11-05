@@ -1,4 +1,4 @@
-"""問いの型と純粋な判断の道具。"""
+"""Question types and pure judgment tools."""
 
 import pytest
 from doeff_system_one import (
@@ -11,26 +11,26 @@ from doeff_system_one._judgment import answered, calibration_ok, chosen, clip, c
 
 def test_question_payload() -> None:
     assert Question(kind="choice", instructions="which", options=(("a", "a"), ("b", "b"))).as_payload() == {"type": "choice", "instructions": "which", "criteria": {"a": "a", "b": "b"}}
-    described = Question(kind="choice", instructions="which", options=(("zsh", "glob が当たらない"), ("none", "どれでもない")))
-    assert described.as_payload()["criteria"] == {"zsh": "glob が当たらない", "none": "どれでもない"}
+    described = Question(kind="choice", instructions="which", options=(("zsh", "glob does not match"), ("none", "none of them")))
+    assert described.as_payload()["criteria"] == {"zsh": "glob does not match", "none": "none of them"}
     assert described.option_ids == ["zsh", "none"]
     assert Question(kind="noul", instructions="is it").as_payload() == {"type": "noul", "instructions": "is it"}
     assert Question(kind="score", instructions="how", levels=("lo", "mid", "hi")).as_payload() == {"type": "score", "instructions": "how", "criteria": ["lo", "mid", "hi"]}
 
 
 def test_question_rejects_bad_shapes() -> None:
-    with pytest.raises(ValueError, match="noul は候補も段階も"):
+    with pytest.raises(ValueError, match="noul takes neither options nor levels"):
         Question(kind="noul", instructions="x", levels=("a",))
-    with pytest.raises(ValueError, match="choice は候補"):
+    with pytest.raises(ValueError, match="choice requires options"):
         Question(kind="choice", instructions="x")
-    with pytest.raises(ValueError, match="score は段階"):
+    with pytest.raises(ValueError, match="score requires levels"):
         Question(kind="score", instructions="x", options=(("a", "a"),))
-    with pytest.raises(ValueError, match="kind は"):
+    with pytest.raises(ValueError, match="kind must be"):
         Question(kind="other", instructions="x")  # type: ignore[arg-type]
 
 
 def test_judge_requires_questions_of_the_right_type() -> None:
-    with pytest.raises(ValueError, match="問いが 1 つ以上"):
+    with pytest.raises(ValueError, match="at least one question"):
         Judge(state="s", questions={})
     with pytest.raises(TypeError):
         Judge(state="s", questions={"q": {"type": "noul"}})  # type: ignore[dict-item]
@@ -78,7 +78,7 @@ def test_clip_keeps_head() -> None:
 
 
 def test_a_usage_limit_is_a_judge_error_of_its_own_kind() -> None:
-    # 判定器の口座の利用枠の尽き: 呼び手は JudgeError のまま受けられ、型で尽きを分けて戻る刻を読める。
+    # Judge account usage limit exhausted: callers can still catch it as JudgeError, and the type lets them tell exhaustion apart and read the reset time.
     from doeff_system_one import JudgeError, JudgeUsageLimited
 
     limited = JudgeUsageLimited("You've hit your session limit", window="five_hour", resets_at=1791342000)

@@ -1,7 +1,7 @@
 """Executable ADR contracts for doeff projects.
 
-実行 API は最初の利用時に読む。pytest plugin の import だけでは registry と YAML を読まない。
-公開 API の型は __init__.pyi で宣言し、Hy の import hook と AST の補正は従来どおり先に入れる。
+The execution API is loaded on first use. Merely importing the pytest plugin does not load the registry or YAML.
+The types of the public API are declared in __init__.pyi; the Hy import hook and the AST fixups are installed first, as before.
 """
 
 from importlib import import_module
@@ -66,8 +66,8 @@ if TYPE_CHECKING:
     from doeff_adr._semgrep_hy import HyScanExpansionError as HyScanExpansionError
 
 
-#: 公開の名から、名を定義する module へ — 最初の利用の時にその module だけを読む(effect と handler は内側の module
-#: _effects・_semgrep_effects)。
+#: From a public name to the module that defines it — only that module is loaded on first use (effects and handlers are in the inner modules
+#: _effects and _semgrep_effects).
 _LAZY_EXPORTS: dict[str, str] = {
     "AdrIds": "doeff_adr._effects",
     "AdrSpec": "doeff_adr._registry",
@@ -95,14 +95,14 @@ _LAZY_EXPORTS: dict[str, str] = {
 
 
 def __getattr__(name: str) -> object:
-    """宣言した公開名だけを遅延解決する。import 失敗は呼び手へそのまま伝える。"""
-    # import * が名前を要求した時だけ遅延公開 API を列挙する。
+    """Lazily resolve only the declared public names. An import failure is propagated to the caller as is."""
+    # Enumerate the lazy public API only when import * asks for names.
     if name == "__all__":
         return ("doeff_hy", *_LAZY_EXPORTS)
     module_name = _LAZY_EXPORTS.get(name)
     if module_name is None:
         raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
-    # 公開の名の値は定義の module の値そのもの。1 度引いた名は package の普通の属性になる。
+    # The value of a public name is the value of the defining module itself. Once looked up, a name becomes an ordinary attribute of the package.
     value = vars(import_module(module_name))[name]
     globals()[name] = value
     return value

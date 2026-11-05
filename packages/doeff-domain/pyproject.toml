@@ -10,8 +10,8 @@ readme = "README.md"
 requires-python = ">=3.10"
 dependencies = [
     "doeff-vm>=0.2.0",
-    # doeff-hy を引かない(ADR-DOE-DOMAIN-001 R1)ので、Hy の版の指定は doeff-hy の Hy の宣言と同じにする — doeff-domain だけを
-    # 引く環境にも doeff-hy の上限を効かせる。違えば ADR-DOE-HY-008 R6 の検が赤。
+    # does not pull in doeff-hy (ADR-DOE-DOMAIN-001 R1), so the Hy version pin is the same as the Hy declaration in doeff-hy — so that
+    # environments pulling only doeff-domain also get the doeff-hy upper bound. If they differ, the ADR-DOE-HY-008 R6 check goes red.
     "hy>=1.3.0,<=1.3.1",
 ]
 
@@ -19,8 +19,8 @@ dependencies = [
 # The dogfood declaration module (doeff_domain._core_effects_domains) is the
 # ONLY part of this package allowed to depend on doeff-core-effects
 # (ADR-DOE-DOMAIN-001 D1, one-way).
-# 検 assert-no-orphan-effects は doeff-core-effects の module を全部 import するので、任意の依存(extra)の module
-# の依存も要る — aiohttp_http_server.hy は extra http-server の aiohttp を、_http_handlers_impl.hy は extra http の httpx を import する。
+# The check assert-no-orphan-effects imports every module of doeff-core-effects, so the dependencies of optional (extra) modules
+# are also needed — aiohttp_http_server.hy imports aiohttp from extra http-server, and _http_handlers_impl.hy imports httpx from extra http.
 dogfood = ["doeff-core-effects[http,http-server]>=0.1.0"]
 
 [tool.hatch.build.targets.wheel]

@@ -1,25 +1,25 @@
-"""判断の道具(純粋・通信を知らない)。
+"""Judgment tools (pure, unaware of the network).
 
-答えをどう読むかは呼び手の仕事だが、繰り返し踏む形はここに 1 度だけ書く。
+How to read an answer is up to the caller, but shapes stepped on repeatedly are written here once.
 """
 
 from collections.abc import Callable
 
 from doeff_system_one._types import Answer
 
-#: state に載せる文の目安(字)。超えると確信度が落ちる(jevadr の実測 2026-09-19: 2,000 字を
-#: 越えた窓は点数が下がるのではなく確信度が 0 になる = 判定器が答えを出せない)。
+#: Advised size (chars) of the text put in the state. Beyond it confidence drops (jevadr measurement 2026-09-19: a window over 2,000 chars
+#: does not lower the score; confidence becomes 0 = the judge cannot give an answer).
 STATE_CHARS_ADVISED = 2_000
 
 
 def answered(answer: Answer | None, floor: float) -> bool:
-    """答えが出ているか。**確信度が無い / 床の下 = 判定できない**(合格でも違反でもない)。"""
+    """Whether an answer is given. **No confidence / below the floor = cannot judge** (neither pass nor violation)."""
     return (answer is not None and answer.confidence is not None
             and answer.confidence >= floor)
 
 
 def crosses(answer: Answer | None, *, value_floor: float, confidence_floor: float) -> bool:
-    """値と確信度の両方が床を越えたか(score / noul 用)。答えが出ていなければ False。"""
+    """Whether both value and confidence exceed the floor (for score / noul). False if no answer is given."""
     if not answered(answer, confidence_floor):
         return False
     assert answer is not None
@@ -30,7 +30,7 @@ def crosses(answer: Answer | None, *, value_floor: float, confidence_floor: floa
 
 
 def chosen(answer: Answer | None, *, floor: float, none_label: str | None = None) -> str | None:
-    """choice の答えを「採る / 採らない」に畳む。確信度が床の下、または「どれでもない」なら None。"""
+    """Fold a choice answer into "take / do not take". None if confidence is below the floor or the answer is "none of them"."""
     if not answered(answer, floor):
         return None
     assert answer is not None
@@ -42,15 +42,15 @@ def chosen(answer: Answer | None, *, floor: float, none_label: str | None = None
 
 def calibration_ok(bad: Answer | None, good: Answer | None,
                    crosses_fn: Callable[[Answer], bool], floor: float) -> bool:
-    """使う前に判定器を測る。違反する例(bad)が越え、守る例(good)が越えず、**両方が答えを
-    出せている**こと。「正例が床を越えなければ合格」だけだと、何を渡しても『判定できない』を
-    返す判定器が校正を通る(jevadr の実弾 2026-09-19)。"""
+    """Measure the judge before use. The violating example (bad) must cross, the compliant example (good) must not cross, and **both must
+    actually give an answer**. With only "pass if the positive example does not cross the floor", a judge that returns "cannot judge"
+    for anything passes calibration (jevadr live fire 2026-09-19)."""
     return (answered(bad, floor) and answered(good, floor)
             and bool(crosses_fn(bad)) and not bool(crosses_fn(good)))  # type: ignore[arg-type]
 
 
 def clip(text: object, limit: int = STATE_CHARS_ADVISED) -> str:
-    """state に載せる文を上限で切る(先頭を残す)。"""
+    """Cut the text put in the state at the limit (keep the head)."""
     if text is None:
         return ""
     value = str(text)

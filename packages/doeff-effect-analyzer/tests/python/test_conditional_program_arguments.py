@@ -47,7 +47,7 @@ READS_HY = """\
   None)
 
 (defk answer-with [from-records]
-  {:pre [(: from-records Program)] :post [(: % "from-records の答え")]}
+  {:pre [(: from-records Program)] :post [(: % "answer of from-records")]}
   (<- answer from-records)
   answer)
 

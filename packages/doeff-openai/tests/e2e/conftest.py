@@ -1,8 +1,8 @@
 """Pytest conftest hook — exposes the shared ``run_program`` helper to e2e tests.
 
-本物の OpenAI API を呼ぶ e2e(印 ``real_openai``)は、2 つが揃った時だけ走る: 印を名指して選ぶ(``pytest -m real_openai``)・
-doeff.py の鍵が在る。以前は環境変数 RUN_OPENAI_E2E で切り替えていた(検の module が環境変数を直に読む — DOEFF004)。
-費用の掛かる呼びを誤って撃たないため、鍵が在るだけでは走らせない。
+e2e tests that call the real OpenAI API (marker ``real_openai``) run only when two conditions hold: the marker is selected by name (``pytest -m real_openai``) and
+a doeff.py key exists. Previously this was switched by the environment variable RUN_OPENAI_E2E (the test module read the environment variable directly — DOEFF004).
+To avoid firing costly calls by accident, they do not run merely because a key exists.
 """
 import sys
 from pathlib import Path
@@ -13,7 +13,7 @@ TESTS_DIR = Path(__file__).resolve().parent.parent
 if str(TESTS_DIR) not in sys.path:
     sys.path.insert(0, str(TESTS_DIR))
 
-from _runner import doeff_py_has_openai_key  # noqa: E402 — TESTS_DIR を sys.path に足した後に読む
+from _runner import doeff_py_has_openai_key  # noqa: E402 — read after adding TESTS_DIR to sys.path
 
 REAL_OPENAI = "real_openai"
 
@@ -21,7 +21,7 @@ REAL_OPENAI = "real_openai"
 def pytest_configure(config: pytest.Config) -> None:
     config.addinivalue_line(
         "markers",
-        f"{REAL_OPENAI}: 本物の OpenAI API を呼ぶ e2e(-m {REAL_OPENAI} で選び、doeff.py の鍵が在る時だけ走る)",
+        f"{REAL_OPENAI}: e2e that calls the real OpenAI API (selected with -m {REAL_OPENAI}; runs only when a doeff.py key exists)",
     )
 
 

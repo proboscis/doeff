@@ -1,4 +1,4 @@
-"""台本 handler で Judge を走らせる — program 側は provider を知らない。"""
+"""Run Judge through a scripted handler — the program side does not know the provider."""
 
 from doeff_core_effects import await_handler, scheduled, slog_discard_handler, try_handler
 from doeff_system_one import (
@@ -21,16 +21,16 @@ def _run(program, *layers):
 
 def test_program_reads_verdict_from_scripted_answers() -> None:
     state = ScriptedJudgeState()
-    handler = scripted_judge_handler({"vague": Answer.noul(0.9), "kind": Answer(kind="choice", value="実装", confidence=0.8)}, state)
+    handler = scripted_judge_handler({"vague": Answer.noul(0.9), "kind": Answer(kind="choice", value="implement", confidence=0.8)}, state)
 
     @do
     def flow():
-        verdict = yield judge({"prompt": "直して"}, {"vague": Question(kind="noul", instructions="曖昧か"), "kind": Question(kind="choice", instructions="種類", options=(("調査", "調査"), ("実装", "実装")))})
+        verdict = yield judge({"prompt": "fix it"}, {"vague": Question(kind="noul", instructions="Is it vague?"), "kind": Question(kind="choice", instructions="kind", options=(("investigate", "investigate"), ("implement", "implement")))})
         return (answered(verdict.answer("vague"), 0.6), verdict.answer("kind").value, verdict.model)
 
-    assert _run(flow(), handler) == (True, "実装", "scripted")
+    assert _run(flow(), handler) == (True, "implement", "scripted")
     assert state.count == 1
-    assert state.calls[0].state == {"prompt": "直して"}
+    assert state.calls[0].state == {"prompt": "fix it"}
 
 
 def test_scripted_error_reaches_the_program_as_judge_error() -> None:

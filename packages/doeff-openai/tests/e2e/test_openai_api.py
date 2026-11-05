@@ -32,8 +32,8 @@ from doeff import (
 )
 from doeff import handler as _program_handler
 
-# 印 e2e は本物の OpenAI API を呼ぶ 2 本(印 real_openai)にだけ付ける。ほかは handler の模擬で網も鍵も使わないので、日次の
-# 処理ステージ packages(`-m "not e2e"`)で走る(以前は module 全体に e2e を付けていて、模擬の 12 本がどの入口からも走らなかった)。
+# The e2e marker is attached only to the 2 tests that call the real OpenAI API (marker real_openai). The others mock the handler and use neither network nor key, so they run in the daily
+# processing-stage packages (`-m "not e2e"`) (previously e2e was attached to the whole module, so the 12 mocked tests ran from no entry point).
 
 
 # Pydantic models for structured output

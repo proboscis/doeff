@@ -7,61 +7,61 @@ Generic publish/subscribe effects for doeff.
 - `Publish(event)`
 - `WaitForEvent(*event_types)`
 - `event_handler()`
-- `subscribed_event_handler(bus, subscriber, event_types=())`・`EventBus()`
+- `subscribed_event_handler(bus, subscriber, event_types=())`, `EventBus()`
 
-## 購読者ごとの列
+## Per-subscriber queues
 
-`event_handler()` は、その時に待っている全員へ合図を渡し、待ち手が居なければ合図を捨てます。状態を読んでから
-`WaitForEvent` に入るまでの間に発した合図を落とさないためには、`subscribed_event_handler()` を使います。購読は handler を
-組み立てた時に始まり、待ち手が居ない間に発した合図も購読者ごとの列に積みます。購読者の名前・列・`EventBus` は handler の
-組み立ての引数だけに出て、Program(`Publish`・`WaitForEvent`)は変わりません。
+`event_handler()` hands a signal to everyone waiting at that moment and discards the signal if nobody is waiting. To avoid losing signals emitted between
+reading the state and entering `WaitForEvent`, use `subscribed_event_handler()`. The subscription starts when the handler is
+built, and signals emitted while no waiter exists are also queued in the per-subscriber queue. The subscriber name, the queue and the `EventBus` appear only in the arguments of the handler's
+construction; the Program (`Publish`, `WaitForEvent`) is unchanged.
 
-| 口 | 振る舞い |
+| Entry point | Behavior |
 |---|---|
-| `subscribed_event_handler(bus, subscriber, event_types=())` | 組み立てた時に `bus` へ購読を始め、その時より後の `event_types` の合図だけを積む。同じ名で組み立て直すと前の列を捨てる。`event_types=()` は発するだけ |
-| `Publish(event)` | `bus` の全購読者(自分を含む)の列へ渡す。待っている購読者は起き、待っていない購読者の列には残る |
-| `WaitForEvent(*types)` | 自分の列の先頭から当たる合図を取り出す。無ければ合図が来るまで待つ。購読の型の外の型を待つと `ValueError` |
-| `EventBus.subscribe(subscriber, event_types)` | 購読者 1 人の列(handler の中の部品 `doeff_events._handlers.memory.SubscriberQueue` — 公開の名でない)を作って返す。別の合図の源を持つ handler も、受けた合図を列の `offer(event)` へ渡せば同じ待ち方を使える |
+| `subscribed_event_handler(bus, subscriber, event_types=())` | When built, starts the subscription on `bus` and queues only signals of `event_types` that come after that point. Rebuilding with the same name discards the previous queue. `event_types=()` only emits |
+| `Publish(event)` | Hands the event to the queues of all subscribers on `bus` (including itself). Waiting subscribers wake; for subscribers not waiting, it stays in their queue |
+| `WaitForEvent(*types)` | Takes the first matching signal from the head of its own queue. If none, waits until a signal arrives. Waiting for a type outside the subscription types raises `ValueError` |
+| `EventBus.subscribe(subscriber, event_types)` | Creates and returns one subscriber's queue (the in-handler part `doeff_events._handlers.memory.SubscriberQueue` — not a public name). A handler with another signal source can use the same way of waiting by handing received signals to the queue's `offer(event)` |
 
-待ち手の居ない間に列に溜まった同じ型の合図のうち、欄 `keys`(変わった所の tuple)を持つ frozen の dataclass の合図は、
-先に来た方の位置で 1 つにまとめます(`keys` は来た順に重なりを除いて合わせる・`keys` の外の欄が違えばまとめない)。
-受け手は所で記録を読み直すので中身は失われません。`keys` を持たない合図(`TimerFired` など)はまとめません。
+Among signals of the same type piled up in the queue while no waiter exists, those that are frozen dataclass signals with a field `keys` (a tuple of changed places) are merged into one
+at the position of the earlier one (`keys` are combined in arrival order with duplicates removed; signals whose fields other than `keys` differ are not merged).
+The receiver re-reads the records by place, so nothing is lost. Signals without `keys` (such as `TimerFired`) are not merged.
 
-## 出来事を待つループの macro `event-loop`
+## The event-waiting loop macro `event-loop`
 
-係のループを「状態を読む → 出来事か止めの合図を待つ → 来た物の節を回す」の 1 つの形で書く Hy の macro です。
+A Hy macro that writes a worker's loop in one shape: "read the state -> wait for an event or the stop signal -> run the clause of whatever arrived".
 
 ```hy
 (require doeff-events.macros [event-loop])
 
-(event-loop [board Board (! (read-board))]    ; state の名・型・初期値(初期値は do! の中 — 読みは (! …) で書く)
-  (:stop reason)          board                ; 止めの節(必ず 1 つ)— この値が event-loop の値
-  (BoardMoved :keys keys) (! (read-board-at board keys))   ; 本体の値が次の state
-  (TimerFired :tag tag)   (match tag "end" (stop board) _ board))   ; (stop 値) で抜ける
+(event-loop [board Board (! (read-board))]    ; state name, type and initial value (the initial value is inside do! — write reads as (! ...))
+  (:stop reason)          board                ; stop clause (exactly one required) — this value is the value of event-loop
+  (BoardMoved :keys keys) (! (read-board-at board keys))   ; the body's value is the next state
+  (TimerFired :tag tag)   (match tag "end" (stop board) _ board))   ; (stop value) exits
 ```
 
-- state の型を書くと(`[名 型 初期値]`)、初期値・各節の値・抜けた値をその型で確かめ、型検査にもループの値の型が見えます。
-  型を省いた `[名 初期値]` も書けます(型検査はループの値を Unknown と見ます)。
+- Writing the state type (`[name type init]`) checks the initial value, each clause's value and the exited value against it, and the type checker also sees the loop's value type.
+  The untyped `[name init]` can also be written (the type checker sees the loop's value as Unknown).
 
-- 節の頭の型の組をそのまま `WaitForEvent` に渡すので、待つ型と扱う型はずれません。扱わない型の出来事は節に来ません。
-- 止めの合図は `AwaitStop` と競わせます(ループの寿命の間に 1 つだけ待つ)。節の処理中に来た止めは、列に残る次の出来事より先に効きます。
-  ループの前に来ていた止めでは、出来事を 1 つも回さずに止めの節を回します。
-- 節の本体は `do!` の中です(`<-` と `!` が使える・`(do …)` の中身は文として並ぶ)。state を省く形は `[名 初期値]` を書かずに節だけを並べます。
-- 回した出来事ごとに `slog("event-loop", event=<型の名>)` を記録します(外に slog の handler が要ります)。
-- `(stop 値)` は本体の最後の値の位置(`do`・`if`・`cond`・`match`・`try` の枝)に書きます。
-- 型の節は書いた順に当たります(親の型の節を先に書くと、子の型の出来事も親の節が受けます)。
-- 止めの合図で抜ける時、待ちの途中で列から取り出された出来事が 1 つ捨てられることがあります(合図は「どこが変わったか」だけなので、
-  次に起きた係が記録を読み直せば揃います)。
-- 本体は `do!` の入れ子の関数なので、外の `var` を `:=` で書き換えても外には届きません。次の state は本体の値で渡します。
+- The tuple of types in each clause head is passed as-is to `WaitForEvent`, so the awaited types and the handled types cannot drift apart. Events of types not handled do not reach a clause.
+- The stop signal races with `AwaitStop` (only one is awaited during the loop's lifetime). A stop that arrives while a clause is being processed takes effect before the next event left in the queue.
+  A stop that arrived before the loop runs the stop clause without running any event.
+- A clause body is inside `do!` (`<-` and `!` are available; the contents of `(do ...)` line up as statements). The form without state lists only clauses, without writing `[name init]`.
+- For each event run, `slog("event-loop", event=<type name>)` is recorded (an outer slog handler is required).
+- `(stop value)` is written at the last-value position of a body (a branch of `do`, `if`, `cond`, `match`, `try`).
+- Type clauses match in the order written (if a parent-type clause is written first, the parent clause also receives events of the child type).
+- When exiting on the stop signal, one event taken from the queue in the middle of a wait may be discarded (a signal only says "where it changed", so
+  the next worker to wake catches up by re-reading the records).
+- The body is a function nested inside `do!`, so rewriting an outer `var` with `:=` does not reach outside. Pass the next state as the body's value.
 
-展開の時に断る形: 止めの節が無い・2 つ在る / 待つ型の節が無い / 型を導けない節(`_`・名前だけ・`|`・値の式)/ 同じ型の節が 2 つ /
-型の節の束縛に値の式を書く(値で絞らず本体で分ける)/ 本体の無い節 / 最後の値の位置でない `stop`。
+Forms rejected at expansion: no stop clause or two of them / no awaited-type clause / a clause whose type cannot be derived (`_`, a bare name, `|`, a value expression) / two clauses of the same type /
+a value expression in a type clause binding (do not narrow by value; branch in the body) / a clause without a body / a `stop` outside the last-value position.
 
-## process をまたぐ知らせ(notice broker)
+## Notices across processes (notice broker)
 
-業務の Program は今までどおり `Publish(event)` と `WaitForEvent(*types)` だけを書きます。出来事を別の process へ運ぶのは
-`notice_events_handler` で、運び方(channel の名・値の綴り方)はその引数の道の表にだけ書きます。Program には channel の名は
-出ません。運ぶのは保存しない知らせ(Redis の Pub/Sub)と、道が名乗った時だけ残す知らせ(Redis Streams — 下の「残す channel」)です。
+Business Programs write only `Publish(event)` and `WaitForEvent(*types)` as before. Carrying events to another process is done by
+`notice_events_handler`, and how they are carried (channel names, value encoding) is written only in the route table passed as its argument. Channel names do not appear in the Program.
+What is carried is unsaved notices (Redis Pub/Sub) and notices kept only when a route declares it (Redis Streams — see "Kept channels" below).
 
 ```python
 from doeff_events import (
@@ -72,21 +72,21 @@ from doeff_events import (
 
 routes = (
     NoticeRoute(
-        event_type=OrderState,                             # Program が出す・待つ型
-        wire_name="order-state",                           # 線の上の名(同じ channel に複数の型が乗る)
-        channel=lambda event: f"order:{event.order_id}",   # 出す先の channel を出来事の値から決める
-        encode=lambda event: json.dumps(...),              # 型 → 文字列
-        decode=lambda body: OrderState(...),               # 文字列 → 型
-        when_unsent=MarkGap(),                             # 届かなかった時: channel に欠けの印(Drop() = 持たない)
-        reads=("order:o1",),                               # この process が受ける channel(出すだけなら ())
+        event_type=OrderState,                             # the type the Program emits and waits for
+        wire_name="order-state",                           # name on the wire (several types can ride the same channel)
+        channel=lambda event: f"order:{event.order_id}",   # decide the destination channel from the event's value
+        encode=lambda event: json.dumps(...),              # type -> string
+        decode=lambda body: OrderState(...),               # string -> type
+        when_unsent=MarkGap(),                             # when it did not arrive: put a gap mark on the channel (Drop() = keep nothing)
+        reads=("order:o1",),                               # channels this process receives (() if it only emits)
     ),
 )
 
-# 外 → 内。時計の handler(GetTime・WaitWithin)は broker に届かない間だけ使います。
+# Outside -> inside. The clock handlers (GetTime, WaitWithin) are used only while the broker is unreachable.
 program = subscribed_event_handler(EventBus(), "screen", (OrderState, SourceStarted, SourceResumed))(
-    broker_patience_handler(BrokerPatience(seconds=900.0))(  # 読む包みの源が止まりの時に問う上限 ReadBrokerPatience の答え(組み立ての 1 か所・既定なし)
-        redis_notice_handler("redis://localhost:6379/0", timeout_seconds=2.0)(  # 手元の模擬とテストは memory_notice_handler(MemoryBroker())
-            broker_back_by_retry(retry_seconds=2.0)(             # Redis の戻りを、待っている間だけ繋がるかの試しで知る
+    broker_patience_handler(BrokerPatience(seconds=900.0))(  # the limit answered to ReadBrokerPatience, asked when the reading wrapper's source stalls (one place in the assembly; no default)
+        redis_notice_handler("redis://localhost:6379/0", timeout_seconds=2.0)(  # for local simulation and tests use memory_notice_handler(MemoryBroker())
+            broker_back_by_retry(retry_seconds=2.0)(             # learn Redis has come back by trying whether it connects, only while waiting
                 notice_events_handler("screen", routes)(body)
             )
         )
@@ -94,72 +94,71 @@ program = subscribed_event_handler(EventBus(), "screen", (OrderState, SourceStar
 )
 ```
 
-- 出す側: 道の表に在る型の `Publish` を broker へ送り(`PUBLISH`)、答えは `NoticeSent(receivers)` — その時に購読していた受け手の数
-  です(0 = 誰も聞いていない。0 をどう扱うかは出し手が決めます。1 以上でも、受け手が読んだ事の証ではありません)。表に無い型は外の
-  handler(process の中の列)へそのまま出ます。
-- 出し損ね(扱いはここ 1 か所 — ADR-DOE-EVENTS-002 R5): broker に届かなくても `Publish` は例外を上げず、閉じた型の 3 つのどれかで答えます —
-  `NoticeSent`・`NoticeGapMarked`(道の `when_unsent` が `MarkGap` — その channel に欠けの印を付けた)・`NoticeDropped`(`Drop` — 持たない。
-  すぐ古く成る物のため)。持つのは channel の印だけで、出来事そのものは持ちません(持つ量は channel の数で止まる)。欠けは定まった知らせ 1 通
-  (`Announce.gap(channel, source)` が作る知らせ)で、broker が戻った時(`AwaitBrokerBack` の答え)・次に通る `Publish` の前・出し手の起動の時
-  (`MarkGap.start_channels`)に出します。broker の effect を直に読む test と fake の broker は、知らせの名を比べずに `Announcement.is_gap`・
-  `Announce.is_gap` で欠けの知らせを見分けます(名の文字列は内側に置く — ADR-DOE-API-001 R1)。受ける包みはそれを `SourceMissed(source, channel)` にし、Program は `SourceStarted` / `SourceResumed` と同じく記録から 1 度
-  追いつきます(何度来てもよい)。別の task が欠けを出している間の `Publish` は、それが終わるのを待ってから出ます(順が入れ替わらない)。
-  次の `Publish` が欠けを全部出したら、戻りを待つ task は止まります。`AwaitBrokerBack` に誰も答えられない時、その task は止まり、印は
-  次の `Publish` まで残り、その失敗は本体が終わる時に上がります。本体が終われば印は消えます(次の起動の欠けの知らせで埋める)。
-- 結末の分からない書き: 書きの答えが期限内に来ず、書きが着いたか分からない出し手は、出すはずだった
-  出来事を `PublishGap(event)` に渡します。出来事は送らず、その道の channel に欠けの印を付けて、同じ出口ですぐに出します(答え
-  `NoticeGapTold(channel)`)。broker が受けられなければ、`Publish` の出し損ねと同じく印が残ります(`NoticeGapMarked`)。`Drop` の道は
-  持たない(`NoticeDropped`)。表に無い型の `PublishGap` は外の handler へ出ます(包みは channel を知らない)。
-- 受ける側: 包んだ本体の最初の effect より前に購読を始め、**broker が購読を確かめた後に** `SourceStarted(source)` を 1 度 出します。
-  受けた知らせは全部 process の中の購読者の列へ `Publish` し、Program は `WaitForEvent` で 1 つずつ受けます(`WaitForEvent` に答えるのは
-  外の `subscribed_event_handler` — `SourceStarted`・`SourceStalled`・`SourceResumed` は、購読の型に名指した Program だけが受けます)。
-  道の表で読めない知らせは捨てずに、源を `UnroutedNotice` で落とします。
-- 届かない物: 知らせは、出された時に購読していて繋がっている読み手にだけ届きます。購読の前と、繋がっていない間の知らせは後から
-  届きません。失った分は backend が埋めず、Program が `SourceStarted` と `SourceResumed` を受けた時に 1 度 記録から追いつく前提です
-  (どちらも購読が成った後にだけ出るので、追いつきの読みの後に出た知らせは落ちません)。
-- 残す channel(`NoticeRoute(kept=True)`): 出す側は `Announce(kept=True)` で channel の log(Redis は
-  Streams の `XADD`・長さの上限 `KEPT_LOG_LENGTH` は近似)へ足し、受ける側は reader の名(源の名)で log から読みます。源は出来事を
-  process の中の列へ出した後に `AckAnnouncement` を返し、broker の handler は ack の無い知らせを `redeliver_seconds`(既定
-  `KEPT_REDELIVERY_SECONDS` = 2 秒)の後に渡し直します。繋ぎ直しの後は、同じ reader の読んだ所の続きから読みます。broker と列の間で
-  失った知らせは、届かないのではなく後から届きます。同じ出来事が 2 度届く事が在るので、受け手は追いつきと同じく重なりを扱います。
-  読んだ所と ack の無い知らせは handler(process)が開いた購読ごとに持ちます。閉じた購読の分は同じ名の次の購読が引き継ぎ、同時に
-  開いた同じ名の購読は、どれも全部の知らせを読みます。起き直した process は log の末尾から始めます(その前は記録から追いつく)。
-  1 つの channel の道は、出す側も受ける側も同じ `kept` を名乗ります(混ぜた読みは包みを作る時に断ります)。残す channel を読む購読は
-  同じ channel の Pub/Sub も聞くので、宣言し直しの間にまだ古い版の出す側が `kept` 無しで出した知らせも届きます(receipt は無く、ack も
-  しない)。出す側と受ける側の宣言の順を問いません。
-- 接続が切れた時: 源は `SourceStalled` を出し、戻りを `AwaitBrokerBack` の答えで待ちます(上限の `WaitWithin` 1 つ —
-  時間で読み直しません)。上限は包みの引数ではなく、源が止まりの始まりに 1 度 問う `ReadBrokerPatience` の答え
-  (`BrokerPatience`)で、包みの外に置く `broker_patience_handler` が答えます(doeff-records の源が `ReadSourcePatience` を問うのと同じ形)。
-  既定は無く、答え手を置き忘れた組み立ては、最初の止まりで答え手の無い effect として名指しで落ちます。出すだけの包みは問いません。戻れば購読を作り直し、
-  broker が確かめた後に `SourceResumed` を 1 度 出して続けます。上限を過ぎれば
-  `NoticeSourceUnreachable` で落ちます(`SourceFailed` が本体の待ちに届く)。`AwaitBrokerBack` に答えるのは、memory の handler では handler
-  自身、Redis では `broker_back_by_retry(retry_seconds)`(`redis_notice_handler` の内側・`notice_events_handler` の外側に置く)です —
-  落ちている Redis からは知らせが来ないので、待っている間だけ、組み立てが名指す間隔(既定なし)で「繋がるか」だけを試します
-  (`ProbeBroker` = `PING`・data を読み書きしない)。待つ者が居ない間の試しは 0 です(ADR-DOE-EVENTS-002 R6)。
-- 読むのが遅い受け手: Redis は、購読者あての未送の知らせが `client-output-buffer-limit pubsub`(既定 32mb 8mb 60)を越えると、その
-  購読者の接続を切ります。受け手には「接続が切れた」(`SourceStalled` → `SourceResumed`)として届き、知らせが黙って抜ける事はありません
-  (本物の redis-server 7.2.7 のテストで確かめています)。
-- 止め方: 源の task は時間の上限の無い blocking の取りで待ち、本体が終わると `Cancel` で止まります(`await_handler` が取り消しを
-  redis-py の coroutine へ伝える)。本体の止めは今までどおり `StopArrived` を `WaitForEvent` で受けます。
+- Emitting side: sends a `Publish` of a type in the route table to the broker (`PUBLISH`), and the answer is `NoticeSent(receivers)` — the number of receivers
+  subscribed at that moment (0 = nobody is listening. What to do about 0 is up to the emitter. Even 1 or more is not proof that a receiver read it). Types not in the table go as they are to the outer
+  handler (the queue inside the process).
+- Failure to emit (handled in this one place — ADR-DOE-EVENTS-002 R5): even if it does not reach the broker, `Publish` does not raise an exception but answers with one of three closed types —
+  `NoticeSent`, `NoticeGapMarked` (the route's `when_unsent` is `MarkGap` — a gap mark was put on that channel), `NoticeDropped` (`Drop` — nothing is kept,
+  for things that go stale quickly). Only the channel's mark is kept, not the event itself (the amount kept is bounded by the number of channels). A gap is one fixed notice
+  (the notice `Announce.gap(channel, source)` builds), and it is emitted when the broker comes back (the answer of `AwaitBrokerBack`), before the next `Publish` that goes through, and when the emitter starts
+  (`MarkGap.start_channels`). Tests that read broker effects directly and fake brokers tell a gap notice apart with `Announcement.is_gap` and
+  `Announce.is_gap` instead of comparing notice names (the name string stays inside — ADR-DOE-API-001 R1). The receiving wrapper turns it into `SourceMissed(source, channel)`, and the Program catches up from the records once, as with `SourceStarted` / `SourceResumed`
+  (it may come any number of times). A `Publish` while another task is emitting a gap waits for that to finish before emitting (the order is not swapped).
+  Once the next `Publish` has emitted all gaps, the task waiting for the broker to come back stops. When nobody can answer `AwaitBrokerBack`, that task stops, the marks
+  stay until the next `Publish`, and the failure is raised when the body ends. When the body ends the marks are gone (filled by the gap notice at the next start).
+- Writes with an unknown outcome: an emitter whose write's answer did not come in time and does not know whether the write arrived passes the event
+  it was going to emit to `PublishGap(event)`. The event is not sent; a gap mark is put on that route's channel and emitted at once through the same outlet (answer
+  `NoticeGapTold(channel)`). If the broker cannot accept it, the mark stays, as with the failure of `Publish` (`NoticeGapMarked`). A `Drop` route
+  keeps nothing (`NoticeDropped`). A `PublishGap` of a type not in the table goes to the outer handler (the wrapper does not know channels).
+- Receiving side: starts the subscription before the first effect of the wrapped body, and emits `SourceStarted(source)` once **after the broker has confirmed the subscription**.
+  All received notices are `Publish`ed to the subscriber queue inside the process, and the Program receives them one at a time with `WaitForEvent` (what answers `WaitForEvent` is the
+  outer `subscribed_event_handler` — `SourceStarted`, `SourceStalled` and `SourceResumed` are received only by a Program that names them in its subscription types).
+  A notice that the route table cannot read is not discarded; the source fails with `UnroutedNotice`.
+- What does not arrive: a notice reaches only readers that were subscribed and connected when it was emitted. Notices from before the subscription and while disconnected are not
+  delivered later. The backend does not fill in what was lost; the premise is that the Program catches up from the records once when it receives `SourceStarted` and `SourceResumed`
+  (both are emitted only after the subscription is established, so notices emitted after the catch-up read are not lost).
+- Kept channels (`NoticeRoute(kept=True)`): the emitting side adds to the channel's log with `Announce(kept=True)` (for Redis,
+  `XADD` of Streams; the length limit `KEPT_LOG_LENGTH` is approximate), and the receiving side reads from the log by reader name (the source's name). After emitting the event
+  to the queue inside the process, the source returns `AckAnnouncement`, and the broker's handler hands over again a notice without an ack after `redeliver_seconds` (default
+  `KEPT_REDELIVERY_SECONDS` = 2 seconds). After reconnecting, it reads from where the same reader left off. A notice
+  lost between the broker and the queue is not undelivered but arrives later. The same event may arrive twice, so the receiver handles duplicates as it does for catch-up.
+  The read position and unacked notices are held per subscription that the handler (process) opened. A closed subscription's share is taken over by the next subscription of the same name, and subscriptions of the same name
+  opened at the same time all read every notice. A restarted process starts from the end of the log (it catches up from the records for what is before that).
+  The routes of one channel, on both the emitting and receiving sides, declare the same `kept` (a mixed read is rejected when the wrapper is built). A subscription that reads a kept channel
+  also listens to that channel's Pub/Sub, so a notice emitted without `kept` by a still-old emitter during a redeclaration also arrives (there is no receipt and it is not
+  acked). The order of declaring the emitting and receiving sides does not matter.
+- When the connection drops: the source emits `SourceStalled` and waits for the return with the answer of `AwaitBrokerBack` (one upper limit `WaitWithin` —
+  it does not re-read on a timer). The upper limit is not an argument of the wrapper but the answer to `ReadBrokerPatience`, which the source asks once at the start of a stall
+  (`BrokerPatience`), and `broker_patience_handler`, placed outside the wrapper, answers it (the same shape as doeff-records' source asking `ReadSourcePatience`).
+  There is no default, and an assembly that forgot to place the answerer fails at the first stall by name as an effect with no answerer. A send-only wrapper does not ask. On return it rebuilds the subscription and,
+  after the broker has confirmed, emits `SourceResumed` once and continues. Past the limit it fails with
+  `NoticeSourceUnreachable` (`SourceFailed` reaches the body's wait). What answers `AwaitBrokerBack` is the handler itself in memory's handler, and in Redis
+  `broker_back_by_retry(retry_seconds)` (placed inside `redis_notice_handler` and outside `notice_events_handler`) —
+  no notices come from a downed Redis, so only while waiting, it merely tries "does it connect" at an interval the assembly names (no default)
+  (`ProbeBroker` = `PING`; it reads and writes no data). Tries while nobody is waiting are 0 (ADR-DOE-EVENTS-002 R6).
+- Slow-reading receivers: Redis cuts a subscriber's connection when the unsent notices addressed to it exceed `client-output-buffer-limit pubsub` (default 32mb 8mb 60). The
+  receiver sees it as "the connection dropped" (`SourceStalled` -> `SourceResumed`), and no notice silently goes missing
+  (confirmed by a test against a real redis-server 7.2.7).
+- How it stops: the source's task waits on a blocking take with no time limit, and stops with `Cancel` when the body ends (`await_handler` passes the cancellation on to the
+  redis-py coroutine). The body's stop is still received as `StopArrived` with `WaitForEvent`, as before.
 
-下の層(broker の操作の effect — `doeff_events._effects.notices`): `Announce`(答え = 受け手の数)・`SubscribeChannels`(答えるのは broker が
-確かめた後)・`NextAnnouncement`・`CloseSubscription`・`AwaitBrokerBack`。broker に届かない時は例外でなく `BrokerUnreachable` を答えます。
-答える handler は `memory_notice_handler(MemoryBroker())`(process の中・テストは `cut_broker` / `restore_broker` で止まりを作れる)と
-`redis_notice_handler(url, timeout_seconds)`(extra `doeff-events[redis]` が要る・設定は URL と、繋ぐ・送るの答えを待つ上限 `timeout_seconds` — 既定なし。答えない server や黙った網が出し手を止めない)。
+The lower layer (the broker operation effects — `doeff_events._effects.notices`): `Announce` (answer = number of receivers), `SubscribeChannels` (answered after the broker has
+confirmed), `NextAnnouncement`, `CloseSubscription`, `AwaitBrokerBack`. When the broker is unreachable, `BrokerUnreachable` is answered instead of an exception.
+The answering handlers are `memory_notice_handler(MemoryBroker())` (inside the process; tests can make a stall with `cut_broker` / `restore_broker`) and
+`redis_notice_handler(url, timeout_seconds)` (needs the extra `doeff-events[redis]`; settings are the URL and the upper limit `timeout_seconds` on waiting for the answer to connect and send — no default. A non-answering server or a silent network does not stall the emitter).
 
-配達の法は `doeff_events._notice_laws` の筋書き(Program)の 1 か所に在り、memory と本物の redis-server の両方が同じ筋書きを通ります
-(宣言 = `docs/adr/defadr_doeff_events_002_notice_delivery_laws.hy`)。本物を相手にするテストは `PATH` の `redis-server` を一時の dir で
-起動します。実行 file が無ければ、そのテストだけを訳つきで skip します(memory を相手にするテストは必ず走ります)。
+The delivery laws live in one place, the scenarios (Programs) of `doeff_events._notice_laws`, and both memory and a real redis-server go through the same scenarios
+(declaration = `docs/adr/defadr_doeff_events_002_notice_delivery_laws.hy`). Tests against the real one start the `redis-server` on `PATH` in a temporary dir.
+If the executable is missing, only that test is skipped with a reason (tests against memory always run).
 
-## ファイルの変更を待つ(`WatchFiles` / `NextFileChanges` / `CloseFileWatch`)
+## Waiting for file changes (`WatchFiles` / `NextFileChanges` / `CloseFileWatch`)
 
-file が伸びたかを決まった間隔で読みに行かず、OS の変更の知らせで起きます。
+Instead of going to read at fixed intervals whether a file has grown, it wakes on the OS's change notifications.
 
-| 口 | 振る舞い |
+| Entry point | Behavior |
 |---|---|
-| `WatchFiles(directory)` | 絶対 path の dir の直下の entry の監視を始める(下の dir の中は見ない — 始める手間を entry の数に依らせない)。答えの後の変更は次の `NextFileChanges` が受ける(待っていない間の変更も失わない)。dir が無ければ `WatchRefused` |
-| `NextFileChanges(watch)` | 次の変更まで待ち、変わった path(作る・書く・消す)を `FilesChanged(paths)` で答える。時間の上限は無い |
-| `CloseFileWatch(watch)` | 監視を止め、handler が持つ物を捨てる |
-| `os_file_watch_handler()` | OS の知らせ(Linux の inotify・macOS の FSEvents)を `watchfiles` で受ける。extra `doeff-events[files]` が要る。`await_handler` の内側(`scheduled` の内)に置く |
-| `memory_file_watch_handler(files)` | 模擬と検の handler。書き手の役が `announce_file_change(files, path)` を撃つと、その path を持つ監視が起きる |
-
+| `WatchFiles(directory)` | Starts watching the entries directly under an absolute-path dir (it does not look inside subdirectories — so the cost to start does not depend on the number of entries). Changes after the answer are received by the next `NextFileChanges` (changes while not waiting are not lost either). If the dir does not exist, `WatchRefused` |
+| `NextFileChanges(watch)` | Waits until the next change and answers the changed paths (create, write, delete) as `FilesChanged(paths)`. There is no time limit |
+| `CloseFileWatch(watch)` | Stops the watch and discards what the handler holds |
+| `os_file_watch_handler()` | Receives the OS's notifications (inotify on Linux, FSEvents on macOS) with `watchfiles`. Needs the extra `doeff-events[files]`. Placed inside `await_handler` (inside `scheduled`) |
+| `memory_file_watch_handler(files)` | Handler for simulation and checks. When a writer role fires `announce_file_change(files, path)`, the watch holding that path wakes |

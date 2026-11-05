@@ -1,12 +1,12 @@
-"""組み立て点の道具 — handler の積み方は 1 か所に書く。
+"""Assembly-point tools: the way handlers are stacked is written in one place.
 
-外側から順に: scheduled → await(httpx の async)→ try → slog の出口(journal / stderr / 捨てる)
-→ HTTP の実体 → cache の実体 → jev(Judge → HttpRequest)→ memo(cache の照合)→ program。
-効果は内側の handler から外へ流れる: program の Judge は memo が受け、外れなら jev が受けて
-HttpRequest を出し、それを HTTP の実体が捌く。
+From the outside in: scheduled -> await (httpx async) -> try -> slog sink (journal / stderr / discard)
+-> HTTP backend -> cache backend -> jev (Judge -> HttpRequest) -> memo (cache lookup) -> program.
+Effects flow from the inner handlers outward: the program's Judge is received by memo, and on a miss jev receives it,
+emits an HttpRequest, and the HTTP backend handles that.
 
-走らせるのは使い手: program を `run(scheduled(with_handlers(judge_stack(…), program)))` で回す
-(ADR-DOE-API-001 R1 — この package は判定の effect Judge に答える handler と、その積みの工場だけを見せる)。
+The caller runs it: run the program with `run(scheduled(with_handlers(judge_stack(...), program)))`
+(ADR-DOE-API-001 R1: this package exposes only the handler that answers the judgment effect Judge, and the factory for its stack).
 """
 
 import os
@@ -39,18 +39,18 @@ def judge_stack(
     caller: str = "",
     log_stderr: bool = False,
 ) -> list[ProgramHandler]:
-    """本番の handler の列(外側が先)。`http` / `cache` を差し替えるとテストや別の実体になる。
+    """The production handler list (outermost first). Swapping `http` / `cache` gives a test or alternative backend.
 
-    target=None でこの process の環境と home の file から宛先を解く(解き方は _target.py の頭の註 — 組み立て点の CLI・hook の
-    入口が呼ぶ形)。journal=None で記録なし。cache=None で in-memory(process 内だけ)。
-    caller = 呼び手の名(`<部品>/<出来事か規則>` の形 — 例 `rulebook-advisor/Stop`)。見出し x-jev-caller で宛先へ送り、
-    jev_judge の行に載せる。
+    With target=None, the destination is resolved from this process's environment and home files (how it is resolved is in the header note of _target.py; the form called by the assembly-point CLI / hook
+    entry). journal=None means no journal. cache=None means in-memory (within the process only).
+    caller = the caller name (form `<component>/<event or rule>`, e.g. `rulebook-advisor/Stop`). Sent to the destination in the x-jev-caller header, and
+    put in the jev_judge line.
     """
     if target is None:
         target = target_from_process_environment()
     sink = slog_handler if log_stderr else slog_discard_handler
-    # 効果は内側から外へ流れる: jev の slog("jev_judge") は journal(内)が消費し、
-    # それ以外の slog は sink(外)へ抜ける。journal を sink の外に置くと sink が先に飲む。
+    # Effects flow from the inside out: the journal (inner) consumes the slog("jev_judge") of jev,
+    # and other slogs pass out to the sink (outer). If the journal were placed outside the sink, the sink would swallow them first.
     layers: list[ProgramHandler] = [await_handler, try_handler, sink]
     if journal:
         layers.append(journal_handler(os.path.expanduser(journal), caller=caller))
@@ -62,7 +62,7 @@ def judge_stack(
 
 
 def durable_cache(path: str = DEFAULT_CACHE_DB) -> Callable[[Any], Any]:
-    """process をまたいで答えを残す cache の実体(SQLite)。"""
+    """The cache backend (SQLite) that keeps answers across processes."""
     expanded = os.path.expanduser(path)
     os.makedirs(os.path.dirname(expanded), exist_ok=True)
     return sqlite_cache_handler(expanded)

@@ -1,17 +1,17 @@
-;;; Dogfood: doeff-core-effects の effect 語彙を domain 宣言する (ADR-DOE-DOMAIN-001 D8)。
+;;; Dogfood: declare the effect vocabulary of doeff-core-effects as domains (ADR-DOE-DOMAIN-001 D8).
 ;;;
-;;; 分割は doeff_core_effects._handlers / scheduler / http / memo / cache の
-;;; handler 構造に沿った提案であり、妥当性は maintainer が PR レビューで判断する。
-;;; 土台の語彙(file / http-server / sql / process / channel / compute /
-;;; stop-signal)は effect の module ごとに 1 domain、Absent / Raise は束ねの
-;;; 境目の受け手(maybe / result / on-raise / absent-as / absent-raises)で 1 domain。
+;;; The split is a proposal that follows the handler structure of doeff_core_effects._handlers / scheduler / http / memo / cache;
+;;; the maintainer judges its validity in PR review.
+;;; The foundation vocabularies (file / http-server / sql / process / channel / compute /
+;;; stop-signal) get one domain per effect module; Absent / Raise get one domain for the
+;;; receivers at the bundling boundary (maybe / result / on-raise / absent-as / absent-raises).
 ;;;
-;;; - 生 Python handler(installer / factory)は :handlers に Handles(handler, effect …) で宣言する
-;;;   (core-effects は編集せず、その handler に何も付けない — D5)。
-;;; - defhandler 製 factory(http / memo)は注釈せずそのまま列挙し、
-;;;   __doeff_body__ からの二層導出(D6)を dogfood する。
-;;; - このモジュールは doeff-domain の中で唯一 doeff-core-effects に依存して
-;;;   よいモジュール(D1、一方向)。import には dogfood extra が必要。
+;;; - Raw Python handlers (installer / factory) are declared in :handlers as Handles(handler, effect ...)
+;;;   (core-effects is not edited and nothing is attached to those handlers - D5).
+;;; - defhandler-made factories (http / memo) are listed as they are, without annotation,
+;;;   to dogfood the two-layer derivation (D6) from __doeff_body__.
+;;; - This module is the only one in doeff-domain that may depend on
+;;;   doeff-core-effects (D1, one-way). Importing it requires the dogfood extra.
 
 (require doeff-domain.macros [defdomain])
 
@@ -24,19 +24,19 @@
 (import doeff_core_effects [Spawn TaskCompleted Gather Wait Cancel Discard Race CreatePromise CompletePromise FailPromise CreateSemaphore AcquireSemaphore ReleaseSemaphore CreateExternalPromise SchedulerIntrospection scheduled])
 (import doeff_core_effects [reader state writer slog-handler slog-discard-handler try-handler local-handler listen-handler await-handler lazy-ask env-var-ask])
 (import doeff_core_effects [cache-handler])
-;; defhandler 製 factory は実装モジュールから直接列挙する(__doeff_body__ を持つ
-;; 実物)。公開 wrapper(http_handlers / memo_handlers)は素の関数で構造情報を
-;; 持たないため、導出の dogfood にはならない。
+;; defhandler-made factories are listed directly from the implementation modules (the real
+;; objects that carry __doeff_body__). The public wrappers (http_handlers / memo_handlers) are plain functions
+;; with no structural information, so they would not dogfood the derivation.
 (import doeff_core_effects._http-handlers-impl [_http-production-handler
                                                 _http-fixture-record-handler
                                                 _http-fixture-replay-handler])
 (import doeff_core_effects._memo-handlers-impl [_memo-layer-handler])
 
-;; 想定内の不在(Absent・BoundAbsent)と失敗(Raise)— 受け手は束ねの境目の生 Python 関数。
+;; Expected absence (Absent, BoundAbsent) and failure (Raise) - the receivers are raw Python functions at the bundling boundary.
 (import doeff_core_effects [Absent Raise])
 (import doeff_core_effects [BoundAbsent maybe result on-raise absent-as absent-raises])
 
-;; 土台の語彙と、その defhandler 製の答え手(注釈せず __doeff_body__ から導出 — D6)。
+;; The foundation vocabulary and its defhandler-made responders (derived from __doeff_body__ without annotation - D6).
 (import doeff_core_effects [StatPath ReadText ReadBytes WriteText WriteBytes AppendText AppendBytes TruncateFile SyncDirectory MakeDirectory ListDirectory WalkTree StatTree RemoveTree RenamePath CopyFile CopyTree AcquireLock ReleaseLock ReadDiskFree ReadDiskUsage MeasureTree LinkFile MakeSymlink CompilePythonSources ReadMemoryFiles])
 (import doeff_core_effects [os-file-handler])
 (import doeff_core_effects [memory-file-handler])
@@ -45,8 +45,8 @@
 (import doeff_core_effects [aiohttp-http-server])
 (import doeff_core_effects [scripted-http-server])
 (import doeff_core_effects [WsConnect WsReceive WsSend WsDisconnect WsDisconnectAll ReadWsSent])
-;; 公開の installer(aiohttp-ws-client・scripted-ws-client)は program を後始末で包む素の関数で構造情報を持たないため、
-;; 導出には __doeff_body__ を持つ defhandler 製の実物を挙げる(_http-production-handler と同じ)。
+;; The public installers (aiohttp-ws-client, scripted-ws-client) are plain functions that wrap the program with cleanup and carry no structural information,
+;; so the derivation lists the real defhandler-made objects that carry __doeff_body__ (same as _http-production-handler).
 (import doeff_core_effects [aiohttp-ws-link-handler])
 (import doeff_core_effects [scripted-ws-link-handler])
 (import doeff_core_effects [SqlQuery SqlInsertRows SqlEnsureTables SqlNotify SqlHangNotice SqlDropNotice SqlTransaction SqlBatch SetSqlOutage])
@@ -55,8 +55,8 @@
 (import doeff_core_effects [clickhouse-http-sql-handler])
 (import doeff_core_effects [sqlite-sql-handler])
 (import doeff_core_effects [RunProcess ExecutableAt ReadEnvironment WorkingDirectory ProcessAlive ReadInterpreter ReadMachineName ResolveModule StartProcess PollProcess StopProcess SignalProcess WriteProcessInput])
-;; offloaded-subprocess-handler は factory metered-offloaded-subprocess-handler に計器 None を渡した値で __doeff_body__ を持たない —
-;; 導出には factory を挙げる。
+;; offloaded-subprocess-handler is the factory metered-offloaded-subprocess-handler given a None meter, and has no __doeff_body__ -
+;; the derivation lists the factory.
 (import doeff_core_effects [subprocess-handler metered-offloaded-subprocess-handler])
 (import doeff_core_effects [scripted-process-handler])
 (import doeff_core_effects [ForkFromWarm PollWarmChild SignalWarmChild WriteWarmChildInput])
@@ -94,86 +94,86 @@
 (import doeff_core_effects [seeded-random-handler])
 
 
-;; --- 生 Python handler の宣言(D5)。節を読めない handler(installer / factory)は、domain の :handlers に
-;; Handles(handler, effect …) で置く — 宣言は domain の側に在り、core-effects の handler に何も付けない(関数 handles() の
-;; 後付けの注釈から型に替えた — ADR-DOE-API-001 R29)。宣言は「処理に参加する宣言」であり
-;; 全域性の保証ではない。lazy-ask は doeff-reader と doeff-scope の 2 つで同じ宣言を置く。
+;; --- Declarations for raw Python handlers (D5). Handlers whose clauses cannot be read (installer / factory) are placed in the domain's :handlers
+;; as Handles(handler, effect ...) - the declaration lives on the domain side and nothing is attached to core-effects handlers (the function handles()
+;; became a type instead of an after-the-fact annotation - ADR-DOE-API-001 R29). A declaration means "takes part in handling" and
+;; is not a totality guarantee. lazy-ask places the same declaration in both doeff-reader and doeff-scope.
 (setv _lazy-ask-handles (Handles lazy-ask Ask Local))
 
 
 (defdomain doeff-reader
-  :title "Reader 語彙 — 環境からの値の照会"
+  :title "Reader vocabulary - looking up values from the environment"
   :effects [Ask]
   :terms [(DomainTerm :name "Ask"
                       :home "doeff_core_effects._effects"
-                      :description "環境キー照会の正典 effect")]
+                      :description "Canonical effect for environment key lookup")]
   :handlers [(Handles reader Ask) _lazy-ask-handles (Handles env-var-ask Ask)]
   :adrs ["ADR-DOE-DOMAIN-001"]
-  :docs "reader / lazy_ask / env_var_ask が被覆する。lazy_ask は Local も処理する(doeff-scope 参照)。")
+  :docs "Covered by reader / lazy_ask / env_var_ask. lazy_ask also handles Local (see doeff-scope).")
 
 
 (defdomain doeff-state
-  :title "State 語彙 — 可変状態の Get/Put"
+  :title "State vocabulary - Get/Put of mutable state"
   :effects [Get Put]
   :handlers [(Handles state Get Put)]
   :adrs ["ADR-DOE-DOMAIN-001"])
 
 
 (defdomain doeff-writer
-  :title "Writer 語彙 — Tell の静かな蓄積"
+  :title "Writer vocabulary - quiet accumulation by Tell"
   :effects [WriterTellEffect ReadWriterLog]
   :terms [(DomainTerm :name "Tell"
                       :home "doeff_core_effects._effects"
-                      :description "WriterTellEffect の正典コンストラクタ")]
+                      :description "Canonical constructor of WriterTellEffect")]
   :handlers [(Handles writer WriterTellEffect ReadWriterLog)]
   :adrs ["ADR-DOE-DOMAIN-001" "ADR-DOE-CORE-EFFECTS-001"])
 
 
 (defdomain doeff-slog
-  :title "Slog 語彙 — 見えてこそ正しい observability"
+  :title "Slog vocabulary - observability is correct only when visible"
   :effects [SlogEffect]
   :terms [(DomainTerm :name "slog"
                       :home "doeff_core_effects._effects"
-                      :description "SlogEffect の正典コンストラクタ")]
+                      :description "Canonical constructor of SlogEffect")]
   :handlers [(Handles slog-handler SlogEffect) (Handles slog-discard-handler SlogEffect)]
   :laws [(DomainLaw :name "slog-tell-types-disjoint"
                     :statement "wire_type(slog) = SlogEffect and wire_type(Tell) = WriterTellEffect and SlogEffect is_not WriterTellEffect"
-                    :counterexamples ["writer() が slog の出力を collect する / slog_handler が Tell を consume する(旧 default_interpreter の実態)"])]
+                    :counterexamples ["writer() collects the output of slog / slog_handler consumes Tell (the actual behavior of the old default_interpreter)"])]
   :adrs ["ADR-DOE-DOMAIN-001" "ADR-DOE-CORE-EFFECTS-001"])
 
 
 (defdomain doeff-error
-  :title "Error 語彙 — Try による Ok/Err 化"
+  :title "Error vocabulary - turning results into Ok/Err via Try"
   :effects [Try]
   :handlers [(Handles try-handler Try)]
   :adrs ["ADR-DOE-DOMAIN-001"])
 
 
 (defdomain doeff-scope
-  :title "Scoped env 語彙 — Local による環境の局所上書き"
+  :title "Scoped env vocabulary - local override of the environment via Local"
   :effects [Local]
   :includes [doeff-reader]
   :handlers [(Handles local-handler Local) _lazy-ask-handles]
   :adrs ["ADR-DOE-DOMAIN-001"]
-  :docs "Local は Ask 語彙(doeff-reader)を参照して意味を持つ — includes は参照合成であり導入ではない(D3)。")
+  :docs "Local has meaning only by referring to the Ask vocabulary (doeff-reader) - includes is reference composition, not introduction (D3).")
 
 
 (defdomain doeff-listen
-  :title "Listen 語彙 — effect の値フロー収集(tee)"
+  :title "Listen vocabulary - collecting the value flow of effects (tee)"
   :effects [Listen]
   :handlers [(Handles listen-handler Listen)]
   :adrs ["ADR-DOE-DOMAIN-001"])
 
 
 (defdomain doeff-await
-  :title "Async bridge 語彙 — coroutine の Await"
+  :title "Async bridge vocabulary - Await of a coroutine"
   :effects [Await]
   :handlers [(Handles await-handler Await)]
   :adrs ["ADR-DOE-DOMAIN-001"])
 
 
 (defdomain doeff-scheduler
-  :title "Scheduler 語彙 — タスク・promise・semaphore の実行基盤"
+  :title "Scheduler vocabulary - execution foundation for tasks, promises, and semaphores"
   :effects [Spawn TaskCompleted Gather Wait Cancel Discard Race
             CreatePromise CompletePromise FailPromise
             CreateSemaphore AcquireSemaphore ReleaseSemaphore
@@ -184,51 +184,51 @@
                       CreateSemaphore AcquireSemaphore ReleaseSemaphore
                       CreateExternalPromise SchedulerIntrospection)]
   :adrs ["ADR-DOE-DOMAIN-001"]
-  :docs "scheduled が単一の実行基盤 prompt として全 scheduler effect を被覆する。")
+  :docs "scheduled covers all scheduler effects as the single execution-foundation prompt.")
 
 
 (defdomain doeff-http
-  :title "HTTP 語彙 — HttpRequest の実行・記録・再生"
+  :title "HTTP vocabulary - executing, recording, and replaying HttpRequest"
   :effects [HttpRequest]
   :handlers [_http-production-handler
              _http-fixture-record-handler
              _http-fixture-replay-handler]
   :adrs ["ADR-DOE-DOMAIN-001"]
-  :docs "handler は defhandler 製 factory — 処理集合は __doeff_body__ から導出される(D6 二層目)。")
+  :docs "The handlers are defhandler-made factories - the handled set is derived from __doeff_body__ (D6 second layer).")
 
 
 (defdomain doeff-memo
-  :title "Memo 語彙 — 階層キャッシュ proxy"
+  :title "Memo vocabulary - hierarchical cache proxy"
   :effects [MemoGetEffect MemoPutEffect MemoDeleteEffect MemoExistsEffect]
   :handlers [_memo-layer-handler]
   :adrs ["ADR-DOE-DOMAIN-001"]
-  :docs "4 effect 全てを _memo-layer-handler が被覆する(defhandler 構造導出)。MemoDeleteEffect は 2026-07-17 実測のドリフト(未処理)だったが、MemoDeleteEffect 節(broadcast delete)が実装され解消済み。")
+  :docs "_memo-layer-handler covers all 4 effects (derived from the defhandler structure). MemoDeleteEffect was drift (unhandled) measured on 2026-07-17, but the MemoDeleteEffect clause (broadcast delete) has been implemented and it is resolved.")
 
 
 (defdomain doeff-cache
-  :title "Cache 語彙 — 内容アドレスの永続キャッシュ"
+  :title "Cache vocabulary - content-addressed persistent cache"
   :effects [CacheGetEffect CachePutEffect CacheDeleteEffect CacheExistsEffect]
   :handlers [(Handles cache-handler CacheGetEffect CachePutEffect CacheDeleteEffect CacheExistsEffect)]
   :adrs ["ADR-DOE-DOMAIN-001"]
-  :docs "4 effect 全てを cache-handler が被覆する(Handles の宣言)。CacheDeleteEffect は 2026-07-17 実測のドリフト(未処理)だったが、CacheDeleteEffect 分岐が実装され解消済み。")
+  :docs "cache-handler covers all 4 effects (declared with Handles). CacheDeleteEffect was drift (unhandled) measured on 2026-07-17, but the CacheDeleteEffect branch has been implemented and it is resolved.")
 
 
 (defdomain doeff-outcome
-  :title "Outcome 語彙 — 想定内の不在(Absent)と失敗(Raise)"
+  :title "Outcome vocabulary - expected absence (Absent) and failure (Raise)"
   :effects [Absent BoundAbsent Raise]
   :terms [(DomainTerm :name "open_bind"
                       :home "doeff_core_effects._outcomes"
-                      :description "<- と ! が宣言に従って答えを開き、不在を Absent・失敗を Raise にして出す 1 点")]
-  ;; Absent / Raise の受け手は束ねの境目の handler を返す工場(呼ぶと scope を包む handler が返る — ADR-DOE-API-001 R6)。
-  ;; BoundAbsent は Absent の子で、印を見て再開し分けるのは absent-as だけ — ほかの受け手には普通の Absent。
+                      :description "The one place where <- and ! open the answer according to the declaration, emitting absence as Absent and failure as Raise")]
+  ;; The receivers of Absent / Raise are factories that return a handler at the bundling boundary (calling one returns a handler that wraps the scope - ADR-DOE-API-001 R6).
+  ;; BoundAbsent is a child of Absent, and only absent-as inspects the mark to decide how to resume - to other receivers it is a plain Absent.
   :handlers [(Handles maybe Absent) (Handles absent-raises Absent) (Handles absent-as Absent BoundAbsent)
              (Handles result Raise) (Handles on-raise Raise)]
   :adrs ["ADR-DOE-DOMAIN-001" "ADR-DOE-CORE-EFFECTS-003"]
-  :docs "受け手は束ねの境目の handler を返す工場で、どれも再開しない(absent-as が自分の字面の BoundAbsent を既定値で再開するのだけが例外)。maybe は Absent を Nothing に、absent-raises は Absent を Raise に、result は Raise を Err に、on-raise は型の合う Raise を業務の答えに畳む。")
+  :docs "The receivers are factories that return a handler at the bundling boundary, and none of them resumes (the only exception is absent-as, which resumes its own literal BoundAbsent with the default value). maybe folds Absent into Nothing, absent-raises folds Absent into Raise, result folds Raise into Err, and on-raise folds a type-matching Raise into a business answer.")
 
 
 (defdomain doeff-file
-  :title "File 語彙 — 汎用の file system の読み書き"
+  :title "File vocabulary - generic file system reads and writes"
   :effects [StatPath ReadText ReadBytes WriteText WriteBytes AppendText
             AppendBytes TruncateFile SyncDirectory
             MakeDirectory ListDirectory WalkTree StatTree RemoveTree RenamePath
@@ -237,153 +237,153 @@
             ReadMemoryFiles]
   :handlers [os-file-handler memory-file-handler rooted-file-handler]
   :adrs ["ADR-DOE-DOMAIN-001"]
-  :docs "os-file-handler(本物)と memory-file-handler(I/O なし)が答え、rooted-file-handler は path を 1 つの dir の下へ移して外側の答え手へ撃ち直す。ReadMemoryFiles は memory-file-handler の置き場を読む effect で、答えるのは memory-file-handler だけ。")
+  :docs "os-file-handler (real) and memory-file-handler (no I/O) answer; rooted-file-handler moves paths under a single dir and re-fires them at the outer responder. ReadMemoryFiles is an effect that reads the storage of memory-file-handler, and only memory-file-handler answers it.")
 
 
 (defdomain doeff-http-server
-  :title "HTTP server 語彙 — HTTP と WebSocket の待ち受け"
+  :title "HTTP server vocabulary - listening for HTTP and WebSocket"
   :effects [HttpListen HttpNextRequest HttpTakeQueued HttpReadBody HttpRespond HttpForward HttpShutdown HttpStopListening
             WsAccept WsSendText WsSendTextEach WsForward WsClose TakeWsSendReport
             AppendHttpScript ReadHttpServed]
   :handlers [aiohttp-http-server scripted-http-server]
   :adrs ["ADR-DOE-DOMAIN-001"]
-  :docs "aiohttp-http-server(本物・extra http-server)と scripted-http-server(I/O なし)が答える。AppendHttpScript / ReadHttpServed は台本を足す・受けた命令を読む effect で、答えるのは scripted-http-server だけ。")
+  :docs "aiohttp-http-server (real, extra http-server) and scripted-http-server (no I/O) answer. AppendHttpScript / ReadHttpServed are effects that add to the script and read the received commands, and only scripted-http-server answers them.")
 
 
 (defdomain doeff-ws-client
-  :title "WebSocket client 語彙 — 繋ぐ側の WebSocket の接続・frame の受け渡し・閉じ"
+  :title "WebSocket client vocabulary - connecting, passing frames, and closing on the connecting side"
   :effects [WsConnect WsReceive WsSend WsDisconnect WsDisconnectAll ReadWsSent]
   :handlers [aiohttp-ws-link-handler scripted-ws-link-handler]
   :adrs ["ADR-DOE-DOMAIN-001"]
-  :docs "aiohttp-ws-link-handler(本物・extra http-server — 公開の installer は aiohttp-ws-client)と scripted-ws-link-handler(I/O なし・台本 — 公開の installer は scripted-ws-client)が答える。installer は program を closing-links で包み、範囲の終わりに WsDisconnectAll を出す。ReadWsSent は台本の答え手が送った文と閉じの記録を読む effect で、答えるのは scripted-ws-link-handler だけ。待ち受け側(doeff-http-server)の WsOpened / WsClose とは別の語彙。")
+  :docs "aiohttp-ws-link-handler (real, extra http-server - the public installer is aiohttp-ws-client) and scripted-ws-link-handler (no I/O, scripted - the public installer is scripted-ws-client) answer. The installer wraps the program with closing-links and emits WsDisconnectAll at the end of the scope. ReadWsSent is an effect that reads the sent text and close records of the scripted responder, and only scripted-ws-link-handler answers it. This is a separate vocabulary from WsOpened / WsClose on the listening side (doeff-http-server).")
 
 
 (defdomain doeff-sql
-  :title "SQL 語彙 — 汎用の SQL の問い合わせ・投入・transaction"
+  :title "SQL vocabulary - generic SQL queries, inserts, and transactions"
   :effects [SqlQuery SqlInsertRows SqlEnsureTables SqlTransaction SqlBatch SqlNotify SqlHangNotice SqlDropNotice SetSqlOutage]
   :handlers [postgres-sql-handler pooled-postgres-sql-handler clickhouse-http-sql-handler sqlite-sql-handler]
   :adrs ["ADR-DOE-DOMAIN-001"]
-  :docs "postgres-sql-handler(scheduler を塞がない — 呼び 1 つに thread 1 本)/ pooled-postgres-sql-handler(同じく塞がない — 呼び手の pool と scheduler の semaphore)/ clickhouse-http-sql-handler(本物 — 同じく塞がない・呼び 1 つに thread 1 本)と sqlite-sql-handler(I/O なし)が答える。SqlTransaction の手順は sql_transaction の run-in-transaction を答え手が共有する(それ自体は handler ではない)。SqlTransaction の欄 batched(既定 False)を選んだ transaction だけが往復をまとめる(手順は run-in-batched-transaction)。SqlBatch はその中の往復をまとめる束で、答えるのは run-in-batched-transaction が被せる scope — batched でない transaction の中・transaction の外で出した束は名指して断る(ClickHouse の答え手は答えない)。SetSqlOutage は模擬の障害を切り替える effect で、答えるのは sqlite-sql-handler だけ。SqlNotify・SqlHangNotice・SqlDropNotice は LISTEN / NOTIFY の呼び鈴で、答えるのは PostgreSQL の答え手 2 つだけ。")
+  :docs "postgres-sql-handler (does not block the scheduler - one thread per call) / pooled-postgres-sql-handler (likewise non-blocking - the caller's pool and the scheduler's semaphore) / clickhouse-http-sql-handler (real - likewise non-blocking, one thread per call) and sqlite-sql-handler (no I/O) answer. The responders share the SqlTransaction procedure, run-in-transaction of sql_transaction (it is not a handler itself). Only a transaction that chose the SqlTransaction field batched (default False) batches round trips (the procedure is run-in-batched-transaction). SqlBatch is a bundle that groups the round trips inside it, and it is answered by the scope that run-in-batched-transaction wraps - a bundle emitted inside a non-batched transaction or outside a transaction is refused by name (the ClickHouse responder does not answer it). SetSqlOutage is an effect that switches a simulated outage, and only sqlite-sql-handler answers it. SqlNotify, SqlHangNotice, and SqlDropNotice are LISTEN / NOTIFY doorbells, and only the two PostgreSQL responders answer them.")
 
 
 (defdomain doeff-process
-  :title "Process 語彙 — 子 process と自分の環境"
+  :title "Process vocabulary - child processes and own environment"
   :effects [RunProcess ExecutableAt ReadEnvironment WorkingDirectory
             ProcessAlive ReadInterpreter ReadMachineName ResolveModule
             StartProcess PollProcess StopProcess SignalProcess WriteProcessInput]
   :handlers [subprocess-handler metered-offloaded-subprocess-handler scripted-process-handler]
   :adrs ["ADR-DOE-DOMAIN-001"]
-  :docs "subprocess-handler(本物)・metered-offloaded-subprocess-handler(本物 — 計器の無い形が offloaded-subprocess-handler)と scripted-process-handler(I/O なし・台本)が 13 effect 全てに答える。")
+  :docs "subprocess-handler (real), metered-offloaded-subprocess-handler (real - the form without a meter is offloaded-subprocess-handler) and scripted-process-handler (no I/O, scripted) answer all 13 effects.")
 
 
 (defdomain doeff-warm-process
-  :title "待ちの子の語彙 — 読み込みを済ませた子 process に仕事を頼み、終わりを読む"
+  :title "Warm-child vocabulary - asking an already-loaded child process to work, and reading its end"
   :effects [ForkFromWarm PollWarmChild SignalWarmChild WriteWarmChildInput]
   :handlers [os-warm-process-handler scripted-warm-process-handler]
   :adrs ["ADR-DOE-DOMAIN-001"]
-  :docs "os-warm-process-handler(本物 — 待ちの子の unix socket に頼み、/proc の start-ticks で照らして読む・送る)と scripted-warm-process-handler(I/O なし・台本)が 4 effect 全てに答える(WriteWarmChildInput は hold-input で頼んだ子の入力の pipe へ書く)。頼んだ子は頼み手の子ではないので、子 process の語彙(doeff-process)の PollProcess では終わりを読めない — この語彙で読む。")
+  :docs "os-warm-process-handler (real - asks the warm child through its unix socket, and reads / sends after checking against the /proc start-ticks) and scripted-warm-process-handler (no I/O, scripted) answer all 4 effects (WriteWarmChildInput writes to the input pipe of a child requested with hold-input). A requested child is not a child of the requester, so its end cannot be read with PollProcess of the child-process vocabulary (doeff-process) - read it with this vocabulary.")
 
 
 (defdomain doeff-proc-table
-  :title "Process の表の語彙 — 機体の process の親子と memory を読み、1 つの process へ signal を送る"
+  :title "Process-table vocabulary - reading process parent/child relations and memory of the machine, and sending a signal to one process"
   :effects [ReadProcTable SignalPid]
   :handlers [os-proc-table-handler scripted-proc-table-handler]
   :adrs ["ADR-DOE-DOMAIN-001"]
-  :docs "os-proc-table-handler(本物 — Linux の /proc を読み、start-ticks で照らして os.kill で送る)と scripted-proc-table-handler(I/O なし・台本の表)が 2 effect 全てに答える。process の group へ送るのは doeff-process の SignalProcess と doeff-warm-process の SignalWarmChild の語彙。")
+  :docs "os-proc-table-handler (real - reads Linux /proc, checks against start-ticks, and sends with os.kill) and scripted-proc-table-handler (no I/O, scripted table) answer both effects. Sending to a process group belongs to the vocabulary of SignalProcess in doeff-process and SignalWarmChild in doeff-warm-process.")
 
 
 (defdomain doeff-process-exit
-  :title "子の終わりの待ちの語彙 — 立てた子・頼んだ子が終わるまで待つ"
+  :title "Child-exit wait vocabulary - waiting until a started or requested child ends"
   :effects [AwaitProcessExit AwaitWarmChildExit]
   :handlers [process-exit-handler]
   :adrs ["ADR-DOE-DOMAIN-001"]
-  :docs "process-exit-handler(本物 — 子の終わると読める fd〔Linux = pidfd・macOS = kqueue の EVFILT_PROC〕の読みを event loop で待つ)が 2 effect 全てに答える。周期で問い直さずに終わりで起きる待ち。
-        終わりを 1 度だけ読む PollProcess・PollWarmChild は、それぞれ doeff-process・doeff-warm-process の語彙。")
+  :docs "process-exit-handler (real - waits in the event loop for a fd that becomes readable when the child ends [Linux = pidfd, macOS = kqueue EVFILT_PROC]) answers both effects. A wait that wakes at the end without re-polling periodically.
+        PollProcess and PollWarmChild, which read the end only once, belong to the vocabularies of doeff-process and doeff-warm-process respectively.")
 
 
 (defdomain doeff-channel
-  :title "Channel 語彙 — 届いた順に読む列"
+  :title "Channel vocabulary - a queue read in arrival order"
   :effects [CreateChannel PutChannel TakeChannel]
   :handlers [scheduler-channel-handler]
   :adrs ["ADR-DOE-DOMAIN-001"]
-  :docs "答え手は scheduler-channel-handler 1 つ(I/O を持たず本番と模擬で同じ物)。scheduled の下で使う。")
+  :docs "The only responder is scheduler-channel-handler (it has no I/O and is the same in production and simulation). Use it under scheduled.")
 
 
 (defdomain doeff-compute
-  :title "Compute 語彙 — 純粋な計算を回して答えを値で受ける"
+  :title "Compute vocabulary - running pure computation and receiving the answer as a value"
   :effects [Compute ReadComputeLoad]
   :handlers [thread-pool-compute-handler inline-compute-handler]
   :adrs ["ADR-DOE-DOMAIN-001"]
-  :docs "thread-pool-compute-handler(thread の pool)と inline-compute-handler(I/O なし・同期)が 2 effect 全てに答える。負荷の読み ReadComputeLoad は pool の並び・走り・待ちの秒の累計(I/O なしは常に 0)。")
+  :docs "thread-pool-compute-handler (thread pool) and inline-compute-handler (no I/O, synchronous) answer both effects. The load reading ReadComputeLoad is the cumulative seconds of pool queue, running, and waiting (always 0 without I/O).")
 
 
 (defdomain doeff-stop-signal
-  :title "Stop signal 語彙 — process の停止の求め"
+  :title "Stop signal vocabulary - requests to stop the process"
   :effects [StopRequested AwaitStop StopBell RaiseStop]
   :handlers [os-signal-stop-handler scripted-stop-handler]
   :adrs ["ADR-DOE-DOMAIN-001"]
-  :docs "os-signal-stop-handler は本物の SIGINT / SIGTERM を StopRequested で読み、AwaitStop で停止まで待ち、StopBell で停止で満ちる Future(session で 1 つ)を渡す。RaiseStop で停止を起こすのは I/O なしの scripted-stop-handler だけ。")
+  :docs "os-signal-stop-handler reads a real SIGINT / SIGTERM with StopRequested, waits until stop with AwaitStop, and hands over a Future filled on stop (one per session) with StopBell. Only the no-I/O scripted-stop-handler raises a stop with RaiseStop.")
 
 
 (defdomain doeff-heap
-  :title "Heap 語彙 — 動き続ける process の heap を集めて凍らせる"
+  :title "Heap vocabulary - collecting and freezing the heap of a continuously running process"
   :effects [CollectAndFreeze]
   :handlers [gc-freeze-handler scripted-freeze-handler]
   :adrs ["ADR-DOE-DOMAIN-001"]
-  :docs "gc-freeze-handler(本物・process の GC に触る)と scripted-freeze-handler(I/O なし・GC に触らず決めた数で答える)が答える。")
+  :docs "gc-freeze-handler (real - touches the GC of the process) and scripted-freeze-handler (no I/O - does not touch the GC and answers with a decided number) answer.")
 
 
 (defdomain doeff-latest
-  :title "Latest 語彙 — 最新の値を置いて読む・変わるまで待つ"
+  :title "Latest vocabulary - publishing and reading the latest value, and waiting until it changes"
   :effects [PublishLatest ReadLatest AwaitLatest]
   :handlers [process-latest-handler memory-latest-handler]
   :adrs ["ADR-DOE-DOMAIN-001"]
-  :docs "process-latest-handler(本物・process の中の置き場)と memory-latest-handler(I/O なし)が答える。")
+  :docs "process-latest-handler (real - storage inside the process) and memory-latest-handler (no I/O) answer.")
 
 
 (defdomain doeff-stack-dump
-  :title "StackDump 語彙 — 共有の実行の流れが止まった最中に全 thread の stack を書く見張り"
+  :title "StackDump vocabulary - a watchdog that writes the stacks of all threads while the shared execution flow is stalled"
   :effects [ArmStackDump DisarmStackDump ReadStackDumps]
   :handlers [faulthandler-stack-dump-handler memory-stack-dump-handler]
   :adrs ["ADR-DOE-DOMAIN-001"]
-  :docs "faulthandler-stack-dump-handler(本物・faulthandler の C の thread が期限を数えて sys.stderr に書く)と memory-stack-dump-handler(I/O なし・数えるだけ)が答える。")
+  :docs "faulthandler-stack-dump-handler (real - the C thread of faulthandler counts down the deadline and writes to sys.stderr) and memory-stack-dump-handler (no I/O - only counts) answer.")
 
 
 (defdomain doeff-meter
-  :title "Meter 語彙 — 数・秒・値の計器"
+  :title "Meter vocabulary - meters for counts, seconds, and values"
   :effects [CountMetric ObserveSeconds ObserveSecondsBatch SetGauge ReadMeter]
   :handlers [process-meter-handler memory-meter-handler]
   :adrs ["ADR-DOE-DOMAIN-001"]
-  :docs "process-meter-handler(本物・process の中の計器)と memory-meter-handler(I/O なし)が 5 effect 全てに答える。")
+  :docs "process-meter-handler (real - a meter inside the process) and memory-meter-handler (no I/O) answer all 5 effects.")
 
 
 (defdomain doeff-step-tally
-  :title "StepTally 語彙 — 窓を開けた間に scheduler が走らせた歩を数える(全体の積算と task ごとの表)"
+  :title "StepTally vocabulary - counting the steps the scheduler ran while a window was open (overall total and a per-task table)"
   :effects [OpenStepTally CloseStepTally OpenTaskTally ReadTaskTally CloseTaskTally]
   :handlers [step-tally-handler]
   :adrs ["ADR-DOE-DOMAIN-001"]
-  :docs "step-tally-handler(Python の scheduler の測りの口に sink を据えて数える)が 5 effect 全てに答える。")
+  :docs "step-tally-handler (installs a sink in the measuring port of the Python scheduler and counts) answers all 5 effects.")
 
 
 (defdomain doeff-random
-  :title "Random 語彙 — 乱数の bytes"
+  :title "Random vocabulary - random bytes"
   :effects [RandomBytes]
   :handlers [os-random-handler seeded-random-handler]
   :adrs ["ADR-DOE-DOMAIN-001"]
-  :docs "os-random-handler(本物・os.urandom)と seeded-random-handler(I/O なし・種から決まる)が答える。")
+  :docs "os-random-handler (real - os.urandom) and seeded-random-handler (no I/O - determined by the seed) answer.")
 
 
-;; VM の数と switch の effect(doeff_vm の関数から effect にした — 宣言が無く、検 (c) が 2026-10-29 の
-;; 日次の検で赤だった)。vm_probe_handler は生 Python の handler で節を読めないので Handles で宣言する。
+;; Effects for VM counts and switches (turned into effects from doeff_vm functions - there was no declaration, and check (c) was red in the 2026-10-29
+;; daily check). vm_probe_handler is a raw Python handler whose clauses cannot be read, so it is declared with Handles.
 (import doeff_core_effects [ReadVmLiveCounts ReadVmWorkCounts ReadVmScanCounts ReadInvariantChecks SetInvariantChecks
                             SetSchedulerStepBudgetArmed SetSchedulerTraceInstalled vm-probe-handler])
 
 (defdomain doeff-vm-probe
-  :title "VM probe 語彙 — doeff-vm の数を読み switch を替える"
+  :title "VM probe vocabulary - reading doeff-vm counts and changing switches"
   :effects [ReadVmLiveCounts ReadVmWorkCounts ReadVmScanCounts ReadInvariantChecks SetInvariantChecks
             SetSchedulerStepBudgetArmed SetSchedulerTraceInstalled]
   :handlers [(Handles vm-probe-handler
                       ReadVmLiveCounts ReadVmWorkCounts ReadVmScanCounts ReadInvariantChecks SetInvariantChecks
                       SetSchedulerStepBudgetArmed SetSchedulerTraceInstalled)]
   :adrs ["ADR-DOE-DOMAIN-001"]
-  :docs "vm-probe-handler(この process の VM に問う・状態を持たない)が 7 effect 全てに答える。")
+  :docs "vm-probe-handler (queries the VM of this process, holds no state) answers all 7 effects.")

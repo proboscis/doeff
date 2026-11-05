@@ -1,8 +1,8 @@
-"""Domain データ構造と表の意味論 (ADR-DOE-DOMAIN-001 D2/D3)。
+"""Domain data structure and registry semantics (ADR-DOE-DOMAIN-001 D2/D3).
 
-表は effect RegisterDomain・GetDomain で読み書きし、handler を返す工場 domain_registry が答える(ADR-DOE-API-001 R29)。
-domain_registry() は process の表(defdomain が載せる所)、domain_registry(domains=[…]) は渡した
-domain だけの別の表から答える。
+The registry is read and written via effects RegisterDomain / GetDomain, answered by the handler factory domain_registry (ADR-DOE-API-001 R29).
+domain_registry() answers from the process registry (where defdomain registers); domain_registry(domains=[…]) answers from a separate registry
+holding only the given domains.
 """
 
 import pytest
@@ -42,7 +42,7 @@ class TestDomainData:
         assert domain.adrs == ("ADR-X",)
 
     def test_effects_must_be_classes_not_strings(self):
-        # D2: 実クラス参照のみ — 文字列は import が壊れても fail しないので禁止
+        # D2: real class references only — strings do not fail when the import breaks, so they are forbidden
         with pytest.raises(DomainDefinitionError, match="FixtureAlpha"):
             make_domain(effects=["FixtureAlpha"])
 
@@ -80,7 +80,7 @@ class TestDomainData:
 
 @do
 def _introducing(table_domains, effect):
-    """effect を導入する domain の名を、表の domain を GetDomain で読んで探す(表の外の関数 introducing_domain の代わり)。"""
+    """Find the name of the domain introducing an effect by reading registry domains with GetDomain (stands in for the out-of-registry function introducing_domain)."""
     homes = []
     for domain in table_domains:
         read = yield GetDomain(domain.name)
@@ -104,7 +104,7 @@ class TestRegistration:
         assert found is domain
 
     def test_same_name_reregistration_raises(self):
-        # D2: 同名 domain の再登録は即例外 — RegisterDomain を出した所で受けられる
+        # D2: re-registering a domain of the same name raises immediately — caught where RegisterDomain was issued
         @do
         def body():
             yield RegisterDomain(make_domain(name="d-dup"))
@@ -117,7 +117,7 @@ class TestRegistration:
         assert "d-dup" in run(domain_registry(domains=[])(body()))
 
     def test_second_introduction_raises_with_both_domain_names(self):
-        # D3: 導入 1 / 包含 ∞ — 2 つ目の導入は両 domain 名入りの例外
+        # D3: introduce 1 / include ∞ — a second introduction raises with both domain names
         @do
         def body():
             yield RegisterDomain(make_domain(name="d-first", effects=[FixtureAlpha]))
@@ -131,7 +131,7 @@ class TestRegistration:
         assert "FixtureAlpha" in message
 
     def test_includes_do_not_introduce(self):
-        # 包含はいくつでも可 — 導入にはならない
+        # any number of inclusions is allowed — they are not introductions
         home = make_domain(name="d-home", effects=[FixtureAlpha])
         inc1 = make_domain(name="d-inc1", includes=[home])
         inc2 = make_domain(name="d-inc2", includes=[home])
@@ -143,7 +143,7 @@ class TestRegistration:
         assert homes == ["d-home"]
 
     def test_introduction_keyed_by_class_identity_not_name(self):
-        # D3: キーはクラス同一性 — 同名の別クラスは両方導入できる
+        # D3: keys are class identity — different classes of the same name can both be introduced
         first = make_effect_class("SameNameEffect")
         second = make_effect_class("SameNameEffect")
         id1 = make_domain(name="d-id1", effects=[first])
@@ -171,7 +171,7 @@ class TestRegistration:
                 pass
             else:
                 return "the failed domain was left behind"
-            # FixtureBeta の導入も残らない — もう一度導入できる
+            # no FixtureBeta introduction remains either — it can be introduced again
             again = yield RegisterDomain(make_domain(name="d-beta", effects=[FixtureBeta]))
             return again.name
 
@@ -196,7 +196,7 @@ class TestRegistration:
 
 
 class TestTableSwap:
-    """test の中で表を差し替えられる(受入の条 cc54652e3 — 別の表を据えると effect がその表から答える)。"""
+    """The registry can be swapped inside a test (acceptance clause cc54652e3 — installing a different registry makes effects answer from it)."""
 
     def test_the_process_table_answers_by_default(self):
         with isolated_registry():
@@ -204,7 +204,7 @@ class TestTableSwap:
             assert run(domain_registry()(GetDomain("d-process"))).title == "from the process table"
 
     def test_the_process_table_is_read_when_the_effect_is_answered(self):
-        """handler を作った後に載った domain も答える(fixture が handler を作るのは宣言の import の前でもよい)。"""
+        """Domains registered after the handler was created also answer (the fixture may create the handler before the declaring import)."""
         answer = domain_registry()
         with isolated_registry():
             register_domain(make_domain(name="d-later", title="registered later"))
@@ -223,7 +223,7 @@ class TestTableSwap:
             assert run(domain_registry()(GetDomain("d-process"))).title == "from the process table"
 
     def test_an_inner_table_answers_before_the_outer_table(self):
-        """外に既定の domain_registry() を据えたまま、program の一部だけを別の表で走らせられる。"""
+        """With the default domain_registry() installed outside, only part of a program can run on a different registry."""
         table = [make_domain(name="d-process", title="from the table")]
 
         @do

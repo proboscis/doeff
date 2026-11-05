@@ -1,11 +1,11 @@
-"""doeff-traverse の効果が答えの型(EffectBase[T])を宣言していることを、実行時と pyright の両方で確かめる。
+"""Checks, both at runtime and with pyright, that the doeff-traverse effects declare their answer type (EffectBase[T]).
 
-実測: Traverse は型引数の無い EffectBase で、型の検査の上では答えが分からなかった。
-agora の Hy の `(<- read (for/do …))` の read が object になり、`read.failed_items`・`read.valid_values` が
-pyright で赤だった(mail_claim_check.hy の attachments-plan・sendback_message.hy の answers-in-order)。
-for/do は Traverse の呼び出しに展開されるので、Traverse が答えの型を宣言すれば、束縛した値の欄が読める。
-宣言した型は handlers.py の handler が Resume に渡す値そのもの(Traverse・Zip・SortBy・Take は Collection、
-Inspect は ItemResult の list、Reduce は畳んだ値、Skip は続きへ戻らない、Fail は handler が選ぶ代わりの値)。
+Measured: Traverse was a bare EffectBase without a type argument, so the answer was unknown to the type checker.
+The `read` of agora's Hy `(<- read (for/do …))` became object, and `read.failed_items` and `read.valid_values` were
+red in pyright (attachments-plan in mail_claim_check.hy, answers-in-order in sendback_message.hy).
+for/do expands to a Traverse call, so once Traverse declares the answer type, the fields of the bound value can be read.
+The declared type is exactly the value the handler in handlers.py passes to Resume (Traverse, Zip, SortBy, Take give a Collection,
+Inspect a list of ItemResult, Reduce the folded value, Skip never returns to the continuation, Fail the replacement value the handler chooses).
 """
 
 import contextlib
@@ -22,7 +22,7 @@ import pytest
 from doeff import Pure, do, effect_result_type, run, with_handlers
 from doeff_traverse import Collection, Fail, Inspect, Reduce, Skip, SortBy, Take, Traverse, Zip, fail_handler, sequential
 from doeff_traverse import ItemResult
-# pyright が検索 path を問うために起こす python を -B で起こす包み(素の sys.executable は checkout へ .pyc を書く)。
+# A wrapper that starts, with -B, the python that pyright launches to query the search path (a bare sys.executable writes .pyc into the checkout).
 from doeff_hy._static_check import python_without_bytecode
 
 REPO = Path(__file__).resolve().parents[3]
@@ -47,7 +47,7 @@ def test_reduce_answers_with_the_type_of_its_initial_accumulator() -> None:
 
 
 def test_errors_are_the_exceptions_of_failed_items_without_the_skipped_originals() -> None:
-    # failed_items の value は例外か(Skip の件は)元の件なので object — errors は例外だけを型つきで返す。
+    # The value of failed_items is an exception or (for a Skip item) the original item, so object — errors returns only exceptions, typed.
     two = ValueError("two")
 
     @do
@@ -97,7 +97,7 @@ def add(acc: int, item: int) -> Generator[Any, Any, int]:
 
 def widths(texts: list[str]) -> Generator[Any, Any, tuple[int, int, int]]:
     read = yield from Traverse(width, texts, label="width")
-    # 答えの Collection は f の答えの型(width の int)を有効な件の値に運ぶ(effects.pyi)
+    # The answer Collection carries the type of f's answer (width's int) as valid item values (effects.pyi)
     assert_type(read, Collection[int])
     failed: list[ItemResult] = read.failed_items
     values: list[int] = read.valid_values
@@ -157,7 +157,7 @@ def test_pyright_reads_the_traverse_answer_and_catches_a_wrong_annotation(tmp_pa
 # (A wrong annotation `(<- read str …)` is not caught here — doeff-hy's `_doeff_perform` falls back to its
 # `object -> Any` overload under the expected type — so the mistakes are pinned by the Python sample above.)
 
-needs_pyright = pytest.mark.skipif(shutil.which("pyright") is None, reason="pyright が無い")
+needs_pyright = pytest.mark.skipif(shutil.which("pyright") is None, reason="pyright is not available")
 
 FOR_DO_MODULE = """\
 (require doeff-hy.macros [defk <- val for/do])
