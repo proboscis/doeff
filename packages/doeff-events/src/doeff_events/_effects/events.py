@@ -269,6 +269,23 @@ class WaitForEventsEffect(EffectBase):
         return f"WaitForEvents({names})"
 
 
+class CountQueuedEffect(EffectBase[int]):
+    """Count the events matching the configured types that wait in the subscriber's queue, not yet taken by a wait.
+
+    ``subscribed_event_handler`` answers from its own queue (a merged signal counts once). The queue has no bound, so a
+    receiver that takes one event per ``WaitForEvent`` reads with this how far it is behind its bus. A handler without
+    a queue (``event_handler``) does not answer it.
+    """
+
+    def __init__(self, event_types: tuple[type[Any], ...]):
+        super().__init__()
+        self.event_types = _normalize_event_types("CountQueued", event_types)
+
+    def __repr__(self):
+        names = ", ".join(t.__name__ for t in self.event_types)
+        return f"CountQueued({names})"
+
+
 def publish(event: Any) -> PublishEffect:
     return PublishEffect(event=event)
 
@@ -285,14 +302,21 @@ def wait_for_events(*event_types: type[Any]) -> WaitForEventsEffect:
     return WaitForEventsEffect(event_types=tuple(event_types))
 
 
+def count_queued(*event_types: type[Any]) -> CountQueuedEffect:
+    return CountQueuedEffect(event_types=tuple(event_types))
+
+
 # Capitalized aliases
 Publish = publish
 PublishGap = publish_gap
 WaitForEvent = wait_for_event
 WaitForEvents = wait_for_events
+CountQueued = count_queued
 
 
 __all__ = [
+    "CountQueued",
+    "CountQueuedEffect",
     "GapAnswer",
     "NoticeDropped",
     "NoticeGapMarked",
@@ -312,6 +336,7 @@ __all__ = [
     "WaitForEventEffect",
     "WaitForEvents",
     "WaitForEventsEffect",
+    "count_queued",
     "publish",
     "publish_effect_type",
     "publish_gap",

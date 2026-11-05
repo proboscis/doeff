@@ -18,6 +18,10 @@ whose tag is not a ``_FoldTimer`` (a ``Run`` of ``ArmTimer``) reaches the step a
 The fold installs one handler, around a step's Program only: the one that refuses every effect (``step_answer``).
 The caller installs the bus handler subscribed to ``inputs.event_types`` (``subscribed_event_handler``) and, for
 ``timers()``, the timer handler inside it — under ``scheduled``.
+
+Under a caller's handler of ``FoldMeasured`` (``_measure.py``), the fold performs one after each input it gave the step:
+the queue behind that input, the runs running and the step's time. It reads them with ``CountQueued`` (the bus handler)
+and ``GetMonotonic`` (the clock handler). Without such a handler it measures nothing.
 """
 
 from collections.abc import Callable, Generator, Hashable
@@ -25,9 +29,11 @@ from dataclasses import dataclass, replace
 from typing import Any, TypeVar
 
 from doeff_core_effects import Cancel, Spawn, Task, TaskCancelledError, Wait, shielded
-from doeff_events import ArmTimer, DisarmTimer, Publish, TimerFired, WaitForEvent
+from doeff_events import ArmTimer, CountQueued, DisarmTimer, Publish, TimerFired, WaitForEvent
+from doeff_time import GetMonotonic
 
 from doeff import Program, do
+from doeff_stream._measure import FoldMeasured, caller_measures
 from doeff_stream._source import Inputs, RunEnded
 from doeff_stream._step import (
     Answered,
@@ -56,6 +62,14 @@ class _Running:
     runner: Task[object]
     watcher: Task[None]
     cancelled: bool = False
+
+
+@dataclass(frozen=True)
+class _StepClock:
+    """What the fold read before a measured step: the queue behind its input and the clock."""
+
+    queued: int
+    began: float
 
 
 @dataclass(frozen=True)
@@ -123,6 +137,14 @@ def _own_input(
 
 
 @do
+def _start_clock(inputs: Inputs) -> Generator[Any, Any, _StepClock]:
+    """Read the queue behind the input just taken, then the clock — right before the step."""
+    queued: int = yield CountQueued(*inputs.event_types)
+    began: float = yield GetMonotonic()
+    return _StepClock(queued, began)
+
+
+@do
 def _set_deadline(
     effect: Arm | Disarm, origin: object, inputs: Inputs, armed: set[Hashable]
 ) -> Generator[Any, Any, None]:
@@ -175,6 +197,9 @@ def fold(
     (``Answered`` / ``Raised`` / ``Cancelled``) or the deadline of an ``Arm`` (``TimerFired(tag)``). If the step raises,
     or the fold's task is cancelled, the deadlines still set are disarmed, the runs still running are cancelled, the
     fold waits until each has ended, and the error goes on.
+
+    Under a handler annotated with ``FoldMeasured``, the fold performs one ``FoldMeasured`` after each input it gave
+    the step (its effects carried out); under none it measures nothing.
     """
     origin = object()
     # The fold's own table of the runs it started (key -> tasks): its loop state, never shared.
@@ -182,17 +207,21 @@ def fold(
     # The tags of the step's deadlines set and not yet fired or disarmed: the fold disarms them when it ends.
     armed: set[Hashable] = set()
     state = initial
+    measured: bool = yield caller_measures()
     try:
         while True:
             event = yield WaitForEvent(*inputs.event_types)
             event = _own_input(event, origin, running, armed)
             if event is _FOREIGN:
                 continue
+            clock = (yield _start_clock(inputs)) if measured else None
             answer = step(state, event)
             if is_program_answer(answer):
                 answer = yield step_answer(step, answer)
             answer = checked_next(answer, frozenset(running))
+            step_seconds = (yield GetMonotonic()) - clock.began if clock is not None else 0.0
             state = answer.state
+            finish: Finish | None = None
             for effect in answer.effects:
                 match effect:
                     case Run(key=key, program=program):
@@ -206,9 +235,14 @@ def fold(
                             running[key] = replace(entry, cancelled=True)
                     case Arm() | Disarm():
                         yield _set_deadline(effect, origin, inputs, armed)
-                    case Finish(value=value):
+                    case Finish():
                         yield _close(origin, running, armed)
-                        return value
+                        finish = effect
+                        break
+            if clock is not None:
+                yield FoldMeasured(clock.queued, len(running), step_seconds)
+            if finish is not None:
+                return finish.value
     except Exception:
         # Shielded: in a fold whose own task is being cancelled, every wait outside a shield raises again.
         yield shielded(_close(origin, running, armed))

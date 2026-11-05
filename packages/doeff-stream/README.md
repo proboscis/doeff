@@ -79,6 +79,33 @@ host = subscribed_event_handler(EventBus(), "host", inputs.event_types)(
 result = run(scheduled(sim_time_handler(start_time=T0)(host)))
 ```
 
+## Measuring the fold
+
+The subscriber queue has no bound and the fold takes one input per wait, so a fold that falls behind only shows in numbers. Under a caller's handler annotated with `FoldMeasured`, the fold performs one `FoldMeasured` after each input it gave the step, once it carried out the step's effects:
+
+| Field | What it is |
+|---|---|
+| `queued` | the inputs waiting in the fold's subscriber queue when it took this one (`CountQueued(*inputs.event_types)`, answered by `subscribed_event_handler`) |
+| `running` | the runs started and not yet ended (`0` after a `Finish`) |
+| `step_seconds` | the step's time, its Program's evaluation included, as two `GetMonotonic` readings tell it (`0.0` on the virtual clock) |
+
+Where the value goes is the caller's handler — for example the instruments of doeff-core-effects:
+
+```python
+from doeff import Resume, handler
+from doeff_core_effects import ObserveSeconds, SetGauge
+from doeff_stream import FoldMeasured
+
+@handler
+def fold_instruments(effect: FoldMeasured, k):
+    yield SetGauge("fold_queued", float(effect.queued))
+    yield SetGauge("fold_running", float(effect.running))
+    yield ObserveSeconds("fold_step", effect.step_seconds)
+    return (yield Resume(k, None))
+```
+
+The fold reads once, when it starts, whether a handler around it names `FoldMeasured` (a handler that admits every effect is not read as one). Without one it measures nothing — the measures are dropped by default, and the fold performs no `CountQueued` and reads no clock.
+
 ## Writing a step as a Program
 
 Instead of a `Next` value, a step may return a Program that answers `Next`. This is the shape where a reducer written with defk calls other defks with `<-` to build its answer.

@@ -16,6 +16,7 @@ from doeff_core_effects import CompletePromise, CreatePromise, Promise, Wait
 from doeff import K, Pass, Resume, ResumeThrow, do
 from doeff import handler as _program_handler
 from doeff_events._effects import (
+    CountQueuedEffect,
     PublishEffect,
     SourceFailed,
     StopArrived,
@@ -256,6 +257,10 @@ class SubscriberQueue:
                 return event
         return EMPTY
 
+    def count(self, wanted: tuple[type, ...]) -> int:
+        """How many signals matching ``wanted`` are in the queue (a merged signal counts once). The queue is left as it is."""
+        return sum(1 for event in self._pending if isinstance(event, wanted))
+
     def take_all(self, wanted: tuple[type, ...]) -> tuple[object, ...]:
         """Remove all signals matching ``wanted`` from the head of the queue and return them as a tuple in arrival order. Empty tuple if none. Non-matching signals stay in the queue."""
         taken = tuple(event for event in self._pending if isinstance(event, wanted))
@@ -322,6 +327,8 @@ def subscribed_event_handler(
       If ``types`` contains a type outside the subscription types, ``ValueError`` (an unsatisfiable wait = a wiring mistake, named on the spot).
     - ``WaitForEvents(*types)``: if its own queue has matching signals, answer with all of them as a tuple in arrival order. If none, wait for one via a promise as ``WaitForEvent`` does,
       and after waking add the rest in the queue at that moment and answer (never answers an empty tuple). The outside-type check is the same.
+    - ``CountQueued(*types)``: answer how many signals matching ``types`` wait in its own queue, and take none. The queue has no
+      bound, so this is how a receiver reads its backlog (doeff-stream's ``fold`` measures with it). The outside-type check is the same.
 
     The subscriber name, queue and ``bus`` appear only in this construction's arguments, not in the Program. There is no ack and no cursor.
     """
@@ -343,9 +350,9 @@ def subscribed_event_handler(
 
     @do
     def handler(
-        effect: WaitForEventEffect | WaitForEventsEffect | PublishEffect, k: K
+        effect: WaitForEventEffect | WaitForEventsEffect | PublishEffect | CountQueuedEffect, k: K
     ) -> "EffectGenerator[object]":
-        """Answer this subscriber's Program's Publish, WaitForEvent and WaitForEvents with the bus and its own queue. Because of the effect type annotation, the VM skips this handler for other
+        """Answer this subscriber's Program's Publish, WaitForEvent, WaitForEvents and CountQueued with the bus and its own queue. Because of the effect type annotation, the VM skips this handler for other
         effects (doeff-vm's _effect_types.py — it does not add steps where all body effects pass through here via Pass)."""
         match effect:
             case WaitForEventEffect(event_types=wanted) | WaitForEventsEffect(event_types=wanted):
@@ -370,6 +377,11 @@ def subscribed_event_handler(
                     # The emitter keeps the turn and continues (see the Publish item in the docstring — the queue keeps signals, so signals emitted in succession are not lost).
                     yield CompletePromise(promise, event, yield_to_woken=False)
                 return (yield Resume(k, None))
+            case CountQueuedEffect(event_types=wanted):
+                error = outside_error(wanted)
+                if error is not None:
+                    return (yield ResumeThrow(k, error))
+                return (yield Resume(k, queue.count(wanted)))
             case _:
                 yield Pass(effect, k)
 
