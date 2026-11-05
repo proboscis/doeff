@@ -1,35 +1,35 @@
-;;; 汎用の WebSocket の client の effect(ws_client_effects.hy)の本物の答え手 aiohttp-ws-client。aiohttp の
-;;; ClientSession.ws_connect で繋ぐ・frame を受け渡す・close frame を送る実 I/O で、判断を持たない。aiohttp は extra `http-server` の依存。
+;;; The real responder aiohttp-ws-client for the generic WebSocket client effects (ws_client_effects.hy). It does the real I/O with aiohttp's
+;;; ClientSession.ws_connect: connecting, passing frames, sending close frames; it holds no decisions. aiohttp is a dependency of the extra `http-server`.
 ;;;
-;;;   loop          節は Await で await-handler の共有の event loop に入り、その上で aiohttp の coroutine を走らせる(handler の組み立ての外側に
-;;;                 await-handler と state が要る — session の値は state の効果で持つ)。_http_handlers_impl.hy の HttpRequest の答え手と同じ載せ方
-;;;   client        接続ごとに aiohttp の ClientSession を 1 つ作る(繋ぐ coroutine の中 = 共有の loop の上で作り、接続を閉じる時に一緒に
-;;;                 閉じる)。1 つの client を範囲をまたいで使い回さない(#3415 — 閉じた client を次の範囲が使う形を作らない)。作り手は installer の
-;;;                 client-factory(既定 new-client-session — 検は作った client を数える作り手を渡す)
-;;;   並行          同じ handler の下で複数の接続が同時に進む(音声の service は session ごとに繋ぐ)。接続の表(open・ended)は session の値の
-;;;                 1 つの dict で、節は Await の後も同じ表を参照し、参照してから書くまでに await を挟まない。id の番号は繋ぎを始める前(await の前)に
-;;;                 確保し、断られても戻さない — await の後に増やすと、同時に進む 2 つの繋ぎが同じ番号を読む
-;;;   WsConnect     ws_connect(headers は handshake の要求のヘッダー)。繋ぐまでの上限は CONNECT-SECONDS・101 の答えを待つ上限は HANDSHAKE-SECONDS。
-;;;                 handshake を断られれば WsConnectFailed(status = 断りの status)、届かなければ WsConnectFailed(status None)。答えが決まらずに
-;;;                 抜ける時(CancelledError — scheduler の Cancel・Race の負け)も client と ws を閉じ、開いたままにしない。
-;;;                 1 通の上限は MAX-MESSAGE-BYTES(超える 1 通は aiohttp が接続を切る → WsLinkClosed)
-;;;   WsReceive     次の frame を待つ: TEXT → WsText・BINARY → WsBinary・CLOSE(相手の close frame)→ その状態符と理由の WsLinkClosed・
-;;;                 CLOSED / ERROR(close frame なしに切れた)→ 接続の状態符(1006 等・無ければ None)の WsLinkClosed。ping には aiohttp の
-;;;                 autoping が pong を返す(ここで待っている間も)。終わった接続はその WsLinkClosed をもう 1 度・知らない id は closed-answer
-;;;   WsSend        send_str。相手が閉じた後の送り(書けない transport)は WsLinkClosed
-;;;   WsDisconnect  close frame を送り、相手の close を CLOSE-SECONDS まで待って閉じる(aiohttp の ws_close)。答えの状態符と理由は渡した物
-;;;   WsDisconnectAll 開いている接続の全部に WsDisconnect と同じ事をする(答え手の範囲の終わりの後始末 — installer の closing-links が出す)
-;;; 理由の文(WsConnectFailed.reason・WsLinkClosed.reason)は例外の型の名と status だけ(failure-detail)。例外の文は要求の url(query を含む)や
-;;; ヘッダー(Authorization の Bearer の値)を運ぶことがあるので載せない — protocol の記録の境界(tests/test_ws_client.hy が固定する)。
-;;; 本物の答え手が heartbeat(自分から ping を送る)を持たない理由: 相手(OpenAI の sideband)が ping を送り、こちらは autoping で答える。
-;;; 自分から ping が要る相手が出たら WsConnect の欄として足す(設計の註)。
-;;; 本物と台本が同じに決める物は ws_client_effects.hy の判断の defk を呼ぶ(契約テストは tests/test_ws_client_contract.hy)。
+;;;   loop          The clauses enter await-handler's shared event loop with Await and run aiohttp coroutines on it (await-handler and state are needed
+;;;                 outside the handler assembly -- the session values are held with the state effect). Mounted the same way as the HttpRequest responder in _http_handlers_impl.hy
+;;;   client        One aiohttp ClientSession per connection (created inside the connecting coroutine = on the shared loop, and closed together with the connection
+;;;                 when it closes). One client is never reused across scopes (#3415 -- never build a shape where the next scope uses a closed client). The maker is the installer's
+;;;                 client-factory (default new-client-session -- the check passes a maker that counts the clients it made)
+;;;   concurrency   Several connections proceed at once under the same handler (the voice service connects per session). The connection tables (open, ended) are
+;;;                 one dict in the session values; clauses refer to the same table after an Await, and never put an await between reading it and writing it. The id number is
+;;;                 reserved before the connect starts (before the await) and is not given back even if refused -- if it were incremented after the await, two concurrent connects would read the same number
+;;;   WsConnect     ws_connect (headers are the handshake request headers). The limit up to connecting is CONNECT-SECONDS; the limit for waiting for the 101 answer is HANDSHAKE-SECONDS.
+;;;                 If the handshake is refused, WsConnectFailed (status = the refusing status); if it does not arrive, WsConnectFailed (status None). When leaving
+;;;                 without the answer being decided (CancelledError -- scheduler Cancel, losing a Race), the client and ws are closed too and not left open.
+;;;                 The limit for one message is MAX-MESSAGE-BYTES (aiohttp drops the connection on a longer message -> WsLinkClosed)
+;;;   WsReceive     Wait for the next frame: TEXT -> WsText, BINARY -> WsBinary, CLOSE (the peer's close frame) -> WsLinkClosed with its status code and reason,
+;;;                 CLOSED / ERROR (dropped without a close frame) -> WsLinkClosed with the connection's status code (1006 etc., None if absent). For ping, aiohttp's
+;;;                 autoping returns a pong (even while waiting here). A finished connection returns its WsLinkClosed once more; an unknown id gets closed-answer
+;;;   WsSend        send_str. A send after the peer has closed (a transport that cannot be written) is WsLinkClosed
+;;;   WsDisconnect  Send a close frame, wait up to CLOSE-SECONDS for the peer's close, then close (aiohttp's ws_close). The status code and reason in the answer are the ones passed in
+;;;   WsDisconnectAll Do the same as WsDisconnect to every open connection (cleanup at the end of the responder's scope -- issued by the installer's closing-links)
+;;; The reason text (WsConnectFailed.reason, WsLinkClosed.reason) is only the exception type name and status (failure-detail). The exception text may carry the request url (including the query) or
+;;; headers (the Bearer value of Authorization), so it is not included -- the boundary of the protocol record (fixed by tests/test_ws_client.hy).
+;;; Why the real responder has no heartbeat (sending ping itself): the peer (OpenAI's sideband) sends ping and we answer with autoping.
+;;; If a peer that needs us to send ping appears, add it as a WsConnect field (design note).
+;;; What the real one and the script decide the same way call the decision defk in ws_client_effects.hy (the contract test is tests/test_ws_client_contract.hy).
 (require doeff-hy.macros [defhandler defk deff <- val var])
 (val MODULE-TAGS {:context "ws-client" :role "foundation"})
 (require doeff-hy.record [defrecord])
 (import asyncio)
 (import collections.abc [Callable])
-(import dataclasses [dataclass])  ; defrecord の展開が使う
+(import dataclasses [dataclass])  ; used by the defrecord expansion
 (import aiohttp)
 (import aiohttp [WSMsgType ClientWSTimeout])
 (import doeff [EffectBase Program])
@@ -38,21 +38,21 @@
 (import doeff_core_effects._ws_client_effects [WsConnect WsReceive WsSend WsDisconnect WsDisconnectAll WsLink WsConnectFailed WsText WsBinary
                                               WsLinkClosed WsFrame WsSent link-name closed-answer closing-links])
 
-;; 繋ぐまで(名前の引きと TCP の接続)の上限と、繋いだ後の handshake の答え(101)を待つ上限(秒)— 待ち受けの ws の中継と同じ 2 つの分け方。
+;; The limit up to connecting (name lookup and TCP connect) and the limit for waiting for the handshake answer (101) after connecting (seconds) -- the same two-way split as the listening ws relay.
 (val CONNECT-SECONDS 10.0)
 (val HANDSHAKE-SECONDS 15.0)
-;; close frame を送ってから相手の close を待つ上限(秒 — aiohttp の ws_close)。
+;; The limit for waiting for the peer's close after sending the close frame (seconds -- aiohttp's ws_close).
 (val CLOSE-SECONDS 10.0)
-;; 1 通の上限(byte)— 超える 1 通は aiohttp が接続を切る。
+;; The limit for one message (bytes) -- aiohttp drops the connection on a longer message.
 (val MAX-MESSAGE-BYTES (* 4 1024 1024))
 
-;; 答える効果と、節が出す効果(installer の宣言 — doeff-effect-analyzer の __doeff_handles__ / __doeff_effects__)。
+;; The effects it answers and the effects the clauses issue (the installer's declaration -- __doeff_handles__ / __doeff_effects__ of doeff-effect-analyzer).
 (val AIOHTTP-WS-HANDLES #(WsConnect WsReceive WsSend WsDisconnect WsDisconnectAll))
 (val AIOHTTP-WS-EFFECTS #(Await))
 
 
 (defrecord OpenLink
-  "繋いだ接続 1 本: link = id・url・session = この接続だけの aiohttp の client・ws = 繋いだ socket。"
+  "One open connection: link = id, url, session = the aiohttp client for this connection only, ws = the connected socket."
   {:tags {:context "ws-client" :role "type"}}
   (#^ str link)
   (#^ str url)
@@ -60,23 +60,23 @@
   (#^ aiohttp.ClientWebSocketResponse ws))
 
 
-(defn #^ aiohttp.ClientSession new-client-session []  ; defk にできない: 繋ぐ coroutine の中(走っている event loop の上)で呼ぶ client の作り手(client-factory の既定)
-  "接続 1 本のための aiohttp の client を作るため: 繋ぐまでの上限と handshake の答えの上限を持ち、total は置かない(繋いだ ws を時間で切らない)。"
+(defn #^ aiohttp.ClientSession new-client-session []  ; cannot be a defk: a client maker called inside the connecting coroutine (on the running event loop) (the default of client-factory)
+  "To make the aiohttp client for one connection: it holds the limit up to connecting and the limit for the handshake answer, and sets no total (a connected ws is not cut by time)."
   (aiohttp.ClientSession :timeout (aiohttp.ClientTimeout :total None :connect CONNECT-SECONDS :sock-read HANDSHAKE-SECONDS)))
 
 
-(defn #^ str failure-detail [#^ BaseException error]  ; defk にできない: aiohttp の coroutine の中(Program の外)で呼ぶ
-  "繋がらなかった・切れた理由の文を決めるため: 例外の型の名と、答えがあればその status だけ(先頭の説明の記録の境界 — 例外の文は要求の
-   url や ヘッダーを運ぶことがあるので載せない。分岐に使わない)。"
+(defn #^ str failure-detail [#^ BaseException error]  ; cannot be a defk: called inside an aiohttp coroutine (outside a Program)
+  "To decide the reason text for a failed connect / a drop: only the exception type name and, if there is an answer, its status (the protocol record boundary in the opening note -- the exception text may carry the request
+   url or headers, so it is not included. Not used for branching)."
   (if (isinstance error aiohttp.ClientResponseError)
       (.format "{}: status {}" (. (type error) __name__) error.status)
       (. (type error) __name__)))
 
 
 (defn :async #^ (| OpenLink WsConnectFailed) open-link [#^ (get Callable #([] aiohttp.ClientSession)) client-factory #^ str link #^ str url
-                                                         #^ (get tuple #(HttpHeader ...)) headers]  ; defk にできない: aiohttp の実 I/O(共有の event loop の coroutine)
-  "url へ繋ぐため(先頭の説明の WsConnect): この接続だけの client を作って ws_connect。断られた・届かなかった時は WsConnectFailed。
-   答えが OpenLink に決まらずに抜ける時(断り・届かない・CancelledError)は finally で ws と client を閉じ、開いたままにしない。"
+                                                         #^ (get tuple #(HttpHeader ...)) headers]  ; cannot be a defk: real aiohttp I/O (a coroutine on the shared event loop)
+  "To connect to url (WsConnect in the opening note): make a client for this connection only and ws_connect. WsConnectFailed when refused or unreachable.
+   When leaving without the answer being decided as an OpenLink (refused, unreachable, CancelledError), ws and client are closed in finally and not left open."
   (setv session (client-factory))
   (setv ws None)
   (setv outcome None)
@@ -96,8 +96,8 @@
   outcome)
 
 
-(defn :async #^ WsFrame receive-frame [#^ OpenLink open]  ; defk にできない: aiohttp の実 I/O(共有の event loop の coroutine)
-  "id の接続の次の frame を待つため(先頭の説明の WsReceive)。ping / pong / 閉じの途中は次を待つ。"
+(defn :async #^ WsFrame receive-frame [#^ OpenLink open]  ; cannot be a defk: real aiohttp I/O (a coroutine on the shared event loop)
+  "To wait for the next frame of the connection with the id (WsReceive in the opening note). Wait for the next one during ping / pong / the middle of closing."
   (while True
     (setv message (await (.receive open.ws)))
     (match message.type
@@ -109,13 +109,13 @@
       _ None)))
 
 
-(defn #^ (| int None) lost-code [#^ aiohttp.ClientWebSocketResponse ws]  ; defk にできない: aiohttp の socket の状態を読む実 I/O
-  "close frame なしに終わった接続の状態符を読むため(aiohttp が付けた close_code — 無ければ None)。"
+(defn #^ (| int None) lost-code [#^ aiohttp.ClientWebSocketResponse ws]  ; cannot be a defk: real I/O reading the state of the aiohttp socket
+  "To read the status code of a connection that ended without a close frame (the close_code aiohttp set -- None if absent)."
   (if (is ws.close-code None) None (int ws.close-code)))
 
 
-(defn :async #^ (| WsSent WsLinkClosed) send-text [#^ OpenLink open #^ str text]  ; defk にできない: aiohttp の実 I/O(共有の event loop の coroutine)
-  "id の接続へ文字の 1 通を送るため(先頭の説明の WsSend)。閉じた・書けない接続は WsLinkClosed。"
+(defn :async #^ (| WsSent WsLinkClosed) send-text [#^ OpenLink open #^ str text]  ; cannot be a defk: real aiohttp I/O (a coroutine on the shared event loop)
+  "To send one text message to the connection with the id (WsSend in the opening note). A closed or unwritable connection is WsLinkClosed."
   (when open.ws.closed
     (return (WsLinkClosed :link open.link :code (lost-code open.ws) :reason "")))
   (try
@@ -125,8 +125,8 @@
   (WsSent :link open.link))
 
 
-(defn :async #^ WsLinkClosed close-link [#^ OpenLink open #^ int code #^ str reason]  ; defk にできない: aiohttp の実 I/O(共有の event loop の coroutine)
-  "id の接続を状態符と理由で閉じるため(先頭の説明の WsDisconnect): close frame を送って相手の close を CLOSE-SECONDS まで待ち、client も閉じる。"
+(defn :async #^ WsLinkClosed close-link [#^ OpenLink open #^ int code #^ str reason]  ; cannot be a defk: real aiohttp I/O (a coroutine on the shared event loop)
+  "To close the connection with the id with a status code and reason (WsDisconnect in the opening note): send a close frame, wait up to CLOSE-SECONDS for the peer's close, and close the client too."
   (try
     (await (.close open.ws :code code :message (.encode reason "utf-8")))
     (except [#(aiohttp.ClientError ConnectionResetError RuntimeError asyncio.TimeoutError)] None)
@@ -135,25 +135,25 @@
   (WsLinkClosed :link open.link :code code :reason reason))
 
 
-(defn :async #^ None drop-link [#^ OpenLink open]  ; defk にできない: aiohttp の実 I/O(共有の event loop の coroutine)
-  "終わった接続の client を閉じるため(相手が閉じた・切れた後の後始末)。"
+(defn :async #^ None drop-link [#^ OpenLink open]  ; cannot be a defk: real aiohttp I/O (a coroutine on the shared event loop)
+  "To close the client of a finished connection (cleanup after the peer closed / it dropped)."
   (await (.close open.session))
   None)
 
 
 (defhandler aiohttp-ws-link-handler [#^ (get Callable #([] aiohttp.ClientSession)) client-factory]
-  "WsConnect・WsReceive・WsSend・WsDisconnect・WsDisconnectAll に、aiohttp の WebSocket の実 I/O で答える(頭の註)。範囲の終わりに
-   接続を閉じる closing-links は installer aiohttp-ws-client が被せる。組の外側に await-handler と state が要る。"
-  ;; 本物の接続(先頭の説明)。open = 開いている接続の表(id → OpenLink)・ended = 終わった接続の答えの表(id → WsLinkClosed — 閉じた後の
-  ;; WsReceive / WsSend が同じ答えを返す)。どちらも session の値の 1 つの dict: 節は Await の後も同じ表を参照し、参照してから書くまでに await を
-  ;; 挟まない(session var の tuple にすると節の初めに取った値を await の後に書き戻し、並行の節の書きを消す)。counter = 振った id の数(session var
-  ;; — await の前に増やすので、並行の 2 つの WsConnect が同じ番号を読まない)。
-  ;; 引数に残す理由: client の作り手は組み立ての側で決まる(検は作った client を数える作り手を渡す)。
+  "Answers WsConnect, WsReceive, WsSend, WsDisconnect, WsDisconnectAll with real aiohttp WebSocket I/O (the head note). The closing-links that closes
+   connections at the end of the scope is wrapped on by the installer aiohttp-ws-client. await-handler and state are needed outside this set."
+  ;; The real connections (opening note). open = the table of open connections (id -> OpenLink), ended = the table of answers for finished connections (id -> WsLinkClosed -- WsReceive /
+  ;; WsSend after closing return the same answer). Both are one dict in the session values: clauses refer to the same table after an Await, and put no await between
+  ;; reading and writing it (with a tuple in a session var, the value taken at the start of the clause would be written back after the await, erasing the writes of concurrent clauses). counter = the number of ids handed out (a session var
+  ;; -- incremented before the await, so two concurrent WsConnect do not read the same number).
+  ;; Why it stays an argument: the client maker is decided on the assembly side (the check passes a maker that counts the clients it made).
   (session val open ((get dict #(str OpenLink))))
   (session val ended ((get dict #(str WsLinkClosed))))
   (session var counter 0)
   (WsConnect [url headers]
-    ;; 番号は繋ぎを始める前に確保し、断られても戻さない(await の後に増やすと、同時に進む 2 つの繋ぎが同じ番号を取る — 台本の答え手も同じ並び)。
+    ;; Reserve the number before the connect starts and do not give it back even if refused (if incremented after the await, two concurrent connects take the same number -- the scripted responder has the same order).
     (:= counter (+ counter 1))
     (<- link str (link-name counter))
     (<- opened (| OpenLink WsConnectFailed) (Await (open-link client-factory link url headers)))
@@ -201,13 +201,13 @@
     (resume closing)))
 
 
-(deff aiohttp-ws-client [* [client-factory new-client-session]]  ; defk にできない: Program の外で呼ぶ、答え手を被せる installer の作り手
+(deff aiohttp-ws-client [* [client-factory new-client-session]]  ; cannot be a defk: called outside a Program, the maker of the installer that wraps the responder on
   {:pre [(: client-factory (get Callable #([] aiohttp.ClientSession)))] :post [(: % (of Callable [(| Program EffectBase)] Program))] :tags {:context "ws-client" :role "foundation"}}
-  "本物の答え手の installer を作るため(先頭の説明): 被せた program を closing-links で包み、範囲の終わりに開いたままの接続を閉じる。
-   client-factory = 接続ごとの client の作り手(既定 new-client-session)。"
+  "To make the installer of the real responder (opening note): wrap the program it is put over with closing-links, closing connections left open at the end of the scope.
+   client-factory = the per-connection client maker (default new-client-session)."
   (setv install (aiohttp-ws-link-handler client-factory))
   (setv closing (fn [#^ (| Program EffectBase) program] (install (closing-links program))))
-  ;; 被せる関数のマーカー(defhandler が付ける物と同じ属性を置く — with_handlers はマーカーの無い Program → Program の関数を断る)と、宣言。
+  ;; The marker of the wrapping function (set the same attributes defhandler sets -- with_handlers refuses a Program -> Program function without the marker), and the declarations.
   (setattr closing "_doeff_is_handler_fn" True)
   (setattr closing "__doeff_name__" "aiohttp-ws-client")
   (setattr closing "__doeff_handler_data__" (getattr install "__doeff_handler_data__"))
@@ -216,7 +216,7 @@
   closing)
 
 
-;; 節を静的に読めない installer の作り手なので、答える効果と出す効果を宣言する(本番の土台の閉じ具合の検が「読めない handler」と
-;; 数えないため — _http_handlers_impl.hy の http-production-handler と同じ)。
+;; The installer maker cannot statically read its clauses, so it declares the effects it answers and the effects it issues (so the check for the closedness of the production base does not count it as an "unreadable handler"
+;; -- the same as http-production-handler in _http_handlers_impl.hy).
 (setattr aiohttp-ws-client "__doeff_handles__" AIOHTTP-WS-HANDLES)
 (setattr aiohttp-ws-client "__doeff_effects__" AIOHTTP-WS-EFFECTS)

@@ -1,11 +1,11 @@
-;;; 子 process の終わりの待ちと process の様子の読みの、機体ごとの仕組みの選び(macOS の機体で直接
-;;; 動く worker が子を立てて待てるように)。
+;;; The choice of the per-machine-type mechanism for waiting for a child process to end and for reading a process's state (so that a worker running directly on a macOS machine
+;;; can start children and wait for them).
 ;;;
-;;;   - 終わると読める fd の開き方: Linux = pidfd-of(pidfd_open)・macOS(Darwin)= kqueue-fd-of(kqueue の EVFILT_PROC / NOTE_EXIT)。
-;;;     知らない機体は ExitWaitUnavailable で名指す — 黙って周期の問い直しにしない。
-;;;   - macOS の process の様子は libproc の proc_pidinfo の答え(struct proc_bsdinfo・struct proc_taskinfo)から読む。bytes の並びの
-;;;     読みは機体に依らない関数なので、Linux でも <sys/proc_info.h> の並びで作った bytes で確かめる(本物の proc_pidinfo を呼ぶ検は
-;;;     macOS の上でだけ走る — test_process_exit_wait.hy の振る舞いの検が、その機体の開き方と読みを本物の process で測る)。
+;;;   - How to open an fd that becomes readable at the end: Linux = pidfd-of (pidfd_open), macOS (Darwin) = kqueue-fd-of (kqueue's EVFILT_PROC / NOTE_EXIT).
+;;;     An unknown machine type is named with ExitWaitUnavailable -- it does not silently fall back to periodic re-asking.
+;;;   - The state of a macOS process is read from the answer of libproc's proc_pidinfo (struct proc_bsdinfo, struct proc_taskinfo). The reading of the byte layout
+;;;     is a function independent of the machine type, so on Linux too it is checked with bytes built in the layout of <sys/proc_info.h> (the check that calls the real proc_pidinfo
+;;;     runs only on macOS -- the behavior check of test_process_exit_wait.hy measures that machine's opening and reading with a real process).
 (require doeff-hy.macros [deftest defk <- val])
 (import ctypes)
 (import os)
@@ -24,36 +24,36 @@
 (import doeff_core_effects._os_warm_process :as os-warm-process-module)
 (import doeff_core_effects._process_stat [ProcStat])
 
-;; <sys/proc_info.h> の struct proc_bsdinfo の並び(136 byte): uint32 × 5(flags status xstatus pid ppid)・uid / gid × 6・rfu_1・
-;; comm[16]・name[32]・uint32 × 5(nfiles pgid pjobc e_tdev e_tpgid)・int32 nice・uint64 start_tvsec・uint64 start_tvusec。
+;; The layout of struct proc_bsdinfo in <sys/proc_info.h> (136 bytes): uint32 x 5 (flags status xstatus pid ppid), uid / gid x 6, rfu_1,
+;; comm[16], name[32], uint32 x 5 (nfiles pgid pjobc e_tdev e_tpgid), int32 nice, uint64 start_tvsec, uint64 start_tvusec.
 (val BSD-INFO-LAYOUT "=5I6II16s32s5Ii2Q")
-;; struct proc_taskinfo の並び(96 byte): uint64 × 6・int32 × 12(10 番目 = pti_threadnum)。
+;; The layout of struct proc_taskinfo (96 bytes): uint64 x 6, int32 x 12 (the 10th = pti_threadnum).
 (val TASK-INFO-LAYOUT "=6Q12i")
 
 
 (defn #^ bytes bsd-info [#^ int status #^ int seconds #^ int micros]
-  "status と起動の時刻だけを持つ proc_bsdinfo の bytes を作るため(他の欄は 0・名は sleep)。"
+  "To build the bytes of a proc_bsdinfo that has only status and the start time (other fields are 0, the name is sleep)."
   (struct.pack BSD-INFO-LAYOUT 0 status 0 4242 1 501 20 501 20 501 20 0 b"sleep" b"sleep" 0 4242 0 0 0 0 seconds micros))
 
 
 (defk stat-line [pid state start-ticks]
   {:pre [(: pid int) (: state str) (: start-ticks int)] :post [(: % str)]}
-  "/proc/<pid>/stat の 1 行を作るため(state と starttime〔22 番目の欄〕だけを決め、他の欄は 0 か pid)。"
+  "To build one line of /proc/<pid>/stat (it decides only state and starttime [the 22nd field], other fields are 0 or pid)."
   (.format "{0} (warm job) {1} 1 {0} {0} 0 -1 4194560 0 0 0 0 0 0 0 0 20 0 1 0 {2} 0 0\n" pid state start-ticks))
 
 
 (deftest test-the-exit-fd-opener-follows-the-machine
-  ;; Linux は pidfd・macOS は kqueue。どちらの開き方も、居ない pid に None を返す同じ形(pid → fd | None)。
+  ;; Linux is pidfd, macOS is kqueue. Both ways of opening have the same shape of returning None for a missing pid (pid -> fd | None).
   (assert (is (run (exit-fd-opener-for "Linux")) pidfd-of))
   (assert (is (run (exit-fd-opener-for "Darwin")) kqueue-fd-of)))
 
 
 (deftest test-the-pidfd-opener-does-not-load-libc-per-call [monkeypatch]
-  ;; 失敗ケース: pidfd-of は呼ぶたびに ctypes.CDLL を作らない。CDLL は作るたびに関数の型(_FuncPtr の class)を 1 つ作り、free-threading の
-  ;; CPython 3.14 では、主 thread の VM が走る間に await の bridge の thread で作り続けると、放した後も memory が戻らない。worker の周の間の
-  ;; 待ちは拍ごと・子ごとに pidfd-of を呼ぶので、子 1 つの worker の process が 1 日に 0.5 GB を越えて増えた。
+  ;; Failure case: pidfd-of does not make a ctypes.CDLL at each call. A CDLL makes one function type (the _FuncPtr class) each time it is made, and under free-threading
+  ;; CPython 3.14, if it keeps being made in the await bridge's thread while the main thread's VM runs, memory does not come back even after release. The wait
+  ;; between worker rounds calls pidfd-of per tick and per child, so a worker process with one child grew by more than 0.5 GB per day.
   (when (not (and (= sys.platform "linux") (in (platform.machine) #("x86_64" "aarch64"))))
-    (pytest.skip "pidfd_open は Linux の x86_64 と aarch64 だけ"))
+    (pytest.skip "pidfd_open is only on Linux x86_64 and aarch64"))
   (val loads (Mock :wraps ctypes.CDLL))
   (.setattr monkeypatch ctypes "CDLL" loads)
   (for [_ (range 3)]
@@ -62,19 +62,19 @@
 
 
 (deftest test-a-machine-without-an-exit-wait-is-named
-  ;; 失敗ケース: 開き方を知らない機体は、機体の名を持った ExitWaitUnavailable — 周期の問い直しへ黙って落ちない。
+  ;; Failure case: a machine type with no known way of opening gives an ExitWaitUnavailable that carries the machine type's name -- it does not silently fall back to periodic re-asking.
   (with [caught (pytest.raises ExitWaitUnavailable)]
     (run (exit-fd-opener-for "Windows")))
   (assert (in "Windows" (str caught.value)) caught.value))
 
 
 (deftest test-a-process-being-reaped-is-not-running [tmp-path monkeypatch]
-  ;; 失敗ケース: 親が回収している最中の process(/proc の state X — Linux の EXIT_DEAD。回収が済んで /proc/<pid> が消える手前の短い間だけ
-  ;; 見える)は、zombie(Z)と同じく走っていない。前は Z だけを終わりと読み、待ちの子から分かれた子の終わりを待った直後の PollWarmChild が、
-  ;; 待ちの子の回収と重なった時に WarmRunning と答えた(日次の packages の段の test_task_venv_on_both_paths)。
-  ;; /proc の根を検の置き場に差し替え、Linux の読みで測る。
+  ;; Failure case: a process the parent is in the middle of reaping (/proc state X -- Linux's EXIT_DEAD. Visible only for the short time before reaping is done and /proc/<pid> disappears)
+  ;; is not running, just like a zombie (Z). Before, only Z was read as ended, and a PollWarmChild right after waiting for the end of a child split from the warm child
+  ;; answered WarmRunning when it overlapped with the warm child's reaping (the daily packages stage's test_task_venv_on_both_paths).
+  ;; Swap the /proc root for the check's own place and measure with the Linux reading.
   (when (!= (platform.system) "Linux")
-    (pytest.skip "/proc の state を読むのは Linux の読み"))
+    (pytest.skip "reading the /proc state is the Linux reading"))
   (.setattr monkeypatch os-warm-process-module "PROC_ROOT" (str tmp-path))
   (for [[pid state running] [[41 "S" True] [42 "Z" False] [43 "X" False]]]
     (<- line str (stat-line pid state 77))
@@ -85,33 +85,33 @@
 
 
 (deftest test-the-layouts-are-the-sizes-libproc-answers
-  ;; 並びの大きさは proc_pidinfo が書く byte 数と同じ(違えば読みの位置がずれる)。
+  ;; The layout size is the same as the number of bytes proc_pidinfo writes (if different, the reading position shifts).
   (assert (= (struct.calcsize BSD-INFO-LAYOUT) BSD-INFO-SIZE 136))
   (assert (= (struct.calcsize TASK-INFO-LAYOUT) TASK-INFO-SIZE 96)))
 
 
 (deftest test-the-bsd-info-reads-the-state-and-the-start
-  ;; 起動の時刻(秒と μ秒)を 1 つの整数(μ秒)にして start-ticks にし、status を /proc の state の 1 文字に写す(5 = SZOMB = Z)。
+  ;; Turn the start time (seconds and microseconds) into one integer (microseconds) as start-ticks, and map status to the one character of /proc's state (5 = SZOMB = Z).
   (assert (= (run (bsd-info-stat (bsd-info 3 1760000000 123456))) (ProcStat :state "S" :start-ticks 1760000000123456)))
   (assert (= (run (bsd-info-stat (bsd-info 2 1 0))) (ProcStat :state "R" :start-ticks 1000000)))
   (assert (= (. (run (bsd-info-stat (bsd-info 5 7 8))) state) "Z")))
 
 
 (deftest test-a-bsd-info-of-the-wrong-size-is-refused
-  ;; 失敗ケース: 大きさの違う答え(proc_pidinfo が途中まで書いた・並びの違う版)は読まずに断る — ずれた位置の数を start-ticks にしない。
+  ;; Failure case: an answer of a different size (proc_pidinfo wrote only partway, a version with a different layout) is refused without reading -- a number at a shifted position is not made start-ticks.
   (with [caught (pytest.raises ValueError)]
     (run (bsd-info-stat (cut (bsd-info 3 1 2) 0 120))))
   (assert (in "136" (str caught.value)) caught.value))
 
 
 (deftest test-an-unknown-bsd-status-is-refused
-  ;; 失敗ケース: 知らない status(SIDL 1〜SZOMB 5 の外)は、走っている process として黙って読まずに断る。
+  ;; Failure case: an unknown status (outside SIDL 1 to SZOMB 5) is refused without being silently read as a running process.
   (with [caught (pytest.raises ValueError)]
     (run (bsd-info-stat (bsd-info 9 1 2))))
   (assert (in "9" (str caught.value)) caught.value))
 
 
 (deftest test-the-task-info-reads-the-thread-count
-  ;; pti_threadnum(int32 の 10 番目)を thread の本数として読む。
+  ;; Read pti_threadnum (the 10th int32) as the number of threads.
   (val raw (struct.pack TASK-INFO-LAYOUT 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 3 1 31))
   (assert (= (run (task-info-threads raw)) 3)))

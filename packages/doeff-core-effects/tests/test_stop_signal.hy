@@ -1,7 +1,7 @@
 (require doeff-hy.macros [defk defhandler deftest <-])
 
-;;; 止めの合図の handler の本物(os-signal-stop-handler)だけの性質。本物と fake(scripted-stop-handler)が同じ答えを返すべき性質
-;;; (合図の前は None・合図の後は理由・最初の理由を保つ・外側に state の handler が要る)は契約テスト test_stop_signal_contract.hy。
+;;; Properties of only the real stop-signal handler (os-signal-stop-handler). The properties on which the real one and the fake (scripted-stop-handler) must give the same answers
+;;; (None before the signal, the reason after it, the first reason is kept, a state handler is needed outside) are in the contract test test_stop_signal_contract.hy.
 
 (import pytest)
 (import doeff [run with_handlers])
@@ -14,23 +14,23 @@
 
 (defk raise-under-os []
   {:pre [] :post [(: % None)] :tags {:context "stop-signal-test" :role "program"}}
-  "本物の handler の下で RaiseStop を出す Program。"
+  "A Program that raises RaiseStop under the real handler."
   (<- (RaiseStop "scenario"))
   None)
 
 
 (deftest test-counterexample-raise-stop-is-not-answered-by-the-os-handler
-  ;; RaiseStop は scripted の口だけ — 本物の signal の handler は答えない(本番で筋書きの止めを起こせない)。
+  ;; RaiseStop is only on the scripted side - the real signal handler does not answer it (a scripted stop cannot be triggered in production).
   (with [(pytest.raises UnhandledEffect :match "RaiseStop")]
     (run (with_handlers [(state) os-signal-stop-handler] (raise-under-os)))))
 
 
-;; --- AwaitStop の反例-----------------------------------------------------------------------------
-;; 止めの合図で寝ている待ちを起こさない handler(RaiseStop で理由を覚えるだけ)だと、AwaitStop で寝た task は止めの後も起きず、
-;; scheduler は待ちの行き詰まりで止まる。scripted-stop-handler が RaiseStop で promise を完了するのは、この形を作らないため。
+;; --- Counterexample for AwaitStop -----------------------------------------------------------------------------
+;; With a handler that does not wake sleeping waits on a stop signal (it only remembers the reason on RaiseStop), a task sleeping in AwaitStop never wakes after the stop,
+;; and the scheduler halts in a wait deadlock. scripted-stop-handler completes the promise on RaiseStop precisely to avoid producing this shape.
 
 (defhandler forgetful-stop-handler
-  "反例: RaiseStop で理由を覚えるが、AwaitStop で寝ている待ちを起こさない(待ちは別の promise に寝る)。"
+  "Counterexample: remembers the reason on RaiseStop but does not wake waits sleeping in AwaitStop (the wait sleeps on a different promise)."
   (session var raised None)
   (RaiseStop [reason]
     (:= raised reason)
@@ -45,14 +45,14 @@
 
 (defk await-stop-once []
   {:pre [] :post [(: % str)] :tags {:context "stop-signal-test" :role "program"}}
-  "AwaitStop を 1 度待つ task の中身。"
+  "Body of a task that waits for AwaitStop once."
   (<- reason str (AwaitStop))
   reason)
 
 
 (defk stop-while-waiting []
   {:pre [] :post [(: % str)] :tags {:context "stop-signal-test" :role "program"}}
-  "AwaitStop で寝た task がある間に止めを起こし、その task の答えを待つ。"
+  "Raise a stop while a task is sleeping in AwaitStop, then wait for that task's answer."
   (<- waiter (Spawn (await-stop-once)))
   (<- step (Spawn (raise-under-os)))
   (<- (Wait step))
@@ -63,5 +63,5 @@
 (deftest test-counterexample-a-stop-that-does-not-wake-the-wait-stalls-the-run
   (with [(pytest.raises SchedulerDeadlockError)]
     (run (scheduled (with_handlers [(state) forgetful-stop-handler] (stop-while-waiting)))))
-  ;; 正しい fake では同じ Program が止めの理由で起きる。
+  ;; With a correct fake, the same Program wakes up with the stop reason.
   (assert (= (run (scheduled (with_handlers [(state) scripted-stop-handler] (stop-while-waiting)))) "scenario")))

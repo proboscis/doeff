@@ -1,14 +1,14 @@
-;;; 汎用の列(channel)の effect(最初の消費者 = agora の画面の処理ループの受け口 — socket の 1 通・起こし・
-;;; 記録の表の変更・Spawn した task の答えを 1 本の列で届いた順に読む。btc-w1 の #811)。業務の語を持たない土台の語彙。
-;;; 答え手は scheduler-channel-handler(scheduler_channel.hy)1 つだけ — I/O を持たず、同じ run の scheduler の promise で待つので、本番と模擬で
-;;; 同じ物を使う(差し替える物が無い)。scheduled の下で使う。
+;;; Generic channel effects (the first consumer = the intake of the processing loop of agora's screen -- reads, in arrival order from one channel, a socket message, a wake-up,
+;;; a change in the record table, and the answers of Spawned tasks; btc-w1 #811). A foundation vocabulary with no business terms.
+;;; There is only one responder, scheduler-channel-handler (scheduler_channel.hy) -- it has no I/O and waits on the same run's scheduler promise, so production and mocks use the
+;;; same one (nothing to swap). Use it under scheduled.
 ;;;
-;;;   CreateChannel   新しい空の列を作る。答え = Channel(列の握り)。
-;;;   PutChannel      列の末尾に 1 つ積む。待たない(列に上限は無い)。答え = None。
-;;;   TakeChannel     列の先頭を 1 つ取る。空なら積まれるまで、撃った task だけが待つ(他の task は回る)。届いた順(FIFO)。
+;;;   CreateChannel   Create a new empty channel. Answer = Channel (the channel handle).
+;;;   PutChannel      Put one item at the end of the channel. Does not wait (the channel has no limit). Answer = None.
+;;;   TakeChannel     Take one item from the head of the channel. If empty, only the task that fired waits until something is put (other tasks keep running). Arrival order (FIFO).
 ;;;
-;;; 積めるのは同じ run の task だけ(外の thread から積む口は無い — 外の thread の出来事は、その答え手が外から完了させる promise で待った
-;;; task が PutChannel で積む)。
+;;; Only tasks of the same run can put (there is no entrance to put from an outside thread -- events of an outside thread are put by PutChannel from a task that waited on a promise
+;;; that the responder completes from outside).
 (require doeff-hy.record [defrecord])
 (import collections [deque])
 (import dataclasses [dataclass field])
@@ -17,7 +17,7 @@
 
 
 (defclass [(dataclass :eq False)] Channel []
-  "列の握り(値ではなく資源 — 中身の items と待ち手の waiters は答え手が書き換える。同一性で比べる)。scheduler の thread の中だけで触る。"
+  "The handle of a channel (a resource, not a value -- the responder rewrites its items and waiters. Compared by identity). Touched only inside the scheduler's thread."
   #^ (get deque object) items
   (setv items (field :default-factory deque))
   #^ (get list (get Promise None)) waiters
@@ -25,15 +25,15 @@
 
 
 (defclass [(dataclass :frozen True)] CreateChannel [EffectBase]
-  "新しい空の列を作る(頭の註)。答え = Channel。")
+  "Create a new empty channel (see the header comment). Answer = Channel.")
 
 
 (defclass [(dataclass :frozen True)] PutChannel [EffectBase]
-  "列の末尾に 1 つ積む(頭の註)。答え = None。"
+  "Put one item at the end of the channel (see the header comment). Answer = None."
   (#^ Channel channel)
   (#^ object item))
 
 
 (defclass [(dataclass :frozen True)] TakeChannel [EffectBase]
-  "列の先頭を 1 つ取る — 空なら積まれるまで待つ(頭の註)。答え = 積まれた値。"
+  "Take one item from the head of the channel -- if empty, wait until something is put (see the header comment). Answer = the value that was put."
   (#^ Channel channel))

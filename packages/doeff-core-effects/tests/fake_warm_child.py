@@ -1,12 +1,12 @@
-"""待ちの子の契約テストの、本物の側の小さな偽の待ちの子(tests/warm_contract_handlers.hy が socket ごとに 1 つ起こす)。
+"""A small fake warm child for the contract test of the warm child, on the real side (tests/warm_contract_handlers.hy starts one per socket).
 
-本物の待ちの子(この package の外)が守る約束だけを、検の中で再現するための script:
-  * socket-path で頼みを受け、約束の 1 行を読む・答える(読み書きは本物の答え手と同じ関数 warm-request-of・warm-answer-line)
-  * mode = accept: 子 A を fork し、A は setsid して group の先頭になり、log へ dup2 し、子 B で入口(module)を走らせ、B の終わり
-    (signal なら負の値)を exit の file へ置き換えで書いて終わる。待ちの子は A の pid と start-ticks(機体ごとの読み proc-stat-of)を答える
-    (env の置き換えは本物の待ちの子の役目で、この偽物はしない — run_entry の註)
-  * mode = refuse:<文> は断りを答え、mode = silent は答えずに接続を持ったまま待つ(頼み手の期限切れを見るため)
-A の終わりは待ちの子が待たない(SIGCHLD を捨てて自動で回収する)ので、終わった A は居なくなり、頼み手は exit の file で読む。
+A script to reproduce, inside the check, only the promises kept by the real warm child (outside this package):
+  * Receive a request at socket-path, read and answer the one line of the promise (reading and writing use the same functions as the real responder, warm-request-of and warm-answer-line)
+  * mode = accept: fork a child A; A does setsid to become the head of a group, dup2s to the log, runs the entry (module) in a child B, and writes the end of B
+    (a negative value if by signal) to the exit file by replacement, then ends. The warm child answers A's pid and start-ticks (read per machine type with proc-stat-of)
+    (replacing env is the job of the real warm child, and this fake does not do it -- see the note of run_entry)
+  * mode = refuse:<text> answers a refusal, and mode = silent does not answer and waits holding the connection (to see the requester's timeout)
+The warm child does not wait for A's end (it discards SIGCHLD and reaps automatically), so a finished A is gone, and the requester reads it from the exit file.
 """
 
 from __future__ import annotations
@@ -17,7 +17,7 @@ import signal
 import socket
 import sys
 
-import hy  # noqa: F401  - doeff_core_effects の Hy の module を読むため
+import hy  # noqa: F401  - to load the Hy modules of doeff_core_effects
 from doeff import run
 from doeff_core_effects import proc_stat_of, warm_answer_line, warm_request_of
 from doeff_core_effects._os_warm_process import WarmRequestWire
@@ -28,19 +28,19 @@ from doeff_hy._wire import Malformed
 
 
 def start_ticks(pid: int) -> int:
-    """pid の process の始まりの刻を読むため — 頼み手が pid の使い回しを見分ける印。頼み手(os-warm-process-handler)と同じ機体ごとの読み
-    proc-stat-of で読む(Linux = /proc・macOS = libproc — 自分で /proc を読むと macOS で答えられない)。"""
+    """To read the start time of the process pid -- the mark by which the requester tells apart a reused pid. It is read with proc-stat-of, the same per-machine-type read as the requester (os-warm-process-handler)
+    (Linux = /proc, macOS = libproc -- reading /proc by itself cannot answer on macOS)."""
     seen: ProcStat | None = run(proc_stat_of(pid))
     if seen is None:
-        raise ProcessLookupError(f"分けた子 {pid} の様子を読めない")
+        raise ProcessLookupError(f"cannot read the state of the forked child {pid}")
     return seen.start_ticks
 
 
 def run_entry(entry: str, args: tuple[str, ...], cwd: str) -> int:
-    """子 B: 入口の module を、渡された cwd で同じ process の中で走らせ、終了 code を返すため。
-    TERM は A が塞いだまま継いでいるので、扱いを既定に戻してから塞ぎを解く — 先に届いて待っていた TERM もここで効く。
-    頼みの env で子の環境変数を置き換えるのは本物の待ちの子(この package の外)の役目で、この偽物は置き換えない — 契約テストは
-    env が約束の 1 行で運ばれる事(往復の検)と、答えに出ない事だけを見る。"""
+    """Child B: to run the entry module with the given cwd in the same process and return the exit code.
+    TERM is still blocked, inherited from A, so restore its handling to the default and then unblock -- a TERM that arrived earlier and was waiting also takes effect here.
+    Replacing the child's environment variables with the request's env is the job of the real warm child (outside this package), and this fake does not replace them -- the contract test
+    only checks that env is carried in the one line of the promise (the round-trip check) and that it does not appear in the answer."""
     signal.signal(signal.SIGTERM, signal.SIG_DFL)
     signal.pthread_sigmask(signal.SIG_UNBLOCK, {signal.SIGTERM})
     os.chdir(cwd)
@@ -54,7 +54,7 @@ def run_entry(entry: str, args: tuple[str, ...], cwd: str) -> int:
 
 
 def write_exit(exit_path: str, code: int) -> None:
-    """子 A: 入口の終了 code を exit の file へ置き換えで書くため(半端な中身を頼み手に読ませない)。"""
+    """Child A: to write the entry's exit code to the exit file by replacement (so the requester is never made to read a half-written content)."""
     partial = f"{exit_path}.partial"
     with open(partial, "w", encoding="utf-8") as f:
         f.write(f"{code}\n")
@@ -62,9 +62,9 @@ def write_exit(exit_path: str, code: int) -> None:
 
 
 def become_a(listener: socket.socket, connection: socket.socket, request: WarmRequestWire, ready: int) -> None:
-    """子 A: group の先頭になり、log へ出力を向け、子 B の終わりを exit の file に書いて終わるため(戻らない)。
-    TERM は塞ぐ(A は group へ送られた TERM で死なず、B の終わりを書く)。setsid と塞ぎを済ませたら ready の pipe へ 1 byte 書く —
-    待ちの子はそれを読んでから頼み手へ答える(済ませる前に届いた signal が「居ない」で外れないため)。"""
+    """Child A: to become the head of a group, direct output to the log, and write the end of child B to the exit file and end (it does not return).
+    Block TERM (A does not die from a TERM sent to the group, and writes B's end). After setsid and the blocking are done, write 1 byte to the ready pipe --
+    the warm child reads it and then answers the requester (so a signal that arrives before they are done is not missed with "no such process")."""
     listener.close()
     connection.close()
     signal.signal(signal.SIGCHLD, signal.SIG_DFL)
@@ -84,7 +84,7 @@ def become_a(listener: socket.socket, connection: socket.socket, request: WarmRe
 
 
 def received_line(connection: socket.socket) -> bytes:
-    """頼みの 1 行(改行まで)を受けるため。"""
+    """To receive one line of the request (up to the newline)."""
     received = b""
     while b"\n" not in received:
         chunk = connection.recv(4096)
@@ -95,10 +95,10 @@ def received_line(connection: socket.socket) -> bytes:
 
 
 def answer(listener: socket.socket, connection: socket.socket, mode: str) -> None:
-    """頼み 1 つに mode の通りに答えるため(accept は子 A を立てる)。"""
+    """To answer one request according to mode (accept starts child A)."""
     line = received_line(connection)
     if mode == "silent":
-        # 答えずに、頼み手が期限で接続を閉じるのを待つ(閉じられると recv が空を返す)。
+        # Do not answer, and wait for the requester to close the connection at its timeout (when closed, recv returns empty).
         while connection.recv(4096):
             pass
         return
@@ -107,7 +107,7 @@ def answer(listener: socket.socket, connection: socket.socket, mode: str) -> Non
         return
     request = run(scheduled(warm_request_of(line)))
     if isinstance(request, Malformed):
-        connection.sendall(run(scheduled(warm_answer_line(WarmRefused(detail="頼みの形が約束と違う")))))
+        connection.sendall(run(scheduled(warm_answer_line(WarmRefused(detail="the shape of the request differs from the promise")))))
         return
     ready_read, ready_write = os.pipe()
     a = os.fork()
@@ -121,13 +121,13 @@ def answer(listener: socket.socket, connection: socket.socket, mode: str) -> Non
 
 
 def main() -> None:
-    """socket-path で頼みを待ち続けるため(親が止めるまで)。"""
+    """To keep waiting for requests at socket-path (until the parent stops it)."""
     socket_path, mode = sys.argv[1], sys.argv[2]
     signal.signal(signal.SIGCHLD, signal.SIG_IGN)
     with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as listener:
         listener.bind(socket_path)
         listener.listen(8)
-        # 組み立ての側(warm_contract_handlers.hy)は、この 1 行を読んで頼み始める(時間で待たない)。
+        # The assembly side (warm_contract_handlers.hy) reads this one line and starts making requests (it does not wait by time).
         print("ready", flush=True)
         while True:
             connection, _ = listener.accept()

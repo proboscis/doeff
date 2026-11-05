@@ -1,10 +1,10 @@
-;;; 汎用の WebSocket の client の effect(ws_client_effects.hy)の、答え手の片方だけが持つ性質の検。両方に共通の
-;;; 性質(繋ぎ・frame の往復・相手の閉じとこちらの閉じ・閉じた後・知らない id・範囲の終わりの後始末)は test_ws_client_contract.hy の契約
-;;; テストが両方の答え手で回す。
-;;;   - 台本の答え手(scripted-ws-client): 台本の frame が尽きた時(then-close の有無)・送った文が含む語ごとの replies が台本の順に全部
-;;;     つながる事・繋ぎ先の最長の一致・送った文と閉じの記録(ReadWsSent)。
-;;;   - 本物の答え手(aiohttp-ws-client): handshake を断った status が WsConnectFailed に載る・Cancel された繋ぎの client が閉じて残った繋ぎが
-;;;     動く・理由の文(reason)に要求のヘッダーの値や url の query が載らない(aiohttp の無い venv では skip)。
+;;; Checks for properties that only one of the answerers of the generic WebSocket client effects (ws_client_effects.hy) has. Properties common to both
+;;; (connecting, frame round trips, peer close and own close, after close, unknown id, cleanup at the end of the scope) are run on both answerers by the contract
+;;; test test_ws_client_contract.hy.
+;;;   - Scripted answerer (scripted-ws-client): when the script's frames run out (with or without then-close), that replies per word contained in the sent text all
+;;;     chain in script order, longest match of the connection target, and the record of sent text and closes (ReadWsSent).
+;;;   - Real answerer (aiohttp-ws-client): the status of a refused handshake rides on WsConnectFailed; the client of a Cancelled connect closes and the remaining connect
+;;;     keeps working; the reason text (reason) carries no request header values or url query (skipped in a venv without aiohttp).
 (require doeff-hy.macros [defk deftest <- val var with-handler])
 (import asyncio)
 (import typing [TYPE_CHECKING])
@@ -20,10 +20,10 @@
 (import ws_client_contract_handlers [ContractWsWorld WsWorld PEER-SECONDS client-into])
 (import pytest)
 
-;; この file の待ちは実時間が対象(何が対象かは名簿 tests/realtime_tests.toml のこの file の行)— realtime を名乗る file の中の眠りを、
-;; 検の眠りの規則(doeff-linter の DOEFF211)は当てない。
+;; The waits in this file target real time (what is targeted is in this file's row of the roster tests/realtime_tests.toml) -- the sleep-check rule (doeff-linter DOEFF211)
+;; is not applied to sleeps inside a file that declares itself realtime.
 (val pytestmark pytest.mark.realtime)
-;; aiohttp は extra `http-server` の依存(無い環境では本物の答え手のテストを skip する)— 型の注記にだけ使い、実行時は import しない。
+;; aiohttp is a dependency of the extra `http-server` (tests of the real answerer are skipped where it is absent) -- used only in type annotations, and not imported at runtime.
 (when TYPE_CHECKING
   (import aiohttp))
 
@@ -32,7 +32,7 @@
 
 (defk connected [url]
   {:pre [(: url str)] :post [(: % str)] :tags {:context "ws-client-test" :role "program"}}
-  "url へ繋ぎ、id を返す。"
+  "Connect to url and return the id."
   (<- outcome WsConnectOutcome (WsConnect :url url))
   (assert (isinstance outcome WsLink) outcome)
   outcome.link)
@@ -40,7 +40,7 @@
 
 (defk drain [link]
   {:pre [(: link str)] :post [(: % (get tuple #(WsFrame ...)))] :tags {:context "ws-client-test" :role "program"}}
-  "id の接続の frame を WsLinkClosed が来るまで受ける(答え = 受けた frame の列・閉じを含む)。"
+  "Receive the frames of the id's connection until WsLinkClosed arrives (answer = the received frames, including the close)."
   (var frames #())
   (var reading True)
   (while reading
@@ -52,7 +52,7 @@
 
 (defk drain-two [first-url second-url]
   {:pre [(: first-url str) (: second-url str)] :post [(: % (get tuple #((get tuple #(WsFrame ...)) (get tuple #(WsFrame ...)))))] :tags {:context "ws-client-test" :role "program"}}
-  "2 つの url へ繋ぎ、それぞれの frame を閉じまで受ける(答え = #(1 つ目の frame の列 2 つ目の frame の列))。"
+  "Connect to 2 urls and receive each one's frames until close (answer = #(1st frame sequence 2nd frame sequence))."
   (<- first str (connected first-url))
   (<- second str (connected second-url))
   (<- first-frames (get tuple #(WsFrame ...)) (drain first))
@@ -63,22 +63,22 @@
 (deftest test-the-scripted-client-ends-an-exhausted-script-without-a-code-or-with-the-scripted-close
   (val script (WsScript :endpoints #((ScriptedWsEndpoint :url "ws://open.test" :frames #((ScriptedWsText :text "one")))
                                      (ScriptedWsEndpoint :url "ws://closing.test" :frames #((ScriptedWsBinary :data b"\x00"))
-                                                         :then-close (ScriptedWsClosed :code 4004 :reason "台本の終わり")))))
+                                                         :then-close (ScriptedWsClosed :code 4004 :reason "end of script")))))
   (<- got (get tuple #((get tuple #(WsFrame ...)) (get tuple #(WsFrame ...)))) (with-handler [(state) (scripted-ws-client script)] (drain-two "ws://open.test/a" "ws://closing.test/b")))
-  ;; then-close の無い台本は、尽きたら状態符なしで script-exhausted(呼び手を待たせない)。
+  ;; A script without then-close, when exhausted, is script-exhausted with no status code (does not make the caller wait).
   (assert (= (get got 0) #((WsText :link "ws-1" :text "one") (WsLinkClosed :link "ws-1" :code None :reason SCRIPT-EXHAUSTED-REASON))) got)
-  (assert (= (get got 1) #((WsBinary :link "ws-2" :data b"\x00") (WsLinkClosed :link "ws-2" :code 4004 :reason "台本の終わり"))) got))
+  (assert (= (get got 1) #((WsBinary :link "ws-2" :data b"\x00") (WsLinkClosed :link "ws-2" :code 4004 :reason "end of script"))) got))
 
 
 (defk send-and-drain [url text]
   {:pre [(: url str) (: text str)]
    :post [(: % (get tuple #(WsSendOutcome (get tuple #(WsFrame ...)) WsLinkClosed (get tuple #(WsSentRecord ...)))))]
    :tags {:context "ws-client-test" :role "program"}}
-  "url へ繋ぎ、text を送り、frame を閉じまで受け、閉じを出し、記録を読む(答え = #(送りの答え frame の列 閉じの答え 記録))。"
+  "Connect to url, send text, receive frames until close, issue the close, and read the record (answer = #(send's answer frame sequence, close's answer, record))."
   (<- link str (connected url))
   (<- sent WsSendOutcome (WsSend :link link :text text))
   (<- frames (get tuple #(WsFrame ...)) (drain link))
-  (<- closed WsLinkClosed (WsDisconnect :link link :code 1000 :reason "終わり"))
+  (<- closed WsLinkClosed (WsDisconnect :link link :code 1000 :reason "done"))
   (<- records (get tuple #(WsSentRecord ...)) (ReadWsSent))
   #(sent frames closed records))
 
@@ -88,21 +88,21 @@
                                                          :replies #((ScriptedWsReply :contains "append" :frames #((ScriptedWsText :text "ack:append")))
                                                                     (ScriptedWsReply :contains "commit" :frames #((ScriptedWsText :text "ack:commit")
                                                                                                                   (ScriptedWsText :text "done"))))))))
-  ;; 2 つの語を含む 1 通は、両方の replies を台本の順につなぐ。
+  ;; One message containing 2 words chains both replies in script order.
   (<- got (get tuple #(WsSendOutcome (get tuple #(WsFrame ...)) WsLinkClosed (get tuple #(WsSentRecord ...))))
       (with-handler [(state) (scripted-ws-client script)] (send-and-drain "ws://side.test/sessions/1/attach" SIDEBAND-APPEND)))
   (assert (= (get got 0) (WsSent :link "ws-1")) got)
   (assert (= (get got 1) #((WsText :link "ws-1" :text "ack:append") (WsText :link "ws-1" :text "ack:commit") (WsText :link "ws-1" :text "done")
                            (WsLinkClosed :link "ws-1" :code None :reason SCRIPT-EXHAUSTED-REASON)))
           got)
-  ;; 尽きた後の WsDisconnect は閉じ直さない — 答えは尽きた時と同じ WsLinkClosed で、記録に閉じは無く、送った文だけが残る。
+  ;; A WsDisconnect after exhaustion does not close again -- the answer is the same WsLinkClosed as at exhaustion, the record has no close, and only the sent text remains.
   (assert (= (get got 2) (WsLinkClosed :link "ws-1" :code None :reason SCRIPT-EXHAUSTED-REASON)) got)
   (assert (= (get got 3) #((WsSentText :link "ws-1" :text SIDEBAND-APPEND))) got))
 
 
 (defk first-frames-and-a-refusal [first-url second-url refused-url]
   {:pre [(: first-url str) (: second-url str) (: refused-url str)] :post [(: % (get tuple #(WsFrame WsFrame WsConnectOutcome)))] :tags {:context "ws-client-test" :role "program"}}
-  "2 つの url へ繋いでそれぞれ最初の frame を受け、3 つ目の url への繋ぎの答えを添える。"
+  "Connect to 2 urls and receive the first frame of each, and attach the answer of the connect to a 3rd url."
   (<- first str (connected first-url))
   (<- second str (connected second-url))
   (<- refused WsConnectOutcome (WsConnect :url refused-url))
@@ -123,7 +123,7 @@
 
 (deftest test-the-aiohttp-client-names-the-status-of-a-refused-handshake
   {:interpreters ["aiohttp-ws-client"]}
-  ;; 相手の待ち受けは /ws だけを ws に上げる — 他の path は 404 で断る(本物だけの性質: 断りの status が載る)。
+  ;; The peer listener upgrades only /ws to ws -- other paths are refused with 404 (a property of the real one only: the refusal status rides along).
   (<- world WsWorld (ContractWsWorld))
   (val elsewhere (+ world.url "/nope"))
   (<- refused WsConnectOutcome (WsConnect :url elsewhere))
@@ -133,7 +133,7 @@
 
 (defk fast-link-after-abandoning-the-slow-one [slow url]
   {:pre [(: slow str) (: url str)] :post [(: % WsText)] :tags {:context "ws-client-test" :role "program"}}
-  "遅い繋ぎを始めてから速い繋ぎを終え、遅い方を Cancel する(答え = 速い方の greeting — 残った方が動く証)。"
+  "Start a slow connect, finish a fast connect, then Cancel the slow one (answer = the fast one's greeting -- proof that the remaining one works)."
   (<- slow-task (Spawn (connected slow)))
   (<- fast WsConnectOutcome (WsConnect :url url))
   (assert (isinstance fast WsLink) fast)
@@ -143,9 +143,9 @@
   hello)
 
 
-(defn :async #^ bool all-closed [#^ (get tuple #("aiohttp.ClientSession" ...)) sessions]  ; defk にできない: 共有の event loop の上で client の閉じを待つ coroutine
-  "Cancel は coroutine の巻き戻りを待たずに返るので、作られた client の全部が閉じるのを PEER-SECONDS まで共有の loop の上で待つため
-   (答え = 全部閉じたか)。"
+(defn :async #^ bool all-closed [#^ (get tuple #("aiohttp.ClientSession" ...)) sessions]  ; cannot be a defk: a coroutine that waits for the client closes on the shared event loop
+  "Cancel returns without waiting for the coroutine to unwind, so wait on the shared loop, for up to PEER-SECONDS, for all the created clients to close
+   (answer = whether all closed)."
   (setv loop (asyncio.get-running-loop))
   (setv deadline (+ (.time loop) PEER-SECONDS))
   (while (and (not (all (gfor s sessions s.closed))) (< (.time loop) deadline))
@@ -155,7 +155,7 @@
 
 (defk drained [box]
   {:pre [(: box (get Queue aiohttp.ClientSession))] :post [(: % (get tuple #(aiohttp.ClientSession ...)))] :tags {:context "ws-client-test" :role "judgment"}}
-  "箱に置かれた物を全部取り出す(置かれた順)。"
+  "Take out everything placed in the box (in the order placed)."
   (var items #())
   (while (not (.empty box))
     (:= items (+ items #((.get-nowait box)))))
@@ -164,16 +164,16 @@
 
 (deftest test-a-cancelled-connect-closes-its-client-and-the-other-connect-proceeds
   {:interpreters ["aiohttp-ws-client"]}
-  ;; 同じ handler の下で同時に進む 2 つの繋ぎのうち片方を Cancel する: 残った方は動き、Cancel された方の client は finally で閉じる。
+  ;; Cancel one of 2 connects progressing at the same time under the same handler: the remaining one works, and the Cancelled one's client closes in finally.
   (import doeff_core_effects._aiohttp_ws_client [aiohttp-ws-client])
   (<- world WsWorld (ContractWsWorld))
   (val box ((get Queue "aiohttp.ClientSession")))
   (<- hello WsText (with-handler [(aiohttp-ws-client :client-factory (partial client-into box))]
                      (fast-link-after-abandoning-the-slow-one world.slow world.url)))
-  ;; 遅い方が ws-1 を確保し、速い方は ws-2(ヘッダーを載せない繋ぎなので greeting は "hello -")。
+  ;; The slow one takes ws-1, and the fast one gets ws-2 (a connect that carries no header, so the greeting is "hello -").
   (assert (= hello (WsText :link "ws-2" :text "hello -")) hello)
   (<- sessions (get tuple #(aiohttp.ClientSession ...)) (drained box))
-  ;; 遅い方と速い方の client が 1 つずつ作られ、Cancel された方は finally で・速い方は範囲の終わりの後始末で閉じる。
+  ;; One client each is created for the slow and the fast ones; the Cancelled one closes in finally, and the fast one at the cleanup at the end of the scope.
   (assert (= (len sessions) 2) sessions)
   (<- closed bool (Await (all-closed sessions)))
   (assert closed (lfor s sessions s.closed)))
@@ -181,8 +181,8 @@
 
 (deftest test-failure-reasons-carry-neither-header-values-nor-the-query
   {:interpreters ["aiohttp-ws-client"]}
-  ;; protocol の記録の境界: WsConnectFailed.reason に要求のヘッダーの値(Authorization の Bearer)や url の query を載せない —
-  ;; 理由は例外の型の名と status だけ。
+  ;; Boundary of the protocol record: WsConnectFailed.reason does not carry the request header values (the Authorization Bearer) or the url query --
+  ;; the reason is only the exception type name and the status.
   (<- world WsWorld (ContractWsWorld))
   (val secret "bearer-secret-value")
   (val bearer #((HttpHeader :name "Authorization" :value (+ "Bearer " secret))))
@@ -198,7 +198,7 @@
 
 (deftest test-failure-detail-drops-the-exception-text-that-carries-the-url
   {:interpreters ["aiohttp-ws-client"]}
-  ;; aiohttp の例外の文は要求の url(query を含む)を運ぶ — 境界は failure-detail が持つ(型の名と status だけにする)。
+  ;; The text of aiohttp's exception carries the request url (including the query) -- the boundary is held by failure-detail (only the type name and the status).
   (import aiohttp)
   (import yarl [URL])
   (import multidict [CIMultiDict CIMultiDictProxy])

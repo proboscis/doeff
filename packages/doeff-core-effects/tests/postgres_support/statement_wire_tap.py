@@ -1,18 +1,18 @@
-"""検の補助: client と PostgreSQL の間に置く TCP の中継で、client が送った文を往復ごとに記録する。
+"""Test helper: a TCP relay placed between the client and PostgreSQL that records, per round trip, the statements the client sent.
 
-答え手が DB へ流す往復の列(往復ごとの文の並び)を、driver の呼び方ではなく wire の上で見るための道具。PostgreSQL の frontend の
-message を読むだけで、中身は書き換えずにそのまま server へ渡す(server の答えも読まずにそのまま client へ返し、bytes の数だけを数える —
-答えの行が wire の上で何 bytes になったかを見る検のため)。
+A tool for seeing, on the wire rather than through the driver's call style, the sequence of round trips (the list of statements per round trip) that the answerer sends to the DB. It only reads PostgreSQL frontend
+messages and passes everything to the server as is without rewriting (the server's answers are likewise returned to the client without being read, and only the number of bytes is counted --
+for a check that looks at how many bytes an answer's rows come to on the wire).
 
-- 往復 = client が Sync('S')か Simple Query('Q')を送るまでに送った文の並び。client はそこで server の答えを待つ(pipeline mode でも
-  sync は出口の 1 度 — 答え手の postgres-flush)。文の無い Sync は往復に数えない。
-- 文 = Execute('E')で流した portal の文(Bind('B')が結んだ prepared statement を作った Parse('P')の文)と、Simple Query の文。
-  psycopg が 5 回目から prepare した文も、Parse の名で元の文に引き戻す。
-- 接続の始まり(StartupMessage・SSLRequest・GSSENCRequest — 型の byte が無い)と、文を運ばない message は数えない。
+- Round trip = the sequence of statements sent until the client sends Sync('S') or Simple Query('Q'). The client then waits for the server's answer (even in pipeline mode,
+  sync is once at the exit -- the answerer's postgres-flush). A Sync with no statements is not counted as a round trip.
+- Statement = the statement of the portal run by Execute('E') (the statement of the Parse('P') that made the prepared statement bound by Bind('B')), and the statement of Simple Query.
+  Statements that psycopg prepares from the 5th time are also mapped back to the original statement by the Parse name.
+- The start of a connection (StartupMessage, SSLRequest, GSSENCRequest -- no type byte) and messages that carry no statement are not counted.
 
-使い方: tap = StatementWireTap(target) — target = unix socket の path(str)か (host, port)。client は 127.0.0.1:tap.port へ繋ぐ
-(sslmode=disable・gssencmode=disable)。tap.reset() の後に答え手を走らせ、tap.round_trips()(往復の列)か tap.downstream_bytes()(server → client の bytes)を読む。止める時は
-tap.close()。
+Usage: tap = StatementWireTap(target) -- target = a unix socket path (str) or (host, port). The client connects to 127.0.0.1:tap.port
+(sslmode=disable, gssencmode=disable). After tap.reset(), run the answerer and read tap.round_trips() (the sequence of round trips) or tap.downstream_bytes() (bytes server -> client). To stop, call
+tap.close().
 """
 
 from __future__ import annotations
@@ -22,26 +22,26 @@ import struct
 import threading
 from dataclasses import dataclass
 
-# 型の byte を持たない始まりの message の code(StartupMessage = protocol 3.0)。
+# Code of the start message that has no type byte (StartupMessage = protocol 3.0).
 PROTOCOL_3 = 196608
 
 
 @dataclass(frozen=True)
 class FrontendMessage:
-    """client が送った message 1 つ: kind = 型の byte(1 字)・payload = 長さの後の本文。"""
+    """One message the client sent: kind = type byte (1 character), payload = the body after the length."""
 
     kind: str
     payload: bytes
 
 
 def c_strings(payload: bytes, count: int) -> tuple[str, ...]:
-    """payload の頭から NUL で終わる文字列を count 個読む。"""
+    """Read count NUL-terminated strings from the head of payload."""
     parts = payload.split(b"\x00", count)
     return tuple(part.decode("utf-8", "replace") for part in parts[:count])
 
 
 class WireConversation:
-    """接続 1 本の client の側の流れを読み、文と往復の境を見つける係(1 本の thread だけが触る)。"""
+    """The part that reads the client-side stream of one connection and finds statement and round-trip boundaries (touched by only one thread)."""
 
     def __init__(self, on_round_trip) -> None:
         self.on_round_trip = on_round_trip
@@ -52,7 +52,7 @@ class WireConversation:
         self._mut_current: tuple[str, ...] = ()
 
     def feed(self, data: bytes) -> None:
-        """client から届いた bytes を足し、読める message を全部読む。"""
+        """Append the bytes that arrived from the client and read all readable messages."""
         self._mut_buffer += data
         while True:
             message = self.next_message()
@@ -62,7 +62,7 @@ class WireConversation:
                 self.read(message)
 
     def next_message(self) -> FrontendMessage | None:
-        """buffer の頭の message 1 つを切り出す(足りなければ None)。始まりの message は kind = ""。"""
+        """Cut out one message at the head of the buffer (None if not enough). The start message has kind = ""."""
         if not self._mut_started:
             if len(self._mut_buffer) < 8:
                 return None
@@ -83,7 +83,7 @@ class WireConversation:
         return FrontendMessage(kind=kind, payload=payload)
 
     def read(self, message: FrontendMessage) -> None:
-        """message 1 つを文と往復の境に写す(頭の註)。"""
+        """Map one message onto statement and round-trip boundaries (header comment)."""
         match message.kind:
             case "P":
                 name, query = c_strings(message.payload, 2)
@@ -104,14 +104,14 @@ class WireConversation:
                 return
 
     def close_round_trip(self) -> None:
-        """今の往復を閉じて記録へ渡す(文の無い往復は数えない)。"""
+        """Close the current round trip and hand it to the record (a round trip with no statements is not counted)."""
         if self._mut_current:
             self.on_round_trip(self._mut_current)
         self._mut_current = ()
 
 
 class StatementWireTap:
-    """127.0.0.1 の口で受けて PostgreSQL へ中継し、client が送った文を往復ごとに記録する中継(頭の註)。"""
+    """A relay that accepts on a 127.0.0.1 port, relays to PostgreSQL, and records the statements the client sent per round trip (header comment)."""
 
     def __init__(self, target: str | tuple[str, int]) -> None:
         self.target = target
@@ -126,7 +126,7 @@ class StatementWireTap:
         threading.Thread(target=self.accept, name="statement-wire-tap", daemon=True).start()
 
     def server_socket(self) -> socket.socket:
-        """中継の先(PostgreSQL)へ繋いだ socket を作る。"""
+        """Make a socket connected to the relay's destination (PostgreSQL)."""
         if isinstance(self.target, str):
             server = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
         else:
@@ -135,7 +135,7 @@ class StatementWireTap:
         return server
 
     def accept(self) -> None:
-        """接続を受けるたびに、上り(client → server — 読みながら渡す)と下り(server → client)の 2 本の pump を起こす。"""
+        """Each time a connection is accepted, start two pumps: upstream (client -> server -- passes while reading) and downstream (server -> client)."""
         while True:
             try:
                 client, _ = self.listener.accept()
@@ -147,7 +147,7 @@ class StatementWireTap:
             threading.Thread(target=self.pump, args=(server, client, None), daemon=True).start()
 
     def pump(self, source: socket.socket, sink: socket.socket, conversation: WireConversation | None) -> None:
-        """source から読んだ bytes を sink へ渡す(上りは渡す前に読む — 答えが返る前に記録が済む)。"""
+        """Pass the bytes read from source to sink (upstream is read before passing -- the record is done before the answer returns)."""
         while True:
             try:
                 data = source.recv(65536)
@@ -170,31 +170,31 @@ class StatementWireTap:
                 return
 
     def record(self, statements: tuple[str, ...]) -> None:
-        """往復 1 回(文の並び)を記録する(どの接続の thread からも呼ばれる)。"""
+        """Record one round trip (a sequence of statements) (called from the thread of any connection)."""
         with self.lock:
             self._mut_recorded = self._mut_recorded + (statements,)
 
     def count_downstream(self, size: int) -> None:
-        """server → client へ渡した bytes を足す(どの接続の thread からも呼ばれる)。"""
+        """Add the bytes passed server -> client (called from the thread of any connection)."""
         with self.lock:
             self._mut_downstream += size
 
     def reset(self) -> None:
-        """記録と数えた bytes を空にする(答え手を走らせる前に呼ぶ)。"""
+        """Empty the records and the counted bytes (call before running the answerer)."""
         with self.lock:
             self._mut_recorded = ()
             self._mut_downstream = 0
 
     def downstream_bytes(self) -> int:
-        """reset の後に server → client へ渡した bytes の和(答えの行が wire の上で占めた大きさを見る)。"""
+        """Sum of bytes passed server -> client since reset (to see the size the answer's rows occupied on the wire)."""
         with self.lock:
             return self._mut_downstream
 
     def round_trips(self) -> tuple[tuple[str, ...], ...]:
-        """reset の後に記録した往復の列(流れた順)。"""
+        """The sequence of round trips recorded since reset (in the order they flowed)."""
         with self.lock:
             return self._mut_recorded
 
     def close(self) -> None:
-        """待ち受けを閉じる(繋がっている接続は client が閉じた時に閉じる)。"""
+        """Close the listener (connections that are connected close when the client closes)."""
         self.listener.close()

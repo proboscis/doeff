@@ -1,40 +1,40 @@
-;;; program を撃った task の scheduler の thread の外で回す仕組み run-apart— program の計算(VM の歩と、program の
-;;; 中の素の関数)は別の thread の新しい VM で回し、program が出す effect は撃った task へ送り返して、撃った所の handler で答える。
+;;; run-apart: a mechanism that runs a program outside the scheduler thread of the task that fired it. The program's computation (VM steps and
+;;; the plain functions inside the program) runs in a fresh VM on another thread; the effects the program emits are sent back to the firing task and answered by the handlers at the firing site.
 ;;;
-;;; 何のためか: scheduler は 1 本の thread で全部の task を回し、task を替えるのは scheduler の effect(待ち・立て・合図)の所だけ。effect を
-;;; 出さずに続く計算(行ごとの読み解き・sha256 の計り直し・tuple の組み立て)は、終わるまで scheduler の thread を占め、同じ run の他の task
-;;; (待ち受けの要求)を全部その後ろに並ばせる。2026-10-27 01:26〜01:44 JST と 02:08〜02:16 JST、記録の service の手入れの係(使い手が渡す
-;;; 送りの関数)が ClickHouse から読み戻した 19 万行を 1 行ずつ照らす計算に 4 分ずつ 2 回 scheduler の thread を占め、本体と twin の要求が
-;;; 全部 数分 待った(DB の接続は全部 idle・要求の待ちは task が始まる前の queue の区間)。Compute(compute_effects.hy)は純粋な program しか
-;;; 回せず(handler を 1 つも付けない VM)、送りの関数のように effect(SQL・計器・時計)を出しながら計算する program は外へ出せなかった。
+;;; Why: the scheduler runs every task on a single thread, and tasks switch only at scheduler effects (wait, spawn, signal). A computation that continues without
+;;; emitting effects (line-by-line parsing, recomputing sha256, building tuples) occupies the scheduler thread until it finishes, and makes every other task of the same run
+;;; (requests waiting to be served) queue up behind it. On 2026-10-27 from 01:26 to 01:44 JST and from 02:08 to 02:16 JST, the maintenance worker of the record service (the
+;;; forwarding function supplied by the user) occupied the scheduler thread twice for 4 minutes each, checking 190,000 rows read back from ClickHouse one row at a time, and the requests of both the main and the twin
+;;; all waited for minutes (all DB connections were idle; the request waits were in the queue interval before the task started). Compute (compute_effects.hy) can run
+;;; only pure programs (a VM with no handler attached), so a program that computes while emitting effects (SQL, meters, clock), like the forwarding function, could not be moved out.
 ;;;
-;;; 形:
-;;;   - run-apart = program に当てる handler の値(ADR-DOE-API-001 R3・R16 — (run-apart program) で当て、with-handlers の列にも置ける)。
-;;;     当てた program の task の中で、daemon の thread 1 本に新しい VM(PyVM)を起こし、program を送り返しの handler(forwarding-handler)
-;;;     だけの下で回す。program が出す effect は全部この handler に届き、handler は effect を通い路(ApartLane)へ置いて答えを待つ(別の
-;;;     thread なので待つのはその thread だけ)。撃った task は通い路に外から完了させる promise を掛けて待ち(Wait — scheduler の他の task は
-;;;     回り続ける)、届いた effect を自分で撃って(撃った所の handler の全部が答える — 置き場・SQL・計器・時計・scheduler の effect も)、
-;;;     答えか例外を返す。program の答えは run-apart の答え、program の例外は run-apart の例外。
-;;;   - 1 本の program の effect は 1 つずつ(VM が答えを待つ間は次を出さない)なので、撃った task は届いた順に 1 つずつ答える。
-;;;   - 計算は別の thread で回り、free-threaded の Python では撃った run の scheduler の thread と並んで走る。effect の往復は thread の受け渡し
-;;;     1 回(外から完了させる promise と Future)ぶん遅い — effect の少ない重い計算に使う(要求ごとの短い program には使わない)。
-;;;   - Try は別の thread の VM の中で答える(VM に try-handler を置く — Try の program は別の thread に留まり、内側の handler も取り直す)。
-;;;   - 撃った所で答える effect が program を値に持つ物(Spawn・Gather・Race の program、SqlTransaction の program)は、その program を
-;;;     撃った run が回す。中の計算は撃った run の scheduler の thread に戻り、中の program は別の thread の VM の中で program が被せた
-;;;     handler(run-apart の内側の handler)も持たない — 撃った所の handler だけが答える。重い計算と内側の handler の要る effect は
-;;;     その外に置く。
-;;;   - 取り消し: 撃った task が取り消されたら通い路を閉じ、答えを待つ effect と、閉じた後に program が出す effect は ApartClosed を
-;;;     program へ投げる(program の finally は回るが、finally の中の effect も ApartClosed になる — 後始末に effect を使う program には
-;;;     使えない)。effect を出さない計算は終わるまで止まらない(thread は daemon — process の終わりを止めない)。閉じた後の program の
-;;;     答えは捨てる。撃った側は、program を待たなくなった時に run-apart の task を取り消す(daemon の task は run の終わりに取り消されない)。
-;;;   - 選び方: 入口が見える 1 つの純粋な計算 → Compute(compute_effects.hy — pool と計器を持つ)。driver の塞ぐ呼び → offloaded
-;;;     (offloaded_call.hy)。使い手が決める、effect を出しながら長く計算する program → run-apart(1 回 1 本の thread・上限も計器も無い —
-;;;     ThreadPerCall と同じ形なので、要求ごとに使わない)。
-;;; 仕組みの在りか(先例): 外から完了させる promise で待つのは offloaded_call.hy の offloaded と同じ作法・新しい VM を起こすのは
-;;; offloaded_call.hy の run-detached と同じ。Compute(純粋な program だけ)と違い、program は effect を出してよい。
+;;; Shape:
+;;;   - run-apart = a handler value applied to a program (ADR-DOE-API-001 R3, R16 - applied as (run-apart program), and can also be placed in a with-handlers list).
+;;;     Inside the task of the program it is applied to, it starts a fresh VM (PyVM) on one daemon thread and runs the program under only a forwarding handler
+;;;     (forwarding-handler). Every effect the program emits reaches this handler, which puts the effect on the lane (ApartLane) and waits for the answer (since it is
+;;;     another thread, only that thread waits). The firing task hangs an externally completed promise on the lane and waits (Wait - the other tasks of the scheduler
+;;;     keep running), fires the delivered effect itself (all handlers at the firing site answer - store, SQL, meters, clock, and scheduler effects too),
+;;;     and returns the answer or the exception. The program's answer is the answer of run-apart, and the program's exception is the exception of run-apart.
+;;;   - The effects of one program come one at a time (the next is not emitted while the VM waits for an answer), so the firing task answers them one at a time in the order they arrive.
+;;;   - The computation runs on another thread, and on free-threaded Python it runs in parallel with the scheduler thread of the firing run. An effect round trip is slower by one thread handoff
+;;;     (the externally completed promise and the Future) - use it for heavy computations with few effects (not for short per-request programs).
+;;;   - Try is answered inside the VM on the other thread (a try-handler is placed in the VM - the Try's program stays on the other thread, and the inner handlers are re-acquired too).
+;;;   - Effects answered at the firing site that carry a program as a value (the programs of Spawn, Gather, Race, and the program of SqlTransaction) have that program run by the
+;;;     firing run. The computation inside returns to the scheduler thread of the firing run, and the program inside does not have, in the VM on the other thread, the handlers
+;;;     that the program wrapped around it (the handlers inside run-apart) either - only the handlers at the firing site answer. Place heavy computations and effects that need the inner handlers
+;;;     outside of it.
+;;;   - Cancellation: when the firing task is cancelled, the lane is closed, and the effect waiting for an answer and the effects the program emits after the close throw ApartClosed into the
+;;;     program (the program's finally runs, but effects inside the finally also become ApartClosed - so it cannot be used by a program that uses effects for cleanup).
+;;;     A computation that emits no effects does not stop until it finishes (the thread is a daemon - it does not block process exit). The program's answer after the close
+;;;     is discarded. The caller cancels the run-apart task when it no longer waits for the program (a daemon task is not cancelled at the end of the run).
+;;;   - How to choose: a single pure computation whose entrance is visible -> Compute (compute_effects.hy - has a pool and meters). A blocking call of a driver -> offloaded
+;;;     (offloaded_call.hy). A program that the user decides on and that computes for a long time while emitting effects -> run-apart (one thread per call, no limit and no meter -
+;;;     the same shape as ThreadPerCall, so do not use it per request).
+;;; Where the mechanism comes from (precedents): waiting on an externally completed promise follows the same practice as offloaded in offloaded_call.hy; starting a fresh VM is the same as
+;;; run-detached in offloaded_call.hy. Unlike Compute (pure programs only), the program may emit effects.
 (require doeff-hy.macros [defk deff <- val])
 (require doeff-hy.record [defrecord])
-(import dataclasses [dataclass])  ; defrecord の展開が名指す
+(import dataclasses [dataclass])  ; named by the expansion of defrecord
 (import threading)
 (import functools [partial])
 (import concurrent.futures [Future])
@@ -49,47 +49,47 @@
 
 
 (defclass ApartClosed [Exception]
-  "撃った task が取り消され、通い路が閉じた後に、別の thread の program が出した effect に投げる例外(頭の註の取り消し)。")
+  "The exception thrown at an effect emitted by the program on the other thread after the firing task was cancelled and the lane closed (the cancellation item of the header note).")
 
 
 (defrecord ApartAsked
-  "別の thread の program が出した effect 1 つ: effect = 出した effect・reply = 答えを返す Future(撃った task が値か例外で終える)。"
+  "One effect emitted by the program on the other thread: effect = the emitted effect, reply = the Future that returns the answer (the firing task finishes it with a value or an exception)."
   (#^ object effect)
   (#^ Future reply))
 
 
 (defrecord ApartDone
-  "別の thread の program が答えた: value = program の答え。"
+  "The program on the other thread answered: value = the program's answer."
   (#^ object value))
 
 
 (defrecord ApartFailed
-  "別の thread の program が落ちた: error = 上げた例外。"
+  "The program on the other thread failed: error = the exception it raised."
   (#^ BaseException error))
 
 
 (defclass ApartLane []
-  "撃った task と別の thread の VM の通い路(頭の註)。資源なので値の型ではない。armed = 撃った task が掛けた、次の知らせを受ける外から
-   完了させる promise(None = 掛かっていない)・asked = 渡したが答えのまだ無い effect の Future(閉じる時に ApartClosed で終える —
-   渡した promise が取り消しと行き違うと、別の thread が答えを永久に待つ)・closed = 撃った task が去った印。錠は thread の間の Condition。"
+  "The lane between the firing task and the VM on the other thread (header note). It is a resource, so not a value type. armed = the externally completed promise, hung by the firing task, that receives the next message
+   (None = not hung) / asked = the Future of an effect that was handed over but has no answer yet (finished with ApartClosed on close -
+   if the handed-over promise crosses with a cancellation, the other thread would wait forever for the answer) / closed = the mark that the firing task has left. The lock is a Condition between threads."
 
-  (deff __init__ [self]  ; defk にできない: 資源の class の初期化
+  (deff __init__ [self]  ; defk にできない: initialization of a resource class
     {:pre [(: self ApartLane)] :post [(: % None)]}
     (setv self.condition (threading.Condition)
           self.armed None
           self.asked None
           self.closed False))
 
-  (deff arm [self promise]  ; defk にできない: 撃った task(scheduler の thread)が知らせの受け口を掛ける同期の口
+  (deff arm [self promise]  ; defk にできない: a synchronous entry where the firing task (on the scheduler thread) hangs the receiver of the message
     {:pre [(: self ApartLane) (: promise ExternalPromise)] :post [(: % None)]}
-    "次の知らせを受ける promise を掛け、知らせを待つ別の thread を起こすため。"
+    "To hang the promise that receives the next message, and wake the other thread waiting for a message."
     (with [_ self.condition]
       (setv self.armed promise)
       (.notify-all self.condition)))
 
-  (deff deliver [self message]  ; defk にできない: 別の thread の VM が知らせを置く同期の口(VM の外)
+  (deff deliver [self message]  ; defk にできない: a synchronous entry where the VM on the other thread puts a message (outside the VM)
     {:pre [(: self ApartLane) (: message (| ApartAsked ApartDone ApartFailed))] :post [(: % bool)]}
-    "知らせ 1 つを、撃った task が掛けた promise で渡すため(掛かるまで待つ)。閉じていれば渡さずに False。"
+    "To hand over one message through the promise hung by the firing task (waits until one is hung). If closed, it hands nothing over and returns False."
     (with [_ self.condition]
       (while (and (is self.armed None) (not self.closed))
         (.wait self.condition))
@@ -102,9 +102,9 @@
     (.complete promise message)
     True)
 
-  (deff close [self]  ; defk にできない: 撃った task が去る時の同期の口(取り消しの後始末)
+  (deff close [self]  ; defk にできない: a synchronous entry for when the firing task leaves (cleanup after cancellation)
     {:pre [(: self ApartLane)] :post [(: % None)]}
-    "通い路を閉じるため(知らせを待つ別の thread を起こし、以後の知らせを渡さず、答えのまだ無い effect を ApartClosed で終える)。"
+    "To close the lane (wake the other thread waiting for a message, hand over no further messages, and finish the effect that has no answer yet with ApartClosed)."
     (with [_ self.condition]
       (setv self.closed True
             self.armed None
@@ -112,14 +112,14 @@
             self.asked None)
       (.notify-all self.condition))
     (when (and (is-not asked None) (not (.done asked)))
-      (.set-exception asked (ApartClosed "撃った task が去った — 通い路は閉じている")))))
+      (.set-exception asked (ApartClosed "the firing task has left - the lane is closed")))))
 
 
-(deff forwarding-handler [lane]  ; defk にできない: 別の thread の VM に入れる答え手を作る(VM の外の Future を待つ)
+(deff forwarding-handler [lane]  ; defk にできない: builds a responder to put in the VM on the other thread (waits on a Future outside the VM)
   {:pre [(: lane ApartLane)] :post [(: % Callable)]}
-  "別の thread の VM で、program が出す effect を全部 通い路へ送り、撃った task が返した答え(か例外)で再開する答え手を作るため。"
+  "To build a responder that, in the VM on the other thread, sends every effect the program emits to the lane and resumes with the answer (or exception) the firing task returned."
   (defn forwarded [effect k]
-    ;; effect 1 つを撃った task へ渡し、答えを待って再開する(待つのはこの thread だけ)。
+    ;; Hand one effect to the firing task, wait for the answer, and resume (only this thread waits).
     (setv reply (Future))
     (if (.deliver lane (ApartAsked :effect effect :reply reply))
         (try
@@ -128,13 +128,13 @@
             (return (yield (TransferThrow k error))))
           (else
             (return (yield (Transfer k value)))))
-        (return (yield (TransferThrow k (ApartClosed "撃った task が去った — 通い路は閉じている"))))))
+        (return (yield (TransferThrow k (ApartClosed "the firing task has left - the lane is closed"))))))
   (raw-handler forwarded))
 
 
-(deff apart-thread [lane program]  ; defk にできない: daemon の thread の本体(VM の外から新しい VM を起こす)
+(deff apart-thread [lane program]  ; defk にできない: the body of the daemon thread (starts a fresh VM from outside the VM)
   {:pre [(: lane ApartLane) (: program Program)] :post [(: % None)]}
-  "別の thread で program を新しい VM で回し、答えか例外を通い路へ置くため(Try はこの VM の中で答える — 頭の註)。"
+  "To run the program in a fresh VM on another thread and put the answer or exception on the lane (Try is answered inside this VM - header note)."
   (try
     (setv value (.run (PyVM) (with-handlers [(forwarding-handler lane) try-handler] program)))
     (except [error BaseException]
@@ -147,8 +147,8 @@
 
 (defk answered-here [asked]
   {:pre [(: asked ApartAsked)] :post [(: % None)] :tags {:context "scheduler" :role "foundation"}}
-  "別の thread の program が出した effect を、撃った task の handler で答え、答えか例外を Future へ返すため。撃った task の取り消しは
-   上げる(答えのまだ無い Future は run-apart の通い路の閉じが ApartClosed で終える)。"
+  "To answer an effect emitted by the program on the other thread with the firing task's handlers, and return the answer or exception to the Future. Cancellation of the firing task
+   is raised (a Future with no answer yet is finished with ApartClosed by the lane close of run-apart)."
   (try
     (<- value asked.effect)
     (except [error TaskCancelledError]
@@ -162,7 +162,7 @@
 
 (defk next-message [lane]
   {:pre [(: lane ApartLane)] :post [(: % (| ApartAsked ApartDone ApartFailed))] :tags {:context "scheduler" :role "foundation"}}
-  "通い路に外から完了させる promise を掛けて、別の thread の次の知らせを待つため(待つのは撃った task だけ)。"
+  "To hang an externally completed promise on the lane and wait for the next message from the other thread (only the firing task waits)."
   (<- promise (CreateExternalPromise))
   (.arm lane promise)
   (<- message (Wait promise.future))
@@ -171,9 +171,9 @@
 
 (defk _apart [program]
   {:tp [T] :pre [(: program (get Program #(T object)))] :post [(: % T)] :tags {:context "scheduler" :role "foundation"}}
-  "program を別の thread の新しい VM で回し、program が出す effect をこの task の handler で答えて、program の答えを返すため(頭の註)。
-   program の例外はそのまま上げる。この task が取り消されたら通い路を閉じる(program へは ApartClosed — 頭の註の取り消し)。
-   外側に scheduled が要る(CreateExternalPromise と Wait)。"
+  "To run the program in a fresh VM on another thread, answer the effects it emits with this task's handlers, and return the program's answer (header note).
+   The program's exception is raised as is. If this task is cancelled, the lane is closed (ApartClosed goes to the program - cancellation item of the header note).
+   A scheduled is required outside (CreateExternalPromise and Wait)."
   (val lane (ApartLane))
   (.start (threading.Thread :target (fn [] (apart-thread lane program)) :name "doeff-apart" :daemon True))
   (try
@@ -188,18 +188,18 @@
 
 
 (defclass _ApartHandler [partial]
-  "run-apart の型: 包む program を _apart に渡す partial に、handler の印 _doeff_is_handler_fn を持たせるため(印が無いと with-handlers が
-   effect の答え手として包み直す・doeff_records の BodyWrapper と同じ付け方)。"
+  "The type of run-apart: to give a partial that passes the wrapped program to _apart the handler mark _doeff_is_handler_fn (without the mark, with-handlers would
+   re-wrap it as a responder of effects - attached the same way as BodyWrapper in doeff_records)."
   (setv _doeff_is_handler_fn True))
 
 
-;; program を撃った task の scheduler の thread の外で回す handler(頭の註): (run-apart program) は、program を別の thread の新しい VM で
-;; 回し、program が出す effect を当てた所の handler で答えて、program の答えを返す program。program の例外はそのまま上げる。外側に
-;; scheduled が要る(CreateExternalPromise と Wait)。設定も呼びごとの状態も持たないので、工場でなく印の付いた handler の値
-;; (ADR-DOE-API-001 R3・R16・ADR-DOE-API-002 R1 — maybe・result と同じ)。型は writer・try-handler と同じ ProgramHandler(答えの型を保つ)。
+;; A handler that runs a program outside the scheduler thread of the task that fired it (header note): (run-apart program) is a program that runs the program in a fresh VM on another thread,
+;; answers the effects the program emits with the handlers at the site where it is applied, and returns the program's answer. The program's exception is raised as is. A
+;; scheduled is required outside (CreateExternalPromise and Wait). It holds no configuration or per-call state, so it is a marked handler value rather than a factory
+;; (ADR-DOE-API-001 R3, R16, ADR-DOE-API-002 R1 - same as maybe and result). The type is ProgramHandler, same as writer and try-handler (it keeps the answer's type).
 (setv #^ ProgramHandler run-apart (_ApartHandler _apart))
 
-;; 何にも答えず(__doeff_handles__ = ())、program の effect を当てた所で出し直し、その周りで通い路の待ち(CreateExternalPromise・Wait)を
-;; 出す、という宣言(doeff-effect-analyzer の body wrapper の読み — doeff_records の records-signal-handler と同じ)。
+;; A declaration that it answers nothing (__doeff_handles__ = ()), re-emits the program's effects at the site where it is applied, and emits the lane waits (CreateExternalPromise, Wait)
+;; around that (the reading of the body wrapper by doeff-effect-analyzer - same as records-signal-handler in doeff_records).
 (setv run-apart.__doeff_handles__ #()
       run-apart.__doeff_effects__ #(CreateExternalPromise Wait))

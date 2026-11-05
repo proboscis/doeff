@@ -1,41 +1,41 @@
-;;; doeff-core-effects の層の宣言。
+;;; Layer declaration for doeff-core-effects.
 ;;;
-;;; doeff-linter は Python の文ごとの規則の母集団を、file から上へ最も近い architecture.hy(この file)から決める(#2811)。
-;;; 層は foundation の 1 つだけを置き、名指すのは scheduler の handler を選ぶ入口と、Ask に環境変数から答える handler の
-;;; 2 module に限る。この package のほかの file の母集団は変わらない(今までどおり DOEFF004 が当たる)。
+;;; doeff-linter decides the population of per-statement Python rules from the nearest architecture.hy above a file (this file) (#2811).
+;;; Only one layer, foundation, is declared, and it names just two modules: the entry point that selects the scheduler handler, and the handler that
+;;; answers Ask from environment variables. The population for the other files in this package is unchanged (DOEFF004 applies as before).
 ;;;
-;;; foundation = 環境変数の読みが許される foundation の handler の層(環境変数の読みは
-;;;   foundation の handler の中だけで、外での読みは違反)。
-;;;   - doeff_core_effects._scheduler: handler の組の前に scheduler の handler(python / rust)を選ぶ入口で、DOEFF_SCHEDULER を読む。
-;;;     handler の組がまだ無い所で選ぶので、ReadEnvironment で問うと doeff の全部の run に約 4 割の固定費が足される
-;;;     (実測 問い 1 回 173 µs・scheduled の run 1 回 415 µs — cisco-c8 2026-10-02 23:4x の決め)。
-;;;   - doeff_core_effects._handlers: Ask に環境変数から答える handler(接頭辞つきの名を読む)。
-;;;   - 外す規則: DOEFF004(os.environ を直に読む)— 名指しの 2 module に限り、ほかの file を足さない。
-;;; 戻し方: :exempt の行を消せば、DOEFF004 が元どおり 2 module に当たる。この file を消すと、この package の file の母集団は
-;;;   根の設定へ戻る。
+;;; foundation = the layer of foundation handlers that may read environment variables (environment reads are
+;;;   allowed only inside foundation handlers; reads outside them are violations).
+;;;   - doeff_core_effects._scheduler: the entry point that selects the scheduler handler (python / rust) before the handler stack exists; it reads DOEFF_SCHEDULER.
+;;;     It selects before any handler stack exists, so asking via ReadEnvironment would add a fixed cost of about 40% to every doeff run
+;;;     (measured: 173 us per query, 415 us per scheduled run - decided by cisco-c8 2026-10-02 23:4x).
+;;;   - doeff_core_effects._handlers: the handler that answers Ask from environment variables (reads names with a prefix).
+;;;   - Rule exempted: DOEFF004 (reading os.environ directly) - limited to the two named modules; no other files are to be added.
+;;; How to revert: delete the :exempt line and DOEFF004 applies to the two modules again as before. If this file is deleted, the population of this package's files
+;;;   goes back to the root configuration.
 ;;;
-;;; 不変条件(scheduler の止まりの見張り — Program の外の scheduler の中の判じなので defservice の :invariants に置けず、条をここに
-;;; 1 か所で書く。判じる関数は doeff_core_effects._scheduler の _external_wait_is_stall の 1 つで、Python と Rust の scheduler が同じ
-;;; 関数を呼ぶ):
-;;;   S1 a-stall-is-a-block-no-registered-wake-will-end — scheduler が外の完了を待って 1 周期(EXTERNAL_STALL_LOG_INTERVAL_SECONDS・
-;;;     本番 30 秒)何も届かない時、それを止まりと数えて警告を書く(#495b の見張り)のは、次のどちらかの時だけ:
-;;;       - 起こしの約束の登録された待ちが 1 つも無い。約束の登録された待ち = 期限の分かる時計の待ち(CreateExternalPromise の
-;;;         deadline — Delay・WaitUntil など・#765)と、終わりの知らせの出どころを見張る待ち(source_alive — 子の process の終わりの
-;;;         fd など)。
-;;;       - 約束を破った待ちが在る(失われた起こし)。時計の待ちは期限から、見張りの待ちは出どころが終わったと初めて見た時から、
-;;;         1 周期を過ぎても届かない。
-;;;     期限も出どころも持たない外部の待ちだけで塞がっている間は、今どおり周期ごとに警告する。
-;;;     失敗ケース = tests/test_scheduler.py の TestDeadlockDiagnostics(出どころの生きた見張りの待ちで黙る・出どころの終わった
-;;;     待ちを報じる・期限の無い待ちを報じる)、packages/doeff-core-effects/tests/test_process_exit_wait.hy の
-;;;     test-waiting-on-a-running-child-is-not-a-stall(走っている子の待ちで黙る — 直す前は周期ごとに警告)と
-;;;     test-a-child-that-ended-without-its-exit-notice-is-a-stall(終わりの知らせの届かない子の待ちを報じる)、
-;;;     packages/doeff-time/tests/test_async_handler.py(時計の待ちで黙る・期限を過ぎた時計の待ちを報じる)。どれも python と rust の
-;;;     両方の scheduler で回す。
+;;; Invariants (scheduler stall watch - this is a judgment inside the scheduler, outside any Program, so it cannot go in defservice :invariants; the clauses are
+;;; written here in one place. The judging function is the single _external_wait_is_stall in doeff_core_effects._scheduler, and the Python and Rust schedulers call the same
+;;; function):
+;;;   S1 a-stall-is-a-block-no-registered-wake-will-end - when the scheduler waits for external completion and nothing arrives for one period (EXTERNAL_STALL_LOG_INTERVAL_SECONDS,
+;;;     30 seconds in production), it counts that as a stall and writes a warning (the #495b watch) only in one of these cases:
+;;;       - There is no wait with a registered wake-up promise. A wait with a registered wake-up promise = a clock wait with a known deadline (CreateExternalPromise's
+;;;         deadline - Delay, WaitUntil, etc. - #765), or a wait that watches the source of its completion notice (source_alive - e.g. the exit
+;;;         fd of a child process).
+;;;       - There is a wait that broke its promise (a lost wake-up). A clock wait counts from its deadline, a watching wait from the moment the source is first seen to have ended;
+;;;         nothing arrived within one period after that.
+;;;     While blocked only on external waits that have neither a deadline nor a source, it warns every period as it does now.
+;;;     Failure cases = TestDeadlockDiagnostics in tests/test_scheduler.py (stay silent on a watching wait whose source is alive; report a wait whose source has ended;
+;;;     report a wait with no deadline), test-waiting-on-a-running-child-is-not-a-stall in packages/doeff-core-effects/tests/test_process_exit_wait.hy
+;;;     (stay silent while waiting on a running child - before the fix it warned every period) and
+;;;     test-a-child-that-ended-without-its-exit-notice-is-a-stall (report a wait on a child whose exit notice never arrives),
+;;;     and packages/doeff-time/tests/test_async_handler.py (stay silent on a clock wait; report a clock wait past its deadline). All of them run on both the python and rust
+;;;     schedulers.
 (defarchitecture doeff-core-effects
   :root "."
   :layers [(layer foundation
-             :summary "環境変数の読みが許される foundation の handler の層 — scheduler の handler を選ぶ入口と、Ask に環境変数から答える handler"
-             :knows "環境変数の名・scheduler の実装の名・Ask の鍵から環境変数の名への写し"
-             :does-not-know "業務の Program・どの業務がどの設定を使うか"
+             :summary "The layer of foundation handlers that may read environment variables - the entry point that selects the scheduler handler, and the handler that answers Ask from environment variables"
+             :knows "Names of environment variables, names of scheduler implementations, the mapping from Ask keys to environment variable names"
+             :does-not-know "Business Programs, which business uses which settings"
              :modules [doeff_core_effects._scheduler doeff_core_effects._handlers]
-             :exempt [(rule DOEFF004 "foundation の層 — handler の組の前に scheduler の handler を選ぶ入口と、Ask に環境変数から答える handler。環境変数の読みは foundation の handler の中だけ可")])])
+             :exempt [(rule DOEFF004 "The foundation layer - the entry point that selects the scheduler handler before the handler stack exists, and the handler that answers Ask from environment variables. Environment reads are allowed only inside foundation handlers")])])

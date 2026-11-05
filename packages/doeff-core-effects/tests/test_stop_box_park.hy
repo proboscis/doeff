@@ -1,14 +1,14 @@
-;;; 止めの合図の箱(stop_signal_handlers.StopBox)の待ちの登録の失敗ケース(#3871 の単位 4 で見つけた取りこぼし)。
+;;; Failure case for registering a wait on the stop-signal box (stop_signal_handlers.StopBox) (a miss found in unit 4 of #3871).
 ;;;
-;;; AwaitStop は「理由がまだ無い」と確かめてから待ちを作って登録する。その間に合図が来ると、合図の受け手は待ちの無いまま理由だけを
-;;; 立て、後から登録した待ちは誰にも満たされない(worker の 60 秒の待ちが SIGTERM で抜けなかった)。登録は、理由が立っていれば待ちを
-;;; その場で満たし、立っていなければ並べる — 合図の受け手との間に取りこぼしの合間を作らない。
+;;; AwaitStop checks that "there is no reason yet", then creates and registers a wait. If the signal arrives in between, the signal receiver sets only the reason with no wait present,
+;;; and a wait registered afterwards is never satisfied by anyone (the worker's 60-second wait was not released by SIGTERM). Registration satisfies the wait
+;;; on the spot if the reason is already set, and queues it otherwise -- leaving no gap for a miss between it and the signal receiver.
 (require doeff-hy.macros [deftest val])
 (import doeff_core_effects._stop_signal_handlers [StopBox])
 
 
 (defclass Recorder []
-  "待ちの代わり: complete で受けた理由を覚える。"
+  "Stand-in for a wait: remembers the reason received by complete."
   (defn __init__ [self]
     (setv self.reasons #()))
   (defn #^ None complete [self #^ str reason]

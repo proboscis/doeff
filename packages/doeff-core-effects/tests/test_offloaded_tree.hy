@@ -1,8 +1,8 @@
-;;; offloaded-tree-handler(os_file.hy)の検— 木の数え(MeasureTree)と消し(RemoveTree)と
-;;; 様子つきの歩き(StatTree)を thread で待つ答え手が、os-file-handler と同じ答えを返す事と、数えや歩きが thread で待つ間も同じ scheduler の
-;;; 別の task が回る事。本物の file(tmp の下)を使う。
-;;; 数えを止めておく所は os.walk(measure-tree が呼ぶ)の差し替え — 検の殻の thread が合図を出すまで walk の頭で待つ。os-file-handler だけ
-;;; (数えを呼んだ thread で待つ)だと、別の task が合図を出せず SCENARIO-LIMIT で赤になる。
+;;; Tests for offloaded-tree-handler (os_file.hy): the responder that waits on a thread for tree measuring (MeasureTree), removal (RemoveTree) and
+;;; walking with stat info (StatTree) returns the same answers as os-file-handler, and another task of the same scheduler
+;;; keeps running while measuring and walking wait on a thread. Uses real files (under tmp).
+;;; The place where measuring is held is a replacement of os.walk (which measure-tree calls) -- it waits at the head of the walk until the test harness's thread signals. With os-file-handler alone
+;;; (waiting on the thread that called the measure), another task cannot signal, and it goes red on SCENARIO-LIMIT.
 (require doeff-hy.macros [defk deftest <- val])
 (require doeff-hy.record [defrecord])
 (import dataclasses [dataclass])
@@ -20,12 +20,12 @@
         doeff_core_effects._os_file [TREE-THREADS])
 (import doeff_core_effects [scheduled CreateExternalPromise Spawn Wait Task])
 
-;; 筋書き 1 つの上限(秒)。普段は 1 秒の内に終わる。
+;; Upper limit of one scenario (seconds). Normally it finishes within 1 second.
 (val SCENARIO-LIMIT 5.0)
 
 
 (defrecord Measured
-  "見た事: whole = 木の大きさ・missing = 無い path の答え・removed = 消した後に木が無いか。"
+  "What was seen: whole = size of the tree, missing = answer for a nonexistent path, removed = whether the tree is gone after removal."
   (#^ int whole)
   (#^ object missing)
   (#^ bool removed))
@@ -33,7 +33,7 @@
 
 (defk measured-and-removed [root]
   {:pre [(: root str)] :post [(: % Measured)] :tags {:context "file-test" :role "program"}}
-  "木を数え、無い path を数え、木を消すため。"
+  "To measure a tree, measure a nonexistent path, and remove the tree."
   (<- whole (MeasureTree (+ root "/t")))
   (<- missing (MeasureTree (+ root "/none")))
   (<- (RemoveTree (+ root "/t")))
@@ -42,14 +42,14 @@
 
 (defk walked-with-stats [path]
   {:pre [(: path str)] :post [(: % (| tuple FileFailed))] :tags {:context "file-test" :role "program"}}
-  "path の下を様子つきで歩いた答えを返すため(in-thread に渡す Program)。"
+  "To return the answer of walking under a path with stat info (a Program passed to in-thread)."
   (<- stats (StatTree path))
   stats)
 
 
 (defk outside-signal [seconds]
   {:pre [(: seconds float)] :post [(: % None)] :tags {:context "file-test" :role "program"}}
-  "seconds 秒後に検の殻の thread が完了させる合図を待つため(待つ間 scheduler は他の task を回す — test_offloaded_lock.hy と同じ)。"
+  "To wait for a signal that the test harness's thread completes after `seconds` seconds (while waiting, the scheduler runs other tasks -- same as test_offloaded_lock.hy)."
   (<- promise (CreateExternalPromise))
   (.start (threading.Timer seconds (fn [] (.complete promise None))))
   (<- (Wait promise.future))
@@ -57,9 +57,9 @@
 
 
 (defk walking-while-another-runs [request gate]
-  {:pre [(: request (| MeasureTree StatTree)) (: gate threading.Event)] :post [(: % "request の答え")] :tags {:context "file-test" :role "program"}}
-  "合図まで止まる木の数えか歩き(request)を別の task で始め、外の合図を待ってから(request が walk の頭で止まっている間)walk の合図を出し、
-   request の答えを待つため。request が scheduler の thread で待つと、この task は外の合図の後に戻れず、合図を出せない。"
+  {:pre [(: request (| MeasureTree StatTree)) (: gate threading.Event)] :post [(: % "the answer of request")] :tags {:context "file-test" :role "program"}}
+  "To start, in another task, a tree measure or walk (request) that stops until a signal, wait for the outside signal (while request is stopped at the head of the walk), then emit the walk's signal,
+   and wait for request's answer. If request waits on the scheduler's thread, this task cannot return after the outside signal and cannot emit the signal."
   (<- walking Task (Spawn request))
   (<- (outside-signal 0.2))
   (.set gate)
@@ -69,7 +69,7 @@
 
 (defk tree-at [tmp]
   {:pre [(: tmp Path)] :post [(: % str)] :tags {:context "file-test" :role "entry"}}
-  "tmp の下に file 2 つ(3 byte と 5 byte)の木を置き、tmp の path を返すため。"
+  "To place a tree of 2 files (3 bytes and 5 bytes) under tmp and return the tmp path."
   (.mkdir (/ tmp "t" "sub") :parents True)
   (.write-bytes (/ tmp "t" "a") b"abc")
   (.write-bytes (/ tmp "t" "sub" "b") b"hello")
@@ -77,15 +77,15 @@
 
 
 (defk in-thread [program]
-  {:pre [(: program Program)] :post [(: % "program の答え")] :tags {:context "file-test" :role "program"}}
-  "program を scheduled と os-file-handler・offloaded-tree-handler(内側)の下で、検の thread とは別の daemon の thread の新しい VM で 1 回
-   回し、SCENARIO-LIMIT 秒まで答えを待つため(過ぎたら scheduler の thread が塞がったと名指して落とす — test_offloaded_lock.hy と同じ作法)。"
+  {:pre [(: program Program)] :post [(: % "the answer of program")] :tags {:context "file-test" :role "program"}}
+  "To run program once, under scheduled, os-file-handler and offloaded-tree-handler (inner), in a new VM on a daemon thread separate from the test thread,
+   and wait up to SCENARIO-LIMIT seconds for the answer (if exceeded, fail naming that the scheduler's thread is blocked -- same convention as test_offloaded_lock.hy)."
   (val running (.submit (ThreadPerCall) run-detached
                         (scheduled (with_handlers [os-file-handler offloaded-tree-handler] program))))
   (try
     (.result running :timeout SCENARIO-LIMIT)
     (except [TimeoutError]
-      (raise (AssertionError (.format "{} 秒で答えが無い(scheduler の thread が塞がった)" SCENARIO-LIMIT))))))
+      (raise (AssertionError (.format "no answer in {} seconds (the scheduler's thread is blocked)" SCENARIO-LIMIT))))))
 
 
 (deftest test-the-offloaded-tree-answers-like-the-os-file-handler [tmp-path]
@@ -97,7 +97,7 @@
 
 
 (deftest test-another-task-runs-while-a-tree-is-measured [tmp-path monkeypatch]
-  ;; 数えは合図まで walk の頭で止まる。合図を出すのは同じ scheduler の別の task — 数えが thread で待つ間に回れば終わる(頭の註)。
+  ;; Measuring stops at the head of the walk until the signal. The one that emits the signal is another task of the same scheduler -- it finishes if it can run while the measure waits on a thread (see the header comment).
   (<- root str (tree-at tmp-path))
   (val gate (threading.Event))
   (val original os.walk)
@@ -107,7 +107,7 @@
 
 
 (deftest test-the-offloaded-stat-tree-answers-like-the-os-file-handler [tmp-path]
-  ;; 様子つきの歩き(StatTree)も thread で待ち、答えは os-file-handler と同じ(名の順・file の大きさ・無い path の断り)。
+  ;; The walk with stat info (StatTree) also waits on a thread, and the answer is the same as os-file-handler (name order, file sizes, refusal for a nonexistent path).
   (<- root str (tree-at tmp-path))
   (<- direct tuple (with_handlers [os-file-handler] (StatTree (+ root "/t"))))
   (<- offloaded tuple (in-thread (walked-with-stats (+ root "/t"))))
@@ -120,8 +120,8 @@
 
 
 (deftest test-another-task-runs-while-a-tree-is-walked-with-stats [tmp-path monkeypatch]
-  ;; 様子つきの歩きは合図まで walk の頭で止まる。合図を出すのは同じ scheduler の別の task — 歩きが thread で待つ間に
-  ;; 回れば終わる(頭の註と同じ形)。
+  ;; The walk with stat info stops at the head of the walk until the signal. The one that emits the signal is another task of the same scheduler -- it finishes if it can run while the walk waits on a thread
+  ;; (same shape as the header comment).
   (<- root str (tree-at tmp-path))
   (val gate (threading.Event))
   (val original os.walk)
@@ -132,7 +132,7 @@
 
 (defk io-class-in-thread [pool]
   {:pre [(: pool ThreadPerCall)] :post [(: % int)] :tags {:context "file-test" :role "program"}}
-  "pool の thread の中から ioprio_get の syscall で IO 優先度の種類を読むため。"
+  "To read the IO priority class with the ioprio_get syscall from inside a pool thread."
   (val libc (ctypes.CDLL None :use-errno True))
   (val get-syscall {"x86_64" 252 "aarch64" 31})
   (val got (.result (.submit pool (fn [] (.syscall libc (get get-syscall (platform.machine)) 1 0)))))
@@ -140,9 +140,9 @@
 
 
 (deftest test-tree-threads-run-at-idle-io-priority-on-linux []
-  ;; 掃除の thread は IDLE(種類 3)で IO を出す。呼んだ側(検の thread)の優先度は変わらない。Linux 以外では何もしない。
+  ;; The cleanup thread issues IO at IDLE (class 3). The priority of the caller (the test thread) does not change. Does nothing on non-Linux.
   (when (not (and (= sys.platform "linux") (in (platform.machine) #("x86_64" "aarch64"))))
-    (pytest.skip "ioprio_set は Linux の x86_64 と aarch64 だけ"))
+    (pytest.skip "ioprio_set is only on Linux x86_64 and aarch64"))
   (<- idle int (io-class-in-thread TREE-THREADS))
   (<- plain int (io-class-in-thread (ThreadPerCall)))
   (assert (= idle 3) idle)

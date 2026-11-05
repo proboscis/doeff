@@ -1,10 +1,10 @@
-;;; run-apart(apart_call.hy)の検: program の計算は撃った task の scheduler の thread の外で回り、program が出す effect は
-;;; 撃った所の handler が答える。
-;;;   - 計算の間も撃った run の他の task が回る(時計の拍が COMPUTE-SECONDS の間に MIN-TICKS 回以上 進む)。計算は別の thread で回り、effect の
-;;;     答えは撃った thread の handler が出す。反例: 同じ program を run-apart なしで撃つと、計算の間に拍が進まない(thread を占める)。
-;;;   - 失敗は両向きに渡る: 答え手が断った effect は program へ例外で投げられ(program が捕まえられる)、program の例外は run-apart の例外。
-;;;   - Try の program は別の thread に留まる(撃った所へ送り返さない)。
-;;;   - 撃った task を取り消すと通い路が閉じ、答えを待っていた program へ ApartClosed が投げられる(program の後始末が回る)。
+;;; Check for run-apart (apart_call.hy): the program's computation runs outside the scheduler thread of the task that fired it, and the effects the program issues are
+;;; answered by the handler at the place that fired it.
+;;;   - Other tasks of the run that fired it keep running during the computation (the clock tick advances at least MIN-TICKS times during COMPUTE-SECONDS). The computation runs in another thread, and the effect
+;;;     answers come from the handler of the firing thread. Counterexample: firing the same program without run-apart, the tick does not advance during the computation (it occupies the thread).
+;;;   - Failures pass in both directions: an effect refused by the responder is thrown to the program as an exception (the program can catch it), and an exception of the program is the exception of run-apart.
+;;;   - The program of Try stays in another thread (it is not sent back to where it was fired).
+;;;   - Cancelling the task that fired it closes the channel, and ApartClosed is thrown to the program that was waiting for an answer (the program's cleanup runs).
 (require doeff-hy.macros [deftest defk <- val var])
 (require doeff-hy.handle [defhandler])
 (import threading)
@@ -17,8 +17,8 @@
 (import doeff_time [Delay async-time-handler])
 (import doeff_core_effects [ApartClosed run-apart])
 
-;; program が effect を出さずに計算する秒・撃った run の他の task の拍の秒・計算の間に進むべき拍の下限・取り消しの後に program の後始末を
-;; 待つ上限の秒。
+;; The seconds the program computes without issuing an effect, the seconds of the tick of the other tasks of the run that fired it, the lower bound of ticks that must advance during the computation, and the upper bound in seconds for waiting for the program's cleanup after cancelling
+;; (seconds).
 (val COMPUTE-SECONDS 0.5)
 (val TICK-SECONDS 0.01)
 (val MIN-TICKS 10)
@@ -26,28 +26,28 @@
 
 
 (defclass [(dataclass :frozen True)] AnsweringThread [EffectBase]
-  "答えた thread の番号を問う effect(撃った所の handler が答えたかを読むため)。")
+  "An effect that asks for the number of the thread that answered (to read whether the handler at the firing place answered).")
 
 
 (defclass [(dataclass :frozen True)] Refused [EffectBase]
-  "撃った所の答え手が断る effect(断りが program へ渡るかを読むため)。")
+  "An effect that the responder at the firing place refuses (to read whether the refusal is passed to the program).")
 
 
 (defhandler caller-answers
-  ;; 撃った所にだけ在る答え手 — 別の thread の program の effect がここで答えられることを読むため。
+  ;; A responder that exists only at the firing place -- to read that the effects of a program in another thread are answered here.
   (AnsweringThread [] (resume (threading.get-ident)))
-  (Refused [] (raise (ValueError "撃った所の答え手が断った"))))
+  (Refused [] (raise (ValueError "the responder at the firing place refused"))))
 
 
 (defk next-count [n]
   {:pre [(: n int)] :post [(: % int)]}
-  "計算の 1 歩(effect を出さない Program)。"
+  "One step of computation (a Program that issues no effect)."
   (+ n 1))
 
 
 (defk computed-on [seconds]
   {:pre [(: seconds float)] :post [(: % tuple)]}
-  "seconds 秒 effect を出さずに計算し、最後に 1 度 effect を出して、#(歩の数 計算した thread 答えた thread) を返すため。"
+  "To compute for seconds seconds without issuing an effect, then issue an effect once at the end, and return #(number of steps, thread that computed, thread that answered)."
   (val until (+ (time.monotonic) seconds))
   (var steps 0)
   (while (< (time.monotonic) until)
@@ -59,7 +59,7 @@
 
 (defk ticking [stop]
   {:pre [(: stop threading.Event)] :post [(: % int)]}
-  "撃った run の他の task として、stop まで時計の拍を数えるため。"
+  "To count clock ticks until stop, as another task of the run that fired it."
   (var ticks 0)
   (while (not (.is-set stop))
     (<- (Delay TICK-SECONDS))
@@ -69,7 +69,7 @@
 
 (defk with-ticker [program]
   {:pre [(: program Program)] :post [(: % tuple)]}
-  "拍を数える task を横に立てて program を撃ち、#(program の答え 拍の数) を返すため。"
+  "To start a task that counts ticks on the side, fire the program, and return #(the program's answer, number of ticks)."
   (val stop (threading.Event))
   (<- ticker (Spawn (ticking stop)))
   (<- answer program)
@@ -85,70 +85,70 @@
   (val ticks (get seen 1))
   (val here (threading.get-ident))
   (assert (> (get answer 0) 0) answer)
-  (assert (!= (get answer 1) here) "計算が撃った thread で回った")
-  (assert (= (get answer 2) here) "effect を撃った所の handler が答えなかった")
-  (assert (>= ticks MIN-TICKS) (.format "計算の間に撃った run の拍が {} 回しか進まない" ticks)))
+  (assert (!= (get answer 1) here) "the computation ran in the firing thread")
+  (assert (= (get answer 2) here) "the handler at the place that issued the effect did not answer")
+  (assert (>= ticks MIN-TICKS) (.format "the tick of the run that fired it advanced only {} times during the computation" ticks)))
 
 
 (deftest test-computing-in-place-holds-the-thread
-  ;; 反例: run-apart なしの同じ program は、計算の間 撃った run の他の task を止める。
+  ;; Counterexample: the same program without run-apart stops the other tasks of the run that fired it during the computation.
   (<- seen tuple (with_handlers [await-handler (async-time-handler) caller-answers]
                                 (with-ticker (computed-on COMPUTE-SECONDS))))
-  (assert (<= (get seen 1) 1) (.format "その場の計算の間に拍が {} 回 進んだ" (get seen 1))))
+  (assert (<= (get seen 1) 1) (.format "the tick advanced {} times during the in-place computation" (get seen 1))))
 
 
 (defk refusal-caught []
   {:pre [] :post [(: % str)]}
-  "答え手が断る effect を撃ち、断りの例外を捕まえて文を返すため。"
+  "To fire an effect that the responder refuses, catch the refusal exception, and return its text."
   (try
     (<- (Refused))
-    "断られなかった"
+    "not refused"
     (except [error ValueError]
       (str error))))
 
 
 (defk broken []
   {:pre [] :post [(: % str)]}
-  "落ちる program。"
-  (raise (KeyError "別の thread の program が落ちた")))
+  "A program that fails."
+  (raise (KeyError "a program in another thread failed")))
 
 
 (deftest test-failures-cross-in-both-directions
   (<- caught str (with_handlers [caller-answers] (run-apart (refusal-caught))))
-  (assert (= caught "撃った所の答え手が断った") caught)
+  (assert (= caught "the responder at the firing place refused") caught)
   (var raised None)
   (try
     (<- (run-apart (broken)))
     (except [error KeyError]
       (:= raised error)))
-  (assert (is-not raised None) "program の例外が run-apart から上がらない"))
+  (assert (is-not raised None) "the program's exception does not rise from run-apart"))
 
 
 (defk computed-thread []
   {:pre [] :post [(: % int)]}
-  "計算した thread の番号を返すため(Try の program として回す)。"
+  "To return the number of the thread that computed (run as the program of Try)."
   (threading.get-ident))
 
 
 (defk thread-inside-try []
   {:pre [] :post [(: % int)]}
-  "Try の program の中で計算した thread の番号を返すため。"
+  "To return the number of the thread that computed inside the program of Try."
   (<- attempted (Try (computed-thread)))
   attempted.value)
 
 
 (deftest test-try-runs-apart
-  ;; Try は別の thread の VM の中で答える(撃った所へ送り返すと、Try の program は撃った thread で回る)。
+  ;; Try answers inside the VM of another thread (if it were sent back to the firing place, the program of Try would run in the firing thread).
   (<- inside int (run-apart (thread-inside-try)))
-  (assert (!= inside (threading.get-ident)) "Try の program が撃った thread で回った"))
+  (assert (!= inside (threading.get-ident)) "the program of Try ran in the firing thread"))
 
 
 (defk waits-long [closed]
   {:pre [(: closed threading.Event)] :post [(: % str)]}
-  "長い待ちを撃ち、通い路が閉じたら closed を立てるため(取り消しの後始末が program に届くかを読む)。"
+  "To fire a long wait and set closed when the channel closes (to read whether the cleanup after cancelling reaches the program)."
   (try
     (<- (Delay 30.0))
-    "起きた"
+    "woke up"
     (except [error ApartClosed]
       (.set closed)
       (raise))))
@@ -156,7 +156,7 @@
 
 (defk cancelled-while-waiting [closed]
   {:pre [(: closed threading.Event)] :post [(: % bool)]}
-  "run-apart を撃った task を、program が effect の答えを待つ間に取り消し、取り消しで終わったかを返すため。"
+  "To cancel the task that fired run-apart while the program waits for an effect answer, and return whether it ended by the cancellation."
   (<- task (Spawn (run-apart (waits-long closed))))
   (<- (Delay 0.2))
   (<- (Cancel task))
@@ -170,12 +170,12 @@
 (deftest test-cancelling-the-caller-closes-the-lane
   (val closed (threading.Event))
   (<- cancelled bool (with_handlers [await-handler (async-time-handler)] (cancelled-while-waiting closed)))
-  (assert cancelled "撃った task が取り消しで終わらない")
-  (assert (.wait closed CLOSE-SECONDS) "通い路が閉じたのに program へ ApartClosed が届かない"))
+  (assert cancelled "the task that fired it did not end by the cancellation")
+  (assert (.wait closed CLOSE-SECONDS) "the channel closed but ApartClosed did not reach the program"))
 
 
 (deftest test-the-apart-thread-ends-without-raising
-  ;; 答え・例外のどちらでも、別の thread が事後条件の違反などの例外で終わらない。
+  ;; Whether an answer or an exception, the other thread does not end with an exception such as a postcondition violation.
   (val raised [])
   (val previous threading.excepthook)
   (setv threading.excepthook (fn [args] (.append raised args.exc-value)))

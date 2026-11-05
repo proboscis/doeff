@@ -1,8 +1,8 @@
-;;; 汎用の列の effect(channel_effects.hy)の答え手 scheduler-channel-handler。I/O を持たず、同じ run の
-;;; scheduler の promise(CreatePromise / CompletePromise / Wait)で待つ — 本番と模擬で同じ答え手。
+;;; scheduler-channel-handler, the answerer for the generic queue effects (channel_effects.hy). It has no I/O and waits on
+;;; the same run's scheduler promises (CreatePromise / CompletePromise / Wait) - the same answerer for production and mock.
 ;;;
-;;; 積んだ時は待ち手を全部起こし、起きた待ち手は列を見直す(空なら待ち直す)。1 人だけに値を渡す形にしないのは、待ち手の task が Cancel
-;;; された時に、その promise へ渡した値が誰にも届かず消えるため — 値は常に列に残り、生きている待ち手が取る。
+;;; When something is put, it wakes all waiters, and each woken waiter rechecks the queue (waits again if empty). The value is not handed to just one waiter because, if that waiter's task is Cancelled,
+;;; the value given to its promise would reach nobody and vanish - instead the value always stays in the queue and a live waiter takes it.
 (require doeff-hy.macros [defhandler defk <- val])
 (val MODULE-TAGS {:context "scheduler" :role "foundation"})
 (import doeff_core_effects._scheduler [CreatePromise CompletePromise Wait])
@@ -11,7 +11,7 @@
 
 (defk woken [promises]
   {:pre [(: promises tuple)] :post [(: % None)]}
-  "列に積んだことを待ち手の全部へ知らせるため(起きた待ち手が列を見直す)。"
+  "To tell all waiters that something was put in the queue (woken waiters recheck the queue)."
   (when promises
     (<- (CompletePromise (get promises 0) None))
     (<- (woken (cut promises 1 None))))
@@ -20,7 +20,7 @@
 
 (defk filled [channel]
   {:pre [(: channel Channel)] :post [(: % None)]}
-  "列に 1 つ以上積まれるまで撃った task だけを待たせるため — 起きたら見直し、空なら待ち直す。"
+  "To make only the task that fired wait until at least one item is put in the queue - on waking it rechecks, and waits again if empty."
   (when (not channel.items)
     (<- promise (CreatePromise))
     (.append channel.waiters promise)
@@ -30,7 +30,7 @@
 
 
 (defhandler scheduler-channel-handler
-  "CreateChannel・PutChannel・TakeChannel に、同じ run の scheduler の promise で答える(I/O を持たない — 頭の註)。"
+  "Answers CreateChannel, PutChannel, and TakeChannel with the same run's scheduler promises (no I/O - see the header comment)."
   (CreateChannel []
     (resume (Channel)))
   (PutChannel [channel item]

@@ -1,23 +1,23 @@
-;;; 塞ぐ呼び(driver の I/O など)を scheduler の thread の外で回し、撃った task だけが外から完了させる promise で待つ仕組み。
-;;;PostgreSQL の答え手 2 つ — postgres-sql-handler(postgres_sql.hy)と pooled-postgres-sql-handler
-;;; (pooled_postgres_sql.hy — #880 U2 で書いた仕組みをここへ移した)— が共に使う。
-;;;   - offloaded = call を Executor の thread で回し、CreateExternalPromise + Wait で待つ(thread_pool_compute.hy と同じ作法)。待つのは撃った
-;;;     task だけで、scheduler の他の task は回り続ける — scheduled の下で使う。待ちが取り消されたら Handoff が後始末をする: 始まっていない
-;;;     仕事は外し、取り消しの前後に出来た答えは abandon(Executor で回す後始末 — 借りた接続を返す等)へ 1 度だけ回す。もう走っていて答えの
-;;;     まだ無い仕事には interrupt(Executor で回す止め方 — 走っている子 process を止める等)を 1 度だけ回す。止め方を
-;;;     持たない仕事(既定の keep-going)は走り切り、答えは abandon へ回る。
-;;;   - 答えは 1 枠の箱 Delivered に入れて promise を完了させ、待ち手へ渡す時に箱を空ける。scheduler は完了した promise の答えを、handle が
-;;;     全部消えたと掃除(HANDLE_SWEEP_INTERVAL の id ごと — doeff #502)が見るまで表に持つ。答えそのもので完了させると、待ち手が手放した
-;;;     答え(ClickHouse の読みの行・file の中身)が掃除まで残り、Rust の版の表は gc からも見えない(読みの口
-;;;     の job が 3.5 時間で RssAnon 440→2464 MB になり、残る型は SqlRows だった)。await_handler の _AwaitedValue と同じ作法。
-;;;   - ThreadPerCall = 呼び 1 つに thread 1 本を起こす Executor(持ち主も後始末も要らない既定)。thread の数に上限を置かないのは、呼びが
-;;;     thread の中で別の資源(接続の許可)を待っても、その資源を持つ側の次の呼びが thread の空きを待って詰まらないため。同時の数の上限は
-;;;     呼びが待つ資源の側(PostgresConnections の許可)が持つ。thread は daemon — 止まらない呼び(長い文)が process の終わりを止めない。
-;;;   - ReusedThreads = 呼びを空いた thread へ渡し、空きが無い時だけ thread を 1 本起こす Executor。ThreadPerCall
-;;;     と同じく上限を置かず daemon で、違いは呼びの後の thread を _IDLE-SECONDS の間待たせて次の呼びに使う事だけ。呼びごとに thread を起こすと
-;;;     起こす待ち(呼び手の thread で数 ms)が文の数に比例し、預かり所の普段の CPU の 2 割を占めた。同時に走る thread の数は ThreadPerCall と
-;;;     同じ(呼びの数の山)で、空きのまま _IDLE-SECONDS を過ぎた thread は終わる。thread は呼びを回し終えたら呼びと答えへの参照を捨ててから
-;;;     次を待つ(待つ間の thread が答えを持ち続けない — 上の Delivered と同じ訳)。
+;;; The machinery that runs blocking calls (driver I/O, etc.) outside the scheduler's threads, with only the task that fired waiting on a promise completed from outside.
+;;; Used by both PostgreSQL answerers - postgres-sql-handler (postgres_sql.hy) and pooled-postgres-sql-handler
+;;; (pooled_postgres_sql.hy - the machinery written in #880 U2 was moved here).
+;;;   - offloaded = runs call on an Executor thread and waits with CreateExternalPromise + Wait (the same practice as thread_pool_compute.hy). Only the task
+;;;     that fired waits, and the scheduler's other tasks keep running - used under scheduled. When the wait is cancelled, Handoff does the cleanup: work that has not started
+;;;     is removed, and an answer produced before or after the cancellation is handed exactly once to abandon (cleanup run on the Executor - returning a leased connection, etc.). For work that is already running and has
+;;;     no answer yet, interrupt (a way of stopping run on the Executor - stopping a running child process, etc.) is run exactly once. Work that has no way of
+;;;     stopping (the default keep-going) runs to completion, and its answer goes to abandon.
+;;;   - The answer is put in a one-slot box Delivered and the promise is completed, and the box is emptied when handed to the waiter. The scheduler keeps the answer of a completed promise in its table until the sweep (every HANDLE_SWEEP_INTERVAL ids - doeff #502)
+;;;     sees that all handles are gone. If completed with the answer itself, an answer the waiter has let go of
+;;;     (rows of a ClickHouse read, file contents) stays until the sweep, and the Rust version's table is not even visible to gc (a read-path
+;;;     job went from RssAnon 440 to 2464 MB in 3.5 hours, and the remaining type was SqlRows). The same practice as _AwaitedValue of await_handler.
+;;;   - ThreadPerCall = an Executor that starts one thread per call (the default, needing neither an owner nor cleanup). No upper limit is put on the number of threads so that, even if a call
+;;;     waits inside a thread for another resource (a connection permit), the next call of the side that holds that resource does not wait for a free thread and jam. The upper limit on concurrency is
+;;;     held by the resource side that calls wait for (the permits of PostgresConnections). Threads are daemon - a call that does not stop (a long statement) does not hold up the end of the process.
+;;;   - ReusedThreads = an Executor that hands a call to an idle thread and starts one thread only when there is none idle. Like ThreadPerCall
+;;;     it has no upper limit and is daemon, and the only difference is that after a call the thread waits for _IDLE-SECONDS and is used for the next call. Starting a thread per call
+;;;     made the start-up wait (a few ms on the caller's thread) proportional to the number of statements, and it took 20% of the custody's ordinary CPU. The number of concurrently running threads is the same as ThreadPerCall
+;;;     (the peak number of calls), and a thread that stays idle past _IDLE-SECONDS ends. After finishing a call, a thread drops its references to the call and the answer
+;;;     before waiting for the next (a waiting thread does not keep holding the answer - the same reason as Delivered above).
 (require doeff-hy.macros [defk deff <- val])
 (val MODULE-TAGS {:context "sql" :role "foundation"})
 (import collections.abc [Callable])
@@ -27,59 +27,59 @@
 (import doeff [PyVM])
 (import doeff_core_effects._scheduler [CreateExternalPromise Wait TaskCancelledError])
 
-;; まだ答えを渡していない印(答えが None の仕事と見分ける)。
+;; A mark that the answer has not been handed over yet (to tell it apart from work whose answer is None).
 (val NOT-DELIVERED (object))
-;; ReusedThreads の空いた thread が次の呼びを待つ秒(過ぎたら終わる — 頭の註)。
+;; Seconds an idle thread of ReusedThreads waits for the next call (it ends when passed - header comment).
 (val _IDLE-SECONDS 60.0)
 
 
 (defclass Delivered []
-  "仕事の答え 1 つを promise の表から待ち手(または後始末)へ 1 度だけ渡す 1 枠の箱(頭の註)。表に残るのは空の箱で、答えは受け手が
-   持つ間だけ生きる。資源の係なので値の型ではない。"
+  "A one-slot box that hands one answer of a job exactly once from the promise table to the waiter (or the cleanup) (header comment). What stays in the table is the empty box, and the answer lives only
+   while the receiver holds it. It is a resource handler, so not a value type."
   (setv __slots__ #("_mut_value"))
 
-  (deff __init__ [self value]  ; defk にできない: 資源の class の初期化
-    {:pre [(: self Delivered) (: value "仕事の答え")] :post [(: % "None")]}
-    "答えを持って始めるため。"
+  (deff __init__ [self value]  ; cannot be a defk: initialization of a resource class
+    {:pre [(: self Delivered) (: value "answer of the job")] :post [(: % "None")]}
+    "To start holding the answer."
     (setv self._mut-value value))
 
-  (deff take [self]  ; defk にできない: scheduler の thread と取り消しの callback が触る箱の口(VM の外の資源)
-    {:pre [(: self Delivered)] :post [(: % "仕事の答え")]}
-    "答えを 1 度渡し、箱の参照を外すため(2 度目は None)。"
+  (deff take [self]  ; cannot be a defk: the box's entry touched by the scheduler's thread and the cancellation callback (a resource outside the VM)
+    {:pre [(: self Delivered)] :post [(: % "answer of the job")]}
+    "To hand over the answer once and drop the box's reference (None the second time)."
     (setv value self._mut-value)
     (setv self._mut-value None)
     value))
 
 
-(deff run-detached [program]  ; defk にできない: Executor の thread で回す入口(VM の外から新しい VM を起こす)
-  {:pre [(: program "driver を呼ぶ Program")] :post [(: % "program の答え")]}
-  "塞ぐ呼びを持つ Program(driver の文の手順)を Executor の thread の新しい VM で値にするため。"
+(deff run-detached [program]  ; cannot be a defk: entry run on the Executor's thread (starts a new VM from outside the VM)
+  {:pre [(: program "Program that calls the driver")] :post [(: % "answer of program")]}
+  "To turn a Program that holds blocking calls (the driver's statement procedure) into a value in a new VM on the Executor's thread."
   (.run (PyVM) program))
 
 
-(deff keep-nothing [_value]  ; defk にできない: Executor の thread で回す後始末の入口(何も持たない答えの後始末)
-  {:pre [(: _value "届かなかった答え")] :post [(: % "None")]}
-  "取り消された待ち手に届かなかった答えが資源を持たない時の後始末(何もしない)。"
+(deff keep-nothing [_value]  ; cannot be a defk: entry of cleanup run on the Executor's thread (cleanup for an answer that holds nothing)
+  {:pre [(: _value "the answer that did not arrive")] :post [(: % "None")]}
+  "Cleanup for when the answer that did not reach a cancelled waiter holds no resource (does nothing)."
   None)
 
 
-(deff keep-going []  ; defk にできない: Executor の thread で回す止め方の入口(止める物を持たない仕事の既定)
+(deff keep-going []  ; cannot be a defk: entry of a stopping method run on the Executor's thread (the default for work with nothing to stop)
   {:pre [] :post [(: % "None")]}
-  "待ち手が取り消された時に走っている仕事を止める手段が無い時の止め方(何もしない — 仕事は走り切り、答えは abandon へ回る)。"
+  "The way of stopping for when there is no means to stop running work once the waiter is cancelled (does nothing - the work runs to completion and its answer goes to abandon)."
   None)
 
 
 (defclass ThreadPerCall [Executor]
-  "呼び 1 つに daemon の thread 1 本を起こす Executor(頭の註)。資源の係なので値の型ではない。"
+  "An Executor that starts one daemon thread per call (header comment). It is a resource handler, so not a value type."
 
-  (deff __init__ [self [on-start None]]  ; defk にできない: 資源の class の初期化
+  (deff __init__ [self [on-start None]]  ; cannot be a defk: initialization of a resource class
     {:pre [(: self ThreadPerCall) (: on-start (| None (get Callable #([] None))))] :post [(: % "None")]}
-    "thread が呼びを回す前に 1 度呼ぶ手(on-start — thread の IO 優先度を下げる等)を持つため(None = 何もしない)。"
+    "To hold a hand (on-start - lowering the thread's IO priority, etc.) called once before the thread runs the call (None = do nothing)."
     (setv self.on-start on-start))
 
-  (deff submit [self call #* args]  ; defk にできない: Executor の口(concurrent.futures の約束 — VM の外)
-    {:pre [(: self ThreadPerCall) (: call "(引数) → 値 の callable") (: args tuple)] :post [(: % Future)]}
-    "call を新しい thread で回し、その終わりを Future で渡すため(始まる前に取り消された Future は回さない・on-start は call の前に thread の中で呼ぶ)。"
+  (deff submit [self call #* args]  ; cannot be a defk: Executor's entry (a concurrent.futures promise - outside the VM)
+    {:pre [(: self ThreadPerCall) (: call "callable (args) -> value") (: args tuple)] :post [(: % Future)]}
+    "To run call on a new thread and hand over its end as a Future (a Future cancelled before starting is not run; on-start is called inside the thread before call)."
     (setv future (Future))
     (.start (threading.Thread :target (fn []
                                         (when (.set-running-or-notify-cancel future)
@@ -95,22 +95,22 @@
 
 
 (defclass ReusedThreads [Executor]
-  "呼びを空いた daemon の thread へ渡し、空きが無い時だけ thread を 1 本起こす Executor(頭の註)。資源の係なので値の型ではない。
-   idle = 呼びを待っている thread のうち、まだ呼びを割り当てていない数。started = 起こした thread の数(検が読む)。"
+  "An Executor that hands a call to an idle daemon thread and starts one thread only when none is idle (header comment). It is a resource handler, so not a value type.
+   idle = the number of threads waiting for a call that have not yet been assigned one. started = the number of threads started (read by tests)."
 
-  (deff __init__ [self [idle-seconds _IDLE-SECONDS]]  ; defk にできない: 資源の class の初期化
+  (deff __init__ [self [idle-seconds _IDLE-SECONDS]]  ; cannot be a defk: initialization of a resource class
     {:pre [(: self ReusedThreads) (: idle-seconds float)] :post [(: % "None")]}
-    "空いた thread が次の呼びを待つ秒を持ち、呼びの列と数えを空で始めるため。"
+    "To hold the seconds an idle thread waits for the next call, and start the call queue and the counts empty."
     (setv self.idle-seconds idle-seconds
           self.idle-lock (threading.Lock)
           self.jobs (SimpleQueue)
           self.idle 0
           self.started 0))
 
-  (deff submit [self call #* args]  ; defk にできない: Executor の口(concurrent.futures の約束 — VM の外)
-    {:pre [(: self ReusedThreads) (: call "(引数) → 値 の callable") (: args tuple)] :post [(: % Future)]}
-    "call を列に置き、空いた thread が無ければ 1 本起こして、その終わりを Future で渡すため(始まる前に取り消された Future は回さない)。
-     thread を起こすのは錠の外 — 起こす待ちの間に他の呼びと空いた thread の数えを止めない。"
+  (deff submit [self call #* args]  ; cannot be a defk: Executor's entry (a concurrent.futures promise - outside the VM)
+    {:pre [(: self ReusedThreads) (: call "callable (args) -> value") (: args tuple)] :post [(: % Future)]}
+    "To put call in the queue, start one thread if there is no idle one, and hand over its end as a Future (a Future cancelled before starting is not run).
+     Threads are started outside the lock - the wait to start one does not stall other calls or the count of idle threads."
     (setv future (Future))
     (with [_ self.idle-lock]
       (.put self.jobs #(future call args))
@@ -122,11 +122,11 @@
       (.start (threading.Thread :target self.serve :name "doeff-offloaded-call" :daemon True)))
     future)
 
-  (deff serve [self]  ; defk にできない: thread の本体(VM の外 — 列から呼びを取って回す)
+  (deff serve [self]  ; cannot be a defk: the thread's body (outside the VM - takes calls from the queue and runs them)
     {:pre [(: self ReusedThreads)] :post [(: % "None")]}
-    "列の呼びを 1 つずつ回し、空きのまま idle-seconds を過ぎたら終わるため。待ちが切れた時は錠の下で列をもう一度見る — 切れたのと同時に
-     この thread へ割り当てられた呼び(submit が idle を減らして置いた物)を落とさない。空きに数えるのは答えを Future へ書く前 — 答えを
-     受けた呼び手がすぐ次の呼びを出しても、この thread が空きに数えられていて新しい thread を起こさない。"
+    "To run the calls in the queue one at a time, and end if idle-seconds pass while idle. When the wait times out, look at the queue once more under the lock - do not drop a call that was
+     assigned to this thread at the same moment it timed out (what submit placed after decrementing idle). It is counted as idle before writing the answer to the Future - so that even if the caller that
+     received the answer immediately issues the next call, this thread is counted as idle and a new thread is not started."
     (while True
       (setv job
         (try
@@ -144,7 +144,7 @@
             job None
             value None
             error None
-            ;; 始まる前に取り消された Future は回さない。
+            ;; A Future cancelled before starting is not run.
             ran (.set-running-or-notify-cancel future))
       (when ran
         (try
@@ -159,25 +159,25 @@
         (not ran) None
         (is-not error None) (.set-exception future error)
         True (.set-result future value))
-      ;; 待つ間に呼びと答えを持たない(頭の註)。
+      ;; Do not hold the call and the answer while waiting (header comment).
       (setv future None
             value None
             error None))))
 
 
 (defclass Handoff []
-  "Executor の仕事 1 つの答えを promise へ渡す係(scheduler の thread と仕事の thread の間で錠を取って触る)。待ち手が取り消されたら、始まって
-   いない仕事は外し、取り消しの前後に出来た答えは abandon(Executor で回す後始末 — 借りた接続を返す等)へ、走っていて答えのまだ無い仕事
-   は interrupt(Executor で回す止め方)へ、どちらか 1 度だけ回す。"
+  "The handler that hands the answer of one Executor job to the promise (it touches them taking a lock between the scheduler's thread and the job's thread). When the waiter is cancelled, work that has
+   not started is removed, an answer produced before or after the cancellation goes to abandon (cleanup run on the Executor - returning a leased connection, etc.), and work that is running with no answer yet
+   goes to interrupt (a way of stopping run on the Executor), exactly once for either one."
 
-  (deff __init__ [self pool abandon interrupt]  ; defk にできない: 資源の class の初期化
+  (deff __init__ [self pool abandon interrupt]  ; cannot be a defk: initialization of a resource class
     {:pre [(: self Handoff) (: pool Executor) (: abandon (get Callable #([object] None))) (: interrupt (get Callable #([] None)))]
      :post [(: % "None")]}
-    ;; 錠は同じ thread から入り直せる RLock: give-up が錠を持ったまま始まっていない仕事を外すと、Future.cancel が同じ thread で完了の
-    ;; callback(deliver)を呼ぶ。入り直せない錠だと scheduler の thread がそこで止まり、run 全体が固まった(発見)。
-    ;; 仕事の Future は持たない: Future の完了の callback がこの係と promise を持つので、係が Future を持つと循環の参照になり、promise と
-    ;; abandon が抱える物(呼び鈴など)の handle が循環の回収(gc)まで消えず、scheduler の掃除がその行を消せなかった。
-    ;; Future は give-up の引数で受ける(取り消しの callback と待ちの後始末が持つ — どちらも promise が終われば手放される)。
+    ;; The lock is an RLock that can be re-entered from the same thread: when give-up removes unstarted work while holding the lock, Future.cancel calls the completion
+    ;; callback (deliver) on the same thread. With a non-reentrant lock the scheduler's thread stalled there and the whole run froze (a discovery).
+    ;; The job's Future is not held: the Future's completion callback holds this handler and the promise, so if the handler held the Future it would be a reference cycle, and the handles of the promise and
+    ;; of what abandon holds (bells, etc.) would not vanish until the cycle collection (gc), and the scheduler's sweep could not remove that row.
+    ;; The Future is received as an argument of give-up (held by the cancellation callback and the wait's cleanup - both are let go of once the promise ends).
     (setv self.pool pool
           self.abandon abandon
           self.interrupt interrupt
@@ -185,9 +185,9 @@
           self.abandoned False
           self.delivered NOT-DELIVERED))
 
-  (deff deliver [self promise future]  ; defk にできない: 仕事の thread から呼ばれる完了の callback(VM の外)
-    {:pre [(: self Handoff) (: promise "scheduler の ExternalPromise") (: future Future)] :post [(: % "None")]}
-    "仕事の終わりを promise へ渡すため(取り消された後に出来た答えは後始末へ回す)。"
+  (deff deliver [self promise future]  ; cannot be a defk: completion callback called from the job's thread (outside the VM)
+    {:pre [(: self Handoff) (: promise "scheduler ExternalPromise") (: future Future)] :post [(: % "None")]}
+    "To hand the end of the job to the promise (an answer produced after cancellation goes to cleanup)."
     (with [_ self.lock]
       (cond
         (.cancelled future) None
@@ -196,11 +196,11 @@
         True (do (setv self.delivered (Delivered (.result future)))
                  (.complete promise self.delivered)))))
 
-  (deff give-up [self job]  ; defk にできない: scheduler の取り消しの callback(on_cancel — VM の外)と、待ちが取り消しで抜けた時の後始末
+  (deff give-up [self job]  ; cannot be a defk: the scheduler's cancellation callback (on_cancel - outside the VM), and the cleanup for when the wait exits by cancellation
     {:pre [(: self Handoff) (: job Future)] :post [(: % "None")]}
-    "待ち手が取り消されたら、始まっていない仕事を外し、もう渡した答えを後始末へ回し、走っていて答えのまだ無い仕事を止め方へ回すため
-     (何度呼んでも、後始末か止め方のどちらかを 1 度)。止め方を Executor で回すのは、止めるのに待ち(猶予)が要っても scheduler の thread を
-     塞がないため。走り終えて答えを渡す直前の仕事にも止め方は回るので、止め方は止める物が無ければ何もしない形にする。"
+    "When the waiter is cancelled, remove work that has not started, send the answer already handed over to cleanup, and send work that is running with no answer yet to the stopping method
+     (however many times it is called, either cleanup or the stopping method exactly once). The stopping method is run on the Executor so that even if stopping needs a wait (grace period), it does not
+     block the scheduler's thread. The stopping method is also sent to work that has just finished running and is about to hand over its answer, so the stopping method must be a form that does nothing if there is nothing to stop."
     (with [_ self.lock]
       (when (not self.abandoned)
         (setv self.abandoned True)
@@ -214,12 +214,12 @@
 (defk offloaded [pool call abandon [interrupt keep-going]]
   {:pre [(: pool Executor) (: call (get Callable #([] object))) (: abandon (get Callable #([object] None)))
          (: interrupt (get Callable #([] None)))]
-   :post [(: % "call の答え")]
+   :post [(: % "answer of call")]
    :tags {:context "sql" :role "foundation"}}
-  "call を pool の thread で回し、この task だけが外から完了させる promise で待つため(scheduler の他の task は回り続ける)。待ちが取り消され
-   たら、始まっていない仕事は外し、届かなかった答えは abandon で後始末する(完了の値が届く前の取り消しも、届いた後で再開の前の取り消しも)。
-   走っている仕事は interrupt で止める(既定 keep-going = 止めずに走り切らせる — 頭の註)。答えは箱 Delivered から取り出して返し、
-   scheduler の promise の表には空の箱だけを残す(頭の註)。"
+  "To run call on a pool thread and wait with a promise that only this task completes from outside (the scheduler's other tasks keep running). When the wait is cancelled,
+   work that has not started is removed and an answer that did not arrive is cleaned up with abandon (both for a cancellation before the completion value arrives and for one after it arrives but before resumption).
+   Running work is stopped with interrupt (default keep-going = let it run to completion without stopping - header comment). The answer is taken out of the box Delivered and returned, and
+   only the empty box is left in the scheduler's promise table (header comment)."
   (<- promise (CreateExternalPromise))
   (val handoff (Handoff pool abandon interrupt))
   (val job (.submit pool call))

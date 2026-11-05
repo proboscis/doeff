@@ -1,19 +1,19 @@
-;;; 機体の process の表の効果(proc_table_effects.hy)の I/O なしの答え手 scripted-proc-table-handler。
-;;; 本物の /proc と signal を使わず、台本の表で答える。業務を知らない: 表の中身は呼び手(検・模擬)が渡す。
+;;; scripted-proc-table-handler, the I/O-free responder for the machine's process table effects (proc_table_effects.hy).
+;;; It answers with a scripted table, without using the real /proc and signals. It knows no business: the table content is passed by the caller (tests, mocks).
 ;;;
-;;;   ReadProcTable  今の表(pid の昇順)を答える。
-;;;   SignalPid      pid と start-ticks が表の行と合う時だけ、その行を表から除いて True(TERM も KILL も、台本の process はすぐ終わる)。
-;;;                  合わない・居ない時は False(他人の process には送らない — 本物と同じ)。除いた行の子は表に残る(本物で親が死んだ子が
-;;;                  残るのと同じ)。
-;;; 表は session の値(この run の中だけ — 外側に state の handler が要る)。本物との契約は tests/test_proc_table_contract.hy。
+;;;   ReadProcTable  Answers the current table (ascending pid).
+;;;   SignalPid      Only when pid and start-ticks match a row of the table, remove that row from the table and return True (both TERM and KILL -- scripted processes end immediately).
+;;;                  When they do not match or the process is absent, False (never sends to another user's process -- same as the real one). Children of the removed row stay in the table (same as children whose parent died
+;;;                  remain with the real one).
+;;; The table is a session value (only within this run -- a state handler is needed outside). The contract with the real one is tests/test_proc_table_contract.hy.
 (require doeff-hy.macros [defhandler <- val var])
 (val MODULE-TAGS {:context "process" :role "foundation"})
 (import doeff_core_effects._proc_table_effects [ProcRow ReadProcTable SignalPid])
 
 
 (defhandler scripted-proc-table-handler [#^ (get tuple #(ProcRow ...)) rows]
-  "ReadProcTable と SignalPid に、台本の表 rows(ProcRow の列)で答える(頭の註)。"
-  ;; 引数に残す理由: 表は検と模擬ごとに決める台本の値で、Ask で読む設定ではない。
+  "Answer ReadProcTable and SignalPid with the scripted table rows (a sequence of ProcRow) (see the header comment)."
+  ;; Why it stays an argument: the table is a scripted value decided per test or mock, not a setting read with Ask.
   (session var table (tuple (sorted rows :key (fn [row] row.pid))))
   (ReadProcTable []
     (resume table))

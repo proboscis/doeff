@@ -1,15 +1,15 @@
-;;; 既に在る SqlTransaction の意味は変えない: batched を選ばない transaction について、答え手が DB へ流す往復の列
-;;; (往復ごとの文の並び)が基点(eaeeb75c4 — 往復をまとめる形を足す前)と同じである事を、基点の並びを書いた期待と比べる。
-;;;   - PostgreSQL(postgres-sql-handler と pooled-postgres-sql-handler): client と使い捨ての PostgreSQL の間に置いた中継
-;;;     (postgres_support/statement_wire_tap.py)が、wire の上で client が送った文を往復ごとに記録する。
-;;;   - sqlite(sqlite-file-sql-handler — memory の DB の答え手と同じ sqlite-answer-transaction を通る): 接続の trace の callback が、流した文を
-;;;     流した順に記録する(sqlite に往復は無いので文の並びだけ)。
-;;; 代表の program: 文 2 本と SqlInsertRows(2 行)と SqlNotify(錠の鍵あり)・SQL を出さない program(錠の鍵あり / なし)・途中で落ちて
-;;; ROLLBACK・預かり所の本体の commit-rows の形(controllers/custody_body/protocol/store.hy — 錠の鍵つきで version の SELECT × 2 → UPSERT × 2)・
-;;; sqlite が断る SqlNotify(ROLLBACK)。
-;;; この file は基点に在る名だけを使う — 基点の答え手の源に差し替えても同じ期待で緑になる事を、変更の時に確かめた。合図だけは
-;;; 後の変更で形が変わった: SqlNotify が関わる名(topics)を持ち、pg_notify の本文が空でなく引数($2)になった(往復の数と
-;;; 順は変わらない)。
+;;; The meaning of the existing SqlTransaction is not changed: for a transaction that does not choose batched, the sequence of round trips the answerer sends to the DB
+;;; (the sequence of statements per round trip) is compared with expectations written from the baseline's sequence (eaeeb75c4 -- before adding the round-trip-batching form), to confirm it is the same as the baseline.
+;;;   - PostgreSQL (postgres-sql-handler and pooled-postgres-sql-handler): a relay placed between the client and a disposable PostgreSQL
+;;;     (postgres_support/statement_wire_tap.py) records, per round trip, the statements the client sent on the wire.
+;;;   - sqlite (sqlite-file-sql-handler -- goes through the same sqlite-answer-transaction as the in-memory DB answerer): the connection's trace callback records the statements sent,
+;;;     in the order sent (sqlite has no round trips, so only the sequence of statements).
+;;; Representative programs: 2 statements plus SqlInsertRows (2 rows) plus SqlNotify (with a lock key); a program that emits no SQL (with / without a lock key); one that fails midway and
+;;; ROLLBACK; the shape of the custody body's commit-rows (controllers/custody_body/protocol/store.hy -- with a lock key, version SELECT x 2 -> UPSERT x 2);
+;;; and SqlNotify that sqlite refuses (ROLLBACK).
+;;; This file uses only names that exist at the baseline -- it was confirmed, at the time of the change, that swapping in the baseline's answerer source still gives green with the same expectations. Only the notice
+;;; changed shape in a later change: SqlNotify now has the names involved (topics), and the pg_notify body is no longer empty but an argument ($2) (the number and
+;;; order of round trips are unchanged).
 (require doeff-hy.macros [deftest defk <- val var with-handler])
 (import queue)
 (import sqlite3)
@@ -35,93 +35,93 @@
                         :columns #((SqlColumn :name "id" :type SqlColumnType.INTEGER) (SqlColumn :name "version" :type SqlColumnType.INTEGER))
                         :primary-key #("id")))
 
-;; 基点の往復の列(PostgreSQL)— 文 1 つが往復 1 回。SqlInsertRows は executemany(行ごとの文を 1 往復で)。引数は wire の綴り($1 …)。
-;; 基点では ROLLBACK の後に driver(psycopg)が DEALLOCATE ALL を流していた(psycopg が自分で prepare した文を覚えている接続で ROLLBACK を
-;; 見ると、覚えを捨てて流す)。psycopg の自動の prepare を止めたので流れない(名の持ち主は doeff 1 つ)。
+;; The baseline's sequence of round trips (PostgreSQL) -- one statement is one round trip. SqlInsertRows is executemany (a per-row statement in one round trip). Arguments are in wire spelling ($1 ...).
+;; At the baseline, after ROLLBACK the driver (psycopg) sent DEALLOCATE ALL (when psycopg sees ROLLBACK on a connection that remembers statements it prepared itself,
+;; it discards that memory and sends it). Since psycopg's automatic prepare was stopped, it is not sent (doeff is the only owner of names).
 (val INSERT-PARAMS "INSERT INTO items (id, label) VALUES ($1, $2)")
 (val LOCK-WIRE "SELECT pg_advisory_xact_lock(hashtext($1))")
 (val BASE-POSTGRES-ROUND-TRIPS
-  {"文と SqlInsertRows と合図(錠あり)" #(#("BEGIN") #(LOCK-WIRE) #(INSERT-PARAMS) #(INSERT-PARAMS INSERT-PARAMS)
+  {"statements, SqlInsertRows and notice (with lock)" #(#("BEGIN") #(LOCK-WIRE) #(INSERT-PARAMS) #(INSERT-PARAMS INSERT-PARAMS)
                                         #("SELECT count(*) FROM items") #("SELECT pg_notify($1, $2)") #("COMMIT"))
-   "SQL を出さない(錠あり)" #(#("BEGIN") #(LOCK-WIRE) #("COMMIT"))
-   "SQL を出さない(錠なし)" #(#("BEGIN") #("COMMIT"))
-   "途中で落ちて ROLLBACK" #(#("BEGIN") #("INSERT INTO items (id, label) VALUES (110, 'x')")
+   "no SQL (with lock)" #(#("BEGIN") #(LOCK-WIRE) #("COMMIT"))
+   "no SQL (without lock)" #(#("BEGIN") #("COMMIT"))
+   "fails midway and ROLLBACK" #(#("BEGIN") #("INSERT INTO items (id, label) VALUES (110, 'x')")
                              #("INSERT INTO items (id, label) VALUES (110, 'y')") #("ROLLBACK"))
-   "預かり所の commit-rows の形(錠あり)" #(#("BEGIN") #(LOCK-WIRE) #("SELECT version FROM accounts WHERE id = $1")
+   "custody commit-rows shape (with lock)" #(#("BEGIN") #(LOCK-WIRE) #("SELECT version FROM accounts WHERE id = $1")
                                             #("SELECT version FROM accounts WHERE id = $1")
                                             #("INSERT INTO accounts (id, version) VALUES ($1, $2) ON CONFLICT (id) DO UPDATE SET version = excluded.version")
                                             #("INSERT INTO accounts (id, version) VALUES ($1, $2) ON CONFLICT (id) DO UPDATE SET version = excluded.version")
                                             #("COMMIT"))})
 
-;; 基点の文の並び(sqlite — trace の callback は値を埋めた文を渡す)。
+;; The baseline's sequence of statements (sqlite -- the trace callback passes the statement with values filled in).
 (val BASE-SQLITE-STATEMENTS
-  {"文と SqlInsertRows(錠あり)" #("BEGIN IMMEDIATE" "INSERT INTO items (id, label) VALUES (100, 'a')" "INSERT INTO items (id, label) VALUES (101, 'b')"
+  {"statements and SqlInsertRows (with lock)" #("BEGIN IMMEDIATE" "INSERT INTO items (id, label) VALUES (100, 'a')" "INSERT INTO items (id, label) VALUES (101, 'b')"
                                   "INSERT INTO items (id, label) VALUES (102, 'c')" "SELECT count(*) FROM items" "COMMIT")
-   "SQL を出さない(錠あり)" #("BEGIN IMMEDIATE" "COMMIT")
-   "途中で落ちて ROLLBACK" #("BEGIN IMMEDIATE" "INSERT INTO items (id, label) VALUES (110, 'x')" "INSERT INTO items (id, label) VALUES (110, 'y')"
+   "no SQL (with lock)" #("BEGIN IMMEDIATE" "COMMIT")
+   "fails midway and ROLLBACK" #("BEGIN IMMEDIATE" "INSERT INTO items (id, label) VALUES (110, 'x')" "INSERT INTO items (id, label) VALUES (110, 'y')"
                              "ROLLBACK")
-   "預かり所の commit-rows の形(錠あり)" #("BEGIN IMMEDIATE" "SELECT version FROM accounts WHERE id = 1" "SELECT version FROM accounts WHERE id = 2"
+   "custody commit-rows shape (with lock)" #("BEGIN IMMEDIATE" "SELECT version FROM accounts WHERE id = 1" "SELECT version FROM accounts WHERE id = 2"
                                             "INSERT INTO accounts (id, version) VALUES (1, 2) ON CONFLICT (id) DO UPDATE SET version = excluded.version"
                                             "INSERT INTO accounts (id, version) VALUES (2, 1) ON CONFLICT (id) DO UPDATE SET version = excluded.version"
                                             "COMMIT")
-   "sqlite が断る SqlNotify" #("BEGIN IMMEDIATE" "INSERT INTO items (id, label) VALUES (120, 'n')" "ROLLBACK")})
+   "SqlNotify refused by sqlite" #("BEGIN IMMEDIATE" "INSERT INTO items (id, label) VALUES (120, 'n')" "ROLLBACK")})
 
 
-;; --- 代表の program -----------------------------------------------------------------------------------------------------
+;; --- Representative programs -----------------------------------------------------------------------------------------------------
 
 (defk statements-and-rows [notice]
   {:pre [(: notice bool)] :post [(: % str)]
    :tags {:context "sql" :role "program"}}
-  "文 2 本と SqlInsertRows(2 行)を流し、notice なら最後に合図を出す program。"
+  "A program that sends 2 statements and SqlInsertRows (2 rows), and, if notice, emits a notice at the end."
   (<- (SqlQuery DB "INSERT INTO items (id, label) VALUES (:id, :label)" #((SqlParam :name "id" :value 100) (SqlParam :name "label" :value "a"))))
   (<- (SqlInsertRows DB "items" #("id" "label") #(#(101 "b") #(102 "c"))))
   (<- (SqlQuery DB "SELECT count(*) FROM items" #()))
   (when notice
     (<- (SqlNotify DB "invariant" #("table:items"))))
-  "流した")
+  "flushed")
 
 
 (defk no-sql []
   {:pre [] :post [(: % int)]
    :tags {:context "sql" :role "program"}}
-  "SQL を 1 つも出さない program(純粋な計算だけ)。"
+  "A program that emits no SQL at all (pure computation only)."
   (+ 1 2))
 
 
 (defk duplicate-insert []
   {:pre [] :post [(: % str)]
    :tags {:context "sql" :role "program"}}
-  "2 文目が一意の違反で落ちる program。"
+  "A program whose 2nd statement fails with a uniqueness violation."
   (<- (SqlQuery DB "INSERT INTO items (id, label) VALUES (110, 'x')" #()))
   (<- (SqlQuery DB "INSERT INTO items (id, label) VALUES (110, 'y')" #()))
-  "来ない")
+  "never reached")
 
 
 (defk checked-and-upserted []
   {:pre [] :post [(: % str)]
    :tags {:context "sql" :role "program"}}
-  "預かり所の本体の commit-rows の形: 行ごとに version を SELECT して照らし、行ごとに UPSERT する program(SqlNotify は出さない)。"
+  "The shape of the custody body's commit-rows: a program that SELECTs the version per row to check, and UPSERTs per row (does not emit SqlNotify)."
   (for [id #(1 2)]
     (<- (SqlQuery DB "SELECT version FROM accounts WHERE id = :id" #((SqlParam :name "id" :value id)))))
   (for [#(id version) #(#(1 2) #(2 1))]
     (<- (SqlQuery DB "INSERT INTO accounts (id, version) VALUES (:id, :version) ON CONFLICT (id) DO UPDATE SET version = excluded.version"
                   #((SqlParam :name "id" :value id) (SqlParam :name "version" :value version)))))
-  "照らして書いた")
+  "checked and written")
 
 
 (defk notice-under-sqlite []
   {:pre [] :post [(: % str)]
    :tags {:context "sql" :role "program"}}
-  "1 行入れてから合図を出す program(sqlite の答え手は合図を受けないので断る)。"
+  "A program that inserts 1 row and then emits a notice (the sqlite answerer does not accept notices, so it refuses)."
   (<- (SqlQuery DB "INSERT INTO items (id, label) VALUES (120, 'n')" #()))
   (<- (SqlNotify DB "invariant" #("table:items")))
-  "来ない")
+  "never reached")
 
 
 (defk prepared-tables []
   {:pre [] :post [(: % None)]
    :tags {:context "sql" :role "program"}}
-  "検の表を作り直すため(前の走行の行を残さない)。"
+  "To rebuild the check's table (do not leave the rows of the previous run)."
   (<- (SqlQuery DB "DROP TABLE IF EXISTS items" #()))
   (<- (SqlQuery DB "DROP TABLE IF EXISTS accounts" #()))
   (<- (SqlEnsureTables DB #(ITEMS ACCOUNTS)))
@@ -129,14 +129,14 @@
 
 
 (defk answer-or-refusal [transaction]
-  {:pre [(: transaction SqlTransaction)] :post [(: % "transaction の答え | 断りの印")]
+  {:pre [(: transaction SqlTransaction)] :post [(: % "the transaction's answer | refusal marker")]
    :tags {:context "sql" :role "program"}}
-  "transaction を撃ち、SqlTransactionMisuse で断られたら断りの印を返すため。"
+  "To fire the transaction, and return the refusal marker if it is refused with SqlTransactionMisuse."
   (try
     (<- answer transaction)
     answer
     (except [SqlTransactionMisuse]
-      "断られた")))
+      "refused")))
 
 
 ;; --- PostgreSQL ---------------------------------------------------------------------------------------------------------
@@ -144,14 +144,14 @@
 (defk postgres-round-trips [tap]
   {:pre [(: tap StatementWireTap)] :post [(: % dict)]
    :tags {:context "sql" :role "program"}}
-  "代表の program を batched を選ばない transaction で 1 つずつ撃ち、名 → #(答え 往復の列) を返すため(往復は中継が記録した物)。"
+  "To fire the representative programs one by one in a transaction that does not choose batched, and return name -> #(answer, sequence of round trips) (the round trips are what the relay recorded)."
   (<- (prepared-tables))
   (var seen {})
-  (for [#(name transaction) #(#("文と SqlInsertRows と合図(錠あり)" (SqlTransaction DB (statements-and-rows True) LOCK))
-                              #("SQL を出さない(錠あり)" (SqlTransaction DB (no-sql) LOCK))
-                              #("SQL を出さない(錠なし)" (SqlTransaction DB (no-sql) None))
-                              #("途中で落ちて ROLLBACK" (SqlTransaction DB (duplicate-insert) None))
-                              #("預かり所の commit-rows の形(錠あり)" (SqlTransaction DB (checked-and-upserted) LOCK)))]
+  (for [#(name transaction) #(#("statements, SqlInsertRows and notice (with lock)" (SqlTransaction DB (statements-and-rows True) LOCK))
+                              #("no SQL (with lock)" (SqlTransaction DB (no-sql) LOCK))
+                              #("no SQL (without lock)" (SqlTransaction DB (no-sql) None))
+                              #("fails midway and ROLLBACK" (SqlTransaction DB (duplicate-insert) None))
+                              #("custody commit-rows shape (with lock)" (SqlTransaction DB (checked-and-upserted) LOCK)))]
     (.reset tap)
     (<- answer (answer-or-refusal transaction))
     (:= seen (| seen {name #(answer (.round-trips tap))})))
@@ -161,7 +161,7 @@
 (defk tapped-dsn [tap]
   {:pre [(: tap StatementWireTap)] :post [(: % str)]
    :tags {:context "sql" :role "program"}}
-  "検の DSN を、中継の口へ繋ぐ DSN に書き換えるため(SSL・GSS の交渉をしない — 中継が読むのは平文の message)。"
+  "To rewrite the check's DSN into a DSN that connects to the relay's port (no SSL or GSS negotiation -- the relay reads plaintext messages)."
   (import psycopg.conninfo [make-conninfo])
   (make-conninfo (or POSTGRES-DSN "") :host "127.0.0.1" :port (str tap.port) :sslmode "disable" :gssencmode "disable"))
 
@@ -169,7 +169,7 @@
 (defk tap-target []
   {:pre [] :post [(: % (| str tuple))]
    :tags {:context "sql" :role "program"}}
-  "検の DSN が指す PostgreSQL の口(unix socket の path か #(host port))を読むため。"
+  "To read the PostgreSQL port (a unix socket path or #(host port)) that the check's DSN points to."
   (import psycopg.conninfo [conninfo-to-dict])
   (val given (conninfo-to-dict (or POSTGRES-DSN "")))
   (val host (.get given "host" "127.0.0.1"))
@@ -182,23 +182,23 @@
 (defk asserted-postgres-round-trips [seen]
   {:pre [(: seen dict)] :post [(: % None)]
    :tags {:context "sql" :role "program"}}
-  "postgres-round-trips の答えを、基点の往復の列と答えに照らすため。"
+  "To check the answers of postgres-round-trips against the baseline's sequence of round trips and answers."
   (assert (= (dfor #(name #(_ trips)) (.items seen) name trips) BASE-POSTGRES-ROUND-TRIPS)
           (dfor #(name #(_ trips)) (.items seen) name trips))
   (val answers (dfor #(name #(answer _)) (.items seen) name answer))
-  (assert (= (get answers "文と SqlInsertRows と合図(錠あり)") "流した") answers)
-  (assert (= (get answers "SQL を出さない(錠あり)") 3) answers)
-  (assert (= (get answers "SQL を出さない(錠なし)") 3) answers)
-  (val failed (get answers "途中で落ちて ROLLBACK"))
+  (assert (= (get answers "statements, SqlInsertRows and notice (with lock)") "flushed") answers)
+  (assert (= (get answers "no SQL (with lock)") 3) answers)
+  (assert (= (get answers "no SQL (without lock)") 3) answers)
+  (val failed (get answers "fails midway and ROLLBACK"))
   (assert (and (isinstance failed SqlFailed) (= failed.sqlstate "23505")) failed)
-  (assert (= (get answers "預かり所の commit-rows の形(錠あり)") "照らして書いた") answers)
+  (assert (= (get answers "custody commit-rows shape (with lock)") "checked and written") answers)
   None)
 
 
 (deftest test-postgres-unbatched-transactions-send-the-base-round-trips
   {:skip-if (bool POSTGRES-SKIP-REASON) :skip-reason POSTGRES-SKIP-REASON}
-  ;; 既に在る SqlTransaction の意味は変えない(#3605): batched を選ばない transaction は、BEGIN・錠・文・合図・COMMIT / ROLLBACK を
-  ;; それぞれ往復 1 回で、出た順に流す — 2 つの PostgreSQL の答え手とも、往復の列が基点と同じ。
+  ;; The meaning of the existing SqlTransaction is not changed (#3605): a transaction that does not choose batched sends BEGIN, the lock, statements, the notice, and COMMIT / ROLLBACK
+  ;; each in 1 round trip, in the order they come out -- for both PostgreSQL answerers, the sequence of round trips is the same as the baseline.
   (<- target (tap-target))
   (val tap (StatementWireTap target))
   (<- dsn (tapped-dsn tap))
@@ -222,21 +222,21 @@
 (defk drained [traced]
   {:pre [(: traced queue.SimpleQueue)] :post [(: % tuple)]
    :tags {:context "sql" :role "program"}}
-  "trace の callback が受けた文を、受けた順に全部取り出すため。"
+  "To take out, in the order received, all the statements the trace callback received."
   (tuple (gfor _ (range (.qsize traced)) (.get traced))))
 
 
 (defk sqlite-statements [traced]
   {:pre [(: traced queue.SimpleQueue)] :post [(: % dict)]
    :tags {:context "sql" :role "program"}}
-  "代表の program を batched を選ばない transaction で 1 つずつ撃ち、名 → #(答え 流した文の並び) を返すため。"
+  "To fire the representative programs one by one in a transaction that does not choose batched, and return name -> #(answer, sequence of statements sent)."
   (<- (prepared-tables))
   (var seen {})
-  (for [#(name transaction) #(#("文と SqlInsertRows(錠あり)" (SqlTransaction DB (statements-and-rows False) LOCK))
-                              #("SQL を出さない(錠あり)" (SqlTransaction DB (no-sql) LOCK))
-                              #("途中で落ちて ROLLBACK" (SqlTransaction DB (duplicate-insert) None))
-                              #("預かり所の commit-rows の形(錠あり)" (SqlTransaction DB (checked-and-upserted) LOCK))
-                              #("sqlite が断る SqlNotify" (SqlTransaction DB (notice-under-sqlite) None)))]
+  (for [#(name transaction) #(#("statements and SqlInsertRows (with lock)" (SqlTransaction DB (statements-and-rows False) LOCK))
+                              #("no SQL (with lock)" (SqlTransaction DB (no-sql) LOCK))
+                              #("fails midway and ROLLBACK" (SqlTransaction DB (duplicate-insert) None))
+                              #("custody commit-rows shape (with lock)" (SqlTransaction DB (checked-and-upserted) LOCK))
+                              #("SqlNotify refused by sqlite" (SqlTransaction DB (notice-under-sqlite) None)))]
     (<- (drained traced))
     (<- answer (answer-or-refusal transaction))
     (<- statements (drained traced))
@@ -245,8 +245,8 @@
 
 
 (deftest test-sqlite-unbatched-transactions-run-the-base-statements [tmp-path]
-  ;; 既に在る SqlTransaction の意味は変えない(#3605): batched を選ばない transaction は、BEGIN IMMEDIATE・文・COMMIT / ROLLBACK を出た順に
-  ;; 流す — 文の並びが基点と同じ(預かり所の本体の答え手 foundation の sqlite_store と同じ sqlite-answer-transaction を通る)。
+  ;; The meaning of the existing SqlTransaction is not changed (#3605): a transaction that does not choose batched sends BEGIN IMMEDIATE, statements, and COMMIT / ROLLBACK in the order they come out
+  ;; -- the sequence of statements is the same as the baseline (it goes through the same sqlite-answer-transaction as the sqlite_store of the custody body's answerer foundation).
   (val path (str (/ tmp-path "invariant.sqlite3")))
   (.close (sqlite3.connect path))
   (<- files (open-sqlite-files #((SqliteFile :name DB :path path))))
@@ -258,9 +258,9 @@
   (assert (= (dfor #(name #(_ statements)) (.items seen) name statements) BASE-SQLITE-STATEMENTS)
           (dfor #(name #(_ statements)) (.items seen) name statements))
   (val answers (dfor #(name #(answer _)) (.items seen) name answer))
-  (assert (= (get answers "文と SqlInsertRows(錠あり)") "流した") answers)
-  (assert (= (get answers "SQL を出さない(錠あり)") 3) answers)
-  (val failed (get answers "途中で落ちて ROLLBACK"))
+  (assert (= (get answers "statements and SqlInsertRows (with lock)") "flushed") answers)
+  (assert (= (get answers "no SQL (with lock)") 3) answers)
+  (val failed (get answers "fails midway and ROLLBACK"))
   (assert (and (isinstance failed SqlFailed) (= failed.sqlstate "23000")) failed)
-  (assert (= (get answers "預かり所の commit-rows の形(錠あり)") "照らして書いた") answers)
-  (assert (= (get answers "sqlite が断る SqlNotify") "断られた") answers))
+  (assert (= (get answers "custody commit-rows shape (with lock)") "checked and written") answers)
+  (assert (= (get answers "SqlNotify refused by sqlite") "refused") answers))

@@ -1,5 +1,5 @@
-;;; 乱数の本物の答え手 os-random-handler— RandomBytes に、os の乱数(os.urandom)で答える。
-;;; os.urandom に触るのはこの module だけ(fake の seeded_random.hy は触らない)。
+;;; The real answerer for randomness, os-random-handler -- answers RandomBytes with the OS randomness (os.urandom).
+;;; This module is the only one that touches os.urandom (the fake seeded_random.hy does not).
 (require doeff-hy.macros [defhandler val])
 (val MODULE-TAGS {:context "random" :role "foundation"})
 (import os)
@@ -7,6 +7,6 @@
 
 
 (defhandler os-random-handler
-  "RandomBytes に、os.urandom の count 個の byte で答える。"
+  "Answer RandomBytes with count bytes from os.urandom."
   (RandomBytes [count]
     (resume (os.urandom count))))

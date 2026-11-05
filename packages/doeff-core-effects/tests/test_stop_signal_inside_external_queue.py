@@ -1,27 +1,27 @@
-"""止めの合図(SIGTERM)が、scheduler の外からの完了の列の操作の中に居る主 thread に当たっても、AwaitStop の待ちが起きて run が
-終わる事の検。
+"""Check that, even when the stop signal (SIGTERM) hits the main thread while it is inside an operation on the scheduler's external completion queue, the AwaitStop wait wakes and the run
+ends.
 
-道筋(本物): os-signal-stop-handler が据える受け手 StopBox.receive は、主 thread の上で bytecode の区切りに割り込んで走り、寝ている
-AwaitStop の外の約束(ExternalPromise)の complete を呼ぶ。complete は scheduler の外からの完了の列(_scheduled_python の
-external_queue)へ put する。主 thread はその同じ列を drain(empty・get)と _drain_one_external(get(timeout=…))で読む。受け手の
-put が、同じ thread が列の操作の中で持っている lock(入れ子で取れない)を待つと、process は自分を待ったまま止まり、後から来る
-SIGTERM でも抜けない(cluster では KILL の 137)。
+Path (real): the receiver StopBox.receive installed by os-signal-stop-handler runs on the main thread, interrupting at a bytecode boundary, and calls complete of the promise
+outside AwaitStop (ExternalPromise) that is sleeping. complete does a put onto the scheduler's external completion queue (external_queue of _scheduled_python).
+The main thread reads that same queue with drain (empty, get) and _drain_one_external (get(timeout=...)). If the receiver's
+put waits on a lock that the same thread holds inside the queue operation (it cannot be taken in a nested way), the process stalls waiting on itself,
+and even a later SIGTERM does not get it out (KILL's 137 in the cluster).
 
-作り方: 子 process で本物の組み(scheduled の python の実装・state・os-signal-stop-handler)を回し、AwaitStop の待ちを 1 つ寝かせて
-その答えを待つ。合図を当てる所は 2 種類:
-  * 列の操作の中の瞬間 — 待ちが寝た後、主 thread が列の操作(列を self に持つ frame とその下)で Python の行を走らせる瞬間を
-    sys.settrace で数え、k 番目の瞬間に signal.raise_signal(SIGTERM) を撃つ(本物の合図が bytecode の区切りに当たった時と同じ所で
-    受け手が走る)。子は k = 0, 1, … と 1 回ずつ新しい run で当てる。
-  * 列の get の中で塞がっている間 — 列の操作の中の瞬間を使い切った run では、主 thread の stack が _drain_one_external の下で
-    止まった(塞がった)のを別の thread が見て、signal.pthread_kill で当てる。列の操作が C で書かれていれば、操作の中で Python が
-    走るのは、塞がった get が合図で割り込まれて受け手を呼ぶこの所だけ。
-判じる事: 子が上限の内に終わり、どの当て所でも待ちが合図の理由で起き、最後は _drain_one_external の get で塞がっている間に当てた。
-子が止まった時は、最後に当てた所(file:行 関数)を赤の文に出す。
+How built: in a child process, run the real assembly (the scheduled python implementation, state, os-signal-stop-handler), put one AwaitStop wait to sleep, and
+wait for its answer. There are 2 kinds of places to deliver the signal:
+  * Moments inside a queue operation -- after the wait sleeps, count with sys.settrace the moments when the main thread runs a Python line in a queue operation (a frame that has the queue as self, and below it),
+    and fire signal.raise_signal(SIGTERM) at the k-th moment (the receiver runs at the same place as when a real signal hits a bytecode
+    boundary). The child delivers once per fresh run with k = 0, 1, ...
+  * While blocked inside the queue's get -- in a run that has used up the moments inside queue operations, another thread sees the main thread's stack
+    stopped (blocked) under _drain_one_external, and delivers with signal.pthread_kill. If the queue operation is written in C, the only place where Python
+    runs inside the operation is this one, where the blocked get is interrupted by the signal and calls the receiver.
+What is judged: the child ends within the limit, at every delivery point the wait wakes for the signal's reason, and the last one was delivered while blocked in the get of _drain_one_external.
+When the child stalls, the last delivery point (file:line function) is put in the red message.
 
-直す前(queue.Queue)は、列の操作の中の 2 番目の瞬間(drain の empty の `with self.mutex:` の内側)で受け手の put が同じ lock を
-待って止まる。直した後(queue.SimpleQueue — put は reentrant で signal の受け手から呼んでよい)は列の操作の中に Python の瞬間が無く、
-塞がった get の中で受け手の put が走って get が起きる事を判じる(この repo の既定の free-threading の Python の上で)。
-Rust の実装(implementation="rust")の列は Python の外の Mutex で、この検の対象の外。
+Before the fix (queue.Queue), at the 2nd moment inside a queue operation (inside the `with self.mutex:` of drain's empty), the receiver's put waits on the same lock
+and stalls. After the fix (queue.SimpleQueue -- put is reentrant and may be called from a signal receiver), there is no Python moment inside a queue operation, and
+it is judged that the receiver's put runs inside the blocked get and the get wakes (on this repo's default free-threading Python).
+The Rust implementation's (implementation="rust") queue is a Mutex outside Python, and is out of this check's scope.
 """
 
 from __future__ import annotations
@@ -35,33 +35,33 @@ from dataclasses import dataclass
 from pathlib import Path
 from types import FrameType
 
-import hy  # noqa: F401  - Hy の module(stop_signal_handlers.hy ほか)を import できるようにする
+import hy  # noqa: F401  - so that Hy modules (stop_signal_handlers.hy and others) can be imported
 import pytest
 from doeff_core_effects import AwaitStop, Spawn, Wait, os_signal_stop_handler, scheduled, state
 from doeff_core_effects._stop_signal_handlers import StopBox
 
 from doeff import do, run, with_handlers
 
-#: この file を子 process の入口にも使う旗。
+#: Flag that also makes this file the child process's entry point.
 CHILD_FLAG = "--child"
-#: 子の時間の上限(秒)。import に数秒・当てる run は 1 回ずつ 1 秒未満。止まった子はこの上限で KILL する(SIGTERM では抜けない)。
+#: Upper limit of the child's time (seconds). A few seconds for imports, under 1 second per delivering run. A stalled child is KILLed at this limit (SIGTERM does not get it out).
 CHILD_LIMIT_SECONDS = 30.0
-#: 塞がりを見る間隔(秒)と、主 thread の stack が同じ所に続けて止まっていれば塞がったと見る回数(0.02 × 25 = 0.5 秒)。
+#: Interval for watching for blockage (seconds), and the number of times the main thread's stack must stay at the same place in a row to be seen as blocked (0.02 x 25 = 0.5 seconds).
 POLL_SECONDS = 0.02
 BLOCKED_SAMPLES = 25
-#: 列の操作の中の瞬間を数える上限(使い切らずに上限に当たれば子を赤で終える)。
+#: Upper limit for counting moments inside queue operations (if the limit is hit without using them up, the child ends in red).
 MOMENT_LIMIT = 500
-#: 塞がりで当てた時に主 thread の stack に在るべき関数 — scheduler が外からの完了を待って列の get で塞がる所。
+#: The function that should be on the main thread's stack when delivering at a blockage -- where the scheduler waits for an external completion and blocks in the queue's get.
 BLOCKING_READ = "_drain_one_external"
-#: 本物の受け手(StopBox.receive)が SIGTERM で書く理由。
+#: The reason the real receiver (StopBox.receive) writes on SIGTERM.
 STOP_REASON = f"signal {int(signal.SIGTERM)}"
 
 TraceFunction = Callable[[FrameType, str, object], object]
 
 
 class Delivery:
-    """1 回の run で合図を当てる所と当てた結果の、ただ 1 つの書き換わる箱(主 thread の tracer と、塞がりを見る thread が書く)。
-    target = 列の操作の中の何番目の瞬間に当てるか・seen = 数えた瞬間の数・where = 当てた所(まだなら None)。"""
+    """The only mutable box for the place where the signal is delivered in one run and the result of delivering (written by the main thread's tracer and by the blockage-watching thread).
+    target = at which moment inside the queue operations to deliver, seen = the number of moments counted, where = the place delivered (None if not yet)."""
 
     __slots__ = ("seen", "target", "where")
 
@@ -72,23 +72,23 @@ class Delivery:
 
 
 def _parked_queue() -> object | None:
-    """止めの受け手が寝ている待ちを持つ間、受け手が put する列(待ちの外の約束が持つ列)。それ以外は None。"""
+    """The queue the receiver puts onto while the stop receiver holds a sleeping wait (the queue held by the promise outside the wait). None otherwise."""
     box = getattr(signal.getsignal(signal.SIGTERM), "__self__", None)
     if not isinstance(box, StopBox) or box.reason is not None or not box.waiters:
         return None
-    # 受け手の put の行き先そのものを見る — ExternalPromise は列を公開の名で出さない(scheduler の内側の値)。
+    # Look at the receiver's put destination itself -- ExternalPromise does not expose the queue by a public name (a value inside the scheduler).
     return box.waiters[0]._queue  # noqa: SLF001
 
 
 def _outward(frame: FrameType | None) -> Iterator[FrameType]:
-    """frame から外へ(呼び手の方へ)たどる stack。"""
+    """The stack traced outward from frame (toward the caller)."""
     while frame is not None:
         yield frame
         frame = frame.f_back
 
 
 def _inside_operation_of(frame: FrameType | None, queue: object) -> bool:
-    """frame が列の操作(列を self に持つ frame)の中かその下で走っているか。"""
+    """Whether frame is running in or below a queue operation (a frame that has the queue as self)."""
     return any(outer.f_locals.get("self") is queue for outer in _outward(frame))
 
 
@@ -97,7 +97,7 @@ def _place(frame: FrameType) -> str:
 
 
 def _stack_names(frame: FrameType | None) -> str:
-    """主 thread の stack の関数の名を、外の BLOCKING_READ から内へ(無ければ内の 5 つ)。"""
+    """The names of the main thread's stack functions, from the outer BLOCKING_READ inward (the inner 5 if absent)."""
     names = tuple(outer.f_code.co_name for outer in _outward(frame))
     shown = names[: names.index(BLOCKING_READ) + 1] if BLOCKING_READ in names else names[:5]
     return " > ".join(reversed(shown))
@@ -105,7 +105,7 @@ def _stack_names(frame: FrameType | None) -> str:
 
 @dataclass(frozen=True)
 class OperationTracer:
-    """待ちが寝た後、主 thread が列の操作の中で Python の行を走らせる瞬間を数え、delivery.target 番目で合図を撃つ。"""
+    """After the wait sleeps, count the moments when the main thread runs a Python line inside a queue operation, and fire the signal at the delivery.target-th."""
 
     delivery: Delivery
 
@@ -130,16 +130,16 @@ class OperationTracer:
 
 
 def _deliver_when_blocked(delivery: Delivery, main: int, finished: threading.Event) -> None:
-    """待ちが寝て、主 thread の stack が BLOCKED_SAMPLES 回続けて同じ所(BLOCKING_READ の下)に止まっていたら、主 thread へ
-    SIGTERM を送る。列の操作の中で既に当てた run では何もしない。frame は id でなく object そのものを持って is で比べる。
-    間隔で見る訳: 「別の thread が塞がった」を知らせる出来事は無く、塞がりは stack が動かない事でしか見えない(検の道具だけの形)。"""
+    """If the wait sleeps and the main thread's stack has stayed at the same place (under BLOCKING_READ) for BLOCKED_SAMPLES times in a row, send
+    SIGTERM to the main thread. Does nothing in a run that has already delivered inside a queue operation. frame is held as the object itself and compared with is, not by id.
+    Why it watches at intervals: there is no event that announces "another thread got blocked", and a blockage is visible only by the stack not moving (a form only for the check's tooling)."""
     last: FrameType | None = None
     last_offset = -1
     same = 0
     while not finished.wait(POLL_SECONDS):
         if delivery.where is not None:
             return
-        frame = sys._current_frames().get(main)  # noqa: SLF001 - 別の thread の stack を読む口は これだけ
+        frame = sys._current_frames().get(main)  # noqa: SLF001 - this is the only place that reads another thread's stack
         if frame is None or _parked_queue() is None or BLOCKING_READ not in _stack_names(frame):
             last, last_offset, same = None, -1, 0
             continue
@@ -166,7 +166,7 @@ def _park_then_wait():
 
 
 def _run_once(target: int) -> Delivery:
-    """本物の組みを 1 回回し、列の操作の中の target 番目の瞬間(無ければ塞がった get の中)で SIGTERM を当てる。"""
+    """Run the real assembly once, and deliver SIGTERM at the target-th moment inside a queue operation (or, if none, inside the blocked get)."""
     delivery = Delivery(target)
     finished = threading.Event()
     helper = threading.Thread(
@@ -187,7 +187,7 @@ def _run_once(target: int) -> Delivery:
 
 
 def _child() -> int:
-    """k = 0, 1, … と 1 回ずつ当て、塞がった get の中で当てた run(列の操作の中の瞬間を使い切った)で終える。"""
+    """Deliver once each with k = 0, 1, ..., and finish at the run that delivered inside the blocked get (the one that used up the moments inside queue operations)."""
     for target in range(MOMENT_LIMIT):
         delivery = _run_once(target)
         if delivery.where is None:
@@ -212,22 +212,22 @@ def test_a_stop_signal_inside_the_external_queue_operations_wakes_the_wait() -> 
         finished = subprocess.run(command, capture_output=True, text=True, timeout=CHILD_LIMIT_SECONDS, check=False)
     except subprocess.TimeoutExpired as stuck:
         pytest.fail(
-            f"子が {CHILD_LIMIT_SECONDS:.0f} 秒の内に終わらない — 最後に当てた SIGTERM の受け手(StopBox.receive → "
-            "ExternalPromise.complete → 外からの完了の列の put)が戻らない。主 thread が列の操作の中で持つ lock を同じ thread の"
-            f"受け手が待つと、こう止まる(cluster では KILL の 137)。子の出力:\n{_text(stuck.stdout)}{_text(stuck.stderr)[-2000:]}"
+            f"The child did not end within {CHILD_LIMIT_SECONDS:.0f} seconds -- the SIGTERM receiver that was last delivered (StopBox.receive -> "
+            "ExternalPromise.complete -> put onto the external completion queue) does not return. This is how it stalls when a receiver on the same thread"
+            f" waits on a lock that the main thread holds inside a queue operation (KILL's 137 in the cluster). Child output:\n{_text(stuck.stdout)}{_text(stuck.stderr)[-2000:]}"
         )
     out = finished.stdout
-    assert finished.returncode == 0, f"子の rc {finished.returncode}:\n{out}\n{finished.stderr[-4000:]}"
+    assert finished.returncode == 0, f"Child rc {finished.returncode}:\n{out}\n{finished.stderr[-4000:]}"
     lines = out.splitlines()
     delivered = [line for line in lines if line.startswith("deliver ")]
     woke = [line for line in lines if line.startswith("woke ")]
-    assert delivered, f"合図を 1 度も当てていない:\n{out}"
-    assert len(woke) == len(delivered), f"当てた {len(delivered)} 回のうち待ちが起きたのは {len(woke)} 回:\n{out}"
-    assert all(line.endswith(repr(STOP_REASON)) for line in woke), f"待ちの答えが {STOP_REASON!r} でない:\n{out}"
-    assert f"blocked {BLOCKING_READ}" in delivered[-1], f"最後の合図を {BLOCKING_READ} の get で塞がっている間に当てていない:\n{out}"
+    assert delivered, f"The signal was never delivered:\n{out}"
+    assert len(woke) == len(delivered), f"Of {len(delivered)} deliveries, the wait woke in {len(woke)}:\n{out}"
+    assert all(line.endswith(repr(STOP_REASON)) for line in woke), f"The wait's answer is not {STOP_REASON!r}:\n{out}"
+    assert f"blocked {BLOCKING_READ}" in delivered[-1], f"The last signal was not delivered while blocked in the get of {BLOCKING_READ}:\n{out}"
 
 
 if __name__ == "__main__":
     if sys.argv[1:] != [CHILD_FLAG]:
-        raise SystemExit(f"使い方: python {Path(__file__).name} {CHILD_FLAG}")
+        raise SystemExit(f"Usage: python {Path(__file__).name} {CHILD_FLAG}")
     raise SystemExit(_child())

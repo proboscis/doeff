@@ -1,11 +1,11 @@
-;;; 計器の契約テストの解釈器(composition root)— 同じ契約の Program を、計器の答え手だけ替えて走らせる(#1107 の決め)。
+;;; Interpreter (composition root) for the meter contract tests - runs the same contract Program with only the meter answerer swapped (decision in #1107).
 ;;;
-;;;   process-meter  本物: process-meter-handler(process に 1 つの置き場 — 別の run・別の thread と同じ名前で共有する)
-;;;   memory-meter   fake: memory-meter-handler(1 つの run の中の状態だけ — 時計・gc・thread を読まない)
+;;;   process-meter  real: process-meter-handler (one store per process - shared by name across runs and threads)
+;;;   memory-meter   fake: memory-meter-handler (state within a single run only - reads no clock, gc, or threads)
 ;;;
-;;; 本物は名前ごとに process の置き場を持つので、解釈器は走らせるたびに新しい名前を使う(前の検の数が混ざらない)。
-;;; 桁の表は両方に同じ物(CONTRACT-SETTINGS)を渡す。
-;;; 使い手は conftest.py の doeff_interpreter(deftest の :interpreters の名 → INTERPRETERS)。
+;;; The real one keeps a per-process store for each name, so the interpreter uses a fresh name on every run (counts from earlier tests do not mix in).
+;;; The same bucket table (CONTRACT-SETTINGS) is passed to both.
+;;; Used by doeff_interpreter in conftest.py (the :interpreters names of deftest -> INTERPRETERS).
 (require doeff-hy.macros [defk <- val])
 (import functools [partial])
 (import itertools [count])
@@ -18,20 +18,20 @@
 (val PROCESS-METER "process-meter")
 (val MEMORY-METER "memory-meter")
 
-;; 契約の検が読む桁の表: 1 秒以下・5 秒以下と、全部を数える inf。
+;; Bucket table read by the contract tests: at most 1 s, at most 5 s, and inf which counts everything.
 (val CONTRACT-SETTINGS (MeterSettings :buckets #((MeterBucket :label "le_1s" :ceiling 1.0)
                                                  (MeterBucket :label "le_5s" :ceiling 5.0))
                                       :inf-label "le_inf"))
 
-;; 本物の置き場の名前を走らせるたびに変える数え手(process の置き場は検の process の間ずっと残る)。
+;; A counter that changes the real store's name on every run (the process store persists for the whole test process).
 (val RUN-NUMBERS (count))
 
 
 (defk under-meter [name program]
   {:pre [(: name str) (in name #{PROCESS-METER MEMORY-METER}) (: program Program)]
-   :post [(: % "契約の Program の答え(型は Program ごと)")]
+   :post [(: % "answer of the contract Program (type varies per Program)")]
    :tags {:context "meter-test" :role "foundation"}}
-  "name の計器の答え手の下で program を走らせる。本物は走らせるたびに新しい置き場の名前を使う。"
+  "Run program under the meter answerer named name. The real one uses a fresh store name on every run."
   (val handler (if (= name PROCESS-METER)
                    (process-meter-handler (+ "meter-contract-" (str (next RUN-NUMBERS))) CONTRACT-SETTINGS)
                    (memory-meter-handler CONTRACT-SETTINGS)))

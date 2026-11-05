@@ -1,37 +1,37 @@
-;;; 汎用の WebSocket の client の effect(ws_client_effects.hy)の I/O なしの答え手 scripted-ws-client。本物の
-;;; socket を開かず、台本(WsScript — 繋ぎ先ごとの届く frame の列と、送りに応じて届く frame)で答え、送った文と閉じを記録する。業務を
-;;; 知らない: 台本の中身は呼び手が渡す。
+;;; scripted-ws-client, the I/O-free responder for the generic WebSocket client effects (ws_client_effects.hy). It opens no real
+;;; socket; it answers from a script (WsScript - the list of frames that arrive per connect target, and the frames that arrive in response to sends), and records the text sent and the closes. It has no
+;;; knowledge of the business domain: the contents of the script are supplied by the caller.
 ;;;
-;;;   WsConnect        台本に url(url の先頭の最長の一致)が在れば WsLink(id は繋ぎを始めた順に ws-1 ・ws-2 … — 断られた繋ぎの番号も戻さない)、
-;;;                    無ければ WsConnectFailed(status None)
-;;;   WsReceive        台本の次の frame を答える。尽きたら then-close が在ればその状態符と理由の WsLinkClosed、無ければ状態符なしで
-;;;                    SCRIPT-EXHAUSTED-REASON の WsLinkClosed(呼び手の Program を永遠に待たせない)。終わった・知らない idは closed-answer
-;;;   WsSend           送った文を記録し(WsSentText)、台本の replies のうち送った文が含む語の frame の列を届く列の後ろへ足す(sideband の
-;;;                    append → ACK の往復を模擬する)。終わった・知らない idは closed-answer
-;;;   WsDisconnect     閉じを記録し(WsSentClose)、接続を終わらせる(以後の WsReceive / WsSend は同じ WsLinkClosed)
-;;;   WsDisconnectAll  開いている接続の全部に同じ事をする
-;;;   ReadWsSent       送った文と閉じの記録(WsSentText・WsSentClose の tuple)
-;;; 本物の答え手と同じに決める物は ws_client_effects.hy の判断の defk を呼ぶ(契約テストは tests/test_ws_client_contract.hy)。
-;;; 公開の installer scripted-ws-client は、program を closing-links(範囲の終わりに WsDisconnectAll)で包んでから被せる — 本物と同じ後始末。
-;;; 並び: session の値を持つ state の handler(doeff_core_effects の state)はこの handler より外側に要る。
+;;;   WsConnect        If the script has a matching url (longest prefix match of the url), WsLink (id is ws-1, ws-2, ... in the order connects were started - the number of a refused connect is not given back),
+;;;                    otherwise WsConnectFailed (status None)
+;;;   WsReceive        Answers the next frame of the script. When exhausted, a WsLinkClosed with the code and reason of then-close if present, otherwise a WsLinkClosed with no code and
+;;;                    SCRIPT-EXHAUSTED-REASON (never leaves the caller's Program waiting forever). For an ended or unknown id, closed-answer
+;;;   WsSend           Records the text sent (WsSentText), and appends to the back of the pending list the frames of the replies in the script whose keyword the sent text contains (simulates the sideband
+;;;                    append -> ACK round trip). For an ended or unknown id, closed-answer
+;;;   WsDisconnect     Records the close (WsSentClose) and ends the connection (later WsReceive / WsSend get the same WsLinkClosed)
+;;;   WsDisconnectAll  Does the same to all open connections
+;;;   ReadWsSent       The record of the text sent and the closes (a tuple of WsSentText and WsSentClose)
+;;; Whatever is decided the same way as in the real responder calls the judgment defk of ws_client_effects.hy (the contract test is tests/test_ws_client_contract.hy).
+;;; The public installer scripted-ws-client wraps the program in closing-links (WsDisconnectAll at the end of the scope) before installing - the same cleanup as the real one.
+;;; Ordering: a state handler holding the session values (state in doeff_core_effects) is needed outside this handler.
 (require doeff-hy.macros [defhandler defk deff <- val var])
 (val MODULE-TAGS {:context "ws-client" :role "foundation"})
 (require doeff-hy.record [defrecord])
 (import collections.abc [Callable])
-(import dataclasses [dataclass])  ; defrecord の展開が使う
+(import dataclasses [dataclass])  ; used by the defrecord expansion
 (import doeff [EffectBase Program])
 (import doeff_core_effects._ws_client_effects [WsConnect WsReceive WsSend WsDisconnect WsDisconnectAll ReadWsSent WsLink WsConnectFailed
                                               WsText WsBinary WsLinkClosed WsFrame WsSent WsScript ScriptedWsEndpoint ScriptedWsText
                                               ScriptedWsBinary ScriptedWsClosed ScriptedWsFrame WsSentText WsSentClose
                                               NOT-IN-SCRIPT-REASON SCRIPT-EXHAUSTED-REASON link-name closed-answer closing-links])
 
-;; 答える効果と、節が出す効果(installer の宣言 — doeff-effect-analyzer の __doeff_handles__ / __doeff_effects__)。
+;; The effects answered and the effects the clauses emit (the installer's declaration - __doeff_handles__ / __doeff_effects__ of doeff-effect-analyzer).
 (val SCRIPTED-WS-HANDLES #(WsConnect WsReceive WsSend WsDisconnect WsDisconnectAll ReadWsSent))
 (val SCRIPTED-WS-EFFECTS #())
 
 
 (defrecord ScriptedLink
-  "台本の上で開いている接続 1 本: link = id・url・endpoint = 当たった繋ぎ先の台本・pending = まだ届けていない frame の列。"
+  "One connection open on the script: link = id, url, endpoint = the script of the connect target that matched, pending = the list of frames not yet delivered."
   {:tags {:context "ws-client" :role "type"}}
   (#^ str link)
   (#^ str url)
@@ -41,27 +41,27 @@
 
 (defk endpoint-for [script url]
   {:pre [(: script WsScript) (: url str)] :post [(: % (| ScriptedWsEndpoint None))] :tags {:context "ws-client" :role "judgment"}}
-  "url への WsConnect を受ける台本の繋ぎ先を選ぶため(url の先頭の最長の一致 — 無ければ None = 台本に無い)。"
+  "To choose the script's connect target that receives a WsConnect to url (longest prefix match of the url - None if absent = not in the script)."
   (val hits (sorted (gfor e script.endpoints :if (.startswith url (.rstrip e.url "/")) e) :key (fn [e] (len e.url))))
   (if hits (get hits -1) None))
 
 
 (defk link-of [links link]
   {:pre [(: links (of tuple ScriptedLink ...)) (: link str)] :post [(: % (| ScriptedLink None))]}
-  "開いている接続の列からid の接続を引くため(無ければ None)。"
+  "To look up the connection with the given id from the list of open connections (None if absent)."
   (next (gfor open links :if (= open.link link) open) None))
 
 
 (defk without-link [links link]
   {:pre [(: links (of tuple ScriptedLink ...)) (: link str)] :post [(: % (of tuple ScriptedLink ...))]}
-  "開いている接続の列からid の接続を外すため。"
+  "To remove the connection with the given id from the list of open connections."
   (tuple (gfor open links :if (!= open.link link) open)))
 
 
 (defk frame-of [link scripted]
   {:pre [(: link str) (: scripted (| ScriptedWsText ScriptedWsBinary ScriptedWsClosed))] :post [(: % WsFrame)]
    :tags {:context "ws-client" :role "judgment"}}
-  "台本の frame 1 つを、id の接続に届いた frame にするため。"
+  "To turn one frame of the script into a frame delivered to the connection with the given id."
   (match scripted
     (ScriptedWsText :text text) (WsText :link link :text text)
     (ScriptedWsBinary :data data) (WsBinary :link link :data data)
@@ -70,8 +70,8 @@
 
 (defk next-frame [open]
   {:pre [(: open ScriptedLink)] :post [(: % WsFrame)] :tags {:context "ws-client" :role "judgment"}}
-  "id の接続の次の frame を決めるため(先頭の説明): 届けていない frame が在ればその先頭、尽きていれば then-close かSCRIPT-EXHAUSTED-REASON の
-   WsLinkClosed。"
+  "To decide the next frame of the connection with the given id (the opening description): the head of the undelivered frames if any, and once exhausted, then-close or the WsLinkClosed of SCRIPT-EXHAUSTED-REASON
+   as a WsLinkClosed."
   (match open.pending
     #() (match open.endpoint.then-close
           None (WsLinkClosed :link open.link :code None :reason SCRIPT-EXHAUSTED-REASON)
@@ -82,22 +82,22 @@
 (defk replies-for [endpoint text]
   {:pre [(: endpoint ScriptedWsEndpoint) (: text str)] :post [(: % (of tuple ScriptedWsFrame ...))]
    :tags {:context "ws-client" :role "judgment"}}
-  "送った文に応じて届く frame の列を決めるため(台本の replies のうち、送った文がその語を含む物を台本の順に — 全部つなぐ)。"
+  "To decide the list of frames that arrive in response to the sent text (of the replies in the script, those whose keyword the sent text contains, in script order - all concatenated)."
   (tuple (gfor reply endpoint.replies :if (in reply.contains text) frame reply.frames frame)))
 
 
 (defhandler scripted-ws-link-handler [#^ WsScript script]
-  "WsConnect・WsReceive・WsSend・WsDisconnect・WsDisconnectAll・ReadWsSent に、呼び手の台本 WsScript で I/O なしに答える(頭の註)。
-   範囲の終わりに接続を閉じる closing-links は installer scripted-ws-client が被せる。"
-  ;; 台本の接続(先頭の説明)。links = 開いている接続の列・ended = 終わった接続の WsLinkClosed の列(閉じた後の WsReceive / WsSend が同じ答えを
-  ;; 返す)・sent = 送った文と閉じの記録・counter = 振った id の数(どれも session の値)。
-  ;; 引数に残す理由: script は呼び手が組んだ凍った台本(繋ぎ先と届く frame)で、組み立ての外で差し替える相手がいない。
+  "Answers WsConnect, WsReceive, WsSend, WsDisconnect, WsDisconnectAll and ReadWsSent with the caller's script WsScript, without I/O (head note).
+   closing-links, which closes connections at the end of the scope, is wrapped on by the installer scripted-ws-client."
+  ;; The script's connections (the opening description). links = the list of open connections, ended = the list of WsLinkClosed of ended connections (a WsReceive / WsSend after close returns the same answer
+  ;; ), sent = the record of text sent and closes, counter = the number of ids handed out (all are session values).
+  ;; Why it stays an argument: script is a frozen script (connect targets and the frames that arrive) assembled by the caller, and nobody swaps it outside assembly.
   (session var links #())
   (session var ended #())
   (session var sent #())
   (session var counter 0)
   (WsConnect [url headers]
-    ;; 番号は繋ぎを始める前に確保し、断られても戻さない(本物の答え手と同じ並び — 本物は同時に進む 2 つの繋ぎが同じ番号を取らないため)。
+    ;; The number is taken before the connect starts and is not given back even if refused (the same order as the real responder - because in the real one two connects progressing concurrently must not take the same number).
     (:= counter (+ counter 1))
     (<- link str (link-name counter))
     (<- endpoint (| ScriptedWsEndpoint None) (endpoint-for script url))
@@ -148,12 +148,12 @@
     (resume sent)))
 
 
-(deff scripted-ws-client [#^ WsScript script]  ; defk にできない: Program の外で呼ぶ、答え手を被せる installer の作り手
+(deff scripted-ws-client [#^ WsScript script]  ; cannot be a defk: it is the maker of an installer that installs a responder, called outside a Program
   {:pre [(: script WsScript)] :post [(: % (of Callable [(| Program EffectBase)] Program))] :tags {:context "ws-client" :role "foundation"}}
-  "台本の答え手の installer を作るため(先頭の説明): 被せた program を closing-links で包み、範囲の終わりに開いたままの接続を閉じる。"
+  "To build the installer of the script responder (the opening description): wrap the installed program in closing-links and close the connections left open at the end of the scope."
   (setv install (scripted-ws-link-handler script))
   (setv closing (fn [#^ (| Program EffectBase) program] (install (closing-links program))))
-  ;; 被せる関数のマーカー(defhandler が付ける物と同じ属性を置く — with_handlers はマーカーの無い Program → Program の関数を断る)と、宣言。
+  ;; The marker of the installing function (the same attributes defhandler sets - with_handlers refuses a Program -> Program function without the marker), and the declaration.
   (setattr closing "_doeff_is_handler_fn" True)
   (setattr closing "__doeff_name__" "scripted-ws-client")
   (setattr closing "__doeff_handler_data__" (getattr install "__doeff_handler_data__"))
@@ -162,7 +162,7 @@
   closing)
 
 
-;; 節を静的に読めない installer の作り手なので、答える効果と出す効果を宣言する(本番の土台の閉じ具合の検が「読めない handler」と
-;; 数えないため — _http_handlers_impl.hy の http-production-handler と同じ)。
+;; This is the maker of an installer whose clauses cannot be read statically, so it declares the effects it answers and emits (so that the production foundation's closedness check does not count it as an "unreadable handler" -
+;; the same as http-production-handler in _http_handlers_impl.hy).
 (setattr scripted-ws-client "__doeff_handles__" SCRIPTED-WS-HANDLES)
 (setattr scripted-ws-client "__doeff_effects__" SCRIPTED-WS-EFFECTS)

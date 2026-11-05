@@ -1,9 +1,9 @@
-;;; 既存の DB の file を開く SQL の答え手(sqlite_file_sql.hy)の失敗ケース。pytest の一時 dir の file の DB で:
-;;;   - 書いた行が、接続を閉じて開き直した後も読める(memory の DB ではなく file に在る)。
-;;;   - 既存の file(先に stdlib の sqlite3 で表と行を作った物)の行をそのまま読める・無い file は作らずに断る。
-;;;   - journal_mode が wal。
-;;;   - 制約違反は SqlFailed(23 の類)の値・閉じた後と SetSqlOutage の間は SqlUnreachable の値(例外にならない)。
-;;;   - SqlTransaction の中の失敗で巻き戻る。
+;;; Failure cases of the SQL responder that opens an existing DB file (sqlite_file_sql.hy). With a file DB in a pytest temporary dir:
+;;;   - A written row can be read even after closing the connection and reopening (it is in the file, not in a memory DB).
+;;;   - The rows of an existing file (a table and rows made first with the stdlib sqlite3) can be read as they are; a missing file is refused without being created.
+;;;   - journal_mode is wal.
+;;;   - A constraint violation is a SqlFailed value (the 23 class); after closing and during SetSqlOutage it is a SqlUnreachable value (it does not become an exception).
+;;;   - A failure inside SqlTransaction rolls back.
 (require doeff-hy.macros [deftest defk <- val var with-handler])
 (import sqlite3)
 (import pathlib [Path])
@@ -14,7 +14,7 @@
 
 (val DB "custody")
 
-;; 検の表: 主鍵つきで、BOOLEAN の読み戻しも見る。
+;; The table for the check: with a primary key, and it also checks reading back BOOLEAN.
 (val LEDGER (SqlTable :name "ledger"
                       :columns #((SqlColumn :name "id" :type SqlColumnType.INTEGER) (SqlColumn :name "label" :type SqlColumnType.TEXT)
                                  (SqlColumn :name "held" :type SqlColumnType.BOOLEAN))
@@ -24,7 +24,7 @@
 (defk empty-file [tmp-path]
   {:pre [(: tmp-path Path)] :post [(: % str)]
    :tags {:context "sql" :role "program"}}
-  "stdlib の sqlite3 で空の DB の file を用意するため(答え手は既存の file しか開かない)。"
+  "To prepare an empty DB file with the stdlib sqlite3 (the responder opens only an existing file)."
   (val path (str (/ tmp-path "custody.db")))
   (.close (sqlite3.connect path))
   path)
@@ -33,7 +33,7 @@
 (defk ledger-ids [database]
   {:pre [(: database str)] :post [(: % tuple)]
    :tags {:context "sql" :role "program"}}
-  "ledger の行(id 順)を読むため。"
+  "To read the rows of ledger (in id order)."
   (<- answer SqlRows (SqlQuery database "SELECT id, label, held FROM ledger ORDER BY id" #()))
   answer.rows)
 
@@ -41,11 +41,11 @@
 (defk write-two [database]
   {:pre [(: database str)] :post [(: % SqlRows)]
    :tags {:context "sql" :role "program"}}
-  "表を宣言して 2 行を書く筋書き。"
+  "A scenario that declares a table and writes 2 rows."
   (<- (SqlEnsureTables database #(LEDGER)))
-  (<- (SqlInsertRows database "ledger" #("id" "label" "held") #(#(1 "一" True))))
+  (<- (SqlInsertRows database "ledger" #("id" "label" "held") #(#(1 "one" True))))
   (<- written (SqlQuery database "INSERT INTO ledger (id, label, held) VALUES (:id, :label, :held)"
-                        #((SqlParam :name "id" :value 2) (SqlParam :name "label" :value "二") (SqlParam :name "held" :value False))))
+                        #((SqlParam :name "id" :value 2) (SqlParam :name "label" :value "two") (SqlParam :name "held" :value False))))
   written)
 
 
@@ -60,9 +60,9 @@
   (try
     (<- rows (with-handler [(state) (sqlite-file-sql-handler again)] (ledger-ids DB)))
     (finally (<- (close-sqlite-files again))))
-  ;; 開き直した後も読め、BOOLEAN の欄は bool で戻る。
-  (assert (= rows #(#(1 "一" True) #(2 "二" False))) rows)
-  ;; 行は file に在る(stdlib の sqlite3 で直に読める)。
+  ;; It can be read even after reopening, and the BOOLEAN column comes back as bool.
+  (assert (= rows #(#(1 "one" True) #(2 "two" False))) rows)
+  ;; The rows are in the file (readable directly with the stdlib sqlite3).
   (val direct (sqlite3.connect path))
   (try
     (assert (= (.fetchall (.execute direct "SELECT id FROM ledger ORDER BY id")) [#(1) #(2)]))
@@ -91,7 +91,7 @@
   (val path (/ tmp-path "missing.db"))
   (with [(pytest.raises sqlite3.OperationalError)]
     (<- (open-sqlite-files #((SqliteFile :name DB :path (str path))))))
-  (assert (not (.exists path)) "無い file を作った"))
+  (assert (not (.exists path)) "created a missing file"))
 
 
 (deftest test-the-journal-mode-is-wal [tmp-path]
@@ -101,7 +101,7 @@
     (<- mode (with-handler [(state) (sqlite-file-sql-handler files)] (SqlQuery DB "PRAGMA journal_mode" #())))
     (finally (<- (close-sqlite-files files))))
   (assert (= mode.rows #(#("wal"))) mode)
-  ;; WAL は file に残る印(別の接続からも wal)。
+  ;; The mark that WAL stays in the file (wal from another connection too).
   (val direct (sqlite3.connect path))
   (try
     (assert (= (get (.fetchone (.execute direct "PRAGMA journal_mode")) 0) "wal"))
@@ -111,9 +111,9 @@
 (defk failures [database]
   {:pre [(: database str)] :post [(: % tuple)]
    :tags {:context "sql" :role "program"}}
-  "制約違反と不達の印を順に撃つ筋書き(どれも例外ではなく値で返る)。"
+  "A scenario that fires a constraint violation and the unreachable mark in turn (each comes back as a value, not an exception)."
   (<- (write-two database))
-  (<- duplicate (SqlInsertRows database "ledger" #("id" "label" "held") #(#(1 "重ね" True))))
+  (<- duplicate (SqlInsertRows database "ledger" #("id" "label" "held") #(#(1 "dup" True))))
   (<- (SetSqlOutage database True))
   (<- down-query (SqlQuery database "SELECT 1" #()))
   (<- down-transaction (SqlTransaction database (ledger-ids database) None))
@@ -132,8 +132,8 @@
   (assert (and (isinstance duplicate SqlFailed) (= duplicate.sqlstate "23000")) duplicate)
   (assert (isinstance (get answers 1) SqlUnreachable) (get answers 1))
   (assert (isinstance (get answers 2) SqlUnreachable) (get answers 2))
-  (assert (= (get answers 3) #(#(1 "一" True) #(2 "二" False))) (get answers 3))
-  ;; 閉じた後の effect は SqlUnreachable の値(例外にならない)。
+  (assert (= (get answers 3) #(#(1 "one" True) #(2 "two" False))) (get answers 3))
+  ;; An effect after closing is a SqlUnreachable value (it does not become an exception).
   (<- closed-query (with-handler [(state) (sqlite-file-sql-handler files)] (SqlQuery DB "SELECT 1" #())))
   (<- closed-transaction (with-handler [(state) (sqlite-file-sql-handler files)] (SqlTransaction DB (ledger-ids DB) None)))
   (assert (isinstance closed-query SqlUnreachable) closed-query)
@@ -143,24 +143,24 @@
 (defk insert-then-duplicate [database]
   {:pre [(: database str)] :post [(: % str)]
    :tags {:context "sql" :role "program"}}
-  "transaction の中で 1 行を入れた後に主鍵の重なる行を入れる program(2 つ目で止まる)。"
-  (<- (SqlQuery database "INSERT INTO ledger (id, label, held) VALUES (3, '三', 1)" #()))
-  (<- (SqlQuery database "INSERT INTO ledger (id, label, held) VALUES (1, '重ね', 1)" #()))
-  "ここへは来ない")
+  "A program that, inside a transaction, inserts 1 row and then a row with a duplicate primary key (it stops at the second)."
+  (<- (SqlQuery database "INSERT INTO ledger (id, label, held) VALUES (3, 'three', 1)" #()))
+  (<- (SqlQuery database "INSERT INTO ledger (id, label, held) VALUES (1, 'dup', 1)" #()))
+  "never reached here")
 
 
 (defk insert-one [database]
   {:pre [(: database str)] :post [(: % str)]
    :tags {:context "sql" :role "program"}}
-  "transaction の中で 1 行を入れる program。"
-  (<- (SqlQuery database "INSERT INTO ledger (id, label, held) VALUES (4, '四', 0)" #()))
-  "入れた")
+  "A program that inserts 1 row inside a transaction."
+  (<- (SqlQuery database "INSERT INTO ledger (id, label, held) VALUES (4, 'four', 0)" #()))
+  "inserted")
 
 
 (defk transactions [database]
   {:pre [(: database str)] :post [(: % tuple)]
    :tags {:context "sql" :role "program"}}
-  "失敗で巻き戻る transaction と commit する transaction を順に撃つ筋書き。"
+  "A scenario that fires, in turn, a transaction that rolls back on failure and a transaction that commits."
   (<- (write-two database))
   (<- failed (SqlTransaction database (insert-then-duplicate database) None))
   (<- after-failure (ledger-ids database))
@@ -177,11 +177,11 @@
     (finally (<- (close-sqlite-files files))))
   (val failed (get answers 0))
   (assert (and (isinstance failed SqlFailed) (= failed.sqlstate "23000")) failed)
-  ;; 3 の行は巻き戻って無い。
+  ;; The row 3 was rolled back and is absent.
   (assert (= (tuple (gfor row (get answers 1) (get row 0))) #(1 2)) (get answers 1))
-  (assert (= (get answers 2) "入れた"))
+  (assert (= (get answers 2) "inserted"))
   (assert (= (tuple (gfor row (get answers 3) (get row 0))) #(1 2 4)) (get answers 3))
-  ;; commit した行は file に在る。
+  ;; The committed row is in the file.
   (val direct (sqlite3.connect path))
   (try
     (assert (= (.fetchall (.execute direct "SELECT id FROM ledger ORDER BY id")) [#(1) #(2) #(4)]))
