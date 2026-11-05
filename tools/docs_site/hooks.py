@@ -1,4 +1,4 @@
-"""mkdocs の hook — GitHub の上で読む形に書いた docs の page を、site の上でも同じに読めるように 4 つを直す。
+"""mkdocs の hook — GitHub の上で読む形に書いた docs の page を、site の上でも同じに読めるように 5 つを直す。
 
 1. site の外の repo の file へ張る相対の link を、GitHub の main の file への link に書き換える。docs の page は repo の file
    (packages/*/README.md・examples/・docs/specs/ の仕様)へ相対の link を張るが、site に入るのは docs/index.md から辿る page
@@ -14,6 +14,9 @@
    同じ内容の GIF が動き、link の先へ飛べる。site では、その 1 行を図の本体(`docs/assets/figures/<名>.html` — 図の様式と動きは同じ dir の
    step-figure.css と step-figure.js が持つ)に替える。script の動かない画面には GIF を残す。GIF は tools/docs-video/figure-gif.mjs が
    同じ図から作るので、2 つの版の中身はずれない。本体の無い名は build を落とす。
+5. 動画の service の動画を再生できるようにする。page は動画を `[![<説明>](https://img.youtube.com/vi/<id>/maxresdefault.jpg)](https://youtu.be/<id>)`
+   の 1 行で書く — GitHub は markdown の iframe を消すので、repo の画面では thumbnail の画像が動画への link になる。site では、その 1 行を
+   動画の service の player(iframe)に替える。
 """
 
 from __future__ import annotations
@@ -42,6 +45,8 @@ IMG_ATTR = re.compile(r'\b(src|alt)="([^"]*)"')
 FIGURE_LINE = re.compile(
     r'<p>(?:<a href="[^"]*">)?(<img\b[^>]*\bsrc="[^"]*assets/figures/([a-z0-9-]+)\.gif"[^>]*>)(?:</a>)?</p>'
 )
+# 動画の service の thumbnail を動画への link にした 1 行(markdown から組んだ後の HTML)。
+YOUTUBE_LINE = re.compile(r'<p><a href="https://youtu\.be/([A-Za-z0-9_-]+)">(<img\b[^>]*>)</a></p>')
 
 
 def _github_url(
@@ -142,9 +147,26 @@ def figures_to_steps(content: str, docs_dir: Path) -> str:
     return FIGURE_LINE.sub(figure, content)
 
 
+def youtube_to_iframes(content: str) -> str:
+    """動画の service の thumbnail の link だけの段落を、その動画の player に替えるため(module の頭の 5)。"""
+
+    def player(match: re.Match[str]) -> str:
+        """1 つの段落を iframe に替える。説明(alt)は iframe の題にする。referrer は player が埋め込み先を読むので送る。"""
+        video_id, image = match.groups()
+        title = dict(IMG_ATTR.findall(image)).get("alt", "")
+        return (
+            f'<p><iframe class="docs-video" src="https://www.youtube.com/embed/{video_id}" title="{title}" '
+            'allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share" '
+            'referrerpolicy="strict-origin-when-cross-origin" allowfullscreen loading="lazy" '
+            'style="width: 100%; aspect-ratio: 16 / 9; border: 0;"></iframe></p>'
+        )
+
+    return YOUTUBE_LINE.sub(player, content)
+
+
 def on_page_content(content: str, page: Page, config: MkDocsConfig, files: Files) -> str:
-    """組んだ page の HTML で、図の GIF を click で進む図に、章の動画の link を video の要素に替えるため(mkdocs の hook)。
+    """組んだ page の HTML で、図の GIF を click で進む図に、章の動画の link を video の要素に、動画の service の link を player に替えるため(mkdocs の hook)。
 
     mkdocs が link と画像の相対の path を site の path に直した後に呼ばれるので、path はそのまま使える。
     """
-    return videos_to_players(figures_to_steps(content, Path(config.docs_dir).resolve()))
+    return youtube_to_iframes(videos_to_players(figures_to_steps(content, Path(config.docs_dir).resolve())))

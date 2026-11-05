@@ -103,6 +103,15 @@ pip install "doeff[http]"  # + the HTTP client handlers (Hy and httpx)
 pip install "doeff[all]"   # both: what `pip install doeff` installed in 0.5.0
 ```
 
+The same idea in a narrated video (1:28): one card fight is one function, and only the handlers
+stacked around it change.
+
+https://github.com/user-attachments/assets/90a881f5-631e-4a4d-b9b7-6b78a0e285a5
+
+For the whole walk-through, read
+[Algebraic effects for Python](https://github.com/proboscis/doeff/blob/main/docs/articles/algebraic-effects-in-python.md),
+or follow [the same story step by step as an animated figure](https://github.com/proboscis/doeff/blob/main/docs/assets/figures/article-opening.gif).
+
 ## Why doeff?
 
 | You want to… | Plain Python | doeff |
