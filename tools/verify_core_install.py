@@ -41,7 +41,8 @@ Python の版ごとに:
 
 9. 記事「Algebraic effects for Python」の例のうち、記事の本番の stack(`real` — 実時間と await_handler)を含む monitor.py と、
    spend.py を、写した dir で走らせ、0 で終わり、monitor.py が本番の stack の印字(`-- real: ...` の見出しと答え)を最後に
-   印字する事を確かめる。記事は「every example runs with doeff 0.8.0 alone」と書くので、PyPI の版でも走らせる(await_handler の
+   印字する事を確かめる。3 本目「時刻」の例の trading.py(virtual clock と wall clock の層)も同じく走らせ、最後の層の印字を
+   見る。記事は「every example runs with doeff 0.8.0 alone」と書くので、PyPI の版でも走らせる(await_handler の
    呼び方が入った版と合わないと TypeError で落ちる)。
 
 CI の Python の版ごとの検(.github/workflows/python-compatibility.yml の job core-only-install と
@@ -352,12 +353,14 @@ ARTICLE_TIMED_LINE = re.compile(r"(\d+\.\d+) s")
 PASSED_SUMMARY = re.compile(r"\d+ passed in \S+")
 
 
-# 記事「Algebraic effects for Python」の例の dir と、核だけの venv で走らせる 2 本。
+# 記事「Algebraic effects for Python」の例の dir と、核だけの venv で走らせる 3 本(trading.py は 3 本目「時刻」の例)。
 TOUR_DIRECTORY = Path("examples/effects_tour")
 # script が印字する見出しの行と、最後の行(monitor.py の本番の stack = 記事の Layer 5 の `real`)。
 TOUR_SCRIPTS = {
     "spend.py": None,
     "monitor.py": ("-- real: wall clock, async client", "[[9], [15]]"),
+    # 3 本目「時刻」の例: 最後の 3 層(virtual clock・wall clock・非同期の取引所)の見出しと、最後の行(seed 固定の損益)
+    "trading.py": ("8. live: the same strategy over an async exchange on the wall clock (60 bars)", "  -> pnl 6.96"),
 }
 
 
