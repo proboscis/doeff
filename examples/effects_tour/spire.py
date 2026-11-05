@@ -6,6 +6,7 @@
 #   2. a random bot                          5. 100 fights, one task each, for a win rate
 #   3. record and replay of a fight          6. a damage count per card
 #   +  production: a person at a terminal, choosing with input()      python spire.py play
+#   +  production: the same person in a window (tkinter)              python spire.py window
 # Every seed is fixed, so the output is the same on every run. Needs only `pip install doeff`.
 from __future__ import annotations
 
@@ -265,6 +266,102 @@ def play() -> None:
     print("->", run(quiet_stats(printed(dice(seed)(human(battle()))))))
 
 
+def at_terminal(seed: int) -> None:
+    """The fight of `seed` at the terminal: printed answers Show, human answers Choose."""
+    print("->", run(quiet_stats(printed(dice(seed)(human(battle()))))))
+
+
+# ---- Production again: the same person in a window. Two handlers change; `battle` does not.
+def window():
+    """Open a window; return a handler for Show, a handler for Choose, and `end` for the result.
+
+    tkinter comes with Python, and it is imported here so that the other layers need no display.
+    `wait_variable` runs the window until a click sets it, so `clicked` waits the way `input()` waits.
+    """
+    import tkinter as tk
+
+    colors = {"Strike": "#b5483f", "Defend": "#3f6fb5", "Bash": "#b5803f"}
+    end_turn, closed = -1, -2
+    full, lines = Fight(), []
+    last = full
+    root = tk.Tk()
+    root.title("spire")
+    board = tk.Canvas(root, width=800, height=260, bg="#1b1f27", highlightthickness=0)
+    board.pack()
+    answer = tk.IntVar()
+    root.protocol("WM_DELETE_WINDOW", lambda: answer.set(closed))
+
+    def write(x, y, text, anchor="w", size=12, color="white"):
+        board.create_text(x, y, anchor=anchor, text=text, fill=color, font=("Helvetica", size))
+
+    def bar(y, name, value, most, color, note):
+        write(16, y, name)
+        board.create_rectangle(80, y - 9, 380, y + 9, fill="#343a46", outline="")
+        if value:
+            board.create_rectangle(80, y - 9, 80 + 300 * value // most, y + 9, fill=color, outline="")
+        write(392, y, f"{value}{note}")
+
+    def button(i, x, width, color, title, *details):
+        tag = f"button{i}"
+        board.create_rectangle(x, 76, x + width, 186, fill=color, outline="#d8dee9", tags=tag)
+        board.create_text(x + width / 2, 98, text=title, fill="white", font=("Helvetica", 14, "bold"), tags=tag)
+        for row, detail in enumerate(details):
+            board.create_text(x + width / 2, 130 + 22 * row, text=detail, fill="white", font=("Helvetica", 11), tags=tag)
+        board.tag_bind(tag, "<Button-1>", lambda _: answer.set(i))
+
+    def draw(s: Fight, hand=(), energy=0, options=()):
+        board.delete("all")
+        block = f"  ({s.block} block)" if s.block else ""
+        bar(22, "you", max(s.hp, 0), full.hp, "#4caf6d", block)
+        bar(52, "enemy", max(s.enemy_hp, 0), full.enemy_hp, "#d9534f", "  vulnerable" if s.vulnerable else "")
+        write(784, 22, f"turn {s.turn}", "e")
+        for i, card in enumerate(hand):
+            cost, damage, gained = CARDS[card]
+            effect = f"{damage} damage" if damage else f"{gained} block"
+            button(i, 16 + 126 * i, 116, colors[card] if i in options else "#343a46", card, f"cost {cost}", effect)
+        if hand:
+            write(784, 52, f"{energy} energy", "e")
+            button(end_turn, 664, 120, "#343a46", "End turn")
+        for row, line in enumerate(lines[-3:]):
+            board.create_text(16, 204 + 19 * row, anchor="w", text=line.strip(), fill="#d8dee9", font=("Courier", 10))
+
+    @handler
+    def drawn(effect: Show, k):
+        """The screen: the same lines the terminal prints, at the bottom of the window."""
+        lines.append(effect.text)
+        return (yield Resume(k, None))
+
+    @handler
+    def clicked(effect: Choose, k):
+        """Draw the fight and wait for a click; "End turn" answers None, like an empty line at the terminal."""
+        nonlocal last
+        last = effect.state
+        draw(effect.state, effect.hand, effect.energy, affordable(effect))
+        root.wait_variable(answer)
+        if answer.get() == closed:
+            raise SystemExit("the window was closed")
+        return (yield Resume(k, None if answer.get() == end_turn else answer.get()))
+
+    def end(result) -> None:
+        """Draw the end of the fight and keep the window until it is closed."""
+        outcome, turn = result
+        lost = {"hp": 0} if outcome == "lose" else {"enemy_hp": 0, "vulnerable": 0}
+        draw(replace(last, **lost))
+        write(400, 130, f"You {outcome} on turn {turn}", "center", 24)
+        root.protocol("WM_DELETE_WINDOW", root.destroy)
+        root.mainloop()
+
+    return drawn, clicked, end
+
+
+def in_window(seed: int) -> None:
+    """The fight of `seed` in a window: drawn answers Show, clicked answers Choose."""
+    drawn, clicked, end = window()
+    result = run(quiet_stats(drawn(dice(seed)(clicked(battle())))))
+    print("->", result, flush=True)
+    end(result)
+
+
 def tour() -> None:
     """Layers 1 to 6 in order. Fixed seeds: the output is the same on every run."""
     print("1. a scripted player on seed 7, on screen")
@@ -296,4 +393,10 @@ def tour() -> None:
 PLAYOUTS = 3  # per candidate move; the 100 Monte Carlo fights take well under a minute
 
 if __name__ == "__main__":
-    play() if sys.argv[1:] == ["play"] else tour()
+    command, seeds = sys.argv[1:2], [int(seed) for seed in sys.argv[2:3]]
+    if command == ["play"]:
+        at_terminal(*seeds) if seeds else play()
+    elif command == ["window"]:
+        in_window(*seeds or [random.SystemRandom().randrange(10**6)])
+    else:
+        tour()

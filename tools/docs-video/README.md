@@ -128,3 +128,7 @@ GitHub and Zenn show the GIF; on the site, `tools/docs_site/hooks.py` puts the f
    three figures of the article's videos (`article-opening`, `monte-carlo`, `hundred-fights`).
 3. Check: `uv run pytest tests/test_docs_site_step_figures.py` (every step names only what the figure has, and every figure has its
    GIF and the other way round) and `make docs-site`.
+
+## Recordings of real programs
+
+`record/terminal_window.py` makes `docs/assets/videos/article-terminal-window.gif` without Remotion: it runs `python spire.py play 39` in a real xterm and `python spire.py window 39` in its real tkinter window on an Xvfb screen, presses keys and clicks with xdotool, and adds only the code lines, the captions and the mouse pointer around the captures. It stops without writing the GIF if either program does not play the fight it worked out beforehand. Run it again when the window in `examples/effects_tour/spire.py` changes; its header says what to install.
