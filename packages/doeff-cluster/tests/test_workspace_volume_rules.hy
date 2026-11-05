@@ -181,21 +181,46 @@
   ;; 線は最小の空き 0% で 105 GB・25% で 105 − 26.3 GB。
   (val maximum 105089261568)
   (val empty (DiskRoom :maximum maximum :reserved 0 :scheduled 0 :available maximum))
-  (<- unlined (room-bytes #(empty) 200 0))
+  (<- unlined (room-bytes #(empty) 200 0 {}))
   (assert (= unlined (RoomBytes :nominal (* 2 maximum) :actual maximum)) unlined)
-  (<- lined (room-bytes #(empty) 200 25))
+  (<- lined (room-bytes #(empty) 200 25 {}))
   (assert (= lined (RoomBytes :nominal (* 2 maximum) :actual (- maximum (// maximum 4)))) lined)
   ;; 置いた分を引き、2 つの disk は足す。線を越えて置かれた disk は負のまま足す(空けても線の下は使えない)。
   (<- two (room-bytes #((DiskRoom :maximum (* 10 GIB) :reserved 0 :scheduled (* 3 GIB) :available (* 100 GIB))
                         (DiskRoom :maximum (* 10 GIB) :reserved (* 5 GIB) :scheduled (* 20 GIB) :available (* 100 GIB)))
-                      200 25))
+                      200 25 {}))
   (assert (= two.nominal (+ (* 17 GIB) (* -10 GIB))) two)
   ;; 2026-11-03 16:2x JST の zeus-usb-workspace(過剰割り当て 2000% の繋ぎの下): 実の空き 62.7 GB は最小の空き 25%(26.3 GB)の線まで
   ;; 36.4 GB。宣言の 200% では、今の予約 848 GB が上限 210 GB を越えて負。
   (val now (DiskRoom :maximum maximum :reserved 0 :scheduled 848256040960 :available 62704844800))
-  (<- declared (room-bytes #(now) 200 25))
+  (<- declared (room-bytes #(now) 200 25 {}))
   (assert (= declared (RoomBytes :nominal (- (* 2 maximum) 848256040960) :actual (- 62704844800 (// maximum 4)))) declared)
   (assert (< declared.nominal 0) declared))
+
+
+(deftest test-a-disk-floor-raises-only-the-actual-line-of-its-disk
+  ;; 2026-11-05 21:5x JST の zeus-usb-workspace: 容量 231.9 GB・実の空き 111.3 GB。disk-share/shares.yaml が USB の SSD の分け前から導いた
+  ;; 床 93.7 GB は % の線(25% = 58.0 GB)より高いので、実の空きの線の残りは 111.3 − 93.7 GB。名目の線と、床の名の無い disk は変わらない。
+  (val maximum 231917150208)
+  (val available 111256465408)
+  (val floor 93665506817)
+  (val usb (DiskRoom :maximum maximum :reserved 0 :scheduled 691489734656 :available available :disk "zeus-usb-workspace"))
+  (val other (DiskRoom :maximum maximum :reserved 0 :scheduled 691489734656 :available available :disk "other-disk"))
+  (<- floored (room-bytes #(usb) 300 25 {"zeus-usb-workspace" floor}))
+  (<- plain (room-bytes #(usb) 300 25 {}))
+  (assert (= floored (RoomBytes :nominal plain.nominal :actual (- available floor))) floored)
+  (assert (= plain.actual (- available (// maximum 4))) plain)
+  (<- unnamed (room-bytes #(other) 300 25 {"zeus-usb-workspace" floor}))
+  (assert (= unnamed plain) unnamed)
+  ;; 床が % の量より低い時は % の量を残す(床は線を下げない)。
+  (<- low (room-bytes #(usb) 300 25 {"zeus-usb-workspace" GIB}))
+  (assert (= low plain) low)
+  ;; 戻す node も同じ床で選ぶ — 床の上に 10 GB しか無い disk は 20 GB を覆わない。
+  (val tight (DiskRoom :node "zeus" :maximum 100 :reserved 0 :scheduled 0 :available 100 :disk "d"))
+  (<- covered (restore-node #(tight) 100 0 {"d" 90} 10))
+  (assert (= covered "zeus") covered)
+  (<- short (restore-node #(tight) 100 0 {"d" 90} 20))
+  (assert (= short "") short))
 
 
 (deftest test-a-demand-is-covered-only-when-both-lines-hold-it
@@ -268,15 +293,15 @@
   (val large (DiskRoom :node "beta" :maximum 100 :reserved 0 :scheduled 20 :available 100))
   (val same (DiskRoom :node "gamma" :maximum 100 :reserved 0 :scheduled 20 :available 100))
   (val dry (DiskRoom :node "delta" :maximum 100 :reserved 0 :scheduled 0 :available 5))
-  (<- only (restore-node #(small) 100 0 10))
+  (<- only (restore-node #(small) 100 0 {} 10))
   (assert (= only "alpha") only)
-  (<- larger (restore-node #(small large) 100 0 10))
+  (<- larger (restore-node #(small large) 100 0 {} 10))
   (assert (= larger "beta") larger)
-  (<- tied (restore-node #(same large) 100 0 10))
+  (<- tied (restore-node #(same large) 100 0 {} 10))
   (assert (= tied "beta") tied)
-  (<- real (restore-node #(dry small) 100 0 10))
+  (<- real (restore-node #(dry small) 100 0 {} 10))
   (assert (= real "alpha") real)
-  (<- none (restore-node #(small dry) 100 0 50))
+  (<- none (restore-node #(small dry) 100 0 {} 50))
   (assert (= none "") none)
-  (<- empty (restore-node #() 100 0 10))
+  (<- empty (restore-node #() 100 0 {} 10))
   (assert (= empty "") empty))

@@ -117,6 +117,7 @@ class SettingsWire:
     keep_days: int
     grow_below_percent: int = 0
     max_size_bytes: int = 0
+    free_floor_bytes: dict[str, int] | None = None
 
 @dataclass(frozen=True, kw_only=True)
 class ConfigMapWire:
@@ -468,19 +469,22 @@ def room_short(owner: str, doing: str, reason: str, fresh: bool) -> _Program[Wor
 def class_disk_tags(parameters: dict[str, str]) -> _Program[tuple[str, ...], object]:
     ...
 
-def room_read(site: WorkspaceVolumeSite, owner: str, doing: str, parameters: dict[str, str]) -> _Program[RoomBytes, object]:
+def settings_floors(settings: SettingsWire) -> _Program[dict[str, int], object]:
+    ...
+
+def room_read(site: WorkspaceVolumeSite, owner: str, doing: str, parameters: dict[str, str], floors: dict[str, int]) -> _Program[RoomBytes, object]:
     ...
 
 def warm_volumes(reads: tuple[VolumeRead, ...]) -> _Program[tuple[WarmVolume, ...], object]:
     ...
 
-def room_waited(site: WorkspaceVolumeSite, owner: str, doing: str, parameters: dict[str, str], demand: int) -> _Program[RoomBytes, object]:
+def room_waited(site: WorkspaceVolumeSite, owner: str, doing: str, parameters: dict[str, str], floors: dict[str, int], demand: int) -> _Program[RoomBytes, object]:
     ...
 
-def room_made(site: WorkspaceVolumeSite, owner: str, doing: str, parameters: dict[str, str], demand: int, fresh: bool) -> _Program[None, object]:
+def room_made(site: WorkspaceVolumeSite, owner: str, doing: str, parameters: dict[str, str], floors: dict[str, int], demand: int, fresh: bool) -> _Program[None, object]:
     ...
 
-def restore_node_read(site: WorkspaceVolumeSite, owner: str, doing: str, parameters: dict[str, str], demand: int) -> _Program[str, object]:
+def restore_node_read(site: WorkspaceVolumeSite, owner: str, doing: str, parameters: dict[str, str], floors: dict[str, int], demand: int) -> _Program[str, object]:
     ...
 
 def replicas_placed(site: WorkspaceVolumeSite, owner: str, doing: str, name: str) -> _Program[bool, object]:

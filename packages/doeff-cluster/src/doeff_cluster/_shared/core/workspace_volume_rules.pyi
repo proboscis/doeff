@@ -61,6 +61,7 @@ class DiskRoom:
     scheduled: int
     available: int
     node: str = ''
+    disk: str = ''
 
 @dataclass(frozen=True, kw_only=True)
 class RoomBytes:
@@ -124,7 +125,10 @@ def newest_backup(backups: tuple[BackupView, ...]) -> _Program[BackupView | None
 def backup_volume_name(name: str, target: str) -> _Program[str, object]:
     ...
 
-def room_bytes(rooms: tuple[DiskRoom, ...], percentage: int, minimal: int) -> _Program[RoomBytes, object]:
+def floor_bytes(room: DiskRoom, minimal: int, floors: dict[str, int]) -> _Program[int, object]:
+    ...
+
+def room_bytes(rooms: tuple[DiskRoom, ...], percentage: int, minimal: int, floors: dict[str, int]) -> _Program[RoomBytes, object]:
     ...
 
 def hyx_room_coversXquestion_markX(room: RoomBytes, demand: int) -> _Program[bool, object]:
@@ -133,5 +137,5 @@ def hyx_room_coversXquestion_markX(room: RoomBytes, demand: int) -> _Program[boo
 def cooling_order(warm: tuple[WarmVolume, ...], now: float, warm_seconds: float, room: RoomBytes, demand: int) -> _Program[CoolingPlan, object]:
     ...
 
-def restore_node(rooms: tuple[DiskRoom, ...], percentage: int, minimal: int, demand: int) -> _Program[str, object]:
+def restore_node(rooms: tuple[DiskRoom, ...], percentage: int, minimal: int, floors: dict[str, int], demand: int) -> _Program[str, object]:
     ...

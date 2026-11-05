@@ -25,6 +25,7 @@ Longhorn の disk の予約がその宣言から導かれている事の検。
 from __future__ import annotations
 
 import dataclasses
+import json
 import shutil
 import subprocess
 import sys
@@ -484,4 +485,57 @@ def test_a_native_worker_with_its_own_free_line_is_refused() -> None:
         "      name: atlas-native\n", "      name: atlas-native\n      minFreeGiB: 25\n"
     )
     with pytest.raises(ValueError, match="知らない鍵"):
+        derive.parse(text)
+
+
+# --- Longhorn の disk が分け合う disk の上の image に在る機体(imageDisks)------------------------------------------------------------------
+
+
+def _zeus_usb(declaration: object) -> object:
+    (share,) = [share for share in declaration.image_disks if share.name == "zeus-usb-ssd"]
+    return share
+
+
+def test_longhorn_grown_to_its_share_keeps_the_usb_ssd_free_line(declaration: object) -> None:
+    """zeus の USB の SSD: Longhorn の image が分(142.56 GB)まで育ち、kubelet.img が見かけの大きさまで育っても、ほかの物が今の使用の
+    ままなら、SSD の空きは空きの最低 100 GB を割らない。image の中の空きが床を割らなければ、image の割り当て(中の使用 + file system
+    の metadata)は分を越えない。"""
+    share = _zeus_usb(declaration)
+    room = derive.image_longhorn_bytes(share)
+    floor = derive.free_floor_bytes(share)
+    assert room == 142_556_822_528
+    assert floor == 93_666_378_752
+    free_at_share = (
+        share.disk_bytes
+        - share.filesystem_reserved_bytes
+        - sum(size for _, size in share.images)
+        - share.residents_bytes
+        - room
+    )
+    assert free_at_share >= share.min_free_bytes >= 100_000_000_000
+    used_inside_at_floor = share.longhorn_storage_bytes - floor
+    metadata = share.longhorn_image_bytes - share.longhorn_storage_bytes
+    assert used_inside_at_floor + metadata <= room
+
+
+def test_the_worker_reads_the_floor_derived_for_the_image(declaration: object) -> None:
+    """worker の値の file の freeFloorBytes は、宣言の Longhorn の disk ごとの床(導き直しは derive.py)。"""
+    settings = json.loads(derive.WORKSPACE_SETTINGS.read_text(encoding="utf-8"))
+    assert settings[derive.FLOOR_KEY] == {
+        share.longhorn_disk: derive.free_floor_bytes(share) for share in declaration.image_disks
+    }
+
+
+def test_residents_over_the_usb_ssd_are_refused(declaration: object, margins: object) -> None:
+    """ほかの物が 143 GB 育った宣言は、Longhorn の分が無くなり、導かない。"""
+    share = _zeus_usb(declaration)
+    swollen = dataclasses.replace(share, residents_bytes=share.residents_bytes + 143_000_000_000)
+    found = derive.faults(dataclasses.replace(declaration, image_disks=(swollen,)), margins)
+    assert len(found) == 1, found
+    assert found[0].startswith("zeus-usb-ssd: 分け前の合計が disk を越える"), found
+
+
+def test_an_image_disk_with_a_misspelled_key_is_refused() -> None:
+    text = (derive.SHARES.read_text(encoding="utf-8")).replace("residentsBytes:", "residentBytes:")
+    with pytest.raises(ValueError, match="imageDisks.zeus-usb-ssd の鍵が違う"):
         derive.parse(text)

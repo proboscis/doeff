@@ -49,7 +49,8 @@
 #   longhornDiskTags    disk の札(StorageClass の diskSelector が引く — longhorn-warm は warm)。Node の札は持たない([] を書く)
 #
 # overProvisioningPercent は Longhorn の設定 storage-over-provisioning-percentage(cluster 全体の値)の写し。設定を替える時はここも直す
-# (替えると導く予約が変わる)。zeus はこの宣言の外 — zeus の worker は USB の SSD に在る(根の disk を分け合わない)。
+# (替えると導く予約が変わる)。zeus の根の disk はこの宣言の外 — zeus の worker は USB の SSD に在る(根の disk を分け合わない)。
+# zeus の USB の SSD は下の imageDisks が宣言する(Longhorn の disk がその SSD の上の image の中に在る形)。
 # atlas と eos は Longhorn の disk の欄を持たない — 根の disk の Longhorn の disk(/var/lib/longhorn)は写しを受けず(allowScheduling
 # false)、atlas の Longhorn の Node は根の外の disk(/mnt/nvme・/mnt/bulk)も持つ。この宣言から Node を書くと、Flux の server-side apply
 # が根の外の disk の欄を引き取って消しうるので、Node は導かない。
@@ -142,3 +143,50 @@ nodes:
       minFreeGiB: 25
       rootsGiB: 20
       stateBytes: 12_000_000_000
+
+# Longhorn の disk が、分け合う disk の上の sparse な image の中の file system に在る機体の分け前(imageDisks — 名は宣言の名)。
+#
+# なぜ要るか: 2026-11-05 に zeus の USB の SSD(/mnt/fast_ssd_usb — 会話の作業の dir・作業場の cache・kubelet.img・Longhorn の
+# image が分け合う)の空きが 242 GB から 56 GB まで減った。Longhorn の disk zeus-usb-workspace は image
+# workspace.img の中に在り、image は中の使用が増えると SSD の上で育つ。その日に image を 105 → 232 GB へ、kubelet.img を 21 → 84 GB へ
+# 広げたが、SSD の分け前を数えた物は無かった。
+#
+# Longhorn の予約 storageReserved では縛れない: 予約は名目の線((容量 − 予約)× overProvisioningPercent)にだけ効き、実の使用を縛らない。
+# 作業場所の volume は thin で、名目 691 GB に対し実の使用は 117 GB(2026-11-05 21:5x)— 名目で SSD の分に収めると、温かく置く
+# volume の多くを冷やし、戻す書きが SSD に増える(workspace-volumes/README.md の節「なぜ温かいままにしないか」)。だから image の中に
+# 残す実の空きの床(freeFloorBytes)を導き、worker が冷やす回と作る手の数えで守る(room-bytes の実の空きの線を、Longhorn の設定の
+# 最小の空きの % より上げる)。予約は 0 のまま。
+#
+# 分け前(byte)— 足すと disk の大きさになる:
+#   filesystemReservedBytes  SSD の file system の予約(ext4 の root の予約 block — 空き〔avail〕に数えない)
+#   minFreeBytes             SSD に残す空きの最低(SSD の空きの見張り ZeusUsbSsdFreeLow が鳴る線)
+#   imagesBytes              Longhorn の外の sparse な image の見かけの大きさ(育ちうる上限 — 全部を数える)
+#   residentsBytes           ほかの物(会話の作業の dir・作業場の cache・利用者の dir ほか)の今の使用。上限を持たない物の読みで、
+#                            育てば Longhorn の分が減る(読み直して導き直す)
+#   Longhorn の分            残り — image が SSD の上で持ってよい量
+#
+# ここから導く物(derive.py が書く):
+#   ../workspace-volumes/workspace-volume.json の freeFloorBytes  {longhornDisk: longhornImageBytes − Longhorn の分}
+# image の SSD の上の割り当ては、中の file system の使用(storageMaximum − storageAvailable)に、file system の metadata
+# (image の見かけ − storageMaximum)を足した量を越えない。だから image の中の空きが床を割らなければ、割り当ては Longhorn の分を越えない
+# — 中の file system を trim して、消えた block を image から返している間(trim が無いと、割り当ては中の使用の最高の値に留まる)。
+#
+# 守りの外: residentsBytes の育ち(上限を持たない — 見張りが鳴る)・付いている volume が名目の内で育つ分(冷やす回が次の回で床へ戻す)。
+#
+# zeus の値の出所(2026-11-05 21:5x JST): diskBytes・filesystemReservedBytes・longhornStorageBytes は node-exporter の
+# node_filesystem_{size,free,avail}_bytes、longhornImageBytes は workspace.img の見かけの大きさ(ls)。使用 1,602.15 GB のうち、
+# workspace.img の割り当て 166.19 GB(ls -s — 中の使用 120.66 GB に trim されない 45.5 GB が乗る)と、kubelet.img の割り当ての下の
+# 限り 71.0 GB(中の使用の 11-05 21 時の値 — root の dir に在り直には読めない)を引いた 1,364.96 GB を residentsBytes に丸めた。
+# kubelet.img の見かけは中の file system 84.36 GB から 80 GiB と読んだ。
+imageDisks:
+  zeus-usb-ssd:
+    node: zeus
+    diskBytes: 1_711_876_399_104
+    filesystemReservedBytes: 17_420_230_656
+    minFreeBytes: 100_000_000_000
+    imagesBytes:
+      kubelet: 85_899_345_920
+    residentsBytes: 1_366_000_000_000
+    longhornDisk: zeus-usb-workspace
+    longhornImageBytes: 236_223_201_280
+    longhornStorageBytes: 231_917_150_208
