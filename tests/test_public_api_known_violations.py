@@ -1,73 +1,67 @@
-"""subpackage の公開 API に effect と handler の外の名を足すと赤になり、今の外れは減るだけの既知の表に並ぶ事。
+"""Adding a name outside effects and handlers to a subpackage's public API turns the check red, and today's violations sit in a known table that can only shrink.
 
-決まり: doeff の subpackage が利用者に見せる公開 API は effect と handler だけ(取り組み doeff-subpackages-effects-only)。
-公開 API を数えるのは tools/public_api_inventory.py の 1 か所で、この file は数えない — 道具の目録の行のうち、種類が
-effect でも handler でもない物(それ以外・未分類)を外れとし、tests/data/public_api_known_violations.json の既知の表
-(違反の表 — 外れと境界だけ)と tests/data/public_api_allowed.json の許した物の表(決まりが名ごとに許した名)の 2 つと
-(名を出す module, 名) の鍵で突き合わせる。_ で始まらない submodule そのものも、目録の 1 行(名を出す module は
-(submodule)・名は submodule の import の名)の外れと数える(ADR-DOE-API-001 R5 — 公開の名は import の根からだけ出す):
+Rule: the public API a doeff subpackage shows its users is effects and handlers only (initiative doeff-subpackages-effects-only).
+Public API is counted in exactly one place, tools/public_api_inventory.py; this file does not count. Among the tool's inventory rows,
+those whose kind is neither effect nor handler (other, unclassified) are violations, and they are matched against two tables, the known table
+tests/data/public_api_known_violations.json (the known-violations table — violations and boundaries only) and the allowed table tests/data/public_api_allowed.json (names the rule allows name by name),
+by the key (module that shows the name, name). A submodule whose name does not start with _ also counts as one inventory row (the module that shows the name is
+(submodule), the name is the submodule's import name) and as a violation (ADR-DOE-API-001 R5 — public names come out of the import root only):
 
-1. package ごとに 1 件(packages/ の下の dir の名で引く): どちらの表にも無い外れが在れば赤(新しく足した外れ・公開の
-   submodule)、表に在るのに目録に無い名が在れば赤(直したのに表を縮め忘れた — 2 つの表のどちらでも)。
-2. 名を submodule から入口へ移した行は、表の module を書き換えずに同じ行と読む: 表に無い根の (根, 名) は、表に同じ名の
-   (根の下の submodule, 名) が在り、その submodule がまだ名を出していれば定義の場所が同じ時だけ、もう出していなければ
-   (古い口を閉じた — 定義を比べる相手が無い)名と根だけで、表のその行と読む。違う定義を根に足すのは赤のまま。
-3. 表の形: 目録の package(packages/ の下の dir のうち、doeff の中の部品の外)の全部が 1 つずつ載り、範囲が決まった値で、名が
-   組の中で並んで重ならない。違反の表は許した物の組を持たない(許した物は許した物の表だけに置くので、違反の表は空になれる)。
-4. 違反の表は減るだけ: 表の「名」の組の名は、この表を足した commit の版(git の履歴の最初の版)に在る名に限る。submodule
-   の行は、submodule の行を表に足した commit の版に在る物に限る。新しく足すしか無い外れは「足した名」に、訳を
-   1 行ずつ書く。
-5. 失敗ケース: 使い捨ての package を作り、effect と handler だけなら緑・外れを 1 つ足すと赤・外すと緑・直したのに表に
-   残すと赤・訳つきで「足した名」に書くと緑・_ の無い submodule を足すと赤・名を submodule から入口へ移しても緑
-   (移し替えの module を残す間も消した後も)・同じ名の違う定義を入口に足すと赤・1 行目に印 moved-submodule-shim の在る
-   移し替えの module は、移した先の package の下の module も古い名で数えて緑になる事を、同じ照合で確かめる。
-   印の下に名の固定の列を持つ移し替えの module は、移した先の _ の module に helper を足しても目録の行が増えず緑・列が
-   無ければ赤・入口に名を足すと列が在っても赤。移し替えの module の全部が列を持つ事も確かめる。
-   戻りの型で handler を返す関数(工場)と読める名が、呼ぶと印 _doeff_is_handler_fn の無い値を返すと赤・handler を返すように
-   直すと緑(目録は引数なしで呼べる工場を呼んで印を確かめる — ADR-DOE-API-001 R3)。
-6. 許した物の表は決めつきで足せる(減るだけでない): 1 行 = (package, module, 名) と組と決め。決めは、その行を許す
-   ADR の条(ADR-DOE-API-001 R<番号>)か、条の無い行は許す訳の英語の 1 文。決めの無い行・記録の id か issue の番号を
-   含む決めの行・違反の表と同じ鍵の行は赤。組は目録で形を確かめる組(ALLOWED_GROUPS)だけを置ける。組「許した物 —
-   program の helper」(ADR-DOE-API-001 R18 — 決まりが名ごとに許した、effect を出すだけの program を返す関数)に置けるのは、
-   目録の形が program の helper の名だけ: handler を被せる・effect に答える・program を返さない関数を置くと赤。組「許した物 —
-   Hy の macro」(R14・R15・R31 — macro を出す module は公開の境界に置く)に置けるのは、目録の形が Hy の macro の名と、Hy の
-   macro だけを出す公開の submodule(macro の module)の行だけ: macro でない名・macro の外の名も出す submodule を置くと赤。
-   組「Allowed — CLI command」(R7・R31)に置けるのは console script と Rust の実行 file の行のうち、ADR の条が名を挙げた物
-   (ADR_COMMANDS — 条の文がその名を挙げる事も確かめる)だけ: ADR に無い命令を置くと赤。組「許した物 — pytest の plugin の
-   登録」(R10・R33)に置けるのは pytest11 の entry point の行と、その entry point が読む module が出す名だけ、組「許した物 —
-   起動の口」(R36)に置けるのは package が配る .pth が起動ごとに呼ぶ名だけ。組「許した物 — 換算の
-   関数」(R35 — effect の答えを他の物差しへ換える関数)に置けるのは、目録の形が換算の関数の名だけ: 中で effect・handler・
-   program を作る・時計や環境や file を読む・generator の関数を置くと赤。組「Allowed — exception type」(R2 — effect と handler が
-   投げる例外の型)に置けるのは、目録の形が例外の class(BaseException の子)で、その package が定義した名だけ: 例外でない
-   class・関数・別の package か標準の library の例外を出し直した名を置くと赤。組「Allowed — effect value type」(R2)に置けるのは、
-   同じ package が見せる effect の class の欄の注釈(型引数を含み、package が定義した値の型の欄を辿る — 目録の value_types)に
-   出る class と型の別名だけ: どの effect の欄にも出ない class を置くと赤。組「Allowed — effect answer type」(R2)に置けるのは、
-   package の effect の答えの型(EffectBase[T] の T か defeffect の :answer に出る型・本体が名指した型で答える待ちの effect が
-   自分の __doeff_bus_events__ に宣言した bus の event と、答えの class の欄の型・子の class・答えの class だけを並べた型の
-   別名 — 目録の answer_types)だけ: 答えを docstring だけに書いた effect の答えと、どの effect の答えにも出ない class を
-   置くと赤。組「Allowed — program-shape builder and type」(R37 — doeff-conductor の workflow を書く
-   agent!・loop ほかと AgentSpec ほか)に置けるのは、目録の形が作り手(換算の形の本体で、同じ package の class の値を返す
-   関数)で返す class をその package が見せる名と、組の作り手が返す class だけ: effect を出す・作る・I/O を読む関数・見せない
-   class を返す関数・値の型の外を返す関数・組の作り手が返さない class を置くと赤。組「Allowed — handler setting type」(R2)に
-   置けるのは、その package が定義した型で、同じ package が見せる handler・handler の class・工場の引数の注釈(型引数を含み、
-   package が定義した設定の型の欄〔Protocol の property を含む〕を辿る — 目録の settings)に出る class と型の別名だけ: どの引数にも出ない class・関数・
-   標準の library の型を出し直した名を置くと赤。
-7. 決まりの範囲の、Rust の拡張を持つ package(maturin)は、目録が import で読めなければ赤 — 字面の読みは入口が拡張から
-   出す名を数えないので(doeff-indexer の Indexer・SymbolInfo を数えていなかった)、環境に入れて読む。
-8. doeff の中の部品(目録の道具の DOEFF_PARTS — doeff-vm)は、doeff の根の package と同じく目録が数えず、表に載せない
-   (ADR-DOE-API-001 R11)。その前提として、doeff の外の file(packages/ の下の部品の外の package・examples・
-   docs/adr)が部品の import の根を import すれば赤(file と行と module を名指す)。失敗ケース: 使い捨ての repo で、素の import・
-   from・下の module・Hy の import と require・importlib と pytest.importorskip に渡す名の文字列は赤、doeff の根と doeff._vm から
-   読む形と、部品そのもの・doeff の根の package・doeff の検(tests/)の import は緑。
-9. 入口(import の根の __init__)の出す名と同じ名の子(移し替えの module を含む)を根の下に置かない(ADR-DOE-API-001 R34
-   — 古い path の import が親の属性を module に束ね、入口の関数を隠して記録の service が起動の度に
-   落ちた)。package ごとに 2 つで照らす: 字面の照合(入口の file が束ねる名と子の名)と、新しい process で根と全部の公開の
-   module(古い path を含む)を 1 つずつ import した後も入口の名が module に替わらない確かめ。失敗ケース: 使い捨ての package
-   の入口が関数 serve(遅延)・tool(すぐ)を出す所に同じ名の移し替えの module を置くと両方が赤・殻を消すと緑。
-   根の下の package(_ の package を含む)の入口にも同じく当てる(移した package の古い path
-   doeff_agents.effects.agent の import が doeff_agents._effects の関数 agent を module で上書きした)。失敗ケース: 根の下の
-   package _inner の入口が同じ名の子 tool から関数 tool を束ね、移した package の古い path inner を殻が答えると両方が赤・
-   子を _tool へ移すと緑。
+1. One check per package (looked up by the dir name under packages/): a violation in neither table is red (a newly added violation or a public
+   submodule), and a name that is in a table but not in the inventory is red (fixed but the table was not shrunk — for either of the two tables).
+2. A row whose name moved from a submodule to the entry point is read as the same row without rewriting the table's module: a root (root, name) that is not in the table, when the table has the same name as
+   (a submodule under the root, name), is read as that table row by definition place only if that submodule still shows the name, and by name and root alone if it no longer shows it
+   (the old door is closed — there is no definition to compare against). Adding a different definition to the root stays red.
+3. Table shape: every package of the inventory (the dirs under packages/ other than the parts inside doeff) is listed exactly once, with a scope of a defined value, and names are
+   sorted and not duplicated within a group. The violations table has no allowed groups (allowed things live only in the allowed table, so the violations table can be empty).
+4. The violations table only shrinks: a name in a table "names" group must be a name present in the version at the commit that added this table (the first version in git history). A submodule
+   row must be one present in the version at the commit that added the submodule rows to the table. A violation that can only be added goes in "added names", with a reason written
+   one line each.
+5. Failure cases: build a throwaway package and confirm with the same matching that effects and handlers alone are green, adding one violation is red, removing it is green, fixing it but leaving it in the table is
+   red, writing it in "added names" with a reason is green, adding a submodule without _ is red, moving a name from a submodule to the entry point is green
+   (both while the forwarding module remains and after it is removed), adding a different definition of the same name to the entry point is red, and a forwarding module whose first line has the marker moved-submodule-shim
+   counts the modules under the destination package by their old names too and is green.
+   A forwarding module that has a fixed list of names under the marker stays green, adding no inventory rows, when a helper is added to a destination _ module; without the list
+   it is red, and adding a name to the entry point is red even with the list. It also confirms that every forwarding module has the list.
+   A name read as a function that returns a handler by its return type (a factory) is red if calling it returns a value without the marker _doeff_is_handler_fn, and green once it
+   returns a handler (the inventory calls factories that can be called without arguments and checks the marker — ADR-DOE-API-001 R3).
+6. The allowed table can be added to with a basis (it does not only shrink): one row = (package, module, name), a group, and a basis. The basis is the ADR rule that allows the row
+   (ADR-DOE-API-001 R<number>), or, for a row with no rule, one English sentence giving the reason it is allowed. A row without a basis, a basis containing a record id or an issue number,
+   and a row with the same key as the violations table are red. Only groups whose shape the inventory checks (ALLOWED_GROUPS) can be used. In the group "Allowed — program helper"
+   (ADR-DOE-API-001 R18 — functions the rule allows name by name that only emit effects and return a program), only names whose inventory shape is a program helper can be placed:
+   placing a function that installs a handler, answers an effect, or does not return a program is red. In the group "Allowed — Hy macro"
+   (R14, R15, R31 — a module that shows macros sits at a public boundary), only rows whose inventory shape is a Hy macro, and rows of public submodules that show only Hy
+   macros (macro modules), can be placed: placing a non-macro name or a submodule that also shows names outside macros is red.
+   In the group "Allowed — CLI command" (R7, R31), only console script and Rust executable rows whose name an ADR rule mentions can be placed
+   (ADR_COMMANDS — it also checks that the rule text mentions the name): placing a command not in an ADR is red. In the group "Allowed — pytest plugin
+   registration" (R10, R33), only pytest11 entry point rows and names shown by the module that entry point loads can be placed, and in the group "Allowed —
+   startup entry" (R36), only names that a .pth shipped by the package calls at every startup can be placed. In the group "Allowed — conversion
+   function" (R35 — functions that convert an effect's answer to another scale), only names whose inventory shape is a conversion function can be placed: a function that creates an effect, handler, or
+   program inside, reads a clock, the environment, or a file, or is a generator function is red. In the group "Allowed — exception type" (R2 — exception types that effects and handlers
+   throw), only names whose inventory shape is an exception class (a child of BaseException) defined by that package can be placed: a class that is not an exception, a function, or a name that re-exports an exception of another package or the standard library is red. In the group "Allowed — effect value type" (R2), only
+   classes and type aliases that appear in the annotations of the fields of effect classes shown by the same package (including type arguments, following the fields of value types the package defines — the inventory's value_types) can be placed:
+   placing a class that appears in no effect's fields is red. In the group "Allowed — effect answer type" (R2), only the package's
+   effect answer types can be placed (the T of EffectBase[T] or the type in a defeffect :answer, a bus event that an effect waiting on a body-named type declared in its own __doeff_bus_events__, and
+   types in the fields of an answer class, child classes, and type aliases that list only answer classes — the inventory's answer_types): an answer written only in a docstring
+   and a class that appears in no effect's answer are red. In the group "Allowed — program-shape builder and type" (R37 — agent!, loop and others that
+   write a doeff-conductor workflow, and AgentSpec and others), only builders (functions of the conversion shape that return a value of a class of the same package) whose returned class is a name the package shows,
+   and classes that the group's builders return, can be placed: a function that emits or creates an effect, reads I/O, returns a class that is not shown, or returns outside value types, and a class that no builder of the group returns, are red. In the group "Allowed — handler setting type" (R2), only
+   types defined by that package can be placed, and only classes and type aliases that appear in the annotations of the arguments of handlers, handler classes, and factories shown by the same package (including type arguments, following the fields of
+   setting types the package defines [including Protocol properties] — the inventory's settings): a class that appears in no argument, a function, or a name that re-exports a standard library type is red.
+7. A package in scope of the rule that has a Rust extension (maturin) is red if the inventory cannot be read by import — a literal reading does not count the names the entry point shows from the extension
+   (it had not counted Indexer and SymbolInfo of doeff-indexer), so install it into the environment and read it.
+8. A part inside doeff (the inventory tool's DOEFF_PARTS — doeff-vm) is not counted by the inventory, like the doeff root package, and is not listed in the tables
+   (ADR-DOE-API-001 R11). As its premise, a file outside doeff (a package under packages/ that is not a part, examples, docs/adr)
+   that imports a part's import root is red (naming the file, line, and module). Failure cases: in a throwaway repo, a plain import, from, a lower module, a Hy import and require,
+   and a name string passed to importlib and pytest.importorskip are red, while the forms that read from the doeff root and doeff._vm, and the imports of the part itself, the doeff root package, and
+   doeff's checks (tests/), are green.
+9. Do not place under the root a child with the same name as a name the entry point (the import root's __init__) shows (including forwarding modules) (ADR-DOE-API-001 R34
+   — an old-path import bound the parent's attribute to a module, hid the entry point's function, and the records service fell over at every startup). Checked two ways per package: a literal check (the names the entry file binds against the child names), and
+   a check that, in a fresh process, after importing the root and every public module (including old paths) one by one, the entry point's names do not turn into modules. Failure case: where the entry point of a throwaway package
+   shows the function serve (lazy) and tool (immediate), placing a forwarding module of the same name makes both red, and removing the shell makes them green.
+   The same is applied to the entry points of packages under the root (including _ packages) (the old path doeff_agents.effects.agent of a moved package imported
+   and overwrote the function agent of doeff_agents._effects with a module). Failure case: the entry point of the package _inner under the root binds the function tool from a child of the same name, tool, and the shell answers the old path inner of the moved package, making both red;
+   moving the child to _tool makes them green.
 """
 
 from __future__ import annotations
@@ -92,73 +86,73 @@ import pytest
 ROOT = Path(__file__).resolve().parents[1]
 TABLE = ROOT / "tests" / "data" / "public_api_known_violations.json"
 ALLOWED = ROOT / "tests" / "data" / "public_api_allowed.json"
-#: 目録の種類のうち、決まりの外の物(effect と handler の外)。
+#: The inventory kinds that are outside the rule (outside effects and handlers).
 OUTSIDE_KINDS = frozenset({"other", "unclassified"})
-#: package の範囲。範囲の外の package は名を突き合わせない(決めが要る)。
+#: Scope of a package. Names of a package out of scope are not matched (it needs a basis).
 SCOPES = ("in scope", "awaiting scope answer", "out of scope")
-#: 違反の表の名の組の名の頭(分け — 直しの向きか境界の種類)。許した物は許した物の表に置く。
+#: Head of the group names in the violations table (the division — direction of the fix or kind of boundary). Allowed things go in the allowed table.
 GROUP_HEADS = ("Violation — ", "Boundary — ", "Unsorted — ")
-#: 許した物の組の名の頭(許した物の表の欄「組」)。
-ALLOWED_HEAD = "許した物 — "
-#: 決まりが名ごとに許した program の helper の組(ADR-DOE-API-001 R18)— 目録の形が program の helper の名だけを置ける。
+#: Head of the group names of allowed things (the "group" field of the allowed table).
+ALLOWED_HEAD = "Allowed — "
+#: Group of program helpers the rule allows name by name (ADR-DOE-API-001 R18) — only names whose inventory shape is a program helper can be placed.
 HELPER_GROUP = "Allowed — program helper"
-#: 決まりが許した Hy の macro の組(ADR-DOE-API-001 R14・R15・R31)— macro の名と macro の module の行だけを置ける。
+#: Group of Hy macros the rule allows (ADR-DOE-API-001 R14, R15, R31) — only macro names and rows of macro modules can be placed.
 MACRO_GROUP = "Allowed — Hy macro"
-#: 決まりが許した CLI コマンドの組(ADR-DOE-API-001 R7・R31)— console script と Rust の実行 file の行だけを置ける。
+#: Group of CLI commands the rule allows (ADR-DOE-API-001 R7, R31) — only console script and Rust executable rows can be placed.
 COMMAND_GROUP = "Allowed — CLI command"
-#: 決まりが名ごとに許した換算の関数の組(ADR-DOE-API-001 R35)— 目録の形が換算の関数の名だけを置ける。
+#: Group of conversion functions the rule allows name by name (ADR-DOE-API-001 R35) — only names whose inventory shape is a conversion function can be placed.
 CONVERSION_GROUP = "Allowed — conversion function"
-#: 決まりが許した ADR を書く関数の組(ADR-DOE-API-001 R14 — docs/adr の file が import して呼ぶ fact・counterexample・interpretation)。
+#: Group of ADR-writing functions the rule allows (ADR-DOE-API-001 R14 — fact, counterexample, interpretation that docs/adr files import and call).
 ADR_WRITER_GROUP = "Allowed — ADR-writing function"
-#: 決まりが許した effect の答えの型の組(ADR-DOE-API-001 R2 — 呼び手が match で読み分ける effect の結果の型)。
+#: Group of effect answer types the rule allows (ADR-DOE-API-001 R2 — result types of effects that callers tell apart with match).
 ANSWER_TYPE_GROUP = "Allowed — effect answer type"
-#: 決まりが許した例外の型の組(ADR-DOE-API-001 R2 — effect と handler が投げ、呼び手が受ける例外の class)。
+#: Group of exception types the rule allows (ADR-DOE-API-001 R2 — exception classes that effects and handlers throw and callers catch).
 EXCEPTION_GROUP = "Allowed — exception type"
-#: 決まりが許した effect の値の型の組(ADR-DOE-API-001 R2)— 同じ package が見せる effect の class の欄の型だけを置ける。
+#: Group of effect value types the rule allows (ADR-DOE-API-001 R2) — only types in the fields of effect classes shown by the same package can be placed.
 VALUE_TYPE_GROUP = "Allowed — effect value type"
-#: 決まりが許した pytest の plugin の登録の組(ADR-DOE-API-001 R10・R33)— pytest11 の entry point の行と、その entry point が
-#: 読む module(plugin の module)が出す名(使い手の検が書く宣言)だけを置ける。
+#: Group of pytest plugin registrations the rule allows (ADR-DOE-API-001 R10, R33) — only pytest11 entry point rows and the names shown by the module that entry point
+#: loads (the plugin module) (declarations written by users' checks) can be placed.
 PLUGIN_GROUP = "Allowed — pytest plugin registration"
-#: 決まりが許した起動の口の組(ADR-DOE-API-001 R36)— package が配る .pth が venv の Python の起動ごとに呼ぶ名だけを置ける。
+#: Group of startup entries the rule allows (ADR-DOE-API-001 R36) — only names that a .pth shipped by the package calls at every startup of the venv's Python can be placed.
 STARTUP_GROUP = "Allowed — startup entry"
-#: 決まりが許した、program の形を表す値を組む作り手と、その返す値の型の組(ADR-DOE-API-001 R37 — doeff-conductor の
-#: workflow の言葉)。目録の形が作り手の名と、組の作り手が返す class だけを置ける。
+#: Group of builders the rule allows that assemble values representing the shape of a program, and the types of the values they return (ADR-DOE-API-001 R37 — the
+#: workflow vocabulary of doeff-conductor). Only builder names whose inventory shape is a builder, and classes that the group's builders return, can be placed.
 BUILDER_GROUP = "Allowed — program-shape builder and type"
-#: 決まりが許した handler の設定の型の組(ADR-DOE-API-001 R2)— 同じ package が見せる handler と工場の引数の型だけを置ける。
+#: Group of handler setting types the rule allows (ADR-DOE-API-001 R2) — only types of the arguments of handlers and factories shown by the same package can be placed.
 SETTING_GROUP = "Allowed — handler setting type"
-#: 目録の pytest11 の entry point の行の形(tools/public_api_inventory.py の _metadata_rows)。
+#: Shape of the inventory row for a pytest11 entry point (_metadata_rows in tools/public_api_inventory.py).
 PYTEST_PLUGIN_FORM = "entry point(pytest11)"
-#: 許した物の組ごとの、置ける物(目録で確かめる形 — 形の合わない名を名指す文に出す)。確かめの無い組は置けない。
+#: What each allowed group can hold (the shape the inventory checks — used in the sentence that names a name whose shape does not fit). A group with no check cannot be used.
 ALLOWED_SHAPES: dict[str, str] = {
-    HELPER_GROUP: "program を返し、中で handler を被せず effect に答えない関数だけを置ける(ADR-DOE-API-001 R18)",
-    MACRO_GROUP: "Hy の macro と、Hy の macro だけを出す公開の submodule(macro の module)だけを置ける"
-    "(ADR-DOE-API-001 R14・R15・R31)",
-    COMMAND_GROUP: "ADR-DOE-API-001 の条が名を挙げて残すと決めた console script と Rust の実行 file だけを置ける"
-    "(ADR_COMMANDS — R7・R23・R24・R27・R28・R31・R33)",
-    CONVERSION_GROUP: "値を受けて値を返し、中で effect も handler も program も作らず、時計・環境・file・process・乱数を"
-    "読まない関数だけを置ける(ADR-DOE-API-001 R35)",
-    ADR_WRITER_GROUP: "Hy の macro の module が出す関数(関数か換算の関数)だけを置ける(ADR は defadr の本文で import して呼ぶ — ADR-DOE-API-001 R14)",
-    ANSWER_TYPE_GROUP: "目録が package の effect の答えの型と読む class と型の別名だけを置ける(EffectBase[T] の T か defeffect の"
-    " :answer に出る型・本体が名指した型で答える待ちの effect が __doeff_bus_events__ に宣言した bus の event と、答えの class の"
-    "欄の型・子の class — effect の答えの型 — ADR-DOE-API-001 R2)。答えを docstring だけに書いた effect の答えは数えない — "
-    "effect に答えの型を書く",
-    EXCEPTION_GROUP: "その package が定義した BaseException の子の class だけを置ける(effect と handler が投げる例外の型 — "
-    "ADR-DOE-API-001 R2)。別の package か標準の library の例外を出し直した名は置けない",
-    VALUE_TYPE_GROUP: "同じ package が見せる effect の class の欄の注釈(型引数を含む・package が定義した値の型の欄を辿る)に"
-    "出る class と型の別名だけを置ける(effect の値の型 — ADR-DOE-API-001 R2)",
-    PLUGIN_GROUP: "pytest11 の entry point の行と、その entry point が読む module(plugin の module)が出す名だけを置ける"
-    "(ADR-DOE-API-001 R10・R33)",
-    STARTUP_GROUP: "package が配る .pth が venv の Python の起動ごとに呼ぶ名だけを置ける(ADR-DOE-API-001 R36)",
-    BUILDER_GROUP: "その package が見せる class の値を返し、中で effect も handler も program も作らず、時計・環境・file・"
-    "process・乱数を読まない関数(作り手)と、組の作り手が返す class だけを置ける(program の形を表す値の作り手とその型 — "
+    HELPER_GROUP: "Only functions that return a program and, inside, neither install a handler nor answer an effect can be placed (ADR-DOE-API-001 R18)",
+    MACRO_GROUP: "Only Hy macros and public submodules that show nothing but Hy macros (macro modules) can be placed"
+    "(ADR-DOE-API-001 R14, R15, R31)",
+    COMMAND_GROUP: "Only console scripts and Rust executables that an ADR-DOE-API-001 rule names and decides to keep can be placed"
+    "(ADR_COMMANDS — R7, R23, R24, R27, R28, R31, R33)",
+    CONVERSION_GROUP: "Only functions that take a value and return a value, create no effect, handler, or program inside, and do not read the clock, environment, files, processes, or"
+    " randomness can be placed (ADR-DOE-API-001 R35)",
+    ADR_WRITER_GROUP: "Only functions (plain or conversion functions) shown by a Hy macro module can be placed (an ADR imports and calls them in a defadr body — ADR-DOE-API-001 R14)",
+    ANSWER_TYPE_GROUP: "Only classes and type aliases that the inventory reads as a package's effect answer type can be placed (the T of EffectBase[T] or the type in a defeffect"
+    " :answer, a bus event that an effect waiting on a body-named type declared in __doeff_bus_events__, and types in the "
+    "fields of an answer class and child classes — effect answer types — ADR-DOE-API-001 R2). The answer of an effect whose answer is written only in a docstring is not counted — "
+    "write the answer type on the effect",
+    EXCEPTION_GROUP: "Only classes that are children of BaseException defined by that package can be placed (exception types that effects and handlers throw — "
+    "ADR-DOE-API-001 R2). A name that re-exports an exception of another package or the standard library cannot be placed",
+    VALUE_TYPE_GROUP: "Only classes and type aliases that appear in the annotations of the fields of effect classes shown by the same package (including type arguments, following the fields of value types the package defines)"
+    " can be placed (effect value types — ADR-DOE-API-001 R2)",
+    PLUGIN_GROUP: "Only pytest11 entry point rows and names shown by the module that entry point loads (the plugin module) can be placed"
+    "(ADR-DOE-API-001 R10, R33)",
+    STARTUP_GROUP: "Only names that a .pth shipped by the package calls at every startup of the venv's Python can be placed (ADR-DOE-API-001 R36)",
+    BUILDER_GROUP: "Only functions that return a value of a class shown by that package and, inside, create no effect, handler, or program and do not read the clock, environment, files,"
+    " processes, or randomness (builders), and the classes that the group's builders return, can be placed (builders of values representing the shape of a program, and their types — "
     "ADR-DOE-API-001 R37)",
-    SETTING_GROUP: "その package が定義した class と型の別名のうち、同じ package が見せる handler・handler の class・工場の"
-    "引数の注釈(型引数を含む・package が定義した設定の型の欄を辿る)に出る物だけを置ける(handler の設定の型 — "
-    "ADR-DOE-API-001 R2)。どの引数にも出ない型と、標準の library か別の package の型を出し直した名は置けない",
+    SETTING_GROUP: "Only classes and type aliases defined by that package that appear in the annotations of the arguments of handlers, handler classes, and factories shown by the same"
+    " package (including type arguments, following the fields of setting types the package defines) can be placed (handler setting types — "
+    "ADR-DOE-API-001 R2). A type that appears in no argument, and a name that re-exports a standard library type or a type of another package, cannot be placed",
 }
-#: ADR-DOE-API-001 の条が名を挙げて残すと決めた CLI コマンド(package の dir から、console script か Rust の実行 file の名から
-#: 名を挙げた条へ)。組「Allowed — CLI command」はここに在る名だけを置け、条の文がその名を挙げる事を
-#: test_every_command_the_guard_allows_is_named_by_its_rule が確かめる — ADR に無い命令を足すと赤。
+#: CLI commands that an ADR-DOE-API-001 rule names and decides to keep (from the package dir, from the name of a console script or Rust executable to
+#: the rule that names it). The group "Allowed — CLI command" can hold only the names here, and
+#: test_every_command_the_guard_allows_is_named_by_its_rule checks that the rule text names each — adding a command not in an ADR is red.
 ADR_COMMANDS: dict[str, dict[str, str]] = {
     "doeff-adr": {"doeff-adr": "R33"},
     "doeff-agentic": {"doeff-agentic": "R28", "doeff-agentic-tui": "R7"},
@@ -171,28 +165,28 @@ ADR_COMMANDS: dict[str, dict[str, str]] = {
     "doeff-linter": {"doeff-linter": "R23"},
 }
 ADR_FILE = ROOT / "docs" / "adr" / "defadr_doeff_api_001_subpackages_show_effects_and_handlers.hy"
-#: 許した物の組の全部(組ごとに、目録で形を確かめる — fits_allowed_group)。
+#: All the allowed groups (the inventory checks the shape per group — fits_allowed_group).
 ALLOWED_GROUPS = tuple(ALLOWED_SHAPES)
-#: 決めの 1 つ目の形: その行を許す ADR の条。
+#: First form of a basis: the ADR rule that allows the row.
 DECISION_RULE = re.compile(r"ADR-DOE-API-001 R[0-9]+")
-#: 決めに書かない印: 記録の id(card・依頼・発言・会話・連絡の名)と issue の番号。
+#: Marks not to write in a basis: record ids (names of cards, requests, messages, conversations, and contacts) and issue numbers.
 PRIVATE_MARK = re.compile(
     r"(?<![A-Za-z0-9-])(?:(?:ki|ms)-[0-9a-f]{12}|(?:lt|ci|c|m|idea)-[0-9A-HJKMNP-TV-Z]{26})(?![A-Za-z0-9])|#[0-9]+"
 )
-#: 使い捨ての表の決め。
+#: Basis of a throwaway table.
 FIXTURE_DECISION = "ADR-DOE-API-001 R18"
-#: 1 package を子の process で読む秒の上限(load 約 55 の下で最も重い doeff-cluster が 9 秒)。根の conftest が混みの倍率を
-#: 掛けるのは pytest の上限(timeout の印)だけなので、本物の package を読む検は子へ渡す秒にも deadline_scale_factor を掛ける —
-#: 掛けないと、Hy の compile の cache が冷えた回(doeff-cluster が 38 秒・温まると 4 秒)に混みの倍率 5.4 の下で 100 秒を越えた。
+#: Upper bound in seconds for reading one package in a child process (the heaviest, doeff-cluster, takes 9 seconds under a load of about 55). The root conftest multiplies
+#: only pytest's limit (the timeout marker) by the load factor, so checks that read a real package also multiply the seconds passed to the child by deadline_scale_factor —
+#: without it, a run with a cold Hy compile cache (doeff-cluster 38 seconds; 4 seconds once warm) exceeded 100 seconds under a load factor of 5.4.
 _PROBE_SECONDS = 100
 
 Key = tuple[str, str]
 
 
 class AddedName(TypedDict):
-    """「足した名」の 1 行: 表を足した後に足すしか無かった外れ(訳つき)。
+    """One "added names" row: a violation that could only be added after the table was added (with a reason).
 
-    許した物(新しく見せる program の helper など)はここに書かず、許した物の表に決めつきで足す。
+    Allowed things (a newly shown program helper, for example) are not written here; they are added to the allowed table with a basis.
     """
 
     package: str
@@ -201,12 +195,12 @@ class AddedName(TypedDict):
     reason: str
 
 
-#: 「足した名」の 1 行の欄。
+#: Fields of one "added names" row.
 ADDED_FIELDS = frozenset({"package", "module", "name", "reason"})
 
 
 class PackageEntry(TypedDict):
-    """1 package の項: 範囲と、組の名(分け — 直しの向きか境界の種類)から module から名の列へ。範囲の外は決めを持つ。"""
+    """One package's entry: the scope, and the group name (the division — direction of the fix or kind of boundary) to module to list of names. A package out of scope has a basis."""
 
     scope: str
     names: dict[str, dict[str, list[str]]]
@@ -214,7 +208,7 @@ class PackageEntry(TypedDict):
 
 
 class KnownTable(TypedDict):
-    """既知の表(違反の表)の全体(説明は読む人のための欄)。"""
+    """The whole known table (the violations table) (the description is a field for human readers)."""
 
     description: NotRequired[list[str]]
     packages: dict[str, PackageEntry]
@@ -222,7 +216,7 @@ class KnownTable(TypedDict):
 
 
 class AllowedName(TypedDict):
-    """許した物の表の 1 行: 決まりが名ごとに許した名(組 = 目録で形を確かめる許す組・決め = その行を許す ADR の条か許す訳の 1 文)。"""
+    """One row of the allowed table: a name the rule allows name by name (group = the allowed group whose shape the inventory checks; basis = the ADR rule that allows the row, or one sentence giving the reason)."""
 
     package: str
     module: str
@@ -231,23 +225,23 @@ class AllowedName(TypedDict):
     basis: str
 
 
-#: 許した物の表の 1 行の欄。
+#: Fields of one row of the allowed table.
 ALLOWED_FIELDS = frozenset({"package", "module", "name", "group", "basis"})
 
 
 class AllowedTable(TypedDict):
-    """許した物の表の全体(説明は読む人のための欄)。行は (package, module, name) の順に並べ、重ねない。"""
+    """The whole allowed table (the description is a field for human readers). Rows are sorted by (package, module, name) and not duplicated."""
 
     description: NotRequired[list[str]]
     allowed: list[AllowedName]
 
 
-#: 何も許していない許した物の表(使い捨ての package の照合の既定)。
+#: An allowed table that allows nothing (the default for matching throwaway packages).
 NOTHING_ALLOWED: AllowedTable = {"allowed": []}
 
 
 def _load() -> ModuleType:
-    """tools/ の目録の道具を読む(tools/ は package ではない — 道具の検と同じ名で 1 つを共にする)。"""
+    """Load the inventory tool in tools/ (tools/ is not a package — share one with the tool's own check under the same name)."""
     loaded = sys.modules.get("public_api_inventory")
     if loaded is not None:
         return loaded
@@ -263,7 +257,7 @@ def _load() -> ModuleType:
 
 
 tool = _load()
-#: 公開の submodule の行の、名を出す module の欄(名は submodule の import の名)。
+#: The module column of a public submodule's row (the name is the submodule's import name).
 SUBMODULE: str = tool.SUBMODULE
 
 
@@ -276,7 +270,7 @@ def _read_allowed(path: Path = ALLOWED) -> AllowedTable:
 
 
 def listed_names(table: KnownTable) -> set[tuple[str, str, str]]:
-    """表の「名」の組に在る (package の dir, module, 名) の全部。"""
+    """Every (package dir, module, name) in the "names" groups of the table."""
     return {
         (package_dir, module, name)
         for package_dir, entry in table["packages"].items()
@@ -287,7 +281,7 @@ def listed_names(table: KnownTable) -> set[tuple[str, str, str]]:
 
 
 def known_names(table: KnownTable, package_dir: str) -> set[Key]:
-    """1 package の既知の外れ: 「名」の組の名と「足した名」の名。"""
+    """One package's known violations: the names in the "names" groups and the names in "added names"."""
     listed = {
         (module, name)
         for modules in table["packages"][package_dir]["names"].values()
@@ -301,14 +295,14 @@ def known_names(table: KnownTable, package_dir: str) -> set[Key]:
 
 
 def allowed_names(allowed: AllowedTable, package_dir: str) -> set[Key]:
-    """1 package の、許した物の表に置いた (module, 名) の全部。"""
+    """Every (module, name) one package placed in the allowed table."""
     return {
         (row["module"], row["name"]) for row in allowed["allowed"] if row["package"] == package_dir
     }
 
 
 def allowed_groups(allowed: AllowedTable, package_dir: str) -> dict[Key, str]:
-    """1 package の、許した物の表に置いた (module, 名) から組へ(目録で形を確かめる組の行だけ)。"""
+    """From (module, name) to group for one package's rows in the allowed table (only rows of groups whose shape the inventory checks)."""
     return {
         (row["module"], row["name"]): row["group"]
         for row in allowed["allowed"]
@@ -317,8 +311,8 @@ def allowed_groups(allowed: AllowedTable, package_dir: str) -> dict[Key, str]:
 
 
 def _is_macro_module(package: Mapping[str, Any], module: str, writers: frozenset[Key] = frozenset()) -> bool:
-    """module の目録の名が 1 つ以上在り、全部が Hy の macro か、許した物の表で ADR を書く関数に置いた名(macro の module
-    — ADR-DOE-API-001 R14・R15・R31)。"""
+    """Whether the module has at least one name in the inventory and every one is a Hy macro or a name placed in the allowed table as an ADR-writing function (a macro module
+    — ADR-DOE-API-001 R14, R15, R31)."""
     rows = [row for row in package["exports"] if row["module"] == module]
     return any(row["form"] == tool.MACRO_FORM for row in rows) and all(
         row["form"] == tool.MACRO_FORM or (module, row["name"]) in writers for row in rows
@@ -326,8 +320,8 @@ def _is_macro_module(package: Mapping[str, Any], module: str, writers: frozenset
 
 
 def defined_by(row: Mapping[str, Any], package: Mapping[str, Any]) -> bool:
-    """目録の行の名を、その package が定義した: 定義の場所が package の dir の下の file か、package の import の根の下の
-    module(repo の外の使い捨ての package と Rust の拡張は module の名で書かれる — tools/public_api_inventory.py の _place_text)。"""
+    """Whether the package defined the inventory row's name: the definition place is a file under the package's dir, or a module under the package's import root
+    (throwaway packages outside the repo and Rust extensions are written by module name — _place_text in tools/public_api_inventory.py)."""
     place = row["defined_at"]
     return place.startswith(f"packages/{package['dir']}/") or (
         place.partition("(")[0].split(".")[0] in package["import_roots"]
@@ -336,31 +330,31 @@ def defined_by(row: Mapping[str, Any], package: Mapping[str, Any]) -> bool:
 
 @dataclass(frozen=True)
 class GroupFacts:
-    """組の形の確かめに要る、目録の行の外の事実(package 1 つの分)。"""
+    """Facts outside the inventory rows that checking a group's shape needs (for one package)."""
 
-    #: 許した物の表で組「ADR を書く関数」に置いた (module, 名)。
+    #: (module, name) placed in the group "ADR-writing function" in the allowed table.
     writers: frozenset[Key] = frozenset()
-    #: ADR-DOE-API-001 の条が名を挙げて残すと決めた CLI コマンドの名(ADR_COMMANDS のその package の分)。
+    #: Names of CLI commands that an ADR-DOE-API-001 rule names and decides to keep (the part of ADR_COMMANDS for that package).
     commands: frozenset[str] = frozenset()
-    #: pytest11 の entry point が読む module(tools/public_api_inventory.py の plugin_modules)。
+    #: Modules that pytest11 entry points load (plugin_modules in tools/public_api_inventory.py).
     plugin_modules: frozenset[str] = frozenset()
-    #: package が配る .pth が起動ごとに呼ぶ (module, 名)(tools/public_api_inventory.py の startup_calls)。
+    #: (module, name) that the .pth shipped by the package calls at every startup (startup_calls in tools/public_api_inventory.py).
     startup_calls: frozenset[Key] = frozenset()
-    #: 許した物の表で組「program の形を組む作り手と型」に置いた作り手が返す class(目録の道具の built_class の形)。
+    #: Classes returned by builders placed in the group "program-shape builder and type" in the allowed table (the shape of the inventory tool's built_class).
     built: frozenset[str] = frozenset()
 
 
-#: 目録の行の外の事実を何も持たない組の確かめ(既定)。
+#: Group check with no facts outside the inventory rows (the default).
 NO_FACTS = GroupFacts()
 
 
 def _is_plain_class(row: Mapping[str, Any]) -> bool:
-    """目録の行が、effect でも handler でも例外でもない素の class(作り手が値を返せる型)。"""
+    """Whether the inventory row is a plain class that is neither an effect, a handler, nor an exception (a type a builder can return a value of)."""
     return row["kind"] == "other" and row["form"] == "class"
 
 
 def shown_classes(package: Mapping[str, Any]) -> frozenset[str]:
-    """package が見せる素の class の全部(目録の道具の built_class の形 — 名と定義の場所)。"""
+    """All the plain classes the package shows (the shape of the inventory tool's built_class — name and definition place)."""
     return frozenset(
         tool.built_class(row["name"], row["defined_at"])
         for row in package["exports"]
@@ -371,8 +365,8 @@ def shown_classes(package: Mapping[str, Any]) -> frozenset[str]:
 def fits_builder_group(
     row: Mapping[str, Any], package: Mapping[str, Any], built: frozenset[str]
 ) -> bool:
-    """目録の行 1 つが組「program の形を組む作り手と型」の形に合う(ADR-DOE-API-001 R37): 形が作り手で、返す class を package が
-    見せるか、素の class で、組に置いた作り手のどれかが返す(built)。"""
+    """Whether one inventory row fits the shape of the group "program-shape builder and type" (ADR-DOE-API-001 R37): the shape is a builder and the package
+    shows the class it returns, or it is a plain class that one of the builders placed in the group returns (built)."""
     if row["form"] == tool.BUILDER:
         return row.get("returns") in shown_classes(package)
     return _is_plain_class(row) and tool.built_class(row["name"], row["defined_at"]) in built
@@ -384,7 +378,7 @@ def fits_allowed_group(
     package: Mapping[str, Any],
     facts: GroupFacts = NO_FACTS,
 ) -> bool:
-    """目録の行 1 つが許した物の組の形に合う(組ごとの形は ALLOWED_SHAPES の文)。facts = 目録の行の外の事実(GroupFacts)。"""
+    """Whether one inventory row fits the shape of an allowed group (the shape per group is the sentence in ALLOWED_SHAPES). facts = facts outside the inventory rows (GroupFacts)."""
     writers = facts.writers
     shapes: dict[str, Callable[[], bool]] = {
         HELPER_GROUP: lambda: row["form"] == tool.PROGRAM_HELPER,
@@ -425,7 +419,7 @@ def fits_allowed_group(
 
 
 def outside_rows(package: Mapping[str, Any]) -> dict[Key, Mapping[str, Any]]:
-    """目録の 1 package の行のうち、effect と handler の外の物((module, 名) から行へ)。"""
+    """The rows of one inventory package that are outside effects and handlers (from (module, name) to row)."""
     return {
         (row["module"], row["name"]): row
         for row in package["exports"]
@@ -436,10 +430,10 @@ def outside_rows(package: Mapping[str, Any]) -> dict[Key, Mapping[str, Any]]:
 def moved_to_root(
     roots: Iterable[str], found: Mapping[Key, Mapping[str, Any]], known: set[Key]
 ) -> set[tuple[Key, Key]]:
-    """名を submodule から入口へ移した行: 表に無い目録の (根, 名) と、同じ行と読む表の (根の下の submodule, 名) の組。
+    """Rows whose name moved from a submodule to the entry point: pairs of an inventory (root, name) not in the table and the table's (submodule under the root, name) read as the same row.
 
-    submodule がまだ同じ名を出していれば(移し替えの module が古い口を開けている間)、定義の場所が同じ時だけ同じ行と読む。
-    もう出していなければ(古い口を閉じた後)、比べる定義が無いので名と根だけで読む。
+    If the submodule still shows the same name (while the forwarding module keeps the old door open), they are read as the same row only when the definition place is the same.
+    If it no longer shows it (after the old door is closed), there is no definition to compare, so they are read by name and root alone.
     """
     return {
         ((root, name), (module, name))
@@ -456,17 +450,17 @@ def moved_to_root(
 
 
 def _key_text(module: str, name: str) -> str:
-    """表の鍵 1 つを人の読む形に(公開の submodule の行は submodule の名だけ)。"""
-    return f"{name}(公開の submodule)" if module == SUBMODULE else f"{module}.{name}"
+    """One table key in a human-readable form (a public submodule's row is just the submodule's name)."""
+    return f"{name}(public submodule)" if module == SUBMODULE else f"{module}.{name}"
 
 
 def _new_text(directory: str, new: list[Key], found: Mapping[Key, Mapping[str, Any]]) -> str:
     rows = [found[key] for key in new]
     return (
-        f"{directory}: 既知の表と許した物の表に無い、effect と handler の外の公開名が {len(new)} 個 — effect か handler にするか、"
-        "名を _ で始めるか _ で始まる module へ移す(公開の submodule は名に _ を付けて隠し、見せる名は入口から出す)。"
-        f"決まりが許した名なら許した物の表 {ALLOWED.relative_to(ROOT)} に組と決めつきで、どうしても見せる外れなら"
-        "既知の表の「足した名」に訳つきで書く:\n"
+        f"{directory}: {len(new)} public name(s) outside effects and handlers are in neither the known table nor the allowed table — make them effects or handlers,"
+        " start the name with _ or move it to a module that starts with _ (hide a public submodule by prefixing its name with _, and show names from the entry point). "
+        f"If the rule allows the name, add it to the allowed table {ALLOWED.relative_to(ROOT)} with a group and a basis; if it is a violation that must be shown, "
+        "write it in \"added names\" of the known table with a reason:\n"
         + "\n".join(
             f"  {_key_text(row['module'], row['name'])}({row['form']}・{row['kind']}・{row['defined_at']})"
             for row in rows
@@ -476,22 +470,22 @@ def _new_text(directory: str, new: list[Key], found: Mapping[Key, Mapping[str, A
 
 def _stale_text(directory: str, stale: list[Key]) -> str:
     return (
-        f"{directory}: 既知の表に在るのに目録に無い名が {len(stale)} 個 — 直した名と隠した submodule は表から消す"
-        "(表は減るだけ):\n" + "\n".join(f"  {_key_text(module, name)}" for module, name in stale)
+        f"{directory}: {len(stale)} name(s) are in the known table but not in the inventory — remove fixed names and hidden submodules from the table"
+        " (the table only shrinks):\n" + "\n".join(f"  {_key_text(module, name)}" for module, name in stale)
     )
 
 
 def _stale_allowed_text(directory: str, stale: list[Key]) -> str:
     return (
-        f"{directory}: 許した物の表に在るのに目録に無い名が {len(stale)} 個 — 消した名と隠した名は許した物の表から消す:\n"
+        f"{directory}: {len(stale)} name(s) are in the allowed table but not in the inventory — remove deleted and hidden names from the allowed table:\n"
         + "\n".join(f"  {_key_text(module, name)}" for module, name in stale)
     )
 
 
 def _misshapen_text(directory: str, group: str, rows: list[Mapping[str, Any]]) -> str:
     return (
-        f"{directory}: 許した物の表の組「{group}」に、目録の形が組に合わない名が {len(rows)} 個 — "
-        f"{ALLOWED_SHAPES[group]}。直すか、許した物の表から外して既知の表の外れか境界の組へ戻す:\n"
+        f"{directory}: {len(rows)} name(s) in the group \"{group}\" of the allowed table have an inventory shape that does not fit the group — "
+        f"{ALLOWED_SHAPES[group]}. Fix them, or take them out of the allowed table and return them to a violation or boundary group of the known table:\n"
         + "\n".join(
             f"  {_key_text(row['module'], row['name'])}({row['form']}・{row['reason']}・{row['defined_at']})"
             for row in rows
@@ -502,10 +496,10 @@ def _misshapen_text(directory: str, group: str, rows: list[Mapping[str, Any]]) -
 def unread_native_modules(
     package: Mapping[str, Any], entry: PackageEntry, repo: Path
 ) -> list[Mapping[str, Any]]:
-    """決まりの範囲の、Rust の拡張を持つ package の module のうち、目録が import できずに字面で読んだ物。
+    """Modules of a package in scope of the rule that has a Rust extension, which the inventory could not import and read literally.
 
-    字面の読みは source に定義の在る名しか数えないので、入口が拡張から出す名(前の doeff-indexer の Indexer・SymbolInfo)を
-    数えない。決まりの範囲の名は全部を数えるので、そういう package は環境に入れて import で読む。
+    A literal reading counts only names defined in source, so it does not count the names the entry point shows from the extension (formerly Indexer and SymbolInfo of doeff-indexer).
+    Every name in scope is counted, so such a package is installed into the environment and read by import.
     """
     if (
         entry["scope"] != "in scope"
@@ -517,8 +511,8 @@ def unread_native_modules(
 
 def _unread_native_text(directory: str, modules: list[Mapping[str, Any]]) -> str:
     return (
-        f"{directory}: Rust の拡張を持つ package の module を目録が import で読めず、字面で読んだ — 字面では入口が拡張から"
-        "出す名を数えられない。root の pyproject の dev の組に package を入れ、make sync の環境で読む:\n"
+        f"{directory}: the inventory could not import the modules of a package with a Rust extension and read them literally — a literal reading cannot count the names the entry point shows from"
+        " the extension. Put the package in the dev group of the root pyproject and read it in the make sync environment:\n"
         + "\n".join(f"  {module['name']}: {module['error']}" for module in modules)
     )
 
@@ -526,8 +520,8 @@ def _unread_native_text(directory: str, modules: list[Mapping[str, Any]]) -> str
 def _diff_against_tables(
     package: Mapping[str, Any], table: KnownTable, allowed: AllowedTable
 ) -> tuple[dict[Key, Mapping[str, Any]], set[Key], set[Key], set[tuple[Key, Key]], list[Key]]:
-    """目録の 1 package の外れと、2 つの表の名・移した行・どちらの表にも無い新しい外れを返す(check_package と
-    tools/public_api_blame.py が同じ照合を使う 1 点)。"""
+    """Return one inventory package's violations, the names in the two tables, the moved rows, and the new violations in neither table (the one point that check_package and
+    tools/public_api_blame.py share for the same matching)."""
     directory = package["dir"]
     found = outside_rows(package)
     known = known_names(table, directory)
@@ -538,7 +532,7 @@ def _diff_against_tables(
 
 
 def unlisted_names(package: Mapping[str, Any], table: KnownTable, allowed: AllowedTable) -> list[Key]:
-    """表に書かずに足された外れ((module, 名)の列)— 日次の全体検証の後段 tools/public_api_blame.py が、足した commit を引くために読む。"""
+    """Violations added without being written in a table (a list of (module, name)) — read by tools/public_api_blame.py, the later stage of the daily full verification, to look up the commit that added them."""
     entry = table["packages"].get(package["dir"])
     if package["error"] is not None or entry is None or entry["scope"] == "out of scope":
         return []
@@ -552,20 +546,20 @@ def check_package(
     repo: Path = ROOT,
     commands: Mapping[str, Mapping[str, str]] = ADR_COMMANDS,
 ) -> None:
-    """目録の 1 package を既知の表(違反の表)と許した物の表と突き合わせる。どちらの表にも無い外れと、表に在るのに目録に
-    無い名(表ごと)を名指して止める。
+    """Match one inventory package against the known table (the violations table) and the allowed table. Stop naming the violations in neither table and the names that are in a table but not
+    in the inventory (per table).
 
-    名を submodule から入口へ移した行(moved_to_root)は、表の submodule の行と同じ行と読む。許した物の表の名は、目録の形が
-    置いた組の形に合わなければ組ごとに名指して止める(fits_allowed_group — 入口へ移した行は入口の行の形で見る)。CLI コマンドの
-    組は commands(ADR の条が名を挙げた命令 — 既定は ADR_COMMANDS)に在る名だけ、plugin の登録と起動の口の組は repo の下の
-    package の pyproject.toml が置く物だけに合う。
-    決まりの範囲の Rust の拡張を持つ package は、目録が import で読めなければ止める(unread_native_modules)。
+    A row whose name moved from a submodule to the entry point (moved_to_root) is read as the same row as the table's submodule row. A name in the allowed table stops with its group named if its inventory shape
+    does not fit the placed group's shape (fits_allowed_group — a row moved to the entry point is viewed by the entry point row's shape). The CLI command
+    group allows only names in commands (the commands an ADR rule names — default ADR_COMMANDS), and the plugin registration and startup entry groups fit only what the package's pyproject.toml
+    under repo places.
+    A package in scope of the rule that has a Rust extension stops if the inventory cannot be read by import (unread_native_modules).
     """
     directory = package["dir"]
-    assert package["error"] is None, f"{directory} を読めなかった: {package['error']}"
+    assert package["error"] is None, f"could not read {directory}: {package['error']}"
     entry = table["packages"].get(directory)
     assert entry is not None, (
-        f"{directory} が既知の表 {TABLE.relative_to(ROOT)} に無い — package を足したら範囲と名の組を表に足す"
+        f"{directory} is not in the known table {TABLE.relative_to(ROOT)} — when adding a package, add its scope and name groups to the table"
     )
     if entry["scope"] == "out of scope":
         return
@@ -609,35 +603,35 @@ def check_package(
 
 
 def decision_problem(decision: str) -> str | None:
-    """決めの欄の誤り(無ければ None)。決めは、その行を許す ADR の条(ADR-DOE-API-001 R<番号>)か、条の無い行は許す訳の
-    英語の 1 文(. で終わる 1 行)— 外の読み手が引けない記録の id と issue の番号は書かない。"""
+    """Problem in the basis field (None if none). A basis is the ADR rule that allows the row (ADR-DOE-API-001 R<number>) or, for a row with no rule, one English
+    sentence giving the reason it is allowed (one line ending with .) — record ids and issue numbers that outside readers cannot look up are not written."""
     text = decision.strip()
     if PRIVATE_MARK.search(text):
-        return f"決め {decision!r} が記録の id か issue の番号を含む(ADR の条か許す訳の 1 文を書く)"
+        return f"basis {decision!r} contains a record id or an issue number (write an ADR rule or one sentence giving the reason it is allowed)"
     if DECISION_RULE.fullmatch(text) or (text.endswith(".") and "\n" not in text and len(text) > 1):
         return None
-    return f"決め {decision!r} が ADR の条(ADR-DOE-API-001 R<番号>)でも、. で終わる許す訳の 1 文でもない"
+    return f"basis {decision!r} is neither an ADR rule (ADR-DOE-API-001 R<number>) nor one sentence ending with . giving the reason it is allowed"
 
 
 def _added_row_problems(
     row: AddedName, table: KnownTable, listed: set[tuple[str, str, str]]
 ) -> list[str]:
-    """「足した名」の 1 行の誤り: 欄・package・訳・「名」の組との重なり。"""
-    where = f"足した名 {row.get('package')} {row.get('module')}.{row.get('name')}"
+    """Problems of one "added names" row: fields, package, reason, and overlap with the "names" groups."""
+    where = f"added names {row.get('package')} {row.get('module')}.{row.get('name')}"
     if set(row) != ADDED_FIELDS:
         return [
-            f"{where}: 欄は package・module・name・訳(許した物は許した物の表 {ALLOWED.relative_to(ROOT)} に置く)"
+            f"{where}: the fields are package, module, name, and reason (allowed things go in the allowed table {ALLOWED.relative_to(ROOT)})"
         ]
     checks = (
-        (row["package"] not in table["packages"], "package が表に無い"),
-        (not row["reason"].strip(), "訳が空"),
-        ((row["package"], row["module"], row["name"]) in listed, "名の組にも在る"),
+        (row["package"] not in table["packages"], "the package is not in the table"),
+        (not row["reason"].strip(), "the reason is empty"),
+        ((row["package"], row["module"], row["name"]) in listed, "it is also in the names groups"),
     )
     return [f"{where}: {text}" for failed, text in checks if failed]
 
 
 def shape_problems(table: KnownTable, package_dirs: Iterable[str]) -> list[str]:
-    """表の形の誤り: dir の過不足・範囲・組の名・名の並びと重なり・「足した名」の訳。"""
+    """Problems of the table's shape: missing or extra dirs, scope, group names, order and overlap of names, and the reasons in "added names"."""
     dirs = set(package_dirs)
     listed_dirs = set(table["packages"])
     entries = sorted(table["packages"].items())
@@ -652,37 +646,37 @@ def shape_problems(table: KnownTable, package_dirs: Iterable[str]) -> list[str]:
         (package_dir, module, name) for package_dir, _group, module, name in placements
     )
     return [
-        *(f"packages/ の下に在るのに表に無い: {name}" for name in sorted(dirs - listed_dirs)),
-        *(f"表に在るのに packages/ の下に無い: {name}" for name in sorted(listed_dirs - dirs)),
+        *(f"in packages/ but not in the table: {name}" for name in sorted(dirs - listed_dirs)),
+        *(f"in the table but not in packages/: {name}" for name in sorted(listed_dirs - dirs)),
         *(
-            f"{package_dir}: 範囲 {entry.get('scope')!r} は {SCOPES} のどれでもない"
+            f"{package_dir}: scope {entry.get('scope')!r} is none of {SCOPES}"
             for package_dir, entry in entries
             if entry.get("scope") not in SCOPES
         ),
         *(
-            f"{package_dir}: 範囲の外の package は決め(ADR の条か許す訳の 1 文)を持ち、名の組を持たない"
+            f"{package_dir}: a package out of scope has a basis (an ADR rule or one sentence giving the reason) and no names groups"
             for package_dir, entry in entries
             if entry.get("scope") == "out of scope"
             and ("basis" not in entry or decision_problem(entry["basis"]) is not None or bool(entry["names"]))
         ),
         *(
-            f"{package_dir}: 許した物の組 {group!r} は既知の表に置かない — 許した物の表 {ALLOWED.relative_to(ROOT)} に"
-            "組と決めつきで置く(既知の表は外れと境界だけを持つ)"
+            f"{package_dir}: the allowed group {group!r} is not placed in the known table — place it in the allowed table {ALLOWED.relative_to(ROOT)} "
+            "with a group and a basis (the known table holds only violations and boundaries)"
             if group.startswith(ALLOWED_HEAD)
-            else f"{package_dir}: 組の名 {group!r} が {GROUP_HEADS} のどれでも始まらない"
+            else f"{package_dir}: the group name {group!r} does not start with any of {GROUP_HEADS}"
             for package_dir, entry in entries
             for group in entry["names"]
             if not group.startswith(GROUP_HEADS)
         ),
         *(
-            f"{package_dir} {group} {module}: 名は空でなく、並べて重ねない"
+            f"{package_dir} {group} {module}: names must be non-empty, sorted, and not duplicated"
             for package_dir, entry in entries
             for group, modules in entry["names"].items()
             for module, names in modules.items()
             if not names or names != sorted(set(names))
         ),
         *(
-            f"{package_dir}: {module}.{name} が 2 つ以上の組に在る"
+            f"{package_dir}: {module}.{name} is in two or more groups"
             for (package_dir, module, name), count in sorted(groups_per_name.items())
             if count > 1
         ),
@@ -697,35 +691,35 @@ def shape_problems(table: KnownTable, package_dirs: Iterable[str]) -> list[str]:
 def _allowed_row_problems(
     row: AllowedName, table: KnownTable, violations: set[tuple[str, str, str]]
 ) -> list[str]:
-    """許した物の表の 1 行の誤り: 欄・組・決め・package・既知の表との重なり。"""
-    where = f"許した物 {row.get('package')} {row.get('module')}.{row.get('name')}"
+    """Problems of one row of the allowed table: fields, group, basis, package, and overlap with the known table."""
+    where = f"allowed {row.get('package')} {row.get('module')}.{row.get('name')}"
     if set(row) != ALLOWED_FIELDS:
-        return [f"{where}: 欄は package・module・name・組・決め(決めの無い行は置けない)"]
+        return [f"{where}: the fields are package, module, name, group, and basis (a row without a basis cannot be placed)"]
     entry = table["packages"].get(row["package"])
     checks = (
         (
             row["group"] not in ALLOWED_GROUPS,
-            f"組 {row['group']!r} は {ALLOWED_GROUPS} のどれでもない(許す組は目録で形を確かめる)",
+            f"group {row['group']!r} is none of {ALLOWED_GROUPS} (an allowed group has its shape checked by the inventory)",
         ),
         (
             (problem := decision_problem(row["basis"])) is not None,
             problem or "",
         ),
-        (entry is None, "package が既知の表に無い"),
+        (entry is None, "the package is not in the known table"),
         (
             entry is not None and entry["scope"] == "out of scope",
-            "範囲の外の package の名は許さない(名を突き合わせない)",
+            "names of a package out of scope are not allowed (names are not matched)",
         ),
         (
             (row["package"], row["module"], row["name"]) in violations,
-            "既知の表にも在る(1 つの名は 1 つの表だけに置く)",
+            "it is also in the known table (one name is placed in only one table)",
         ),
     )
     return [f"{where}: {text}" for failed, text in checks if failed]
 
 
 def allowed_problems(allowed: AllowedTable, table: KnownTable) -> list[str]:
-    """許した物の表の形の誤り: 行ごとの欄・組・決め・package・既知の表との重なりと、行の並びと重なり。"""
+    """Problems of the allowed table's shape: per-row fields, group, basis, package, and overlap with the known table, and the order and overlap of rows."""
     rows = allowed["allowed"]
     violations = listed_names(table) | {
         (row["package"], row["module"], row["name"]) for row in table["added_names"]
@@ -734,7 +728,7 @@ def allowed_problems(allowed: AllowedTable, table: KnownTable) -> list[str]:
     return [
         *(problem for row in rows for problem in _allowed_row_problems(row, table, violations)),
         *(
-            ["許した物の表の行は (package, module, name) の順に並べ、重ねない"]
+            ["rows of the allowed table must be sorted by (package, module, name) and not duplicated"]
             if keys != sorted(set(keys))
             else []
         ),
@@ -744,10 +738,10 @@ def allowed_problems(allowed: AllowedTable, table: KnownTable) -> list[str]:
 def grown_names(
     first: KnownTable, current: KnownTable, first_submodules: KnownTable | None = None
 ) -> list[tuple[str, str, str]]:
-    """最初の版の「名」の組に無いのに、今の「名」の組に在る名(表が増えた所)。
+    """Names in the current "names" groups that are not in the "names" groups of the first version (where the table has grown).
 
-    公開の submodule の行は、submodule の行を表に足した版(first_submodules)と比べる。その版がまだ無い間(submodule の行を
-    足す commit の前)は比べない。
+    Public submodule rows are compared with the version at which the submodule rows were added to the table (first_submodules). While that version does not exist yet (before the commit
+    that adds submodule rows), they are not compared.
     """
     listed = listed_names(current)
     names = {row for row in listed if row[1] != SUBMODULE} - listed_names(first)
@@ -766,19 +760,19 @@ def _git(*arguments: str) -> str:
 
 
 def first_version() -> KnownTable | None:
-    """既知の表を足した commit の版(git の履歴の最初の版)。まだ commit していない間は None。"""
+    """The version at the commit that added the known table (the first version in git history). None while it is not yet committed."""
     relative = TABLE.relative_to(ROOT).as_posix()
     added = _git("log", "--diff-filter=A", "--format=%H", "--", relative).split()
     if not added:
         assert not _git("ls-files", "--", relative).strip(), (
-            f"{relative} は追跡されているのに、足した commit が履歴に無い — 減るだけの比べの相手が読めない"
+            f"{relative} is tracked but the commit that added it is not in the history — the counterpart for the only-shrinks comparison cannot be read"
         )
         return None
     return json.loads(_git("show", f"{added[-1]}:{relative}"))
 
 
 def first_submodule_version() -> KnownTable | None:
-    """公開の submodule の行を既知の表に足した commit の版(行の欄の文字列が履歴で最初に現れた版)。まだ無ければ None。"""
+    """The version at the commit that added public submodule rows to the known table (the first version in which the row's field string appears in history). None if there is none yet."""
     relative = TABLE.relative_to(ROOT).as_posix()
     marker = json.dumps(SUBMODULE)
     added = _git("log", "--format=%H", "-S", marker, "--", relative).split()
@@ -790,7 +784,7 @@ def first_submodule_version() -> KnownTable | None:
             check=False,
         ).stdout
         assert marker not in committed, (
-            f"{relative} の commit 済みの版に submodule の行が在るのに、足した commit が履歴に無い — 減るだけの比べの相手が読めない"
+            f"{relative} has submodule rows in its committed version but the commit that added them is not in the history — the counterpart for the only-shrinks comparison cannot be read"
         )
         return None
     return json.loads(_git("show", f"{added[-1]}:{relative}"))
@@ -801,47 +795,47 @@ def first_submodule_version() -> KnownTable | None:
 def test_public_api_outside_effects_and_handlers_is_in_the_known_table(
     package_dir: str, deadline_scale_factor: float
 ) -> None:
-    """package の公開名のうち effect と handler の外の物が、既知の表と許した物の表の名とちょうど同じ(足しても直しても
-    表と合わせる)。"""
+    """Among a package's public names, those outside effects and handlers are exactly the names in the known table and the allowed table (add or fix, and match
+    the tables)."""
     [package] = tool.inventory(ROOT, [package_dir], jobs=1, timeout=_PROBE_SECONDS * deadline_scale_factor)
     check_package(package, _read_table(), _read_allowed())
 
 
 def test_the_known_table_has_one_well_formed_entry_per_package_dir() -> None:
-    """表は packages/ の下の dir を 1 つずつ持ち、範囲・組の名・名の並び・「足した名」の訳が形どおり。許した物の組を
-    持たない。"""
+    """The table has one entry per dir under packages/, and its scope, group names, order of names, and the reasons in "added names" are well formed. It has no
+    allowed groups."""
     problems = shape_problems(_read_table(), (path.name for path in tool.package_dirs(ROOT)))
     assert not problems, "\n".join(problems)
 
 
 def test_the_allowed_table_is_well_formed() -> None:
-    """許した物の表の行は、組が形を確かめる組・決めが ADR の条か許す訳の 1 文・package が既知の表の範囲の内で、鍵の順に並び、既知の表と重ならない。"""
+    """Rows of the allowed table: the group is one whose shape is checked, the basis is an ADR rule or one sentence giving the reason, the package is in scope in the known table, rows are sorted by key, and they do not overlap the known table."""
     problems = allowed_problems(_read_allowed(), _read_table())
     assert not problems, "\n".join(problems)
 
 
 def test_the_known_table_only_shrinks_from_its_first_version() -> None:
-    """表の「名」の組は、表を足した commit の版から減るだけ(新しく足す名は「足した名」に訳つきで書く)。"""
+    """The table's "names" groups only shrink from the version at the commit that added the table (a name that can only be added goes in "added names" with a reason)."""
     first = first_version()
     if first is None:
         return
     grown = grown_names(first, _read_table(), first_submodule_version())
     assert not grown, (
-        "既知の表の「名」の組に、最初の版に無い名が在る — 表は減るだけ。足すしか無い名は「足した名」に訳つきで書く:\n"
+        "The known table's \"names\" groups have names not in the first version — the table only shrinks. A name that can only be added goes in \"added names\" with a reason:\n"
         + "\n".join(f"  {package_dir} {module}.{name}" for package_dir, module, name in grown)
     )
 
 
-# --- 入口の名と同じ名の submodule(ADR-DOE-API-001 R34) ---
+# --- Submodules named like a name the entry point shows (ADR-DOE-API-001 R34) ---
 
-#: 子の module の file の末尾(拡張の module は名の後の最初の . までが名)。
+#: Endings of child module files (for extension modules, the name is up to the first . after it).
 _CHILD_SUFFIXES = (".py", ".pyi", ".hy")
 _EXTENSION_SUFFIXES = (".so", ".pyd")
 
 
 def _bound_by_entry(node: ast.stmt, root: str) -> Iterator[tuple[str, int]]:
-    """入口の top level の文 1 つが束ねる名と行(子の module そのものを束ねる import と ``*`` は数えない)。"""
-    # match の文で書かない: commit の hook の semgrep が match の文を構文として読めない(the former move tool と同じ)。
+    """The names and lines that one top-level statement of the entry point binds (an import that binds the child module itself and ``*`` are not counted)."""
+    # Do not write a match statement: the commit hook's semgrep cannot read a match statement as syntax (same as the former move tool).
     if isinstance(node, (ast.If, ast.Try)):
         handlers = node.handlers if isinstance(node, ast.Try) else []
         finals = node.finalbody if isinstance(node, ast.Try) else []
@@ -871,7 +865,7 @@ def _bound_by_entry(node: ast.stmt, root: str) -> Iterator[tuple[str, int]]:
 
 
 def _is_child(path: Path) -> bool:
-    """package のすぐ下の、_ で始まらない子(module の file・package の dir・名前空間の dir)か。"""
+    """Whether this is a child directly under the package that does not start with _ (a module file, a package dir, or a namespace dir)."""
     if path.name.startswith(("_", ".")):
         return False
     if path.is_dir():
@@ -880,7 +874,7 @@ def _is_child(path: Path) -> bool:
 
 
 def _child_names(package: Path) -> dict[str, Path]:
-    """package のすぐ下の子の名から path へ(同じ名の .py と .pyi は名の順で先の file)。"""
+    """From the names of children directly under the package to paths (for a .py and a .pyi of the same name, the file that comes first in name order)."""
     return {
         path.name.split(".")[0]: path
         for path in sorted(package.iterdir(), reverse=True)
@@ -888,15 +882,15 @@ def _child_names(package: Path) -> dict[str, Path]:
     }
 
 
-#: package の dir にする入口の file(Hy の入口も import できる — 新しい process の確かめが import する)。
+#: Entry files that make a dir a package (a Hy entry can be imported too — the fresh-process check imports it).
 _ENTRY_FILES = ("__init__.py", "__init__.hy")
 
 
 def entry_packages(root_dir: Path, root: str) -> list[tuple[str, Path]]:
-    """import の根と、その下の package(_ の package を含む)の名と dir — 入口の file を持つ dir(名の順)。
+    """The names and dirs of the import root and the packages under it (including _ packages) — dirs that have an entry file (in name order).
 
-    根の下の package の入口も根と同じく名を出し、移した package の古い path の import がその package の属性を同じ名の子の
-    module で上書きする(doeff_agents.effects.agent の import が doeff_agents._effects の agent を)。
+    The entry of a package under the root shows names like the root's, and an old-path import of a moved package overwrites that package's attribute with a child module of the same name
+    (the import of doeff_agents.effects.agent overwrote the agent of doeff_agents._effects).
     """
     if not root_dir.is_dir():
         return []
@@ -911,10 +905,9 @@ def entry_packages(root_dir: Path, root: str) -> list[tuple[str, Path]]:
 
 
 def written_entry_name_clashes(package_dir: Path) -> list[str]:
-    """字面の照合: import の根と、その下の package(_ の package を含む)の ``__init__.py`` が束ねる公開の名と同じ名の子
-    (移し替えの module を含む)。
+    """Literal check: children (including forwarding modules) with the same name as a public name bound by the ``__init__.py`` of the import root and of the packages under it (including _ packages).
 
-    import の順に依らない — 移し替えの module が package の class を差し替えて束ねを捨てても(前の hide の手当て)赤。
+    It does not depend on import order — it is red even when a forwarding module replaces the package's class and discards the binding (the former hide workaround).
     """
     repo = package_dir.parent.parent
     entries = [
@@ -924,8 +917,8 @@ def written_entry_name_clashes(package_dir: Path) -> list[str]:
         if (path / "__init__.py").is_file()
     ]
     return [
-        f"{package}.{name}: 入口 {init.relative_to(repo)} の {bound[name]} 行が出す名と同じ名の子"
-        f" {child.relative_to(repo)} が在る"
+        f"{package}.{name}: a child {child.relative_to(repo)} has the same name as the name shown at line {bound[name]} of the entry"
+        f" {init.relative_to(repo)}"
         for package, path, init in entries
         for bound in [_entry_bindings(init, package)]
         for name, child in sorted(_child_names(path).items())
@@ -934,17 +927,17 @@ def written_entry_name_clashes(package_dir: Path) -> list[str]:
 
 
 def _entry_bindings(init: Path, root: str) -> dict[str, int]:
-    """入口の file が top level で束ねる公開の名から、最初に束ねる行へ。"""
+    """From the public names an entry file binds at top level to the line that binds them first."""
     tree = ast.parse(init.read_text(encoding="utf-8"))
     pairs = [pair for node in tree.body for pair in _bound_by_entry(node, root)]
     return {name: line for name, line in reversed(pairs) if not name.startswith("_")}
 
 
-#: 新しい process の確かめ: 根を import して入口の公開の名(dir — 遅延の名を含む)のうち module でない物を控え、根の下の
-#: package(_ の package を含む)を 1 つずつ import して同じく入口の名を控え、公開の module(移し替えの module の古い path
-#: と、移した package の下の古い名を含む)を 1 つずつ import し、そのたびに控えた入口の名が module に替わったかを見る。
-#: 最後に入口の名を全部読み(遅延の名を作らせ)、module が返れば同じく数える。import に落ちた module は名を束ねないので
-#: 数えず、結末に並べる(赤の文に出す)。
+#: Fresh-process check: import the root and note the entry's public names (dir — including lazy names) that are not modules, import the packages under the root
+#: (including _ packages) one by one and note their entry names likewise, import the public modules (including the old paths of forwarding modules and the old names under
+#: moved packages) one by one, and after each see whether a noted entry name became a module.
+#: Finally read all the entry names (to force lazy names to be created) and count them likewise if a module is returned. Modules whose import failed do not bind names, so they are not
+#: counted and are listed in the outcome (shown in the red sentence).
 _IMPORTED_PROBE = r"""
 import importlib
 import importlib.util
@@ -1014,7 +1007,7 @@ last = {
 }
 first = {
     key: [module, after]
-    for after, bound in [("(入口の名を全部読んだ後)", last), *reversed([(n, b) for n, _f, b in steps])]
+    for after, bound in [("(after reading all the entry names)", last), *reversed([(n, b) for n, _f, b in steps])]
     for key, module in bound.items()
 }
 print(json.dumps({
@@ -1025,8 +1018,8 @@ print(json.dumps({
 
 
 def imported_entry_name_clashes(package_dir: Path) -> tuple[list[str], list[str]]:
-    """新しい process の確かめ: 根の下の package と、全部の公開の module と古い path を import した後に module になった
-    入口(根と根の下の package の入口)の名と、import に落ちた物。"""
+    """Fresh-process check: the names of entries (of the root and of packages under it) that became modules after importing the packages under the root and all the public modules and old paths,
+    and the imports that failed."""
     layout = tool.read_layout(package_dir)
     roots = [root for root in layout.roots if root.path.is_dir()]
     if not roots:
@@ -1049,11 +1042,11 @@ def imported_entry_name_clashes(package_dir: Path) -> tuple[list[str], list[str]
         check=False,
         cwd=package_dir,
     )
-    assert done.returncode == 0, f"{package_dir.name} の入口を新しい process で読めなかった:\n{done.stderr[-2000:]}"
+    assert done.returncode == 0, f"{package_dir.name}: could not read the entry in a fresh process:\n{done.stderr[-2000:]}"
     result = json.loads(done.stdout.strip().splitlines()[-1])
     return (
         [
-            f"{root}.{name}: {after} を import した後、入口の名が module {module} に替わった"
+            f"{root}.{name}: after importing {after}, the entry's name became the module {module}"
             for root, name, module, after in result["found"]
         ],
         [f"{name}: {error}" for name, error in result["failed"]],
@@ -1061,26 +1054,26 @@ def imported_entry_name_clashes(package_dir: Path) -> tuple[list[str], list[str]
 
 
 def check_entry_names(package_dir: Path) -> None:
-    """package の入口の出す名と同じ名の submodule が無い事(字面の照合と、新しい process の確かめの両方 — R34)。"""
+    """That no submodule is named like a name the package's entry shows (both the literal check and the fresh-process check — R34)."""
     imported, failed = imported_entry_name_clashes(package_dir)
     clashes = [*written_entry_name_clashes(package_dir), *imported]
     assert not clashes, (
-        f"{package_dir.name}: 入口の出す名と同じ名の submodule(移し替えの module を含む)を置かない"
-        "(ADR-DOE-API-001 R34 — 古い path の import が親の属性を module に束ね、入口の名を隠す):\n"
+        f"{package_dir.name}: do not place a submodule (including a forwarding module) named like a name the entry shows"
+        "(ADR-DOE-API-001 R34 — an old-path import bound the parent's attribute to a module and hid the entry's name):\n"
         + "\n".join(f"  {line}" for line in clashes)
-        + ("\n  import に落ちた(名を束ねないので数えない): " + "; ".join(failed) if failed else "")
+        + ("\n  imports that failed (not counted because they do not bind names): " + "; ".join(failed) if failed else "")
     )
 
 
 @pytest.mark.timeout(_PROBE_SECONDS + 20)
 @pytest.mark.parametrize("package_dir", [path.name for path in tool.package_dirs(ROOT)])
 def test_no_submodule_is_named_like_a_name_its_entry_shows(package_dir: str) -> None:
-    """入口(import の根の __init__)の出す名と同じ名の子を根の下に置かず、新しい process で全部の公開の module と古い path を
-    import した後も、入口の名が module に替わらない(ADR-DOE-API-001 R34)。"""
+    """Do not place under the root a child with the same name as a name the entry (the import root's __init__) shows, and after importing all the public modules and old paths in a fresh process, the entry's
+    names do not turn into modules (ADR-DOE-API-001 R34)."""
     check_entry_names(ROOT / "packages" / package_dir)
 
 
-# --- 失敗ケース: 使い捨ての package で、同じ照合が赤と緑を返す事 ---
+# --- Failure cases: that the same matching returns red and green on throwaway packages ---
 
 FIXTURE_DIR = "doeff-fixture-api"
 FIXTURE_ROOT = "doeff_fixture_api"
@@ -1117,12 +1110,12 @@ def helper(x: int) -> int:
 
 
 def _fixture_repo(tmp_path: Path, source: str) -> Path:
-    """packages/ の下に package を 1 つ持つ使い捨ての repo(__init__ の中身は source)。"""
+    """A throwaway repo with one package under packages/ (the contents of __init__ are source)."""
     return _fixture_tree(tmp_path, {"__init__.py": source})
 
 
 def _fixture_tree(tmp_path: Path, files: Mapping[str, str]) -> Path:
-    """packages/ の下に package を 1 つ持つ使い捨ての repo(import の根の下の file の名から中身へ)。"""
+    """A throwaway repo with one package under packages/ (from the names of files under the import root to their contents)."""
     package = tmp_path / "packages" / FIXTURE_DIR
     (package / "src" / FIXTURE_ROOT).mkdir(parents=True, exist_ok=True)
     (package / "pyproject.toml").write_text(textwrap.dedent(FIXTURE_PYPROJECT), encoding="utf-8")
@@ -1144,12 +1137,12 @@ def _fixture_table(
 
 
 def _fixture_allowed(helpers: Iterable[str], decision: str = FIXTURE_DECISION) -> AllowedTable:
-    """使い捨ての package の入口の名を、組「Allowed — program helper」で許した物の表。"""
+    """An allowed table that places a throwaway package's entry names in the group "Allowed — program helper"."""
     return _fixture_grouped({(FIXTURE_ROOT, name): HELPER_GROUP for name in helpers}, decision)
 
 
 def _fixture_grouped(groups: Mapping[Key, str], decision: str = FIXTURE_DECISION) -> AllowedTable:
-    """使い捨ての package の (module, 名) を、それぞれの組で許した物の表。"""
+    """An allowed table that places a throwaway package's (module, name) in their respective groups."""
     return {
         "allowed": [
             {
@@ -1171,13 +1164,13 @@ def _read_fixture(repo: Path) -> dict[str, Any]:
 
 @pytest.mark.timeout(_PROBE_SECONDS + 20)
 def test_an_added_outlier_turns_red_and_removing_it_turns_green(tmp_path: Path) -> None:
-    """effect と handler だけの package は緑・外れの関数を 1 つ足すと赤(名を名指す)・外すとまた緑。"""
+    """A package of only effects and handlers is green; adding one violating function turns it red (naming it); removing it makes it green again."""
     table = _fixture_table({})
     repo = _fixture_repo(tmp_path, EFFECTS_AND_HANDLERS)
     check_package(_read_fixture(repo), table)
 
     _fixture_repo(tmp_path, EFFECTS_AND_HANDLERS + OUTLIER)
-    with pytest.raises(AssertionError, match=r"許した物の表に無い[\s\S]*doeff_fixture_api\.helper"):
+    with pytest.raises(AssertionError, match=r"in neither the known table nor the allowed table[\s\S]*doeff_fixture_api\.helper"):
         check_package(_read_fixture(repo), table)
 
     _fixture_repo(tmp_path, EFFECTS_AND_HANDLERS)
@@ -1186,22 +1179,22 @@ def test_an_added_outlier_turns_red_and_removing_it_turns_green(tmp_path: Path) 
 
 @pytest.mark.timeout(_PROBE_SECONDS + 20)
 def test_a_fixed_name_left_in_the_table_turns_red(tmp_path: Path) -> None:
-    """表に在る外れを直した(消した)のに表に残すと赤 — 表を縮めるのを忘れた所を名指す。"""
+    """Fixing (removing) a violation in the table but leaving it in the table is red — naming where the table was not shrunk."""
     repo = _fixture_repo(tmp_path, EFFECTS_AND_HANDLERS)
     table = _fixture_table({FIXTURE_ROOT: ["helper"]})
-    with pytest.raises(AssertionError, match=r"目録に無い名[\s\S]*doeff_fixture_api\.helper"):
+    with pytest.raises(AssertionError, match=r"in the known table but not in the inventory[\s\S]*doeff_fixture_api\.helper"):
         check_package(_read_fixture(repo), table)
 
 
 @pytest.mark.timeout(_PROBE_SECONDS + 20)
 def test_an_outlier_added_with_a_reason_line_is_green(tmp_path: Path) -> None:
-    """足すしか無い外れは「足した名」に訳つきで書けば緑。訳が欠けると表の形の検が赤。"""
+    """A violation that can only be added is green if written in "added names" with a reason. A missing reason turns the table shape check red."""
     repo = _fixture_repo(tmp_path, EFFECTS_AND_HANDLERS + OUTLIER)
     row: AddedName = {
         "package": FIXTURE_DIR,
         "module": FIXTURE_ROOT,
         "name": "helper",
-        "reason": "使い手が値を直に組む所(例)",
+        "reason": "a place where users assemble values directly (example)",
     }
     table = _fixture_table({}, [row])
     check_package(_read_fixture(repo), table)
@@ -1209,11 +1202,11 @@ def test_an_outlier_added_with_a_reason_line_is_green(tmp_path: Path) -> None:
 
     lacking = _fixture_table({}, [{**row, "reason": " "}])
     assert shape_problems(lacking, [FIXTURE_DIR]) == [
-        f"足した名 {FIXTURE_DIR} {FIXTURE_ROOT}.helper: 訳が空",
+        f"added names {FIXTURE_DIR} {FIXTURE_ROOT}.helper: the reason is empty",
     ]
 
 
-#: Rust の拡張を持つ package(maturin の mixed の形 — 入口は python/ の下・拡張は内側の _native)。組まないので環境に無い。
+#: A package with a Rust extension (the maturin mixed layout — the entry is under python/, the extension is the inner _native). It is not built, so it is absent from the environment.
 NATIVE_PYPROJECT = f"""
 [project]
 name = "{FIXTURE_DIR}"
@@ -1233,9 +1226,9 @@ module-name = "{FIXTURE_ROOT}._native"
 def test_a_native_package_in_scope_that_the_inventory_cannot_import_turns_red(
     tmp_path: Path,
 ) -> None:
-    """Rust の拡張を持つ package を目録が import で読めない(環境に無い)と、字面の読みは入口が拡張から出す名を数えない —
-    決まりの範囲なら赤(前の doeff-indexer の Indexer・SymbolInfo を目録が数えなかった)。名を決めて
-    いない範囲の答え待ちの package は、同じ読みで緑。"""
+    """If the inventory cannot read a package with a Rust extension by import (it is absent from the environment), a literal reading does not count the names the entry shows from the extension —
+    it is red if the package is in scope of the rule (the inventory had not counted Indexer and SymbolInfo of doeff-indexer). A package awaiting a scope answer, whose names are not
+    decided, is green by the same reading."""
     package = tmp_path / "packages" / FIXTURE_DIR
     (package / "python" / FIXTURE_ROOT).mkdir(parents=True)
     (package / "pyproject.toml").write_text(textwrap.dedent(NATIVE_PYPROJECT), encoding="utf-8")
@@ -1243,10 +1236,10 @@ def test_a_native_package_in_scope_that_the_inventory_cannot_import_turns_red(
         f"from {FIXTURE_ROOT}._native import Indexer, SymbolInfo\n", encoding="utf-8"
     )
     found = _read_fixture(tmp_path)
-    assert not found["exports"], "字面の読みは拡張から出す名を数えない(この検の前提)"
+    assert not found["exports"], "a literal reading does not count names the extension shows (the premise of this check)"
     with pytest.raises(
         AssertionError,
-        match=rf"{FIXTURE_DIR}: Rust の拡張を持つ package の module を目録が import で読めず",
+        match=rf"{FIXTURE_DIR}: the inventory could not import the modules of a package with a Rust extension",
     ):
         check_package(found, _fixture_table({}), repo=tmp_path)
 
@@ -1277,14 +1270,14 @@ def ping_handlers() -> ProgramHandler:
 
 @pytest.mark.timeout(_PROBE_SECONDS + 20)
 def test_a_factory_whose_call_is_not_a_handler_turns_red(tmp_path: Path) -> None:
-    """戻りの型で handler を返す関数(工場)と読める名も、呼ぶと印 _doeff_is_handler_fn の無い値を返せば外れ — 赤(名指す)。
-    handler を返すように直すと緑で、目録はその名を、呼んで印を確かめた handler と数える(ADR-DOE-API-001 R3)。
+    """A name read as a function that returns a handler by its return type (a factory) is also a violation if calling it returns a value without the marker _doeff_is_handler_fn — red (naming it).
+    Fixing it to return a handler makes it green, and the inventory counts the name as a handler whose marker it confirmed by calling it (ADR-DOE-API-001 R3).
     """
     table = _fixture_table({})
     repo = _fixture_repo(tmp_path, EFFECTS_AND_HANDLERS + NOT_A_FACTORY)
     with pytest.raises(
         AssertionError,
-        match=r"許した物の表に無い[\s\S]*"
+        match=r"in neither the known table nor the allowed table[\s\S]*"
         + re.escape(f"{FIXTURE_ROOT}.ping_handlers({tool.NOT_A_FACTORY}・other"),
     ):
         check_package(_read_fixture(repo), table)
@@ -1297,8 +1290,8 @@ def test_a_factory_whose_call_is_not_a_handler_turns_red(tmp_path: Path) -> None
     assert row["reason"].endswith("引数なしで呼ぶと handler を返す")
 
 
-#: program を返す関数の 4 つの形: effect を出すだけの helper と、helper の形を越える 3 つ(handler の値を当てる・
-#: WithHandler で被せる・中の同じ package の関数が handler を当てる)と、effect に答える物。
+#: The four shapes of a function that returns a program: a helper that only emits effects, three that go beyond a helper's shape (applying a handler value,
+#: wrapping with WithHandler, a function of the same package inside applying a handler), and one that answers an effect.
 PROGRAM_FUNCTIONS = '''
 
 from doeff import DoExpr, Resume, WithHandlerType, do
@@ -1340,11 +1333,11 @@ def answering(effect, cont):
 
 @pytest.mark.timeout(_PROBE_SECONDS + 20)
 def test_only_a_program_helper_can_be_put_into_the_helper_group(tmp_path: Path) -> None:
-    """許した物の表の組「Allowed — program helper」に置けるのは、目録の形が program の helper の名だけ(ADR-DOE-API-001 R18)。
+    """The group "Allowed — program helper" of the allowed table can hold only names whose inventory shape is a program helper (ADR-DOE-API-001 R18).
 
-    effect を出すだけの program の関数は、許した物の表に置けば緑・どちらの表にも無ければ外れのまま赤。handler を被せる関数
-    (handler の値を当てる・WithHandler・中の同じ package の関数が当てる)・effect に答える関数・program を返さない関数を許した物の
-    表に置くと赤(名と形を名指す)。許した物の表に在るのに目録に無い名も赤(消した名を表に残した)。
+    A program function that only emits effects is green if placed in the allowed table, and stays a red violation if it is in neither table. Placing a function that installs a handler
+    (applying a handler value, WithHandler, or a function of the same package inside applying one), a function that answers an effect, or a function that does not return a program in the allowed
+    table is red (naming the name and shape). A name that is in the allowed table but not in the inventory is also red (a deleted name left in the table).
     """
     repo = _fixture_repo(tmp_path, EFFECTS_AND_HANDLERS + PROGRAM_FUNCTIONS + OUTLIER)
     package = _read_fixture(repo)
@@ -1358,7 +1351,7 @@ def test_only_a_program_helper_can_be_put_into_the_helper_group(tmp_path: Path) 
 
     check_package(package, *tables(["pinging"]))
     with pytest.raises(
-        AssertionError, match=r"許した物の表に無い[\s\S]*doeff_fixture_api\.pinging"
+        AssertionError, match=r"in neither the known table nor the allowed table[\s\S]*doeff_fixture_api\.pinging"
     ):
         check_package(package, *tables([]))
 
@@ -1381,7 +1374,7 @@ def test_only_a_program_helper_can_be_put_into_the_helper_group(tmp_path: Path) 
 
     with pytest.raises(
         AssertionError,
-        match=r"許した物の表に在るのに目録に無い名が 1 個[\s\S]*doeff_fixture_api\.gone",
+        match=r"1 name\(s\) are in the allowed table but not in the inventory[\s\S]*doeff_fixture_api\.gone",
     ):
         check_package(package, *tables(["gone", "pinging"]))
 
@@ -1429,10 +1422,10 @@ def pinged(n: int) -> int:
 
 @pytest.mark.timeout(_PROBE_SECONDS + 20)
 def test_only_a_conversion_can_be_put_into_the_conversion_group(tmp_path: Path) -> None:
-    """許した物の表の組「Allowed — conversion function」に置けるのは、目録の形が換算の関数の名だけ(ADR-DOE-API-001 R35)。
+    """The group "Allowed — conversion function" of the allowed table can hold only names whose inventory shape is a conversion function (ADR-DOE-API-001 R35).
 
-    値を受けて値を返すだけの関数(中で読む同じ package の関数も同じ)は、許した物の表に置けば緑・どちらの表にも無ければ
-    外れのまま赤。中の同じ package の関数が時計を読む・属性で時計を読む・effect を作る関数を置くと赤(組と名と形と読む名を名指す)。
+    A function that only takes a value and returns a value (the same for a function of the same package it reads inside) is green if placed in the allowed table, and stays a red violation
+    if it is in neither table. Placing a function whose inner function of the same package reads the clock, reads the clock through an attribute, or creates an effect is red (naming the group, name, shape, and name read).
     """
     repo = _fixture_repo(tmp_path, EFFECTS_AND_HANDLERS + CONVERSIONS)
     package = _read_fixture(repo)
@@ -1449,7 +1442,7 @@ def test_only_a_conversion_can_be_put_into_the_conversion_group(tmp_path: Path) 
         return _fixture_table({FIXTURE_ROOT: listed} if listed else {}), allowed
 
     check_package(package, *tables(["ms_of"]))
-    with pytest.raises(AssertionError, match=r"許した物の表に無い[\s\S]*doeff_fixture_api\.ms_of"):
+    with pytest.raises(AssertionError, match=r"in neither the known table nor the allowed table[\s\S]*doeff_fixture_api\.ms_of"):
         check_package(package, *tables([]))
 
     past_a_conversion = [
@@ -1464,7 +1457,7 @@ def test_only_a_conversion_can_be_put_into_the_conversion_group(tmp_path: Path) 
         assert said in str(failure.value)
 
 
-#: package が定義した例外の class と、例外でない class。
+#: A class that is an exception defined by the package, and a class that is not an exception.
 EXCEPTIONS = '''
 
 
@@ -1475,7 +1468,7 @@ class PingFailed(Exception):
 class PingNote:
     """A class that is not an exception."""
 '''
-#: 標準の library の例外を __all__ で出し直す submodule(BaseException の子だが、package が定義した名でない)。
+#: A submodule that re-exports an exception of the standard library through __all__ (a child of BaseException, but not a name the package defined).
 REEXPORTED_EXCEPTION = '''
 from json import JSONDecodeError
 
@@ -1487,11 +1480,11 @@ __all__ = ["JSONDecodeError"]
 def test_only_an_exception_class_of_its_package_can_be_put_into_the_exception_group(
     tmp_path: Path,
 ) -> None:
-    """許した物の表の組「Allowed — exception type」に置けるのは、目録の形が例外の class で、その package が定義した名だけ
-    (ADR-DOE-API-001 R2)。
+    """The group "Allowed — exception type" of the allowed table can hold only names whose inventory shape is an exception class and that the package defined
+    (ADR-DOE-API-001 R2).
 
-    package が定義した BaseException の子の class は、許した物の表に置けば緑・どちらの表にも無ければ外れのまま赤。例外でない
-    class と、標準の library の例外を submodule の __all__ で出し直した名を置くと赤(組と名と形と定義の場所を名指す)。
+    A class that is a child of BaseException defined by the package is green if placed in the allowed table, and stays a red violation if it is in neither table. Placing a class that is not an exception,
+    or a name that re-exports an exception of the standard library through a submodule's __all__, is red (naming the group, name, shape, and definition place).
     """
     repo = _fixture_tree(
         tmp_path,
@@ -1516,7 +1509,7 @@ def test_only_an_exception_class_of_its_package_can_be_put_into_the_exception_gr
 
     defined = (FIXTURE_ROOT, "PingFailed")
     check_package(package, *tables([defined]))
-    with pytest.raises(AssertionError, match=r"許した物の表に無い[\s\S]*doeff_fixture_api\.PingFailed"):
+    with pytest.raises(AssertionError, match=r"in neither the known table nor the allowed table[\s\S]*doeff_fixture_api\.PingFailed"):
         check_package(package, *tables([]))
 
     misplaced = [
@@ -1527,13 +1520,13 @@ def test_only_an_exception_class_of_its_package_can_be_put_into_the_exception_gr
         ),
     ]
     for key, said in misplaced:
-        with pytest.raises(AssertionError, match=re.escape(f"組「{EXCEPTION_GROUP}」")) as failure:
+        with pytest.raises(AssertionError, match=re.escape(f'group "{EXCEPTION_GROUP}"')) as failure:
             check_package(package, *tables([defined, key]))
         assert said in str(failure.value)
         assert ALLOWED_SHAPES[EXCEPTION_GROUP] in str(failure.value)
 
-#: program の形を表す値の型と作り手(doeff-conductor の AgentSpec と agent! の形)と、作り手の形を越える物: effect を出す・
-#: 作る・中の同じ package の関数が環境を読む・file を読む関数、見せない class を返す関数、値の型の外を返す関数、作り手の無い class。
+#: The types and builders of values representing the shape of a program (the shape of AgentSpec and agent! of doeff-conductor), and things beyond a builder's shape: functions that emit or
+#: create effects, whose inner functions of the same package read the environment or files, functions that return a class that is not shown, functions that return outside value types, and a class with no builder.
 BUILDERS = '''
 
 import os
@@ -1610,13 +1603,13 @@ def step_count(name: str) -> int:
 def test_only_a_builder_and_the_class_it_returns_can_be_put_into_the_builder_group(
     tmp_path: Path,
 ) -> None:
-    """許した物の表の組「Allowed — program-shape builder and type」に置けるのは、目録の形が作り手で返す class をその package が
-    見せる名と、組の作り手が返す class だけ(ADR-DOE-API-001 R37)。
+    """The group "Allowed — program-shape builder and type" of the allowed table can hold only builders whose inventory shape is a builder and whose returned class is a name the package
+    shows, and classes that the group's builders return (ADR-DOE-API-001 R37).
 
-    作り手(値を受けて同じ package の見せる class の値を返し、中で読む同じ package の関数も effect も I/O も読まない)とその型は、
-    許した物の表に置けば緑・どちらの表にも無ければ外れのまま赤。effect を出す(yield)・effect を作る・中の同じ package の関数が
-    環境を読む・file を読む関数、見せない class を返す関数、値の型の外を返す関数、組の作り手が返さない class(作り手の無い
-    class・作り手を組に置かずに型だけ置いた class)を置くと赤(組と名と形と読む名か返す class を名指す)。
+    A builder (takes a value and returns a value of a class the same package shows, reading no function of the same package, effect, or I/O inside) and its type are green if placed
+    in the allowed table, and stay red violations if they are in neither table. Placing a function that emits (yield) or creates an effect, whose inner function of the same package reads the
+    environment, or that reads a file, a function that returns a class that is not shown, a function that returns outside value types, or a class that no builder of the group returns (a class with no
+    builder, or a class placed as a type alone without its builder in the group) is red (naming the group, name, shape, and the name read or class returned).
     """
     repo = _fixture_repo(tmp_path, EFFECTS_AND_HANDLERS + BUILDERS)
     package = _read_fixture(repo)
@@ -1645,7 +1638,7 @@ def test_only_a_builder_and_the_class_it_returns_can_be_put_into_the_builder_gro
         return _fixture_table({FIXTURE_ROOT: listed} if listed else {}), allowed
 
     check_package(package, *tables(shapes))
-    with pytest.raises(AssertionError, match=r"許した物の表に無い[\s\S]*doeff_fixture_api\.step\("):
+    with pytest.raises(AssertionError, match=r"in neither the known table nor the allowed table[\s\S]*doeff_fixture_api\.step\("):
         check_package(package, *tables([]))
 
     past_a_builder = [
@@ -1658,19 +1651,19 @@ def test_only_a_builder_and_the_class_it_returns_can_be_put_into_the_builder_gro
         ("TraceNote", "class・class・", "class・class・"),
     ]
     for name, form, said in past_a_builder:
-        with pytest.raises(AssertionError, match=re.escape(f"組「{BUILDER_GROUP}」")) as failure:
+        with pytest.raises(AssertionError, match=re.escape(f'group "{BUILDER_GROUP}"')) as failure:
             check_package(package, *tables([*shapes, name]))
         assert f"{FIXTURE_ROOT}.{name}({form}" in str(failure.value)
         assert said in str(failure.value)
         assert ALLOWED_SHAPES[BUILDER_GROUP] in str(failure.value)
 
-    with pytest.raises(AssertionError, match=re.escape(f"組「{BUILDER_GROUP}」")) as failure:
+    with pytest.raises(AssertionError, match=re.escape(f'group "{BUILDER_GROUP}"')) as failure:
         check_package(package, *tables(["StepSpec"], known=["step"]))
     assert f"{FIXTURE_ROOT}.StepSpec(class・class・" in str(failure.value)
 
 
 
-#: 欄に値の型を持つ effect の class 2 つ(dataclass と __init__ で書く class)と、どの effect の欄にも出ない class を持つ package。
+#: A package with two effect classes that have value types in their fields (a dataclass and a class written with __init__), and a class that appears in no effect's fields.
 VALUE_TYPES = '''
 from __future__ import annotations
 
@@ -1725,12 +1718,12 @@ def send_handler(effect: SendEffect, k):
 
 @pytest.mark.timeout(_PROBE_SECONDS + 20)
 def test_only_an_effect_value_type_can_be_put_into_the_value_type_group(tmp_path: Path) -> None:
-    """許した物の表の組「Allowed — effect value type」に置けるのは、同じ package が見せる effect の class の欄の注釈に出る class
-    と型の別名だけ(ADR-DOE-API-001 R2)。
+    """The group "Allowed — effect value type" of the allowed table can hold only classes and type aliases that appear in the annotations of the fields of effect classes shown by the same package
+    (ADR-DOE-API-001 R2).
 
-    dataclass の effect の欄の型引数(list[Payload])・__init__ で書く effect の引数(Hint | None)・package が定義した値の型の欄
-    (Payload.mode の Mode)に出る class は、許した物の表に置けば緑・どちらの表にも無ければ外れのまま赤。どの effect の欄にも
-    出ない class Unrelated を置くと赤(組と名と形を名指す)。
+    Classes that appear in the type arguments of a dataclass effect's fields (list[Payload]), the arguments of an effect written with __init__ (Hint | None), and the fields of value types
+    the package defines (Mode of Payload.mode) are green if placed in the allowed table, and stay red violations if they are in neither table. Placing the class Unrelated, which appears in no
+    effect's fields, is red (naming the group, name, and shape).
     """
     repo = _fixture_repo(tmp_path, VALUE_TYPES)
     package = _read_fixture(repo)
@@ -1751,16 +1744,16 @@ def test_only_an_effect_value_type_can_be_put_into_the_value_type_group(tmp_path
 
     check_package(package, *tables(value_types, ["Unrelated"]))
     with pytest.raises(
-        AssertionError, match=r"許した物の表に無い[\s\S]*doeff_fixture_api\.Payload"
+        AssertionError, match=r"in neither the known table nor the allowed table[\s\S]*doeff_fixture_api\.Payload"
     ):
         check_package(package, *tables(["Hint", "Mode"], ["Unrelated"]))
-    with pytest.raises(AssertionError, match=re.escape(f"組「{VALUE_TYPE_GROUP}」")) as failure:
+    with pytest.raises(AssertionError, match=re.escape(f'group "{VALUE_TYPE_GROUP}"')) as failure:
         check_package(package, *tables([*value_types, "Unrelated"], []))
     assert f"{FIXTURE_ROOT}.Unrelated(class・" in str(failure.value)
     assert ALLOWED_SHAPES[VALUE_TYPE_GROUP] in str(failure.value)
 
 
-#: 答えを EffectBase[T] に書いた effect と docstring だけに書いた effect、どの effect の答えにも出ない class を持つ package の名。
+#: The names of a package with an effect whose answer is written in EffectBase[T], an effect whose answer is written only in a docstring, and a class that appears in no effect's answer.
 ANSWERS = '''
 
 from dataclasses import dataclass
@@ -1836,13 +1829,13 @@ class FactoryEffect(EffectBase[Callable[..., int]]):
 
 @pytest.mark.timeout(_PROBE_SECONDS + 20)
 def test_only_an_answer_type_can_be_put_into_the_answer_type_group(tmp_path: Path) -> None:
-    """許した物の表の組「Allowed — effect answer type」に置けるのは、目録が package の effect の答えの型と読む名だけ
-    (ADR-DOE-API-001 R2)。
+    """The group "Allowed — effect answer type" of the allowed table can hold only names that the inventory reads as a package's effect answer type
+    (ADR-DOE-API-001 R2).
 
-    EffectBase[T] の T(和の型の別名)とその class・答えの class の欄の型(Enum)・答えの class の子は、許した物の表に置けば
-    緑・どちらの表にも無ければ外れのまま赤。答えを docstring だけに書いた effect の答えの class と、どの effect の答えにも
-    出ない class を置くと赤(組と名と形を名指す)。答えに object と Callable が出ても、どの effect も答えない class を引数に
-    取る Callable の別名(Listener)は答えの型でない — Callable の引数の並びの型も読む。
+    The T of EffectBase[T] (a type alias of a sum type) and its classes, the types in the fields of an answer class (Enum), and the children of an answer class are green if placed in the allowed table, and
+    stay red violations if they are in neither table. Placing the answer class of an effect whose answer is written only in a docstring, or a class that appears in no effect's answer, is red
+    (naming the group, name, and shape). Even if object and Callable appear in an answer, a Callable alias taking a class that no effect answers as an argument (Listener) is not an answer type — the types in a
+    Callable's argument list are read too.
     """
     repo = _fixture_repo(tmp_path, EFFECTS_AND_HANDLERS + ANSWERS)
     package = _read_fixture(repo)
@@ -1872,17 +1865,17 @@ def test_only_an_answer_type_can_be_put_into_the_answer_type_group(tmp_path: Pat
         return _fixture_table({FIXTURE_ROOT: listed} if listed else {}), allowed
 
     check_package(package, *tables(answers))
-    with pytest.raises(AssertionError, match=r"許した物の表に無い[\s\S]*doeff_fixture_api\.Reading"):
+    with pytest.raises(AssertionError, match=r"in neither the known table nor the allowed table[\s\S]*doeff_fixture_api\.Reading"):
         check_package(package, *tables([name for name in answers if name != "Reading"]))
     for name in rest:
-        with pytest.raises(AssertionError, match=re.escape(f"組「{ANSWER_TYPE_GROUP}」")) as failure:
+        with pytest.raises(AssertionError, match=re.escape(f'group "{ANSWER_TYPE_GROUP}"')) as failure:
             check_package(package, *tables([*answers, name]))
         assert f"{FIXTURE_ROOT}.{name}({forms[name]}・" in str(failure.value)
         assert ALLOWED_SHAPES[ANSWER_TYPE_GROUP] in str(failure.value)
 
 
-#: 本体が名指した型で答える待ちの effect が bus の event を宣言し、宣言を継ぐだけの子の effect と、どの待ちも宣言しない
-#: event の class を持つ package の名。
+#: The names of a package in which an effect waiting on a body-named type declares a bus event, a child effect that only inherits the declaration, and a class of an
+#: event that no waiting effect declares.
 BUS_EVENTS = '''
 
 from dataclasses import dataclass
@@ -1919,12 +1912,12 @@ class AwaitEventsEffect(AwaitEventEffect):
 
 @pytest.mark.timeout(_PROBE_SECONDS + 20)
 def test_a_bus_event_a_wait_declares_can_be_put_into_the_answer_type_group(tmp_path: Path) -> None:
-    """本体が名指した型で答える待ちの effect は EffectBase[T] に 1 つの型を書けないので、package が bus に出す event を自分の
-    __doeff_bus_events__ に宣言し、目録はそれを待ちの答えの型と読む(ADR-DOE-API-001 R2)。
+    """An effect waiting on a body-named type cannot write one type in EffectBase[T], so the package declares the events it puts on the bus in its own
+    __doeff_bus_events__, and the inventory reads them as the waiting effect's answer type (ADR-DOE-API-001 R2).
 
-    宣言した event とその欄の型は組「Allowed — effect answer type」に置けば緑・どちらの表にも無ければ外れのまま赤。宣言を
-    継ぐだけの子の effect は宣言を読み直さない(答えの場所は宣言した effect だけ)。どの待ちも宣言しない event の class を
-    置くと赤(組と名と形を名指す)。
+    A declared event and the types in its fields are green if placed in the group "Allowed — effect answer type", and stay red violations if they are in neither table. A child effect that only
+    inherits the declaration does not re-read the declaration (the place of the answer is only the effect that declared it). Placing the class of an event that no waiting effect declares
+    is red (naming the group, name, and shape).
     """
     repo = _fixture_repo(tmp_path, EFFECTS_AND_HANDLERS + BUS_EVENTS)
     package = _read_fixture(repo)
@@ -1940,16 +1933,16 @@ def test_a_bus_event_a_wait_declares_can_be_put_into_the_answer_type_group(tmp_p
         return _fixture_table({FIXTURE_ROOT: listed} if listed else {}), allowed
 
     check_package(package, *tables(events))
-    with pytest.raises(AssertionError, match=r"許した物の表に無い[\s\S]*doeff_fixture_api\.Fired"):
+    with pytest.raises(AssertionError, match=r"in neither the known table nor the allowed table[\s\S]*doeff_fixture_api\.Fired"):
         check_package(package, *tables(["Cause"]))
-    with pytest.raises(AssertionError, match=re.escape(f"組「{ANSWER_TYPE_GROUP}」")) as failure:
+    with pytest.raises(AssertionError, match=re.escape(f'group "{ANSWER_TYPE_GROUP}"')) as failure:
         check_package(package, *tables([*events, "Undeclared"]))
     assert f"{FIXTURE_ROOT}.Undeclared(class・" in str(failure.value)
     assert ALLOWED_SHAPES[ANSWER_TYPE_GROUP] in str(failure.value)
 
 
-#: 設定の型を引数に取る工場・欄で辿る設定の型(Protocol の property の戻りの型を含む)・どの引数にも出ない class と関数を持つ
-#: package の名(注釈は字のまま)。
+#: The names of a package with a factory taking a setting type as an argument, setting types followed through fields (including the return type of a Protocol property), and a class and a function that appear in no argument
+#: (annotations are literal).
 SETTINGS = '''
 from __future__ import annotations
 
@@ -2017,7 +2010,7 @@ def helper(x: int) -> int:
     """A plain function: neither an effect nor a handler."""
     return x + 1
 '''
-#: 標準の library の class を __all__ で出し直し、工場の引数にも名指す submodule(package が定義した型でない)。
+#: A submodule that re-exports a class of the standard library through __all__ and also names it in a factory's argument (not a type the package defined).
 REEXPORTED_SETTING = '''
 from pathlib import Path
 
@@ -2036,13 +2029,13 @@ def rooted_ping_handlers(root: Path) -> ProgramHandler:
 
 @pytest.mark.timeout(_PROBE_SECONDS + 20)
 def test_only_a_type_a_handler_takes_can_be_put_into_the_setting_group(tmp_path: Path) -> None:
-    """許した物の表の組「Allowed — handler setting type」に置けるのは、その package が定義した型で、同じ package が見せる
-    handler と工場の引数の注釈に出る(package が定義した設定の型の欄を辿る)と目録が読む名だけ(ADR-DOE-API-001 R2)。
+    """The group "Allowed — handler setting type" of the allowed table can hold only types that the package defined and that the inventory reads as appearing in the annotations of the arguments of handlers and factories
+    shown by the same package (following the fields of setting types the package defined) (ADR-DOE-API-001 R2).
 
-    工場の引数(字の注釈)の型・型引数の中の型(Sequence[Hint])・設定の型の欄の型(Settings.level の Level)・欄が名指す
-    Protocol の、読むだけの欄(property)の戻りの型(Settings.marked の type[_Marked] の marks の Mark)は、
-    許した物の表に置けば緑・どちらの表にも無ければ外れのまま赤。どの引数にも出ない class と関数と、標準の library の class Path を
-    submodule の __all__ で出し直した名(工場の引数に出るが package が定義した型でない)を置くと赤(組と名と形を名指す)。
+    The types of a factory's arguments (literal annotations), types inside type arguments (Sequence[Hint]), types in the fields of a setting type (Level of Settings.level), and the return types of the read-only fields
+    (properties) of a Protocol that a field names (Mark of marks in type[_Marked] of Settings.marked) are green if placed in the allowed table, and stay red violations if they are in neither table.
+    Placing a class or function that appears in no argument, or a name that re-exports the standard library class Path through a submodule's __all__ (it appears in a factory's argument but is not a type the package
+    defined), is red (naming the group, name, and shape).
     """
     repo = _fixture_tree(tmp_path, {"__init__.py": SETTINGS, "rooted.py": REEXPORTED_SETTING})
     package = _read_fixture(repo)
@@ -2073,7 +2066,7 @@ def test_only_a_type_a_handler_takes_can_be_put_into_the_setting_group(tmp_path:
         return _fixture_table(known), allowed
 
     check_package(package, *tables(settings))
-    with pytest.raises(AssertionError, match=r"許した物の表に無い[\s\S]*doeff_fixture_api\.Settings"):
+    with pytest.raises(AssertionError, match=r"in neither the known table nor the allowed table[\s\S]*doeff_fixture_api\.Settings"):
         check_package(package, *tables([key for key in settings if key[1] != "Settings"]))
     said = {
         (FIXTURE_ROOT, "Unrelated"): f"{FIXTURE_ROOT}.Unrelated(class・",
@@ -2081,13 +2074,13 @@ def test_only_a_type_a_handler_takes_can_be_put_into_the_setting_group(tmp_path:
         (rooted, "Path"): f"{rooted}.Path(class・class・pathlib)",
     }
     for key in rest:
-        with pytest.raises(AssertionError, match=re.escape(f"組「{SETTING_GROUP}」")) as failure:
+        with pytest.raises(AssertionError, match=re.escape(f'group "{SETTING_GROUP}"')) as failure:
             check_package(package, *tables([*settings, key]))
         assert said[key] in str(failure.value)
         assert ALLOWED_SHAPES[SETTING_GROUP] in str(failure.value)
 
 
-#: macro だけを出す module と、macro の外の名も出す module(Hy)と、console script を 1 つ持つ package の宣言。
+#: A package declaration with a module that shows only macros, a module (Hy) that also shows names outside macros, and one console script.
 MACRO_MODULE = """
 (defmacro ping! []
   "A macro module's macro."
@@ -2111,12 +2104,12 @@ COMMAND_PYPROJECT = (
 def test_only_a_macro_or_a_command_can_be_put_into_the_macro_and_command_groups(
     tmp_path: Path,
 ) -> None:
-    """組「Allowed — Hy macro」に置けるのは Hy の macro の名と macro だけを出す公開の submodule の行、組「Allowed — CLI
-    コマンド」に置けるのは ADR の条が名を挙げた console script の行だけ(ADR-DOE-API-001 R7・R14・R15・R31)。
+    """The group "Allowed — Hy macro" can hold only Hy macro names and rows of public submodules that show only macros, and the group "Allowed — CLI command" can hold only the rows of console scripts
+    that an ADR rule names (ADR-DOE-API-001 R7, R14, R15, R31).
 
-    macro の module(名に _ の無い submodule)と macro と console script を許した物の表に置けば緑。macro の外の名も出す
-    submodule・macro でない関数・console script を macro の組に、macro と関数を CLI コマンドの組に置くと赤(組と名と形を名指す)。
-    ADR の条が名を挙げない console script を CLI コマンドの組に置くのも赤(test_a_command_the_adr_does_not_name_turns_red)。
+    A macro module (a submodule whose name has no _), macros, and a console script are green if placed in the allowed table. Placing a submodule that also shows names outside macros, a function that is not a macro, or a console
+    script in the macro group, or a macro or function in the CLI command group, is red (naming the group, name, and shape).
+    Placing a console script that no ADR rule names in the CLI command group is also red (test_a_command_the_adr_does_not_name_turns_red).
     """
     repo = _fixture_tree(
         tmp_path,
@@ -2153,7 +2146,7 @@ def test_only_a_macro_or_a_command_can_be_put_into_the_macro_and_command_groups(
 
     check_package(package, *tables({}), commands=FIXTURE_COMMANDS)
     misplaced = [
-        ((SUBMODULE, mixed), MACRO_GROUP, f"{mixed}(公開の submodule)(公開の submodule・"),
+        ((SUBMODULE, mixed), MACRO_GROUP, f"{mixed}(public submodule)(公開の submodule・"),
         ((FIXTURE_ROOT, "helper"), MACRO_GROUP, f"{FIXTURE_ROOT}.helper({tool.CONVERSION}・"),
         (
             ("(console script)", "fixture-command"),
@@ -2164,26 +2157,26 @@ def test_only_a_macro_or_a_command_can_be_put_into_the_macro_and_command_groups(
         ((FIXTURE_ROOT, "helper"), COMMAND_GROUP, f"{FIXTURE_ROOT}.helper({tool.CONVERSION}・"),
     ]
     for key, group, said in misplaced:
-        with pytest.raises(AssertionError, match=re.escape(f"組「{group}」")) as failure:
+        with pytest.raises(AssertionError, match=re.escape(f'group "{group}"')) as failure:
             check_package(package, *tables({key: group}), commands=FIXTURE_COMMANDS)
         assert said in str(failure.value)
         assert ALLOWED_SHAPES[group] in str(failure.value)
 
 
-#: 使い捨ての package の console script を、ADR の条が名を挙げた命令と読む表(ADR_COMMANDS の形)。
+#: A table that reads a throwaway package's console script as a command that an ADR rule names (the shape of ADR_COMMANDS).
 FIXTURE_COMMANDS = {FIXTURE_DIR: {"fixture-command": "R7"}}
-#: 条の文の名を引く使い捨ての ADR(R7 だけが fixture-command を挙げる)。
+#: A throwaway ADR that looks up the name in the rule text (only R7 names fixture-command).
 FIXTURE_RULES = """
-    [(rule R7 "人が打つ CLI コマンド(fixture-command)は残す。")
-     (rule R8 "code は CLI コマンドのサブコマンドで process を起こさない(fixture-command-daemon は消した)。")]
+    [(rule R7 "The CLI command a person types (fixture-command) stays.")
+     (rule R8 "code does not start a process with a subcommand of the CLI command (fixture-command-daemon was removed).")]
 """
 
 
 @pytest.mark.timeout(_PROBE_SECONDS + 20)
 def test_a_command_the_adr_does_not_name_turns_red(tmp_path: Path) -> None:
-    """組「Allowed — CLI command」に置けるのは ADR-DOE-API-001 の条が名を挙げた命令だけ(ADR_COMMANDS)— 使い捨ての package
-    の console script は、ADR の条が名を挙げれば緑・挙げなければ形が console script でも赤(名と形を名指す)。命令と条の組の表に
-    在っても、条の文がその名を挙げなければ赤(名の一部だけが合う別の名 fixture-command-daemon も挙げた事にしない)。"""
+    """The group "Allowed — CLI command" can hold only commands that an ADR-DOE-API-001 rule names (ADR_COMMANDS) — a throwaway package's
+    console script is green if an ADR rule names it, and red if not, even though its shape is a console script (naming the name and shape). Even if it is in the table of command and rule pairs,
+    it is red if the rule text does not name it (a different name that matches only part of the name, fixture-command-daemon, is not counted as named)."""
     repo = _fixture_tree(tmp_path, {"__init__.py": EFFECTS_AND_HANDLERS})
     (repo / "packages" / FIXTURE_DIR / "pyproject.toml").write_text(
         textwrap.dedent(COMMAND_PYPROJECT), encoding="utf-8"
@@ -2192,7 +2185,7 @@ def test_a_command_the_adr_does_not_name_turns_red(tmp_path: Path) -> None:
     command = ("(console script)", "fixture-command")
     tables = _fixture_table({}), _fixture_grouped({command: COMMAND_GROUP})
     check_package(package, *tables, commands=FIXTURE_COMMANDS)
-    with pytest.raises(AssertionError, match=re.escape(f"組「{COMMAND_GROUP}」")) as failure:
+    with pytest.raises(AssertionError, match=re.escape(f'group "{COMMAND_GROUP}"')) as failure:
         check_package(package, *tables, commands={})
     assert f"(console script).fixture-command({tool.CONSOLE_SCRIPT}・" in str(failure.value)
     assert ALLOWED_SHAPES[COMMAND_GROUP] in str(failure.value)
@@ -2200,15 +2193,15 @@ def test_a_command_the_adr_does_not_name_turns_red(tmp_path: Path) -> None:
     rules = adr_rules(textwrap.dedent(FIXTURE_RULES))
     assert unnamed_commands(rules, FIXTURE_COMMANDS) == []
     assert unnamed_commands(rules, {FIXTURE_DIR: {"fixture-command": "R8"}}) == [
-        f"{FIXTURE_DIR} の命令 fixture-command: 条 R8 の文がこの名を挙げない"
+        f"{FIXTURE_DIR}: command fixture-command: the text of rule R8 does not name this name"
     ]
     assert unnamed_commands(rules, {FIXTURE_DIR: {"fixture-command": "R9"}}) == [
-        f"{FIXTURE_DIR} の命令 fixture-command: 条 R9 が ADR に無い"
+        f"{FIXTURE_DIR}: command fixture-command: rule R9 is not in the ADR"
     ]
 
 
 def adr_rules(text: str) -> dict[str, str]:
-    """ADR の file の文から、条の id(R1 ほか)から条の文へ。"""
+    """From the text of the ADR file, the rule ids (R1 and so on) to the rule text."""
     return {
         match["id"]: match["text"]
         for match in re.finditer(r'\(rule (?P<id>R\d+) "(?P<text>(?:[^"\\]|\\.)*)"', text)
@@ -2218,11 +2211,11 @@ def adr_rules(text: str) -> dict[str, str]:
 def unnamed_commands(
     rules: Mapping[str, str], commands: Mapping[str, Mapping[str, str]]
 ) -> list[str]:
-    """命令と条の組のうち、条が ADR に無いか、条の文がその名を挙げない物(名の前後が名の字でない所に在る時だけ挙げたと読む)。"""
+    """The command and rule pairs whose rule is not in the ADR or whose rule text does not name the name (read as named only where the characters before and after the name are not name characters)."""
     return [
-        f"{directory} の命令 {name}: 条 {rule} が ADR に無い"
+        f"{directory}: command {name}: rule {rule} is not in the ADR"
         if rule not in rules
-        else f"{directory} の命令 {name}: 条 {rule} の文がこの名を挙げない"
+        else f"{directory}: command {name}: the text of rule {rule} does not name this name"
         for directory, named in sorted(commands.items())
         for name, rule in sorted(named.items())
         if rule not in rules
@@ -2231,14 +2224,14 @@ def unnamed_commands(
 
 
 def test_every_command_the_guard_allows_is_named_by_its_rule() -> None:
-    """ADR_COMMANDS の命令は、どれも書いた条の文が名を挙げる(ADR-DOE-API-001 R7・R23・R24・R27・R28・R31・R33)— 条を改めずに
-    命令を足すと赤。"""
+    """Every command in ADR_COMMANDS has a rule text that names it (ADR-DOE-API-001 R7, R23, R24, R27, R28, R31, R33) — adding a command without revising the rule
+    is red."""
     assert not (
         problems := unnamed_commands(adr_rules(ADR_FILE.read_text(encoding="utf-8")), ADR_COMMANDS)
     ), "\n".join(problems)
 
 
-#: pytest の plugin の登録と、起動の .pth と、plugin の module の外の名を持つ package の宣言。
+#: A package declaration with a pytest plugin registration, a startup .pth, and a name outside the plugin module.
 PLUGIN_PYPROJECT = (
     FIXTURE_PYPROJECT
     + f"""
@@ -2270,11 +2263,11 @@ def tool_helper(x: int) -> int:
 def test_only_a_plugin_registration_or_a_startup_call_can_be_put_into_their_groups(
     tmp_path: Path,
 ) -> None:
-    """組「Allowed — pytest plugin registration」に置けるのは pytest11 の entry point の行と plugin の module が出す名、組「許した物 —
-    起動の口」に置けるのは package が配る .pth が起動ごとに呼ぶ名だけ(ADR-DOE-API-001 R10・R33・R36)。
+    """The group "Allowed — pytest plugin registration" can hold only pytest11 entry point rows and names the plugin module shows, and the group "Allowed —
+    startup entry" can hold only names that a .pth shipped by the package calls at every startup (ADR-DOE-API-001 R10, R33, R36).
 
-    使い捨ての package の pytest11 の登録と plugin の宣言と .pth が呼ぶ install は、それぞれの組に置けば緑。plugin の module の
-    外の名を plugin の組に、.pth が呼ばない名を起動の口の組に置くと赤(組と名と形を名指す)。.pth を配らなければ install も赤。
+    A throwaway package's pytest11 registration, plugin declaration, and the install that the .pth calls are green if placed in their respective groups. Placing a name outside the plugin
+    module in the plugin group, or a name the .pth does not call in the startup entry group, is red (naming the group, name, and shape). Install is also red if no .pth is shipped.
     """
     repo = _fixture_tree(
         tmp_path,
@@ -2315,55 +2308,55 @@ def test_only_a_plugin_registration_or_a_startup_call_can_be_put_into_their_grou
         ((FIXTURE_ROOT, "declare_slow"), STARTUP_GROUP, f"{FIXTURE_ROOT}.declare_slow("),
     ]
     for key, group, said in misplaced:
-        with pytest.raises(AssertionError, match=re.escape(f"組「{group}」")) as failure:
+        with pytest.raises(AssertionError, match=re.escape(f'group "{group}"')) as failure:
             check_package(package, *tables({key: group}), repo=repo)
         assert said in str(failure.value)
         assert ALLOWED_SHAPES[group] in str(failure.value)
 
     (package_dir / "src" / f"{FIXTURE_ROOT}.pth").unlink()
-    with pytest.raises(AssertionError, match=re.escape(f"組「{STARTUP_GROUP}」")) as failure:
+    with pytest.raises(AssertionError, match=re.escape(f'group "{STARTUP_GROUP}"')) as failure:
         check_package(package, *tables({}), repo=repo)
     assert f"{FIXTURE_ROOT}.install(" in str(failure.value)
 
 
 def test_an_allowed_group_without_a_check_is_not_well_formed() -> None:
-    """許した物の組は、目録で形を確かめる組(ALLOWED_GROUPS)だけを置ける — 確かめの無い組で名を許すと許した物の表の形の検が
-    赤。許した物の組を既知の表に置くのも赤(既知の表は外れと境界だけを持ち、空になれる)。"""
+    """An allowed group can hold only groups whose shape the inventory checks (ALLOWED_GROUPS) — allowing a name in a group with no check turns the allowed table's shape check
+    red. Placing an allowed group in the known table is also red (the known table holds only violations and boundaries, and can be empty)."""
     table = _fixture_table({})
     allowed = _fixture_allowed(["helper"])
     assert allowed_problems(allowed, table) == []
     allowed["allowed"][0]["group"] = "Allowed — handy function"
     assert allowed_problems(allowed, table) == [
-        f"許した物 {FIXTURE_DIR} {FIXTURE_ROOT}.helper: 組 'Allowed — handy function' は {ALLOWED_GROUPS} のどれでもない(許す組は目録で形を確かめる)"
+        f"allowed {FIXTURE_DIR} {FIXTURE_ROOT}.helper: group 'Allowed — handy function' is none of {ALLOWED_GROUPS} (an allowed group has its shape checked by the inventory)"
     ]
 
     table["packages"][FIXTURE_DIR]["names"] = {HELPER_GROUP: {FIXTURE_ROOT: ["helper"]}}
     assert shape_problems(table, [FIXTURE_DIR]) == [
-        f"{FIXTURE_DIR}: 許した物の組 {HELPER_GROUP!r} は既知の表に置かない — 許した物の表 {ALLOWED.relative_to(ROOT)} に"
-        "組と決めつきで置く(既知の表は外れと境界だけを持つ)"
+        f"{FIXTURE_DIR}: the allowed group {HELPER_GROUP!r} is not placed in the known table — place it in the allowed table {ALLOWED.relative_to(ROOT)} "
+        "with a group and a basis (the known table holds only violations and boundaries)"
     ]
 
 
 def test_an_allowed_row_without_a_reason_is_not_well_formed() -> None:
-    """許した物の表は決めつきで足せる: 決めが ADR の条か許す訳の英語の 1 文の行は緑、決めの欄の無い行・空の決め・記録の
-    id か issue の番号を含む決めの行は赤。
+    """The allowed table can be added to with a basis: a row whose basis is an ADR rule or one English sentence giving the reason it is allowed is green, and a row without a basis field, an empty basis, or a basis containing a record
+    id or an issue number is red.
 
-    既知の表と同じ名を置く行・鍵の順に並ばない行・範囲の外の package の行も赤。許した物を「足した名」の欄「組」で足す前の道は
-    閉じた(欄「組」の在る「足した名」は既知の表の形の検が赤)。
+    A row that places the same name as the known table, a row not sorted by key, and a row of a package out of scope are also red. The old way of allowing something by adding it with the field "group" in "added names"
+    is closed (an "added names" row with the field "group" turns the known table's shape check red).
     """
     table = _fixture_table({})
-    where = f"許した物 {FIXTURE_DIR} {FIXTURE_ROOT}.pinging"
+    where = f"allowed {FIXTURE_DIR} {FIXTURE_ROOT}.pinging"
     assert allowed_problems(_fixture_allowed(["pinging"], "ADR-DOE-API-001 R25"), table) == []
     assert allowed_problems(_fixture_allowed(["pinging"], "Only emits effects for its callers."), table) == []
     assert allowed_problems(_fixture_allowed(["pinging"], " "), table) == [
-        f"{where}: 決め ' ' が ADR の条(ADR-DOE-API-001 R<番号>)でも、. で終わる許す訳の 1 文でもない"
+        f"{where}: basis ' ' is neither an ADR rule (ADR-DOE-API-001 R<number>) nor one sentence ending with . giving the reason it is allowed"
     ]
     tracked = "ki-" + "0123456789ab"
     assert allowed_problems(_fixture_allowed(["pinging"], tracked), table) == [
-        f"{where}: 決め {tracked!r} が記録の id か issue の番号を含む(ADR の条か許す訳の 1 文を書く)"
+        f"{where}: basis {tracked!r} contains a record id or an issue number (write an ADR rule or one sentence giving the reason it is allowed)"
     ]
     assert allowed_problems(_fixture_allowed(["pinging"], "Allowed in #123."), table) == [
-        f"{where}: 決め 'Allowed in #123.' が記録の id か issue の番号を含む(ADR の条か許す訳の 1 文を書く)"
+        f"{where}: basis 'Allowed in #123.' contains a record id or an issue number (write an ADR rule or one sentence giving the reason it is allowed)"
     ]
     lacking = cast(
         AllowedTable,
@@ -2379,21 +2372,21 @@ def test_an_allowed_row_without_a_reason_is_not_well_formed() -> None:
         },
     )
     assert allowed_problems(lacking, table) == [
-        f"{where}: 欄は package・module・name・組・決め(決めの無い行は置けない)"
+        f"{where}: the fields are package, module, name, group, and basis (a row without a basis cannot be placed)"
     ]
 
     assert allowed_problems(
         _fixture_allowed(["pinging"]), _fixture_table({FIXTURE_ROOT: ["pinging"]})
-    ) == [f"{where}: 既知の表にも在る(1 つの名は 1 つの表だけに置く)"]
+    ) == [f"{where}: it is also in the known table (one name is placed in only one table)"]
     unordered = _fixture_allowed(["pinging", "sequence"])
     unordered["allowed"].reverse()
     assert allowed_problems(unordered, table) == [
-        "許した物の表の行は (package, module, name) の順に並べ、重ねない"
+        "rows of the allowed table must be sorted by (package, module, name) and not duplicated"
     ]
     outside = _fixture_table({})
     outside["packages"][FIXTURE_DIR] = {"scope": "out of scope", "names": {}, "basis": FIXTURE_DECISION}
     assert allowed_problems(_fixture_allowed(["pinging"]), outside) == [
-        f"{where}: 範囲の外の package の名は許さない(名を突き合わせない)"
+        f"{where}: names of a package out of scope are not allowed (names are not matched)"
     ]
 
     old_path = cast(
@@ -2402,18 +2395,18 @@ def test_an_allowed_row_without_a_reason_is_not_well_formed() -> None:
             "package": FIXTURE_DIR,
             "module": FIXTURE_ROOT,
             "name": "pinging",
-            "reason": "表を足した後に見せる helper(例)",
+            "reason": "a helper shown after the table was added (example)",
             "group": HELPER_GROUP,
         },
     )
     assert shape_problems(_fixture_table({}, [old_path]), [FIXTURE_DIR]) == [
-        f"足した名 {FIXTURE_DIR} {FIXTURE_ROOT}.pinging: 欄は package・module・name・訳"
-        f"(許した物は許した物の表 {ALLOWED.relative_to(ROOT)} に置く)"
+        f"added names {FIXTURE_DIR} {FIXTURE_ROOT}.pinging: the fields are package, module, name, and reason"
+        f"(allowed things go in the allowed table {ALLOWED.relative_to(ROOT)})"
     ]
 
 
 def test_a_name_put_into_the_listed_groups_turns_red() -> None:
-    """最初の版の「名」の組に無い名を「名」の組に足すと、減るだけの検が名指す(消すのは緑)。"""
+    """Adding a name that is not in the first version to the "names" groups makes the only-shrinks check name it (removing is green)."""
     first = _fixture_table({FIXTURE_ROOT: ["a", "b"]})
     assert grown_names(first, _fixture_table({FIXTURE_ROOT: ["a"]})) == []
     assert grown_names(first, _fixture_table({FIXTURE_ROOT: ["a", "b", "c"]})) == [
@@ -2422,7 +2415,7 @@ def test_a_name_put_into_the_listed_groups_turns_red() -> None:
 
 
 def test_a_submodule_row_put_into_the_table_after_it_had_submodule_rows_turns_red() -> None:
-    """submodule の行は、submodule の行を足した版から減るだけ(最初の版に無くても、その版に在れば増えたと読まない)。"""
+    """Submodule rows only shrink from the version at which the submodule rows were added (even if a row was not in the first version, it is not read as grown if it is in that version)."""
     first = _fixture_table({FIXTURE_ROOT: ["a"]})
     with_submodules = _fixture_table({FIXTURE_ROOT: ["a"], SUBMODULE: [f"{FIXTURE_ROOT}.x"]})
     assert grown_names(first, with_submodules, with_submodules) == []
@@ -2435,7 +2428,7 @@ def test_a_submodule_row_put_into_the_table_after_it_had_submodule_rows_turns_re
     ]
 
 
-# --- 失敗ケース: 公開の submodule と、名を submodule から入口へ移す直し(ADR-DOE-API-001 R5) ---
+# --- Failure cases: public submodules, and the fix of moving names from a submodule to the entry point (ADR-DOE-API-001 R5) ---
 
 ANOTHER_EFFECT = '''
 from doeff import EffectBase
@@ -2444,7 +2437,7 @@ from doeff import EffectBase
 class PongEffect(EffectBase):
     """An effect in a submodule: the names are fine, the public submodule is not."""
 '''
-#: 入口へ移す前の submodule: R2 の型(結果の型)と定数(入口へ移す)と、外れの関数(_ の中に残す)。
+#: The submodule before moving to the entry point: R2's type (a result type), a constant (moved to the entry point), and a violating function (left inside _).
 TYPES = '''
 from dataclasses import dataclass
 
@@ -2463,7 +2456,7 @@ def helper(x: int) -> int:
     """An outlier: stays inside the hidden module."""
     return x + 1
 '''
-#: 入口が _types の名を出す 2 つの形: すぐ import する形と、遅延の import の形(__getattr__・__dir__・TYPE_CHECKING)。
+#: Two forms in which the entry shows the names of _types: a form imported immediately and a lazy import form (__getattr__, __dir__, TYPE_CHECKING).
 ROOT_SHOWS_TYPES = {
     "eager": f"""
 from {FIXTURE_ROOT}._types import LIMIT as LIMIT, PingResult as PingResult
@@ -2489,7 +2482,7 @@ def __dir__():
     return sorted([*globals(), *_LAZY])
 """,
 }
-#: 元の path に残す移し替えの module の 2 つの形: * で名を写す形と、sys.modules の項を _types に替える形。
+#: Two forms of forwarding module left at the original path: a form that copies names with *, and a form that replaces the sys.modules entry with _types.
 SHIM = {
     "star": f"""
 from {FIXTURE_ROOT}._types import *
@@ -2502,7 +2495,7 @@ from {FIXTURE_ROOT} import _types
 sys.modules[__name__] = _types
 """,
 }
-#: 入口が自分で定義する、同じ名の違う型(移した名ではない)。
+#: A different type of the same name that the entry defines itself (not a moved name).
 ANOTHER_PING_RESULT = '''
 
 
@@ -2513,7 +2506,7 @@ class PingResult:
 
 @pytest.mark.timeout(_PROBE_SECONDS + 20)
 def test_an_added_public_submodule_turns_red_and_hiding_it_turns_green(tmp_path: Path) -> None:
-    """_ の無い submodule を足すと、出す名が effect だけでも赤(submodule を名指す)・名に _ を付けて隠すと緑。"""
+    """Adding a submodule without _ is red even if the names it shows are only effects (naming the submodule) — hiding it by prefixing the name with _ is green."""
     table = _fixture_table({})
     check_package(_read_fixture(_fixture_repo(tmp_path / "root", EFFECTS_AND_HANDLERS)), table)
 
@@ -2522,7 +2515,7 @@ def test_an_added_public_submodule_turns_red_and_hiding_it_turns_green(tmp_path:
     )
     with pytest.raises(
         AssertionError,
-        match=r"許した物の表に無い[\s\S]*doeff_fixture_api\.extra\(公開の submodule\)",
+        match=r"in neither the known table nor the allowed table[\s\S]*doeff_fixture_api\.extra\(public submodule\)",
     ):
         check_package(_read_fixture(public), table)
 
@@ -2537,10 +2530,10 @@ def test_an_added_public_submodule_turns_red_and_hiding_it_turns_green(tmp_path:
 def test_moving_names_from_a_submodule_to_the_root_keeps_the_table_green(
     tmp_path: Path, root_form: str, shim_form: str
 ) -> None:
-    """名を submodule から入口へ移しても、表の module を書き換えずに緑(stage 1 — 移し替えの module を残す間)。
+    """Moving names from a submodule to the entry point is green without rewriting the table's module (stage 1 — while the forwarding module remains).
 
-    stage 3 で移し替えの module を消すと、表に残るのは隠した submodule と _ の中に残した外れの名だけで、それを表から消すと緑
-    (入口へ移した名は表の submodule の行のまま読む)。
+    When the forwarding module is removed at stage 3, what remains in the table is only the hidden submodule and the violating names left inside _, and removing them from the table makes it green
+    (names moved to the entry point are still read as the table's submodule row).
     """
     submodule = f"{FIXTURE_ROOT}.types"
     table = _fixture_table({SUBMODULE: [submodule], submodule: ["LIMIT", "PingResult", "helper"]})
@@ -2558,35 +2551,35 @@ def test_moving_names_from_a_submodule_to_the_root_keeps_the_table_green(
     stage_3 = _read_fixture(
         _fixture_tree(tmp_path / "stage-3", {"__init__.py": root, "_types.py": TYPES})
     )
-    with pytest.raises(AssertionError, match=r"目録に無い名が 2 個") as failure:
+    with pytest.raises(AssertionError, match=r"2 name\(s\) are in the known table but not in the inventory") as failure:
         check_package(stage_3, table)
-    assert f"{submodule}(公開の submodule)" in str(failure.value)
+    assert f"{submodule}(public submodule)" in str(failure.value)
     assert f"{submodule}.helper" in str(failure.value)
     check_package(stage_3, _fixture_table({submodule: ["LIMIT", "PingResult"]}))
 
 
 @pytest.mark.timeout(_PROBE_SECONDS + 20)
 def test_a_different_definition_with_a_known_name_at_the_root_turns_red(tmp_path: Path) -> None:
-    """submodule が名を出している間に、同じ名の違う定義を入口に足すと赤(移した名と読まない)。"""
+    """Adding a different definition of the same name to the entry while the submodule shows the name is red (not read as a moved name)."""
     submodule = f"{FIXTURE_ROOT}.types"
     table = _fixture_table({SUBMODULE: [submodule], submodule: ["LIMIT", "PingResult", "helper"]})
     repo = _fixture_tree(
         tmp_path, {"__init__.py": EFFECTS_AND_HANDLERS + ANOTHER_PING_RESULT, "types.py": TYPES}
     )
     with pytest.raises(
-        AssertionError, match=r"許した物の表に無い[\s\S]*doeff_fixture_api\.PingResult"
+        AssertionError, match=r"in neither the known table nor the allowed table[\s\S]*doeff_fixture_api\.PingResult"
     ):
         check_package(_read_fixture(repo), table)
 
 
-#: 子の package を _types へ移した後に元の path へ残す移し替えの module(道具の形 — 1 行目の印つき)。
+#: A forwarding module left at the original path after moving a child package to _types (the tool's form — with the marker on its first line).
 MARKED_SHIM = f"""# moved-submodule-shim: {FIXTURE_ROOT}.types -> {FIXTURE_ROOT}._types
 import sys
 from importlib import import_module
 
 sys.modules[__name__] = import_module("{FIXTURE_ROOT}._types")
 """
-#: 子の package の下の module(外れの関数を 1 つ出す)。
+#: A module under the child package (it shows one violating function).
 BELOW = '''
 def sub_helper(x: int) -> int:
     """An outlier in a module below the child package."""
@@ -2598,9 +2591,9 @@ def sub_helper(x: int) -> int:
 def test_a_marked_shim_keeps_the_modules_below_a_moved_package_at_their_old_names(
     tmp_path: Path,
 ) -> None:
-    """子の package を _ へ移し、1 行目に印のある移し替えの module を残す間は、下の module も古い名のまま数えて緑。
+    """While a child package is moved to _ and a forwarding module with the marker on its first line remains, the modules below are counted by their old names and stay green.
 
-    印の無い移し替えの module では、下の module は目録から消える(古い名の submodule と名の行が、表に在るのに目録に無い)。
+    With a forwarding module without the marker, the modules below disappear from the inventory (the old-named submodule and name rows are in the table but not in the inventory).
     """
     child, below = f"{FIXTURE_ROOT}.types", f"{FIXTURE_ROOT}.types.sub"
     table = _fixture_table(
@@ -2622,9 +2615,9 @@ def test_a_marked_shim_keeps_the_modules_below_a_moved_package_at_their_old_name
 
     unmarked = MARKED_SHIM.split("\n", 1)[1]
     without_mark = _fixture_tree(tmp_path / "unmarked", {**moved, "types.py": unmarked})
-    with pytest.raises(AssertionError, match=r"目録に無い名が 2 個") as failure:
+    with pytest.raises(AssertionError, match=r"2 name\(s\) are in the known table but not in the inventory") as failure:
         check_package(_read_fixture(without_mark), table)
-    assert f"{below}(公開の submodule)" in str(failure.value)
+    assert f"{below}(public submodule)" in str(failure.value)
     assert f"{below}.sub_helper" in str(failure.value)
 
 
@@ -2632,12 +2625,12 @@ def test_a_marked_shim_keeps_the_modules_below_a_moved_package_at_their_old_name
 def test_a_marked_shim_of_a_namespace_dir_keeps_the_modules_below_at_their_old_names(
     tmp_path: Path,
 ) -> None:
-    """__init__ の無い子の dir を _ へ移し、印のある移し替えの module を残す間も、下の module を古い名で数えて緑。
+    """A child dir without __init__ is moved to _, and while a forwarding module with the marker remains, the modules below are counted by their old names and stay green.
 
-    移す前の namespace の dir は module でなく(submodule の行が無い)、目録は dir を通り抜けて下の module を数える。
-    移し替えの module はその dir の代わりなので、自分は submodule と数えずに、移した先の dir を同じに通り抜ける
-    (doeff-cluster の区画 sim を _sim へ移した時、移した先を辿らずに下の 603 行が消え、移し替えの module が表に無い
-    submodule になった)。
+    A namespace dir before the move is not a module (it has no submodule row), and the inventory passes through the dir and counts the modules below.
+    The forwarding module stands in for that dir, so it does not count itself as a submodule and passes through the moved-to dir in the same way
+    (when the doeff-cluster section sim was moved to _sim, 603 lines below disappeared without following the destination, and the forwarding module became a
+    submodule not in the table).
     """
     below = f"{FIXTURE_ROOT}.types.sub"
     table = _fixture_table({SUBMODULE: [below], below: ["sub_helper"]})
@@ -2653,7 +2646,7 @@ def test_a_marked_shim_of_a_namespace_dir_keeps_the_modules_below_at_their_old_n
     check_package(_read_fixture(stage_1), table)
 
 
-#: import すると落ちる子の module(目録は名を text から読む — doeff-ml-nexus の import できない Hy の module の様に)。
+#: A child module that fails when imported (the inventory reads names from its text — like doeff-ml-nexus's Hy module that cannot be imported).
 UNIMPORTABLE = '''
 raise RuntimeError("this module cannot be imported")
 
@@ -2668,10 +2661,10 @@ def helper(x: int) -> int:
 def test_a_marked_shim_of_a_module_that_cannot_be_imported_keeps_the_names_of_the_moved_text(
     tmp_path: Path,
 ) -> None:
-    """import できない子を _ へ移し、印のある移し替えの module を残す間も、名を移した先の text から古い名で数えて緑。
+    """An unimportable child is moved to _, and while a forwarding module with the marker remains, names are counted by their old names from the destination's text and stay green.
 
-    移し替えの module の text は名を定義しないので、移した先を読まないと名が目録から消え、表に在るのに目録に無い名で赤になる
-    (doeff-ml-nexus の import できない Hy の module で起きた)。
+    The forwarding module's text does not define names, so unless the destination is read the names disappear from the inventory and it turns red with names that are in the table but not in the inventory
+    (this happened with doeff-ml-nexus's Hy module that cannot be imported).
     """
     child = f"{FIXTURE_ROOT}.types"
     table = _fixture_table({SUBMODULE: [child], child: ["helper"]})
@@ -2687,17 +2680,17 @@ def test_a_marked_shim_of_a_module_that_cannot_be_imported_keeps_the_names_of_th
     check_package(_read_fixture(stage_1), table)
 
 
-# --- doeff の中の部品は doeff だけが import する(ADR-DOE-API-001 R10・R11) ---
+# --- Only doeff imports its parts (ADR-DOE-API-001 R10, R11) ---
 
-#: doeff の外の file を探す所(repo の根から): packages/ の下(部品そのものの dir を除く)・examples・docs/adr の Hy。doeff の根の
-#: package(doeff/)と doeff の検(tests/)は doeff の中。
+#: Where to look for files outside doeff (from the repo root): under packages/ (excluding the parts' own dirs), examples, and the Hy of docs/adr. The doeff root
+#: package (doeff/) and doeff's checks (tests/) are inside doeff.
 OUTSIDE_DOEFF = ("packages", "examples", "docs/adr")
-#: 読む file の種類と、探さない dir(組み立ての物と依存 — 名が . で始まる dir も探さない)。
+#: Kinds of files to read, and dirs not to look in (build products and dependencies — dirs whose names start with . are not looked in either).
 _SOURCE_SUFFIXES = (".py", ".pyi", ".hy")
 _SKIPPED_DIRS = frozenset({"__pycache__", "node_modules", "target"})
-#: module の名の文字列を受けて読む関数(importlib.import_module・pytest.importorskip・__import__・importlib.util.find_spec)。
+#: Functions that take and read a module name string (importlib.import_module, pytest.importorskip, __import__, importlib.util.find_spec).
 _IMPORTING_CALLS = frozenset({"import_module", "importorskip", "__import__", "find_spec"})
-#: Hy の字句: 文字列・註・括弧・それ以外の語(文字列と註の中の括弧を形と読まない)。
+#: Hy lexical tokens: strings, comments, parentheses, and other words (parentheses inside strings and comments are not read as forms).
 _HY_TOKEN = re.compile(r'"(?:\\.|[^"\\])*"|;[^\n]*|[()\[\]{}]|[^\s()\[\]{}";]+')
 _OPENING = frozenset({"(", "[", "{"})
 _CLOSING = frozenset({")", "]", "}"})
@@ -2705,7 +2698,7 @@ _CLOSING = frozenset({")", "]", "}"})
 
 @dataclass(frozen=True)
 class PartImport:
-    """doeff の外の file が doeff の中の部品を import する 1 か所(repo の根からの path・行・import する module)。"""
+    """One place where a file outside doeff imports a part inside doeff (path from the repo root, line, and the imported module)."""
 
     path: str
     line: int
@@ -2713,12 +2706,12 @@ class PartImport:
 
 
 def _is_part(module: str, roots: frozenset[str]) -> bool:
-    """module の名(Hy の - の綴りも)の根が、部品の import の根のどれかか。"""
+    """Whether the root of a module name (including the Hy - spelling) is one of the parts' import roots."""
     return module.replace("-", "_").split(".")[0] in roots
 
 
 def _source_files(base: Path, skipped: frozenset[Path]) -> Iterator[Path]:
-    """base の下の Python と Hy の file(skipped の dir・. で始まる dir・組み立ての物の dir を除く)。"""
+    """Python and Hy files under base (excluding skipped dirs, dirs that start with ., and dirs of build products)."""
     for directory, dirs, files in os.walk(base):
         here = Path(directory)
         dirs[:] = sorted(
@@ -2730,9 +2723,9 @@ def _source_files(base: Path, skipped: frozenset[Path]) -> Iterator[Path]:
 
 
 def _python_imports(text: str) -> Iterator[tuple[int, str]]:
-    """Python の file が import する module(行と名): import・from(相対でない)・名の文字列を受けて読む関数の呼び。
+    """Modules that a Python file imports (line and name): import, from (non-relative), and calls to functions that take and read a name string.
 
-    構文の誤りで読めない file は、行の頭の import と from の文を字面で読む。
+    A file that cannot be read because of a syntax error is read literally for its import and from statements at the start of a line.
     """
     try:
         tree = ast.parse(text)
@@ -2763,9 +2756,9 @@ def _python_imports(text: str) -> Iterator[tuple[int, str]]:
 
 
 def _form_modules(tokens: list[tuple[int, str]], start: int) -> Iterator[tuple[int, str]]:
-    """Hy の import か require の形の module の語(位置と名): 形のすぐ下の段の語のうち、:as とその次の語と括弧の中を除いた物。
+    """The module words of a Hy import or require form (position and name): of the words one level directly under the form, those excluding :as, the word after it, and what is inside parentheses.
 
-    形は module ごとに「module [名 …]」か「module :as 別名」を並べるので、名の列は括弧の中、別名は :as の次に在る。
+    A form lists, for each module, "module [name ...]" or "module :as alias", so the list of names is inside parentheses and the alias is after :as.
     """
     depth, alias_next = 0, False
     for position, token in tokens[start:]:
@@ -2784,7 +2777,7 @@ def _form_modules(tokens: list[tuple[int, str]], start: int) -> Iterator[tuple[i
 
 
 def _hy_imports(text: str) -> Iterator[tuple[int, str]]:
-    """Hy の file が import する module(行と名): (import …)・(require …) の module の語と、名の文字列を受けて読む関数の呼び。"""
+    """Modules that a Hy file imports (line and name): the module words of (import ...) and (require ...) forms, and calls to functions that take and read a name string."""
     tokens = [(found.start(), found.group()) for found in _HY_TOKEN.finditer(text)]
     tokens = [(position, token) for position, token in tokens if not token.startswith(";")]
     for index, (_position, token) in enumerate(tokens[:-2]):
@@ -2802,7 +2795,7 @@ def _hy_imports(text: str) -> Iterator[tuple[int, str]]:
 
 
 def part_imports(repo: Path) -> list[PartImport]:
-    """doeff の外の file(OUTSIDE_DOEFF の下 — 部品そのものの dir を除く)が doeff の中の部品の import の根を import する所の全部。"""
+    """Every place where a file outside doeff (under OUTSIDE_DOEFF — excluding the parts' own dirs) imports an import root of a part inside doeff."""
     roots = frozenset(part.import_root for part in tool.DOEFF_PARTS)
     own = frozenset(repo / "packages" / part.dir for part in tool.DOEFF_PARTS)
     found: list[PartImport] = []
@@ -2823,20 +2816,20 @@ def part_imports(repo: Path) -> list[PartImport]:
 
 def _part_imports_text(found: list[PartImport]) -> str:
     return (
-        "doeff の外の file が doeff の中の部品を import している — 部品は目録が数えない doeff の中の物(ADR-DOE-API-001 R11)。"
-        "VM の型は doeff の根から(from doeff import EffectBase, K, Pass, Resume, UnhandledEffect)、doeff の subpackage が要る "
-        "VM の内側の物は doeff._vm から読む:\n"
+        "A file outside doeff imports a part inside doeff — the parts are inside doeff and not counted by the inventory (ADR-DOE-API-001 R11). "
+        "Read VM types from the doeff root (from doeff import EffectBase, K, Pass, Resume, UnhandledEffect), and read what a doeff subpackage needs "
+        "from inside the VM from doeff._vm:\n"
         + "\n".join(f"  {row.path}:{row.line} {row.module}" for row in found)
     )
 
 
 def test_only_doeff_imports_its_parts() -> None:
-    """doeff の外の file(packages/ の下の部品の外の package・examples・docs/adr)は、doeff の中の部品(doeff_vm)を import しない。"""
+    """A file outside doeff (a package under packages/ that is not a part, examples, docs/adr) does not import a part inside doeff (doeff_vm)."""
     found = part_imports(ROOT)
     assert not found, _part_imports_text(found)
 
 
-#: doeff の外で doeff_vm を読む形(行の末の印 fires の行が赤)と、赤にならない形(doeff の根・doeff._vm・似た名・註と文字列)。
+#: Forms that read doeff_vm outside doeff (a line with the marker fires at its end is red) and forms that do not turn red (the doeff root, doeff._vm, similar names, comments and strings).
 PART_IMPORTS_PY = """
 import importlib
 
@@ -2868,7 +2861,7 @@ PART_IMPORTS_HY = """
 ;; (import doeff_vm [K])
 (setv SAID "(import doeff_vm)")
 """
-#: 同じ所を doeff の根と doeff._vm から読む形(緑)。
+#: Forms that read the same place from the doeff root and doeff._vm (green).
 ROOT_IMPORTS_PY = """
 from doeff import K, Pass
 from doeff._vm import declare_passes, native
@@ -2877,7 +2870,7 @@ ROOT_IMPORTS_HY = """
 (import doeff [K Pass])
 (import doeff._vm [native])
 """
-#: doeff の外の file(赤になる所)と、doeff の中の file(部品そのもの・doeff の根の package・doeff の検 — 数えない所)。
+#: Files outside doeff (where it turns red) and files inside doeff (the parts themselves, the doeff root package, and doeff's checks — where it is not counted).
 OUTSIDE_FILES = {
     f"packages/{FIXTURE_DIR}/src/{FIXTURE_ROOT}/__init__.py": PART_IMPORTS_PY,
     f"packages/{FIXTURE_DIR}/src/{FIXTURE_ROOT}/hy_side.hy": PART_IMPORTS_HY,
@@ -2899,10 +2892,10 @@ def _write_files(repo: Path, files: Mapping[str, str]) -> None:
 
 
 def test_a_doeff_part_imported_outside_doeff_turns_red(tmp_path: Path) -> None:
-    """doeff の外の file が doeff の中の部品(doeff_vm)を import すると赤 — 素の import・from・下の module・Hy の import と require
-    (1 つの形に module を並べる形も)・importlib.import_module と pytest.importorskip に渡す名の文字列の行を名指す。doeff の根と
-    doeff._vm から読む形・似た名・註と文字列は数えず、部品そのもの・doeff の根の package・doeff の検(tests/)の import も数えない。
-    外の file を doeff の根から読む形に直すと緑(ADR-DOE-API-001 R11)。"""
+    """A file outside doeff that imports a part inside doeff (doeff_vm) is red — it names the lines of a plain import, from, a lower module, a Hy import and require
+    (including a form that lists modules in one form), and a name string passed to importlib.import_module and pytest.importorskip. Forms that read from the doeff root and
+    doeff._vm, similar names, and comments and strings are not counted, and imports of the parts themselves, the doeff root package, and doeff's checks (tests/) are not counted either.
+    Fixing the outside file to read from the doeff root makes it green (ADR-DOE-API-001 R11)."""
     _write_files(tmp_path, {**OUTSIDE_FILES, **INSIDE_FILES})
     found = part_imports(tmp_path)
     marked = {
@@ -2930,20 +2923,20 @@ def test_a_doeff_part_imported_outside_doeff_turns_red(tmp_path: Path) -> None:
     assert part_imports(tmp_path) == []
 
 
-#: 隠した時の名の固定の列を印の下に持つ移し替えの module(the former move tool の書く形)。
+#: A forwarding module that has, under the marker, a fixed list of names for when it was hidden (the form the former move tool writes).
 PINNED_SHIM = MARKED_SHIM.replace(
     "\n",
     f"\n# moved-submodule-shim-names {FIXTURE_ROOT}.types:\n#   LIMIT PingResult\n#   helper\n",
     1,
 )
-#: 隠した後に、移した先の _ の module へ書き手が足した内側の helper。
+#: An inner helper a writer added to the destination _ module after hiding.
 ADDED_INSIDE = '''
 
 def added_helper(x: int) -> int:
     """A helper added inside the hidden module after it was hidden."""
     return x * 2
 '''
-#: 入口に書き手が足した名(意図して見せる名)。
+#: A name a writer added to the entry (a name intended to be shown).
 ADDED_AT_ROOT = '''
 
 def root_helper(x: int) -> int:
@@ -2954,11 +2947,11 @@ def root_helper(x: int) -> int:
 
 @pytest.mark.timeout(_PROBE_SECONDS + 20)
 def test_a_name_added_inside_a_pinned_shim_does_not_grow_the_public_api(tmp_path: Path) -> None:
-    """移し替えの module が名の固定の列を持てば、移した先の _ の module に helper を足しても目録の行は増えず緑。
+    """If a forwarding module has a fixed list of names, adding a helper to the destination _ module adds no inventory rows and stays green.
 
-    列の無い移し替えの module では、古い path が移した先の module そのものを返すので、足した helper が古い path の
-    公開名に加わって赤になる(内側の helper を足すだけで公開 API が増えた)。入口に足した名は
-    書き手が意図して見せる名なので、列が在っても赤(表に足すか直す)。
+    With a forwarding module without the list, the old path returns the destination module itself, so the added helper joins the old path's
+    public names and turns red (merely adding an inner helper grew the public API). A name added to the entry is
+    a name the writer intends to show, so it is red even with the list (add it to the table or fix it).
     """
     child = f"{FIXTURE_ROOT}.types"
     table = _fixture_table({SUBMODULE: [child], child: ["LIMIT", "PingResult", "helper"]})
@@ -2986,7 +2979,7 @@ def test_a_name_added_inside_a_pinned_shim_does_not_grow_the_public_api(tmp_path
             "types.py": MARKED_SHIM,
         },
     )
-    with pytest.raises(AssertionError, match=rf"許した物の表に無い[\s\S]*{child}\.added_helper"):
+    with pytest.raises(AssertionError, match=rf"in neither the known table nor the allowed table[\s\S]*{child}\.added_helper"):
         check_package(_read_fixture(unpinned), table)
 
     at_root = _fixture_tree(
@@ -2998,13 +2991,13 @@ def test_a_name_added_inside_a_pinned_shim_does_not_grow_the_public_api(tmp_path
         },
     )
     with pytest.raises(
-        AssertionError, match=rf"許した物の表に無い[\s\S]*{FIXTURE_ROOT}\.root_helper"
+        AssertionError, match=rf"in neither the known table nor the allowed table[\s\S]*{FIXTURE_ROOT}\.root_helper"
     ) as failure:
         check_package(_read_fixture(at_root), table)
     assert "added_helper" not in str(failure.value)
 
 
-#: namespace の dir(__init__ の無い _types)を指す移し替えの module に、下の module の名の固定の列を書いた形。
+#: A forwarding module pointing at a namespace dir (_types without __init__), with a fixed list of the names of the modules below written in it.
 PINNED_NAMESPACE_SHIM = MARKED_SHIM.replace(
     "\n", f"\n# moved-submodule-shim-names {FIXTURE_ROOT}.types.sub:\n#   sub_helper\n", 1
 )
@@ -3014,11 +3007,11 @@ PINNED_NAMESPACE_SHIM = MARKED_SHIM.replace(
 def test_a_name_added_below_a_pinned_namespace_dir_shim_does_not_grow_the_public_api(
     tmp_path: Path,
 ) -> None:
-    """namespace の dir を指す移し替えの module の名の固定の列も読み、移した先の _ の下に helper を足しても緑。
+    """It also reads the fixed list of names of a forwarding module that points at a namespace dir, and stays green when a helper is added under the destination _.
 
-    その移し替えの module は module でないので、目録が module の列だけから列を読むと読まれず、足した helper が古い path の
-    公開名に加わって赤に戻った(doeff-cluster の区画 _sim・_record_store)。列の無い時は、
-    下の古い path を列の無い path に数える(the former move tool (pin) が列を書く移し替えの module に拾う)。
+    That forwarding module is not a module, so if the inventory read lists only from a list of modules it was not read, and the added helper joined the old path's
+    public names and turned red again (the doeff-cluster sections _sim and _record_store). When there is no list,
+    the old paths below are counted as paths without a list (picked up by forwarding modules for which the former move tool (pin) writes a list).
     """
     below = f"{FIXTURE_ROOT}.types.sub"
     table = _fixture_table({SUBMODULE: [below], below: ["sub_helper"]})
@@ -3033,7 +3026,7 @@ def test_a_name_added_below_a_pinned_namespace_dir_shim_does_not_grow_the_public
     assert tool.unpinned_shim_modules(layout) == []
 
     unpinned = _fixture_tree(tmp_path / "unpinned", {**files, "types.py": MARKED_SHIM})
-    with pytest.raises(AssertionError, match=rf"許した物の表に無い[\s\S]*{below}\.added_helper"):
+    with pytest.raises(AssertionError, match=rf"in neither the known table nor the allowed table[\s\S]*{below}\.added_helper"):
         check_package(_read_fixture(unpinned), table)
     assert tool.unpinned_shim_modules(tool.read_layout(unpinned / "packages" / FIXTURE_DIR)) == [
         below
@@ -3042,18 +3035,18 @@ def test_a_name_added_below_a_pinned_namespace_dir_shim_does_not_grow_the_public
 
 @pytest.mark.parametrize("package_dir", [path.name for path in tool.package_dirs(ROOT)])
 def test_every_moved_submodule_shim_pins_the_names_of_its_old_paths(package_dir: str) -> None:
-    """移し替えの module の全部が、自分と下の module の古い path ごとに名の固定の列を持つ(列の無い古い path は、
-    移した先の _ の module に足した名を全部公開名に数えてしまう — the former move tool (pin) で列を書く)。"""
+    """Every forwarding module has a fixed list of names for each old path of itself and the modules below (an old path without a list
+    counts all names added to the destination _ module as public names — write the list with the former move tool (pin))."""
     layout = tool.read_layout(ROOT / "packages" / package_dir)
     assert not tool.unpinned_shim_modules(layout), (
-        f"{package_dir}: 名の固定の列の無い移し替えの古い path が在る — "
-        f"名の固定の列を移し替えの module に書く: "
+        f"{package_dir}: there are old paths of forwarding modules without a fixed list of names — "
+        f"write a fixed list of names in the forwarding module: "
         + ", ".join(tool.unpinned_shim_modules(layout))
     )
 
 
-#: 入口が遅延で関数 serve を出し(doeff_core_effects の aiohttp_http_server の形)、すぐに関数 tool を出す(doeff_agentic の
-#: tmux_handler の形)package。どちらの関数も _ の module に在り、古い path の子 serve・tool は移し替えの module。
+#: A package whose entry shows the function serve lazily (the shape of aiohttp_http_server in doeff_core_effects) and the function tool immediately (the shape of tmux_handler in doeff_agentic).
+#: Both functions are in _ modules, and the children serve and tool at the old paths are forwarding modules.
 CLASHING_ENTRY = f"""
 import importlib as _importlib
 
@@ -3077,7 +3070,7 @@ def __dir__() -> list[str]:
 
 
 def _moved_shim(child: str) -> str:
-    """古い path の子 ``child`` の移し替えの module(the former move tool の殻と同じく sys.modules を差し替える)。"""
+    """A forwarding module for a child ``child`` at an old path (it replaces sys.modules, like the former move tool's shell)."""
     return (
         f"# moved-submodule-shim: {FIXTURE_ROOT}.{child} -> {FIXTURE_ROOT}._{child}\n"
         f"# moved-submodule-shim-names {FIXTURE_ROOT}.{child}:\n"
@@ -3092,11 +3085,11 @@ def _moved_shim(child: str) -> str:
 def test_a_submodule_named_like_an_entry_name_turns_red_and_removing_it_turns_green(
     tmp_path: Path,
 ) -> None:
-    """入口が出す関数 serve(遅延)・tool(すぐ)と同じ名の移し替えの module を置くと、字面の照合も新しい process の確かめも
-    赤(どの古い path の import で名が module に替わったかを名指す)・2 つの殻を消すと緑(ADR-DOE-API-001 R34)。
+    """Placing a forwarding module with the same name as the function serve (lazy) or tool (immediate) the entry shows turns both the literal check and the fresh-process check
+    red (naming which old-path import turned the name into a module), and removing the two shells makes it green (ADR-DOE-API-001 R34).
 
-    doeff 42f897000 の doeff_core_effects の殻 aiohttp_http_server.py と同じ形で、10-30 に記録の service が起動の度に
-    ``with_handlers: handler must be callable, got module`` で落ちた。
+    The same shape as the shell aiohttp_http_server.py of doeff_core_effects at doeff 42f897000, with which the records service fell over at every startup on 10-30
+    with ``with_handlers: handler must be callable, got module``.
     """
     files = {
         "__init__.py": CLASHING_ENTRY,
@@ -3110,8 +3103,8 @@ def test_a_submodule_named_like_an_entry_name_turns_red_and_removing_it_turns_gr
     imported, failed = imported_entry_name_clashes(package_dir)
     assert [line.split(":")[0] for line in written] == [f"{FIXTURE_ROOT}.serve", f"{FIXTURE_ROOT}.tool"]
     assert imported == [
-        f"{FIXTURE_ROOT}.serve: {FIXTURE_ROOT}.serve を import した後、入口の名が module {FIXTURE_ROOT}._serve に替わった",
-        f"{FIXTURE_ROOT}.tool: {FIXTURE_ROOT}.tool を import した後、入口の名が module {FIXTURE_ROOT}._tool に替わった",
+        f"{FIXTURE_ROOT}.serve: after importing {FIXTURE_ROOT}.serve, the entry's name became the module {FIXTURE_ROOT}._serve",
+        f"{FIXTURE_ROOT}.tool: after importing {FIXTURE_ROOT}.tool, the entry's name became the module {FIXTURE_ROOT}._tool",
     ]
     assert failed == []
     with pytest.raises(AssertionError, match=r"ADR-DOE-API-001 R34"):
@@ -3123,8 +3116,8 @@ def test_a_submodule_named_like_an_entry_name_turns_red_and_removing_it_turns_gr
 
 
 def _moved_package_shim(child: str, names: Mapping[str, str]) -> str:
-    """古い path の子 package ``child`` の移し替えの module: 古い path も、その下の古い名も(meta path の finder が)移した先の
-    module そのもので答える(the former move tool の package の殻と同じ形)。``names`` は古い module の名から固定の列へ。"""
+    """A forwarding module for a child package ``child`` at an old path: both the old path and the old names below it answer (through a meta path finder) with the destination
+    module itself (the same shape as the former move tool's package shell). ``names`` goes from an old module's name to its fixed list."""
     old, new = f"{FIXTURE_ROOT}.{child}", f"{FIXTURE_ROOT}._{child}"
     pins = "".join(f"# moved-submodule-shim-names {module}:\n#   {pinned}\n" for module, pinned in names.items())
     return (
@@ -3152,11 +3145,11 @@ def _moved_package_shim(child: str, names: Mapping[str, str]) -> str:
 def test_an_inner_package_entry_name_like_its_child_turns_red_and_moving_the_child_turns_green(
     tmp_path: Path,
 ) -> None:
-    """根の下の package _inner の入口が、同じ名の子 tool から関数 tool を束ね、移した package の古い path inner を殻が答えると、
-    字面の照合も新しい process の確かめも赤(古い path inner.tool の import が _inner の属性 tool を module で上書きする)・
-    子を _ の名 _tool へ移すと緑(ADR-DOE-API-001 R34)。
+    """When the entry of the package _inner under the root binds the function tool from a child of the same name, tool, and a shell answers the old path inner of the moved package,
+    both the literal check and the fresh-process check are red (importing the old path inner.tool overwrites the attribute tool of _inner with a module), and
+    moving the child to the _ name _tool makes it green (ADR-DOE-API-001 R34).
 
-    doeff_agents._effects の子 agent と、移した package の古い path doeff_agents.effects.agent と同じ形。
+    The same shape as the child agent of doeff_agents._effects and the old path doeff_agents.effects.agent of the moved package.
     """
     files = {
         "__init__.py": "",
@@ -3171,8 +3164,8 @@ def test_an_inner_package_entry_name_like_its_child_turns_red_and_moving_the_chi
     imported, failed = imported_entry_name_clashes(package_dir)
     assert [line.split(":")[0] for line in written] == [f"{FIXTURE_ROOT}._inner.tool"]
     assert imported == [
-        f"{FIXTURE_ROOT}._inner.tool: {FIXTURE_ROOT}.inner.tool を import した後、入口の名が module"
-        f" {FIXTURE_ROOT}._inner.tool に替わった",
+        f"{FIXTURE_ROOT}._inner.tool: after importing {FIXTURE_ROOT}.inner.tool, the entry's name became the module"
+        f" {FIXTURE_ROOT}._inner.tool"
     ]
     assert failed == []
     with pytest.raises(AssertionError, match=r"ADR-DOE-API-001 R34"):
