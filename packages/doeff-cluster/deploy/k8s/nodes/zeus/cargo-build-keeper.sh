@@ -12,6 +12,9 @@
 #     test を走らせる間は lock を放すので、GRACE は長めに取る(流れている cargo test の次の binary を消さないため)。
 #   使わなくなった物: 最後の変更から IDLE 秒を過ぎたら消す(memory を返す。作業木は残るので、次の build が組み直す)。
 #   溢れそう: tmpfs の使いが HIGH% 以上か、機体の MemAvailable が FLOOR MiB 未満なら、古い順に消す。使いが LOW% 未満かつ FLOOR 以上で止める。
+#   満杯の手前: 使いが FULL% 以上で上の決まりでは足りなければ、猶予を FULL_GRACE 秒に縮め、lock の持たれていない物を古い順に、使いが HIGH% 未満に
+#     なるまで消す。訳: 2026-11-05 16:00 JST の zeus で使いが 93〜97% に留まり、中間物のどれもが 15 分の内に変わっていて何も消せなかった(大きい物から 3.5・3.4・2.5 GiB)。
+#     流れている cargo test の次の binary を消しうる(やり直しで直る)が、全部の build を ENOSPC で落とすより小さい。
 #   消せる物が無い: 何も消さず、使いが FULL% 以上なら 1 行出す。その先の書きは ENOSPC で build が失敗する。SSD へは自動で戻さない(途中で置き場を
 #     替えると全部を組み直す書きになり、減らす物を増やす)。`env -u CARGO_BUILD_BUILD_DIR cargo …` でその 1 回を作業木の target/ に組める。
 #
@@ -25,6 +28,7 @@ full=${CARGO_BUILD_KEEPER_FULL_PERCENT:-90}
 floor_mib=${CARGO_BUILD_KEEPER_FLOOR_MIB:-12288}
 idle=${CARGO_BUILD_KEEPER_IDLE_SECONDS:-14400}
 grace=${CARGO_BUILD_KEEPER_GRACE_SECONDS:-900}
+full_grace=${CARGO_BUILD_KEEPER_FULL_GRACE_SECONDS:-300}
 meminfo=${CARGO_BUILD_KEEPER_MEMINFO:-/proc/meminfo}
 
 log() {
@@ -107,6 +111,14 @@ if pressed "$high"; then
   candidates | while read -r _ entry; do
     pressed "$low" || break
     evict "$entry" "使い $(used_percent)%・MemAvailable $(available_mib) MiB"
+  done
+fi
+
+if [ "$(used_percent)" -ge "$full" ]; then
+  grace=$full_grace
+  candidates | while read -r _ entry; do
+    [ "$(used_percent)" -ge "$high" ] || break
+    evict "$entry" "満杯の手前・使い $(used_percent)%"
   done
 fi
 

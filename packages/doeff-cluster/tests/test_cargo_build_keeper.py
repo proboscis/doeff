@@ -29,6 +29,7 @@ SCRIPT = ZEUS / "cargo-build-keeper.sh"
 KIB_LIMIT = 1000
 ENTRY_KIB = 100
 GRACE = 900
+FULL_GRACE = 300
 IDLE = 14400
 FAKE_DF = """#!/bin/sh
 used=$(du -sk "$2" | cut -f1)
@@ -132,6 +133,28 @@ def test_a_workspace_held_by_cargo_or_just_changed_is_never_removed(world: World
     assert held.is_dir()
     assert changed.is_dir()
     assert "消せる物が無い" in done.stderr
+
+
+def test_at_the_full_mark_the_grace_shrinks_for_what_cargo_does_not_hold(world: World) -> None:
+    """FULL% 以上で GRACE の内の物しか無い時は、FULL_GRACE を過ぎて lock の無い物を古い順に、HIGH% 未満まで消す。失敗ケース: 全部が 15 分の内に
+    変わっていると何も消せず、全部の build が ENOSPC で落ちる(2026-11-05 16:00 JST の zeus)。cargo が持つ物と FULL_GRACE の内の物は消さない。"""
+    oldest = _entry(world, "aa11", age=FULL_GRACE * 2, kib=300)
+    newer = _entry(world, "bb22", age=FULL_GRACE + 60, kib=300)
+    held = _entry(world, "cc33", age=FULL_GRACE * 2, kib=200)
+    changed = _entry(world, "dd44", age=10, kib=150)
+    with _held(held):
+        _keep(world)
+    assert not oldest.exists()
+    assert newer.is_dir()
+    assert held.is_dir()
+    assert changed.is_dir()
+
+
+def test_under_the_full_mark_the_grace_stays(world: World) -> None:
+    """HIGH% 以上でも FULL% の下なら猶予は GRACE のまま。失敗ケース: 使いが少し高いだけで、cargo test の間の作業木を消す。"""
+    recent = _entry(world, "aa11", age=FULL_GRACE * 2, kib=800)
+    _keep(world)
+    assert recent.is_dir()
 
 
 def test_only_the_shape_cargo_makes_is_removed(world: World) -> None:
