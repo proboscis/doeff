@@ -100,7 +100,7 @@ def test_checker_detects_silent_drop(tmp_path: Path) -> None:
     _write_fixture_tree(tmp_path, laws=1, ledger_laws=2)
     proc = _run_checker(tmp_path, f"--root={tmp_path}")
     assert proc.returncode == 1, "does not detect erosion (tree < ledger)"
-    assert "消えた" in proc.stderr, proc.stderr
+    assert "disappeared" in proc.stderr, proc.stderr
     assert "ADR-FIXTURE-001 fixture-1" in proc.stderr, f"does not name the removed item: {proc.stderr}"
 
 

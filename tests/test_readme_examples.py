@@ -189,7 +189,7 @@ def test_check_names_the_stale_examples(
     example = STALE_EXAMPLES[error]
     mismatch = examples.mismatch(example, _run(example, tmp_path, deadline_scale_factor))
     assert mismatch is not None
-    assert "落ちた" in mismatch
+    assert "failed with exit code" in mismatch
     assert error in mismatch
 
 
@@ -198,7 +198,7 @@ def test_check_names_an_example_that_prints_otherwise(
 ) -> None:
     example = Example("README.md", "Quick Start", "python", "print(1 + 1)  # 3\n", 0)
     mismatch = examples.mismatch(example, _run(example, tmp_path, deadline_scale_factor))
-    assert mismatch == f"{example.name} の印字が print の行の注記と違う — 注記 ['3']・印字 ['2']"
+    assert mismatch == f"{example.name}: the printed output differs from the annotation on the print line — annotation ['3'], printed ['2']"
 
 
 def test_fences_are_read_with_their_section_words_and_stated_output() -> None:
@@ -251,16 +251,16 @@ def _fence(info: str, code: str) -> Example:
 @pytest.mark.parametrize(
     ("info", "code", "named"),
     [
-        ("py", "print(1)  # 1\n", "にも無い"),
-        ("python fragment", "print(1)  # 1\n", "知らない語 ['fragment']"),
-        ("python run", "print(1)  # 1\n", "bash の囲みだけ"),
-        ("python excerpt file=a.py", "x = 1\n", "file= とも run とも書けない"),
-        ("python file=../a.py", "x = 1\n", "dir を含まない名"),
-        ("python", "print(1)\n", "注記が無い"),
-        ("bash run", "pytest\n", "注記が無い"),
-        ("python continues", "print(1)  # 1\n", "続く先の python の囲み"),
-        ("python continues file=a.py", "print(1)  # 1\n", "continues は python か hy の囲みに書き"),
-        ("bash continues", "pip install doeff\n", "continues は python か hy の囲みに書き"),
+        ("py", "print(1)  # 1\n", "nor a not-run language"),
+        ("python fragment", "print(1)  # 1\n", "unknown word ['fragment']"),
+        ("python run", "print(1)  # 1\n", "can be written only on a bash fence"),
+        ("python excerpt file=a.py", "x = 1\n", "cannot be written with file= or run"),
+        ("python file=../a.py", "x = 1\n", "contains no dir"),
+        ("python", "print(1)\n", "has no annotation"),
+        ("bash run", "pytest\n", "has no annotation"),
+        ("python continues", "print(1)  # 1\n", "there is no python fence to continue into"),
+        ("python continues file=a.py", "print(1)  # 1\n", "is written on a python or hy fence"),
+        ("bash continues", "pip install doeff\n", "is written on a python or hy fence"),
     ],
 )
 def test_rules_name_a_fence_that_breaks_them(info: str, code: str, named: str) -> None:
@@ -308,7 +308,7 @@ def test_a_fence_does_not_continue_an_excerpt_or_a_module(above: str) -> None:
     text = f"## Rules\n\n```{above}\nx = 1\n```\n\n```python continues\nprint(x)  # 1\n```\n"
     continuing = examples.fences(text, "README.md")[1]
     assert continuing.continues_from is None
-    assert any("続く先の python の囲み" in problem for problem in continuing.problems())
+    assert any("there is no python fence to continue into" in problem for problem in continuing.problems())
 
 
 @pytest.mark.parametrize(("stated", "failed"), [("21", []), ("20", ["README.md:8"])])
@@ -388,7 +388,7 @@ def test_shell_check_names_stated_text_missing_from_the_output(
             example, tmp_path, Path(sys.executable), CHILD_DEADLINE_SECONDS * deadline_scale_factor
         ),
     )
-    assert mismatch == f"{example.name} の出力に、注記の文 ['goodbye'] が無い — 出力\nhello\n"
+    assert mismatch == f"{example.name}: the output lacks the annotated text ['goodbye'] — output\nhello\n"
 
 
 def test_release_check_installs_only_third_party_dependencies_from_pypi() -> None:

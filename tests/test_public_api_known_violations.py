@@ -388,7 +388,7 @@ def fits_allowed_group(
             or (row["module"] == SUBMODULE and _is_macro_module(package, row["name"], writers))
         ),
         ADR_WRITER_GROUP: lambda: (
-            row["form"] in ("関数", tool.CONVERSION) and row["module"].endswith(".macros")
+            row["form"] in (tool.PLAIN_FUNCTION, tool.CONVERSION) and row["module"].endswith(".macros")
         ),
         ANSWER_TYPE_GROUP: lambda: any(
             (shown["module"], shown["name"]) == (row["module"], row["name"])
@@ -1287,7 +1287,7 @@ def test_a_factory_whose_call_is_not_a_handler_turns_red(tmp_path: Path) -> None
     check_package(package, table)
     [row] = [row for row in package["exports"] if row["name"] == "ping_handlers"]
     assert (row["kind"], row["form"]) == ("handler", "handler を返す関数")
-    assert row["reason"].endswith("引数なしで呼ぶと handler を返す")
+    assert row["reason"].endswith("calling it returns a handler")
 
 
 #: The four shapes of a function that returns a program: a helper that only emits effects, three that go beyond a helper's shape (applying a handler value,
@@ -1356,15 +1356,15 @@ def test_only_a_program_helper_can_be_put_into_the_helper_group(tmp_path: Path) 
         check_package(package, *tables([]))
 
     past_a_helper = [
-        ("pinging_handled", tool.HELPER_INSTALLS, "pinging_handled が ping_handler を読む"),
+        ("pinging_handled", tool.HELPER_INSTALLS, "pinging_handled reads ping_handler"),
         (
             "pinging_with_handler",
             tool.HELPER_INSTALLS,
-            "pinging_with_handler が WithHandlerType を読む",
+            "pinging_with_handler reads WithHandlerType",
         ),
-        ("pinging_wrapped", tool.HELPER_INSTALLS, "_install が ping_handler を読む"),
-        ("answering", tool.HELPER_ANSWERS, "answering が Resume を読む"),
-        ("helper", tool.CONVERSION, "戻りの型 int"),
+        ("pinging_wrapped", tool.HELPER_INSTALLS, "_install reads ping_handler"),
+        ("answering", tool.HELPER_ANSWERS, "answering reads Resume"),
+        ("helper", tool.CONVERSION, "return type int"),
     ]
     for name, form, said in past_a_helper:
         with pytest.raises(AssertionError, match=re.escape(HELPER_GROUP)) as failure:
@@ -1446,9 +1446,9 @@ def test_only_a_conversion_can_be_put_into_the_conversion_group(tmp_path: Path) 
         check_package(package, *tables([]))
 
     past_a_conversion = [
-        ("ms_now", "_stamp が time を読む"),
-        ("ms_today", "ms_today が now を読む"),
-        ("pinged", "pinged が PingEffect を読む"),
+        ("ms_now", "_stamp reads time"),
+        ("ms_today", "ms_today reads now"),
+        ("pinged", "pinged reads PingEffect"),
     ]
     for name, said in past_a_conversion:
         with pytest.raises(AssertionError, match=re.escape(CONVERSION_GROUP)) as failure:
@@ -1516,7 +1516,7 @@ def test_only_an_exception_class_of_its_package_can_be_put_into_the_exception_gr
         ((FIXTURE_ROOT, "PingNote"), f"{FIXTURE_ROOT}.PingNote(class・class・"),
         (
             (errors, "JSONDecodeError"),
-            f"{errors}.JSONDecodeError({tool.EXCEPTION_CLASS}・BaseException の子・json.decoder)",
+            f"{errors}.JSONDecodeError({tool.EXCEPTION_CLASS}・a subclass of BaseException・json.decoder)",
         ),
     ]
     for key, said in misplaced:
@@ -1642,12 +1642,12 @@ def test_only_a_builder_and_the_class_it_returns_can_be_put_into_the_builder_gro
         check_package(package, *tables([]))
 
     past_a_builder = [
-        ("step_yielding", f"{tool.PLAIN_FUNCTION}・", "step_yielding が yield を読む"),
-        ("step_pinged", f"{tool.PLAIN_FUNCTION}・", "step_pinged が PingEffect を読む"),
-        ("step_at_home", f"{tool.PLAIN_FUNCTION}・", "_home が environ を読む"),
-        ("step_from", f"{tool.PLAIN_FUNCTION}・", "step_from が read_text を読む"),
-        ("draft", f"{tool.BUILDER}・", "同じ package の class _DraftSpec("),
-        ("step_count", f"{tool.CONVERSION}・", "戻りの型 int"),
+        ("step_yielding", f"{tool.PLAIN_FUNCTION}・", "step_yielding reads yield"),
+        ("step_pinged", f"{tool.PLAIN_FUNCTION}・", "step_pinged reads PingEffect"),
+        ("step_at_home", f"{tool.PLAIN_FUNCTION}・", "_home reads environ"),
+        ("step_from", f"{tool.PLAIN_FUNCTION}・", "step_from reads read_text"),
+        ("draft", f"{tool.BUILDER}・", "a class _DraftSpec("),
+        ("step_count", f"{tool.CONVERSION}・", "return type int"),
         ("TraceNote", "class・class・", "class・class・"),
     ]
     for name, form, said in past_a_builder:
@@ -2070,7 +2070,7 @@ def test_only_a_type_a_handler_takes_can_be_put_into_the_setting_group(tmp_path:
         check_package(package, *tables([key for key in settings if key[1] != "Settings"]))
     said = {
         (FIXTURE_ROOT, "Unrelated"): f"{FIXTURE_ROOT}.Unrelated(class・",
-        (FIXTURE_ROOT, "helper"): f"{FIXTURE_ROOT}.helper(換算の関数・",
+        (FIXTURE_ROOT, "helper"): f"{FIXTURE_ROOT}.helper({tool.CONVERSION}・",
         (rooted, "Path"): f"{rooted}.Path(class・class・pathlib)",
     }
     for key in rest:

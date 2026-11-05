@@ -38,7 +38,7 @@ def test_the_hook_turns_the_gif_line_into_the_figure() -> None:
 
 
 def test_the_hook_refuses_a_gif_without_a_body() -> None:
-    with pytest.raises(ValueError, match="図の本体が無い"):
+    with pytest.raises(ValueError, match="has no figure body"):
         hooks.figures_to_steps('<p><img alt="" src="assets/figures/nothing-here.gif" /></p>', DOCS)
 
 

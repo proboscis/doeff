@@ -93,13 +93,13 @@ def test_a_windows_wheel_needs_the_exe_and_no_executable_bit(tmp_path: Path) -> 
     bare = tmp_path / "bare"
     bare.mkdir()
     wrong = _wheel(bare, WINDOWS_WHEEL, {"doeff_indexer/bin/doeff-indexer": PLAIN})
-    assert any("doeff-indexer.exe が無い" in problem for problem in _tool().layout_problems(wrong))
+    assert any("doeff-indexer.exe is missing" in problem for problem in _tool().layout_problems(wrong))
 
 
 def test_the_pypi_0_1_3_layout_is_named_for_both_faults(tmp_path: Path) -> None:
     wheel = _wheel(tmp_path, LINUX_WHEEL, dict.fromkeys(PYPI_0_1_3, EXECUTABLE))
     problems = _tool().layout_problems(wheel)
-    assert any("doeff_indexer/bin/doeff-indexer が無い" in problem for problem in problems)
+    assert any("doeff_indexer/bin/doeff-indexer is missing" in problem for problem in problems)
     assert any("python/doeff_indexer/bin/doeff-indexer" in problem for problem in problems)
 
 
@@ -120,7 +120,7 @@ def test_a_stray_python_dir_is_named_even_when_the_binary_is_in_place(tmp_path: 
 
 def test_a_binary_without_the_executable_bit_is_named(tmp_path: Path) -> None:
     wheel = _wheel(tmp_path, LINUX_WHEEL, {"doeff_indexer/bin/doeff-indexer": PLAIN})
-    assert any("実行できる印" in problem for problem in _tool().layout_problems(wheel))
+    assert any("lacks the executable bit" in problem for problem in _tool().layout_problems(wheel))
 
 
 def test_main_exits_nonzero_and_prints_each_problem(

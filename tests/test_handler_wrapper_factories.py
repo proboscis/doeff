@@ -90,7 +90,7 @@ def test_the_inventory_reads_each_factory_as_a_handler_it_called(
         if row["module"] == module and row["name"] == name
     ]
     assert row["kind"] == "handler", row
-    assert row["reason"].endswith("呼ぶと handler を返す"), row
+    assert row["reason"].endswith("calling it returns a handler"), row
 
 
 @pytest.mark.timeout(_PROBE_SECONDS + 20)

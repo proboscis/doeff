@@ -80,6 +80,6 @@ def test_checks_name_the_old_example(tmp_path: Path, deadline_scale_factor: floa
     # The example test names that the old example prints the Ask object instead of the text's value.
     mismatch = examples.mismatch(OLD_EXAMPLE, _run(OLD_EXAMPLE, tmp_path, deadline_scale_factor))
     assert mismatch is not None
-    assert "印字 [\"Ask('x'):10\"]" in mismatch
+    assert "printed [\"Ask('x'):10\"]" in mismatch
     # The word test names the two annotation lines of the old example.
     assert old_policy_lines(OLD_EXAMPLE.code) == [10, 11]

@@ -85,7 +85,7 @@ def test_a_marker_inside_a_string_is_not_read() -> None:
 
 
 def _finding(checker: str, line: int, file: str = "p.py") -> object:
-    return tool.Finding(checker, file, line, f"誤り {checker} {line}")
+    return tool.Finding(checker, file, line, f"error {checker} {line}")
 
 
 def _marked(line: int, comment: str) -> object:
@@ -103,13 +103,13 @@ def test_findings_that_match_every_marker_pass_and_count_the_open_gaps() -> None
 def test_a_marked_error_that_a_checker_no_longer_reports_is_named() -> None:
     # When a fixed gap (such as keeping the result type even when a handler is attached) comes back, the error on that line disappears.
     judged = tool.judge((_marked(1, "# expect-error"),), (_finding("pyright", 1),))
-    assert judged.failures == ("p.py:1: mypy が印と違う — 印は「誤りを出す」",)
+    assert judged.failures == ("p.py:1: mypy differs from the mark — the mark says \"reports an error\"",)
 
 
 def test_an_error_on_an_unmarked_line_is_named_with_the_message() -> None:
     judged = tool.judge((), (_finding("pyright", 5, "readme_example_74.py"),))
     assert judged.failures == (
-        "readme_example_74.py:5: pyright が印と違う — 印は「誤りを出さない」 — pyright の誤り: 誤り pyright 5",
+        "readme_example_74.py:5: pyright differs from the mark — the mark says \"reports no error\" — pyright errors: error pyright 5",
     )
 
 
@@ -126,7 +126,7 @@ def test_a_gap_that_a_checker_closed_fails_until_the_marker_is_changed(
     comment: str, findings: tuple[str, ...], checker: str
 ) -> None:
     judged = tool.judge((_marked(1, comment),), tuple(_finding(name, 1) for name in findings))
-    closed = [failure for failure in judged.failures if f"が {checker} で埋まった" in failure]
+    closed = [failure for failure in judged.failures if f"is now closed by {checker}" in failure]
     assert len(closed) == 1, judged.failures
     assert judged.open_gaps == ()
 
@@ -134,7 +134,7 @@ def test_a_gap_that_a_checker_closed_fails_until_the_marker_is_changed(
 def test_a_checker_that_breaks_the_unnamed_side_of_a_gap_is_a_regression() -> None:
     # gap-11 want-error[mypy] also says "pyright still reports an error" -- if pyright's error disappears, it is a regression, not a closed gap.
     judged = tool.judge((_marked(1, "# gap-11 want-error[mypy]"),), ())
-    assert judged.failures == ("p.py:1: pyright が印と違う — 印は「誤りを出す」",)
+    assert judged.failures == ("p.py:1: pyright differs from the mark — the mark says \"reports an error\"",)
 
 
 def test_pyright_errors_are_read_relative_to_the_checked_directory(tmp_path: Path) -> None:
@@ -164,7 +164,7 @@ def test_pyright_errors_are_read_relative_to_the_checked_directory(tmp_path: Pat
 
 
 def test_a_pyright_answer_of_another_shape_is_refused(tmp_path: Path) -> None:
-    with pytest.raises(TypeError, match="pyright の答えの形が違う"):
+    with pytest.raises(TypeError, match="unexpected shape of the pyright answer"):
         tool.pyright_findings({"generalDiagnostics": []}, tmp_path)
 
 
@@ -225,7 +225,7 @@ def test_a_lock_with_two_versions_of_a_checker_is_refused() -> None:
         '[[package]]\nname = "mypy"\nversion = "2.4.0"\n\n'
         '[[package]]\nname = "mypy"\nversion = "2.3.0"\n'
     )
-    with pytest.raises(ValueError, match="1 つに決まらない"):
+    with pytest.raises(ValueError, match="is not a single one"):
         tool.locked_version(lock, "mypy")
 
 

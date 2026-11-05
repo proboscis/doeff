@@ -158,8 +158,8 @@ def test_added_resuming_operation_is_refused_in_a_raise_clause_at_expansion(
           r)
         """
     )
-    assert "Raise の節は throw できない" in refusal
-    assert "Absent の節は throw できない" in _expansion_refusal(
+    assert "A Raise clause cannot throw" in refusal
+    assert "An Absent clause cannot throw" in _expansion_refusal(
         '(setv h (handle (raises) (Absent [why] (throw (ValueError "into-k")))))'
     )
 
@@ -270,7 +270,7 @@ def test_added_operation_with_a_tail_is_replaced_at_the_tail(resume_throw_ops: N
         assert alias("ResumeThrow") in inner_names
         assert alias("TransferThrow") not in inner_names
     assert run(_eval_module(tail).subject()) == -1
-    assert "Raise の節は throw できない" in _expansion_refusal(
+    assert "A Raise clause cannot throw" in _expansion_refusal(
         '(setv h (handle (raises) (Raise [reason] (throw (ValueError "into-k")))))'
     )
 
@@ -313,8 +313,8 @@ def test_every_operation_in_the_table_is_checked_by_its_ending(op: ClauseOp) -> 
     absent_clause = _expansion_refusal(f"(setv h (handle (raises) (Absent [why] {_written(op)})))")
     ordinary_clause = _expansion_refusal(f"(setv h (handle (raises) (Bump [n] {_written(op)})))")
     if op.ending is Ending.RESUMES:
-        assert f"Raise の節は {op.name} できない" in raise_clause
-        assert f"Absent の節は {op.name} できない" in absent_clause
+        assert f"A Raise clause cannot {op.name}" in raise_clause
+        assert f"An Absent clause cannot {op.name}" in absent_clause
     else:
         assert raise_clause == absent_clause == ""
     if op.ending is Ending.FINISHES:
