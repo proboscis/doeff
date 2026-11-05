@@ -268,7 +268,10 @@ spec:
             # (worker の側)。eos・k3s-0〜3 の worker をこの版へ上げるため(worker の版を coordinator より新しくしない約束)に上げる。
             # coordinator の process に効く差: 走り手の名簿の機体の CPU の使い(a3eaa9d43)・workspace の控えの読みを 1 時間ごとに(4815f2456)。
             # 前の版 2ee23e6d7 は 4f7cd9f75 の祖先。
-            - { name: WORKER_DOEFF_COMMIT, value: 4f7cd9f75aa310e4c7034f0055002d695ce69581 }
+            # 14fd4ae4c = 作業場所の volume を作る時と冷やす Backup の前に束 BackupVolume を作る(worker の側)。zeus・atlas・helios の
+            # worker をこの版へ上げるため(worker の版を coordinator より新しくしない約束)に上げる。coordinator の process に効く差は無い。
+            # 前の版 4f7cd9f75 は 14fd4ae4c の祖先。
+            - { name: WORKER_DOEFF_COMMIT, value: 14fd4ae4c2fc92a52bfb72a5011c4278dddcb027 }
             # coordinator の process 自身の行の名乗り(coordinator/entry/main の process-lines — job の名 coordinator/<namespace>・worker の
             # 名の欄 = Pod の名)。送り先(ConfigMap coordinator-env の DOEFF_JOB_LOG_OTLP)が無ければ読まない。
             - { name: POD_NAME, valueFrom: { fieldRef: { fieldPath: metadata.name } } }
