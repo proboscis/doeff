@@ -159,7 +159,7 @@ CONVERSION = "換算の関数"
 BUILDER = "作り手"
 #: The form of a plain function with a value's return type whose body goes past a conversion's.
 PLAIN_FUNCTION = "関数"
-#: The form of a public Hy macro's row (a macro module shows only these — ADR-DOE-API-001 R14・R15・R31).
+#: The form of a public Hy macro's row (a macro module shows only these — ADR-DOE-API-001 R14, R15, R31).
 MACRO_FORM = "Hy の macro"
 #: The form of a class that subclasses ``BaseException`` (an exception type an effect or handler raises — R2).
 EXCEPTION_CLASS = "例外の class"
@@ -361,7 +361,7 @@ class DoeffPart:
     """One of doeff's own parts under ``packages/``: a package only doeff (the repo root package) imports.
 
     A part is not a subpackage a user imports — a user reads its names from ``doeff`` — so the inventory does
-    not count it, as it does not count ``doeff`` itself (ADR-DOE-API-001 R10・R11).
+    not count it, as it does not count ``doeff`` itself (ADR-DOE-API-001 R10, R11).
     ``tests/test_public_api_known_violations.py`` checks that no file outside doeff imports its root.
     """
 
@@ -488,7 +488,7 @@ def _installs(
     if maturin and maturin.get("bindings") == "bin":
         return _Installs(
             rust_bins=_cargo_bins(package_dir),
-            notes=("Rust の実行 file を置く package(Python から import できる module は無い)",),
+            notes=("A package that holds a Rust executable (no module importable from Python)",),
         )
     if maturin:
         default_module = (distribution or package_dir.name).replace("-", "_")
@@ -501,7 +501,7 @@ def _installs(
         return _Installs(
             roots=tuple(ImportRoot(path.name, path) for path in paths if path.name.isidentifier()),
             notes=tuple(
-                f"{path.relative_to(package_dir)}: import の名にならない dir(型の stub など)— 数えない"
+                f"{path.relative_to(package_dir)}: a dir that is not an import name (a type stub, etc.) -- not counted"
                 for path in paths
                 if not path.name.isidentifier()
             ),
@@ -511,10 +511,10 @@ def _installs(
     if not backend:
         return _Installs(
             notes=(
-                "build の設定が無い(uv の package = false)— Python から import できる module は無い",
+                "No build configuration (uv package = false) -- no module importable from Python",
             )
         )
-    return _Installs(notes=(f"build backend {backend} の import の根を読めない",))
+    return _Installs(notes=(f"cannot read the import roots of build backend {backend}",))
 
 
 def read_layout(package_dir: Path) -> PackageLayout:
@@ -529,7 +529,7 @@ def read_layout(package_dir: Path) -> PackageLayout:
             {},
             {},
             _cargo_bins(package_dir),
-            ("pyproject.toml が無い",),
+            ("no pyproject.toml",),
         )
     data = _read_toml(pyproject)
     project = _table(data, "project")
@@ -895,26 +895,26 @@ class _Classifier:
         rules: list[tuple[bool, Verdict]] = [
             (
                 isinstance(obj, self.effect_base),
-                Verdict("effect", "effect の値", f"{type_name} の値(EffectBase の子)"),
+                Verdict("effect", "effect の値", f"a {type_name} value (a subclass of EffectBase)"),
             ),
             (
                 _is_handler_marked(obj),
-                Verdict("handler", "handler", "handler の印(_doeff_is_handler_fn)を持つ"),
+                Verdict("handler", "handler", "has the handler mark (_doeff_is_handler_fn)"),
             ),
             (isinstance(obj, types.ModuleType), Verdict("other", "module", "module")),
             (
                 from_doeff and type_name.endswith("Handler"),
-                Verdict("handler", "VM の handler の値", f"{type_name} の値"),
+                Verdict("handler", "VM の handler の値", f"a {type_name} value"),
             ),
-            (_is_type_like(obj), Verdict("other", "型", f"型({type_name})")),
-            (isinstance(obj, _CONSTANT_TYPES), Verdict("other", "定数", f"定数({type_name})")),
+            (_is_type_like(obj), Verdict("other", "型", f"type ({type_name})")),
+            (isinstance(obj, _CONSTANT_TYPES), Verdict("other", "定数", f"constant ({type_name})")),
             (
                 from_doeff and type_name in _PROGRAM_VALUE_TYPE_NAMES,
-                Verdict("other", "program の値", f"{type_name} の値"),
+                Verdict("other", "program の値", f"a {type_name} value"),
             ),
-            (callable(obj), Verdict("other", "呼べる値", f"{type_name} の値(呼べる)")),
+            (callable(obj), Verdict("other", "呼べる値", f"a {type_name} value (callable)")),
         ]
-        fallback = Verdict("other", "値", f"{type_name} の値")
+        fallback = Verdict("other", "値", f"a {type_name} value")
         return next((verdict for matched, verdict in rules if matched), fallback)
 
     def _classify_class(self, cls: type, name: str) -> Verdict:
@@ -923,27 +923,27 @@ class _Classifier:
         rules: list[tuple[bool, Verdict]] = [
             (
                 issubclass(cls, self.effect_base),
-                Verdict("effect", "effect の class", "EffectBase の子の class"),
+                Verdict("effect", "effect の class", "a class that subclasses EffectBase"),
             ),
             (
                 _is_handler_marked(cls),
                 Verdict(
-                    "handler", "handler の class", "handler の印(_doeff_is_handler_fn)を持つ class"
+                    "handler", "handler の class", "a class with the handler mark (_doeff_is_handler_fn)"
                 ),
             ),
             (
                 issubclass(cls, BaseException),
-                Verdict("other", EXCEPTION_CLASS, "BaseException の子"),
+                Verdict("other", EXCEPTION_CLASS, "a subclass of BaseException"),
             ),
             (
                 any(each.endswith("Effect") for each in names),
-                Verdict("unclassified", "class", "名が Effect で終わるが EffectBase の子でない"),
+                Verdict("unclassified", "class", "the name ends in Effect but it is not a subclass of EffectBase"),
             ),
             (
                 any(each.endswith("Handler") for each in names),
-                Verdict("unclassified", "class", "名が Handler で終わるが handler の印が無い"),
+                Verdict("unclassified", "class", "the name ends in Handler but it has no handler mark"),
             ),
-            (issubclass(cls, enum.Enum), Verdict("other", "Enum", "Enum の子")),
+            (issubclass(cls, enum.Enum), Verdict("other", "Enum", "a subclass of Enum")),
             (_static(cls, "_is_protocol") is True, Verdict("other", "Protocol", "typing.Protocol")),
         ]
         return next(
@@ -965,12 +965,12 @@ class _Classifier:
         function = _definition(obj)
         if _takes_effect_and_k(function):
             return Verdict(
-                "handler", "素の handler の関数", "引数が (effect, k)(handler の印は無い)"
+                "handler", "素の handler の関数", "takes (effect, k) as arguments (no handler mark)"
             )
         if _is_program_function(obj):
             return self._program_verdict(
                 function,
-                Verdict("other", "program 関数", "@do / defk の関数(呼ぶと program を作る)"),
+                Verdict("other", "program 関数", "a @do / defk function (calling it builds a program)"),
             )
         annotation = _return_annotation(function)
         decided = self._annotation_kind(annotation) if annotation is not _MISSING else None
@@ -980,14 +980,14 @@ class _Classifier:
             return decided
         if annotation is _MISSING or self._is_vague(annotation):
             unknown = (
-                "戻りの型が無く、return の形からも決まらない"
+                "no return type, and the shape of return does not decide it either"
                 if annotation is _MISSING
-                else f"戻りの型 {_annotation_text(annotation)} では決まらず、return の形からも決まらない"
+                else f"return type {_annotation_text(annotation)} does not decide it, and the shape of return does not either"
             )
             return self._returns_kind(function) or Verdict("unclassified", "関数", unknown)
         return self._conversion_verdict(
             function,
-            Verdict("other", PLAIN_FUNCTION, f"戻りの型 {_annotation_text(annotation)}"),
+            Verdict("other", PLAIN_FUNCTION, f"return type {_annotation_text(annotation)}"),
             annotation,
         )
 
@@ -1003,25 +1003,25 @@ class _Classifier:
         """
         needed = _required_parameters(obj)
         if needed is None or not callable(obj):
-            return Verdict(read.kind, read.form, f"{read.reason}・引数を読めず、呼んでいない")
+            return Verdict(read.kind, read.form, f"{read.reason}; its arguments cannot be read, so it was not called")
         how = (
-            f"要る引数 {'・'.join(parameter.name for parameter in needed)} に置き物を渡して"
+            f"with placeholders for the required arguments {', '.join(parameter.name for parameter in needed)},"
             if needed
-            else "引数なしで"
+            else "with no arguments,"
         )
         key = id(obj)
         if key not in self._factory_calls:
             self._factory_calls[key] = _FactoryCall(obj, _call_factory(obj, needed))
         outcome = self._factory_calls[key].outcome
         if isinstance(outcome, _CallFailure):
-            return Verdict(read.kind, read.form, f"{read.reason}・{how}呼ぶと {outcome.error}")
+            return Verdict(read.kind, read.form, f"{read.reason}; {how} calling it raises {outcome.error}")
         if _returns_handlers(outcome, many=read.form == "handler の組を返す関数"):
-            return Verdict(read.kind, read.form, f"{read.reason}・{how}呼ぶと handler を返す")
+            return Verdict(read.kind, read.form, f"{read.reason}; {how} calling it returns a handler")
         return Verdict(
             "other",
             NOT_A_FACTORY,
-            f"{read.reason} だが、{how}呼ぶと {type(outcome).__name__} を返す"
-            "(handler の印 _doeff_is_handler_fn が無い)",
+            f"{read.reason}, but {how} calling it returns a {type(outcome).__name__}"
+            " (it lacks the handler mark _doeff_is_handler_fn)",
         )
 
     def _program_verdict(self, function: object, read: Verdict) -> Verdict:
@@ -1034,7 +1034,7 @@ class _Classifier:
         """
         if not isinstance(function, types.FunctionType):
             return Verdict(
-                read.kind, read.form, f"{read.reason}・中を読めず、helper と確かめていない"
+                read.kind, read.form, f"{read.reason}; its body cannot be read, so it is not confirmed as a helper"
             )
         breaches = (
             found
@@ -1044,15 +1044,15 @@ class _Classifier:
         breach = next(breaches, None)
         if breach is None:
             return Verdict(
-                "other", PROGRAM_HELPER, f"{read.reason}・中で handler を被せず、effect に答えない"
+                "other", PROGRAM_HELPER, f"{read.reason}; it installs no handler inside and answers no effect"
             )
         return Verdict(
-            "other", breach.form, f"{read.reason}・{breach.where} が {breach.name} を読む"
+            "other", breach.form, f"{read.reason}; {breach.where} reads {breach.name}"
         )
 
     def _conversion_verdict(self, function: object, read: Verdict, annotation: object) -> Verdict:
         """The verdict on a plain function with a value's return type: a conversion, a builder or neither
-        (ADR-DOE-API-001 R35・R37).
+        (ADR-DOE-API-001 R35, R37).
 
         A conversion turns a value into a value: it is no generator or coroutine, and nothing its body
         reads — and the bodies of the functions of its own package it reads, followed through — makes
@@ -1073,16 +1073,16 @@ class _Classifier:
         breach = next(breaches, None)
         if breach is not None:
             return Verdict(
-                read.kind, read.form, f"{read.reason}・{breach.where} が {breach.name} を読む"
+                read.kind, read.form, f"{read.reason}; {breach.where} reads {breach.name}"
             )
         clean = (
-            "中で effect も handler も program も作らず、時計・環境・file・process・乱数を読まない"
+            "it makes no effect, handler or program inside, and reads no clock, environment, file, process or randomness"
         )
         built = _own_class(function, annotation)
         if built is None:
-            return Verdict("other", CONVERSION, f"{read.reason}・{clean}")
+            return Verdict("other", CONVERSION, f"{read.reason}; {clean}")
         return Verdict(
-            "other", BUILDER, f"{read.reason}・同じ package の class {built}・{clean}", built
+            "other", BUILDER, f"{read.reason}; a class {built} of the same package; {clean}", built
         )
 
     def _conversion_breach(self, function: types.FunctionType) -> _Breach | None:
@@ -1206,27 +1206,27 @@ class _Classifier:
         rules: list[tuple[bool, Verdict]] = [
             (
                 self._is_effect_type(annotation),
-                Verdict("effect", "effect を作る関数", f"戻りの型 {text}(EffectBase の子)"),
+                Verdict("effect", "effect を作る関数", f"return type {text} (a subclass of EffectBase)"),
             ),
             (
                 self._is_handler_type(annotation),
-                Verdict("handler", "handler を返す関数", f"戻りの型 {text}"),
+                Verdict("handler", "handler を返す関数", f"return type {text}"),
             ),
             (
                 self._is_handler_collection(annotation),
-                Verdict("handler", "handler の組を返す関数", f"戻りの型 {text}"),
+                Verdict("handler", "handler の組を返す関数", f"return type {text}"),
             ),
             (
                 isinstance(base, type) and base.__name__.endswith("Handler"),
                 Verdict(
                     "unclassified",
                     "関数",
-                    f"戻りの型 {text} の名は Handler で終わるが handler の印が無い",
+                    f"the name of return type {text} ends in Handler but it has no handler mark",
                 ),
             ),
             (
                 _is_program_type(annotation),
-                Verdict("other", "program を返す関数", f"戻りの型 {text}"),
+                Verdict("other", "program を返す関数", f"return type {text}"),
             ),
         ]
         return next((verdict for matched, verdict in rules if matched), None)
@@ -1271,7 +1271,7 @@ class _Classifier:
             return None
         returned = [statement.value for statement in _own_returns(node)]
         if all(value is None for value in returned):
-            return Verdict("other", "関数", "値を返さない")
+            return Verdict("other", "関数", "returns no value")
         nested = {
             child.name: child
             for child in ast.walk(node)
@@ -1283,9 +1283,9 @@ class _Classifier:
             if value is not None
         }
         if kinds == {"effect"}:
-            return Verdict("effect", "effect を作る関数", "return が effect の class を呼ぶ")
+            return Verdict("effect", "effect を作る関数", "return calls an effect class")
         if kinds == {"handler"}:
-            return Verdict("handler", "handler を返す関数", "return が handler を作る")
+            return Verdict("handler", "handler を返す関数", "return builds a handler")
         return None
 
     def _returned_kind(
@@ -1336,10 +1336,10 @@ def _named_annotation_kind(annotation: str) -> Verdict:
     """The verdict of a return type left as text (one the module's globals cannot evaluate)."""
     head = annotation.split("[", 1)[0].strip().rsplit(".", 1)[-1]
     if head in _HANDLER_TYPE_NAMES:
-        return Verdict("handler", "handler を返す関数", f"戻りの型 {annotation}")
+        return Verdict("handler", "handler を返す関数", f"return type {annotation}")
     if head in _PROGRAM_TYPE_NAMES:
-        return Verdict("other", "program を返す関数", f"戻りの型 {annotation}")
-    return Verdict("unclassified", "関数", f"戻りの型 {annotation} を解けない")
+        return Verdict("other", "program を返す関数", f"return type {annotation}")
+    return Verdict("unclassified", "関数", f"cannot resolve return type {annotation}")
 
 
 def _is_function_like(obj: object) -> bool:
@@ -1470,7 +1470,7 @@ class _Placeholder:
     """What a factory call passes for a parameter without a default: no value, only a stand-in."""
 
     def __repr__(self) -> str:
-        return "<public_api_inventory の置き物の引数>"
+        return "<placeholder argument of public_api_inventory>"
 
 
 def _required_parameters(function: object) -> list[inspect.Parameter] | None:
@@ -2042,7 +2042,7 @@ def _entry_location(target: str) -> str:
     try:
         module = importlib.import_module(module_name)
     except Exception as error:  # the failure is written into the row, not dropped
-        return f"{module_name}(import できない: {type(error).__name__})"
+        return f"{module_name} (cannot import: {type(error).__name__})"
     if not attribute:
         return _place_text(Place(module_name, _module_file(module_name)))
     value = functools.reduce(_static, attribute.split("."), cast(object, module))
@@ -2060,11 +2060,11 @@ def _name_row(
     value = _module_value(module, name)
     if value is _MISSING:
         verdict = Verdict(
-            "unclassified", "名だけ", "__all__ か移し替えの module の列に在るが module に無い"
+            "unclassified", "名だけ", "listed in __all__ or in the moved-submodule shim's names but absent from the module"
         )
         defined_at = module.__name__
     elif isinstance(value, _LazyFailure):
-        verdict = Verdict("unclassified", "名だけ", f"__getattr__ が名を作れない: {value.error}")
+        verdict = Verdict("unclassified", "名だけ", f"__getattr__ cannot build the name: {value.error}")
         defined_at = module.__name__
     else:
         try:
@@ -2072,7 +2072,7 @@ def _name_row(
             defined_at = _location(value, module.__name__, name, sources)
         except Exception as error:  # the failure is written into the row, not dropped
             verdict = Verdict(
-                "unclassified", "値", f"種類を決める途中で {type(error).__name__}: {error}"
+                "unclassified", "値", f"{type(error).__name__} while deciding the kind: {error}"
             )
             defined_at = module.__name__
     row = ExportRow(
@@ -2098,7 +2098,7 @@ def _macro_row(
         kind="other",
         form=MACRO_FORM,
         defined_at=_place_text(_code_place(macro) or Place(module.__name__)),
-        reason="Hy の macro(書き方の道具)",
+        reason="a Hy macro (a writing aid)",
     )
 
 
@@ -2174,7 +2174,7 @@ def _metadata_rows(layout: PackageLayout) -> list[ExportRow]:
                 kind="other",
                 form=CONSOLE_SCRIPT,
                 defined_at=_entry_location(target),
-                reason=f"命令の入口 {target}",
+                reason=f"command entry point {target}",
             )
             for script, target in sorted(layout.scripts.items())
         ),
@@ -2185,7 +2185,7 @@ def _metadata_rows(layout: PackageLayout) -> list[ExportRow]:
                 kind="other",
                 form=f"entry point({group})",
                 defined_at=_entry_location(target),
-                reason=f"入口 {target}",
+                reason=f"entry point {target}",
             )
             for group, entries in sorted(layout.entry_points.items())
             for entry, target in sorted(entries.items())
@@ -2197,7 +2197,7 @@ def _metadata_rows(layout: PackageLayout) -> list[ExportRow]:
                 kind="other",
                 form=RUST_EXECUTABLE,
                 defined_at=cargo,
-                reason="maturin の bin が置く実行 file",
+                reason="an executable placed by the maturin bin",
             )
             for binary in layout.rust_bins
         ),
@@ -2217,7 +2217,7 @@ def submodule_rows(layout: PackageLayout) -> list[ExportRow]:
             kind="other",
             form="公開の submodule",
             defined_at=_place_text(Place(name, str(path))),
-            reason="path のどの部分も _ で始まらない submodule(名は import の根から出し、submodule は _ で隠す)",
+            reason="a submodule with no part of its path starting with _ (names are shown from the import root, and submodules are hidden with _)",
         )
         for name, path in public_modules(layout)
         if name not in roots
@@ -2658,11 +2658,11 @@ def _run_probe(package_dir: Path, timeout: float) -> PackageInventory:
                 command, capture_output=True, text=True, timeout=timeout, check=False
             )
         except subprocess.TimeoutExpired:
-            return _failed(package_dir, f"{timeout:.0f} 秒で読み終わらなかった")
+            return _failed(package_dir, f"did not finish reading within {timeout:.0f} seconds")
         if finished.returncode != 0 or not out.is_file():
             tail = " / ".join(finished.stderr.strip().splitlines()[-5:])
             return _failed(
-                package_dir, f"読む子が終了 code {finished.returncode} で終わった: {tail}"
+                package_dir, f"the reading child exited with code {finished.returncode}: {tail}"
             )
         return cast(
             PackageInventory, json.loads(out.read_text(encoding="utf-8"))
@@ -2698,7 +2698,7 @@ def inventory(
         unknown = set(packages) - {path.name for path in dirs}
         if unknown:
             raise SystemExit(
-                f"目録の package に無い(packages/ の下に無いか doeff の中の部品): {', '.join(sorted(unknown))}"
+                f"not a package of the inventory (absent under packages/ or a part inside doeff): {', '.join(sorted(unknown))}"
             )
         dirs = [path for path in dirs if path.name in packages]
     with ThreadPoolExecutor(max_workers=max(1, jobs)) as pool:
@@ -2740,16 +2740,16 @@ def _cell(text: str) -> str:
 def _counts_text(found: dict[Kind, int]) -> str:
     """A package's counts in one phrase, for the page and the run's log."""
     return (
-        f"公開名 {sum(found.values())} 個(effect {found['effect']}・handler {found['handler']}・"
-        f"それ以外 {found['other']}・未分類 {found['unclassified']})"
+        f"{sum(found.values())} public names (effect {found['effect']}, handler {found['handler']}, "
+        f"other {found['other']}, unclassified {found['unclassified']})"
     )
 
 
 def _package_notes(package: PackageInventory) -> list[str]:
     """What the reader should know about a package before its table (layout notes, failures)."""
-    failure = [f"読めなかった: {package['error']}"] if package["error"] is not None else []
+    failure = [f"could not be read: {package['error']}"] if package["error"] is not None else []
     modules = [
-        f"`{module['name']}` を import できない: {module['error']}"
+        f"cannot import `{module['name']}`: {module['error']}"
         for module in package["modules"]
         if module["error"] is not None
     ]
@@ -2758,19 +2758,19 @@ def _package_notes(package: PackageInventory) -> list[str]:
 
 def _package_section(package: PackageInventory, found: dict[Kind, int]) -> list[str]:
     """One package's section of the page: a summary line, its notes and its table of names."""
-    roots = ", ".join(f"`{root}`" for root in package["import_roots"]) or "なし"
+    roots = ", ".join(f"`{root}`" for root in package["import_roots"]) or "none"
     notes = _package_notes(package)
     rows = merged_exports(package)
     head = [
         "",
         f"## {package['dir']}",
         "",
-        f"import の根 {roots}・{_counts_text(found)}。",
+        f"import roots: {roots}; {_counts_text(found)}.",
         *([""] if notes else []),
         *(f"- {_cell(note)}" for note in notes),
     ]
     if not rows:
-        return [*head, "", "注: 公開名は無い。"]
+        return [*head, "", "Note: there are no public names."]
     table = [
         f"| `{_cell(row['name'])}` | {KIND_LABELS[row['kind']]} | {_cell(row['form'])} | "
         f"`{_cell(_short_place(row['defined_at'], package['dir']))}` | "
@@ -2781,7 +2781,7 @@ def _package_section(package: PackageInventory, found: dict[Kind, int]) -> list[
     return [
         *head,
         "",
-        "| 名 | 種類 | 形 | 定義の場所 | 出す所 | 訳 |",
+        "| name | kind | form | defined at | shown from | reason |",
         "|---|---|---|---|---|---|",
         *table,
     ]
@@ -2794,11 +2794,11 @@ def _short_place(place: str, package_dir: str) -> str:
 
 
 def _short_modules(modules: list[str], roots: list[str]) -> str:
-    """The modules showing a name, relative to the package's root (``根`` for the root), at most two named."""
+    """The modules showing a name, relative to the package's root (``root`` for the root), at most two named."""
     relative = [
         next(
             (
-                "根" if module == root else module.removeprefix(f"{root}.")
+                "root" if module == root else module.removeprefix(f"{root}.")
                 for root in roots
                 if module == root or module.startswith(f"{root}.")
             ),
@@ -2806,41 +2806,41 @@ def _short_modules(modules: list[str], roots: list[str]) -> str:
         )
         for module in modules
     ]
-    rest = f" ほか {len(relative) - 2}" if len(relative) > 2 else ""
+    rest = f" and {len(relative) - 2} more" if len(relative) > 2 else ""
     return ", ".join(relative[:2]) + rest
 
 
 _METHOD_NOTES = (
-    "数える module: pyproject の wheel の packages(hatch)・python-source と module-name(maturin)・setuptools の"
-    "見つける package を import の根とし、根と、path のどの部分も `_` で始まらない submodule の全部。",
-    "module が出す名: `__all__` が在ればその全部。無ければ `_` で始まらない名のうち、その package の中で定義された物"
-    "(他の package と標準ライブラリから import しただけの名と module は数えない)。module の `__getattr__` で"
-    "遅れて出す名は、`__dir__` と import 文(`if TYPE_CHECKING:` の節を含む)が並べる名も数える。",
-    "Hy の module は `_` で始まらない macro も数える。pyproject の console script・entry point と、maturin の bin の"
-    "Rust の実行 file も数える。",
-    "path のどの部分も `_` で始まらない submodule そのものも、1 行(出す所 `(submodule)`・名は module の import の名・"
-    "形「公開の submodule」・それ以外)と数える — 公開の名は import の根からだけ出す(ADR-DOE-API-001 R5)。"
-    "1 行目が `# moved-submodule-shim: <古い名> -> <新しい名>` の移し替えの module は、移した先の package の下の module も"
-    "古い名で数える(移し替えの module を消すまで古い path で import できる)。古い path が出す名は、印の下の"
-    "`# moved-submodule-shim-names <古い名>: <名> …` の行(隠した時に書いた名の固定の列)の名だけを数える — 古い path は"
-    "移した先の `_` の module そのものを返すので、列が無いと `_` の module に足した helper も古い path の公開名に加わる。",
-    "effect: EffectBase の子の class・EffectBase の値・effect を作る関数(戻りの型が EffectBase の子か、return が"
-    "effect の class を呼ぶ)。",
-    "handler: handler の印(`_doeff_is_handler_fn`)を持つ値と class・handler を返す関数(戻りの型が ProgramHandler・"
-    "program を受けて program を返す呼べる物・handler の組か、return が handler を作る)・引数が (effect, k) の素の"
-    "handler の関数。",
-    "それ以外: program 関数(@do・defk)と戻りの型が program の関数・ほかの関数・class・例外・型・定数・macro・"
-    "console script・entry point。program を返す関数は、中(と、中で読む同じ package の関数の中)で handler を被せず"
-    "(WithHandler・handler の値・作り手・工場を読まない)effect に答えない(Resume・Pass・Transfer などを読まない)時に"
-    "形「program の helper」— 許した物の表は名ごとに組「許した物 — program の helper」で許す(ADR-DOE-API-001 R18)。",
-    "未分類: 戻りの型が無いか中身を言わない型(Any・object・Callable・その list)で、return の形からも決まらない関数・"
-    "名が Effect か Handler で終わるのに印の無い class(とそれを返す関数)・import できない module の名。",
-    "同じ名を根と submodule の両方が出す時は 1 行にまとめ、列「出す所」に出す module を import の根からの相対で"
-    "2 つまで並べる(根は「根」・3 つ目からは数)。定義の場所の `packages/<package>/`(と続く `src/`・`python/`)は"
-    "略す。列「訳」は種類を決めた訳で、「それ以外」の行は列「形」が訳を兼ねるので空ける。全部の module と訳は"
-    "`--json` の目録に在る。",
-    "道具: `tools/public_api_inventory.py`(`uv run python tools/public_api_inventory.py --json <file> "
-    "--markdown <file>`)。",
+    "Modules counted: the import roots are taken from the wheel packages in pyproject (hatch), python-source and module-name (maturin), and the packages found by"
+    " setuptools; the roots and every submodule with no part of its path starting with `_` are counted.",
+    "Names a module shows: all of `__all__` if there is one. Otherwise, the names not starting with `_` that are defined inside that package"
+    " (names and modules merely imported from other packages and the standard library are not counted). Names a module shows lazily through"
+    " `__getattr__` also include the names listed by `__dir__` and by import statements (including the `if TYPE_CHECKING:` section).",
+    "Hy modules also count macros not starting with `_`. The console scripts and entry points of pyproject, and the Rust executables of the maturin bin,"
+    " are counted too.",
+    "A submodule with no part of its path starting with `_` is itself counted as one row (shown from `(submodule)`, name = the module's import name,"
+    " form 「公開の submodule」, kind other) -- public names are shown only from the import root (ADR-DOE-API-001 R5)."
+    " A moved-submodule module whose first line is `# moved-submodule-shim: <old name> -> <new name>` also counts the modules under the package it was moved to"
+    " by their old names (the old path stays importable until the moved-submodule module is deleted). The names the old path shows are only the names on the line"
+    " `# moved-submodule-shim-names <old name>: <name> ...` under the mark (a fixed list of names written when it was hidden) -- the old path returns"
+    " the moved-to `_` module itself, so without the list a helper added to the `_` module would also join the old path's public names.",
+    "effect: a class that subclasses EffectBase, a value of EffectBase, a function that makes an effect (its return type subclasses EffectBase, or return"
+    " calls an effect class).",
+    "handler: a value or class with the handler mark (`_doeff_is_handler_fn`), a function that returns a handler (its return type is ProgramHandler,"
+    " a callable that takes a program and returns a program, or a set of handlers; or return builds a handler), and a bare"
+    " handler function whose arguments are (effect, k).",
+    "other: program functions (@do, defk) and functions whose return type is a program, other functions, classes, exceptions, types, constants, macros,"
+    " console scripts and entry points. A function that returns a program gets the form 「program の helper」 when, inside it (and inside the"
+    " same-package functions it reads), it neither installs a handler (does not read WithHandler, handler values, builders or factories) nor answers an effect (does not read Resume,"
+    " Pass, Transfer and the like) -- the allowed-names table allows these name by name in the group 「許した物 — program の helper」 (ADR-DOE-API-001 R18).",
+    "unclassified: functions with no return type or a type that says nothing about the contents (Any, object, Callable, a list of them) that the shape of return does not decide either,"
+    " classes whose name ends in Effect or Handler but have no mark (and functions that return them), and names of modules that cannot be imported.",
+    "When both the root and a submodule show the same name, they are merged into one row, and the column \"shown from\" lists the modules showing it relative to the import root,"
+    " at most two (the root is \"root\"; from the third on, a count). The `packages/<package>/` prefix (and the following `src/` or `python/`) of the definition place"
+    " is omitted. The column \"reason\" is the reason the kind was decided; for \"other\" rows the column \"form\" doubles as the reason, so it is left empty. All modules and reasons"
+    " are in the `--json` inventory.",
+    "Tool: `tools/public_api_inventory.py` (`uv run python tools/public_api_inventory.py --json <file> "
+    "--markdown <file>`).",
 )
 
 
@@ -2851,17 +2851,17 @@ def render_markdown(packages: list[PackageInventory], commit: str) -> str:
         kind: sum(found[kind] for _package, found in per_package) for kind in KINDS
     }
     header = [
-        "# doeff の subpackage の公開 API の目録",
+        "# Inventory of the public API of doeff subpackages",
         "",
         (
-            f"packages/ の下の {len(packages)} 個の subpackage が利用者に見せる公開名は {sum(total.values())} 個で、"
-            f"effect {total['effect']} 個・handler {total['handler']} 個・それ以外 {total['other']} 個・"
-            f"未分類 {total['unclassified']} 個です。"
+            f"The {len(packages)} subpackages under packages/ show {sum(total.values())} public names to users:"
+            f" {total['effect']} effect, {total['handler']} handler, {total['other']} other, "
+            f"and {total['unclassified']} unclassified."
         ),
         "",
-        "## 全体",
+        "## Totals",
         "",
-        "| package | 公開名 | effect | handler | それ以外 | 未分類 | 公開 module | import できない module |",
+        "| package | public names | effect | handler | other | unclassified | public modules | modules that cannot be imported |",
         "|---|---:|---:|---:|---:|---:|---:|---:|",
     ]
     totals = [
@@ -2871,8 +2871,8 @@ def render_markdown(packages: list[PackageInventory], commit: str) -> str:
         for package, found in per_package
     ]
     sections = [line for package, found in per_package for line in _package_section(package, found)]
-    appendix = ["", "## 付録: 数え方", "", *(f"- {note}" for note in _METHOD_NOTES)]
-    note = f"注: doeff の commit {commit} の木を数えた。種類の決め方は付録にある。"
+    appendix = ["", "## Appendix: how names are counted", "", *(f"- {note}" for note in _METHOD_NOTES)]
+    note = f"Note: the tree at doeff commit {commit} was counted. How kinds are decided is in the appendix."
     return "\n".join([*header, *totals, "", note, *sections, *appendix]) + "\n"
 
 
@@ -2884,20 +2884,20 @@ def _git_head(repo: Path) -> str:
         text=True,
         check=False,
     )
-    return finished.stdout.strip() or "(不明)"
+    return finished.stdout.strip() or "(unknown)"
 
 
 def main(argv: Sequence[str] | None = None) -> int:
     """Write the inventory as JSON and markdown, or probe one package (the child process's entry)."""
-    parser = argparse.ArgumentParser(description="subpackage の公開 API の目録を作る")
+    parser = argparse.ArgumentParser(description="Build the inventory of the public API of subpackages")
     parser.add_argument(
-        "--package", action="append", help="packages/ の下の dir の名(重ねてよい・既定は全部)"
+        "--package", action="append", help="Name of a dir under packages/ (may be repeated; default: all)"
     )
-    parser.add_argument("--json", help="目録の JSON を書く file(- で標準出力)")
-    parser.add_argument("--markdown", help="目録の表の markdown を書く file")
-    parser.add_argument("--jobs", type=int, default=4, help="同時に読む package の数")
+    parser.add_argument("--json", help="File to write the inventory JSON to (- for standard output)")
+    parser.add_argument("--markdown", help="File to write the inventory table markdown to")
+    parser.add_argument("--jobs", type=int, default=4, help="Number of packages to read at the same time")
     parser.add_argument(
-        "--timeout", type=float, default=_DEFAULT_TIMEOUT_SECONDS, help="1 package を読む秒の上限"
+        "--timeout", type=float, default=_DEFAULT_TIMEOUT_SECONDS, help="Upper limit in seconds for reading one package"
     )
     parser.add_argument("--probe", help=argparse.SUPPRESS)
     parser.add_argument("--probe-out", help=argparse.SUPPRESS)
@@ -2921,7 +2921,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         Path(arguments.markdown).write_text(render_markdown(packages, commit), encoding="utf-8")
     log = "\n".join(
         f"{package['dir']}: {_counts_text(counts(package))}"
-        + (f" — 読めなかった: {package['error']}" if package["error"] else "")
+        + (f" -- could not be read: {package['error']}" if package["error"] else "")
         for package in packages
     )
     print(log, file=sys.stderr)

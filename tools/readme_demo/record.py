@@ -1,31 +1,31 @@
-"""README の頭の GIF(images/readme-demo.gif)を録り直す道具。
+"""A tool that re-records the head GIF of the README (images/readme-demo.gif).
 
-GIF は「`pip install doeff` → program の file と handler の file を見る → 同じ `digest` を 4 つの handler で走らせると、
-handler が k(continuation)をどう扱うかで effect の意味と答えが変わる」を見せる — 値を答えて k を resume する canned・
-全部の effect を見て次へ渡す trace・1 つ通した後に k を捨てて途中で止める budget(1)・本物の HTTP で答える live_world
-(`python -m doeff demo` と同じ 4 つ)。台本は下の SCRIPT の 1 か所に在り、録る file は隣の digest.py と
-handlers.py(GIF に映る file そのもの)。2 つは README の例と同じ書き方(定義の間の空行は 1 つ・註を揃える)で、それぞれ 1 画面に
-収める。handlers.py は REPL で使う `handler` と `run` も import する — ruff の整形は当てない(`make lint-ruff` の範囲の外)。
-走るかは tests/test_readme_demo.py が確かめる:
+The GIF shows "`pip install doeff` -> look at the program file and the handler file -> run the same `digest` with 4 handlers, and
+how a handler treats k (the continuation) changes the meaning and answer of an effect" -- canned, which answers a value and resumes k;
+trace, which sees every effect and passes it on; budget(1), which lets one through then drops k and stops midway; and live_world, which answers with real HTTP
+(the same 4 as `python -m doeff demo`). The script lives in one place, SCRIPT below, and the files recorded are digest.py and
+handlers.py next to it (the files shown in the GIF themselves). Both are written the same way as the README examples (one blank line between definitions, aligned comments) and each fits on one screen.
+handlers.py also imports `handler` and `run` used in the REPL -- ruff formatting is not applied (outside the scope of `make lint-ruff`).
+Whether they run is checked by tests/test_readme_demo.py:
 
-    uv run --no-project python tools/readme_demo/record.py                       # images/readme-demo.gif を書き直す
-    uv run --no-project python tools/readme_demo/record.py --font-dir <dir>      # 等幅の字形が機体に無い時
-    uv run --no-project python tools/readme_demo/record.py --cast demo.cast      # 中間の asciicast も残す
+    uv run --no-project python tools/readme_demo/record.py                       # rewrite images/readme-demo.gif
+    uv run --no-project python tools/readme_demo/record.py --font-dir <dir>      # when the machine has no monospace glyphs
+    uv run --no-project python tools/readme_demo/record.py --cast demo.cast      # also keep the intermediate asciicast
 
-録り方:
+How it records:
 
-1. repo の外の一時の dir に digest.py と handlers.py を写し、`uv venv --seed` で pip の入った新しい venv を作る。
-2. その dir で bash を擬似端末(pty)の中に起こし、台本の命令を 1 字ずつ打ち込む。命令は本当に走る — `pip install doeff` は
-   PyPI から入れ、`live_world` は https://example.com を本当に取りに行く。画面に出る物は bash と Python の出力そのもの。
-3. 出力の刻を asciicast v2 に書く。打鍵の間と台本の「待つ」は決めた長さにし、命令の出力の間の待ち(pip の取り寄せなど)は
-   縮める(asciinema の idle time limit と同じ扱い)。
-4. agg(https://github.com/asciinema/agg)で GIF にする。agg と uv は PATH から探す。
+1. Copy digest.py and handlers.py into a temporary dir outside the repo, and make a new venv with pip using `uv venv --seed`.
+2. In that dir, start bash inside a pseudo-terminal (pty) and type the script's commands one character at a time. The commands really run -- `pip install doeff` installs from
+   PyPI, and `live_world` really fetches https://example.com. What appears on screen is the output of bash and Python itself.
+3. Write the output timing as asciicast v2. The pauses between keystrokes and the script's "wait" are fixed lengths, and waits between command output (such as pip fetching) are
+   shortened (treated the same as asciinema's idle time limit).
+4. Make a GIF with agg (https://github.com/asciinema/agg). agg and uv are looked up in PATH.
 
-bash と Python には、この機体の環境変数を渡さない(HOME は一時の dir・pip は設定の file を読まない)。画面に機体の path や
-名が出ない。GIF の大きさの目安は 1 MB まで — 越えたら終了コード 1 で知らせる(GIF は書く)。
+The environment variables of this machine are not passed to bash and Python (HOME is a temporary dir, pip does not read config files). Paths and names
+of this machine do not appear on screen. The size target of the GIF is up to 1 MB -- if exceeded, it is reported with exit code 1 (the GIF is still written).
 
-終了コード: 書けて目安に収まれば 0・目安を越えれば 1・道具が使えなければ(uv・agg が無い・命令が時間内に終わらない)2。
-標準ライブラリだけを使う(workspace を同期せずに走る)。
+Exit code: 0 if written and within the target, 1 if the target is exceeded, 2 if the tool cannot be used (no uv or agg, a command does not finish in time).
+Uses only the standard library (runs without syncing the workspace).
 """
 
 from __future__ import annotations
@@ -52,12 +52,12 @@ from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
 ROOT = HERE.parents[1]
-# GIF に映る file — program の digest.py と、それを import する handler の handlers.py。
+# Files shown in the GIF -- the program digest.py, and handlers.py which imports it.
 DEMO_FILES = (HERE / "digest.py", HERE / "handlers.py")
 DEFAULT_OUT = ROOT / "images" / "readme-demo.gif"
 SIZE_BUDGET_BYTES = 1_000_000
 
-# 端末の大きさ — `cat handlers.py` の命令の行と file(29 行)と次の prompt が 1 画面に収まる高さ。
+# Terminal size -- tall enough that the `cat handlers.py` command line, the file (29 lines), and the next prompt fit on one screen.
 COLUMNS = 76
 ROWS = 32
 SHELL_PROMPT = r"\$ $"
@@ -66,9 +66,9 @@ PYTHON_PROMPT = r">>> $"
 
 @dataclass(frozen=True)
 class Type:
-    """命令を 1 字ずつ打ち、Enter を押し、prompt が戻るまで出力を録る。
+    """Type a command one character at a time, press Enter, and record the output until the prompt returns.
 
-    gap_cap は出力の間の待ちの上限(秒)— pip の取り寄せのような長い待ちを縮める。
+    gap_cap is the upper limit of waits between output (seconds) -- shortens long waits such as pip fetching.
     """
 
     text: str
@@ -78,7 +78,7 @@ class Type:
 
 @dataclass(frozen=True)
 class Hold:
-    """何も打たずに待つ(秒)— 見る人が画面を読む間。"""
+    """Wait without typing (seconds) -- while the viewer reads the screen."""
 
     seconds: float
 
@@ -101,9 +101,9 @@ SCRIPT: tuple[Type | Hold, ...] = (
     Hold(1.5),
     Type("run(handler(canned)(handler(live_world)(digest(url))))", PYTHON_PROMPT),
 )
-# 最後の画面を見せる長さ(秒)— agg の --last-frame-duration。
+# How long to show the last screen (seconds) -- agg's --last-frame-duration.
 LAST_FRAME_SECONDS = 4.0
-# 1 字を打つ間(秒)と揺らぎ。揺らぎの乱数は種を決め、録り直しても同じ打ち方にする。
+# The gap between typing one character (seconds) and its jitter. The jitter's random numbers use a fixed seed so re-recording gives the same typing.
 CHAR_SECONDS = 0.035
 CHAR_JITTER = 0.4
 SEED = 7
@@ -115,19 +115,19 @@ ANSI = re.compile(
 
 
 class ToolError(Exception):
-    """道具が使えない(終了コード 2)。"""
+    """The tool cannot be used (exit code 2)."""
 
 
 def plain(text: str) -> str:
-    """端末の制御の列と CR を除いた字。prompt が戻ったかを読むのに使う。"""
+    """Text with terminal control sequences and CR removed. Used to read whether the prompt has returned."""
     return ANSI.sub("", text).replace("\r", "")
 
 
 class Recorder:
-    """pty の中の bash へ打ち、出力を仮の時計の刻で録る。"""
+    """Type into bash inside the pty and record the output with timestamps from a virtual clock."""
 
     def __init__(self, fd: int) -> None:
-        """録り始めの状態 — 仮の時計は 0 秒、録った出力は無し。"""
+        """State at the start of recording -- the virtual clock is at 0 seconds and no output has been recorded."""
         self.fd = fd
         self.clock = 0.0
         self.events: tuple[tuple[float, str], ...] = ()
@@ -136,51 +136,51 @@ class Recorder:
         self.random = random.Random(SEED)
 
     def _read(self, timeout: float) -> str | None:
-        """pty から届いた出力を字にする。timeout 秒の間 何も来なければ None・端末が閉じたら空の字。"""
+        """Turn output arriving from the pty into text. None if nothing arrives for timeout seconds; empty text if the terminal closed."""
         ready, _, _ = select.select([self.fd], [], [], timeout)
         if not ready:
             return None
         try:
             data = os.read(self.fd, 65536)
-        except OSError:  # 子が閉じた pty は EIO を返す
+        except OSError:  # a pty whose child closed returns EIO
             return ""
         return self.decoder.decode(data)
 
     def _record(self, text: str) -> None:
-        """出力を今の刻で GIF の列に残し、prompt が戻ったかを読む分にも足す。"""
+        """Keep the output in the GIF's event list at the current time, and also add it to what is used to read whether the prompt has returned."""
         if text:
-            self.events = (*self.events, (round(self.clock, 3), text))  # noqa: DOEFF002 — 録画の状態を持つ 1 つの recorder の時計と入力の欄
-            self.since_enter += text  # noqa: DOEFF002 — 録画の状態を持つ 1 つの recorder の時計と入力の欄
+            self.events = (*self.events, (round(self.clock, 3), text))  # noqa: DOEFF002 — the clock and input field of the single recorder that holds recording state
+            self.since_enter += text  # noqa: DOEFF002 — the clock and input field of the single recorder that holds recording state
 
     def drain(self, quiet: float) -> None:
-        """quiet 秒の間 何も来なくなるまで読み、今の刻で録る(打った字の echo など)。"""
+        """Read until nothing arrives for quiet seconds, and record at the current time (the echo of typed characters, etc.)."""
         while (chunk := self._read(quiet)) is not None:
             if chunk == "":
                 return
             self._record(chunk)
 
     def wait_for(self, prompt: str, gap_cap: float) -> None:
-        """prompt が出力の末尾に戻るまで読む。出力の間の待ちは gap_cap 秒までに縮めて刻む。"""
+        """Read until the prompt returns at the end of the output. Waits between output are shortened to at most gap_cap seconds and timestamped."""
         last = time.monotonic()
         deadline = last + COMMAND_TIMEOUT_SECONDS
         while not re.search(prompt, plain(self.since_enter)):
             chunk = self._read(0.05)
             now = time.monotonic()
             if chunk == "":
-                raise ToolError(f"端末が閉じた。最後の出力:\n{plain(self.since_enter)[-2000:]}")
+                raise ToolError(f"the terminal closed. Last output:\n{plain(self.since_enter)[-2000:]}")
             if chunk is not None:
-                self.clock += min(now - last, gap_cap)  # noqa: DOEFF002 — 録画の状態を持つ 1 つの recorder の時計と入力の欄
+                self.clock += min(now - last, gap_cap)  # noqa: DOEFF002 — the clock and input field of the single recorder that holds recording state
                 last = now
                 self._record(chunk)
             if now > deadline:
                 raise ToolError(
-                    f"{COMMAND_TIMEOUT_SECONDS} 秒待っても prompt が戻らない。最後の出力:\n"
+                    f"the prompt did not return after waiting {COMMAND_TIMEOUT_SECONDS} seconds. Last output:\n"
                     f"{plain(self.since_enter)[-2000:]}"
                 )
         self.drain(0.15)
 
     def type(self, step: Type) -> None:
-        """人が打つ速さで命令を打ち、走らせて、答えが出終わるまでを録る。"""
+        """Type a command at human speed, run it, and record until the answer has finished appearing."""
         for char in step.text:
             os.write(self.fd, char.encode())
             self.clock += CHAR_SECONDS * (1 + CHAR_JITTER * (self.random.random() - 0.5))
@@ -191,16 +191,16 @@ class Recorder:
         self.wait_for(step.prompt, step.gap_cap)
 
     def hold(self, step: Hold) -> None:
-        """見る人が今の画面を読めるよう、何も打たずに仮の時計だけを進める。"""
+        """Advance only the virtual clock without typing, so the viewer can read the current screen."""
         self.drain(0.05)
         self.clock += step.seconds
 
 
 def make_world(work: Path, python: str) -> Path:
-    """GIF に映る file を写し、pip の入った新しい venv を作る。venv の dir を返す。"""
+    """Copy the files shown in the GIF and make a new venv with pip. Return the venv dir."""
     uv = shutil.which("uv")
     if uv is None:
-        raise ToolError("uv が PATH に無い(https://docs.astral.sh/uv/)")
+        raise ToolError("uv is not on PATH (https://docs.astral.sh/uv/)")
     for demo_file in DEMO_FILES:
         shutil.copy(demo_file, work / demo_file.name)
     venv = work / ".venv"
@@ -212,12 +212,12 @@ def make_world(work: Path, python: str) -> Path:
         check=False,
     )
     if made.returncode != 0:
-        raise ToolError(f"uv venv が落ちた:\n{made.stderr}")
+        raise ToolError(f"uv venv failed:\n{made.stderr}")
     return venv
 
 
 def shell_env(work: Path, venv: Path) -> dict[str, str]:
-    """録る bash の環境。この機体の環境変数は渡さない。"""
+    """The environment of the recorded bash. Environment variables of this machine are not passed."""
     return {
         "PATH": f"{venv / 'bin'}:/usr/bin:/bin",
         "VIRTUAL_ENV": str(venv),
@@ -234,12 +234,12 @@ def shell_env(work: Path, venv: Path) -> dict[str, str]:
 
 
 def record(work: Path, venv: Path) -> tuple[tuple[float, str], ...]:
-    """pty の中で台本を演じ、出力の刻の列を返す。"""
+    """Perform the script inside the pty and return the list of output timestamps."""
     bash = shutil.which("bash", path="/usr/bin:/bin")
     if bash is None:
-        raise ToolError("bash が /usr/bin にも /bin にも無い")
+        raise ToolError("bash is in neither /usr/bin nor /bin")
     pid, fd = pty.fork()
-    if pid == 0:  # 子: 決めた大きさの端末で bash を起こす
+    if pid == 0:  # child: start bash in a terminal of the chosen size
         os.chdir(work)
         os.execve(bash, ["bash", "--norc", "--noprofile", "-i"], shell_env(work, venv))
     try:
@@ -260,7 +260,7 @@ def record(work: Path, venv: Path) -> tuple[tuple[float, str], ...]:
 
 
 def write_cast(events: tuple[tuple[float, str], ...], path: Path) -> None:
-    """録った出力を agg が読む asciicast v2 にする(環境は端末の種類だけを書く)。"""
+    """Turn the recorded output into an asciicast v2 that agg can read (the environment records only the terminal type)."""
     header = {
         "version": 2,
         "width": COLUMNS,
@@ -272,7 +272,7 @@ def write_cast(events: tuple[tuple[float, str], ...], path: Path) -> None:
 
 
 def render(cast: Path, out: Path, agg: str, font_dirs: list[str]) -> None:
-    """asciicast を README に載せる GIF にする。色・字の大きさ・画の数は 1 MB の目安に収める値。"""
+    """Turn the asciicast into the GIF placed in the README. Colors, glyph size, and frame count are values that fit the 1 MB target."""
     command = (
         agg,
         "--quiet",
@@ -282,7 +282,7 @@ def render(cast: Path, out: Path, agg: str, font_dirs: list[str]) -> None:
         "16",
         "--fps-cap",
         "10",
-        # 刻は録る時に縮めてあるので、agg では縮めない(台本の Hold を保つ)
+        # Timing was already shortened at recording time, so agg does not shorten it (keeps the script's Hold)
         "--idle-time-limit",
         "60",
         "--last-frame-duration",
@@ -293,31 +293,31 @@ def render(cast: Path, out: Path, agg: str, font_dirs: list[str]) -> None:
     )
     made = subprocess.run(command, capture_output=True, text=True, check=False)
     if made.returncode != 0:
-        raise ToolError(f"agg が落ちた:\n{made.stderr}")
+        raise ToolError(f"agg failed:\n{made.stderr}")
 
 
 def main(argv: list[str]) -> int:
-    """録って GIF を書き、大きさと長さを知らせる。終了コードは module の docstring のとおり。"""
+    """Record and write the GIF, and report its size and length. The exit code is as in the module docstring."""
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument(
-        "--out", type=Path, default=DEFAULT_OUT, help="書く GIF(既定 images/readme-demo.gif)"
+        "--out", type=Path, default=DEFAULT_OUT, help="GIF to write (default images/readme-demo.gif)"
     )
-    parser.add_argument("--cast", type=Path, help="中間の asciicast を残す先(既定は残さない)")
+    parser.add_argument("--cast", type=Path, help="where to keep the intermediate asciicast (default: not kept)")
     parser.add_argument(
         "--python",
         default="3.14",
-        help="録る venv の Python の版(既定 3.14 — REPL の prompt に色が付く)",
+        help="Python version of the recorded venv (default 3.14 -- the REPL prompt gets color)",
     )
-    parser.add_argument("--agg", default="agg", help="agg の path(既定は PATH から)")
+    parser.add_argument("--agg", default="agg", help="path of agg (default: from PATH)")
     parser.add_argument(
-        "--font-dir", action="append", default=[], help="agg に足す字形の dir(何度でも書ける)"
+        "--font-dir", action="append", default=[], help="a glyph dir to add to agg (can be given repeatedly)"
     )
     args = parser.parse_args(argv)
     agg = shutil.which(args.agg)
     try:
         if agg is None:
             raise ToolError(
-                f"agg が見つからない: {args.agg}(https://github.com/asciinema/agg/releases)"
+                f"agg not found: {args.agg} (https://github.com/asciinema/agg/releases)"
             )
         with tempfile.TemporaryDirectory(prefix="doeff-demo-") as tmp:
             work = Path(tmp)
@@ -327,13 +327,13 @@ def main(argv: list[str]) -> int:
             write_cast(events, cast)
             render(cast, args.out, agg, args.font_dir)
     except ToolError as error:
-        print(f"録れない: {error}", file=sys.stderr)
+        print(f"cannot record: {error}", file=sys.stderr)
         return 2
     size = args.out.stat().st_size
     length = events[-1][0] + LAST_FRAME_SECONDS
-    print(f"{args.out}: {size / 1_000_000:.2f} MB・約 {length:.1f} 秒")
+    print(f"{args.out}: {size / 1_000_000:.2f} MB, about {length:.1f} seconds")
     if size > SIZE_BUDGET_BYTES:
-        print(f"目安の {SIZE_BUDGET_BYTES / 1_000_000:.1f} MB を越えた", file=sys.stderr)
+        print(f"exceeded the target of {SIZE_BUDGET_BYTES / 1_000_000:.1f} MB", file=sys.stderr)
         return 1
     return 0
 

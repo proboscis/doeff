@@ -294,14 +294,14 @@ def test_names_are_typed_by_marker_return_type_and_return_shape(
 @pytest.mark.parametrize(
     ("name", "said"),
     [
-        ("ping_handler_factory", "引数なしで呼ぶと handler を返す"),
-        ("ping_handler_stack", "引数なしで呼ぶと handler を返す"),
-        ("ping_handler_untyped", "引数なしで呼ぶと handler を返す"),
-        ("ping_handler_for", "要る引数 name に置き物を渡して呼ぶと handler を返す"),
-        ("ping_handler_reading", "要る引数 name に置き物を渡して呼ぶと TypeError: name is a str"),
-        ("not_a_ping_handler_factory", "引数なしで呼ぶと function を返す"),
-        ("not_a_ping_handler_stack", "引数なしで呼ぶと list を返す"),
-        ("not_a_ping_handler_for", "要る引数 name に置き物を渡して呼ぶと function を返す"),
+        ("ping_handler_factory", "with no arguments, calling it returns a handler"),
+        ("ping_handler_stack", "with no arguments, calling it returns a handler"),
+        ("ping_handler_untyped", "with no arguments, calling it returns a handler"),
+        ("ping_handler_for", "with placeholders for the required arguments name, calling it returns a handler"),
+        ("ping_handler_reading", "with placeholders for the required arguments name, calling it raises TypeError: name is a str"),
+        ("not_a_ping_handler_factory", "with no arguments, calling it returns a function"),
+        ("not_a_ping_handler_stack", "with no arguments, calling it returns a list"),
+        ("not_a_ping_handler_for", "with placeholders for the required arguments name, calling it returns a function"),
     ],
 )
 def test_a_factory_says_whether_its_call_was_checked(
@@ -317,11 +317,11 @@ def test_a_factory_says_whether_its_call_was_checked(
     [
         (
             "flow",
-            "@do / defk の関数(呼ぶと program を作る)・中で handler を被せず、effect に答えない",
+            "a @do / defk function (calling it builds a program); it installs no handler inside and answers no effect",
         ),
-        ("flow_handled", "flow_handled が WithHandlerType を読む"),
-        ("flow_wrapped", "戻りの型 DoExpr・_wrap が ping_handler を読む"),
-        ("flow_answering", "flow_answering が Resume を読む"),
+        ("flow_handled", "flow_handled reads WithHandlerType"),
+        ("flow_wrapped", "return type DoExpr; _wrap reads ping_handler"),
+        ("flow_answering", "flow_answering reads Resume"),
     ],
 )
 def test_a_program_function_says_whether_it_is_a_helper(
@@ -424,7 +424,7 @@ def test_a_factory_is_called_with_home_and_cwd_in_a_scratch_dir(
         sample.ping_handler_with_state_dir, "ping_handler_with_state_dir"
     )
     assert (verdict.kind, verdict.form) == ("handler", "handler を返す関数")
-    assert "引数なしで呼ぶと handler を返す" in verdict.reason
+    assert "with no arguments, calling it returns a handler" in verdict.reason
     assert list(home.iterdir()) == []
     assert list(work.iterdir()) == []
     assert Path.cwd() == work

@@ -1,11 +1,11 @@
-"""scheduler の代表的な流れの費用を測る(1 操作あたりの µs)。
+"""Measure the cost of representative scheduler flows (µs per operation).
 
-    uv run python benchmarks/scheduler_bench.py            # 既定の scheduler
+    uv run python benchmarks/scheduler_bench.py            # default scheduler
     uv run python benchmarks/scheduler_bench.py --impl python
     uv run python benchmarks/scheduler_bench.py --impl rust
     uv run python benchmarks/scheduler_bench.py --only spawn_wait --n 20000 --repeat 5
 
-各流れは「何を 1 操作と数えるか」を名前の横に書く。最良値(repeat 回の最小)を出す。
+Each flow writes next to its name "what counts as one operation". The best value (the minimum over repeat runs) is printed.
 """
 
 from __future__ import annotations
@@ -38,7 +38,7 @@ from doeff import EffectBase, Resume, do, handler, run, with_handlers
 
 
 class Outside(EffectBase[int]):
-    """scheduler の外側の handler が解く effect(scheduler を素通りする費用)。"""
+    """An effect solved by a handler outside the scheduler (the cost of passing straight through the scheduler)."""
 
 
 @handler
@@ -159,18 +159,18 @@ def pass_through(n: int):
 
 
 FLOWS: dict[str, tuple[str, Callable[[int], Any], bool]] = {
-    "spawn_wait": ("Spawn + Wait 1 往復", spawn_wait, False),
-    "gather": ("Gather の子 1 つ(Spawn を含む)", gather, False),
-    "race": ("Race 1 回(Spawn 2 回を含む)", race, False),
-    "semaphore_uncontended": ("Acquire + Release 1 組(競合なし)", semaphore_uncontended, False),
+    "spawn_wait": ("Spawn + Wait, one round trip", spawn_wait, False),
+    "gather": ("one Gather child (including Spawn)", gather, False),
+    "race": ("one Race (including 2 Spawns)", race, False),
+    "semaphore_uncontended": ("one Acquire + Release pair (no contention)", semaphore_uncontended, False),
     "semaphore_contended": (
-        "Acquire + Spawn + Wait + Release(4 task で競合)",
+        "Acquire + Spawn + Wait + Release (contended by 4 tasks)",
         semaphore_contended,
         False,
     ),
     "promise": ("CreatePromise + Spawn(Complete) + Wait", promise, False),
-    "cancel": ("Spawn + Cancel + finally + Wait(取り消し)", cancel, False),
-    "pass_through": ("scheduler を素通りする effect 1 回", pass_through, True),
+    "cancel": ("Spawn + Cancel + finally + Wait (cancellation)", cancel, False),
+    "pass_through": ("one effect passing straight through the scheduler", pass_through, True),
 }
 
 

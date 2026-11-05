@@ -1,14 +1,15 @@
-"""doeff の Rust の package の wheel を、機体の外の置き場(公開の GitHub の release `rust-wheels`)へ上げる — 置き場の書き手の 1 つ
-(ADR-DOE-BUILD-001 R5 の追補・設計 docs/design/rust-wheel-distribution)。走るのは doeff の GitHub Actions
-(.github/workflows/rust-wheels.yml)の中だけで、資格は Actions の GITHUB_TOKEN(contents: write)だけ。
+"""Upload doeff's Rust package wheels to a store outside the machine (the public GitHub release `rust-wheels`) -- one of the store's writers
+(addendum to ADR-DOE-BUILD-001 R5; design docs/design/rust-wheel-distribution). It runs only inside doeff's GitHub Actions
+(.github/workflows/rust-wheels.yml), and its only credential is the Actions GITHUB_TOKEN (contents: write).
 
-package ごとに build の口(tools/doeff_cargo_backend.py)を `uv build --wheel` で通す — 口は置き場を引くので、同じ鍵の wheel が
-置き場に在れば取って終わり(報告の出どころ remote・上げない)。無ければ口が組み、出どころ built の wheel だけを asset
-`<package>-<鍵>.whl`(手元の保存先の dir の名 + .whl — 口が引く名と同じ)として上げる。同じ名の asset は上書きしない(在れば上げない)。
-上げた後、asset が KEEP_ASSETS を越えていれば古い順に消す(release の asset は 1000 個が上限)。
+For each package it runs the build backend (tools/doeff_cargo_backend.py) through `uv build --wheel`. The backend looks the wheel up in the store, so
+if a wheel with the same key is already there it is fetched and nothing more happens (reported source remote; not uploaded). Otherwise the backend builds it, and only wheels
+whose source is built are uploaded as the asset `<package>-<key>.whl` (the local store dir name + .whl, the same name the backend looks up).
+An asset with the same name is never overwritten (if it exists, nothing is uploaded).
+After uploading, if the assets exceed KEEP_ASSETS, the oldest are deleted (a release holds at most 1000 assets).
 
-使い方: python tools/rust_wheel_release.py --tag rust-wheels --python 3.14t packages/doeff-vm packages/doeff-linter …
-(env GH_TOKEN・GITHUB_REPOSITORY が要る — Actions が渡す)
+Usage: python tools/rust_wheel_release.py --tag rust-wheels --python 3.14t packages/doeff-vm packages/doeff-linter ...
+(requires env GH_TOKEN and GITHUB_REPOSITORY, which Actions provides)
 """
 
 from __future__ import annotations
@@ -23,13 +24,13 @@ import tempfile
 from dataclasses import dataclass
 from pathlib import Path
 
-# 残す asset の数(上限 1000 の手前 — 1 回の上げで越えない余り)。
+# Number of assets to keep (below the 1000 limit, leaving headroom so a single upload cannot exceed it).
 KEEP_ASSETS = 800
 
 
 @dataclass(frozen=True)
 class Reported:
-    """build の口の報告の 1 行: project = package の名・wheel = 手元の保存先の中の wheel・source = 出どころ(local・remote・built)。"""
+    """One line of the build backend report: project = package name, wheel = the wheel in the local store, source = origin (local, remote, built)."""
 
     project: str
     wheel: Path
@@ -37,72 +38,72 @@ class Reported:
 
     @property
     def asset(self) -> str:
-        """置き場の asset の名(手元の保存先の dir の名 `<package>-<鍵>` + .whl — 口の _remote_wheel が引く名)。"""
+        """The store asset name (local store dir name `<package>-<key>` + .whl, the name the backend's _remote_wheel looks up)."""
         return f"{self.wheel.parent.name}.whl"
 
 
 def _gh(*argv: str) -> subprocess.CompletedProcess[str]:
-    """gh を撃って結果を返す(rc は呼び手が読む)。"""
+    """Run gh and return the result (the caller reads the return code)."""
     return subprocess.run(["gh", *argv], capture_output=True, text=True, check=False)
 
 
 def _ensure_release(repo: str, tag: str) -> None:
-    """置き場の release が無ければ作る(asset の入れ物 — 版の告知ではないので latest にしない)。"""
+    """Create the store release if it does not exist (a container for assets, not a version announcement, so it is not marked latest)."""
     if _gh("release", "view", tag, "--repo", repo).returncode == 0:
         return
     made = _gh(
         "release", "create", tag, "--repo", repo, "--prerelease", "--latest=false", "--title", "Rust wheels (build cache)",
-        "--notes", "doeff の build の口(tools/doeff_cargo_backend.py)が引く Rust の wheel の置き場。asset の名 = <package>-<鍵>.whl。"
-        "CI(.github/workflows/rust-wheels.yml)だけが書く。設計 = docs/design/rust-wheel-distribution。",
+        "--notes", "Store of Rust wheels that doeff's build backend (tools/doeff_cargo_backend.py) looks up. Asset name = <package>-<key>.whl. "
+        "Written only by CI (.github/workflows/rust-wheels.yml). Design = docs/design/rust-wheel-distribution.",
     )
     if made.returncode != 0:
-        sys.exit(f"rust_wheel_release: release {tag} を作れない — {made.stderr.strip()}")
+        sys.exit(f"rust_wheel_release: cannot create release {tag} - {made.stderr.strip()}")
 
 
 def _build(package: Path, python: str, store: Path) -> tuple[Reported, ...]:
-    """package を build の口に通し、口の報告の行を返す(口が置き場を引く — 在れば取るだけで組まない)。手元の保存先 = store
-    (この走りだけの空の dir — 報告の wheel は上げ終わるまでそこに在る)。"""
+    """Run the package through the build backend and return the backend's report lines (the backend looks up the store; if the wheel exists it is only fetched, not built). Local store = store
+    (an empty dir used by this run only; the reported wheels stay there until uploading finishes)."""
     with tempfile.TemporaryDirectory(prefix="rust-wheel-release-") as work:
         report = Path(work) / "report.jsonl"
         env = {**os.environ, "DOEFF_WHEEL_CACHE": str(store), "DOEFF_WHEEL_REPORT": str(report)}
         done = subprocess.run(["uv", "build", "--wheel", "--python", python, "--out-dir", str(Path(work) / "out"), str(package)], env=env, check=False)
         if done.returncode != 0:
-            sys.exit(f"rust_wheel_release: {package} の uv build が rc {done.returncode}")
+            sys.exit(f"rust_wheel_release: uv build of {package} exited with rc {done.returncode}")
         rows = [json.loads(line) for line in report.read_text(encoding="utf-8").splitlines()] if report.exists() else []
     return tuple(Reported(project=row["project"], wheel=Path(row["wheel"]), source=row["source"]) for row in rows)
 
 
 def _upload(repo: str, tag: str, reported: Reported) -> None:
-    """口が組んだ wheel を asset の名で上げる。同じ名が既に在れば上書きせずに知らせる(同じ鍵の別の走りが先に上げた)。"""
+    """Upload the wheel the backend built under its asset name. If the same name already exists, report it without overwriting (another run with the same key uploaded first)."""
     with tempfile.TemporaryDirectory(prefix="rust-wheel-asset-") as work:
         asset = Path(work) / reported.asset
         shutil.copy2(reported.wheel, asset)
         sent = _gh("release", "upload", tag, str(asset), "--repo", repo)
     if sent.returncode == 0:
-        print(f"rust_wheel_release: 上げた — {reported.asset}({reported.wheel.name}・{reported.wheel.stat().st_size} byte)")
+        print(f"rust_wheel_release: uploaded - {reported.asset} ({reported.wheel.name}, {reported.wheel.stat().st_size} bytes)")
     elif "already exists" in sent.stderr:
-        print(f"rust_wheel_release: 同じ名が在る(上書きしない)— {reported.asset}")
+        print(f"rust_wheel_release: same name exists (not overwritten) - {reported.asset}")
     else:
-        sys.exit(f"rust_wheel_release: {reported.asset} を上げられない — {sent.stderr.strip()}")
+        sys.exit(f"rust_wheel_release: cannot upload {reported.asset} - {sent.stderr.strip()}")
 
 
 def _prune(repo: str, tag: str) -> None:
-    """release の asset が KEEP_ASSETS を越えていれば、作った時刻の古い順に越えた分を消す。"""
+    """If the release assets exceed KEEP_ASSETS, delete the excess, oldest creation time first."""
     release = _gh("api", f"repos/{repo}/releases/tags/{tag}", "--jq", ".id")
     listed = _gh("api", "--paginate", f"repos/{repo}/releases/{release.stdout.strip()}/assets", "--jq", ".[] | [.id, .created_at, .name] | @tsv")
     if release.returncode != 0 or listed.returncode != 0:
-        sys.exit(f"rust_wheel_release: asset の一覧を読めない — {release.stderr.strip()} {listed.stderr.strip()}")
+        sys.exit(f"rust_wheel_release: cannot read the asset list - {release.stderr.strip()} {listed.stderr.strip()}")
     assets = sorted((line.split("\t") for line in listed.stdout.splitlines() if line), key=lambda row: row[1])
     for asset_id, _, name in assets[: max(0, len(assets) - KEEP_ASSETS)]:
         gone = _gh("api", "-X", "DELETE", f"repos/{repo}/releases/assets/{asset_id}")
-        print(f"rust_wheel_release: 古い asset を消した — {name}" if gone.returncode == 0 else f"rust_wheel_release: {name} を消せない — {gone.stderr.strip()}")
+        print(f"rust_wheel_release: deleted old asset - {name}" if gone.returncode == 0 else f"rust_wheel_release: cannot delete {name} - {gone.stderr.strip()}")
 
 
 def main(argv: list[str]) -> None:
-    parser = argparse.ArgumentParser(description="doeff の Rust の package の wheel を置き場(release rust-wheels)へ上げる")
-    parser.add_argument("--tag", required=True, help="置き場の release の tag(rust-wheels)")
-    parser.add_argument("--python", required=True, help="組む Python(使う側の venv と同じ ABI — 3.14t)")
-    parser.add_argument("packages", nargs="+", type=Path, help="build の口を通す package の dir")
+    parser = argparse.ArgumentParser(description="Upload doeff Rust package wheels to the store (release rust-wheels)")
+    parser.add_argument("--tag", required=True, help="tag of the store release (rust-wheels)")
+    parser.add_argument("--python", required=True, help="Python to build with (same ABI as the consuming venv, 3.14t)")
+    parser.add_argument("packages", nargs="+", type=Path, help="package dirs to run through the build backend")
     args = parser.parse_args(argv)
     repo = os.environ["GITHUB_REPOSITORY"]
     _ensure_release(repo, args.tag)
@@ -112,7 +113,7 @@ def main(argv: list[str]) -> None:
             if row.source == "built":
                 _upload(repo, args.tag, row)
             else:
-                print(f"rust_wheel_release: 置き場か手元に在る(上げない)— {row.asset}・{row.source}")
+                print(f"rust_wheel_release: already in the store or local (not uploaded) - {row.asset}, {row.source}")
     _prune(repo, args.tag)
 
 

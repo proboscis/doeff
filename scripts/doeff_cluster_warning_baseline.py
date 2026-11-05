@@ -1,13 +1,13 @@
-"""packages/doeff-cluster の warning(major)の数を、規則ごと × file ごとの基点と比べる。
+"""Compare the number of warnings (major) in packages/doeff-cluster against a baseline per rule x per file.
 
-error(critical)は lint-doeff-cluster.sh が doeff-linter の終了コードで止める。warning は linter が 0 で終わるので、ここで
-基点の file(packages/doeff-cluster/lint-warning-baseline.json = {規則: {package の dir からの path: 数}})と比べる:
+error (critical) is stopped by lint-doeff-cluster.sh using doeff-linter's exit code. The linter exits 0 on warnings, so here they are
+compared with the baseline file (packages/doeff-cluster/lint-warning-baseline.json = {rule: {path from the package dir: count}}):
 
-  check [path …]  測った file について、数が基点より多ければ赤(新しい warning)。少ないのに基点が下がっていなければ赤
-                  (直した便が同じ commit で基点を下げる — 下げ忘れると次の新しい違反が黙って入る)。path を渡さなければ package 全体。
-  lower           package 全体を測り、基点を今の数まで下げる(上げない・新しい組を足さない)。直した便が実行して stage する。
+  check [path ...]  For the measured files, red if the count is higher than the baseline (a new warning). Also red if it is lower but the baseline has not been lowered
+                  (the change that fixes it lowers the baseline in the same commit -- if forgotten, the next new violation slips in silently). Without paths, the whole package.
+  lower           Measure the whole package and lower the baseline to the current counts (never raise it, never add new pairs). Run and staged by the change that fixed things.
 
-既知の一覧で「通す」物ではない: 基点は下がる向きにだけ動く。linter は package の dir で走らせる(lint-doeff-cluster.sh と同じ)。
+This is not a known-list that "lets things through": the baseline moves only downward. The linter runs in the package dir (same as lint-doeff-cluster.sh).
 """
 
 from __future__ import annotations
@@ -27,7 +27,7 @@ BASELINE_NAME: str = "lint-warning-baseline.json"
 DECLARATION: str = "architecture.hy"
 BASELINE_ENV: str = "DOEFF_CLUSTER_WARNING_BASELINE"
 
-# 基点の file の JSON の形そのもの(規則 → file → 数)。JSON の境界の値なので写像のまま持つ。
+# The exact JSON shape of the baseline file (rule -> file -> count). It is a value at the JSON boundary, so it is kept as a mapping.
 Counts = dict[str, dict[str, int]]
 
 
@@ -40,21 +40,21 @@ class Finding:
 
 
 def package_path(package_dir: Path, reported: str) -> str:
-    """linter が報せた path(絶対のことも package の dir からのこともある)を、package の dir からの path に揃えるため。
+    """To align a path reported by the linter (sometimes absolute, sometimes relative to the package dir) to a path relative to the package dir.
 
-    鍵が作業木の置き場に依らないようにする(ddc164310 は絶対 path を鍵にしたので、別の作業木では lower が基点を空にし、
-    path を渡す check は 1 つも比べずに通った — 実測)。package の外の path は名指して止める。"""
+    Keeps the key independent of where the worktree is placed (ddc164310 used the absolute path as the key, so in another worktree lower emptied the baseline and
+    a check given paths passed without comparing anything -- measured). A path outside the package is named and stopped."""
     path: Path = Path(reported)
     if not path.is_absolute():
         return path.as_posix()
     try:
         return path.resolve().relative_to(package_dir.resolve()).as_posix()
     except ValueError:
-        raise SystemExit(f"linter が package の外の path を報せた: {reported}(基点の鍵にできない)") from None
+        raise SystemExit(f"the linter reported a path outside the package: {reported} (cannot be a baseline key)") from None
 
 
 def warning_counts(report: list[dict[str, object]], package_dir: Path) -> Counts:
-    """linter の JSON(規則ごとの組の列)から、warning だけを規則 × file(package の dir からの path)で数える。"""
+    """From the linter's JSON (a list of pairs per rule), count only warnings by rule x file (path from the package dir)."""
     paths_by_rule: dict[str, list[str]] = {
         str(entry["rule"]): [package_path(package_dir, str(v["file"])) for v in violations]
         for entry in report
@@ -64,20 +64,20 @@ def warning_counts(report: list[dict[str, object]], package_dir: Path) -> Counts
 
 
 def _count(counts: Counts, rule: str, path: str) -> int:
-    """基点にも今にも無い組を 0 として比べるため(無い = その規則の warning がその file に 1 つも無い)。"""
+    """To compare a pair absent from both the baseline and now as 0 (absent = that rule has no warning in that file)."""
     return counts.get(rule, {}).get(path, 0)
 
 
 @dataclass(frozen=True)
 class Comparison:
-    """比べの結末: grown = 基点より増えた組(新しい違反)・stale = 減ったのに基点が下がっていない組。"""
+    """Outcome of the comparison: grown = pairs that increased over the baseline (new violations); stale = pairs that decreased but whose baseline was not lowered."""
 
     grown: tuple[Finding, ...]
     stale: tuple[Finding, ...]
 
 
 def compare(baseline: Counts, current: Counts, measured: frozenset[str] | None) -> Comparison:
-    """基点と今の数を比べる。measured = 測った file の集合(None = package 全体を測った)。"""
+    """Compare the baseline with the current counts. measured = the set of measured files (None = the whole package was measured)."""
     rules: set[str] = set(baseline) | set(current)
     pairs: set[tuple[str, str]] = {
         (rule, path)
@@ -96,7 +96,7 @@ def compare(baseline: Counts, current: Counts, measured: frozenset[str] | None) 
 
 
 def lowered(baseline: Counts, current: Counts) -> Counts:
-    """基点を今の数まで下げる(上げない・基点に無い組は足さない・0 になった組は消す)。"""
+    """Lower the baseline to the current counts (never raise it, do not add pairs absent from the baseline, delete pairs that reached 0)."""
     result: Counts = {
         rule: {
             path: min(count, _count(current, rule, path))
@@ -109,36 +109,36 @@ def lowered(baseline: Counts, current: Counts) -> Counts:
 
 
 def _run_linter(linter: str, package_dir: Path, paths: list[str]) -> list[dict[str, object]]:
-    """package の dir で linter を 1 回走らせて JSON の報告を得るため(rc 0 / 1 以外は測れなかったとして止める)。"""
+    """To run the linter once in the package dir and get the JSON report (anything other than rc 0 / 1 is stopped as unmeasurable)."""
     arguments: list[str] = [linter, "--no-log", "--output-format", "json", *paths]
     completed: subprocess.CompletedProcess[str] = subprocess.run(
         arguments, cwd=package_dir, capture_output=True, text=True, check=False,
     )
     if completed.returncode not in (0, 1):
-        raise SystemExit(f"doeff-linter が測れなかった(rc {completed.returncode}): {completed.stderr.strip()}")
+        raise SystemExit(f"doeff-linter could not measure (rc {completed.returncode}): {completed.stderr.strip()}")
     report = json.loads(completed.stdout or "[]")
     if not isinstance(report, list):
-        raise SystemExit("doeff-linter の JSON が組の列でない")
+        raise SystemExit("the JSON of doeff-linter is not a list of pairs")
     return report
 
 
 def _package_paths(repo_paths: list[str]) -> list[str]:
-    """commit の hook が渡す repo の根からの path を package の dir からの path にし、宣言の file を必ず足すため。"""
+    """To turn the paths from the repo root passed by the commit hook into paths from the package dir, and always add the declaration file."""
     prefix: str = f"{PACKAGE}/"
     inside: list[str] = [p[len(prefix):] for p in repo_paths if p.startswith(prefix) and p != f"{prefix}{DECLARATION}"]
     return [*inside, DECLARATION]
 
 
 def _line(finding: Finding) -> str:
-    """赤の理由の 1 行(規則・file・基点と今の数)を出すため。"""
+    """To emit one line of the reason for red (rule, file, baseline and current count)."""
     return f"  {finding.rule} {finding.path}: 基点 {finding.baseline} → 今 {finding.current}"
 
 
 def main(argv: list[str]) -> int:
-    """check(commit の hook と make lint-doeff)と lower(直した便)の 2 つの入口。"""
-    # 置き場の根は呼び手(lint-doeff-cluster.sh)が --root で渡す。無ければこの script の在り処の 1 つ上。linter は commit の hook が
-    # --linter で HEAD の組み立ての入力の鍵の binary を渡し(#2906)、make lint-doeff は package を当てたのと同じ探し道の linter を
-    # 渡す。無ければ探し道の doeff-linter。
+    """Two entry points: check (commit hook and make lint-doeff) and lower (for the change that fixed things)."""
+    # The root of the location is passed by the caller (lint-doeff-cluster.sh) with --root. If absent, one above where this script lives. For the linter, the commit hook
+    # passes with --linter the binary keyed by the inputs of the HEAD build (#2906), and make lint-doeff passes the linter found by the same search path that matched the package.
+    # If absent, doeff-linter on the search path.
     top: Path = Path(__file__).resolve().parents[1]
     linter: str = "doeff-linter"
     while argv[:1] in (["--root"], ["--linter"]) and len(argv) >= 2:
@@ -148,34 +148,34 @@ def main(argv: list[str]) -> int:
             linter = argv[1]
         argv = argv[2:]
     package_dir: Path = top / PACKAGE
-    # 基点の置き場を差し替えるのは make の入口の検だけ(偽の linter と空の基点で終了コードの伝わり方を試す)。
-    # 置き場の差し替えは環境変数の値 — os.environ を直に読まず、本物の答え手の下の ReadEnvironment で問う。
+    # Only the make entry point check swaps the baseline location (tries how the exit code propagates with a fake linter and an empty baseline).
+    # Swapping the location is an environment variable value -- do not read os.environ directly; ask via ReadEnvironment under the real responder.
     entries = run(with_handlers([subprocess_handler], ReadEnvironment((BASELINE_ENV,))))
     configured = next((entry.value for entry in entries if entry.name == BASELINE_ENV), None)
     baseline_file: Path = Path(configured or package_dir / BASELINE_NAME)
     if not argv or argv[0] not in ("check", "lower"):
-        print("使い方: doeff_cluster_warning_baseline.py check [path …] | lower", file=sys.stderr)
+        print("usage: doeff_cluster_warning_baseline.py check [path ...] | lower", file=sys.stderr)
         return 2
     if not baseline_file.is_file():
-        print(f"基点の file が無い: {baseline_file}(既定の 0 にしない)", file=sys.stderr)
+        print(f"baseline file missing: {baseline_file} (not defaulted to 0)", file=sys.stderr)
         return 2
     baseline: Counts = json.loads(baseline_file.read_text(encoding="utf-8"))
     if argv[0] == "lower":
         current: Counts = warning_counts(_run_linter(linter, package_dir, []), package_dir)
         baseline_file.write_text(json.dumps(lowered(baseline, current), ensure_ascii=False, indent=2, sort_keys=True) + "\n",
                                  encoding="utf-8")
-        print(f"基点を下げた: {baseline_file}")
+        print(f"lowered the baseline: {baseline_file}")
         return 0
     paths: list[str] = _package_paths(argv[1:]) if len(argv) > 1 else []
     current = warning_counts(_run_linter(linter, package_dir, paths), package_dir)
     measured: frozenset[str] | None = frozenset(paths) if paths else None
     comparison: Comparison = compare(baseline, current, measured)
     if comparison.grown:
-        print(f"{PACKAGE} の warning が基点より増えた(新しい違反は直す — 基点に足さない):", file=sys.stderr)
+        print(f"warnings of {PACKAGE} grew over the baseline (fix new violations -- do not add them to the baseline):", file=sys.stderr)
         print("\n".join(_line(f) for f in comparison.grown), file=sys.stderr)
     if comparison.stale:
-        print(f"{PACKAGE} の warning が基点より減ったのに基点が下がっていない — "
-              "`uv run --no-project python scripts/doeff_cluster_warning_baseline.py lower` を実行して stage する:", file=sys.stderr)
+        print(f"warnings of {PACKAGE} decreased below the baseline but the baseline was not lowered -- "
+              "run `uv run --no-project python scripts/doeff_cluster_warning_baseline.py lower` and stage:", file=sys.stderr)
         print("\n".join(_line(f) for f in comparison.stale), file=sys.stderr)
     return 1 if comparison.grown or comparison.stale else 0
 

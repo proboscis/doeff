@@ -1,67 +1,67 @@
-"""doeff の Rust の package の PEP 517 の build の口 — Rust の部品を組む・引く入口の 1 つ。
+"""PEP 517 build entry for doeff's Rust packages -- one entry point for building and fetching Rust components.
 
-入口は 1 つ(ADR-DOE-BUILD-001): uv sync・uv build・別の repo の path の依存・uv の git の checkout からの build・worker の
-`uv build --wheel` のどれもこの口を通る。口は組む前に、必ず「source の中身の hash を鍵にした wheel の保存先」を引く。在れば cargo を
-撃たずにそれを使い、無ければ組んで置いてから使う。wheel の hook(build_wheel)も editable の hook(build_editable)も同じ保存先の
-同じ wheel から答える。以前の editable は毎回 maturin を一時の target で撃ち、日次の検証で doeff-vm を 1 日 約 100 度組み直していた(#3860)。
+There is a single entry (ADR-DOE-BUILD-001): uv sync, uv build, path dependencies from other repos, builds from a uv git checkout, and the worker's
+`uv build --wheel` all go through it. Before building, the entry always looks up the "wheel store keyed by a hash of the source contents". If a wheel is
+there, it is used without invoking cargo; otherwise the wheel is built, stored, and then used. The wheel hook (build_wheel) and the editable hook
+(build_editable) both answer from the same wheel in the same store. The earlier editable hook ran maturin in a temporary target every time, rebuilding doeff-vm about 100 times a day in the daily verification (#3860).
 
-editable(_editable_wheel): 保存先の wheel の組み立ての成果物(native の拡張 module と、maturin の include で wheel に入れる組み立ての
-出力)を、editable の wheel の中身として venv の site-packages の `__editable__.<名>.native/` に入れる(uv の RECORD が持つ — 消えれば
-uv が入れ直し、uninstall でも消える)。source は作業木の maturin の python-source のまま読み、package の探し先は venv の成果物の dir →
-作業木の dir の順(wheel に入れる小さな finder `__editable___<名>_finder` と、それを起こす .pth)。成果物を source の木の中に置かない
-理由(2026-10-07 04:00 の日次): 木の git の名簿に無い file を消す写し(dotfiles の remote_check)が成果物を消しても、uv の記録は
-その有無を知らず、次の uv sync が組み直さず import が落ちた(tests/test_editable_native_survives_tree_prune.py)。成果物の dir を先に
-探すので、前の形が source の木に残した成果物は使われない。
+editable (_editable_wheel): the build products of the stored wheel (the native extension module, and the build output that maturin's include puts in the wheel)
+go into the venv's site-packages under `__editable__.<name>.native/` as the contents of the editable wheel (uv's RECORD owns them -- if they disappear,
+uv reinstalls them, and uninstall removes them). Sources are still read from the working tree's maturin python-source, and the package search order is the venv's products dir ->
+the working tree's dir (a small finder `__editable___<name>_finder` shipped in the wheel, plus the .pth that activates it). Why products are not placed inside the source tree
+(daily run of 2026-10-07 04:00): a copy that deletes files absent from the tree's git listing (dotfiles' remote_check) removed the products, but uv's record
+did not know whether they existed, so the next uv sync did not rebuild and imports failed (tests/test_editable_native_survives_tree_prune.py). The products dir is
+searched first, so products that the earlier layout left in the source tree are never used.
 
-wheel(_source_wheel): maturin の python-source を持つ package の wheel の hook も、保存先の wheel から組み立ての成果物・data・dist-info
-だけを取り、python-source の package の file は作業木から入れて RECORD を書き直す(editable と同じ分け方 — ADR-DOE-BUILD-001 R2b)。
-理由: 鍵は tool.uv.cache-keys の宣言の file だけを見るので、宣言に python-source を並べない package
-(doeff-effect-analyzer — 宣言が無く既定の glob)では、Rust の同じ前の版の wheel が前の Python のまま引かれ、git の依存で入れた
-解析器が新しい版を名乗りながら古い Python を持った。作業木の __pycache__ と .pyc、前の形が木に残した成果物は入れない。python-source を
-持たない package は保存先の wheel をそのまま渡す。
+wheel (_source_wheel): for packages with a maturin python-source, the wheel hook also takes only the build products, data, and dist-info from the stored wheel,
+installs the python-source package files from the working tree, and rewrites RECORD (the same split as editable -- ADR-DOE-BUILD-001 R2b).
+Reason: the key looks only at the files declared in tool.uv.cache-keys, so for a package that does not list python-source in its declaration
+(doeff-effect-analyzer -- no declaration, default glob), a wheel of an earlier version with the same Rust was fetched with the old Python, and an
+analyzer installed as a git dependency claimed the new version while carrying the old Python. The working tree's __pycache__ and .pyc files, and products that an earlier layout left in the tree, are not installed. A package
+without python-source gets the stored wheel as is.
 
-鍵(_wheel_slot): 組みに効く物の sha256 — tool.uv.cache-keys の file(宣言が無ければ DEFAULT_SOURCE_GLOBS)の中身と相対 path・maturin の
-版・機体・libc の名と版(置き場の wheel は CI の glibc で組むので、それより古い glibc の機体が取って import で落ちないように — ADR-DOE-BUILD-001
-R4 の追補 2)・組む Python の版と ABI・組みを変える環境変数(RUSTFLAGS・CARGO_PROFILE_* など — #2969)・build の設定。file の時刻と作業木の
-path には依らない — pin を上げて作業木を作り直しても、中身が同じなら同じ鍵。uv も tool.uv.cache-keys の file を見て口を呼ぶので、この
-宣言が「uv が組み直しを問う集合」と「保存先の鍵」の 1 つの定義になる。鍵は子 process を起こさずに作る(ADR-DOE-BUILD-001 R4 の追補 —
-rustc の版を鍵に入れない。鍵は保存先を引く前に要るので、`rustc -V` を起こす形では PATH に rustc の無い環境が、保存先に同じ source の
-wheel が在っても鍵を作る所で落ちた — 2026-10-07 の zeus の slot の同期。wheel の中身を決めるのは source・Python の
-ABI・機体・組みを変える環境変数・build の設定で、Python へ見せる ABI は C-API なので rustc の版は wheel の外へ出ない)。
+key (_wheel_slot): a sha256 of everything that affects the build -- the contents and relative paths of the tool.uv.cache-keys files (DEFAULT_SOURCE_GLOBS if undeclared), the maturin
+version, the machine, the libc name and version (the wheels in the store are built with CI's glibc, so a machine with an older glibc must not take one and fail at import -- ADR-DOE-BUILD-001
+R4 addendum 2), the Python version and ABI used to build, environment variables that change the build (RUSTFLAGS, CARGO_PROFILE_*, etc. -- #2969), and the build settings. It does not depend on file mtimes or the working
+tree path -- even if the pin is bumped and the working tree is recreated, the same contents give the same key. uv also looks at the tool.uv.cache-keys files and then calls the entry, so this
+declaration is the single definition of both "the set on which uv asks for a rebuild" and "the store key". The key is built without spawning child processes (ADR-DOE-BUILD-001 R4 addendum --
+the rustc version is not part of the key. The key is needed before the store lookup, so a design that spawned `rustc -V` made an environment without rustc on PATH fail at key creation even though the store
+held a wheel for the same source -- slot sync on zeus, 2026-10-07. What determines a wheel's contents is the source, the Python
+ABI, the machine, the environment variables that change the build, and the build settings; the ABI exposed to Python is the C-API, so the rustc version does not leak outside the wheel).
 
-保存先(_wheel_slot・_store_wheel): `<置き場>/<package>-<鍵>/<wheel>` と使った印 `.used`(使うたびに置き換えて dir の時刻を進める)。
-置き場 = env DOEFF_WHEEL_CACHE、無ければ `$XDG_CACHE_HOME/doeff-cargo-wheels`(無ければ ~/.cache の下)。並びは doeff-cluster の worker の
-wheel の置き場(state/wheels/<package>-<鍵>/ と .used — shared/core/native_wheel.py)と同じで、日次の検証は worker の /work/state/wheels を
-置き場に渡して共有する — worker の掃除(7 日使われない dir を消す)がそのまま効く。保存先の wheel は使う前に RECORD の hash で
-確かめ、壊れていれば名指しの 1 行を出してその wheel を除き、組み直す(黙って壊れた物を使わない)。
+store (_wheel_slot, _store_wheel): `<store>/<package>-<key>/<wheel>` plus a used marker `.used` (replaced on every use to advance the dir's mtime).
+The store = env DOEFF_WHEEL_CACHE, else `$XDG_CACHE_HOME/doeff-cargo-wheels` (else under ~/.cache). The layout is the same as doeff-cluster's worker
+wheel store (state/wheels/<package>-<key>/ and .used -- shared/core/native_wheel.py), and the daily verification shares it by passing the worker's /work/state/wheels as the
+store -- the worker's cleanup (removing dirs unused for 7 days) applies as is. A stored wheel is checked against RECORD hashes before use;
+if it is corrupt, one line naming it is printed, the wheel is removed, and it is rebuilt (corrupt wheels are never used silently).
 
-機体の外の置き場(_remote_wheel・ADR-DOE-BUILD-001 R5 の追補・設計 docs/design/rust-wheel-distribution): 手元の
-保存先に無い時、組む前に doeff の公開の GitHub の release `rust-wheels` の asset `<package>-<鍵>.whl` を鍵なしの HTTPS で取り
-(WHEEL_REMOTE_TIMEOUT_SECONDS 秒まで)、RECORD の hash で確かめ、本当の file 名を dist-info と WHEEL の Tag から作り直して手元の
-保存先へ置く。置き場に書くのは doeff の GitHub Actions(.github/workflows/rust-wheels.yml)だけで、口は置き場に書かない。取れない時
-(404・網の失敗・時間切れ・壊れた wheel)は名指しの 1 行を出して今どおり組む。env DOEFF_WHEEL_REMOTE で置き場の頭を替え、空の値なら
-置き場を引かない(手元で組む道を見る検・網の無い場所)。uv の find-links・index は使わない(uv は path・editable・git の依存に使わない)。
+Off-machine store (_remote_wheel, ADR-DOE-BUILD-001 R5 addendum, design docs/design/rust-wheel-distribution): when the local
+store has nothing, before building, the entry fetches the asset `<package>-<key>.whl` of doeff's public GitHub release `rust-wheels` over unauthenticated HTTPS
+(up to WHEEL_REMOTE_TIMEOUT_SECONDS seconds), verifies it with the RECORD hashes, reconstructs the real file name from the dist-info and the WHEEL Tag, and places it in the local
+store. Only doeff's GitHub Actions (.github/workflows/rust-wheels.yml) writes to that store; the entry never writes to it. When fetching fails
+(404, network failure, timeout, corrupt wheel), one line naming the cause is printed and the build proceeds as before. env DOEFF_WHEEL_REMOTE replaces the store's base, and an empty value
+disables the store lookup (for checks of the local build path, and places with no network). uv's find-links and index are not used (uv does not use them for path, editable, or git dependencies).
 
-報告(_write_report): env DOEFF_WHEEL_REPORT が在れば、その file に 1 行の JSON {"project": <package の名>, "wheel": <保存先の中の
-wheel の path>, "source": <出どころ local・remote・built>, "built": <この呼び出しが組んだか>} を足す("built" は読み手の
-doeff-cluster の native_wheel.reported_built が読む欄なので残す)。doeff-cluster の worker(実行環境の準備と起動の script)は `uv build --wheel
---out-dir` でこの口を通り、出た wheel を入れる — 自前の鍵と置き場を持たない。報告は組んだかを見るためだけに使う(読み手は
-shared/core/native_wheel.py の reported_built・報告を書かない版の口なら組んだかは UNREPORTED・#3860)。
+report (_write_report): if env DOEFF_WHEEL_REPORT is set, one JSON line {"project": <package name>, "wheel": <path of the wheel in the
+store>, "source": <origin: local, remote, built>, "built": <whether this call built it>} is appended to that file ("built" is the field read by
+doeff-cluster's native_wheel.reported_built, so it stays). The doeff-cluster worker (the environment preparation and startup script) goes through this entry with `uv build --wheel
+--out-dir` and installs the resulting wheel -- it keeps no key or store of its own. The report is used only to see whether a build happened (the reader is
+reported_built in shared/core/native_wheel.py; for an entry version that writes no report, whether it built is UNREPORTED; #3860).
 
-cargo の target: 組む時だけ、package の dir の外の 1 回の build ごとの一時の dir に置き、wheel を作ったら消す(#1493)。1 つの共有の
-target にしない理由: cargo は source の file の時刻で新旧を判定し、成果物を workspace の中の相対 path で名付ける。2 つの作業木が 1 つの
-target を共有すると、先に作った作業木の source は後の build の成果物より古く見え、別の作業木の build を黙って使う(cargo 1.96.1 で
-実測)— その wheel が鍵の下に置かれると、同じ鍵の build が全部それを引く。利用者が CARGO_TARGET_DIR を
-渡した時はそこに組み、消さない — Rust を直すセッションが差分の build を使うための口(`CARGO_TARGET_DIR=<dir> uv sync`)。cargo では
-env の CARGO_TARGET_DIR が config の build.target-dir(と CARGO_BUILD_TARGET_DIR)に勝つので、口の一時の dir はそれらの設定にも勝つ。
-一時の dir を使う build は、中間物の置き場 CARGO_BUILD_BUILD_DIR も同じ一時の dir に向ける。環境が置き場を memory などへ向けていても(zeus の
-worker)、1 回の build の中間物を後に残さない。利用者が CARGO_TARGET_DIR を渡した時は環境の値のまま。
-一時の dir の名には build の process の pid を入れる(doeff-cargo-target-<pid>-<乱字>)。SIGTERM・SIGKILL で止められた build は後始末を
-しないので、次の build が入口で、持ち主の process が居ない dir を片づける。
+cargo target: only when building, it is placed in a per-build temporary dir outside the package dir and deleted once the wheel is made (#1493). Why not one shared
+target: cargo judges freshness by source file mtimes and names products by their path relative to the workspace. When two working trees share one
+target, the earlier tree's sources look older than the later build's products, so another tree's build is silently reused (measured with cargo 1.96.1)
+-- and once that wheel is placed under a key, every build with the same key fetches it. When the user passes CARGO_TARGET_DIR, the build happens there and it is not deleted -- the way for a
+session fixing Rust to use incremental builds (`CARGO_TARGET_DIR=<dir> uv sync`). In cargo,
+the env CARGO_TARGET_DIR beats the config's build.target-dir (and CARGO_BUILD_TARGET_DIR), so the entry's temporary dir also beats those settings.
+A build that uses the temporary dir also points the intermediate-artifact location CARGO_BUILD_BUILD_DIR at the same temporary dir. Even if the environment points that location at memory or similar (zeus's
+worker), one build's intermediates are not left behind. When the user passes CARGO_TARGET_DIR, the environment's value is left as is.
+The temporary dir's name includes the build process's pid (doeff-cargo-target-<pid>-<random chars>). A build stopped by SIGTERM or SIGKILL does no cleanup,
+so the next build, at the entry, removes dirs whose owner process is gone.
 
-正本は tools/doeff_cargo_backend.py。各 package の doeff_cargo_backend.py はこの file への symlink(backend-path は package の dir の中
-しか指せない — PEP 517)。組み方が maturin だけでない package(doeff-indexer — CLI の binary を wheel に同梱する)は、自分の組み方
-(Compile)を wheel_from_store・editable_from_store に渡し、同じ保存先を通る。sdist は引かない(Rust を組まない)。
+The canonical source is tools/doeff_cargo_backend.py. Each package's doeff_cargo_backend.py is a symlink to this file (backend-path can only point inside the package's
+dir -- PEP 517). A package whose build is not maturin alone (doeff-indexer -- bundles a CLI binary into the wheel) passes its own build
+(Compile) to wheel_from_store and editable_from_store and goes through the same store. sdist does not consult the store (no Rust is built).
 """
 
 from __future__ import annotations
@@ -97,53 +97,53 @@ TARGET_ENV = "CARGO_TARGET_DIR"
 BUILD_DIR_ENV = "CARGO_BUILD_BUILD_DIR"
 TEMP_PREFIX = "doeff-cargo-target-"
 WHEEL_CACHE_ENV = "DOEFF_WHEEL_CACHE"
-# 機体の外の置き場の頭を替える env(空の値なら置き場を引かない — 頭の註の置き場)。
+# Env that replaces the base of the off-machine store (an empty value skips the store lookup -- the store from the header note).
 WHEEL_REMOTE_ENV = "DOEFF_WHEEL_REMOTE"
-# 置き場の既定 = doeff の公開の release rust-wheels の download の URL(鍵なしで読む・API を使わない — 鍵なしの API は 1 時間 60 回の上限)。
+# Store default = the download URL of doeff's public release rust-wheels (read unauthenticated, no API -- the unauthenticated API is limited to 60 calls per hour).
 WHEEL_REMOTE_DEFAULT = "https://github.com/proboscis/doeff/releases/download/rust-wheels"
-# 置き場から 1 つ取るのを待つ秒(過ぎれば名指しの 1 行を出して手元で組む)。
+# Seconds to wait when fetching one wheel from the store (after that, one line naming the cause is printed and the build runs locally).
 WHEEL_REMOTE_TIMEOUT_SECONDS = 20
-# 保存先の中の wheel と組んだかを 1 行の JSON で足す file を指す env(頭の註の報告 — 無ければ書かない)。
+# Env naming the file to which a one-line JSON of the stored wheel and whether it was built is appended (the report from the header note -- nothing is written if unset).
 WHEEL_REPORT_ENV = "DOEFF_WHEEL_REPORT"
-# 保存先の dir の使った印(dir の時刻を進める — worker の掃除は 7 日使われない dir を dir の時刻で選ぶ)。
+# Used marker of a store dir (advances the dir's mtime -- the worker's cleanup picks dirs unused for 7 days by dir mtime).
 USED_MARK = ".used"
-# tool.uv.cache-keys の file を宣言しない package の、組みに効く file の既定(package の dir からの glob)。
+# Default build-relevant files (globs from the package dir) for a package that declares no tool.uv.cache-keys files.
 DEFAULT_SOURCE_GLOBS = ("pyproject.toml", "Cargo.toml", "Cargo.lock", "build.rs", "src/**/*")
-# wheel の中身を変える環境変数(置き場の鍵に名と値を入れる): rustc の旗・cargo の profile と build の設定・
-# maturin と PyO3 の設定・doeff-indexer の CLI の binary を同梱しない旗(同梱しない wheel を同梱する build が引かないため)。
+# Environment variables that change the wheel contents (name and value go into the store key): rustc flags, cargo profile and build settings,
+# maturin and PyO3 settings, and the flag that omits bundling doeff-indexer's CLI binary (so a build that bundles it never fetches a wheel built without it).
 BUILD_ENV_NAMES = frozenset({"RUSTFLAGS", "CARGO_ENCODED_RUSTFLAGS", "RUSTC", "MACOSX_DEPLOYMENT_TARGET", "DOEFF_INDEXER_SKIP_CLI_BUILD"})
 BUILD_ENV_PREFIXES = ("CARGO_PROFILE_", "CARGO_BUILD_", "MATURIN_", "PYO3_")
-# 上の接頭辞に当たるが、組む場所と並べる数だけを変えて中身を変えない名 — 鍵に入れると作業木や機体の混み方ごとに置き場が割れて
-# 共有が効かなくなる。
+# Names that match the prefixes above but only change where and how many jobs build, not the contents -- including them in the key would split the store per working tree or machine load
+# and defeat sharing.
 PLACE_ONLY_ENV_NAMES = frozenset({"CARGO_BUILD_TARGET_DIR", BUILD_DIR_ENV, "CARGO_BUILD_JOBS"})
-# native の拡張 module の file の末尾(editable で venv の成果物の dir へ入れる組み立ての成果物)。
+# Suffixes of native extension module files (the build products that editable places in the venv's products dir).
 NATIVE_SUFFIXES = (".so", ".pyd", ".dylib")
 
-# PEP 517 の config_settings: frontend が渡す「設定の名 → 文字列か文字列の list」。口は中を読まず maturin へ渡す。
+# PEP 517 config_settings: "setting name -> string or list of strings" passed by the frontend. The entry does not read them and passes them to maturin.
 ConfigSettings: TypeAlias = Mapping[str, str | list[str]]
-# 保存先に無い時に wheel を組む関数: (この build の cargo の target, wheel を出す dir, build の設定) → 出した wheel の file の名。
+# Function that builds a wheel when the store has none: (this build's cargo target, dir to write the wheel into, build settings) -> file name of the wheel written.
 Compile: TypeAlias = Callable[[Path, str, "ConfigSettings | None"], str]
-# 保存先の wheel の出どころ: local = 手元の保存先に在った・remote = 機体の外の置き場から取った・built = この呼び出しが組んだ。
+# Origin of a stored wheel: local = found in the local store; remote = fetched from the off-machine store; built = built by this call.
 WheelSource: TypeAlias = Literal["local", "remote", "built"]
 
 
 @dataclass(frozen=True)
 class StoredWheel:
-    """保存先の wheel 1 つ: path = 保存先の中の wheel の file・source = 出どころ。"""
+    """One stored wheel: path = the wheel file in the store; source = its origin."""
 
     path: Path
     source: WheelSource
 
     @property
     def built(self) -> bool:
-        """この呼び出しが組んだか(手元にも置き場にも無かったか、壊れていた)。"""
+        """Whether this call built it (it was in neither the local store nor the remote store, or it was corrupt)."""
         return self.source == "built"
 
 
 @dataclass(frozen=True)
 class WheelEntry:
-    """口が書く wheel(editable・python-source を作業木から入れた wheel)の file 1 つ: name = wheel の中の path・data = 中身・mode = 入れた
-    file の許可の bit(CLI の binary は実行の bit)。"""
+    """One file of a wheel the entry writes (editable, or a wheel with python-source installed from the working tree): name = path inside the wheel; data = contents; mode = permission bits of the installed
+    file (the execute bit for a CLI binary)."""
 
     name: str
     data: bytes
@@ -151,33 +151,33 @@ class WheelEntry:
 
 
 def _owner_pid(name: str) -> int | None:
-    """一時の target の名(doeff-cargo-target-<pid>-<乱字>)から、それを作った build の pid を読む。"""
+    """Read the pid of the build that created a temporary target from its name (doeff-cargo-target-<pid>-<random chars>)."""
     match name.removeprefix(TEMP_PREFIX).split("-", 1):
         case [pid, _] if pid.isdigit():
             return int(pid)
         case _:
-            # この口の名の形ではない — 持ち主を言えないので片づけの対象にしない。
+            # Not a name in this entry's format -- its owner is unknown, so it is not a cleanup candidate.
             return None
 
 
 def _alive(pid: int) -> bool:
-    """pid の process がまだ居るか(居なければ、その build は止められて後始末をしていない)。"""
+    """Whether the process for the pid still exists (if not, that build was stopped and did no cleanup)."""
     try:
         os.kill(pid, 0)
     except ProcessLookupError:
         return False
     except PermissionError:
-        # 別の利用者の process が同じ pid で居る。
+        # A process of a different user has the same pid.
         return True
     return True
 
 
 def _sweep_orphans(root: Path) -> None:
-    """止められた build が残した一時の target を消す。持ち主の process が居ない dir だけで、走っている build には触らない。"""
+    """Remove temporary targets left by stopped builds. Only dirs whose owner process is gone; builds that are running are not touched."""
     for path in root.glob(f"{TEMP_PREFIX}*"):
         match _owner_pid(path.name):
             case int(pid) if not _alive(pid):
-                # 同時に入口に来た別の build が先に消していれば、消えた file は探さない。
+                # If another build that reached the entry at the same time removed it first, do not look for the vanished files.
                 with suppress(FileNotFoundError):
                     shutil.rmtree(path)
             case _:
@@ -186,7 +186,7 @@ def _sweep_orphans(root: Path) -> None:
 
 @contextmanager
 def cargo_target_dir() -> Iterator[Path]:
-    """この build の cargo の target。利用者の指定が無ければ一時の dir を作って env に渡し、抜ける時に消す。"""
+    """This build's cargo target. Without a user setting, create a temporary dir, pass it via env, and delete it on exit."""
     match os.environ.get(TARGET_ENV):
         case (None | "") as absent:
             root = Path(tempfile.gettempdir())
@@ -214,18 +214,18 @@ def cargo_target_dir() -> Iterator[Path]:
 
 
 def _maturin_wheel(target: Path, wheel_directory: str, config_settings: ConfigSettings | None) -> str:
-    """maturin だけで組む package の組み方(target は cargo_target_dir が env に渡してある)。"""
+    """Build for packages built by maturin alone (the target was already passed via env by cargo_target_dir)."""
     return maturin.build_wheel(wheel_directory, config_settings, None)
 
 
 def stored_wheel(package: Path, config_settings: ConfigSettings | None, compile_wheel: Compile) -> StoredWheel:
-    """package の source の鍵の wheel を手元の保存先から引き、無ければ(壊れていれば)機体の外の置き場から取り、そこにも無ければ組んで
-    置くため — Rust の部品を組む・引く入口の本体(頭の註)。答え = 保存先の中の wheel。stderr に 1 行(使った / 取った / 組んだ秒)。"""
+    """Look up the wheel for the package's source key in the local store; if absent (or corrupt), fetch it from the off-machine store; if absent there too, build and
+    store it -- the core of the entry for building and fetching Rust components (header note). Answer = the wheel in the store. One line on stderr (reused / fetched / seconds to build)."""
     slot = _wheel_slot(package, config_settings)
     match _intact_wheel(slot):
         case Path() as found:
             _mark_used(slot)
-            print(f"doeff_cargo_backend: 同じ source の wheel を使う(組まない)— {found.name}・{slot}", file=sys.stderr)
+            print(f"doeff_cargo_backend: reusing wheel for identical source (no build) -- {found.name} in {slot}", file=sys.stderr)
             return _write_report(package, StoredWheel(path=found, source="local"))
         case None:
             pass
@@ -239,14 +239,14 @@ def stored_wheel(package: Path, config_settings: ConfigSettings | None, compile_
         with cargo_target_dir() as target:
             name = compile_wheel(target, out, config_settings)
         stored = _store_wheel(slot, Path(out) / name)
-    print(f"doeff_cargo_backend: wheel を組んだ({time.monotonic() - started:.0f} 秒)— {name}・{slot} に置いた", file=sys.stderr)
+    print(f"doeff_cargo_backend: wheel built ({time.monotonic() - started:.0f} s) -- {name} placed in {slot}", file=sys.stderr)
     return _write_report(package, StoredWheel(path=stored, source="built"))
 
 
 def _remote_wheel(slot: Path) -> Path | None:
-    """機体の外の置き場から、鍵の wheel(`<置き場>/<slot の名>.whl`)を取り、RECORD の hash で確かめてから手元の保存先へ置くため
-    (頭の註の置き場)。答え = 手元の保存先に置いた wheel。取れない時(置き場を引かない設定・404・網の失敗・時間切れ・壊れた wheel)は
-    名指しの 1 行を出して None(呼び手が組む)— 黙って組まない・黙って壊れた物を使わない。"""
+    """Fetch the key's wheel (`<store>/<slot name>.whl`) from the off-machine store, verify it with the RECORD hashes, then place it in the local store
+    (the store from the header note). Answer = the wheel placed in the local store. When it cannot be fetched (store lookup disabled, 404, network failure, timeout, corrupt wheel),
+    print one line naming the cause and return None (the caller builds) -- never build silently, never use a corrupt wheel silently."""
     base = os.environ.get(WHEEL_REMOTE_ENV, WHEEL_REMOTE_DEFAULT)
     if not base:
         return None
@@ -257,15 +257,15 @@ def _remote_wheel(slot: Path) -> Path | None:
             with urllib.request.urlopen(url, timeout=WHEEL_REMOTE_TIMEOUT_SECONDS) as response:
                 raw.write_bytes(response.read())
         except urllib.error.HTTPError as error:
-            print(f"doeff_cargo_backend: 置き場に同じ鍵の wheel が無い(HTTP {error.code})— {url}・手元で組む", file=sys.stderr)
+            print(f"doeff_cargo_backend: remote store has no wheel with the same key (HTTP {error.code}) -- {url}; building locally", file=sys.stderr)
             return None
         except (urllib.error.URLError, OSError) as error:
-            print(f"doeff_cargo_backend: 置き場に繋がらない({error})— {url}・手元で組む", file=sys.stderr)
+            print(f"doeff_cargo_backend: cannot reach the remote store ({error}) -- {url}; building locally", file=sys.stderr)
             return None
-        # 壊れていない(zip として読め RECORD が合う)と分かってから名を読む。
+        # Read the name only after knowing the wheel is intact (readable as a zip and RECORD matches).
         match _wheel_problem(raw):
             case str() as problem:
-                print(f"doeff_cargo_backend: 置き場の wheel が壊れている({problem})— {url}・使わずに手元で組む", file=sys.stderr)
+                print(f"doeff_cargo_backend: remote store wheel is corrupt ({problem}) -- {url}; not using it, building locally", file=sys.stderr)
                 return None
             case None:
                 pass
@@ -273,18 +273,18 @@ def _remote_wheel(slot: Path) -> Path | None:
             case str() as name:
                 pass
             case None:
-                print(f"doeff_cargo_backend: 置き場の wheel の名と tag を読めない — {url}・使わずに手元で組む", file=sys.stderr)
+                print(f"doeff_cargo_backend: cannot read the name and tag of the remote store wheel -- {url}; not using it, building locally", file=sys.stderr)
                 return None
         named = Path(fetched) / name
         raw.rename(named)
         placed = _store_wheel(slot, named)
-    print(f"doeff_cargo_backend: 置き場の wheel を使う(組まない)— {name}・{url}", file=sys.stderr)
+    print(f"doeff_cargo_backend: using remote store wheel (no build) -- {name} from {url}", file=sys.stderr)
     return placed
 
 
 def _wheel_file_name(wheel: Path) -> str | None:
-    """wheel の本当の file 名(`<名>-<版>-<python>-<abi>-<platform>.whl`)を、中の `*.dist-info` の dir の名と WHEEL の Tag の行から
-    作り直すため — 置き場の asset の名は鍵(`<package>-<鍵>.whl`)なので、名を持ってこない。読めなければ None。"""
+    """Reconstruct the wheel's real file name (`<name>-<version>-<python>-<abi>-<platform>.whl`) from the name of the inner `*.dist-info` dir and the Tag lines of WHEEL
+    -- the store asset's name is the key (`<package>-<key>.whl`), so it carries no name. None if it cannot be read."""
     with zipfile.ZipFile(wheel) as archive:
         infos = sorted({name.split("/", 1)[0] for name in archive.namelist() if name.split("/", 1)[0].endswith(".dist-info")})
         match infos:
@@ -301,8 +301,8 @@ def _wheel_file_name(wheel: Path) -> str | None:
 
 
 def _write_report(package: Path, stored: StoredWheel) -> StoredWheel:
-    """env DOEFF_WHEEL_REPORT の file に、保存先の中の wheel と組んだかを 1 行の JSON で足すため(頭の註の報告 — env が無ければ何も
-    しない)。答え = stored(呼び手がそのまま返す)。"""
+    """Append a one-line JSON of the stored wheel and whether it was built to the file named by env DOEFF_WHEEL_REPORT (the report from the header note -- does nothing
+    if the env is unset). Answer = stored (the caller returns it as is)."""
     match os.environ.get(WHEEL_REPORT_ENV):
         case str() as report if report:
             match _pyproject(package).get("project"):
@@ -321,8 +321,8 @@ def _write_report(package: Path, stored: StoredWheel) -> StoredWheel:
 
 
 def wheel_from_store(wheel_directory: str, config_settings: ConfigSettings | None, compile_wheel: Compile) -> str:
-    """wheel の hook の本体: cwd の package の保存先の wheel から wheel を wheel_directory に書き、その名を返すため。maturin の
-    python-source を持つ package は python-source の file を作業木から入れ(頭の註の wheel)、持たない package は保存先の wheel を写す。"""
+    """Core of the wheel hook: write a wheel into wheel_directory from the cwd package's stored wheel and return its name. For a package with a maturin
+    python-source, install the python-source files from the working tree (the wheel from the header note); for a package without, copy the stored wheel."""
     package = Path.cwd()
     stored = stored_wheel(package, config_settings, compile_wheel)
     config = _maturin_config(package)
@@ -335,9 +335,9 @@ def wheel_from_store(wheel_directory: str, config_settings: ConfigSettings | Non
 
 
 def editable_from_store(wheel_directory: str, config_settings: ConfigSettings | None, compile_wheel: Compile) -> str:
-    """editable の hook の本体: cwd の package の保存先の wheel から editable の wheel を作り、その名を返すため(頭の註)。
-    maturin の python-source を持たない package(bin の binary・Python の source を持たない拡張)は、保存先の wheel そのものを渡す
-    (作業木を指す物が無いので、editable も wheel と同じ中身)。"""
+    """Core of the editable hook: build an editable wheel from the cwd package's stored wheel and return its name (header note).
+    For a package without a maturin python-source (a bin binary, an extension with no Python source), hand over the stored wheel itself
+    (nothing points at the working tree, so editable has the same contents as the wheel)."""
     package = Path.cwd()
     stored = stored_wheel(package, config_settings, compile_wheel)
     config = _maturin_config(package)
@@ -354,8 +354,8 @@ def build_wheel(
     config_settings: ConfigSettings | None = None,
     metadata_directory: str | None = None,
 ) -> str:
-    """uv sync・uv build が wheel を求めた時に、保存先の同じ source の wheel から答えるため(無ければ組んで置く・python-source は作業木
-    から入れる — 頭の註)。"""
+    """When uv sync or uv build asks for a wheel, answer from the same-source wheel in the store (build and store it if absent; python-source is installed from the working
+    tree -- header note)."""
     return wheel_from_store(wheel_directory, config_settings, _maturin_wheel)
 
 
@@ -364,12 +364,12 @@ def build_editable(
     config_settings: ConfigSettings | None = None,
     metadata_directory: str | None = None,
 ) -> str:
-    """uv の workspace の一員・editable の path の依存を入れる時も、保存先の wheel から答えるため(頭の註)。"""
+    """When installing a uv workspace member or an editable path dependency, also answer from the stored wheel (header note)."""
     return editable_from_store(wheel_directory, config_settings, _maturin_wheel)
 
 
 def _source_files(package: Path) -> list[Path]:
-    """組みに効く file(package の tool.uv.cache-keys の file の glob か既定 — uv が組み直しを判じる集合と同じ)を相対 path の順で並べる。"""
+    """List the build-relevant files (globs of the package's tool.uv.cache-keys files, or the default -- the same set uv uses to decide on rebuilds) in relative-path order."""
     declared = tomllib.loads((package / "pyproject.toml").read_text(encoding="utf-8")).get("tool", {}).get("uv", {}).get("cache-keys", [])
     globs = [key["file"] for key in declared if isinstance(key, dict) and isinstance(key.get("file"), str)] or list(DEFAULT_SOURCE_GLOBS)
     matched = {Path(hit) for pattern in globs for hit in glob.glob(str(package / pattern), recursive=True)}
@@ -377,15 +377,15 @@ def _source_files(package: Path) -> list[Path]:
 
 
 def _tool_versions() -> str:
-    """組みに効く道具の版(maturin — 配布の記録から読み、子 process を起こさない)— maturin が替われば同じ source でも wheel を組み直すため。
-    rustc の版は入れない(頭の註の鍵・ADR-DOE-BUILD-001 R4 の追補)。"""
+    """Versions of the tools that affect the build (maturin -- read from the distribution metadata without spawning child processes) -- so that when maturin changes, the wheel is rebuilt even for the same source.
+    The rustc version is not included (the key in the header note; ADR-DOE-BUILD-001 R4 addendum)."""
     return f"maturin={importlib.metadata.version('maturin')}"
 
 
 def _build_environment() -> str:
-    """組みを変える環境変数(BUILD_ENV_NAMES と BUILD_ENV_PREFIXES に当たる名、置き場だけの名を除く)の名と値を並べるため
-    (同じ source でも RUSTFLAGS・CARGO_PROFILE_RELEASE_STRIP などを変えて組んだ wheel を、既定の build が
-    引かないように)。値は鍵の hash に入るだけで、どこにも出さない。"""
+    """List the names and values of environment variables that change the build (names matching BUILD_ENV_NAMES and BUILD_ENV_PREFIXES, excluding place-only names)
+    (so that a default build never fetches a wheel built with different RUSTFLAGS, CARGO_PROFILE_RELEASE_STRIP, etc. for the same source).
+    Values go only into the key's hash and are never shown anywhere."""
     chosen = sorted(
         (name, value)
         for name, value in os.environ.items()
@@ -395,18 +395,18 @@ def _build_environment() -> str:
 
 
 def _python_abi() -> str:
-    """組む Python の版・ABI・機体(拡張 module の名の末尾 — 例 `.cpython-314t-x86_64-linux-gnu.so`)— free-threading の cp314t と
-    cp313 のように ABI の違う環境で同じ source を組んでも、置き場の wheel を取り違えないため。"""
+    """Python version, ABI, and machine used to build (the tail of an extension module name -- e.g. `.cpython-314t-x86_64-linux-gnu.so`) -- so that building the same source in environments with different ABIs, such as free-threading cp314t and
+    cp313, never mixes up the wheels in the store."""
     return f"{sys.implementation.cache_tag} {sysconfig.get_config_var('EXT_SUFFIX')}"
 
 
 def _pyproject(package: Path) -> dict[str, object]:
-    """package の pyproject.toml を読むため。"""
+    """Read the package's pyproject.toml."""
     return tomllib.loads((package / "pyproject.toml").read_text(encoding="utf-8"))
 
 
 def _maturin_config(package: Path) -> dict[str, object]:
-    """package の [tool.maturin] の表を読むため(無ければ空)。"""
+    """Read the package's [tool.maturin] table (empty if absent)."""
     match _pyproject(package).get("tool"):
         case {"maturin": dict() as config}:
             return config
@@ -415,9 +415,9 @@ def _maturin_config(package: Path) -> dict[str, object]:
 
 
 def _wheel_slot(package: Path, config_settings: ConfigSettings | None) -> Path:
-    """source の中身・道具の版・機体・組む Python の ABI・組みを変える環境変数・build の設定の hash で、wheel を置く dir を決めるため
-    (file の時刻と作業木の path に依らない — 置き場だけを変える CARGO_TARGET_DIR なども入れない)。dir の名は <package>-<鍵>
-    (作業木の dir の名は作業木ごとに違うので使わない・worker の wheel の置き場と同じ並び — 頭の註)。"""
+    """Decide the dir for the wheel from a hash of the source contents, tool versions, machine, Python ABI, environment variables that change the build, and build settings
+    (independent of file mtimes and the working tree path -- CARGO_TARGET_DIR and the like, which only change the location, are not included). The dir name is <package>-<key>
+    (the working tree's dir name differs per working tree so it is not used; same layout as the worker's wheel store -- header note)."""
     digest = hashlib.sha256()
     lines = (
         _tool_versions(), sys.platform, platform.machine(), repr(platform.libc_ver()), _python_abi(), _build_environment(),
@@ -438,8 +438,8 @@ def _wheel_slot(package: Path, config_settings: ConfigSettings | None) -> Path:
 
 
 def _wheel_problem(wheel: Path) -> str | None:
-    """保存先の wheel が壊れているか(zip として読めない・RECORD が無い・RECORD の file が無いか hash が違う)を 1 行で言うため
-    (None = 壊れていない)。"""
+    """Say in one line whether a stored wheel is corrupt (unreadable as a zip, no RECORD, a RECORD file missing, or a hash mismatch)
+    (None = not corrupt)."""
     try:
         with zipfile.ZipFile(wheel) as archive:
             names = set(archive.namelist())
@@ -448,50 +448,50 @@ def _wheel_problem(wheel: Path) -> str | None:
                 case [record]:
                     rows = list(csv.reader(io.StringIO(archive.read(record).decode("utf-8"))))
                 case _:
-                    return f"RECORD が {len(records)} 個(1 個のはず)"
+                    return f"RECORD count is {len(records)} (expected 1)"
             for row in rows:
                 match row:
                     case [name, str() as hashed, _] if hashed:
                         if name not in names:
-                            return f"RECORD の {name} が wheel に無い"
+                            return f"{name} listed in RECORD is not in the wheel"
                         algorithm, _, expected = hashed.partition("=")
                         if _urlsafe_digest(algorithm, archive.read(name)) != expected:
-                            return f"{name} の hash が RECORD と違う"
+                            return f"hash of {name} differs from RECORD"
                     case _:
                         pass
     except (zipfile.BadZipFile, OSError, KeyError, ValueError, UnicodeDecodeError) as error:
-        return f"wheel として読めない: {error}"
+        return f"unreadable as a wheel: {error}"
     return None
 
 
 def _urlsafe_digest(algorithm: str, data: bytes) -> str:
-    """wheel の RECORD の hash の綴り(urlsafe base64・末尾の = なし)。"""
+    """Spelling of a wheel RECORD hash (urlsafe base64, no trailing =)."""
     return base64.urlsafe_b64encode(hashlib.new(algorithm, data).digest()).rstrip(b"=").decode("ascii")
 
 
 def _intact_wheel(slot: Path) -> Path | None:
-    """保存先の dir の壊れていない wheel(名の順の先頭)を返すため。壊れた wheel は名指しの 1 行を出して除く(この口が置いた file
-    だけ — 置き場の dir の中の *.whl)。無ければ None(組む)。"""
+    """Return the first intact wheel (in name order) in the store dir. For a corrupt wheel, print one line naming it and remove it (only files this entry
+    placed -- *.whl in the store dir). None if there is none (build)."""
     for wheel in sorted(slot.glob("*.whl")):
         match _wheel_problem(wheel):
             case None:
                 return wheel
             case str() as problem:
-                print(f"doeff_cargo_backend: 保存先の wheel が壊れている({problem})— {wheel} を除いて組み直す", file=sys.stderr)
+                print(f"doeff_cargo_backend: stored wheel is corrupt ({problem}) -- removing {wheel} and rebuilding", file=sys.stderr)
                 wheel.unlink(missing_ok=True)
     return None
 
 
 def _mark_used(slot: Path) -> None:
-    """使った印を別名に書いてから置き換え、dir の時刻を進めるため(掃除が使っている wheel を消さない — worker の印と同じ置き方)。"""
+    """Write the used marker under another name, then replace, advancing the dir's mtime (so cleanup never removes a wheel in use -- same placement as the worker's marker)."""
     handle, staged = tempfile.mkstemp(dir=slot, prefix=".used.")
     os.close(handle)
     os.replace(staged, slot / USED_MARK)
 
 
 def _store_wheel(slot: Path, built: Path) -> Path:
-    """組んだ wheel を保存先へ写し、置いた path を返すため(一時の名で書いてから名を替える — 同じ鍵を同時に組んだ別の build と
-    混ざらず、書きかけを読ませない)。"""
+    """Copy the built wheel into the store and return the path it was placed at (write under a temporary name, then rename -- so it does not mix with another build
+    that built the same key at the same time, and a half-written file is never read)."""
     slot.mkdir(parents=True, exist_ok=True)
     staged = slot / f".{built.name}.{os.getpid()}.part"
     shutil.copy2(built, staged)
@@ -502,8 +502,8 @@ def _store_wheel(slot: Path, built: Path) -> Path:
 
 
 def _wheel_includes(config: Mapping[str, object]) -> tuple[str, ...]:
-    """[tool.maturin] の include のうち wheel に入る物の glob(package の dir から)— 組み立ての出力を wheel に同梱する宣言
-    (doeff-indexer の CLI の binary)。editable はこれも venv の成果物の dir へ入れる。"""
+    """Globs (from the package dir) of the [tool.maturin] include entries that go into the wheel -- a declaration that bundles build output into the wheel
+    (doeff-indexer's CLI binary). Editable also places these in the venv's products dir."""
     match config.get("include"):
         case list() as entries:
             return tuple(
@@ -522,20 +522,20 @@ def _wheel_includes(config: Mapping[str, object]) -> tuple[str, ...]:
 
 
 def _built_member(member: str, package: Path, source_root: Path, includes: tuple[str, ...]) -> bool:
-    """wheel の file 1 つが組み立ての成果物(native の拡張 module か、include で wheel に入れた物)か — editable が venv の成果物の dir へ
-    入れる物。dist-info・data の下と、source そのもの(.py など)は入れない(作業木の source が正しい)。"""
+    """Whether a file of the wheel is a build product (a native extension module, or something put into the wheel by include) -- what editable places in the venv's products dir.
+    Files under dist-info and data, and the sources themselves (.py etc.), are not included (the working tree's sources are the correct ones)."""
     if member.endswith("/") or member.split("/", 1)[0].endswith((".dist-info", ".data")):
         return False
     relative = os.path.relpath(source_root / member, package)
     return member.endswith(NATIVE_SUFFIXES) or any(fnmatch.fnmatch(relative, pattern) for pattern in includes)
 
 
-# editable の wheel に入れる finder の module の中身({packages} = 答える package の名の組・{native} = 成果物の dir の名・{pth} = 作業木の
-# source の根を 1 行目に持つ同じ wheel の .pth の名 — source の根は finder に書かず .pth から読む)。
-# package の探し先を venv の成果物の dir → 作業木の source の dir の順にする(成果物の dir を先に探すので、前の形が source の木に残した
-# 成果物は使われない)。
+# Contents of the finder module put in the editable wheel ({packages} = the set of package names it answers for; {native} = the name of the products dir; {pth} = the name of the same wheel's .pth,
+# which holds the working tree's source root on its first line -- the source root is not written in the finder but read from the .pth).
+# The package search order is the venv's products dir -> the working tree's source dir (the products dir is searched first, so products that an earlier layout left in the source tree
+# are never used).
 EDITABLE_FINDER = '''\
-"""editable の入れの finder — doeff の build の口(tools/doeff_cargo_backend.py)が書く。"""
+"""Finder for the editable install -- written by doeff's build entry (tools/doeff_cargo_backend.py)."""
 import importlib.util
 import os
 import sys
@@ -543,14 +543,14 @@ import sys
 SITE = os.path.dirname(os.path.abspath(__file__))
 NATIVE = os.path.join(SITE, {native!r})
 PACKAGES = {packages!r}
-# 作業木の source の根は、同じ wheel の .pth の 1 行目だけが持つ(定義元を 1 つにする — .pth の行を別の checkout へ書き換える向け直しに
-# finder も従う)。
+# The working tree's source root is held only by the first line of the same wheel's .pth (one definition -- the finder also follows a redirect that rewrites the .pth line to another
+# checkout).
 with open(os.path.join(SITE, {pth!r}), encoding="utf-8") as _pth:
     SOURCE = _pth.readline().strip()
 
 
 class EditableNativeFinder:
-    """PACKAGES の package を、探し先 = 成果物の dir → 作業木の source の dir の package として答える。"""
+    """Answer for the packages in PACKAGES, as packages whose search path = products dir -> working tree's source dir."""
 
     @classmethod
     def find_spec(cls, fullname, path=None, target=None):
@@ -567,9 +567,9 @@ sys.meta_path.insert(0, EditableNativeFinder)
 
 
 def _editable_wheel(stored: Path, package: Path, source_root: Path, includes: tuple[str, ...], wheel_directory: Path) -> str:
-    """保存先の wheel から editable の wheel を作るため(頭の註の editable): 組み立ての成果物を `__editable__.<名>.native/` の下に、
-    dist-info(RECORD を除く)と、source_root を指し finder を起こす .pth と、finder の module を入れた wheel を wheel_directory に書く。
-    答え = 書いた wheel の名(保存先の wheel と同じ名 — 同じ tag)。"""
+    """Build an editable wheel from the stored wheel (editable in the header note): write into wheel_directory a wheel holding the build products under `__editable__.<name>.native/`,
+    the dist-info (excluding RECORD), a .pth that points at source_root and activates the finder, and the finder module.
+    Answer = the name of the wheel written (the same name as the stored wheel -- the same tag)."""
     with zipfile.ZipFile(stored) as archive:
         (dist_info,) = {name.split("/", 1)[0] for name in archive.namelist() if name.split("/", 1)[0].endswith(".dist-info")}
         distribution = dist_info.split("-", 1)[0]
@@ -587,7 +587,7 @@ def _editable_wheel(stored: Path, package: Path, source_root: Path, includes: tu
     tops = sorted({entry.name.split("/")[1] for entry in products if entry.name.count("/") >= 2})
     packages = tuple(top for top in tops if (source_root / top / "__init__.py").is_file())
     finder = f"__editable___{distribution}_finder"
-    loose = any(entry.name.count("/") == 1 for entry in products)  # package の外の成果物(根の拡張 module)は成果物の dir を路に足す
+    loose = any(entry.name.count("/") == 1 for entry in products)  # products outside any package (a root extension module) add the products dir to the path
     pth = "".join((f"{source_root}\n", f"{native}\n" if loose else "", f"import {finder}\n" if packages else ""))
     entries = (
         *metadata,
@@ -600,9 +600,9 @@ def _editable_wheel(stored: Path, package: Path, source_root: Path, includes: tu
 
 
 def _source_wheel(stored: Path, package: Path, source_root: Path, includes: tuple[str, ...], wheel_directory: Path) -> str:
-    """保存先の wheel と作業木の python-source から wheel を作るため(頭の註の wheel): 保存先の wheel からは組み立ての成果物・data・
-    dist-info(RECORD を除く)だけを取り、保存先の wheel が持つ python の package(と根の module)の file は作業木の source_root から
-    入れ直し、RECORD を書き直した wheel を wheel_directory に書く。答え = 書いた wheel の名(保存先の wheel と同じ名 — 同じ tag)。"""
+    """Build a wheel from the stored wheel and the working tree's python-source (wheel in the header note): from the stored wheel take only the build products, data, and
+    dist-info (excluding RECORD), reinstall the files of the python packages (and root modules) the stored wheel holds from the working tree's source_root,
+    and write the wheel with a rewritten RECORD into wheel_directory. Answer = the name of the wheel written (the same name as the stored wheel -- the same tag)."""
     with zipfile.ZipFile(stored) as archive:
         (dist_info,) = {name.split("/", 1)[0] for name in archive.namelist() if name.split("/", 1)[0].endswith(".dist-info")}
         members = tuple(
@@ -625,14 +625,14 @@ def _source_wheel(stored: Path, package: Path, source_root: Path, includes: tupl
 
 
 def _source_member(member: str, package: Path, source_root: Path, includes: tuple[str, ...]) -> bool:
-    """wheel の file 1 つが python-source の source か(dist-info・data の下でも組み立ての成果物でもない — 作業木から入れ直す物)。"""
+    """Whether a wheel file is python-source source (neither under dist-info or data nor a build product -- what is reinstalled from the working tree)."""
     return not member.split("/", 1)[0].endswith((".dist-info", ".data")) and not _built_member(member, package, source_root, includes)
 
 
 def _python_source_files(source_root: Path, tops: frozenset[str]) -> list[Path]:
-    """作業木の python-source の、名 tops の package の dir の下の file と根の module の file を、wheel の中の path の順で並べるため。
-    __pycache__ の下と .pyc・.pyo は入れない(組む作業木に無い物 — 使う側の Python が作り直す)。tops のうち作業木に無い物は入れない
-    (その版で消えた module)。"""
+    """List, in wheel-internal path order, the files under the package dirs named by tops and the root-module files of the working tree's python-source.
+    Files under __pycache__ and .pyc and .pyo are not included (they do not exist in the building working tree -- the user's Python recreates them). Entries of tops
+    that are absent from the working tree are not included (modules removed in that version)."""
     found = (
         hit
         for top in tops
@@ -645,8 +645,8 @@ def _python_source_files(source_root: Path, tops: frozenset[str]) -> list[Path]:
 
 
 def _write_wheel(path: Path, dist_info: str, entries: tuple[WheelEntry, ...]) -> None:
-    """entries と、その file の hash を並べた RECORD(dist_info の下・最後)を持つ wheel を path に書くため(時刻は固定 — 同じ中身は
-    同じ zip)。"""
+    """Write to path a wheel holding entries and a RECORD (under dist_info, last) listing those files' hashes (timestamps are fixed -- the same contents give
+    the same zip)."""
     text = io.StringIO()
     csv.writer(text, lineterminator="\n").writerows(
         (*((entry.name, f"sha256={_urlsafe_digest('sha256', entry.data)}", str(len(entry.data))) for entry in entries), (f"{dist_info}/RECORD", "", ""))
@@ -661,7 +661,7 @@ def _write_wheel(path: Path, dist_info: str, entries: tuple[WheelEntry, ...]) ->
 
 
 def build_sdist(sdist_directory: str, config_settings: ConfigSettings | None = None) -> str:
-    """sdist を組む時も、maturin が cargo に作らせる target を作業木の外に置くため(Rust は組まないので保存先は引かない)。"""
+    """When building an sdist too, keep the target that maturin has cargo create outside the working tree (no Rust is built, so the store is not consulted)."""
     with cargo_target_dir():
         return maturin.build_sdist(sdist_directory, config_settings)
 

@@ -231,7 +231,7 @@ def test_a_remote_wheel_that_fails_its_record_is_named_and_not_stored(
     stored = backend.stored_wheel(package, None, compile_wheel)
     err = capsys.readouterr().err
     assert (compile_wheel.calls, stored.source) == (1, "built")
-    assert "hash が RECORD と違う" in err and f"{slot.name}.whl" in err, err
+    assert "differs from RECORD" in err and f"{slot.name}.whl" in err, err
     with zipfile.ZipFile(stored.path) as archive:
         assert archive.read(NATIVE) == b"built here\n"
     assert sorted(path.name for path in slot.iterdir() if path.suffix == ".whl") == [WHEEL_NAME]
@@ -250,7 +250,7 @@ def test_an_unreachable_remote_is_named_and_built(
     stored = backend.stored_wheel(package, None, compile_wheel)
     err = capsys.readouterr().err
     assert (compile_wheel.calls, stored.source) == (1, "built")
-    assert f"127.0.0.1:{closed}" in err and "置き場" in err, err
+    assert f"127.0.0.1:{closed}" in err and "remote store" in err, err
 
 
 def test_an_empty_remote_setting_does_not_ask_the_network(

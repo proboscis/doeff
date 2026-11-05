@@ -254,7 +254,7 @@ def _counts(output: RunnerOutput) -> str:
 
 def _summary(output: RunnerOutput) -> str:
     """入口の出力のうち、最後の要約の節(pytest の出力を除く)。"""
-    marker = "== 変えた所の検の要約"
+    marker = "== Changed-tests summary"
     assert marker in output.text, f"要約が無い(rc {output.returncode})\n{output.text[-3000:]}"
     return output.text[output.text.index(marker) :]
 
@@ -272,14 +272,14 @@ def test_a_hy_name_without_its_stub_is_red_through_the_contract_set(tmp_path: Pa
     output = _run(model)
     summary = _summary(output)
     assert output.returncode == 1, f"赤なのに rc {output.returncode}\n{output.text[-3000:]}"
-    assert "赤: 1" in summary, summary
-    assert f"{STUB_TEST} — 赤" in summary, summary
+    assert "\nred: 1" in summary, summary
+    assert f"{STUB_TEST} — red" in summary, summary
     assert "[sql_effects]" in summary, summary
     assert "宣言に無い公開の名: ADDED_WITHOUT_STUB" in output.text, (
         "pytest の出力に足した名が出ていない"
     )
-    assert "tests/test_ok.py — 1 本" in summary, summary
-    assert "作業木の中身で走らせる(index ではない)" in output.text.splitlines()[0], output.text[
+    assert "tests/test_ok.py — 1 test(s)" in summary, summary
+    assert "running on working tree contents (not the index)" in output.text.splitlines()[0], output.text[
         :500
     ]
 
@@ -292,8 +292,8 @@ def test_the_stub_check_is_not_selected_without_its_table_row(tmp_path: Path) ->
     summary = _summary(output)
     assert STUB_TEST not in output.text, summary
     assert output.returncode == 0, output.text[-3000:]
-    assert "走った: 1" in summary, summary
-    assert "赤: 0" in summary, summary
+    assert "ran: 1" in summary, summary
+    assert "\nred: 0" in summary, summary
 
 
 def test_a_set_over_the_budget_is_named_unmeasured_not_red(tmp_path: Path) -> None:
@@ -305,10 +305,10 @@ def test_a_set_over_the_budget_is_named_unmeasured_not_red(tmp_path: Path) -> No
     output = _run(model, "--budget", "8")
     summary = _summary(output)
     assert output.returncode == 0, output.text[-3000:]
-    assert "tests/test_ok.py — 1 本" in summary, summary
-    assert "未測: 1" in summary, summary
-    assert "tests/test_slow.py — 上限 8 秒で打ち切り" in summary, summary
-    assert "赤: 0" in summary, summary
+    assert "tests/test_ok.py — 1 test(s)" in summary, summary
+    assert "unmeasured: 1" in summary, summary
+    assert "tests/test_slow.py — cut off at the 8s budget" in summary, summary
+    assert "\nred: 0" in summary, summary
     counts = _counts(output)
     assert " selected=2 ran=1 red=0 unmeasured=1 unmeasured_reverse=0 rc=0 " in counts, counts
     assert counts.endswith(" budget=8"), counts
@@ -323,9 +323,9 @@ def test_a_worktree_without_an_environment_names_every_selected_test_unmeasured(
     output = _run(model, with_environment=False)
     summary = _summary(output)
     assert output.returncode == 0, output.text[-3000:]
-    assert "未測: 2" in summary, summary
-    assert "uv の環境" in summary, summary
-    assert "が無い" in summary, summary
+    assert "unmeasured: 2" in summary, summary
+    assert "uv environment" in summary, summary
+    assert "not found" in summary, summary
     assert STUB_TEST in summary, summary
     assert "tests/test_ok.py" in summary, summary
 
@@ -406,8 +406,8 @@ def test_reverse_dependents_follow_the_contract_set_and_the_changed_test_by_dist
     output = _run(model, linter=linter)
     summary = _summary(output)
     assert output.returncode == 0, output.text[-3000:]
-    assert "走った: 5" in summary, summary
-    ran = [line.strip().split(" — ", 1)[0] for line in summary.splitlines() if " — 1 本" in line]
+    assert "ran: 5" in summary, summary
+    ran = [line.strip().split(" — ", 1)[0] for line in summary.splitlines() if " — 1 test(s)" in line]
     assert ran == [
         "tests/test_ok.py",
         "tests/test_changed.py",
@@ -416,11 +416,11 @@ def test_reverse_dependents_follow_the_contract_set_and_the_changed_test_by_dist
         "tests/test_far.py",
     ], summary
     assert (
-        "tests/test_far.py — 1 本(逆依存・距離 2: tests/test_changed.py → tests/test_far.py)"
+        "tests/test_far.py — 1 test(s) (reverse dependency, distance 2: tests/test_changed.py → tests/test_far.py)"
         in summary
     )
-    assert "逆依存: 足した検 3 本" in summary, summary
-    assert "逆依存が広すぎて辿らなかった module: macros(根 src・直接の使い手 412)" in summary, (
+    assert "Reverse dependencies: added 3 test(s)" in summary, summary
+    assert "module too widely depended on to trace: macros (root src, direct dependents 412)" in summary, (
         summary
     )
     argv = (linter.parent / "argv").read_text(encoding="utf-8").splitlines()
@@ -463,17 +463,17 @@ def test_a_test_named_file_under_a_record_dir_is_selected_neither_as_changed_nor
     summary = _summary(output)
     assert ("probe_test.py" in summary) is selected, summary
     assert (output.returncode == 1) is selected, output.text[-3000:]
-    assert "tests/test_outside.py — 1 本(逆依存" in summary, summary
-    assert "tests/test_changed.py — 1 本(変えた検" in summary, summary
+    assert "tests/test_outside.py — 1 test(s) (reverse dependency" in summary, summary
+    assert "tests/test_changed.py — 1 test(s) (changed test" in summary, summary
 
 
 @pytest.mark.parametrize(
     ("case", "answer", "returncode", "named"),
     [
-        ("無い", None, 0, "が無い"),
-        ("止まった", EMPTY_ANSWER, 2, "rc 2 で止まった — fake linter stderr"),
-        ("読めない", "not json", 0, "linter の答えが読めない"),
-        ("形が違う", '{"tests": [{"path": 1}], "hubs": [], "unreadable": []}', 0, "読めない"),
+        ("absent", None, 0, "not found"),
+        ("stopped", EMPTY_ANSWER, 2, "stopped with rc 2 — fake linter stderr"),
+        ("unreadable", "not json", 0, "linter answer unreadable"),
+        ("wrong-shape", '{"tests": [{"path": 1}], "hubs": [], "unreadable": []}', 0, "unreadable"),
     ],
 )
 def test_an_unanswering_linter_is_named_and_the_run_goes_on(
@@ -490,9 +490,9 @@ def test_an_unanswering_linter_is_named_and_the_run_goes_on(
     output = _run(model, linter=linter)
     summary = _summary(output)
     assert output.returncode == 0, output.text[-3000:]
-    assert "tests/test_ok.py — 1 本" in summary, summary
-    assert "赤: 0" in summary, summary
-    assert "逆依存を測れなかった — " in summary, summary
+    assert "tests/test_ok.py — 1 test(s)" in summary, summary
+    assert "\nred: 0" in summary, summary
+    assert "Reverse dependencies could not be measured — " in summary, summary
     assert named in summary, summary
 
 
@@ -565,8 +565,8 @@ def test_the_default_linter_is_the_snapshot_locked_to_the_worktrees_build_inputs
     output = _run(model, home=home)
     summary = _summary(output)
     assert output.returncode == 0, output.text[-3000:]
-    assert "逆依存を測れなかった" not in summary, summary
-    assert "tests/test_near.py — 1 本(逆依存・距離 1" in summary, summary
+    assert "Reverse dependencies could not be measured" not in summary, summary
+    assert "tests/test_near.py — 1 test(s) (reverse dependency, distance 1" in summary, summary
     argv = (linter.parent / "argv").read_text(encoding="utf-8").splitlines()
     assert argv[argv.index("--affected-tests") + 1] == "README", argv
 
@@ -580,7 +580,7 @@ def test_an_explicit_linter_wins_over_the_snapshot(runner: ModuleType, tmp_path:
         patch.setenv("HOME", str(home))
         picked = runner.pick_linter("/explicit/doeff-linter", model.root)
     assert picked.command == "/explicit/doeff-linter"
-    assert "--linter で渡した命令" in picked.absent
+    assert "the command passed with --linter" in picked.absent
 
 
 def test_a_snapshot_with_another_key_is_not_used_and_the_search_is_named(
@@ -597,7 +597,7 @@ def test_a_snapshot_with_another_key_is_not_used_and_the_search_is_named(
     assert picked.command == runner.DEFAULT_LINTER
     assert _input_key(model) in picked.absent, picked.absent
     assert str(home / ".cache" / "doeff-linter-snapshots") in picked.absent, picked.absent
-    assert "PATH にも" in picked.absent, picked.absent
+    assert "is not on PATH either" in picked.absent, picked.absent
 
 
 def test_a_worktree_without_the_linter_crate_falls_back_to_path_and_names_it(
@@ -609,7 +609,7 @@ def test_a_worktree_without_the_linter_crate_falls_back_to_path_and_names_it(
         patch.setenv("HOME", str(tmp_path / "home"))
         picked = runner.pick_linter(None, model.root)
     assert picked.command == runner.DEFAULT_LINTER
-    assert "linter が無い — " in picked.absent, picked.absent
+    assert "linter not found — " in picked.absent, picked.absent
 
 
 # ---------------------------------------------------------------------------
@@ -654,11 +654,11 @@ def test_tests_of_two_packages_with_their_own_conftest_both_run(tmp_path: Path) 
     summary = _summary(output)
     assert output.returncode == 0, output.text[-3000:]
     assert "ImportPathMismatchError" not in output.text, output.text[-3000:]
-    assert "走った: 3" in summary, summary
-    assert f"{ALPHA} — 1 本(変えた検" in summary, summary
-    assert f"{BETA} — 1 本(変えた検" in summary, summary
+    assert "ran: 3" in summary, summary
+    assert f"{ALPHA} — 1 test(s) (changed test" in summary, summary
+    assert f"{BETA} — 1 test(s) (changed test" in summary, summary
     assert (
-        "pytest の process: 3/3 本が走った(session: ., packages/doeff-alpha/tests, packages/doeff-beta/tests)"
+        "pytest processes: 3/3 ran (sessions: ., packages/doeff-alpha/tests, packages/doeff-beta/tests)"
         in summary
     ), summary
 
@@ -675,10 +675,10 @@ def test_a_batch_left_without_budget_is_named_unmeasured(tmp_path: Path) -> None
     output = _run(model, "--budget", "6")
     summary = _summary(output)
     assert output.returncode == 0, output.text[-3000:]
-    assert "未測: 2" in summary, summary
-    assert "tests/test_slow.py — 上限 6 秒で打ち切り" in summary, summary
-    assert f"{ALPHA} — 上限 6 秒の内に番が来なかった" in summary, summary
-    assert "pytest の process: 1/2 本が走った" in summary, summary
+    assert "unmeasured: 2" in summary, summary
+    assert "tests/test_slow.py — cut off at the 6s budget" in summary, summary
+    assert f"{ALPHA} — did not get a turn within the 6s budget" in summary, summary
+    assert "pytest processes: 1/2 ran" in summary, summary
 
 
 #: 枠が埋まっている間の待ちの代役の秒 — 上限(8 秒)より長いので、待ちを上限に数える入口は束を集める前に必ず打ち切る。
@@ -705,15 +705,15 @@ def test_the_wait_for_a_machine_check_slot_is_not_counted_in_the_budget(tmp_path
     output = _run(model, "--budget", "8")
     summary = _summary(output)
     assert output.returncode == 0, output.text[-3000:]
-    assert "tests/test_ok.py — 1 本" in summary, summary
-    assert "未測: 0" in summary, summary
-    counted = re.search(r"所要 ([0-9.]+) 秒 / 上限 8 秒", summary)
+    assert "tests/test_ok.py — 1 test(s)" in summary, summary
+    assert "unmeasured: 0" in summary, summary
+    counted = re.search(r"elapsed ([0-9.]+)s / budget 8s", summary)
     assert counted is not None, summary
     assert float(counted.group(1)) < 8, summary
     waited = re.search(
-        re.escape("上限に数えなかった configure の間(機体の検の枠の待ちを含む): 計 ")
+        re.escape("Configure time not counted against the budget (includes waiting for the machine's test slot): total ")
         + r"([0-9.]+)"
-        + re.escape(" 秒(session . "),
+        + re.escape("s (session . "),
         summary,
     )
     assert waited is not None, summary
@@ -746,8 +746,8 @@ def test_a_collection_over_the_budget_is_cut_not_excluded(tmp_path: Path) -> Non
     output = _run(model, "--budget", "6")
     summary = _summary(output)
     assert output.returncode == 0, output.text[-3000:]
-    assert "tests/test_slow_collect.py — 上限 6 秒の内に集め終わらなかった" in summary, summary
-    waited = re.search(re.escape("(機体の検の枠の待ちを含む): 計 ") + r"([0-9.]+)", summary)
+    assert "tests/test_slow_collect.py — did not finish collecting within the 6s budget" in summary, summary
+    waited = re.search(re.escape("(includes waiting for the machine's test slot): total ") + r"([0-9.]+)", summary)
     assert waited is not None, summary
     assert float(waited.group(1)) < SLOW_COLLECTION_SECONDS / 2, summary
     counts = _counts(output)

@@ -807,7 +807,7 @@ LIBRARY_CASES: dict[str, Callable[[CompareConfig], list[Case]]] = {
 }
 
 
-def _library_cases(  # noqa: DOEFF006 — benchmark の case 表の戻り
+def _library_cases(  # noqa: DOEFF006 — return of the benchmark case table
     library: str, config: CompareConfig
 ) -> tuple[list[Case], tuple[str, str] | None]:
     """One library's cases, or why it was skipped (the comparison libraries are optional)."""
@@ -817,7 +817,7 @@ def _library_cases(  # noqa: DOEFF006 — benchmark の case 表の戻り
         return [], (library, f"not installed ({error.name})")
 
 
-def build_cases(  # noqa: DOEFF006 — benchmark の case 表の戻り
+def build_cases(  # noqa: DOEFF006 — return of the benchmark case table
     config: CompareConfig, libraries: Sequence[str] | None = None
 ) -> tuple[list[Case], dict[str, str]]:
     """The cases of every installed library, and why the others were skipped."""
@@ -828,7 +828,7 @@ def build_cases(  # noqa: DOEFF006 — benchmark の case 表の戻り
     return cases, skipped
 
 
-def _time_case(case: Case) -> tuple[float, float]:  # noqa: DOEFF006 — benchmark の測定値の組
+def _time_case(case: Case) -> tuple[float, float]:  # noqa: DOEFF006 — pair of benchmark measurements
     """Time one run of a case (CPU, wall µs per unit) and check its answer."""
     gc.collect()
     wall_start = time.perf_counter_ns()

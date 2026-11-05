@@ -1,64 +1,64 @@
-"""核の 4 個だけを入れた新しい venv で、README の Python の例と試しの命令 `python -m doeff demo` と LLM の agent の例が通り、Hy と
-HTTP の extra が要る使い方が足す extra の名を言う事を確かめる(取り組み doeff-publish の区切り 8)。
+"""In a fresh venv holding only the four core distributions, check that the README Python examples, the trial command `python -m doeff demo` and the LLM agent example run, and that uses needing the Hy or
+HTTP extras name the extra to add (milestone 8 of the doeff-publish effort).
 
-`pip install doeff` は核の 4 個(doeff・doeff-vm・doeff-core-effects・frozendict)だけを入れ、Hy の言語は extra hy・HTTP の client の
-handler は extra http で足す。tests/test_core_install_extras.py は pyproject.toml の宣言を読み、tests/test_missing_extra_hints.py は
-開発の環境で Hy の import を塞いで文を読む — 開発の環境には Hy も httpx も検の道具も入っているので、核だけの入れ方が壊れても
-どちらも気づけない。この道具は本物の install で確かめる:
+`pip install doeff` installs only the four core distributions (doeff, doeff-vm, doeff-core-effects, frozendict); the Hy language is added by extra hy and the HTTP client
+handlers by extra http. tests/test_core_install_extras.py reads the declarations in pyproject.toml, and tests/test_missing_extra_hints.py
+blocks the Hy import in the development environment and reads the messages. The development environment has Hy, httpx and the test tools installed, so if the core-only install broke,
+neither would notice. This tool checks with a real install:
 
-    uv run --no-project python tools/verify_core_install.py                  # 既定 3.11 と 3.14+gil
-    uv run --no-project python tools/verify_core_install.py --python 3.13    # --python は何度でも書ける
-    uv run --no-project python tools/verify_core_install.py --pypi latest    # PyPI の最新(利用者の pip install doeff)
-    uv run --no-project python tools/verify_core_install.py --pypi 0.6.0     # PyPI の 0.6.0
+    uv run --no-project python tools/verify_core_install.py                  # defaults: 3.11 and 3.14+gil
+    uv run --no-project python tools/verify_core_install.py --python 3.13    # --python can be given repeatedly
+    uv run --no-project python tools/verify_core_install.py --pypi latest    # latest on PyPI (the user's pip install doeff)
+    uv run --no-project python tools/verify_core_install.py --pypi 0.6.0     # 0.6.0 on PyPI
 
-Python の版ごとに:
+For each Python version:
 
-1. 新しい venv を repo の外の一時の dir に作り、この checkout の doeff・doeff-vm・doeff-core-effects を extra 無しで入れる(依存は
-   uv.lock でなく各 package の宣言から解く — PyPI から入れた利用者と同じ)。
-2. venv に入った配布物がちょうど核の 4 個で、doeff の 3 個はこの checkout から入った事を確かめる。
-3. doeff と doeff-vm の README(wheel の metadata の本文 — PyPI の頁が見せる物)の Python の例を、README ごとに新しい dir で上から
-   順に走らせ、注記と比べる(約束は tools/readme_examples.py)。Hy の囲みと、Hy の module を読む Python の囲み(`import hy` を
-   書く物・README の Hy の file= の囲みが書く module を import する物)は extra hy の例なので走らせない。
-4. Hy か HTTP の extra が要る使い方(EXTRA_USES)を走らせ、1 で終わり、標準エラーの最後の行が `pip install "doeff[<extra>]"` で
-   終わる事を確かめる。
-5. 3 の README の Python の例を、pyright(standard)と mypy --strict にかけ(venv の外で `uv tool run` が起こし、核の venv を指す)、
-   import が「公開していない名」(reportPrivateImportUsage・attr-defined)と言われない事を確かめる。README の例そのものへの型の
-   注記の文句は数えない。py.typed の package は `X as X` か `__all__` で再 export した名だけを公開とするので、README が
-   `from doeff_core_effects import Ask` と書いても、再 export が欠けると利用者の editor が赤にする。
-   あわせて、核だけの venv(Hy も httpx も無い)で package の頭の名が属性として在り、star import でも結ばれる事を確かめる。
-6. README の入れ方の直後に案内する試しの命令 `python -m doeff demo` を走らせ、0 で終わり、同じ digest を 4 つの handler で
-   走らせた答え — canned の答え・trace が見た effect の行・budget(1) が k を捨てた答え・作業の dir の頁を live_world が読んだ
-   答え — をその順に印字する事を確かめる。
-7. README と docs/index.md が `pip install doeff` だけで走ると案内する LLM の agent の例(examples/llm_agent.py)を、例の 2 つの
-   file だけを写した dir で走らせ、偽の model の答えを印字する事を確かめる。続けて venv に pytest を足し、その dir で検の例
-   (examples/test_llm_agent.py)が通る事を確かめる。どちらも OPENAI_ の環境変数を外して走らせる(model の key を読まない)。
-   pytest を足すので、核の 4 個だけを見る 2〜6 の後の最後に置く。
-8. 紹介の記事「Testing Python code without mocks」が `pip install doeff` で走ると書く例の dir(examples/testing_without_mocks)を
-   写した dir で、script が記事の見せる行をその順に印字し、標準エラーに何も出さない事と、その dir の pytest が通る事を確かめる。
-   fanout.py は、3 つの取り寄せが並行に走った(1 つずつなら掛かる 0.6 秒より短い)事も見る。7 と同じく pytest を足すので最後に
-   置く。--pypi の時だけ走らせる: 例の dir は PyPI の版に留めて書き、値の形の版が PyPI に出るまで書き
-   換えない(ADR-DOE-API-002 R3)ので、checkout の版で走らせると checkout の API が変わるたびに落ちる。
+1. Create a fresh venv in a temporary dir outside the repo and install this checkout's doeff, doeff-vm and doeff-core-effects without extras (dependencies are resolved from
+   each package's declaration, not uv.lock - the same as a user who installed from PyPI).
+2. Check that the distributions in the venv are exactly the core four, and that the three doeff ones came from this checkout.
+3. Run the Python examples of the READMEs of doeff and doeff-vm (the body of the wheel metadata - what the PyPI page shows) top to bottom in a fresh dir per README,
+   and compare with the annotations (the contract is in tools/readme_examples.py). Hy fences and Python fences that load a Hy module (those that write `import hy`,
+   or import a module written by a README Hy file= fence) are extra hy examples, so they are not run.
+4. Run the uses that need the Hy or HTTP extra (EXTRA_USES) and check that they exit with 1 and that the last line of stderr ends with
+   `pip install "doeff[<extra>]"`.
+5. Run the README Python examples of step 3 through pyright (standard) and mypy --strict (launched by `uv tool run` outside the venv, pointing at the core venv),
+   and check that no import is reported as a "non-public name" (reportPrivateImportUsage, attr-defined). Complaints about type
+   annotations in the README examples themselves are not counted. A py.typed package treats only names re-exported with `X as X` or `__all__` as public,
+   so even if the README writes `from doeff_core_effects import Ask`, a missing re-export turns the user's editor red.
+   Also check that, in a core-only venv (no Hy, no httpx), the names at the package head exist as attributes and are bound by a star import.
+6. Run the trial command `python -m doeff demo` that the README points to right after the install steps, and check that it exits with 0 and prints, in this order, the answers
+   of running the same digest with four handlers - the canned answer, the effect line seen by the trace, the answer where budget(1) dropped k, and the answer where live_world
+   read a page in the working dir.
+7. Run the LLM agent example (examples/llm_agent.py) that the README and docs/index.md say runs with `pip install doeff` alone, in a dir holding copies of only the two
+   example files, and check that it prints the answer of the fake model. Then add pytest to the venv and check that the test example
+   (examples/test_llm_agent.py) passes in that dir. Both are run with OPENAI_ environment variables removed (no model key is read).
+   Since pytest gets added, this goes last, after steps 2-6 that look at only the core four.
+8. In a dir copied from the example dir (examples/testing_without_mocks) that the introductory article "Testing Python code without mocks" says runs with `pip install doeff`,
+   check that each script prints the lines the article shows, in that order, with nothing on stderr, and that the dir's pytest passes.
+   For fanout.py, also check that the three fetches ran concurrently (faster than the 0.6 seconds they would take one at a time). As in 7, pytest is added, so this goes
+   last. Run only with --pypi: the example dir is written to stay on the PyPI version and is not rewritten
+   until the value-shaped version appears on PyPI (ADR-DOE-API-002 R3), so running it on the checkout version would fail whenever the checkout API changes.
 
-9. 記事「Algebraic effects for Python」の例のうち、記事の本番の stack(`real` — 実時間と await_handler)を含む monitor.py と、
-   spend.py を、写した dir で走らせ、0 で終わり、monitor.py が本番の stack の印字(`-- real: ...` の見出しと答え)を最後に
-   印字する事を確かめる。3 本目「時刻」の例の trading.py(virtual clock と wall clock の層)も同じく走らせ、最後の層の印字を
-   見る。記事は「every example runs with doeff 0.8.0 alone」と書くので、PyPI の版でも走らせる(await_handler の
-   呼び方が入った版と合わないと TypeError で落ちる)。
+9. Of the examples of the article "Algebraic effects for Python", run monitor.py, which includes the article's production stack (`real` - real time and await_handler), and
+   spend.py in the copied dir, and check that they exit with 0 and that monitor.py prints the production stack output (the `-- real: ...` heading and the answer) last.
+   Run trading.py (virtual clock and wall clock layers), the example of the third article "Time", the same way and check the output of the last layer.
+   The article says "every example runs with doeff 0.8.0 alone", so this also runs on the PyPI version (a version that does not match the
+   await_handler call style fails with TypeError).
 
-CI の Python の版ごとの検(.github/workflows/python-compatibility.yml の job core-only-install と
-.github/workflows/core-install-macos-windows.yml)が、--pypi 無しで 1〜7 を走らせる。
+The per-Python-version checks in CI (job core-only-install of .github/workflows/python-compatibility.yml and
+.github/workflows/core-install-macos-windows.yml) run 1-7 without --pypi.
 
---pypi は 1 で checkout の代わりに PyPI の doeff を入れ(doeff-vm は wheel だけを受ける — 利用者の機体に Rust の道具は無い)、2 で
-doeff の 3 個が PyPI から入った事を、3 と 5 で入った版の README を確かめる。3 の後に、この checkout(CI では GitHub の main)の
-doeff と doeff-vm の README(初めて来た人が GitHub で読む物)の Python の例を、同じ約束で入った版の venv で走らせる — wheel の
-README は入った版と同じ時に書いた物なので、GitHub の README が出した版より先へ進んでも 3 は緑のまま食い違いを見ない。
-wheel の README と GitHub の README は別々に「<組>の例 N 個のうち入った版で通るのは M 個」と数え、
-落ちた例の節の題と訳の 1 行を印字する。4・6・7 は走らせない — 期待(extra の文・試しの命令の答え・例の file)が checkout の物で、
-出した版より新しい事が在る。8 は走らせる — 記事は例が今日の `pip install doeff` で走ると約束するので、例の file が出した版より
-先へ進んだら(まだ出していない API を使ったら)赤にする。毎日の CI(.github/workflows/core-install-from-pypi.yml)が Linux・
-macOS・Windows で走らせる。
+--pypi installs doeff from PyPI instead of the checkout in step 1 (doeff-vm accepts only wheels - the user's machine has no Rust tools), checks in 2 that
+the three doeff distributions came from PyPI, and checks the installed version's README in 3 and 5. After 3, it runs the Python examples of the READMEs of
+doeff and doeff-vm in this checkout (on GitHub main in CI; what a first-time visitor reads on GitHub) in the venv of the installed version under the same contract - since the wheel
+README was written at the same time as the installed version, step 3 stays green and misses a mismatch even when the GitHub README has moved ahead of the released version.
+The wheel README and the GitHub README are counted separately as "of N examples in <set>, M pass on the installed version", and
+the section title and a one-line reason for each failed example are printed. 4, 6 and 7 are not run - their expectations (extra messages, the trial command answer, example files) are the checkout's,
+which can be newer than the released version. 8 is run - the article promises the examples run with today's `pip install doeff`, so if the example files
+move ahead of the released version (use an API not yet released) it goes red. The daily CI (.github/workflows/core-install-from-pypi.yml) runs it on Linux,
+macOS and Windows.
 
-終了コード: 全部通れば 0・確かめが落ちれば 1・道具が使えなければ(venv・install の失敗)2。標準ライブラリだけを使う。
+Exit code: 0 if everything passes, 1 if a check fails, 2 if the tool cannot be used (venv or install failure). Uses only the standard library.
 """
 
 from __future__ import annotations
@@ -80,7 +80,7 @@ from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 
-# 同じ dir の module — script として走らせると、Python が script の dir を sys.path の頭に置く。
+# Modules in the same dir - when run as a script, Python puts the script's dir at the head of sys.path.
 import readme_examples
 import verify_release_install
 
@@ -89,11 +89,11 @@ REPO = Path(__file__).resolve().parents[1]
 
 @dataclass(frozen=True)
 class FromCheckout:
-    """この checkout から入れる doeff の配布物 1 つ。"""
+    """One doeff distribution installed from this checkout."""
 
-    # 配布物の名(PEP 503 の形)
+    # Distribution name (PEP 503 form)
     name: str
-    # repo の中の dir
+    # Dir inside the repo
     directory: Path
 
 
@@ -102,60 +102,60 @@ FROM_CHECKOUT = (
     FromCheckout("doeff-vm", Path("packages/doeff-vm")),
     FromCheckout("doeff-core-effects", Path("packages/doeff-core-effects")),
 )
-# pip install doeff で入る物の全部。
+# Everything that `pip install doeff` installs.
 CORE_FOUR = frozenset({*(package.name for package in FROM_CHECKOUT), "frozendict"})
 
 
 @dataclass(frozen=True)
 class Checkout:
-    """この checkout の doeff の 3 個を組んで入れる(出す前の確かめ)。"""
+    """Build and install the three doeff distributions of this checkout (a check before release)."""
 
 
 @dataclass(frozen=True)
 class PyPI:
-    """PyPI の doeff を入れる(出した後の確かめ — 利用者が打つ `pip install doeff` と同じ)。"""
+    """Install doeff from PyPI (a check after release - the same as the `pip install doeff` a user types)."""
 
-    # 名指した版(None は PyPI の最新 — 今日来た人が入れる物)
+    # Named version (None is the latest on PyPI - what someone arriving today installs)
     version: str | None
 
     def requirement(self) -> str:
-        """uv pip install に渡す要求。"""
+        """The requirement passed to uv pip install."""
         return "doeff" if self.version is None else f"doeff=={self.version}"
 
 
 Source = Checkout | PyPI
-# --pypi の値のうち、版でなく PyPI の最新を言う語。
+# The value of --pypi that means the latest on PyPI rather than a version.
 LATEST = "latest"
-# PyPI から入れる時に wheel だけを受ける物(PyO3 の拡張)。GitHub の runner には Rust の道具が入っているので、機体に合う wheel が
-# 無くても source から組んで通ってしまい、Rust の無い利用者の機体で落ちる事に気づけない。
+# The distribution that accepts only wheels when installing from PyPI (a PyO3 extension). GitHub runners have Rust tools, so even without a wheel for the machine it would be built from source and pass,
+# hiding the failure on a user's machine without Rust.
 WHEEL_ONLY = "doeff-vm"
-# 例を走らせる README。doeff-core-effects の README は外す — 例の 1 つ(節 Swapping a production handler for a test handler)が
-# Hy で書いた handler(os_file・memory_file)を使い、README もその例に extra hy が要ると書く。
+# READMEs whose examples are run. The README of doeff-core-effects is excluded - one example (the section Swapping a production handler for a test handler)
+# uses handlers written in Hy (os_file, memory_file), and the README also says that example needs extra hy.
 CHECKED_READMES = ("doeff", "doeff-vm")
-# README の囲みのうち、extra を足さないと走らない言葉(Hy の言語は extra hy が入れる)。
+# Fence languages that do not run without an extra (the Hy language is installed by extra hy).
 NEEDS_AN_EXTRA = frozenset({"hy"})
-# Python が Hy の module を読むために import する、Hy の本体の名(`import hy` が Hy の import hook を置く)。
+# The name of the Hy package itself that Python imports to load Hy modules (`import hy` installs the Hy import hook).
 HY_PACKAGE = "hy"
 DEFAULT_PYTHONS = ("3.11", "3.14+gil")
-# 型の check の道具。検める venv は核の 4 個だけに保つので、venv の外で uv tool run が起こし、--pythonpath・--python-executable で
-# 核の venv を指す。
+# Type-check tools. The venv being checked is kept to the core four only, so uv tool run launches them outside the venv and --pythonpath / --python-executable
+# point at the core venv.
 PYRIGHT = ("uv", "tool", "run", "pyright")
 MYPY = ("uv", "tool", "run", "mypy")
-# pyright の規則のうち、この確かめが名指す物 — 公開していない名(py.typed の package が再 export していない名)と、venv の package を
-# 見つけられない事(見つけられなければ、公開の名の確かめにならずに緑になる)。README の例そのものへの文句(型の注記の無さなど)は
-# この確かめの外。
+# The pyright rules this check names - non-public names (names a py.typed package does not re-export) and failure to
+# find the venv's packages (if they cannot be found, the check would go green without checking public names). Complaints about the README examples themselves (missing type annotations etc.) are
+# outside this check.
 PYRIGHT_RULES = frozenset({"reportPrivateImportUsage", "reportMissingImports"})
-# mypy の同じ目印(mypy は規則でなく文と [コード] で言う)。
+# The same markers for mypy (mypy reports by message and [code], not by rule).
 MYPY_MARKERS = ("does not explicitly export attribute", "[import-not-found]")
-# 核だけの venv で、package の頭から取れる名の見本(README と入門の章の例が取る名)— Hy の module を読まずに結ばれている事の確かめ。
+# Sample names available from the package head in a core-only venv (the names the README and tutorial examples take) - checks they are bound without loading Hy modules.
 HEAD_NAMES = ("Ask", "Get", "Put", "Tell", "reader", "state", "writer")
 MYPY_CHECKED = re.compile(r"(?:\(checked|no issues found in) (\d+) source files?")
-# 子の process 1 つの制限時間(秒)。Hy の compile が無いので、どれも数秒で終わる。
+# Time limit (seconds) for one child process. There is no Hy compile, so each finishes in a few seconds.
 CHILD_TIMEOUT_SECONDS = 120
-# 3.15 の traceback が名を持つ ModuleNotFoundError の行の末尾に足す、似た module の名の後書き。
+# The suffix naming a similar module that a 3.15 traceback appends to the end of a ModuleNotFoundError line that carries a name.
 _SUGGESTION_SUFFIX = re.compile(r"\. Did you mean: '[^']*'\?$")
-# 入れた venv の中で走らせ、入れた物の様子を JSON で印字する program(direct_url.json は PEP 610 — どこから入れたか)。
-# README の本文は 3.14 までは metadata の payload に、3.15 からは Description の欄に在る(payload は空)。
+# A program run inside the installed venv that prints the state of what was installed as JSON (direct_url.json is PEP 610 - where it was installed from).
+# Up to 3.14 the README body is in the metadata payload; from 3.15 it is in the Description field (the payload is empty).
 _DESCRIBE = """
 import importlib.metadata as metadata, json, sys, sysconfig
 
@@ -179,14 +179,14 @@ print(json.dumps({
 
 @dataclass(frozen=True)
 class WrittenFile:
-    """extra が要る使い方を走らせる dir に置く file 1 つ。"""
+    """One file placed in the dir where an extra-requiring use is run."""
 
-    # dir からの path
+    # Path from the dir
     path: str
     text: str
 
 
-# CLI の --program hyprog.mod.answer_program が読む Hy の program。
+# The Hy program read by the CLI's --program hyprog.mod.answer_program.
 HY_PROGRAM_FILES = (
     WrittenFile("hyprog/__init__.py", ""),
     WrittenFile("hyprog/mod.hy", "(import doeff [Pure])\n(setv answer-program (Pure 42))\n"),
@@ -195,46 +195,46 @@ HY_PROGRAM_FILES = (
 
 @dataclass(frozen=True)
 class ExtraUse:
-    """Hy か HTTP の extra が要る使い方 1 つ — 核の 4 個だけでは、足す extra の名を言う文で落ちる。"""
+    """One use that needs the Hy or HTTP extra - with only the core four, it fails with a message naming the extra to add."""
 
-    # 印字の名
+    # Printed name
     name: str
-    # venv の bin の下の命令(python か doeff)
+    # Command under the venv's bin (python or doeff)
     program: str
-    # 命令の後の引数
+    # Arguments after the command
     arguments: tuple[str, ...]
-    # 足す extra(文の最後の `pip install "doeff[<extra>]"`)
+    # The extra to add (the final `pip install "doeff[<extra>]"` of the message)
     extra: str
 
 
 def _python_use(name: str, statement: str, extra: str) -> ExtraUse:
-    """Python の文 1 つを、checkout も cwd も sys.path に置かない interpreter で走らせる使い方。"""
+    """A use that runs one Python statement in an interpreter that puts neither the checkout nor the cwd on sys.path."""
     return ExtraUse(name, "python", ("-I", "-c", statement), extra)
 
 
-# 文と extra の表は doeff_core_effects/_extra_hints.py。開発の環境で同じ場面を読む検は tests/test_missing_extra_hints.py と
-# tests/cli/test_cli_without_hy.py(Hy は在り httpx だけが無い場面は、核の 4 個だけの venv には無い)。
+# The table of messages and extras is doeff_core_effects/_extra_hints.py. The checks that read the same situations in the development environment are tests/test_missing_extra_hints.py and
+# tests/cli/test_cli_without_hy.py (the case where Hy exists and only httpx is missing does not exist in a core-four-only venv).
 EXTRA_USES = (
-    _python_use("Hy で書いた module", "import doeff_core_effects._os_process", "hy"),
+    _python_use("module written in Hy", "import doeff_core_effects._os_process", "hy"),
     _python_use("cache", "from doeff_core_effects._cache import cache", "hy"),
     _python_use(
-        "HTTP の handler", "from doeff_core_effects import http_production_handler", "http"
+        "HTTP handler", "from doeff_core_effects import http_production_handler", "http"
     ),
     _python_use(
-        "HTTP の handler の module",
+        "HTTP handler module",
         "from doeff_core_effects._http_handlers import http_fixture_handler",
         "http",
     ),
-    _python_use("HTTP の effect", "from doeff_core_effects import HttpRequest", "http"),
+    _python_use("HTTP effect", "from doeff_core_effects import HttpRequest", "http"),
     ExtraUse("doeff run --hy", "doeff", ("run", "--hy", "(import doeff [Pure]) (Pure 42)"), "hy"),
     ExtraUse(
-        "doeff run の .hy の program",
+        "doeff run .hy program",
         "doeff",
         ("run", "--program", "hyprog.mod.answer_program"),
         "hy",
     ),
     ExtraUse(
-        "doeff run -c で Hy の module を読む",
+        "doeff run -c loading a Hy module",
         "doeff",
         ("run", "-c", "import doeff_core_effects._os_process\nPure(42)"),
         "hy",
@@ -242,35 +242,35 @@ EXTRA_USES = (
 )
 
 
-# README の入れ方の直後に案内する試しの命令 `python -m doeff demo`(doeff/cli/demo.py)。live_world が取りに行く頁は --url で
-# 作業の dir の file にする — urlopen は file の URL を HTTP と同じ道で読むので、検は network に出ない。
+# The trial command `python -m doeff demo` (doeff/cli/demo.py) that the README points to right after the install steps. The page live_world fetches is made a file in the working dir with --url
+# - urlopen reads a file URL by the same path as HTTP, so the check does not touch the network.
 DEMO_ARGUMENTS = ("-I", "-m", "doeff", "demo")
 DEMO_PAGE = "<h1>Hello, live</h1>"
-# 決めた値で答える handler(canned)の答えの行 — 頁を読まず、決めた頁 <h1>Hello</h1> の字の数を言う。
+# The answer line of the handler that answers with fixed values (canned) - it does not read the page and states the character count of the fixed page <h1>Hello</h1>.
 DEMO_CANNED_ANSWER = "'14 chars'"
-# trace が 2 つ目の effect を見て印字する行と、budget(1) が 2 つ目の effect で k を捨てて返す答えの行。
+# The line the trace prints on seeing the second effect, and the answer line budget(1) returns by dropping k at the second effect.
 DEMO_TRACE_LINE = "trace: Summarize(text='<h1>Hello</h1>')"
 DEMO_BUDGET_ANSWER = "'over budget at Summarize'"
 
-# README と docs/index.md が `pip install doeff` だけで走ると案内する LLM の agent の例と、それを確かめる pytest の検の例。
-# repo の根からの path。
+# The LLM agent example that the README and docs/index.md say runs with `pip install doeff` alone, and the pytest test example that checks it.
+# Paths from the repo root.
 LLM_EXAMPLE_FILES = ("examples/llm_agent.py", "examples/test_llm_agent.py")
-# 2 つの file を写す、作業の dir の下の dir。
+# The dir under the working dir where the two files are copied.
 LLM_EXAMPLE_DIRECTORY = "llm-agent"
 LLM_EXAMPLE_SCRIPT = "llm_agent.py"
 LLM_EXAMPLE_TESTS = "test_llm_agent.py"
-# 例が偽の model(canned_reply)の答えで印字する行。
+# The line the example prints with the fake model (canned_reply) answer.
 LLM_EXAMPLE_ANSWER = "answer: No: an existing queue already does all of it, for little cost."
 
-# 紹介の記事「Testing Python code without mocks」の例の dir。記事は script の印字を囲みで見せ、残りの
-# file(infra.py・試験の例)をこの dir への link で指す。repo の根からの path。
+# The example dir of the introductory article "Testing Python code without mocks". The article shows the script output in fences and points to the remaining
+# files (infra.py, test examples) by links to this dir. Path from the repo root.
 ARTICLE_EXAMPLE_DIRECTORY = Path("examples/testing_without_mocks")
 
 
-# カード・ゲームの戦い(examples/effects_tour/spire.py — 記事の中心の例)。seed を固定した全部の層の印字のうち、画面(1 層目)の
-# 後の行 — 1 層目の結末から最後まで。画面の行は 1 行目の見出しだけを見る。決定的なので、版が替わって答えが動いたら赤にする。
+# A card-game fight (examples/effects_tour/spire.py - the central example of the article). Of the output of all layers with the seed fixed, the lines after the screen (layer 1)
+# - from the outcome of layer 1 to the end. For the screen lines only the heading on line 1 is checked. It is deterministic, so if the answer moves when the version changes it goes red.
 SPIRE_FILE = Path("examples/effects_tour/spire.py")
-# 記事の「Tests are one of the stacks」の検と、その dir を pytest の根にする設定(spire.py と並べて pytest で走らせる)。
+# The article's "Tests are one of the stacks" test, and the settings that make that dir the pytest root (run with pytest alongside spire.py).
 SPIRE_TEST_FILES = (
     Path("examples/effects_tour/test_spire.py"),
     Path("examples/effects_tour/pytest.ini"),
@@ -294,19 +294,19 @@ SPIRE_LAST_LINES = (
 
 @dataclass(frozen=True)
 class ArticleScript:
-    """記事の例の script 1 回の走らせ方と、記事が見せる印字。"""
+    """How to run one article example script, and the output the article shows."""
 
-    # dir の中の file の名
+    # File name in the dir
     name: str
-    # 標準出力の行の全部(timed なら、最後の秒の行の前の全部)
+    # All stdout lines (if timed, everything before the last seconds line)
     lines: tuple[str, ...]
-    # 最後の行に掛かった秒を印字し、並行に走ったか(SEQUENTIAL_SECONDS より短いか)を見るか
+    # Whether to print the seconds taken on the last line and check it ran concurrently (shorter than SEQUENTIAL_SECONDS)
     timed: bool = False
-    # 子に渡す DOEFF_SCHEDULER の値(None は渡さない — 入った版の既定の scheduler。子の環境は DOEFF_* を外す)
+    # Value of DOEFF_SCHEDULER passed to the child (None means not passed - the installed version's default scheduler. The child environment drops DOEFF_*)
     scheduler: str | None = None
 
     def label(self) -> str:
-        """印字の名(読み手が打つ命令の形)。"""
+        """The printed name (the form of the command a reader types)."""
         return (
             self.name
             if self.scheduler is None
@@ -314,11 +314,11 @@ class ArticleScript:
         )
 
     def environment(self, base: dict[str, str]) -> dict[str, str]:
-        """子の環境 — base に、選んだ scheduler を足した物。"""
+        """The child environment - base plus the chosen scheduler."""
         return base if self.scheduler is None else {**base, SCHEDULER_VARIABLE: self.scheduler}
 
 
-# scheduler を選ぶ環境変数(README と記事が書く切り替え)。
+# The environment variable that selects the scheduler (the switch the README and article describe).
 SCHEDULER_VARIABLE = "DOEFF_SCHEDULER"
 
 
@@ -326,8 +326,8 @@ _FANOUT_TITLES = (
     "['a.example', 'b.example', 'c.example']",
     "['A.EXAMPLE', 'B.EXAMPLE', 'C.EXAMPLE']",
 )
-# 記事の囲みと同じ行(記事の例の印字を比べるのはこの表 1 か所)。記事は fanout.py の切り替えを
-# DOEFF_SCHEDULER=rust と書くので、その選びでも走らせる。
+# The same lines as the article fences (this table is the one place that compares the article example output). The article writes the fanout.py switch as
+# DOEFF_SCHEDULER=rust, so it is run with that choice too.
 ARTICLE_SCRIPTS = (
     ArticleScript(
         "production.py", ("SMTP -> grace@example.com: Welcome, Grace!", "Welcome, Grace!")
@@ -346,73 +346,73 @@ ARTICLE_SCRIPTS = (
     ArticleScript("fanout.py", _FANOUT_TITLES, timed=True),
     ArticleScript("fanout.py", _FANOUT_TITLES, timed=True, scheduler="rust"),
 )
-# fanout.py の 3 つの取り寄せは各 0.2 秒 — 1 つずつ走れば 0.6 秒かかる。
+# The three fetches in fanout.py take 0.2 seconds each - run one at a time they take 0.6 seconds.
 SEQUENTIAL_SECONDS = 0.6
 ARTICLE_TIMED_LINE = re.compile(r"(\d+\.\d+) s")
-# pytest -q の最後の行(失敗・skip・警告の無い形)。
+# The last line of pytest -q (the form with no failures, skips or warnings).
 PASSED_SUMMARY = re.compile(r"\d+ passed in \S+")
 
 
-# 記事「Algebraic effects for Python」の例の dir と、核だけの venv で走らせる 3 本(trading.py は 3 本目「時刻」の例)。
+# The example dir of the article "Algebraic effects for Python", and the three run in a core-only venv (trading.py is the example of the third article, "Time").
 TOUR_DIRECTORY = Path("examples/effects_tour")
-# script が印字する見出しの行と、最後の行(monitor.py の本番の stack = 記事の Layer 5 の `real`)。
+# The heading line the script prints, and the last line (monitor.py's production stack = the article's Layer 5 `real`).
 TOUR_SCRIPTS = {
     "spend.py": None,
     "monitor.py": ("-- real: wall clock, async client", "[[9], [15]]"),
-    # 3 本目「時刻」の例: 最後の 3 層(virtual clock・wall clock・非同期の取引所)の見出しと、最後の行(seed 固定の損益)
+    # Example of the third article "Time": the heading of the last three layers (virtual clock, wall clock, async exchange) and the last line (PnL with a fixed seed)
     "trading.py": ("8. live: the same strategy over an async exchange on the wall clock (60 bars)", "  -> pnl 6.96"),
 }
 
 
 @dataclass(frozen=True)
 class Distribution:
-    """venv に入った配布物 1 つ。"""
+    """One distribution installed in the venv."""
 
-    # 配布物の名(PEP 503 の形)
+    # Distribution name (PEP 503 form)
     name: str
-    # 版
+    # Version
     version: str
-    # 入れた所の URL(PEP 610 の direct_url.json — index から入れた物は "")
+    # URL it was installed from (PEP 610 direct_url.json - "" for one installed from an index)
     url: str
-    # dir を直に読む editable で入ったか(wheel の中身でなく checkout を読む)
+    # Whether it was installed editable, reading a dir directly (reads the checkout, not the wheel contents)
     editable: bool
 
 
 @dataclass(frozen=True)
 class Installed:
-    """新しい venv に入れた物の様子(venv の interpreter が JSON で答えた物を、境界で型を確かめて持つ)。"""
+    """The state of what was installed in the fresh venv (what the venv's interpreter answered in JSON, held after type-checking at the boundary)."""
 
-    # venv の interpreter
+    # The venv's interpreter
     python: Path
-    # interpreter の版(例 3.11.16)
+    # Interpreter version (e.g. 3.11.16)
     version: str
-    # free-threading の build か
+    # Whether it is a free-threading build
     free_threaded: bool
-    # 入った配布物の全部
+    # All installed distributions
     distributions: tuple[Distribution, ...]
-    # README(metadata の本文)— CHECKED_READMES と同じ並び
+    # READMEs (metadata bodies) - in the same order as CHECKED_READMES
     readmes: tuple[str, ...]
 
     def readme(self, package: str) -> str:
-        """CHECKED_READMES の配布物 1 つの README。"""
+        """The README of one distribution of CHECKED_READMES."""
         return self.readmes[CHECKED_READMES.index(package)]
 
     def command(self, name: str) -> Path:
-        """venv の中の命令 1 つ(doeff など)— interpreter と同じ dir(Windows は Scripts・他の機体は bin)に在る。"""
+        """One command in the venv (doeff etc.) - in the same dir as the interpreter (Scripts on Windows, bin on other machines)."""
         return venv_command(self.python.parent.parent, name)
 
 
 def venv_command(venv: Path, name: str) -> Path:
-    """venv の中の命令 1 つ(python・doeff など)の path — Windows の venv は Scripts\\<名>.exe、他の機体は bin/<名>。"""
+    """The path of one command in the venv (python, doeff etc.) - on Windows Scripts\\<name>.exe, on other machines bin/<name>."""
     if os.name == "nt":
         return venv / "Scripts" / f"{name}.exe"
     return venv / "bin" / name
 
 
 def print_in_utf8() -> None:
-    """道具の印字(日本語)を UTF-8 で書く — Windows の pipe(CI の log)の既定は locale の符号(cp1252 など)で、日本語を書けずに落ちる。
+    """Write the tool's output (which contains Japanese) as UTF-8 - the default for a Windows pipe (CI log) is the locale encoding (cp1252 etc.), which cannot write Japanese and fails.
 
-    子の process の環境は変えない: 子は利用者の機体と同じく locale の符号で書き、subprocess の text の読みも locale の符号で読む。
+    The child process environment is not changed: a child writes in the locale encoding like a user's machine, and subprocess text reading also uses the locale encoding.
     """
     for stream in (sys.stdout, sys.stderr):
         if isinstance(stream, io.TextIOWrapper):
@@ -420,48 +420,48 @@ def print_in_utf8() -> None:
 
 
 def _uv(arguments: Sequence[str], cwd: Path) -> None:
-    """uv を 1 回呼ぶ(落ちたら CalledProcessError — 道具が使えない事として終了コード 2 になる)。"""
+    """Call uv once (on failure CalledProcessError - exit code 2 as the tool being unusable)."""
     print(f"$ uv {' '.join(arguments)}", flush=True)
     subprocess.run(["uv", *arguments], cwd=cwd, check=True, text=True)
 
 
 def _texts(value: object) -> tuple[str, ...]:
-    """JSON の文の列である事を確かめて持つ(違えば、venv の interpreter の答えが壊れている)。"""
+    """Check that the JSON is a list of strings and hold it (otherwise the venv interpreter's answer is broken)."""
     if not isinstance(value, list) or not all(isinstance(item, str) for item in value):
-        raise TypeError(f"venv の interpreter の答えに、文の列でない値が在る: {value!r}")
+        raise TypeError(f"the venv interpreter's answer has a value that is not a list of strings: {value!r}")
     return tuple(value)
 
 
 def _distribution(value: object) -> Distribution:
-    """JSON の [名, 版, URL, editable か] を、入った配布物 1 つとして持つ(形が違えば、venv の interpreter の答えが壊れている)。"""
+    """Hold the JSON [name, version, URL, editable] as one installed distribution (if the shape differs, the venv interpreter's answer is broken)."""
     match value:
         case [str(name), str(version), str(url), bool(editable)]:
             return Distribution(verify_release_install.normalize(name), version, url, editable)
         case _:
             raise TypeError(
-                f"venv の interpreter の答えに、入った配布物の形でない値が在る: {value!r}"
+                f"the venv interpreter's answer has a value that is not the shape of an installed distribution: {value!r}"
             )
 
 
 def install_arguments(source: Source) -> list[str]:
-    """uv pip install の、入れる物と入れ方の引数(venv の指定の後に続ける)。"""
+    """The arguments of uv pip install - what to install and how (follows the venv specification)."""
     match source:
         case Checkout():
-            # uv は path から組んだ wheel を pyproject.toml が変わるまで使い回すので、今の checkout から組み直させる。
+            # uv reuses a wheel built from a path until pyproject.toml changes, so make it rebuild from the current checkout.
             refresh = [
                 part for package in FROM_CHECKOUT for part in ("--refresh-package", package.name)
             ]
             paths = [str(REPO / package.directory) for package in FROM_CHECKOUT]
-            # --no-sources: 部品の [tool.uv.sources] の workspace = true を読むと、uv は 3 個を editable(checkout を直に読む
-            # .pth)で入れ、wheel の中身を確かめた事にならない。読まなければ、3 個は上の path から組んだ wheel で入る。
+            # --no-sources: if the components' [tool.uv.sources] workspace = true were read, uv would install the three as editable (a .pth reading the checkout
+            # directly), which would not check the wheel contents. If not read, the three are installed as wheels built from the paths above.
             return ["--no-sources", *refresh, *paths]
         case PyPI():
-            # --refresh: 手元の cache の索引を読み直す(cache に前の最新が残っていると、今日来た人が入れる版を確かめない)。
+            # --refresh: re-read the local cache index (if the previous latest remains in the cache, the version someone arriving today installs is not checked).
             return ["--refresh", "--only-binary", WHEEL_ONLY, source.requirement()]
 
 
 def install(python_request: str, place: Path, source: Source) -> Installed:
-    """place に新しい venv を作り、source の doeff を extra 無しで入れる。"""
+    """Create a fresh venv at place and install source's doeff without extras."""
     venv = place / "venv"
     _uv(["venv", "--no-project", "--python", python_request, str(venv)], place)
     python = venv_command(venv, "python")
@@ -477,10 +477,10 @@ def install(python_request: str, place: Path, source: Source) -> Installed:
     version, free_threaded = answer["version"], answer["free_threaded"]
     if not isinstance(version, str) or not isinstance(free_threaded, bool):
         raise TypeError(
-            f"venv の interpreter の版の答えが壊れている: {version!r}・{free_threaded!r}"
+            f"the venv interpreter's version answer is broken: {version!r}, {free_threaded!r}"
         )
     if not isinstance(answer["installed"], list):
-        raise TypeError(f"venv の interpreter の入った物の答えが列でない: {answer['installed']!r}")
+        raise TypeError(f"the venv interpreter's answer for installed items is not a list: {answer['installed']!r}")
     return Installed(
         python=python,
         version=version,
@@ -491,14 +491,14 @@ def install(python_request: str, place: Path, source: Source) -> Installed:
 
 
 def install_problems(installed: Installed, source: Source) -> list[str]:
-    """入った物が核の 4 個でない事と、doeff の 3 個が source から入っていない事を言う文(合えば空)。"""
+    """Messages saying the installed set is not the core four and that the three doeff ones were not installed from source (empty if all match)."""
     names = {distribution.name for distribution in installed.distributions}
     extra = sorted(names - CORE_FOUR)
     missing = sorted(CORE_FOUR - names)
     problems = (
         [
-            f"入った配布物が核の 4 個でない — 余計: {extra}・足りない: {missing}"
-            "(Hy と HTTP の物は extra hy・http・all に置く — tests/test_core_install_extras.py)"
+            f"installed distributions are not exactly the core four - extra: {extra}, missing: {missing}"
+            " (put Hy and HTTP items in extras hy, http and all - tests/test_core_install_extras.py)"
         ]
         if extra or missing
         else []
@@ -515,38 +515,38 @@ def install_problems(installed: Installed, source: Source) -> list[str]:
 def _source_problem(
     package: FromCheckout, distribution: Distribution, source: Source
 ) -> str | None:
-    """doeff の配布物 1 つが source から入っていない事を言う文(合えば None)。"""
+    """A message saying one doeff distribution was not installed from source (None if it matches)."""
     where = (
-        f"入れた所: {distribution.url or 'index'}{'(editable)' if distribution.editable else ''}"
+        f"installed from: {distribution.url or 'index'}{'(editable)' if distribution.editable else ''}"
     )
     match source:
         case Checkout():
             if distribution.editable or not _is_directory(
                 distribution.url, REPO / package.directory
             ):
-                return f"{package.name} が、この checkout({REPO / package.directory})から組んだ wheel で入っていない — {where}"
+                return f"{package.name} was not installed as a wheel built from this checkout ({REPO / package.directory}) - {where}"
             return None
         case PyPI(version=version):
             if distribution.url or distribution.editable:
-                return f"{package.name} が PyPI から入っていない — {where}"
+                return f"{package.name} was not installed from PyPI - {where}"
             if version is not None and distribution.version != version:
-                return f"{package.name} が名指した版 {version} でない — 入った版: {distribution.version}"
+                return f"{package.name} is not the named version {version} - installed version: {distribution.version}"
             return None
 
 
 def source_name(source: Source) -> str:
-    """確かめの行に書く、doeff の 3 個の入れ元。"""
+    """The source of the three doeff distributions, written on the check line."""
     match source:
         case Checkout():
-            return "checkout から組んだ wheel"
+            return "wheels built from the checkout"
         case PyPI(version=None):
-            return "PyPI の最新"
+            return "latest on PyPI"
         case PyPI(version=version):
-            return f"PyPI の {version}"
+            return f"{version} on PyPI"
 
 
 def _is_directory(url: str, directory: Path) -> bool:
-    """file の URL が directory を指すか。"""
+    """Whether the file URL points at the directory."""
     parsed = urllib.parse.urlparse(url)
     return parsed.scheme == "file" and (
         Path(urllib.request.url2pathname(parsed.path)).resolve() == directory.resolve()
@@ -554,7 +554,7 @@ def _is_directory(url: str, directory: Path) -> bool:
 
 
 def print_result(name: str, failure: str | None) -> None:
-    """確かめ 1 つの結末を 1 行で(落ちたら、その訳を続けて)印字する。"""
+    """Print the outcome of one check on one line (if it failed, followed by the reason)."""
     print(f"    {'ok' if failure is None else 'NG'}  {name}", flush=True)
     if failure is not None:
         print("        " + failure.replace("\n", "\n        "), flush=True)
@@ -562,51 +562,51 @@ def print_result(name: str, failure: str | None) -> None:
 
 @dataclass(frozen=True)
 class Readme:
-    """例を走らせる README 1 つ。"""
+    """One README whose examples are run."""
 
-    # 配布物の名(CHECKED_READMES の 1 つ)
+    # Distribution name (one of CHECKED_READMES)
     package: str
-    # 囲みの名の頭 — 落ちた事を言う文で、読み手が README を探し当てる名(例 "doeff の README"・"README.md")
+    # Head of the fence name - the name by which a reader finds the README in the failure message (e.g. "README of doeff", "README.md")
     source: str
     text: str
 
 
 @dataclass(frozen=True)
 class ReadmeSet:
-    """例を走らせる README の組 — 入った wheel の metadata の本文か、checkout(CI では GitHub の main)の file。"""
+    """A set of READMEs whose examples are run - the body of the installed wheel's metadata, or the files of the checkout (GitHub main in CI)."""
 
-    # 印字の名(「<名> の例 N 個のうち…」の頭)
+    # Printed name (the head of "<name>: N examples...")
     title: str
-    # 作業の dir の下の、例を走らせる dir の名
+    # Name of the dir under the working dir where the examples are run
     directory: str
-    # CHECKED_READMES と同じ並び
+    # Same order as CHECKED_READMES
     readmes: tuple[Readme, ...]
 
 
-# README の組の印字の名。
-WHEEL_READMES = "入った wheel の README"
-GITHUB_READMES = "GitHub の README"
-# 各配布物の README の file の名 — pyproject.toml の readme が wheel の metadata の本文に入れる物(tests/test_verify_core_install.py)。
+# Printed names of the README sets.
+WHEEL_READMES = "README of the installed wheel"
+GITHUB_READMES = "README on GitHub"
+# The README file name of each distribution - what pyproject.toml's readme puts in the body of the wheel metadata (tests/test_verify_core_install.py).
 README_FILE = "README.md"
 
 
 def wheel_readmes(installed: Installed) -> ReadmeSet:
-    """入った wheel の metadata の README(PyPI の頁が見せる物)— 入った版と同じ時に書いた README。"""
+    """The metadata README of the installed wheel (what the PyPI page shows) - the README written at the same time as the installed version."""
     return ReadmeSet(
         WHEEL_READMES,
         "examples",
         tuple(
-            Readme(package, f"{package} の README", installed.readme(package))
+            Readme(package, f"README of {package}", installed.readme(package))
             for package in CHECKED_READMES
         ),
     )
 
 
 def checkout_readmes(repo: Path = REPO) -> ReadmeSet:
-    """この checkout の README(CI では GitHub の main — 初めて来た人が GitHub で読む物)。
+    """The README of this checkout (GitHub main in CI - what a first-time visitor reads on GitHub).
 
-    PyPI から入れた版で走らせると、README が出した版より先へ進んだ(まだ出していない使い方を書いた)事を名指す — wheel の
-    README は入った版と同じ時に書いた物なので、それだけでは食い違いを見ない。
+    Run on a version installed from PyPI, it names when the README has moved ahead of the released version (describing uses not yet released) - the wheel
+    README was written at the same time as the installed version, so it alone does not see the mismatch.
     """
     directories = {package.name: package.directory for package in FROM_CHECKOUT}
     paths = [(package, directories[package] / README_FILE) for package in CHECKED_READMES]
@@ -622,66 +622,66 @@ def checkout_readmes(repo: Path = REPO) -> ReadmeSet:
 
 @dataclass(frozen=True)
 class ExampleResult:
-    """走らせた README の例 1 つの結末。"""
+    """The outcome of running one README example."""
 
     example: readme_examples.Example
-    # 落ちた事を言う文(通れば None)
+    # Message saying it failed (None if it passed)
     failure: str | None
 
 
 @dataclass(frozen=True)
 class CheckedReadme:
-    """README 1 つの例を走らせた結末。"""
+    """The outcome of running the examples of one README."""
 
-    # 走らせた例ごとの結末
+    # Outcome per example run
     results: tuple[ExampleResult, ...]
-    # 落ちた事を言う文の全部(落ちた例の全文と、約束に合わない囲み・走らせる例の無い README)
+    # All messages saying something failed (the full text of failed examples, fences that do not match the contract, READMEs with no example to run)
     failures: tuple[str, ...]
 
 
 @dataclass(frozen=True)
 class FailedExample:
-    """入った版で落ちた README の例 1 つ。"""
+    """One README example that failed on the installed version."""
 
-    # README と行(例 "README.md:42")
+    # README and line (e.g. "README.md:42")
     where: str
-    # 囲みの在る節の題
+    # Title of the section containing the fence
     section: str
-    # 落ちた訳の 1 行(例外の行など)
+    # One line giving the reason for the failure (an exception line etc.)
     error: str
 
 
 @dataclass(frozen=True)
 class ReadmeTally:
-    """README の組 1 つの例を、入った版で走らせた数え。"""
+    """The tally of running the examples of one README set on the installed version."""
 
     title: str
-    # 走らせた例の数
+    # Number of examples run
     ran: int
     failed: tuple[FailedExample, ...]
-    # 落ちた事を言う文の全部(落ちた例の全文と、約束に合わない囲み・走らせる例の無い README)
+    # All messages saying something failed (the full text of failed examples, fences that do not match the contract, READMEs with no example to run)
     failures: tuple[str, ...]
 
     def summary(self) -> list[str]:
-        """数えの行と、落ちた例ごとの節の題と訳の 1 行。"""
+        """The tally line and, per failed example, the section title and a one-line reason."""
         return [
-            f"{self.title} の例 {self.ran} 個のうち入った版で通るのは {self.ran - len(self.failed)} 個",
+            f"{self.title}: of {self.ran} examples, {self.ran - len(self.failed)} pass on the installed version",
             *(
-                f"  NG  節「{failed.section}」({failed.where}): {failed.error}"
+                f"  NG  section \"{failed.section}\" ({failed.where}): {failed.error}"
                 for failed in self.failed
             ),
         ]
 
 
 def error_line(failure: str) -> str:
-    """落ちた事を言う文の、訳の 1 行 — 最後の空でない行(落ちた例は標準エラーの最後の行の例外・注記の違いは 1 行の文)。"""
+    """The one-line reason from a failure message - the last non-empty line (for a failed example, the exception on the last stderr line; for an annotation mismatch, a one-line message)."""
     return next((line.strip() for line in reversed(failure.splitlines()) if line.strip()), "")
 
 
 def check_readmes(
     readmes: ReadmeSet, installed: Installed, place: Path, timeout: float
 ) -> ReadmeTally:
-    """README の組の Python の例を走らせ、数えを印字して返す — 核だけの利用者が写す例が動くかを見るため。"""
+    """Run the Python examples of a README set and return the tally after printing it - to see whether the examples a core-only user copies work."""
     environment = verify_release_install.example_environment(place)
     checked = [
         _check_readme(
@@ -710,7 +710,7 @@ def check_readmes(
 
 
 def _imported_modules(code: str) -> set[str]:
-    """Python の囲みが import する module の、最初の名の集まり(読めない囲みは空 — 走らせて落ちた所を見せる)。"""
+    """The set of first names of modules a Python fence imports (an unreadable fence gives empty - the failure is shown by running it)."""
     try:
         tree = ast.parse(code)
     except SyntaxError:
@@ -726,10 +726,10 @@ def _imported_modules(code: str) -> set[str]:
 
 
 def hy_extra_examples(examples: Sequence[readme_examples.Example]) -> list[readme_examples.Example]:
-    """README 1 つの囲みのうち、extra hy を足さないと走らない物 — Hy の言葉の囲みと、Hy の module を読む Python の囲み。
+    """The fences of one README that do not run without adding extra hy - Hy-language fences and Python fences that load a Hy module.
 
-    Python は `import hy` の後でだけ .hy を読めるので、`import hy` を書く囲みも、同じ README の Hy の file= の囲みが書く
-    module を import する囲みも、Hy の言語が無い核だけの venv では走らない。
+    Python can load .hy only after `import hy`, so neither a fence that writes `import hy` nor one that imports a module written by a Hy file= fence in the same README
+    runs in a core-only venv without the Hy language.
     """
     hy_files = [example for example in examples if example.language in NEEDS_AN_EXTRA]
     reads_hy = {HY_PACKAGE, *(Path(example.file).stem for example in hy_files if example.file)}
@@ -751,15 +751,15 @@ def _check_readme(
     timeout: float,
     environment: dict[str, str],
 ) -> CheckedReadme:
-    """README 1 つの例(extra hy の要る囲みを除く)を、新しい dir で上から順に走らせ、結末を返す。"""
+    """Run one README's examples (minus fences that need extra hy) top to bottom in a fresh dir and return the outcome."""
     fences = readme_examples.fences(readme.text, readme.source)
     set_aside = hy_extra_examples(fences)
     examples = [fence for fence in fences if fence not in set_aside]
     directory.mkdir(parents=True)
-    print(f"  {readme.source} の例", flush=True)
-    # 黙って検から外れないよう、extra hy の例として走らせない囲みの名を見せる。
+    print(f"  examples in {readme.source}", flush=True)
+    # So fences skipped as extra-hy examples never drop out of the check silently, show their names.
     for fence in set_aside:
-        print(f"    --  {fence.name}(extra hy の例 — 走らせない)", flush=True)
+        print(f"    --  {fence.name} (extra hy example - not run)", flush=True)
     results: list[ExampleResult] = []
 
     def record(example: readme_examples.Example, failure: str | None) -> None:
@@ -769,11 +769,11 @@ def _check_readme(
     failures = readme_examples.run_in_order(
         examples, directory, installed.python, timeout, environment=environment, on_result=record
     )
-    # 走らせる例が無い README は、確かめた事が無いので通さない(例を全部 excerpt か Hy にした時など)。
+    # A README with no runnable examples verifies nothing, so it fails (e.g. when every example became an excerpt or Hy).
     empty = (
         []
         if any(example.runs() and not example.problems() for example in examples)
-        else [f"{readme.source} に、核の 4 個だけで走らせる例が無い — 確かめた事が無い"]
+        else [f"{readme.source} has no example that runs with only the four core packages - nothing was verified"]
     )
     for missing in empty:
         print_result(readme.source, missing)
@@ -781,11 +781,11 @@ def _check_readme(
 
 
 def type_checked_examples(installed: Installed, package: str) -> list[readme_examples.Example]:
-    """README 1 つの囲みのうち、核だけの venv で型の check にかける Python の囲み(extra hy の例と、書かない excerpt は除く)。
+    """Python fences of one README to type-check in the core-only venv (excluding extra-hy examples and excerpts that are not written out).
 
-    `file=` で書く module の囲みも含める — 後の例がそれを import するので、無いと「見つからない」になる。
+    Include fences that write a module via `file=` too - later examples import it, and without it they would report "not found".
     """
-    fences = readme_examples.fences(installed.readme(package), f"{package} の README")
+    fences = readme_examples.fences(installed.readme(package), f"README of {package}")
     set_aside = hy_extra_examples(fences)
     return [
         fence
@@ -795,13 +795,13 @@ def type_checked_examples(installed: Installed, package: str) -> list[readme_exa
 
 
 def pyright_failures(report: object, checked: int) -> list[str]:
-    """pyright --outputjson の答えのうち、公開していない名と package の見つからなさ(PYRIGHT_RULES)を言う文の列と、
-    読んだ file が書いた数 checked に足りない事を言う文(合えば空)。"""
+    """Sentences naming the names pyright --outputjson reports as not public or packages not found (PYRIGHT_RULES), plus
+    a sentence when the number of files pyright read falls short of the number written, checked (empty when they match)."""
     match report:
         case {"generalDiagnostics": list(diagnostics), "summary": {"filesAnalyzed": int(analyzed)}}:
             findings = tuple(map(pyright_finding, diagnostics))
         case _:
-            raise TypeError(f"pyright の答えの形が違う: {report!r}")
+            raise TypeError(f"unexpected shape of the pyright output: {report!r}")
     named = [
         f"{Path(finding.file).name}:{finding.line + 1}: {finding.message.splitlines()[0]}  [{finding.rule}]"
         for finding in findings
@@ -809,7 +809,7 @@ def pyright_failures(report: object, checked: int) -> list[str]:
     ]
     unread = (
         [
-            f"pyright が読んだ file が {analyzed} 個で、書いた {checked} 個と違う — 型の check が例を読んでいない"
+            f"pyright read {analyzed} files, which differs from the {checked} written - the type check did not read the examples"
         ]
         if analyzed != checked
         else []
@@ -819,35 +819,35 @@ def pyright_failures(report: object, checked: int) -> list[str]:
 
 @dataclass(frozen=True)
 class PyrightFinding:
-    """pyright の所見 1 つ(--outputjson の generalDiagnostics の 1 要素)。"""
+    """One pyright finding (one element of generalDiagnostics in --outputjson)."""
 
-    # 規則の名(構文の誤りなど、規則の無い所見は "")
+    # Rule name ("" for findings without a rule, such as syntax errors)
     rule: str
     message: str
     file: str
-    # 0 から数える行
+    # Zero-based line
     line: int
 
 
 def pyright_finding(diagnostic: object) -> PyrightFinding:
-    """JSON の所見 1 つを持つ(形が違えば、pyright の答えが壊れている)。"""
+    """Hold one JSON finding (a different shape means the pyright output is broken)."""
     match diagnostic:
         case {"message": str(message), "file": str(file), "range": {"start": {"line": int(line)}}}:
             rule = diagnostic.get("rule")
             return PyrightFinding(rule if isinstance(rule, str) else "", message, file, line)
         case _:
-            raise TypeError(f"pyright の所見の形が違う: {diagnostic!r}")
+            raise TypeError(f"unexpected shape of the pyright finding: {diagnostic!r}")
 
 
 def mypy_failures(output: str, checked: int) -> list[str]:
-    """mypy の出力のうち、公開していない名と package の見つからなさ(MYPY_MARKERS)を言う行と、
-    読んだ file が書いた数 checked に足りない事を言う文(合えば空)。"""
+    """Lines of mypy output naming names that are not public or packages not found (MYPY_MARKERS), plus
+    a sentence when the number of files mypy read falls short of the number written, checked (empty when they match)."""
     named = [line for line in output.splitlines() if any(mark in line for mark in MYPY_MARKERS)]
     found = MYPY_CHECKED.search(output)
-    read = "数えられなかった" if found is None else f"{found[1]} 個"
+    read = "could not be counted" if found is None else f"{found[1]} files"
     unread = (
         [
-            f"mypy が読んだ file が {read}で、書いた {checked} 個と違う — 型の check が例を読んでいない"
+            f"mypy read {read}, which differs from the {checked} written - the type check did not read the examples"
         ]
         if found is None or int(found[1]) != checked
         else []
@@ -858,7 +858,7 @@ def mypy_failures(output: str, checked: int) -> list[str]:
 def run_checker(
     command: Sequence[str], directory: Path, timeout: float
 ) -> subprocess.CompletedProcess[str]:
-    """型の check の道具を 1 回起こす。誤りを見つけた時の終了コード 1 までは普通 — それ以外は道具が使えない事として落とす。"""
+    """Run a type checker once. Exit code 1 (errors found) is normal; any other code is raised as the tool being unusable."""
     result = subprocess.run(
         command, cwd=directory, capture_output=True, text=True, timeout=timeout, check=False
     )
@@ -870,10 +870,10 @@ def run_checker(
 
 
 def write_example(example: readme_examples.Example, directory: Path) -> Path:
-    """README の囲み 1 つを dir の下の、囲みの名の file に書く(書かない囲みは渡さない)。"""
+    """Write one README fence to a file named after the fence under the dir (never pass a fence that is not written out)."""
     name = example.written_as()
     if name is None:
-        raise ValueError(f"{example.name} は file に書かない囲み")
+        raise ValueError(f"{example.name} is a fence that is not written to a file")
     path = directory / name
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(example.code, encoding="utf-8")
@@ -881,7 +881,7 @@ def write_example(example: readme_examples.Example, directory: Path) -> Path:
 
 
 def _check_types(package: str, installed: Installed, directory: Path, timeout: float) -> list[str]:
-    """README 1 つの例を dir に書き、pyright(standard)と mypy --strict にかけて、公開していない名の誤りを言う文の列を返す。"""
+    """Write one README's examples to the dir, run pyright (standard) and mypy --strict on them, and return sentences naming errors about non-public names."""
     paths = [
         write_example(example, directory) for example in type_checked_examples(installed, package)
     ]
@@ -920,15 +920,15 @@ def _check_types(package: str, installed: Installed, directory: Path, timeout: f
     )
     for checker, found in results:
         print_result(
-            f"{package} の README の例の import を {checker} が公開の名と読む",
+            f"{checker} reads the imports in the README examples of {package} as public names",
             "\n".join(found) or None,
         )
     return [failure for _, found in results for failure in found]
 
 
 def check_head_names(installed: Installed, timeout: float) -> str | None:
-    """核だけの venv(Hy も httpx も無い)で、package の頭の名が属性として在り、star import でも結ばれる事を確かめ、
-    欠けを言う文を返す(合えば None)— 型の check に公開した名を、Hy の module を読まずに結んでいる事。"""
+    """In the core-only venv (no Hy, no httpx), check that the package's head names exist as attributes and are bound by star import too,
+    and return a sentence naming what is missing (None when they match) - that names published to the type check are bound without loading Hy modules."""
     statement = (
         "import doeff_core_effects as package\n"
         "namespace = {}\n"
@@ -946,21 +946,21 @@ def check_head_names(installed: Installed, timeout: float) -> str | None:
             check=False,
         )
     except subprocess.TimeoutExpired:
-        failure = f"package の頭の名の確かめが {timeout} 秒で終わらなかった"
+        failure = f"the package head-name check did not finish within {timeout} seconds"
     else:
         failure = (
             None
             if result.returncode == 0
-            else f"核だけの venv で、package の頭の名 {HEAD_NAMES} が揃わない\n{result.stderr}"
+            else f"in the core-only venv, the package head names {HEAD_NAMES} are not all present\n{result.stderr}"
         )
-    print_result("核だけの venv で package の頭の名が属性と star import に在る", failure)
+    print_result("in the core-only venv, the package head names exist as attributes and via star import", failure)
     return failure
 
 
 def check_public_names(installed: Installed, place: Path, timeout: float) -> list[str]:
-    """CHECKED_READMES の例が package の頭から取る名を、型の check(pyright・mypy --strict)が公開の名と読む事と、その名が核だけの
-    venv で結ばれている事を確かめ、落ちた事を言う文の列を返す — README を写した使い手の editor に、公開していない名が出ないため。"""
-    print("  型の check が README の例の import を公開の名と読む", flush=True)
+    """Check that the type checkers (pyright, mypy --strict) read the names CHECKED_READMES examples take from the package head as public,
+    and that those names are bound in the core-only venv; return sentences naming what failed - so that the editor of a user who copies the README shows no non-public names."""
+    print("  type checkers read the README example imports as public names", flush=True)
     typed = place / "typed"
     failures = [
         failure
@@ -972,22 +972,22 @@ def check_public_names(installed: Installed, place: Path, timeout: float) -> lis
 
 
 def extra_failure(use: ExtraUse, result: subprocess.CompletedProcess[str]) -> str | None:
-    """extra が要る使い方の結末が、足す extra の名を言う文で 1 を返す形でない事を言う文(合えば None)。"""
+    """Sentence saying that an extra-requiring use did not end by returning 1 with a sentence naming the extra to add (None when it did)."""
     line = f'pip install "doeff[{use.extra}]"'
     last = (result.stderr.strip().splitlines() or [""])[-1]
-    # 3.15 から traceback は名を持つ ModuleNotFoundError の行の末尾に似た module の名を足す(`. Did you mean: 'doeff_vm'?`)—
-    # MissingExtraError の文の後ろに付くので、その後書きを除いて比べる。
+    # From 3.15 the traceback appends a similar module name to the end of the named ModuleNotFoundError line (`. Did you mean: 'doeff_vm'?`) -
+    # it follows the MissingExtraError sentence, so strip that suffix before comparing.
     last = _SUGGESTION_SUFFIX.sub("", last)
     if result.returncode == 1 and last.endswith(line):
         return None
     return (
-        f"{use.name} が、終了コード 1 と最後の行の {line} で落ちなかった"
-        f"(終了コード {result.returncode})\n{result.stdout}{result.stderr}"
+        f"{use.name} did not fail with exit code 1 and last line {line}"
+        f"(exit code {result.returncode})\n{result.stdout}{result.stderr}"
     )
 
 
 def check_extra_uses(installed: Installed, place: Path, timeout: float) -> list[str]:
-    """EXTRA_USES を走らせ、足す extra の名を言わなかった物を言う文の列を返す。"""
+    """Run EXTRA_USES and return sentences naming the ones that did not name the extra to add."""
     directory = place / "extra-uses"
     for written in HY_PROGRAM_FILES:
         (directory / written.path).parent.mkdir(parents=True, exist_ok=True)
@@ -996,7 +996,7 @@ def check_extra_uses(installed: Installed, place: Path, timeout: float) -> list[
         **verify_release_install.example_environment(place),
         "PYTHONPATH": str(directory),
     }
-    print("  Hy と HTTP の extra が要る使い方", flush=True)
+    print("  uses that need the Hy and HTTP extras", flush=True)
     return [
         failure
         for use in EXTRA_USES
@@ -1011,7 +1011,7 @@ def _run_extra_use(
     environment: dict[str, str],
     timeout: float,
 ) -> str | None:
-    """使い方 1 つを venv の命令で走らせて結末を印字し、足す extra の名を言わなかった事を言う文を返す(言えば None)。"""
+    """Run one use with the venv's command, print the outcome, and return a sentence saying it did not name the extra to add (None if it did)."""
     try:
         result = subprocess.run(
             [str(installed.command(use.program)), *use.arguments],
@@ -1024,36 +1024,36 @@ def _run_extra_use(
         )
         failure = extra_failure(use, result)
     except subprocess.TimeoutExpired:
-        failure = f"{use.name} が {timeout} 秒で終わらなかった"
+        failure = f"{use.name} did not finish within {timeout} seconds"
     print_result(use.name, failure)
     return failure
 
 
 def demo_failure(result: subprocess.CompletedProcess[str]) -> str | None:
-    """試しの命令の結末が、0 で終わり、4 つの handler の答えの行をその順に印字した形でない事を言う文(合えば None)。"""
+    """Sentence saying the demo command's outcome did not end with 0 and print the four handlers' answer lines in that order (None when it did)."""
     expected = (
         DEMO_CANNED_ANSWER,
         DEMO_TRACE_LINE,
         DEMO_BUDGET_ANSWER,
         repr(f"{len(DEMO_PAGE)} chars"),
     )
-    # 行の iterator を前から読み進め、expected の各行をその前の行より後ろに探す(間に別の行を挟んでよい)。
+    # Read the line iterator forward and look for each expected line after the previous one (other lines may sit between).
     printed = iter(result.stdout.splitlines())
     if result.returncode == 0 and all(line in printed for line in expected):
         return None
     return (
-        f"python -m doeff demo が、終了コード 0 で 4 つの handler の答えの行 {' → '.join(expected)} をその順に"
-        f"印字しなかった(終了コード {result.returncode})\n{result.stdout}{result.stderr}"
+        f"python -m doeff demo did not exit with code 0 and print the four handlers' answer lines {' → '.join(expected)} in that order"
+        f"(exit code {result.returncode})\n{result.stdout}{result.stderr}"
     )
 
 
 def check_demo(installed: Installed, place: Path, timeout: float) -> list[str]:
-    """試しの命令を核だけの venv で走らせ、落ちた事を言う文の列を返す(通れば空)— `pip install doeff` の直後に打つ命令が動くかを見るため。"""
+    """Run the demo command in the core-only venv and return sentences naming what failed (empty when it passes) - to see whether the command typed right after `pip install doeff` works."""
     directory = place / "demo"
     directory.mkdir()
     page = directory / "page.html"
     page.write_text(DEMO_PAGE, encoding="utf-8")
-    print("  試しの命令(README の入れ方の直後に案内する物)", flush=True)
+    print("  demo command (the one shown right after the README install steps)", flush=True)
     try:
         result = subprocess.run(
             [str(installed.python), *DEMO_ARGUMENTS, "--url", page.as_uri()],
@@ -1065,33 +1065,33 @@ def check_demo(installed: Installed, place: Path, timeout: float) -> list[str]:
             check=False,
         )
     except subprocess.TimeoutExpired:
-        failure = f"python -m doeff demo が {timeout} 秒で終わらなかった"
+        failure = f"python -m doeff demo did not finish within {timeout} seconds"
     else:
         failure = demo_failure(result)
     print_result(
-        "python -m doeff demo が、同じ digest を 4 つの handler で走らせた答えをその順に言う",
+        "python -m doeff demo prints the answers of running the same digest through the four handlers, in that order",
         failure,
     )
     return [] if failure is None else [failure]
 
 
 def llm_example_failure(result: subprocess.CompletedProcess[str]) -> str | None:
-    """LLM の agent の例の結末が、0 で終わり偽の model の答えの行を印字した形でない事を言う文(合えば None)。"""
+    """Sentence saying the LLM agent example's outcome did not end with 0 and print the fake model's answer line (None when it did)."""
     if result.returncode == 0 and LLM_EXAMPLE_ANSWER in result.stdout.splitlines():
         return None
     return (
-        f"{LLM_EXAMPLE_SCRIPT} が、終了コード 0 で答えの行 {LLM_EXAMPLE_ANSWER!r} を印字しなかった"
-        f"(終了コード {result.returncode})\n{result.stdout}{result.stderr}"
+        f"{LLM_EXAMPLE_SCRIPT} did not exit with code 0 and print the answer line {LLM_EXAMPLE_ANSWER!r} "
+        f"(exit code {result.returncode})\n{result.stdout}{result.stderr}"
     )
 
 
 def llm_tests_failure(result: subprocess.CompletedProcess[str]) -> str | None:
-    """検の例の pytest の結末が、0 で終わり要約の行が passed で始まる形でない事を言う文(合えば None)。"""
+    """Sentence saying the test example's pytest outcome did not end with 0 and a summary line starting with passed (None when it did)."""
     lines = result.stdout.splitlines()
     if result.returncode == 0 and lines and re.match(r"\d+ passed\b", lines[-1]):
         return None
     return (
-        f"pytest {LLM_EXAMPLE_TESTS} が、終了コード 0 で通らなかった(終了コード {result.returncode})\n"
+        f"pytest {LLM_EXAMPLE_TESTS} did not pass with exit code 0 (exit code {result.returncode})\n"
         f"{result.stdout}{result.stderr}"
     )
 
@@ -1103,9 +1103,9 @@ def _llm_example_run_failure(
     judge: Callable[[subprocess.CompletedProcess[str]], str | None],
     timeout: float,
 ) -> str | None:
-    """LLM の agent の例の dir で venv の python を 1 回走らせ、judge が言う落ちた訳か、時間切れの訳を返す(通れば None)。
+    """Run the venv's python once in the LLM agent example's dir and return the reason the judge says it failed, or a timeout reason (None when it passes).
 
-    model の key を読まない事を見るため、OPENAI_ の環境変数を外す。
+    Strip OPENAI_ environment variables to see that it does not read a model key.
     """
     environment = {
         name: value
@@ -1123,76 +1123,76 @@ def _llm_example_run_failure(
             check=False,
         )
     except subprocess.TimeoutExpired:
-        return f"python {' '.join(arguments)} が {timeout} 秒で終わらなかった"
+        return f"python {' '.join(arguments)} did not finish within {timeout} seconds"
     return judge(result)
 
 
 def check_llm_example(installed: Installed, place: Path, timeout: float) -> list[str]:
-    """LLM の agent の例を核だけの venv で走らせ、pytest を足して検の例を走らせ、落ちた事を言う文の列を返す(通れば空)。
+    """Run the LLM agent example in the core-only venv, add pytest and run the test example, and return sentences naming what failed (empty when it passes).
 
-    利用者と同じく、例の 2 つの file だけを置いた dir で走らせる。pytest を venv に足すので、核の 4 個だけを見る確かめの後に呼ぶ。
+    Like a user, run in a dir holding only the example's two files. This adds pytest to the venv, so call it after the check that looks at only the four core packages.
     """
     directory = place / LLM_EXAMPLE_DIRECTORY
     directory.mkdir()
     for name in LLM_EXAMPLE_FILES:
         shutil.copy(REPO / name, directory / Path(name).name)
     print(
-        "  LLM の agent の例(README と docs/index.md が pip install doeff だけで走ると案内する物)",
+        "  LLM agent example (what the README and docs/index.md say runs with just pip install doeff)",
         flush=True,
     )
     script_failure = _llm_example_run_failure(
         installed, place, [LLM_EXAMPLE_SCRIPT], llm_example_failure, timeout
     )
-    print_result(f"{LLM_EXAMPLE_SCRIPT} が偽の model の答えを言う", script_failure)
+    print_result(f"{LLM_EXAMPLE_SCRIPT} prints the fake model's answer", script_failure)
     _uv(["pip", "install", "--python", str(installed.python), "pytest"], place)
     tests_failure = _llm_example_run_failure(
         installed, place, ["-m", "pytest", "-q", LLM_EXAMPLE_TESTS], llm_tests_failure, timeout
     )
-    print_result(f"核の 4 個と pytest だけで pytest {LLM_EXAMPLE_TESTS} が通る", tests_failure)
+    print_result(f"pytest {LLM_EXAMPLE_TESTS} passes with only the four core packages and pytest", tests_failure)
     return [failure for failure in (script_failure, tests_failure) if failure is not None]
 
 
 def article_script_failure(
     script: ArticleScript, result: subprocess.CompletedProcess[str]
 ) -> str | None:
-    """記事の例の script 1 回の結末が、0 で終わり、標準エラーが空で、記事の見せる行をその順に印字した形でない事を言う文(合えば None)。
+    """Sentence saying one run of an article example script did not exit 0 with empty stderr and print the lines the article shows, in that order (None when it did).
 
-    timed の script は、最後の行が掛かった秒で、SEQUENTIAL_SECONDS より短い事も見る。
+    For a timed script, also check that the last line's elapsed seconds is shorter than SEQUENTIAL_SECONDS.
     """
     printed = result.stdout.splitlines()
     shown = printed[:-1] if script.timed and printed else printed
     timed = ARTICLE_TIMED_LINE.fullmatch(printed[-1]) if script.timed and printed else None
     if result.returncode != 0 or result.stderr:
-        problem = f"終了コード 0 で、標準エラーに何も出さずに終わらなかった(終了コード {result.returncode})"
+        problem = f"did not exit with code 0 with nothing on stderr (exit code {result.returncode})"
     elif shown != list(script.lines):
-        problem = f"記事の見せる行 {list(script.lines)!r} をその順に印字しなかった"
+        problem = f"did not print the lines the article shows {list(script.lines)!r} in that order"
     elif script.timed and timed is None:
-        problem = "最後の行に掛かった秒(`0.20 s` の形)を印字しなかった"
+        problem = "did not print the elapsed seconds on the last line (in the form `0.20 s`)"
     elif timed is not None and float(timed.group(1)) >= SEQUENTIAL_SECONDS:
-        problem = f"取り寄せが並行に走らなかった({timed.group(1)} 秒 — 1 つずつなら {SEQUENTIAL_SECONDS} 秒)"
+        problem = f"the fetches did not run concurrently ({timed.group(1)} seconds - {SEQUENTIAL_SECONDS} if one at a time)"
     else:
         return None
-    return f"{script.label()} が{problem}\n{result.stdout}{result.stderr}"
+    return f"{script.label()} {problem}\n{result.stdout}{result.stderr}"
 
 
 def article_tests_failure(result: subprocess.CompletedProcess[str]) -> str | None:
-    """記事の例の dir の pytest の結末が、0 で終わり、最後の行が失敗も skip も警告も無い passed の要約の形でない事を言う文(合えば None)。"""
+    """Sentence saying the pytest outcome in the article example dir did not end with 0 and a last line that is a passed summary with no failures, skips, or warnings (None when it did)."""
     lines = result.stdout.splitlines()
     if result.returncode == 0 and lines and PASSED_SUMMARY.fullmatch(lines[-1]):
         return None
     return (
-        f"{ARTICLE_EXAMPLE_DIRECTORY} の pytest が、終了コード 0 で全部通らなかった(終了コード {result.returncode})\n"
+        f"pytest in {ARTICLE_EXAMPLE_DIRECTORY} did not pass everything with exit code 0 (exit code {result.returncode})\n"
         f"{result.stdout}{result.stderr}"
     )
 
 
 def spire_tests_failure(result: subprocess.CompletedProcess[str]) -> str | None:
-    """test_spire.py の pytest の結末が、0 で終わり、最後の行が失敗も skip も警告も無い passed の要約の形でない事を言う文(合えば None)。"""
+    """Sentence saying the pytest outcome of test_spire.py did not end with 0 and a last line that is a passed summary with no failures, skips, or warnings (None when it did)."""
     lines = result.stdout.splitlines()
     if result.returncode == 0 and lines and PASSED_SUMMARY.fullmatch(lines[-1]):
         return None
     return (
-        f"{SPIRE_TEST_FILES[0]} の pytest が、終了コード 0 で全部通らなかった(終了コード {result.returncode})\n"
+        f"pytest of {SPIRE_TEST_FILES[0]} did not pass everything with exit code 0 (exit code {result.returncode})\n"
         f"{result.stdout}{result.stderr}"
     )
 
@@ -1205,11 +1205,11 @@ def _article_run_failure(
     judge: Callable[[subprocess.CompletedProcess[str]], str | None],
     timeout: float,
 ) -> str | None:
-    """記事の例の dir で venv の python を 1 回走らせ、judge が言う落ちた訳か、時間切れの訳を返す(通れば None)。
+    """Run the venv's python once in the article example dir and return the reason the judge says it failed, or a timeout reason (None when it passes).
 
-    -I を付けない — 例の file は同じ dir の file を import する(trace.py が production.py を読む)ので、読み手が打つ
-    `python trace.py` と同じく、script の dir が sys.path の頭に要る(-I は -P を含み、それを外す)。dir は repo の外の写しなので、
-    checkout の doeff を拾わない。
+    Do not pass -I - example files import files in the same dir (trace.py reads production.py), so like the
+    `python trace.py` the reader types, the script's dir must be at the head of sys.path (-I includes -P, which removes it). The dir is a copy outside the repo, so
+    it does not pick up the checkout's doeff.
     """
     try:
         result = subprocess.run(
@@ -1222,27 +1222,27 @@ def _article_run_failure(
             check=False,
         )
     except subprocess.TimeoutExpired:
-        return f"python {' '.join(arguments)} が {timeout} 秒で終わらなかった"
+        return f"python {' '.join(arguments)} did not finish within {timeout} seconds"
     return judge(result)
 
 
 def spire_failure(result: subprocess.CompletedProcess[str]) -> str | None:
-    """spire.py の結末が、0 で終わり、標準エラーが空で、見出しと 1 層目の後の行が決めた通りでない事を言う文(合えば None)。"""
+    """Sentence saying the outcome of spire.py did not exit 0 with empty stderr and match the decided heading and lines after the first layer (None when it did)."""
     printed = result.stdout.splitlines()
     if result.returncode != 0 or result.stderr:
-        problem = f"終了コード 0 で、標準エラーに何も出さずに終わらなかった(終了コード {result.returncode})"
+        problem = f"did not exit with code 0 with nothing on stderr (exit code {result.returncode})"
     elif printed[:1] != [SPIRE_FIRST_LINE]:
-        problem = f"最初の行が {SPIRE_FIRST_LINE!r} でなかった"
+        problem = f"the first line was not {SPIRE_FIRST_LINE!r}"
     elif tuple(printed[-len(SPIRE_LAST_LINES) :]) != SPIRE_LAST_LINES:
-        problem = f"最後の行が決めた {list(SPIRE_LAST_LINES)!r} と違った"
+        problem = f"the last lines differed from the decided {list(SPIRE_LAST_LINES)!r}"
     else:
         return None
-    return f"{SPIRE_FILE.name} が{problem}\n{result.stdout}{result.stderr}"
+    return f"{SPIRE_FILE.name} {problem}\n{result.stdout}{result.stderr}"
 
 
 def check_spire(installed: Installed, place: Path, timeout: float) -> str | None:
-    """spire.py を、読み手と同じく写した dir で `python spire.py` と走らせ、落ちた訳を返す(通れば None)。"""
-    # 例の dir の全部は check_tour_examples が place / effects_tour に写すので、spire.py の組は別の dir に置く
+    """Run spire.py as `python spire.py` in a copied dir, like a reader, and return the reason it failed (None when it passes)."""
+    # check_tour_examples copies the whole example dir to place / effects_tour, so put the spire.py set in a separate dir
     directory = place / SPIRE_FILE.stem
     directory.mkdir()
     for path in (SPIRE_FILE, *SPIRE_TEST_FILES):
@@ -1255,15 +1255,15 @@ def check_spire(installed: Installed, place: Path, timeout: float) -> str | None
         spire_failure,
         timeout,
     )
-    print_result(f"{SPIRE_FILE.name} が 6 つの層の答えを決めた通りに印字する", failure)
+    print_result(f"{SPIRE_FILE.name} prints the answers of the six layers as decided", failure)
     return failure
 
 
 def check_article_examples(installed: Installed, place: Path, timeout: float) -> list[str]:
-    """紹介の記事の例の dir を核だけの venv で走らせ、pytest を足して dir の検を走らせ、落ちた事を言う文の列を返す(通れば空)。
+    """Run the intro article's example dir in the core-only venv, add pytest and run the dir's tests, and return sentences naming what failed (empty when it passes).
 
-    読み手と同じく、例の dir を写した所で走らせる。警告も誤りとして扱う(記事は印字を囲みのまま見せる)。pytest を venv に
-    足すので、核の 4 個だけを見る確かめの後に呼ぶ。
+    Like a reader, run in a copy of the example dir. Warnings count as errors too (the article shows the printed output as is). This adds pytest to the venv, so
+    call it after the check that looks at only the four core packages.
     """
     directory = place / ARTICLE_EXAMPLE_DIRECTORY.name
     shutil.copytree(
@@ -1272,7 +1272,7 @@ def check_article_examples(installed: Installed, place: Path, timeout: float) ->
         ignore=shutil.ignore_patterns("__pycache__", ".pytest_cache"),
     )
     print(
-        f"  紹介の記事の例({ARTICLE_EXAMPLE_DIRECTORY} — 記事が pip install doeff で走ると書く物)",
+        f"  intro article examples ({ARTICLE_EXAMPLE_DIRECTORY} - what the article says runs with pip install doeff)",
         flush=True,
     )
     environment = verify_release_install.example_environment(place)
@@ -1286,7 +1286,7 @@ def check_article_examples(installed: Installed, place: Path, timeout: float) ->
             functools.partial(article_script_failure, script),
             timeout,
         )
-        print_result(f"{script.label()} が記事の見せる行を印字する", failure)
+        print_result(f"{script.label()} prints the lines the article shows", failure)
         failures.extend([] if failure is None else [failure])
     spire = check_spire(installed, place, timeout)
     _uv(["pip", "install", "--python", str(installed.python), "pytest"], place)
@@ -1298,7 +1298,7 @@ def check_article_examples(installed: Installed, place: Path, timeout: float) ->
         article_tests_failure,
         timeout,
     )
-    print_result("核の 4 個と pytest だけで、例の dir の pytest が全部通る", tests_failure)
+    print_result("pytest in the example dir passes everything with only the four core packages and pytest", tests_failure)
     spire_tests = _article_run_failure(
         installed,
         place / SPIRE_FILE.stem,
@@ -1307,7 +1307,7 @@ def check_article_examples(installed: Installed, place: Path, timeout: float) ->
         spire_tests_failure,
         timeout,
     )
-    print_result("核の 4 個と pytest だけで、spire.py の横の test_spire.py が全部通る", spire_tests)
+    print_result("test_spire.py next to spire.py passes everything with only the four core packages and pytest", spire_tests)
     return [
         *failures,
         *([] if spire is None else [spire]),
@@ -1317,9 +1317,9 @@ def check_article_examples(installed: Installed, place: Path, timeout: float) ->
 
 
 def tour_script_failure(name: str, result: subprocess.CompletedProcess[str]) -> str | None:
-    """effects_tour の script 1 本の結末が、0 で終わり、必要な最後の行を印字した形でない事を言う文(合えば None)。
+    """Sentence saying one effects_tour script's outcome did not end with 0 and print the required last line (None when it did).
 
-    標準エラーは、repo の版が旧い `await_handler()` の呼びに出す DeprecationWarning(その行と、警告が写す source の行)だけを許す。
+    For stderr, allow only the DeprecationWarning the repo's older version emits for `await_handler()` calls (that line and the source line the warning echoes).
     """
     last = TOUR_SCRIPTS[name]
     printed = result.stdout.splitlines()
@@ -1327,22 +1327,22 @@ def tour_script_failure(name: str, result: subprocess.CompletedProcess[str]) -> 
         line for line in result.stderr.splitlines() if line.strip() and "await_handler" not in line
     ]
     if result.returncode != 0 or unexpected:
-        problem = f"終了コード 0 で、標準エラーに何も出さずに終わらなかった(終了コード {result.returncode})"
+        problem = f"did not exit with code 0 with nothing on stderr (exit code {result.returncode})"
     elif not printed:
-        problem = "何も印字しなかった"
+        problem = "printed nothing"
     elif last is not None and not (last[0] in printed and printed[-1] == last[-1]):
-        problem = f"最後に {list(last)!r} を印字しなかった"
+        problem = f"did not print {list(last)!r} last"
     else:
         return None
-    return f"{name} が{problem}\n{result.stdout}{result.stderr}"
+    return f"{name} {problem}\n{result.stdout}{result.stderr}"
 
 
 def check_tour_examples(installed: Installed, place: Path, timeout: float) -> list[str]:
-    """記事 1 本目の例の dir から 2 本を、核だけの venv で写した dir から走らせ、落ちた事を言う文の列を返す(通れば空)。"""
+    """Run two scripts from the first article's example dir, from a copy in the core-only venv, and return sentences naming what failed (empty when it passes)."""
     directory = place / TOUR_DIRECTORY.name
     shutil.copytree(REPO / TOUR_DIRECTORY, directory, ignore=shutil.ignore_patterns("__pycache__"))
     print(
-        f"  記事 1 本目の例({TOUR_DIRECTORY} — 記事が pip install doeff で走ると書く物)", flush=True
+        f"  first article examples ({TOUR_DIRECTORY} - what the article says runs with pip install doeff)", flush=True
     )
     environment = verify_release_install.example_environment(place)
     failures: list[str] = []
@@ -1355,70 +1355,70 @@ def check_tour_examples(installed: Installed, place: Path, timeout: float) -> li
             functools.partial(tour_script_failure, name),
             timeout,
         )
-        print_result(f"{name} が通り、記事の本番の stack まで印字する", failure)
+        print_result(f"{name} passes and prints through the article's production stack", failure)
         failures.extend([] if failure is None else [failure])
     return failures
 
 
 def check_python(python_request: str, work: Path, timeout: float, source: Source) -> list[str]:
-    """Python の版 1 つで、新しい venv に核だけを入れて確かめ、落ちた事を言う文の列を返す。"""
+    """Verify with only the core installed into a fresh venv for one Python version, and return sentences naming what failed."""
     place = work / f"py{python_request.replace('+', '-')}"
     place.mkdir(parents=True)
     print(
-        f"\n== Python {python_request}: 新しい venv に doeff({source_name(source)})を extra 無しで入れる",
+        f"\n== Python {python_request}: install doeff ({source_name(source)}) into a fresh venv without extras",
         flush=True,
     )
     installed = install(python_request, place, source)
     build_kind = "free-threading" if installed.free_threaded else "GIL"
     print(f"  interpreter {installed.version}({build_kind})・{installed.python}", flush=True)
     names = sorted(f"{d.name} {d.version}" for d in installed.distributions)
-    print(f"  入った配布物: {'・'.join(names)}", flush=True)
+    print(f"  installed distributions: {', '.join(names)}", flush=True)
     problems = install_problems(installed, source)
     print_result(
-        f"入った物がちょうど核の 4 個で、doeff の 3 個は {source_name(source)}",
+        f"the installed distributions are exactly the four core packages, and the three doeff ones are {source_name(source)}",
         "\n".join(problems) or None,
     )
     if isinstance(source, PyPI):
-        # extra の文・試しの命令・LLM の例の期待は checkout の物で、出した版より新しい事が在る。wheel の README は入った版と
-        # 同じ時に書いた物なので版に合う。GitHub の README と記事の例は、今日の pip install doeff で走ると読み手に約束する。
+        # The expectations for the extra sentences, demo command, and LLM example come from the checkout, which can be newer than the released version. The wheel's README was written at the same time as the installed version,
+        # so it matches. The GitHub README and the article examples promise readers they run with today's pip install doeff.
         return [
             *problems,
             *check_readmes(wheel_readmes(installed), installed, place, timeout).failures,
-            # 初めて来た人が読む GitHub の README を入った版で — README が出した版より先へ進むと落ちる。
+            # Check the GitHub README, which first-time visitors read, against the installed version - it fails if the README gets ahead of the released version.
             *check_readmes(checkout_readmes(), installed, place, timeout).failures,
             *check_public_names(installed, place, timeout),
-            # venv に pytest を足すので最後に置く。
+            # Add pytest to the venv, so put this last.
             *check_article_examples(installed, place, timeout),
             *check_tour_examples(installed, place, timeout),
         ]
     return [
         *problems,
-        # checkout から組んだ wheel の README は checkout の README と同じ物なので、1 度だけ走らせる。
+        # The wheel README built from the checkout is the same as the checkout's README, so run it only once.
         *check_readmes(wheel_readmes(installed), installed, place, timeout).failures,
         *check_public_names(installed, place, timeout),
         *check_extra_uses(installed, place, timeout),
         *check_demo(installed, place, timeout),
-        # venv に pytest を足すので最後に置く。
+        # Add pytest to the venv, so put this last.
         *check_llm_example(installed, place, timeout),
-        # 8 と 9 は走らせない — 記事の例は PyPI の版に留めて書く(ADR-DOE-API-002 R3)ので、checkout の版で走らせると checkout の
-        # API が変わるたびに落ちる。確かめは --pypi だけが持つ。
+        # Do not run 8 and 9 - the article examples are written to stay at the PyPI version (ADR-DOE-API-002 R3), so running them at the checkout version fails whenever the checkout
+        # API changes. Only --pypi holds that check.
     ]
 
 
 def parse_source(pypi: str | None) -> Source:
-    """--pypi の値を入れ元にする(無ければ checkout・latest は PyPI の最新)。"""
+    """Make the --pypi value the install source (checkout if absent; latest means the newest on PyPI)."""
     if pypi is None:
         return Checkout()
     return PyPI(None if pypi == LATEST else pypi)
 
 
 def _parse(argv: Sequence[str] | None) -> argparse.Namespace:
-    """引数を読む — Python の版と、作業の dir を残すか。"""
+    """Read the arguments - the Python versions, and whether to keep the work dir."""
     parser = argparse.ArgumentParser(
         description=(
-            "核の 4 個だけを入れた新しい venv で、README の Python の例と、その例の import が型の check で公開の名と読まれる事と、"
-            "Hy・HTTP の extra を言う文と、試しの命令 python -m doeff demo と、LLM の agent の例とその pytest の検の例と、"
-            "紹介の記事の例を確かめる。"
+            "In a fresh venv with only the four core packages, verify the README Python examples, that their imports are read as public names by the type checkers, "
+            "the sentences naming the Hy and HTTP extras, the demo command python -m doeff demo, the LLM agent example and its pytest test example, "
+            "and the intro article examples."
         ),
     )
     parser.add_argument(
@@ -1426,45 +1426,45 @@ def _parse(argv: Sequence[str] | None) -> argparse.Namespace:
         action="append",
         dest="pythons",
         metavar="REQUEST",
-        help=f"uv に渡す Python の指定(何度でも書ける・既定 {' と '.join(DEFAULT_PYTHONS)})",
+        help=f"Python spec to pass to uv (repeatable; default {' and '.join(DEFAULT_PYTHONS)})",
     )
     parser.add_argument(
         "--pypi",
         metavar="VERSION",
         help=(
-            f"checkout の代わりに PyPI の doeff の版を入れる({LATEST} は最新)— 入った版の README の例と型の check と、"
-            "この checkout(GitHub)の README の例と、紹介の記事の例だけを確かめる"
+            f"install this PyPI doeff version instead of the checkout ({LATEST} is the newest) - verify only the installed version's README examples and type checks, "
+            "the checkout (GitHub) README examples, and the intro article examples"
         ),
     )
-    parser.add_argument("--keep", action="store_true", help="終わった後も作業の dir を消さない")
+    parser.add_argument("--keep", action="store_true", help="do not delete the work dir after finishing")
     parser.add_argument(
         "--timeout",
         type=float,
         default=CHILD_TIMEOUT_SECONDS,
-        help="子の process 1 つの制限時間(秒・既定 %(default)s)",
+        help="time limit for one child process (seconds; default %(default)s)",
     )
     return parser.parse_args(argv)
 
 
 def main(argv: Sequence[str] | None = None) -> int:
-    """入口 — Python の版ごとに確かめ、結末を印字して終了コードを返す。"""
+    """Entry point - verify per Python version, print the outcome, and return the exit code."""
     print_in_utf8()
     arguments = _parse(argv)
     pythons = tuple(arguments.pythons or DEFAULT_PYTHONS)
     source = parse_source(arguments.pypi)
     if shutil.which("uv") is None:
-        print("uv が PATH に無い — https://docs.astral.sh/uv/ の手順で入れる", file=sys.stderr)
+        print("uv is not on PATH - install it by following https://docs.astral.sh/uv/", file=sys.stderr)
         return 2
-    # repo の外(uv が repo の pyproject.toml の [tool.uv] を読まず、例の import が checkout の doeff を拾わない)。
+    # Outside the repo (uv does not read the repo's [tool.uv] in pyproject.toml, and the example imports do not pick up the checkout's doeff).
     work = Path(tempfile.mkdtemp(prefix="doeff-core-install-check-"))
-    print(f"作業の dir: {work}", flush=True)
+    print(f"work dir: {work}", flush=True)
     try:
         results = {
             python: check_python(python, work, arguments.timeout, source) for python in pythons
         }
     except subprocess.CalledProcessError as failed:
         print(
-            f"\nvenv か install が落ちた(確かめまでは進んでいない・終了コード {failed.returncode}): "
+            f"\nvenv or install failed (did not reach verification, exit code {failed.returncode}): "
             f"{' '.join(map(str, failed.cmd))}",
             file=sys.stderr,
         )
@@ -1473,17 +1473,17 @@ def main(argv: Sequence[str] | None = None) -> int:
         return 2
     finally:
         if arguments.keep:
-            print(f"\n作業の dir を残した: {work}", flush=True)
+            print(f"\nkept the work dir: {work}", flush=True)
         else:
             shutil.rmtree(work, ignore_errors=True)
-    print("\n== 結末", flush=True)
+    print("\n== outcome", flush=True)
     for python, failures in results.items():
         print(
-            f"  Python {python}: {'通った' if not failures else f'NG {len(failures)} 個'}",
+            f"  Python {python}: {'passed' if not failures else f'NG {len(failures)} failures'}",
             flush=True,
         )
     passed = not any(results.values())
-    print("\n全部通った" if passed else "\n落ちた所が在る — 上の NG の行を読む", flush=True)
+    print("\nall passed" if passed else "\nsome checks failed - read the NG lines above", flush=True)
     return 0 if passed else 1
 
 

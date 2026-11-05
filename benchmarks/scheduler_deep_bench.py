@@ -1,19 +1,19 @@
-"""深い handler の下で、待つ task が多い時の scheduler の 1 操作の thread の CPU を測る。
+"""Measure the thread CPU of one scheduler operation under deep handlers when many tasks are waiting.
 
     uv run python benchmarks/scheduler_deep_bench.py
     uv run python benchmarks/scheduler_deep_bench.py --layers 0 80 --parked 0 2000 --ops 400 --impl rust
 
-本番の画面のサーバーの形に寄せた模擬: 本体(と Spawn した task)と scheduler の間に、ほかの effect を解く型つきの
-handler を ``--layers`` 段 置き(scheduler の effect は全段を素通りする)、``--parked`` 本の daemon の task を外の約束で
-待たせる(半分は WaitWithin(park=True) — 期限の timer の task も 1 本ずつ待つ、半分は素の Wait)。その上で本体が
-1 操作を ``--ops`` 回する:
+A simulation close to the shape of the production screen server: between the body (and Spawned tasks) and the scheduler, place ``--layers`` layers of typed
+handlers that solve other effects (the scheduler's effects pass straight through every layer), and make ``--parked`` daemon tasks wait on external promises
+(half with WaitWithin(park=True) -- each also waits for a deadline-timer task, half with a plain Wait). On top of that the body performs
+one operation ``--ops`` times:
 
-- ``timed_wait``: 外の約束を作って完了し、WaitWithin(park=True) で受ける(turn-host が CLI の 1 行ごとにする待ち)
-- ``blocking_wait``: 外の約束を park なしで待ち、scheduler が止まって別の thread からの完了を受ける
-  (止まっている間は thread の CPU に数えない)
-- ``spawn_wait``: 何もしない task を Spawn して Wait する
+- ``timed_wait``: create an external promise and complete it, receiving with WaitWithin(park=True) (the wait turn-host does for each CLI line)
+- ``blocking_wait``: wait for an external promise without park, with the scheduler stopped, receiving the completion from another thread
+  (time while stopped is not counted in thread CPU)
+- ``spawn_wait``: Spawn a task that does nothing and Wait for it
 
-1 操作の thread の CPU(time.thread_time の差 / 回数 — 中央値は repeat 回の中の値)を µs で出す。
+Prints the thread CPU of one operation (difference of time.thread_time / count -- the median is the value within repeat runs) in µs.
 """
 
 from __future__ import annotations
@@ -34,7 +34,7 @@ from doeff import EffectBase, Resume, do, handler, run, with_handlers
 
 
 class Unrelated(EffectBase[int]):
-    """深い handler の段が解く effect(scheduler の effect はどの段も受けない)。"""
+    """An effect solved by a layer of the deep handler (the scheduler's effects are not received by any layer)."""
 
 
 @handler

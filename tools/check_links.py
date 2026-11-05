@@ -1,38 +1,38 @@
-"""README・docs・PyPI の頁に出る README の link が切れていない事を確かめる(取り組み doeff-publish の区切り 11)。
+"""Check that the links in README, docs, and the READMEs shown on PyPI pages are not broken (doeff-publish initiative, milestone 11).
 
-読む file(既定 — 初めて来た人が GitHub と PyPI で押す link の在る所): 根の README.md・CONTRIBUTING.md・CHANGELOG.md・CODE_OF_CONDUCT.md・SECURITY.md・
-docs/ の下の全部の *.md・packages/*/README.md。git に載っている file だけを読む(載っていない file は GitHub に無い)。
-設計の記録の dir(根の pyproject.toml の `[tool.doeff] record-dirs`)の下は読まない — 記録はその時点の証拠で、写しの
-文を後から書き換えない。
+Files read (default -- where the links a first-time visitor clicks on GitHub and PyPI live): the root README.md, CONTRIBUTING.md, CHANGELOG.md, CODE_OF_CONDUCT.md, SECURITY.md,
+every *.md under docs/, and packages/*/README.md. Only git-tracked files are read (untracked files do not exist on GitHub).
+Design record directories (`[tool.doeff] record-dirs` in the root pyproject.toml) are not read -- records are evidence as of
+their time, and quoted text is not rewritten afterwards.
 
-link = markdown の `[文](先)`・`![文](先)`・参照の定義 `[名]: 先`・`<https://…>`・HTML の href= と src=・文の中の素の
-`https://…`(GitHub と PyPI はどれも押せる link にする)。``` と ~~~ の囲み・`code`・HTML の注釈の中は読まない。
+A link is a markdown `[text](target)`, `![text](target)`, a reference definition `[name]: target`, `<https://...>`, an HTML href= or src=, or a bare
+`https://...` in prose (every GitHub and PyPI URL must be a clickable link). Fenced blocks (``` and ~~~), `code`, and HTML comments are not read.
 
-2 つの確かめ:
+Two checks:
 
-- repo の中(既定 — 網に出ない。CI では .github/workflows/links.yml の job in-repo が push と pull request ごとに走らせ、
-  Python Compatibility の root の tests でも tests/test_check_links.py::test_repo_links_resolve_in_the_tree が走らせる):
-  - 相対の link(`docs/x.md`・`../LICENSE`・`/README.md`)の先が、git に載った file か dir である事。
-  - main を指す GitHub の link(`https://github.com/proboscis/doeff/blob/main/<path>`・`tree/main`・`raw/main`・
-    `https://raw.githubusercontent.com/proboscis/doeff/main/<path>`)の先も、同じく木に在る事 — 網に聞かず木で読む
-    (main に入る前の変更でも、入った後に切れるかが分かる)。
-  - `#見出し` の付いた link は、先の markdown にその見出し(GitHub の付け方の anchor)か `id=`・`name=` の anchor が在る事。
-  - PyPI の頁になる README(核の 5 個 — 定義元は tools/verify_release_install.py の CORE)に、相対の path の link が
-    無い事。PyPI は相対の path を GitHub の木でなく PyPI の頁の URL に対して解くので、PyPI の頁で切れる。main を指す
-    GitHub の link で書く。`#見出し` だけの link は PyPI でも働く(見出しに anchor を付け、link をそこへ向ける)。
-- 外の link(`--external` — 網に出る。相手の site の都合で揺れるので push ごとには走らせず、links.yml の job external が
-  週 1 回と手で起こす時に走らせる): http と https の link に要求を送り、返事が来る事。HEAD で聞き、2xx・3xx で無ければ
-  GET で聞き直す。404・410 と名の引けない host は切れた link。429・5xx・403・
-  時間切れは、間を置いて聞き直しても同じなら「確かめられない」として出すが、終了コードには数えない(相手の都合で揺れる)。
-  main を指す GitHub の link と、localhost・example.com などの例の host は送らない。GitHub の添付(`https://github.com/user-attachments/…`)も
-  送らない — sign in なしの要求には 404 を返すが、GitHub の画面は本文の中で再生できる形に替えて出す。
+- In-repo (default -- no network. In CI the job in-repo of .github/workflows/links.yml runs it on every push and pull request,
+  and the root tests of Python Compatibility also run it via tests/test_check_links.py::test_repo_links_resolve_in_the_tree):
+  - The target of a relative link (`docs/x.md`, `../LICENSE`, `/README.md`) must be a git-tracked file or directory.
+  - The target of a GitHub link pointing at main (`https://github.com/proboscis/doeff/blob/main/<path>`, `tree/main`, `raw/main`,
+    `https://raw.githubusercontent.com/proboscis/doeff/main/<path>`) must also exist in the tree -- read from the tree, not the network
+    (so a change not yet on main can be checked for breaking after it lands).
+  - A link with a `#heading` must point at a markdown file that has that heading (GitHub-style anchor) or an `id=` / `name=` anchor.
+  - The READMEs that become PyPI pages (the 5 core packages -- defined by CORE in tools/verify_release_install.py) must contain no
+    relative-path links. PyPI resolves a relative path against the PyPI page URL, not the GitHub tree, so it breaks on the PyPI page. Write
+    them as GitHub links pointing at main. A link that is only `#heading` also works on PyPI (give the heading an anchor and point the link at it).
+- External (`--external` -- goes to the network. It fluctuates with the other site's conditions, so it is not run on every push; the job external of links.yml runs it
+  weekly and on manual trigger): send a request to http and https links and expect a response. Ask with HEAD, and if the result is not 2xx or 3xx,
+  ask again with GET. 404, 410, and unresolvable hosts are broken links. 429, 5xx, 403, and
+  timeouts are reported as "unconfirmed" if asking again after a pause gives the same result, but are not counted in the exit code (they fluctuate with the other side).
+  GitHub links pointing at main and example hosts such as localhost and example.com are not sent. GitHub attachments (`https://github.com/user-attachments/...`) are also not
+  sent -- they return 404 to a request without sign-in, but the GitHub UI rewrites them into a playable form in the body.
 
-    uv run --no-project python tools/check_links.py               # repo の中の link
-    uv run --no-project python tools/check_links.py --external    # 外の link
-    uv run --no-project python tools/check_links.py docs/x.md     # 渡した file だけ
+    uv run --no-project python tools/check_links.py               # in-repo links
+    uv run --no-project python tools/check_links.py --external    # external links
+    uv run --no-project python tools/check_links.py docs/x.md     # only the given files
 
-終了コード: 切れた link が無ければ 0・在れば 1・道具が使えなければ(git が無いなど)2。
-標準ライブラリだけを使う(workspace を同期せずに走る)。
+Exit code: 0 if no broken links, 1 if any, 2 if the tool cannot be used (e.g. no git).
+Uses only the standard library (runs without syncing the workspace).
 """
 
 from __future__ import annotations
@@ -57,15 +57,15 @@ from pathlib import Path, PurePosixPath
 
 import tomllib
 
-# 同じ dir の module — script として走らせると、Python が script の dir を sys.path の頭に置く。
+# A module in the same dir -- when run as a script, Python puts the script's dir at the head of sys.path.
 import verify_release_install
 
 REPO = Path(__file__).resolve().parents[1]
 GITHUB_REPO = "proboscis/doeff"
 DEFAULT_BRANCH = "main"
-# 根の決まった名の file。docs/ の下の *.md と packages/*/README.md は木から読む(default_files)。
+# Files at fixed names in the root. *.md under docs/ and packages/*/README.md are read from the tree (default_files).
 ROOT_FILES = ("README.md", "CONTRIBUTING.md", "CHANGELOG.md", "CODE_OF_CONDUCT.md", "SECURITY.md")
-# 例として書かれた host(送っても返事の来ない・来ても意味の無い物)。名か、その下の名なら当たる。
+# Hosts written as examples (requests get no answer, or the answer is meaningless). Matches the name or any name under it.
 EXAMPLE_HOSTS = ("localhost", "127.0.0.1", "0.0.0.0", "example.com", "example.org", "example.net")
 EXAMPLE_HOST_SUFFIXES = (".local", ".localhost", ".test", ".invalid", ".example", ".internal")
 GITHUB_ATTACHMENTS = "https://github.com/user-attachments/"
@@ -75,14 +75,14 @@ RETRY_WAITS_SECONDS = (2, 8)
 WORKERS = 8
 
 
-# --- link を集める ------------------------------------------------------------------------------
+# --- collecting links ---------------------------------------------------------------------------
 
 
 @dataclass(frozen=True)
 class Link:
-    """1 つの file の 1 つの link。切れた時に、どの file の何行目かを名指すため。"""
+    """One link in one file. Kept so a broken link can name which file and which line."""
 
-    path: str  # 根からの path(POSIX)
+    path: str  # path from the root (POSIX)
     line: int
     target: str
 
@@ -93,24 +93,24 @@ class Link:
 _FENCE = re.compile(r"^ {0,3}(`{3,}|~{3,})(.*)$")
 _CODE_SPAN = re.compile(r"(`+)(?:(?!\1).)+?\1")
 _HTML_COMMENT = re.compile(r"<!--.*?-->", re.DOTALL)
-# 参照の定義 `[名]: 先`。脚注の定義 `[^名]: 文` は link でない。
+# Reference definition `[name]: target`. A footnote definition `[^name]: text` is not a link.
 _REFERENCE_DEFINITION = re.compile(r"^ {0,3}\[(?!\^)[^\]]+\]:\s*<?([^\s>]+)>?")
 _AUTOLINK = re.compile(r"<(https?://[^\s>]+)>")
 _HTML_ATTRIBUTE = re.compile(r"""\b(?:href|src)\s*=\s*(?:"([^"]*)"|'([^']*)')""", re.IGNORECASE)
 _BARE_URL = re.compile(r"https?://[^\s<>()\[\]\"'`]+")
-# 素の URL の末尾の句読点は link に含めない(GitHub の autolink と同じ)。
+# Trailing punctuation of a bare URL is not part of the link (same as GitHub autolink).
 _TRAILING_PUNCTUATION = ".,:;!?*_~'\""
-# `](先` の後に来てよい物: 空白と題(`"…"`・`'…'`・`(…)`)と閉じの `)`。他の物が来れば link でない(`[0](frame だけ)`)。
+# What may follow `](target`: whitespace, a title (`"..."`, `'...'`, `(...)`), and the closing `)`. Anything else means it is not a link (`[0](frame only)`).
 _LINK_TAIL = re.compile(r"""\s*(?:\s(?:"[^"]*"|'[^']*'|\([^)]*\))\s*)?\)""")
 
 
 def _blank(match: re.Match[str]) -> str:
-    """一致した所を同じ数の改行と空白に置き換える — 消した後も行の番号と桁を元の file と揃えるため。"""
+    """Replace the matched span with the same number of newlines and spaces -- so line numbers and columns still match the original file after blanking."""
     return re.sub(r"[^\n]", " ", match.group(0))
 
 
 def _outside_fences(lines: Sequence[str]) -> Iterator[str]:
-    """``` と ~~~ の囲みの中の行を空にした行の列 — 囲みの中の code を link や見出しと読まないため。"""
+    """Lines with the inside of ``` and ~~~ fences blanked -- so code inside a fence is not read as links or headings."""
     fence = ""
     for line in lines:
         marker = _FENCE.match(line)
@@ -131,15 +131,15 @@ def _outside_fences(lines: Sequence[str]) -> Iterator[str]:
 
 
 def markdown_lines(text: str, *, keep_code_spans: bool = False) -> list[str]:
-    """囲みと HTML の注釈を空にした行の列(行の番号は元の file と同じ)。link を集める時は `code` も空にし、見出しの
-    anchor を作る時は残す(GitHub は見出しの `code` の中の字も anchor に入れる)。"""
+    """Lines with fences and HTML comments blanked (line numbers match the original file). When collecting links `code` is blanked too; when building heading
+    anchors it is kept (GitHub includes the characters inside a heading's `code` in the anchor)."""
     lines = _outside_fences(_HTML_COMMENT.sub(_blank, text).split("\n"))
     return [line if keep_code_spans else _CODE_SPAN.sub(_blank, line) for line in lines]
 
 
 def _inline_targets(line: str) -> Iterator[tuple[int, str]]:
-    """`](先)` の先と、その始まりの桁 — markdown の inline の link と画像の先を拾うため。先の中の括弧は対になる分だけ
-    含める(`Foo_(bar)` の形の URL)。"""
+    """The target of `](target)` and the column where it starts -- to pick up targets of markdown inline links and images. Parentheses inside the target are
+    included only when balanced (URLs of the form `Foo_(bar)`)."""
     start = 0
     while (opened := line.find("](", start)) != -1:
         position = opened + 2
@@ -158,7 +158,7 @@ def _inline_targets(line: str) -> Iterator[tuple[int, str]]:
 
 
 def _destination_end(line: str, position: int) -> int:
-    """position から始まる link の先の終わりの桁(空白か、対にならない `)` の前)— 先の中の括弧の対を数えるため。"""
+    """The end column of the link target starting at position (before whitespace or an unbalanced `)`) -- to count balanced parentheses inside the target."""
     depth = 0
     for end in range(position, len(line)):
         char = line[end]
@@ -169,7 +169,7 @@ def _destination_end(line: str, position: int) -> int:
 
 
 def _targets_in_line(line: str) -> list[tuple[int, str]]:
-    """1 行の link の (桁, 先) — 種類ごとの拾い方を 1 つの列にするため。素の URL は、他の link の中に在る物を除く。"""
+    """The (column, target) of each link on one line -- to merge the per-kind extraction into one list. Bare URLs inside other links are excluded."""
     marked = [
         *_inline_targets(line),
         *(
@@ -194,7 +194,7 @@ def _targets_in_line(line: str) -> list[tuple[int, str]]:
 
 
 def extract_links(path: str, text: str) -> list[Link]:
-    """text(path の file の中身)の link を出た順に返す — 確かめる対象を file と行で名指すため。同じ行の同じ先は 1 つ。"""
+    """Return the links in text (the contents of the file at path) in order of appearance -- to name the objects to check by file and line. The same target on the same line counts once."""
     return [
         Link(path, number, target)
         for number, line in enumerate(markdown_lines(text), start=1)
@@ -205,7 +205,7 @@ def extract_links(path: str, text: str) -> list[Link]:
     ]
 
 
-# --- 見出しの anchor ------------------------------------------------------------------------------
+# --- heading anchors ------------------------------------------------------------------------------
 
 _ATX_HEADING = re.compile(r"^ {0,3}#{1,6}(?:[ \t]+(.*?))?(?:[ \t]+#+)?[ \t]*$")
 _SETEXT_UNDERLINE = re.compile(r"^ {0,3}(=+|-+)\s*$")
@@ -217,7 +217,7 @@ _EMPHASIS = re.compile(r"(?<!\w)[*_]+|[*_]+(?!\w)|\*+")
 
 
 def heading_text(source: str) -> str:
-    """見出しの markdown を GitHub が描く文字に近づける(印・link・画像・HTML の tag を外す)— anchor を作る元にするため。"""
+    """Bring heading markdown close to the characters GitHub renders (strip marks, links, images, HTML tags) -- the source for building an anchor."""
     text = source.replace("`", "")
     text = _INLINE_IMAGE.sub("", text)
     text = _INLINE_LINK.sub(
@@ -229,8 +229,8 @@ def heading_text(source: str) -> str:
 
 
 def github_slug(text: str) -> str:
-    """GitHub が見出しに付ける anchor(github-slugger と同じ: 小文字にし、字・数字・結合の印・`-`・`_`・空白の外を消し、
-    空白を `-` にする)— `#見出し` の link の先が在るかを、GitHub の描き方で確かめるため。"""
+    """The anchor GitHub gives a heading (same as github-slugger: lowercase, delete everything except letters, digits, combining marks, `-`, `_`, and spaces,
+    and turn spaces into `-`) -- to check whether the target of a `#heading` link exists, the way GitHub renders it."""
     kept = "".join(
         char
         for char in text.lower()
@@ -240,7 +240,7 @@ def github_slug(text: str) -> str:
 
 
 def _heading_sources(lines: Sequence[str]) -> Iterator[str]:
-    """見出し(`#` の形と、下に `===`・`---` を引く形)の markdown の列 — anchor を作る見出しを出た順に拾うため。"""
+    """The markdown lines of headings (the `#` form, and the form underlined with `===` or `---`) -- to pick up the headings that make anchors in order of appearance."""
     for index, line in enumerate(lines):
         if heading := _ATX_HEADING.match(line):
             yield heading.group(1) or ""
@@ -256,8 +256,8 @@ def _heading_sources(lines: Sequence[str]) -> Iterator[str]:
 
 
 def anchors_of(text: str) -> frozenset[str]:
-    """markdown の text の anchor の組(小文字)— `#見出し` の link の先を引くため。見出しの anchor は、同じ物の 2 つ目から
-    `-1`・`-2` を付ける(GitHub と同じ)。HTML の `id=`・`name=` も anchor。"""
+    """The set of anchors (lowercase) of markdown text -- to look up the targets of `#heading` links. Heading anchors get
+    `-1`, `-2` from the second occurrence of the same one (same as GitHub). HTML `id=` and `name=` are anchors too."""
     slugs = [
         github_slug(heading_text(source))
         for source in _heading_sources(markdown_lines(text, keep_code_spans=True))
@@ -273,19 +273,19 @@ def anchors_of(text: str) -> frozenset[str]:
     return frozenset(anchor.lower() for anchor in numbered | explicit)
 
 
-# --- repo の中の確かめ ----------------------------------------------------------------------------
+# --- in-repo checks ----------------------------------------------------------------------------
 
 
 @dataclass(frozen=True)
 class Tree:
-    """git に載った file と dir(根からの POSIX の path)— link の先が GitHub の木に在るかを、網に出ずに引くため。"""
+    """The git-tracked files and dirs (POSIX paths from the root) -- to look up, without the network, whether a link target exists in the GitHub tree."""
 
     files: frozenset[str]
     dirs: frozenset[str]
 
     @classmethod
     def of(cls, files: Iterable[str]) -> Tree:
-        """file の列から、その file を持つ dir(根の "" を含む)も引ける木を作る。"""
+        """Build from a list of files a tree that can also look up the dirs that contain them (including the root "")."""
         file_set = frozenset(files)
         dirs = frozenset(
             "" if str(parent) == "." else str(parent)
@@ -295,12 +295,12 @@ class Tree:
         return cls(file_set, dirs | {""})
 
     def has(self, name: str) -> bool:
-        """name(根からの path)が木の file か dir か — link の先が在るかの答え。"""
+        """Whether name (a path from the root) is a file or dir of the tree -- the answer to whether a link target exists."""
         return name in self.files or name in self.dirs
 
 
 def git_tree(root: Path) -> Tree:
-    """root の git に載った file の木 — 手元にだけ在る file(git に載っていない)を、在ると読まないため。"""
+    """The tree of git-tracked files under root -- so a file that exists only locally (untracked) is not treated as existing."""
     listed = subprocess.run(
         ["git", "-C", str(root), "ls-files", "-z"], capture_output=True, check=True
     ).stdout.decode("utf-8")
@@ -315,33 +315,33 @@ _OWN_RAW = re.compile(
     rf"^https?://raw\.githubusercontent\.com/{re.escape(GITHUB_REPO)}/(?:refs/heads/)?{DEFAULT_BRANCH}/(?P<path>[^?#]*)"
 )
 _SCHEME = re.compile(r"^[a-zA-Z][a-zA-Z0-9+.-]*:")
-# GitHub の code の頁の行の anchor(#L10・#L10-L20)。
+# Line anchors of GitHub code pages (#L10, #L10-L20).
 _LINE_ANCHOR = re.compile(r"^L\d+(?:C\d+)?(?:-L\d+(?:C\d+)?)?$")
 
 
 class Kind(Enum):
-    """link の種類 — どの確かめ(木か網か)に回すかを決めるため。"""
+    """The kind of link -- to decide which check (tree or network) it goes to."""
 
-    IN_REPO = "in-repo"  # 木で確かめる(相対の link と main を指す GitHub の link)
-    EXTERNAL = "external"  # 網で確かめる
-    OTHER = "other"  # 確かめない(mailto: など)
+    IN_REPO = "in-repo"  # checked against the tree (relative links and GitHub links pointing at main)
+    EXTERNAL = "external"  # checked over the network
+    OTHER = "other"  # not checked (mailto: etc.)
 
 
 @dataclass(frozen=True)
 class Resolved:
-    """link の先(木の path と anchor)か、外の URL — link の書き方の違いを解いた後の、確かめる物。"""
+    """The target of a link (tree path and anchor), or an external URL -- the thing to check after resolving the differences in how links are written."""
 
     kind: Kind
-    path: str | None = None  # IN_REPO の時の根からの path(木の外を指せば None)
+    path: str | None = None  # path from the root when IN_REPO (None if it points outside the tree)
     fragment: str | None = None
-    url: str | None = None  # EXTERNAL の時の URL(# より前)
+    url: str | None = None  # URL (before #) when EXTERNAL
     relative_path: bool = (
-        False  # 相対の path を持つ link か(PyPI の頁で切れる形 — `#見出し` だけの link は含めない)
+        False  # whether the link has a relative path (a form that breaks on a PyPI page -- links that are only `#heading` are excluded)
     )
 
 
 def resolve(source: str, target: str) -> Resolved:
-    """source(根からの path)の file に書かれた target の先 — GitHub が link を解くのと同じ先を引くため。"""
+    """The target written in the file at source (a path from the root) as target -- to look up the same target GitHub resolves the link to."""
     if match := _OWN_GITHUB.match(target):
         path = _normalize(urllib.parse.unquote(match.group("path") or ""))
         return Resolved(Kind.IN_REPO, path, match.group("fragment"))
@@ -360,7 +360,7 @@ def resolve(source: str, target: str) -> Resolved:
 
 
 def _normalize(path: str) -> str | None:
-    """`.`・`..`・頭と末尾の `/` を解いた根からの path(根は "")— 木の名と比べるため。根の外へ出れば None。"""
+    """The path from the root with `.`, `..`, and leading/trailing `/` resolved (the root is "") -- to compare with names in the tree. None if it goes outside the root."""
     normalized = posixpath.normpath("/" + path) if path else "/"
     if posixpath.normpath(path.lstrip("/") or ".").startswith(".."):
         return None
@@ -369,7 +369,7 @@ def _normalize(path: str) -> str | None:
 
 @dataclass(frozen=True)
 class Problem:
-    """1 つの link の切れ目 — 直す人に、どこの何がなぜ切れているかを言うため。"""
+    """One break in a link -- to tell the person fixing it what is broken where and why."""
 
     link: Link
     reason: str
@@ -379,7 +379,7 @@ class Problem:
 
 
 def pypi_readmes() -> frozenset[str]:
-    """PyPI の頁になる README(根からの path)— 相対の link を PyPI で切れる形として止める file を決めるため。"""
+    """The READMEs that become PyPI pages (paths from the root) -- decides which files get relative links stopped as a form that breaks on PyPI."""
     return frozenset(
         "README.md" if name == "doeff" else f"packages/{name}/README.md"
         for name in verify_release_install.CORE
@@ -387,16 +387,15 @@ def pypi_readmes() -> frozenset[str]:
 
 
 def record_dirs(root: Path) -> tuple[str, ...]:
-    """設計の記録の dir(根の pyproject.toml の `[tool.doeff] record-dirs`)— その時点の証拠を書き換えさせないため、
-    その下の file を読まない。"""
+    """Design record directories (`[tool.doeff] record-dirs` in the root pyproject.toml) -- files under them are not read, so that
+    evidence as of its time is not rewritten."""
     with (root / "pyproject.toml").open("rb") as file:
         config = tomllib.load(file)
     return tuple(config.get("tool", {}).get("doeff", {}).get("record-dirs", ()))
 
 
 class InRepoChecker:
-    """木と markdown の anchor を読んで、repo の中の link を確かめる — 同じ file の anchor を何度も読まないため、
-    読んだ anchor を file ごとに持つ。"""
+    """Check in-repo links by reading the tree and markdown anchors -- keeps the anchors read per file so the same file's anchors are not read repeatedly."""
 
     def __init__(self, root: Path, tree: Tree, pypi: frozenset[str]) -> None:
         self._root = root
@@ -405,7 +404,7 @@ class InRepoChecker:
         self._anchors: dict[str, frozenset[str]] = {}
 
     def anchors(self, path: str) -> frozenset[str]:
-        """path の markdown の anchor の組(読んだ物は持っておく)。"""
+        """The set of anchors of the markdown at path (keeps what was read)."""
         if path not in self._anchors:
             self._anchors[path] = anchors_of(
                 (self._root / path).read_text(encoding="utf-8", errors="replace")
@@ -413,7 +412,7 @@ class InRepoChecker:
         return self._anchors[path]
 
     def problems(self, link: Link) -> list[Problem]:
-        """link の切れ目(無ければ空)— 先が木に無い・anchor が無い・PyPI の頁で切れる、のどれか。"""
+        """The breaks of a link (empty if none) -- one of: target not in the tree, anchor missing, or breaks on a PyPI page."""
         resolved = resolve(link.path, link.target)
         if resolved.kind is not Kind.IN_REPO:
             return []
@@ -421,8 +420,8 @@ class InRepoChecker:
             [
                 Problem(
                     link,
-                    "PyPI の頁は相対の path を GitHub の木で解かない — "
-                    f"https://github.com/{GITHUB_REPO}/blob/{DEFAULT_BRANCH}/… の形で書く",
+                    "A PyPI page does not resolve a relative path against the GitHub tree -- "
+                    f"write it in the form https://github.com/{GITHUB_REPO}/blob/{DEFAULT_BRANCH}/...",
                 )
             ]
             if link.path in self._pypi and resolved.relative_path
@@ -430,9 +429,9 @@ class InRepoChecker:
         )
         path = resolved.path
         if path is None:
-            return [*pypi, Problem(link, "repo の根の外を指す")]
+            return [*pypi, Problem(link, "points outside the repo root")]
         if not self._tree.has(path):
-            return [*pypi, Problem(link, f"木に無い: {path or '/'}")]
+            return [*pypi, Problem(link, f"not in the tree: {path or '/'}")]
         fragment = resolved.fragment
         anchored = (
             fragment
@@ -442,31 +441,31 @@ class InRepoChecker:
         )
         anchor = urllib.parse.unquote(fragment or "").lower().removeprefix("user-content-")
         if anchored and anchor not in self.anchors(path):
-            return [*pypi, Problem(link, f"見出しの anchor が無い: {path}#{fragment}")]
+            return [*pypi, Problem(link, f"heading anchor missing: {path}#{fragment}")]
         return pypi
 
 
-# --- 外の確かめ ---------------------------------------------------------------------------------
+# --- external checks ---------------------------------------------------------------------------
 
 
 class Verdict(Enum):
-    """外の link の 1 つの答え — 終了コードに数える物(切れている)と数えない物(確かめられない)を分けるため。"""
+    """The answer for one external link -- separates what counts toward the exit code (broken) from what does not (unconfirmed)."""
 
     OK = "ok"
-    BROKEN = "broken"  # 切れている(404・410・名の引けない host)
-    UNCONFIRMED = "unconfirmed"  # 確かめられない(429・5xx・403・時間切れ)
+    BROKEN = "broken"  # broken (404, 410, unresolvable host)
+    UNCONFIRMED = "unconfirmed"  # unconfirmed (429, 5xx, 403, timeout)
 
 
 @dataclass(frozen=True)
 class Answer:
-    """1 つの URL に聞いた答えと、その中身(HTTP の番号や網の誤り)— 切れた訳を出すため。"""
+    """The answer from asking one URL, and its content (HTTP status or network error) -- to show why it is broken."""
 
     verdict: Verdict
     detail: str
 
 
 def is_example_host(url: str) -> bool:
-    """url の host が例として書かれた物か — 返事の来ない例の URL を切れた link と数えないため。"""
+    """Whether the host of url is one written as an example -- so an example URL that gets no answer is not counted as a broken link."""
     host = (urllib.parse.urlsplit(url).hostname or "").lower()
     return (
         host in EXAMPLE_HOSTS
@@ -475,14 +474,14 @@ def is_example_host(url: str) -> bool:
     )
 
 
-# 名の引けない host の答え(名が無い・名に番地が無い)。名を引く道の一時の誤り(EAI_AGAIN など)は確かめられないに数える。
+# Answers for unresolvable hosts (no such name, no address for the name). Transient errors on the name lookup path (EAI_AGAIN etc.) count as unconfirmed.
 _NO_SUCH_HOST = frozenset(
     vars(socket)[name] for name in ("EAI_NONAME", "EAI_NODATA") if name in vars(socket)
 )
 
 
 def _ask_once(url: str, method: str) -> Answer:
-    """url に method で 1 度聞く — 返事の番号と網の誤りを、切れている・確かめられないに分けるため。"""
+    """Ask url once with method -- split the status and network error into broken and unconfirmed."""
     request = urllib.request.Request(
         url, method=method, headers={"User-Agent": USER_AGENT, "Accept": "*/*"}
     )
@@ -494,16 +493,16 @@ def _ask_once(url: str, method: str) -> Answer:
         return Answer(verdict, f"HTTP {error.code}")
     except urllib.error.URLError as error:
         if isinstance(error.reason, socket.gaierror) and error.reason.errno in _NO_SUCH_HOST:
-            return Answer(Verdict.BROKEN, f"host の名が引けない: {error.reason}")
-        return Answer(Verdict.UNCONFIRMED, f"つながらない: {error.reason}")
+            return Answer(Verdict.BROKEN, f"host name cannot be resolved: {error.reason}")
+        return Answer(Verdict.UNCONFIRMED, f"cannot connect: {error.reason}")
     except OSError as error:
-        return Answer(Verdict.UNCONFIRMED, f"つながらない: {error}")
+        return Answer(Verdict.UNCONFIRMED, f"cannot connect: {error}")
 
 
 def ask(url: str) -> Answer:
-    """url に HEAD で聞き、2xx・3xx で無ければ GET で聞き直す(HEAD を断る site が在る)。確かめられない答えは、間を
-    置いて聞き直す — 一時の誤りで切れたと言わないため。"""
-    answer = Answer(Verdict.UNCONFIRMED, "未だ聞いていない")
+    """Ask url with HEAD, and if the result is not 2xx or 3xx ask again with GET (some sites refuse HEAD). Unconfirmed answers are asked again
+    after a pause -- so a transient error is not reported as broken."""
+    answer = Answer(Verdict.UNCONFIRMED, "not asked yet")
     for wait in (0, *RETRY_WAITS_SECONDS):
         time.sleep(wait)
         answer = _ask_once(url, "HEAD")
@@ -513,11 +512,11 @@ def ask(url: str) -> Answer:
     return answer
 
 
-# --- 読む file と入口 ----------------------------------------------------------------------------
+# --- files to read and entry point ---------------------------------------------------------------
 
 
 def is_default_file(name: str, records: Sequence[str]) -> bool:
-    """name(根からの path)を既定で読むか — 初めて来た人が押す link の在る file に絞るため。"""
+    """Whether to read name (a path from the root) by default -- to narrow to files containing links a first-time visitor clicks."""
     parts = PurePosixPath(name).parts
     if any(name.startswith(record) for record in records):
         return False
@@ -529,7 +528,7 @@ def is_default_file(name: str, records: Sequence[str]) -> bool:
 
 
 def default_files(root: Path, tree: Tree) -> list[str]:
-    """既定で読む file(git に載った物・根の file が先、残りは名の順)。"""
+    """Files read by default (git-tracked; root files first, the rest in name order)."""
     records = record_dirs(root)
     roots = [name for name in ROOT_FILES if name in tree.files]
     rest = sorted(
@@ -539,7 +538,7 @@ def default_files(root: Path, tree: Tree) -> list[str]:
 
 
 def collect(root: Path, files: Sequence[str]) -> list[Link]:
-    """files の link を全部集める。"""
+    """Collect all links of files."""
     return [
         link
         for name in files
@@ -548,13 +547,13 @@ def collect(root: Path, files: Sequence[str]) -> list[Link]:
 
 
 def check_in_repo(root: Path, tree: Tree, links: Sequence[Link]) -> list[Problem]:
-    """repo の中の link の切れ目を全部返す(網に出ない)。"""
+    """Return all breaks of in-repo links (no network)."""
     checker = InRepoChecker(root, tree, pypi_readmes())
     return [problem for link in links for problem in checker.problems(link)]
 
 
-def check_external(links: Sequence[Link]) -> tuple[list[Problem], list[Problem], int]:  # noqa: DOEFF006 — 道具の小さな組の戻り
-    """外の link に聞いて、(切れた物・確かめられない物・聞いた URL の数)を返す。同じ URL は 1 度だけ聞く。"""
+def check_external(links: Sequence[Link]) -> tuple[list[Problem], list[Problem], int]:  # noqa: DOEFF006 — small return bundle for the tool
+    """Ask the external links and return (broken, unconfirmed, number of URLs asked). The same URL is asked only once."""
     urls = {
         link: resolved.url
         for link in links
@@ -580,50 +579,50 @@ def check_external(links: Sequence[Link]) -> tuple[list[Problem], list[Problem],
 
 
 def main(argv: Sequence[str] | None = None) -> int:
-    """命令の入口 — 既定は repo の中の確かめ、`--external` は外の確かめ。"""
+    """Command entry point -- the default is the in-repo check, `--external` is the external check."""
     parser = argparse.ArgumentParser(description=(__doc__ or "").split("\n", 1)[0])
     parser.add_argument(
         "files",
         nargs="*",
-        help="読む file(根からの path)。既定は README・docs・packages/*/README.md",
+        help="files to read (paths from the root). Default is README, docs, packages/*/README.md",
     )
     parser.add_argument(
-        "--external", action="store_true", help="外の link に要求を送って確かめる(網に出る)"
+        "--external", action="store_true", help="send requests to external links to check them (goes to the network)"
     )
     parser.add_argument(
-        "--root", type=Path, default=REPO, help="repo の根(既定はこの道具の在る repo)"
+        "--root", type=Path, default=REPO, help="repo root (default is the repo where this tool lives)"
     )
     args = parser.parse_args(argv)
     root: Path = args.root
     try:
         tree = git_tree(root)
     except (OSError, subprocess.CalledProcessError) as error:
-        print(f"git の木を読めない: {error}", file=sys.stderr)
+        print(f"cannot read the git tree: {error}", file=sys.stderr)
         return 2
     files = list(args.files) or default_files(root, tree)
     links = collect(root, files)
     if args.external:
         broken, unconfirmed, asked = check_external(links)
         print(
-            *(f"確かめられない: {problem}" for problem in unconfirmed),
+            *(f"unconfirmed: {problem}" for problem in unconfirmed),
             sep="\n",
             end="\n" if unconfirmed else "",
         )
         print(
-            *(f"切れている: {problem}" for problem in broken), sep="\n", end="\n" if broken else ""
+            *(f"broken: {problem}" for problem in broken), sep="\n", end="\n" if broken else ""
         )
         print(
-            f"{len(files)} 個の file の外の link の URL {asked} 個に聞いた: 切れている {len(broken)}・"
-            f"確かめられない {len(unconfirmed)}"
+            f"asked {asked} URLs of external links in {len(files)} files: broken {len(broken)}, "
+            f"unconfirmed {len(unconfirmed)}"
         )
         return 1 if broken else 0
     problems = check_in_repo(root, tree, links)
     print(
-        *(f"切れている: {problem}" for problem in problems), sep="\n", end="\n" if problems else ""
+        *(f"broken: {problem}" for problem in problems), sep="\n", end="\n" if problems else ""
     )
     in_repo = sum(1 for link in links if resolve(link.path, link.target).kind is Kind.IN_REPO)
     print(
-        f"{len(files)} 個の file の repo の中の link {in_repo} 個を木で読んだ: 切れている {len(problems)}"
+        f"read {in_repo} in-repo links of {len(files)} files against the tree: broken {len(problems)}"
     )
     return 1 if problems else 0
 

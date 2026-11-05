@@ -1,22 +1,22 @@
-"""mkdocs の hook — GitHub の上で読む形に書いた docs の page を、site の上でも同じに読めるように 5 つを直す。
+"""mkdocs hook -- fixes 5 things so docs pages written to be read on GitHub also read the same on the site.
 
-1. site の外の repo の file へ張る相対の link を、GitHub の main の file への link に書き換える。docs の page は repo の file
-   (packages/*/README.md・examples/・docs/specs/ の仕様)へ相対の link を張るが、site に入るのは docs/index.md から辿る page
-   だけ(mkdocs.yml の exclude_docs)なので、そのままでは site の上で切れる。在る file への link だけを書き換え、無い file への link は
-   書き換えない — mkdocs が warning を出し、--strict の build が落ちる。囲みのコードと `` ` `` の中は書き換えない。
-2. 囲みの頭の言語の後の語を落とす。docs の例の検は ```python excerpt・```hy file=greet.hy の印を読むが、pymdownx.superfences は
-   言語の後の素の語を読めず、その囲みを囲みと見ないので、後ろの見出しまで崩れる。file=<名> は囲みの題(title)にする。
-3. 章の動画を再生できるようにする。page は動画を `[![<説明>](assets/videos/<名>.jpg)](assets/videos/<名>.mp4)` と書く —
-   GitHub は markdown の video の要素を消すので、repo の画面では 1 こまの画像が mp4 への link になる。site では、その link を
-   1 こまの画像を poster にした video の要素に替える(動画は tools/docs-video で作る)。画像を動画の頭の GIF
-   (`assets/videos/<名>.gif` — GitHub の repo の画面で動く)にした page では、poster は同じ名の 1 こまの画像(<名>.jpg)にする。
-4. click で進む図を動くようにする。page は図を `[![<説明>](assets/figures/<名>.gif)](<link の先>)` の 1 行で書く — GitHub と Zenn では
-   同じ内容の GIF が動き、link の先へ飛べる。site では、その 1 行を図の本体(`docs/assets/figures/<名>.html` — 図の様式と動きは同じ dir の
-   step-figure.css と step-figure.js が持つ)に替える。script の動かない画面には GIF を残す。GIF は tools/docs-video/figure-gif.mjs が
-   同じ図から作るので、2 つの版の中身はずれない。本体の無い名は build を落とす。
-5. 動画の service の動画を再生できるようにする。page は動画を `[![<説明>](https://img.youtube.com/vi/<id>/maxresdefault.jpg)](https://youtu.be/<id>)`
-   の 1 行で書く — GitHub は markdown の iframe を消すので、repo の画面では thumbnail の画像が動画への link になる。site では、その 1 行を
-   動画の service の player(iframe)に替える。
+1. Rewrite relative links to repo files outside the site into links to the file on GitHub main. docs pages link relatively to repo files
+   (packages/*/README.md, examples/, the specs in docs/specs/), but only the pages reachable from docs/index.md enter the site
+   (exclude_docs in mkdocs.yml), so they would break on the site as they are. Only links to existing files are rewritten; links to missing files are
+   not rewritten -- mkdocs emits a warning and a --strict build fails. Code in fences and inside `` ` `` is not rewritten.
+2. Drop the word after the language at the head of a fence. The example checks in docs read the markers ```python excerpt and ```hy file=greet.hy, but pymdownx.superfences
+   cannot read a bare word after the language and does not see the fence as a fence, so even the headings after it collapse. file=<name> becomes the fence's title.
+3. Make chapter videos playable. A page writes a video as `[![<description>](assets/videos/<name>.jpg)](assets/videos/<name>.mp4)` --
+   GitHub strips markdown video elements, so on the repo screen the one-frame image becomes a link to the mp4. On the site, that link is
+   replaced with a video element whose poster is the one-frame image (videos are made with tools/docs-video). For pages whose image is the head GIF of the video
+   (`assets/videos/<name>.gif` -- animates on the GitHub repo screen), the poster is the one-frame image of the same name (<name>.jpg).
+4. Make click-through figures animate. A page writes a figure as a single line `[![<description>](assets/figures/<name>.gif)](<link target>)` -- on GitHub and Zenn
+   the GIF of the same content animates and the link target can be followed. On the site, that line is replaced with the figure body (`docs/assets/figures/<name>.html` -- the figure's style and motion are held by
+   step-figure.css and step-figure.js in the same dir). The GIF is left for screens where script does not run. The GIF is made by tools/docs-video/figure-gif.mjs from
+   the same figure, so the contents of the two versions do not drift. A name without a body fails the build.
+5. Make videos from a video service playable. A page writes a video as a single line `[![<description>](https://img.youtube.com/vi/<id>/maxresdefault.jpg)](https://youtu.be/<id>)`
+   -- GitHub strips markdown iframes, so on the repo screen the thumbnail image becomes a link to the video. On the site, that line is replaced with
+   the video service's player (iframe).
 """
 
 from __future__ import annotations
@@ -38,21 +38,21 @@ FENCE = re.compile(r"^(\s*)(`{3,}|~{3,})(.*)$")
 CODE_SPAN = re.compile(r"(`+[^`]*`+)")
 INLINE_LINK = re.compile(r"(\]\()([^)\s]+)(\s+\"[^\"]*\")?(\))")
 SCHEME = re.compile(r"^[A-Za-z][A-Za-z0-9+.-]*:")
-# 1 こまの画像を mp4 への link にした形(markdown から組んだ後の HTML)。img の属性の順は問わない。
+# A form where a one-frame image is a link to an mp4 (HTML after building from markdown). The order of img attributes does not matter.
 VIDEO_LINK = re.compile(r'<a href="([^"]+\.mp4)">(<img\b[^>]*>)</a>')
 IMG_ATTR = re.compile(r'\b(src|alt)="([^"]*)"')
-# click で進む図の 1 行(markdown から組んだ後の HTML)。1 つの段落に図の GIF だけが在る形で、link は在っても無くてもよい。
+# A one-line click-through figure (HTML after building from markdown). A form where a paragraph holds only the figure's GIF; the link may or may not be present.
 FIGURE_LINE = re.compile(
     r'<p>(?:<a href="[^"]*">)?(<img\b[^>]*\bsrc="[^"]*assets/figures/([a-z0-9-]+)\.gif"[^>]*>)(?:</a>)?</p>'
 )
-# 動画の service の thumbnail を動画への link にした 1 行(markdown から組んだ後の HTML)。
+# A one-line form where a video service thumbnail is a link to the video (HTML after building from markdown).
 YOUTUBE_LINE = re.compile(r'<p><a href="https://youtu\.be/([A-Za-z0-9_-]+)">(<img\b[^>]*>)</a></p>')
 
 
 def _github_url(
     target: str, page_dir: Path, repo_root: Path, docs_dir: Path, files: Files, repo_url: str
 ) -> str:
-    """target が site の外の在る repo の file なら GitHub の URL を、そうでなければ target のままを返す。"""
+    """Return the GitHub URL if target is a repo file outside the site, otherwise return target unchanged."""
     path, hash_mark, anchor = target.partition("#")
     if not path or path.startswith("/") or SCHEME.match(path):
         return target
@@ -68,7 +68,7 @@ def _github_url(
 
 
 def _fence_line(line: str) -> str:
-    """囲みの線を superfences が読める形にするため — 頭は言語だけと題、閉じの線はそのまま。"""
+    """So superfences can read the fence line -- keep only the language and title at the head; the closing line stays as is."""
     match = FENCE.match(line)
     if match is None:
         return line
@@ -81,9 +81,9 @@ def _fence_line(line: str) -> str:
 
 
 def on_page_markdown(markdown: str, page: Page, config: MkDocsConfig, files: Files) -> str:
-    """GitHub の上で読む形に書いた page を、site の上でも同じに読ませるため(mkdocs の hook・直す 2 つは module の頭)。
+    """So that a page written to be read on GitHub reads the same on the site (a mkdocs hook; the 2 fixes are at the head of the module).
 
-    囲みの中かは線の数の偶奇で読む — docs の page の囲みは入れ子にしない(4 つの ` の囲みは無い)前提。
+    Whether a line is inside a fence is read from the parity of the fence line count -- assumes fences in docs pages are not nested (no 4-backtick fences).
     """
     docs_dir = Path(config.docs_dir).resolve()
     repo_root = Path(config.config_file_path).resolve().parent
@@ -91,18 +91,18 @@ def on_page_markdown(markdown: str, page: Page, config: MkDocsConfig, files: Fil
     repo_url = config.repo_url.rstrip("/")
 
     def rewrite(match: re.Match[str]) -> str:
-        """1 つの `](target)` の target だけを替え、題と括弧は残すため。"""
+        """Replace only the target of one `](target)`, keeping the title and parentheses."""
         target = _github_url(match.group(2), page_dir, repo_root, docs_dir, files, repo_url)
         return f"{match.group(1)}{target}{match.group(3) or ''}{match.group(4)}"
 
     def rewrite_line(line: str) -> str:
-        """1 行の中で、`` ` `` の中のコードの例を書き換えないため(split の奇数番目がコード)。"""
+        """Within one line, do not rewrite code examples inside `` ` `` (odd-numbered split parts are code)."""
         return "".join(
             part if index % 2 else INLINE_LINK.sub(rewrite, part)
             for index, part in enumerate(CODE_SPAN.split(line))
         )
 
-    # 行が囲みの中か = その行までに出た囲みの線の数が奇数か(囲みの線そのものは link を書き換えない)。
+    # A line is inside a fence = the number of fence lines up to that line is odd (the fence lines themselves do not get their links rewritten).
     lines = markdown.split("\n")
     fences = [FENCE.match(line) is not None for line in lines]
     return "\n".join(
@@ -112,10 +112,10 @@ def on_page_markdown(markdown: str, page: Page, config: MkDocsConfig, files: Fil
 
 
 def videos_to_players(content: str) -> str:
-    """mp4 への link にした 1 こまの画像か GIF を、1 こまの画像を poster にして再生する video の要素に替えるため(module の頭の 3)。"""
+    """Replace a one-frame image or GIF made into a link to an mp4 with a video element that plays with the one-frame image as poster (3 at the head of the module)."""
 
     def player(match: re.Match[str]) -> str:
-        """1 つの link を video に替える。説明(alt)は読み上げの名にする。"""
+        """Replace one link with a video. The description (alt) becomes the name for screen readers."""
         attrs = dict(IMG_ATTR.findall(match.group(2)))
         poster = attrs.get("src", "")
         if poster.endswith(".gif"):
@@ -130,14 +130,14 @@ def videos_to_players(content: str) -> str:
 
 
 def figures_to_steps(content: str, docs_dir: Path) -> str:
-    """図の GIF だけの段落を、click で進む図の本体に替えるため(module の頭の 4)。"""
+    """Replace a paragraph that holds only a figure GIF with the click-through figure body (4 at the head of the module)."""
 
     def figure(match: re.Match[str]) -> str:
-        """1 つの段落を図に替える。説明(alt)は読み上げの名に、GIF は script の動かない画面の代わりにする。"""
+        """Replace one paragraph with a figure. The description (alt) becomes the name for screen readers, and the GIF stands in for screens where script does not run."""
         image, name = match.groups()
         body = docs_dir / "assets" / "figures" / f"{name}.html"
         if not body.is_file():
-            raise ValueError(f"{name}.gif を置く page に図の本体が無い: {body}")
+            raise ValueError(f"the page that places {name}.gif has no figure body: {body}")
         label = dict(IMG_ATTR.findall(image)).get("alt", "")
         return (
             f'<figure class="step-figure" data-step-figure="{name}" aria-label="{label}">'
@@ -148,10 +148,10 @@ def figures_to_steps(content: str, docs_dir: Path) -> str:
 
 
 def youtube_to_iframes(content: str) -> str:
-    """動画の service の thumbnail の link だけの段落を、その動画の player に替えるため(module の頭の 5)。"""
+    """Replace a paragraph that holds only a video service thumbnail link with that video's player (5 at the head of the module)."""
 
     def player(match: re.Match[str]) -> str:
-        """1 つの段落を iframe に替える。説明(alt)は iframe の題にする。referrer は player が埋め込み先を読むので送る。"""
+        """Replace one paragraph with an iframe. The description (alt) becomes the iframe's title. The referrer is sent because the player reads the embedding site."""
         video_id, image = match.groups()
         title = dict(IMG_ATTR.findall(image)).get("alt", "")
         return (
@@ -165,8 +165,8 @@ def youtube_to_iframes(content: str) -> str:
 
 
 def on_page_content(content: str, page: Page, config: MkDocsConfig, files: Files) -> str:
-    """組んだ page の HTML で、図の GIF を click で進む図に、章の動画の link を video の要素に、動画の service の link を player に替えるため(mkdocs の hook)。
+    """In the built page's HTML, replace figure GIFs with click-through figures, chapter video links with video elements, and video service links with players (a mkdocs hook).
 
-    mkdocs が link と画像の相対の path を site の path に直した後に呼ばれるので、path はそのまま使える。
+    Called after mkdocs has rewritten relative paths of links and images to site paths, so paths can be used as they are.
     """
     return youtube_to_iframes(videos_to_players(figures_to_steps(content, Path(config.docs_dir).resolve())))

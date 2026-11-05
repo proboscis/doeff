@@ -390,11 +390,11 @@ def test_the_same_source_in_a_fresh_checkout_reuses_the_wheel(tmp_path: Path) ->
     first = _write_checkout(tmp_path / "wt-first", "same")
     _age(first, 3600)
     built = _build_logged(first, tmp_path / "wheels-first", env)
-    assert "wheel を組んだ" in built.log, built.log
+    assert "wheel built" in built.log, built.log
     fresh = _write_checkout(tmp_path / "wt-fresh", "same")
     again = _build_logged(fresh, tmp_path / "wheels-fresh", env)
-    assert "同じ source の wheel を使う(組まない)" in again.log, again.log
-    assert "wheel を組んだ" not in again.log, again.log
+    assert "reusing wheel for identical source (no build)" in again.log, again.log
+    assert "wheel built" not in again.log, again.log
     assert again.wheel.name == built.wheel.name
     assert _greeting(again.wheel, tmp_path / "scratch") == "same"
     assert _leftovers(temp_root) == []
@@ -407,7 +407,7 @@ def test_a_changed_source_builds_again(tmp_path: Path) -> None:
     env = _build_env(temp_root, None)
     _build_logged(_write_checkout(tmp_path / "wt-old", "before"), tmp_path / "wheels-old", env)
     changed = _build_logged(_write_checkout(tmp_path / "wt-new", "after"), tmp_path / "wheels-new", env)
-    assert "wheel を組んだ" in changed.log, changed.log
+    assert "wheel built" in changed.log, changed.log
     assert _greeting(changed.wheel, tmp_path / "scratch") == "after"
 
 
@@ -422,13 +422,13 @@ def test_an_editable_in_a_fresh_checkout_reuses_the_stored_wheel(tmp_path: Path)
     process = _start_build(first, tmp_path / "wheels-first", env, "build_editable")
     _, built_log = process.communicate(timeout=BUILD_TIMEOUT_SECONDS)
     assert process.returncode == 0, built_log
-    assert "wheel を組んだ" in built_log, built_log
+    assert "wheel built" in built_log, built_log
     fresh = _write_checkout(tmp_path / "wt-fresh", "same")
     process = _start_build(fresh, tmp_path / "wheels-fresh", env, "build_editable")
     out, again_log = process.communicate(timeout=BUILD_TIMEOUT_SECONDS)
     assert process.returncode == 0, again_log
-    assert "同じ source の wheel を使う(組まない)" in again_log, again_log
-    assert "wheel を組んだ" not in again_log, again_log
+    assert "reusing wheel for identical source (no build)" in again_log, again_log
+    assert "wheel built" not in again_log, again_log
     wheel = tmp_path / "wheels-fresh" / out.strip().splitlines()[-1]
     assert _greeting(wheel, tmp_path / "scratch") == "same"
     assert _leftovers(temp_root) == []
@@ -440,9 +440,9 @@ def test_the_wheel_hook_fills_the_store_the_editable_hook_reads(tmp_path: Path) 
     temp_root.mkdir()
     env = _build_env(temp_root, None)
     built = _build_logged(_write_checkout(tmp_path / "wt-wheel", "shared"), tmp_path / "wheels-wheel", env)
-    assert "wheel を組んだ" in built.log, built.log
+    assert "wheel built" in built.log, built.log
     process = _start_build(_write_checkout(tmp_path / "wt-editable", "shared"), tmp_path / "wheels-editable", env, "build_editable")
     _, log = process.communicate(timeout=BUILD_TIMEOUT_SECONDS)
     assert process.returncode == 0, log
-    assert "同じ source の wheel を使う(組まない)" in log, log
-    assert "wheel を組んだ" not in log, log
+    assert "reusing wheel for identical source (no build)" in log, log
+    assert "wheel built" not in log, log
