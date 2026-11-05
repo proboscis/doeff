@@ -162,7 +162,8 @@
    終わり(gone)の順の記録・created = 作成の本文・seen = 受けた要求・asked = 係が受けた頼み。束 BackupVolume: target-stalled = backup の先の
    全体の同期が落ち続けている(Longhorn が束を作らない — 束は手で作られた物 bundles だけ。落ちていなければ backup の在る volume に束が在る)・
    bundle-stalled = 束 1 本の同期も落ちる(束の lastBackupName が空のまま)・bundle-lag = 束が在っても webhook の cache がまだ見ず、戻しの
-   Volume の POST を 422 で断る回数。走らせた後に読む物: bundles = 手で作られた束の volume の名。"
+   Volume の POST を 422 で断る回数。走らせた後に読む物: bundles = 手で作られた束の volume の名・target-syncs = Longhorn の backup controller が
+   backup の完了に backup の先の全体の同期を頼んだ回数(その volume の束が無い時 — Longhorn v1.13 の backup_controller.go の syncBackupVolume)。"
   (defn #^ None __init__ [self #^ WorkspaceVolumeWorld held #^ dict [parameters None] #^ int [settle 0] #^ bool [stuck False]
                           #^ int [races 0] #^ bool [silent False] #^ int [restore-settle 0] #^ int [snapshot-settle 0]
                           #^ int [backup-settle 0] #^ int [dying-settle 0] #^ bool [snapshot-error False] #^ bool [backup-error False]
@@ -183,7 +184,7 @@
           self.available available self.unplaceable unplaceable
           self.restore-failures restore-failures self.disk-node (if (is disk-node None) NODE disk-node) self.before-delete before-delete
           self.target-stalled target-stalled self.bundle-stalled bundle-stalled self.bundle-lag bundle-lag
-          self.bundles (set)
+          self.bundles (set) self.target-syncs 0
           self.doomed (set) self.failed (set) self.faulted (set)
           #^ (get tuple #(str ...)) self.events #()
           self.backup-size (if (is backup-size None) SIZE backup-size)
@@ -473,6 +474,9 @@
     (> work.left 1) (do (setv (get world.backups backup) (replace work :left (- work.left 1)))
                         (! (api-answer 200 (! (backup-payload held "InProgress" world.backup-size)))))
     True (do (del (get world.backups backup))
+             ;; Longhorn は完了の時に束が在れば束 1 本の同期を、無ければ backup の先の全体の同期を頼む。
+             (when (not (! (bundle-held? world work.volume)))
+               (setv world.target-syncs (+ world.target-syncs 1)))
              (setv world.held.backups (+ world.held.backups #(held)))
              (! (api-answer 200 (! (backup-payload held "Completed" world.backup-size)))))))
 
@@ -2155,13 +2159,39 @@
 
 
 (deftest test-a-bundle-already-there-is-neither-made-again-nor-asked-to-sync
-  ;; 全体の同期が通る世界: 束は Longhorn が作り、今回の backup を指しているので、答え手は束を作らず同期も頼まない。
-  (val api (LonghornWorld (WorkspaceVolumeWorld NODE :volumes #(WARM))))
+  ;; 前に backup を取った名: 束は在り、束 1 本の同期が今回の backup を指すので、答え手は束を作らず同期も頼まない。
+  (val api (LonghornWorld (WorkspaceVolumeWorld NODE :volumes #(WARM) :backups #(COLD-BACKUP))))
   (<- ran ApiRan (on-api api (+ #((Step :verb "cool" :owner OWNER)) #((Step :verb "create" :owner OWNER)))))
   (assert (= ran.outcomes #("done" "restored")) ran.outcomes)
   (assert (= (! (requests-of api "POST" BUNDLES-PATH)) #()) api.seen)
   (assert (= (! (requests-of api "PATCH" BUNDLES-PATH)) #()) api.seen)
-  (assert (= api.bundles (set)) api.bundles))
+  (assert (= api.bundles (set)) api.bundles)
+  (assert (= api.target-syncs 0) api.target-syncs))
+
+
+;; 束を backup より先に作る(backup.yaml の注の引き金 2 — Longhorn は束の無い volume の backup の完了に backup の先の全体の同期を頼み、
+;; 全体の同期は bucket の全部の束を list して garage の目録の node を 30 秒埋める)。
+
+(deftest test-a-new-empty-volume-gets-its-bundle-before-it-is-posted
+  ;; 初めての名を空で作る: Volume の POST の前に束を作るので、毎時の backup の初めての完了も束 1 本の同期だけを頼む。
+  (val api (LonghornWorld (WorkspaceVolumeWorld NODE)))
+  (<- ran ApiRan (on-api api #((Step :verb "create" :owner OWNER))))
+  (assert (= ran.outcomes #("done")) ran.outcomes)
+  (assert (! (bundle-before api VOLUMES-PATH)) api.seen)
+  (assert (= api.bundles #{NAME}) api.bundles)
+  (assert (not (.get (get (json.loads (get api.created 0)) "spec") "fromBackup")) api.created))
+
+
+(deftest test-cooling-a-never-backed-up-volume-makes-its-bundle-before-the-backup
+  ;; 作った後に 1 度も backup を取っていない名(直しの前に作った volume)を冷やす: Backup の前に束を作るので、Longhorn は backup の完了に
+  ;; 全体の同期を頼まない(直しの前は完了の後に束を作り、全体の同期を 1 回頼ませていた)。
+  (val api (LonghornWorld (WorkspaceVolumeWorld NODE :volumes #(WARM))))
+  (<- ran ApiRan (on-api api (+ #((Step :verb "cool" :owner OWNER)) START)))
+  (assert (= ran.outcomes #("done" "restored" "done" "done")) ran.outcomes)
+  (assert (! (bundle-before api (+ LONGHORN-HEAD "/backups"))) api.seen)
+  (assert (! (bundle-before api (+ LONGHORN-HEAD "/snapshots"))) api.seen)
+  (assert (= api.target-syncs 0) api.target-syncs)
+  (assert (= api.bundles #{NAME}) api.bundles))
 
 
 (deftest test-a-restore-the-webhook-refuses-before-it-sees-the-new-bundle-is-posted-again

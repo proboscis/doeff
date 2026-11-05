@@ -188,7 +188,7 @@ worker は CSI を通らずに Longhorn の volume を名指しで作るので�
 
 - Longhorn v1.13 の webhook は、spec.fromBackup の Volume の作成を、その名と backup の先の束 BackupVolume が cluster に在る時だけ受ける
   (無いと 422「cannot get backup volume for backup target garage-workspace and volume <名>: backupVolumes "" not found」)。
-- Longhorn が自分で束を作るのは、BackupTarget の同期(pollInterval ごと — 今は 1 時間 — と、backup の完了の頼み)が bucket の全部の束を list できた時だけ。その
+- Longhorn が束を作るのは、BackupTarget の全体の同期(2026-11-05 までは pollInterval 5 分と、束の無い volume の backup の完了の頼み)が bucket の全部の束を list できた時だけ。その
   list の時間切れは設定 backup-execution-timeout の 1 分で、重さは bucket の束と object の数に比例する。2026-11-04 04:3x〜12:5x UTC に garage
   の node(全部 atlas の上)が混み、list が 1 分を越えて同期が落ち続け、その間に初めて冷やした名の束ができず、冷えた会話が戻せなかった
   (13:3x の測り: Longhorn と同じ辿りで 784 回の呼び出し・208 秒。12:54Z に同期が戻り、束が 112 本まとめてできた)。
@@ -200,12 +200,16 @@ worker は CSI を通らずに Longhorn の volume を名指しで作るので�
   作った束 `bvtrial-baef-2-f38f5748` を Longhorn は受けて 3 秒で同期し(lastBackupName を書いた)、その後の戻しは通った。
 - 冷やす手順は、束が今回の Backup を指してから volume を消す(節「寿命」)。戻す手順は、束が無ければ作ってから Volume を作る。作った直後に
   webhook の cache がまだ束を見ない 422 は、戻しの上限の秒(1800 秒)の内だけ間を置いて出し直す。
-- pollInterval を 1 時間にした訳(2026-11-05): Longhorn v1.13 の BackupTarget の poll は、bucket の list の成否に依らず、その先の束の
-  全部に spec.syncRequestedAt を書き、束ごとの同期が status を書く(束 1 本に 2 回の書き)。束は冷やした名ごとに 1 本で「消す」まで
-  残る(11-03〜05 に 1,174 本)ので、5 分の poll では毎秒 約 7 件 — k8s の目録(atlas の kine)の書き 毎秒 約 26 件の約 27% で、
-  束の数と共に伸びていた(card ki-71615bf0d3a4)。1 時間なら 1,200 本で毎秒 約 0.7 件。作る・冷やす・戻すは、handler の束の作りと
-  1 本の同期の頼み・backup の完了の頼みで進み、poll を待たない。poll が遅れて困るのは、bucket に在って cluster に束の無い名(handler の
-  外で作られた backup)を見つけるまでの時間だけ。
+- 束は backup より先に作る: handler は volume を作る時(空で作る時も戻す時も)と、冷やす手順で Snapshot と Backup を作る前に束を作る。
+  Longhorn は Backup の完了に、その volume の束が在れば束 1 本の同期を、無ければ BackupTarget の全体の同期を頼む。backup の先にまだ何も
+  無い名の束は、束ごとの同期が backup の list を NotFound = 空と読み、volume.cfg が無いので何も書かずに戻る(束を消さない・誤りにしない)。
+- BackupTarget の全体の同期は止めてある(backup.yaml の pollInterval 0 — 引き金の一覧と 0 の扱いは backup.yaml の注)。全体の同期は bucket の
+  全部の束を list し、bucket の目録を持つ garage の node(2026-11 は g1・g5)を 30 秒ほど埋めて /health と /metrics を 1.5〜6 秒止める。残る
+  引き金は人の操作(credential の Secret の変更・BackupTarget の URL・Secret・pollInterval の変更・UI の同期の釦)だけで、その時の 1 回の
+  30 秒は受ける。全体の同期が無いので、bucket に在って cluster に無い束(別の cluster の backup など)は拾われず、status.available も
+  timer では読み直されない。
+- pollInterval の移り(2026-11-05): 5 分 → 1 時間(card ki-71615bf0d3a4 — poll のたびに束の全部に spec.syncRequestedAt と status の書きが
+  入り、5 分では k8s の目録(atlas の kine)の書きの約 27%)→ 0(上の全体の同期の止め — 束の全部への書きも無くなる)。
 
 ### 別の node へ戻す手順
 
